@@ -28,7 +28,7 @@ const { loggerMock } = vi.hoisted(() => ({
 vi.mock( "@zhushanwen/subagent-core/core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 vi.mock("node:child_process", async () => {
-  const { FakeChild } = await import( "@zhushanwen/subagent-core/execution/__tests__/helpers/spawn-mock.ts");
+  const { FakeChild } = await import( "@zhushanwen/subagent-core/testing/execution/__tests__/helpers/spawn-mock.ts");
   return {
     spawn: vi.fn(() => new FakeChild()),
     // buildEnvBlock 的 git branch 调用（execFile 异步）：默认 err-first 兜底 → catch → branch=""
@@ -80,7 +80,7 @@ vi.mock( "@zhushanwen/subagent-core/execution/session-pending.ts", () => ({
   prunePendingCursor: vi.fn(),
 }));
 
-vi.mock( "@zhushanwen/subagent-core/execution/temp-prompt.ts", () => ({
+vi.mock( "@zhushanwen/subagent-core/execution/engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -89,10 +89,10 @@ vi.mock( "@zhushanwen/subagent-core/execution/temp-prompt.ts", () => ({
 }));
 
 import { _resetLifecycleState } from "@zhushanwen/subagent-core/execution/lifecycle-manager.ts";
-import { ModelConfigService } from "@zhushanwen/subagent-core/execution/model-config-service.ts";
+import { ModelConfigService } from "@zhushanwen/subagent-core";
 import type { ModelInfo, ModelRegistryLike } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
-import type { ExecutionRecord } from "@zhushanwen/subagent-core/execution/types.ts";
-import { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
+import type { ExecutionRecord } from "@zhushanwen/subagent-core";
+import { SubagentService } from "@zhushanwen/subagent-core";
 import type { PiLike } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
 import { createDelivery } from "@xyz-agent/session-delivery";
 import { configureNotifyDomain, resetNotifyDomainForTests } from "@zhushanwen/subagent-core/core/notify-ports.ts";
@@ -101,7 +101,7 @@ import {
   lastSpawnedChild,
   sessionHeader,
   waitForSpawn,
-} from "@zhushanwen/subagent-core/execution/__tests__/helpers/spawn-mock.ts";
+} from "@zhushanwen/subagent-core/testing/execution/__tests__/helpers/spawn-mock.ts";
 
 // 投递内核经通知域窄端口注入（u0-notify）——本测试是真实 session-runner 链路回归，
 // 投递内核同样保真实 createDelivery（dedupe/合批语义参与断言：同 notifyId 重放被吞，
@@ -168,7 +168,7 @@ describe("[N2] chatMode 轮次通知正文：真实 session-runner 链路", () =
   it("真实 execute(conversation:true) + FakeChild 驱动 text_delta/agent_settled → 通知正文含本轮真实回复（非 (empty)）", async () => {
     const ROUND_REPLY = "THE ROUND REPLY";
 
-    // 真实链路：execute → kickOffBackground → runAndFinalize → 真实 runSpawn → FakeChild。
+    // 真实链路：execute → kickOffChatRound → runAndFinalize → 真实 runSpawn → FakeChild。
     // ctx.onRoundSettled 由 buildSessionRunnerContext 注入（真实回调，非 mock）。
     const handle = await service.execute({
       task: "tell me something",

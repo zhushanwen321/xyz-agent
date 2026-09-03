@@ -26,7 +26,7 @@ vi.mock( "@zhushanwen/subagent-core/core/logger.ts", () => ({ getLogger: () => l
 
 // mock session-runner：runSpawn 返回永不 resolve 的 promise（阻断 runAndFinalize 收尾，
 // record 停在 running，execute 返回后立即可断言 createRecordForMode 的接线产物）。
-vi.mock( "@zhushanwen/subagent-core/execution/session-runner.ts", () => ({
+vi.mock( "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(() => new Promise(() => {})),
   killAllSpawnedChildren: vi.fn(),
   killRecordChildWithEscalation: vi.fn(),
@@ -34,12 +34,12 @@ vi.mock( "@zhushanwen/subagent-core/execution/session-runner.ts", () => ({
   spawnedChildren: new Map(),
 }));
 
-import { runSpawn } from "@zhushanwen/subagent-core/execution/session-runner.ts";
+import { runSpawn } from "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts";
 import { startHandler } from "../interface/subagent-actions.ts";
-import { ModelConfigService } from "@zhushanwen/subagent-core/execution/model-config-service.ts";
+import { ModelConfigService } from "@zhushanwen/subagent-core";
 import type { ModelInfo, ModelRegistryLike } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
-import { RecordStore } from "@zhushanwen/subagent-core/execution/record-store.ts";
-import { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
+import { RecordStore } from "@zhushanwen/subagent-core";
+import { SubagentService } from "@zhushanwen/subagent-core";
 import type { ExecutionHandle, SubagentToolDetails } from "@zhushanwen/subagent-core/execution/types.ts";
 
 const mockRunSpawn = vi.mocked(runSpawn);
@@ -115,7 +115,7 @@ describe("[M9] conversation:true 接线：execute → createRecordForMode", () =
     expect(record!.chatMode).toBe(true);
     expect(record!.idleTimeoutMs).toBe(12345);
     expect(record!.status).toBe("running");
-    // execute 走到 kickOffBackground（runSpawn 已被调用）——完整接线而非 early return
+    // execute 走到 kickOffChatRound（runSpawn 已被调用）——完整接线而非 early return
     expect(mockRunSpawn).toHaveBeenCalledTimes(1);
   });
 

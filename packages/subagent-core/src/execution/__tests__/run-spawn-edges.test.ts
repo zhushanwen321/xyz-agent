@@ -78,7 +78,7 @@ vi.mock("../session-pending.ts", () => ({
   prunePendingCursor: vi.fn(),
 }));
 
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -86,7 +86,7 @@ vi.mock("../temp-prompt.ts", () => ({
   cleanupTempPrompt: vi.fn(async () => {}),
 }));
 
-import { KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS, killAllSpawnedChildren, runSpawn, spawnedChildren, WAKEUP_GRACE_MS, maxTurnsToWatchdogMs, SPAWN_WATCHDOG_ENV } from "../session-runner.ts";
+import { KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS, killAllSpawnedChildren, runSpawn, spawnedChildren, WAKEUP_GRACE_MS, maxTurnsToWatchdogMs, SPAWN_WATCHDOG_ENV } from "../engine/engines/pi/session-runner.ts";
 import { writeAliveMarker } from "../alive-store.ts";
 import { getSubagentSessionDir } from "../path-encoding.ts";
 import { readActivePendingFromSessionFile } from "../session-pending.ts";

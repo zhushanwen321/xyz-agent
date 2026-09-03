@@ -6,9 +6,9 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { mirrorMainProcessFlags } from "../argv-mirror.ts";
+import { mirrorMainProcessFlags } from "../engine/engines/pi/argv-mirror.ts";
 import { MAX_FORK_DEPTH } from "../session-context-resolver.ts";
-import { buildEnvBlock, buildSpawnArgs } from "../session-runner.ts";
+import { buildEnvBlock, buildSpawnArgs } from "../engine/engines/pi/session-runner.ts";
 
 describe("buildSpawnArgs", () => {
   // [U1 D2] modelRef 为必填（spawn 前置守卫：未经裁决的裸字符串类型层面不可达）。

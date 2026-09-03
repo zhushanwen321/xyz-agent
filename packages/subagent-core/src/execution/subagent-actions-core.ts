@@ -16,7 +16,7 @@
 
 import { computeElapsedSeconds, projectOutcome } from "./execution-record.ts";
 import { isResumable } from "./lifecycle-predicates.ts";
-import { SLUG_MAX_LENGTH } from "./execute-options-mapper.ts";
+import { SLUG_MAX_LENGTH } from "../orchestration/models/types.ts";
 import type { ModelInfo } from "./model-resolver.ts";
 import type { SubagentService } from "./subagent-service.ts";
 import { displayAgentName } from "../shared/agent-ref.ts";
@@ -209,7 +209,7 @@ export function endedMessageGuard(service: SubagentService, id: string, original
   if (original instanceof ResurrectDeniedError) return original;
   let snap: SubagentRecord | undefined;
   try {
-    snap = service.lookupRecordAnyState(id);
+    snap = service.queries.lookupRecordAnyState(id);
   } catch {
     snap = undefined;
   }
@@ -400,12 +400,12 @@ export function listHandler(
   // collectRecords 是 service 核心能力：statusFilter 决定 running-only 还是全部。
   // 防截断（先多取再过滤）已下沉到 store 层——这里直接传 limit + filter。
   const filter = includeFinished ? "all" : "running";
-  const all = service.collectRecords(limit, filter);
+  const all = service.queries.collectRecords(limit, filter);
   // collectRecords 磁盘源是 light（无 totalTokens/model 等）：SubagentListItem 对
   // LLM 消费方暴露 totalTokens/model，逐项 getFullRecord 补全（per-file 缓存，仅首次
   // 全量解析；显式 tool 调用非渲染热路径，成本可接受）。
   const items: SubagentListItem[] = all.map((r) =>
-    recordToListItem(service.getFullRecord(r.id) ?? r),
+    recordToListItem(service.queries.getFullRecord(r.id) ?? r),
   );
   const running = items.filter((i) => i.status === "running").length;
 
@@ -424,13 +424,13 @@ export async function cancelHandler(
   if (!id) throw new Error("cancelParam.subagentId is required for action:'cancel'");
 
   // step 1: id 不存在（findRecord 只查内存 running record，不从 session.jsonl 重建）
-  const rec = service.findRecord(id);
+  const rec = service.queries.findRecord(id);
   if (!rec) {
     // 全树可见后，list/completion 可能列出其他进程（父/兄弟）的 running record
     //（collectRecords 扫共享 sessionsDir 按 rootSessionId 过滤，跨进程互相可见），而 cancel
     // 只作用于本进程内存 record。区分两种失败，避免「may have finished」误导（该 record 正
     // 被列出且未 finished，只是不属于本进程内存）。仅文案区分，不改 cancel 作用域。
-    const treeRec = service.collectRecords(DEFAULT_LIST_LIMIT, "all").find((r) => r.id === id);
+    const treeRec = service.queries.collectRecords(DEFAULT_LIST_LIMIT, "all").find((r) => r.id === id);
     if (treeRec && treeRec.status === "running") {
       throw new Error(
         `Subagent record "${id}" is running but owned by another process in the tree ` +
@@ -448,8 +448,8 @@ export async function cancelHandler(
   // 走 close 行为路径（idle 终态化 done；running 立即 SIGTERM cancelled），
   // 返回 cancel 响应（向后兼容 cancel action 的返回类型）。非 chatMode 保持现有 cancel 行为。
   if (rec.chatMode) {
-    const chatRecord = service.getRecordForAction(id);
-    await service.closeSubagent(chatRecord, true);
+    const chatRecord = service.chatActions.getRecordForAction(id);
+    await service.chatActions.closeSubagent(chatRecord, true);
     return { subagentId: id, response: { cancelled: true } };
   }
   // step 3: service.cancel boolean（list-view 契约不变）；false = 已终态（CAS 抢锁失败）。
@@ -459,7 +459,7 @@ export async function cancelHandler(
     // CAS 失败 = record 在 cancel 期间被 detached 路径 finalize（done/failed）。
     // re-query 查当前真实状态。终态 record 被 archive 立即移出内存，
     // 诚实报告 "unknown (evicted from memory)" 而非回落到可能过期的 rec.status。
-    const now = service.findRecord(id);
+    const now = service.queries.findRecord(id);
     const statusDesc = now ? now.status : "unknown (evicted from memory)";
     throw new Error(`Subagent ${id} could not be cancelled (it likely just finished; status: ${statusDesc})`);
   }
@@ -474,9 +474,9 @@ export async function cancelHandler(
  * message action handler：向对话模式 subagent 续聊/插入消息。
  *
  * 状态 × interrupt 自动映射（agent 只表达意图）：
- *   running → deliverMessage 热路径（进程活：prompt + streamingBehavior，interrupt=true
+ *   running → deliverChatMessage 热路径（进程活：prompt + streamingBehavior，interrupt=true
  *             抢占 / false 排队）
- *   进程死  → deliverMessage 冷路径（resumeRound 重开 session + prompt，interrupt 自动
+ *   进程死  → deliverChatMessage 冷路径（resumeRound 重开 session + prompt，interrupt 自动
  *             退化，agent 无感）
  *   终态    → throw ended（正常路径不命中——终态 record 已 archive，getRecordForAction 先 throw not found）
  *
@@ -503,13 +503,13 @@ export async function messageHandler(
   // 升级文案——close/cancel 维持原语义（它们不需要恢复通道）。
   let record: ExecutionRecord;
   try {
-    record = service.getRecordForAction(id, { allowReconnect: true });
+    record = service.chatActions.getRecordForAction(id, { allowReconnect: true });
   } catch (err) {
     throw endedMessageGuard(service, id, err);
   }
 
   // one-shot upgrade：非 chatMode 的 active record（running/idle）收到 message 时
-  // 自动升级为 chatMode，后续走 deliverMessage 统一投递路径（热路径或冷路径 resume）。
+  // 自动升级为 chatMode，后续走 deliverChatMessage 统一投递路径（热路径或冷路径 resume）。
   // closed/cancelled 终态 record 不可 upgrade（getRecordForAction 已抛 not found）。
   // chatMode 是 ExecutionRecord 的 readonly 字段，用 Mutable<T> 显式断言绕过 readonly 约束（upgrade 语义）。
   // Object.assign 隐式绕过 readonly 不可追踪，改为单字段显式赋值。
@@ -526,7 +526,7 @@ export async function messageHandler(
   // 不按 record.status（进程长驻，idle 态进程仍活，续聊走热路径 prompt 而非重开 session）。
   // upgrade 后 record.chatMode 已为 true，统一进此分支。
   if (record.chatMode) {
-    await service.deliverMessage(record, text, interrupt);
+    await service.chatActions.deliverChatMessage(record, text, interrupt);
   } else {
     // 终态（closed/cancelled）：防御性兜底（终态 record 已 archive，正常走 not found）
     throw new Error(
@@ -550,7 +550,7 @@ export async function messageHandler(
  *     有活进程在跑轮 → 置 closeAfterRound，轮完成时终态化——返回 {closed:true} 即承诺轮结束后资源已释放
  *   force:true = 立即终止——running 立即 SIGTERM（cancelBackground 显式 kill）+ closed+cancelled
  *
- * 行为分流委托 service.closeSubagent（归属守卫由 getRecordForAction 把关）。
+ * 行为分流委托 chatActions.closeSubagent（归属守卫由 chatActions.getRecordForAction 把关）。
  * 已终态 record 由 getRecordForAction throw not found（「已结束的不能再操作」语义）。
  */
 export async function closeHandler(
@@ -561,9 +561,9 @@ export async function closeHandler(
   if (!id) throw new Error("closeParam.subagentId is required for action:'close'");
   const force = input?.force === true;
 
-  // 归属守卫（决策 3）+ 行为分流（service.closeSubagent）
-  const record = service.getRecordForAction(id);
-  await service.closeSubagent(record, force);
+  // 归属守卫（决策 3）+ 行为分流（chatActions.closeSubagent）
+  const record = service.chatActions.getRecordForAction(id);
+  await service.chatActions.closeSubagent(record, force);
 
   return { kind: "close", subagentId: id, response: { closed: true } };
 }
@@ -621,7 +621,7 @@ export async function forkFromHandler(
  *  （守卫 6 已保证 sessionFile 非空，返回类型随之收窄）。 */
 function assertAndLookupForkFromSource(service: SubagentService, id: string): SubagentRecord & { sessionFile: string } {
   // 守卫 1：本进程内存 running —— 直接 message 即可，fork-from 会双写其 session 文件。
-  if (service.findRecord(id)) {
+  if (service.queries.findRecord(id)) {
     throw new Error(
       `subagent ${id} is still active in this process — use action:'message' to continue it directly. ` +
       `If you want a parallel branch from its history, close it first (action:'close'), then fork-from.`,
@@ -629,7 +629,7 @@ function assertAndLookupForkFromSource(service: SubagentService, id: string): Su
   }
 
   // 守卫 2：全态查找（内存 archived + 磁盘重建）。
-  const source = service.lookupRecordAnyState(id);
+  const source = service.queries.lookupRecordAnyState(id);
   if (!source) {
     throw new Error(
       `No subagent record with id "${id}". It may never have existed or been garbage-collected — ` +
@@ -652,7 +652,7 @@ function assertAndLookupForkFromSource(service: SubagentService, id: string): Su
 
   // 守卫 4：主动告别（cancelled tombstone / user-close 正式关闭）——close 语义无旁路：
   // fork-from 与 message 一致拒绝（guard 一致性规格），文案升级为统一「主动关闭」形态
-  //（含 closedReason 显式列入），与 deliverMessage 的同类分支同语系不同落地（此处强调不可 branch）。
+  //（含 closedReason 显式列入），与 deliverChatMessage 的同类分支同语系不同落地（此处强调不可 branch）。
   if (source.status === "closed" && (source.closedReason === "cancelled" || source.closedReason === "user-close")) {
     throw new Error(
       `subagent ${id} was deliberately closed by user (closedReason: ${source.closedReason}) — ` +
@@ -662,7 +662,7 @@ function assertAndLookupForkFromSource(service: SubagentService, id: string): Su
   }
 
   // 守卫 5：worktree 记录 —— WorktreeHandle 不可序列化，checkout 已被 reaper/cleanup
-  // 回收；fork 子进程若复用旧路径会回落主 repo（破坏文件隔离）。与 deliverMessage 的
+  // 回收；fork 子进程若复用旧路径会回落主 repo（破坏文件隔离）。与 deliverChatMessage 的
   // hadWorktree 守卫同一判据同一理由。
   if (source.worktree === true) {
     throw new Error(

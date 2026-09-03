@@ -19,7 +19,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EngineRunResult, RunContext } from "../../../port.ts";
-import type { AgentEvent, AgentTaskSpec } from "../../../types.ts";
+import type { AgentEvent } from "../../../types.ts";
+import type { AgentCallOpts } from "../../../../../orchestration/models/types.ts";
 import { getLogger } from "../../../../../core/logger.ts";
 import { ZCODE_SHARED_POOL_KEY } from "../constants.ts";
 import { ZCODE_APPSERVER_GOLDEN } from "../golden-sample.ts";
@@ -181,8 +182,8 @@ function bootEnv(stateFile: string): Record<string, unknown> {
   return isRecord(env) ? env : {};
 }
 
-function makeTask(overrides?: Partial<AgentTaskSpec>): AgentTaskSpec {
-  return { task: "做点什么", slug: "s", model: `${PROVIDER}/m1`, ...overrides };
+function makeTask(overrides?: Partial<AgentCallOpts>): AgentCallOpts {
+  return { prompt: "做点什么", description: "s", model: `${PROVIDER}/m1`, ...overrides };
 }
 
 function makeCtx(overrides?: Partial<RunContext>): RunContext {
@@ -285,28 +286,28 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     expect(create.params["mode"]).toBe("yolo");
   }, 15_000);
 
-  it("effort → create 帧 thoughtLevel 透传（F15a：spec.effort 映射协议通道）", async () => {
+  it("thinkingLevel → create 帧 thoughtLevel 透传（F15a：task 声明映射协议通道）", async () => {
     const { engine, stateFile, workspace } = makeEngine();
-    await engine.run(makeTask({ cwd: workspace, effort: "high" }), makeCtx());
+    await engine.run(makeTask({ cwd: workspace, thinkingLevel: "high" }), makeCtx());
     const create = sentFrames(stateFile, "session/create")[0];
     expect(create.params["thoughtLevel"]).toBe("high");
   }, 15_000);
 
-  it("effort 未传/空白 → create 帧无 thoughtLevel 键（A.2 ① strict 对象不设空键，防 -32602）", async () => {
+  it("thinkingLevel 未传/空白 → create 帧无 thoughtLevel 键（A.2 ① strict 对象不设空键，防 -32602）", async () => {
     const { engine, stateFile, workspace } = makeEngine();
-    await engine.run(makeTask({ cwd: workspace, effort: "  " }), makeCtx());
+    await engine.run(makeTask({ cwd: workspace, thinkingLevel: "  " }), makeCtx());
     const create = sentFrames(stateFile, "session/create")[0];
     expect("thoughtLevel" in create.params).toBe(false);
   }, 15_000);
 
-  it("effort=medium（非常见档位）→ warn 一行提示且 thoughtLevel 键仍透传（RX2-F1：提示不拦截）", async () => {
+  it("thinkingLevel=medium（非常见档位）→ warn 一行提示且 thoughtLevel 键仍透传（RX2-F1：提示不拦截）", async () => {
     const { engine, stateFile, workspace } = makeEngine();
     const warns: string[] = [];
     const warnSpy = vi.spyOn(subagentsLogger, "warn").mockImplementation(((msg: string) => {
       warns.push(msg);
     }) as typeof subagentsLogger.warn);
     try {
-      await engine.run(makeTask({ cwd: workspace, effort: "medium" }), makeCtx());
+      await engine.run(makeTask({ cwd: workspace, thinkingLevel: "medium" }), makeCtx());
     } finally {
       warnSpy.mockRestore();
     }
@@ -321,14 +322,14 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     expect(create.params["thoughtLevel"]).toBe("medium");
   }, 15_000);
 
-  it("effort=high（常见档位）→ 零 thoughtLevel 提示（RX2-F1：常见档位不出声）", async () => {
+  it("thinkingLevel=high（常见档位）→ 零 thoughtLevel 提示（RX2-F1：常见档位不出声）", async () => {
     const { engine, workspace } = makeEngine();
     const warns: string[] = [];
     const warnSpy = vi.spyOn(subagentsLogger, "warn").mockImplementation(((msg: string) => {
       warns.push(msg);
     }) as typeof subagentsLogger.warn);
     try {
-      await engine.run(makeTask({ cwd: workspace, effort: "high" }), makeCtx());
+      await engine.run(makeTask({ cwd: workspace, thinkingLevel: "high" }), makeCtx());
     } finally {
       warnSpy.mockRestore();
     }
@@ -709,6 +710,7 @@ describe("capabilities（D5：仅 eventGranularity 变）", () => {
       resume: "cold",
       interrupt: "kill-only",
       permissionMode: "native",
+      maxTurns: false,
     });
   });
 

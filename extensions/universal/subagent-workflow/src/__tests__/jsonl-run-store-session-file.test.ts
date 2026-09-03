@@ -25,14 +25,14 @@ vi.mock("@zhushanwen/subagent-core/core/logger.ts", () => ({
 
 import type { CustomEntry } from "@earendil-works/pi-coding-agent";
 
-import { AgentCall } from "@zhushanwen/subagent-core/orchestration/models/agent-call.ts";
-import { Budget } from "@zhushanwen/subagent-core/orchestration/models/budget.ts";
-import { Trace } from "@zhushanwen/subagent-core/orchestration/models/trace.ts";
-import type { ExecutionTraceNode } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
-import type { RunSpec } from "@zhushanwen/subagent-core/orchestration/models/run-spec.ts";
-import { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
+import { AgentCall } from "@zhushanwen/subagent-core";
+import { Budget } from "@zhushanwen/subagent-core";
+import { Trace } from "@zhushanwen/subagent-core";
+import type { ExecutionTraceNode } from "@zhushanwen/subagent-core";
+import type { RunSpec } from "@zhushanwen/subagent-core";
+import { WorkflowRun } from "@zhushanwen/subagent-core";
 import { JsonlRunStore, WORKFLOW_RECORD_CUSTOM_TYPE } from "../jsonl-run-store.ts";
-import { mkCtx, mkPi } from "@zhushanwen/subagent-core/orchestration/__tests__/test-mocks.ts";
+import { mkCtx, mkPi } from "@zhushanwen/subagent-core/testing/orchestration/__tests__/test-mocks.ts";
 
 function makeSpec(): RunSpec {
   return {

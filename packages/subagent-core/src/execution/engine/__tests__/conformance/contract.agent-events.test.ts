@@ -110,7 +110,7 @@ describe("conformance C3：zcode app-server 常驻通道（stream 口径，fake 
     try {
       const events: AgentEvent[] = [];
       const { outcome } = await h.engine.run(
-        { task: "做点什么", slug: "c3-appserver", model: "conformance-provider/m1", cwd: h.workspace },
+        { prompt: "做点什么", description: "c3-appserver", model: "conformance-provider/m1", cwd: h.workspace },
         { taskId: "sa-c3-appserver", poolKey: "", onEvent: (e) => events.push(e) },
       );
 
@@ -145,7 +145,7 @@ describe("conformance C3：zcode app-server 常驻通道（stream 口径，fake 
     try {
       const events: AgentEvent[] = [];
       const { outcome } = await h.engine.run(
-        { task: "做点什么", slug: "c3-no-terminal", model: "conformance-provider/m1", cwd: h.workspace },
+        { prompt: "做点什么", description: "c3-no-terminal", model: "conformance-provider/m1", cwd: h.workspace },
         { taskId: "sa-c3-no-terminal", poolKey: "", onEvent: (e) => events.push(e) },
       );
       expect(outcome.error).toBeUndefined();
@@ -160,7 +160,7 @@ describe("conformance C3：zcode app-server 常驻通道（stream 口径，fake 
     const h = makeAppserverHarness();
     try {
       const { handle, outcome } = await h.engine.run(
-        { task: "做点什么", slug: "c3-anchor", model: "conformance-provider/m1", cwd: h.workspace },
+        { prompt: "做点什么", description: "c3-anchor", model: "conformance-provider/m1", cwd: h.workspace },
         { taskId: "sa-c3-anchor", poolKey: "" },
       );
       expect(handle.data.poolKey).toBe(ZCODE_SHARED_POOL_KEY);

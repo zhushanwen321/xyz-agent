@@ -1,7 +1,7 @@
 // src/execution/__tests__/subagent-service-notify-gate.test.ts
 //
 // [u-svc / T4] 通知可靠性（subagent-service 侧三措施）：
-//   - T4①/PS-2：kickOffBackground.then notify 门按 closedReason 白名单放行——
+//   - T4①/PS-2：kickOffChatRound.then notify 门按 closedReason 白名单放行——
 //     parent-new/parent-fork 不注入（可能已切换的）新 session（A-6 决策落实）；
 //   - T4②/PS-4：idleTimeoutMs 非法值（>2^31-1 / 非有限值）在 spawn 入口同步 fail-fast，
 //     错误含合法范围（不静默 clamp、不静默不挂）；
@@ -23,7 +23,7 @@ const { loggerMock } = vi.hoisted(() => ({
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 const { killChildSpy } = vi.hoisted(() => ({ killChildSpy: vi.fn() }));
-vi.mock("../session-runner.ts", () => ({
+vi.mock("../engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(),
   killAllSpawnedChildren: vi.fn(),
   getChildByRecord: vi.fn(() => undefined),
@@ -95,7 +95,7 @@ describe("T4① notify gate closedReason whitelist", () => {
     expect(notifyGateAllowsDelivery(undefined)).toBe(true);
   });
 
-  it("kickOffBackground.then does not inject parent-new closed records into the session", async () => {
+  it("kickOffChatRound.then does not inject parent-new closed records into the session", async () => {
     const { agentDir, service, pi } = setup();
     const record = createRecord("sa-gate-new", {
       agent: "general-purpose",
@@ -106,7 +106,7 @@ describe("T4① notify gate closedReason whitelist", () => {
       rootSessionId: "root-session",
       controller: new AbortController(),
     });
-    // 模拟 disposeAllRecords 先行编排性关闭后，迟到的 kickOffBackground.then 回注
+    // 模拟 disposeAllRecords 先行编排性关闭后，迟到的 kickOffChatRound.then 回注
     record.closedReason = "parent-new";
     const stub = vi.fn().mockResolvedValue({
       text: "",
@@ -118,10 +118,13 @@ describe("T4① notify gate closedReason whitelist", () => {
       toolCalls: [],
     });
     (service as unknown as Record<string, unknown>).runAndFinalize = stub;
-    const kickOffBackground = (
+    // [D4 后形态] 轮次编排入口 kickOffChatRound（私有，bracket 调用先例见
+    // subagent-service-recovery-bounds.test.ts privateFn）；opts 形参仍是 ExecuteOptions
+    //（task/slug），chat 分支由 ticket lossless 携带——task 声明形参不参与校验。
+    const kickOffChatRound = (
       service as unknown as Record<string, (...args: unknown[]) => void>
-    )["kickOffBackground"];
-    kickOffBackground.call(service, record, { task: "t" }, {}, {}, undefined, 1000, undefined);
+    )["kickOffChatRound"];
+    kickOffChatRound.call(service, record, { task: "t", slug: "gate" }, {}, {}, undefined, 1000, undefined);
     await vi.waitFor(() => expect(stub).toHaveBeenCalled());
     await Promise.resolve();
     await Promise.resolve();
@@ -129,7 +132,7 @@ describe("T4① notify gate closedReason whitelist", () => {
     fs.rmSync(agentDir, { recursive: true, force: true });
   });
 
-  it("kickOffBackground.then still notifies for real failure closures (gc)", async () => {
+  it("kickOffChatRound.then still notifies for real failure closures (gc)", async () => {
     const { agentDir, service, pi } = setup();
     const record = createRecord("sa-gate-gc", {
       agent: "general-purpose",
@@ -142,10 +145,10 @@ describe("T4① notify gate closedReason whitelist", () => {
     });
     record.closedReason = "gc";
     (service as unknown as Record<string, unknown>).runAndFinalize = vi.fn().mockResolvedValue({});
-    const kickOffBackground = (
+    const kickOffChatRound = (
       service as unknown as Record<string, (...args: unknown[]) => void>
-    )["kickOffBackground"];
-    kickOffBackground.call(service, record, { task: "t" }, {}, {}, undefined, 1000, undefined);
+    )["kickOffChatRound"];
+    kickOffChatRound.call(service, record, { task: "t", slug: "gate" }, {}, {}, undefined, 1000, undefined);
     await vi.waitFor(() => expect(pi.sendMessage).toHaveBeenCalled());
     fs.rmSync(agentDir, { recursive: true, force: true });
   });

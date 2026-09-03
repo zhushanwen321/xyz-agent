@@ -76,7 +76,7 @@ vi.mock("../session-pending.ts", () => ({
   listActivePendingFromSessionFile: vi.fn(() => ({ items: [] })),
 }));
 
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -89,7 +89,7 @@ import {
   maxTurnsToWatchdogMs,
   runSpawn,
   SPAWN_WATCHDOG_ENV,
-} from "../session-runner.ts";
+} from "../engine/engines/pi/session-runner.ts";
 import { listActivePendingFromSessionFile, readActivePendingFromSessionFile } from "../session-pending.ts";
 import { isProcessAlive, readAliveMarker, writeAliveMarker } from "../alive-store.ts";
 import {
@@ -253,6 +253,11 @@ describe("[T2-①] keep-alive 裸缺省无进展检测上界（P-T2 降级路径
     expect(child.killed).toBe(true);
 
     // 反证 timer 已撤：advance 30min 不再有任何残留 kill 副作用（进程已 close 收尾）
+    // 真实 ChildProcess 语义：被 SIGTERM 杀死 → 先 exit(null,'SIGTERM') 再 close。只发
+    // close 不发 exit 时 killChain 升级窗口不结算（waitForExit 挂 exit 事件），下方
+    // advance 30min+ 会越过 30s grace 误触发 SIGKILL 升级——补 exit 忠实模拟进程已死。
+    child.signalCode = "SIGTERM";
+    child.emit("exit", null, "SIGTERM");
     child.stdout.end();
     child.stderr.end();
     child.emit("close", 143);

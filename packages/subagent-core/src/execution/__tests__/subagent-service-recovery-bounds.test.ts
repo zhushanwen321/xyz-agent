@@ -5,9 +5,11 @@
 //     收敛到 killRecordChildWithEscalation（spy 断言调用点与参数）；
 //   - T2⑥/PS-1：disposeAllRecords 补三回收面（controller.abort + kill + disarm idle timer
 //     + disarm settled watchdog）；
-//   - T2③/LC-1：deliverMessage 热路径 armSettledWatchdog（挂载 + 到期 onTimeout 处置：
-//     kill + 失败终态化 + error 含 'settled watchdog' 标记与恢复指引）；
-//   - T2⑧/PS-3：deliverMessage 非 EPIPE 失败 re-arm idle timer（进程不再裸奔）。
+//   - T2③/LC-1：热路径投递 armSettledWatchdog（挂载点 D2 下沉后在编排层 deliverChatMessage
+//     的 interact 返回点 + 到期 onTimeout 处置：kill + 失败终态化 + error 含
+//     'settled watchdog' 标记与恢复指引）；
+//   - T2⑧/PS-3：非 EPIPE 热路径写失败 re-arm idle timer（进程不再裸奔；挂载位 D2
+//     下沉后在 PiEngine.deliverPrompt 的非 EPIPE catch——编排层无法区分错误类别）。
 //
 // mock 形态沿用 subagent-service-message-close.test.ts（真实 SubagentService + ServiceInternals
 // cast 暴露 store + mock session-runner/stdin-writer/logger）。
@@ -24,8 +26,8 @@ const { loggerMock } = vi.hoisted(() => ({
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 // killRecordChildWithEscalation 换 spy（收敛调用点断言）；spawnedChildren 用真 Map
-//（deliverMessage 热路径判定 / EPIPE 兜底按值删除的消费者）；getChildByRecord 从同
-// 一 Map 查（mock 工厂与测试共享同一实例）。
+//（热路径投递判定 / EPIPE 兜底按值删除的消费者）；getChildByRecord 从同一 Map 查
+//（mock 工厂与测试共享同一实例）。D2 后模块物理下沉 engines/pi/（mock 路径随迁）。
 const { killChildSpy, spawnedMap, getChildByRecordMock } = vi.hoisted(() => {
   const map = new Map<string, unknown>();
   return {
@@ -34,7 +36,7 @@ const { killChildSpy, spawnedMap, getChildByRecordMock } = vi.hoisted(() => {
     getChildByRecordMock: vi.fn((recordId: string) => map.get(recordId)),
   };
 });
-vi.mock("../session-runner.ts", () => ({
+vi.mock("../engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(),
   killAllSpawnedChildren: vi.fn(),
   getChildByRecord: getChildByRecordMock,
@@ -45,7 +47,7 @@ vi.mock("../session-runner.ts", () => ({
 
 // sendPromptCommand 换 spy（控制热路径写成功 / 抛非 EPIPE 错误）。
 const { sendPromptCommandMock } = vi.hoisted(() => ({ sendPromptCommandMock: vi.fn() }));
-vi.mock("../stdin-writer.ts", () => ({
+vi.mock("../engine/engines/pi/stdin-writer.ts", () => ({
   sendPromptCommand: sendPromptCommandMock,
   clearEpipeFailure: vi.fn(),
   recordEpipeFailure: vi.fn(() => 1),
@@ -119,6 +121,26 @@ function setup(): { agentDir: string; service: SubagentService; store: RecordSto
 /** bracket 调 private 方法（ServiceInternals cast 先例的扩展形态）。 */
 function privateFn<K extends string>(service: SubagentService, key: K): (...args: never[]) => unknown {
   return (service as unknown as Record<string, (...args: never[]) => unknown>)[key];
+}
+
+/**
+ * message 投递入口（D2 后形态：编排层私有 deliverChatMessage → PiEngine.interactRecord
+ * → deliverPrompt；旧直调形态 deliverMessage 已随协议知识下沉删除）。
+ */
+async function deliverChat(
+  service: SubagentService,
+  record: ExecutionRecord,
+  text: string,
+  interrupt: boolean,
+): Promise<void> {
+  return (
+    privateFn(service, "deliverChatMessage") as (
+      this: SubagentService,
+      r: ExecutionRecord,
+      t: string,
+      i: boolean,
+    ) => Promise<void>
+  ).call(service, record, text, interrupt);
 }
 
 describe("T2④ service-side kill convergence", () => {
@@ -230,7 +252,7 @@ describe("T2③ hot-path settled watchdog", () => {
     const record = makeRecord({ id: "sa-hot-arm" });
     store.register(record);
     spawnedMap.set(record.id, new FakeChild());
-    await service.deliverMessage(record, "hello", false);
+    await deliverChat(service, record, "hello", false);
     expect(sendPromptCommandMock).toHaveBeenCalledTimes(1);
     expect(hasSettledWatchdog(record.id)).toBe(true);
   });
@@ -241,7 +263,7 @@ describe("T2③ hot-path settled watchdog", () => {
     const record = makeRecord({ id: "sa-hot-timeout" });
     store.register(record);
     spawnedMap.set(record.id, new FakeChild());
-    await service.deliverMessage(record, "hello", false);
+    await deliverChat(service, record, "hello", false);
     expect(hasSettledWatchdog(record.id)).toBe(true);
 
     await vi.advanceTimersByTimeAsync(SETTLED_WATCHDOG_TIMEOUT_MS + 1);
@@ -289,7 +311,7 @@ describe("T2⑧ non-EPIPE hot-path failure re-arms idle timer", () => {
       throw new Error("write after end: ERR_STREAM_DESTROYED");
     });
 
-    await expect(service.deliverMessage(record, "hello", false)).rejects.toThrow(/ERR_STREAM_DESTROYED/);
+    await expect(deliverChat(service, record, "hello", false)).rejects.toThrow(/ERR_STREAM_DESTROYED/);
 
     // 防泄漏前提恢复：入口 disarm 过的 idle timer 被 re-arm（进程不再裸奔）
     expect(hasIdleTimer(record.id)).toBe(true);
@@ -310,7 +332,7 @@ describe("T2⑧ non-EPIPE hot-path failure re-arms idle timer", () => {
       throw new Error("ERR_STREAM_DESTROYED");
     });
 
-    await expect(service.deliverMessage(record, "hello", false)).rejects.toThrow(/ERR_STREAM_DESTROYED/);
+    await expect(deliverChat(service, record, "hello", false)).rejects.toThrow(/ERR_STREAM_DESTROYED/);
     expect(hasIdleTimer(record.id)).toBe(true);
   });
 });

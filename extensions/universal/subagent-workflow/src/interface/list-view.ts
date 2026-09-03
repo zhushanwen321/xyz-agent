@@ -35,8 +35,8 @@
 import { matchesKey } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import type { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
-import type { SubagentRecord } from "@zhushanwen/subagent-core/execution/types.ts";
+import type { SubagentService } from "@zhushanwen/subagent-core";
+import type { SubagentRecord } from "@zhushanwen/subagent-core";
 import { type ThemeLike } from "./format.ts";
 import { SubagentsListComponent } from "./list-component.ts";
 import {
@@ -48,21 +48,21 @@ import {
   type TuiLike,
   type ViewState,
 } from "./list-shared.ts";
+import { PAGE_SCROLL_DEFAULT } from "./tui-kit.ts";
 
 // ============================================================
 // 常量
 // ============================================================
 
 // 布局/边框常量（LEFT_COL_RATIO、COL_*、BORDER_WIDTH、PAD_*、MIN_*、TITLE_*、
-// SPLIT_FIXED_LINES、TERM_ROWS_FALLBACK、DETAIL_LEN_PROBE_WIDTH、VERT_CENTER_DIVISOR、
-// SPINNER_FRAME_MS、PREVIEW_RECENT_LINES）已随 SubagentsListComponent 移至 list-component.ts。
+// SPLIT_FIXED_LINES、DETAIL_LEN_PROBE_WIDTH、VERT_CENTER_DIVISOR、
+// SPINNER_FRAME_MS、PREVIEW_RECENT_LINES）已随 SubagentsListComponent 移至 list-component.ts；
+// 终端兜底零件（终端行数兜底/termRows/边框家族）单定义在 ./tui-kit.ts（C4）。
 // 共享类型/常量/纯函数（LIST_LIMIT/ViewState/DetailKeyContext/TuiLike/NotifyFn/applyFilter/
 // KeyResult/KeyHandler）已移至 list-shared.ts（消除 list-view ↔ list-component 循环依赖）。
 
 /** 详情区 eventLog 翻屏步长（方向键单步）。 */
 const DETAIL_SCROLL_STEP = 1;
-/** 详情区 PgUp/PgDn 默认步长（无 viewport 信息时）。 */
-const PAGE_SCROLL_DEFAULT = 10;
 
 /** overlay 动画刷新间隔（spinner 换帧 + elapsed 跳动）。同 tool-render.ts SPINNER_INTERVAL_MS。 */
 const OVERLAY_REFRESH_MS = 250;
@@ -88,7 +88,7 @@ let activeView: { close: () => void } | null = null;
  *   ╔══════════════════════════════════════════════════════════════════╗
  *   ║  1. G-017 防叠加：activeView?.close()                              ║
  *   ║  2. ctx.ui.custom((tui, theme, kb, done) => {                      ║
- *   ║       unsubscribe = service.onChange(() => tui.requestRender())  ║
+ *   ║       unsubscribe = service.queries.onChange(() => tui.requestRender())  ║
  *   ║       activeView = { close: wrappedDone }                          ║
  *   ║       return new SubagentsListComponent(...)                       ║
  *   ║     }, { overlay:true, overlayOptions:{margin:0, width:"100%"}})   ║
@@ -112,7 +112,7 @@ export async function createSubagentsView(
 
   // directId 提示
   if (directId) {
-    const all = service.collectRecords(LIST_LIMIT);
+    const all = service.queries.collectRecords(LIST_LIMIT);
     if (!all.some((r) => r.id === directId)) {
       notify(`No record found for id "${directId}", showing all`, "warning");
     }
@@ -143,7 +143,7 @@ export async function createSubagentsView(
       // 易产生 cell 残留（视觉重影）。节流到 ONCHANGE_DEBOUNCE_MS，animTimer（250ms）
       // 兜底刷新。终态变化（record 完成）延迟可接受。
       let renderDebounce: ReturnType<typeof setTimeout> | undefined;
-      const unsubscribe = service.onChange(() => {
+      const unsubscribe = service.queries.onChange(() => {
         if (state.disposed) return;
         if (renderDebounce) clearTimeout(renderDebounce);
         renderDebounce = setTimeout(() => {
@@ -156,7 +156,7 @@ export async function createSubagentsView(
 
       // directId 命中 → 进详情模式（右侧就地展开，底部对齐）
       if (directId) {
-        const records = service.collectRecords(LIST_LIMIT);
+        const records = service.queries.collectRecords(LIST_LIMIT);
         const idx = records.findIndex((r) => r.id === directId);
         if (idx >= 0) {
           state.selectedIdx = idx;

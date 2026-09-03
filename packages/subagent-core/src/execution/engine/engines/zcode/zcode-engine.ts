@@ -19,12 +19,16 @@
 //     为绝对路径（宿主 ~/.zcode/cli/db/db.sqlite）。
 //
 // run 错误语义（设计 §3.3.5）：
-//   ① prepare 期错误（credential_missing / model_not_available / capability
-//      拒绝）在进程创建前 reject，不产生 handle；
+//   ① prepare 期错误（credential_missing / model_not_available）在进程创建前
+//      reject，不产生 handle；
 //   ② 运行中失败不 reject——合成 engine_run_failed outcome + 正常 handle 返回
 //      （record 必须收尾）；
 //   ③ abort：D3 链（session/stop → grace → killChain 连坐共享进程）——终态
 //      exitCode=null + 杀链标记。
+//   [D3-④] capability 拒绝（fork/conversation/maxTurns/worktree）不再在本引擎：
+//      上提到宿主调用前预检（common/capability-gate，两调用点 = chat 域
+//      executeViaEngine 同步段 + SAR run 前）——拒绝语义不变
+//      （engine_capability_unsupported + 无进程创建）。
 //
 // schema 仿真接线（D4 emulated 侧）：common/schema-emulation.ts——prompt 拼仿真段、
 // 终态后三级容错提取 + ajv 校验、失败强化重试一次、仍失败报 schema_emulation_failed。
@@ -42,14 +46,13 @@ import {
   extractAndValidateStructuredOutput,
 } from "../../common/schema-emulation.ts";
 import { HOST_TIMEOUT_ABORT_REASON, synthesizeTimeoutOutcome } from "../../common/kill-chain.ts";
-import { applyPersona } from "../../common/persona-router.ts";
 import { engineTimeoutDetail } from "../../common/errors.ts";
 import { replayJournalToSessionView } from "../../common/journal-replay.ts";
+import type { AgentCallOpts } from "../../../../orchestration/models/types.ts";
 import type { EnginePort, EngineRunResult, RunContext } from "../../port.ts";
 import type {
   AgentEvent,
   AgentOutcome,
-  AgentTaskSpec,
   EngineCapabilities,
   EngineHandle,
   InteractAction,
@@ -170,6 +173,8 @@ export class ZcodeEngine implements EnginePort {
       interrupt: "kill-only",
       // --mode build/edit/plan/yolo 原生权限档位
       permissionMode: "native",
+      // [D3-④] 无 turn_end 语义，轮数上限不可兑现（预检 gate 据此同步拒绝）
+      maxTurns: false,
     };
   }
 
@@ -240,8 +245,10 @@ export class ZcodeEngine implements EnginePort {
   }
 
   /** D1 主语义：唯一通道 = app-server 常驻连接（spawn 降级链已删除）。 */
-  async run(task: AgentTaskSpec, ctx: RunContext): Promise<EngineRunResult> {
-    this.rejectUnsupportedTaskShapes(task);
+  async run(task: AgentCallOpts, ctx: RunContext): Promise<EngineRunResult> {
+    // [D3-④] fork/conversation/maxTurns 的能力拒绝已上提到宿主调用前预检
+    //（common/capability-gate，capabilities.maxTurns 扩位承载）——引擎内不再做
+    // shape 检查（拦截逻辑单点化，重演双轨根因的形态被删除）。
     return this.runViaAppServer(task, ctx);
   }
 
@@ -255,7 +262,7 @@ export class ZcodeEngine implements EnginePort {
    * poolKey 固定 'shared'（共享宿主 HOME，无池），onPoolResolved 在 prepare 期、
    * onHandleReady 在 create 应答后（§3.4 不变量 3）。
    */
-  private async runViaAppServer(task: AgentTaskSpec, ctx: RunContext): Promise<EngineRunResult> {
+  private async runViaAppServer(task: AgentCallOpts, ctx: RunContext): Promise<EngineRunResult> {
     const startedAt = Date.now();
     // pre-aborted 短路：取消先于启动——不创建会话、不触发连接惰性启动（防误杀共享
     // 进程殃及在途任务）
@@ -285,7 +292,7 @@ export class ZcodeEngine implements EnginePort {
   }
 
   /** pre-aborted 短路收口：合成中止 outcome + 'shared' 锚定 handle。 */
-  private abortedAppServerRun(task: AgentTaskSpec, ctx: RunContext, startedAt: number): EngineRunResult {
+  private abortedAppServerRun(task: AgentCallOpts, ctx: RunContext, startedAt: number): EngineRunResult {
     // 对齐点③（不变量 3）：onPoolResolved 必须先于首个事件 emit——本分支
     // finalizeOutcome 经 applyAbortedOutcome emit error 事件
     ctx.onPoolResolved?.(ZCODE_SHARED_POOL_KEY);
@@ -306,7 +313,7 @@ export class ZcodeEngine implements EnginePort {
    * 只在最终轮终态后合成（不变量 2/5）。
    */
   private async runAppServerAttemptsWithRetry(
-    task: AgentTaskSpec,
+    task: AgentCallOpts,
     ctx: RunContext,
     modelRef: string,
     cwd: string,
@@ -349,7 +356,7 @@ export class ZcodeEngine implements EnginePort {
    * 终态数据经 read 兜底收口后才 resolve——不变量 1/2）。
    */
   private async attemptAppServerTurn(
-    task: AgentTaskSpec,
+    task: AgentCallOpts,
     ctx: RunContext,
     modelRef: string,
     cwd: string,
@@ -535,7 +542,7 @@ export class ZcodeEngine implements EnginePort {
 
   /** 终态合成（extension-conventions 函数 80 行上限，从 run 提取）：aborted / run-failed / parsed 三分支。 */
   private finalizeOutcome(
-    task: AgentTaskSpec,
+    task: AgentCallOpts,
     ctx: RunContext,
     final: AttemptResult,
     usageAcc: { input: number; output: number; cacheRead: number; cacheWrite: number; has: boolean },
@@ -567,7 +574,7 @@ export class ZcodeEngine implements EnginePort {
   /** abort 合成终态：exitCode=null（record 正常收尾，不留僵尸）。 */
   private applyAbortedOutcome(
     outcome: AgentOutcome,
-    task: AgentTaskSpec,
+    task: AgentCallOpts,
     ctx: RunContext,
     final: Extract<AttemptResult, { kind: "aborted" }>,
     emit: (event: AgentEvent) => void,
@@ -700,49 +707,20 @@ export class ZcodeEngine implements EnginePort {
   // ── 内部 ──
 
   /**
-   * prepare 期的能力拒绝（进程创建前）：fork 是 pi 专属（AgentTaskSpec.fork 契约：
-   * 其他引擎按 capabilities 拒绝）；conversation 是 interact 控制面的 task 标志，
-   * zcode 无此面（A11：同步拒绝 + 可操作建议，无进程创建）；maxTurns 是 pi 引擎
-   * 专属（turn limiter 依赖 pi 的 turn_end 事件流）——zcode 无 turn_end 语义，
-   * 静默丢弃会造成「传了上限却失控」的假象，显式拒绝（U4，同 fork 模式）。
+   * [RX2-F1] appserver 路径的非常见档位提示：thinkingLevel → thoughtLevel 恒等透传
+   * （F15a），全 7 档放行不拦截——但部分档位（off/minimal/medium/xhigh 等）不在部分
+   * 模型的合法值域内（如 GLM-5.3 仅接受 low/high/max），app-server 侧对不支持的档位
+   * warn-skip（会话照常但档位静默失效），调用方无从察觉。此处仅对
+   * COMMON_THOUGHT_LEVELS 之外的档位出声一行提示（措辞是「若不支持将被忽略/回落」的
+   * 或然警告，非无效断言）；是否真不支持由目标模型决定，core 不做权威校验（引擎层
+   * 不掌握各模型值域）。
    */
-  private rejectUnsupportedTaskShapes(task: AgentTaskSpec): void {
-    if (task.fork === true) {
-      throw new ZcodeTaskShapeError(
-        "engine_capability_unsupported",
-        "zcode 引擎不支持 fork（pi 专属会话分叉语义）。恢复指引：去掉 fork 参数重派，或使用 engine: 'pi'。",
-      );
-    }
-    if (task.conversation === true) {
-      throw new ZcodeTaskShapeError(
-        "engine_capability_unsupported",
-        "zcode 引擎不支持 conversation 模式（每任务自包含会话，无同进程 idle 复用）。" +
-          "恢复指引：改用单次调用（去掉 conversation），或使用 engine: 'pi'。",
-      );
-    }
-    if (task.maxTurns !== undefined) {
-      throw new ZcodeTaskShapeError(
-        "engine_capability_unsupported",
-        "zcode 引擎不支持 maxTurns（pi 引擎专属 turn limiter；zcode 无 turn_end 语义，无法兑现轮数上限）。" +
-          "恢复指引：去掉 maxTurns 参数重派，或使用 engine: 'pi'。",
-      );
-    }
-  }
-
-  /**
-   * [RX2-F1] appserver 路径的非常见档位提示：effort → thoughtLevel 恒等透传（F15a），
-   * 全 7 档放行不拦截——但部分档位（off/minimal/medium/xhigh 等）不在部分模型的合法
-   * 值域内（如 GLM-5.3 仅接受 low/high/max），app-server 侧对不支持的档位 warn-skip
-   * （会话照常但档位静默失效），调用方无从察觉。此处仅对 COMMON_THOUGHT_LEVELS 之外
-   * 的档位出声一行提示（措辞是「若不支持将被忽略/回落」的或然警告，非无效断言）；
-   * 是否真不支持由目标模型决定，core 不做权威校验（引擎层不掌握各模型值域）。
-   */
-  private warnThoughtLevelUncommon(task: AgentTaskSpec, ctx: RunContext): void {
-    const thoughtLevel = task.effort?.trim();
+  private warnThoughtLevelUncommon(task: AgentCallOpts, ctx: RunContext): void {
+    const thoughtLevel = task.thinkingLevel?.trim();
     if (thoughtLevel === undefined || thoughtLevel === "") return;
     if (COMMON_THOUGHT_LEVELS.includes(thoughtLevel)) return;
     logger.warn(
-      `[zcode-engine] effort=${thoughtLevel} 已透传为 thoughtLevel（非常见档位）：若目标模型不支持该档位将被忽略/回落到模型缺省推理档位（常见档位：${COMMON_THOUGHT_LEVELS.join("/")}）；档位是否生效以模型实际行为为准`,
+      `[zcode-engine] thinkingLevel=${thoughtLevel} 已透传为 thoughtLevel（非常见档位）：若目标模型不支持该档位将被忽略/回落到模型缺省推理档位（常见档位：${COMMON_THOUGHT_LEVELS.join("/")}）；档位是否生效以模型实际行为为准`,
       { taskId: ctx.taskId },
     );
   }
@@ -756,7 +734,7 @@ export class ZcodeEngine implements EnginePort {
    * 但被忽略」场景输出：显式 task.model 走正常解析链、ctx 本就无模型属预期缺省，
    * 均不出声（避免噪音）。
    */
-  private warnIgnoredCtxModel(task: AgentTaskSpec, ctx: RunContext, modelRef: string): void {
+  private warnIgnoredCtxModel(task: AgentCallOpts, ctx: RunContext, modelRef: string): void {
     if (ctx.ctxModel === undefined) return;
     const requested = task.model?.trim();
     if (requested !== undefined && requested !== "") return;
@@ -769,17 +747,13 @@ export class ZcodeEngine implements EnginePort {
 
   /**
    * persona 拼接后的完整 prompt（personaInjection: 'prompt'——zcode 无 flag 通道）：
-   * persona 段经 common/persona-router.applyPersona 按 capabilities 路由产出
-   * （agentRef/skillPath 引用行 + appendSystemPrompt 正文统一拼装，S5 接线），
-   * task 正文居中，schema 仿真段尾置（common/schema-emulation 公共层产出）。
+   * appendSystemPrompt 段在前（人设/约束语境——D6 合流后 persona≡skillPath+
+   * appendSystemPrompt 平铺，由上游解析进 appendSystemPrompt），task 正文居中，
+   * schema 仿真段尾置（common/schema-emulation 公共层产出）。
    */
-  private buildPrompt(task: AgentTaskSpec, schema: object | undefined): string {
-    const segments: string[] = [];
-    if (task.persona !== undefined) {
-      const routed = applyPersona(task.persona, this.capabilities());
-      if (routed.promptSegment !== "") segments.push(routed.promptSegment);
-    }
-    segments.push(task.task);
+  private buildPrompt(task: AgentCallOpts, schema: object | undefined): string {
+    const segments: string[] = [...(task.appendSystemPrompt ?? [])];
+    segments.push(task.prompt);
     if (schema !== undefined) segments.push(buildSchemaEmulationSegment(schema));
     return segments.join("\n\n");
   }
@@ -919,15 +893,15 @@ function appendSchemaRetryDirective(basePrompt: string, validationError: string)
 
 /** create 参数组装（A.2 ① strict 键集：空白 thoughtLevel / 空 deny 清单不设键）。 */
 function buildAppServerCreateParams(
-  task: AgentTaskSpec,
+  task: AgentCallOpts,
   providerId: string,
   modelId: string,
   cwd: string,
 ): SessionCreateParams {
   const denyTools = (task.denyTools ?? []).filter((t) => typeof t === "string" && t.trim() !== "");
-  // effort → thoughtLevel（A.2 ① 键集内）：空白串归一为不设键——strict 对象下
+  // thinkingLevel → thoughtLevel（A.2 ① 键集内）：空白串归一为不设键——strict 对象下
   // 空值键位无语义且防 -32602 变形拒收（与 denyTools 空清单不设键同款纪律）
-  const thoughtLevel = task.effort?.trim();
+  const thoughtLevel = task.thinkingLevel?.trim();
   return {
     workspacePath: cwd,
     mode: "yolo",
@@ -940,7 +914,7 @@ function buildAppServerCreateParams(
 }
 
 /** appserver 轮成功收口的 parsed 三态（read 兜底后的 response + schema 校验）。 */
-function parsedAppServerAttempt(task: AgentTaskSpec, r: SessionTurnResult): AttemptResult {
+function parsedAppServerAttempt(task: AgentCallOpts, r: SessionTurnResult): AttemptResult {
   const schema = isPlainObject(task.schema) ? task.schema : undefined;
   return {
     kind: "parsed",
@@ -965,8 +939,13 @@ function failedAppServerAttempt(err: unknown, currentSessionId: string | undefin
   };
 }
 
-/** prepare 期能力拒绝的载体（code 进 message 前缀，调用方可程序化分流）。
- *  [U10① D6] execution 运行时面错误族成员：export 供宿主 instanceof 分流（纯追加，零逻辑改动）。 */
+/**
+ * prepare 期能力拒绝的历史载体（code 进 message 前缀，调用方可程序化分流）。
+ *  [U10① D6] execution 运行时面错误族成员：export 供宿主 instanceof 分流。
+ *  [D3-④ 合并注] 引擎内 shape 拒绝已上提 common/capability-gate（EngineError 承载），
+ *  本引擎不再抛出；保留 export 维持错误族面兼容（execution-runtime-face.test 消费），
+ *  待波 2 收口时随 export 面清理一并裁决。
+ */
 export class ZcodeTaskShapeError extends Error {
   readonly code: string;
 

@@ -423,15 +423,17 @@ describe('extractWorkflowsFromSessionFile', () => {
     expect(coreMatch, 'subagent-core 侧 SNAPSHOT_VERSION 导出字面量未找到——导出形式是否变了？').not.toBeNull()
     const current = coreMatch![1]
 
-    // 源 1 留壳防分叉：extension jsonl-run-store.ts 必须仍以 import 绑定消费 core 权威源，
+    // 源 1 留壳防分叉：extension jsonl-run-store.ts 必须仍以 import 绑定消费 core 权威源
+    // （u-2b 归一后为 barrel import——barrel re-export 同一物理定义，同步性构造性成立；
+    // 深路径形态为归一前的旧口径，两形态任一即满足 import 绑定），
     // 且不得出现本地字面量定义（否则该副本脱离三源守卫覆盖，版本可静默分叉）
     const extShellSrc = readFileSync(
       join(__dirname, '..', '..', '..', 'extensions', 'universal', 'subagent-workflow', 'src', 'jsonl-run-store.ts'),
       'utf-8',
     )
     expect(
-      extShellSrc.match(/import\s*\{[\s\S]*?\bSNAPSHOT_VERSION\b[\s\S]*?\}\s*from\s*"@zhushanwen\/subagent-core\/orchestration\/run-snapshot\.ts"/),
-      'extension jsonl-run-store.ts 不再从 subagent-core run-snapshot.ts import SNAPSHOT_VERSION——留壳消费形态是否变了？',
+      extShellSrc.match(/import\s*\{[\s\S]*?\bSNAPSHOT_VERSION\b[\s\S]*?\}\s*from\s*"@zhushanwen\/subagent-core(?:\/orchestration\/run-snapshot\.ts)?"/),
+      'extension jsonl-run-store.ts 不再从 subagent-core（barrel 或 run-snapshot.ts 深路径）import SNAPSHOT_VERSION——留壳消费形态是否变了？',
     ).not.toBeNull()
     expect(
       extShellSrc.match(/const\s+SNAPSHOT_VERSION\s*=/),

@@ -22,8 +22,10 @@ import {
 	type EngineAwarenessDeps,
 	type EngineAwarenessOutcome,
 } from "../engine-awareness";
-import { normalizeEngineId } from "@zhushanwen/subagent-core/execution/engine/registry.ts";
-import type { GlobalConfigReadResult } from "@zhushanwen/subagent-core/execution/config.ts";
+// dev 1b05be6f9 删壳 engine-awareness 的 normalizeEngineId 再导出面后，测试直连
+// core barrel（与生产 engine-awareness.ts 的 import 形态一致）
+import { normalizeEngineId } from "@zhushanwen/subagent-core";
+import type { GlobalConfigReadResult } from "@zhushanwen/subagent-core";
 
 // ── 测试数据 ────────────────────────────────────────────
 

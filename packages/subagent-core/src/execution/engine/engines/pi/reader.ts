@@ -17,6 +17,17 @@
 // xyz-agent runtime 侧的 pi 历史读取链（getHistoryFromFilePath）是独立实现（shared
 // Message 投影），不消费本模块——两链各自保持现状（P5 只对非 pi 引擎引入共享
 // reader；pi 的 runtime 链路回归由现有测试守护）。
+//
+// [D2 实施期门②裁决：保留（2026-09-02，u-2a）] 现状 readPiSessionView 仅被
+// PiEngine.read（①级原生层）消费、read 面生产零调用（pi 历史走 runtime 自有 JSONL
+// 直读链）——但 EnginePort.read 是四能力面的非可选成员（port.ts），pi 的
+// capabilities.sessionRead='full' 与 conformance read 降级契约（contract.read-
+// degradation）以此为①级实现；删除本模块会使 pi 的 read 面空心化（②③级兜底直通），
+// 与终态图（dual-track-convergence §3.5：engines/pi/ 四件套含 reader）矛盾。保留
+// 不构成第三个 SessionView 装配实现：u-1a 的 session-view-service（GUI 生产链）对
+// pi 分支维持防御性空返回（A1 守护，不 import 本模块），两链零交叠；read 面的
+// 生产调用方归属终态「extension 内 EnginePort.read() 复用同一 module」接线
+// （§3.5 GUI 读取路径），不在 u-2a 范围。
 
 import { reconstructFromFile } from "../../../session-reconstructor.ts";
 import type { SessionView } from "../../types.ts";

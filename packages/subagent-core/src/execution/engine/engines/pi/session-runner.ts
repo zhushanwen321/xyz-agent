@@ -1,4 +1,4 @@
-// src/core/session-runner.ts
+// src/execution/engine/engines/pi/session-runner.ts
 //
 // spawn pi --mode rpc 子进程执行 session 的编排器。零 mode 感知。
 //
@@ -14,48 +14,49 @@ import {
 } from "node:child_process";
 import * as fs from "node:fs";
 
-import { getLogger } from "../core/logger.ts";
-import { bestEffort } from "./best-effort.ts";
-import { disposeEngines } from "./engine/registry.ts";
-import { armIdleTimer, DEFAULT_IDLE_TIMEOUT_MS } from "./lifecycle-manager.ts";
+import { getLogger } from "../../../../core/logger.ts";
+import { bestEffort } from "../../../best-effort.ts";
+import { disposeEngines } from "../../registry.ts";
+import { armIdleTimer, DEFAULT_IDLE_TIMEOUT_MS } from "../../../lifecycle-manager.ts";
 import {
   listActivePendingFromSessionFile,
   prunePendingCursor,
   readActivePendingFromSessionFile,
   type ActivePendingResult,
-} from "./session-pending.ts";
+} from "../../../session-pending.ts";
+import { killChain } from "../../common/kill-chain.ts";
 
-import type { ExtensionMode } from "./host-mode.ts";
+import type { ExtensionMode } from "../../../host-mode.ts";
 
 import { type MirrorFlags, mirrorMainProcessFlags } from "./argv-mirror.ts";
-import { isProcessAlive, readAliveMarker, writeAliveMarker } from "./alive-store.ts";
-import { type DialogGlobalQueue, type UiRequestHandler } from "./dialog-queue.ts";
-import { updateFromEvent } from "./execution-record.ts";
+import { isProcessAlive, readAliveMarker, writeAliveMarker } from "../../../alive-store.ts";
+import { type DialogGlobalQueue, type UiRequestHandler } from "../../../dialog-queue.ts";
+import { updateFromEvent } from "../../../execution-record.ts";
 import {
   type AddGetStateResponseListener,
   type GetStateResult,
   performGetStateHandshake,
   requestGetStateOnce,
 } from "./get-state-handshake.ts";
-import { willRespondToAskUser } from "./host-mode.ts";
-import type { AgentConfig, ResolvedModel } from "./model-resolver.ts";
+import { willRespondToAskUser } from "../../../host-mode.ts";
+import type { AgentConfig, ResolvedModel } from "../../../model-resolver.ts";
 import { collectResult } from "./output-collector.ts";
-import { getSubagentSessionDir } from "./path-encoding.ts";
+import { getSubagentSessionDir } from "../../../path-encoding.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
-import { isRelayActive, RELAY_ENV_RECORD_ID, RELAY_ENV_SESSION_ID } from "./relay-env.ts";
-import { assertThinkingLevel, type ThinkingLevel } from "../shared/model-ref";
+import { isRelayActive, RELAY_ENV_RECORD_ID, RELAY_ENV_SESSION_ID } from "../../../relay-env.ts";
+import { assertThinkingLevel, type ThinkingLevel } from "../../../../shared/model-ref";
 import {
   SCHEMA_ENV_MAX_BYTES,
   SCHEMA_ENV_VAR,
   schemaEnvByteLength,
-} from "../shared/schema-env.ts";
-import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
+} from "../../../../shared/schema-env.ts";
+import { assertSafeTimerDelay } from "../../../../shared/timer-delay.ts";
 import {
   armSettledWatchdog,
   disarmSettledWatchdog,
   SETTLED_WATCHDOG_TIMEOUT_MS,
-} from "./settled-watchdog.ts";
-import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
+} from "../../../settled-watchdog.ts";
+import { MAX_FORK_DEPTH } from "../../../session-context-resolver.ts";
 import { EPIPE_FAILURE_THRESHOLD, recordEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
 import {
   deriveSessionFilePath,
@@ -63,7 +64,7 @@ import {
   parseSpawnLine,
   type SpawnSessionHeader,
 } from "./spawn-event-adapter.ts";
-import type { SubagentStream } from "./stream-sink.ts";
+import type { SubagentStream } from "../../../stream-sink.ts";
 import {
   cleanupTempPrompt,
   writePromptToTempFile,
@@ -74,9 +75,9 @@ import type {
   ExecutionRecord,
   SdkEvent,
   WorktreeHandle,
-} from "./types.ts";
+} from "../../../types.ts";
 import { createTurnLimiter, WRAP_UP_HINT } from "./turn-limiter.ts";
-import { createUiRequestQueue } from "./ui-request-queue.ts";
+import { createUiRequestQueue } from "../../../ui-request-queue.ts";
 
 const logger = getLogger("subagents");
 
@@ -520,8 +521,8 @@ export function getChildByRecord(recordId: string): ChildProcess | undefined {
  * 背景：spawnedChildren 是 Map<recordId, ChildProcess>，resume spawn 会 set 覆盖旧句柄。
  * 旧 child 的 close/error 事件异步到达（kill 后 close 回调可能晚数 tick），若 close/error
  * handler 无条件 delete(record.id)，会误删 resume spawn 刚注册的**新** child——
- * 时序：idle timer 对旧 child SIGTERM（killed=true 但 close 未到）→ deliverMessage 判
- * child.killed 走冷路径 resumeRound → spawn 新 child set 覆盖 → 旧 child close 此刻到达 →
+ * 时序：idle timer 对旧 child SIGTERM（killed=true 但 close 未到）→ 投递方（PiEngine
+ * deliverPrompt）判 child.killed 走冷路径续轮 → spawn 新 child set 覆盖 → 旧 child close 此刻到达 →
  * 误删新注册。后果：新活进程脱离记账（killAllSpawnedChildren 漏杀孤儿 + getChildByRecord
  * undefined → busy 投递再走冷路径二次 resume → 两进程写同一 session 文件，v4 A-5 注释
  * 自述的 P7 双写者事故模式）。按句相等守卫：set 覆盖后旧句柄 ≠ Map 当前值，天然跳过。
@@ -1233,9 +1234,6 @@ interface SpawnRunState {
   proc: ChildProcess | undefined;
   /** watchdog timer（stdout handler 的 agent_end keep-alive 分支重挂，收尾统一 clearTimeout）。 */
   watchdog: NodeJS.Timeout | undefined;
-  /** [race-F4] SIGKILL 升级 timer（killChildWithEscalation 挂载；exit 事件自动 clear，
-   *  收尾统一 clearTimeout 兑底）。 */
-  escalationTimer: NodeJS.Timeout | undefined;
   /** stdout 首行 header（json mode 才有；RPC mode 恒 undefined）——收尾 sessionFile 兜底查找用。 */
   sessionHeader: SpawnSessionHeader | undefined;
   /** get_state 握手结果（RPC mode）——收尾 sessionFile 兜底查找用。 */
@@ -1276,45 +1274,62 @@ interface SpawnRunState {
  */
 
 /**
+ * [D3-① 杀链合一] pi 侧杀链参数（现状值，[race-F4]）：SIGTERM 优雅窗口 30s——
+ * 超窗未见 exit 视为 SIGTERM 被无视，升级 SIGKILL。秒数单提命名常量再组合 ms：
+ * no-magic-numbers 豁免 const init 单字面量但不豁免乘法表达式中的裸字面量
+ * （对齐上方 watchdog 系列的常量组合写法）。
+ */
+const PI_KILL_GRACE_SECS = 30;
+const PI_KILL_GRACE_MS = PI_KILL_GRACE_SECS * MS_PER_SECOND;
+
+/**
+ * [D3-① 杀链合一 + race-F4] 杀 pi 子进程：发 SIGTERM，30s 优雅窗口后仍存活则 SIGKILL。
+ *
+ * 唯一实现 = common/kill-chain.killChain（本函数只是 pi 参数装配：grace 30s、timer
+ * unref（不阻止主进程退出，dispose 路径 killAllSpawnedChildren 兜底）、SIGKILL 升级
+ * warn 留痕含 record id 与来源）。fire-and-forget：调用方不 await 结果（子进程 close
+ * 事件驱动后续收尾），killChain 内部 exit 事件自动清升级 timer。
+ *
+ * 背景（race-F4）：watchdog/limiter/idle timer/abort 触发只发一次 SIGTERM——子进程若
+ * 无视 SIGTERM（卡死在不可中断的 native 调用 / SIGTERM handler 挂死），close 永不触发
+ * → runSpawn 悬挂、background 槽位/worktree/alive marker 泄漏。
+ *
+ * @param source 升级来源标识（warn 日志定位用，如 "spawn watchdog" / "turn limiter"）
+ */
+function killPiChild(child: ChildProcess, recordId: string, source: string): void {
+  void killChain(child, {
+    graceMs: PI_KILL_GRACE_MS,
+    unrefTimers: true,
+    escalationNote: `child ${recordId} (source: ${source})`,
+  });
+}
+
+/**
  * [race-F4] SIGTERM 后升级 SIGKILL 的等待窗口：30s 未见 exit 视为 SIGTERM 被无视，强杀。
+ * （与上方 PI_KILL_GRACE 同值——runSpawn 内外两杀链入口的现状窗口一致。）
  */
 const SIGKILL_ESCALATION_SECONDS = 30;
 const SIGKILL_ESCALATION_MS = SIGKILL_ESCALATION_SECONDS * MS_PER_SECOND;
 
 /**
- * [race-F4] 发 SIGTERM 并武装 SIGKILL 升级 timer：SIGKILL_ESCALATION_MS 后子进程
- * 仍未退出（exitCode/signalCode 双 null）则 SIGKILL。
+ * [race-F4] runSpawn 作用域内 kill 收敛入口（持有 SpawnRunState 的调用方）：
+ * 发 SIGTERM 并武装 30s SIGKILL 升级。
  *
  * 背景：watchdog/limiter/idle timer/abort 触发只发一次 SIGTERM——子进程若无视
  * SIGTERM（卡死在不可中断的 native 调用 / SIGTERM handler 挂死），close 永不触发
  * → runSpawn 悬挂、background 槽位/worktree/alive marker 泄漏，旧实现永不回收。
  *
- * - 升级 timer unref（不阻止主进程退出；dispose 路径 killAllSpawnedChildren 兜底）
- * - assertSafeTimerDelay：包内 timer 挂载入口统一校验（常量 30s 恒通过，防未来改
- *   可配置时静默引入 1ms 溢出语义反转）
- * - child exit 事件 clear 升级 timer（自然退出/被 SIGTERM 杀死均不升级）
- * - state.escalationTimer 记录句柄：watchdog re-arm 场景先清旧升级窗口，收尾兜底 clear
+ * [D3-① 合并注] 实现已合一到公共杀链（killPiChild → common/kill-chain.killChain，
+ * grace 30s 与原私有链现状逐字节保持）——升级 timer 的记账与清理由 killChain 内部
+ * 承担（exit 事件 settle 自动 clear），原 state.escalationTimer 兜底句柄随旧私有
+ * 链删除（runSpawn 收尾不再 clearTimeout）。本函数保留 state 形态签名：state 参数
+ * 供日志语境（record id），调用点（settled watchdog / keep-alive no-progress /
+ * idle timer / agent_end 处置链）语义不变。
  *
  * @param source 升级来源标识（warn 日志定位用，如 "spawn watchdog" / "turn limiter"）
  */
 function killChildWithEscalation(state: SpawnRunState, child: ChildProcess, source: string): void {
-  child.kill("SIGTERM");
-  if (state.escalationTimer) clearTimeout(state.escalationTimer);
-  assertSafeTimerDelay(SIGKILL_ESCALATION_MS, `SIGKILL escalation (${source})`);
-  const escalation = setTimeout(
-    () => {
-      if (child.exitCode === null && child.signalCode === null) {
-        logger.warn(
-          `[session-runner] child ${state.record.id} still alive ${SIGKILL_ESCALATION_MS / MS_PER_SECOND}s after SIGTERM, escalating to SIGKILL (source: ${source})`,
-        );
-        child.kill("SIGKILL");
-      }
-    },
-    SIGKILL_ESCALATION_MS,
-  );
-  escalation.unref();
-  child.once("exit", () => clearTimeout(escalation));
-  state.escalationTimer = escalation;
+  killPiChild(child, state.record.id, source);
 }
 
 /**
@@ -1508,7 +1523,7 @@ function createSpawnEventHandlers(state: SpawnRunState): (raw: SdkEvent) => void
     },
     abort: () => {
       // [race-F4] 升级路径：SIGTERM 后 30s 未 exit 则 SIGKILL（挂住子进程永不回收防线）
-      if (state.proc) killChildWithEscalation(state, state.proc, "turn limiter abort");
+      if (state.proc) killPiChild(state.proc, record.id, "turn limiter abort");
     },
   });
 
@@ -2307,7 +2322,6 @@ export async function runSpawn(
     ctx,
     proc: undefined,
     watchdog: undefined,
-    escalationTimer: undefined,
     sessionHeader: undefined,
     handshakeResult: undefined,
     resolveRun: undefined,
@@ -2421,8 +2435,8 @@ export async function runSpawn(
     // ②recordEpipeFailure 合并同步/异步计数；③logger.warn 记录一次。
     // [v4 A-1 裁决] handler 内**不 throw**——stream 'error' listener 内 throw 会经 Node 内部
     // emit() 传播为 uncaughtException 崩主进程，违背 A-1 防崩核心目标。达阈值的 throw 留给
-    // 同步路径（deliverMessage catch 合并计数达 EPIPE_FAILURE_THRESHOLD 时同步 throw，不崩）。
-    // async handler 只移句柄 + 计数 + warn；进程已 dead（移句柄），下次 deliverMessage 检测
+    // 同步路径（PiEngine.deliverPrompt 的 catch 合并计数达 EPIPE_FAILURE_THRESHOLD 时同步 throw，不崩）。
+    // async handler 只移句柄 + 计数 + warn；进程已 dead（移句柄），下次投递检测
     // dead 走冷路径，冷路径 write EPIPE 同步计数达阈值同步 throw——防死循环且不崩。
     child.stdin.on("error", (err: Error) => {
       // [M4] 按值守卫：resume spawn 已覆盖注册时不误删新 child（见 removeChildRegistration）
@@ -2463,7 +2477,7 @@ export async function runSpawn(
     // d. signal → proc.kill 监听（一次性，替代 session.abort）
     // [race-F4] 用户取消同样升级：SIGTERM 后挂住 → 30s 后 SIGKILL 兑现取消语义。
     const onAbort = (): void => {
-      killChildWithEscalation(state, child, "abort signal");
+      killPiChild(child, record.id, "abort signal");
     };
     opts.signal?.addEventListener("abort", onAbort, { once: true });
     // 前置检查：signal 在 spawn 前已 aborted 时 addEventListener 不会触发 onAbort，
@@ -2483,7 +2497,7 @@ export async function runSpawn(
     const watchdogMs = resolveSpawnWatchdogMs(opts.maxTurns);
     if (watchdogMs !== undefined) {
       state.watchdog = setTimeout(
-        () => killChildWithEscalation(state, child, "spawn watchdog"),
+        () => killPiChild(child, record.id, "spawn watchdog"),
         watchdogMs,
       );
       state.watchdog.unref();
@@ -2534,9 +2548,9 @@ export async function runSpawn(
 
     opts.signal?.removeEventListener("abort", onAbort);
     clearTimeout(state.watchdog);
-    // [race-F4] 兑底清升级 timer（exit 事件自动 clear 的双保险：close 先于升级触发的
-    // 竞态窗口内不误杀下一个占用同 state 的子进程）
-    clearTimeout(state.escalationTimer);
+    // [D3-①] SIGKILL 升级 timer 的清理由公共 kill-chain 内部承担（exit 事件 settle
+    // 等待 promise → raceTimeout clearTimeout；且链持有 child 闭包，不误伤后续同
+    // state 子进程）——旧 escalationTimer 兜底句柄随旧私有杀链一并删除。
     // [T2-①③] 收尾兜底清新增 timer（正常清除点已覆盖；防收尾路径遗漏泄漏）
     disarmKeepAliveNoProgressTimer(state);
     disarmSettledWatchdog(record.id);

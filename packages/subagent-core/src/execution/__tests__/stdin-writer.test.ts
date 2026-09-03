@@ -33,7 +33,7 @@ vi.mock("../../core/logger.ts", () => ({
   getLogger: () => loggerMock,
 }));
 
-import { respond, sendGetStateCommand, sendPromptCommand } from "../stdin-writer.ts";
+import { respond, sendGetStateCommand, sendPromptCommand } from "../engine/engines/pi/stdin-writer.ts";
 
 // ── helpers ──
 

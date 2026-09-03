@@ -19,7 +19,7 @@ import {
 import {
   handleWorkerError,
   resetRebuildFailureInjectionForTest,
-} from "../error-recovery.ts";
+} from "../worker-message-pump.ts";
 import { Budget } from "../models/budget.ts";
 import { RunRuntime } from "../models/run-runtime.ts";
 import { Trace } from "../models/trace.ts";

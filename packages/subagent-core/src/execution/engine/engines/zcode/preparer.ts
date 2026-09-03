@@ -240,4 +240,3 @@ export function listZcodeModels(sources?: ZcodeSourcePaths): Array<{ id: string;
 // 池 key 与目录（2026-09 删除：HOME 池化随 CLI spawn 链一并退役——共享宿主 HOME
 // 后无隔离池、无 config 引导，本文件只剩 v2 单源的模型解析/清单校验件）
 // ============================================================
-

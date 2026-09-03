@@ -73,19 +73,22 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import type { CustomEntry, ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+// DEFAULT_SAVE_MIN_INTERVAL_MS / DEFAULT_STATE_MAX_RUNS 保留深路径：core barrel
+// 刻意不导出（exports 面即 semver 契约，见 subagent-core src/index.ts 头注），壳侧
+// barrel 消费（DEFAULT_* 已进 core barrel——u-2c 删 ./* 通配后深路径 tsc 不可解析）
 import {
   DEFAULT_SAVE_MIN_INTERVAL_MS,
   DEFAULT_STATE_MAX_RUNS,
-} from "@zhushanwen/subagent-core/orchestration/file-run-store.ts";
-import { getLogger } from "@zhushanwen/subagent-core/core/logger.ts";
+} from "@zhushanwen/subagent-core";
+import { getLogger } from "@zhushanwen/subagent-core";
 
-import { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
+import { WorkflowRun } from "@zhushanwen/subagent-core";
 import {
   SNAPSHOT_VERSION,
   fromRunSnapshot,
   toRunSnapshot,
   type RunSnapshot,
-} from "@zhushanwen/subagent-core/orchestration/run-snapshot.ts";
+} from "@zhushanwen/subagent-core";
 
 // ── Workflow-record self-describing entry (W17, D4) ─────────
 

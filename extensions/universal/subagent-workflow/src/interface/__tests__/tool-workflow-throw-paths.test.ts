@@ -15,7 +15,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core/execution/execute-options-mapper.ts";
+import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core";
 import { REENTRY_BUSY_MESSAGE, type ReentryGuardRef } from "../reentry-guard.ts";
 import { registerWorkflowTool } from "../tool-workflow.ts";
 

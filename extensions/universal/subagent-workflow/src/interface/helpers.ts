@@ -12,9 +12,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // bounded JSON pretty 序列化（IF13/#19，TC5/ES5）已下沉 core shared
 // （u-core-atomic 逐字平移，输出与原本地实现字节一致；本地实现已删）。
-import { boundedPrettySerialize } from "@zhushanwen/subagent-core/shared/bounded-serialize.ts";
+import { boundedPrettySerialize } from "@zhushanwen/subagent-core";
 
-import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
+import type { WorkflowRun } from "@zhushanwen/subagent-core";
 import {
   guiComponent,
   type GuiContext,

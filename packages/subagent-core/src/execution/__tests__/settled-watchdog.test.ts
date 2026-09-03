@@ -69,7 +69,7 @@ vi.mock("../session-pending.ts", () => ({
   listActivePendingFromSessionFile: vi.fn(() => ({ items: [] })),
 }));
 
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -77,7 +77,7 @@ vi.mock("../temp-prompt.ts", () => ({
   cleanupTempPrompt: vi.fn(async () => {}),
 }));
 
-import { runSpawn } from "../session-runner.ts";
+import { runSpawn } from "../engine/engines/pi/session-runner.ts";
 import {
   _resetSettledWatchdogsForTest,
   armSettledWatchdog,

@@ -1,6 +1,11 @@
-// src/__tests__/agent-registry.test.ts（P1 抽包留壳：混合 subject——除「builtin agents 数据合规」段扫描壳内 agents/*.md 资产须随壳外，其余 describe 均为 subagent-core 解析行为，见 impl-plan 偏差 #17）
+// src/execution/__tests__/agent-registry.test.ts
 //
-// AgentRegistry 测试（S2 路径统一版）。
+// AgentRegistry 测试（S2 路径统一版）。u-5c 迁自壳套件 src/__tests__/agent-registry.test.ts
+// （被测 module 是 core 件，唯一测试覆盖原落壳——设计 §2.2 C6 / §1 目标 6）。
+//
+// 「builtin agents 数据合规」段：u-5c 曾拆出留壳（feat 侧布局：资产在壳包），但
+// 合并终态 10 模板资产已迁 core 包 agents/（dev 侧 C5/D-1），壳 agents/ 不存在，
+// 该段随资产回归 core 测试域（C5 锚点 + D-5 去 tools 化断言）。
 //
 // S2 重构：AgentRegistry 从「按名查找（discoverAll + cache Map<name>）」收敛为
 // 「按绝对路径加载（loadByPath）」——agentRef 唯一形态 = .md 绝对路径（注入段
@@ -20,11 +25,11 @@ vi.mock("node:os", async (importOriginal) => {
   return { ...actual, homedir: () => "/nonexistent-home-for-tests" };
 });
 
-import { lintAgentMeta } from "@zhushanwen/subagent-core/orchestration/script-lint.ts";
-import { parseResourceMeta } from "@zhushanwen/subagent-core/shared/meta-parser.ts";
-import { AgentRegistry, parseAgentFrontmatter, parseAgentWithMeta } from "@zhushanwen/subagent-core/execution/agent-registry.ts";
-import type { EnginePort } from "@zhushanwen/subagent-core/execution/engine/port.ts";
-import { clearEngines, registerEngine } from "@zhushanwen/subagent-core/execution/engine/registry.ts";
+import { AgentRegistry, parseAgentFrontmatter, parseAgentWithMeta } from "../agent-registry.ts";
+import { clearEngines, registerEngine } from "../engine/registry.ts";
+import type { EnginePort } from "../engine/port.ts";
+import { lintAgentMeta } from "../../orchestration/script-lint.ts";
+import { parseResourceMeta } from "../../shared/meta-parser.ts";
 
 // ============================================================
 // helpers

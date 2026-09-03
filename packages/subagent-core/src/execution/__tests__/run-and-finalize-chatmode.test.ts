@@ -25,7 +25,7 @@ vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner：runSpawn 受控返回 result，killAllSpawnedChildren 空实现。
 // 注意：必须在 import SubagentService 之前 mock（vi.mock 提升到顶部）。
-vi.mock("../session-runner.ts", () => ({
+vi.mock("../engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(),
   killAllSpawnedChildren: vi.fn(),
   getChildByRecord: vi.fn(() => undefined),
@@ -34,8 +34,8 @@ vi.mock("../session-runner.ts", () => ({
   spawnedChildren: new Map(),
 }));
 
-import { runSpawn } from "../session-runner.ts";
-import type { SessionRunnerContext } from "../session-runner.ts";
+import { runSpawn } from "../engine/engines/pi/session-runner.ts";
+import type { SessionRunnerContext } from "../engine/engines/pi/session-runner.ts";
 import { createRecord } from "../execution-record.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo } from "../model-resolver.ts";

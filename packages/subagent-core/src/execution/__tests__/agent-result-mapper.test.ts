@@ -57,6 +57,22 @@ describe("mapToWorkflowAgentResult (D-A10)", () => {
     expect(result.parsedOutput).toEqual(parsedData);
   });
 
+  // ── D5-③: failureKind 分诊标签透传（产出侧 output-collector → 消费侧 executeAgentCall） ──
+
+  it("failureKind 三态逐值透传（stale_context / schema_deterministic / unknown）", () => {
+    for (const kind of ["stale_context", "schema_deterministic", "unknown"] as const) {
+      const r: SubagentsAgentResult = { ...minimalResult, success: false, error: "boom", failureKind: kind };
+      const result = mapToWorkflowAgentResult(r);
+      expect(result.failureKind).toBe(kind);
+    }
+  });
+
+  it("failureKind 缺省（成功路径/上游未写）→ 不落键（消费侧视为 unknown = 可重试）", () => {
+    const result = mapToWorkflowAgentResult(minimalResult);
+    expect(result.failureKind).toBeUndefined();
+    expect("failureKind" in result).toBe(false);
+  });
+
   // ── T3.14: 失败路径 ──
 
   it("映射失败: success=false 且 error → 填入 error 字段", () => {

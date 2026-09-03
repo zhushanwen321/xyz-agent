@@ -14,7 +14,18 @@
 //   - 'prompt'→ promptSegment 为带引导结构的人设段（拼进最终 prompt——zcode 形态）。
 
 import { promptTooLargeError } from "./errors.ts";
-import type { EngineCapabilities, PersonaSpec } from "../types.ts";
+import type { EngineCapabilities } from "../types.ts";
+
+/**
+ * 人设注入内容（[D6 合流] 原 PersonaSpec 的内容面——收拢层删除后 persona 路由
+ * 只需人设正文的两个来源字段，取合流形状 AgentCallOpts 的结构子集：appendSystemPrompt
+ * 是人设正文，skillPath 以引用提示行进文本。原 agentRef 字段随 PersonaSpec 裁撤
+ * （无生产写入方）。
+ */
+export interface PersonaContent {
+  appendSystemPrompt?: string[];
+  skillPath?: string;
+}
 
 // ============================================================
 // persona 三策略路由
@@ -35,10 +46,10 @@ const PERSONA_FILE_NAME = "persona.md";
  * 按 capabilities.personaInjection 路由 persona 的注入通道。
  *
  * router 不解析 agent .md / skill 文件内容（身份解析归宿主 resolveIdentity）——
- * 只把 PersonaSpec 声明的内容组装成通道载体：appendSystemPrompt 是人设正文，
- * agentRef/skillPath 以引用提示行进文本（prompt 通道）或正文头（file 通道）。
+ * 只把 PersonaContent 声明的内容组装成通道载体：appendSystemPrompt 是人设正文，
+ * skillPath 以引用提示行进文本（prompt 通道）或正文头（file 通道）。
  */
-export function applyPersona(persona: PersonaSpec, capabilities: EngineCapabilities): PersonaRouting {
+export function applyPersona(persona: PersonaContent, capabilities: EngineCapabilities): PersonaRouting {
   switch (capabilities.personaInjection) {
     case "file": {
       const content = buildPersonaBody(persona);
@@ -54,10 +65,9 @@ export function applyPersona(persona: PersonaSpec, capabilities: EngineCapabilit
   }
 }
 
-/** 人设正文：appendSystemPrompt join + agentRef/skillPath 头部引用行。 */
-function buildPersonaBody(persona: PersonaSpec): string {
+/** 人设正文：appendSystemPrompt join + skillPath 头部引用行。 */
+function buildPersonaBody(persona: PersonaContent): string {
   const parts: string[] = [];
-  if (persona.agentRef !== undefined) parts.push(`# Agent: ${persona.agentRef}`);
   if (persona.skillPath !== undefined) parts.push(`Skill context: ${persona.skillPath}`);
   const body = persona.appendSystemPrompt?.join("\n") ?? "";
   if (body !== "") parts.push(body);
@@ -65,7 +75,7 @@ function buildPersonaBody(persona: PersonaSpec): string {
 }
 
 /** prompt 通道的人设段（带结构头，拼进最终 prompt）。 */
-function buildPromptSegment(persona: PersonaSpec): string {
+function buildPromptSegment(persona: PersonaContent): string {
   const body = buildPersonaBody(persona);
   if (body === "") return "";
   return `## Persona\n${body}`;

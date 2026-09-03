@@ -21,7 +21,6 @@ import {
   isGuiCapable,
 } from "@xyz-agent/extension-protocol";
 
-import type { SubagentToolResult } from "@zhushanwen/subagent-core/execution/types.ts";
 import type {
   CancelHandlerResult,
   CloseHandlerResult,
@@ -29,11 +28,12 @@ import type {
   ListHandlerResult,
   MessageHandlerResult,
   StartHandlerResult,
-} from "@zhushanwen/subagent-core/execution/subagent-actions-core.ts";
+  SubagentToolResult,
+} from "@zhushanwen/subagent-core";
 import { mapRunIcon, mapRunStatus } from "./gui-mappers.ts";
 
 // ============================================================
-// core 领域内核 re-export（pi 消费面符号与收缩前一致，deep path 直连 core 源码）
+// core 领域内核 re-export（pi 消费面符号与收缩前一致，经 core barrel 统一消费）
 // ============================================================
 
 export {
@@ -46,7 +46,7 @@ export {
   messageHandler,
   recordToListItem,
   startHandler,
-} from "@zhushanwen/subagent-core/execution/subagent-actions-core.ts";
+} from "@zhushanwen/subagent-core";
 
 export type {
   CancelHandlerInput,
@@ -61,7 +61,7 @@ export type {
   MessageHandlerResult,
   StartHandlerInput,
   StartHandlerResult,
-} from "@zhushanwen/subagent-core/execution/subagent-actions-core.ts";
+} from "@zhushanwen/subagent-core";
 
 // ============================================================
 // 渲染层常量 / 类型（pi TUI 渲染族，按设计留壳）

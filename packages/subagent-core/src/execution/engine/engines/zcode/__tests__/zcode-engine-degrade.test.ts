@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { RunContext } from "../../../port.ts";
-import type { AgentTaskSpec } from "../../../types.ts";
+import type { AgentCallOpts } from "../../../../../orchestration/models/types.ts";
 import { ZCODE_APPSERVER_GOLDEN } from "../golden-sample.ts";
 import { ZcodeEngine, type ZcodeEngineDeps } from "../zcode-engine.ts";
 
@@ -120,8 +120,8 @@ function recvFrames(stateFile: string, method: string): Array<{ id: number; para
     );
 }
 
-function makeTask(overrides?: Partial<AgentTaskSpec>): AgentTaskSpec {
-  return { task: "做点什么", slug: "s", model: `${PROVIDER}/m1`, ...overrides };
+function makeTask(overrides?: Partial<AgentCallOpts>): AgentCallOpts {
+  return { prompt: "做点什么", description: "s", model: `${PROVIDER}/m1`, ...overrides };
 }
 
 function makeCtx(overrides?: Partial<RunContext>): RunContext {

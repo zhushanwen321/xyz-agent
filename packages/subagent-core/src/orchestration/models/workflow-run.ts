@@ -39,7 +39,7 @@ import { canRunTransition } from "./types.ts";
 /**
  * 聚合根级 meta（非 RunState 的一部分，不随 trace 持久化到 worker JSONL）。
  *
- * workerErrorCount/scriptErrorCount 跨 runtime 存活（C.5：error-recovery 重试计数载体），
+ * workerErrorCount/scriptErrorCount 跨 runtime 存活（C.5：worker-message-pump 重试计数载体），
  * 因为 retry 会 replaceRuntime，但计数是 run 级而非 runtime 级。
  */
 export interface WorkflowRunMeta {

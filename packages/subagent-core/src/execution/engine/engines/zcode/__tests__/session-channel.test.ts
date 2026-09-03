@@ -137,10 +137,14 @@ function makeChannel(overrides: ScenarioOverrides = {}): ChannelHandle {
       : {}),
   };
   writeFileSync(scenarioFile, JSON.stringify(scenario));
+  // buildAppServerEnv 2026-09 共享宿主 HOME 改版后只收单参 baseEnv（不再覆写 HOME）；
+  // 旧两参形态 (homeDir, extraEnv) 的第一参被展开成字符索引对象——PATH 进不了子 env，
+  // spawn("node") 无 PATH 可查 → ENOENT。此处传 env 对象本体（与 zcode-engine-*
+  // 引擎测试的 deps.processEnv 同模式）。
   const conn = new AppServerConnection({
     cliPath: FAKE_CLI,
     cwd: workspacePath,
-    env: buildAppServerEnv(join(TMP, `home-${connSeq}`), {
+    env: buildAppServerEnv({
       PATH: process.env.PATH ?? "",
       FAKE_STATE_FILE: stateFile,
       FAKE_SESSION_SCENARIO: scenarioFile,

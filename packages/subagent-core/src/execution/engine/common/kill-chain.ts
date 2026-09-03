@@ -10,7 +10,8 @@
 import { getLogger } from "../../../core/logger.ts";
 
 import { engineTimeoutDetail } from "./errors.ts";
-import type { AgentOutcome, AgentTaskSpec } from "../types.ts";
+import type { AgentCallOpts } from "../../../orchestration/models/types.ts";
+import type { AgentOutcome } from "../types.ts";
 import { DEFAULT_ENGINE_ID } from "../registry.ts";
 
 const logger = getLogger("subagents");
@@ -34,6 +35,11 @@ export interface KillableChild {
   once(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown;
 }
 
+// 毫秒→秒换算（SIGKILL 升级 warn 日志的秒数显示）。文件内私有定义：工程内 MS_PER_SECOND
+// 惯例是各使用文件私有常量（execution-record / lifecycle-manager / session-file-gc /
+// session-runner 四处先例），无共享导出源可 import，保持同惯例不另立导出点。
+const MS_PER_SECOND = 1_000;
+
 /** SIGTERM 优雅窗口默认值（ms）。实测校准点：设计 §5 待验证检查点⑤（zcode 对 SIGTERM 的响应时序）。 */
 export const DEFAULT_KILL_GRACE_MS = 5_000;
 
@@ -47,6 +53,25 @@ const SIGKILL_REAP_TIMEOUT_MS = 10_000;
  */
 export const HOST_TIMEOUT_ABORT_REASON = "agent-call-timeout";
 
+/** killChain 的参数形状。 */
+export interface KillChainOptions {
+  /**
+   * SIGTERM 优雅窗口（ms）。grace 窗口按引擎参数化（D3-① 杀链合一）：pi 传 30s
+   * （[race-F4] 现状值）、zcode 传 5s（ZCODE_KILL_GRACE_MS）——两引擎现状逐字节保持。
+   */
+  graceMs: number;
+  /**
+   * [D3-①] 内部 timer unref。pi 路径现状 = 升级 timer unref（不阻止主进程退出，dispose
+   * killAll 兜底）；zcode 现状 = ref'd（timer 挂起时进程等待收尸）——各引擎按现状传。
+   */
+  unrefTimers?: boolean;
+  /**
+   * SIGKILL 升级时的 warn 留痕载体（如 `child sa-xxx (source: spawn watchdog)`）。
+   * 不传则升级静默（zcode 现状）——pi 侧现状有 warn，由调用方组装完整语境。
+   */
+  escalationNote?: string;
+}
+
 /**
  * 杀链：SIGTERM → 等待 graceMs → 仍存活则 SIGKILL。
  *
@@ -54,7 +79,7 @@ export const HOST_TIMEOUT_ABORT_REASON = "agent-call-timeout";
  */
 export async function killChain(
   child: KillableChild,
-  opts: { graceMs: number },
+  opts: KillChainOptions,
 ): Promise<"terminated" | "killed"> {
   // 已退出（自然/已被杀）→ 无需发信号，按优雅终止口径返回
   if (child.exitCode !== null || child.signalCode !== null) return "terminated";
@@ -62,14 +87,19 @@ export async function killChain(
   const exited = waitForExit(child);
   safeKill(child, "SIGTERM");
 
-  const graceful = await raceTimeout(exited, opts.graceMs);
+  const graceful = await raceTimeout(exited, opts.graceMs, opts.unrefTimers === true);
   if (graceful === "settled") return "terminated";
   // grace 超时后进程可能恰好在检查前一刻退出——复核退出态，避免误杀已死进程
   if (child.exitCode !== null || child.signalCode !== null) return "terminated";
 
+  if (opts.escalationNote !== undefined) {
+    logger.warn(
+      `[kill-chain] ${opts.escalationNote} still alive ${opts.graceMs / MS_PER_SECOND}s after SIGTERM, escalating to SIGKILL`,
+    );
+  }
   safeKill(child, "SIGKILL");
   // 有界收尸：无论等到与否都返回 'killed'（信号已发出，返回值表达「走了 SIGKILL」）
-  await raceTimeout(exited, SIGKILL_REAP_TIMEOUT_MS);
+  await raceTimeout(exited, SIGKILL_REAP_TIMEOUT_MS, opts.unrefTimers === true);
   return "killed";
 }
 
@@ -98,14 +128,14 @@ function safeKill(child: KillableChild, signal: NodeJS.Signals): void {
  * exitCode: null = 被信号杀死（AgentOutcome 的杀链判据，§3.3.5）。
  */
 export function synthesizeTimeoutOutcome(
-  task: AgentTaskSpec,
+  task: AgentCallOpts,
   stdoutTail: string,
   engineId: string = DEFAULT_ENGINE_ID,
 ): AgentOutcome {
   return {
     content: "",
     // slug 进错误信息：单看 outcome（record 之外）也能定位是哪个任务超时
-    error: `engine_timeout: [slug=${task.slug}] ${engineTimeoutDetail(stdoutTail)}`,
+    error: `engine_timeout: [slug=${task.description ?? "unknown"}] ${engineTimeoutDetail(stdoutTail)}`,
     // 被信号杀死：退出码语义为 null（§3.3.5 AgentOutcome.exitCode 注释）
     exitCode: null,
     engineId,
@@ -202,10 +232,11 @@ function waitForExit(child: KillableChild): Promise<void> {
   });
 }
 
-/** promise vs 超时：超时先到返回 'timeout'（promise 继续但被放弃等待）。 */
-function raceTimeout(p: Promise<void>, ms: number): Promise<"settled" | "timeout"> {
+/** promise vs 超时：超时先到返回 'timeout'（promise 继续但被放弃等待）。unref 见 KillChainOptions。 */
+function raceTimeout(p: Promise<void>, ms: number, unref = false): Promise<"settled" | "timeout"> {
   return new Promise<"settled" | "timeout">((resolve) => {
     const timer = setTimeout(() => resolve("timeout"), ms);
+    if (unref) timer.unref();
     p.then(
       () => {
         clearTimeout(timer);

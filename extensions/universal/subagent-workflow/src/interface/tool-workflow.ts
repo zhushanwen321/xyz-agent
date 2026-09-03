@@ -31,18 +31,20 @@ import {
 } from "@xyz-agent/extension-protocol";
 import { type Static, Type } from "typebox";
 
-import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core/execution/execute-options-mapper.ts";
-import { THINKING_ORDER } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
-import { MAX_TIMER_DELAY_MS } from "@zhushanwen/subagent-core/shared/timer-delay.ts";
+import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core";
+import { THINKING_ORDER } from "@zhushanwen/subagent-core";
+import type { LauncherDeps } from "@zhushanwen/subagent-core";
+import { abortRun, runWorkflow } from "@zhushanwen/subagent-core";
+import type { RunStore } from "@zhushanwen/subagent-core";
+import type { WorkflowRun } from "@zhushanwen/subagent-core";
+// D9 closure：core args-meta 消费（reservedKeys 注入见下方 ARGS_META_OPTIONS）
+// MAX_TIMER_DELAY_MS：OR-1 消费（barrel 导出，深路径经 u-2c 删通配后 tsc 不可解析）
 import {
   argKeysFromMeta,
   findFlattenedArgKeys,
-} from "@zhushanwen/subagent-core/orchestration/args-meta.ts";
-import type { LauncherDeps } from "@zhushanwen/subagent-core/orchestration/launcher.ts";
-import { abortRun, runWorkflow } from "@zhushanwen/subagent-core/orchestration/lifecycle.ts";
-import type { RunStore } from "@zhushanwen/subagent-core/orchestration/models/ports.ts";
-import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
-import { runSummary } from "@zhushanwen/subagent-core/orchestration/workflow-run-summary.ts";
+  MAX_TIMER_DELAY_MS,
+} from "@zhushanwen/subagent-core";
+import { runSummary } from "@zhushanwen/subagent-core";
 import { mapRunIcon, mapRunStatus, toGuiCtx } from "./gui-mappers.ts";
 import {
   acquireReentryGuard,
@@ -50,7 +52,7 @@ import {
   type ReentryGuardRef,
   releaseReentryGuard,
 } from "./reentry-guard.ts";
-import { formatElapsed, renderTextFallback } from "./views/format.ts";
+import { formatElapsed, renderTextFallback } from "./format.ts";
 
 // ── Parameter schema ─────────────────────────────────────────
 

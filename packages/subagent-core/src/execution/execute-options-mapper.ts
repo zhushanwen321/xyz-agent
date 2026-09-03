@@ -6,19 +6,15 @@
 // 接线层级：[模块内直调] —— SAR.run 内调。
 
 import type { AgentCallOpts } from "../orchestration/models/types.ts";
+import { SLUG_MAX_LENGTH } from "../orchestration/models/types.ts";
 import { HOST_TIMEOUT_ABORT_REASON } from "./engine/common/kill-chain.ts";
 import type { ModelInfo } from "./model-resolver.ts";
 import type { ExecuteOptions } from "./types.ts";
 
-// SLUG_MAX_LENGTH 权威定义（subagent-core 包抽离 u1-move 内化）：core 切面不得反向
-// import 壳侧 interface（D1 依赖闭包判据），常量定义回归 execution 侧本文件——
-// 与 tool schema 的 maxLength 语义同源（壳侧 subagent-tool-schema.ts 改经本文件 import）。
-/**
- * slug 最大长度。历史值 20 偏紧——描述性 slug 如 "audit-structured-output"（23）/
- * "fix-subagent-wf-tools"（21）会撞上限，放宽到 35 兼顾「短到能塞进 TUI 标题行」
- * 与「容纳合理描述性 kebab-case 名」。
- */
-export const SLUG_MAX_LENGTH = 35;
+// SLUG_MAX_LENGTH 单源收敛（D6 合流收尾）：权威定义在 orchestration/models/types.ts
+//（约束对象 AgentCallOpts.description 与字段同文件）；本文件仅 import 消费
+//（mapToExecuteOptions 的 slug 截断）。execution → orchestration/models/types 引用
+// 有 pi-engine / host-task-spec 同款先例，D1 依赖闭包判据（不反向 import 壳侧）不受影响。
 
 /**
  * D-A2: AgentCallOpts → ExecuteOptions 映射。

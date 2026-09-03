@@ -1,4 +1,4 @@
-// src/core/temp-prompt.ts
+// src/execution/engine/engines/pi/temp-prompt.ts
 //
 // 将 agent systemPrompt 写入临时文件，供 pi CLI --append-system-prompt 使用。
 // Core 叶子原语（node 内置 + 同目录 bestEffort 清理 helper）。注意 bestEffort
@@ -14,7 +14,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { bestEffort } from "./best-effort.ts";
+import { bestEffort } from "../../../best-effort.ts";
 
 /** 临时 prompt 文件创建结果。dir 供调用方清理。 */
 export interface TempPromptFile {

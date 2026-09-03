@@ -30,12 +30,13 @@ const { loggerMock, rafCapture } = vi.hoisted(() => ({
 }));
 vi.mock("@zhushanwen/subagent-core/core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
-// mock session-runner：fork-from 的 execute 链经 kickOffBackground → runAndFinalize →
+// mock session-runner：fork-from 的 execute 链经 kickOffChatRound（EnginePort 交接）→ runAndFinalize →
 // runSpawn。runSpawn 返回最小成功 AgentResult，后台收尾链可完整走完（archive + notify）。
-// [v8.5 D 修正] 路径必须是 ../execution/session-runner.ts——原 "../session-runner.ts"
-// 指向不存在的文件，mock 从未生效（探针实证 identity=REAL），是历史上全量套件
-// 偶发挂起的真根源之一：真实 detached 链泄漏句柄让 worker 无法收敛。
-vi.mock("@zhushanwen/subagent-core/execution/session-runner.ts", () => ({
+// [v8.5 D 修正][u-2a 迁移] 路径必须指向真实模块文件——现为
+// @zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts（原
+// "../session-runner.ts" 指向不存在的文件，mock 从未生效，探针实证 identity=REAL，
+// 是历史上全量套件偶发挂起的真根源之一：真实 detached 链泄漏句柄让 worker 无法收敛）。
+vi.mock("@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(async () => ({
     text: "",
     turns: 1,
@@ -53,10 +54,10 @@ vi.mock("@zhushanwen/subagent-core/execution/session-runner.ts", () => ({
 import { writeFinalized } from "@zhushanwen/subagent-core/execution/finalized-marker.ts";
 import type { ModelRegistryLike } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
 import { getSubagentSessionDir } from "@zhushanwen/subagent-core/execution/path-encoding.ts";
-import type { RecordStore } from "@zhushanwen/subagent-core/execution/record-store.ts";
+import type { RecordStore } from "@zhushanwen/subagent-core";
 import type { ExecuteOptions } from "@zhushanwen/subagent-core/execution/types.ts";
-import { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
-import { ModelConfigService } from "@zhushanwen/subagent-core/execution/model-config-service.ts";
+import { SubagentService } from "@zhushanwen/subagent-core";
+import { ModelConfigService } from "@zhushanwen/subagent-core";
 import { forkFromHandler, messageHandler } from "../interface/subagent-actions.ts";
 
 const IDENTITY_ENV_KEYS = [
@@ -209,7 +210,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       const file = writeSessionJsonl(sessionsDir, { id: "sa-a2-userclose", rootSessionId: "root-session-cur" });
       writeFinalized(file, "user-close");
 
-      const rec = service.collectRecords(50, "all").find((r) => r.id === "sa-a2-userclose");
+      const rec = service.queries.collectRecords(50, "all").find((r) => r.id === "sa-a2-userclose");
       expect(rec?.status).toBe("closed");
       expect(rec?.closedReason).toBe("user-close");
     });
@@ -218,7 +219,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       const file = writeSessionJsonl(sessionsDir, { id: "sa-a2-shutdown", rootSessionId: "root-session-cur" });
       writeFinalized(file, "parent-shutdown");
 
-      const rec = service.collectRecords(50, "all").find((r) => r.id === "sa-a2-shutdown");
+      const rec = service.queries.collectRecords(50, "all").find((r) => r.id === "sa-a2-shutdown");
       expect(rec?.closedReason).toBe("parent-shutdown");
     });
 
@@ -226,7 +227,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       const file = writeSessionJsonl(sessionsDir, { id: "sa-a2-gc", rootSessionId: "root-session-cur" });
       writeFinalized(file, "gc");
 
-      const rec = service.collectRecords(50, "all").find((r) => r.id === "sa-a2-gc");
+      const rec = service.queries.collectRecords(50, "all").find((r) => r.id === "sa-a2-gc");
       expect(rec?.closedReason).toBe("gc");
     });
 
@@ -234,7 +235,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       const file = writeSessionJsonl(sessionsDir, { id: "sa-a2-legacy", rootSessionId: "root-session-cur" });
       writeFinalized(file); // v8.5 前：空文件
 
-      const rec = service.collectRecords(50, "all").find((r) => r.id === "sa-a2-legacy");
+      const rec = service.queries.collectRecords(50, "all").find((r) => r.id === "sa-a2-legacy");
       expect(rec?.status).toBe("closed");
       expect(rec?.closedReason).toBe("disconnected");
 
@@ -250,7 +251,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       const file = writeSessionJsonl(sessionsDir, { id: "sa-a2-junk", rootSessionId: "root-session-cur" });
       fs.writeFileSync(`${file}.finalized`, "some random junk", "utf-8");
 
-      const rec = service.collectRecords(50, "all").find((r) => r.id === "sa-a2-junk");
+      const rec = service.queries.collectRecords(50, "all").find((r) => r.id === "sa-a2-junk");
       expect(rec?.closedReason).toBe("disconnected");
     });
 
@@ -258,7 +259,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       const file = writeSessionJsonl(sessionsDir, { id: "sa-a2-tomb", rootSessionId: "root-session-cur" });
       writeTombstone(file, "sa-a2-tomb");
 
-      const rec = service.collectRecords(50, "all").find((r) => r.id === "sa-a2-tomb");
+      const rec = service.queries.collectRecords(50, "all").find((r) => r.id === "sa-a2-tomb");
       expect(rec?.status).toBe("closed");
       expect(rec?.closedReason).toBe("cancelled");
     });
@@ -344,15 +345,15 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       expect(result.subagentId).toBe(result.response.newSubagentId);
 
       // prompt 注入：task = 用户指令在前 + 接续框架在后（--fork 上下文重建要求）。
-      // kickOffBackground 是 detached 编排——等后台链穿过 runAndFinalize 边界再断言。
+      // kickOffChatRound 是 detached 编排——等后台链穿过 runAndFinalize 边界再断言。
       await vi.waitFor(() => expect(rafCapture.length).toBe(1));
       expect(rafCapture[0].task).toContain("verify test results first");
       expect(rafCapture[0].task).toMatch(/inherited conversation via --fork/);
       // forkSource 透传 RunOptions（下游 buildSpawnArgs 的 --fork 映射有专项直测覆盖）
       expect(rafCapture[0].forkSource).toBe(sourceFile);
 
-      expect((service.findRecord(result.response.newSubagentId))?.status).toBe("running");
-      expect((service.findRecord(result.response.newSubagentId))?.slug).toBe("src-resumed");
+      expect((service.queries.findRecord(result.response.newSubagentId))?.status).toBe("running");
+      expect((service.queries.findRecord(result.response.newSubagentId))?.slug).toBe("src-resumed");
     });
 
     it("无 prompt → 注入默认接管框架（reconstruct state 引导语）", async () => {
@@ -390,7 +391,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
     it("本进程 running 记录拒绝（还在跑应走 message，防双写）", async () => {
       writeSessionJsonl(sessionsDir, { id: "sa-live", rootSessionId: "root-session-cur" });
       // 冷路径重建进内存（running）→ findRecord 命中
-      service.getRecordForAction("sa-live");
+      service.chatActions.getRecordForAction("sa-live");
 
       await expect(forkFromHandler(service, { sourceSubagentId: "sa-live" })).rejects.toThrow(
         /still active in this process[\s\S]*action:'message'/,

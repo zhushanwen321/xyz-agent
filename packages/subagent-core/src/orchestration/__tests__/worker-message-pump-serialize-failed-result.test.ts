@@ -1,4 +1,4 @@
-// src/orchestration/__tests__/error-recovery-serialize-failed-result.test.ts
+// src/orchestration/__tests__/worker-message-pump-serialize-failed-result.test.ts
 //
 // makeSerializeFailedResult 独立单测（W2 防御关键纯函数）。
 //
@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { makeSerializeFailedResult } from "../error-recovery.ts";
+import { makeSerializeFailedResult } from "../worker-message-pump.ts";
 
 describe("makeSerializeFailedResult", () => {
   it("返回 {content:'', error:'<prefix>: <errMsg>'} 形状（必可克隆 fallback）", () => {

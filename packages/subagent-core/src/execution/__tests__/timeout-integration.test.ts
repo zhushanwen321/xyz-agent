@@ -89,7 +89,7 @@ vi.mock("../alive-store.ts", () => ({
   writeAliveMarker: vi.fn(),
 }));
 
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -108,7 +108,7 @@ import {
   runSpawn,
   SPAWN_WATCHDOG_ENV,
   type SessionRunnerContext,
-} from "../session-runner.ts";
+} from "../engine/engines/pi/session-runner.ts";
 
 const mockSpawn = vi.mocked(spawn);
 const mockExistsSync = vi.mocked(fs.existsSync);
@@ -351,7 +351,7 @@ describe("timeoutMs / signal abort → child.kill 端到端路径", () => {
       expect(child.killSignal).toBe("SIGTERM");
 
       // 子进程响应 SIGTERM 退出：exitCode 143（SIGTERM 终止形态）+ exit + close。
-      // exit 事件触发升级 timer clear（killChildWithEscalation 内 once("exit") 挂钩）。
+      // exit 事件触发升级 timer clear（公共 kill-chain 的 exit 等待 promise settle → timer clear）。
       child.exitCode = 143;
       child.emit("exit", 143);
       child.stdout.end();

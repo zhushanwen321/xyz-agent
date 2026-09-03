@@ -1,7 +1,7 @@
 /**
- * error-recovery handlers — handleWorkerExit/Error/ScriptError + postBudgetUpdate 测试。
+ * worker-message-pump handlers — handleWorkerExit/Error/ScriptError + postBudgetUpdate 测试。
  *
- * 参考 error-recovery-workflow-call.test.ts 的 mock 构建。通过 vi.useFakeTimers() 跳过
+ * 参考 worker-message-pump-workflow-call.test.ts 的 mock 构建。通过 vi.useFakeTimers() 跳过
  * scheduleRebuild 的指数退避（1s/2s/4s）。
  *
  * 覆盖：
@@ -23,7 +23,7 @@ import {
   handleWorkerMessage,
   postBudgetUpdate,
   rebuildRuntime,
-} from "../error-recovery.ts";
+} from "../worker-message-pump.ts";
 import { Budget } from "../models/budget.ts";
 import { RunRuntime } from "../models/run-runtime.ts";
 import { Trace } from "../models/trace.ts";

@@ -92,7 +92,7 @@ vi.mock("../manifest-store.ts", () => {
   return { ManifestStore: vi.fn(function (_recordsDir: string) { return new FakeManifestStore(); }) };
 });
 
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -225,8 +225,8 @@ describe("TC-3: PI_SUBAGENT_ROOT_SESSION_ID env 贯穿正确", () => {
     const sessionRootId = Reflect.get(service, "sessionRootId") as string;
     expect(sessionRootId).toBe("root-main-session");
 
-    // B 的 execCtxBaseline 记录了 B 自己的身份（recordId + depth）
-    const baseline = Reflect.get(service, "execCtxBaseline") as { recordId: string; depth: number };
+    // B 的嵌套基线记录了 B 自己的身份（recordId + depth；[D3-⑤] execNesting 公共层）
+    const baseline = (Reflect.get(service, "execNesting") as { baseline(): { recordId: string; depth: number } | null }).baseline();
     expect(baseline.recordId).toBe("sa-a-record");
     expect(baseline.depth).toBe(1);
   });
@@ -277,7 +277,7 @@ describe("TC-3: PI_SUBAGENT_ROOT_SESSION_ID env 贯穿正确", () => {
     store.register(recordC);
 
     // collectRecords（不带 filter）用 this.sessionRootId 过滤
-    const viaService = service.collectRecords(100);
+    const viaService = service.queries.collectRecords(100);
     const ids = viaService.map((r) => r.id);
 
     // C 的 record 归 ROOT（rootSessionId=root-main-session），能被子进程查到

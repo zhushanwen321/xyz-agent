@@ -9,6 +9,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { AgentCallOpts } from "../../../../orchestration/models/types.ts";
+import type { RunContext } from "../../port.ts";
 import type { AgentEvent } from "../../types.ts";
 import { makeAppserverHarness, sentMethodNames } from "./zcode-appserver-harness.ts";
 
@@ -24,10 +26,20 @@ describe("conformance C4：abort 行为（运行中 cancel → 合成终态、�
 
       const controller = new AbortController();
       const events: AgentEvent[] = [];
-      const runP = h.engine.run(
-        { task: "hang", slug: "abort-appserver", model: "conformance-provider/m1", cwd: h.workspace },
-        { taskId: "sa-c4-appserver", poolKey: "", signal: controller.signal, onEvent: (e) => events.push(e) },
-      );
+      const ctx: RunContext = {
+        taskId: "sa-c4-appserver",
+        poolKey: "",
+        signal: controller.signal,
+        onEvent: (e) => events.push(e),
+      };
+      // D6 合流后单一任务形状 AgentCallOpts（prompt≡原 task、description≡原 slug 源）
+      const task: AgentCallOpts = {
+        prompt: "hang",
+        description: "abort-appserver",
+        model: "conformance-provider/m1",
+        cwd: h.workspace,
+      };
+      const runP = h.engine.run(task, ctx);
       // 推进到 send 已达（create+send 帧落 fake 流水）再 abort——abort 先于 create 会
       // 走 pre-aborted 短路面，覆盖不到 stop 链
       await vi.waitFor(

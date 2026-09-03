@@ -7,11 +7,11 @@
  * 职责：封装一次 running-segment 的所有技术资源（worker 线程 +
  * abort controller），统一 release 入口（AC-2：单 release 替代多 boolean flag）。
  * （旧并发门闩 gate 抽象已删——no-op，实际并发由 SubagentService ConcurrencyPool 管理；
- * 原 withSlot 的 pre-abort 检查内联到 error-recovery dispatchAgentCall。）
+ * 原 withSlot 的 pre-abort 检查内联到 worker-message-pump dispatchAgentCall。）
  *
  * 一次性生命周期（G3-001）：runtime 释放后不再复用——AbortController 一次性
  * 语义决定 controller 无法跨释放复用，所以整个 RunRuntime 重建。唯一注入路径：
- * assignRuntime（runWorkflow 创建）与 replaceRuntime（error-recovery 崩溃重试）。
+ * assignRuntime（runWorkflow 创建）与 replaceRuntime（worker-message-pump 崩溃重试）。
  *
  * 参考：domain-models.md §10、clarification.md G3-001。
  */

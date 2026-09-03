@@ -67,9 +67,13 @@ describe("U3: not-found 错误含退路指引", () => {
   const toolWorkflowSrc = readSrc("src/interface/tool-workflow.ts");
   const toolWorkflowScriptSrc = readSrc("src/interface/tool-workflow-script.ts");
   // [D6②] cancel not-found 文案权威源已随领域内核下沉 core subagent-actions-core
-  //（读 core 源文件——resolve 方式同下方 U4 的 createRequire 先例，exports ./* → src/*）
+  //（经 relay-env 合法子入口 resolve 后切回包根再进 src——u-2c 删 ./* 通配后深路径
+  // resolve 不再合法，且 require 条件下 relay-env 落 dist/ 产物而非 src）
+  const coreRoot = createRequire(import.meta.url)
+    .resolve("@zhushanwen/subagent-core/relay-env")
+    .replace(/[/\\](?:dist|src)[/\\].*$/, "");
   const subagentActionsCoreSrc = readFileSync(
-    createRequire(import.meta.url).resolve("@zhushanwen/subagent-core/execution/subagent-actions-core.ts"),
+    join(coreRoot, "src/execution/subagent-actions-core.ts"),
     "utf-8",
   );
 

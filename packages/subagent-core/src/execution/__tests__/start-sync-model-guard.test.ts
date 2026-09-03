@@ -30,14 +30,14 @@ vi.mock("node:child_process", async () => {
 });
 
 // buildSpawnArgs 包装为 spy（保留真实实现）——「非全等拒单不触达 spawn 参数组装」的承重断言。
-vi.mock("../session-runner.ts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../session-runner.ts")>();
+vi.mock("../engine/engines/pi/session-runner.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../engine/engines/pi/session-runner.ts")>();
   return { ...actual, buildSpawnArgs: vi.fn(actual.buildSpawnArgs) };
 });
 
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
-import { buildSpawnArgs } from "../session-runner.ts";
+import { buildSpawnArgs } from "../engine/engines/pi/session-runner.ts";
 import type { PiLike } from "../subagent-service.ts";
 import { SubagentService } from "../subagent-service.ts";
 
@@ -128,7 +128,7 @@ describe("start 同步期裁决（U1 验收 3：非全等 → isError 且无 spa
   });
 
   it("全等入参通过裁决（reject 不发生，放行链路触达 spawn 参数组装）——守卫零误伤对照", async () => {
-    // 放行路径会进入 kickOffBackground（detached）；execute resolve 即视为裁决放行。
+    // 放行路径会进入轮次 kick-off（detached）；execute resolve 即视为裁决放行。
     // spawn 本身由 FakeChild 缺失抛错收口——本断言只关心「越过了同步裁决」：
     // execute 不 reject，且 buildSpawnArgs 已被调（或即将被调的 record 已创建）。
     const promise = service.execute({

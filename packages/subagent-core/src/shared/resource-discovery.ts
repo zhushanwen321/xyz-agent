@@ -132,8 +132,8 @@ function isDirectChildOfWorkspaceRoot(dir: string, workspaceRoot: string): boole
 // ── 统一 mtime 缓存层（m5 IF10）────────────────────────────────────
 //
 // 模块级 Map<path, { mtimeMs, content }>：mtime 判变缓存文件内容。
-// - sync 实现（statSync/readFileSync）：agent-registry discoverAll 是同步路径，
-//   async 缓存无法被 await（m5 design-review A1 探针实证约束）
+// - sync 实现（statSync/readFileSync）：getCachedFile 同步返回，供 async 发现流程
+//   与 agent-registry loadByPath 在流程内同步读缓存
 // - stat 失败/ENOENT → 驱逐条目（mtime 缓存下文件删除不自愈——A3 修复）
 // - 已知局限（C3 记录）：内容变 mtime 未变（cp -p/rsync -t 保留源 mtime、
 //   2s 粒度文件系统）→ 漏判，invalidateCache/clearFileCache 兜底；
@@ -383,7 +383,7 @@ async function scanDirectory(dirPath: string, kind: ResourceKind): Promise<strin
 /**
  * 读取 package.json 的 pi.{kind} manifest（pi.agents / pi.workflows）。
  * 返回 undefined 表示无 manifest 声明（无 pi / pi[kind] 非数组 / 解析失败）。
- * 内部走 manifestCache（与 readPackageManifestSync 共享同一 Map，失败语义见声明处）。
+ * 内部走 manifestCache（失败语义见声明处）。
  */
 async function readPackageManifest(pkgDir: string, kind: ResourceKind): Promise<string[] | undefined> {
   const pkgJsonPath = resolve(pkgDir, "package.json");
@@ -477,9 +477,9 @@ async function scanNpmDir(
   }
 
   // [perf] 包级并行（swf-perf-impl cleanup TC2/IF2）：entries.map + Promise.all，
-  // perEntry.flat() 按原 readdir 序 concat——输出序与串行逐包 push 等价。
+  // perEntry.flat() 按原 readdir 序 concat——输出序与 readdir 包序一致。
   // 不加新增 catch：每包失败面由 processPackage 内部既有 catch 承担，未捕获异常
-  // 传播语义与串行版一致（Promise.all 整体 reject ↔ 串行版向上抛）。
+  // 经 Promise.all 以首个 reject 整体向上抛。
   const perEntry = await Promise.all(
     entries.map(async (entry): Promise<DiscoveredResource[]> => {
       const entryPath = resolve(nodeModulesDir, entry);
@@ -624,7 +624,7 @@ function buildScanTargets(config: ScanConfig): ScanTarget[] {
  * 原 path，属预期失败不抛。
  *
  * Throws on unrecoverable scan errors——未捕获异常向上抛（Promise.all 首个 reject
- * 即整体拒绝，与串行版 discoverResourcesSync 的传播语义一致，见实现内 [perf] 注释）。
+ * 即整体拒绝，见实现内 [perf] 注释）。
  * 预期失败不抛：目录不存在/不可读返回空列表，manifest 声明路径缺失以 available=false 返回。
  *
  * @returns 去重后的资源列表（按优先级合并，高优先级覆盖低优先级同名）
@@ -634,11 +634,10 @@ export async function discoverResources(config: ScanConfig): Promise<DiscoveredR
 
   // [perf] 源级并行（swf-perf-impl cleanup TC2/IF2）：targets.map + Promise.all，
   // Promise.all 对 map 数组保序——allBySource 顺序 = targets 优先级序（低→高），
-  // 与串行逐源 push 完全一致 → 下方合并去重逻辑零改动、输出逐字节等价。
+  // 下方合并去重按该顺序 last-writer-wins。
   // 不加新增 catch：每源预期失败路径由内部既有 catch 面承担（scanDirectory access
-  // catch / scanNpmDir readdir catch / processPackage 全链 catch），未捕获异常
-  // 传播语义与串行版等价（ES2：串行版 target k 抛错中断后续源，并行版全部源已并发
-  // 启动、以首个 reject 拒绝——两版对调用方同为 discoverResources 抛出，各源只读无副作用）。
+  // catch / scanNpmDir readdir catch / processPackage 全链 catch）；未捕获异常经
+  // Promise.all 以首个 reject 整体向上拒绝（各源只读无副作用）。
   const allBySource: Array<{ source: ResourceSource; resources: DiscoveredResource[] }> = await Promise.all(
     targets.map(async (target) => {
       if (target.source === "npm" || target.source === "npm-dev") {
@@ -727,176 +726,3 @@ export async function discoverResources(config: ScanConfig): Promise<DiscoveredR
   return Array.from(merged.values());
 }
 
-/**
- * 同步版：扫描单个目录下的资源文件路径。
- *
- * 消费关系（W2⑤ 漂移修正）：当前无非测试调用方——agent-registry 只 import
- * getCachedFile（mtime 缓存），不消费 sync 扫描。保留作 async scanDirectory 的
- * 对称 API / 测试用；生产 agent/workflow 发现统一走 async discoverResources
- * （红线 4：修对生产面）。npm/dev 包内发现仍需 async（scanNpmDir）。
- */
-export function scanDirectorySync(dirPath: string, kind: ResourceKind): string[] {
-  try {
-    fsSync.accessSync(dirPath);
-  } catch {
-    return [];
-  }
-
-  let entries: string[];
-  try {
-    entries = fsSync.readdirSync(dirPath);
-  } catch {
-    return [];
-  }
-
-  const files: string[] = [];
-  for (const entry of entries) {
-    if (!isTargetFile(entry, kind)) continue;
-    files.push(resolve(dirPath, entry));
-  }
-  return files;
-}
-
-/**
- * 同步版：读取 package.json 的 pi.{kind} manifest。
- * 当前无非测试调用方（W2⑤ 漂移修正，保留作对称 API/测试用）。与 async 版
- * 共享 manifestCache（双读者同一 Map）。
- */
-export function readPackageManifestSync(pkgDir: string, kind: ResourceKind): string[] | undefined {
-  const pkgJsonPath = resolve(pkgDir, "package.json");
-  let mtimeMs: number;
-  try {
-    mtimeMs = fsSync.statSync(pkgJsonPath).mtimeMs;
-  } catch {
-    // stat 失败：文件不存在/不可 stat → 驱逐条目（对齐 getCachedFile 语义）
-    manifestCache.delete(pkgJsonPath);
-    return undefined;
-  }
-  const entry = manifestCache.get(pkgJsonPath);
-  if (entry && entry.mtimeMs === mtimeMs) return piToManifest(entry.pi, kind);
-  let pi: Record<string, unknown> | undefined;
-  try {
-    const content = fsSync.readFileSync(pkgJsonPath, "utf-8");
-    pi = parsePiField(content);
-  } catch {
-    // read 失败或坏 JSON → 不缓存不驱逐已有好条目，下次调用重试
-    return undefined;
-  }
-  manifestCache.set(pkgJsonPath, { mtimeMs, pi });
-  return piToManifest(pi, kind);
-}
-
-/**
- * 同步版：处理单个 npm/dev 包。
- * 当前无非测试调用方（W2⑤ 漂移修正，保留作对称 API/测试用）。
- */
-export function processPackageSync(pkgDir: string, kind: ResourceKind): DiscoveredResource[] {
-  const manifestPaths = readPackageManifestSync(pkgDir, kind);
-
-  if (manifestPaths && manifestPaths.length > 0) {
-    const results: DiscoveredResource[] = [];
-
-    for (const relPath of manifestPaths) {
-      const absPath = resolve(pkgDir, relPath);
-      let fileStat: fsSync.Stats | null;
-      try {
-        fileStat = fsSync.statSync(absPath);
-      } catch {
-        fileStat = null;
-      }
-      if (!fileStat) {
-        results.push({ path: absPath, source: "npm", available: false });
-        continue;
-      }
-
-      if (fileStat.isDirectory()) {
-        const files = scanDirectorySync(absPath, kind);
-        for (const f of files) {
-          results.push({ path: f, source: "npm", available: true });
-        }
-      } else if (fileStat.isFile()) {
-        results.push({ path: absPath, source: "npm", available: true });
-      }
-    }
-
-    return results;
-  }
-
-  // 无 manifest：扫约定目录
-  const conventionDir = resolve(pkgDir, kind);
-  const files = scanDirectorySync(conventionDir, kind);
-  return files.map((f) => ({ path: f, source: "npm", available: true }));
-}
-
-/**
- * 同步版：扫描 npm node_modules 目录。
- * 当前无非测试调用方（W2⑤ 漂移修正，保留作对称 API/测试用）。
- */
-export function scanNpmDirSync(nodeModulesDir: string, kind: ResourceKind): DiscoveredResource[] {
-  let entries: string[];
-  try {
-    entries = fsSync.readdirSync(nodeModulesDir);
-  } catch {
-    return [];
-  }
-
-  const results: DiscoveredResource[] = [];
-  for (const entry of entries) {
-    const entryPath = resolve(nodeModulesDir, entry);
-
-    if (entry.startsWith("@")) {
-      let scopedEntries: string[];
-      try {
-        scopedEntries = fsSync.readdirSync(entryPath);
-      } catch {
-        continue;
-      }
-      for (const scopedPkg of scopedEntries) {
-        const scopedPkgDir = resolve(entryPath, scopedPkg);
-        results.push(...processPackageSync(scopedPkgDir, kind));
-      }
-    } else {
-      results.push(...processPackageSync(entryPath, kind));
-    }
-  }
-  return results;
-}
-
-/**
- * 同步版：发现所有资源。
- *
- * 当前无非测试调用方（W2⑤ 漂移修正：agent-registry 只 import getCachedFile，
- * 不消费本族；保留作 async discoverResources 的对照实现/测试用——两版输出等价
- * 由既有快照用例锁定）。
- *
- * 与 discoverResources 对应的同步实现，扫描相同的源，同 stem last-writer-wins
- * 合并（不含 async 链的 realpath 去重——sync 链无非测试调用方，勿扩面，红线 4）。
- */
-export function discoverResourcesSync(config: ScanConfig): DiscoveredResource[] {
-  const targets = buildScanTargets(config);
-  const all: DiscoveredResource[] = [];
-
-  for (const target of targets) {
-    if (target.source === "npm" || target.source === "npm-dev") {
-      const resources = scanNpmDirSync(target.dir, config.kind);
-      all.push(...resources.map((r) => ({ ...r, source: target.source })));
-    } else if (target.source === "user-extension-paths") {
-      // XYZ_EXTENSION_PATHS（dev-link）：每个 dir 是单个包目录
-      const resources = processPackageSync(target.dir, config.kind);
-      all.push(...resources.map((r) => ({ ...r, source: target.source })));
-    } else {
-      const files = scanDirectorySync(target.dir, config.kind);
-      all.push(...files.map((f) => ({ path: f, source: target.source, available: true })));
-    }
-  }
-
-  // 按优先级合并（targets 顺序 = 优先级低→高）
-  const merged = new Map<string, DiscoveredResource>();
-  for (const r of all) {
-    const key = stem(r.path);
-    if (!r.available && merged.has(key)) continue;
-    merged.set(key, r);
-  }
-
-  return Array.from(merged.values());
-}
