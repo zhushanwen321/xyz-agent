@@ -30,7 +30,7 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ error: vi.fn(), info: vi.fn(), warning: vi.fn() }),
 }))
 
-// ── mock useSidebarNew（focusedSessionId/focusedSession 必须真实 Vue ref，
+// ── mock useSidebar（focusedSessionId/focusedSession 必须真实 Vue ref，
 //    否则模板传对象给 String|Null 子组件触发 Invalid prop 警告，同既有范式注释）──
 const sidebarMocks = vi.hoisted(() => ({
   selectSession: vi.fn(),
@@ -42,11 +42,15 @@ const sidebarMocks = vi.hoisted(() => ({
   loadSessions: vi.fn(() => Promise.resolve()),
   syncSessionToPanel: vi.fn(),
   assignSessionToProject: vi.fn(),
+  restoreSession: vi.fn(),
+  forkFromLastAssistant: vi.fn(),
+  enterForkModeFromLastAssistant: vi.fn(),
+  handoffFromLastAssistant: vi.fn(),
 }))
-vi.mock('@/composables/features/sidebar/useSidebarNew', async () => {
+vi.mock('@/composables/features/sidebar/useSidebar', async () => {
   const { ref } = await import('vue')
   return {
-    useSidebarNew: () => ({
+    useSidebar: () => ({
       ...sidebarMocks,
       focusedSessionId: ref<string | null>(null),
       focusedSession: ref(null),

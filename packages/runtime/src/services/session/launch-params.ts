@@ -140,6 +140,23 @@ export interface PresetClientOptions {
  *
  * S-RT-5：thinkingOverride 校验合法值，非法值 warn 后忽略（不透传给 pi）。
  */
+/**
+ * S-RT-5：thinkingLevel 校验合法值。Landing 传入与 preset 字段都可能是非法值
+ *（如前端未约束 / preset JSON 手改），透传给 pi 会触发 pi 报错或静默忽略，统一在此拦截。
+ * 非法值 warn 后忽略（返回 undefined，不透传给 pi）。
+ */
+function resolveEffectiveThinking(rawThinking: string | undefined): ThinkingLevel | undefined {
+  // widening cast（与 shared isPiLaunchPreset 的 TOOL_MODES 同款惯例）：includes 收窄参数类型，
+  // 此处本意就是对任意 string 做白名单判定。
+  if (rawThinking !== undefined && (VALID_THINKING_LEVELS as readonly string[]).includes(rawThinking)) {
+    return rawThinking as ThinkingLevel
+  }
+  if (rawThinking !== undefined) {
+    console.warn(`[lifecycle] invalid thinking level: ${rawThinking}, ignored`)
+  }
+  return undefined
+}
+
 export function buildPresetClientOptions(
   resolution: PresetResolution | undefined,
   modelOverride: string | undefined,
@@ -148,16 +165,7 @@ export function buildPresetClientOptions(
   // C-RL-6 优先级（设计文档 §5.2）：Landing 传入 > preset 字段。
   // model 不校验值域（provider/modelId 形式自由，pi 报错由用户感知）。
   const effectiveModel = modelOverride ?? resolution?.modelOverride
-  // S-RT-5：thinkingLevel 校验合法值。Landing 传入与 preset 字段都可能是非法值
-  //（如前端未约束 / preset JSON 手改），透传给 pi 会触发 pi 报错或静默忽略，统一在此拦截。
-  const rawThinking = thinkingOverride ?? resolution?.thinkingLevel
-  // widening cast（与 shared isPiLaunchPreset 的 TOOL_MODES 同款惯例）：includes 收窄参数类型，
-  // 此处本意就是对任意 string 做白名单判定。
-  const knownThinking = rawThinking !== undefined && (VALID_THINKING_LEVELS as readonly string[]).includes(rawThinking)
-  const effectiveThinking = knownThinking ? rawThinking : undefined
-  if (rawThinking !== undefined && !knownThinking) {
-    console.warn(`[lifecycle] invalid thinking level: ${rawThinking}, ignored`)
-  }
+  const effectiveThinking = resolveEffectiveThinking(thinkingOverride ?? resolution?.thinkingLevel)
 
   return {
     // preset 字段（resolution 存在时才设，条件 spread 避免 undefined 覆盖默认）
@@ -167,6 +175,6 @@ export function buildPresetClientOptions(
     ...(resolution?.flags.noSkills && { noSkills: true }),
     ...(resolution?.flags.noContextFiles && { noContextFiles: true }),
     ...(effectiveModel && { model: effectiveModel }),
-    ...(effectiveThinking && { thinkingLevel: effectiveThinking as ThinkingLevel }),
+    ...(effectiveThinking && { thinkingLevel: effectiveThinking }),
   }
 }

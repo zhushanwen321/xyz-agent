@@ -222,57 +222,8 @@ export class SessionHistoryReader {
       // ── 分支 1/2：缓存命中 → since 增量 ──
       const cached = this.historyCache.get(sessionId)
       if (cached && cached.leafId !== null) {
-        try {
-          const inc = await client.getEntries(cached.leafId) as GetEntriesResult
-          const incEntries = inc.data?.entries ?? []
-          if (incEntries.length === 0) {
-            // R-12 短路：空增量 = leafId 未变 = 缓存新鲜。零重建直接返回（不走尾读 fallback）。
-            console.log(`[session-service] getHistory cache fresh (empty delta) for ${sessionId}, returning ${cached.messages.length} cached messages`)
-            // 终审 minor：返回浅拷贝而非缓存引用——调用方就地 sort/splice/push 会打穿缓存
-            // 基底（增量合并的正确性依赖缓存未被污染）。元素级引用仍共享（只读契约，
-            // 与 scanPiSessions 浅拷贝注释同边界）。
-            return { messages: cached.messages.slice(), truncated: cached.truncated }
-          }
-          // W20 review Fix-2：parentId 不变量检测。pi append-only 下 delta 首条 entry 的
-          // parentId 恒等于缓存基线 leafId（上次响应的叶子即本次增量的父）；branch
-          // （pi rpc-mode 把 navigateTree 暴露给 extension command context）后新分支首条
-          // parentId 是 branch 点，pi **不报错**但直接合并会静默产出「老分支尾 + 新分支」
-          // 的混合历史（D6-4 的 "Entry not found" fallback 只覆盖 entry 消失场景）。
-          // 不满足不变量 → 丢缓存 fall-through 全量重建（正确性优先，代价一次全量）。
-          if (incEntries[0].parentId !== cached.leafId) {
-            console.warn(
-              `[session-service] getHistory incremental parent-id invariant violated for ${sessionId}: ` +
-              `delta head parent=${String(incEntries[0].parentId)} != cached leafId=${cached.leafId} (branch/rewrite?), dropping cache and full rebuild`,
-            )
-            this.historyCache.delete(sessionId)
-          } else {
-            const segmentsMetadata = await readSegmentsMetadataFile(sessionId)
-            const rebuilt = this.deps.sessionStore.rebuildHistoryFromEntries(incEntries, segmentsMetadata)
-            const merged = mergeIncrementalMessages(cached.messages, rebuilt.messages)
-            // W20 review Fix-1：增量窗口以 toolResult 开头（缓存 leafId 切在 assistant(toolCalls)
-            // 与其 toolResults 之间——后台 session 生成中 getHistory 写缓存所致）时，convertPiHistory
-            // 窗口局部配对失败的孤儿 toolResult 按 toolCallId 回填到缓存中 assistant 的 toolCall，
-            // 工具输出不再静默丢失。
-            if (rebuilt.orphanToolResults.length > 0) {
-              applyOrphanToolResults(merged, rebuilt.orphanToolResults)
-            }
-            const newLeafId = inc.data?.leafId ?? null
-            this.historyCache.set(sessionId, { leafId: newLeafId, messages: merged, truncated: false })
-            console.log(`[session-service] getHistory incremental for ${sessionId}: ${incEntries.length} delta entries, merged ${cached.messages.length} -> ${merged.length} messages`)
-            // merged 已写入缓存，返回浅拷贝与缓存本体分离（终审 minor，同上防御）
-            return { messages: merged.slice(), truncated: false }
-          }
-        } catch (e) {
-          if (isEntryNotFoundError(e)) {
-            // D6-4 fallback：since 失效（缓存基线不在 pi 当前 entry 集合）→ 丢缓存 → 全量重拉
-            console.warn(`[session-service] getHistory incremental Entry-not-found for ${sessionId}, dropping cache and full rebuild`)
-            this.historyCache.delete(sessionId)
-          } else {
-            // 其他错误：现有降级链（尾读），缓存不动（下次重试仍走 since）
-            console.warn(`[session-service] getHistory via getEntries(since) failed: ${toErrorMessage(e)}, falling back to tail read`)
-            return await getHistoryTailFromFile(sessionId, this.deps.sessionStore)
-          }
-        }
+        const incremental = await this.getIncrementalHistory(sessionId, client, cached)
+        if (incremental) return incremental
       }
       // ── 分支 3：全量重建（无缓存 / D6-4 fallback / Fix-2 parentId 不变量 violation 丢缓存后）──
       try {
@@ -298,6 +249,70 @@ export class SessionHistoryReader {
     }
     // 无 RPC client（离线 session）：走尾读，避免大文件全量读（不读不写缓存——文件路径无 leafId 概念）
     return await getHistoryTailFromFile(sessionId, this.deps.sessionStore)
+  }
+
+  /**
+   * 增量路径（doGetHistory 分支 1/2）：缓存命中时 getEntries(since=leafId) 增量拉取。
+   *
+   * 返回 undefined = 缓存已丢（parentId 不变量 violation / "Entry not found" fallback），
+   * 调用方 fall-through 全量重建；返回结果 = 增量命中或尾读降级。
+   */
+  private async getIncrementalHistory(
+    sessionId: string,
+    client: NonNullable<ReturnType<IProcessManager['getClient']>>,
+    cached: HistoryRebuildCacheEntry,
+  ): Promise<{ messages: Message[]; truncated: boolean } | undefined> {
+    try {
+      const inc = await client.getEntries(cached.leafId as string) as GetEntriesResult
+      const incEntries = inc.data?.entries ?? []
+      if (incEntries.length === 0) {
+        // R-12 短路：空增量 = leafId 未变 = 缓存新鲜。零重建直接返回（不走尾读 fallback）。
+        console.log(`[session-service] getHistory cache fresh (empty delta) for ${sessionId}, returning ${cached.messages.length} cached messages`)
+        // 终审 minor：返回浅拷贝而非缓存引用——调用方就地 sort/splice/push 会打穿缓存
+        // 基底（增量合并的正确性依赖缓存未被污染）。元素级引用仍共享（只读契约，
+        // 与 scanPiSessions 浅拷贝注释同边界）。
+        return { messages: cached.messages.slice(), truncated: cached.truncated }
+      }
+      // W20 review Fix-2：parentId 不变量检测。pi append-only 下 delta 首条 entry 的
+      // parentId 恒等于缓存基线 leafId（上次响应的叶子即本次增量的父）；branch
+      // （pi rpc-mode 把 navigateTree 暴露给 extension command context）后新分支首条
+      // parentId 是 branch 点，pi **不报错**但直接合并会静默产出「老分支尾 + 新分支」
+      // 的混合历史（D6-4 的 "Entry not found" fallback 只覆盖 entry 消失场景）。
+      // 不满足不变量 → 丢缓存 fall-through 全量重建（正确性优先，代价一次全量）。
+      if (incEntries[0].parentId !== cached.leafId) {
+        console.warn(
+          `[session-service] getHistory incremental parent-id invariant violated for ${sessionId}: ` +
+          `delta head parent=${String(incEntries[0].parentId)} != cached leafId=${cached.leafId} (branch/rewrite?), dropping cache and full rebuild`,
+        )
+        this.historyCache.delete(sessionId)
+        return undefined
+      }
+      const segmentsMetadata = await readSegmentsMetadataFile(sessionId)
+      const rebuilt = this.deps.sessionStore.rebuildHistoryFromEntries(incEntries, segmentsMetadata)
+      const merged = mergeIncrementalMessages(cached.messages, rebuilt.messages)
+      // W20 review Fix-1：增量窗口以 toolResult 开头（缓存 leafId 切在 assistant(toolCalls)
+      // 与其 toolResults 之间——后台 session 生成中 getHistory 写缓存所致）时，convertPiHistory
+      // 窗口局部配对失败的孤儿 toolResult 按 toolCallId 回填到缓存中 assistant 的 toolCall，
+      // 工具输出不再静默丢失。
+      if (rebuilt.orphanToolResults.length > 0) {
+        applyOrphanToolResults(merged, rebuilt.orphanToolResults)
+      }
+      const newLeafId = inc.data?.leafId ?? null
+      this.historyCache.set(sessionId, { leafId: newLeafId, messages: merged, truncated: false })
+      console.log(`[session-service] getHistory incremental for ${sessionId}: ${incEntries.length} delta entries, merged ${cached.messages.length} -> ${merged.length} messages`)
+      // merged 已写入缓存，返回浅拷贝与缓存本体分离（终审 minor，同上防御）
+      return { messages: merged.slice(), truncated: false }
+    } catch (e) {
+      if (isEntryNotFoundError(e)) {
+        // D6-4 fallback：since 失效（缓存基线不在 pi 当前 entry 集合）→ 丢缓存 → 全量重拉
+        console.warn(`[session-service] getHistory incremental Entry-not-found for ${sessionId}, dropping cache and full rebuild`)
+        this.historyCache.delete(sessionId)
+        return undefined
+      }
+      // 其他错误：现有降级链（尾读），缓存不动（下次重试仍走 since）
+      console.warn(`[session-service] getHistory via getEntries(since) failed: ${toErrorMessage(e)}, falling back to tail read`)
+      return await getHistoryTailFromFile(sessionId, this.deps.sessionStore)
+    }
   }
 
   /**
