@@ -12,39 +12,49 @@
 //   2. skillPath / cwd 相对路径 → 同步 reject
 //   3. 合法绝对路径放行 → 参数原样透传 service.execute（守卫零误伤对照）
 //
-// harness 复用 sdk-contract.test.ts 的 mock 链（pi-ai/typebox/subagent-service），
-// registerSubagentTool 后捕获 execute 回调直接调用。
+// harness（[u-5b / A-V3] 改写）：registerSubagentTool 后捕获 execute 回调直接调用。
+// SubagentService 经单例访问器槽注入 fake（setSubagentService，globalThis 槽——
+// executeSubagent 内 getSubagentService() 读同一槽，「守卫拒绝时 service.execute
+// 零触达」的承重断言不依赖整类 mock）；pi-ai/typebox 桩改共享桩
+// （src/__tests__/mocks/runtime-stubs.ts，async 工厂 + 动态 import，消费约定见
+// 桩 module 头注）。
 
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@earendil-works/pi-ai", () => ({
-  StringEnum: (values: string[]) => ({ type: "string", enum: values }),
-}));
-vi.mock("typebox", () => ({
-  Type: {
-    Object: (props: Record<string, unknown>) => ({ type: "object", properties: props }),
-    Optional: (schema: unknown) => ({ ...(schema as object), optional: true }),
-    String: (opts?: Record<string, unknown>) => ({ type: "string", ...opts }),
-    Boolean: () => ({ type: "boolean" }),
-    Number: (opts?: Record<string, unknown>) => ({ type: "number", ...opts }),
-    Array: (items: unknown) => ({ type: "array", items }),
-    Record: (key: unknown, value: unknown) => ({ type: "object", additionalProperties: value, key }),
-    Unknown: () => ({ type: "unknown" }),
-    Union: (members: unknown[]) => ({ type: "union", members }),
-    Literal: (value: unknown) => ({ type: "literal", value }),
-  },
-}));
+// 共享桩（./mocks/runtime-stubs.ts 相对本文件 = ../../__tests__/mocks/runtime-stubs.ts）：
+// vi.mock 工厂提升到文件顶部，体内不能引用普通顶层变量，一律经 async 工厂 +
+// 动态 import 取桩。
+vi.mock("@earendil-works/pi-ai", async () => {
+  const { piAiStringEnumStub } = await import("../../__tests__/mocks/runtime-stubs.ts");
+  return piAiStringEnumStub();
+});
+vi.mock("typebox", async () => {
+  const { typeboxStub } = await import("../../__tests__/mocks/runtime-stubs.ts");
+  return typeboxStub;
+});
 
-// Mock getSubagentService：断言「守卫拒绝时 service.execute 零触达」的承重证据。
-const { mockServiceExecute } = vi.hoisted(() => ({
-  mockServiceExecute: vi.fn(),
-}));
-vi.mock("@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
-  getSubagentService: () => ({ execute: mockServiceExecute }),
-}));
+import { setSubagentService } from "@zhushanwen/subagent-core";
 
 import { registerSubagentTool } from "../../interface/subagent-tool.ts";
 import { mockExtensionApi } from "@zhushanwen/subagent-core/testing/execution/__tests__/helpers/mock-extension-api.ts";
+
+// ── 访问器槽注入 helpers ─────────────────────────────────────
+
+/** fake service：execute 断言面（守卫拒绝 → 零触达）。 */
+const { mockServiceExecute } = vi.hoisted(() => ({
+  mockServiceExecute: vi.fn(),
+}));
+
+/** 重置进程级 SubagentService 单例槽（setSubagentService 不接受 null，测试清理用
+ *  Symbol 直写；key 与生产 getServiceSlot 的 SERVICE_SLOT_KEY 一致）。 */
+function resetServiceSlot(): void {
+  const slot = Reflect.get(globalThis, Symbol.for("@zhushanwen/pi-subagents.service")) as
+    | { current: unknown }
+    | undefined;
+  if (slot) slot.current = null;
+}
+
+// ── harness ──────────────────────────────────────────────────
 
 type ExecuteCb = (...args: unknown[]) => Promise<unknown>;
 
@@ -82,7 +92,13 @@ describe("subagent tool 路径守卫（skillPath/cwd：绝对路径 + 禁 .. 穿
   beforeEach(() => {
     vi.clearAllMocks();
     mockServiceExecute.mockResolvedValue(stubHandle());
+    // 经真实单例访问器注入 fake service（executeSubagent 内 getSubagentService 读同槽）
+    setSubagentService({ execute: mockServiceExecute } as never);
     execute = captureExecute();
+  });
+
+  afterEach(() => {
+    resetServiceSlot();
   });
 
   // ── `..` 穿越段拒绝 ──

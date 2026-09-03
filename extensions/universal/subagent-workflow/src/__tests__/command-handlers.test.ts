@@ -7,8 +7,10 @@
  * 测试手法：调 register*Command(pi_mock) 后，从 pi_mock.registerCommand 的调用中
  * 取出 handler 函数，直接调用 handler(argsStr, ctx_mock)。
  *
- * mock 策略：
- * - getSubagentService（subagent-service.ts）用 vi.mock 桩化，控制返回的 service.cancel 行为
+ * mock 策略（[u-5b / A-V3] 访问器窄 mock 形态）：
+ * - SubagentService 经单例访问器槽注入 fake（setSubagentService，globalThis 槽——
+ *   生产 getSubagentService 读同一槽，不再整类 mock subagent-service 模块），
+ *   由测试控制返回的 service 形状（cancel/chatActions/execute 等少数方法）
  * - abortRun（lifecycle.ts）用 vi.mock 桩化，控制抛错/成功
  * - ExtensionCommandContext 用最小 duck-typed mock（mode/hasUI/ui.notify + isIdle 留痕分流判据）
  */
@@ -16,11 +18,6 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── module mocks（必须在 import 被测模块之前声明）──────────────
-
-/** 桩化 subagent-service——只暴露 getSubagentService，由测试控制返回值。 */
-vi.mock("@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
-  getSubagentService: vi.fn(),
-}));
 
 /** 桩化 lifecycle——abortRun 为 vi.fn，由测试控制 resolve/reject。 */
 vi.mock("@zhushanwen/subagent-core/orchestration/lifecycle.ts", () => ({
@@ -31,10 +28,26 @@ vi.mock("@zhushanwen/subagent-core/orchestration/lifecycle.ts", () => ({
 
 // 被 mock 的模块——vi.mock 路径与被测源文件解析到同一物理模块，确保 vitest 拦截同一模块实例。
 // 使用 import 副作用顺序：vi.mock 在文件顶部提升，此处 import 拿到的是 mock 版本。
-import { getSubagentService } from "@zhushanwen/subagent-core";
+import { setSubagentService } from "@zhushanwen/subagent-core";
 import { registerWorkflowsCommand } from "../interface/commands.ts";
 import { registerSubagentsCommand } from "../interface/subagents.ts";
 import { abortRun } from "@zhushanwen/subagent-core";
+
+// ── 访问器槽注入 helpers ─────────────────────────────────────
+
+/** 重置进程级 SubagentService 单例槽（setSubagentService 不接受 null，测试清理用
+ *  Symbol 直写；key 与生产 getServiceSlot 的 SERVICE_SLOT_KEY 一致）。 */
+function resetServiceSlot(): void {
+  const slot = Reflect.get(globalThis, Symbol.for("@zhushanwen/pi-subagents.service")) as
+    | { current: unknown }
+    | undefined;
+  if (slot) slot.current = null;
+}
+
+/** 经真实单例访问器注入 fake service（消费方 interface/* 经 barrel 读同一 globalThis 槽）。 */
+function injectFakeService(service: unknown): void {
+  setSubagentService(service as never);
+}
 
 // ── 类型辅助 ────────────────────────────────────────────────
 
@@ -59,7 +72,6 @@ describe("registerSubagentsCommand — RPC 分支 dispatch", () => {
   let pi: PiMock;
   let ctx: CtxMock;
   let cancelMock: ReturnType<typeof vi.fn>;
-  const mockedGetService = vi.mocked(getSubagentService);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -76,8 +88,8 @@ describe("registerSubagentsCommand — RPC 分支 dispatch", () => {
       isIdle: vi.fn(() => true),
     };
     cancelMock = vi.fn();
-    // 默认返回一个带 cancel 的 service（由用例覆写 cancelMock 行为）
-    mockedGetService.mockReturnValue({ cancel: cancelMock } as never);
+    // 默认注入一个带 cancel 的 service（由用例覆写 cancelMock 行为）
+    injectFakeService({ cancel: cancelMock });
   });
 
   /** 取出注册的 /subagents handler 并调用。 */
@@ -139,7 +151,7 @@ describe("registerSubagentsCommand — RPC 分支 dispatch", () => {
   });
 
   it("service=null（session 未启动）→ error 文案，不进入 RPC 分支", async () => {
-    mockedGetService.mockReturnValue(null);
+    resetServiceSlot();
 
     await runHandler("cancel bg-z");
 
@@ -160,7 +172,6 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
   let pi: PiMock;
   let ctx: CtxMock;
   let sendMessageMock: ReturnType<typeof vi.fn>;
-  const mockedGetService = vi.mocked(getSubagentService);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -180,6 +191,10 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
       ui: { notify: vi.fn() } as unknown as CtxMock["ui"],
       isIdle: vi.fn(() => true),
     };
+    // 槽清理 + 非 null 兜底（message 缺 text 类用例在触 service 前走 Usage 分支，
+    // 但 handler 先检查 service 就绪——空槽会提前进 "not ready" 分支）
+    resetServiceSlot();
+    injectFakeService({});
   });
 
   async function runHandler(argsStr: string): Promise<void> {
@@ -204,12 +219,12 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
     const record = makeRecord();
     const deliverChatMessage = vi.fn();
     // [D4 聚合跟随] message/close 生产消费面 = service.chatActions
-    mockedGetService.mockReturnValue({
+    injectFakeService({
       chatActions: {
         getRecordForAction: vi.fn(() => record),
         deliverChatMessage,
       },
-    } as never);
+    });
 
     // 转义协议：字面 \n 传输，解析侧还原（P3）
     await runHandler("message sa-1 第一条消息\\n带换行");
@@ -239,12 +254,12 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
     const record = makeRecord();
     const deliverChatMessage = vi.fn();
     // [D4 聚合跟随] message/close 生产消费面 = service.chatActions
-    mockedGetService.mockReturnValue({
+    injectFakeService({
       chatActions: {
         getRecordForAction: vi.fn(() => record),
         deliverChatMessage,
       },
-    } as never);
+    });
     // 主 agent turn 进行中（ctx.isIdle()=false）
     ctx.isIdle = vi.fn(() => false);
 
@@ -270,14 +285,14 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
 
   it("message 目标不存在（getRecordForAction throw）→ warning 文案，不留痕", async () => {
     // [D4 聚合跟随] message/close 生产消费面 = service.chatActions
-    mockedGetService.mockReturnValue({
+    injectFakeService({
       chatActions: {
         getRecordForAction: vi.fn(() => {
           throw new Error('No subagent record with id "sa-x"');
         }),
         deliverChatMessage: vi.fn(),
       },
-    } as never);
+    });
 
     await runHandler("message sa-x hi");
 
@@ -291,7 +306,7 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
 
   it("message 缺 recordId → Usage warning 指明缺什么，不触 service", async () => {
     const deliverChatMessage = vi.fn();
-    mockedGetService.mockReturnValue({ deliverChatMessage } as never);
+    injectFakeService({ deliverChatMessage });
 
     await runHandler("message");
 
@@ -318,7 +333,7 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
       sessionFile: "/tmp/s.jsonl",
       details: { slug: "fix-login" },
     });
-    mockedGetService.mockReturnValue({ execute } as never);
+    injectFakeService({ execute });
 
     await runHandler("start fix-login 修复登录页\\n并写测试");
 
@@ -350,7 +365,7 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
       sessionFile: "/tmp/s2.jsonl",
       details: { slug: "audit-log" },
     });
-    mockedGetService.mockReturnValue({ execute } as never);
+    injectFakeService({ execute });
     // 主 agent turn 进行中（ctx.isIdle()=false）
     ctx.isIdle = vi.fn(() => false);
 
@@ -370,7 +385,7 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
 
   it("start 缺 task → Usage warning 指明缺 task，不触 service", async () => {
     const execute = vi.fn();
-    mockedGetService.mockReturnValue({ execute } as never);
+    injectFakeService({ execute });
 
     await runHandler("start fix-login");
 
@@ -383,9 +398,9 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
   });
 
   it("start service.execute 抛错（slug 超长等）→ warning 文案，不留痕", async () => {
-    mockedGetService.mockReturnValue({
+    injectFakeService({
       execute: vi.fn().mockRejectedValue(new Error("slug must be ≤35 chars")),
-    } as never);
+    });
 
     await runHandler("start x task text");
 

@@ -1,165 +1,124 @@
 // src/__tests__/session-start-reaper.test.ts
 //
-// 验证 session_start 的两个新行为：
-//   1. WTM.scan reaper 被调用（best-effort）
-//   2. mainSessionFile 被缓存
-//   3. scan 抛错不阻断启动
+// 验证 session 装配的三个行为（[u-5b / A-V3] 改写为 bootstrap seam 直测，设计 §3.1
+// 「使用者视角」样例的落地——被测行为在 session_start 装配链内，直调
+// setupSessionLifecycle + fake pi/ctx + deps 注入 fake，不再挂载 index.ts、
+// 不再整类 mock SubagentService/pi-ai/typebox）：
+//   1. WTM.scan reaper 被调用（best-effort）——deps.worktreeManager 注入 fake
+//   2. scan 抛错不阻断启动——后续装配步骤（manifest 恢复接线）仍执行
+//   3. mainSessionFile 被缓存并传给 SubagentService——fake service 的 initSession
+//      参数观察（访问器槽注入，默认装配 existing 分支复用 fake）
+//
+// 形态适配（deviation 登记）：旧形态经整类 mock 的 SubagentService 构造参数
+// （getMainSessionFile getter）观察缓存；现行生产形态为 initSession.mainSessionFile
+// 值直传（session-lifecycle.ts createOrReuseServices），观察面随之迁移，断言意图不变。
 
-import { beforeEach,describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// ── mock modules（在 import 前声明）──
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-// 共享桩（./mocks/runtime-stubs.ts）：vi.mock 工厂提升到文件顶部，体内不能引用
-// 普通顶层变量，一律经 async 工厂 + 动态 import 取桩（消费约定见桩 module 头注）。
-vi.mock("@earendil-works/pi-coding-agent", async () => {
-  const { piCodingAgentStub } = await import("./mocks/runtime-stubs.ts");
-  return piCodingAgentStub();
-});
-vi.mock("@earendil-works/pi-ai", async () => {
-  const { piAiStringEnumStub } = await import("./mocks/runtime-stubs.ts");
-  return piAiStringEnumStub();
-});
-vi.mock("typebox", async () => {
-  const { typeboxStub } = await import("./mocks/runtime-stubs.ts");
-  return typeboxStub;
-});
+import { setModelConfigService, setSubagentService } from "@zhushanwen/subagent-core";
+import { setupSessionLifecycle, type SessionLifecycleDeps } from "../session-lifecycle.ts";
 
-// hoisted mock 实例
-const { mockScan, mockCleanup } = vi.hoisted(() => ({
-  mockScan: vi.fn(),
-  mockCleanup: vi.fn(),
-}));
+// ── helpers ──────────────────────────────────────────────────────────────────
 
-vi.mock("@zhushanwen/subagent-core/execution/worktree-manager.ts", () => ({
-  WorktreeManager: class {
-    constructor(_agentDir: string) { /* mock */ }
-    scan = mockScan;
-    cleanup = mockCleanup;
-    create = vi.fn();
-    collectPatch = vi.fn();
-    registerPid = vi.fn();
-  },
-}));
-
-vi.mock("@zhushanwen/subagent-core/execution/session-file-gc.ts", () => ({
-  maybeCleanupExpiredSessionFiles: vi.fn(),
-}));
-
-// mock subagent-service：避免真正构造 SubagentService（它依赖 ModelConfigService 等）
-const { mockInitModel, mockInitSession, mockSetUiRequestHandler, mockSetModelConfigService, mockSetSubagentService, capturedConstructorArg } =
-  vi.hoisted(() => ({
-    mockInitModel: vi.fn(),
-    mockInitSession: vi.fn(),
-    // W3: index.ts session_start 注入 UI handler 时调用
-    mockSetUiRequestHandler: vi.fn(),
-    mockSetModelConfigService: vi.fn(),
-    mockSetSubagentService: vi.fn(),
-    capturedConstructorArg: { current: undefined as unknown },
-  }));
-
-vi.mock("@zhushanwen/subagent-core/execution/model-config-service.ts", () => ({
-  ModelConfigService: class {
-    initModel = mockInitModel;
-    // session_start 的 lastEngine 基线读取经本方法（构造性同源）：absent → lastEngine
-    // 归一 'pi'，与旧实现 readGlobalConfig 读不到文件时的行为一致
-    reloadGlobalConfig = vi.fn(() => ({ status: "absent", config: { version: 1, maxConcurrent: 6 } }));
-  },
-  getModelConfigService: () => null,
-  setModelConfigService: mockSetModelConfigService,
-}));
-
-vi.mock("@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
-  SubagentService: class {
-    initSession = mockInitSession;
-    // W3: index.ts session_start 注入 UI handler 时调用
-    setUiRequestHandler = mockSetUiRequestHandler;
-    startGcTimer = vi.fn();
-    recoverManifestTmpFiles = vi.fn(async () => ({ deleted: 0, recovered: 0 }));
-    constructor(init: unknown) {
-      capturedConstructorArg.current = init;
-    }
-  },
-  getSubagentService: () => null,
-  setSubagentService: mockSetSubagentService,
-}));
-
-// ── import 被测工厂 ──
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-
-import subagentsExtension from "../index.ts";
-
-// ── helpers ──
-
-/** 创建最小 mock ExtensionAPI，捕获 session_start handler。 */
-function createMockPi(overrides: Record<string, unknown> = {}): {
-  pi: ExtensionAPI;
-  getSessionStartHandler: () => ((event: unknown, ctx: unknown) => void) | undefined;
-} {
-  let sessionStartHandler: ((event: unknown, ctx: unknown) => void) | undefined;
-  const noop = (): void => { /* mock */ };
-  const pi = new Proxy<ExtensionAPI>(overrides as ExtensionAPI, {
-    get(target, prop: string | symbol): unknown {
-      if (prop === "on") {
-        return (event: string, handler: (...args: unknown[]) => unknown) => {
-          if (event === "session_start") {
-            sessionStartHandler = handler as (event: unknown, ctx: unknown) => void;
-          }
-        };
-      }
-      if (prop in target) return target[prop as keyof ExtensionAPI];
-      return noop;
-    },
-  });
-  return {
-    pi,
-    getSessionStartHandler: () => sessionStartHandler,
+/** 最小 typed fake pi（appendEntry/events.emit/on/sendMessage 四成员）。 */
+function createFakePi(): ExtensionAPI {
+  const noop = (): void => {
+    /* fake */
   };
+  return {
+    appendEntry: noop,
+    events: { emit: vi.fn() },
+    on: noop,
+    sendMessage: noop,
+  } as unknown as ExtensionAPI;
 }
 
-/** 最小 ExtensionContext mock。 */
-function createMockCtx(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+/** 最小 fake ExtensionContext。 */
+function createFakeCtx(): ExtensionContext {
   return {
     cwd: "/home/user/project",
     // [Wave1 #21] mode 必填（与 SDK ExtensionContext 契约一致）；默认 tui。
     mode: "tui",
     modelRegistry: { getAvailable: () => [], find: () => undefined, hasConfiguredAuth: () => false },
     model: undefined,
+    isIdle: () => true,
     sessionManager: {
       getSessionId: () => "session-123",
       getSessionFile: () => "/home/user/.pi/agent/sessions/session-123.jsonl",
-      getSessionDir: () => "/home/user/.pi/agent/sessions",
-      getCwd: () => "/home/user/project",
       getEntries: () => [],
-      getBranch: () => [],
-      getLeafId: () => null,
-      getLeafEntry: () => undefined,
-      getEntry: () => undefined,
-      getHeader: () => null,
-      getTree: () => [],
-      getSessionName: () => undefined,
     },
-    ...overrides,
+  } as unknown as ExtensionContext;
+}
+
+/** 重置双 Service 单例槽（setter 不接受 null，测试清理用 Symbol 直写；
+ *  key 与生产 getServiceSlot / getModelServiceSlot 的 Symbol.for 一致）。 */
+function resetLifecycleSlots(): void {
+  for (const key of ["@zhushanwen/pi-subagents.service", "@zhushanwen/pi-subagents.model-service"]) {
+    const slot = Reflect.get(globalThis, Symbol.for(key)) as { current: unknown } | undefined;
+    if (slot) slot.current = null;
+  }
+}
+
+/** fake 双 Service（经访问器槽注入，默认装配 existing 分支复用之，不构造真实 Service）。 */
+function injectLifecycleFakes(): {
+  mockInitSession: ReturnType<typeof vi.fn>;
+  mockRecoverManifestTmpFiles: ReturnType<typeof vi.fn>;
+} {
+  const mockInitSession = vi.fn();
+  const mockRecoverManifestTmpFiles = vi.fn(async () => ({ deleted: 0, recovered: 0 }));
+  setSubagentService({
+    initSession: mockInitSession,
+    recoverManifestTmpFiles: mockRecoverManifestTmpFiles,
+    startGcTimer: vi.fn(),
+    getStreamSink: () => null,
+    dispose: vi.fn(),
+  } as never);
+  setModelConfigService({
+    initModel: vi.fn(),
+    // session_start 的 lastEngine 基线读取经本方法（构造性同源）：absent → lastEngine
+    // 归一 'pi'，与旧实现 readGlobalConfig 读不到文件时的行为一致
+    reloadGlobalConfig: vi.fn(() => ({ status: "absent", config: { version: 1, maxConcurrent: 6 } })),
+  } as never);
+  return { mockInitSession, mockRecoverManifestTmpFiles };
+}
+
+/** 可控 fake store（注入 deps.createRunStore）。 */
+function makeFakeStore(): { loadAll: () => Promise<unknown[]>; save: () => Promise<void>; dispose: () => Promise<void> } {
+  return {
+    loadAll: vi.fn(async () => []),
+    save: vi.fn(async () => {}),
+    dispose: vi.fn(async () => {}),
   };
 }
+
+/** 组装 seam deps：fake wtm（scan 行为可配）+ fake store。 */
+function makeSeamDeps(scan: () => Promise<void>): SessionLifecycleDeps {
+  return {
+    worktreeManager: { scan },
+    createRunStore: () => makeFakeStore() as never,
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  resetLifecycleSlots();
+});
+
+afterEach(() => {
+  resetLifecycleSlots();
+});
 
 // ── tests ──
 
 describe("session_start worktree reaper", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
   it("session_start 触发 WTM.scan 调用", async () => {
-    const { pi, getSessionStartHandler } = createMockPi();
-    subagentsExtension(pi);
+    const mockScan = vi.fn(async () => {});
+    injectLifecycleFakes();
+    const deps = makeSeamDeps(mockScan);
 
-    const handler = getSessionStartHandler();
-    expect(handler).toBeDefined();
-
-    await handler!(
-      { type: "session_start", reason: "startup" },
-      createMockCtx(),
-    );
+    await setupSessionLifecycle(createFakePi(), createFakeCtx(), deps);
 
     expect(mockScan).toHaveBeenCalledTimes(1);
     // scan 无参（全局注册表，不依赖 cwd）
@@ -167,47 +126,34 @@ describe("session_start worktree reaper", () => {
   });
 
   it("scan 抛错不阻断 session_start", async () => {
-    mockScan.mockImplementation(() => {
+    // scan 同步抛错（走 catch 分支）
+    const mockScan = vi.fn(() => {
       throw new Error("git not found");
     });
-
-    const { pi, getSessionStartHandler } = createMockPi();
-    subagentsExtension(pi);
-
-    const handler = getSessionStartHandler();
-    expect(handler).toBeDefined();
+    const { mockRecoverManifestTmpFiles } = injectLifecycleFakes();
+    const deps = makeSeamDeps(mockScan as unknown as () => Promise<void>);
 
     // 不应抛错
     await expect(
-      handler!(
-        { type: "session_start", reason: "startup" },
-        createMockCtx(),
-      )
-    ).resolves.toBeUndefined();
+      setupSessionLifecycle(createFakePi(), createFakeCtx(), deps),
+    ).resolves.toBeDefined();
 
-    // service 仍然被注册（启动未被阻断）
-    expect(mockSetSubagentService).toHaveBeenCalled();
+    // 启动未被阻断：装配后续步骤（ADR-035 manifest 恢复接线）仍执行
+    //（旧形态断言 setSubagentService 被调——existing 分支复用 fake 不再 set，
+    // 改以「后续装配步骤继续」作为等价阻断观察，deviation 已登记）
+    expect(mockRecoverManifestTmpFiles).toHaveBeenCalledTimes(1);
   });
 
   it("mainSessionFile 被缓存并传给 SubagentService", async () => {
-    const { pi, getSessionStartHandler } = createMockPi();
-    subagentsExtension(pi);
+    const { mockInitSession } = injectLifecycleFakes();
+    const deps = makeSeamDeps(vi.fn(async () => {}));
 
-    const handler = getSessionStartHandler();
-    await handler!(
-      { type: "session_start", reason: "startup" },
-      createMockCtx(),
-    );
+    await setupSessionLifecycle(createFakePi(), createFakeCtx(), deps);
 
-    // SubagentService 构造参数含 getMainSessionFile getter
-    const init = capturedConstructorArg.current as {
-      getMainSessionFile?: () => string | undefined;
-    } | undefined;
-    expect(init).toBeDefined();
-    expect(init?.getMainSessionFile).toBeDefined();
-    // 返回 session_start 时缓存的 sessionFile
-    expect(init?.getMainSessionFile?.()).toBe(
-      "/home/user/.pi/agent/sessions/session-123.jsonl",
-    );
+    // initSession 收到 session_start 时缓存解析的 sessionFile
+    //（resolveMainSessionFileById 对 stub agentDir 未命中 → 回退 getSessionFile()）
+    expect(mockInitSession).toHaveBeenCalledTimes(1);
+    const initArg = mockInitSession.mock.calls[0]?.[0] as { mainSessionFile?: string | undefined };
+    expect(initArg.mainSessionFile).toBe("/home/user/.pi/agent/sessions/session-123.jsonl");
   });
 });

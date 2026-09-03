@@ -2,164 +2,104 @@
 //
 // streamSink ctx.mode guard — 运行时测试（FR-1/FR-2/AC-1/AC-2）。
 //
-// [B7] 从纯源码正则断言升级为运行时行为断言：
-//   旧版读 index.ts 源码用正则匹配 `ctx.mode === "rpc"`——源码改了正则可能仍过，但运行时
-//   行为可能已坏（如三元写反、字段名拼错）。现改为真正调 session_start handler，mock ctx.mode
-//   为 tui/json，断言 initSession 收到的 streamSink === undefined；rpc mode 断言是函数对象。
+// [B7] 从纯源码正则断言升级为运行时行为断言：真正调装配逻辑，mock ctx.mode 为
+// tui/json/print，断言 initSession 收到的 streamSink === undefined；rpc mode 断言是
+// 包装 ctx.ui.setWidget 的 sink 对象。
 //
-// 复用 index-session-start.test.ts 的 mock 基础设施（Proxy pi 捕获 handler + 内联 vi.mock
-// 隔离真实 SDK + vi.mock SubagentService 捕获 initSession 参数）。详见 index-session-start
-// 顶部 [D15] 注释对两套 mock 分工的说明。
+// [u-5b / A-V3] 改写为 bootstrap seam 直测（设计 §3.1）：streamSink 接线住在
+// session-lifecycle.ts 的默认 createOrReuseServices 内（initSession 参数组装处），
+// 本文件经单例访问器槽（setSubagentService/setModelConfigService，globalThis 槽）
+// 注入 fake service/model——默认装配走 existing 分支复用 fake，initSession 参数
+// 在 fake 上可观察。不再挂载 index.ts、不再整类 mock SubagentService/pi-ai/typebox
+// （pi-coding-agent 运行时值由包根 mocks/ alias 提供）。
 //
-// 断言契约来源：index.ts session_start 内
+// 断言契约来源：session-lifecycle.ts createOrReuseServices 内
 //   streamSink: ctx.mode === "rpc" ? { setWidget: (key, lines) => ctx.ui.setWidget(...) } : undefined
 // TUI/json/print 下 streamSink=undefined（无 widget 噪音）；rpc 下注入 ctx.ui.setWidget 包装。
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// ── 内联 vi.mock：覆盖 config alias，隔离真实 SDK（见 [D15] 分工说明） ──
-vi.mock("@earendil-works/pi-coding-agent", () => ({
-  getAgentDir: () => "/home/user/.pi/agent",
-}));
-vi.mock("@earendil-works/pi-ai", () => ({
-  StringEnum: (values: string[]) => ({ type: "string", enum: values }),
-}));
-vi.mock("typebox", () => ({
-  Type: {
-    Object: (props: Record<string, unknown>) => ({ type: "object", properties: props }),
-    Optional: (schema: unknown) => ({ ...(schema as object), optional: true }),
-    String: () => ({ type: "string" }),
-    Boolean: () => ({ type: "boolean" }),
-    Number: () => ({ type: "number" }),
-    Array: (items: unknown) => ({ type: "array", items }),
-    Record: (key: unknown, value: unknown) => ({ type: "object", additionalProperties: value, key }),
-    Unknown: () => ({ type: "unknown" }),
-    Union: (members: unknown[]) => ({ type: "union", members }),
-    Literal: (value: unknown) => ({ type: "literal", value }),
-  },
-}));
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-// ── hoisted：捕获 initSession 的 streamSink 参数 ──
-const { mockInitSession, mockSetUiRequestHandler, mockLoadAll, existingServiceRef } =
-  vi.hoisted(() => ({
-    mockInitSession: vi.fn(),
-    mockSetUiRequestHandler: vi.fn(),
-    mockLoadAll: vi.fn(async () => []),
-    existingServiceRef: { current: null as unknown },
-  }));
+import { setModelConfigService, setSubagentService } from "@zhushanwen/subagent-core";
+import { setupSessionLifecycle } from "../session-lifecycle.ts";
 
-vi.mock("@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
-  SubagentService: class {
-    initSession = mockInitSession;
-    setUiRequestHandler = mockSetUiRequestHandler;
-    recoverManifestTmpFiles = vi.fn(async () => ({ deleted: 0, recovered: 0 }));
-    startGcTimer = vi.fn();
-    getStreamSink = () => null;
-    dispose = vi.fn();
-  },
-  getSubagentService: () => existingServiceRef.current,
-  setSubagentService: vi.fn(),
-}));
+// ── helpers ──────────────────────────────────────────────────────────────────
 
-vi.mock("@zhushanwen/subagent-core/execution/model-config-service.ts", () => ({
-  ModelConfigService: class {
-    initModel = vi.fn();
-    // session_start 的 lastEngine 基线读取经本方法（构造性同源）：absent → lastEngine
-    // 归一 'pi'，与旧实现 readGlobalConfig 读不到文件时的行为一致
-    reloadGlobalConfig = vi.fn(() => ({ status: "absent", config: { version: 1, maxConcurrent: 6 } }));
-    setCtxModel = vi.fn();
-  },
-  getModelConfigService: () => null,
-  setModelConfigService: vi.fn(),
-}));
-
-vi.mock("@zhushanwen/subagent-core/execution/worktree-manager.ts", () => ({
-  WorktreeManager: class {
-    constructor(_agentDir: string) {
-      /* mock */
-    }
-    scan = vi.fn();
-    cleanup = vi.fn();
-    create = vi.fn();
-    collectPatch = vi.fn();
-    registerPid = vi.fn();
-  },
-}));
-
-vi.mock("@zhushanwen/subagent-core/execution/session-file-gc.ts", () => ({
-  maybeCleanupExpiredSessionFiles: vi.fn(),
-}));
-
-vi.mock("../jsonl-run-store.ts", () => ({
-  JsonlRunStore: class {
-    loadAll = mockLoadAll;
-    save = vi.fn(async () => {});
-    // dispose/flushPendingSaves：session_shutdown handler 会调 state.store.dispose()
-    // （W2C5）。本文件用例不触发 shutdown，防御性补齐防 mock 缺方法 TypeError
-    // （对齐 index-session-start / crash-recovery / index-session-start-identity 三文件口径）。
-    // dispose 真实契约是同步函数返回缓存 Promise——mock 侧保持简单 no-op 即可。
-    dispose = vi.fn(() => Promise.resolve());
-    flushPendingSaves = vi.fn(async () => {});
-  },
-}));
-
-// interface 层 mock：避免触发真实 pi.registerTool
-vi.mock("../interface/subagent-tool.ts", () => ({ registerSubagentTool: vi.fn() }));
-vi.mock("../interface/subagents.ts", () => ({ registerSubagentsCommand: vi.fn() }));
-vi.mock("../interface/bg-notify-render.ts", () => ({ renderBgNotifyMessage: vi.fn() }));
-vi.mock("../interface/tool-workflow.ts", () => ({ registerWorkflowTool: vi.fn() }));
-vi.mock("../interface/tool-workflow-script.ts", () => ({ registerWorkflowScriptTool: vi.fn() }));
-vi.mock("../interface/commands.ts", () => ({ registerWorkflowsCommand: vi.fn() }));
-
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-
-import subagentsExtension from "../index.ts";
-
-// ── helpers（与 index-session-start.test.ts 同构，聚焦 streamSink 断言） ──
-
-function createMockPi(): {
-  pi: ExtensionAPI;
-  getSessionStartHandler: () => ((event: unknown, ctx: unknown) => Promise<void>) | undefined;
-} {
-  let sessionStartHandler: ((event: unknown, ctx: unknown) => Promise<void>) | undefined;
-  const events = { emit: vi.fn() };
+/** 最小 typed fake pi（appendEntry/events.emit/on/sendMessage 四成员，设计 §3.1 形态）。 */
+function createFakePi(): ExtensionAPI {
   const noop = (): void => {
-    /* mock */
+    /* fake */
   };
-  const pi = new Proxy<ExtensionAPI>({} as ExtensionAPI, {
-    get(_target, prop: string | symbol): unknown {
-      if (prop === "on") {
-        return (event: string, handler: (...args: unknown[]) => unknown) => {
-          if (event === "session_start") {
-            sessionStartHandler = handler as (event: unknown, ctx: unknown) => Promise<void>;
-          }
-        };
-      }
-      if (prop === "events") return events;
-      if (prop === "appendEntry") return noop;
-      if (prop === "registerMessageRenderer") return noop;
-      return noop;
-    },
-  });
-  return { pi, getSessionStartHandler: () => sessionStartHandler };
+  return {
+    appendEntry: noop,
+    events: { emit: vi.fn() },
+    on: noop,
+    sendMessage: noop,
+  } as unknown as ExtensionAPI;
 }
 
-/** mode 控制 streamSink 守卫分支。rpc 下 ui 必须有 setWidget。 */
-function createMockCtx(mode: "tui" | "rpc" | "json" | "print"): Record<string, unknown> {
-  const sessionManager = {
-    getSessionId: () => "session-stream-1",
-    getSessionFile: () => "/home/user/.pi/agent/sessions/session-stream-1.jsonl",
-    getSessionDir: () => "/home/user/.pi/agent/sessions",
-  };
+/** mode 控制 streamSink 守卫分支的 fake ctx。rpc 下 ui 必须有 setWidget。 */
+function createFakeCtx(mode: "tui" | "rpc" | "json" | "print"): ExtensionContext & {
+  ui: { setWidget: ReturnType<typeof vi.fn> } | undefined;
+} {
   const ui = mode === "rpc" ? { setWidget: vi.fn() } : undefined;
   return {
     cwd: "/home/user/project",
     mode,
     modelRegistry: { getAvailable: () => [], find: () => undefined, hasConfiguredAuth: () => false },
     model: undefined,
-    sessionManager,
+    isIdle: () => true,
+    sessionManager: {
+      getSessionId: () => "session-stream-1",
+      getSessionFile: () => "/home/user/.pi/agent/sessions/session-stream-1.jsonl",
+      getEntries: () => [],
+    },
     ui,
+  } as unknown as ExtensionContext & { ui: { setWidget: ReturnType<typeof vi.fn> } | undefined };
+}
+
+/** 可控 fake store（注入 deps.createRunStore）。 */
+function makeFakeStore(): { loadAll: () => Promise<unknown[]>; save: () => Promise<void>; dispose: () => Promise<void> } {
+  return {
+    loadAll: vi.fn(async () => []),
+    save: vi.fn(async () => {}),
+    dispose: vi.fn(async () => {}),
   };
+}
+
+/** 重置双 Service 单例槽（setter 不接受 null，测试清理用 Symbol 直写；
+ *  key 与生产 getServiceSlot / getModelServiceSlot 的 Symbol.for 一致）。 */
+function resetLifecycleSlots(): void {
+  for (const key of ["@zhushanwen/pi-subagents.service", "@zhushanwen/pi-subagents.model-service"]) {
+    const slot = Reflect.get(globalThis, Symbol.for(key)) as { current: unknown } | undefined;
+    if (slot) slot.current = null;
+  }
+}
+
+/**
+ * 注入 fake 双 Service（访问器槽）+ fake wtm/store，跑一次完整 session 装配，
+ * 返回 fake service 的 initSession spy（接线参数观察面）。
+ */
+async function runSessionAssembly(ctx: ExtensionContext): Promise<ReturnType<typeof vi.fn>> {
+  const mockInitSession = vi.fn();
+  setSubagentService({
+    initSession: mockInitSession,
+    recoverManifestTmpFiles: vi.fn(async () => ({ deleted: 0, recovered: 0 })),
+    startGcTimer: vi.fn(),
+    getStreamSink: () => null,
+    dispose: vi.fn(),
+  } as never);
+  setModelConfigService({
+    initModel: vi.fn(),
+    // lastEngine 基线读取：absent → 归一 'pi'（与旧实现 readGlobalConfig 缺文件时一致）
+    reloadGlobalConfig: vi.fn(() => ({ status: "absent", config: { version: 1, maxConcurrent: 6 } })),
+  } as never);
+  await setupSessionLifecycle(createFakePi(), ctx, {
+    worktreeManager: { scan: vi.fn(async () => {}) },
+    createRunStore: () => makeFakeStore() as never,
+  });
+  return mockInitSession;
 }
 
 /** initSession 参数的 streamSink 字段形状（断言 mock 调用参数）。
@@ -169,17 +109,18 @@ type InitSessionArg = { streamSink: unknown };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockLoadAll.mockResolvedValue([]);
-  existingServiceRef.current = null;
+  resetLifecycleSlots();
+});
+
+afterEach(() => {
+  resetLifecycleSlots();
 });
 
 // ── 运行时断言 ──
 
 describe("streamSink ctx.mode guard — 运行时行为（FR-1/FR-2/AC-1/AC-2）", () => {
   it("tui mode：initSession 收到 streamSink === undefined（无 widget 噪音）", async () => {
-    const { pi, getSessionStartHandler } = createMockPi();
-    subagentsExtension(pi);
-    await getSessionStartHandler()!({ type: "session_start" }, createMockCtx("tui"));
+    const mockInitSession = await runSessionAssembly(createFakeCtx("tui"));
 
     expect(mockInitSession).toHaveBeenCalledTimes(1);
     const initArg = mockInitSession.mock.calls[0]?.[0] as InitSessionArg;
@@ -188,28 +129,21 @@ describe("streamSink ctx.mode guard — 运行时行为（FR-1/FR-2/AC-1/AC-2）
   });
 
   it("json mode（headless）：initSession 收到 streamSink === undefined", async () => {
-    const { pi, getSessionStartHandler } = createMockPi();
-    subagentsExtension(pi);
-    await getSessionStartHandler()!({ type: "session_start" }, createMockCtx("json"));
+    const mockInitSession = await runSessionAssembly(createFakeCtx("json"));
 
     const initArg = mockInitSession.mock.calls[0]?.[0] as InitSessionArg;
     expect(initArg.streamSink).toBeUndefined();
   });
 
   it("print mode：initSession 收到 streamSink === undefined", async () => {
-    const { pi, getSessionStartHandler } = createMockPi();
-    subagentsExtension(pi);
-    await getSessionStartHandler()!({ type: "session_start" }, createMockCtx("print"));
+    const mockInitSession = await runSessionAssembly(createFakeCtx("print"));
 
     const initArg = mockInitSession.mock.calls[0]?.[0] as InitSessionArg;
     expect(initArg.streamSink).toBeUndefined();
   });
 
   it("rpc mode（GUI/xyz-agent）：initSession 收到 streamSink 是 { setWidget } 对象（守卫放行）", async () => {
-    const { pi, getSessionStartHandler } = createMockPi();
-    subagentsExtension(pi);
-    const ctx = createMockCtx("rpc");
-    await getSessionStartHandler()!({ type: "session_start" }, ctx);
+    const mockInitSession = await runSessionAssembly(createFakeCtx("rpc"));
 
     const initArg = mockInitSession.mock.calls[0]?.[0] as InitSessionArg;
     // rpc 守卫放行：streamSink 注入了包装 ctx.ui.setWidget 的 sink 对象
@@ -219,10 +153,8 @@ describe("streamSink ctx.mode guard — 运行时行为（FR-1/FR-2/AC-1/AC-2）
   });
 
   it("rpc mode：streamSink.setWidget 转发到 ctx.ui.setWidget（绑定真实方法）", async () => {
-    const { pi, getSessionStartHandler } = createMockPi();
-    subagentsExtension(pi);
-    const ctx = createMockCtx("rpc");
-    await getSessionStartHandler()!({ type: "session_start" }, ctx);
+    const ctx = createFakeCtx("rpc");
+    const mockInitSession = await runSessionAssembly(ctx);
 
     const initArg = mockInitSession.mock.calls[0]?.[0] as InitSessionArg;
     (initArg.streamSink as { setWidget: (key: string, lines: string[]) => void }).setWidget("key1", ["line-a"]);

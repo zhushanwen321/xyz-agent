@@ -2,136 +2,37 @@
 //
 // [M4 / V2 决策 5] identity 子进程写入测试。
 //
-// 验证 index.ts session_start hook 的 identity 写入职责：
+// 验证 session 装配（identity 重建块）的写入职责（[u-5b / A-V3] 改写为 bootstrap
+// seam 直测——identity 重建住在 session-lifecycle.ts 装配链最前段，fake pi 捕获
+// appendEntry 即可断言，不再挂载 index.ts、不再整类 mock SubagentService/pi-ai/typebox）：
 //   1. 子进程（PI_SUBAGENT_SELF_RECORD_ID 存在）：调 pi.appendEntry 写
 //      customType="subagent-identity" 的 custom entry，data 字段与 env 组装的
 //      SubagentIdentityData 一致（id/agent/mode/task/slug/startedAt/rootSessionId/
-//      parentRecordId/depth/forkDepth/chatMode）。
+//      parentRecordId/depth/forkDepth/chatMode/worktree）。
 //   2. 主进程（无 PI_SUBAGENT_SELF_RECORD_ID）：不写 identity custom entry。
-//   3. 可选字段缺失（chatMode/slug/parentRecordId/forkDepth 未注入）：identity 仍写入，
+//   3. 可选字段缺失（chatMode/slug/parentRecordId/forkDepth/worktree 未注入）：identity 仍写入，
 //      可选字段为 undefined / false，不抛错。
+//   4. 主进程分支下 loadAll 裁剪接线（21 done → 20）与 identity 共存（W3TC9）——
+//      装配结果 result.runs 直接观察（旧形态经 registerWorkflowsCommand 捕获 runs
+//      getter，观察面等价迁移）。
 //
 // 修复背景：旧实现父进程 fs.appendFileSync 补写的 custom entry 缺 id/parentId →
 // 污染 pi _buildIndex leafId → message tree 断成两棵 → 多轮对话丢上下文。
 // 改由子进程（session 文件所有者）在 session_start 用 pi.appendEntry 写，
 // pi 自动生成 id/parentId → message tree 连续。
-//
-// mock 模式复用 index-session-start.test.ts（隔离真实 SDK 顶层副作用），差异：
-// appendEntry 改 vi.fn() 捕获调用（断言 identity custom entry）。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// ── mock modules（路径相对 src/__tests__/）──
-vi.mock("@earendil-works/pi-coding-agent", () => ({
-  getAgentDir: () => "/home/user/.pi/agent",
-}));
-vi.mock("@earendil-works/pi-ai", () => ({
-  StringEnum: (values: string[]) => ({ type: "string", enum: values }),
-}));
-vi.mock("typebox", () => ({
-  Type: {
-    Object: (props: Record<string, unknown>) => ({ type: "object", properties: props }),
-    Optional: (schema: unknown) => ({ ...(schema as object), optional: true }),
-    String: () => ({ type: "string" }),
-    Boolean: () => ({ type: "boolean" }),
-    Number: () => ({ type: "number" }),
-    Array: (items: unknown) => ({ type: "array", items }),
-    Record: (key: unknown, value: unknown) => ({ type: "object", additionalProperties: value, key }),
-    Unknown: () => ({ type: "unknown" }),
-    Union: (members: unknown[]) => ({ type: "union", members }),
-    Literal: (value: unknown) => ({ type: "literal", value }),
-  },
-}));
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-// ── hoisted mock 实例 ──
-const { mockSetUiRequestHandler, mockInitSession, mockLoadAll, mockRecoverManifestTmpFiles } =
-  vi.hoisted(() => ({
-    mockSetUiRequestHandler: vi.fn(),
-    mockInitSession: vi.fn(),
-    mockLoadAll: vi.fn(async () => []),
-    mockRecoverManifestTmpFiles: vi.fn(async () => ({ deleted: 0, recovered: 0 })),
-  }));
-
-vi.mock("@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
-  SubagentService: class {
-    initSession = mockInitSession;
-    setUiRequestHandler = mockSetUiRequestHandler;
-    recoverManifestTmpFiles = mockRecoverManifestTmpFiles;
-    startGcTimer = vi.fn();
-    getStreamSink = () => null;
-    dispose = vi.fn();
-  },
-  getSubagentService: () => null,
-  setSubagentService: vi.fn(),
-}));
-
-vi.mock("@zhushanwen/subagent-core/execution/model-config-service.ts", () => ({
-  ModelConfigService: class {
-    initModel = vi.fn();
-    // session_start 的 lastEngine 基线读取经本方法（构造性同源）：absent → lastEngine
-    // 归一 'pi'，与旧实现 readGlobalConfig 读不到文件时的行为一致
-    reloadGlobalConfig = vi.fn(() => ({ status: "absent", config: { version: 1, maxConcurrent: 6 } }));
-    setCtxModel = vi.fn();
-  },
-  getModelConfigService: () => null,
-  setModelConfigService: vi.fn(),
-}));
-
-vi.mock("@zhushanwen/subagent-core/execution/worktree-manager.ts", () => ({
-  WorktreeManager: class {
-    constructor(_agentDir: string) {
-      /* mock */
-    }
-    scan = vi.fn();
-    cleanup = vi.fn();
-    create = vi.fn();
-    collectPatch = vi.fn();
-    registerPid = vi.fn();
-  },
-}));
-
-vi.mock("@zhushanwen/subagent-core/execution/session-file-gc.ts", () => ({
-  maybeCleanupExpiredSessionFiles: vi.fn(),
-}));
-
-// dispose/flushPendingSaves：session_shutdown handler 会调 state.store.dispose()（W2C5），
-// 防御性补齐（identity 语义与 dispose 无关，不加新用例）。
-vi.mock("../jsonl-run-store.ts", () => ({
-  JsonlRunStore: class {
-    loadAll = mockLoadAll;
-    save = vi.fn(async () => {});
-    dispose = vi.fn(async () => {});
-    flushPendingSaves = vi.fn(async () => {});
-  },
-}));
-
-vi.mock("../interface/subagent-tool.ts", () => ({ registerSubagentTool: vi.fn() }));
-vi.mock("../interface/subagents.ts", () => ({ registerSubagentsCommand: vi.fn() }));
-vi.mock("../interface/bg-notify-render.ts", () => ({ renderBgNotifyMessage: vi.fn() }));
-// registerWorkflowsCommand 用 hoisted spy——W3TC9 需在 it 内读 mock.calls 捕获
-// runs getter（对齐 index-session-start.test.ts 的 mockStoreDispose 先例）。
-const { mockRegisterWorkflowsCommand } = vi.hoisted(() => ({
-  mockRegisterWorkflowsCommand: vi.fn(),
-}));
-vi.mock("../interface/tool-workflow.ts", () => ({ registerWorkflowTool: vi.fn() }));
-vi.mock("../interface/tool-workflow-script.ts", () => ({
-  registerWorkflowScriptTool: vi.fn(),
-}));
-vi.mock("../interface/commands.ts", () => ({
-  registerWorkflowsCommand: mockRegisterWorkflowsCommand,
-}));
-
-// ── import 被测工厂 ──
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-
-import subagentsExtension from "../index.ts";
 import { Budget } from "@zhushanwen/subagent-core";
 import { Trace } from "@zhushanwen/subagent-core";
-import type { WorkflowRun } from "@zhushanwen/subagent-core";
-import { WorkflowRun as WorkflowRunCtor } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
+import { WorkflowRun } from "@zhushanwen/subagent-core";
+import type { WorkflowRun as WorkflowRunType } from "@zhushanwen/subagent-core";
 import { IDENTITY_CUSTOM_TYPE } from "@zhushanwen/subagent-core";
+import { setupSessionLifecycle, type SessionLifecycleDeps } from "../session-lifecycle.ts";
 
-// ── helpers ──
+// ── helpers ──────────────────────────────────────────────────────────────────
 
 const IDENTITY_ENV_KEYS = [
   "PI_SUBAGENT_SELF_RECORD_ID",
@@ -152,69 +53,67 @@ function clearIdentityEnv(): void {
   for (const k of IDENTITY_ENV_KEYS) delete process.env[k];
 }
 
-/** 创建可观察 appendEntry 的 mock ExtensionAPI，捕获 session_start handler。 */
-function createMockPi(): {
+/** 可观察 appendEntry 的 fake pi（identity 写入断言面）。 */
+function createFakePi(): {
   pi: ExtensionAPI;
-  getSessionStartHandler: () => ((event: unknown, ctx: unknown) => Promise<void>) | undefined;
   appendEntrySpy: ReturnType<typeof vi.fn>;
 } {
-  let sessionStartHandler: ((event: unknown, ctx: unknown) => Promise<void>) | undefined;
   const appendEntrySpy = vi.fn();
-  const events = { emit: vi.fn() };
   const noop = (): void => {
-    /* mock */
+    /* fake */
   };
-  const pi = new Proxy<ExtensionAPI>({} as ExtensionAPI, {
-    get(_target, prop: string | symbol): unknown {
-      if (prop === "on") {
-        return (event: string, handler: (...args: unknown[]) => unknown) => {
-          if (event === "session_start") {
-            sessionStartHandler = handler as (event: unknown, ctx: unknown) => Promise<void>;
-          }
-        };
-      }
-      if (prop === "events") return events;
-      if (prop === "appendEntry") return appendEntrySpy;
-      if (prop === "registerMessageRenderer") return noop;
-      return noop;
-    },
-  });
-  return { pi, getSessionStartHandler: () => sessionStartHandler, appendEntrySpy };
+  const pi = {
+    appendEntry: appendEntrySpy,
+    events: { emit: vi.fn() },
+    on: noop,
+    sendMessage: noop,
+  } as unknown as ExtensionAPI;
+  return { pi, appendEntrySpy };
 }
 
-/** 最小 ExtensionContext mock（tui mode，足够走完 session_start 装配）。 */
-function createMockCtx(): Record<string, unknown> {
-  const sessionManager = {
-    getSessionId: () => "session-identity-1",
-    getSessionFile: () => "/home/user/.pi/agent/sessions/session-identity-1.jsonl",
-    getSessionDir: () => "/home/user/.pi/agent/sessions",
-    getCwd: () => "/home/user/project",
-    getEntries: () => [],
-    getBranch: () => [],
-    getLeafId: () => null,
-    getLeafEntry: () => undefined,
-    getEntry: () => undefined,
-    getHeader: () => null,
-    getTree: () => [],
-    getSessionName: () => undefined,
-  };
+/** 最小 fake ExtensionContext（tui mode，足够走完装配）。 */
+function createFakeCtx(): ExtensionContext {
   return {
     cwd: "/home/user/project",
     mode: "tui",
-    modelRegistry: {
-      getAvailable: () => [],
-      find: () => undefined,
-      hasConfiguredAuth: () => false,
-    },
+    modelRegistry: { getAvailable: () => [], find: () => undefined, hasConfiguredAuth: () => false },
     model: undefined,
-    sessionManager,
-    ui: undefined,
+    isIdle: () => true,
+    sessionManager: {
+      getSessionId: () => "session-identity-1",
+      getSessionFile: () => "/home/user/.pi/agent/sessions/session-identity-1.jsonl",
+      getEntries: () => [],
+    },
+  } as unknown as ExtensionContext;
+}
+
+/** seam deps：fake 双 Service 工厂 + fake wtm + fake store（loadAll 可配）。 */
+function makeSeamDeps(loadAll: () => Promise<WorkflowRunType[]> = async () => []): SessionLifecycleDeps {
+  return {
+    createServices: (() => ({
+      service: {
+        initSession: vi.fn(),
+        recoverManifestTmpFiles: vi.fn(async () => ({ deleted: 0, recovered: 0 })),
+        startGcTimer: vi.fn(),
+      },
+      modelService: {
+        initModel: vi.fn(),
+        reloadGlobalConfig: vi.fn(() => ({ status: "absent", config: { version: 1, maxConcurrent: 6 } })),
+      },
+      reused: false,
+    })) as never,
+    worktreeManager: { scan: vi.fn(async () => {}) },
+    createRunStore: () =>
+      ({
+        loadAll,
+        save: vi.fn(async () => {}),
+        dispose: vi.fn(async () => {}),
+      }) as never,
   };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockLoadAll.mockResolvedValue([]);
   clearIdentityEnv();
 });
 
@@ -239,12 +138,9 @@ describe("session_start identity 子进程写入（M4 / V2 决策 5）", () => {
     process.env.PI_SUBAGENT_CHAT_MODE = "true";
     process.env.PI_SUBAGENT_WORKTREE = "true";
 
-    const { pi, getSessionStartHandler, appendEntrySpy } = createMockPi();
-    subagentsExtension(pi);
+    const { pi, appendEntrySpy } = createFakePi();
 
-    const handler = getSessionStartHandler();
-    expect(handler).toBeDefined();
-    await handler!({ type: "session_start" }, createMockCtx());
+    await setupSessionLifecycle(pi, createFakeCtx(), makeSeamDeps());
 
     // 找到 identity 的 appendEntry 调用（customType = IDENTITY_CUSTOM_TYPE）
     const identityCall = appendEntrySpy.mock.calls.find(
@@ -275,12 +171,9 @@ describe("session_start identity 子进程写入（M4 / V2 决策 5）", () => {
 
   it("主进程（无 PI_SUBAGENT_SELF_RECORD_ID）：不写 identity custom entry", async () => {
     // 不设 SELF_RECORD_ID（主进程环境）
-    const { pi, getSessionStartHandler, appendEntrySpy } = createMockPi();
-    subagentsExtension(pi);
+    const { pi, appendEntrySpy } = createFakePi();
 
-    const handler = getSessionStartHandler();
-    expect(handler).toBeDefined();
-    await handler!({ type: "session_start" }, createMockCtx());
+    await setupSessionLifecycle(pi, createFakeCtx(), makeSeamDeps());
 
     // 无 identity 的 appendEntry 调用（logger.warn 等可能调 workflow:log，需过滤）
     const identityCall = appendEntrySpy.mock.calls.find(
@@ -297,13 +190,11 @@ describe("session_start identity 子进程写入（M4 / V2 决策 5）", () => {
     process.env.PI_SUBAGENT_STARTED_AT = "1700000000002";
     process.env.PI_SUBAGENT_ROOT_SESSION_ID = "root-9";
     process.env.PI_SUBAGENT_DEPTH = "1";
-    // 不设 SLUG / PARENT_RECORD_ID / FORK_DEPTH / CHAT_MODE
+    // 不设 SLUG / PARENT_RECORD_ID / FORK_DEPTH / CHAT_MODE / WORKTREE
 
-    const { pi, getSessionStartHandler, appendEntrySpy } = createMockPi();
-    subagentsExtension(pi);
+    const { pi, appendEntrySpy } = createFakePi();
 
-    const handler = getSessionStartHandler();
-    await handler!({ type: "session_start" }, createMockCtx());
+    await setupSessionLifecycle(pi, createFakeCtx(), makeSeamDeps());
 
     const identityCall = appendEntrySpy.mock.calls.find(
       (c: unknown[]) => c[0] === IDENTITY_CUSTOM_TYPE,
@@ -325,11 +216,11 @@ describe("session_start identity 子进程写入（M4 / V2 决策 5）", () => {
 
   it("W3TC9: 主进程分支 session_start 裁剪接线——21 done 经 loadAll 裁到 20（identity 与淘汰共存）", async () => {
     // identity handler 前段（appendEntry）与裁剪接线（loadAll 循环后）共存于同一
-    // session_start handler——主进程分支（PI_SUBAGENT_SELF_RECORD_ID 未设，beforeEach
+    // session 装配——主进程分支（PI_SUBAGENT_SELF_RECORD_ID 未设，beforeEach
     // 已清）验证裁剪同样生效。
     const T0 = Date.parse("2020-01-01T00:00:00.000Z");
     const doneRuns = Array.from({ length: 21 }, (_, i) =>
-      WorkflowRunCtor.reconstruct(
+      WorkflowRun.reconstruct(
         `wf-id-${i}`,
         {
           scriptSource: "execute() {}",
@@ -350,20 +241,12 @@ describe("session_start identity 子进程写入（M4 / V2 决策 5）", () => {
           completedAt: new Date(T0 + i * 60_000).toISOString(),
         },
       ));
-    mockLoadAll.mockResolvedValue(doneRuns);
 
-    const { pi, getSessionStartHandler } = createMockPi();
-    subagentsExtension(pi);
-    const handler = getSessionStartHandler();
-    expect(handler).toBeDefined();
-    await handler!({ type: "session_start" }, createMockCtx());
+    const { pi } = createFakePi();
+    const result = await setupSessionLifecycle(pi, createFakeCtx(), makeSeamDeps(async () => doneRuns));
 
-    // runs Map 观察：registerWorkflowsCommand 第二参数的 runs getter
-    const getRuns = mockRegisterWorkflowsCommand.mock.calls[0]?.[1] as
-      | (() => Map<string, WorkflowRun>)
-      | undefined;
-    expect(typeof getRuns).toBe("function");
-    const runs = getRuns!();
+    // 装配结果 runs Map（旧形态经 registerWorkflowsCommand 捕获 getter，等价迁移）
+    const runs = result.runs;
     // 21 done 裁 1：最旧（wf-id-0）被裁
     expect(runs.size).toBe(20);
     expect(runs.has("wf-id-0")).toBe(false);
