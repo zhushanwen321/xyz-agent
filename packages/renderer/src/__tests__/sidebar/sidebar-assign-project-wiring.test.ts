@@ -122,7 +122,7 @@ vi.mock('@/composables/features/sidebar/useSidebarSubagentActions', () => ({
 vi.mock('@/composables/usePlatformShortcut', () => ({ usePlatformShortcut: () => ({ formatKbd: () => '⌘K' }) }))
 
 // ── mock api/events（onMounted 的 loadSessions / app.info 订阅）──
-vi.mock('@/api/events', () => ({
+vi.mock('@xyz-agent/core/transport/api', () => ({
   onGlobalType: vi.fn(() => () => {}),
   dispatchSession: vi.fn(),
   dispatchGlobal: vi.fn(),

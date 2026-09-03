@@ -166,7 +166,7 @@ import { useContextUsage } from '@/composables/features/model/useContextUsage'
 import { useQuotaStore } from '@/stores/quota'
 import { useQuotaDisplay } from '@/composables/features/model/useQuotaDisplay'
 import { quotaFailReasonText } from '@/composables/features/model/useQuotaQuery'
-import * as quotaApi from '@/api/domains/quota'
+import * as quotaApi from '@xyz-agent/core/transport/api/domains/quota'
 
 const { t } = useI18n()
 

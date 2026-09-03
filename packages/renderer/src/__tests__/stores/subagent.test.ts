@@ -25,7 +25,7 @@ import { useSubagentStore } from '@/stores/subagent'
 import type { SubagentRecord, Message } from '@xyz-agent/shared'
 
 // mock sessionApi（loadSubagents / fetchAndInject / cancelSubagent 内部调用）
-vi.mock('@/api/domains/session', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({
   getSubagents: vi.fn(),
   getSubagentHistory: vi.fn(),
   subagentAction: vi.fn(),
@@ -35,11 +35,11 @@ vi.mock('@/api/domains/session', () => ({
 // 保证 store 与断言用的是同一个 vi.fn()。
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
-  const session = await import('@/api/domains/session')
+  const session = await import('@xyz-agent/core/transport/api/domains/session')
   return { ...actual, session }
 })
 
-import * as sessionApi from '@/api/domains/session'
+import * as sessionApi from '@xyz-agent/core/transport/api/domains/session'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -400,14 +400,14 @@ describe('subagent store — cancelSubagent', () => {
 
 // ── subscribeStream / stopStream（W4 收口机制 + U8 drawer scope token + E-4 双订阅适配）──
 //
-// store 内 import * as events from '@/api/events'，此处 mock events.on 捕获 WS handler。
+// store 内 import * as events from '@xyz-agent/core/transport/api'，此处 mock events.on 捕获 WS handler。
 // E-4：双键订阅（主 sid = 旧 widget 通道帧路由 key；虚拟分区 id = tee 帧路由 key），
 // 每次 subscribeStream 消耗 events.on 两次。
-vi.mock('@/api/events', () => ({
+vi.mock('@xyz-agent/core/transport/api', () => ({
   on: vi.fn(),
 }))
 
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 
 describe('subagent store — subscribeStream / stopStream（streaming 订阅生命周期）', () => {
   /**

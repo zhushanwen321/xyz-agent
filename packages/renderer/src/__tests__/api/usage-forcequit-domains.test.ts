@@ -2,7 +2,7 @@
  * usage / session 域 RPC 封装单测（用量统计 + forceQuit/subagentAction 增量覆盖 gate）。
  *
  * 测试框架：vitest（禁 node:test）。
- * 运行命令：cd packages/renderer && npx vitest run src/api/__tests__/usage-forcequit-domains.test.ts
+ * 运行命令：cd packages/renderer && npx vitest run src/__tests__/api/usage-forcequit-domains.test.ts
  *
  * 覆盖：
  *   - usage.getUsageStats → command('usage.getStats', {}) 且透传 reply
@@ -13,13 +13,17 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 const commandMock = vi.hoisted(() => vi.fn())
-vi.mock('@/api/request', () => ({
+// [tc-transport-consolidation u2 改锚] domains 已迁 core：core 域内 import { command } from '../request'
+// 是 core 内模块 ID，vi.mock('@/api/request') 拦截壳桥模块、不转发（u1 v2 先例）——mock 说明符须
+// 直指 core request 模块文件（四段子路径无 exports 条目，故用跨包相对路径，vi.mock 按解析后模块 ID 拦截）。
+// 断言与 factory 零改动。
+vi.mock('../../../../core/src/transport/api/request', () => ({
   command: commandMock,
 }))
 
-import { getUsageStats } from '@/api/domains/usage'
-import { forceQuit, subagentAction } from '@/api/domains/session'
-import { session as mockSession } from '@/api/mock'
+import { getUsageStats } from '@xyz-agent/core/transport/api/domains/usage'
+import { forceQuit, subagentAction } from '@xyz-agent/core/transport/api/domains/session'
+import { session as mockSession } from '@xyz-agent/core/transport/mock'
 
 beforeEach(() => {
   commandMock.mockReset()

@@ -1,4 +1,4 @@
-/* eslint-disable no-magic-numbers */
+/* eslint-disable no-magic-numbers -- mock fixture 数据（session/message/文件树等演示数据）的字面量数值属领域数据，非逻辑魔数 */
 /**
  * Mock fixture —— 最小但结构完整的预制数据（D7：严格镜像 shared 类型）。
  *

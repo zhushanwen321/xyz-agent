@@ -40,11 +40,10 @@
 import { onMounted, watch, type Ref } from 'vue'
 import type { ComposerInjectionStore, PendingInjection } from './injection-store'
 
-/**
- * ComposerInput 实例最小契约（insertFileChip / insertTextAtCursor / focus 经 defineExpose 暴露）。
- * 用结构类型避免 import .vue 文件（循环依赖 + 类型推断复杂），同 context-chips/submit 范式。
- * [W3] 合并到 input/types.ts 权威定义（本模块 import，不再重复声明）。
- */
+// 本模块消费面（focus / insertSessionChip? / insertTextAtCursor / insertFileChip）全部在
+// 域级权威接口 ComposerInputInstance（../types，ADR-0058 归位）之内，直接消费权威接口，
+// 不再局部窄契约——与 send/submit/context-chips 的局部最小契约（dispatch 消费面字段不在
+// 权威接口内）是两种互补形态，非漂移。
 import type { ComposerInputInstance } from '../types'
 
 /** useComposerInjection 的注入依赖（壳层 Composer 从各 store/composable 派生后注入）。 */

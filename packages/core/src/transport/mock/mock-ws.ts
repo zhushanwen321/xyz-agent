@@ -1,4 +1,4 @@
-/* eslint-disable no-magic-numbers */
+/* eslint-disable no-magic-numbers -- mock WS 桩的握手延迟/状态码等字面量属桩行为参数，非逻辑魔数 */
 /**
  * Mock WebSocket —— VITE_MOCK=true 时替代真实 WS 连接。
  *
@@ -20,12 +20,9 @@
  * 但 goal 要求保留；留待 P6-residual-deletion cleanup wave 删除）。
  */
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
-import type {
-  PlatformPort,
-  WebSocketLike,
-  KVStorage,
-} from '@xyz-agent/core'
-import { WS_READY_STATE } from '@xyz-agent/core'
+// 相对路径直达定义处（platform/port.ts）：经 '@xyz-agent/core' barrel 回引会成环，ESM 序隐患
+import type { PlatformPort, WebSocketLike, KVStorage } from '../../platform/port'
+import { WS_READY_STATE } from '../../platform/port'
 
 // ── 旧导出（过渡兼容，shim 化后无生产消费方，保留待 P6 cleanup）──────────
 
@@ -136,13 +133,11 @@ function createMockWebSocket(_url: string): WebSocketLike {
  * - kind: 'mock'
  * - storage: 最小 in-memory KVStorage
  * - webSocket: WebSocketFactory（create 返回复刻旧 mock 语义的桩）
- * - ipc: null（mock 无 electron IPC）
  */
 export function createMockPlatform(): PlatformPort {
   return {
     kind: 'mock',
     storage: createInMemoryStorage(),
     webSocket: { create: createMockWebSocket },
-    ipc: null,
   }
 }

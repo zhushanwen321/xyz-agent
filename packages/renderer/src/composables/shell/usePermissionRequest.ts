@@ -20,7 +20,7 @@
 import { reactive, type App } from 'vue'
 import type { InternalEventBus } from '@xyz-agent/core'
 import { PERMISSION_TRANSPORT_KEY, type PermissionTransport } from '@xyz-agent/ui/extension-host'
-import * as pluginApi from '@/api/domains/plugin'
+import * as pluginApi from '@xyz-agent/core/transport/api/domains/plugin'
 
 /** 弹窗可见状态（供 App.vue 绑定 Dialog props）。 */
 interface PermissionRequestState {

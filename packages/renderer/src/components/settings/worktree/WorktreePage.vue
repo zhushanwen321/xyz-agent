@@ -146,7 +146,7 @@ import {
   setWorktreeTimeout,
   getDefaultBaseBranch,
   setDefaultBaseBranch,
-} from '@/api/domains/settings'
+} from '@xyz-agent/core/transport/api/domains/settings'
 
 const { t } = useI18n()
 const { info: toastInfo, error: toastError } = useToast()

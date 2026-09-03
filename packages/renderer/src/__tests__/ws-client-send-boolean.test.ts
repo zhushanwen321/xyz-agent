@@ -7,18 +7,18 @@
  *
  * ── W2 迁移后重写说明 ──
  * 旧版依赖 renderer ws-client 内部 isMock 分支调 mockSend 控制返回值。W2 把 ws-client
- * 迁入 core（re-export shim），mock 行为改由 platform 注入，旧 isMock 分支已删除。
- * 本测试改为：注入可控 readyState 的 fake-WS platform（providePlatform），经
- * @/lib/ws-client（shim）→ core 的 connect/disconnect/send 验证布尔契约。
+ * 迁入 core，mock 行为改由 platform 注入，旧 isMock 分支已删除。本测试改为：注入可控
+ * readyState 的 fake-WS platform（providePlatform），经 core 的 connect/disconnect/send
+ * 验证布尔契约（u4 后 deprecated shim 已删，直接 import core ws-client 子路径）。
  *
  * W4 fast-fail 契约的主覆盖在 core invariants.test.ts:270（OPEN→true / 非 OPEN→false），
- * renderer 侧重在验证 shim 转发链路不断（catch shim export 名拼写错 / 转发断链）。
+ * renderer 侧重在验证壳侧 import 链路不断（catch export 名拼写错 / 解析断链）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/ws-client-send-boolean.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import type { ClientMessage } from '@xyz-agent/shared'
-import { connect, disconnect, send } from '@/lib/ws-client'
+import { connect, disconnect, send } from '@xyz-agent/core/transport/ws-client'
 import {
   providePlatform,
   WS_READY_STATE,

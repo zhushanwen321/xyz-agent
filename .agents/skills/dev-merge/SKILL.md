@@ -19,7 +19,7 @@ description: >-
 
 ## 流程
 
-**调用约束**：cwd 必须在待合并 feat worktree 根目录（脚本靠 `git rev-parse --show-toplevel` 定位源 worktree）。旧 base 的 feat worktree 分支历史可能不含本 skill 文件（相对路径调用会 No such file or directory），脚本调用一律用本文写死的绝对路径，禁止 `.agents/skills/...` 相对路径写法。
+**调用约束**：cwd 必须在待合并 feat worktree 根目录（脚本靠 `git rev-parse --show-toplevel` 定位源 worktree）。脚本路径用 `"$(git rev-parse --show-toplevel)/.agents/skills/dev-merge/dev-merge.sh"` 动态拼**当前 worktree 内的副本**——禁止写死某个 worktree 目录的绝对路径（会随该 worktree cleanup 过期，如历史上写死的 dev-0.9.10 路径已失效），也禁止 `.agents/skills/...` 相对路径写法（bash cwd 不跨调用持久）。当前分支不含本 skill 文件时（极旧 base），从任意含该文件的 worktree 复制脚本后调用。
 
 ### 第 1 步：处理未提交改动（AI 决策，脚本不代劳）
 
@@ -33,10 +33,10 @@ description: >-
 ### 第 2 步：合并
 
 ```bash
-bash /Users/zhushanwen/Code/xyz-agent-workspace/dev-0.9.10/.agents/skills/dev-merge/dev-merge.sh merge <dev-branch>
+bash "$(git rev-parse --show-toplevel)/.agents/skills/dev-merge/dev-merge.sh" merge <dev-branch>
 ```
 
-脚本自动完成：两侧干净预检 → 已合并短路 → `git merge --no-ff`（保留 feature 分支历史，与项目 PR 合并策略一致）。
+脚本自动完成：目标 worktree 缺失时**自动创建**（复用全局 `worktree-manipulate` 的 create-worktree.sh：分支已存在则检出、不存在则基于 main 新建 dev 分支，并经项目 setup hook 完成 pnpm 依赖安装 + Electron/pi 缓存链接——耗时数分钟属正常，merge commit 的 pre-commit 检查依赖它们）→ 两侧干净预检 → 已合并短路 → `git merge --no-ff`（保留 feature 分支历史，与项目 PR 合并策略一致）。
 
 三种结果：
 
@@ -63,7 +63,7 @@ cd /Users/zhushanwen/Code/xyz-agent-workspace/<dev-branch> && git add <files> &&
 合并成功后**自动执行清理**（删除 worktree + 分支）。用户不特别说明时默认清理，无需逐次确认。仅当用户明确说「不清理」时才跳过。
 
 ```bash
-bash /Users/zhushanwen/Code/xyz-agent-workspace/dev-0.9.10/.agents/skills/dev-merge/dev-merge.sh cleanup <dev-branch>
+bash "$(git rev-parse --show-toplevel)/.agents/skills/dev-merge/dev-merge.sh" cleanup <dev-branch>
 ```
 
 脚本内置安全闸：分支未合并进 dev 拒绝清理（`is_merged` 闸门通过后脚本直接 `git branch -D`，不依赖 `git branch -d`——`-D` 避免依赖 upstream/HEAD 校验的不确定性，已合并与否由 `is_merged` 闸门保证）；worktree 有未跟踪且未 ignore 的文件时 git 拒绝删除——**不要擅自 `--force`**，先看那些文件是什么（认知外的问用户），确认后由用户/显式决策强删。

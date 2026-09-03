@@ -12,7 +12,7 @@
  * mock 策略：
  *  - vue-i18n 全局 mock（vitest-i18n-setup.ts，t() 从 zh-CN 取值）
  *  - provideSettingsTransport 注入 spy transport（save 路径断言）
- *  - USE_QUOTA_CONFIGURE_KEY provide 真实 useQuotaConfigure（'@/api/domains/quota' mock）
+ *  - USE_QUOTA_CONFIGURE_KEY provide 真实 useQuotaConfigure（'@xyz-agent/core/transport/api/domains/quota' mock）
  *  - Dialog（形态切换确认）teleport 到 body：attachTo + document.body 查询（对齐 provider-builtin-ui 模式）
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -36,7 +36,7 @@ import { useQuotaConfigure } from '@/composables/features/model/useQuotaConfigur
 import { useToast } from '@/composables/useToast'
 
 // useQuotaConfigure 直连 quota domain（原实现如此，非绕门面场景），mock 其 RPC 面
-vi.mock('@/api/domains/quota', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/quota', () => ({
   getCached: vi.fn(async () => ({ data: null, lastFetchAt: null })),
   fetchQuota: vi.fn(async () => ({ data: null, lastFetchAt: null })),
   refreshQuota: vi.fn(async () => ({ data: null, lastFetchAt: null })),

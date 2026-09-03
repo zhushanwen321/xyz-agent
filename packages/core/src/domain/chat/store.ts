@@ -1133,9 +1133,6 @@ export function createChatStore() {
     resetTransientStates,
     addPendingSend,
     clearPendingSend,
-    armStreamingTimer,
-    armBashTimer,
-    clearBashTimer,
     markSessionError,
     isCompacting,
     setCompacting,
@@ -1152,17 +1149,92 @@ export function createChatStore() {
     // 产物的 messages 类型鸿沟：pinia Store.messages 被解包为 Map，factory 产物为 ShallowRef）。
     markStreamingBashError: (sessionId: string, errorText: string) =>
       markBashError(messages, sessionId, errorText, clearBashTimer),
-    /** 测试专用：暴露 D-3 streaming flag 惰性派生缓存（断言 disposeSession/LRU 驱逐的清理语义用，生产代码勿读）。 */
-    _sessionStreamingFlagsForTest: sessionStreamingFlags,
-    /** 测试专用：暴露 [W21] per-session reducer 累积态（断言 applyEntryFrame 喂入/清理语义用，生产代码勿读——W22 对账消费前不设正式读口）。 */
-    _entryStatesForTest: entryStates,
     // W3 H3 LRU
     touchLru,
     evictIfNeeded,
     evictSessionWithVirtual,
     evictVirtualKey,
+    /**
+     * [D6①/u6.1] 测试逃生舱命名空间：timer 三件套 + 两个状态逃生舱并入此处，
+     * 顶层导出删除（renderer-deepening D6——timer 三件套生产外部零消费已实证，
+     * 仅 core/domain/chat 内部经 effects ctx 消费，ctx 由 store 闭包构建不受影响）。
+     *
+     * 为什么不让测试直接 import chat/timers.ts 的 initTimers（chat-bash-effects.test.ts
+     * 先例）：store 内 timer 经 `initTimers(finalizeSession, …)` 与 store 闭包绑定，
+     * 外部独立调 initTimers 得到的是不同 finalize 闭包的独立实例——测 store 行为的
+     * 用例走该先例会悄悄改变测试语义。测试消费形态：`chat.testInternals.armStreamingTimer(…)`。
+     * 生产代码（组件/composable/effects）禁读——taste-lint 规则
+     * no-chat-ops-in-components 将 testInternals 归入 ops 面拦截组件访问。
+     */
+    testInternals: {
+      armStreamingTimer,
+      armBashTimer,
+      clearBashTimer,
+      /** D-3 streaming flag 惰性派生缓存（断言 disposeSession/LRU 驱逐清理语义用，生产代码勿读）。 */
+      _sessionStreamingFlagsForTest: sessionStreamingFlags,
+      /** [W21] per-session reducer 累积态（断言 applyEntryFrame 喂入/清理语义用，生产代码勿读）。 */
+      _entryStatesForTest: entryStates,
+    },
   }
 }
 
 /** chat store factory 产物类型（renderer defineStore 包装 + core 单测共用，避免手写大 interface 漂移） */
 export type ChatStoreInstance = ReturnType<typeof createChatStore>
+
+/**
+ * [D6②/u6.1] chat store facet：readers 面——消费组件可碰的渲染读取面。
+ *
+ * 边界裁量（「组件渲染需要」vs「编排动作」，renderer-deepening §3.3 D6）：
+ * - 状态 refs 全部入 readers：数据载体本身，组件读 ref 不破坏任何不变量
+ *   （写路径全部在 ops 面；直接写 ref 的治理归 no-non-owner-store-mutation 管辖，不重复立法）；
+ * - 纯读查询方法（getXxx/isXxx 族，无副作用）入 readers——新读方法默认进本面，
+ *   组件读它结构上无害；
+ * - testInternals（测试逃生舱）虽只读也归 ops 面：生产消费方为零是它的存在前提。
+ *
+ * 组件误用 ops 面字段由 taste-lint 规则 no-chat-ops-in-components 拦截（清单与本
+ * facet 差集同步维护，规则文件内注明 SSOT 指向此处）。
+ */
+export type ChatStoreReaders = Pick<
+  ChatStoreInstance,
+  | 'messages' | 'pendingSend' | 'compactingSessions' | 'handingOffSessions'
+  | 'retryStates' | 'queueStates' | 'pendingBuffer' | 'changeSetStatuses'
+  | 'failedHistory' | 'hydrated' | 'inflightCounts'
+  | 'getMessages' | 'getRetryState' | 'getQueueState' | 'getChangeSetStatus'
+  | 'isHydrated' | 'getHydrateAnchor' | 'isGenerating' | 'isActive'
+  | 'isCompacting' | 'getCompactingReason' | 'isHandingOff'
+  | 'getInflight'
+>
+
+/**
+ * [D6②/u6.1] chat store facet：ops 面——编排/composable 专用动作面（写操作 + LRU + 订阅类 + 测试逃生舱）。
+ *
+ * 消费方边界：composables/stores/effects/tests 不受限；组件（src/components/** 的 .vue）
+ * 禁访问——编排动作在组件内联是 facet 约束要拦的形态（下沉 composable 后经 props/事件对接）。
+ */
+export type ChatStoreOps = Pick<
+  ChatStoreInstance,
+  | 'setChangeSetStatus' | 'markChangeSetsSuperseded' | 'markHistoryFailed'
+  | 'clearHistoryError' | 'hydrate' | 'setMessages' | 'reconcileHistory'
+  | 'prependHistory' | 'applySubagentStreamDelta' | 'finalizeSubagentStream'
+  | 'applySubagentEntries' | 'appendUser' | 'pushPending' | 'drainN'
+  | 'reconcilePending' | 'abortPending' | 'applyMessageEvent' | 'finalizeSession'
+  | 'finalizeAllStreaming' | 'resetTransientStates' | 'addPendingSend'
+  | 'clearPendingSend' | 'markSessionError' | 'setCompacting' | 'setHandingOff'
+  | 'appendSystemNotice' | 'appendSubagentDirective' | 'truncateFrom'
+  | 'applyFileChanges' | 'disposeSession' | 'markStreamingBashError'
+  | 'touchLru' | 'evictIfNeeded' | 'evictSessionWithVirtual' | 'evictVirtualKey'
+  | 'incrementInflight' | 'decrementInflight' | 'clearInflight'
+  | 'testInternals'
+>
+
+// ── 编译期 facet 漂移断言（零运行时产物）：return 面新增字段时漏登记进任一 facet
+//    即在此显形，防止「64 项混装」回归。export 仅为止住 noUnusedLocals（renderer
+//    tsconfig 开启），非公共 API——domain/chat/index.ts 显式列举导出，不转出本域 ──
+
+/** readers ∪ ops 必须恰好覆盖 return 面全部键（漏项 → 非 never → 约束报错） */
+type AssertNever<T extends never> = T
+export type _FacetCoversAllKeys = AssertNever<
+  Exclude<keyof ChatStoreInstance, keyof ChatStoreReaders | keyof ChatStoreOps>
+>
+/** readers ∩ ops 必须为空（同字段双面登记 → 约束报错） */
+export type _FacetsDisjoint = AssertNever<Extract<keyof ChatStoreReaders, keyof ChatStoreOps>>

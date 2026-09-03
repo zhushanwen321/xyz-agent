@@ -4,10 +4,11 @@
  * 锁定 createUseSession(deps) factory 产物的纯编排行为（不经 renderer 壳）：
  * selectSession 全编排 / 失败不更新 activeId / hydrate 失败消化、deleteSession S3 全 hooks
  * 调用序 + ES1 fallback、deleteFolder wasActiveInFolder 回退、loadSessions 成功/失败（ES2）、
- * retryHistory 双分支、newSession 延迟 create 三分支、rename/syncSessionToPanel、refCount 订阅去重。
+ * retryHistory 双分支、newSession 延迟 create 三分支、rename/syncSessionToPanel、refCount 订阅去重；
+ * [renderer-deepening D3/D4] selectSession 12 步切入链精确顺序（记录型 fake 端口回放调用序）。
  *
  * 模式（对齐 chat 域 useChat.test.ts）：effectScope + 真实 createSessionStore（w1 交付，
- * 编排终态断言需真实响应式）+ mock deps（api/panel/navigation/chat/hooks/flow 全 vi.fn）。
+ * 编排终态断言需真实响应式）+ mock deps（api/panel/navigation/chat/hooks/flow/sessionEntry 全 vi.fn）。
  * 调用序断言用 invocation log 数组（S3 全序可读）。beforeEach 调 resetSessionListSubForTest()
  * 清模块级订阅计数（跨用例隔离）。
  */
@@ -17,6 +18,7 @@ import type { SessionGroup, SessionSummary, BatchDeleteResult } from '@xyz-agent
 import { createSessionStore } from '../store'
 import { createUseSession, resetSessionListSubForTest } from '../use-session'
 import type { UseSessionDeps, SessionCleanupHooks, ChatHydratePort } from '../use-session'
+import type { SessionEntryPort } from '../api-port'
 
 /** 构造 SessionSummary 最小形状（类型收窄后字段由测试按需给全） */
 function summary(id: string, cwd = '/a'): SessionSummary {
@@ -72,7 +74,11 @@ interface Fixture {
 }
 
 function makeFixture(
-  opts: { withFlow?: boolean; selectSessionFallback?: (id: string) => Promise<void> } = {},
+  opts: {
+    withFlow?: boolean
+    selectSessionFallback?: (id: string) => Promise<void>
+    sessionEntry?: SessionEntryPort
+  } = {},
 ): Fixture {
   const scope = effectScope(true)
   const log: string[] = []
@@ -110,6 +116,7 @@ function makeFixture(
     store, api, panel, navigation, chat, hooks,
     ...(opts.withFlow ? { flow } : {}),
     ...(opts.selectSessionFallback ? { selectSessionFallback: opts.selectSessionFallback } : {}),
+    ...(opts.sessionEntry ? { sessionEntry: opts.sessionEntry } : {}),
   }
   const session = scope.run(() => createUseSession(deps))!
   return { session, store, api, panel, navigation, chat, flow, hooks, log, dispose: () => scope.stop() }
@@ -121,7 +128,7 @@ function seed(store: Fixture['store'], groups: SessionGroup[]): void {
 }
 
 describe('selectSession', () => {
-  it('TC-1 成功：switchSession→activeId→hydrate→syncSessionToPanel→push', async () => {
+  it('TC-1 成功：switchSession→activeId→panel 载入→push→hydrate（D4 panel-first；12 步全序断言见下方切入链 describe）', async () => {
     const f = makeFixture()
     const msgs = [{ id: 'm1' } as never]
     f.chat.getHistory.mockResolvedValue({ messages: msgs, historyTruncated: true })
@@ -204,6 +211,138 @@ describe('selectSession', () => {
     await f.session.selectSession('sid-1')
     // 分区已被 reconcile 整量替换为全量 → 无更早历史可加载，标记同步清除
     expect(f.chat.setHistoryTruncated).toHaveBeenCalledWith('sid-1', false)
+    f.dispose()
+  })
+})
+
+describe('selectSession 12 步切入链（D3 端口束 / D4 壳版时序）', () => {
+  /**
+   * 记录型 sessionEntry fake（D3 接口级断言）：每端口一个 push 到数组的 spy。
+   * touchRecency 被链内两步消费（步 6 切入 session / 步 11 panel 绑定 session），
+   * 用调用序号 #1/#2 区分——同名端口两次调用的相对位置即统一链时序断言目标。
+   */
+  function makeEntrySpies(order: string[]) {
+    let touchCount = 0
+    return {
+      cancelActiveFlow: vi.fn(() => { order.push('1.cancelActiveFlow') }),
+      clearUnread: vi.fn((sid: string) => { order.push(`4.clearUnread(${sid})`) }),
+      ensureStreamSubscription: vi.fn((sid: string) => { order.push(`5.ensureStreamSubscription(${sid})`) }),
+      touchRecency: vi.fn((sid: string) => { order.push(`6/11.touchRecency#${++touchCount}(${sid})`) }),
+      preloadFileTree: vi.fn((sid: string) => { order.push(`10.preloadFileTree(${sid})`) }),
+      evictLru: vi.fn((sid: string | null) => { order.push(`12.evictLru(${sid ?? 'null'})`) }),
+    }
+  }
+
+  it('12 步精确顺序：cancelActiveFlow→switch→setActiveId→clearUnread→ensureStream→touch→sync→push→hydrate→preload→touch(panel)→evict', async () => {
+    const order: string[] = []
+    const entry = makeEntrySpies(order)
+    const f = makeFixture({ sessionEntry: entry })
+    // 非 sessionEntry 步骤（api/store/panel/navigation/chat 端口）记录到同一数组，
+    // 步骤号对齐统一链注释（use-session.selectSession 的 1-12 步）
+    f.api.switchSession.mockImplementation(async (id: string) => { order.push(`2.switchSession(${id})`) })
+    const origSetActiveId = f.store.setActiveId.bind(f.store)
+    f.store.setActiveId = (id: string | null) => { order.push(`3.setActiveId(${id})`); origSetActiveId(id) }
+    f.panel.loadSession.mockImplementation((pid: string, sid: string | null) => {
+      order.push(`7.syncSessionToPanel(${pid}<-${sid})`)
+    })
+    f.navigation.push.mockImplementation((route: { view: string }) => {
+      order.push(`8.navigation.push(${route.view})`)
+    })
+    f.chat.reconcileHistory.mockImplementation((sid: string) => { order.push(`9.hydrateReconcile(${sid})`) })
+    // panel 绑定 session 经 PanelOrchestrationPort.focusedSessionId 读取
+    // （壳版 panel.currentLeaf.sessionId 与之同源——panel store layout.sessionId）
+    f.panel.focusedSessionId.mockReturnValue('sid-1')
+
+    await f.session.selectSession('sid-1')
+
+    expect(order).toEqual([
+      '1.cancelActiveFlow',
+      '2.switchSession(sid-1)',
+      '3.setActiveId(sid-1)',
+      '4.clearUnread(sid-1)',
+      '5.ensureStreamSubscription(sid-1)',
+      '6/11.touchRecency#1(sid-1)',
+      '7.syncSessionToPanel(p1<-sid-1)',
+      '8.navigation.push(chat)',
+      '9.hydrateReconcile(sid-1)',
+      '10.preloadFileTree(sid-1)',
+      '6/11.touchRecency#2(sid-1)',
+      '12.evictLru(sid-1)',
+    ])
+    expect(f.panel.focusedSessionId).toHaveBeenCalled()
+    // touchRecency 双跳：切入 session（步 6）+ panel 绑定 session（步 11，exempt 前半）
+    expect(entry.touchRecency).toHaveBeenCalledTimes(2)
+    f.dispose()
+  })
+
+  it('panel 无绑定 session（focusedSessionId=null）：步 11 跳过，evictLru(null) 照常执行', async () => {
+    const order: string[] = []
+    const entry = makeEntrySpies(order)
+    const f = makeFixture({ sessionEntry: entry })
+    f.panel.focusedSessionId.mockReturnValue(null)
+
+    await f.session.selectSession('sid-1')
+
+    // 仅步 6 一次 touchRecency；步 11 的条件刷新跳过（对齐壳版 if (panel.currentLeaf.sessionId)）
+    expect(entry.touchRecency).toHaveBeenCalledTimes(1)
+    expect(entry.touchRecency).toHaveBeenCalledWith('sid-1')
+    expect(entry.evictLru).toHaveBeenCalledTimes(1)
+    expect(entry.evictLru).toHaveBeenCalledWith(null)
+    f.dispose()
+  })
+
+  it('sessionEntry 全缺省：链完整执行不崩（no-op 步骤占位），主步骤照常', async () => {
+    const f = makeFixture()
+    await expect(f.session.selectSession('sid-1')).resolves.toBeUndefined()
+    expect(f.api.switchSession).toHaveBeenCalledWith('sid-1')
+    expect(f.store.activeId.value).toBe('sid-1')
+    expect(f.chat.reconcileHistory).toHaveBeenCalledWith('sid-1', [])
+    expect(f.panel.loadSession).toHaveBeenCalledWith('p1', 'sid-1')
+    expect(f.navigation.push).toHaveBeenCalledWith({ view: 'chat', sessionId: 'sid-1' })
+    f.dispose()
+  })
+
+  it('成员级部分注入（仅 clearUnread）：其余成员缺省 no-op 不崩，链完整', async () => {
+    const clearUnread = vi.fn()
+    const f = makeFixture({ sessionEntry: { clearUnread } })
+    await expect(f.session.selectSession('sid-1')).resolves.toBeUndefined()
+    expect(clearUnread).toHaveBeenCalledWith('sid-1')
+    expect(f.store.activeId.value).toBe('sid-1')
+    expect(f.panel.loadSession).toHaveBeenCalledWith('p1', 'sid-1')
+    expect(f.navigation.push).toHaveBeenCalledWith({ view: 'chat', sessionId: 'sid-1' })
+    f.dispose()
+  })
+
+  it('switchSession reject：步 1 已执行、步 4 起全部短路 + 抛错上抛（失败语义不变）', async () => {
+    const entry = makeEntrySpies([])
+    const f = makeFixture({ sessionEntry: entry })
+    f.api.switchSession.mockRejectedValue(new Error('not found'))
+
+    await expect(f.session.selectSession('ghost')).rejects.toThrow('not found')
+    // 步 1 在 switch 之前（对齐壳版 cancelFlow 先于 switchSession）
+    expect(entry.cancelActiveFlow).toHaveBeenCalledTimes(1)
+    expect(entry.clearUnread).not.toHaveBeenCalled()
+    expect(entry.ensureStreamSubscription).not.toHaveBeenCalled()
+    expect(entry.touchRecency).not.toHaveBeenCalled()
+    expect(entry.preloadFileTree).not.toHaveBeenCalled()
+    expect(entry.evictLru).not.toHaveBeenCalled()
+    expect(f.panel.loadSession).not.toHaveBeenCalled()
+    expect(f.navigation.push).not.toHaveBeenCalled()
+    expect(f.store.activeId.value).toBeNull()
+    f.dispose()
+  })
+
+  it('hydrate 失败（未 hydrate 分支）：markHistoryFailed 不抛穿，尾部步骤 10-12 照常执行', async () => {
+    const entry = makeEntrySpies([])
+    const f = makeFixture({ sessionEntry: entry })
+    f.chat.getHistory.mockRejectedValue(new Error('io'))
+
+    await expect(f.session.selectSession('sid-1')).resolves.toBeUndefined()
+    expect(f.chat.markHistoryFailed).toHaveBeenCalledWith('sid-1')
+    // D4 后 hydrate 在 panel 载入之后：panel 已挂载（先亮），历史失败不阻断文件树/驱逐
+    expect(f.panel.loadSession).toHaveBeenCalledWith('p1', 'sid-1')
+    expect(entry.preloadFileTree).toHaveBeenCalledWith('sid-1')
+    expect(entry.evictLru).toHaveBeenCalledTimes(1)
     f.dispose()
   })
 })

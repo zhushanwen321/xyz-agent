@@ -10,13 +10,15 @@
  * - send false → 立即 reject（code='disconnected'），不悬挂
  * - send true → promise 保持 pending 直到 reply 回灌（正常链路不被破坏）
  *
- * 运行：cd packages/renderer && npx vitest run src/api/__tests__/request.test.ts
+ * 运行：cd packages/core && npx vitest run src/transport/api/__tests__/request.test.ts
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-// mock transport 层：send 的返回值是本测试的控制变量（true=已送出 / false=WS 非 OPEN）
+// mock ws-client 层：send 的返回值是本测试的控制变量（true=已送出 / false=WS 非 OPEN）。
+// mock 路径相对测试文件解析（../../ws-client = core/transport/ws-client.ts），与 request.ts
+// 内部 import '../ws-client' 解析到同一模块 ID 才能拦截（§11-2 拦截链路实证点）。
 const mockSend = vi.fn<(msg: unknown) => boolean>()
-vi.mock('../transport', () => ({
+vi.mock('../../ws-client', () => ({
   send: (msg: unknown) => mockSend(msg),
 }))
 

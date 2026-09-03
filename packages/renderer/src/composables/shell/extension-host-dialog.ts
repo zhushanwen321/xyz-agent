@@ -21,9 +21,9 @@ import type {
   UiResponseTransport,
 } from '@xyz-agent/ui/extension-host'
 import type { ExtensionInteractMethod } from '@xyz-agent/shared'
-import { onCrossSession } from '@/api/events'
-import * as transport from '@/api/transport'
-import { sendExtensionUIResponse } from '@/api/domains/extension'
+import { onCrossSession } from '@xyz-agent/core/transport/api'
+import { send } from '@xyz-agent/core/transport/ws-client'
+import { sendExtensionUIResponse } from '@xyz-agent/core/transport/api/domains/extension'
 
 type UiRequestEvent = Extract<InternalEvent, { kind: 'ui-request' }>
 
@@ -117,7 +117,7 @@ export function createDialogRequestSource(bus: InternalEventBus): DialogRequestS
     },
     onUiTimeout(handler) {
       // MF-6：extension.ui_timeout 广播 payload 带 sessionId，route-inbound 落 session 通道 +
-      // CROSS_SESSION_TYPES（crossSession 通道），onGlobal 收不到带 sid 消息——必须订阅
+      // crossSession 声明条目（crossSession 通道），onGlobal 收不到带 sid 消息——必须订阅
       // crossSession 通道（onUiTimeout 自身按 payload.sessionId 校验，双保险）。
       return onCrossSession((msg) => {
         if (msg.type !== 'extension.ui_timeout') return
@@ -148,7 +148,7 @@ export function createUiResponseTransport(): UiResponseTransport {
       sendExtensionUIResponse(sessionId, requestId, toInteractMethod(method), result)
     },
     sendPluginResponse(requestId, result) {
-      transport.send({ type: 'plugin.uiResponse', payload: { requestId, result } })
+      send({ type: 'plugin.uiResponse', payload: { requestId, result } })
     },
   }
 }

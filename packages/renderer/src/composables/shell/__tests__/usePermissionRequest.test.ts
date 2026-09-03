@@ -19,7 +19,7 @@ import { PERMISSION_TRANSPORT_KEY } from '@xyz-agent/ui/extension-host'
 // mock RPC 回传域（approve/revoke 走 command → ws-client，测试环境不连 WS）
 const approvePermissions = vi.fn()
 const revokePermissions = vi.fn()
-vi.mock('@/api/domains/plugin', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/plugin', () => ({
   approvePermissions: (...args: unknown[]) => approvePermissions(...args),
   revokePermissions: (...args: unknown[]) => revokePermissions(...args),
 }))

@@ -75,12 +75,12 @@ describe('TC-3: AC5 getRegisteredMountPoints 含 mobile B+D 子集三挂载点',
 })
 
 describe('TC-4: AC5 createMobilePlatformAdapter 满足 core PlatformPort 契约', () => {
-  it('kind === "mobile" 且三端口字段存在 + ipc === null', () => {
+  it('kind === "mobile" 且两端口字段存在（storage/webSocket；ipc 已从契约删除）', () => {
     const adapter = createMobilePlatformAdapter()
     expect(adapter.kind).toBe('mobile')
     expect(adapter.storage).toBeDefined()
     expect(adapter.webSocket).toBeDefined()
-    expect(adapter.ipc).toBeNull()
+    expect('ipc' in adapter).toBe(false)
   })
 
   it('storage.get 不存在 key 返回 null（非抛错）', async () => {

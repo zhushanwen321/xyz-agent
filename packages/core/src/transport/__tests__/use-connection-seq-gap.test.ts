@@ -49,6 +49,8 @@ vi.mock('../ws-client', () => ({
 }))
 
 // ── pending mock（routeInbound id 路径需要）─────────────────────────
+// D3 后 configureRouteInbound 缺省直连 transport/api 真实模块（不再经 ConnectionPorts
+// 注入三件套）——mock 须拦截模块本身，dispatcher 的 defaultPorts 解析到下列 mock 对象
 const pendingMock = vi.hoisted(() => {
   const m = {
     resolve: vi.fn(),
@@ -56,9 +58,9 @@ const pendingMock = vi.hoisted(() => {
     rejectAll: vi.fn(),
     // routeInbound 用 has 判定 msg.id 是否命中 pending（RPC reply）；测试模拟的带 id 消息均为 reply
     has: vi.fn().mockReturnValue(true),
-    // 模拟 renderer api/pending.resolveEnvelope 行为（收尾 6 R2/ES1）：route-inbound 委托
+    // 模拟 transport/api/pending.resolveEnvelope 行为（收尾 6 R2/ES1）：route-inbound 委托
     // envelope 展开到 pending 层（code 提取 + details.detail → Error），此处转发到 reject/resolve。
-    // 真实实现单测在 renderer api/__tests__/pending.test.ts。
+    // 真实实现单测在 transport/api/__tests__/pending.test.ts。
     resolveEnvelope: vi.fn(),
   }
   m.resolveEnvelope.mockImplementation((msg: ServerMessage) => {
@@ -81,6 +83,8 @@ const pendingMock = vi.hoisted(() => {
   return m
 })
 
+vi.mock('../api/pending', () => pendingMock)
+
 // ── events mock：捕获 dispatchSession/dispatchGlobal ────────────────
 const eventsMock = vi.hoisted(() => ({
   dispatchSession: vi.fn(),
@@ -88,10 +92,14 @@ const eventsMock = vi.hoisted(() => ({
   dispatchCrossSession: vi.fn(),
 }))
 
+vi.mock('../api/events', () => eventsMock)
+
 // ── subscribe mock（subscribeSession reconcile 用）──────────────────
 const subscribeMock = vi.hoisted(() => ({
   subscribe: vi.fn().mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 }),
 }))
+
+vi.mock('../api/domains/session', () => ({ subscribe: subscribeMock.subscribe }))
 
 function makePorts(): ConnectionPorts {
   return {
@@ -109,11 +117,7 @@ function makePorts(): ConnectionPorts {
     },
     // mock 分支：dispatcher 在 mock return 前安装（ensureDispatcher 先于 mock 分支）
     env: { isMock: true, isDev: false },
-    pending: pendingMock,
-    events: eventsMock,
-    subscribe: subscribeMock.subscribe,
     effects: {},
-    toast: { error: vi.fn() },
     t: vi.fn((key: string) => `[${key}]`),
     onRuntimeUnavailable: vi.fn(),
   }
@@ -196,8 +200,12 @@ describe('TC4: gap 检测 seq>lastSeenSeq+1 触发 reconcile', () => {
     expect(eventsMock.dispatchSession).toHaveBeenCalledWith('s1', liveMsg(8))
     // MF-3：基线不提前推进到 8——reconcile RPC 成功前推进基线，失败则缺失段 {6,7} 永久不可恢复
     expect(getSubscriptionState('s1')!.lastSeenSeq).toBe(5)
-    // reconcile 触发：subscribeSession(s1, fromSeq=5) 被调（lastSeenSeq=排他下界，覆盖缺失段 {6,7}）
-    expect(subscribeMock.subscribe).toHaveBeenCalledWith('s1', 5)
+    // reconcile 触发：subscribeSession(s1, fromSeq=5) 被调（lastSeenSeq=排他下界，覆盖缺失段 {6,7}）。
+    // defaultPorts.subscribe 经动态 import 解析（route-inbound 顶部注释），fire-and-forget 的
+    // reconcile RPC 晚 1 个微任务到达——waitFor 等待而非同步断言（断言语义不变）
+    await vi.waitFor(() => {
+      expect(subscribeMock.subscribe).toHaveBeenCalledWith('s1', 5)
+    })
   })
 })
 

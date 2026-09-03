@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import { __clearSessionCleanupRegistryForTest } from '@/composables/useSessionScopedState'
 import { __clearInFlightContextFetchForTest } from '@/composables/features/model/useContextUsage'
 import type { ServerMessage } from '@xyz-agent/shared'
@@ -24,10 +24,10 @@ import ContextCapacityPopover from '@/components/panel/ContextCapacityPopover.vu
 
 // ── mock 边界：getContext mock 为受控 pending（挂载触发的恢复腿不落地）；门面重指 ──
 const getContextMock = vi.hoisted(() => vi.fn())
-vi.mock('@/api/domains/session', () => ({ getContext: getContextMock }))
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({ getContext: getContextMock }))
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
-  const session = await import('@/api/domains/session')
+  const session = await import('@xyz-agent/core/transport/api/domains/session')
   return { ...actual, session }
 })
 

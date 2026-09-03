@@ -47,7 +47,7 @@ vi.mock('@/composables/features/sidebar/useSidebar', () => ({
 
 import { bindHandoffEffect } from '@/composables/effects/useHandoffEffect'
 import { useChatStore } from '@/stores/chat'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 const SRC = 'src-1'

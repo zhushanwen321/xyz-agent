@@ -12,8 +12,8 @@
  * （留 Composer.vue / 其他 composable）。
  *
  * [W3 迁移] 迁自 renderer composables/panel/useComposerSubmit.ts（零跨域 import 纯搬运）。
- * ComposerInputInstance 此处为本模块视角的最小契约（getSegments），与 input/types.ts 的
- * 完整实例契约互补——壳层 ComposerInput.vue 的 defineExpose 同时满足两者（结构类型）。
+ * ComposerInputInstance 此处为本模块视角的最小契约（getSegments），与域级 types.ts 权威接口
+ * ComposerInputInstance 互补——壳层 ComposerInput.vue 的 defineExpose 同时满足两者（结构类型）。
  */
 import type { ComputedRef, Ref } from 'vue'
 import type { Segment } from '@xyz-agent/shared'

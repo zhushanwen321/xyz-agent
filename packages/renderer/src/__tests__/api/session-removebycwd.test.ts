@@ -5,7 +5,8 @@
  * - 发 WS type 'session.deleteByCwd'，payload { cwd }
  * - reply 解包为 BatchDeleteResult（{ cwd, deleted, failed }）
  *
- * mock 策略：vi.mock('@/api/request') 捕获 command 调用 + 控制其 resolve 值。
+ * mock 策略：vi.mock core request 模块捕获 command 调用 + 控制其 resolve 值（domains 已迁 core，
+ * 桥不转发 mock——mock 说明符直指 core 模块文件，四段子路径无 exports 条目故用跨包相对路径）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/api/session-removebycwd.test.ts
  */
@@ -14,11 +15,11 @@ import type { BatchDeleteResult } from '@xyz-agent/shared'
 
 // 捕获 command 调用，控制 resolve 值（reply payload 即 BatchDeleteResult 本身）
 const commandMock = vi.fn()
-vi.mock('@/api/request', () => ({
+vi.mock('../../../../core/src/transport/api/request', () => ({
   command: (...args: unknown[]) => commandMock(...args),
 }))
 
-import { removeByCwd } from '@/api/domains/session'
+import { removeByCwd } from '@xyz-agent/core/transport/api/domains/session'
 
 beforeEach(() => {
   vi.clearAllMocks()

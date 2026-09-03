@@ -34,7 +34,7 @@ import {
   smartContextFixture,
 } from '../helpers/system-page-mount'
 
-vi.mock('@/api/domains/settings', () => settingsApiModule())
+vi.mock('@xyz-agent/core/transport/api/domains/settings', () => settingsApiModule())
 vi.mock('@/composables/useToast', () => toastModule())
 vi.mock('@/composables/features/command/useCommandStore', () => commandStoreModule())
 vi.mock('@/lib/ipc', () => ipcModule())

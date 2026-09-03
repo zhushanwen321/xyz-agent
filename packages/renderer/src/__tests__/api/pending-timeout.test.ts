@@ -9,7 +9,7 @@
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/api/pending-timeout.test.ts
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
-import * as pending from '@/api/pending'
+import * as pending from '@xyz-agent/core/transport/api'
 
 describe('pending.register 超时', () => {
   beforeEach(() => {

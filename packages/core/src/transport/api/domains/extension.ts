@@ -12,7 +12,9 @@
  *
  * 契约见 contract.md §2.5 / code-architecture.md §3.2/§4.3/§4.9。
  *
- * 依赖方向：events（订阅）+ command（类型化请求/动作原语）+ transport（extension.ui_response fire-and-forget）。
+ * 依赖方向：events（订阅）+ command（类型化请求/动作原语）+ ws-client.send（extension.ui_response
+ * fire-and-forget；tc u2 迁移时自壳 ../transport 改锚——transport.send 是 ws-client.send 纯透传，
+ * domains 子目录深一层故为 ../../ws-client）。
  */
 import type {
   ExtensionInfo,
@@ -21,7 +23,7 @@ import type {
   RecommendedExtension,
 } from '@xyz-agent/shared'
 import { command } from '../request'
-import * as transport from '../transport'
+import { send } from '../../ws-client'
 import * as events from '../events'
 
 export function onExtensions(handler: (extensions: ExtensionInfo[]) => void): () => void {
@@ -187,7 +189,7 @@ export function onNotify(sessionId: string, handler: (payload: { message: string
  * 发错字段静默返回默认值）。
  */
 export function sendExtensionUIResponse(sessionId: string, requestId: string, method: ExtensionInteractMethod, result: boolean | string | null): void {
-  transport.send({
+  send({
     type: 'extension.ui_response',
     payload: { sessionId, requestId, method, result },
   })

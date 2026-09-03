@@ -1,10 +1,10 @@
 /**
- * RPC 类型化 helper —— 收敛 pending.createCommandId + register + transport.send 的 4 行模板。
+ * RPC 类型化 helper —— 收敛 pending.createCommandId + register + ws-client.send 的 4 行模板。
  *
  * api/domains/ 下每个 RPC 函数原本手动展开：
  *   const id = pending.createCommandId()
  *   const result = pending.register<TReply>(id)
- *   transport.send({ type, id, payload })
+ *   send({ type, id, payload })
  *   return await result
  *
  * 收敛为单次 command<K>(type, payload) 调用。K 经 ReplyPayloadMap 推导出 reply payload 类型，
@@ -12,8 +12,9 @@
  * 调用方自己从 reply 解包字段（如 `.subagents`）。
  */
 import type { ClientMessage, ClientMessageMap, ReplyPayloadMap } from '@xyz-agent/shared'
-import * as transport from './transport'
 import * as pending from './pending'
+import { send } from '../ws-client'
+import { transportUnavailableError } from '../errors'
 
 /**
  * 发送 RPC 请求并等待 reply（类型化原语）。
@@ -46,17 +47,14 @@ export async function command<K extends keyof ReplyPayloadMap>(
   const result = pending.register<ReplyPayloadMap[K]>(id, timeoutMs)
   // ClientMessage 是 discriminated union（type ↔ payload 对应），helper 的泛型 payload
   // 无法满足精确联合约束，用断言绕过——type 字面量已由 ReplyPayloadMap key 约束，安全。
-  const sent = transport.send({ type, id, payload } as ClientMessage)
+  const sent = send({ type, id, payload } as ClientMessage)
   if (!sent) {
     // send false = WS 非 OPEN（reconnecting/restarting/connecting），消息根本没送出，
     // 该 id 永远等不到 reply。use-connection 的 rejectAll 只覆盖「connected → 断开」转变；
     // 请求发出时本就处于断开态则后续永不触发，promise 只能等 65s sweep 超时——期间调用方
     // 的 in-flight 标记（如文件树 inFlight/loading）持续拦截用户操作（V8 实测：runtime
     // 重启窗口内点击目录零反馈，reload 才恢复）。立即 reject 让调用方进入可重试的 error 态。
-    pending.reject(
-      id,
-      Object.assign(new Error('transport unavailable (ws not open)'), { code: 'disconnected' }),
-    )
+    pending.reject(id, transportUnavailableError('transport unavailable (ws not open)'))
   }
   return result
 }

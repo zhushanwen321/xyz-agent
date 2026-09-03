@@ -29,7 +29,7 @@ import { effectScope } from 'vue'
 import type { EffectScope } from 'vue'
 import { useCompactQueue } from '@/composables/panel/useCompactQueue'
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
-import { dispatchSession } from '@/api/events'
+import { dispatchSession } from '@xyz-agent/core/transport/api'
 
 // vi.hoisted 保证 mock 工厂在模块加载前就绪；chatApi.send/steer 是本队列唯一依赖的 RPC
 const apiMock = vi.hoisted(() => ({

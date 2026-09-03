@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
   startFlow: vi.fn().mockResolvedValue(undefined),
 }))
 
-vi.mock('@/api/domains/session', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({
   switchSession: mocks.switchSession,
   list: mocks.list,
   remove: mocks.remove,
@@ -34,22 +34,22 @@ vi.mock('@/api/domains/session', () => ({
   getWorkflows: vi.fn().mockResolvedValue([]),
   getAgentCallHistory: vi.fn().mockResolvedValue([]),
 }))
-vi.mock('@/api/domains/chat', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/chat', () => ({
   getHistory: mocks.getHistory,
   send: vi.fn(),
   streamSubscribe: vi.fn(),
 }))
-vi.mock('@/api/events', () => ({
+vi.mock('@xyz-agent/core/transport/api', () => ({
   on: vi.fn(() => () => {}),
   onGlobalType: vi.fn(() => () => {}),
   dispatchSession: vi.fn(),
 }))
-vi.mock('@/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
-vi.mock('@/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
+vi.mock('@xyz-agent/core/transport/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
+vi.mock('@xyz-agent/core/transport/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
-  const session = await import('@/api/domains/session')
-  const chat = await import('@/api/domains/chat')
+  const session = await import('@xyz-agent/core/transport/api/domains/session')
+  const chat = await import('@xyz-agent/core/transport/api/domains/chat')
   return { ...actual, session, chat }
 })
 vi.mock('@/composables/features/chat/useChat', () => ({

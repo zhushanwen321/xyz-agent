@@ -9,18 +9,23 @@
  * assignSessionToProject）。
  *
  * 关键裁决：
- * - C-W5-1：selectSession/newSession 壳重编排（不代理 core.selectSession）——core.selectSession
- *   是闭合函数，renderer 专属步骤（ensureStreamSubscription 须先于 syncSessionToPanel / LRU /
- *   clearUnread / fileTree 预加载 / flow.cancelFlow）无法插入其内部。core.selectSession 留
- *   headless/mobile 消费。deleteSession/deleteFolder 代理 core，wasActive 回退经
- *   selectSessionFallback 端口走本壳版 selectSession（C-W5-1 债务已清偿）；空态承接 [D7]
- *   由 core enterEmptyChatState 经 flow 端口完成。
+ * - C-W5-1 → [HISTORICAL]（renderer-deepening D3/D4 推翻，u5.2）：selectSession 曾壳重编排
+ *   （理由「core.selectSession 是闭合函数，renderer 步骤无法插入」）——u5.1 起 core 持完整
+ *   12 步切入链 + sessionEntry 端口束，renderer 专属步骤（取消 flow/清未读/流订阅/LRU/文件树）
+ *   经端口注入。壳 selectSession 现为一行代理 core.selectSession，链唯一载体在
+ *   core domain/session/use-session.ts（改时序只改那一处，12 步顺序有接口级断言）。
+ *   deleteSession/deleteFolder 的 wasActive 回退原「缺 ensureStreamSubscription」接缝债随之闭合
+ *   （回退路径经同一 core 链，端口已接线；main 侧曾以 selectSessionFallback 端口注入壳版
+ *   selectSession 清偿同一债务——D3 路线下 core 链即完整链，壳不再注入该端口）。
  * - C-W5-5（ADR-0059 重构）：sessionStore 经 pinia useSessionStore() cast 成 core factory 类型。
  *   core createUseSession 经方法访问 store（getActiveId/setActiveId/getList，ADR-0059 决策 1），
  *   方法闭包持原始 ref，pinia unwrap 不影响方法内部 .value。消除原 raw 双轨 + config.sessions 桥接。
  *
  * 边界（C-W4-3 / FU-1）：thinkingLevel apply / panel.loadSession / navigation.push / send /
  * transition 留 useNewTaskFlow 壳（submitFirstMessage 改调 core createSessionFlow，见该文件）。
+ *
+ * 命名收尾（2026-09-03 dev-merge dev-0.9.14）：本文件由 useSidebar.ts 重命名接管原名——
+ * main 侧 2026-08-31 已独立完成同一 strangler 收尾（af96fa94c），两侧合并时采纳其终态命名。
  */
 import type { ComputedRef } from 'vue'
 import type { SessionSummary } from '@xyz-agent/shared'
@@ -36,9 +41,10 @@ import type {
   NavigationPort,
   SessionCleanupHooks,
   NewTaskFlowPort,
+  SessionEntryPort,
 } from '@xyz-agent/core'
 import { chat as chatApi, session as sessionApi, extension as extensionApi } from '@/api'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import { useChatStore } from '@/stores/chat'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'
@@ -156,13 +162,34 @@ export function useSidebar() {
     currentSession: () => useNewTaskFlow().currentSession.value,
   }
 
+  // ── sessionEntry 端口束接线（D3，u5.2）：切入链跨域步骤注入 core 12 步链 ──
+  // 时序不变量（含 C-W3-4「订阅先于 panel 载入」）由 core 链本体保证，实现侧无需关心顺序；
+  // 适配映射：cancelActiveFlow←useNewTaskFlow / clearUnread←useSessionMarkers /
+  // ensureStreamSubscription←useChat 壳包装（(sid, chat, sessionStore) 签名收窄为 (sid)）/
+  // touchRecency+evictLru←chat store LRU / preloadFileTree←useFileTree。
+  const sessionEntry: SessionEntryPort = {
+    cancelActiveFlow: () => {
+      const newTaskFlow = useNewTaskFlow()
+      if (newTaskFlow.isActive.value) newTaskFlow.cancelFlow()
+    },
+    clearUnread: (sid) => clearUnread(sid),
+    ensureStreamSubscription: (sid) =>
+      ensureStreamSubscription(sid, chat, useSessionStoreSafe()),
+    touchRecency: (sid) => chat.touchLru(sid),
+    preloadFileTree: (sid) => {
+      void useFileTree().loadTree(sid)
+    },
+    // panelSessionId 由 core 链在步 11 已完成 recency 刷新后透传；壳实现执行驱逐本体即可
+    evictLru: () => chat.evictIfNeeded(),
+  }
+
   // ── sessionStore：pinia useSessionStore cast 成 core factory 类型（ADR-0059 cast 接缝）──
   // pinia setup store unwrap ref（外部拿值非 ref），与 core createSessionStore 返回的 ref 类型不兼容。
   // cast 是 pinia + core factory 结合的固有类型鸿沟（ADR-0059 决策 3）。createUseSession 内部经方法
   // 访问（getActiveId/setActiveId/getList），方法闭包持原始 ref，pinia/raw 双模式下都正常工作。
   const sessionStore = useSessionStore() as unknown as ReturnType<typeof createSessionStore>
 
-  // ── core createUseSession（headless 编排；proxy 无 renderer 时序的方法）──
+  // ── core createUseSession（12 步切入链唯一载体；sessionEntry 接线后全链生效）──
   const core = createUseSession({
     store: sessionStore,
     api,
@@ -171,10 +198,7 @@ export function useSidebar() {
     chat: chatPort,
     hooks,
     flow,
-    // C-W5-1 债务清偿：deleteSession/deleteFolder 的 wasActive 回退走壳版 selectSession
-    // （含 ensureStreamSubscription 先于 panel 载入的 renderer 时序），不再走 core headless
-    // 路径。函数声明提升 + 闭包延迟求值，此处引用后文定义的 selectSession 安全。
-    selectSessionFallback: (id) => selectSession(id),
+    sessionEntry,
   })
 
   /** 当前焦点 panel 绑定的 session（UI 高亮 SSOT）——代理 core.focusedSessionId */
@@ -188,98 +212,41 @@ export function useSidebar() {
   const syncSessionToPanel = core.syncSessionToPanel
 
   /**
-   * selectSession——壳重编排（C-W5-1，不代理 core.selectSession）。
+   * selectSession —— 一行代理 core.selectSession（D3/D4，u5.2）。
    *
-   * 完整 12 步时序（旧版自持编排的 selectSession 逐条迁移，旧轨已删）：
-   * flow.cancelFlow(若活跃) → api.switchSession → sessionStore.activeId=id → clearUnread →
-   * ensureStreamSubscription → chat.touchLru → syncSessionToPanel → navigation.push →
-   * hydrate(若未 hydrate) → fileTree.loadTree(火忘) →
-   * touchLru(panel绑定session) → evictIfNeeded。
-   * [P4 s5 drawer-widget-removal] consumePendingOpen 步骤已删（pendingOpen 机制随 tasks 域移除）。
-   *
-   * ensureStreamSubscription 须先于 syncSessionToPanel（C-W3-4）——panel 载入后 MessageStream
-   * 挂载，订阅必须先就绪否则 snapshot 回放事件被丢（2026-07-29 handoff 回复丢失事故）。
+   * 完整 12 步切入链在 core domain/session/use-session.ts 单点编排（唯一载体）：
+   * cancelActiveFlow → switchSession → setActiveId → clearUnread → ensureStreamSubscription →
+   * touchRecency → syncSessionToPanel → navigation.push → hydrate/reconcile → preloadFileTree →
+   * touchRecency(panel 绑定 session) → evictLru。renderer 专属步骤经上方 sessionEntry 端口注入；
+   * C-W3-4 时序前提（订阅先于 panel 载入，防 snapshot 回放丢失）由 core 链步 5→7 顺序保证。
    */
-  /**
-   * postLoadSession —— session 载入后的通用编排（selectSession/restoreSession 共享）。
-   * clearUnread → ensureStreamSubscription → touchLru → syncSessionToPanel → navigation →
-   * hydrate(getHistory) → fileTree → evictIfNeeded。
-   * 前置约束：调用方须先 setActiveId(id)——ensureStreamSubscription/syncSessionToPanel 依赖
-   * 当前 activeId 路由到正确 session 分区（ADR-0049 + 架构约定 #7）。
-   * [P4 s5 drawer-widget-removal] consumePendingOpen 步骤已删（pendingOpen 机制随 tasks 域移除）。
-   */
-  async function postLoadSession(id: string): Promise<void> {
-    // 清除未读标记：用户主动查看该 session，不再显示未读 badge
-    clearUnread(id)
-    // ensureStreamSubscription：同步注册 events.on handler + fire-and-forget subscribeSession
-    ensureStreamSubscription(id, chat, useSessionStoreSafe())
-    // W3 H3：更新 LRU recency（在 syncSessionToPanel 之前，确保当前 session 不被驱逐）
-    chat.touchLru(id)
-    syncSessionToPanel(id)
-    navigationPort.push({ view: 'chat', sessionId: id })
-    // 历史回填/刷新（后台 session reconcile）：首次等价 hydrate；已 hydrate 则增量刷新到
-    // 最新 entries（agent-managed 子 session 的 turn 可能在前端不在场时完成，一次性守卫会让
-    // 最后输出永不出现）+ 保留尾部 streaming 实体（进行中轮次不断链，见 store reconcileHistory）。
-    if (!chat.isHydrated(id)) {
-      try {
-        const { messages, historyTruncated } = await chatApi.getHistory(id)
-        chat.reconcileHistory(id, messages)
-        useChat().setHistoryTruncated(id, historyTruncated)
-        chat.clearHistoryError(id)
-      } catch {
-        chat.markHistoryFailed(id)
-      }
-    } else {
-      // 已 hydrate：静默刷新（失败不阻断——旧数据仍在，下次切入重试）
-      try {
-        const { messages, historyTruncated } = await chatApi.getHistory(id)
-        chat.reconcileHistory(id, messages)
-        // reconcile 整量替换分区：尾读（RPC 失败 fallback 20-turn）会把 load-more 前插的
-        // 更早历史截回尾窗——truncated 标记必须同步刷新（对齐 core use-session 同款修复）：
-        // true 时 load-more 按钮重显（hydrate 锚不被 reconcile 触碰，锚定切分仍可恢复全量）；
-        // false 时清标记，与「分区已替换为全量」一致。
-        useChat().setHistoryTruncated(id, historyTruncated)
-      } catch (e) {
-        // 已 hydrate 刷新失败不阻断切入——旧数据仍在，下次切入重试；warn 留排查痕迹
-        console.warn('[useSidebar] background reconcile refresh failed for', id, e)
-      }
-    }
-    // 文件树预加载：切 session 即拉取，侧栏「文件」tab 计数立即更新。fire-and-forget 失败不阻断。
-    void useFileTree().loadTree(id)
-    // [lru-panel-exempt-fix] evictIfNeeded 前刷新 panel 绑定 session 的 LRU recency
-    if (panel.currentLeaf.sessionId) chat.touchLru(panel.currentLeaf.sessionId)
-    chat.evictIfNeeded()
-  }
-
-  async function selectSession(id: string): Promise<void> {
-    // flow 活跃（landing/overlay）时切 session → cancelled（AC-3.10，避免 overlay 卡死 + landing 残留）
-    const newTaskFlow = useNewTaskFlow()
-    if (newTaskFlow.isActive.value) newTaskFlow.cancelFlow()
-
-    await sessionApi.switchSession(id)
-    sessionStore.setActiveId(id)
-    await postLoadSession(id)
-  }
+  const selectSession = core.selectSession
 
   /**
    * restoreSession —— 显式重开 dead session（重新 spawn pi）。
-   * 编排对齐 selectSession，但第一步用 sessionApi.restoreSession（显式 RPC）替代 switchSession。
-   * cancelFlow → restoreSession RPC → setActiveId → postLoadSession → revive（dead→idle 统一收口）。
-   * 解决：模式 A（useI18n 报错——须由调用方在 setup 内解构后调闭包）、模式 B（隐式分支）。
+   * 编排对齐 selectSession，但切入 RPC 用 sessionApi.restoreSession（显式重新 spawn，区别于
+   * switchSession 的「内存已有则纯切换」语义）替代。壳侧职责收缩为：restore RPC 前置取消 flow
+   * （保持取消先于 RPC 的原时序）+ 成功后经 core 12 步链切入 + revive（dead→idle 统一收口）。
+   *
+   * 与壳版链的两处已知等价偏差（u5.2 记录）：① core 链步 1 的 cancelActiveFlow 对本路径是
+   * no-op 冗余（壳已在 RPC 前取消）；② core 链步 2 会补发一次 switchSession RPC——runtime 对
+   * 已存在 session 的 switch 是纯读 + reply（session-message-handler.ts session.switch 分支），
+   * 无副作用，代价仅一次往返（紧邻的 getHistory 本就是 RPC）。
    */
   async function restoreSession(id: string): Promise<void> {
+    // flow 活跃（landing/overlay）时重开 session → cancelled（AC-3.10，避免 overlay 卡死 + landing 残留）
     const newTaskFlow = useNewTaskFlow()
     if (newTaskFlow.isActive.value) newTaskFlow.cancelFlow()
 
     await sessionApi.restoreSession(id)
-    sessionStore.setActiveId(id)
-    await postLoadSession(id)
+    await core.selectSession(id)
     sessionStore.revive(id)
   }
 
   /**
-   * newSession——壳重编排（调壳版 selectSession，不代理 core.newSession）。
-   * 委托 useNewTaskFlow.startFlow + selectSession 载入。返回新 id；延迟 create 返回 null。
+   * newSession——壳重编排（不代理 core.newSession：壳侧补 presetCwd ?? workspaceStore.defaultCwd
+   * 兜底，core 版无此回退）。委托 useNewTaskFlow.startFlow + selectSession（core 12 步链）载入。
+   * 返回新 id；延迟 create 返回 null。
    */
   let newTaskInFlight = false
   async function newSession(presetCwd?: string): Promise<string | null> {
@@ -303,10 +270,10 @@ export function useSidebar() {
     }
   }
 
-  // ── 代理 core 无 renderer 时序的方法（deleteSession/deleteFolder/retryHistory/renameSession/loadSessions）──
-  // deleteSession/deleteFolder 的 wasActive 回退已升级为 shell 版 selectSession（上方
-  // selectSessionFallback 端口注入，C-W5-1 债务已清偿）；空态承接 [D7] push + startFlow
-  // 由 core enterEmptyChatState 经 flow 端口完成（与新壳 useNewTaskFlow 同一实例）。
+  // ── 代理 core 方法（deleteSession/deleteFolder/retryHistory/renameSession/loadSessions）──
+  // [D3 接缝债已闭合] deleteSession/deleteFolder 的 wasActive 回退走 core.selectSession——
+  // sessionEntry 端口接线后回退路径执行完整 12 步链（含 ensureStreamSubscription），
+  // 原「回退后新 session 无流订阅」债务消除。
   const retryHistory = core.retryHistory
   const renameSession = core.renameSession
   const deleteSession = core.deleteSession

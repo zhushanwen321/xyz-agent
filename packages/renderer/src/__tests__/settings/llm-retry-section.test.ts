@@ -18,7 +18,7 @@
  *  - provider 全未设：三输入留空 = 未设 → 保存成功，载荷 provider 键值为 undefined（留空路径回归）；
  *  - 小数秒组装：baseDelay=1.005 → baseDelayMs 1005（Math.round 消浮点尾差，校验通过）。
  *
- * mock 策略：vi.mock('@/api/domains/config') 替换读写 RPC；toast 走 useToast mock 捕获。
+ * mock 策略：vi.mock core transport config 域（dev-merge 后组件直引 @xyz-agent/core/transport/api/domains/config）替换读写 RPC；toast 走 useToast mock 捕获。
  *
  * 运行：npx vitest run src/__tests__/settings/llm-retry-section.test.ts（packages/renderer 目录）
  */
@@ -36,7 +36,7 @@ const toastMock = vi.hoisted(() => ({
   error: vi.fn(),
 }))
 
-vi.mock('@/api/domains/config', () => configApiMock)
+vi.mock('@xyz-agent/core/transport/api/domains/config', () => configApiMock)
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ info: toastMock.info, error: toastMock.error, warning: vi.fn() }),
 }))

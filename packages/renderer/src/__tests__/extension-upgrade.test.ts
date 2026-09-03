@@ -5,22 +5,25 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-// Mock transport 和 pending 模块（vi.mock 会自动提升到文件顶部）
-// （send 返回 true = 消息已送出，符合 transport.send 的 boolean 契约：
+// Mock core ws-client 和 pending 源文件（vi.mock 会自动提升到文件顶部）。
+// request 已下沉 core（tc u1），出站链路 domains → core request → core ws-client/pending，
+// mock 目标须与 core 内相对 import 同一模块 ID 才能拦截；断言用的 namespace import
+// 同步指向被 mock 的模块（否则拿到真实 re-export 而非 mock 实例）。
+// （send 返回 true = 消息已送出，符合 ws-client.send 的 boolean 契约：
 // request.command 对 send false 会调 pending.reject 走 fast-fail，mock 需提供 reject）
-vi.mock('../api/transport', () => ({
+vi.mock('@xyz-agent/core/transport/ws-client', () => ({
   send: vi.fn((): boolean => true),
 }))
 
-vi.mock('../api/pending', () => ({
+vi.mock('../../../core/src/transport/api/pending', () => ({
   createCommandId: vi.fn(() => 'test-id'),
   register: vi.fn(() => Promise.resolve()),
   reject: vi.fn(),
 }))
 
-import * as extension from '../api/domains/extension'
-import * as transport from '../api/transport'
-import * as pending from '../api/pending'
+import * as extension from '@xyz-agent/core/transport/api/domains/extension'
+import * as transport from '@xyz-agent/core/transport/ws-client'
+import * as pending from '../../../core/src/transport/api/pending'
 
 describe('extension domain upgrade', () => {
   beforeEach(() => {

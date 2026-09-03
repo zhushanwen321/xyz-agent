@@ -23,9 +23,10 @@ import type { Segment } from '@xyz-agent/shared'
 import type { BashCommandExtract, StagingAction, StagingConfig } from '../types'
 
 /**
- * ComposerInput 实例最小契约（getSegments 经 defineExpose 暴露）。
- * 用结构类型避免 import .vue 文件（循环依赖 + 类型推断复杂），
- * 同 useComposerSubmit / useComposerRestore 范式。
+ * 本模块视角的最小契约：发送前快照只需 getSegments。
+ * getSegments 不在域级权威接口 ComposerInputInstance（../types，context 消费面）内，
+ * 有意不扩权威接口收编——dispatch 消费面字段留在消费模块局部声明（同 context-chips 立场，
+ * 避免强行扩展权威契约边界），壳层 ComposerInput.vue 的 defineExpose 同时满足两者（结构类型）。
  */
 interface ComposerInputInstance {
   getSegments: () => Segment[]

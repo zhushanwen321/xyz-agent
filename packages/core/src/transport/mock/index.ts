@@ -10,7 +10,7 @@
  * 依赖方向：无（不 import transport/events/pending，独立内存实现）。
  *
  * [W17] ⚠️ 事件总线共享警告：mock 直接复用 real events 总线（pushSession/dispatchSession
- * 走的是 real `@/api/events`），mock 推送的 server-push 会被所有经 events.on 注册的订阅者收到。
+ * 走的是 real events，core transport/api/events），mock 推送的 server-push 会被所有经 events.on 注册的订阅者收到。
  * 因此 **mock 不可与 real 模式同进程加载**——若 real ws-client 已连，mock 推送会污染 real 订阅者。
  * 工程约定：测试/E2E/演示环境只用 mock（VITE_MOCK=true），生产构建不走 mock 门面（api/index
  * 在构建期静态选 real），两者互斥。若检测到 mock 与 real 同时激活（first-push 时 ws-client 已
@@ -32,12 +32,13 @@ import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from 
 import { fixtureProviders, fixtureSkills, fixtureAgents, fixtureExtensions, toCandidate } from './settings-data'
 import { MOCK_MODELS, mockModelToInfo, MENTION_CANDIDATES, FILE_CANDIDATES } from './composer-data'
 import { SEARCH_MOCK, SEARCH_RECENTS, SEARCH_SUGGESTED_COUNT, type SearchItem } from './search-data'
-import type { Section } from '@xyz-agent/core'
+// 相对路径直达定义处（new-task-search/types.ts）：经 '@xyz-agent/core' barrel 回引会成环，ESM 序隐患
+import type { Section } from '../../domain/new-task-search/types'
 import { runSendStream, type Timing } from './run-send-stream'
 import { makeMockSubscription, type GlobalHandler } from './subscription'
-import * as events from '../events'
+import * as events from '../api/events'
 // [W17] 检测 real ws-client 是否已 connected（mock 与 real 同进程时打 warn，防 events 总线污染）
-import * as wsClient from '@/lib/ws-client'
+import * as wsClient from '../ws-client'
 // [W4] getSystem/updateSystem 持久化已迁 @xyz-agent/core domain/settings/system-storage
 // （经 PlatformPort.storage KVStorage，renderer 壳 useSettingsShell providePlatform 注入）。
 // mock 不再转发这两个方法（消费方已切 core getSystem(getPlatform().storage)）。
@@ -95,9 +96,15 @@ function pushSession(sessionId: string, msg: ServerMessageUnion): void {
 /**
  * E2E 注入：VITE_E2E === 'true' 时把 e2eTestSession（cwd 指向 e2e/fixtures/sample-project）
  * 并入 fixtureSessions 快照，让 W8 文件树 E2E 拿到带确定 cwd 的 session。
- * renderer 是浏览器环境读不到 process.env，故用 Vite 构建期注入的 import.meta.env.VITE_E2E。
+ * [tc-transport-consolidation u3] core 不能读 import.meta.env——VITE_E2E 构建期值改由壳
+ * facade 注入（api/index.ts 调 setMockE2E）；未注入时默认 false（非 E2E）。
  */
-const isE2E = import.meta.env.VITE_E2E === 'true'
+let isE2E = false
+
+/** 壳注入 VITE_E2E 构建期值（renderer facade 调用；core 保持无 Vite env 依赖） */
+export function setMockE2E(enabled: boolean): void {
+  isE2E = enabled
+}
 
 /** 按 cwd 聚合 fixtureSessions 为 SessionGroup[]（config.sessions reply 与 server-push 共用） */
 function buildGroups(): SessionGroup[] {

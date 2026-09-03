@@ -53,8 +53,10 @@ export default [
   // settings/workspace/composer 共 9 个域），天然需要超 500 行。拆分到 per-domain 文件需要重构
   // 内部共享函数（pushSession/emit/sleep/fixtureSessions 等），收益不抵成本。fixture 数据已拆到
   // data.ts/settings-data.ts/composer-data.ts/workflow-data.ts。
+  // [tc-transport-consolidation u3→u5] 文件已迁 core（原 packages/renderer/src/api/mock/index.ts），
+  // 豁免 glob 跟随真源路径。
   {
-    files: ['packages/renderer/src/api/mock/index.ts'],
+    files: ['packages/core/src/transport/mock/index.ts'],
     rules: {
       'max-lines': 'off',
     },
@@ -194,13 +196,16 @@ export default [
   // max-lines-per-function 规则不适用（项目已裁定该场景为误报，对齐 renderer chat.ts 同款 override）。
   // B6 *Impl 消除（FR2 内联）后函数体 345 行；深模块化已由 streaming-state-machine 承担（FR1），
   // 不再为绕行数拆分模块级函数（B6 反模式）。
+  // [u6.1] D6 facet 收口：testInternals 命名空间 + ChatStoreReaders/ChatStoreOps 类型及
+  // 编译期完备性/互斥断言就地挂本文件（facet 与 return 面同文件才能锚定 Pick 键集），
+  // 文件总行数超 500——对齐 renderer stores/chat.ts 同款「唯一聚合中心」总行数豁免。
   {
     files: ['packages/core/src/domain/chat/store.ts'],
     rules: {
       'max-lines-per-function': 'off',
-      // chat store 聚合中心（packages 域上限 500 下 580 行，live/reload 双通路共用
-      // reducer 的等价性设计要求单一 applyEntry 归属地）。拆分属独立重构，短期 override。
-      'max-lines': ['warn', { max: 650, skipBlankLines: true, skipComments: true }],
+      // chat store 聚合中心：live/reload 双通路共用 reducer 的等价性设计要求单一 applyEntry
+      // 归属地，拆分属独立重构——行数豁免（总行数豁免理由见上 [u6.1] 注释）。
+      'max-lines': 'off',
     },
   },
   // [HISTORICAL] buildWorkerScript 是 worker 源码生成器——返回单一字符串数组的纯模板函数，

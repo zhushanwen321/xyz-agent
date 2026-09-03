@@ -27,7 +27,7 @@ import { computed, watch, onScopeDispose, type Ref } from 'vue'
 import type { InternalEvent, DialogRequest } from '@xyz-agent/core'
 import type { ExtensionInteractMethod } from '@xyz-agent/shared'
 import { getExtensionBus } from '@/composables/shell/useExtensionHostBridge'
-import { onUITimeout, sendExtensionUIResponse, getPendingRequests, type ExtensionUIRequest } from '@/api/domains/extension'
+import { onUITimeout, sendExtensionUIResponse, getPendingRequests, type ExtensionUIRequest } from '@xyz-agent/core/transport/api/domains/extension'
 import { useExtensionUIStore } from '@/stores/extension-ui'
 
 /** 入队过滤谓词：返回 true 的请求才入队 */

@@ -11,7 +11,7 @@ import { ref, computed, watch, type Ref } from 'vue'
 import type { NormalizedQuotaRow, QuotaPreset, ProviderInfo, QuotaAuthKind, QuotaFetchFailureReason } from '@xyz-agent/shared'
 import { QUOTA_PRESETS } from '@xyz-agent/shared'
 import type { QuotaConfigureState, QuotaTestStatus } from '@xyz-agent/core'
-import * as quotaApi from '@/api/domains/quota'
+import * as quotaApi from '@xyz-agent/core/transport/api/domains/quota'
 import i18n from '@/i18n'
 import { useQuotaStore } from '@/stores/quota'
 

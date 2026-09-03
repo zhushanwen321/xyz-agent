@@ -65,7 +65,7 @@ vi.mock('@/composables/features/chat/useSessionDerivations', () => ({
 vi.mock('@/composables/features/sidebar/useSidebarSubagentActions', () => ({
   useSidebarSubagentActions: () => ({ stopSubagent: vi.fn() }),
 }))
-vi.mock('@/api/events', () => ({
+vi.mock('@xyz-agent/core/transport/api', () => ({
   onGlobalType: vi.fn(() => () => {}),
   dispatchSession: vi.fn(),
 }))

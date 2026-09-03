@@ -157,7 +157,8 @@ describe.skipIf(!REAL_PI_READY)(
     try {
       const store = scope.run(() => createChatStore())!
       for (const f of feed) store.applyMessageEvent(sid, f)
-      const state = store._entryStatesForTest.get(sid)
+      // u6.1 收编：_entryStatesForTest 已并入 testInternals 命名空间（对齐 core custom-start-equivalence.test.ts 的嵌套路径）
+      const state = store.testInternals._entryStatesForTest.get(sid)
       expect(state).toBeDefined()
       return state!
     } finally {

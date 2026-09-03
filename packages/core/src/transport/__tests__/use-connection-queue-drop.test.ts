@@ -40,6 +40,17 @@ vi.mock('../ws-client', () => ({
 const mockReject = vi.fn()
 const mockT = vi.fn((key: string) => `[${key}]`)
 
+// pending 模块 mock（D3 后 use-connection 的 reject 直连 transport/api/pending，
+// 不再经 ConnectionPorts 注入——mock 须拦截模块本身；闭包转发 mockReject，
+// 工厂执行早于 const 初始化，惰性解引用避开 TDZ）
+vi.mock('../api/pending', () => ({
+  reject: (...args: unknown[]) => mockReject(...args),
+  rejectAll: vi.fn(),
+  resolve: vi.fn(),
+  has: vi.fn(),
+  resolveEnvelope: vi.fn(),
+}))
+
 function makePorts(isMock: boolean): ConnectionPorts {
   return {
     ipc: {
@@ -56,21 +67,7 @@ function makePorts(isMock: boolean): ConnectionPorts {
       onVisibilityChange: () => () => {},
     },
     env: { isMock, isDev: false },
-    pending: {
-      reject: (...args: unknown[]) => mockReject(...args),
-      rejectAll: vi.fn(),
-      resolve: vi.fn(),
-      has: vi.fn().mockReturnValue(true),
-      resolveEnvelope: vi.fn(),
-    },
-    events: {
-      dispatchSession: vi.fn(),
-      dispatchGlobal: vi.fn(),
-      dispatchCrossSession: vi.fn(),
-    },
-    subscribe: vi.fn().mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 }),
     effects: {},
-    toast: { error: vi.fn() },
     t: mockT,
     onRuntimeUnavailable: vi.fn(),
   }

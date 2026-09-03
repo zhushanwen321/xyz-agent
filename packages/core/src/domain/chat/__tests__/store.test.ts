@@ -430,7 +430,7 @@ describe('createChatStore factory', () => {
       const id = sut.store.appendUser(sid, textToSegments('hello'))
       // reducer 不喂：user entry 唯一来源 = 真实 message_end(user)（W22 等价性——乐观 entry
       // 与真实帧双喂会双计同一条 user 消息）
-      expect(sut.store._entryStatesForTest.get(sid)).toBeUndefined()
+      expect(sut.store.testInternals._entryStatesForTest.get(sid)).toBeUndefined()
       // ref 消息（overlay）：id = entry.id 派生——clientUuid 映射链（useChat）消费同一值
       expect(sut.store.getMessages(sid)[0].id).toBe(id)
       expect(sut.store.getMessages(sid)[0].role).toBe('user')
@@ -479,7 +479,7 @@ describe('createChatStore factory', () => {
       // ref：乐观 user 一条（真实帧不 commit ref——与 W21 assistant 同款 overlay 分工）
       expect(sut.store.getMessages(sid)).toHaveLength(1)
       // reducer：真实帧一条（乐观不喂）
-      const liveMsgs = sut.store._entryStatesForTest.get(sid)!.messages
+      const liveMsgs = sut.store.testInternals._entryStatesForTest.get(sid)!.messages
       expect(liveMsgs).toHaveLength(1)
       // 重开侧：同形态 user entry（pi 持久化形态——content 纯文本）重放同一 reducer
       const reloadState = replayEntries([{
@@ -790,32 +790,32 @@ describe('createChatStore factory', () => {
       sut.store.setMessages('s2', [userMsg('m2')])
       sut.store.isGenerating('s1') // 惰性建 flag（false，非豁免）
       sut.store.isGenerating('s2')
-      expect(sut.store._sessionStreamingFlagsForTest.has('s1')).toBe(true)
-      expect(sut.store._sessionStreamingFlagsForTest.has('s2')).toBe(true)
+      expect(sut.store.testInternals._sessionStreamingFlagsForTest.has('s1')).toBe(true)
+      expect(sut.store.testInternals._sessionStreamingFlagsForTest.has('s2')).toBe(true)
 
       sut.store.evictSessionWithVirtual('s1') // 非豁免（无 streaming）→ 驱逐
       expect(sut.store.getMessages('s1')).toHaveLength(0)
-      expect(sut.store._sessionStreamingFlagsForTest.has('s1')).toBe(false)
-      expect(sut.store._sessionStreamingFlagsForTest.has('s2')).toBe(true)
+      expect(sut.store.testInternals._sessionStreamingFlagsForTest.has('s1')).toBe(false)
+      expect(sut.store.testInternals._sessionStreamingFlagsForTest.has('s2')).toBe(true)
     })
 
     it('evictVirtualKey 清虚拟 key 的 flags（subagent 分区驱逐泄漏防护）', () => {
       const virtualId = 'subagent:s1:c1'
       sut.store.setMessages(virtualId, [userMsg('m1')])
       sut.store.isGenerating(virtualId)
-      expect(sut.store._sessionStreamingFlagsForTest.has(virtualId)).toBe(true)
+      expect(sut.store.testInternals._sessionStreamingFlagsForTest.has(virtualId)).toBe(true)
 
       sut.store.evictVirtualKey(virtualId)
-      expect(sut.store._sessionStreamingFlagsForTest.has(virtualId)).toBe(false)
+      expect(sut.store.testInternals._sessionStreamingFlagsForTest.has(virtualId)).toBe(false)
     })
 
     it('disposeSession 清 flags', () => {
       sut.store.setMessages('s1', [userMsg('m1')])
       sut.store.isGenerating('s1')
-      expect(sut.store._sessionStreamingFlagsForTest.has('s1')).toBe(true)
+      expect(sut.store.testInternals._sessionStreamingFlagsForTest.has('s1')).toBe(true)
 
       sut.store.disposeSession('s1')
-      expect(sut.store._sessionStreamingFlagsForTest.has('s1')).toBe(false)
+      expect(sut.store.testInternals._sessionStreamingFlagsForTest.has('s1')).toBe(false)
     })
 
     it('驱逐后再次 isGenerating 重建 flag 且行为正确（复访兜底）', () => {
@@ -825,7 +825,7 @@ describe('createChatStore factory', () => {
       // 驱逐后 flag 已清；重新写入消息后再问 → 重建 flag，派生值正确
       sut.store.setMessages('s1', [streamingAssistant('a1')])
       expect(sut.store.isGenerating('s1')).toBe(true)
-      expect(sut.store._sessionStreamingFlagsForTest.has('s1')).toBe(true)
+      expect(sut.store.testInternals._sessionStreamingFlagsForTest.has('s1')).toBe(true)
     })
   })
 
@@ -1108,7 +1108,7 @@ describe('createChatStore factory', () => {
           message: { role: 'user', content: 'hello', timestamp: 1000 },
         },
       }))
-      const state = s.store._entryStatesForTest.get(sid)
+      const state = s.store.testInternals._entryStatesForTest.get(sid)
       expect(state?.messages).toHaveLength(1)
       expect(state?.messages[0]).toMatchObject({ role: 'user', content: [{ type: 'text', text: 'hello' }], status: 'complete' })
       // ref 不动（send 时 appendUser 的乐观消息负责实时渲染；ref 收敛归 W22 对账）
@@ -1143,7 +1143,7 @@ describe('createChatStore factory', () => {
           message: { role: 'toolResult', toolCallId: 'tc-9', toolName: 'read', content: [{ type: 'text', text: 'file body' }], isError: true, timestamp: 3000 },
         },
       }))
-      const state = s.store._entryStatesForTest.get(sid)
+      const state = s.store.testInternals._entryStatesForTest.get(sid)
       // reducer：assistant 投影（toolCalls completed）+ toolResult 窗口局部配对回填（isError → error 态）
       expect(state?.messages).toHaveLength(1)
       const tc = state?.messages[0].toolCalls?.[0]
@@ -1157,7 +1157,7 @@ describe('createChatStore factory', () => {
       s.store.applyMessageEvent(sid, msg(sid, 'message.message_end', {
         entry: { type: 'compaction', timestamp: new Date(0).toISOString(), summary: 'x' },
       }))
-      expect(s.store._entryStatesForTest.has(sid)).toBe(false)
+      expect(s.store.testInternals._entryStatesForTest.has(sid)).toBe(false)
       s.dispose()
     })
 
@@ -1167,9 +1167,9 @@ describe('createChatStore factory', () => {
       s.store.applyMessageEvent(sid, msg(sid, 'message.message_end', {
         entry: { type: 'message', parentId: null, timestamp: new Date(0).toISOString(), message: { role: 'user', content: 'x', timestamp: 0 } },
       }))
-      expect(s.store._entryStatesForTest.has(sid)).toBe(true)
+      expect(s.store.testInternals._entryStatesForTest.has(sid)).toBe(true)
       s.store.disposeSession(sid)
-      expect(s.store._entryStatesForTest.has(sid)).toBe(false)
+      expect(s.store.testInternals._entryStatesForTest.has(sid)).toBe(false)
       s.dispose()
     })
   })

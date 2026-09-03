@@ -24,7 +24,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ServerMessage, SkillInfo } from '@xyz-agent/shared'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import { getSettingsStore, __resetSettingsStoreForTesting } from '@xyz-agent/core'
 import { __resetCommandStoreForTesting } from '@/composables/features/command/useCommandStore'
 import CommandPopover from '@/components/panel/CommandPopover.vue'
@@ -37,7 +37,7 @@ const getGlobalSkillsMock = vi.hoisted(() => vi.fn().mockResolvedValue([]))
 // 但 mock 须声明 session 导出防 vi.mock 的严格校验。
 const getCommandsMock = vi.hoisted(() => vi.fn().mockResolvedValue({ sessionId: '', commands: [] }))
 vi.mock('@/api', async () => {
-  const realEvents = await import('@/api/events')
+  const realEvents = await import('@xyz-agent/core/transport/api')
   return {
     config: {
       getGlobalSkills: getGlobalSkillsMock,

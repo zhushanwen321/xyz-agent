@@ -2,7 +2,7 @@
  * Events 层 —— ServerMessage 订阅分发。
  *
  * 三条独立通道：
- * - session 通道（on/off/dispatch/dispatchSession）：按 sessionId 路由。CLAUDE.md line 98
+ * - session 通道（on/off/dispatchSession）：按 sessionId 路由。CLAUDE.md line 98
  *   要求 session 级消息必须含 sessionId。隔离规则不变。
  * - global 通道（onGlobal/onGlobalType/dispatchGlobal）：无 sessionId 的 server-push
  *   （config.providers / model.list / config.skills / config.agents / config.plugins /
@@ -11,9 +11,9 @@
  *   全局单例消费者的消息（ADR-0060）。合法消费者仅 ExtensionHost（+ 未来远程化协同态），
  *   per-session 消费用 on(sid, handler)，不要用本通道。
  *
- * 三通道互不串扰。routeInbound（useConnection）按 payload.sessionId 有无 + type 白名单
- * 决定走哪条（有 sid → session 通道；有 sid 且 type ∈ CROSS_SESSION_TYPES → 额外 crossSession；
- * 无 sid → global 通道）。
+ * 三通道互不串扰。route-inbound（coordination/route-inbound.ts）按 payload.sessionId 有无
+ * + ROUTE_TABLE 条目声明决定走哪条（有 sid → session 通道；有 sid 且条目 crossSession 字段
+ * 声明 → 额外 crossSession；无 sid → global 通道）。
  */
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 
@@ -54,11 +54,6 @@ export function on(sessionId: string, handler: MessageHandler): () => void {
 /** 取消订阅（按 sessionId + handler） */
 export function off(sessionId: string, handler: MessageHandler): void {
   sessionHandlers.get(sessionId)?.delete(handler)
-}
-
-/** 旧名兼容：转发到 dispatchSession */
-export function dispatch(sessionId: string, msg: ServerMessage): void {
-  dispatchSession(sessionId, msg)
 }
 
 export function dispatchSession(sessionId: string, msg: ServerMessage): void {
@@ -127,7 +122,7 @@ export function onCrossSession(handler: MessageHandler): () => void {
   }
 }
 
-/** 分发消息到 crossSession 通道（route-inbound FALLBACK 有 sid 分支调用）。ADR-0060。 */
+/** 分发消息到 crossSession 通道（route-inbound dispatchRouted 有 sid 序言的 crossSession 声明分支调用）。ADR-0060。 */
 export function dispatchCrossSession(msg: ServerMessage): void {
   if (crossSessionHandlers.size > 0) safeForEach(crossSessionHandlers, msg)
 }

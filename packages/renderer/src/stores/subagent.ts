@@ -37,7 +37,7 @@ export {
   extractMainSessionId,
 } from '@xyz-agent/shared'
 import { session as sessionApi } from '@/api'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 
 /**
  * fetchAndInject 的 chat 注入回调类型。

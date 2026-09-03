@@ -74,12 +74,6 @@ const sessionState = vi.hoisted(() => ({
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: sessionState.active, list: [], applySnapshot: vi.fn() }),
 }))
-vi.mock('@/stores/command', () => ({
-  useCommandStore: () => ({
-    pendingSlash: ref(null),
-    clearPendingSlash: vi.fn(),
-  }),
-}))
 
 // ── ComposerInput mock：defineExpose 暴露 insertSessionChip/insertFileChip spy（S1-S3 层）──
 // importOriginal 保留其余 export（ComposerInputDepsKey 等，Composer.vue provide 需要）

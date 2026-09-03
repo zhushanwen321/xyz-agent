@@ -17,6 +17,8 @@
  *   直插双路径消灭——live 与重开共用 reducer compaction case）
  * - message_end(user) 腿 2 确认制（steer-bubble u1 / D2：inflight 抵消 / includes 兜底
  *   消费 + 剔快照 / 未命中·无快照跳过 / 暂存空纯文本降级）
+ * - branchSummary：构造 branch_summary entry 喂 applyEntryFrame（D13 renderer-deepening
+ *   entry 化，fallback 与 reducer 收敛一致——live 与重开共用 reducer branch_summary case）
  *
  * 运行：cd packages/core && npx vitest run src/domain/chat/__tests__/effects.test.ts
  */
@@ -25,7 +27,7 @@ import { ref, shallowRef } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { dispatchMessageEvent } from '../effects/registry'
 import type { MessageEffectContext } from '../effect-types'
-import type { Message, PiCompactionEntry, PiCustomMessageEntry, Segment, ServerMessage } from '@xyz-agent/shared'
+import type { Message, PiBranchSummaryEntry, PiCompactionEntry, PiCustomMessageEntry, Segment, ServerMessage } from '@xyz-agent/shared'
 
 const SID = 's-test'
 
@@ -494,6 +496,63 @@ describe('dispatchMessageEvent message.compactionSummary（W6 entry 化——消
     const list = getMsgs(ctx)
     expect(list[0].content).toBe('上下文已压缩')
     expect(list[0].compactionSummary).toMatchObject({ summary: undefined, tokensBefore: undefined })
+  })
+})
+
+describe('dispatchMessageEvent message.branchSummary（D13 renderer-deepening entry 化——fallback 与 reducer 收敛一致）', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('帧 → 构造 branch_summary entry 喂 applyEntryFrame（与重开 branch_summary entry 同构）+ overlay system 行', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.branchSummary', {
+      summary: '分支摘要',
+      fromId: 'msg-9',
+      timestamp: 6000,
+    }))
+    // 喂入点：与文件重放（get_entries → replayEntries）同一个 applyEntry reducer
+    expect(ctx.applyEntryFrame).toHaveBeenCalledTimes(1)
+    const entry = vi.mocked(ctx.applyEntryFrame).mock.calls[0][1] as PiBranchSummaryEntry
+    expect(entry.type).toBe('branch_summary')
+    expect(entry.id).toMatch(/^br-/)
+    expect(entry.summary).toBe('分支摘要')
+    expect(entry.fromId).toBe('msg-9')
+    // 帧 timestamp（ms）→ entry ISO（reducer branch_summary case toMs 往返）
+    expect(entry.timestamp).toBe(new Date(6000).toISOString())
+    // overlay 投影：system 分支行（用户可见行为——live 与重开同款，live≡reload 归一
+    // deep-equal 由 branch-summary-equivalence.test.ts 全量锁定）
+    const list = getMsgs(ctx)
+    expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({
+      role: 'system',
+      content: '分支摘要',
+      status: 'complete',
+      timestamp: 6000,
+      branchSummary: { summary: '分支摘要', fromId: 'msg-9', timestamp: 6000 },
+    })
+  })
+
+  it('帧缺 summary → entry 不含可选字段，overlay 走 reducer fallback 空串（旧直插路径英文占位 Branched 由 D13 声明收敛，live ≡ reload）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.branchSummary', { fromId: 'n-1' }))
+    expect(ctx.applyEntryFrame).toHaveBeenCalledTimes(1)
+    const entry = vi.mocked(ctx.applyEntryFrame).mock.calls[0][1] as PiBranchSummaryEntry
+    expect(entry.type).toBe('branch_summary')
+    expect(entry.summary).toBeUndefined()
+    // reducer branch_summary case 的 fallback：空串（与重开 `rawSummary ?? ''` 一致）
+    const list = getMsgs(ctx)
+    expect(list).toHaveLength(1)
+    expect(list[0].content).toBe('')
+    expect(list[0].branchSummary).toMatchObject({ summary: undefined, fromId: 'n-1' })
+  })
+
+  it('空串 summary 透传（readBranchSummary 空串门）→ content 保留空行（compaction E4c 同族分叉预防）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.branchSummary', { summary: '', timestamp: 7000 }))
+    const entry = vi.mocked(ctx.applyEntryFrame).mock.calls[0][1] as PiBranchSummaryEntry
+    expect(entry.summary).toBe('')
+    const list = getMsgs(ctx)
+    expect(list[0].content).toBe('')
+    expect(list[0].branchSummary).toMatchObject({ summary: '' })
   })
 })
 
