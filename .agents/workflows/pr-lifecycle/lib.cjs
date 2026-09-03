@@ -505,7 +505,7 @@ function acquireLock(io, stateDir, engineRunId) {
     }
     try {
       io.fs.writeSync(fd, JSON.stringify({
-        runId: null, // fresh 时 runId 未生成，生成后经 updateLockContent 回填
+        runId: null, // fresh 时 runId 未生成，生成后经 writeLockContent 回填
         pid: io.pid,
         engineRunId: engineRunId || null,
         createdAt: io.now().toISOString(),
@@ -858,6 +858,11 @@ function changesetAgentPrompt(baseHash, diffStatOut, commitsOut, changesetFiles)
   ].filter(Boolean).join('\n');
 }
 
+// diff --name-only 输出 → 现有 .changeset/*.md 清单（changeset / pr-meta 两 step 同一推导）
+function listChangesetFiles(namesOut) {
+  return String(namesOut || '').split('\n').map((s) => s.trim()).filter((f) => /^\.changeset\/.+\.md$/.test(f));
+}
+
 function prMetaAgentPrompt(baseHash, commitsOut, diffStatOut, changesetFiles) {
   return [
     '任务：从分支全部 commit 自动生成 PR title 与 body（英文，无需用户提供）。',
@@ -906,6 +911,13 @@ const REAL_PI_SKIP_MARKERS = [
   '｜skip：pi 凭证不可用',
   '｜skip：env XYZ_SKIP_REAL_PI',
 ];
+
+// shared 包 src 改动 → 追加下游兜底包（coverage-gate D12：--extra-packages 追加器语义）
+function sharedSrcExtraArgs(namesOut) {
+  return /(?:^|\n)packages\/shared\/(?:.+\/*\/)?src\//.test(`\n${namesOut}`)
+    ? ['--extra-packages', 'packages/runtime,packages/renderer']
+    : [];
+}
 
 function coverageInsufficientReasonPrefix() {
   return '增量覆盖率'; // coverage-gate.py FAIL 条目 reason 固定前缀（覆盖率不足 vs 测试跑红的分流依据）
@@ -1266,7 +1278,7 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
         const diffStat = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--stat']);
         const commits = ctx.io.sh('git', ['log', `${ctx.state.baseHash}..HEAD`, '--format=%s%n%b---']);
         const names = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--name-only']);
-        const changesetFiles = names.stdout.split('\n').map((s) => s.trim()).filter((f) => /^\.changeset\/.+\.md$/.test(f));
+        const changesetFiles = listChangesetFiles(names.stdout);
         const res = await ctx.io.agent({
           description: 'changeset-draft',
           schema: CHANGESET_SCHEMA,
@@ -1293,7 +1305,7 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
         if (commits.code !== 0) throw new Error(MSG.gitFailed(['log', `${ctx.state.baseHash}..HEAD`], commits.stderr));
         const diffStat = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--stat']);
         const names = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--name-only']);
-        const changesetFiles = names.stdout.split('\n').map((s) => s.trim()).filter((f) => /^\.changeset\/.+\.md$/.test(f));
+        const changesetFiles = listChangesetFiles(names.stdout);
         const res = await ctx.io.agent({
           description: 'pr-meta',
           schema: PR_META_SCHEMA,
@@ -1373,11 +1385,7 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
       id: 'coverage-1',
       run: (ctx) => {
         const names = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--name-only']);
-        const args = [paths.coverageGate, '--base', ctx.state.baseHash];
-        // shared 包 src 改动 → 追加下游兜底包（coverage-gate D12：--extra-packages 追加器语义）
-        if (/(?:^|\n)packages\/shared\/(?:.+\/*\/)?src\//.test(`\n${names.stdout}`)) {
-          args.push('--extra-packages', 'packages/runtime,packages/renderer');
-        }
+        const args = [paths.coverageGate, '--base', ctx.state.baseHash, ...sharedSrcExtraArgs(names.stdout)];
         return gateFixLoop(ctx, {
           stepId: 'coverage-1',
           gateName: `coverage-gate.py --base ${ctx.state.baseHash}`,
@@ -1509,9 +1517,7 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
       run: async (ctx) => {
         const sharedSrcArgs = () => {
           const names = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--name-only']);
-          return /(?:^|\n)packages\/shared\/(?:.+\/*\/)?src\//.test(`\n${names.stdout}`)
-            ? ['--extra-packages', 'packages/runtime,packages/renderer']
-            : [];
+          return sharedSrcExtraArgs(names.stdout);
         };
         const outputs = await gateFixLoop(ctx, {
           stepId: 'final-gates',
@@ -1647,7 +1653,7 @@ async function freshFlow(io, params, engineRunId, stateDir, lockPath) {
   const runId = makeRunId(io.now, io.randomToken);
   if (!isValidRunId(runId)) throw new GuardError(`生成的 runId 不合法（${runId}）；检查 now/randomToken 注入`);
   writeLatest(io, stateDir, runId); // 暴毙兜底通道先落（先于任何副作用）
-  updateLockContent(io, lockPath, runId, engineRunId);
+  writeLockContent(io, lockPath, runId, engineRunId);
 
   const git = gitSnapshot(io);
   const baseHash = resolveBaseHash(io, params.base);
@@ -1765,10 +1771,6 @@ async function resumeFlow(io, params, engineRunId, stateDir) {
 function touchRunContext(io, state, engineRunId) {
   state.engineRunId = engineRunId || state.engineRunId;
   state.pid = io.pid;
-}
-
-function updateLockContent(io, lockPath, runId, engineRunId) {
-  writeLockContent(io, lockPath, runId, engineRunId);
 }
 
 module.exports = {
