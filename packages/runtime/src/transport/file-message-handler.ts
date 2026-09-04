@@ -6,6 +6,9 @@
  * 路由：
  * - file.tree        → fileService.listTree      → reply 'file.tree:result' {sessionId, tree}
  * - file.tree.expand → fileService.expandDir     → reply 'file.tree.expand:result' {sessionId, children}
+ * - file.search.cwd  → fileService.searchFilesInCwd → reply 'file.search.cwd:result' {files}
+ *   （landing cwd 路：composer $ 候选按 cwd 全量递归，reply 契约无 sessionId 字段；
+ *    cwd 无效 → FileError('not_found') 结构化失败，设计 D6 准入边界：不做目录白名单）
  * - file.read        → fileService.readFile      → reply 'file.read:result' {content, truncated, path}
  *   （file.read 从 server.ts 内联下沉到 FileService，解三层违纪 AC-2b；W2 扩展 BC-3 白名单）
  * - file.write.create/rename/delete → fileService 骨架 → reply 'file.write.*.result' {implemented:false}
@@ -38,6 +41,7 @@ export class FileMessageHandler {
     'file.tree',
     'file.tree.expand',
     'file.search',
+    'file.search.cwd',
     'file.read',
     'file.write.create',
     'file.write.rename',
@@ -73,6 +77,19 @@ export class FileMessageHandler {
           return this.ctx.reply(ws, msg.id, 'file.search:result', { sessionId, files })
         } catch (e) {
           return this.sendFileError(ws, msg.id, sessionId, e)
+        }
+      }
+      case 'file.search.cwd': {
+        // landing 态 composer $ 文件候选：按 cwd 全量递归（扫描约束与 file.search 同源——
+        // 共用 searchFilesInCwd 核心）。reply 契约无 sessionId 字段（协议定义如此）；
+        // cwd 无效 → FileError('not_found') → error envelope（D6 准入边界）。
+        const { cwd } = msg.payload
+        try {
+          const files = await this.ctx.fileService.searchFilesInCwd(cwd)
+          return this.ctx.reply(ws, msg.id, 'file.search.cwd:result', { files })
+        } catch (e) {
+          // cwd 路无 sessionId 上下文，传空串 → sendFileError 省略 details
+          return this.sendFileError(ws, msg.id, '', e)
         }
       }
       case 'file.read': {
