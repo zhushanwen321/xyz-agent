@@ -27,7 +27,7 @@ export { SLUG_MAX_LENGTH };
 
 // Params schema（跨包契约测试的真实 typebox 校验入口）。
 //
-// action:"start" 的 13 字段（task/slug/agent/model/...）拍平在顶层，不再用 startParam
+// action:"start" 的 14 字段（task/slug/agent/model/...）拍平在顶层，不再用 startParam
 // 嵌套容器包。原因：弱模型（GLM/DeepSeek）信任 schema 结构信号 > 文本信号，经常省略
 // startParam 嵌套层把 task/slug 直接平铺到顶层导致调用失败。拍平后 schema 结构与模型
 // 的自然倾向一致，消除这层误用。task/slug 必填性由 startHandler runtime 校验（flat
@@ -107,6 +107,18 @@ export const SubagentParams = Type.Object({
       "Execution engine for this subagent. Omit to inherit the global config. " +
       "Three-layer priority: this parameter > agent .md frontmatter engine > config.json defaultEngine. " +
       "Non-pi engines do not support conversation/fork/worktree (rejected before the subagent is created).",
+  })),
+  collect: Type.Optional(StringEnum(["async", "sync"], {
+    description:
+      "Completion-notification collection mode for one-shot subagents (subagent-sync-collect). " +
+      "Omit to use the config default (currently async). " +
+      "Use 'sync' when you dispatch >=2 independent one-shot subagents whose results you will combine: " +
+      "their completions are held until ALL pending sync subagents finish, then delivered as ONE batch " +
+      "notification (single wake-up, results inline). You may keep dispatching more sync subagents in " +
+      "later turns — they join the same pending batch. " +
+      "Use 'async' (or omit) for immediate per-subagent completion notifications. " +
+      "Incompatible with conversation:true — that combination is rejected immediately before start; " +
+      "remove either conversation or collect.",
   })),
   // action:"list" → listParam OPTIONAL (all fields optional, defaults apply). Ignored by other actions.
   listParam: Type.Optional(Type.Object({
