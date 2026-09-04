@@ -13,6 +13,7 @@ import type { IProcessManager } from '../ports/pi-engine.js'
 import type { IManagedSessionView } from './types.js'
 import type { SessionReplicatedStates } from './session-state-projection.js'
 import { toErrorMessage } from '../../utils/errors.js'
+import { persistModelBinding } from '../../infra/pi/session-file-utils.js'
 import { logger } from '../../infra/logger.js'
 
 /**
@@ -67,12 +68,17 @@ export class SessionModelControl {
     //（与 setThinkingLevel 的 set→get_state→effective 同款模式，PS-03/PS-01）。
     // get_state 失败 fallback 请求值（旧行为），不反噬切模型主链路。
     let effectiveModelId = newModelId
+    let effectiveThinkingLevel = session.thinkingLevel ?? ''
     try {
       const state = await client.getState()
       const model = state?.model
       const m = typeof model === 'object' && model !== null ? model as Record<string, unknown> : undefined
       if (m && typeof m.id === 'string' && m.id !== '' && typeof m.provider === 'string' && m.provider !== '') {
         effectiveModelId = `${m.provider}/${m.id}`
+      }
+      // 同次 get_state 读回 thinkingLevel（pi 生效思考等级），用于 sidecar 持久化
+      if (typeof state?.thinkingLevel === 'string') {
+        effectiveThinkingLevel = state.thinkingLevel
       }
     } catch (e) {
       // 读回失败保持请求值（下游 markDirty 防抖重拉 get_state 仍会收敛到权威值）
@@ -94,6 +100,14 @@ export class SessionModelControl {
     // 实例快照收敛后主路径照常读快照（与直写同值，无冲突）。U6：直写 get_state 读回的
     // 生效值（pi pattern 换模时 ≠ 请求值），缓存不再携带未生效的请求模型。
     session.modelId = effectiveModelId
+    // 持久化 model binding sidecar（switchModel 生效后写入 .model.json）。
+    if (session.sessionFilePath) {
+      try {
+        persistModelBinding(session.sessionFilePath, effectiveModelId, effectiveThinkingLevel)
+      } catch (e) {
+        console.warn(`[session-service] persistModelBinding failed after switchModel: ${toErrorMessage(e)}`)
+      }
+    }
     // session-trace（A33）：lifecycle RPC 成功后主动补拉——model_change 的 append 无通用事件
     //（design D4：model_change / label 无事件，这些动作由 runtime 自身发起，RPC 成功后补拉覆盖）。
     // fire-and-forget：补拉失败不影响切模型主流程（syncTraceEntries 内部吞错）。
@@ -143,6 +157,14 @@ export class SessionModelControl {
     // 见 switchModel）。值未变时 pi 不发事件、不写 entry（PS-04），此直写是唯一同步点；
     // 值变场景事件随后到达，直写保证防抖窗口内的即时性。
     if (session) session.thinkingLevel = effective
+    // 持久化 model binding sidecar（setThinkingLevel 生效后写入 .model.json）。
+    if (session?.sessionFilePath) {
+      try {
+        persistModelBinding(session.sessionFilePath, session.modelId, effective)
+      } catch (e) {
+        console.warn(`[session-service] persistModelBinding failed after setThinkingLevel: ${toErrorMessage(e)}`)
+      }
+    }
     return effective
   }
 }

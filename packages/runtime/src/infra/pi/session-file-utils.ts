@@ -258,6 +258,14 @@ export function projectSidecarPath(filePath: string): string {
 }
 
 /**
+ * 计算 session model binding sidecar 路径。
+ * `<sessionFile>.model.json`：session 的模型与思考等级绑定信息（与 preset/project/agent sidecar 并列独立）。
+ */
+export function modelSidecarPath(filePath: string): string {
+  return filePath + '.model.json'
+}
+
+/**
  * sidecar 家族公共写入（preset/project/agent binding 共用骨架）：
  * 空路径守卫 + JSONL 未落盘守卫（规则 #6：绝不创建 sidecar）+ 原子写 + 双层缓存失效
  * （sessionMetaCache 必失效；scanDirCache 默认失效，见 invalidateScanDir 说明）。
@@ -419,6 +427,50 @@ export function readAgentBinding(filePath: string): { spawnSource: 'user' | 'age
       return {
         spawnSource: b.spawnSource,
         parentAgentSessionId: typeof b.parentAgentSessionId === 'string' ? b.parentAgentSessionId : undefined,
+      }
+    }
+    return undefined
+  })
+}
+
+/**
+ * 将 session 模型绑定持久化到 sidecar `.model.json`（model binding）。
+ *
+ * switchModel / setThinkingLevel 生效后调用，记录 session 当前绑定的 modelId 与 thinkingLevel。
+ * 与 preset/project/agent sidecar 并列独立。
+ *
+ * [规则 #6] session JSONL 文件不存在时**绝不创建 sidecar**：pi 延迟写入窗口内
+ * existsSync=false → 静默跳过。
+ *
+ * @param filePath session JSONL 绝对路径（sidecar = modelSidecarPath(filePath)）
+ * @param modelId 模型 id（'provider/modelId' 格式）
+ * @param thinkingLevel 思考等级
+ */
+export function persistModelBinding(filePath: string, modelId: string, thinkingLevel: string): void {
+  if (!filePath || !modelId) return
+  persistBindingSidecar(
+    filePath,
+    modelSidecarPath,
+    { modelId, thinkingLevel, version: 1 as const },
+    'model',
+  )
+}
+
+/**
+ * 从 `.model.json` sidecar 读取模型绑定。
+ *
+ * scanSessionMeta 第七读：与 agent/project/preset 同批次提取，结果合并进
+ * ScannedSessionMeta.modelId / thinkingLevel，享受 sessionMetaCache 缓存。
+ *
+ * @returns { modelId, thinkingLevel }；sidecar 不存在/损坏/字段非法 → undefined
+ */
+export function readModelBinding(filePath: string): { modelId: string; thinkingLevel: string } | undefined {
+  return readBindingSidecar(modelSidecarPath(filePath), (binding) => {
+    const b = binding as Record<string, unknown> | undefined
+    if (b && typeof b.modelId === 'string' && b.modelId !== '') {
+      return {
+        modelId: b.modelId,
+        thinkingLevel: typeof b.thinkingLevel === 'string' ? b.thinkingLevel : '',
       }
     }
     return undefined
@@ -858,6 +910,16 @@ export interface ScannedSessionMeta {
    * 记录 spawn 该 session 的父 agent session。undefined = 非 agent 管理的普通 session。
    */
   parentAgentSessionId?: string
+  /**
+   * 该 session 绑定的模型 id（从 .model.json sidecar 读，model binding）。
+   * 'provider/modelId' 格式。undefined 表示无 sidecar（历史 session / create 时未绑定）。
+   */
+  modelId?: string
+  /**
+   * 该 session 绑定的思考等级（从 .model.json sidecar 读，model binding）。
+   * undefined 表示无 sidecar（历史 session / create 时未绑定）。
+   */
+  thinkingLevel?: string
 }
 
 // 绑定字段注册表已抽出至 './session-binding-fields.ts'（BINDING_FIELDS / hydrateBindingMeta /
@@ -944,6 +1006,8 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
   const projectId = readProjectBinding(filePath)
   // 第六读：agent binding sidecar（agent-managed-session），同批次提取进 meta.spawnSource / parentAgentSessionId。
   const agentBinding = readAgentBinding(filePath)
+  // 第七读：model binding sidecar（model binding），同批次提取进 meta.modelId / meta.thinkingLevel。
+  const modelBinding = readModelBinding(filePath)
   const meta: ScannedSessionMeta = {
     id: header.id,
     filePath,
@@ -960,6 +1024,8 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
     projectId,
     spawnSource: agentBinding?.spawnSource,
     parentAgentSessionId: agentBinding?.parentAgentSessionId,
+    modelId: modelBinding?.modelId,
+    thinkingLevel: modelBinding?.thinkingLevel,
   }
   sessionMetaCache.set(filePath, { mtimeMs: fstat.mtimeMs, size: fstat.size, meta })
   return meta

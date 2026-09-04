@@ -33,6 +33,10 @@ export interface ScannedSessionMeta {
   spawnSource?: 'user' | 'agent'
   /** 父 agent session id（从 .agent.json sidecar 读，agent-managed-session，与 infra/pi/session-file-utils 版本对齐）。 */
   parentAgentSessionId?: string
+  /** session 绑定的模型 id（从 .model.json sidecar 读，model binding，与 infra/pi/session-file-utils 版本对齐）。 */
+  modelId?: string
+  /** session 绑定的思考等级（从 .model.json sidecar 读，model binding，与 infra/pi/session-file-utils 版本对齐）。 */
+  thinkingLevel?: string
 }
 
 /** session 终态类型（W4，ADR 0042）。与 infra/pi/session-file-utils 的 SessionOutcome 结构对齐。 */

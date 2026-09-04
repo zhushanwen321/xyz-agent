@@ -44,7 +44,7 @@ import { createForkedSessionFile, resolveEntryIdByTimestamp } from './session-fo
 // 统一回填入口（sidecar-binding-sync 设计文档拍板接线在此），同样随 R3 收口。新写
 // services 代码不得再效仿此处直引 infra。
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
-import { normalizeSessionFileInPlace, cleanupMigrateResidues } from '../../infra/pi/session-file-utils.js'
+import { normalizeSessionFileInPlace, cleanupMigrateResidues, persistModelBinding } from '../../infra/pi/session-file-utils.js'
 // 绑定字段注册表模块（BINDING_FIELDS / hydrateBindingMeta / CREATE_DERIVED_CALLERS SSOT）
 import { hydrateBindingMeta } from '../../infra/pi/session-binding-fields.js'
 import { assertPiSessionFile } from '../../infra/pi/session-attach-assert.js'
@@ -460,6 +460,8 @@ export class SessionLifecycle implements ISessionRegistry {
       projectId: options?.projectId,
       spawnSource: options?.spawnSource,
       parentAgentSessionId: options?.parentAgentSessionId,
+      modelId: presetClientOptions.model,
+      thinkingLevel: typeof presetClientOptions.thinkingLevel === 'string' ? presetClientOptions.thinkingLevel : undefined,
     }, 'create')
     // 持久化 preset 绑定到 .preset.json sidecar（设计文档 §4）。
     // presetId 存在时写 sidecar，供 fork/restore 继承；sessionFilePath 不存在（pi 延迟写入窗口）
@@ -595,6 +597,8 @@ export class SessionLifecycle implements ISessionRegistry {
     try { unlinkSync(filePath + '.handoff.json') } catch { void 0 }
     // 清理 agent binding sidecar（agent-managed-session；delete 是唯一清理点，防孤儿 sidecar）
     try { unlinkSync(filePath + '.agent.json') } catch { void 0 }
+    // 清理 model binding sidecar（model binding；delete 是唯一清理点，防孤儿 sidecar）
+    try { unlinkSync(filePath + '.model.json') } catch { void 0 }
     // 清理归一化残留 .tmp-migrate-*.jsonl（差距复审 suggestion 6，与 sidecar 同点 best-effort）
     cleanupMigrateResidues(filePath)
     // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
@@ -974,6 +978,15 @@ export class SessionLifecycle implements ISessionRegistry {
       if (forkProjectId) {
         this.sessionStore.persistProjectBinding(forkedFilePath, forkProjectId)
       }
+      // 写 model binding 到 forkedFilePath 的 sidecar（model binding）：fork 继承源模型与思考等级。
+      // effectiveModel/effectiveThinkingLevel = override > preset.modelOverride 生效值（C-RL-6 优先级）。
+      if (presetClientOptions.model) {
+        persistModelBinding(
+          forkedFilePath,
+          presetClientOptions.model,
+          typeof presetClientOptions.thinkingLevel === 'string' ? presetClientOptions.thinkingLevel : '',
+        )
+      }
     } catch (e) {
       // L5: switchSession 失败时清理孤儿 fork 文件（已写出但 pi 未能加载）
       await this.safeDestroy(forkedId)
@@ -1020,6 +1033,8 @@ export class SessionLifecycle implements ISessionRegistry {
     hydrateBindingMeta(session, {
       launchPresetId: forkPresetId,
       projectId: forkProjectId,
+      modelId: presetClientOptions.model,
+      thinkingLevel: typeof presetClientOptions.thinkingLevel === 'string' ? presetClientOptions.thinkingLevel : undefined,
     }, 'fork')
     const forkedSummary = this.svc.toSummary(session)
     // S3-W2：创建入口收敛点（forkSession 路径）——新 session 诞生，插件 didCreate 投递。

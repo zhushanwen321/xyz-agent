@@ -152,6 +152,8 @@ describe('hydrateBindingMeta · 设计文档 §3.3 决策 1 矩阵（期望硬�
       spawnSource:          { create: true,  handoff: false, restore: true,  fork: false },
       parentAgentSessionId: { create: true,  handoff: false, restore: true,  fork: false },
       handedOffTo:          { create: false, handoff: false, restore: true,  fork: false },
+      modelId:              { create: true,  handoff: true,  restore: false, fork: true  },
+      thinkingLevel:        { create: true,  handoff: true,  restore: false, fork: true  },
     }
 
     const entries: BindingEntryKind[] = ['create', 'handoff', 'restore', 'fork']
@@ -182,6 +184,8 @@ describe('hydrateBindingMeta · 设计文档 §3.3 决策 1 矩阵（期望硬�
       spawnSource: true,
       parentAgentSessionId: true,
       handedOffTo: true,
+      modelId: true,
+      thinkingLevel: true,
     }) as BindingFieldKey[]).sort()
     expect(matrixKeys).toEqual(registryKeys)
   })

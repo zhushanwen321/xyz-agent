@@ -144,7 +144,7 @@
     },
     {
       "id": "C-pi-07",
-      "summary": "pi JSONL 唯一写方 = pi 进程（绝对写规则）；合法边界仅登记三类：sidecar 四后缀 / fork 文件创建型 / restore 归一化白名单",
+      "summary": "pi JSONL 唯一写方 = pi 进程（绝对写规则）；合法边界仅登记三类：sidecar 六后缀 / fork 文件创建型 / restore 归一化白名单",
       "scope": [
         "global"
       ],

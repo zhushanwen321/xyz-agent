@@ -124,6 +124,26 @@ export const BINDING_FIELDS: Record<BindingFieldKey, BindingFieldSpec> = {
       fork: 'none', // fork 不写 handoff sidecar（现状保持）
     },
   },
+  // D1 设计决策：restore='none' — 扫描值禁覆写 D2 播种真值（get_state 读回）。
+  // modelId/thinkingLevel 的权威值来自 pi get_state（RPC 回执），restore 路径不从
+  // sidecar 回填，防止覆盖 pi 从 model_change/thinking_level_change entry 恢复的终态。
+  // create/handoff/fork='options'：Landing Chip / preset / 源 session 传入的生效值写入 sidecar。
+  modelId: {
+    entries: {
+      create: 'options',
+      handoff: 'options',
+      restore: 'none',
+      fork: 'options',
+    },
+  },
+  thinkingLevel: {
+    entries: {
+      create: 'options',
+      handoff: 'options',
+      restore: 'none',
+      fork: 'options',
+    },
+  },
 }
 
 /**
@@ -185,5 +205,5 @@ export interface CreateDerivedCaller {
 export const CREATE_DERIVED_CALLERS: readonly CreateDerivedCaller[] = [
   { file: 'transport/session-message-handler.ts', semantic: 'user-facing', passedBindingFields: ['launchPresetId', 'projectId'] },
   { file: 'transport/session-manager-handler.ts', semantic: 'agent-managed', passedBindingFields: ['spawnSource', 'parentAgentSessionId'] },
-  { file: 'services/handoff-service.ts', semantic: 'handoff', passedBindingFields: ['projectId'] },
+  { file: 'services/handoff-service.ts', semantic: 'handoff', passedBindingFields: ['projectId', 'modelId', 'thinkingLevel'] },
 ]
