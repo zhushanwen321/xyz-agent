@@ -54,7 +54,7 @@ composer 是 xyz-agent 的消息输入区（Vue contenteditable），一条消�
 - `@` 已开 subagent 跨 session 引用（扫 `agentDir/subagents/` 全历史）
 - `@` 新建时选择 agent .md 清单（见 D3，MVP 用默认 agent）
 - `#` 引用 subagent 的 session 文件（session-reader 工具层支持，浮层不单列，LLM 可用 `#id` 自行定位）
-- landing 态（无活跃 session）的 `@`/`#` 浮层（无数据源，不触发）
+- landing 态（无活跃 session）的 `@` 浮层（无数据源，不触发）；`#`/`$` 已由后续设计落地为 landing 可用（`#` 走常驻 sessionStore 数据、`$` 新增 `file.search.cwd` 协议按选定目录拉取），见 [landing-composer-session-file-symbols](../design/landing-composer-session-file-symbols.md)
 
 ---
 
@@ -437,7 +437,7 @@ detectSlashTriggerFromEl():     { query } | null    // /^\/(\S*)$/（光标所�
 1. `client.prompt('/__xyz_reload__')` resolve 时机 = reload 完成的实测复验（P2 探针，U3 首日真实 pi 子进程）
 2. `/subagents message` 文本含换行的端到端实测（P3 探针，转义协议实施首日）
 3. session chip 选中后 `#uuid` 与 session_read guidelines 的端到端命中率（P4；uuid 子串匹配协议以 TUI hash-provider 实测行为为准）
-4. `sessionStore.groups` 在 landing 态为空 → `#`/`@` 不触发（浮层无数据源）的空态处理（U2 实现时确认触发短路条件）
+4. 【已被后续设计 supersede】原判断「`sessionStore.groups` 在 landing 态为空 → `#`/`@` 不触发」已失效：landing 态 session 数据实为常驻（启动即填充），现状为 `#` 有候选即弹（删 `hasSessionId` 门）、`@` 维持不触发（门保留，无 session 即无数据源）——详见 [landing-composer-session-file-symbols](../design/landing-composer-session-file-symbols.md)（D1/D3）
 5. `sendMessage` 无 triggerTurn 的「留痕不唤醒」实测（P6 探针，U4 首日本地 pi CLI）
 
 ### 5.2 用户习惯迁移（随 release note 交付）
@@ -454,3 +454,9 @@ detectSlashTriggerFromEl():     { query } | null    // /^\/(\S*)$/（光标所�
 | P4 | `#uuid` 文本被 session_read 正确消费（stripHash `tool-handler.ts:102-103` + uuid 片段匹配已存在，TUI 生产验证过） | ⛔ 实施期门（S4 端到端）；降级：匹配退回全量 36 位 uuid（session chip 存全量 id，本就携带） | 3.3.2 / S4 |
 | P5 | commands ReplicatedState 失效防抖 + 失败退避保留旧值 | ✅ 已测（replicated-state.ts 既有机制与测试，W8 验收锁定） | D4 |
 | P6 | `sendMessage` 不传 triggerTurn 时不产生新 turn（留痕不唤醒） | ⛔ 实施期门（U4 首日本地 pi CLI 实测；降级：换 deliverAs:'nextTurn' 排队或退回 appendEntry 放弃留痕） | 3.3.3 / 3.3.8 |
+
+---
+
+## 变更记录
+
+- 2026-09-04 landing `#`/`$` 通道设计（sessionStore 常驻 + `file.search.cwd` 协议）：landing 态 `#` 有候选即弹、`$` 按选定目录拉取、`@` 维持不触发；本文 §1 Out 第 5 条与 §5 待验证第 4 条已同步修订（C-proc-10 同批回写）——详见 [landing-composer-session-file-symbols](../design/landing-composer-session-file-symbols.md)（D1-D7）

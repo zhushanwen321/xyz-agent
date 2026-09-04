@@ -82,18 +82,30 @@ graph TD
 
 | Unit | 偏差 | 理由 | 登记 |
 |------|------|------|------|
-| （初始为空） | | | |
+| u2-runtime | interfaces.ts（原计划外）+2 行 | IFileService 精确签名接口需声明 searchFilesInCwd，handler 类型化调用必需；计划遗漏该文件归属，orchestrator 裁决划入 u2 | 计划领地列已补（本行即登记） |
+| u2-runtime | showIgnored 不透传 cwd 路 | 协议 payload 仅 { cwd }（设计 Out-of-scope 定死默认 false） | 无需改设计 |
+| u2-runtime | cwd 无效错误码用 not_found | FileErrorCode 枚举无 invalid_path，选现有最近似码 | 无需改设计 |
+| u2-runtime | session cwd 目录已删：旧返回 [] → 新抛 not_found | stat 准入前置的必然推论；renderer 侧 load 失败降级空态（useFileSearch catch → []），用户可见行为不变（浮层空），错误信息更准确 | 合理偏差，接受 |
+| u2-runtime | cwd 路 error envelope 无 details | 无 sessionId 上下文，沿用 file.read 既有先例 | 无需改设计 |
+| u4-popover | hash-trigger S4 转红（u5 领地未动） | D1 删门后按设计必然翻红，S4 翻转正是 u5 验收条款① | 无需改设计 |
+| u4-popover | open-fetch 直接 import api domain 而非 '@/api' 门面 | mock 域未扩 getFileCandidatesByCwd（领地外）；直接 import 有既有先例；mock 下失败降级空态符合计划待验证② | 无需改设计 |
+| u4-popover | file-candidates 仅修 1 行过时注释 | 原注释与实际门不符 | 无需改设计 |
+| u4-popover | cwd 拉取失败主动清空本地 ref | 防换目录后失败时残留脏候选，保证失败→无浮层恒成立，有专项用例 | 合理增强 |
+| u5-wiring | 绑定用 flow.currentCwd?.value ?? null 而非字面 prop | flow 是普通对象嵌套 ComputedRef 模板不自动解包；?. 同时防御领地外测试 mock 缺字段（退化为 S4b 空态语义） | 合理偏差，接受 |
+| u5-wiring | 新断言改用 data-reka-popper-content-wrapper 真选择器 | 旧 data-radix-* 是恒 null 空选择器（旧 S4/A5/U8 该断言空洞）；仅新/翻转断言改真选择器，旧断言未动（A5 仍有 bodyRows 实体断言护栏） | 登记残留风险：旧空洞断言留待后续批清理 |
+| （初始空位） | | | |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u1-protocol | committed | 1 | typecheck 绿 + grep 7 处（:111/:487/:761/:1158/:1571），commit 见 git log u1-protocol |
+| u1-protocol | committed | 1 | typecheck 绿 + grep 7 处（:111/:487/:761/:1158/:1571），commit 577cbbeed |
+| u2-runtime | committed | 1+1（补接口授权轮） | vitest 18/18 + runtime typecheck 绿，commit 3a77447e6；blocker 已裁决（interfaces.ts 划入领地补 1 行） |
 | u2-runtime | pending | 0 | — |
-| u3-api | pending | 0 | — |
-| u4-popover | pending | 0 | — |
-| u5-wiring | pending | 0 | — |
-| u6-regression | pending | 0 | — |
+| u3-api | committed | 1 | frontend typecheck 绿 + grep :41-42，commit 97ebba367 |
+| u4-popover | committed | 1 | vitest 19/19 + typecheck 绿，commit b86d7cad6；5 条偏差已审（合理，见 §5） |
+| u5-wiring | committed | 1 | panel 517/517 全绿 + typecheck 绿，commit f970b925b；3 条偏差合理（flow.currentCwd?.value 解包 / reka 真选择器 / fake Date 节流隔离） |
+| u6-regression | committed | 1 | 全量 vitest 绿（subagent-core 6 例/TaiJi 宿主 env 注入净环境 12/12 绿；runtime thinking-e2e 1 例/基线同红实锤非本次引入）+ 三包 typecheck + lint 全绿；无领地外修复 |
 | u7-docs | pending | 0 | — |
 
 ## 7 残留风险与变更历史
