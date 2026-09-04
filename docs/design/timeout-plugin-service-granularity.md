@@ -325,7 +325,7 @@ ctx.tools.register({
 
 ### 6.1 D1：工具执行超时——默认 30min + 工具定义级声明覆盖 + 显式 opt-out（选定）
 
-- **采用**：三层取值结构，单一权威源在 bridge-interop 调用点：`有效超时 = entry.schema.timeoutMs（插件作者声明，合法正数） ?? DEFAULT_TOOL_EXECUTE_TIMEOUT_MS（1_800_000 = 30min，新常量；v2.1 勘误：初稿误写 30_000_000=500min，与本节量级依据「dialog-queue 同值」矛盾，实施期 U1 发现后裁决收敛）`；`timeoutMs <= 0` 或 `Infinity` 视为显式 opt-out（不限时，直接不挂 PendingTracker 超时——invoke 侧需支持 `timeoutMs = 0` 表示不注册超时或传一个 2^31-1 clamp 值，实现取简单者）。超时后行为：isError 保留（工具级失败让 pi agent 自行决策重试——pi 的工具错误语义本就如此）+ 错误消息按 §5.2 诚实化（等了多久 / 默认还是声明值 / handler 可能仍在跑 / 如何调）。不 terminate 插件宿主（长任务 ≠ 插件坏；迟到回包 PendingTracker miss 丢弃即可）。
+- **采用**：三层取值结构，单一权威源在 bridge-interop 调用点：`有效超时 = entry.schema.timeoutMs（插件作者声明，合法正数） ?? DEFAULT_TOOL_EXECUTE_TIMEOUT_MS（1_800_000 = 30min，新常量；v2.2 勘误：初稿误写 30_000_000=500min，与本节量级依据「dialog-queue 同值」矛盾，实施期 U1 发现后裁决收敛）`；`timeoutMs <= 0` 或 `Infinity` 视为显式 opt-out（不限时，直接不挂 PendingTracker 超时——invoke 侧需支持 `timeoutMs = 0` 表示不注册超时或传一个 2^31-1 clamp 值，实现取简单者）。超时后行为：isError 保留（工具级失败让 pi agent 自行决策重试——pi 的工具错误语义本就如此）+ 错误消息按 §5.2 诚实化（等了多久 / 默认还是声明值 / handler 可能仍在跑 / 如何调）。不 terminate 插件宿主（长任务 ≠ 插件坏；迟到回包 PendingTracker miss 丢弃即可）。
 - **被否**：
   - **方案 a：纯声明制**（未声明维持 30s 短默认，声明了才放宽）——存量插件全部未声明，30s 误杀照旧；且把「系统防挂死兜底」的责任转嫁给插件作者（不写声明就被砍），激励倒挂。若用它，§5.1 的 90s 工具场景变成：作者忘了声明 → 30s 被 isError → 用户以为插件坏了。
   - **方案 c：默认不挂（不限时）纯 opt-in**——最贴规则 19 字面（「调用方未传就是不限时」），但被 dialog-queue LC-3 的同类论证击穿：插件 handler 死循环 → pi turn 永久占死（pi 侧 bridge 调用路径无超时无 abort，✅已核实 rpc-mode.js:47-77 / :177）→ 用户只 能重启 session。dialog 先例的原话：「『等用户无限久』改为默认有界是有意的行为变更」——防全局死锁的有界兜底是本仓已裁决的方向。若用它，§2 目标 4（挂死有兜底）被放弃。
