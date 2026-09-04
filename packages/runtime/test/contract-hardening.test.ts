@@ -527,8 +527,9 @@ describe('invoke.result 回传归属校验（D2 回传段：handlerId 必须属�
 
       // pending 保持挂起（未被 forged resolve）：推进超时窗口后以超时 reject。
       // 若归属校验缺失，pending 已被 resolve('forged')，此 rejects 断言失败。
-      vi.advanceTimersByTime(10_000)
-      await expect(pending).rejects.toThrow('Command execution timeout: p1:cmd1')
+      // （D4 后命令默认超时 = DEFAULT_TOOL_EXECUTE_TIMEOUT_MS 30min）
+      vi.advanceTimersByTime(1_800_000)
+      await expect(pending).rejects.toThrow("Command 'p1:cmd1' timed out after 30min")
     } finally {
       vi.useRealTimers()
     }
@@ -562,8 +563,8 @@ describe('invoke.result 回传归属校验（D2 回传段：handlerId 必须属�
       expect(warns).toHaveLength(1)
       expect(warns[0]).toContain('h-A')
 
-      vi.advanceTimersByTime(10_000)
-      await expect(pending).rejects.toThrow('Command execution timeout: p1:cmd1')
+      vi.advanceTimersByTime(1_800_000)
+      await expect(pending).rejects.toThrow("Command 'p1:cmd1' timed out after 30min")
     } finally {
       vi.useRealTimers()
     }

@@ -630,7 +630,8 @@ export class PluginService implements IPluginService {
    * 实现在 api/commands-executor.ts（max-lines 拆分迁出，行为不变）：复合键查
    * registry → rpcServer.notify 向 Worker 发 plugin.commands.invoke → Worker 执行
    * handler 后经 plugin.commands.invoke.result 回传结果/错误 → deliverInvokeResult
-   * resolve/reject 对应 pending（超时 COMMAND_EXECUTE_TIMEOUT_MS）。命令表按插件
+   * resolve/reject 对应 pending（超时取值链见 api/commands-executor.ts，D4：命令
+   * 定义 timeoutMs 声明优先，默认 DEFAULT_TOOL_EXECUTE_TIMEOUT_MS 30min）。命令表按插件
    * 隔离（B 无法覆盖/注销 A 的同名命令）。
    */
   async executeCommand(pluginId: string, commandId: string, args?: Record<string, unknown>): Promise<unknown> {

@@ -78,6 +78,14 @@ export interface ActivatorOptions {
    * PERMISSION_TIMEOUT_MS）；测试可直接传小值加速。
    */
   permissionTimeoutMs?: number
+  /**
+   * 覆盖 activate 生命周期握手超时（ms）。timeout-plugin-service D4：activate 是
+   * 控制面单请求（默认 30s 保持不动），本参数是逃生门——重初始化插件的 onActivate
+   * 做重活（拉配置、建连接、预热缓存）时可放宽（对齐 fork 版 plugin-host-process
+   * 构造器 loadTimeoutMs 先例；契约要求 onActivate 保持轻量，重活应移到首个工具
+   * 调用或命令 handler）。测试可传小值加速超时路径。
+   */
+  activateTimeoutMs?: number
 }
 
 interface PendingPermission {
@@ -123,6 +131,8 @@ export class PluginActivator {
   private onPermissionRequest?: (payload: { pluginId: string; permissions: PluginPermission[] }) => void
   private onPermissionRequestExpired?: (payload: { pluginId: string }) => void
   private permissionTimeoutMs: number
+  /** activate 生命周期握手超时（D4：默认 ACTIVATE_TIMEOUT_MS 30s 不动，构造选项可覆盖） */
+  private activateTimeoutMs: number
   /** 待审批的权限请求 */
   private pendingPermissions = new Map<string, PendingPermission>()
 
@@ -134,6 +144,9 @@ export class PluginActivator {
     this.onPermissionRequest = options?.onPermissionRequest
     this.onPermissionRequestExpired = options?.onPermissionRequestExpired
     this.permissionTimeoutMs = options?.permissionTimeoutMs ?? PERMISSION_TIMEOUT_MS
+    // 对齐 U7 形态（plugin-host.ts 构造器 loadTimeoutMs ?? LOAD_PLUGIN_TIMEOUT_MS）：
+    // 生产装配不传 → 默认 30s 不动；仅测试/重初始化插件场景传覆盖值。
+    this.activateTimeoutMs = options?.activateTimeoutMs ?? ACTIVATE_TIMEOUT_MS
   }
 
   /** 注册插件描述符，构建 activationEvent 索引 */
@@ -294,7 +307,7 @@ export class PluginActivator {
         { type: 'activate', pluginId, pluginDir: descriptor.pluginPath, event },
         pluginId,
         'activate',
-        ACTIVATE_TIMEOUT_MS,
+        this.activateTimeoutMs,
       )
 
       if (success) {
@@ -714,6 +727,17 @@ export class PluginActivator {
         // 旧 timer 不误删新 entry——旧实现无条件 delete 是回复错配的帮凶）
         if (this.pendingReplies.get(key)?.timer === timer) {
           this.pendingReplies.delete(key)
+        }
+        // D4 错误规格（activate 超时行）：UNLOADED 保持 + 消息提示 activateTimeoutMs
+        // 覆盖通道。只 activate 打——deactivate 超时是 D6 登记不动项（本地清理
+        // 兜底已安全，维持静默 resolve(false)）。迟到的 activated 回复经 pending
+        // miss noop（handleWorkerReply 守卫），不炸。
+        if (op === 'activate') {
+          console.warn(
+            `[plugin-activator] activate reply for ${pluginId} timed out after ${timeoutMs}ms — ` +
+              `plugin left UNLOADED (pass activateTimeoutMs option to extend; ` +
+              `onActivate should stay lightweight — move heavy initialization to the first tool/command)`,
+          )
         }
         resolve(false)
       }, timeoutMs)

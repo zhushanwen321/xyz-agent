@@ -281,3 +281,134 @@ describe('external plugin activation hard lock（§6.6 激活侧，IF3）', () =
     expect(host.loadPlugin).toHaveBeenCalled()
   })
 })
+
+/**
+ * 沉默 host：postMessage 后 Worker 不回复（activate 超时路径用——回复型 mock 会在
+ * microtask 内 resolve，永远走不到超时 timer）。
+ */
+function createSilentHost(): ActivatorHost {
+  return {
+    assignWorker: vi.fn(() => Promise.resolve('worker-1')),
+    loadPlugin: vi.fn(() => Promise.resolve()),
+    getWorkerHandle: vi.fn(() => ({
+      workerId: 'worker-1',
+      postMessage: vi.fn(),
+    })),
+    terminateWorker: vi.fn(() => Promise.resolve()),
+  }
+}
+
+describe('activate 超时覆盖参数（timeout-plugin-service D4：控制面 30s 保持 + activateTimeoutMs 逃生门）', () => {
+  it('activateTimeoutMs 覆盖生效：注入小值后超时 → UNLOADED + warn 含 activateTimeoutMs 覆盖指引', async () => {
+    vi.useFakeTimers()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const activator = new PluginActivator({ activateTimeoutMs: 100 })
+      const desc = makeDescriptor({ pluginId: 'slow-activate' })
+      activator.registerDescriptors([desc])
+
+      const host = createSilentHost()
+      const pending = activator.activatePlugin('slow-activate', { type: 'onStartupFinished' }, host)
+
+      await vi.advanceTimersByTimeAsync(100)
+      await pending
+
+      expect(activator.getState('slow-activate')).toBe('UNLOADED')
+      const warns = warnSpy.mock.calls.map((c: unknown[]) => String(c[0]))
+        .filter((msg: string) => msg.includes('activate reply'))
+      expect(warns).toHaveLength(1)
+      expect(warns[0]).toContain('timed out after 100ms')
+      expect(warns[0]).toContain('activateTimeoutMs')
+    } finally {
+      warnSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('默认 30s 回归：未传 activateTimeoutMs 时 29_999ms 仍等待、30_000ms 超时 UNLOADED', async () => {
+    vi.useFakeTimers()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const activator = new PluginActivator()
+      const desc = makeDescriptor({ pluginId: 'default-timeout' })
+      activator.registerDescriptors([desc])
+
+      const host = createSilentHost()
+      const pending = activator.activatePlugin('default-timeout', { type: 'onStartupFinished' }, host)
+
+      await vi.advanceTimersByTimeAsync(29_999)
+      expect(activator.getState('default-timeout')).toBe('ACTIVATING')
+
+      await vi.advanceTimersByTimeAsync(1)
+      await pending
+
+      expect(activator.getState('default-timeout')).toBe('UNLOADED')
+      expect(warnSpy.mock.calls.map((c: unknown[]) => String(c[0]))
+        .some((msg: string) => msg.includes('timed out after 30000ms'))).toBe(true)
+    } finally {
+      warnSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('deactivate 超时不打 activateTimeoutMs 指引（D6 登记不动项维持静默）', async () => {
+    vi.useFakeTimers()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const activator = new PluginActivator()
+      const desc = makeDescriptor({ pluginId: 'silent-deact' })
+      activator.registerDescriptors([desc])
+
+      // 先用回复型 host 激活成功，再换沉默 host 停用（deactivate 回复永不到达）
+      await activator.activatePlugin('silent-deact', { type: 'onStartupFinished' }, createMockHost(activator, 'activated'))
+      expect(activator.getState('silent-deact')).toBe('ACTIVE')
+
+      const pending = activator.deactivatePlugin('silent-deact', createSilentHost())
+      await vi.advanceTimersByTimeAsync(5_000)
+      await pending
+
+      // deactivate 超时（5s）后仍完成本地清理（D6 现状），且无 activate 超时类 warn
+      expect(activator.getState('silent-deact')).toBe('UNLOADED')
+      expect(warnSpy.mock.calls.map((c: unknown[]) => String(c[0]))
+        .some((msg: string) => msg.includes('activateTimeoutMs'))).toBe(false)
+    } finally {
+      warnSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('超时后迟到的 activated 回复 miss noop：状态不被复活', async () => {
+    vi.useFakeTimers()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const activator = new PluginActivator({ activateTimeoutMs: 50 })
+      const desc = makeDescriptor({ pluginId: 'late-reply' })
+      activator.registerDescriptors([desc])
+
+      // postMessage 后手动控制回复时机：超时到期后再补发 activated 回复
+      let posted = false
+      const host: ActivatorHost = {
+        assignWorker: vi.fn(() => Promise.resolve('worker-1')),
+        loadPlugin: vi.fn(() => Promise.resolve()),
+        getWorkerHandle: vi.fn((pluginId: string) => ({
+          workerId: 'worker-1',
+          postMessage: vi.fn(() => { posted = true }),
+        })),
+        terminateWorker: vi.fn(() => Promise.resolve()),
+      }
+      const pending = activator.activatePlugin('late-reply', { type: 'onStartupFinished' }, host)
+
+      await vi.advanceTimersByTimeAsync(50)
+      await pending
+      expect(activator.getState('late-reply')).toBe('UNLOADED')
+
+      // 迟到的 activated 回复：pending 已删，miss noop，状态不复活
+      expect(posted).toBe(true)
+      activator.handleWorkerReply({ type: 'activated', pluginId: 'late-reply' })
+      expect(activator.getState('late-reply')).toBe('UNLOADED')
+    } finally {
+      warnSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+})
