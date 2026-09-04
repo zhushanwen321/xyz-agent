@@ -140,6 +140,16 @@ export default {
     turnsUnit: 'turns',
     tokUnit: 'tok',
   },
+  // Agents tab 二级状态筛选（设计 docs/design/subagent-sidebar-filter.md §3.4；D2 文案「已结束」）
+  subagentFilter: {
+    active: '进行中',
+    ended: '已结束',
+    all: '全部',
+    emptyActive: '没有进行中的后台任务',
+    emptyActiveHint: '当前会话没有正在运行的任务',
+    viewAll: '查看全部（{count}）',
+    emptyEnded: '没有已结束的任务',
+  },
   workflowDetail: {
     backToList: '返回工作流列表',
     pause: '暂停',

@@ -74,7 +74,7 @@ Wave 1: u-foundation ∥ u-i18n（并行）→ Wave 2: u-filterbar → Wave 3: u
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
 | u-foundation | pending | 0 | |
-| u-i18n | pending | 0 | |
+| u-i18n | committed | 1 | commit 见 git log；check:i18n 186 passed（主 agent 复跑核验；structured-output 汇报机制失败不影响实物验收） |
 | u-filterbar | pending | 0 | |
 | u-wiring | pending | 0 | |
 | u-acceptance | pending | 0 | |
