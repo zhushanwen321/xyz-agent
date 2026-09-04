@@ -223,6 +223,8 @@ export class SessionLifecycle implements ISessionRegistry {
   async registerSession(
     id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean,
     parentSession?: string, forkEntryId?: string, modelOverride?: string,
+    /** U2: restore/create get_state 读回的生效值播种，优先级高于 modelOverride/全局默认。 */
+    metaOverride?: { modelId?: string; thinkingLevel?: string },
   ): Promise<IManagedSessionRecord> {
     const send = (msg: ServerMessage) => {
       // wave:perf-w09（02 文档 D1-2）：session 级消息单通道——payload 带 sessionId 的消息
@@ -257,11 +259,13 @@ export class SessionLifecycle implements ISessionRegistry {
     // 正确显示用户选定的模型（create/fork/handoff 路径透传 effectiveModel）。pi 进程的模型
     // 已由 createSession 时 client options.model 设定，此处只补齐元数据层缺口。
     // 无 override 时 fallback 全局默认（与原行为一致）。
+    // U2 播种优先级：metaOverride > modelOverride > 全局默认（hydrateBindingMeta 后续回填按矩阵语义）。
     const defaultModelRef = this.configStore.getDefaultModel()
     const fallbackModelId = defaultModelRef ? `${defaultModelRef.provider}/${defaultModelRef.modelId}` : ''
     const session: IManagedSessionRecord = {
       id, cwd, label,
-      modelId: modelOverride ?? fallbackModelId,
+      modelId: metaOverride?.modelId ?? modelOverride ?? fallbackModelId,
+      thinkingLevel: metaOverride?.thinkingLevel,
       createdAt: Date.now(), lastActiveAt: Date.now(),
       // W10：inputTokens/tokenCount 退化为恒 0 派生基线（types 必填字段保留）——真值由
       // usage 实例快照持有，读点（getInputTokens / toSummary.tokenCount）从实例派生，
@@ -396,13 +400,38 @@ export class SessionLifecycle implements ISessionRegistry {
       ...presetClientOptions,
     })
 
-    // 从 pi 获取真实 session ID
+    // 从 pi 获取真实 session ID + U2: 顺带读回生效 model+thinkingLevel（D2 设计）。
     let piSessionId: string
     let sessionFilePath: string | undefined
+    let createMetaOverride: { modelId?: string; thinkingLevel?: string } | undefined
     try {
       const stateData = await client.getState()
       piSessionId = (stateData?.sessionId as string) ?? ''
       sessionFilePath = stateData?.sessionFile as string | undefined
+      // U2: 从同一 get_state 读回 pi 生效 model + thinkingLevel，通过 metaOverride 播种。
+      // create 路径：pattern 引擎可能静默换模，读回值是真值（而非请求值）。
+      const stateObj = stateData as Record<string, unknown> | null | undefined
+      let readModelId: string | undefined
+      let readThinkingLevel: string | undefined
+      if (stateObj?.model && typeof stateObj.model === 'object') {
+        const m = stateObj.model as Record<string, unknown>
+        const provider = typeof m.provider === 'string' ? m.provider : undefined
+        const modelId = typeof m.id === 'string' ? m.id : undefined
+        if (provider && modelId) readModelId = `${provider}/${modelId}`
+        else if (modelId) readModelId = modelId
+      }
+      if (!readModelId && typeof stateObj?.modelId === 'string') {
+        readModelId = stateObj.modelId
+      }
+      if (typeof stateObj?.thinkingLevel === 'string') {
+        readThinkingLevel = stateObj.thinkingLevel
+      }
+      if (readModelId || readThinkingLevel) {
+        createMetaOverride = {
+          modelId: readModelId,
+          thinkingLevel: readThinkingLevel,
+        }
+      }
     } catch (e) {
       await this.safeDestroy(tempId)
       throw new Error(`Failed to get session state from pi: ${toErrorMessage(e)}`)
@@ -426,9 +455,10 @@ export class SessionLifecycle implements ISessionRegistry {
     try {
       // Staging Mode（ADR-0056）：透传 effectiveModel（presetClientOptions.model，已含 C-RL-6 优先级解析）
       // 让 session 元数据 modelId 反映实际启动模型，前端 composer chip 正确显示。
+      // U2: metaOverride（get_state 读回值）优先级高于 presetClientOptions.model。
       session = await this.registerSession(
         id, client, sessionCwd, label ?? basename(sessionCwd), sessionFilePath, options?.hidden,
-        undefined, undefined, presetClientOptions.model,
+        undefined, undefined, presetClientOptions.model, createMetaOverride,
       )
     } catch (initErr) {
       await this.safeDestroy(id)
@@ -799,11 +829,55 @@ export class SessionLifecycle implements ISessionRegistry {
       throw e
     }
 
+    // U2: get_state 读回 pi 生效 model + thinkingLevel（D2 设计）。
+    // switchSession 成功后 pi 已附着会话文件，get_state 返回当前生效值。
+    // 读回成功 → 用真值播种（metaOverride）；读回失败 → 兜底链：sidecar 扫描值 → 空字符串。
+    // hydrateBindingMeta restore='none' 不覆写播种值（D1 裁决），所以兜底链在此完成不经过 hydrate。
+    let restoreMetaOverride: { modelId?: string; thinkingLevel?: string } | undefined
+    try {
+      const stateData = await client.getState()
+      const stateObj = stateData as Record<string, unknown> | null | undefined
+      // model: pi get_state 返回 { model: { id, provider }, thinkingLevel } 或扁平字段
+      let readModelId: string | undefined
+      let readThinkingLevel: string | undefined
+      if (stateObj?.model && typeof stateObj.model === 'object') {
+        const m = stateObj.model as Record<string, unknown>
+        const provider = typeof m.provider === 'string' ? m.provider : undefined
+        const modelId = typeof m.id === 'string' ? m.id : undefined
+        if (provider && modelId) readModelId = `${provider}/${modelId}`
+        else if (modelId) readModelId = modelId
+      }
+      if (!readModelId && typeof stateObj?.modelId === 'string') {
+        readModelId = stateObj.modelId
+      }
+      if (typeof stateObj?.thinkingLevel === 'string') {
+        readThinkingLevel = stateObj.thinkingLevel
+      }
+      if (readModelId || readThinkingLevel) {
+        restoreMetaOverride = {
+          modelId: readModelId ?? target.modelId ?? '',
+          thinkingLevel: readThinkingLevel ?? target.thinkingLevel ?? '',
+        }
+      }
+    } catch (e) {
+      // E2: get_state 读回失败，兜底 sidecar 扫描值（target 来自 findScannedSession，含 .model.json 值）。
+      // sidecar 值 undefined 时 fallback 空字符串（不回落全局默认——D2 裁决）。
+      console.warn(`[session-lifecycle] restoreSession(${sessionId}): get_state readback failed, falling back to sidecar values`, e)
+      if (target.modelId || target.thinkingLevel) {
+        restoreMetaOverride = {
+          modelId: target.modelId ?? '',
+          thinkingLevel: target.thinkingLevel ?? '',
+        }
+      }
+      // 都无值时 restoreMetaOverride 保持 undefined → registerSession 用 modelOverride/全局默认兜底
+    }
+
     // M3: registerSession 失败时清理 pi 进程（与 create 同模式）
     let session: IManagedSessionView
     try {
       session = await this.registerSession(
         id, client, sessionCwd, target.name ?? basename(sessionCwd), target.filePath,
+        undefined, undefined, undefined, undefined, restoreMetaOverride,
       )
     } catch (initErr) {
       await this.safeDestroy(id)
@@ -817,6 +891,7 @@ export class SessionLifecycle implements ISessionRegistry {
     // sidecar-binding-sync：restore 全量回填（矩阵 restore 列）——修复缺陷 A-1：原来只回填
     // launchPresetId，projectId/spawnSource/parentAgentSessionId/handedOffTo 不回填导致
     // 重开后归属/徽标丢失、广播回退默认项目。期望值来自 findScannedSession 全字段 meta。
+    // D1 裁决：restore 列 = 'none'，modelId/thinkingLevel 不经 hydrate 回填（播种由上方 metaOverride 完成）。
     hydrateBindingMeta(session, {
       launchPresetId: presetId, // 已含 BUILTIN_PRESET_IDS.FULL 兜底的解析值（resolved-in-entry）
       projectId: target.projectId,
