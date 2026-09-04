@@ -4,15 +4,24 @@
  * Tests the full tool execution path:
  *   PluginService.handleBridgeToolExecute
  *     → toolRegistry.find → PluginHost.getWorkerHandle
- *     → PluginRpcServer.invoke(workerId, 'plugin.tool.execute', params, 30_000)
+ *     → resolveToolTimeoutMs(entry.schema.timeoutMs)（D1 取值链：声明优先 /
+ *       <=0 或 Infinity opt-out / 非法回落默认 / clamp 上界）
+ *     → PluginRpcServer.invoke(workerId, 'plugin.tool.execute', params, timeoutMs)
  *     → BridgeToolExecuteResponse
  *
- * Also tests PluginRpcServer.invoke() directly.
+ * Also tests PluginRpcServer.invoke() directly, the resolveToolTimeoutMs
+ * branch table, the honest timeout error message (§5.2), and the
+ * late-reply-after-timeout drop path (P-9, fake timers).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 import { PluginRpcServer } from '../src/services/plugin-service/plugin-rpc-server.js'
+import {
+  handleBridgeToolExecute,
+  resolveToolTimeoutMs,
+  DEFAULT_TOOL_EXECUTE_TIMEOUT_MS,
+} from '../src/services/plugin-service/bridge-interop.js'
 import type { IMessageBroker } from '../src/interfaces.js'
 import type { ToolEntry, BridgeToolExecuteRequest } from '../src/services/plugin-service/plugin-types.js'
 
@@ -164,7 +173,7 @@ describe('PluginService.handleBridgeToolExecute (BG1 T1)', () => {
         toolName: 'hello',
         arguments: { name: 'World' },
       }),
-      30_000,
+      DEFAULT_TOOL_EXECUTE_TIMEOUT_MS,
     )
   })
 
@@ -242,10 +251,17 @@ describe('PluginService.handleBridgeToolExecute (BG1 T1)', () => {
     }
     const result = await service.handleBridgeToolExecute(request)
 
-    expect(result).toEqual({
-      content: 'Plugin tool execution timed out',
-      isError: true,
-    })
+    expect(result.isError).toBe(true)
+    // 诚实化文案（§5.2）：等了多久 / 声明来源 / handler 仍在跑 / 调整指引
+    expect(result.content).toContain(
+      `Plugin tool 'hello' timed out after 30min (default;`,
+    )
+    expect(result.content).toContain(
+      'plugin handler may still be running, its result will be discarded',
+    )
+    expect(result.content).toContain(
+      'pass timeoutMs in registerTool() to extend or opt out (<=0 = no limit)',
+    )
   })
 
   // ── Worker execution error → error ──
@@ -353,7 +369,202 @@ describe('PluginService.handleBridgeToolExecute (BG1 T1)', () => {
         sessionId: 'session-123',
         toolCallId: 'call-456',
       }),
-      30_000,
+      DEFAULT_TOOL_EXECUTE_TIMEOUT_MS,
     )
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// resolveToolTimeoutMs — D1 取值链全分支
+// ══════════════════════════════════════════════════════════════════
+
+/** Node setTimeout 域上界 2^31-1（bridge-interop 内 MAX_TIMER_DELAY_MS 的值；
+ * 该常量未导出，测试以字面锚定规格，漂移即红）。 */
+const TIMER_DOMAIN_MAX_MS = 2_147_483_647
+
+describe('resolveToolTimeoutMs', () => {
+  it('uses a valid positive declaration as-is (clamp no-op below the limit)', () => {
+    expect(resolveToolTimeoutMs(1)).toBe(1)
+    expect(resolveToolTimeoutMs(10_000)).toBe(10_000)
+    expect(resolveToolTimeoutMs(600_000)).toBe(600_000)
+  })
+
+  it('clamps oversized declarations to the Node timer domain limit', () => {
+    expect(resolveToolTimeoutMs(TIMER_DOMAIN_MAX_MS)).toBe(TIMER_DOMAIN_MAX_MS)
+    expect(resolveToolTimeoutMs(TIMER_DOMAIN_MAX_MS + 1)).toBe(TIMER_DOMAIN_MAX_MS)
+    expect(resolveToolTimeoutMs(5_000_000_000)).toBe(TIMER_DOMAIN_MAX_MS)
+    expect(resolveToolTimeoutMs(Number.MAX_SAFE_INTEGER)).toBe(TIMER_DOMAIN_MAX_MS)
+  })
+
+  it('treats <=0 and ±Infinity as explicit opt-out (clamped upper bound ≈ no limit)', () => {
+    expect(resolveToolTimeoutMs(0)).toBe(TIMER_DOMAIN_MAX_MS)
+    expect(resolveToolTimeoutMs(-1)).toBe(TIMER_DOMAIN_MAX_MS)
+    expect(resolveToolTimeoutMs(-60_000)).toBe(TIMER_DOMAIN_MAX_MS)
+    expect(resolveToolTimeoutMs(Number.POSITIVE_INFINITY)).toBe(TIMER_DOMAIN_MAX_MS)
+    expect(resolveToolTimeoutMs(Number.NEGATIVE_INFINITY)).toBe(TIMER_DOMAIN_MAX_MS)
+  })
+
+  it('falls back to the default for NaN / undefined (dirty values never disarm the watchdog)', () => {
+    expect(resolveToolTimeoutMs(Number.NaN)).toBe(DEFAULT_TOOL_EXECUTE_TIMEOUT_MS)
+    expect(resolveToolTimeoutMs(undefined)).toBe(DEFAULT_TOOL_EXECUTE_TIMEOUT_MS)
+    expect(resolveToolTimeoutMs()).toBe(DEFAULT_TOOL_EXECUTE_TIMEOUT_MS)
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// 超时错误消息诚实化（设计 §5.2）：声明来源 + 时长 + 调整指引
+// ══════════════════════════════════════════════════════════════════
+
+describe('handleBridgeToolExecute timeout error message', () => {
+  /** 组装：注册带额外 schema 字段的工具 + mock invoke 恒超时（变量中转携带
+   * timeoutMs，绕开对 ToolRegistration 的字面量 excess property check——U2 落地
+   * 字段后可直接写进类型） */
+  function setupWithSchema(schema: ToolEntry['schema']) {
+    const broker = createMockBroker()
+    const service = new PluginService({} as never, broker)
+    const reg = internals(service)
+    reg.toolRegistry.set('p1:hello', {
+      pluginId: 'p1',
+      handlerId: 'p1:hello',
+      schema,
+    })
+    reg.host.getWorkerHandle = vi.fn().mockReturnValue({
+      workerId: 'worker-1',
+      postMessage: vi.fn(),
+    })
+    reg.rpcServer.invoke = vi.fn().mockRejectedValue(new Error('RPC timeout'))
+    return service
+  }
+
+  function makeRequest(): BridgeToolExecuteRequest {
+    return { type: 'bridge.tool.execute', toolName: 'hello', parameters: {} }
+  }
+
+  it('reports the declared duration and source when timeoutMs is declared', async () => {
+    const declaredSchema = { name: 'hello', description: '', parameters: {}, timeoutMs: 10_000 }
+    const service = setupWithSchema(declaredSchema)
+
+    const result = await service.handleBridgeToolExecute(makeRequest())
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain(`Plugin tool 'hello' timed out after 10s (declared;`)
+    expect(result.content).toContain('its result will be discarded')
+    expect(result.content).toContain('<=0 = no limit')
+  })
+
+  it('reports the default duration and source when no timeoutMs declared', async () => {
+    const plainSchema = { name: 'hello', description: '', parameters: {} }
+    const service = setupWithSchema(plainSchema)
+
+    const result = await service.handleBridgeToolExecute(makeRequest())
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain(
+      `timed out after 30min (default;`,
+    )
+  })
+
+  it('falls back to default source for an illegal (NaN) declaration', async () => {
+    const nanSchema = { name: 'hello', description: '', parameters: {}, timeoutMs: Number.NaN }
+    const service = setupWithSchema(nanSchema)
+
+    const result = await service.handleBridgeToolExecute(makeRequest())
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('timed out after 30min (default;')
+  })
+
+  it('passes the resolved declared timeout to invoke', async () => {
+    const declaredSchema = { name: 'hello', description: '', parameters: {}, timeoutMs: 10_000 }
+    const broker = createMockBroker()
+    const service = new PluginService({} as never, broker)
+    const reg = internals(service)
+    reg.toolRegistry.set('p1:hello', {
+      pluginId: 'p1',
+      handlerId: 'p1:hello',
+      schema: declaredSchema,
+    })
+    reg.host.getWorkerHandle = vi.fn().mockReturnValue({
+      workerId: 'worker-1',
+      postMessage: vi.fn(),
+    })
+    reg.rpcServer.invoke = vi.fn().mockResolvedValue({ content: 'ok', isError: false })
+
+    await service.handleBridgeToolExecute(makeRequest())
+
+    expect(reg.rpcServer.invoke).toHaveBeenCalledWith(
+      'worker-1',
+      'plugin.tool.execute',
+      expect.objectContaining({ toolName: 'hello' }),
+      10_000,
+    )
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// P-9：迟到回包 miss 不炸（fake timers 驱动真实 invoke 链）
+// ══════════════════════════════════════════════════════════════════
+
+describe('late reply after tool timeout (P-9)', () => {
+  it('drops the late reply without error and keeps the pending tracker clean', async () => {
+    vi.useFakeTimers()
+    try {
+      const broker = createMockBroker()
+      const service = new PluginService({} as never, broker)
+      const reg = internals(service)
+
+      const declaredSchema = { name: 'slow', description: '', parameters: {}, timeoutMs: 5_000 }
+      reg.toolRegistry.set('p1:slow', {
+        pluginId: 'p1',
+        handlerId: 'p1:slow',
+        schema: declaredSchema,
+      })
+      reg.host.getWorkerHandle = vi.fn().mockReturnValue({
+        workerId: 'worker-1',
+        postMessage: vi.fn(),
+      })
+      // 真实 PluginRpcServer（不 mock invoke）——PendingTracker timer 由 fake timers 驱动
+      const sentMessages: unknown[] = []
+      reg.rpcServer.registerWorker('worker-1', {
+        postMessage: (msg: unknown) => { sentMessages.push(msg) },
+      })
+
+      const request: BridgeToolExecuteRequest = {
+        type: 'bridge.tool.execute',
+        toolName: 'slow',
+        parameters: {},
+      }
+      const execution = service.handleBridgeToolExecute(request)
+
+      // 推进超过声明超时（5s）→ invoke reject → 诚实 isError
+      await vi.advanceTimersByTimeAsync(5_100)
+      const result = await execution
+      expect(result.isError).toBe(true)
+      expect(result.content).toContain('timed out after 5s (declared')
+
+      // 迟到回包到达：登记项已随超时删除 → miss（返回 false），不得抛异常
+      const timedOutId = (sentMessages[0] as { request: { id: number } }).request.id
+      let lateHandled: boolean | undefined
+      expect(() => {
+        lateHandled = reg.rpcServer.handleResponse({
+          jsonrpc: '2.0',
+          id: timedOutId,
+          result: { content: 'late result', isError: false },
+        })
+      }).not.toThrow()
+      expect(lateHandled).toBe(false)
+
+      // 登记表未被污染：后续请求正常收发
+      const followUp = reg.rpcServer.invoke('worker-1', 'plugin.tool.execute', {}, 5_000)
+      const followUpId = (sentMessages[1] as { request: { id: number } }).request.id
+      reg.rpcServer.handleResponse({
+        jsonrpc: '2.0',
+        id: followUpId,
+        result: { content: 'ok', isError: false },
+      })
+      await expect(followUp).resolves.toEqual({ content: 'ok', isError: false })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

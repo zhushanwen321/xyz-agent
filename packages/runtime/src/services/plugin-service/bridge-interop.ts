@@ -15,7 +15,68 @@ import type { PluginHost } from './plugin-host.js'
 import type { PluginRpcServer } from './plugin-rpc-server.js'
 import { toErrorMessage } from '../../utils/errors.js'
 
-const TOOL_EXECUTE_TIMEOUT_MS = 30_000
+/**
+ * 工具执行默认超时（D1：任务级防挂死兜底，docs/design/timeout-plugin-service-granularity.md §6.1）。
+ *
+ * 旧值 30s 固定墙钟误杀长工具（失败模式 A）；新默认可被 ToolRegistration.timeoutMs
+ * 声明覆盖（声明通道 U2 落地），声明 <=0 / Infinity 显式 opt-out（见 resolveToolTimeoutMs）。
+ * 30min 与本仓既有裁决同值：subagent-core dialog-queue DEFAULT_DIALOG_TIMEOUT_MS、
+ * session-runner SPAWN_WATCHDOG_FLOOR_MS。
+ */
+export const DEFAULT_TOOL_EXECUTE_TIMEOUT_MS = 1_800_000
+
+/**
+ * Node setTimeout delay 安全上限（2^31-1）：超域 delay 会被 Node 塌缩为 1ms 立即
+ * 触发（语义反转：刚发起就超时）。权威源 @zhushanwen/subagent-core/shared/timer-delay.ts
+ * （dialog-queue 同款 clamp 惯例）——runtime 尚无该符号的 import 先例，本地同值定义
+ * （平台常量无漂移面），避免首创跨包深路径耦合。
+ */
+const MAX_TIMER_DELAY_MS = 2_147_483_647
+
+/**
+ * declared 是否为参与取值的合法正数声明（合法域判定的单一权威源）：
+ * finite 且 > 0 才生效——NaN / ±Infinity / undefined / 运行时脏值均不算合法声明。
+ */
+function isDeclaredTimeoutActive(declared: number | undefined): declared is number {
+  return typeof declared === 'number' && Number.isFinite(declared) && declared > 0
+}
+
+/**
+ * 解析工具执行的有效超时（对齐 dialog-queue resolveDialogTimeoutMs 形态，D1 取值链）：
+ * 1. 合法正数声明优先，clamp 到 MAX_TIMER_DELAY_MS（超域值经 Node setTimeout 会塌缩
+ *    1ms 反转为立即超时，clamp 是「近乎不限时」意图在 timer 域内的安全近似）；
+ * 2. declared <= 0 或 Infinity 视为显式 opt-out（不限时）——invoke 的 timeoutMs 必传
+ *    （plugin-rpc-server.ts，不注册 timer 需改其签名），故以 clamp 上界 2^31-1 近似
+ *    「不限时」（约 24.8 天，实际等价于不设防挂死兜底）；
+ * 3. 非法值（undefined / NaN / 非数值）回落 DEFAULT_TOOL_EXECUTE_TIMEOUT_MS——不因
+ *    脏参数拆掉防挂死兜底。
+ */
+export function resolveToolTimeoutMs(declared?: number): number {
+  if (isDeclaredTimeoutActive(declared)) {
+    return Math.min(declared, MAX_TIMER_DELAY_MS)
+  }
+  if (typeof declared !== 'number' || Number.isNaN(declared)) {
+    return DEFAULT_TOOL_EXECUTE_TIMEOUT_MS
+  }
+  return MAX_TIMER_DELAY_MS
+}
+
+/**
+ * 读取 schema 上的声明 timeoutMs。U2 落地 ToolRegistration.timeoutMs 前该字段不在
+ * 类型面，经运行时 guard 窄化（非 number 一律 undefined → 回落默认）；U2 落地后可
+ * 简化为直接读 schema.timeoutMs。
+ */
+function getDeclaredToolTimeoutMs(schema: ToolRegistration): number | undefined {
+  const declared = (schema as { timeoutMs?: unknown }).timeoutMs
+  return typeof declared === 'number' ? declared : undefined
+}
+
+/** 毫秒时长 → 诚实可读文案（整分/整秒/毫秒，不四舍五入以免低报等待时长） */
+function formatDurationMs(ms: number): string {
+  if (ms % 60_000 === 0) return `${ms / 60_000}min`
+  if (ms % 1_000 === 0) return `${ms / 1_000}s`
+  return `${ms}ms`
+}
 
 /**
  * pi 事件 → plugin HookType 翻译映射表（IF1，D4）。
@@ -113,6 +174,10 @@ export async function handleBridgeToolExecute(
     return { content: 'Plugin worker crashed', isError: true }
   }
 
+  // D1 取值链：声明 timeoutMs（合法正数）优先，否则默认兜底；<=0/Infinity opt-out
+  const declared = getDeclaredToolTimeoutMs(entry.schema)
+  const timeoutMs = resolveToolTimeoutMs(declared)
+
   try {
     const result = await rpcServer.invoke(
       handle.workerId,
@@ -124,12 +189,21 @@ export async function handleBridgeToolExecute(
         sessionId: request.sessionId,
         toolCallId: request.toolCallId,
       },
-      TOOL_EXECUTE_TIMEOUT_MS,
+      timeoutMs,
     )
     return result as BridgeToolExecuteResponse
   } catch (err: unknown) {
     if (err instanceof Error && err.message.includes('RPC timeout')) {
-      return { content: 'Plugin tool execution timed out', isError: true }
+      // 超时错误诚实化（设计 §5.2 文案）：等了多久 / 默认还是声明值 / handler 仍在跑
+      // 结果将丢弃 / 插件作者如何调整。迟到回包经 PendingTracker miss 静默丢弃，不炸。
+      const source = isDeclaredTimeoutActive(declared) ? 'declared' : 'default'
+      return {
+        content:
+          `Plugin tool '${request.toolName}' timed out after ${formatDurationMs(timeoutMs)} ` +
+          `(${source}; plugin handler may still be running, its result will be discarded). ` +
+          `Plugin authors: pass timeoutMs in registerTool() to extend or opt out (<=0 = no limit).`,
+        isError: true,
+      }
     }
     const msg = toErrorMessage(err)
     return { content: `Plugin tool execution failed: ${msg}`, isError: true }
