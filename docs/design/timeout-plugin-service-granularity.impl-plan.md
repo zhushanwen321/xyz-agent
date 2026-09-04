@@ -83,6 +83,14 @@ graph TD
 | U7 | loadTimeoutMs 落地为构造选项（fork 版 PluginPoolOptions 逐字同构）而非方法参数；race timer 清理用 finally 超集覆盖 deactivate 抛错路径 | plugin-host.ts；plugin-host-process.ts:102/123 | 2026-09-04 U7 |
 | U8 | 权限撤窗按 pluginId 严格匹配（防陈旧广播误撤后到插件的新弹窗）——任务描述的幂等严格化 | usePermissionRequest.ts | 2026-09-04 U8 |
 | U8 | development-guide 契约节落位 §11.5（保护外部锚点 #22 不断链） | development-guide.md:1104+ | 2026-09-04 U8 |
+| U5 | ACTIVATING 作废检查先于 'timeout' 分流（作废激活不发 expired 广播，弹窗命运归接管方）——设计条款 2 未细分的正确实现 | plugin-activator.ts:266-269；plugin-permission-timeout.test.ts d1/d2 | 2026-09-04 A2 |
+| U3 | 排队项兜底收尾（expireFallback 含 queued 分支）——cancel 丢失形态下 V4b 排队场景也封闭，设计条款 4 未细列 | ui-request-queue.ts:170-194 | 2026-09-04 A2 |
+| U3 | uiRequestExpired handler 双防御（缺 requestId warn 丢弃 / 未接线 warn 退化兜底）——失败要出声 | ui-api.ts:197-215 | 2026-09-04 A2 |
+| U3 | 重复 id 防御保持 JSON-RPC error.code 线协议形状（throw 纯 Error → INTERNAL_ERROR 回包） | ui-request-queue.ts:96-103 | 2026-09-04 A2 |
+| U3 | 生产装配全链回归测试（真实 PluginService + advanceTimersByTimeAsync 防兜底抢跑竞速失真） | plugin-ui-timeout-authority.test.ts:388-472 | 2026-09-04 A2 |
+| U7 | loadPlugin 超时错误消息诚实化超出设计要求（时长 + loadTimeoutMs 指引，落实 §2 目标 3）；loadTimeoutMs 为宿主装配选项不进插件契约节，文档落位正确 | plugin-host.ts:397-409 | 2026-09-04 A3 |
+| U8 | requestIdSessions 反查表「撤窗命中才删」生命周期——requestId 全局唯一保证残留无误命中；卫生建议：respond 出队可顺手删表项（非必须） | extension-host-dialog.ts:130-153 | 2026-09-04 A3 |
+| U7 | P-10 检查点证据链双载体（注释推演 + 测试断言）可回溯 | plugin-host.ts:398-405；plugin-host.test.ts | 2026-09-04 A3 |
 
 **A1-low 修复记录**：development-guide §11.5 缺命令 timeoutMs 契约行（unreasonable，low）——由主 agent 亲为补齐（文档一行补丁，命令节 + busy 说明），未打回 U8（额度受限期务实选择，动作同 doc 处理路径）。
 

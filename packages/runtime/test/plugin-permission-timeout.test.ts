@@ -12,6 +12,9 @@
  *  e. 生产装配接线：XYZ_PLUGIN_PERMISSION_TIMEOUT_MS env 合法值生效 / 非法值 warn
  *     回落默认 30min / 缺失回落默认（readEnvPermissionTimeoutMs，lifecycle-manager
  *     getEnvIdleTimeoutMs 同形态）
+ *  f. V5 端到端重触发链路（设计 §6.3 条款 2 重触发精确语义）：超时取消（UNLOADED）
+ *     后重触发 activation event 不被 handleEvent 候选过滤拦截（仅排除 ACTIVE/
+ *     ACTIVATING）→ 重新弹审批（新 pending 挂起），本次批准走完整激活链 → ACTIVE
  *
  * 运行命令: cd packages/runtime && npx vitest run test/plugin-permission-timeout.test.ts
  */
@@ -77,6 +80,8 @@ function createMockHost(activator: PluginActivator): PluginHost {
 function makeActivator(overrides: {
   permissionTimeoutMs?: number
   onPermissionRequestExpired?: (payload: { pluginId: string }) => void
+  /** 传入 spy 以断言审批弹窗触发次数/时点（缺省 no-op「无人作答」） */
+  onPermissionRequest?: (payload: { pluginId: string; permissions: string[] }) => void
 }): PluginActivator {
   return new PluginActivator({
     permissionChecker: { getUnapproved: () => ['plugin.hooks.register'] },
@@ -205,6 +210,48 @@ describe('审批等待到期取消语义（activator 层分流）', () => {
     expect(activator.getState('timeout-plugin')).toBe('UNLOADED')
     expect(expiredSpy).not.toHaveBeenCalled()
     expect((host.assignWorker as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0)
+  })
+
+  // ── f. V5 端到端重触发链路（设计 §6.3 条款 2）：超时取消 ≠ 终局——UNLOADED ──
+  // 重触发 activation event → 新审批 pending → 本次批准 → ACTIVE
+  it('超时取消（UNLOADED）后重触发 activation event → 重新弹审批，本次批准生效 → ACTIVE', async () => {
+    const requestSpy = vi.fn()
+    const expiredSpy = vi.fn()
+    const activator = makeActivator({
+      permissionTimeoutMs: 100,
+      onPermissionRequest: requestSpy,
+      onPermissionRequestExpired: expiredSpy,
+    })
+    activator.registerDescriptors([descriptor])
+    const host = createMockHost(activator)
+
+    // 第一次激活：挂审批 → 到期取消 → UNLOADED + expired 广播
+    const firstActivation = activator.activatePlugin('timeout-plugin', { type: 'onStartupFinished' }, host)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(activator.getState('timeout-plugin')).toBe('ACTIVATING')
+    expect(requestSpy).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(200)
+    await firstActivation
+    expect(activator.getState('timeout-plugin')).toBe('UNLOADED')
+    expect(expiredSpy).toHaveBeenCalledTimes(1)
+
+    // 重触发 activation event（handleEvent 候选过滤仅排除 ACTIVE/ACTIVATING，
+    // UNLOADED 放行）→ 新审批 pending 挂起（第二个弹窗）
+    const secondActivation = activator.handleEvent({ type: 'onStartupFinished' }, host)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(requestSpy).toHaveBeenCalledTimes(2)
+    expect(requestSpy).toHaveBeenLastCalledWith({ pluginId: 'timeout-plugin', permissions: ['plugin.hooks.register'] })
+    expect(activator.getState('timeout-plugin')).toBe('ACTIVATING')
+
+    // 本次批准 → 激活链走完（assignWorker → loadPlugin → activated 回复）→ ACTIVE
+    activator.resolvePermissionApproval('timeout-plugin', true)
+    await vi.advanceTimersByTimeAsync(0)
+    await secondActivation
+    expect(activator.getState('timeout-plugin')).toBe('ACTIVE')
+    expect((host.assignWorker as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1)
+    // 批准路径不再产生第二次 expired 广播
+    expect(expiredSpy).toHaveBeenCalledTimes(1)
   })
 })
 

@@ -32,7 +32,7 @@
 import { PLUGIN_NOTIFY_LIMITS } from '@xyz-agent/shared'
 import type { PluginRpcServer } from '../plugin-rpc-server.js'
 import type { PluginRpcClient } from '../plugin-rpc-client.js'
-import type { StatusBarItemOptions } from '../plugin-types.js'
+import type { StatusBarItemOptions, UiDialogOptions } from '../plugin-types.js'
 import { PluginRpcErrorCodes } from '../plugin-types.js'
 import {
   asBoundedString,
@@ -84,10 +84,10 @@ export function resolveUiRequestTimeoutMs(timeout: number | undefined): number {
   return Math.min(resolved, MAX_TIMER_DELAY_MS)
 }
 
-/** dialog 方法的可选超时覆盖（毫秒，从调用到拿到结果的最长全程等待，含串行排队）。 */
-export interface UiDialogOptions {
-  timeout?: number
-}
+// re-export（NON-BREAKING）：UiDialogOptions 权威契约定义在 plugin-types.ts（与
+// StatusBarItemOptions 同源，单一定义消除本文件历史副本）；既有消费者
+//（plugin-ui-timeout-authority.test.ts）仍从本文件导入，导出面不变。
+export type { UiDialogOptions }
 
 /** Worker→host dialog 请求携带的计时/取消控制字段（queue 尊重来方值）。 */
 export interface UiRequestMeta {
