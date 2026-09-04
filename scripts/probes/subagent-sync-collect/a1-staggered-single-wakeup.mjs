@@ -104,7 +104,7 @@ async function main() {
 
       const segs = C.batchSegments(batch.content);
       checks.check("三段结果在同一条消息（批头 + 3 条目）", segs.length === 4, `segments=${segs.length}`);
-      const ids = segs.slice(1).map((s) => (s.match(/sa-[0-9a-f]+/i) || [])[0]);
+      const ids = segs.slice(1).map((s) => C.saIdOf(s));
       const uniqueIds = new Set(ids.filter(Boolean));
       checks.check("3 个不同 sa- id 条目", uniqueIds.size === 3, `ids=${[...uniqueIds].join(",")}`);
 

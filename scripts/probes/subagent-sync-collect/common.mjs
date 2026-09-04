@@ -25,7 +25,7 @@
 // 与 --session-dir 无关——path-encoding.ts 布局）。
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -106,19 +106,47 @@ export function isDryRun(argv) {
 
 // ── 工作区（mkdtemp + agentDir subagents 段清理）──────────
 
-export function makeWorkspace(label) {
+/** 隔离 agentDir 需要拷贝的最小文件集（模型鉴权/自定义 provider 配置；均 <几 KB）。
+ *  pi 核心与扩展的其余状态（会话 db/日志/已装扩展等）探针用不上：--no-extensions +
+ *  显式 --extension 本地源码 + 显式 --model，缺什么也不会坏启动。 */
+const AGENT_DIR_BOOTSTRAP_FILES = ["auth.json", "models.json", "models-store.json", "settings.json"];
+
+export function makeWorkspace(label, opts = {}) {
   const root = mkdtempSync(join(tmpdir(), `pi-sync-collect-${label}-`));
-  const cwd = join(root, "cwd");
+  const rawCwd = join(root, "cwd");
   const sessionDir = join(root, "sessions");
-  mkdirSync(cwd, { recursive: true });
+  mkdirSync(rawCwd, { recursive: true });
   mkdirSync(sessionDir, { recursive: true });
+  // [A4/A6 扫描修复] spawn 后 pi 进程的 process.cwd() 会解析 macOS 符号链接
+  // （/var/folders → /private/var/folders）；path-encoding 用的是进程内解析后的
+  // cwd——工作区必须同步用 realpath 编码，否则 enc 段错位（真跑实证：磁盘目录名
+  // 为 --private-var-…-，而旧移植按 /var/… 编码 → subagentSessionFiles/records 恒空）。
+  const cwd = realpathSync(rawCwd);
   const enc = encodeCwd(cwd);
+  // [A4 确定性触发] 隔离 agentDir：拷最小鉴权/模型配置集 + 写 subagents/config.json，
+  // 经 PI_CODING_AGENT_DIR 注入（pi 核心 getAgentDir() 读该 env，扩展 config 发现
+  // = <agentDir>/subagents/config.json）——预算覆盖可按 probe 定制，且子代理树
+  // 全部落 tmp，零真实目录污染。env 注入同时对本进程生效（resolveAgentDir() 扫描对齐）。
+  let agentDir = null;
+  let savedAgentDirEnv;
+  if (opts.isolatedAgentDir) {
+    agentDir = mkdtempSync(join(tmpdir(), `pi-sync-collect-${label}-agent-`));
+    for (const f of AGENT_DIR_BOOTSTRAP_FILES) {
+      const src = join(resolveAgentDir(), f);
+      if (existsSync(src)) copyFileSync(src, join(agentDir, f));
+    }
+    mkdirSync(join(agentDir, "subagents"), { recursive: true });
+    savedAgentDirEnv = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    if (typeof opts.writeConfig === "function") opts.writeConfig(agentDir);
+  }
   return {
     root,
     cwd,
     sessionDir,
     enc,
-    subagentTree: join(resolveAgentDir(), "subagents", enc),
+    agentDir,
+    subagentTree: join(agentDir ?? resolveAgentDir(), "subagents", enc),
     cleanup() {
       try {
         rmSync(root, { recursive: true, force: true });
@@ -126,6 +154,13 @@ export function makeWorkspace(label) {
       try {
         rmSync(join(resolveAgentDir(), "subagents", enc), { recursive: true, force: true });
       } catch { /* best-effort */ }
+      if (agentDir) {
+        try {
+          rmSync(agentDir, { recursive: true, force: true });
+        } catch { /* best-effort */ }
+        if (savedAgentDirEnv === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = savedAgentDirEnv;
+      }
     },
   };
 }
@@ -156,7 +191,15 @@ export function spawnSession(opts) {
     "--approve",
   ];
   if (opts.sessionFile) args.push("--session", opts.sessionFile);
-  const child = spawn(opts.piBin, args, { stdio: ["pipe", "pipe", "pipe"], cwd: opts.cwd });
+  // [U8 同病同修·子 env 消毒] 宿主链可能注入 PI_SUBAGENT_*（身份/ROOT_CWD——后者会
+  // 改写 subagent 树编码键：真跑实证 enc 段落到 enc(宿主 repo) 而非工作区）与
+  // XYZ_SUBAGENT_RELAY_*（改道 getPiInvocation relay 分支）。探针 pi 必须以 root 层、
+  // 自身 cwd 的干净身份运行，否则 A4 子 session 扫描/A6 records 扫描恒空。
+  const childEnv = { ...process.env };
+  for (const key of Object.keys(childEnv)) {
+    if (key.startsWith("PI_SUBAGENT_") || key.startsWith("XYZ_SUBAGENT_RELAY_")) delete childEnv[key];
+  }
+  const child = spawn(opts.piBin, args, { stdio: ["pipe", "pipe", "pipe"], cwd: opts.cwd, env: childEnv });
 
   let rpcId = 0;
   const pending = new Map();
@@ -244,9 +287,14 @@ export function spawnSession(opts) {
       }
       return null;
     },
-    /** 发 prompt 并等真回合结束（stopReason !== toolUse）。 */
-    async prompt(message, turnTimeoutMs = 180000) {
-      const ack = await Promise.race([sendRpc({ type: "prompt", message }), sleep(30000).then(() => null)]);
+    /** 发 prompt 并等真回合结束（stopReason !== toolUse）。
+     *  rpcExtras：透传额外 RPC 字段（如 streamingBehavior:"followUp"——批唤醒 turn
+     *  可能仍在跑，带此字段排队而非被拒，A4 取回轮确定性写入）。 */
+    async prompt(message, turnTimeoutMs = 180000, rpcExtras = {}) {
+      const ack = await Promise.race([
+        sendRpc({ type: "prompt", message, ...rpcExtras }),
+        sleep(30000).then(() => null),
+      ]);
       if (!ack) throw new Error(`[${opts.label}] prompt ack timeout (30s)`);
       if (!ack.success) throw new Error(`[${opts.label}] prompt rejected: ${JSON.stringify(ack.error || ack.data)}`);
       return waitForTurnEnd(turnTimeoutMs);
@@ -506,11 +554,22 @@ export function itemResultBody(item) {
   return body;
 }
 
+/** sa- 全形 id 提取：真实形态 = sa-<uuid>（如 sa-9407516a-a053-45a4-9d12-69a93b6d7c8c，
+ *  A1 真跑 dump 实证），短式 sa-<hex> 兜底。返回首个命中或 undefined。
+ *  各场景 item 侧/start 侧必须同用本函数，避免截断不一致导致集合比对假阴性。 */
+export function saIdOf(text) {
+  if (typeof text !== "string") return undefined;
+  return text.match(/sa-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0]
+    ?? text.match(/sa-[0-9a-f]{6,}/i)?.[0];
+}
+
 /** 扫描主 session entries，提取派发轮 subagent start 调用映射。
  *
- * assistant content 的 toolCall 块（pi entry schema：toolCall 是 assistant message
- * content block，携带 toolCallId/toolName/arguments）× toolResult（role="toolResult"
- * 正文含 sa- id）配对 → { saId, collect, engine, task } 列表。 */
+ * 真实形态（A1 真跑 dump 实证，2026-09）：assistant content 的 toolCall 块字段为
+ * {type:"toolCall", id, name, arguments}——工具名字段是 name（非 toolName），调用 id
+ * 字段是 id（非 toolCallId）；toolResult message 侧才是 toolCallId/toolName。
+ * arguments 为对象（兼容字符串形态 JSON.parse）× toolResult 正文首块
+ * {"action":"start","subagentId":"sa-…"} 配对 → { saId, collect, engine, task } 列表。 */
 export function dispatchedStarts(entries) {
   const calls = new Map(); // toolCallId -> args
   for (const e of entries) {
@@ -518,7 +577,9 @@ export function dispatchedStarts(entries) {
     const content = e.message.content;
     if (!Array.isArray(content)) continue;
     for (const c of content) {
-      if (c && c.type === "toolCall" && c.toolName === "subagent" && typeof c.toolCallId === "string") {
+      const callId = typeof c?.id === "string" ? c.id : c?.toolCallId;
+      const toolName = c?.name ?? c?.toolName;
+      if (c && c.type === "toolCall" && toolName === "subagent" && typeof callId === "string") {
         let args = c.arguments;
         if (typeof args === "string") {
           try {
@@ -527,7 +588,7 @@ export function dispatchedStarts(entries) {
             args = {};
           }
         }
-        if (args && args.action === "start") calls.set(c.toolCallId, args);
+        if (args && args.action === "start") calls.set(callId, args);
       }
     }
   }
@@ -542,10 +603,10 @@ export function dispatchedStarts(entries) {
       : Array.isArray(content)
         ? content.filter((c) => c && c.type === "text").map((c) => c.text || "").join("\n")
         : "";
-    const m = text.match(/sa-[0-9a-f]{6,}/i) || text.match(/sa-\w+-?\w*/i);
-    if (!m) continue;
+    const saId = saIdOf(text);
+    if (!saId) continue;
     const args = calls.get(tcid);
-    out.push({ saId: m[0], collect: args.collect || "async", engine: args.engine || null, task: args.task || "" });
+    out.push({ saId, collect: args.collect || "async", engine: args.engine || null, task: args.task || "" });
   }
   return out;
 }

@@ -112,8 +112,12 @@ async function main() {
 
     const F = resolveSessionFile(s1, ws);
     checks.check("主 session 文件可定位", !!F, F || "n/a");
-    const records = C.readRecordManifests(ws).length;
-    checks.check("派发记录 ≥2（子进程已拉起）", records >= 2, `records=${records}`);
+    // [A6 修复] 派发证据改用主 session 已落盘的 dispatchedStarts（派发轮 turn_end 后必
+    // 已 flush；worker 子 session 文件延迟写入不可靠——真跑实证 8s 时仅 1/2 可见）。
+    const dispatched = C.dispatchedStarts(C.readJsonlEntries(F)).filter((s) => s.collect === "sync");
+    checks.check("派发 2 个 collect:sync start（子进程已拉起）", dispatched.length === 2, `starts=${dispatched.length}`);
+    const subSessionsNow = C.subagentSessionFiles(ws).length;
+    checks.note("当前可见 worker 子 session 文件数（延迟写入，仅参考）", `${subSessionsNow}`);
 
     // 静置 8s：让两个子进程越过启动段进入 sleep（kill 窗口稳定）
     await C.sleep(8000);
@@ -161,7 +165,7 @@ async function main() {
         checks.check("补发批头 + 2 条目", segs.length === 3, `segments=${segs.length}`);
         const starts = C.dispatchedStarts(entries).filter((s) => s.collect === "sync");
         const startIds = new Set(starts.map((s) => s.saId));
-        const itemIds = new Set(segs.slice(1).map((s) => (s.match(/sa-[0-9a-f]+/i) || [])[0]).filter(Boolean));
+        const itemIds = new Set(segs.slice(1).map((s) => C.saIdOf(s)).filter(Boolean));
         checks.check(
           "补发条目 id 集 == 派发 sync 成员 id 集",
           startIds.size === 2 && itemIds.size === 2 && [...itemIds].every((id) => startIds.has(id)),

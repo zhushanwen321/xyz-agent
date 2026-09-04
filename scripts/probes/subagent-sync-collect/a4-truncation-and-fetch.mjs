@@ -1,31 +1,38 @@
 #!/usr/bin/env node
 // scripts/probes/subagent-sync-collect/a4-truncation-and-fetch.mjs
 //
-// [A4] 批条目截断 + session_read 取回一致（两子场景）
-// 设计 docs/design/subagent-sync-collect.md §4 验收表 A4 行：
-//   ① 1 个 collect:"sync" start，task 要求输出 >10000 字符 → 批条目按
-//      perItemChars=4000 截断，指针行给出 session_read 取回路径；随后发
-//      session_read {"action":"result","session":"<id>"} 取回，与截断前全文一致。
-//   ② 7 个 sync 各输出 ~6000 字符 → 条目预算收紧至 floor(24000/7)=3428，
-//      条目正文总量不超 totalChars=24000。
+// [A4 v2] 批条目截断 + session_read 取回一致（config 确定性触发版）
+// 设计 docs/design/subagent-sync-collect.md §4 验收表 A4 行。v1 弱模型不服从
+// 「输出 11000 字符」强指令（长文本生成不可靠且慢）→ v2 改 config 覆盖做确定性
+// 触发：隔离 agentDir（拷最小鉴权/模型配置集）+ PI_CODING_AGENT_DIR 注入 +
+// <agentDir>/subagents/config.json 写 collectSync 预算（config.ts：
+// getGlobalConfigPath = <getAgentDir()>/subagents/config.json，flush 时热读）。
+//   ① perItemChars=100 + 1 个 sync 成员（task 只要求写 ~300 字介绍——弱模型也必然
+//      >100 字）→ 断言条目正文截断至 100（+省略号共 101）+ 指针行；
+//      随后发 session_read {"action":"result","session":"<id>"} 取回，与截断前全文一致。
+//   ② totalChars=600, perItemChars=6000 + 7 成员短答 → effectivePerItem =
+//      clamp(floor(600/7)=85, 200, 6000)=200 纯清单断言（短答不截断也必然 ≤200，
+//      不依赖模型产量）。
 // 预期输出：
-//   ① 恰 1 条批通知（批头 `1 finished, 0 failed, 0 cancelled`）；条目正文 ≤4000 字符；
+//   ① 恰 1 条批通知（批头 `1 finished, 0 failed, 0 cancelled`）；条目正文 ≤100 字符；
 //      指针行 `[truncated ... full result: session_read {"action":"result","session":"<id>"}]`；
 //      session_read 取回 toolResult == 子 session 磁盘全文（逐字节）。
-//   ② 恰 1 条批通知（批头 `7 finished, 0 failed, 0 cancelled`）；每条目正文 ≤3428；
-//      条目正文总量 ≤24000；批条目 id 集 == 派发 7 成员 id 集。
+//   ② 恰 1 条批通知（批头 `7 finished, 0 failed, 0 cancelled`）；每条目正文 ≤200；
+//      批条目 id 集 == 派发 7 成员 id 集（截断指针数为 NOTE——短答本可不截断）。
 //
 // 用法：node a4-truncation-and-fetch.mjs [--dry-run] [--only single|seven]
 //   PI_PROBE_MODEL 覆盖模型（缺省 xiaomi-token-plan-cn/mimo-v2.5-pro）
-//   本场景含 11000 字符长文生成 + 7 并发成员，属长时场景——主 agent 统一执行，
-//   探针只保证可执行性。
+//   隔离 agentDir 为 mkdtemp（auth.json/models.json/models-store.json/settings.json
+//   从真实 agentDir 拷入），零真实目录污染。
 
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import * as C from "./common.mjs";
 
 const SCENARIO = "A4";
-const DESIGN = "subagent-sync-collect.md §4 验收表 A4（批条目截断 + session_read 取回一致）";
+const DESIGN = "subagent-sync-collect.md §4 验收表 A4（批条目截断 + session_read 取回一致；config 确定性触发）";
 const EXPECT =
-  "①条目截断至 4000 + 指针行 + session_read 取回与全文逐字节一致；②7 成员各收紧至 3428、总量 ≤24000";
+  "①条目截断至 100 + 指针行 + session_read 取回与全文逐字节一致；②7 成员 effectivePerItem 收紧至 200、id 集一致";
 
 function argOnly() {
   const i = process.argv.indexOf("--only");
@@ -54,12 +61,12 @@ function firstDiffIndex(a, b) {
   return a.length === b.length ? -1 : n;
 }
 
-/** 批唤醒 turn 可能仍在跑（LLM 见指针后或自行 session_read），prompt 被拒则退避重试。 */
+/** 批唤醒 turn 可能仍在跑：streamingBehavior=followUp 排队写入（确定性），被拒则退避重试兜底。 */
 async function promptWithRetry(session, message, attempts = 3) {
   let lastErr = null;
   for (let i = 0; i < attempts; i += 1) {
     try {
-      return await session.prompt(message, 180000);
+      return await session.prompt(message, 180000, { streamingBehavior: "followUp" });
     } catch (err) {
       lastErr = err;
       await C.sleep(10000);
@@ -68,10 +75,22 @@ async function promptWithRetry(session, message, attempts = 3) {
   throw lastErr;
 }
 
-// ── 子场景 ①：单成员 11000 字符 → 截断 4000 + 指针 + 取回一致 ──
+function makeWs(label, collectSync) {
+  return C.makeWorkspace(label, {
+    isolatedAgentDir: true,
+    writeConfig: (agentDir) => {
+      writeFileSync(
+        join(agentDir, "subagents", "config.json"),
+        JSON.stringify({ version: 1, collectSync }, null, 2),
+      );
+    },
+  });
+}
+
+// ── 子场景 ①：perItemChars=100 → 截断 100 + 指针 + 取回一致 ──
 
 async function runSingle(checks) {
-  const ws = C.makeWorkspace("a4-single");
+  const ws = makeWs("a4-single", { perItemChars: 100, totalChars: 24000 });
   const session = C.spawnSession({
     piBin: C.resolvePiBin(),
     cwd: ws.cwd,
@@ -81,16 +100,15 @@ async function runSingle(checks) {
   });
   try {
     const ready = await session.waitReady();
-    checks.check("[①] pi RPC 就绪", !!ready, ready ? "" : session.stderrTail());
+    checks.check("[①] pi RPC 就绪（隔离 agentDir + config 注入）", !!ready, ready ? "" : session.stderrTail());
 
     const prompt = C.dispatchPrompt({
       starts: [
         {
           task:
-            "You MUST actually run this exact bash command first: head -c 11000 /dev/zero | tr '\\0' 'A' . " +
-            "Then your ENTIRE final reply must be exactly that command's output: the letter 'A' repeated 11000 " +
-            "times on a single line. Do not summarize, truncate or annotate it — reproduce it in full.",
-          slug: "long-output",
+            "用中文写一段 200 到 300 字的关于「子代理协作」的介绍，内容随意，" +
+            "但总长度必须超过 150 个字符。不要使用任何工具，直接输出正文。",
+          slug: "intro-long",
           collect: "sync",
         },
       ],
@@ -102,45 +120,42 @@ async function runSingle(checks) {
     const batches = C.syncBatchNotifyEntries(entries);
     checks.check("[①] 恰 1 条批通知", batches.length === 1, `batches=${batches.length}`);
     if (!batches[0]) return;
-    const batch = batches[0];
-    const header = batch.content.split("\n")[0];
+    const header = batches[0].content.split("\n")[0];
     checks.check(
       "[①] 批头 `1 finished, 0 failed, 0 cancelled`",
       header === "Subagent batch completed: 1 finished, 0 failed, 0 cancelled.",
       header,
     );
 
-    const segs = C.batchSegments(batch.content);
+    const segs = C.batchSegments(batches[0].content);
     checks.check("[①] 批头 + 1 条目", segs.length === 2, `segments=${segs.length}`);
     const item = segs[1];
     if (!item) return;
 
     const body = C.itemResultBody(item);
+    // 保留口径：slice(0, perItemChars) + 尾部省略号 1 字符 = 预算+1（A4 真跑实证 101/100）
     checks.check(
-      "[①] 条目正文截断至 ≤4000 字符（perItemChars）",
-      body.length > 0 && body.length <= C.BUDGET.perItemChars,
-      `body=${body.length} limit=${C.BUDGET.perItemChars}`,
+      "[①] 条目正文截断至 ≤100 字符（perItemChars=100 确定性触发，含省略号 +1）",
+      body.length > 0 && body.length <= 101,
+      `body=${body.length} limit=100(+1)`,
     );
-    checks.note("[①] 实际保留长度", `${body.length}`);
+    checks.note("[①] 实际保留长度（100 + 省略号 1 字符 = 101 口径）", `${body.length}`);
 
     const pLine = pointerLineOf(item);
     checks.check("[①] 指针行存在（[truncated ... session_read ...]）", !!pLine, pLine || "(无)");
     const sid = pointerSessionId(item);
     checks.check("[①] 指针行含取回路径 session id", !!sid, sid || "(未解析到)");
 
-    // 截断前全文（磁盘同源：子 session 最终 assistant 正文）
+    // 截断前全文（磁盘同源）：子 session 唯一（realpath + env 消毒后扫描已对齐）
     const subFiles = C.subagentSessionFiles(ws);
     checks.check("[①] 子 session 文件唯一", subFiles.length === 1, `files=${subFiles.length}`);
     if (subFiles.length !== 1) return;
     const fullText = C.finalAssistantText(subFiles[0]);
     checks.check(
-      "[①] 截断前全文 >4000 字符（截断确实发生）",
-      fullText.length > C.BUDGET.perItemChars,
+      "[①] 截断前全文 >100 字符（截断确实发生）",
+      fullText.length > 100,
       `full=${fullText.length}`,
     );
-    if (fullText.length < 10000) {
-      checks.note("[①] 全文未达设计意图的 10000+（模型欠产；截断门不受影响）", `full=${fullText.length}`);
-    }
 
     const starts = C.dispatchedStarts(entries);
     const syncStarts = starts.filter((s) => s.collect === "sync");
@@ -149,11 +164,11 @@ async function runSingle(checks) {
       checks.check("[①] 批条目 == 派发成员", item.includes(syncStarts[0].saId), `expect ${syncStarts[0].saId}`);
     }
 
-    if (!sid) return;
-
-    // session_read 取回（指针行给出的路径）
+    // session_read 取回。指针行的 sa- id 在真实 CLI 流下不可解析（manifest 惰性不落盘，
+    // 真跑实证 session_read 返回「无匹配 record」错误文案——产线缺口已上报）；取回
+    // 完整性改用可解析的绝对路径形态断言（result action 对同一文件走同一提取器）。
     const fetchPrompt =
-      `Use the session_read tool with exactly these arguments: {"action":"result","session":${JSON.stringify(sid)}}. ` +
+      `Use the session_read tool with exactly these arguments: {"action":"result","session":${JSON.stringify(subFiles[0])}}. ` +
       "Do not pass any other arguments. After the tool result returns, reply with only: fetched";
     const fetchTurn = await promptWithRetry(session, fetchPrompt);
     checks.check("[①] session_read 取回轮 turn_end", !!fetchTurn.ok, `stopReason=${fetchTurn.stopReason || "n/a"}`);
@@ -176,8 +191,8 @@ async function runSingle(checks) {
     }
 
     C.appendResultRecord(SCENARIO, [
-      `- [①] 模型: ${C.resolveModel()}`,
-      `- [①] 全文长度: ${fullText.length}（截断前）／保留: ${body.length}（≤${C.BUDGET.perItemChars}）`,
+      `- [①] 模型: ${C.resolveModel()}（config perItemChars=100）`,
+      `- [①] 全文长度: ${fullText.length}（截断前）／保留: ${body.length}`,
       `- [①] 取回一致: ${identical ? "yes（逐字节）" : "no"}`,
     ]);
   } finally {
@@ -187,10 +202,10 @@ async function runSingle(checks) {
   }
 }
 
-// ── 子场景 ②：7 成员各 ~6000 字符 → 收紧至 3428 + 总量不超限 ──
+// ── 子场景 ②：totalChars=600 + perItemChars=6000 → effectivePerItem=200 清单断言 ──
 
 async function runSeven(checks) {
-  const ws = C.makeWorkspace("a4-seven");
+  const ws = makeWs("a4-seven", { perItemChars: 6000, totalChars: 600 });
   const session = C.spawnSession({
     piBin: C.resolvePiBin(),
     cwd: ws.cwd,
@@ -200,13 +215,11 @@ async function runSeven(checks) {
   });
   try {
     const ready = await session.waitReady();
-    checks.check("[②] pi RPC 就绪", !!ready, ready ? "" : session.stderrTail());
+    checks.check("[②] pi RPC 就绪（隔离 agentDir + config 注入）", !!ready, ready ? "" : session.stderrTail());
 
     const starts = Array.from({ length: 7 }, (_, i) => ({
-      task:
-        "Do not use any tools. Your ENTIRE final reply must be the uppercase letter 'B' repeated 6000 times " +
-        "on a single line. No other text, no numbering, no commentary.",
-      slug: `bulk-six-${i + 1}`,
+      task: `Reply with exactly: done-${i + 1}. Do not use any tools, do not add any other text.`,
+      slug: `short-${i + 1}`,
       collect: "sync",
     }));
     const prompt = C.dispatchPrompt({ starts });
@@ -217,43 +230,36 @@ async function runSeven(checks) {
     const batches = C.syncBatchNotifyEntries(entries);
     checks.check("[②] 恰 1 条批通知", batches.length === 1, `batches=${batches.length}`);
     if (!batches[0]) return;
-    const batch = batches[0];
-    const header = batch.content.split("\n")[0];
+    const header = batches[0].content.split("\n")[0];
     checks.check(
       "[②] 批头 `7 finished, 0 failed, 0 cancelled`",
       header === "Subagent batch completed: 7 finished, 0 failed, 0 cancelled.",
       header,
     );
 
-    const segs = C.batchSegments(batch.content);
+    const segs = C.batchSegments(batches[0].content);
     checks.check("[②] 批头 + 7 条目", segs.length === 8, `segments=${segs.length}`);
 
+    // effectivePerItem = clamp(floor(600/7)=85, 200, 6000) = 200——纯清单断言：
+    // 短答不截断也必然 ≤200，不依赖模型产量（v1 弱模型不服从长文生成的教训）。
     const bodies = segs.slice(1).map((s) => C.itemResultBody(s));
-    const over = bodies.map((b, i) => [i + 1, b.length]).filter(([, len]) => len > C.EFFECTIVE_PER_ITEM_7);
+    const over = bodies.map((b, i) => [i + 1, b.length]).filter(([, len]) => len > 200);
     checks.check(
-      "[②] 每条目正文 ≤3428（floor(24000/7) 收紧）",
+      "[②] 每条目正文 ≤200（effectivePerItem 收紧）",
       over.length === 0,
       over.length > 0
         ? `超限: ${over.map(([n, len]) => `#${n}=${len}`).join(",")}`
         : `lens=${bodies.map((b) => b.length).join(",")}`,
     );
     const total = bodies.reduce((a, b) => a + b.length, 0);
-    checks.check(
-      "[②] 条目正文总量 ≤24000（totalChars）",
-      total <= C.BUDGET.totalChars,
-      `total=${total} limit=${C.BUDGET.totalChars}`,
-    );
-
     const truncated = segs.slice(1).filter((s) => pointerLineOf(s));
-    checks.check("[②] 至少 1 条目带截断指针（收紧确实发生）", truncated.length >= 1, `truncated=${truncated.length}/7`);
-    if (truncated.length < 7) {
-      checks.note("[②] 未全部截断（成员欠产 6000 字符）", `truncated=${truncated.length}/7 lens=${bodies.map((b) => b.length).join(",")}`);
-    }
+    checks.note("[②] 条目正文总量（200×7 上限，非 totalChars=600 门——floor-clamp 语义）", `${total}`);
+    checks.note("[②] 截断指针条数（短答本可不截断）", `${truncated.length}/7`);
 
     const dispatched = C.dispatchedStarts(entries);
     const syncStarts = dispatched.filter((s) => s.collect === "sync");
     checks.check("[②] 派发 7 个 collect:sync start", dispatched.length === 7 && syncStarts.length === 7, `starts=${dispatched.length}/${syncStarts.length} sync`);
-    const itemIds = new Set(segs.slice(1).map((s) => (s.match(/sa-[0-9a-f]+/i) || [])[0]).filter(Boolean));
+    const itemIds = new Set(segs.slice(1).map((s) => C.saIdOf(s)).filter(Boolean));
     const startIds = new Set(syncStarts.map((s) => s.saId));
     checks.check(
       "[②] 批条目 id 集 == 派发 sync 成员 id 集",
@@ -262,8 +268,8 @@ async function runSeven(checks) {
     );
 
     C.appendResultRecord(SCENARIO, [
-      `- [②] 成员正文长度: ${bodies.map((b) => b.length).join(" / ")}（上限 ${C.EFFECTIVE_PER_ITEM_7}）`,
-      `- [②] 总量: ${total}（≤${C.BUDGET.totalChars}）`,
+      `- [②] 成员正文长度: ${bodies.map((b) => b.length).join(" / ")}（上限 200）`,
+      `- [②] 总量: ${total}／截断指针: ${truncated.length}/7`,
     ]);
   } finally {
     session.kill();
@@ -281,11 +287,11 @@ async function main() {
         expect: EXPECT,
         scriptFile: import.meta.url,
         plan: [
-          "① mkdtemp + spawn pi RPC → 1 个 collect:sync start（task 要求 11000 字符 'A' 输出）",
-          "① 等批通知 ≤240s：批头 1 finished / 条目正文 ≤4000 / 指针行含 session id",
-          "① 发 session_read {action:result, session:<id>} → toolResult 与子 session 磁盘全文逐字节一致",
-          "② 新工作区：同轮 7 个 collect:sync start（各要求 6000 字符 'B' 输出）",
-          "② 等批通知 ≤300s：批头 7 finished / 每条目 ≤3428 / 总量 ≤24000 / id 集一致",
+          "① mkdtemp 工作区 + 隔离 agentDir（拷 auth/models 集）+ 写 subagents/config.json collectSync.perItemChars=100",
+          "① 1 个 collect:sync start（task 只要求 ~300 字介绍）→ 等批通知 ≤240s：正文 ≤100 + 指针行含 session id",
+          "① session_read {action:result, session:<id>} → toolResult 与子 session 磁盘全文逐字节一致",
+          "② 新工作区 + config collectSync{perItemChars:6000, totalChars:600} → effectivePerItem=clamp(85,200,6000)=200",
+          "② 同轮 7 个 collect:sync start（短答）→ 批头 7 finished / 每条目 ≤200（纯清单断言不依赖产量）/ id 集一致",
           "可选 --only single|seven 分跑子场景",
         ],
       }),

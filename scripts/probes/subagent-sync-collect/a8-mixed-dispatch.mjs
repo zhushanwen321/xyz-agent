@@ -121,7 +121,7 @@ async function main() {
       const asyncStart = starts.find((s) => s.task.includes(MARKER_ASYNC));
       checks.check("派发 2 个 collect:sync + 1 个 async", starts.length === 3 && syncStarts.length === 2 && !!asyncStart, `starts=${starts.length} sync=${syncStarts.length}`);
 
-      const batchIds = new Set(segs.slice(1).map((s) => (s.match(/sa-[0-9a-f]+/i) || [])[0]).filter(Boolean));
+      const batchIds = new Set(segs.slice(1).map((s) => C.saIdOf(s)).filter(Boolean));
       const syncIds = new Set(syncStarts.map((s) => s.saId));
       checks.check(
         "批条目 id 集 == 2 个 sync 成员 id 集",
