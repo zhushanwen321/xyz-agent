@@ -344,9 +344,12 @@ export class EventInterpreter {
         this.opts.onTurnUsage?.(ev.sessionId)
         // composer-gen-stats（D1/D2）：组装生成指标样本采样（fire-and-forget 同步，不阻塞事件流）。
         // durationMs = now - turnStartedAt；无配对 turn-start → null（速度样本由 service 跳过，
-        // 命中率样本照常——promptTotal 与时间无关）。
+        // 命中率样本照常——promptTotal 与时间无关）。消费后置空锚点（一次性语义）：缺配对
+        // 的后续 turn-usage 不得拿上一 turn 旧锚点算出系统性偏大 duration，须 §3.5 承诺的
+        // durationMs=null。
         if (this.opts.onGenStats) {
           const startedAt = this.turnStartedAt
+          this.turnStartedAt = null
           this.opts.onGenStats(ev.sessionId, {
             outputTokens: ev.outputTokens,
             durationMs: startedAt === null ? null : Date.now() - startedAt,

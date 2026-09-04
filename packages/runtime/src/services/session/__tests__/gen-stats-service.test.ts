@@ -371,6 +371,25 @@ describe('EventInterpreter gen-stats 接线（D1/D2）', () => {
     expect(onGenStats).toHaveBeenCalledWith('s1', expect.objectContaining({ durationMs: null }))
   })
 
+  it('消费后锚点复位：缺配对的下一个 turn-usage 不得复用上一 turn 旧锚点（§3.5 一致性）', () => {
+    vi.useFakeTimers()
+    const onGenStats = vi.fn()
+    const interp = makeInterpreter(onGenStats)
+    const T0 = 2_000_000
+    vi.setSystemTime(T0)
+    interp.interpret([{ kind: 'turn-start', messageId: 'm1' }])
+    vi.setSystemTime(T0 + 5_000)
+    interp.interpret([TURN_USAGE_EVENT])
+    // 第二个 turn-usage 无配对 turn-start：若旧锚点未复位会算出 10_000（系统性偏大），
+    // 修复后必须为 null（§3.5：速度样本跳过而非脏样本）
+    vi.setSystemTime(T0 + 10_000)
+    interp.interpret([TURN_USAGE_EVENT])
+
+    expect(onGenStats).toHaveBeenCalledTimes(2)
+    expect(onGenStats).toHaveBeenNthCalledWith(1, 's1', expect.objectContaining({ durationMs: 5_000 }))
+    expect(onGenStats).toHaveBeenNthCalledWith(2, 's1', expect.objectContaining({ durationMs: null }))
+  })
+
   it('context.update 链路不受影响：onContextUpdate 照常触发（既有行为回归钉）', () => {
     const onGenStats = vi.fn()
     const onContextUpdate = vi.fn()

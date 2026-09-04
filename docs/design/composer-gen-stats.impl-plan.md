@@ -68,21 +68,37 @@ graph TD
 
 | Unit | 偏差 | 理由 | 登记时间 |
 |------|------|------|----------|
-| （空） | | | |
+| u2 | cacheRatio 分母不含 output（task 提示笔误） | 设计 §3.1 权威口径 `cacheRead÷(input+cacheRead+cacheWrite)`，dev 正确从设计 | 2026-02-09 |
+| u2 | store 导出 bogus 阈值常量+纯谓词 | SSOT 在 store、丢弃判定在 u3，领地内可测 | 2026-02-09 |
+| u2 | 测试落位 src/__tests__（非包根 __tests__） | tsconfig include:['src'] 覆盖 src/__tests__，编译期断言获机器强制力（负向对照证实） | 2026-02-09 |
+| u3 | 写 2 挂接用投影专用 bus 视图后置 tap（session-service.ts） | session-state-projection.ts 不在领地；bus 边界拦截 ≡ 唯一生产点汇聚，帧序构造性保证 | 2026-02-09 |
+| u3 | server.ts 经 OptionalServices.genStats 装配 | 计划「组合根装配处以实际为准」条款；importService 同款范式 | 2026-02-09 |
+| u3 | test/event-interpreter-w3.test.ts fixture 补新字段 | 主 agent 指示；仅修 TS2322 不改断言 | 2026-02-09 |
+| u3 | snapshot 返回 Omit<GenStatsFrame,'sessionId'> | 扩展广播逐 sid 帧体复用同模型快照，类型更精确 | 2026-02-09 |
+| u3 | recordSample 映射写 1 无条件登记（含 bogus 全丢 turn） | 「当前模型归属」语义与写 2/写 3 一致，降级链②命中面更准 | 2026-02-09 |
+| u3 | 速度样本附加 durationMs>0 防退化 | 0ms 分母对 current 恒产 null 无信息量 | 2026-02-09 |
+| u3 | 扩展广播 no-op 抑制（双丢弃 turn 不推帧） | 快照值不变推帧零信息量 | 2026-02-09 |
+| u4 | RPC 直调 command（未扩 api/domains/session.ts） | 领地外最小侵入；后续可补 domain 包装收敛惯例 | 2026-02-09 |
+| u4 | 帧 model 双形态兼容（精确相等+复合后缀） | model 字段真实性待验证检查点的防御；跨区核对恒复合格式，恒走精确分支 | 2026-02-09 |
+| u4 | 缓存浮层无绝对 token 行 | 协议仅携带百分比（D6 前端只拿结论） | 2026-02-09 |
+| u4 | 触发器无 ⚡/◔ 图标 | 禁 Emoji 纪律，纯文字与既有触发器同构 | 2026-02-09 |
+| u4 | 速度浮层 2×2 grid 布局 | 对齐 ContextCapacityPopover 浮层行形态 | 2026-02-09 |
+| u4 | useGenStats 增第二参 modelIdRef? | D4 前端兜底必需，受控 prop 下发（审查 R 后回写设计 §3.4） | 2026-02-09 |
+| 全局 | recency 守卫 seqAtIssue 跨实例语义错配 | 继承蓝本 useContextUsage 固有边界（非本次引入），登记为已知限制，后续统一任务修两 composable | 2026-02-09 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u1-shared | pending | — | — |
-| u2-store | pending | — | — |
-| u3-wiring | pending | — | — |
-| u4-renderer | pending | — | — |
+| u1-shared | committed | 1 | commit feat(shared) u1；vitest 232 绿 + tsc 0 + 负向对照断言生效 |
+| u2-store | committed | 3（r1 基础设施空转/r2 挂死接替/r3 完成+watchdog 中断续聊 1 轮） | commit feat(runtime) u2；vitest 43 绿 + tsc 0；3 deviations 已核验属实（cacheRatio 分母不含 output 系设计 §3.1 权威口径） |
+| u3-wiring | committed | 2（settled watchdog 中断续聊 1 轮 + tsc 提示 1 轮） | commit feat(runtime) u3；service 22 + store 回归 43 = 65 tests 绿 + tsc 0；4 deviations 已核验合理（server.ts 组合根按计划条款/event-interpreter-w3 fixture 按主 agent 指示/snapshot Omit 签名更精确/recordSample 无条件登记语义更准）；⛔ D2 探针待真实会话验证 |
+| u4-renderer | committed | 2（watchdog 中断续聊 1 轮完成） | commit feat(renderer) u4；vitest 531 绿 + vue-tsc 0；4 deviations 已核验合理（RPC 直调 command 系领地外最小侵入/model 双形态兼容/浮层无绝对 token 行系协议口径/无图标系禁 Emoji 纪律） |
 
 ## 7 残留风险与变更历史
 
 **残留风险**：
-- D2 探针（u3 验收③）为 ⛔实施期门：若 1 turn=1 assistant message 配对不成立或 duration 系统性偏差 ≥10%，停下上报（设计已预留降级路径：改挂 assistant message_start/end 对——该变更属设计变更，须回设计文档修订，不得 u3 内自行切换）
+- ~~D2 探针（u3 验收③）为 ⛔实施期门~~ **已被一致性审查静态判定关闭（2026-02-09）**：审查核实 runtime 'turn-start' 唯一产出点为 assistant message_start（pi turn_start ∈ NULL_EVENTS），锚点每轮重置 ⇒ duration 口径 = 末轮 LLM 请求时长，担心的膨胀不会发生；设计 D2 已回写实装口径。剩余实测项（turn_end.message.model 形态对齐、get_state model 形状）随日常使用观察，不阻塞验收
 - get_state 对「从未发消息 session」的返回形态待实测（设计待验证检查点）；若返回空/异常，降级链④兜底全 null，功能不损但「默认模型 session」的恢复腿显示延迟到首采样
 - provider cacheRead 上报覆盖面未知（zai/kimi/xiaomi-mimo 待实测）——影响「—」态出现频率，不影响正确性
 
