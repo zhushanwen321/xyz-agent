@@ -737,6 +737,11 @@ export type ServerMessageType =
   // runtime UiRequestQueue cancelRequest / 防泄漏兜底生产）。广播无条件发出（含排队中
   // 从未展示的请求）；前端对未展示/已关闭弹窗的撤窗 miss 须 noop 幂等。
   | 'plugin:uiRequestExpired'
+  // plugin:permissionRequestExpired：权限审批到期取消下行（timeout-plugin-service D3，
+  // runtime PluginActivator 审批等待超时生产——取消非判拒：插件置 UNLOADED 且可经
+  // 重触发 activation event 重新激活 + 重新弹审批）。前端收到后撤回该插件的审批弹窗；
+  // 迟到批准对已删 pending noop 幂等（旧版前端未消费此帧时无异常回退，P-11）。
+  | 'plugin:permissionRequestExpired'
   | 'plugin:viewUpdate'
   | 'extension:widget' | 'extension:widgetGui' | 'extension:status' | 'extension:notify'
   | 'extension:setEditorText'
@@ -923,6 +928,12 @@ export interface ServerMessageMapBase {
   // 定位撤窗）。广播无条件发出（含排队中从未展示的请求——前端对未展示/已关闭弹窗的撤窗
   // miss 须 noop 幂等，P-11：旧版前端未消费此帧时无异常回退）。
   'plugin:uiRequestExpired': { requestId: string; pluginId: string; sessionId?: string } & Record<string, unknown>
+  // plugin:permissionRequestExpired：权限审批到期取消下行（timeout-plugin-service D3，
+  // runtime PluginActivator 审批等待超时生产）。pluginId 必带（前端按插件定位撤窗）。
+  // 与 D2 的 plugin:uiRequestExpired 同为「取消非替答」语义——插件置 UNLOADED（未装载
+  // 态）而非「被拒」，重触发 activation event 即可重新激活 + 重新弹审批；前端撤窗
+  // miss noop 幂等（P-11：旧版前端未消费此帧时无异常回退）。
+  'plugin:permissionRequestExpired': { pluginId: string } & Record<string, unknown>
   'model.list': { models: ModelInfo[] }
   // model:capabilityDrift：runtime 能力注册表在线对账（reconcileModelCapabilities）发现
   // 配置聚合与 pi 合并清单漂移时经 setCapabilityDriftSink 广播（drift 项已同步记 runtime
