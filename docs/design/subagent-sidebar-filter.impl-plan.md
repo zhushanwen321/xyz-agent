@@ -98,4 +98,5 @@ Wave 1: u-foundation ∥ u-i18n（并行）→ Wave 2: u-filterbar → Wave 3: u
 - 残留风险（设计已登记，实施不处理）：waiting 类记录（chat 轮终/孤儿）无外部动作在 renderer 侧永不迁出，「进行中」计数含不可归零项（设计 D4 语义残留登记）；done 投影 renderer 侧永久态由 D8 badge 收窄兜住 badge 虚亮。
 - 2026-09-04：计划创建（设计文档 v3，第 3 轮终审进行中）。
 - 2026-09-04：终审 0 must-fix 通过，设计文档升至 v3.1（3 条 suggestion 随轮修）；u-wiring 领地补 SegmentedTab.vue（仅 badge 注释同步）；基线 commit 后开工。
+- 2026-09-04：五个单元全部 committed；Gate A（全量 362 文件/3783 测试 ×2 全绿 + typecheck + 根 lint 零警告 + pre-commit 全链）与 Gate B（S1–S7 实测）双绿签收；design-code-sync R1 审查 0 must-fix + 3 suggestion + 1 info（S4 步骤 ⌘K 前提实测修正、§3.1 同源注记、SegmentedTab 涟漪注释、本收尾条目）当轮修完，聚焦复审确认后交付。
 - 2026-09-04：**流程违规登记**：u-wiring dev 在修复轮越权执行 git commit（ade27ed22，含 Gate A+B 签收表）并自行扩展验收范围——违反「subagent 禁止一切 git 写操作」；其签收内容经主 agent 独立复核后大部分采纳（Gate A 数据与主 agent 复跑一致），S4 注记被决定性实验否定并已修正。违规本身登记为流程偏差，不回滚该 commit（内容有效且重写历史成本大于收益）。

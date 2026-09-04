@@ -9,6 +9,7 @@
   - v2 修复（本轮）：D4 改为 done 投影归「已结束」（被 `doFinalizeRoundToIdle` 轮终稳定态事实击穿）；D5 改为 `useSessionScopedState` 工厂分区（违反 ADR-0049 2026-08-24 扩展）；D1 联动修订（分区记忆语义）；登记既有测试破坏面。
   - v3 修复（R2 聚焦复审）：MF-A 分区 init 改 reactive 容器（plain object 违反工厂响应式契约，切桶 UI 永不更新——功能死锁级）；MF-B 分区语义对齐 per-instance 实装（挂载期内记忆、切 tab 重置，S4/D1/§3.1 三处收窄）；MF-C 一级 tab badge 口径同步收窄（done 投影不计入，消除宽窄口径分叉与永久虚亮）；MF-D spec 路径改正；S1–S4（GC 断言修正、waiting 滞留残留登记、S3 one-shot 前提、sessionId prop 语义、测试文件地图补全）。
   - v3.1（R3 终审 3 条 suggestion 随轮修）：D5 内联片段补 reactive 与 §3.4 对齐；T3 badge 表述改为「新增 subagentRunningCount 口径断言」（SegmentedTab.spec.ts props 层 mock 不受影响）；S4 补 ⌘K 切 session 入口。终审结论：0 must-fix，设计就绪。
+  - v3.2（design-code-sync R1）：S4 步骤与 §3.1 切 session 行按真实 dev app 实测修正（⌘K 选 session 会落在「会话」tab，挂载期内分区记忆分支由组件级单测覆盖、真实 UX 生效语义 = 每次进入默认进行中）。0 must-fix 维持。
 
 ## 1. 背景目标
 
@@ -83,7 +84,7 @@ runtime（pi session JSONL → subagent-extractor 解析）
 | 加载中（isLoading） | 维持现有 loading 态，不渲染筛选条 | 等待完成 |
 | 某任务轮终为 done 投影（one-shot 跑完，列表显绿点） | 归「已结束」桶（判据对齐「轮终不算真在跑」既定语义 + 绿点视觉，见 D4）；该状态在 renderer 侧长期恒定（数据源是主 session JSONL 磁盘解析，extension 侧 GC 是内存 archive、不作用于 renderer 链），判据稳定、不会回流「进行中」 | 无需操作 |
 | chat 模式轮终等续聊 / 孤儿兜底（waiting，半透明 accent 点） | 归「进行中」桶——可复活非终态，「已结束」应意味着不会再动；**无续聊 / 关闭 session 等外部动作不会自动迁出**（语义残留登记见 D4） | 续聊或关闭 session 后按新 status 落桶 |
-| 切换焦点 session | 同一次 Agents tab 挂载期内各 session 分区独立（工厂 per-instance Map）：新 session 首次进入 = 默认「进行中」，切回恢复该 session 上次选择；**切 tab（组件卸载）后全部分区丢弃**，重置默认「进行中」（见 D5 生命周期语义） | 如需看历史，点一下「已结束」/「全部」 |
+| 切换焦点 session | 同一次 Agents tab 挂载期内各 session 分区独立（工厂 per-instance Map）：新 session 首次进入 = 默认「进行中」，切回恢复该 session 上次选择；**切 tab（组件卸载）后全部分区丢弃**，重置默认「进行中」（见 D5 生命周期语义）。实测注记：真实 UX 切 session 路径（⌘K）会离开 Agents tab，用户可感知行为即「每次进入 = 默认进行中」 | 如需看历史，点一下「已结束」/「全部」 |
 | 无焦点 session（Overview 态） | SubagentList 显示既有空态，不渲染筛选条（props 传 null） | 先选择/新建 session |
 | 某桶为空（如只有 1 个在跑任务，「已结束 0」） | 列表区显示对应空态文案；「进行中」空桶额外给「查看全部」快捷按钮（高频场景），「已结束」空桶仅文案 | 点筛选槽切桶 |
 
@@ -237,7 +238,7 @@ SubagentList(props: subagents 全量, sessionId)
 | S1 | 主会话让 agent 并行派发 2 个 subagent（如「用 subagent 同时调研 A 和 B」），任务运行中打开 Agents tab | 筛选槽出现，「进行中」默认高亮；列表恰为 2 张在跑卡片（spinner）；计数 `进行中 2 ｜ 已结束 N ｜ 全部 2+N` 与实际一致 | G1 G3 |
 | S2 | 在 S1 基础上点「已结束」「全部」来回切 | 切换即时（无 spinner / 无网络新请求，DevTools Network 验证），每桶内容与其语义一致 | G2 |
 | S3 | 在 one-shot 专用会话（不含 chat 模式任务，避免 waiting 类记录滞留「进行中」）派发 subagent 等全部跑完，切走 tab 再切回 Agents | 「进行中」默认高亮且列表为空态：文案 + 「查看全部（N）」按钮；点按钮后显示全部历史（含绿点 done 投影卡片，确认落「已结束」/「全部」桶而非进行中）；一级 tab badge 蓝点熄灭（D8 口径收窄验证） | G1（自适应空态）+ D4 D8 |
-| S4 | 同一次 Agents tab 挂载期内（切 session 经 ⌘K 搜索面板，不切 tab）：session A 选「已结束」→ 切 session B（有在跑任务，B 首次进入 = 「进行中」）→ 切回 A；然后切到别的 tab 再回 Agents | A 恢复「已结束」、B 为「进行中」（挂载期内分区独立互不串）；切 tab 回来后重置默认「进行中」（per-instance 分区随卸载丢弃） | G1（默认态语义）+ D1/D5 |
+| S4 | 会话隔离与重置语义：session A 选「已结束」→ 切到 session B（有后台任务）→ 回 Agents tab 看 B；再离开 Agents tab（切 tab 或 ⌘K 切 session——实测 ⌘K 选 session 会落在「会话」tab）后回 Agents tab | B 首次进入 = 默认「进行中」、计数为 B 自己的数据（A=0/4/4、B=1/5/6 类，无跨 session 串值）；任何离开 Agents tab 的路径后再进入 → 重置默认「进行中」（per-instance 分区随卸载丢弃）。注：组件级「挂载期内分区记忆」由 composable 单测覆盖（真实 UX 切 session 路径会离开本 tab，该分支不可稳定手测） | G1（默认态语义）+ D1/D5 |
 | S5 | 回归：进行中卡片 hover → 取消按钮两段式确认 → 确认后任务进入终态 | 取消流程与改造前一致；任务落「已结束」桶，计数 -1/+1 正确 | 不破坏既有交互 |
 | S6 | 回归：点击任一卡片 | drawer SubagentTab 正常打开（虚拟 session 对话流加载） | 不破坏既有交互 |
 | S7 | Overview 态（无焦点 session）切到 Agents tab | 既有空态，无筛选条，无报错 | 边界路径 |
