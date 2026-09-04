@@ -24,6 +24,11 @@ import {
   lookup,
   record,
 } from './model-thinking-memory'
+import {
+  record as recordLastUsed,
+  lookup as lookupLastUsed,
+  __resetLastUsedModelForTesting,
+} from './last-used-model'
 import { resolveThinkingValue } from './thinking-levels'
 import {
   providePlatform,
@@ -145,12 +150,14 @@ function provideMockPlatform(storage: KVStorage): void {
 beforeEach(() => {
   provideMockPlatform(new MemKV())
   __resetModelThinkingMemoryForTesting()
+  __resetLastUsedModelForTesting()
 })
 
 afterEach(() => {
   vi.restoreAllMocks()
   __resetPlatformForTesting()
   __resetModelThinkingMemoryForTesting()
+  __resetLastUsedModelForTesting()
 })
 
 /**
@@ -273,13 +280,13 @@ describe('useComposerModelThinking · currentModelId 派生', () => {
     scope.stop()
   })
 
-  it('session.modelId 空串（磁盘/已退出 session）→ || 兜底到 defaultModel', () => {
-    // 空串场景：广播里已退出 session 的 modelId 硬编码为 ''。?? 不兜底空串，必须 ||
+  it('session.modelId 空串（磁盘/已退出 session）→ D3 占位不回落 defaultModel', () => {
+    // 空串场景：广播里已退出 session 的 modelId 硬编码为 ''。D3 已建态空值→占位，不兜底
     const { result, scope } = mount('s1', {
       sessionState: { modelId: '' },
       defaultModel: 'provider-D/model-D',
     })
-    expect(result.currentModelId.value).toBe('provider-D/model-D')
+    expect(result.currentModelId.value).toBe('')
     scope.stop()
   })
 })
@@ -899,5 +906,120 @@ describe('useComposerModelThinking · 一致性审查修复（U-fix-1/2）', () 
     expect(h.setPendingModel).toHaveBeenCalledWith('p/N') // pendingModel 照常记
     expect(h.setThinkingLevel).not.toHaveBeenCalled() // landing 无 RPC
     h.scope.stop()
+  })
+})
+
+// ══════════ [U4] D3 显示分流：已建态空值占位（不回落 landing 残留/全局默认）══════════
+describe('useComposerModelThinking · D3 显示分流（已建态空值占位）', () => {
+  it('已建态 session.modelId 空串 → regularModelId 返回空串占位，不兜底到 currentModel/defaultModel', () => {
+    const { result, scope } = mount('s1', {
+      sessionState: { modelId: '' },
+      currentModel: 'provider-F/model-F',
+      defaultModel: 'provider-D/model-D',
+    })
+    // 空串 → '' 占位，不回落 landing currentModel 或全局 defaultModel
+    expect(result.currentModelId.value).toBe('')
+    scope.stop()
+  })
+
+  it('已建态 session.thinkingLevel undefined → regularThinkingLevel 返回 undefined，不回落 localThinkingLevel', () => {
+    const { result, scope } = mount('s1', {
+      sessionState: { modelId: 'provider-A/model-A' }, // thinkingLevel 缺失
+    })
+    // thinkingLevel undefined → undefined 占位，不回落 landing localThinkingLevel
+    expect(result.currentThinkingLevel.value).toBeUndefined()
+    scope.stop()
+  })
+
+  it('已建态 session.modelId 有值 → 正常返回（不被 D3 改变）', () => {
+    const { result, scope } = mount('s1', {
+      sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
+    })
+    expect(result.currentModelId.value).toBe('provider-A/model-A')
+    expect(result.currentThinkingLevel.value).toBe('high')
+    scope.stop()
+  })
+
+  it('landing 态（sessionId=null）→ 走兜底链，不受 D3 分流影响', () => {
+    const { result, scope } = mount(null, {
+      currentModel: 'provider-F/model-F',
+      defaultModel: 'provider-D/model-D',
+    })
+    expect(result.currentModelId.value).toBe('provider-F/model-F')
+    scope.stop()
+  })
+})
+
+// ══════════ [U4] D4 lastUsedModel 兜底链（landing 态 modelId 兜底链顺序）══════════
+describe('useComposerModelThinking · D4 lastUsedModel 兜底链', () => {
+  it('landing + currentModel null + lastUsedModel 有值 → 读 lastUsedModel', () => {
+    recordLastUsed('provider-L/model-L')
+    const { result, scope } = mount(null, {
+      defaultModel: 'provider-D/model-D',
+    })
+    // currentModel null → lastUsedModel → defaultModel
+    expect(result.currentModelId.value).toBe('provider-L/model-L')
+    scope.stop()
+  })
+
+  it('landing + currentModel 有值 → 优先读 currentModel（lastUsedModel 不干扰）', () => {
+    recordLastUsed('provider-L/model-L')
+    const { result, scope } = mount(null, {
+      currentModel: 'provider-F/model-F',
+      defaultModel: 'provider-D/model-D',
+    })
+    // currentModel 优先级最高
+    expect(result.currentModelId.value).toBe('provider-F/model-F')
+    scope.stop()
+  })
+
+  it('landing + currentModel null + lastUsedModel 无记录 → 回落 defaultModel', () => {
+    // lastUsedModel 未记录 → undefined
+    const { result, scope } = mount(null, {
+      defaultModel: 'provider-D/model-D',
+    })
+    expect(result.currentModelId.value).toBe('provider-D/model-D')
+    scope.stop()
+  })
+})
+
+// ══════════ [U4] D4 lastUsedModel 写入（显式选择写 KV，staging 不写）══════════
+describe('useComposerModelThinking · D4 lastUsedModel 写入', () => {
+  it('已建态 onModelSelect → 写入 lastUsedModel', async () => {
+    const { result, scope } = mount('s1', {
+      sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
+    })
+    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' })
+    expect(lookupLastUsed()).toBe('provider-C/model-C')
+    scope.stop()
+  })
+
+  it('landing 态 onModelSelect → 写入 lastUsedModel', async () => {
+    const { result, scope } = mount(null)
+    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' })
+    expect(lookupLastUsed()).toBe('provider-C/model-C')
+    scope.stop()
+  })
+
+  it('staging 态 onModelSelect → 不写 lastUsedModel', async () => {
+    const { result, scope } = mount('s1', {
+      sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
+    })
+    result.enterStagingMode()
+    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' })
+    // staging 试选不写 KV
+    expect(lookupLastUsed()).toBeUndefined()
+    scope.stop()
+  })
+
+  it('多次选择 → lastUsedModel 覆盖为最后一次', async () => {
+    const { result, scope } = mount('s1', {
+      sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
+    })
+    await result.onModelSelect({ modelId: 'model-B', provider: 'provider-B' })
+    expect(lookupLastUsed()).toBe('provider-B/model-B')
+    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' })
+    expect(lookupLastUsed()).toBe('provider-C/model-C')
+    scope.stop()
   })
 })
