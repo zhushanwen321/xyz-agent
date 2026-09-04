@@ -1798,6 +1798,70 @@
           "hook": "check-pi-sync.mjs"
         }
       ]
+    },
+    {
+      "id": "C-data-15",
+      "summary": "per-session 模型/思考档位必须持久化到独立 sidecar <sessionFile>.model.json（persistBindingSidecar 家族：原子写 + sessionMetaCache 失效 + JSONL 不存在不创建守卫），禁只存内存；BINDING_FIELDS 矩阵登记 modelId/thinkingLevel 绑定字段且 restore 列='none'（扫描值禁覆写 get_state 读回的播种真值）；全部写点写生效值；purgeSessionSidecars 清单必须含 .model.json 防孤儿；sidecar 是 best-effort 显示缓存非权威（权威 = pi 会话文件 entries，restore 读回覆写过期值自愈）",
+      "scope": [
+        "packages/runtime/src/**"
+      ],
+      "authority": [
+        "design/composer-model-session-isolation.md#33-关键决策与权衡"
+      ],
+      "dimensions": [
+        "data-governance"
+      ],
+      "enforcement": [
+        {
+          "type": "machine",
+          "hook": "check_pi_direct_write.py"
+        },
+        {
+          "type": "review",
+          "agent": "review-data-governance"
+        }
+      ]
+    },
+    {
+      "id": "C-data-16",
+      "summary": "全局默认模型不得由 session 级模型切换改写：ModelService.switchModel 禁广播 config.defaults（source=model-switch），settingsStore.defaultModel 单一语义 = Settings 配置值（消费点不得因 session 级切换写默认或弹「默认模型自动更新」toast）；landing 新任务默认模型显式化为 lastUsedModel KV（仅显式选择写入，staging 试选不写），landing 兜底链 currentModel || lastUsedModel || defaultModel 仅限 landing 态",
+      "scope": [
+        "packages/runtime/src/**",
+        "packages/core/src/**",
+        "packages/renderer/src/**"
+      ],
+      "authority": [
+        "design/composer-model-session-isolation.md#33-关键决策与权衡"
+      ],
+      "dimensions": [
+        "business-logic",
+        "data-governance"
+      ],
+      "enforcement": [
+        {
+          "type": "review",
+          "agent": "review-business-logic"
+        }
+      ]
+    },
+    {
+      "id": "C-state-10",
+      "summary": "thinking 档位对齐 watch 仅挂「用户显式切模型」：watch 回调以入口 armed 快照（consumeArmedRestore 执行前捕获）为门禁判据（禁读消费块后的 armed 值），无 armed 快照时全部对齐分支（无档位设最高档/同体系映射/跨体系重置）一律跳过——切 session 焦点等非用户动作禁触发对齐 setThinkingLevel RPC；可用性校验分支（数据不一致安全网）保持不门禁；armed 生命周期沿用既有防线（显式 onModelSelect 设立，成功/失败/换绑/5s 过期清）零新状态",
+      "scope": [
+        "packages/core/src/**"
+      ],
+      "authority": [
+        "design/composer-model-session-isolation.md#33-关键决策与权衡"
+      ],
+      "dimensions": [
+        "business-logic"
+      ],
+      "enforcement": [
+        {
+          "type": "review",
+          "agent": "review-business-logic"
+        }
+      ]
     }
   ]
 }
