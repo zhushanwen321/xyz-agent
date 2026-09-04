@@ -160,7 +160,7 @@ describe('open-fetch file 路 landing cwd 通道（D2/D3）', () => {
     await flushPromises()
     expect(getFileCandidatesByCwdMock).not.toHaveBeenCalled()
     expect(bodyRows()).toHaveLength(0)
-    expect(document.body.querySelector('[data-radix-popper-content-wrapper]')).toBeNull()
+    expect(document.body.querySelector('[data-reka-popper-content-wrapper]')).toBeNull()
   })
 
   it('有 sid（panel）：open-fetch 不拉（file 候选专属 store 缓存路，防双路重复 RPC）', async () => {
@@ -204,6 +204,6 @@ describe('open-fetch file 路 landing cwd 通道（D2/D3）', () => {
     expect(getFileCandidatesByCwdMock).toHaveBeenCalledTimes(1)
     // reply error → 降级空候选（§3.1 失败路径）：无浮层，unhandled rejection 不冒泡为失败
     expect(bodyRows()).toHaveLength(0)
-    expect(document.body.querySelector('[data-radix-popper-content-wrapper]')).toBeNull()
+    expect(document.body.querySelector('[data-reka-popper-content-wrapper]')).toBeNull()
   })
 })
