@@ -52,6 +52,8 @@ pi 进程内存（权威） ──RPC──> runtime 内存 Map（ManagedSession
 
 ## §2 现状与问题分析
 
+> **行号口径声明**：本章 file:line 行号为设计时快照（Before 分析），实施后行号已漂移，符号名仍可解析；处置见 impl-plan R4。
+
 **现状结论：per-session 模型/档位状态只活在「pi 进程存活期间的内存」里；进程一退，renderer 手里的值被整表广播抹成空串占位；composer 对空串的兜底是被 session 级切换污染的全局默认。**
 
 ### 2.1 使用者视角的现状（真实复现，日志实证）
@@ -251,10 +253,10 @@ const regularModelId = computed(
 
 | # | 失败场景 | 行为 | 恢复指引 |
 |---|---|---|---|
-| E1 | `.model.json` 写失败（磁盘满/权限） | best-effort 吞错 + console.warn（对齐 `persistBindingSidecar` 家族先例）；内存态不受影响 | 无需动作：本运行期显示正确；仅「退出后重启」回落到 D3 占位，restore 后自愈 |
-| E2 | restore 的 get_state 读回失败 | 按字段兜底链：`.model.json` 扫描值 → 空串占位（D3 语义，不播种全局默认），快照实例异步收敛纠正 | 重新切回该 session 触发再次 restore；日志有 `switchModel get_state read-back failed` 同款 warn 可排查 |
-| E3 | 老会话无 `.model.json` | summary 字段 undefined → composer 显示 D3 占位 | restore 完成（≤2s）自动显示真值；无需迁移脚本（向后兼容） |
-| E4 | lastUsedModel KV 读失败/未加载 | landing 兜底 `defaultModel`（同 u3 E7① 语义：未加载不阻塞，回落默认） | 无需动作；KV 惰性加载完成后下次 landing 生效 |
+| E1 | `.model.json` 写失败（磁盘满/权限） | 双层吞错：persist 层 console.error（家族先例，`session-file-utils.ts` `persistBindingSidecar` 家族 catch）+ 写点①②外围 catch console.warn（`session-model-control.ts:113/171`）；内存态不受影响 | 无需动作：本运行期显示正确；仅「退出后重启」回落到 D3 占位，restore 后自愈 |
+| E2 | restore 的 get_state 读回失败 | 按字段兜底链：`.model.json` 扫描值 → 空串占位（D3 语义，不播种全局默认），快照实例异步收敛纠正 | 重新切回该 session 触发再次 restore；日志排查关键字按路径分两条：restore 路径 `get_state readback failed, falling back to sidecar values`（`restore-seeding.ts:214` catch，无连字符）、switchModel 路径 `switchModel get_state read-back failed`（`session-model-control.ts:89` catch，read-back 带连字符） |
+| E3 | 老会话无 `.model.json` | summary.modelId=''、summary.thinkingLevel=undefined（`session-scanner.ts:85` 扫描占位恒空串）→ composer 显示 D3 占位 | restore 完成（≤2s）自动显示真值；无需迁移脚本（向后兼容） |
+| E4 | lastUsedModel KV 读失败/未加载 | landing 兜底 `defaultModel`（同 u3 E7① 语义：未加载不阻塞，回落默认） | 无需动作；KV 惰性加载完成后自动生效（模块级响应式 ref，`last-used-model.ts:22-27`，KV 到达当次 landing 即更新，无需重进） |
 | E5 | armed 过期（switchModel RPC >5s 后才回包） | 规则 1 清 armed → 该次切换无档位对齐/记忆恢复，session 保持 pi 生效档 | 用户手动调档（一次性成本）；既有 u3 规则，非本设计新增 |
 | E6 | pi 侧 extension 旁路改档位（不经 runtime RPC） | sidecar 不更新（短暂过期），内存快照经事件失效自愈 | restore 时 D2 读回覆写 sidecar，自愈闭环（D1 restore 列='none' 保证回填不反向覆写读回值） |
 
@@ -332,7 +334,7 @@ docs/constraints.json + docs/design/model-thinking-level-memory.md [约束登记
 
 ### 待验证检查点（设计阶段无法确定，诚实标注）
 
-- `onDefaults`/`onDefaultsWithSource`/`config.defaults` 消费方全集（第 1 轮审查证明分析期 grep 可被证伪——已发现 ProviderPage 第二消费点；实施期以全量 grep 结果为准更新 D4 消费方清单）
+- `onDefaults`/`onDefaultsWithSource`/`config.defaults` 消费方全集（✅ 已闭环 2026-09-04：实施期全量 grep 履行完毕，无新消费方，D4 清单两点即全集——详见 impl-plan R1）
 - `CREATE_DERIVED_CALLERS` 的 `passedBindingFields` 守卫映射：modelOverride/thinkingOverride 参数如何映射到绑定字段取决于守卫的静态扫描实现（r2 提出，实施期核对并同步登记）
 - ModelSelectPopover/ThinkingLevelPopover 空值占位的具体 UI 形态（「…」vs「未知」文案定稿）
 - sidecar 写频率上限评估：仅显式切换/restore 触发，量级 = 用户手动操作频次，预判无 debounce 需求（实施期如实测有高频写再加）

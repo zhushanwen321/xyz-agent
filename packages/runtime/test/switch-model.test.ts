@@ -10,10 +10,21 @@
  * - session 不存在 → throw Error('session not active')（fail-fast，调用方据 .code 引导）。
  * - client 不存在 → 跳过缓存写和广播，return sessionId（不假装成功）。
  *
+ * U8 追加（composer-model-session-isolation §5 写点单测，Gate B 端到端之外的最小覆盖）：
+ * 写点①（switchModel）/ 写点②（setThinkingLevel）成功后 persistModelBinding 落盘值 ==
+ * get_state 读回的生效值（生效值胜请求值）；空值守卫负例 = sessionFilePath 缺失（pi 未
+ * flush 窗口，Gate B 偏差 #9① 形态）时写点①不触发。注意「读回失败」在实现中是 fallback
+ * 请求值仍写（自愈设计，session-model-control switchModel catch 分支），非「不写」。
+ *
  * 运行：cd packages/runtime && npx vitest run test/switch-model.test.ts
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { ServerMessage, ProviderId } from '@xyz-agent/shared'
+
+import { readModelBinding } from '../src/infra/pi/session-model-sidecar.js'
 
 import type {
   IMessageBroker,
@@ -42,9 +53,21 @@ vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
     readSettings: () => ({}),
   }
 })
+// U8 写点断言：记录 persistModelBinding 的全部调用（真身委托，落盘行为不变）——
+// 既有用例透明；U8 正例断言落盘值、负例断言「sessionFilePath 缺失时写点①不触发」。
+const persistBindingCalls = vi.hoisted(() =>
+  [] as Array<{ filePath: string; modelId: string; thinkingLevel: string }>,
+)
 vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/infra/pi/session-file-utils.js')>()
-  return { ...actual, scanPiSessions: () => [] }
+  return {
+    ...actual,
+    scanPiSessions: () => [],
+    persistModelBinding: (filePath: string, modelId: string, thinkingLevel: string) => {
+      persistBindingCalls.push({ filePath, modelId, thinkingLevel })
+      return actual.persistModelBinding(filePath, modelId, thinkingLevel)
+    },
+  }
 })
 vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
@@ -183,5 +206,97 @@ describe('W1/L7: switchModel fail-fast & 无 client 不假装成功', () => {
     expect(service.getSummary('s1')?.modelId).toBe(beforeModelId)
     // 未广播 session.state_changed（不广播假信号）
     expect(findBroadcast(broker, 'session.state_changed')).toBeUndefined()
+  })
+})
+
+describe('U8: model-control 写点①②——switchModel/setThinkingLevel → .model.json sidecar 落盘', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    providerMocks.defaultModel.value = { provider: 'test-provider', modelId: 'test-model' }
+    persistBindingCalls.length = 0
+    tmpDir = mkdtempSync(join(tmpdir(), 'switch-model-sidecar-'))
+  })
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  /** 建一个带已 materialize 主文件的 seed session（persistBindingSidecar 的 existsSync 守卫要求主文件存在）。 */
+  async function seedSessionWithFile(ctx: ReturnType<typeof createService>, id: string): Promise<string> {
+    const sessionFile = join(tmpDir, `${id}.jsonl`)
+    writeFileSync(sessionFile, '{"type":"session"}\n', 'utf8')
+    const client = makeClient()
+    vi.mocked(client.getState).mockResolvedValue({ sessionId: id, sessionFile })
+    vi.mocked(ctx.pm.createSession).mockResolvedValueOnce(client)
+    ctx.clientMap.set(id, client)
+    await ctx.service.create('/tmp', `seed-${id}`)
+    return sessionFile
+  }
+
+  it('写点①: switchModel 成功后 sidecar 落盘 get_state 读回的生效值（生效值胜请求值）', async () => {
+    const ctx = createService()
+    const sessionFile = await seedSessionWithFile(ctx, 's1')
+    const client = ctx.clientMap.get('s1')!
+    // pi pattern 引擎静默换模形态：get_state 读回生效模型 ≠ 请求模型（U6 回执普查）
+    vi.mocked(client.getState).mockResolvedValue({
+      sessionId: 's1',
+      sessionFile,
+      model: { provider: 'eff-provider', id: 'eff-model' },
+      thinkingLevel: 'high',
+    })
+
+    const effective = await ctx.service.switchModel('s1', 'req-provider' as ProviderId, 'req-model')
+
+    expect(effective).toBe('eff-provider/eff-model')
+    // 断言目标：落盘值 == get_state 读回生效值（非请求值）
+    expect(readModelBinding(sessionFile)).toEqual({
+      modelId: 'eff-provider/eff-model',
+      thinkingLevel: 'high',
+    })
+  })
+
+  it('写点②: setThinkingLevel 成功后 sidecar 落盘钳制生效值（get_state 读回胜请求值）', async () => {
+    const ctx = createService()
+    const sessionFile = await seedSessionWithFile(ctx, 's1')
+    const client = ctx.clientMap.get('s1')!
+    vi.mocked(client.getState).mockResolvedValue({
+      sessionId: 's1',
+      sessionFile,
+      model: { provider: 'eff-provider', id: 'eff-model' },
+      // P3 钳制形态：请求 max，pi 钳到 xhigh
+      thinkingLevel: 'xhigh',
+    })
+    await ctx.service.switchModel('s1', 'eff-provider' as ProviderId, 'eff-model')
+
+    const effective = await ctx.service.setThinkingLevel('s1', 'max')
+
+    expect(effective).toBe('xhigh')
+    expect(readModelBinding(sessionFile)).toEqual({
+      modelId: 'eff-provider/eff-model',
+      thinkingLevel: 'xhigh',
+    })
+  })
+
+  it('写点①空值守卫负例: sessionFilePath 缺失（pi 未 flush 窗口）→ 写点①不触发、无 sidecar', async () => {
+    const ctx = createService()
+    // Gate B 偏差 #9① 形态：create 瞬间 pi 尚未首 flush，getState 无 sessionFile
+    const client = makeClient()
+    vi.mocked(client.getState).mockResolvedValue({ sessionId: 's2' })
+    vi.mocked(ctx.pm.createSession).mockResolvedValueOnce(client)
+    ctx.clientMap.set('s2', client)
+    await ctx.service.create('/tmp', 'seed-s2')
+
+    vi.mocked(client.getState).mockResolvedValue({
+      sessionId: 's2',
+      model: { provider: 'eff-provider', id: 'eff-model' },
+    })
+    await ctx.service.switchModel('s2', 'req-provider' as ProviderId, 'req-model')
+
+    // 守卫（if (session.sessionFilePath)）生效：写点①未以空/缺失路径触发，也无 sidecar 产物
+    expect(persistBindingCalls.some((c) => !c.filePath)).toBe(false)
+    expect(persistBindingCalls.some((c) => c.filePath === join(tmpDir, 's2.jsonl'))).toBe(false)
+    expect(existsSync(join(tmpDir, 's2.jsonl.model.json'))).toBe(false)
   })
 })

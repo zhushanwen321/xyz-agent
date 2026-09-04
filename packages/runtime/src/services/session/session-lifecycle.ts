@@ -38,8 +38,8 @@ import { createForkedSessionFile, resolveEntryIdByTimestamp } from './session-fo
 // 自本文件迁出（max-lines 行数合规），函数体逐字节等价，见 restore-seeding.ts。
 import { normalizeInactiveSessionFileIfNeeded, readEffectiveModelFromState, seedRestoreMetaOverride } from './restore-seeding.js'
 
-// [arch 技术债登记，R3 ports 依赖倒置待收口] 下方四个 infra/pi 值 import（getSessionsDir /
-// normalizeSessionFileInPlace + cleanupMigrateResidues / assertPiSessionFile / hydrateBindingMeta）
+// [arch 技术债登记，R3 ports 依赖倒置待收口] 下方五个 infra/pi 值 import（getSessionsDir /
+// cleanupMigrateResidues + persistModelBinding / hydrateBindingMeta / assertPiSessionFile）
 // 违反「services 禁止 import infra」三层规则（见 docs/architecture/runtime-three-layer-design.md 阶段 R3）。
 // 未在本轮直接 port 化的原因：restore/fork 归一化管线是 W1 高危区（tmp+rename 原子覆盖 +
 // 附着断言），包一层 port 接口属于行为敏感重构，应随 R3 阶段统一落地（ISessionStore 等

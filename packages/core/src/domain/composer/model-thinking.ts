@@ -218,7 +218,7 @@ export function useComposerModelThinking(
 
   /**
    * 当前选中模型 id（"provider/modelId" 复合串）。
-   * staging 活跃时读暂存快照，否则读常规态真值（session > landing pendingModel > 全局默认）。
+   * staging 活跃时读暂存快照，否则读常规态真值（session > landing 兜底链 pendingModel > lastUsedModel > 全局默认）。
    */
   const currentModelId = computed(
     () => stagingModel.value !== null
@@ -251,10 +251,11 @@ export function useComposerModelThinking(
   /**
    * landing 未 authored 的 local 档位跟随模型重设：可用(lookup(当前模型)) ?? 最高可用档
    * （value 形态，localThinkingLevel 存 value——§2.2 关键事实①）。
-   * 为什么需要：landing 挂载时 sync watch 的「无档位」分支会自动设最高可用档，该 auto 值经
-   * 首发透传（send → flow apply）会以「用户从未选择」的身份进入已建态记录 watch——纯态轴
-   * 门禁挡不住它（D2 被否③：判别轴错位，污染只是从挂载时点换到首发时点）。跟随重设让
-   * auto 值本身 memory-aware，污染在源头消灭；顺带让新任务默认档贴合用户习惯（G1 延伸）。
+   * 为什么需要：[U5/D5] 门禁后 landing 无值初值唯一来源就是本 watch（sync watch 的「无档位」
+   * 分支 2 被 armed 快照恒 null 恒拦截；历史上该分支自动设最高可用档，该 auto 值经首发
+   * 透传（send → flow apply）会以「用户从未选择」的身份进入已建态记录 watch——纯态轴
+   * 门禁挡不住它，D2 被否③：判别轴错位）。跟随重设让 auto 值本身 memory-aware，污染在
+   * 源头消灭；顺带让新任务默认档贴合用户习惯（G1 延伸）。
    * 为什么记忆要过可用性校验（一致性审查 U-fix-2 同步，D2 公式）：能力注册表变化致记忆键
    * 失效时（如 max 档被下线），不过校验会让 landing 短暂显示不可用档——E3/D5 的可用性
    * 回落防线延伸到跟随路径，失效即回落最高可用档。

@@ -10,9 +10,11 @@
  *   token 设立/保留/消费/清除的可观测投影），用真实 u1 memory API（record 预置记忆）
  * - 跟随三行为 / 双路径污染反例（gated KV 控制预载完成时刻）/ 记录门禁（真实 memory Map 断言）
  *
- * 注意副作用：useThinkingLevelSync 的 immediate watch 在挂载时同步触发——若 currentThinkingLevel
- * 无值会调 onReset→routeThinkingLevel（内部对齐路由，不置 localAuthored；landing 设
- * localThinkingLevel、已建调 setThinkingLevel）。测试通过 sessionState 带初值或 mockClear
+ * 注意副作用：landing 无值初值由 followRememberedOrDefault watch（immediate）直接写入
+ * localThinkingLevel（不走 routeThinkingLevel；已建 session 该 watch 直接 return）。[U5/D5]
+ * 门禁后 useThinkingLevelSync 的 immediate watch 在挂载时不再走「无档位」分支 2（armed
+ * 快照恒 null 恒拦截），仅分支 3（oldMap undefined 可用性检查，当前档位不可用时）仍可能
+ * 调 onReset→routeThinkingLevel。测试通过 sessionState 带初值或 mockClear
  * 规避其对断言的干扰。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -343,9 +345,9 @@ describe('useComposerModelThinking · currentThinkingLevel 派生', () => {
     scope.stop()
   })
 
-  it('landing 态 → currentThinkingLevel 跟随 localThinkingLevel（sync 会设初值）', () => {
+  it('landing 态 → currentThinkingLevel 跟随 localThinkingLevel（初值由 followRememberedOrDefault watch 设定）', () => {
     const { result, scope } = mount(null)
-    // sync immediate watch 设 localThinkingLevel 为最高可用档（map 缺失新语义默认五档 → 'high'）
+    // followRememberedOrDefault immediate watch 设 localThinkingLevel 为最高可用档（map 缺失新语义默认五档 → 'high'）
     expect(result.currentThinkingLevel.value).toBe('high')
     // 手动改 localThinkingLevel → currentThinkingLevel 跟随
     result.localThinkingLevel.value = 'medium'

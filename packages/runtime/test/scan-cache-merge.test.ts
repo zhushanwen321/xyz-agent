@@ -164,7 +164,7 @@ describe('W3 scanPiSessions mtime+size 缓存', () => {
     expect(result).toHaveLength(0)
   })
 
-  it('AC-merge-1: 3 文件冷缓存 → readFileSync 总数 ≤ 6（五读合一，非 12；尾读命中则 ≤4）', () => {
+  it('AC-merge-1: 3 文件冷缓存 → readFileSync 总数 ≤ 36（六读合一，vitest mock 计数 ×2）', () => {
     pathsMock.getSessionsDir.mockReturnValue(tmpSessionsDir)
     makeSessionFile('s1', 'n1', 'done', new Date(1000))
     makeSessionFile('s2', 'n2', 'error', new Date(2000))

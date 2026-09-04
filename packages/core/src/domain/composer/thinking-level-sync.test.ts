@@ -96,7 +96,7 @@ describe('useThinkingLevelSync', () => {
       getSupportedLevels: vi.fn((id: string) => (id === 'p/m1' ? supportedA : supportedDefault)),
     }
     useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
-    // immediate：current 'h' 有值，oldMap undefined → 第二分支可用性检查
+    // immediate：current 'h' 有值，oldMap undefined → 分支 3 可用性检查
     // resolveThinkingKey('h', mapA) = 'high'；available(mapA) = ['off','high'] includes 'high' → 不重置
     expect(onReset).not.toHaveBeenCalled()
 
@@ -123,7 +123,7 @@ describe('useThinkingLevelSync', () => {
       getSupportedLevels: vi.fn(() => undefined),
     }
     useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
-    // immediate：current 'high' 有值，oldMap undefined → 第二分支
+    // immediate：current 'high' 有值，oldMap undefined → 分支 3
     // resolveThinkingKey('high', undefined) = 'high'（isThinkingLevel 直接命中）
     // normalizeSupportedLevels(undefined) = 默认五档 includes 'high' → true → 不重置
     expect(onReset).not.toHaveBeenCalled()

@@ -97,7 +97,7 @@ export class ModelService implements IModelService {
   async switchModel(sessionId: string, provider: ProviderId, modelId: string): Promise<string> {
     this.ensureInitialized()
     // 1. pi RPC + 缓存更新 + 广播 session.state_changed（session 级状态单一 owner；
-    //    pi 侧同时持久化 defaultModel/defaultProvider）
+    //    pi 0.84.4 setModel 只写 session 级 entries，不持久化全局默认）
     // U6 回执普查：透传 get_state 读回的生效模型复合串（pi pattern 换模时 ≠ 请求值）
     const effective = await this.sessionService.switchModel(sessionId, provider, modelId)
 
