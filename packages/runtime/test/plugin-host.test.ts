@@ -9,11 +9,18 @@
  */
 
 import { describe, it, expect, vi } from 'vitest'
-import { resolve, dirname } from 'node:path'
+import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 
 import { PluginHost } from '../src/services/plugin-service/plugin-host.js'
 import { PluginRpcServer } from '../src/services/plugin-service/plugin-rpc-server.js'
+import { PluginActivator } from '../src/services/plugin-service/plugin-activator.js'
+import { PluginService } from '../src/services/plugin-service/plugin-service.js'
+import { PluginRegistry } from '../src/services/plugin-service/plugin-registry.js'
+import type { PluginDescriptor } from '../src/services/plugin-service/plugin-types.js'
+import type { IMessageBroker } from '../src/interfaces.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -321,5 +328,90 @@ describe('PluginHost', { timeout: 30_000 }, () => {
     }
 
     await host.shutdown()
+  })
+
+  // ── V6②: load 超时 crash 连坐——同宿主已激活插件 rebuild 后自动重载 ──
+  // 设计 §6.5/§9 V6②：load 超时 ≈ Worker event loop 卡死，terminate + rebuild
+  // （连带同宿主其他插件重载）与 crash 路径处理完全一致。全链（真实 PluginService
+  // 装配 + mock Worker 线程）验证：同宿主 ACTIVE 插件随 crash 链置 CRASHED（而非
+  // 被激活失败终态覆盖为 UNLOADED）→ 冷却后 rebuild（trusted-2）→ 按既有
+  // CRASHED-only 重载编排恢复 ACTIVE（工具可用）。UNLOADED 跳过语义（用户
+  // disable/uninstall 不复活）由 lifecycle-races LC-U1 在 PluginService 层覆盖。
+  it('V6②: loadPlugin timeout collateral — active same-host plugin ends CRASHED and is reloaded after rebuild', async () => {
+    const tmpRoot = await mkdtemp(join(tmpdir(), 'v62-host-root-'))
+    const tmpConfig = await mkdtemp(join(tmpdir(), 'v62-host-config-'))
+    const broadcasts: unknown[] = []
+    const broker: IMessageBroker = {
+      send: () => {},
+      broadcast: (msg) => { broadcasts.push(msg) },
+      sendError: () => {},
+    }
+    const service = new PluginService(new PluginRegistry(tmpRoot, tmpConfig), broker, { configDir: tmpConfig })
+    // initialize 前换装 mock-bootstrap 宿主：registerWorkerCallbacks（crash/rebuilt/reply）
+    // 会接线到该实例——生产装配路径零复制（crash callback → markCrashed、rebuilt → 重载编排均走真实代码）
+    service.host = new PluginHost(service.rpcServer, { workerBootstrapOverride: WORKER_MOCK })
+    await service.initialize()
+
+    const makeTrustedDescriptor = (pluginId: string): PluginDescriptor => ({
+      pluginId,
+      version: '1.0.0',
+      displayName: pluginId,
+      description: '',
+      main: 'index.js',
+      activationEvents: ['onStartupFinished'],
+      trustLevel: 'trusted',
+      status: 'UNLOADED',
+      contributes: {},
+      permissions: [],
+      engines: { 'xyz-agent': '*' },
+      pluginPath: `/tmp/${pluginId}/index.js`,
+      source: 'built-in',
+      extensionDependencies: [],
+    })
+    const normalDesc = makeTrustedDescriptor('gateb-normal')
+    const hangDesc = makeTrustedDescriptor('gateb-hang-load')
+    service.registry.cacheDescriptors([normalDesc, hangDesc])
+    service.activator.registerDescriptors([normalDesc, hangDesc])
+
+    // 同宿主正常插件先激活成功（Gate B 前置形态）
+    await service.activator.activatePlugin('gateb-normal', { type: 'onStartupFinished' }, service.host)
+    expect(service.activator.getState('gateb-normal')).toBe('ACTIVE')
+    const trusted1WorkerId = service.host.getWorkerHandle('gateb-normal')!.workerId
+
+    // U7 同款 fake timers 同步 advance 手法：gateb-hang 经 assignWorker 复用 trusted-1
+    // （登记进 handle.pluginIds，同宿主共享），load 挂起后同步烧完 10s load 超时
+    // （确定性先于 mock 的 loaded 回包），触发 crash 链
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await service.host.assignWorker('gateb-hang-load', 'trusted', hangDesc.pluginPath)
+      const hangLoad = service.host.loadPlugin(trusted1WorkerId, 'gateb-hang-load', hangDesc.pluginPath, 'trusted')
+      vi.advanceTimersByTime(10_000)
+      await expect(hangLoad).rejects.toThrow(/loadPlugin timeout for worker/)
+
+      // 连坐：同宿主 ACTIVE 插件随 crash 链置 CRASHED（而非 UNLOADED）
+      expect(service.activator.getState('gateb-normal')).toBe('CRASHED')
+      expect(service.activator.getState('gateb-hang-load')).toBe('CRASHED')
+      expect(service.host.getPendingRebuildTimer(trusted1WorkerId)).toBeDefined()
+
+      // 冷却（5s）到期 → rebuild trusted-2 → 既有 CRASHED-only 重载编排接手；
+      // 重载链（loadPlugin / activate 回包）是真实线程 I/O，切回真实 timer 轮询等收敛
+      await vi.advanceTimersByTimeAsync(5_000)
+    } finally {
+      vi.useRealTimers()
+    }
+
+    const deadline = Date.now() + 10_000
+    while (service.activator.getState('gateb-normal') !== 'ACTIVE' && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 25))
+    }
+
+    // rebuild 后同宿主插件恢复 ACTIVE（V6②：工具可用），且落在重建后的新宿主上
+    expect(service.activator.getState('gateb-normal')).toBe('ACTIVE')
+    expect(service.activator.getState('gateb-hang-load')).toBe('ACTIVE')
+    expect(service.host.getWorkerHandle('gateb-normal')!.workerId).not.toBe(trusted1WorkerId)
+
+    await service.shutdown()
+    await rm(tmpRoot, { recursive: true, force: true })
+    await rm(tmpConfig, { recursive: true, force: true })
   })
 })

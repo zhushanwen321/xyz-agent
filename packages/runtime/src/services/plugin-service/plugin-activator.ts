@@ -298,7 +298,7 @@ export class PluginActivator {
       // 3. 发送 activate 消息并等待 Worker 回复
       const handle = host.getWorkerHandle(pluginId)
       if (!handle) {
-        this.setState(pluginId, 'UNLOADED')
+        this.settleActivationFailure(pluginId)
         return
       }
 
@@ -314,11 +314,11 @@ export class PluginActivator {
         this.contexts.set(pluginId, { subscriptions: [] })
         this.setState(pluginId, 'ACTIVE')
       } else {
-        this.setState(pluginId, 'UNLOADED')
+        this.settleActivationFailure(pluginId)
       }
     } catch (err: unknown) {
       console.error(`[plugin-activator] failed to activate ${pluginId}:`, err)
-      this.setState(pluginId, 'UNLOADED')
+      this.settleActivationFailure(pluginId)
     } finally {
       // D6 取消标志消费（finally 覆盖全部出口：成功 / 异常 / 审批作废与权限拒绝
       // 的早退 return）：激活期间收到过 deactivatePlugin 请求时——
@@ -686,6 +686,23 @@ export class PluginActivator {
     this.pluginStates.set(pluginId, state)
     const descriptor = this.descriptors.get(pluginId)
     if (descriptor) descriptor.status = state
+  }
+
+  /**
+   * 激活失败终态写点（V6② crash 连坐守护）。
+   *
+   * 激活在飞期间同宿主 load 超时 / Worker crash 链（plugin-host handleWorkerCrash →
+   * PluginService crash callback → markCrashed）已把本插件置 CRASHED 时，激活自身的
+   * 失败终态不得覆盖为 UNLOADED——handleWorkerRebuilt 只重载 CRASHED 态插件，覆盖会让
+   * 被连坐插件在 rebuild 后被跳过（Gate B V6② 实测：同宿主正常插件未自动重载，需手动
+   * toggle 恢复）。UNLOADED 的合法语义（首次安装锁 / 权限被拒 / 审批等待超时取消 /
+   * 无 crash 参与的激活握手失败）不受影响：仅当状态已被 crash 链接管（CRASHED）时让位。
+   * 权限等待路径不经此守卫：其作废检查（state !== 'ACTIVATING' 提前 return）已天然
+   * 保留 CRASHED。
+   */
+  private settleActivationFailure(pluginId: string): void {
+    if (this.pluginStates.get(pluginId) === 'CRASHED') return
+    this.setState(pluginId, 'UNLOADED')
   }
 
   /** 根据 ActivationEvent 解析匹配的 pluginId 列表 */
