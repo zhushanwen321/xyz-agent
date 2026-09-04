@@ -192,6 +192,14 @@ function mountMem(opts: {
   currentModel?: string | null
   maps?: Record<string, Record<string, string | null>>
   supported?: Record<string, string[]>
+  /**
+   * [Gate B] 生产保真 setThinkingLevel：默认 no-op mock 不写 store，无法驱动「恢复回包
+   * applySnapshot({thinkingLevel})」的第二次 store 写——而跨写污染恰发生在 switchModel
+   * 回包（写 modelId）与恢复回包（写 level）两次 store 写之间的 flush 上。true 时改为
+   * 可控 promise，resolveReply() 模拟回包：先 applySnapshot 写 store 再 resolve（与
+   * useModel.setThinkingLevel 的「await RPC → applySnapshot → resolve」序列同构）。
+   */
+  realisticSetLevel?: boolean
 } = {}) {
   const sessionRef = ref<{ modelId: string; thinkingLevel?: string } | null>(opts.session ?? null)
   const defaultModelRef = ref(opts.defaultModel ?? '')
@@ -216,7 +224,21 @@ function mountMem(opts: {
         })
       }),
   )
-  const setThinkingLevel = vi.fn().mockResolvedValue(undefined)
+  const setLevelCalls: Array<{ level: string; resolveReply: () => void }> = []
+  const setThinkingLevel = opts.realisticSetLevel
+    ? vi.fn((_sid: string, level: string) =>
+        new Promise<void>((resolve) => {
+          setLevelCalls.push({
+            level,
+            // 生产保真（useModel.setThinkingLevel 时序）：回包 → applySnapshot({thinkingLevel}) → resolve
+            resolveReply: () => {
+              sessionRef.value = { modelId: sessionRef.value!.modelId, thinkingLevel: level }
+              resolve()
+            },
+          })
+        }),
+      )
+    : vi.fn().mockResolvedValue(undefined)
   // [R2-fix-2] 生产保真：flow.setPendingModel 是同步 ref 写（flow.ts:366-369），经
   // pendingModel → currentModel → currentModelId 同步 computed 传播——no-op mock 会
   // 掩盖「写后读」时序类回归（R2-fix-1 教训）。vi.fn 包真实写，保留调用断言能力。
@@ -245,6 +267,7 @@ function mountMem(opts: {
     providersRef,
     switchModel,
     setThinkingLevel,
+    setLevelCalls,
     setPendingModel,
     pending,
     scope,
@@ -782,6 +805,108 @@ describe('useComposerModelThinking · 记录 watch 门禁（D2 双条件）', ()
     h.sessionRef.value = { modelId: 'p/X', thinkingLevel: 'm' }
     await nextTick()
     expect(lookup('p/X')).toBe('high') // 'max' 被可用性校验拦截，记忆保持
+    h.scope.stop()
+  })
+})
+
+// ══════════ [Gate B] 跨写污染回归：切模型回包 flush 的错配对不得写穿记忆 ══════════
+// 真实 app 复现（V4 档位记忆场景，浏览器 50-100ms 采样）：mem[flash]='low'、mem[glm-5.3]='max'，
+// 显式切走再切回后 mem[flash] 变 max（档位自动落 max 而非用户设的 low）。
+//
+// 根因（错配对入表）：switchModel 回包 applySnapshot({modelId}) 与后续 consume 恢复的
+// setThinkingLevel 回包 applySnapshot({thinkingLevel}) 是两次独立 store 写，中间夹一个
+// watch flush——记录 watch 在该 flush 读到「模型已变、档位尚未对齐」的跨纪元快照：
+// 切走 = (新模型, 旧档位)、切回 = (旧模型, 新纪元档位)。后者把 glm-5.3 纪元的 max value
+// 经 flash 的 map 反查为 'max' 写进 mem[flash]（KV 写穿持久化），且该窗口内 armed consume
+// 若幂等（记忆已被污染即命中 max）则恢复链不再发出，污染固化。
+//
+// 生产保真 harness：realisticSetLevel 让 setThinkingLevel 回包真实写 store（useModel 时序：
+// await RPC → applySnapshot({thinkingLevel}) → resolve），否则第二次 store 写无法驱动。
+const fiveLevelMap = () => ({ ...sameContentMap(), max: 'x' })
+const fiveLevels = [...fourLevels, 'max']
+
+describe('useComposerModelThinking · 跨写污染回归（Gate B：错配对不入表）', () => {
+  /** W1+W2 公共前置：X/Y 五档同 value 空间，mem[X]='low'、mem[Y]='max'，store=(X,'l') */
+  function mountCrossWrite() {
+    record('p/X', 'low')
+    record('p/Y', 'max')
+    return mountMem({
+      sid: 's1',
+      session: { modelId: 'p/X', thinkingLevel: 'l' },
+      maps: { 'p/X': fiveLevelMap(), 'p/Y': fiveLevelMap() },
+      supported: { 'p/X': fiveLevels, 'p/Y': fiveLevels },
+      realisticSetLevel: true,
+    })
+  }
+
+  it('W1/切走已记忆模型：「(新模型, 旧档位)」错配 flush 不入表，mem[Y] 不被旧档位临时改写', async () => {
+    const h = mountCrossWrite()
+    // 切走 X → Y：回包 applySnapshot({modelId:'p/Y'})，level 仍 'l'（X 纪元遗留）
+    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
+    h.pending[0].applyAndResolve('p/Y')
+    await nextTick()
+    // consume 命中 mem[Y]='max' → 恢复 onReset('x') → setThinkingLevel('x') 发出
+    expect(h.setLevelCalls).toHaveLength(1)
+    expect(h.setLevelCalls[0].level).toBe('x')
+    // 错配对 (p/Y,'l') 不得写穿：'l' 是 X 纪元的生效档，从未生效于 Y
+    //（当前实现此处 record(p/Y,'low')，红）
+    expect(lookup('p/Y')).toBe('max')
+    // 恢复回包：applySnapshot({thinkingLevel:'x'}) → 「level 变化」flush 记录 (Y,'max')
+    h.setLevelCalls[0].resolveReply()
+    await nextTick()
+    await p
+    expect(lookup('p/X')).toBe('low')
+    expect(lookup('p/Y')).toBe('max')
+    h.scope.stop()
+  })
+
+  it('W2/切回旧模型：「(旧模型, 新纪元档位)」错配 flush 不入表——mem[X] 不被 Y 的 max 污染（主回归点）', async () => {
+    const h = mountCrossWrite()
+    // 前半：切走 X → Y（同 W1），到达 store=(p/Y,'x')、mem[X]='low'、mem[Y]='max' 的稳态
+    const p1 = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
+    h.pending[0].applyAndResolve('p/Y')
+    await nextTick()
+    h.setLevelCalls[0].resolveReply()
+    await nextTick()
+    await p1
+
+    // 切回 Y → X：回包 applySnapshot({modelId:'p/X'})，level 仍 'x'（glm-5.3 纪元的 max value）
+    const p2 = h.result.onModelSelect({ modelId: 'X', provider: 'p' })
+    h.pending[1].applyAndResolve('p/X')
+    await nextTick()
+    // consume 仍按未污染记忆命中 low → 恢复 onReset('l')（consume 判定先于错配写入）
+    expect(h.setLevelCalls[1]?.level).toBe('l')
+    // 错配对 (p/X,'x') 不得写穿：'x' 经 X 的 map 反查恰为 'max'，但它是 Y 纪元的档位，
+    // 从未生效于 X——当前实现此处 record(p/X,'max') 污染记忆表（红，即真实 app 观测的
+    // mem[flash] 被改写为 max）
+    expect(lookup('p/X')).toBe('low')
+    // 恢复回包：store=(p/X,'l') → 纪元一致 flush 记录 (X,'low')，终态双向不污染
+    h.setLevelCalls[1].resolveReply()
+    await nextTick()
+    await p2
+    expect(lookup('p/X')).toBe('low')
+    expect(lookup('p/Y')).toBe('max')
+    h.scope.stop()
+  })
+
+  it('W3/纪元一致 flush 不受影响：恢复回包的 level 变化照常入表，条件 b（挂载记录既有值）保持', async () => {
+    const h = mountCrossWrite()
+    // 挂载 immediate：记录 session 加载既有值（条件 b，D6 原语义）
+    expect(lookup('p/X')).toBe('low')
+    // 手选档（modelId 不变、level 变）：照常入表
+    h.sessionRef.value = { modelId: 'p/X', thinkingLevel: 'm' }
+    await nextTick()
+    expect(lookup('p/X')).toBe('medium')
+    h.scope.stop()
+  })
+
+  it('W4/换绑不误伤：换绑到另一 session（sid 变、modelId/level 随真值变化）保持记录既有真值', async () => {
+    const h = mountCrossWrite()
+    // 换绑到 s2（模型 Y、档位 'm'）：sid 变化使错配跳过判据不命中，新 session 真值照常入表
+    h.sessionId.value = 's2'
+    h.sessionRef.value = { modelId: 'p/Y', thinkingLevel: 'm' }
+    await nextTick()
+    expect(lookup('p/Y')).toBe('medium')
     h.scope.stop()
   })
 })

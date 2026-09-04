@@ -300,12 +300,26 @@ export function useComposerModelThinking(
    * 切模型自动对齐、session 加载既有状态（immediate 覆盖最后一种，mount 即记录载入值）。
    * 条件 a（态轴）：landing 悬空值（sessionId 空）与 staging 试选值（stagingModel 非空——
    * fork/handoff 暂存取消时不该入表）不入表；其生效时点（新 session 建立）必进已建态由门禁补上。
+   *
+   * [Gate B 跨写污染修复] 观察源含 sessionId（第 0 位），用于识别「跨纪元错配 flush」：
+   * 切模型的回包链是两次独立 store 写——switchModel 回包 applySnapshot({modelId}) 先落，
+   * consume 恢复的 setThinkingLevel 回包 applySnapshot({thinkingLevel}) 后落，两次写之间
+   * 夹着一个 watch flush。该 flush 上 (modelId, level) 是「模型已变、档位尚未对齐」的
+   * 跨纪元快照（切走 = 新模型×旧档位；切回 = 旧模型×新纪元档位），把后者反查入表会把
+   * 旧模型槽位写成新模型的记忆档（mem[flash] ← mem[glm-5.3] 的 max，KV 写穿持久化，
+   * 即 V4 Gate B 实测污染）。纪元一致的真值必然出现在后续「level 变化」的 flush
+   * （恢复/手选/对齐回包）上，届时照常入表——「生效即记录」语义不变（D6），拒收的只是
+   * level 从未生效于该 modelId 的时序中间态。判据为纯时序纪元一致性，非用户意图判别
+   * （D6 被否②的轴未触碰）。换绑（prev sid ≠ sid）不跳过——新 session 的既有真值属新纪元，
+   * 条件 b 记录保持。
    */
   watch(
-    [currentModelId, currentThinkingLevel],
-    ([modelId, level]) => {
-      if (!sessionId.value || stagingModel.value !== null) return
+    [sessionId, currentModelId, currentThinkingLevel],
+    ([sid, modelId, level], prev) => {
+      if (!sid || stagingModel.value !== null) return
       if (!level) return
+      // 同 session 内模型已变而档位未变 → level 是旧模型纪元遗留，本 flush 不入表
+      if (prev && prev[0] === sid && prev[1] !== modelId && prev[2] === level) return
       // 记录的是 UI key（D1：跨模型恢复的语义是档位名而非实现值）——value 经当前模型 map 反查
       const uiKey = resolveThinkingKey(level, getThinkingLevelMap(modelId))
       // 可用性校验（E5 防线）：体系外脏值（transient 窗口值/异常快照）不入表
