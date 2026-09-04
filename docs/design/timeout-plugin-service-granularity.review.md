@@ -1,34 +1,49 @@
-# 对抗式审查报告：timeout-plugin-service-granularity.md（Doc 3）
+# 对抗式审查报告（第 4 轮聚焦复审）：timeout-plugin-service-granularity.md
 
-> 审查人：主 agent（代 tech-design-review——原定审查 subagent 两轮均被环境杀死，写作/审查分离临时让渡；本文档作者为独立 subagent，非审查人）
-> 依据：rubric-design-doc.md + AGENTS.md 规则 16/17/19 + 源码实读核实。审查日期 2026-09-04（v1）。
+> 审查人：tech-design-review agent。依据 rubric-design-doc.md + 源码实读核实。审查对象 = v2.1（2026-09-04）。本轮范围**仅限验证第 3 轮修复**（1 MF / 2 SG），不重查任何已确认项（前轮通过清单见 .review.round2-agent.md 与本文件历史版本，已被覆盖）。
 
 ## Summary
 
-**2 must-fix, 2 suggestions, 2 info。**
+**0 must-fix, 0 suggestions, 2 info。** 第 3 轮三项修复（MF 兜底 min() / SG① requestId 口径收敛 / SG② 撤窗 miss 幂等表述）全部成立，经源码实读核实与自报攻击点（effective=MAX 同刻到期交错）推演未击穿。文档达到可实施状态。
 
-文档质量显著高于均值：v2 自修订已吸收双层竞速（Worker 侧单一计时权威 + cancel 通知 + 防泄漏兜底，含串行排队反例重演与被否谱系）；对抗攻击 10+ 处事实声明（ui-api 五方法不传参 / client 30s 发起即挂 / activator resolve(false) 链 / Worker loadPlugin 仅 reject / handleWorkerCrash 存在 / bridge-interop 30s isError / invoke 必传 / dialog-queue 30min 先例 / syncFrom 存完整 schema）逐一实读核实**全部命中**；「D1 声明值传播链」与「30min 上界归属论证」两个最强攻击面均被文档自身的证据链挡住（syncFrom 存完整 ToolEntry，getSyncPayload 塑形只影响 pi 侧负载——无矛盾）。两处 MUST_FIX 集中在：**新引入机制的碰撞面未设计（requestId 生成权移交）**与**验收环境可行性（pi CLI 无 runtime 时 bridge 工具无被调方）**。
+## 第 3 轮修复验证
+
+### MF（兜底 clamp 塌缩 → min() 修复）：通过
+
+- **事实核实**：`MAX_TIMER_DELAY_MS = 2_147_483_647`（subagent-core/src/shared/timer-delay.ts:19 ✅）。修复后兜底 `min(effective + 60_000, MAX_TIMER_DELAY_MS)` 在全部 effective 取值域内恒 ≤ MAX，不超 Node setTimeout 域，塌缩 1ms 提前触发的反例被封闭。
+- **拒绝「clamp 上界预留 60s」备选的理由成立**：该备选会使 UI 语义 clamp 上界变为 MAX-60s，与 D1 工具执行的 clamp 口径（MAX，对齐 dialog-queue `resolveDialogTimeoutMs` 的 `Math.min(resolved, MAX_TIMER_DELAY_MS)`，dialog-queue.ts 实装核实 ✅）分叉——两处 clamp 不一致确是新长期债务，取舍论证正确。
+- **边界推演自洽**：effective < MAX-60s 时兜底 = effective+60s 恒晚于语义（60s 足以覆盖一条 Worker→host cancel 通知的传播，秒级，余量重新成立）；effective 恰 = MAX 时（语义 timer 值 2^31-1 合法、不塌缩）兜底 = MAX 与语义同刻。
+- **四处联动位置核实一致**：§6.2 第 4 条 / §4.4 总表 queue 行 / §7 文件地图 ui-request-queue.ts 行与错误规格表兜底行 / §11 检查点，`min(...)` 措辞与「上界边界与语义同刻、幂等收尾」表述全部同步，无遗漏联动点。
+
+### 自报攻击点（effective=MAX 同刻到期交错）：未击穿
+
+按任务书要求优先攻击同刻触发下的交错副作用（双重 processNext / 双重撤窗广播）：
+
+- **交错 A（兜底先于 cancel 通知到达）**：queue 兜底 timer 先 fire → 删 pending + expired 广播 + 活跃则 processNext 放行；随后 Worker 的 cancel notify 到达 → `cancelRequest` 按 §11 约束「Map.delete miss → return」直接返回，无第二次 processNext。串行不变量保持。
+- **交错 B（cancel 通知先到）**：`cancelRequest` 删 pending + 广播 + 放行，并按 §6.2 第 4 条「兜底被 clearTimeout」清掉兜底 timer；兜底已 fire 但未执行的最坏情况回落到交错 A 的 miss-safe 路径。
+- **双重撤窗广播**：两路径最坏各发一次 expired 广播，前端撤窗 miss noop 幂等（v2.1 SG② 修复已显式覆盖该消费侧预期），无异常、无状态破坏。
+- **§11 闭环充分性**：检查点已扩充为「cancel、兜底、语义三路径清理均须幂等可重入（前端撤窗 miss 亦 noop）+ effective=MAX 边界单测用例」——同刻交错的所有形态都归约为「第二次清理 miss-safe 返回 + 广播幂等」两条实现约束，且各带可验收的单测断言点。设计层封闭充分，剩余为实现纪律（单测覆盖已登记）。
+- **触发面评估**：effective=MAX 需插件显式声明 ~24.8 天量级的 timeout，属极端声明值边界——设计为该边界付出 min() + 幂等约束的代价合理，无过度设计。
+
+### SG①（requestId 唯一性口径）：通过
+
+`createUiApi(rpcClient, pluginId)` 签名实装核实无 workerId（api/ui-api.ts:160-162 ✅）。§6.2 第 2 条已删 workerId 选项，收敛为「UUID（§7 口径）或沿用现状格式 `${pluginId}_${Date.now()}_${randomSuffix()}`」，与 queue 现状生成格式（ui-request-queue.ts:66 ✅）一致，`randomSuffix` 对 Worker 侧 ui-api 同包可导入（utils/ids）——两选项实施均无取值障碍。
+
+### SG②（cancelRequest 恒发广播表述缝）：通过
+
+§6.2 第 3 条已补「广播无条件发出——排队中从未展示的请求超时取消时广播照发，前端对未展示/已关闭弹窗的撤窗 miss 须 noop 幂等」；V4b 通过标准已补「B 的 expired 广播照发但前端无 B 弹窗可撤（miss noop 幂等，无异常）」。与 §11 幂等约束口径一致，语义缝消除。
+
+### 变更历史 v2.1 条目：通过
+
+收敛轨迹（2 MF/5 SG → 2 MF/2 SG/2 INFO → 1 MF/2 SG）与各轮条目对应正确，产物自包含。
 
 ## Findings
 
 | 优先级 | 位置 | 维度 | 描述 | 修复方向 |
 |--------|------|------|------|----------|
-| MUST_FIX | §6.2 D2 第 2 条（requestId 生成权移到 Worker 侧） | P0-12 副作用/遗漏 | **Worker 侧生成 requestId 的跨 Worker/跨插件碰撞面未设计**。现状 queue（宿主单点）生成 id 天然全局唯一；移交 Worker 侧后：① 共享 Worker（≤10 插件同一线程同一 rpcClient）内两插件并发出 UI 请求，各自 ui-api 生成的 id 可能碰撞（PendingTracker 按 id 键控）→ cancel 通知误删他方 pending → 错撤他人弹窗；② 多 Worker 场景同理。取消语义（本决策核心）的 correctness 依赖 id 全局唯一，文档未指定生成规则 | 指定唯一性规则：`workerId` 前缀或 UUID（对齐既有 id 生成惯例），写入 D2-2 采用段；验收 V4 补「双插件并发弹窗 + 其一超时取消，另一不受影响」断言 |
-| MUST_FIX | §9 V1/V2 + §8 P-8（验收环境） | P0-14 可执行性 | **「本地 pi CLI --extension <bridge>」验收环境大概率不可行**：实装核实 `bridge:sync`/`bridge:tool_execute` 是 runtime WS 命令（`transport/bridge-handler.ts:28-37`，转发 pluginService）——pi 侧 bridge 消费方经 relay WS 到 runtime；纯本地 pi CLI 无 xyz runtime 时，bridge 工具清单为空、tool_execute 无被调方，V1/V2/P-8 按字面无法执行。AGENTS.md「extension 优先 pi CLI 实测」纪律针对 pi extension 本体；plugin-service 是 runtime 子系统，该纪律不直接适用 | V1/V2/P-8 环境重述为：`pnpm dev`（runtime + pi spawn 全链）或「standalone 启动 runtime + 以 relay env 手动拉起 pi CLI」二选一，写明 relay env 接线点；保留「真实 pi + 真实插件 + 真实前端」的实质要求不变 |
-| SUGGESTION | §7 错误规格表 + §6.4 D4 | P1-3 UX 完整性 | command 抬 30min 后的**重复触发行为未登记**：现状并发守卫拒绝重复执行（普查已录）——30min 窗口把「点了没反应再点被拒」的 UX 面放大 180 倍；用户视角需要「正在执行中」的可见反馈与取消出路 | 错误规格表补一行：重复触发 → busy 提示（含已等待时长）；登记「命令可取消/进度反馈」为 renderer 联动排期项（对齐 U8 模式） |
-| SUGGESTION | §6.2 D2 第 3 条 + §7 ui-request-queue 行 | P1-8 一致性 | D2 采用段第 3 条写「rpcClient.notify('plugin.ui.uiRequestExpired')」而 §7 改动地图同位置写「expired 广播回调注入」——通知方法命名（`plugin.ui.uiRequestExpired`）与广播事件名（`plugin:uiRequestExpired`）两套命名并存，实施者易混（Worker→host notify 与 host→renderer broadcast 是两条不同通路，文档区分了通路但未给命名对齐规则） | 统一命名约定：Worker→host notify 用 `plugin.ui.*`（RPC 域），host→renderer broadcast 用 `plugin:*Expired`（ServerMessageMap 域），并在 D2 加一句命名规则说明 |
-| INFO | §6.1 D1 证据（声明值传播链） | 攻击未击穿记录 | 审查以「getSyncPayload 只塑形三字段 → 裁决点读不到 timeoutMs」为攻击点，实读 `bridge-interop.ts:71-79` 证伪：`syncFrom` 存的是完整 `ToolEntry`（含全量 schema），`entriesByName` 路由的正是完整 entry——`getSyncPayload` 的塑形只影响发往 pi 的负载，runtime 裁决点本地可读。文档证据链成立。建议：把「syncFrom 存完整 entry（:71-75）」在证据句中明示为传播链承重环节（现文「缓存层整体同步 schema」已对但可更直白） | （可选）证据句补半句 |
-| INFO | 全文 | P0 通过项 | 五段骨架/SCQA/结论先行 ✓；每决策 ≥3 方案+被否反演+反例重演（D2 v1 被击穿方案入谱系是范本）✓；验收 6 场景全真实+回溯目标 ✓；探针 ✅7+⛔5 全带降级 ✓；被否谱系/回写义务/量级依据（dialog 30min + SPAWN_WATCHDOG_FLOOR 双先例）✓；行号抽查全命中 | — |
+| INFO | §6.2 第 2 条 vs §7 ui-api 行 | P1-8 表述（不影响决策） | §6.2 唯一性规则给两选项（UUID 或现状格式），§7 只写「requestId 生成（uuid 随 params 传递）」——实施若选现状格式则 §7 行与实况有一字之差 | 实施时按所选格式回改 §7 措辞，或现在把 §7 改为「requestId 生成（全局唯一 id，格式见 §6.2）」 |
+| INFO | §7 D2 行 | P1-8 范围表述（不影响决策） | §7 写「`createUiApi` 五个方法加 `opts?: { timeout?: number }`」——五方法含 `notify` / `updateStatusBarItem` 两个纯展示类（非 dialog、fire-and-forget），给它们加等待超时的语义价值存疑 | 实施时可将 opts.timeout 限定到 dialog 类三方法（select/confirm/input），§7 同步收敛措辞 |
 
-## 判定四态（P0 摘要）
+## 结论
 
-| 检查项 | 判定 |
-|---|---|
-| P0-1~9（骨架/delta/结论先行/问题定义/视角/术语/方案对比三维/因果） | 通过 |
-| P0-10 解决目标问题 | 通过（D1-D6 与 §4.4 裁定框架逐点对齐；workflow/worker 碰撞面属 P0-12） |
-| P0-11 关键事实 | 通过（10+ 处实读全命中；无「声明 vs 源码」断裂） |
-| P0-12 副作用/遗漏 | **不通过（requestId 碰撞面）** |
-| P0-13/15 验收存在/投入 | 通过（6 场景/大改动） |
-| P0-14 验收真实可执行 | **不通过（V1/V2/P-8 环境可行性）** |
-| P0-16 探针 | 通过（⛔ 带降级） |
-| P0-17/18 数据流图/恢复指引 | 通过 |
+第 3 轮修复全部成立，无新增 must-fix / suggestion。文档（v2.1）通过对抗式审查，可进入实施（§10 单元序）。

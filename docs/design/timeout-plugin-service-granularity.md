@@ -10,7 +10,7 @@
 - **S（情境）**：xyz-agent 的 plugin-service 是插件宿主——插件跑在 Worker 线程或 fork 子进程里，向 pi agent 提供工具、hook、UI 弹窗与状态栏能力；runtime 与插件之间靠 JSON-RPC 往返，每一处「等回复」都挂了一个固定墙钟。
 - **C（冲突）**：超时普查（[timeout-audit-2026-09.md](timeout-audit-2026-09.md) Doc 3 范围）发现：pi agent loop 主链路上的插件工具执行被 30s 固定墙钟砍成 `isError`（与已修的 zcode 300s turn 误杀同构、量级短 10 倍）；两处「等用户操作」被短墙钟替答——UI 弹窗 60s 自动 resolve `false`、权限审批 30s 判拒并把插件置 UNLOADED；且 UI 弹窗链路上还藏着一层 30s 的 RPC 客户端超时先到期。所有覆盖参数（`permissionTimeoutMs` 等）注释标注「测试用」，生产不可达。
 - **Q（问题）**：怎么让 plugin-service 每一处超时都符合 [AGENTS.md](../../AGENTS.md) 规则 19 的「量级按对象粒度校准」——任务执行 = 小时级或无进展检测、等人工 = 本仓既有 30min 裁决、控制面单请求 = 秒级——并给插件作者与用户留显式逃生门？
-- **A（答案）**：六个决策（§5 D1-D6）：工具执行默认 30min + 声明覆盖 + opt-out（D1）；UI 弹窗双层同改 30min + `timeout` 参数 + 取消语义（D2）；权限审批默认转正 30min + 取消语义（D3）；activate 保持控制面量级补覆盖、command 按任务级抬 30min（D4）；Worker loadPlugin 超时后 terminate + 走 rebuild 链（D5）；hook 5s / client 30s 机制 / load 10s 等登记不动（D6）。
+- **A（答案）**：六个决策（§6 D1-D6）：工具执行默认 30min + 声明覆盖 + opt-out（D1）；UI 弹窗单一计时权威（Worker 侧）默认 30min + `timeout` 参数 + 取消语义，queue 层退为防泄漏兜底（D2）；权限审批默认转正 30min + 取消语义（D3）；activate 保持控制面量级补覆盖、command 按任务级抬 30min（D4）；Worker loadPlugin 超时后 terminate + 走 rebuild 链（D5）；hook 5s / client 30s 机制 / load 10s 等登记不动（D6）。
 
 ---
 
@@ -77,6 +77,7 @@ execute: async (toolCallId: string, params: any, _signal: any, _onUpdate: any, c
     toolCallId, params, sessionId: ctx?.sessionId,
   })
 }
+```
 
 runtime 侧（`bridge-interop.ts:97-133`）用**模块级常量**一刀切：
 
@@ -166,7 +167,8 @@ pi agent loop (pi 进程)
        │  轮询 bridge:sync 拿工具清单，注册为 pi 工具
        │  执行时: api.extension_ui_request({method:'bridge:tool_execute', ...})   (:31-34)
        │  （:30 有 bridgeState!=='Ready' 前置守卫，未就绪直接 isError）
-       │  ⚠ pi 侧无超时（rpc-mode.js:70-77 pendingExtensionRequests 只 set(id,{resolve,reject})，无 timer）✅已核实
+       │  ⚠ pi 侧 bridge 调用无超时无 abort（rpc-mode.js:177 pendingExtensionRequests 直接登记，不传 opts；
+       │    createDialogPromise :47-77 的 signal/timeout 支持是 pi 自有 dialog 的 opt-in，bridge 未用）✅已核实
        ▼  (pi ↔ runtime RPC: extension_ui_request 通道)
 runtime bridge-handler (transport/bridge-handler.ts:37-42)
   └─ pluginService.handleBridgeToolExecute (plugin-service.ts:718)
@@ -221,7 +223,7 @@ activation event (onStartupFinished / onSlashCommand:xxx)
 |---|---|---|---|---|---|---|
 | 工具执行 | bridge-interop.ts:18（用 :127） | 插件业务代码执行 | 任务级 | 30s | 默认 30min + 声明覆盖 + opt-out | D1 |
 | UI 弹窗（client 层 → v2 唯一计时权威） | plugin-rpc-client.ts:15（ui-api.ts:171-184 不传参） | 等用户点击（计时起点 = 插件调用，含排队） | 等人工 | 30s | 唯一语义计时器：默认 30min + `opts.timeout` 覆盖；到期 `UI_TIMEOUT` + cancel 通知 | D2 |
-| UI 弹窗（queue 层 → 防泄漏兜底） | ui-request-queue.ts:19（timer :99-103） | 同上（兜底收尾，正常不裁决） | 等人工 | 60s | 删语义裁决与替答；兜底 = effective+60s（仅 cancel 丢失 / Worker 死亡时收尾） | D2 |
+| UI 弹窗（queue 层 → 防泄漏兜底） | ui-request-queue.ts:19（timer :99-103） | 同上（兜底收尾，正常不裁决） | 等人工 | 60s | 删语义裁决与替答；兜底 = min(effective+60s, MAX_TIMER_DELAY_MS)（仅 cancel 丢失 / Worker 死亡时收尾；上界边界与语义同刻、幂等收尾） | D2 |
 | 权限审批 | plugin-activator.ts:45（接线 :119 注释测试用；timer :417-420） | 等用户审批 | 等人工 | 30s | 默认 30min + env 覆盖；到期取消非判拒 | D3 |
 | activate 回复 | plugin-activator.ts:44（用 :263） | 生命周期握手 | 控制面 | 30s | 30s 保持 + `activateTimeoutMs` 覆盖 + 契约文档 | D4 |
 | 命令执行 | api/commands-executor.ts:15（PendingTracker :66） | 用户触发的插件动作 | 任务级 | 10s | 默认 30min + 命令定义级声明 | D4 |
@@ -326,7 +328,7 @@ ctx.tools.register({
 - **采用**：三层取值结构，单一权威源在 bridge-interop 调用点：`有效超时 = entry.schema.timeoutMs（插件作者声明，合法正数） ?? DEFAULT_TOOL_EXECUTE_TIMEOUT_MS（30_000_000，新常量）`；`timeoutMs <= 0` 或 `Infinity` 视为显式 opt-out（不限时，直接不挂 PendingTracker 超时——invoke 侧需支持 `timeoutMs = 0` 表示不注册超时或传一个 2^31-1 clamp 值，实现取简单者）。超时后行为：isError 保留（工具级失败让 pi agent 自行决策重试——pi 的工具错误语义本就如此）+ 错误消息按 §5.2 诚实化（等了多久 / 默认还是声明值 / handler 可能仍在跑 / 如何调）。不 terminate 插件宿主（长任务 ≠ 插件坏；迟到回包 PendingTracker miss 丢弃即可）。
 - **被否**：
   - **方案 a：纯声明制**（未声明维持 30s 短默认，声明了才放宽）——存量插件全部未声明，30s 误杀照旧；且把「系统防挂死兜底」的责任转嫁给插件作者（不写声明就被砍），激励倒挂。若用它，§5.1 的 90s 工具场景变成：作者忘了声明 → 30s 被 isError → 用户以为插件坏了。
-  - **方案 c：默认不挂（不限时）纯 opt-in**——最贴规则 19 字面（「调用方未传就是不限时」），但被 dialog-queue LC-3 的同类论证击穿：插件 handler 死循环 → pi turn 永久占死（pi 侧 extension_ui_request 无超时，✅已核实 rpc-mode.js:70-77）→ 用户只 能重启 session。dialog 先例的原话：「『等用户无限久』改为默认有界是有意的行为变更」——防全局死锁的有界兜底是本仓已裁决的方向。若用它，§2 目标 4（挂死有兜底）被放弃。
+  - **方案 c：默认不挂（不限时）纯 opt-in**——最贴规则 19 字面（「调用方未传就是不限时」），但被 dialog-queue LC-3 的同类论证击穿：插件 handler 死循环 → pi turn 永久占死（pi 侧 bridge 调用路径无超时无 abort，✅已核实 rpc-mode.js:47-77 / :177）→ 用户只 能重启 session。dialog 先例的原话：「『等用户无限久』改为默认有界是有意的行为变更」——防全局死锁的有界兜底是本仓已裁决的方向。若用它，§2 目标 4（挂死有兜底）被放弃。
   - **被否谱系（无进展检测完整形态）**：给插件 API 加 progress 事件通道（handler 周期上报进度刷新计时，busy 永不判死——idle timer 范式）——架构上最正确，但要新增 Worker→host→bridge→pi 的进度 RPC 通道并改 bridge extension，改造面横跨四层；当前插件生态无此需求证据（误杀是实证、挂死无实证）。**若未来出现「合法跑数小时」的工具需求，此方案是升级路径**，届时 D1 的声明通道平滑兼容（声明 `timeoutMs: Infinity` + progress 通道）。
 - **证据**：执行形态无进度回传（§4.1 论断 + PendingTracker 机制约束）→ 无进展检测不可行 → 归属规则 19「回收层防挂死兜底 = 默认有界 opt-out」条款；量级=任务级兜底下限 30min（`session-runner.ts:155` SPAWN_WATCHDOG_FLOOR_MS 同值）+ dialog 30min 裁决（dialog-queue.ts:46）；zcode 300s 误杀 21% 实证秒级必误杀；`invoke` timeoutMs 必传机制（plugin-rpc-server.ts:142）证明「调用点显式指定」的通道现成，只缺读取源；`ToolRegistration`（plugin-types.ts:324-330）现无字段（✅已核实）；声明值传播链现成——Worker 注册 → `toolRegistry` → `bridgeToolCache.syncFrom`（bridge-interop.ts:71-75 缓存层整体同步 schema，runtime 裁决点本地可读 `entry.schema.timeoutMs`）；注意 `getSyncPayload` 只塑形 `{name, description, parameters}`（bridge-interop.ts:92），`timeoutMs` **不进 `bridge:sync` 负载**——pi 侧不可见亦无需可见（裁决在 runtime 本地，不经 pi）。声明值合法性校验对齐 dialog-queue `isValidDialogTimeout` / `resolveDialogTimeoutMs` 先例（合法正数、非法回落默认、clamp `MAX_TIMER_DELAY_MS` 防 Node timer 塌缩 1ms 语义反转）。
 - **效果**：§2 目标 1（长工具不误杀）、3（错误诚实）、4（兜底）、5（逃生门）全部成立；§5.1/§5.2 前两个场景成立。
@@ -342,9 +344,9 @@ ctx.tools.register({
 
 - **采用**（v2 重构：计时权威归属请求发起方，queue 退为防泄漏兜底）：
   1. **Worker 侧（createUiApi）是唯一计时权威**：`opts.timeout`（插件 API 新增可选参数，形态对齐 pi 先例 `showConfirm(title, message, opts?: { timeout?: number })`）经 `resolveUiRequestTimeoutMs`（对齐 dialog-queue `resolveDialogTimeoutMs`：合法正数优先 / 非法回落默认 30min / clamp）解析为 effective；`rpcClient.request(method, params, effective)` 显式传参——**传输计时与语义计时合并为同一个 timer**（client 的 PendingTracker timer 就是语义裁决者，plugin-rpc-client.ts:52 发起即挂），链路上不存在「两层谁先到期」。`opts.timeout` 语义 = **从调用到拿到结果的最长全程等待，含串行排队时间**——排队也是插件在等，从请求方视角计时才诚实。
-2. **requestId 生成权移到 Worker 侧**：现状由 queue 在 `handleRequest` 生成（ui-request-queue.ts:66），而 Worker 侧的取消通知需要引用它——改为 ui-api 生成随 params 传递，queue 尊重来方 requestId。**唯一性规则（v1.1 补，审查 MF1）**：生成 id 必须全局唯一——`${workerId}-${自增}` 或 UUID（对齐既有 id 惯例），防共享 Worker（≤10 插件同线程同 rpcClient）内两插件并发请求 id 碰撞导致 cancel 误删他方 pending/错撤他人弹窗；queue 侧对重复 id 的行为 = warn + 丢弃后到者（防御性）。
-  3. **到期行为从「替答」改「取消」**：Worker 侧 timer 到期 → PendingTracker reject → ui-api catch 转译为 `Error('ui request timed out after N', code='UI_TIMEOUT')` reject 给插件（effective timer 的 reject 只可能来自语义到期，转译安全）→ 同刻 `rpcClient.notify('plugin.ui.uiRequestExpired', { requestId, pluginId })`（**复用既有 Worker→host notification 通路**，plugin-rpc-server.ts:175-190 无 id 消息 dispatch 已存在，仅注册新 method handler）→ 主线程 queue `cancelRequest(requestId)`：删 pending / 排队项 + `broadcast('plugin:uiRequestExpired', { requestId, pluginId })`（前端撤回弹窗；`ServerMessageMap` 新增类型，类型定义随本单元落地）+ 若该请求正活跃则 `processNext()` 放行（串行防死锁保留）。warn 日志（等了多久 + 恢复指引）在 Worker 侧 reject 处打。**命名对齐规则（v1.1 补，审查 S2）**：Worker→host notify 用 `plugin.ui.*` RPC 域；host→renderer broadcast 用 `plugin:*Expired`（ServerMessageMap 域）——两条通路命名前缀不同，实施时勿混用。
-  4. **queue 侧删语义 timer，换防泄漏兜底**：删除 `UI_REQUEST_TIMEOUT_MS` 60s 语义 timer 与 `defaultResult` 替答；queue 收到请求时挂**兜底** timer = `effective + 60s`（入队起算，与 Worker 侧语义 timer 同起点、值恒更大）——正常路径下 Worker 先到期 + cancel 通知到达，兜底被 clearTimeout；兜底只在 cancel 丢失 / Worker 死亡（线程死则语义 timer 随之消失）时触发，做同样的清理 + 撤窗 + 放行 + warn。兜底不参与语义裁决、永不与语义裁决竞速——「防泄漏余量」从「覆盖排队等待（无上界）」缩为「覆盖一条 cancel 通知的传播（秒级）」，固定余量重新成立。
+  2. **requestId 生成权移到 Worker 侧**：现状由 queue 在 `handleRequest` 生成（ui-request-queue.ts:66），而 Worker 侧的取消通知需要引用它——改为 ui-api 生成随 params 传递，queue 尊重来方 requestId。**唯一性规则（v1.1 补，审查 MF1；v2.1 按审查第 3 轮 SG① 校正取值口径）**：生成 id 必须全局唯一——UUID（§7 口径）或沿用现状格式 `${pluginId}_${Date.now()}_${randomSuffix()}`（ui-api 上下文持有 pluginId；workerId 前缀不可行——`createUiApi(rpcClient, pluginId)` 签名无 workerId，ui-api.ts:160-162 ✅已核实），防共享 Worker（≤10 插件同线程同 rpcClient）内两插件并发请求 id 碰撞导致 cancel 误删他方 pending/错撤他人弹窗；queue 侧对重复 id 的行为 = warn + 丢弃后到者（防御性）。
+  3. **到期行为从「替答」改「取消」**：Worker 侧 timer 到期 → PendingTracker reject → ui-api catch 转译为 `Error('ui request timed out after N', code='UI_TIMEOUT')` reject 给插件（effective timer 的 reject 只可能来自语义到期，转译安全）→ 同刻 `rpcClient.notify('plugin.ui.uiRequestExpired', { requestId, pluginId })`（**复用既有 Worker→host notification 通路**，plugin-rpc-server.ts:175-190 无 id 消息 dispatch 已存在，仅注册新 method handler）→ 主线程 queue `cancelRequest(requestId)`：删 pending / 排队项 + `broadcast('plugin:uiRequestExpired', { requestId, pluginId })`（前端撤回弹窗；**广播无条件发出**——排队中从未展示的请求超时取消时广播照发，前端对未展示/已关闭弹窗的撤窗 miss 须 noop 幂等，v2.1 补；`ServerMessageMap` 新增类型，类型定义随本单元落地）+ 若该请求正活跃则 `processNext()` 放行（串行防死锁保留）。warn 日志（等了多久 + 恢复指引）在 Worker 侧 reject 处打。**命名对齐规则（v1.1 补，审查 S2）**：Worker→host notify 用 `plugin.ui.*` RPC 域；host→renderer broadcast 用 `plugin:*Expired`（ServerMessageMap 域）——两条通路命名前缀不同，实施时勿混用。
+  4. **queue 侧删语义 timer，换防泄漏兜底**：删除 `UI_REQUEST_TIMEOUT_MS` 60s 语义 timer 与 `defaultResult` 替答；queue 收到请求时挂**兜底** timer = `min(effective + 60_000, MAX_TIMER_DELAY_MS)`（入队起算，与 Worker 侧语义 timer 同起点；`min()` 防止 effective 被 clamp 到上界 `MAX_TIMER_DELAY_MS`（timer-delay.ts:19）时 `+60s` 超出 Node setTimeout 域塌缩 1ms 反客为主提前触发——v2.1 修复，审查第 3 轮 MF）——正常路径下 Worker 先到期 + cancel 通知到达，兜底被 clearTimeout；兜底只在 cancel 丢失 / Worker 死亡（线程死则语义 timer 随之消失）时触发，做同样的清理 + 撤窗 + 放行 + warn。残余边界：effective 恰被 clamp 到上界时兜底与语义 timer **同刻**到期，两路径清理幂等可重入（§11 检查点闭环）。兜底不参与语义裁决——「防泄漏余量」从「覆盖排队等待（无上界）」缩为「覆盖一条 cancel 通知的传播（秒级）」，固定余量重新成立。
 - **被否**（v2 新增三条置前）：
   - **[v1 采用方案，被反例击穿] queue 唯一裁决 + client 传「语义值 + 60s 固定余量」**——击穿反例：client timer 从 `request()` 发起即挂（plugin-rpc-client.ts:52）且计时**含排队等待**，queue 语义 timer 到 `dispatch` 才挂（ui-request-queue.ts:68-73 排队不 dispatch）且**不含排队**——前置一个全时长 30min 弹窗时，第二个弹窗传输层在 ~30min+60s 报 RPC_TIMEOUT、语义层要 ~60min 才裁，失败模式 B（传输层先于语义层报错）原样复发；且队列长度无上界，任何固定余量都不封闭。v1 援引的「UI = RPC + 余量」handoff 范本只适用于各层计时**同起点**的链路，串行排队打破了同起点前提。
   - **[重置方案] queue 出队 dispatch 时经 host→Worker 反向通知重置 client timer**——可实现「从展示起算」，但需新增 host→Worker 通知 + client reset API（双向协议改动），并引入 reset 与到期的竞速；被「Worker 侧单向 notify cancel」取代（复用既有 notification 通路，零新协议形态）。
@@ -418,8 +420,8 @@ ctx.tools.register({
 | `plugin-service/bridge-interop.ts` | D1 | `TOOL_EXECUTE_TIMEOUT_MS` → `DEFAULT_TOOL_EXECUTE_TIMEOUT_MS = 30_000_000`；invoke 前经 `resolveToolTimeoutMs(entry.schema.timeoutMs)`（新纯函数，对齐 dialog-queue `resolveDialogTimeoutMs`：合法正数优先 / `<=0` 或 `Infinity` = 不限时 / 非法回落默认 / clamp）；超时 catch 分支错误消息诚实化（§5.2 文案） |
 | `plugin-service/plugin-types.ts` | D1 | `ToolRegistration` 加 `timeoutMs?: number`（JSDoc：声明 >0 为该工具上界；`<=0`/`Infinity` 显式不限时；非法值回落默认） |
 | `plugin-service/tool-api.ts` | D1 | 注册入口窄校验（对齐 ui-api 的 INVALID_* 风格：非 number 抛 INVALID_TIMEOUT_MS） |
-| `plugin-service/ui-request-queue.ts` | D2 | 删 60s 语义 timer 与 `defaultResult` 替答；改挂防泄漏兜底 timer = `effective + 60s`（入队起算，仅 cancel 丢失 / Worker 死亡时收尾清理 + warn）；requestId 尊重 Worker 侧来方值；新增 `cancelRequest(requestId)`（删 pending / 排队项 + expired 广播 + 活跃请求 `processNext` 放行）；注册 `plugin.ui.uiRequestExpired` notification handler（复用既有无 id dispatch 通路，plugin-rpc-server.ts:175-190） |
-| `plugin-service/api/ui-api.ts` | D2 | `createUiApi` 五个方法加 `opts?: { timeout?: number }`；requestId 生成（uuid 随 params 传递）；`rpcClient.request` 第三参传 `resolveUiRequestTimeoutMs(opts?.timeout)`（**语义值本身，无余量**——传输计时即语义计时）；到期 catch 转译 `UI_TIMEOUT` reject 插件 + warn + notify cancel |
+| `plugin-service/ui-request-queue.ts` | D2 | 删 60s 语义 timer 与 `defaultResult` 替答；改挂防泄漏兜底 timer = `min(effective + 60_000, MAX_TIMER_DELAY_MS)`（入队起算，仅 cancel 丢失 / Worker 死亡时收尾清理 + warn；`min()` 防上界塌缩提前触发）；requestId 尊重 Worker 侧来方值；新增 `cancelRequest(requestId)`（删 pending / 排队项 + expired 广播恒发 + 活跃请求 `processNext` 放行）；注册 `plugin.ui.uiRequestExpired` notification handler（复用既有无 id dispatch 通路，plugin-rpc-server.ts:175-190） |
+| `plugin-service/api/ui-api.ts` | D2 | `createUiApi` dialog 类三方法（showConfirm/showSelect/showInput）加 `opts?: { timeout?: number }`（notify/updateStatusBarItem 纯展示类不设等待超时语义，维持 client 默认 30s——第 4 轮 INFO）；requestId 生成（UUID 或现状 pluginId 前缀格式，随 params 传递）；`rpcClient.request` 第三参传 `resolveUiRequestTimeoutMs(opts?.timeout)`（**语义值本身，无余量**——传输计时即语义计时）；到期 catch 转译 `UI_TIMEOUT` reject 插件 + warn + notify cancel |
 | `plugin-service/plugin-activator.ts` | D3/D4 | `PERMISSION_TIMEOUT_MS` → 30min；`waitForPermissionApproval` 到期 resolve `'timeout'`；`doActivatePlugin` 分流 `'timeout'`（warn + expired 通知 + UNLOADED）与 `false`（现状 UNLOADED）；`ActivatorOptions` 加 `activateTimeoutMs` |
 | `plugin-service/plugin-service.ts` | D3 | activator 装配点接线：`permissionTimeoutMs: readEnvTimeoutMs('XYZ_PLUGIN_PERMISSION_TIMEOUT_MS') ?? DEFAULT`（env 读取 + 非法 warn 回落，对齐 lifecycle-manager :68 形态）；`onPermissionRequestExpired` 广播回调注入 |
 | `plugin-service/api/commands-executor.ts` | D4 | 常量 10s → 复用 D1 默认常量；命令注册定义加可选 `timeoutMs`（取值链同 D1）；错误消息诚实化 |
@@ -434,7 +436,7 @@ ctx.tools.register({
 | 工具超时（默认或声明值到期） | isError 诚实消息（时长 / 声明or默认 / handler 仍在跑结果将丢弃） | 错误消息内嵌「registerTool 传 timeoutMs 调整」 |
 | 工具迟到回包 | PendingTracker miss → 丢弃，debug 日志一条 | —（pi agent 已拿到 isError 并决策） |
 | UI 弹窗超时（语义到期，Worker 侧裁决） | 插件收 `UI_TIMEOUT` reject + cancel 通知 → queue 删项 / 撤窗广播 / 活跃请求放行下一个 | warn 日志「传 opts.timeout 延长（全程含排队）/ 用户在场则弹窗会一直等」 |
-| cancel 通知丢失 / Worker 死亡（queue 兜底到期） | 兜底 timer（effective+60s）清理：撤窗广播 + 放行 + warn（插件侧早已 reject，无幽灵 promise） | warn 日志标注兜底触发原因 |
+| cancel 通知丢失 / Worker 死亡（queue 兜底到期） | 兜底 timer（min(effective+60s, MAX_TIMER_DELAY_MS)，防超域塌缩）清理：撤窗广播 + 放行 + warn（插件侧早已 reject，无幽灵 promise）；effective 达上界时与语义同刻、两路径幂等收尾 | warn 日志标注兜底触发原因 |
 | 审批超时 | resolve `'timeout'` → 取消激活 + expired 广播撤窗 | warn 日志「重触发激活事件 / env 调整」 |
 | activate 超时 | 现状 UNLOADED 保持 + 消息提示 activateTimeoutMs | 错误消息内嵌 |
 | Worker load 超时 | terminate + rebuild 链 + warn | 日志「loadTimeoutMs 可覆盖 / rebuild 已排期」 |
@@ -463,7 +465,7 @@ ctx.tools.register({
 
 ## 9. 验收（真实场景，非单测非 mock）
 
-**本章结论**：改动规模=大（行为变更 + API 扩展，6 个决策），用 6 个真实场景验证，覆盖全部正向目标 + 2 个负面行为。
+**本章结论**：改动规模=大（行为变更 + API 扩展，6 个决策），用 7 个真实场景验证，覆盖全部正向目标 + 3 个负面行为。
 
 ### 9.1 改动规模
 
@@ -477,7 +479,7 @@ ctx.tools.register({
 | V2 声明通道生效 + 挂死兜底 | 目标 4/5；§5.2 场景 1 | 同环境两个工具：`a`（声明 `timeoutMs: 10_000`，handler 睡 60s）、`b`（声明 `timeoutMs: 0` 不限时，handler 睡 45s） | `a` 在 10s 收到 isError 且错误消息含「timed out after 10s (declared)」与调整指引；`b` 在 45s 正常返回（opt-out 尊重）；pi agent 对 `a` 的 isError 可继续对话 |
 | V3 弹窗离席不替答 | 目标 2；§5.1 场景 2 | xyz-agent dev 环境装测试插件，触发 `ctx.ui.confirm`；人离开 5min（屏幕勿扰/切窗），回来点「确定」 | 插件收到 `true`；全程无 RPC_TIMEOUT / 无替答日志；串行队列无幽灵放行 |
 | V4 弹窗超时取消语义（负面验证） | 目标 3；§5.2 场景 2 | 测试插件 `confirm(title, msg, { timeout: 60_000 })` 显式传 60s；不点击等待到期 | 60s 时插件 catch 到 `UI_TIMEOUT`（**不是** resolve false）；前端弹窗撤回（expired 广播消费）；runtime warn 含等待时长与恢复指引；队列中排队的下一个弹窗正常弹出（防死锁保留） |
-| V4b 弹窗排队全程语义（负面验证，v2 新增） | 目标 3；§6.2 反例重演 | 两个弹窗：A 不传 timeout（默认全时长）、B 传 `{ timeout: 60_000 }` 在 A 发起后立刻发起（B 排队）；均不点击 | B 在发起后 ~60s（仍在排队、从未展示）即收 `UI_TIMEOUT` reject，且**无任何 RPC_TIMEOUT 先于语义到期**（v1 固定余量方案的击穿反例不复发）；A 不受 B 影响继续等待至自身到期；全程无幽灵替答 |
+| V4b 弹窗排队全程语义（负面验证，v2 新增） | 目标 3；§6.2 反例重演 | 两个弹窗：A 不传 timeout（默认全时长）、B 传 `{ timeout: 60_000 }` 在 A 发起后立刻发起（B 排队）；均不点击 | B 在发起后 ~60s（仍在排队、从未展示）即收 `UI_TIMEOUT` reject，且**无任何 RPC_TIMEOUT 先于语义到期**（v1 固定余量方案的击穿反例不复发）；A 不受 B 影响继续等待至自身到期；全程无幽灵替答；B 的 expired 广播照发但前端无 B 弹窗可撤（miss noop 幂等，无异常） |
 | V5 慢审批不 UNLOADED + 批准不被吞 | 目标 2/3；§5.1 场景 3 | dev 环境：带权限插件首次激活触发审批弹窗，等待 10min 后点「批准」 | 插件 ACTIVE；无 UNLOADED；权限存储记录批准；若等 30min+（可临时 env 调小加速验证）→ 插件 UNLOADED + 前端弹窗撤回 + warn，重触发 slash command 后重新弹审批且本次批准生效 |
 | V6 Worker 回收 + 命令不误杀 | 目标 4/5；附赠#5；§5.2 场景 4 | ①死循环模块插件（顶层 `while(true)`）load 超时 → 观察 Worker 线程数/loadedModules 回收 + rebuild 日志；②同宿主正常插件 rebuild 后工具可用；③测试命令 handler 睡 45s（旧 10s 必杀），前端按钮触发 | ①10s 后线程被 terminate（`process` 观察 Worker 数回落）、warn 含 rebuild 排期；②正常插件冷却后恢复；③命令 45s 返回真实结果非 `-32000` |
 
@@ -491,7 +493,7 @@ ctx.tools.register({
 |---|---|---|---|
 | U1 | 工具执行根修：bridge-interop.ts 常量 + resolveToolTimeoutMs + 错误消息诚实化 | P0 最高优先；纯 runtime 内改动零跨层；独立于其余单元 | V1/V2 |
 | U2 | 声明通道：plugin-types.ts 字段 + tool-api.ts 校验 | 与 U1 是同决策的 API 面，但类型+校验可独立回归；U1 无 U2 也可跑（字段缺省回落默认） | V2 |
-| U3 | UI 弹窗超时权威源重构：ui-api.ts（`opts.timeout` + requestId 生成 + effective 直传 + `UI_TIMEOUT` 转译 + cancel notify）+ ui-request-queue.ts（删语义 timer / 替答 → 防泄漏兜底 timer + `cancelRequest` + notification handler）+ shared ServerMessageMap `plugin:uiRequestExpired` 类型 | D2 v2 的单一计时权威横跨 Worker（ui-api）与 host（queue）两侧，**必须单 commit 同改**——拆开交付会产生「queue 已无语义 timer 但 ui-api 未接取消通知」的中间破碎态（比失败模式 B 更糟）；广播类型同 commit 落地防 `as ServerMessage` 断言漂移 | V3/V4/V4b |
+| U3 | UI 弹窗超时权威源重构：ui-api.ts（dialog 三方法 `opts.timeout` + requestId 生成 + effective 直传 + `UI_TIMEOUT` 转译 + cancel notify）+ ui-request-queue.ts（删语义 timer / 替答 → 防泄漏兜底 timer + `cancelRequest` + notification handler）+ shared ServerMessageMap `plugin:uiRequestExpired` 类型 | D2 v2 的单一计时权威横跨 Worker（ui-api）与 host（queue）两侧，**必须单 commit 同改**——拆开交付会产生「queue 已无语义 timer 但 ui-api 未接取消通知」的中间破碎态（比失败模式 B 更糟）；广播类型同 commit 落地防 `as ServerMessage` 断言漂移 | V3/V4/V4b |
 | U5 | 权限审批：plugin-activator.ts 30min + timeout 结局 + plugin-service.ts 接线 env + shared ServerMessageMap `plugin:permissionRequestExpired` 类型 | D3 完整闭环（值+通道+语义）一个单元，避免半成品（值改了语义没改）；类型同 commit 防漂移 | V5 |
 | U6 | 控制面裁定：activateTimeoutMs 参数 + commands-executor 30min + 命令声明 | D4 两文件小改合并单元；依赖 U1 的默认常量与取值函数 | V6③ |
 | U7 | Worker 回收对称化：plugin-host.ts crash 链接入 + loadTimeoutMs + hot-reload timer 修 | D5 与超时值无关的行为修复，独立可测（P-10） | V6①② |
@@ -504,18 +506,19 @@ ctx.tools.register({
 - ⛔ P-8：30min 默认下 pi bridge 首调的 `bridge:sync` 轮询间隔是否影响首工具可用性（轮询周期内工具清单未同步 → tool not found 假象）——实施时实测首次调用时延。
 - ⛔ P-10：`handleWorkerCrash` 幂等守卫对 load 超时入口的 status 前置条件（load 期间 handle.status 值待实测——若非预期状态需走直接 terminate 兜底）。
 - ✅已核实 → 登记推进：pi 侧 `_signal`（abort）不传播至 bridge 调用（bridge/index.ts:31-34 不传 opts；rpc-mode.js:47-77 opt-in 支持、:177 bridge 路径未用）——**30min 工具等待窗内无任何层可中断是既成事实**（非待验证）。本设计 out-of-scope 维持：缓解 = 插件作者声明 timeoutMs（U8 契约文档显式标注该已知限制）；根治 = signal/timeout 传播缺口独立登记推进（bridge extension 改动）。
-- ⛔ D2 cancel 通知的幂等与竞态窗：`cancelRequest` 对已 settle 请求须 miss-safe（Map.delete miss → return，实现约束）；cancel notify 与 queue 兜底到期理论上可能接近同刻（clamp 上限边界），两路径清理须幂等可重入——实施时以单测覆盖。
+- ⛔ D2 cancel 通知的幂等与竞态窗（v2.1 扩充）：`cancelRequest` 对已 settle 请求须 miss-safe（Map.delete miss → return，实现约束）；兜底 timer 经 `min(effective+60s, MAX_TIMER_DELAY_MS)` 保证不超 Node timer 域（防塌缩提前触发），effective 恰达上界时兜底与语义 timer **同刻**到期——cancel、兜底、语义三路径的清理均须幂等可重入（前端撤窗 miss 亦 noop）——实施时以单测覆盖（含 effective=MAX 边界用例）。
 - `XYZ_PLUGIN_PERMISSION_TIMEOUT_MS` env 是否需要进 `ENV_WHITELIST_PREFIXES`（runtime 进程自读 env 不涉入站白名单，预期不需要——实施时按 C-proc-09 出站契约核对）。
 
 ---
 
 ## 附录：变更历史
 
-- v1.1（2026-09-04）：第一轮对抗式审查修复（2 MF/2 SG/2 INFO，审查人=主 agent 代行，报告见 .review.md）：
-  - MF1（requestId 碰撞面）→ D2 第 2 条补全局唯一规则（workerId 前缀/UUID + queue 重复 id 防御）；U4 验收落地时加双插件并发断言。
+- v1（2026-09-04）：初稿。依据 timeout-audit-2026-09.md Doc 3 范围（P0-3 + P1 全部 + 附赠#5）与 rt-svc-plugin 模块普查报告撰写；全部 file:line 经代码实读核实（普查报告行号漂移已修正：ui-request-queue confirm 默认值 :96→:97、processNext :63→:118）；设计期新发现报告未覆盖的隐藏层——UI 链路 client 30s 与 queue 60s 双层竞速（§4.2 / P-1）。
+- v2（2026-09-04）：**第 1 轮对抗式审查修复**（审查人 = tech-design-review subagent 独立审查，2 MF / 5 SG 全修，原报告已被第 2 轮报告覆盖）。**MF#1**：D2 v1「queue 唯一裁决 + client 固定 60s 余量」被串行排队反例击穿（client timer 发起即挂含排队、queue timer dispatch 才挂不含——前置 30min 弹窗时传输层 ~30min+60s 先炸），重设计为「Worker 侧单一计时权威（传输计时即语义计时）+ cancel notification（复用既有无 id dispatch 通路）+ queue 防泄漏兜底（effective+60s，仅异常收尾）」，v1 方案连同击穿反例记入 D2 被否谱系；联动 §4.2 论断 / §4.4 总表 / §7 文件地图与错误规格表 / §9 新增 V4b 排队变体 / §10 U3+U4 合并。**MF#2**：D1 风险论证「pi agent 层仍可 abort turn」与实装不符（abort/timeout 是 opt-in，bridge 调用不传 opts）改写为正面承认 30min 不可中断 + 可接受性四点论证，§11 对应条目从「待验证」升级为「已核实事实 + 登记推进」。**SG**：bridge 代码片段按实装原文修正（含 Ready 守卫）；P-2 表述修正（opt-in 机制）；D3 补 30min ACTIVATING 窗口调度论证（并行激活 + 审批不占 Worker 槽）、重触发精确语义、dismiss 路径不存在（hide-close）与多插件并发审批单例覆盖限制登记；U3/U8 类型定义顺序矛盾消除（类型随 U3/U5 落地）；D1 传播措辞收紧（getSyncPayload 只塑形三字段，timeoutMs 不进 bridge:sync 负载）。新增 P-13 设计期探针（notification 通路既有）与 §11 cancel 幂等检查点。
+- v1.1（2026-09-04）：**第 2 轮对抗式审查修复**（基于 v2 状态的文档复审；审查人 = 主 agent 代行——原定审查 subagent 两轮均被环境杀死，写作/审查分离临时让渡；报告见 .review.md，2 MF/2 SG/2 INFO）：
+  - MF1（requestId 碰撞面）→ D2 第 2 条补全局唯一规则（workerId 前缀/UUID + queue 重复 id 防御）；U3（v2 合并后的 UI 单元）验收落地时加双插件并发断言。
   - MF2（验收环境可行性）→ V1/P-8/说明注三处环境勘误：bridge 是 runtime WS 子系统（bridge-handler.ts），纯 pi CLI 无被调方，改 dev app 全链或 standalone runtime + relay env pi CLI；AGENTS.md pi CLI 纪律适用性澄清。
   - S1（command 重复触发 UX）→ 错误规格表补 busy 行 + renderer 联动排期登记；S2（命名对齐）→ D2 补两通路命名规则。
   - INFO×2：D1 传播链攻击未击穿（syncFrom 存完整 entry，:71-75）记录在案；证据句直白化建议采纳为可选。
-  - 联动同步：§6.2/§7 错误规格表/§8 P-8/§9 V1+说明/变更历史；变更历史本条。
-- v1（2026-09-04）：初稿。依据 timeout-audit-2026-09.md Doc 3 范围（P0-3 + P1 全部 + 附赠#5）与 rt-svc-plugin 模块普查报告撰写；全部 file:line 经代码实读核实（普查报告行号漂移已修正：ui-request-queue confirm 默认值 :96→:97、processNext :63→:118）；设计期新发现报告未覆盖的隐藏层——UI 链路 client 30s 与 queue 60s 双层竞速（§4.2 / P-1）。
-- v2（2026-09-04）：对抗式审查第 1 轮修复（2 MF / 5 SG 全修）。**MF#1**：D2 v1「queue 唯一裁决 + client 固定 60s 余量」被串行排队反例击穿（client timer 发起即挂含排队、queue timer dispatch 才挂不含——前置 30min 弹窗时传输层 ~30min+60s 先炸），重设计为「Worker 侧单一计时权威（传输计时即语义计时）+ cancel notification（复用既有无 id dispatch 通路）+ queue 防泄漏兜底（effective+60s，仅异常收尾）」，v1 方案连同击穿反例记入 D2 被否谱系；联动 §4.2 论断 / §4.4 总表 / §7 文件地图与错误规格表 / §9 新增 V4b 排队变体 / §10 U3+U4 合并。**MF#2**：D1 风险论证「pi agent 层仍可 abort turn」与实装不符（abort/timeout 是 opt-in，bridge 调用不传 opts）改写为正面承认 30min 不可中断 + 可接受性四点论证，§11 对应条目从「待验证」升级为「已核实事实 + 登记推进」。**SG**：bridge 代码片段按实装原文修正（含 Ready 守卫）；P-2 表述修正（opt-in 机制）；D3 补 30min ACTIVATING 窗口调度论证（并行激活 + 审批不占 Worker 槽）、重触发精确语义、dismiss 路径不存在（hide-close）与多插件并发审批单例覆盖限制登记；U3/U8 类型定义顺序矛盾消除（类型随 U3/U5 落地）；D1 传播措辞收紧（getSyncPayload 只塑形三字段，timeoutMs 不进 bridge:sync 负载）。新增 P-13 设计期探针（notification 通路既有）与 §11 cancel 幂等检查点。
+  - 与 v2 的关系：两轮审查互补无冲突——v2 重构 D2 权威源，v1.1 攻击 v2 新引入的 requestId 机制并修正验收环境；v1.1 条目中「U4」引用已按 v2 拆分（U3/U4 合并）校正。合并收口（本条目时间线重排 + 结构修复）由 v2 修复会话执行。
+- v2.1（2026-09-04）：**第 3 轮聚焦复审修复**（审查人 = tech-design-review subagent，conversation 模式复派；1 MF / 2 SG 全修，报告见 .review.md）。**MF（P0-12）**：D2 第 4 条兜底 timer `effective + 60s` 在 clamp 上界塌缩——effective 被 clamp 到 `MAX_TIMER_DELAY_MS`（2^31-1）时 `+60s` 超 Node setTimeout 域、塌缩 1ms 立即触发，兜底反客为主提前裁决语义；修复为 `min(effective + 60_000, MAX_TIMER_DELAY_MS)`（不改语义 clamp 上界，避免与 D1 clamp 口径分叉；上界边界与语义同刻由 §11 幂等约束闭环），联动 §4.4 总表 / §7 文件地图与错误规格表 / §11。**SG①**：requestId 唯一性规则删 workerId 前缀选项（createUiApi 签名无 workerId，ui-api.ts:160-162 已核实），收敛为「UUID 或现状 pluginId 前缀格式」单一口径。**SG②**：cancelRequest 广播无条件发出与「B 从未展示」的表述缝补齐——前端对未展示/已关闭弹窗的撤窗 miss noop 幂等（§6.2 第 3 条 + V4b 通过标准）。攻击④（D1 风险 vs §5.2 错误消息）、⑤（V1 环境勘误 vs pi CLI 纪律）均通过；交叉引用终检通过。收敛轨迹：2 MF/5 SG（第 1 轮）→ 2 MF/2 SG/2 INFO（第 2 轮代行）→ 1 MF/2 SG（第 3 轮）→ **0 MF/0 SG（第 4 轮，收敛）**。第 4 轮 2 INFO 已落地：§7 uuid 措辞与 §6.2 双选项口径对齐；`opts.timeout` 限定 dialog 类三方法（notify/updateStatusBarItem 纯展示类不设等待超时语义，维持 client 默认 30s），§7/§10 同步。
