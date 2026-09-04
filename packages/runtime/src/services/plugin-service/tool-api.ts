@@ -14,6 +14,7 @@ import type { PluginRpcClient } from './plugin-rpc-client.js'
 import type { ToolRegistration, ToolEntry } from './plugin-types.js'
 import { PluginRpcErrorCodes } from './plugin-types.js'
 import { asOptionalString, asRecord, asSafeKey, asString } from './validation.js'
+import { errorWithCode } from '../../utils/errors.js'
 /** Tool 注册服务依赖（主线程侧） */
 export interface ToolService {
   /** 工具注册表，key 为 toolKey */
@@ -44,6 +45,19 @@ export function registerToolRpcHandlers(
       ? {}
       : asRecord(params.parameters, 'parameters')
 
+    // D1 声明通道窄校验（对齐 ui-api INVALID_* 风格）：timeoutMs 可选，present 即必须
+    // 是 number 且非 NaN——脏值 fail-fast 拒注册（INVALID_TIMEOUT_MS）；0 / 负数 /
+    // Infinity 是合法声明（显式 opt-out，运行时语义归 bridge-interop resolveToolTimeoutMs），
+    // 原样透传存储。
+    const timeoutMs = params.timeoutMs
+    if (timeoutMs !== undefined && (typeof timeoutMs !== 'number' || Number.isNaN(timeoutMs))) {
+      throw errorWithCode(
+        `Invalid timeoutMs: expected a number (milliseconds; <=0 or Infinity = no limit) ` +
+          `but received ${typeof timeoutMs === 'number' ? 'NaN' : typeof timeoutMs}.`,
+        'INVALID_TIMEOUT_MS',
+      )
+    }
+
     const toolKey = `${pluginId}:${name}`
 
     // 验证 name 不重复
@@ -54,11 +68,16 @@ export function registerToolRpcHandlers(
       )
     }
 
-    // 存储到注册表
+    // 存储到注册表（timeoutMs 缺省不落键——合法值含 0/负数/Infinity 均透传）
     service.toolRegistry.set(toolKey, {
       pluginId,
       handlerId: toolKey,
-      schema: { name, description, parameters },
+      schema: {
+        name,
+        description,
+        parameters,
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      },
     })
 
     // 同步到 bridge
@@ -109,6 +128,8 @@ export function createToolApi(
         name: registration.name,
         description: registration.description,
         parameters: registration.parameters,
+        // D1 声明通道：timeoutMs 随载荷透传主线程（缺省不发键）
+        ...(registration.timeoutMs !== undefined ? { timeoutMs: registration.timeoutMs } : {}),
       }) as string
       // RPC 成功后才存本地 handler，避免 RPC 失败时 handler 残留
       if (registration.execute) {

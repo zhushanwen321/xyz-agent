@@ -6,6 +6,11 @@ import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { PluginRegistry } from '../src/services/plugin-service/plugin-registry.js'
+import { PluginRpcServer } from '../src/services/plugin-service/plugin-rpc-server.js'
+import type { WorkerPort } from '../src/services/plugin-service/plugin-rpc-server.js'
+import { registerToolRpcHandlers, createToolApi } from '../src/services/plugin-service/tool-api.js'
+import { PluginRpcClient } from '../src/services/plugin-service/plugin-rpc-client.js'
+import type { ToolEntry, RpcResponse } from '../src/services/plugin-service/plugin-types.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const FIXTURES_DIR = resolve(__dirname, 'fixtures/plugins')
@@ -292,5 +297,148 @@ describe('PluginRegistry', () => {
 
     expect(descriptors.find(d => d.pluginId === 'local-builtin')).toBeTruthy()
     expect(descriptors.find(d => d.pluginId === 'up-level-builtin')).toBe(undefined)
+  })
+})
+
+// ── U2（timeout-plugin-service-granularity）：ToolRegistration.timeoutMs 声明通道 ──
+//
+// 覆盖 tool-api.ts 注册入口的窄校验与透传（设计 §6.1 D1 / §7 文件地图 / 错误规格表
+// 「声明值非法」行）：
+// - 合法正数 → 透传存储（运行时语义归 bridge-interop resolveToolTimeoutMs，U1 领地）
+// - 非 number / NaN → 注册入口 fail-fast（INVALID_TIMEOUT_MS，对齐 ui-api INVALID_* 风格）
+// - 0 / 负数 / Infinity → 合法声明（显式 opt-out），不抛、透传
+// - 缺省 → 不落键，现状注册行为不变（兼容用例）
+describe('ToolRegistration.timeoutMs — register 入口校验与透传 (U2)', () => {
+  interface MockPort extends WorkerPort { messages: unknown[] }
+
+  function createMockPort(): MockPort {
+    const messages: unknown[] = []
+    return { messages, postMessage(msg: unknown) { messages.push(msg) } }
+  }
+
+  function extractLastResponse(port: MockPort): RpcResponse & { error?: { code: string | number; message: string } } {
+    const last = port.messages[port.messages.length - 1] as { response: RpcResponse }
+    return last.response as RpcResponse & { error?: { code: string | number; message: string } }
+  }
+
+  interface Harness {
+    rpc: PluginRpcServer
+    toolRegistry: Map<string, ToolEntry>
+    syncCalls: () => number
+    dispatchRegister: (params: Record<string, unknown>) => Promise<RpcResponse & { error?: { code: string | number; message: string } }>
+  }
+
+  /** 搭一个带 registerToolRpcHandlers 的最小 RPC 环境，dispatch 后返回最后一个响应 */
+  function setup(): Harness {
+    const rpc = new PluginRpcServer()
+    const toolRegistry = new Map<string, ToolEntry>()
+    let syncCount = 0
+    registerToolRpcHandlers(rpc, {
+      toolRegistry,
+      syncToolsToBridge: async () => { syncCount++ },
+    })
+    const port = createMockPort()
+    rpc.registerWorker('w1', port)
+    let nextId = 1
+    return {
+      rpc,
+      toolRegistry,
+      syncCalls: () => syncCount,
+      dispatchRegister: async (params) => {
+        const id = nextId++
+        await rpc.dispatch('w1', { jsonrpc: '2.0', id, method: 'plugin.tools.register', params })
+        const resp = extractLastResponse(port)
+        expect(resp.id).toBe(id)
+        return resp
+      },
+    }
+  }
+
+  const baseParams = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    pluginId: 'my-plugin',
+    name: 'my-tool',
+    description: 'A test tool',
+    parameters: {},
+    ...extra,
+  })
+
+  it('合法正数 timeoutMs → 注册成功且透传到 registry schema', async () => {
+    const h = setup()
+    const resp = await h.dispatchRegister(baseParams({ timeoutMs: 600_000 }))
+
+    expect('result' in resp).toBeTruthy()
+    expect(h.toolRegistry.get('my-plugin:my-tool')!.schema.timeoutMs).toBe(600_000)
+    expect(h.syncCalls()).toBe(1)
+  })
+
+  it('timeoutMs 为字符串 → 抛 INVALID_TIMEOUT_MS，不落 registry、不 sync', async () => {
+    const h = setup()
+    const resp = await h.dispatchRegister(baseParams({ timeoutMs: '600000' }))
+
+    expect('error' in resp).toBeTruthy()
+    expect(String(resp.error!.code)).toBe('INVALID_TIMEOUT_MS')
+    expect(resp.error!.message.includes('timeoutMs')).toBeTruthy()
+    expect(h.toolRegistry.size).toBe(0)
+    expect(h.syncCalls()).toBe(0)
+  })
+
+  it('timeoutMs 为 NaN → 抛 INVALID_TIMEOUT_MS，不落 registry、不 sync', async () => {
+    const h = setup()
+    const resp = await h.dispatchRegister(baseParams({ timeoutMs: Number.NaN }))
+
+    expect('error' in resp).toBeTruthy()
+    expect(String(resp.error!.code)).toBe('INVALID_TIMEOUT_MS')
+    expect(h.toolRegistry.size).toBe(0)
+    expect(h.syncCalls()).toBe(0)
+  })
+
+  it('不传 timeoutMs → 注册成功且 schema 不落键（现状兼容，缺省回落语义归 U1）', async () => {
+    const h = setup()
+    const resp = await h.dispatchRegister(baseParams())
+
+    expect('result' in resp).toBeTruthy()
+    const schema = h.toolRegistry.get('my-plugin:my-tool')!.schema
+    expect('timeoutMs' in schema).toBe(false)
+    expect(schema.timeoutMs).toBe(undefined)
+  })
+
+  it.each([0, -1, Number.POSITIVE_INFINITY] as const)('timeoutMs = %p（显式 opt-out）→ 注册成功且透传', async (declared) => {
+    const h = setup()
+    const resp = await h.dispatchRegister(baseParams({ timeoutMs: declared }))
+
+    expect('result' in resp).toBeTruthy()
+    expect(h.toolRegistry.get('my-plugin:my-tool')!.schema.timeoutMs).toBe(declared)
+  })
+
+  it('Worker 侧 createToolApi → timeoutMs 随 RPC 载荷透传主线程', async () => {
+    const client = new PluginRpcClient()
+    const port = createMockPort()
+    client.attach(port)
+
+    const api = createToolApi(client, 'my-plugin')
+    const pending = api.register({ name: 'my-tool', description: '', parameters: {}, timeoutMs: 600_000 })
+
+    // 取 Worker 发出的 register 请求，回放成功响应完成往返
+    const last = port.messages[port.messages.length - 1] as { id: number; params: Record<string, unknown> }
+    expect(last.params.timeoutMs).toBe(600_000)
+    client.handleResponse({ jsonrpc: '2.0', id: last.id, result: 'my-plugin:my-tool' })
+
+    const toolKey = await pending
+    expect(toolKey).toBe('my-plugin:my-tool')
+  })
+
+  it('Worker 侧 createToolApi → 缺省 timeoutMs 不发键（现状兼容）', async () => {
+    const client = new PluginRpcClient()
+    const port = createMockPort()
+    client.attach(port)
+
+    const api = createToolApi(client, 'my-plugin')
+    const pending = api.register({ name: 'my-tool', description: '', parameters: {} })
+
+    const last = port.messages[port.messages.length - 1] as { id: number; params: Record<string, unknown> }
+    expect('timeoutMs' in last.params).toBe(false)
+    client.handleResponse({ jsonrpc: '2.0', id: last.id, result: 'my-plugin:my-tool' })
+
+    await pending
   })
 })
