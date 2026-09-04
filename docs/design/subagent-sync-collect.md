@@ -220,7 +220,7 @@ session_read {"action":"result","session":"bg-aaa,bgc,ccc"}    // 批量（≤10
 
 | # | 场景 | 行为 | 恢复指引 |
 |---|------|------|---------|
-| E1 | 批等待中主进程崩溃，重启 | session_start 恢复钩子扫描**主 session 文件「每 id 末条 subagent-record entry」**（collectLastRecordEntries 同构 + 投影扩展含 collectMode/batchFinalized **及终态五字段**（补发判定与内容依赖）；不走 collectRecords light 路径——它只读子文件 identity 头，主 session 落标 entry 不可见）：只收 collectMode=sync 且无 batchFinalized 标记的成员（排除已通过批 flush 或 E9 转换离场的成员）重建缓冲与 running 集；若全员终态且账本中无该批 notifyId 的已送达记录 → 立即 notifyBatch 补发（内容 = 末条 entry 终态快照）；仍有 running → 等其自然终态走正常流；补发尝试后统一补 batchFinalized 标记（补标崩溃重入幂等收敛） | 无需人工干预；账本幂等键防重发；E9 跨键残余重复窗见 §3.1.3（PS-17 同族）；〔注 2026-09-05 探针裁决〕CLI kill -9 形态实证不可构造（worker 共亡，同 §4 A6 注），本行经 §3.3 D5 备选门满足（U5 集成测试；探针留痕 `scripts/probes/subagent-sync-collect/RESULTS.md`） |
+| E1 | 批等待中主进程崩溃，重启 | session_start 恢复钩子扫描**主 session 文件「每 id 末条 subagent-record entry」**（collectLastRecordEntries 同构 + 投影扩展含 collectMode/batchFinalized **及终态五字段**（补发判定与内容依赖）；不走 collectRecords light 路径——它只读子文件 identity 头，主 session 落标 entry 不可见）：只收 collectMode=sync 且无 batchFinalized 标记的成员（排除已通过批 flush 或 E9 转换离场的成员）重建缓冲与 running 集；若全员终态且账本中无该批 notifyId 的已送达记录 → 立即 notifyBatch 补发（内容 = 末条 entry 终态快照）；仍有 running → 等其自然终态走正常流；补发尝试后统一补 batchFinalized 标记（补标崩溃重入幂等收敛） | 无需人工干预；账本幂等键防重发；E9 跨键残余重复窗见 §3.1.3（PS-17 同族）；〔注 2026-09-05 探针裁决〕kill 形态可构造，补发不可达：worker 与宿主 SIGKILL 共亡（产线前提缺口而非探针缺陷；同 §4 A6 注），真实 kill -9 后通知可达性依赖未证实的 orphan 兜底——本行经 §3.3 D5 备选门满足（U5 集成测试；探针留痕 `scripts/probes/subagent-sync-collect/RESULTS.md`） |
 | E2 | 批已投递后崩溃重启 | 账本 recoverFromSession 现有语义：已销账条目零重发 | — |
 | E3 | sync 成员进程异常（orphan 判定） | 现有 orphan 判定（record-store.ts orphanJudged）转终态 → 计入批 → 批闭合 | 结果以 failed/crashed 条目出现在批内 |
 | E4 | `conversation:true` + `collect:"sync"` | start 立即校验错（immediate throw，不产生半启动 record——与 skillPath 路径守卫同风格） | 错误文案指引：sync 仅支持 one-shot，去掉 conversation 或 collect |
@@ -291,7 +291,7 @@ session_read {"action":"result","session":"bg-aaa,bgc,ccc"}    // 批量（≤10
 | A3 | 成员失败入批 | 3 个 sync，其一 task 为"直接 throw/失败" | 仍单条通知，批头 `2 finished, 1 failed`，失败条目含 error 全文（与异步单条通知同构，无首行截取） | G1 |
 | A4 | 超预算截断 + 取回 | ① 1 个 sync，task 要求输出 >10K 字符结构化报告；② 7 个 sync 各输出 ~6K 字符（触发总量超限） | ① 该条目截断至 perItemChars 且尾行含 `session_read {"action":"result",...}` 指引；② 各条目截至 `effectivePerItem = floor(24000/7) = 3428`、总量回预算内且仍单条通知；随后真实调 `session_read action:result` 取回内容与 record.result 逐字节一致 | G2 |
 | A5 | 异步零回归 | 不传 collect 跑既有单 subagent 流程 | 单条通知文案与改动前 golden 逐字节一致（旧 golden 测试全绿）；`list`/`cancel`/`message` 不变 | G3 |
-| A6 | 崩溃恢复不丢不重 | ① 2 个 sync（sleep 60s）派发后 kill -9 主 pi；重启同 session；② 正常 `/exit` 于批未闭合时（2 已终态 + 1 在跑）再 resume | ① 恢复后补发单条批通知（若已全终态）、二次重启零重发（账本幂等键生效）——〔注 2026-09-05 探针裁决〕CLI kill -9 形态实证不可构造（worker 子进程与宿主 SIGKILL 共亡，探针留痕 `scripts/probes/subagent-sync-collect/RESULTS.md` + `diag-survive.mjs`），本条经 §3.3 D5 备选门满足（U5 集成测试）；② resume 后 E9 转换的两条经 async 重放送达、**零重发**，恢复补发只含在跑成员（batchFinalized 排除生效） | G4 |
+| A6 | 崩溃恢复不丢不重 | ① 2 个 sync（sleep 60s）派发后 kill -9 主 pi；重启同 session；② 正常 `/exit` 于批未闭合时（2 已终态 + 1 在跑）再 resume | ① 恢复后补发单条批通知（若已全终态）、二次重启零重发（账本幂等键生效）——〔注 2026-09-05 探针裁决〕kill 形态可构造，补发不可达：worker 与宿主 SIGKILL 共亡（产线前提缺口而非探针缺陷，探针留痕 `scripts/probes/subagent-sync-collect/RESULTS.md` + `diag-survive.mjs`）；真实 kill -9 后通知可达性依赖未证实的 orphan 兜底——本条经 §3.3 D5 备选门满足（U5 集成测试）；② resume 后 E9 转换的两条经 async 重放送达、**零重发**，恢复补发只含在跑成员（batchFinalized 排除生效） | G4 |
 | A7 | zcode 一致性 | 配置 engine 路由到 zcode，重复 A1 | 行为与 pi 引擎一致（单条批通知） | G5 |
 | A8 | 混派正交性 | 同轮 2 sync + 1 async | sync 对合并为 1 条批通知；async 各自单独通知（或与批在 settled 边沿自然合并——允许 2~3 条，但 sync 部分恒 1 条） | G1/G3 |
 

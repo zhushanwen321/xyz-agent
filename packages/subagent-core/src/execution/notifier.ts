@@ -10,6 +10,7 @@
 //     notify-ledger.ts）；未装配时退回投递内核路径（createDelivery 经通知域窄端口
 //     NotifyDomainPorts 注入——core 依赖闭包不含 session-delivery，见 core/notify-ports.ts；
 //     合并窗口 / 去重 / 退避 / flush 委托内核，旧装配 / 无 ledger 测试兼容）
+//   - notifyBatch / buildBatchLlmContent / computeBatchBudget：sync 批通知三件套（U3/U4）
 //
 // 投递通道（D5 单通道化）：ledger 路径经 courier 在 settled 边沿直达
 // pi.sendMessage({triggerTurn:true})；内核路径的 port.send 同样只传

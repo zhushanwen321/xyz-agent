@@ -210,10 +210,72 @@
 - **已修（文档侧 9 条）**：F-a-1 / F-a-2 / F-a-3 / F-b-2 / F-b-3 / F-b-4 / F-c-1 / F-c-2 / F-c-3。
   - 设计文档（subagent-sync-collect.md）3 项 7 处：F-a-1 error 全文口径（§3.1.2 + §4 A3）；F-a-2 批 details 顶层 notifyId 键（§3.1.3 notifyId 段 + §3.1.4 数据流图 + §5 拆分清单 U3 联动）；F-a-3 list 逃生口措辞按裁决改写（§3.1.2 + D2 + D6 联动）。
   - impl-plan（subagent-sync-collect.impl-plan.md）7 项 18 处：F-b-2 偏差 #5 闭合回写（偏差表理由列 + §7 残留风险句移除 + 变更历史补行）；F-b-3 日期 9 处按 git 真实提交日（2026-09-04/05）逐条修正；F-c-1 偏差 #7 行按 2099e2b69 原文恢复（置于 #6/#8 之间）；F-c-2 U1 证据指针回填 faab2a3cc；F-c-3 基线改锚现行 HEAD 3b4be4561 + 92b977b68 悬空说明入变更历史；F-b-4 ⛔1 闭合结论补记；偏差 #12 裁决回写（F-a-3 涟漪）。
-- **已闭环（2026-09-05 探针收尾回写）**：F-b-1——三探针全绿（A1 12/12 / A4 23/23 / A8 13/13，探针实跑 e8619bae9，记录 `scripts/probes/subagent-sync-collect/RESULTS.md`）；A6 裁决——CLI kill -9 形态实证不可构造（worker 与宿主 SIGKILL 共亡，`diag-survive.mjs` 实测留痕 RESULTS.md），按设计 §3.3 D5 预声明备选门由 U5 的 E1/E9 集成测试满足（subagent-core 3104 passed 内）；指针缺口（批通知指针行 sa- id 不可自举解析——manifest 惰性/不落盘，临时绕过 = session_read 绝对路径形态）登记 impl-plan §7 残留风险（v2 候选修复）；impl-plan §6 U8 证据指针 + §7 变更历史已同步回写。
+- **已闭环（2026-09-05 探针收尾回写）**：F-b-1——A1/A4/A8 探针实跑全绿（探针实跑 e8619bae9，记录 `scripts/probes/subagent-sync-collect/RESULTS.md`，场景记录含 start 计数检查；精确分数以运行时 stdout 为准，检查项在修复中途有增补）；A6 裁决——kill 形态可构造，补发不可达：worker 与宿主 SIGKILL 共亡（产线前提缺口而非探针缺陷，`diag-survive.mjs` 实测留痕 RESULTS.md），真实 kill -9 后通知可达性依赖未证实的 orphan 兜底；按设计 §3.3 D5 预声明备选门由 U5 的 E1/E9 集成测试满足（subagent-core 3104 passed 内）；指针缺口（批通知指针行 sa- id 不可自举解析——manifest 惰性/不落盘，临时绕过 = session_read 绝对路径形态）登记 impl-plan §7 残留风险（v2 候选修复）；impl-plan §6 U8 证据指针 + §7 变更历史已同步回写。
 - **移交代码侧（超出本轮领地「禁碰产线代码与测试」，均为 code-right 单点小改，移交主 agent 后续轮）**：F-a-4（subagent-tool.ts Actions 参数表 Optional 列表补 `collect`，顺带评估补 `engine`）；F-d-1（notifier.ts 头注释「sync 不用」术语消歧 + notifyBatch/buildBatchLlmContent/computeBatchBudget 入职责清单）；F-d-2（start-collect-guard.test.ts 头公式改现行无补偿口径）。
 - **五处联动自检**：正文（§3.1.2/§3.1.3/D2/D6）、数据流图（§3.1.4 details 形状）、错误规格表（§3.1.5 E1 依赖 notifyId 已在账语义与 details 顶层键一致，无需改）、拆分清单（U3 notifyId 括注）、验收场景（A3 措辞）——已逐一核对同步。
 
 ## 收束意见
 
 机制层（collect 参数 / config collectSync / 批缓冲与闭合 / notifyBatch + sync-batch hash / 两段式预算 / 截断指针 / session_read result / batchFinalized 两出口落标 / E1 恢复钩子 / E9 dispose 转换）实现完整且与设计条文逐项吻合，U8 拆批盲窗修复（setTimeout(0) 去抖 + 触发重验 + E9 cancel）质量高且注释自证——特性本体质量高。全部 5 条 must-fix 集中在**登记与验收纪律**：真实 CLI DoD（A1/A4/A6）未跑而宣称阶段完成（F-b-1）、两处 append-only 登记被误删/未清账（F-c-1+F-a-2 / F-b-2）、系统性日期错误（F-b-3）。均不要求改代码：补跑验收或诚实披露 + 恢复/回写登记 + 修日期即可闭环。
+
+## 聚焦复审（Step 4 · 对抗式 · 基线 HEAD 2b483bc39）
+
+- **复审范围**：仅两件事——① 13 条第 1 轮 finding 的修复成立性；② 修复改动面（61cecd9b8 / cc5ee6e3d / e8619bae9 / 2b483bc39）引入的新差距。第 1 轮已确认项（17 项机制清单、36 标识符、U2-U8 hash 真实性等）不重查。
+- **方法**：四个修复 commit 全 diff 精读 → 修复后文本与实装/ git 事实逐字比对（notifier.ts notifyBatch details 形状、notify-ledger.ts collectDeliveredNotifyIds、subagent-tool-schema.ts 参数全集、739718be4^ 考古原文、逐 commit 日期）→ 探针在盘证据（RESULTS.md + 脚本 check 静态计数 + common.mjs finish() 行为）交叉。
+- **总判定**：13/13 全部 fixed（其中 F-d-1 为「核心 gap 消除 + 残留整理项」，见 N-3）；0 not-fixed；0 regressed。新差距 4 条（2 suggestion + 2 info），无 must-fix。
+
+### 逐条 verdict
+
+| id | verdict | evidence |
+|---|---|---|
+| F-a-1 | fixed | 设计 §3.1.2（L143）「failed: {error 全文}——与异步单条通知同构（复用 buildLlmContent，无首行截取）」+ §4 A3（L291）同口径；实装 notifier.ts:285-286 `Subagent "${agent}" (${id}) failed: ${record.error}` 全文无截取——文档新措辞与实装方向一致，未被同场景击穿 |
+| F-a-2 | fixed | 设计 §3.1.3 notifyId 段（L184）「批 details 形状 = `{batch:true, notifyId:"sync-batch:<hash>", items:[...]}`」+ §3.1.4 数据流图（L210）同形状；逐字比对 notifier.ts:522 `const details = { batch: true as const, notifyId: batchNotifyId, items: payloads };`——三键与顺序完全吻合；「collectDeliveredNotifyIds 按 details.notifyId / details.items[].notifyId 匹配」断言与 notify-ledger.ts:237-262 实装逐字一致（两处读取均在）；「顶层键对 extractBatch 透明」与 notifier.ts:520 注释同款；impl-plan U3 行括注联动落位 |
+| F-a-3 | fixed | 设计 §3.1.2（L144）/D2（L254）/D6（L267）三处统一为「list 可见在跑成员 + cancel 逼闭合；pendingSyncCount 仅在 start 响应；投影列 v2 候选」——与实装（list 不投影 collect，第 1 轮已确认）及偏差 #12 裁决回写三向一致 |
+| F-a-4 | fixed | subagent-tool.ts:164 Optional 列表 = agent, model, thinkingLevel, engine, collect, skillPath, appendSystemPrompt, schema, maxTurns, graceTurns, fork, worktree, cwd, conversation, idleTimeoutMs（15 项）；与 subagent-tool-schema.ts start 可选参数集（agent…collect，L47-122 共 15 个）集合完全一致；engine 一并补齐（fix-hint 顺带项）；description 词数实测 798 ≤ 800 |
+| F-b-1 | fixed（附裁决）| RESULTS.md 真实执行记录在盘：A1×2（notify entry 总数 1、时延 70.2s/68.3s ≥50s）、A4×4（含 19:53 一次「取回一致 no」失败留痕 + 20:08「yes（逐字节）」终绿）、A8×1（总数 2 = 1 批 + 1 单）、A6 FAIL×1（含 diag-survive 根因留痕）；impl-plan 状态表 U8 行补「探针实跑 e8619bae9」；A6 裁决落 D5 备选门——D5（设计 §3.3 L262-263）预声明括号例「子进程回收」正覆盖 worker 共亡根因，引用措辞成立；A6 注记与 E1 注记同源（E1 注记显式引「同 §4 A6 注」+ 同一 D5 指向），二探针新差距见 N-1/N-2 |
+| F-b-2 | fixed | impl-plan 偏差表 #5 理由列「已闭合（3b4be4561，2026-09-05）：relay-env 断言改 sanitized copy、pi-invocation 剥 5 键、根聚合测试 6 红转绿」——与 3b4be4561 commit message（deviation #5 closure）吻合；§7 残留风险句改写为闭合说明；变更历史补行（含「修复发生在 2c1f47d8d（02:45）之后」——git 实测 2c1f47d8d = 09-05 02:45，准确） |
+| F-b-3 | fixed | 9 处日期逐条对 git：初版 fb66e8ec3 09-04 19:42 ✓；U1 期（领地说明 09-04）faab2a3cc 09-04 20:14 ✓；W2（U2 77de9c02d + U6 895f9da2a 均 09-04 23:37）标 09-04 ✓；W3 U3 a53271c70 09-05 00:11 标 09-05 ✓；W4（U4 00:57 + U5 01:14）标 09-05 ✓；W5 U7 33601d35c 01:32 ✓；W6 U8 94c706656 02:45 ✓；头部日期 09-04 ✓——全数吻合 |
+| F-b-4 | fixed | impl-plan §7 补「⛔1 已核实（U3）：GUI 链路 details 原样透传…TUI extractBatch 已支持…（2026-09-05 一致性修复轮补记——W3 变更历史曾宣称闭合但漏登记于此）」——与 fix-hint 逐点一致，且诚实标注补记性质 |
+| F-c-1 | fixed | 恢复行与考古原文逐字一致：`git show 739718be4^:docs/design/subagent-sync-collect.impl-plan.md` L85（= 2099e2b69 加入行）vs 现行 §5 #7 行——编号列/单元列/事由列（含「投递回执匹配 collectDeliveredNotifyIds 读 details.notifyId，否则批 entry 永不销账」）/理由列（「设计未明写此键（§3.1.4 details 形状沿用 mergeItems），实装需要；零冲突增量」）全字符相同；位置在 #6 与 #8 之间 ✓；变更历史 W3 条引用 #7 不再悬空 |
+| F-c-2 | fixed | 状态表 U1 行「commit faab2a3cc」——faab2a3cc 真实存在（09-04 20:14「feat(subagent-core): U1 collect contract surface (design §3.1.3)」），message 与单元职责吻合 |
+| F-c-3 | fixed | 头部「基线: 3b4be4561（现行 HEAD；初版基线 92b977b68 已因 rebase 悬空…）」——git branch --contains 3b4be4561 命中当前分支 ✓；变更历史「92b977b68 = fb66e8ec3 的 rebase 前身」经证：两者 parent 均为 1612e2f37（同位）✓；92b977b68 悬空说明入变更历史 ✓（「现行 HEAD」表述的时效性见 N-4） |
+| F-d-1 | fixed（残留 N-3）| notifier.ts:3-4 头部首句改为「collect:"sync" 的批通知不经单条 notify() 生命周期，由 collect-coordinator 合批后调本文件 notifyBatch 投递」——「sync 不用」术语撞车（severity 依据的第一屏错误信号）消除，notifyBatch 于头部 L4 可见；fix-hint 后半（职责清单纳入批三件套）未执行，见 N-3 |
+| F-d-2 | fixed | start-collect-guard.test.ts:9-10 头部公式改为「pendingSyncCount = 未闭合批 sync 成员数（collectMode=sync 且无 batchFinalized；U2 偏差#4 接线后 record 落 collectMode，枚举天然含本条，无 +1）」——与测试体 L188「如实反映，无补偿」/L191（pendingSyncCount:0）/L185,L202（:2）现行断言一致，旧「manual +1」语义描述清除（现文「无 +1」为否定式正确口径） |
+
+### 修复引入的新差距（4 条）
+
+#### N-1 探针精确计数「12/12 · 23/23 · 13/13」无可复核在盘证据（suggestion）
+
+- **location**：impl-plan §6 U8 行 + §7 变更历史末条 + consistency-review 修复执行记录三处引用「A1 12/12 / A4 23/23 / A8 13/13」vs RESULTS.md（全无计数记载）+ 探针在盘代码 checks.check() 静态计数（a1=13 / a4=23 / a8=15）+ common.mjs:473-475 finish() 行为（全绿只打 `ALL PASS`，仅失败时打 `FAILED (n/total)`，任何路径不输出「12/12」形通过计数）
+- **gap**：计数只能来自未存档的探针 stdout PASS 行数或手工统计；与在盘代码静态计数存在 a1 −1 / a8 −2 偏差（a4 精确吻合），无法判定口径。全绿结论本身不依赖该分数——RESULTS.md 摘要事实（A1 notify 总数 1、时延 70.2s/68.3s、A4 截断 380→101 + 逐字节取回一致、A8 总数 2）独立支撑验收成立。
+- **direction**：doc-right（结论真实、精确数字无证据指针）。
+- **severity**：suggestion——分数被三处文档引用，后来者无法复核出处；「每条可回溯」纪律在同一轮修复中再次打折。
+- **fix-hint**：RESULTS.md 各场景补一行「checks: N/N pass」（或 stdout 归档进 probes 目录）；或三处引用降格为「ALL PASS（记录见 RESULTS.md）」去掉具体分数。
+
+#### N-2 A6 三处回写措辞与 RESULTS.md 原始定性存在叙述落差，「kill -9 后 E1 永久等待」行为面未入残留风险（suggestion）
+
+- **location**：设计 §4 A6 注记 + §3.1.5 E1 注记（「CLI kill -9 形态实证不可构造（worker 共亡）…经 §3.3 D5 备选门满足」）+ impl-plan §7 变更历史探针收尾条 + consistency-review 闭环记录 vs RESULTS.md A6 条原始定性「**属产线前提缺口而非探针缺陷**——成员 subagent-record 停留 running，E1 恢复钩子按『仍有 running → 等待自然完成』永久等待」
+- **gap**：探针实际**构造出了** kill -9 形态（kill 生效、重启 #1 RPC 就绪、E1 钩子运行，RESULTS.md「已过断言」自证），不可构造的是预期**结果**（补发零到达、两次复现 240s）。四处回写统一改用「形态不可构造」的中性措辞，丢掉了 RESULTS.md 的「产线前提缺口」定性；其真实行为面——用户 kill -9 后批通知可达性完全依赖 E3 orphan 判定兜底，而该兜底在 240s 观察窗内未兜住、时效未证实——未进入 impl-plan §7 残留风险（同轮仅登记批指针 sa- id 缺口）。
+- **direction**：doc-right（D5 备选门的适用本身成立——其预声明括号例「子进程回收」正覆盖 worker 共亡根因；缺的是行为面的登记）。
+- **severity**：suggestion——后来者读 A6/E1 注记会认为「kill -9 场景已经 D5 备选门闭环」，不会意识到真实 kill -9 后「等 running 自然终态」的设计前提断裂、通知可达性悬于未证实的 orphan 兜底。
+- **fix-hint**：impl-plan §7 残留风险补一条「kill -9 后 E1『等 running 自然终态』前提断裂（worker 共亡，diag-survive 实证）——通知可达性依赖 orphan 判定兜底时效（240s 窗未兜住，未证实）」；A6/E1 注记保留 RESULTS.md「产线前提缺口」措辞或直接引其原文。
+
+#### N-3 F-d-1 修复未按 fix-hint 全文执行：职责清单未纳入批三件套（info）
+
+- **location**：notifier.ts:6-16「职责（U2 后）」清单仍仅列 buildLlmContent / createNotifier 两项 vs 同文件 notifyBatch / buildBatchLlmContent / computeBatchBudget / buildBatchNotifyId（U3/U4 批能力承载者）
+- **gap**：fix-hint 后半（三件套入职责清单）未执行；「（U2 后）」时点标签亦滞后（批能力 U3/U4 引入）。核心误导（头部首屏「sync 不用」歧义）已消除，故 F-d-1 判 fixed；本条为残留整理项，不构成机制误读（批路径已在头部 L3-4 正确描述）。
+- **direction**：doc-right。
+- **severity**：info。
+- **fix-hint**：职责清单补「notifyBatch / buildBatchLlmContent / computeBatchBudget：sync 批通知（U3/U4）」并更新时点标签。
+
+#### N-4 基线行「现行 HEAD」表述已随 HEAD 前移过时（info）
+
+- **location**：impl-plan 头部「基线: 3b4be4561（现行 HEAD；…）」vs 实际 HEAD = 2b483bc39（基线改锚 commit 之后的探针收尾回写）
+- **gap**：「现行 HEAD」在改锚时点（61cecd9b8）为真，2b483bc39 后字面失真。基线锚定实施起点、不随 HEAD 漂移是合理语义，且变更历史已注明改锚轮次，误导面近零。
+- **direction**：contested（写时真实）。
+- **severity**：info。
+- **fix-hint**：括注改「（改锚时 HEAD；初版基线 92b977b68…）」或维持现状接受自然漂移。
+
+### 复审结论
+
+13 条第 1 轮 finding 全部 fixed，无一被同场景击穿，无一 regressed：文档侧修复与代码/git 事实逐字对得上（F-a-2 details 形状、F-c-1 考古原文、F-b-3 九处日期三点名核对项全过）；代码侧三处微修与实装/测试断言一致。新差距集中在**修复轮自身的证据与登记纪律**：探针分数无出处（N-1）、A6「产线前提缺口」定性在回写链中被降格且行为面未登记（N-2）——与第 1 轮 must-fix 的病灶同族但程度轻，均 suggestion 级，不影响「修复成立」的判定。
