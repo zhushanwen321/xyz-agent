@@ -4,7 +4,7 @@
  * 分层约定（同 scheduler/cw-tool）：本文件零 pi 依赖——agentDir 作参数注入，
  * 不调用 getAgentDir()，可完全单测；pi 注册与 getAgentDir() 调用在 index.ts。
  *
- * 按 action 分发到 9 条路径，串联 M1 core（parser/tree/turns/render）+ M2 discovery
+ * 按 action 分发到 10 条路径，串联 M1 core（parser/tree/turns/render）+ M2 discovery
  *（find/subagents）。content 给 LLM 读（人类可读摘要），details 供程序化消费/测试断言。
  *
  * 错误规格 F1-F6：handler 抛 Error（message 含 👉 恢复指引），index.ts 的 execute 闭包
@@ -35,6 +35,10 @@ import {
   type ToolResultSummaryEntry,
 } from './core/render.js'
 import type { Family, SessionRef, WorkflowRef } from './core/family.js'
+import { doResult, extractFinalAssistantText, type ResultActionDeps } from './result-action.js'
+
+// result action 主体在 result-action.ts（max-lines 拆分轮机械提取，零行为变更）；
+// 导出面保持不变：extractFinalAssistantText 仍从本模块导出（包内测试白盒导入路径不变）。
 import {
   buildExecutionTree,
   formatExecutionTreeText,
@@ -55,6 +59,7 @@ export type SessionReadAction =
   | 'export'
   | 'extract'
   | 'workflow'
+  | 'result'
 
 export interface SessionReadParams {
   action: SessionReadAction
@@ -185,7 +190,7 @@ function rangeLabel(r: { start: number; end: number }): string {
 // resolveSessionId：片段 → 完整 id（design §3.4 resolveSessionId 辅助）
 // ---------------------------------------------------------------------------
 
-type ResolveResult =
+export type ResolveResult =
   | { kind: 'ok'; sessionId: string; fileName: string }
   | { kind: 'multi'; query: string; candidates: MatchedSession[] }
 
@@ -257,8 +262,8 @@ function expandHome(p: string): string {
  * 错误契约（U3）：① 文件不存在/非 .jsonl/header 读不出 → F6 风格；
  * ② sessionFile GC → ES1（manifest 元数据 + 👉）；sa-id 0/>1 命中 → ES2（👉 family）。
  *
- * 仅用于 family/outline/expand/detail/search/export/extract（find action 自行调 findSessions，
- * 零匹配时返回空 + 提示，不抛错）。
+ * 仅用于 family/outline/expand/detail/search/export/extract/result（find action 自行调
+ * findSessions，零匹配时返回空 + 提示，不抛错）。
  */
 async function resolveSessionId(
   rawSession: string | undefined,
@@ -1474,6 +1479,19 @@ async function doWorkflow(params: SessionReadParams, agentDir: string): Promise<
   return { content: [{ type: 'text', text }], details }
 }
 
+/** result action 的注入依赖（构造期绑定本文件私有 helper，运行时零查找开销）。 */
+const RESULT_ACTION_DEPS: ResultActionDeps = {
+  err,
+  stripHash,
+  requireStr,
+  resolveSessionId,
+  disambiguate,
+  safeParse,
+  sessionIdPrefixLen: SESSION_ID_PREFIX_LEN,
+}
+
+export { extractFinalAssistantText }
+
 // ===========================================================================
 // 入口：按 action 分发
 // ===========================================================================
@@ -1510,12 +1528,14 @@ export async function handleSessionRead(
       return doExtract(params, agentDir)
     case 'workflow':
       return doWorkflow(params, agentDir)
+    case 'result':
+      return doResult(params, agentDir, RESULT_ACTION_DEPS)
     default: {
-      // exhaustive guard：switch 覆盖全部 9 action，此处 params.action 收窄为 never；
+      // exhaustive guard：switch 覆盖全部 10 action，此处 params.action 收窄为 never；
       // 仅防御运行时非法 action（schema 正常校验下不可达）
       const exhaustive: never = params.action
       throw err(
-        `未知 action "${JSON.stringify(exhaustive)}"。👉 合法 action: find/family/outline/expand/detail/search/export/extract/workflow。`,
+        `未知 action "${JSON.stringify(exhaustive)}"。👉 合法 action: find/family/outline/expand/detail/search/export/extract/workflow/result。`,
       )
     }
   }
