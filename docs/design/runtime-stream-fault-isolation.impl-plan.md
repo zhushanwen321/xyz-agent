@@ -1,5 +1,5 @@
 # Runtime 流级故障隔离 实施计划
-基线: <待填：本文件 commit hash> | 来源设计: docs/design/runtime-stream-fault-isolation.md | 日期: 2026-09-04
+基线: 693afd4c5 | 来源设计: docs/design/runtime-stream-fault-isolation.md | 日期: 2026-09-04
 
 > 执行方式说明（本计划特有）：设计所述实施已存在于工作区（未提交），经 3 轮对抗式审查核实与文档一致（报告 `.review/design-review-20260904-135803-r3.md`）。因此各 Unit 的「开发」= **验证工作区实物与设计一致 + 测试真实跑绿 + 按领地精确提交**，不重写代码；subagent 不修改任何 src/tests 内容，发现不一致走阶段 3 偏差流程上报。
 
@@ -62,11 +62,13 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| U1 | pending（工作区有实物，未 committed） | 0 | - |
-| U2 | pending（同上） | 0 | - |
-| U3 | pending（同上） | 0 | - |
-| U4 | in-progress（脚本+allowlist 已 committed 5fb5ed597；ci.yml 未提交） | 0 | git show 5fb5ed597 |
-| U5 | pending（工作区有实物，未 committed） | 0 | - |
+| U1 | committed | 1 | 11f2f37bf；relay-registry 25 绿（P1/P2） |
+| U2 | committed | 1 | 44b09f2f0；rpc-client-exit-multicast + usage equivalence 绿（P5） |
+| U3 | committed | 1 | fdcd83d57；uncaught-policy 4 绿（P3） |
+| U4 | committed | 1 | 5fb5ed597（脚本+allowlist）+ 5468f5d86（ci.yml）；护栏 253 文件绿（P4/P7） |
+| U5 | committed | 1 | 09e478b7c；受影响面 49 绿 |
+
+收尾全量（阶段 5 Gate A 证据）：runtime 包 vitest 400 文件 / 4374 用例全绿（168s，2026-09-04）；`tsc --noEmit` 通过；eslint 改动源码 0 warning。
 
 ## 7 残留风险与变更历史
 
