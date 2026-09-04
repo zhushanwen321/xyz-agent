@@ -831,7 +831,10 @@ export class SessionLifecycle implements ISessionRegistry {
 
     // U2: get_state 读回 pi 生效 model + thinkingLevel（D2 设计）。
     // switchSession 成功后 pi 已附着会话文件，get_state 返回当前生效值。
-    // 读回成功 → 用真值播种（metaOverride）；读回失败 → 兜底链：sidecar 扫描值 → 空字符串。
+    // r3 校准：metaOverride 恒提供（读回成功/失败两路径同构），每字段独立走
+    // 「读回值 → sidecar 扫描值 → ''」兜底链。restore 从不播种全局默认：空串经
+    // registerSession 的 ?? 短路阻断 modelOverride/fallbackModelId，composer 按 D3
+    // 显示占位而非假值，快照收敛自愈。
     // hydrateBindingMeta restore='none' 不覆写播种值（D1 裁决），所以兜底链在此完成不经过 hydrate。
     let restoreMetaOverride: { modelId?: string; thinkingLevel?: string } | undefined
     try {
@@ -853,23 +856,20 @@ export class SessionLifecycle implements ISessionRegistry {
       if (typeof stateObj?.thinkingLevel === 'string') {
         readThinkingLevel = stateObj.thinkingLevel
       }
-      if (readModelId || readThinkingLevel) {
-        restoreMetaOverride = {
-          modelId: readModelId ?? target.modelId ?? '',
-          thinkingLevel: readThinkingLevel ?? target.thinkingLevel ?? '',
-        }
+      restoreMetaOverride = {
+        modelId: readModelId ?? target.modelId ?? '',
+        thinkingLevel: readThinkingLevel ?? target.thinkingLevel ?? '',
       }
     } catch (e) {
-      // E2: get_state 读回失败，兜底 sidecar 扫描值（target 来自 findScannedSession，含 .model.json 值）。
-      // sidecar 值 undefined 时 fallback 空字符串（不回落全局默认——D2 裁决）。
+      // E2: get_state 读回失败 → 每字段回落 sidecar 扫描值（target 来自 findScannedSession，
+      // 含 .model.json 值），仍缺则 '' 占位。与读回成功路径同构：双无值也播种 ''/''，
+      // 不保持 undefined 走 registerSession 全局默认（D2 被否谱系：全局默认播种让 restore
+      // 窗口显示他 session 的假值，违 G4「不知道显示占位」）。
       console.warn(`[session-lifecycle] restoreSession(${sessionId}): get_state readback failed, falling back to sidecar values`, e)
-      if (target.modelId || target.thinkingLevel) {
-        restoreMetaOverride = {
-          modelId: target.modelId ?? '',
-          thinkingLevel: target.thinkingLevel ?? '',
-        }
+      restoreMetaOverride = {
+        modelId: target.modelId ?? '',
+        thinkingLevel: target.thinkingLevel ?? '',
       }
-      // 都无值时 restoreMetaOverride 保持 undefined → registerSession 用 modelOverride/全局默认兜底
     }
 
     // M3: registerSession 失败时清理 pi 进程（与 create 同模式）

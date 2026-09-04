@@ -1,14 +1,17 @@
 /**
- * U2 restore/create 播种测试（composer-model-session-isolation 设计 §3.3 D2）。
+ * U2/U9 restore/create 播种测试（composer-model-session-isolation 设计 §3.3 D2，r3 校准）。
  *
  * 验证 restoreSession 在 switchSession 成功后 get_state 读回生效 model+thinkingLevel，
- * 通过 registerSession 新参 metaOverride 播种。兜底链：get_state → sidecar 扫描值 → 空字符串。
+ * 通过 registerSession 新参 metaOverride 播种。r3 校准：metaOverride 恒提供（读回成功/
+ * 失败两路径同构），每字段独立走「读回值 → sidecar 扫描值 → ''」兜底链——restore 任何
+ * 情况不播种全局默认（D2 被否谱系：全局默认播种 = restore 窗口显示他 session 的假值，违 G4）。
  *
- * 测试四场景：
- * 1. 读回成功播种真值
- * 2. 读回失败回落 sidecar 值
- * 3. 双失败回落空字符串（不回落全局默认）
- * 4. hydrateBindingMeta restore='none' 不覆写播种值（D1 生效验证）
+ * 测试场景（r3 校准后）：
+ * 1. 读回成功全字段 → 播种真值
+ * 2. 读回成功部分字段 → 缺字段回落 sidecar 值再 '' 占位
+ * 3. 读回失败 + sidecar 部分字段 → 有值字段播种 sidecar 值、缺字段播种 ''
+ * 4. 读回失败 + sidecar 双无值 → metaOverride {modelId:'', thinkingLevel:''}（不回落全局默认）
+ * 5. hydrateBindingMeta restore='none' 不覆写播种值（D1 生效验证）
  *
  * 运行：cd packages/runtime && pnpm vitest run src/__tests__/session-lifecycle-restore-seeding.test.ts
  */
@@ -212,6 +215,35 @@ describe('U2 restoreSession 播种（D2 设计）', () => {
     expect(session).toBeDefined()
     expect(session!.modelId).toBe('zai-coding-cn/glm-5.3-flash')
     expect(session!.thinkingLevel).toBe('max')
+  })
+
+  it('场景 2a: 读回仅 thinkingLevel，modelId 回落 sidecar 值（r3 校准按字段链）', async () => {
+    // get_state 只返回 thinkingLevel（无 model/modelId 字段）→ modelId 走 sidecar 扫描值
+    const { session } = await runRestore(
+      { sessionId: 'test-session-id', sessionFile: '/test/sessions/test-session-id.jsonl', thinkingLevel: 'high' },
+      { modelId: 'zai-coding-cn/glm-5.3-flash' },
+    )
+
+    expect(session).toBeDefined()
+    expect(session!.modelId).toBe('zai-coding-cn/glm-5.3-flash')
+    expect(session!.thinkingLevel).toBe('high')
+  })
+
+  it('场景 2b: 读回仅 modelId，thinkingLevel 两级全缺 → 播种空串占位（不再走全局默认）', async () => {
+    // get_state 只返回 model（无 thinkingLevel），sidecar 无 thinkingLevel → '' 占位；
+    // metaOverride 恒提供使 modelId 读回值正常播种，thinkingLevel='' 不受全局默认影响
+    const { session } = await runRestore(
+      {
+        sessionId: 'test-session-id',
+        sessionFile: '/test/sessions/test-session-id.jsonl',
+        model: { id: 'glm-5.3', provider: 'zai-coding-cn' },
+      },
+      {},
+    )
+
+    expect(session).toBeDefined()
+    expect(session!.modelId).toBe('zai-coding-cn/glm-5.3')
+    expect(session!.thinkingLevel).toBe('')
   })
 
   it('场景 3: 双失败（get_state 失败 + sidecar 无值）→ 空字符串（不回落全局默认）', async () => {
