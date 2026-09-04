@@ -160,6 +160,18 @@ export default {
     resetRemainingMinutes: '剩{m}m',
     resetRemainingSoon: '<1m',
     resetEmpty: '--',
+    // composer-gen-stats 双触发器（docs/design/composer-gen-stats.md §3.1 / §3.3 D5）
+    genStatsSpeedTitle: 'TOKEN 速度',
+    genStatsCacheTitle: '缓存命中率',
+    genStatsCurrent: '本次',
+    genStatsCurrentReq: '本次请求',
+    genStatsDay: '今日均值（此模型）',
+    genStatsD7: '近 7 天',
+    genStatsD30: '近 30 天',
+    genStatsDayShort: '今日加权',
+    genStatsSpeedNote: 'output tokens ÷ 生成耗时，按模型分文件累计（加权平均）',
+    genStatsCacheNote: 'cacheRead ÷ (input + cacheRead + cacheWrite)',
+    genStatsNoData: '暂无数据',
   },
   sideDrawer: {
     title: '侧边抽屉',
