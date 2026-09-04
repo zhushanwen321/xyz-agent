@@ -3,7 +3,7 @@
 > **一句话结论**：per-session 模型/档位状态没有任何持久层，「全局默认」又被设计成跟随任意 session 的最后一次切换——切走再切回（尤其 pi 进程退出/app 重启后），session 自己的模型只剩空串占位，composer 兜底显示的就是被别的 session 污染的全局默认。修复 = 独立 sidecar（`.model.json`）持久化 per-session 终态 + restore 读回真值播种 + 全局默认与 session 级切换解耦 + 档位对齐 watch 加「显式切换」门禁。
 
 - **层性质声明**：本文档是技术方案设计（slice 级），下一层产物 = 可实现的接口/数据模型/代码任务。准则 5（物理数据流）/6（错误恢复）/7（运行时断言探针）全适用。
-- **状态**：已过 2 轮对抗式审查（r1：3 must-fix + 4 suggestion 全修；r2：0 must-fix + 3 suggestion 当轮吸收。报告 `/tmp/design-composer-model-session-isolation.review-r1.md` / `.review-r2.md`）。**DoR 达成，可进入实施**。
+- **状态**：已过 4 轮对抗式审查（r1：3 must-fix + 4 suggestion 全修；r2：0 must-fix + 3 suggestion 当轮吸收；r3：1 must-fix + 3 suggestion——must-fix 为 impl-plan U5 blocked 误诊更正，设计 D5 本体裁决无缺陷；r4 聚焦复审：r3 修复全部核验通过，2 must-fix 跨文档文字残留已修，审查方结论「无需 r5，设计就绪」。报告 `docs/design/composer-model-session-isolation.review-r1.md` / `.review-r2.md` / `.review-r3.md` / `.review-r4.md`）。**DoR 达成，可进入实施**。
 
 ---
 
@@ -183,8 +183,8 @@ const regularModelId = computed(
 
 **D2：restore / create 用 get_state 生效值播种元数据（选定）**
 
-- **采用**：`restoreSession` 在 `switchSession(file)` 成功后 `get_state` 读回生效 model + thinkingLevel，作为 `registerSession` 新参数 `metaOverride` 播种 `session.modelId/thinkingLevel`。**失败兜底链（实现于 D2 内部，不经 hydrateBindingMeta）**：get_state 抛错 → `findScannedSession` 结果的 sidecar 值（D1 落盘的最近生效值）→ 仍无则维持现状的全局默认兜底——任一兜底都不阻塞 restore。`create` 同理：现有流程已为拿 piSessionId 调过一次 `get_state`（`session-lifecycle.ts:403`），顺带读回生效模型播种（替代当前的 `presetClientOptions.model` 请求值播种，pattern 引擎静默换模时显示从第一毫秒起就是真值）。
-- **被否**：只依赖快照实例异步收敛（现状）——收敛窗口内 `state_changed` 组合投影回退播种值（机制 ④），假值帧广播给 renderer。
+- **采用**：`restoreSession` 在 `switchSession(file)` 成功后 `get_state` 读回生效 model + thinkingLevel，作为 `registerSession` 新参数 `metaOverride` 播种 `session.modelId/thinkingLevel`。**失败兜底链（实现于 D2 内部，不经 hydrateBindingMeta；r3 起按字段粒度）**：每个字段独立取值——get_state 读回值 → `findScannedSession` 结果的 sidecar 值（D1 落盘的最近生效值）→ 仍无则播种**空串占位**（D3 语义，不播种全局默认——G4：已建态「不知道」显示占位而非假值；假值窗口由快照实例异步收敛自愈）。任一兜底都不阻塞 restore。`create` 同理：现有流程已为拿 piSessionId 调过一次 `get_state`（`session-lifecycle.ts:403`），顺带读回生效模型播种（替代当前的 `presetClientOptions.model` 请求值播种，pattern 引擎静默换模时显示从第一毫秒起就是真值）。
+- **被否**：只依赖快照实例异步收敛（现状）——收敛窗口内 `state_changed` 组合投影回退播种值（机制 ④），假值帧广播给 renderer。末级兜底播种全局默认（r2 版文字「仍无则维持现状的全局默认兜底」）——被 r3 击穿：全局默认播种 = restore 窗口向 composer 提供可能不属于本 session 的假值（机制 ④ 残余），与 G4「不知道显示占位」直接冲突；r3 起兜底链按字段粒度以空串占位收尾，双无值与单字段缺失两子分支统一（实现侧 `session-lifecycle.ts` restore 兜底随 U5 解 block 同批对齐此语义）。
 - **证据**：`session-lifecycle.ts:713-830`（restore 现不传 override；hydrateBindingMeta 在 registerSession 之后——见 D1 restore 列裁决）；`session-state-projection.ts:145`（`?? session.modelId` 回退链）；日志 03:28:44（spawn→switch_session→三个并行 get_state，读回成本 ~250ms 且非新增）。
 - **效果**：机制 ④ 消灭；G4 在 restore 窗口成立（配合 D3 占位，假值窗口归零）。
 
@@ -209,10 +209,11 @@ const regularModelId = computed(
 - **采用**：`thinking-level-sync.ts` 的 watch 回调以**回调入口时的 armed 快照**（`consumeArmedRestore` 执行前捕获的 `getArmed()` 值，存局部变量）作为门禁判据——不能用消费块之后的 armed 值（`consumeArmedRestore` 在「未命中/幂等/不可用」回落路径**先清 armed 再 return false**，读后值会让「记忆未命中的显式切换」误入只读分支）。门禁覆盖**所有 onReset 对齐分支**：无 armed 快照时，「无档位设最高档」（分支 2）、「同体系映射」（分支 4）、「跨体系重置」（分支 5）一律跳过；**「可用性校验」（分支 3）保持不门禁**——它是数据不一致时的安全网，仅在**前一对 map 为 undefined 的触发**可达（挂载首触发 + providers 迟到后 map 首次到达），此时当前档位在新模型不可用才重置一次。armed 生命周期沿用 u3 既有防线（设立=显式 onModelSelect、成功/失败清、换绑清、5s 过期清、in-flight 豁免），零新状态。
   - **记忆未命中的显式切换**：armed 快照存在 → 对齐分支照常执行（同体系映射/跨体系重置），保持现状行为——记忆恢复（命中）与规则对齐（未命中）都只发生在显式切换上。
   - **landing 初值不受分支 2 门禁影响**：landing 挂载的初值由 u3 的 `followRememberedOrDefault` watch（`model-thinking.ts`，immediate）设定（记忆档 ?? 最高档），与 sync watch 分支 2 是双路径冗余——门禁分支 2 后 landing 初值仍由前者覆盖，行为不变。
+  - **门禁语义边界（启发式声明，r3）**：入口快照是「本触发 = 显式切换」的**一次性抑制判据，非精确归因**——armed 在途（规则 3 不匹配保留）窗口内，providers 刷新等无关触发会因快照非 null 放行对齐分支（行为与无门禁现状等价，非本设计引入的回归）；同触发内规则 1 过期清同样放行。V3 偶发红的排查锚点：先查该时段是否恰有 armed 在途（`set_thinking_level` 时序紧邻 switchModel 回包 / config.providers 广播），再怀疑门禁回归。
 - **被否**：① rebind 标志位（watch sessionId 设「重绑中」标志跳过一次对齐）——新增时序耦合状态（标志设置与 watch flush 顺序），且 armed 机制语义上就是「显式切换」的精确判据，重复造轮子；② 把对齐逻辑从 watch 移进 onModelSelect 内联调用——重构 sync 所有权，u3 记忆消费点也在 watch 里，连锁改动大；③ 门禁读消费块后的 armed 值（第一版表述的 ambiguity，被审查指出）——「先清再 return false」的回落路径会吞掉显式切换的对齐，V4 测不出（只测命中路径）。
 - **证据**：`thinking-level-sync.ts` watch 结构（armed 消费块在回调顶部、三个 onReset 分支顺序）；`model-thinking.ts` armed 防线全集 + `followRememberedOrDefault`（landing 初值双路径）；日志 03:28:44.163（无 armed 的换绑触发对齐的反例实证）。
 - **效果**：机制 ⑤ 消灭，G3 成立（场景 1/3）；G2 的污染源（机制 ⑥ 的上游）同步消灭——记录 watch「生效即记录」语义保持不变（u3 裁决），但被记录的值回归真值。
-- **边界（显式声明）**：显式切模型后 5s 内换绑（armed 已被换绑清）→ 该次切换的档位对齐/记忆恢复不触发，session 保持 pi 侧生效档——用户切走即视为放弃本次对齐，可接受（显式换绑优先于在途意图，与 u3 规则 6 同向）。**既有错钳窗口（登记，维持现状）**：分支 3 不门禁 + providers 迟到（map undefined→defined 之间已发生换绑）的组合下，已建 session 档位 value ∈ {xhigh, max}（`DEFAULT_SUPPORTED_LEVELS` 五档之外）会被按五档归一误判不可用 → 钳到 high 并发一次 setThinkingLevel RPC + 记忆表写入。此为**现状既有行为，非本设计引入，D5 前后等价**（窗口窄：providers 早于 panel 加载即不出现）；留待后续治理，本设计不扩大也不修复——但 V3 实施期若偶发红，先查此窗口再怀疑 D5 门禁回归（排查锚点：日志中该 RPC 的时序紧邻 config.providers 广播）。
+- **边界（显式声明）**：显式切模型后 5s 内换绑（armed 已被换绑清）→ 该次切换的档位对齐/记忆恢复不触发，session 保持 pi 侧生效档——用户切走即视为放弃本次对齐，可接受（显式换绑优先于在途意图，与 u3 规则 6 同向）。**既有错钳窗口（登记，维持现状）**：分支 3 不门禁 + providers 迟到（map undefined→defined 之间已发生换绑）的组合下，已建 session 档位 value ∈ {xhigh, max}（`DEFAULT_SUPPORTED_LEVELS` 五档之外）会被按五档归一误判不可用 → 钳到 high 并发一次 setThinkingLevel RPC + 记忆表写入。此为**现状既有行为，非本设计引入，D5 前后等价**（窗口窄：providers 早于 panel 加载即不出现）；留待后续治理，本设计不扩大也不修复——但 V3 实施期若偶发红，先查此窗口再怀疑 D5 门禁回归（排查锚点：日志中该 RPC 的时序紧邻 config.providers 广播）。**providers 迟到两步到达窗口（登记，r3）**：显式切换后目标模型的 map/supportedLevels 若分两步到达（首触发时 supported 尚未下发），首触发即消费 armed（记忆命中按默认五档 fallback 提前 onReset；未命中走对齐/分支 3 后清 armed），第二次触发（真实数据到达）被门禁拦截 → 该次切换「用真实数据再对齐」的一次性机会丢失，session 保持 pi 侧生效档（无错误 RPC，仅对齐不理想）；若两步到达形态为 supported 先到、map 后到，第二次触发 oldMap 仍 undefined，落不门禁的分支 3，可用性安全网照常可达（r4 补记）。窗口窄：popover 可选本身要求 providers 已知该模型，仅能力注册表下发晚于切换回包时出现。**被否的根治候选**：门禁对「armed 已清 + oldMap 有值 + 模型确实变化」的触发放行——重演击穿：session 焦点切换（A→B）恰好同构满足三条件（换绑清先执行 → armed null；oldMap = A 体系 map；模型变化），放行即复活机制 ⑤；故仅登记观察，V4/Gate B 偶发红的排查锚点 = 该时段 config.providers 是否晚于 switchModel 回包到达。
 
 **D6：记录 watch 维持「生效即记录」+ 漂移文档修正（选定）**
 
@@ -251,7 +252,7 @@ const regularModelId = computed(
 | # | 失败场景 | 行为 | 恢复指引 |
 |---|---|---|---|
 | E1 | `.model.json` 写失败（磁盘满/权限） | best-effort 吞错 + console.warn（对齐 `persistBindingSidecar` 家族先例）；内存态不受影响 | 无需动作：本运行期显示正确；仅「退出后重启」回落到 D3 占位，restore 后自愈 |
-| E2 | restore 的 get_state 读回失败 | 兜底链：`.model.json` 扫描值 → 全局默认（现状行为），快照实例异步收敛纠正 | 重新切回该 session 触发再次 restore；日志有 `switchModel get_state read-back failed` 同款 warn 可排查 |
+| E2 | restore 的 get_state 读回失败 | 按字段兜底链：`.model.json` 扫描值 → 空串占位（D3 语义，不播种全局默认），快照实例异步收敛纠正 | 重新切回该 session 触发再次 restore；日志有 `switchModel get_state read-back failed` 同款 warn 可排查 |
 | E3 | 老会话无 `.model.json` | summary 字段 undefined → composer 显示 D3 占位 | restore 完成（≤2s）自动显示真值；无需迁移脚本（向后兼容） |
 | E4 | lastUsedModel KV 读失败/未加载 | landing 兜底 `defaultModel`（同 u3 E7① 语义：未加载不阻塞，回落默认） | 无需动作；KV 惰性加载完成后下次 landing 生效 |
 | E5 | armed 过期（switchModel RPC >5s 后才回包） | 规则 1 清 armed → 该次切换无档位对齐/记忆恢复，session 保持 pi 生效档 | 用户手动调档（一次性成本）；既有 u3 规则，非本设计新增 |
@@ -290,7 +291,7 @@ const regularModelId = computed(
 |---|---|---|---|
 | U0 | constraints.json 登记三条新约束（per-session 模型/档位必须持久独立 sidecar；全局默认不得由 session 级切换改写；档位对齐仅挂显式切换）+ `render-constraints.mjs` 重生成 | 项目纪律「先登记再写代码」——放代码之后违反纪律；三条约束正是 D1/D4/D5 的机器可读投影，先登记让后续单元有登记号可引 | — |
 | U1 | runtime：`modelSidecarPath`/`persistModelBinding`（persistBindingSidecar 家族）+ BINDING_FIELDS +`modelId`/`thinkingLevel` 两行（create/handoff/fork='options'，restore='none'）+ 扫描器 `scanSessionMeta`/`scannedToSummary` 提取 + 五写点接入（含 forkSession 侧 sidecar 落位）+ `purgeSessionSidecars` 清单 +`.model.json` + `CREATE_DERIVED_CALLERS` 守卫契约核对（`passedBindingFields: ['projectId']` 是否需 + 两新字段，含 user-facing/agent-managed 行） | 数据层先行——U2-U6 全部依赖「持久值存在」或与之正交；sidecar 注册表自带编译级守卫（漏登记矩阵列 = 编译红）；restore 列裁决在矩阵层固化，防实施惯性填 'meta' 覆写 D2 播种；删除清理清单与守卫契约是 r2 审查抓出的连带改动，随数据层同批防孤儿/防契约漂移 | V1 |
-| U2 | runtime：restore `get_state` 读回 → `registerSession` `metaOverride` 播种（兜底链 sidecar→全局默认，实现在 D2 内部）；create 路径同款读回播种 | 与 U1 同包同层，先于行为层落地可独立验收 restore 窗口（V2 的真值部分） | V2 |
+| U2 | runtime：restore `get_state` 读回 → `registerSession` `metaOverride` 播种（兜底链 sidecar 值 → 空串占位（r3 校准），实现在 D2 内部）；create 路径同款读回播种 | 与 U1 同包同层，先于行为层落地可独立验收 restore 窗口（V2 的真值部分） | V2 |
 | U3 | runtime：`ModelService.switchModel` 移除 config.defaults 广播（source=model-switch） | 单点删除、独立回滚；先于 U4 落地可让「默认不被污染 + toast 症状消失」立即成立 | V5 |
 | U4 | core：`regularModelId`/`regularThinkingLevel` 按态分流（已建 session 空值→占位，不回落 landing 残留）+ lastUsedModel KV（写点=onModelSelect 非 staging 分支）+ landing 兜底链 | 显示语义与 KV 属 core 域同一 composable 家族，一起改保持 `model-thinking.ts` 内聚 | V2/V6 |
 | U5 | core：`thinking-level-sync` armed 门禁（回调入口快照判定；覆盖分支 2/4/5，分支 3 保持） | 单文件单 watch 的行为门禁，独立可测（core vitest 直接覆盖换绑/显式命中/显式未命中三路径） | V3/V4 |

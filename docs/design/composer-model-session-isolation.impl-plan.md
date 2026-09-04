@@ -11,7 +11,7 @@
 | 验收场景表 | §4 验收（V1-V6，含步骤/通过标准/探针回溯；V3/V5 为负面验证） |
 | 下一层拆分 | §5 下一层拆分（U0-U8 单元表 + 文件改动地图 + 运行时探针 A1-A5 + 待验证检查点 4 条） |
 | 待验证检查点 | §5 末尾「待验证检查点（设计阶段无法确定，诚实标注）」4 条（D4 消费方全集 grep / CREATE_DERIVED_CALLERS 映射 / 占位 UI 形态定稿 / sidecar 写频率评估） |
-| 审查证据 | docs/design/composer-model-session-isolation.review-r1.md（3 must-fix + 4 suggestion + 1 INFO，全修）· review-r2.md（0 must-fix，3 suggestions，结论「可进入实施，DoR 达成」） |
+| 审查证据 | docs/design/composer-model-session-isolation.review-r1.md（3 must-fix + 4 suggestion + 1 INFO，全修）· review-r2.md（0 must-fix，3 suggestions，结论「可进入实施，DoR 达成」）· review-r3.md（1 must-fix = 本计划 §6 U5 blocked 误诊更正，设计 D5 本体裁决无缺陷；3 suggestions 当轮吸收：D5 两处边界登记 + D2/E2 兜底链按字段占位校准）· review-r4.md（聚焦复审：r3 修复全部核验通过 + 修订方两个被否反例独立重演成立；2 must-fix 文字残留已修 = 设计 §5 U2 行 + 本计划 §2/§6 U2 行与 U9 单元登记；结论「修完即可宣布 0 must-fix，无需 r5」） |
 
 ## 1 目标快照（逐字摘录自设计文档 §1）
 
@@ -35,13 +35,14 @@
 |---|---|---|---|---|---|
 | U0 | constraints.json 登记三条新约束（per-session 模型/档位持久独立 sidecar；全局默认不得由 session 级切换改写；档位对齐仅挂显式切换）+ `render-constraints.mjs` 重生成 md | `docs/constraints.json`<br>`docs/constraints.md`（生成物） | 无 | plain | `node scripts/render-constraints.mjs` 成功；三条约束在 json+md 中可见且 scope/权威源/执行方式完整；pre-commit 全绿 |
 | U1 | runtime 数据层：`modelSidecarPath`/`persistModelBinding`（persistBindingSidecar 家族）+ BINDING_FIELDS 增 `modelId`/`thinkingLevel` 两行（create/handoff/fork=`'options'`，restore=`'none'`）+ `scanSessionMeta`/`scannedToSummary` 提取两字段 + 五写点接入（switchModel/setThinkingLevel/create/landing/fork，含 forkSession 侧 sidecar 落位）+ `purgeSessionSidecars` 清单 +`.model.json` + `CREATE_DERIVED_CALLERS` 守卫契约核对（`passedBindingFields` 是否需 + 两新字段） + C-pi-07 豁免闭环（偏差 #3） | `packages/runtime/src/infra/pi/session-binding-fields.ts`<br>`packages/runtime/src/infra/pi/session-file-utils.ts`<br>`packages/runtime/src/services/session/session-scanner.ts`<br>`packages/runtime/src/services/session/session-model-control.ts`<br>`packages/runtime/src/services/session/session-lifecycle.ts`（**仅** purgeSessionSidecars + forkSession 侧落位；restore/create 播种归 U2）<br>`packages/runtime/src/__tests__/`（`session-file-utils-sidecar.test.ts` 扩展或新增 sidecar/矩阵守卫/scanner 提取测试）<br>`.githooks/check_pi_direct_write.py`（仅豁免①后缀清单）<br>`docs/architecture/data-source-registry.md`（sidecar 家族条目）<br>`docs/constraints.json`（仅 C-pi-07 文案）+ `docs/constraints.md`（render 生成物） | U0 | plain | `cd packages/runtime && pnpm vitest run src/__tests__/<相关测试>` 绿：矩阵四列含两新字段且 restore='none' / scanner 提取两字段进 summary / persistModelBinding 原子写 + JSONL 不存在不创建守卫 / purge 清单含 `.model.json`；`pnpm typecheck` 过；探针 A2/A3 的单测层覆盖就绪 |
-| U2 | runtime 播种层：restoreSession `switchSession` 成功后 `get_state` 读回生效 model+thinkingLevel → `registerSession` 新参 `metaOverride` 播种（兜底链 get_state→sidecar 扫描值→全局默认，实现在 D2 内部不经 hydrateBindingMeta）；create 路径顺带既有 get_state 读回播种 | `packages/runtime/src/services/session/session-lifecycle.ts`（restore/create 播种 + registerSession metaOverride + 兜底链）<br>`packages/runtime/src/__tests__/`（restore 播种/兜底链测试） | U1 | plain | `cd packages/runtime && pnpm vitest run src/__tests__/<相关测试>` 绿：读回成功播种真值 / 读回失败回落 sidecar 值 / 双失败回落全局默认 / hydrateBindingMeta restore 入口不覆写播种值（restore='none' 生效）；`pnpm typecheck` 过 |
+| U2 | runtime 播种层：restoreSession `switchSession` 成功后 `get_state` 读回生效 model+thinkingLevel → `registerSession` 新参 `metaOverride` 播种（兜底链 get_state→sidecar 扫描值→**空串占位**（r3 校准，不播种全局默认），实现在 D2 内部不经 hydrateBindingMeta）；create 路径顺带既有 get_state 读回播种 | `packages/runtime/src/services/session/session-lifecycle.ts`（restore/create 播种 + registerSession metaOverride + 兜底链）<br>`packages/runtime/src/__tests__/`（restore 播种/兜底链测试） | U1 | plain | `cd packages/runtime && pnpm vitest run src/__tests__/<相关测试>` 绿：读回成功播种真值 / 读回失败回落 sidecar 值 / 双失败回落空串占位（r3 校准，committed 版本为旧语义，对齐随 U9）/ hydrateBindingMeta restore 入口不覆写播种值（restore='none' 生效）；`pnpm typecheck` 过 |
 | U3 | runtime 解耦：`ModelService.switchModel` 移除 `config.defaults` 广播（source=model-switch）+ `model-service.ts` 失效注释按 pi 0.84.4 实装改写（原 U7 的 model-service.ts 部分归并至此，消除同文件双单元领地冲突） | `packages/runtime/src/services/model-service.ts`<br>`packages/runtime/src/__tests__/`（受影响广播断言测试调整） | U0 | plain | `cd packages/runtime && pnpm vitest run src/__tests__/<相关测试>` 绿：switchModel 不再产生 config.defaults 帧（探针 A4 生产点断言）+ 无其他 `source:'model-switch'` 生产点（grep 核对，发现第二生产点按 D4 一并移除并回写设计 D4 消费方清单）；`pnpm typecheck` 过 |
 | U4 | core 显示分流 + lastUsedModel：`regularModelId`/`regularThinkingLevel` 按态分流（已建 session 空值→占位信号，不回落 landing 残留/全局默认；landing 兜底链 `currentModel \|\| lastUsedModel \|\| defaultModel`）+ `last-used-model.ts` KV 单键（仿 model-thinking-memory；写点=onModelSelect 非 staging 分支） | `packages/core/src/domain/composer/model-thinking.ts`<br>`packages/core/src/domain/composer/last-used-model.ts`（新）<br>`packages/core/src/domain/composer/model-thinking.test.ts`<br>`packages/core/src/domain/composer/last-used-model.test.ts`（新） | 无（store 接口不变，可与 U1 并行） | plain | `cd packages/core && pnpm vitest run src/domain/composer/model-thinking.test.ts src/domain/composer/last-used-model.test.ts` 绿：已建态空值→占位不回落 / landing 兜底链顺序 / 显式选择写 KV、staging 不写 / KV 损坏回退（E4）；`pnpm typecheck` 过 |
 | U5 | core 门禁：`thinking-level-sync` watch 回调以入口 armed 快照（consumeArmedRestore 执行前捕获）判定；分支 2（无档位设最高档）/4（同体系映射）/5（跨体系重置）无 armed 快照一律跳过；分支 3（可用性校验）保持不门禁；记忆未命中的显式切换照常走对齐分支 | `packages/core/src/domain/composer/thinking-level-sync.ts`<br>`packages/core/src/domain/composer/thinking-level-sync.test.ts` | 无 | plain | `cd packages/core && pnpm vitest run src/domain/composer/thinking-level-sync.test.ts` 绿：换绑（无 armed 入口快照）不发 setThinkingLevel（探针 A1 单测层）/ 显式命中→记忆恢复 / 显式未命中→对齐照常 / 分支 3 不回归（现有用例全绿）；`pnpm typecheck` 过 |
 | U6 | renderer 占位文案：ModelSelectPopover/ThinkingLevelPopover 空值渲染占位（「…」，形态实施期定稿）+ i18n en-US/zh-CN | `packages/renderer/src/components/panel/ModelSelectPopover.vue`<br>`packages/renderer/src/components/panel/ThinkingLevelPopover.vue`<br>`packages/renderer/src/i18n/locales/en-US/panel.ts`<br>`packages/renderer/src/i18n/locales/zh-CN/panel.ts`<br>对应组件测试文件 | U4 | plain | `cd packages/renderer && pnpm vitest run <相关测试>` 绿：空值渲染占位文案（含用户可见 DOM 断言）；`pnpm typecheck:test` 过；`pnpm check:i18n` 过 |
 | U7 | 文档勘误：u3 设计文档「关键事实⑤」（pi setModel 持久化全局默认）按 0.84.4 实装勘误，附本设计文档链接（model-service.ts 注释修正已在 U3） | `docs/design/model-thinking-level-memory.md` | U3 | plain | 勘误落档 + 链接可解析；`node scripts/check-doc-symbol-drift.mjs` 过（pre-commit 触发） |
 | U8 | 全量回归收口：全量测试套件 + lint + 三包 typecheck；发现回归修复回所属单元领地（不新增文件） | 无新领地 | U1-U7 | plain | `pnpm test`（root 全量：packages+apps+extensions）绿；`pnpm run lint` 绿；runtime/core `pnpm typecheck` + renderer `pnpm typecheck:test` 绿 —— Gate A |
+| U9 | r3 校准落地（r4 登记的连带改动，随 U5 批次执行）：restore 兜底链双无值分支统一播种 `''/''`（消除与单字段缺失分支的不一致，全局默认不再参与 restore 播种——D2 r3 校准语义）+ 删除 `session-lifecycle.ts` restore catch 内虚构「D2 裁决」注释引用（改为指认 r3 校准后语义） | `packages/runtime/src/services/session/session-lifecycle.ts`（仅 restore 兜底 catch 分支 + 相关注释）<br>`packages/runtime/src/__tests__/session-lifecycle-restore-seeding.test.ts`（双无值用例断言改空串占位） | U2 | plain | `cd packages/runtime && pnpm vitest run src/__tests__/session-lifecycle-restore-seeding.test.ts` 绿：双无值 → metaOverride `{modelId:'', thinkingLevel:''}`（不再走全局默认兜底）；单字段缺失分支行为不变；`pnpm typecheck` 过 |
 
 **计划层裁决（对设计 §5 的三处落地校准，行为语义零变更）**：
 
@@ -81,7 +82,7 @@ graph TD
   U7 --> P3
 ```
 
-- 波次：P1（U0→U1→U2 串行，session-lifecycle.ts 共享文件强制 U1/U2 串行）→ P2（U3‖U4‖U5 并行，其后 U6‖U7）→ P3（U8）。峰值并发 3 ≤ 5。
+- 波次：P1（U0→U1→U2 串行，session-lifecycle.ts 共享文件强制 U1/U2 串行）→ P2（U3‖U4‖U5 并行，其后 U6‖U7）→ P3（U8）。峰值并发 3 ≤ 5。r3/r4 修正后剩余执行集：**U5‖U9 并行**（core 与 runtime 不同包无领地冲突），完成后 U8 复跑 Gate A + Gate B 端到端验收。
 - worktree：全部 plain——已在专用 worktree `fix-composer-model`，单元领地互斥（U1/U2 同文件靠 DAG 串行化解），无并行写冲突。
 
 ## 4 测试策略
@@ -116,13 +117,14 @@ graph TD
 |---|---|---|---|
 | U0 | committed | 1 | commit `5acafab78`；render --check 88 条 exit 0 + select --check PASS + md 45/46/78 行可见（主 agent 复跑核验） |
 | U1 | committed | 2 | commit `3f1a6cfe4`；typecheck exit 0；tests 32/32 PASS（A1-A4）；guard check PASS；render --check PASS；缺 check-unsafe-stream-writes.mjs 脚本（存量基础设施问题，非本次引入，偏差 #4） |
-| U2 | committed | 1 | commit `a5e89acc1`；registerSession metaOverride + restoreSession get_state 播种 + 兜底链；typecheck exit 0；lifecycle tests 25/25 PASS |
+| U2 | committed | 1 | commit `a5e89acc1`；registerSession metaOverride + restoreSession get_state 播种 + 兜底链；typecheck exit 0；lifecycle tests 25/25 PASS（兜底链语义按 r3 校准，双无值分支对齐随 U9 批次） |
 | U3 | committed | 1 | commit `5a108b46d`；switchModel config.defaults 广播移除 + 注释修正；typecheck exit 0；model-service tests 21/21 PASS |
 | U4 | committed | 1 | commit `cd0e3f7a2`（model-thinking D3 分流 + lastUsedModel KV + D3 占位断言更新 + lifecycle seeding test）；typecheck exit 0；core tests 66/66 PASS |
-| U5 | **blocked** | 0 | D5 门禁与 consumeArmedRestore 冲突：consume 所有路径均 clearArmed → 门禁 getArmed() 恒 null → 分支 2/4/5 永远跳过。需设计修正（consume 不清 miss/门禁用 pre-consume 快照）。thinking-level-sync 已回退到基线，代码+测试零残留 |
+| U5 | pending（r3 更正误诊） | 1 | r3 审查裁决（review-r3.md「D5 根因裁决」）：首次实施 blocked 为**误诊**——「consume 所有路径均 clearArmed」不成立（规则 3 模型未匹配不清 armed，`thinking-level-sync.ts:122-125`）；「门禁恒 null」唯一成因是门禁取值接到**消费块之后**（D5 被否③明确禁止的形态），而 `thinking-level-sync.ts:182` 的局部变量本身就是 consume 执行前入口快照。设计无需修正。重实现要点：复用 :182 入口快照作门禁，**分支 2 内 + 分支 4/5 前各一处守卫**（不能用消费块后单点 `if (!armed) return`——会把设计明确不门禁的分支 3 一并拦掉）；thinking-level-sync 已回退基线，代码+测试零残留 |
 | U6 | committed | 1 | commit `9cf3175ad`；typecheck:test exit 0；tests 19/19 PASS；check:i18n PASS |
 | U7 | committed | 1 | commit `1c749bb72`；3处勘误落档 + 链接可解析 + drift check PASS |
-| U8 | committed | 1 | Gate A：runtime/core/renderer typecheck PASS；runtime 4384 PASS (3 pre-existing) / core 1420 PASS / renderer 3735 PASS；lint 2 max-lines warnings (pre-existing,偏差 #5) |
+| U8 | committed | 1 | Gate A：runtime/core/renderer typecheck PASS；runtime 4384 PASS (3 pre-existing) / core 1420 PASS / renderer 3735 PASS；lint 2 max-lines warnings (pre-existing,偏差 #5)。U5/U9 落地后复跑收口 |
+| U9 | pending | 0 | r4 登记的连带改动单元（r3 D2 校准的实现侧对齐）：restore 兜底双无值分支统一播种 ''/'' + 虚构「D2 裁决」注释清理，随 U5 批次并行执行 |
 
 ## 7 残留风险与变更历史
 
@@ -132,10 +134,12 @@ graph TD
 - R2（U1）：`CREATE_DERIVED_CALLERS` 的 `passedBindingFields` 守卫映射取决于静态扫描实现，实施期核对；modelOverride/thinkingOverride 参数如何映射进绑定字段以核对结果为准。
 - R3（D5 边界，现状行为）：分支 3 不门禁 + providers 迟到的既有错钳窗口（value∈{xhigh,max} 被五档归一误判钳到 high）——非本设计引入、D5 前后等价；V3/Gate B 偶发红先查此窗口再怀疑门禁回归（排查锚点：该 RPC 时序紧邻 config.providers 广播）。
 - R4（流程）：设计文档/勘误 commit 触发 pre-commit `check-doc-symbol-drift.mjs`，须绿；设计文档含大量 file:line 引用，若报悬空引用按现行源码修正文档。
-- R5（探针降级）：A2 写失败走 E1 吞错不阻塞（验收转 V2 占位路径）；A1 门失败先查门禁是否误读消费块后 armed 值（D5 入口快照语义）。
+- R5（探针降级）：A2 写失败走 E1 吞错不阻塞（验收转 V2 占位路径）；A1 门失败先核对门禁取值时点——必须为 consume 执行前的入口快照（`thinking-level-sync.ts:182` 局部变量），禁止读消费块之后的 armed 值（U5 首次实施即误此处，r3 裁决，见 D5 被否③）。
 
 **变更历史**：
 
+- 2026-09-04：r4 聚焦复审（GLM-5.3）：r3 修复全部核验通过，修订方两个被否反例（单点门禁消灭分支 3 / 按字段空串占位）独立重演成立。2 must-fix（跨文档文字残留）已修：设计 §5 U2 行兜底链文字同步；本计划 §2 U2 行职责/验收改空串占位语义、§6 U2 行加对齐标记、新增 U9 单元登记 session-lifecycle.ts 连带改动。1 INFO 吸收（D5 两步到达窗口补 supported 先到形态）。审查方结论「0 must-fix 达成后无需 r5」。
+- 2026-09-04：r3 对抗式审查完成（GLM-5.3 tech-design-review）。U5 blocked 判定为**误诊**：门禁取值误接消费块之后（D5 被否③形态），设计 D5 本体无缺陷、按原文可实现；U5 转 pending 待重实现（守卫形态 = 入口快照按分支守卫，分支 3 保持不门禁）。同批吸收 3 suggestions：设计 D5 补「门禁启发式声明」与「providers 迟到两步到达窗口」两处边界登记（含根治候选被否重演）；D2/E2 兜底链文字按字段粒度空串占位校准（全局默认末级兜底记入被否谱系）。本计划 §0/§6/R5 同步更正。
 - 2026-09-04：U6+U8 committed。Gate A 全绿（三包 typecheck + tests 9539 PASS + lint 2 max-lines pre-existing）。U5 仍 blocked。目标 report_blocked。
 - 2026-09-04：U2-U4 committed。U5 blocked（D5 门禁与 consumeArmedRestore 冲突——consume 所有路径 clearArmed → 门禁 getArmed() 恒 null，thinking-level-sync 已回退基线）。U6/U7 就绪待派发。
 - 2026-09-04：U0 committed（`5acafab78`）。C-pi-07 豁免闭环触发 U1 领地扩展（偏差 #3）：`.githooks/check_pi_direct_write.py` + `docs/architecture/data-source-registry.md` + constraints 文案，U1 派发前已固化。
