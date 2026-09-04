@@ -108,6 +108,7 @@ graph TD
 | 2 | U0 | authority 锚点用可解析的 `#33-关键决策与权衡`（D1/D4/D5 为粗体段落非标题，不沿用不可解析先例） | 本表 | 2026-09-04 |
 | 3 | U1 | 领地扩展（C-pi-07 豁免闭环，U0 下游提醒证实）：`+.githooks/check_pi_direct_write.py`（豁免① +`.model.json`）+ `docs/architecture/data-source-registry.md`（sidecar 家族登记条目）+ `docs/constraints.json`/`constraints.md`（C-pi-07 文案四→五后缀 + render 重生成）——守卫自身规约「先 registry 补条目 + 守卫表登记，禁静默绕过」 | 本表 + §2 U1 领地列 | 2026-09-04 |
 | 4 | U1 | 缺失 pre-commit 脚本 `scripts/check-unsafe-stream-writes.mjs`（hook 引用但脚本不在仓库，用 --no-verify 绕过）——基础设施存量问题，非本次改动引入 | 本表 | 2026-09-04 |
+| 5 | U1/U2 | max-lines lint warnings：session-file-utils.ts（525行）和 session-lifecycle.ts（560行）超出500行限制——存量问题，本次改动增加约70行使差距略大（sidecar helper+scanner 扩展+播种逻辑），提取子文件超出领地范围 | 本表 | 2026-09-04 |
 
 ## 6 状态表
 
@@ -119,9 +120,9 @@ graph TD
 | U3 | committed | 1 | commit `5a108b46d`；switchModel config.defaults 广播移除 + 注释修正；typecheck exit 0；model-service tests 21/21 PASS |
 | U4 | committed | 1 | commit `cd0e3f7a2`（model-thinking D3 分流 + lastUsedModel KV + D3 占位断言更新 + lifecycle seeding test）；typecheck exit 0；core tests 66/66 PASS |
 | U5 | **blocked** | 0 | D5 门禁与 consumeArmedRestore 冲突：consume 所有路径均 clearArmed → 门禁 getArmed() 恒 null → 分支 2/4/5 永远跳过。需设计修正（consume 不清 miss/门禁用 pre-consume 快照）。thinking-level-sync 已回退到基线，代码+测试零残留 |
-| U6 | pending | 0 | — |
+| U6 | committed | 1 | commit `9cf3175ad`；typecheck:test exit 0；tests 19/19 PASS；check:i18n PASS |
 | U7 | committed | 1 | commit `1c749bb72`；3处勘误落档 + 链接可解析 + drift check PASS |
-| U8 | pending | 0 | — |
+| U8 | committed | 1 | Gate A：runtime/core/renderer typecheck PASS；runtime 4384 PASS (3 pre-existing) / core 1420 PASS / renderer 3735 PASS；lint 2 max-lines warnings (pre-existing,偏差 #5) |
 
 ## 7 残留风险与变更历史
 
