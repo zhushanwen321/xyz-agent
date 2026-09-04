@@ -8,7 +8,7 @@
  * 运行命令: npx vitest run test/plugin-host.test.ts
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -239,5 +239,87 @@ describe('PluginHost', { timeout: 30_000 }, () => {
     await new Promise((resolve) => setTimeout(resolve, 300))
 
     expect(crashes).toEqual([])
+  })
+
+  // ── U7/D5: loadPlugin 超时 → handleWorkerCrash 回收链（P-10 检查点）──
+  // fake timers 同步 advance 手法：loadPlugin 内 postMessage 后、无事件循环让渡时
+  // 同步 advanceTimersByTime，超时回调确定性先于 Worker 线程的 loaded 回包被主线程
+  // 消费（跨线程消息需经真实事件循环派发，fake timer 同步触发）——无需「不回复的
+  // bootstrap」即可确定性复现 load 超时。
+  it('loadPlugin timeout triggers crash chain: terminate + rebuild scheduling (D5)', async () => {
+    const rpc = new PluginRpcServer()
+    const host = new PluginHost(rpc, { workerBootstrapOverride: WORKER_MOCK })
+
+    const crashes: Array<{ workerId: string; pluginIds: string[]; error: string }> = []
+    host.setCrashCallback((workerId, pluginIds, error) => {
+      crashes.push({ workerId, pluginIds, error })
+    })
+
+    const workerId = await host.assignWorker('load-timeout', 'trusted')
+
+    // P-10 检查点实测：load 超时入口 handle.status === 'active'（createWorker 刚创建，
+    // 未涉 crash/terminate）——满足 handleWorkerCrash 幂等守卫前置，无需直接 terminate 兜底
+    expect(host.getWorkerHandleById(workerId)!.status).toBe('active')
+
+    const worker = host.getWorkerInstance(workerId)!
+    const termSpy = vi.spyOn(worker, 'terminate')
+
+    vi.useFakeTimers()
+    try {
+      const pending = host.loadPlugin(workerId, 'load-timeout', '/virtual/plugin', 'trusted')
+
+      // 默认 LOAD_PLUGIN_TIMEOUT_MS = 10s 精确边界：9_999ms 未超时
+      vi.advanceTimersByTime(9_999)
+      expect(host.getCrashCount('load-timeout')).toBe(0)
+      expect(host.getPendingRebuildTimer(workerId)).toBeUndefined()
+
+      vi.advanceTimersByTime(1)
+      await expect(pending).rejects.toThrow(/loadPlugin timeout for worker/)
+
+      // crash 链完整执行：terminate 被调 + handle/索引清理 + crash 计数 + rebuild 排期
+      expect(termSpy).toHaveBeenCalledTimes(1)
+      expect(host.getWorkerHandleById(workerId)).toBeUndefined()
+      expect(host.getCrashCount('load-timeout')).toBe(1)
+      expect(host.getPendingRebuildTimer(workerId)).toBeDefined()
+      expect(crashes.length).toBe(1)
+      expect(crashes[0].error).toContain('loadPlugin timeout')
+      expect(crashes[0].pluginIds).toEqual(['load-timeout'])
+    } finally {
+      vi.useRealTimers()
+    }
+
+    // 幂等守卫：本 terminate 触发的 exit(code=1) 不二次 crash（等事件真实传播）
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(crashes.length).toBe(1)
+    expect(host.getCrashCount('load-timeout')).toBe(1)
+
+    await host.shutdown()
+  })
+
+  // ── U7/D5: loadTimeoutMs 覆盖参数（对齐 fork 版 PluginPoolOptions 先例）──
+  it('loadTimeoutMs option overrides the 10s default (fork parity)', async () => {
+    const rpc = new PluginRpcServer()
+    // 覆盖 2s：2s-1ms 未超时、2s 整触发——证明取的是覆盖值而非默认 10s
+    const host = new PluginHost(rpc, { workerBootstrapOverride: WORKER_MOCK, loadTimeoutMs: 2_000 })
+
+    const workerId = await host.assignWorker('load-timeout-opt', 'trusted')
+
+    vi.useFakeTimers()
+    try {
+      const pending = host.loadPlugin(workerId, 'load-timeout-opt', '/virtual/plugin', 'trusted')
+
+      vi.advanceTimersByTime(1_999)
+      expect(host.getCrashCount('load-timeout-opt')).toBe(0)
+      expect(host.getPendingRebuildTimer(workerId)).toBeUndefined()
+
+      vi.advanceTimersByTime(1)
+      expect(host.getCrashCount('load-timeout-opt')).toBe(1)
+      expect(host.getPendingRebuildTimer(workerId)).toBeDefined()
+      await expect(pending).rejects.toThrow(/after 2000ms/)
+    } finally {
+      vi.useRealTimers()
+    }
+
+    await host.shutdown()
   })
 })

@@ -14,6 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { PluginActivator } from '../src/services/plugin-service/plugin-activator.js'
 import type { PluginHost as ActivatorHost } from '../src/services/plugin-service/plugin-activator.js'
+import { PluginHotReloader, type HotReloadHooks } from '../src/services/plugin-service/plugin-hot-reload.js'
 import type { PluginDescriptor, PluginSource } from '../src/services/plugin-service/plugin-types.js'
 
 // ── Hoisted mock data (available when vi.mock factory runs) ──────
@@ -376,5 +377,76 @@ describe('Plugin Hot Reload (fs.watch + Debounce)', () => {
     await vi.advanceTimersByTimeAsync(300)
 
     expect(statusCapture.calls.length).toBe(1)
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// U7/D5: performReload deactivate race timer 句柄清理
+// 直接实例化 PluginHotReloader（不经 PluginActivator），隔离 hooks 内
+// 全部 timer，使 vi.getTimerCount() 成为「race timer 是否残留」的精确判据：
+// deactivate 胜出后 5s timer 应被 clearTimeout（修复前残留 1 个，到期空 reject）。
+// ══════════════════════════════════════════════════════════════════
+
+describe('PluginHotReloader deactivate race timer cleanup (U7/D5)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function makeHooks(overrides: Partial<HotReloadHooks> = {}): HotReloadHooks {
+    return {
+      deactivate: vi.fn((_pluginId: string) => Promise.resolve()),
+      activate: vi.fn((_pluginId: string) => Promise.resolve()),
+      forceTerminate: vi.fn((_pluginId: string) => Promise.resolve()),
+      disposeContext: vi.fn((_pluginId: string) => undefined),
+      setState: vi.fn((_pluginId: string, _state: 'UNLOADED') => undefined),
+      getState: vi.fn((_pluginId: string) => 'ACTIVE'),
+      ...overrides,
+    }
+  }
+
+  it('deactivate win clears the race timer (no 5s idle timer left)', async () => {
+    const reloader = new PluginHotReloader()
+    const hooks = makeHooks()
+    const onStatusChange = vi.fn()
+
+    expect(vi.getTimerCount()).toBe(0)
+
+    // deactivate 立即完成（胜出）
+    await reloader.performReload('p-win', hooks, onStatusChange)
+
+    // 修复断言：胜出路径 clearTimeout，无残留 5s race timer（修复前此处为 1）
+    expect(vi.getTimerCount()).toBe(0)
+    expect(hooks.forceTerminate).not.toHaveBeenCalled()
+    expect(onStatusChange).toHaveBeenCalledTimes(1)
+    expect(onStatusChange).toHaveBeenCalledWith({
+      pluginId: 'p-win',
+      oldStatus: 'active',
+      newStatus: 'active',
+    })
+
+    // 快进过原 timer 触发点：无空转触发、无新增 timer
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('deactivate timeout still force-terminates and cleans up (regression)', async () => {
+    const reloader = new PluginHotReloader()
+    // deactivate 永不 settle → 5s race timer 胜出走强杀清理（既有行为不变）
+    const hooks = makeHooks({
+      deactivate: vi.fn((_pluginId: string) => new Promise<void>(() => undefined)),
+    })
+    const onStatusChange = vi.fn()
+
+    const reloading = reloader.performReload('p-stuck', hooks, onStatusChange)
+    await vi.advanceTimersByTimeAsync(5_000)
+    await reloading
+
+    expect(hooks.forceTerminate).toHaveBeenCalledWith('p-stuck')
+    expect(hooks.disposeContext).toHaveBeenCalledWith('p-stuck')
+    expect(hooks.setState).toHaveBeenCalledWith('p-stuck', 'UNLOADED')
   })
 })
