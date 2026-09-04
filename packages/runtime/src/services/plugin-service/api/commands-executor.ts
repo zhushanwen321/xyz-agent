@@ -12,17 +12,11 @@ import { COMMAND_RPC_METHODS, commandCompositeKey } from './commands-api.js'
 // D4（timeout-plugin-service）：命令执行是任务级（用户点击触发的插件业务代码），
 // 执行超时取值链复用 D1 工具执行的 resolveToolTimeoutMs（声明优先 / opt-out /
 // 非法回落 DEFAULT_TOOL_EXECUTE_TIMEOUT_MS 30min / clamp），不另设命令专属常量。
-import { resolveToolTimeoutMs } from '../bridge-interop.js'
+// formatDurationMs / isDeclaredTimeoutActive 同源自 D1（impl-plan §5 假差异收敛：
+// busy 提示文案与 declared 判定统一走 bridge-interop 单一权威，本地复制已删）。
+import { formatDurationMs, isDeclaredTimeoutActive, resolveToolTimeoutMs } from '../bridge-interop.js'
 import { toErrorMessage } from '../../../utils/errors.js'
 import { PendingTracker } from '../../../utils/async/pending-tracker.js'
-
-/** 毫秒时长 → 诚实可读文案（与 bridge-interop.ts formatDurationMs 同款；该 helper
- * 未导出且 bridge-interop 属 U1 领地，跨文件收敛留待后续清理统一导出） */
-function formatDurationMs(ms: number): string {
-  if (ms % 60_000 === 0) return `${ms / 60_000}min`
-  if (ms % 1_000 === 0) return `${ms / 1_000}s`
-  return `${ms}ms`
-}
 
 /**
  * 命令执行开始时间（错误规格表「命令执行中重复触发」行的 busy 提示「已等待时长」
@@ -80,8 +74,7 @@ export async function executeCommand(
   // 注册入口已窄校验（INVALID_TIMEOUT_MS），脏值防御由 resolveToolTimeoutMs 全分支兜住
   const declared = registration.timeoutMs
   const timeoutMs = resolveToolTimeoutMs(declared)
-  const declaredActive =
-    typeof declared === 'number' && Number.isFinite(declared) && declared > 0
+  const declaredActive = isDeclaredTimeoutActive(declared)
 
   // 并发守卫：同 handlerId 二次执行会覆盖 pending 登记表条目（旧 promise 永挂），
   // 显式拒绝并发（用户双击同一命令的第二次触发立即失败优于静默挂死）。错误规格表

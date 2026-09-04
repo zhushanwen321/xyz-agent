@@ -52,11 +52,19 @@ const BYTES_PER_KB = 1024
 const UI_TEXT_MAX_KB = 8
 const UI_TEXT_MAX_BYTES = UI_TEXT_MAX_KB * BYTES_PER_KB
 
+/** 时长换算基数（命名常量惯例对齐 subagent-core dialog-queue / session-runner） */
+const MS_PER_SECOND = 1_000
+const SECONDS_PER_MINUTE = 60
+
+/** UI dialog 默认超时的裁决分钟数：30min（「等人工」，dialog-queue 先例同值） */
+const DEFAULT_UI_REQUEST_TIMEOUT_MINUTES = 30
+
 /**
  * UI dialog 请求默认超时（ms）＝ 30min（「等人工」裁决值，dialog-queue 先例同值；
  * timeout-plugin-service D2）。opts.timeout 非法/未传时回落此默认。
  */
-export const DEFAULT_UI_REQUEST_TIMEOUT_MS = 30 * 60 * 1000
+export const DEFAULT_UI_REQUEST_TIMEOUT_MS =
+  DEFAULT_UI_REQUEST_TIMEOUT_MINUTES * SECONDS_PER_MINUTE * MS_PER_SECOND
 
 /**
  * Node setTimeout delay 安全上限（2^31-1）：超域 delay 被 Node 塌缩为 1ms 立即触发

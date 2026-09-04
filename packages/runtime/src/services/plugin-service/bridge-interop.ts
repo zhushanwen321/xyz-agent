@@ -36,8 +36,9 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647
 /**
  * declared 是否为参与取值的合法正数声明（合法域判定的单一权威源）：
  * finite 且 > 0 才生效——NaN / ±Infinity / undefined / 运行时脏值均不算合法声明。
+ * 导出供 commands-executor（D4）复用，消除 declaredActive 内联复制的假差异。
  */
-function isDeclaredTimeoutActive(declared: number | undefined): declared is number {
+export function isDeclaredTimeoutActive(declared: number | undefined): declared is number {
   return typeof declared === 'number' && Number.isFinite(declared) && declared > 0
 }
 
@@ -61,10 +62,16 @@ export function resolveToolTimeoutMs(declared?: number): number {
   return MAX_TIMER_DELAY_MS
 }
 
-/** 毫秒时长 → 诚实可读文案（整分/整秒/毫秒，不四舍五入以免低报等待时长） */
-function formatDurationMs(ms: number): string {
-  if (ms % 60_000 === 0) return `${ms / 60_000}min`
-  if (ms % 1_000 === 0) return `${ms / 1_000}s`
+/** 时长文案换算基数（命名常量惯例对齐 subagent-core dialog-queue / session-runner） */
+const MS_PER_SECOND = 1_000
+const SECONDS_PER_MINUTE = 60
+const MS_PER_MINUTE = SECONDS_PER_MINUTE * MS_PER_SECOND
+
+/** 毫秒时长 → 诚实可读文案（整分/整秒/毫秒，不四舍五入以免低报等待时长）。
+ * 导出供 commands-executor（D4 busy 提示）复用，消除本地复制的假差异（输出格式 SSOT）。 */
+export function formatDurationMs(ms: number): string {
+  if (ms % MS_PER_MINUTE === 0) return `${ms / MS_PER_MINUTE}min`
+  if (ms % MS_PER_SECOND === 0) return `${ms / MS_PER_SECOND}s`
   return `${ms}ms`
 }
 
