@@ -87,11 +87,11 @@ graph TD
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
 | U1 | committed | 1（3 次看门狗截断续聊完成） | commit <本条>; subagent-core 3038 绿 + SW 931 绿（golden 11/11）+ typecheck/lint 过（主 agent 重跑） |
-| U2 | pending | 0 | — |
+| U2 | committed | 1（2 次看门狗截断续聊完成） | commit 77de9c02d; subagent-core 3060 绿（主 agent 复跑）+ typecheck/lint 过；⛔4/⛔2 结论入 §7 |
 | U3 | pending | 0 | — |
 | U4 | pending | 0 | — |
 | U5 | pending | 0 | — |
-| U6 | pending | 0 | — |
+| U6 | committed | 1（修复轮：max-lines 提取 + 接替 dev 会话 GC 后主 agent 验收） | commit 895f9da2a; session-reader 305 绿（主 agent 复跑）+ typecheck/lint 过 |
 | U7 | pending | 0 | — |
 | U8 | pending | 0 | — |
 
@@ -99,6 +99,11 @@ graph TD
 
 - 残留风险：E9 出口跨键残余重复窗（PS-17 同族，设计 §3.1.3 已披露，v1 接受）；⛔1-4 检查点若核实出设计外事实（如 zcode 终态旁路），停下上报，不自行扩 scope；偏差表 #5 存量测试环境敏感缺口（PI_SUBAGENT_*/RELAY_* 泄漏即红）。
 - ⛔3 已核实（U1）：排队 record 在 `store.register` 时即 `status:"running"`（register 先于 pool.acquire，池无状态概念）——U2 闭合判定用「非终态」口径，无需新状态。
+- ⛔4 已核实（U2）：zcode 引擎零 notify 旁路（engine/ 目录无 notify 命中，唯一出口 kickOffEngineRun 汇聚 notifyComplete）——U2 路由全覆盖。
+- ⛔2 已核实（U2）：ledger 同 notifyId 重复 record 幂等拒绝零副作用——U3 批 hash 幂等依赖成立。
+- 环境注意（U2 发现）：vitest 4.1.8 本包环境 `vi.waitFor` 失效（sanity 实证 callback falsy 直接 resolve）——后续单元集成测试用手写轮询。
+- U5 强制前置（U2 披露）：record-store 投影（recordToSubagent）现不含 collectMode，落盘 entry 暂无该字段（闭合判定不受影响，内存 record 已带）——U5 投影扩展必须补。
 - 变更历史：
   - 2026-02-11 初版（基于设计 v5 审查收敛稿）。
   - 2026-02-11 U1 执行期：领地修订（ExecutionRecord 接口本体在 types.ts:416，初版误判 execution-record.ts）；U1 committed（偏差 #1-5 登记，#3/#4 为 U2 强制接线项）。
+  - 2026-02-11 W2 流转：U2 committed（77de9c02d，偏差 #3/#4 接线完成）+ U6 committed（895f9da2a，含 max-lines 提取修复轮）；巡检机制（5m 调度）当轮发现接替 dev 会话假活（工作已完成但完成通知丢失），主 agent 直接验收闭环。
