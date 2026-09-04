@@ -325,7 +325,7 @@ ctx.tools.register({
 
 ### 6.1 D1：工具执行超时——默认 30min + 工具定义级声明覆盖 + 显式 opt-out（选定）
 
-- **采用**：三层取值结构，单一权威源在 bridge-interop 调用点：`有效超时 = entry.schema.timeoutMs（插件作者声明，合法正数） ?? DEFAULT_TOOL_EXECUTE_TIMEOUT_MS（30_000_000，新常量）`；`timeoutMs <= 0` 或 `Infinity` 视为显式 opt-out（不限时，直接不挂 PendingTracker 超时——invoke 侧需支持 `timeoutMs = 0` 表示不注册超时或传一个 2^31-1 clamp 值，实现取简单者）。超时后行为：isError 保留（工具级失败让 pi agent 自行决策重试——pi 的工具错误语义本就如此）+ 错误消息按 §5.2 诚实化（等了多久 / 默认还是声明值 / handler 可能仍在跑 / 如何调）。不 terminate 插件宿主（长任务 ≠ 插件坏；迟到回包 PendingTracker miss 丢弃即可）。
+- **采用**：三层取值结构，单一权威源在 bridge-interop 调用点：`有效超时 = entry.schema.timeoutMs（插件作者声明，合法正数） ?? DEFAULT_TOOL_EXECUTE_TIMEOUT_MS（1_800_000 = 30min，新常量；v2.1 勘误：初稿误写 30_000_000=500min，与本节量级依据「dialog-queue 同值」矛盾，实施期 U1 发现后裁决收敛）`；`timeoutMs <= 0` 或 `Infinity` 视为显式 opt-out（不限时，直接不挂 PendingTracker 超时——invoke 侧需支持 `timeoutMs = 0` 表示不注册超时或传一个 2^31-1 clamp 值，实现取简单者）。超时后行为：isError 保留（工具级失败让 pi agent 自行决策重试——pi 的工具错误语义本就如此）+ 错误消息按 §5.2 诚实化（等了多久 / 默认还是声明值 / handler 可能仍在跑 / 如何调）。不 terminate 插件宿主（长任务 ≠ 插件坏；迟到回包 PendingTracker miss 丢弃即可）。
 - **被否**：
   - **方案 a：纯声明制**（未声明维持 30s 短默认，声明了才放宽）——存量插件全部未声明，30s 误杀照旧；且把「系统防挂死兜底」的责任转嫁给插件作者（不写声明就被砍），激励倒挂。若用它，§5.1 的 90s 工具场景变成：作者忘了声明 → 30s 被 isError → 用户以为插件坏了。
   - **方案 c：默认不挂（不限时）纯 opt-in**——最贴规则 19 字面（「调用方未传就是不限时」），但被 dialog-queue LC-3 的同类论证击穿：插件 handler 死循环 → pi turn 永久占死（pi 侧 bridge 调用路径无超时无 abort，✅已核实 rpc-mode.js:47-77 / :177）→ 用户只 能重启 session。dialog 先例的原话：「『等用户无限久』改为默认有界是有意的行为变更」——防全局死锁的有界兜底是本仓已裁决的方向。若用它，§2 目标 4（挂死有兜底）被放弃。
@@ -513,6 +513,7 @@ ctx.tools.register({
 
 ## 附录：变更历史
 
+- v2.2（2026-09-04）：实施期勘误（dev-flow U1 发现，doc_errors 类）：§6.1 采用条款 `DEFAULT_TOOL_EXECUTE_TIMEOUT_MS` 字面 30_000_000（=500min）为初稿笔误，与本节量级依据「dialog-queue 同值」及全文叙述（§4.4/§5.2/P-12）矛盾，裁决收敛为 1_800_000（30min）。同步登记实施偏差：①opt-out 以 clamp 上界近似「不挂超时」（invoke 签名必传，dialog-queue 同款域内安全近似）；②迟到回包 miss 现状为静默安全 noop，错误规格表「debug 日志一条」待后续补点（归属 PendingTracker/plugin-rpc-server，超出 U1 领地）；③U3 生产装配接线授权扩展 plugin-rpc-setup.ts / plugin-service.ts 两文件（cancelUiRequest + meta 透传）。
 - v1（2026-09-04）：初稿。依据 timeout-audit-2026-09.md Doc 3 范围（P0-3 + P1 全部 + 附赠#5）与 rt-svc-plugin 模块普查报告撰写；全部 file:line 经代码实读核实（普查报告行号漂移已修正：ui-request-queue confirm 默认值 :96→:97、processNext :63→:118）；设计期新发现报告未覆盖的隐藏层——UI 链路 client 30s 与 queue 60s 双层竞速（§4.2 / P-1）。
 - v2（2026-09-04）：**第 1 轮对抗式审查修复**（审查人 = tech-design-review subagent 独立审查，2 MF / 5 SG 全修，原报告已被第 2 轮报告覆盖）。**MF#1**：D2 v1「queue 唯一裁决 + client 固定 60s 余量」被串行排队反例击穿（client timer 发起即挂含排队、queue timer dispatch 才挂不含——前置 30min 弹窗时传输层 ~30min+60s 先炸），重设计为「Worker 侧单一计时权威（传输计时即语义计时）+ cancel notification（复用既有无 id dispatch 通路）+ queue 防泄漏兜底（effective+60s，仅异常收尾）」，v1 方案连同击穿反例记入 D2 被否谱系；联动 §4.2 论断 / §4.4 总表 / §7 文件地图与错误规格表 / §9 新增 V4b 排队变体 / §10 U3+U4 合并。**MF#2**：D1 风险论证「pi agent 层仍可 abort turn」与实装不符（abort/timeout 是 opt-in，bridge 调用不传 opts）改写为正面承认 30min 不可中断 + 可接受性四点论证，§11 对应条目从「待验证」升级为「已核实事实 + 登记推进」。**SG**：bridge 代码片段按实装原文修正（含 Ready 守卫）；P-2 表述修正（opt-in 机制）；D3 补 30min ACTIVATING 窗口调度论证（并行激活 + 审批不占 Worker 槽）、重触发精确语义、dismiss 路径不存在（hide-close）与多插件并发审批单例覆盖限制登记；U3/U8 类型定义顺序矛盾消除（类型随 U3/U5 落地）；D1 传播措辞收紧（getSyncPayload 只塑形三字段，timeoutMs 不进 bridge:sync 负载）。新增 P-13 设计期探针（notification 通路既有）与 §11 cancel 幂等检查点。
 - v1.1（2026-09-04）：**第 2 轮对抗式审查修复**（基于 v2 状态的文档复审；审查人 = 主 agent 代行——原定审查 subagent 两轮均被环境杀死，写作/审查分离临时让渡；报告见 .review.md，2 MF/2 SG/2 INFO）：

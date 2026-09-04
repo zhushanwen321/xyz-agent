@@ -78,13 +78,13 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| U1 | pending | 0 | — |
-| U2 | pending | 0 | — |
-| U3 | pending | 0 | — |
-| U5 | pending | 0 | — |
-| U6 | pending | 0 | — |
-| U7 | pending | 0 | — |
-| U8 | pending | 0 | — |
+| U1 | committed | 2 | 15c772474；20 tests 绿，typecheck 零错误；常量裁决 30min（设计 v2.2 勘误联动）+ opt-out clamp 近似 + guard helper（U2 落地后可简化）均登记 |
+| U2 | committed | 1 | c61095d3a；20 用例绿 + 全量 4220 绿 + typecheck 零错误；plugin-sdk types.ts 生成物同步已追认（sync 脚本机械产物，SSOT 在领地内）；guard 简化建议转 U1 agent 执行 |
+| U3 | committed | 2 | 7ac323b5f；34 targeted + 4211 全量绿，typecheck 零错误；越界联动（permission-map SSOT 守卫）已追认登记；生产装配接线（plugin-rpc-setup + plugin-service.ts 1 行）授权扩展完成；SDK 类型面 opts 并入 U8（blockers 转移） |
+| U5 | committed | 1 | ac00daa7f；27 targeted + 4229 全量 + shared 226 绿，typecheck/eslint 零错误；§11 env 白名单检查点闭环（入站 XYZ_ 前缀已放行 + 出站不注入）；env 先例位置校正登记（subagent-core lifecycle-manager.ts:57-79） |
+| U6 | committed | 1 | 6b6ebe047；70 targeted + plugin 套件 579 + 全量绿（A1-A33 PASS），typecheck/eslint 零错误；commands-api.ts 越界已追认（命令类型实际所在地，声明链验收必需）；busy 提示（v1.1 S1）落地；formatDurationMs 本地复制与 warning 与 U1 基线同款（收敛建议登记） |
+| U7 | committed | 1 | a618c114f；plugin-host+plugin-hot-reload 23 tests 绿，全量 4182 绿，typecheck 零错误；P-10 实测入口 status=active 无需兜底（deviation 登记） |
+| U8 | committed | 1 | e90bd960c；renderer 19 + ui 22 targeted、ui 557 / renderer 3670 套件绿，runtime/ui/renderer typecheck 零错误；expired 广播 sid 反查表与 onGlobal 通道偏差登记；plugin-sdk/mock.ts 存量 tsc 错误 2 处为流水线前遗留（残留风险登记） |
 
 ## 7 残留风险与变更历史
 
