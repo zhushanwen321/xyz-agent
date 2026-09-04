@@ -490,8 +490,12 @@ export class SessionLifecycle implements ISessionRegistry {
       projectId: options?.projectId,
       spawnSource: options?.spawnSource,
       parentAgentSessionId: options?.parentAgentSessionId,
-      modelId: presetClientOptions.model,
-      thinkingLevel: typeof presetClientOptions.thinkingLevel === 'string' ? presetClientOptions.thinkingLevel : undefined,
+      // D1 写点③（一致性修复）：hydrate 值与 registerSession 播种同源——createMetaOverride
+      //（get_state 读回生效值）优先于请求值 presetClientOptions，消除「请求值覆写读回真值」
+      //（C-pi-13 写点写生效值；pattern 引擎静默换模时读回值才是真值）。
+      modelId: createMetaOverride?.modelId ?? presetClientOptions.model,
+      thinkingLevel: createMetaOverride?.thinkingLevel
+        ?? (typeof presetClientOptions.thinkingLevel === 'string' ? presetClientOptions.thinkingLevel : undefined),
     }, 'create')
     // 持久化 preset 绑定到 .preset.json sidecar（设计文档 §4）。
     // presetId 存在时写 sidecar，供 fork/restore 继承；sessionFilePath 不存在（pi 延迟写入窗口）
@@ -514,6 +518,17 @@ export class SessionLifecycle implements ISessionRegistry {
     if (options?.spawnSource && session.sessionFilePath) {
       // parentAgentSessionId 可选（#15）：spawnSource 单独成立即持久化，防异常路径下 badge 重启丢失
       this.sessionStore.persistAgentBinding(session.sessionFilePath, options.spawnSource, options.parentAgentSessionId)
+    }
+    // D1 写点③ create/landing：落盘生效值（读回真值优先）——从未显式切模型的 session
+    // 也在创建时获得 .model.json（V1 文件断言）。sessionFilePath 缺失（pi 延迟写入窗口）
+    // 时 persistModelBinding 内部 existsSync 守卫跳过，与 preset/project/agent 同模式。
+    if (session.sessionFilePath) {
+      persistModelBinding(
+        session.sessionFilePath,
+        createMetaOverride?.modelId ?? presetClientOptions.model ?? '',
+        createMetaOverride?.thinkingLevel
+          ?? (typeof presetClientOptions.thinkingLevel === 'string' ? presetClientOptions.thinkingLevel : ''),
+      )
     }
     // hidden session（公共 session）不记工作区历史——cwd 是数据目录，不应污染最近工作区列表。
     // homedir 过滤（含降级 homedir）由 WorkspaceService.record 统一负责（方案A，一处堵死全部路径），
@@ -856,10 +871,13 @@ export class SessionLifecycle implements ISessionRegistry {
       if (typeof stateObj?.thinkingLevel === 'string') {
         readThinkingLevel = stateObj.thinkingLevel
       }
-      restoreMetaOverride = {
-        modelId: readModelId ?? target.modelId ?? '',
-        thinkingLevel: readThinkingLevel ?? target.thinkingLevel ?? '',
-      }
+      const restoredModelId = readModelId ?? target.modelId ?? ''
+      const restoredThinkingLevel = readThinkingLevel ?? target.thinkingLevel ?? ''
+      restoreMetaOverride = { modelId: restoredModelId, thinkingLevel: restoredThinkingLevel }
+      // D1 写点⑤ / E6 自愈闭环：读回成功后用真值覆写 sidecar 过期值（restore 窗口外
+      // 切模产生的 .model.json 漂移在此收敛）。catch 分支不写——sidecar 原值保持作下次
+      // restore 的兜底源。persistModelBinding 自带 existsSync + 空值/写失败守卫。
+      persistModelBinding(target.filePath, restoredModelId, restoredThinkingLevel)
     } catch (e) {
       // E2: get_state 读回失败 → 每字段回落 sidecar 扫描值（target 来自 findScannedSession，
       // 含 .model.json 值），仍缺则 '' 占位。与读回成功路径同构：双无值也播种 ''/''，

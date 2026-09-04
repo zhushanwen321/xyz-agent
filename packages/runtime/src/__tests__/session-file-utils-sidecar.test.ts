@@ -13,7 +13,7 @@
  * M4：purge 清单含 .model.json。
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -29,6 +29,12 @@ import {
   _resetSessionMetaCacheForTest,
 } from '../infra/pi/session-file-utils.js'
 import { BINDING_FIELDS } from '../infra/pi/session-binding-fields.js'
+import type { SessionLifecycle } from '../services/session/session-lifecycle.js'
+import type { ILifecycleSessionOps, ISessionRegisterDeps } from '../services/session/session-internal.js'
+import type { IConfigStore } from '../services/ports/config.js'
+import type { ISessionStore } from '../services/ports/session.js'
+import type { IProcessManager } from '../services/ports/pi-engine.js'
+import type { WorkspaceService } from '../services/workspace/workspace-service.js'
 
 function makeTmpDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix))
@@ -378,32 +384,44 @@ describe('readModelBinding', () => {
 })
 
 describe('M4: purge 清单含 .model.json', () => {
-  it('purgeSessionSidecars 清理 .model.json（通过 delete 路径间接验证）', () => {
+  it('delete（scanned 分支）驱动 purgeSessionSidecars，.model.json 与其他 sidecar 后缀一并清理', async () => {
     const dir = makeTmpDir('model-purge-')
     try {
       const fp = join(dir, 'test.jsonl')
       writeFileSync(fp, '{"type":"session","id":"s1","cwd":"/tmp","timestamp":"2026-01-01"}\n')
-      // 创建所有 sidecar
-      writeFileSync(fp + '.meta.json', '{}')
-      writeFileSync(fp + '.preset.json', '{}')
-      writeFileSync(fp + '.project.json', '{}')
-      writeFileSync(fp + '.handoff.json', '{}')
-      writeFileSync(fp + '.agent.json', '{}')
-      writeFileSync(fp + '.model.json', '{}')
-
-      // 验证所有 sidecar 存在
-      expect(existsSync(fp + '.meta.json')).toBe(true)
-      expect(existsSync(fp + '.model.json')).toBe(true)
-
-      // 删除主文件（触发 sidecar 清理由 delete 路径完成，此处直接模拟 purge 逻辑）
-      const { unlinkSync } = require('node:fs')
-      unlinkSync(fp)
       const suffixes = ['.meta.json', '.preset.json', '.project.json', '.handoff.json', '.agent.json', '.model.json']
       for (const suffix of suffixes) {
-        try { unlinkSync(fp + suffix) } catch { /* ignore */ }
+        writeFileSync(fp + suffix, '{}')
+        expect(existsSync(fp + suffix)).toBe(true)
       }
 
-      // 验证所有 sidecar 被清理
+      // 真实驱动 SessionLifecycle.delete（scanned 分支 → purgeSessionSidecars）：
+      // trash 用 mock（主文件留原地，只验 sidecar unlink），其余 store 方法 mock。
+      const { SessionLifecycle: LC } = await import('../services/session/session-lifecycle.js') as {
+        SessionLifecycle: typeof SessionLifecycle
+      }
+      const svc = {
+        findScannedSession: vi.fn(() => ({
+          id: 's1', filePath: fp, cwd: dir, timestamp: new Date().toISOString(),
+          name: 'test', outcome: null, lastModified: Date.now(), size: 100,
+        })),
+      } as unknown as ILifecycleSessionOps
+      const sessionStore = {
+        trash: vi.fn(async () => {}),
+        invalidateMetaCache: vi.fn(),
+        invalidateScanCache: vi.fn(),
+        refreshAll: vi.fn(),
+      } as unknown as ISessionStore
+      const lifecycle = new LC(
+        svc, {} as unknown as IProcessManager, {} as unknown as IConfigStore,
+        sessionStore, {} as unknown as WorkspaceService,
+        { adapterFactory: vi.fn(), getMessageBus: vi.fn(() => null), broadcastGlobal: vi.fn(), notifySessionComplete: vi.fn() } as unknown as ISessionRegisterDeps,
+      )
+      await lifecycle.delete('s1')
+
+      // trash 被 mock → 主文件仍在原地；全部 sidecar 必须被真实 unlink。
+      // 若 purgeSessionSidecars 清单漏掉 .model.json，此处 existsSync 断言变红。
+      expect(existsSync(fp)).toBe(true)
       for (const suffix of suffixes) {
         expect(existsSync(fp + suffix)).toBe(false)
       }

@@ -16,7 +16,7 @@
  * 运行：cd packages/runtime && pnpm vitest run src/__tests__/session-lifecycle-restore-seeding.test.ts
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { SessionSummary } from '@xyz-agent/shared'
@@ -117,6 +117,7 @@ describe('U2 restoreSession 播种（D2 设计）', () => {
   let SessionLifecycle: typeof import('../services/session/session-lifecycle.js').SessionLifecycle
   let assertPiSessionFileMock: ReturnType<typeof vi.fn>
   let normalizeSessionFileInPlaceMock: ReturnType<typeof vi.fn>
+  let persistModelBindingMock: ReturnType<typeof vi.fn>
   let tmpDir: string
 
   beforeEach(async () => {
@@ -128,12 +129,15 @@ describe('U2 restoreSession 播种（D2 设计）', () => {
     vi.doMock('../infra/pi/session-attach-assert.js', () => ({
       assertPiSessionFile: assertPiSessionFileMock,
     }))
-    // mock normalizeSessionFileInPlace（归一化 noop）
+    // mock normalizeSessionFileInPlace（归一化 noop）；persistModelBinding 记录调用
+    // 并委托真实实现（写点③⑤ 测试需要真实 sidecar 落盘断言，tmpDir 内自建自删）
     normalizeSessionFileInPlaceMock = vi.fn()
+    const actual = await vi.importActual<typeof import('../infra/pi/session-file-utils.js')>('../infra/pi/session-file-utils.js')
+    persistModelBindingMock = vi.fn(actual.persistModelBinding)
     vi.doMock('../infra/pi/session-file-utils.js', () => ({
       normalizeSessionFileInPlace: normalizeSessionFileInPlaceMock,
       cleanupMigrateResidues: vi.fn(),
-      persistModelBinding: vi.fn(),
+      persistModelBinding: persistModelBindingMock,
     }))
     // mock session-binding-fields（hydrateBindingMeta 实际行为——restore='none' 时 skip modelId/thinkingLevel）
     vi.doMock('../infra/pi/session-binding-fields.js', () => ({
@@ -269,14 +273,11 @@ describe('U2 restoreSession 播种（D2 设计）', () => {
 
     const session = lifecycle.get('test-session-id')
     expect(session).toBeDefined()
-    // 关键：不回落全局默认（configStore.getDefaultModel() 返回 { provider: 'default-provider', modelId: 'default-model' }）
-    // 双失败时 metaOverride = undefined → registerSession 用 modelOverride(undefined) → fallbackModelId（全局默认）
-    // 但这是 registerSession 的 modelOverride fallback，不是 D2 兜底链——
-    // D2 兜底链仅在 get_state 失败 + sidecar 有值时填充 metaOverride。
-    // 双失败时 metaOverride undefined → registerSession 走 modelOverride/全局默认——
-    // 设计文档 §3.5 E2 兜底链说明这是可接受行为。
-    // 验证 session 存在且有 modelId（不抛错）
-    expect(session!.id).toBe('test-session-id')
+    // r3 校准：metaOverride 恒提供（含双失败路径），双无值字段播种 '' 占位——
+    // configStore 的 default-model（'default-provider/default-model'）恰好不该出现：
+    // 全局默认播种 = restore 窗口显示他 session 的假值（D2 被否谱系，违 G4「不知道显示占位」）
+    expect(session!.modelId).toBe('')
+    expect(session!.thinkingLevel).toBe('')
   })
 
   it('场景 4: hydrateBindingMeta restore=none 不覆写播种值（D1 生效验证）', async () => {
@@ -373,5 +374,49 @@ describe('U2 restoreSession 播种（D2 设计）', () => {
 
     // fallback to global default
     expect(session.modelId).toBe('default-p/default-m')
+  })
+
+  it('D1 写点③: create 后 .model.json 存在且含生效值（get_state 读回真值优先于请求值）', async () => {
+    const sessionFilePath = join(tmpDir, 'created-id.jsonl')
+    writeFileSync(sessionFilePath, '{"type":"session","cwd":"/test"}\n')
+
+    const pm = makePm({
+      sessionId: 'created-id',
+      sessionFile: sessionFilePath,
+      model: { id: 'real-model', provider: 'real-p' },
+      thinkingLevel: 'max',
+    })
+    const lifecycle = new SessionLifecycle(
+      makeSvc(), pm, makeConfigStore(), makeSessionStore(),
+      { record: vi.fn() } as unknown as WorkspaceService, makeRegisterDeps(),
+    )
+    // 请求值（Landing Chip override）与 pi 读回生效值不同——pattern 引擎静默换模场景，
+    // 真值必须胜出（C-pi-13 写点写生效值）
+    await lifecycle.create(tmpDir, 'test', { modelOverride: 'requested/model', thinkingOverride: 'low' })
+
+    const sidecarPath = sessionFilePath + '.model.json'
+    expect(existsSync(sidecarPath)).toBe(true)
+    const data = JSON.parse(readFileSync(sidecarPath, 'utf-8'))
+    expect(data.modelId).toBe('real-p/real-model')
+    expect(data.thinkingLevel).toBe('max')
+  })
+
+  it('D1 写点⑤/E6 自愈: restore 读回成功后过期 .model.json 被覆写为读回值', async () => {
+    const sessionFilePath = join(tmpDir, 'test-session-id.jsonl')
+    const sidecarPath = sessionFilePath + '.model.json'
+    // 预置过期 sidecar（restore 窗口外切模产生的漂移值）
+    writeFileSync(sidecarPath, JSON.stringify({ modelId: 'stale/model', thinkingLevel: 'stale-level', version: 1 }))
+
+    await runRestore({
+      sessionId: 'test-session-id',
+      sessionFile: sessionFilePath,
+      model: { id: 'fresh', provider: 'fp' },
+      thinkingLevel: 'high',
+    })
+
+    expect(existsSync(sidecarPath)).toBe(true)
+    const data = JSON.parse(readFileSync(sidecarPath, 'utf-8'))
+    expect(data.modelId).toBe('fp/fresh')
+    expect(data.thinkingLevel).toBe('high')
   })
 })
