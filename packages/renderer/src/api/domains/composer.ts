@@ -30,6 +30,20 @@ export async function getFileCandidates(sessionId: string): Promise<FileNode[]> 
 }
 
 /**
+ * 拉 `$` 文件候选（landing 态 composer 专用：cwd 通道，无 session）。
+ * landing 态尚无 session，无法走 file.search 的 session 键控路，改按用户当前选定目录
+ * 全量递归搜索（与 file.search 同约束：ignore 过滤 + 深度上限 + 结果数上限）。
+ * 相对路径语义与 session 路一致：FileNode.path 相对 cwd 无前导斜杠，
+ * 首条消息发送建 session（cwd 即该目录）后 chip 相对路径始终可解析。
+ * @param cwd 当前选定目录（landing 态 pendingCwd）
+ * @returns FileNode[]（扁平，path 相对 cwd 无前导斜杠）
+ */
+export async function getFileCandidatesByCwd(cwd: string): Promise<FileNode[]> {
+  const reply = await command('file.search.cwd', { cwd })
+  return reply.files
+}
+
+/**
  * `@` 提及候选（已废弃）。技能候选由 slash 命令实现、符号候选无 LSP 能力，
  * 故 real 模式返回空数组。保留签名避免 CommandPopover 调用点改动。
  */
