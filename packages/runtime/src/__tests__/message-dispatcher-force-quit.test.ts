@@ -16,7 +16,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { MessageDispatcher } from '../services/session/message-dispatcher.js'
 import { RpcTimeoutError } from '../utils/errors.js'
-import type { ISessionServiceInternal } from '../services/session/session-internal.js'
+import type { IDispatcherSessionOps } from '../services/session/session-internal.js'
 import type { IManagedSessionView } from '../services/session/types.js'
 import type { IMessageBus } from '../services/message-bus/message-bus.js'
 import type { IPiEngine, IProcessManager } from '../services/ports/pi-engine.js'
@@ -76,12 +76,16 @@ function makeMocks(opts: MockOpts = {}): ForceQuitMocks {
   const persistOutcomeFn = vi.fn(() => { callOrder.push('persist') })
   const removeEntryFn = vi.fn(() => { callOrder.push('remove') })
 
-  const svc = {
+  // S2 ISP 化：结构性满足 dispatcher 窄接口（6 方法 = 实际消费面），无强转。
+  // ensureActive/getSession 不在 forceQuit/abort 收敛路径上，空 mock 即可。
+  const svc: IDispatcherSessionOps = {
     getSessionByClient: vi.fn(() => makeMockSession()),
     detachSession: detachSessionFn,
     persistSessionOutcome: persistOutcomeFn,
     removeSessionEntry: removeEntryFn,
-  } as unknown as ISessionServiceInternal
+    ensureActive: vi.fn(),
+    getSession: vi.fn(),
+  }
 
   const pm = {
     getClient: vi.fn(() => (opts.active === false ? undefined : client)),

@@ -1,7 +1,7 @@
 <template>
   <!--
     UserBubble：用户气泡（展示态/编辑态 + skill/file/image badge + hover actions）。
-    从 Turn.vue 拆出。emit edit-state-change 通知父组件 pinEditing。
+    从 Turn.vue 拆出。emit edit-state-change 通知父组件（MessageStream.onEditStateChange 按 turnKey 身份持有钉扎状态）。
   -->
   <!-- user 区：编辑态切 textarea，展示态气泡 + hover actions -->
   <div class="group/user flex flex-col items-end gap-1">
@@ -118,13 +118,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowRight, Check, Copy, FileText, Pencil } from '@lucide/vue'
 // primitives 直接路径（不经 @xyz-agent/ui 顶层 barrel）：chat 组件被 barrel 再导出，
 // barrel 自引用会闭合一族循环依赖环（详见 BashOutputBlock.vue 同款注释）
 import { Button } from '../../primitives/button'
 import { Textarea } from '../../primitives/textarea'
+import { turnStableId } from '@xyz-agent/core/domain/chat'
 import type { MessageTurn } from '@xyz-agent/core/domain/chat'
 import type { Segment } from '@xyz-agent/shared'
 import { normalizeContent } from '@xyz-agent/shared'
@@ -146,7 +147,11 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  'edit-state-change': [{ editing: boolean }]
+  // D2：turnKey = turnStableId(turn)，编辑身份由事件源携带——父组件不再把数组索引
+  // 快照当钉扎状态（virtua keepMounted 越界崩溃根因），改为按稳定身份反查当前索引。
+  // 本组件只渲染有 user 的 turn，实际恒取 turn.user.id，但仍走 turnStableId 保持
+  // 与渲染层 renderKey 单一身份口径。
+  'edit-state-change': [{ editing: boolean; turnKey: string }]
 }>()
 
 const { t } = useI18n()
@@ -195,7 +200,19 @@ const isEditingThisUser = computed(
 )
 
 watch(isEditingThisUser, (editing) => {
-  emit('edit-state-change', { editing })
+  emit('edit-state-change', { editing, turnKey: turnStableId(props.turn) })
+})
+
+// D3 卸载清理（谁置位谁清理）：切 session / 数据换血等路径卸载本组件时，编辑态
+// 的解除只能在这里发——watch 随组件作用域失效不再触发，cancelEdit/submitEdit 两个
+// 显式动作也不会执行。缺此清理会让父组件钉扎状态残留，keepMounted 越界渲染崩溃
+// （编辑身份改为 turnKey 反查后此 emit 是反查失效的信号源）。
+// C2 实测（happy-dom + @vue/test-utils 2.4.11）：onUnmounted 内 emit 父监听器
+// 仍可达，wrapper.emitted 能收到该条记录——无需降级 onBeforeUnmount。
+onUnmounted(() => {
+  if (editingUserId.value !== null) {
+    emit('edit-state-change', { editing: false, turnKey: turnStableId(props.turn) })
+  }
 })
 
 function startEdit(): void {

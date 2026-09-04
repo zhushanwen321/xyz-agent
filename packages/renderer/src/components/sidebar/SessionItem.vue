@@ -67,6 +67,15 @@
             data-testid="session-agent-badge"
             class="shrink-0 rounded-sm bg-accent-soft px-1 py-0.5 font-mono text-[length:var(--text-3xs)] leading-none text-accent"
           >{{ t('sidebar.sessionItem.agentBadge') }}</span>
+          <!-- 导入 fresh 徽标（import-session u7）：刚导入的会话标记「导入」，数秒后
+               淡出移除（状态机在 useImportSession 模块级，Sidebar 写 / 此处读）。
+               形态与 agent badge 同源（accent 低饱和），fade 阶段走 opacity 过渡 -->
+          <span
+            v-if="freshImportState"
+            data-testid="session-imported-fresh"
+            class="shrink-0 rounded-sm bg-accent-soft px-1 py-0.5 text-[length:var(--text-3xs)] leading-none text-accent transition-opacity duration-200"
+            :class="freshImportState === 'fading' ? 'opacity-0' : ''"
+          >{{ t('importSession.freshBadge') }}</span>
         </div>
         <div
           class="mt-0.5 truncate font-mono text-[length:var(--text-3xs)] leading-[1.3] text-neutral-dim"
@@ -234,6 +243,7 @@ import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
 import { dirNameOf } from '@xyz-agent/ui'
 import { isUnread, isMarkedDone, toggleMarkedDone } from '@/composables/useSessionMarkers'
+import { isImportedFresh } from '@/composables/features/sidebar/useImportSession'
 
 /** 左侧状态 icon 种类（7px 单一 icon 范式）。 */
 type IconKind = 'spinning' | 'hollow' | 'hollow-dim' | 'waiting' | 'error' | 'done' | 'dead' | 'empty'
@@ -412,6 +422,10 @@ const timeLabel = computed(() => formatRelativeTime(props.session.lastActiveAt))
 // ── 未读 + 标记完成状态 ──
 const unread = computed(() => isUnread(props.session.id))
 const markedDone = computed(() => isMarkedDone(props.session.id))
+
+// ── 导入 fresh 徽标（import-session u7）：isImportedFresh 读模块级响应式集合，
+//    'visible' 实显 / 'fading' 淡出过渡 / null 不渲染 ──
+const freshImportState = computed(() => isImportedFresh(props.session.id))
 
 /** 无障碍 label：归档态把归档语义拼进 label，让屏幕阅读器读出「已归档: <名称>」。
  *  背景是归档态移除了可见的「已归档」文字（改用 opacity-60 降权），opacity 不影响 a11y，

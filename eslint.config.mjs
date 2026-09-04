@@ -47,6 +47,9 @@ export default [
       // type:module 的冲突由同目录 package.json {"type":"commonjs"} 解决；
       // no-require-imports 对其是误报（同 extensions/**/workflows/** 先例）
       '.agents/workflows/**',
+      // skill 内置 workflow 脚本（pr-lifecycle 入口 + lib.cjs + node 直测 run-tests.js）：
+      // CJS 是 workflow 加载器契约（同上），no-require-imports 对其是误报
+      '.agents/skills/**/workflows/**',
     ],
   },
   // [HISTORICAL] mock 门面文件是所有 domain 的聚合中心（session/chat/config/model/extension/plugin/
@@ -71,15 +74,16 @@ export default [
     },
   },
   // [HISTORICAL] runtime 核心服务聚合点：event-adapter（pi 事件→前端消息的唯一适配层）、
-  // extension-service（扩展生命周期 + 路径解析 + 热重载）、session-service（session 生命周期/历史/
-  // fork/agentcall 的 facade）。三者都是本子系统的唯一聚合中心，职责内聚但行数超 500。
-  // 拆分需先理清职责边界（如 session-service 的 fork vs history vs lifecycle 三块），
-  // 属独立重构任务。短期 max-lines override 避免阻塞，长期应拆分。
+  // extension-service（扩展生命周期 + 路径解析 + 热重载）。二者都是本子系统的唯一聚合
+  // 中心，职责内聚但行数超 500，拆分属独立重构任务（event-adapter 归 C2 候选收尾）。
+  // 短期 max-lines override 避免阻塞，长期应拆分。
+  // [HISTORICAL] session-service 曾在本清单（session 生命周期/历史/fork/agentcall 的
+  // facade），2026-09 session-service-deepening 六域迁出后移除（S6/D5：行数守卫恢复，
+  // 设计 docs/design/session-service-deepening.md）。
   {
     files: [
       'packages/runtime/src/infra/pi/event-adapter.ts',
       'packages/runtime/src/services/extension-service.ts',
-      'packages/runtime/src/services/session/session-service.ts',
     ],
     rules: {
       'max-lines': 'off',

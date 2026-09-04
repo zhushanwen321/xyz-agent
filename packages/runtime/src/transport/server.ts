@@ -54,6 +54,7 @@ import type { WorkspaceService } from '../services/workspace/workspace-service.j
 import type { ProjectStore } from '../services/project/project-store.js'
 import type { IWorktreeService } from '../services/ports/worktree-service.js'
 import type { HandoffService } from '../services/handoff-service.js'
+import type { ImportService } from '../services/session/import-service.js'
 import type { ITerminalService } from '../services/ports/terminal-service.js'
 import type { QuotaService } from '../services/quota-service.js'
 import { UsageStatsService } from '../services/usage/usage-stats-service.js'
@@ -80,6 +81,8 @@ export interface RuntimeServerOptionalServices {
   auth?: IAuthService
   project?: ProjectStore
   delivery?: SessionDeliveryRegistry
+  /** 导入 pi 会话服务（import-session D5/U2）：session.importCandidates / session.import 路由依赖。可选：未注入时该 case 报 unsupported。 */
+  importService?: ImportService
 }
 
 export class RuntimeServer implements IMessageBroker {
@@ -98,6 +101,8 @@ export class RuntimeServer implements IMessageBroker {
   private handoffService?: HandoffService
   /** W4：skillRegistry（可选，landing 全局/项目 skill 缓存源） */
   private skillRegistry?: SkillRegistry
+  /** 导入 pi 会话服务（import-session U2）：可选，setServices 注入后经 sessionHandler ctx 触达。 */
+  private importService?: ImportService
   /**
    * MessageBus 单例（wave:runtime-wiring）：注入到 SessionMessageHandler ctx，
    * 供 session.subscribe/unsubscribe RPC 注册/取消订阅。ws 断开时 onDisconnect 回调调
@@ -160,7 +165,7 @@ export class RuntimeServer implements IMessageBroker {
   }
 
   setServices(session: ISessionService, config: IConfigService, model: IModelService, optional: RuntimeServerOptionalServices = {}): void {
-    const { extension, plugin, git, file, workspace, appInfo, skillRegistry, worktree, terminal, quota, handoff, preset, auth, project, delivery } = optional
+    const { extension, plugin, git, file, workspace, appInfo, skillRegistry, worktree, terminal, quota, handoff, preset, auth, project, delivery, importService } = optional
     this.gitService = git
     this.fileService = file
     this.handoffService = handoff
@@ -179,6 +184,7 @@ export class RuntimeServer implements IMessageBroker {
     this.configService = config
     this.modelService = model
     this.skillRegistry = skillRegistry
+    this.importService = importService
     if (extension) this.extensionService = extension
     if (plugin) this.pluginService = plugin
     //（wave:perf-w09 接口收敛）plugin.setMessageBus 的 wire 已归位组合根（index.ts，
@@ -235,6 +241,8 @@ export class RuntimeServer implements IMessageBroker {
       ...messaging,
       sessionService: this.sessionService,
       handoffService: this.handoffService,
+      // 导入 pi 会话（import-session D5/U2）：session.importCandidates / session.import 路由依赖。
+      importService: this.importService,
       // wave:runtime-wiring：注入 MessageBus 供 session.subscribe/unsubscribe RPC 用。
       messageBus: this.messageBus,
       nextPushId: () => this.broker.nextPushId(),

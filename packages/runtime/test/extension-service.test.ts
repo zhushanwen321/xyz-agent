@@ -893,13 +893,19 @@ describe('ExtensionService', () => {
     })
 
     it('rejects non-directory paths under home', async () => {
-      const filePath = join(homedir(), 'xyz-agent-test-file-' + Date.now())
-      writeFileSync(filePath, 'test', 'utf-8')
+      // fs-guard：家目录在白名单外不可写。HOME 临时指向 tmp——installLocalDirectory 的
+      // home 判定经 homedir() 动态读 $HOME，「home 下非目录路径 → 拒」语义原样保留。
+      const realHome = process.env.HOME
+      const fakeHome = mkdtempSync(join(tmpdir(), 'extsvc-home-'))
+      process.env.HOME = fakeHome
       try {
+        const filePath = join(fakeHome, 'xyz-agent-test-file-' + Date.now())
+        writeFileSync(filePath, 'test', 'utf-8')
         await expect(service.installLocalDirectory(filePath))
           .rejects.toThrow('not a directory')
       } finally {
-        try { rmSync(filePath, { force: true }) } catch { /* ignore */ }
+        process.env.HOME = realHome
+        rmSync(fakeHome, { recursive: true, force: true })
       }
     })
   })

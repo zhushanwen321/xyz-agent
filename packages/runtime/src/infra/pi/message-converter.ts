@@ -7,10 +7,10 @@
  * 本文件保留 wire 层职责：RPC reply / JSONL 读到的原始形态 → pi entry 列表（liftHistoryToEntries）
  * → 喂 core reducer → Message[]。
  *
- * 相对路径 import core 说明：runtime 包依赖图不含 @xyz-agent/core（core 依赖 vue/pinia，
- * 加包级依赖会把 vue 拉进 runtime bundle）；apply-entry.ts 是自包含纯函数模块（只依赖
- * @xyz-agent/shared，tsup 已随 noExternal 打包 shared），相对路径引用使派生规则单点化。
- * W21/W22 若把 reducer 输入上收到 protocol 层，可重新评估包边界（如 shared 收敛）。
+ * core 依赖现状（r1-S12 更新）：runtime 已声明 @xyz-agent/core（workspace:*，tsup
+ * noExternal 已含该包；子路径 import 先例见 trace-sync.ts），本文件保留相对路径 import
+ * 系历史形态——apply-entry.ts 是自包含纯函数模块（只依赖 @xyz-agent/shared），相对引用
+ * 使派生规则单点化；新增 core 引用建议走包名子路径。
  *
  * [W21] 迁移期参照实现（convertPiHistoryLegacy 家族）已删除——等价性防线升级为
  * live≡reload store 级同构（src/__tests__/equivalence/live-reload.test.ts，真实 pi fixture

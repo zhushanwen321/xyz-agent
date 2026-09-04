@@ -34,6 +34,7 @@ vi.mock('../src/infra/system/trash.js', () => ({ trash: vi.fn() }))
 vi.mock('../src/infra/pi/message-converter.js', () => ({ convertPiHistory: vi.fn((r) => r) }))
 
 import { SessionService } from '../src/services/session/session-service.js'
+import type { SessionRecords } from '../src/services/session/session-records.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { PiSessionStore } from '../src/infra/pi/session-store.js'
 
@@ -71,7 +72,10 @@ describe('SessionService.getAgentCallHistory', () => {
     const fakeMessages: Message[] = [
       { id: 'm1', role: 'user', content: 'hello', status: 'complete', timestamp: 1689222883000 },
     ]
-    const spy = vi.spyOn(service, 'getSubagentHistory').mockResolvedValue(fakeMessages)
+    // S6 迁移：getSubagentHistory 实现落位 session-records，观察点随迁到 records 实例
+    //（Facade.getAgentCallHistory 一行委托 → records.getAgentCallHistory → records.getSubagentHistory）
+    const { records } = service as unknown as { records: SessionRecords }
+    const spy = vi.spyOn(records, 'getSubagentHistory').mockResolvedValue(fakeMessages)
 
     const result = await service.getAgentCallHistory('main-sess-001', 'sa-agentcall-001')
 
@@ -81,7 +85,8 @@ describe('SessionService.getAgentCallHistory', () => {
 
   it('getSubagentHistory 返回空数组时透传（找不到 record 不 throw，前端显空对话流非错误态）', async () => {
     const service = createService()
-    vi.spyOn(service, 'getSubagentHistory').mockResolvedValue([])
+    const { records } = service as unknown as { records: SessionRecords }
+    vi.spyOn(records, 'getSubagentHistory').mockResolvedValue([])
 
     const result = await service.getAgentCallHistory('main-sess', 'sa-missing')
 

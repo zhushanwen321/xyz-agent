@@ -84,6 +84,12 @@ export * from './file-tree'
 export type { RecentWorkspaceRecord } from './workspace'
 export type { Project, ProjectStoreState } from './project'
 export type { SubagentRecord, SubagentStatus, ClosedDisplayStatus } from './subagent'
+// 导入 pi 会话 RPC 契约（设计 docs/design/import-session.md §3.3 D5，runtime/renderer 两端共同 import）
+export type {
+  ImportWarning, ImportErrorCode,
+  ImportCandidatesRequest, ImportCandidatesReply, ImportCandidate, ImportCandidateDir,
+  ImportRequest, ImportReply,
+} from './import-session'
 // 虚拟 session ID 工厂（subagent 三段式 / agent call 两段式）——跨层协议级 key 约定 SSOT
 export {
   SUBAGENT_PREFIX,

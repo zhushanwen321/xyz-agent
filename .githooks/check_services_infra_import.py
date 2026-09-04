@@ -41,6 +41,10 @@ ALLOWED_MODULES = {
     "file-change-reconciler",
     # sidecar-binding-sync 注册表 SSOT（2026-08-26）：纯声明+纯函数，同 session-file-utils 族随 R3 收编
     "session-binding-fields",
+    # 外部会话扫描域（import-session 2026-09-02）：scanExternalSessions + 缓存 + 批常量，
+    # 纯函数（fs/promises 全注入路径参数，无模块级服务状态副作用），自 session-file-utils 抽出
+    # （Gate A lint max-lines 拆分），同族受控例外随 R3 收编
+    "session-file-external-scan",
     # spawn-env 出站契约构建器（2026-08-27）：纯函数（env 全 DI 不触 process.env），
     # terminal-service / plugin-host-process 消费 buildOutboundChildEnv 组装子进程 env
     # （env-propagation-boundary 设计 C-proc-09），同族随 R3 收编

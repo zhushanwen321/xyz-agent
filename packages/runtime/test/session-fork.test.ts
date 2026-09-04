@@ -7,14 +7,15 @@
  * - session header 重建（新 id/timestamp/parentSession 指回源）
  * - 兄弟分支丢弃（不在路径上的 entry 不写入）
  * - 边界：源文件不存在 / 无 session header / forkEntryId 找不到
+ * - resolveEntryIdByTimestamp（S6 迁入）：timestamp 容差命中 / 精确优先 / 无匹配 fallback / 报错路径
  *
  * 运行：pnpm --filter @xyz-agent/runtime run test -- test/session-fork.test.ts
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
-import { createForkedSessionFile } from '../src/services/session/session-fork.js'
+import { createForkedSessionFile, resolveEntryIdByTimestamp } from '../src/services/session/session-fork.js'
 import { parseJsonl } from '../src/utils/jsonl.js'
 
 /** 读 fork 后的文件，返回解析后的 entry 数组（文件级共享，多 describe 复用） */
@@ -285,5 +286,110 @@ describe('createForkedSessionFile · 多级 fork parentSession 指向直接父�
     // 关键断言（W3）：C.parentSession = B.path（直接父级），不是 A.path（祖父）
     expect(cHeader.parentSession).toBe(bFile)
     expect(cHeader.parentSession).not.toBe(aFile)
+  })
+})
+
+
+// ── resolveEntryIdByTimestamp（S6 迁入 fork 域；纯函数直测，tmp JSONL 真跑）──
+
+describe('resolveEntryIdByTimestamp', () => {
+  /** 写多行 message entry 的 JSONL，返回文件路径。 */
+  async function writeMessages(dir: string, msgs: Array<{ id: string; ts: number; role: string }>): Promise<string> {
+    const filePath = join(dir, `fork-resolve-${randomish()}.jsonl`)
+    const lines = [
+      JSON.stringify({ type: 'session', version: 3, id: 'root-1', timestamp: '2026-08-19T00:00:00Z', cwd: dir }),
+      ...msgs.map((m) => JSON.stringify({
+        type: 'message',
+        id: m.id,
+        parentId: 'root-1',
+        timestamp: new Date(m.ts).toISOString(),
+        message: { role: m.role, content: [], timestamp: new Date(m.ts).toISOString() },
+      })),
+    ]
+    await writeFile(filePath, lines.join('\n') + '\n', 'utf-8')
+    return filePath
+  }
+
+  let seq = 0
+  function randomish(): string {
+    seq += 1
+    return `f${seq}`
+  }
+
+  let dir: string
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'fork-resolve-test-'))
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  const T0 = 1700000000000
+
+  it('timestamp 容差命中：秒级精度历史 session（±1000ms 内）匹配成功', async () => {
+    const filePath = await writeMessages(dir, [
+      { id: 'e1', ts: T0, role: 'user' },
+      { id: 'e2', ts: T0 + 500, role: 'assistant' },
+    ])
+    // 前端 timestamp 与 entry 差 800ms（秒级精度典型偏移），1000ms 容差内命中 e2
+    await expect(resolveEntryIdByTimestamp(filePath, T0 + 1300, 'assistant')).resolves.toBe('e2')
+  })
+
+  it('精确匹配优先：完全相等时命中该 entry（容差不引入歧义）', async () => {
+    const filePath = await writeMessages(dir, [
+      { id: 'e1', ts: T0, role: 'user' },
+      { id: 'e2', ts: T0, role: 'assistant' },
+    ])
+    await expect(resolveEntryIdByTimestamp(filePath, T0, 'user')).resolves.toBe('e1')
+  })
+
+  it('role 限定消歧：同 timestamp 不同 role 时只匹配指定 role', async () => {
+    const filePath = await writeMessages(dir, [
+      { id: 'e1', ts: T0, role: 'user' },
+      { id: 'e2', ts: T0, role: 'assistant' },
+    ])
+    await expect(resolveEntryIdByTimestamp(filePath, T0, 'assistant')).resolves.toBe('e2')
+  })
+
+  it('无匹配 fallback：warn 后取最后一条 message entry（不 throw）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const filePath = await writeMessages(dir, [
+        { id: 'e1', ts: T0, role: 'user' },
+        { id: 'e2', ts: T0 + 100, role: 'assistant' },
+      ])
+      // 距离全部 entry 超出容差 → fallback 最后一条
+      await expect(resolveEntryIdByTimestamp(filePath, T0 + 60000)).resolves.toBe('e2')
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('falling back to last entry'))
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('容差内多条同 role：取 |diff| 最小者而非首个命中（r1-S3，fork 点不错位）', async () => {
+    const filePath = await writeMessages(dir, [
+      { id: 'e1', ts: T0, role: 'user' },
+      { id: 'e2', ts: T0, role: 'assistant' },
+      { id: 'e3', ts: T0 + 800, role: 'assistant' },
+    ])
+    // 目标 timestamp 距 e3 仅 100ms、距 e2 900ms——两者均在 1000ms 容差内，
+    // 修复前取首个命中（e2）致 fork 点错位；应取 |diff| 最小的 e3
+    await expect(resolveEntryIdByTimestamp(filePath, T0 + 900, 'assistant')).resolves.toBe('e3')
+  })
+
+  it('报错路径：源文件不存在 → throw（带路径，ENOENT 分支）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const missing = join(dir, 'no-such.jsonl')
+      await expect(resolveEntryIdByTimestamp(missing, T0)).rejects.toThrow(`fork: source session file missing for resolve: ${missing}`)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('报错路径：无 message entry → throw', async () => {
+    const filePath = join(dir, 'empty.jsonl')
+    await writeFile(filePath, JSON.stringify({ type: 'session', version: 3, id: 'root-1', timestamp: '2026-08-19T00:00:00Z', cwd: dir }) + '\n', 'utf-8')
+    await expect(resolveEntryIdByTimestamp(filePath, T0)).rejects.toThrow('fork: source session has no message entries')
   })
 })

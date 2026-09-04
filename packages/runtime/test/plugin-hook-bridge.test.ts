@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createEventAdapter, type WsSender, type EventAdapterOptions } from './helpers/event-adapter-test-fixture.js'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 import type { PluginRegistry } from '../src/services/plugin-service/plugin-registry.js'
@@ -21,6 +24,11 @@ function piEvent(fields: PiTestEvent): PiTestEvent {
 }
 
 // ── EventAdapter onHookExecute ────────────────────────────────
+
+// 模块级测试 configDir：PluginService 的 configDir 缺省回退 process.cwd()（仅供单测的
+// 兜底），不注入会在包目录 mkdirSync plugins 目录——vitest fs-guard 白名单外被拦。
+const TEST_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'plugin-hook-bridge-cfg-'))
+
 
 describe('EventAdapter: onHookExecute callback', () => {
   let sent: ServerMessage[]
@@ -344,7 +352,7 @@ describe('PluginService: registerSendMessageHook', () => {
     const service = new PluginService(
       registry as PluginRegistry,
       broker as never,
-      { sessionService: sessionService as never },
+      { sessionService: sessionService as never, configDir: TEST_CONFIG_DIR },
     )
 
     await service.initialize()
@@ -361,7 +369,7 @@ describe('PluginService: registerSendMessageHook', () => {
     const service = new PluginService(
       registry as PluginRegistry,
       broker as never,
-      { sessionService: sessionService as never },
+      { sessionService: sessionService as never, configDir: TEST_CONFIG_DIR },
     )
 
     // Mock executeHooks to return blocked
@@ -401,7 +409,7 @@ describe('PluginService: registerSendMessageHook', () => {
     const service = new PluginService(
       registry as PluginRegistry,
       broker as never,
-      { sessionService: sessionService as never },
+      { sessionService: sessionService as never, configDir: TEST_CONFIG_DIR },
     )
 
     // Mock executeHooks to return not blocked
@@ -429,7 +437,7 @@ describe('PluginService: registerSendMessageHook', () => {
     const service = new PluginService(
       registry as PluginRegistry,
       broker as never,
-      { sessionService: sessionService as never },
+      { sessionService: sessionService as never, configDir: TEST_CONFIG_DIR },
     )
 
     vi.spyOn(service, 'executeHooks').mockResolvedValue({
@@ -457,7 +465,7 @@ describe('PluginService: registerSendMessageHook', () => {
     const service = new PluginService(
       registry as PluginRegistry,
       broker as never,
-      { sessionService: sessionService as never },
+      { sessionService: sessionService as never, configDir: TEST_CONFIG_DIR },
     )
 
     vi.spyOn(service, 'executeHooks').mockResolvedValue({
@@ -486,7 +494,8 @@ describe('PluginService: registerSendMessageHook', () => {
     const service = new PluginService(
       registry as PluginRegistry,
       broker as never,
-      // No sessionService
+      // No sessionService（configDir 注入 tmp，防包目录 mkdir plugins——fs-guard）
+      { configDir: TEST_CONFIG_DIR },
     )
 
     await service.initialize()
