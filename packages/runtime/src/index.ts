@@ -12,6 +12,7 @@ import { ModelService } from './services/model-service.js'
 import { BASE_PORT, MAX_PORT } from '@xyz-agent/shared'
 import { getDataDir } from '@xyz-agent/shared/paths'
 import { initLogger, closeLogger } from './infra/logger.js'
+import { isContainedStreamError } from './infra/system/uncaught-policy.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
 import { migrateToPiSubdir, getProviderConfig, upsertProvider, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
@@ -717,7 +718,16 @@ async function main(): Promise<void> {
   // shutdown（flush 日志与 session 数据），退出码 1 让 supervisor 感知异常退出。
   // 不尝试带伤继续服务：uncaught 后运行时一致性无法保证，可观测 + 有序退出是
   // 本防线的目标。
+  //
+  // 分级护栏（2026-09-04 整机崩溃事故）：已识别的连接/流级错误码（EPIPE 等，见
+  // uncaught-policy）只可能产自流操作且影响限于单连接，log-continue 不升级为整机
+  // shutdown——即便未来出现源头修复遗漏的写点，也不再拿全部 session 陪葬。其余
+  // 错误维持原语义（shutdown + exit 1）。
   process.on('uncaughtException', (err) => {
+    if (isContainedStreamError(err)) {
+      console.warn('[runtime] stream-level exception contained (no shutdown):', err)
+      return
+    }
     console.error('[runtime] *** UNCAUGHT EXCEPTION *** (attempting graceful shutdown):', err)
     void shutdown('uncaughtException', 1)
   })
