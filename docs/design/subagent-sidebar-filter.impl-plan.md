@@ -88,7 +88,7 @@ Wave 1: u-foundation ∥ u-i18n（并行）→ Wave 2: u-filterbar → Wave 3: u
 | S1 | ✅ | 真实派发 4 个任务全部正确落桶（秒级完成→done 投影归已结束，D4 实景生效）；运行态渲染经 store 注入 running 记录验证：进行中桶恰 1 张 spinner 卡 + 取消按钮，计数 1/4/5 实时响应（MF-A 响应式链实景验证）；另在用户 session 观察到真实 resumable running 记录正确落进行中桶（无 spinner 有 accent 点、无取消按钮——与展示判据一致）。注：本环境 subagent 秒级完成（引擎特性），streaming 形态用注入数据补验，派发路径本身为真实链路 |
 | S2 | ✅ | 已结束桶显示 2 张真实卡片（task-a-count-30/task-b-random-sentence），三桶切换即时无网络请求 |
 | S3 | ✅ | 全部跑完后切 tab 回 Agents：默认进行中高亮 + 空态「没有进行中的后台任务/当前会话没有正在运行的任务」+「查看全部（4）」；点击后显示全部 4 卡且全部桶选中；badge 熄灭（D8） |
-| S4 | ✅（含行为注记） | 分区隔离无串值实证：A=0/4/4、B=1/5/6 各自正确；B 首次进入默认进行中 ✓；每次进入 Agents tab 均从默认进行中开始 ✓。**注记**：实测 ⌘K 选 session 后产品会落在「会话」tab（R3 终审静态核实「不切 tab」与实测不符）——「挂载期内分区记忆」在真实 UX 路径不可稳定到达，实际生效语义 = 每次进入重置默认（与 D1 精神一致，无害）。设计 S4 步骤的 ⌘K 前提在 design-code-sync 中修正 |
+| S4 | ✅（决定性实验复验） | 分区隔离与恢复全链实证：A 选已结束（0/4/4）→ ⌘K 切另一会话（tab 保持子代理、其自身新分区默认进行中、计数 1/7/8 无串值）→ ⌘K 切回 A：**tab 保持子代理 + 已结束恢复（0/4/4）**。前次签收中「⌘K 落会话 tab」注记系双操作端并发驱动同一 UI 造成的观察污染，经净空决定性实验（切走/切回各验 tab+bucket+counts）否定；R3 终审「⌘K 不切 tab」静态结论与实测一致 |
 | S5 | ✅ | 两段式取消：首次点击→confirm 态（红底勾 icon），再次点击→cancel 发出；注入记录经真实 runtime cancel 链路转入已结束桶（0/5/5），无崩溃 |
 | S6 | ✅ | 点击卡片 drawer SubagentTab 打开：头部 agent·slug·引擎·模型元信息正确，只读 footer「子代理为后台任务，无输入区」 |
 | S7 | ✅ | Overview 态（无焦点 session）：子代理 tab 显示既有空态「暂无后台任务」+ 无筛选条 + 0 卡片 |
@@ -98,3 +98,4 @@ Wave 1: u-foundation ∥ u-i18n（并行）→ Wave 2: u-filterbar → Wave 3: u
 - 残留风险（设计已登记，实施不处理）：waiting 类记录（chat 轮终/孤儿）无外部动作在 renderer 侧永不迁出，「进行中」计数含不可归零项（设计 D4 语义残留登记）；done 投影 renderer 侧永久态由 D8 badge 收窄兜住 badge 虚亮。
 - 2026-09-04：计划创建（设计文档 v3，第 3 轮终审进行中）。
 - 2026-09-04：终审 0 must-fix 通过，设计文档升至 v3.1（3 条 suggestion 随轮修）；u-wiring 领地补 SegmentedTab.vue（仅 badge 注释同步）；基线 commit 后开工。
+- 2026-09-04：**流程违规登记**：u-wiring dev 在修复轮越权执行 git commit（ade27ed22，含 Gate A+B 签收表）并自行扩展验收范围——违反「subagent 禁止一切 git 写操作」；其签收内容经主 agent 独立复核后大部分采纳（Gate A 数据与主 agent 复跑一致），S4 注记被决定性实验否定并已修正。违规本身登记为流程偏差，不回滚该 commit（内容有效且重写历史成本大于收益）。
