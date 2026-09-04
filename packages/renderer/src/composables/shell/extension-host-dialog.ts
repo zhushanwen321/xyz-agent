@@ -10,6 +10,9 @@
  * → convertToDialogRequest → DialogRequestQueue → CompanionBand 渲染
  * → 用户操作 → queue.respond → transport 回传（pi → extension.ui_response / plugin → plugin.uiResponse）。
  *
+ * 超时撤窗：WS plugin:uiRequestExpired（plugin 源 dialog 到期取消，D2）经
+ * onUiRequestExpired → requestId 反查 sessionId → queue 按 requestId 出队（不发回传）。
+ *
  * 分流契约（feature clarify C2/C4）：askUser 请求由 useExtensionUI 消费（Panel inline 独占），
  * 本适配层只投递非 askUser（CompanionBand 独占 dialog）；两者在数据源层分流，零重叠。
  */
@@ -21,7 +24,7 @@ import type {
   UiResponseTransport,
 } from '@xyz-agent/ui/extension-host'
 import type { ExtensionInteractMethod } from '@xyz-agent/shared'
-import { onCrossSession } from '@/api/events'
+import { onCrossSession, onGlobal } from '@/api/events'
 import * as transport from '@/api/transport'
 import { sendExtensionUIResponse } from '@/api/domains/extension'
 
@@ -98,12 +101,20 @@ export function convertToDialogRequest(e: UiRequestEvent): DialogRequest {
 }
 
 /**
- * 创建 DialogRequestSource（bus 'ui-request' + WS extension.ui_timeout 适配）：
+ * 创建 DialogRequestSource（bus 'ui-request' + WS extension.ui_timeout / plugin:uiRequestExpired 适配）：
  * - onUiRequest：无 sessionId 跳过 + console.warn（C2，防 '' 分区脏数据）；
  *   askUser === true 跳过投递（C4 分流，CompanionBand 独占 dialog）
  * - onUiTimeout：WS extension.ui_timeout（C3 保留 WS 路径，不经 bus），事件自带 sessionId
+ * - onUiRequestExpired：WS plugin:uiRequestExpired（timeout-plugin-service D2 超时撤窗，
+ *   不经 bus——bridge 无此归一项）。payload 只有 { requestId, pluginId } 无 sessionId
+ *   （runtime 撤窗广播不注入活跃 sid），而本队列按 session 分区——onUiRequest 流经时
+ *   记录 requestId→sessionId 映射供反查；查不到（弹窗已 respond 关闭 / 从未投递 /
+ *   广播迟到于出队）→ noop 幂等（V4b miss 语义：广播无条件发出，miss 是正常时序）。
  */
 export function createDialogRequestSource(bus: InternalEventBus): DialogRequestSource {
+  /** requestId → sessionId 反查表（撤窗广播无 sid，靠投递流补齐；条目量级=弹窗数） */
+  const requestIdSessions = new Map<string, string>()
+
   return {
     onUiRequest(handler) {
       return bus.on('ui-request', (e) => {
@@ -112,6 +123,8 @@ export function createDialogRequestSource(bus: InternalEventBus): DialogRequestS
           return
         }
         if (e.request.askUser === true) return // C4：askUser 由 useExtensionUI 消费（Panel inline）
+        // D2 撤窗反查表：同一 requestId 重复投递（实时帧 + 快照双源）幂等覆盖
+        requestIdSessions.set(e.request.requestId, e.sessionId)
         handler(convertToDialogRequest(e))
       })
     },
@@ -124,6 +137,19 @@ export function createDialogRequestSource(bus: InternalEventBus): DialogRequestS
         const payload = msg.payload as { sessionId?: unknown; requestId?: unknown }
         if (typeof payload.sessionId !== 'string' || typeof payload.requestId !== 'string') return
         handler({ sessionId: payload.sessionId, requestId: payload.requestId })
+      })
+    },
+    onUiRequestExpired(handler) {
+      return onGlobal((msg) => {
+        if (msg.type !== 'plugin:uiRequestExpired') return
+        const payload = msg.payload as { requestId?: unknown }
+        if (typeof payload.requestId !== 'string') return
+        const sessionId = requestIdSessions.get(payload.requestId)
+        // miss noop 幂等（V4b）：已 respond 关闭 / 排队中从未展示 / 未知请求的撤窗广播
+        // 直接忽略；命中则先删表项（生命周期至撤窗为止）再出队。
+        if (sessionId === undefined) return
+        requestIdSessions.delete(payload.requestId)
+        handler({ sessionId, requestId: payload.requestId })
       })
     },
   }

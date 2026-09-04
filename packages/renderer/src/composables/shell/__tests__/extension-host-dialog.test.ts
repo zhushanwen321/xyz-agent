@@ -3,7 +3,8 @@
  *
  * 覆盖：TC1-TC4 convertToDialogRequest 转换（source 判定 / askUser 改写 / options 归一 /
  * method 超界恢复 + receivedAt）；TC5 无 sessionId 跳过；TC6 投递层 askUser 过滤（C4 分流）；
- * TC7/TC8 回传双通道（plugin.uiResponse / extension.ui_response 复用）；TC9 onUiTimeout WS 订阅。
+ * TC7/TC8 回传双通道（plugin.uiResponse / extension.ui_response 复用）；TC9 onUiTimeout WS 订阅；
+ * TC10 onUiRequestExpired 撤窗订阅（D2，requestId 反查 sessionId + miss noop）。
  *
  * 策略：convertToDialogRequest 直测（纯函数）；createDialogRequestSource 用真实
  * InternalEventBus（bus.emit）+ dispatchGlobal（onGlobal 通道）——对齐 useExtensionHostBridge.test.ts
@@ -12,7 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { InternalEventBus } from '@xyz-agent/core'
 import type { InternalEvent } from '@xyz-agent/core'
-import { dispatchCrossSession } from '@/api/events'
+import { dispatchCrossSession, dispatchGlobal } from '@/api/events'
 
 vi.mock('@/api/transport', () => ({
   send: vi.fn(),
@@ -163,6 +164,38 @@ describe('createDialogRequestSource（C2/C3/C4 分流）', () => {
     dispatchCrossSession({ type: 'extension:notify', payload: { sessionId: 's1', message: 'hi' } })
     expect(handler).toHaveBeenCalledTimes(1) // 非 timeout 类型零触发
     unsub()
+  })
+
+  it('TC10: onUiRequestExpired 订阅 global 通道 plugin:uiRequestExpired（D2 撤窗，requestId 反查 sessionId）', () => {
+    const source = createDialogRequestSource(bus)
+    const expiredHandler = vi.fn()
+    const unsubExpired = source.onUiRequestExpired(expiredHandler)
+
+    // 反查表来自 onUiRequest 投递流：先投递（记录 requestId→sessionId），再撤窗
+    const requestHandler = vi.fn()
+    const unsubRequest = source.onUiRequest(requestHandler)
+    bus.emit({ kind: 'ui-request', sessionId: 's1', request: { requestId: 'r1', pluginId: 'p1', kind: 'confirm' } })
+    expect(requestHandler).toHaveBeenCalledTimes(1)
+
+    // D2：撤窗广播 payload 无 sessionId（runtime 不注入活跃 sid）→ global 通道广播形状
+    dispatchGlobal({ type: 'plugin:uiRequestExpired', payload: { requestId: 'r1', pluginId: 'p1' } })
+    expect(expiredHandler).toHaveBeenCalledTimes(1)
+    expect(expiredHandler).toHaveBeenCalledWith({ sessionId: 's1', requestId: 'r1' })
+
+    // 同一 requestId 二次撤窗：表项已删 → miss noop（幂等）
+    dispatchGlobal({ type: 'plugin:uiRequestExpired', payload: { requestId: 'r1', pluginId: 'p1' } })
+    expect(expiredHandler).toHaveBeenCalledTimes(1)
+
+    // 未投递过的 requestId（已 respond 关闭 / 未知请求）→ miss noop 幂等（V4b）
+    dispatchGlobal({ type: 'plugin:uiRequestExpired', payload: { requestId: 'unknown', pluginId: 'p1' } })
+    expect(expiredHandler).toHaveBeenCalledTimes(1)
+
+    // 非 expired 类型零触发
+    dispatchGlobal({ type: 'plugin:crashed', payload: { pluginId: 'p1', error: 'x' } })
+    expect(expiredHandler).toHaveBeenCalledTimes(1)
+
+    unsubExpired()
+    unsubRequest()
   })
 })
 
