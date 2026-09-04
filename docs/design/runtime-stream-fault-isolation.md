@@ -204,7 +204,7 @@ $ git commit -m "feat: new relay handler"
 - 场景：runtime 真崩溃（逻辑级异常）。
 - 步骤：dev 运行中 `kill -9 <runtime pid>`。
 - 通过标准：Electron 自动重启 runtime、session 列表恢复、UI 短暂「runtime 重启」后可用——与事故前既有行为一致（重启耗时 ≤ 既有 ~16s 量级）。
-- 当前状态：⛔ 环境冲突 blocked——Gate B 实测打包版太极（PID 17071/62565）占用 3210 端口，按不杀用户进程规则未执行；用户退出打包版后可按上述步骤重跑。S4 验证的是既有 supervisor 能力（本设计 diff 未触碰重启链路）。
+- 当前状态：✅ 已验证（2026-09-04 design-code-sync R3 收尾重跑）——dev 环境 `kill -9 <runtime pid>` 实测：supervisor 日志 `Process exited unexpectedly (code 137) — evaluating restart` → 自动拉起新 runtime → 全量初始化完成（17 extensions / plugins / skills）→ `/health` 返回 ok，全程 2s（dev 模式，远优于既有 ~16s 量级）。当时场景无活跃 session，「session 列表恢复」项无对象；恢复链路核心断言（意外退出检测 → 评估重启 → 拉起 → 健康就绪）全部达成。S4 验证的是既有 supervisor 能力（本设计 diff 未触碰重启链路），真机完整形态（含活跃 session 的列表恢复）随 S1 发版后验收覆盖。
 
 ### 负面行为反向验证（必须有）
 
@@ -226,7 +226,7 @@ S1 的通过标准本身即含两条「不该发生的不发生」：无 UNCAUGH
 
 验证汇总：runtime 受影响面 vitest 76 passed（relay 25 / pi / usage / policy 4；全部单元提交后口径——U5 单元时点为 49，Gate A 复验扩大至 76，见 impl-plan §6）；`tsc --noEmit` 通过；eslint `--max-warnings 0` 通过；护栏脚本 253 文件扫描绿。修复轮（2026-09-04 对抗审查后）复验：护栏正向绿 253 文件 / 负向红（探针裸写拦截）/ allowlist 端到端绿（P7 重演）；本轮仅动护栏脚本与文档，runtime 源码无改动，vitest/tsc/eslint 结论不受影响。
 
-交付后验收链（2026-09-04 dev-flow）：一致性审查清零（1 处文档归属修正）；Gate A 整体验收通过——零容忍审计仅 2 处带理由 disable、uncovered 2 区中 U2b 补测 usage-stats 容错回归（commit 839bc6e19，P5 证据更新如上）、收尾全量 runtime 400 文件 / 4374 用例全绿；Gate B——S2 pass（真实 pre-commit 拦截实测 + 据此发现并修复 hook SSOT 缺口，commit 4ecea728f，见 §5 hook 位置段）、S3 单测 pass、S1/P6 blocked（发版后门，见 §4 S1）、S4 blocked（环境冲突，见 §4 S4）。
+交付后验收链（2026-09-04 dev-flow）：一致性审查清零（1 处文档归属修正）；Gate A 整体验收通过——零容忍审计仅 2 处带理由 disable、uncovered 2 区中 U2b 补测 usage-stats 容错回归（commit 839bc6e19，P5 证据更新如上）、收尾全量 runtime 400 文件 / 4374 用例全绿；Gate B——S2 pass（真实 pre-commit 拦截实测 + 据此发现并修复 hook SSOT 缺口，commit 4ecea728f，见 §5 hook 位置段）、S3 单测 pass、S4 pass（R3 收尾重跑，见 §4 S4）、S1/P6 blocked（发版后门，见 §4 S1）。design-code-sync R3（2026-09-04）：代码 ↔ 设计 0 must-fix 收敛；发现共享 hook 副本被旧版源覆盖复发并恢复 + install-hooks.sh 加安装后自检（排查规则登记 troubleshooting.md「共享 pre-commit hook 被旧版 install-hooks.sh 覆盖」）。
 
 ### 残留观察项（不阻塞，诚实登记）
 
