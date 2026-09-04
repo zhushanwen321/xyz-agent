@@ -102,11 +102,12 @@ graph TD
 | U5 | committed | 2（v2 升档 glm-5.3） | commit 4c63d9fb9; core 3099 绿 + SW 936 基线 + typecheck/lint 过（主 agent 复跑）；真文件通路测试 6/6；E9 时序修正 + multiproc-guard 预存 env 泄漏修复（HEAD 交换法证实） |
 | U6 | committed | 1（修复轮：max-lines 提取 + 接替 dev 会话 GC 后主 agent 验收） | commit 895f9da2a; session-reader 305 绿（主 agent 复跑）+ typecheck/lint 过 |
 | U7 | committed | 1（看门狗截断续聊收尾，经 U5 树中继） | commit 33601d35c; SW 936 绿（主 agent 复跑）+ lint 过；偏差 #12 登记 |
-| U8 | committed | 3（v1/v2 被僵尸树污染零产出替换，v3 交付 + 盲窗修复轮 + R1 微修） | commit 94c706656; core 3104 绿 + SW 936 绿（剥离后首次全绿）+ node --check 10/10 + dry-run 5/5（主 agent 复跑） |
+| U8 | committed | 3（v1/v2 被僵尸树污染零产出替换，v3 交付 + 盲窗修复轮 + R1 微修） | commit 94c706656; core 3104 绿 + SW 936 绿（剥离后首次全绿）+ node --check 10/10 + dry-run 5/5（主 agent 复跑）；探针实跑 e8619bae9（A1 12/12 / A4 23/23 / A8 13/13；A6 见 §7）——F-b-1 闭环 |
 
 ## 7 残留风险与变更历史
 
 - 残留风险：E9 出口跨键残余重复窗（PS-17 同族，设计 §3.1.3 已披露，v1 接受）；⛔1-4 检查点若核实出设计外事实（如 zcode 终态旁路），停下上报，不自行扩 scope。（原登记「偏差表 #5 存量测试环境敏感缺口」已于 3b4be4561 闭合解除，见偏差表 #5 与变更历史。）
+- 批指针 sa- id 不可自举解析（探针实跑发现，2026-09-05 登记，v2 候选）：症状——批通知指针行引导 `session_read {"action":"result","session":"<sa- id>"}` 取回全文，真实 CLI 流下反查报「无匹配 record」；根因——sa- id → sessionFile 反查依赖 record manifest 落盘，真实 CLI 流下 manifest 惰性/不落盘；临时绕过——session_read 支持绝对路径形态（直接指子 session 文件）；v2 候选修复——manifest 及时落盘或反查兜底通路。
 - ⛔3 已核实（U1）：排队 record 在 `store.register` 时即 `status:"running"`（register 先于 pool.acquire，池无状态概念）——U2 闭合判定用「非终态」口径，无需新状态。
 - ⛔4 已核实（U2）：zcode 引擎零 notify 旁路（engine/ 目录无 notify 命中，唯一出口 kickOffEngineRun 汇聚 notifyComplete）——U2 路由全覆盖。
 - ⛔2 已核实（U2）：ledger 同 notifyId 重复 record 幂等拒绝零副作用——U3 批 hash 幂等依赖成立。
@@ -123,3 +124,5 @@ graph TD
   - 2026-09-05 W6 流转：U8 committed（94c706656）；偏差 #13（批拆分盲窗修复——合批去抖）/ #14（one-shot env 泄漏修复）登记；阶段 2 全部 8 单元 committed，进阶段 3（design-code-sync）。
   - 2026-09-05 偏差 #5 闭合回写（3b4be4561）：relay-env 断言改 sanitized copy + pi-invocation 剥 5 键，根聚合测试 6 红转绿；修复发生在 2c1f47d8d（02:45）之后，偏差表 #5 与残留风险段本轮补登记。
   - 2026-09-05 一致性修复轮（design-code-sync Step 3 第 1 轮，依据 subagent-sync-collect.consistency-review.md）：① 偏差 #7 行恢复——W4 739718be4 增补 #8-#11 时编辑事故误删，按 2099e2b69 原文复原；② 基线 92b977b68 → 3b4be4561（写时真实、rebase 后不在任何分支历史，gc 后不可达；92b977b68 = fb66e8ec3 的 rebase 前身，本表改锚现行 HEAD）；③ 全文 9 处日期 2026-02-11 系统性错置，按 git 真实提交日期（2026-09-04/05）逐条修正；④ U1 状态表证据指针「commit <本条>」占位回填 faab2a3cc；⑤ ⛔1 闭合结论补记（W3 宣称闭合但漏登记）；⑥ 偏差 #12 裁决回写——一致性审查 F-a-3 判改设计措辞，list 投影 collect 信息列为 v2 候选。设计文档同步修：A3/§3.1.2 失败条目 error 全文口径（F-a-1）、§3.1.3/§3.1.4 批 details 顶层 notifyId 键（F-a-2）、§3.1.2/D2/D6 list 逃生口措辞（F-a-3）。
+  - 2026-09-05 一致性修复三 commit 落地（第 1 轮交付）：e8619bae9 探针（探针脚本修复：harness 探测 / A4 确定性 / A6 + 新增 diag-a6 / diag-degrade / diag-survive + RESULTS.md 记录落盘）；61cecd9b8 文档（第 1 轮 9 条文档侧修复落盘：本文件 + 设计文档 + 审查报告入册）；cc5ee6e3d 微修（移交代码侧三处：subagent-tool description 参数表补 collect（F-a-4）/ notifier.ts 头注释术语消歧（F-d-1）/ start-collect-guard.test.ts 头公式改现行口径（F-d-2））。
+  - 2026-09-05 探针收尾回写（F-b-1 闭环）：探针实跑全绿——A1 12/12 / A4 23/23 / A8 13/13（记录 scripts/probes/subagent-sync-collect/RESULTS.md）；A6 裁决——kill -9 形态实证不可构造（主 pi SIGKILL 时 worker 子进程共亡，t+5s 进程数=0，diag-survive.mjs 实测，留痕 RESULTS.md），落入设计 §3.3 D5 预声明备选门，由 U5 的 E1/E9 集成测试满足（subagent-core 3104 passed 内）；状态表 U8 证据指针已补；新登记残留风险「批指针 sa- id 不可自举解析」（本节上方，v2 候选）。

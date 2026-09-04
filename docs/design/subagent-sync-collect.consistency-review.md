@@ -90,7 +90,7 @@
 
 #### F-b-1 U8 宣称 committed 但设计 DoD（A1/A4/A6 真实 CLI 实测）未执行且未披露
 
-> **状态（2026-09-05）**：执行中，由主 agent 负责（按 fix-hint ① 补跑 A1/A4/A6 + A2/A3/A5/A7/A8 落 RESULTS.md 后回写状态表）。文档修复轮不动 impl-plan 状态表结论。
+> **状态（2026-09-05）**：已闭环——探针实跑完成，状态表/变更历史已回写（闭环结论见文末「修复执行记录」F-b-1 条）。
 
 - **location**：impl-plan §6 状态表 U8 行（「committed … node --check 10/10 + dry-run 5/5」）+ §7 变更历史末条（「阶段 2 全部 8 单元 committed，进阶段 3（design-code-sync）」）vs scripts/probes/subagent-sync-collect/RESULTS.md（仅一条 2026-09-04T18:44 的**空白** A7 模板，全部字段无值，无 A1-A6/A8 任何执行记录；工作区 clean 无未提交结果）+ U8 commit 94c706656 message（「long-running scenarios not auto-executed (main agent runs them at acceptance)」）+ 其后仅有 2c1f47d8d/3b4be4561 两个非验收 commit
 - **gap**：设计 §4 明定「A1/A4/A6 为实施完成门（DoD）」，impl-plan U8 验收条款亦写「DoD：A1/A4/A6 CLI 实测通过 + A2/A3/A5/A7/A8 执行记录」；现实中真实 CLI 探针从未跑过。A6 的 kill -9 面可依设计 D5 降级条款以 sync-collect-recovery.test.ts 集成测试替代门（该测试真实文件通路 6 场景在盘），但 A1（错峰单唤醒）/A4（超预算截断+取回）无任何降级条款。状态表/变更历史均未披露此缺口，反而宣告进入阶段 3。
@@ -210,7 +210,7 @@
 - **已修（文档侧 9 条）**：F-a-1 / F-a-2 / F-a-3 / F-b-2 / F-b-3 / F-b-4 / F-c-1 / F-c-2 / F-c-3。
   - 设计文档（subagent-sync-collect.md）3 项 7 处：F-a-1 error 全文口径（§3.1.2 + §4 A3）；F-a-2 批 details 顶层 notifyId 键（§3.1.3 notifyId 段 + §3.1.4 数据流图 + §5 拆分清单 U3 联动）；F-a-3 list 逃生口措辞按裁决改写（§3.1.2 + D2 + D6 联动）。
   - impl-plan（subagent-sync-collect.impl-plan.md）7 项 18 处：F-b-2 偏差 #5 闭合回写（偏差表理由列 + §7 残留风险句移除 + 变更历史补行）；F-b-3 日期 9 处按 git 真实提交日（2026-09-04/05）逐条修正；F-c-1 偏差 #7 行按 2099e2b69 原文恢复（置于 #6/#8 之间）；F-c-2 U1 证据指针回填 faab2a3cc；F-c-3 基线改锚现行 HEAD 3b4be4561 + 92b977b68 悬空说明入变更历史；F-b-4 ⛔1 闭合结论补记；偏差 #12 裁决回写（F-a-3 涟漪）。
-- **执行中**：F-b-1（探针执行）——由主 agent 负责，状态表结论未动（见 F-b-1 节内标注）。
+- **已闭环（2026-09-05 探针收尾回写）**：F-b-1——三探针全绿（A1 12/12 / A4 23/23 / A8 13/13，探针实跑 e8619bae9，记录 `scripts/probes/subagent-sync-collect/RESULTS.md`）；A6 裁决——CLI kill -9 形态实证不可构造（worker 与宿主 SIGKILL 共亡，`diag-survive.mjs` 实测留痕 RESULTS.md），按设计 §3.3 D5 预声明备选门由 U5 的 E1/E9 集成测试满足（subagent-core 3104 passed 内）；指针缺口（批通知指针行 sa- id 不可自举解析——manifest 惰性/不落盘，临时绕过 = session_read 绝对路径形态）登记 impl-plan §7 残留风险（v2 候选修复）；impl-plan §6 U8 证据指针 + §7 变更历史已同步回写。
 - **移交代码侧（超出本轮领地「禁碰产线代码与测试」，均为 code-right 单点小改，移交主 agent 后续轮）**：F-a-4（subagent-tool.ts Actions 参数表 Optional 列表补 `collect`，顺带评估补 `engine`）；F-d-1（notifier.ts 头注释「sync 不用」术语消歧 + notifyBatch/buildBatchLlmContent/computeBatchBudget 入职责清单）；F-d-2（start-collect-guard.test.ts 头公式改现行无补偿口径）。
 - **五处联动自检**：正文（§3.1.2/§3.1.3/D2/D6）、数据流图（§3.1.4 details 形状）、错误规格表（§3.1.5 E1 依赖 notifyId 已在账语义与 details 顶层键一致，无需改）、拆分清单（U3 notifyId 括注）、验收场景（A3 措辞）——已逐一核对同步。
 
