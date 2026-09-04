@@ -140,8 +140,8 @@ subagent 工具 (interface/subagent-tool.ts)
 
 #### 3.1.2 失败与逃生路径
 
-- **成员失败**：批头变为 `3 finished, 1 failed, 0 cancelled`；失败条目正文为 `Subagent "x" (bg-xx) failed: {error 首行}`。批照常一次唤醒（不 fail-fast，见 D6）。
-- **成员挂死**：批迟迟不闭合。逃生：`list` 可见 `collect:sync` 与 pending 计数 → 主 agent/用户对挂死成员 `cancel` → 该成员转终态计入批 → 批闭合唤醒。
+- **成员失败**：批头变为 `3 finished, 1 failed, 0 cancelled`；失败条目正文为 `Subagent "x" (bg-xx) failed: {error 全文}`——与异步单条通知同构（复用 buildLlmContent，无首行截取；多行 error 整段呈现）。批照常一次唤醒（不 fail-fast，见 D6）。
+- **成员挂死**：批迟迟不闭合。逃生：`list` 可见仍在跑的成员（list 不投影 collect 标识与 pendingSyncCount——计数回显仅在 start 响应；list 投影 collect 信息列为 v2 候选）→ 主 agent/用户对挂死成员 `cancel` → 该成员转终态计入批 → 批闭合唤醒。
 - **结果超预算**：条目正文先按 perItemChars 截断；若各条目截断后总和仍超 totalChars，则按总量预算**再压缩**——每条目有效预算降为 `effectivePerItem = clamp(floor(totalChars / n), 200, perItemChars)`（n = 批成员数；200 为绝对下限，低于它该条目退化为「头行 + 指针行」的纯清单形态）。截断尾接指针行：
   ```
   Subagent "explore-runtime" (bg-aaa) completed. Result:
@@ -181,7 +181,7 @@ start 的 tool result 响应追加 `collect` 段（如上样例：mode + 当前 
 
 **ExecutionRecord 新增字段**：`readonly collectMode?: "sync"`（缺省 = async，不落盘旧记录零迁移）+ `batchFinalized?: boolean`（**离开批的终局标记**，两出口统一落标：① 批闭合 flush 写账成功后；② E9 dispose 转换逐条写 async 账后；均 appendEntry 持久化）。E1 恢复钩子重建扫描**只收「collectMode=sync 且无 batchFinalized」的成员**。**标记读取通路（必须钉死，否则静默失效）**：落标 entry 写入的是**主 session 文件**，而 RecordStore 标准扫描 `collectRecords` 走 light 路径只读**子 session 文件** identity 头 + sidecar——主 session 落标 entry 对它不可见（存储域错位）。E1 重建扫描必须走**主 session 文件「每 id 末条 subagent-record entry」**通路（`collectLastRecordEntries` 同构，last-writer-wins 与两出口 append-only 时序自洽）；`rebuildEntryRecord` 投影白名单扩展含 **collectMode/batchFinalized + 终态五字段 status/endedAt/closedReason/result/error**（现实现硬编码 status:"running" 且不投影终态——不扩展则 E1 重建成员恒被视为 running，「全员终态→补发」判定永假、补发内容缺失，整条补发路径成死代码）；补发内容来源 = 末条 entry 终态快照（record-entry.ts 已含 result，零新增数据源）；该通路与账本 recoverFromSession 同文件域，flush 快照天然同源。幂等窗口：批闭合「写账成功、落标前」崩溃 → E1 重建出同成员集批 → notifyBatch 同 hash → 账本 record 幂等拒绝重发（同 notifyId 已在账，notify-ledger 实装确认）→ E1 事后无论账本接受或拒绝统一补标，窗口自愈（「同 hash 幂等」仅对「同成员集重建」成立；E9 部分转换后崩溃 → 重建集已缩小、hash 随之变化——行为正确，已转换成员本就不应再入批）；**E9 出口残余窗（披露）**：async 单成员 notifyId 与批 hash 键域不同，账本跨键不拦——flush 边界恰好切开「E9 转账 entry 已 flush / 落标 entry 未 flush」的强杀窗口内，resume 重放 async 条目 + E1 重建批再送达 = 同成员重复通知（重复方向在 at-least-once 语义下良性，与 PS-17 同族已接受面；彻底闭合可选 E1 逐成员查账本任意形态已送达条目作第二道排除，v1 不做）。E1 补标动作自身崩溃：每次重启要么幂等无操作要么推进，无振荡收敛。
 
-**批通知 notifyId**（幂等键，进账本）：`sync-batch:<sha1(sorted member ids)>`——重启重放时凭此去重。
+**批通知 notifyId**（幂等键，进账本）：`sync-batch:<sha1(sorted member ids)>`——重启重放时凭此去重；**且必须作为批 entry details 的顶层键**。批 details 形状 = `{batch:true, notifyId:"sync-batch:<hash>", items:[...]}`（items 复用现有批量渲染，顶层 notifyId 键对 extractBatch 透明）；账本回执销账 `collectDeliveredNotifyIds` 按 `details.notifyId` / `details.items[].notifyId` 匹配——批身份键若不在顶层可达，批 entry 永不销账、重投至放弃。
 
 **`session_read` 新 action `result`**（session-reader extension）：
 
@@ -207,8 +207,9 @@ session_read {"action":"result","session":"bg-aaa,bgc,ccc"}    // 批量（≤10
                               │                        notifier.notifyBatch(records)
                               │                          · 逐条 buildLlmContent + per-item/total 预算
                               │                          · 批头行 + \n\n---\n\n join
-                              │                          · details {batch:true, items:[...]}（复用现有批量渲染）
-                              │                          · notifyId = sync-batch:<hash>
+                              │                          · details {batch:true, notifyId:"sync-batch:<hash>", items:[...]}
+                              │                            （notifyId 顶层键 = 账本回执销账匹配键，缺它批 entry 永不销账；items 复用现有批量渲染）
+                              │                          · notifyId = sync-batch:<sha1(sorted ids)>
                               ▼                                     ▼
                           ledger 写账（单 entry）──▶ settled 边沿投递 ──▶ pi.sendMessage ×1（triggerTurn）
                                                                       ▼
@@ -250,7 +251,7 @@ session_read {"action":"result","session":"bg-aaa,bgc,ccc"}    // 批量（≤10
 选择：`start` 顶层参数 `collect`。被否：独立 action（多一次调用、批身份要么显式 batchId 要么隐式引用"最近的 start"，LLM 出错面更大）。证据：用户原始诉求即"派发时指定"；顶层拍平是既有惯例（task/slug/agent/model…）。探针 ✅：e2e 验证 LLM 一次消息内 3 连 start 带 collect。
 
 **D2 批身份：隐式 pending 集合 vs 显式 batchId**
-选择：隐式（批 = 全部未通知的 sync record）。被否：batchId——LLM 需自己管理 id 的生成/复用，孤儿批（id 拼错永不闭合）是必然出现的失败模式；隐式集合下"批"只是投递时机，无身份可错。代价：①同轮混派多批语义不可表达（后派 sync 并入 pending 批）——v1 接受并文档化；②**批饥饿**：主 agent 持续不 STOP、不断派新 sync，pending 永不为空 → 最早结果被无限扣留——逃生 = `list` 观察 pendingSyncCount + 对已有条目 cancel/close 逼闭合（list 输出含 collect 段即为此场景的指定逃生口）。探针 ✅：单测覆盖"分两轮派发 2+1 sync → 仍单条通知含 3 段"。
+选择：隐式（批 = 全部未通知的 sync record）。被否：batchId——LLM 需自己管理 id 的生成/复用，孤儿批（id 拼错永不闭合）是必然出现的失败模式；隐式集合下"批"只是投递时机，无身份可错。代价：①同轮混派多批语义不可表达（后派 sync 并入 pending 批）——v1 接受并文档化；②**批饥饿**：主 agent 持续不 STOP、不断派新 sync，pending 永不为空 → 最早结果被无限扣留——逃生 = `list` 观察仍在跑的成员 + 对已有条目 cancel/close 逼闭合（pendingSyncCount 回显仅在 start 响应，list 不投影 collect 信息；投影列为 v2 候选，不作为 v1 逃生依赖）。探针 ✅：单测覆盖"分两轮派发 2+1 sync → 仍单条通知含 3 段"。
 
 **D3 结果预算：仅批模式加 vs 全局加**
 选择：仅批内容加预算（perItemChars/totalChars）。被否：全局预算——异步单条通知文案有 golden snapshot 字节锁（`notifier-golden-snapshot.test.ts` G4），且 G3 要求现状零变化。批是新文案，新 golden。探针 ✅：新 golden 锁批格式；旧 golden 不动全绿。
@@ -262,7 +263,7 @@ session_read {"action":"result","session":"bg-aaa,bgc,ccc"}    // 批量（≤10
 选择：service 层缓冲，flush 时**单条** batch entry 进账本。被否：账本感知批（成员级 held entry + 全员闭合才投）——把"何时发"的执行语义塞进"必达"的账本层，账本复杂度（at-least-once 状态机）本已高；单 entry 进账本后账本零改动即继承幂等/重放/看门狗。代价：缓冲期间（成员终态→批闭合）的崩溃需 E1 恢复钩子兜底——批成员身份与终态都已持久化在 record store，可完整重建。探针 ⛔实施期门：kill -9 崩溃恢复 e2e（kill -9 主进程于批等待中 → 重启单条补发、二次重启零重发）；**降级路径**：若该时序无法稳定构造（子进程回收/session flush 窗口抖动），以集成测试模拟重启序列（dispose → 重建 service → session_start 恢复钩子断言补发与幂等）为备选门，二者至少其一通过。
 
 **D6 失败与超时语义：批内披露 + 无批级超时**
-选择：failed/cancelled/crashed 全部计入批（批头计数），不 fail-fast；不设批级超时。论据：①成员失败通常改变编排决策，但早通知省下的 token 有限（失败通知本就短），而 fail-fast 会让"批"退化为逐条通知（违背 G1）；②挂死风险由现有 per-subagent 守卫兜底（settled-watchdog / turn-limiter / maxTurns / orphan 判定，`subagent-core-unbounded-wait-audit.md` 已普查无界等待），批级超时与其重叠；逃生 = list（可见 pending 计数）+ cancel。被否：批级 timeoutMs（v2 视真实使用再加，config 已留节）。探针 ✅：单测 cancel 挂死成员 → 批闭合且计数含 cancelled。
+选择：failed/cancelled/crashed 全部计入批（批头计数），不 fail-fast；不设批级超时。论据：①成员失败通常改变编排决策，但早通知省下的 token 有限（失败通知本就短），而 fail-fast 会让"批"退化为逐条通知（违背 G1）；②挂死风险由现有 per-subagent 守卫兜底（settled-watchdog / turn-limiter / maxTurns / orphan 判定，`subagent-core-unbounded-wait-audit.md` 已普查无界等待），批级超时与其重叠；逃生 = list（可见在跑成员；pendingSyncCount 见 start 响应）+ cancel。被否：批级 timeoutMs（v2 视真实使用再加，config 已留节）。探针 ✅：单测 cancel 挂死成员 → 批闭合且计数含 cancelled。
 
 **D7 等待形态：延迟通知（steer 通道）vs 阻塞工具调用（tool-result 通道）**
 选择：延迟通知。被否：阻塞式 collect action——pi 无工具超时（0.84.4 dist 实证）技术上可行，但①主 agent 必须留在 turn 里不能 STOP，与工具 prompt `otherwise STOP` 契约冲突；②in-flight tool call 的 abort/crash 恢复是新语义（pi 重启后悬挂 toolCall 的 session 状态无既有处理）；③TUI 长挂显示差。延迟通知完全复用现有 steer/账本/批量渲染三套机制。谱系：方案 A（§3.2）+ 本条。
@@ -287,7 +288,7 @@ session_read {"action":"result","session":"bg-aaa,bgc,ccc"}    // 批量（≤10
 |---|------|------|---------|------|
 | A1 | 错峰全成功单唤醒 | RPC 起 pi，发一条含 3 个 `collect:"sync"` start 的 prompt（任务里让三台 sleep 10s/30s/60s 再返回），等待 | session JSONL 中 `subagent-bg-notify` custom entry 恰好 **1 条**（批头 `3 finished`）；批闭合前主 agent 无任何新增 turn；三段结果在同一条消息 | G1 |
 | A2 | token 对比探针 | 同一任务分别以 async（不传 collect）与 sync 各跑一次，从最后 assistant usage 统计 input tokens | sync 的总 input tokens 低于 async；async 路径产生 ≥2 条中间 ack turn，sync 为 0（数字记录进验收报告作参考基线，3 subagent 规模下通常差距 ≥40%，**非门**） | G1 |
-| A3 | 成员失败入批 | 3 个 sync，其一 task 为"直接 throw/失败" | 仍单条通知，批头 `2 finished, 1 failed`，失败条目含 error 首行 | G1 |
+| A3 | 成员失败入批 | 3 个 sync，其一 task 为"直接 throw/失败" | 仍单条通知，批头 `2 finished, 1 failed`，失败条目含 error 全文（与异步单条通知同构，无首行截取） | G1 |
 | A4 | 超预算截断 + 取回 | ① 1 个 sync，task 要求输出 >10K 字符结构化报告；② 7 个 sync 各输出 ~6K 字符（触发总量超限） | ① 该条目截断至 perItemChars 且尾行含 `session_read {"action":"result",...}` 指引；② 各条目截至 `effectivePerItem = floor(24000/7) = 3428`、总量回预算内且仍单条通知；随后真实调 `session_read action:result` 取回内容与 record.result 逐字节一致 | G2 |
 | A5 | 异步零回归 | 不传 collect 跑既有单 subagent 流程 | 单条通知文案与改动前 golden 逐字节一致（旧 golden 测试全绿）；`list`/`cancel`/`message` 不变 | G3 |
 | A6 | 崩溃恢复不丢不重 | ① 2 个 sync（sleep 60s）派发后 kill -9 主 pi；重启同 session；② 正常 `/exit` 于批未闭合时（2 已终态 + 1 在跑）再 resume | ① 恢复后补发单条批通知（若已全终态）、二次重启零重发（账本幂等键生效）；② resume 后 E9 转换的两条经 async 重放送达、**零重发**，恢复补发只含在跑成员（batchFinalized 排除生效） | G4 |

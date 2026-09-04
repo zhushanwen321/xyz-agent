@@ -1,6 +1,6 @@
 # subagent 同步收集（sync collect）实施计划
 
-基线: 92b977b68 | 来源设计: docs/design/subagent-sync-collect.md | 日期: 2026-02-11
+基线: 3b4be4561（现行 HEAD；初版基线 92b977b68 已因 rebase 悬空，见变更历史 2026-09-05 一致性修复轮） | 来源设计: docs/design/subagent-sync-collect.md | 日期: 2026-09-04
 审查报告: docs/design/subagent-sync-collect.review.md（5 轮收敛，最终 0 must-fix / 0 suggestion）
 
 ## 0 章节映射
@@ -29,14 +29,14 @@
 |------|------|---------------------|------|------|---------|
 | U1 参数与契约面（foundation） | schema 加 `collect`；config `collectSync` 节 + sanitize（E5）；ExecutionRecord 加 `collectMode` + `batchFinalized` 字段及 record-entry 序列化白名单；start handler 解析 + 响应 `collect` 段（mode/pendingSyncCount）+ E4 校验（conversation+sync immediate throw）；⛔3 池排队 sync record status 值核实 | `extensions/universal/subagent-workflow/src/interface/subagent-tool-schema.ts`、`packages/subagent-core/src/execution/subagent-actions-core.ts`、`packages/subagent-core/src/execution/config.ts`、`packages/subagent-core/src/execution/types.ts`（ExecutionRecord 接口本体，types.ts:416）、`packages/subagent-core/src/execution/record-entry.ts`、测试：`packages/subagent-core/src/execution/__tests__/`（新增 collect-param / config-collect-sync 测试）、`extensions/universal/subagent-workflow/src/__tests__/`（schema 校验测试） | 无 | plain | E4/E5 单测；schema 导出契约；既有测试零回归 |
 | U2 collectCoordinator 路由 | notifyComplete 全部调用点统一过协调器（sync→缓冲，async→现状字节不变）；⛔4 核实 zcode 终态汇聚点（parent-child-matrix 测试参照）；⛔2 前置：确认 ledger 同 notifyId 重复 record 行为 | `packages/subagent-core/src/execution/collect-coordinator.ts`（新建）、`packages/subagent-core/src/execution/subagent-service.ts`、`packages/subagent-core/src/execution/session-runner.ts`（调用点路由）、测试：`packages/subagent-core/src/execution/__tests__/`（协调器路由测试） | U1 | plain | A5（async 路由字节不变，旧 golden 全绿）；A8 前置（混派路由单测） |
-| U3 批缓冲 + notifyBatch | pending 集/缓冲/闭合判定（running-sync==0 && 缓冲非空，跨轮续累）；`notifier.notifyBatch` + `buildBatchLlmContent` 基础版（批头计数 + `\n\n---\n\n` join）；notifyId = `sync-batch:<sha1(sorted ids)>`；⛔1 gui-mappers 批量 details 核对；⛔2 ledger 幂等断言补强 | `packages/subagent-core/src/execution/notifier.ts`、`packages/subagent-core/src/execution/subagent-service.ts`、只读核对：`extensions/universal/subagent-workflow/src/interface/bg-notify-render.ts`、测试：`packages/subagent-core/src/execution/__tests__/` + `extensions/universal/subagent-workflow/src/__tests__/`（新批 golden） | U2 | plain | A1/A3/A8 单测层（错峰闭合、失败入批、混派正交、跨轮 2+1 续累单批） |
+| U3 批缓冲 + notifyBatch | pending 集/缓冲/闭合判定（running-sync==0 && 缓冲非空，跨轮续累）；`notifier.notifyBatch` + `buildBatchLlmContent` 基础版（批头计数 + `\n\n---\n\n` join）；notifyId = `sync-batch:<sha1(sorted ids)>`（批 entry details 顶层键，回执销账匹配）；⛔1 gui-mappers 批量 details 核对；⛔2 ledger 幂等断言补强 | `packages/subagent-core/src/execution/notifier.ts`、`packages/subagent-core/src/execution/subagent-service.ts`、只读核对：`extensions/universal/subagent-workflow/src/interface/bg-notify-render.ts`、测试：`packages/subagent-core/src/execution/__tests__/` + `extensions/universal/subagent-workflow/src/__tests__/`（新批 golden） | U2 | plain | A1/A3/A8 单测层（错峰闭合、失败入批、混派正交、跨轮 2+1 续累单批） |
 | U4 预算截断 + 指针 | 两段式预算纯函数：per-item 截断 + totalChars 再压缩 `effectivePerItem = clamp(floor(totalChars/n), 200, perItemChars)`；截断尾行（session_read 指引）；config 热读 | `packages/subagent-core/src/execution/notifier.ts`（批内容组装处）、测试：`packages/subagent-core/src/execution/__tests__/`（预算确定性测试） | U3 | plain | A4 单测层（7×6000→3428 演算例、纯清单退化 n>120、指针行格式） |
 | U5 崩溃恢复钩子 + dispose 转换 | record-store 末条 entry 通路（collectLastRecordEntries 同构）+ rebuildEntryRecord 投影扩展（collectMode/batchFinalized + 终态五字段 status/endedAt/closedReason/result/error）；E1 session_start 恢复钩子（只收无标记 sync 终态成员；补发内容=末条终态快照；补标+幂等窗口补标）；E9 dispose 转换（缓冲终态成员逐条转 async 写账 + 落 batchFinalized）；与 ledger recoverFromSession 协同 | `packages/subagent-core/src/execution/record-store.ts`、`packages/subagent-core/src/execution/subagent-service.ts`（dispose 路径）、`extensions/universal/subagent-workflow/src/index.ts`（恢复编排接线）、测试：`packages/subagent-core/src/execution/__tests__/`（真实文件通路集成测试——标记可见性断言禁 mock） | U3 | plain | A6 单测/集成层（真实 JSONL 写入→扫描重建；dispose 转换零重发；补标幂等收敛） |
 | U6 session_read result action | 新 action `result`：manifest 反查 → 最终 assistant 正文（与 record.result 同源）+ 批量 id（≤10）+ limit（默认 8000） | `extensions/universal/session-reader/src/tool-handler.ts`、`extensions/universal/session-reader/src/index.ts`（schema）、测试：`extensions/universal/session-reader/src/__tests__/` | 无 | plain | A4 取回一致前置（action 返回与 record.result 逐字节一致） |
 | U7 工具 prompt 与引导文案 | subagent 工具 description：collect 用法（≥2 独立 one-shot 要综合→sync；对话/需早响应→async）；「You cannot」节措辞；config skill 文档补 collectSync 节 | `extensions/universal/subagent-workflow/src/interface/subagent-tool.ts`、`extensions/universal/subagent-workflow/skills/subagent-ext-config/SKILL.md` | U1-U4 | plain | 文案与实装一致性核对（description 参数表 = schema 实际） |
 | U8 集成测试 + 真实 CLI 探针 | 崩溃恢复集成测试（真实文件通路）；A1-A8 CLI 探针脚本化（`pi --mode rpc --extension <path>`，探针脚本落 `scripts/probes/subagent-sync-collect/`，验收后按仓库惯例归档）；全量回归 | `packages/subagent-core/src/execution/__tests__/`（集成）、`extensions/universal/subagent-workflow/src/__tests__/`、`extensions/universal/session-reader/src/__tests__/`、`scripts/probes/subagent-sync-collect/`（新建，探针） | U1-U7 | plain | DoD：A1/A4/A6 CLI 实测通过 + A2/A3/A5/A7/A8 执行记录 + 全量测试绿 |
 
-**领地说明（对照设计 §5 的修正，2026-02-11 执行期修订）**：ExecutionRecord 接口本体在 `types.ts:416`（初版计划误判为 execution-record.ts，U1 执行者发现后主 agent 核实裁决——设计原文正确）；`record-entry.ts` 是 entry 序列化单写点（round-5 审查核实）；两字段的序列化白名单统一放 U1（foundation 契约），U5 只消费。⛔3 已核实：池排队 record 在 `store.register` 时即 `status:"running"`，池无独立状态概念（U2 闭合判定用「非终态」口径）。
+**领地说明（对照设计 §5 的修正，2026-09-04 执行期修订）**：ExecutionRecord 接口本体在 `types.ts:416`（初版计划误判为 execution-record.ts，U1 执行者发现后主 agent 核实裁决——设计原文正确）；`record-entry.ts` 是 entry 序列化单写点（round-5 审查核实）；两字段的序列化白名单统一放 U1（foundation 契约），U5 只消费。⛔3 已核实：池排队 record 在 `store.register` 时即 `status:"running"`，池无独立状态概念（U2 闭合判定用「非终态」口径）。
 
 ## 3 DAG 图
 
@@ -80,13 +80,14 @@ graph TD
 | 2 | U1 | `DEFAULT_CONFIG` 刻意不含 collectSync 键；缺省语义由 `DEFAULT_COLLECT_SYNC` 承载（消费方 `?? DEFAULT_COLLECT_SYNC` 兼底） | SW 包 startupConfig 声明守护测试断言与 DEFAULT_CONFIG 深相等；键缺失语义与 defaultEngine/engineRouting 同风格 |
 | 3 | U1→U2 | startHandler 缺省 collect 暂以 `DEFAULT_COLLECT_SYNC.default` 兑底，config.json 的 collectSync.default 未接线（service 无公开配置访问器） | U1 领地内无 service 配置面；**U2 必须接线**：开放配置访问后接入真实 config 读取，E4 守卫判定无需改 |
 | 4 | U1→U2 | start 响应 `pendingSyncCount` 暂以「枚举计数 + 1」补足本条（record.collectMode 落点未接线，枚举天然不含本条） | **U2 必须接线后去掉 +1**（record 带 collectMode 入枚举后 +1 即双计；源码已有 [U2 接线点] 注释锚） |
-| 5 | 全局 | 存量测试环境敏感缺口：`pi-invocation.test.ts` / `relay-env.test.ts` 在带 `XYZ_SUBAGENT_RELAY_*` / `PI_SUBAGENT_*` 的会话环境内跑会红（断言依赖真实进程 env/execPath） | 非 U1 引入（HEAD 同红）；CI 干净环境不受影响；不入本特性 scope，残留风险登记 |
+| 5 | 全局 | 存量测试环境敏感缺口：`pi-invocation.test.ts` / `relay-env.test.ts` 在带 `XYZ_SUBAGENT_RELAY_*` / `PI_SUBAGENT_*` 的会话环境内跑会红（断言依赖真实进程 env/execPath） | 非 U1 引入（HEAD 同红）；CI 干净环境不受影响；**已闭合（3b4be4561，2026-09-05）**：relay-env 断言改 sanitized copy、pi-invocation 剥 5 键、根聚合测试 6 红转绿——残留风险解除 |
 | 6 | U2→U3 | U2 集成测试 `vi.mock("../execution/session-runner.ts")` 路径错误致拦截从未生效，U3 修正为 `"../session-runner.ts"` 后真链 trace 暴露两个缺陷并已修复：① recordToSubagent 投影丢 collectMode → 闭合判定恒立即闭合（数据源改 store.listAllActive() 原始内存态）；② SP-5 resumable 回退态（running+resumable 留内存）致 sync 批永不闭合（非终态口径补 resumable 判据） | U3 真链验证抓出的真 bug，修复属 U3 领地内修正；教训登记：mock 测试不验证真链，后续单元集成测试必须 mock 路径自检 |
+| 7 | U3 | 批 details 需带顶层 `notifyId` 键（投递回执匹配 collectDeliveredNotifyIds 读 details.notifyId，否则批 entry 永不销账） | 设计未明写此键（§3.1.4 details 形状沿用 mergeItems），实装需要；零冲突增量 |
 | 8 | U4→U5 | config 预算热读未在 U4 接线（领地不含 service），落地为 buildBatchLlmContent 可选 budget 参数 | **已闭环**：U5 flushBatch 调用点接入 config collectSync 预算（同 commit 4c63d9fb9） |
 | 9 | U5 | E9 转换挪到 disposeAllRecords 之前 | 测试实证：archive 先清内存 + idToFile 冷启动 → 落标必 miss；前置转换后 6/6 绿 |
 | 10 | U5 | notifier.ts 最小加法（notifyBatch 可选 budget 参数） | U4 预算接线的调用点在 notifier 内部，跨领地最小增量已验收 |
 | 11 | U5 | multiproc-guard 存量测试 env 泄漏修复（PI_SUBAGENT_ROOT_SESSION_ID 泄进 vitem 致所有权误判） | HEAD 文件交换法证实预存红；领地内修复（测试 env 清理），非本特性回归 |
-| 12 | U7→审查 | 设计 D2 的「list 看 pendingSyncCount」逃生口与实装不符（计数只在 start 响应，list 未投影 collect 信息） | 文案按实装落笔；list 投影为功能缺口，转一致性审查阶段裁决（补实装或改设计措辞） |
+| 12 | U7→审查 | 设计 D2 的「list 看 pendingSyncCount」逃生口与实装不符（计数只在 start 响应，list 未投影 collect 信息） | 文案按实装落笔；**已裁决（一致性审查 F-a-3，2026-09-05）**：改设计措辞（逃生口 = list 可见在跑成员 + cancel 逼闭合，pendingSyncCount 回显仅在 start 响应），偏差登记保留，list 投影 collect 信息列为 v2 候选 |
 | 13 | U8→产线修复 | 批拆分盲窗：同同步段背靠背终态的 sync 成员拆成多条单成员批（闭合检测只扫 listAllActive 非终态，看不到已终态未路由成员） | U8 集成测试抓出（G1 削弱）；修复 = 闭合满足改 setTimeout(0) 合批去抖（触发时重验闭合条件）+ cancelScheduledFlush 供 E9 取消（避免双通道双投递）；A8 用例收紧为背靠背断言锁定 |
 | 14 | U8→测试修复 | one-shot-upgrade.test.ts 未清理宿主身份 env（PI_SUBAGENT_* 泄漏 → cross-tree 守卫正确拒绝 spawn） | A/B 法实证根因；beforeEach 剥 IDENTITY_ENV_KEYS 五键（与 collect-mixed-dispatch 同款范式）；pre-commit 拦截解除 |
 
@@ -94,7 +95,7 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| U1 | committed | 1（3 次看门狗截断续聊完成） | commit <本条>; subagent-core 3038 绿 + SW 931 绿（golden 11/11）+ typecheck/lint 过（主 agent 重跑） |
+| U1 | committed | 1（3 次看门狗截断续聊完成） | commit faab2a3cc; subagent-core 3038 绿 + SW 931 绿（golden 11/11）+ typecheck/lint 过（主 agent 重跑） |
 | U2 | committed | 1（2 次看门狗截断续聊完成） | commit 77de9c02d; subagent-core 3060 绿（主 agent 复跑）+ typecheck/lint 过；⛔4/⛔2 结论入 §7 |
 | U3 | committed | 2（含真链 bug 修复轮） | commit a53271c70; subagent-core 3078 绿 + SW 936 绿（旧 golden 11/11 零 diff）+ typecheck/lint 过（主 agent 复跑） |
 | U4 | committed | 2（首任零产出被替换，v2 测试先行收工） | commit a39505d1e; collect-budget 15 新 + notify-batch 14 回归 = 29 绿（主 agent 复跑）+ tsc 过 |
@@ -105,17 +106,20 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-- 残留风险：E9 出口跨键残余重复窗（PS-17 同族，设计 §3.1.3 已披露，v1 接受）；⛔1-4 检查点若核实出设计外事实（如 zcode 终态旁路），停下上报，不自行扩 scope；偏差表 #5 存量测试环境敏感缺口（PI_SUBAGENT_*/RELAY_* 泄漏即红）。
+- 残留风险：E9 出口跨键残余重复窗（PS-17 同族，设计 §3.1.3 已披露，v1 接受）；⛔1-4 检查点若核实出设计外事实（如 zcode 终态旁路），停下上报，不自行扩 scope。（原登记「偏差表 #5 存量测试环境敏感缺口」已于 3b4be4561 闭合解除，见偏差表 #5 与变更历史。）
 - ⛔3 已核实（U1）：排队 record 在 `store.register` 时即 `status:"running"`（register 先于 pool.acquire，池无状态概念）——U2 闭合判定用「非终态」口径，无需新状态。
 - ⛔4 已核实（U2）：zcode 引擎零 notify 旁路（engine/ 目录无 notify 命中，唯一出口 kickOffEngineRun 汇聚 notifyComplete）——U2 路由全覆盖。
 - ⛔2 已核实（U2）：ledger 同 notifyId 重复 record 幂等拒绝零副作用——U3 批 hash 幂等依赖成立。
+- ⛔1 已核实（U3）：GUI 链路 details 原样透传（renderer 不拆批量细节），TUI extractBatch 已支持；无需改动，不属本特性缺口。（2026-09-05 一致性修复轮补记——W3 变更历史曾宣称闭合但漏登记于此。）
 - 环境注意（U2 发现）：vitest 4.1.8 本包环境 `vi.waitFor` 失效（sanity 实证 callback falsy 直接 resolve）——后续单元集成测试用手写轮询。
 - U5 强制前置（U2 披露）：record-store 投影（recordToSubagent）现不含 collectMode，落盘 entry 暂无该字段（闭合判定不受影响，内存 record 已带）——U5 投影扩展必须补。
 - 变更历史：
-  - 2026-02-11 初版（基于设计 v5 审查收敛稿）。
-  - 2026-02-11 U1 执行期：领地修订（ExecutionRecord 接口本体在 types.ts:416，初版误判 execution-record.ts）；U1 committed（偏差 #1-5 登记，#3/#4 为 U2 强制接线项）。
-  - 2026-02-11 W2 流转：U2 committed（77de9c02d，偏差 #3/#4 接线完成）+ U6 committed（895f9da2a，含 max-lines 提取修复轮）；巡检机制（5m 调度）当轮发现接替 dev 会话假活（工作已完成但完成通知丢失），主 agent 直接验收闭环。
-  - 2026-02-11 W3 流转：U3 committed（a53271c70）；偏差 #6/#7 登记（真链 bug 修复 + 回执匹配 notifyId 键）；⛔1/⛔2 全部闭合（4 个检查点清零）。
-  - 2026-02-11 W4 流转：U4 committed（a39505d1e，首任零产出替换后 v2 测试先行收工）+ U5 committed（4c63d9fb9，升档 glm-5.3）；偏差 #8 闭环、#9-#11 登记；僵树清理 + 主会话直接派发恢复可达性。
-  - 2026-02-11 W5 流转：U7 committed（33601d35c）；偏差 #12 登记（list 逃生口缺口转一致性审查）。
-  - 2026-02-11 W6 流转：U8 committed（94c706656）；偏差 #13（批拆分盲窗修复——合批去抖）/ #14（one-shot env 泄漏修复）登记；阶段 2 全部 8 单元 committed，进阶段 3（design-code-sync）。
+  - 2026-09-04 初版（基于设计 v5 审查收敛稿，fb66e8ec3 基线提交）。
+  - 2026-09-04 U1 执行期：领地修订（ExecutionRecord 接口本体在 types.ts:416，初版误判 execution-record.ts）；U1 committed（偏差 #1-5 登记，#3/#4 为 U2 强制接线项）。
+  - 2026-09-04 W2 流转：U2 committed（77de9c02d，偏差 #3/#4 接线完成）+ U6 committed（895f9da2a，含 max-lines 提取修复轮）；巡检机制（5m 调度）当轮发现接替 dev 会话假活（工作已完成但完成通知丢失），主 agent 直接验收闭环。
+  - 2026-09-05 W3 流转：U3 committed（a53271c70）；偏差 #6/#7 登记（真链 bug 修复 + 回执匹配 notifyId 键）；⛔1/⛔2 全部闭合（4 个检查点清零）。
+  - 2026-09-05 W4 流转：U4 committed（a39505d1e，首任零产出替换后 v2 测试先行收工）+ U5 committed（4c63d9fb9，升档 glm-5.3）；偏差 #8 闭环、#9-#11 登记；僵树清理 + 主会话直接派发恢复可达性。
+  - 2026-09-05 W5 流转：U7 committed（33601d35c）；偏差 #12 登记（list 逃生口缺口转一致性审查）。
+  - 2026-09-05 W6 流转：U8 committed（94c706656）；偏差 #13（批拆分盲窗修复——合批去抖）/ #14（one-shot env 泄漏修复）登记；阶段 2 全部 8 单元 committed，进阶段 3（design-code-sync）。
+  - 2026-09-05 偏差 #5 闭合回写（3b4be4561）：relay-env 断言改 sanitized copy + pi-invocation 剥 5 键，根聚合测试 6 红转绿；修复发生在 2c1f47d8d（02:45）之后，偏差表 #5 与残留风险段本轮补登记。
+  - 2026-09-05 一致性修复轮（design-code-sync Step 3 第 1 轮，依据 subagent-sync-collect.consistency-review.md）：① 偏差 #7 行恢复——W4 739718be4 增补 #8-#11 时编辑事故误删，按 2099e2b69 原文复原；② 基线 92b977b68 → 3b4be4561（写时真实、rebase 后不在任何分支历史，gc 后不可达；92b977b68 = fb66e8ec3 的 rebase 前身，本表改锚现行 HEAD）；③ 全文 9 处日期 2026-02-11 系统性错置，按 git 真实提交日期（2026-09-04/05）逐条修正；④ U1 状态表证据指针「commit <本条>」占位回填 faab2a3cc；⑤ ⛔1 闭合结论补记（W3 宣称闭合但漏登记）；⑥ 偏差 #12 裁决回写——一致性审查 F-a-3 判改设计措辞，list 投影 collect 信息列为 v2 候选。设计文档同步修：A3/§3.1.2 失败条目 error 全文口径（F-a-1）、§3.1.3/§3.1.4 批 details 顶层 notifyId 键（F-a-2）、§3.1.2/D2/D6 list 逃生口措辞（F-a-3）。
