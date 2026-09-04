@@ -1,6 +1,6 @@
 ---
 name: subagent-ext-config
-description: "使用或排查 @zhushanwen/pi-subagent-workflow 的引擎路由配置时加载。说明 config.json 三环境路径与动态推导方法、字段表（defaultEngine / engineRouting.strict / maxConcurrent）、三层路由优先级、生效时机（新 session 生效）、probe 缓存语义、验证步骤与常见错误。触发词：subagent 引擎配置、切换 subagent 引擎、defaultEngine、zcode 派发、subagent 配置在哪、engineFallback、engine_not_found、subagent-ext-config。"
+description: "使用或排查 @zhushanwen/pi-subagent-workflow 的引擎路由与同步收集配置时加载。说明 config.json 三环境路径与动态推导方法、字段表（defaultEngine / engineRouting.strict / maxConcurrent / collectSync 三键）、三层路由优先级、生效时机（新 session 生效）、probe 缓存语义、collectSync 预算（perItemChars/totalChars）热读时机、验证步骤与常见错误。触发词：subagent 引擎配置、切换 subagent 引擎、defaultEngine、zcode 派发、subagent 配置在哪、engineFallback、engine_not_found、collectSync、sync collect、collect 配置、subagent-ext-config。"
 ---
 
 # subagent-workflow 引擎路由配置指南
@@ -41,6 +41,26 @@ config.json 位于 pi agent 目录下的 `subagents/config.json`，随环境不�
   "maxConcurrent": 6
 }
 ```
+
+## collectSync 节（同步收集）
+
+`collectSync` 控制 subagent 同步收集（`collect:"sync"` 批通知）的默认模式与结果预算。整节缺失 = 不落键，消费方兜底默认（与 defaultEngine/engineRouting 同风格）；逐字段 sanitize——坏字段回该字段默认、好字段透传（部分覆盖合法）；非对象值（字符串/null 等）整节回默认。坏值不炸启动（与 maxConcurrent 同判）。
+
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `collectSync.default` | string | `"async"` | start 未显式传 `collect` 参数时的缺省通知模式。合法值 `"async"` / `"sync"`，其它值回 `"async"`。工具调用显式传 `collect` 时覆盖本值 |
+| `collectSync.perItemChars` | number | `4000` | sync 批通知单条目结果正文预算（字符）：超出截断，尾接 `session_read {"action":"result","session":"<id>"}` 指针行。正整数，坏值回默认 |
+| `collectSync.totalChars` | number | `24000` | sync 批通知全批正文总量预算（字符）：Σ 超限时统一收紧每条目有效预算 `effectivePerItem = clamp(floor(totalChars/n), 200, perItemChars)`（n = 批成员数；折算低于 200 的条目退化为「头行 + 指针行」纯清单）。正整数，坏值回默认 |
+
+示例：
+
+```json
+{
+  "collectSync": { "default": "async", "perItemChars": 4000, "totalChars": 24000 }
+}
+```
+
+**生效时机**：`default` 与 `defaultEngine` 同时机（新 session 生效）。两个预算值在批通知组装（flush）时从配置缓存读取（非派发时定格），但配置文件本身仍按「重要前提」规则缓存——因此改 collectSync 后的可靠生效方式与其它字段一致：**新建 session**。
 
 ## 三层路由优先级
 
