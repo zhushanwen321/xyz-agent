@@ -61,16 +61,6 @@ export function resolveToolTimeoutMs(declared?: number): number {
   return MAX_TIMER_DELAY_MS
 }
 
-/**
- * 读取 schema 上的声明 timeoutMs。U2 落地 ToolRegistration.timeoutMs 前该字段不在
- * 类型面，经运行时 guard 窄化（非 number 一律 undefined → 回落默认）；U2 落地后可
- * 简化为直接读 schema.timeoutMs。
- */
-function getDeclaredToolTimeoutMs(schema: ToolRegistration): number | undefined {
-  const declared = (schema as { timeoutMs?: unknown }).timeoutMs
-  return typeof declared === 'number' ? declared : undefined
-}
-
 /** 毫秒时长 → 诚实可读文案（整分/整秒/毫秒，不四舍五入以免低报等待时长） */
 function formatDurationMs(ms: number): string {
   if (ms % 60_000 === 0) return `${ms / 60_000}min`
@@ -174,8 +164,9 @@ export async function handleBridgeToolExecute(
     return { content: 'Plugin worker crashed', isError: true }
   }
 
-  // D1 取值链：声明 timeoutMs（合法正数）优先，否则默认兜底；<=0/Infinity opt-out
-  const declared = getDeclaredToolTimeoutMs(entry.schema)
+  // D1 取值链：声明 timeoutMs（合法正数）优先，否则默认兜底；<=0/Infinity opt-out。
+  // 注册入口已窄校验（U2），脏值防御由 resolveToolTimeoutMs 全分支兜住
+  const declared = entry.schema.timeoutMs
   const timeoutMs = resolveToolTimeoutMs(declared)
 
   try {
