@@ -113,6 +113,8 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-- 残留风险：①U2 的 pi CLI 实测只能验加载层（factory 合法/registerTool 生效/sync 发出），全链响应依赖 runtime——U5 兜底；②探针 P-9（intercept 挂死）失败时按设计降级路径加通道级 30s timeout，会引入与 D5「零 timer」的例外——降级触发时须同步回写设计 §3.3-D5 论证；③dev app 全链环境可能被并行会话占用（handoff 坑④），U5 备选 standalone 环境。
+- 残留风险：①U2 的 pi CLI 实测只能验加载层（factory 合法/registerTool 生效/sync 发出），全链响应依赖 runtime——U5 兜底；②探针 P-9（intercept 挂死）失败时按设计降级路径加通道级 30s timeout，会引入与 D5「零 timer」的例外——降级触发时须同步回写设计 §3.3-D5 论证；③dev app 全链环境可能被并行会话占用（handoff 坑④），U5 备选 standalone 环境；④定向复审 NF-2（info，可选补强）：intercept 畸形 {type:'text'} 缺 text 字段走 stringify 兜底的行为无测试用例——非阻塞，后续随手补；⑤NF-3（out-of-scope）：bridge-handler.ts bridge:event 分支 console.log 为既有代码（超时流水线期已存在），不属本次范围。
+- 阶段 3/4 记录（2026-09-05）：一致性审查 2 reviewer 并行（A=pi 侧与装配 9R/2U/2D，B=runtime 侧 8R/1U/2D）；3 条 unreasonable（B-U1 event 登记累积 / A-U1 intercept 类型退化 / A-U2 syncLoop 兜底缺口）+ 4 条 doc_errors 全部在 16b013cdb 修复闭合（偏差表 #8-#18 同批补齐）；定向复审全 pass + NF-1 文档回写（设计 v3.3）。合理偏差累计 18 项全登记于 §5。
 - 变更历史：
   - v1（2026-09-04）：初版。按设计 §5 U1-U5 展开，波次优化 U2∥U3 并行；偏差 #1 登记（mandatory 前移 U2）。
+  - v2（2026-09-05）：U1-U4 执行期状态表更新；偏差 #2-#18 陆续登记。
