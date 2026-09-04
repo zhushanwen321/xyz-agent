@@ -142,6 +142,9 @@ function makeService(over: Record<string, unknown> = {}): SubagentService {
     getRecordForAction: vi.fn(),
     closeSubagent: vi.fn(),
     deliverMessage: vi.fn(),
+    // [U2] startHandler 缺省 collect 解析读真实 config（偏差#3 接线）：stub 缺省 async
+    //（本文件不测 collect 语义，专项见 start-collect-guard.test.ts）。
+    getCollectSyncDefault: vi.fn(() => "async" as const),
     ...over,
   } as unknown as SubagentService;
 }

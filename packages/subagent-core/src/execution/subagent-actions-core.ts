@@ -17,7 +17,6 @@
 import { computeElapsedSeconds, projectOutcome } from "./execution-record.ts";
 import { isResumable } from "./lifecycle-predicates.ts";
 import { SLUG_MAX_LENGTH } from "./execute-options-mapper.ts";
-import { DEFAULT_COLLECT_SYNC } from "./config.ts";
 import type { ModelInfo } from "./model-resolver.ts";
 import type { SubagentService } from "./subagent-service.ts";
 import { displayAgentName } from "../shared/agent-ref.ts";
@@ -349,14 +348,12 @@ export async function startHandler(
   );
   if (slug.length > SLUG_MAX_LENGTH) throw new Error(`slug must be ≤${SLUG_MAX_LENGTH} chars (got ${slug.length}). Shorten to a kebab-case label, e.g. "fix-login", "extract-urls".`);
 
-  // ── collect 解析（subagent-sync-collect U1 foundation）──
-  // resolved = 显式参数 ?? config collectSync.default。
-  // [U2 接线点] config 读取链未通（SubagentService.modelService 私有，无公开访问器），
-  // 暂以 DEFAULT_COLLECT_SYNC.default 兑底——config.json 配 collectSync.default:"sync"
-  // 的生效需 U2 在 service 侧开放配置访问后接入。E4 守卫放在 resolved 之后：显式
-  // collect:"sync" + conversation 现在即拒；config 默认 sync（U2 接通后）同一条
-  // 守卫自动覆盖，无需改判定。
-  const resolvedCollect = input.collect ?? DEFAULT_COLLECT_SYNC.default;
+  // ── collect 解析（subagent-sync-collect）──
+  // resolved = 显式参数 ?? config collectSync.default（U2 偏差#3 接线：经 service
+  // 公开访问器读真实 config，内部 DEFAULT 兑底——config 未配/读失败不炸）。
+  // E4 守卫放在 resolved 之后：显式 collect:"sync" + conversation 即拒；config 默认
+  // sync + conversation 同样被拦（同一守卫，无需改判定）。
+  const resolvedCollect = input.collect ?? service.getCollectSyncDefault();
   // E4（设计 §3.1.5）：sync 仅支持 one-shot。immediate throw——校验先于 service.execute，
   // 不产生半启动 record（与 skillPath 路径守卫同风格：参数语义校验前置）。
   if (input.conversation === true && resolvedCollect === "sync") {
@@ -397,11 +394,10 @@ export async function startHandler(
   };
   // 同步收集登记回显段（设计 §3.1.1）：仅 resolved 为 sync 时附段——async 响应
   // 字节零变化（G3）。pendingSyncCount = 未闭合批 sync 成员总数（含本条，跨轮续累）。
-  // [U2 接线点] 「含本条」由下方 +1 补足：U1 阶段 record.collectMode 落点
-  // （service.createRecordForMode）未接线，枚举天然不含本条；U2 接通后本条已带
-  // collectMode 入枚举，此处必须同步去掉 +1（防双计）。
+  // 本条 record 已由 createRecordForMode 落 collectMode（U2 偏差#4 接线），
+  // 枚举天然含本条，无需补偿。
   if (resolvedCollect === "sync") {
-    response.collect = { mode: "sync", pendingSyncCount: countPendingSyncRecords(service) + 1 };
+    response.collect = { mode: "sync", pendingSyncCount: countPendingSyncRecords(service) };
   }
 
   return {
@@ -418,7 +414,8 @@ export async function startHandler(
 /**
  * 当前未闭合批的 sync 成员计数（pendingSyncCount 口径，设计 §3.1.3）：本进程全部
  * record（含已终态未 flush 的缓冲成员，故 statusFilter="all"）中 collectMode="sync"
- * 且无 batchFinalized 标记的数量。
+ * 且无 batchFinalized 标记的数量。含调用方刚启动的本条（record 已带 collectMode 入
+ * 枚举——U2 偏差#4 接线）。
  *
  * 扫描上限 1000 与 service 冷路径全扫兑底同量级（COLD_LOOKUP_SCAN_LIMIT 同值，
  * 该常量未导出故字面量 + 注释锚定）。

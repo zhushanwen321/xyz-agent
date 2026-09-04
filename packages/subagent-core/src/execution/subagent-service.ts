@@ -16,6 +16,8 @@ import { MAX_TIMER_DELAY_MS } from "../shared/timer-delay.ts";
 import { mapToWorkflowAgentResult } from "./agent-result-mapper.ts";
 import { removeAliveMarker, findForeignLiveInstance, writeAliveMarker } from "./alive-store.ts";
 import { bestEffort } from "./best-effort.ts";
+import { CollectCoordinator } from "./collect-coordinator.ts";
+import { DEFAULT_COLLECT_SYNC } from "./config.ts";
 // [V2 决策 3] lifecycle-manager idle timer：chatMode 统一投递新 turn disarm（防误杀活进程）。
 // [M3] hasIdleTimer：piAdapter.hasRunningBackground 排除等待续聊（timer armed）的 record。
 // [T4②] DEFAULT_IDLE_TIMEOUT_MS：deliverMessage 非 EPIPE 失败 re-arm 的防御性兜底时长。
@@ -330,6 +332,9 @@ export class SubagentService {
   private _seq = 0;
   /** background 完成通知器（滑动窗口合并 + 去重）。session_start revive，shutdown dispose。 */
   private readonly notifier: BgNotifier;
+
+  /** collectCoordinator（subagent-sync-collect U2）：sync 批缓冲 + 闭合检测 + flush 分流。 */
+  private readonly collectCoordinator: CollectCoordinator;
   /** [MF#4][MF#2] fork 深度按 async 调用链传递（AsyncLocalStorage），替代共享可变计数器。
    *  主 session=0；fork 进入子 session 期间推进为子深度，供嵌套 fork 经 ALS 读到自身深度作为
    *  parentForkDepth。并发 background fork 各自独立调用链，不再互相压低深度值。
@@ -381,6 +386,23 @@ export class SubagentService {
     this.manifestStore = new ManifestStore(recordsDir);
     this.store = new RecordStore(sessionsDir, this.manifestStore, this.pi ?? undefined);
     this.notifier = createNotifier(this.piAdapter());
+    // collectCoordinator（subagent-sync-collect U2）：notifyComplete 唯一路由入口——
+    // async 直通（字节不变）/ sync 批缓冲 + 闭合检测。flush 生产缺省 = 逐条 async 降级
+    // 投递（不丢通知的最小可用）；[U3 接线点] 替换为 notifier.notifyBatch 单条批投递
+    // + ledger sync-batch hash 写账 + batchFinalized 落标。
+    this.collectCoordinator = new CollectCoordinator({
+      notifyAsync: (record) => {
+        const notify = this.toNotifyRecord(record);
+        if (notify) this.notifier.notify(notify);
+      },
+      toNotifyRecord: (record) => this.toNotifyRecord(record),
+      listRecords: (limit) => this.collectRecords(limit, "all"),
+      flushBatch: (members) => {
+        for (const member of members) {
+          this.notifier.notify(member);
+        }
+      },
+    });
     // #11：注册进程级 observability 单例——ui-request-queue.handleUiRequest 经
     // globalThis 桥接（notifyMissingHandlerGlobal）调到同一实例，共享
     // warnedMissingHandlerSessions 去重集合。未注册时 queue 走 fallback warn（不去重）。
@@ -704,10 +726,12 @@ export class SubagentService {
   /** background 完成回注（record → BgNotifyRecord 映射 + notifier.notify）。
    *  正在执行（running + 活进程 + 非 timer-armed）静默跳过——notify 只对 closed（终态）、
    *  isIdle（chatMode 轮次完成）或 isResumable（SP-5 one-shot 成功完成 / MF-6 失败轮回退）有意义。
-   *  SP-1: closed 统一终态（done/failed/crashed 合并），closedReason 携带 L2 原因。 */
+   *  SP-1: closed 统一终态（done/failed/crashed 合并），closedReason 携带 L2 原因。
+   *  [U2] 全部调用点（kickOffBackground.then / kickOffEngineRun / settled-watchdog /
+   *  cancelBackground / chatMode onRoundSettled）统一经 collectCoordinator 路由：
+   *  async record 直通 notifier.notify（字节不变）；sync record 入批缓冲 + 闭合检测。 */
   private notifyComplete(record: ExecutionRecord): void {
-    const notify = this.toNotifyRecord(record);
-    if (notify) this.notifier.notify(notify);
+    this.collectCoordinator.route(record);
   }
 
   /** [C-1] chatMode close 终态通知（设计 D2：正文空/本轮增量 + sessionFile 指针行）。
@@ -1782,6 +1806,17 @@ export class SubagentService {
     return this.store.collectRecords(limit, statusFilter, this.sessionRootId ?? this.sessionId ?? undefined);
   }
 
+  /**
+   * collectSync.default 当前生效值（subagent-sync-collect U2，偏差#3 接线：
+   * startHandler 缺省 collect 解析用）。
+   * config 未配/读失败 → DEFAULT_COLLECT_SYNC.default 兜底（E5 不炸启动）。
+   * 新 session 生效语义与 engine 配置一致（globalConfig 由 ModelConfigService
+   * reloadGlobalConfig 刷新）。
+   */
+  getCollectSyncDefault(): "async" | "sync" {
+    return this.modelService.getGlobalConfig().collectSync?.default ?? DEFAULT_COLLECT_SYNC.default;
+  }
+
   /** [perf] 单 record 详情懒加载（全量：eventLog/displayItems/result/turns/tokens）。
    *  内存 running record 直接投影；磁盘 record 全量重建（per-file 缓存，stat 戳校验）。
    *  返回 undefined：id 不存在于内存与磁盘。 */
@@ -1854,6 +1889,10 @@ export class SubagentService {
       // 从 RunContext 回填；缺省 = pi 投影，存量调用方零感知）
       engine: opts.engine,
       engineFallback: opts.engineFallback,
+      // subagent-sync-collect U2（偏差#4 接线）：sync record 落 collectMode——
+      // 协调器路由判据 + startHandler pendingSyncCount 枚举含本条的数据源。
+      // undefined = async（缺省语义，旧记录零迁移）。
+      collectMode: opts.collect === "sync" ? "sync" : undefined,
       controller,
     });
 

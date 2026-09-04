@@ -71,12 +71,17 @@ function makeRec(over: Partial<SubagentRecord> = {}): SubagentRecord {
 type ServiceStub = SubagentService & {
   execute: ReturnType<typeof vi.fn>;
   collectRecords: ReturnType<typeof vi.fn>;
+  getCollectSyncDefault: ReturnType<typeof vi.fn>;
 };
 
-function makeService(collectRecordsReturn: SubagentRecord[] = []): ServiceStub {
+function makeService(
+  collectRecordsReturn: SubagentRecord[] = [],
+  collectSyncDefault: "async" | "sync" = "async",
+): ServiceStub {
   const execute = vi.fn(async () => makeHandle());
   const collectRecords = vi.fn(() => collectRecordsReturn);
-  return { execute, collectRecords } as unknown as ServiceStub;
+  const getCollectSyncDefault = vi.fn(() => collectSyncDefault);
+  return { execute, collectRecords, getCollectSyncDefault } as unknown as ServiceStub;
 }
 
 const BASE_INPUT = { task: "do things", slug: "do-things" };
@@ -125,6 +130,28 @@ describe("startHandler E4 guard (conversation + collect:sync)", () => {
     expect(result.subagentId).toBe("sa-new");
     expect(service.execute).toHaveBeenCalledTimes(1);
   });
+
+  it("E4 also blocks conversation when config default is sync (偏差#3 接线：resolved 含 config 默认)", async () => {
+    const service = makeService([], "sync");
+    await expect(
+      startHandler(service, { ...BASE_INPUT, conversation: true }, undefined),
+    ).rejects.toThrow('collect:"sync" only supports one-shot subagents');
+    expect(service.execute).not.toHaveBeenCalled();
+  });
+
+  it("config default=sync applies when collect omitted (缺省读真实 config，U2 偏差#3)", async () => {
+    const service = makeService([], "sync");
+    const result = await startHandler(service, { ...BASE_INPUT }, undefined);
+    expect(result.response.collect).toBeDefined();
+    expect(service.getCollectSyncDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads config default via service accessor when collect omitted (async 默认零附段)", async () => {
+    const service = makeService([], "async");
+    const result = await startHandler(service, { ...BASE_INPUT }, undefined);
+    expect(result.response.collect).toBeUndefined();
+    expect(service.getCollectSyncDefault).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ============================================================
@@ -146,13 +173,25 @@ describe("startHandler collect forwarding + response collect segment", () => {
     expect(opts.collect).toBeUndefined();
   });
 
-  it("attaches collect segment with pendingSyncCount=1 for the first sync start (含本条)", async () => {
-    const service = makeService();
+  it("attaches collect segment counting this very record from the enumeration (U2 偏差#4：无 +1 补偿)", async () => {
+    // 本条 record（id=sa-new）已由 createRecordForMode 落 collectMode 入枚举：
+    // stub 枚举返回本条 + 另一未闭合 sync → count=2（无 +1 补偿即含本条）
+    const service = makeService([
+      makeRec({ id: "sa-new", collectMode: "sync" }),
+      makeRec({ id: "sa-other", collectMode: "sync", status: "running" }),
+      makeRec({ id: "sa-gone", collectMode: "sync", batchFinalized: true }),
+    ]);
     const result = await startHandler(service, { ...BASE_INPUT, collect: "sync" }, undefined);
-    expect(result.response.collect).toEqual({ mode: "sync", pendingSyncCount: 1 });
+    expect(result.response.collect).toEqual({ mode: "sync", pendingSyncCount: 2 });
   });
 
-  it("counts pending unmarked sync members + this one (跨轮续累口径)", async () => {
+  it("reports the enumeration verbatim when no sync records exist yet (如实反映，无补偿)", async () => {
+    const service = makeService([]);
+    const result = await startHandler(service, { ...BASE_INPUT, collect: "sync" }, undefined);
+    expect(result.response.collect).toEqual({ mode: "sync", pendingSyncCount: 0 });
+  });
+
+  it("counts pending unmarked sync members from the enumeration (跨轮续累口径)", async () => {
     const service = makeService([
       makeRec({ id: "sa-1", collectMode: "sync" }), // 未闭合（无 batchFinalized）→ 计入
       makeRec({ id: "sa-2", collectMode: "sync", batchFinalized: true }), // 已离场 → 排除
@@ -160,7 +199,7 @@ describe("startHandler collect forwarding + response collect segment", () => {
       makeRec({ id: "sa-4", collectMode: "sync", batchFinalized: false }), // 显式 false → 计入
     ]);
     const result = await startHandler(service, { ...BASE_INPUT, collect: "sync" }, undefined);
-    expect(result.response.collect).toEqual({ mode: "sync", pendingSyncCount: 3 });
+    expect(result.response.collect).toEqual({ mode: "sync", pendingSyncCount: 2 });
   });
 
   it("omits the collect segment for async starts (G3: async 响应字节零变化)", async () => {
