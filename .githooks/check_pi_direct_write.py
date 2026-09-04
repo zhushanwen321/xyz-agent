@@ -16,9 +16,10 @@
     完全绕过。logger.ts 的 logs 常驻写流是合法用例：文件内 sessions token 仅存在于
     注释，条件 A 不命中，无需豁免）。
   - 条件 B（内置豁免，写目标路径层级判定，命中任一则放行）：
-    ① sidecar 家族四后缀（xyz 自有文件，登记表 §4 ⑤）：写目标语句含 '.meta.json' /
-       '.preset.json' / '.project.json' / '.handoff.json' 字面量（filePath + '.meta.json'
-       内联形态），或经 projectSidecarPath() / presetSidecarPath() helper（后缀在 helper
+    ① sidecar 家族六后缀（xyz 自有文件，登记表 §4 ⑤）：写目标语句含 '.meta.json' /
+       '.preset.json' / '.project.json' / '.handoff.json' / '.agent.json' / '.model.json'
+       字面量（filePath + '.meta.json' 内联形态），或经 projectSidecarPath() /
+       presetSidecarPath() / agentSidecarPath() / modelSidecarPath() helper（后缀在 helper
        定义处的间接形态）；文件内任意位置的后缀提及不豁免无关写点（语句级判定）。
     ② 非 sessions 目标：写目标表达式（含同函数内单跳直接赋值链，如
        const tmpFile = join(tmpdir(), …) 随后的 writeFileSync(tmpFile, …)）可见地经
@@ -121,10 +122,10 @@ TARGET_ARG_RE = re.compile(
 # ---------------------------------------------------------------------------
 # 条件 B①：sidecar 家族四后缀（登记表 §4 ⑤，豁免清单与本条一一对应）
 # ---------------------------------------------------------------------------
-SIDECAR_SUFFIX_RE = re.compile(r"['\"]\.(?:meta|preset|project|handoff|agent)\.json['\"]")
+SIDECAR_SUFFIX_RE = re.compile(r"['\"]\.(?:meta|preset|project|handoff|agent|model)\.json['\"]")
 # persistBindingSidecar 公共层的参数形态（实参恒为上述 xxxSidecarPath helper——
 # sidecar 家族公共写入抽取后的间接一层；code-simplify 批次补充识别）
-SIDECAR_HELPER_RE = re.compile(r"\b(?:(?:project|preset|agent)SidecarPath|sidecarPathOf)\s*\(")
+SIDECAR_HELPER_RE = re.compile(r"\b(?:(?:project|preset|agent|model)SidecarPath|sidecarPathOf)\s*\(")
 
 # ---------------------------------------------------------------------------
 # 条件 B③：restore-time 归一化临时名（登记表 §4 ⑨，restore-fork-attach-fix W1 F3）。

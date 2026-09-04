@@ -71,16 +71,15 @@ describe('ModelSelectPopover 纯受控 + store 数据源', () => {
     expect(emitted![0][0]).toEqual({ modelId: 'gpt-4', provider: 'openai' })
   })
 
-  it('U15: props.selected 为空串时，触发器显示空串对应的裸 id（空串场景由 Composer || 兜底处理）', async () => {
-    // ModelSelectPopover 本身不兜底空串——它纯受控显示 selected。
-    // 空串的裸 id 仍是空串，currentName fallback 到空串。
+  it('U15: props.selected 为空串时，触发器显示占位文案（…）而非空串', async () => {
     getSettingsStore().models.value = MODELS
     const wrapper = mount(ModelSelectPopover, {
       props: { selected: '' },
     })
     await wrapper.vm.$nextTick()
-    // currentName = models.find(id==='')?.name ?? '' → ''
+    // D3：已建 session modelId 为空 → 显示占位「…」，不兜底全局默认
     expect(wrapper.find('[title="切换模型"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('…')
   })
 
   it('U9: store 已有数据时 mount，触发器立即显示模型名（竞态回归——模拟 v-if 翻转后重新 mount，无任何推送）', async () => {

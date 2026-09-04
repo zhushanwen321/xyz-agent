@@ -175,7 +175,7 @@ const props = defineProps<{
   sessionId?: string
   /**
    * 当前复合 modelId（"provider/modelId"），受控 prop，由 Composer 下发。
-   * landing 态由 Composer 经 useComposerModelThinking fallback 到 defaultModel。
+   * landing 态由 Composer 经 useComposerModelThinking 兜底链（currentModel > lastUsedModel）fallback 到 defaultModel。
    * 用于推导 provider（split('/')[0]）查 quota——不在子组件内自查 sessionStore，
    * 对齐 ModelSelectPopover/ThinkingLevelPopover 的受控范式。
    */

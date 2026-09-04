@@ -10,6 +10,10 @@ import { atomicWrite } from '../../utils/fs-utils.js'
 import { parseJsonl, readTailEntries } from '../../utils/jsonl.js'
 import { join, dirname, basename } from 'node:path'
 import { getSessionsDir } from './pi-paths.js'
+// model sidecar 家族（函数级循环引用：本文件经 scanSessionMeta 消费 readModelBinding，
+// 对方复用下方最小导出的 persistBindingSidecar/readBindingSidecar 骨架；均为 function
+// 声明，ESM 实例化期绑定，运行时无 TDZ 风险——见 session-model-sidecar.ts 头注释）。
+import { readModelBinding, type ModelBindingFields } from './session-model-sidecar.js'
 
 // ── 类型定义 ─────────────────────────────────────────────────
 
@@ -257,6 +261,17 @@ export function projectSidecarPath(filePath: string): string {
   return filePath + '.project.json'
 }
 
+// model binding sidecar 家族（modelSidecarPath/persistModelBinding/readModelBinding +
+// ModelBindingFields 字段声明）已迁至 './session-model-sidecar.ts'（本文件 max-lines
+// 行数合规）；scanSessionMeta 第七读经该模块的 readModelBinding 供给。
+// [re-export 登记] persistModelBinding / readModelBinding 经本模块转出是 mock 链刚需：
+// restore 播种测试（session-lifecycle-restore-seeding.test.ts）以硬编码 factory 替换本模块
+// 并经 importActual 取「本模块导出的 persistModelBinding」委托真值落盘，session-lifecycle
+// 的写点 import 也锚定本模块路径——re-export 缺失会使 actual 侧拿到 undefined。
+// readModelBinding 转出（2026-09-04）：session-service tryPersistModelBinding（D1 写点③
+// 兜底）的「缺失才写」守卫消费，services 层 infra value import 白名单只认本模块。
+export { persistModelBinding, readModelBinding } from './session-model-sidecar.js'
+
 /**
  * sidecar 家族公共写入（preset/project/agent binding 共用骨架）：
  * 空路径守卫 + JSONL 未落盘守卫（规则 #6：绝不创建 sidecar）+ 原子写 + 双层缓存失效
@@ -267,8 +282,12 @@ export function projectSidecarPath(filePath: string): string {
  * 列表消费方是扫描侧，写后不失效无正当场景——不失效则紧跟的列表广播命中 1s TTL 窗口内的
  * pre-write 快照返回 stale 数据；此前逐调用方 opt-in 已产出多个漏改实例（设计文档缺陷 B），
  * 故收敛为默认开。确需跳过时必须显式传 { invalidateScanDir: false } 并附注释说明理由。
+ *
+ * [最小导出登记] 原为模块私有；model sidecar 家族迁 './session-model-sidecar.ts' 时该
+ * 家族仍复用本骨架（preset/project/agent 家族留本文件，骨架不可随迁否则依赖倒挂），
+ * 故最小导出——仅限 sidecar 家族模块消费，不作为公共 API。
  */
-function persistBindingSidecar(
+export function persistBindingSidecar(
   filePath: string,
   sidecarPathOf: (fp: string) => string,
   binding: object,
@@ -299,8 +318,11 @@ function persistBindingSidecar(
 /**
  * sidecar 家族公共读取：读文件 + JSON.parse + 调用方字段守卫回调。
  * sidecar 不存在/损坏/守卫不过 → undefined（降级不抛错）。
+ *
+ * [最小导出登记] 同 persistBindingSidecar——model sidecar 家族
+ * （'./session-model-sidecar.ts'）复用，仅限 sidecar 家族模块消费。
  */
-function readBindingSidecar<T>(sidecarPath: string, decode: (binding: unknown) => T | undefined): T | undefined {
+export function readBindingSidecar<T>(sidecarPath: string, decode: (binding: unknown) => T | undefined): T | undefined {
   try {
     const raw = readFileSync(sidecarPath, 'utf-8')
     return decode(JSON.parse(raw))
@@ -424,6 +446,9 @@ export function readAgentBinding(filePath: string): { spawnSource: 'user' | 'age
     return undefined
   })
 }
+
+// persistModelBinding / readModelBinding 已迁 './session-model-sidecar.ts'
+// （scanSessionMeta 第七读经该模块供给，指针注释见 projectSidecarPath 之后）。
 
 /**
  * 将 launch preset 绑定持久化到 sidecar `.preset.json`（设计文档 §4）。
@@ -821,7 +846,7 @@ function removeStaleResiduesInDir(dir: string, cutoff: number): number {
 // ── Session 扫描 ─────────────────────────────────────────────
 
 /** scanPiSessions 返回的单条 session 元信息（持久化会话扫描结果）。 */
-export interface ScannedSessionMeta {
+export interface ScannedSessionMeta extends ModelBindingFields {
   id: string
   filePath: string
   cwd: string
@@ -858,6 +883,9 @@ export interface ScannedSessionMeta {
    * 记录 spawn 该 session 的父 agent session。undefined = 非 agent 管理的普通 session。
    */
   parentAgentSessionId?: string
+  // modelId / thinkingLevel 字段声明随 model sidecar 家族迁至 './session-model-sidecar.ts'
+  // （ModelBindingFields，本接口 extends 收编）；BindingFieldKey 的 OptionalKeys 派生对
+  // extends 字段照常生效，session-binding-fields.ts 注册表不受影响。
 }
 
 // 绑定字段注册表已抽出至 './session-binding-fields.ts'（BINDING_FIELDS / hydrateBindingMeta /
@@ -960,6 +988,9 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
     projectId,
     spawnSource: agentBinding?.spawnSource,
     parentAgentSessionId: agentBinding?.parentAgentSessionId,
+    // 第七读：model binding sidecar（model binding，'./session-model-sidecar.ts'）——
+    // 无 sidecar 时返回 undefined，对象展开零字段，与逐字段 `?.` 赋 undefined 等价。
+    ...readModelBinding(filePath),
   }
   sessionMetaCache.set(filePath, { mtimeMs: fstat.mtimeMs, size: fstat.size, meta })
   return meta

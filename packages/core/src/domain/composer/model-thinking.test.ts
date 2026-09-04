@@ -10,9 +10,11 @@
  *   token 设立/保留/消费/清除的可观测投影），用真实 u1 memory API（record 预置记忆）
  * - 跟随三行为 / 双路径污染反例（gated KV 控制预载完成时刻）/ 记录门禁（真实 memory Map 断言）
  *
- * 注意副作用：useThinkingLevelSync 的 immediate watch 在挂载时同步触发——若 currentThinkingLevel
- * 无值会调 onReset→routeThinkingLevel（内部对齐路由，不置 localAuthored；landing 设
- * localThinkingLevel、已建调 setThinkingLevel）。测试通过 sessionState 带初值或 mockClear
+ * 注意副作用：landing 无值初值由 followRememberedOrDefault watch（immediate）直接写入
+ * localThinkingLevel（不走 routeThinkingLevel；已建 session 该 watch 直接 return）。[U5/D5]
+ * 门禁后 useThinkingLevelSync 的 immediate watch 在挂载时不再走「无档位」分支 2（armed
+ * 快照恒 null 恒拦截），仅分支 3（oldMap undefined 可用性检查，当前档位不可用时）仍可能
+ * 调 onReset→routeThinkingLevel。测试通过 sessionState 带初值或 mockClear
  * 规避其对断言的干扰。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -24,6 +26,11 @@ import {
   lookup,
   record,
 } from './model-thinking-memory'
+import {
+  record as recordLastUsed,
+  lookup as lookupLastUsed,
+  __resetLastUsedModelForTesting,
+} from './last-used-model'
 import { resolveThinkingValue } from './thinking-levels'
 import {
   providePlatform,
@@ -145,12 +152,14 @@ function provideMockPlatform(storage: KVStorage): void {
 beforeEach(() => {
   provideMockPlatform(new MemKV())
   __resetModelThinkingMemoryForTesting()
+  __resetLastUsedModelForTesting()
 })
 
 afterEach(() => {
   vi.restoreAllMocks()
   __resetPlatformForTesting()
   __resetModelThinkingMemoryForTesting()
+  __resetLastUsedModelForTesting()
 })
 
 /**
@@ -185,6 +194,14 @@ function mountMem(opts: {
   currentModel?: string | null
   maps?: Record<string, Record<string, string | null>>
   supported?: Record<string, string[]>
+  /**
+   * [Gate B] 生产保真 setThinkingLevel：默认 no-op mock 不写 store，无法驱动「恢复回包
+   * applySnapshot({thinkingLevel})」的第二次 store 写——而跨写污染恰发生在 switchModel
+   * 回包（写 modelId）与恢复回包（写 level）两次 store 写之间的 flush 上。true 时改为
+   * 可控 promise，resolveReply() 模拟回包：先 applySnapshot 写 store 再 resolve（与
+   * useModel.setThinkingLevel 的「await RPC → applySnapshot → resolve」序列同构）。
+   */
+  realisticSetLevel?: boolean
 } = {}) {
   const sessionRef = ref<{ modelId: string; thinkingLevel?: string } | null>(opts.session ?? null)
   const defaultModelRef = ref(opts.defaultModel ?? '')
@@ -209,7 +226,21 @@ function mountMem(opts: {
         })
       }),
   )
-  const setThinkingLevel = vi.fn().mockResolvedValue(undefined)
+  const setLevelCalls: Array<{ level: string; resolveReply: () => void }> = []
+  const setThinkingLevel = opts.realisticSetLevel
+    ? vi.fn((_sid: string, level: string) =>
+        new Promise<void>((resolve) => {
+          setLevelCalls.push({
+            level,
+            // 生产保真（useModel.setThinkingLevel 时序）：回包 → applySnapshot({thinkingLevel}) → resolve
+            resolveReply: () => {
+              sessionRef.value = { modelId: sessionRef.value!.modelId, thinkingLevel: level }
+              resolve()
+            },
+          })
+        }),
+      )
+    : vi.fn().mockResolvedValue(undefined)
   // [R2-fix-2] 生产保真：flow.setPendingModel 是同步 ref 写（flow.ts:366-369），经
   // pendingModel → currentModel → currentModelId 同步 computed 传播——no-op mock 会
   // 掩盖「写后读」时序类回归（R2-fix-1 教训）。vi.fn 包真实写，保留调用断言能力。
@@ -238,6 +269,7 @@ function mountMem(opts: {
     providersRef,
     switchModel,
     setThinkingLevel,
+    setLevelCalls,
     setPendingModel,
     pending,
     scope,
@@ -273,13 +305,13 @@ describe('useComposerModelThinking · currentModelId 派生', () => {
     scope.stop()
   })
 
-  it('session.modelId 空串（磁盘/已退出 session）→ || 兜底到 defaultModel', () => {
-    // 空串场景：广播里已退出 session 的 modelId 硬编码为 ''。?? 不兜底空串，必须 ||
+  it('session.modelId 空串（磁盘/已退出 session）→ D3 占位不回落 defaultModel', () => {
+    // 空串场景：广播里已退出 session 的 modelId 硬编码为 ''。D3 已建态空值→占位，不兜底
     const { result, scope } = mount('s1', {
       sessionState: { modelId: '' },
       defaultModel: 'provider-D/model-D',
     })
-    expect(result.currentModelId.value).toBe('provider-D/model-D')
+    expect(result.currentModelId.value).toBe('')
     scope.stop()
   })
 })
@@ -313,9 +345,9 @@ describe('useComposerModelThinking · currentThinkingLevel 派生', () => {
     scope.stop()
   })
 
-  it('landing 态 → currentThinkingLevel 跟随 localThinkingLevel（sync 会设初值）', () => {
+  it('landing 态 → currentThinkingLevel 跟随 localThinkingLevel（初值由 followRememberedOrDefault watch 设定）', () => {
     const { result, scope } = mount(null)
-    // sync immediate watch 设 localThinkingLevel 为最高可用档（map 缺失新语义默认五档 → 'high'）
+    // followRememberedOrDefault immediate watch 设 localThinkingLevel 为最高可用档（map 缺失新语义默认五档 → 'high'）
     expect(result.currentThinkingLevel.value).toBe('high')
     // 手动改 localThinkingLevel → currentThinkingLevel 跟随
     result.localThinkingLevel.value = 'medium'
@@ -405,13 +437,16 @@ describe('useComposerModelThinking · onThinkingSelect 三分支', () => {
 })
 
 describe('useComposerModelThinking · Staging Mode（ADR-0056）', () => {
-  it('enterStagingMode：currentModelId 读快照，后续 onModelSelect/onThinkingSelect 走 staging 分支', async () => {
+  it('enterStagingMode：currentModelId/currentThinkingLevel 读快照，后续 onModelSelect/onThinkingSelect 走 staging 分支', async () => {
     const { result, spies, scope } = mount('s1', {
       sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
     })
     result.enterStagingMode()
-    // currentModelId 进入暂存态读 staging 快照（enterStagingMode 先快照 modelId）
+    // 快照初值直断言：源 enterStagingMode 为「先快照 stagingThinking 再置 stagingModel」——
+    // stagingModel 置位后两个 computed 才切读 staging 分支，故读到的都是切换前的常规态原值，
+    // 快照初值可直接断言（若回退为反序，thinking 快照会落 undefined，见下一用例守卫）
     expect(result.currentModelId.value).toBe('provider-A/model-A')
+    expect(result.currentThinkingLevel.value).toBe('high')
     // staging 活跃：onModelSelect 写快照，不调 RPC
     await result.onModelSelect({ modelId: 'model-B', provider: 'provider-B' })
     expect(result.currentModelId.value).toBe('provider-B/model-B')
@@ -422,10 +457,19 @@ describe('useComposerModelThinking · Staging Mode（ADR-0056）', () => {
     expect(result.currentThinkingLevel.value).toBe('xhigh')
     expect(spies.setThinkingLevel).not.toHaveBeenCalled()
     scope.stop()
-    // 注：源 enterStagingMode 顺序为「先设 stagingModel 再读 currentThinkingLevel」，而
-    // currentThinkingLevel computed 依赖 stagingModel——赋值后重算走 staging 分支返回尚未赋值的
-    // stagingThinking（undefined）。故本用例不直接断言 enterStagingMode 后的 thinking 快照初值，
-    // 改为经 onThinkingSelect 显式写入验证 staging 分支。此顺序特性建议后续修复（先读后设）。
+  })
+
+  it('enterStagingMode 快照直断言：快照初值即原值（先快照后切换，防反序回退）', () => {
+    // 反序回退守卫：旧顺序「先置 stagingModel 再读 currentThinkingLevel」下，stagingModel
+    // 置位后 currentThinkingLevel computed 即切读 staging 分支，读到尚未赋值的
+    // stagingThinking（undefined）写进快照——此断言在旧顺序下必红
+    const { result, scope } = mount('s1', {
+      sessionState: { modelId: 'p/m1', thinkingLevel: 'h' },
+    })
+    result.enterStagingMode()
+    expect(result.currentThinkingLevel.value).toBe('h')
+    expect(result.currentModelId.value).toBe('p/m1')
+    scope.stop()
   })
 
   it('exitStagingMode 清空快照，chip 恢复读常规态真值', async () => {
@@ -767,6 +811,108 @@ describe('useComposerModelThinking · 记录 watch 门禁（D2 双条件）', ()
   })
 })
 
+// ══════════ [Gate B] 跨写污染回归：切模型回包 flush 的错配对不得写穿记忆 ══════════
+// 真实 app 复现（V4 档位记忆场景，浏览器 50-100ms 采样）：mem[flash]='low'、mem[glm-5.3]='max'，
+// 显式切走再切回后 mem[flash] 变 max（档位自动落 max 而非用户设的 low）。
+//
+// 根因（错配对入表）：switchModel 回包 applySnapshot({modelId}) 与后续 consume 恢复的
+// setThinkingLevel 回包 applySnapshot({thinkingLevel}) 是两次独立 store 写，中间夹一个
+// watch flush——记录 watch 在该 flush 读到「模型已变、档位尚未对齐」的跨纪元快照：
+// 切走 = (新模型, 旧档位)、切回 = (旧模型, 新纪元档位)。后者把 glm-5.3 纪元的 max value
+// 经 flash 的 map 反查为 'max' 写进 mem[flash]（KV 写穿持久化），且该窗口内 armed consume
+// 若幂等（记忆已被污染即命中 max）则恢复链不再发出，污染固化。
+//
+// 生产保真 harness：realisticSetLevel 让 setThinkingLevel 回包真实写 store（useModel 时序：
+// await RPC → applySnapshot({thinkingLevel}) → resolve），否则第二次 store 写无法驱动。
+const fiveLevelMap = () => ({ ...sameContentMap(), max: 'x' })
+const fiveLevels = [...fourLevels, 'max']
+
+describe('useComposerModelThinking · 跨写污染回归（Gate B：错配对不入表）', () => {
+  /** W1+W2 公共前置：X/Y 五档同 value 空间，mem[X]='low'、mem[Y]='max'，store=(X,'l') */
+  function mountCrossWrite() {
+    record('p/X', 'low')
+    record('p/Y', 'max')
+    return mountMem({
+      sid: 's1',
+      session: { modelId: 'p/X', thinkingLevel: 'l' },
+      maps: { 'p/X': fiveLevelMap(), 'p/Y': fiveLevelMap() },
+      supported: { 'p/X': fiveLevels, 'p/Y': fiveLevels },
+      realisticSetLevel: true,
+    })
+  }
+
+  it('W1/切走已记忆模型：「(新模型, 旧档位)」错配 flush 不入表，mem[Y] 不被旧档位临时改写', async () => {
+    const h = mountCrossWrite()
+    // 切走 X → Y：回包 applySnapshot({modelId:'p/Y'})，level 仍 'l'（X 纪元遗留）
+    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
+    h.pending[0].applyAndResolve('p/Y')
+    await nextTick()
+    // consume 命中 mem[Y]='max' → 恢复 onReset('x') → setThinkingLevel('x') 发出
+    expect(h.setLevelCalls).toHaveLength(1)
+    expect(h.setLevelCalls[0].level).toBe('x')
+    // 错配对 (p/Y,'l') 不得写穿：'l' 是 X 纪元的生效档，从未生效于 Y
+    //（当前实现此处 record(p/Y,'low')，红）
+    expect(lookup('p/Y')).toBe('max')
+    // 恢复回包：applySnapshot({thinkingLevel:'x'}) → 「level 变化」flush 记录 (Y,'max')
+    h.setLevelCalls[0].resolveReply()
+    await nextTick()
+    await p
+    expect(lookup('p/X')).toBe('low')
+    expect(lookup('p/Y')).toBe('max')
+    h.scope.stop()
+  })
+
+  it('W2/切回旧模型：「(旧模型, 新纪元档位)」错配 flush 不入表——mem[X] 不被 Y 的 max 污染（主回归点）', async () => {
+    const h = mountCrossWrite()
+    // 前半：切走 X → Y（同 W1），到达 store=(p/Y,'x')、mem[X]='low'、mem[Y]='max' 的稳态
+    const p1 = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
+    h.pending[0].applyAndResolve('p/Y')
+    await nextTick()
+    h.setLevelCalls[0].resolveReply()
+    await nextTick()
+    await p1
+
+    // 切回 Y → X：回包 applySnapshot({modelId:'p/X'})，level 仍 'x'（glm-5.3 纪元的 max value）
+    const p2 = h.result.onModelSelect({ modelId: 'X', provider: 'p' })
+    h.pending[1].applyAndResolve('p/X')
+    await nextTick()
+    // consume 仍按未污染记忆命中 low → 恢复 onReset('l')（consume 判定先于错配写入）
+    expect(h.setLevelCalls[1]?.level).toBe('l')
+    // 错配对 (p/X,'x') 不得写穿：'x' 经 X 的 map 反查恰为 'max'，但它是 Y 纪元的档位，
+    // 从未生效于 X——当前实现此处 record(p/X,'max') 污染记忆表（红，即真实 app 观测的
+    // mem[flash] 被改写为 max）
+    expect(lookup('p/X')).toBe('low')
+    // 恢复回包：store=(p/X,'l') → 纪元一致 flush 记录 (X,'low')，终态双向不污染
+    h.setLevelCalls[1].resolveReply()
+    await nextTick()
+    await p2
+    expect(lookup('p/X')).toBe('low')
+    expect(lookup('p/Y')).toBe('max')
+    h.scope.stop()
+  })
+
+  it('W3/纪元一致 flush 不受影响：恢复回包的 level 变化照常入表，条件 b（挂载记录既有值）保持', async () => {
+    const h = mountCrossWrite()
+    // 挂载 immediate：记录 session 加载既有值（条件 b，D6 原语义）
+    expect(lookup('p/X')).toBe('low')
+    // 手选档（modelId 不变、level 变）：照常入表
+    h.sessionRef.value = { modelId: 'p/X', thinkingLevel: 'm' }
+    await nextTick()
+    expect(lookup('p/X')).toBe('medium')
+    h.scope.stop()
+  })
+
+  it('W4/换绑不误伤：换绑到另一 session（sid 变、modelId/level 随真值变化）保持记录既有真值', async () => {
+    const h = mountCrossWrite()
+    // 换绑到 s2（模型 Y、档位 'm'）：sid 变化使错配跳过判据不命中，新 session 真值照常入表
+    h.sessionId.value = 's2'
+    h.sessionRef.value = { modelId: 'p/Y', thinkingLevel: 'm' }
+    await nextTick()
+    expect(lookup('p/Y')).toBe('medium')
+    h.scope.stop()
+  })
+})
+
 // ══════════ [u5] 探针表补漏收口（设计 §3.3 探针表第 2/3 行缺口）══════════
 describe('useComposerModelThinking · 探针表补漏（u5 收口）', () => {
   it('F4/已建态不受跟随影响：session 已建时跟随 watch 恒静默，localThinkingLevel 不被触碰（G3）', async () => {
@@ -899,5 +1045,120 @@ describe('useComposerModelThinking · 一致性审查修复（U-fix-1/2）', () 
     expect(h.setPendingModel).toHaveBeenCalledWith('p/N') // pendingModel 照常记
     expect(h.setThinkingLevel).not.toHaveBeenCalled() // landing 无 RPC
     h.scope.stop()
+  })
+})
+
+// ══════════ [U4] D3 显示分流：已建态空值占位（不回落 landing 残留/全局默认）══════════
+describe('useComposerModelThinking · D3 显示分流（已建态空值占位）', () => {
+  it('已建态 session.modelId 空串 → regularModelId 返回空串占位，不兜底到 currentModel/defaultModel', () => {
+    const { result, scope } = mount('s1', {
+      sessionState: { modelId: '' },
+      currentModel: 'provider-F/model-F',
+      defaultModel: 'provider-D/model-D',
+    })
+    // 空串 → '' 占位，不回落 landing currentModel 或全局 defaultModel
+    expect(result.currentModelId.value).toBe('')
+    scope.stop()
+  })
+
+  it('已建态 session.thinkingLevel undefined → regularThinkingLevel 返回 undefined，不回落 localThinkingLevel', () => {
+    const { result, scope } = mount('s1', {
+      sessionState: { modelId: 'provider-A/model-A' }, // thinkingLevel 缺失
+    })
+    // thinkingLevel undefined → undefined 占位，不回落 landing localThinkingLevel
+    expect(result.currentThinkingLevel.value).toBeUndefined()
+    scope.stop()
+  })
+
+  it('已建态 session.modelId 有值 → 正常返回（不被 D3 改变）', () => {
+    const { result, scope } = mount('s1', {
+      sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
+    })
+    expect(result.currentModelId.value).toBe('provider-A/model-A')
+    expect(result.currentThinkingLevel.value).toBe('high')
+    scope.stop()
+  })
+
+  it('landing 态（sessionId=null）→ 走兜底链，不受 D3 分流影响', () => {
+    const { result, scope } = mount(null, {
+      currentModel: 'provider-F/model-F',
+      defaultModel: 'provider-D/model-D',
+    })
+    expect(result.currentModelId.value).toBe('provider-F/model-F')
+    scope.stop()
+  })
+})
+
+// ══════════ [U4] D4 lastUsedModel 兜底链（landing 态 modelId 兜底链顺序）══════════
+describe('useComposerModelThinking · D4 lastUsedModel 兜底链', () => {
+  it('landing + currentModel null + lastUsedModel 有值 → 读 lastUsedModel', () => {
+    recordLastUsed('provider-L/model-L')
+    const { result, scope } = mount(null, {
+      defaultModel: 'provider-D/model-D',
+    })
+    // currentModel null → lastUsedModel → defaultModel
+    expect(result.currentModelId.value).toBe('provider-L/model-L')
+    scope.stop()
+  })
+
+  it('landing + currentModel 有值 → 优先读 currentModel（lastUsedModel 不干扰）', () => {
+    recordLastUsed('provider-L/model-L')
+    const { result, scope } = mount(null, {
+      currentModel: 'provider-F/model-F',
+      defaultModel: 'provider-D/model-D',
+    })
+    // currentModel 优先级最高
+    expect(result.currentModelId.value).toBe('provider-F/model-F')
+    scope.stop()
+  })
+
+  it('landing + currentModel null + lastUsedModel 无记录 → 回落 defaultModel', () => {
+    // lastUsedModel 未记录 → undefined
+    const { result, scope } = mount(null, {
+      defaultModel: 'provider-D/model-D',
+    })
+    expect(result.currentModelId.value).toBe('provider-D/model-D')
+    scope.stop()
+  })
+})
+
+// ══════════ [U4] D4 lastUsedModel 写入（显式选择写 KV，staging 不写）══════════
+describe('useComposerModelThinking · D4 lastUsedModel 写入', () => {
+  it('已建态 onModelSelect → 写入 lastUsedModel', async () => {
+    const { result, scope } = mount('s1', {
+      sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
+    })
+    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' })
+    expect(lookupLastUsed()).toBe('provider-C/model-C')
+    scope.stop()
+  })
+
+  it('landing 态 onModelSelect → 写入 lastUsedModel', async () => {
+    const { result, scope } = mount(null)
+    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' })
+    expect(lookupLastUsed()).toBe('provider-C/model-C')
+    scope.stop()
+  })
+
+  it('staging 态 onModelSelect → 不写 lastUsedModel', async () => {
+    const { result, scope } = mount('s1', {
+      sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
+    })
+    result.enterStagingMode()
+    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' })
+    // staging 试选不写 KV
+    expect(lookupLastUsed()).toBeUndefined()
+    scope.stop()
+  })
+
+  it('多次选择 → lastUsedModel 覆盖为最后一次', async () => {
+    const { result, scope } = mount('s1', {
+      sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
+    })
+    await result.onModelSelect({ modelId: 'model-B', provider: 'provider-B' })
+    expect(lookupLastUsed()).toBe('provider-B/model-B')
+    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' })
+    expect(lookupLastUsed()).toBe('provider-C/model-C')
+    scope.stop()
   })
 })

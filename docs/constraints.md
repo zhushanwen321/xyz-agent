@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 86 条（生成于 2026-09-04）。
+共 89 条（生成于 2026-09-04）。
 
 ## pi 关系（外部依赖边界）
 
@@ -16,7 +16,7 @@
 | C-pi-04 | pi 严格打包内置（Bun 编译二进制），无系统回退，缺失/启动失败即 fatal error | apps/electron/**、packages/runtime/src/** | [0005-bun-binary-over-npm-package](adr/0005-bun-binary-over-npm-package.md) · [0006-strict-bundled-pi-no-fallback](adr/0006-strict-bundled-pi-no-fallback.md) | hook: `prepare-pi-resources.sh` + review: review-electron-build |
 | C-pi-05 | pi-protocol.ts 是 pi 协议真契约：PiEvent 联合全覆盖、字段类型镜像 pi 源码、禁 args ?? input 类防御性双读 | packages/runtime/src/infra/pi/** | [0037-pi-protocol-real-contract](adr/0037-pi-protocol-real-contract.md) | review: review-type-safety |
 | C-pi-06 | ~/.xyz-agent 与 ~/.pi/agent 完全隔离；路径禁硬编码，从 getConfigDir()/getPiAgentDir() 动态推导 | global | [0009-xyz-agent-data-dir-isolation-from-pi](adr/0009-xyz-agent-data-dir-isolation-from-pi.md) · [AGENTS.md](../AGENTS.md) | hook: `check_path_whitelist.py` |
-| C-pi-07 | pi JSONL 唯一写方 = pi 进程（绝对写规则）；合法边界仅登记三类：sidecar 四后缀 / fork 文件创建型 / restore 归一化白名单 | global | [0062-single-data-owner-absolute-write-rule](adr/0062-single-data-owner-absolute-write-rule.md) · [data-source-registry](architecture/data-source-registry.md) | hook: `check_pi_direct_write.py` + review: review-data-governance |
+| C-pi-07 | pi JSONL 唯一写方 = pi 进程（绝对写规则）；合法边界仅登记三类：sidecar 六后缀 / fork 文件创建型 / restore 归一化白名单 | global | [0062-single-data-owner-absolute-write-rule](adr/0062-single-data-owner-absolute-write-rule.md) · [data-source-registry](architecture/data-source-registry.md) | hook: `check_pi_direct_write.py` + review: review-data-governance |
 | C-pi-08 | pi session 文件延迟写入：首次 flush 前禁止 xyz 代码创建/触碰（EEXIST 致 session 永久卡死）；读取必须处理文件不存在 | packages/runtime/src/** | [AGENTS.md](../AGENTS.md) · [data-source-registry](architecture/data-source-registry.md) | review: review-data-governance |
 | C-pi-09 | 系统提示词替换走 --system-prompt CLI（仅新会话），追加走 extension before_agent_start hook（每轮热生效）；禁 hook 内整段替换 | extensions/taiji/system-prompt/**、packages/runtime/src/** | [0044-system-prompt-replace-via-cli-append-via-hook](adr/0044-system-prompt-replace-via-cli-append-via-hook.md) | review: review-extension-api |
 | C-pi-10 | 非活跃 session 的修改经短命 pi 进程 + RPC（withEphemeralPi），不做直接文件操作 | packages/runtime/src/** | [data-source-governance](architecture/data-source-governance.md) | review: review-data-governance |
@@ -42,6 +42,8 @@
 | C-data-12 | session 终态由 runtime 写 .meta.json sidecar（原子写 + 写前 existsSync 守卫），不向 pi JSONL append session_end | packages/runtime/src/** | [0042-runtime-session-end-entry](adr/0042-runtime-session-end-entry.md) | review: review-data-governance |
 | C-data-13 | 默认模型：校验基准双源聚合（catalog ∪ auth ∪ custom）+ 用户意图优先 + 收口 default-model-resolver 单点；pi 实际模型对账以 get_state 为唯一真值源 | packages/renderer/src/**、packages/runtime/src/** | [default-model-unified-exit](architecture/default-model-unified-exit.md) | review: review-business-logic |
 | C-data-14 | hydrate 记录尾窗锚（piEntryId），load-more 按锚切分只前插；id 去重降级为兜底断言 | packages/renderer/src/**、packages/core/src/** | [conversation-turn-attribution](architecture/conversation-turn-attribution.md) | review: review-data-governance |
+| C-data-15 | per-session 模型/思考档位必须持久化到独立 sidecar <sessionFile>.model.json（persistBindingSidecar 家族：原子写 + sessionMetaCache 失效 + JSONL 不存在不创建守卫），禁只存内存；BINDING_FIELDS 矩阵登记 modelId/thinkingLevel 绑定字段且 restore 列='none'（扫描值禁覆写 get_state 读回的播种真值）；全部写点写生效值；purgeSessionSidecars 清单必须含 .model.json 防孤儿；sidecar 是 best-effort 显示缓存非权威（权威 = pi 会话文件 entries，restore 读回覆写过期值自愈） | packages/runtime/src/** | [composer-model-session-isolation](design/composer-model-session-isolation.md#33-关键决策与权衡) | hook: `check_pi_direct_write.py` + review: review-data-governance |
+| C-data-16 | 全局默认模型不得由 session 级模型切换改写：ModelService.switchModel 禁广播 config.defaults（source=model-switch），settingsStore.defaultModel 单一语义 = Settings 配置值（消费点不得因 session 级切换写默认或弹「默认模型自动更新」toast）；landing 新任务默认模型显式化为 lastUsedModel KV（仅显式选择写入，staging 试选不写），landing 兜底链 currentModel \|\| lastUsedModel \|\| defaultModel 仅限 landing 态 | packages/runtime/src/**、packages/core/src/**、packages/renderer/src/** | [composer-model-session-isolation](design/composer-model-session-isolation.md#33-关键决策与权衡) | review: review-business-logic |
 
 ## 进程与通信架构
 
@@ -73,6 +75,7 @@
 | C-state-07 | 领域类型 SSOT 归领域层，mock 反向 import 生产类型；禁生产代码从 mock 目录获取类型 | packages/renderer/src/**、packages/core/src/** | [0029-domain-types-ssot-in-lib](adr/0029-domain-types-ssot-in-lib.md) | review: review-type-safety |
 | C-state-08 | session 级 renderer 状态三问——存哪里（分区 store/composable）？切走谁清（cleanup 编排）？切回谁喂（恢复腿）？新增 ServerMessageType 的 renderer 消费方 / useSessionEvents 调用点时 CR 必查，三问有明确归属才放行；「onMessage 直写组件本地 ref」反模式由 taste-lint 规则 no-instance-level-session-state 机器拦截 | packages/renderer/src/** | [context-consistency-design](todo/context-consistency-design.md) · [0049-session-isolation-map-partition](adr/0049-session-isolation-map-partition.md) | hook: `taste-lint/base.mjs` + review: review-data-governance |
 | C-state-09 | panel 输入面（composer/ask-user/landing）显隐只许经 derivePanelView 纯函数派生（packages/core/src/domain/session/panel-view.ts），禁止组件内直接组合 flow/chat/session 状态判显隐；landing 判据恒为 !sessionId && isFlowActive（G2 结构免疫） | packages/renderer/src/components/panel/**、packages/core/src/domain/session/panel-view.ts | [panel-view-derivation-and-flow-lifecycle](design/panel-view-derivation-and-flow-lifecycle.md) | review: review-arch-boundary |
+| C-state-10 | thinking 档位对齐 watch 仅挂「用户显式切模型」：watch 回调以入口 armed 快照（consumeArmedRestore 执行前捕获）为门禁判据（禁读消费块后的 armed 值），无 armed 快照时全部对齐分支（无档位设最高档/同体系映射/跨体系重置）一律跳过——切 session 焦点等非用户动作禁触发对齐 setThinkingLevel RPC；可用性校验分支（数据不一致安全网）保持不门禁；armed 生命周期沿用既有防线（显式 onModelSelect 设立，成功/失败/换绑/5s 过期清）零新状态 | packages/core/src/** | [composer-model-session-isolation](design/composer-model-session-isolation.md#33-关键决策与权衡) | review: review-business-logic |
 
 ## extension 体系
 
