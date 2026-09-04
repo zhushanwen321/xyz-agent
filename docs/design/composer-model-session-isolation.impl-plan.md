@@ -120,7 +120,7 @@ graph TD
 | U4 | committed | 1 | commit `cd0e3f7a2`（model-thinking D3 分流 + lastUsedModel KV + D3 占位断言更新 + lifecycle seeding test）；typecheck exit 0；core tests 66/66 PASS |
 | U5 | **blocked** | 0 | D5 门禁与 consumeArmedRestore 冲突：consume 所有路径均 clearArmed → 门禁 getArmed() 恒 null → 分支 2/4/5 永远跳过。需设计修正（consume 不清 miss/门禁用 pre-consume 快照）。thinking-level-sync 已回退到基线，代码+测试零残留 |
 | U6 | pending | 0 | — |
-| U7 | pending | 0 | — |
+| U7 | committed | 1 | commit `1c749bb72`；3处勘误落档 + 链接可解析 + drift check PASS |
 | U8 | pending | 0 | — |
 
 ## 7 残留风险与变更历史
