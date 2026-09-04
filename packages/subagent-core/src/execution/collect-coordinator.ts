@@ -18,6 +18,25 @@
 //   跨轮续累（D2 隐式批）：缓冲跨多次 route 累积不清空（分两轮派 2+1 sync → 闭合时
 //   单批三成员）；flush 后缓冲清空，后续 sync 成员自然开新批（语义 = "等所有 sync 待收"）。
 //
+// [U8 拆批盲窗修复] 闭合满足 → 同宏任务去抖合批 flush（不再立即 flush）：
+//   盲窗机理：kickOffBackground 的 runAndFinalize（completeRecord+archive，record 从
+//   store.listAllActive 移除）先于 .then 链的 notifyComplete。同同步段背靠背终态时，
+//   成员 A route 触发闭合检测（只扫 listAllActive 非终态）看不到「已 archive 未路由」
+//   的成员 B → 立即 flush([A])；B route 再 flush([B]) → 拆两条单成员批（G1 弱化，
+//   单唤醒变两次）。
+//   修复：闭合首次满足改排程 flush（setTimeout(0)，Node 1ms clamp——同一宏任务级窗口，
+//   确定性、无可观察延迟）；窗口内后续 route 落缓冲后一并 flush（背靠背成员合单批）。
+//   触发时重验闭合条件：窗口内若有新 sync 成员注册 running（跨轮续累反转）→ 保留缓冲
+//   不 flush，等其终态 route 重新排程（终态必经 notifyComplete，不丢、不悬挂）。
+//   交互语义（授权修复轮决策）：
+//   - E9 dispose：service.convertPendingSyncBufferToAsync 先 cancelScheduledFlush
+//     （取消而非同步 flush——放任触发会与逐条转 async 写账双通道并发 → 同成员双投递，
+//     且触发点可能落在 notifier/store dispose 之后）；取消后缓冲原样保留，E9 单通路
+//     完整接管（选语义最简）。
+//   - E1 恢复补发：只在 session_start 编排处运行（此前 dispose 已取消挂起排程），
+//     补发直走 notifier.notifyBatch 不经协调器；异常时序相撞由账本 sync-batch:<hash>
+//     幂等拒绝兜底。
+//
 // flush 注入式（U3 已接线）：deps.flushBatch 由宿主注入——U3 接 notifier.notifyBatch
 //（单条批投递 + ledger sync-batch hash 写账 + batchFinalized 落标，见
 // subagent-service.ts flushBatch 闭包）。测试注入 fake 断言闭合条件。flush 同步
@@ -31,6 +50,8 @@
 //     路径的静默跳过对称——调用点 gate 语义不变，协调器不重复判定。
 //   - 闭合判定只敏感于「是否还有非终态 sync」：本条终态在 store 的可见性（archive 后
 //     磁盘重建时序）不影响判定正确性。
+//   - [U8] 排程幂等：窗口内多条 route 至多一个挂起定时器；flush 只在触发时重验后执行，
+//     缓冲在排程期内保持可枚举（pendingMembers 供 E9 dispose 转换读取）。
 
 import type { BgNotifyRecord } from "./notifier.ts";
 import type { ExecutionRecord } from "./types.ts";
@@ -65,7 +86,7 @@ export interface CollectCoordinatorDeps {
   /** 闭合判定数据源（CollectScanRecord 最小视图，见接口注释——数据源须携带
    *  collectMode/batchFinalized 原始值，禁经 recordToSubagent 投影）。 */
   listRecords(limit: number): CollectScanRecord[];
-  /** 批投递回调（闭合时触发，缓冲整体移交后清空）。U3 接 notifier.notifyBatch。 */
+  /** 批投递回调（合批窗口到期触发，缓冲整体移交后清空）。U3 接 notifier.notifyBatch。 */
   flushBatch(members: BgNotifyRecord[]): void;
 }
 
@@ -77,12 +98,16 @@ export type CollectRouteResult =
   | "sync-skipped"
   /** 入缓冲未闭合（仍有非终态 sync 成员）。 */
   | "sync-buffered"
-  /** 入缓冲并触发闭合 flush（缓冲已移交 flushBatch 并清空）。 */
+  /** 闭合触发（[U8] flush 已排程合批——同宏任务窗口内的后续 route 一并投递）。 */
   | "sync-flushed";
 
 export class CollectCoordinator {
-  /** 批缓冲（内存）：已终态未 flush 的 sync 成员终态快照，跨 route 累积。 */
+  /** 批缓冲（内存）：已终态未 flush 的 sync 成员终态快照，跨 route 累积。
+   *  [U8] 排程合批窗口期内保持可枚举（E9 dispose 转换依赖 pendingMembers 全量）。 */
   private readonly buffer: BgNotifyRecord[] = [];
+
+  /** [U8] 挂起的合批排程定时器（undefined = 无排程）。 */
+  private flushTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly deps: CollectCoordinatorDeps) {}
 
@@ -95,26 +120,56 @@ export class CollectCoordinator {
     const snapshotRecord = this.deps.toNotifyRecord(record);
     if (!snapshotRecord) return "sync-skipped";
     this.buffer.push(snapshotRecord);
-    return this.maybeFlush() ? "sync-flushed" : "sync-buffered";
+    return this.closeDetected() ? "sync-flushed" : "sync-buffered";
   }
 
-  /** 诊断/测试：当前缓冲成员数（= 已终态未 flush 的 sync 成员数）。 */
+  /** 诊断/测试：当前缓冲成员数（= 已终态未 flush 的 sync 成员数，含合批窗口内成员）。 */
   get pendingCount(): number {
     return this.buffer.length;
   }
 
-  /** 诊断/测试：缓冲成员快照（副本，非活引用）。 */
+  /** 诊断/测试 + E9 dispose 转换数据源：缓冲成员快照（副本，非活引用）。 */
   pendingMembers(): BgNotifyRecord[] {
     return [...this.buffer];
   }
 
-  /** 闭合检测 + flush：缓冲非空 && 无非终态 sync 成员 → 整体移交 flushBatch 并清空。 */
-  private maybeFlush(): boolean {
+  /** [U8·E9 交互] 取消挂起的合批排程（缓冲原样保留——dispose 转 async 通路仍读得到
+   *  全部成员）。无排程时 no-op；幂等。 */
+  cancelScheduledFlush(): void {
+    if (this.flushTimer !== undefined) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = undefined;
+    }
+  }
+
+  /** 闭合判定 + 合批排程武装：缓冲非空 && 无非终态 sync 成员 → 排程 flush。
+   *  已有排程挂起时幂等（同窗口合批，不重复定时器）。 */
+  private closeDetected(): boolean {
     if (this.buffer.length === 0) return false;
     if (this.hasRunningSync()) return false;
+    this.scheduleFlush();
+    return true;
+  }
+
+  /** [U8] 同宏任务去抖合批排程：setTimeout(0)（Node 1ms clamp）——窗口跨度覆盖一个
+   *  完整事件循环轮次（当前 poll 段 I/O 回调 + 微任务链排空），足以收纳 finalize 链
+   *  间隙内的背靠背 route，同时无可观察延迟（毫秒级 < 任意 LLM/投递时标）。 */
+  private scheduleFlush(): void {
+    if (this.flushTimer !== undefined) return;
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = undefined;
+      this.flushIfClosed();
+    }, 0);
+  }
+
+  /** 合批窗口到期：重验闭合条件后整体移交 flushBatch 并清空。
+   *  窗口内新 sync 成员注册 running（跨轮续累反转）→ 保留缓冲不 flush，等其终态
+   *  route 重新排程（终态必经 notifyComplete，不丢、不悬挂）。 */
+  private flushIfClosed(): void {
+    if (this.buffer.length === 0) return;
+    if (this.hasRunningSync()) return;
     const members = this.buffer.splice(0, this.buffer.length);
     this.deps.flushBatch(members);
-    return true;
   }
 
   /** 是否存在非终态 sync 成员（collectMode=sync && 无 batchFinalized && 非终态）。

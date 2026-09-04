@@ -394,7 +394,13 @@ describe("CollectCoordinator ↔ notifyBatch 集成 — 跨轮续累单批（D2 
     return { mock, notifier, coordinator };
   }
 
-  it("分两轮派 2+1 sync：闭合时单批 3 成员一次投递（D2）", () => {
+/** [U8 拆批修复] 闭合合批排程窗口等待：flush 排程 = setTimeout(0)（Node 1ms clamp），
+ *  10ms 真实定时器保证窗口已开（本包 vitest 真实 timers 环境）。 */
+async function settleFlush(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+
+  it("分两轮派 2+1 sync：闭合时单批 3 成员一次投递（D2）", async () => {
     // 第一轮：2 sync 终态，第三台仍在跑（非终态 → 不闭合）
     const storeRecords = [
       makeStoreRec("sa-1", "sync", "closed"),
@@ -411,6 +417,7 @@ describe("CollectCoordinator ↔ notifyBatch 集成 — 跨轮续累单批（D2 
     // 第二轮：sa-3 终态（store 快照同步终态）→ 闭合 → 单批 3 成员
     storeRecords[2] = makeStoreRec("sa-3", "sync", "closed");
     expect(coordinator.route(makeExecutionRecord("sa-3", "sync"))).toBe("sync-flushed");
+    await settleFlush();
     expect(coordinator.pendingCount).toBe(0);
 
     expect(mock.sentMessages).toHaveLength(1);
@@ -422,14 +429,16 @@ describe("CollectCoordinator ↔ notifyBatch 集成 — 跨轮续累单批（D2 
     expect(details.notifyId).toBe(buildBatchNotifyId(["sa-1", "sa-2", "sa-3"]));
   });
 
-  it("flush 后新 sync 成员开新批（缓冲清空语义），两批 hash 互异", () => {
+  it("flush 后新 sync 成员开新批（缓冲清空语义），两批 hash 互异", async () => {
     const storeRecords = [makeStoreRec("sa-1", "sync", "closed")];
     const { mock, coordinator } = makeHarness(storeRecords);
 
     expect(coordinator.route(makeExecutionRecord("sa-1", "sync"))).toBe("sync-flushed");
+    await settleFlush();
     // 第一批已投（仍挂 pending——idle），第二批成员入缓冲
     storeRecords.push(makeStoreRec("sa-2", "sync", "closed"));
     expect(coordinator.route(makeExecutionRecord("sa-2", "sync"))).toBe("sync-flushed");
+    await settleFlush();
 
     expect(mock.sentMessages).toHaveLength(2);
     const ids = mock.sentMessages.map((m) => (m.details as { notifyId: string }).notifyId);
@@ -438,7 +447,7 @@ describe("CollectCoordinator ↔ notifyBatch 集成 — 跨轮续累单批（D2 
     expect(ids).toContain(buildBatchNotifyId(["sa-2"]));
   });
 
-  it("混派正交（A8）：async record 直通不走批，sync 成员批闭合不受 async 干扰", () => {
+  it("混派正交（A8）：async record 直通不走批，sync 成员批闭合不受 async 干扰", async () => {
     const storeRecords = [
       makeStoreRec("sa-sync", "sync", "closed"),
       makeStoreRec("sa-async", undefined, "closed"),
@@ -478,6 +487,7 @@ describe("CollectCoordinator ↔ notifyBatch 集成 — 跨轮续累单批（D2 
 
     expect(coordinator.route(makeExecutionRecord("sa-async", undefined))).toBe("async");
     expect(coordinator.route(makeExecutionRecord("sa-sync", "sync"))).toBe("sync-flushed");
+    await settleFlush();
     // async 直通收集器（生产接 notifier.notify），批通道只见 sync 成员
     expect(asyncDirect.map((r) => r.id)).toEqual(["sa-async"]);
     expect(mock.sentMessages).toHaveLength(1);

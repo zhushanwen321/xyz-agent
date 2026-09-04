@@ -47,6 +47,19 @@ import { messageHandler } from "../interface/subagent-actions.ts";
 
 const mockRunSpawn = vi.mocked(runSpawn);
 
+// [commit 前修复] 测试进程可能继承宿主（pi 子进程链）的 PI_SUBAGENT_* 身份 env：
+// initSession 的 sessionRootId/execCtx 基线读 env 优先于 init.sessionId——宿主 env
+// 泄漏时 cross-tree 守卫（15448af73）把本测试自建的 record 判为异树拒绝 message
+//（守卫行为正确，测试缺清理）。与 subagent-core collect-mixed-dispatch.test.ts
+// 同病同修：beforeEach 删五键后再 initSession（delete 不 restore，同包既有范式）。
+const IDENTITY_ENV_KEYS = [
+  "PI_SUBAGENT_ROOT_SESSION_ID",
+  "PI_SUBAGENT_SELF_RECORD_ID",
+  "PI_SUBAGENT_DEPTH",
+  "PI_SUBAGENT_ROOT_CWD",
+  "PI_SUBAGENT_FORK_DEPTH",
+] as const;
+
 const STUB_MODEL: ModelInfo = { id: "test-model", name: "Test", provider: "test", reasoning: false };
 
 function makeTmpAgentDir(): string {
@@ -115,6 +128,7 @@ describe("SP-5 one-shot upgrade（message → chatMode + 冷 resume）", () => {
   let sessionRootId: string;
 
   beforeEach(() => {
+    for (const k of IDENTITY_ENV_KEYS) delete process.env[k];
     agentDir = makeTmpAgentDir();
     const modelService = new ModelConfigService({ agentDir });
     service = new SubagentService({ cwd: agentDir, modelService });

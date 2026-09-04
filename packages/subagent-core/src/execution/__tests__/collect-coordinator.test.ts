@@ -7,6 +7,10 @@
 //   3. 跨轮续累（D2 隐式批）：分两轮派 2+1 sync 仍同一 pending 集（单批三成员）；
 //   4. cancel / watchdog（orphan 类）终态入 pending（设计 E3/E6）。
 //
+// [U8 拆批修复] 闭合满足 → setTimeout(0) 同宏任务去抖合批 flush（非立即）——背靠背
+//   route（终态已落 store、notifyComplete 尚在 finalize 链间隙）一并入批；武装后
+//   flush 异步到期，断言投递面/缓冲清空前须 await settleFlush() 开窗。
+//
 // 纯注入测试：无文件 IO、无真实 service——service 集成面见 collect-coordinator-service.test.ts。
 
 import { describe, expect, it, vi } from "vitest";
@@ -112,6 +116,12 @@ function makeHarness(storeRecords: SubagentRecord[] = []): Harness {
   return { coordinator, notifyAsync, toNotifyRecord, listRecords, flushBatch };
 }
 
+/** [U8 拆批修复] 闭合合批排程窗口等待：flush 排程 = setTimeout(0)（Node 1ms clamp），
+ *  10ms 真实定时器保证窗口已开（本包 vitest 真实 timers 环境）。 */
+async function settleFlush(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+
 // ============================================================
 // async 路由（字节不变语义）
 // ============================================================
@@ -156,7 +166,7 @@ describe("CollectCoordinator sync buffering + closure", () => {
     expect(h.flushBatch).not.toHaveBeenCalled();
   });
 
-  it("flushes the whole buffer when the last running sync member finishes", () => {
+  it("flushes the whole buffer when the last running sync member finishes", async () => {
     // 时序：sa-1 先终态（sa-2 仍 running → 入缓冲）；sa-2 最后终态（store 全 closed）
     // → 闭合 flush 两成员。
     let sa2Running = true;
@@ -169,19 +179,50 @@ describe("CollectCoordinator sync buffering + closure", () => {
     expect(h.coordinator.route(makeRec({ id: "sa-1", collectMode: "sync" }))).toBe("sync-buffered");
     sa2Running = false;
     expect(h.coordinator.route(makeRec({ id: "sa-2", collectMode: "sync" }))).toBe("sync-flushed");
+    await settleFlush();
     expect(h.flushBatch).toHaveBeenCalledTimes(1);
     const members = h.flushBatch.mock.calls[0]?.[0] as BgNotifyRecord[];
     expect(members.map((m) => m.id)).toEqual(["sa-1", "sa-2"]);
     expect(h.coordinator.pendingCount).toBe(0);
   });
 
-  it("a lone sync member flushes immediately (单成员即闭合)", () => {
+  it("a lone sync member flushes via the coalescing window (单成员即闭合)", async () => {
     const h = makeHarness([
       makeStoreRec({ id: "sa-1", collectMode: "sync", status: "closed" }),
     ]);
     const result = h.coordinator.route(makeRec({ id: "sa-1", collectMode: "sync" }));
     expect(result).toBe("sync-flushed");
+    await settleFlush();
     expect(h.flushBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("back-to-back routes in one macrotask coalesce into ONE flush (U8 拆批盲窗回归)", async () => {
+    // 盲窗精确形态：A/B 均已 archive（listAllActive 扫描恒空——终态已落 store 但
+    // B 的 notifyComplete 尚在 finalize 链间隙）。修复前：route(A) 闭合立即 flush([A])，
+    // route(B) 再 flush([B]) → 两条单成员批；修复后：同宏任务去抖窗口把 B 并入，
+    // 单批两成员一次投递。
+    const h = makeHarness([]); // store 空 = 双成员均已 archive（盲窗扫描视图）
+    expect(h.coordinator.route(makeRec({ id: "sa-a", collectMode: "sync" }))).toBe("sync-flushed");
+    expect(h.coordinator.route(makeRec({ id: "sa-b", collectMode: "sync" }))).toBe("sync-flushed");
+    await settleFlush();
+    expect(h.flushBatch).toHaveBeenCalledTimes(1);
+    const members = h.flushBatch.mock.calls[0]?.[0] as BgNotifyRecord[];
+    expect(members.map((m) => m.id)).toEqual(["sa-a", "sa-b"]);
+    expect(h.coordinator.pendingCount).toBe(0);
+  });
+
+  it("cancelScheduledFlush drops the pending window and keeps the buffer (E9 dispose 语义)", async () => {
+    // dispose 到来时挂起排程取消、缓冲原样保留（convertPendingSyncBufferToAsync
+    // 仍读得到全部成员转 async）——service 侧 E9 交互的单元级前置。
+    const h = makeHarness([
+      makeStoreRec({ id: "sa-1", collectMode: "sync", status: "closed" }),
+    ]);
+    expect(h.coordinator.route(makeRec({ id: "sa-1", collectMode: "sync" }))).toBe("sync-flushed");
+    h.coordinator.cancelScheduledFlush();
+    await settleFlush();
+    expect(h.flushBatch).not.toHaveBeenCalled();
+    expect(h.coordinator.pendingCount).toBe(1);
+    expect(h.coordinator.pendingMembers().map((m) => m.id)).toEqual(["sa-1"]);
   });
 
   it("pool-queued sync members (status=running) block closure (⛔3 非终态口径)", () => {
@@ -195,23 +236,25 @@ describe("CollectCoordinator sync buffering + closure", () => {
     expect(h.flushBatch).not.toHaveBeenCalled();
   });
 
-  it("batchFinalized members do not block closure (已离场成员)", () => {
+  it("batchFinalized members do not block closure (已离场成员)", async () => {
     const h = makeHarness([
       makeStoreRec({ id: "sa-1", collectMode: "sync", status: "closed" }),
       makeStoreRec({ id: "sa-2", collectMode: "sync", status: "closed", batchFinalized: true }),
     ]);
     const result = h.coordinator.route(makeRec({ id: "sa-1", collectMode: "sync" }));
     expect(result).toBe("sync-flushed");
+    await settleFlush();
     expect(h.flushBatch).toHaveBeenCalledTimes(1);
   });
 
-  it("async records never block sync closure (混派正交，A8 前置)", () => {
+  it("async records never block sync closure (混派正交，A8 前置)", async () => {
     const h = makeHarness([
       makeStoreRec({ id: "sa-1", collectMode: "sync", status: "closed" }),
       makeStoreRec({ id: "sa-async", status: "running" }), // 无 collectMode：async 在跑
     ]);
     const result = h.coordinator.route(makeRec({ id: "sa-1", collectMode: "sync" }));
     expect(result).toBe("sync-flushed");
+    await settleFlush();
     expect(h.flushBatch).toHaveBeenCalledTimes(1);
   });
 
@@ -233,7 +276,7 @@ describe("CollectCoordinator sync buffering + closure", () => {
 // ============================================================
 
 describe("CollectCoordinator cross-turn accumulation (D2)", () => {
-  it("accumulates 2+1 sync starts across two turns into ONE flush batch", () => {
+  it("accumulates 2+1 sync starts across two turns into ONE flush batch", async () => {
     // round1 派 A、B；round2 派 C。终态时序：A → C → B（B 最后闭合）。
     // store 枚举由「谁还活着」驱动：闭合只看非终态 sync 是否清零。
     let running = new Set(["sa-b"]);
@@ -256,13 +299,14 @@ describe("CollectCoordinator cross-turn accumulation (D2)", () => {
     // B 终态（先从 running 集移除 = 终态落 store）→ 闭合：单批三成员（2+1 同一批）
     running.delete("sa-b");
     expect(coordinator.route(makeRec({ id: "sa-b", collectMode: "sync" }))).toBe("sync-flushed");
+    await settleFlush();
     expect(flushBatch).toHaveBeenCalledTimes(1);
     const members = flushBatch.mock.calls[0]?.[0] as BgNotifyRecord[];
     expect(members.map((m) => m.id).sort()).toEqual(["sa-a", "sa-b", "sa-c"]);
     expect(coordinator.pendingCount).toBe(0);
   });
 
-  it("starts a fresh batch after a flush (闭合后新派开新批)", () => {
+  it("starts a fresh batch after a flush (闭合后新派开新批)", async () => {
     // sa-2 在跑（阻止闭合）：sa-1 终态入缓冲；sa-2 终态闭合后，新派 sa-3 终态开新批。
     const store: SubagentRecord[] = [
       makeStoreRec({ id: "sa-1", collectMode: "sync", status: "closed" }),
@@ -273,9 +317,11 @@ describe("CollectCoordinator cross-turn accumulation (D2)", () => {
     expect(h.coordinator.route(makeRec({ id: "sa-1", collectMode: "sync" }))).toBe("sync-buffered");
     store[1] = makeStoreRec({ id: "sa-2", collectMode: "sync", status: "closed" });
     expect(h.coordinator.route(makeRec({ id: "sa-2", collectMode: "sync" }))).toBe("sync-flushed");
+    await settleFlush(); // 第一批投出（合批窗口开）
     // 闭合后新 sync 终态 → 新批缓冲（不复活旧成员）：store 无 running sync → 但
-    // 缓冲非空在先入时判定，route(sa-3) 时缓冲空 + 无 running → 立即闭合
+    // 缓冲非空在先入时判定，route(sa-3) 时缓冲空 + 无 running → 闭合开新批排程
     expect(h.coordinator.route(makeRec({ id: "sa-3", collectMode: "sync" }))).toBe("sync-flushed");
+    await settleFlush();
     expect(h.coordinator.pendingMembers().map((m) => m.id)).toEqual([]);
     expect(h.flushBatch).toHaveBeenCalledTimes(2);
   });
@@ -286,7 +332,7 @@ describe("CollectCoordinator cross-turn accumulation (D2)", () => {
 // ============================================================
 
 describe("CollectCoordinator cancel/watchdog terminal states enter the batch", () => {
-  it("routes a cancelled sync member into the buffer (E6：cancel 计入批)", () => {
+  it("routes a cancelled sync member into the buffer (E6：cancel 计入批)", async () => {
     const h = makeHarness([
       makeStoreRec({ id: "sa-1", collectMode: "sync", status: "closed" }),
     ]);
@@ -299,12 +345,13 @@ describe("CollectCoordinator cancel/watchdog terminal states enter the batch", (
       error: "cancelled by user",
     });
     expect(h.coordinator.route(record)).toBe("sync-flushed");
+    await settleFlush();
     const members = h.flushBatch.mock.calls[0]?.[0] as BgNotifyRecord[];
     expect(members).toHaveLength(1);
     expect(members[0]?.closedReason).toBe("cancelled");
   });
 
-  it("routes a watchdog/gc-failed sync member into the buffer (E3：orphan 类终态计入批)", () => {
+  it("routes a watchdog/gc-failed sync member into the buffer (E3：orphan 类终态计入批)", async () => {
     const h = makeHarness([
       makeStoreRec({ id: "sa-1", collectMode: "sync", status: "closed" }),
     ]);
@@ -317,6 +364,7 @@ describe("CollectCoordinator cancel/watchdog terminal states enter the batch", (
       error: "settled watchdog timeout",
     });
     expect(h.coordinator.route(record)).toBe("sync-flushed");
+    await settleFlush();
     const members = h.flushBatch.mock.calls[0]?.[0] as BgNotifyRecord[];
     expect(members[0]?.error).toBe("settled watchdog timeout");
   });

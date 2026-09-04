@@ -394,8 +394,13 @@ export class SubagentService {
     this.notifier = createNotifier(this.piAdapter());
     // collectCoordinator（subagent-sync-collect U2）：notifyComplete 唯一路由入口——
     // async 直通（字节不变）/ sync 批缓冲 + 闭合检测。[U3 接线点] 已接线：flush =
-    // notifier.notifyBatch 单条批投递（幂等键 sync-batch:<hash> + 闭合触发即 flush：
-    // ledger 写账 → attemptDeliver 边沿投递）+ batchFinalized 落标（出口①，见下方闭包注释）。
+    // notifier.notifyBatch 单条批投递（幂等键 sync-batch:<hash> + 闭合触发排程合批
+    // flush：同宏任务去抖窗口收纳背靠背 route——U8 拆批盲窗修复 → ledger 写账 →
+    // attemptDeliver 边沿投递）+ batchFinalized 落标（出口①，见下方闭包注释）。
+    // [U8] 排程与 E9/E1 交互：dispose 经 convertPendingSyncBufferToAsync 先取消挂起
+    // 排程（取消而非同步 flush——双通道并发写账防护，见该函数注释）；E1 只在
+    // session_start 编排处运行（此前 dispose 已取消排程，补发直走 notifyBatch 不经
+    // 协调器），异常时序相撞由账本 sync-batch:<hash> 幂等拒绝兜底。
     this.collectCoordinator = new CollectCoordinator({
       notifyAsync: (record) => {
         const notify = this.toNotifyRecord(record);
@@ -719,6 +724,12 @@ export class SubagentService {
    *  源序：写账先于落标——写账后崩溃 → E1 重建收该成员，但 async notifyId 与批 hash
    *  跨键不拦的重发属设计披露的 E9 残余窗（at-least-once 良性，PS-17 同族，v1 接受）。 */
   private convertPendingSyncBufferToAsync(): void {
+    // [U8 拆批修复·E9 交互] 挂起的合批排程先取消——dispose 已选「放弃攒批转 async」
+    // 语义（最简语义 = 取消而非同步 flush）：放任排程触发会让 flushBatch（批 hash
+    // 通道）与下方逐条 notify（async id 通道）双通道并发写账 → 同成员双投递，且触发
+    // 点可能落在 notifier/store dispose 之后。取消后缓冲原样保留，本函数既有单通路
+    // 完整接管（协调器侧幂等：无排程时 no-op）。
+    this.collectCoordinator.cancelScheduledFlush();
     const members = this.collectCoordinator.pendingMembers();
     if (members.length === 0) return;
     for (const member of members) {
@@ -748,6 +759,10 @@ export class SubagentService {
    *  - 补发尝试后统一补 batchFinalized 标记（账本拒绝也算已投递；直接用末条重建快照
    *    落标不经 getFullRecord——子文件缺失/已 GC 时标记仍可落盘，窗口自愈不依赖二次
    *    重启；补标自身崩溃重入幂等收敛，末条 entry last-writer-wins）。
+   *
+   *  [U8 拆批修复] 与协调器合批排程无交集：E1 只在 session_start 编排处运行（此前
+   *  dispose 已取消挂起排程），补发直走 notifier.notifyBatch 不经协调器；异常时序
+   *  相撞由账本 sync-batch:<hash> 幂等拒绝兜底。
    */
   recoverSyncCollectBatch(): void {
     const lastRecords = this.store.scanLastRecordEntries(this.mainSessionFile);
