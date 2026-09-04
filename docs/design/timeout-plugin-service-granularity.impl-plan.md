@@ -108,12 +108,14 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-- §11 检查点随实施闭环：P-8（bridge:sync 轮询对首调时延）、P-10（已闭环：U7 实测入口 status=active 守卫满足）、D2 cancel/兜底/语义三路径幂等单测（U3 已覆盖含 effective=MAX 边界）、env 白名单（U5 已闭环：无需登记）。
-- U3 中间破碎态风险由「单 commit 同改」约束化解（7ac323b5f 单 commit 落地）。
-- pi abort 不传播为已登记已知限制（out-of-scope），已落 development-guide §11.5。
-- **跟进项（本流水线范围外）**：①packages/plugin-sdk/src/mock.ts 存量 tsc 错误 2 处（:87/:90，setModel/setThinkingLevel 返回类型 Promise<void> vs Promise<string>，w1 时期签名变更后 mock 滞后；plugin-sdk 无 typecheck script 从未暴露，非本流水线引入）；②core MessageBusBridge 对两条 expired 广播补归一（当前各 emit 一条 bus error → console.warn，无用户可见异常）；③迟到回包 debug 日志补点（plugin-rpc-server/PendingTracker）；④formatDurationMs/isDeclaredTimeoutActive 从 bridge-interop 统一导出消除复制。
+- §11 检查点闭环情况：P-8/P-9 **blocked**（端到端通路依赖 bridge extension，实测其与 pi 0.84.4 实装不兼容——export 形态旧 + `extension_ui_request` 不在 pi 0.84 UI context，插件工具经 pi 调用链路产品级不可达；**区间外既有缺口**，bridge/index.ts 在 7650690ac..HEAD 零改动；runtime 侧 D1 语义由 U1 单测 20 例 + 实读核实覆盖）；P-10 **已闭环**（入口 status=active 守卫满足 + E2E 三轮 rebuild 后同宿主插件自动重载恢复 ACTIVE + 工具重注册）；D2 幂等单测已覆盖含 effective=MAX 边界；env 白名单无需登记（入站 XYZ_ 前缀放行 + 出站不注入）。
+- **跟进项（本流水线范围外）**：①**bridge extension 重写适配 pi 0.84**（产品级：factory 形态 + UI context 无自定义 method 透传——插件工具经 pi 调用链路恢复的前提，V1/V2/P-8/P-9 端到端验收依赖此项）；②packages/plugin-sdk/src/mock.ts 存量 tsc 错误 2 处（w1 时期签名漂移，非本流水线引入）；③core MessageBusBridge 对两条 expired 广播补归一（当前 console.warn 噪音，无用户可见异常）；④formatDurationMs/isDeclaredTimeoutActive 已统一导出（Gate A 修复落地），MAX_TIMER_DELAY_MS 双份（bridge-interop 模块私有/ui-api 导出，同值平台常量）可并入同批收敛；⑤sandbox 插件命令 invokeResult 一次疑似未闭环（Gate B 观察到一次，trusted 正常，独立于超时逻辑，待查）；⑥W3 crashCounts 衰减快照比对在连续崩溃耗尽重试后不收敛（exceeded 成不可逆终态）——crash-rebuild 既有机制，与超时修复无关。
+- **Gate B 环境与口径说明**：dev app 全链被并行会话占用，采用设计 §9 V1 勘误的备选环境（standalone runtime :3311 + 隔离数据目录 + WS 直连 + runtime spawn pi binary）；前端缺席场景「用户点击」由同协议 WS 命令承载、撤窗断言降级为 expired 广播发出 + U8 单测佐证；V3/V5 含 5min/10min 真实等待（无加速）。含 hang-load 的宿主 rebuild 后 load 阶段被同批死循环再次连坐属固有杀伤半径（plugin-bootstrap 消息并发处理），ACTIVE restored 终态由 TDD full-chain 单测 + crasher 形态 E2E 补全覆盖。
 
 ## 变更历史
 
+- v1.3（2026-09-04）：阶段 5 双级验收完成。**Gate A 绿**：4 包 5702 用例全绿 + typecheck 四包零错误 + 根 lint exit 0（修复 1dad3ce65：命名时间常量 + formatDurationMs/isDeclaredTimeoutActive 统一导出，登记表假差异收敛同批落地）+ 零 skip/零 SKIP_ + 覆盖矩阵 7 单元全认领。**Gate B 绿**（含 1 轮失败回流）：V3/V4/V4b/V5/V6①③ pass（真实等待 5min/9min37s/45s，无加速）；V6② 首轮 fail（load 超时连坐后同宿主插件状态被激活失败终态覆盖为 UNLOADED，rebuild 不重载——U7 引入回归）→ 修复 08dc7b4e1（settleActivationFailure CRASHED 让位，TDD 三连坐路径）→ 真实环境复验 pass（skip reload 0 次 + 重载自动发起 + crasher 形态 3 轮 rebuild 恢复弧线）；V1/V2/P-8/P-9 blocked 登记（bridge 与 pi 0.84 既有断裂，见残留风险①）。
+- v1.2（2026-09-04）：阶段 3 A2/A3 区审查结论处理——0 doc_errors；3 low（sandbox cancel 触发场景入错误规格表【主 agent 亲改】、V5 重触发链路直接单测【已补】、UiDialogOptions import 收敛【已落地】）全清零 commit c5a862246；reasonable ×9 入登记表；Gate A lint 失败回流修复 1dad3ce65。
+- v2.2（2026-09-04）：实施期勘误登记（与设计文档 v2.2 同步；dev-flow U1 发现）：§6.1 常量字面 30_000_000（500min）系设计初稿笔误，裁决收敛 1_800_000（30min）——U1 代码与测试已同步；登记实施偏差：opt-out clamp 近似、迟到回包静默 noop（debug 补点待后续）、U3 生产装配接线授权扩展（plugin-rpc-setup.ts / plugin-service.ts）。实质明细已并入本表 §5 登记表对应行。
 - v1.1（2026-09-04）：阶段 3 A1 区审查结论处理——reasonable×4 入登记表；A1-low（development-guide 缺命令 timeoutMs 契约行）主 agent 亲为补齐；A1 doc_error（迟到回包 debug 日志）设计正文已修正。A2/A3 区审查因 5h 额度上限中断，待 18:54 额度重置后重派。
 - v1（2026-09-04）：初版。单元表派生自设计 §10（U1-U8）；U5/U6 因领地重叠（plugin-activator.ts）串行化，较设计收紧。
