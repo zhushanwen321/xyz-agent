@@ -88,7 +88,7 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u1-protocol | pending | 0 | — |
+| u1-protocol | committed | 1 | typecheck 绿 + grep 7 处（:111/:487/:761/:1158/:1571），commit 见 git log u1-protocol |
 | u2-runtime | pending | 0 | — |
 | u3-api | pending | 0 | — |
 | u4-popover | pending | 0 | — |

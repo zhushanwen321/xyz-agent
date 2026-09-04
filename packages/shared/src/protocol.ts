@@ -108,7 +108,7 @@ export type ClientMessageType =
   | 'plugin.uiResponse'
   | 'plugin.mountPoints.sync'
   | 'file.read'
-  | 'file.tree' | 'file.tree.expand' | 'file.search'
+  | 'file.tree' | 'file.tree.expand' | 'file.search' | 'file.search.cwd'
   | 'git.diff'
   | 'file.write.create' | 'file.write.rename' | 'file.write.delete'
   | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.checkoutCwd' | 'git.createBranch'
@@ -483,6 +483,8 @@ export interface ClientMessageMap {
   'file.tree.expand': { sessionId: string; path: string }
   /** file.search：composer # 文件候选，全量递归当前 cwd（受 ignore 过滤 + 深度上限 8 + DoS 上限 5000）*/
   'file.search': { sessionId: string; showIgnored?: boolean }
+  /** file.search.cwd：landing 态 composer $ 文件候选，按 cwd 全量递归，与 file.search 同约束——ignore 过滤 + 深度上限 8 + DoS 上限 5000 */
+  'file.search.cwd': { cwd: string }
   'git.diff': { sessionId: string; path: string }
   'file.write.create': { sessionId: string; path: string; content: string }
   'file.write.rename': { sessionId: string; oldPath: string; newPath: string }
@@ -756,7 +758,7 @@ export type ServerMessageType =
   | 'message.changeSetInvalidated'
   | 'message.customStart'
   | 'file.read:result'
-  | 'file.tree:result' | 'file.tree.expand:result' | 'file.search:result'
+  | 'file.tree:result' | 'file.tree.expand:result' | 'file.search:result' | 'file.search.cwd:result'
   | 'git.diff:result'
   | 'file.write.create:result' | 'file.write.rename:result' | 'file.write.delete:result'
   // wave:runtime-patch ipc-converge-a3 W2：业务持久化写 reply（:result 后缀复用 file.write.create:result 约定）
@@ -1152,6 +1154,8 @@ export interface ServerMessageMapBase {
   'file.tree.expand:result': { sessionId: string; children: FileNode[] }
   /** file.search:result：composer # 文件候选 reply，全量递归 FileNode[]（受 ignore + 深度 8 + DoS 上限 5000）*/
   'file.search:result': { sessionId: string; files: FileNode[] }
+  /** file.search.cwd:result：composer $ 文件候选（landing cwd 路）reply，全量递归 FileNode[]（受 ignore + 深度 8 + DoS 上限 5000）*/
+  'file.search.cwd:result': { files: FileNode[] }
   /** git.diff:result：文件 diff reply（patch + binary 标志） */
   'git.diff:result': { sessionId: string; patch: string; binary: boolean }
   /** file.write.*.result：文件操作骨架 reply（D-018 实现延后，AC-14.4 结构化「待实现」） */
@@ -1564,6 +1568,7 @@ export interface ReplyPayloadMap {
   'extension.recommended': ServerMessageMap['extension.recommended']
   'file.read': ServerMessageMap['file.read:result']
   'file.search': ServerMessageMap['file.search:result']
+  'file.search.cwd': ServerMessageMap['file.search.cwd:result']
   'file.tree': ServerMessageMap['file.tree:result']
   // file.write.*（D-018 实现延后，runtime 回 implemented:false 骨架 reply；reply type 见 :result）
   'file.write.create': ServerMessageMap['file.write.create:result']
