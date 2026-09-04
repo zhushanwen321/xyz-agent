@@ -74,7 +74,7 @@ subagent 子进程 stdout ──'data' 事件──▶ runtime relay-registry
 | 路径 | 机制 | 真实逃逸点（审计发现） | 已达标防线（审计确认无需改） |
 |---|---|---|---|
 | R1 裸流写 | 半关闭/destroyed 流上 `.write()`/`.end()` 同步抛 | ① relay-registry `writeFrame`（事故根因）② 7 处裸 `conn.end()` ③ relay child stdin write | rpc-client sendRaw/sendCommand（try 已包）；broker send/broadcast（readyState guard + per-client try）；ws.send 全链（connection-manager 挂了 ws error listener） |
-| R2 socket error 无 listener | 对端 RST → 'error' 事件无 listener → EventEmitter emit 直接 throw | ④ relay-server `handleConnection(conn)` 未挂 `conn.on('error')` | relay probeStaleSocket 的 probe socket（once('error') 已挂）；wss/httpServer（error 已接） |
+| R2 socket error 无 listener | 对端 RST → 'error' 事件无 listener → EventEmitter emit 直接 throw | ④ relay-registry `handleConnection(conn)`（relay-server 连接回调的委托入口）未挂 `conn.on('error')` | relay probeStaleSocket 的 probe socket（once('error') 已挂）；wss/httpServer（error 已接） |
 | R4 readline 转发 | readline 把 input 流 error **转发到 interface 实例 re-emit**，rl 无 listener 同样 throw | ⑤ relay-registry 的 rl（input=conn）⑥ rpc-client 的 rl（input=pi stdout，pi 崩溃时触发）⑦ usage-stats 的 rl（input=文件流，读失败时触发）+ 单文件失败会打断整个聚合 | ——（审计前无一处有防护） |
 
 > R4 是实施期由回归测试实测抓出的：修复 R1/R2 后单测仍红，暴露 readline 转发是独立于 conn 层 listener 的第二条 throw 路径——conn 层挂 listener 挡不住它。
