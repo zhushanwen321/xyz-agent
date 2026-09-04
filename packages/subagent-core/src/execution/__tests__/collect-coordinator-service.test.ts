@@ -168,7 +168,8 @@ describe("collectCoordinator service integration (U2)", () => {
     await until(() => spy.notifyBatch.mock.calls.length > 0);
     expect(handle.subagentId).toMatch(/^sa-/);
     // 落标出口①绑「写账成功」：accepted=false → 无带 batchFinalized 标记的 subagent-record
-    // entry（register/archive 的常规 entry 经 recordToSubagent 投影不含该字段，天然不含）
+    // entry（register/archive 常规 entry 经 recordToSubagent 投影携带 batchFinalized=
+    // undefined——未离场成员，非 true；U5 投影扩展后缺省键不落值，断言语义不变）
     const recordEntries = pi.appendEntry.mock.calls
       .filter((c) => c[0] === "subagent-record")
       .map((c) => c[1] as Record<string, unknown>);

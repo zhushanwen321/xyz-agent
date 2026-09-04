@@ -37,12 +37,11 @@ import type { ExecutionRecord } from "./types.ts";
 
 /** 闭合判定的 record 最小视图（ExecutionRecord / SubagentRecord 的同构子集）。
  *
- *  [U3 微调] 原 deps 用 SubagentRecord——但生产通路 collectRecords 经
- *  recordToSubagent 投影不含 collectMode/batchFinalized（U2 披露的投影缺口，U5 修复）
- *  ——真链上闭合判定恒读 undefined → 立即闭合，跨轮续累失效（真链 trace 实证）。
- *  收窄为结构化最小接口后，service 接线改走 store.listAllActive()（原始
- *  ExecutionRecord 内存态，不经投影）——非终态 sync 成员必在内存（archive 只删终态），
- *  闭合判定语义完整；纯注入测试的 SubagentRecord stub 结构兼容零改动。 */
+ *  [U3 微调 / U5 已修] 原 deps 用 SubagentRecord——生产通路 collectRecords 经
+ *  recordToSubagent 投影曾不含 collectMode/batchFinalized（U2 披露，U5 已补投影），
+ *  保留结构化最小接口 + service 接线走 store.listAllActive()（原始 ExecutionRecord
+ *  内存态，不经投影）——非终态 sync 成员必在内存（archive 只删终态），内存视图语义
+ *  完整；纯注入测试的 SubagentRecord stub 结构兼容零改动。 */
 export interface CollectScanRecord {
   status: string;
   collectMode?: "sync";

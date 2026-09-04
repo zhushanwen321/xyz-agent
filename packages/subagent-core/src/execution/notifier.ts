@@ -321,7 +321,7 @@ export interface BgNotifier {
    * entry）。返回 false = 幂等拒绝（同成员集批已在账/已销账）或空批 / dispose 后——
    * 调用方（service flushBatch 接线）据此决定 batchFinalized 落标。
    */
-  notifyBatch(records: readonly BgNotifyRecord[]): boolean;
+  notifyBatch(records: readonly BgNotifyRecord[], budget?: BatchBudgetParams): boolean;
   /** 立即 flush（session_shutdown 调用，防丢失）。 */
   flushPendingNotifications(): void;
   /** session 结束：清队列，dispose 内核 handle。 */
@@ -499,7 +499,7 @@ export function createNotifier(host: NotifierHost): BgNotifier {
       });
     },
 
-    notifyBatch(records: readonly BgNotifyRecord[]): boolean {
+    notifyBatch(records: readonly BgNotifyRecord[], budget?: BatchBudgetParams): boolean {
       if (disposed || records.length === 0) return false;
 
       // 投影边界物化（与 notify 同款）：closed 成员补 outcome——批头计数与成员条目
@@ -510,7 +510,10 @@ export function createNotifier(host: NotifierHost): BgNotifier {
           : { ...record },
       );
       const batchNotifyId = buildBatchNotifyId(payloads.map((p) => p.id));
-      const content = buildBatchLlmContent(payloads);
+      // budget（可选）= service flushBatch/E1 补发接线传入的 config 热读值（U4 deviation #8
+      // 由 U5 接线）；undefined → buildBatchLlmContent 参数缺省 = 设计默认值（4000/24000）。
+      // 账本重放走写入时已定格的 content，预算在写账时刻生效（“flush 时热读”语义）。
+      const content = buildBatchLlmContent(payloads, budget);
       // details 形态 = ledger mergeItems 批量分支（{batch:true, items}——bg-notify-render
       // extractBatch 已支持，⛔1 核对）+ 顶层 notifyId：collectDeliveredNotifyIds 的回执
       // 匹配键认 details.notifyId / details.items[].notifyId，批身份键必须顶层可达，

@@ -245,7 +245,13 @@ function collectLastRecordEntries(content: string): Map<string, Record<string, u
 }
 
 /** entry data 即 SubagentRecord v1 快照——带运行时 guard 重建（taste/no-unsafe-cast）。
- *  损坏 entry（agent/task/startedAt 任一缺失）返回 null，由调用方跳过。 */
+ *  损坏 entry（agent/task/startedAt 任一缺失）返回 null，由调用方跳过。
+ *  [U5 E1] 投影白名单扩展（设计 §3.1.3「标记读取通路」）：collectMode/batchFinalized
+ *  + 终态五字段 status/endedAt/closedReason/result/error——原实现硬编码
+ *  status:"running" 且不投影终态，E1 重建成员恒被视为 running，「全员终态→补发」
+ *  判定永假、补发内容缺失，整条补发路径成死代码。status 守卫只认 "closed" 字面量
+ *  （其余含缺省 → "running"，旧调用方 recoverEntryOnlyOrphans 行为不变——其候选
+ *  守卫已滤非 running 末条）；closedReason 经 isValidClosedReason 枚举守卫。 */
 function rebuildEntryRecord(id: string, d: Record<string, unknown>): SubagentRecord | null {
   const str = (k: string): string | undefined => (typeof d[k] === "string" ? (d[k] as string) : undefined);
   const num = (k: string): number | undefined => (typeof d[k] === "number" ? (d[k] as number) : undefined);
@@ -253,24 +259,28 @@ function rebuildEntryRecord(id: string, d: Record<string, unknown>): SubagentRec
   const task = str("task");
   const startedAt = num("startedAt");
   if (agent === undefined || task === undefined || startedAt === undefined) return null; // 损坏 entry：跳过
+  const closedReason = str("closedReason");
   return {
     id,
     agent,
     task,
     slug: str("slug") ?? "",
-    status: "running",
+    status: d.status === "closed" ? "closed" : "running",
+    closedReason: isValidClosedReason(closedReason) ? closedReason : undefined,
     mode: "background",
     startedAt,
     rootSessionId: str("rootSessionId"),
     parentRecordId: str("parentRecordId"),
     depth: num("depth") ?? 0,
-    endedAt: undefined,
+    endedAt: num("endedAt"),
     turns: num("turns") ?? 0,
     totalTokens: num("totalTokens") ?? 0,
     model: str("model") ?? "",
     thinkingLevel: str("thinkingLevel"),
     eventLog: [],
     displayItems: [],
+    result: str("result"),
+    error: str("error"),
     sessionFile: undefined,
     chatMode: d.chatMode === true,
     round: num("round"),
@@ -278,6 +288,8 @@ function rebuildEntryRecord(id: string, d: Record<string, unknown>): SubagentRec
     engineFallback:
       isEngineFallbackShape(d.engineFallback) ? d.engineFallback : undefined,
     engineHandle: isEngineHandleShape(d.engineHandle) ? d.engineHandle : undefined,
+    collectMode: d.collectMode === "sync" ? "sync" : undefined,
+    batchFinalized: d.batchFinalized === true ? true : undefined,
   };
 }
 
@@ -710,6 +722,31 @@ export class RecordStore {
           error: "orphan recovery: no child session file (spawn interrupted or file removed externally)",
         }),
     });
+  }
+
+  /**
+   * [E1/U5] sync 批崩溃恢复扫描：主 session 文件「每 id 末条 subagent-record entry」
+   * （collectLastRecordEntries + rebuildEntryRecord 组合通路，设计 §3.1.3「标记读取
+   * 通路」——batchFinalized 落标 entry 写主 session 文件，本扫描同文件域才可见；禁走
+   * collectRecords light 路径，它只读子文件 identity 头+sidecar，主 session 落标
+   * entry 不可见）。返回每 id 末条重建的完整 record（含 collectMode/batchFinalized /
+   * 终态五字段，损坏 entry 跳过）；调用方（service.recoverSyncCollectBatch）自行过滤
+   * sync/无标记成员。主文件不可读（含新 session 未 flush 的 ENOENT）→ 空数组静默。
+   */
+  scanLastRecordEntries(mainSessionFile: string | undefined): SubagentRecord[] {
+    if (mainSessionFile === undefined) return [];
+    let content: string;
+    try {
+      content = fs.readFileSync(mainSessionFile, "utf-8");
+    } catch {
+      return []; // 与 recoverEntryOnlyOrphans 同判：best-effort 恢复，不可读静默跳过
+    }
+    const out: SubagentRecord[] = [];
+    for (const [id, d] of collectLastRecordEntries(content)) {
+      const rec = rebuildEntryRecord(id, d);
+      if (rec !== null) out.push(rec);
+    }
+    return out;
   }
 
   /** 订阅变更。返回取消订阅函数。 */
@@ -1274,6 +1311,11 @@ export class RecordStore {
       engineFallback: r.engineFallback,
       // U2：engineHandle 经 entry 持久化（register/archive 双写点均经本投影），无则 undefined 自然省略
       engineHandle: r.engineHandle,
+      // [U5 修复 U2 披露的投影缺口] 同步收集两字段随本投影持久化（register entry /
+      // archive entry 双写点）——原缺失时闭合判定 flushBatch 重建、E1 重建扫描等消费方
+      // 读不到原始值。undefined 经 JSON.stringify 自然缺省，旧 entry 零迁移。
+      collectMode: r.collectMode,
+      batchFinalized: r.batchFinalized,
     };
   }
 }

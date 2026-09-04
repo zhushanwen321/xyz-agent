@@ -489,6 +489,19 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       isIdle: () => ctx.isIdle(),
     });
 
+    // [E1] sync 批崩溃恢复（subagent-sync-collect 设计 §3.1.5 E1，U5 接线）：扫描主
+    // session 末条 entry 重建批缓冲；全员终态未投递 → notifyBatch 补发 + 统一补
+    // batchFinalized 标记（账本同 hash 幂等拒绝也算已投递）。须晚于 initSession（孤儿
+    // 终态恢复先行收敛 running 成员）与 ledger bind（补发走 notifyBatch 写账链）。
+    // per-session 域（主 session 文件），不用 oncePerProcess；best-effort 不阻断 session_start。
+    try {
+      service.recoverSyncCollectBatch();
+    } catch (err) {
+      logger.warn("[subagents] sync collect batch recovery failed", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     if (!existingService) {
       setModelConfigService(modelService);
       setSubagentService(service);
