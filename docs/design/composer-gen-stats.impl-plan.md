@@ -98,6 +98,7 @@ graph TD
 ## 7 残留风险与变更历史
 
 **残留风险**：
+- Gate A 重验结论（2026-02-09）：lint 5 warnings 已清零（229cb6a5f），uncovered 4 项全认领；runtime 全量存在 1 个环境性预存失败（thinking-level-effective-e2e：本地 pi 模型清单缺 reasoning:false 模型，文件不在本变更区间，单文件复跑稳定复现）——非本功能引入，登记为环境依赖残留风险（上游测试建议加环境前置检查）；renderer 3 个 it.skip 同为区间外预存
 - ~~D2 探针（u3 验收③）为 ⛔实施期门~~ **已被一致性审查静态判定关闭（2026-02-09）**：审查核实 runtime 'turn-start' 唯一产出点为 assistant message_start（pi turn_start ∈ NULL_EVENTS），锚点每轮重置 ⇒ duration 口径 = 末轮 LLM 请求时长，担心的膨胀不会发生；设计 D2 已回写实装口径。剩余实测项（turn_end.message.model 形态对齐、get_state model 形状）随日常使用观察，不阻塞验收
 - get_state 对「从未发消息 session」的返回形态待实测（设计待验证检查点）；若返回空/异常，降级链④兜底全 null，功能不损但「默认模型 session」的恢复腿显示延迟到首采样
 - provider cacheRead 上报覆盖面未知（zai/kimi/xiaomi-mimo 待实测）——影响「—」态出现频率，不影响正确性
