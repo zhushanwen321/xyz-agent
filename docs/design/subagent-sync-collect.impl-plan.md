@@ -86,6 +86,7 @@ graph TD
 | 9 | U5 | E9 转换挪到 disposeAllRecords 之前 | 测试实证：archive 先清内存 + idToFile 冷启动 → 落标必 miss；前置转换后 6/6 绿 |
 | 10 | U5 | notifier.ts 最小加法（notifyBatch 可选 budget 参数） | U4 预算接线的调用点在 notifier 内部，跨领地最小增量已验收 |
 | 11 | U5 | multiproc-guard 存量测试 env 泄漏修复（PI_SUBAGENT_ROOT_SESSION_ID 泄进 vitem 致所有权误判） | HEAD 文件交换法证实预存红；领地内修复（测试 env 清理），非本特性回归 |
+| 12 | U7→审查 | 设计 D2 的「list 看 pendingSyncCount」逃生口与实装不符（计数只在 start 响应，list 未投影 collect 信息） | 文案按实装落笔；list 投影为功能缺口，转一致性审查阶段裁决（补实装或改设计措辞） |
 
 ## 6 状态表
 
@@ -97,7 +98,7 @@ graph TD
 | U4 | committed | 2（首任零产出被替换，v2 测试先行收工） | commit a39505d1e; collect-budget 15 新 + notify-batch 14 回归 = 29 绿（主 agent 复跑）+ tsc 过 |
 | U5 | committed | 2（v2 升档 glm-5.3） | commit 4c63d9fb9; core 3099 绿 + SW 936 基线 + typecheck/lint 过（主 agent 复跑）；真文件通路测试 6/6；E9 时序修正 + multiproc-guard 预存 env 泄漏修复（HEAD 交换法证实） |
 | U6 | committed | 1（修复轮：max-lines 提取 + 接替 dev 会话 GC 后主 agent 验收） | commit 895f9da2a; session-reader 305 绿（主 agent 复跑）+ typecheck/lint 过 |
-| U7 | pending | 0 | — |
+| U7 | committed | 1（看门狗截断续聊收尾，经 U5 树中继） | commit 33601d35c; SW 936 绿（主 agent 复跑）+ lint 过；偏差 #12 登记 |
 | U8 | pending | 0 | — |
 
 ## 7 残留风险与变更历史
@@ -114,3 +115,4 @@ graph TD
   - 2026-02-11 W2 流转：U2 committed（77de9c02d，偏差 #3/#4 接线完成）+ U6 committed（895f9da2a，含 max-lines 提取修复轮）；巡检机制（5m 调度）当轮发现接替 dev 会话假活（工作已完成但完成通知丢失），主 agent 直接验收闭环。
   - 2026-02-11 W3 流转：U3 committed（a53271c70）；偏差 #6/#7 登记（真链 bug 修复 + 回执匹配 notifyId 键）；⛔1/⛔2 全部闭合（4 个检查点清零）。
   - 2026-02-11 W4 流转：U4 committed（a39505d1e，首任零产出替换后 v2 测试先行收工）+ U5 committed（4c63d9fb9，升档 glm-5.3）；偏差 #8 闭环、#9-#11 登记；僵树清理 + 主会话直接派发恢复可达性。
+  - 2026-02-11 W5 流转：U7 committed（33601d35c）；偏差 #12 登记（list 逃生口缺口转一致性审查）。
