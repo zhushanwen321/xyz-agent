@@ -78,6 +78,6 @@ graph TD
 - 变更历史：
   - 2026-09-04 计划创建。校准说明：工作区实物先于本计划存在（实施先于流水线），按「状态恢复：无 committed 证据按 pending 重算」处理；U4 部分提交。设计审查证据：`.review/design-review-20260904-135803.md`（R1）/ `-r2.md`（R2）/ `-r3.md`（R3，must_fix==0）。
   - 2026-09-04 阶段 3 一致性审查（reviewer sa-bb568f32）：unreasonable 0 / doc_errors 1（§2.3 ④ 归属文件 relay-server → relay-registry，主 agent 已修设计文档）/ reasonable 2（入登记表 #1 #2）。清零，转阶段 5。
-  - 2026-09-04 阶段 5 Gate B / S2 实测发现 U4 实施缺口：流写护栏 pre-commit 段曾只写入 .bare/hooks 运行时副本，SSOT（.githooks/install-hooks.sh heredoc）无此段——任何 worktree 的 pnpm install 重装 hook 即静默丢失（实测拦截失效复现；U1 首次 commit 的 hook 瞬态错误 882 亦由此覆盖竞态解释）。修复：护栏段落进 install-hooks.sh 源 + 重装运行时 + S2 重验拦截通过。教训登记进 [HISTORICAL] 注释。
+  - 2026-09-04 阶段 5 Gate B / S2 实测发现 U4 实施缺口：流写护栏 pre-commit 段曾只写入 .bare/hooks 运行时副本，SSOT（.githooks/install-hooks.sh heredoc）无此段——任何 worktree 的 pnpm install 重装 hook 即静默丢失（实测拦截失效复现；U1 首次 commit 的 hook 瞬态错误 882 亦由此覆盖竞态解释）。修复：护栏段落进 install-hooks.sh 源 + 重装运行时 + S2 重验拦截通过（commit 4ecea728f）。教训登记进 [HISTORICAL] 注释。
   - 2026-09-04 Gate A 通过（sa-11910405）：受影响面复验 29/29 + tsc 0 错 + 护栏 253 绿；零容忍审计仅 2 处带理由 disable（入登记表 #3）；uncovered 2 区 → U2b 补测（usage-stats 容错 3 用例，commit 839bc6e19）+ U3 接线薄胶水判可接受。收尾全量：runtime 400 文件 / 4374 用例全绿。
   - 2026-09-04 Gate B 完成（sa-0e9b3bbb）：S2 pass（主 agent 真实 pre-commit 拦截实测 + 复跑绿）、S3 pass（单测 4/4；真机部分随 S1）、S1/P6 blocked（设计声明的发版后门，降级证据 P1/P2 已绿）、S4 blocked（环境冲突：打包版 TaiJi PID 17071/62565 占 3210，未杀用户进程；解除方式 = 用户退出打包版后重跑 S4）。差距清单：S4 待环境解除后重跑、S1/P6 待发版后执行。

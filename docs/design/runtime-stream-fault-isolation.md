@@ -154,7 +154,7 @@ $ git commit -m "feat: new relay handler"
 
 - 采用：`rl.on('error', () => {})`，rl 侧只堵「转发 re-emit 无 listener → throw」这一条逃逸路径，**真实处置归各自的流/消费层**，三处归宿不同（勿一概而论）：⑤ relay——conn 层 error listener（destroy + warn）；⑥ rpc-client——input 是 pi stdout，pi 退出走 exit/kill 链路处置；⑦ usage-stats——input 是文件流，**没有 conn 层 listener**，真实处置 = for-await 的 try/catch → 单文件空分片降级（实现含 iterator rejection / 裸 emit 双保险，与 §2.3 ⑦「单文件失败会打断整个聚合」的修复前形态呼应）。
 - 依据：readline 转发只是通知机制，同一个错误已由上述消费层处置，rl 侧再处置即重复；for-await 场景 iterator rejection 仍正常传播（多播不冲突）。
-- 效果探针：✅已测——relay-registry.test.ts「RST 容错（单元级）」用例：`emit('error')` 在无 rl 吞咽时同步 throw（逃逸机制自证），有吞咽后 not.toThrow；usage 聚合的空分片降级回归在既有 usage 测试内（P5）。
+- 效果探针：✅已测——relay-registry.test.ts「RST 容错（单元级）」用例：`emit('error')` 在无 rl 吞咽时同步 throw（逃逸机制自证），有吞咽后 not.toThrow；usage 聚合的空分片降级回归锁在 U2b 专项测试 `usage-stats-fault-tolerance.test.ts`（Gate A 补测，commit 839bc6e19，3 用例）。
 
 **D4：writeFrame 双保险 guard + try（采用）vs 仅 guard（被否）**
 
@@ -170,7 +170,7 @@ $ git commit -m "feat: new relay handler"
 | P2 | conn 'error' 事件不逃逸（RST 场景） | relay-registry.test.ts「RST 容错（单元级）」（emit throw 机制自证 + not.toThrow） | ✅已测 |
 | P3 | 分级策略三态判定（流码 contained / 逻辑码 shutdown / 非 Error 安全） | uncaught-policy.test.ts 4 用例 | ✅已测 |
 | P4 | 护栏三条规则可拦截各自形态 | 负向验证（破坏 → 红 → 还原 → 绿，3 规则各一次） | ✅已测 |
-| P5 | 单文件 usage 读取失败不打断聚合 | usage-stats 空分片降级路径（既有 usage 测试回归 76 绿内） | ✅已测 |
+| P5 | 单文件 usage 读取失败不打断聚合 | usage-stats 容错专项回归 `src/__tests__/services/usage/usage-stats-fault-tolerance.test.ts`（Gate A 补测 U2b，commit 839bc6e19，3 用例：流失败空分片降级 + mtime 键保留 + 坏文件不打断聚合） | ✅已测 |
 | P6 | 真机事故场景不复现（发版后） | §4 S1 | ⛔实施期门（降级路径：未发版时以 P1/P2 真 socket 集成证据 + dev 环境手工复现替代） |
 | P7 | allowlist 豁免端到端可走通（G3 误报场景可达性）+ 条目生命周期观测 | 探针裸写文件 → 负向红 → allowlist.txt 登记 `路径@行号` → 无参调用（pre-commit/CI 同形态）绿 + 豁免命中提示输出；再移除命中（还原探针文件）→ ⚠ 未命中告警、退出码不变 | ✅已测（第 2 修复轮） |
 
@@ -204,6 +204,7 @@ $ git commit -m "feat: new relay handler"
 - 场景：runtime 真崩溃（逻辑级异常）。
 - 步骤：dev 运行中 `kill -9 <runtime pid>`。
 - 通过标准：Electron 自动重启 runtime、session 列表恢复、UI 短暂「runtime 重启」后可用——与事故前既有行为一致（重启耗时 ≤ 既有 ~16s 量级）。
+- 当前状态：⛔ 环境冲突 blocked——Gate B 实测打包版太极（PID 17071/62565）占用 3210 端口，按不杀用户进程规则未执行；用户退出打包版后可按上述步骤重跑。S4 验证的是既有 supervisor 能力（本设计 diff 未触碰重启链路）。
 
 ### 负面行为反向验证（必须有）
 
@@ -221,9 +222,11 @@ S1 的通过标准本身即含两条「不该发生的不发生」：无 UNCAUGH
 | U4 静态护栏 | scripts/check-unsafe-stream-writes.mjs（R1/R2/R4）+ 随 git 跟踪的 check-unsafe-stream-writes.allowlist.txt（唯一豁免登记入口，pre-commit/CI 无参自动读取）+ pre-commit 段 + ci.yml invariant | 脚本独立于被检代码；pre-commit 按 runtime 路径触发避免全量拖慢；allowlist 与代码同 commit 可审计 | ✅ 实施完成（修复轮 2026-09-04：allowlist 由 CLI 传参改为持久化文件——初版传参入口到不了无参调用的 pre-commit/CI，对抗审查 MUST_FIX） |
 | U5 回归测试 | relay-registry.test.ts 2 个事故用例 + uncaught-policy.test.ts | 用例名标注事故日期与形态，防未来误删 | ✅ 实施完成 |
 
-> **关于 pre-commit hook 位置**：本项目采用 bare repo + worktree 结构（见 [AGENTS.md](../../AGENTS.md)「目录结构」），全局 pre-commit hook 位于 `.bare/hooks/pre-commit`（worktree 外），由 git commondir 机制自动对所有 worktree 生效。本次修改的流写护栏段即在该文件中——所有 worktree（包括本 fix-runtime-restart worktree）共享同一份 hook。CI invariant 在 `.github/workflows/ci.yml` 中独立配置。
+> **关于 pre-commit hook 位置（SSOT = `.githooks/install-hooks.sh`）**：本项目采用 bare repo + worktree 结构（见 [AGENTS.md](../../AGENTS.md)「目录结构」），全局 pre-commit hook 位于 `.bare/hooks/pre-commit`（worktree 外），由 git commondir 机制自动对所有 worktree 生效。**流写护栏段的修改源是 `.githooks/install-hooks.sh` 内嵌的 heredoc**（`pnpm install` 的 prepare 跑 install-hooks.sh 生成运行时副本）——[HISTORICAL] 护栏段曾只写入 `.bare/hooks` 运行时副本而漏掉安装源，任何 worktree 的 pnpm install 重装即静默丢失护栏（2026-09-04 S2 验收实测拦截失效后定位，commit 4ecea728f 迁移）。改护栏段一律改 install-hooks.sh 后重跑 `bash .githooks/install-hooks.sh`。CI invariant 在 `.github/workflows/ci.yml` 中独立配置。
 
 验证汇总：runtime 受影响面 vitest 76 passed（relay 25 / pi / usage / policy 4）；`tsc --noEmit` 通过；eslint `--max-warnings 0` 通过；护栏脚本 253 文件扫描绿。修复轮（2026-09-04 对抗审查后）复验：护栏正向绿 253 文件 / 负向红（探针裸写拦截）/ allowlist 端到端绿（P7 重演）；本轮仅动护栏脚本与文档，runtime 源码无改动，vitest/tsc/eslint 结论不受影响。
+
+交付后验收链（2026-09-04 dev-flow）：一致性审查清零（1 处文档归属修正）；Gate A 整体验收通过——零容忍审计仅 2 处带理由 disable、uncovered 2 区中 U2b 补测 usage-stats 容错回归（commit 839bc6e19，P5 证据更新如上）、收尾全量 runtime 400 文件 / 4374 用例全绿；Gate B——S2 pass（真实 pre-commit 拦截实测 + 据此发现并修复 hook SSOT 缺口，commit 4ecea728f，见 §5 hook 位置段）、S3 单测 pass、S1/P6 blocked（发版后门，见 §4 S1）、S4 blocked（环境冲突，见 §4 S4）。
 
 ### 残留观察项（不阻塞，诚实登记）
 
