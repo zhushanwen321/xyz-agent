@@ -44,7 +44,7 @@ const { mockServiceExecute } = vi.hoisted(() => ({
   mockServiceExecute: vi.fn(),
 }));
 vi.mock( "@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
-  getSubagentService: () => ({ execute: mockServiceExecute }),
+  getSubagentService: () => ({ execute: mockServiceExecute, getCollectSyncDefault: () => "async" }),
 }));
 
 import { registerWorkflowsCommand } from "../interface/commands.ts";

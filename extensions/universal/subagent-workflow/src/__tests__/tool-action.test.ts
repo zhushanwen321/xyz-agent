@@ -63,6 +63,8 @@ function makeService(over: Partial<SubagentService> = {}): SubagentService {
     collectRecords: vi.fn(() => [] as SubagentRecord[]),
     // [perf] listHandler 逐项 enrich 会调 getFullRecord；mock 回 undefined → 调用方回退 light record
     getFullRecord: vi.fn(() => undefined as SubagentRecord | undefined),
+    // [U1/U2] collect 契约面：startHandler 解析链（E4 守卫前置）必调；stub 回缺省 async
+    getCollectSyncDefault: vi.fn(() => "async" as const),
     ...over,
   } as SubagentService;
 }

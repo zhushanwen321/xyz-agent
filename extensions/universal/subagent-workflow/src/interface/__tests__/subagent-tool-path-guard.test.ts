@@ -40,7 +40,7 @@ const { mockServiceExecute } = vi.hoisted(() => ({
   mockServiceExecute: vi.fn(),
 }));
 vi.mock("@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
-  getSubagentService: () => ({ execute: mockServiceExecute }),
+  getSubagentService: () => ({ execute: mockServiceExecute, getCollectSyncDefault: () => "async" }),
 }));
 
 import { registerSubagentTool } from "../../interface/subagent-tool.ts";

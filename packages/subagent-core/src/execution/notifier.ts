@@ -17,6 +17,8 @@
 // 设计 D5 实测证伪）；busy 场景由 ledger（settled 边沿 + isIdle 二次复查）或内核
 // settled 订阅驱动在空闲边沿投递。
 
+import { createHash } from "node:crypto";
+
 import { getLogger } from "../core/logger.ts";
 import { getNotifyDomainPorts, type DeliveryHandle, type DeliveryPort } from "../core/notify-ports.ts";
 
@@ -104,6 +106,52 @@ export interface NotifierHost {
   onAgentSettled?(handler: () => void): void;
 }
 
+/** sync 批通知幂等键前缀（subagent-sync-collect 设计 §3.1.3 批身份）。 */
+const BATCH_NOTIFY_ID_PREFIX = "sync-batch:";
+
+/**
+ * sync 批通知 notifyId：`sync-batch:<sha1(sorted member ids)>`。
+ *
+ * 成员集身份（D2 隐式批）：字典序排序后 sha1——同成员集不同登记顺序同 hash（重启
+ * 重建批 / E1 补发凭此与账本原条目对齐，幂等去重）；不同成员集必异 hash（跨批不互吞）。
+ * 成员 id 为 sa-xxx 格式无分隔歧义，join(",") 仅作边界防御。
+ */
+export function buildBatchNotifyId(memberIds: readonly string[]): string {
+  const digest = createHash("sha1")
+    .update([...memberIds].sort().join(","))
+    .digest("hex");
+  return `${BATCH_NOTIFY_ID_PREFIX}${digest}`;
+}
+
+/**
+ * sync 批通知文案（U3 基础版；U4 将在本组装处扩展两段式预算截断）。
+ *
+ * 形态（设计 §3.1.1 交互样例）：批头行 `Subagent batch completed: N finished,
+ * M failed, K cancelled.` + 各成员条目（buildLlmContent 同语义）以 "\n\n---\n\"
+ * \n" join（分隔符对齐 ledger mergeItems / 内核合批——TUI/LLM 两消费方同构）。
+ * 批头计数口径 = 成员 outcome 三态（completed→finished）；closed 成员 outcome 缺省
+ * 时按单一权威 deriveOutcome 兑底（与 notify() 投影边界同款，幂等无害）。
+ */
+export function buildBatchLlmContent(records: readonly BgNotifyRecord[]): string {
+  let finished = 0;
+  let failed = 0;
+  let cancelled = 0;
+  const items = records.map((record) => {
+    if (record.status === "closed") {
+      const outcome = record.outcome ?? deriveOutcome(record.closedReason, record.error);
+      if (outcome === "completed") finished += 1;
+      else if (outcome === "failed") failed += 1;
+      else if (outcome === "cancelled") cancelled += 1;
+      return buildLlmContent({ ...record, outcome });
+    }
+    // sync 批成员恒 one-shot closed（E4 守卫拒绝 conversation+sync）；running 分支仅
+    // 类型完备性防御（轮次通知语义不属于批，计数不含）。
+    return buildLlmContent(record);
+  });
+  const header = `Subagent batch completed: ${finished} finished, ${failed} failed, ${cancelled} cancelled.`;
+  return [header, ...items].join("\n\n---\n\n");
+}
+
 /**
  * 将 BgNotifyRecord 格式化为 LLM 可读的 notification content。
  *
@@ -164,6 +212,13 @@ function buildLlmContent(record: BgNotifyRecord): string {
 export interface BgNotifier {
   /** 入队一条完成通知（去重 + 合批窗口合并）。dispose 后短路。 */
   notify(record: BgNotifyRecord): void;
+  /**
+   * sync 批通知（subagent-sync-collect U3）：成员集 → 单条批投递。幂等键
+   * `sync-batch:<sha1(sorted ids)>`，走与 notify 同一写账→settled 边沿投递链（单
+   * entry）。返回 false = 幂等拒绝（同成员集批已在账/已销账）或空批 / dispose 后——
+   * 调用方（service flushBatch 接线）据此决定 batchFinalized 落标。
+   */
+  notifyBatch(records: readonly BgNotifyRecord[]): boolean;
   /** 立即 flush（session_shutdown 调用，防丢失）。 */
   flushPendingNotifications(): void;
   /** session 结束：清队列，dispose 内核 handle。 */
@@ -339,6 +394,52 @@ export function createNotifier(host: NotifierHost): BgNotifier {
         },
         dedupeKey: notifyId,
       });
+    },
+
+    notifyBatch(records: readonly BgNotifyRecord[]): boolean {
+      if (disposed || records.length === 0) return false;
+
+      // 投影边界物化（与 notify 同款）：closed 成员补 outcome——批头计数与成员条目
+      // 单一来源。消源自入参浅拷贝，不改写协调器缓冲持有的快照对象。
+      const payloads = records.map((record) =>
+        record.status === "closed"
+          ? { ...record, outcome: record.outcome ?? deriveOutcome(record.closedReason, record.error) }
+          : { ...record },
+      );
+      const batchNotifyId = buildBatchNotifyId(payloads.map((p) => p.id));
+      const content = buildBatchLlmContent(payloads);
+      // details 形态 = ledger mergeItems 批量分支（{batch:true, items}——bg-notify-render
+      // extractBatch 已支持，⛔1 核对）+ 顶层 notifyId：collectDeliveredNotifyIds 的回执
+      // 匹配键认 details.notifyId / details.items[].notifyId，批身份键必须顶层可达，
+      // 否则批 entry 永不销账、重投至放弃。顶层 notifyId 键对 extractBatch 透明（多键无感）。
+      const details = { batch: true as const, notifyId: batchNotifyId, items: payloads };
+
+      // 与 notify 同一四步链：①写账（单 entry）→ ②attemptDeliver（settled 边沿 +
+      // isIdle 二次复查——闭合触发即 flush：主 agent STOP 等通知时立刻投递，busy 则
+      // 挂 pending 等边沿）→ ③④销账/重放幂等均在 ledger。返回 false = 同成员集批
+      // 已在账（E1 重建重发 / 重复 flush）→ 调用方跳过落标。
+      const ledger = getBoundNotifyLedger();
+      if (ledger) {
+        if (!ledger.record(batchNotifyId, content, details)) return false;
+        ledger.attemptDeliver();
+        return true;
+      }
+
+      // 无 ledger 装配（旧装配 / 部分测试）：内核路径降级（同 notify 的降级留痕风格）。
+      notifyLogger.warn("notify ledger not bound, falling back to delivery kernel path (at-most-once)", {
+        notifyId: batchNotifyId,
+      });
+      handle.send({
+        payload: {
+          kind: "custom",
+          customType: NOTIFY_CUSTOM_TYPE,
+          content,
+          display: true,
+          details,
+        },
+        dedupeKey: batchNotifyId,
+      });
+      return true;
     },
 
     flushPendingNotifications(): void {

@@ -231,6 +231,33 @@ describe("NotifyLedger — T4③ 重投止损（PS-6）", () => {
     ledger.dispose();
   });
 
+  it("同 notifyId 在账重复 record 幂等拒绝零副作用（⛔2 补强：U3 批 hash 幂等依赖）", () => {
+    const mock = makeLedgerHost();
+    const ledger = createNotifyLedger(mock.host);
+
+    expect(ledger.record("sa-dup", "content-v1", { notifyId: "sa-dup", agent: "first" })).toBe(true);
+    const ledgerEntriesBefore = mock.entries.filter((e) => e.customType === NOTIFY_LEDGER_CUSTOM_TYPE).length;
+    expect(ledgerEntriesBefore).toBe(1);
+
+    // 同 notifyId 二次 record：返回 false，零副作用（不新增 entry、账面不被覆盖）
+    expect(ledger.record("sa-dup", "content-v2-attempted-overwrite", { notifyId: "sa-dup", agent: "second" })).toBe(false);
+    expect(mock.entries.filter((e) => e.customType === NOTIFY_LEDGER_CUSTOM_TYPE)).toHaveLength(ledgerEntriesBefore);
+    expect(ledger.pendingCount()).toBe(1);
+
+    // 投递面零副作用：只送首条 content（后写不覆盖），回执匹配不受污染
+    mock.setIdle(true);
+    ledger.attemptDeliver();
+    expect(mock.sentMessages).toHaveLength(1);
+    expect(mock.sentMessages[0]?.content).toBe("content-v1");
+
+    // 销账后同号仍拒绝（已销账幂等，E1 补发窗口依赖）
+    fireSettled(mock);
+    expect(ledger.waitingReceiptCount()).toBe(0);
+    expect(ledger.record("sa-dup", "content-v1", { notifyId: "sa-dup" })).toBe(false);
+
+    ledger.dispose();
+  });
+
   it("③ 未达上限时正常重投行为不变：照常超时重投，回执到达后照常销账", () => {
     const mock = makeLedgerHost();
     // 前三轮回执不可匹配（重投路径）

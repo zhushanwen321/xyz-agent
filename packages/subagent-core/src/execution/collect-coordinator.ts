@@ -18,10 +18,10 @@
 //   跨轮续累（D2 隐式批）：缓冲跨多次 route 累积不清空（分两轮派 2+1 sync → 闭合时
 //   单批三成员）；flush 后缓冲清空，后续 sync 成员自然开新批（语义 = "等所有 sync 待收"）。
 //
-// flush 注入式（U3 挂点）：deps.flushBatch 由宿主注入——U3 接 notifier.notifyBatch
-//（单条批投递 + ledger sync-batch hash 写账 + batchFinalized 落标）；U2 生产缺省 =
-// service 注入的逐条 async 降级投递（不丢通知的最小可用形态），测试注入 fake 断言
-// 闭合条件。flush 同步 void：投递失败语义归 flush 实现方（与 notifier.notify 同风格）。
+// flush 注入式（U3 已接线）：deps.flushBatch 由宿主注入——U3 接 notifier.notifyBatch
+//（单条批投递 + ledger sync-batch hash 写账 + batchFinalized 落标，见
+// subagent-service.ts flushBatch 闭包）。测试注入 fake 断言闭合条件。flush 同步
+// void：投递失败语义归 flush 实现方（与 notifier.notify 同风格）。
 //
 // 不变量：
 //   - 每个成员只登记一次：notifyComplete 调用点自带 CAS/gate 单次性（与既有 notify
@@ -33,7 +33,26 @@
 //     磁盘重建时序）不影响判定正确性。
 
 import type { BgNotifyRecord } from "./notifier.ts";
-import type { ExecutionRecord, SubagentRecord } from "./types.ts";
+import type { ExecutionRecord } from "./types.ts";
+
+/** 闭合判定的 record 最小视图（ExecutionRecord / SubagentRecord 的同构子集）。
+ *
+ *  [U3 微调] 原 deps 用 SubagentRecord——但生产通路 collectRecords 经
+ *  recordToSubagent 投影不含 collectMode/batchFinalized（U2 披露的投影缺口，U5 修复）
+ *  ——真链上闭合判定恒读 undefined → 立即闭合，跨轮续累失效（真链 trace 实证）。
+ *  收窄为结构化最小接口后，service 接线改走 store.listAllActive()（原始
+ *  ExecutionRecord 内存态，不经投影）——非终态 sync 成员必在内存（archive 只删终态），
+ *  闭合判定语义完整；纯注入测试的 SubagentRecord stub 结构兼容零改动。 */
+export interface CollectScanRecord {
+  status: string;
+  collectMode?: "sync";
+  batchFinalized?: boolean;
+  /** SP-5 执行态信号：true = 无活进程驱动的 running（one-shot 成功回退态）。
+   *  [U3 补丁] ⛔3 非终态口径的必要补充——one-shot 成功完成后 record 不 archive，
+   *  以 running+resumable 留内存等 message 升级（真链 trace 实证）：结果已定格、
+   *  进程已死 = 已完成待通知，不阻止闭合；否则 sync 批永不闭合。 */
+  resumable?: boolean;
+}
 
 /** 闭合判定的全 record 扫描上限（service 冷路径 COLD_LOOKUP_SCAN_LIMIT 同量级）。 */
 export const COLLECT_SCAN_LIMIT = 1000;
@@ -44,8 +63,9 @@ export interface CollectCoordinatorDeps {
   notifyAsync(record: ExecutionRecord): void;
   /** record → 通知快照（登记时定格）。undefined = gate 未过/非终态（静默跳过）。 */
   toNotifyRecord(record: ExecutionRecord): BgNotifyRecord | undefined;
-  /** 全量 record 快照枚举（闭合判定数据源；service.collectRecords 同源过滤域）。 */
-  listRecords(limit: number): SubagentRecord[];
+  /** 闭合判定数据源（CollectScanRecord 最小视图，见接口注释——数据源须携带
+   *  collectMode/batchFinalized 原始值，禁经 recordToSubagent 投影）。 */
+  listRecords(limit: number): CollectScanRecord[];
   /** 批投递回调（闭合时触发，缓冲整体移交后清空）。U3 接 notifier.notifyBatch。 */
   flushBatch(members: BgNotifyRecord[]): void;
 }
@@ -98,12 +118,17 @@ export class CollectCoordinator {
     return true;
   }
 
-  /** 是否存在非终态 sync 成员（collectMode=sync && 无 batchFinalized && status 非 closed）。 */
+  /** 是否存在非终态 sync 成员（collectMode=sync && 无 batchFinalized && 非终态）。
+   *  非终态口径（⛔3 U1 已核实 + U3 resumable 补丁）：status 非 closed 且非 resumable
+   *  ——池排队/在跑成员在 store.register 时即 status="running"，自动计入（闭合等待它）；
+   *  batchFinalized=true 的已离场成员不阻止闭合；running+resumable（SP-5 one-shot
+   *  成功回退态，进程已死结果已定格）视为已完成，不阻止闭合。 */
   private hasRunningSync(): boolean {
     for (const record of this.deps.listRecords(COLLECT_SCAN_LIMIT)) {
       if (
         record.collectMode === "sync" &&
         record.batchFinalized !== true &&
+        record.resumable !== true &&
         record.status !== "closed"
       ) {
         return true;

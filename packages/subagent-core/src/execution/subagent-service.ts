@@ -387,19 +387,42 @@ export class SubagentService {
     this.store = new RecordStore(sessionsDir, this.manifestStore, this.pi ?? undefined);
     this.notifier = createNotifier(this.piAdapter());
     // collectCoordinator（subagent-sync-collect U2）：notifyComplete 唯一路由入口——
-    // async 直通（字节不变）/ sync 批缓冲 + 闭合检测。flush 生产缺省 = 逐条 async 降级
-    // 投递（不丢通知的最小可用）；[U3 接线点] 替换为 notifier.notifyBatch 单条批投递
-    // + ledger sync-batch hash 写账 + batchFinalized 落标。
+    // async 直通（字节不变）/ sync 批缓冲 + 闭合检测。[U3 接线点] 已接线：flush =
+    // notifier.notifyBatch 单条批投递（幂等键 sync-batch:<hash> + 闭合触发即 flush：
+    // ledger 写账 → attemptDeliver 边沿投递）+ batchFinalized 落标（出口①，见下方闭包注释）。
     this.collectCoordinator = new CollectCoordinator({
       notifyAsync: (record) => {
         const notify = this.toNotifyRecord(record);
         if (notify) this.notifier.notify(notify);
       },
       toNotifyRecord: (record) => this.toNotifyRecord(record),
-      listRecords: (limit) => this.collectRecords(limit, "all"),
+      // 闭合判定数据源：listAllActive（原始 ExecutionRecord 内存态，携带 collectMode/
+      // batchFinalized 原始值）。[U3 修正] 原接 collectRecords——其经 recordToSubagent
+      // 投影丢 collectMode（U2 披露的投影缺口）→ 真链上闭合判定恒立即闭合、跨轮续累
+      // 失效（真链 trace 实证）。非终态 sync 成员必在内存（archive 只删终态；磁盘重建
+      // 残留属孤儿恢复域），内存视图语义完整。
+      listRecords: (limit) => this.store.listAllActive().slice(0, limit),
       flushBatch: (members) => {
+        // 单条批投递：accepted=false（同成员集批已在账——E1 重建重发/重复 flush）或
+        // 空批/dispose → 零副作用返回，不落标（设计 §3.1.3 出口①绑「写账成功」）。
+        const accepted = this.notifier.notifyBatch(members);
+        if (!accepted) return;
+        // batchFinalized 落标（设计 §3.1.3 两出口之一：批闭合 flush 写账成功后）。
+        // 数据源 = getFullRecord 冷路径重建（成员在 notifyComplete 前已 archive，内存
+        // 无；闭合判定 hasRunningSync 的 listRecords 扫描已建 idToFile 索引，此处命中）
+        // → 显式补 collectMode（register 经 recordToSubagent 投影现不含该字段，U2 披露
+        // / U5 修复——本 entry 直投影 SubagentRecord 不经该投影，两字段齐全）→
+        // reportSubagentRecord（toSubagentRecordEntry 白名单含两字段，U1 foundation）。
+        // 末条 entry 带标记 → E1 重建扫描（collectMode=sync 且无标记才收）据此排除，
+        // 防双重通知。浅拷贝防污染 getFullRecord 的 fileCache 缓存对象。
+        // getFullRecord 不可达（子 session 文件缺失/已 GC 的窗口）→ 跳过：该窗口下 E1
+        // 本也收不到该成员（同样缺文件通路）；若未来投影修复后误收，账本
+        // sync-batch:<hash> 幂等拒绝重发，行为收敛（设计 §3.1.3 幂等窗口段落明示）。
         for (const member of members) {
-          this.notifier.notify(member);
+          const full = this.store.getFullRecord(member.id);
+          if (full) {
+            this.store.reportSubagentRecord({ ...full, collectMode: "sync", batchFinalized: true });
+          }
         }
       },
     });

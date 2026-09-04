@@ -161,6 +161,8 @@ function makeService(): SubagentService & { execute: ReturnType<typeof vi.fn> } 
     cancel: vi.fn(() => false),
     collectRecords: vi.fn(() => []),
     getFullRecord: vi.fn(() => undefined),
+    // [U1/U2] collect 契约面：startHandler 解析链必调；stub 回缺省 async
+    getCollectSyncDefault: vi.fn(() => "async" as const),
   } as unknown as SubagentService & { execute: ReturnType<typeof vi.fn> };
 }
 

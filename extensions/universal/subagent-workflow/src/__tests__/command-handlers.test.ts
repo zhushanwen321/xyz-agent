@@ -309,7 +309,7 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
       sessionFile: "/tmp/s.jsonl",
       details: { slug: "fix-login" },
     });
-    mockedGetService.mockReturnValue({ execute } as never);
+    mockedGetService.mockReturnValue({ execute, getCollectSyncDefault: () => "async" } as never);
 
     await runHandler("start fix-login 修复登录页\\n并写测试");
 
@@ -341,7 +341,7 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
       sessionFile: "/tmp/s2.jsonl",
       details: { slug: "audit-log" },
     });
-    mockedGetService.mockReturnValue({ execute } as never);
+    mockedGetService.mockReturnValue({ execute, getCollectSyncDefault: () => "async" } as never);
     // 主 agent turn 进行中（ctx.isIdle()=false）
     ctx.isIdle = vi.fn(() => false);
 
@@ -361,7 +361,7 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
 
   it("start 缺 task → Usage warning 指明缺 task，不触 service", async () => {
     const execute = vi.fn();
-    mockedGetService.mockReturnValue({ execute } as never);
+    mockedGetService.mockReturnValue({ execute, getCollectSyncDefault: () => "async" } as never);
 
     await runHandler("start fix-login");
 
@@ -376,6 +376,8 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
   it("start service.execute 抛错（slug 超长等）→ warning 文案，不留痕", async () => {
     mockedGetService.mockReturnValue({
       execute: vi.fn().mockRejectedValue(new Error("slug must be ≤35 chars")),
+      // [U1/U2] startHandler 解析链（E4 守卫前置）在 execute 之前调；缺省 async 不触发额外分支
+      getCollectSyncDefault: () => "async",
     } as never);
 
     await runHandler("start x task text");
