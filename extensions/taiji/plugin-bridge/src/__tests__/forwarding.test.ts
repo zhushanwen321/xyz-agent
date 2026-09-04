@@ -60,7 +60,7 @@ async function syncedTool(harness: ReturnType<typeof createHarness>): Promise<Ca
 /** 找第 n 笔（0 基）指定 method 的 select 调用；无该笔返回 undefined */
 function bridgeCall(selectMock: ReturnType<typeof vi.fn>, method: string, nth = 0) {
 	const calls = selectMock.mock.calls
-		.map((call) => call as unknown as [string, [string], { signal?: AbortSignal }])
+		.map((call) => call as unknown as [string, [string], { signal?: AbortSignal; timeout?: number }])
 		.filter(([, options]) => {
 			try {
 				return JSON.parse(options[0]).method === method;
@@ -99,6 +99,9 @@ describe("execute 转发（bridge:tool_execute）", () => {
 			sessionId: "sess-1",
 		});
 		expect(call.opts?.signal).toBe(signal);
+		// 工具 execute 的 select 不带 timeout（设计 §3.3-D5：超时权威在 runtime D1 取值链，
+		// timeout 是启动 sync 专属例外，防误传扩散）
+		expect(call.opts?.timeout).toBeUndefined();
 		expect(result.content).toEqual([{ type: "text", text: "slept 90s" }]);
 		expect(result.details.kind).toBe("ok");
 		expect(result.isError).toBeUndefined();

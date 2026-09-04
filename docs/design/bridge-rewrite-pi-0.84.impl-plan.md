@@ -113,8 +113,10 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-- 残留风险：①U2 的 pi CLI 实测只能验加载层（factory 合法/registerTool 生效/sync 发出），全链响应依赖 runtime——U5 兜底；②探针 P-9（intercept 挂死）失败时按设计降级路径加通道级 30s timeout，会引入与 D5「零 timer」的例外——降级触发时须同步回写设计 §3.3-D5 论证；③dev app 全链环境可能被并行会话占用（handoff 坑④），U5 备选 standalone 环境；④定向复审 NF-2（info，可选补强）：intercept 畸形 {type:'text'} 缺 text 字段走 stringify 兜底的行为无测试用例——非阻塞，后续随手补；⑤NF-3（out-of-scope）：bridge-handler.ts bridge:event 分支 console.log 为既有代码（超时流水线期已存在），不属本次范围。
+- 残留风险：①探针 P-9 附带登记：intercept 无回包时 turn 无界挂起（pi 不挂死、回包即恢复），超时文档 D1 不覆盖 intercept 通道——需要兜底时按设计 §4.1 降级路径加通道级 timeout；②**session_start 观察帧 attach 空窗丢失**（Gate B 实证，既有行为非本次回归）：runtime adapter attach 前的 pi 事件帧被 rpc-client 丢弃，插件 onPiEvent hook 收不到 session_start（agent_start 等后续事件正常）——根治方案 = rpc-client 早期帧缓冲回放，登记为后续架构改进项（本次以 R1 sync timeout 自愈工具注册链路，不动 rpc-client）；③**intercept 注入生产端**（上游既有）：handleBridgeIntercept 恒返回空 injectedMessages（bridge-interop.ts:258-260，01-plugin-hook-fix §5 检查点 2 未定案空间）——V6 注入断言按通道级口径验收，端到端注入待上游落地；④定向复审 NF-2（info）：intercept 畸形 {type:'text'} 缺 text 走 stringify 兜底无测试——后续随手补；⑤NF-3（out-of-scope）：bridge-handler.ts bridge:event 分支 console.log 为既有代码；⑥V7 packaged 全量冒烟简化为 staged 构建确认（prepare-builtin-extensions.sh 含包），发布前 prerelease 范围补全。
+- 阶段 5 记录（2026-09-05）：Gate A 绿（13 命令全 exit 0，4 包 9573 用例 + extension-protocol 91 + extensions 全家桶 + validate-runtime-bundle + 插件 E2E 安全场景，零容忍零命中，覆盖矩阵无缺口）。Gate B 首轮：V7/V9 pass、P-4 pi 侧 6ms、P-9/P-10 pass；V1-V5/V6/V8/P-7 因两个缺口回流——R1（本设计遗漏）：启动 sync 带 2s 通道级 timeout 自愈 attach 空窗丢帧（设计 v4 D5 分档修正）；R2（上游既有）：intercept 注入生产端登记不修。R1 修复后复验受影响场景（V1/V2/V3 全链/V4 全链/V5②③/V8/P-4 全链/P-7）。
 - 阶段 3/4 记录（2026-09-05）：一致性审查 2 reviewer 并行（A=pi 侧与装配 9R/2U/2D，B=runtime 侧 8R/1U/2D）；3 条 unreasonable（B-U1 event 登记累积 / A-U1 intercept 类型退化 / A-U2 syncLoop 兜底缺口）+ 4 条 doc_errors 全部在 16b013cdb 修复闭合（偏差表 #8-#18 同批补齐）；定向复审全 pass + NF-1 文档回写（设计 v3.3）。合理偏差累计 18 项全登记于 §5。
 - 变更历史：
   - v1（2026-09-04）：初版。按设计 §5 U1-U5 展开，波次优化 U2∥U3 并行；偏差 #1 登记（mandatory 前移 U2）。
   - v2（2026-09-05）：U1-U4 执行期状态表更新；偏差 #2-#18 陆续登记。
+  - v3（2026-09-05）：阶段 3/4 收口 + Gate A/B 首轮记录。

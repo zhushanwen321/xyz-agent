@@ -11,9 +11,11 @@
 // 2. observe 类事件（bridge:event）转发必须 fire-and-forget —— pi runner 的通用
 //    emit 对每个 handler 逐个 await，await runtime 往返会把每个 agent 事件都阻塞在
 //    一次跨进程 RPC 上。仅 intercept（本就要等决策结果）允许 await。
-// 3. select 不传 timeout（通道层零 timer）—— 超时权威在 runtime 侧 D1 取值链
-//    （插件声明 timeoutMs / 30min 默认，超时后 runtime 主动回包），dialog 恒有终态；
-//    只透传 signal 吃 abort 红利（用户中断 → pi 本地 resolve(undefined)）。
+// 3. timeout 按请求类别分档（设计 §3.3-D5，[Gate B 实证修正] 原「一律零 timer」被真实
+//    环境击穿）—— 工具 execute / observe / intercept 的 select 不传 timeout：超时权威在
+//    runtime 侧 D1 取值链（插件声明 timeoutMs / 30min 默认，超时后 runtime 主动回包），
+//    dialog 恒有终态，只透传 signal 吃 abort 红利（用户中断 → pi 本地 resolve(undefined)）。
+//    例外：启动 sync 带 2s 通道级 timeout（控制面就绪等待的自愈闸，详见 syncOnce 注释）。
 
 import type {
 	BeforeAgentStartEventResult,
@@ -119,17 +121,20 @@ function isToolNotFound(raw: unknown): boolean {
 // ── select 通道 ──
 
 /** bridge 请求经 select 通道的统一出口：返回解析后的回包对象；失败路径统一折叠为 null
- * （cancelled / 通道异常 / 非 JSON 回包），由各调用方按语义折叠为 isError 或重试。 */
+ * （cancelled / 通道异常 / 非 JSON 回包 / timeout 到期），由各调用方按语义折叠为 isError 或重试。 */
 async function callBridge(
 	ctx: ExtensionContext,
 	request: BridgeRequest,
-	opts?: { signal?: AbortSignal },
+	opts?: { signal?: AbortSignal; timeout?: number },
 ): Promise<unknown> {
 	const payload = JSON.stringify(request);
 	try {
 		// signal 透传给 dialog：abort 后 pi 本地 resolve(undefined) 不 reject（rpc-mode
-		// pendingExtensionRequests），用户中断秒级打断挂起等待（G2）。不传 timeout（零 timer 约束）。
-		const value = await ctx.ui.select(BRIDGE_MARKER, [payload], { signal: opts?.signal });
+		// pendingExtensionRequests），用户中断秒级打断挂起等待（G2）。timeout 同为 pi 本地
+		// resolve(undefined)（rpc-mode createDialogPromise），仅启动 sync 传入（控制面就绪
+		// 等待的自愈闸，见 syncOnce 注释）；工具 execute 不传——超时权威在 runtime 侧 D1
+		// 取值链，pi 侧挂 timer 会与 runtime 计时器赛跑。undefined 字段 pi 侧当无约束。
+		const value = await ctx.ui.select(BRIDGE_MARKER, [payload], { signal: opts?.signal, timeout: opts?.timeout });
 		if (value === undefined || value === null) return null;
 		try {
 			return JSON.parse(value);
@@ -245,9 +250,18 @@ export default function pluginBridgeExtension(pi: ExtensionAPI): void {
 		return registered;
 	}
 
-	/** 单次 sync：成功注册工具返回 ok；error 回包 / cancelled / 形状不符均视为可重试失败 */
+	/** 单次 sync：成功注册工具返回 ok；error 回包 / cancelled / 形状不符 / 超时均视为可重试失败 */
 	async function syncOnce(ctx: ExtensionContext): Promise<{ ok: true; tools: number } | { ok: false; reason: string }> {
-		const raw = await callBridge(ctx, { method: "bridge:sync" });
+		// 为什么 sync 带 timeout 而工具 execute 不带：启动 sync 是「等 runtime 就绪」的
+		// 控制面等待——Gate B 实证（2026-09-05）runtime adapter attach 晚于首帧到达
+		// （session-lifecycle spawn → await get_state → 才 attach），rpc-client 对 listener
+		// 空窗期的帧无缓冲直接丢弃，首帧永久挂起会让 runSyncLoop 停在本 await 上、重试
+		// 逻辑从未运转。2s timeout 到期 pi 本地 resolve(undefined)（rpc-mode 原生支持），
+		// 折叠 {ok:false} 后退避重试，重试帧到达时 attach 已完成（毫秒级），必然自愈。
+		// 秒级量级符合控制面单请求校准（超时默认原则规则 19）。工具 execute 的等待窗口 =
+		// 插件执行 = 任务级，语义超时权威在 runtime D1 取值链（设计 §3.3-D5），pi 侧挂
+		// timer 会两计时器赛跑，故不传。
+		const raw = await callBridge(ctx, { method: "bridge:sync" }, { timeout: SYNC_RETRY_MS });
 		if (raw === null) return { ok: false, reason: "cancelled, channel error, or non-JSON response" };
 		if (isBridgeErrorResponse(raw)) return { ok: false, reason: raw.error };
 		if (!isBridgeSyncPayload(raw)) return { ok: false, reason: "unexpected sync payload shape" };

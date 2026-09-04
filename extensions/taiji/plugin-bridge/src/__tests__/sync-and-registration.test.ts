@@ -132,6 +132,62 @@ describe("启动 sync（设计 §3.3-D4）", () => {
 		expect(tool.parameters).toStrictEqual({ type: "object", properties: { ms: { type: "number" } } });
 	});
 
+	it("sync 的 select 第三参带 timeout: 2000（就绪等待的通道级自愈闸），observe 转发不带（防误传）", async () => {
+		const selectMock = methodRouter({ "bridge:sync": [SYNC_PAYLOAD] });
+		const { registered, handlers, ctx } = createHarness(selectMock);
+		triggerSessionStart(handlers, ctx);
+		await vi.waitFor(() => expect(registered).toHaveLength(1));
+
+		// Gate B 修复：sync 是控制面就绪等待，首帧可能在 runtime adapter attach 前被
+		// rpc-client 丢弃——timeout 让挂起折叠为 {ok:false} 进入退避重试（设计 §3.3-D5）
+		const [, , syncOpts] = callsOf(selectMock, "bridge:sync")[0];
+		expect(syncOpts).toEqual({ timeout: 2_000 });
+		// bridge:event（observe 转发）恒零 timer——timeout 是 sync 专属例外，不得扩散
+		const [, , eventOpts] = callsOf(selectMock, "bridge:event")[0];
+		expect(eventOpts).toEqual({});
+	});
+
+	it("Gate B 场景复现：首帧被丢弃（select 永不回包）→ 2s timeout 折叠 {ok:false}，退避重试后注册成功", async () => {
+		vi.useFakeTimers();
+		try {
+			let syncCalls = 0;
+			// 模拟 pi rpc-mode select 语义：带 opts.timeout 且无回包时到期本地 resolve(undefined)。
+			// 首笔 bridge:sync 永不回包（= rpc-client 在 adapter attach 前丢帧），第二笔（attach 后）
+			// 正常回包——Gate B 实证场景的单元级复现
+			const selectMock = vi.fn((_title: string, options: [string], opts?: { timeout?: number }) => {
+				const request = JSON.parse(options[0]) as { method: string };
+				if (request.method === "bridge:sync") {
+					syncCalls++;
+					if (syncCalls === 1) {
+						return new Promise<string | undefined>((resolve) => {
+							// 无 timeout（修复前形态）= 真挂死，runSyncLoop 停在首帧 await 上
+							if (opts?.timeout) setTimeout(() => resolve(undefined), opts.timeout);
+						});
+					}
+					return Promise.resolve(SYNC_PAYLOAD);
+				}
+				return Promise.resolve(undefined);
+			});
+			const { registered, handlers, ctx } = createHarness(selectMock);
+			triggerSessionStart(handlers, ctx);
+
+			await vi.advanceTimersByTimeAsync(0);
+			// 首帧挂起：未注册，循环停在 syncOnce 的 await 上
+			expect(registered).toHaveLength(0);
+
+			// 2s：pi 本地 timeout 到期 → callBridge null → {ok:false} → 进入退避
+			await vi.advanceTimersByTimeAsync(2_000);
+			expect(registered).toHaveLength(0);
+
+			// 再 2s：退避结束，第二笔 sync 成功 → 注册（自愈闭环）
+			await vi.advanceTimersByTimeAsync(2_000);
+			await vi.waitFor(() => expect(registered).toHaveLength(1));
+			expect(callsOf(selectMock, "bridge:sync")).toHaveLength(2);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("commands 恒空被忽略（设计 §3.3-D7，死代码不复制）——无 registerCommand 调用路径", async () => {
 		const selectMock = methodRouter({ "bridge:sync": [SYNC_PAYLOAD] });
 		const { registered, handlers, ctx } = createHarness(selectMock);
