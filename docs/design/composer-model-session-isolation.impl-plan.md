@@ -115,10 +115,10 @@ graph TD
 |---|---|---|---|
 | U0 | committed | 1 | commit `5acafab78`；render --check 88 条 exit 0 + select --check PASS + md 45/46/78 行可见（主 agent 复跑核验） |
 | U1 | committed | 2 | commit `3f1a6cfe4`；typecheck exit 0；tests 32/32 PASS（A1-A4）；guard check PASS；render --check PASS；缺 check-unsafe-stream-writes.mjs 脚本（存量基础设施问题，非本次引入，偏差 #4） |
-| U2 | pending | 0 | — |
-| U3 | pending | 0 | — |
-| U4 | pending | 0 | — |
-| U5 | pending | 0 | — |
+| U2 | committed | 1 | commit `a5e89acc1`；registerSession metaOverride + restoreSession get_state 播种 + 兜底链；typecheck exit 0；lifecycle tests 25/25 PASS |
+| U3 | committed | 1 | commit `5a108b46d`；switchModel config.defaults 广播移除 + 注释修正；typecheck exit 0；model-service tests 21/21 PASS |
+| U4 | committed | 1 | commit `cd0e3f7a2`（model-thinking D3 分流 + lastUsedModel KV + D3 占位断言更新 + lifecycle seeding test）；typecheck exit 0；core tests 66/66 PASS |
+| U5 | **blocked** | 0 | D5 门禁与 consumeArmedRestore 冲突：consume 所有路径均 clearArmed → 门禁 getArmed() 恒 null → 分支 2/4/5 永远跳过。需设计修正（consume 不清 miss/门禁用 pre-consume 快照）。thinking-level-sync 已回退到基线，代码+测试零残留 |
 | U6 | pending | 0 | — |
 | U7 | pending | 0 | — |
 | U8 | pending | 0 | — |
@@ -135,5 +135,6 @@ graph TD
 
 **变更历史**：
 
+- 2026-09-04：U2-U4 committed。U5 blocked（D5 门禁与 consumeArmedRestore 冲突——consume 所有路径 clearArmed → 门禁 getArmed() 恒 null，thinking-level-sync 已回退基线零残留）。U6/U7 就绪待派发。
 - 2026-09-04：U0 committed（`5acafab78`）。C-pi-07 豁免闭环触发 U1 领地扩展（偏差 #3）：`.githooks/check_pi_direct_write.py` + `docs/architecture/data-source-registry.md` + constraints 文案，U1 派发前已固化。
 - 2026-09-04：计划建立。设计文档 + review-r1/r2 自 /tmp 复制入 docs/design/（基线 commit 携带）；U3/U7 领地归并（model-service.ts 注释归 U3）；设计 U8 测试收编进 U1-U6，U8 转全量回归单元。审查证据：r1 全修、r2 0 must-fix（DoR 达成）。
