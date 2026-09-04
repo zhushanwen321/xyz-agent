@@ -264,11 +264,13 @@ export function projectSidecarPath(filePath: string): string {
 // model binding sidecar 家族（modelSidecarPath/persistModelBinding/readModelBinding +
 // ModelBindingFields 字段声明）已迁至 './session-model-sidecar.ts'（本文件 max-lines
 // 行数合规）；scanSessionMeta 第七读经该模块的 readModelBinding 供给。
-// [re-export 登记] persistModelBinding 经本模块转出是 mock 链刚需：restore 播种测试
-// （session-lifecycle-restore-seeding.test.ts）以硬编码 factory 替换本模块并经
-// importActual 取「本模块导出的 persistModelBinding」委托真值落盘，session-lifecycle
+// [re-export 登记] persistModelBinding / readModelBinding 经本模块转出是 mock 链刚需：
+// restore 播种测试（session-lifecycle-restore-seeding.test.ts）以硬编码 factory 替换本模块
+// 并经 importActual 取「本模块导出的 persistModelBinding」委托真值落盘，session-lifecycle
 // 的写点 import 也锚定本模块路径——re-export 缺失会使 actual 侧拿到 undefined。
-export { persistModelBinding } from './session-model-sidecar.js'
+// readModelBinding 转出（2026-09-04）：session-service tryPersistModelBinding（D1 写点③
+// 兜底）的「缺失才写」守卫消费，services 层 infra value import 白名单只认本模块。
+export { persistModelBinding, readModelBinding } from './session-model-sidecar.js'
 
 /**
  * sidecar 家族公共写入（preset/project/agent binding 共用骨架）：
