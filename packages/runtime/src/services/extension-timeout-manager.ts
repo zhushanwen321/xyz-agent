@@ -76,6 +76,18 @@ export class ExtensionTimeoutManager {
   }
 
   /**
+   * 登记 marker 通道（select+BRIDGE_MARKER，设计 bridge-rewrite-pi-0.84 §3.3-D6）识别出的
+   * bridge 请求。新通道的 extension_ui_request method 恒为 'select'，registerTimeout 的
+   * `bridge:` 前缀判定不再命中——识别出的请求到达 BridgeHandler 时经此方法显式登记
+   * （登记语义与 registerTimeout 的 bridge 分支一致：bridgeRequestIds + session 跟踪，
+   * 供 clearForSession 清理；不排定时器——bridge 请求由 runtime 内部消化，无前端弹窗超时）。
+   */
+  addBridgeRequest(sessionId: string, requestId: string): void {
+    this.bridgeRequestIds.add(requestId)
+    this.trackSessionRequest(sessionId, requestId)
+  }
+
+  /**
    * Register a timeout for an extension UI request.
    * Returns cleanup info or undefined if no timer needed (notify/bridge methods).
    *

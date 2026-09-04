@@ -24,8 +24,8 @@
  */
 import type { ServerMessage, ServerMessageType, ExtensionInteractMethod, PiMessageEntry, PiToolCallEntryForm } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE, SUBAGENT_DIRECTIVE_CUSTOM_TYPE, parseSubagentDirective } from '@xyz-agent/shared'
-import { GUI_WIDGET_MARKER, ASK_USER_MARKER, SESSION_MANAGER_MARKER, SESSION_MANAGER_ACTIONS, isGuiComponent, isGuiRenderResult } from '@xyz-agent/extension-protocol'
-import type { SessionManagerAction } from '@xyz-agent/extension-protocol'
+import { GUI_WIDGET_MARKER, ASK_USER_MARKER, SESSION_MANAGER_MARKER, SESSION_MANAGER_ACTIONS, BRIDGE_MARKER, BRIDGE_METHODS, isGuiComponent, isGuiRenderResult } from '@xyz-agent/extension-protocol'
+import type { SessionManagerAction, BridgeRequest } from '@xyz-agent/extension-protocol'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
 import type { PiTranslatedEvent } from '../../services/session/types.js'
 import { randomUUID } from 'node:crypto'
@@ -552,6 +552,38 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
         : {}
 
       return [{ kind: 'session-manager-ui', requestId, sessionId: sid, action, params }]
+    }
+
+    // bridge 请求检测（设计 bridge-rewrite-pi-0.84 §3.3-D6）：select title 为 BRIDGE_MARKER →
+    // options[0] 是 JSON 序列化的 BridgeRequest（协议 v2）。识别成功产出既有 bridge-ui kind
+    // 交 interpreter 路由 bridge-handler（method 分派逻辑不动）。
+    // 与 session-manager 分支同构：不产 extension-ui kind（不弹前端、不注册弹窗超时）。
+    // 解析失败（非 JSON / 缺 method / method 不在 BRIDGE_METHODS 集合）折叠为
+    // 'bridge:malformed' 哨兵请求——event-adapter 是纯翻译层无 client 句柄，回包必须经
+    // handler（bridge:malformed case 回 E5 错误，不静默丢弃——失败要出声）。
+    if (method === 'select' && event.title === BRIDGE_MARKER) {
+      const rawBridge = parseSelectOptionsPayload(event) as Partial<BridgeRequest> | undefined
+      const rawBridgeMethod = rawBridge?.method
+      // method 集合守卫（与 session-manager action 守卫同款防线）：判别字段合法才走正常分派
+      if (typeof rawBridgeMethod === 'string' && (BRIDGE_METHODS as readonly string[]).includes(rawBridgeMethod)) {
+        // data = BridgeRequest 除 method 外的字段集，照 bridge-handler 的消费形状组装
+        //（tool_execute 读 toolName/toolCallId/params，event/intercept 读 eventName/data）
+        const bridgeData: Record<string, unknown> = {}
+        const bridgeFieldKeys = ['toolName', 'toolCallId', 'params', 'sessionId', 'eventName', 'data'] as const
+        for (const key of bridgeFieldKeys) {
+          if (rawBridge?.[key] !== undefined) bridgeData[key] = rawBridge[key]
+        }
+        return [{ kind: 'bridge-ui', requestId, sessionId: sid, method: rawBridgeMethod, data: bridgeData }]
+      }
+      // malformed 哨兵：raw 带原始 payload 供 handler 日志留痕（非 JSON 时回退原始 options 字符串）
+      const rawOptions = Array.isArray(event.options) && event.options.length > 0 ? String(event.options[0]) : ''
+      return [{
+        kind: 'bridge-ui',
+        requestId,
+        sessionId: sid,
+        method: 'bridge:malformed',
+        data: { raw: rawBridge ?? rawOptions },
+      }]
     }
 
     // ask-user 富交互请求检测：select title 为 ASK_USER_MARKER → options[0] 是 JSON payload
