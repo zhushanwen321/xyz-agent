@@ -1265,6 +1265,17 @@ HOOK_EOF
 
 chmod +x "$GIT_HOOKS_DIR/pre-commit"
 
+# 安装后自检：生成的 pre-commit 必须含流写逃逸护栏段。
+# 防「源缺段/heredoc 生成失败」——本脚本源若缺护栏段或 heredoc 损坏，此处 exit 1 拦下。
+# 边界：防不了「旧版源覆盖」（旧源无此自检，静默装旧版），该残留风险登记在
+# docs/design/runtime-stream-fault-isolation.impl-plan.md §7 变更历史 2026-09-04 条目。
+# 匹配护栏段功能行（变量赋值），不匹配任意出现——仅残留注释/引用的坏源同样拦下。
+if ! grep -q 'UNSAFE_STREAM_CHECKER=' "$GIT_HOOKS_DIR/pre-commit"; then
+    echo -e "${RED}[ERROR] 安装后自检失败：生成的 pre-commit 缺少流写逃逸护栏段（check-unsafe-stream-writes）${NC}"
+    echo -e "${YELLOW}[FIX] 安装源已过期或 heredoc 损坏：对照 docs/design/runtime-stream-fault-isolation.md §5 核对本 worktree 的 .githooks/install-hooks.sh 是否含护栏段，更新到最新分支后重跑 bash .githooks/install-hooks.sh${NC}"
+    exit 1
+fi
+
 echo -e "${GREEN}[OK] pre-commit hook 安装完成${NC}"
 echo ""
 

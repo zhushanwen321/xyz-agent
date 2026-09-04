@@ -68,7 +68,7 @@ graph TD
 | U2 | committed | 1 | 44b09f2f0；rpc-client-exit-multicast + usage equivalence 绿（P5） |
 | U3 | committed | 1 | fdcd83d57；uncaught-policy 4 绿（P3） |
 | U4 | committed | 1 | 5fb5ed597（脚本+allowlist）+ 5468f5d86（ci.yml）+ 4ecea728f（护栏段进 install-hooks.sh SSOT）；护栏 253 文件绿（P4/P7） |
-| U5 | committed | 1 | 09e478b7c；受影响面 49 绿 |
+| U5 | committed | 1 | 09e478b7c；受影响面 49 绿（U5 提交时点口径；Gate A 复验扩大至 76，见设计 §5 验证汇总） |
 
 收尾全量（阶段 5 Gate A 证据）：runtime 包 vitest 400 文件 / 4374 用例全绿（168s，2026-09-04）；`tsc --noEmit` 通过；eslint 改动源码 0 warning。
 
@@ -81,3 +81,4 @@ graph TD
   - 2026-09-04 阶段 5 Gate B / S2 实测发现 U4 实施缺口：流写护栏 pre-commit 段曾只写入 .bare/hooks 运行时副本，SSOT（.githooks/install-hooks.sh heredoc）无此段——任何 worktree 的 pnpm install 重装 hook 即静默丢失（实测拦截失效复现；U1 首次 commit 的 hook 瞬态错误 882 亦由此覆盖竞态解释）。修复：护栏段落进 install-hooks.sh 源 + 重装运行时 + S2 重验拦截通过（commit 4ecea728f）。教训登记进 [HISTORICAL] 注释。
   - 2026-09-04 Gate A 通过（sa-11910405）：受影响面复验 29/29 + tsc 0 错 + 护栏 253 绿；零容忍审计仅 2 处带理由 disable（入登记表 #3）；uncovered 2 区 → U2b 补测（usage-stats 容错 3 用例，commit 839bc6e19）+ U3 接线薄胶水判可接受。收尾全量：runtime 400 文件 / 4374 用例全绿。
   - 2026-09-04 Gate B 完成（sa-0e9b3bbb）：S2 pass（主 agent 真实 pre-commit 拦截实测 + 复跑绿）、S3 pass（单测 4/4；真机部分随 S1）、S1/P6 blocked（设计声明的发版后门，降级证据 P1/P2 已绿）、S4 blocked（环境冲突：打包版 TaiJi PID 17071/62565 占 3210，未杀用户进程；解除方式 = 用户退出打包版后重跑 S4）。差距清单：S4 待环境解除后重跑、S1/P6 待发版后执行。
+  - 2026-09-04 design-code-sync R3（B 区 F1）：发现 4ecea728f 同款事故复发——共享副本 `.bare/hooks/pre-commit` 被旧版源覆盖（mtime 22:53:57，护栏段 = 0 处；workspace 内 22 个其他 worktree 的 install-hooks.sh 均为旧版，任一 `pnpm install` 即覆盖共享副本，机制实测证实）。处置 = 用本分支 SSOT 重装恢复 + install-hooks.sh 加安装后自检（生成的 pre-commit 缺护栏段即 exit 1，防「源缺段/生成失败」）。边界 = 旧源覆盖时无告警且旧源无自检，根治需旧 worktree 更新/清理（待用户治理）；本地失效窗口期由 ci.yml invariant 兜底。

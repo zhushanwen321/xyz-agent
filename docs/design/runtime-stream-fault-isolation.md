@@ -222,9 +222,9 @@ S1 的通过标准本身即含两条「不该发生的不发生」：无 UNCAUGH
 | U4 静态护栏 | scripts/check-unsafe-stream-writes.mjs（R1/R2/R4）+ 随 git 跟踪的 check-unsafe-stream-writes.allowlist.txt（唯一豁免登记入口，pre-commit/CI 无参自动读取）+ pre-commit 段 + ci.yml invariant | 脚本独立于被检代码；pre-commit 按 runtime 路径触发避免全量拖慢；allowlist 与代码同 commit 可审计 | ✅ 实施完成（修复轮 2026-09-04：allowlist 由 CLI 传参改为持久化文件——初版传参入口到不了无参调用的 pre-commit/CI，对抗审查 MUST_FIX） |
 | U5 回归测试 | relay-registry.test.ts 2 个事故用例 + uncaught-policy.test.ts | 用例名标注事故日期与形态，防未来误删 | ✅ 实施完成 |
 
-> **关于 pre-commit hook 位置（SSOT = `.githooks/install-hooks.sh`）**：本项目采用 bare repo + worktree 结构（见 [AGENTS.md](../../AGENTS.md)「目录结构」），全局 pre-commit hook 位于 `.bare/hooks/pre-commit`（worktree 外），由 git commondir 机制自动对所有 worktree 生效。**流写护栏段的修改源是 `.githooks/install-hooks.sh` 内嵌的 heredoc**（`pnpm install` 的 prepare 跑 install-hooks.sh 生成运行时副本）——[HISTORICAL] 护栏段曾只写入 `.bare/hooks` 运行时副本而漏掉安装源，任何 worktree 的 pnpm install 重装即静默丢失护栏（2026-09-04 S2 验收实测拦截失效后定位，commit 4ecea728f 迁移）。改护栏段一律改 install-hooks.sh 后重跑 `bash .githooks/install-hooks.sh`。CI invariant 在 `.github/workflows/ci.yml` 中独立配置。
+> **关于 pre-commit hook 位置（SSOT = `.githooks/install-hooks.sh`）**：本项目采用 bare repo + worktree 结构（见 [AGENTS.md](../../AGENTS.md)「目录结构」），全局 pre-commit hook 位于 `.bare/hooks/pre-commit`（worktree 外），由 git commondir 机制自动对所有 worktree 生效。**流写护栏段的修改源是 `.githooks/install-hooks.sh` 内嵌的 heredoc**（`pnpm install` 的 prepare 跑 install-hooks.sh 生成运行时副本）——[HISTORICAL] 护栏段曾只写入 `.bare/hooks` 运行时副本而漏掉安装源，任何 worktree 的 pnpm install 重装即静默丢失护栏（2026-09-04 S2 验收实测拦截失效后定位，commit 4ecea728f 迁移）。改护栏段一律改 install-hooks.sh 后重跑 `bash .githooks/install-hooks.sh`。install-hooks.sh 现带安装后自检：生成的 pre-commit 缺护栏段（源缺段/生成失败）即 exit 1。CI invariant 在 `.github/workflows/ci.yml` 中独立配置。
 
-验证汇总：runtime 受影响面 vitest 76 passed（relay 25 / pi / usage / policy 4）；`tsc --noEmit` 通过；eslint `--max-warnings 0` 通过；护栏脚本 253 文件扫描绿。修复轮（2026-09-04 对抗审查后）复验：护栏正向绿 253 文件 / 负向红（探针裸写拦截）/ allowlist 端到端绿（P7 重演）；本轮仅动护栏脚本与文档，runtime 源码无改动，vitest/tsc/eslint 结论不受影响。
+验证汇总：runtime 受影响面 vitest 76 passed（relay 25 / pi / usage / policy 4；全部单元提交后口径——U5 单元时点为 49，Gate A 复验扩大至 76，见 impl-plan §6）；`tsc --noEmit` 通过；eslint `--max-warnings 0` 通过；护栏脚本 253 文件扫描绿。修复轮（2026-09-04 对抗审查后）复验：护栏正向绿 253 文件 / 负向红（探针裸写拦截）/ allowlist 端到端绿（P7 重演）；本轮仅动护栏脚本与文档，runtime 源码无改动，vitest/tsc/eslint 结论不受影响。
 
 交付后验收链（2026-09-04 dev-flow）：一致性审查清零（1 处文档归属修正）；Gate A 整体验收通过——零容忍审计仅 2 处带理由 disable、uncovered 2 区中 U2b 补测 usage-stats 容错回归（commit 839bc6e19，P5 证据更新如上）、收尾全量 runtime 400 文件 / 4374 用例全绿；Gate B——S2 pass（真实 pre-commit 拦截实测 + 据此发现并修复 hook SSOT 缺口，commit 4ecea728f，见 §5 hook 位置段）、S3 单测 pass、S1/P6 blocked（发版后门，见 §4 S1）、S4 blocked（环境冲突，见 §4 S4）。
 
@@ -232,6 +232,7 @@ S1 的通过标准本身即含两条「不该发生的不发生」：无 UNCAUGH
 
 1. **崩溃→恢复窗口丢在途 turn**：L3 真崩溃时正在生成的 turn 数据丢失（~16s 恢复期固有代价）。G2 落地后整机崩溃频率应大幅下降；若后续仍观察到流错误引发的 L3 故障，重新评估 turn 保全（属新设计，超出本层 scope）。
 2. **extension 侧同族加固**：pi 子进程内（subagent-workflow 等 extension）的流错误处理是另一进程边界，其崩溃只影响单 session（L1 隔离成立），暂无整机风险——不纳入本期。
+3. **usage 空分片降级的数据点缺失**：usage 流中途损坏时，空分片降级会丢弃该文件已聚合行且 mtime 键保留→该文件数据点缺失（D3 已知代价，登记详见 impl-plan §7 风险⑤）。
 
 ### 后续登记（建议）
 
