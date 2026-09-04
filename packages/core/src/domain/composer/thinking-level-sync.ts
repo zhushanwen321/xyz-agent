@@ -23,6 +23,12 @@
  * D3 规则 1/2/3 / D4 消费点 / D5 可用性回落）：显式切模型（u3 model-thinking 设立 armed）时
  * 优先恢复记忆档位，未命中 / 不可用 / 幂等 / 过期回落既有对齐分支。armed 相关 deps
  * 均为可选注入——未注入时消费块零副作用，行为与既有对齐逻辑一致（零回归底线）。
+ *
+ * [U5/D5 门禁] 本设计 composer-model-session-isolation D5：档位对齐只挂「用户显式切模型」。
+ * 门禁判据 = 回调入口的 armed 快照（consumeArmedRestore 执行前捕获）——分支 2（无档位
+ * 设最高档）/4（同体系映射）/5（跨体系重置）无快照一律跳过；分支 3（可用性校验，oldMap
+ * undefined 挂载首触发可达）保持不门禁。armed 快照是「本触发 = 显式切换」的一次性抑制
+ * 判据（启发式）而非精确归因。
  */
 import { computed, watch, type ComputedRef, type Ref } from 'vue'
 import {
@@ -158,6 +164,8 @@ export function useThinkingLevelSync(
    * 0. [u2] armed 记忆恢复消费（D4：先于下列所有分支）——显式切模型的记忆恢复，
    *    命中且可用且 value≠当前 → onReset(记忆值) 后直接 return 跳过下列分支；
    *    过期 / 幂等 / 未命中 / 不可用 / 不匹配 → armed 按规则处理后照走下列分支
+   *    [U5/D5] 入口 armed 快照同时是对齐门禁：下列 1/3 分支无快照时跳过
+   *    （2 分支可用性安全网不门禁）——对齐只挂「用户显式切模型」
    * 1. currentThinkingLevel 无值（landing 态初始）→ 设为新模型最高可用档
    * 2. 首次触发（oldMap===undefined，Composer 挂载/session 载入）→ 可用性检查：
    *    当前档位在新模型可用则保留，不可用则重置到最高档（与原逻辑一致，避免无 oldMap
@@ -178,12 +186,14 @@ export function useThinkingLevelSync(
     () => [currentThinkingLevelMap.value, supportedOf()] as const,
     ([map, supported], oldPair) => {
     // [u2/D4] armed 消费置于回调最顶部，先于「无档位」「首触发」「体系判定」所有分支。
-    // armed 未注入 / 为 null 时零副作用，下方既有分支行为与现状一致（零回归底线）
-      const armed = deps.getArmed?.() ?? null
+    // [U5/D5] 入口快照语义：armedSnapshot 在 consumeArmedRestore 执行前捕获——消费块内的
+    // clearArmed 不影响该局部变量，故「记忆未命中的显式切换」（回落路径先清 armed）仍能放行
+    // 对齐分支。禁止读消费块之后的 armed 值（D5 被否③）。
+      const armedSnapshot = deps.getArmed?.() ?? null
       if (
-        armed &&
+        armedSnapshot &&
       consumeArmedRestore({
-        armed,
+        armed: armedSnapshot,
         deps,
         currentModelId: currentModelId.value,
         currentValue: currentThinkingLevel.value,
@@ -198,12 +208,16 @@ export function useThinkingLevelSync(
       const oldSupported = oldPair?.[1]
       const current = currentThinkingLevel.value
       if (!current) {
-      // landing 态初始无思考等级 → 设为新模型最高可用档
+        // [U5/D5] 分支 2 门禁：landing 态无 armed 快照时不自动设最高档（初值由 u3 的
+        // followRememberedOrDefault watch 双路径覆盖），避免换绑触发发多余 setThinkingLevel
+        if (!armedSnapshot) return
+        // landing 态初始无思考等级 → 设为新模型最高可用档
         const highest = highestAvailableLevel(supported)
         onReset(resolveThinkingValue(highest, map))
         return
       }
       // 首次触发（无 oldMap 可比）→ 可用性检查，与原逻辑一致
+      // [U5/D5] 分支 3 保持不门禁：数据不一致时的可用性安全网（不可用才重置一次）
       if (oldMap === undefined) {
         const currentKey = resolveThinkingKey(current, map, highestAvailableLevel(supported))
         const available = normalizeSupportedLevels(supported)
@@ -213,6 +227,9 @@ export function useThinkingLevelSync(
         }
         return
       }
+      // [U5/D5] 分支 4/5 门禁：无入口快照时同体系映射与跨体系重置一并跳过
+      //（置于 isSameThinkingScheme 判定之前，一处守卫覆盖两分支；分支 3 已在上面 return）
+      if (!armedSnapshot) return
       // 模型切换：同体系 → 直接映射当前档位 key 到新模型 value
       if (isSameThinkingScheme(oldSupported, supported)) {
         const currentKey = resolveThinkingKey(current, oldMap)
