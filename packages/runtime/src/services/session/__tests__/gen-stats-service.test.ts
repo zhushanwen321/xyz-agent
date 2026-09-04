@@ -24,8 +24,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { GenStatsFrame, ServerMessage } from '@xyz-agent/shared'
 import type { IProcessManager } from '../../ports/pi-engine.js'
-import type { ISessionService } from '../../../interfaces.js'
+import type { IPiEngine } from '../../ports/pi-engine.js'
+import type { ISessionService, IMessageBroker } from '../../../interfaces.js'
 import { EventInterpreter } from '../event-interpreter.js'
+import { SessionService } from '../session-service.js'
+import { MessageBus } from '../../message-bus/message-bus.js'
+import { SessionMessageHandler } from '../../../transport/session-message-handler.js'
+import { translate } from '../../../infra/pi/event-adapter.js'
+import type { PiTurnEndEvent } from '../../../infra/pi/pi-protocol.js'
 import type { PiTranslatedEvent } from '../types.js'
 import { cacheRatioFilePath, localDayKey, speedFilePath, writeDayRecords } from '../gen-stats-store.js'
 import { GenStatsService } from '../gen-stats-service.js'
@@ -400,5 +406,194 @@ describe('EventInterpreter gen-stats 接线（D1/D2）', () => {
     })
     interp.interpret([TURN_USAGE_EVENT])
     expect(onContextUpdate).toHaveBeenCalledWith('s1', { inputTokens: 30, totalTokens: 30 })
+  })
+})
+
+// ── Gate A ②：event-adapter handleTurnEndPi 扩展字段提取（D1，无人认领防线）────────────
+
+describe('event-adapter handleTurnEndPi 扩展字段提取（D1）', () => {
+  function turnEndEvent(message: Record<string, unknown>): PiTurnEndEvent {
+    return { type: 'turn_end', turnIndex: 0, message, toolResults: [] } as unknown as PiTurnEndEvent
+  }
+
+  it('完整 usage + model/provider → turn-usage 携带全部扩展字段', () => {
+    const events = translate(turnEndEvent({
+      role: 'assistant',
+      content: [],
+      usage: { input: 100, output: 200, totalTokens: 500, cacheRead: 300, cacheWrite: 50 },
+      model: 'mimo-v2.5-pro',
+      provider: 'xiaomi-token-plan-cn',
+    }), 's1')
+
+    expect(events.find((e) => e.kind === 'turn-usage')).toEqual({
+      kind: 'turn-usage',
+      sessionId: 's1',
+      inputTokens: 500,
+      totalTokens: 500,
+      outputTokens: 200,
+      cacheRead: 300,
+      cacheWrite: 50,
+      input: 100,
+      model: 'mimo-v2.5-pro',
+      provider: 'xiaomi-token-plan-cn',
+    })
+  })
+
+  it('字段缺省 → null 编码（禁 ?? 0）；无 totalTokens → 空（既有早退门控不变）', () => {
+    const events = translate(turnEndEvent({ role: 'assistant', content: [], usage: { totalTokens: 10 } }), 's1')
+    expect(events.find((e) => e.kind === 'turn-usage')).toEqual({
+      kind: 'turn-usage',
+      sessionId: 's1',
+      inputTokens: 10,
+      totalTokens: 10,
+      outputTokens: null,
+      cacheRead: null,
+      cacheWrite: null,
+      input: null,
+      model: null,
+      provider: null,
+    })
+
+    const none = translate(turnEndEvent({ role: 'assistant', content: [] }), 's1')
+    expect(none.filter((e) => e.kind === 'turn-usage')).toHaveLength(0)
+  })
+})
+
+// ── Gate A ③：session-service 写 2 tap 机制（state_changed 后置 tap / 帧序 / bus 替换 memoize）──
+
+describe('SessionService 写 2 tap（setGenStatsModelSwitchTap / 投影 bus 视图）', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  /** d1-usage-protocol-invariants 同款最小 fixture：真实 bus + fake pi client + 全 mock 依赖。 */
+  function makeSvcFixture() {
+    const state: Record<string, unknown> = {
+      sessionName: 'tap', thinkingLevel: 'low', model: { id: 'model-a', provider: 'p' }, pendingMessageCount: 0,
+    }
+    const client = {
+      getState: vi.fn(async () => state),
+      getSessionStats: vi.fn(async () => ({ contextUsage: { tokens: 100, contextWindow: 128000, percent: 1 } })),
+      getCommands: vi.fn(async () => []),
+      setModel: vi.fn(async () => undefined),
+    }
+    const pm = {
+      onSessionExit: vi.fn(),
+      getClient: vi.fn(() => client as unknown as IPiEngine),
+    } as unknown as IProcessManager
+    const bus = new MessageBus()
+    const publishSpy1 = vi.spyOn(bus, 'publish')
+    const svc = new SessionService(
+      pm,
+      { broadcast: vi.fn() } as unknown as IMessageBroker,
+      () => ({ attach: vi.fn(), detach: vi.fn() }),
+      '/test/project-root',
+      {} as never,
+      { getDefaultModel: () => ({ provider: 'p', modelId: 'model-a' }) } as never,
+      { scanSessions: vi.fn(() => []), extractSessionOutcome: vi.fn(() => null), persistSessionEnd: vi.fn() } as never,
+      { pruneStaleCache: vi.fn(), readGitInfo: vi.fn(() => undefined) } as never,
+      {} as never,
+      bus,
+    )
+    svc.setMessageBus(bus)
+    return { svc, bus, client, publishSpy1 }
+  }
+
+  it('state_changed 发布后 tap 被调且帧序构造性成立（ws 先收到 state_changed，tap 后执行，MF9）', async () => {
+    const { svc, bus } = makeSvcFixture()
+    const order: string[] = []
+    const ws = { readyState: 1, send: (p: string) => { if (p.includes('"session.state_changed"')) order.push('ws:state_changed') } }
+    bus.subscribe('s-tap', ws as never)
+    const tapCalls: Array<[string, string]> = []
+    svc.setGenStatsModelSwitchTap((sid, mk) => { tapCalls.push([sid, mk]); order.push('tap') })
+
+    await svc.initializeManagedSession('s-tap', {} as unknown as IPiEngine, '/tmp', 'w1')
+    await vi.advanceTimersByTimeAsync(500)
+
+    expect(tapCalls.length).toBeGreaterThanOrEqual(1)
+    expect(tapCalls[0]![0]).toBe('s-tap')
+    expect(tapCalls[0]![1]).toBe('p/model-a')
+    expect(order[0]).toBe('ws:state_changed')
+    expect(order[1]).toBe('tap')
+  })
+
+  it('publish 非 state_changed 类型不触发 tap', () => {
+    const { svc, bus } = makeSvcFixture()
+    const tap = vi.fn()
+    svc.setGenStatsModelSwitchTap(tap)
+    bus.publish('s-x', { type: 'message.message_start', payload: { sessionId: 's-x' } } as never)
+    bus.publish('s-x', { type: 'context.update', payload: { sessionId: 's-x' } } as never)
+    expect(tap).not.toHaveBeenCalled()
+  })
+
+  it('bus 替换后 memoize 重建：state_changed 落新 bus、tap 继续被调、旧 bus 不再收新帧', async () => {
+    const { svc, client, publishSpy1 } = makeSvcFixture()
+    const tap = vi.fn()
+    svc.setGenStatsModelSwitchTap(tap)
+    await svc.initializeManagedSession('s-r', {} as unknown as IPiEngine, '/tmp', 'w1')
+    await vi.advanceTimersByTimeAsync(500)
+    const stateFramesOnBus1 = publishSpy1.mock.calls.filter(([, m]) => m.type === 'session.state_changed').length
+    expect(stateFramesOnBus1).toBeGreaterThanOrEqual(1)
+
+    const bus2 = new MessageBus()
+    const publishSpy2 = vi.spyOn(bus2, 'publish')
+    svc.setMessageBus(bus2)
+    client.getState.mockResolvedValue({
+      sessionName: 'tap', thinkingLevel: 'low', model: { id: 'model-b', provider: 'p' }, pendingMessageCount: 0,
+    })
+    await svc.switchModel('s-r', 'p' as never, 'model-b')
+    await vi.advanceTimersByTimeAsync(1000)
+
+    expect(publishSpy2.mock.calls.filter(([, m]) => m.type === 'session.state_changed').length).toBeGreaterThanOrEqual(1)
+    expect(tap).toHaveBeenCalledWith('s-r', 'p/model-b')
+    // 旧 bus 视图随 memoize 失效：替换后无新增 state_changed
+    expect(publishSpy1.mock.calls.filter(([, m]) => m.type === 'session.state_changed').length).toBe(stateFramesOnBus1)
+  })
+})
+
+// ── Gate A ④：session-message-handler getGenStats case（D4 恢复腿路由）────────────────
+
+describe('SessionMessageHandler session.getGenStats case', () => {
+  const MSG = { type: 'session.getGenStats', id: 'req-1', payload: { sessionId: 's9' } } as never
+  const WS = {} as never
+
+  function makeHandler(genStats?: { getSnapshotForSession: (sid: string) => Promise<GenStatsFrame> }) {
+    const replies: Array<{ id: string | undefined; type: string; payload: unknown }> = []
+    const errors: Array<{ code: string }> = []
+    const ctx = {
+      send: vi.fn(),
+      reply: vi.fn((_ws: unknown, id: string | undefined, type: string, payload: unknown) => {
+        replies.push({ id, type, payload })
+      }),
+      sendError: vi.fn((_ws: unknown, code: string) => { errors.push({ code }) }),
+      sessionService: {},
+      genStatsService: genStats,
+    }
+    const handler = new SessionMessageHandler(ctx as unknown as ConstructorParameters<typeof SessionMessageHandler>[0])
+    return { handler, replies, errors }
+  }
+
+  it('未注入 genStatsService → sendError gen_stats_unsupported（importService 同款防御）', async () => {
+    const { handler, errors, replies } = makeHandler()
+    await handler.handleSessionMessage(MSG, WS)
+    expect(errors).toEqual([{ code: 'gen_stats_unsupported' }])
+    expect(replies).toHaveLength(0)
+  })
+
+  it('注入 → reply session.stats_update，payload = 降级链快照帧（handler 只透传）', async () => {
+    const frame: GenStatsFrame = {
+      sessionId: 's9',
+      speed: { current: 50, day: 50, d7: null, d30: null },
+      cacheRatio: { current: null, day: null },
+      model: 'prov/mdl',
+    }
+    const getSnapshotForSession = vi.fn(async () => frame)
+    const { handler, replies, errors } = makeHandler({ getSnapshotForSession })
+
+    await handler.handleSessionMessage(MSG, WS)
+
+    expect(errors).toHaveLength(0)
+    expect(getSnapshotForSession).toHaveBeenCalledWith('s9')
+    expect(replies).toEqual([{ id: 'req-1', type: 'session.stats_update', payload: frame }])
   })
 })

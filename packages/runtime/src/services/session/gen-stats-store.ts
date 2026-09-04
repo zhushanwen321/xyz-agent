@@ -74,6 +74,12 @@ const MS_PER_DAY = 86_400_000
 /** 合法日 key 形状（YYYY-MM-DD；GC 的字典序比较依赖该规范形） */
 const DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/
 
+/** 日 key 月/日段补零宽度（YYYY-MM-DD 规范形） */
+const DATE_PAD_WIDTH = 2
+
+/** 样本记录二元组长度（SpeedRecord / CacheRatioRecord 同形，读写校验共用） */
+const RECORD_TUPLE_LENGTH = 2
+
 // ── 样本有效性（D7 bogus guard，阈值 SSOT）───────────────────────────
 
 /**
@@ -93,8 +99,8 @@ export function isBogusSpeedSample(outputTokens: number, durationMs: number): bo
  */
 export function localDayKey(date: Date = new Date()): string {
   const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
+  const m = String(date.getMonth() + 1).padStart(DATE_PAD_WIDTH, '0')
+  const d = String(date.getDate()).padStart(DATE_PAD_WIDTH, '0')
   return `${y}-${m}-${d}`
 }
 
@@ -193,7 +199,7 @@ export function cacheRatioFilePath(provider: string, model: string, env: NodeJS.
 function isValidRecord(entry: unknown): entry is GenStatsRecord {
   return (
     Array.isArray(entry) &&
-    entry.length === 2 &&
+    entry.length === RECORD_TUPLE_LENGTH &&
     typeof entry[0] === 'number' && Number.isFinite(entry[0]) &&
     typeof entry[1] === 'number' && Number.isFinite(entry[1])
   )

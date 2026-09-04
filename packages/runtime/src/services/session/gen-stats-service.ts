@@ -21,6 +21,7 @@
  */
 
 import type { GenStatsCacheRatio, GenStatsFrame, GenStatsSpeed, ServerMessage } from '@xyz-agent/shared'
+import { logger } from '../../infra/logger.js'
 import type { ISessionService } from '../../interfaces.js'
 import type { IProcessManager } from '../ports/pi-engine.js'
 import type { GenStatsSample } from './types.js'
@@ -147,7 +148,7 @@ export class GenStatsService {
         persisted = true
       } catch (err) {
         // §3.5：写失败 warn；内存聚合照常、当前帧照常推，下个 turn 重写自愈
-        console.warn('[gen-stats] speed record write failed', { provider, model, error: toMessage(err) })
+        logger.warn('[gen-stats] speed record write failed', { provider, model, error: toMessage(err) })
       }
     }
 
@@ -157,7 +158,7 @@ export class GenStatsService {
         this.appendRecord(cacheRatioFilePath(provider, model), day, [s.cacheRead ?? 0, promptTotal])
         persisted = true
       } catch (err) {
-        console.warn('[gen-stats] cache-ratio record write failed', { provider, model, error: toMessage(err) })
+        logger.warn('[gen-stats] cache-ratio record write failed', { provider, model, error: toMessage(err) })
       }
     }
     return persisted
@@ -275,8 +276,13 @@ export class GenStatsService {
         this.onSnapshotResolved(sid, modelKey) // 写 3
         return modelKey
       }
-    } catch {
-      // §3.5：get_state 失败/超时不卡加载，静默降级（pi 侧退避重试语义不受影响）
+    } catch (err) {
+      // §3.5：get_state 失败/超时不卡加载，降级链下一级（pi 侧退避重试语义不受影响）；
+      // warn 带上下文落盘（非静默吞——排障时需知道降级发生与原因）
+      logger.warn('[gen-stats] get_state resolve failed, degrade to fallback chain', {
+        sessionId: sid,
+        error: toMessage(err),
+      })
     }
     // ② 内存映射（该 session 至少采样过一次 / 写 2 / 写 3 登记过）
     const mapped = this.modelBySid.get(sid)
