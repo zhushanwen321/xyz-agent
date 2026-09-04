@@ -25,6 +25,8 @@ import type {
 import type { SegmentsMetadataEntry } from './message-metadata'
 import type { ImportCandidatesRequest, ImportCandidatesReply, ImportRequest, ImportReply } from './import-session'
 import type { UsageStatsResult } from './usage-stats'
+// composer-gen-stats（docs/design/composer-gen-stats.md §3.4）：生成指标帧形状 SSOT（本文件仅登记 type→payload 映射）
+import type { GenStatsFrame } from './gen-stats'
 
 // ── Client → Runtime message types
 
@@ -48,6 +50,10 @@ export interface CommandSourceInfo {
 export type ClientMessageType =
   | 'session.create' | 'session.delete' | 'session.deleteByCwd' | 'config.sessions' | 'session.switch' | 'session.restore' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
   | 'session.compact' | 'session.rename' | 'session.fork' | 'session.setProject'
+  // composer-gen-stats（docs/design/composer-gen-stats.md §3.3 D4）：session.getGenStats 拉该 session
+  // 当前模型的速度/缓存命中率快照（恢复腿——切 session 主动拉取，规避 broadcast 早于订阅的时序竞争）。
+  // reply session.stats_update（payload 消费型，同 session.getContext → context.update 模式）。
+  | 'session.getGenStats'
   // session-trace（design D4 数据通路 A1）：session.getTraceEntries 拉全量 trace 台账
   //（活跃走 RPC get_entries + header 首行补读；非活跃走文件直读），reply session.traceEntries。
   | 'session.getTraceEntries'
@@ -303,6 +309,9 @@ export interface ClientMessageMap {
   'session.getFullHistory': { sessionId: string }
   'session.getCommands': { sessionId: string }
   'session.getContext': { sessionId: string }
+  // session.getGenStats（docs/design/composer-gen-stats.md §3.3 D4）：生成指标恢复腿。
+  // reply = session.stats_update payload 同形（无任何数据时 speed/cacheRatio 全 null + model 缺省）。
+  'session.getGenStats': { sessionId: string }
   'session.getTraceEntries': { sessionId: string }
   'session.fetchCurrentSystemPrompt': { sessionId: string }
   'session.compact': { sessionId: string; customInstructions?: string }
@@ -700,6 +709,11 @@ export type ServerMessageType =
   | 'message.bashStart' | 'message.bashResult'
   | 'message.complete' | 'message.error' | 'message.status'
   | 'context.update'
+  // composer-gen-stats（docs/design/composer-gen-stats.md §3.3 D4）：生成指标帧——双发送点同形：
+  // ① turn-usage 采样后扩展广播（对该模型全部已知 session 逐 sid 发帧）；② session.getGenStats
+  // RPC 的 reply（恢复腿）。payload 形状 SSOT = gen-stats.ts；无值一律 null（null=无数据，
+  // 0=真实测量值），与 context.update 的无值编码纪律同源。
+  | 'session.stats_update'
   | 'config.providers' | 'config.providerUpdated' | 'config.discoveredModels' | 'config.defaults'
   | 'config.providerCatalogsRefreshed'
   | 'config.scopedModels'
@@ -1103,6 +1117,11 @@ export interface ServerMessageMapBase {
   // [HISTORICAL] D1 协议收敛（context-consistency Phase 1）：无值以「字段缺失」表达，禁止 ?? 0 编码
   // （0 物理上不可能是真值——任何模型 contextWindow > 0）；仅含 sessionId 的帧 = 无值占位帧。
   'context.update': { sessionId: string; usagePercent?: number; inputTokens?: number; contextLimit?: number }
+  // session.stats_update：Composer 生成指标（token 速度 + 缓存命中率，模型视角——该 session 当前
+  // 模型的全局指标，同模型多 session 分区值相同是预期行为）。形状 SSOT = GenStatsFrame
+  // （gen-stats.ts，设计 §3.4 唯一权威）。无值编码纪律 [HISTORICAL] 与 context.update 同源：
+  // null = 无数据，0 = 真实测量值，禁止 ?? 0 编码（0 物理上可能是真值，null/0 必须可区分）。
+  'session.stats_update': GenStatsFrame
   // message.compactionSummary：上下文压缩摘要（compact 执行后推送，进对话流作 SystemNotice）。
   // runtime message-dispatcher.compact() 从 pi CompactionResult 提取 summary/tokensBefore 广播。
   // 前端 chat-message-effects 把它渲染成 system 消息（SystemNotice.vue「上下文已压缩」）。
@@ -1586,6 +1605,9 @@ export interface ReplyPayloadMap {
   'session.getAgentCallHistory': ServerMessageMap['session.agentCallHistory']
   'session.getCommands': ServerMessageMap['session.commands']
   'session.getContext': ServerMessageMap['context.update']
+  // session.getGenStats：reply = session.stats_update payload 同形（payload 消费型；
+  // docs/design/composer-gen-stats.md §3.3 D4 恢复腿，runtime 侧 modelId 解析降级链权威）。 
+  'session.getGenStats': ServerMessageMap['session.stats_update']
   'session.getTraceEntries': ServerMessageMap['session.traceEntries']
   'session.fetchCurrentSystemPrompt': ServerMessageMap['session.currentSystemPrompt']
   'session.getFullHistory': ServerMessageMap['session.fullHistory']

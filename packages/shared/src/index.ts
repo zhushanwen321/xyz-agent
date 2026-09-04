@@ -145,6 +145,9 @@ export type { LatestReleaseInfo, ReleaseAsset, UpdateStage, UpdateState, IProxyC
 export { LAUNCH_RESULT_STATUSES, UPDATE_STALE_RELEASE } from './update'
 // 用量统计类型（W1 数据层）
 export type { UsageMetrics, UsageRow, UsageStatsResult } from './usage-stats'
+// Composer 生成指标类型 SSOT（docs/design/composer-gen-stats.md §3.4；帧 session.stats_update /
+// RPC session.getGenStats 的 type→payload 登记在 protocol.ts，形状经 GenStatsFrame 引用防漂移）
+export type { GenStatsSpeed, GenStatsCacheRatio, GenStatsFrame } from './gen-stats'
 // 迁移功能（从其他 agent 迁移配置）类型
 export type {
   ProviderSource,
