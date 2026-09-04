@@ -75,7 +75,7 @@ Wave 1: u-foundation ∥ u-i18n（并行）→ Wave 2: u-filterbar → Wave 3: u
 |------|------|------|----------|
 | u-foundation | committed | 1 | 单测 23 passed（主 agent 复跑核验：矩阵/D4 回归/黑盒/形态全覆盖） |
 | u-i18n | committed | 1 | commit 见 git log；check:i18n 186 passed（主 agent 复跑核验；structured-output 汇报机制失败不影响实物验收） |
-| u-filterbar | pending | 0 | |
+| u-filterbar | committed | 1 | 组件测试 10 passed（主 agent 复跑核验）+ vue-tsc 零错误 |
 | u-wiring | pending | 0 | |
 | u-acceptance | pending | 0 | |
 
