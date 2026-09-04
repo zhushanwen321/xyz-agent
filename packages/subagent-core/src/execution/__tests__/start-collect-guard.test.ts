@@ -7,7 +7,7 @@
 //   2. 合法组合放行：collect 透传 service.execute（ExecuteOptions.collect）；
 //   3. start 响应 collect 段（设计 §3.1.1）：仅 resolved=sync 附段（async 响应字节
 //      零变化，G3）；pendingSyncCount = 未闭合批 sync 成员数（collectMode=sync 且无
-//      batchFinalized）+ 本条（U1 阶段 record 落点未接线，manual +1，U2 接线后去除）。
+//      batchFinalized；U2 偏差#4 接线后 record 落 collectMode，枚举天然含本条，无 +1）。
 //
 // stub SubagentService 仅实现 handler 触达的方法子集（subagent-actions-core.test.ts
 // 同款形态）；真实 service 行为归属 subagent-service 各自测试。

@@ -161,7 +161,7 @@ action:"list" before action:"start" — a reusable subagent may exist; compactio
 
 ## Actions
 
-- action:"start" — run a subagent. Pass task and slug as top-level fields (REQUIRED). Optional: agent, model, thinkingLevel, skillPath, appendSystemPrompt, schema, maxTurns, graceTurns, fork, worktree, cwd, conversation, idleTimeoutMs. Background only: returns a subagentId immediately, notifies on completion.
+- action:"start" — run a subagent. Pass task and slug as top-level fields (REQUIRED). Optional: agent, model, thinkingLevel, engine, collect, skillPath, appendSystemPrompt, schema, maxTurns, graceTurns, fork, worktree, cwd, conversation, idleTimeoutMs. Background only: returns a subagentId immediately, notifies on completion.
 - action:"message" — send a follow-up to a running subagent (conversation-mode or one-shot); full context retained. REQUIRED messageParam: { subagentId, text }. Optional: interrupt (default false). The reply auto-notifies.
 - action:"close" — end a running subagent and release its resources. REQUIRED closeParam: { subagentId }. Optional: force (default false = let the current round finish; true terminates mid-round).
 - action:"list" — list subagents. listParam: { includeFinished?, limit? } (all optional). Read an item's sessionFile for full detail.

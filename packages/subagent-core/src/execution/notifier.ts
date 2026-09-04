@@ -1,6 +1,7 @@
 // src/execution/notifier.ts
 //
-// Background 完成回注主对话。sync 不用（调用方还在 await，结果直接返回）。
+// Background 完成回注主对话。collect:"sync" 的批通知不经单条 notify() 生命周期，
+// 由 collect-coordinator 合批后调本文件 notifyBatch 投递（成员结果不直接返回调用方）。
 //
 // 职责（U2 后）：
 //   - buildLlmContent：格式化通知文案（本文件唯一逻辑职责）
