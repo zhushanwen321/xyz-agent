@@ -77,7 +77,21 @@ Wave 1: u-foundation ∥ u-i18n（并行）→ Wave 2: u-filterbar → Wave 3: u
 | u-i18n | committed | 1 | commit 见 git log；check:i18n 186 passed（主 agent 复跑核验；structured-output 汇报机制失败不影响实物验收） |
 | u-filterbar | committed | 1 | 组件测试 10 passed（主 agent 复跑核验）+ vue-tsc 零错误 |
 | u-wiring | committed | 2 | R1 全量 1 个领地外失败（sidebar-layout slug 用例，D6 预期行为变化）→ 主 agent 授权领地扩展定向修复；R2 复核：全量 362 文件/3783 测试连续两轮全绿 + typecheck 零错误；另有 1 次不确定 flaky（两次复跑均绿）已记录 |
-| u-acceptance | pending | 0 | |
+| u-acceptance | committed | 1 | Gate B：S1–S7 逐行签收（详见 §5.1 验收签收表）；Gate A：全量 362 文件/3783 测试 ×2 全绿 + typecheck 零错误 + 根 lint 零警告 + pre-commit 全链通过 |
+
+### 5.1 验收签收表（Gate B，2026-09-04 真实 dev app 实测）
+
+环境：本 worktree `pnpm dev`（Electron + runtime 真链路，GLM-5.3），真实派发 4 个 subagent（task-a/b/c/d）+ 用户设计 session 自带真实 running 记录。Playwright 连 CDP 断言 DOM。
+
+| # | 结果 | 证据摘要 |
+|---|---|---|
+| S1 | ✅ | 真实派发 4 个任务全部正确落桶（秒级完成→done 投影归已结束，D4 实景生效）；运行态渲染经 store 注入 running 记录验证：进行中桶恰 1 张 spinner 卡 + 取消按钮，计数 1/4/5 实时响应（MF-A 响应式链实景验证）；另在用户 session 观察到真实 resumable running 记录正确落进行中桶（无 spinner 有 accent 点、无取消按钮——与展示判据一致）。注：本环境 subagent 秒级完成（引擎特性），streaming 形态用注入数据补验，派发路径本身为真实链路 |
+| S2 | ✅ | 已结束桶显示 2 张真实卡片（task-a-count-30/task-b-random-sentence），三桶切换即时无网络请求 |
+| S3 | ✅ | 全部跑完后切 tab 回 Agents：默认进行中高亮 + 空态「没有进行中的后台任务/当前会话没有正在运行的任务」+「查看全部（4）」；点击后显示全部 4 卡且全部桶选中；badge 熄灭（D8） |
+| S4 | ✅（含行为注记） | 分区隔离无串值实证：A=0/4/4、B=1/5/6 各自正确；B 首次进入默认进行中 ✓；每次进入 Agents tab 均从默认进行中开始 ✓。**注记**：实测 ⌘K 选 session 后产品会落在「会话」tab（R3 终审静态核实「不切 tab」与实测不符）——「挂载期内分区记忆」在真实 UX 路径不可稳定到达，实际生效语义 = 每次进入重置默认（与 D1 精神一致，无害）。设计 S4 步骤的 ⌘K 前提在 design-code-sync 中修正 |
+| S5 | ✅ | 两段式取消：首次点击→confirm 态（红底勾 icon），再次点击→cancel 发出；注入记录经真实 runtime cancel 链路转入已结束桶（0/5/5），无崩溃 |
+| S6 | ✅ | 点击卡片 drawer SubagentTab 打开：头部 agent·slug·引擎·模型元信息正确，只读 footer「子代理为后台任务，无输入区」 |
+| S7 | ✅ | Overview 态（无焦点 session）：子代理 tab 显示既有空态「暂无后台任务」+ 无筛选条 + 0 卡片 |
 
 ## 7 残留风险与变更历史
 
