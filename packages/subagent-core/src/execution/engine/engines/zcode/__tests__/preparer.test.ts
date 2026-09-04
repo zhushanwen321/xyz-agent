@@ -2,7 +2,7 @@
 // 凭据源 = v2 config 单源（2026-08-25 拍板：不读 ~/.zcode/cli/config.json——GUI 不
 // 管理该文件，可能残留历史验证配置）。原 HOME 池化面（池目录 SSOT / 原子写 /
 // mtime 免重写 / 池 config 无 plugins 块）已随「共享宿主 HOME」重构删除（2026-09：
-// app-server 直接消费宿主 ~/.zcode/，不再建池写 config）。
+// app-server 侧凭据经 appserver-launcher fs 拦截注入，不再建池写 config）。
 
 import * as fs from "node:fs";
 import * as os from "node:os";

@@ -1,11 +1,13 @@
 /**
  * 原子写原语（sink 设计 U6a / B6）：tmp+rename 的单一实现。
  *
- * 背景：core 内部散布 6-7 份 tmp+rename 写点（manifest-store / sessions-index /
+ * 背景：core 内部曾散布 6-7 份 tmp+rename 写点（manifest-store / sessions-index /
  * worktree-registry / engine-discovery / zcode preparer / zcode appserver-home），
  * tmp 命名各异（`.tmp.<pid>` / `.tmp_<pid>_<rand>` / `.tmp-<pid>-<ts>`）、失败路径
  * 清理纪律不齐（worktree-registry 失败时漏清残留 tmp）。本模块给出统一原语供全
- * 部写点收敛（调用点迁移归 u-wire 单元，本单元只建原语）。
+ * 部写点收敛（调用点迁移归 u-wire 单元，本单元只建原语）。现存消费方 4 处：
+ * manifest-store / sessions-index / worktree-registry / engine-discovery——zcode
+ * preparer 与 zcode appserver-home 两处写点已随 2026-09 共享宿主 HOME 重构删除。
  *
  * **统一 tmp 命名约定**：`<最终路径>.tmp.<pid>.<seq>-<rand>`。
  * - `.tmp.` 标记向后兼容 manifest-store 既有扫描（`x.json` 的 tmp 名为
@@ -21,8 +23,8 @@
  *
  * **两种耐久档位**（对齐现存两族写点的生产模式）：
  * - sync（writeAtomicFileSync）：writeFileSync + renameSync，无 fsync——对齐
- *   worktree-registry / engine-discovery / zcode preparer / appserver-home 四处
- *   同步写点现状（prep/注册表类，进程崩溃窗口可容忍）；
+ *   worktree-registry / engine-discovery 两处同步写点现状（注册表/发现缓存类，
+ *   进程崩溃窗口可容忍）；
  * - async（writeAtomicFile）：fsync 文件 → rename → 尽力 fsync 目录——对齐
  *   manifest-store / sessions-index 的生产耐久模式（掉电也不丢已确认写入）。
  */

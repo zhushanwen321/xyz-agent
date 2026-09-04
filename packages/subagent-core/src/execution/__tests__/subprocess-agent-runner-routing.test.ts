@@ -31,7 +31,10 @@ interface FakeEngineCalls {
   runs: Array<{ taskSpec: unknown; ctx: RunContext }>;
 }
 
-function makeFakeZcodeEngine(probeOk: boolean): { engine: EnginePort; calls: FakeEngineCalls } {
+/** fake zcode 引擎的池 key 缺省值（机制跟随性用例：任意 key 落对应目录）。 */
+const FAKE_POOL_KEY = "home-test-provider-m1";
+
+function makeFakeZcodeEngine(probeOk: boolean, poolKey: string = FAKE_POOL_KEY): { engine: EnginePort; calls: FakeEngineCalls } {
   const calls: FakeEngineCalls = { probed: 0, runs: [] };
   const engine: EnginePort = {
     id: "zcode",
@@ -63,11 +66,11 @@ function makeFakeZcodeEngine(probeOk: boolean): { engine: EnginePort; calls: Fak
     run: (taskSpec, ctx) => {
       calls.runs.push({ taskSpec, ctx });
       // 对齐点③模拟：prepare 期声明池 key → 事件 emit（zcode coarse 形态：终态后合成）
-      ctx.onPoolResolved?.("home-test-provider-m1");
+      ctx.onPoolResolved?.(poolKey);
       ctx.onEvent?.({ type: "message_end", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } });
       ctx.onEvent?.({ type: "turn_end" });
       return Promise.resolve({
-        handle: { data: { v: 1, engineId: "zcode", sessionRef: {}, poolKey: "home-test-provider-m1", adapterVersion: "t" } },
+        handle: { data: { v: 1, engineId: "zcode", sessionRef: {}, poolKey, adapterVersion: "t" } },
         outcome: { engineId: "zcode", content: "from-zcode" },
       });
     },
@@ -167,13 +170,31 @@ describe("SAR 路由集成（P4 验收 1/2/3）", () => {
     expect(result.content).toBe("from-zcode");
     expect(calls.runs).toHaveLength(1);
     expect(pi.executeAndAwait).not.toHaveBeenCalled();
-    // 对齐点③断言：journal 落在引擎声明的池 key 目录（非 pi 'shared' 占位路径）
-    const poolDir = path.join(tmpRoot, "engine-data", "engines", "zcode", "home-test-provider-m1");
+    // 机制跟随性断言：journal 落在引擎声明的池 key 目录（任意 key 落对应目录——
+    // 真实 zcode 引擎 poolKey 恒 'shared'，对齐真实行为的断言见下一用例）
+    const poolDir = path.join(tmpRoot, "engine-data", "engines", "zcode", FAKE_POOL_KEY);
     const journals = fs.existsSync(poolDir) ? fs.readdirSync(poolDir) : [];
     expect(journals).toHaveLength(1);
     expect(journals[0]).toMatch(/^journal-sa-.+\.jsonl$/);
-    const sharedDir = path.join(tmpRoot, "engine-data", "engines", "zcode", "shared");
-    expect(fs.existsSync(sharedDir)).toBe(false); // 占位 poolKey 未产生错位落盘
+  });
+
+  it("journal 落盘对齐真实行为：poolKey 'shared' → engines/zcode/shared/journal-<taskId>.jsonl", async () => {
+    // 生产 zcode 引擎 poolKey 恒 'shared'（ZCODE_SHARED_POOL_KEY）——fake 以同 key
+    // 声明，断言 journal 精确落 shared 池目录（旧池化时代「shared 目录不存在」的
+    // 反向锚定已随池化删除，此处锚定现行正向语义）
+    const agentRef = writeAgentMd("reviewer", "name: reviewer\ndescription: d\nengine: zcode");
+    installModelService();
+    const { engine, calls } = makeFakeZcodeEngine(true, "shared");
+    registerEngine("zcode", () => engine);
+    const pi = makeMockPiService();
+    const sar = new SubprocessAgentRunner({ subagentService: pi.service });
+
+    await sar.run(makeOpts({ agent: agentRef }), new AbortController().signal);
+
+    const taskId = calls.runs[0]?.ctx.taskId;
+    expect(taskId).toMatch(/^sa-/);
+    const sharedPoolDir = path.join(tmpRoot, "engine-data", "engines", "zcode", "shared");
+    expect(fs.readdirSync(sharedPoolDir)).toEqual([`journal-${taskId}.jsonl`]);
   });
 
   it("调用参数 engine 覆盖 frontmatter（三层优先级落到 run，A7）", async () => {

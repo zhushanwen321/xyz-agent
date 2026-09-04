@@ -25,8 +25,11 @@ export const ZCODE_CLI_DEFAULT_PATH = "/Applications/ZCode.app/Contents/Resource
  * 为什么绝不读 ~/.zcode/cli/config.json 作为引擎侧凭据校验源：它不在 ZCode GUI
  * 管理面，可能残留历史验证配置（2026-08-25 事故：8/24 zsub 开发残留把默认模型
  * 劫持到失效 router 端点，turn 0 即 401）；桌面端登录凭据落在 v2/config.json，
- * 是 zsub 生产验证过的凭据源。共享宿主 HOME 后引擎侧只读它做模型解析校验，
- * app-server 进程自身则直接消费宿主 HOME 的全部配置（用户已拍板接受）。
+ * 是 zsub 生产验证过的凭据源。共享宿主 HOME 后引擎侧只读它做模型解析校验；
+ * app-server 进程侧 CLI 只认 ~/.zcode/cli/config.json（GUI 从不写该文件），由
+ * appserver-launcher 的 fs 拦截 wrapper 把对该文件的读取重定向为「真实文件 +
+ * v2 provider 注入」内存合并（同 id 时 v2 整条优先）——凭据实际供数仍以 v2 为
+ * 权威源，并非直接消费宿主 HOME 的原始 cli config。
  */
 export const ZCODE_V2_CONFIG_PATH_SUFFIX = [".zcode", "v2", "config.json"] as const;
 

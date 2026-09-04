@@ -18,7 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { AgentEvent } from "../../../types.ts";
 import { ZCODE_SHARED_POOL_KEY } from "../constants.ts";
-import { ZcodeEngine, hostZcodeDbPath } from "../zcode-engine.ts";
+import { ZcodeEngine } from "../zcode-engine.ts";
 import { assertAgentEventInvariants } from "../../../__tests__/conformance/agent-event-invariants.ts";
 
 const LIVE = process.env["ENGINE_CONFORMANCE_LIVE"] === "1";
@@ -83,9 +83,11 @@ describe.skipIf(!LIVE)("ZcodeEngine 端到端真机（app-server 常驻，共享
     expect(events.some((e) => e.type === "text_delta")).toBe(true);
     assertAgentEventInvariants(events, { granularity: "stream", content: outcome.content });
 
-    // handle 锚定：poolKey 恒 'shared'，dbPath = 宿主 HOME 绝对路径（①级读取钥匙）
-    expect(handle.data.poolKey).toBe(ZCODE_SHARED_POOL_KEY);
-    expect(handle.data.sessionRef["dbPath"]).toBe(hostZcodeDbPath());
+    // handle 锚定：poolKey 恒 'shared'，dbPath = 宿主 HOME 绝对路径（①级读取钥匙）。
+    // 期望值独立展开（不调实现函数——实现改错时断言须红），非 path.join(homedir(), suffix) 同源
+    const dbPath = handle.data.sessionRef["dbPath"];
+    expect(dbPath).toBe(path.resolve(os.homedir(), ".zcode", "cli", "db", "db.sqlite"));
+    expect(dbPath.startsWith("/")).toBe(true);
 
     // read 第①级：SQLite 完整重建（非降级）——读的是宿主 db（共享 HOME 形态）
     const view = await engine.read(handle);
@@ -128,13 +130,15 @@ describe.skipIf(!LIVE)("ZcodeEngine 端到端真机（app-server 常驻，共享
   }, 300_000);
 });
 
-/** 扫系统进程表：--cwd 锚定到指定目录的 zcode CLI 进程（僵尸检测）。 */
+/** 扫系统进程表：--cwd 锚定到指定目录的 app-server 常驻进程（僵尸检测）。spawn 形态
+ * 是 `node .../engines/zcode/appserver-launcher.cjs app-server --cwd <dir>`——zcode.cjs
+ * 经 launcher 的 import() 动态加载，不出现在 cmdline。 */
 function listZcodeProcessesForCwd(cwd: string): string[] {
   try {
     const out = execFileSync("ps", ["-eo", "command"], { encoding: "utf8" });
     return out
       .split("\n")
-      .filter((line) => line.includes("zcode.cjs") && line.includes(`--cwd ${cwd}`));
+      .filter((line) => line.includes("appserver-launcher.cjs") && line.includes(`--cwd ${cwd}`));
   } catch {
     return [];
   }

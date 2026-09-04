@@ -2,7 +2,7 @@
 // 全部跑 __fixtures__/fake-appserver.mjs 子进程（scenario 注入），绝不 spawn 真
 // zcode.cjs。覆盖：事件时序前移（text_delta 流式 + 终态 message_end/turn_end +
 // resolve 严格晚于末事件——不变量 2）/ usage 映射（与 parser.mapZcodeUsage 同源）/
-// per-session model 透传 / 共享宿主 HOME（poolKey 恒 'shared'、env 不覆写 HOME、
+// per-session model 透传 / 共享宿主 HOME（poolKey 恒 'shared'、HOME 正向透传、
 // argv=app-server --cwd engineDataDir、无池 config/lockfile/pidfile）/
 // onHandleReady 回调时点（create 应答后）与 onPoolResolved 时点（prepare 期，
 // 先于首事件）/ abort 链 D3（stop 帧先发 → stop 优雅生效不杀进程 / stop 无效
@@ -26,10 +26,16 @@ import { ZCODE_SHARED_POOL_KEY } from "../constants.ts";
 import { ZCODE_APPSERVER_GOLDEN } from "../golden-sample.ts";
 import { AppServerConnection } from "../connection.ts";
 import { SessionChannel } from "../session-channel.ts";
-import { ZcodeEngine, hostZcodeDbPath, type ZcodeEngineDeps } from "../zcode-engine.ts";
+import { ZcodeEngine, type ZcodeEngineDeps } from "../zcode-engine.ts";
 
 const FAKE_CLI = fileURLToPath(new URL("./__fixtures__/fake-appserver.mjs", import.meta.url));
 const PROVIDER = "test-provider";
+
+/** 宿主 zcode 会话 db 期望值的独立展开（①级读取钥匙）——刻意不 import 实现的
+ * hostZcodeDbPath（自指断言：实现改错时断言仍绿），路径知识独立于实现复述。 */
+function expectedHostDbPath(): string {
+  return path.resolve(os.homedir(), ".zcode", "cli", "db", "db.sqlite");
+}
 
 /** 与 zcode-engine.ts 同一 facade 单例引用（spy 它的方法即拦截引擎的 warn 出声）。 */
 const subagentsLogger = getLogger("subagents");
@@ -122,6 +128,7 @@ function makeEngine(overrides: ScenarioOverrides = {}): EngineHandle_ {
     sources: { v2ConfigPath: v2Path },
     processEnv: {
       PATH: process.env.PATH ?? "",
+      HOME: "/fake-host-home",
       FAKE_STATE_FILE: stateFile,
       FAKE_SESSION_SCENARIO: scenarioFile,
       ...(overrides.stampSession === true ? { FAKE_STAMP_SESSION: "1" } : {}),
@@ -236,8 +243,10 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     expect(outcome.exitCode).toBe(0);
 
     // handle 锚定：poolKey 恒 'shared'，sessionRef.dbPath = 宿主 HOME 绝对路径
+    // （期望值独立展开，见 expectedHostDbPath 注释——不调实现函数）
     expect(handle.data.poolKey).toBe(ZCODE_SHARED_POOL_KEY);
-    expect(handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: hostZcodeDbPath() });
+    expect(handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: expectedHostDbPath() });
+    expect(String(handle.data.sessionRef["dbPath"]).startsWith("/")).toBe(true);
   }, 15_000);
 
   it("回调时点：onPoolResolved（prepare 期）先于 onHandleReady（create 应答后）先于首事件", async () => {
@@ -258,23 +267,40 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     expect(order[2]).toBe("event");
   }, 15_000);
 
-  it("共享宿主 HOME：env 不覆写 HOME、遥测关、argv=app-server --cwd engineDataDir、无池 config/lockfile/pidfile", async () => {
+  it("共享宿主 HOME：HOME 正向透传、遥测关、argv=app-server --cwd engineDataDir、无池 config/lockfile/pidfile、onChildSpawned 零调用", async () => {
     const { engine, stateFile, workspace } = makeEngine();
-    const { handle } = await engine.run(makeTask({ cwd: workspace }), makeCtx());
+    const onChildSpawned = vi.fn();
+    const { handle } = await engine.run(makeTask({ cwd: workspace }), makeCtx({ onChildSpawned }));
     expect(handle.data.poolKey).toBe(ZCODE_SHARED_POOL_KEY);
-    // fake 侧 boot env：HOME 不注入（共享宿主——buildAppServerEnv 不设 HOME 键）、
-    // 遥测 false、统一嵌套标记
+    // fake 侧 boot env：base env 携带的宿主 HOME 值原样透传（buildAppServerEnv 不覆写
+    // HOME 键——launcher 同进程 import() 也不改 env）、遥测 false、统一嵌套标记
     const env = bootEnv(stateFile);
-    expect(env["home"]).toBeUndefined();
+    expect(env["home"]).toBe("/fake-host-home");
     expect(env["telemetry"]).toBe("false");
     expect(env["unifiedNested"]).toBe("1");
     const boot = readState(stateFile).find((e) => e.ev === "boot");
     expect(boot?.["argv"]).toEqual(["app-server", "--cwd", dataDir]);
+    // D6：app-server 常驻进程是引擎自管资源（dispose 收割），不进宿主终止链——
+    // run 全程 onChildSpawned 不被调用（宿主 killAll 不误杀共享进程）
+    expect(onChildSpawned).not.toHaveBeenCalled();
     // 池化时代的产物全部不存在：engines/zcode/ 只含 fs 拦截 launcher，无池
     // config/lockfile/pidfile/journal 目录
     const engineDir = fs.readdirSync(path.join(dataDir, "engines", "zcode"));
     expect(engineDir).toEqual(["appserver-launcher.cjs"]);
   }, 15_000);
+
+  it("maxTurns（pi 专属）→ engine_capability_unsupported 拒绝，不创建会话（U4：静默丢弃会造成假上限）", async () => {
+    const { engine, stateFile, workspace } = makeEngine();
+    await expect(engine.run(makeTask({ cwd: workspace, maxTurns: 10 }), makeCtx())).rejects.toThrowError(
+      /engine_capability_unsupported/,
+    );
+    // 恢复指引：去掉 maxTurns 或改用 pi 引擎
+    await expect(engine.run(makeTask({ cwd: workspace, maxTurns: 10 }), makeCtx())).rejects.toThrowError(
+      /maxTurns|engine: 'pi'/,
+    );
+    // 拒绝发生在 prepare 期（进程创建前）：fake 侧零流水（连惰性启动都没触发）
+    expect(readState(stateFile)).toHaveLength(0);
+  }, 10_000);
 
   it("per-session model：create 帧 model={providerId,modelId}（task.model 拆分）+ toolDenylist 透传", async () => {
     const { engine, stateFile, workspace } = makeEngine();
@@ -448,7 +474,7 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     expect(outcome.error).toContain("-32004");
     expect(outcome.error).toContain(GOLDEN_SESSION_ID);
     expect(outcome.sessionId).toBe(GOLDEN_SESSION_ID);
-    expect(handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: hostZcodeDbPath() });
+    expect(handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: expectedHostDbPath() });
   }, 15_000);
 });
 
