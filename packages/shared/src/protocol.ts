@@ -733,6 +733,10 @@ export type ServerMessageType =
   | 'plugin:statusBarUpdate' | 'plugin:messageDecoration' | 'plugin:config'
   | 'plugin:statusSetUpdate'
   | 'plugin:uiRequest'
+  // plugin:uiRequestExpired：plugin dialog 到期取消下行（timeout-plugin-service D2，
+  // runtime UiRequestQueue cancelRequest / 防泄漏兜底生产）。广播无条件发出（含排队中
+  // 从未展示的请求）；前端对未展示/已关闭弹窗的撤窗 miss 须 noop 幂等。
+  | 'plugin:uiRequestExpired'
   | 'plugin:viewUpdate'
   | 'extension:widget' | 'extension:widgetGui' | 'extension:status' | 'extension:notify'
   | 'extension:setEditorText'
@@ -913,6 +917,12 @@ export interface ServerMessageMapBase {
   //（消费端 parseUiRequest 对 method 超界兜底 'input'，未知字段原样保留），与 runtime
   // UiBroadcastFn 的 Record<string, unknown> 同形。
   'plugin:uiRequest': { requestId: string; sessionId?: string } & Record<string, unknown>
+  // plugin:uiRequestExpired：plugin dialog 到期取消下行（timeout-plugin-service D2，
+  // runtime UiRequestQueue cancelRequest / 防泄漏兜底两路径共用此帧）。与 plugin:uiRequest
+  // 契约形态一致（requestId 必带 + 索引签名透传 dialog 字段）；pluginId 必带（前端按插件
+  // 定位撤窗）。广播无条件发出（含排队中从未展示的请求——前端对未展示/已关闭弹窗的撤窗
+  // miss 须 noop 幂等，P-11：旧版前端未消费此帧时无异常回退）。
+  'plugin:uiRequestExpired': { requestId: string; pluginId: string; sessionId?: string } & Record<string, unknown>
   'model.list': { models: ModelInfo[] }
   // model:capabilityDrift：runtime 能力注册表在线对账（reconcileModelCapabilities）发现
   // 配置聚合与 pi 合并清单漂移时经 setCapabilityDriftSink 广播（drift 项已同步记 runtime

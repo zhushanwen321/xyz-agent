@@ -661,6 +661,7 @@ export class PluginService implements IPluginService {
       deps: this.deps,
       broadcastStatusBarItems: () => this.statusBarRegistry.broadcastAll(),
       handleUiRequest: (method, params, pluginId) => this.uiRequestQueue.handleRequest(method, params, pluginId),
+      cancelUiRequest: (requestId) => this.uiRequestQueue.cancelRequest(requestId),
       syncToolsToBridge: () => this.syncToolsToBridge(),
       getDescriptor: (pluginId) => this.registry.getDescriptor(pluginId),
       sessionDataStore: this.sessionDataStore,
