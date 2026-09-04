@@ -6,9 +6,11 @@
  * service to ensure consistent side-effects (broadcast).
  *
  * session 级状态（modelId / thinkingLevel / inputTokens / usagePercent）的单一 owner 是
- * SessionService；本服务只负责「config.defaults 广播」+ 委托
- * SessionService 做 session 级 RPC/缓存/broadcast。usagePercent 不再在此计算（去重到
- * SessionService.computeUsage）。
+ * SessionService；本服务只负责委托 SessionService 做 session 级 RPC/缓存/broadcast。
+ * usagePercent 不再在此计算（去重到 SessionService.computeUsage）。
+ *
+ * D4（composer-model-session-isolation）：switchModel 不再广播 config.defaults——
+ * 全局默认回归 Settings 配置单一语义（sendInitialState 推送），session 级切换不再改全局默认。
  *
  * aggregateModels is pure data transformation (stays here). discoverFromApi is
  * external HTTP — delegated to IModelSource (injected, infra implements).
@@ -82,11 +84,11 @@ export class ModelService implements IModelService {
    * Unified switchModel entry point.
    *
    * 编排：pi RPC + 缓存更新 + 广播 session 级状态（全部委托 SessionService.switchModel，
-   * 它是 session 级状态唯一 owner）→ 广播 config.defaults。
+   * 它是 session 级状态唯一 owner）。D4 移除 config.defaults 广播。
    *
-   * 全局默认模型的持久化由 pi 侧 setModel 完成（pi 持久化 defaultModel/defaultProvider
-   * 到 settings.json）——xyz 不再冗余写一次（D1d）：configService.setDefaultModel 的
-   * 全量覆盖写会在 pi 并发写其他字段时把它们回滚，且每次切模型都开双写窗口。
+   * 全局默认模型持久化：pi 0.84.4 实装中 setModel 不传 options.persist，
+   * 只写 session 级 entries，不写 settings.json（全局默认）。全局默认
+   * 回归 Settings 页配置的单一语义（sendInitialState 推送）。xyz 不再冗余写（D1d）。
    *
    * session.state_changed 的广播由 SessionService.switchModel 内部负责（含新 modelId +
    * thinkingLevel；usage 已随 D1 协议收敛移出该帧，经 context.update 单帧贯穿），
@@ -99,12 +101,8 @@ export class ModelService implements IModelService {
     // U6 回执普查：透传 get_state 读回的生效模型复合串（pi pattern 换模时 ≠ 请求值）
     const effective = await this.sessionService.switchModel(sessionId, provider, modelId)
 
-    // 2. Broadcast 全局默认模型（landing 态 Composer 的 fallback）
-    this.broker.broadcast({
-      type: 'config.defaults',
-      id: this.nextPushId(),
-      payload: { defaultModel: `${provider}/${modelId}`, source: 'model-switch' },
-    })
+    // D4：移除 config.defaults 广播——全局默认回归 Settings 配置单一语义，
+    // session 级切换不再改全局默认（landing 新任务默认模型改用 lastUsedModel，见 U4）。
     return effective
   }
 
