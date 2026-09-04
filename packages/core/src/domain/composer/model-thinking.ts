@@ -361,11 +361,13 @@ export function useComposerModelThinking(
     }
     // 已建态：RPC + 乐观更新（编排逻辑归壳层 useModel，ADR-0028）
     armed.value = { modelId: targetModelId, at: Date.now(), callId }
-    // [D4] lastUsedModel 写入（仅显式选模型，staging 试选不写——入口已在上方 staging return）
-    recordLastUsed(targetModelId)
     inFlightCallIds.add(callId)
     try {
       await switchModel(sessionId.value, payload.provider, payload.modelId)
+      // [D4] lastUsedModel 写入（仅显式选模型，staging 试选不写——入口已在上方 staging return）。
+      // 置于 RPC 成功后、clearArmedIfOwner 之前：RPC 失败 = 本次切换未生效，landing 粘滞
+      // 默认不指向切换失败的模型（与 armed「失败清」防线同向）
+      recordLastUsed(targetModelId)
       // [u3·D3 规则 5「成功清」] 时序依据（D3 证据②）：applySnapshot 在 switchModel 内同步
       // 执行，watch flush 微任务于 applySnapshot 时刻入队，本 await 续段晚于 flush——
       // watch 回调总是先跑。故此处只对「回调未能消费」的残留 token 生效（pi 静默换模 /
@@ -420,8 +422,10 @@ export function useComposerModelThinking(
    * 之后 chip 切换只改 staging 值，不影响源 session。
    */
   function enterStagingMode(): void {
-    stagingModel.value = currentModelId.value
+    // 先快照再切 stagingModel：stagingModel 置位后 currentModelId/currentThinkingLevel
+    // 即切读 staging 分支，反序快照会把 undefined 写进 stagingThinking（UF1b）
     stagingThinking.value = currentThinkingLevel.value
+    stagingModel.value = currentModelId.value
   }
 
   /**

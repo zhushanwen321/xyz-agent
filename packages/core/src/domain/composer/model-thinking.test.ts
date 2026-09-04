@@ -412,13 +412,16 @@ describe('useComposerModelThinking · onThinkingSelect 三分支', () => {
 })
 
 describe('useComposerModelThinking · Staging Mode（ADR-0056）', () => {
-  it('enterStagingMode：currentModelId 读快照，后续 onModelSelect/onThinkingSelect 走 staging 分支', async () => {
+  it('enterStagingMode：currentModelId/currentThinkingLevel 读快照，后续 onModelSelect/onThinkingSelect 走 staging 分支', async () => {
     const { result, spies, scope } = mount('s1', {
       sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
     })
     result.enterStagingMode()
-    // currentModelId 进入暂存态读 staging 快照（enterStagingMode 先快照 modelId）
+    // 快照初值直断言：源 enterStagingMode 为「先快照 stagingThinking 再置 stagingModel」——
+    // stagingModel 置位后两个 computed 才切读 staging 分支，故读到的都是切换前的常规态原值，
+    // 快照初值可直接断言（若回退为反序，thinking 快照会落 undefined，见下一用例守卫）
     expect(result.currentModelId.value).toBe('provider-A/model-A')
+    expect(result.currentThinkingLevel.value).toBe('high')
     // staging 活跃：onModelSelect 写快照，不调 RPC
     await result.onModelSelect({ modelId: 'model-B', provider: 'provider-B' })
     expect(result.currentModelId.value).toBe('provider-B/model-B')
@@ -429,10 +432,19 @@ describe('useComposerModelThinking · Staging Mode（ADR-0056）', () => {
     expect(result.currentThinkingLevel.value).toBe('xhigh')
     expect(spies.setThinkingLevel).not.toHaveBeenCalled()
     scope.stop()
-    // 注：源 enterStagingMode 顺序为「先设 stagingModel 再读 currentThinkingLevel」，而
-    // currentThinkingLevel computed 依赖 stagingModel——赋值后重算走 staging 分支返回尚未赋值的
-    // stagingThinking（undefined）。故本用例不直接断言 enterStagingMode 后的 thinking 快照初值，
-    // 改为经 onThinkingSelect 显式写入验证 staging 分支。此顺序特性建议后续修复（先读后设）。
+  })
+
+  it('enterStagingMode 快照直断言：快照初值即原值（先快照后切换，防反序回退）', () => {
+    // 反序回退守卫：旧顺序「先置 stagingModel 再读 currentThinkingLevel」下，stagingModel
+    // 置位后 currentThinkingLevel computed 即切读 staging 分支，读到尚未赋值的
+    // stagingThinking（undefined）写进快照——此断言在旧顺序下必红
+    const { result, scope } = mount('s1', {
+      sessionState: { modelId: 'p/m1', thinkingLevel: 'h' },
+    })
+    result.enterStagingMode()
+    expect(result.currentThinkingLevel.value).toBe('h')
+    expect(result.currentModelId.value).toBe('p/m1')
+    scope.stop()
   })
 
   it('exitStagingMode 清空快照，chip 恢复读常规态真值', async () => {

@@ -12,13 +12,19 @@
  * - KV 写失败 → console.warn，内存值不回滚（本次运行内仍生效，重启后丢）
  * - JSON 非字符串 → undefined（兼容旧格式或损坏数据）
  */
+import { ref } from 'vue'
 import { getPlatform } from '../../platform/port'
 
 /** localStorage key（对齐 model-thinking-memory 命名空间）。 */
 export const LAST_USED_MODEL_KEY = 'xyz-agent:last-used-model'
 
-/** 内存缓存：模块级单例。 */
-let cachedValue: string | undefined = undefined
+/**
+ * 内存缓存：模块级单例 ref（同 model-thinking-memory 的 reactive 先例）。
+ * 响应式使下游 computed（model-thinking regularModelId 经 lookup）对 KV 预载
+ * 完成建立依赖——冷启动 KV 值到达时 chip 自动脱离 defaultModel。
+ */
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态）：lastUsedModel 内存镜像单例
+const cachedValue = ref<string | undefined>(undefined)
 
 type LoadState = 'idle' | 'loading' | 'loaded'
 
@@ -47,13 +53,16 @@ async function loadFromKV(): Promise<void> {
     const raw = await getPlatform().storage.get(LAST_USED_MODEL_KEY)
     if (raw) {
       const parsed: unknown = JSON.parse(raw)
-      if (typeof parsed === 'string') {
-        cachedValue = parsed
+      // 加载窗口守卫（镜像 model-thinking-memory）：内存已有值时在途 KV 快照不得覆写
+      // ——加载窗口内的 record 比快照新，覆写后 deferred 补写会把 KV 旧值落盘（双丢）
+      if (typeof parsed === 'string' && cachedValue.value === undefined) {
+        cachedValue.value = parsed
       }
     }
   } catch {
-    // E4：KV 读失败/损坏 → undefined（不抛不吞）
-    cachedValue = undefined
+    // E4：KV 读失败/损坏 → undefined（不抛不吞）。加载窗口内已 record 的内存新值保留，
+    // 由 deferred 补写收敛（同守卫语义，读失败不抹掉更新的内存值）
+    if (!deferredPersist) cachedValue.value = undefined
   }
   loadState = 'loaded'
   const callbacks = loadedCallbacks
@@ -69,7 +78,7 @@ async function loadFromKV(): Promise<void> {
  * 同步查记忆：返回最后显式选择的模型 id，未加载或无记录返回 undefined。
  */
 export function lookup(): string | undefined {
-  return cachedValue
+  return cachedValue.value
 }
 
 /**
@@ -77,7 +86,7 @@ export function lookup(): string | undefined {
  * KV 写失败仅 console.warn，内存不回滚（E4）。
  */
 export function record(modelId: string): void {
-  cachedValue = modelId
+  cachedValue.value = modelId
   if (loadState !== 'loaded') {
     deferredPersist = true
     return
@@ -88,7 +97,7 @@ export function record(modelId: string): void {
 /** 写穿 KV。失败不回滚内存。 */
 async function persist(): Promise<void> {
   try {
-    await getPlatform().storage.set(LAST_USED_MODEL_KEY, JSON.stringify(cachedValue))
+    await getPlatform().storage.set(LAST_USED_MODEL_KEY, JSON.stringify(cachedValue.value))
   } catch (err) {
     // best-effort：KV 写失败不阻塞——内存值仍有效，重启后丢（E4 容错）
     console.warn('[last-used-model] KV write-through failed:', err)
@@ -109,7 +118,7 @@ export function onLoaded(cb: () => void): void {
 
 /** 仅测试用：重置模块级状态。 */
 export function __resetLastUsedModelForTesting(): void {
-  cachedValue = undefined
+  cachedValue.value = undefined
   loadState = 'idle'
   loadedCallbacks = []
   deferredPersist = false

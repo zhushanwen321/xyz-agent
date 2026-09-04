@@ -233,4 +233,45 @@ describe('last-used-model · deferred persist', () => {
       JSON.stringify('provider/deferred'),
     )
   })
+
+  it('加载窗口内 record 的新值不被在途 KV 旧值覆写（内存 + 最终落盘均为新值）', async () => {
+    // KV 已有旧值；record 发生在 KV get 在途时
+    const gated = new GatedKV()
+    await gated.set(LAST_USED_MODEL_KEY, JSON.stringify('provider/stale'))
+    const setSpy = vi.spyOn(gated, 'set')
+    gated.closeGate()
+    provideMockPlatform(gated)
+    __resetLastUsedModelForTesting()
+
+    loadOnce() // get 挂起（loading 窗口）
+    record('provider/fresh') // 加载窗口内的显式选择
+    gated.openGateNow()
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+    // 内存：KV 旧快照不覆写 record 新值
+    expect(lookup()).toBe('provider/fresh')
+    // 落盘：deferred 补写收敛的也是新值（非旧值回写）
+    expect(setSpy).toHaveBeenCalledWith(
+      LAST_USED_MODEL_KEY,
+      JSON.stringify('provider/fresh'),
+    )
+    expect(await gated.get(LAST_USED_MODEL_KEY)).toBe(JSON.stringify('provider/fresh'))
+  })
+
+  it('加载窗口内 record 新值后 KV 读失败 → 内存新值保留', async () => {
+    const gated = new GatedKV()
+    vi.spyOn(gated, 'get').mockRejectedValue(new Error('read error'))
+    gated.closeGate()
+    provideMockPlatform(gated)
+    __resetLastUsedModelForTesting()
+
+    loadOnce()
+    record('provider/fresh')
+    gated.openGateNow()
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+    expect(lookup()).toBe('provider/fresh')
+  })
 })

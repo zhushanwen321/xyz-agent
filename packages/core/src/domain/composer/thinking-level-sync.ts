@@ -160,19 +160,19 @@ export function useThinkingLevelSync(
   /**
    * 模型切换后对齐思考等级（session 已建 + landing 态均触发）。
    *
-   * 映射规则（用户确认的语义）：
-   * 0. [u2] armed 记忆恢复消费（D4：先于下列所有分支）——显式切模型的记忆恢复，
+   * 映射规则（用户确认的语义；编号 = 设计 D5 分支编号，与行内门禁注释单轨）：
+   * 1. [u2] armed 记忆恢复消费（D4：先于下列所有分支）——显式切模型的记忆恢复，
    *    命中且可用且 value≠当前 → onReset(记忆值) 后直接 return 跳过下列分支；
    *    过期 / 幂等 / 未命中 / 不可用 / 不匹配 → armed 按规则处理后照走下列分支
-   *    [U5/D5] 入口 armed 快照同时是对齐门禁：下列 1/3 分支无快照时跳过
-   *    （2 分支可用性安全网不门禁）——对齐只挂「用户显式切模型」
-   * 1. currentThinkingLevel 无值（landing 态初始）→ 设为新模型最高可用档
-   * 2. 首次触发（oldMap===undefined，Composer 挂载/session 载入）→ 可用性检查：
+   *    [U5/D5] 入口 armed 快照同时是对齐门禁：下列分支 2/4/5 无快照一律跳过
+   *    （分支 3 可用性安全网不门禁）——对齐只挂「用户显式切模型」
+   * 2. currentThinkingLevel 无值（landing 态初始）→ 设为新模型最高可用档
+   * 3. 首次触发（oldMap===undefined，Composer 挂载/session 载入）→ 可用性检查：
    *    当前档位在新模型可用则保留，不可用则重置到最高档（与原逻辑一致，避免无 oldMap
    *    无法判定体系时误触发冗余 RPC）
-   * 3. 真正的模型切换（oldMap 有值）→ 体系判定：
-   *    - 同体系（可用 key 集合相同）→ 直接映射当前档位到新模型 value
-   *    - 跨体系 → 重置到新模型最高可用档
+   * 4. 真正的模型切换（oldMap 有值）且同体系（可用 key 集合相同）→
+   *    直接映射当前档位到新模型 value
+   * 5. 跨体系切换 → 重置到新模型最高可用档
    *
    * 「体系」定义见 isSameThinkingScheme。同体系时用旧 map 反查当前 value 的 UI key，
    * 再用新 map 转成新 value；value 未变则不触发冗余 RPC。

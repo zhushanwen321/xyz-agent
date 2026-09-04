@@ -86,10 +86,10 @@ describe('D3: props.level 为空时触发器显示占位文案', () => {
       props: { level: 'high' },
     })
     await wrapper.vm.$nextTick()
-    // 有明确档位时，不应显示占位「…」
-    // 高档位显示文字（由 getDisplayLabel 决定，非 '…'）
-    const triggerText = wrapper.text()
-    expect(triggerText).not.toBe('…')
+    // 有明确档位时显示 high 档显示文案（getDisplayLabel → '高'，zh-CN 默认 locale）——
+    // 断言包含期望文案使「有值仍渲染占位」回归可被抓到（not.toBe 恒真不可证伪）
+    expect(wrapper.text()).toContain('高')
+    expect(wrapper.text()).not.toContain('…')
   })
 })
 
