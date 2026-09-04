@@ -25,7 +25,8 @@ import type { UiDialogOptions } from '../src/services/plugin-service/api/ui-api.
 import { UiRequestQueue, resolveFallbackDelayMs } from '../src/services/plugin-service/ui-request-queue.js'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 import { PluginRegistry } from '../src/services/plugin-service/plugin-registry.js'
-import type { IMessageBroker } from '../src/interfaces.js'
+import type { IMessageBroker, ISessionService } from '../src/interfaces.js'
+import type { IMessageBus } from '../src/services/message-bus/message-bus.js'
 import type { RpcRequest, RpcResponse, RpcNotification } from '../src/services/plugin-service/plugin-types.js'
 
 // ══════════════════════════════════════════════════════════════════
@@ -468,5 +469,95 @@ describe('生产装配全链（D2 接线回归）', () => {
     } finally {
       warnSpy.mockRestore()
     }
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// expired 撤窗广播分流（R1-1 回归：bus 装配 + sid 存在直发 global 通道）
+// ══════════════════════════════════════════════════════════════════
+
+describe('expired 撤窗广播分流（R1-1）', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** 真实 PluginService + mock messageBus + 活跃 session（生产常态三要素齐备） */
+  function createWiredServiceWithBus(): {
+    service: PluginService
+    broadcasts: Array<{ type: string; payload: Record<string, unknown> }>
+    busPublish: ReturnType<typeof vi.fn>
+  } {
+    const broadcasts: Array<{ type: string; payload: Record<string, unknown> }> = []
+    const broker = {
+      send: vi.fn(),
+      sendError: vi.fn(),
+      broadcast: vi.fn((msg: { type: string; payload: unknown }) => {
+        broadcasts.push({ type: msg.type, payload: msg.payload as Record<string, unknown> })
+      }),
+    }
+    const registry = new PluginRegistry('/tmp/fake-project', '/tmp/fake-project')
+    // 活跃 session 存在 → 广播回调 resolve 出 sid（生产常态的 sid 分支）
+    const sessionService = {
+      listPersistedSessions: () => [{ sessions: [{ id: 'sess-1', status: 'active' }] }],
+      getSummary: (id: string) => ({ id, status: 'active' }),
+    }
+    const service = new PluginService(registry, broker as unknown as IMessageBroker, {
+      broadcastFn: (type, payload) => broker.broadcast({ type, payload }),
+      sessionService: sessionService as unknown as ISessionService,
+    })
+    // mock messageBus 装配（生产 setMessageBus wire 同点）
+    const busPublish = vi.fn()
+    service.setMessageBus({ publish: busPublish } as unknown as IMessageBus)
+    ;(service as unknown as { registerRpcMethods(): void }).registerRpcMethods()
+    return { service, broadcasts, busPublish }
+  }
+
+  it('生产常态（sid 存在 + bus 装配）：expired 不进 bus.publish 直发 broadcastOrBroker；uiRequest 展示帧仍走 bus 带 sid', async () => {
+    const { service, broadcasts, busPublish } = createWiredServiceWithBus()
+    const rpcServer = (service as unknown as { rpcServer: import('../src/services/plugin-service/plugin-rpc-server.js').PluginRpcServer }).rpcServer
+
+    // host→Worker / Worker→host 桥（与 D2 全链回归同构）
+    const client = new PluginRpcClient()
+    rpcServer.registerWorker('w1', {
+      postMessage(msg: unknown) {
+        const m = msg as { type: string; response?: RpcResponse; notification?: RpcNotification }
+        if (m.type === 'rpc' && m.response) client.handleResponse(m.response)
+        else if (m.type === 'rpc' && m.notification) client.handleNotification(m.notification)
+      },
+    })
+    client.attach({
+      postMessage(msg: unknown) {
+        void rpcServer.dispatch('w1', msg as RpcRequest)
+      },
+    } satisfies ClientPort)
+
+    const api = createUiApi(client, 'p1')
+    const p = api.showConfirm('T', 'M', { timeout: 1_000 })
+    const assertion = expect(p).rejects.toMatchObject({ code: 'UI_TIMEOUT' })
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    await assertion
+
+    // 展示帧：走 bus session 级定向（带 sid），session 关联展示语义不变
+    expect(busPublish).toHaveBeenCalledTimes(1)
+    expect(busPublish.mock.calls[0][0]).toBe('sess-1')
+    const uiRequestFrame = busPublish.mock.calls[0][1] as { type: string; payload: { requestId: string } }
+    expect(uiRequestFrame.type).toBe('plugin:uiRequest')
+    const requestId = uiRequestFrame.payload.requestId
+    expect(requestId).toMatch(/^p1_\d+_/)
+
+    // 撤窗帧：不进 bus.publish（session 级帧 onGlobal 不可达），直发 broadcastOrBroker
+    const expiredViaBus = busPublish.mock.calls.filter(
+      ([, m]) => (m as { type: string }).type === 'plugin:uiRequestExpired',
+    )
+    expect(expiredViaBus).toHaveLength(0)
+    const expired = broadcasts.filter(m => m.type === 'plugin:uiRequestExpired')
+    expect(expired).toHaveLength(1)
+    expect(expired[0].payload.requestId).toBe(requestId)
+    // expired payload 无 sessionId 语义（renderer 契约：撤窗广播不注入活跃 sid）
+    expect('sessionId' in expired[0].payload).toBe(false)
   })
 })

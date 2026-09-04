@@ -306,7 +306,7 @@ ctx.tools.register({
 ```
 [审批 30min 无人响应] → warn 日志 + broadcast('plugin:permissionRequestExpired')
   → 本次激活取消（插件置 UNLOADED——未装载态，非「被拒」）
-  → 前端撤回审批弹窗；用户迟到点「批准」→ 前端提示已过期
+  → 前端撤回审批弹窗（迟到批准对已删 pending noop）
 [下次 activation event]（如再次触发该 slash command）→ 重新激活 + 重新弹审批  ← §1 目标 2/3 成立
 👉 恢复指引：重触发激活事件即可；全局调等待时长用 env XYZ_PLUGIN_PERMISSION_TIMEOUT_MS
 ```
@@ -365,7 +365,7 @@ ctx.tools.register({
   2. **到期行为从「判拒」改「取消」**：`waitForPermissionApproval` 到期不再 `resolve(false)`，改为 resolve 可区分的 `'timeout'` 结局（Promise 类型收窄为 `boolean | 'timeout'`）；`doActivatePlugin` 收到 `'timeout'` → warn 日志（恢复指引）+ `broadcast('plugin:permissionRequestExpired', { pluginId })`（前端撤回审批弹窗）+ 本次激活取消（置 UNLOADED——该状态本就兼作「未装载」，且状态机允许后续 activation event 重触发激活，✅已核实 handleEvent 过滤条件只排除 ACTIVE/ACTIVATING）。收到显式 `false`（用户真点了拒绝）行为不变（UNLOADED）。用户迟到点「批准」时 pending 已删 → 前端收到 expired 广播后应已撤窗；若旧版前端仍派发批准，`resolvePermissionApproval` miss noop 维持（不炸），日志 debug 一条。重触发的精确语义：**30min 等待窗口内**重触发 activation event 被 handleEvent 候选过滤拦截（plugin-activator.ts:157 排除 ACTIVATING）——原审批等待继续有效，不产生第二个弹窗；**超时取消（UNLOADED）后**重触发才走新激活 + 重新弹审批（恢复指引据此写）。
   3. **权限存储不受影响**：超时不是拒绝，不写任何「拒绝」记录（现状 `resolve(false)` 也未写 storage——storage 只存批准，`getUnapproved` 过滤已批准项），重触发激活时同一批权限重新弹审批。
   4. **30min ACTIVATING 窗口的调度语义（为何可接受）**：`handleEvent` 对候选插件是**并行**激活（plugin-activator.ts:160 `Promise.allSettled`），且权限审批等待位于 `assignWorker` **之前**（:223-242 早于 :246）——等待中的插件不占 Worker 执行槽，不阻塞其他插件激活；startup 批量场景（onStartupFinished）各插件的审批弹窗各自独立等待。诚实披露：`handleEvent` 的调用方（plugin-lifecycle.ts:93 `await`）会被最慢的那个审批等待拖住——但等待条件是「用户未作答」，此时用户不在场，被拖住的 boot 收尾逻辑无用户可感知的损失。与 D4 论证的对齐：D4 否「activate 抬 30min」的论据是**占 Worker 执行槽**（activate 在 assignWorker 之后执行插件代码），审批等待不占槽——同一「启动链拖慢」论据在两处的适用性不同，不矛盾。
-  5. **dismiss / 弹窗丢失路径**：现状审批弹窗 `hide-close` 无主动关闭通道（PermissionRequestDialog.vue:84，✅已核实），仅「批准 / 拒绝」两个出口——「用户主动 dismiss 不作答」路径现状不存在；若未来组件放开关闭（或 ESC 本地关闭不回传），runtime 侧视同「无人作答」自然落入超时取消路径（`'timeout'` 结局），无需新增处理分支。**已知限制（登记）**：前端审批弹窗为全局单例且不做队列（usePermissionRequest.ts:17-18「新请求覆盖旧 state」）——多插件并发审批时，先到的弹窗被后到者顶掉、runtime 仍在等待：30s 时代该插件 30s 即超时，30min 时代空窗被拉长至 30min。审批弹窗队列化是 renderer 侧既有 TODO（usePermissionRequest.ts:18），登记为本设计的联动依赖（U8/排期项），不阻塞 runtime 侧决策——runtime 语义（取消非判拒 + 可重触发）在队列化前后均成立。
+  5. **dismiss / 弹窗丢失路径**：现状审批弹窗 `hide-close` 无主动关闭通道（PermissionRequestDialog.vue:84，✅已核实），仅「批准 / 拒绝」两个出口——「用户主动 dismiss 不作答」路径现状不存在；若未来组件放开关闭（或 ESC 本地关闭不回传），runtime 侧视同「无人作答」自然落入超时取消路径（`'timeout'` 结局），无需新增处理分支。**已知限制（登记）**：前端审批弹窗为全局单例且不做队列（usePermissionRequest.ts:24-25「新请求覆盖旧 state」）——多插件并发审批时，先到的弹窗被后到者顶掉、runtime 仍在等待：30s 时代该插件 30s 即超时，30min 时代空窗被拉长至 30min。审批弹窗队列化是 renderer 侧既有待办，登记为本设计的联动依赖（U8/排期项），不阻塞 runtime 侧决策——runtime 语义（取消非判拒 + 可重触发）在队列化前后均成立。
 - **被否**：
   - **仅转正参数不提值**（30s 保持 + env 可调）——30s 对「人不在场」仍是秒级判死；env 逃生门是给排障的，不是给每个用户日常配置的（默认值必须本身合理——与 streaming 死口反例同理：把默认值做对，配置口才不是必需品）。
   - **接 configService 配置面**（settings UI 可调）——plumbing 重（settings 存储 → renderer 设置页 → runtime 读取三层），而「等权限审批多久」没有证据表明需要 per-app 用户配置；env + 合理默认已覆盖排障诉求。若未来用户侧诉求出现，env → configService 是平滑升级（单一读取函数替换）。
@@ -391,7 +391,7 @@ ctx.tools.register({
 
 - **采用**：
   1. **Worker 版 loadPlugin 超时 → terminate + 清理 + rebuild 链**：超时 reject 前/后调用既有 `handleWorkerCrash(workerId, 'loadPlugin timeout ...')`（plugin-host.ts:640-680——已含：幂等守卫 / `worker.terminate()` / `rpcServer.unregisterWorker` / `removeIndexEntries`（loadedModules 索引清理）/ trusted 记录 `crashedTrustedWorkers` / crash 计数 / 冷却后 `rebuildWorker`）。与 fork 版 `terminateProcess`（:192-195）行为对齐：**超时后宿主必回收**。
-  2. **「连坐」是正确语义的论证**：load 超时 ≈ 插件模块顶层代码死循环 ≈ Worker 线程 event loop 卡死 ≈ 同宿主（共享 ≤10 插件）的一切 RPC 不可响应——此时该 Worker 已整体不可用，terminate + rebuild（连带同宿主其他插件重载）与 crash 路径的处理完全一致，是恢复而非伤害。若顶层代码只是「慢初始化」（>10s 合法场景），`loadTimeoutMs` 覆盖参数是逃生门（fork 版先例，Worker 版同步补齐同名参数）。
+  2. **「连坐」是正确语义的论证**：load 超时 ≈ 插件模块顶层代码死循环 ≈ Worker 线程 event loop 卡死 ≈ 同宿主（共享 ≤10 插件）的一切 RPC 不可响应——此时该 Worker 已整体不可用，terminate + rebuild（连带同宿主其他插件重载）与 crash 路径的处理完全一致，是恢复而非伤害。**连坐恢复链的组成约束**：同宿主在飞激活的插件因宿主回收而失败的，其失败终态写点须让位 CRASHED（settleActivationFailure 不覆盖既有 CRASHED）——rebuild 后的重载编排按 CRASHED 终态筛选待重载插件，终态被激活失败改写成 UNLOADED 会导致 rebuild 不重载（实施期 Gate B 实测回归，已修复）。若顶层代码只是「慢初始化」（>10s 合法场景），`loadTimeoutMs` 覆盖参数是逃生门（fork 版先例，Worker 版同步补齐同名参数）。
   3. **hot-reload timer 小修**：`performReload` 的 race timer（plugin-hot-reload.ts:125-128）提取句柄，deactivate 胜出路径 `clearTimeout`——消除 5s 空转（行为无变化的卫生修）。
 - **被否**：
   - **超时只清理 loadedModules 不 terminate**（最小干预）——模块顶层死循环下线程已卡死，只删索引不杀线程 = 线程泄漏照旧（失败模式 E 未修）；「该插件不再派活」的僵尸防御治标不治本。
@@ -417,13 +417,13 @@ ctx.tools.register({
 
 | 文件 | 决策 | 改动 |
 |---|---|---|
-| `plugin-service/bridge-interop.ts` | D1 | `TOOL_EXECUTE_TIMEOUT_MS` → `DEFAULT_TOOL_EXECUTE_TIMEOUT_MS = 30_000_000`；invoke 前经 `resolveToolTimeoutMs(entry.schema.timeoutMs)`（新纯函数，对齐 dialog-queue `resolveDialogTimeoutMs`：合法正数优先 / `<=0` 或 `Infinity` = 不限时 / 非法回落默认 / clamp）；超时 catch 分支错误消息诚实化（§5.2 文案） |
+| `plugin-service/bridge-interop.ts` | D1 | `TOOL_EXECUTE_TIMEOUT_MS` → `DEFAULT_TOOL_EXECUTE_TIMEOUT_MS = 1_800_000`（30min，v2.2 勘误后）；invoke 前经 `resolveToolTimeoutMs(entry.schema.timeoutMs)`（新纯函数，对齐 dialog-queue `resolveDialogTimeoutMs`：合法正数优先 / `<=0` 或 `Infinity` = 不限时 / 非法回落默认 / clamp）；超时 catch 分支错误消息诚实化（§5.2 文案） |
 | `plugin-service/plugin-types.ts` | D1 | `ToolRegistration` 加 `timeoutMs?: number`（JSDoc：声明 >0 为该工具上界；`<=0`/`Infinity` 显式不限时；非法值回落默认） |
 | `plugin-service/tool-api.ts` | D1 | 注册入口窄校验（对齐 ui-api 的 INVALID_* 风格：非 number 抛 INVALID_TIMEOUT_MS） |
 | `plugin-service/ui-request-queue.ts` | D2 | 删 60s 语义 timer 与 `defaultResult` 替答；改挂防泄漏兜底 timer = `min(effective + 60_000, MAX_TIMER_DELAY_MS)`（入队起算，仅 cancel 丢失 / Worker 死亡时收尾清理 + warn；`min()` 防上界塌缩提前触发）；requestId 尊重 Worker 侧来方值；新增 `cancelRequest(requestId)`（删 pending / 排队项 + expired 广播恒发 + 活跃请求 `processNext` 放行）；注册 `plugin.ui.uiRequestExpired` notification handler（复用既有无 id dispatch 通路，plugin-rpc-server.ts:175-190） |
 | `plugin-service/api/ui-api.ts` | D2 | `createUiApi` dialog 类三方法（showConfirm/showSelect/showInput）加 `opts?: { timeout?: number }`（notify/updateStatusBarItem 纯展示类不设等待超时语义，维持 client 默认 30s——第 4 轮 INFO）；requestId 生成（UUID 或现状 pluginId 前缀格式，随 params 传递）；`rpcClient.request` 第三参传 `resolveUiRequestTimeoutMs(opts?.timeout)`（**语义值本身，无余量**——传输计时即语义计时）；到期 catch 转译 `UI_TIMEOUT` reject 插件 + warn + notify cancel |
 | `plugin-service/plugin-activator.ts` | D3/D4 | `PERMISSION_TIMEOUT_MS` → 30min；`waitForPermissionApproval` 到期 resolve `'timeout'`；`doActivatePlugin` 分流 `'timeout'`（warn + expired 通知 + UNLOADED）与 `false`（现状 UNLOADED）；`ActivatorOptions` 加 `activateTimeoutMs` |
-| `plugin-service/plugin-service.ts` | D3 | activator 装配点接线：`permissionTimeoutMs: readEnvTimeoutMs('XYZ_PLUGIN_PERMISSION_TIMEOUT_MS') ?? DEFAULT`（env 读取 + 非法 warn 回落，对齐 lifecycle-manager :68 形态）；`onPermissionRequestExpired` 广播回调注入 |
+| `plugin-service/plugin-service.ts` | D3 | activator 装配点接线：`permissionTimeoutMs: readEnvPermissionTimeoutMs()`（回落权威在 Activator 构造函数——env 缺失/非法已 warn 时由其回落 `PERMISSION_TIMEOUT_MS`）；`onPermissionRequestExpired` 广播回调注入 |
 | `plugin-service/api/commands-executor.ts` | D4 | 常量 10s → 复用 D1 默认常量；命令注册定义加可选 `timeoutMs`（取值链同 D1）；错误消息诚实化 |
 | `plugin-service/plugin-host.ts` | D5 | `loadPlugin` 超时 reject 前调 `this.handleWorkerCrash(workerId, 'loadPlugin timeout...')`；`loadPlugin` 加 `loadTimeoutMs` 参数（对齐 fork 版） |
 | `plugin-service/plugin-hot-reload.ts` | D5 | race timer 句柄提取 + 胜出 `clearTimeout` |
@@ -439,7 +439,7 @@ ctx.tools.register({
 | cancel 通知丢失 / Worker 死亡 / sandbox 通道 permission fail-closed 拒绝（queue 兜底到期） | 兜底 timer（min(effective+60s, MAX_TIMER_DELAY_MS)，防超域塌缩）清理：撤窗广播 + 放行 + warn（插件侧早已 reject，无幽灵 promise）；effective 达上界时与语义同刻、两路径幂等收尾；排队项同样收尾（V4b 排队场景封闭）；sandbox 拒绝形态为双 warn（PERMISSION_DENIED + fallback cleanup），trusted 不受影响 | warn 日志标注兜底触发原因 |
 | 审批超时 | resolve `'timeout'` → 取消激活 + expired 广播撤窗（等待期间状态被外部改写的作废路径不发广播——弹窗命运归接管方） | warn 日志「重触发激活事件 / env 调整」 |
 | activate 超时 | 现状 UNLOADED 保持 + 消息提示 activateTimeoutMs | 错误消息内嵌 |
-| Worker load 超时 | terminate + rebuild 链 + warn | 日志「loadTimeoutMs 可覆盖 / rebuild 已排期」 |
+| Worker load 超时 | terminate + rebuild 链 + warn；同宿主在飞激活的连坐插件失败终态保留 CRASHED（settleActivationFailure 让位），rebuild 后经 CRASHED-only 重载编排恢复 | 日志「loadTimeoutMs 可覆盖 / rebuild 已排期」 |
 | 声明值非法（非正数非 Infinity 的脏值） | 注册入口 INVALID_TIMEOUT_MS 抛错（fail-fast）；运行中防御回落默认 | 注册错误消息含期望格式 |
 | 命令执行中重复触发（30min 窗口放大 UX 面，v1.1 补，审查 S1） | 并发守卫拒绝 → busy 提示（含已等待时长与取消出路） | 提示文案；「命令进度反馈/可取消」登记 renderer 联动排期项（U8 模式） |
 
@@ -513,6 +513,7 @@ ctx.tools.register({
 
 ## 附录：变更历史
 
+- v2.3（2026-09-04）：design-code-sync 第 1 轮校准修复（13 finding 全清；R1-1 为代码修复——`plugin:uiRequestExpired` 撤窗广播生产常态不可达，runtime 侧广播回调对 expired 分流直发 global 与 D3 对称、无需 core MessageBusBridge 归一，登记见 impl-plan §5）。文档校准：§7 错误规格表与 §6.5 补连坐插件失败终态 CRASHED 让位约束（连坐恢复链组成约束）；§7 装配点接线改 `readEnvPermissionTimeoutMs()`（实装形态，回落权威在 Activator 构造函数）；§6.3 usePermissionRequest 引用行号 :24-25 并去除不存在的 TODO 标注表述；§5.2 审批超时前端行为收敛为「撤回审批弹窗（迟到批准对已删 pending noop）」；§7 bridge-interop 行常量随 v2.2 勘误补改 1_800_000。
 - v2.2（2026-09-04）：实施期勘误（dev-flow U1 发现，doc_errors 类）：§6.1 采用条款 `DEFAULT_TOOL_EXECUTE_TIMEOUT_MS` 字面 30_000_000（=500min）为初稿笔误，与本节量级依据「dialog-queue 同值」及全文叙述（§4.4/§5.2/P-12）矛盾，裁决收敛为 1_800_000（30min）。同步登记实施偏差：①opt-out 以 clamp 上界近似「不挂超时」（invoke 签名必传，dialog-queue 同款域内安全近似）；②迟到回包 miss 现状为静默安全 noop，错误规格表「debug 日志一条」待后续补点（归属 PendingTracker/plugin-rpc-server，超出 U1 领地）；③U3 生产装配接线授权扩展 plugin-rpc-setup.ts / plugin-service.ts 两文件（cancelUiRequest + meta 透传）。
 - v1（2026-09-04）：初稿。依据 timeout-audit-2026-09.md Doc 3 范围（P0-3 + P1 全部 + 附赠#5）与 rt-svc-plugin 模块普查报告撰写；全部 file:line 经代码实读核实（普查报告行号漂移已修正：ui-request-queue confirm 默认值 :96→:97、processNext :63→:118）；设计期新发现报告未覆盖的隐藏层——UI 链路 client 30s 与 queue 60s 双层竞速（§4.2 / P-1）。
 - v2（2026-09-04）：**第 1 轮对抗式审查修复**（审查人 = tech-design-review subagent 独立审查，2 MF / 5 SG 全修，原报告已被第 2 轮报告覆盖）。**MF#1**：D2 v1「queue 唯一裁决 + client 固定 60s 余量」被串行排队反例击穿（client timer 发起即挂含排队、queue timer dispatch 才挂不含——前置 30min 弹窗时传输层 ~30min+60s 先炸），重设计为「Worker 侧单一计时权威（传输计时即语义计时）+ cancel notification（复用既有无 id dispatch 通路）+ queue 防泄漏兜底（effective+60s，仅异常收尾）」，v1 方案连同击穿反例记入 D2 被否谱系；联动 §4.2 论断 / §4.4 总表 / §7 文件地图与错误规格表 / §9 新增 V4b 排队变体 / §10 U3+U4 合并。**MF#2**：D1 风险论证「pi agent 层仍可 abort turn」与实装不符（abort/timeout 是 opt-in，bridge 调用不传 opts）改写为正面承认 30min 不可中断 + 可接受性四点论证，§11 对应条目从「待验证」升级为「已核实事实 + 登记推进」。**SG**：bridge 代码片段按实装原文修正（含 Ready 守卫）；P-2 表述修正（opt-in 机制）；D3 补 30min ACTIVATING 窗口调度论证（并行激活 + 审批不占 Worker 槽）、重触发精确语义、dismiss 路径不存在（hide-close）与多插件并发审批单例覆盖限制登记；U3/U8 类型定义顺序矛盾消除（类型随 U3/U5 落地）；D1 传播措辞收紧（getSyncPayload 只塑形三字段，timeoutMs 不进 bridge:sync 负载）。新增 P-13 设计期探针（notification 通路既有）与 §11 cancel 幂等检查点。

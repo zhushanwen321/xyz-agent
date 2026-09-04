@@ -22,7 +22,7 @@
  * 'plugin.revokePermissions')）→ runtime plugin-service → reply config.plugins。
  *
  * 全局弹窗（session 无关）：permissionRequest 一次一个，新请求到来覆盖旧 state
- * （不做队列；队列化后续完善，见下方 TODO 标注）。
+ * （不做队列）。
  */
 import { reactive, type App } from 'vue'
 import type { InternalEventBus } from '@xyz-agent/core'
