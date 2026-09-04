@@ -1129,6 +1129,13 @@ to extend or opt out (<=0 = no limit).
 
 pi agent 自行决策重试/换路径；插件侧无感知、不被卸载。
 
+**命令执行超时（命令定义级 `timeoutMs` 声明）**：用户点击 UI（状态栏按钮/命令面板）触发的
+插件命令，执行超时取值链与工具 `registerTool` 完全同款（上表适用；校验同在注册入口，
+非 number 抛 `INVALID_TIMEOUT_MS`），缺省默认 30min，`<=0` / `Infinity` 显式 opt-out。
+命令并发执行有 busy 守卫：同一命令 handler 未返回前重复触发会被拒绝，提示含已等待时长
+（命令进度反馈/可取消能力为后续演进项）。到期行为与工具一致（诚实 `isError`，含调整指引
+`pass timeoutMs in the command definition`），保留 `code: -32000`。
+
 **UI 弹窗超时（`ctx.ui.showConfirm` / `showSelect` / `showInput` 末位 `opts.timeout`）**：
 
 ```typescript

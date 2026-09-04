@@ -72,7 +72,19 @@ graph TD
 
 | Unit | 偏差 | 证据（file:line） | 登记时间 |
 |------|------|-------------------|----------|
-| （空） | | | |
+| U1 | opt-out 以 clamp 上界（2^31-1≈24.8 天）近似「不挂 timer」——invoke timeoutMs 必传的客观约束下取「简单者」，设计 §6.1 明示二选一 | bridge-interop.ts:35-57；plugin-rpc-server.ts:142 | 2026-09-04 实施期 |
+| U1/U6 | formatDurationMs 双份 + declaredActive 内联复制 isDeclaredTimeoutActive 语义（假差异，语义同构）——收敛建议：后续清理 commit 从 bridge-interop 统一导出 | bridge-interop.ts:33-66；commands-executor.ts:17-21/83 | 2026-09-04 A1 审查 |
+| U1 | 迟到回包 miss 为静默安全 noop（无 debug 日志）——设计正文已同步为如实描述（v2.2 勘误②+A1 doc_error 修正），日志补点留后续 | plugin-rpc-server.ts:164-169；pending-tracker.ts:55-73 | 2026-09-04 A1 审查 |
+| U3 | production 接线授权扩展 plugin-rpc-setup.ts + plugin-service.ts（cancelUiRequest/meta 透传）——单一权威生产生效必需 | plugin-rpc-setup.ts；plugin-service.ts | 2026-09-04 实施期 |
+| U3 | plugin-permission-map.ts SSOT 登记 +1（ui 域 5→6）——守卫强制（新增 RPC 方法必须登记否则全量红） | plugin-permission-map.ts；plugin-permission-map.test.ts | 2026-09-04 实施期 |
+| U3/U8 | expired 广播不经 core MessageBusBridge（bridge 无归一项），消费侧直订 WS onGlobal（沿 extension.ui_timeout 先例）——副作用：bridge 对 unknown type 各 emit 一条 bus error → console.warn（无用户可见异常，P-11 成立）；core 补归一为后续跟进项 | usePermissionRequest.ts；extension-host-dialog.ts；notification-host-controller.ts:97-99 | 2026-09-04 U8 |
+| U6 | commands-api.ts 越界最小追加（命令定义类型实际所在地，任务预判 plugin-types.ts 不适用）——声明链验收必需，A1 审查追认 | commands-api.ts:64-97/155-170 | 2026-09-04 U6/A1 |
+| U6 | busy 提示按 v1.1 S1 规格落地（WeakMap 记录 register 时刻） | commands-executor.ts:88-96/176-180 | 2026-09-04 U6 |
+| U7 | loadTimeoutMs 落地为构造选项（fork 版 PluginPoolOptions 逐字同构）而非方法参数；race timer 清理用 finally 超集覆盖 deactivate 抛错路径 | plugin-host.ts；plugin-host-process.ts:102/123 | 2026-09-04 U7 |
+| U8 | 权限撤窗按 pluginId 严格匹配（防陈旧广播误撤后到插件的新弹窗）——任务描述的幂等严格化 | usePermissionRequest.ts | 2026-09-04 U8 |
+| U8 | development-guide 契约节落位 §11.5（保护外部锚点 #22 不断链） | development-guide.md:1104+ | 2026-09-04 U8 |
+
+**A1-low 修复记录**：development-guide §11.5 缺命令 timeoutMs 契约行（unreasonable，low）——由主 agent 亲为补齐（文档一行补丁，命令节 + busy 说明），未打回 U8（额度受限期务实选择，动作同 doc 处理路径）。
 
 ## 6 状态表
 
@@ -88,10 +100,12 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-- §11 检查点随实施闭环：P-8（bridge:sync 轮询对首调时延）、P-10（handleWorkerCrash 幂等守卫 status 前置）、D2 cancel/兜底/语义三路径幂等单测（含 effective=MAX 边界）、env 是否需进 ENV_WHITELIST_PREFIXES（按 C-proc-09 核对，预期不需要）。
-- U3 中间破碎态风险由「单 commit 同改」约束化解；实施 subagent 禁止拆半交付。
-- pi abort 不传播为已登记已知限制（out-of-scope），U8 契约文档须显式标注。
+- §11 检查点随实施闭环：P-8（bridge:sync 轮询对首调时延）、P-10（已闭环：U7 实测入口 status=active 守卫满足）、D2 cancel/兜底/语义三路径幂等单测（U3 已覆盖含 effective=MAX 边界）、env 白名单（U5 已闭环：无需登记）。
+- U3 中间破碎态风险由「单 commit 同改」约束化解（7ac323b5f 单 commit 落地）。
+- pi abort 不传播为已登记已知限制（out-of-scope），已落 development-guide §11.5。
+- **跟进项（本流水线范围外）**：①packages/plugin-sdk/src/mock.ts 存量 tsc 错误 2 处（:87/:90，setModel/setThinkingLevel 返回类型 Promise<void> vs Promise<string>，w1 时期签名变更后 mock 滞后；plugin-sdk 无 typecheck script 从未暴露，非本流水线引入）；②core MessageBusBridge 对两条 expired 广播补归一（当前各 emit 一条 bus error → console.warn，无用户可见异常）；③迟到回包 debug 日志补点（plugin-rpc-server/PendingTracker）；④formatDurationMs/isDeclaredTimeoutActive 从 bridge-interop 统一导出消除复制。
 
 ## 变更历史
 
+- v1.1（2026-09-04）：阶段 3 A1 区审查结论处理——reasonable×4 入登记表；A1-low（development-guide 缺命令 timeoutMs 契约行）主 agent 亲为补齐；A1 doc_error（迟到回包 debug 日志）设计正文已修正。A2/A3 区审查因 5h 额度上限中断，待 18:54 额度重置后重派。
 - v1（2026-09-04）：初版。单元表派生自设计 §10（U1-U8）；U5/U6 因领地重叠（plugin-activator.ts）串行化，较设计收紧。

@@ -434,7 +434,7 @@ ctx.tools.register({
 | 边界 | 行为 | 恢复指引载体 |
 |---|---|---|
 | 工具超时（默认或声明值到期） | isError 诚实消息（时长 / 声明or默认 / handler 仍在跑结果将丢弃） | 错误消息内嵌「registerTool 传 timeoutMs 调整」 |
-| 工具迟到回包 | PendingTracker miss → 丢弃，debug 日志一条 | —（pi agent 已拿到 isError 并决策） |
+| 工具迟到回包 | PendingTracker miss → 静默安全 noop 丢弃（无日志；debug 补点归属 plugin-rpc-server/PendingTracker，v2.2 勘误②登记待后续） | —（pi agent 已拿到 isError 并决策） |
 | UI 弹窗超时（语义到期，Worker 侧裁决） | 插件收 `UI_TIMEOUT` reject + cancel 通知 → queue 删项 / 撤窗广播 / 活跃请求放行下一个 | warn 日志「传 opts.timeout 延长（全程含排队）/ 用户在场则弹窗会一直等」 |
 | cancel 通知丢失 / Worker 死亡（queue 兜底到期） | 兜底 timer（min(effective+60s, MAX_TIMER_DELAY_MS)，防超域塌缩）清理：撤窗广播 + 放行 + warn（插件侧早已 reject，无幽灵 promise）；effective 达上界时与语义同刻、两路径幂等收尾 | warn 日志标注兜底触发原因 |
 | 审批超时 | resolve `'timeout'` → 取消激活 + expired 广播撤窗 | warn 日志「重触发激活事件 / env 调整」 |
