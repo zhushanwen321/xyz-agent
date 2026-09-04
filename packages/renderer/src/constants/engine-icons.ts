@@ -9,16 +9,31 @@
  *
  * 扩展：未来新引擎只需在 ENGINE_ICON_REGISTRY 加一行（id → icon 组件），
  * 并提交 assets/icons/engine/<id>.svg 资产（设计场景 8「零 UI 改动」）。
+ *
+ * 已注册 id 与 runtime ProviderSource（settings-message-handler VALID_SOURCES =
+ * ['pi', 'zcode', 'codex', 'claude']）对齐；kimi / opencode 为规划接入引擎预注册。
+ * icon 几何源 = lobehub icons（@lobehub/icons-static-svg），mono 版 path d 原样入仓：
+ * pi ← pi.svg · zcode ← zai.svg（Z.ai 品牌标，非 zhipu）· claude ← claudecode.svg ·
+ * kimi ← kimi.svg · codex ← codex.svg · opencode ← opencode.svg。
+ * 各资产 viewBox 统一扩边留白（内容占比 60%），pi 为官方自带留白（占比 ~59%），观感一致。
  */
 import type { Component } from 'vue'
 import { Circle } from '@lucide/vue'
 import EnginePiIcon from '@/components/icons/EnginePiIcon.vue'
 import EngineZcodeIcon from '@/components/icons/EngineZcodeIcon.vue'
+import EngineKimiIcon from '@/components/icons/EngineKimiIcon.vue'
+import EngineCodexIcon from '@/components/icons/EngineCodexIcon.vue'
+import EngineClaudeIcon from '@/components/icons/EngineClaudeIcon.vue'
+import EngineOpencodeIcon from '@/components/icons/EngineOpencodeIcon.vue'
 
 /** 已注册引擎 id → icon 组件（几何 SSOT = assets/icons/engine/<id>.svg） */
 const ENGINE_ICON_REGISTRY: Record<string, Component> = {
   pi: EnginePiIcon,
   zcode: EngineZcodeIcon,
+  codex: EngineCodexIcon,
+  claude: EngineClaudeIcon,
+  kimi: EngineKimiIcon,
+  opencode: EngineOpencodeIcon,
 }
 
 /** 缺省引擎（record.engine 缺省时的归属，见 shared SubagentRecord.engine 注释） */
