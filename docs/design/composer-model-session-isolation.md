@@ -217,10 +217,10 @@ const regularModelId = computed(
 
 **D6：记录 watch 维持「生效即记录」+ 漂移文档修正（选定）**
 
-- **采用**：记录 watch 不加新门禁——机制 ⑥ 的污染输入是机制 ⑤ 的改写值，D5 消灭后记录值回归真值（含 session 加载即记录，u3 条件 b 原语义，保持）。同批修正两处漂移登记：`model-service.ts` 失效注释（「pi 侧 setModel 持久化全局默认」→ 按 0.84.4 实装改写）+ u3 设计文档「关键事实⑤」勘误（附本设计链接）。
+- **采用**：记录 watch 不加新门禁——机制 ⑥ 的污染输入是机制 ⑤ 的改写值，D5 消灭后记录值回归真值（含 session 加载即记录，u3 条件 b 原语义，保持）。同批修正两处漂移登记：`model-service.ts` 失效注释（「pi 侧 setModel 持久化全局默认」→ 按 0.84.4 实装改写）+ u3 设计文档「关键事实⑤」勘误（附本设计链接）。**Gate B 纪元精确化（V4 冻结批次补记）**：Gate B 实测发现跨纪元中间 flush 仍会污染记忆（切模型的生效链是两次独立 store 写——modelId 回包先落、恢复档位回包后落，中间 flush 读到错配对），已加 **sessionId 纪元判据**（观察源加 sessionId，跳过「同 session、modelId 已变而 level 未变」的中间 flush，commit `1f5024380`）——被拒收的对中 level 从未生效于该 modelId，故「值生效即记录」语义保持，非用户意图判别轴（不违背被否②）；第三形态（app 实测）未覆盖，冻结于 impl-plan R6。
 - **被否**：给记录 watch 加「仅用户手选才记录」门禁——u3 对抗审查已裁决过该问题（判别轴错位，D2 被否③），重开无新证据；且 session 加载值入表是「切回模型恢复上次档位」的正当数据来源。
-- **证据**：`model-thinking.ts:263-287`（条件 b 注释）；`docs/design/model-thinking-level-memory.md` §1。
-- **效果**：G2 在 D5 之上无需额外机制即成立（减法）；文档与实装一致（漂移守卫纪律 C-proc-10 同向）。
+- **证据**：`model-thinking.ts` 记录 watch（条件 b 注释 + 纪元判据）；`docs/design/model-thinking-level-memory.md` §1。
+- **效果**：D5 消灭主要污染源；Gate B 发现跨纪元中间 flush 残留，已加时序精确化（覆盖单测可复现的两类窗口），第三形态冻结于 impl-plan R6——G2 在切模型场景存在已知退化，待后续治理；文档与实装一致（漂移守卫纪律 C-proc-10 同向）。
 
 ### 3.4 终态物理数据流图
 
@@ -303,10 +303,14 @@ const regularModelId = computed(
 
 ```
 packages/runtime/src/infra/pi/session-binding-fields.ts        [+2 字段矩阵行（restore 列='none'）]
-packages/runtime/src/infra/pi/session-file-utils.ts            [modelSidecarPath/persistModelBinding + ScannedSessionMeta +2 字段 + scanSessionMeta 提取]
+packages/runtime/src/infra/pi/session-file-utils.ts            [ScannedSessionMeta +2 字段 + scanSessionMeta 提取；persistModelBinding/readModelBinding 已提取至 session-model-sidecar.ts（Gate A），本文件保留 re-export 导入面]
+packages/runtime/src/infra/pi/session-model-sidecar.ts         [新（Gate A 提取自 session-file-utils）：modelSidecarPath/persistModelBinding/readModelBinding]
 packages/runtime/src/services/session/session-scanner.ts       [scannedToSummary 填真值]
 packages/runtime/src/services/session/session-model-control.ts [switchModel/setThinkingLevel 写点]
-packages/runtime/src/services/session/session-lifecycle.ts     [restore/create 读回播种 + 兜底链, registerSession metaOverride, purgeSessionSidecars 清单 +.model.json, fork 侧 sidecar 落位]
+packages/runtime/src/services/session/session-lifecycle.ts     [restore/create 读回播种 + 兜底链（Gate A 提取 restore 播种段至 restore-seeding.ts）, registerSession metaOverride, purgeSessionSidecars 清单 +.model.json, fork 侧 sidecar 落位]
+packages/runtime/src/services/session/restore-seeding.ts       [新（Gate A 提取自 session-lifecycle）：restore get_state 读回 + 按字段 metaOverride 构造 + E6 sidecar 覆写]
+packages/runtime/src/services/session/session-service.ts       [Gate B：tryPersistModelBinding（写点③ turn-end ensure）]
+packages/runtime/src/services/session/session-state-projection.ts [Gate B：handleTurnUsageSideEffects/handleTurnEndSideEffects 两调用点]
 packages/runtime/src/services/model-service.ts                 [移除 config.defaults 广播 + 注释修正]
 packages/core/src/domain/composer/model-thinking.ts            [regularModelId/regularThinkingLevel 分流 + lastUsedModel 写点]
 packages/core/src/domain/composer/thinking-level-sync.ts       [armed 入口快照门禁（分支 2/4/5）]

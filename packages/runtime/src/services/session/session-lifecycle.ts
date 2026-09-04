@@ -428,9 +428,11 @@ export class SessionLifecycle implements ISessionRegistry {
       // parentAgentSessionId 可选（#15）：spawnSource 单独成立即持久化，防异常路径下 badge 重启丢失
       this.sessionStore.persistAgentBinding(session.sessionFilePath, options.spawnSource, options.parentAgentSessionId)
     }
-    // D1 写点③ create/landing：落盘生效值（读回真值优先）——从未显式切模型的 session
-    // 也在创建时获得 .model.json（V1 文件断言）。sessionFilePath 缺失（pi 延迟写入窗口）
-    // 时 persistModelBinding 内部 existsSync 守卫跳过，与 preset/project/agent 同模式。
+    // D1 写点③ create/landing：落盘生效值（读回真值优先）。注意：Gate B 实证 create 瞬间
+    // pi 尚未首 flush、sessionFilePath 恒 undefined，本写点常态被守卫跳过（偏差 #9①）——
+    // 从未显式切模型的 session 的 .model.json 由写点③的 turn-end ensure
+    // （tryPersistModelBinding，session-state-projection）补写，V1 文件断言由其满足；
+    // 本段仅在文件已 materialize 的少见时序生效。
     if (session.sessionFilePath) {
       persistModelBinding(
         session.sessionFilePath,
