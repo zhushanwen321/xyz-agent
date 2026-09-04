@@ -83,12 +83,15 @@ graph TD
 | # | 偏差 | 理由 | 登记时间 |
 |---|------|------|---------|
 | 1 | mandatory-extensions.json 追加从设计 §5 的 U4 前移到 U2 | check-extension-dependencies.mjs:119-124 强制 taiji↔mandatory 联动：包存在不在清单 = 违规。U2/U4 分属两波会造成中间态检查红；装配原子性优先（设计 D3 本意即「新包进 SSOT」，归属调整不改变内容） | 计划期 |
+| 2 | U1 增补 BRIDGE_METHODS 运行时常量集合（marker.ts）+ BridgeMethod 派生类型（types.ts） | 设计 §3.3-D6 要求 event-adapter 运行时校验「缺合法 method」——需要运行时集合，否则 U3 须在 runtime 硬编码重复清单，破坏 D1 单一来源。照抄 SESSION_MANAGER_ACTIONS 值类型同源先例 | U1 交付 |
+| 3 | U1 增补 BridgeErrorResponse 类型 + marker 测试多两条断言（marker 互斥 + BRIDGE_METHODS 四值守护） | 设计 §3.3-D1 明文错误闭环形状 `{error, hint?}`（E5 malformed 回包即此形状），属协议 v2 契约一部分；测试断言对齐 session-manager.test.ts 先例（marker 互斥守护） | U1 交付 |
+| 4 | U1 回包三形状本地定义（非 re-export runtime）+ 注释注明对应关系 | extension-protocol 包零运行时依赖（包头注释明文），无法 import runtime 包；逐字段与 plugin-types.ts 同名接口对应（runtime 是实现侧权威） | U1 交付 |
 
 ## 6 状态表
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|-------------------------------------------|------|---------|
-| U1 | pending | 0 | — |
+| U1 | committed | 1 | typecheck exit 0 + vitest 91 passed（含 marker.test.ts 4 tests）；偏差 #2-#4 登记 |
 | U2 | pending | 0 | — |
 | U3 | pending | 0 | — |
 | U4 | pending | 0 | — |
