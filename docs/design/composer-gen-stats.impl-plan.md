@@ -1,6 +1,6 @@
 # composer-gen-stats 实施计划
 
-基线: <待用户确认后 commit 填入> | 来源设计: docs/design/composer-gen-stats.md | 日期: 2026-02-09
+基线: 0e6d264e4 | 来源设计: docs/design/composer-gen-stats.md | 日期: 2026-02-09
 
 > 审查证据：docs/design/composer-gen-stats.review.md 第 6 轮复审「设计就绪（0 must-fix）」
 > （收敛轨迹 R1:3MF+7S → R2:2MF+1S → R3:1MF+3S → R4:1MF+2S → R5:2MF → R6:0MF，全部 suggestion 当轮修复）。
