@@ -177,6 +177,18 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    */
   private messageBus: IMessageBus | null = null
   /**
+   * 写 2 挂钩的投影专用 bus 视图缓存：getter 每次 publish 都会读，按底层 bus 身份
+   * memoize（setMessageBus 晚期注入/替换后自动重建）。
+   */
+  private projectionBusView: { bus: IMessageBus; wrapped: IMessageBus } | null = null
+  /**
+   * composer-gen-stats（u3 写 2）：state_changed 发布后置 tap（重登记 sid→modelKey 映射
+   * + 推新模型快照帧）。经 setter 注入（组合根绑 GenStatsService.onModelSwitched，
+   * 同 setConfigService 模式——GenStatsService 依赖 sessionService，构造注入会成环）。
+   * 未注入时挂钩 no-op（既有行为不变）。
+   */
+  private genStatsModelSwitchTap: ((sessionId: string, modelId: string) => void) | null = null
+  /**
    * history 读编排域（S6 迁出至 history-rebuild-cache.ts）：getHistory 三分支重建
    * （缓存增量/RPC 全量/尾读降级）+ getFullHistory 文件直读 + inflight 合并。销毁经
    * onSessionDisposed 由 removeSessionEntry 第 ⑤ 步直调（与 traceSync/projection/records
@@ -246,7 +258,9 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
       pm: this.pm,
       getSession: (sessionId) => this.lifecycle.get(sessionId),
       hasSession: (sessionId) => this.lifecycle.has(sessionId),
-      getMessageBus: () => this.messageBus,
+      // composer-gen-stats（u3 写 2）：投影用带 state_changed 后置 tap 的 bus 视图（其余
+      // 消费方 registerDeps/traceSync/records 保持裸 bus——tap 只需挂在真汇聚点上）
+      getMessageBus: () => this.getProjectionBusWithGenStatsTap(),
       fetchContext: (sessionId) => this.fetchContext(sessionId),
       persistSessionOutcome: (sessionId, outcome, reason) => this.persistSessionOutcome(sessionId, outcome, reason),
       tryPersistProjectBinding: (session) => this.tryPersistProjectBinding(session),
@@ -396,6 +410,51 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   setMessageBus(bus: IMessageBus): void {
     this.messageBus = bus
     this.dispatcher.setMessageBus(bus)
+  }
+
+  /**
+   * composer-gen-stats（u3 写 2，MF9 固定帧序）：注入「state_changed 发布后置 tap」。
+   * 投影每次 publish session.state_changed 后同步调 tap(sid, modelId)——tap 内重登记
+   * GenStatsService 的 sid→modelKey 映射并推新模型快照帧。帧序构造性成立：bus.publish
+   * 同步完成 WS 送达后才进 tap（单 WS 连接有序送达：先 state_changed → 后 stats_update），
+   * 插件路径 renderer 的 modelId 先由 state_changed 帧更新，快照帧不会被前端校验误丢。
+   */
+  setGenStatsModelSwitchTap(tap: (sessionId: string, modelId: string) => void): void {
+    this.genStatsModelSwitchTap = tap
+  }
+
+  /**
+   * 投影专用 bus 视图：透传全部 IMessageBus 方法，仅在 publish session.state_changed
+   * 后同步触发写 2 tap（重登记+推快照帧）。全 runtime 唯一 state_changed 生产点 =
+   * 投影的 publishStateChangedFromSnapshot（publish 前有同值 diff 抑制），故「bus 边界
+   * 拦截该 type」≡「在 state_changed 广播处挂接」——不触碰 session-state-projection.ts
+   * 即可拿到真汇聚点（composer-gen-stats 设计 D4 写 2 挂接点的实装核实结论）。
+   */
+  private getProjectionBusWithGenStatsTap(): IMessageBus | null {
+    if (!this.messageBus) return null
+    if (this.projectionBusView?.bus !== this.messageBus) {
+      const bus = this.messageBus
+      this.projectionBusView = {
+        bus,
+        wrapped: {
+          publish: (sessionId, message) => {
+            // 固定帧序（MF9）：先原序发布（state_changed 同步送达订阅 ws），后置 tap
+            bus.publish(sessionId, message)
+            if (message.type === 'session.state_changed') {
+              const modelId = (message.payload as { modelId?: unknown } | undefined)?.modelId
+              if (typeof modelId === 'string' && modelId !== '') {
+                this.genStatsModelSwitchTap?.(sessionId, modelId)
+              }
+            }
+          },
+          subscribe: (sid, ws) => bus.subscribe(sid, ws),
+          unsubscribe: (sid, ws) => bus.unsubscribe(sid, ws),
+          unsubscribeAll: (ws) => bus.unsubscribeAll(ws),
+          clearSession: (sid) => bus.clearSession(sid),
+        },
+      }
+    }
+    return this.projectionBusView.wrapped
   }
 
   // ── ISessionService:纯委托(lifecycle / dispatcher / scanner)─────

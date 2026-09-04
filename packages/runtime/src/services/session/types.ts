@@ -212,8 +212,29 @@ export type PiTranslatedEvent =
    * 与 turn-end（agent_end）的区别：pi 0.80.3 一个 agent 循环含 N 个 turn，每个 turn_end 带 usage；
    * 若每 turn 都走 turn-end 路径会触发 message.complete → 前端 setStreaming(false) 闪烁。
    * 故 turn_end 走本 kind，仅刷新用量数字；message.complete 仍由 agent_end（turn-end）独占。
+   *
+   * composer-gen-stats（D1）：扩展字段全来自 turn_end.message 的 AssistantMessage 自带结构
+   * （output/cacheRead/cacheWrite/input/model/provider），event-adapter 缺省补 null（禁 ?? 0，
+   * 无值编码纪律 D4）——interpreter 组装 GenStatsSample 调 onGenStats 采样。
    */
-  | { kind: 'turn-usage'; sessionId: string; inputTokens: number; totalTokens: number }
+  | {
+      kind: 'turn-usage'
+      sessionId: string
+      inputTokens: number
+      totalTokens: number
+      /** gen-stats：本 turn 真实 output（usage.output，缺省 null） */
+      outputTokens: number | null
+      /** gen-stats：prompt 缓存读（usage.cacheRead，缺省 null） */
+      cacheRead: number | null
+      /** gen-stats：prompt 缓存写（usage.cacheWrite，缺省 null） */
+      cacheWrite: number | null
+      /** gen-stats：本 turn 增量 input（usage.input，缺省 null） */
+      input: number | null
+      /** gen-stats：样本模型 id（AssistantMessage.model 运行时字段，缺省 null；D2 探针待验证） */
+      model: string | null
+      /** gen-stats：样本 provider（AssistantMessage.provider 运行时字段，缺省 null） */
+      provider: string | null
+    }
   /** extension setStatus —— interpreter 路由到 server.handleStatusSetUpdate + 转发 WS。 */
   | { kind: 'status-set'; sessionId: string; key: string; text: string; textRaw?: string }
   /** extension setStatus 对应的 WS 帧（interpreter 转发）。 */
@@ -280,3 +301,25 @@ export type PiTranslatedEvent =
    */
   | { kind: 'trace-trigger'; trigger: 'message_end' | 'agent_settled' | 'entry_appended' }
 
+
+/**
+ * composer-gen-stats（D1/D2）turn-usage 携带的生成指标样本（interpreter 组装 → onGenStats →
+ * GenStatsService.recordSample）。字段缺省一律 null（无值编码纪律 D4，禁 ?? 0——null 由
+ * service 侧逐字段判定丢弃语义，0 只允许作为真实测量值出现）。
+ */
+export interface GenStatsSample {
+  /** 本 turn 真实 output（usage.output，缺省 null） */
+  outputTokens: number | null
+  /** turn-start → turn-usage 本地时钟差（D2；无配对 turn-start → null，速度样本跳过） */
+  durationMs: number | null
+  /** 样本模型 id（AssistantMessage.model 运行时字段，缺省 null；D2 探针待验证真实性） */
+  model: string | null
+  /** 样本 provider（AssistantMessage.provider 运行时字段，缺省 null） */
+  provider: string | null
+  /** 本 turn 增量 input（usage.input，缺省 null） */
+  input: number | null
+  /** prompt 缓存读（usage.cacheRead，缺省 null；D7③ service 侧按 0 计入 promptTotal） */
+  cacheRead: number | null
+  /** prompt 缓存写（usage.cacheWrite，缺省 null） */
+  cacheWrite: number | null
+}

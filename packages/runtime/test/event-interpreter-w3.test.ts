@@ -38,6 +38,12 @@ describe('EventInterpreter · W3 onTurnUsage / onTurnFinalize 回调', () => {
         sessionId: 'sid-u6a',
         inputTokens: 163628,
         totalTokens: 163628,
+        outputTokens: null,
+        cacheRead: null,
+        cacheWrite: null,
+        input: null,
+        model: null,
+        provider: null,
       }
       interpreter.interpret([ev])
 
@@ -57,6 +63,12 @@ describe('EventInterpreter · W3 onTurnUsage / onTurnFinalize 回调', () => {
         sessionId: 'sid-order',
         inputTokens: 100,
         totalTokens: 100,
+        outputTokens: null,
+        cacheRead: null,
+        cacheWrite: null,
+        input: null,
+        model: null,
+        provider: null,
       }])
 
       expect(callOrder).toEqual(['onContextUpdate', 'onTurnUsage'])
@@ -68,6 +80,7 @@ describe('EventInterpreter · W3 onTurnUsage / onTurnFinalize 回调', () => {
 
       expect(() => interpreter.interpret([{
         kind: 'turn-usage', sessionId: 'sid-noop', inputTokens: 10, totalTokens: 10,
+        outputTokens: null, cacheRead: null, cacheWrite: null, input: null, model: null, provider: null,
       }])).not.toThrow()
       expect(onContextUpdate).toHaveBeenCalledTimes(1)
     })

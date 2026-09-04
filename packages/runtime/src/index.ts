@@ -1,5 +1,6 @@
 import { RuntimeServer } from './transport/server.js'
 import { SessionService } from './services/session/session-service.js'
+import { GenStatsService } from './services/session/gen-stats-service.js'
 import { createSessionDeliveryRegistry } from './services/session/session-delivery-registry.js'
 import { createCompletionBackflow } from './services/session/completion-backflow.js'
 import { fanOutSettled } from './services/session/agent-settled-fanout.js'
@@ -360,6 +361,11 @@ async function main(): Promise<void> {
       // W3：turn_end 单 turn 副作用（原 attachUsageListener turn_end 分支迁移至此，经中间事件链路触发；
       // W1 后 label 持久化移交 pi set_session_name RPC，此处承载 project sidecar 兜底）。
       onTurnUsage: (sid) => sessionService.handleTurnUsageSideEffects(sid),
+      // composer-gen-stats（D1/D2）：turn-usage 组装 GenStatsSample 后采样（recordSample 内部
+      // 完成落盘 + 映射写 1 + 扩展广播；同步 fire-and-forget 不阻塞事件流）。genStatsService
+      // 声明在下方（先于 sessionService 构造后）——createAdapter 仅在 session 创建后调用，
+      // 引用恒就绪（与上方 sessionService 自引用闭包同模式）。
+      onGenStats: (sid, sample) => genStatsService.recordSample(sid, sample),
       // W3：agent_end 副作用——isGenerating 复位（W1 后 label 直写兜底已随机制删除）。
       // 原 attachUsageListener agent_end 分支迁移至此。不迁移则 session 永远 busy（下条消息被拒）。
       // W4：转发 stopReason 用于 session_end 终态判定（'error'→error，其余→done）。
@@ -555,6 +561,21 @@ async function main(): Promise<void> {
   // 不持 undefined bus，见 session-service.setMessageBus）。
   sessionService.setMessageBus(messageBus)
 
+  // ── composer-gen-stats（u3）：GenStatsService 装配（依赖 bus publish 通道 + pm + sessionService；
+  // 存储算法 SSOT 在 gen-stats-store.ts，本处只接线）。三件事：
+  // ① 映射「清」腿：销毁回调挂 onSessionDestroyedHandlers（removeSessionEntry 汇聚点）；
+  // ② 映射「写 2」腿：state_changed 发布后置 tap（session-service 投影专用 bus 视图触发，
+  //    固定帧序 MF9：state_changed 同步送达后才重登记+推快照帧）；
+  // ③「写 1 + 降级链 + 扩展广播」经 interpreter onGenStats 与 session.getGenStats RPC case
+  //    触达（后者经 server.setServices 注入，见下方 optional 对象）。
+  const genStatsService = new GenStatsService({
+    publish: (sid, msg) => messageBus.publish(sid, msg),
+    pm,
+    sessionService,
+  })
+  genStatsService.registerSessionCleanup()
+  sessionService.setGenStatsModelSwitchTap((sid, modelKey) => genStatsService.onModelSwitched(sid, modelKey))
+
   // ── SkillRegistry（W1）：全局 + 项目级 skill 缓存 + chokidar 文件监听 ──
   // 构造在 sessionService 之后（依赖其 getActiveSessionIds/getSessionCwd 窄接口）。
   // initGlobal() 在 server.start 后调（下文），启动期扫描全局 skill 目录挂 watcher。
@@ -666,6 +687,8 @@ async function main(): Promise<void> {
     delivery: sessionDelivery,
     // 导入 pi 会话（import-session D5/U2）：session.importCandidates / session.import 路由。
     importService,
+    // composer-gen-stats（D4）：session.getGenStats 恢复腿 RPC（降级链 + 写 3 回填在 service 内部）。
+    genStats: genStatsService,
   })
 
   // Graceful shutdown on signals

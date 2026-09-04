@@ -43,7 +43,7 @@ import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
 import type { SessionManagerAction } from '@xyz-agent/extension-protocol'
 import type { IFileChangeDiff } from '../ports/file-change-diff.js'
-import type { PiTranslatedEvent } from './types.js'
+import type { GenStatsSample, PiTranslatedEvent } from './types.js'
 
 /** plain object 判定（type-safety review：plugin hook 返回值是不可信边界——Worker/
  * sandbox 里的第三方代码可返回任意值，改写前必须 shape 守卫，畸形值丢弃改写保原值）。 */
@@ -79,6 +79,14 @@ export interface EventInterpreterOptions {
    * 承载 project sidecar 兜底等 turn 级副作用；label 持久化 W1 起移交 pi set_session_name RPC）。
    */
   onTurnUsage?: (sessionId: string) => void
+  /**
+   * composer-gen-stats（D1/D2）：turn-usage 组装 GenStatsSample 后采样回调（组合根注入
+   * GenStatsService.recordSample）。durationMs = Date.now() - turnStartedAt（本地时钟差，
+   * D2 口径）；无配对 turn-start（runtime 中途启动/事件丢失）→ durationMs=null，
+   * service 侧速度样本跳过、命中率样本照常（§3.5）。同步 fire-and-forget（service 内部
+   * 完成落盘与扩展广播，不阻塞事件流）。
+   */
+  onGenStats?: (sessionId: string, sample: GenStatsSample) => void
   /**
    * pi agent_end 整循环结束时触发（组合根注入 sessionService.handleTurnEndSideEffects）。
    *
@@ -200,6 +208,8 @@ export class EventInterpreter {
   private diffChain: Promise<void> = Promise.resolve()
   /** 回合代际守卫：turn-start 自增；链上执行时 gen 不匹配 → 丢弃 accumulating（ready 绕过恒推，见 sendDiffFileChanges） */
   private turnGen = 0
+  /** composer-gen-stats（D2）：本 turn 起始本地时钟（turn-start 记；无配对 turn-usage 消费为 null） */
+  private turnStartedAt: number | null = null
   /** turn-end 压制标记：true 后到达的 accumulating 直接 no-op（同回合迟到 tool-call-end 不产生新帧） */
   private turnFinalizing = false
   /**
@@ -300,6 +310,9 @@ export class EventInterpreter {
         this.currentMessageId = ev.messageId
         this.turnGen += 1
         this.turnFinalizing = false
+        // composer-gen-stats（D2）：turn 起始本地时钟锚点（pi-statusline 同口径；
+        // pi entry 无起算点，只能用 runtime 本地时钟）
+        this.turnStartedAt = Date.now()
         // 替换新 Map（非原地 clear）：上一 turn 排在 diff 链上的 ready 计算闭包仍持有旧引用，
         // 原地清空会让 untracked 行数回退拿不到 content。
         this.writeContents = new Map()
@@ -329,6 +342,21 @@ export class EventInterpreter {
         // message.complete 仍由 turn-end/agent_end 独占）。
         this.opts.onContextUpdate?.(ev.sessionId, { inputTokens: ev.inputTokens, totalTokens: ev.totalTokens })
         this.opts.onTurnUsage?.(ev.sessionId)
+        // composer-gen-stats（D1/D2）：组装生成指标样本采样（fire-and-forget 同步，不阻塞事件流）。
+        // durationMs = now - turnStartedAt；无配对 turn-start → null（速度样本由 service 跳过，
+        // 命中率样本照常——promptTotal 与时间无关）。
+        if (this.opts.onGenStats) {
+          const startedAt = this.turnStartedAt
+          this.opts.onGenStats(ev.sessionId, {
+            outputTokens: ev.outputTokens,
+            durationMs: startedAt === null ? null : Date.now() - startedAt,
+            model: ev.model,
+            provider: ev.provider,
+            input: ev.input,
+            cacheRead: ev.cacheRead,
+            cacheWrite: ev.cacheWrite,
+          })
+        }
         return
       case 'status-set':
         this.opts.onStatusSetUpdate?.({ sessionId: this.sessionId, key: ev.key, text: ev.text, textRaw: ev.textRaw })
