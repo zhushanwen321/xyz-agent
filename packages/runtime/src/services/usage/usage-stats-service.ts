@@ -138,40 +138,56 @@ export class UsageStatsService {
       input: createReadStream(filePath, { encoding: 'utf-8' }),
       crlfDelay: Infinity,
     })
+    // rl error 吞转发（2026-09-04 事故审计）：readline 把 input 流 error 转发到
+    // interface 实例 re-emit，与 for-await 的 iterator listener 多播共存；文件级
+    // 容错由下方 try/catch 承担（双保险：iterator rejection / 裸 emit 两路都不逃逸）
+    rl.on('error', () => {})
 
-    for await (const line of rl) {
-      if (!line.trim()) continue
+    try {
+      for await (const line of rl) {
+        if (!line.trim()) continue
 
-      let entry: Record<string, unknown>
-      try {
-        entry = JSON.parse(line) as Record<string, unknown>
-      } catch {
-        skippedLines++
-        continue
+        let entry: Record<string, unknown>
+        try {
+          entry = JSON.parse(line) as Record<string, unknown>
+        } catch {
+          skippedLines++
+          continue
+        }
+
+        // 提取 cwd：逐行读直到找到第一个 type==='session' entry
+        // 容错首行为 session_info 的旧文件——继续读找 session entry
+        if (!foundSessionEntry && entry.type === 'session' && typeof entry.cwd === 'string') {
+          cwd = entry.cwd
+          foundSessionEntry = true
+        }
+
+        // 按原顺序尝试三类判定；'skip' 短路（timestamp 无效行不再计入任何桶）
+        const row =
+          this.rowFromAssistant(entry, cwd) ??
+          this.rowFromToolResult(entry, cwd) ??
+          this.rowFromCompactionEntry(entry, cwd)
+
+        if (row === 'skip') {
+          skippedLines++
+          continue
+        }
+        if (row) {
+          rows.push(row)
+        }
+
+        // 其余行 continue
       }
-
-      // 提取 cwd：逐行读直到找到第一个 type==='session' entry
-      // 容错首行为 session_info 的旧文件——继续读找 session entry
-      if (!foundSessionEntry && entry.type === 'session' && typeof entry.cwd === 'string') {
-        cwd = entry.cwd
-        foundSessionEntry = true
+    } catch {
+      // 单文件读失败（流错误/中断）→ 空分片降级，不打断整个聚合（与上方 readdir
+      // 失败返回空结果的容错语义一致）；mtime/size 键保留，下次变更时重读
+      return {
+        mtimeMs: fileStat.mtimeMs,
+        size: fileStat.size,
+        rows: [],
+        skippedLines: 0,
+        cwd: null,
       }
-
-      // 按原顺序尝试三类判定；'skip' 短路（timestamp 无效行不再计入任何桶）
-      const row =
-        this.rowFromAssistant(entry, cwd) ??
-        this.rowFromToolResult(entry, cwd) ??
-        this.rowFromCompactionEntry(entry, cwd)
-
-      if (row === 'skip') {
-        skippedLines++
-        continue
-      }
-      if (row) {
-        rows.push(row)
-      }
-
-      // 其余行 continue
     }
 
     return {
