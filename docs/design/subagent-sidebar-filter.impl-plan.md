@@ -76,7 +76,7 @@ Wave 1: u-foundation ∥ u-i18n（并行）→ Wave 2: u-filterbar → Wave 3: u
 | u-foundation | committed | 1 | 单测 23 passed（主 agent 复跑核验：矩阵/D4 回归/黑盒/形态全覆盖） |
 | u-i18n | committed | 1 | commit 见 git log；check:i18n 186 passed（主 agent 复跑核验；structured-output 汇报机制失败不影响实物验收） |
 | u-filterbar | committed | 1 | 组件测试 10 passed（主 agent 复跑核验）+ vue-tsc 零错误 |
-| u-wiring | pending | 0 | |
+| u-wiring | committed | 2 | R1 全量 1 个领地外失败（sidebar-layout slug 用例，D6 预期行为变化）→ 主 agent 授权领地扩展定向修复；R2 复核：全量 362 文件/3783 测试连续两轮全绿 + typecheck 零错误；另有 1 次不确定 flaky（两次复跑均绿）已记录 |
 | u-acceptance | pending | 0 | |
 
 ## 7 残留风险与变更历史

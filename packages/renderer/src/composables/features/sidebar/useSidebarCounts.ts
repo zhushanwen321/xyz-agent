@@ -13,6 +13,7 @@ import { useFileTreeStore } from '@/stores/fileTree'
 import { usePanelStore } from '@/stores/panel'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
+import { isDoneProjection } from '@/lib/subagent-bucket'
 
 export function useSidebarCounts(focusedSessionId: Ref<string | null>) {
   const fileTreeStore = useFileTreeStore()
@@ -27,8 +28,13 @@ export function useSidebarCounts(focusedSessionId: Ref<string | null>) {
     return fileTreeStore.getTree(sid)?.length ?? 0
   })
   const subagentCount = computed(() => subagentStore.recordsOf(focusedSessionId.value ?? '').value.length)
+  // D8 口径收窄：done 投影（one-shot 轮终等 GC，renderer 侧永久态）不计入——badge 语义
+  // 与「进行中」桶判据恒一致（同源 isDoneProjection），消除 badge 永久虚亮
   const subagentRunningCount = computed(
-    () => subagentStore.recordsOf(focusedSessionId.value ?? '').value.filter((r) => r.status === 'running').length,
+    () =>
+      subagentStore
+        .recordsOf(focusedSessionId.value ?? '')
+        .value.filter((r) => r.status === 'running' && !isDoneProjection(r)).length,
   )
   const subagentList = computed(() => subagentStore.recordsOf(focusedSessionId.value ?? '').value)
   const workflowCount = computed(() => workflowStore.recordsOf(focusedSessionId.value ?? '').value.length)

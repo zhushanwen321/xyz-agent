@@ -41,7 +41,7 @@ const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: SidebarTab
-  /** running 态数量（badge 精确化：仅 running>0 亮蓝点，避免已完成任务也亮） */
+  /** 进行中桶数量（badge 精确化：仅 >0 亮蓝点；done 投影不计入，D8 与「进行中」桶同源 isDoneProjection） */
   subagentRunningCount: number
   workflowRunningCount: number
 }>()

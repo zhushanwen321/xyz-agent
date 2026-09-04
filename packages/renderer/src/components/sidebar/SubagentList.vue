@@ -3,7 +3,8 @@
     展示组件 · subagent 列表（Agents tab）。
     渲染 SubagentRecord[] 卡片：状态点 + agent 名称 + task 摘要 + turns/tokens/elapsed。
     点击卡片 → emit('select', subagentId)，由父组件切换 Panel sessionId。
-    空态展示提示文案。
+    二级筛选（进行中 / 已结束 / 全部）：SubagentFilterBar + subagent-bucket SSOT 派生
+    （设计 subagent-sidebar-filter，D3/D4/D5/D6）。空态展示提示文案。
   -->
   <div class="flex h-full min-h-0 flex-col" data-testid="subagent-list">
     <!-- 加载态（M1：loadSubagents 在途） -->
@@ -25,82 +26,9 @@
       <p class="text-[length:var(--text-2xs)] text-neutral-mid">{{ t('sidebar.subagentList.loadFailed', { error: loadError }) }}</p>
       <Button variant="ghost" class="h-6 text-[length:var(--text-2xs)] text-accent" data-testid="subagent-list-retry" @click="emit('retry')">{{ t('sidebar.subagentList.retry') }}</Button>
     </div>
-    <!-- 列表 -->
-    <ScrollArea v-else-if="subagents.length > 0" class="min-h-0 flex-1">
-      <div class="flex flex-col px-1.5">
-        <div
-          v-for="record in subagents"
-          :key="record.subagentId"
-          class="group relative cursor-pointer rounded-md px-2 py-1 transition-colors hover:bg-surface-hover"
-          data-testid="subagent-card"
-          :title="record.slug ? record.agent + ' · ' + record.slug : record.agent"
-          @click="emit('select', record.subagentId)"
-          @mouseleave="cancellingId = null"
-        >
-          <!-- 状态指示（引擎 icon 最左，D9；尺寸与 spinner 同级 13px） -->
-          <div class="flex items-center gap-2">
-            <component
-              :is="resolveEngineIcon(record.engine).icon"
-              class="size-[13px] shrink-0 text-neutral-dim"
-              :title="resolveEngineIcon(record.engine).label"
-              data-testid="subagent-engine-icon"
-            />
-            <Loader2
-              v-if="isStreaming(record)"
-              class="size-[13px] shrink-0 animate-spin text-accent"
-              data-testid="subagent-card-spinner"
-            />
-            <span
-              v-else
-              class="size-2 shrink-0 rounded-full"
-              :class="statusDotClass(record)"
-            />
-            <span class="min-w-0 flex-1 truncate text-[length:var(--text-xs)] font-medium leading-[1.35] text-neutral-fg">
-              {{ record.agent }}
-            </span>
-            <!-- slug 短标签（与 WorkflowList 第一行对齐：名称右侧 mono 小字；旧 session 兜底空串不渲染） -->
-            <span
-              v-if="record.slug"
-              class="shrink-0 font-mono text-[length:var(--text-3xs)] text-neutral-mid"
-              data-testid="subagent-card-slug"
-            >
-              {{ record.slug }}
-            </span>
-            <!-- cancel 按钮（streaming 态显示，inline 两段式确认；waiting/done 投影无进程可取消，不显示） -->
-            <Button
-              v-if="isStreaming(record)"
-              variant="ghost"
-              size="icon"
-              :data-testid="cancellingId === record.subagentId ? 'subagent-action-cancel-confirm' : 'subagent-action-cancel'"
-              :class="cancellingId === record.subagentId
-                ? 'size-5 rounded-sm border border-danger bg-danger text-neutral-fg'
-                : 'size-5 text-neutral-dim hover:text-danger'"
-              :title="cancellingId === record.subagentId ? t('sidebar.subagentList.cancelConfirm') : t('sidebar.subagentList.cancel')"
-              @click.stop="onCancelClick(record.subagentId)"
-            >
-              <Check v-if="cancellingId === record.subagentId" class="size-3" />
-              <X v-else class="size-3" />
-            </Button>
-          </div>
-
-          <!-- 摘要 -->
-          <div class="mt-1 flex items-center gap-2 pl-[42px] font-mono text-[length:var(--text-3xs)] text-neutral-dim">
-            <span v-if="record.turns !== undefined">{{ record.turns }} {{ t('sidebar.subagentList.turnsUnit') }}</span>
-            <span v-if="record.totalTokens !== undefined">· {{ formatTokens(record.totalTokens, t('sidebar.subagentList.tokUnit')) }}</span>
-            <span v-if="record.elapsedSeconds !== undefined">· {{ formatElapsed(record.elapsedSeconds) }}</span>
-          </div>
-
-          <!-- 任务描述 -->
-          <div class="mt-0.5 truncate pl-[42px] text-[length:var(--text-2xs)] leading-[1.3] text-neutral-mid">
-            {{ record.task }}
-          </div>
-        </div>
-      </div>
-    </ScrollArea>
-
-    <!-- 空态 -->
+    <!-- 全量空态（D6：无数据时不渲染筛选条，沿用既有空态） -->
     <div
-      v-else
+      v-else-if="subagents.length === 0"
       class="flex flex-col items-center justify-center gap-2 py-10 text-center"
       data-testid="subagent-list-empty"
     >
@@ -108,15 +36,123 @@
       <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-55">{{ t('sidebar.subagentList.empty') }}</p>
       <p class="text-[length:var(--text-3xs)] text-neutral-dim opacity-40">{{ t('sidebar.subagentList.emptyHint') }}</p>
     </div>
+    <!-- 有数据列表态：二级筛选槽 + 按桶过滤的列表 / 桶空态 -->
+    <template v-else>
+      <SubagentFilterBar
+        :counts="countSubagents(subagents)"
+        :model-value="filter"
+        @update:model-value="setFilter"
+      />
+      <!-- 列表（当前桶非空） -->
+      <ScrollArea v-if="visibleSubagents.length > 0" class="min-h-0 flex-1">
+        <div class="flex flex-col px-1.5">
+          <div
+            v-for="record in visibleSubagents"
+            :key="record.subagentId"
+            class="group relative cursor-pointer rounded-md px-2 py-1 transition-colors hover:bg-surface-hover"
+            data-testid="subagent-card"
+            :title="record.slug ? record.agent + ' · ' + record.slug : record.agent"
+            @click="emit('select', record.subagentId)"
+            @mouseleave="cancellingId = null"
+          >
+            <!-- 状态指示（引擎 icon 最左，D9；尺寸与 spinner 同级 13px） -->
+            <div class="flex items-center gap-2">
+              <component
+                :is="resolveEngineIcon(record.engine).icon"
+                class="size-[13px] shrink-0 text-neutral-dim"
+                :title="resolveEngineIcon(record.engine).label"
+                data-testid="subagent-engine-icon"
+              />
+              <Loader2
+                v-if="isStreaming(record)"
+                class="size-[13px] shrink-0 animate-spin text-accent"
+                data-testid="subagent-card-spinner"
+              />
+              <span
+                v-else
+                class="size-2 shrink-0 rounded-full"
+                :class="statusDotClass(record)"
+              />
+              <span class="min-w-0 flex-1 truncate text-[length:var(--text-xs)] font-medium leading-[1.35] text-neutral-fg">
+                {{ record.agent }}
+              </span>
+              <!-- slug 短标签（与 WorkflowList 第一行对齐：名称右侧 mono 小字；旧 session 兜底空串不渲染） -->
+              <span
+                v-if="record.slug"
+                class="shrink-0 font-mono text-[length:var(--text-3xs)] text-neutral-mid"
+                data-testid="subagent-card-slug"
+              >
+                {{ record.slug }}
+              </span>
+              <!-- cancel 按钮（streaming 态显示，inline 两段式确认；waiting/done 投影无进程可取消，不显示） -->
+              <Button
+                v-if="isStreaming(record)"
+                variant="ghost"
+                size="icon"
+                :data-testid="cancellingId === record.subagentId ? 'subagent-action-cancel-confirm' : 'subagent-action-cancel'"
+                :class="cancellingId === record.subagentId
+                  ? 'size-5 rounded-sm border border-danger bg-danger text-neutral-fg'
+                  : 'size-5 text-neutral-dim hover:text-danger'"
+                :title="cancellingId === record.subagentId ? t('sidebar.subagentList.cancelConfirm') : t('sidebar.subagentList.cancel')"
+                @click.stop="onCancelClick(record.subagentId)"
+              >
+                <Check v-if="cancellingId === record.subagentId" class="size-3" />
+                <X v-else class="size-3" />
+              </Button>
+            </div>
+
+            <!-- 摘要 -->
+            <div class="mt-1 flex items-center gap-2 pl-[42px] font-mono text-[length:var(--text-3xs)] text-neutral-dim">
+              <span v-if="record.turns !== undefined">{{ record.turns }} {{ t('sidebar.subagentList.turnsUnit') }}</span>
+              <span v-if="record.totalTokens !== undefined">· {{ formatTokens(record.totalTokens, t('sidebar.subagentList.tokUnit')) }}</span>
+              <span v-if="record.elapsedSeconds !== undefined">· {{ formatElapsed(record.elapsedSeconds) }}</span>
+            </div>
+
+            <!-- 任务描述 -->
+            <div class="mt-0.5 truncate pl-[42px] text-[length:var(--text-2xs)] leading-[1.3] text-neutral-mid">
+              {{ record.task }}
+            </div>
+          </div>
+        </div>
+      </ScrollArea>
+
+      <!-- 「进行中」空桶：自适应空态 + 一键查看全部（G1，设计 §3.1 空桶行） -->
+      <div
+        v-else-if="filter === 'active'"
+        class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 py-10 text-center"
+        data-testid="subagent-list-empty-active"
+      >
+        <Bot class="size-7 text-neutral-dim opacity-40" />
+        <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-55">{{ t('sidebar.subagentFilter.emptyActive') }}</p>
+        <p class="text-[length:var(--text-3xs)] text-neutral-dim opacity-40">{{ t('sidebar.subagentFilter.emptyActiveHint') }}</p>
+        <Button
+          variant="ghost"
+          class="h-6 text-[length:var(--text-2xs)] text-accent"
+          data-testid="subagent-filter-jump-all"
+          @click="setFilter('all')"
+        >{{ t('sidebar.subagentFilter.viewAll', { count: subagents.length }) }}</Button>
+      </div>
+      <!-- 「已结束」空桶：仅文案（设计 D6/§3.1） -->
+      <div
+        v-else
+        class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 py-10 text-center"
+        data-testid="subagent-list-empty-ended"
+      >
+        <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-55">{{ t('sidebar.subagentFilter.emptyEnded') }}</p>
+      </div>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { Loader2, Bot, AlertCircle, X, Check } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import SubagentFilterBar from '@/components/sidebar/SubagentFilterBar.vue'
+import { countSubagents, filterSubagents, isDoneProjection } from '@/lib/subagent-bucket'
+import { useSubagentBucketFilter } from '@/composables/features/sidebar/useSubagentBucketFilter'
 import type { SubagentRecord } from '@xyz-agent/shared'
 import { deriveClosedDisplay } from '@xyz-agent/shared'
 import { resolveEngineIcon } from '@/constants/engine-icons'
@@ -128,14 +164,23 @@ const SECONDS_PER_MINUTE = 60
 
 const { t } = useI18n()
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   subagents: SubagentRecord[]
+  /** 焦点 session id（null = Overview 态既有空态路径）；per-session 筛选分区 key（D5） */
+  sessionId: string | null
   isLoading?: boolean
   loadError?: string | null
 }>(), {
   isLoading: false,
   loadError: null,
 })
+
+// per-session 筛选分区（D5）：组件纯读，无 watch 无实例级 filter ref——分区语义由
+// useSubagentBucketFilter / useSessionScopedState 工厂承担（ADR-0049）
+const { filter, setFilter } = useSubagentBucketFilter(computed(() => props.sessionId))
+
+/** 当前桶下的可见记录（纯内存派生，subagent-bucket SSOT） */
+const visibleSubagents = computed(() => filterSubagents(props.subagents, filter.value))
 
 const emit = defineEmits<{
   select: [subagentId: string]
@@ -165,9 +210,8 @@ function isStreaming(record: SubagentRecord): boolean {
   return record.status === 'running' && record.result === undefined && record.resumable !== true
 }
 
-function isDone(record: SubagentRecord): boolean {
-  return record.status === 'running' && record.result !== undefined && record.chatMode === false
-}
+// done 投影展示判据（D4 SSOT）：引用 subagent-bucket 的 isDoneProjection，禁止本地重复实现
+const isDone = isDoneProjection
 
 function isWaiting(record: SubagentRecord): boolean {
   return record.status === 'running' && !isStreaming(record) && !isDone(record)
