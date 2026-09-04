@@ -27,7 +27,7 @@ function createMockBroker(): IMessageBroker {
   }
 }
 
-// ── 常量：pi 侧 bridge extension 转发的事件全集（resources/pi/agent/extensions/bridge/index.ts EVENTS） ──
+// ── 常量：pi 侧 bridge extension 转发的事件全集（extensions/taiji/plugin-bridge/src/index.ts 的 pi.on 注册段，select+BRIDGE_MARKER 通道） ──
 
 const PI_BRIDGE_EVENTS = [
   'agent_start',

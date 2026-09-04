@@ -301,23 +301,30 @@ describe('bridgeRequestIds 登记（marker 命中 → timeout-manager 有记录�
   })
 })
 
-// ── addBridgeRequest 与 registerTimeout 的登记语义等价 ──
+// ── addBridgeRequest：marker 通道唯一的 bridge 登记路径 ──
 
 describe('ExtensionTimeoutManager.addBridgeRequest', () => {
-  it('登记语义与 registerTimeout(bridge:*) 分支一致（isBridgeRequest + session 跟踪清理）', () => {
+  it('登记 bridgeRequestIds + session 跟踪，clearForSession 清理（marker 通道唯一登记路径）', () => {
     const mgr = new ExtensionTimeoutManager()
-    // 旧通道登记方式（registerTimeout 的 bridge: 前缀分支，U4 清理前并存）
-    mgr.registerTimeout('sess-old', 'req-old', 'bridge:sync', () => {})
-    // 新通道登记方式（marker 识别 → handler 显式登记）
-    mgr.addBridgeRequest('sess-new', 'req-new')
+    mgr.addBridgeRequest('sess-1', 'req-a')
+    mgr.addBridgeRequest('sess-2', 'req-b')
 
-    expect(mgr.isBridgeRequest('req-old')).toBe(true)
-    expect(mgr.isBridgeRequest('req-new')).toBe(true)
+    expect(mgr.isBridgeRequest('req-a')).toBe(true)
+    expect(mgr.isBridgeRequest('req-b')).toBe(true)
 
-    // 两者的 session 跟踪互通：按各自 session 清理互不影响
-    mgr.clearForSession('sess-old')
-    expect(mgr.isBridgeRequest('req-old')).toBe(false)
-    expect(mgr.isBridgeRequest('req-new')).toBe(true)
+    // session 级跟踪：按各自 session 清理互不影响
+    mgr.clearForSession('sess-1')
+    expect(mgr.isBridgeRequest('req-a')).toBe(false)
+    expect(mgr.isBridgeRequest('req-b')).toBe(true)
+  })
+
+  it('registerTimeout 不再登记 bridge 请求（旧 bridge: 前缀分支已删，防回归）', () => {
+    const mgr = new ExtensionTimeoutManager()
+    // 旧通道入参形态（防御性锁定）：registerTimeout 只服务 extension-ui kind，
+    // bridge 登记责任单落在 BridgeHandler 入口的 addBridgeRequest——误传 bridge:
+    // method 不得再进 bridgeRequestIds（否则前端误发拦截依据出现第二来源）
+    mgr.registerTimeout('sess-x', 'req-old-style', 'bridge:sync', () => {})
+    expect(mgr.isBridgeRequest('req-old-style')).toBe(false)
   })
 })
 

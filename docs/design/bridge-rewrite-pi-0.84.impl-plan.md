@@ -94,9 +94,9 @@ graph TD
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|-------------------------------------------|------|---------|
-| U1 | committed | 1 | typecheck exit 0 + vitest 91 passed（含 marker.test.ts 4 tests）；偏差 #2-#4 登记 |
-| U2 | pending | 0 | — |
-| U3 | pending | 0 | — |
+| U1 | committed | 1 | e084a9ab7；typecheck exit 0 + vitest 91 passed（含 marker.test.ts 4 tests）；偏差 #2-#4 登记 |
+| U2 | committed | 1 | e71627b62；extensions 三连绿（26/26）+ check-extension-dependencies exit 0（含授权补登 extension-dependencies.json，偏差 #8）+ pi CLI 实测加载成功（marker/sync/event 帧形状吻合设计）；偏差 #9-#14 见 subagent 报告（session_start 双职责方案/Tool not found 双形态/AgentToolResult isError 兼容字段/显式 pi.on 注册/--no-extensions 实测形态/extension-logger 无 info 级） |
+| U3 | committed | 1 | 437988df4；typecheck exit 0 + 26/26 新测试 + 72/72 增量回归；偏差 #5-#7 登记（登记点改 BridgeHandler 入口 + server.ts 装配行并入 U4 + event 恒 null 例外 + 4 旧测试失败清单：bridge-sync 5 / bridge-reconnect 12） |
 | U4 | pending | 0 | — |
 | U5 | pending | 0 | — |
 

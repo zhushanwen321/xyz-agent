@@ -25,9 +25,14 @@ const noopGitInfoReader: IGitInfoReader = { readGitInfo: () => undefined, pruneS
  * Bridge extension message format tests.
  *
  * Test strategy:
- * - EventAdapter bridge detection: unit test the translate method for bridge: methods
  * - Server bridge routing: test handleBridgeRequest directly with mock IPiEngine
+ *   （回包断言按新契约：JSON.stringify + 'select'，设计 bridge-rewrite-pi-0.84 §3.3-D1）
  * - Extension timeout bridge tracking: test registerExtensionTimeout for bridge: methods
+ *
+ * [HISTORICAL] 旧通道的「EventAdapter 对 method='bridge:*' 前缀帧的直接识别」用例已删除
+ * （原 'detects bridge: prefix' / 'routes multiple bridge methods'）：该翻译分支随旧通道
+ * 清理删除（设计 §3.3-D6），新通道 method 恒为 'select' 经 BRIDGE_MARKER 识别，marker
+ * 识别行为由 test/bridge-marker-channel.test.ts 覆盖。
  */
 
 import {
@@ -150,62 +155,10 @@ function attachAndEmit(adapter: any, mockClient: { onEvent: ReturnType<typeof vi
 }
 
 describe('EventAdapter: bridge method detection', () => {
-  it('detects bridge: prefix in extension_ui_request and calls callback', async () => {
-    const bridgeCallback = vi.fn()
-    const wsSender = vi.fn()
-    const adapter = await buildRealAdapter('test-session', wsSender, {
-      onBridgeUIRequest: bridgeCallback,
-    })
-
-    const mockClient = makeMockClient()
-    const event = {
-      type: 'extension_ui_request' as const,
-      method: 'bridge:sync',
-      id: 'bridge-req-1',
-    }
-
-    attachAndEmit(adapter, mockClient, event)
-    await new Promise((r) => setTimeout(r, 50))
-
-    expect(bridgeCallback).toHaveBeenCalledTimes(1)
-    expect(bridgeCallback).toHaveBeenCalledWith(
-      'bridge-req-1',
-      'test-session',
-      'bridge:sync',
-      expect.any(Object),
-    )
-
-    // Bridge message should NOT be forwarded to the frontend (WsSender)
-    expect(wsSender).not.toHaveBeenCalled()
-  })
-
-  it('routes multiple bridge methods without frontend timeout registration', async () => {
-    const bridgeCallback = vi.fn()
-    const extensionCallback = vi.fn()
-    const wsSender = vi.fn()
-    const adapter = await buildRealAdapter('test-session', wsSender, {
-      onExtensionUIRequest: extensionCallback,
-      onBridgeUIRequest: bridgeCallback,
-    })
-
-    const methods = ['bridge:sync', 'bridge:tool_execute', 'bridge:event', 'bridge:intercept', 'bridge:append_entry']
-
-    for (const method of methods) {
-      bridgeCallback.mockClear()
-      extensionCallback.mockClear()
-      wsSender.mockClear()
-
-      const event = { type: 'extension_ui_request' as const, method, id: `req-${method}` }
-      const mockClient = makeMockClient()
-      attachAndEmit(adapter, mockClient, event)
-      await new Promise((r) => setTimeout(r, 50))
-      adapter.detach()
-
-      expect(bridgeCallback).toHaveBeenCalledTimes(1)
-      expect(extensionCallback).not.toHaveBeenCalled()
-      expect(wsSender).not.toHaveBeenCalled()
-    }
-  })
+  // [HISTORICAL] 'detects bridge: prefix in extension_ui_request' 与
+  // 'routes multiple bridge methods without frontend timeout registration' 两用例已删除：
+  // 断言的旧通道翻译分支（method.startsWith('bridge:') 直接产 bridge-ui kind）已随
+  // bridge 重写清理（设计 §3.3-D6）——新通道 marker 识别行为见 bridge-marker-channel.test.ts。
 
   it('does not interfere with non-bridge extension_ui_request methods', async () => {
     const extensionCallback = vi.fn()
@@ -235,6 +188,18 @@ describe('EventAdapter: bridge method detection', () => {
 
 // ── Server bridge routing tests ──────────────────────────────────
 
+/**
+ * 解析 bridge-handler 回包（新契约，设计 bridge-rewrite-pi-0.84 §3.3-D1）：
+ * sendExtensionUiResponse(id, JSON.stringify(<对象>), 'select')——rpc-client 对 select
+ * 走 `String(response)` value 分支，调用方必须传 JSON 字符串（传对象会变 '[object Object]'）。
+ */
+function parseBridgeResponse(call: unknown[]): Record<string, unknown> {
+  const [, response, method] = call as [string, string, string | undefined]
+  expect(method).toBe('select')
+  expect(typeof response).toBe('string')
+  return JSON.parse(response) as Record<string, unknown>
+}
+
 describe('RuntimeServer: bridge request routing', () => {
   let server: RuntimeServer
 
@@ -261,15 +226,15 @@ describe('RuntimeServer: bridge request routing', () => {
     it('sends tools and commands response via extension_ui_response', async () => {
       await server.handleBridgeRequest('sess-1', 'bridge-req-1', 'bridge:sync', {})
 
-      // sendExtensionUiResponse(id, response, method?) — bridge 场景无 method，response 是对象
-      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith(
-        'bridge-req-1',
-        expect.objectContaining({
-          tools: expect.any(Array),
-          commands: expect.any(Array),
-          success: true,
-        }),
-      )
+      // 新契约：回包是 JSON 字符串 + 'select'（bridge-handler stringify 序列化）
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+      expect(mockSendExtensionUiResponse.mock.calls[0][0]).toBe('bridge-req-1')
+      const response = parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0])
+      expect(response).toEqual(expect.objectContaining({
+        tools: expect.any(Array),
+        commands: expect.any(Array),
+        success: true,
+      }))
     })
 
     it('aggregates tools from plugin contributions', async () => {
@@ -295,8 +260,7 @@ describe('RuntimeServer: bridge request routing', () => {
 
       await server.handleBridgeRequest('sess-1', 'bridge-req-2', 'bridge:sync', {})
 
-      const callArgs = mockSendExtensionUiResponse.mock.calls[0]
-      const response = callArgs[1] as Record<string, unknown>
+      const response = parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0])
 
       expect(response.tools).toHaveLength(0)
       expect(response.commands).toHaveLength(0)
@@ -311,10 +275,13 @@ describe('RuntimeServer: bridge request routing', () => {
         params: { name: 'world' },
       })
 
-      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith(
-        'bridge-req-exec',
-        expect.anything(),
-      )
+      // 新契约：JSON 字符串 + 'select'（bridge-handler stringify 序列化）
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+      const response = parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0])
+      expect(response).toEqual(expect.objectContaining({
+        content: expect.any(String),
+        isError: expect.any(Boolean),
+      }))
     })
   })
 
@@ -336,10 +303,10 @@ describe('RuntimeServer: bridge request routing', () => {
         data: { sessionId: 'sess-1', query: 'hello' },
       })
 
-      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith(
-        'bridge-req-int',
-        expect.any(Object),
-      )
+      // 新契约：JSON 字符串 + 'select'（PluginService mock 无 handleBridgeIntercept → {} 回包）
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+      const response = parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0])
+      expect(response).toEqual({})
     })
   })
 
@@ -347,12 +314,9 @@ describe('RuntimeServer: bridge request routing', () => {
     it('sends error response for unknown method', async () => {
       await server.handleBridgeRequest('sess-1', 'bridge-req-unk', 'bridge:unknown_method', {})
 
-      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith(
-        'bridge-req-unk',
-        expect.objectContaining({
-          error: expect.stringContaining('Unknown bridge method'),
-        }),
-      )
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+      const response = parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0])
+      expect(response.error).toEqual(expect.stringContaining('Unknown bridge method'))
     })
   })
 })
@@ -381,21 +345,24 @@ describe('RuntimeServer: bridge timeout exclusion', () => {
     vi.useRealTimers()
   })
 
-  it('does NOT register frontend timeout for bridge: methods', () => {
-    server.registerExtensionTimeout('sess-1', 'req-bridge-sync', 'bridge:sync', {})
-    server.registerExtensionTimeout('sess-1', 'req-bridge-exec', 'bridge:tool_execute', {})
-    server.registerExtensionTimeout('sess-1', 'req-bridge-ev', 'bridge:event', {})
-    server.registerExtensionTimeout('sess-1', 'req-bridge-int', 'bridge:intercept', {})
+  it('does NOT register frontend timeout for bridge: methods', async () => {
+    // 生产链路形态（marker 通道）：请求经 handleBridgeRequest → BridgeHandler 入口
+    // addBridgeRequest 登记（旧 registerTimeout 的 bridge: 前缀分支已删）
+    await server.handleBridgeRequest('sess-1', 'req-bridge-sync', 'bridge:sync', {})
+    await server.handleBridgeRequest('sess-1', 'req-bridge-exec', 'bridge:tool_execute', {})
+    await server.handleBridgeRequest('sess-1', 'req-bridge-ev', 'bridge:event', {})
+    await server.handleBridgeRequest('sess-1', 'req-bridge-int', 'bridge:intercept', {})
+    mockSendExtensionUiResponse.mockClear() // 正常回包已发生，只观察超时窗口
 
     // Advance time past the normal timeout duration
     vi.advanceTimersByTime(300_000)
 
-    // No timeout responses should be sent for bridge methods
+    // 超时窗口内零新增调用：bridge 请求无前端弹窗超时（等待终态由跨进程链路保证）
     expect(mockSendExtensionUiResponse).not.toHaveBeenCalled()
   })
 
-  it('tracks bridge requestIds in bridgeRequestIds set', () => {
-    server.registerExtensionTimeout('sess-1', 'req-bridge-track', 'bridge:sync', {})
+  it('tracks bridge requestIds in bridgeRequestIds set', async () => {
+    await server.handleBridgeRequest('sess-1', 'req-bridge-track', 'bridge:sync', {})
 
     // Bridge requestIds should be tracked
     const mgr = (server as unknown as { extensionTimeoutMgr: { isBridgeRequest(id: string): boolean } }).extensionTimeoutMgr

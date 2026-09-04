@@ -2,8 +2,10 @@
  * Bridge Reconnect Tests.
  *
  * Tests the bridge connection lifecycle between pi (extension) and runtime.
- * The bridge is the pi RPC connection through which extension_ui_request messages
- * with 'bridge:' method prefix are routed.
+ * The bridge is the pi RPC connection through which plugin bridge requests
+ * (select + BRIDGE_MARKER 通道，协议 v2) are routed——请求的 method 字段沿用
+ * 'bridge:sync' 等值，分派逻辑不变；回包契约 = JSON.stringify + 'select'（设计
+ * bridge-rewrite-pi-0.84 §3.3-D1）。
  *
  * Test strategy:
  * - Mock SessionService.getRpcClient to simulate connected/disconnected states
@@ -143,6 +145,18 @@ function syncPayload(tools: Array<{ name: string; description: string; parameter
   return { tools, commands: [], success: true as const }
 }
 
+/**
+ * 解析 bridge-handler 回包（新契约，设计 bridge-rewrite-pi-0.84 §3.3-D1）：
+ * sendExtensionUiResponse(id, JSON.stringify(<对象>), 'select')——rpc-client 对 select
+ * 走 `String(response)` value 分支，调用方必须传 JSON 字符串（传对象会变 '[object Object]'）。
+ */
+function parseBridgeResponse(call: unknown[]): Record<string, unknown> {
+  const [, response, method] = call as [string, string, string | undefined]
+  expect(method).toBe('select')
+  expect(typeof response).toBe('string')
+  return JSON.parse(response) as Record<string, unknown>
+}
+
 // ── Tests ────────────────────────────────────────────────────────
 
 describe('Bridge reconnect lifecycle', () => {
@@ -191,9 +205,9 @@ describe('Bridge reconnect lifecycle', () => {
       await server.handleBridgeRequest(SESSION_ID, 'req-2', 'bridge:sync', {})
 
       expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
-      const callArgs = mockSendExtensionUiResponse.mock.calls[0]
-      expect(callArgs[0]).toBe('req-2')
-      expect(callArgs[1]).toMatchObject({
+      expect(mockSendExtensionUiResponse.mock.calls[0][0]).toBe('req-2')
+      const response = parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0])
+      expect(response).toMatchObject({
         success: true,
         tools: RUNTIME_RESTART_TOOLS,
       })
@@ -215,10 +229,11 @@ describe('Bridge reconnect lifecycle', () => {
       await server.handleBridgeRequest(SESSION_ID, 'req-p2', 'bridge:sync', {})
       expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
 
-      const response = mockSendExtensionUiResponse.mock.calls[0][1]
+      const response = parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0])
       expect(response.success).toBe(true)
-      expect(response.tools).toHaveLength(1)
-      expect(response.tools[0].name).toBe('goal_manager')
+      const tools = response.tools as Array<{ name: string }>
+      expect(tools).toHaveLength(1)
+      expect(tools[0].name).toBe('goal_manager')
     })
   })
 
@@ -238,10 +253,11 @@ describe('Bridge reconnect lifecycle', () => {
       await server.handleBridgeRequest(SESSION_ID, 'req-restart', 'bridge:sync', {})
 
       expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
-      const response = mockSendExtensionUiResponse.mock.calls[0][1]
-      expect(response.tools).toHaveLength(2)
-      expect(response.tools[0].name).toBe('hello')
-      expect(response.tools[1].name).toBe('goodbye')
+      const response = parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0])
+      const tools = response.tools as Array<{ name: string }>
+      expect(tools).toHaveLength(2)
+      expect(tools[0].name).toBe('hello')
+      expect(tools[1].name).toBe('goodbye')
     })
 
     it('sends empty tool list when no plugins are active after restart', async () => {
@@ -250,7 +266,7 @@ describe('Bridge reconnect lifecycle', () => {
       await server.handleBridgeRequest(SESSION_ID, 'req-empty', 'bridge:sync', {})
 
       expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
-      const response = mockSendExtensionUiResponse.mock.calls[0][1]
+      const response = parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0])
       expect(response.tools).toHaveLength(0)
       expect(response.commands).toHaveLength(0)
       expect(response.success).toBe(true)
@@ -260,18 +276,21 @@ describe('Bridge reconnect lifecycle', () => {
   // ── Scenario 3: Sync timeout handling ─────────────────────────
 
   describe('Sync timeout (bridge timeout exclusion)', () => {
-    it('does NOT register frontend timeout for bridge:sync', () => {
-      server.registerExtensionTimeout(SESSION_ID, 'req-bridge-sync', 'bridge:sync', {})
+    it('does NOT register frontend timeout for bridge:sync', async () => {
+      // 生产链路形态（marker 通道）：请求经 handleBridgeRequest → BridgeHandler 入口
+      // addBridgeRequest 登记（旧 registerTimeout 的 bridge: 前缀分支已删）
+      await server.handleBridgeRequest(SESSION_ID, 'req-bridge-sync', 'bridge:sync', {})
+      mockSendExtensionUiResponse.mockClear() // 正常回包已发生，只观察超时窗口
 
       vi.advanceTimersByTime(300_000)
 
-      // No timeout response for bridge methods
+      // 超时窗口内零新增调用：bridge 请求无前端弹窗超时
       expect(mockSendExtensionUiResponse).not.toHaveBeenCalled()
     })
 
-    it('tracks bridge request IDs for session cleanup', () => {
-      server.registerExtensionTimeout(SESSION_ID, 'req-bridge', 'bridge:sync', {})
-      server.registerExtensionTimeout(SESSION_ID, 'req-bridge2', 'bridge:tool_execute', {})
+    it('tracks bridge request IDs for session cleanup', async () => {
+      await server.handleBridgeRequest(SESSION_ID, 'req-bridge', 'bridge:sync', {})
+      await server.handleBridgeRequest(SESSION_ID, 'req-bridge2', 'bridge:tool_execute', {})
 
       // Bridge request IDs should be tracked internally
       const mgr = (server as unknown as { extensionTimeoutMgr: { isBridgeRequest(id: string): boolean } }).extensionTimeoutMgr
@@ -296,7 +315,7 @@ describe('Bridge reconnect lifecycle', () => {
       })
 
       expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
-      const response = mockSendExtensionUiResponse.mock.calls[0][1]
+      const response = parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0])
       expect(response.isError).toBe(true)
       expect(response.content).toContain('Tool not found')
     })
@@ -314,7 +333,7 @@ describe('Bridge reconnect lifecycle', () => {
       })
 
       expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
-      const response = mockSendExtensionUiResponse.mock.calls[0][1]
+      const response = parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0])
       expect(response.isError).toBeFalsy()
       expect(response.content).toBe(JSON.stringify({ result: 'hello world' }))
     })
@@ -330,10 +349,13 @@ describe('Bridge reconnect lifecycle', () => {
         params: {},
       })
 
-      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith(
-        'req-exec3',
-        { content: 'Plugin system not available', isError: true },
-      )
+      // 新契约：not-available 分支回 JSON 字符串 + 'select'
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+      expect(mockSendExtensionUiResponse.mock.calls[0][0]).toBe('req-exec3')
+      expect(parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0])).toEqual({
+        content: 'Plugin system not available',
+        isError: true,
+      })
     })
   })
 
@@ -386,7 +408,7 @@ describe('Bridge reconnect lifecycle', () => {
       await server.handleBridgeRequest(SESSION_ID, 'req-restore', 'bridge:sync', {})
 
       expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
-      const response = mockSendExtensionUiResponse.mock.calls[0][1]
+      const response = parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0])
       expect(response.success).toBe(true)
       expect(response.tools).toHaveLength(1)
     })
@@ -419,7 +441,7 @@ describe('Bridge reconnect lifecycle', () => {
       mockSendExtensionUiResponse.mockClear()
       await server.handleBridgeRequest(SESSION_ID, 'req-s4', 'bridge:sync', {})
       expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
-      expect(mockSendExtensionUiResponse.mock.calls[0][1].success).toBe(true)
+      expect(parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0]).success).toBe(true)
 
       // 7. Tool execute works again
       mockHandleBridgeToolExecute.mockResolvedValue({
@@ -433,7 +455,7 @@ describe('Bridge reconnect lifecycle', () => {
         toolCallId: 'tc-restart',
       })
       expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
-      expect(mockSendExtensionUiResponse.mock.calls[0][1].content).toContain('post-restart')
+      expect(parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0]).content).toContain('post-restart')
     })
   })
 
@@ -449,7 +471,8 @@ describe('Bridge reconnect lifecycle', () => {
       })
 
       expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
-      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-int', { injectedMessages: [] })
+      expect(mockSendExtensionUiResponse.mock.calls[0][0]).toBe('req-int')
+      expect(parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0])).toEqual({ injectedMessages: [] })
     })
 
     it('returns empty intercept when plugin service is not available', async () => {
@@ -463,7 +486,10 @@ describe('Bridge reconnect lifecycle', () => {
         data: { sessionId: SESSION_ID },
       })
 
-      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith('req-int2', {})
+      // 新契约：无 pluginService → {} 回包为 JSON 字符串 + 'select'
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+      expect(mockSendExtensionUiResponse.mock.calls[0][0]).toBe('req-int2')
+      expect(parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0])).toEqual({})
     })
   })
 
@@ -473,12 +499,9 @@ describe('Bridge reconnect lifecycle', () => {
     it('returns error for unknown bridge method', async () => {
       await server.handleBridgeRequest(SESSION_ID, 'req-unk', 'bridge:unknown', {})
 
-      expect(mockSendExtensionUiResponse).toHaveBeenCalledWith(
-        'req-unk',
-        expect.objectContaining({
-          error: expect.stringContaining('Unknown bridge method'),
-        }),
-      )
+      expect(mockSendExtensionUiResponse).toHaveBeenCalledTimes(1)
+      const response = parseBridgeResponse(mockSendExtensionUiResponse.mock.calls[0])
+      expect(response.error).toEqual(expect.stringContaining('Unknown bridge method'))
     })
   })
 })

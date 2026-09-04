@@ -78,9 +78,10 @@ export function formatDurationMs(ms: number): string {
 /**
  * pi 事件 → plugin HookType 翻译映射表（IF1，D4）。
  *
- * pi 侧 bridge extension（resources/pi/agent/extensions/bridge/index.ts EVENTS 列表）
- * 转发的事件名是 snake_case（before_agent_start），而插件 HookRegistry 按 camelCase
- * HookType（onBeforeAgentStart/onPiEvent/onAfterToolResult）注册——不经翻译永远匹配不上。
+ * pi 侧 bridge extension（extensions/taiji/plugin-bridge/src/index.ts 的 pi.on 注册段，
+ * select+BRIDGE_MARKER 通道）转发的事件名是 snake_case（before_agent_start），而插件
+ * HookRegistry 按 camelCase HookType（onBeforeAgentStart/onPiEvent/onAfterToolResult）
+ * 注册——不经翻译永远匹配不上。
  *
  * kind 语义：
  * - 'intercept'：可拦截事件，经 handleBridgeIntercept 链路，block/injectedMessages 生效

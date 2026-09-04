@@ -773,27 +773,24 @@ export class RpcClient implements IPiEngine {
    * pi 对 extension_ui_response 不回 RPC reply（rpc-mode.ts 直接 resolve pending 后 return），
    * 故用 sendRaw 写入（不等 reply，不注册 pending，避免 60s timer 泄漏）。
    *
-   * 两种 payload 格式（吸收 extension-message-handler 的 buildExtensionUiResponse 映射）：
-   *
-   * 1. extension UI 场景（带 method）——pi 鸭子类型字段检测（rpc-mode.ts:136-149）：
+   * payload 格式（吸收 extension-message-handler 的 buildExtensionUiResponse 映射）——
+   * pi 鸭子类型字段检测（rpc-mode.ts:136-149）：
    *    - response === null → {id, cancelled:true}（取消 / 超时）
    *    - method === 'confirm' → {id, confirmed:boolean}
-   *    - 其余（select/input/editor）→ {id, value:string}
+   *    - 其余（select/input/editor）→ {id, value:string}（对象经 String 会变
+   *      '[object Object]'，调用方传对象前必须自行 JSON.stringify——设计
+   *      bridge-rewrite-pi-0.84 §3.3-D1 序列化陷阱）
    *
-   * 2. bridge 场景（无 method）——pi bridge extension 的 pendingExtensionRequests 期望
-   *    `{response: <payload>}` 包裹结构（见 transport/bridge-handler.ts:32）：
-   *    - response 是对象 → {id, response}（原样发）
-   *
-   * 判定优先级：null（取消）> bridge（无 method 且对象）> confirm > value。
+   * 判定优先级：null（取消）> confirm > value。
+   * [HISTORICAL] 旧 bridge 场景的 `{id, response}` 包裹分支（method===undefined 且
+   * response 是对象）已删除：唯一调用方 bridge-handler 已全改 stringify+'select'，
+   * 该形态无生产调用方。
    */
   sendExtensionUiResponse(id: string, response: unknown, method?: string): void {
     let payload: Record<string, unknown>
     if (response === null) {
       // 取消 / 超时（无论 method）
       payload = { type: 'extension_ui_response', id, cancelled: true }
-    } else if (method === undefined && typeof response === 'object') {
-      // bridge 场景：response 是完整对象 + 无 method → {id, response}
-      payload = { type: 'extension_ui_response', id, response }
     } else if (method === 'confirm') {
       payload = { type: 'extension_ui_response', id, confirmed: response as boolean }
     } else {

@@ -77,10 +77,9 @@ export class ExtensionTimeoutManager {
 
   /**
    * 登记 marker 通道（select+BRIDGE_MARKER，设计 bridge-rewrite-pi-0.84 §3.3-D6）识别出的
-   * bridge 请求。新通道的 extension_ui_request method 恒为 'select'，registerTimeout 的
-   * `bridge:` 前缀判定不再命中——识别出的请求到达 BridgeHandler 时经此方法显式登记
-   * （登记语义与 registerTimeout 的 bridge 分支一致：bridgeRequestIds + session 跟踪，
-   * 供 clearForSession 清理；不排定时器——bridge 请求由 runtime 内部消化，无前端弹窗超时）。
+   * bridge 请求——marker 通道唯一的 bridgeRequestIds 登记入口（识别出的请求到达
+   * BridgeHandler 时经此方法显式登记）：bridgeRequestIds + session 跟踪，供
+   * clearForSession 清理；不排定时器——bridge 请求由 runtime 内部消化，无前端弹窗超时。
    */
   addBridgeRequest(sessionId: string, requestId: string): void {
     this.bridgeRequestIds.add(requestId)
@@ -89,11 +88,16 @@ export class ExtensionTimeoutManager {
 
   /**
    * Register a timeout for an extension UI request.
-   * Returns cleanup info or undefined if no timer needed (notify/bridge methods).
+   * Returns cleanup info or undefined if no timer needed (notify method).
    *
    * [2026-07-16] 取消所有 extension UI 超时：confirm/select/input/editor/ask-user
    * 统一不超时，block 等待用户决策。保留 session 跟踪以便 clearForSession 清理。
    * onTimeout 参数保留为 dead callback（不再被调用），维持调用点签名稳定。
+   *
+   * [HISTORICAL] 旧 bridge 通道的 `method.startsWith('bridge:')` 前缀登记分支已删除
+   * （设计 bridge-rewrite-pi-0.84 §3.3-D6 清理批）：旧 event-adapter bridge:* 翻译分支
+   * 删除后，本方法只由 extension-ui kind 触发，而 bridge 请求不产该 kind——该分支生产
+   * 不可达。新通道（select+BRIDGE_MARKER）的登记在 BridgeHandler 入口经 addBridgeRequest。
    */
   registerTimeout(
     sessionId: string,
@@ -103,12 +107,6 @@ export class ExtensionTimeoutManager {
   ): void {
     void onTimeout // 不再排定时器，回调保留为签名稳定占位
     if (method === 'notify') return
-
-    if (method.startsWith('bridge:')) {
-      this.bridgeRequestIds.add(requestId)
-      this.trackSessionRequest(sessionId, requestId)
-      return
-    }
 
     // 交互式 method（select/confirm/input/editor/ask-user）：只做 session 跟踪，不排超时定时器
     this.trackSessionRequest(sessionId, requestId)

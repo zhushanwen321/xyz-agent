@@ -519,14 +519,11 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
     }]
   }
 
-  // bridge:* → bridge-ui（interpreter 路由 server）
-  if (method?.startsWith('bridge:')) {
-    const requestId = String(event.id ?? '')
-    const data = event.data as Record<string, unknown> ?? {}
-    return [{ kind: 'bridge-ui', requestId, sessionId: sid, method, data }]
-  }
-
   // Interactive dialog methods: confirm, select, input, editor (notify 已在上方独立分支处理)
+  // [HISTORICAL] 旧 bridge 通道的 method.startsWith('bridge:') 前缀分支已删除（设计
+  // bridge-rewrite-pi-0.84 §3.3-D6 清理批）：pi 0.84.4 下 ExtensionAPI 无自定义
+  // extension_ui_request method 能力，旧通道永不可达；新通道 method 恒为 'select'，
+  // 经下方 INTERACTIVE_UI_METHODS 分支内的 BRIDGE_MARKER 识别进入 bridge-ui kind。
   if (method && INTERACTIVE_UI_METHODS.has(method as ExtensionInteractMethod)) {
     const dialogMethod = method as ExtensionInteractMethod
     const requestId = String(event.id ?? '')
