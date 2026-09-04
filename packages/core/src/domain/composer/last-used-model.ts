@@ -90,6 +90,7 @@ async function persist(): Promise<void> {
   try {
     await getPlatform().storage.set(LAST_USED_MODEL_KEY, JSON.stringify(cachedValue))
   } catch (err) {
+    // best-effort：KV 写失败不阻塞——内存值仍有效，重启后丢（E4 容错）
     console.warn('[last-used-model] KV write-through failed:', err)
   }
 }

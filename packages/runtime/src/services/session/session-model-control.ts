@@ -105,6 +105,7 @@ export class SessionModelControl {
       try {
         persistModelBinding(session.sessionFilePath, effectiveModelId, effectiveThinkingLevel)
       } catch (e) {
+        // best-effort：sidecar 写失败不阻塞 switchModel 主链路——重启后 get_state 读回自愈
         console.warn(`[session-service] persistModelBinding failed after switchModel: ${toErrorMessage(e)}`)
       }
     }
@@ -162,6 +163,7 @@ export class SessionModelControl {
       try {
         persistModelBinding(session.sessionFilePath, session.modelId, effective)
       } catch (e) {
+        // best-effort：sidecar 写失败不阻塞 setThinkingLevel 主链路——重启后 get_state 读回自愈
         console.warn(`[session-service] persistModelBinding failed after setThinkingLevel: ${toErrorMessage(e)}`)
       }
     }
