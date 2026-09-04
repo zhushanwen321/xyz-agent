@@ -113,7 +113,7 @@ graph TD
 | 6 | U5 | 既有 5 个测试用例断言按 D5 行为变更改造（case1/2/3/U11 注入 armed 解锁对齐断言；「回归基线」断言反转为零 onReset）——D5 是刻意的行为变更设计，旧断言（无 armed 也对齐）与新门禁语义互斥；用例总数不减、全部通过 | 本表 | 2026-09-04 |
 | 7 | U4 | recordLastUsed 已建态写入时机从「onModelSelect 调用时」细化为「switchModel RPC 成功后」（失败不写，与 armed 失败清同向）——D4② 设计措辞已同步（审查 minor 项裁决采纳修复方向） | 本表 + 设计 D4② | 2026-09-04 |
 | 8 | U4 | 一致性审查修复批顺带修 enterStagingMode 快照顺序缺陷（先快照 stagingThinking 再置 stagingModel）——U5 门禁消除了「对齐 watch 顺手写 stagingThinking」的掩盖路径后暴露的潜伏 bug（UF1b 用例转红实证），非设计外功能而是既有缺陷的根因修复；配套测试注释更新 + 快照直断言（反序变异验证 3 用例红） | 本表 | 2026-09-04 |
-| 9 | 全局 | 定向复审 2 条 minor 残留注记（审查方判定不处理可接受）：① session-lifecycle.ts 写点③注释「从未显式切模型的 session 也在创建时获得 .model.json」在「get_state 无 model 且无 preset model」极端组合下不成立（persistModelBinding 空值守卫跳过），正常路径不触发；② last-used-model persist 无串行化（model-thinking-memory 有 persistChain），同步 localStorage 语义下无实害，先在差异非本批引入 | 本表 | 2026-09-04 |
+| 9 | 全局 | 定向复审 2 条 minor 残留注记（审查方判定不处理可接受）：① session-lifecycle.ts 写点③注释「从未显式切模型的 session 也在创建时获得 .model.json」在「get_state 无 model 且无 preset model」极端组合下不成立（persistModelBinding 空值守卫跳过），正常路径不触发——**① 已由 design-code-sync 修复轮关闭**（Gate B 实证后该注释改写为 turn-end ensure 机制归属表述，F7）；② last-used-model persist 无串行化（model-thinking-memory 有 persistChain），同步 localStorage 语义下无实害，先在差异非本批引入，仍开放 | 本表 | 2026-09-04 |
 
 ## 6 状态表
 
