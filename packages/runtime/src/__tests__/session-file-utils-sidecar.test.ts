@@ -21,13 +21,12 @@ import {
   persistAgentBinding,
   readAgentBinding,
   agentSidecarPath,
-  modelSidecarPath,
-  persistModelBinding,
-  readModelBinding,
   scanPiSessions,
   invalidateScanDirCache,
   _resetSessionMetaCacheForTest,
 } from '../infra/pi/session-file-utils.js'
+// model sidecar 家族自 session-file-utils 迁出（max-lines 行数合规），权威源在本模块。
+import { modelSidecarPath, persistModelBinding, readModelBinding } from '../infra/pi/session-model-sidecar.js'
 import { BINDING_FIELDS } from '../infra/pi/session-binding-fields.js'
 import type { SessionLifecycle } from '../services/session/session-lifecycle.js'
 import type { ILifecycleSessionOps, ISessionRegisterDeps } from '../services/session/session-internal.js'

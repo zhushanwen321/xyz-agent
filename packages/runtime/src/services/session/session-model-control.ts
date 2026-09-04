@@ -13,6 +13,10 @@ import type { IProcessManager } from '../ports/pi-engine.js'
 import type { IManagedSessionView } from './types.js'
 import type { SessionReplicatedStates } from './session-state-projection.js'
 import { toErrorMessage } from '../../utils/errors.js'
+// persistModelBinding 实现已迁至 infra/pi/session-model-sidecar（max-lines 行数合规）；
+// 本文件保持经 session-file-utils 的 re-export 导入——services 层 infra 直引白名单以
+// session-file-utils 锚定（三层守卫 check_services_infra_import），且 restore 播种测试的
+// mock factory 锚定同一导入面。
 import { persistModelBinding } from '../../infra/pi/session-file-utils.js'
 import { logger } from '../../infra/logger.js'
 

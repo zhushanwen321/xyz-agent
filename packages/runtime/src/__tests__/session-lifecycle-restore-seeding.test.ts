@@ -130,15 +130,24 @@ describe('U2 restoreSession 播种（D2 设计）', () => {
       assertPiSessionFile: assertPiSessionFileMock,
     }))
     // mock normalizeSessionFileInPlace（归一化 noop）；persistModelBinding 记录调用
-    // 并委托真实实现（写点③⑤ 测试需要真实 sidecar 落盘断言，tmpDir 内自建自删）
+    // 并委托真实实现（写点③⑤ 测试需要真实 sidecar 落盘断言，tmpDir 内自建自删）。
+    // persistBindingSidecar / readBindingSidecar：model sidecar 家族迁 session-model-sidecar.ts
+    // 后，persistModelBinding 真身（经 re-export 委托）依赖这两个骨架导出——mock 面必须
+    // 转发真实实现，否则真身链访问 mock 缺失导出时 vitest getter 抛错、被播种 catch 吞掉
+    // （播种值漂移 + 写点③⑤ 不落盘）。
     normalizeSessionFileInPlaceMock = vi.fn()
     const actual = await vi.importActual<typeof import('../infra/pi/session-file-utils.js')>('../infra/pi/session-file-utils.js')
     persistModelBindingMock = vi.fn(actual.persistModelBinding)
-    vi.doMock('../infra/pi/session-file-utils.js', () => ({
-      normalizeSessionFileInPlace: normalizeSessionFileInPlaceMock,
-      cleanupMigrateResidues: vi.fn(),
-      persistModelBinding: persistModelBindingMock,
-    }))
+    vi.doMock('../infra/pi/session-file-utils.js', async (importOriginal) => {
+      const sidecarActual = await importOriginal<typeof import('../infra/pi/session-file-utils.js')>()
+      return {
+        normalizeSessionFileInPlace: normalizeSessionFileInPlaceMock,
+        cleanupMigrateResidues: vi.fn(),
+        persistModelBinding: persistModelBindingMock,
+        persistBindingSidecar: sidecarActual.persistBindingSidecar,
+        readBindingSidecar: sidecarActual.readBindingSidecar,
+      }
+    })
     // mock session-binding-fields（hydrateBindingMeta 实际行为——restore='none' 时 skip modelId/thinkingLevel）
     vi.doMock('../infra/pi/session-binding-fields.js', () => ({
       hydrateBindingMeta: vi.fn((session: Record<string, unknown>, meta: Record<string, unknown>, entry: string) => {
