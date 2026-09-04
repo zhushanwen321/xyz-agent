@@ -32,7 +32,7 @@ Out-of-scope：per-session runtime 进程隔离（§3.2 方案 C，评估后否�
 | U1 源头修复 | relay-registry：writeFrame guard+try / endConn 替换 7 处裸 end / conn error listener / rl 吞转发 / child stdin write 防护 | packages/runtime/src/infra/relay/relay-registry.ts | 无 | plain | §3.4 P1/P2 ✅（半关闭容错 / RST 容错测试绿）；G1 |
 | U2 同族修复 | rpc-client rl 吞转发；usage-stats rl 吞转发 + 单文件空分片降级 | packages/runtime/src/infra/pi/rpc-client.ts · packages/runtime/src/services/usage/usage-stats-service.ts | 无 | plain | §3.4 P5 ✅（usage 回归绿）；G2 |
 | U3 运行时分级 | uncaught-policy 模块（SAFE_STREAM_ERROR_CODES 五码）+ index.ts handler 接入 | packages/runtime/src/infra/system/uncaught-policy.ts · packages/runtime/src/index.ts | 无 | plain | §3.4 P3 ✅（policy 4 用例绿）；G2 |
-| U4 静态护栏 | 护栏脚本 + allowlist + CI invariant 接入（pre-commit 段在 .bare/hooks，不在 git 领地） | scripts/check-unsafe-stream-writes.mjs · scripts/check-unsafe-stream-writes.allowlist.txt · .github/workflows/ci.yml | 无 | plain | §3.4 P4/P7 ✅；G3 |
+| U4 静态护栏 | 护栏脚本 + allowlist + CI invariant 接入（pre-commit 段 SSOT = .githooks/install-hooks.sh heredoc，.bare/hooks 为其生成的运行时副本） | scripts/check-unsafe-stream-writes.mjs · scripts/check-unsafe-stream-writes.allowlist.txt · .githooks/install-hooks.sh · .github/workflows/ci.yml | 无 | plain | §3.4 P4/P7 ✅；G3 |
 | U5 回归测试 | relay-registry 2 个事故用例 + uncaught-policy 4 用例 | packages/runtime/src/__tests__/infra/relay/relay-registry.test.ts · packages/runtime/src/__tests__/infra/system/uncaught-policy.test.ts | U1, U2, U3 | plain | 用例全绿且断言非恒真（审查 R1 轮已核实）；G1/G2 |
 
 ## 3 DAG 图
@@ -67,7 +67,7 @@ graph TD
 | U1 | committed | 1 | 11f2f37bf；relay-registry 25 绿（P1/P2） |
 | U2 | committed | 1 | 44b09f2f0；rpc-client-exit-multicast + usage equivalence 绿（P5） |
 | U3 | committed | 1 | fdcd83d57；uncaught-policy 4 绿（P3） |
-| U4 | committed | 1 | 5fb5ed597（脚本+allowlist）+ 5468f5d86（ci.yml）；护栏 253 文件绿（P4/P7） |
+| U4 | committed | 1 | 5fb5ed597（脚本+allowlist）+ 5468f5d86（ci.yml）+ 4ecea728f（护栏段进 install-hooks.sh SSOT）；护栏 253 文件绿（P4/P7） |
 | U5 | committed | 1 | 09e478b7c；受影响面 49 绿 |
 
 收尾全量（阶段 5 Gate A 证据）：runtime 包 vitest 400 文件 / 4374 用例全绿（168s，2026-09-04）；`tsc --noEmit` 通过；eslint 改动源码 0 warning。
