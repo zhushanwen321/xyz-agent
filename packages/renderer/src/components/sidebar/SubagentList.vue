@@ -201,7 +201,7 @@ function onCancelClick(subagentId: string): void {
   }
 }
 
-/** 执行态四形态判据（residual-fixes 设计 §5.4 等价公式，权威判据）：
+/** 执行态判据（四形态合并为三态展示，权威源 residual-fixes 设计 §5.4 等价公式）：
  *  streaming = 真在跑（进程驱动中，spinner + 取消按钮）；
  *  done = one-shot 轮终（result 有值且 chatMode 显式 false——缺省视为不可确认，
  *    落 waiting 保守兜底：无法确认不是 chat → 不宣告完成）；

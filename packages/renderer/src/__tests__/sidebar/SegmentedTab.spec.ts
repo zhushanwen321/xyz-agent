@@ -53,7 +53,7 @@ describe('SegmentedTab', () => {
     const wrapper = mount(SegmentedTab, {
       props: {
         modelValue: 'sessions' as SidebarTab,
-        // badge 精确化：仅 running 态 > 0 亮蓝点（组件 badge = subagentRunningCount > 0）
+        // badge 精确化：running 且非 done 投影（isDoneProjection）> 0 亮蓝点（组件 badge = subagentRunningCount > 0）
         subagentRunningCount: 1,
         workflowRunningCount: 0,
       },
