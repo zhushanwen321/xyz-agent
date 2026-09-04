@@ -13,7 +13,7 @@
 | 待验证检查点 | §5 末尾「待验证检查点（设计阶段无法确定，诚实标注）」4 条（D4 消费方全集 grep / CREATE_DERIVED_CALLERS 映射 / 占位 UI 形态定稿 / sidecar 写频率评估） |
 | 审查证据 | docs/design/composer-model-session-isolation.review-r1.md（3 must-fix + 4 suggestion + 1 INFO，全修）· review-r2.md（0 must-fix，3 suggestions，结论「可进入实施，DoR 达成」）· review-r3.md（1 must-fix = 本计划 §6 U5 blocked 误诊更正，设计 D5 本体裁决无缺陷；3 suggestions 当轮吸收：D5 两处边界登记 + D2/E2 兜底链按字段占位校准）· review-r4.md（聚焦复审：r3 修复全部核验通过 + 修订方两个被否反例独立重演成立；2 must-fix 文字残留已修 = 设计 §5 U2 行 + 本计划 §2/§6 U2 行与 U9 单元登记；结论「修完即可宣布 0 must-fix，无需 r5」） |
 
-## 1 目标快照（G1-G4 与 Out of scope 逐字摘录自设计文档 §1，首段 blockquote 为自撰概括）
+## 1 目标快照（G1-G4 与 Out of scope 逐字摘录自设计文档 §1，首段 blockquote 截自设计文档卷首一句话结论，有删节）
 
 > **一句话结论**：per-session 模型/档位状态没有任何持久层，「全局默认」又被设计成跟随任意 session 的最后一次切换——切走再切回（尤其 pi 进程退出/app 重启后），session 自己的模型只剩空串占位，composer 兜底显示的就是被别的 session 污染的全局默认。
 
@@ -107,7 +107,7 @@ graph TD
 |---|---|---|---|---|
 | 1 | U0 | 「pre-commit 全绿」以直跑 `render --check` + `select --check` 等价替代（subagent 禁 git 写；pre-commit 由主 agent 单元 commit 等效触发，实际绿） | 本表 | 2026-09-04 |
 | 2 | U0 | authority 锚点用可解析的 `#33-关键决策与权衡`（D1/D4/D5 为粗体段落非标题，不沿用不可解析先例） | 本表 | 2026-09-04 |
-| 3 | U1 | 领地扩展（C-pi-07 豁免闭环，U0 下游提醒证实）：`+.githooks/check_pi_direct_write.py`（豁免① +`.model.json`）+ `docs/architecture/data-source-registry.md`（sidecar 家族登记条目）+ `docs/constraints.json`/`constraints.md`（C-pi-07 文案四→五后缀 + render 重生成；终态六后缀——`.agent.json` 为第 6 项，registry 计数已由 `a6752ad97` 校正 4→6，constraints summary / `check_pi_direct_write.py` / `data-source-registry.md` 三处终态一致）——守卫自身规约「先 registry 补条目 + 守卫表登记，禁静默绕过」 | 本表 + §2 U1 领地列 | 2026-09-04 |
+| 3 | U1 | 领地扩展（C-pi-07 豁免闭环，U0 下游提醒证实）：`+.githooks/check_pi_direct_write.py`（豁免① +`.model.json`）+ `docs/architecture/data-source-registry.md`（sidecar 家族登记条目）+ `docs/constraints.json`/`constraints.md`（C-pi-07 文案四→五后缀 + render 重生成；终态六后缀——`.agent.json` 为第 5 项、`.model.json` 为第 6 项，registry 计数已由 `a6752ad97` 校正 4→6，constraints summary / `check_pi_direct_write.py` / `data-source-registry.md` 三处终态一致）——守卫自身规约「先 registry 补条目 + 守卫表登记，禁静默绕过」 | 本表 + §2 U1 领地列 | 2026-09-04 |
 | 4 | U1 | 缺失 pre-commit 脚本 `scripts/check-unsafe-stream-writes.mjs`（hook 引用但脚本不在仓库，用 --no-verify 绕过）——基础设施存量问题，非本次改动引入 | 本表 | 2026-09-04 |
 | 5 | U1/U2 | max-lines lint warnings：session-file-utils.ts（525行）和 session-lifecycle.ts（560行）超出500行限制——存量问题，本次改动增加约70行使差距略大（sidecar helper+scanner 扩展+播种逻辑），提取子文件超出领地范围。行数口径 = lint max-lines（`eslint.config.mjs` 生效规则均 skipBlankLines+skipComments），非 wc -l 物理行 | 本表 | 2026-09-04 |
 | 6 | U5 | 既有 5 个测试用例断言按 D5 行为变更改造（case1/2/3/U11 注入 armed 解锁对齐断言；「回归基线」断言反转为零 onReset）——D5 是刻意的行为变更设计，旧断言（无 armed 也对齐）与新门禁语义互斥；用例总数不减、全部通过 | 本表 | 2026-09-04 |
@@ -144,7 +144,7 @@ graph TD
 
 **变更历史**：
 
-- 2026-09-04：design-code-sync 第 2 轮修复（3 must-fix：失效注释 R-A1 / U4 hash R-C1 / 历史缺条目 R-C2 本条；17 suggestion + 4 info 当轮全修）
+- 2026-09-04：design-code-sync 第 2 轮修复（3 must-fix：失效注释 R-A1 / U4 hash R-C1 / 历史缺条目 R-C2 本条；17 suggestion + 4 info 当轮全修，本体 `a0acc7d4c`）。聚焦复审 24 条全部处置、0 must-fix（R-A9 方案替换经源码核实正当：读回失败 = fallback 请求值仍写的自愈设计）；复审新抓 4 条 low/info（blockquote 出处措辞、`.agent.json` 序数、兜底链首环旧词 pendingModel、测试 describe 台账标签）当轮修讫，循环终止。
 - 2026-09-04：design-code-sync 定向修正（`e2130fb93`）：偏差 #9① 补关闭标注（写点③注释已由 Gate B 实证后改写为 turn-end ensure 机制归属表述，第 1 轮 F7 关闭）。
 - 2026-09-04：design-code-sync 第 1 轮修复（`00b72a97b`，F1-F7）：设计 D6 纪元判据同步（Gate B `1f5024380`）/ R2 闭环标注 / §5 文件改动地图补 Gate A 提取产物 / session-lifecycle.ts 注释校准；同 commit 回写登记但未入本变更历史（违反 C-proc-10，本轮 R-C2 补记）。
 - 2026-09-04：Gate B 端到端验收（真实 app + browser-automation + 日志探针，主 agent 执行——zsw 引擎故障期 subagent 无法承载长交互）。V1 ✓（sidecar 落盘 + 0.7s 即时显示 + 跨重启 A=glm-5.3/B=flash 各自保持；sidecar 文件断言通过）；V2 ✓（无假值全程成立、真值 0.7s ≤2s；占位窗口注记 R7；E6 自愈实证）；V3 ✓（A'↔B' 切换窗口零 set_thinking_level + B 档位保持「高」——机制⑤消灭实机证据）；V5 ✓（全程日志零 model-switch 帧 + 默认供应商不被改写 + 无误导 toast）；V6 ✓（显式选 flash → landing chip=flash ≠ Settings 默认 glm-5.3，跨重启保持）。**V4 ✗ 冻结（R6）**：记忆跨写缺陷 2 轮修复未绿（第一轮纪元判据 `1f5024380` 覆盖单测两窗口并绿、app 第三形态仍复现），按 dev-flow 阈值冻结升级用户。Gate B 期间另抓出并修复 D1 写点③延迟 flush 失效（`e93149b62`，turn-end ensure 镜像 D14 先例）。变更历史补归宿：`9c1b6ec2f`（no-silent-catch 合规注释，触碰 last-used-model/session-model-control，无行为变更）属 U6/U8 批次；`bce6bf18f`→`4f2d98e9c`（CREATE_DERIVED_CALLERS 守卫契约核对-误写-回退，见 R2 闭环结论）属 U1 批次。

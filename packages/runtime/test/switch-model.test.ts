@@ -10,7 +10,8 @@
  * - session 不存在 → throw Error('session not active')（fail-fast，调用方据 .code 引导）。
  * - client 不存在 → 跳过缓存写和广播，return sessionId（不假装成功）。
  *
- * U8 追加（composer-model-session-isolation §5 写点单测，Gate B 端到端之外的最小覆盖）：
+ * 写点单测追加（composer-model-session-isolation 设计 §5 U8 承诺的 model-control 写点覆盖；
+ * impl-plan 台账中写点接入属 U1，本组用例是 Gate B 端到端之外的最小单测防线）：
  * 写点①（switchModel）/ 写点②（setThinkingLevel）成功后 persistModelBinding 落盘值 ==
  * get_state 读回的生效值（生效值胜请求值）；空值守卫负例 = sessionFilePath 缺失（pi 未
  * flush 窗口，Gate B 偏差 #9① 形态）时写点①不触发。注意「读回失败」在实现中是 fallback
@@ -53,8 +54,8 @@ vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
     readSettings: () => ({}),
   }
 })
-// U8 写点断言：记录 persistModelBinding 的全部调用（真身委托，落盘行为不变）——
-// 既有用例透明；U8 正例断言落盘值、负例断言「sessionFilePath 缺失时写点①不触发」。
+// 写点①②断言：记录 persistModelBinding 的全部调用（真身委托，落盘行为不变）——
+// 既有用例透明；正例断言落盘值、负例断言「sessionFilePath 缺失时写点①不触发」。
 const persistBindingCalls = vi.hoisted(() =>
   [] as Array<{ filePath: string; modelId: string; thinkingLevel: string }>,
 )
@@ -209,7 +210,7 @@ describe('W1/L7: switchModel fail-fast & 无 client 不假装成功', () => {
   })
 })
 
-describe('U8: model-control 写点①②——switchModel/setThinkingLevel → .model.json sidecar 落盘', () => {
+describe('model-control 写点①②（设计 §5 U8 承诺，写点接入属 U1）——switchModel/setThinkingLevel → .model.json sidecar 落盘', () => {
   let tmpDir: string
 
   beforeEach(() => {

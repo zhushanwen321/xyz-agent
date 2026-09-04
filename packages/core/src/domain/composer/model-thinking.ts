@@ -218,7 +218,7 @@ export function useComposerModelThinking(
 
   /**
    * 当前选中模型 id（"provider/modelId" 复合串）。
-   * staging 活跃时读暂存快照，否则读常规态真值（session > landing 兜底链 pendingModel > lastUsedModel > 全局默认）。
+   * staging 活跃时读暂存快照，否则读常规态真值（session > landing 兜底链 currentModel > lastUsedModel > 全局默认）。
    */
   const currentModelId = computed(
     () => stagingModel.value !== null
