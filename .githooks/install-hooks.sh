@@ -893,6 +893,43 @@ else
 fi
 
 # ============================================================================
+# 流写逃逸护栏（2026-09-04 runtime 整机崩溃事故护栏，与 ci.yml invariant 同源直调）
+#   packages/runtime/src 有变更时触发：scripts/check-unsafe-stream-writes.mjs
+#   （R1 裸流写 / R2 socket error 挂载 / R4 readline 转发吞咽）。豁免唯一登记
+#   入口 = scripts/check-unsafe-stream-writes.allowlist.txt（随 git 跟踪，无参
+#   调用自动读取；CLI 传参不生效——pre-commit/CI 均无参调用）。
+#   [HISTORICAL] 本段曾只写入 .bare/hooks 运行时副本而漏掉本安装源：任何
+#   worktree 的 pnpm install（prepare → 本脚本）都会用无护栏段的源覆盖运行时
+#   hook，护栏静默失效（2026-09-04 S2 验收实测拦截失效后定位）。SSOT = 本文件。
+#   注：不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
+# ============================================================================
+
+UNSAFE_STREAM_CHECKER="scripts/check-unsafe-stream-writes.mjs"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    if echo "$STAGED_FILES" | grep -q "^$RUNTIME_SRC/"; then
+        print_section "[流写逃逸护栏]"
+        echo -e "${BLUE}[INFO] runtime 源码有变更，扫描流写逃逸风险...${NC}"
+
+        if [ ! -f "$UNSAFE_STREAM_CHECKER" ]; then
+            echo -e "${RED}[ERROR] 找不到 $UNSAFE_STREAM_CHECKER${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+
+        node "$UNSAFE_STREAM_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}[OK] runtime 源码无变更，跳过流写逃逸护栏${NC}"
+    fi
+fi
+
+# ============================================================================
 # AC7 extension-host 边界检查（packages/core 源码有变更时触发）
 # ============================================================================
 
@@ -1258,6 +1295,7 @@ echo -e "  ${GREEN}[+]${NC} ws-client send 直调检查（D3 统一门面）"
 echo -e "  ${GREEN}[+]${NC} runtime services 循环依赖检查（D6c 防护）"
 echo -e "  ${GREEN}[+]${NC} CSP 能力一致性检查（源码 eval/WebAssembly vs index.html CSP 指令）"
 echo -e "  ${GREEN}[+]${NC} Runtime Bundle 验证（依赖打包 + CJS 兼容 + 健康检查）"
+echo -e "  ${GREEN}[+]${NC} 流写逃逸护栏（runtime 变更时触发：R1 裸流写 / R2 socket error / R4 readline 转发）"
 echo -e "  ${GREEN}[+]${NC} AC7 extension-host 边界检查（core 变更时触发，禁 domain/stores import）"
 echo -e "  ${GREEN}[+]${NC} 打包配置预检查（asarUnpack/files 一致性 + symlink 检查）"
 echo -e "  ${GREEN}[+]${NC} i18n CJK 残留检测（.vue 模板不得含硬编码中文）"

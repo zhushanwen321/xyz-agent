@@ -77,3 +77,4 @@ graph TD
 - 变更历史：
   - 2026-09-04 计划创建。校准说明：工作区实物先于本计划存在（实施先于流水线），按「状态恢复：无 committed 证据按 pending 重算」处理；U4 部分提交。设计审查证据：`.review/design-review-20260904-135803.md`（R1）/ `-r2.md`（R2）/ `-r3.md`（R3，must_fix==0）。
   - 2026-09-04 阶段 3 一致性审查（reviewer sa-bb568f32）：unreasonable 0 / doc_errors 1（§2.3 ④ 归属文件 relay-server → relay-registry，主 agent 已修设计文档）/ reasonable 2（入登记表 #1 #2）。清零，转阶段 5。
+  - 2026-09-04 阶段 5 Gate B / S2 实测发现 U4 实施缺口：流写护栏 pre-commit 段曾只写入 .bare/hooks 运行时副本，SSOT（.githooks/install-hooks.sh heredoc）无此段——任何 worktree 的 pnpm install 重装 hook 即静默丢失（实测拦截失效复现；U1 首次 commit 的 hook 瞬态错误 882 亦由此覆盖竞态解释）。修复：护栏段落进 install-hooks.sh 源 + 重装运行时 + S2 重验拦截通过。教训登记进 [HISTORICAL] 注释。
