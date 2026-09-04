@@ -205,5 +205,5 @@ export interface CreateDerivedCaller {
 export const CREATE_DERIVED_CALLERS: readonly CreateDerivedCaller[] = [
   { file: 'transport/session-message-handler.ts', semantic: 'user-facing', passedBindingFields: ['launchPresetId', 'projectId'] },
   { file: 'transport/session-manager-handler.ts', semantic: 'agent-managed', passedBindingFields: ['spawnSource', 'parentAgentSessionId'] },
-  { file: 'services/handoff-service.ts', semantic: 'handoff', passedBindingFields: ['projectId', 'modelId', 'thinkingLevel'] },
+  { file: 'services/handoff-service.ts', semantic: 'handoff', passedBindingFields: ['projectId', 'modelOverride', 'thinkingOverride'] },
 ]
