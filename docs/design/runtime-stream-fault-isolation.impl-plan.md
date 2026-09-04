@@ -58,6 +58,7 @@ graph TD
 |---|------|----------|------------------|----------|
 | 1 | U5 | RST 容错用例采用单元级 emit('error') 直验而非真实 RST（resetAndDestroy 仅支持 TCP，unix socket 环回无法模拟） | 忠实执行设计 P2「单元级」措辞，机制等价（not.toThrow + destroyed 双断言），注释如实标注局限 | 一致性审查 sa-bb568f32；无需文档同步 |
 | 2 | U2 | usage-stats 空分片降级返回 skippedLines:0 / cwd:null 空分片并保留原 mtime/size 键 | 与 D3 文字逐字一致，与 readdir 失败容错语义对称，未引入新状态位 | 同上；无需文档同步 |
+| 3 | U1 | writeFrame/endConn 两处 `eslint-disable-next-line taste/no-silent-catch`（Gate A 零容忍审计上报） | 设计 D4 明确采用「try 吞 destroy 竞态」语义，catch 内降级 debug 日志 + 带理由注释 + 事故回归测试覆盖，非静默吞；与 lint 规则的冲突属设计选择的已知代价，不改全项目 lint 规则本体（超 scope） | Gate A sa-11910405 |
 
 ## 6 状态表
 
@@ -73,7 +74,7 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-- 残留风险（承设计 §5）：① S1 真机验收为发版后门（⛔，降级路径 P1/P2 + dev 手工复现）；② 崩溃窗口在途 turn 丢失（观察项）；③ extension 侧同族加固不在此期。
+- 残留风险（承设计 §5）：① S1 真机验收为发版后门（⛔，降级路径 P1/P2 + dev 手工复现）；② 崩溃窗口在途 turn 丢失（观察项）；③ extension 侧同族加固不在此期。Gate A 补充（sa-11910405）：④ 流错误码白名单若遇业务路径伪造 code 的逻辑异常会被 log-continue（D1 已知反例，观测面 = grep contained）；⑤ usage 空分片降级在流中途损坏时丢弃该文件已聚合行且 mtime 键保留→数据点缺失（非关键路径，U2b 补测后行为有回归锁）。
 - 变更历史：
   - 2026-09-04 计划创建。校准说明：工作区实物先于本计划存在（实施先于流水线），按「状态恢复：无 committed 证据按 pending 重算」处理；U4 部分提交。设计审查证据：`.review/design-review-20260904-135803.md`（R1）/ `-r2.md`（R2）/ `-r3.md`（R3，must_fix==0）。
   - 2026-09-04 阶段 3 一致性审查（reviewer sa-bb568f32）：unreasonable 0 / doc_errors 1（§2.3 ④ 归属文件 relay-server → relay-registry，主 agent 已修设计文档）/ reasonable 2（入登记表 #1 #2）。清零，转阶段 5。
