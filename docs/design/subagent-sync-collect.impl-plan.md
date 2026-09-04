@@ -82,7 +82,10 @@ graph TD
 | 4 | U1→U2 | start 响应 `pendingSyncCount` 暂以「枚举计数 + 1」补足本条（record.collectMode 落点未接线，枚举天然不含本条） | **U2 必须接线后去掉 +1**（record 带 collectMode 入枚举后 +1 即双计；源码已有 [U2 接线点] 注释锚） |
 | 5 | 全局 | 存量测试环境敏感缺口：`pi-invocation.test.ts` / `relay-env.test.ts` 在带 `XYZ_SUBAGENT_RELAY_*` / `PI_SUBAGENT_*` 的会话环境内跑会红（断言依赖真实进程 env/execPath） | 非 U1 引入（HEAD 同红）；CI 干净环境不受影响；不入本特性 scope，残留风险登记 |
 | 6 | U2→U3 | U2 集成测试 `vi.mock("../execution/session-runner.ts")` 路径错误致拦截从未生效，U3 修正为 `"../session-runner.ts"` 后真链 trace 暴露两个缺陷并已修复：① recordToSubagent 投影丢 collectMode → 闭合判定恒立即闭合（数据源改 store.listAllActive() 原始内存态）；② SP-5 resumable 回退态（running+resumable 留内存）致 sync 批永不闭合（非终态口径补 resumable 判据） | U3 真链验证抓出的真 bug，修复属 U3 领地内修正；教训登记：mock 测试不验证真链，后续单元集成测试必须 mock 路径自检 |
-| 7 | U3 | 批 details 需带顶层 `notifyId` 键（投递回执匹配 collectDeliveredNotifyIds 读 details.notifyId，否则批 entry 永不销账） | 设计未明写此键（§3.1.4 details 形状沿用 mergeItems），实装需要；零冲突增量 |
+| 8 | U4→U5 | config 预算热读未在 U4 接线（领地不含 service），落地为 buildBatchLlmContent 可选 budget 参数 | **已闭环**：U5 flushBatch 调用点接入 config collectSync 预算（同 commit 4c63d9fb9） |
+| 9 | U5 | E9 转换挪到 disposeAllRecords 之前 | 测试实证：archive 先清内存 + idToFile 冷启动 → 落标必 miss；前置转换后 6/6 绿 |
+| 10 | U5 | notifier.ts 最小加法（notifyBatch 可选 budget 参数） | U4 预算接线的调用点在 notifier 内部，跨领地最小增量已验收 |
+| 11 | U5 | multiproc-guard 存量测试 env 泄漏修复（PI_SUBAGENT_ROOT_SESSION_ID 泄进 vitem 致所有权误判） | HEAD 文件交换法证实预存红；领地内修复（测试 env 清理），非本特性回归 |
 
 ## 6 状态表
 
@@ -91,8 +94,8 @@ graph TD
 | U1 | committed | 1（3 次看门狗截断续聊完成） | commit <本条>; subagent-core 3038 绿 + SW 931 绿（golden 11/11）+ typecheck/lint 过（主 agent 重跑） |
 | U2 | committed | 1（2 次看门狗截断续聊完成） | commit 77de9c02d; subagent-core 3060 绿（主 agent 复跑）+ typecheck/lint 过；⛔4/⛔2 结论入 §7 |
 | U3 | committed | 2（含真链 bug 修复轮） | commit a53271c70; subagent-core 3078 绿 + SW 936 绿（旧 golden 11/11 零 diff）+ typecheck/lint 过（主 agent 复跑） |
-| U4 | pending | 0 | — |
-| U5 | pending | 0 | — |
+| U4 | committed | 2（首任零产出被替换，v2 测试先行收工） | commit a39505d1e; collect-budget 15 新 + notify-batch 14 回归 = 29 绿（主 agent 复跑）+ tsc 过 |
+| U5 | committed | 2（v2 升档 glm-5.3） | commit 4c63d9fb9; core 3099 绿 + SW 936 基线 + typecheck/lint 过（主 agent 复跑）；真文件通路测试 6/6；E9 时序修正 + multiproc-guard 预存 env 泄漏修复（HEAD 交换法证实） |
 | U6 | committed | 1（修复轮：max-lines 提取 + 接替 dev 会话 GC 后主 agent 验收） | commit 895f9da2a; session-reader 305 绿（主 agent 复跑）+ typecheck/lint 过 |
 | U7 | pending | 0 | — |
 | U8 | pending | 0 | — |
@@ -110,3 +113,4 @@ graph TD
   - 2026-02-11 U1 执行期：领地修订（ExecutionRecord 接口本体在 types.ts:416，初版误判 execution-record.ts）；U1 committed（偏差 #1-5 登记，#3/#4 为 U2 强制接线项）。
   - 2026-02-11 W2 流转：U2 committed（77de9c02d，偏差 #3/#4 接线完成）+ U6 committed（895f9da2a，含 max-lines 提取修复轮）；巡检机制（5m 调度）当轮发现接替 dev 会话假活（工作已完成但完成通知丢失），主 agent 直接验收闭环。
   - 2026-02-11 W3 流转：U3 committed（a53271c70）；偏差 #6/#7 登记（真链 bug 修复 + 回执匹配 notifyId 键）；⛔1/⛔2 全部闭合（4 个检查点清零）。
+  - 2026-02-11 W4 流转：U4 committed（a39505d1e，首任零产出替换后 v2 测试先行收工）+ U5 committed（4c63d9fb9，升档 glm-5.3）；偏差 #8 闭环、#9-#11 登记；僵树清理 + 主会话直接派发恢复可达性。
