@@ -127,7 +127,7 @@ graph TD
 | U5 | committed | 2 | 重实现 commit `abe7ce4ad`（第 1 轮 blocked 记录已移至变更历史）。armedSnapshot 入口快照按分支守卫：分支 2 内 + 分支 4/5 前各一处，分支 3 不门禁；core 22/22 PASS（17 既有含 5 个按 D5 语义改造 + 5 新增门禁用例）+ typecheck 0。偏差 #6：既有 5 用例断言按 D5 行为变更改造（dev 已声明，主 agent 核验采纳） |
 | U6 | committed | 1 | commit `9cf3175ad`；typecheck:test exit 0；tests 19/19 PASS；check:i18n PASS |
 | U7 | committed | 1 | commit `1c749bb72`；3处勘误落档 + 链接可解析 + drift check PASS |
-| U8 | committed | 1 | Gate A：runtime/core/renderer typecheck PASS；runtime 4384 PASS (3 pre-existing) / core 1420 PASS / renderer 3735 PASS；lint 2 max-lines warnings (pre-existing,偏差 #5)。U5/U9 落地后复跑收口 |
+| U8 | committed | 2 | Gate A 终证（HEAD `8bff8d175`，空闲态复跑）：root `pnpm test` exit 0（全包，含 extensions/apps）；`pnpm run lint` exit 0（偏差 #5 的 2 条 max-lines 已由收口批消除）；runtime/core typecheck 0 + renderer typecheck:test 0；变更面 skip 扫描干净。过程记录：首轮全量红两项——scan-cache-merge 预算（U1 增量读取未校准，收口批校准）+ lint max-lines（提取重构消除）；次轮 send-queue-e2e 真实子进程 60s 超时为负载偶发（单跑 3/3 绿，空闲态全量复跑通过） |
 | U9 | committed | 1 | commit `65d746703`。restore 播种两路径同构恒提供 metaOverride（读回值 → sidecar → '' 按字段链）+ 虚构「D2 裁决」注释替换为 r3 校准语义；restore-seeding 9/9 PASS（新增场景 2a/2b 部分读回用例）+ typecheck 0。流程注记：dev 会话引擎级超时未返回报告（rounds 0），改动已落工作区——主 agent 逐行核验 diff 符合 spec + 复跑测试绿后采纳（接替程序的核验等价路径，未重派） |
 
 ## 7 残留风险与变更历史
@@ -142,6 +142,7 @@ graph TD
 
 **变更历史**：
 
+- 2026-09-04：Gate A 收口（`8bff8d175`，harness u-dev 通道）：① scan-cache-merge AC-merge-1 预算 30→36（归因精确：U1 scanSessionMeta 新增 model sidecar 读 +1/文件 × 测试计数代理双计 = 3×6×2，非回归；缓存命中断言原样）；② max-lines 提取重构：session-model-sidecar.ts（SFU 525→499）+ restore-seeding.ts（lifecycle 565→479），零行为变更，tests 40/40 + typecheck 0 + lint 0；pre-commit 三层守卫拦下 services→infra 直引后改经 SFU re-export 白名单导入面。偏差 #5（max-lines）至此关闭。基础设施事故注记：`.bare/hooks/pre-commit` 于 16:27 发现字节损坏（执行期随机行语法错误+mojibake），已从权威源 `.githooks/install-hooks.sh` 重装恢复（损坏件存证 /tmp/pre-commit.corrupted.*.bak）；同时段 zsw 引擎连续 6 次 300s 轮超时（app-server 观察窗故障），改用 harness 原生 Agent 通道派发。
 - 2026-09-04：阶段 3 一致性对抗审查（双区独立 reviewer，GLM-5.3）：runtime 区 4 major + 1 minor unreasonable（create 缺写点③、restore 缺写点⑤/E6、create hydrate 请求值覆写读回真值、U9 场景 3 断言空转、purge 测试同义反复）+ 2 doc_errors（已由主 agent 修正 `a6752ad97`）；core+renderer 区 1 major + 4 minor（last-used-model 加载窗口覆写丢值、cachedValue 非响应式、recordLastUsed 先于 RPC、sync 分支编号双轨、popover 断言恒真）。5 条 reasonable 演化核验通过。
 - 2026-09-04：阶段 4 修复循环。runtime 批（`e50a01167`）：写点③⑤补齐 + hydrate 生效值 + 测试诚实化，30/30 + typecheck 0；core 批（`9f7b66de6`）：加载窗口守卫 + ref 响应化 + recordLastUsed 成功后写（偏差 #7）+ 编号单轨 + enterStagingMode 快照顺序修复（偏差 #8，staging 测试收尾微任务补齐注释与直断言）+ popover 断言可证伪，core composer 域 244/244 + renderer 10/10。流程注记：三处引擎 300s 超时（U9 dev、core 区 reviewer 首跑、runtime 修复批 dev）均以「工作区产物 + 主 agent 行级核验 + 测试复跑」采纳，runtime 批一处 3 行机械类型修正由主 agent 完成并披露。定向复审判定 **clean**（11 项修复全部行级核验通过，2 条 minor 注记入偏差 #9）。审查清零，转阶段 5 双级验收。
 - 2026-09-04：U5+U9 committed，状态表全 committed。U5 重实现（`abe7ce4ad`，GLM-5.3）：按分支守卫形态落地，core 22/22 + typecheck 0，偏差 #6 登记。U9（`65d746703`，GLM-5.3-Flash）：restore 播种按字段恒提供 + 注释校准，runtime 9/9 + typecheck 0；dev 会话引擎级超时未返回报告，主 agent 逐行核验 diff + 复跑测试后采纳。下一步：一致性审查（阶段 3）。
