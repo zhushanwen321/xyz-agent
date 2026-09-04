@@ -89,6 +89,17 @@ graph TD
 | 5 | U3 bridgeRequestIds 登记点从「event-adapter 识别时」改为「BridgeHandler 入口」（构造器注入 timeoutManager 可选依赖 + ExtensionTimeoutManager.addBridgeRequest 导出） | event-adapter 是纯翻译层（文件头注释明文无路由副作用），无法持有 timeout-manager 实例；到达即登记同时覆盖旧 bridge:* 通道 / 新 marker 通道 / malformed 哨兵三种到达形态，登记语义与原设计等价。**连带**：server.ts:208 构造器需补传第二参（并入 U4 领地） | U3 交付 |
 | 6 | U3 bridge:event 回包（bridge-handler :63）保持恒 null 不 stringify | 设计 §3.3-D1 明文 event 恒 null → cancelled 帧（bridge 侧 void 丢弃），不属 6 处序列化清单；测试已锁定该例外 | U3 交付 |
 | 7 | U3 实测 4 旧测试中 event-adapter-bridge.test.ts 与 plugin-hook-bridge.test.ts 仍绿（不涉序列化断言） | U4 对这两文件核对后保留或微调（原计划「按新契约重写」收窄为「按需」）；bridge-sync（5 失败）/bridge-reconnect（12 失败）确需重写 | U3 交付 |
+| 8 | U2 领地扩至根 extension-dependencies.json（协调者授权补登） | check-extension-dependencies.mjs check #2（:90-97）要求磁盘每个 @zhushanwen/pi-* 包必须登记——计划缺口（偏差 #1 只前移 mandatory，漏了同脚本反向校验）；登记条目含 extension-protocol + pi-extension-logger 两条 package 依赖 | U2 交付（授权补登） |
+| 9 | U2 启动 sync 的 ctx 获取：session_start 事件 handler 双职责（触发 sync + 转发自身事件） | ExtensionAPI 无 ui（UI 方法在 ExtensionContext，仅事件 handler / 工具 execute 的 ctx 携带）——设计 v1「factory 内后台任务」不可实现；session_start 是 bindExtensions 末尾 emit 的最早带 ctx 钩子，先于任何 prompt，时序符合 D4。设计文档已在 v3.2 修正 D4 表述 | U2 交付 |
+| 10 | U2 Tool not found 识别双形态：`{error:'Tool not found…'}` + `{content:'Tool not found…', isError:true}` | 设计 §3.4-E2 只写错误闭环一种形态；runtime bridge-interop.ts:167 实装回工具结果形态——双覆盖防 miss 重同步漏判 | U2 交付 |
+| 11 | U2 AgentToolResult 返回体保留 isError 字段（pi 0.84.4 接口无此字段） | 与 session-manager 先例同款（extension 侧约定字段）；LLM 判错依据 content 文本，E2-E4 文案均在 content 中。设计 v3.2 已补实施注记 | U2 交付 |
+| 12 | U2 8 个 observe 事件用显式 `pi.on` 字面量调用而非数组循环 | pi.on 的字面量重载对 union 字符串变量失效——显式注册保住 handler 类型推断，零 as 断言 | U2 交付 |
+| 13 | U2 pi CLI 实测命令补 `--no-extensions` | 用户全局安装的第三方 pi extension 损坏会先拒载干扰实测；与 xyz-agent runtime spawn 形态一致（rpc-client.ts:216 同款组合） | U2 交付 |
+| 14 | U2 日志 sync 成功用 debug 级（非 info） | @zhushanwen/pi-extension-logger 实例 API 仅 debug/warn/error 三级（LogLevel 类型含 info 但实例无 info()） | U2 交付 |
+| 15 | U4 rpc-client.test.ts 领地微扩：删 U5d 死分支用例 | 删 sendExtensionUiResponse `{id,response}` 死分支使其必失败，全量绿是硬验收——按「测已删除旧机制的用例删除并注释」原则处理，留 [HISTORICAL] 注释指向 bridge-marker-channel.test.ts | U4 交付 |
+| 16 | U4 event-adapter-bridge.test.ts 与 plugin-hook-bridge.test.ts 零改动 | 逐用例核对确认不含旧 bridge:* method 帧用例（前者测 setWidget/setStatus 翻译，后者测 hook 机制），与被删分支无关 | U4 交付 |
+| 17 | U4 electron-builder.yml 零改动 | apps/electron/resources/pi（pi Bun binary，prepare-pi-resources.sh 产物，untracked）与被删的仓库根 resources/pi 是两个不同目录，yml 的 from 指向前者 | U4 交付 |
+| 18 | U4 收尾（协调者授权）：registerTimeout 的 bridge: 前缀分支删除 + extension-timeout-manager.test / server-destroyed-converged-cleanup / bridge-marker-channel / bridge-sync / bridge-reconnect 连带测试改造 | 「新链路上线即旧链路删除，无并存窗口」纪律——旧 event-adapter bridge:* 分支删后该分支生产不可达（registerExtensionTimeout 只由 extension-ui kind 触发）；登记单源化到 addBridgeRequest + 2 条防回归锁（registerTimeout 误传 bridge: 不得登记） | U4 收尾（授权） |
 
 ## 6 状态表
 
@@ -97,7 +108,7 @@ graph TD
 | U1 | committed | 1 | e084a9ab7；typecheck exit 0 + vitest 91 passed（含 marker.test.ts 4 tests）；偏差 #2-#4 登记 |
 | U2 | committed | 1 | e71627b62；extensions 三连绿（26/26）+ check-extension-dependencies exit 0（含授权补登 extension-dependencies.json，偏差 #8）+ pi CLI 实测加载成功（marker/sync/event 帧形状吻合设计）；偏差 #9-#14 见 subagent 报告（session_start 双职责方案/Tool not found 双形态/AgentToolResult isError 兼容字段/显式 pi.on 注册/--no-extensions 实测形态/extension-logger 无 info 级） |
 | U3 | committed | 1 | 437988df4；typecheck exit 0 + 26/26 新测试 + 72/72 增量回归；偏差 #5-#7 登记（登记点改 BridgeHandler 入口 + server.ts 装配行并入 U4 + event 恒 null 例外 + 4 旧测试失败清单：bridge-sync 5 / bridge-reconnect 12） |
-| U4 | pending | 0 | — |
+| U4 | committed | 2 | 809d11129；全量 4280/4280 绿（17 failed→0 + 2 防回归锁）+ typecheck/lint/doc-symbol-drift 过；server.ts 装配行落地（偏差 #5 收口）+ registerTimeout 死分支删除（「无并存窗口」纪律）+ AGENTS.md 21 包；偏差 #15-#18 见报告 | 
 | U5 | pending | 0 | — |
 
 ## 7 残留风险与变更历史

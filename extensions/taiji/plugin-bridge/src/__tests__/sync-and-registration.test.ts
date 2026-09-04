@@ -19,13 +19,26 @@ function methodRouter(responses: Partial<Record<string, unknown[]>>, fallback: u
 	});
 }
 
-/** select 通道 mock 形态（照 session-manager __tests__ 模式） */
-function createHarness(selectImpl: (...args: unknown[]) => unknown) {
-	const registered: Array<{ name: string; label: string; description: string; parameters: unknown; execute: Function }> = [];
+/** 注册到的工具条目形状（pi.registerTool 收到的完整定义） */
+interface RegisteredTool {
+	name: string;
+	label: string;
+	description: string;
+	parameters: unknown;
+	execute: Function;
+}
+
+/** select 通道 mock 形态（照 session-manager __tests__ 模式）；
+ * registerToolImpl 可注入自定义注册行为（默认 push 进 registered） */
+function createHarness(
+	selectImpl: (...args: unknown[]) => unknown,
+	registerToolImpl?: (tool: RegisteredTool) => void,
+) {
+	const registered: RegisteredTool[] = [];
 	const handlers = new Map<string, Array<(data: unknown, ctx: unknown) => unknown>>();
 	const selectMock = vi.fn(selectImpl);
 	const pi = {
-		registerTool: (tool: { name: string }) => registered.push(tool),
+		registerTool: registerToolImpl ?? ((tool: RegisteredTool) => registered.push(tool)),
 		on: (evt: string, handler: (data: unknown, ctx: unknown) => unknown) => {
 			handlers.set(evt, [...(handlers.get(evt) ?? []), handler]);
 		},
@@ -191,5 +204,41 @@ describe("启动 sync（设计 §3.3-D4）", () => {
 		// sync 只发一笔（防抖命中）；event 转发每触发一次一笔（两笔，各自独立 fire-and-forget）
 		expect(callsOf(selectMock, "bridge:sync")).toHaveLength(1);
 		expect(callsOf(selectMock, "bridge:event")).toHaveLength(2);
+	});
+
+	it("registerTool throw 被循环整体兜底：退避重试后成功注册，无 unhandled rejection 逃逸", async () => {
+		vi.useFakeTimers();
+		// session_start 的 `void ensureSynced(ctx)` 无人 await——若 runSyncLoop 循环体
+		// 不兜底，registerTool 的同步 throw 会变 unhandledRejection 逃逸到进程级
+		const rejections: unknown[] = [];
+		const onUnhandled = (reason: unknown) => rejections.push(reason);
+		process.on("unhandledRejection", onUnhandled);
+		try {
+			// 第一笔 sync 回包正常，但 pi.registerTool 同步 throw（模拟 pi 内部错误）；
+			// 第二笔退避重试成功——证明 throw 走 {ok:false} 同路径而非打断循环
+			let throwOnce = true;
+			const selectMock = methodRouter({ "bridge:sync": [SYNC_PAYLOAD, SYNC_PAYLOAD] });
+			const { registered, handlers, ctx } = createHarness(selectMock, (tool) => {
+				if (throwOnce) {
+					throwOnce = false;
+					throw new Error("pi internal registerTool failure");
+				}
+				registered.push(tool);
+			});
+			triggerSessionStart(handlers, ctx);
+
+			await vi.advanceTimersByTimeAsync(0);
+			// 第一次 attempt 被 catch 兜底：零注册、promise 已 settle（无 unhandled）
+			expect(registered).toHaveLength(0);
+			expect(rejections).toEqual([]);
+
+			await vi.advanceTimersByTimeAsync(2_000);
+			await vi.waitFor(() => expect(registered).toHaveLength(1));
+			expect(registered[0].name).toBe("sleep-tool");
+			expect(rejections).toEqual([]);
+		} finally {
+			process.off("unhandledRejection", onUnhandled);
+			vi.useRealTimers();
+		}
 	});
 });

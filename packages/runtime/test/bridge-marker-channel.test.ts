@@ -172,7 +172,7 @@ describe('bridge-handler: sendExtensionUiResponse 序列化形状', () => {
     expect(JSON.parse(response as string)).toEqual(expected)
   }
 
-  it('bridge:sync（:32 存量）→ payload JSON 字符串 + select', async () => {
+  it('bridge:sync（设计 §3.3-D6 枚举的 6 处存量之一）→ payload JSON 字符串 + select', async () => {
     const syncPayload = { tools: [{ name: 'sleep-tool', description: 'd', parameters: {} }], commands: [], success: true }
     const { client, send } = makeMockClient()
     const handler = new BridgeHandler(makePluginService({ getBridgeSyncPayload: () => syncPayload }))
@@ -180,14 +180,14 @@ describe('bridge-handler: sendExtensionUiResponse 序列化形状', () => {
     expectSelectJsonSerialization(send, syncPayload)
   })
 
-  it('bridge:tool_execute 无 pluginService（:39 not-available 防御分支）→ JSON 字符串 + select', async () => {
+  it('bridge:tool_execute 无 pluginService（§3.3-D6 not-available 防御分支）→ JSON 字符串 + select', async () => {
     const { client, send } = makeMockClient()
     const handler = new BridgeHandler(null)
     await handler.handleBridgeRequest('sess-1', 'req-2', 'bridge:tool_execute', { toolName: 't' }, client)
     expectSelectJsonSerialization(send, { content: 'Plugin system not available', isError: true })
   })
 
-  it('bridge:tool_execute 正常结果（:49 存量）→ result JSON 字符串 + select', async () => {
+  it('bridge:tool_execute 正常结果（设计 §3.3-D6 枚举的 6 处存量之一）→ result JSON 字符串 + select', async () => {
     const toolResult = { content: 'slept 90s', isError: false }
     const { client, send } = makeMockClient()
     const handler = new BridgeHandler(makePluginService({
@@ -197,7 +197,7 @@ describe('bridge-handler: sendExtensionUiResponse 序列化形状', () => {
     expectSelectJsonSerialization(send, toolResult)
   })
 
-  it('bridge:event（:63 例外）→ 恒 null 回包（cancelled 帧，bridge 侧 void 丢弃）', async () => {
+  it('bridge:event（§3.3-D6 序列化例外：恒 null 回包）→ cancelled 帧（bridge 侧 void 丢弃）', async () => {
     const { client, send } = makeMockClient()
     const handler = new BridgeHandler(makePluginService())
     await handler.handleBridgeRequest('sess-1', 'req-4', 'bridge:event', { eventName: 'agent_start', data: {} }, client)
@@ -206,7 +206,7 @@ describe('bridge-handler: sendExtensionUiResponse 序列化形状', () => {
     expect(response).toBeNull()
   })
 
-  it('bridge:intercept（:74 存量）→ result JSON 字符串 + select', async () => {
+  it('bridge:intercept（设计 §3.3-D6 枚举的 6 处存量之一）→ result JSON 字符串 + select', async () => {
     const interceptResult = { injectedMessages: [{ role: 'user', content: 'injected' }] }
     const { client, send } = makeMockClient()
     const handler = new BridgeHandler(makePluginService({
@@ -233,14 +233,14 @@ describe('bridge-handler: sendExtensionUiResponse 序列化形状', () => {
     }
   })
 
-  it('default 未知 method（:80 存量）→ 错误 JSON 字符串 + select', async () => {
+  it('default 未知 method（设计 §3.3-D6 枚举的 6 处存量之一）→ 错误 JSON 字符串 + select', async () => {
     const { client, send } = makeMockClient()
     const handler = new BridgeHandler(null)
     await handler.handleBridgeRequest('sess-1', 'req-7', 'bridge:unknown', {}, client)
     expectSelectJsonSerialization(send, { error: 'Unknown bridge method: bridge:unknown' })
   })
 
-  it('catch 路径（:89 存量）→ {error} JSON 字符串 + select', async () => {
+  it('catch 路径（设计 §3.3-D6 枚举的 6 处存量之一）→ {error} JSON 字符串 + select', async () => {
     const { client, send } = makeMockClient()
     const handler = new BridgeHandler(makePluginService({
       handleBridgeToolExecute: vi.fn().mockRejectedValue(new Error('boom')),
@@ -269,10 +269,16 @@ describe('bridgeRequestIds 登记（marker 命中 → timeout-manager 有记录�
     await handler.handleBridgeRequest('sess-1', 'req-reg-2', 'bridge:malformed', { raw: 'x' }, client)
     expect(mgr.isBridgeRequest('req-reg-2')).toBe(true)
 
+    // bridge:event 例外不登记：fire-and-forget 恒 null 回包无抢答窗口，且事件频率
+    // = pi agent 事件频率，登记只会在 session 销毁时清理（长会话单调累积）
+    await handler.handleBridgeRequest('sess-1', 'req-reg-ev', 'bridge:event', { eventName: 'agent_start', data: {} }, client)
+    expect(mgr.isBridgeRequest('req-reg-ev')).toBe(false)
+
     // session 级跟踪生效：clearForSession 一并清理 bridgeRequestIds
     mgr.clearForSession('sess-1')
     expect(mgr.isBridgeRequest('req-reg-1')).toBe(false)
     expect(mgr.isBridgeRequest('req-reg-2')).toBe(false)
+    expect(mgr.isBridgeRequest('req-reg-ev')).toBe(false)
   })
 
   it('端到端链路：marker 帧翻译 → bridge-ui kind → handler → timeout-manager 有记录', async () => {

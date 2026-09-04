@@ -84,6 +84,30 @@ function isInjectedMessage(v: unknown): v is { content: unknown } {
 	return isRecord(v) && "content" in v;
 }
 
+// ── pi 原生 Content 形态（@earendil-works/pi-ai TextContent/ImageContent 的结构形状；
+// pi-coding-agent 主入口不 re-export 这两个类型，按 subagent-workflow 同款局部接口先例）──
+
+/** TextContent 最小判定形状：textSignature 等可选字段守卫不检查、透传不丢失 */
+interface InjectedTextContent {
+	type: "text";
+	text: string;
+}
+
+/** ImageContent 同构形状：{type:'image', data, mimeType} */
+interface InjectedImageContent {
+	type: "image";
+	data: string;
+	mimeType: string;
+}
+
+function isTextContent(v: unknown): v is InjectedTextContent {
+	return isRecord(v) && v.type === "text" && typeof v.text === "string";
+}
+
+function isImageContent(v: unknown): v is InjectedImageContent {
+	return isRecord(v) && v.type === "image" && typeof v.data === "string" && typeof v.mimeType === "string";
+}
+
 /** 清单 miss 识别（设计 §3.4-E2）：错误闭环 {error:'Tool not found…'} 与工具结果
  * {content:'Tool not found…', isError:true}（runtime bridge-interop 实装形态）双覆盖 */
 function isToolNotFound(raw: unknown): boolean {
@@ -234,12 +258,22 @@ export default function pluginBridgeExtension(pi: ExtensionAPI): void {
 	 * 本 session 无自愈——零工具注册 = execute 永不触发，恢复 = 下个 session 重新 sync）。 */
 	async function runSyncLoop(ctx: ExtensionContext): Promise<void> {
 		for (let attempt = 1; attempt <= MAX_SYNC_ATTEMPTS; attempt++) {
-			const result = await syncOnce(ctx);
-			if (result.ok) {
-				logger.debug(`[plugin-bridge] synced ${result.tools} plugin tool(s)`);
-				return;
+			// 循环体整体兜底：syncOnce 正常路径已把通道错误折叠为 {ok:false}，这里防的是
+			// registerTool 调用链等同步 throw——不捕获会让 session_start 的
+			// `void ensureSynced(ctx)` 产生 unhandled rejection 逃逸（调用侧无法感知）；
+			// catch 后按失败重试语义继续，与 {ok:false} 同路径
+			try {
+				const result = await syncOnce(ctx);
+				if (result.ok) {
+					logger.debug(`[plugin-bridge] synced ${result.tools} plugin tool(s)`);
+					return;
+				}
+				logger.warn(`[plugin-bridge] sync attempt ${attempt}/${MAX_SYNC_ATTEMPTS} failed: ${result.reason}`);
+			} catch (err) {
+				logger.error(`[plugin-bridge] sync attempt ${attempt}/${MAX_SYNC_ATTEMPTS} threw`, {
+					reason: err instanceof Error ? err.message : String(err),
+				});
 			}
-			logger.warn(`[plugin-bridge] sync attempt ${attempt}/${MAX_SYNC_ATTEMPTS} failed: ${result.reason}`);
 			if (attempt < MAX_SYNC_ATTEMPTS) {
 				await new Promise<void>((resolve) => setTimeout(resolve, SYNC_RETRY_MS));
 			}
@@ -379,13 +413,20 @@ export default function pluginBridgeExtension(pi: ExtensionAPI): void {
 		const result: BeforeAgentStartEventResult = {
 			message: {
 				customType: "plugin-inject",
-				content: messages.map((content) => ({
-					type: "text" as const,
-					// content 契约是 string | 结构化（旧 bridge 契约 {role, content}），非字符串
-					// 序列化保信息；undefined/null 兜底 String() 防 text 破约（JSON.stringify
+				content: messages.map((content): InjectedTextContent | InjectedImageContent => {
+					// 已是 pi 原生 Content 形态（TextContent/ImageContent）→ 原样透传：
+					// CustomMessage.content 数组本就接受该形态（设计 §3.2「类型零丢失」
+					// 承诺——如 image 段被 stringify 成 text 会丢失多模态语义）
+					if (isTextContent(content) || isImageContent(content)) return content;
+					// 其余未知形态（含 string）fallback 为 text 段：content 契约是
+					// string | 结构化（旧 bridge 契约 {role, content}），非字符串序列化
+					// 保信息；undefined/null 兜底 String() 防 text 破约（JSON.stringify
 					// 对 undefined 返回 undefined 而非字符串）
-					text: typeof content === "string" ? content : (JSON.stringify(content) ?? String(content)),
-				})),
+					return {
+						type: "text" as const,
+						text: typeof content === "string" ? content : (JSON.stringify(content) ?? String(content)),
+					};
+				}),
 				display: false,
 				details: { count: messages.length },
 			},

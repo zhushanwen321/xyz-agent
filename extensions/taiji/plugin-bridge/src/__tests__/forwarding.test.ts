@@ -272,6 +272,7 @@ describe("intercept（bridge:intercept，唯一允许 await 的转发）", () =>
 		};
 
 		expect(result.message.customType).toBe("plugin-inject");
+		// string content → text 段；未知对象 fallback JSON.stringify 为 text 段
 		expect(result.message.content).toEqual([
 			{ type: "text", text: "first instruction" },
 			{ type: "text", text: '{"nested":true}' },
@@ -286,6 +287,28 @@ describe("intercept（bridge:intercept，唯一允许 await 的转发）", () =>
 			data: { type: "before_agent_start", prompt: "hi" },
 			sessionId: "sess-1",
 		});
+	});
+
+	it("pi 原生 Content 形态原样透传（类型零丢失，设计 §3.2）", async () => {
+		const full = createHarness(methodRouter({
+			"bridge:intercept": [JSON.stringify({
+				injectedMessages: [
+					{ role: "user", content: { type: "text", text: "native text", textSignature: "sig-1" } },
+					{ role: "user", content: { type: "image", data: "aW1hZ2U=", mimeType: "image/png" } },
+				],
+			})],
+		}));
+		const handler = full.handlers.get("before_agent_start")![0] as (data: unknown, ctx: unknown) => Promise<unknown>;
+		const result = (await handler({ type: "before_agent_start", prompt: "hi" }, full.ctx)) as {
+			message: { content: Array<Record<string, unknown>>; details: { count: number } };
+		};
+
+		// TextContent 形态原样透传：可选字段（textSignature）不丢，不被重新构造为裸 text 段
+		expect(result.message.content[0]).toEqual({ type: "text", text: "native text", textSignature: "sig-1" });
+		// ImageContent 透传：CustomMessage.content 数组原生接受该形态；stringify 兜底
+		// 会把 image 降级成 text 丢失多模态语义
+		expect(result.message.content[1]).toEqual({ type: "image", data: "aW1hZ2U=", mimeType: "image/png" });
+		expect(result.message.details.count).toBe(2);
 	});
 
 	it("无 injectedMessages → 不注入（undefined）", async () => {

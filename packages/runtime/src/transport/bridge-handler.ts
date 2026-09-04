@@ -26,7 +26,8 @@ export class BridgeHandler {
      * ExtensionTimeoutManager.registerTimeout 的 bridge: 前缀判定不再命中，识别出的
      * 请求到达本 handler 时登记进 bridgeRequestIds——供 extension-message-handler 拦截
      * 前端误发的 ui_response（bridge 请求由 runtime 内部应答，前端不得抢答）；
-     * clearForSession 按 session 跟踪清理。结构类型：生产注入 ExtensionTimeoutManager。
+     * clearForSession 按 session 跟踪清理。bridge:event 例外不登记（见 handleBridgeRequest
+     * 入口注释）。结构类型：生产注入 ExtensionTimeoutManager。
      */
     private readonly timeoutManager?: { addBridgeRequest(sessionId: string, requestId: string): void },
   ) {}
@@ -38,7 +39,13 @@ export class BridgeHandler {
     data: Record<string, unknown>,
     client: IPiEngine,
   ): Promise<void> {
-    this.timeoutManager?.addBridgeRequest(sessionId, requestId)
+    // 按收窄登记：bridge:event 是 fire-and-forget——runtime 微秒级恒 null 回包，无被
+    // 前端抢答的语义窗口；且 event 转发频率 = pi agent 事件频率，登记后唯一清理点是
+    // session 销毁，长会话单调累积（~100B/条）。sync / tool_execute / intercept /
+    // malformed 是同步往返类（回包前有可观等待窗口），照常登记防前端误发抢答。
+    if (method !== 'bridge:event') {
+      this.timeoutManager?.addBridgeRequest(sessionId, requestId)
+    }
     try {
       switch (method) {
         // 同步工具 schema（塑形由 plugin-service 负责）
