@@ -250,10 +250,12 @@ export default {
     switchModel: '切换模型',
     searchPlaceholder: '搜索模型…',
     noMatch: '无匹配模型',
+    placeholder: '\u2026',
   },
   thinkingLevel: {
     title: '思考级别',
     level: '级别',
+    placeholder: '\u2026',
   },
   command: {
     title: '命令',

@@ -62,6 +62,37 @@ describe('ThinkingLevelPopover onSelect 发 value（map 映射后）', () => {
   })
 })
 
+// ══ D3: props.level 为空时显示占位文案 ══
+describe('D3: props.level 为空时触发器显示占位文案', () => {
+  it('level 不传 → 触发器显示占位「…」', async () => {
+    const wrapper = mount(ThinkingLevelPopover, {
+      props: {},
+    })
+    await wrapper.vm.$nextTick()
+    // D3：已建 session thinkingLevel 为空 → 显示占位「…」
+    expect(wrapper.text()).toContain('…')
+  })
+
+  it('level=undefined → 触发器显示占位「…」', async () => {
+    const wrapper = mount(ThinkingLevelPopover, {
+      props: { level: undefined },
+    })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('…')
+  })
+
+  it('level="high" → 触发器正常显示档位名（不显示占位）', async () => {
+    const wrapper = mount(ThinkingLevelPopover, {
+      props: { level: 'high' },
+    })
+    await wrapper.vm.$nextTick()
+    // 有明确档位时，不应显示占位「…」
+    // 高档位显示文字（由 getDisplayLabel 决定，非 '…'）
+    const triggerText = wrapper.text()
+    expect(triggerText).not.toBe('…')
+  })
+})
+
 // ══ U9: pi 新语义（U6 改锚：可用集读 supportedLevels 下发）——mimo 场景档位渲染 ══
 // xiaomi-token-plan-cn/mimo-v2.5-pro 的 supportedLevels = pi 同源计算默认五档。
 describe('U9: mimo 场景（supportedLevels 未下发）→ 渲染默认五档含 minimal，无 xhigh/max', () => {

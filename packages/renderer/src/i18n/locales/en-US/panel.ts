@@ -250,10 +250,12 @@ export default {
     switchModel: 'Switch model',
     searchPlaceholder: 'Search models…',
     noMatch: 'No matching models',
+    placeholder: '\u2026',
   },
   thinkingLevel: {
     title: 'Thinking level',
     level: 'Level',
+    placeholder: '\u2026',
   },
   command: {
     title: 'Commands',
