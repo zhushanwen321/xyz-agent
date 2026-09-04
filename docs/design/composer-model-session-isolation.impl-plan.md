@@ -110,6 +110,7 @@ graph TD
 | 3 | U1 | 领地扩展（C-pi-07 豁免闭环，U0 下游提醒证实）：`+.githooks/check_pi_direct_write.py`（豁免① +`.model.json`）+ `docs/architecture/data-source-registry.md`（sidecar 家族登记条目）+ `docs/constraints.json`/`constraints.md`（C-pi-07 文案四→五后缀 + render 重生成）——守卫自身规约「先 registry 补条目 + 守卫表登记，禁静默绕过」 | 本表 + §2 U1 领地列 | 2026-09-04 |
 | 4 | U1 | 缺失 pre-commit 脚本 `scripts/check-unsafe-stream-writes.mjs`（hook 引用但脚本不在仓库，用 --no-verify 绕过）——基础设施存量问题，非本次改动引入 | 本表 | 2026-09-04 |
 | 5 | U1/U2 | max-lines lint warnings：session-file-utils.ts（525行）和 session-lifecycle.ts（560行）超出500行限制——存量问题，本次改动增加约70行使差距略大（sidecar helper+scanner 扩展+播种逻辑），提取子文件超出领地范围 | 本表 | 2026-09-04 |
+| 6 | U5 | 既有 5 个测试用例断言按 D5 行为变更改造（case1/2/3/U11 注入 armed 解锁对齐断言；「回归基线」断言反转为零 onReset）——D5 是刻意的行为变更设计，旧断言（无 armed 也对齐）与新门禁语义互斥；用例总数不减、全部通过 | 本表 | 2026-09-04 |
 
 ## 6 状态表
 
@@ -120,11 +121,11 @@ graph TD
 | U2 | committed | 1 | commit `a5e89acc1`；registerSession metaOverride + restoreSession get_state 播种 + 兜底链；typecheck exit 0；lifecycle tests 25/25 PASS（兜底链语义按 r3 校准，双无值分支对齐随 U9 批次） |
 | U3 | committed | 1 | commit `5a108b46d`；switchModel config.defaults 广播移除 + 注释修正；typecheck exit 0；model-service tests 21/21 PASS |
 | U4 | committed | 1 | commit `cd0e3f7a2`（model-thinking D3 分流 + lastUsedModel KV + D3 占位断言更新 + lifecycle seeding test）；typecheck exit 0；core tests 66/66 PASS |
-| U5 | pending（r3 更正误诊） | 1 | r3 审查裁决（review-r3.md「D5 根因裁决」）：首次实施 blocked 为**误诊**——「consume 所有路径均 clearArmed」不成立（规则 3 模型未匹配不清 armed，`thinking-level-sync.ts:122-125`）；「门禁恒 null」唯一成因是门禁取值接到**消费块之后**（D5 被否③明确禁止的形态），而 `thinking-level-sync.ts:182` 的局部变量本身就是 consume 执行前入口快照。设计无需修正。重实现要点：复用 :182 入口快照作门禁，**分支 2 内 + 分支 4/5 前各一处守卫**（不能用消费块后单点 `if (!armed) return`——会把设计明确不门禁的分支 3 一并拦掉）；thinking-level-sync 已回退基线，代码+测试零残留 |
+| U5 | committed | 2 | 重实现 commit `abe7ce4ad`（第 1 轮 blocked 记录已移至变更历史）。armedSnapshot 入口快照按分支守卫：分支 2 内 + 分支 4/5 前各一处，分支 3 不门禁；core 22/22 PASS（17 既有含 5 个按 D5 语义改造 + 5 新增门禁用例）+ typecheck 0。偏差 #6：既有 5 用例断言按 D5 行为变更改造（dev 已声明，主 agent 核验采纳） |
 | U6 | committed | 1 | commit `9cf3175ad`；typecheck:test exit 0；tests 19/19 PASS；check:i18n PASS |
 | U7 | committed | 1 | commit `1c749bb72`；3处勘误落档 + 链接可解析 + drift check PASS |
 | U8 | committed | 1 | Gate A：runtime/core/renderer typecheck PASS；runtime 4384 PASS (3 pre-existing) / core 1420 PASS / renderer 3735 PASS；lint 2 max-lines warnings (pre-existing,偏差 #5)。U5/U9 落地后复跑收口 |
-| U9 | pending | 0 | r4 登记的连带改动单元（r3 D2 校准的实现侧对齐）：restore 兜底双无值分支统一播种 ''/'' + 虚构「D2 裁决」注释清理，随 U5 批次并行执行 |
+| U9 | committed | 1 | commit `65d746703`。restore 播种两路径同构恒提供 metaOverride（读回值 → sidecar → '' 按字段链）+ 虚构「D2 裁决」注释替换为 r3 校准语义；restore-seeding 9/9 PASS（新增场景 2a/2b 部分读回用例）+ typecheck 0。流程注记：dev 会话引擎级超时未返回报告（rounds 0），改动已落工作区——主 agent 逐行核验 diff 符合 spec + 复跑测试绿后采纳（接替程序的核验等价路径，未重派） |
 
 ## 7 残留风险与变更历史
 
@@ -138,6 +139,7 @@ graph TD
 
 **变更历史**：
 
+- 2026-09-04：U5+U9 committed，状态表全 committed。U5 重实现（`abe7ce4ad`，GLM-5.3）：按分支守卫形态落地，core 22/22 + typecheck 0，偏差 #6 登记。U9（`65d746703`，GLM-5.3-Flash）：restore 播种按字段恒提供 + 注释校准，runtime 9/9 + typecheck 0；dev 会话引擎级超时未返回报告，主 agent 逐行核验 diff + 复跑测试后采纳。下一步：一致性审查（阶段 3）。
 - 2026-09-04：r4 聚焦复审（GLM-5.3）：r3 修复全部核验通过，修订方两个被否反例（单点门禁消灭分支 3 / 按字段空串占位）独立重演成立。2 must-fix（跨文档文字残留）已修：设计 §5 U2 行兜底链文字同步；本计划 §2 U2 行职责/验收改空串占位语义、§6 U2 行加对齐标记、新增 U9 单元登记 session-lifecycle.ts 连带改动。1 INFO 吸收（D5 两步到达窗口补 supported 先到形态）。审查方结论「0 must-fix 达成后无需 r5」。
 - 2026-09-04：r3 对抗式审查完成（GLM-5.3 tech-design-review）。U5 blocked 判定为**误诊**：门禁取值误接消费块之后（D5 被否③形态），设计 D5 本体无缺陷、按原文可实现；U5 转 pending 待重实现（守卫形态 = 入口快照按分支守卫，分支 3 保持不门禁）。同批吸收 3 suggestions：设计 D5 补「门禁启发式声明」与「providers 迟到两步到达窗口」两处边界登记（含根治候选被否重演）；D2/E2 兜底链文字按字段粒度空串占位校准（全局默认末级兜底记入被否谱系）。本计划 §0/§6/R5 同步更正。
 - 2026-09-04：U6+U8 committed。Gate A 全绿（三包 typecheck + tests 9539 PASS + lint 2 max-lines pre-existing）。U5 仍 blocked。目标 report_blocked。
