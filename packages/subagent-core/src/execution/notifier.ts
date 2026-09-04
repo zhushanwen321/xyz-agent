@@ -123,30 +123,133 @@ export function buildBatchNotifyId(memberIds: readonly string[]): string {
   return `${BATCH_NOTIFY_ID_PREFIX}${digest}`;
 }
 
+// ─── U4 预算截断 + 指针（设计 §3.1.2 两段式预算，确定性统一收紧）───
+
+/** sync 批预算参数（config collectSync 节语义）。U4 以设计默认值锁规格；
+ * config 热读（flush 时读值）需 service 传参接线，不在本函数内自行读 config。 */
+export interface BatchBudgetParams {
+  /** 单条目正文上限（第一段截断）。 */
+  perItemChars: number;
+  /** 全批正文中量预算（第二段收紧触发阈值）。 */
+  totalChars: number;
+}
+
+/** 设计默认预算（§3.1.3 config 示例值）。 */
+const DEFAULT_BATCH_BUDGET: BatchBudgetParams = { perItemChars: 4000, totalChars: 24000 };
+
+/** 预算计划（computeBatchBudget 输出，纯数据）。 */
+export interface BatchBudgetPlan {
+  /** ② 总量再压缩是否触发（Σ per-item 截断后正文 > totalChars）。 */
+  tightened: boolean;
+  /** 每条目正文有效上限：未收紧 = perItemChars（兼作第一段截断上限）；纯清单退化 = 0。 */
+  effectivePerItem: number;
+  /** 纯清单退化（floor(totalChars/n) < 200 → 条目只剩头行 + 指针行，正文 0 字符）。 */
+  listOnly: boolean;
+}
+
+/** 绝对下限（设计 §3.1.2）：预算折算低于它时放弃正文，条目退化为「头行 + 指针行」。 */
+const LIST_ONLY_FLOOR = 200;
+
 /**
- * sync 批通知文案（U3 基础版；U4 将在本组装处扩展两段式预算截断）。
+ * 两段式批预算计划（纯函数，规格测试 collect-budget.test.ts 锁定）。
+ *
+ * ① per-item：每条目正文 ≤ perItemChars；② 总量：Σ(截断后) > totalChars 时
+ * effectivePerItem = clamp(floor(totalChars / n), 200, perItemChars) 统一收紧
+ * （n = 成员数）。刻意放弃按剩余预算的瀑布分配（非确定、依赖条目顺序），
+ * 统一收紧换确定性；收紧后 Σ ≤ n × floor(totalChars/n) ≤ totalChars 恒回到预算内。
+ * 未触发收紧时 effectivePerItem = perItemChars（同时承担第一段截断上限）。
+ */
+export function computeBatchBudget(
+  bodyLengths: readonly number[],
+  perItemChars: number,
+  totalChars: number,
+): BatchBudgetPlan {
+  const n = bodyLengths.length;
+  const sumAfterPerItem = bodyLengths.reduce((sum, len) => sum + Math.min(len, perItemChars), 0);
+  if (n === 0 || sumAfterPerItem <= totalChars) {
+    return { tightened: false, effectivePerItem: perItemChars, listOnly: false };
+  }
+  const tight = Math.floor(totalChars / n);
+  if (tight < LIST_ONLY_FLOOR) {
+    return { tightened: true, effectivePerItem: 0, listOnly: true };
+  }
+  return { tightened: true, effectivePerItem: Math.min(tight, perItemChars), listOnly: false };
+}
+
+/** 千位分隔（对齐设计样例 11,234；手写正则零 ICU 依赖）。 */
+function formatChars(n: number): string {
+  return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/** 截断指针行（设计 §3.1.2 样例）：主 agent 据此按需 session_read 取回全文。 */
+function buildTruncationPointer(id: string, kept: number, total: number): string {
+  return `[truncated ${formatChars(total - kept)} of ${formatChars(total)} chars — full result: session_read {"action":"result","session":"${id}"}]`;
+}
+
+/** closed 成员 outcome 兑底物化（与下方 notify() 投影边界同款）；running 原样透传。 */
+function withMaterializedOutcome(record: BgNotifyRecord): BgNotifyRecord {
+  return record.status === "closed"
+    ? { ...record, outcome: record.outcome ?? deriveOutcome(record.closedReason, record.error) }
+    : record;
+}
+
+/**
+ * sync 批通知文案（U3 批形态 + U4 两段式预算截断）。
  *
  * 形态（设计 §3.1.1 交互样例）：批头行 `Subagent batch completed: N finished,
  * M failed, K cancelled.` + 各成员条目（buildLlmContent 同语义）以 "\n\n---\n\"
  * \n" join（分隔符对齐 ledger mergeItems / 内核合批——TUI/LLM 两消费方同构）。
  * 批头计数口径 = 成员 outcome 三态（completed→finished）；closed 成员 outcome 缺省
  * 时按单一权威 deriveOutcome 兑底（与 notify() 投影边界同款，幂等无害）。
+ *
+ * [U4 预算截断] 仅对展示结果正文的条目（closed+completed / running）生效；
+ * failed/cancelled 条目无 result 可取回（指针无意义）不计正文预算、原样输出。
+ * totalChars 口径（§3.1.2）：仅计条目正文（截断后）之和，批头/头行/指针行/
+ * 分隔符等包装开销为有界常量不入预算。未触预算时输出与 U3 基线逐字节一致。
+ * budget 缺省 = 设计默认值；config 热读接线由 flush 调用方传入。
  */
-export function buildBatchLlmContent(records: readonly BgNotifyRecord[]): string {
+export function buildBatchLlmContent(
+  records: readonly BgNotifyRecord[],
+  budget: BatchBudgetParams = DEFAULT_BATCH_BUDGET,
+): string {
   let finished = 0;
   let failed = 0;
   let cancelled = 0;
-  const items = records.map((record) => {
+  // 各条目参与预算的正文（§3.1.2 口径）；null = 该条目不展示 result 正文。
+  const bodies = records.map((record): string | null => {
+    const outcome =
+      record.status === "closed"
+        ? record.outcome ?? deriveOutcome(record.closedReason, record.error)
+        : undefined;
+    if (record.status === "closed" && outcome !== "completed") return null;
+    return record.result ?? "(empty)";
+  });
+  const plan = computeBatchBudget(
+    bodies.map((body) => body?.length ?? 0),
+    budget.perItemChars,
+    budget.totalChars,
+  );
+  const items = records.map((record, i) => {
     if (record.status === "closed") {
       const outcome = record.outcome ?? deriveOutcome(record.closedReason, record.error);
       if (outcome === "completed") finished += 1;
       else if (outcome === "failed") failed += 1;
       else if (outcome === "cancelled") cancelled += 1;
-      return buildLlmContent({ ...record, outcome });
     }
-    // sync 批成员恒 one-shot closed（E4 守卫拒绝 conversation+sync）；running 分支仅
-    // 类型完备性防御（轮次通知语义不属于批，计数不含）。
-    return buildLlmContent(record);
+    const body = bodies[i];
+    if (body === null || body.length <= plan.effectivePerItem) {
+      // 未触预算（含 failed/cancelled 条目）：U3 基线字节不变。
+      return buildLlmContent(withMaterializedOutcome(record));
+    }
+    // 截断：正文保留前 limit 字符 + 省略号，尾接指针行（kept=0 纯清单时省略号一并省略）。
+    const kept = body.slice(0, plan.effectivePerItem);
+    const truncated = buildLlmContent(
+      withMaterializedOutcome({ ...record, result: plan.listOnly ? "" : `${kept}…` }),
+    );
+    // 纯清单时 result 置空会在 buildLlmContent 内残留头行尾换行（"Result:\n" + ""），
+    // 收掉该空行让条目严格为「头行 + 指针行」两行形态（设计 §3.1.2 纯清单退化）。
+    const stripped = plan.listOnly ? truncated.replace(/\n$/, "") : truncated;
+    return `${stripped}\n${buildTruncationPointer(record.id, kept.length, body.length)}`;
   });
   const header = `Subagent batch completed: ${finished} finished, ${failed} failed, ${cancelled} cancelled.`;
   return [header, ...items].join("\n\n---\n\n");
