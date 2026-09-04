@@ -111,6 +111,9 @@ graph TD
 | 4 | U1 | 缺失 pre-commit 脚本 `scripts/check-unsafe-stream-writes.mjs`（hook 引用但脚本不在仓库，用 --no-verify 绕过）——基础设施存量问题，非本次改动引入 | 本表 | 2026-09-04 |
 | 5 | U1/U2 | max-lines lint warnings：session-file-utils.ts（525行）和 session-lifecycle.ts（560行）超出500行限制——存量问题，本次改动增加约70行使差距略大（sidecar helper+scanner 扩展+播种逻辑），提取子文件超出领地范围 | 本表 | 2026-09-04 |
 | 6 | U5 | 既有 5 个测试用例断言按 D5 行为变更改造（case1/2/3/U11 注入 armed 解锁对齐断言；「回归基线」断言反转为零 onReset）——D5 是刻意的行为变更设计，旧断言（无 armed 也对齐）与新门禁语义互斥；用例总数不减、全部通过 | 本表 | 2026-09-04 |
+| 7 | U4 | recordLastUsed 已建态写入时机从「onModelSelect 调用时」细化为「switchModel RPC 成功后」（失败不写，与 armed 失败清同向）——D4② 设计措辞已同步（审查 minor 项裁决采纳修复方向） | 本表 + 设计 D4② | 2026-09-04 |
+| 8 | U4 | 一致性审查修复批顺带修 enterStagingMode 快照顺序缺陷（先快照 stagingThinking 再置 stagingModel）——U5 门禁消除了「对齐 watch 顺手写 stagingThinking」的掩盖路径后暴露的潜伏 bug（UF1b 用例转红实证），非设计外功能而是既有缺陷的根因修复；配套测试注释更新 + 快照直断言（反序变异验证 3 用例红） | 本表 | 2026-09-04 |
+| 9 | 全局 | 定向复审 2 条 minor 残留注记（审查方判定不处理可接受）：① session-lifecycle.ts 写点③注释「从未显式切模型的 session 也在创建时获得 .model.json」在「get_state 无 model 且无 preset model」极端组合下不成立（persistModelBinding 空值守卫跳过），正常路径不触发；② last-used-model persist 无串行化（model-thinking-memory 有 persistChain），同步 localStorage 语义下无实害，先在差异非本批引入 | 本表 | 2026-09-04 |
 
 ## 6 状态表
 
@@ -139,6 +142,8 @@ graph TD
 
 **变更历史**：
 
+- 2026-09-04：阶段 3 一致性对抗审查（双区独立 reviewer，GLM-5.3）：runtime 区 4 major + 1 minor unreasonable（create 缺写点③、restore 缺写点⑤/E6、create hydrate 请求值覆写读回真值、U9 场景 3 断言空转、purge 测试同义反复）+ 2 doc_errors（已由主 agent 修正 `a6752ad97`）；core+renderer 区 1 major + 4 minor（last-used-model 加载窗口覆写丢值、cachedValue 非响应式、recordLastUsed 先于 RPC、sync 分支编号双轨、popover 断言恒真）。5 条 reasonable 演化核验通过。
+- 2026-09-04：阶段 4 修复循环。runtime 批（`e50a01167`）：写点③⑤补齐 + hydrate 生效值 + 测试诚实化，30/30 + typecheck 0；core 批（`9f7b66de6`）：加载窗口守卫 + ref 响应化 + recordLastUsed 成功后写（偏差 #7）+ 编号单轨 + enterStagingMode 快照顺序修复（偏差 #8，staging 测试收尾微任务补齐注释与直断言）+ popover 断言可证伪，core composer 域 244/244 + renderer 10/10。流程注记：三处引擎 300s 超时（U9 dev、core 区 reviewer 首跑、runtime 修复批 dev）均以「工作区产物 + 主 agent 行级核验 + 测试复跑」采纳，runtime 批一处 3 行机械类型修正由主 agent 完成并披露。定向复审判定 **clean**（11 项修复全部行级核验通过，2 条 minor 注记入偏差 #9）。审查清零，转阶段 5 双级验收。
 - 2026-09-04：U5+U9 committed，状态表全 committed。U5 重实现（`abe7ce4ad`，GLM-5.3）：按分支守卫形态落地，core 22/22 + typecheck 0，偏差 #6 登记。U9（`65d746703`，GLM-5.3-Flash）：restore 播种按字段恒提供 + 注释校准，runtime 9/9 + typecheck 0；dev 会话引擎级超时未返回报告，主 agent 逐行核验 diff + 复跑测试后采纳。下一步：一致性审查（阶段 3）。
 - 2026-09-04：r4 聚焦复审（GLM-5.3）：r3 修复全部核验通过，修订方两个被否反例（单点门禁消灭分支 3 / 按字段空串占位）独立重演成立。2 must-fix（跨文档文字残留）已修：设计 §5 U2 行兜底链文字同步；本计划 §2 U2 行职责/验收改空串占位语义、§6 U2 行加对齐标记、新增 U9 单元登记 session-lifecycle.ts 连带改动。1 INFO 吸收（D5 两步到达窗口补 supported 先到形态）。审查方结论「0 must-fix 达成后无需 r5」。
 - 2026-09-04：r3 对抗式审查完成（GLM-5.3 tech-design-review）。U5 blocked 判定为**误诊**：门禁取值误接消费块之后（D5 被否③形态），设计 D5 本体无缺陷、按原文可实现；U5 转 pending 待重实现（守卫形态 = 入口快照按分支守卫，分支 3 保持不门禁）。同批吸收 3 suggestions：设计 D5 补「门禁启发式声明」与「providers 迟到两步到达窗口」两处边界登记（含根治候选被否重演）；D2/E2 兜底链文字按字段粒度空串占位校准（全局默认末级兜底记入被否谱系）。本计划 §0/§6/R5 同步更正。

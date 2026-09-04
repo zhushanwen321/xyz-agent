@@ -197,7 +197,7 @@ const regularModelId = computed(
 
 **D4：全局默认与 session 级切换解耦 + landing 粘滞默认显式化（选定）**
 
-- **采用**：① `ModelService.switchModel` 移除 `config.defaults` 广播（该消息语义是「全局默认变了」，session 级切换在新语义下不再改全局默认——广播错误内容比不广播更糟）；`settingsStore.defaultModel` 回归单一语义 = Settings 配置值（sendInitialState 推送）。② landing 新任务默认模型改为显式 **lastUsedModel**（renderer KVStorage 单键，与 u3 记忆表同基建同平台）：`onModelSelect` 显式选模型时写入（staging 试选不写），landing 兜底链变 `currentModel || lastUsedModel || defaultModel`。
+- **采用**：① `ModelService.switchModel` 移除 `config.defaults` 广播（该消息语义是「全局默认变了」，session 级切换在新语义下不再改全局默认——广播错误内容比不广播更糟）；`settingsStore.defaultModel` 回归单一语义 = Settings 配置值（sendInitialState 推送）。② landing 新任务默认模型改为显式 **lastUsedModel**（renderer KVStorage 单键，与 u3 记忆表同基建同平台）：`onModelSelect` 显式选模型时写入（staging 试选不写；已建态在 switchModel RPC **成功后**写入、失败不写——与 armed「失败清」同向，切换未生效不污染粘滞默认；KV 加载窗口内的写入优先于在途旧快照，镜像记忆表守卫），landing 兜底链变 `currentModel || lastUsedModel || defaultModel`。
 - **被否**：②' 完全移除粘滞默认（landing 恒用 Settings 默认）——砍掉已被用户习惯的「新任务接着用上次的模型」体验，而实现它的成本只是复用 u3 KV 基建的一个键；②'' 维持现状（靠 `config.defaults` 广播撑粘滞）——语义污染源本体，且 pi 0.84.4 下重启即丢，行为不完整。
 - **证据**：`model-service.ts:88-108`（广播现状）；renderer 侧**两个消费点**（审查第 1 轮核实）：`settings-lifecycle.ts:73`（写 store）+ `ProviderPage.vue:369`（`onDefaultsWithSource`，非 `default-set` 且值变时 toast「默认模型自动更新」）；`model-thinking-memory.ts`（KVStorage 平台基建，lastUsedModel 照抄其 load/record 形态）；pi 实装「set_model 不持久化」（关键事实，见 §2.3）。
 - **副作用（显式声明，正向）**：ProviderPage 的「默认模型自动更新」toast 在 session 级切换后不再出现——该 toast 本就是机制 ① 的症状（用户在别的 session 切模型，Settings 页却被告知「默认模型已更新」）；用户主动在 Settings 设默认（`source: 'default-set'`）或 provider 变更对账触发的路径不受影响（这些不经 `ModelService.switchModel` 的 session 级入口）。
