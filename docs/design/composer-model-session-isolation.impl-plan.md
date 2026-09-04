@@ -34,7 +34,7 @@
 | Unit | 职责 | 领地（精确文件路径） | 依赖 | 隔离 | 验收条款 |
 |---|---|---|---|---|---|
 | U0 | constraints.json 登记三条新约束（per-session 模型/档位持久独立 sidecar；全局默认不得由 session 级切换改写；档位对齐仅挂显式切换）+ `render-constraints.mjs` 重生成 md | `docs/constraints.json`<br>`docs/constraints.md`（生成物） | 无 | plain | `node scripts/render-constraints.mjs` 成功；三条约束在 json+md 中可见且 scope/权威源/执行方式完整；pre-commit 全绿 |
-| U1 | runtime 数据层：`modelSidecarPath`/`persistModelBinding`（persistBindingSidecar 家族）+ BINDING_FIELDS 增 `modelId`/`thinkingLevel` 两行（create/handoff/fork=`'options'`，restore=`'none'`）+ `scanSessionMeta`/`scannedToSummary` 提取两字段 + 五写点接入（switchModel/setThinkingLevel/create/landing/fork，含 forkSession 侧 sidecar 落位）+ `purgeSessionSidecars` 清单 +`.model.json` + `CREATE_DERIVED_CALLERS` 守卫契约核对（`passedBindingFields` 是否需 + 两新字段） | `packages/runtime/src/infra/pi/session-binding-fields.ts`<br>`packages/runtime/src/infra/pi/session-file-utils.ts`<br>`packages/runtime/src/services/session/session-scanner.ts`<br>`packages/runtime/src/services/session/session-model-control.ts`<br>`packages/runtime/src/services/session/session-lifecycle.ts`（**仅** purgeSessionSidecars + forkSession 侧落位；restore/create 播种归 U2）<br>`packages/runtime/src/__tests__/`（`session-file-utils-sidecar.test.ts` 扩展或新增 sidecar/矩阵守卫/scanner 提取测试） | U0 | plain | `cd packages/runtime && pnpm vitest run src/__tests__/<相关测试>` 绿：矩阵四列含两新字段且 restore='none' / scanner 提取两字段进 summary / persistModelBinding 原子写 + JSONL 不存在不创建守卫 / purge 清单含 `.model.json`；`pnpm typecheck` 过；探针 A2/A3 的单测层覆盖就绪 |
+| U1 | runtime 数据层：`modelSidecarPath`/`persistModelBinding`（persistBindingSidecar 家族）+ BINDING_FIELDS 增 `modelId`/`thinkingLevel` 两行（create/handoff/fork=`'options'`，restore=`'none'`）+ `scanSessionMeta`/`scannedToSummary` 提取两字段 + 五写点接入（switchModel/setThinkingLevel/create/landing/fork，含 forkSession 侧 sidecar 落位）+ `purgeSessionSidecars` 清单 +`.model.json` + `CREATE_DERIVED_CALLERS` 守卫契约核对（`passedBindingFields` 是否需 + 两新字段） + C-pi-07 豁免闭环（偏差 #3） | `packages/runtime/src/infra/pi/session-binding-fields.ts`<br>`packages/runtime/src/infra/pi/session-file-utils.ts`<br>`packages/runtime/src/services/session/session-scanner.ts`<br>`packages/runtime/src/services/session/session-model-control.ts`<br>`packages/runtime/src/services/session/session-lifecycle.ts`（**仅** purgeSessionSidecars + forkSession 侧落位；restore/create 播种归 U2）<br>`packages/runtime/src/__tests__/`（`session-file-utils-sidecar.test.ts` 扩展或新增 sidecar/矩阵守卫/scanner 提取测试）<br>`.githooks/check_pi_direct_write.py`（仅豁免①后缀清单）<br>`docs/architecture/data-source-registry.md`（sidecar 家族条目）<br>`docs/constraints.json`（仅 C-pi-07 文案）+ `docs/constraints.md`（render 生成物） | U0 | plain | `cd packages/runtime && pnpm vitest run src/__tests__/<相关测试>` 绿：矩阵四列含两新字段且 restore='none' / scanner 提取两字段进 summary / persistModelBinding 原子写 + JSONL 不存在不创建守卫 / purge 清单含 `.model.json`；`pnpm typecheck` 过；探针 A2/A3 的单测层覆盖就绪 |
 | U2 | runtime 播种层：restoreSession `switchSession` 成功后 `get_state` 读回生效 model+thinkingLevel → `registerSession` 新参 `metaOverride` 播种（兜底链 get_state→sidecar 扫描值→全局默认，实现在 D2 内部不经 hydrateBindingMeta）；create 路径顺带既有 get_state 读回播种 | `packages/runtime/src/services/session/session-lifecycle.ts`（restore/create 播种 + registerSession metaOverride + 兜底链）<br>`packages/runtime/src/__tests__/`（restore 播种/兜底链测试） | U1 | plain | `cd packages/runtime && pnpm vitest run src/__tests__/<相关测试>` 绿：读回成功播种真值 / 读回失败回落 sidecar 值 / 双失败回落全局默认 / hydrateBindingMeta restore 入口不覆写播种值（restore='none' 生效）；`pnpm typecheck` 过 |
 | U3 | runtime 解耦：`ModelService.switchModel` 移除 `config.defaults` 广播（source=model-switch）+ `model-service.ts` 失效注释按 pi 0.84.4 实装改写（原 U7 的 model-service.ts 部分归并至此，消除同文件双单元领地冲突） | `packages/runtime/src/services/model-service.ts`<br>`packages/runtime/src/__tests__/`（受影响广播断言测试调整） | U0 | plain | `cd packages/runtime && pnpm vitest run src/__tests__/<相关测试>` 绿：switchModel 不再产生 config.defaults 帧（探针 A4 生产点断言）+ 无其他 `source:'model-switch'` 生产点（grep 核对，发现第二生产点按 D4 一并移除并回写设计 D4 消费方清单）；`pnpm typecheck` 过 |
 | U4 | core 显示分流 + lastUsedModel：`regularModelId`/`regularThinkingLevel` 按态分流（已建 session 空值→占位信号，不回落 landing 残留/全局默认；landing 兜底链 `currentModel \|\| lastUsedModel \|\| defaultModel`）+ `last-used-model.ts` KV 单键（仿 model-thinking-memory；写点=onModelSelect 非 staging 分支） | `packages/core/src/domain/composer/model-thinking.ts`<br>`packages/core/src/domain/composer/last-used-model.ts`（新）<br>`packages/core/src/domain/composer/model-thinking.test.ts`<br>`packages/core/src/domain/composer/last-used-model.test.ts`（新） | 无（store 接口不变，可与 U1 并行） | plain | `cd packages/core && pnpm vitest run src/domain/composer/model-thinking.test.ts src/domain/composer/last-used-model.test.ts` 绿：已建态空值→占位不回落 / landing 兜底链顺序 / 显式选择写 KV、staging 不写 / KV 损坏回退（E4）；`pnpm typecheck` 过 |
@@ -104,13 +104,15 @@ graph TD
 
 | # | 单元 | 偏差描述 | 固化位置 | 日期 |
 |---|---|---|---|---|
-| （空） | | | | |
+| 1 | U0 | 「pre-commit 全绿」以直跑 `render --check` + `select --check` 等价替代（subagent 禁 git 写；pre-commit 由主 agent 单元 commit 等效触发，实际绿） | 本表 | 2026-09-04 |
+| 2 | U0 | authority 锚点用可解析的 `#33-关键决策与权衡`（D1/D4/D5 为粗体段落非标题，不沿用不可解析先例） | 本表 | 2026-09-04 |
+| 3 | U1 | 领地扩展（C-pi-07 豁免闭环，U0 下游提醒证实）：`+.githooks/check_pi_direct_write.py`（豁免① +`.model.json`）+ `docs/architecture/data-source-registry.md`（sidecar 家族登记条目）+ `docs/constraints.json`/`constraints.md`（C-pi-07 文案四→五后缀 + render 重生成）——守卫自身规约「先 registry 补条目 + 守卫表登记，禁静默绕过」 | 本表 + §2 U1 领地列 | 2026-09-04 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
-| U0 | pending | 0 | — |
+| U0 | committed | 1 | commit `5acafab78`；render --check 88 条 exit 0 + select --check PASS + md 45/46/78 行可见（主 agent 复跑核验） |
 | U1 | pending | 0 | — |
 | U2 | pending | 0 | — |
 | U3 | pending | 0 | — |
@@ -132,4 +134,5 @@ graph TD
 
 **变更历史**：
 
+- 2026-09-04：U0 committed（`5acafab78`）。C-pi-07 豁免闭环触发 U1 领地扩展（偏差 #3）：`.githooks/check_pi_direct_write.py` + `docs/architecture/data-source-registry.md` + constraints 文案，U1 派发前已固化。
 - 2026-09-04：计划建立。设计文档 + review-r1/r2 自 /tmp 复制入 docs/design/（基线 commit 携带）；U3/U7 领地归并（model-service.ts 注释归 U3）；设计 U8 测试收编进 U1-U6，U8 转全量回归单元。审查证据：r1 全修、r2 0 must-fix（DoR 达成）。
