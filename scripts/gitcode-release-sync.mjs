@@ -137,15 +137,18 @@ async function createRelease({ tag, name, body, prerelease = false }) {
     + `恢复：到 docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-releases 核对接口契约后调整本脚本`);
 }
 
-/** release 的附件列表（字段名做了防御：GitCode 实测非 GitHub 的 assets.size 形态，
- * 探针观察到 size=-1 即字段名不匹配，候选覆盖 name/file_name/path × size/filesize） */
+/** release 的附件列表。GitCode 实测条目无 size 字段（仅 browser_download_url/name/type/id），
+ * size 返回 null 表示服务端不可比；候选字段名留作 GitCode 未来补齐 size 时自动生效。 */
 function assetList(releaseJson) {
   const assets = releaseJson?.assets ?? releaseJson?.attach_files ?? releaseJson?.attachFiles ?? [];
   return (Array.isArray(assets) ? assets : [])
-    .map((a) => ({
-      name: a.name ?? a.file_name ?? a.path ?? a.filename ?? '',
-      size: Number(a.size ?? a.filesize ?? a.file_size ?? a.attach_size ?? -1),
-    }))
+    .map((a) => {
+      const raw = a.size ?? a.filesize ?? a.file_size ?? a.attach_size;
+      return {
+        name: a.name ?? a.file_name ?? a.path ?? a.filename ?? '',
+        size: raw === undefined ? null : Number(raw),
+      };
+    })
     .filter((a) => a.name);
 }
 
@@ -237,12 +240,20 @@ function resolveGitcodeRemote() {
 
 /** 强推 origin 分支 + tags 到 GitCode（--prune 保证与 GitHub 完全一致，防 drift）。
  * 超时 30 分钟：GitHub runner（海外）→ GitCode（国内）实测上行约 0.8MB/s，
- * 首次全量（本仓 pack ≈ 490MB）需 10-20 分钟，仅首次；后续发布只推增量。 */
+ * 首次全量（本仓 pack ≈ 490MB）需 10-20 分钟，仅首次；后续发布只推增量。
+ * push 前必须确保非 shallow：GitCode receive 端拒绝 shallow update
+ * （探针实测 "remote rejected ... (shallow update not allowed)"）。 */
 function pushRepoMirror() {
   const url = resolveGitcodeRemote();
   execSync('git remote remove gitcode-sync 2>/dev/null || true', { stdio: 'pipe', shell: '/bin/bash' });
   execSync(`git remote add gitcode-sync "${url}"`, { stdio: 'pipe' });
   try {
+    const isShallow = execSync('git rev-parse --is-shallow-repository', { encoding: 'utf8' }).trim() === 'true';
+    if (isShallow) {
+      console.log('[push-repo] 当前仓库为 shallow，先 fetch 全量历史（GitHub 内网，约 1-3 分钟）…');
+      execSync('git fetch --unshallow origin "+refs/heads/*:refs/remotes/origin/*" "+refs/tags/*:refs/tags/*"',
+        { stdio: 'inherit', timeout: 600000 });
+    }
     execSync(
       'git push gitcode-sync --progress --force --prune "+refs/remotes/origin/*:refs/heads/*" "+refs/tags/*:refs/tags/*" 2>&1',
       { stdio: 'inherit', timeout: 1800000 },
@@ -374,9 +385,12 @@ async function runSync({ tag, name, notesFile, artifactsDir, prerelease = false 
   for (const f of files) {
     const rel = f.slice(artifactsDir.length + 1);
     const size = statSync(f).size;
-    if (existing.get(rel) === size) {
+    const knownSize = existing.get(rel);
+    // GitCode 条目无 size 字段（null）：同名即跳过——同一 release 的同名附件语义上不可变，
+    // 且 PUT 幂等覆盖，误跳过的代价为零
+    if (knownSize !== undefined && (knownSize === null || knownSize === size)) {
       skipped++;
-      console.log(`[sync] 跳过（已存在同大小）：${rel}`);
+      console.log(`[sync] 跳过（已存在${knownSize === null ? '，服务端无 size 可比' : '同大小'}）：${rel}`);
       continue;
     }
     const ms = await uploadAsset(tag, f, rel);
