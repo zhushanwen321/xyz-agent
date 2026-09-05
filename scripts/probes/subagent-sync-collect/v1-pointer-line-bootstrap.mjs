@@ -42,6 +42,15 @@ function pointerSessionId(item) {
   return m ? m[1] : null;
 }
 
+/** mtime 时序方向自适应文案（实跑两态都出现过——早于 2ms / 晚于 3ms，方向锚死
+ *  会产生「早于 -3ms」矛盾表述，按符号选词）。 */
+function mtimeOrderNote(deltaMs) {
+  if (deltaMs == null) return "mtime vs notify entry timestamp: n/a";
+  if (deltaMs > 0) return `mtime 早于 notify entry timestamp ${deltaMs.toFixed(0)}ms`;
+  if (deltaMs < 0) return `mtime 晚于 notify entry timestamp ${(-deltaMs).toFixed(0)}ms`;
+  return "mtime 与 notify entry timestamp 同刻";
+}
+
 function firstDiffIndex(a, b) {
   const n = Math.min(a.length, b.length);
   for (let i = 0; i < n; i += 1) if (a[i] !== b[i]) return i;
@@ -176,13 +185,18 @@ async function main() {
         ? `saId=${manifestSeenAtFirstNotify.saId} exists=${manifestSeenAtFirstNotify.exists}`
         : "(pred 钩子未触发)",
     );
+    // 记录行插值源（实况派生，禁硬编码经验值）：mtime 与 notify entry 的时序差、
+    // manifest.status 投影——末次实跑值不可复用，逐次由实读数据产出。
+    let mtimeDeltaMs = null; // notify entry timestamp - manifest mtime（正 = mtime 更早）
     if (manifestSeenAtFirstNotify?.manifestMtime != null && manifestSeenAtFirstNotify.notifyEntryTs != null) {
-      const delta = manifestSeenAtFirstNotify.notifyEntryTs - manifestSeenAtFirstNotify.manifestMtime;
-      checks.note("manifest mtime vs notify entry timestamp（时序口径：消费时点就位为门，此处仅留痕）", `notify-entry - mtime = ${delta.toFixed(0)}ms`);
+      mtimeDeltaMs = manifestSeenAtFirstNotify.notifyEntryTs - manifestSeenAtFirstNotify.manifestMtime;
+      checks.note("manifest mtime vs notify entry timestamp（时序口径：消费时点就位为门，此处仅留痕）", `notify-entry - mtime = ${mtimeDeltaMs.toFixed(0)}ms`);
     }
+    let manifestStatus = null;
     const manifestFile = join(C.resolveAgentDir(), "subagents", ws.enc, "records", `${sid}.json`);
     if (existsSync(manifestFile)) {
       const raw = JSON.parse(readFileSync(manifestFile, "utf-8"));
+      manifestStatus = typeof raw.status === "string" ? raw.status : null;
       checks.check(
         "manifest 投影字段齐备（id/sessionFile 反查索引可用）",
         raw.id === sid && typeof raw.sessionFile === "string" && raw.sessionFile.endsWith(".jsonl"),
@@ -239,11 +253,12 @@ async function main() {
         : `fetched=${fetched.length} full=${fullText.length} 首差异@${firstDiffIndex(fetched, fullText)}`,
     );
 
+    const summary = checks.summary();
     C.appendResultRecord(SCENARIO, [
-      `- 世代: v2 探针（subagent-sync-collect-v2 §4 V1；v1 A4① 复验）——17 PASS / 0 FAIL`,
+      `- 世代: v2 探针（subagent-sync-collect-v2 §4 V1；v1 A4① 复验）——${summary.passed} PASS / ${summary.failed} FAIL`,
       `- 模型: ${C.resolveModel()}（config perItemChars=100 确定性触发截断）`,
       `- 全文长度: ${fullText.length}（截断前）／批内保留: ${body.length}`,
-      `- manifest 首见时点已落盘: ${manifestSeenAtFirstNotify?.exists === true ? "yes" : "no"}（mtime 早于 notify entry timestamp 2ms）`,
+      `- manifest 首见时点已落盘: ${manifestSeenAtFirstNotify?.exists === true ? "yes" : "no"}（${mtimeOrderNote(mtimeDeltaMs)}；manifest.status 如实投影 ${JSON.stringify(manifestStatus)}）`,
       `- sa- id 自举反查: ${fetched.includes("无匹配 record") ? "FAIL（无匹配 record）" : "命中"}`,
       `- 取回一致: ${identical ? "yes（逐字节）" : "no"}`,
     ]);
@@ -251,6 +266,10 @@ async function main() {
     session.kill();
     await session.waitExit();
     ws.cleanup();
+    // finish 收尾对齐 v1 旧探针（a4/a6）约定，但置于 finally：本场景存在多处
+    // check FAIL 后的 early return，若按旧形态放 try 末尾会跳过汇总——FAIL 不置
+    // 非零 exit code，DoD 门失去机器可检性。
+    checks.finish(SCENARIO);
   }
 }
 

@@ -205,7 +205,7 @@ Subagent "big-report" (sa-9f2c…) completed. Result:
 
 **D2 manifest.status 取值 = 如实投影**
 选择：成功成员落标时 record 实态是 `running`+resumable，manifest.status 写 `"running"`（枚举合法值）；后续 upgrade 覆盖为 `"closed"`。不写 "closed"（撒谎——record 还可 resume）也不扩枚举（resumable 信息在 record/entry 域已有，manifest 不需要）。
-风险评估：subagent-core 内 manifest 唯一读方是 `collectRecords` 的孤儿补充路径（`record-store.ts:541-565`，仅补「session.jsonl 重建失败的 orphan」且 `byId.has` 跳过已覆盖项）——running manifest 只在「entry 源完全缺失」时才会被投影，而 F1 场景成员必有 entry（落标 entry 就在主 session 文件），投影不会被触发；实施期以测试锁定该不变量（⛔ 探针 P-manifest）。
+风险评估：subagent-core 内 manifest 唯一读方是 `collectRecords` 的孤儿补充路径（`record-store.ts:541-565`，仅补「session.jsonl 重建失败的 orphan」且 `byId.has` 跳过已覆盖项）——running manifest 只在该 id **无子文件锚**（reconstructAll 重建不可达）且不在内存时才会被投影；F1 场景成员必有子文件锚（跑过至少一轮才进批/落标），reconstructAll 先占 byId 使 manifest 补充路径恒跳过（反例边界：子文件被外部删除而主文件 entry 完好时，manifest 补充投影仍会触发——recoverEntryOnlyOrphans 注释记载的已知边界同族）；实施期以测试锁定该不变量（⛔ 探针 P-manifest）。
 
 **D3 orphan 覆写保留批标记 + E1 口径对齐（F2 核心，两修复同批落地）**
 选择（两半必须同批——只修覆写不修口径，E1 仍被 running 顶死；只修口径不修覆写，候选恒空）：

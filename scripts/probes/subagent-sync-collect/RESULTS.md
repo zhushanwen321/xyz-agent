@@ -82,3 +82,29 @@
 - 模型: xiaomi-token-plan-cn/mimo-v2.5-pro
 - 补发批头: 2 finished, 0 failed, 0 cancelled（成员正文实测为空——sleep 中 kill 无 assistant 输出，gc 判 finished + 覆写 entry 无 result 可 merge，设计「result 或截断 error」二分外的第三形态：空正文）
 - 二次重启 notify: before=1 after=1
+
+## V2 — 2026-09-05T07:27:53.158Z
+
+- 世代: v2 探针（subagent-sync-collect-v2 §4 V2；GV2①）——16 PASS / 0 FAIL
+- 模式: primary（SIGKILL 于批等待中，2 终态成员 + 1 sleep 240s 中）
+- 模型: xiaomi-token-plan-cn/mimo-v2.5-pro
+- 补发批头: 3 finished, 0 failed, 0 cancelled
+- 成功成员 result 全文: yes（覆写 merge 保留）
+- 二次重启 notify: before=1 after=1
+
+## V1 — 2026-09-05T07:31:44.167Z
+
+- 世代: v2 探针（subagent-sync-collect-v2 §4 V1；v1 A4① 复验）——17 PASS / 0 FAIL
+- 模型: xiaomi-token-plan-cn/mimo-v2.5-pro（config perItemChars=100 确定性触发截断）
+- 全文长度: 417（截断前）／批内保留: 101
+- manifest 首见时点已落盘: yes（mtime 晚于 notify entry timestamp 3ms；manifest.status 如实投影 "running"）
+- sa- id 自举反查: 命中
+- 取回一致: yes（逐字节）
+
+## V3 — 2026-09-05T07:32:59.823Z
+
+- 世代: v2 探针（subagent-sync-collect-v2 §4 V3；v1 A6 FAIL 转 PASS）——12 PASS / 0 FAIL
+- 模式: primary（kill -9 于批等待中）
+- 模型: xiaomi-token-plan-cn/mimo-v2.5-pro
+- 补发批头: 2 finished, 0 failed, 0 cancelled（成员正文实测为空——sleep 中 kill 无 assistant 输出，gc 判 finished + 覆写 entry 无 result 可 merge，设计「result 或截断 error」二分外的第三形态：空正文）
+- 二次重启 notify: before=1 after=1

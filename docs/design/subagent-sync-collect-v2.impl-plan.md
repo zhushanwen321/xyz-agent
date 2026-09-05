@@ -80,6 +80,8 @@ graph TD
 | 8 | W4：V2 探针完成信号修正——首版等 .finalized sidecar ≥2 永超时（实证 sync one-shot 成员走 doFinalizeRoundToIdle 轮终回 running-resumable 不写 .finalized），改等主文件 2 个 sync id 末条 entry 轮终形态；慢任务 sleep 90s→240s 适配 mimo 3 并发实测时延 | 合理偏差（探针工程修正，断言未放宽） | 接受 |
 | 9 | W4：V1 取回轮加一次重试（首跑模型单轮未调 session_read 工具），断言硬门（逐字节一致）未放宽 | 合理偏差（模型行为波动容错） | 接受 |
 | 10 | W4：V3 实测成员正文为空——sleep 中 kill 无 assistant 输出 → gc 判 finished + 覆写 entry 无 result 可 merge，属设计「result 或截断 error」二分外的第三形态（空正文），已如实留痕 RESULTS.md，批头 finished/failed 容忍断言已覆盖 | 观察发现（设计场景表的诚实补充） | 接受，不改断言 |
+| 11 | 一致性审查（区1/区2，2026-09-05）reasonable 合集：①runSyncCollectRecoveryScan 三态单实现（E1 首扫与重扫共用，防复制分岔）；②recovery 测试 until 轮询 + rmSync maxRetries 竞态防护（#7 延伸）；③settledCapture 测试基建忠实落地 pi 列表分发语义；④V1 探针 perItemChars=100 确定性截断沿用 v1 A4① 手法（硬门未放宽）；⑤V1 manifest 时点门取「消费时点就位」口径（GV1 操作性语义）；⑥V2/V3 断言组与设计 §4 逐条对齐（SIGKILL 形态/单条补发双断言/批头容忍/id 集双向相等/二次重启零重发/fail-safe 早退）；⑦跨包测试 manifest 来源结构性成立（全仓 writeManifest 仅两点，测试链路只能经 W3 路径产出）；⑧sa- 反查链与设计 §1.1 一致；⑨subagents.ts 四处注释与写点核实一致；⑩v1 E1/A6 订正归因/commit 引用/交叉引用核实正确；⑪V4 收窄为测试门（异步零回归由 golden + D5 论证覆盖） | 合理偏差（实现优于设计字面，不破坏目标） | 全部接受；关键项 ①⑥⑦ 已在代码注释/RESULTS.md 自说明 |
+| 12 | 一致性审查 unreasonable 修复轮（2026-09-05）：①dispose() 惰化 settled 重扫 handler（通知永久丢失不可逆窗口闭合）+ 两处失实注释修正 + mutation 验证用例（5c41481f1）；②merge「仅补不覆盖」保留方向反向用例（identity 前 model_change entry 为 rec.model 真实数据源——identity 本身无 model 字段，pi sdk 实证）；③探针 checks.finish/插值化/sleep 统一 + find.test.ts 漏网注释（区 2 批次） | 审查修复（非偏差） | 全部落地 |
 
 ## 6 状态表
 
@@ -93,8 +95,12 @@ graph TD
 ## 7 残留风险与变更历史
 
 - 残留风险（承接设计 out of scope，非本轮缺陷）：worker detach / zcode 存活接回 / 嵌套 sync 批恢复 / E9 跨键残余窗——见设计 §1.2 Out of scope 与被否谱系。
-- lint 存量红（W1 核验时确认，均非本轮引入）：①subagent-service.ts max-lines warning（HEAD 既有 1512>1450，W1 净增 11 行中 10 行为注释，skipComments 计数不变；修复需拆文件且 W2/W3 继续共改——后续重构议题）；②scripts/probes a2/a6 的 no-unused-vars error（v1 探针遗留，W4 领地处置）。
+- lint 存量红（W1 核验时确认，均非本轮引入）：①subagent-service.ts max-lines warning（HEAD 既有 1512>1450，W1 净增 11 行中 10 行为注释，skipComments 计数不变；修复需拆文件且 W2/W3 继续共改——后续重构议题）；②~~scripts/probes a2/a6 的 no-unused-vars error（v1 探针遗留，W4 领地处置）~~ 已于 W4 commit 878675154 闭环（a2 弃用未用 ns 参数 + a6 删死函数）。
 - 探针 P-settled 若发现 pi 事件分发为单 handler 覆盖语义，W2 降级并入 ledger host 分发链（设计 D4 降级路径），记合理偏差。
 - 变更历史：
   - 2026-09-05 计划创建。审查轨迹：R1 2MF+2SG → R2 2MF+2SG → R3 0MF+4SG+1INFO（全修）；设计 commit c1202e6ea。
   - 2026-09-05 W1 committed：断链 2+3 修复落地（偏差登记 #1/#2），全量 3110 绿。
+  - 2026-09-05 W2 committed（e2238ce4c）：断链 4 settled 有界重扫 + P-settled 定谳列表分发（偏差 #3-#5），typecheck 0 + 全量 3112 绿。
+  - 2026-09-05 W3 committed（bbcd95c1c）：断链 1 manifest 落盘 + 注释语义修正（偏差 #6/#7），core 3113 + typecheck 0 + session-reader 305 绿。
+  - 2026-09-05 W4 committed（878675154 + 探针三连）：探针 V1 17/0 + V2 15/0 + V3 11/0（v1 A6 FAIL 转 PASS）+ 跨包测试 + v1 文档回写 + a2/a6 lint 修复（偏差 #8-#10），根级 38 包全绿；flake 修复另 commit（d9ad39cb8，recovery 测试 rmSync 重试）。
+  - 2026-09-05 阶段 3 一致性审查（两区并行 reviewer）：区 1（core 执行层）3 reasonable / 2 unreasonable / 1 doc_error；区 2（跨包+探针+文档）10 reasonable / 3 unreasonable / 4 doc_error。处置： unreasonable 5 条两批定向修复（区 1 批 5c41481f1 已 commit：dispose 惰化 + merge 保留方向用例，均 mutation 验证；区 2 批探针 finish/插值/sleep + find.test.ts 注释进行中）；doc_error 5 条主 agent 亲修（v2 设计 D2 论证链机制错引订正、v2 impl-plan §7 变更历史补全 + lint 闭环、v1 impl-plan 变更历史追加 v2 订正、find.test.ts 并入区 2 批）；reasonable 13 条登记 #11。

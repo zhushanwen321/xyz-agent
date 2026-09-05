@@ -469,6 +469,11 @@ export function makeChecks() {
         return null;
       }
     },
+    /** PASS/FAIL 计数快照（记录行插值用——check 数随分支增减，禁硬编码经验值）。 */
+    summary() {
+      const failed = results.filter((r) => !r.pass).length;
+      return { total: results.length, passed: results.length - failed, failed };
+    },
     finish(scenarioId) {
       const failed = results.filter((r) => !r.pass);
       console.log(`\n[${scenarioId}] ${failed.length === 0 ? "ALL PASS" : `FAILED (${failed.length}/${results.length})`}`);

@@ -2,7 +2,7 @@
 // scripts/probes/subagent-sync-collect/v2-crash-batch-redeliver.mjs
 //
 // [V2] 含成功成员的崩溃批补发（v2 设计 §4 验收表 V2 行 / GV2①）
-// 3 个 sync（2 快任务先完成 + 1 sleep 90s 在跑）→ 批等待中 **SIGKILL** 宿主
+// 3 个 sync（2 快任务先完成 + 1 sleep 240s 在跑）→ 批等待中 **SIGKILL** 宿主
 // （不是 SIGTERM——SIGTERM 走 dispose/E9 转换路径，测不到 E1；kill 时 2 成员
 // 已终态未通知、批未闭合）→ 重启同 session → 断言：
 //   - 重启 #1 后收到**单条**补发批通知（v1 三重断：候选空 / 口径顶死 / 无再驱动，
@@ -14,7 +14,7 @@
 //
 // 用法：node v2-crash-batch-redeliver.mjs [--dry-run]
 //   PI_PROBE_MODEL 覆盖模型（缺省 xiaomi-token-plan-cn/mimo-v2.5-pro）
-//   含 90s sleep + 三次进程生命周期，长时场景——总时长约 4-6 分钟。
+//   含 240s sleep + 三次进程生命周期，长时场景——总时长约 5-8 分钟。
 
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -25,6 +25,10 @@ const DESIGN = "subagent-sync-collect-v2.md §4 验收表 V2（含成功成员�
 const EXPECT = "SIGKILL 后重启 #1 单条补发批（含 2 成功成员 result 全文，批头 finished/failed 两形态）→ 重启 #2 零重发";
 
 const FAST_RESULTS = ["V2-OK-1", "V2-OK-2"];
+
+/** 慢成员 sleep 秒数——task 模板与按 task 文本定位慢成员（"sleep 240"）的唯一来源，
+ *  防 task 实际值与定位串脱节（曾漂移：task sleep 240 vs 定位 includes("sleep 90")）。 */
+const SLOW_SLEEP_SECONDS = 240;
 
 /** 等进程真正死亡（exitCode 或 signalCode 置位；SIGKILL 下 exitCode 保持 null）。 */
 async function waitDead(session, timeoutMs) {
@@ -146,7 +150,7 @@ async function main() {
       })),
       {
         task:
-          "You MUST actually run this exact bash command first: sleep 240 && echo marker-v2-slow. " +
+          `You MUST actually run this exact bash command first: sleep ${SLOW_SLEEP_SECONDS} && echo marker-v2-slow. ` +
           "After it finishes, reply with exactly: v2-slow-done",
         slug: "v2-slow",
         collect: "sync",
@@ -164,7 +168,7 @@ async function main() {
 
     // ── 崩溃窗口构造：2 快成员轮终（主文件末条 result+resumable，SP-5 one-shot 完成
     //  形态——不写 .finalized sidecar），慢成员 sleep 中。mimo 3 并发下快任务实测可达
-    //  2-4 分钟：等待 300s，慢任务 sleep 150s 保 kill 时点仍在批等待中。──
+    //  2-4 分钟：等待 300s，慢任务 sleep 240s 保 kill 时点仍在批等待中。──
     const syncIds = dispatched.map((s) => s.saId);
     try {
       const done = await waitForRoundTerminal(F, syncIds, 2, 300000);
@@ -224,8 +228,8 @@ async function main() {
       `items=${itemIds.size} starts=${startIds.size}`,
     );
     // 慢成员条目正文（result 或截断 error 文案，非门仅留痕；dispatchedStarts 产物无
-    // slug 字段，按 task 文本定位）
-    const slowStart = dispatched.find((s) => s.task.includes("sleep 90"));
+    // slug 字段，按 task 文本定位——定位串与 task 模板同源 SLOW_SLEEP_SECONDS）
+    const slowStart = dispatched.find((s) => s.task.includes(`sleep ${SLOW_SLEEP_SECONDS}`));
     if (slowStart) {
       const slowItem = segs.slice(1).find((s) => s.includes(slowStart.saId));
       if (slowItem) checks.note("慢成员条目正文形态（gc 二选一：result / 截断 error）", C.itemResultBody(slowItem).slice(0, 80));
@@ -244,9 +248,10 @@ async function main() {
     const after2 = C.bgNotifyEntries(C.readJsonlEntries(F)).length;
     checks.check("二次重启零重发（30s 观察窗）", after2 === before2, `before=${before2} after=${after2}`);
 
+    const summary = checks.summary();
     C.appendResultRecord(SCENARIO, [
-      `- 世代: v2 探针（subagent-sync-collect-v2 §4 V2；GV2①）——15 PASS / 0 FAIL`,
-      `- 模式: primary（SIGKILL 于批等待中，2 终态成员 + 1 sleep 中）`,
+      `- 世代: v2 探针（subagent-sync-collect-v2 §4 V2；GV2①）——${summary.passed} PASS / ${summary.failed} FAIL`,
+      `- 模式: primary（SIGKILL 于批等待中，2 终态成员 + 1 sleep ${SLOW_SLEEP_SECONDS}s 中）`,
       `- 模型: ${C.resolveModel()}`,
       `- 补发批头: ${head ? `${head.finished} finished, ${head.failed} failed, ${head.cancelled} cancelled` : "(未解析)"}`,
       `- 成功成员 result 全文: ${FAST_RESULTS.every((r) => content.includes(r)) ? "yes（覆写 merge 保留）" : "no"}`,
@@ -256,6 +261,10 @@ async function main() {
     for (const s of sessions) s.kill("SIGKILL");
     for (const s of sessions) await waitDead(s, 3000);
     ws.cleanup();
+    // finish 收尾对齐 v1 旧探针（a4/a6）约定，但置于 finally：本场景存在多处
+    // check FAIL 后的 early return，若按旧形态放 try 末尾会跳过汇总——FAIL 不置
+    // 非零 exit code，DoD 门失去机器可检性。
+    checks.finish(SCENARIO);
   }
 }
 

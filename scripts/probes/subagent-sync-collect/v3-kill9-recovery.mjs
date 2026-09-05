@@ -60,6 +60,26 @@ function parseBatchHeader(content) {
   return { finished: Number(m[1]), failed: Number(m[2]), cancelled: Number(m[3]) };
 }
 
+/** 条目正文「空形态」判定：trim 后为空，或为构建方无 result 可 merge 时的
+ *  "(empty)" 字面占位（实跑实证：kill -9 sleep 成员的批条目正文是 7 字符字符串
+ *  "(empty)" 而非空串——按长度判定会误报「非空」）。 */
+function isEmptyBody(body) {
+  const t = body.trim();
+  return t.length === 0 || t === "(empty)";
+}
+
+/** 记录行「成员正文」段：按补发批成员正文实况插值（全空 → 空正文第三形态说明；
+ *  含非空 → 首段摘录；未观察 → n/a——曾硬编码「实测为空」与实跑漂移，禁回写经验值）。 */
+function memberBodyNote(bodies) {
+  if (bodies.length === 0) return "（成员正文未观察——降级/批未达）";
+  const nonEmpty = bodies.filter((b) => !isEmptyBody(b));
+  if (nonEmpty.length === 0) {
+    return "（成员正文实测为空——sleep 中 kill 无 assistant 输出，gc 判 finished + 覆写 entry 无 result 可 merge，设计「result 或截断 error」二分外的第三形态：空正文）";
+  }
+  const state = nonEmpty.length === bodies.length ? "全非空" : `${nonEmpty.length}/${bodies.length} 非空`;
+  return `（成员正文实测${state}——首段摘录: ${JSON.stringify(nonEmpty[0].slice(0, 80))}）`;
+}
+
 async function main() {
   if (C.isDryRun(process.argv)) {
     process.exit(
@@ -85,6 +105,7 @@ async function main() {
   const sessions = [];
   let degraded = null; // { reason } — kill -9 时序不可构造时置位（批先行闭合）
   let redeliverHead = null; // 补发批头（RESULTS.md 留痕用）
+  const memberBodies = []; // 补发批各成员条目正文（记录行按实况插值，禁硬编码形态）
 
   try {
     const s1 = C.spawnSession({
@@ -171,7 +192,9 @@ async function main() {
         );
         // 成员正文形态（result 或截断 error 文案——kill -9 概率形态，非门仅留痕）
         for (const seg of segs.slice(1)) {
-          checks.note("成员条目正文形态（gc：崩溃前 result / 截断 error 二选一）", C.itemResultBody(seg).slice(0, 80));
+          const segBody = C.itemResultBody(seg);
+          memberBodies.push(segBody);
+          checks.note("成员条目正文形态（gc：崩溃前 result / 截断 error 二选一）", segBody.slice(0, 80));
         }
       }
     }
@@ -189,17 +212,22 @@ async function main() {
     const after2 = F ? C.bgNotifyEntries(C.readJsonlEntries(F)).length : -1;
     checks.check("二次重启零重发（30s 观察窗）", after2 === before2, `before=${before2} after=${after2}`);
 
+    const summary = checks.summary();
     C.appendResultRecord(SCENARIO, [
-      `- 世代: v2 探针（subagent-sync-collect-v2 §4 V3；v1 A6 FAIL 转 PASS）——11 PASS / 0 FAIL`,
+      `- 世代: v2 探针（subagent-sync-collect-v2 §4 V3；v1 A6 FAIL 转 PASS）——${summary.passed} PASS / ${summary.failed} FAIL`,
       `- 模式: ${degraded ? `降级（${degraded.reason}）` : "primary（kill -9 于批等待中）"}`,
       `- 模型: ${C.resolveModel()}`,
-      `- 补发批头: ${redeliverHead ? `${redeliverHead.finished} finished, ${redeliverHead.failed} failed, ${redeliverHead.cancelled} cancelled` : degraded ? "n/a（时序不可构造）" : "(未解析)"}（成员正文实测为空——sleep 中 kill 无 assistant 输出，gc 判 finished + 覆写 entry 无 result 可 merge，设计「result 或截断 error」二分外的第三形态：空正文）`,
+      `- 补发批头: ${redeliverHead ? `${redeliverHead.finished} finished, ${redeliverHead.failed} failed, ${redeliverHead.cancelled} cancelled` : degraded ? "n/a（时序不可构造）" : "(未解析)"}${memberBodyNote(memberBodies)}`,
       `- 二次重启 notify: before=${before2} after=${after2}`,
     ]);
   } finally {
     for (const s of sessions) s.kill("SIGKILL");
     for (const s of sessions) await waitDead(s, 3000);
     ws.cleanup();
+    // finish 收尾对齐 v1 旧探针（a4/a6）约定，但置于 finally：本场景存在多处
+    // check FAIL 后的 early return，若按旧形态放 try 末尾会跳过汇总——FAIL 不置
+    // 非零 exit code，DoD 门失去机器可检性。
+    checks.finish(SCENARIO);
   }
 }
 
