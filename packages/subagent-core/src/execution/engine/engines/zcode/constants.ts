@@ -72,11 +72,63 @@ export const ZCODE_APPSERVER_TURN_READ_TIMEOUT_MS = 5_000;
 export const ZCODE_APPSERVER_TURN_CLOSE_TIMEOUT_MS = 1_500;
 
 /**
- * [R3] 一轮终态等待的缺省预算（ms）。终态双保险（turn.terminal 权威 + 收尾帧宽松
- * 匹配防洪堤）之后的最后一道：全漂移/进程假死时不挂死任务。R4 接线后任务级
- * timeout / abort 链可显式传入更贴任务的值。
+ * [R3 → superseded by P0-1] 旧「一轮终态等待」固定墙钟缺省值（ms）。**已被
+ * `ZCODE_TURN_IDLE_TIMEOUT_MS`（idle 主判定）+ `ZCODE_TURN_MAX_TIMEOUT_MS`
+ * （总上界兜底）两 timer 语义替换，session-channel 不再消费本值**——固定墙钟
+ * 「到点=不可推进」判定被 2026-09 T001 深诊击穿（21% 活跃任务被误杀，见设计
+ * timeout-zcode-turn-and-settled-watchdog.md §3.1/§4）。符号保留：audit/设计
+ * 文档（timeout-audit-2026-09.md 等）以本名记录事故成因，删除即产生悬空引用。
  */
 export const ZCODE_APPSERVER_TURN_DEFAULT_TIMEOUT_MS = 300_000;
+
+// ============================================================
+// [P0-1 U1] turn 等待两 timer（idle 主判定 + 总上界回收兜底）
+// 设计权威源：docs/design/timeout-zcode-turn-and-settled-watchdog.md §6 D1/D2
+// ============================================================
+
+/** turn idle 主判定的 env 覆盖通道（>0 覆盖、≤0 关闭、非法值 warn+回落默认）。 */
+export const ZCODE_TURN_IDLE_TIMEOUT_ENV = "XYZ_ZCODE_TURN_IDLE_TIMEOUT_MS";
+
+/** turn 总上界的 env 覆盖通道（语义同上；0=关闭后 chatty-wedge 无自动回收）。 */
+export const ZCODE_TURN_MAX_TIMEOUT_ENV = "XYZ_ZCODE_TURN_MAX_TIMEOUT_MS";
+
+/**
+ * [P0-1 D1] turn idle 主判定缺省阈值（ms）：该 turn 任何事件到达刷新计时，连续
+ * 静默达此值判「执行已不可推进」。活跃事件流零误杀（ADR-0047 逆否面）。默认
+ * 30min 为先验值，⛔P-Z1 门（事件流 inter-event gap 分布）标定前用此默认。
+ */
+export const ZCODE_TURN_IDLE_TIMEOUT_MS = 1_800_000;
+
+/**
+ * [P0-1 D1] turn 总上界缺省值（ms）：从 openTurn 挂载起固定不刷新，兜 idle 覆盖
+ * 不了的 chatty-wedge（事件持续但终态永不到达）。对超上界的合法极长任务是显式
+ * 接受的残余误杀面（env 可调/可关 + 错误文案附自救指引）。默认 60min 为先验值
+ * （T001 34 任务最长 541s，先验远离 6.6×），⛔P-Z0 门（任务总时长分布）标定前
+ * 用此默认。
+ */
+export const ZCODE_TURN_MAX_TIMEOUT_MS = 3_600_000;
+
+/** `parseZcodeTurnTimeoutEnv` 的解析结果（可判别联合——valid 分支 ms 必有）。 */
+export type ZcodeTurnTimeoutEnvParse =
+  | { state: "unset" }
+  | { state: "valid"; ms: number }
+  | { state: "invalid" };
+
+/**
+ * 解析 turn 阈值 env 原始值（空串视同未设置，对齐 lifecycle-manager 先例的
+ * `if (!raw)` 口径）。**与 `XYZ_SUBAGENT_IDLE_TIMEOUT_MS` 先例的刻意分歧（设计
+ * D2/r3 SG-5 显式登记）**：先例 ≤0=非法回落且禁用后不认 env；本通道 ≤0=显式
+ * 关闭该 timer（规则 19 的 opt-out 出路），非法（非数字）才回落默认——调用方
+ * 必须对 invalid 与 ≤0 关闭分别 warn 留痕（生效行为可见，A10① 断言依据）。
+ */
+export function parseZcodeTurnTimeoutEnv(
+  raw: string | undefined
+): ZcodeTurnTimeoutEnvParse {
+  if (raw === undefined || raw === "") return { state: "unset" };
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return { state: "invalid" };
+  return { state: "valid", ms: parsed };
+}
 
 // ============================================================
 // [R4] app-server 常驻 HOME（D7）/ abort 链（D3）/ 孤儿自愈（D6③）

@@ -25,6 +25,7 @@ import { ZCODE_APPSERVER_GOLDEN } from "../golden-sample.ts";
 import {
   SessionChannel,
   SUBSCRIBE_DELIVERY_KIND,
+  TurnTimeoutError,
   extractAssistantText,
   extractCreatedSessionId,
   extractReadUsage,
@@ -568,16 +569,23 @@ describe("close（D4 用后即毁）", () => {
     expect(sentFrames(stateFile, "session/close")).toHaveLength(1);
   }, 10_000);
 
-  it("终态超时（turn.terminal 与收尾帧均未达）→ reject 超时语境且 close 仍被调用", async () => {
+  it("终态超时（turn.terminal 与收尾帧均未达）→ TurnTimeoutError（ceiling 形态，P0-1 两 timer 语义）且 close 仍被调用", async () => {
     const onlyRunning = [ZCODE_APPSERVER_GOLDEN.pushStream[0]]; // 仅 state.updated，无终态
     const { ch, stateFile, workspacePath } = makeChannel({
       replaceSendPushes: onlyRunning,
     });
-    await expect(
-      ch.runTurn({ workspacePath, mode: "yolo" }, "做点什么", {
-        turnTimeoutMs: 250,
+    const err = await ch
+      .runTurn({ workspacePath, mode: "yolo" }, "做点什么", {
+        turnTimeoutMs: 250, // P0-1 语义收窄：显式总上界（不再是固定墙钟预算）
       })
-    ).rejects.toThrow(/终态/);
+      .then(
+        () => {
+          throw new Error("should reject");
+        },
+        (e: unknown) => e
+      );
+    expect(err).toBeInstanceOf(TurnTimeoutError);
+    expect((err as TurnTimeoutError).kind).toBe("ceiling");
     expect(sentFrames(stateFile, "session/close")).toHaveLength(1);
   }, 10_000);
 });

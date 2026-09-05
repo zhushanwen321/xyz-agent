@@ -105,6 +105,20 @@ export default [
       'max-lines': 'off',
     },
   },
+  // [HISTORICAL] session-channel.ts 是 zcode 单任务会话通道的唯一聚合点：A.2 协议帧序
+  // SSOT（create/subscribe/send/终态双保险判定/read/close）+ P0-1 turn 等待两 timer
+  // 状态机（idle 主判定 + 总上界兜底，timeout-zcode-turn-and-settled-watchdog.md §6 D1，
+  // 2026-09-05 落地后超限）。职责内聚（帧序分发、终态判定与 idle 刷新共享同一
+  // ActiveTurn 状态），行数超 500。拆分违反该设计 §7「无新模块」约束，属独立重构任务。
+  // 与 event-adapter/session-service 等 override 同型——唯一聚合中心，短期避免阻塞。
+  {
+    files: [
+      'packages/subagent-core/src/execution/engine/engines/zcode/session-channel.ts',
+    ],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
   // [HISTORICAL] useContenteditableInput.ts 是 composer 富文本输入的唯一聚合点：
   // 视觉行移动（getClientRects+caretRangeFromPoint）+ segments 解析（getSegmentsFromEl）
   // + 草稿/光标/IME/粘贴事件处理 + Cmd+V 双通路图片粘贴。各职责共享 savedRange/preferredX

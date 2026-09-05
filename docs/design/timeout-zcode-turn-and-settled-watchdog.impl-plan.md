@@ -64,12 +64,12 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| u-z1-turn-timeout-state-machine | pending | 0 | — |
+| u-z1-turn-timeout-state-machine | committed | 1 | 状态机 17 测 + 包全量 3040 绿；eslint max-lines override（授权修复轮，4 先例同型） |
 | u-z2-timeout-abort-chain | pending | 0 | — |
 | u-z3-status-consume | pending | 0 | — |
 | u-z4-retry-budget | pending | 0 | — |
 | u-z5-dispose-harvest | pending | 0 | — |
-| u-z6-settled-watchdog | pending | 0 | — |
+| u-z6-settled-watchdog | committed | 1 | 两段式原语 25 测 + 包全量 3023 绿；4 项偏差登记（env 非法值语义等） |
 | u-z7-doc-writeback | pending | 0 | — |
 
 ## 7 残留风险与变更历史
