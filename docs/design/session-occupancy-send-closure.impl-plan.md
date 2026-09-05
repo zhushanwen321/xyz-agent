@@ -146,6 +146,11 @@ cd packages/renderer && pnpm vitest run <相关>
 
 **全部 9 单元 committed（2026-09-05），进入阶段 3 一致性审查。**
 
+**阶段 5 双级验收终态（2026-09-06）：Gate A 绿 + Gate B 绿，交付。**
+- Gate A：根 pnpm test（--no-bail）35 包零失败零 flaky；lint --max-warnings 0；extensions 三连绿；validate-runtime-bundle 绿（Plugin E2E + SEC-A1~A5）；覆盖矩阵 9 单元 × diff 83 文件 uncovered 空；零绕过（SKIP_/eslint-disable/test.skip 新增均为 0）。
+- Gate B：11 项 = 9 pass + 1 degraded-pass（V4a，设计预留降级路径：机制审查断言全绿 + 实测 generating+compacting 并存帧佐证可达）+ 1 partial（V6a① toast 端到端不可构造——本机 RTT≈0 环境限制，机制由 TC11 单测覆盖，②③端到端 pass）；V6b④ respawn 反例修复后端到端重验 pass（f53225d12），V5 快照恢复 DOM 采样不回归。
+- 探针：P-1 settling P95=5ms（108 样本，门限 2s）；P-3 广播延迟 7-11ms（门限 100ms）；P-2 双字符串入 pi-semantics 门禁。
+
 ## 7 残留风险与变更历史
 
 **残留风险**（来自设计 §5 待验证检查点，实施期对应单元处理）：
