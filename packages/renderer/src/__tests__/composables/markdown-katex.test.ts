@@ -10,8 +10,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 const fakeCodeToHtml = vi.fn((code: string) => `<pre class="shiki"><code>${code}</code></pre>`)
-vi.mock('shiki', () => ({
-  createHighlighter: vi.fn(() =>
+vi.mock('shiki/core', () => ({
+  createHighlighterCore: vi.fn(() =>
     Promise.resolve({
       codeToHtml: fakeCodeToHtml,
       getLoadedLanguages: () => ['typescript', 'javascript', 'vue'],
@@ -21,8 +21,8 @@ vi.mock('shiki', () => ({
 
 async function freshRender(content: string): Promise<string> {
   vi.resetModules()
-  vi.doMock('shiki', () => ({
-    createHighlighter: () =>
+  vi.doMock('shiki/core', () => ({
+    createHighlighterCore: () =>
       Promise.resolve({
         codeToHtml: fakeCodeToHtml,
         getLoadedLanguages: () => ['typescript', 'javascript', 'vue'],

@@ -22,14 +22,15 @@ import type { ChatViewDeps } from '@xyz-agent/ui'
 import type { VueWrapper } from '@vue/test-utils'
 import { createMockChatDeps } from '@/__tests__/helpers/chat-view-deps'
 
-// stub shiki：避免真实 WASM/语法加载；codeToHtml 计数用作「占位期零高亮」探针
+// stub shiki：避免真实语法加载；codeToHtml 计数用作「占位期零高亮」探针
+// （fine-grained 后 markdown.ts 从 shiki/core import，mock 入口同步为 shiki/core）
 const fakeCodeToHtml = vi.fn((code: string) => `<pre class="shiki"><code>${code}</code></pre>`)
 
 /** 每用例拿到干净的 markdown 模块（renderMarkdown 内部缓存 markdown-it 实例 + highlighter 单例） */
 async function freshModule(): Promise<typeof import('@/composables/logic/markdown')> {
   vi.resetModules()
-  vi.doMock('shiki', () => ({
-    createHighlighter: () =>
+  vi.doMock('shiki/core', () => ({
+    createHighlighterCore: () =>
       Promise.resolve({
         codeToHtml: fakeCodeToHtml,
         getLoadedLanguages: () => ['typescript', 'javascript', 'vue'],
@@ -117,7 +118,7 @@ afterEach(() => {
   globalThis.requestAnimationFrame = originalRAF
   globalThis.cancelAnimationFrame = originalCAF
   vi.useRealTimers()
-  vi.doUnmock('shiki')
+  vi.doUnmock('shiki/core')
 })
 
 describe('W23 ①: 增量更新只重渲染尾段（真实 renderIncremental）', () => {

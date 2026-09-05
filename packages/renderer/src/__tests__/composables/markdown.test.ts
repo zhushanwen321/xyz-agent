@@ -2,17 +2,17 @@
  * markdown.ts fence 规则覆盖单测（W3，对话流 markdown 渲染增强）。
  *
  * 覆盖代码块增强（语言标签 + 复制按钮 data-code）+ mermaid 占位。
- * mock 策略：vi.mock('shiki') stub createHighlighter 返回假 highlighter，
+ * mock 策略：vi.mock('shiki/core') stub createHighlighterCore 返回假 highlighter，
  * codeToHtml 返回固定 `<pre class="shiki">…</pre>`，使测试聚焦 fence 逻辑而非 shiki 真实渲染。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/markdown.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// stub shiki：避免真实 WASM/语法加载，测试聚焦 fence 包装逻辑
+// stub shiki：避免真实语法加载，测试聚焦 fence 包装逻辑（fine-grained 后入口是 shiki/core）
 const fakeCodeToHtml = vi.fn((code: string) => `<pre class="shiki"><code>${code}</code></pre>`)
-vi.mock('shiki', () => ({
-  createHighlighter: vi.fn(() =>
+vi.mock('shiki/core', () => ({
+  createHighlighterCore: vi.fn(() =>
     Promise.resolve({
       codeToHtml: fakeCodeToHtml,
       getLoadedLanguages: () => ['typescript', 'javascript', 'vue'],
@@ -26,8 +26,8 @@ vi.mock('shiki', () => ({
 async function freshRender(content: string): Promise<string> {
   vi.resetModules()
   // 重新 mock（resetModules 会清掉 mock 注册）
-  vi.doMock('shiki', () => ({
-    createHighlighter: () =>
+  vi.doMock('shiki/core', () => ({
+    createHighlighterCore: () =>
       Promise.resolve({
         codeToHtml: fakeCodeToHtml,
         getLoadedLanguages: () => ['typescript', 'javascript', 'vue'],
@@ -43,8 +43,8 @@ async function freshRenderWithEnv(
   env?: { filePaths?: Set<string>; localFiles?: Set<string> },
 ): Promise<string> {
   vi.resetModules()
-  vi.doMock('shiki', () => ({
-    createHighlighter: () =>
+  vi.doMock('shiki/core', () => ({
+    createHighlighterCore: () =>
       Promise.resolve({
         codeToHtml: fakeCodeToHtml,
         getLoadedLanguages: () => ['typescript', 'javascript', 'vue'],
@@ -57,8 +57,8 @@ async function freshRenderWithEnv(
 /** 同 freshRender 但返回 segments（text/mermaid 拆分） */
 async function freshRenderSegments(content: string): Promise<{ type: string; content: string }[]> {
   vi.resetModules()
-  vi.doMock('shiki', () => ({
-    createHighlighter: () =>
+  vi.doMock('shiki/core', () => ({
+    createHighlighterCore: () =>
       Promise.resolve({
         codeToHtml: fakeCodeToHtml,
         getLoadedLanguages: () => ['typescript', 'javascript', 'vue'],
@@ -204,8 +204,8 @@ describe('markdown fence 规则覆盖（W3）', () => {
   it('U10h: 无 env（localFiles 未传）→ 降级纯文本（与现状一致，无回归）', async () => {
     // 不传 env（fileSearch 未加载场景）
     vi.resetModules()
-    vi.doMock('shiki', () => ({
-      createHighlighter: () => Promise.resolve({ codeToHtml: fakeCodeToHtml, getLoadedLanguages: () => ['typescript'] }),
+    vi.doMock('shiki/core', () => ({
+      createHighlighterCore: () => Promise.resolve({ codeToHtml: fakeCodeToHtml, getLoadedLanguages: () => ['typescript'] }),
     }))
     const { renderMarkdown } = await import('@/composables/logic/markdown')
     const html = await renderMarkdown('更新了 design.md 文档\n')

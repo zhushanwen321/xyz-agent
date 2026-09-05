@@ -14,10 +14,10 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// stub shiki：避免真实 WASM/语法加载，测试聚焦 fence 的 base64 链路
+// stub shiki：避免真实语法加载，测试聚焦 fence 的 base64 链路（fine-grained 后入口是 shiki/core）
 const fakeCodeToHtml = vi.fn((code: string) => `<pre class="shiki"><code>${code}</code></pre>`)
-vi.mock('shiki', () => ({
-  createHighlighter: vi.fn(() =>
+vi.mock('shiki/core', () => ({
+  createHighlighterCore: vi.fn(() =>
     Promise.resolve({
       codeToHtml: fakeCodeToHtml,
       getLoadedLanguages: () => ['typescript', 'javascript', 'vue'],
@@ -28,8 +28,8 @@ vi.mock('shiki', () => ({
 /** 每用例拿到干净的 markdown 模块（内部缓存 markdown-it 实例 + highlighter/codec 单例） */
 async function freshModule(): Promise<typeof import('@/composables/logic/markdown')> {
   vi.resetModules()
-  vi.doMock('shiki', () => ({
-    createHighlighter: () =>
+  vi.doMock('shiki/core', () => ({
+    createHighlighterCore: () =>
       Promise.resolve({
         codeToHtml: fakeCodeToHtml,
         getLoadedLanguages: () => ['typescript', 'javascript', 'vue'],
