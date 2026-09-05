@@ -530,6 +530,69 @@ describe('T4 update-handlers: update:download / update:install / update:getPrelo
     expect(preloadedMocks.clearPreloadedUpdate).not.toHaveBeenCalled()
   })
 
+  // ── UPDATE_NETWORK_TIMEOUT 用户文案成因分流（design-code-sync F1）──────────
+  it('update:download：curl connect-timeout 形态 → 用户文案分流为连接超时（不误标停滞）', async () => {
+    const { UpdateError } = await import('../update/types.js')
+    const orch = mockOrchestrator({
+      downloadUpdate: vi.fn(async () => {
+        // mapCurlExitToError connect 档产出的英文诊断串形态
+        throw new UpdateError('curl connection timeout (no connection within 10s, exit 28)', 'downloading', 'UPDATE_NETWORK_TIMEOUT')
+      }),
+    })
+    register(orch)
+
+    const handler = handlers.get('update:download')!
+    await expect(handler({}, { version: '0.9.0' })).rejects.toMatchObject({
+      stage: 'downloading',
+      message: '连接超时（10 秒未建立连接）',
+      suggestion: '请检查网络连接或代理设置后重试',
+    })
+    expect(sendSpy).toHaveBeenCalledWith('update:error', expect.objectContaining({
+      errorCode: 'UPDATE_NETWORK_TIMEOUT',
+      message: '连接超时（10 秒未建立连接）',
+    }))
+  })
+
+  it('update:download：停滞形态 → 用户文案保持停滞 + 断点续传指引（不被 connect 话术覆盖）', async () => {
+    const { UpdateError } = await import('../update/types.js')
+    const orch = mockOrchestrator({
+      downloadUpdate: vi.fn(async () => {
+        // undici 停滞档（finalizeSingleStreamError）/ curl --speed-time 档的英文诊断串形态
+        throw new UpdateError('download stalled (no data for 30s), aborted; temp kept — retry resumes from break point', 'downloading', 'UPDATE_NETWORK_TIMEOUT')
+      }),
+    })
+    register(orch)
+
+    const handler = handlers.get('update:download')!
+    await expect(handler({}, { version: '0.9.0' })).rejects.toMatchObject({
+      stage: 'downloading',
+      message: '下载停滞（连续 30 秒无数据）已中断',
+      suggestion: expect.stringContaining('断点续传'),
+    })
+    expect(sendSpy).toHaveBeenCalledWith('update:error', expect.objectContaining({
+      errorCode: 'UPDATE_NETWORK_TIMEOUT',
+      message: '下载停滞（连续 30 秒无数据）已中断',
+    }))
+  })
+
+  it('update:download：泛化 timeout 形态（testProxy 探测类）→ 中性超时话术（无下载语境不给续传指引）', async () => {
+    const { UpdateError } = await import('../update/types.js')
+    const orch = mockOrchestrator({
+      downloadUpdate: vi.fn(async () => {
+        // classifyNetError 对 AbortError 的泛化形态（无 stalled/connection timeout 特征）
+        throw new UpdateError('timeout (aborted)', 'downloading', 'UPDATE_NETWORK_TIMEOUT')
+      }),
+    })
+    register(orch)
+
+    const handler = handlers.get('update:download')!
+    await expect(handler({}, { version: '0.9.0' })).rejects.toMatchObject({
+      stage: 'downloading',
+      message: '连接或响应超时',
+      suggestion: '请检查网络连接是否稳定，或尝试配置代理服务器',
+    })
+  })
+
   // ── update:install 成功路径（从 preloaded 读）─────────────────
   it('update:install：从 readPreloadedUpdateRaw 读 release+filePath → installUpdate 用 preloaded release', async () => {
     preloadedMocks.readPreloadedUpdateRaw.mockResolvedValue({ release: FIXTURE, filePath: '/tmp/pre.zip' })

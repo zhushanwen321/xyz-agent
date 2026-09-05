@@ -990,6 +990,8 @@ describe('D1: idle 停滞检测（总墙钟已删）', () => {
     const err = await probe
     expect(err).toBeInstanceOf(UpdateError)
     expect((err as UpdateError).errorCode).toBe('UPDATE_NETWORK_TIMEOUT')
+    // header 停滞的诊断串为停滞语义（F1 成因分流的判别依据），非泛化 'timeout (aborted)'
+    expect((err as UpdateError).message).toContain('stalled')
     // header 阶段失败：temp 文件从未创建，无半下载残留
     expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'd1-stall-header.zip.downloading'))).toBe(false)
   }, 30_000)

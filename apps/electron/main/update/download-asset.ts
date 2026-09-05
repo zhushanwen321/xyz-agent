@@ -505,6 +505,20 @@ async function fetchSingleStreamResponse(
   try {
     response = await fetch(asset.downloadUrl, fetchOptions as RequestInit)
   } catch (fetchErr) {
+    // header 等待阶段的 idle 中止（D1 idle 前移后本阶段唯一 abort 来源）按停滞语义抛出
+    // （design-code-sync F1）：与 testProxy 探测超时（同经 classifyNetError 产泛化
+    // 'timeout (aborted)'）在诊断串上可判别，下游用户文案按成因分流才不误标。cause 链
+    // 保留原始错误（编排层 classifyUndiciFailure 判定口径与之前 AbortError 形态一致）。
+    if (fetchErr instanceof Error && (fetchErr.name === 'AbortError' || fetchErr.message.includes('aborted'))) {
+      const stalled = new UpdateError(
+        `download stalled (no data for ${IDLE_TIMEOUT_MS / MS_PER_SECOND}s), aborted; temp kept — retry resumes from break point`,
+        'downloading',
+        'UPDATE_NETWORK_TIMEOUT',
+        extractRawCause(fetchErr),
+      )
+      stalled.cause = fetchErr
+      throw stalled
+    }
     // D1: 使用统一的分类函数替代内联字符串匹配（收敛三条 fetch 路径）
     const proxyUrl = ctx.proxyConfig ? resolveProxyUrl(ctx.proxyConfig) : undefined
     const classified = classifyNetError(fetchErr, 'downloading', proxyUrl)
