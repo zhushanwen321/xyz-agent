@@ -78,6 +78,7 @@ import {
   ZCODE_MODE_ENV_VAR,
   ZCODE_POOL_DB_RELATIVE_PATH,
   ZCODE_TURN_MAX_TIMEOUT_ENV,
+  parseZcodeTurnTimeoutEnv,
 } from "./constants.ts";
 import { ZCODE_GOLDEN_STDOUT } from "./golden-sample.ts";
 import {
@@ -216,6 +217,14 @@ export class ZcodeEngine implements EnginePort {
    * app-server）。
    */
   private driftDegraded = false;
+  /**
+   * [P0-1 U4] 引擎停机标志（dispose 置位，不重置——dispose 后首个 run 走重建路径
+   * 不受影响）：瞬时重试判定据此排除 dispose 收割引发的崩溃形态——停机后的重试轮
+   * 会经 ensureAppServerRuntime 惰性重建进程（复活已停机引擎），违背 dispose 防泄漏
+   * 语义。teardown（凭据刷新/池变更）不走此标志：其崩溃重试用新 HOME/凭据重建属
+   * 合法续跑。
+   */
+  private disposed = false;
 
   constructor(deps: ZcodeEngineDeps) {
     this.deps = deps;
@@ -487,11 +496,21 @@ export class ZcodeEngine implements EnginePort {
   }
 
   /**
-   * 首轮执行 + schema 仿真重试编排（常驻路径）：schema 任务校验失败时重试一次（强化
-   * JSON 输出指令——与 spawn/structured-output 的重试语义对齐）。重试轮是独立会话的
-   * 独立 LLM 调用：token 计入 outcome.usage 总量；事件面 text_delta 按实际流出（含
-   * 失败轮——journal 记录真实流水），message_end/turn_end 只在最终轮终态后合成
-   * （不变量 2/5）。
+   * 首轮执行 + 双重试编排（常驻路径）：
+   * - **schema 仿真重试**（既有语义）：parsed 但校验失败时重试一次（强化 JSON 输出
+   *   指令——与 spawn/structured-output 的重试语义对齐）。
+   * - **瞬时失败自动重试一次**（[P0-1 U4/D6]）：末次 attempt 为 timeout 类（idle/
+   *   ceiling）或连接崩溃类失败且非用户 abort、非漂移码 → 用新会话重跑一次（attempt
+   *   本就每次新建会话）。重试轮 prompt 用 basePrompt 原样重跑（失败形态非 schema），
+   *   文案补「已自动重试一次」句（retried 标记仅对真实发生的重试生效）。
+   *
+   * 两次重试一次封顶各自独立（D6 被否①：多次重试/指数退避不做——重跑一轮=整任务
+   * 重算，一次封顶）。组合序：瞬时重试在前、schema 重试在后——瞬时重试轮 parsed 且
+   * 校验失败时仍进 schema 重试（末次 attempt 语义，schema 重试编排保持现状不动）。
+   *
+   * 重试轮是独立会话的独立 LLM 调用：token 计入 outcome.usage 总量；事件面
+   * text_delta 按实际流出（含失败轮——journal 记录真实流水），message_end/turn_end
+   * 只在最终轮终态后合成（不变量 2/5）。
    */
   private async runAppServerAttemptsWithRetry(
     task: AgentTaskSpec,
@@ -503,8 +522,46 @@ export class ZcodeEngine implements EnginePort {
     schema: object | undefined,
     usageAcc: { input: number; output: number; cacheRead: number; cacheWrite: number; has: boolean },
   ): Promise<AttemptResult> {
+    const attemptStartedAt = Date.now();
     let final = await this.attemptAppServerTurn(task, ctx, home, modelRef, cwd, basePrompt);
     accumulateUsage(usageAcc, final);
+    // [P0-1 U4/D6] 瞬时失败自动重试一次：判据 = run-failed 且 transient 形态标记
+    // （类型化，不经字符串反推）+ 非用户已取消 + 非漂移码（防御性——transient 形态
+    // 构造处即无 rpcCode，漂移类有专属 R5 降级链语义）+ 非引擎停机（dispose 收割
+    // 引发的崩溃不重试——停机后惰性重建 = 复活进程，违背 dispose 防泄漏语义）。
+    // 预算继承（P-Z4）：显式总上界预算下重试轮上界 = 剩余（总 − 已耗尽），剩余不足
+    // 最小下限不重试直接终态化；重试轮启动即 journal 出声（D6：重试事实记入 journal）。
+    if (
+      final.kind === "run-failed" &&
+      final.transient !== undefined &&
+      ctx.signal?.aborted !== true &&
+      !this.disposed &&
+      !(final.rpcCode !== undefined && isDriftRpcCode(final.rpcCode))
+    ) {
+      const budget = resolveTransientRetryBudget(explicitTurnBudgetMs(), Date.now() - attemptStartedAt);
+      if (budget.state === "depleted") {
+        logger.warn(
+          `[zcode-engine] 末次 attempt 瞬时失败（${final.transient}）——显式总上界预算剩余不足 ${ZCODE_TURN_RETRY_MIN_BUDGET_MS}ms，不重试直接终态化（预算继承：重试不重置总预算）`,
+        );
+      } else {
+        logger.warn(
+          `[zcode-engine] 末次 attempt 瞬时失败（${final.transient}）——止损链已终局，新会话自动重试一次` +
+            (budget.state === "inherit"
+              ? `（预算继承：重试轮总上界=剩余 ${budget.remainingMs}ms，不重置总预算）`
+              : "（无显式总上界预算，重试轮走 env/默认上界）"),
+        );
+        const retry = await this.attemptAppServerTurn(task, ctx, home, modelRef, cwd, basePrompt, {
+          // 预算继承传递点（D2 内部传参面）：显式预算 → 剩余值；无显式预算 → 缺省
+          // （channel 侧走同一 env/默认，与首轮行为一致）
+          ...(budget.state === "inherit" ? { turnTimeoutMs: budget.remainingMs } : {}),
+          // 重试事实进文案：「已自动重试一次」句仅对真实发生的重试生效（未重试形态
+          // 不含——与行为一致，§5.2 F-1/F-4）
+          retried: true,
+        });
+        accumulateUsage(usageAcc, retry);
+        final = retry;
+      }
+    }
     if (final.kind === "parsed" && final.schemaResult !== undefined && !final.schemaResult.ok && schema !== undefined) {
       const retryPrompt = appendSchemaRetryDirective(basePrompt, final.schemaResult.error);
       const retry = await this.attemptAppServerTurn(task, ctx, home, modelRef, cwd, retryPrompt);
@@ -536,6 +593,10 @@ export class ZcodeEngine implements EnginePort {
   /**
    * 单轮常驻执行：runTurn 组合面 + D3 abort 链 + 事件前移（text_delta 实时流出；
    * 终态数据经 read 兜底收口后才 resolve——不变量 1/2）。产出三态与 spawn 同构。
+   *
+   * @param opts turnTimeoutMs：显式总上界传参面（D2 内部传参点）——U4/D6 预算继承
+   *   向重试轮传剩余值；缺省不传（channel 走 env→默认，首轮行为）。
+   *   retried：瞬时重试轮标记——失败文案补「已自动重试一次」句（F-1/F-4）。
    */
   private async attemptAppServerTurn(
     task: AgentTaskSpec,
@@ -544,6 +605,7 @@ export class ZcodeEngine implements EnginePort {
     modelRef: string,
     cwd: string,
     prompt: string,
+    opts: { turnTimeoutMs?: number; retried?: boolean } = {},
   ): Promise<AttemptResult> {
     const rt = this.ensureAppServerRuntime(home);
     const { providerId, modelId } = splitZcodeModelRef(modelRef);
@@ -567,6 +629,8 @@ export class ZcodeEngine implements EnginePort {
           poolKey: home.poolKey,
         });
       },
+      // 显式总上界传参（D2/U4：缺省缺席——channel 侧 resolveTurnTimerMs 走 env→默认）
+      ...(opts.turnTimeoutMs !== undefined ? { turnTimeoutMs: opts.turnTimeoutMs } : {}),
     });
 
     // D3 abort 链：signal abort → ① session/stop {sessionId} ② grace 窗口确认终态
@@ -603,9 +667,20 @@ export class ZcodeEngine implements EnginePort {
           sessionCreated,
           { escalateOn: "stop-outcome" },
         );
-        return timeoutAppServerAttempt(err, currentSessionId, stopPath);
+        // [P0-1 U4] timeout 类（idle/ceiling 都算）是 D6 明文的可重试形态——结构化
+        // 标记（TurnTimeoutError 类型化判据，不经字符串匹配，D4 同精神）
+        return timeoutAppServerAttempt(err, currentSessionId, stopPath, { retried: opts.retried });
       }
-      return failedAppServerAttempt(err, home, currentSessionId);
+      // [P0-1 U4] 连接崩溃收割形态（failAllTurns 的错误，D6 第二可重试形态）判据：
+      // 非 RPC error（服务端无明确应答——有应答即精确错误归类，非瞬时崩溃面）且
+      // conn 不存活。时序可靠性：catch 时刻紧随 onClose 收割，连接重建仅由
+      // conn.request 惰性触发——本链路中 runTurn finally 的 closeSession 对死连接
+      // 短路（channel 侧 !alive 守卫）、stop 只属 abort/超时入口（前者已被
+      // signal.aborted 短路、后者走上一分支）——此刻无 request 可重建，判据可靠。
+      if (!isAppServerRpcError(err) && !rt.conn.alive) {
+        return failedAppServerAttempt(err, home, currentSessionId, { retried: opts.retried, transient: "conn-closed" });
+      }
+      return failedAppServerAttempt(err, home, currentSessionId, { retried: opts.retried });
     } finally {
       if (currentSessionId !== undefined) rt.activeSessions.delete(currentSessionId);
       if (ctx.signal !== undefined) ctx.signal.removeEventListener("abort", onAbort);
@@ -866,6 +941,9 @@ export class ZcodeEngine implements EnginePort {
    * 锁不释放（随宿主进程存活——活宿主持有语义；进程死锁自然无主可接管）。
    */
   async dispose(): Promise<void> {
+    // [P0-1 U4] 停机标志先行：在途任务的瞬时重试判定据此短路（dispose 收割引发的
+    // 崩溃不再触发重试轮——重试轮会经惰性重建复活已停机引擎）
+    this.disposed = true;
     const rt = this.appserverRuntime;
     if (rt === undefined) return;
     this.appserverRuntime = undefined;
@@ -1383,6 +1461,15 @@ type AttemptResult =
       rpcCode?: number;
       /** appserver 路径失败时已建立的会话 id（错误规格表 -32004 行：按任务失败上报含会话 id）。 */
       sessionId?: string;
+      /**
+       * [P0-1 U4/D6] 瞬时失败形态标记（重试判定判据——类型化字段，不经字符串
+       * 反推）：timeout = channel 判死（TurnTimeoutError，idle/ceiling 都算——D6
+       * 明文两类均可重试）；conn-closed = 连接崩溃收割（failAllTurns 形态，判据 =
+       * 非 RPC error 且 conn 不存活——catch 时刻重建仅由 conn.request 惰性触发，
+       * 此前无 request，判据可靠）。缺席 = 非瞬时形态（RPC 错误/status=error 终态/
+       * send 未送达等），不参与重试（D6 被否③：status='error' 终态 v1 不重试）。
+       */
+      transient?: "timeout" | "conn-closed";
     }
   | {
       kind: "parsed";
@@ -1390,6 +1477,50 @@ type AttemptResult =
       payload: ZcodeTerminalPayload;
       schemaResult?: { ok: true; parsed: unknown } | { ok: false; error: string; tail: string };
     };
+
+/**
+ * [P0-1 U4/D6] 瞬时失败自动重试的最小剩余预算下限（ms）：显式总上界预算下，剩余
+ * 低于此值不再重试直接终态化（D6「剩余不足一个最小下限（如 5min）」——重跑一轮
+ * 整任务的最小耗时估计，剩余更小的重试注定再被上界回收，白烧一轮 token）。
+ * 单消费方（本文件重试编排），故为模块常量不进 constants.ts（跨文件共享才上移）。
+ */
+export const ZCODE_TURN_RETRY_MIN_BUDGET_MS = 300_000;
+
+/** resolveTransientRetryBudget 的判定结果（可判别联合——inherit 分支剩余值必有）。 */
+export type ZcodeTurnRetryBudget =
+  | { state: "inherit"; remainingMs: number }
+  | { state: "depleted" }
+  | { state: "unbounded" };
+
+/**
+ * [P0-1 U4/D6 预算继承] 重试轮预算判定（纯函数，P-Z4 探针「显式预算下重试轮不
+ * 重置总预算」的数学本体——剩余 = 总预算 − 已耗尽）：显式总上界预算存在时重试轮
+ * 上界收窄为剩余（不重置），剩余不足最小下限则不重试；非显式（env 未设/非法/
+ * ≤0 显式关闭）为 unbounded——无「总预算」可言，重试轮走 env/默认全新上界（与
+ * 首轮同源，行为一致），不受预算门禁。
+ */
+export function resolveTransientRetryBudget(
+  totalBudgetMs: number | undefined,
+  consumedMs: number,
+): ZcodeTurnRetryBudget {
+  if (totalBudgetMs === undefined) return { state: "unbounded" };
+  const remainingMs = totalBudgetMs - consumedMs;
+  return remainingMs >= ZCODE_TURN_RETRY_MIN_BUDGET_MS
+    ? { state: "inherit", remainingMs }
+    : { state: "depleted" };
+}
+
+/**
+ * 显式总上界预算读取（P-Z4 门禁的「显式」判定——D6「显式设置了 turnTimeoutMs
+ * （env 或内部传参）」在引擎侧的唯一来源是 env；引擎内部传参点只用于向重试轮传
+ * 剩余值）：env 设置为正数 → 显式预算；未设/非法（走默认）与 ≤0（显式关闭上界）
+ * 均非显式预算（undefined → unbounded）。读 process.env 直连（与 session-channel
+ * 的 resolveTurnTimerMs 同源同通道，vi.stubEnv 可测——D2 env 通道一致性）。
+ */
+function explicitTurnBudgetMs(): number | undefined {
+  const parsed = parseZcodeTurnTimeoutEnv(process.env[ZCODE_TURN_MAX_TIMEOUT_ENV]);
+  return parsed.state === "valid" && parsed.ms > 0 ? parsed.ms : undefined;
+}
 
 /** Record 形状 guard（task.schema 的运行时窄化——Record<string, unknown> 不满足 ajv 的 object 入参）。 */
 function isPlainObject(v: unknown): v is object {
@@ -1449,8 +1580,12 @@ function turnResultToPayload(r: SessionTurnResult): ZcodeTerminalPayload {
  * -32010 → 单会话一任务是结构保证（busy 不排队不打断），文案引导附带 sessionId/state
  * 流水报告；其余（连接崩溃/会话失败/漂移类透传——漂移降级归 R5）→ engine_run_failed +
  * 恢复指引。sessionId 已建立时随文案透出（错误规格表 -32004 行「按任务失败上报含会话 id」）。
+ *
+ * retried（[P0-1 U4] §5.2 F-4「已重试 1 次」）：仅在瞬时重试真实发生后为 true——
+ * 兜底行恢复指引补「已自动重试一次仍失败」句（未重试形态不含，与行为一致）；专属
+ * 归类行（credential/busy）有独立恢复指引，不掺重试事实（错误规格表行的归类语义优先）。
  */
-function buildAppServerRunFailedMessage(err: unknown, home: AppServerHomeHandle, sessionId?: string): string {
+function buildAppServerRunFailedMessage(err: unknown, home: AppServerHomeHandle, sessionId?: string, retried = false): string {
   if (
     isAppServerRpcError(err) &&
     err.code === ZCODE_APPSERVER_ERR_MODEL_CONFIG_MISSING &&
@@ -1470,9 +1605,12 @@ function buildAppServerRunFailedMessage(err: unknown, home: AppServerHomeHandle,
   }
   const code = isAppServerRpcError(err) && err.code !== undefined ? `（code ${err.code}）` : "";
   const sid = sessionId !== undefined ? `（会话 ${sessionId}）` : "";
+  const retryNote = retried
+    ? `恢复指引：直接重跑本任务（瞬时故障已自动重试一次仍失败；重试用的是崩溃后自动重建的新会话）。`
+    : `恢复指引：直接重跑本任务（连接崩溃后自动重建进程）；`;
   return (
     `engine_run_failed: app-server 会话执行失败${code}${sid}: ${errMessage(err).slice(-ZCODE_ERROR_TAIL_CHARS)}。` +
-    `恢复指引：直接重跑本任务（连接崩溃后自动重建进程）；若持续失败，跑 probe 核对协议漂移（R5 降级链）或改用 engine: pi。`
+    `${retryNote}若持续失败，跑 probe 核对协议漂移（R5 降级链）或改用 engine: pi。`
   );
 }
 
@@ -1578,14 +1716,18 @@ function failedAppServerAttempt(
   err: unknown,
   home: AppServerHomeHandle,
   currentSessionId: string | undefined,
+  opts: { retried?: boolean; transient?: "timeout" | "conn-closed" } = {},
 ): AttemptResult {
   return {
     kind: "run-failed",
     output: syntheticAppServerOutput(null),
-    message: buildAppServerRunFailedMessage(err, home, currentSessionId),
+    message: buildAppServerRunFailedMessage(err, home, currentSessionId, opts.retried === true),
     // [R5] RPC code 透传给 run 编排（-32601/-32602 漂移降级判据；连接级/超时类
     // 错误无 code 不参与降级）
     ...(isAppServerRpcError(err) && err.code !== undefined ? { rpcCode: err.code } : {}),
+    // [P0-1 U4/D6] 瞬时失败形态标记（重试判定判据——timeout 形态走
+    // timeoutAppServerAttempt，此处只承载 conn-closed）
+    ...(opts.transient !== undefined ? { transient: opts.transient } : {}),
     // 错误规格表 -32004 行「按任务失败上报（含会话 id）」：create 成功后运行中失败
     // （-32004/-32010 等）时留痕会话 id——经 applyRunFailedOutcome 落 outcome.sessionId
     // 与 handle.sessionRef（create 阶段失败无会话，缺省不带）
@@ -1612,16 +1754,20 @@ type AbortChainStopPath =
  * （D4——与 engine_run_failed 分流，下游按前缀分流不经字符串反推超时语义），走
  * run-failed kind 承载（exitCode=null 异常终态口径与杀链超时合成终态一致；无
  * rpcCode——超时不属漂移类，不参与降级）。sessionId 留痕同 failedAppServerAttempt。
+ * [P0-1 U4/D6] timeout 类（idle/ceiling 都算）恒标 transient——D6 明文的可重试形态；
+ * retried 时文案补「已自动重试一次」句（F-1）。
  */
 function timeoutAppServerAttempt(
   err: TurnTimeoutError,
   currentSessionId: string | undefined,
   stopPath: AbortChainStopPath,
+  opts: { retried?: boolean } = {},
 ): AttemptResult {
   return {
     kind: "run-failed",
     output: syntheticAppServerOutput(null),
-    message: buildAppServerTimeoutMessage(err, currentSessionId, stopPath),
+    message: buildAppServerTimeoutMessage(err, currentSessionId, stopPath, opts.retried === true),
+    transient: "timeout",
     ...(currentSessionId !== undefined ? { sessionId: currentSessionId } : {}),
   };
 }
@@ -1647,12 +1793,15 @@ function stopPathText(stopPath: AbortChainStopPath): string {
  * 超时族 outcome 文案（D4 + §5.2 F-1/F-2，两形态有别）：idle 主判定静默时长 + 最后
  * 事件时刻（诊断面）；ceiling 总上界判死附 env 自救通道（XYZ_ZCODE_TURN_MAX_TIMEOUT_MS
  * 可调/0 关闭——§2 目标 5 的用户可见出口）。恢复指引共段：重跑 + 连通性排查 + engine: pi。
- * （F-1 样例中「已自动重试一次」句属 D6/u-z4 重试落地后的增量，本单元不加。）
+ * retried（[P0-1 U4] §5.2 F-1 样例句，u-z2 留的补句义务）：仅在瞬时重试真实发生后
+ * 为 true——恢复指引补「瞬时故障已自动重试一次仍超时；重试在止损链终局后启动，无
+ * 新旧任务双跑窗」句（未重试形态不含，与行为一致）。
  */
 function buildAppServerTimeoutMessage(
   err: TurnTimeoutError,
   sessionId: string | undefined,
   stopPath: AbortChainStopPath,
+  retried = false,
 ): string {
   const sid = sessionId !== undefined ? `（会话 ${sessionId}）` : "";
   const lastEventText =
@@ -1667,9 +1816,12 @@ function buildAppServerTimeoutMessage(
     err.kind === "ceiling"
       ? `若本任务属合法超长任务（预期超过 ${err.thresholdMs}ms），重跑前设 ${ZCODE_TURN_MAX_TIMEOUT_ENV} 为更大毫秒值或 0 关闭总上界（关闭后 chatty 形态不再自动回收，静默 wedged 仍由 idle 层兜底——自行权衡）。`
       : "";
+  const rerunGuide = retried
+    ? `👉 恢复指引：直接重跑本任务（瞬时故障已自动重试一次仍超时；重试在止损链终局后启动，无新旧任务双跑窗）；`
+    : `👉 恢复指引：直接重跑本任务；`;
   return (
     `${head}止损路径：${stopPathText(stopPath)}。\n` +
-    `👉 恢复指引：直接重跑本任务；${selfHelp}若持续出现，检查 ZCode 桌面端模型连通性或改用 engine: pi。`
+    `${rerunGuide}${selfHelp}若持续出现，检查 ZCode 桌面端模型连通性或改用 engine: pi。`
   );
 }
 

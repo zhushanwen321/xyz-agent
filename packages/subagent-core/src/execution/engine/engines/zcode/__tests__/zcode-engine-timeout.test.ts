@@ -245,13 +245,15 @@ describe("超时处置链（P0-1 U2：catch 分流 → stop-outcome 三态裁决
     expect(sentMethods(f.stateFile)).toContain("session/stop");
     // killChain 真的收割了共享进程（机械证据）：旧 fake 进程已死（探活失败）
     expect(processAlive(bootPid(f.stateFile))).toBe(false);
-    // 切换正常场景后下一任务必须重建（boot 2——新 fake 重读 scenario，正常完成；
-    // A2「killChain 路径可判定断言」的单测等价物：文案与杀链同分支 + 重建为进程死亡佐证）
+    // 切换正常场景后下一任务必须重建（boot 计数：U4 起首轮 killChain 收口后自动重试
+    // 一次——重试轮经惰性重建 boot 2（同 scenario 仍 hang+stop hang → 重试轮也走
+    // killChain 收口）；本用例的下一任务再重建 boot 3——「killChain 后重建」语义不变，
+    // 计数随 U4 重试 +1）
     f.rewriteScenario({ replaceSendPushes: [...ZCODE_APPSERVER_GOLDEN.pushStream, ...ZCODE_APPSERVER_GOLDEN.terminal] });
     const r2 = await f.engine.run(makeTask({ cwd: f.workspace }), makeCtx());
     expect(r2.outcome.error).toBeUndefined();
     expect(r2.outcome.content).toBe(GOLDEN_FULL_TEXT);
-    expect(bootCount(f.stateFile)).toBe(2);
+    expect(bootCount(f.stateFile)).toBe(3);
   }, 40_000);
 
   it("ceiling 形态（idle 关闭 + 总上界判死）：文案标 chatty-wedge + 附 XYZ_ZCODE_TURN_MAX_TIMEOUT_MS env 自救通道（F-2）", async () => {
@@ -292,7 +294,12 @@ describe("超时处置链（P0-1 U2：catch 分流 → stop-outcome 三态裁决
           ready.push({ sessionId: partial.sessionRef["sessionId"], poolKey: partial.poolKey }),
       }),
     );
-    expect(ready).toEqual([{ sessionId: GOLDEN_SESSION_ID, poolKey: ZCODE_APPSERVER_POOL_KEY }]);
+    expect(ready).toEqual([
+      { sessionId: GOLDEN_SESSION_ID, poolKey: ZCODE_APPSERVER_POOL_KEY },
+      // U4 起首轮超时收口后自动重试一次（同 hang 场景）——重试轮 create 再回填一次，
+      // 值相同（同一 fake 的 golden create 应答）：不变量 3 每轮 create 都成立
+      { sessionId: GOLDEN_SESSION_ID, poolKey: ZCODE_APPSERVER_POOL_KEY },
+    ]);
     expect(r.handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: ".zcode/cli/db/db.sqlite" });
     expect(r.handle.data.poolKey).toBe(ZCODE_APPSERVER_POOL_KEY);
   }, 20_000);
