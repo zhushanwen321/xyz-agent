@@ -21,6 +21,20 @@
 //      走现有退出路径（不通知）；
 //   6. U4 deviation #8 接线：notifyBatch 收到 config 热读的 budget 参数。
 //
+// v2 断链 2+3（设计 subagent-sync-collect-v2.md §3.3 D3）真实序列种子（形态取自
+// kill -9 真实链路，v1 教训：种子绕过 orphan 恢复直接写终态 entry = 测不到断链）：
+//   7. 主用例（写文件 pi）：主文件种 register（running+sync）→ 轮终（running+
+//      resumable+result 全文）两笔 entry，sessionsDir 构造子 session 文件（identity +
+//      末行完整 JSON）且不写三 sidecar（分支 4 命中）→ initSession 后 orphan 覆写
+//      （finalizeOrphanRecord 真实跑，merge 保留批标记与 result/model）→ E1 补发
+//      单批 + 落标 → 二次重启零补发；
+//   8. async 对照（同构造无 collectMode）：覆写 entry 批域字段不出现、result 按
+//      merge 补齐（拉齐修复口径）；
+//   9. 豁免路径（断言 pi，覆写不落盘）：E1 直读轮终 running+resumable entry 走
+//      resumable 豁免判定 → 补发可达（判定侧另一分支，与协调器 hasRunningSync 同构）；
+//  10. P-rebuild：rebuildEntryRecord 新投影字段（resumable/sessionFile）不改变
+//      recoverEntryOnlyOrphans 的「只认 running 末条」候选判定。
+//
 // mock 手法对齐 collect-coordinator-service.test.ts：mock session-runner（不 spawn 真子
 // 进程）+ logger；record-store / config 走真实实现（tmpdir 自建自删，红线）。
 
@@ -112,6 +126,7 @@ function makeAssertPi() {
 }
 
 type AssertPi = ReturnType<typeof makeAssertPi>;
+type WritingPi = ReturnType<typeof makeWritingPi>;
 
 interface NotifierSpy {
   notify: ReturnType<typeof vi.fn>;
@@ -193,8 +208,9 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     );
   }
 
-  /** 恢复侧 service（断言 pi，不写文件）。 */
-  function makeRecoveryService(pi: AssertPi): SubagentService {
+  /** 恢复侧 service：断言 pi（覆写不落盘，断言内存面）/ 写文件 pi（覆写真实落盘，
+   *  E1 读覆写后末条——kill -9 真实链路同构）两用。 */
+  function makeRecoveryService(pi: AssertPi | WritingPi): SubagentService {
     const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
     const modelRegistry: ModelRegistryLike = {
       getAvailable: () => [],
@@ -222,6 +238,48 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
       }
     }
     return lastById;
+  }
+
+  /** 在 sessionsDir 手工构造子 session 文件（session 头 + identity entry + 末行完整
+   *  JSON record entry，E9 用例同款形态）且**不写** `.finalized`/`.cancelled`/`.alive`
+   *  三 sidecar——重建矩阵分支 4 命中条件，保证 orphan 恢复走 finalizeOrphanRecord
+   *  真实路径（entry-born 兜底测不到 D3 merge 所在路径 = 假绿）。
+   *  identity 含 reconstructAll 过滤必需字段：id/agent/task string + mode 枚举 +
+   *  startedAt number + rootSessionId。 */
+  function writeChildSessionFile(recordId: string, task: string): string {
+    const childFile = path.join(getSubagentSessionDir(agentDir, agentDir), `${recordId}.jsonl`);
+    const ts = new Date(1000).toISOString();
+    fs.writeFileSync(
+      childFile,
+      JSON.stringify({ type: "session", version: 3, id: `sess-${recordId}`, timestamp: ts, cwd: agentDir }) + "\n" +
+        JSON.stringify({
+          type: "custom", id: `cid-${recordId}-1`, parentId: null, timestamp: ts,
+          customType: "subagent-identity",
+          data: { id: recordId, agent: "/agents/worker.md", mode: "background", task, startedAt: 1000, rootSessionId: ROOT_SESSION, depth: 0 },
+        }) + "\n" +
+        JSON.stringify({
+          type: "custom", id: `cid-${recordId}-2`, parentId: `cid-${recordId}-1`, timestamp: ts,
+          customType: "subagent-record",
+          data: {
+            v: 1, id: recordId, agent: "/agents/worker.md", task, slug: "child",
+            status: "running", mode: "background", startedAt: 1000, rootSessionId: ROOT_SESSION,
+            depth: 0, turns: 1, totalTokens: 10, model: "prov/child-m", eventLog: [], displayItems: [],
+          },
+        }) + "\n",
+      "utf-8",
+    );
+    return childFile;
+  }
+
+  /** 种下「崩溃前主文件末条序列」：register（running+sync）→ 轮终（running+
+   *  resumable + result 全文 + sessionFile）——成功成员崩溃时的真实末条形态
+   *  （SP-5 one-shot 轮终写点，finalize-record.ts doFinalizeRoundToIdle）。
+   *  collectMode 必须显式传（"sync" 主用例 / undefined async 对照）——不可给默认值：
+   *  JS 默认参数对显式 undefined 也触发，async 对照会被默认 "sync" 污染。 */
+  function seedRoundTerminalEntries(id: string, childFile: string, result: string, model: string, collectMode: "sync" | undefined): void {
+    const store = makeSeedStore();
+    store.reportSubagentRecord(memberRecord({ id, sessionFile: childFile, model, collectMode }));
+    store.reportSubagentRecord(memberRecord({ id, sessionFile: childFile, model, collectMode, resumable: true, result }));
   }
 
   it("标记与终态五字段经真实落盘→扫描投影后可见（rebuildEntryRecord 白名单扩展）", () => {
@@ -468,5 +526,130 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     // 文件末条确为无标记终态（本用例的数据前提自检）
     const last = readMainFileLastEntries().get("sa-a");
     expect(last!.batchFinalized).toBeUndefined();
+  });
+
+  // ============================================================
+  // v2 断链 2+3（设计 §3.3 D3）：orphan 覆写 merge + E1 resumable 豁免。
+  // 种子形态取自 kill -9 真实链路（v1 教训：绕过 orphan 恢复直接写终态 entry
+  // 测不到断链——主文件两笔 entry + 子文件 + 无三 sidecar，让 finalizeOrphanRecord
+  // 与 E1 在同一测试里真实跑）。
+  // ============================================================
+
+  it("kill -9 同构主用例：orphan 覆写 merge 保留批标记与 result/model → E1 补发单批 + 落标 → 二次重启零补发", () => {
+    // ── 崩溃前形态：register（running+sync）→ 轮终（running+resumable+result 全文）──
+    const childFile = writeChildSessionFile("sa-kill9", "kill -9 crash task");
+    seedRoundTerminalEntries("sa-kill9", childFile, "kill-9 full result body", "prov/round-m", "sync");
+
+    // ── 重启恢复（写文件 pi：orphan 覆写 entry 真实落盘，E1 读覆写后末条）──
+    // initSession 内已真实跑 orphan 恢复（ENV 已剥 → 根进程判定 → finalizeOrphanRecord）。
+    const recoveryPi = makeWritingPi(mainFile);
+    const recovery = makeRecoveryService(recoveryPi);
+
+    // 断链 2 核心断言：覆写 entry（主文件末条）保留批域标记与轮终正文/模型——
+    // 重建矩阵不含这些字段，不 merge 就会被覆写抹掉（E1 候选集恒空的真根因）。
+    const overwritten = readMainFileLastEntries().get("sa-kill9")!;
+    expect(overwritten.status).toBe("closed");
+    expect(overwritten.closedReason).toBe("gc");
+    expect(overwritten.collectMode).toBe("sync");
+    expect(overwritten.result).toBe("kill-9 full result body");
+    expect(overwritten.model).toBe("prov/round-m");
+    // 防重锚落盘（覆写已判终态，二次重启不再进判定）
+    expect(fs.existsSync(`${childFile}.finalized`)).toBe(true);
+
+    // ── E1 真实跑：末条（覆写后 closed entry）候选命中 → 补发 + 落标 ──
+    const spy = spyNotifier(recovery);
+    recovery.recoverSyncCollectBatch();
+    expect(spy.notifyBatch).toHaveBeenCalledTimes(1);
+    expect(spy.notify).not.toHaveBeenCalled();
+    const batch = spy.notifyBatch.mock.calls[0]![0] as Array<Record<string, unknown>>;
+    expect(batch).toHaveLength(1);
+    expect(batch[0]!.id).toBe("sa-kill9");
+    // 成功成员正文含 result 全文（来自覆写 entry 的 merge 保留，非 "(empty)"）
+    expect(batch[0]!.result).toBe("kill-9 full result body");
+    expect(batch[0]!.status).toBe("closed");
+
+    // 补发后落标 batchFinalized（主文件末条）
+    const marked = readMainFileLastEntries().get("sa-kill9")!;
+    expect(marked.batchFinalized).toBe(true);
+    expect(marked.collectMode).toBe("sync");
+
+    // ── 二次重启（V2 验收「零重发」）：已标记 → 候选空 → 零补发 ──
+    const second = makeRecoveryService(makeAssertPi());
+    const spy2 = spyNotifier(second);
+    second.recoverSyncCollectBatch();
+    expect(spy2.notifyBatch).not.toHaveBeenCalled();
+    expect(spy2.notify).not.toHaveBeenCalled();
+  });
+
+  it("async 对照：覆写 entry 批域字段不出现，result/model 按 merge 补齐（拉齐修复口径）", () => {
+    const childFile = writeChildSessionFile("sa-async-ctl", "async crash task");
+    // 同构造但无 collectMode（undefined 覆盖 memberRecord 默认 "sync"）
+    seedRoundTerminalEntries("sa-async-ctl", childFile, "async full result body", "prov/async-m", undefined);
+
+    const recoveryPi = makeWritingPi(mainFile);
+    makeRecoveryService(recoveryPi); // initSession 内 orphan 覆写真实跑
+
+    const overwritten = readMainFileLastEntries().get("sa-async-ctl")!;
+    expect(overwritten.status).toBe("closed");
+    // 批域字段对非 sync 成员恒 no-op：序列化产物不含这两键（merge 无值可补）
+    expect(Object.hasOwn(overwritten, "collectMode")).toBe(false);
+    expect(Object.hasOwn(overwritten, "batchFinalized")).toBe(false);
+    // result/model 修补对 async 成员同样生效（light 重建丢 result/model 的拉齐修复）
+    expect(overwritten.result).toBe("async full result body");
+    expect(overwritten.model).toBe("prov/async-m");
+  });
+
+  it("豁免路径：轮终 running+resumable 末条（覆写不落盘）→ E1 resumable 豁免 → 补发可达", () => {
+    const childFile = writeChildSessionFile("sa-exempt", "exempt path task");
+    seedRoundTerminalEntries("sa-exempt", childFile, "exempt full result body", "prov/round-m", "sync");
+
+    // 断言 pi：orphan 覆写 entry 不落盘——主文件末条保持轮终 running+resumable 形态，
+    // E1 读的是该 entry（覆写不可达的防御分支残余，正是豁免口径要覆盖的形态）。
+    const pi = makeAssertPi();
+    const recovery = makeRecoveryService(pi);
+
+    // 前提自检：主文件末条仍是轮终 running+resumable（旧口径 status !== "closed"
+    // 会把它顶死在「等自然终态」，本用例锁定豁免判定让补发可达）。
+    const lastBefore = readMainFileLastEntries().get("sa-exempt")!;
+    expect(lastBefore.status).toBe("running");
+    expect(lastBefore.resumable).toBe(true);
+
+    const spy = spyNotifier(recovery);
+    recovery.recoverSyncCollectBatch();
+    expect(spy.notifyBatch).toHaveBeenCalledTimes(1);
+    const batch = spy.notifyBatch.mock.calls[0]![0] as Array<Record<string, unknown>>;
+    expect(batch[0]!.id).toBe("sa-exempt");
+    // 补发内容 = 轮终快照（result 全文；resumable 投影使豁免判定可见）
+    expect(batch[0]!.result).toBe("exempt full result body");
+
+    // 落标 entry（断言 pi 的内存面）：覆写被豁免放行的成员同样统一补标
+    const marks = pi.appendEntry.mock.calls
+      .filter((c) => c[0] === SUBAGENT_RECORD_CUSTOM_TYPE)
+      .map((c) => c[1] as Record<string, unknown>)
+      .filter((d) => d.batchFinalized === true);
+    expect(marks.map((m) => m.id)).toEqual(["sa-exempt"]);
+  });
+
+  it("P-rebuild：新投影字段不改变 entry-born 孤儿判定（轮终 running 末条无子文件锚仍入判定覆写）", () => {
+    // 轮终形态末条（running + resumable + sessionFile 字段在 entry 里），子文件不
+    // 存在——recoverEntryOnlyOrphans 的「只认 running 末条」判定不应因新投影字段
+    // （resumable/sessionFile）而跳过该 id（resumable 豁免只在 E1 口径，不在
+    // entry-born 域）。
+    const seedStore = makeSeedStore();
+    seedStore.reportSubagentRecord(
+      memberRecord({ id: "sa-p-rebuild", resumable: true, result: "round done", sessionFile: path.join(agentDir, "no-such-child.jsonl") }),
+    );
+
+    const pi = makeAssertPi();
+    makeRecoveryService(pi); // initSession 内 recoverEntryOnlyOrphans 真实跑
+
+    const entry = pi.appendEntry.mock.calls
+      .filter((c) => c[0] === SUBAGENT_RECORD_CUSTOM_TYPE)
+      .map((c) => c[1] as Record<string, unknown>)
+      .find((d) => d.id === "sa-p-rebuild");
+    expect(entry).toBeDefined();
+    expect(entry!.status).toBe("closed");
+    expect(entry!.closedReason).toBe("gc");
+    expect(String(entry!.error)).toContain("no child session file");
   });
 });

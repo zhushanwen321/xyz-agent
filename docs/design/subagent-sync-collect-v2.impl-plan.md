@@ -68,16 +68,16 @@ graph TD
 
 ## 5 合理偏差登记表
 
-初始为空。
-
 | # | 偏差 | 类别 | 裁决 |
 |---|------|------|------|
+| 1 | W1：`recoverOrphanRecords` 参数为追加式第二参 `(rootSessionFilter?, mainSessionFile?)`，非设计 D3 字面的「与 recoverEntryOnlyOrphans 同款 mainSessionFile 前置」——领地外 record-store.test.ts（7 处）与 record-store-orphan-revive.test.ts（3 处）既有单参调用，前置会使 rootSessionId 被误读为文件路径；追加式既有调用面零改动且行为等价（undefined 时 merge 无源，与旧版一致） | 合理偏差（签名细节，语义符合 D3） | 接受，设计措辞以「追加式传参」为准 |
+| 2 | W1：merge 落点在 `finalizeOrphanRecord` 入口统一（覆盖 chatMode 分流 / IO 保守 / 终态覆写三分支），设计 D3 明示 chatMode 分支、未明示 IO-error 保守分支——该分支同样落 resumable entry，覆写语义同构，入口统一比逐分支选择性 merge 简单 | 合理偏差（超设计最小面的同构扩展） | 接受 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| W1 | pending | 0 | — |
+| W1 | committed | 1（首轮绿） | 全量 3110 passed / 9 skipped（基线 3106 + 新增 4：kill-9 同构主用例 / async 对照 / 豁免路径 / P-rebuild）；主 agent 复跑核实 |
 | W2 | pending | 0 | — |
 | W3 | pending | 0 | — |
 | W4 | pending | 0 | — |
@@ -85,6 +85,8 @@ graph TD
 ## 7 残留风险与变更历史
 
 - 残留风险（承接设计 out of scope，非本轮缺陷）：worker detach / zcode 存活接回 / 嵌套 sync 批恢复 / E9 跨键残余窗——见设计 §1.2 Out of scope 与被否谱系。
+- lint 存量红（W1 核验时确认，均非本轮引入）：①subagent-service.ts max-lines warning（HEAD 既有 1512>1450，W1 净增 11 行中 10 行为注释，skipComments 计数不变；修复需拆文件且 W2/W3 继续共改——后续重构议题）；②scripts/probes a2/a6 的 no-unused-vars error（v1 探针遗留，W4 领地处置）。
 - 探针 P-settled 若发现 pi 事件分发为单 handler 覆盖语义，W2 降级并入 ledger host 分发链（设计 D4 降级路径），记合理偏差。
 - 变更历史：
   - 2026-09-05 计划创建。审查轨迹：R1 2MF+2SG → R2 2MF+2SG → R3 0MF+4SG+1INFO（全修）；设计 commit c1202e6ea。
+  - 2026-09-05 W1 committed：断链 2+3 修复落地（偏差登记 #1/#2），全量 3110 绿。

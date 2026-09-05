@@ -561,11 +561,13 @@ export class SubagentService {
 
   /** 孤儿终态恢复委托（RecordStore.recoverOrphanRecords 的唯一公开入口，维持 store
    *  private 封装——与 recoverManifestTmpFiles 同模式）。判定语义见 store 侧注释。
+   *  mainSessionFile 随调用透传（v2 D3 覆写 merge 数据源：主文件末条 entry 的批域
+   *  标记与轮终 result/model；initSession 先赋值后恢复，时序就绪）。
    *  随后跑 entry-born 孤儿恢复（无子文件锚的 register-only record，spawn 窗口期死亡，
    *  E2E 实测缺口）——主 session 文件经 getMainSessionFile 注入（构造期可空）。 */
   recoverOrphanRecords(): void {
     try {
-      this.store.recoverOrphanRecords(this.sessionRootId ?? undefined);
+      this.store.recoverOrphanRecords(this.sessionRootId ?? undefined, this.mainSessionFile);
     } catch (err) {
       logger.warn("[subagents] orphan recovery failed", {
         reason: err instanceof Error ? err.message : String(err),
@@ -755,7 +757,8 @@ export class SubagentService {
    *  - 全员终态且账本无同成员集批记录 → notifyBatch 补发（内容 = 末条 entry 终态快照；
    *    账本 record 同 hash 幂等拒绝 = 已投递/已在账，两种结局都算「已处理」）；
    *  - 仍有 running → 本次不动，等其自然终态走正常流（下次 session_start 重扫收敛——
-   *    每次重启要么幂等无操作要么推进，无振荡）；
+   *    每次重启要么幂等无操作要么推进，无振荡）；running 口径与协调器同构
+   *    （resumable 豁免，v2 D3——覆写不可达的防御分支残余不被误判「仍在跑」）；
    *  - 补发尝试后统一补 batchFinalized 标记（账本拒绝也算已投递；直接用末条重建快照
    *    落标不经 getFullRecord——子文件缺失/已 GC 时标记仍可落盘，窗口自愈不依赖二次
    *    重启；补标自身崩溃重入幂等收敛，末条 entry last-writer-wins）。
@@ -775,7 +778,11 @@ export class SubagentService {
         (rootFilter === undefined || r.rootSessionId === rootFilter),
     );
     if (candidates.length === 0) return;
-    const running = candidates.filter((r) => r.status !== "closed");
+    // [v2 D3] 与协调器 hasRunningSync 同构口径（collect-coordinator.ts）：running+
+    // resumable 视为已完成、不阻止补发——成功成员崩溃时的末条 entry 恒为轮终
+    // running+resumable（SP-5 有意语义），旧口径只看 status !== "closed" 会把主场景
+    // （批内含成功成员）顶死在「等自然终态」永不补发（v2 §2.3 断链 3）。
+    const running = candidates.filter((r) => r.resumable !== true && r.status !== "closed");
     if (running.length > 0) {
       logger.debug(
         `[subagents] E1 sync batch recovery: ${running.length} member(s) still running, wait for natural completion`,

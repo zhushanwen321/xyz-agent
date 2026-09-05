@@ -251,7 +251,13 @@ function collectLastRecordEntries(content: string): Map<string, Record<string, u
  *  status:"running" 且不投影终态，E1 重建成员恒被视为 running，「全员终态→补发」
  *  判定永假、补发内容缺失，整条补发路径成死代码。status 守卫只认 "closed" 字面量
  *  （其余含缺省 → "running"，旧调用方 recoverEntryOnlyOrphans 行为不变——其候选
- *  守卫已滤非 running 末条）；closedReason 经 isValidClosedReason 枚举守卫。 */
+ *  守卫已滤非 running 末条）；closedReason 经 isValidClosedReason 枚举守卫。
+ *  [v2 D3] 再补 resumable/sessionFile 两投影：成功成员崩溃时末条恒为轮终
+ *  running+resumable entry（SP-5 有意语义），不投影 resumable 则 E1 无法与协调器
+ *  hasRunningSync 同构豁免（§2.3 断链 3）；sessionFile 原硬编码 undefined，导致
+ *  E1 落标路径重建快照丢失反查索引锚（断链 1 前置依赖）。recoverEntryOnlyOrphans
+ *  的候选判定（isEntryOrphanCandidate）只认 status==="running"，两新字段不参与
+ *  判定（P-rebuild 探针守卫面）。 */
 function rebuildEntryRecord(id: string, d: Record<string, unknown>): SubagentRecord | null {
   const str = (k: string): string | undefined => (typeof d[k] === "string" ? (d[k] as string) : undefined);
   const num = (k: string): number | undefined => (typeof d[k] === "number" ? (d[k] as number) : undefined);
@@ -281,7 +287,7 @@ function rebuildEntryRecord(id: string, d: Record<string, unknown>): SubagentRec
     displayItems: [],
     result: str("result"),
     error: str("error"),
-    sessionFile: undefined,
+    sessionFile: str("sessionFile"),
     chatMode: d.chatMode === true,
     round: num("round"),
     engine: str("engine"),
@@ -290,6 +296,7 @@ function rebuildEntryRecord(id: string, d: Record<string, unknown>): SubagentRec
     engineHandle: isEngineHandleShape(d.engineHandle) ? d.engineHandle : undefined,
     collectMode: d.collectMode === "sync" ? "sync" : undefined,
     batchFinalized: d.batchFinalized === true ? true : undefined,
+    resumable: d.resumable === true ? true : undefined,
   };
 }
 
@@ -607,35 +614,53 @@ export class RecordStore {
    * - 文件不可读（IO 错误，可能暂时）→ 不判终态，落 resumable entry（防御性路径，
    *   IO 恢复后重开可重判）。
    *
+   * [v2 D3] mainSessionFile = 覆写 merge 数据源（主 session 每 id 末条 entry，与 E1
+   * 的 scanLastRecordEntries 同款通路）：崩溃前的批域标记（collectMode/batchFinalized）
+   * 与轮终 result/model 只活在主文件 entry——重建矩阵（buildRecord）的数据源
+   * （sidecar/子文件 identity）不含它们，覆写前不 merge 就会被抹掉（v2 §2.2 断链 2：
+   * E1 候选集恒空的真根因）。缺省（undefined）时 merge 无源，行为与旧版一致。
+   * 参数为追加式第二参（rootSessionFilter 保持首参）：既有调用面只传过滤参。
+   *
    * 防重：orphanJudged 实例级缓存（resumable 形态无 sidecar 锚，同进程重复调用跳过；
    * 终态形态双重防护 = sidecar + 缓存）。调用方：index.ts session_start 恢复段（一次）。
    */
-  recoverOrphanRecords(rootSessionFilter?: string): void {
+  recoverOrphanRecords(rootSessionFilter?: string, mainSessionFile?: string): void {
+    const lastById = new Map(this.scanLastRecordEntries(mainSessionFile).map((r) => [r.id, r]));
     for (const rec of this.reconstructAll(rootSessionFilter)) {
       // 分支 4 命中集 = running 且无活进程实例（分支 3 带 externalInstance，分支 1/2 已 closed）。
       if (rec.status !== "running" || rec.externalInstance !== undefined) continue;
       if (this.orphanJudged.has(rec.id)) continue;
       this.orphanJudged.add(rec.id);
-      this.finalizeOrphanRecord(rec);
+      this.finalizeOrphanRecord(rec, lastById.get(rec.id));
     }
   }
 
   /**
    * 单孤儿 record 的终态判定与落 entry（residual-fixes §5.2 三判据 + chat 分流）。
    * 防重锚（orphanJudged 标记）已由调用方完成。
+   *
+   * [v2 D3] 覆写前 merge（lastEntry = 主 session 同 id 末条 entry 重建，调用方构建）：
+   * 覆写是状态迁移不是信息重建，迁移不应丢末条既有信息。三个落 entry 分支（chatMode
+   * 分流 / IO 保守 / 终态覆写）统一基于 merge 后的 rec，同款口径。
    */
-  private finalizeOrphanRecord(rec: SubagentRecord): void {
-    if (rec.chatMode === true) {
+  private finalizeOrphanRecord(rec: SubagentRecord, lastEntry?: SubagentRecord): void {
+    // 仅补 undefined/空值字段、不覆盖已有值——覆写自带的 status/closedReason/endedAt/
+    // error 不在 merge 字段集，天然不受影响。批域字段（collectMode/batchFinalized）对
+    // 非 sync 成员恒 no-op（末条 entry collectMode undefined → 无值可补）；result/model
+    // 的修补对 async/chat 成员同样生效——拉齐 light 重建丢 result/model 与 full 重建的
+    // 既有形态不一致（v2 D3 影响面诚实口径），不触碰任何通知文案（golden 不锁 entry 字节）。
+    const rec0 = lastEntry === undefined ? rec : RecordStore.mergeOrphanLastEntry(rec, lastEntry);
+    if (rec0.chatMode === true) {
       // chat 会话跨重启等续聊：保留 running（可续聊），仅落执行态信号。
-      this.reportSubagentRecord({ ...rec, resumable: true });
+      this.reportSubagentRecord({ ...rec0, resumable: true });
       return;
     }
-    const sessionFile = rec.sessionFile;
+    const sessionFile = rec0.sessionFile;
     if (sessionFile === undefined) return; // 无子文件锚（目录扫描源不可达，防御）
     const lastLine = readLastJsonlLine(sessionFile);
     if (!lastLine.ok) {
       // IO 错误可能暂时——判终态不可逆，保守落 resumable 等重开重判。
-      this.reportSubagentRecord({ ...rec, resumable: true });
+      this.reportSubagentRecord({ ...rec0, resumable: true });
       return;
     }
     let parseOk = false;
@@ -651,12 +676,28 @@ export class RecordStore {
     // 把正常完成的记录误标成断联。
     writeFinalized(sessionFile, "gc");
     this.reportSubagentRecord({
-      ...rec,
+      ...rec0,
       status: "closed",
       closedReason: "gc",
       endedAt: Date.now(),
       ...(parseOk ? {} : { error: "orphan recovery: subagent session ended abnormally (truncated last line)" }),
     });
+  }
+
+  /** [v2 D3] 孤儿覆写 merge 字段集：末条 entry 的批域标记 + 轮终正文/模型，仅补 rec 侧
+   *  undefined/空值（model 的空值形态是 ""——light 重建无 model_change entry 时起步
+   *  空串），不覆盖已有值。merge 后写 entry 经 reportSubagentRecord →
+   *  toSubagentRecordEntry 序列化，undefined 字段自然缺省（不引入显式 null）。 */
+  private static mergeOrphanLastEntry(rec: SubagentRecord, last: SubagentRecord): SubagentRecord {
+    const pickStr = (cur: string | undefined, src: string | undefined): string | undefined =>
+      cur !== undefined && cur !== "" ? cur : src;
+    return {
+      ...rec,
+      collectMode: rec.collectMode ?? last.collectMode,
+      batchFinalized: rec.batchFinalized ?? last.batchFinalized,
+      result: pickStr(rec.result, last.result),
+      model: pickStr(rec.model, last.model),
+    };
   }
 
   /**
@@ -730,8 +771,9 @@ export class RecordStore {
    * 通路」——batchFinalized 落标 entry 写主 session 文件，本扫描同文件域才可见；禁走
    * collectRecords light 路径，它只读子文件 identity 头+sidecar，主 session 落标
    * entry 不可见）。返回每 id 末条重建的完整 record（含 collectMode/batchFinalized /
-   * 终态五字段，损坏 entry 跳过）；调用方（service.recoverSyncCollectBatch）自行过滤
-   * sync/无标记成员。主文件不可读（含新 session 未 flush 的 ENOENT）→ 空数组静默。
+   * 终态五字段，损坏 entry 跳过）；调用方（service.recoverSyncCollectBatch 的 E1 过滤、
+   * recoverOrphanRecords 的覆写 merge）自行取舍。主文件不可读（含新 session 未 flush
+   * 的 ENOENT）→ 空数组静默。
    */
   scanLastRecordEntries(mainSessionFile: string | undefined): SubagentRecord[] {
     if (mainSessionFile === undefined) return [];
