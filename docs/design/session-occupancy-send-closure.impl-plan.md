@@ -149,15 +149,21 @@ cd packages/renderer && pnpm vitest run <相关>
 ## 7 残留风险与变更历史
 
 **残留风险**（来自设计 §5 待验证检查点，实施期对应单元处理）：
-- P-1 settling 时长分布（V8，u5a 后采集）——超 P95>2s 则按设计回改展示形态。
-- P-2 转译双字符串探针写入 `check-pi-semantics.mjs` 语义探针族（u2 期内完成，版本 bump 门禁保护）。
-- V4a threshold 形态构造（u5b 期）：实测难构造则降级「机制审查 + 源码时序断言」并登记偏差表。
-- V2 ~100ms 档 pi 行为边界（D2 已登记）：实施期真实会话记录一次作佐证，不进验收判据。
-- 转移 #10 respawn 后 occupancy 初值：u5a 实施确认（预期 idle 起步，无反例即按此）。
-- `removeQueuedTextFromSnapshot` 幂等性：u4a 逐行确认，结论回填设计文档 §5。
-- fork notice 定位基线迁移：u6a 实测核对。
+- P-1 settling 时长分布【已回填 2026-09-06 Gate B】：108 样本 P95=5ms max=22ms，远优于 2s 门——settling 展示形态无需回改（「思考中…」文案保留，ActivityStrip settling 行已实现）。
+- P-2 转译双字符串探针【已落地 u2】：PS-22/PS-23 入 pi-semantics 守卫（probe 13 条），版本 bump 门禁保护。
+- V4a threshold 形态构造【degraded-pass 2026-09-06 Gate B】：实测未构造（成本超预算），降级机制审查——send-route 行 3 断言 8/8 + occupancy-runtime 27/27 绿；补充实测佐证：generating+compacting 并存帧在 smart-context 工具触发场景真实出现（frames-v4b.jsonl）。
+- V2 ~100ms 档 pi 行为边界【已记录 2026-09-06 Gate B】：230ms 档未命中——occupancy 广播 ~10ms 到达，消息全走 defer 直路由，三档零 send.rejected；转译路径在人手时序不可达，正确性由单测 + P-2 探针覆盖。
+- 转移 #10 respawn 后 occupancy 初值【Gate B 反例已发现，修复中】：respawn 后 renderer 恢复 stale compacting=true 卡压缩中不自愈（预期 idle 起步）——修复批次进行中，重验后清账。
+- `removeQueuedTextFromSnapshot` 幂等性【已回填 u4a】：天然幂等三早退，ID1-ID3 锁定。
+- fork notice 定位基线【已核对 u6a】：fork notice 为 Virtualizer 后文档流 block，定位正确性由文档序保证，公式保留为兜底；Gate B V5 切 session 未触发 fork 路径，无异常可观察。
+
+**Gate B 遗留登记（2026-09-06，均不阻塞交付）**：
+- V4b① 文案偏差：smart-context 工具触发压缩时活动条显示「压缩中」而非「正在自动压缩上下文」——根因 pi `compact()` 固定 emit reason:"manual"（工具触发与用户手动在 pi 侧同源，红线不可改），xyz 侧无区分信号；接受现状，用户感知无损（压缩指示本身正确）。
+- V6a① flush 断连 toast 端到端未复现：本机 RTT≈0，RPC 完成快于 setOffline 生效（+28/+83/+152ms 三档均未命中窗口）——环境构造限制非功能反证；toast 机制由单测 TC11 覆盖（带原因断言）；V6a②③（气泡保持/队列保留/恢复自动重放）端到端 pass。
 
 **变更历史**：
 - 2026-09-05：计划创建。用户评审说明：单元切分为设计文档 §5 P1-P4 的机械细化（粒度/验收条款直接来自用户已审的 §4/§5），用户已显式指令「开始开发」——评审门以此记录通过，破土。
 - 2026-09-05：全部 9 单元 committed（62d8bb1a7..a52237ec0，79 文件 +5385/-703）。u4b 存在 subagent 违反零 git 约束自行 commit（cdbe3ef60），内容经编排者核验合格保留。
 - 2026-09-05：阶段 3 一致性审查（3 区独立 reviewer：shared+runtime / core / renderer+ui）返回聚合：unreasonable 9 条（R1-U1 onSessionExit 测试缺口 low / R3-U1 ActivityStrip 缺 settling 行 medium / R3-U2 remove 不设防 low / R2-U1+R3-U3 flush 来源拒绝双 toast medium / R3-U4 行 6 bash 缺集成直测 low / R3-U5 flush 失败 toast 未带原因 low / R2-U2 editAndResend 气泡不回滚 low / R2-U3 幂等结论未回填+偏差表空置 low）+ doc_errors 2 条（defer 文案压缩专用措辞失配 / session.compacting reason 职责表述歧义）+ reasonable 15 条。处理：修复批次 A（core+runtime：A1 双 toast 收窄+原因带出、A2 editAndResend 回滚、A3 onSessionExit 断言）与批次 B（renderer：B1 settling 行、B2 remove 设防、B3 行 6 直测、B4 文案泛化）并行派发；doc_errors 与 reasonable 由编排者亲改设计文档（D2 双命中/D3 三注记/D5.1 重入/D5.3 已提交限定/D6 RTT 并集+settling+bash/§3.4 reason 职责+断连收口/§3.5 文案泛化/§5 幂等性回填）并落偏差登记表 22 条。
+- 2026-09-05：阶段 4 修复轮 1 提交（2a80f6c5f，9 findings 全修），定向复审 pass（remaining=[] / new_issues=[]，三攻击面未击穿：doFlush throw 无裸调用方、editAndResend 入队语义与成功路径终态一致、settling 行与 streaming 本体无双指示）——阶段 3/4 清零。
+- 2026-09-06：阶段 5 Gate A 绿（全量 35 包零失败零 flaky 零绕过、lint/extensions 三连/bundle 验证全过、覆盖矩阵 uncovered 空）；Gate B 8 pass + 2 partial + 1 degraded-pass——V6b④ respawn stale 快照反例转修复批次（进行中）；V4b① 文案偏差与 V6a① toast 不可构造登记为遗留（见上）。
