@@ -73,11 +73,11 @@ S6（CI 端到端发 beta）需 push 授权，独立于本流水线，完成后�
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u1 | pending | 0 | |
-| u2 | pending | 0 | |
-| u3 | pending | 0 | |
-| u4 | pending | 0 | |
-| 冒烟 S1.5 | pending | 0 | |
+| u1 | committed | 1 | 9b65257ea（diff 静态核验；build:dir 佐证配置解析） |
+| u2 | committed | 2 | db9379a7c（r1 轮 zh-CN 连字符 mac 不匹配 zh_CN.lproj，构建断言抓出后 fix 轮改 zh_CN 下划线；重构建断言 en.lproj 560K + zh_CN.lproj 564K 在位） |
+| u3 | committed | 1 | 2c5913c8c（build:dir 断言 extensions 15MB→6.2MB、.map/README/ARCHITECTURE 零残留、SKILL.md 7/7 保留） |
+| u4 | committed | 1 | 3aa0dae10（preflight --ci 绿 + validate-runtime-bundle 绿 + build:dir 断言 asar 170MB→18MB、unpacked 含 node-pty pty.node/spawn-helper） |
+| 冒烟 S1.5 | committed | 1 | 主 agent 执行：隔离 userData+数据目录启动 build:dir 产物（生产实例共存，runtime 自适应 3211 端口未误杀）。GLM-5.3 会话收发（22.1K token）+ shiki python 高亮 + mermaid 流程图渲染 + pty `echo PTY_OK` 回显，全部通过（截图证据 /tmp 已清理，流程见变更历史） |
 
 ## 7 残留风险与变更历史
 
@@ -85,3 +85,7 @@ S6（CI 端到端发 beta）需 push 授权，独立于本流水线，完成后�
 - 变更历史：
   - 2026-09-05 计划创建；u3 领地在派发前经自查修正：filter 用精确文件名排除（README.md/ARCHITECTURE.md）而非 `!**/*.md` 通配——staged extensions 含 7 个 skills/*/SKILL.md 为运行时资源（构建产物实测清单），通配会静默删除内置 skills。
   - 2026-09-05 r1 对抗审查（review-r1.md，must_fix: 2）后修复：①u4 增加 node-pty 显式 dependencies 声明（原方案迁移 runtime 会断掉 node-pty 传递收集路径，files 白名单无纳入能力，终端功能整体崩溃风险）；②冒烟场景由 pnpm dev（不经过 electron-builder 收集，验不到任何本批改动）改为 S1.5 打包产物真实启动。suggestion 3 条（包数表述统一 / alternatives 记录 / 行号数字精确化）已同步落进设计文档。
+  - 2026-09-05 基线 commit 前处置环境阻塞：兄弟分支 feat-subagent-sync-collect 更新了 bare 级共享 pre-commit（新增 flake 卫生检查）但脚本不在本分支，经用户授权 cherry-pick f235bb7f2（→d404696d8）；该检查 F5 随即抓出根 package.json scripts.test 缺 --no-bail 的存量问题，已正面修复（7bd14647f）。
+  - 2026-09-05 执行期应用户要求改并行：u2+u3（同文件）与 u4（异文件）两 dev 并行派发；commit 仍按 u1→u2→u3→u4 串行拆分（git apply --cached 按 hunk 拆 u2/u3）。
+  - 2026-09-05 u2 验收抓出 locale 格式缺陷（轮次 2）：electron-builder ElectronFramework.js 的语言匹配为「去扩展名小写后全等或 wanted 前缀匹配」，mac lproj 目录名下划线（zh_CN）与配置连字符（zh-CN）永不匹配，产物 zh_CN.lproj 被误删；fix 轮改 mac 段 `["en","zh_CN"]`（win/linux 保持 `zh-CN`），重构建断言双 lproj 在位。副作用评估：zh_CN 性别变体（FEMININE 等 3 个）被裁属预期，Chromium 回落标准 zh_CN。
+  - 2026-09-05 S1.5 冒烟执行方式：生产实例（/Applications/TaiJi.app 占 3210 + 真实数据目录）共存约束下，以 `--user-data-dir`（隔离单实例锁）+ `XYZ_AGENT_DATA_DIR`（tmpdir 自建）双隔离启动打包产物；模型配置从生产目录只读拷贝（红线只禁写/删）。runtime 端口自适应落 3211，未触碰生产进程。验证后冒烟实例进程清零、临时目录删除。
