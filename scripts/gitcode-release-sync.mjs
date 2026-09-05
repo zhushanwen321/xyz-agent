@@ -30,7 +30,10 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { execSync } from 'node:child_process';
+import { execSync, exec as execCb } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execP = promisify(execCb);
 
 const API_BASE = 'https://api.gitcode.com/api/v5';
 const WEB_BASE = 'https://gitcode.com';
@@ -154,20 +157,22 @@ function assetList(releaseJson) {
     .filter((a) => a.name);
 }
 
-/** 取预签名上传地址并 PUT 上传单个文件；返回上传耗时 ms。
+/** 取预签名上传地址并 PUT 上传单个文件；返回上传耗时 ms。错误 throw（并发上传时
+ * 由调用方收集汇总，不直接终止进程）。
  * PUT 走 curl 子进程：Node fetch(undici) 的 headersTimeout 默认 300s，200MB 级附件
- * 在跨境链路（实测 ~0.5MB/s）下必然 UND_ERR_HEADERS_TIMEOUT（2026-09-05 CI 实测），
- * curl 无此限制；--max-time 1800 与 job 的 90 分钟超时配套。 */
+ * 在跨境链路下必然 UND_ERR_HEADERS_TIMEOUT（2026-09-05 CI 实测），curl 无此限制。
+ * 跨境单连接吞吐波动大（实测 0.09-0.4MB/s，晚高峰最低），必须配合 runSync 的
+ * 多路并发使用；--max-time 1800 为单附件兜底。 */
 async function uploadAsset(tag, filePath, fileName) {
   const r = await apiCall('GET',
     `/repos/${repo}/releases/${encodeURIComponent(tag)}/upload_url?file_name=${encodeURIComponent(fileName)}`);
   if (!r.ok) {
-    die(`获取附件上传地址失败（HTTP ${r.status}）：${r.text.slice(0, 500)}。`
+    throw new Error(`获取附件上传地址失败（HTTP ${r.status}）：${r.text.slice(0, 300)}。`
       + `恢复：确认 release ${tag} 存在；持续失败核对 docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-releases-tag-upload-url 是否变更。`);
   }
   const uploadUrl = r.json?.upload_url || r.json?.url;
   if (!uploadUrl) {
-    die(`upload_url 接口响应中无 upload_url/url 字段，原始响应：${r.text.slice(0, 500)}。`
+    throw new Error(`upload_url 接口响应中无 upload_url/url 字段，原始响应：${r.text.slice(0, 300)}。`
       + 'GitCode API 形态可能已变化，按上方文档链接人工核对。');
   }
   const finalUrl = uploadUrl.startsWith('/') ? `https://api.gitcode.com${uploadUrl}` : uploadUrl;
@@ -180,19 +185,19 @@ async function uploadAsset(tag, filePath, fileName) {
   const t0 = performance.now();
   let code = '';
   try {
-    code = execSync(
+    const res = await execP(
       `curl -sS --max-time 1800 -o /dev/null -w "%{http_code}" -X PUT ${headerArgs} `
       + `--data-binary @${shellQuote(filePath)} ${shellQuote(finalUrl)}`,
-      { encoding: 'utf8', timeout: 1800000, shell: '/bin/bash' },
-    ).trim();
+      { encoding: 'utf8', timeout: 1800000, shell: '/bin/bash', maxBuffer: 10 * 1024 * 1024 },
+    );
+    code = String(res.stdout || '').trim();
   } catch (e) {
-    die(`上传附件 ${fileName} 失败（curl 网络错误或 30 分钟超时）：${String(e.message || e).slice(0, 300)}。`
-      + '恢复：直接重跑——脚本幂等，已成功上传的附件按名跳过，只补剩余的。');
+    const timedOut = e.killed === true || /curl: \(28\)/.test(String(e.stderr || ''));
+    throw new Error(`curl 上传失败${timedOut ? '（30 分钟单附件超时）' : ''}：${String(e.stderr || e.message || e).slice(0, 200)}`);
   }
   const elapsed = Math.round(performance.now() - t0);
   if (!/^2\d\d$/.test(code)) {
-    die(`上传附件 ${fileName} 失败（HTTP ${code}）。`
-      + '恢复：429/5xx 直接重跑（脚本幂等）；403 可能是预签名地址过期（脚本每次现取，重跑即可）。');
+    throw new Error(`HTTP ${code}。恢复：429/5xx 直接重跑（脚本幂等）；403 可能是预签名地址过期（脚本每次现取，重跑即可）`);
   }
   return elapsed;
 }
@@ -398,6 +403,7 @@ async function runSync({ tag, name, notesFile, artifactsDir, prerelease = false 
   if (files.length === 0) die(`产物目录 ${artifactsDir} 下没有文件——检查构建产物路径是否正确`);
 
   let skipped = 0;
+  const pending = [];
   for (const f of files) {
     const rel = f.slice(artifactsDir.length + 1);
     const size = statSync(f).size;
@@ -409,10 +415,33 @@ async function runSync({ tag, name, notesFile, artifactsDir, prerelease = false 
       console.log(`[sync] 跳过（已存在${knownSize === null ? '，服务端无 size 可比' : '同大小'}）：${rel}`);
       continue;
     }
-    const ms = await uploadAsset(tag, f, rel);
-    console.log(`[sync] 已上传：${rel}（${(size / 1048576).toFixed(1)}MB，${ms}ms）`);
+    pending.push({ f, rel, size });
   }
-  console.log(`[sync] 完成：${files.length} 个文件（新传 ${files.length - skipped}，跳过 ${skipped}）。`);
+
+  // 多路并发上传：跨境单连接吞吐波动大（实测 0.09-0.4MB/s，晚高峰最低），串行时
+  // 1.1GB 附件最坏要数小时；3 路并行把总时长压进 job 预算。预签名 PUT 不占 API 配额，
+  // 并发安全；upload_url 的 GET 仍各自过 apiCall 限速。
+  const UPLOAD_CONCURRENCY = 3;
+  const failures = [];
+  let next = 0;
+  const workers = Array.from({ length: Math.min(UPLOAD_CONCURRENCY, pending.length) }, async () => {
+    while (next < pending.length) {
+      const t = pending[next++];
+      try {
+        const ms = await uploadAsset(tag, t.f, t.rel);
+        console.log(`[sync] 已上传：${t.rel}（${(t.size / 1048576).toFixed(1)}MB，${(ms / 1000).toFixed(0)}s）`);
+      } catch (e) {
+        failures.push(`${t.rel} —— ${String(e.message || e).slice(0, 250)}`);
+      }
+    }
+  });
+  await Promise.all(workers);
+
+  if (failures.length > 0) {
+    die(`上传失败 ${failures.length}/${pending.length} 个附件：\n  - ${failures.join('\n  - ')}\n`
+      + '恢复：直接重跑——脚本幂等，已成功上传的附件按名跳过，只补剩余的。');
+  }
+  console.log(`[sync] 完成：${files.length} 个文件（新传 ${pending.length}，跳过 ${skipped}，并发 ${Math.min(UPLOAD_CONCURRENCY, pending.length)} 路）。`);
   console.log(`[sync] 下载直链格式：${WEB_BASE}/${repo}/releases/download/${tag}/<文件名>`);
 }
 

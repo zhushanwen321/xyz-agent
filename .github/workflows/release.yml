@@ -239,9 +239,10 @@ jobs:
     name: Sync Release to GitCode
     needs: release
     runs-on: ubuntu-latest
-    # 90 分钟：附件上传走同一跨境链路（runner→GitCode 实测 0.4-0.8MB/s），
-    # 单次 release 约 1.1GB 需 25-45 分钟；脚本幂等，超时/失败 re-run 只补剩余附件
-    timeout-minutes: 90
+    # 150 分钟：附件走 runner→GitCode 跨境链路（单连接 0.09-0.4MB/s 且波动大），
+    # 脚本 3 路并发上传，1.1GB 预计 15-60 分钟（随时段波动）；单附件另有 30 分钟兜底。
+    # 脚本幂等，超时/失败 re-run 只补剩余附件。
+    timeout-minutes: 150
     if: >-
       !cancelled() &&
       needs.release.result == 'success' &&
