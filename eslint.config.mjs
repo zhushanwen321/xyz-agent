@@ -421,12 +421,14 @@ export default [
   },
   // subagent-service.ts 单列：旧位 2141 行即超 extensions 域 1000 上限（基线存量，
   // 迁移前已在告警），抽离后 1245 行；无界等待修复（OR-3 消息层超时 + 收殓下沉）
-  // 后 1415 行。短期 override 至 1450 避免阻塞，长期拆分（service 门面 / record
-  // 子图 / spawn 编排三段）待独立重构。
+  // 后 1415 行；u-h2 engine-aware model validation（route first、按目标 engine
+  // 校验，2026-09-05）+21 行 → 1471 行。该文件是编排聚合点（与 event-adapter
+  // 同型先例），不拆文件；短期 override 至 1500 避免阻塞，长期拆分（service 门面 /
+  // record 子图 / spawn 编排三段）待独立重构。
   {
     files: ['packages/subagent-core/src/execution/subagent-service.ts'],
     rules: {
-      'max-lines': ['warn', { max: 1450, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 1500, skipBlankLines: true, skipComments: true }],
     },
   },
   // session-reader tool-handler：聚合工具处理中枢（多工具入口 + 渲染调度），

@@ -26,13 +26,22 @@ const RANDOM_TOKEN_RADIX = 36
 const RANDOM_TOKEN_SLICE_START = 2
 
 /**
+ * 时长换算系数（命名对齐 dialog-queue 惯例）：formatTimeoutDuration 的整时折算用，
+ * 是纯单位换算（ms/秒、ms/分、ms/时）而非业务超时值——业务超时链值域 SSOT 在
+ * packages/shared/src/timeouts.ts，两者语义不同禁止混用。
+ */
+const MS_PER_SECOND = 1000
+const MS_PER_MINUTE = 60_000
+const MS_PER_HOUR = 3_600_000
+
+/**
  * 超时时长的人类可读格式（诚实文案用）：整小时/整分钟取整表述，其余折算秒。
  * env 逃生门可把 bash RPC 超时调成任意值，文案必须如实反映实际等待上限（timeout-slow-flow-wallclock D2）。
  */
 function formatTimeoutDuration(timeoutMs: number): string {
-  if (timeoutMs >= 3_600_000 && timeoutMs % 3_600_000 === 0) return `${timeoutMs / 3_600_000} 小时`
-  if (timeoutMs >= 60_000 && timeoutMs % 60_000 === 0) return `${timeoutMs / 60_000} 分钟`
-  return `${Math.round(timeoutMs / 1000)} 秒`
+  if (timeoutMs >= MS_PER_HOUR && timeoutMs % MS_PER_HOUR === 0) return `${timeoutMs / MS_PER_HOUR} 小时`
+  if (timeoutMs >= MS_PER_MINUTE && timeoutMs % MS_PER_MINUTE === 0) return `${timeoutMs / MS_PER_MINUTE} 分钟`
+  return `${Math.round(timeoutMs / MS_PER_SECOND)} 秒`
 }
 
 /**
