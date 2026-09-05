@@ -272,3 +272,30 @@ describe('B-3 失败态（A2-4 reason 透传）+ 「查看上次成功数据」�
     expect(wrapper.find('[data-testid="quota-toggle-last-success"]').exists()).toBe(false)
   })
 })
+
+// ── D1-1 Workspace 地址块（资源维度 fetcher 如 opencode-go）──────────────────
+describe('workspace 地址块（needsWorkspace 条件渲染 + 输入/保存事件上抛）', () => {
+  it('cookie 类 + needsWorkspace → 渲染块；输入上抛 update:workspaceInput、保存点击上抛 saveWorkspace', async () => {
+    wrapper = mountSection({
+      isCookieAuth: true,
+      needsWorkspace: true,
+      workspaceConfigured: false,
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="quota-workspace-block"]').exists()).toBe(true)
+
+    const input = wrapper.find('[data-testid="quota-workspace-input"]')
+    await input.setValue('wrk_123')
+    expect(wrapper.emitted('update:workspaceInput')?.at(-1)).toEqual(['wrk_123'])
+
+    await wrapper.find('[data-testid="quota-save-workspace-btn"]').trigger('click')
+    expect(wrapper.emitted('saveWorkspace')).toHaveLength(1)
+  })
+
+  it('needsWorkspace=false → 不渲染 workspace 块', async () => {
+    wrapper = mountSection({ isCookieAuth: true, needsWorkspace: false })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="quota-workspace-block"]').exists()).toBe(false)
+  })
+})

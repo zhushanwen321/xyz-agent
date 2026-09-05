@@ -317,3 +317,15 @@ describe('空查询：recents + 建议命令', () => {
     expect(suggested!.items.length).toBeLessThanOrEqual(3) // SUGGESTED_COMMAND_COUNT=3
   })
 })
+
+describe('mock 端口守卫（tc u3/D4-②：isMock=true 而未装配 searchMock 显式抛错）', () => {
+  it('isMock=true + searchMock 未装配 → reject 并指向恢复动作（不静默返空）', async () => {
+    const deps = makeDeps()
+    deps.ports.isMock = true
+    deps.ports.searchMock = undefined
+
+    const { query } = useSearch(ref<string | null>('s1'), deps)
+
+    await expect(query('a', { activeSessionId: 's1' })).rejects.toThrow('SearchPorts.searchMock 未装配')
+  })
+})
