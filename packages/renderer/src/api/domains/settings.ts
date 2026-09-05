@@ -46,6 +46,8 @@ type SetupScriptReply = ServerMessageMap['config.setupScript']
 type BareSetupScriptReply = ServerMessageMap['config.bareSetupScript']
 /** worktree 创建超时时间配置 reply 类型。 */
 type WorktreeTimeoutReply = ServerMessageMap['config.worktreeTimeout']
+/** 对话流式空闲超时阈值配置 reply 类型（clamp 后生效值，秒）。 */
+type StreamingIdleTimeoutReply = ServerMessageMap['config.streamingIdleTimeout']
 /** 默认基分支配置 reply 类型。 */
 type DefaultBaseBranchReply = ServerMessageMap['config.defaultBaseBranch']
 /** 自动重命名 session 配置 reply 类型。 */
@@ -101,6 +103,16 @@ export async function setWorktreeTimeout(timeout: number): Promise<WorktreeTimeo
 /** 读取 worktree 创建超时时间配置。 */
 export async function getWorktreeTimeout(): Promise<WorktreeTimeoutReply> {
   return command('config.getTimeout', {})
+}
+
+/** 设置对话流式空闲超时阈值（秒；runtime clamp 到 [60, 3600]，reply 返回生效值）。 */
+export async function setStreamingIdleTimeout(timeout: number): Promise<StreamingIdleTimeoutReply> {
+  return command('config.setStreamingIdleTimeout', { timeout })
+}
+
+/** 读取对话流式空闲超时阈值（秒，未配置时 runtime 回默认 1800）。 */
+export async function getStreamingIdleTimeout(): Promise<StreamingIdleTimeoutReply> {
+  return command('config.getStreamingIdleTimeout', {})
 }
 
 /** 设置默认基分支（持久化到 settings.json）。 */
