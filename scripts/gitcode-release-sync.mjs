@@ -477,7 +477,11 @@ async function runSyncFromGithub({ tag, githubRepo }) {
     // 下载用 curl 直链而非 gh release download：实测 gh 的下载实现把每连接压到
     // 0.07-0.09MB/s（同代理下 curl 单连接 1.36MB/s、4 连接合计 ~5MB/s，2026-09-05 实测），
     // 1.1GB 会拖到 40 分钟以上；curl 多文件并行走满代理容量（~4 分钟）。
-    const assets = (meta.assets || []).map((a) => ({ name: a.name, url: a.browser_download_url, size: a.size }));
+    // url 字段：gh release view --json assets 的下载直链字段名是 url（browser_download_url
+    // 恒为 null，gh 2.89.0 实测）——曾用错字段致 URL 变字符串 "undefined" 下载段全灭（2026-09-06 实测抓出）。
+    // --retry 5 --retry-all-errors：跨境单连接常 80s 零字节 stall（2026-09-06 实测 4 并发只成 1），
+    // 无重试时单次运行全灭概率高，只能整条命令重跑。
+    const assets = (meta.assets || []).map((a) => ({ name: a.name, url: a.url, size: a.size }));
     if (assets.length === 0) die(`GitHub release ${tag} 没有附件可同步——确认 tag 正确、Release 已发布`);
     const DOWNLOAD_CONCURRENCY = 4;
     const failures = [];
@@ -489,7 +493,7 @@ async function runSyncFromGithub({ tag, githubRepo }) {
         const dest = join(tmpDir, a.name);
         try {
           await execP(
-            `curl -sSL --max-time 900 -o ${shellQuote(dest)} ${shellQuote(a.url)}`,
+            `curl -sSL --retry 5 --retry-all-errors --max-time 900 -o ${shellQuote(dest)} ${shellQuote(a.url)}`,
             { timeout: 900000, shell: '/bin/bash', maxBuffer: 10 * 1024 * 1024 },
           );
           const actual = statSync(dest).size;
