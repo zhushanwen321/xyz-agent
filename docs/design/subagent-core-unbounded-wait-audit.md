@@ -249,7 +249,7 @@ if (record.sessionFile) {              // ← 守卫条件恰等于它要兜底�
 ### 6.2 失败路径（带恢复指引）
 
 - **子进程 wedged（连 get_state 都答不出）**：keep-alive 无进展上界（静默 30 分钟，stdout 活动刷新）到期 → 复核存活活跃后代（差集 + pid 探测，与 sweep 同源判据）：有存活后代 → 重挂再等一周期（不误杀合法长等待）；无 → SIGTERM → 30s 未退 SIGKILL → 层主确认死亡后采集后代清单（冻结快照）并迭代展开至叶逐个 escalation kill → 终态原因经错误消息携带 watchdog 标记（closedReason 枚举封闭不扩值），workflow 该 call 以明确错误失败。👉 恢复：错误消息含 sessionId 与 `subagents action:"list"` 指引，可人工复查后重跑该 call。
-- **chatMode agent_settled 永不到达（LC-1 形态）**：settled 等待窗口固定硬上限（默认 10 分钟，prompt 发出起算）到期 → SIGTERM→30s 未退 SIGKILL。首轮窗口：runSpawn 以错误返回；续聊轮窗口（runSpawn 已返回）：进程被杀 + 该轮以失败通知用户，chatMode record 回退 running-resumable（可冷路径复活）。终态原因经错误消息携带 'settled watchdog' 标记 + 恢复指引（closedReason 枚举封闭不扩值）。👉 恢复：`subagents action:"list"` 复查后重跑。
+- **chatMode agent_settled 永不到达（LC-1 形态）**：settled 等待窗口固定硬上限（默认 10 分钟，prompt 发出起算）到期 → SIGTERM→30s 未退 SIGKILL。首轮窗口：runSpawn 以错误返回；续聊轮窗口（runSpawn 已返回）：进程被杀 + 该轮以失败通知用户，chatMode record 回退 running-resumable（可冷路径复活）。终态原因经错误消息携带 'settled watchdog' 标记 + 恢复指引（closedReason 枚举封闭不扩值）。👉 恢复：`subagents action:"list"` 复查后重跑。【已被两段式取代（2026-09-05，见 §7.2③ 与 commit 0364b349e）——本行为普查时点历史描述】
 - **dialog（ask_user）30 分钟无响应**：settle 为 cancelled（协议响应为封闭联合、无 error 形态），完整错误消息（等待时长 + 重新发起提问指引）落父进程日志 warn → agent 收到 cancelled 可继续推进或重新发起提问；用户事后回来看日志说明而非无限挂起。需要更长等待的调用方显式传合法正数 timeout 覆盖（非法值两层一致回落默认上界）。
 - **budgetTimeMs 非法**：runWorkflow 在**首个副作用前** fail-fast：`time 超过上限 2147483647（约 24.8 天）`。👉 恢复：错误消息给出合法范围，修正参数重试。
 - **worker 崩溃且重建失败**：计入重试矩阵，耗尽后 run 收敛 `done,failed`（不卡 running）。👉 恢复：`workflow status <runId>` 可查失败原因，重新 run。

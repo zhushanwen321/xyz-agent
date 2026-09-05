@@ -70,7 +70,7 @@ graph TD
 ## 变更历史
 
 - v1（2026-09-05）：初版。用户评审以会话指令「开始规划开发」代替（夜间托管自治态），DAG/单元表随最终汇报呈现。
-- （一致性审查 reasonable 确认）①SDK 侧走 sync-types.sh 再生路径达成镜像一致（已同步设计 §5-I1）；②blocked 回包在管线累积为空时不带 injectedMessages 键（桥接层 ?? [] 恒带键，保持既有 block 回包形状 G4）；③warn 形状摘要 80 字符截断 + 循环引用兜底（WARN_SUMMARY_MAX_CHARS 具名）。
+- （一致性审查 reasonable 确认）①SDK 侧走 sync-types.sh 再生路径达成镜像一致（已同步设计 §5-I1）；②blocked 回包恒带 injectedMessages 键（管线层空累积时不带键、桥接层 ?? [] 组装为空数组，协议面保持既有 block 回包形状 G4）；③warn 形状摘要 80 字符截断 + 循环引用兜底（WARN_SUMMARY_MAX_CHARS 具名）。
 
 ## 8 验收终态（2026-09-05）
 

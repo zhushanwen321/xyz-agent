@@ -32,7 +32,7 @@
 | u-z2-timeout-abort-chain | zcode-engine.ts：catch 分流（timeout→abort 链 stop 应答三态裁决 + `engine_timeout` 文案） | `packages/subagent-core/src/execution/engine/engines/zcode/zcode-engine.ts` | u-z1 | plain | §8 场景 3（死后不烧钱）；A2 可判定断言 |
 | u-z3-status-consume | zcode-engine.ts：`parsedAppServerAttempt` 消费 status + run-failed 合成（⚠️P-Z2 探针先行） | `packages/subagent-core/src/execution/engine/engines/zcode/zcode-engine.ts` | u-z1 | plain | §8 场景 5（失败形态真实） |
 | u-z4-retry-budget | zcode-engine.ts：`runAppServerAttemptsWithRetry` 扩展 + 预算继承（⚠️P-Z4） | `packages/subagent-core/src/execution/engine/engines/zcode/zcode-engine.ts` | u-z2 | plain | §8 场景 6（瞬时失败重试一次） |
-| u-z5-dispose-harvest | zcode-engine.ts + session-channel.ts：dispose 前收割（HARVEST_GRACE，⚠️P-Z3） | `packages/subagent-core/src/execution/engine/engines/zcode/zcode-engine.ts` · `session-channel.ts` | u-z1 | plain | §8 场景 4 + A11（hangOnly 分支） |
+| u-z5-dispose-harvest | zcode-engine.ts + session-channel.ts：dispose 前收割（ZCODE_APPSERVER_HARVEST_GRACE_MS，⚠️P-Z3） | `packages/subagent-core/src/execution/engine/engines/zcode/zcode-engine.ts` · `session-channel.ts` | u-z1 | plain | §11 P-Z3（机制层承载：session-channel-dispose-harvest 测试）+ §3.4 退化路径闭合（A11 归 u-z2 行） |
 | u-z6-settled-watchdog | settled-watchdog.ts 两段式原语 + 两挂载点改造 + env `XYZ_SUBAGENT_SETTLED_WATCHDOG_MS` | `packages/subagent-core/src/execution/settled-watchdog.ts` · `execution/session-runner.ts` · `execution/subagent-service.ts` | 无（与 zcode 侧无文件交集） | plain | §8 P0-4 场景（600s 定值不再误标定） |
 | u-z7-doc-writeback | 文档回写三处：unbounded-wait-audit §7.2 被否谱系 / 其 impl-plan §5 清账 / settled-watchdog 头注释 | `docs/design/subagent-core-unbounded-wait-audit.md` · `docs/design/subagent-core-unbounded-wait-audit.impl-plan.md` · `packages/subagent-core/src/execution/settled-watchdog.ts`（头注释） | u-z6 | plain | 回写内容与实现一致（C-proc-10） |
 
@@ -58,7 +58,20 @@ graph TD
 
 ## 5 合理偏差登记表
 
-（初始为空）
+（一致性审查后补录——u-z6/u-z7 交付时声称登记于本表但实际空置，ZC-S5/F2 修复补齐）
+
+**u-z6 四项偏差**：
+1. env 非法值（非数字）语义为设计留白：按 LC-7 先例实现为非法回落默认 600s + warn 留痕。
+2. fire 回调签名带 SettledWatchdogFireInfo{phase,waitedMs}：失败文案按段标注（D9 §7 要求）的载体选择。
+3. 热路径轮 agent_end 交棒面无独立服务级测试：由原语级测试 + runSpawn 首轮挂载集成测试覆盖（首轮与热路径共用同一 pump 接线点）。
+4. settled-watchdog.ts 头注释已重写为两段式机制描述（消除旧 10min 矛盾）；session-runner.ts:1558 旧语义注释同批清理。
+
+**u-z7 五条残留**：
+1. 同文档超 D10 清单残留：unbounded-wait-audit.md §6.2 行 252 旧 10min 语义——已按本表补【已被两段式取代】标注（design-code-sync 轮）。
+2. audit impl-plan §5 行 115 P-T2c 结论为探针历史结论，取代关系由 audit.md §7.3 ⚠️ 块承载（不削弱历史）。
+3. audit impl-plan §5 行 121「closedReason:'watchdog' 未落」属另一登记债（§6.2/S-B 回写），与两段式清账不同源。
+4. 设计 §10 文件改动地图曾误列本设计文档自身为 U7 目标——已修正（一致性审查 DE2）。
+5. check-doc-symbol-drift.mjs 映射表不含本次所改文档，符号正确性以手工 grep 实装核实替代。
 
 ## 6 状态表
 
@@ -76,7 +89,8 @@ graph TD
 
 - 预检证据：设计 v1.3 经 3 轮对抗审查收敛 0 must-fix（`.review/timeout-zcode-turn-r3.md`：0 MF/5 SG/2 INFO，5 条 SG 均一句话级收尾）。
 - **跨文档领地冲突（主 agent 编排约束）**：u-z1~u-z5 的 zcode-engine.ts / session-channel.ts 与 timeout-audit-hygiene u-h2 重叠——**zcode 链完成后才派发 u-h2**。
-- P-Z0/Z1 探针门（默认 60min/30min 取值标定）失败时降级路径已预定义（§11），实施期不得跳过。
+- **interrupted 终态语义（P-Z2 修复轮裁决登记）**：真实协议 status="interrupted"（用户中断）不分流为失败——宿主 abort 主路径场景 turn 已被本地收口，terminal 帧仅记录；**已知边界：服务端自发 interrupted（非宿主触发）现走 parsed 收口（成功形态），语义待评估**（另立跟进，非本设计 scope）。
+- P-Z0/Z1 探针门（默认 60min/30min 取值标定）失败时降级路径已预定义（§11），实施期不得跳过——**已闭合（见 §8 验收终态）：P-Z0/Z1 PASS 维持默认、P-Z2 拦截判据漂移已修正、P-Z3/P-Z4 机制层测试承载**。
 
 ## 变更历史
 

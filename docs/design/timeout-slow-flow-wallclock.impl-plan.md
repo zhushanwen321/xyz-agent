@@ -44,6 +44,7 @@ graph TD
     P1[⛔P1 探针] --> Y2[u-y2 bash RPC 独立化]
     P4[⛔P4/P6 探针] --> Y3[u-y3 compact 对齐]
     Y4[u-y4 shell-runner 必传] --> ACC[§9 场景 1-7 + 全量回归]
+    Y1[u-y1 updater idle] --> ACC
     R1EXT[rpc-client-early-frame-buffer 完成] --> Y2
     R1EXT --> Y3
     S3EXT[streaming-ui u-s3 完成] --> Y5[u-y5 renderer 必传]

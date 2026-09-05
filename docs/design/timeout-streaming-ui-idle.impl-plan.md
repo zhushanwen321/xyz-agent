@@ -60,9 +60,9 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| u-s1-idle-refresh-bridge | pending | 0 | — |
-| u-s2-complete-recovery | pending | 0 | — |
-| u-s3-bash-contract-delete | pending | 0 | — |
+| u-s1-idle-refresh-bridge | committed | 1 | idle 语义 + 桥接 + 装配接线（授权补线 useMessageEffects）；core 15 例端到端模拟装配 + renderer 装配 3 例；commit 6a4bb82b3 |
+| u-s2-complete-recovery | committed | 1 | prematureTimeout 打标 + complete 自愈（stopReason 全集）+ Turn.vue 恢复指引；core 16 例 + Turn DOM 3；commit 8ffc560e8 |
+| u-s3-bash-contract-delete | committed | 1 | dormant 契约整链删除（纯减法 15 文件）+ grep 零残留 + 注释级悬空清扫；core 1433 绿；commit d8427b695 |
 | u-s4-config-chain | committed | 1 | config.* RPC + 持久化 + System 页表单 + 启动水合；21 新用例 + 四包全量绿；偏好 case 拆分（max-lines）；持久化实落 config.json（措辞漂移登记） |
 | u-s5-registry-writeback | committed | 1 | audit SSOT P0-2/D 组已修标记 + C-comm-13 约束登记（86 条再生成 + drift guard 绿） |
 

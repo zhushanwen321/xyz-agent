@@ -196,7 +196,7 @@ xyz-agent 的架构分三层：renderer（Vue 前端）↔ runtime（Node WebSoc
 
 ### D2：bash RPC——拆小时级独立常量 + 超时诚实告知，不自动 abort（选定）
 
-- **采用**：**`packages/shared` 新增 `BASH_RPC_TIMEOUT_MS = 3_600_000`（1h，与 D3 常量同文件——r2 复审 MF-1 修正落点：renderer 从不 import runtime 包（package.json deps 核实），常量留 runtime 则 D5 的 renderer 引用只能复制字面值，复活 D3 被否项②否决的双端常量漂移模式）**；runtime `rpc-client.ts` import 该常量，`:700` bash() 改用之；compact 回归自己的常量（见 D3）。env 逃生门 `XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS`（设 0 = 不限时，读一次缓存，覆盖读取留在 runtime 侧）。超时行为三点改进：① dispatcher catch 识别 `RpcTimeoutError`（字段化 commandType/timeoutMs，rpc-client D3a 既有类型）时，合成终态的 output 换成 §5.2 样例 6 的诚实文案（仍在运行 / abortBash 可取消 / 重开可查结果）；**①b（r2 复审 MF-3 补：envelope→toast 表面）——超时后 dispatcher 返回 `{blocked:true}`、session-message-handler blocked 分支回 error envelope（message 硬编码 'Bash execution failed'，:527-528）→ renderer useChat catch 弹 `bashFailed` toast——用户同时看到诚实气泡 +「失败」措辞 toast，与 G2 矛盾；处理：useChat catch 判别 RPC 错误时若该命令已收到合成终态（气泡已呈现超时三步指引），抑制失败 toast（气泡终态是权威呈现面，toast 冗余且误导）**；② **不自动 `abort_bash`**——超时是「停止等待」，不是「处决命令」；③ 迟到响应维持丢弃（timedOutIds/NULL_EVENTS 机制不动）。
+- **采用**：**`packages/shared` 新增 `BASH_RPC_TIMEOUT_MS = 3_600_000`（1h，与 D3 常量同文件——r2 复审 MF-1 修正落点：renderer 从不 import runtime 包（package.json deps 核实），常量留 runtime 则 D5 的 renderer 引用只能复制字面值，复活 D3 被否项②否决的双端常量漂移模式）**；runtime `rpc-client.ts` import 该常量，`:700` bash() 改用之；compact 回归自己的常量（见 D3）。env 逃生门 `XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS`（设 0 = 不限时，读一次缓存，覆盖读取留在 runtime 侧）。超时行为三点改进：① dispatcher catch 识别 `RpcTimeoutError`（字段化 commandType/timeoutMs，rpc-client D3a 既有类型）时，合成终态的 output 换成 §5.2 样例 6 的诚实文案（仍在运行 / abortBash 可取消 / 重开可查结果）；**①b（r2 复审 MF-3 补：envelope→toast 表面）——超时后 dispatcher 返回 `{blocked:true}`、session-message-handler blocked 分支回 error envelope（message 硬编码 'Bash execution failed'，:527-528）→ renderer useChat catch 弹 `bashFailed` toast——用户同时看到诚实气泡 +「失败」措辞 toast，与 G2 矛盾；处理：useChat catch 判别 RPC 错误时若该命令已收到合成终态（气泡已呈现超时三步指引），抑制失败 toast（气泡终态是权威呈现面，toast 冗余且误导）**；② **不自动 `abort_bash`**——超时是「停止等待」，不是「处决命令」；**实施补记（P6 断言④，bc45b710d）**：超时置会话级孤儿标记 `orphanBashRunning`，用户手动 abortBash 时守卫放行（否则 isBashRunning 已复位会短路）、abort_bash 发出且 pi 确认后清除；abortBash 回执 void→{sent}，sent=false 回 error envelope `abort_bash_not_sent`（renderer stopFailed toast）不谎报已取消；超时分支不再广播 message.error 技术帧（P6 实测与诚实气泡聊天流双条目）；③ 迟到响应维持丢弃（timedOutIds/NULL_EVENTS 机制不动）。
 - **被否**：
   - **默认不挂（timeout=∞）**：dispatcher 的 `await` 永不 settle → `isBashRunning` 卡 true（finally 永不执行）→ 后续所有 bash 被 busy 预检拒绝 + pending 永挂。命令如 `tail -f` 确实永不结束，回收层必须有界兜底（规则 19 允许回收层默认有界 + opt-out，正是本形态）。
   - **显式参数必传**（bash() 加 timeout 必传参数）：把决策推给唯一调用方 dispatcher，dispatcher 仍需一个默认值——换汤不换药；composer 快捷命令也没有 per-command 超时的用户需求面。
@@ -306,6 +306,7 @@ xyz-agent 的架构分三层：renderer（Vue 前端）↔ runtime（Node WebSoc
 | 下载 idle 30s（undici/curl 双侧） | 「下载停滞（30 秒无数据）已中断」 | 重试自动断点续传 |
 | curl exit 28（r2 复审 SG-3 补：双成因） | connect 失败：「连接超时（10 秒未建立连接）」；传输停滞：「下载停滞（30 秒无数据）已中断」（stderr 判别成因） | 重试自动断点续传；connect 失败查网络/镜像源 |
 | bash >1h（env 可调/0=不限） | 「命令超 1 小时，已停止等待——可能仍在运行」 | ①abortBash 终止 ②重开 session 查结果 ③先取消再重跑 |
+| 超时孤儿命令用户取消但 abort_bash 未送达（P6 断言④补） | 「停止失败」toast（stopFailed）；命令可能仍在跑，重开 session 查结果或重试取消 | abortBash 重试（幂等，孤儿标记保留时再发） |
 | bash 超时后 blocked envelope → renderer（r2 复审 MF-3 补） | 气泡诚实终态（三步指引）为权威面；useChat 抑制 `bashFailed` toast（命令已收到合成终态时不再弹「失败」措辞 toast） | 见上行的三步指引 |
 | env 逃生门（runtime >3660s 或 0）下 renderer 3660s backstop 先到（r2 复审 MF-2 补，已知接受） | 失败 toast（此时气泡无终态，toast 是唯一提示） | 命令仍在跑——abortBash 或等完成；逃生门配置属用户显式行为（r3 复审 SG-B 标注：本列指引为文档级说明——toast 模板 `composable.bashFailed` 是固定 i18n 不含指引；逃生门形态属极端配置，不为它扩 toast 模板） |
 | compact 30min 无响应 | `session.compacted{error}` + 压缩按钮复位 | 重试；连续失败走 ensureActive 自愈链 |
@@ -315,12 +316,12 @@ xyz-agent 的架构分三层：renderer（Vue 前端）↔ runtime（Node WebSoc
 
 | ID | 验证的行为 | 探针 | 状态 | 失败时的降级路径 |
 |---|---|---|---|---|
-| P1 | pi 对超时后的 bash RPC 照常 recordBashResult 落盘（reload 可见真实结果） | 实测 `sleep 320` 超时（临时调小常量）后重开 session，断言 JSONL 含成功 entry | ⛔ M2 | 若不落盘 →「维持丢弃」失去恢复出口，重评 D2：迟到响应改投递补救（真实帧替换合成帧，需保 live≡reload）或超时自动 abort 二选一 |
-| P2 | 单段路径 idleTimer 前移到 fetch 前后，慢网络 header 阶段（TLS+RTT+CDN 调度）不误杀（per-part 路径已在生产以同形态运行——现成证据，v1.1 补） | 限速代理下抓 header 到达时延分布，确认 30s 边界余量 | ⛔ M1 | 前移致误杀 → header 阶段独立 60s timer，body 段维持 idle 语义 |
+| P1 | pi 对超时后的 bash RPC 照常 recordBashResult 落盘（reload 可见真实结果） | 实测 `sleep 320` 超时（临时调小常量）后重开 session，断言 JSONL 含成功 entry | ✅ 已执行（u-y2 修复轮，探针 PASS：runtime 放弃等待后 pi 照常落盘 entry 4→5） | 若不落盘 →「维持丢弃」失去恢复出口，重评 D2：迟到响应改投递补救（真实帧替换合成帧，需保 live≡reload）或超时自动 abort 二选一 |
+| P2 | 单段路径 idleTimer 前移到 fetch 前后，慢网络 header 阶段（TLS+RTT+CDN 调度）不误杀（per-part 路径已在生产以同形态运行——现成证据，v1.1 补） | 限速代理下抓 header 到达时延分布，确认 30s 边界余量 | ✅ 已执行（u-y1，真实 CDN header p50=416ms/max=930ms，30s 边界余量 32.3x） | 前移致误杀 → header 阶段独立 60s timer，body 段维持 idle 语义 |
 | P3 | 停滞检测双侧真实存在且 chunk 重置 | 代码核实（download-asset.ts:551,567-569；curl-download.ts:170-172）+ 既有测试 | ✅ 已核 | — |
-| P4 | 大 session compact 实际时长 ∈ 30min 余量内 | 构造 300k-1M token session 实测压缩耗时 | ⛔ M3 | 实测击穿 → 取值升 45/60min 并重跑外推论证 |
+| P4 | 大 session compact 实际时长 ∈ 30min 余量内 | 构造 300k-1M token session 实测压缩耗时 | ✅ 已执行（u-y3，真实 compact 178k tokens 9.5s = 189 倍余量 + 缩样双端 SIGSTOP 时序 B1/B2/B3 全 true） | 实测击穿 → 取值升 45/60min 并重跑外推论证 |
 | P5 | shared 常量双端可 import | protocol.ts 已被 runtime/renderer 双端引用（结构性） | ✅ 结构性 | — |
-| P6 | bash 超时路径全行为：诚实文案 + abortBash 释放 slot + 后续 bash 不 busy | 经 env 调小实测超时路径三断言（r3 复审 SG-C：顺带覆盖 env 通路）+ 一次全时长（1h）抽样 | ✅ 已执行（2026-09-05 Gate B，证据 /tmp/gate-b-p6 + /tmp/gate-b-reverify）：诚实文案/slot 复位/迟到不污染/abortBash 可取消/5min 不限时抽样全 PASS——断言④首拦真实缺陷（超时后 abortBash 被 isBashRunning 守卫短路，abort 不触达 pi）已修复（孤儿标记 orphanBashRunning + {sent} 回执真实化 + message.error 技术帧删除，bc45b710d）并复验通过 | 拦截修复后复验 PASS；1h 全时长抽样登记为发布前项（缩样 3000ms 已覆盖同构机制路径） |
+| P6 | bash 超时路径全行为：诚实文案 + abortBash 释放 slot + 后续 bash 不 busy | 经 env 调小实测超时路径三断言（r3 复审 SG-C：顺带覆盖 env 通路）+ 一次全时长（1h）抽样 | ✅ 已执行（2026-09-05 Gate B，断言结果见本行（探针原始资产为易失 /tmp 形态，不复现依赖本行断言明细 + bc45b710d 修复 diff + 复验单测 D2-6/7/8））：诚实文案/slot 复位/迟到不污染/abortBash 可取消/5min 不限时抽样全 PASS——断言④首拦真实缺陷（超时后 abortBash 被 isBashRunning 守卫短路，abort 不触达 pi）已修复（孤儿标记 orphanBashRunning + {sent} 回执真实化 + message.error 技术帧删除，bc45b710d）并复验通过 | 拦截修复后复验 PASS；1h 全时长抽样登记为发布前项（缩样 3000ms 已覆盖同构机制路径） |
 | P-T2c（已有） | 300k token compact = 40.1s | `subagent-core-unbounded-wait-audit.impl-plan.md:115` | ✅ 已测 | D3 取值外推的输入 |
 
 ## 9. 验收（真实场景，非单测非 mock）
