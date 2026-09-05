@@ -81,10 +81,14 @@ S6（CI 端到端发 beta）需 push 授权，独立于本流水线，完成后�
 | u3 | committed | 1 | 2c5913c8c（build:dir 断言 extensions 15MB→6.2MB、.map/README/ARCHITECTURE 零残留、SKILL.md 7/7 保留） |
 | u4 | committed | 1 | 3aa0dae10（preflight --ci 绿 + validate-runtime-bundle 绿 + build:dir 断言 asar 170MB→18MB、unpacked 含 node-pty pty.node/spawn-helper） |
 | 冒烟 S1.5 | committed | 1 | 主 agent 执行：隔离 userData+数据目录启动 build:dir 产物（生产实例共存，runtime 自适应 3211 端口未误杀）。GLM-5.3 会话收发（22.1K token）+ shiki python 高亮 + mermaid 流程图渲染 + pty `echo PTY_OK` 回显，全部通过（截图证据 /tmp 已清理，流程见变更历史） |
+| Gate A | committed | 1 | subagent 实跑：preflight --ci exit 0（10/10）+ validate-runtime-bundle exit 0（E2E 全 PASS）+ test:main 736 用例全过 0 skip + 零容忍绕过检查零命中；lint exit 1 为存量（区间内 0 改动文件，逐字比对归因），登记 §7 残留风险 |
+| Gate B | committed | 1 | subagent 实跑：产物新鲜度核对（HEAD de74847f0 后配置零改动）；隔离启动 + ui.png 非白屏 + pty `echo GATEB_PTY_OK` 回显 + pi 会话链路复现；S1/S1.5/S2/S3/S5 全 pass，S6 blocked（待用户授权 push 发 beta） |
 
 ## 7 残留风险与变更历史
 
 - 残留风险：win 平台的 pdb/locale 收益无法本地实证（mac 交叉打包 win 超出本批验证面），S6 CI 发 beta 时核对 exe 数字；asar 构成（§2）数字来自本机单次构建，CI runner 环境理论上同构（同 lockfile）。
+- 残留风险（Gate A 发现，与本批零因果）：仓库根 `pnpm run lint` 在 HEAD 上红——4 errors + 1 warning 全部位于 `packages/subagent-core/src/execution/engine/engines/zcode/appserver-launcher.ts`、`packages/subagent-core/src/execution/subagent-service.ts`、`scripts/check-core-dist-gate.mjs`（unused import/变量 + 空 catch），基线逐字比对为存量、该三文件在 45a581c7e..HEAD 区间零改动；疑似 feat-subagent-sync-collect 分支演进中间态。本批不越界修复，需独立任务处理（CI 若跑全仓 lint 同样会红）。
+- 残留风险：pnpm-lock.yaml ↔ package.json 一致性本地无检查段（preflight/validate-runtime-bundle 均不含），完全托付 CI frozen-lockfile。
 - 变更历史：
   - 2026-09-05 计划创建；u3 领地在派发前经自查修正：filter 用精确文件名排除（README.md/ARCHITECTURE.md）而非 `!**/*.md` 通配——staged extensions 含 7 个 skills/*/SKILL.md 为运行时资源（构建产物实测清单），通配会静默删除内置 skills。
   - 2026-09-05 r1 对抗审查（review-r1.md，must_fix: 2）后修复：①u4 增加 node-pty 显式 dependencies 声明（原方案迁移 runtime 会断掉 node-pty 传递收集路径，files 白名单无纳入能力，终端功能整体崩溃风险）；②冒烟场景由 pnpm dev（不经过 electron-builder 收集，验不到任何本批改动）改为 S1.5 打包产物真实启动。suggestion 3 条（包数表述统一 / alternatives 记录 / 行号数字精确化）已同步落进设计文档。
