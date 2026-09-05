@@ -58,8 +58,8 @@ graph TD
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
 | u-i1-sdk-contract | committed | 1 | Wave1 交付+修复轮（mock.ts 存量类型错修复）；sync-types.sh 再生路径（偏差已登记）；plugin-sdk tsc exit 0 |
-| u-i2-pipeline | pending | 0 | — |
-| u-i3-bridge-mapping | pending | 0 | — |
+| u-i2-pipeline | committed | 1 | 校验矩阵 15 测 + runtime 全量 4320 绿；统一处理序落地（校验→push→block 判定） |
+| u-i3-bridge-mapping | committed | 1 | 映射矩阵 7 测 + runtime 全量绿；blocked 回包按 {content} 形态（pi 侧 isInjectedMessage 实装直读核实） |
 
 ## 7 残留风险与变更历史
 
