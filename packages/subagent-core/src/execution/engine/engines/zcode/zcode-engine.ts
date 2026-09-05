@@ -1521,8 +1521,25 @@ function buildAppServerCreateParams(
   };
 }
 
-/** appserver 轮成功收口的 parsed 三态（read 兜底后的 response + schema 校验）。 */
+/**
+ * 权威终态 status 提取（P0-1 U3/D5② + ⛔P-Z2 降级路径约束「只消费
+ * source="turn.terminal" 的 status」）：turn.terminal 到达（先到/迟到）时 u-z1 的
+ * lastTerminalStatus 必有记录（channel 无条件先记再 settle/不改写落定）；缺席说明
+ * 终态仅由 final-frame 宽松判定落定（恒 settle success，不可信）——无权威 status
+ * 可消费，不据此判失败。
+ */
+function authoritativeTerminalStatus(r: SessionTurnResult): string | undefined {
+  if (r.lastTerminalStatus !== undefined) return r.lastTerminalStatus;
+  return r.terminal.source === "turn.terminal" ? r.terminal.status : undefined;
+}
+
+/**
+ * [P0-1 U3/D5②] appserver 轮成功收口的 parsed 三态（read 兜底后的 response + schema
+ * 校验）。status='error' 终态先分流（§3.2 缺陷 B 不再假成功；schema 校验对失败形态
+ * 无意义——error 终态的 response 是错误尾部，非结构化输出候选）。
+ */
 function parsedAppServerAttempt(task: AgentTaskSpec, r: SessionTurnResult): AttemptResult {
+  if (authoritativeTerminalStatus(r) === "error") return errorTerminalAppServerAttempt(r);
   const schema = isPlainObject(task.schema) ? task.schema : undefined;
   return {
     kind: "parsed",
@@ -1531,6 +1548,28 @@ function parsedAppServerAttempt(task: AgentTaskSpec, r: SessionTurnResult): Atte
     ...(schema !== undefined
       ? { schemaResult: extractAndValidateStructuredOutput(r.response, schema) }
       : {}),
+  };
+}
+
+/**
+ * [P0-1 U3/D5②] error 终态的 run-failed 合成（§5.2 F-3 文案）：exitCode=null 异常
+ * 终态、无 rpcCode（终态 error 非 RPC error 帧，不参与漂移降级）、sessionId 留痕同
+ * failedAppServerAttempt。message 附 read 兜底/delta 聚合的实际尾部内容（诊断信息
+ * 不丢——§8 A4「尾部内容可见」）；内容全空（P-Z2 降级形态：final-frame 先到且
+ * read 无错误信息）时不伪造错误详情，仅报终态 status——覆盖面收窄但不假成功。
+ */
+function errorTerminalAppServerAttempt(r: SessionTurnResult): AttemptResult {
+  const tail = r.response.trim();
+  return {
+    kind: "run-failed",
+    output: syntheticAppServerOutput(null),
+    message:
+      `engine_run_failed: app-server 终态 status=error（会话 ${r.sessionId}）。` +
+      (tail !== ""
+        ? `服务端返回尾部：${tail.slice(-ZCODE_ERROR_TAIL_CHARS)}\n`
+        : "服务端无返回内容（read 兜底/delta 聚合均为空）。\n") +
+      `👉 恢复指引：错误内容来自模型/服务端；直接重跑，若持续出现核对 ZCode 桌面端凭据与模型配置（engine_credential_missing 同族排查）。`,
+    sessionId: r.sessionId,
   };
 }
 

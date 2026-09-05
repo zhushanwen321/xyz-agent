@@ -410,11 +410,13 @@ export default [
   },
   // zcode-engine.ts：zcode app-server 常驻引擎的唯一聚合中心（连接池 + 会话生命周期 +
   // 降级链 + 错误归类，packages 域上限 500 下 1038 行）。拆分方向（连接层 / 会话层 /
-  // 归类层）属独立重构任务，短期 override 至 1150 避免阻塞。
+  // 归类层）属独立重构任务，短期 override 至 1150 避免阻塞。U2 超时收口 + U3 终态
+  // status 分流（timeout-zcode-turn-and-settled-watchdog.md，2026-09-05）后 1165 行——
+  // 与 session-runner 同型提额至 1300（U4 重试扩展/U5 dispose 收割还将落在同文件）。
   {
     files: ['packages/subagent-core/src/execution/engine/engines/zcode/zcode-engine.ts'],
     rules: {
-      'max-lines': ['warn', { max: 1150, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 1300, skipBlankLines: true, skipComments: true }],
     },
   },
   // subagent-service.ts 单列：旧位 2141 行即超 extensions 域 1000 上限（基线存量，
