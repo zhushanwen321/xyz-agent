@@ -59,7 +59,7 @@ graph TD
 |------|------|------|---------|
 | u-h1-opencode-workspace | pending | 0 | — |
 | u-h2-engine-model-validation | pending（blocked-by: zcode-turn 链） | 0 | — |
-| u-h3-tarball-stall-guard | pending | 0 | — |
+| u-h3-tarball-stall-guard | committed | 1 | stall 测试 9/9（真实 TCP 故障注入）+ runtime 主组 4260 绿；P3-1 降级未启用（实测无需） |
 | u-h4-trash-no-permanent-delete | pending | 0 | — |
 
 ## 7 残留风险与变更历史
