@@ -11,7 +11,9 @@
 //   - engine_timeout 前缀归类（D4，与 engine_run_failed 分流）+ 会话 id 留痕；
 //   - idle / ceiling 两形态文案有别（ceiling 附 XYZ_ZCODE_TURN_MAX_TIMEOUT_MS env
 //     自救通道——§5.2 F-2）；
-//   - 非超时错误不受影响（sendError → engine_run_failed 原路径，abort 链不触发）。
+//   - 非超时错误不受影响（sendError → engine_run_failed 原路径，abort 链不触发）；
+//   - alive 守卫（修复轮）：conn 已 finalize 的微窗口内 stop 分支不惰性重建进程
+//     （对称 closeSession 的 !alive 守卫），按连接级失败形态终局。
 // idle/ceiling 阈值经 vi.stubEnv 缩短（session-channel 的 env 通道，D2）——真实默认
 // 30min/60min 不在单测等待范围。
 
@@ -27,6 +29,8 @@ import type { AgentTaskSpec } from "../../../types.ts";
 import { resolvePoolDir } from "../../../paths.ts";
 import { ZCODE_APPSERVER_POOL_KEY } from "../constants.ts";
 import { ZCODE_APPSERVER_GOLDEN } from "../golden-sample.ts";
+import { AppServerConnection } from "../connection.ts";
+import { SessionChannel, TurnTimeoutError } from "../session-channel.ts";
 import { ZcodeEngine, type ZcodeEngineDeps } from "../zcode-engine.ts";
 
 const FAKE_CLI = fileURLToPath(new URL("./__fixtures__/fake-appserver.mjs", import.meta.url));
@@ -73,7 +77,7 @@ beforeEach(() => {
 afterEach(async () => {
   vi.unstubAllEnvs();
   for (const engine of engines.splice(0)) await engine.dispose().catch(() => undefined);
-  fs.rmSync(tmpRoot, { recursive: true, force: true });
+  fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 interface EngineFixture {
@@ -303,4 +307,69 @@ describe("超时处置链（P0-1 U2：catch 分流 → stop-outcome 三态裁决
     expect(r.handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: ".zcode/cli/db/db.sqlite" });
     expect(r.handle.data.poolKey).toBe(ZCODE_APPSERVER_POOL_KEY);
   }, 20_000);
+
+  it("alive 守卫：conn 已 finalize（进程死+收割完成微窗口）时 stop 分支不惰性重建，按连接级失败形态终局", async () => {
+    // 真实微拍窗口（turn 判死与 abort 链发 stop 之间进程 finalize 完成）不可从公开
+    // 面同步注入——白盒构造同形态快照（dispose 窄竞态守卫测试同款先例）：真实
+    // AppServerConnection 从未启动（child=null 等价 finalize 完成快照），onSpawned
+    // 探针锁「request → ensureStarted 惰性重建」未发生（守卫缺失时 stop 分支必凭空
+    // spawn 新一代进程再写帧）。
+    let spawned = false;
+    const conn = new AppServerConnection({
+      cliPath: FAKE_CLI,
+      cwd: tmpRoot,
+      env: {
+        PATH: process.env.PATH ?? "",
+        FAKE_STATE_FILE: path.join(tmpRoot, "state-alive-guard.jsonl"),
+        FAKE_SESSION_SCENARIO: path.join(tmpRoot, "scenario-alive-guard.json"),
+      },
+      stderrLogPath: path.join(dataDir, "logs", "alive-guard-stderr.log"),
+      onSpawned: () => {
+        spawned = true;
+      },
+    });
+    expect(conn.alive).toBe(false); // 快照前置：无活进程（finalize 完成形态）
+    const engine = new ZcodeEngine({
+      engineDataDir: () => dataDir,
+      cliPath: FAKE_CLI,
+      sources: { v2ConfigPath: v2Path },
+      processEnv: { PATH: process.env.PATH ?? "", XYZ_ZCODE_MODE: "appserver" },
+    });
+    engines.push(engine);
+    const ghostRt = {
+      conn,
+      channel: new SessionChannel(conn),
+      homePoolKey: ZCODE_APPSERVER_POOL_KEY,
+      homeDir: resolvePoolDir(dataDir, "zcode", ZCODE_APPSERVER_POOL_KEY),
+      activeSessions: new Set<string>(),
+    };
+    const turn: Promise<unknown> = Promise.reject(
+      new TurnTimeoutError("idle", { thresholdMs: 300, elapsed: 301, lastEventAt: undefined }),
+    );
+    void turn.catch(() => undefined); // abort 链只 race 不 await reject——防 unhandled rejection
+    const chain = (
+      engine as unknown as {
+        appServerAbortChain: (
+          rt: unknown,
+          turn: Promise<unknown>,
+          getSessionId: () => string | undefined,
+          sessionCreated: Promise<void>,
+          entry: { escalateOn: "turn-settled" | "stop-outcome" },
+        ) => Promise<string>;
+      }
+    ).appServerAbortChain.bind(engine);
+    // 超时入口：conn 已死 = 连接级失败形态——不发 stop、不惰性重建，直接杀链终局
+    const stopPath = await chain(ghostRt, turn, () => GOLDEN_SESSION_ID, Promise.resolve(), {
+      escalateOn: "stop-outcome",
+    });
+    expect(stopPath).toBe("stop-unreachable-killed");
+    expect(spawned).toBe(false); // 守卫生效：零惰性 spawn（无新进程被凭空拉起）
+    expect(conn.alive).toBe(false); // 连接保持死亡态（无 request 触发重建）
+    // 用户取消入口：跳过 stop 落回 grace race——turn 已 reject 立即 settled（零重建）
+    const settledPath = await chain(ghostRt, turn, () => GOLDEN_SESSION_ID, Promise.resolve(), {
+      escalateOn: "turn-settled",
+    });
+    expect(settledPath).toBe("settled-in-grace");
+    expect(spawned).toBe(false);
+  }, 15_000);
 });

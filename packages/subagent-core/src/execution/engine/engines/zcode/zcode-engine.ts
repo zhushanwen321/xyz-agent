@@ -765,6 +765,17 @@ export class ZcodeEngine implements EnginePort {
         return graceRaceThenKill();
       }
     }
+    // [u-z2 修复轮] alive 守卫（与 closeSession 的 `!conn.alive` return 同款防御，
+    // 对称补齐）：进程在 turn 判死/abort 与本链发 stop 之间 finalize 完成的微窗口内，
+    // request 首行 ensureStarted 会惰性 spawn 新一代进程再写 stop 帧——凭空拉起无人
+    // 使用的进程，且 stop-outcome 入口会拿到新进程的「成功应答」误报止损确认。
+    // 不 alive = 连接级失败形态（进程已死即已收割）：超时入口直接落杀链终局（等同
+    // 三态的连接级失败分支）；用户取消入口跳过 stop 落回 grace race（turn 已被
+    // failAllTurns 收割则立即 settled，语义零变化）。
+    if (!rt.conn.alive) {
+      if (entry.escalateOn === "stop-outcome") return "stop-unreachable-killed";
+      return graceRaceThenKill();
+    }
     try {
       await rt.conn.request("session/stop", { sessionId }, { timeoutMs: ZCODE_APPSERVER_STOP_TIMEOUT_MS });
     } catch (err) {
