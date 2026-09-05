@@ -103,7 +103,7 @@ describe("manifestCache（readPackageManifestSync）", () => {
     pkgDir = tmpPkgDir();
   });
   afterEach(() => {
-    fs.rmSync(pkgDir, { recursive: true, force: true });
+    fs.rmSync(pkgDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("命中：同 mtime 二次调用不重读（readFileSync 只调 1 次）", () => {
@@ -237,7 +237,7 @@ describe("manifestCache 双读者共享（async ↔ sync）", () => {
   afterEach(() => {
     if (savedEnv === undefined) delete process.env.XYZ_EXTENSION_PATHS;
     else process.env.XYZ_EXTENSION_PATHS = savedEnv;
-    fs.rmSync(ws, { recursive: true, force: true });
+    fs.rmSync(ws, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("sync 写入的条目被 async 命中：discoverResources 零 fs/promises readFile", async () => {

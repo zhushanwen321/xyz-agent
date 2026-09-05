@@ -97,7 +97,7 @@ describe('preloaded-update (预下载产物元信息 SSOT)', () => {
     mod = await loadModule()
     // 每个用例独立：清掉残留的 preloaded-update.json
     const dir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
+    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     createdFiles.length = 0
   })
 
@@ -108,7 +108,7 @@ describe('preloaded-update (预下载产物元信息 SSOT)', () => {
       if (existsSync(f)) rmSync(f, { force: true })
     }
     const dir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
+    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 创建一个真实存在的临时产物文件，返回绝对路径 */

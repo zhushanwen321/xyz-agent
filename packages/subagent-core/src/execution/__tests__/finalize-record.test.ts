@@ -77,7 +77,7 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   /** 构造最小 FinalizeDeps：record 无 sessionFile/worktreeHandle,跳过 Step 0/3 文件操作。 */
@@ -198,7 +198,7 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
     });
 
     afterEach(() => {
-      fs.rmSync(sessionDir, { recursive: true, force: true });
+      fs.rmSync(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     });
 
     /** 在 sessionDir 写入带 identity 的 session 文件（1 行 identity entry，位于头部）。 */
@@ -287,7 +287,7 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   /** 构造 FinalizeDeps：worktreeManager.cleanup / store.archive 为 vi.fn 以断言「不调」。 */

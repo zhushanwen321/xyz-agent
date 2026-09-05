@@ -26,7 +26,7 @@ describe('W4: persistSessionEnd + extractSessionOutcome round-trip（AC-3）', (
   })
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('persistSessionEnd(done) 后 extractSessionOutcome 返回 done', () => {
@@ -85,7 +85,7 @@ describe('W4: persistSessionEnd existsSync guard（AC-7 规则 #6）', () => {
       // 关键断言：文件仍未被创建（不违反规则 #6 pi _persist openSync(wx) 竞态）
       expect(existsSync(nonExist)).toBe(false)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -111,7 +111,7 @@ describe('W4: SessionOutcome 类型完整性', () => {
         expect(extractSessionOutcome(fp)).toBe(o)
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })

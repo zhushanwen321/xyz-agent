@@ -242,7 +242,7 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     // registry 是 globalThis 进程单例——必须清空，防假引擎泄漏进其他测试文件
     clearEngines();
     resetCoreForTests();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     vi.clearAllMocks();
   });
 
@@ -468,7 +468,7 @@ describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
   afterEach(() => {
     clearEngines();
     delete process.env.XYZ_AGENT_DATA_DIR;
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     vi.clearAllMocks();
   });
 

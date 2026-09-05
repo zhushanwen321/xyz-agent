@@ -445,7 +445,7 @@ describe('W1-error-log-append', () => {
     try { unlinkSync(`${TEST_LOG_PATH}.1`) } catch {}
     try {
       const fs = require('node:fs') as typeof import('node:fs')
-      fs.rmSync(TEST_LOG_DIR, { recursive: true, force: true })
+      fs.rmSync(TEST_LOG_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     } catch {}
   })
 
@@ -605,13 +605,13 @@ describe('B4-downloadPart-no-double-wrap', () => {
   const TOTAL_BYTES = 21 * 1024 * 1024
 
   beforeEach(() => {
-    rmSync(TEST_LOG_DIR, { recursive: true, force: true })
+    rmSync(TEST_LOG_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     mkdirSync(TEST_LOG_DIR, { recursive: true })
   })
 
   afterEach(() => {
     vi.unstubAllGlobals()
-    rmSync(TEST_LOG_DIR, { recursive: true, force: true })
+    rmSync(TEST_LOG_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('B4 pre-built part UpdateError passes through downloadPart verbatim (not double-wrapped by fallback)', async () => {

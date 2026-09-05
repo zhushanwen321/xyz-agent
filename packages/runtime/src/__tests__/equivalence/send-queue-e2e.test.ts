@@ -209,7 +209,7 @@ describe.skipIf(!REAL_PI_READY)(`send queue e2e real pi${REAL_PI_READY ? '' : `ï
     } finally {
       if (pump !== undefined) clearInterval(pump)
       await targetFx?.dispose().catch(() => {})
-      rmSync(dataRoot, { recursive: true, force: true })
+      rmSync(dataRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })

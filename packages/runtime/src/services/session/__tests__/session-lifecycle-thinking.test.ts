@@ -93,7 +93,7 @@ describe('thinking 值域校验（W2 A-03：max 全通）', () => {
     await lifecycle.create(cwd, 't', { thinkingOverride: 'max' })
     const options = createSession.mock.calls[0][2] as { thinkingLevel?: string }
     expect(options.thinkingLevel).toBe('max')
-    rmSync(cwd, { recursive: true, force: true })
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it.each(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])(
@@ -104,7 +104,7 @@ describe('thinking 值域校验（W2 A-03：max 全通）', () => {
       await lifecycle.create(cwd, 't', { thinkingOverride: level })
       const options = createSession.mock.calls[0][2] as { thinkingLevel?: string }
       expect(options.thinkingLevel).toBe(level)
-      rmSync(cwd, { recursive: true, force: true })
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     },
   )
 
@@ -117,7 +117,7 @@ describe('thinking 值域校验（W2 A-03：max 全通）', () => {
     await lifecycle.create(cwd, 't', { presetId: 'builtin:full' })
     const options = createSession.mock.calls[0][2] as { thinkingLevel?: string }
     expect(options.thinkingLevel).toBe('max')
-    rmSync(cwd, { recursive: true, force: true })
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('非法值 warn 后丢弃（spawn 参数无 thinkingLevel 字段）', async () => {
@@ -129,7 +129,7 @@ describe('thinking 值域校验（W2 A-03：max 全通）', () => {
     expect(options.thinkingLevel).toBeUndefined()
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('ultra'))
     warnSpy.mockRestore()
-    rmSync(cwd, { recursive: true, force: true })
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('Landing override 优先于 preset 字段（C-RL-6）：override=max preset=high → max', async () => {
@@ -141,6 +141,6 @@ describe('thinking 值域校验（W2 A-03：max 全通）', () => {
     await lifecycle.create(cwd, 't', { presetId: 'builtin:full', thinkingOverride: 'max' })
     const options = createSession.mock.calls[0][2] as { thinkingLevel?: string }
     expect(options.thinkingLevel).toBe('max')
-    rmSync(cwd, { recursive: true, force: true })
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 })

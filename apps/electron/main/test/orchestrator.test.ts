@@ -89,7 +89,7 @@ describe('W3: orchestrator (W3TC8-9)', () => {
     if (originalArch) Object.defineProperty(process, 'arch', originalArch)
     vi.restoreAllMocks()
     const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   function setPlatform(platform: string): void {

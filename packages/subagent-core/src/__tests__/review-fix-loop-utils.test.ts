@@ -1251,7 +1251,7 @@ describe("A5 resolveRunRoot: 存储根解析（git slug / 非 git cwd / home 不
       expect(root).toBe(join(home, ".review-fix-loop", "Users-x-proj-my-repo", "wf-test-1"));
       expect(made).toEqual([root]);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -1269,7 +1269,7 @@ describe("A5 resolveRunRoot: 存储根解析（git slug / 非 git cwd / home 不
       expect(slug).toBe("tmp-plain-docs");
       expect(root).toBe(join(home, ".review-fix-loop", "tmp-plain-docs", "run-42"));
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -1294,7 +1294,7 @@ describe("A5 resolveRunRoot: 存储根解析（git slug / 非 git cwd / home 不
       expect(root).toBe(join(fallbackTmp, "review-fix-loop", "wf-test-2"));
       expect(made).toEqual([root]);
     } finally {
-      rmSync(fallbackTmp, { recursive: true, force: true });
+      rmSync(fallbackTmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -1313,7 +1313,7 @@ describe("A5 resolveRunRoot: 存储根解析（git slug / 非 git cwd / home 不
       expect(existsSync(root)).toBe(true);
       expect(root).toContain(join(home, ".review-fix-loop", "Users-x-a b-c", "wf-real-1"));
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 });

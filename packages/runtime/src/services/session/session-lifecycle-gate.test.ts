@@ -122,7 +122,7 @@ describe('SessionLifecycle × migration gate（D8-3）', () => {
       const summary = await pending
       expect(pm.createSession).toHaveBeenCalledTimes(1)
       expect(summary.id).toBe('sess-1')
-      rmSync(cwd, { recursive: true, force: true })
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     })
 
     it('gate 未注入（默认 resolved）时 create 不等待（与旧版一致）', async () => {
@@ -133,7 +133,7 @@ describe('SessionLifecycle × migration gate（D8-3）', () => {
       const summary = await lifecycle.create(cwd, 't')
       expect(pm.createSession).toHaveBeenCalledTimes(1)
       expect(summary.id).toBe('sess-1')
-      rmSync(cwd, { recursive: true, force: true })
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     })
   })
 
@@ -162,7 +162,7 @@ describe('SessionLifecycle × migration gate（D8-3）', () => {
       const summary = await pending
       expect(pm.createSession).toHaveBeenCalledTimes(1)
       expect(summary.id).toBe('s-restore')
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     })
   })
 
@@ -195,7 +195,7 @@ describe('SessionLifecycle × migration gate（D8-3）', () => {
       // 生成的 forkedId，非固定值）——断言 summary 对应已入 Map 的新 session。
       expect(summary.id).not.toBe('s-fork-src')
       expect(lifecycle.has(summary.id)).toBe(true)
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     })
     // r2-S1：model 门禁优先级——configStore 无默认 model 且源 session 也不存在时，
     // 错误码必须是 MODEL_NOT_CONFIGURED（先于 source not found 报出），

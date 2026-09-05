@@ -87,7 +87,7 @@ afterEach(() => {
     spawnSync('hdiutil', ['detach', mnt, '-force'])
   }
   try {
-    rmSync(tmpDir, { recursive: true, force: true })
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   } catch (e) {
     console.warn('[warn] tmpDir 清理失败（可能挂载点残留）:', e)
   }
@@ -698,7 +698,7 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-scrip
 
       // 等 S3 完成，趁暂停删掉 .new（模拟 staging 内容消失 → S4 mv 必失败）
       await waitFor('S3 完成', () => existsSync(`${vars.appBundle}.old`) && !existsSync(vars.appBundle))
-      rmSync(`${vars.appBundle}.new`, { recursive: true, force: true })
+      rmSync(`${vars.appBundle}.new`, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       rmSync(flag) // 放行 → S4 mv 源缺失失败 → 回滚 .old
       await exited
 

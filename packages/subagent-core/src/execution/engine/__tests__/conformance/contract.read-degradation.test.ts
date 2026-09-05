@@ -44,7 +44,7 @@ describe("conformance C5：read 降级链（三级都不 throw）", () => {
     dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "c5-read-"));
   });
   afterEach(() => {
-    fs.rmSync(dataDir, { recursive: true, force: true });
+    fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("重放等价性：journal 重放 turns 与 live 累积一致（共用 updateFromEvent reducer）", () => {

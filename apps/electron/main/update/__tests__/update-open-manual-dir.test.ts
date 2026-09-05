@@ -57,14 +57,14 @@ beforeEach(() => {
   handlers.clear()
   vi.clearAllMocks()
   // 每用例从「目录不存在」起步（幂等用例内部自建再复调验证 recursive 语义）
-  rmSync(getManualAssetDir(), { recursive: true, force: true })
+  rmSync(getManualAssetDir(), { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   // openPath 成功语义：返回空字符串（Electron 契约：'' = 成功，非空 = 错误描述）
   openPathMock.mockResolvedValue('')
   registerUpdateHandlers({ getMainWindow: () => null } as never)
 })
 
 afterEach(() => {
-  rmSync(getManualAssetDir(), { recursive: true, force: true })
+  rmSync(getManualAssetDir(), { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 describe('u7b D9: update:openManualDir', () => {

@@ -355,7 +355,7 @@ describe('AuthService.logout', () => {
       expect(await storage.get('xai')).toBeUndefined()
       expect(await storage.get('other')).toMatchObject({ type: 'oauth', access: 'at' })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })

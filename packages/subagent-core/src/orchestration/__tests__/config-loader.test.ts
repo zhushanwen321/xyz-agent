@@ -102,7 +102,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.useRealTimers();
-  if (ws) await rm(ws.root, { recursive: true, force: true });
+  if (ws) await rm(ws.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 /** 过滤掉可能从真实 homedir 泄漏进来的 user-agents 文件，只保留临时工作区内结果。 */

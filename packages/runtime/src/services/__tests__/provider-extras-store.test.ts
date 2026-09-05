@@ -30,7 +30,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 describe('XyzProviderStore', () => {
@@ -116,7 +116,7 @@ describe('XyzProviderStore', () => {
       await new XyzProviderStore(freshFile).delete('x')
       expect(existsSync(freshFile)).toBe(false)
     } finally {
-      rmSync(freshDir, { recursive: true, force: true })
+      rmSync(freshDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 

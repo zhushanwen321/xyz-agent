@@ -129,7 +129,7 @@ describe('跨包集成：subagent-core E1 落标 manifest → session-reader res
 
   afterEach(() => {
     for (const s of services) s.dispose()
-    fs.rmSync(agentDir, { recursive: true, force: true })
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 真实 RecordStore（写文件 pi：种子经真实 toSubagentRecordEntry 序列化落主文件）。 */

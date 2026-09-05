@@ -150,14 +150,14 @@ describe("findSessionFileByHeaderId", () => {
     fs.writeFileSync(expectedFile, "{}");
     const result = findSessionFileByHeaderId(tmpDir, "sid-456");
     expect(result).toBe(expectedFile);
-    fs.rmSync(tmpDir, { recursive: true });
+    fs.rmSync(tmpDir, { recursive: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("无匹配返回 undefined", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "spawn-adapter-test-"));
     const result = findSessionFileByHeaderId(tmpDir, "nonexistent");
     expect(result).toBeUndefined();
-    fs.rmSync(tmpDir, { recursive: true });
+    fs.rmSync(tmpDir, { recursive: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("目录不存在返回 undefined（不抛错）", () => {

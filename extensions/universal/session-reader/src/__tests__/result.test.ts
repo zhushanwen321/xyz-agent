@@ -129,7 +129,7 @@ describe('result action（U6）', () => {
     dir = await mkdtemp(join(tmpdir(), 'session-reader-result-'))
   })
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('1. 单 id：返回纯正文（无包装），details 带元数据（sessionId=header 真实 id）', async () => {

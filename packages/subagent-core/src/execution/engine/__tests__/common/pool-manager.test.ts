@@ -27,7 +27,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(tmpRoot, { recursive: true, force: true });
+  rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 describe("acquirePool", () => {
@@ -84,7 +84,7 @@ describe("releasePoolRef 引用计数与整池删除", () => {
   it("池目录不存在时 release 归零 → 无原生状态可清，视为成功不抛", async () => {
     await acquirePool(tmpRoot, "zcode", "ghost");
     // 归零但目录已被外部删除
-    rmSync(resolvePoolDir(tmpRoot, "zcode", "ghost"), { recursive: true, force: true });
+    rmSync(resolvePoolDir(tmpRoot, "zcode", "ghost"), { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     await expect(releasePoolRef(tmpRoot, "zcode", "ghost")).resolves.toBeUndefined();
   });
 

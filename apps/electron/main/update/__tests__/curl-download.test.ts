@@ -93,7 +93,7 @@ describe('u2-curl-download', () => {
   afterEach(() => {
     if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
     vi.useRealTimers()
-    rmSync(tmpDir, { recursive: true, force: true })
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   function stubPlatform(platform: string): void {

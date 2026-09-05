@@ -107,7 +107,7 @@ afterEach(() => {
   delegateFsToReal()
   childMock.spawnSync.mockReset()
   Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true })
-  for (const dir of tmpAgentDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  for (const dir of tmpAgentDirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 /** 临时改写 process.platform（win32 分支在非 Windows 测试机上可达）。 */

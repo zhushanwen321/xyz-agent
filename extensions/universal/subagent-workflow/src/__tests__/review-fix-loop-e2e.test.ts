@@ -333,9 +333,9 @@ beforeEach(() => {
 
 afterEach(() => {
   try {
-    rmSync(sessionDir, { recursive: true, force: true });
-    rmSync(fixtureDir, { recursive: true, force: true });
-    rmSync(rflHomeDir, { recursive: true, force: true });
+    rmSync(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+    rmSync(fixtureDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+    rmSync(rflHomeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   } catch {
     // 临时目录清理失败不影响测试结论
   }
@@ -2094,7 +2094,7 @@ describe("startup fail-fast (ADR-0003 D6)", () => {
         expect(st.fixResults.length).toBe(1);
         expect(st.fixCount).toBe(1);
       } finally {
-        rmSync(faultDir, { recursive: true, force: true });
+        rmSync(faultDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
       }
     },
     RUN_TIMEOUT_MS * 2,

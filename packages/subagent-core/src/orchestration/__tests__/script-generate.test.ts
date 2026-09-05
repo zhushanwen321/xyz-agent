@@ -168,7 +168,7 @@ describe("generateWorkflowScript 校验闸（文案逐字对齐 pi 现版）", (
       );
       expect(existsSync(join(tmpRoot, "esm-wf.js"))).toBe(false);
     } finally {
-      rmSync(tmpRoot, { recursive: true, force: true });
+      rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -216,7 +216,7 @@ describe("generateWorkflowScript 校验闸（文案逐字对齐 pi 现版）", (
       }
       expect(existsSync(join(tmpRoot, "bad-wf.js"))).toBe(false);
     } finally {
-      rmSync(tmpRoot, { recursive: true, force: true });
+      rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -247,7 +247,7 @@ describe("generateWorkflowScript 合法样本落 tmp", () => {
       expect(existsSync(r.path)).toBe(true);
       expect(readFileSync(r.path, "utf-8")).toBe(PI_META_VALID);
     } finally {
-      rmSync(tmpRoot, { recursive: true, force: true });
+      rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -259,7 +259,7 @@ describe("generateWorkflowScript 合法样本落 tmp", () => {
       if (!r.ok) throw new Error(r.error);
       expect(existsSync(r.path)).toBe(true);
     } finally {
-      rmSync(tmpRoot, { recursive: true, force: true });
+      rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -274,7 +274,7 @@ describe("generateWorkflowScript 合法样本落 tmp", () => {
       expect(existsSync(r.path)).toBe(true);
     } finally {
       cwdSpy.mockRestore();
-      rmSync(fakeCwd, { recursive: true, force: true });
+      rmSync(fakeCwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 });

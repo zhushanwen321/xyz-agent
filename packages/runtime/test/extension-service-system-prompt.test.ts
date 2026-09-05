@@ -81,7 +81,7 @@ beforeEach(() => {
 
 afterEach(() => {
   try {
-    rmSync(tmpRoot, { recursive: true, force: true })
+    rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   } catch {
     // ignore cleanup errors
   }

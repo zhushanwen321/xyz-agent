@@ -99,7 +99,7 @@ describe("[M9] conversation:true 接线：execute → createRecordForMode", () =
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("conversation:true + idleTimeoutMs:12345 → record.chatMode===true、idleTimeoutMs 生效", async () => {

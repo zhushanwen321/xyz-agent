@@ -36,7 +36,7 @@ beforeEach(() => {
 afterEach(() => {
   clearPendingCursors();
   resetNotifyDomainForTests();
-  fs.rmSync(sessionDir, { recursive: true, force: true });
+  fs.rmSync(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 function entryLine(customType: string, data: Record<string, unknown>): string {

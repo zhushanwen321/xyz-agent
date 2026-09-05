@@ -77,7 +77,7 @@ describe("reconstructFromFile", () => {
     filePath = path.join(tmpDir, "test.jsonl");
   });
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   function writeJsonl(lines: unknown[]): void {

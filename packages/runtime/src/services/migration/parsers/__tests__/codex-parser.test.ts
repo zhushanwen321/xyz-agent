@@ -51,7 +51,7 @@ describe('parseCodexProviders', () => {
     home = mkdtempSync(join(tmpdir(), 'codex-parser-'))
   })
   afterEach(() => {
-    rmSync(home, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     vi.unstubAllEnvs()
   })
 

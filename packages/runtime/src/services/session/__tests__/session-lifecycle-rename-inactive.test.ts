@@ -130,7 +130,7 @@ describe('SessionLifecycle.renameSession 非活跃分支（p1p4-closure W1）', 
     // mock 链路等价断言：RPC 以新名在附着的 client 上执行
     expect(setSessionName).toHaveBeenCalledTimes(1)
     expect(setSessionName).toHaveBeenCalledWith('renamed-name')
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('正常 fixture（cwd 活、无 session_end）→ 零变换：附着时与完成后文件字节、mtime 均不变', async () => {
@@ -149,6 +149,6 @@ describe('SessionLifecycle.renameSession 非活跃分支（p1p4-closure W1）', 
     expect(statSync(filePath).mtimeMs).toBe(beforeMtime)
     expect(setSessionName).toHaveBeenCalledTimes(1)
     expect(setSessionName).toHaveBeenCalledWith('renamed-name')
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 })

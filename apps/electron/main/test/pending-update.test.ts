@@ -65,12 +65,12 @@ describe('pending-update (升级提醒持久化标志 SSOT)', () => {
     mod = await loadModule()
     // 每个用例独立：清掉残留的 pending-update.json
     const dir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
+    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   afterEach(() => {
     const dir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
+    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ── 1. writePendingUpdate + readPendingUpdate 往返 ──────────────

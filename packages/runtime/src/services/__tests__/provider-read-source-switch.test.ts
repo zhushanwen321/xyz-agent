@@ -60,7 +60,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.XYZ_AGENT_DATA_DIR
-  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 describe('A1-3 验收 1：聚合层读源（providers.json 优先）', () => {

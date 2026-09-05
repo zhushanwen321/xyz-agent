@@ -24,7 +24,7 @@ describe('extractWorkflowsFromSessionFile', () => {
   })
 
   afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true })
+    rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('正常映射：主 session JSONL 含 workflow-state-link + state 文件含 wf-run-v2 快照（2 个 trace 节点）', () => {

@@ -28,7 +28,7 @@ describe("executeAutoRenameCommand", () => {
 		if (origEnv === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = origEnv;
 		clearConfigCache();
-		fs.rmSync(tmpAgentDir, { recursive: true, force: true });
+		fs.rmSync(tmpAgentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 	});
 
 	function configPath(): string {

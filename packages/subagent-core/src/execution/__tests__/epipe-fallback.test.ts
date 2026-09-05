@@ -135,7 +135,7 @@ describe("deliverMessage EPIPE 兜底（热路径 stdin EPIPE → 冷路径 resu
     service.dispose();
     spawnedChildren.clear();
     lifecycle._resetLifecycleState();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("首次 EPIPE → 自动转冷路径 resumeRound + 原消息重放", async () => {

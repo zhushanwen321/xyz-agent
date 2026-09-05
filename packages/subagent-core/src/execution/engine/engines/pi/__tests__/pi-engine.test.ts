@@ -346,7 +346,7 @@ describe("PiEngine.read（D6 降级链）", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-engine-read-"));
   });
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("无 sessionRef → outcome-only（turns 空）", async () => {

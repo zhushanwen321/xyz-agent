@@ -122,7 +122,7 @@ describe('skillRegistry (W1)', () => {
       })
     } finally {
       reg.dispose()
-      rmSync(cwd, { recursive: true, force: true })
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -153,7 +153,7 @@ describe('skillRegistry (W1)', () => {
       expect(closeSpy).toHaveBeenCalledTimes(1)
     } finally {
       reg.dispose()
-      rmSync(cwd, { recursive: true, force: true })
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -185,7 +185,7 @@ describe('skillRegistry (W1)', () => {
       expect(chokidar.watch).toHaveBeenCalledTimes(1)
     } finally {
       reg.dispose()
-      rmSync(cwd, { recursive: true, force: true })
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -215,7 +215,7 @@ describe('skillRegistry (W1)', () => {
       expect(scanSpy).toHaveBeenCalledTimes(2)
     } finally {
       reg.dispose()
-      rmSync(cwd, { recursive: true, force: true })
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -246,7 +246,7 @@ describe('skillRegistry (W1)', () => {
       expect(onChangeSpy).toHaveBeenCalledWith({ scope: 'project', cwd, affectedSessionIds: ['sid-x'] })
     } finally {
       reg.dispose()
-      rmSync(cwd, { recursive: true, force: true })
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -312,8 +312,8 @@ describe('skillRegistry (W2 rebuild)', () => {
       expect(watchedPaths).toContain(dirB)
     } finally {
       reg.dispose()
-      rmSync(dirA, { recursive: true, force: true })
-      rmSync(dirB, { recursive: true, force: true })
+      rmSync(dirA, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+      rmSync(dirB, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -339,7 +339,7 @@ describe('skillRegistry (W2 rebuild)', () => {
       expect(closeSpy).toHaveBeenCalledTimes(1)
     } finally {
       reg.dispose()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -381,7 +381,7 @@ describe('skillRegistry (W2 rebuild)', () => {
       })
     } finally {
       reg.dispose()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -423,8 +423,8 @@ describe('skillRegistry (W2 rebuild)', () => {
       expect(scanSpy.mock.calls.length).toBeGreaterThan(scanBefore)
     } finally {
       reg.dispose()
-      rmSync(cwdA, { recursive: true, force: true })
-      rmSync(cwdB, { recursive: true, force: true })
+      rmSync(cwdA, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+      rmSync(cwdB, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -471,7 +471,7 @@ describe('skillRegistry (W2 rebuild)', () => {
       expect(chokidar.watch).not.toHaveBeenCalled()
     } finally {
       reg.dispose()
-      rmSync(cwd, { recursive: true, force: true })
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -529,7 +529,7 @@ describe('skillRegistry (W2 rebuild)', () => {
       expect(events[0].cwd).toBeUndefined()
     } finally {
       reg.dispose()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })

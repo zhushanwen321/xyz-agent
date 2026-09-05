@@ -242,7 +242,7 @@ describe('provideHashCandidates', () => {
     await mkdir(otherCwdDir, { recursive: true })
   })
   afterEach(async () => {
-    await rm(agentDir, { recursive: true, force: true })
+    await rm(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('非 # 输入 → null（委托下家 provider）', async () => {
@@ -377,7 +377,7 @@ describe('createHashAutocompleteProvider - getSuggestions', () => {
     await mkdir(cwdSessionDir, { recursive: true })
   })
   afterEach(async () => {
-    await rm(agentDir, { recursive: true, force: true })
+    await rm(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('signal.aborted → 早退返 null，不调 current、不做 IO', async () => {

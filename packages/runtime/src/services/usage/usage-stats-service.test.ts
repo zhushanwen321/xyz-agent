@@ -181,7 +181,7 @@ describe('UsageStatsService', () => {
 
   afterEach(async () => {
     statMock.override = null
-    await rm(tmpDir, { recursive: true, force: true })
+    await rm(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ── 基础功能 ─────────────────────────────────────────────

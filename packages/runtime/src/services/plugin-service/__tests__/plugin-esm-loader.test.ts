@@ -73,7 +73,7 @@ describe('plugin-esm-loader sandbox interception', () => {
   let pluginDir = ''
 
   afterEach(() => {
-    if (pluginDir) rmSync(pluginDir, { recursive: true, force: true })
+    if (pluginDir) rmSync(pluginDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   function setupSandbox(): void {

@@ -39,7 +39,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   resetCoreForTests();
-  rmSync(dataRoot, { recursive: true, force: true });
+  rmSync(dataRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 /** 构造可持久化的 WorkflowRun（对齐 file-run-store.test.ts makeRun 模式）。 */

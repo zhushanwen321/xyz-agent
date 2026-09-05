@@ -78,7 +78,7 @@ describe("JsonlRunStore workflow-record entry append 节流（[B-1]）", () => {
 
   afterEach(() => {
     vi.useRealTimers();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("高频 running flush：节流窗口内只 append 1 次（次数有界，state 文件照写）", async () => {

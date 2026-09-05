@@ -154,7 +154,7 @@ describe("A8 混派正交 service e2e（同轮 2 sync + 1 async，U8）", () => 
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("async 先终态：即时直通 notify（不被 sync 批扣留）→ sync 逐个终态 → 恰 1 批 2 成员", async () => {

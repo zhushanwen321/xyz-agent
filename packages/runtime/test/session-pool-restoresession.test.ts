@@ -185,7 +185,7 @@ describe('SessionService.restoreSession', () => {
   })
 
   afterEach(() => {
-  if (tmpRoot) rmSync(tmpRoot, { recursive: true, force: true })
+  if (tmpRoot) rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ── Normal path ──────────────────────────────────────────────

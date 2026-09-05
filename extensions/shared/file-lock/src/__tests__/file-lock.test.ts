@@ -31,7 +31,7 @@ describe("withFileLock (async)", () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "file-lock-test-"));
 		target = path.join(tmpDir, "target.json");
 	});
-	afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+	afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
 
 	it("并发临界区互斥：计数无交错丢失", async () => {
 		let counter = 0;
@@ -98,7 +98,7 @@ describe("withFileLockSync", () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "file-lock-sync-test-"));
 		target = path.join(tmpDir, "target.json");
 	});
-	afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+	afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
 
 	it("返回 fn 结果且锁已释放（可立即再锁）", () => {
 		expect(withFileLockSync(target, () => 42)).toBe(42);
@@ -205,7 +205,7 @@ register("./resolve-hook.mjs", import.meta.url);
 			}
 			expect((JSON.parse(fs.readFileSync(target, "utf-8")) as { n: number }).n).toBe(100);
 		} finally {
-			fs.rmSync(tmpDir, { recursive: true, force: true });
+			fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		}
 		// 用例级预算须覆盖子进程 spawnSync timeout（60s，内含自旋重试预算 30s）：
 		// 文件级 20s 会在子进程合法重试期间先红——预算放宽不改变断言强度（终值精确 100）

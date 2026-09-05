@@ -92,7 +92,7 @@ describe('path-utils', () => {
         // realpath 应与 tmp 的 realpath 同根（macOS 下 /tmp → /private/tmp）
         expect(result.endsWith('real.txt')).toBe(true)
       } finally {
-        rmSync(tmp, { recursive: true, force: true })
+        rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       }
     })
 
@@ -116,7 +116,7 @@ describe('path-utils', () => {
         // 两者 realpath 后都应以 real-target.ts 结尾
         expect(canonicalizePath(linkPath).endsWith('real-target.ts')).toBe(true)
       } finally {
-        rmSync(tmp, { recursive: true, force: true })
+        rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       }
     })
   })

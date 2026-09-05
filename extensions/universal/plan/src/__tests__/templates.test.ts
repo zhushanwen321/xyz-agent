@@ -54,7 +54,7 @@ describe("Template system", () => {
     } finally {
       if (origEnv === undefined) delete process.env.PI_CODING_AGENT_DIR;
       else process.env.PI_CODING_AGENT_DIR = origEnv;
-      fs.rmSync(isolated, { recursive: true, force: true });
+      fs.rmSync(isolated, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 });

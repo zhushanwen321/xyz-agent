@@ -92,9 +92,9 @@ describe('S1-W3: sandbox escape regression (real fork + real ESM loader)', () =>
     // runner 不主动 exit，用例结束时统一回收（幂等：已退出的 kill 是 no-op）
     activeChild?.kill()
     activeChild = null
-    if (pluginDir) rmSync(pluginDir, { recursive: true, force: true })
+    if (pluginDir) rmSync(pluginDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     // 向上逃逸的沙箱外 node_modules 放在 pluginDir 父目录（mktemp 工作目录），单独清理
-    if (pluginDir) rmSync(join(dirname(pluginDir), 'node_modules'), { recursive: true, force: true })
+    if (pluginDir) rmSync(join(dirname(pluginDir), 'node_modules'), { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('SEC-A1(单元): node:fs 被拒（静态/动态）+ 同入口合法相对 import 成功', async () => {
@@ -316,7 +316,7 @@ describe('S-36: CJS 拦截一次性监控日志（usage monitor）', () => {
         }
       })
     })
-    rmSync(workDir, { recursive: true, force: true })
+    rmSync(workDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 
     // 两次 require 都真实经过了 sandbox patch 且加载成功（排除缓存假阴性）
     expect(result.resolveCount).toBeGreaterThanOrEqual(2)

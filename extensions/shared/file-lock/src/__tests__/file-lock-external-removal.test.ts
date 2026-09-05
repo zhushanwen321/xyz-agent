@@ -23,7 +23,7 @@ describe("withFileLock 锁目录被外部删除（原 compromise 场景的自实
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "file-lock-extrem-"));
 		target = path.join(tmpDir, "target.json");
 	});
-	afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+	afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
 
 	it("fn 执行期间锁被外部删除 → fn 正常返回 + release 静默成功 + 可立即再锁", async () => {
 		const result = await withFileLock(
@@ -31,7 +31,7 @@ describe("withFileLock 锁目录被外部删除（原 compromise 场景的自实
 			async () => {
 				// 模拟外部清理（对端 stale 夺取会先 rmdir 再 mkdir；此处直接删）：
 				// 自实现无保活定时器，删除本身不触发任何回调
-				fs.rmSync(`${target}.lock`, { recursive: true, force: true });
+				fs.rmSync(`${target}.lock`, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 				return "fn-done";
 			},
 			{ staleMs: 2000 },
@@ -47,7 +47,7 @@ describe("withFileLock 锁目录被外部删除（原 compromise 场景的自实
 	it("fn 抛错且锁目录已被外部删除 → 错误照常外抛 + release 不叠加失败", async () => {
 		await expect(
 			withFileLock(target, () => {
-				fs.rmSync(`${target}.lock`, { recursive: true, force: true });
+				fs.rmSync(`${target}.lock`, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 				throw new Error("boom");
 			}),
 		).rejects.toThrow("boom");

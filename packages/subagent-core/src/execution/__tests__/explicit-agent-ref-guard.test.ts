@@ -95,7 +95,7 @@ describe("显式 agent ref 失败报错（非静默降级 general-purpose）", (
 
   afterEach(() => {
     vi.restoreAllMocks();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   // ── 拒绝路径：显式 ref 失败 → 同步 reject + spawn 链路零触达 ──

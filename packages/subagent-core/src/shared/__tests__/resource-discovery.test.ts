@@ -85,7 +85,7 @@ describe("findWorkspaceRoot", () => {
   it("returns cwd when no marker found", () => {
     const ws = tmpWorkspace();
     expect(findWorkspaceRoot(ws)).toBe(ws);
-    fs.rmSync(ws, { recursive: true, force: true });
+    fs.rmSync(ws, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("finds .git root", () => {
@@ -94,7 +94,7 @@ describe("findWorkspaceRoot", () => {
     const sub = path.join(ws, "sub", "deep");
     fs.mkdirSync(sub, { recursive: true });
     expect(findWorkspaceRoot(sub)).toBe(ws);
-    fs.rmSync(ws, { recursive: true, force: true });
+    fs.rmSync(ws, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 });
 
@@ -111,7 +111,7 @@ describe("discoverResourcesSync", () => {
     agentDir = path.join(ws, ".fake-agent");
   });
   afterEach(() => {
-    fs.rmSync(ws, { recursive: true, force: true });
+    fs.rmSync(ws, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("discovers agents from project .pi/agents/", () => {
@@ -185,7 +185,7 @@ describe("processPackageSync", () => {
     pkgDir = tmpWorkspace();
   });
   afterEach(() => {
-    fs.rmSync(pkgDir, { recursive: true, force: true });
+    fs.rmSync(pkgDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("loads from manifest directory declaration", () => {
@@ -242,7 +242,7 @@ describe("discoverResources (async)", () => {
     ws = tmpWorkspace();
   });
   afterEach(() => {
-    fs.rmSync(ws, { recursive: true, force: true });
+    fs.rmSync(ws, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     __testResetShadowDedup();
   });
 
@@ -287,7 +287,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
   afterEach(() => {
     if (savedEnv === undefined) delete process.env.XYZ_EXTENSION_PATHS;
     else process.env.XYZ_EXTENSION_PATHS = savedEnv;
-    fs.rmSync(ws, { recursive: true, force: true });
+    fs.rmSync(ws, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     __testResetShadowDedup();
   });
 
@@ -521,7 +521,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
         warnSpy.mockRestore();
       }
     } finally {
-      fs.rmSync(userAgentsDir, { recursive: true, force: true });
+      fs.rmSync(userAgentsDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -557,7 +557,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
         warnSpy.mockRestore();
       }
     } finally {
-      fs.rmSync(userAgentsDir, { recursive: true, force: true });
+      fs.rmSync(userAgentsDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -617,7 +617,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
         __testResetShadowDedup();
       }
     } finally {
-      fs.rmSync(userAgentsDir, { recursive: true, force: true });
+      fs.rmSync(userAgentsDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 });
@@ -637,7 +637,7 @@ describe("m5: 统一 mtime 缓存层", () => {
       expect(first?.content).toBe("---\nname: x\ndescription: y\n---\nbody");
       expect(second).toBe(first); // 同引用 = 命中缓存（未重 read）
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -651,7 +651,7 @@ describe("m5: 统一 mtime 缓存层", () => {
       // 内容一致性（命中语义由 TC4a 的对象引用断言覆盖——此处验证两 API 一致）
       expect(a?.content).toBe(b);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -667,7 +667,7 @@ describe("m5: 统一 mtime 缓存层", () => {
       fs.rmSync(f);
       expect(getCachedFileContent(f)).toBeNull();
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 });
@@ -691,7 +691,7 @@ describe("getCachedParsed（mtime 级解析缓存）", () => {
       expect(second).toBe("OK");
       expect(parse).toHaveBeenCalledTimes(1); // 第二次命中缓存，不重 parse
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -707,7 +707,7 @@ describe("getCachedParsed（mtime 级解析缓存）", () => {
       fs.rmSync(f);
       expect(getCachedParsed(f, parse)).toBeNull(); // 删除 → null
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -722,7 +722,7 @@ describe("getCachedParsed（mtime 级解析缓存）", () => {
       getCachedParsed(f, parse);
       expect(parse).toHaveBeenCalledTimes(2); // 缓存被清 → 重新 parse
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -744,7 +744,7 @@ describe("getCachedParsed（mtime 级解析缓存）", () => {
       expect(w1).toEqual({ kind: "workflow", len: 14 });
       expect(a2).toEqual({ kind: "agent", content: "shared-content" });
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 });

@@ -134,7 +134,7 @@ describe("resumeRound (M2-B1 idle 投递)", () => {
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("resumeRound(running) → kickOff runSpawn 收到 resume 参数；chatMode+done 回 running/round+1", async () => {
@@ -209,7 +209,7 @@ describe("deliverMessage (V2 决策 3 chatMode 统一投递)", () => {
     service.dispose();
     spawnedChildren.clear();
     lifecycle._resetLifecycleState();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("热路径 interrupt=false：进程活 → prompt streamingBehavior:followUp + status=running + pid 记录", () => {
@@ -359,7 +359,7 @@ describe("deliverMessage 冷路径并发守卫（review round2 MF1）", () => {
     service.dispose();
     spawnedChildren.clear();
     lifecycle._resetLifecycleState();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("同 record 连续两条 message 冷路径 → 第二条 throw 行动语言，runSpawn 仅 1 次", async () => {

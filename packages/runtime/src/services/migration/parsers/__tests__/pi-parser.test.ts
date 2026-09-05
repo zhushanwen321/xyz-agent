@@ -35,7 +35,7 @@ describe('parsePiProviders', () => {
     home = mkdtempSync(join(tmpdir(), 'pi-parser-'))
   })
   afterEach(() => {
-    rmSync(home, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 把 fixture JSON 写到 <home>/.pi/agent/<target>。 */

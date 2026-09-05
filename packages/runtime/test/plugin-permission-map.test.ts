@@ -61,7 +61,7 @@ describe('plugin-permission-map SSOT（AC-I6）', () => {
   })
 
   afterAll(async () => {
-    await rm(tmpDir, { recursive: true, force: true })
+    await rm(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('AC-I6: SDK PermissionConstants 全量常量归一非空（新常量未收录映射表时红）', () => {

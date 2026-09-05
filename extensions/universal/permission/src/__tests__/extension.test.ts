@@ -26,7 +26,7 @@ beforeEach(() => {
 afterEach(() => {
 	if (originalAgentDirEnv === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = originalAgentDirEnv;
-	rmSync(tempAgentDir, { recursive: true, force: true });
+	rmSync(tempAgentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 /** 最小 mock：只记录 registerCommand 和 on 调用 */

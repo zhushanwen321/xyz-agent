@@ -31,7 +31,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 /** 预写 providers.json（含顶层 scopedModels 白名单）。 */

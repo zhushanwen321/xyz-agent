@@ -88,7 +88,7 @@ describe("loadAll entry 源扫描：多 run 重建与损坏 state 降级（R2-TC
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("多 run 并存：2 个 entry run + 1 个 link run 同批全部重建（无丢失）", async () => {

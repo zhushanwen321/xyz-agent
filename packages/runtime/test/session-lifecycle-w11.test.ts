@@ -107,7 +107,7 @@ describe('restoreSession cwd fallback 落点（W11 → W1 直附着正式文件�
 
   afterEach(() => {
     setMigrationGate(Promise.resolve())
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   function mountTarget(cwd: string): void {

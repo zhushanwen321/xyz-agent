@@ -30,7 +30,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs()
-  rmSync(dataDir, { recursive: true, force: true })
+  rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 function makeService(opts: { models?: ConfigModelsConfig['providers']; authIds?: string[] } = {}): ConfigService {

@@ -145,7 +145,7 @@ describe('findSessions', () => {
     recordsDir = join(agentDir, 'subagents', '--Users-demo--', 'records')
   })
   afterEach(async () => {
-    await rm(agentDir, { recursive: true, force: true })
+    await rm(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('uuid 片段匹配正确的 session（sessionId 含 query）', async () => {

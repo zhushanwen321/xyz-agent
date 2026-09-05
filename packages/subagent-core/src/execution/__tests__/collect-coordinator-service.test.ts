@@ -121,7 +121,7 @@ describe("collectCoordinator service integration (U2)", () => {
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   function makeService(piInstance: ReturnType<typeof makePi>): SubagentService {

@@ -40,7 +40,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  rmSync(dataDir, { recursive: true, force: true })
+  rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 function zcodeRecord(handle: EngineHandleShape | undefined, engine = 'zcode'): EngineAwareRecord {
@@ -243,7 +243,7 @@ describe('readEngineSubagentHistory（zcode 三级降级）', () => {
       expect(messages[1]?.content).toBe('LGTM outcome text')
       expect(JSON.stringify(messages)).not.toContain('STOLEN')
     } finally {
-      rmSync(outsideDir, { recursive: true, force: true })
+      rmSync(outsideDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 

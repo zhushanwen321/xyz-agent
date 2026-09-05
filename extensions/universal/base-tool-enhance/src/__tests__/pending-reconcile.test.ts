@@ -52,7 +52,7 @@ function registerEntry(id: string) {
 }
 
 afterEach(() => {
-	rmSync(DATA_DIR, { recursive: true, force: true });
+	rmSync(DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 	vi.restoreAllMocks();
 });
 

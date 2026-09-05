@@ -126,7 +126,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	rmSync(rootDir, { recursive: true, force: true });
+	rmSync(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 describe("index.ts wiring SDK 契约", () => {

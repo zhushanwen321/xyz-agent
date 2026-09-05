@@ -115,7 +115,7 @@ describe('W3: platform-updater (W3TC5-7)', () => {
     vi.restoreAllMocks()
     delete process.env.APPIMAGE
     const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 设置 process.platform + execPath 桩 */

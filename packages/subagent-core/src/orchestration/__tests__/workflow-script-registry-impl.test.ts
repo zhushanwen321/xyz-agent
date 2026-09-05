@@ -59,7 +59,7 @@ describe("loadWorkflowScriptByPath / WorkflowScript 导出形态（U1）", () =>
   afterEach(async () => {
     invalidateCache();
     for (const dir of tempDirs) {
-      await rm(dir, { recursive: true, force: true });
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 

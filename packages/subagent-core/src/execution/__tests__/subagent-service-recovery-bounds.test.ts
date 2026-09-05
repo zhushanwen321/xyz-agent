@@ -138,7 +138,7 @@ describe("T2④ service-side kill convergence", () => {
     _resetLifecycleState();
     _resetSettledWatchdogsForTest();
     spawnedMap.clear();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("cancelBackground (via cancel) routes through killRecordChildWithEscalation", async () => {
@@ -223,7 +223,7 @@ describe("T2③ hot-path settled watchdog", () => {
     _resetLifecycleState();
     _resetSettledWatchdogsForTest();
     spawnedMap.clear();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("arms the settled watchdog after a successful hot-path prompt", async () => {
@@ -278,7 +278,7 @@ describe("T2⑧ non-EPIPE hot-path failure re-arms idle timer", () => {
     _resetLifecycleState();
     _resetSettledWatchdogsForTest();
     spawnedMap.clear();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("re-arms the idle timer (default duration) and rethrows on non-EPIPE write failure", async () => {

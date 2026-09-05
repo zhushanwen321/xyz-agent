@@ -105,7 +105,7 @@ describe("SO-DATA-2: 残缺 record entry 的 per-entry 隔离", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("3 条 entry（2 好 1 坏）→ 返回 2 条 + warn 留证（含 entry 索引与原因）", async () => {

@@ -34,7 +34,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   warnSpy.mockRestore()
-  await rm(tmpDir, { recursive: true, force: true })
+  await rm(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 /** 在 <base>/<...segments>/ 下写入一个最小插件目录（package.json + manifest 合并字段） */

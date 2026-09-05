@@ -66,7 +66,7 @@ function readExtras(providerId: string): Record<string, unknown> | undefined {
 }
 
 afterEach(() => {
-  rmSync(tmpDir, { recursive: true, force: true })
+  rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 describe('QuotaService — 偏差 #B: providerId→fetcher 映射', () => {

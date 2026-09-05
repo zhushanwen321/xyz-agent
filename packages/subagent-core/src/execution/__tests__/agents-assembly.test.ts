@@ -98,7 +98,7 @@ describe("discoverAgents", () => {
   afterEach(() => {
     resetCoreForTests();
     clearFileCache();
-    fs.rmSync(outerDir, { recursive: true, force: true });
+    fs.rmSync(outerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("与 pi 壳现装配循环产出等值（同序同名同字段）——多形态 fixture 对照", async () => {

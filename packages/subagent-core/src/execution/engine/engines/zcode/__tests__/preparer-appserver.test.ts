@@ -114,7 +114,7 @@ afterEach(() => {
       // 已退出——无妨
     }
   }
-  fs.rmSync(tmpRoot, { recursive: true, force: true });
+  fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 // ============================================================

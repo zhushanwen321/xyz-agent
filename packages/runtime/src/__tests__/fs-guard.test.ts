@@ -49,7 +49,7 @@ describe('fs-guard 判定（纯函数）', () => {
     const realPath = realpathSync(dir)
     expect(isDestructiveAllowed(realPath)).toBe(true)
     expect(isDestructiveAllowed(join(realPath, 'nested', 'a.jsonl'))).toBe(true)
-    rmSync(dir, { recursive: true })
+    rmSync(dir, { recursive: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('其余目录一律拒绝（工作区 / 家目录普通文件 / 前缀撞名）', () => {
@@ -67,11 +67,11 @@ describe('fs-guard 切面端到端（本文件 import 的 fs 已是 wrapper）',
     const file = join(dir, 'a.txt')
     writeFileSync(file, 'x')
     rmSync(file)
-    rmSync(dir, { recursive: true })
+    rmSync(dir, { recursive: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('真实目录的删除被拦截且错误信息可操作', () => {
-    expect(() => rmSync(join(homedir(), '.xyz-agent'), { recursive: true })).toThrow(/vitest-fs-guard/)
+    expect(() => rmSync(join(homedir(), '.xyz-agent'), { recursive: true, maxRetries: 5, retryDelay: 20 })).toThrow(/vitest-fs-guard/)
     let caught: Error | undefined
     try {
       writeFileSync(join(homedir(), '.xyz-agent', 'pi', 'sessions', 'probe.txt'), 'x')
@@ -93,7 +93,7 @@ describe('fs-guard 写句柄入口（fd/流写路径防线）', () => {
     writeSync(fd, 'x')
     closeSync(fd)
     expect(readFileSync(file, 'utf8')).toBe('x')
-    rmSync(dir, { recursive: true })
+    rmSync(dir, { recursive: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('真实数据目录 openSync("w") 被拦（绕道 fd 写不可达）', () => {

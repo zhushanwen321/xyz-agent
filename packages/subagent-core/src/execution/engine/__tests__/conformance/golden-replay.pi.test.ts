@@ -45,7 +45,7 @@ describe("pi golden 回放（conformance C3/C5-journal，免 LLM）", () => {
       // 深比较（含 undefined 键缺省语义——JSON 序列化后 undefined 字段自然消失，两侧同构）
       expect(replayed).toEqual(golden.events);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 

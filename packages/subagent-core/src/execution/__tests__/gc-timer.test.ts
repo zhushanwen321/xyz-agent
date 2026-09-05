@@ -109,7 +109,7 @@ describe("[M8] idle record GC 定时器（startGcTimer）", () => {
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     vi.useRealTimers();
   });
 

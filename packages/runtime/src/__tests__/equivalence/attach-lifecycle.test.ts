@@ -263,7 +263,7 @@ describe.skipIf(!REAL_PI_READY)(
           fx2 = null
         }
       } finally {
-        rmSync(workDir, { recursive: true, force: true })
+        rmSync(workDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       }
     },
   )
@@ -336,7 +336,7 @@ describe.skipIf(!REAL_PI_READY)(
           fx2 = null
         }
       } finally {
-        rmSync(workDir, { recursive: true, force: true })
+        rmSync(workDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       }
     },
   )
@@ -390,7 +390,7 @@ describe.skipIf(!REAL_PI_READY)(
         fixture = null
         fx = null
       } finally {
-        rmSync(workDir, { recursive: true, force: true })
+        rmSync(workDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       }
     },
   )
@@ -425,7 +425,7 @@ describe.skipIf(!REAL_PI_READY)(
           fx = null
         }
       } finally {
-        rmSync(workDir, { recursive: true, force: true })
+        rmSync(workDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       }
     },
   )
@@ -505,7 +505,7 @@ describe.skipIf(!REAL_PI_READY)(
           fx3 = null
         }
       } finally {
-        rmSync(workDir, { recursive: true, force: true })
+        rmSync(workDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       }
     },
   )

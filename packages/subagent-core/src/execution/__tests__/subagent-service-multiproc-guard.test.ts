@@ -95,7 +95,7 @@ describe("T5① child process skips orphan recovery scan", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("root process (no self-record env) runs the orphan recovery scan", () => {
@@ -140,7 +140,7 @@ describe("T5③ cold-lookup running candidate foreign-instance guard", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   const stubColdCandidate = (record: {

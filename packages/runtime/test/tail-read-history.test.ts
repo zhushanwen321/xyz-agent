@@ -45,7 +45,7 @@ describe('W1 tailReadHistory 尾读 + turn 边界截断', () => {
   })
 
   afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true })
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 构造一个 pi JSONL session 文件 */

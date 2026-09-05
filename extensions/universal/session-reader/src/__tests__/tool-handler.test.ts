@@ -330,7 +330,7 @@ describe('F2 多匹配消歧（fixture，MF-9）', () => {
     dir = await mkdtemp(join(tmpdir(), 'tool-handler-f2-'))
   })
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('共享 uuid 片段 → 不抛错，content 含两候选 + 👉，details.ambiguous=true', async () => {
@@ -380,7 +380,7 @@ describe('outline skippedLines 报告（fixture，D8d 有检测必有报告）',
     dir = await mkdtemp(join(tmpdir(), 'tool-handler-skipped-'))
   })
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('坏行计入 stats.skippedLines 且文本尾部可见（不静默跳过）', async () => {
@@ -423,7 +423,7 @@ describe('search 灾难性正则降级 + abort（fixture，MF-5 回归）', () =
     await makeFixtureSession(dir, SID, 'aaa plugin 内容')
   })
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('嵌套量词 pattern (a+)+ → 降级字面子串（不挂死，零命中）', async () => {
@@ -635,7 +635,7 @@ describe('resolveSessionId ① 绝对路径形态（w2 TC2-TC6）', () => {
     dir = await mkdtemp(join(tmpdir(), 'tool-handler-path-'))
   })
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('TC2: 绝对路径 outline → sessionId=header 真实 id（非文件名）', async () => {
@@ -723,7 +723,7 @@ describe('resolveSessionId ① 绝对路径形态（w2 TC2-TC6）', () => {
       )
       expect((r.details as { path: string }).path).toContain(fileId)
     } finally {
-      await rm(tmpUnderHome, { recursive: true, force: true })
+      await rm(tmpUnderHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })
@@ -735,7 +735,7 @@ describe('resolveSessionId ② sa-id 形态（w2 TC7-TC10 + CQ3）', () => {
     dir = await mkdtemp(join(tmpdir(), 'tool-handler-said-'))
   })
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('TC7: sa-id 恰 1 命中 + sessionFile 存在 → 成功，sessionId=header 真实 id（非 sa-）', async () => {
@@ -858,7 +858,7 @@ describe('source 透传（w2 TC12-TC13，依赖 w1 findSessions opts.source）',
     dir = await mkdtemp(join(tmpdir(), 'tool-handler-src-'))
   })
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('TC12: find source 过滤——subagent 只返回 subagent 候选，main 只返回 main', async () => {
@@ -1089,7 +1089,7 @@ describe('doWorkflow（w6，fixture）', () => {
     dir = await mkdtemp(join(tmpdir(), 'tool-handler-wf-'))
   })
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('TC-w6-single-run：单 run 概览，content 含 run 头行/budget/step，details.runs/runIds 非空', async () => {
@@ -1370,7 +1370,7 @@ describe('doFamily recursive（m3b U8 接入）', () => {
     })
   })
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('TC-m3b-dofamily-recursive-false：不传 recursive → flat family（m0-m2 零回归）', async () => {

@@ -77,7 +77,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(tmpRoot, { recursive: true, force: true });
+  fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 describe("conformance C4：abort 行为（运行中 cancel → 合成终态、无悬挂）", () => {

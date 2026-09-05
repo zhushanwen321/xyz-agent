@@ -43,7 +43,7 @@ describe.skipIf(!LIVE)("ZcodeEngine 端到端真机（真实 LLM 调用）", () 
     // 用完清理：池数据 + 任务 cwd（保持 /tmp 干净，实录/验证不留残留）
     for (const dir of [DATA_ROOT, WORK_CWD]) {
       try {
-        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
       } catch {
         // 尽力清理
       }
@@ -162,7 +162,7 @@ describe.skipIf(!LIVE)("ZcodeEngine 端到端真机（app-server 常驻，[R6] l
     await engine.dispose().catch(() => undefined);
     for (const dir of [AS_DATA_ROOT, AS_WORK_CWD]) {
       try {
-        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
       } catch {
         // 尽力清理
       }

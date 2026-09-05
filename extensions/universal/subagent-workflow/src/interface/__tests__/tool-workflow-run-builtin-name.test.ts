@@ -165,7 +165,7 @@ describe("C5③ run 内置名（真 registry：WorkflowScriptRegistryImpl + 真�
   });
 
   afterEach(() => {
-    rmSync(fixtureDir, { recursive: true, force: true });
+    rmSync(fixtureDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("get('chain') 经真实 discoverWorkflows 命中 fixture 脚本 → actionRun 按名启动成功", async () => {

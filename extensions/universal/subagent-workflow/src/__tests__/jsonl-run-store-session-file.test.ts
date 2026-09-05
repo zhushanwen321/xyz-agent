@@ -152,7 +152,7 @@ describe("W1: JsonlRunStore sessionFile 序列化 round-trip", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("save + loadAll round-trip: AgentCall.sessionFile 保留", async () => {
@@ -222,7 +222,7 @@ describe("W2: RunStore.stateFilePath 暴露 run 状态文件路径", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("stateFilePath(runId) 返回 <sessionDir>/workflow-state/<runId>.jsonl", () => {
@@ -244,7 +244,7 @@ describe("W9: 快照版本守卫（v2 当前 / v1 跳过）", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("v1 头快照（升级前遗留）→ loadAll 静默跳过：不崩、不显示", async () => {
@@ -322,7 +322,7 @@ describe("W3: JsonlRunStore.save 兜底容错（run 工作目录被并发清理�
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     vi.restoreAllMocks();
   });
 
@@ -374,7 +374,7 @@ describe("W4: save 去抖（热路径合并 / 冷路径同步 flush）", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("W2TC1: 热路径去抖合并：3 次 save 合并 1 次写盘、内容为 flush 时刻最新状态", async () => {
@@ -523,7 +523,7 @@ describe("W5: 批 settle 与 IO 错误语义", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("W2TC4: flush IO 错误 reject 批内全部调用 + 失败不粘滞（下一 save 开新批）", async () => {
@@ -605,7 +605,7 @@ describe("W6: workflow-record entry 计数（= flush 次数；save 级不放大�
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("W2TC6(W17): entry 计数 = flush 次数：首写+终态各 1、中间去抖批合并（N save → 1 entry）、终态 entry 含 done", async () => {
@@ -653,7 +653,7 @@ describe("W7: flushPendingSaves / dispose / 串行链", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("W2TC9: flushPendingSaves 立即刷全部 pending 批且 store 保持可用", async () => {
@@ -847,7 +847,7 @@ describe("W8: 去抖窗口崩溃语义与 timer unref", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("W2TC12: 去抖 timer 必须 unref（不钉住 extension 进程）", async () => {
@@ -928,7 +928,7 @@ describe("W17: workflow-record 自描述 entry 重建（entry > state 文件 > �
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("customType 常量字面量钉住：WORKFLOW_RECORD_CUSTOM_TYPE === 'workflow-record'", () => {

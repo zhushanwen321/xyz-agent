@@ -50,7 +50,7 @@ describe('persistAgentBinding', () => {
       const sidecarFiles = readdirSync(dir).filter((f: string) => f.includes('.agent.json'))
       expect(sidecarFiles.length).toBe(0)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -83,7 +83,7 @@ describe('persistAgentBinding', () => {
       expect(result!.spawnSource).toBe('agent')
       expect(result!.parentAgentSessionId).toBe('parent-123')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })
@@ -127,7 +127,7 @@ describe('A3b: 缓存失效集成', () => {
         delete process.env.XYZ_AGENT_DATA_DIR
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })
@@ -143,7 +143,7 @@ describe('readAgentBinding', () => {
       const result = readAgentBinding(fp)
       expect(result).toBeUndefined()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -160,7 +160,7 @@ describe('readAgentBinding', () => {
       const result = readAgentBinding(fp)
       expect(result).toBeUndefined()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -177,7 +177,7 @@ describe('readAgentBinding', () => {
       const result = readAgentBinding(fp)
       expect(result).toBeUndefined()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -195,7 +195,7 @@ describe('readAgentBinding', () => {
       expect(result?.spawnSource).toBe('agent')
       expect(result?.parentAgentSessionId).toBeUndefined()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })

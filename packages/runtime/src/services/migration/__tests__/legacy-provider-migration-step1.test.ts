@@ -55,7 +55,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.XYZ_AGENT_DATA_DIR
-  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 describe('M5-04: step1 hasOverride 判定含 models/quota（catalog 条目保留仅删 apiKey）', () => {

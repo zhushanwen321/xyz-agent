@@ -48,7 +48,7 @@ describe("readActivePendingFromSessionFile", () => {
   afterEach(() => {
     for (const f of tmpFiles.splice(0)) {
       try {
-        fs.rmSync(path.dirname(f), { recursive: true, force: true });
+        fs.rmSync(path.dirname(f), { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
       } catch {
         // 清理失败不影响断言
       }
@@ -165,7 +165,7 @@ describe("readActivePendingFromSessionFile — 增量游标 [perf]", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("首次全量 + append 后增量：unregister 只抵消对应 id（与全量读一致）", () => {

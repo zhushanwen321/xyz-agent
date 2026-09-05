@@ -149,7 +149,7 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：onRoundSettled 注入 + early 
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   // ── 改动 2：onRoundSettled 回调注入 ──────────────────────────────────
@@ -322,7 +322,7 @@ describe("[N1] one-shot 成功完成通知：SP-5 回退 resumable 后仍送达"
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     // 还原默认活进程句柄实现（其他用例的 busy 判定依赖）
     mockGetChildByRecord.mockImplementation(() => ({ killed: false, kill: () => true }));
   });

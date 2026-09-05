@@ -140,7 +140,7 @@ afterEach(() => {
 	delete process.env.PI_CODING_AGENT_DIR;
 	Reflect.deleteProperty(globalThis, FOOTER_HANDSHAKE_KEY);
 	Reflect.deleteProperty(globalThis, REQUEST_RENDER_KEY);
-	if (existsSync(TMP_ROOT)) rmSync(TMP_ROOT, { recursive: true, force: true });
+	if (existsSync(TMP_ROOT)) rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 // ──────────────────────── 测试 ────────────────────────

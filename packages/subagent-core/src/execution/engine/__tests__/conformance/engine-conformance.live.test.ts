@@ -221,7 +221,7 @@ describe.skipIf(!LIVE)("conformance relay 变体（经代理 spawn 全链，手�
         else process.env[key] = savedEnv[key];
       }
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 });

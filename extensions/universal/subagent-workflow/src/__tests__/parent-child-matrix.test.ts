@@ -136,7 +136,7 @@ describe("SP-4 级联关闭（真实 SubagentService）", () => {
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("onParentFork：running record 转 closed + closedReason=parent-fork，并从内存归档", () => {
@@ -257,7 +257,7 @@ describe("SP-4 index.ts 事件接线", () => {
   afterEach(() => {
     processOnSpy.mockRestore();
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     resetServiceSlot();
   });
 

@@ -276,7 +276,7 @@ afterEach(async () => {
     ),
   );
   activeServers.length = 0;
-  for (const dir of activeTmpDirs) fs.rmSync(dir, { recursive: true, force: true });
+  for (const dir of activeTmpDirs) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   activeTmpDirs.length = 0;
 });
 

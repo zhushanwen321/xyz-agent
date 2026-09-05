@@ -140,7 +140,7 @@ describe("SP-5 one-shot upgrade（message → chatMode + 冷 resume）", () => {
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   // TC-1: one-shot done 后 message 触发 upgrade（chatMode=true）

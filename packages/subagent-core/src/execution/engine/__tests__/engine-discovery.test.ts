@@ -38,7 +38,7 @@ beforeEach(() => {
 
 afterEach(() => {
   clearEngines();
-  fs.rmSync(tmpRoot, { recursive: true, force: true });
+  fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 describe("syncEnginesFile", () => {

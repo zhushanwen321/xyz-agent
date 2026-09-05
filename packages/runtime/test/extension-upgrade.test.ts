@@ -98,7 +98,7 @@ describe('Extension Upgrade', () => {
   })
 
   afterEach(() => {
-    try { rmSync(testSettingsDir, { recursive: true, force: true }) } catch { /* ignore */ }
+    try { rmSync(testSettingsDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }) } catch { /* ignore */ }
   })
 
   // ── 1. IExtensionSettings: autoUpgrade 持久化 ─────────────────

@@ -252,7 +252,7 @@ describe("E1 全链路集成：goal_control create 数组 → 落盘 → 重载 
 			expect(prompt).toContain("1. e2e cond a");
 			expect(prompt).toContain("2. e2e cond b");
 		} finally {
-			rmSync(dir, { recursive: true, force: true });
+			rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		}
 	});
 });

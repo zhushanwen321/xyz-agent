@@ -120,11 +120,11 @@ beforeAll(() => {
 
 afterAll(() => {
   Object.defineProperty(process, 'platform', { value: ORIGINAL_PLATFORM })
-  rmSync(TEST_UPDATE_DIR, { recursive: true, force: true })
+  rmSync(TEST_UPDATE_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 beforeEach(() => {
-  rmSync(TEST_UPDATE_DIR, { recursive: true, force: true })
+  rmSync(TEST_UPDATE_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   renameSyncMock.mockReset()
   renameSyncMock.mockImplementation((src, dst, real) => real(src, dst))
   appendUpdateErrorMock.mockClear()

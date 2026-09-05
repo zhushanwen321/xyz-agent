@@ -34,7 +34,7 @@ describe('skill-dir-config buildDirConfigs', () => {
   })
 
   afterEach(() => {
-    rmSync(tmpRealDir, { recursive: true, force: true })
+    rmSync(tmpRealDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('过滤不存在的绝对路径脏数据（/path/a 等 pi 占位符）', () => {
@@ -67,7 +67,7 @@ describe('skill-dir-config buildDirConfigs', () => {
     } finally {
       process.env.HOME = realHome
       // fakeHome 递归删除已覆盖其下 fixture，无需单独清理 tmpHomeSubdir
-      rmSync(fakeHome, { recursive: true, force: true })
+      rmSync(fakeHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -104,8 +104,8 @@ describe('skill-dir-config buildDirConfigs', () => {
       // global 内顺序与传入一致（dirB 在前）
       expect(enabled.map(c => c.path)).toEqual([dirB, dirA])
     } finally {
-      rmSync(dirA, { recursive: true, force: true })
-      rmSync(dirB, { recursive: true, force: true })
+      rmSync(dirA, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+      rmSync(dirB, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -154,8 +154,8 @@ describe('discovery-store setSkillDirs 脏数据写入过滤（v2 SkillDirConfig
   })
 
   afterEach(() => {
-    rmSync(discoveryTmpDir, { recursive: true, force: true })
-    rmSync(realDir, { recursive: true, force: true })
+    rmSync(discoveryTmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+    rmSync(realDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('剔除不存在的绝对路径脏数据（/path/a 等 pi 占位符），保留存在的', () => {
@@ -186,7 +186,7 @@ describe('discovery-store setSkillDirs 脏数据写入过滤（v2 SkillDirConfig
     } finally {
       process.env.HOME = realHome
       // fakeHome 递归删除已覆盖其下 fixture，无需单独清理 tmpHomeSubdir
-      rmSync(fakeHome, { recursive: true, force: true })
+      rmSync(fakeHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
