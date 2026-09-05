@@ -108,3 +108,13 @@
 - 模型: xiaomi-token-plan-cn/mimo-v2.5-pro
 - 补发批头: 2 finished, 0 failed, 0 cancelled（成员正文实测为空——sleep 中 kill 无 assistant 输出，gc 判 finished + 覆写 entry 无 result 可 merge，设计「result 或截断 error」二分外的第三形态：空正文）
 - 二次重启 notify: before=1 after=1
+
+## V1 — 2026-09-05T08:36:07.409Z
+
+- 世代: v2 探针（subagent-sync-collect-v2 §4 V1；v1 A4① 复验）——18 PASS / 0 FAIL
+- 时序修订: 批通知路径「写账前 manifest 屏障 await」修复（§3.3 D1 修订）后首次实跑；mtime 断言从留痕 note 升为硬 check（notify-entry − mtime > 0）。旧 fire-and-forget 形态实跑方向不定（06:33 早于 2ms / 07:31 晚于 3ms），修复后构造性保证
+- 模型: xiaomi-token-plan-cn/mimo-v2.5-pro（config perItemChars=100 确定性触发截断）
+- 全文长度: 236（截断前）／批内保留: 101
+- manifest 首见时点已落盘: yes（mtime 严格早于 notify entry timestamp 3.9ms；屏障严格门 PASS；manifest.status 如实投影 "running"）
+- sa- id 自举反查: 命中
+- 取回一致: yes（逐字节）

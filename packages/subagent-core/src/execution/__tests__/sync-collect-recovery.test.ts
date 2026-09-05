@@ -12,7 +12,8 @@
 // 场景：
 //   1. 标记与终态五字段可见性：collectMode/batchFinalized/status/endedAt/closedReason/
 //      result/error 经末条 entry 重建后全部可见（rebuildEntryRecord 投影白名单扩展）；
-//   2. E1 补发：崩溃残留（全员终态 + 无标记）→ notifyBatch 单批补发（内容 = 末条终态
+//   2. E1 补发：崩溃残留（全员终态 + 无标记）→ manifest 屏障（await 落盘，先于
+//      写账——「通知可达 ⇒ 索引就位」构造性保证）→ notifyBatch 单批补发（内容 = 末条终态
 //      快照）+ 统一落标；async 成员 / 已标记成员（E9 排除）/ 异根成员均不入批；
 //   3. E1 幂等窗口：账本同 hash 拒绝（accepted=false）也统一补标 → 标记落盘后二次
 //      恢复零补发（收敛）；
@@ -38,9 +39,10 @@
 //      成员补种终态 entry → settled 边沿重扫补发单批 + 落标 → 后续 settled 零处理；
 //  12. D4 上限：成员恒 running → settled 驱动 8 次重扫达限 → disposed（debug 留痕），
 //      第 9 次（成员此刻已终态）不再扫描；
-//  13. v2 断链 1（设计 §3.3 D1/D2）E1 路径 manifest：落标出口 fire-and-forget 补写
-//      records/<sa-id>.json——成功成员 status 如实投影 "running"（豁免形态末条）/
-//      "closed"（覆写后末条），sessionFile 投影（W1 前置依赖）随批落标就位；
+//  13. v2 断链 1（设计 §3.3 D1/D2）E1 路径 manifest：写账前屏障 await 补写
+//      records/<sa-id>.json（时序竞态修订：原落标出口 fire-and-forget）——成功成员
+//      status 如实投影 "running"（豁免形态末条）/"closed"（覆写后末条），sessionFile
+//      投影（W1 前置依赖）随批补发就位；
 //  14. P-manifest 不变量：子文件锚 + manifest 并存 → 重启重建 collectRecords 投影
 //      与删 manifest 后一致（byId.has 跳过语义：有子文件锚的成员永不被 manifest
 //      补充投影覆盖，running manifest 不改变 list 形态）；
@@ -112,22 +114,23 @@ const ENV_KEYS_TO_STRIP = [
 const ROOT_SESSION = "root-session-crash";
 
 /** settled handler 捕获 + 驱动（D4 重扫用例用）：pi 实装为列表分发（P-settled 定谳，
- *  0.84.4 dist loader.js on() push 进数组 + runner.js emit() 遍历全部 handler），
- *  捕获数组同构——emitAgentSettled 逐一调用已注册 handler，模拟一次 settled 边沿。 */
+ *  0.84.4 dist loader.js on() push 进数组 + runner.js emit() 遍历全部 handler 并逐一
+ *  await），捕获数组同构——emitAgentSettled 逐一 await 已注册 handler（D4 重扫
+ *  handler 已 async 化：E1 补发前有 manifest 屏障 await），模拟一次 settled 边沿。 */
 interface SettledDriver {
   /** 驱动一次 agent_settled 边沿（快照遍历，防 handler 内注册/变异干扰本轮）。 */
-  emitAgentSettled(): void;
+  emitAgentSettled(): Promise<void>;
 }
 
 function settledCapture(): { driver: SettledDriver; on: ReturnType<typeof vi.fn> } {
-  const handlers: Array<() => void> = [];
+  const handlers: Array<() => void | Promise<void>> = [];
   return {
     driver: {
-      emitAgentSettled: () => {
-        for (const h of [...handlers]) h();
+      emitAgentSettled: async () => {
+        for (const h of [...handlers]) await h();
       },
     },
-    on: vi.fn((event: string, handler: () => void) => {
+    on: vi.fn((event: string, handler: () => void | Promise<void>) => {
       if (event === "agent_settled") handlers.push(handler);
     }),
   };
@@ -241,10 +244,11 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
   });
 
   afterEach(() => {
-    // maxRetries：落标出口的 manifest fire-and-forget 原子写（tmp→fsync→rename，
-    // 断言 until 只等 rename 完成，链尾 fsyncDir 仍在飞）+ sessions-index fire 写
-    // 都可能与删除并发（ENOTEMPTY 竞态，根级全量并行时机器负载高会放大窗口）——
-    // 同款修法见 get-record-for-action-restart.test.ts / record-store-index.test.ts。
+    // maxRetries：E9 落标的 manifest fire-and-forget 原子写（tmp→fsync→rename，
+    // 链尾 fsyncDir 仍在飞；批通知路径的屏障 await 已含 fsyncDir，无此竞态）+
+    // sessions-index fire 写都可能与删除并发（ENOTEMPTY 竞态，根级全量并行时机器
+    // 负载高会放大窗口）——同款修法见 get-record-for-action-restart.test.ts /
+    // record-store-index.test.ts。
     fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
@@ -396,7 +400,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     expect(byId.get("sa-d")!.collectMode).toBeUndefined();
   });
 
-  it("E1 补发：全员终态无标记 → notifyBatch 单批（末条终态快照）+ 统一落标；async/已标记/异根排除", () => {
+  it("E1 补发：全员终态无标记 → notifyBatch 单批（末条终态快照）+ 统一落标；async/已标记/异根排除", async () => {
     const store = makeSeedStore();
     store.reportSubagentRecord(memberRecord({ id: "sa-a" }));
     store.reportSubagentRecord(
@@ -422,7 +426,17 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     const pi = makeAssertPi();
     const recovery = makeRecoveryService(pi);
     const spy = spyNotifier(recovery);
-    recovery.recoverSyncCollectBatch();
+    // 屏障断言钩子（严格时序门）：notifyBatch（写账入口）被调用的时刻，成员 manifest
+    // 必已在磁盘——「通知可达 ⇒ 索引就位」的构造性保证（修复前 manifest 在写账后
+    // fire-and-forget 写，该时刻只大概率成立）。
+    let manifestExistsAtLedgerWrite = false;
+    spy.notifyBatch.mockImplementation(() => {
+      manifestExistsAtLedgerWrite = fs.existsSync(
+        path.join(getSubagentRecordsDir(agentDir, agentDir), "sa-a.json"),
+      );
+      return true;
+    });
+    await recovery.recoverSyncCollectBatch();
 
     // 单批补发：只有 sa-a / sa-b 入批，内容 = 末条终态快照
     expect(spy.notifyBatch).toHaveBeenCalledTimes(1);
@@ -436,6 +450,8 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     expect(b.error).toBe("boom");
     // 单条 notify 零调用（补发形态是批，不是逐条）
     expect(spy.notify).not.toHaveBeenCalled();
+    // E1 屏障：写账时刻成员 manifest 已落盘（严格时序门）
+    expect(manifestExistsAtLedgerWrite).toBe(true);
 
     // 统一落标：两成员各一笔 batchFinalized entry（appendEntry 直投影，含终态快照）
     const marks = pi.appendEntry.mock.calls
@@ -445,7 +461,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     expect(marks.map((m) => m.id).sort()).toEqual(["sa-a", "sa-b"]);
   });
 
-  it("E1 幂等窗口：账本同 hash 拒绝（accepted=false）也统一补标 → 标记落盘后二次恢复零补发", () => {
+  it("E1 幂等窗口：账本同 hash 拒绝（accepted=false）也统一补标 → 标记落盘后二次恢复零补发", async () => {
     const store = makeSeedStore();
     store.reportSubagentRecord(memberRecord({ id: "sa-a" }));
     store.reportSubagentRecord(
@@ -457,7 +473,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     const first = makeRecoveryService(pi1);
     const spy1 = spyNotifier(first);
     spy1.notifyBatch.mockReturnValue(false);
-    first.recoverSyncCollectBatch();
+    await first.recoverSyncCollectBatch();
     expect(spy1.notifyBatch).toHaveBeenCalledTimes(1);
     // 账本拒绝也算已投递 → 仍统一补标
     const marks1 = pi1.appendEntry.mock.calls
@@ -475,12 +491,12 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     // 第二次恢复：全员已标记 → 零补发零 notify（收敛，无振荡）
     const second = makeRecoveryService(makeAssertPi());
     const spy2 = spyNotifier(second);
-    second.recoverSyncCollectBatch();
+    await second.recoverSyncCollectBatch();
     expect(spy2.notifyBatch).not.toHaveBeenCalled();
     expect(spy2.notify).not.toHaveBeenCalled();
   });
 
-  it("E1 仍有 running 成员：不补发不落标（等自然终态走正常流）", () => {
+  it("E1 仍有 running 成员：不补发不落标（等自然终态走正常流）", async () => {
     const store = makeSeedStore();
     store.reportSubagentRecord(memberRecord({ id: "sa-a" }));
     store.reportSubagentRecord(
@@ -492,7 +508,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     const pi = makeAssertPi();
     const recovery = makeRecoveryService(pi);
     const spy = spyNotifier(recovery);
-    recovery.recoverSyncCollectBatch();
+    await recovery.recoverSyncCollectBatch();
 
     expect(spy.notifyBatch).not.toHaveBeenCalled();
     expect(spy.notify).not.toHaveBeenCalled();
@@ -560,7 +576,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     expect(marks[0]!.result).toBe("ok-terminal");
   });
 
-  it("U4 deviation #8 接线：config collectSync 预算热读传入 notifyBatch budget 参数", () => {
+  it("U4 deviation #8 接线：config collectSync 预算热读传入 notifyBatch budget 参数", async () => {
     const store = makeSeedStore();
     store.reportSubagentRecord(memberRecord({ id: "sa-a" }));
     store.reportSubagentRecord(
@@ -580,7 +596,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     const modelService = (recovery as unknown as { modelService: ModelConfigService }).modelService;
     modelService.reloadGlobalConfig();
     const spy = spyNotifier(recovery);
-    recovery.recoverSyncCollectBatch();
+    await recovery.recoverSyncCollectBatch();
 
     expect(spy.notifyBatch).toHaveBeenCalledTimes(1);
     expect(spy.notifyBatch.mock.calls[0]![1]).toEqual({ perItemChars: 1234, totalChars: 5678 });
@@ -620,7 +636,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
 
     // ── E1 真实跑：末条（覆写后 closed entry）候选命中 → 补发 + 落标 ──
     const spy = spyNotifier(recovery);
-    recovery.recoverSyncCollectBatch();
+    await recovery.recoverSyncCollectBatch();
     expect(spy.notifyBatch).toHaveBeenCalledTimes(1);
     expect(spy.notify).not.toHaveBeenCalled();
     const batch = spy.notifyBatch.mock.calls[0]![0] as Array<Record<string, unknown>>;
@@ -635,11 +651,12 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     expect(marked.batchFinalized).toBe(true);
     expect(marked.collectMode).toBe("sync");
 
-    // [v2 D1] E1 路径 manifest：落标出口 fire-and-forget 补写 records/<sa-id>.json，
-    // 反查索引随补发就位（指针行消费前可得）。覆写后 closed 重建快照 → status 如实
-    // 投影 "closed"；sessionFile 来自 W1 的 rebuildEntryRecord 投影扩展。
+    // [v2 D1] E1 路径 manifest：写账前屏障 await 补写 records/<sa-id>.json（时序
+    // 竞态修订：原为落标出口 fire-and-forget），反查索引随补发就位（指针行消费前
+    // 可得——await 返回时屏障已完成，无需轮询）。覆写后 closed 重建快照 → status
+    // 如实投影 "closed"；sessionFile 来自 W1 的 rebuildEntryRecord 投影扩展。
     const manifestFile = path.join(getSubagentRecordsDir(agentDir, agentDir), "sa-kill9.json");
-    await until(() => fs.existsSync(manifestFile));
+    expect(fs.existsSync(manifestFile)).toBe(true);
     const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf-8")) as Record<string, unknown>;
     expect(manifest).toMatchObject({
       id: "sa-kill9",
@@ -652,7 +669,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     // ── 二次重启（V2 验收「零重发」）：已标记 → 候选空 → 零补发 ──
     const second = makeRecoveryService(makeAssertPi());
     const spy2 = spyNotifier(second);
-    second.recoverSyncCollectBatch();
+    await second.recoverSyncCollectBatch();
     expect(spy2.notifyBatch).not.toHaveBeenCalled();
     expect(spy2.notify).not.toHaveBeenCalled();
   });
@@ -714,7 +731,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     expect(lastBefore.resumable).toBe(true);
 
     const spy = spyNotifier(recovery);
-    recovery.recoverSyncCollectBatch();
+    await recovery.recoverSyncCollectBatch();
     expect(spy.notifyBatch).toHaveBeenCalledTimes(1);
     const batch = spy.notifyBatch.mock.calls[0]![0] as Array<Record<string, unknown>>;
     expect(batch[0]!.id).toBe("sa-exempt");
@@ -729,10 +746,11 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     expect(marks.map((m) => m.id)).toEqual(["sa-exempt"]);
 
     // [v2 D1/D2 断链 1] E1 补发路径（rebuildEntryRecord 重建快照来源）的 manifest：
-    // 落标出口 fire-and-forget 补写，成功成员此刻实态 running+resumable → status 如实
-    // 投影 "running"（D2：不撒谎写 closed）；sessionFile 来自 W1 的投影扩展（前置依赖）。
+    // 写账前屏障 await 补写（await 返回时必在场），成功成员此刻实态 running+
+    // resumable → status 如实投影 "running"（D2：不撒谎写 closed）；sessionFile
+    // 来自 W1 的投影扩展（前置依赖）。
     const manifestFile = path.join(getSubagentRecordsDir(agentDir, agentDir), "sa-exempt.json");
-    await until(() => fs.existsSync(manifestFile));
+    expect(fs.existsSync(manifestFile)).toBe(true);
     const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf-8")) as Record<string, unknown>;
     expect(manifest).toMatchObject({
       id: "sa-exempt",
@@ -749,7 +767,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
   // 成员延迟终态（冷路径 resume → 正常流落 entry）由 settled 边沿驱动重扫收敛。
   // ============================================================
 
-  it("D4 延迟闭合：E1 仍有 running → 注册 settled 重扫（单注册）→ 成员补种终态 entry → 边沿重扫补发单批+落标 → disposed", () => {
+  it("D4 延迟闭合：E1 仍有 running → 注册 settled 重扫（单注册）→ 成员补种终态 entry → 边沿重扫补发单批+落标 → disposed", async () => {
     const store = makeSeedStore();
     store.reportSubagentRecord(memberRecord({ id: "sa-a" }));
     store.reportSubagentRecord(
@@ -762,7 +780,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     const pi = makeAssertPi();
     const recovery = makeRecoveryService(pi);
     const spy = spyNotifier(recovery);
-    recovery.recoverSyncCollectBatch();
+    await recovery.recoverSyncCollectBatch();
 
     // 等待分支：零补发 + 注册 settled 重扫恰一次（agent_settled 单注册断言）
     expect(spy.notifyBatch).not.toHaveBeenCalled();
@@ -775,8 +793,9 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
       memberRecord({ id: "sa-late", status: "closed", endedAt: 9000, result: "late full result" }),
     );
 
-    // settled 边沿 → 重扫一次：全员终态 → 补发单批（两成员，含延迟成员 result 全文）
-    pi.emitAgentSettled();
+    // settled 边沿 → 重扫一次（await 完整补发链：manifest 屏障 → 写账 → 落标）：
+    // 全员终态 → 补发单批（两成员，含延迟成员 result 全文）
+    await pi.emitAgentSettled();
     expect(spy.notifyBatch).toHaveBeenCalledTimes(1);
     const batch = spy.notifyBatch.mock.calls[0]![0] as Array<Record<string, unknown>>;
     expect(batch.map((m) => m.id).sort()).toEqual(["sa-a", "sa-late"]);
@@ -790,11 +809,11 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     expect(marks.map((m) => m.id).sort()).toEqual(["sa-a", "sa-late"]);
 
     // disposed 验证：补发完成后再驱动 settled 边沿 → 零处理（无第二次补发）
-    pi.emitAgentSettled();
+    await pi.emitAgentSettled();
     expect(spy.notifyBatch).toHaveBeenCalledTimes(1);
   });
 
-  it("D4 上限：成员恒 running → settled 驱动 8 次重扫达限 disposed（debug 留痕）→ 第 9 次（成员已终态）不再扫描", () => {
+  it("D4 上限：成员恒 running → settled 驱动 8 次重扫达限 disposed（debug 留痕）→ 第 9 次（成员已终态）不再扫描", async () => {
     const store = makeSeedStore();
     store.reportSubagentRecord(memberRecord({ id: "sa-stuck" }));
 
@@ -802,14 +821,14 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     const recovery = makeRecoveryService(pi);
     const spy = spyNotifier(recovery);
     loggerMock.debug.mockClear(); // logger 是模块级共享，计数从本用例起算
-    recovery.recoverSyncCollectBatch();
+    await recovery.recoverSyncCollectBatch();
     expect(spy.notifyBatch).not.toHaveBeenCalled();
     expect(pi.on.mock.calls.filter((c) => c[0] === "agent_settled")).toHaveLength(1);
 
     // 连续 8 次 settled：每次重扫（成员末条恒 running → 每次都判「仍在等」）。
     // waiting 判定过滤用消息前缀精确匹配（达限日志文案同样含 "still running" 词）。
     const e1WaitingLogs = () => loggerMock.debug.mock.calls.map((c) => String(c[0])).filter((m) => m.startsWith("[subagents] E1 sync batch recovery:"));
-    for (let i = 0; i < 8; i++) pi.emitAgentSettled();
+    for (let i = 0; i < 8; i++) await pi.emitAgentSettled();
     // 首扫 1 + 重扫 8 = 9 次 waiting 判定留痕；达限 debug 恰一次
     expect(e1WaitingLogs()).toHaveLength(9);
     const limitLogs = loggerMock.debug.mock.calls.map((c) => String(c[0])).filter((m) => m.startsWith("[subagents] E1 settled rescan: reached limit"));
@@ -821,12 +840,12 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     lateStore.reportSubagentRecord(
       memberRecord({ id: "sa-stuck", status: "closed", endedAt: 9500, result: "too late" }),
     );
-    pi.emitAgentSettled();
+    await pi.emitAgentSettled();
     expect(spy.notifyBatch).not.toHaveBeenCalled();
     expect(e1WaitingLogs()).toHaveLength(9);
   });
 
-  it("D4 dispose 惰化：E1 waiting → dispose() → trailing settled 边沿不扫描不落标（通知不丢失）", () => {
+  it("D4 dispose 惰化：E1 waiting → dispose() → trailing settled 边沿不扫描不落标（通知不丢失）", async () => {
     // 与「D4 延迟闭合」同构造（成员补种终态 + settled 边沿 → 补发落标）作对照：
     // 本用例在边沿前插入 dispose()——handler 已惰化，扫描/补发/落标全不发生。
     // 失败模式（修复前）：dispose 后 notifier 已 dispose → notifyBatch 短路 false
@@ -843,7 +862,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     const pi = makeAssertPi();
     const recovery = makeRecoveryService(pi);
     const spy = spyNotifier(recovery);
-    recovery.recoverSyncCollectBatch();
+    await recovery.recoverSyncCollectBatch();
     expect(spy.notifyBatch).not.toHaveBeenCalled();
     expect(pi.on.mock.calls.filter((c) => c[0] === "agent_settled")).toHaveLength(1);
 
@@ -857,7 +876,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     );
     loggerMock.debug.mockClear();
     loggerMock.warn.mockClear();
-    pi.emitAgentSettled();
+    await pi.emitAgentSettled();
     expect(spy.notifyBatch).not.toHaveBeenCalled();
     const e1Logs = () =>
       [...loggerMock.debug.mock.calls, ...loggerMock.warn.mock.calls]
@@ -911,10 +930,10 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     seedRoundTerminalEntries("sa-pm", childFile, "p-manifest full result", "prov/pm-m", "sync");
     const recovery = makeRecoveryService(makeAssertPi()); // initSession：orphan 判定 + sidecar 真实落盘
     const spy = spyNotifier(recovery);
-    recovery.recoverSyncCollectBatch(); // E1 豁免补发 + 落标 + manifest fire-and-forget 写
+    await recovery.recoverSyncCollectBatch(); // E1 豁免补发：manifest 屏障（先于写账）→ 落标
     expect(spy.notifyBatch).toHaveBeenCalledTimes(1);
     const manifestFile = path.join(getSubagentRecordsDir(agentDir, agentDir), "sa-pm.json");
-    await until(() => fs.existsSync(manifestFile));
+    expect(fs.existsSync(manifestFile)).toBe(true); // 屏障：await 返回时必已落盘
 
     // 模拟重启重建：全新 RecordStore + ManifestStore（内存缓存零残留），manifest 存在时
     const freshStore = () =>

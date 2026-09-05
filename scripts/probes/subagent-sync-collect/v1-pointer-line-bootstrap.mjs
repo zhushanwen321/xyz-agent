@@ -5,10 +5,14 @@
 // 断链 1（manifest 永不产生）修复后：批通知指针行原文 `session_read
 // {"action":"result","session":"<sa- id>"}` 应可直接自举取回——v1 A4① 实跑中
 // sa- id 反查报「无匹配 record」（manifest 惰性不落盘，须人工换绝对路径），v2 W3
-// 在落标唯一出口（appendBatchFinalizedEntry）fire-and-forget 补写 manifest。
+// 在批通知路径补写 manifest；时序竞态修订后写点前移为「写账前屏障 await 全部落盘」
+// （原落标出口 fire-and-forget 与通知投递并发，「送达时已落盘」只大概率成立——
+// 探针实测 mtime 相对 notify entry ±2/3ms 方向不定），「通知可达 ⇒ 索引就位」
+// 升为构造性保证（by construction），本探针恢复严格时序门（硬 check）。
 // 预期输出：
 //   - 恰 1 条批通知（批头 `1 finished, 0 failed, 0 cancelled`），条目正文截断 + 指针行；
-//   - 批通知首见时点（waitForNotify pred 粒度）records/<sa-id>.json 已落盘；
+//   - 批通知首见时点（waitForNotify pred 粒度）records/<sa-id>.json 已落盘，且
+//     manifest mtime 严格早于 notify entry timestamp（屏障硬 check）；
 //   - 主 agent 按指针行原文（sa- id，非绝对路径）调 session_read result：
 //     不再出现「无匹配 record」，取回正文与子 session 磁盘全文（record.result 同源）
 //     逐字节一致。
@@ -27,7 +31,7 @@ import * as C from "./common.mjs";
 const SCENARIO = "V1";
 const DESIGN = "subagent-sync-collect-v2.md §4 验收表 V1（指针行取回自举；v1 A4① 复验）";
 const EXPECT =
-  "批通知指针行 sa- id 原文反查命中（无「无匹配 record」）+ 取回与 record.result 逐字节一致 + manifest 先于通知消费落盘";
+  "批通知指针行 sa- id 原文反查命中（无「无匹配 record」）+ 取回与 record.result 逐字节一致 + manifest mtime 严格早于 notify entry timestamp（屏障构造性保证）";
 
 /** 条目内指针行（以 `[truncated ` 开头的行）。 */
 function pointerLineOf(item) {
@@ -42,12 +46,12 @@ function pointerSessionId(item) {
   return m ? m[1] : null;
 }
 
-/** mtime 时序方向自适应文案（实跑两态都出现过——早于 2ms / 晚于 3ms，方向锚死
- *  会产生「早于 -3ms」矛盾表述，按符号选词）。 */
+/** mtime vs notify entry timestamp 的时序差描述（正 = manifest 先落盘）。
+ *  屏障修复后方向恒为正（构造性保证），仍保留按符号选词的形态以在异常时如实呈现。 */
 function mtimeOrderNote(deltaMs) {
   if (deltaMs == null) return "mtime vs notify entry timestamp: n/a";
-  if (deltaMs > 0) return `mtime 早于 notify entry timestamp ${deltaMs.toFixed(0)}ms`;
-  if (deltaMs < 0) return `mtime 晚于 notify entry timestamp ${(-deltaMs).toFixed(0)}ms`;
+  if (deltaMs > 0) return `mtime 严格早于 notify entry timestamp ${deltaMs.toFixed(1)}ms`;
+  if (deltaMs < 0) return `mtime 晚于 notify entry timestamp ${(-deltaMs).toFixed(1)}ms（屏障失效）`;
   return "mtime 与 notify entry timestamp 同刻";
 }
 
@@ -82,7 +86,7 @@ async function main() {
         plan: [
           "mkdtemp 工作区 + 隔离 agentDir + 写 subagents/config.json collectSync.perItemChars=100（确定性截断触发）",
           "1 个 collect:sync start（task 要求 200-300 字介绍）→ 等批通知 ≤240s",
-          "批通知首见时点（pred 粒度）检查 records/<sa-id>.json 已落盘 + 记录 mtime vs notify entry timestamp",
+          "批通知首见时点（pred 粒度）检查 records/<sa-id>.json 已落盘 + mtime 严格早于 notify entry timestamp（屏障硬 check）",
           "主 agent 按指针行原文调 session_read {action:result, session:<sa- id>}（不换绝对路径）",
           "断言：无「无匹配 record」+ 取回 toolResult 与子 session 磁盘全文逐字节一致",
         ],
@@ -126,8 +130,9 @@ async function main() {
     const turn = await session.prompt(prompt, 120000);
     checks.check("派发轮 turn_end", !!turn.ok, `stopReason=${turn.stopReason || "n/a"}`);
 
-    // 批通知首见时点立即检查 manifest 落盘（pred 内联钩子，轮询粒度 ≤2s——W3 的
-    // fire-and-forget 写为毫秒级，首见时点必已完成；FAIL 则如实记录）。
+    // 批通知首见时点立即检查 manifest 落盘（pred 内联钩子，轮询粒度 ≤2s）。屏障
+    //（写账前 await 落盘）已构造性保证「通知可达 ⇒ 索引就位」，本检查 + 下方 mtime
+    // 硬 check 是对该保证的真实通路验证（FAIL = 屏障被回归破坏，如实红）。
     let manifestSeenAtFirstNotify = null; // { saId, exists, manifestMtime, notifyEntryTs }
     const entries = await C.waitForNotify(session.sessionFile, 240000, (ns) => {
       const batch = ns.find((n) => C.BATCH_HEADER_RE.test(n.content.split("\n")[0] || ""));
@@ -177,7 +182,7 @@ async function main() {
     checks.check("指针行含 sa- id（取回路径就绪）", !!sid && sid.startsWith("sa-"), sid || "(未解析到)");
     if (!sid) return;
 
-    // [V1 核心断言 1] manifest 在批通知首见时点已落盘（W3 落标出口 fire-and-forget 写）
+    // [V1 核心断言 1] manifest 在批通知首见时点已落盘（批通知路径写账前屏障写）
     checks.check(
       "磁盘 manifest 在批通知首见时点已存在",
       manifestSeenAtFirstNotify !== null && manifestSeenAtFirstNotify.exists === true,
@@ -185,12 +190,18 @@ async function main() {
         ? `saId=${manifestSeenAtFirstNotify.saId} exists=${manifestSeenAtFirstNotify.exists}`
         : "(pred 钩子未触发)",
     );
-    // 记录行插值源（实况派生，禁硬编码经验值）：mtime 与 notify entry 的时序差、
-    // manifest.status 投影——末次实跑值不可复用，逐次由实读数据产出。
+    // [V1 严格时序门] manifest mtime 严格早于 notify entry timestamp——时序竞态修订
+    // （原 fire-and-forget 与投递并发，探针实测 ±2/3ms 方向不定）后的硬 check：
+    // 屏障（写账前 await 全部落盘）使「通知可达 ⇒ 索引就位」成为构造性保证，
+    // mtime 落后/同刻即屏障回归，不再留痕降级。
     let mtimeDeltaMs = null; // notify entry timestamp - manifest mtime（正 = mtime 更早）
     if (manifestSeenAtFirstNotify?.manifestMtime != null && manifestSeenAtFirstNotify.notifyEntryTs != null) {
       mtimeDeltaMs = manifestSeenAtFirstNotify.notifyEntryTs - manifestSeenAtFirstNotify.manifestMtime;
-      checks.note("manifest mtime vs notify entry timestamp（时序口径：消费时点就位为门，此处仅留痕）", `notify-entry - mtime = ${mtimeDeltaMs.toFixed(0)}ms`);
+      checks.check(
+        "manifest mtime 严格早于 notify entry timestamp（屏障构造性保证）",
+        mtimeDeltaMs > 0,
+        `notify-entry - mtime = ${mtimeDeltaMs.toFixed(1)}ms`,
+      );
     }
     let manifestStatus = null;
     const manifestFile = join(C.resolveAgentDir(), "subagents", ws.enc, "records", `${sid}.json`);
@@ -258,7 +269,7 @@ async function main() {
       `- 世代: v2 探针（subagent-sync-collect-v2 §4 V1；v1 A4① 复验）——${summary.passed} PASS / ${summary.failed} FAIL`,
       `- 模型: ${C.resolveModel()}（config perItemChars=100 确定性触发截断）`,
       `- 全文长度: ${fullText.length}（截断前）／批内保留: ${body.length}`,
-      `- manifest 首见时点已落盘: ${manifestSeenAtFirstNotify?.exists === true ? "yes" : "no"}（${mtimeOrderNote(mtimeDeltaMs)}；manifest.status 如实投影 ${JSON.stringify(manifestStatus)}）`,
+      `- manifest 首见时点已落盘: ${manifestSeenAtFirstNotify?.exists === true ? "yes" : "no"}（${mtimeOrderNote(mtimeDeltaMs)}；屏障严格门 ${mtimeDeltaMs != null && mtimeDeltaMs > 0 ? "PASS" : "FAIL"}；manifest.status 如实投影 ${JSON.stringify(manifestStatus)}）`,
       `- sa- id 自举反查: ${fetched.includes("无匹配 record") ? "FAIL（无匹配 record）" : "命中"}`,
       `- 取回一致: ${identical ? "yes（逐字节）" : "no"}`,
     ]);

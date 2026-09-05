@@ -387,7 +387,8 @@ describe("CollectCoordinator ↔ notifyBatch 集成 — 跨轮续累单批（D2 
         endedAt: 2000,
       }),
       listRecords: (limit) => storeRecords.slice(0, limit),
-      flushBatch: (members) => {
+      // flushBatch 签名已 async 化（deps 契约 Promise<void>）；本 fake 只透传 notifyBatch
+      flushBatch: async (members) => {
         notifier.notifyBatch(members);
       },
     });
@@ -480,7 +481,7 @@ async function settleFlush(): Promise<void> {
         endedAt: 2000,
       }),
       listRecords: (limit) => storeRecords.slice(0, limit),
-      flushBatch: (members) => {
+      flushBatch: async (members) => {
         notifier.notifyBatch(members);
       },
     });

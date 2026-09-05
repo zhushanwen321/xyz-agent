@@ -37,10 +37,12 @@
 //     补发直走 notifier.notifyBatch 不经协调器；异常时序相撞由账本 sync-batch:<hash>
 //     幂等拒绝兜底。
 //
-// flush 注入式（U3 已接线）：deps.flushBatch 由宿主注入——U3 接 notifier.notifyBatch
-//（单条批投递 + ledger sync-batch hash 写账 + batchFinalized 落标，见
-// subagent-service.ts flushBatch 闭包）。测试注入 fake 断言闭合条件。flush 同步
-// void：投递失败语义归 flush 实现方（与 notifier.notify 同风格）。
+// flush 注入式（U3 已接线）：deps.flushBatch 由宿主注入——U3 接 service 闭包的
+//「manifest 屏障（await 落盘）→ notifier.notifyBatch 单条批投递（ledger sync-batch
+// hash 写账）→ batchFinalized 落标」（见 subagent-service.ts flushBatch 闭包）。
+// 测试注入 fake 断言闭合条件。flush 异步（Promise<void>）、协调器 void 调用不等待：
+// 缓冲在调用前已整体移交清空，flush 内部时序（屏障 → 写账 → 落标）与失败语义归
+// 实现方（与 notifier.notify 同风格）。
 //
 // 不变量：
 //   - 每个成员只登记一次：notifyComplete 调用点自带 CAS/gate 单次性（与既有 notify
@@ -86,8 +88,10 @@ export interface CollectCoordinatorDeps {
   /** 闭合判定数据源（CollectScanRecord 最小视图，见接口注释——数据源须携带
    *  collectMode/batchFinalized 原始值，禁经 recordToSubagent 投影）。 */
   listRecords(limit: number): CollectScanRecord[];
-  /** 批投递回调（合批窗口到期触发，缓冲整体移交后清空）。U3 接 notifier.notifyBatch。 */
-  flushBatch(members: BgNotifyRecord[]): void;
+  /** 批投递回调（合批窗口到期触发，缓冲整体移交后清空）。U3 接 service 闭包：
+   *  manifest 屏障 → notifier.notifyBatch 写账 → batchFinalized 落标——屏障先于写账
+   *  是「通知可达 ⇒ 索引就位」的构造性保证，故异步；协调器 void 调用不等待其完成。 */
+  flushBatch(members: BgNotifyRecord[]): Promise<void>;
 }
 
 /** route 去向（测试/诊断断言用）。 */
@@ -165,12 +169,14 @@ export class CollectCoordinator {
 
   /** 合批窗口到期：重验闭合条件后整体移交 flushBatch 并清空。
    *  窗口内新 sync 成员注册 running（跨轮续累反转）→ 保留缓冲不 flush，等其终态
-   *  route 重新排程（终态必经 notifyComplete，不丢、不悬挂）。 */
+   *  route 重新排程（终态必经 notifyComplete，不丢、不悬挂）。
+   *  void 不等待 flush 的 async 屏障序列（manifest → 写账 → 落标）：缓冲已 splice
+   *  先行整体移交，屏障 await 期间窗口内新成员重新入空缓冲开新批，互不干扰。 */
   private flushIfClosed(): void {
     if (this.buffer.length === 0) return;
     if (this.hasRunningSync()) return;
     const members = this.buffer.splice(0, this.buffer.length);
-    this.deps.flushBatch(members);
+    void this.deps.flushBatch(members);
   }
 
   /** 是否存在非终态 sync 成员（collectMode=sync && 无 batchFinalized && 非终态）。

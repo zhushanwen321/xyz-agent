@@ -8,7 +8,9 @@
 //      闭包经 this 运行时读取，替换生效）；
 //   3. async record（无 collect）直通同一 notifier.notify（现状路径字节不变）；
 //   4. 偏差#3 接线：getCollectSyncDefault 读真实 config（缺省 async / 配置 sync +
-//      reloadGlobalConfig 后生效）。
+//      reloadGlobalConfig 后生效）；
+//   5. flush 屏障时序：manifest 写完成先于 notifyBatch 写账（通知可达 ⇒ 索引就位
+//      的构造性保证，时序竞态修复）。
 //
 // mock 手法对齐 ended-message-and-fork-from.test.ts：mock session-runner（不 spawn
 // 真子进程）+ logger；record-store / config 走真实实现（tmpdir 自建自删，红线）。
@@ -47,7 +49,7 @@ vi.mock("../session-runner.ts", () => ({
   spawnedChildren: new Map(),
 }));
 
-import { getSubagentSessionDir } from "../path-encoding.ts";
+import { getSubagentSessionDir, getSubagentRecordsDir } from "../path-encoding.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelRegistryLike } from "../model-resolver.ts";
 import { SubagentService } from "../subagent-service.ts";
@@ -291,5 +293,29 @@ describe("collectCoordinator service integration (U2)", () => {
     expect(marked[0]?.["collectMode"]).toBe("sync");
     expect(marked[0]?.["result"]).toBe("ok");
     expect(marked[0]?.["resumable"]).toBe(true); // SP-5 成功回退态（真链形态保真）
+  });
+
+  it("flush 屏障：manifest 写完成先于 notifyBatch 写账（通知可达 ⇒ 索引就位，构造性保证）", async () => {
+    // 时序竞态修复（v2 D1 修订）：批通知路径的 manifest 写从「写账后 fire-and-forget」
+    // 前移为「写账前 await 全部落盘」屏障——「通知可达 ⇒ 索引就位」从大概率成立升为
+    // 构造性保证（by construction）。断言打在 notifyBatch（写账入口）被调用的时刻：
+    // 磁盘上 records/<sa-id>.json 必已存在（修复前该时刻大概率 false，探针实测 mtime
+    // 相对 notify entry ±2/3ms 方向不定）。
+    let resolveSpawn!: (v: ReturnType<typeof spawnOk>) => void;
+    runSpawnMock.mockImplementationOnce(() => new Promise((res) => { resolveSpawn = res; }));
+    const spy = spyNotifier(service);
+    const handle = await service.execute({ task: "collect me", slug: "collect-me", collect: "sync" });
+    await until(() => runSpawnMock.mock.calls.length >= 1); // 受控 promise 已构造
+    writeChildSessionFile(handle.subagentId, "/agents/worker.md", "ok");
+    const manifestPath = path.join(getSubagentRecordsDir(agentDir, agentDir), `${handle.subagentId}.json`);
+    // 写账时刻钩子：mock 内联捕获 manifest 存在性（此刻即指针行消费可用性）
+    let manifestExistsAtLedgerWrite = false;
+    spy.notifyBatch.mockImplementation(() => {
+      manifestExistsAtLedgerWrite = fs.existsSync(manifestPath);
+      return true;
+    });
+    resolveSpawn(spawnOk());
+    await until(() => spy.notifyBatch.mock.calls.length > 0);
+    expect(manifestExistsAtLedgerWrite).toBe(true);
   });
 });

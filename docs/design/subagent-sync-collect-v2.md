@@ -198,9 +198,9 @@ Subagent "big-report" (sa-9f2c…) completed. Result:
 
 ### 3.3 关键决策与权衡
 
-**D1 manifest 写点 = appendBatchFinalizedEntry（方案 b）**
-选择：在落标唯一出口处，对每成员 fire-and-forget best-effort 写 manifest（与 doFinalizeRecord Step 4 的 best-effort 语义一致，失败仅 debug 日志不阻断落标）。写后与 doFinalizeRecord 的关系：若成员随后被 message upgrade 走完整 finalize，Step 4 会再写一次 manifest（closed）**原子覆盖**——manifest 语义从「终态诊断辅助」修正为「sa- id 反查索引（最新已知快照）」，读侧注释同步修正（subagents.ts:22-24、finalize-record.ts:230 与文件头 D-017 段）。
-被否：方案 a（行为近等价但写点分散两处）、方案 c（影响面外溢，v3 候选）。
+**D1 manifest 写点 = 批通知路径写账前屏障（时序修订版；原 W3 为落标出口 fire-and-forget）**
+选择：批通知路径（flushBatch 正常批 / E1 补发）在 notifyBatch 写账**之前**对每成员并行写 manifest 并 await 全部落盘（Promise.allSettled；失败仅 debug 不阻断写账投递——best-effort 语义与 doFinalizeRecord Step 4 一致），序列为 **manifest（屏障）→ 写账 → 落标**——「通知可达 ⇒ 索引就位」成为构造性保证（by construction）。修订动机：原 W3 在落标唯一出口（appendBatchFinalizedEntry）fire-and-forget 写，与通知投递并发，「通知送达时 manifest 已落盘」只是大概率成立（探针实测 mtime 相对 notify entry ±2/3ms 方向不定），批通知的指针行消费依赖该反查索引——dev-flow 验收 gap 登记为时序竞态。E9 转换路径保持落标后 fire-and-forget：其成员走 async 单条通知（全文注入、无指针行消费），无时序要求（manifest 仍写，作 list 后手动反查的顺带索引）。源序约束不变：「写账先于落标」（v1 幂等窗口语义）保持；幂等窗口内崩溃时 manifest 已提前落盘，行为更优。写后与 doFinalizeRecord 的关系：若成员随后被 message upgrade 走完整 finalize，Step 4 会再写一次 manifest（closed）**原子覆盖**——manifest 语义从「终态诊断辅助」修正为「sa- id 反查索引（最新已知快照）」，读侧注释同步修正（subagents.ts:22-24、finalize-record.ts:230 与文件头 D-017 段）。
+被否：方案 a（行为近等价但写点分散两处）、方案 c（影响面外溢，v3 候选）；保持 fire-and-forget（依赖「毫秒级写完」的调度运气，非构造性保证，探针可证伪——本次修订的动因）。
 前置依赖：断链 3 的 `sessionFile` 投影扩展（D3）——E1 补发路径的成员来自重建快照，不补投影则该路径写出的 manifest `sessionFile: undefined` 是无用索引。
 
 **D2 manifest.status 取值 = 如实投影**
@@ -239,7 +239,7 @@ F1 写点仅在落标出口（sync 批成员专属路径——async 成员无 ba
 
 | # | 场景 | 步骤 | 通过标准 | 回溯 |
 |---|------|------|---------|------|
-| V1 | 指针行取回自举（v1 A4① 复验） | RPC 起 pi，1 个 sync + task 输出 >10K 字符；等批通知后**让主 agent 按指针行原文**调 `session_read {"action":"result","session":"<sa- id>"}` | 取回内容与 record.result 逐字节一致；**不再出现「无匹配 record」**（v1 此处 FAIL，需手工换绝对路径）；磁盘上 `records/<sa-id>.json` 在批通知送达前已存在 | GV1 |
+| V1 | 指针行取回自举（v1 A4① 复验） | RPC 起 pi，1 个 sync + task 输出 >10K 字符；等批通知后**让主 agent 按指针行原文**调 `session_read {"action":"result","session":"<sa- id>"}` | 取回内容与 record.result 逐字节一致；**不再出现「无匹配 record」**（v1 此处 FAIL，需手工换绝对路径）；磁盘上 `records/<sa-id>.json` 在批通知送达前已存在，且 mtime 严格早于 notify entry timestamp（D1 屏障构造性保证——时序修订后从「大概率」升为严格门） | GV1 |
 | V2 | 含成功成员的崩溃批补发 | 3 个 sync（2 个先完成、1 个 sleep 中）→ **SIGKILL** 宿主进程（与 V3 同款信号——SIGTERM 触发 dispose 走 E9 转换，测不到 E1 路径；entry 已同步落盘）→ 重启同 session → 等待 → 再重启一次 | 重启 #1 后收到**单条**补发批通知，含 2 个成功成员正文（result 全文来自覆写 entry 的 merge 保留）；重启 #2 零重发（账本幂等）；批头计数与成员终态形态一致 | GV2① |
 | V3 | kill -9 崩溃恢复（v1 A6 复验） | 2 个 sync（sleep 60s）派发后 kill -9 主 pi → 重启同 session → 等待 | 重启后补发单条批通知，240s 内到达（v1 A6 FAIL 转 PASS）；批头计数 0-2 finished / 0-2 failed（gc 成员依子文件末行完整性二选一，kill -9 下截断与否是概率形态，断言容忍两种 outcome），成员正文为 result 或截断 error 文案；二次重启零重发；RESULTS.md 回写 | GV2② |
 | V4 | 异步与既有批零回归 | 不传 collect 跑既有单 subagent 流程 + 既有 sync 批流程；全量测试 | 异步单条通知文案与 v1 golden 逐字节一致；批通知 golden 不动全绿；subagent-core / session-reader / subagent-workflow 三包测试基线不降 | GV3 |
@@ -254,7 +254,7 @@ F1 写点仅在落标出口（sync 批成员专属路径——async 成员无 ba
 |------|------|-------------|---------------|---------|
 | W1 orphan 覆写保标记 + E1 口径对齐 | ①`recoverOrphanRecords` 增 `mainSessionFile` 参数 + `finalizeOrphanRecord` 覆写前 merge（仅补 undefined/空值）；②E1 running 判定加 resumable 豁免；③`rebuildEntryRecord` 投影补 `resumable`/`sessionFile`；④**真实序列种子测试（形态必须同构 kill -9 链路）**：主文件种 register（running+sync）→ 轮终（running+resumable+result）两笔 entry；**sessionsDir 构造子 session 文件**（identity entry + 末行完整 JSON，先例 `sync-collect-recovery.test.ts:399-421` E9 用例手工写子文件）且**不写** `.finalized`/`.cancelled`/`.alive` 三 sidecar（分支 4 命中条件）；`initSession` 后让 orphan 恢复（`finalizeOrphanRecord` 真实跑，不走 entry-born 兜底——无子文件形态测不到 D3 merge 所在路径）与 E1 **真实跑**；**主用例用写文件 pi**（makeWritingPi——种子与覆写均落盘，E1 读覆写后末条 closed entry，与 kill -9 真实链路同构）；断言面 = 覆写 entry 保留 collectMode/batchFinalized/result/model + E1 补发与落标。另配两个用例：①async 对照（同构造无 collectMode）：断言批域字段不出现、result 按 merge 补齐；②豁免路径（断言 pi 不落盘——E1 直读轮终 running+resumable entry 走 resumable 豁免判定，覆盖判定侧另一分支）——v1 教训是种子形态必须取自真实链路 | `record-store.ts`（merge + 投影）、`subagent-service.ts`（E1 判定 + 传参）、`__tests__/sync-collect-recovery.test.ts` | 同链两修复同批才可验收（D3）；「orphan×E1 联动」从 v1 的零覆盖测试盲区升格为本单元的核心验收；子文件 + 无 sidecar 构造保证测的是 `finalizeOrphanRecord` 路径而非 entry-born 兜底（后者 collectMode 投影 v1 已修，测它 = 假绿） | V2/V3 前置 |
 | W2 有界 settled 重扫 | E1 等待分支注册 disposed 包装的 `agent_settled` 重扫（上限 8，达限 debug 留痕）；重扫 = 重读主文件末条 entry 走同一 E1 判定 | `subagent-service.ts`（E1 等待分支 + 重扫函数） | 断链 4；scheduler disposed 包装先例复用；pi.on 多注册互扰以探针 P-settled 定谳 | V2 增强 |
-| W3 manifest 落盘 + 注释语义修正 | `appendBatchFinalizedEntry` 处 fire-and-forget best-effort 写 manifest（status 如实投影）；修正 manifest 生命周期旧语义注释三处（finalize-record.ts:230、文件头 D-017 段、discovery/subagents.ts:22-24）；不变量测试（collectRecords 不因 running manifest 多投影） | `subagent-service.ts`（appendBatchFinalizedEntry）、`finalize-record.ts`/`discovery/subagents.ts`（注释）、`__tests__/` | 断链 1；落标唯一出口单点覆盖正常 flush / E1 补发 / E9 转换三路径 | V1 |
+| W3 manifest 落盘 + 注释语义修正 | `appendBatchFinalizedEntry` 处 fire-and-forget best-effort 写 manifest（status 如实投影）；修正 manifest 生命周期旧语义注释三处（finalize-record.ts:230、文件头 D-017 段、discovery/subagents.ts:22-24）；不变量测试（collectRecords 不因 running manifest 多投影）（后续时序修订：批通知路径的写点前移为写账前屏障 await 落盘、E9 保持本行形态，见 §3.3 D1） | `subagent-service.ts`（appendBatchFinalizedEntry）、`finalize-record.ts`/`discovery/subagents.ts`（注释）、`__tests__/` | 断链 1；落标唯一出口单点覆盖正常 flush / E1 补发 / E9 转换三路径 | V1 |
 | W4 真实通路集成测试 + 探针 + 文档回写 | ①跨包集成测试：subagent-core 真实 tmpdir 产出磁盘状态 → session-reader result action 反查（不 mock manifest 写入）；②探针 V1/V2/V3 复跑 + RESULTS.md 回写；③v1 设计文档 §3.1.5 E1/E3、§4 A6 注记（stale-read 旧归因订正为 orphan 覆写真根因）与 impl-plan §7 残留风险段回写（设计文档同步纪律：登记即债务修复即清账） | `scripts/probes/subagent-sync-collect/`（复用+回写）、`docs/design/subagent-sync-collect.md`、`subagent-sync-collect.impl-plan.md`、跨包测试落 subagent-core 或 session-reader `__tests__/` | v1 的教训：跨包链路与 mock 掩盖的字段丢失正是残留的成因——真实通路测试是防回归的最终形态 | V1-V3 闭环 |
 
 依赖：W1 → W2 串行（同域递进，W2 重扫复用 W1 判定）；W3 依赖 W1 的 sessionFile 投影（E1 路径 manifest），可与 W2 并行；W4 收尾。
