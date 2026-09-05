@@ -63,8 +63,8 @@ graph TD
 | u-s1-idle-refresh-bridge | pending | 0 | — |
 | u-s2-complete-recovery | pending | 0 | — |
 | u-s3-bash-contract-delete | pending | 0 | — |
-| u-s4-config-chain | pending | 0 | — |
-| u-s5-registry-writeback | pending | 0 | — |
+| u-s4-config-chain | committed | 1 | config.* RPC + 持久化 + System 页表单 + 启动水合；21 新用例 + 四包全量绿；偏好 case 拆分（max-lines）；持久化实落 config.json（措辞漂移登记） |
+| u-s5-registry-writeback | committed | 1 | audit SSOT P0-2/D 组已修标记 + C-comm-13 约束登记（86 条再生成 + drift guard 绿） |
 
 ## 7 残留风险与变更历史
 

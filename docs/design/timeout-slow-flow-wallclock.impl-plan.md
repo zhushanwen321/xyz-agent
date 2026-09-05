@@ -76,10 +76,10 @@ graph TD
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
 | u-y1-updater-idle | committed | 1 | P2 探针余量 32.3x 走正常路径（idle 前移）；main 全量 741 绿；upgrade-fetch 注释联动（授权修复轮）；types.ts UI 文案留 design-code-sync 裁决 |
-| u-y2-bash-rpc-independence | implemented（执行者禁 git 写，待主 agent review 后 commit） | 1 | ⛔P1 探针 PASS（真 pi 0.84.4 switch_session + sleep 缩样：runtime 放弃等待后 recordBashResult 落盘 entry 4→5，output 含真实 marker，exitCode 0；探针脚本已拆除）；测试 shared 249 / runtime 4364 / core 1440 全绿；apply-entry-equivalence 两轮 18 files/65 tests 绿；typecheck shared/runtime/core/renderer 过。改动：shared timeouts.ts 新增 BASH_RPC_TIMEOUT_MS（偏差#1）· rpc-client bash() 换常量 + env 逃生门（读一次缓存/0=不限时，偏差#4）· dispatcher catch RpcTimeoutError 诚实文案（偏差#3/#5）· useChat ①b 极性（偏差#6）；迟到响应 timedOutIds/NULL_EVENTS 机制未动，早期帧缓冲逻辑未动。测试文件：shared timeouts.test.ts · runtime rpc-client-bash-timeout.test.ts（env 三断言 7 用例）+ message-dispatcher-bash.test.ts D2-1~4 · core useChat.test.ts ①b 三形态；修复轮（u-s2 交接）：renderer useChat-bash.test.ts T5 改写 + T5b 反形态（偏差#8），renderer 全量 355 files/3683 tests 0 failed + vue-tsc 干净 |
-| u-y3-compact-align | pending（blocked-by: rpc-client 计划 ✓ 已解除，待派发） | 0 | — |
+| u-y2-bash-rpc-independence | committed | 1 | ⛔P1 探针 PASS（runtime 放弃等待后 pi 照常落盘，迟到响应恢复出口成立）；equivalence 两轮绿；T5 修复轮（①b 行为面断言 T5 改写 + T5b 反形态）；commit cf943ccd9 |
+| u-y3-compact-align | committed | 1 | ⛔P4 探针 PASS（真实 compact 178k tokens 9.5s = 189 倍余量；缩样 SIGSTOP 双端时序 B1/B2/B3 全 true）；三包全量绿；commit d7fd9728e |
 | u-y4-shell-runner-required | committed | 1 | 编译拦截验证 + 唯一生产调用点已显式传参零破坏；用户值生效测试 |
-| u-y5-renderer-required | pending（blocked-by: u-y2 常量 + streaming-ui u-s3） | 0 | — |
+| u-y5-renderer-required | committed | 1 | 149 调用点（147 补参 backstop + 2 核对跳过）+ bash 语义化 3660s（设计归本单元）；编译拦截验证；renderer 3695 绿 |
 
 ## 7 残留风险与变更历史
 

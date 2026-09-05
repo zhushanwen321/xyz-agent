@@ -58,7 +58,7 @@ graph TD
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
 | u-h1-opencode-workspace | committed | 1 | 三层 29 文件同批（Settings 实际在 ui 包，连带文件已登记）；五包测试绿 + V1-3 硬编码 grep 归零 |
-| u-h2-engine-model-validation | pending（blocked-by: zcode-turn 链 u-z3/z4/z5 未完） | 0 | — |
+| u-h2-engine-model-validation | committed | 1 | 路由先行 + 按引擎校验 + workflow 路径同覆盖；24 测 + 包全量 3100 绿；P2-1 降级未启用（无时序回归）；model-ref 实际路径在 subagent-core/src/shared/ |
 | u-h3-tarball-stall-guard | committed | 1 | stall 测试 9/9（真实 TCP 故障注入）+ runtime 主组 4260 绿；P3-1 降级未启用（实测无需） |
 | u-h4-trash-no-permanent-delete | committed | 1 | unlink 降级分支删除 6 测 + 错误链中间层修复（授权修复轮：session-store/ports 签名 Promise 化 + 端到端 5 测）；P4-1 收口存在核实 |
 
