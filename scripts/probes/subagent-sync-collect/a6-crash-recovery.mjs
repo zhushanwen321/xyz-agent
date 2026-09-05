@@ -28,10 +28,6 @@ const EXPECT = "kill -9 于批等待中；重启补发单条批（2 finished 0 f
 
 const BATCH_HEADER_2 = "Subagent batch completed: 2 finished, 0 failed, 0 cancelled.";
 
-function argHas(flag) {
-  return process.argv.includes(flag);
-}
-
 /** 等进程真正死亡（exitCode 或 signalCode 置位；SIGKILL 下 exitCode 保持 null）。 */
 async function waitDead(session, timeoutMs) {
   const start = Date.now();

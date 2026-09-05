@@ -68,9 +68,10 @@ async function runOnce(mode, checks) {
     const dispatchAt = Date.now();
 
     // async：3 条单条通知全部送达；sync：1 条批通知
+    //（sync 侧 pred 不消费 ns——waitForNotify 每轮重读主 session 文件取批头形态）
     const pred =
       mode === "sync"
-        ? (ns) => C.syncBatchNotifyEntries(C.readJsonlEntries(session.sessionFile)).length >= 1
+        ? () => C.syncBatchNotifyEntries(C.readJsonlEntries(session.sessionFile)).length >= 1
         : (ns) => ns.length >= 3;
     const entries = await C.waitForNotify(
       session.sessionFile,

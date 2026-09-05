@@ -77,6 +77,9 @@ graph TD
 | 5 | P-settled 定谳结论：pi dist extension 事件分发为**列表分发**（loader.js:233-238 handlers.push + runner.js:623-653 逐一 await），多次 pi.on 互不干扰——设计 D4 主路径实施，降级路径（并入 ledger host 分发链）未触发 | 探针定谳（非偏差） | 主路径成立 |
 | 6 | W3：注释修正处数超任务列举三处——同款旧语义残留全扫（finalize-record.ts 另有 Step 4 段 :193、subagents.ts 另有 :131/:304/:346 三处「创建时写入」错误假设），不改则文件内自相矛盾 | 合理偏差（同类缺口全修） | 接受 |
 | 7 | W3：kill-9 主用例与豁免路径用例由同步 it 改 async it（manifest fire-and-forget 异步写需轮询等落盘），原有断言全保留仅追加 manifest 断言段 | 合理偏差（异步写的必然配套） | 接受 |
+| 8 | W4：V2 探针完成信号修正——首版等 .finalized sidecar ≥2 永超时（实证 sync one-shot 成员走 doFinalizeRoundToIdle 轮终回 running-resumable 不写 .finalized），改等主文件 2 个 sync id 末条 entry 轮终形态；慢任务 sleep 90s→240s 适配 mimo 3 并发实测时延 | 合理偏差（探针工程修正，断言未放宽） | 接受 |
+| 9 | W4：V1 取回轮加一次重试（首跑模型单轮未调 session_read 工具），断言硬门（逐字节一致）未放宽 | 合理偏差（模型行为波动容错） | 接受 |
+| 10 | W4：V3 实测成员正文为空——sleep 中 kill 无 assistant 输出 → gc 判 finished + 覆写 entry 无 result 可 merge，属设计「result 或截断 error」二分外的第三形态（空正文），已如实留痕 RESULTS.md，批头 finished/failed 容忍断言已覆盖 | 观察发现（设计场景表的诚实补充） | 接受，不改断言 |
 
 ## 6 状态表
 
@@ -85,7 +88,7 @@ graph TD
 | W1 | committed | 1（首轮绿） | 全量 3110 passed / 9 skipped（基线 3106 + 新增 4：kill-9 同构主用例 / async 对照 / 豁免路径 / P-rebuild）；主 agent 复跑核实 |
 | W2 | committed | 1（首轮绿 + 1 轮定向类型修复） | typecheck exit 0 + 全量 3112 passed / 9 skipped（+2：延迟闭合 / 上限 disposed）；P-settled 定谳列表分发（偏差 #5）；主 agent 复跑核实 |
 | W3 | committed | 1（首轮绿；编排者复跑首轮 1 failed 为 W2 已登记 flake，复跑 2 连绿 + 单文件 3 连绿排除回归） | core 全量 3113 passed / 9 skipped（+1 P-manifest）+ typecheck exit 0 + session-reader 305 passed / 1 skipped；偏差 #6/#7 |
-| W4 | pending | 0 | — |
+| W4 | committed | 1（首轮绿） | 探针实跑 V1 17/0 + V2 15/0 + V3 11/0（v1 A6 FAIL 转 PASS）；跨包测试 2 用例（session-reader 307 passed）；根级 pnpm test exit 0（38 包全绿）+ extensions:lint 0 + doc-symbol-drift OK；偏差 #8-#10 |
 
 ## 7 残留风险与变更历史
 

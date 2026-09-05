@@ -56,3 +56,29 @@
 - 未达断言: 补发单条批（批头 2 finished, 0 failed, 0 cancelled）/ 二次重启零重发（前置失败未达）
 - 根因（diag-survive 实测）: 主 pi SIGKILL 后 worker 子进程随即全灭（t+5s 进程数=0，stdin 管道断裂），finalized 恒 0；成员 subagent-record 停留 running，E1 恢复钩子按「仍有 running → 等待自然完成」永久等待——「孤儿自行跑完」前提在真实 CLI 不成立，属产线前提缺口而非探针缺陷
 - 模型: xiaomi-token-plan-cn/mimo-v2.5-pro
+
+## V1 — 2026-09-05T06:33:21.826Z
+
+- 世代: v2 探针（subagent-sync-collect-v2 §4 V1；v1 A4① 复验）——17 PASS / 0 FAIL
+- 模型: xiaomi-token-plan-cn/mimo-v2.5-pro（config perItemChars=100 确定性触发截断）
+- 全文长度: 420（截断前）／批内保留: 101
+- manifest 首见时点已落盘: yes（mtime 早于 notify entry timestamp 2ms；manifest.status 如实投影 "running"）
+- sa- id 自举反查: 命中
+- 取回一致: yes（逐字节）
+
+## V2 — 2026-09-05T06:44:28.456Z
+
+- 世代: v2 探针（subagent-sync-collect-v2 §4 V2；GV2①）——15 PASS / 0 FAIL
+- 模式: primary（SIGKILL 于批等待中，2 终态成员 + 1 sleep 中）
+- 模型: xiaomi-token-plan-cn/mimo-v2.5-pro
+- 补发批头: 3 finished, 0 failed, 0 cancelled
+- 成功成员 result 全文: yes（覆写 merge 保留）
+- 二次重启 notify: before=1 after=1
+
+## V3 — 2026-09-05T06:45:32.695Z
+
+- 世代: v2 探针（subagent-sync-collect-v2 §4 V3；v1 A6 FAIL 转 PASS）——11 PASS / 0 FAIL
+- 模式: primary（kill -9 于批等待中）
+- 模型: xiaomi-token-plan-cn/mimo-v2.5-pro
+- 补发批头: 2 finished, 0 failed, 0 cancelled（成员正文实测为空——sleep 中 kill 无 assistant 输出，gc 判 finished + 覆写 entry 无 result 可 merge，设计「result 或截断 error」二分外的第三形态：空正文）
+- 二次重启 notify: before=1 after=1

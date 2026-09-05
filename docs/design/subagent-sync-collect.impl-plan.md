@@ -107,8 +107,8 @@ graph TD
 ## 7 残留风险与变更历史
 
 - 残留风险：E9 出口跨键残余重复窗（PS-17 同族，设计 §3.1.3 已披露，v1 接受）；⛔1-4 检查点若核实出设计外事实（如 zcode 终态旁路），停下上报，不自行扩 scope。（原登记「偏差表 #5 存量测试环境敏感缺口」已于 3b4be4561 闭合解除，见偏差表 #5 与变更历史。）
-- orphan 兜底未证实 → 极端 kill 时序下 sync 成员结果可能静默丢失（用户重发任务即可恢复，v2 候选：worker detach 或孤儿判定）。
-- 批指针 sa- id 不可自举解析（探针实跑发现，2026-09-05 登记，v2 候选）：症状——批通知指针行引导 `session_read {"action":"result","session":"<sa- id>"}` 取回全文，真实 CLI 流下反查报「无匹配 record」；根因——sa- id → sessionFile 反查依赖 record manifest 落盘，真实 CLI 流下 manifest 惰性/不落盘；临时绕过——session_read 支持绝对路径形态（直接指子 session 文件）；v2 候选修复——manifest 及时落盘或反查兜底通路。
+- ~~orphan 兜底未证实 → 极端 kill 时序下 sync 成员结果可能静默丢失（用户重发任务即可恢复，v2 候选：worker detach 或孤儿判定）。~~ **已由 v2 闭环（2026-09-05）**：v2（[subagent-sync-collect-v2.md](subagent-sync-collect-v2.md)，W1-W3 commit 8b679519b / e2238ce4c / bbcd95c1c）定谳 kill -9 补发不可达的真根因——orphan 覆写 entry 抹 collectMode（E1 候选恒空）+ E1 running 口径与协调器分岔 + 无再驱动，非「孤儿自行跑完」前提缺口；覆写保标记 + resumable 口径 + settled 有界重扫落地后探针 V3 复验 PASS（kill -9 重启 240s 内补发单批 + 二次重启零重发，留痕 `scripts/probes/subagent-sync-collect/RESULTS.md` V3 节）。
+- ~~批指针 sa- id 不可自举解析（探针实跑发现，2026-09-05 登记，v2 候选）：症状——批通知指针行引导 `session_read {"action":"result","session":"<sa- id>"}` 取回全文，真实 CLI 流下反查报「无匹配 record」；根因——sa- id → sessionFile 反查依赖 record manifest 落盘，真实 CLI 流下 manifest 惰性/不落盘；临时绕过——session_read 支持绝对路径形态（直接指子 session 文件）；v2 候选修复——manifest 及时落盘或反查兜底通路。~~ **已由 v2 闭环（2026-09-05）**：v2 D1 在落标唯一出口（appendBatchFinalizedEntry）fire-and-forget 补写 manifest（status 如实投影），探针 V1 复验 PASS（批通知首见时点 manifest 已落盘、sa- id 原文反查命中、取回与 record.result 逐字节一致，留痕 `scripts/probes/subagent-sync-collect/RESULTS.md` V1 节；commit 同上 W1-W3 系列）。
 - ⛔3 已核实（U1）：排队 record 在 `store.register` 时即 `status:"running"`（register 先于 pool.acquire，池无状态概念）——U2 闭合判定用「非终态」口径，无需新状态。
 - ⛔4 已核实（U2）：zcode 引擎零 notify 旁路（engine/ 目录无 notify 命中，唯一出口 kickOffEngineRun 汇聚 notifyComplete）——U2 路由全覆盖。
 - ⛔2 已核实（U2）：ledger 同 notifyId 重复 record 幂等拒绝零副作用——U3 批 hash 幂等依赖成立。
