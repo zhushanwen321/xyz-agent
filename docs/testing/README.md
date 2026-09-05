@@ -41,3 +41,4 @@
 - 看 [TEST-STRATEGY.md §2 运行命令](../../TEST-STRATEGY.md) 确认 cwd（renderer 测试必须从 `packages/renderer` 跑）
 - 看 [troubleshooting.md](../troubleshooting.md) 排查 runtime/WS/路径问题
 - E2E 看 [00-test-strategy-overview.md §6 常见坑](./00-test-strategy-overview.md)
+- 单测满载下间歇 flake（等待/删除/跨进程时序）→ [TEST-STRATEGY.md「测试自身引入的 flake 防规范」](../../TEST-STRATEGY.md)
