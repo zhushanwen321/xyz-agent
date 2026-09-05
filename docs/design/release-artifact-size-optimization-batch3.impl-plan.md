@@ -94,10 +94,11 @@ graph TD
 | 阶段3 审查 | committed | 1 | 双区并行 reviewer：更新链路面 unreasonable 0 / doc_errors 0（12 条 reasonable 全核实）；构建面 1 major（README 指引未收敛）+ 4 minor + 3 doc_errors → 修复批次 04473fb64 + 主 agent 修 doc_errors 82461df06 |
 | Gate A | committed | 1 | subagent 实跑：preflight --ci 10/10 exit 0 + validate-runtime-bundle exit 0（Plugin E2E 全 PASS）+ test:main 752 全绿（update 链路 337 用例验证 merge 交叠零失败）+ frontend 3755 全绿（shiki 18 新用例）+ 全量 38/39 包绿；唯一红灯 = extension-protocol tsc 编译 5s 超时（存量负载敏感，基点前文件零改动，有先例 d0f558b16）；lint 3E+2W 全归因存量/merge 带入（rpc-client max-lines 为 fix-zcode 侧 5 commit 增量）；零绕过违规（25 行命中逐条判定合法平台守卫） |
 | Gate B | committed | 1 | 主 agent 实跑（HEAD 新鲜产物：build:dir + dmg Format=ULFO 104M）：启动不白屏；S3 bash 2 span + python 18 span（--shiki 双主题）+ mermaid SVG 渲染 ✓；S5 pty `echo PTY_OK_B3` 回显 ✓；S9 真实 ULFO dmg 换装 exit 0 + marker 消失证明真实替换 + 同 inode 双挂载边界 exit 1 且错误信息含恢复指引 ✓；S10 部分——mock 桩被 isDev 双重保护隔离在打包产物外（刻意设计，main.ts:176），断言由 update 链路 337 用例等价覆盖，真机更新链路归 S11 CI |
+| S11 CI 端到端 | committed | 1 | 2026-09-06 v0.9.14-beta 实发（run 33978907331，tag bdc7b1c60）：三平台构建 + Create Release 全绿，附件 = dmg/exe/AppImage/manifest **且无 zip/deb**（负向断言语义达成）；实测 dmg 129M / exe 159M / AppImage 117M = **405MB（v0.9.13 1.1GB 的 -63%）**——略超预期区间 200-320MB，主因 exe 仅 -5.5%（NSIS 7z 自身高压缩比稀释 asar 减量，§4.2 的 0.30-0.36 压缩比估算未计该效应）；GitCode 镜像 job 失败（3 大附件 30min 单件超时，深夜跨境 <0.1MB/s）——镜像侧另案（见残留风险） |
 
 ## 7 残留风险与变更历史
 
-- 残留风险：S11 CI 端到端（beta tag + prerelease 验证脚本）blocked 待 push 授权——产物级数字（dmg 104M / AppImage xz 比例 / 全发布总量 ~200-320MB 核对）与 GitCode 镜像同步需真实发布验证；负向断言（无 zip/deb）已落 verify-ci-release.sh。
+- 残留风险（S11 已执行，镜像侧未闭环）：GitCode 同步 job 在 405MB 新体积下仍失败——3 大附件 3 路并发 curl PUT 全部 30min 单件超时（2026-09-06 深夜 00:53-01:23 北京，单附件有效吞吐 <0.1MB/s）。结论：runner 直传路线即使配并发优化 + 体积降 63% 仍不可靠，瓶颈在跨境链路不在并发度；候选处置 = 低峰（8-16 点）重 dispatch（幂等补齐）/ 本地中转 sync-from-github（国内上行 5-20MB/s，需 GITCODE_TOKEN 本地 export）/ release.yml 把 gitcode-sync 改 continue-on-error 防止镜像失败否决整 run（本次 verify-ci-release.sh 因 job 失败对完好产物误判 FATAL）。
 - 残留风险（与本批零因果，Gate A 核实）：extension-protocol validation.test 的 tsc 编译用例 5s 超时临界（全量负载下 5981ms，间歇性红风险，建议调大 testTimeout）；lint 3E 存量（appserver-launcher 2 / check-core-dist-gate 1）+ rpc-client max-lines warning（fix-zcode merge 侧增量）——需独立任务。
 - 残留风险：renderer 对三个新脚本错误码（dmg mount failed 等）走通用降级文案，恢复指引（reboot/hdiutil detach）仅在 update-result.json 与日志可见——renderer 侧接线留待后续（LAUNCH_FAILURE_ERROR_KEYS 映射，实施期检查点③的答案）。
 - 2026-09-05 计划创建。设计阶段两轮对抗审查记录见 review 文件；S7 本地 linux AppImage 可行性与 S6 ULFO 收益数字为实施期门（设计 §5 待验证检查点）。
