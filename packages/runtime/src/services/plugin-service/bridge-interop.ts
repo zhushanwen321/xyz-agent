@@ -251,11 +251,20 @@ export async function handleBridgeIntercept(
 
   const hookResult = await executeHooks(mapping.hookType, context)
 
+  // 纯映射（plugin-intercept-injection 设计 §3.3-D3）：注入形状守卫职责在管线层逐插件
+  // 执行（同设计 §3.3-D2），此处输入恒为管线产出的合法 string[]——无校验无日志职责。
+  // 每条 string 包一层 {content}，对齐 pi 侧 bridge extension 的 isInjectedMessage 守卫
+  // 形态（extensions/taiji/plugin-bridge/src/index.ts:90，要求对象含 content 键，
+  // string 条目会被无留痕过滤）。协议层类型 injectedMessages: unknown[] 不收紧（D3 定案）。
+  const injectedMessages = (hookResult.injectedMessages ?? []).map(content => ({ content }))
+
   if (hookResult.blocked) {
-    return { blocked: true, reason: hookResult.reason ?? `Blocked by ${hookResult.blockedBy}`, injectedMessages: [] }
+    // blocked 透传管线累积注入（设计 §3.3-D2 block 交互定案 + §3.3-D3）：校验先于
+    // block 判定，block 插件自身合法注入已进累积——pi 侧对该组合「blocked 只 log、
+    // 注入照常评估」（plugin result 契约无 block 槽位，turn 照常进行；plugin-bridge
+    // :450-457），阻止后续插件与向 LLM 留言互不吞没。
+    return { blocked: true, reason: hookResult.reason ?? `Blocked by ${hookResult.blockedBy}`, injectedMessages }
   }
 
-  // transformedData → injectedMessages 映射未实施，属 01-plugin-hook-fix §5 检查点 2 的
-  // 未定案空间（pi 侧协议通道已存在，runtime 侧暂不产出注入消息），非死代码遗漏。
-  return { injectedMessages: [] }
+  return { injectedMessages }
 }
