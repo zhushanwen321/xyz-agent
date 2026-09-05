@@ -55,6 +55,8 @@ import type { ProjectStore } from '../services/project/project-store.js'
 import type { IWorktreeService } from '../services/ports/worktree-service.js'
 import type { HandoffService } from '../services/handoff-service.js'
 import type { ImportService } from '../services/session/import-service.js'
+// GenStatsService（composer-gen-stats u3）：session.getGenStats 恢复腿 RPC 路由依赖。
+import type { GenStatsService } from '../services/session/gen-stats-service.js'
 import type { ITerminalService } from '../services/ports/terminal-service.js'
 import type { QuotaService } from '../services/quota-service.js'
 import { UsageStatsService } from '../services/usage/usage-stats-service.js'
@@ -83,6 +85,8 @@ export interface RuntimeServerOptionalServices {
   delivery?: SessionDeliveryRegistry
   /** 导入 pi 会话服务（import-session D5/U2）：session.importCandidates / session.import 路由依赖。可选：未注入时该 case 报 unsupported。 */
   importService?: ImportService
+  /** 生成指标服务（composer-gen-stats D4）：session.getGenStats 恢复腿路由依赖。可选：未注入时该 case 报 unsupported。 */
+  genStats?: GenStatsService
 }
 
 export class RuntimeServer implements IMessageBroker {
@@ -103,6 +107,8 @@ export class RuntimeServer implements IMessageBroker {
   private skillRegistry?: SkillRegistry
   /** 导入 pi 会话服务（import-session U2）：可选，setServices 注入后经 sessionHandler ctx 触达。 */
   private importService?: ImportService
+  /** 生成指标服务（composer-gen-stats u3）：可选，setServices 注入后经 sessionHandler ctx 触达。 */
+  private genStatsService?: GenStatsService
   /**
    * MessageBus 单例（wave:runtime-wiring）：注入到 SessionMessageHandler ctx，
    * 供 session.subscribe/unsubscribe RPC 注册/取消订阅。ws 断开时 onDisconnect 回调调
@@ -165,10 +171,11 @@ export class RuntimeServer implements IMessageBroker {
   }
 
   setServices(session: ISessionService, config: IConfigService, model: IModelService, optional: RuntimeServerOptionalServices = {}): void {
-    const { extension, plugin, git, file, workspace, appInfo, skillRegistry, worktree, terminal, quota, handoff, preset, auth, project, delivery, importService } = optional
+    const { extension, plugin, git, file, workspace, appInfo, skillRegistry, worktree, terminal, quota, handoff, preset, auth, project, delivery, importService, genStats } = optional
     this.gitService = git
     this.fileService = file
     this.handoffService = handoff
+    this.genStatsService = genStats
     this.sessionService = session
     // D6a（integrity-hardening §3.6）：挂起 UI 请求的汇聚清理。extensionTimeoutMgr 的
     // per-session 残留（pendingRequests / bridgeRequestIds / session 跟踪）此前只在
@@ -243,6 +250,8 @@ export class RuntimeServer implements IMessageBroker {
       handoffService: this.handoffService,
       // 导入 pi 会话（import-session D5/U2）：session.importCandidates / session.import 路由依赖。
       importService: this.importService,
+      // composer-gen-stats（u3）：session.getGenStats 恢复腿 RPC 路由依赖。
+      genStatsService: this.genStatsService,
       // wave:runtime-wiring：注入 MessageBus 供 session.subscribe/unsubscribe RPC 用。
       messageBus: this.messageBus,
       nextPushId: () => this.broker.nextPushId(),

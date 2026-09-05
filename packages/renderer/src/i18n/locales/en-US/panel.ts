@@ -160,6 +160,18 @@ export default {
     resetRemainingMinutes: '{m}m left',
     resetRemainingSoon: '<1m',
     resetEmpty: '--',
+    // composer-gen-stats dual triggers (docs/design/composer-gen-stats.md §3.1 / §3.3 D5)
+    genStatsSpeedTitle: 'Token speed',
+    genStatsCacheTitle: 'Cache hit rate',
+    genStatsCurrent: 'Last turn',
+    genStatsCurrentReq: 'Last request',
+    genStatsDay: 'Today avg (this model)',
+    genStatsD7: 'Last 7 days',
+    genStatsD30: 'Last 30 days',
+    genStatsDayShort: 'Today weighted',
+    genStatsSpeedNote: 'output tokens ÷ generation time, aggregated per model (weighted avg)',
+    genStatsCacheNote: 'cacheRead ÷ (input + cacheRead + cacheWrite)',
+    genStatsNoData: 'No data yet',
   },
   sideDrawer: {
     title: 'Side drawer',

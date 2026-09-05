@@ -352,17 +352,32 @@ function handleAgentEnd(event: PiAgentEndEvent, sid: string): PiTranslatedEvent[
  * 与 handleAgentEnd（整个循环结束）的区别：本 handler 不产 message/stopReason/file_changes，
  * 避免每 turn 触发前端 message.complete → setStreaming(false) 闪烁。
  * totalTokens 缺失时返回空（纯工具结果 turn 可能无 usage）。
+ *
+ * composer-gen-stats（D1）：同时透传 gen-stats 扩展字段（output/cacheRead/cacheWrite/input/model/
+ * provider，全来自 turn_end.message 的 AssistantMessage 自带结构）。model/provider 是运行时字段
+ * （超出 PiTurnEndMessage 声明范围，同 handleAgentEnd 的 responseModel 提取模式——pi AgentMessage
+ * 实际形态比声明的 union 更宽），用 as 提取。字段缺省 → null（无值编码纪律 D4，禁 ?? 0——
+ * 0 只允许作为真实测量值出现，null 由 interpreter/service 逐字段判定丢弃语义）。
+ * D2 探针待验证：turn_end.message.model 的真实性（responseModel vs model 字段）。
  */
 function handleTurnEndPi(event: PiTurnEndEvent, sid: string): PiTranslatedEvent[] {
   // pi turn_end 事件把 message 放在顶层 message 字段（ADR-0037 契约，pi 从不发 payload）。
   const message = event.message
   const usage = message?.usage
   if (!usage?.totalTokens) return []
+  const msgExtra = message as unknown as { model?: unknown; provider?: unknown }
   return [{
     kind: 'turn-usage',
     sessionId: sid,
     inputTokens: usage.totalTokens,
     totalTokens: usage.totalTokens,
+    // gen-stats 扩展字段（pi usage/output 结构 AssistantMessage 自带；缺省 null 禁 ?? 0）
+    outputTokens: typeof usage.output === 'number' ? usage.output : null,
+    cacheRead: typeof usage.cacheRead === 'number' ? usage.cacheRead : null,
+    cacheWrite: typeof usage.cacheWrite === 'number' ? usage.cacheWrite : null,
+    input: typeof usage.input === 'number' ? usage.input : null,
+    model: typeof msgExtra.model === 'string' && msgExtra.model !== '' ? msgExtra.model : null,
+    provider: typeof msgExtra.provider === 'string' && msgExtra.provider !== '' ? msgExtra.provider : null,
   }]
 }
 

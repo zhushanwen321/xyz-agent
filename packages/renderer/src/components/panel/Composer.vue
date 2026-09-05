@@ -100,6 +100,8 @@
           empty="hidden"
         />
         <span class="flex-1" />
+        <!-- 生成指标双触发器（composer-gen-stats §3.1：速度 t/s + 缓存命中率 %，位于上下文容量左侧） -->
+        <GenStatsTriggers :session-id="sessionId ?? undefined" :model-id="currentModelId" />
         <!-- 上下文容量（spec §2a：hover 出容量 popover；session 通道订阅 context.update） -->
         <ContextCapacityPopover :session-id="sessionId ?? undefined" :model-id="currentModelId" />
         <!-- 模型（spec §2b：click 出模型切换 popover） -->
@@ -179,6 +181,7 @@ import { ViewHost } from '@xyz-agent/ui/extension-host'
 import AddMenuPopover from './AddMenuPopover.vue'
 import CommandPopover from './CommandPopover.vue'
 import ContextCapacityPopover from './ContextCapacityPopover.vue'
+import GenStatsTriggers from './GenStatsTriggers.vue'
 import ModelSelectPopover from './ModelSelectPopover.vue'
 import ThinkingLevelPopover from './ThinkingLevelPopover.vue'
 import ContextChipsBar from './ContextChipsBar.vue'

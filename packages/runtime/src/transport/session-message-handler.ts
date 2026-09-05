@@ -12,6 +12,10 @@ import type { MessageHandlerContext } from './message-context.js'
 // MessageBus（wave:runtime-wiring）：session.subscribe/unsubscribe RPC handler 用它注册订阅。
 // type-only import（handler 不持有 bus 实例的创建，只调它的方法）。
 import type { IMessageBus } from '../services/message-bus/message-bus.js'
+// GenStatsService（composer-gen-stats u3）：session.getGenStats 恢复腿 RPC 的降级链解析
+// + 快照构造（写 3 回填在 getSnapshotForSession 内部完成）。可选注入：未注入时该 case 报
+// unsupported（组合根保证注入；importService 同款模式）。
+import type { GenStatsService } from '../services/session/gen-stats-service.js'
 // BusClient（wave:bus-core）：ws 适配为 bus 订阅者的最小契约 { readyState, send }。
 // ws 库的 WebSocket 天然满足，但类型不完全一致，用 as unknown as BusClient 显式标记边界（R2）。
 import type { BusClient } from '../services/message-bus/types.js'
@@ -31,6 +35,11 @@ export interface SessionHandlerContext extends MessageHandlerContext {
    * 可选：未注入时 subscribe/unsubscribe case 报 unsupported（组合根保证注入）。
    */
   messageBus?: IMessageBus
+  /**
+   * 生成指标服务（composer-gen-stats u3）：session.getGenStats 恢复腿 RPC 用。
+   * 可选：未注入时该 case 报 unsupported（组合根保证注入）。
+   */
+  genStatsService?: GenStatsService
   nextPushId(): string
   broadcastSessionList(): void
   /** 广播一条 ServerMessage 给所有连接（FR-12：fork 后广播 session.forkNotice）。 */
@@ -61,6 +70,8 @@ export class SessionMessageHandler {
     'session.fetchCurrentSystemPrompt',
     // wave:runtime-patch ipc-converge-a3 W2：业务持久化写 WS（session 数据单一出口归 runtime）
     'session.writeImage', 'session.migrateImage', 'session.writeSegments',
+    // composer-gen-stats（D4）：生成指标恢复腿（切 session 视图主动拉，架构约定 #7 时序竞争）。
+    'session.getGenStats',
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
     'message.bash', 'message.abortBash',
   ]
@@ -456,6 +467,18 @@ export class SessionMessageHandler {
         const { sessionId } = msg.payload
         const payload = await this.ctx.sessionService.fetchContext(sessionId)
         return this.ctx.reply(ws, msg.id, 'context.update', payload ? { sessionId, ...payload } : { sessionId })
+      }
+      case 'session.getGenStats': {
+        // composer-gen-stats（D4）：生成指标恢复腿。reply = session.stats_update payload 同形
+        // （GenStatsFrame）；modelId 解析降级链（get_state → 内存映射 → replicated states →
+        // 全 null）+ 写 3 回填全部在 service.getSnapshotForSession 内部完成，handler 只透传。
+        const genStats = this.ctx.genStatsService
+        if (!genStats) {
+          return this.ctx.sendError(ws, 'gen_stats_unsupported', 'gen stats service not available', msg.id)
+        }
+        const { sessionId } = msg.payload
+        const frame = await genStats.getSnapshotForSession(sessionId)
+        return this.ctx.reply(ws, msg.id, 'session.stats_update', frame)
       }
       case 'session.rename': {
         await this.ctx.sessionService.renameSession(msg.payload.sessionId, msg.payload.name)
