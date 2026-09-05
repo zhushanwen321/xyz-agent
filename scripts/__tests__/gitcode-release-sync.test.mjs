@@ -60,36 +60,54 @@ describe('buildExistingAssetMap（runSync 幂等跳过判定）', () => {
 })
 
 describe('fetchUploadTarget', () => {
+  // S-R2-1：apiCall 成功路径自带 sleep(CALL_PAUSE_MS=1500) 串行限速，fake timers 推进
+  // 计时器避免真实等待（timer 测试规范）；rejects 断言需在推进计时器前先挂上，
+  // 否则 rejection 在推进期间浮动未处理（unhandled rejection 噪音）。
   it('成功：相对 upload_url 补 API 域 + headers 缺 Content-Type 就地补默认', async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ upload_url: '/presigned/xyz', headers: { 'x-oss': '1' } }))
     vi.stubGlobal('fetch', fetchMock)
+    vi.useFakeTimers()
     try {
       const { fetchUploadTarget } = await loadModule()
-      const t = await fetchUploadTarget('v1.0.0', 'app.dmg')
+      const p = fetchUploadTarget('v1.0.0', 'app.dmg')
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(1500)
+      const t = await p
       expect(t.finalUrl).toBe('https://api.gitcode.com/presigned/xyz')
       expect(t.headerArgs).toContain('-H \'x-oss: 1\'')
       expect(t.headerArgs).toContain('-H \'Content-Type: application/octet-stream\'')
     } finally {
+      vi.useRealTimers()
       vi.unstubAllGlobals()
     }
   })
   it('失败信号：非 ok 时 throw 恢复指引（确认 release 存在 + 文档核对）', async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ message: 'not found' }, 404))
     vi.stubGlobal('fetch', fetchMock)
+    vi.useFakeTimers()
     try {
       const { fetchUploadTarget } = await loadModule()
-      await expect(fetchUploadTarget('v1.0.0', 'app.dmg')).rejects.toThrow(/获取附件上传地址失败（HTTP 404）/)
+      const assertion = expect(fetchUploadTarget('v1.0.0', 'app.dmg')).rejects.toThrow(/获取附件上传地址失败（HTTP 404）/)
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(1500)
+      await assertion
     } finally {
+      vi.useRealTimers()
       vi.unstubAllGlobals()
     }
   })
   it('失败信号：响应无 upload_url/url 字段时 throw（API 形态漂移显式报错）', async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ foo: 1 }))
     vi.stubGlobal('fetch', fetchMock)
+    vi.useFakeTimers()
     try {
       const { fetchUploadTarget } = await loadModule()
-      await expect(fetchUploadTarget('v1.0.0', 'app.dmg')).rejects.toThrow(/无 upload_url\/url 字段/)
+      const assertion = expect(fetchUploadTarget('v1.0.0', 'app.dmg')).rejects.toThrow(/无 upload_url\/url 字段/)
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(1500)
+      await assertion
     } finally {
+      vi.useRealTimers()
       vi.unstubAllGlobals()
     }
   })

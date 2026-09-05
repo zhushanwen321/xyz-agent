@@ -106,10 +106,10 @@ export function convertToDialogRequest(e: UiRequestEvent): DialogRequest {
  *   askUser === true 跳过投递（C4 分流，CompanionBand 独占 dialog）
  * - onUiTimeout：WS extension.ui_timeout（C3 保留 WS 路径，不经 bus），事件自带 sessionId
  * - onUiRequestExpired：WS plugin:uiRequestExpired（timeout-plugin-service D2 超时撤窗，
- *   不经 bus——bridge 无此归一项）。payload 只有 { requestId, pluginId } 无 sessionId
- *   （runtime 撤窗广播不注入活跃 sid），而本队列按 session 分区——onUiRequest 流经时
- *   记录 requestId→sessionId 映射供反查；查不到（弹窗已 respond 关闭 / 从未投递 /
- *   广播迟到于出队）→ noop 幂等（V4b miss 语义：广播无条件发出，miss 是正常时序）。
+ *   不经 bus——bridge 无此归一项）。按 requestId 反查（onUiRequest 流经时记录 requestId→sessionId
+ *   映射，投递时归属 sid，MF-4 反查为主）；Map miss 时 payload 可选 sessionId 兜底（renderer 重启）。
+ *   查不到（弹窗已 respond 关闭 /
+ *   从未投递 / 广播迟到于出队）→ noop 幂等（V4b miss 语义：广播无条件发出，miss 是正常时序）。
  */
 export function createDialogRequestSource(bus: InternalEventBus): DialogRequestSource {
   /** requestId → sessionId 反查表（撤窗广播无 sid，靠投递流补齐；条目量级=弹窗数） */
@@ -142,9 +142,13 @@ export function createDialogRequestSource(bus: InternalEventBus): DialogRequestS
     onUiRequestExpired(handler) {
       return onGlobal((msg) => {
         if (msg.type !== 'plugin:uiRequestExpired') return
-        const payload = msg.payload as { requestId?: unknown }
+        const payload = msg.payload as { requestId?: unknown; sessionId?: unknown }
         if (typeof payload.requestId !== 'string') return
+        // MF-4：requestId 反查（onUiRequest 投递时记录的权威归属 sid）为主——payload.sessionId
+        // 是撤窗时点的活跃 sid（S1 修复引入），投递后切换 session 会路由错分区；payload sid
+        // 降为 Map miss 兜底（renderer 重启 / 旧版 runtime 未记录条目）
         const sessionId = requestIdSessions.get(payload.requestId)
+          ?? (typeof payload.sessionId === 'string' ? payload.sessionId : undefined)
         // miss noop 幂等（V4b）：已 respond 关闭 / 排队中从未展示 / 未知请求的撤窗广播
         // 直接忽略；命中则先删表项（生命周期至撤窗为止）再出队。
         if (sessionId === undefined) return
