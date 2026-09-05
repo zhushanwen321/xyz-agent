@@ -156,7 +156,8 @@ describe('ConfigPreferencesMessageHandler · 偏好组转发参数化（S15：12
     expect(replies[0]).toMatchObject({ type: replyType, id: 's1' })
     expect(replies[0].payload).toEqual(payload)
     if (setter) {
-      expect(configService[setter.fn]).toHaveBeenCalledWith(setter.arg)
+      // it.each 表格字面量推宽 fn 为 string；收窄回 mock 对象键集合（TS7053，无 any 断言）
+      expect(configService[setter.fn as keyof typeof configService]).toHaveBeenCalledWith(setter.arg)
     }
   })
 })
