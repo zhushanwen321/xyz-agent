@@ -42,7 +42,6 @@ export default {
   message: {
     copy: 'Copy',
     edit: 'Edit',
-    thinking: 'Thinking',
     working: 'Working…',
     worked: 'Worked',
     steer: 'STEER',

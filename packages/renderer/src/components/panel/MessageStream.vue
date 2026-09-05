@@ -97,47 +97,12 @@
       />
     </div>
 
-    <!-- 压缩中提示（瞬时态：isCompacting=true 时显示，完成后由 message.compactionSummary 持久化记录取代）。
-         文档流 block（Virtualizer 之后），样式对齐 SystemNotice 横线分隔行；content-col 与对话流内容列对齐。
-         ref 供 dev-only 断言：实测高度 vs COMPACTING_NOTICE_HEIGHT 常量漂移检测。 -->
-    <div
-      v-if="isCompacting"
-      ref="compactingNoticeEl"
-      class="system-notice content-col flex min-w-0 items-center gap-2 py-1"
-    >
-      <span class="h-px flex-1 bg-border" />
-      <Loader2 class="size-3 shrink-0 animate-spin text-neutral-mid" />
-      <span class="min-w-0 truncate text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ compactingText }}</span>
-      <span class="h-px flex-1 bg-border" />
-    </div>
-
-    <!-- bash 执行中反馈行（W1 fix-chat-flow-order D2 ephemeral 通道，W4 完整形态）：`!` 命令执行
-         期间的瞬时反馈（前缀文案 + mono 命令 + 转圈，样式对齐 compacting 行；v3 tokens 无硬编码）。
-         不进 messages 不持久化：bashStart 置 / bashResult·错误路径清；run 级联结束后由
-         bashExecution entry 入流承担持久语义（live≡reload 双通路分工）。
-         堆叠协调（W4 核实）：① 与 isCompacting 互斥——useComposerSend 优先级链 compact 分支
-         在 bash 分流之前（compacting 中 `!` 输入转排队待重放，不会执行），两者不同时出现；
-         ② 与 ForkNotice 均为 Virtualizer 之后的文档流 block（forkNoticeBaseTop absolute 基线
-         生产路径已不消费），按文档序自然堆叠，无需纳入 useNoticeStack 基线。 -->
-    <div
-      v-if="executingBash"
-      ref="executingBashEl"
-      class="system-notice flex min-w-0 items-center gap-2 py-1"
-      data-testid="executing-bash-notice"
-    >
-      <span class="h-px flex-1 bg-border" />
-      <Loader2 class="size-3 shrink-0 animate-spin text-neutral-mid" />
-      <span class="flex min-w-0 items-center gap-1">
-        <span class="shrink-0 text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ t('panel.message.executingBash') }}</span>
-        <span class="min-w-0 truncate font-mono text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ executingBash.command }}</span>
-      </span>
-      <span class="h-px flex-1 bg-border" />
-    </div>
-
-    <!-- [方案 D] dispatching 空窗期占位已移除：原 absolute 浮层改为末尾空 turn 的 TurnMeta 占位。
-         message_start 前末尾空 turn（user 已发、assistants=[]）经 TurnMeta 的 isPendingPlaceholder
-         渲染「思考中」+ spinner，message_start 后 assistant 填入同一 turn，原地变为 working 态。
-         dispatching 占位现在是对话流文档流的一部分（已计入 vlistBottom），不再是独立浮层。 -->
+    <!-- ActivityStrip 活动条（session-occupancy u6a / D7 展示统一）：对话流尾部单一的
+         「进行中」指示位，收编原 compacting 浮层 / executing bash 行 / TurnMeta dispatching
+         思考占位三处分散指示（优先级 compacting > bash > thinking，数据源 sessionPhase
+         occupancy 投影）。文档流 block（Virtualizer 之后），fork notice 等后续内容自然堆叠。
+         dev 断言（COMPACTING/EXECUTING_BASH 高度常量漂移检测）随行迁入组件内部。 -->
+    <ActivityStrip :session-id="sessionId" :executing-bash="executingBash" />
 
     <!-- ForkNotice 反馈行（transient，RV1）。文档流 block（Virtualizer 之后），多条通知垂直堆叠；
          宽度约束在 ForkNotice 根（content-col），与对话流内容列对齐。 -->
@@ -205,6 +170,8 @@ import { Turn, SystemNotice, BashOutputBlock, TurnRail, ChatViewDepsKey } from '
 import { useChatViewDeps } from '@/composables/panel/useChatViewDeps'
 import ForkNotice from './ForkNotice.vue'
 import PendingBubble from './message-stream/PendingBubble.vue'
+// 活动条（u6a / D7 展示统一）：compacting/bash/thinking 行的单一渲染位（原三处分散指示收编）。
+import ActivityStrip from './message-stream/ActivityStrip.vue'
 // defer 队列（u4b / D4）：pending 气泡数据源——per-session 分区只读快照（computed 内
 // peek 读 reactive 分区建立依赖，入队/确认出队/撤销实时反映；CompactQueueBadge 同款模式）。
 import { useCompactQueue } from '@/composables/panel/useCompactQueue'
@@ -215,11 +182,9 @@ import { useSessionActive } from '@/composables/panel/useSessionActive'
 import { useMessageStreamScroll } from '@/composables/panel/useMessageStreamScroll'
 import { useMessageStreamRail } from '@/composables/panel/useMessageStreamRail'
 import { useStreamingPin } from '@/composables/panel/useStreamingPin'
-import {
-  useMessageStreamNotices,
-  COMPACTING_NOTICE_HEIGHT,
-  EXECUTING_BASH_NOTICE_HEIGHT,
-} from '@/composables/panel/useMessageStreamNotices'
+// [u6a] COMPACTING/EXECUTING_BASH_NOTICE_HEIGHT 的消费点（ActivityStrip 行渲染 + dev 断言）
+// 已随指示行迁入 ActivityStrip；此处仅剩 COMPACTING_NOTICE_HEIGHT（fork 基线参数）。
+import { useMessageStreamNotices, COMPACTING_NOTICE_HEIGHT } from '@/composables/panel/useMessageStreamNotices'
 
 const props = defineProps<{
   sessionId: string
@@ -335,19 +300,19 @@ const vlistBottom = computed(() => {
   return v.getItemOffset(last) + v.getItemSize(last)
 })
 
-/** B2 dev-only 常量漂移检测：ResizeObserver 实测 vs 像素常量，不匹配 console.warn。生产裁剪零开销。 */
-const [loadMoreEl, compactingNoticeEl, executingBashEl] = useConstantHeightAssert([
+/** B2 dev-only 常量漂移检测：ResizeObserver 实测 vs 像素常量，不匹配 console.warn。生产裁剪零开销。
+ *  [u6a] COMPACTING/EXECUTING_BASH 两常量的断言 ref 随指示行迁入 ActivityStrip 内部，此处仅剩 load-more。 */
+const [loadMoreEl] = useConstantHeightAssert([
   { name: 'LOAD_MORE_RESERVED_HEIGHT', expected: LOAD_MORE_RESERVED_HEIGHT },
-  { name: 'COMPACTING_NOTICE_HEIGHT', expected: COMPACTING_NOTICE_HEIGHT },
-  { name: 'EXECUTING_BASH_NOTICE_HEIGHT', expected: EXECUTING_BASH_NOTICE_HEIGHT },
 ]).els
 
-/** 末尾瞬时块（compacting/dispatching）状态 + 垂直堆叠定位 + 取消 handler（M2）。
+/** 末尾瞬时块状态 + 垂直堆叠定位（M2）。[u6a] compacting/bash 指示行渲染已收编 ActivityStrip
+ *  （compactingText 退役），isCompacting/isDispatching/hasWorkingTurn 保留——isCompacting 驱动
+ *  滚动跟随与 fork 基线，isDispatching/hasWorkingTurn 供 useForkNoticeStream 兜底 deps。
  *  [cw wave w3] 切到 virta 路径：totalHeight 不传（virta scrollSize 经 vlistBottom 注入），
  *  topOffset 恒 0（W3C2 R2）。 */
 const {
   isCompacting,
-  compactingText,
   isDispatching,
   hasWorkingTurn,
   forkNoticeBaseTop,

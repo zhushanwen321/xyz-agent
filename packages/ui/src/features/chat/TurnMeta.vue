@@ -4,9 +4,12 @@
     从 Turn.vue 拆出。badge 灰阶化（H 设计：bg-surface-2 text-neutral-mid 替代彩色）。
   -->
   <!-- turn-meta + hr wrapper（sticky 已移除：负 margin 覆盖 scrollEl padding-top 的技巧不可靠——
-       working 态贴顶时与 scrollEl 顶部有间隔，滚过来的文字从 gap 漏出。改回正常文档流）。 -->
+       working 态贴顶时与 scrollEl 顶部有间隔，滚过来的文字从 gap 漏出。改回正常文档流）。
+       [u6a] v-if 收窄回 assistants.length > 0：dispatching 空窗期的空 turn（user 已发、
+       assistant 未到）不再渲染 TurnMeta 占位——「思考中」指示已迁对话流尾部 ActivityStrip
+       thinking 行（sessionPhase occupancy 投影驱动，D7 展示统一）。 -->
   <div
-    v-if="turn.assistants.length > 0 || isWorkingTurn"
+    v-if="turn.assistants.length > 0"
     :data-testid="`turn-meta-${turnIndex}`"
   >
     <Button
@@ -22,12 +25,12 @@
       @click="toggle(turnKey)"
     >
       <!-- streaming 态：spinner（更显眼的流式生成指示），替代原脉冲点。仅文本流式生成时转（A 类） -->
-      <!-- streaming 或 dispatching 占位（isPendingPlaceholder）时转 spinner；ask-user 等待态不转 -->
-      <Loader2 v-if="isStreaming || isPendingPlaceholder" class="size-3.5 shrink-0 animate-spin" :class="spinnerColor" />
+      <!-- [u6a] dispatching 占位态（isPendingPlaceholder）已删除：空 turn 不再渲染 TurnMeta
+           （v-if 收窄），「思考中」指示迁 ActivityStrip thinking 行；spinner 只跟 isStreaming -->
+      <Loader2 v-if="isStreaming" class="size-3.5 shrink-0 animate-spin" :class="spinnerColor" />
       <span class="text-[length:var(--text-sm)] font-medium">
         <span class="lbl" :class="isWorkingTurn ? 'text-accent' : 'text-neutral-mid'">{{ statusLabel }}</span>
-        <!-- dispatching 占位态尚未开始计时，隐藏 elapsed（避免显示 0s） -->
-        <span v-if="!isPendingPlaceholder" class="elapsed ml-1 font-mono font-medium tracking-[0.01em]" :class="elapsedColor">{{ elapsed }}</span>
+        <span class="elapsed ml-1 font-mono font-medium tracking-[0.01em]" :class="elapsedColor">{{ elapsed }}</span>
       </span>
       <!-- chevron 紧跟耗时（展开/收起 trace 入口），在 badge 之前 -->
       <ChevronRight
@@ -81,24 +84,14 @@ const { isExpanded, toggleExpand: toggle } = useChatViewDeps()
 const { t } = useI18n()
 
 /**
- * dispatching 空窗期占位（方案 D）：user 已发、assistant 未到（message_start 前）的末尾空 turn。
- * session 进行中（derivedStatus=pending）但 assistants 为空 → 渲染 TurnMeta 占位「思考中」，
- * message_start 到达后 assistant 填入同一 turn，TurnMeta 原地变为 working 态（DOM 延续）。
- * 与 ask-user（assistants 非空、isStreaming=false）区分：占位态强制转 spinner（表示正在处理），
- * 隐藏 elapsed（尚未开始计时，避免显示 0s）。区别于原 absolute dispatching 浮层——占位现在是对话流
- * 末尾 turn 的一部分，不再独立浮层。
- */
-const isPendingPlaceholder = computed(
-  () => props.isWorkingTurn && props.turn.assistants.length === 0,
-)
-
-/**
- * working 态文案（SSOT §3.3.4）：占位空窗期（assistant 未到）语义是「思考中」保持不动；
- * 真正 working（assistant 已到、仍在生成）显示「工作中」；完成态「已工作」。
+ * working 态文案（SSOT §3.3.4）：working（assistant 已到、仍在生成）显示「工作中」；
+ * 完成态「已工作」。[u6a] dispatching 空窗占位分支已删除——空 turn 不再渲染 TurnMeta
+ * （v-if 收窄 assistants.length > 0），「思考中」指示迁对话流尾部 ActivityStrip thinking 行
+ * （sessionPhase occupancy 投影驱动，D7 展示统一）。
  */
 const statusLabel = computed(() => {
   if (!props.isWorkingTurn) return t('panel.message.worked')
-  return isPendingPlaceholder.value ? t('panel.message.thinking') : t('panel.message.working')
+  return t('panel.message.working')
 })
 
 /** 长时生成分级阈值（秒）：≥5min 转 warn、≥30min 转 danger（正常生成 30s~2min 不触发）。 */

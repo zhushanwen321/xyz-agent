@@ -211,10 +211,11 @@ describe('Turn working 态 · 完成复位 + elapsed live', () => {
     expect(wrapper.find('.trace').exists()).toBe(true)
   })
 
-  // U15:[方案 D] dispatching 空窗期占位——空 turn（user 已发、assistants 未到）+ session 进行中，
-  // 渲染 TurnMeta 占位「思考中」+ spinner，替代原 absolute dispatching 浮层。
-  // message_start 到达后 assistant 填入同一 turn，TurnMeta 原地变为 working 态（DOM 延续）。
-  it('U15: dispatching 占位（空 turn + sessionActive）→ TurnMeta 渲染「思考中」+ spinner，无 elapsed', () => {
+  // U15:[u6a / D7 展示统一] dispatching 空窗期占位已迁出——空 turn（user 已发、assistants 未到）
+  // + session 进行中不再渲染 TurnMeta 占位（v-if 收窄回 assistants.length > 0），「思考中」指示
+  // 由对话流尾部 ActivityStrip thinking 行承担（sessionPhase occupancy 投影驱动，
+  // 组件级断言见 message-stream/__tests__/ActivityStrip.test.ts）。
+  it('U15: dispatching 占位迁出——空 turn + sessionActive 不再渲染 TurnMeta（旧占位清理）', () => {
     const wrapper = mountTurn({
       turn: makeTurn({
         isStreaming: false,
@@ -223,16 +224,12 @@ describe('Turn working 态 · 完成复位 + elapsed live', () => {
       }),
       isSessionActive: true, // session 进行中（derivedStatus=pending）
     })
-    // 占位 TurnMeta 渲染（v-if 放宽：assistants 空 + sessionActive）
-    expect(wrapper.find('.turn-meta').exists()).toBe(true)
-    // 占位态显示「思考中」（sessionActive）
-    expect(wrapper.find('.lbl').text()).toBe('思考中')
-    // 占位态强制转 spinner（isPendingPlaceholder，区别于 ask-user 不转）
-    expect(wrapper.find('.turn-meta .animate-spin').exists()).toBe(true)
-    // 占位态隐藏 elapsed（尚未开始计时，避免 0s）
-    expect(wrapper.find('.elapsed').exists()).toBe(false)
-    // 无 chevron（hasFoldable=false）
-    expect(wrapper.find('.chev').exists()).toBe(false)
+    // 占位 TurnMeta 不再渲染（原「思考中」+ spinner 占位已迁 ActivityStrip）
+    expect(wrapper.find('.turn-meta').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="turn-meta-1"]').exists()).toBe(false)
+    // user 区不受影响（空 turn 只删 meta 行；UserBubble 根 group/user 仍在——正文经异步
+    // markdown 渲染，同步 wrapper.text() 取不到，断言用结构锚点）
+    expect(wrapper.find('.group\\/user').exists()).toBe(true)
   })
 })
 
