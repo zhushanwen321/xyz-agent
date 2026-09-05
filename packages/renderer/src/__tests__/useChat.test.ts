@@ -334,14 +334,21 @@ describe('useChat compact 状态机（#6）', () => {
     expect(apiMock.streamSubscribe).toHaveBeenCalledTimes(1)
   })
 
-  it('session.compacting → isCompacting=true；session.compacted → isCompacting=false', async () => {
+  it('session.compacting + occupancy{compacting:true} → isCompacting=true；occupancy{false} 帧 → false（u5b 投影驱动）', async () => {
     const chat = useChatStore()
     const { compact } = useChat()
     await compact('c-flow')
+    // [u5b] membership 由 occupancy 投影派生（interpreter 同一挂点先发 session.compacting
+    // 再发 occupancy——帧序镜像 runtime 实发）；session.compacting 只承载 reason 文案源。
     emit({ type: 'session.compacting', payload: { sessionId: 'c-flow', status: 'compacting', reason: 'manual' } })
+    expect(chat.getCompactingReason('c-flow')).toBe('manual')
+    emit({ type: 'session.occupancy', payload: { sessionId: 'c-flow', turn: 'idle', compacting: true, bash: false } })
     expect(chat.isCompacting('c-flow')).toBe(true)
+    // compaction_end 三路复位（含失败）→ occupancy compacting=false 帧 → 投影复位
     emit({ type: 'session.compacted', payload: { sessionId: 'c-flow', status: 'compacted' } })
+    emit({ type: 'session.occupancy', payload: { sessionId: 'c-flow', turn: 'idle', compacting: false, bash: false } })
     expect(chat.isCompacting('c-flow')).toBe(false)
+    expect(chat.getCompactingReason('c-flow')).toBeUndefined()
   })
 
   it('compact 失败（pending reject）→ toast 错误提示，不抛出（不卡 UI，M8 toast 方案）', async () => {

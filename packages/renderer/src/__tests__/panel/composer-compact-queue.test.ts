@@ -13,7 +13,8 @@
  * - TC18: compact 期间 Alt+⏎ → 入队而非 followUp
  *
  * 策略（对齐 composer-bash-mode.test.ts 结构范本）：
- * - 真 pinia + 真 chatStore（isCompacting 用 chat.setCompacting(sid, true) 驱动）
+ * - 真 pinia + 真 chatStore（[u5b] isCompacting 由 occupancy 投影派生——驱动方式 =
+ *   chat.setOccupancy(sid, { turn:'idle', compacting:true, bash:false })，D6 defer 路由同源）
  * - mock useChat（spy 化 send/steer/followUp/compact...）+ useToast（断言 toastError）
  * - mock ComposerInput（emit input 设 draft + emit keydown Enter 触发 onSend）
  * - stub 子组件（保留真实 CompactQueueBadge——断言其 DOM）
@@ -135,7 +136,7 @@ async function typeAndEnter(wrapper: ReturnType<typeof mountComposer>, text: str
 describe('Composer compact 待发队列（TC11-TC18）', () => {
   it('TC11: compact 期间 ⏎ 发送 → 入队 + 输入清空 + badge 可见', async () => {
     const chat = useChatStore()
-    chat.setCompacting('s1', true)
+    chat.setOccupancy('s1', { turn: 'idle', compacting: true, bash: false })
     const wrapper = mountComposer({ sessionId: 's1' })
     await typeAndEnter(wrapper, 'hello')
 
@@ -154,7 +155,7 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
 
   it('TC12: compact 期间发送按钮点击 → 入队（按钮可点非 spinner）', async () => {
     const chat = useChatStore()
-    chat.setCompacting('s1', true)
+    chat.setOccupancy('s1', { turn: 'idle', compacting: true, bash: false })
     const wrapper = mountComposer({ sessionId: 's1' })
     wrapper.findComponent(ComposerInputMock).vm.$emit('input', 'world')
     await wrapper.vm.$nextTick()
@@ -177,7 +178,7 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
 
   it('TC13: compact 期间 `/` 前缀文本 → 拒绝入队 + toast + draft 保留', async () => {
     const chat = useChatStore()
-    chat.setCompacting('s1', true)
+    chat.setOccupancy('s1', { turn: 'idle', compacting: true, bash: false })
     const wrapper = mountComposer({ sessionId: 's1' })
     await typeAndEnter(wrapper, '/compact')
 
@@ -193,7 +194,7 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
 
   it('TC13b: compact 期间 `!` 前缀 bash 命令 → 拒绝入队 + toast + draft 保留', async () => {
     const chat = useChatStore()
-    chat.setCompacting('s1', true)
+    chat.setOccupancy('s1', { turn: 'idle', compacting: true, bash: false })
     const wrapper = mountComposer({ sessionId: 's1' })
     await typeAndEnter(wrapper, '!ls')
 
@@ -209,7 +210,7 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
 
   it('TC14: badge 显示条数 + 首条预览 + 取消按钮移除单条', async () => {
     const chat = useChatStore()
-    chat.setCompacting('s1', true)
+    chat.setOccupancy('s1', { turn: 'idle', compacting: true, bash: false })
     const queue = useCompactQueue()
     const wrapper = mountComposer({ sessionId: 's1' })
     const m1 = queue.enqueue('s1', 'm1')
@@ -241,9 +242,9 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
     expect(wrapper.find('[data-testid="compact-queue-badge"]').exists()).toBe(true)
 
     // compacted 成功链路：flush 提交成功（send mock resolve）——[u4b] 提交 ≠ 出队（E2 退役），
-    // badge 保持（条目等确认帧）；压缩态结束
+    // badge 保持（条目等确认帧）；压缩态结束（[u5b] occupancy compacting=false 驱动）
     await expect(queue.flush('s1')).resolves.toBe(true)
-    chat.setCompacting('s1', false)
+    chat.setOccupancy('s1', { turn: 'idle', compacting: false, bash: false })
     await wrapper.vm.$nextTick()
 
     expect(queue.count('s1')).toBe(1)
@@ -263,15 +264,16 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
 
   it('TC16: compacted 失败（队列保留）→ badge 仍在', async () => {
     const chat = useChatStore()
-    chat.setCompacting('s1', true)
+    chat.setOccupancy('s1', { turn: 'idle', compacting: true, bash: false })
     const queue = useCompactQueue()
     const wrapper = mountComposer({ sessionId: 's1' })
     queue.enqueue('s1', 'm1')
     await wrapper.vm.$nextTick()
     expect(wrapper.find('[data-testid="compact-queue-badge"]').exists()).toBe(true)
 
-    // compacted 失败：压缩态结束但队列未 flush（保留待下次重试）
-    chat.setCompacting('s1', false)
+    // compacted 失败：压缩态结束但队列未 flush（保留待下次重试；[u5b] 本用例直接驱动
+    // store 投影不经 useChat handler，occupancy idle 的 flush 触发在 handler 集成测试覆盖）
+    chat.setOccupancy('s1', { turn: 'idle', compacting: false, bash: false })
     await wrapper.vm.$nextTick()
 
     expect(queue.count('s1')).toBe(1)
@@ -280,7 +282,7 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
 
   it('TC17: compact 态无输入 → 发送按钮 disabled + title=sendHint + 点击不入队', async () => {
     const chat = useChatStore()
-    chat.setCompacting('s1', true)
+    chat.setOccupancy('s1', { turn: 'idle', compacting: true, bash: false })
     const wrapper = mountComposer({ sessionId: 's1' })
     await wrapper.vm.$nextTick()
 
@@ -301,7 +303,7 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
 
   it('TC18: compact 期间 Alt+⏎ → 入队而非 followUp', async () => {
     const chat = useChatStore()
-    chat.setCompacting('s1', true)
+    chat.setOccupancy('s1', { turn: 'idle', compacting: true, bash: false })
     const wrapper = mountComposer({ sessionId: 's1' })
     wrapper.findComponent(ComposerInputMock).vm.$emit('input', 'alt-msg')
     await wrapper.vm.$nextTick()

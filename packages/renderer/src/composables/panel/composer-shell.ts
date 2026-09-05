@@ -20,7 +20,7 @@
  * （boxClass 三级链：staging > bash > 流式 steer 呼吸 > 聚焦 ring；placeholder 三级链：
  * staging > bash > steerHint/inputHint），删除原 2 文件（无独立复用点，仅 Composer.vue 消费）。
  */
-import { computed, type ComputedRef, type Ref } from 'vue'
+import { computed, reactive, type ComputedRef, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { GitFork, Upload } from '@lucide/vue'
 import type { Segment, Message } from '@xyz-agent/shared'
@@ -35,6 +35,8 @@ import {
   useComposerBash,
   useComposerSubmit,
   useComposerSend,
+  resolveSendRoute,
+  type SendRoute,
 } from '@xyz-agent/core/domain/composer'
 // input 域 3 个 composable 已迁 @xyz-agent/dom-core（ADR-0058）：history/dragdrop/restore
 import {
@@ -52,6 +54,7 @@ import { useModel } from '@/composables/features/model/useModel'
 import { useHandoffActions } from '@/composables/features/fork-handoff/useHandoffActions'
 import { useSidebar } from '@/composables/features/sidebar/useSidebar'
 import { useCompactQueue } from './useCompactQueue'
+import { useSessionScopedState } from '@/composables/useSessionScopedState'
 import { useToast } from '@/composables/useToast'
 import { useForkModeChannel } from './useForkModeChannel'
 import { useHandoffModeChannel } from './useHandoffModeChannel'
@@ -98,8 +101,6 @@ export interface ComposerShellParams {
   drafts: DraftStore
   /** session 是否活跃（流式/派发）—— canSend/visual 守卫 */
   isActive: ComputedRef<boolean>
-  /** session 是否正在压缩上下文（compact 分支守卫） */
-  isCompacting: ComputedRef<boolean>
 }
 
 /**
@@ -140,7 +141,7 @@ export function deriveHistoryFromChatStore(chatStore: ReturnType<typeof useChatS
  * @returns core 模块组装结果 + 派生状态（Composer.vue 解构消费）
  */
 export function useComposerShell(params: ComposerShellParams) {
-  const { sessionIdRef, variantRef, inputRef, composerBoxRef, draft, isSending, drafts, isActive, isCompacting } = params
+  const { sessionIdRef, variantRef, inputRef, composerBoxRef, draft, isSending, drafts, isActive } = params
   const { t } = useI18n()
   const chatStore = useChatStore()
   const sessionStore = useSessionStore()
@@ -272,6 +273,24 @@ export function useComposerShell(params: ComposerShellParams) {
 
   const hasInput = computed(() => draft.value.trim().length > 0)
 
+  // ── D6 发送路由（u5b）：sessionPhase（occupancy 投影）→ sendRoute，导出供 P4 消费 ──
+  // 数据源 = chat store sessionPhase（session.occupancy 帧驱动 + stateSnapshot 快照恢复）。
+  // 发送位四态（P4/u6b）与 ActivityStrip 从本 computed 取同一真值，与分发器行为同源不漂移。
+  //
+  // turn 活跃判定取**并集**：occupancy 权威投影 ∨ 本地乐观视图（isActive = streaming 实体
+  // ∨ 乐观 pendingSend）。本地 send 的乐观置位先于 runtime occupancy 广播（RPC RTT 窗口），
+  // 只看投影会让窗口内 Enter 落 direct 被 canSend 守卫拦死（死键回退）——并集保持现状
+  // isActive→steer 语义；settling/compacting/bash 维度无本地乐观源，由权威帧独占。
+  const sendRoute = computed<SendRoute>(() => {
+    const sid = sessionIdRef.value
+    if (!sid) return 'direct' // landing（无 session）无 occupancy 记录 → 全 idle → direct
+    const phase = chatStore.sessionPhase(sid)
+    // 本地乐观 busy 投影化为 dispatching（「已发起未确认」的 occupancy 语义）后过统一路由表
+    // ——判定逻辑单点在 resolveSendRoute，P4 复用同函数不漂移。
+    const effective = isActive.value && phase.turn === 'idle' ? { ...phase, turn: 'dispatching' as const } : phase
+    return resolveSendRoute(effective)
+  })
+
   // ── bash 命令模式（core dispatch/bash；sendBash 注入）──
   const composerBash = useComposerBash({
     draft,
@@ -337,12 +356,14 @@ export function useComposerShell(params: ComposerShellParams) {
           : t('panel.composer.inputHint')),
   )
 
-  // ── 发送分流（core dispatch/send；staging > compact > landing > bash > /compact > send）──
+  // ── 发送分流（core dispatch/send；D6 统一分发器：staging > steer 路由 > canSend > staging.send >
+  //    defer 路由 > landing > bash > /compact > send）──
   const { onSend } = useComposerSend({
     staging: { hasActiveStaging: staging.hasActiveStaging, send: staging.send, activeStaging: staging.activeStaging },
     getStagingConfig,
     canSend,
-    isCompacting,
+    hasInput,
+    getSendRoute: () => sendRoute.value,
     draft,
     inputRef,
     sessionIdRef,
@@ -354,6 +375,7 @@ export function useComposerShell(params: ComposerShellParams) {
     flow,
     localThinkingLevel,
     send,
+    steer,
     compact,
     enqueueCompact: (sessionId: string, text: string) => compactQueue.enqueue(sessionId, text),
     toastError,
@@ -402,6 +424,8 @@ export function useComposerShell(params: ComposerShellParams) {
     onAbort,
     // send
     onSend,
+    // D6 发送路由（u5b 导出：P4 发送位四态 / ActivityStrip 同源消费）
+    sendRoute,
     // 派生状态
     hasInput,
     isBusy,
@@ -416,3 +440,26 @@ export function useComposerShell(params: ComposerShellParams) {
 export type ComposerShellReturn = ReturnType<typeof useComposerShell>
 // Segment 类型 re-export（Composer.vue 发送/恢复链路消费）
 export type { Segment }
+
+/**
+ * FR4: per-session 草稿存储（内存不持久化）；session 切换时保存旧/恢复新草稿。
+ * ADR-0049：裸 Map 迁到 useSessionScopedState 分区——结构化消除 session 泄漏。
+ * DraftStore 窄接口：消费方（restore.ts）只关心 get/save/delete，不持有 Map 引用。
+ */
+export function createComposerDrafts(sessionIdRef: ComputedRef<string | null>): DraftStore {
+  const draftsState = useSessionScopedState(sessionIdRef, () => reactive({ text: '' }))
+  return {
+    getDraft: (sid: string) => {
+      let text = ''
+      draftsState.updateFor(sid, (s) => { text = s.text })
+      return text
+    },
+    saveDraft: (sid: string, text: string) => {
+      draftsState.updateFor(sid, (s) => { s.text = text })
+    },
+    deleteDraft: (sid: string) => {
+      // cleanup 移除分区（triggerSessionCleanups 也会调，此处是发送成功后即时清理）
+      draftsState.cleanup(sid)
+    },
+  }
+}

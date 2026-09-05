@@ -6,7 +6,8 @@
  * （createUseChat + 真实 useCompactQueue 单例 + 真实 chat store），锁定接线层：
  * - 验收① compacting 拒绝 → 真实 compactQueue 入队恰一次（text 为原文）+ 乐观气泡回滚
  *   + inflight 回滚（store/composable 层状态断言）
- * - 验收② busy 拒绝 → 不入队（队列保持空）
+ * - 验收② busy 拒绝 → 静默入队（[u5b] P3 全 reason——flush 触发源已切 occupancy idle，
+ *   busy 拒绝入队等 bash/turn 结束即投递，不再有「等不到触发源」滞留）
  * - 验收④ clientUuid 经 renderer chatApi 实现透传（options.clientUuid = 乐观气泡 id）
  *
  * mock 策略对齐 src/__tests__/useChat.test.ts：vi.hoisted 捕获 streamSubscribe handler，
@@ -99,7 +100,7 @@ describe('send.rejected compacting 兜底入队（renderer 集成）', () => {
     expect(chat.getInflight('f1')).toBe(0)
   })
 
-  it('验收② busy 拒绝 → 回滚生效、队列保持空（不入队）', async () => {
+  it('验收② busy 拒绝 → 回滚生效 + 静默入队（P3 全 reason，无 toast）', async () => {
     const chat = useChatStore()
     const queue = useCompactQueue()
     const { send } = useChat()
@@ -111,7 +112,8 @@ describe('send.rejected compacting 兜底入队（renderer 集成）', () => {
     } as ServerMessage)
     await p
 
-    expect(queue.count('f2')).toBe(0)
+    // [u5b / D2 P3] busy 拒绝静默入队（原文入队，occupancy 回 idle 自动投递）
+    expect(queue.peek('f2')).toEqual([{ id: expect.any(String), text: 'hi' }])
     expect(chat.getMessages('f2').length).toBe(0)
     expect(chat.getInflight('f2')).toBe(0)
   })

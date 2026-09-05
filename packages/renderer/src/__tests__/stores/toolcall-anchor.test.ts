@@ -203,7 +203,7 @@ describe('W1: isActive 作为 UI 层 SSOT — deriveStatus 消费 isActive（含
     const store = useChatStore()
     const sid = 's-compact'
     // 设置 compacting 态
-    store.setCompacting(sid, true)
+    store.setOccupancy(sid, { turn: 'idle', compacting: true, bash: false })
     expect(store.isCompacting(sid)).toBe(true)
     // 同时有 pendingSend（用户在 compact 期间提交了新消息）
     store.addPendingSend(sid)

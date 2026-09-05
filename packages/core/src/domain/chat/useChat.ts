@@ -63,6 +63,11 @@ export interface CompactQueueLike {
    *  [u4a] message_end(user) ① 据此做 defer 分区 FIFO 文本匹配（按入队序，最早同文本优先） */
   peek: (sid: string) => ReadonlyArray<CompactQueueEntrySnapshot>
   /**
+   * [u5b / D6] 队列非空判定（occupancy 全 idle 时 flush 触发条件的「且队列非空」半边）。
+   * count>0 的布尔投影；实现方（renderer useCompactQueue）已有同签名方法。
+   */
+  hasPending: (sid: string) => boolean
+  /**
    * [u4a / D5.3] 投递确认回调：message_end(user) ① 命中 defer 条目时由 core 调用。
    * 队列实现侧执行「标记确认 + 出队」（转态/pending 气泡收口归 u4b 消费条目 id）；
    * 按 id 精确出队，未知 id no-op 返回 false。返回 true = 出队成功，core 继续剔快照
@@ -281,12 +286,14 @@ export function ensureStreamSubscription(
   const unsub = deps.chatApi.streamSubscribe(sid, (msg) => {
     // [send.rejected] 兜底通道（D-006 独立类型，不进对话流）——session-occupancy D2 改造：
     // 乐观气泡回滚 + inflight 回滚对全部 reason 立即生效（修复 §2.2 窗口 2 的「气泡残留 +
-    // 计数悬空」）；仅 reason='compacting' 兜底入队（P1 分阶段：复用 compactQueue，flush 触发
-    // 仍是 session.compacted——reason 与触发事件一一对应；'busy'/'processing' 维持 toast-only，
-    // P3 起 occupancy 落地后才全 reason 静默入队）；clientUuid 命中队列已有条目 = flush 重放
-    // 来源，跳过重入队（flush 的 S1 窗口订阅已处理失败保留，重入队会双条目双投递）。
+    // 计数悬空」）；u5b 起 P3 全 reason 静默入队（flush 触发源切 session.occupancy 全 idle——
+    // busy/processing 的拒绝入队等 occupancy 回 idle 即投递，不再有「等不到触发源」的滞留，
+    // 设计 D2 被否 ③ 的前置条件已解除）；clientUuid 命中队列已有条目 = flush 重放来源，
+    // 跳过重入队（flush 的 S1 窗口订阅已处理失败保留，重入队会双条目双投递）。
     if (msg.type === 'send.rejected') {
-      const { reason, clientUuid: rejectedUuid, message: rejectMessage } = msg.payload
+      // reason（busy/compacting/processing）P3 起不再参与分型判定（全 reason 统一静默入队），
+      // 仅作为 runtime 转译语义保留在 wire 契约。
+      const { clientUuid: rejectedUuid, message: rejectMessage } = msg.payload
       const pending = pendingDirectSends.get(sid)
       // flush 重放来源消歧：rejected 回带的 clientUuid 命中 compactQueue 已有条目（u4b 起
       // flush 提交携带条目 id）→ 该次发送来自 flush，只回滚不入队。
@@ -299,16 +306,11 @@ export function ensureStreamSubscription(
         chat.decrementInflight(sid, 1) // 消除计数悬空（后续 steer 确认被错抵的根因）
         chat.clearPendingSend(sid)
         pendingDirectSends.delete(sid)
-        if (reason === 'compacting') {
-          if (!uuidQueued) {
-            // P1 兜底：静默入队取代 toast（D2 接管表），原文（未加标记）等 session.compacted flush 重放。
-            deps.getCompactQueue().enqueue(sid, pending.text)
-          }
-          return
+        // P3 全 reason 静默入队（D2 接管表）：toast 退役（三种拒绝统一 defer 语义——
+        // occupancy 回 idle 自动投递 + pending 气泡可见），原文（未加标记）入队。
+        if (!uuidQueued) {
+          deps.getCompactQueue().enqueue(sid, pending.text)
         }
-        // 'busy' / 'processing'：toast-only（无对话流错误气泡、不入队——P1 阶段 flush 触发源
-        // 只有 session.compacted，入队会永等不到触发源，设计 D2 被否 ③）。
-        deps.toast.error(rejectMessage ?? deps.t('composable.agentProcessing'))
         return
       }
       // 无未决直发记录（flush 重放 / editAndResend / 迟到帧）：无本编排器产生的乐观副作用
@@ -348,31 +350,53 @@ export function ensureStreamSubscription(
       coalescer.enqueue(sid, msg, (m) => chat.applyMessageEvent(sid, m))
       return
     }
-    // session.* → 跨 store 协调（sessionStore.applySnapshot/setCompacting），
+    // session.* → 跨 store 协调（sessionStore.applySnapshot / occupancy 投影），
     // 保留在 useChat（stores 间禁止互相 import）。
     switch (msg.type) {
       // [fix-handoff-with-message] session.handoffStarted 不再处理：前端已删除「正在交接…」
       // system notice（改由 composer stop 按钮提供取消入口）。runtime 仍广播此消息，前端忽略即可。
       case 'session.compacting': {
         // #6 + M4：compact 生命周期开始（interpreter 从 compaction_start 事件唯一驱动，走 session 通道）。
-        // reason 区分手动/自动，驱动 MessageStream compacting 浮层文案（M4 事件驱动核心价值）。
-        chat.setCompacting(sid, true, msg.payload.reason)
+        // [u5b / D1] membership 已切 occupancy 派生（session.occupancy 帧，见下方 case）——本
+        // handler 只保留 reason 文案源维护（手动/自动浮层文案，useMessageStreamNotices 消费）。
+        // 帧序：interpreter 同一挂点先发 session.compacting 再发 occupancy（event-interpreter
+        // handleCompactionStart），reason 就位先于浮层显隐条件成立。
+        chat.setCompactingReason(sid, msg.payload.reason)
         break
       }
       case 'session.compacted': {
-        // #6：compact 生命周期结束（成功/失败/取消均广播）。复位态 + 标记 compaction_end 已到达。
-        chat.setCompacting(sid, false)
+        // #6：compact 生命周期结束（成功/失败/取消均广播）。清除 reason 文案源（occupancy 的
+        // compacting=false 由本事件之后的 session.occupancy 帧驱动）。
+        chat.setCompactingReason(sid, undefined)
         // MF-1：compaction_end 到达标记（供 compact() catch 区分失败类型）。仅 manual compact
         // in-flight 时标记——auto-compaction 的 compaction_end handler 见 key 不在则跳过（不污染）。
-        // 成功/失败/aborted 均置 true：只要 compaction_end 到达，说明 pi 已处理 compact，结果（含错误）
+        // 成功/失败/aborted 坉 true：只要 compaction_end 到达，说明 pi 已处理 compact，结果（含错误）
         // 由 interpreter 进对话流，catch 不再 toast（避免双提示 / 对 aborted 误提示失败）。
         if (manualCompactionState.has(sid)) manualCompactionState.set(sid, true)
-        // wave:compact-queued-messages：compact 成功后重放排队消息（session.compacted 无 error 字段）。
-        // - error 非空（compact 失败）：仅保留队列，不 flush——错误反馈归 interpreter
-        //   （compaction_end{errorMessage} → message.error 对话流），handler 不 toast（避免双提示）。
-        // - error 为 undefined（compact 成功 / aborted）：flush 重放；flush 返回 false（重放 RPC 失败）→
-        // toast 提示（队列保留，下次 compact 成功时重试）。
-        if (msg.payload.error === undefined) {
+        // [u5b / D6] flush 触发源切换：session.compacted 不再直接 flush——统一由下方
+        // session.occupancy handler 的「全 idle 且队列非空」判定触发（sendRoute 解除语义）。
+        // 行为变化（设计 §3.5 错误规格表已声明）：压缩失败（compacted{error}）后 occupancy
+        // 三路复位 compacting=false → 同样满足 idle 条件 → 队列照常投递（消息不丢优先）。
+        break
+      }
+      case 'session.occupancy': {
+        // [u5b / D1+D3] occupancy 投影消费（state topic：live 广播 + subscribeSession 的
+        // stateSnapshot 回放同路径到达——WS 重连 resubscribeAll / 切回 session 时快照恢复，
+        // G4）。写入 chat store 投影分区（sessionPhase 单一数据源）。
+        chat.setOccupancy(sid, { turn: msg.payload.turn, compacting: msg.payload.compacting, bash: msg.payload.bash })
+        // [u5b / D6] defer 队列 flush 触发（sendRoute 解除语义 = 路由表行 1 的三维形态）：
+        // turn=idle 且 compacting=false 且 bash=false 且队列非空 → 投递。bash 参与条件
+        // （行 6 bash=true 时路由 defer，投递时机上 bash 结束解除）；renderer 的 bash flag
+        // 从 occupancy 帧取得（runtime #7 挂点写入）。
+        // 覆盖场景：压缩完成（原 session.compacted 触发语义）/ settling 收口 / bash 结束 /
+        // 断连重连快照恢复 idle（V6a：恢复后自动重放）。幂等：occupancy 帧变化才广播
+        // （runtime 去重）+ flush per-session in-flight 守卫 + 空队列 no-op。
+        if (
+          msg.payload.turn === 'idle'
+          && !msg.payload.compacting
+          && !msg.payload.bash
+          && deps.getCompactQueue().hasPending(sid)
+        ) {
           void deps
             .getCompactQueue()
             .flush(sid)

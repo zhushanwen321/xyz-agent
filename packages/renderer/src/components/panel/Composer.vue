@@ -170,7 +170,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, createVNode, onBeforeUnmount, onMounted, provide, reactive, ref, render, watch, type Ref } from 'vue'
+import { computed, createVNode, onBeforeUnmount, onMounted, provide, ref, render, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowUp, Loader2, Square, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -189,11 +189,10 @@ import { useChatStore } from '@/stores/chat'
 import { useProjectSkills, useGlobalSkills } from '@/composables/features/settings/useProjectSkills'
 import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverTrigger'
-import { useComposerShell, type ShellInputInstance } from '@/composables/panel/composer-shell'
+import { useComposerShell, createComposerDrafts, type ShellInputInstance } from '@/composables/panel/composer-shell'
 import type { DraftStore } from '@xyz-agent/dom-core/composer/input'
 import { handleImagePaste } from '@/composables/panel/useImageAttachment'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
-import { useSessionScopedState } from '@/composables/useSessionScopedState'
 
 const props = withDefaults(
   defineProps<{
@@ -298,24 +297,8 @@ const isCompacting = computed(() => (props.sessionId ? chatStore.isCompacting(pr
 
 // composer-box 容器 ref（拖拽落位 + 视觉）——先声明，再喂给 shell
 const composerBoxRef = ref<HTMLElement | null>(null)
-// FR4: per-session 草稿存储（内存不持久化）；session 切换时保存旧/恢复新草稿
-// ADR-0049：裸 Map 迁到 useSessionScopedState 分区——结构化消除 session 泄漏
-const draftsState = useSessionScopedState(sessionIdRef, () => reactive({ text: '' }))
-/** DraftStore 窄接口：消费方（restore.ts）只关心 get/save/delete，不持有 Map 引用 */
-const drafts: DraftStore = {
-  getDraft: (sid: string) => {
-    let text = ''
-    draftsState.updateFor(sid, (s) => { text = s.text })
-    return text
-  },
-  saveDraft: (sid: string, text: string) => {
-    draftsState.updateFor(sid, (s) => { s.text = text })
-  },
-  deleteDraft: (sid: string) => {
-    // cleanup 移除分区（triggerSessionCleanups 也会调，此处是发送成功后即时清理）
-    draftsState.cleanup(sid)
-  },
-}
+// FR4: per-session 草稿存储（ADR-0049 分区，工厂在 composer-shell）
+const drafts: DraftStore = createComposerDrafts(sessionIdRef)
 
 // ── W4 壳改写：core 模块 deps 组装 + 视觉派生集中在 composer-shell.ts（替代 14 个 useComposer* shim）──
 const shell = useComposerShell({
@@ -327,7 +310,6 @@ const shell = useComposerShell({
   isSending,
   drafts,
   isActive,
-  isCompacting,
 })
 const {
   currentModelId,
@@ -349,10 +331,11 @@ const {
   fork,
   handoff,
   staging,
-  onSteer,
+  // [u5b] onSteer 解构退役：Enter 路由收口在分发器（onSend 内部 steer 分支），组件内无直调消费方
   onFollowUp,
   onAbort,
   onSend,
+  sendRoute,
   canSubmit,
   boxClass,
   placeholder,
@@ -360,7 +343,6 @@ const {
   // 传 ComposerInput suppressTriggers——bash 模式下 $/#/@/ 全部不触发浮层（设计 D6 豁免）
   isBashMode,
 } = shell
-
 watch(
   () => props.sessionId,
   (newId, oldId) => {
@@ -393,7 +375,11 @@ function onInputChange(text: string): void {
   resetBrowsing()
 }
 
-/** 键盘：staging 优先 ⏎ 提交（fork/handoff，含 streaming 中）；无 staging 时 ⏎ 发送/steer，Alt+⏎ follow-up，⇧⏎ 换行，↑/↓ 翻历史。命令浮层 open 时优先路由到浮层。 */
+/** 键盘：staging 优先 ⏎ 提交（fork/handoff，含 streaming 中）；⏎ / Alt+⏎ 全部汇入统一发送分发器
+ *  （D6，u5b——Enter 按 sessionPhase 路由 direct/steer/defer；Alt+⏎ 保留 followUp 语义：turn 活跃
+ *  （steer 路由行）走 followUp 下一轮，其余（defer/direct）同 Enter 经分发器）；⇧⏎ 换行，↑/↓ 翻历史。
+ *  命令浮层 open 时优先路由到浮层。[HISTORICAL] isActive→onSteer 与 isCompacting→onSend 两套
+ *  分散判定（优先级倒挂根因）已退役，路由判定收口在 useComposerSend（core dispatch/send）。 */
 function onKeydown(e: KeyboardEvent): void {
   if (cmdOpen.value && commandPopoverRef.value?.handleKeydown(e)) return
   if (e.isComposing) return // IME 组合中不拦截（与 useContenteditableInput 守卫一致）
@@ -411,7 +397,7 @@ function onKeydown(e: KeyboardEvent): void {
   }
   if (e.key !== 'Enter' || e.shiftKey) return
   e.preventDefault()
-  // staging（fork/handoff）优先于 steer/followUp：模式 chip 在时 Enter/Alt+Enter 均提交 staging，
+  // staging（fork/handoff）优先于发送路由：模式 chip 在时 Enter/Alt+Enter 均提交 staging，
   // 不注入当前对话（streaming 中 fork-ask 合法——对源 session 只读；handoff 的 streaming
   // 拦截在 enterHandoffMode 入口 + handleHandoffSend 兑底，此处无需区分）。
   if (staging.activeStaging.value) {
@@ -419,13 +405,15 @@ function onKeydown(e: KeyboardEvent): void {
     return
   }
   if (e.altKey) {
-    // Alt+⏎：压缩期间重路由到 onSend（入队待重放）——onFollowUp 无 isActive 守卫，
-    // 直通会走 pi followUp RPC 留陈旧队列。非压缩态保持 followUp。
-    if (isCompacting.value) onSend()
-    else onFollowUp()
-  } else if (isActive.value) {
-    onSteer()
+    // Alt+⏎ followUp 语义经分发器：turn 活跃（steer 路由行 2/3）→ followUp（下一轮投递，
+    // 现状 isActive→onFollowUp 等价）；defer（settling/compacting/bash）→ 分发器入队；
+    // direct → 分发器直发（followUp 非活跃退化路径的语义收口）。[u5b] 原 isCompacting→onSend
+    // 特判由 defer 路由自然覆盖。
+    if (sendRoute.value === 'steer') onFollowUp()
+    else onSend()
   } else {
+    // ⏎：统一分发器（steer 路由并入当前回合 / defer 入队 / direct 直发——优先级倒挂消除：
+    // turn 活跃 + compacting（行 3）按 D6 表走 steer 而非误排队）
     onSend()
   }
 }

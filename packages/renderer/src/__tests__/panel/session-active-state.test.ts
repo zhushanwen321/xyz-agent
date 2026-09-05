@@ -5,7 +5,7 @@
  * 消除「提交后到 pi message_start 之间」空窗期的状态不一致；compact 互斥态独立驱动 running。
  *
  * 三视角覆盖（AGENTS.md 测试规范 #5-8）：
- * - 构建者（白盒）：store.addPendingSend / setCompacting → isActive / isCompacting → deriveStatus
+ * - 构建者（白盒）：store.addPendingSend / setOccupancy → isActive / isCompacting（occupancy 派生）→ deriveStatus
  * - 使用者（黑盒）：mount SessionItem/Panel 断言 DOM（转菊花 / Composer 渲染 / Landing 守卫）
  * - 观察者（形态）：spinner 含 animate-spin 动画类、composer/landing testid 存在
  *
@@ -141,7 +141,7 @@ describe('E2: 非焦点 session 提交后 pending 态（activeId 限定已移除
 })
 
 describe('E3: compact 期 compacting 态 + Panel 渲染 Composer（conversation 恒挂，D2 存在性与模态正交）', () => {
-  it('setCompacting(s1,true) → derivedStatus=compacting；Panel 渲染 Composer', () => {
+  it('setOccupancy(s1,{compacting:true}) → derivedStatus=compacting；Panel 渲染 Composer', () => {
     const chat = useChatStore()
     const sessionStore = useSessionStore()
     const { derivedStatus } = useSessionDerivations()
@@ -150,7 +150,7 @@ describe('E3: compact 期 compacting 态 + Panel 渲染 Composer（conversation 
     sessionStore.appendSession(session)
 
     // 触发 compact：compact 互斥态开启
-    chat.setCompacting('s1', true)
+    chat.setOccupancy('s1', { turn: 'idle', compacting: true, bash: false })
     expect(chat.isCompacting('s1')).toBe(true)
 
     // compact 不并入 isActive（设计约束：用户不可干预压缩流程）

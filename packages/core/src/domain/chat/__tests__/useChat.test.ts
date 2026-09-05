@@ -46,6 +46,8 @@ interface Fixture {
     flush: ReturnType<typeof vi.fn>
     enqueue: ReturnType<typeof vi.fn>
     peek: ReturnType<typeof vi.fn>
+    hasPending: ReturnType<typeof vi.fn>
+    confirmDelivery: ReturnType<typeof vi.fn>
   }
   /** 主动向 sid 的 streamSubscribe handler 注入一条 ServerMessage（模拟 WS 事件） */
   emit: (sid: string, m: ServerMessage) => void
@@ -81,6 +83,10 @@ function makeFixture(): Fixture {
     flush: vi.fn().mockResolvedValue(true),
     enqueue: vi.fn((sid: string, text: string) => ({ id: `q-${sid}-${Date.now()}`, text })),
     peek: vi.fn((_sid: string) => [] as Array<{ id: string; text: string }>),
+    // [u5b] CompactQueueLike 全接口 mock（occupancy handler flush 条件的 hasPending +
+    // u4a ① 确认出队）——core 用例不发 occupancy 帧，补齐面保接口完整
+    hasPending: vi.fn((_sid: string) => false),
+    confirmDelivery: vi.fn((_sid: string, _id: string) => false),
   }
   const deps: UseChatDeps = {
     chatApi,
@@ -584,9 +590,10 @@ describe('send inflight 挂钩（steer-bubble u2 / D2 维护点 2）', () => {
   })
 })
 
-// ── [session-occupancy-send-closure D2 / u3-p1-renderer] send.rejected 兜底与回滚 ──
-// 乐观气泡回滚 + inflight 回滚全 reason 生效；仅 compacting 兜底入队（P1 分阶段）；
-// clientUuid 命中队列条目（flush 来源）只回滚不入队；busy/processing toast-only。
+// ── [session-occupancy-send-closure D2 / u3-p1-renderer + u5b P3 全 reason] send.rejected 兜底与回滚 ──
+// 乐观气泡回滚 + inflight 回滚全 reason 生效；u5b 起三种 reason 统一静默入队（flush 触发源
+// 切 session.occupancy 全 idle，busy/processing 的拒绝入队等 idle 即投递，无「等不到触发源」
+// 滞留——D2 被否 ③ 的前置条件已解除）；clientUuid 命中队列条目（flush 来源）只回滚不入队。
 // 时序模拟：WS FIFO 保证 rejected 广播先于 RPC reply——send 的 promise 同步段完成后
 // （记录已写、订阅已建）即 emit，再 await send 收口。
 
@@ -623,25 +630,30 @@ describe('send.rejected 兜底与回滚（session-occupancy D2 P1）', () => {
     f.dispose()
   })
 
-  it('验收② busy 拒绝：回滚生效、不入队、toast-only（无对话流气泡）', async () => {
+  it('验收② busy 拒绝：回滚生效 + 静默入队（P3 全 reason，无 toast 无对话流气泡）', async () => {
     const f = makeFixture()
     await sendThenReject(f, 'r2', 'hi', { reason: 'busy', message: 'Agent 正在处理' })
 
     expect(f.chatStore.getMessages('r2').length).toBe(0)
     expect(f.chatStore.getInflight('r2')).toBe(0)
-    expect(f.compactQueue.enqueue).not.toHaveBeenCalled()
-    expect(f.toast.error).toHaveBeenCalledWith('Agent 正在处理')
+    // P3 全 reason：busy（bash 忙等）拒绝同样静默入队——occupancy 回 idle（bash 结束）时
+    // useChat occupancy handler 触发 flush 投递，不再有「等不到触发源」的滞留。
+    expect(f.compactQueue.enqueue).toHaveBeenCalledTimes(1)
+    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('r2', 'hi')
+    // toast-only 分支退役（静默入队取代）
+    expect(f.toast.error).not.toHaveBeenCalled()
     f.dispose()
   })
 
-  it('验收② processing 拒绝：回滚生效、不入队、toast-only', async () => {
+  it('验收② processing 拒绝（settling 窗口）：回滚生效 + 静默入队（P3 全 reason）', async () => {
     const f = makeFixture()
     await sendThenReject(f, 'r2b', 'hi', { reason: 'processing', message: 'Agent 正在处理' })
 
     expect(f.chatStore.getMessages('r2b').length).toBe(0)
     expect(f.chatStore.getInflight('r2b')).toBe(0)
-    expect(f.compactQueue.enqueue).not.toHaveBeenCalled()
-    expect(f.toast.error).toHaveBeenCalledWith('Agent 正在处理')
+    expect(f.compactQueue.enqueue).toHaveBeenCalledTimes(1)
+    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('r2b', 'hi')
+    expect(f.toast.error).not.toHaveBeenCalled()
     f.dispose()
   })
 

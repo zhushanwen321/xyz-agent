@@ -27,7 +27,7 @@ describe('chat store 瞬态状态收口（W3：finalizeAllStreaming 应全收口
     const sid = 's-compacting'
 
     // 把 session 标为「压缩中」（session.compacting 驱动）
-    store.setCompacting(sid, true)
+    store.setOccupancy(sid, { turn: 'idle', compacting: true, bash: false })
     expect(store.isCompacting(sid)).toBe(true)
 
     // 模拟 runtime 重启 / 断连：useConnection 会调 finalizeAllStreaming('restart')
@@ -83,7 +83,7 @@ describe('chat store 瞬态状态收口（W3：finalizeAllStreaming 应全收口
     const sid = 's-normal'
 
     // session 正在压缩 + 一条 streaming 消息
-    store.setCompacting(sid, true)
+    store.setOccupancy(sid, { turn: 'idle', compacting: true, bash: false })
     store.applyMessageEvent(sid, {
       type: 'message.message_start',
       payload: { sessionId: sid, messageId: 'a1' },
@@ -110,7 +110,7 @@ describe('chat store 瞬态状态收口（W3：finalizeAllStreaming 应全收口
       type: 'message.message_start',
       payload: { sessionId: sid, messageId: 'a1' },
     })
-    store.setCompacting(sid, true)
+    store.setOccupancy(sid, { turn: 'idle', compacting: true, bash: false })
     store.applyMessageEvent(sid, {
       type: 'message.auto_retry_start',
       payload: { sessionId: sid, attempt: 1 },

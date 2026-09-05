@@ -25,6 +25,8 @@ export { dispatchMessageEvent } from './effects/registry'
 export { setCompactQueueProviderForEffects, resetCompactQueueProviderForEffectsForTest } from './effects/user-delivery'
 export type { CompactQueueLike, CompactQueueEntrySnapshot } from './useChat'
 export { createChatStore, DEFAULT_STREAMING_TIMEOUT_MS } from './store'
+// [session-occupancy u5b] occupancy 投影类型（sessionPhase 数据源，P4 ActivityStrip/发送位消费）
+export type { SessionOccupancyState } from './store'
 export * from './derive-status'
 export { createStreamingStateMachine, type StreamingStateMachineDeps } from './streaming-state-machine'
 export type { ChatStoreInstance } from './store'
