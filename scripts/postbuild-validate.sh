@@ -2,7 +2,7 @@
 # scripts/postbuild-validate.sh — 打包后产物验证
 #
 # 检查项：
-# 1. 产物存在性（dmg/zip/exe/AppImage）
+# 1. 产物存在性（dmg/exe/AppImage）
 # 2. macOS/Windows unpacked app 结构（main executable, asar, runtime, native resources）
 # 3. asar 内容正确性
 # 4. renderer WASM chunk 检查（CSP 能力防线：产物级拦截依赖暗藏的可执行 WASM）
@@ -180,6 +180,30 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
             fi
         else
             echo -e "  ${RED}✗${NC} app.asar.unpacked/node_modules/node-pty/lib/unixTerminal.js 缺失（无法验证 helperPath guard）"
+            FAILED=1
+        fi
+
+        # node-pty prebuilds 平台裁剪守卫 — u2（设计 batch3 §3.2.2）靠 electron-builder.yml
+        # mac 平台段 files 排除 win32-*/darwin-x64 prebuilds。yml 回退或 electron-builder
+        # 升级改变 files 匹配语义时，全平台 prebuilds 会静默回到产物（死重 + 体积回涨），
+        # CI 无感。产物级断言：prebuilds 目录仅含 darwin-arm64，且 pty.node/spawn-helper 在位
+        # （darwin-arm64 被误裁时 S5 冒烟前在此捕获）。node-pty 整包 asarUnpack，prebuilds
+        # 目录本身缺失亦属回归。
+        PTY_PREBUILDS_DIR="$APP_PATH/Contents/Resources/app.asar.unpacked/node_modules/node-pty/prebuilds"
+        if [ -d "$PTY_PREBUILDS_DIR" ]; then
+            PTY_FOREIGN_PLATFORMS=$(find "$PTY_PREBUILDS_DIR" -mindepth 1 -maxdepth 1 -type d ! -name 'darwin-arm64' -exec basename {} \;)
+            if [ -n "$PTY_FOREIGN_PLATFORMS" ]; then
+                echo -e "  ${RED}✗${NC} node-pty prebuilds 含非 darwin-arm64 平台目录:$(echo "$PTY_FOREIGN_PLATFORMS" | tr '\n' ' ')"
+                echo -e "        u2 平台裁剪疑似被回退——检查 electron-builder.yml mac 段 files 的 prebuilds 排除行（设计 batch3 §3.2.2）"
+                FAILED=1
+            elif [ -f "$PTY_PREBUILDS_DIR/darwin-arm64/pty.node" ] && [ -f "$PTY_PREBUILDS_DIR/darwin-arm64/spawn-helper" ]; then
+                echo -e "  ${GREEN}✓${NC} node-pty prebuilds 仅 darwin-arm64（pty.node + spawn-helper 在位）"
+            else
+                echo -e "  ${RED}✗${NC} node-pty darwin-arm64 native 缺失（pty.node/spawn-helper）: $PTY_PREBUILDS_DIR/darwin-arm64"
+                FAILED=1
+            fi
+        else
+            echo -e "  ${RED}✗${NC} node-pty prebuilds 目录缺失: $PTY_PREBUILDS_DIR"
             FAILED=1
         fi
 

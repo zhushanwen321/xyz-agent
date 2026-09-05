@@ -9,7 +9,7 @@
 | 优先级 | 位置 | 描述（修复记录） |
 |---|---|---|
 | MUST_FIX | §3.3.3-B/S8 | `mktemp -d /Volumes/...` 在 root:wheel 755 的现代 macOS 上普通用户必失败（探针复现 Permission denied），dmg 更新第一步即 fail。→ 已修：mountpoint 改 `$TMPDIR` + 「独立于 STAGING_DIR」约束 + S8 断言同步；探针升 ✅（用户目录挂载全链路实测通过） |
-| MUST_FIX | §3.3.3-A/u6 | 改动面清单遗漏 platform-updater.ts:104（MacUpdater 直读 macArm64Zip.sha256，不经 pickPlatformAsset）与 main/update/dev/mock-release-checker.ts:50（dev 桩）；测试同步实为 13 个文件而非 4 个。→ 已修：清单扩为 5 处源码 + 类型 + 13 测试文件（以 grep 为准），u6 领地同步 |
+| MUST_FIX | §3.3.3-A/u6 | 改动面清单遗漏 platform-updater.ts:104（MacUpdater 直读 macArm64Zip.sha256，不经 pickPlatformAsset）与 main/dev/mock-release-checker.ts:50（dev 桩）；测试同步实为 13 个文件而非 4 个。→ 已修：清单扩为 5 处源码 + 类型 + 13 测试文件（以 grep 为准），u6 领地同步 |
 | SUGGESTION | §3.2.1 | langAlias 段前提为假：实装 shellscript grammar JSON 自带 aliases=[bash,sh,shell,zsh] 且 primitive loadLanguage:285-287 自动注册，不补 langAlias 也无降级回归。→ 已修：段重写为「alias 对账（r1 审查修正）」，无需 langAlias 配置；S1 措辞改 grammar aliases 回归防护；A1 表风险列同步 |
 | SUGGESTION | §2.2/§3.3.3-A/§2.1 | 行号偏移两处：pick-platform-asset.ts :21→:20；release-checker :461→:458。→ 已修 |
 | INFO | §4 S2/S10 | S2 阈值 1.0MB 余量紧（18 grammar 模块实测 812K+16K）→ 放宽 ≤1.2MB；S10 hosts 劫持有 TLS 障碍 → 明示 mock-release-checker 桩路线。→ 已修 |

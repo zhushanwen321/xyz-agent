@@ -46,6 +46,8 @@ renderer 触发 → IPC update:check → ReleaseChecker.checkForLatestRelease
 
 ### 2.3 renderer 语言 chunk 死重根因
 
+本节 file:line 为基线 86f944027（改造前）时点快照，u1 落地后行号已漂移（SHIKI_LANGS 现 :83 等），机制断言仍成立。
+
 `markdown.ts:28` `import { createHighlighter } from 'shiki'`（full bundle）→ shiki full bundle 的 `langs-bundle-full` 模块内含 **235 个** `import("@shikijs/langs/<lang>")` 动态条目（node_modules/shiki/dist/langs-bundle-full-*.mjs 实测 grep 计数）→ rolldown 对每个动态入口产独立 chunk → 产物 `renderer/dist/assets/` 实测 **289 个语言 chunk 共 ~8.1MB**。而运行时只注册 13 语言（markdown.ts:55 SHIKI_LANGS），未注册语言一律回落 typescript（:122-134）——**~7.5MB 是模块图里存在、运行时永不加载的死重**。vite.config.ts:81 的 shiki 组 regex 已用负向前瞻排除 `@shikijs/langs/`，与死重成因无关，改造后无需同步（该文件 :66-67 关于「235 动态 chunk 按需分离」的注释随 full bundle 移除而失真，已在阶段 3 修复批次补 [HISTORICAL] 标注）。
 
 ### 2.4 node-pty 全平台 prebuilds
@@ -133,7 +135,7 @@ hdiutil attach 对 ULFO 完全透明（系统层解压），updater 脚本与人
 - release-checker.ts：`ASSET_PATTERNS.macArm64Zip: endsWith('-mac-arm64.zip')` → `macArm64Dmg: endsWith('-mac-arm64.dmg')`；buildLatestReleaseInfo 组装字段同步（:446-449, :458）。
 - pick-platform-asset.ts:20：darwin 分支 → `release.assets.macArm64Dmg`。
 - **platform-updater.ts:104**：MacUpdater 直读 `release.assets.macArm64Zip?.sha256?.toLowerCase()` 拼 S0c 校验值——**不经 pickPlatformAsset**（r1 审查发现的遗漏直读点），同步改读 macArm64Dmg。
-- main/update/dev/mock-release-checker.ts:50：dev 桩（main.ts dev 模式引入），同步字段名。
+- main/dev/mock-release-checker.ts:50：dev 桩（main.ts dev 模式引入），同步字段名。
 - packages/shared/src/update.ts：LatestReleaseInfo.assets 字段 `macArm64Zip` → `macArm64Dmg`。
 - **[必须] validate-release.ts:54 key 列表同步**（`['macArm64Dmg','winX64Exe','linuxX64AppImage']`）——该列表是 asset URL 的 SSRF/白名单校验入口，漏同步 = dmg asset 跳过防御校验（调研发现的隐性耦合，纵深缺口）。
 - preloaded-update.ts / manual-claim.ts 经 pickPlatformAsset 派生，自动跟随，零改动。
@@ -205,7 +207,7 @@ hdiutil detach "$MOUNT_DIR" || hdiutil eject "$MOUNT_DIR" 2>/dev/null   # detach
 | u3 | dmg ULFO（**顶层 dmg 段**加 `format: ULFO`——u3 实施修正：非 mac 子段，dmg-builder 直读 packager.config.dmg，mac 段被 schema 拒绝 + 注释） | apps/electron/electron-builder.yml | u2（同文件串行） | S6 |
 | u4 | AppImage xz（**顶层 appImage 段**加 `compression: xz`——u4 实施修正：非 linux 子段，schema 拒绝 + 注释） | apps/electron/electron-builder.yml | u3（同文件串行） | S7 |
 | u5 | 砍 deb（yml linux.target + release-checker pattern + shared 类型 + validate-release key + generate-manifest 正则 + build.yml glob/注释） | electron-builder.yml / release-checker.ts / packages/shared/src/update.ts / update/validate-release.ts / scripts/generate-manifest.sh / .github/workflows/build.yml | u4（同文件串行；checker 链与 u6 同文件亦串行） | 单测 + S11 负向断言 |
-| u6 | mac 更新走 dmg（A 定位链 5 处源码 + 类型 + B updater 脚本 S1 段 + C 删 zip target/build.yml 清理 + D 断供错误信息 + 测试同步：全仓 grep `macArm64Zip` 命中的 13 个测试文件逐一改） | release-checker.ts / pick-platform-asset.ts / update/platform-updater.ts / update/dev/mock-release-checker.ts / packages/shared/src/update.ts / updater-script.ts / validate-release.ts / electron-builder.yml / build.yml / orchestrator.ts（仅错误信息）+ 13 个测试文件 | u5（同文件串行、风险最后置） | S8+S9+S10 |
+| u6 | mac 更新走 dmg（A 定位链 5 处源码 + 类型 + B updater 脚本 S1 段 + C 删 zip target/build.yml 清理 + D 断供错误信息 + 测试同步：全仓 grep `macArm64Zip` 命中的 13 个测试文件逐一改） | release-checker.ts / pick-platform-asset.ts / update/platform-updater.ts / dev/mock-release-checker.ts / packages/shared/src/update.ts / updater-script.ts / validate-release.ts / electron-builder.yml / build.yml / orchestrator.ts（仅错误信息）+ 13 个测试文件 | u5（同文件串行、风险最后置） | S8+S9+S10 |
 
 拆分理由：规则 12「打包子系统改动逐个 commit 逐个验证」；u1-u2 无依赖可并行；u2→u3→u4→u5 同文件（yml）严格串行且各自原子小改；u6 动面最大（10 个源码文件 + 13 个测试文件）且含行为变更，置于流水线末端独立验收。dmg/AppImage 的产物级验证（S6/S7）依赖 u3/u4 的完整构建，CI dir-only 模式（build.yml:140-142）不产压缩 target，故 S6 用本地单 target 构建、S11 用 release 完整构建兜底。
 
