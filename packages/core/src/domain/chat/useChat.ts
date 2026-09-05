@@ -39,13 +39,36 @@ import { createMessageCoalescer } from './delta-coalescer'
  *
  * session-occupancy-send-closure D2 P1：send.rejected{reason:'compacting'} 兜底入队复用
  * compactQueue（enqueue）+ flush 重放来源消歧（peek 命中条目 id 即跳过重入队）。
+ * [u4a / D5.3 ①] 扩展投递确认回调（confirmDelivery）与条目提交通道标记（mode）——
+ * message_end(user) 三分支处理序 ①（defer 分区 FIFO 文本匹配）的 core 消费面。
  */
+export interface CompactQueueEntrySnapshot {
+  id: string
+  text: string
+  /**
+   * [u4a / D5.3] 提交通道标记：flush 提交该条目时写入（队首 'send'、其余 'steer'——
+   * 与 flush 的首条 send + 后续 steer 提交顺序一致）；undefined = 未提交（还没被任何
+   * flush 提交过）。双消费：① 匹配资格判据（未提交条目不可能产生投递确认帧，若被同
+   * 文本他帧误配出队 = 消息永不被投递即丢失）+ send 占位回收判据（命中 send 条目
+   * decrementInflight 回收占位，steer 条目不挂占位不动计数）。
+   */
+  mode?: 'send' | 'steer'
+}
+
 export interface CompactQueueLike {
   flush: (sid: string) => Promise<boolean>
   /** 入队一条待发消息，返回含 id 的条目（id 供 flush 提交时的 clientUuid 消歧，u4b 消费） */
   enqueue: (sid: string, text: string) => { id: string; text: string }
-  /** 只读快照（副本），兜底 handler 据此判定 rejected.clientUuid 是否命中已有条目 */
-  peek: (sid: string) => ReadonlyArray<{ id: string; text: string }>
+  /** 只读快照（副本），兜底 handler 据此判定 rejected.clientUuid 是否命中已有条目；
+   *  [u4a] message_end(user) ① 据此做 defer 分区 FIFO 文本匹配（按入队序，最早同文本优先） */
+  peek: (sid: string) => ReadonlyArray<CompactQueueEntrySnapshot>
+  /**
+   * [u4a / D5.3] 投递确认回调：message_end(user) ① 命中 defer 条目时由 core 调用。
+   * 队列实现侧执行「标记确认 + 出队」（转态/pending 气泡收口归 u4b 消费条目 id）；
+   * 按 id 精确出队，未知 id no-op 返回 false。返回 true = 出队成功，core 继续剔快照
+   * 实例与回收 send 占位；false = 匹配作废，帧落 ②③ 现状链（不丢帧）。
+   */
+  confirmDelivery: (sid: string, id: string) => boolean
 }
 
 /**

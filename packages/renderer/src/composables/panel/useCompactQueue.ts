@@ -14,6 +14,7 @@
 import { reactive, ref } from 'vue'
 import type { Ref } from 'vue'
 import type { ServerMessage } from '@xyz-agent/shared'
+import { setCompactQueueProviderForEffects } from '@xyz-agent/core'
 import { chat as chatApi } from '@/api'
 import * as events from '@/api/events'
 import { useSessionScopedState } from '@/composables/useSessionScopedState'
@@ -22,6 +23,13 @@ import { useSessionScopedState } from '@/composables/useSessionScopedState'
 export interface QueuedMessage {
   id: string
   text: string
+  /**
+   * [session-occupancy u4a / D5.3] 提交通道标记（core CompactQueueEntrySnapshot.mode
+   * 对齐）：flush 提交该条目时写入——队首 'send'、其余 'steer'（与提交顺序一致）；
+   * undefined = 未提交。core message_end(user) ① 据此判定匹配资格（未提交条目的确认帧
+   * 不可能存在，不参与 FIFO 匹配）与 send 占位回收（命中 send 条目才 decrementInflight）。
+   */
+  mode?: 'send' | 'steer'
 }
 
 /** per-session 分区：待发消息数组（init 返回 reactive 容器，ADR-0049 响应式契约） */
@@ -40,6 +48,15 @@ export interface CompactQueue {
   peek(sid: string): QueuedMessage[]
   /** 是否有待发消息（count > 0） */
   hasPending(sid: string): boolean
+  /**
+   * [session-occupancy u4a / D5.3 ①] 投递确认出队（core CompactQueueLike.confirmDelivery
+   * 契约）：message_end(user) 帧经 core effects/registry ① 命中本队列条目时调用——
+   * 按 id 精确移除并返回 true（出队成功）；未知 id no-op 返回 false（core 据此判匹配
+   * 作废落回现有处理链）。条目转态（pending 气泡收口）由 u4b 按 id 消费，本方法只做
+   * 出队记账。与 remove 的区别：remove 是用户撤销（未知 id 静默），confirmDelivery 是
+   * 投递事实确认（返回值参与 core 帧消费裁决），语义不同不合并。
+   */
+  confirmDelivery(sid: string, id: string): boolean
   /**
    * 重放队列：首条 chatApi.send + 其余依次 chatApi.steer（await 串行）。
    * 成功判定（S1，D-009 契约核对）：runtime sendMessage busy 预检（isGenerating /
@@ -97,6 +114,19 @@ function createCompactQueue(): CompactQueue {
     })
   }
 
+  /** [u4a / D5.3 ①] 投递确认出队：按 id 精确 splice，命中 true / 未知 id false（no-op） */
+  function confirmDelivery(sid: string, id: string): boolean {
+    let removed = false
+    state.updateFor(sid, (p) => {
+      const idx = p.messages.findIndex((m) => m.id === id)
+      if (idx !== -1) {
+        p.messages.splice(idx, 1)
+        removed = true
+      }
+    })
+    return removed
+  }
+
   function count(sid: string): number {
     let n = 0
     state.updateFor(sid, (p) => {
@@ -135,6 +165,15 @@ function createCompactQueue(): CompactQueue {
   async function doFlush(sid: string): Promise<boolean> {
     const snapshot = peek(sid)
     if (snapshot.length === 0) return true
+    // [u4a / D5.3] 提交通道标记（先于首条 RPC 写入）：队首 'send'、其余 'steer'——与
+    // 下方提交顺序一致。仅写条目字段（core ① 的匹配资格 + send 占位回收判据），不改
+    // 提交顺序/出队时机/返回值（u4b flush 重写为投递确认驱动后按 mode 记账消费）。
+    state.updateFor(sid, (p) => {
+      snapshot.forEach((s, i) => {
+        const live = p.messages.find((m) => m.id === s.id)
+        if (live) live.mode = i === 0 ? 'send' : 'steer'
+      })
+    })
     // S1：flush 窗口内临时订阅 send.rejected。runtime 广播先于 RPC reply 到达
     //（同 WS 连接 FIFO：dispatcher 同步广播 → handler 同步 reply），await resolve 时标志已就绪。
     // 订阅仅存在于 flush 窗口，用户后续的 send.rejected 不影响本次判定。
@@ -167,5 +206,11 @@ function createCompactQueue(): CompactQueue {
     return true
   }
 
-  return { enqueue, remove, count, peek, hasPending, flush, _clearAllForTest: state._clearAllForTest }
+  return { enqueue, remove, count, peek, hasPending, confirmDelivery, flush, _clearAllForTest: state._clearAllForTest }
 }
+
+// [session-occupancy u4a / D5.3] 注册 defer 队列 provider（core effects/registry ① 的注入点）。
+// 闭包惰性执行：首个 message_end(user) 帧处理时才调 useCompactQueue()——生产时序下单例
+// 已由 App.vue setup 创建（app 级 effect scope，见上方单例注释），此处直接返回缓存实例。
+// 未注册时 core ① 整体跳过（帧落现有处理链），注册失败方向安全。
+setCompactQueueProviderForEffects(() => useCompactQueue())

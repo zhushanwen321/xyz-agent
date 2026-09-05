@@ -223,3 +223,57 @@ describe('useCompactQueue 隔离与生命周期（TC7-TC8）', () => {
     expect(queue.count('s1')).toBe(0)
   })
 })
+
+// ── [session-occupancy u4a / D5.3 ①] 投递确认出队（confirmDelivery）+ 提交通道标记
+//    （mode）——core CompactQueueLike 接口扩展的 renderer 实现侧锁定。core 侧机制
+//    （message_end(user) 三分支 ①）的行为测试在 packages/core effects-defer-confirmation.test.ts。──
+describe('useCompactQueue 投递确认与提交通道标记（u4a / D5.3）', () => {
+  it('CD1: confirmDelivery 按 id 精确出队返回 true；未知 id 返回 false 且队列不变', () => {
+    const queue = useCompactQueue()
+    const e1 = queue.enqueue('s1', 'm1')
+    queue.enqueue('s1', 'm2')
+
+    expect(queue.confirmDelivery('s1', e1.id)).toBe(true)
+    expect(queue.peek('s1').map((m) => m.text)).toEqual(['m2'])
+
+    // 未知 id：no-op 不抛错，返回 false（core 据此判匹配作废落回现有处理链）
+    expect(queue.confirmDelivery('s1', 'unknown-id')).toBe(false)
+    expect(queue.peek('s1').map((m) => m.text)).toEqual(['m2'])
+  })
+
+  it('CD2: flush 提交时写提交通道标记——队首 send、其余 steer（core ① 匹配资格判据）', async () => {
+    const queue = useCompactQueue()
+    queue.enqueue('s1', 'm1')
+    queue.enqueue('s1', 'm2')
+    // 入队未提交：mode undefined（不参与 core ① 的确认匹配）
+    expect(queue.peek('s1').map((m) => m.mode)).toEqual([undefined, undefined])
+
+    let resolveSend!: () => void
+    apiMock.send.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveSend = resolve }),
+    )
+    const flushPromise = queue.flush('s1')
+    // send 在途（已提交未出队）窗口：首条 'send'、其余 'steer'——与提交顺序一致
+    expect(queue.peek('s1').map((m) => m.mode)).toEqual(['send', 'steer'])
+    resolveSend()
+    await expect(flushPromise).resolves.toBe(true)
+  })
+
+  it('CD3: flush 提交窗口内 confirmDelivery 出队成功（core message_end 确认帧驱动路径）', async () => {
+    const queue = useCompactQueue()
+    const e1 = queue.enqueue('s1', 'm1')
+    queue.enqueue('s1', 'm2')
+    let resolveSend!: () => void
+    apiMock.send.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveSend = resolve }),
+    )
+    const flushPromise = queue.flush('s1')
+    // 投递确认帧先于 flush 完成到达（pi ack 后 message_end 即落盘）：条目按 id 出队
+    expect(queue.confirmDelivery('s1', e1.id)).toBe(true)
+    resolveSend()
+    await expect(flushPromise).resolves.toBe(true)
+    // flush 完成移除 snapshot 条目：已确认的 m1 早已出队（filter no-op），仅剩 m2 的
+    // snapshot 移除照常——出队记账与 flush 清除互不双删
+    expect(queue.count('s1')).toBe(0)
+  })
+})
