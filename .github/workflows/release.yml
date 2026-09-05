@@ -245,7 +245,7 @@ jobs:
     if: >-
       !cancelled() &&
       needs.release.result == 'success' &&
-      startsWith(github.ref, 'refs/tags/v')
+      (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
 
     steps:
       - uses: actions/checkout@v4
@@ -288,7 +288,8 @@ jobs:
           VERSION=$(node -p "require('./apps/electron/package.json').version")
           NOTES=""
           [ -f release-artifacts/release-notes.md ] && NOTES="release-artifacts/release-notes.md"
+          # prerelease 以版本号含 '-' 判断（不能用 GITHUB_REF：workflow_dispatch 时是分支名，必含 '-'）
           PRERELEASE_FLAG=""
-          case "${GITHUB_REF}" in *-*) PRERELEASE_FLAG="--prerelease" ;; esac
+          case "v${VERSION}" in *-*) PRERELEASE_FLAG="--prerelease" ;; esac
           node scripts/gitcode-release-sync.mjs sync \
             "v${VERSION}" "xyz-agent v${VERSION}" "${NOTES}" release-artifacts ${PRERELEASE_FLAG}
