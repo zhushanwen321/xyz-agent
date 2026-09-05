@@ -10,6 +10,8 @@
 //   - [R4 已实施 2026-08-30] RunContext.onHandleReady——运行中句柄回填通道
 //     （同设计 §3.4 不变量 3：sessionRef 在 create 应答后经本回调送达编排层，
 //     与 onPoolResolved 分立两个时点）。
+//   - [u-h2 已实施 2026-09-05] EnginePort.validateModel?()——派发同步期 model 校验面。
+//     权威源：docs/design/timeout-audit-hygiene-batch.md §3.2 D2-2。
 //
 // 四个能力面（D1）：
 //   run        —— 主语义：一次性 fire-to-completion 任务执行；
@@ -179,6 +181,21 @@ export interface EnginePort {
    * 侧零改动。
    */
   listModels?(): Array<{ id: string; name?: string }> | null;
+
+  /**
+   * [u-h2 D2-2] 可选面：派发同步期 model 校验（引擎 registry 单源裁决）。实现引擎复用其
+   * prepare 期同一校验函数（zcode: resolveZcodeModelRef——同一函数两处消费，canonicalRef
+   * 归一化与短名缺省 provider 决策不产生双实现漂移）；校验失败同步 throw（编排层包装为
+   * 「引擎与模型不配套」错误，见 engine/model-validation.ts）。
+   *
+   * modelRef undefined = 查询引擎缺省模型（D2-1：主 agent 的 pi id 不透传给非 pi 引擎，
+   * 缺省语义归引擎——zcode 落 ZCODE_FALLBACK_DEFAULT_MODEL）。返回 canonical 全名供
+   * record.model 留痕。
+   *
+   * 未实现：model 透传，引擎自身 prepare 期校验兜底（现状语义）；pi 不实现（pi 链走
+   * 既有三层解析 + assertCanonicalModelRef 裁决，搬迁是大重构，设计 D2-2 被否②）。
+   */
+  validateModel?(modelRef: string | undefined): { canonicalRef: string };
 
   /**
    * [R1 D6] 可选停机面：释放引擎持有的常驻资源（如 app-server 常驻进程 / 长连接）。

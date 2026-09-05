@@ -1316,6 +1316,17 @@ export class ZcodeEngine implements EnginePort {
     return listZcodeModels(this.deps.sources);
   }
 
+  /**
+   * [u-h2 D2-2] 派发同步期 model 校验：委托 resolveZcodeModelRef（与 run prepare 期
+   * 同一函数——canonicalRef 归一化、短名缺省 provider、凭据与清单校验单一权威，无双实现）。
+   * modelRef undefined = 返回引擎缺省模型 canonical 全名（ZCODE_FALLBACK_DEFAULT_MODEL，
+   * D2-1 ctxModel 不透传的承接面）。校验失败原样抛 ZcodePrepareError，由编排层
+   * （engine/model-validation.ts）包装成「引擎与模型不配套」文案。
+   */
+  validateModel(modelRef: string | undefined): { canonicalRef: string } {
+    return { canonicalRef: resolveZcodeModelRef(modelRef, this.deps.sources) };
+  }
+
   async read(handle: EngineHandle): Promise<SessionView> {
     if (handle.data.engineId !== ZCODE_ENGINE_ID) {
       return { engineId: ZCODE_ENGINE_ID, turns: [], source: "outcome-only" };

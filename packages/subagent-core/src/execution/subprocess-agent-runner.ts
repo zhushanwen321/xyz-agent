@@ -25,6 +25,7 @@ import { createPiEngine, PI_POOL_KEY } from "./engine/engines/pi/registration.ts
 import { executeOptionsToTaskSpec } from "./engine/engines/pi/task-spec-mapper.ts";
 import { resolveJournalPath } from "./engine/paths.ts";
 import type { EnginePort, RunContext } from "./engine/port.ts";
+import { validateModelForEngine } from "./engine/model-validation.ts";
 import { routeEngine, resolveEngineRouting, type EngineRouteResult, type EngineRoutingInput } from "./engine/routing.ts";
 import { getEngine, hasEngine, listEngines } from "./engine/registry.ts";
 import type { AgentOutcome, EngineHandle } from "./engine/types.ts";
@@ -151,6 +152,14 @@ export class SubprocessAgentRunner implements AgentRunner {
           hasEngineFn: (engineId) => engineId === "pi" || hasEngine(engineId),
           listEnginesFn: () => (hasEngine("pi") ? listEngines() : ["pi", ...listEngines()]),
         });
+        // [u-h2 D2-2 调用点②] workflow 域非 pi 引擎的派发同步期 model 校验——与 chat
+        // 路径（subagent-service.executeViaEngine）共享同一入口 validateModelForEngine
+        // 与同一错误文案（V2-4④：agent({engine:'zcode', model:<pi id>}) 同步期报
+        // 「引擎与模型不配套」，不再落 engine.run 的 prepare 期晚炸）。SAR 已路由先行，
+        // 校验对象是显式 opts.model（frontmatter model 的解析归 pi 链，非 pi 路径现状
+        // 不消费——维持现状语义不扩散）。「不 reject」契约：throw 由本 try 的 catch
+        // 收口 errorResult，不进入 journal 创建与 engine.run（零 record/spawn 副作用）。
+        validateModelForEngine(route.engine, opts.model);
       }
     } catch (err) {
       // buildRoutingInput 的 agent 解析期校验（未注册 frontmatter engine）与路由失败

@@ -45,7 +45,8 @@ import { JournalWriter } from "./engine/common/event-journal.ts";
 import { resolveJournalPath } from "./engine/paths.ts";
 import { executeOptionsToEngineTaskSpec } from "./engine/host-task-spec.ts";
 import type { EnginePort, RunContext } from "./engine/port.ts";
-import { DEFAULT_ENGINE_ID, getEngine } from "./engine/registry.ts";
+import { DEFAULT_ENGINE_ID, getEngine, listEngines } from "./engine/registry.ts";
+import { validateModelForEngine, withCrossEngineHint } from "./engine/model-validation.ts";
 import { type EngineRouteResult, resolveEngineRouting, routeEngine } from "./engine/routing.ts";
 import type { AgentOutcome } from "./engine/types.ts";
 import { ManifestStore } from "./manifest-store.ts";
@@ -846,10 +847,16 @@ export class SubagentService {
     const mode: ExecutionMode = "background";
     const ctx = this.buildSessionRunnerContext(opts.cwd);
 
-    // ── 1. IDENTITY 解析（确认 → agentConfig → resolveModel）──
-    const identity = await this.resolveIdentity(opts);
+    // ── 1. IDENTITY 前置解析：agentConfig（agent .md 加载）保持在最前 ──
+    // [u-h2 D2-1] 路由先行：model 解析从「路由之前」移到「路由之后、按目标引擎分支」
+    // （修 F2-A/B 时序根因——曾 :850 先解析 model 再 :867 路由）。agentConfig 是路由
+    // 第二层输入（frontmatter engine）必须先解析；显式 agent ref 校验语义不变。
+    const agent = opts.agent ?? DEFAULT_AGENT_NAME;
+    const agentConfig = opts.agent
+      ? this.modelService.getRequiredAgentConfig(opts.agent)
+      : undefined;
 
-    // ── 1.5 引擎路由（D4 chat 入口分叉；U2 升级为 routeEngine 编排）──
+    // ── 1.5 引擎路由（[u-h2 D2-1] 提前到 model 解析之前；D4 chat 入口分叉；U2 升级为 routeEngine 编排）──
     // 三层解析（调用参数 > agent frontmatter > config.json defaultEngine）仍是同步纯
     // 函数；解析为非 pi 时升级走 routeEngine（probe 编排 + fallback 三守卫）。时机
     // 选择：路由（含 probe）在 record 创建前完成——兜底时 record 直接按 pi 语义创建 +
@@ -858,7 +865,7 @@ export class SubagentService {
     // throw，不产生孤儿 record。
     const routingInput = {
       callEngine: opts.engine,
-      agentEngine: identity.agentConfig?.engine,
+      agentEngine: agentConfig?.engine,
       globalDefaultEngine: this.modelService.getGlobalConfig().defaultEngine,
     };
     const routing = resolveEngineRouting(routingInput);
@@ -873,11 +880,16 @@ export class SubagentService {
         probe: (engineId) => getEngine(engineId).probe(),
       });
       if (route.engineId !== DEFAULT_ENGINE_ID) {
-        return this.executeViaEngine(opts, identity, route);
+        // [u-h2 D2-1③] 非 pi 分支：跳过 pi registry，model 按目标引擎校验（同步期
+        // throw，record 创建前——场景 2 错误；identity 由目标引擎分支构造）。
+        return this.executeViaEngine(opts, agent, agentConfig, route);
       }
       // 兜底成功（典型：默认路由 + probe 失败 + 无守卫命中）→ 落回下方 pi 主路径，
       // record 创建时按 pi 语义 + engine/engineFallback 留痕（engine = 实际执行引擎）
     }
+
+    // ── 2. pi 主路径 identity 解析（[u-h2 D2-1] 路由后执行——现状三层解析链行为零变化）──
+    const identity = await this.resolveIdentity(opts, { agent, agentConfig });
     // D5 字节级守护：无 fallback 的 pi 路由剥掉 opts.engine——createRecordForMode
     // 不盖章（pi record entry 序列化产物不得新增 engine 键，undefined 经 JSON 省略）。
     // 兜底路径显式盖 engine='pi' + engineFallback（见上方时机注释）。
@@ -1803,30 +1815,94 @@ export class SubagentService {
 
   // ── 执行内部：身份解析 + record 创建 ──────────
 
-  /** 步骤 1：身份解析。agentConfig → resolveModel（三层：override → agentConfig → 主 agent model）。 */
-  private async resolveIdentity(opts: ExecuteOptions): Promise<ResolvedIdentity> {
+  /** 步骤 1：身份解析。agentConfig → resolveModel（三层：override → agentConfig → 主 agent model）。
+   *
+   * [u-h2] pi 未命中跨引擎候选（D2-4）：resolveModel 抛 notFoundError（pi registry
+   * 全等裁决未命中）时反查其他已注册引擎清单，唯一命中则追加「该 id 属于引擎 X」
+   * 候选段（场景 3）；其余裁决失败（孪生歧义/auth）与命中路径原样返回（零回归）。
+   * execute() 与 executeAndAwait() 两个派发路径共享本方法，故 chat 与 workflow 域的
+   * pi 校验同享场景 3 文案。
+   */
+  private async resolveIdentity(
+    opts: ExecuteOptions,
+    pre?: { agent: string; agentConfig: AgentConfig | undefined },
+  ): Promise<ResolvedIdentity> {
     // agentRef 语义（S2）：agent 参数 = .md 绝对路径；不传 = 不加载 agentConfig，
     // 直接用 override → 主 agent model。DEFAULT_AGENT_NAME 仅作 record 显示名
     // （TUI 层 extractAgentName 共用，保证显示一致）。
-    const agent = opts.agent ?? DEFAULT_AGENT_NAME;
+    const agent = pre?.agent ?? opts.agent ?? DEFAULT_AGENT_NAME;
     // 显式 agent ref（用户点名）失败必须报错，不静默降级：无 require 的 loadByPath
     // 对相对路径/裸名/文件缺失都返回 undefined → agentConfig undefined → resolveModel
     // 静默回落 override→主 agent model，用户拿到的 subagent 无 systemPrompt/工具白名单
     // 且零反馈。require:true 让失败抛出带 <available_subagents> 指引的错误（对齐
     // workflow name not found 反馈风格）；不传 agent = 默认 general-purpose 语义，
     // agentConfig 保持 undefined（合法缺省，走 override → ctxModel 兑底）。
-    const agentConfig = opts.agent
-      ? this.modelService.getRequiredAgentConfig(opts.agent)
-      : undefined;
+    // [u-h2 D2-1] execute() 已在路由前解析 agentConfig（pre 通道），此处复用不二次加载。
+    const agentConfig = pre
+      ? pre.agentConfig
+      : opts.agent
+        ? this.modelService.getRequiredAgentConfig(opts.agent)
+        : undefined;
 
-    const resolved = this.modelService.resolveModel(
-      opts.agent ?? "",
-      { model: opts.model, thinkingLevel: opts.thinkingLevel },
-      opts.ctxModel,
-      agentConfig,
-    );
+    let resolved: ResolvedModel;
+    try {
+      resolved = this.modelService.resolveModel(
+        opts.agent ?? "",
+        { model: opts.model, thinkingLevel: opts.thinkingLevel },
+        opts.ctxModel,
+        agentConfig,
+      );
+    } catch (err) {
+      throw withCrossEngineHint(err, listEngines(), (id) => {
+        try {
+          return getEngine(id);
+        } catch {
+          return undefined; // 清单快照与注册表并发变化的防御：取不到引擎按未注册处理
+        }
+      });
+    }
 
     return { agent, agentConfig, resolved };
+  }
+
+  /**
+   * [u-h2 D2-1③] 非 pi 引擎的 identity 解析：跳过 pi registry 三层解析（ctxModel 主
+   * agent model 不透传——主 agent 的 pi id 对目标引擎大概率无效，缺省语义归引擎）。
+   *
+   * 逐层语义（设计 D2-1 归趋表）：
+   *   - model 源 = engineModel（调用参数 opts.model > agentConfig.model frontmatter，
+   *     agent 作者声明不忽略——配错在 validateModel 同步报错，不落引擎缺省静默续跑）；
+   *   - 无显式 model → 校验/留痕走引擎缺省（validateModel(undefined) 的 canonicalRef）；
+   *   - thinkingLevel 直接透传（引擎中立参数，不涉 registry）。
+   *
+   * 引擎未实现 validateModel 时 modelRef 原样透传（其 prepare 期校验兜底，现状语义）。
+   */
+  private resolveIdentityForEngine(
+    engine: EnginePort,
+    engineModel: string | undefined,
+    agent: string,
+    agentConfig: AgentConfig | undefined,
+    opts: ExecuteOptions,
+  ): ResolvedIdentity {
+    const canonical = validateModelForEngine(engine, engineModel);
+    // record.model 留痕：canonical（引擎裁决全名，含短名→缺省 provider 归一化）；
+    // 引擎未实现校验面且无显式 model 时为空串（记录形态退化，生产不可达——注册表
+    // 内非 pi 引擎均实现 validateModel；防御性拼接避免 throw 打断兜底语义）。
+    const modelStr = canonical ?? engineModel ?? "";
+    const slashIdx = modelStr.indexOf("/");
+    return {
+      agent,
+      agentConfig,
+      resolved: {
+        model: {
+          id: slashIdx > 0 ? modelStr.slice(slashIdx + 1) : "",
+          name: modelStr,
+          provider: slashIdx > 0 ? modelStr.slice(0, slashIdx) : modelStr,
+          reasoning: false,
+        },
+        thinkingLevel: opts.thinkingLevel ?? agentConfig?.thinkingLevel,
+      },
+    };
   }
 
   /** 步骤 2：按 mode 生成 id + controller，创建 record 并注册。
@@ -1884,16 +1960,23 @@ export class SubagentService {
 
   /**
    * 路由到非 pi 引擎的执行入口：routeEngine（注册表校验 + probe/守卫）已由 execute
-   * 完成——这里只剩 unsupported 预检 → record 创建+盖章 → detached 引擎 run。
+   * 完成——这里只剩 unsupported 预检 → 非 pi identity（含按目标引擎的 model 校验，
+   * [u-h2 D2-1/D2-2]）→ record 创建+盖章 → detached 引擎 run。
    * 全部同步拒绝发生在 record 创建前（不产生孤儿 record）。
    */
   private executeViaEngine(
     opts: ExecuteOptions,
-    identity: ResolvedIdentity,
+    agent: string,
+    agentConfig: AgentConfig | undefined,
     route: EngineRouteResult,
   ): ExecutionHandle {
     const engine = route.engine;
     this.assertEngineParamSupport(engine, opts);
+    // [u-h2 D2-1③] model 源 = 调用参数 > agent .md frontmatter（作者声明不忽略）——
+    // frontmatter 声明须真正透传给引擎（taskSpec.model 消费 opts.model），不能只进
+    // record 留痕；无显式 model 时引擎落自身缺省（validateModel(undefined) 裁决）。
+    const engineModel = opts.model ?? agentConfig?.model;
+    const identity = this.resolveIdentityForEngine(engine, engineModel, agent, agentConfig, opts);
     // record 盖章路由结果（D5 仅 pi 缺省不盖章；非 pi 显式留痕，createRecordForMode
     // 经 opts.engine/engineFallback 读入 record identity——engine 为实际执行引擎，
     // fallback 路径 from=请求引擎留痕，probe 通过的常态路径恒缺省）
@@ -1901,13 +1984,14 @@ export class SubagentService {
       identity,
       {
         ...opts,
+        ...(engineModel !== undefined ? { model: engineModel } : {}),
         engine: route.engineId,
         ...(route.engineFallback !== undefined ? { engineFallback: route.engineFallback } : {}),
       },
       "background",
     );
     emitPendingRegister(this.pi, record.id, record.agent);
-    this.kickOffEngineRun(record, opts, engine);
+    this.kickOffEngineRun(record, { ...opts, ...(engineModel !== undefined ? { model: engineModel } : {}) }, engine);
     return { mode: "background", subagentId: record.id, sessionFile: record.sessionFile, details: project(record) };
   }
 
