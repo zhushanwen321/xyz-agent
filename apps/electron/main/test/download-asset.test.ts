@@ -128,7 +128,7 @@ describe('W3: download-asset (W3TC1-3)', () => {
     vi.restoreAllMocks()
     // 清理 tmp 目录内容（保留目录本身供下次用）
     const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ── W3TC1：happy path（sha256 匹配）────────────────────────────
@@ -312,7 +312,7 @@ describe('W3 multipart error path (S#10)', () => {
     globalThis.fetch = originalFetch
     vi.restoreAllMocks()
     const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ── W3TC5：某段 Range 返回 500 → downloadAsset rejects + 全部临时文件清理 ──
@@ -385,7 +385,7 @@ describe('RM3: multipart Range violation → fallback to single-stream', () => {
     globalThis.fetch = originalFetch
     vi.restoreAllMocks()
     const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 断言降级后无 .part-* / .downloading 残留（泄漏检查） */
@@ -536,7 +536,7 @@ describe('批次 5: resume-state 原子写序列（§3.7.2）', () => {
     globalThis.fetch = originalFetch
     vi.restoreAllMocks()
     const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('多段下载过程中 saveResumeState → 先写 resume-state.json.tmp 再 renameSync 到终态（验收③）', { timeout: 60_000 }, async () => {
@@ -628,7 +628,7 @@ describe('B-4: 断点续传判定边界（overshoot 信任窗口）', () => {
     globalThis.fetch = originalFetch
     vi.restoreAllMocks()
     const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ① 0 < overshoot <= SAVE_INTERVAL_BYTES 且 stat.size <= totalBytes → 信任 stat.size 续传
@@ -771,7 +771,7 @@ describe('RM3-4: 段失败 → 共享 signal 中断其余段', () => {
     globalThis.fetch = originalFetch
     vi.restoreAllMocks()
     const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('part-0 返回 500 → 其余三段挂起流收到 abort 被中断（非跑完），整批 rejects', { timeout: 30_000 }, async () => {
@@ -899,7 +899,7 @@ describe('D1: idle 停滞检测（总墙钟已删）', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ① 场景 1（单测缩样）：慢速但持续传输不被杀——每 10s 一块共 400 块 = 4000s，
@@ -993,4 +993,22 @@ describe('D1: idle 停滞检测（总墙钟已删）', () => {
     // header 阶段失败：temp 文件从未创建，无半下载残留
     expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'd1-stall-header.zip.downloading'))).toBe(false)
   }, 30_000)
+
+  // ④ 用户可见文案闭环（G1 失败路径）：main 推送 update:error 前经 toUserFriendly()
+  //    映射（reportUpdateDownloadError 组 UpdateErrorPayload），toast/设置页展示的是
+  //    停滞语义中文文案 + 断点续传指引（设计 §5.2 样例 5）；英文技术 message 只走
+  //    落盘诊断通道，不直达用户。
+  it('UPDATE_NETWORK_TIMEOUT 用户可见文案为停滞语义 + 续传指引（toUserFriendly 映射闭环）', () => {
+    const err = new UpdateError(
+      'download stalled (no data for 30s), aborted; temp kept — retry resumes from break point',
+      'downloading',
+      'UPDATE_NETWORK_TIMEOUT',
+    )
+    const friendly = err.toUserFriendly()
+    expect(friendly.message).toBe('下载停滞（连续 30 秒无数据）已中断')
+    expect(friendly.suggestion).toContain('断点续传')
+    expect(friendly.suggestion).toContain('重试')
+    // 英文技术 message 无「(大写码)」形态，不触发 (CODE) 后缀拼接污染中文文案
+    expect(friendly.message).not.toContain('stalled')
+  })
 })

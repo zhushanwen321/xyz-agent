@@ -67,9 +67,12 @@ export interface UpdateErrorInfo {
  */
 export const UPDATE_ERROR_MESSAGES: Record<UpdateErrorCode, Omit<UpdateErrorInfo, 'code'>> = {
   UPDATE_NETWORK_TIMEOUT: {
-    message: '下载超时，请检查网络连接',
+    // 停滞检测语义（timeout-slow-flow-wallclock D1/G1：总墙钟已删，本码只会因 30s
+    // 无进展触发；设计 §5.2 样例 5 措辞）——「下载超时」旧措辞会让用户误以为下载
+    // 太慢被杀（正是本次修复消灭的误杀叙事）。30 秒数字与 IDLE_TIMEOUT_MS 对齐。
+    message: '下载停滞（连续 30 秒无数据）已中断',
     stage: 'downloading',
-    suggestion: '请检查您的网络连接是否稳定，或尝试配置代理服务器',
+    suggestion: '点「重试」将从断点续传，无需重头下载；若反复停滞，请检查网络连接是否稳定或配置代理',
   },
   UPDATE_NETWORK_FAILED: {
     message: '网络连接失败',
