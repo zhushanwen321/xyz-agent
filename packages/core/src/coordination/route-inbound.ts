@@ -104,6 +104,22 @@ export interface InboundEffects {
     entries: Array<PiEntry | PiToolCallEntryForm>,
   ): void
   onWorkflowUpdate?(sessionId: string, update: ServerMessageMap['session.workflowUpdate']['update']): void
+  /**
+   * [idle-refresh] subagent.stream_delta 帧桥接（docs/design/timeout-streaming-ui-idle.md §5.1 D1 / §6）。
+   *
+   * sync subagent/workflow 编排期父 session 的 message.* 帧构造性为零（生产端
+   * executeSubagent 不消费 onUpdate），子代理活跃信号走本帧旁路（relay tee / 旧
+   * widget 通道，不经 chat store.applyMessageEvent）。本回调在 routeInbound FALLBACK
+   * 路径按 type 识别后调用（该 type 不在 ROUTE_TABLE/CROSS_SESSION_TYPES，帧与
+   * payload.sessionId 在挂载点完全可见；pending 分流与 seq gap 均不拦截）。
+   *
+   * 实现方（renderer 装配层，useMessageEffects 范本）：解析 payload.sessionId
+   * （shared resolveSubagentParentSessionId——三段式虚拟 id `subagent:<mainSessionId>:<subagentId>`
+   * 提取父 sid / 旧 widget 通道主 sid 原样，双形态兼容，纯字符串函数零失败模式）
+   * → 调 chatStore.refreshStreamingTimer(父sid)，防「子面板在打字、父气泡被判无进展」。
+   * 非 subagent.stream_delta 类型帧不调用（type guard 在 FALLBACK 挂载点）。
+   */
+  onSubagentStreamDelta?(frame: ServerMessage): void
   onGlobalError?(message: string): void
   /**
    * 带 sessionId、未命中 pending 的 error envelope 兜底（D6b，integrity-hardening §3.6）。
@@ -320,6 +336,14 @@ const FALLBACK: RouteTableEntry['handle'] = (msg, { ports, effects, sid }) => {
     // ADR-0060：带 sid 的 extension:* 下行同时分发到全局消费者（ExtensionHost 单例）。
     if (CROSS_SESSION_TYPES.has(msg.type)) {
       ports.events.dispatchCrossSession(msg)
+    }
+    // [idle-refresh] subagent.stream_delta 桥接（§5.1 D1）：该 type 不在 ROUTE_TABLE /
+    // CROSS_SESSION_TYPES（唯一关切是活跃信号，无需独立路由条目），恒落 FALLBACK——
+    // 此处按 type 识别后透传原始 frame，父 sid 解析与 refreshStreamingTimer 调用由
+    // effects 实现方完成（见 InboundEffects.onSubagentStreamDelta 注释）。非本 type
+    // 帧不调用（no-op）；未注册回调时跳过（生产接线前行为与现状一致）。
+    if (msg.type === 'subagent.stream_delta') {
+      effects.onSubagentStreamDelta?.(msg)
     }
     return
   }

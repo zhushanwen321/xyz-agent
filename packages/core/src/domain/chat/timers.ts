@@ -26,11 +26,15 @@ export function clearSessionTimer(timers: Map<string, ReturnType<typeof setTimeo
 /**
  * 初始化 timer 模块。在 chat.ts setup 阶段调用一次，返回 timer 操作函数。
  * 闭包捕获 finalizeSession / finalizeBashOnly 函数，不暴露到模块外部。
+ *
+ * [idle-refresh] streaming 阈值改为 getter 注入（docs/design/timeout-streaming-ui-idle.md §6）：
+ * 每次挂载时读当前配置值（store 侧可变配置源，setStreamingIdleTimeoutMs 更新后新 arm/refresh
+ * 生效），而非 factory 构造期定格的常量——配置链（u-s4）接入后无需重建 store。
  */
 export function initTimers(
   finalizeSession: (sessionId: string, reason: FinalizeReason, errorText?: string) => void,
   finalizeBashOnly: (sessionId: string) => void,
-  streamingTimeoutMs: number,
+  getStreamingTimeoutMs: () => number,
 ) {
   /**
    * [ADR-0049 例外] 以下两个 Map 不套 useSessionScopedState。判据：initTimers() factory 由
@@ -49,15 +53,28 @@ export function initTimers(
   const streamingTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const bashTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-  // ── streaming timer ──
+  // ── streaming timer（idle 无进展检测，[idle-refresh] docs/design/timeout-streaming-ui-idle.md D1）──
 
-  /** message_start 挂载超时兜底（防 message.complete 永不到）。 */
+  /**
+   * 挂载 streaming idle timer（防 message.complete 永不到的挂死流）。
+   * 阈值挂载时读当前配置值（getter 注入，见 initTimers 注释）。
+   */
   function armStreamingTimer(sessionId: string): void {
     clearSessionTimer(streamingTimers, sessionId)
     streamingTimers.set(sessionId, setTimeout(() => {
       finalizeSession(sessionId, 'timeout')
       streamingTimers.delete(sessionId)
-    }, streamingTimeoutMs))
+    }, getStreamingTimeoutMs()))
+  }
+
+  /**
+   * 纯活动刷新 idle 计时（D1）：**当前有 timer 才**清 + 重挂（读当前阈值）；
+   * 无 timer 则 no-op——finalize 后迟到的活动帧（text_delta 等）不复活 timer
+   * （P-H 构造性语义：计时 Map 已无该 sid，刷新即返回）。
+   */
+  function refreshStreamingTimer(sessionId: string): void {
+    if (!streamingTimers.has(sessionId)) return
+    armStreamingTimer(sessionId)
   }
 
   /** 取消 streaming 超时 timer */
@@ -105,5 +122,5 @@ export function initTimers(
     }
   }
 
-  return { armStreamingTimer, clearStreamingTimer, armBashTimer, clearBashTimer, disposeAllTimers }
+  return { armStreamingTimer, refreshStreamingTimer, clearStreamingTimer, armBashTimer, clearBashTimer, disposeAllTimers }
 }

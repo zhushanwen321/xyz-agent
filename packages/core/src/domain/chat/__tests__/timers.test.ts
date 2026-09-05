@@ -8,6 +8,8 @@
  * 覆盖分支（对应 R1 MF-2）：
  * - [W1 decouple] bash timer 到期调 finalizeBashOnly，**不**调 finalizeSession（C2 回归防护）
  * - streaming timer 到期调 finalizeSession(reason='timeout')
+ * - [idle-refresh] 阈值 getter 注入（挂载时读当前值）+ refreshStreamingTimer（有 timer 重挂
+ *   读当前值 / 无 timer no-op 不复活）
  * - clearStreamingTimer / clearBashTimer / disposeAllTimers（HMR/dispose 清理）
  * - clearSessionTimer（export 纯函数）
  * - per-session 隔离 + 重复 arm 不泄漏旧 timer
@@ -21,8 +23,15 @@ const BASH_TIMEOUT_MS = 300_000
 function makeTimers() {
   const finalizeSession = vi.fn<(sessionId: string, reason: string, errorText?: string) => void>()
   const finalizeBashOnly = vi.fn<(sessionId: string) => void>()
-  const t = initTimers(finalizeSession, finalizeBashOnly, STREAMING_TIMEOUT_MS)
-  return { t, finalizeSession, finalizeBashOnly }
+  let timeoutMs = STREAMING_TIMEOUT_MS
+  const t = initTimers(finalizeSession, finalizeBashOnly, () => timeoutMs)
+  return {
+    t,
+    finalizeSession,
+    finalizeBashOnly,
+    /** [idle-refresh] 模拟配置源更新（store.setStreamingIdleTimeoutMs 等价物）。 */
+    setTimeoutMs: (ms: number) => { timeoutMs = ms },
+  }
 }
 
 describe('initTimers — streaming timer', () => {
@@ -69,6 +78,73 @@ describe('initTimers — streaming timer', () => {
     t.armStreamingTimer('s1')
     t.armStreamingTimer('s1') // 再次 arm
     expect(vi.getTimerCount()).toBe(1)
+  })
+})
+
+describe('initTimers — refreshStreamingTimer [idle-refresh]', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('有 timer 时 refresh 清 + 重挂：计时从刷新点重新起算（活动即刷新）', () => {
+    const { t, finalizeSession } = makeTimers()
+    t.armStreamingTimer('s1')
+    // 推进阈值 - 1ms（即将到期）后活动帧到达 → refresh 重挂
+    vi.advanceTimersByTime(STREAMING_TIMEOUT_MS - 1)
+    t.refreshStreamingTimer('s1')
+    // 再推进阈值 - 1ms（累计 2×(阈值-1) > 单阈值）：若未重挂早已触发
+    vi.advanceTimersByTime(STREAMING_TIMEOUT_MS - 1)
+    expect(finalizeSession).not.toHaveBeenCalled()
+    // 推进最后 2ms（自刷新点满阈值）→ 触发
+    vi.advanceTimersByTime(2)
+    expect(finalizeSession).toHaveBeenCalledWith('s1', 'timeout')
+  })
+
+  it('refresh 挂载时读当前配置值（getter 注入，配置更新后新计时按新值）', () => {
+    const { t, finalizeSession, setTimeoutMs } = makeTimers()
+    t.armStreamingTimer('s1')
+    setTimeoutMs(STREAMING_TIMEOUT_MS * 2) // 配置翻倍（arm 后生效）
+    t.refreshStreamingTimer('s1') // refresh 重挂按新值
+    // 推进旧阈值：若 refresh 仍按旧值，此处已触发
+    vi.advanceTimersByTime(STREAMING_TIMEOUT_MS)
+    expect(finalizeSession).not.toHaveBeenCalled()
+    // 推进到新阈值（自 refresh 点起 2×）→ 触发
+    vi.advanceTimersByTime(STREAMING_TIMEOUT_MS)
+    expect(finalizeSession).toHaveBeenCalledWith('s1', 'timeout')
+  })
+
+  it('无 timer 时 refresh no-op（不复活——P-H 构造性语义）', () => {
+    const { t, finalizeSession } = makeTimers()
+    // 从未挂载
+    t.refreshStreamingTimer('s1')
+    expect(vi.getTimerCount()).toBe(0)
+    // finalize 后（timer 到期自动移除）迟到刷新
+    t.armStreamingTimer('s2')
+    vi.advanceTimersByTime(STREAMING_TIMEOUT_MS)
+    expect(finalizeSession).toHaveBeenCalledWith('s2', 'timeout')
+    t.refreshStreamingTimer('s2')
+    expect(vi.getTimerCount()).toBe(0)
+    // 再推进长时间也无二次 finalize
+    vi.advanceTimersByTime(STREAMING_TIMEOUT_MS * 3)
+    expect(finalizeSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('refresh 不影响其他 session 的 timer（只重挂目标 sid 的计时）', () => {
+    const { t, finalizeSession } = makeTimers()
+    t.armStreamingTimer('s1')
+    t.armStreamingTimer('s2')
+    // 两 timer 同挂；推进半程后只 refresh s1
+    vi.advanceTimersByTime(STREAMING_TIMEOUT_MS / 2)
+    t.refreshStreamingTimer('s1')
+    expect(vi.getTimerCount()).toBe(2)
+    // 再推半程：s2 走完原全程到期；s1 自刷新点仅过半程未到期
+    vi.advanceTimersByTime(STREAMING_TIMEOUT_MS / 2)
+    expect(finalizeSession).toHaveBeenCalledTimes(1)
+    expect(finalizeSession).toHaveBeenCalledWith('s2', 'timeout')
+    expect(vi.getTimerCount()).toBe(1)
+    // s1 在刷新点 + 满阈值时到期
+    vi.advanceTimersByTime(STREAMING_TIMEOUT_MS / 2)
+    expect(finalizeSession).toHaveBeenCalledTimes(2)
+    expect(finalizeSession).toHaveBeenCalledWith('s1', 'timeout')
   })
 })
 
