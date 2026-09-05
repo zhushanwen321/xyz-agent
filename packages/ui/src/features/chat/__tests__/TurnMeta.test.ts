@@ -112,14 +112,16 @@ describe('W4TC1: TurnMeta badge 灰阶化', () => {
     expect(wrapper.find('.elapsed').text()).toBe('3s')
   })
 
-  it('turn-meta 按钮文字：dispatching 占位态（assistants 空）保持「思考中」（panel.message.thinking）', () => {
+  it('[u6a] dispatching 占位迁出：空 assistants 不再渲染 TurnMeta（「思考中」迁 ActivityStrip thinking 行）', () => {
     const wrapper = mountMeta({
       turn: makeTurn({ assistants: [] }),
       isWorkingTurn: true,
       isStreaming: false,
       elapsed: '',
     })
-    expect(wrapper.find('.lbl').text()).toBe('panel.message.thinking')
+    // 占位迁出后 v-if 收窄回 assistants.length > 0：空 turn 整个 TurnMeta（含 wrapper div）不渲染
+    expect(wrapper.find('[data-testid="turn-meta-1"]').exists()).toBe(false)
+    expect(wrapper.find('.turn-meta').exists()).toBe(false)
   })
 
   it('thinkCount=0 时不渲染 think badge', () => {

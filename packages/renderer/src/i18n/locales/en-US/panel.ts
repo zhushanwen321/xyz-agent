@@ -19,7 +19,7 @@ export default {
     thinkingLevel: 'Thinking level',
     compacting: 'Compacting…',
     queueSend: 'Queue to send',
-    commandQueuedRejected: 'Compaction in progress, commands are disabled until it finishes',
+    commandQueuedRejected: 'Session busy, commands are disabled until it is free',
     sending: 'Sending…',
     sendHint: 'Type and send',
     steerHint: 'Add to current task with ⏎ · Queue for next turn with Alt+⏎…',
@@ -42,7 +42,6 @@ export default {
   message: {
     copy: 'Copy',
     edit: 'Edit',
-    thinking: 'Thinking',
     working: 'Working…',
     worked: 'Worked',
     steer: 'STEER',
@@ -310,10 +309,10 @@ export default {
     followupLabel: 'FOLLOWUP new turn',
     itemCount: '{count} items',
   },
-  compactQueue: {
-    pending: 'Send after compaction',
-    itemCount: '{count} items',
-    cancel: 'Cancel queue',
+  deferQueue: {
+    pendingHint: 'Will be sent when the session is free',
+    cancelQueued: 'Cancel queued message',
+    submittedAwaitingDelivery: 'Submitted, awaiting delivery',
   },
   contextChips: {
     directory: 'Directory',

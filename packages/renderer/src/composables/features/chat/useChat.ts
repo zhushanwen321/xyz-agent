@@ -41,7 +41,9 @@ import { useCompactQueue } from '@/composables/panel/useCompactQueue'
  * 方法引用稳定（模块级函数），组装一次复用。
  */
 const chatApiPort: ChatApiPort = {
-  send: chatApi.send,
+  // 端口适配：ChatApiPort.send 无 images 概念（Cmd+V 富呈现通路绕过端口直调 api/domains/chat），
+  // 发送编排链路（submitSegments）仅需 options.clientUuid（session-occupancy D2）透传。
+  send: (sid, text, options) => chatApi.send(sid, text, undefined, options),
   // `@` 定向消息分流（U2b）：实现在 session 域（session.subagentAction RPC），经端口
   // 暴露给 core useChat 发送链路（ChatApiPort 注释）；mock 层 stub 已随 U5 就位。
   // 懒解引用（调用时才读 sessionApi.subagentAction）：部分测试 vi.mock session 域时

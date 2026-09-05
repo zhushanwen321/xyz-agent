@@ -409,5 +409,39 @@
    "note": "承重：subagent-workflow U3「ASP 单点注入、删 task 后缀」（agent-opts-resolver.ts formatSchemaInstruction 与 session-runner.ts runSpawn 头注引用本条）——若 pi 升级后不再把注册工具 parameters 下发进请求体，模型将失去 schema 展示面，structured-output 指令链断裂且 ASP 的 {value} 包装契约失去对位；PS-20 的 observe 守卫只覆盖校验链不覆盖展示面。pi 升级时重验：convertTools 是否仍原样映射 tool.parameters、state.tools 是否仍随流式调用上下文下发。观察记录：bcadf4c22 live-verification（structured-output 全链实测，schema 经工具定义对模型生效）"
   },
   "verifiedWith": "0.84.4"
+ },
+ {
+  "id": "PS-22",
+  "claim": "prompt() 首个确定性拒绝分支：_compactionAbortController !== undefined 即 throw \"Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.\"——manual 压缩置位窗口的 pi 侧拒绝原文（session-occupancy-send-closure D2：runtime sendPrompt catch 按原文 includes 转译 send.rejected{reason:'compacting'}，不进 message.error；文案漂移 = 转译失效退化为普通错误气泡）",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "prompt(text, options)",
+    "note": "if (this._compactionAbortController !== undefined) throw ...（0.84.4 实测，紧邻检查块内）；xyz 消费点 packages/runtime/src/services/session/message-dispatcher.ts 的 PI_REJECTION_COMPACTING / classifyPromptRejection"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-prompt-rejection.test.ts"
+  },
+  "verifiedWith": "0.84.4"
+ },
+ {
+  "id": "PS-23",
+  "claim": "prompt() 第二拒绝分支：isStreaming 为 true 且未传 streamingBehavior 即 throw \"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.\"——isStreaming getter 含 post-run settling（_isAgentRunActive 在 agent_end 后仍 true），故 auto 压缩 / post-run 收尾窗口的裸 prompt 也落此分支（manual 压缩走 PS-22 分支在前）；runtime 转译 send.rejected{reason:'processing'} 的识别依据",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "prompt(text, options)",
+    "note": "if (this.isStreaming) { if (!options?.streamingBehavior) throw ...（0.84.4 实测，位于 PS-22 分支之后）；isStreaming getter = _isAgentRunActive（含 post-run）；xyz 消费点 packages/runtime/src/services/session/message-dispatcher.ts 的 PI_REJECTION_PROCESSING / classifyPromptRejection"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-prompt-rejection.test.ts"
+  },
+  "verifiedWith": "0.84.4"
  }
 ]

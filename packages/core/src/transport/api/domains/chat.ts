@@ -46,15 +46,23 @@ export async function getFullHistory(sessionId: string): Promise<Message[]> {
  * shared protocol message.send（protocol.ts:199 images?: Array<{data;mimeType}>）。
  * runtime rpc-client 已守卫空数组（rpc-client.ts:430 images.length>0 才组 piImages），
  * 故此处 images 为 undefined 时直接不传 images 键（保持既有 payload 形态不变）。
+ *
+ * options.clientUuid（session-occupancy-send-closure D2）：经 message.send RPC 参数透传，
+ * runtime 拒绝时在 send.rejected 广播原样带回（renderer 兜底消歧）。undefined 时不带键，
+ * payload 形态与既有流量完全一致（归一模式对称 images）。
  */
 export function send(
   sessionId: string,
   text: string,
   images?: Array<{ data: string; mimeType: string }>,
+  options?: { clientUuid?: string },
 ): Promise<void> {
+  const clientUuid = options?.clientUuid
   return sendCommand(
     'message.send',
-    images ? { sessionId, content: text, images } : { sessionId, content: text },
+    images
+      ? { sessionId, content: text, images, ...(clientUuid !== undefined && { clientUuid }) }
+      : { sessionId, content: text, ...(clientUuid !== undefined && { clientUuid }) },
   )
 }
 

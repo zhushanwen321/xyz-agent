@@ -1,11 +1,12 @@
 <template>
   <!--
     容器组件 · composer（panel/spec.md zone ④，draft-composer-states）。
-    v1 主路径 4 态：
-      S1 空 → S2 输入中 → S5 发送中（spinner）→ S6 流式中（stop + steer/followUp）
-    DEFERRED：
-      S3/S4（@/#// 附件浮层 G2-002）、S7-S9 双队列视图/失败回退/已排队多条。
-    steer/followUp：活跃态（isGenerating/派发空窗期）时 ⏎ 追加 steer，Alt+⏎ 追加 followUp，都不打断当前回合。
+    发送位四态（u6b / D6 表）：send（↑ idle 直发）/ stop（■ turn 活跃 / settling 单独）/
+    queue（↑ 时钟角标：compacting/bash/settling+compacting，点击入 defer 队列）/
+    spinner（isSending）。staging 模式优先（fork/handoff）。
+    steer/followUp/defer 路由：⏎/Alt+⏎ 全部汇入统一发送分发器（D6，composer-shell
+    sendRoute——turn 活跃→steer、占用→defer、idle→direct），Alt+⏎ 在 steer 路由行保留
+    followUp 语义。
     staging 优先（fork/handoff，与视觉层 boxClass/placeholder 优先级对齐）：staging 活跃时 ⏎/Alt+⏎
       均提交 staging（发送位也替换为 staging 发送按钮，streaming 中同样生效）；handoff 的
       streaming 拦截在 enterHandoffMode/handleHandoffSend（isSessionActive 守卫）。
@@ -18,7 +19,6 @@
     <!-- retry/queue 指示位（spec C10，#13，composer 上方独立行）：
          auto_retry_end / message_start 到达时 store 自动清 → state=undefined → 组件 v-if 消失 -->
     <RetryIndicator :state="retryState" />
-    <CompactQueueBadge :session-id="sessionId" />
     <!-- 命令浮层（§2d @/#//）：anchor = composer-box（slot），reka-ui Popover portal body。
          composer-box 内 focus 算 inside 不触发 dismiss，键盘路由见 onKeydown。
          cwd：landing 态 $ 候选的 cwd 通道（landing-composer-session-file-symbols D2；
@@ -114,8 +114,11 @@
         <!-- 思考等级（spec §2c：click 出档位 popover；level 从 session 透传；reasoning 决定可用档集——non-reasoning 只 off） -->
         <ThinkingLevelPopover :level="currentThinkingLevel" :level-map="currentThinkingLevelMap" :supported-levels="currentSupportedLevels" @select="onThinkingSelect" />
 
-        <!-- 发送位：staging（fork/handoff，含 streaming 中）→staging send / S6 streaming/dispatching→stop /
-             S5 sending→spinner / compact→queue-send（可点，入队待重放）/ S1·S2 idle→send。
+        <!-- 发送位四态（u6b / D6 表「发送位」列）：staging（fork/handoff，含 streaming 中）→
+             staging send / stop（turn 活跃 dispatching|generating；settling 单独）→ ■ stop /
+             queue（compacting/bash/settling+compacting）→ ↑ 带时钟角标（可点入队，flush 于占用
+             解除后自动投递）/ S5 sending→spinner / 全 idle→send。
+             派生源 = shell sendButtonState（与分发器 sendRoute 同源 effectivePhase，不漂移）。
              staging 优先于 stop（用户决策）：streaming 中提交 fork 合法（对源只读）；需停止时
              先 Esc 退出 staging 再点 stop。staging 发送中（isSending）仍走 spinner。 -->
         <Button
@@ -131,7 +134,7 @@
           <ArrowUp class="size-[15px]" />
         </Button>
         <Button
-          v-else-if="isActive"
+          v-else-if="sendButtonState === 'stop'"
           variant="ghost"
           size="icon"
           class="stop-btn ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-surface-hover text-neutral-mid hover:bg-danger-soft hover:text-danger"
@@ -141,15 +144,17 @@
           <Square class="size-[13px]" />
         </Button>
         <Button
-          v-else-if="isCompacting"
+          v-else-if="sendButtonState === 'queue'"
           variant="default"
           size="icon"
-          class="ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-accent text-accent-fg transition-colors enabled:hover:bg-accent-hover disabled:bg-transparent disabled:text-[var(--neutral-dim)]"
+          class="queue-send-btn relative ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-accent text-accent-fg transition-colors enabled:hover:bg-accent-hover disabled:bg-transparent disabled:text-[var(--neutral-dim)]"
           :disabled="!canSubmit"
-          :title="canSubmit ? t('panel.composer.queueSend') : t('panel.composer.sendHint')"
+          :title="canSubmit ? `${t('panel.composer.queueSend')} · ⏎` : t('panel.composer.sendHint')"
           @click="onSend"
         >
           <ArrowUp class="size-[15px]" />
+          <!-- 时钟角标（D6 场景 1）：排队语义视觉锚点，右上角 1/4 尺寸 -->
+          <Clock class="absolute right-[2px] top-[2px] size-2" aria-hidden="true" />
         </Button>
         <div
           v-else-if="isSending"
@@ -177,9 +182,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, createVNode, onBeforeUnmount, onMounted, provide, reactive, ref, render, watch, type Ref } from 'vue'
+import { computed, createVNode, onBeforeUnmount, onMounted, provide, ref, render, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowUp, Loader2, Square, X } from '@lucide/vue'
+import { ArrowUp, Clock, Loader2, Square, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { ComposerInput, ComposerInputDepsKey, type ComposerInputDeps } from '@xyz-agent/ui/features/composer'
 import { ViewHost } from '@xyz-agent/ui/extension-host'
@@ -192,16 +197,14 @@ import ThinkingLevelPopover from './ThinkingLevelPopover.vue'
 import ContextChipsBar from './ContextChipsBar.vue'
 import RetryIndicator from './RetryIndicator.vue'
 import QueueBubble from './QueueBubble.vue'
-import CompactQueueBadge from './CompactQueueBadge.vue'
 import { useChatStore } from '@/stores/chat'
 import { useProjectSkills, useGlobalSkills } from '@/composables/features/settings/useProjectSkills'
 import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverTrigger'
-import { useComposerShell, type ShellInputInstance } from '@/composables/panel/composer-shell'
+import { useComposerShell, createComposerDrafts, type ShellInputInstance } from '@/composables/panel/composer-shell'
 import type { DraftStore } from '@xyz-agent/dom-core/composer/input'
 import { handleImagePaste } from '@/composables/panel/useImageAttachment'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
-import { useSessionScopedState } from '@/composables/useSessionScopedState'
 
 const props = withDefaults(
   defineProps<{
@@ -301,29 +304,13 @@ onBeforeUnmount(() => {
 })
 /** composer-box 聚焦态：由 ComposerInput @focus/@blur 驱动（composer-box 经 CommandPopover
  *  PopoverAnchor as-child 包裹，ref 透传丢失，改由子组件 ComposerInput emit focus/blur）。 */
-/** 当前 panel 的 session 是否正在压缩上下文（#6，per-session） */
-const isCompacting = computed(() => (props.sessionId ? chatStore.isCompacting(props.sessionId) : false))
+// [u6b] 本地 isCompacting computed 已退役：压缩维度的唯一读口收敛到 shell sendButtonState
+// （occupancy 投影派生，与分发器 sendRoute 同源——双轨收口完成）。
 
 // composer-box 容器 ref（拖拽落位 + 视觉）——先声明，再喂给 shell
 const composerBoxRef = ref<HTMLElement | null>(null)
-// FR4: per-session 草稿存储（内存不持久化）；session 切换时保存旧/恢复新草稿
-// ADR-0049：裸 Map 迁到 useSessionScopedState 分区——结构化消除 session 泄漏
-const draftsState = useSessionScopedState(sessionIdRef, () => reactive({ text: '' }))
-/** DraftStore 窄接口：消费方（restore.ts）只关心 get/save/delete，不持有 Map 引用 */
-const drafts: DraftStore = {
-  getDraft: (sid: string) => {
-    let text = ''
-    draftsState.updateFor(sid, (s) => { text = s.text })
-    return text
-  },
-  saveDraft: (sid: string, text: string) => {
-    draftsState.updateFor(sid, (s) => { s.text = text })
-  },
-  deleteDraft: (sid: string) => {
-    // cleanup 移除分区（triggerSessionCleanups 也会调，此处是发送成功后即时清理）
-    draftsState.cleanup(sid)
-  },
-}
+// FR4: per-session 草稿存储（ADR-0049 分区，工厂在 composer-shell）
+const drafts: DraftStore = createComposerDrafts(sessionIdRef)
 
 // ── W4 壳改写：core 模块 deps 组装 + 视觉派生集中在 composer-shell.ts（替代 14 个 useComposer* shim）──
 const shell = useComposerShell({
@@ -335,7 +322,6 @@ const shell = useComposerShell({
   isSending,
   drafts,
   isActive,
-  isCompacting,
 })
 const {
   currentModelId,
@@ -357,10 +343,12 @@ const {
   fork,
   handoff,
   staging,
-  onSteer,
+  // [u5b] onSteer 解构退役：Enter 路由收口在分发器（onSend 内部 steer 分支），组件内无直调消费方
   onFollowUp,
   onAbort,
   onSend,
+  sendRoute,
+  sendButtonState,
   canSubmit,
   boxClass,
   placeholder,
@@ -368,7 +356,6 @@ const {
   // 传 ComposerInput suppressTriggers——bash 模式下 $/#/@/ 全部不触发浮层（设计 D6 豁免）
   isBashMode,
 } = shell
-
 watch(
   () => props.sessionId,
   (newId, oldId) => {
@@ -401,7 +388,11 @@ function onInputChange(text: string): void {
   resetBrowsing()
 }
 
-/** 键盘：staging 优先 ⏎ 提交（fork/handoff，含 streaming 中）；无 staging 时 ⏎ 发送/steer，Alt+⏎ follow-up，⇧⏎ 换行，↑/↓ 翻历史。命令浮层 open 时优先路由到浮层。 */
+/** 键盘：staging 优先 ⏎ 提交（fork/handoff，含 streaming 中）；⏎ / Alt+⏎ 全部汇入统一发送分发器
+ *  （D6，u5b——Enter 按 sessionPhase 路由 direct/steer/defer；Alt+⏎ 保留 followUp 语义：turn 活跃
+ *  （steer 路由行）走 followUp 下一轮，其余（defer/direct）同 Enter 经分发器）；⇧⏎ 换行，↑/↓ 翻历史。
+ *  命令浮层 open 时优先路由到浮层。[HISTORICAL] isActive→onSteer 与 isCompacting→onSend 两套
+ *  分散判定（优先级倒挂根因）已退役，路由判定收口在 useComposerSend（core dispatch/send）。 */
 function onKeydown(e: KeyboardEvent): void {
   if (cmdOpen.value && commandPopoverRef.value?.handleKeydown(e)) return
   if (e.isComposing) return // IME 组合中不拦截（与 useContenteditableInput 守卫一致）
@@ -419,7 +410,7 @@ function onKeydown(e: KeyboardEvent): void {
   }
   if (e.key !== 'Enter' || e.shiftKey) return
   e.preventDefault()
-  // staging（fork/handoff）优先于 steer/followUp：模式 chip 在时 Enter/Alt+Enter 均提交 staging，
+  // staging（fork/handoff）优先于发送路由：模式 chip 在时 Enter/Alt+Enter 均提交 staging，
   // 不注入当前对话（streaming 中 fork-ask 合法——对源 session 只读；handoff 的 streaming
   // 拦截在 enterHandoffMode 入口 + handleHandoffSend 兑底，此处无需区分）。
   if (staging.activeStaging.value) {
@@ -427,13 +418,15 @@ function onKeydown(e: KeyboardEvent): void {
     return
   }
   if (e.altKey) {
-    // Alt+⏎：压缩期间重路由到 onSend（入队待重放）——onFollowUp 无 isActive 守卫，
-    // 直通会走 pi followUp RPC 留陈旧队列。非压缩态保持 followUp。
-    if (isCompacting.value) onSend()
-    else onFollowUp()
-  } else if (isActive.value) {
-    onSteer()
+    // Alt+⏎ followUp 语义经分发器：turn 活跃（steer 路由行 2/3）→ followUp（下一轮投递，
+    // 现状 isActive→onFollowUp 等价）；defer（settling/compacting/bash）→ 分发器入队；
+    // direct → 分发器直发（followUp 非活跃退化路径的语义收口）。[u5b] 原 isCompacting→onSend
+    // 特判由 defer 路由自然覆盖。
+    if (sendRoute.value === 'steer') onFollowUp()
+    else onSend()
   } else {
+    // ⏎：统一分发器（steer 路由并入当前回合 / defer 入队 / direct 直发——优先级倒挂消除：
+    // turn 活跃 + compacting（行 3）按 D6 表走 steer 而非误排队）
     onSend()
   }
 }

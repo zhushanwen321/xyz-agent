@@ -406,10 +406,12 @@ export interface ClientMessageMap {
   // message.send：images 是 Cmd+V 富呈现通路的图片数据（base64，不含 data: 前缀）。
   // runtime 适配层（rpc-client）补 type:'image' 组装成 pi 的 ImageContent。
   // 不带 type 字段（type 是 pi 私有，runtime 适配层负责补）。
+  // clientUuid（session-occupancy-send-closure D2/D5）：客户端生成的幂等 id，runtime 拒绝时在
+  // send.rejected 广播原样带回，renderer 据此消歧发送来源（flush 重放的拒绝不重入队）。
   // [HISTORICAL] subagent 可选字段已删除（composer 四符号设计 D2）：曾经的 marker 半成品通道
   // （base64 隐藏注释前缀拼进主 agent prompt，extension 侧零消费方，且经主 agent 转发违背
   // 「直达 subagent」目标）——定向消息改走 session.subagentAction(message/start)。
-  'message.send': { sessionId: string; content: string; images?: Array<{ data: string; mimeType: string }> }
+  'message.send': { sessionId: string; content: string; images?: Array<{ data: string; mimeType: string }>; clientUuid?: string }
   'message.abort': { sessionId: string }
   'message.steer': { sessionId: string; content: string }
   'message.follow_up': { sessionId: string; content: string }
@@ -692,6 +694,9 @@ export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.deletedByCwd' | 'config.sessions' | 'session.history' | 'session.fullHistory' | 'session.switched'
   | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffStarted' | 'session.handoffComplete' | 'session.handoffAborted' | 'session.setProject'
+  // session.occupancy（session-occupancy-send-closure P3）：占用三维快照广播（state topic，
+  // last-value 语义——重连/切回 session 自动恢复，不依赖广播时序），renderer sessionPhase 唯一数据源。
+  | 'session.occupancy'
   | 'project.loaded'
   | 'session.subagents' | 'session.subagentHistory'
   // [U7] 子代理引擎配置（Settings 引擎选择器；形状 = @xyz-agent/extension-protocol SubagentEngineConfigView，契约 SSOT 在彼处）
@@ -969,7 +974,13 @@ export interface ServerMessageMapBase {
   // send.rejected：runtime 预检拦截（busy 时发送），防御性反馈通道（D-006）。
   // 语义：操作拒绝，区别于 message.error（流终止）。不进对话流，不翻流式态。
   // useChat 收到后回滚 pendingSend + toast。
-  'send.rejected': { sessionId: string; reason: 'busy'; message: string }
+  // reason（session-occupancy-send-closure D2）：'busy' = runtime 预检（generating/bash 忙，存量）；
+  // 'compacting' | 'processing' = pi 侧拒绝经 runtime 转译——前者 manual 压缩中（pi 抛
+  // "Cannot submit a prompt while compaction is in progress"），后者 auto 压缩 / post-run settling
+  // 窗口（pi 抛 "Agent is already processing"）。renderer 按 reason 分型兜底入队（'busy' 兼容存量）。
+  // clientUuid：renderer 发送时经 message.send RPC 透传的客户端幂等 id，拒绝广播原样带回——
+  // 兜底 handler 见 uuid 命中 defer 队列已有条目即跳过重入队（flush 来源消歧，防双条目双投递）。
+  'send.rejected': { sessionId: string; reason: 'busy' | 'compacting' | 'processing'; message: string; clientUuid?: string }
   // session.exited：pi 进程异常退出（区别于 message.error 的「单次消息失败」）。
   // 前端 routeInbound 收到后标记 session 为 dead 态 + 插入 error 消息 + toast。
   // reason: 人类可读的错误原因（含 stderr 尾部截断），供诊断面板展开显示。
@@ -1007,6 +1018,14 @@ export interface ServerMessageMapBase {
   // PiCompactionReason，驱动前端 compacting 浮层文案区分手动/自动。
   'session.compacting': { sessionId: string; status: 'compacting'; reason: 'manual' | 'threshold' | 'overflow' }
   'session.compacted': { sessionId: string; status: 'compacted'; error?: string }
+  // session.occupancy（session-occupancy-send-closure D3/P3）：占用三维结构快照，state topic
+  // （message-bus 分配 seq + 写 last-value 快照、不入 ring——重连/切回 session 经 stateSnapshot
+  // 回放自动恢复）。turn 三阶段：dispatching = prompt 已发、message_start 未到；
+  // generating = turn-start..turn-end；settling = turn-end..agent-settled（pi post-run 收尾期）。
+  // 三维独立（compacting/bash 与 turn 各阶段可并存：settling+compacting 是 overflow 收尾常态，
+  // threshold 模式 turn 内自动压缩则 generating+compacting）。session.compacting/compacted 事件
+  // 保留（浮层 reason 文案源），isCompacting 改由本消息派生。
+  'session.occupancy': { sessionId: string; turn: 'idle' | 'dispatching' | 'generating' | 'settling'; compacting: boolean; bash: boolean }
   // session.subscribe（wave:runtime-wiring）：session.subscribe RPC 的 reply payload（IF6 契约）。
   // snapshot：订阅时刻 bus ring 内当前事件序列（元素为带 seq 的 ServerMessage），renderer 据此 reconcile。
   // stateSnapshot：4 个 state topic（commands/context/subagents/workflows）的 last-value 数组拷贝

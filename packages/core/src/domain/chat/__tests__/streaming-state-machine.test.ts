@@ -2,7 +2,7 @@
  * streaming-state-machine 独立单测（B6 深模块）。
  *
  * 直接调 createStreamingStateMachine 工厂：refs 用 vue 原语构造，commitMessages /
- * findLastAssistantIndex 走真实实现（mutations / chunk-processor），setCompacting /
+ * findLastAssistantIndex 走真实实现（mutations / chunk-processor），clearOccupancy /
  * setHandingOff 用 vi.fn()——不 mock 被测模块内部依赖，避免假绿。
  * store.test.ts 保留为 createChatStore 委托后的集成回归（行为等价锁定）。
  */
@@ -29,24 +29,24 @@ function runningToolCall(id: string) {
 function makeMachine() {
   // W10 D-1 容器范式：外层 Map 恒等稳定，每 sid 分区是独立 ShallowRef
   const messages = shallowRef<Map<string, ShallowRef<Message[]>>>(new Map())
-  const compactingSessions = ref<Set<string>>(new Set())
+  const occupancies = ref<Map<string, { compacting: boolean }>>(new Map())
   const handingOffSessions = ref<Set<string>>(new Set())
   const retryStates = ref<Map<string, unknown>>(new Map())
   const queueStates = ref<Map<string, unknown>>(new Map())
   const pendingSend = ref<Set<string>>(new Set())
-  const setCompacting = vi.fn<(sessionId: string, value: boolean) => void>()
+  const clearOccupancy = vi.fn<(sessionId: string) => void>()
   const setHandingOff = vi.fn<(sessionId: string, value: boolean) => void>()
   const sm = createStreamingStateMachine({
     messages,
-    compactingSessions,
+    occupancies,
     handingOffSessions,
     retryStates,
     queueStates,
     pendingSend,
-    setCompacting,
+    clearOccupancy,
     setHandingOff,
   })
-  return { sm, messages, retryStates, queueStates, setCompacting, setHandingOff }
+  return { sm, messages, retryStates, queueStates, clearOccupancy, setHandingOff }
 }
 
 describe('applySubagentStreamDelta', () => {
@@ -225,19 +225,19 @@ describe('collectFinalizeCandidates', () => {
   it('TC6 并集：messages ∪ compacting ∪ handingOff ∪ retry ∪ queue ∪ pendingSend', () => {
     // 6 源各贡献一个独有 sid，验证并集不漏
     const messages = shallowRef<Map<string, ShallowRef<Message[]>>>(new Map([['a', shallowRef([streamingAssistant('a1')])]]))
-    const compacting = ref<Set<string>>(new Set(['b']))
+    const occupancies = ref<Map<string, { compacting: boolean }>>(new Map([['b', { compacting: true }]]))
     const handingOff = ref<Set<string>>(new Set(['c']))
     const retryStates = ref<Map<string, unknown>>(new Map([['d', {}]]))
     const queueStates = ref<Map<string, unknown>>(new Map([['e', {}]]))
     const pendingSend = ref<Set<string>>(new Set(['f']))
     const sm = createStreamingStateMachine({
       messages,
-      compactingSessions: compacting,
+      occupancies,
       handingOffSessions: handingOff,
       retryStates,
       queueStates,
       pendingSend,
-      setCompacting: vi.fn(),
+      clearOccupancy: vi.fn(),
       setHandingOff: vi.fn(),
     })
 
@@ -248,13 +248,13 @@ describe('collectFinalizeCandidates', () => {
 
 describe('clearIndependentTransient', () => {
   it('TC7 清 compacting/handingOff 置位 + retry/queue 删除；无 sid 时 no-op', () => {
-    const { sm, retryStates, queueStates, setCompacting, setHandingOff } = makeMachine()
+    const { sm, retryStates, queueStates, clearOccupancy, setHandingOff } = makeMachine()
     retryStates.value = new Map([['s1', { attempt: 1 }]])
     queueStates.value = new Map([['s1', { queued: true }]])
 
     sm.clearIndependentTransient('s1')
 
-    expect(setCompacting).toHaveBeenCalledWith('s1', false)
+    expect(clearOccupancy).toHaveBeenCalledWith('s1')
     expect(setHandingOff).toHaveBeenCalledWith('s1', false)
     expect(retryStates.value.has('s1')).toBe(false)
     expect(queueStates.value.has('s1')).toBe(false)

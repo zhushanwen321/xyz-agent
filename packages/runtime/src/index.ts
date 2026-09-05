@@ -29,7 +29,7 @@ import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
 import { PiRetrySettings } from './infra/pi/pi-retry-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
 import { FileChangeDiffAdapter } from './infra/pi/file-change-diff-adapter.js'
-import { EventInterpreter } from './services/session/event-interpreter.js'
+import { EventInterpreter, updateSessionOccupancy } from './services/session/event-interpreter.js'
 import { join, resolve, isAbsolute } from 'node:path'
 import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
@@ -402,6 +402,14 @@ async function main(): Promise<void> {
       onCompactingStateChange: (sid, v) => {
         const s = sessionService.getSession(sid)
         if (s) s.isCompacting = v
+      },
+      // occupancy 挂点接线（session-occupancy-send-closure D3 #2-#6）：interpreter 侧成功路径
+      // 挂点经本回调写 session 记录 occupancy 并广播 session.occupancy state 帧——与上方
+      // onCompactingStateChange 同构（interpreter 不持有全量 occupancy，合并/去重在
+      // updateSessionOccupancy 内，经 session 记录权威聚合）。
+      onOccupancyTransition: (patch) => {
+        const s = sessionService.getSession(sessionId)
+        if (s) updateSessionOccupancy(s, messageBus, patch)
       },
       // session-trace（A33）：增量腿触发回调——interpreter 的四类触发事件到达后做
       // 追赶式 since 补拉（syncTraceEntries 内部自查 leaf 基线，无基线 no-op；串行链

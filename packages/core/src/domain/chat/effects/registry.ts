@@ -72,6 +72,9 @@ import { commitMessages } from '../mutations'
 import { truncateToolCall } from '../truncate-tool-output'
 import { bashStartEffect, bashResultEffect } from '../bash-effects'
 import { applyEntryFrameWithOverlay } from './entry-overlay'
+// [session-occupancy u4a] message_end(user) 三分支 ①（defer 分区 FIFO 匹配）与 ①③ 共用
+// helper 归位 effects/user-delivery.ts（机制独立成模块，u4b flush 确认驱动只扩展该文件）
+import { confirmDeferQueueEntry, extractUserContentText, removeQueuedTextFromSnapshot } from './user-delivery'
 // [TODO @i18n-migration] core/i18n 落地后恢复 i18n.global.t 调用（§0.3 列为后续迁移）。
 // compactionSummary（W6）/ branchSummary（D13 renderer-deepening）均已 entry 化：两者的
 // summary 兜底收敛到 reducer（compaction 中文 fallback「上下文已压缩」/ branchSummary
@@ -103,69 +106,17 @@ function countDrained(prev: string[], next: string[]): string[] {
 }
 
 /**
- * [steer-bubble u1 / docs/design/steer-followup-user-bubble-display.md D2 第 3 点]
- * 提取 message_end(user) 帧的投递文本——腿 2 includes 兜底判据的比对源。
- *
- * 实测 pi 投递的 user message content 是 content parts 数组 [{type:'text',text}]
- * （P2 探针，pi 不 trim）；wire 宽形态也可能到达 string（lift/异常帧），两种都归一为
- * 纯文本。非 text part（image 等）不拼接——入队帧数组只含文本，拼接会破坏同源比对。
- * text parts 按顺序拼接与 reducer 的 textContent 累加同语义（apply-entry-convert）。
- */
-function extractUserContentText(entry: PiMessageEntry): string {
-  const content = entry.message.content
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    let text = ''
-    for (const part of content) {
-      if (
-        typeof part === 'object' && part !== null &&
-        (part as { type?: unknown }).type === 'text' &&
-        typeof (part as { text?: unknown }).text === 'string'
-      ) {
-        text += (part as { text: string }).text
-      }
-    }
-    return text
-  }
-  return content != null ? String(content) : ''
-}
-
-/**
- * [steer-bubble u1 / D2 第 3 点] 腿 2 消费后从快照剔命中文本一个实例（不可变写）。
- *
- * 为什么剔：F1 场景（pi splice 失败、drain 帧未发）快照停留于入队帧——含已被腿 2
- * 消费的文本，不剔则下一条提交的 countDrained(prev, new) 差集会错算出虚假 drain 数
- * → 腿 1 提前取出未投递条目；剔后快照深度与实际待投递对齐。
- *
- * 剔后形态对齐 queue_update handler 的既有惯例：维度数组剔空 → 移除该维度字段；
- * 两维度全空 → 删除条目（queueStates 不积累空形态条目，QueueBubble 随深度归零消失，
- * 与空帧删条目同语义）。
- */
-function removeQueuedTextFromSnapshot(
-  queueStates: MessageEffectContext['queueStates'],
-  sid: string,
-  dimension: 'steering' | 'followUp',
-  text: string,
-): void {
-  const prev = queueStates.value.get(sid)
-  const arr = prev?.[dimension]
-  if (!prev || !arr) return
-  const idx = arr.indexOf(text)
-  if (idx === -1) return
-  const rest = arr.filter((_, i) => i !== idx)
-  const next: QueueState = { ...prev }
-  if (rest.length === 0) delete next[dimension]
-  else next[dimension] = rest
-  const nextMap = new Map(queueStates.value)
-  if (next.steering?.length || next.followUp?.length) nextMap.set(sid, next)
-  else nextMap.delete(sid)
-  queueStates.value = nextMap
-}
-
-/**
  * [steer-bubble u1 / D1 + D2] message_end(user) 腿 2：投递事实驱动的用户气泡兜底显示。
  *
- * 双腿互斥裁决（D2，P1 探针保证 drain 帧恒先于 message_end(user) 到达）：
+ * [session-occupancy-send-closure u4a / D5.3] 处理序升级为三分支（单一入口内，逐级下落）：
+ * - ① defer 分区 FIFO 文本匹配（effects/user-delivery.ts，新增，最高优先级）：命中 →
+ *   确认回调出队 + 剔一个快照实例 + 仅 send 条目 decrementInflight 回收占位 + 帧消费
+ *   终止；未命中 → 逐级下落。
+ * - ② inflight > 0 → 纯计数 decrement → return（现状零改动——恢复计数语义，不作出队信号）
+ * - ③ inflight == 0 → includes 兜底（现状零改动——腿 2 正常 steer 路径，defer 帧未命中
+ *   ① 时的数量守恒兜底：drainN 无货则降级 appendUser，帧不丢气泡不丢）。
+ *
+ * 腿 2 双腿互斥裁决原文（D2，P1 探针保证 drain 帧恒先于 message_end(user) 到达）：
  * - inflight > 0 → 本帧对应**已显示**的投递（腿 1 消费 +m / send 乐观 +1 的确认通道）
  *   → decrementInflight 抵消后跳过。不查 includes——同文本下数组可能还剩未投递条目，
  *   includes 不可判定，计数优先裁决。
@@ -188,6 +139,8 @@ function confirmUserDeliveryOnMessageEnd(
   sid: string,
   entry: PiMessageEntry,
 ): void {
+  // ① defer 分区 FIFO 文本匹配（session-occupancy D5.3）：命中即消费终止，不走 ②③。
+  if (confirmDeferQueueEntry(ctx, sid, entry)) return
   if (ctx.getInflight(sid) > 0) {
     ctx.decrementInflight(sid, 1)
     return

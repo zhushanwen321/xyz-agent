@@ -64,7 +64,7 @@ describe('session status icons extended states', () => {
 
   it('compacting 派生为 compacting', () => {
     const chat = useChatStore()
-    chat.setCompacting('sid', true)
+    chat.setOccupancy('sid', { turn: 'idle', compacting: true, bash: false })
     expect(deriveStatus('sid', chat, false, true)).toBe('compacting')
   })
 

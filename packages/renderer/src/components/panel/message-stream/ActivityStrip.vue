@@ -1,0 +1,121 @@
+<!--
+  展示组件 · ActivityStrip 对话流尾部活动条（session-occupancy u6a / D7 展示统一）。
+  数据源 = chat store 的 sessionPhase（occupancy 投影，runtime session.occupancy state topic
+  驱动的单一权威）+ executingBash 瞬时态（props 注入，core bash-effects 分区）。
+
+  收编三处分散的「进行中」指示（原 compacting 浮层 / TurnMeta dispatching 思考占位 /
+  executing bash 行），按优先级纵向堆叠（compacting > bash > thinking / settling）：
+  - compacting：手动 →「压缩中」；threshold/overflow（reason 文案源 = setCompactingReason
+    通路，u5b 保留）→「正在自动压缩上下文」
+  - bash：「正在执行」+ mono 命令
+  - thinking：turn=dispatching（prompt 已发、message_start 未到）→「思考中…」
+  - settling：turn=settling（turn-end→agent_settled 收尾窗口，D6 表行 4 活动条列）且无
+    compacting/bash 时渲染一行——文案暂复用 dispatching key「思考中…」；P-1 探针（V8）
+    校准点：若 settling P95 > 2s 常态化，换「收尾中…」专用 key（zh/en 同步）
+  - turn=generating 不渲染行：streaming 本体由末位 turn 的 TurnMeta「工作中」行承担
+    （D6 活动条列「streaming 本体」，不重复指示）；全部 idle 渲染 nothing。
+
+  视觉沿用 system-notice 形态（左右 hairline + Loader2 spinner + --text-xs，太极纯灰
+  tokens，无 emoji 无硬编码颜色）。文档流 block（Virtualizer 之后），fork notice 等后续
+  文档流内容自然堆叠在其后（fork notice 定位结论见 useNoticeStack.ts 注释）。
+  dev 断言：COMPACTING_NOTICE_HEIGHT / EXECUTING_BASH_NOTICE_HEIGHT 常量漂移检测随行迁入
+  （useConstantHeightAssert，生产裁剪零开销）。
+-->
+<template>
+  <div v-if="rows.length > 0" class="flex flex-col" data-testid="activity-strip">
+    <div
+      v-for="row in rows"
+      :key="row.kind"
+      :ref="(el) => bindRowRef(row.kind, el)"
+      class="system-notice content-col flex min-w-0 items-center gap-2 py-1"
+      :data-testid="`activity-strip-row-${row.kind}`"
+    >
+      <span class="h-px flex-1 bg-border" />
+      <Loader2 class="size-3 shrink-0 animate-spin text-neutral-mid" />
+      <span
+        class="flex min-w-0 items-center gap-1 text-[length:var(--text-xs)] leading-snug text-neutral-mid"
+        :data-testid="`activity-strip-text-${row.kind}`"
+      >
+        <span class="shrink-0">{{ row.text }}</span>
+        <span v-if="row.command" class="min-w-0 truncate font-mono">{{ row.command }}</span>
+      </span>
+      <span class="h-px flex-1 bg-border" />
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { Loader2 } from '@lucide/vue'
+import type { ExecutingBash } from '@xyz-agent/core'
+import { useChatStore } from '@/stores/chat'
+import { useConstantHeightAssert } from '@/composables/panel/useConstantHeightAssert'
+import { COMPACTING_NOTICE_HEIGHT, EXECUTING_BASH_NOTICE_HEIGHT } from '@/composables/panel/useMessageStreamNotices'
+
+const props = defineProps<{
+  /** session id（occupancy 投影 / compacting reason 的查询键） */
+  sessionId: string
+  /** 执行中 bash 瞬时态（core bash-effects 分区，MessageStream computed 注入；无则 undefined） */
+  executingBash?: ExecutingBash
+}>()
+
+const chat = useChatStore()
+const { t } = useI18n()
+
+/** 活动条行（单一变化轴：行类型 + 文案）。优先级 = 数组序（compacting > bash > thinking / settling，
+ *  thinking 与 settling 互斥不并存——turn 单值，同一档位）。 */
+interface ActivityRow {
+  kind: 'compacting' | 'bash' | 'thinking' | 'settling'
+  text: string
+  /** bash 行专属：mono 命令文本 */
+  command?: string
+}
+
+const rows = computed<ActivityRow[]>(() => {
+  const list: ActivityRow[] = []
+  const compacting = chat.isCompacting(props.sessionId)
+  const turn = chat.sessionPhase(props.sessionId).turn
+  // compacting 行（manual → 压缩中；threshold/overflow → 自动压缩中；未知/空 reason 兜底手动文案，
+  // 与原 useMessageStreamNotices.compactingText 判定逐字一致——reason==='manual' 不特判即落此分支）
+  if (compacting) {
+    const reason = chat.getCompactingReason(props.sessionId)
+    list.push({
+      kind: 'compacting',
+      text: reason === 'threshold' || reason === 'overflow'
+        ? t('panel.message.autoCompressing')
+        : t('panel.message.compressing'),
+    })
+  }
+  // bash 行（`!` 命令执行期瞬时反馈；与 compacting 可并存——threshold turn 内压缩 + bash）
+  if (props.executingBash) {
+    list.push({ kind: 'bash', text: t('panel.message.executingBash'), command: props.executingBash.command })
+  }
+  // thinking 行：无 compacting/bash 且 turn=dispatching（occupancy 权威投影，替代原 TurnMeta
+  // isPendingPlaceholder 占位——「无以上但有 dispatching turn」才显示，避免与压缩/命令行重复堆叠）
+  if (!compacting && !props.executingBash && turn === 'dispatching') {
+    list.push({ kind: 'thinking', text: t('panel.message.dispatching') })
+  }
+  // settling 行（D6 表行 4 活动条列前半，修复一致性审查 R3-U1）：无 compacting/bash 且
+  // turn=settling（turn-end→agent_settled 收尾窗口，设计 §2.1 失败 C 的「有提示无状态」
+  // 窗口之一）。文案复用 dispatching key「思考中…」，P-1 校准点见组件头注；与 thinking
+  // 同档位互斥；settling+compacting 命中上方 compacting 行，不重复渲染。
+  if (!compacting && !props.executingBash && turn === 'settling') {
+    list.push({ kind: 'settling', text: t('panel.message.dispatching') })
+  }
+  return list
+})
+
+// dev-only 像素常量漂移检测（随行迁入本组件；行结构与原 compacting/bash 行同构 → 高度常量语义不变）
+const [compactingEl, executingBashEl] = useConstantHeightAssert([
+  { name: 'COMPACTING_NOTICE_HEIGHT', expected: COMPACTING_NOTICE_HEIGHT },
+  { name: 'EXECUTING_BASH_NOTICE_HEIGHT', expected: EXECUTING_BASH_NOTICE_HEIGHT },
+]).els
+
+/** v-for 行的函数 ref 分发（thinking / settling 行不参与高度断言，el 丢弃） */
+function bindRowRef(kind: ActivityRow['kind'], el: unknown): void {
+  const node = el instanceof HTMLElement ? el : null
+  if (kind === 'compacting') compactingEl.value = node
+  else if (kind === 'bash') executingBashEl.value = node
+}
+</script>

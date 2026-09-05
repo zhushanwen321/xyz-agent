@@ -17,8 +17,15 @@ import type { Message, Segment, ServerMessageUnion } from '@xyz-agent/shared'
  * 壳侧实现：renderer 现 api/domains/chat（函数集组装成对象注入）。
  */
 export interface ChatApiPort {
-  /** 发送消息（message.send RPC）*/
-  send(sessionId: string, promptText: string): Promise<void>
+  /**
+   * 发送消息（message.send RPC）。
+   *
+   * options.clientUuid（session-occupancy-send-closure D2）：调用方乐观插入的 user message
+   * id（`u-<uuid>`），经 RPC 参数透传，runtime 拒绝时在 send.rejected 广播原样带回——
+   * renderer 兜底 handler 据此消歧发送来源（flush 重放的拒绝不重入队）。可选参数，
+   * 不传时 RPC payload 不带 clientUuid 键（向后兼容）。
+   */
+  send(sessionId: string, promptText: string, options?: { clientUuid?: string }): Promise<void>
   /**
    * subagent 定向消息 / 生命周期操作（session.subagentAction RPC，composer 四符号 `@` 发送分流）。
    * 契约对齐 renderer api/domains/session.subagentAction（U5 扩签名）：action='message' 带

@@ -32,7 +32,7 @@ export interface HandoffController {
   isHandingOff: (sessionId: string) => boolean
   /**
    * 设置交接态（useHandoffActions.handoff 触发→true / session.handoffComplete 广播或 abort→false）。
-   * 不可变 set 保证响应性，镜像 setCompacting。
+   * 不可变 set 保证响应性，镜像 occupancy 投影的不可变写（[u5b] setCompacting 退役后仍成立的响应性范式）。
    *
    * [C2+M1] 超时兜底：value=true 时启动 handingOffTimer（对称 pendingSendTimers），
    * 超时后清 handingOff——防 session.handoffComplete 广播丢失致源 session 永久卡「正在交接」。

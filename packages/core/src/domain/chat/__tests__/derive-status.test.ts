@@ -68,7 +68,7 @@ describe('deriveStatus 9 态 parity（M3 搬迁）', () => {
   })
 
   it('isCompacting=true → compacting', () => {
-    sut.store.setCompacting('s1', true, 'manual')
+    sut.store.setOccupancy('s1', { turn: 'idle', compacting: true, bash: false })
     expect(deriveStatus('s1', sut.store, false, true)).toBe('compacting')
   })
 

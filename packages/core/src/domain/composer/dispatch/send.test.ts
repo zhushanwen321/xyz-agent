@@ -1,26 +1,32 @@
 /**
- * useComposerSend 单元测试。
+ * useComposerSend 单元测试（D6 统一发送分发器，session-occupancy u5b）。
  *
- * 被测对象：domain/composer/dispatch/send.ts —— Composer onSend 发送分流。
- * 职责：6 优先级分流（staging 守卫 > staging.send > isCompacting > landing > bash > /compact > send）
- * + 失败 restoreSegments 回滚。
+ * 被测对象：domain/composer/dispatch/send.ts —— Composer onSend 统一分发入口
+ * （Enter / Alt+Enter / 发送按钮共用）。
+ * 职责：staging > [steer 路由] > canSend 守卫 > staging.send > [defer 路由] >
+ * landing > bash > /compact > send + 失败 restoreSegments 回滚。
  *
- * 策略：全 deps mock。control 对象驱动只读 ComputedRef（canSend/isCompacting/...），
- * spies 记录调用。isSending 用真 ref（onSend 会写）。composerBash 的 extractBashCommand /
- * trySendBash 用 vi.fn 返回 ctrl 控制的值。
+ * [u5b 改造] isCompacting dep 退役 → getSendRoute（D6 路由：direct/steer/defer）；
+ * 新增 steer dep（steer 路由终端）与 hasInput dep（steer 分支空输入守卫）。
+ * 三/四/五用例由 isCompacting 判定改为 defer 路由驱动；新增 steer 路由分支行为用例
+ * （行 2/3 语义：turn 活跃追加当前回合——优先级倒挂消除的核心断言）。
+ *
+ * 路由表六行的纯函数断言见 ./send-route.test.ts；本文件锁定分发器行为。
  *
  * 运行：cd packages/core && npx vitest run src/domain/composer/dispatch/send.test.ts
  */
 import { describe, it, expect, vi } from 'vitest'
 import { computed, ref } from 'vue'
 import { useComposerSend, type ComposerSendDeps } from './send'
+import type { SendRoute } from './send-route'
 import type { BashCommandExtract } from './bash'
 import type { StagingAction, StagingConfig } from '../types'
 import type { Segment } from '@xyz-agent/shared'
 
 interface DepsControl {
   canSend: boolean
-  isCompacting: boolean
+  hasInput: boolean
+  sendRoute: SendRoute
   hasActiveStaging: boolean
   activeStagingAllowsEmpty: boolean
   variant: 'panel' | 'landing'
@@ -39,6 +45,7 @@ interface Spies {
   restoreSegments: ReturnType<typeof vi.fn>
   submitFirstMessage: ReturnType<typeof vi.fn>
   send: ReturnType<typeof vi.fn>
+  steer: ReturnType<typeof vi.fn>
   compact: ReturnType<typeof vi.fn>
   enqueueCompact: ReturnType<typeof vi.fn>
   toastError: ReturnType<typeof vi.fn>
@@ -52,7 +59,8 @@ const SEGMENTS: Segment[] = [{ type: 'text', text: 'hello' }] as unknown as Segm
 function setup(initial?: Partial<DepsControl>): { deps: ComposerSendDeps; spies: Spies; ctrl: DepsControl } {
   const ctrl: DepsControl = {
     canSend: true,
-    isCompacting: false,
+    hasInput: true,
+    sendRoute: 'direct',
     hasActiveStaging: false,
     activeStagingAllowsEmpty: false,
     variant: 'panel',
@@ -71,6 +79,7 @@ function setup(initial?: Partial<DepsControl>): { deps: ComposerSendDeps; spies:
     restoreSegments: vi.fn(),
     submitFirstMessage: vi.fn(async () => {}),
     send: vi.fn(async () => {}),
+    steer: vi.fn(async () => {}),
     compact: vi.fn(async () => {}),
     enqueueCompact: vi.fn(),
     toastError: vi.fn(),
@@ -91,7 +100,8 @@ function setup(initial?: Partial<DepsControl>): { deps: ComposerSendDeps; spies:
     },
     getStagingConfig: spies.getStagingConfig,
     canSend: computed(() => ctrl.canSend),
-    isCompacting: computed(() => ctrl.isCompacting),
+    hasInput: computed(() => ctrl.hasInput),
+    getSendRoute: () => ctrl.sendRoute,
     draft: computed(() => ctrl.draft),
     inputRef: computed(() => ({ getSegments: spies.getSegments })),
     sessionIdRef: computed(() => ctrl.sessionId),
@@ -106,6 +116,7 @@ function setup(initial?: Partial<DepsControl>): { deps: ComposerSendDeps; spies:
     flow: { submitFirstMessage: spies.submitFirstMessage },
     localThinkingLevel: ref(ctrl.localThinkingLevel),
     send: spies.send,
+    steer: spies.steer,
     compact: spies.compact,
     enqueueCompact: spies.enqueueCompact,
     toastError: spies.toastError,
@@ -146,26 +157,92 @@ describe('useComposerSend.onSend', () => {
     expect(spies.stagingSend).not.toHaveBeenCalled()
   })
 
-  it('③ isCompacting + `/` 前缀命令 → toastError 拒绝，不入队', async () => {
-    const { deps, spies } = setup({ isCompacting: true, draft: '/compact later' })
+  // ── [D6 u5b] steer 路由（行 2/3：turn 活跃 = dispatching/generating）──
+
+  it('②d steer 路由（turn=generating + 本地 busy）→ steer(sid, segments) + clearInput，不走 canSend 拦截', async () => {
+    // canSend=false（turn 活跃 → isActive → isBusy）：steer 判定先于 canSend 守卫——
+    // 优先级倒挂消除的核心行为（turn 活跃时 Enter 语义 = 追加当前回合，不被 busy 锁拦死）。
+    const { deps, spies } = setup({ canSend: false, sendRoute: 'steer' })
+    await useComposerSend(deps).onSend()
+    expect(spies.steer).toHaveBeenCalledWith('s1', SEGMENTS)
+    expect(spies.clearInput).toHaveBeenCalledTimes(1)
+    expect(spies.send).not.toHaveBeenCalled()
+    expect(spies.compact).not.toHaveBeenCalled()
+  })
+
+  it('②e steer 路由（行 3：generating + compacting）→ 仍走 steer（turn 活跃优先于 compacting 维度）', async () => {
+    // threshold turn 内压缩：D6 表行 3 steer（压缩后 turn 继续跑，steering 队列在压缩完成的
+    // 下一次 LLM 调用前投递）——不误入 defer 队列。
+    const { deps, spies } = setup({ canSend: false, sendRoute: 'steer', draft: '补充：别忘了加测试' })
+    await useComposerSend(deps).onSend()
+    expect(spies.steer).toHaveBeenCalledWith('s1', SEGMENTS)
+    expect(spies.enqueueCompact).not.toHaveBeenCalled()
+  })
+
+  it('②f steer 路由（本地 busy）+ 空输入 → 拦截（不调 steer 不清输入）', async () => {
+    const { deps, spies } = setup({ canSend: false, sendRoute: 'steer', hasInput: false })
+    await useComposerSend(deps).onSend()
+    expect(spies.steer).not.toHaveBeenCalled()
+    expect(spies.clearInput).not.toHaveBeenCalled()
+  })
+
+  it('②g steer 路由（本地 busy）+ isSending=true（双发锁）→ 拦截', async () => {
+    const { deps, spies } = setup({ canSend: false, sendRoute: 'steer' })
+    ;(deps.isSending as unknown as { value: boolean }).value = true
+    await useComposerSend(deps).onSend()
+    expect(spies.steer).not.toHaveBeenCalled()
+    expect(spies.clearInput).not.toHaveBeenCalled()
+  })
+
+  it('②i 投影失配窗口（route=steer + 本地 idle）→ 落 direct 流程（send 兜底，不丢输入）', async () => {
+    // 续跑 turn-start 先于 message_start 的毫秒级窗口：本地已收口（canSend=true）而投影
+    // 已 flip steer——不进 steer 分支（steer 内部 isActive 守卫会静默吞输入），落 direct
+    // 由 useChat.send B 策略/拒绝兜底自愈。分发器层断言：不丢输入、不误入 defer 队列。
+    const { deps, spies } = setup({ canSend: true, sendRoute: 'steer', draft: '失配窗口消息' })
+    await useComposerSend(deps).onSend()
+    expect(spies.send).toHaveBeenCalledWith('s1', SEGMENTS)
+    expect(spies.steer).not.toHaveBeenCalled()
+    expect(spies.enqueueCompact).not.toHaveBeenCalled()
+  })
+
+  it('②h staging 活跃 + steer 路由 → staging 优先于路由（staging 提交与 occupancy 路由正交）', async () => {
+    const { deps, spies } = setup({ sendRoute: 'steer', hasActiveStaging: true, stagingSendReturn: true })
+    await useComposerSend(deps).onSend()
+    expect(spies.stagingSend).toHaveBeenCalledWith('hello', {})
+    expect(spies.steer).not.toHaveBeenCalled()
+  })
+
+  // ── [D6 u5b] defer 路由（行 4/5/6：settling / compacting / bash）──
+
+  it('③ defer 路由 + `/` 前缀命令 → toastError 拒绝，不入队（命令无法延迟重放）', async () => {
+    const { deps, spies } = setup({ sendRoute: 'defer', draft: '/compact later' })
     await useComposerSend(deps).onSend()
     expect(spies.toastError).toHaveBeenCalledWith('panel.composer.commandQueuedRejected')
     expect(spies.enqueueCompact).not.toHaveBeenCalled()
     expect(spies.clearInput).not.toHaveBeenCalled()
   })
 
-  it('④ isCompacting + `!` 前缀命令 → toastError 拒绝，不入队', async () => {
-    const { deps, spies } = setup({ isCompacting: true, draft: '!ls' })
+  it('④ defer 路由 + `!` 前缀命令 → toastError 拒绝，不入队', async () => {
+    const { deps, spies } = setup({ sendRoute: 'defer', draft: '!ls' })
     await useComposerSend(deps).onSend()
     expect(spies.toastError).toHaveBeenCalledWith('panel.composer.commandQueuedRejected')
     expect(spies.enqueueCompact).not.toHaveBeenCalled()
   })
 
-  it('⑤ isCompacting + 普通文本 → enqueueCompact + clearInput', async () => {
-    const { deps, spies } = setup({ isCompacting: true, draft: 'queued msg' })
+  it('⑤ defer 路由（settling / bash 忙）+ 普通文本 → enqueueCompact + clearInput', async () => {
+    // defer 泛化：settling（行 4）与 bash（行 6）与 compacting（行 5）同走入队——
+    // 路由值由 sessionPhase 派生，分发器不区分忙的来源维度。
+    const { deps, spies } = setup({ sendRoute: 'defer', draft: 'queued msg' })
     await useComposerSend(deps).onSend()
     expect(spies.enqueueCompact).toHaveBeenCalledWith('s1', 'queued msg')
     expect(spies.clearInput).toHaveBeenCalledTimes(1)
+    expect(spies.send).not.toHaveBeenCalled()
+  })
+
+  it('⑤b defer 路由 + landing（无 session）→ 不入队（sessionIdRef null 防御守卫）', async () => {
+    const { deps, spies } = setup({ sendRoute: 'defer', variant: 'landing', sessionId: null })
+    await useComposerSend(deps).onSend()
+    expect(spies.enqueueCompact).not.toHaveBeenCalled()
   })
 
   it('⑥ landing + bash empty → return，不提交', async () => {
@@ -195,7 +272,7 @@ describe('useComposerSend.onSend', () => {
     expect(spies.submitFirstMessage).toHaveBeenCalledWith(SEGMENTS, undefined, bashExtract)
   })
 
-  it('⑧ active + trySendBash 命中 → return，普通 send 不调', async () => {
+  it('⑧ direct + trySendBash 命中 → return，普通 send 不调', async () => {
     const { deps, spies } = setup({ variant: 'panel', bashTryReturn: true, draft: '!ls' })
     await useComposerSend(deps).onSend()
     expect(spies.trySendBash).toHaveBeenCalledWith('!ls')

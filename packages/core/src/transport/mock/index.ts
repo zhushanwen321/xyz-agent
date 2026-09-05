@@ -580,7 +580,14 @@ export const chat = {
     return (fixtureMessages[sessionId] ?? []).map((m) => ({ ...m }))
   },
 
-  async send(sessionId: string, text: string): Promise<void> {
+  // options.clientUuid（session-occupancy D2）：mock 不模拟 send.rejected，参数仅签名对齐
+  // real 域（门面三元要求两侧同构），运行时忽略。
+  async send(
+    sessionId: string,
+    text: string,
+    _images?: Array<{ data: string; mimeType: string }>,
+    _options?: { clientUuid?: string },
+  ): Promise<void> {
     cancelled.delete(sessionId)
     // ack 语义：仅模拟 pi 接收命令，立即 resolve；流式序列 fire-and-forget（不 await）。
     // isStreaming 由 message_start/complete 事件驱动（useChat.ts），不受此处 resolve 时机影响，

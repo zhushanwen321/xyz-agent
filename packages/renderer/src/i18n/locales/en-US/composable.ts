@@ -5,7 +5,6 @@ export default {
   nextTurnSendFailed: 'Failed to send next turn: {msg}',
   stopFailed: 'Failed to stop: {msg}',
   compactFailed: 'Failed to compact: {msg}',
-  queueFlushFailed: 'Failed to resend queued messages, messages kept',
   bashFailed: 'Failed to run bash: {msg}',
   // `@` directive messages (U2b): empty-text guard + RPC failure (readable error, S8)
   subagentDirectiveEmpty: 'Directive message is empty, please type content for the subagent',
