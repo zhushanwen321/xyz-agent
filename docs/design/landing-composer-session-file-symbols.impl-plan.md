@@ -92,7 +92,7 @@ graph TD
 | u4-popover | file-candidates 仅修 1 行过时注释 | 原注释与实际门不符 | 无需改设计 |
 | u4-popover | cwd 拉取失败主动清空本地 ref | 防换目录后失败时残留脏候选，保证失败→无浮层恒成立，有专项用例 | 合理增强 |
 | u4-popover | 落点选择：open-fetch 经 onCwdFileCandidates 回调写入 CommandPopover 本地 ref（cwdFileCandidates），未拆新文件 | 设计 §5 待验证①授权的实施期落点，script 294/300 | 状态表 u4 行所称第 5 条偏差即本条（登记补录于 design-code-sync R1） |
-| u5-wiring | LP 组 fake Date 节流隔离 | open-fetch 1s 节流依赖 Date.now（模块级真实时钟），测试以 toFake:['Date'] + 固定 NOW 传参隔离跨用例污染（composer-hash-trigger.test.ts:295） | 状态表 u5 行所称第 3 条偏差即本条（登记补录于 design-code-sync R1） |
+| u5-wiring | LP 组 fake Date 节流隔离 | open-fetch 1s 节流依赖 Date.now（模块级真实时钟），测试以 toFake:['Date']（composer-file-popover.test.ts:163 beforeEach）+ LP2 advanceTimersByTime(1001) 跳节流窗口隔离跨用例污染（:197） | 状态表 u5 行所称第 3 条偏差即本条（登记补录于 design-code-sync R1，锚点经 R2 复审修正） |
 | u5-wiring | 绑定用 flow.currentCwd?.value ?? null 而非字面 prop | flow 是普通对象嵌套 ComputedRef 模板不自动解包；?. 同时防御领地外测试 mock 缺字段（退化为 S4b 空态语义） | 合理偏差，接受 |
 | u5-wiring | 新断言改用 data-reka-popper-content-wrapper 真选择器 | 旧 data-radix-* 是恒 null 空选择器（旧 S4/A5/U8 该断言空洞）；仅新/翻转断言改真选择器，旧断言未动（A5 仍有 bodyRows 实体断言护栏） | 登记残留风险：旧空洞断言留待后续批清理 |
 | （初始空位） | | | |
