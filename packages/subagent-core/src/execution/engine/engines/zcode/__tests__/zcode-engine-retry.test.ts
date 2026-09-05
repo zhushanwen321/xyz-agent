@@ -27,7 +27,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EngineRunResult, RunContext } from "../../../port.ts";
-import type { AgentCallOpts } from "../../../../orchestration/models/types.ts";
+import type { AgentCallOpts } from "../../../../../orchestration/models/types.ts";
 import { ZCODE_APPSERVER_GOLDEN } from "../golden-sample.ts";
 import {
   ZcodeEngine,
