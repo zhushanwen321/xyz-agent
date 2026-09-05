@@ -4,7 +4,7 @@ import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
 import { RpcTimeoutError } from '../../utils/errors.js'
 import type { ThinkingLevel, ProviderId } from '@xyz-agent/shared'
-import { BASH_RPC_TIMEOUT_MS } from '@xyz-agent/shared'
+import { BASH_RPC_TIMEOUT_MS, COMPACT_RPC_TIMEOUT_MS } from '@xyz-agent/shared'
 // B3 出站契约唯一构建器（U3 收口点；实现本体在 @xyz-agent/shared，此处走 runtime 门面）
 import { buildOutboundChildEnv } from '../spawn-env.js'
 import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
@@ -87,7 +87,6 @@ export interface RpcClientOptions {
 }
 
 const CMD_TIMEOUT_MS = 60_000
-const COMPACT_TIMEOUT_MS = 300_000
 const KILL_TIMEOUT_MS = 2_000
 /** 快速操作超时（L6：getState/getCommands 等毫秒级 RPC，10s 足够，60s 等太久才报错） */
 const FAST_TIMEOUT_MS = 10_000
@@ -818,7 +817,10 @@ export class RpcClient implements IPiEngine {
   }
 
   async compact(customInstructions?: string): Promise<PiCompactionResult> {
-    const msg = await this.sendCommand('compact', customInstructions ? { customInstructions } : {}, COMPACT_TIMEOUT_MS)
+    // timeout-slow-flow-wallclock D3：压缩是 LLM 调用链（分钟级），超时回归自有常量
+    // COMPACT_RPC_TIMEOUT_MS（30min，shared SSOT）——不再与 bash 共用（300s 前科已由 D2 拆除），
+    // renderer backstop 引同一常量 + RENDERER_RPC_MARGIN_MS（编译期对齐，恒不先于本层判死）。
+    const msg = await this.sendCommand('compact', customInstructions ? { customInstructions } : {}, COMPACT_RPC_TIMEOUT_MS)
     return msg.data as unknown as PiCompactionResult
   }
 

@@ -8,11 +8,9 @@
  * 注：mock 模式下不走本域（api/index 切到 mock 门面）。
  */
 import type { Message, ServerMessageUnion } from '@xyz-agent/shared'
+import { COMPACT_RPC_TIMEOUT_MS, RENDERER_RPC_MARGIN_MS } from '@xyz-agent/shared'
 import { command as sendCommand } from '../request'
 import * as events from '../events'
-
-/** compact 超时（ms）：对齐 runtime rpc-client COMPACT_TIMEOUT_MS，大上下文压缩需数分钟 */
-const COMPACT_TIMEOUT_MS = 300_000
 
 /** getHistory 返回结构（含 historyTruncated 标志，N1 修复） */
 export interface HistoryResult {
@@ -73,11 +71,13 @@ export function followUp(sessionId: string, text: string): Promise<void> {
  * runtime 生命周期推送：session.compacting（开始）→ session.compacted（完成/失败）。
  * 这些广播走 session 通道，由 useChat 的会话级订阅消费，驱动 store 的 isCompacting 状态。
  *
- * 超时 300s：对齐 runtime rpc-client 的 COMPACT_TIMEOUT_MS（大上下文压缩需数分钟），
- * 默认 65s 超时会在大 session 压缩时误 reject。
+ * 超时 = COMPACT_RPC_TIMEOUT_MS + RENDERER_RPC_MARGIN_MS（30min + 60s = 1860s，backstop）：
+ * 校准链「renderer = runtime 第一刀 + 余量」（timeout-slow-flow-wallclock D3），双端引用
+ * 同一 shared 常量编译期对齐——结构保证 renderer 恒不先于 runtime 判死（现状双端同值
+ * 300s 零余量、renderer 因传输延迟恒先报错的竞态由此外科切除；65s 误杀大 session 前科同根）。
  */
 export function compact(sessionId: string, customInstructions?: string): Promise<void> {
-  return sendCommand('session.compact', { sessionId, customInstructions }, COMPACT_TIMEOUT_MS)
+  return sendCommand('session.compact', { sessionId, customInstructions }, COMPACT_RPC_TIMEOUT_MS + RENDERER_RPC_MARGIN_MS)
 }
 
 /** 中断当前回合（DEFERRED 流转，§9 G-025） */
