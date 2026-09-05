@@ -224,6 +224,22 @@ function baseOpts(agentDir: string, extra: Partial<ExecuteOptions> = {}): Execut
   return { task: "do work", slug: "validation-test", cwd: agentDir, ctxModel: CTX_MODEL, ...extra };
 }
 
+/**
+ * 等待 detached finalize 链完全静止后再离开用例（flake 加固 2026-09-05）。
+ *
+ * fake run 立即 resolve → kickOffEngineRun 的 detached 链推进 finalizeEngineOutcome →
+ * finalizeRecord（内含 writeManifest——fs.promises 真异步，threadpool 落盘）→
+ * notifyComplete → pi.sendMessage。sendMessage 被调 = runEngineTask 已 await 完成
+ * = 链上全部异步落盘已 resolve（与 chat-engine-routing 终态通知同一等待语义）。
+ *
+ * 缺失本等待时，链的在途写盘会跨过 afterEach 的 fs.rmSync——threadpool 写与主线程
+ * 删除目录树竞争，rmSync 以 ENOTEMPTY 失败打翻清理（单文件跑时间隙足够恒绿，
+ * 全量并发负载下写延迟跨窗即偶发——本文件曾因此 6 轮中 2 轮失败）。
+ */
+async function settleEngineRunChain(pi: ChatSetup["pi"]): Promise<void> {
+  await vi.waitFor(() => expect(pi.sendMessage).toHaveBeenCalled());
+}
+
 describe("chat 路径：路由先行 + 按目标引擎校验 model（u-h2 V2-1/V2-2）", () => {
   let agentDir: string;
 
@@ -236,7 +252,7 @@ describe("chat 路径：路由先行 + 按目标引擎校验 model（u-h2 V2-1/V
   afterEach(() => {
     clearEngines();
     resetCoreForTests();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     vi.clearAllMocks();
   });
 
@@ -244,24 +260,30 @@ describe("chat 路径：路由先行 + 按目标引擎校验 model（u-h2 V2-1/V
 
   it("[V2-1a] defaultEngine=zcode 不传 engine + zcode id → 成功派发（修复前报 not a registry entry）", async () => {
     writeGlobalConfig(agentDir, { version: 1, maxConcurrent: 6, defaultEngine: "zcode" });
-    const { service, zcode } = setupChat(agentDir);
+    const { service, zcode, pi } = setupChat(agentDir);
 
     const handle = await service.execute(baseOpts(agentDir, { model: ZCODE_FLASH }));
-    await vi.waitFor(() => expect(zcode.runs.length).toBe(1));
-
-    expect(zcode.runs[0]!.task.model).toBe(ZCODE_FLASH);
+    // record 身份字段产生于 execute 同步段——resolve 后立即快照：fake run 立即 resolve，
+    // 轮询窗口内 finalize/archive 会把 record 移出 running（waitFor 后再读是负载敏感竞态）
     const rec = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
     expect(rec?.engine).toBe("zcode");
     expect(rec?.model).toBe(ZCODE_FLASH);
+    // 引擎派发事实单独确定性等待（runs 数组只增不删）
+    await vi.waitFor(() => expect(zcode.runs.length).toBe(1));
+    expect(zcode.runs[0]!.task.model).toBe(ZCODE_FLASH);
+    // 链静止后再离开用例（afterEach rmSync 竞争防御，见 helper 注释）
+    await settleEngineRunChain(pi);
   });
 
   it("[V2-1b] 显式 engine='zcode' + zcode id → 成功派发", async () => {
-    const { service, zcode } = setupChat(agentDir);
+    const { service, zcode, pi } = setupChat(agentDir);
     const handle = await service.execute(baseOpts(agentDir, { engine: "zcode", model: ZCODE_FLASH }));
-    await vi.waitFor(() => expect(zcode.runs.length).toBe(1));
-    expect(zcode.runs[0]!.task.model).toBe(ZCODE_FLASH);
+    // 同步段快照（竞态依据同 V2-1a）
     const rec = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
     expect(rec?.engine).toBe("zcode");
+    await vi.waitFor(() => expect(zcode.runs.length).toBe(1));
+    expect(zcode.runs[0]!.task.model).toBe(ZCODE_FLASH);
+    await settleEngineRunChain(pi);
   });
 
   // ── V2-2（原 F2-B）：pi id 用在 zcode → 派发同步期明确报错（场景 2 文案逐句）──
@@ -303,12 +325,13 @@ describe("chat 路径：路由先行 + 按目标引擎校验 model（u-h2 V2-1/V
 
   it("[D2-1] frontmatter model（agent .md）+ engine: zcode → 原样透传给 taskSpec（作者声明不忽略）", async () => {
     const agentRef = writeAgentMd(agentDir, `name: fm-agent\ndescription: d\nengine: zcode\nmodel: ${ZCODE_FLASH}`);
-    const { service, zcode } = setupChat(agentDir);
+    const { service, zcode, pi } = setupChat(agentDir);
 
     await service.execute(baseOpts(agentDir, { agent: agentRef }));
     await vi.waitFor(() => expect(zcode.runs.length).toBe(1));
 
     expect(zcode.runs[0]!.task.model).toBe(ZCODE_FLASH);
+    await settleEngineRunChain(pi);
   });
 
   it("[D2-1] frontmatter model 配错（pi id + engine: zcode）→ 同步期场景 2 报错（不落引擎缺省静默续跑）", async () => {
@@ -322,15 +345,17 @@ describe("chat 路径：路由先行 + 按目标引擎校验 model（u-h2 V2-1/V
 
   it("[D2-1] 无显式 model → ctxModel 不透传；validateModel(undefined) 裁决引擎缺省进 record", async () => {
     writeGlobalConfig(agentDir, { version: 1, maxConcurrent: 6, defaultEngine: "zcode" });
-    const { service, zcode } = setupChat(agentDir);
+    const { service, zcode, pi } = setupChat(agentDir);
 
     const handle = await service.execute(baseOpts(agentDir));
+    // 同步段快照 record 身份（竞态依据同 V2-1a）
+    const rec = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
+    expect(rec?.model).toBe(ZCODE_DEFAULT);
     await vi.waitFor(() => expect(zcode.runs.length).toBe(1));
 
     // taskSpec.model 不带主 agent 的 pi id（引擎缺省语义归引擎）
     expect(zcode.runs[0]!.task.model).toBeUndefined();
-    const rec = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
-    expect(rec?.model).toBe(ZCODE_DEFAULT);
+    await settleEngineRunChain(pi);
   });
 
   it("[现状语义] 未实现 validateModel 的引擎 → model 原样透传（prepare 期兜底，零强制接入）", async () => {
@@ -352,21 +377,27 @@ describe("chat 路径：路由先行 + 按目标引擎校验 model（u-h2 V2-1/V
     const bareRunTasks: AgentTaskSpec[] = [];
     registerEngine("bare", () => bare);
 
-    const { service } = setupChat(agentDir);
+    const { service, pi } = setupChat(agentDir);
     await service.execute(baseOpts(agentDir, { engine: "bare", model: "future-eng/future-model" }));
     await vi.waitFor(() => expect(bareRunTasks.length).toBe(1));
 
     expect(bareRunTasks[0]!.model).toBe("future-eng/future-model");
+    await settleEngineRunChain(pi);
   });
 
   it("[V2-4①] pi id 派发 pi 引擎（现状主路径）行为不变：resolveModel 正常解析 + spawn 启动", async () => {
     const { service } = setupChat(agentDir);
+    // mock spawn 计数文件级共享（跨用例累积）——以计数差归因本用例（单调递增，可确定性等待）
+    const spawnCallsBefore = mockSpawn.mock.calls.length;
     const handle = await service.execute(baseOpts(agentDir, { model: PI_ID }));
-    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
 
+    // record 身份字段产生于 execute 同步段——resolve 后立即快照（竞态依据同 V2-1a）。
+    // pi 路径的 kickOffBackground → runSpawn 是 detached 链，不作为断言前置条件。
     const rec = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
     expect(rec?.engine).toBeUndefined(); // pi 缺省不盖章（D5 零变化）
     expect(rec?.model).toBe(PI_ID);
+
+    await vi.waitFor(() => expect(mockSpawn.mock.calls.length).toBeGreaterThan(spawnCallsBefore));
   });
 });
 
@@ -386,7 +417,7 @@ describe("pi registry 未命中的跨引擎候选（u-h2 D2-4）", () => {
   afterEach(() => {
     clearEngines();
     resetCoreForTests();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     vi.clearAllMocks();
   });
 
@@ -488,7 +519,7 @@ describe("workflow 路径 SAR：非 pi 引擎派发同步期 model 校验（u-h2
     if (prevDataDirEnv === undefined) delete process.env["XYZ_AGENT_DATA_DIR"];
     else process.env["XYZ_AGENT_DATA_DIR"] = prevDataDirEnv;
     clearEngines();
-    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     vi.clearAllMocks();
   });
 
@@ -550,6 +581,17 @@ describe("workflow 路径 SAR：非 pi 引擎派发同步期 model 校验（u-h2
 
 // ============================================================
 // D. P2-1 时序回归：record 注册 / emit 顺序
+//
+// 确定性依据（flake 加固 2026-09-05）：record entry（createRecordForMode → store.register
+// → pi.appendEntry，record-store.ts 同步调用）与 pending:register emit
+//（emitPendingRegister）都产生于 execute()/executeViaEngine() 的同一同步段——
+// service.execute() 的 Promise resolve 时两笔必然已写入 eventLog。
+//
+// 因此本组断言【不等待 detached 引擎链】（不 waitFor zcode.runs / mockSpawn）：那条链
+// 会继续向 eventLog 追加噪声（archive 的第二笔 subagent-record entry、pending:unregister），
+// waitFor 的轮询窗口让断言评估时机落在链推进的任意交错点——重负载下即偶发失败形态
+//（单跑全绿、全量偶发）。顺序锁定语义不变：第一笔 entry:subagent-record 必须先于
+// 第一笔 emit:pending:register。
 // ============================================================
 
 describe("P2-1 路由先行 reorder 的时序回归锁定", () => {
@@ -564,7 +606,7 @@ describe("P2-1 路由先行 reorder 的时序回归锁定", () => {
   afterEach(() => {
     clearEngines();
     resetCoreForTests();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     vi.clearAllMocks();
   });
 
@@ -572,7 +614,6 @@ describe("P2-1 路由先行 reorder 的时序回归锁定", () => {
     const { service, eventLog } = setupChat(agentDir);
 
     await service.execute(baseOpts(agentDir));
-    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
 
     const entryIdx = eventLog.indexOf("entry:subagent-record");
     const registerIdx = eventLog.indexOf("emit:pending:register");
@@ -595,15 +636,21 @@ describe("P2-1 路由先行 reorder 的时序回归锁定", () => {
   });
 
   it("[非 pi 成功] record entry → pending:register 顺序与 pi 路径一致", async () => {
-    const { service, eventLog, zcode } = setupChat(agentDir);
+    const { service, eventLog, zcode, pi } = setupChat(agentDir);
 
+    // execute() resolve 即同步段完成点：entry 与 emit 两笔此时已确定写入 eventLog
+    //（不依赖 detached 引擎链推进——等待该链只会给断言引入负载敏感的评估时机，
+    // 且链的后续写入〔archive 第二笔 entry / pending:unregister〕与断言语义无关）。
     await service.execute(baseOpts(agentDir, { engine: "zcode", model: ZCODE_FLASH }));
-    await vi.waitFor(() => expect(zcode.runs.length).toBe(1));
 
     const entryIdx = eventLog.indexOf("entry:subagent-record");
     const registerIdx = eventLog.indexOf("emit:pending:register");
     expect(entryIdx).toBeGreaterThanOrEqual(0);
     expect(registerIdx).toBeGreaterThan(entryIdx);
+    // 引擎派发事实单独确定性等待（runs 数组只增不删，与 eventLog 时序断言解耦）
+    await vi.waitFor(() => expect(zcode.runs.length).toBe(1));
+    // 链静止后再离开用例（afterEach rmSync 竞争防御，见 helper 注释）
+    await settleEngineRunChain(pi);
   });
 });
 
@@ -639,7 +686,7 @@ describe("ZcodeEngine.validateModel 委托 resolveZcodeModelRef（u-h2 D2-2）",
   });
 
   afterEach(() => {
-    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   function makeEngine(): ZcodeEngine {
