@@ -105,6 +105,21 @@ function stripFrontmatterPi(content: string): string {
 // ── 标记完整性检测（D8 残缺分支）──
 
 /**
+ * pi get_commands 的 skill 命令 name 前缀（实装锚点 agent-session.js 0.84.4 :1996
+ * `name: \`skill:${skill.name}\``）。映射 key 与展开 block 的 name 插值都必须剥前缀：
+ * 私有标记的 name 是裸 skill 名（u1 语法，无前缀），block 的 name 须与 pi 原生展开
+ * （`name="${skill.name}"`，无前缀）逐字一致。
+ */
+const PI_SKILL_COMMAND_PREFIX = 'skill:'
+
+/** 剥 pi 命令 name 的 `skill:` 前缀得裸 skill 名（无前缀输入原样返回，防手滑）。 */
+function stripPiSkillCommandPrefix(commandName: string): string {
+  return commandName.startsWith(PI_SKILL_COMMAND_PREFIX)
+    ? commandName.slice(PI_SKILL_COMMAND_PREFIX.length)
+    : commandName
+}
+
+/**
  * 标记开头顶点统计：`<xyz-skill` 后紧跟空白 / `/` / `>` 视为标记开头（含完整标记与残缺标记；
  * `<xyz-skills>` 降级块的包裹标签后跟字母 s，不命中——手打降级块不在本模块处理范围）。
  */
@@ -255,9 +270,10 @@ export class SkillInjector {
       console.warn('[skill-injector] get_commands failed, pass-through all markers:', e instanceof Error ? e.message : String(e))
       return { text, notices: [{ reason: 'mapping_unavailable', skills: dedupeNames(markers) }] }
     }
+    // 映射 key 用剥 `skill:` 前缀后的裸 skill 名（与私有标记的 name 同一口径）
     const skillsByName = new Map<string, SkillCommandInfo>()
     for (const cmd of commands) {
-      if (cmd.source === 'skill') skillsByName.set(cmd.name, cmd)
+      if (cmd.source === 'skill') skillsByName.set(stripPiSkillCommandPrefix(cmd.name), cmd)
     }
 
     // ── 逐标记求值：映射 → 读 SKILL.md → 构建与 pi 逐字一致的 block（D5 模板）──
@@ -279,11 +295,17 @@ export class SkillInjector {
       }
       try {
         const body = stripFrontmatterPi(readFileSync(path, 'utf-8')).trim()
-        const baseDir = cmd.sourceInfo?.baseDir ?? dirname(path)
+        // References 行 baseDir 取 SKILL.md 所在目录（dirname(path)）——pi 展开用的 skill.baseDir
+        // 恒为 skillDir = dirname(filePath)（skills.js :236/:260 实装锚点）。不用 sourceInfo.baseDir：
+        // 它经 createSkillSourceInfo 按 source 分链组装、语义随来源可变（PS-22 真实 pi 探针实证
+        // .pi/skills 来源下是扫描根而非 SKILL.md 所在目录），golden diff 抓到漂移后弃用。
+        const baseDir = dirname(path)
         // pi _expandSkillCommand 模板（agent-session.js 0.84.4 :997）逐字：
         // `<skill name="..." location="...">\nReferences are relative to <baseDir>.\n\n<body>\n</skill>`
+        // name 用裸 skill 名（get_commands 的 name 带 `skill:` 前缀，pi 原生展开无前缀）；
         // name/baseDir 与 pi 同款直接插值不转义（对齐实装行为）
-        const block = `<skill name="${cmd.name}" location="${path}">\nReferences are relative to ${baseDir}.\n\n${body}\n</skill>`
+        const skillName = stripPiSkillCommandPrefix(cmd.name)
+        const block = `<skill name="${skillName}" location="${path}">\nReferences are relative to ${baseDir}.\n\n${body}\n</skill>`
         return { marker, block, path }
       } catch (e) {
         console.warn(`[skill-injector] failed to read SKILL.md for "${marker.name}" (${path}):`, e instanceof Error ? e.message : String(e))

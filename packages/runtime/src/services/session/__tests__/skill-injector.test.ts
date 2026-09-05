@@ -61,10 +61,16 @@ afterEach(() => {
 
 // ── fake client ──
 
-const skillCmd = (name: string, path: string, baseDir?: string): PiCommandInfo => ({
-  name,
+/**
+ * skill 命令 fake：name 带 `skill:` 前缀（对齐 pi 实装 agent-session.js :1996
+ * `name: \`skill:${skill.name}\``）——mock 与实装不同形会掩盖生产错位（PS-22 教训）。
+ * 不设 sourceInfo.baseDir：注入器 References 行取 dirname(path)（skill.baseDir 实装语义），
+ * 不消费 sourceInfo.baseDir。
+ */
+const skillCmd = (name: string, path: string): PiCommandInfo => ({
+  name: `skill:${name}`,
   source: 'skill',
-  sourceInfo: { path, source: 'skill', ...(baseDir !== undefined ? { baseDir } : {}) },
+  sourceInfo: { path, source: 'skill' },
 })
 
 interface ClientOverrides {
@@ -99,7 +105,7 @@ describe('SkillInjector.inject', () => {
   it('① 单标记：原位展开与 pi 模板逐字一致（block 与前后正文空行分隔）', async () => {
     const marker = buildSkillMarker('skill-a', skillAPath)
     const text = `帮我 ${marker} 处理问题`
-    const { client } = makeClient({ commands: [skillCmd('skill-a', skillAPath, skillADir)], stats: { contextUsage: { tokens: 1, contextWindow: 100000, percent: 1 } } })
+    const { client } = makeClient({ commands: [skillCmd('skill-a', skillAPath)], stats: { contextUsage: { tokens: 1, contextWindow: 100000, percent: 1 } } })
     const result = await injector.inject(client, text)
     const block = expectedBlock('skill-a', skillAPath, skillADir, SKILL_A_BODY)
     expect(result.text).toBe(`帮我\n\n${block}\n\n处理问题`)
@@ -115,7 +121,7 @@ describe('SkillInjector.inject', () => {
       '结尾',
     ].join(' ')
     const { client } = makeClient({
-      commands: [skillCmd('skill-a', skillAPath, skillADir), skillCmd('skill-b', skillBPath, skillBDir)],
+      commands: [skillCmd('skill-a', skillAPath), skillCmd('skill-b', skillBPath)],
       stats: { contextUsage: { tokens: 1, contextWindow: 100000, percent: 1 } },
     })
     const result = await injector.inject(client, text)
@@ -127,7 +133,7 @@ describe('SkillInjector.inject', () => {
   it('① 标记位于两端：对齐 pi 原生「block 开头 + args」与「正文 + block 结尾」形态', async () => {
     const marker = buildSkillMarker('skill-a', skillAPath)
     const block = expectedBlock('skill-a', skillAPath, skillADir, SKILL_A_BODY)
-    const { client } = makeClient({ commands: [skillCmd('skill-a', skillAPath, skillADir)], stats: { contextUsage: { tokens: 1, contextWindow: 100000, percent: 1 } } })
+    const { client } = makeClient({ commands: [skillCmd('skill-a', skillAPath)], stats: { contextUsage: { tokens: 1, contextWindow: 100000, percent: 1 } } })
     // block 开头（pi 原生 /skill:name args 的形态）
     const head = await injector.inject(client, `${marker} 后续正文`)
     expect(head.text).toBe(`${block}\n\n后续正文`)
@@ -153,7 +159,7 @@ describe('SkillInjector.inject', () => {
     const marker = buildSkillMarker('skill-a', skillAPath)
     const text = `正文在前 ${marker}`
     const { client, getCommands } = makeClient({
-      commands: [skillCmd('skill-a', skillAPath, skillADir)],
+      commands: [skillCmd('skill-a', skillAPath)],
       stats: { contextUsage: { tokens: 10, contextWindow: 100, percent: 10 } },
     })
     const result = await injector.inject(client, text)
@@ -178,7 +184,7 @@ describe('SkillInjector.inject', () => {
     writeFileSync(skillBPath, bigBody)
     const text = `${buildSkillMarker('skill-a', skillAPath)} ${buildSkillMarker('skill-b', skillBPath)}`
     const { client } = makeClient({
-      commands: [skillCmd('skill-a', skillAPath, skillADir), skillCmd('skill-b', skillBPath, skillBDir)],
+      commands: [skillCmd('skill-a', skillAPath), skillCmd('skill-b', skillBPath)],
       stats: { contextUsage: { tokens: 10, contextWindow: 100, percent: 10 } },
     })
     const result = await injector.inject(client, text)
@@ -190,7 +196,7 @@ describe('SkillInjector.inject', () => {
   it('④ get_session_stats 抛错：fail-safe 降级（reason=context_window_unavailable），不放行全文', async () => {
     const marker = buildSkillMarker('skill-a', skillAPath)
     const { client } = makeClient({
-      commands: [skillCmd('skill-a', skillAPath, skillADir)],
+      commands: [skillCmd('skill-a', skillAPath)],
       statsError: new Error('rpc timeout'),
     })
     const result = await injector.inject(client, `正文 ${marker}`)
@@ -201,12 +207,12 @@ describe('SkillInjector.inject', () => {
 
   it('④ contextUsage 缺失 / contextWindow 非法：同样 fail-safe 降级', async () => {
     const marker = buildSkillMarker('skill-a', skillAPath)
-    const noUsage = makeClient({ commands: [skillCmd('skill-a', skillAPath, skillADir)], stats: {} })
+    const noUsage = makeClient({ commands: [skillCmd('skill-a', skillAPath)], stats: {} })
     const resultNoUsage = await injector.inject(noUsage.client, `正文 ${marker}`)
     expect(resultNoUsage.text).toContain(`<${SKILLS_BLOCK_TAG}>`)
     expect(resultNoUsage.notices[0]?.reason).toBe('context_window_unavailable')
 
-    const zeroWindow = makeClient({ commands: [skillCmd('skill-a', skillAPath, skillADir)], stats: { contextUsage: { tokens: 0, contextWindow: 0, percent: null } } })
+    const zeroWindow = makeClient({ commands: [skillCmd('skill-a', skillAPath)], stats: { contextUsage: { tokens: 0, contextWindow: 0, percent: null } } })
     const resultZero = await injector.inject(zeroWindow.client, `正文 ${marker}`)
     expect(resultZero.notices[0]?.reason).toBe('context_window_unavailable')
   })
@@ -225,7 +231,7 @@ describe('SkillInjector.inject', () => {
 
     // 略低（估算 318 < 320）：不降级，全文展开
     writeBody(nExact - 8)
-    const low = makeClient({ commands: [skillCmd('skill-a', skillAPath, skillADir)], stats: { contextUsage: { tokens: 1, contextWindow: window, percent: 1 } } })
+    const low = makeClient({ commands: [skillCmd('skill-a', skillAPath)], stats: { contextUsage: { tokens: 1, contextWindow: window, percent: 1 } } })
     const lowResult = await injector.inject(low.client, `x ${marker}`)
     expect(lowResult.text).not.toContain(`<${SKILLS_BLOCK_TAG}>`)
     expect(lowResult.text).toContain('a'.repeat(nExact - 8))
@@ -233,14 +239,14 @@ describe('SkillInjector.inject', () => {
 
     // 恰好等于阈值（320 > 320 为 false）：不降级
     writeBody(nExact)
-    const exact = makeClient({ commands: [skillCmd('skill-a', skillAPath, skillADir)], stats: { contextUsage: { tokens: 1, contextWindow: window, percent: 1 } } })
+    const exact = makeClient({ commands: [skillCmd('skill-a', skillAPath)], stats: { contextUsage: { tokens: 1, contextWindow: window, percent: 1 } } })
     const exactResult = await injector.inject(exact.client, `x ${marker}`)
     expect(exactResult.text).not.toContain(`<${SKILLS_BLOCK_TAG}>`)
     expect(exactResult.notices).toEqual([])
 
     // 略超（321+ > 320）：降级
     writeBody(nExact + 8)
-    const over = makeClient({ commands: [skillCmd('skill-a', skillAPath, skillADir)], stats: { contextUsage: { tokens: 1, contextWindow: window, percent: 1 } } })
+    const over = makeClient({ commands: [skillCmd('skill-a', skillAPath)], stats: { contextUsage: { tokens: 1, contextWindow: window, percent: 1 } } })
     const overResult = await injector.inject(over.client, `x ${marker}`)
     expect(overResult.text).toContain(`<${SKILLS_BLOCK_TAG}>`)
     expect(overResult.notices[0]?.reason).toBe('budget_exceeded')
@@ -248,7 +254,7 @@ describe('SkillInjector.inject', () => {
 
   it('⑥ name 无映射：标记原样透传 + skill_missing 提示（无 valid 时跳过预检 RPC）', async () => {
     const marker = buildSkillMarker('ghost', '/nonexistent/SKILL.md')
-    const { client, getCommands, getSessionStats } = makeClient({ commands: [skillCmd('skill-a', skillAPath, skillADir)] })
+    const { client, getCommands, getSessionStats } = makeClient({ commands: [skillCmd('skill-a', skillAPath)] })
     const result = await injector.inject(client, `正文 ${marker} 结束`)
     expect(result.text).toBe(`正文 ${marker} 结束`)
     expect(result.notices).toEqual([{ reason: 'skill_missing', skills: ['ghost'] }])
@@ -259,7 +265,7 @@ describe('SkillInjector.inject', () => {
   it('⑦ SKILL.md 读取失败：标记原样透传 + skill_read_failed 提示', async () => {
     const missingPath = join(skillADir, 'missing', 'SKILL.md')
     const marker = buildSkillMarker('skill-a', missingPath)
-    const { client } = makeClient({ commands: [skillCmd('skill-a', missingPath, skillADir)], stats: { contextUsage: { tokens: 1, contextWindow: 100000, percent: 1 } } })
+    const { client } = makeClient({ commands: [skillCmd('skill-a', missingPath)], stats: { contextUsage: { tokens: 1, contextWindow: 100000, percent: 1 } } })
     const result = await injector.inject(client, `正文 ${marker}`)
     expect(result.text).toBe(`正文 ${marker}`)
     expect(result.notices).toEqual([{ reason: 'skill_read_failed', skills: ['skill-a'] }])
@@ -268,7 +274,7 @@ describe('SkillInjector.inject', () => {
   it('⑦ 映射缺 sourceInfo.path：无法定位文件，按读取失败处理', async () => {
     const marker = buildSkillMarker('skill-a', '')
     const { client } = makeClient({
-      commands: [{ name: 'skill-a', source: 'skill' }],
+      commands: [{ name: 'skill:skill-a', source: 'skill' }],
       stats: { contextUsage: { tokens: 1, contextWindow: 100000, percent: 1 } },
     })
     const result = await injector.inject(client, `正文 ${marker}`)
@@ -287,11 +293,23 @@ describe('SkillInjector.inject', () => {
 
   it('⑨ location 缺省标记：get_commands 映射补路径，正常展开', async () => {
     const marker = buildSkillMarker('skill-a')
-    const { client } = makeClient({ commands: [skillCmd('skill-a', skillAPath, skillADir)], stats: { contextUsage: { tokens: 1, contextWindow: 100000, percent: 1 } } })
+    const { client } = makeClient({ commands: [skillCmd('skill-a', skillAPath)], stats: { contextUsage: { tokens: 1, contextWindow: 100000, percent: 1 } } })
     const result = await injector.inject(client, marker)
     const block = expectedBlock('skill-a', skillAPath, skillADir, SKILL_A_BODY)
     expect(result.text).toBe(block)
     expect(result.notices).toEqual([])
+  })
+
+  it('PS-22：get_commands name 带 skill: 前缀（实装形态）——映射可命中且展开 block name 无前缀', async () => {
+    // 实装 get_commands 的 skill 项 name 恒带 `skill:` 前缀（agent-session.js :1996）；
+    // 私有标记 name 是裸名——映射按裸名命中、block name 插值剥前缀，两端都对齐 pi。
+    const marker = buildSkillMarker('skill-a', skillAPath)
+    const { client } = makeClient({ commands: [skillCmd('skill-a', skillAPath)], stats: { contextUsage: { tokens: 1, contextWindow: 100000, percent: 1 } } })
+    const result = await injector.inject(client, `帮我 ${marker}`)
+    // 显式断言：不误报 skill_missing + block name 无前缀（pi 原生展开形态）
+    expect(result.notices).toEqual([])
+    expect(result.text).toContain(`<skill name="skill-a" location="${skillAPath}">`)
+    expect(result.text).not.toContain('name="skill:')
   })
 
   it('get_commands 整体失败：全部标记透传 + mapping_unavailable（不走降级——location 无从构建）', async () => {
@@ -309,7 +327,7 @@ describe('SkillInjector.inject', () => {
     const valid = buildSkillMarker('skill-a', skillAPath)
     const invalid = buildSkillMarker('ghost')
     const { client } = makeClient({
-      commands: [skillCmd('skill-a', skillAPath, skillADir)],
+      commands: [skillCmd('skill-a', skillAPath)],
       stats: { contextUsage: { tokens: 10, contextWindow: 100, percent: 10 } },
     })
     const result = await injector.inject(client, `前 ${valid} 中 ${invalid} 后`)
@@ -338,7 +356,7 @@ describe('SkillInjector.inject', () => {
     writeFileSync(skillAPath, '---\nname: skill-a\n没有闭合行')
     const raw = '---\nname: skill-a\n没有闭合行'
     const marker = buildSkillMarker('skill-a', skillAPath)
-    const { client } = makeClient({ commands: [skillCmd('skill-a', skillAPath, skillADir)], stats: { contextUsage: { tokens: 1, contextWindow: 100000, percent: 1 } } })
+    const { client } = makeClient({ commands: [skillCmd('skill-a', skillAPath)], stats: { contextUsage: { tokens: 1, contextWindow: 100000, percent: 1 } } })
     const result = await injector.inject(client, marker)
     expect(result.text).toBe(expectedBlock('skill-a', skillAPath, skillADir, raw))
   })

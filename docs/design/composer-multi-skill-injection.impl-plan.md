@@ -88,3 +88,4 @@ graph TD
 
 - 2026-09-06：初版（用户已豁免评审确认，直接基线）。
 - 2026-09-06（W1 后）：u1 committed（32 测试绿 + shared 全量 258 绿 + typecheck/eslint 过）。u2 领地补 `packages/shared/src/protocol.ts`（仅限新增提示广播消息类型，范式 `session.forkNotice`）——u1 完成通知后主 agent 核实发现提示广播需契约登记，属计划缺口修订。u1 两条合理偏差登记：① 指引行无句号（取 D7 正文定稿，场景 2 示意图句号属排版）；② 降级块解析区间可选吞入紧随指引行（可选组，hook 删指引行时块仍可识别）。
+- 2026-09-06（W3 后）：u6 PS-22 真实 pi 探针实证两处 u2 生产缺陷并打回修复（R1，28/28 + 探针绿）：① get_commands skill 项 name 恒带 `skill:` 前缀（pi agent-session.js:1996 实装），注入器映射与 block 插值改为剥前缀归一（设计未明说该形态，属设计盲区补齐）；② References 行 baseDir 恒用 `dirname(path)` 弃用 `sourceInfo.baseDir`——后者按 source 分链语义可变（.pi/skills 来源下为扫描根），与 pi 实装 `skill.baseDir=dirname(filePath)`（skills.js:236/:260）漂移。**设计 §5 检查点 1 的「sourceInfo 含 baseDir，D5 所需数据齐全」断言对 baseDir 字段不成立**——登记为设计文档待修项（阶段 3 doc_errors 预登记，设计文档 D4/D5 的 sourceInfo 表述与检查点 1 措辞需同步修正）。
