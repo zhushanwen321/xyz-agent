@@ -66,17 +66,18 @@ graph TD
 | 2 | 任务描述领地路径勘误：`message-dispatcher.ts` 实际在 `packages/runtime/src/services/session/` | 设计 §7 文件地图同路径；任务领地段写的 `packages/runtime/src/transport/` 是笔误（transport/ 下是 session-message-handler.ts，本单元未改动它）。文件本身在领地内 |
 | 3 | 诚实文案不含设计样例 `👉` Emoji + 时长动态格式化 | 项目规范禁止 Emoji（AGENTS.md 前端编码规范 / 全局输出习惯）；文案用 `RpcTimeoutError.timeoutMs` 动态构造（「1 小时」/「90 秒」等），env 缩样时如实反映实际等待上限，比样例固定「1 小时」更诚实（§7 错误规格表「bash >1h（env 可调）」口径） |
 | 4 | `sendCommand` 增设 timeout ≤ 0 = 不限时不挂 timer 分支（`pending.timer` 类型放宽 `| undefined`） | 设计只定「env 0=不限时」语义未定实现载体；`setTimeout(fn, 0)` 立即触发故必须显式分支。默认值与其余命令行为不变，`clearTimeout(undefined)` 为 no-op，resolve/reject 路径天然安全 |
-| 5 | dispatcher 超时分支仍广播 `message.error`（技术性 errMsg 进对话流） | 设计 D2 只要求合成终态 output 换诚实文案；`message.error` 是既有诊断通道（含 timeoutMs 数值可追溯），保留为最小 diff。气泡诚实文案（权威面）+ 对话流技术行不矛盾 |
+| 5 | ~~dispatcher 超时分支仍广播 `message.error`~~（**已撤销，见 #9④**——P6 Gate B 实测与诚实气泡聊天流双条目并存，超时分支不再广播 message.error；非超时通用错误分支的 message.error 保留不变） | 初版登记的理由（诊断通道最小 diff）被 P6 实测推翻：诚实原则优先，技术细节由 error envelope + runtime 日志承载 |
 | 6 | useChat ①b 抑制的边界形态登记：命令从未到达 runtime（WS 断连 `code='disconnected'`）时 `getExecutingBash` 从未置位 → 按极性「为空→抑制」不弹失败 toast | r4 权威表述的字面结论，设计未显式讨论该形态；断连态有 use-connection 重连指示兜底，非静默无反馈。发生率低（发送时 WS 已断），如需区分「终态已到」与「从未开始」需新增标志位，超出本单元 scope |
 | 7 | P1 探针形态补强：空 session 直接 bash RPC 落盘断言不成立（pi 延迟写入门：`_persist` 无 assistant 消息前一切 entry 只留内存，pi 0.84.4 dist session-manager.js:726-738）→ 探针改为预置含 assistant 历史的 session + switch_session | 真实 composer 场景（`!` 前必有对话历史）天然越过该门，P1 假设实测成立；该门是 pi 既有行为非 D2 引入，首条 assistant 消息到达时 fileEntries 全量补写，entry 不丢 |
 | 8 | 修复轮：renderer 测试领地临时扩入 `src/__tests__/composables/useChat-bash.test.ts`（u-s2 完成后归 u-y2 收尾）——T5 按新行为改写（终态已收→toast 抑制）+ 新增 T5b 反形态（backstop 先到→toast 被调），并同批回补 core useChat.test.ts 无 renderer 行为面的缺口 | ①b 改变了 renderer 既有 T5 断言的行为前提；任务授权领地扩入。路径勘误：实际在 `__tests__/composables/` 子目录（任务描述少一层） |
+| 9 | ⛔P6 断言④修复轮：① per-session 孤儿标记 `orphanBashRunning`（types.ts，D2 超时 catch 置位 / abortBash 发出且 pi 确认后清除）；② abortBash 守卫扩为 `isBashRunning || orphanBashRunning` 任一放行（收口「runtime 不等待 = 无命令在跑」与 D2「停止等待 ≠ 处决」的语义冲突）；③ 回执真实化：`abortBash` 返回 `{sent}`（interfaces/session-service/session-message-handler 三处签名同步），sent=true 才回 `message.status{aborted}`，sent=false 回 `sendError('abort_bash_not_sent')`（renderer useChat.abortBash catch → stopFailed 兜底）；④ 超时分支 message.error 删除（见 #5 撤销） | Gate B 实证缺口（守卫短路 abort_bash 0 发出 + UI 误报 aborted）。孤儿标记 bash 自然结束无法自动清（迟到 response 被丢弃机制吞，D2 不动）——残留只致下次 abort 再发一次幂等 abort_bash（pi 无 bash 时无操作），无害；abort_bash 发送失败时标记保留（bash 状态未知，误清比残留更不诚实）；sent=false 回 error envelope 而非静默——诚实报错优于谎报已取消 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
 | u-y1-updater-idle | committed | 1 | P2 探针余量 32.3x 走正常路径（idle 前移）；main 全量 741 绿；upgrade-fetch 注释联动（授权修复轮）；types.ts UI 文案留 design-code-sync 裁决 |
-| u-y2-bash-rpc-independence | committed | 1 | ⛔P1 探针 PASS（runtime 放弃等待后 pi 照常落盘，迟到响应恢复出口成立）；equivalence 两轮绿；T5 修复轮（①b 行为面断言 T5 改写 + T5b 反形态）；commit cf943ccd9 |
+| u-y2-bash-rpc-independence | committed | 1 | ⛔P1 探针 PASS（runtime 放弃等待后 pi 照常落盘，迟到响应恢复出口成立）；equivalence 两轮绿；T5 修复轮（①b 行为面断言 T5 改写 + T5b 反形态）；commit cf943ccd9；⛔P6 断言④修复轮（偏差#9：孤儿标记 + 守卫放行 + 回执真实化 {sent} + message.error 删除，复验单测 D2-6/D2-7/D2-8 + handler T14b） |
 | u-y3-compact-align | committed | 1 | ⛔P4 探针 PASS（真实 compact 178k tokens 9.5s = 189 倍余量；缩样 SIGSTOP 双端时序 B1/B2/B3 全 true）；三包全量绿；commit d7fd9728e |
 | u-y4-shell-runner-required | committed | 1 | 编译拦截验证 + 唯一生产调用点已显式传参零破坏；用户值生效测试 |
 | u-y5-renderer-required | committed | 1 | 149 调用点（147 补参 backstop + 2 核对跳过）+ bash 语义化 3660s（设计归本单元）；编译拦截验证；renderer 3695 绿 |

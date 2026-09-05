@@ -530,10 +530,17 @@ export class SessionMessageHandler {
         return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'sent' })
       }
       case 'message.abortBash': {
-        // 与 message.abort 对称：调 dispatcher.abortBash，reply message.status{aborted}。
-        // 终态经 message.bashResult{cancelled:true} 广播推回（dispatcher.abortBash 兑底），不依赖 reply。
+        // 与 message.abort 对称：调 dispatcher.abortBash → 按 abort_bash 实际发送结果回执
+        // （P6 断言④回执真实化）。sent=true（abort_bash 已发出且 pi 确认取消）→ reply
+        // message.status{aborted}；sent=false（守卫短路：无 bash 在跑且无孤儿标记，或
+        // abort_bash 发送失败）→ 不得谎报 aborted，走 error envelope（renderer useChat.abortBash
+        // catch → stopFailed toast 兜底）。终态经 message.bashResult{cancelled:true} 广播推回
+        // （dispatcher.abortBash 兑底），不依赖 reply。
         const abortBashSid = msg.payload.sessionId
-        await this.ctx.sessionService.abortBash(abortBashSid)
+        const abortResult = await this.ctx.sessionService.abortBash(abortBashSid)
+        if (!abortResult.sent) {
+          return this.ctx.sendError(ws, 'abort_bash_not_sent', 'No bash execution to abort', msg.id, { sessionId: abortBashSid })
+        }
         return this.ctx.reply(ws, msg.id, 'message.status', { sessionId: abortBashSid, status: 'aborted' })
       }
     }

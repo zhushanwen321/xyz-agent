@@ -452,6 +452,10 @@ export class MessageDispatcher {
       // RpcTimeoutError→强杀自愈分支语义不同，不得复用强杀路径。
       if (e instanceof RpcTimeoutError) {
         const honestOutput = buildBashTimeoutOutput(e.timeoutMs)
+        // P6 断言④：超时是「停止等待」不是「处决」——pi 侧孤儿 bash 仍在跑。置孤儿标记让
+        // abortBash 守卫放行（诚实文案第①步「abortBash 可终止」的 runtime 承诺），
+        // abort_bash 发出且 pi 确认后由 abortBash 清除（见 abortBash）。
+        if (activeSession) activeSession.orphanBashRunning = true
         // 错误帧不进待落列（立即发布）：xyz 合成帧，无 pi 落盘时序语义（同下方通用错误分支）。
         this.publishBashResult(sessionId, {
           command,
@@ -462,8 +466,10 @@ export class MessageDispatcher {
           excludeFromContext: excludeFlag,
           timestamp: Date.now(),
         })
-        const bashErrMsg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
-        this.messageBus?.publish(sessionId, bashErrMsg)
+        // [P6 deviation] 不广播 message.error 技术帧（'RPC command "bash" timed out after...'）：
+        // Gate B 实测它与诚实气泡在聊天流双条目并存（renderer 把 message.error 插入对话流），
+        // 与 G2「诚实告知」矛盾；诊断信息由 error envelope（session-message-handler blocked
+        // 分支）+ runtime 日志承载，用户可见面只保留诚实气泡。
         return { blocked: true }
       }
       // [S2] 对称兜底：与 abortBash「无论成败都广播 bashResult 终态」对称。
@@ -534,19 +540,33 @@ export class MessageDispatcher {
    *
    * 与 abort() 对称：失败不 throw（console.error 兑底），finally 兑底广播 bashResult{cancelled:true}
    * 终态——与 abort 广播 message.complete{aborted} 对称，前端据 bashResult 收口 isBashRunning 态。
+   *
+   * 返回 sent = abort_bash 是否真的发出且 pi 确认（P6 断言④回执真实化）：调用方
+   * （session-message-handler）据此决定回执——sent=true 才回 message.status{aborted}，
+   * sent=false（守卫短路 / 发送失败）不得谎报 aborted。
    */
-  async abortBash(sessionId: string): Promise<void> {
+  async abortBash(sessionId: string): Promise<{ sent: boolean }> {
     const client = this.getClientOrThrow(sessionId, 'abortBash')
     const activeSession = this.svc.getSessionByClient(client)
-    // [W1] 守卫：当前没有 bash 在运行时短路返回，避免无条件广播 bashResult{cancelled:true}
-    // 与 abort() 不需要守卫不同——abort 的 isGenerating 可能在 pi 卡死时残留，必须强制终态；
-    // 而 isBashRunning 仅在 sendBash 显式置 true，用户对同一 session 重复 abortBash 时应静默跳过。
-    if (!activeSession?.isBashRunning) return
+    // [W1 + P6 断言④] 守卫：isBashRunning（runtime 在等待）或 orphanBashRunning（D2 超时后
+    // runtime 已停止等待但 pi 侧孤儿 bash 仍在跑）任一在 → 放行。旧守卫只看 isBashRunning，
+    // 语义「runtime 不等待 = 无命令在跑」与 D2 超时形态「停止等待 ≠ 处决」冲突——超时后
+    // abort_bash 被短路永不发出，诚实文案第①步「abortBash 可终止」落空，UI 却仍收 aborted。
+    // 两态皆无（空闲 session 的重复/误触取消）→ 短路 { sent: false }，由调用方回执真实化。
+    if (!activeSession?.isBashRunning && !activeSession?.orphanBashRunning) return { sent: false }
+    // sent = abort_bash 是否发出且 pi 确认（sendCommand 对 success:false reject，resolve =
+    // pi 已执行 abort）。失败不提前 return：兑底 cancelled 哨兵广播必须照发（T8b 既有契约）。
+    let sent = true
     try {
       await client.abortBash()
+      // pi 确认取消 → 孤儿标记清除（pi 单 bash slot，孤儿已终止）。
+      if (activeSession) activeSession.orphanBashRunning = false
     } catch (e) {
-      // 与 abort() 的错误兑底一致：不 throw，避免请求级 envelope 双重报错。
+      // 与 abort() 的错误兑底一致：不 throw，避免请求级 envelope 双重报错。孤儿标记保留：
+      // abort_bash 失败（pi 卡死/管道断）时 bash 状态未知，标记残留只让下次 abortBash 再发
+      // 一次幂等的 abort_bash，比误清（谎称无孤儿）更诚实。
       console.error(`[message-dispatcher] abortBash failed: sessionId=${sessionId}`, toErrorMessage(e))
+      sent = false
     } finally {
       if (activeSession) {
         activeSession.isBashRunning = false
@@ -573,6 +593,7 @@ export class MessageDispatcher {
       },
     }
     this.messageBus?.publish(sessionId, cancelMsg)
+    return { sent }
   }
 
   async steerMessage(sessionId: string, content: string): Promise<void> {
