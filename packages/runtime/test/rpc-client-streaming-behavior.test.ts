@@ -25,27 +25,20 @@ const fakeStdin = {
 }
 
 // ── readline 接口 mock ──
-const rlEmitter = new EventEmitter()
-const fakeRl = Object.assign(rlEmitter, {
-  close: vi.fn(),
-  [Symbol.iterator]: vi.fn(),
-})
+// ── stdout emitter（D10：LF-only 读取器桥接 'data'，替代旧 readline 的 rlEmitter）──
+const stdoutEmitter = new EventEmitter()
 
 // ── Mock modules ──
 vi.mock('node:child_process', () => ({
   spawn: vi.fn(() => ({
     stdin: fakeStdin,
-    stdout: new EventEmitter(),
+    stdout: stdoutEmitter,
     stderr: new EventEmitter(),
     kill: vi.fn(),
     pid: 12345,
     on: vi.fn(),
     removeListener: vi.fn(),
   })),
-}))
-
-vi.mock('node:readline', () => ({
-  createInterface: vi.fn(() => fakeRl),
 }))
 
 vi.mock('../src/infra/pi/pi-paths.js', () => ({
@@ -77,7 +70,7 @@ describe('RpcClient.prompt streamingBehavior 透传（U1: session-delivery）', 
   beforeEach(async () => {
     vi.clearAllMocks()
     writeCalls.length = 0
-    rlEmitter.removeAllListeners()
+    stdoutEmitter.removeAllListeners()
     const mod = await import('../src/infra/pi/rpc-client.js')
     RpcClient = mod.RpcClient
   })
@@ -111,8 +104,8 @@ describe('RpcClient.prompt streamingBehavior 透传（U1: session-delivery）', 
 
     const cmd = lastWrittenCommand()
 
-    // 模拟 pi RPC 响应（通过 readline 接口触发 handleMessage）
-    rlEmitter.emit('line', JSON.stringify({ type: 'response', id: cmd.id, success: true }))
+    // 模拟 pi RPC 响应（D10：投给 stdout 的 LF-only 读取器 data 入口，整行 + \n）
+    stdoutEmitter.emit('data', JSON.stringify({ type: 'response', id: cmd.id, success: true }) + '\n')
 
     await promptPromise
     return cmd

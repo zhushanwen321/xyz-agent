@@ -32,6 +32,9 @@ const REAL_PI_TESTS = [
   'src/__tests__/equivalence/thinking-level-effective-e2e.test.ts',
   'src/__tests__/equivalence/tool-call-index.test.ts',
   'src/__tests__/equivalence/usage-queue-commands-invalidation.test.ts',
+  // u6（composer-multi-skill-injection）：PS-22 动态探针——真实 pi RPC /skill: 展开 vs
+  // skill-injector golden diff（探针族首个真实进程成员，import spawnPiFixture 被守卫强制登记）
+  'src/infra/pi/__tests__/pi-semantics-skill-expansion-golden.test.ts',
 ] as const
 
 export default defineConfig({

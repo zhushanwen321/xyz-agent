@@ -19,7 +19,7 @@ import type { RpcClient } from '../infra/pi/rpc-client.js'
 // ── Mocks（与 test/rpc-client.test.ts 同构）──────────────────────
 
 const stdinWrites: string[] = []
-let stdoutLineHandler: ((line: string) => void) | null = null
+let stdoutDataHandler: ((chunk: Buffer | string) => void) | null = null
 let procExitHandlers: Array<(code: number | null) => void> = []
 
 const fakeProc = {
@@ -29,7 +29,16 @@ const fakeProc = {
   }),
   off: vi.fn(),
   removeListener: vi.fn(),
-  stdout: { on: vi.fn(), resume: vi.fn(), destroy: vi.fn() },
+  stdout: {
+    on: vi.fn((event: string, handler: (chunk: Buffer | string) => void) => {
+      if (event === 'data') stdoutDataHandler = handler
+      return fakeProc.stdout
+    }),
+    off: vi.fn(),
+    removeListener: vi.fn(),
+    resume: vi.fn(),
+    destroy: vi.fn(),
+  },
   stderr: { on: vi.fn() },
   stdin: {
     write: vi.fn((chunk: string) => {
@@ -44,14 +53,9 @@ const fakeProc = {
 
 vi.mock('node:child_process', () => ({ spawn: () => fakeProc }))
 
-vi.mock('node:readline', () => ({
-  createInterface: () => ({
-    on: (event: string, handler: (line: string) => void) => {
-      if (event === 'line') stdoutLineHandler = handler
-    },
-    close: vi.fn(),
-  }),
-}))
+// D10 后 stdout 分帧走 rpc-client 自实现的 LF-only 读取器（同模块直调，无法从模块边界 mock）。
+// 测试改为在 fake stdout 上桥接 'data' handler，emitPiLine 直投「整行 + \n」由读取器分帧——
+// 投递时序与旧 readline 桥接一致（同步直调）；LF-only 分帧行为由 rpc-client-lf-framing.test.ts 专项覆盖。
 
 vi.mock('@xyz-agent/shared', async (importOriginal) => {
   // U3 起 rpc-client 经 infra/spawn-env 门面消费 shared 的 buildOutboundChildEnv；
@@ -88,8 +92,8 @@ vi.mock('../infra/logger.js', () => ({
 // ── Helpers ──────────────────────────────────────────────────────
 
 function emitPiLine(obj: Record<string, unknown>): void {
-  if (!stdoutLineHandler) throw new Error('stdout line handler not registered yet')
-  stdoutLineHandler(JSON.stringify(obj))
+  if (!stdoutDataHandler) throw new Error('stdout data handler not registered yet')
+  stdoutDataHandler(JSON.stringify(obj) + '\n')
 }
 
 function lastWrittenJson(): Record<string, unknown> {
@@ -104,7 +108,7 @@ describe('RpcClient bash/abortBash 透传', () => {
 
   beforeEach(async () => {
     stdinWrites.length = 0
-    stdoutLineHandler = null
+    stdoutDataHandler = null
     procExitHandlers = []
     fakeProc.on.mockClear()
     fakeProc.stdin.write.mockClear()
