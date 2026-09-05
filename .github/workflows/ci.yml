@@ -252,6 +252,12 @@ jobs:
       - name: Test - builtin-ext-bundle
         run: pnpm exec vitest run scripts/__tests__/builtin-ext-bundle.test.mjs
 
+      # R1-R3 新增 scripts 层护栏测试（check-unsafe-stream-writes / check-core-dist-gate /
+      # gitcode-release-sync，纯函数 + mock fetch，不依赖 staged 产物）接入 CI——护栏测试
+      # 自身也需要回归保护。
+      - name: Test - scripts guards
+        run: pnpm exec vitest run scripts/__tests__/check-unsafe-stream-writes.test.mjs scripts/__tests__/check-core-dist-gate.test.mjs scripts/__tests__/gitcode-release-sync.test.mjs
+
   # E2E 视觉回归（mock 轨 visual-chromium）：只跑像素 diff baseline（S2 W3 交付的
   # visual-chromium project，testMatch **/visual/** + chromium.launch + spawn vite @ VITE_MOCK=true）。
   # 只需 chromium（无需 electron 二进制/build:e2e）。runner 用 macos-latest 与 baseline 生成

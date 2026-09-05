@@ -187,11 +187,13 @@ export class PluginService implements IPluginService {
     // sid undefined（无活跃 session 的弹窗仍须必达全部连接）或 bus 未装配 → 保持全局广播。
     this.uiRequestQueue = new UiRequestQueue((type, payload) => {
       // 撤窗广播不走 session 级 bus（D2 收尾修正，与 D3 permissionRequestExpired 直发
-      // 形态对称）：expired payload 无 sessionId 语义（renderer onGlobal 按 requestId
-      // 反查撤窗，extension-host-dialog.ts），bus.publish(sid) 落 session 级帧
-      // onGlobal 永不可达 → 撤窗生产常态失效。直发 global 通道，raw payload 不注 sid。
+      // 形态对称）：bus.publish(sid) 落 session 级帧 onGlobal 永不可达 → 撤窗生产常态
+      // 失效。直发 global 通道；payload 注入活跃 sessionId（协议可选字段，S1：renderer
+      // 重启后 requestId 反查 Map 为空致过期弹窗残留——renderer 以 requestId 反查 Map 为主（MF-4），
+      // payload sid 仅作 renderer 重启后 Map 为空的兜底）。
       if (type === 'plugin:uiRequestExpired') {
-        this.broadcastOrBroker(type, `ui_${payload.requestId}`, payload)
+        const sid = this.activeSessionResolver.resolve()?.id
+        this.broadcastOrBroker(type, `ui_${payload.requestId}`, { ...payload, sessionId: sid })
         return
       }
       const active = this.activeSessionResolver.resolve()
