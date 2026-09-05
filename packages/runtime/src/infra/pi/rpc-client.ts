@@ -577,10 +577,6 @@ export class RpcClient implements IPiEngine {
   }
 
   /**
-   * Send a raw command and wait for a response with matching id.
-   * If the response indicates failure (success: false), the promise is rejected.
-   */
-  /**
    * timeout ≤ 0 = 不限时：不挂墙钟 timer，pending 等到响应/进程退出才 settle。
    * 唯一合法入口是 bash RPC 的 env 逃生门 `XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS=0`
    * （timeout-slow-flow-wallclock D2：0=不限时）——其余命令不得传 ≤0（控制面单请求
@@ -956,10 +952,7 @@ export class RpcClient implements IPiEngine {
       let settled = false
 
       const done = () => {
-        if (!settled) {
-          settled = true
-          resolve()
-        }
+        if (!settled) { settled = true; resolve() }
       }
 
       const killTimer = setTimeout(() => {
@@ -970,9 +963,8 @@ export class RpcClient implements IPiEngine {
 
       proc.on('exit', () => {
         clearTimeout(killTimer)
-        // Safety net: clean up any pending requests that weren't rejected
-        // by the unexpected-exit handler (because _killing=true skips it).
-        // Without this, callers await until their own CMD_TIMEOUT_MS (60s).
+        // Safety net: clean up pending requests not rejected by the unexpected-exit
+        // handler (_killing=true skips it), so callers don't await their own 60s timeout.
         this.rejectAll(new Error('pi process killed'))
         done()
       })

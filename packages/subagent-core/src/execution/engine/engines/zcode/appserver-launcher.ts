@@ -25,8 +25,6 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { resolveEngineDir } from "../../paths";
-import { ZCODE_ENGINE_ID } from "./constants";
 
 /** wrapper 落盘文件名（engineDataDir/engines/zcode/ 下）。 */
 export const ZCODE_APPSERVER_LAUNCHER_NAME = "appserver-launcher.cjs";
@@ -147,12 +145,9 @@ import(CLI_PATH).catch((err) => {
 export function ensureAppServerLauncher(engineDataDir: string): string {
   const dir = path.join(engineDataDir, "engines", "zcode");
   const file = path.join(dir, ZCODE_APPSERVER_LAUNCHER_NAME);
-  let existing: string | undefined;
-  try {
-    existing = fs.readFileSync(file, "utf8");
-  } catch {
-    // 首次落盘
-  }
+  const existing = fs.existsSync(file) && fs.statSync(file).isFile()
+    ? fs.readFileSync(file, "utf8")
+    : undefined;
   if (existing === APPSERVER_LAUNCHER_SOURCE) return file;
   try {
     fs.mkdirSync(dir, { recursive: true });

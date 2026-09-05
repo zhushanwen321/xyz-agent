@@ -157,8 +157,6 @@ function findModuleLevelMutableState(srcAbs) {
 
 // ---------- 导出面符号提取 ----------
 
-const IDENT_RE = /^[A-Za-z_$][\w$]*$/
-
 /**
  * 解析全部 `export { ... }` 块（可多行、含 `type X` 前缀与 `X as Y` 重命名）。
  * 解析不了的 part 记入 problems（fail-closed：宁可报错人工看，不静默漏符号）。
