@@ -557,7 +557,8 @@ describe('expired 撤窗广播分流（R1-1）', () => {
     const expired = broadcasts.filter(m => m.type === 'plugin:uiRequestExpired')
     expect(expired).toHaveLength(1)
     expect(expired[0].payload.requestId).toBe(requestId)
-    // expired payload 无 sessionId 语义（renderer 契约：撤窗广播不注入活跃 sid）
-    expect('sessionId' in expired[0].payload).toBe(false)
+    // expired payload 携带活跃 sid（75a97ba3c 契约修订，MF-4）：renderer 重启后 requestId
+    // 反查 Map 为空时以 payload sid 定位分区撤窗（dialog-request-queue dequeueByRequestId）
+    expect(expired[0].payload.sessionId).toBe('sess-1')
   })
 })
