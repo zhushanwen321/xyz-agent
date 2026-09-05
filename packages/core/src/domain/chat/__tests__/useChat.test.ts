@@ -42,6 +42,11 @@ interface Fixture {
   chatStore: ReturnType<typeof createChatStore>
   sessionStore: { applySnapshot: ReturnType<typeof vi.fn> }
   toast: { error: ReturnType<typeof vi.fn> }
+  compactQueue: {
+    flush: ReturnType<typeof vi.fn>
+    enqueue: ReturnType<typeof vi.fn>
+    peek: ReturnType<typeof vi.fn>
+  }
   /** 主动向 sid 的 streamSubscribe handler 注入一条 ServerMessage（模拟 WS 事件） */
   emit: (sid: string, m: ServerMessage) => void
   dispose: () => void
@@ -71,7 +76,12 @@ function makeFixture(): Fixture {
   }
   const sessionStore = { applySnapshot: vi.fn() }
   const toast = { error: vi.fn() }
-  const compactQueue = { flush: vi.fn().mockResolvedValue(true) }
+  // CompactQueueLike mock（session-occupancy D2：rejected 兜底入队 + flush 来源消歧）
+  const compactQueue = {
+    flush: vi.fn().mockResolvedValue(true),
+    enqueue: vi.fn((sid: string, text: string) => ({ id: `q-${sid}-${Date.now()}`, text })),
+    peek: vi.fn((_sid: string) => [] as Array<{ id: string; text: string }>),
+  }
   const deps: UseChatDeps = {
     chatApi,
     writeSegments: vi.fn().mockResolvedValue(undefined),
@@ -88,6 +98,7 @@ function makeFixture(): Fixture {
     chatStore,
     sessionStore,
     toast,
+    compactQueue,
     emit: (sid, m) => {
       streamHandlers.get(sid)?.(m)
     },
@@ -135,6 +146,9 @@ describe('createUseChat factory 行为', () => {
   })
 
   it('send.rejected handler：clearPendingSend + toast.error', async () => {
+    // [session-occupancy D2] send await 完成后未决记录已收口（WS FIFO 下 rejected 帧必然先于
+    // reply 处理，await 后到达属迟到帧/非直发来源）→ fallback 分支：保持既有反馈（清占位 +
+    // toast），不回滚不入队。直发时序的完整行为见下方「send.rejected 兜底与回滚」describe。
     const f = makeFixture()
     await f.useChat.send('s4', textToSegments('hi'))
     f.emit('s4', msg('s4', 'send.rejected', { reason: 'busy', message: '被拒' }))
@@ -566,6 +580,146 @@ describe('send inflight 挂钩（steer-bubble u2 / D2 维护点 2）', () => {
     // 挂钩在 send 调用点不在 appendUser 内：编辑重发路径零计数（误挂会在此 +1，
     // 其 message_end 到达时错抵真正的 inflight 配额）
     expect(f.chatStore.getInflight('s33')).toBe(1) // 仅首发 send 的 +1
+    f.dispose()
+  })
+})
+
+// ── [session-occupancy-send-closure D2 / u3-p1-renderer] send.rejected 兜底与回滚 ──
+// 乐观气泡回滚 + inflight 回滚全 reason 生效；仅 compacting 兜底入队（P1 分阶段）；
+// clientUuid 命中队列条目（flush 来源）只回滚不入队；busy/processing toast-only。
+// 时序模拟：WS FIFO 保证 rejected 广播先于 RPC reply——send 的 promise 同步段完成后
+// （记录已写、订阅已建）即 emit，再 await send 收口。
+
+describe('send.rejected 兜底与回滚（session-occupancy D2 P1）', () => {
+  beforeEach(() => {
+    resetChatModuleStateForTest()
+  })
+
+  /** 直发 + 注入 rejected（真实时序：广播先于 reply，emit 在 send await 收口前） */
+  async function sendThenReject(
+    f: Fixture,
+    sid: string,
+    text: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const p = f.useChat.send(sid, textToSegments(text))
+    f.emit(sid, msg(sid, 'send.rejected', payload))
+    await p
+  }
+
+  it('验收① compacting 拒绝：乐观气泡回滚 + inflight 回滚 + 入队恰一次，无 toast', async () => {
+    const f = makeFixture()
+    await sendThenReject(f, 'r1', '继续重构 auth 模块', { reason: 'compacting', message: 'Agent 正在处理' })
+
+    // 气泡回滚：appendUser 的乐观 user 气泡被移除（对话流无错误气泡也无残留气泡）
+    expect(f.chatStore.getMessages('r1').length).toBe(0)
+    // inflight 回滚：send 乐观 +1 被 rejected 回滚 −1，无悬空
+    expect(f.chatStore.getInflight('r1')).toBe(0)
+    // 入队恰一次：兜底 enqueue 调用一次，原文入队（flush 重放直发原文）
+    expect(f.compactQueue.enqueue).toHaveBeenCalledTimes(1)
+    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('r1', '继续重构 auth 模块')
+    // 静默入队取代 toast（D2 接管表）
+    expect(f.toast.error).not.toHaveBeenCalled()
+    f.dispose()
+  })
+
+  it('验收② busy 拒绝：回滚生效、不入队、toast-only（无对话流气泡）', async () => {
+    const f = makeFixture()
+    await sendThenReject(f, 'r2', 'hi', { reason: 'busy', message: 'Agent 正在处理' })
+
+    expect(f.chatStore.getMessages('r2').length).toBe(0)
+    expect(f.chatStore.getInflight('r2')).toBe(0)
+    expect(f.compactQueue.enqueue).not.toHaveBeenCalled()
+    expect(f.toast.error).toHaveBeenCalledWith('Agent 正在处理')
+    f.dispose()
+  })
+
+  it('验收② processing 拒绝：回滚生效、不入队、toast-only', async () => {
+    const f = makeFixture()
+    await sendThenReject(f, 'r2b', 'hi', { reason: 'processing', message: 'Agent 正在处理' })
+
+    expect(f.chatStore.getMessages('r2b').length).toBe(0)
+    expect(f.chatStore.getInflight('r2b')).toBe(0)
+    expect(f.compactQueue.enqueue).not.toHaveBeenCalled()
+    expect(f.toast.error).toHaveBeenCalledWith('Agent 正在处理')
+    f.dispose()
+  })
+
+  it('验收③ clientUuid 命中队列已有条目（flush 来源）：只做回滚不做入队', async () => {
+    const f = makeFixture()
+    const p = f.useChat.send('r3', textToSegments('hi'))
+    // appendUser 的气泡 id = clientUuid（u-<uuid>）；构造该 uuid 已在队列条目中的形态
+    //（u4b 起 flush 提交携带条目 id，rejected 回带命中）——即使与未决直发记录同 uuid，
+    // 也只回滚不入队（重入队会双条目双投递）。
+    const userMsgId = f.chatStore.getMessages('r3').find((m) => m.role === 'user')!.id
+    f.compactQueue.peek.mockReturnValue([{ id: userMsgId, text: 'hi' }])
+    f.emit('r3', msg('r3', 'send.rejected', { reason: 'compacting', message: 'Agent 正在处理', clientUuid: userMsgId }))
+    await p
+
+    // 回滚生效（气泡移除 + inflight 归零）……
+    expect(f.chatStore.getMessages('r3').length).toBe(0)
+    expect(f.chatStore.getInflight('r3')).toBe(0)
+    // ……但不重入队（条目已在队列，flush 的 S1 订阅已处理失败保留）
+    expect(f.compactQueue.enqueue).not.toHaveBeenCalled()
+    f.dispose()
+  })
+
+  it('验收③b flush 重放来源（无未决直发记录）：不重入队，保持既有 toast 反馈', async () => {
+    const f = makeFixture()
+    // 先完成一次 send（ack 后未决记录收口），再注入 flush 形态的 rejected
+    await f.useChat.send('r3b', textToSegments('old'))
+    f.compactQueue.peek.mockReturnValue([{ id: 'q-flush-entry', text: 'queued text' }])
+    f.emit('r3b', msg('r3b', 'send.rejected', { reason: 'compacting', message: 'Agent 正在处理', clientUuid: 'q-flush-entry' }))
+
+    // 队列条目不翻倍（重入队 = 双条目双投递）
+    expect(f.compactQueue.enqueue).not.toHaveBeenCalled()
+    // 无乐观副作用可回滚（非直发来源），保持既有反馈
+    expect(f.toast.error).toHaveBeenCalledWith('Agent 正在处理')
+    f.dispose()
+  })
+
+  it('验收④ 正常发送路径：clientUuid 经 RPC options 透传且等于乐观气泡 id', async () => {
+    const f = makeFixture()
+    await f.useChat.send('r4', textToSegments('hello'))
+
+    expect(f.chatApi.send).toHaveBeenCalledTimes(1)
+    const [calledSid, calledText, options] = f.chatApi.send.mock.calls[0] as unknown as [
+      string, string, { clientUuid?: string },
+    ]
+    expect(calledSid).toBe('r4')
+    expect(calledText).toBe('hello') // 纯文本消息无标记，promptText 原样
+    const userMsgId = f.chatStore.getMessages('r4').find((m) => m.role === 'user')!.id
+    expect(options.clientUuid).toBe(userMsgId) // 透传值 = appendUser 生成的气泡 id（u-<uuid>）
+    expect(userMsgId).toMatch(/^u-[0-9a-fA-F-]{36}$/)
+    f.dispose()
+  })
+
+  it('非纯文本消息：clientUuid 透传 RPC options，prompt 内标记并存（两通路正交）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('r5', [
+      { type: 'file', path: '/tmp/a.ts' },
+      { type: 'text', text: '看看' },
+    ])
+
+    const [calledSid, calledText, options] = f.chatApi.send.mock.calls[0] as unknown as [
+      string, string, { clientUuid?: string },
+    ]
+    expect(calledSid).toBe('r5')
+    expect(calledText).toMatch(/<!--xyz:msg:u-[0-9a-fA-F-]{36}-->$/) // prompt 标记通路不变
+    expect(options.clientUuid).toMatch(/^u-[0-9a-fA-F-]{36}$/) // RPC 参数通路新增
+    f.dispose()
+  })
+
+  it('RPC ack 后迟到 rejected：记录已收口，不重复回滚不入队（防御）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('r6', textToSegments('hi'))
+    // ack 后乐观气泡属正常在途（message_end(user) 确认）——迟到 rejected 帧不得误删
+    const msgsBefore = f.chatStore.getMessages('r6').length
+    f.emit('r6', msg('r6', 'send.rejected', { reason: 'compacting', message: 'Agent 正在处理' }))
+
+    expect(f.chatStore.getMessages('r6').length).toBe(msgsBefore)
+    expect(f.chatStore.getInflight('r6')).toBe(1)
+    expect(f.compactQueue.enqueue).not.toHaveBeenCalled()
     f.dispose()
   })
 })

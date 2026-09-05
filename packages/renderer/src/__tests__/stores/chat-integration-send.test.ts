@@ -145,7 +145,13 @@ describe('T1.4 useChat.send 全链', () => {
     expect(chat.isActive('s-fullchain')).toBe(true)
     // 3. api.send 被调（图片走路径模式，send 第二参数 promptText，无 images 通道）
     // 纯文本轮不加 clientUuid 标记后缀（最小写入：textToSegments 降级渲染等价，无需映射）
-    expect(apiMock.send).toHaveBeenCalledWith('s-fullchain', 'hello')
+    // 第 4 参 options.clientUuid（session-occupancy D2）经 ChatApiPort 适配转发，等于乐观气泡 id
+    expect(apiMock.send).toHaveBeenCalledWith(
+      's-fullchain',
+      'hello',
+      undefined,
+      { clientUuid: msgs.find((m) => m.role === 'user')!.id },
+    )
     // 4. message_start 到达 → clearPendingSend
     emit({ type: 'message.message_start', payload: { sessionId: 's-fullchain', messageId: 'a1' } })
     // message_start 后 isGenerating=true（streaming entity 存在），isActive 仍 true
@@ -180,7 +186,11 @@ describe('T5.1 editAndResend pendingSend 对称', () => {
     await editAndResend('s-edit', userMsg.id, textToSegments('edited text'))
     // api.send 被调（editAndResend 内部走 submitSegments → chatApi.send）
     // 纯文本轮不加 clientUuid 标记后缀（最小写入，与 send 同通路）
-    expect(apiMock.send).toHaveBeenCalledWith('s-edit', 'edited text')
+    // 第 4 参 options.clientUuid（session-occupancy D2）= 编辑重发的新乐观气泡 id
+    const resentUserMsg = chat.getMessages('s-edit').filter((m) => m.role === 'user').at(-1)!
+    expect(apiMock.send).toHaveBeenCalledWith('s-edit', 'edited text', undefined, {
+      clientUuid: resentUserMsg.id,
+    })
     // addPendingSend：isActive=true（空窗期）
     expect(chat.isActive('s-edit')).toBe(true)
   })

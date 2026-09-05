@@ -34,6 +34,21 @@ import { splitHistoryBeforeAnchor } from './mutations'
 import { createMessageCoalescer } from './delta-coalescer'
 
 /**
+ * CompactQueueLike —— useChat 消费 compactQueue 的最小结构类型（renderer useCompactQueue
+ * 单例自动满足，经 deps.getCompactQueue 注入——session.compacted → flush 先例的既有模式）。
+ *
+ * session-occupancy-send-closure D2 P1：send.rejected{reason:'compacting'} 兜底入队复用
+ * compactQueue（enqueue）+ flush 重放来源消歧（peek 命中条目 id 即跳过重入队）。
+ */
+export interface CompactQueueLike {
+  flush: (sid: string) => Promise<boolean>
+  /** 入队一条待发消息，返回含 id 的条目（id 供 flush 提交时的 clientUuid 消歧，u4b 消费） */
+  enqueue: (sid: string, text: string) => { id: string; text: string }
+  /** 只读快照（副本），兜底 handler 据此判定 rejected.clientUuid 是否命中已有条目 */
+  peek: (sid: string) => ReadonlyArray<{ id: string; text: string }>
+}
+
+/**
  * SessionStoreLike —— useChat 消费 session store 的最小结构类型。
  *
  * 不 import 整个 SessionStoreInstance（避免 core 内 chat→session 域强耦合 + 返回类型膨胀）。
@@ -55,7 +70,7 @@ export interface EnsureStreamSubDeps {
   chatApi: ChatApiPort
   toast: { error: (msg: string) => void }
   t: (key: string, params?: Record<string, unknown>) => string
-  getCompactQueue: () => { flush: (sid: string) => Promise<boolean> }
+  getCompactQueue: () => CompactQueueLike
 }
 
 /**
@@ -74,7 +89,7 @@ export interface UseChatDeps {
   getSessionStore: () => SessionStoreLike
   toast: { error: (msg: string) => void }
   t: (key: string, params?: Record<string, unknown>) => string
-  getCompactQueue: () => { flush: (sid: string) => Promise<boolean> }
+  getCompactQueue: () => CompactQueueLike
 }
 
 /**
@@ -135,6 +150,22 @@ const historyTruncatedSessions = ref<Set<string>>(new Set())
 const manualCompactionState = new Map<string, boolean>()
 
 /**
+ * [session-occupancy-send-closure D2] per-session 未决直发记录（sid → 本次 send 的
+ * clientUuid + 入队用原文）。
+ *
+ * send() 在乐观插入（appendUser）时写入，供 ensureStreamSubscription 的 send.rejected
+ * handler 消歧「直发被拒 vs flush 重放被拒」：
+ * - 记录存在 → 本编排器的直发被拒 → 回滚乐观气泡 + inflight +（compacting 时）兜底入队；
+ * - 记录不存在 → flush 重放 / editAndResend / 迟到帧 → 不回滚不入队（重入队会双条目双投递）。
+ * payload.clientUuid 回带命中记录时为强确认（u2 落地后）；现状 runtime 未回带时以记录存在性兜底
+ * 判定（WS FIFO 保证 rejected 帧先于 RPC reply 到达，故 send await resolve 后清除记录安全）。
+ * 与 streamSubscriptions/manualCompactionState 同模式：模块级 Map + resetChatModuleStateForTest
+ * 清理 + disposeSession 按 sid 删除（ADR-0049 全局 sid 协调器例外）。
+ */
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：未决直发记录（流程状态，非 GUI 数据）
+const pendingDirectSends = new Map<string, { clientUuid: string; text: string }>()
+
+/**
  * 重置 useChat 模块级状态（仅供测试隔离）。
  *
  * 清 streamSubscriptions（逐个调 unsub 解除 WS 订阅 + 清 Map）+ historyTruncatedSessions
@@ -164,6 +195,9 @@ export function resetChatModuleStateForTest(): void {
   historyTruncatedSessions.value = new Set()
   // MF-1：清 manual compact 标记（测试间不 reset 会泄漏到下一用例）
   manualCompactionState.clear()
+  // D2：清未决直发记录（测试间不 reset 会把上一用例的 send 记录泄漏进下一用例的
+  // rejected handler，误触发回滚/入队分支）
+  pendingDirectSends.clear()
   // wave:renderer-subscribe：重置 MessageBus 订阅状态（subscriptionStates 模块级 Map）。
   // 与 streamSubscriptions/historyTruncatedSessions 同理——测试间不 reset 会泄漏到下一用例
   //（subscriptionStates 残留 → routeInbound gap 检测误判）。
@@ -202,10 +236,42 @@ export function ensureStreamSubscription(
     console.warn(`[useChat] subscribeSession failed for session ${sid}:`, e),
   )
   const unsub = deps.chatApi.streamSubscribe(sid, (msg) => {
-    // [send.rejected] 防御性反馈通道（D-006 独立类型，不进对话流）
+    // [send.rejected] 兜底通道（D-006 独立类型，不进对话流）——session-occupancy D2 改造：
+    // 乐观气泡回滚 + inflight 回滚对全部 reason 立即生效（修复 §2.2 窗口 2 的「气泡残留 +
+    // 计数悬空」）；仅 reason='compacting' 兜底入队（P1 分阶段：复用 compactQueue，flush 触发
+    // 仍是 session.compacted——reason 与触发事件一一对应；'busy'/'processing' 维持 toast-only，
+    // P3 起 occupancy 落地后才全 reason 静默入队）；clientUuid 命中队列已有条目 = flush 重放
+    // 来源，跳过重入队（flush 的 S1 窗口订阅已处理失败保留，重入队会双条目双投递）。
     if (msg.type === 'send.rejected') {
+      const { reason, clientUuid: rejectedUuid, message: rejectMessage } = msg.payload
+      const pending = pendingDirectSends.get(sid)
+      // flush 重放来源消歧：rejected 回带的 clientUuid 命中 compactQueue 已有条目（u4b 起
+      // flush 提交携带条目 id）→ 该次发送来自 flush，只回滚不入队。
+      const uuidQueued =
+        rejectedUuid != null && deps.getCompactQueue().peek(sid).some((m) => m.id === rejectedUuid)
+      if (pending && (rejectedUuid == null || rejectedUuid === pending.clientUuid)) {
+        // 本编排器的未决直发被拒（payload 回带命中 / 现状 runtime 未回带两种形态）：
+        // 回滚乐观副作用（与入队正交，全 reason）。
+        chat.truncateFrom(sid, pending.clientUuid, true) // 移除未确认的乐观气泡（appendUser 尾插，其后无消息）
+        chat.decrementInflight(sid, 1) // 消除计数悬空（后续 steer 确认被错抵的根因）
+        chat.clearPendingSend(sid)
+        pendingDirectSends.delete(sid)
+        if (reason === 'compacting') {
+          if (!uuidQueued) {
+            // P1 兜底：静默入队取代 toast（D2 接管表），原文（未加标记）等 session.compacted flush 重放。
+            deps.getCompactQueue().enqueue(sid, pending.text)
+          }
+          return
+        }
+        // 'busy' / 'processing'：toast-only（无对话流错误气泡、不入队——P1 阶段 flush 触发源
+        // 只有 session.compacted，入队会永等不到触发源，设计 D2 被否 ③）。
+        deps.toast.error(rejectMessage ?? deps.t('composable.agentProcessing'))
+        return
+      }
+      // 无未决直发记录（flush 重放 / editAndResend / 迟到帧）：无本编排器产生的乐观副作用
+      // 可回滚、不入队（uuidQueued 或无记录均指向非直发来源），保持既有反馈（现状行为）。
       chat.clearPendingSend(sid)
-      deps.toast.error(msg.payload.message ?? deps.t('composable.agentProcessing'))
+      deps.toast.error(rejectMessage ?? deps.t('composable.agentProcessing'))
       return
     }
     // subagent.directive：`@` 定向消息的可见气泡信号（composer-symbol-system §3.3.3a
@@ -389,7 +455,9 @@ export function createUseChat(deps: UseChatDeps) {
     const markedPromptText = needsBackfill ? `${promptText}\n<!--xyz:msg:${clientUuid}-->` : promptText
     // 图片走路径模式（对齐 pi TUI）：路径已在 promptText 里（segmentsToText 产出裸路径），
     // LLM 自己调 read 工具读。不再传 images base64 字段。
-    await deps.chatApi.send(sessionId, markedPromptText)
+    // options.clientUuid（session-occupancy D2）：RPC 参数透传（与 prompt 内标记正交——标记
+    // 服务 pi extension 映射回填，RPC 参数服务 runtime 拒绝广播原样回带）。
+    await deps.chatApi.send(sessionId, markedPromptText, { clientUuid })
   }
 
   /**
@@ -433,6 +501,10 @@ export function createUseChat(deps: UseChatDeps) {
     // appendUser 返回生成的 user message id（u-<uuid>），作为 clientUuid 传给 submitSegments
     // （写 segments.json sidecar + prompt 标记，建立 clientUuid ↔ pi userEntryId 映射）。
     const clientUuid = chat.appendUser(sid, segments)
+    // [session-occupancy D2] 记录未决直发（clientUuid + 入队用原文），供 send.rejected handler
+    // 消歧直发被拒 vs flush 重放被拒。入队 text 用未加标记的 promptText 原文（flush 重放
+    // 直发原文，带 `<!--xyz:msg:-->` 标记会污染重放文本）。
+    pendingDirectSends.set(sid, { clientUuid, text: promptText })
     // [steer-bubble u2 / docs/design/steer-followup-user-bubble-display.md D2 维护点 2]
     // send 乐观 +1：乐观插入即「已显示」，其自身投递的 message_end(user) 到达时被
     // inflight 计数抵消（不落入腿 2 includes 兜底——send 文本通常不在队列数组，但与
@@ -458,6 +530,10 @@ export function createUseChat(deps: UseChatDeps) {
       chat.decrementInflight(sid, 1)
       const msg = e instanceof Error ? e.message : String(e)
       deps.toast.error(deps.t('composable.sendFailed', { msg }))
+    } finally {
+      // [session-occupancy D2] 未决记录收口：RPC ack/reject 时 send.rejected 帧必然已处理
+      // （WS FIFO：dispatcher 同步广播先于 reply），handler 已消费记录，此处删除防泄漏。
+      pendingDirectSends.delete(sid)
     }
   }
 
@@ -832,6 +908,7 @@ export function createUseChat(deps: UseChatDeps) {
     coalescer.flush(sessionId)
     clearHistoryTruncated(sessionId) // SUGGESTION：已删 session 的截断标记不再有意义
     manualCompactionState.delete(sessionId) // MF-1：清 manual compact 标记
+    pendingDirectSends.delete(sessionId) // D2：清未决直发记录（session 已销毁，rejected 不再有意义）
     // wave:renderer-subscribe：清除 MessageBus 订阅状态（SubscriptionState）。
     // 与 streamSubscriptions.delete 配对——session 删除后若不清，routeInbound 的 gap 检测
     // 仍会读残留 state（lastSeenSeq 基线 stale），且 Map 永久增长。
