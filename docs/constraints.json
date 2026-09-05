@@ -1798,6 +1798,29 @@
           "hook": "check-pi-sync.mjs"
         }
       ]
+    },
+    {
+      "id": "C-comm-13",
+      "summary": "chat 流式 UI 判死必须 idle 语义：streaming timer 只由活动刷新计时（message 帧挂 refresh，stream_warn 除外），禁固定墙钟；活跃性定义含编排期子代理产出——subagent.stream_delta 帧经 route-inbound 桥接刷新父 session timer，禁止旁路帧不经 chat store 的静默检测；timeout 收口必须打标（Message.prematureTimeout）并允许迟到 message.complete 自愈恢复真实终态；阈值经 settings 配置链读写持久化（默认 1800s、clamp 60–3600s 单一权威 DEFAULT_STREAMING_IDLE_TIMEOUT_MS），禁新增 env 死配置口",
+      "scope": [
+        "packages/core/src/domain/chat/**",
+        "packages/core/src/coordination/**",
+        "packages/renderer/src/composables/effects/**",
+        "packages/shared/src/subagent-frame.ts"
+      ],
+      "authority": [
+        "design/timeout-streaming-ui-idle.md",
+        "../AGENTS.md"
+      ],
+      "dimensions": [
+        "business-logic"
+      ],
+      "enforcement": [
+        {
+          "type": "review",
+          "agent": "review-business-logic"
+        }
+      ]
     }
   ]
 }

@@ -34,7 +34,7 @@
 | # | 位置 | 值 | 危害摘要 |
 |---|------|-----|---------|
 | 1 | `subagent-core/src/execution/engine/engines/zcode/constants.ts:79` + `session-channel.ts:507-518` | turn 墙钟 **300s** | 起因案件：21% 任务误杀、死后烧 token、错误归类漏分流；二阶证据：①delta 不刷新；②超时后只本地 reject + closeSession（1.5s best-effort），app-server 侧 turn 不 stop；③错误归类 `engine_run_failed` 而非 `engine_timeout`。另：`status='error'` 终态被吞成假成功（`parsedAppServerAttempt` 不查 `terminal.status`） |
-| 2 | `core/src/domain/chat/store.ts:69` + `timers.ts:55-60`（挂载点唯一 `effects/registry.ts:308`）+ renderer `stores/chat.ts:30` re-export（执行现场） | streaming UI **10min** | UI 判死活跃流（text_delta/tool_call 均不刷新计时），finalizeSession('timeout') 强推终态后 pi 侧继续烧 token；`XYZ_STREAMING_TIMEOUT_MS` 配置口是死口（store.ts:240-244 TODO 未接线） |
+| 2 | `core/src/domain/chat/store.ts:69` + `timers.ts:55-60`（挂载点唯一 `effects/registry.ts:308`）+ renderer `stores/chat.ts:30` re-export（执行现场） | streaming UI **10min** | UI 判死活跃流（text_delta/tool_call 均不刷新计时），finalizeSession('timeout') 强推终态后 pi 侧继续烧 token；`XYZ_STREAMING_TIMEOUT_MS` 配置口是死口（store.ts:240-244 TODO 未接线）✅ **已修**（设计 docs/design/timeout-streaming-ui-idle.md）：固定墙钟改 idle 语义——timer 只由活动刷新（默认 1800s、clamp 60–3600s，`DEFAULT_STREAMING_IDLE_TIMEOUT_MS` 单一权威），编排期子代理逐字产出经 `subagent.stream_delta` 桥接刷新父 timer（6a4bb82b3）；timeout 收口打 prematureTimeout 标、迟到 message.complete 自愈恢复真实终态（8ffc560e8）；阈值经 settings 配置链持久化、死口 env 随改删除（2966eb2cf） |
 | 3 | `runtime/src/services/plugin-service/bridge-interop.ts:18`（使用 :127） | 插件工具执行 **30s** | pi agent loop 主链路：`plugin.tool.execute` 被 30s 墙钟砍成 isError，无插件/用户指定通道；与 zcode 300s 同构、量级短 10 倍 |
 | 4 | `subagent-core/src/execution/settled-watchdog.ts:43`（挂载：session-runner.ts:2454 首轮 + subagent-service.ts:1177 续聊轮） | chatMode 每轮 **10min** | **标定错误实锤**：探针 P-T2c 测的是 agent_end→settled（<2ms 收尾段），窗口却罩 prompt→settled 整轮执行——「4 个数量级余量」建立在错误被测对象上；默认挂载无 opt-out，唯一缓解=改源码常量；unbounded-wait-audit.md:295 自认「>10min 的 chatMode 单轮会被回收」 |
 
@@ -63,7 +63,8 @@
 **D. 无兜底/死口**：
 - tarball 下载无 stall 超时（`npm-installer.ts:127` header 到达即清 timer，body/解压零超时——挂死不报错；**入 Doc 5**）
 - 4 处裸 fetch（elec-a，liveness 探测漂移 ~300s，观察）
-- streaming 配置死口（**入 Doc 2**）/ BASH_TIMEOUT_MS dormant 契约（`timers.ts:15`，**入 Doc 2**）
+- streaming 配置死口（**入 Doc 2**）——✅ 已修：死口 env 配置口随 idle 语义重构删除，改接 settings 配置链（6a4bb82b3 删除 + 2966eb2cf 接线）
+- BASH_TIMEOUT_MS dormant 契约（timers.ts:15 普查时点行号，**入 Doc 2**）——✅ 已修：契约整链删除（常量/bashTimers/arm+clear/finalizeBashOnly/effect-ctx 槽位），纯减法零行为变化，markBashError 收窄（d8427b695）
 - pgrep 无 timeout（`kill-tree.ts:137`，观察）
 - Worker 版 loadPlugin 超时不回收线程（`plugin-host.ts:108`——**入 Doc 3**）
 
@@ -103,3 +104,4 @@
 ## 7. 变更历史
 
 - 2026-09-04：初版落盘（普查总报告 + P0-P3 分组 + 5 份设计文档映射）。
+- 2026-09-05：P0-2（§1 ❌2 streaming UI 10min 固定墙钟）与 ⚠️D 组两条「入 Doc 2」条目（streaming 配置死口 / BASH_TIMEOUT_MS dormant 契约）修复完成，对应条目处已加 ✅ 标记 + commit 指针；修复链 = 设计 docs/design/timeout-streaming-ui-idle.md 四 commit——idle 语义 + stream_delta 桥接 6a4bb82b3 / prematureTimeout 打标 + complete 自愈 8ffc560e8 / dormant 契约整链删除 d8427b695 / 阈值配置链 2966eb2cf。已删符号的历史性提及按口径去代码 span（BASH_TIMEOUT_MS）。其余 ❌/⚠️/附赠条目状态不变（修复由各 Doc 1/3/4/5 链自行回写）。

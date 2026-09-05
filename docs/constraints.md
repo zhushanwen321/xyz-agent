@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 85 条（生成于 2026-08-30）。
+共 86 条（生成于 2026-09-05）。
 
 ## pi 关系（外部依赖边界）
 
@@ -59,6 +59,7 @@
 | C-comm-10 | renderer 不直连 pi；store/composable/组件禁直调 ws-client.send 与 window.electronAPI，统一经 api 门面（白名单仅 3 个传输封装文件） | packages/renderer/src/** | [context](architecture/context.md) | hook: `check_no_direct_ws_send.py` |
 | C-comm-11 | emit 只传单个 payload 对象（禁多参数）；event-bus listener 用模块级 refCount 防重复注册；错误必须重置 isGenerating + streamingMessage | packages/runtime/src/**、packages/renderer/src/** | [AGENTS.md](../AGENTS.md) | review: review-arch-boundary |
 | C-comm-12 | extension UI 交互走 extension.ui_request/ui_response 独立通道（禁复用 tool approval）；plugin tool 经 Pi Bridge Extension 代理注册 | packages/runtime/src/**、extensions/taiji/** | [0010-extension-ui-independent-channel](adr/0010-extension-ui-independent-channel.md) · [0012-pi-bridge-extension-for-plugin-proxy](adr/0012-pi-bridge-extension-for-plugin-proxy.md) | review: review-extension-api |
+| C-comm-13 | chat 流式 UI 判死必须 idle 语义：streaming timer 只由活动刷新计时（message 帧挂 refresh，stream_warn 除外），禁固定墙钟；活跃性定义含编排期子代理产出——subagent.stream_delta 帧经 route-inbound 桥接刷新父 session timer，禁止旁路帧不经 chat store 的静默检测；timeout 收口必须打标（Message.prematureTimeout）并允许迟到 message.complete 自愈恢复真实终态；阈值经 settings 配置链读写持久化（默认 1800s、clamp 60–3600s 单一权威 DEFAULT_STREAMING_IDLE_TIMEOUT_MS），禁新增 env 死配置口 | packages/core/src/domain/chat/**、packages/core/src/coordination/**、packages/renderer/src/composables/effects/**、packages/shared/src/subagent-frame.ts | [timeout-streaming-ui-idle](design/timeout-streaming-ui-idle.md) · [AGENTS.md](../AGENTS.md) | review: review-business-logic |
 
 ## renderer 状态与包拓扑
 
