@@ -69,9 +69,9 @@ import {
   type SpawnResumeOpts,
 } from "./session-runner.ts";
 import {
-  armSettledWatchdog,
+  armMidRoundNoProgress,
   disarmSettledWatchdog,
-  SETTLED_WATCHDOG_TIMEOUT_MS,
+  type SettledWatchdogFireInfo,
 } from "./settled-watchdog.ts";
 import { isIdle, isResumable, hasLiveProcessHandle } from "./lifecycle-predicates.ts";
 import { startIdleGc } from "./idle-gc.ts";
@@ -1167,14 +1167,19 @@ export class SubagentService {
         record.result = undefined;
         record.resumable = undefined;
         this.store.reportRecordTransition(record);
-        // [T2③ / LC-1] 热路径轮 settled 等待固定硬上限（双挂载原语之热路径调用点，
-        // 首轮调用点在 session-runner runSpawn）。prompt 发出即起算（整轮含 turn 执行与
-        // 收尾都在窗口内，impl-plan §5 窗口口径裁决），settled 到达（session-runner
-        // handleSdkEvent 的 disarm，幂等生效于热路径轮）/ 进程 close（waitForChildExit
-        // 的 disarm）/ 本方终态化处置后即清——settled 永不到达（事件行丢失 / 子进程
-        // wedged）时本 timer 是唯一独立回收通道：现状「settled 不 arm 则 idle timer 不挂、
-        // runSpawn 已在首轮返回、spawn watchdog 默认关」的三无窗口由此收敛。
-        armSettledWatchdog(record.id, () => this.onHotPathSettledWatchdogTimeout(record));
+        // [T2③ / D9 两段式] 热路径轮 settled 等待守护（双挂载原语之热路径调用点，
+        // 首轮调用点在 session-runner runSpawn）。prompt 发出后挂**中段**无进展检测
+        //（session-runner stdout pump 的有效协议事件行刷新，连续静默 30min 判 wedged；
+        // agent_end 到达时 pump 交棒收尾段固定上界 600s——交棒接线点两路径共用）。
+        // settled 到达（session-runner handleSdkEvent 的 disarm，幂等生效于热路径轮）/
+        // 进程 close（waitForChildExit 的 disarm）/ 本方终态化处置后即清——两段合起来
+        // 覆盖 LC-1 三 wedged 形态：settled 永不到达（事件行丢失 / 子进程 wedged）时
+        // 本守护是唯一独立回收通道：现状「settled 不 arm 则 idle timer 不挂、runSpawn
+        // 已在首轮返回、spawn watchdog 默认关」的三无窗口由此收敛。
+        armMidRoundNoProgress(record.id, {
+          onMidTimeout: (fire) => this.onHotPathSettledWatchdogTimeout(record, fire),
+          onSettleTimeout: (fire) => this.onHotPathSettledWatchdogTimeout(record, fire),
+        });
       } catch (err) {
         // EPIPE 兜底：stdin 管道已断，进程实际已死但 close 事件尚未到达。
         // 检测 EPIPE 关键词 → 进程按 dead 处理 → 自动转冷路径 resume + 消息重放。
@@ -1235,6 +1240,9 @@ export class SubagentService {
    * [T2③] 热路径轮 settled watchdog 到期处置（对齐 u-t2a 首轮形态：kill + 该轮失败
    * 终态化 + 失败通知，error 含 'settled watchdog' 标记与恢复指引）。
    *
+   * [D9 两段式] 两段（mid-round 无进展 / settled 收尾段上界）共用本处置，fire 信息
+   *（段 + 窗长）由原语注入，失败文案按段分叉窗长语义。
+   *
    * 与首轮的差异：runSpawn 已返回（无收尾链路承接 settledWatchdogFired 标记），失败
    * 终态化在本回调内完成。chatMode 按 MF-6 语义回退 running-resumable（与首轮 watchdog
    * 经 runAndFinalize 失败分支的最终形态一致——对话可冷路径复活）；非 chatMode 终态
@@ -1243,10 +1251,14 @@ export class SubagentService {
    * 回调在 timer 触发的同步上下文执行：同步段只做 kill + CAS（不抛），异步收尾
    * fire-and-forget 且 catch 归 bestEffort——错误逃出回调 = uncaughtException 崩宿主。
    */
-  private onHotPathSettledWatchdogTimeout(record: ExecutionRecord): void {
+  private onHotPathSettledWatchdogTimeout(record: ExecutionRecord, fire: SettledWatchdogFireInfo): void {
+    const windowDesc =
+      fire.phase === "mid-round"
+        ? `no valid protocol event for ${fire.waitedMs / MS_PER_SECOND / SECONDS_PER_MINUTE} min after prompt (mid-round no-progress)`
+        : `no agent_settled within ${fire.waitedMs / MS_PER_SECOND}s after agent_end (settled phase)`;
     logger.warn(
-      `[subagents] settled watchdog fired for ${record.id}: no agent_settled within ` +
-        `${SETTLED_WATCHDOG_TIMEOUT_MS / MS_PER_SECOND / SECONDS_PER_MINUTE} min of hot-path prompt, terminating (LC-1 wedge recovery)`,
+      `[subagents] settled watchdog (${fire.phase}) fired for ${record.id}: ${windowDesc}, ` +
+        `terminating (LC-1 wedge recovery)`,
     );
     killRecordChildWithEscalation(record.id, "settled watchdog (hot path)");
     const failedResult: AgentResult = {
@@ -1255,7 +1267,7 @@ export class SubagentService {
       durationMs: Date.now() - record.startedAt,
       success: false,
       error:
-        `subagent did not reach agent_settled within ${SETTLED_WATCHDOG_TIMEOUT_MS / MS_PER_SECOND / SECONDS_PER_MINUTE} min (settled watchdog); ` +
+        `subagent did not reach agent_settled (${windowDesc}; settled watchdog); ` +
         `the process was terminated to bound the wait. ` +
         `Recovery: check state with subagents action:'list', then re-send your message to continue.`,
       sessionId: record.id,

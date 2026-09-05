@@ -51,9 +51,11 @@ import {
 } from "../shared/schema-env.ts";
 import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
 import {
-  armSettledWatchdog,
+  armMidRoundNoProgress,
   disarmSettledWatchdog,
-  SETTLED_WATCHDOG_TIMEOUT_MS,
+  handoverMidRoundToSettled,
+  refreshMidRoundNoProgress,
+  type SettledWatchdogFireInfo,
 } from "./settled-watchdog.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import { EPIPE_FAILURE_THRESHOLD, recordEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
@@ -1260,12 +1262,17 @@ interface SpawnRunState {
    */
   sweepDescendantsOnClose: boolean;
   /**
-   * [T2-③ / LC-1] chatMode 首轮 settled 等待固定硬上限（timer 句柄记账在
-   * settled-watchdog.ts 的 armedTimers Map，按 recordId arm/disarm；双挂载原语，
-   * 热路径挂载在 subagent-service deliverMessage，u-t2b 接线）。
+   * [T2-③ / D9 两段式] chatMode 首轮 settled 等待守护（timer 句柄记账在
+   * settled-watchdog.ts 的 armedEntries Map，按 recordId arm/disarm/交棒；双挂载原语，
+   * 热路径挂载在 subagent-service deliverMessage）。中段无进展检测 + 收尾段固定上界
+   * 两段合用本标记。
    */
-  /** [T2-③] settled watchdog 已触发——runSpawn 收尾据此转 failed + 恢复指引（非正常完成）。 */
-  settledWatchdogFired: boolean;
+  /**
+   * [T2-③] settled watchdog 已触发及触发段——runSpawn 收尾据此转 failed + 恢复指引
+   * （非正常完成）。undefined = 未触发；mid-round = 中段无进展（30min 静默）；
+   * settled = 收尾段固定上界（agent_end 后 600s）。
+   */
+  settledWatchdogFired: SettledWatchdogFireInfo | undefined;
 }
 
 /**
@@ -1539,14 +1546,19 @@ function createSpawnEventHandlers(state: SpawnRunState): (raw: SdkEvent) => void
   };
 
   const handleSdkEvent = (raw: SdkEvent): void => {
+    // [T2-③ / D9 两段式] 有效协议事件行刷新中段无进展计时（本函数是 stdout pump
+    // 解析出的合法 SdkEvent 的唯一喂入口——LC-9 invalid 行不进入，天然不刷新）。
+    // 未挂载（非 chatMode / env 关闭）或已交棒（收尾段不刷新）时幂等 no-op。
+    refreshMidRoundNoProgress(record.id);
     // [V2 模块 3] agent_settled：真空闲边界（agent_end 之后、post-run 完成后才 emit）。
     // chatMode：arm idle timer（超时 SIGTERM 回收）+ 通知本轮完成（onRoundSettled）。
     // 非 chatMode：忽略（agent_end handler 的一次性 kill 已处理，进程不会活到 agent_settled）。
     if (isAgentSettledEvt(raw)) {
       if (record.chatMode) {
-        // [T2-③ / LC-1] settled 到达：本轮等待窗口结束，固定硬上限即清（resolveRun
-        // 在本分支同点调用，天然同清）。清除必须先于后续逻辑——idle timer / 回调 /
-        // resolve 抛错时 watchdog 已确保撤下，不会误杀下一个正常轮次。
+        // [T2-③ / D9 两段式] settled 到达：本轮等待结束，两段守护（中段无进展 +
+        // 收尾段上界）一并即清（resolveRun 在本分支同点调用，天然同清）。清除必须
+        // 先于后续逻辑——idle timer / 回调 / resolve 抛错时 watchdog 已确保撤下，
+        // 不会误杀下一个正常轮次。
         disarmSettledWatchdog(record.id);
         // [F-R2] 本闭包经 stdout data 回调同步调用（handleSdkEvent ← attachStdoutPump）：
         // armIdleTimer → assertSafeTimerDelay fail-fast 的 throw 若逃出回调 = uncaughtException
@@ -2129,6 +2141,10 @@ function attachStdoutPump(
           } else if (record.chatMode) {
             // [V2 决策 1] chatMode：对话模式进程不因轮次死。agent_end 不 kill、不 MF-3/MF-4。
             // 等待 agent_settled（真空闲信号）arm idle timer + notify（onRoundSettled）。
+            // [T2-③ / D9 两段式] agent_end 到达 = 工作段结束：中段无进展计时让位收尾段
+            // 固定上界（清中段、已过时间不继承，从 agent_end 起独立计时 600s；未挂载 /
+            // 已交棒幂等 no-op——首轮与热路径轮共用本 pump 接线点）。
+            handoverMidRoundToSettled(record.id);
             // 用 continue 而非 return：return 会跳出 stdout data handler 的 for(line) 循环，
             // 丢弃同一 flush 内 agent_end 之后的事件（如紧随的 agent_settled）。continue 只
             // 跳过当前行剩余（handleSdkEvent 对 agent_end 是 no-op），继续处理后续行。
@@ -2313,7 +2329,7 @@ export async function runSpawn(
     resolveRun: undefined,
     keepAliveNoProgressTimer: undefined,
     sweepDescendantsOnClose: false,
-    settledWatchdogFired: false,
+    settledWatchdogFired: undefined,
   };
 
   // a/b. 事件累积器（pendingTools 寄存器 + turnLimiter + handleSdkEvent/agentEvent 闭包）
@@ -2444,19 +2460,30 @@ export async function runSpawn(
     // 时机安全：pipe 内核缓冲不丢；pi 在 rebindSession 后才挂 stdin reader。
     sendPromptCommand(child, task);
 
-    // [T2-③ / LC-1] chatMode 首轮 settled 等待固定硬上限（双挂载原语之首轮调用点；
-    // 热路径调用点在 subagent-service deliverMessage，u-t2b 接线）。prompt 发出后挂、
-    // settled 到达（handleSdkEvent）/ close（waitForChildExit）/ resolveRun 任一发生
-    // 即清——settled 永不到达（事件行丢失 / 子进程 wedged）时本 timer 是唯一独立
-    // 回收通道。到期处置：kill 层主 + settledWatchdogFired 标记（收尾据此转 failed
+    // [T2-③ / D9 两段式] chatMode 首轮 settled 等待守护（双挂载原语之首轮调用点；
+    // 热路径调用点在 subagent-service deliverMessage）。prompt 发出后挂**中段**无进展
+    // 检测（有效协议事件行刷新，连续静默 30min 判 wedged）；agent_end 到达时经 stdout
+    // pump 交棒**收尾段**固定上界（agent_end 后 600s，P-T2c 定案）；settled 到达
+    //（handleSdkEvent）/ close（waitForChildExit）/ resolveRun 任一发生即清——两段
+    // 合起来覆盖 LC-1 三 wedged 形态（agent_end 永不到达 / 收尾卡死 / settled 行丢失）。
+    // 到期处置（两段同构）：kill 层主 + settledWatchdogFired 段信息（收尾据此转 failed
     // + 恢复指引，见下方 success 判定），与被信号终止视为正常完成的既有语义区分。
     if (record.chatMode) {
-      armSettledWatchdog(record.id, () => {
-        logger.warn(
-          `[session-runner] settled watchdog fired for ${record.id}: no agent_settled within ${SETTLED_WATCHDOG_TIMEOUT_MS / MS_PER_SECOND / SECONDS_PER_MINUTE} min of first-round prompt, terminating (LC-1 wedge recovery)`,
-        );
-        state.settledWatchdogFired = true;
-        killChildWithEscalation(state, child, "settled watchdog");
+      armMidRoundNoProgress(record.id, {
+        onMidTimeout: (fire) => {
+          logger.warn(
+            `[session-runner] settled watchdog (mid-round) fired for ${record.id}: no valid protocol event for ${fire.waitedMs / MS_PER_SECOND / SECONDS_PER_MINUTE} min, terminating (LC-1 wedge recovery)`,
+          );
+          state.settledWatchdogFired = fire;
+          killChildWithEscalation(state, child, "settled watchdog");
+        },
+        onSettleTimeout: (fire) => {
+          logger.warn(
+            `[session-runner] settled watchdog (settled phase) fired for ${record.id}: no agent_settled within ${fire.waitedMs / MS_PER_SECOND}s after agent_end, terminating (LC-1 wedge recovery)`,
+          );
+          state.settledWatchdogFired = fire;
+          killChildWithEscalation(state, child, "settled watchdog");
+        },
       });
     }
 
@@ -2588,13 +2615,19 @@ export async function runSpawn(
     let success: boolean;
     let error: string | undefined;
     if (state.settledWatchdogFired) {
-      // [T2-③ / LC-1] settled 硬上限到期回收 ≠ 正常完成：被信号终止视为正常完成的
+      // [T2-③ / D9] settled watchdog 到期回收 ≠ 正常完成：被信号终止视为正常完成的
       // 既有语义（maxTurns 达限 kill）不适用于本形态——runSpawn 以错误返回（设计
       // §6.2），错误消息含恢复指引（S-B 验收判据）。closedReason 的 "watchdog" 映射
       // 由 finalize 侧按 error 标记承接（ClosedReason 枚举封闭，不在此擅自扩枚举）。
+      // 文案按触发段分叉窗长语义（D9 失败路径总表：中段标注 mid-round no-progress）。
+      const fire = state.settledWatchdogFired;
+      const windowDesc =
+        fire.phase === "mid-round"
+          ? `no valid protocol event for ${fire.waitedMs / MS_PER_SECOND / SECONDS_PER_MINUTE} min after prompt (mid-round no-progress)`
+          : `no agent_settled within ${fire.waitedMs / MS_PER_SECOND}s after agent_end (settled phase)`;
       success = false;
       error =
-        `subagent did not reach agent_settled within ${SETTLED_WATCHDOG_TIMEOUT_MS / MS_PER_SECOND / SECONDS_PER_MINUTE} min (settled watchdog); the process was terminated to bound the wait. ` +
+        `subagent did not reach agent_settled (${windowDesc}; settled watchdog); the process was terminated to bound the wait. ` +
         `Recovery: check state with subagents action:'list', then re-send your message to continue.`;
     } else if (record.lastError) {
       // LLM/provider error 或 abort error 已收口进 record.lastError
