@@ -33,8 +33,8 @@ export interface ShellRunnerExecuteOptions {
   args?: string[]
   /** 子进程 cwd（通常是新 worktree 目录）。 */
   cwd: string
-  /** 超时 ms，默认 120000。到期发 SIGTERM + reject ShellRunnerError(code='timeout')。 */
-  timeout?: number
+  /** 超时 ms，必传：调用方按脚本内容校准量级。到期发 SIGTERM + reject ShellRunnerError(code='timeout')。 */
+  timeout: number
   /** 逐行输出回调（每行 + 流标识）。setup 脚本的 stdout/stderr 实时反馈给前端用。 */
   onOutput?: (line: string, stream: 'stdout' | 'stderr') => void
 }

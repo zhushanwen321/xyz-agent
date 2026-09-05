@@ -550,6 +550,8 @@ describe('WorktreeService setup 脚本', () => {
         scriptPath: setupScriptPath,
         args: ['/project/feat-test'],
         cwd: '/project/feat-test',
+        // timeout 必传后（D4）：断言用户配置值（getTimeout()=60s → 60_000ms）显式透传
+        timeout: 60_000,
       }),
     )
   })
