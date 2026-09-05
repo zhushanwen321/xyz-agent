@@ -67,7 +67,10 @@ S6（CI 端到端发 beta）需 push 授权，独立于本流水线，完成后�
 
 | Unit | 偏差 | 理由 | 登记时间 |
 |------|------|------|----------|
-| （空） | | | |
+| u2 | mac 段 electronLanguages 用 `["en","zh_CN"]`（下划线），偏离设计 §3.2.2 原文统一连字符写法 | 实现优于设计文字：builder 对账规则致连字符在 mac 永不匹配、误删 zh_CN.lproj（r1 轮构建断言实证）；设计文档已按 doc_error 结论同步（阶段 3） | 2026-09-05 |
+| u2/u3 | electron-builder.yml 配置现场强化注释：`!**/*.md` 通配禁令（含 7 个 SKILL.md 依据）、electronLanguages 平台格式差异与 en 首位回落 | 把设计约束固化到改动现场，后来者无需回查设计文档；不破坏设计目标 | 2026-09-05 |
+| u1 | 删 win zip target 时同步清理 win 段注释中的 zip 表述 | 防悬空引用，属 u1 领地定义「target 列表 + 相邻注释」之内，非越权 | 2026-09-05 |
+| u4 | lockfile 重装刷新带出 jiti@1.21.7 peer 组合变体（renderer devDeps 侧） | 「重装刷新 lockfile」的自然结果，全在 devDependencies 侧，不进 electron-builder 收集闭包，产物零影响 | 2026-09-05 |
 
 ## 6 状态表
 
@@ -89,3 +92,4 @@ S6（CI 端到端发 beta）需 push 授权，独立于本流水线，完成后�
   - 2026-09-05 执行期应用户要求改并行：u2+u3（同文件）与 u4（异文件）两 dev 并行派发；commit 仍按 u1→u2→u3→u4 串行拆分（git apply --cached 按 hunk 拆 u2/u3）。
   - 2026-09-05 u2 验收抓出 locale 格式缺陷（轮次 2）：electron-builder ElectronFramework.js 的语言匹配为「去扩展名小写后全等或 wanted 前缀匹配」，mac lproj 目录名下划线（zh_CN）与配置连字符（zh-CN）永不匹配，产物 zh_CN.lproj 被误删；fix 轮改 mac 段 `["en","zh_CN"]`（win/linux 保持 `zh-CN`），重构建断言双 lproj 在位。副作用评估：zh_CN 性别变体（FEMININE 等 3 个）被裁属预期，Chromium 回落标准 zh_CN。
   - 2026-09-05 S1.5 冒烟执行方式：生产实例（/Applications/TaiJi.app 占 3210 + 真实数据目录）共存约束下，以 `--user-data-dir`（隔离单实例锁）+ `XYZ_AGENT_DATA_DIR`（tmpdir 自建）双隔离启动打包产物；模型配置从生产目录只读拷贝（红线只禁写/删）。runtime 端口自适应落 3211，未触碰生产进程。验证后冒烟实例进程清零、临时目录删除。
+  - 2026-09-05 阶段 3 一致性审查（zsw 引擎连续 2 次超时后改内置 Agent 通道派发）：unreasonable 0（终态/机制/领地/验收四区未发现）、reasonable 4 条（已入 §5 登记表）、doc_errors 2 条（§3.2 语言裁剪未回写 mac 下划线平台差异；§3.3/§5 引用了 preflight-check.sh 中不存在的「白名单一致性对账」机制）——均由主 agent 亲自修订设计文档并复核。审查附带独立复跑 validate-runtime-bundle.sh 与 preflight-check.sh --ci 双绿、asar 18M、SKILL.md 7/7 等断言。

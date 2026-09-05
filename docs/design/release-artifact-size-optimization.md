@@ -39,7 +39,7 @@ mac unpacked .app = 463MB，构成：
 ### 3.2 第一批：纯配置（`apps/electron/electron-builder.yml`）
 
 1. **删 win zip target**：`win.target` 移除 `zip`，只留 `nsis`。依据：`apps/electron/main/release-checker.ts` ASSET_PATTERNS 只认 `-setup-x64.exe`；`scripts/verify-ci-release.sh:131-133` 只硬查 dmg/exe/AppImage；全仓无 `-setup-x64.zip` 消费方。代价：失去 win 免安装绿色版形态（产品已确认接受，2026-09-05 会话）。
-2. **语言裁剪**：mac/win/linux 三段各加 `electronLanguages: ["en", "zh-CN"]`。依据：§2 locale paks 实测 48MB/包，保留 en（回落必需，全删有启动风险）+ zh-CN。electron-builder 原生字段，构建时删除不匹配 lproj/pak。
+2. **语言裁剪**：三段各加 `electronLanguages`——mac 段 `["en", "zh_CN"]`（下划线），win/linux 段 `["en", "zh-CN"]`（连字符）。依据：§2 locale paks 实测 48MB/包，保留 en（回落必需，全删有启动风险）+ zh-CN。electron-builder 原生字段，构建时删除不匹配 lproj/pak。**平台格式差异（实施期 r1 轮构建断言实证）**：electron-builder 的语言对账规则是「目录/文件名去扩展名小写后，与配置项全等或被配置项前缀匹配」（`app-builder-lib/out/electron/ElectronFramework.js:79-89`）——mac lproj 目录名是下划线格式（zh_CN.lproj），连字符写法在 mac 永不匹配、会误删中文 locale；win/linux 的 pak 文件名则是连字符格式（zh-CN.pak）。副作用：mac 的 zh_CN 性别变体（FEMININE 等 3 个）被裁属预期，Chromium 回落标准 zh_CN。
 3. **extensions filter 排垃圾**：extraResources 的 extensions filter 加 `!**/*.map`、`!**/README.md`、`!**/ARCHITECTURE.md`。依据：§2 实测 ~8.7MB/包垃圾（.map 合计 8.5M，md 仅零头），压缩态约 -2.5~3MB × 6 附件 ≈ -15~18MB/发布。现有 filter 已排 `.d.ts`/`*.test.*`/tree-sitter 源码，此处补齐同类。
    **禁止用 `!**/*.md` 通配**：staged extensions 内含 7 个 `skills/<name>/SKILL.md`（pi 内置 skills，运行时资源发现机制读取，实测产物清单），通配排除会造成内置 skills 静默消失的功能回归；故 md 只按精确文件名排（包根级文档实测仅 README.md / ARCHITECTURE.md 两种名字，workflows/README.md 为文档无运行时消费）。
 
@@ -50,7 +50,7 @@ mac unpacked .app = 463MB，构成：
 - `@xyz-agent/frontend`、`@xyz-agent/runtime`、`@xyz-agent/shared`（workspace 包）：main 进程对三者零外部 require——vite（`vite.config.main.ts`，第三方包一律 bundle 进 main.cjs）与 tsup（`packages/runtime/tsup.config.ts` noExternal 含 `@xyz-agent/shared` 等）已完成打包。fresh build 的 `dist/main/main.cjs`/`dist/preload/*.cjs`/`dist/runtime/index.cjs` 对 `electron-store`/`is-glob`/`markdown-it-footnote`/`undici`/`compare-versions` 的 require 均 grep 零命中。
 - `undici`、`compare-versions`：同样已被 bundle（undici ProxyAgent 用于 update 下载，见 `vite.config.main.ts` [HISTORICAL] 注释——历史教训是「标 external 导致运行时崩」，本次反向操作是「挪出 prod deps」，bundle 行为不变，不受该教训影响）。
 - **[r1 审查新增] `node-pty` 必须显式新增进 dependencies（`^1.0.0`，对齐 `packages/runtime/package.json`）**：node-pty 当前不是 apps/electron 的直接依赖，是经 runtime 依赖树传递进入收集闭包；runtime 迁出 prod deps 后该传递路径断掉，而 electron-builder 的 files 白名单（`node_modules/node-pty/**/*`）只能在已收集模块内过滤、不能强制纳入未收集的包（实装 `app-builder-lib/out/util/appFileCopier.js` computeNodeModuleFileSets 仅遍历 prod 依赖树）。runtime tsup 将 node-pty 标 external（`packages/runtime/tsup.config.ts`），丢失即终端功能整体崩溃，且 asarUnpack 静默无文件可解（同款事故形态见 electron-builder.yml:41-44 注释）。显式声明后收集闭包恢复包含 node-pty。
-- **不动**：`electron-store`/`is-glob`/`markdown-it-footnote`（files 白名单显式收集，涉及 preflight-check.sh 白名单一致性检查联动，收益 ~2-3MB 不值得本批冒险，登记 §5 后续项）。
+- **不动**：`electron-store`/`is-glob`/`markdown-it-footnote`（files 白名单显式收集；一致性审查实测三包在构建产物中 require 零命中，白名单本身已过时，但其清理涉及 preflight-check.sh 现有检查项联动——preflight 现仅查 asarUnpack vs files 一致性（[7/10]）与 native module 探测（[4/10]），**无「files 白名单 ↔ package.json 依赖」对账逻辑，清理时需先新增该检查项**，收益 ~2-3MB 不值得本批冒险，登记 §5 后续项）。
 - **alternatives 记录**：另一条路是反向收紧——`files` 加 `!node_modules/**/*` 后显式收齐全部所需包（electron-builder.yml:22-27 注释宣示的现行约定方向）。不选它做本批方案的原因：显式清单需随每次主进程依赖变更手动同步，漏一条即启动崩溃，维护成本在依赖最少的理想假设下也高于 devDeps 迁移（后者由包管理器语义自动保证「bundle 过的不进 asar」）；且本批 5 包迁移零 files 结构改动、可独立回滚。白名单全收集作为 §5 后续项，若未来主进程依赖增多再评估。
 
 预期收益：asar 从 155.9MB 降至 ≤25MB（剩 node-pty 2.2M + 白名单包依赖树 + @types + dist），未压缩 -130MB，压缩态约 **-40MB/包**。
@@ -94,7 +94,7 @@ mac unpacked .app = 463MB，构成：
 | AppImage 显式 xz | -20%（201.5→~161MB） | 运行时解压启动显著变慢（社区报告），需权衡 |
 | mac zip→dmg 更新改造 | -181.5MB/发布 | 中风险改造（hdiutil attach 拷贝），需 tech-design + 更新用例回归 |
 | renderer shiki 语言收敛（fine-grained 注册） | -7~9MB 未压缩/包 | 少见语言高亮降级，需产品定语言清单 |
-| 白名单包清理（electron-store 等挪 dep + 删 files 白名单） | ~2-3MB/包 | 需联动 preflight-check.sh 白名单逻辑，单独小批做 |
+| 白名单包清理（electron-store 等挪 dep + 删 files 白名单） | ~2-3MB/包 | preflight-check.sh 现无「files 白名单 ↔ package.json 依赖」对账检查（一致性审查核实，现有仅 [4/10] native 探测与 [7/10] asarUnpack 一致性），需先新增检查项再清理，单独小批做 |
 | 差分更新（blockmap + latest.yml） | 用户侧增量 10-30MB/次 | updater 协议改造，独立专题 |
 
 ## 6 实施拆分（impl-plan 种子）
