@@ -95,7 +95,9 @@ git 逐 tag 核实：**v0.8.44 ~ v0.9.13 全体 darwin 正式版的自动更新�
 
 #### 3.3.1 AppImage 内部压缩 xz（纯配置）
 
-electron-builder 原生字段 `appimage.compression: "xz"`（linuxOptions.d.ts:177-198；消费逻辑 AppImageTarget.js:83-92：显式 xz 直接透传 mksquashfs `-comp xz -Xdict-size 100% -b 1048576`）。本项目未配置 `toolsets.appimage` → 走 legacy FUSE2 路径（xz 可用；static toolset 路径不支持 xz，AppImageTarget.js:111-121，不适用本仓）。
+electron-builder 原生字段 `appImage.compression: "xz"`（linuxOptions.d.ts:177-198；消费逻辑 AppImageTarget.js:83-92：显式 xz 直接透传 mksquashfs `-comp xz -Xdict-size 100% -b 1048576`）。**[u4 实施修正] 配置位置是顶层 `appImage:` 段（驼峰 key，大写 I），不是 linux: 子段**——scheme.json 的 LinuxConfiguration 无 appimage 属性且 additionalProperties: false，放 linux 段会被 schema 校验拒绝（26.15.3 实测复现，与 u3 的 dmg 顶层段修正同型）。本项目未配置 `toolsets.appimage` → 走 legacy FUSE2 路径（xz 可用；static toolset 路径不支持 xz，AppImageTarget.js:111-121，不适用本仓）。
+
+**收益实测（u4 双构建，实施期门②已解答——本地构建 linux AppImage 可行）**：gzip 基线 117,491,716 B vs xz 85,595,477 B（linux-arm64，mac 本地构建）= **-27.1%**，超出设计期预期 -15~20%。两产物 `file` 断言均为 ELF executable（语义锁定验证通过）。
 
 **[语义锁定] 「xz 压缩」= AppImage 内部 squashfs 压缩算法换 xz，产物仍是可执行单文件 `TaiJi-*.AppImage`**。严禁理解为外层再包 `.xz` 归档——linux updater 脚本替换后直接 exec 该文件（updater-script.ts:425），外层归档会让更新后 app 无法启动且 self-healer 不回滚（脚本已写 done）。原生配置字段恰好杜绝了这种误实现。
 
@@ -201,10 +203,10 @@ hdiutil detach "$MOUNT_DIR" || hdiutil eject "$MOUNT_DIR" 2>/dev/null   # detach
 | u1 | shiki fine-grained（core import + 12 个静态 grammar import 覆盖 13 项 SHIKI_LANGS——bash/shell 由 shellscript 自带 aliases 覆盖 + 2 theme + 类型标注）+ 单测 | packages/renderer/src/composables/logic/markdown.ts + 其测试 | 无 | S1+S2+S3 |
 | u2 | node-pty prebuilds 平台裁剪（三平台段 files 各加排除行 + 注释） | apps/electron/electron-builder.yml | 无（与 u1 异文件可并行） | S4+S5 |
 | u3 | dmg ULFO（**顶层 dmg 段**加 `format: ULFO`——u3 实施修正：非 mac 子段，dmg-builder 直读 packager.config.dmg，mac 段被 schema 拒绝 + 注释） | apps/electron/electron-builder.yml | u2（同文件串行） | S6 |
-| u4 | AppImage xz（linux 段加 `appimage: compression: xz` + 注释） | apps/electron/electron-builder.yml | u3（同文件串行） | S7 |
+| u4 | AppImage xz（**顶层 appImage 段**加 `compression: xz`——u4 实施修正：非 linux 子段，schema 拒绝 + 注释） | apps/electron/electron-builder.yml | u3（同文件串行） | S7 |
 | u5 | 砍 deb（yml linux.target + release-checker pattern + shared 类型 + validate-release key + generate-manifest 正则 + build.yml glob/注释） | electron-builder.yml / release-checker.ts / packages/shared/src/update.ts / update/validate-release.ts / scripts/generate-manifest.sh / .github/workflows/build.yml | u4（同文件串行；checker 链与 u6 同文件亦串行） | 单测 + S11 负向断言 |
 | u6 | mac 更新走 dmg（A 定位链 5 处源码 + 类型 + B updater 脚本 S1 段 + C 删 zip target/build.yml 清理 + D 断供错误信息 + 测试同步：全仓 grep `macArm64Zip` 命中的 13 个测试文件逐一改） | release-checker.ts / pick-platform-asset.ts / update/platform-updater.ts / update/dev/mock-release-checker.ts / packages/shared/src/update.ts / updater-script.ts / validate-release.ts / electron-builder.yml / build.yml / orchestrator.ts（仅错误信息）+ 13 个测试文件 | u5（同文件串行、风险最后置） | S8+S9+S10 |
 
 拆分理由：规则 12「打包子系统改动逐个 commit 逐个验证」；u1-u2 无依赖可并行；u2→u3→u4→u5 同文件（yml）严格串行且各自原子小改；u6 动面最大（10 个源码文件 + 13 个测试文件）且含行为变更，置于流水线末端独立验收。dmg/AppImage 的产物级验证（S6/S7）依赖 u3/u4 的完整构建，CI dir-only 模式（build.yml:140-142）不产压缩 target，故 S6 用本地单 target 构建、S11 用 release 完整构建兜底。
 
-待验证检查点（实施期门，来自 §3.3.4 ⛔ 清单）：~~①ULFO 收益数字~~（u3 已解答：实测 -1.77%，远低于预期 -10~15%，原因与校准见 §3.3.2）②本地 linux AppImage 构建可行性 ③UpdateError UI 展示形态。
+待验证检查点（实施期门，来自 §3.3.4 ⛔ 清单）：~~①ULFO 收益数字~~（u3 已解答：实测 -1.77%，远低于预期 -10~15%，原因与校准见 §3.3.2）~~②本地 linux AppImage 构建可行性~~（u4 已解答：可行，双构建实测 xz -27.1%，见 §3.3.1）③UpdateError UI 展示形态。

@@ -198,6 +198,26 @@ linux:
   # 产物：TaiJi-${version}-x86_64.AppImage 和 TaiJi-${version}-amd64.deb。
   artifactName: TaiJi-${version}-${arch}.${ext}
 
+# AppImage 内部压缩算法（设计 §3.3.1，docs/design/release-artifact-size-optimization-batch3.md）。
+# [语义锁定] xz 指 AppImage 内部 squashfs 压缩算法（透传 mksquashfs -comp xz
+# -Xdict-size 100% -b 1048576，AppImageTarget.js:83-92 消费），
+# 产物仍是可执行单文件 TaiJi-*.AppImage，不是 .xz 归档。
+# [禁令] 严禁把「xz 压缩」实现为外层再包 .xz 归档：linux updater 替换后直接
+# exec 该文件（updater-script.ts），外层归档会让更新后 app 无法启动且
+# self-healer 不回滚（脚本已写 done）——原生配置字段恰好杜绝这种误实现。
+# 已知代价：xz 解压慢于默认 gzip，首启/更新后首启增加数秒（产品已拍板接受）。
+# [禁令] 不要改顶层 compression 字段来实现（副面警告同上方 dmg 段注释，设计 §3.4：
+# packager.compression: maximum 会让 AppImage 隐式变 xz + dmg 推导 UDBZ，
+# 副作用路径不可控）——各 target 压缩一律用显式字段。
+# [位置] appImage 是顶层段（Configuration.appImage，configuration.d.ts:135；
+# AppImageTarget.js:25 读 packager.config.appImage），不是 linux 子段——
+# scheme.json 的 LinuxConfiguration 无 appimage 属性且 additionalProperties: false，
+# 放 linux 段会被 schema 校验拒绝（26.15.3 实测复现）。设计 §3.3.1 原文写的
+# 「linux: 段内 appimage:」属同型笔误（u3 的 dmg 段位置修正的镜像），已按实装修正。
+# [防混淆] 与 dmg 同为顶层段，但 key 大小写不同：dmg 全小写 vs appImage 驼峰（大写 I）。
+appImage:
+  compression: xz
+
 # 本地构建时 electron-builder 需要至少一个 publish provider
 # 否则 updateInfoBuilder 会因 channel === null 崩溃
 # CI release workflow 会覆盖此配置
