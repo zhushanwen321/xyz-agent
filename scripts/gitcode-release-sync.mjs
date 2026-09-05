@@ -57,6 +57,8 @@ if (!repo || !/^[^/]+\/[^/]+$/.test(repo)) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const shellQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+
 /** GitCode API 调用：串行限速 + 429/5xx 指数退避重试，返回 {status, ok, json, text} */
 async function apiCall(method, pathOrUrl, { body, extraHeaders = {} } = {}) {
   const url = pathOrUrl.startsWith('http') ? pathOrUrl : `${API_BASE}${pathOrUrl}`;
@@ -152,7 +154,10 @@ function assetList(releaseJson) {
     .filter((a) => a.name);
 }
 
-/** 取预签名上传地址并 PUT 上传单个文件；返回上传耗时 ms */
+/** 取预签名上传地址并 PUT 上传单个文件；返回上传耗时 ms。
+ * PUT 走 curl 子进程：Node fetch(undici) 的 headersTimeout 默认 300s，200MB 级附件
+ * 在跨境链路（实测 ~0.5MB/s）下必然 UND_ERR_HEADERS_TIMEOUT（2026-09-05 CI 实测），
+ * curl 无此限制；--max-time 1800 与 job 的 90 分钟超时配套。 */
 async function uploadAsset(tag, filePath, fileName) {
   const r = await apiCall('GET',
     `/repos/${repo}/releases/${encodeURIComponent(tag)}/upload_url?file_name=${encodeURIComponent(fileName)}`);
@@ -166,17 +171,28 @@ async function uploadAsset(tag, filePath, fileName) {
       + 'GitCode API 形态可能已变化，按上方文档链接人工核对。');
   }
   const finalUrl = uploadUrl.startsWith('/') ? `https://api.gitcode.com${uploadUrl}` : uploadUrl;
-  const headers = { ...(r.json?.headers || {}) };
-  if (!headers['Content-Type'] && !headers['content-type']) headers['Content-Type'] = 'application/octet-stream';
+  const headerPairs = Object.entries(r.json?.headers || {});
+  if (!headerPairs.some(([k]) => /content-type/i.test(k))) {
+    headerPairs.push(['Content-Type', 'application/octet-stream']);
+  }
+  const headerArgs = headerPairs.map(([k, v]) => `-H ${shellQuote(`${k}: ${v}`)}`).join(' ');
 
-  const buf = readFileSync(filePath);
   const t0 = performance.now();
-  const put = await fetch(finalUrl, { method: 'PUT', headers, body: buf });
+  let code = '';
+  try {
+    code = execSync(
+      `curl -sS --max-time 1800 -o /dev/null -w "%{http_code}" -X PUT ${headerArgs} `
+      + `--data-binary @${shellQuote(filePath)} ${shellQuote(finalUrl)}`,
+      { encoding: 'utf8', timeout: 1800000, shell: '/bin/bash' },
+    ).trim();
+  } catch (e) {
+    die(`上传附件 ${fileName} 失败（curl 网络错误或 30 分钟超时）：${String(e.message || e).slice(0, 300)}。`
+      + '恢复：直接重跑——脚本幂等，已成功上传的附件按名跳过，只补剩余的。');
+  }
   const elapsed = Math.round(performance.now() - t0);
-  if (!put.ok) {
-    const putText = await put.text().catch(() => '');
-    die(`上传附件 ${fileName} 失败（HTTP ${put.status}）：${putText.slice(0, 500)}。`
-      + `恢复：429/5xx 直接重跑（脚本幂等）；403 可能是预签名地址过期（脚本每次现取，重跑即可）。`);
+  if (!/^2\d\d$/.test(code)) {
+    die(`上传附件 ${fileName} 失败（HTTP ${code}）。`
+      + '恢复：429/5xx 直接重跑（脚本幂等）；403 可能是预签名地址过期（脚本每次现取，重跑即可）。');
   }
   return elapsed;
 }
