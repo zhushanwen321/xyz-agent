@@ -5,11 +5,11 @@
 // D-017 时序：collectPatch → completeRecord → archive → cleanup(finalized+worktree+
 // aliveMarker+pending注销) → manifest(最后 best-effort)。
 //
-// [Critical #1 / PR #85] cleanup 全部在 manifest 写之前执行——manifest 是诊断辅助
-//（orphan recovery），写失败仅记录不阻断。旧实现 Step 2.5 throw 会跳过 Step 3 cleanup，
-// 导致磁盘满/权限错时 worktree 泄漏 + finalized marker 不写 + alive marker 残留 +
-// pending 记账错乱。现 manifest 写移到 Step 4（最后），best-effort（console.error +
-// appendEntry，不 throw）。
+// [Critical #1 / PR #85] cleanup 全部在 manifest 写之前执行——manifest 是 sa- id 反查
+// 索引（最新已知快照），非正确性依赖，写失败仅记录不阻断。旧实现 Step 2.5 throw 会跳过
+// Step 3 cleanup，导致磁盘满/权限错时 worktree 泄漏 + finalized marker 不写 + alive
+// marker 残留 + pending 记账错乱。现 manifest 写移到 Step 4（最后），best-effort
+//（console.error + appendEntry，不 throw）。
 //
 // B9 兜底：completeRecord/archive 抛错→后续 cleanup/manifest 仍执行。
 
@@ -190,11 +190,13 @@ export async function doFinalizeRecord(
   deps.emitUnregister(record.id, status);
 
   // ── Step 4 (last): manifest 持久化（best-effort，不阻断、不 throw）──
-  // [Critical #1] manifest 是诊断辅助（orphan recovery），不是正确性依赖。写失败时
-  //   仅记录（console.error + appendEntry），绝不让 manifest 写失败跳过上面的 worktree
-  //   cleanup 或抛出打断 finalize 链。旧实现 Step 2.5 throw 会跳过 Step 3 cleanup。
-  //   task/slug/model 从 ExecutionRecord 抓取（配合 ManifestRecord 补字段），
-  //   manifestToSubagent 投影时用真实值而非硬编码空串。
+  // [Critical #1] manifest 是 sa- id 反查索引（最新已知快照），不是正确性依赖。本步骤
+  //   写终态快照；sync 批成功成员不经此处——落标出口（subagent-service
+  //   appendBatchFinalizedEntry）已先行补写，message upgrade 到终态时被本步骤原子
+  //   覆盖。写失败时仅记录（console.error + appendEntry），绝不让 manifest 写失败
+  //   跳过上面的 worktree cleanup 或抛出打断 finalize 链。旧实现 Step 2.5 throw 会
+  //   跳过 Step 3 cleanup。task/slug/model 从 ExecutionRecord 抓取（配合
+  //   ManifestRecord 补字段），manifestToSubagent 投影时用真实值而非硬编码空串。
   try {
     await deps.manifestStore.writeManifest({
       id: record.id,
@@ -227,7 +229,9 @@ export async function doFinalizeRecord(
  *   - 不调 completeRecord（record 不冻结，保留 turns[] 等运行时状态供续聊累积）
  *   - 不调 store.archive（record 留内存，getMutable 可查、list 可见）
  *   - 不 cleanup worktree（保留对话模式工作目录）
- *   - 不写 manifest（idle 非终态，manifest 是终态诊断辅助）
+ *   - 不写 manifest：轮终回 running-resumable 非终态化，本方法无终态快照可写——
+ *     manifest 是 sa- id 反查索引（最新已知快照），sync 批成员的先行快照由落标出口
+ *     补写（subagent-service appendBatchFinalizedEntry），此处不重复
  *   - 删 .alive marker（进程已 SIGTERM 回收，不再是活进程）
  *   - emitUnregister（进程已死，从 pending 活跃后代差集移除；record 留内存不 archive）
  *

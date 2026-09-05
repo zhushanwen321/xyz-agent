@@ -75,6 +75,8 @@ graph TD
 | 3 | W1 遗留 typecheck 错误（mergeOrphanLastEntry model 返回 string\|undefined vs SubagentRecord.model 非可选，vitest 不查类型未暴露），W2 轮编排者授权定向修复：`?? ""` 类型收尾（运行时不可达，两侧实参恒 string），typecheck exit 0 | 缺陷修复（非偏差） | 已修（W2 commit 内） |
 | 4 | W2：修复测试文件既有 logger mock 死路径（vi.mock 相对路径解析到不存在的模块，静默失效；D4 上限用例需断言 debug 留痕才暴露）——改为正确相对路径后 loggerMock 真正接管，既有 10 用例复跑全绿 | 合理偏差（领地内既有缺陷顺手修，非静默） | 接受 |
 | 5 | P-settled 定谳结论：pi dist extension 事件分发为**列表分发**（loader.js:233-238 handlers.push + runner.js:623-653 逐一 await），多次 pi.on 互不干扰——设计 D4 主路径实施，降级路径（并入 ledger host 分发链）未触发 | 探针定谳（非偏差） | 主路径成立 |
+| 6 | W3：注释修正处数超任务列举三处——同款旧语义残留全扫（finalize-record.ts 另有 Step 4 段 :193、subagents.ts 另有 :131/:304/:346 三处「创建时写入」错误假设），不改则文件内自相矛盾 | 合理偏差（同类缺口全修） | 接受 |
+| 7 | W3：kill-9 主用例与豁免路径用例由同步 it 改 async it（manifest fire-and-forget 异步写需轮询等落盘），原有断言全保留仅追加 manifest 断言段 | 合理偏差（异步写的必然配套） | 接受 |
 
 ## 6 状态表
 
@@ -82,7 +84,7 @@ graph TD
 |------|------|------|---------|
 | W1 | committed | 1（首轮绿） | 全量 3110 passed / 9 skipped（基线 3106 + 新增 4：kill-9 同构主用例 / async 对照 / 豁免路径 / P-rebuild）；主 agent 复跑核实 |
 | W2 | committed | 1（首轮绿 + 1 轮定向类型修复） | typecheck exit 0 + 全量 3112 passed / 9 skipped（+2：延迟闭合 / 上限 disposed）；P-settled 定谳列表分发（偏差 #5）；主 agent 复跑核实 |
-| W3 | pending | 0 | — |
+| W3 | committed | 1（首轮绿；编排者复跑首轮 1 failed 为 W2 已登记 flake，复跑 2 连绿 + 单文件 3 连绿排除回归） | core 全量 3113 passed / 9 skipped（+1 P-manifest）+ typecheck exit 0 + session-reader 305 passed / 1 skipped；偏差 #6/#7 |
 | W4 | pending | 0 | — |
 
 ## 7 残留风险与变更历史

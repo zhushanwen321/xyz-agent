@@ -37,7 +37,13 @@
 //  11. v2 断链 4（设计 §3.3 D4）延迟闭合：E1 waiting → 注册 settled 有界重扫 →
 //      成员补种终态 entry → settled 边沿重扫补发单批 + 落标 → 后续 settled 零处理；
 //  12. D4 上限：成员恒 running → settled 驱动 8 次重扫达限 → disposed（debug 留痕），
-//      第 9 次（成员此刻已终态）不再扫描。
+//      第 9 次（成员此刻已终态）不再扫描；
+//  13. v2 断链 1（设计 §3.3 D1/D2）E1 路径 manifest：落标出口 fire-and-forget 补写
+//      records/<sa-id>.json——成功成员 status 如实投影 "running"（豁免形态末条）/
+//      "closed"（覆写后末条），sessionFile 投影（W1 前置依赖）随批落标就位；
+//  14. P-manifest 不变量：子文件锚 + manifest 并存 → 重启重建 collectRecords 投影
+//      与删 manifest 后一致（byId.has 跳过语义：有子文件锚的成员永不被 manifest
+//      补充投影覆盖，running manifest 不改变 list 形态）。
 //
 // mock 手法对齐 collect-coordinator-service.test.ts：mock session-runner（不 spawn 真子
 // 进程）+ logger；record-store / config 走真实实现（tmpdir 自建自删，红线）。
@@ -568,7 +574,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
   // 与 E1 在同一测试里真实跑）。
   // ============================================================
 
-  it("kill -9 同构主用例：orphan 覆写 merge 保留批标记与 result/model → E1 补发单批 + 落标 → 二次重启零补发", () => {
+  it("kill -9 同构主用例：orphan 覆写 merge 保留批标记与 result/model → E1 补发单批 + 落标 → 二次重启零补发", async () => {
     // ── 崩溃前形态：register（running+sync）→ 轮终（running+resumable+result 全文）──
     const childFile = writeChildSessionFile("sa-kill9", "kill -9 crash task");
     seedRoundTerminalEntries("sa-kill9", childFile, "kill-9 full result body", "prov/round-m", "sync");
@@ -606,6 +612,20 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     expect(marked.batchFinalized).toBe(true);
     expect(marked.collectMode).toBe("sync");
 
+    // [v2 D1] E1 路径 manifest：落标出口 fire-and-forget 补写 records/<sa-id>.json，
+    // 反查索引随补发就位（指针行消费前可得）。覆写后 closed 重建快照 → status 如实
+    // 投影 "closed"；sessionFile 来自 W1 的 rebuildEntryRecord 投影扩展。
+    const manifestFile = path.join(getSubagentRecordsDir(agentDir, agentDir), "sa-kill9.json");
+    await until(() => fs.existsSync(manifestFile));
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf-8")) as Record<string, unknown>;
+    expect(manifest).toMatchObject({
+      id: "sa-kill9",
+      rootSessionId: ROOT_SESSION,
+      agentName: "/agents/worker.md",
+      status: "closed",
+      sessionFile: childFile,
+    });
+
     // ── 二次重启（V2 验收「零重发」）：已标记 → 候选空 → 零补发 ──
     const second = makeRecoveryService(makeAssertPi());
     const spy2 = spyNotifier(second);
@@ -632,7 +652,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     expect(overwritten.model).toBe("prov/async-m");
   });
 
-  it("豁免路径：轮终 running+resumable 末条（覆写不落盘）→ E1 resumable 豁免 → 补发可达", () => {
+  it("豁免路径：轮终 running+resumable 末条（覆写不落盘）→ E1 resumable 豁免 → 补发可达 + manifest 如实投影 running", async () => {
     const childFile = writeChildSessionFile("sa-exempt", "exempt path task");
     seedRoundTerminalEntries("sa-exempt", childFile, "exempt full result body", "prov/round-m", "sync");
 
@@ -661,6 +681,21 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
       .map((c) => c[1] as Record<string, unknown>)
       .filter((d) => d.batchFinalized === true);
     expect(marks.map((m) => m.id)).toEqual(["sa-exempt"]);
+
+    // [v2 D1/D2 断链 1] E1 补发路径（rebuildEntryRecord 重建快照来源）的 manifest：
+    // 落标出口 fire-and-forget 补写，成功成员此刻实态 running+resumable → status 如实
+    // 投影 "running"（D2：不撒谎写 closed）；sessionFile 来自 W1 的投影扩展（前置依赖）。
+    const manifestFile = path.join(getSubagentRecordsDir(agentDir, agentDir), "sa-exempt.json");
+    await until(() => fs.existsSync(manifestFile));
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf-8")) as Record<string, unknown>;
+    expect(manifest).toMatchObject({
+      id: "sa-exempt",
+      rootSessionId: ROOT_SESSION,
+      agentName: "/agents/worker.md",
+      status: "running",
+      createdAt: 1000,
+      sessionFile: childFile,
+    });
   });
 
   // ============================================================
@@ -766,5 +801,44 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     expect(entry!.status).toBe("closed");
     expect(entry!.closedReason).toBe("gc");
     expect(String(entry!.error)).toContain("no child session file");
+  });
+
+  // ============================================================
+  // v2 断链 1（设计 §3.3 D1/D2 + 探针 P-manifest）：落标出口 manifest 落盘后，
+  // running manifest 不得触发 collectRecords 孤儿补充投影——有子文件锚的成员
+  // 永不被 manifest 补充投影覆盖（record-store byId.has 跳过语义）。
+  // ============================================================
+
+  it("P-manifest 不变量：子文件锚 + manifest 并存 → 重启重建 list 投影与删 manifest 后逐字段一致", async () => {
+    // 豁免形态构造（区分度最强）：落标写出的 manifest.status="running"（D2 如实
+    // 投影）与子文件 sidecar 重建投影 closed+gc 可辨——若 manifest 被错误投影，
+    // status/closedReason 形态差异立即暴露。
+    const childFile = writeChildSessionFile("sa-pm", "p-manifest task");
+    seedRoundTerminalEntries("sa-pm", childFile, "p-manifest full result", "prov/pm-m", "sync");
+    const recovery = makeRecoveryService(makeAssertPi()); // initSession：orphan 判定 + sidecar 真实落盘
+    const spy = spyNotifier(recovery);
+    recovery.recoverSyncCollectBatch(); // E1 豁免补发 + 落标 + manifest fire-and-forget 写
+    expect(spy.notifyBatch).toHaveBeenCalledTimes(1);
+    const manifestFile = path.join(getSubagentRecordsDir(agentDir, agentDir), "sa-pm.json");
+    await until(() => fs.existsSync(manifestFile));
+
+    // 模拟重启重建：全新 RecordStore + ManifestStore（内存缓存零残留），manifest 存在时
+    const freshStore = () =>
+      new RecordStore(
+        getSubagentSessionDir(agentDir, agentDir),
+        new ManifestStore(getSubagentRecordsDir(agentDir, agentDir)),
+      );
+    const withManifest = freshStore().collectRecords(100, "all", ROOT_SESSION);
+    const pm = withManifest.find((r) => r.id === "sa-pm");
+    expect(pm).toBeDefined();
+    // 投影来自子文件 sidecar 重建（closed+gc），非 manifest（status="running"）
+    expect(pm!.status).toBe("closed");
+    expect(pm!.closedReason).toBe("gc");
+
+    // 删 manifest 文件 → 同款重建 → 投影逐字段一致（不变量：manifest 的存在不改变
+    // list 形态——补充投影只服务「entry/子文件源完全缺失」的孤儿）
+    fs.rmSync(manifestFile);
+    const withoutManifest = freshStore().collectRecords(100, "all", ROOT_SESSION);
+    expect(withoutManifest).toEqual(withManifest);
   });
 });

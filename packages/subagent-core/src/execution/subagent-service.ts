@@ -727,9 +727,41 @@ export class SubagentService {
   }
 
   /** batchFinalized 落标唯一出口（appendEntry 公共末步，三写点共用）：显式覆写
-   *  collectMode/batchFinalized（防非 entry 源重建丢标记）→ reportSubagentRecord。 */
+   *  collectMode/batchFinalized（防非 entry 源重建丢标记）→ reportSubagentRecord。
+   *
+   *  [v2 D1 断链 1] 落标即「离开批 = 通知已/即将送达 = 指针行即将被消费」，此处对成员
+   *  补写 manifest（sa- id → sessionFile 反查索引）：成功成员走 SP-5 改道
+   *  doFinalizeRoundToIdle（不写 manifest），不经本出口补写则 records/<sa-id>.json
+   *  永不产生、session-reader 反查 0 命中。fire-and-forget best-effort（与
+   *  doFinalizeRecord Step 4 同款语义：写失败仅 debug 日志，不阻断落标）。
+   *  status 如实投影（v2 D2）：成功成员此刻 record 实态 running+resumable →
+   *  "running"，后续 message upgrade 走完整 finalize 时 Step 4 原子覆盖为 "closed"。
+   *  rec 两来源（flush/E9 的 getFullRecord 内存全量 / E1 的 rebuildEntryRecord 重建
+   *  快照）必需字段恒齐备（id/agentName←agent/rootSessionId/createdAt←startedAt），
+   *  task/slug/parentRecordId 等可选 undefined 自然缺省。 */
   private appendBatchFinalizedEntry(rec: SubagentRecord): void {
     this.store.reportSubagentRecord({ ...rec, collectMode: "sync", batchFinalized: true });
+    void this.manifestStore
+      .writeManifest({
+        id: rec.id,
+        rootSessionId: rec.rootSessionId ?? "",
+        parentRecordId: rec.parentRecordId,
+        agentName: rec.agent,
+        status: rec.status,
+        createdAt: rec.startedAt,
+        completedAt: rec.endedAt,
+        sessionFile: rec.sessionFile,
+        task: rec.task,
+        slug: rec.slug,
+        model: rec.model,
+      })
+      .catch((err: unknown) => {
+        // 反查索引缺失只影响指针行反查（session-reader 错误文案已指引绝对路径兜底），不构成落标失败
+        logger.debug(
+          `[subagents] batch-finalized manifest write failed (record=${rec.id})`,
+          { reason: err instanceof Error ? err.message : String(err) },
+        );
+      });
   }
 
   /** [E9] dispose 时批未闭合：缓冲中已终态未通知成员逐条转 async 语义写账（放弃攒批）

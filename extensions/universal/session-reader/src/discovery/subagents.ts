@@ -20,7 +20,8 @@ import { resolveWorkflows } from './workflows.js'
  *   M2 用 subagent 文件首行 header.id（真实 session id）替换之，使 SubagentRef.sessionId
  *   是真实 id，Q1 隔代关联仍用 data.rootSessionId（不变）。
  * - cleanedUp：subagent 文件被 30 天 TTL GC 后，identity（在文件尾）一并消失。唯一残留痕迹
- *   是 records/<sa-id>.json manifest（subagent 创建时写入，持久存在）。故 manifest 是孤儿/
+ *   是 records/<sa-id>.json manifest（终态 finalize 或 sync 批落标出口写入——subagent
+ *   创建时不写，两写点均先于 30 天 GC 落盘，故 GC 后必残留）。manifest 是孤儿/
  *   cleanedUp 的来源（design §3.3 D-7 "records/*.json manifest 作孤儿补充"）。
  * - workflows：M1 resolveFamily 恒返回 []。M2 在此单独读目标 session 的 workflow-state-link
  *   custom entry → link.data.path（wf-state 文件绝对路径）→ 从文件尾向头找首个非空且
@@ -128,7 +129,8 @@ export async function buildFamilyFromFs(sessionId: string, agentDir: string): Pr
   }
 
   // ---- 3. records manifest → 孤儿（cleanedUp，ES-orphan-manifest）----
-  // manifest 在 subagent 创建时写入，.jsonl 被 GC 后仍残留。alive 的（sessionFile 已在步骤 2
+  // manifest 由终态 finalize / sync 批落标出口写入（创建时不写），.jsonl 被 GC 后仍
+  // 残留。alive 的（sessionFile 已在步骤 2
   // 扫到）跳过；未扫到的 = 文件已 GC → 孤儿。用 manifest 完整富字段填 SubagentRef，
   // sessionFile 保留 manifest 的 GC 路径（不置空，供 LLM 知晓原位置），cleanedUp 由
   // buildFamilyIndex 的 !fileStats.has(ident.id) 判 true（ident.id=manifest.id 不在 fileStats）。
@@ -301,7 +303,7 @@ export interface RecordManifest {
   id: string
   rootSessionId: string
   agentName?: string
-  /** subagent session.jsonl 绝对路径（创建时写入；文件 GC 后路径仍残留） */
+  /** subagent session.jsonl 绝对路径（manifest 写入时快照；文件 GC 后路径仍残留） */
   sessionFile: string
   /** subagent 任务文本（探针 20/20 全有；旧 manifest 缺→undefined） */
   task?: string
@@ -343,8 +345,8 @@ async function tryReadManifest(path: string): Promise<RecordManifest | undefined
 
 /**
  * 扫描 subagents/<cwdSlug>/records/*.json —— subagent 注册清单。
- * 每个 manifest 在 subagent 创建时写入，持久存在即使 .jsonl 被 GC。坏 manifest（缺必填字段
- * /JSON 损坏）跳过，不中断扫描。
+ * 每个 manifest 由终态 finalize 或 sync 批落标出口写入（创建时不写），持久存在即使
+ * .jsonl 被 GC。坏 manifest（缺必填字段/JSON 损坏）跳过，不中断扫描。
  */
 export async function listRecordManifests(agentDir: string): Promise<RecordManifest[]> {
   const root = join(agentDir, 'subagents')
