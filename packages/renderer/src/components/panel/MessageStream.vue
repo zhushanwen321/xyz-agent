@@ -32,14 +32,15 @@
            [pin-identity D1] editing 项由 useStreamingPin 按 turnKey 反查当前 items 得出）
          - :startMargin load-more 占位高度（virta getItemOffset 已含 startMargin，design §4.11）
          - :key=session 强制重建 Virtualizer，跨 session 测量缓存隔离（design §4.5）
-         slot 内 item.kind 分支与原 visibleItems 循环一致（kind 全集三态：turn/systemNotice/bashExecution）。 -->
+         slot 内 item.kind 分支与 streamItems 对应（kind 全集四态：core 三态 turn/systemNotice/
+         bashExecution + u5 渲染层拼接的 skillNotice，:data 已从 renderItems 升为 streamItems）。 -->
     <Virtualizer
       ref="vlistRef"
-      :data="renderItems"
+      :data="streamItems"
       :item-size="ESTIMATED_TURN_HEIGHT"
       :shift="isPrepend"
       :keep-mounted="pinnedIndexes"
-      :start-margin="showLoadMore && renderItems.length > 0 ? LOAD_MORE_RESERVED_HEIGHT : 0"
+      :start-margin="showLoadMore && streamItems.length > 0 ? LOAD_MORE_RESERVED_HEIGHT : 0"
       :key="props.sessionId"
       @scroll="onVirtuaScroll"
       @scroll-end="onVirtuaScrollEnd"
@@ -47,8 +48,8 @@
       <!-- slot 内容注意：禁止在 <template #default> 内放任何注释/文本节点！
            virtua 的 item key 提取要求 slot 返回恰好 1 个 vnode（P(): e.length===1 才取 e[0].key），
            注释节点会让长度变 2 → fallback `_${index}` 索引 key（M5 stable-key 失效）。
-           三分支共用 :key="renderKey(item)"（稳定 id 非索引）：turn 用首条消息 id（turnStableId），
-           system 类用 message.id。 -->
+           各分支共用稳定 :key（非索引）：core 三态 turn/systemNotice/bashExecution 用 renderKey
+          （turn=首条消息 id，system=message.id）；u5 渲染层拼接的 skillNotice 用 notice 稳定 id。 -->
       <template #default="{ item, index }">
         <Turn
           v-if="item.kind === 'turn'"
@@ -65,6 +66,13 @@
           :key="renderKey(item)"
           :message="item.message"
           :session-id="sessionId"
+        />
+        <!-- skill 注入提示行（u5）：紧跟锚点 turn 之后（interleaveSkillNoticeItems 拼接），
+             key 用 notice 稳定 id（n- 空间，与 t-/s- renderKey 空间区分）。 -->
+        <SkillNoticeInline
+          v-else-if="item.kind === 'skillNotice'"
+          :key="item.entry.id"
+          :entry="item.entry"
         />
         <SystemNotice v-else :key="renderKey(item)" :message="item.message" />
       </template>
@@ -191,6 +199,11 @@ import { isSubagentVirtualId, extractSubagentId, extractMainSessionId, useSubage
 import { Turn, SystemNotice, BashOutputBlock, TurnRail, ChatViewDepsKey } from '@xyz-agent/ui'
 import { useChatViewDeps } from '@/composables/panel/useChatViewDeps'
 import ForkNotice from './ForkNotice.vue'
+import SkillNoticeInline from './SkillNoticeInline.vue'
+import {
+  useSkillNoticeStream,
+  interleaveSkillNoticeItems,
+} from '@/composables/panel/useSkillNoticeStream'
 import { useForkNoticeStream } from '@/composables/panel/useForkNoticeStream'
 import { useLoadMoreHistory } from '@/composables/panel/useLoadMoreHistory'
 import { useSessionActive } from '@/composables/panel/useSessionActive'
@@ -262,6 +275,16 @@ const renderItems = computed(() =>
     turnCacheState.current.value.value, // 双层 .value：分区 shallowRef → TurnRenderCache
   ),
 )
+
+/** skill 注入提示（u5）：消费 session.skillNotice 广播（订阅 + per-session 分区 + toast 副作用
+ *  在 composable 内），呈现数据经 interleave 拼进对话流渲染项（锚点 turn 之后单行提示）。 */
+const { notices: skillNotices } = useSkillNoticeStream(sessionId)
+
+/** Virtualizer 数据源：renderItems（core 三态增量派生）+ skillNotice 拼接项（u5）。
+ *  无 notice 时 interleave 原样返回 renderItems（引用恒等，增量派生路径零开销）。
+ *  [索引一致性硬约束] :data / lastUserTurnIdx / useStreamingPin / rail 四处消费必须同一
+ *  数组基准——virtua 的 keepMounted 与 rail jump 都是下标空间操作，混用两个基准会错钉/错跳。 */
+const streamItems = computed(() => interleaveSkillNoticeItems(renderItems.value, skillNotices.value))
 
 /** 渲染项里最后一个 turn（streaming 滚动判定 + hasWorkingTurn 派生用）。 */
 const lastRenderTurn = computed(() => {
@@ -344,10 +367,12 @@ const { forkNotices, onView: onForkNoticeView, onDismiss: onForkNoticeDismiss } 
     injectedBaseTop: forkNoticeBaseTop,
   })
 
-/** 最后一个含 user 的 turn 的数组下标（只有它的 user 可编辑，避免编辑中间 user 丢失其后对话） */
+/** 最后一个含 user 的 turn 的数组下标（只有它的 user 可编辑，避免编辑中间 user 丢失其后对话）。
+ *  [u5] 基准 = streamItems（与 Virtualizer slot 的 index 同源——:data 换 streamItems 后
+ *  slot 下标含 notice 项，用 renderItems 基准会错位 canEdit 判定）。 */
 const lastUserTurnIdx = computed(() => {
-  for (let i = renderItems.value.length - 1; i >= 0; i -= 1) {
-    const item = renderItems.value[i]
+  for (let i = streamItems.value.length - 1; i >= 0; i -= 1) {
+    const item = streamItems.value[i]
     if (item.kind === 'turn' && item.turn.user) return i
   }
   return -1
@@ -375,7 +400,8 @@ function onEditStateChange(payload: { editing: boolean; turnKey: string }): void
  *  virta 对 keepMounted 的项恒挂 RO，从根上消除 streaming turn 滚出视口致 RO 断开、高度不更新的隐患。
  *  [cw wave w3] 不传 pinStreaming（W3T1 已改可选，watch 内 guard no-op）。 */
 const { pinnedIndexes } = useStreamingPin({
-  items: renderItems,
+  // [u5] streamItems 基准（keepMounted 下标空间 = :data，索引一致性硬约束见 streamItems 注释）
+  items: streamItems,
   sessionId: () => props.sessionId,
   editingTurnKey,
 })
@@ -399,7 +425,8 @@ const {
    （scrollToIndex/findItemIndex）；virta startMargin 已接管 load-more 占位，offsetOf/topOffset 旧通路删除。 */
 const rail = useMessageStreamRail({
   sessionId,
-  renderItems,
+  // [u5] streamItems 基准（rail jump/active 的 virtua 下标空间 = :data，见 streamItems 注释）
+  renderItems: streamItems,
   scrollEl,
   vlistRef,
 })

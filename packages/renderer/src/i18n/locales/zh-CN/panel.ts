@@ -337,6 +337,14 @@ export default {
     viewBranch: '查看分支',
     dismiss: '关闭',
   },
+  skillNotice: {
+    degradeBudget: '已按标记模式注入（预算超限），模型可自行读取 skill 文件',
+    degradeWindow: '窗口信息获取失败，已按标记模式注入',
+    missing: 'skill {names} 不存在，已按原文透传',
+    readFailed: 'skill {names} 读取失败，已按原文透传',
+    malformed: 'skill 标记已损坏，已按原文透传',
+    mappingUnavailable: 'skill 映射服务不可用，已按原文透传',
+  },
   retryIndicator: {
     retrying: '重试中',
     failed: '失败',
