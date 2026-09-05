@@ -43,6 +43,23 @@ const mockRow: NormalizedQuotaRow = {
 /** kimi-coding 命中的 preset（auth=['api-key','oauth']，B-3 双能力） */
 const KIMI_PRESET: QuotaPreset | undefined = QUOTA_PRESETS.find((p) => p.fetcher === 'kimi-coding')
 
+/** opencode-go 命中的 preset（auth=['cookie'] + requiresWorkspace，D1-1 资源维度） */
+const OPENCODE_PRESET: QuotaPreset | undefined = QUOTA_PRESETS.find((p) => p.fetcher === 'opencode-go')
+
+/** 已配置 workspace 的 opencode provider（quota.workspace 明文回显） */
+function opencodeProvider(): ProviderInfo {
+  return {
+    id: 'my-opencode',
+    name: 'My opencode',
+    api: 'openai-completions',
+    apiKeySet: false,
+    status: 'connected',
+    enabled: true,
+    quota: { enabled: false, fetcher: 'opencode-go', workspace: 'https://opencode.ai/workspace/wrk_saved/go' },
+    models: [],
+  }
+}
+
 /** 已启用额度查询的 kimi provider */
 function kimiProvider(): ProviderInfo {
   return {
@@ -181,6 +198,103 @@ describe('useQuotaConfigure reset（provider 切换清空失败痕迹）', () =>
     expect(testStatus.value).toBe('idle')
     expect(testFailReason.value).toBeNull()
     expect(quotaData.value).toBeNull()
+  })
+})
+
+describe('useQuotaConfigure workspace（D1-1 资源维度 fetcher 配置）', () => {
+  it('opencode preset → needsWorkspace=true；kimi → false（账号维度隐藏输入框）', async () => {
+    const { needsWorkspace } = useQuotaConfigure(ref(OPENCODE_PRESET), ref<ProviderInfo | null>(opencodeProvider()))
+    await Promise.resolve()
+    expect(needsWorkspace.value).toBe(true)
+
+    const kimi = useQuotaConfigure(ref(KIMI_PRESET), ref<ProviderInfo | null>(kimiProvider()))
+    await Promise.resolve()
+    expect(kimi.needsWorkspace.value).toBe(false)
+  })
+
+  it('syncFromProvider：已保存 workspace 明文回显 + workspaceConfigured=true', async () => {
+    const { workspaceInput, workspaceConfigured } = useQuotaConfigure(
+      ref(OPENCODE_PRESET),
+      ref<ProviderInfo | null>(opencodeProvider()),
+    )
+    await Promise.resolve()
+    expect(workspaceInput.value).toBe('https://opencode.ai/workspace/wrk_saved/go')
+    expect(workspaceConfigured.value).toBe(true)
+  })
+
+  it('saveWorkspace：裸 wrk_ id → 归一化 URL 走 configure 持久化（P1-1 两形态）', async () => {
+    const providerRef = ref<ProviderInfo | null>(opencodeProvider())
+    const { workspaceInput, saveWorkspace, workspaceConfigured } = useQuotaConfigure(ref(OPENCODE_PRESET), providerRef)
+    await Promise.resolve()
+
+    workspaceInput.value = 'wrk_newid77'
+    await saveWorkspace()
+
+    expect(quotaApi.configure).toHaveBeenCalledWith(
+      'my-opencode', false, undefined, 'opencode-go', undefined,
+      'https://opencode.ai/workspace/wrk_newid77/go',
+    )
+    expect(workspaceConfigured.value).toBe(true)
+  })
+
+  it('saveWorkspace：非法输入（他域 URL）→ 本地报错不发 RPC（configureError 落 i18n 文案）', async () => {
+    const providerRef = ref<ProviderInfo | null>(opencodeProvider())
+    const { workspaceInput, saveWorkspace, configureError } = useQuotaConfigure(ref(OPENCODE_PRESET), providerRef)
+    await Promise.resolve()
+
+    workspaceInput.value = 'https://evil.example.com/workspace/wrk_x/go'
+    await saveWorkspace()
+
+    expect(quotaApi.configure).not.toHaveBeenCalled()
+    expect(configureError.value).toBe('Workspace 地址无效：请粘贴 opencode.ai 的 workspace 页 URL（形如 https://opencode.ai/workspace/wrk_xxx/go）或裸 wrk_ id')
+  })
+
+  it('saveWorkspace：空输入且未配置 → 提示先输入，不发 RPC', async () => {
+    const provider = opencodeProvider()
+    provider.quota = { enabled: false, fetcher: 'opencode-go' } // 未配置 workspace
+    const { workspaceInput, saveWorkspace, configureError, workspaceConfigured } = useQuotaConfigure(
+      ref(OPENCODE_PRESET),
+      ref<ProviderInfo | null>(provider),
+    )
+    await Promise.resolve()
+    expect(workspaceConfigured.value).toBe(false)
+
+    workspaceInput.value = '  '
+    await saveWorkspace()
+
+    expect(configureError.value).toBe('请先输入 Workspace 地址')
+    expect(quotaApi.configure).not.toHaveBeenCalled()
+  })
+
+  it('saveWorkspace：已配置时空串 = 清除（configure 收到空 workspace）', async () => {
+    const { workspaceInput, saveWorkspace, configureError } = useQuotaConfigure(
+      ref(OPENCODE_PRESET),
+      ref<ProviderInfo | null>(opencodeProvider()),
+    )
+    await Promise.resolve()
+
+    workspaceInput.value = ''
+    await saveWorkspace()
+
+    expect(configureError.value).toBe('')
+    expect(quotaApi.configure).toHaveBeenCalledWith(
+      'my-opencode', false, undefined, 'opencode-go', undefined, '',
+    )
+  })
+
+  it('saveWorkspace：启用状态下保存成功 → 自动测试查询（与 saveCookie 同模式）', async () => {
+    vi.mocked(quotaApi.refreshQuota).mockResolvedValue({ data: mockRow, lastFetchAt: 2000 })
+    const provider = opencodeProvider()
+    provider.quota = { ...provider.quota!, enabled: true }
+    const providerRef = ref<ProviderInfo | null>(provider)
+    const { workspaceInput, saveWorkspace, testStatus } = useQuotaConfigure(ref(OPENCODE_PRESET), providerRef)
+    await Promise.resolve()
+
+    workspaceInput.value = 'https://opencode.ai/workspace/wrk_new/go'
+    await saveWorkspace()
+
+    expect(testStatus.value).toBe('success')
+    expect(quotaApi.refreshQuota).toHaveBeenCalledWith('my-opencode')
   })
 })
 

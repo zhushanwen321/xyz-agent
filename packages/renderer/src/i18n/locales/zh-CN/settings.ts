@@ -420,6 +420,18 @@ export default {
     // S5：cookie 类 provider 的 no-subscription 业务码不可区分「无订阅 vs Cookie 失效」（fetcher 层论证不可行），两可提示
     quotaFetchFailNoSubscriptionCookie: '额度查询失败：未检测到有效订阅或 Cookie 已失效，请检查订阅状态或更新 Cookie',
     quotaFetchFailParse: '额度查询失败：额度响应解析失败，请稍后重试；若持续出现请更新应用',
+    // not_configured（D1-3，timeout-audit-hygiene-batch）：workspace 未配置——指引去配置而非检查凭证
+    quotaFetchFailNotConfigured: '额度查询失败：未配置 Workspace。打开 opencode.ai 控制台，从浏览器地址栏复制 workspace 页 URL，填入上方「Workspace 地址」后重试',
+    // Workspace 地址（资源维度 fetcher 如 opencode-go，D1-1）
+    quotaWorkspaceLabel: 'Workspace 地址',
+    quotaWorkspaceHint: '（opencode 必填）',
+    quotaWorkspacePlaceholder: '粘贴 workspace 页 URL 或 wrk_ id',
+    quotaWorkspaceSetPlaceholder: '已配置，输入新值可覆盖',
+    quotaWorkspaceSave: '保存',
+    quotaWorkspaceHelp: '打开 opencode.ai 控制台进入你的 workspace，从浏览器地址栏复制页面 URL（形如 https://opencode.ai/workspace/wrk_xxx/go）',
+    quotaWorkspaceRequired: '请先输入 Workspace 地址',
+    quotaWorkspaceInvalid: 'Workspace 地址无效：请粘贴 opencode.ai 的 workspace 页 URL（形如 https://opencode.ai/workspace/wrk_xxx/go）或裸 wrk_ id',
+    quotaWorkspaceSaveFail: 'Workspace 保存失败',
     // B-3 失败态旧缓存折叠入口（design §3.4 展示语义）
     quotaLastSuccessToggle: '查看上次成功数据',
     quotaLastSuccessAt: '数据截至 {time}',

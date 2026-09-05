@@ -148,6 +148,7 @@ export default {
     quotaFailNetwork: 'network error or service unavailable',
     quotaFailNoSubscription: 'no active subscription detected',
     quotaFailParse: 'failed to parse quota response',
+    quotaFailNotConfigured: 'no Workspace configured — set it in Settings and retry',
     window5h: '5h',
     windowWeek: 'This week',
     windowMonth: 'This month',

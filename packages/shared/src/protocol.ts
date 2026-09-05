@@ -530,7 +530,12 @@ export interface ClientMessageMap {
   // Coding Plan 额度查询
   'quota.fetch': { providerId: string }
   'quota.getCached': { providerId: string }
-  'quota.configure': { providerId: string; enabled: boolean; cookie?: string; fetcher?: string; apiKey?: string }
+  /**
+   * quota.configure：Coding Plan 额度查询配置。
+   * workspace（D1-1）：资源维度 fetcher（opencode）的 workspace 地址——完整 URL 或裸 wrk_ id
+   * 均可（runtime 归一化存储）；空字符串 = 清除（恢复未配置态，查询报 not_configured）。
+   */
+  'quota.configure': { providerId: string; enabled: boolean; cookie?: string; fetcher?: string; apiKey?: string; workspace?: string }
   /** 强制刷新额度（绕过 throttle，Settings 测试查询用）。 */
   'quota.refresh': { providerId: string }
   /** usage.getStats：拉取用量统计数据（无参数）。 */

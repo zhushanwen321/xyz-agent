@@ -1,15 +1,17 @@
 /**
  * opencode.go 额度 fetcher。
  *
- * API: GET https://opencode.ai/workspace/wrk_.../go
+ * API: GET https://opencode.ai/workspace/<wrk_id>/go（workspace 由用户配置注入，D1-1——
+ * timeout-audit-hygiene-batch：workspace 是 per-account 资产，禁止硬编码任何 id）
  * Auth: Cookie + redirect:manual
  * 窗口：5h + week + month（全部支持）
  *
  * 关键点：SSR HTML 中嵌入数据（非 JSON），用正则解析。
  * HTTP 302 = cookie 过期。
+ * 未配置 workspace → not_configured（不发任何请求，D1-3）。
  */
 
-import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome } from './types.js'
+import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome, QuotaFetcherConfig } from './types.js'
 import { statusToReason } from './types.js'
 import { logger } from '../../infra/logger.js'
 
@@ -52,12 +54,20 @@ export const opencodeFetcher: ProviderQuotaFetcher = {
   id: 'opencode-go',
   auth: ['cookie'],
 
-  async fetchQuota(credential: string, _kind: QuotaAuthKind): Promise<QuotaFetchOutcome> {
+  async fetchQuota(credential: string, _kind: QuotaAuthKind, config?: QuotaFetcherConfig): Promise<QuotaFetchOutcome> {
     if (!credential) return { ok: false, reason: 'unauthorized' }
+
+    // D1-3：未配置 workspace = 可区分失败 not_configured，不发任何 HTTP 请求——
+    // 绝不 fallback 别的页面/缓存（G1：未配置得到明确指引，不查他人数据）
+    const workspaceUrl = config?.workspaceUrl
+    if (!workspaceUrl) {
+      logger.debug('[quota:opencode] workspace not configured, skipping fetch')
+      return { ok: false, reason: 'not_configured' }
+    }
 
     try {
       const resp = await fetch(
-        'https://opencode.ai/workspace/wrk_01KM5Q3EEQEHZJ3V5PXF5JCR62/go',
+        workspaceUrl,
         {
           headers: {
             accept: 'text/html',

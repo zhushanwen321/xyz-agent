@@ -148,6 +148,7 @@ export default {
     quotaFailNetwork: '网络异常或服务不可用',
     quotaFailNoSubscription: '未检测到有效订阅',
     quotaFailParse: '额度响应解析失败',
+    quotaFailNotConfigured: '未配置 Workspace，请在设置中填写后重试',
     window5h: '5h',
     windowWeek: '本周',
     windowMonth: '本月',

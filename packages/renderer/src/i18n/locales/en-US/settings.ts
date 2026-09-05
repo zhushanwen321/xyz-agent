@@ -420,6 +420,18 @@ export default {
     // S5: for cookie-based providers the no-subscription business code cannot distinguish "no subscription" from "expired cookie" (proven infeasible at fetcher layer), so hint both
     quotaFetchFailNoSubscriptionCookie: 'Quota query failed: no active subscription detected, or the Cookie may have expired. Check your subscription status or update the Cookie',
     quotaFetchFailParse: 'Quota query failed: could not parse the quota response. Retry later; if it persists, update the app',
+    // not_configured (D1-3, timeout-audit-hygiene-batch): workspace missing — point to config, not credentials
+    quotaFetchFailNotConfigured: 'Quota query failed: no Workspace configured. Open the opencode.ai console, copy the workspace page URL from the browser address bar, paste it into "Workspace URL" above, then retry',
+    // Workspace URL (resource-scoped fetcher e.g. opencode-go, D1-1)
+    quotaWorkspaceLabel: 'Workspace URL',
+    quotaWorkspaceHint: '(required for opencode)',
+    quotaWorkspacePlaceholder: 'Paste the workspace page URL or a bare wrk_ id',
+    quotaWorkspaceSetPlaceholder: 'Configured, type to override',
+    quotaWorkspaceSave: 'Save',
+    quotaWorkspaceHelp: 'Open the opencode.ai console and enter your workspace, then copy the page URL from the browser address bar (like https://opencode.ai/workspace/wrk_xxx/go)',
+    quotaWorkspaceRequired: 'Enter the Workspace URL first',
+    quotaWorkspaceInvalid: 'Invalid Workspace URL: paste an opencode.ai workspace page URL (like https://opencode.ai/workspace/wrk_xxx/go) or a bare wrk_ id',
+    quotaWorkspaceSaveFail: 'Failed to save the Workspace URL',
     // B-3 stale-cache collapse entry in failure state (design §3.4 display semantics)
     quotaLastSuccessToggle: 'View last successful data',
     quotaLastSuccessAt: 'Data as of {time}',

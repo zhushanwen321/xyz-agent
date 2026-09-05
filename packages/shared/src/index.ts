@@ -96,6 +96,8 @@ export {
   isAgentCallVirtualId,
   extractAgentCallSessionId,
 } from './virtual-session-id'
+// subagent.stream_delta 帧父 session 解析（idle-refresh 桥接纯函数，双通道形态归一）
+export { resolveSubagentParentSessionId } from './subagent-frame'
 // Coding Plan 额度查询类型
 export type {
   QuotaWindow,
@@ -105,7 +107,10 @@ export type {
   QuotaAuthKind,
   QuotaFetchFailureReason,
   QuotaFetchOutcome,
+  QuotaFetcherConfig,
+  QuotaWorkspaceNormalizeResult,
 } from './quota-types'
+export { normalizeQuotaWorkspaceUrl } from './quota-types'
 export type { QuotaPreset } from './quota-presets'
 export { QUOTA_PRESETS, matchQuotaPreset } from './quota-presets'
 // normalizeSubagentStatus 已下沉至 runtime（packages/runtime/src/services/session/subagent-status.ts，

@@ -53,8 +53,9 @@ export async function refreshQuota(providerId: string): Promise<QuotaResult> {
 }
 
 /**
- * Settings 配置。启用/禁用 + 写 cookie（cookie 类）+ 持久化 fetcher + 专属 apiKey（api-key 类）。
- * enabled=false 不删缓存。apiKey 空字符串 = 清除专属 key，undefined = 不变。
+ * Settings 配置。启用/禁用 + 写 cookie（cookie 类）+ 持久化 fetcher + 专属 apiKey（api-key 类）
+ * + workspace 地址（资源维度 fetcher 如 opencode，完整 URL 或裸 wrk_ id，runtime 归一化）。
+ * enabled=false 不删缓存。apiKey/workspace 空字符串 = 清除，undefined = 不变。
  */
 export async function configure(
   providerId: string,
@@ -62,7 +63,8 @@ export async function configure(
   cookie?: string,
   fetcher?: string,
   apiKey?: string,
+  workspace?: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const reply = await command('quota.configure', { providerId, enabled, cookie, fetcher, apiKey })
+  const reply = await command('quota.configure', { providerId, enabled, cookie, fetcher, apiKey, workspace })
   return { ok: reply.ok, error: reply.error }
 }

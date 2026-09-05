@@ -9,7 +9,7 @@
  */
 import { ref, computed, watch, type Ref } from 'vue'
 import type { NormalizedQuotaRow, QuotaPreset, ProviderInfo, QuotaAuthKind, QuotaFetchFailureReason } from '@xyz-agent/shared'
-import { QUOTA_PRESETS } from '@xyz-agent/shared'
+import { QUOTA_PRESETS, normalizeQuotaWorkspaceUrl } from '@xyz-agent/shared'
 import type { QuotaConfigureState, QuotaTestStatus } from '@xyz-agent/core'
 import * as quotaApi from '@/api/domains/quota'
 import i18n from '@/i18n'
@@ -21,6 +21,30 @@ const t = i18n.global.t as (key: string) => string
 
 // 状态契约 SSOT 在 core（ui injection-keys 与本 composable 共享，字段语义注释见彼处）
 export type { QuotaTestStatus }
+
+/**
+ * saveWorkspace 的输入归一化（模块级辅助，从 composable 内抽出）：
+ * - 空 + 未配置 → required 报错（不发 RPC）；空 + 已配置 → 清除（payload = ''）
+ * - 非空 → shared 归一化校验（完整 URL / 裸 wrk_ id → 规范额度页 URL）
+ * - 非法输入 → invalid 报错（不发 RPC）；errorKey 由调用方经 i18n 渲染
+ */
+function normalizeWorkspaceInput(
+  raw: string,
+  hasConfigured: boolean,
+): { ok: true; payload: string } | { ok: false; errorKey: string } {
+  if (!raw) {
+    // 空 = 清除；无已配置值时提示先输入（与 cookie「请先输入」同语义）
+    if (!hasConfigured) {
+      return { ok: false, errorKey: 'settings.providerEdit.quotaWorkspaceRequired' }
+    }
+    return { ok: true, payload: '' }
+  }
+  const normalized = normalizeQuotaWorkspaceUrl(raw)
+  if (!normalized.ok) {
+    return { ok: false, errorKey: 'settings.providerEdit.quotaWorkspaceInvalid' }
+  }
+  return { ok: true, payload: normalized.url }
+}
 
 /**
  * composable 返回类型 = core 契约（[BL round1 monorepo S] 原 ui injection-keys 逐字段
@@ -42,6 +66,9 @@ export function useQuotaConfigure(
   const cookieInput = ref('')
   const apiKeyInput = ref('')
   const apiKeyConfigured = ref(false)
+  /** Workspace 地址输入（资源维度 fetcher 如 opencode；保存时归一化，D1-1） */
+  const workspaceInput = ref('')
+  const workspaceConfigured = ref(false)
   const testStatus = ref<QuotaTestStatus>('idle')
   const testError = ref('')
   const quotaData = ref<NormalizedQuotaRow | null>(null)
@@ -83,6 +110,9 @@ export function useQuotaConfigure(
   /** 帮助文案（基于当前选中 fetcher）。 */
   const helpText = computed<string | undefined>(() => activePreset.value?.helpText)
 
+  /** 当前 fetcher 是否需要 workspace 配置（D1-1：资源维度 fetcher 如 opencode-go） */
+  const needsWorkspace = computed<boolean>(() => activePreset.value?.requiresWorkspace ?? false)
+
   /**
    * 当前选中 fetcher 的凭证能力声明（B-3）：fetcherId 优先、fallback 自动匹配 preset。
    * CodingPlanSection 据此渲染凭证态（oauth 就绪/缺失、api-key 回退顺序说明）。
@@ -102,6 +132,8 @@ export function useQuotaConfigure(
       cookieInput.value = ''
       apiKeyInput.value = ''
       apiKeyConfigured.value = false
+      workspaceInput.value = ''
+      workspaceConfigured.value = false
       testStatus.value = 'idle'
       testError.value = ''
       testFailReason.value = null
@@ -117,6 +149,9 @@ export function useQuotaConfigure(
     // 专属 API Key 明文不入前端，只标记是否已配置（用于占位符提示）
     apiKeyConfigured.value = p.quota.apiKeySet === true
     apiKeyInput.value = ''
+    // workspace 非凭证（用户浏览器地址栏可见的 URL），明文回显供编辑
+    workspaceInput.value = p.quota.workspace ?? ''
+    workspaceConfigured.value = !!p.quota.workspace
     // 如果已启用，尝试读缓存
     if (p.quota.enabled) {
       loadCached()
@@ -304,6 +339,43 @@ export function useQuotaConfigure(
     }
   }
 
+  /**
+   * 保存 Workspace 地址（资源维度 fetcher 如 opencode-go，D1-1）。
+   * - 输入先经 shared 归一化校验（完整 URL / 裸 wrk_ id → 规范 URL；非法输入本地报错不发 RPC）
+   * - 空字符串 = 清除已有配置（恢复未配置态，查询报 not_configured）
+   * - 保存成功且已启用时自动测试查询（与 saveCookie 同模式）
+   */
+  async function saveWorkspace(): Promise<void> {
+    const p = providerRef.value
+    if (!p) return
+
+    configuring.value = true
+    configureError.value = ''
+
+    try {
+      const raw = workspaceInput.value.trim()
+      const normalized = normalizeWorkspaceInput(raw, workspaceConfigured.value)
+      if (!normalized.ok) {
+        configureError.value = t(normalized.errorKey)
+        return
+      }
+      const payload = normalized.payload
+
+      const result = await quotaApi.configure(p.id, enabled.value, undefined, fetcherId.value, undefined, payload)
+      if (result.ok) {
+        workspaceConfigured.value = payload.length > 0
+        // 保存后自动测试（如果已启用）——workspace 改动立即反映到查询结果
+        if (enabled.value) await testQuery()
+      } else {
+        configureError.value = result.error || t('settings.providerEdit.quotaWorkspaceSaveFail')
+      }
+    } catch (e) {
+      configureError.value = e instanceof Error ? e.message : t('settings.providerEdit.quotaWorkspaceSaveFail')
+    } finally {
+      configuring.value = false
+    }
+  }
+
   /** 测试查询（触发 quota.refresh，绕过 throttle） */
   async function testQuery(): Promise<void> {
     const p = providerRef.value
@@ -341,6 +413,8 @@ export function useQuotaConfigure(
     cookieInput.value = ''
     apiKeyInput.value = ''
     apiKeyConfigured.value = false
+    workspaceInput.value = ''
+    workspaceConfigured.value = false
     testStatus.value = 'idle'
     testError.value = ''
     testFailReason.value = null
@@ -357,6 +431,9 @@ export function useQuotaConfigure(
     cookieInput,
     apiKeyInput,
     apiKeyConfigured,
+    workspaceInput,
+    workspaceConfigured,
+    needsWorkspace,
     testStatus,
     testError,
     testFailReason,
@@ -372,6 +449,7 @@ export function useQuotaConfigure(
     selectFetcher,
     saveCookie,
     saveApiKey,
+    saveWorkspace,
     testQuery,
     reset,
   }
