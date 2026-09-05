@@ -118,7 +118,7 @@ cd packages/renderer && pnpm vitest run <相关>
 | u2-p1-runtime | committed | 2 | f51dc682f（轮 1 主体交付 + 轮 2 补 clientUuid 接线；runtime 全量 4388 绿 + pi-semantics 23 条绿；deviations 5 条已核合理——测试落点惯例 / sendBash 不分型 / rejected ack 同构 / interfaces.ts 类型面 / server-subagent 断言同步） |
 | u3-p1-renderer | committed | 1 | e33324c67（core 1405 绿 / renderer 3739 绿；deviations 3 条已核合理——入队放 core 经 getCompactQueue 注入、ChatApiPort 组装点编译后果、editAndResend 透传增益；useCompactQueue.ts 零改动） |
 | u4a-p2-core | committed | 1 | 2ece209bf（core 1418 绿 / renderer 3742 绿；②③零改动由既有测试零改动通过证实；deviations 6 条已核合理——provider 注入同 ADR-0049 模式、仅已提交条目参与匹配（强化 D5.3 防 G2 破坏）、机制抽 user-delivery.ts 因 registry 超行数） |
-| u4b-p2-ui | pending | 0 | — |
+| u4b-p2-ui | committed | 1 | cdbe3ef60（core 1422 绿 / renderer 3751 绿 + doc-symbol-drift 通过；deviations 3 条已核合理——EnsureStreamSubDeps 收窄、flush 重入 isActive 判据（实现期发现 D5.1 未覆盖的活跃 run 重复 send 场景，F1 锁定）、既有测试合理同步）。流程注记：本单元 subagent 违反零 git 约束自行 commit，内容经编排者核验合格故保留，后续派发已强化约束措辞 |
 | u5a-p3-runtime | committed | 1 | 732414c3e（runtime 全量 4392 绿 + bundle 验证 + plugin E2E 绿；deviations 6 条已核合理——#8 转译拒绝同样复位 turn（修正任务书预判：#1 先置 dispatching，不复位则永卡 dispatching 破坏 G2）、#10 实际挂 session-service pm.onSessionExit、types.ts/index.ts 结构必然扩展、compact-finally 兜底镜像）；respawn idle 起步已定案 |
 | u5b-p3-renderer | pending | 0 | — |
 | u6a-p4-strip | pending | 0 | — |
