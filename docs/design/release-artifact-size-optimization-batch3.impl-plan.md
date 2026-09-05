@@ -72,7 +72,13 @@ graph TD
 | u1 | 领地外修改 packages/renderer/src/__tests__/markdown-renderer-incremental.test.ts（mock 契约 'shiki'→'shiki/core' 同步） | markdown.ts import 入口变化的直接下游 mock，不改则该文件 1 用例必红、「单测全绿」验收不可能达成；与 u2-u6 领地零冲突 | 2026-09-05 |
 | u1 | SHIKI_LANGS 增加 export（数组值与位置不动） | langs 改收静态 grammar 对象后 SHIKI_LANGS 失去运行时消费者触发 TS6133；export 后由新测试消费，避免测试侧抄第二份清单双源漂移 | 2026-09-05 |
 | u1 | 语言 grammar 未按「独立语言 chunk」产出而是内联进共享 vendor chunk | vite manualChunks 的 node_modules→vendor 归并（任务禁改 vite.config.ts）；验收语义全部满足（命中 1≤14 文件、782KB≤1.2MB、死语言零命中），数字优于设计预期 | 2026-09-05 |
-| u1 | 领地新增 packages/renderer/package.json + pnpm-lock.yaml（声明 @shikijs/langs/@shikijs/themes ^4.3.1） | pre-flight 依赖完整性检查拦截：import 未直接声明的传递依赖；lock 已有 4.3.1 解析，不引新版本 | 2026-09-05 |
+| u1 | 新增领地外 packages/renderer/package.json + pnpm-lock.yaml（声明 @shikijs/langs/@shikijs/themes ^4.3.1） | pre-flight 依赖完整性检查拦截：import 未直接声明的传递依赖；lock 已有 4.3.1 解析，不引新版本 | 2026-09-05 |
+| u3 | 配置位置实为顶层 dmg: 段（非 mac: 子段，schema 实测拒绝）；收益实测 -1.77% 远低于预期 -10~15% | dmg-builder 直读 packager.config.dmg（dmg.js:19）；收益低因第一二批后 dmg 以 Electron 本体为主（zlib 已压紧）。设计文档已回写（§3.3.2/S11 标准校准） | 2026-09-05 |
+| u4 | 配置位置实为顶层 appImage: 段（驼峰，非 linux: 子段，schema 实测拒绝）；收益实测 -27.1% 超预期（-15~20%） | 与 u3 位置修正同型；双构建 gzip 117,491,716 B → xz 85,595,477 B（linux-arm64 本地）。设计文档已回写 | 2026-09-05 |
+| u5+u6 | 合并为单个 commit d3385ee92（未按单元拆分） | 应用户要求批量验证加速；两单元在 release-checker/shared/validate-release 等同文件交错改动，hunk 拆分会产生不可独立验证的中间态；commit message 分节保留归因 | 2026-09-05 |
+| u5+u6 | 阶段 2 验证合并（test:main 一次 + 双平台构建一次），未逐单元验证 | 应用户要求；规则 12 的「逐个验证」放宽，「逐个 commit」由 u1-u4 保留 | 2026-09-05 |
+| u6 | S1 新错误码（dmg mount failed 等）在 renderer LAUNCH_FAILURE_ERROR_KEYS 无映射，走通用降级文案 | renderer 明确禁改（并行领地边界）；无崩溃面；设计待验证检查点③登记的实施期事实 | 2026-09-05 |
+| u5+u6 | staged 12 处测试 rmSync 递归删除补 maxRetries/retryDelay（F3 flake 卫生检查拦截） | pre-commit MANDATORY 全部正面修复；多为存量，随本批测试文件 staged 被扫出 | 2026-09-05 |
 
 ## 6 状态表
 
@@ -80,10 +86,10 @@ graph TD
 |------|------|------|----------|
 | u1 | committed | 1 | ac01fab47（3729 用例 0 失败含 18 新增 fine-grained 用例；vite build 后语言死重 8.1MB→782KB、死语言 chunk 零命中；主 agent build:dir 复核 asar 18M→11M） |
 | u2 | committed | 1 | db4f42fc7（yaml 解析断言三平台段排除就位；主 agent build:dir 断言 prebuilds 仅 darwin-arm64 且 pty.node/spawn-helper 在位） |
-| u3 | committed | 1 | 待回填 commit hash（yaml OK + imageinfo Format: ULFO / Ratio 0.42 + 双构建对比 106M→104M（-1.77%）+ 挂载冒烟 ditto exec 位在位；deviation 2 条：配置位置实为顶层 dmg 段（schema 实测，设计已回写）、收益 -1.77% 远低预期（S11 标准已校准）） |
-| u4 | pending | — | — |
-| u5 | pending | — | — |
-| u6 | pending | — | — |
+| u3 | committed | 1 | 643387668（imageinfo Format: ULFO / Ratio 0.42 + 双构建 106M→104M(-1.77%) + 挂载冒烟 ditto exec 位在位；deviation 2 条已登记） |
+| u4 | committed | 1 | e94b9e17b（双构建 gzip 112.0MB→xz 81.6MB = -27.1%，两产物 file 断言均 ELF executable；位置修正已回写设计） |
+| u5 | committed | 1 | d3385ee92（与 u6 合并 commit，见偏差登记；grep linuxX64Deb 清零 + 双平台构建无 deb 产物） |
+| u6 | committed | 1 | d3385ee92（test:main 743 用例 0 失败含 23 个真实 hdiutil/ditto 集成用例；grep macArm64Zip 清零；typecheck 三 tsconfig 过；产物无 zip） |
 
 ## 7 残留风险与变更历史
 
