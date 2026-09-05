@@ -47,6 +47,7 @@ import type { IManagedSessionView, ScannedSession, SendMessageHook } from './typ
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { SessionLifecycle } from './session-lifecycle.js'
 import { MessageDispatcher } from './message-dispatcher.js'
+import { updateSessionOccupancy } from './event-interpreter.js'
 import { SessionScanner } from './session-scanner.js'
 import { AttachmentStore } from './attachment-store.js'
 import { SessionStateProjection, type SessionReplicatedStates } from './session-state-projection.js'
@@ -297,6 +298,12 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
       //（renderer 全量订阅覆盖 list 内全部 session，见 useSessionStreamSync）。
       const exitedMsg: ServerMessage = { type: 'session.exited', payload: { sessionId, code, reason } }
       this.messageBus?.publish(sessionId, exitedMsg)
+
+      // occupancy #10（session-occupancy-send-closure D3 失败路径，进程异常退出腿）：占用中
+      // pi 死亡时 agent_settled / compaction_end 永不会发出（二者只从 pi run/compact finally
+      // 触发），turn/compacting/bash 三维在此全复位兜底——否则重连 renderer 经 stateSnapshot
+      // 回放恢复的是永久的占用投影。须在 removeSessionEntry（内部 bus.clearSession）之前。
+      updateSessionOccupancy(session, this.messageBus, { turn: 'idle', compacting: false, bash: false })
 
       // 注意：此处 session 是 delete 前缓存的引用，removeSessionEntry 后 Map 条目已删除
       // 统一经 removeSessionEntry（触发 onSessionDelete 清 pendingReload 等残留）

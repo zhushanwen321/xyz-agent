@@ -67,6 +67,9 @@ const TOPIC_TABLE: Readonly<Record<string, TopicKind>> = {
   'session.subagentEntriesAppended': 'state',
   'session.workflowUpdate': 'state',
   'session.state_changed': 'state',
+  // occupancy（session-occupancy-send-closure P3）：占用三维快照。state topic last-value——
+  // 断连重连 / 切回 session 经 stateSnapshot 回放恢复（G4），不依赖广播时序。
+  'session.occupancy': 'state',
   // ── stream 类：分配 seq、入 ring（O(1) 覆盖写）──
   'message.message_start': 'stream',
   'message.complete': 'stream',
@@ -150,6 +153,10 @@ const STATE_TYPE_KEY_MAP: Readonly<Record<string, string>> = {
   'session.subagents': 'subagents',
   'session.workflowUpdate': 'workflows',
   'session.state_changed': 'state_changed',
+  // occupancy（session-occupancy-send-closure P3）：last-value 快照 key，重连/切回 session
+  // 时 subscribe 返回的 stateSnapshot 含此帧，renderer sessionPhase 从快照恢复（G4）。
+  // 写快照/回放对 stateSnapshot Map 的任意 key 自动生效，无需其他登记点。
+  'session.occupancy': 'occupancy',
 }
 
 /**

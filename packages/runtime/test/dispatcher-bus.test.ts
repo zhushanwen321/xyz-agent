@@ -120,8 +120,10 @@ describe('message-dispatcher bus integration', () => {
     })
     await dispatcher.sendMessage('s1', 'hello')
     expect(messageBus.publish).toHaveBeenCalledWith('s1', expect.objectContaining({ type: 'message.error' }))
-    const msg = messageBus.publish.mock.calls[0][1]
-    expect(msg.payload.message).toContain('pi crashed')
+    // occupancy 帧（u5a-p3）先于 message.error 入列，按 type 定位（原 calls[0] 断言失真同步）
+    const errCall = messageBus.publish.mock.calls.map((c: any[]) => c[1]).find((m: ServerMessage) => m.type === 'message.error')
+    expect(errCall).toBeDefined()
+    expect(errCall!.payload.message).toContain('pi crashed')
   })
 
   it('sendMessage busy → bus.publish(send.rejected)', async () => {
@@ -361,8 +363,13 @@ describe('message-dispatcher bus integration', () => {
       promptError: new Error('test'),
     })
     await dispatcher.sendMessage('s1', 'hello')
-    expect(messageBus.publish).toHaveBeenCalledTimes(1)
-    expect(messageBus.publish.mock.calls[0][1].type).toBe('message.error')
+    // occupancy 帧（u5a-p3：dispatching + catch 复位 idle）与 message.error 并存，
+    // 本用例锁的是 message.error 单通道无双发——按 type 过滤后计数（原全量计数失真同步）。
+    const errCalls = messageBus.publish.mock.calls.filter(
+      (c: any[]) => c[1].type === 'message.error',
+    )
+    expect(errCalls).toHaveLength(1)
+    expect(errCalls[0][1].type).toBe('message.error')
   })
 
   // ── sessionId passes through correctly ──

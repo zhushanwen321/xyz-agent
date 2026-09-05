@@ -267,6 +267,11 @@ export class SessionLifecycle implements ISessionRegistry {
       // usage 实例快照持有，读点（getInputTokens / toSummary.tokenCount）从实例派生，
       // 任何路径不再直写这两个字段（旧外部 setter / applyContextUpdate 直写已删）。
       tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, isBashRunning: false, bashRunToken: undefined,
+      // occupancy 初值 = 全 idle（session-occupancy-send-closure D3 转移 #10 respawn 衔接）：
+      // create/fork/restore（respawn）三入口共用本注册汇聚点，pi 重 spawn 后无活跃 run，
+      // idle 起步成立（与上方三 flag 全 false 同语义）；restore 路径旧条目已删除且
+      // bus.clearSession 清空 occupancy 快照，renderer 重订阅时无帧 = idle 缺省，一致。
+      occupancy: { turn: 'idle', compacting: false, bash: false },
       adapter, sessionFilePath,
       hidden,
       parentSession,

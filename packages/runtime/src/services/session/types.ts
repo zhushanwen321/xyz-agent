@@ -31,6 +31,24 @@ export type SendMessageHook = (
 export type ScannedSession = ScannedSessionMeta
 
 /**
+ * 会话占用状态（session-occupancy-send-closure D3/P3）——三维结构而非单枚举：
+ * - turn 三阶段：dispatching（prompt 已发、message_start 未到）→ generating（turn-start..turn-end）
+ *   → settling（turn-end..agent-settled，pi post-run 收尾期）；idle 为空档。
+ * - compacting / bash 独立布尔（与 turn 各阶段可并存：settling+compacting 是 overflow 收尾常态，
+ *   threshold 模式 turn 内自动压缩则 generating+compacting）。
+ *
+ * wire 形状见 shared protocol.ts 的 'session.occupancy' payload（本形状是其 runtime 侧镜像，
+ * 广播帧由 updateSessionOccupancy 按字段展开构造，两处字段名/值域必须保持一致）。
+ */
+export type SessionTurnPhase = 'idle' | 'dispatching' | 'generating' | 'settling'
+
+export interface SessionOccupancy {
+  turn: SessionTurnPhase
+  compacting: boolean
+  bash: boolean
+}
+
+/**
  * ManagedSession 的子模块可见视图(不含运行时句柄)。
  * 子模块经此引用更新 lastActiveAt / isGenerating 等可变字段。
  */
@@ -85,6 +103,18 @@ export interface IManagedSessionView {
    * 无孤儿残留；flush 信号按 sessionId 定向，跨 session 不误清。
    */
   pendingBashResults?: PendingBashResultData[]
+  /**
+   * 会话占用状态投影（session-occupancy-send-closure D3/P3）——turn 三阶段 + compacting/bash
+   * 三维的权威聚合，唯一写方 = updateSessionOccupancy（幂等写 + 变化才广播 session.occupancy
+   * state 帧）。与上方 isGenerating/isCompacting/isBashRunning 同源同点写入（11 挂点见设计
+   * D3 转移表），但维度划分不同：isGenerating 覆盖 dispatching+generating 两段，turn 把
+   * settling（turn-end..agent-settled 的 pi post-run 窗口）从「空闲」中显式分离。
+   *
+   * 可选（undefined = idle）：registerSession 显式初始化为 idle；测试 mock 与历史构造点
+   * 缺省时由 updateSessionOccupancy 按 idle 兜底合并，不强制所有构造点同步改。
+   * 运行时内部状态，不进 toSummary（对外投影只经 session.occupancy state 帧）。
+   */
+  occupancy?: SessionOccupancy
   thinkingLevel?: string
   sessionFilePath?: string
   /**
