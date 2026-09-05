@@ -65,12 +65,12 @@ graph TD
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
 | u-z1-turn-timeout-state-machine | committed | 1 | 状态机 17 测 + 包全量 3040 绿；eslint max-lines override（授权修复轮，4 先例同型） |
-| u-z2-timeout-abort-chain | pending | 0 | — |
+| u-z2-timeout-abort-chain | committed | 1 | 三态裁决 6 测 + 包全量 3046 绿；额外根修 awaitConnFinalized（killChain 后连接 finalize 竞态，实测命中）；「已自动重试」句留 u-z4 补 |
 | u-z3-status-consume | pending | 0 | — |
 | u-z4-retry-budget | pending | 0 | — |
 | u-z5-dispose-harvest | pending | 0 | — |
 | u-z6-settled-watchdog | committed | 1 | 两段式原语 25 测 + 包全量 3023 绿；4 项偏差登记（env 非法值语义等） |
-| u-z7-doc-writeback | pending | 0 | — |
+| u-z7-doc-writeback | committed | 1 | 三处回写完成（audit §7.2/§7.3 + impl-plan §5 T2③ 清账）；头注释核实免改；5 条残留 deviations 登记（§6.2 行 252 等） |
 
 ## 7 残留风险与变更历史
 

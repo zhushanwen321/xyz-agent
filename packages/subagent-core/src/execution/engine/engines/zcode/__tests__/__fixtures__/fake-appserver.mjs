@@ -45,11 +45,16 @@
  *     sendResult?:  object             缺省 {accepted:true}
  *     readError?:   {code,message,data} read 应答 error 帧（read 兜底降级链断言）
  *     readResult?:  object             覆盖 read 应答
- *     stopBehavior?: 'terminal'|'none'  session/stop 的行为（R4 abort 链断言面）：
+ *     stopBehavior?: 'terminal'|'none'|'hang'
+ *                                      session/stop 的行为（R4 abort 链断言面）：
  *                                      'terminal'（缺省）= stop 时推送该会话的
  *                                      turn.terminal 终态帧（stop 优雅生效——不杀
  *                                      进程的 abort 路径）；'none' = 只应答不推终态
- *                                      （grace 窗口耗尽 → killChain 兜底路径）
+ *                                      （grace 窗口耗尽 → killChain 兜底路径）；
+ *                                      'hang' = 连应答都不给（P0-1 U2 超时入口态③——
+ *                                      控制面假死注入，stop 3s 超时 → 连接级失败判据）
+ *     stopError?:   {code,message,data} stop 应答 error 帧（P0-1 U2 超时入口态②——
+ *                                      协议性 error（如会话已回收）注入，断言不升级杀链）
  *   }
  *
  * 多会话支持（R4 引擎接线 / RA3 双会话地基）：
@@ -233,8 +238,14 @@ async function handleRequest(f) {
       return reply(id, (SCENARIO && SCENARIO.sendResult) || { accepted: true });
     }
     case 'session/stop': {
-      // [R4] abort 链断言面：缺省推终态（stop 优雅生效）；stopBehavior:'none' 只应答
+      // [R4] abort 链断言面：缺省推终态（stop 优雅生效）；stopBehavior:'none' 只应答；
+      // stopError 注入协议性 error 应答帧（P0-1 U2 态②——不升级杀链判据）；
+      // stopBehavior:'hang' 永不应答（态③——stop 3s 超时 = 连接级失败判据）
       const behavior = (SCENARIO && SCENARIO.stopBehavior) || 'terminal';
+      if (behavior === 'hang') return;
+      if (SCENARIO && SCENARIO.stopError) {
+        return replyErr(id, SCENARIO.stopError.code, SCENARIO.stopError.message, SCENARIO.stopError.data);
+      }
       if (behavior === 'terminal') {
         pushFrames([TURN_TERMINAL_FRAME], String(params.sessionId || ''));
       }
