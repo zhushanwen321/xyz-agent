@@ -1701,12 +1701,29 @@ function authoritativeTerminalStatus(r: SessionTurnResult): string | undefined {
 }
 
 /**
+ * 失败终态判据（⛔P-Z2 门修正）：真实 status 枚举 = ["success","interrupted",
+ * "failed"]（app-server dist schema f.enum 实证，**无 "error"**——v1 判据
+ * `=== "error"` 对真实 failed 终态漏分流即假成功，本修复轮根修）。裁决：
+ *   - "failed" → run-failed（模型/服务端真实失败——§5.2 F-3）；
+ *   - "interrupted" → 不分流（用户中断，不属引擎失败——随宿主 abort 主路径收口，
+ *     引擎侧不抢先把它终态化为失败）；
+ *   - "error" → 保留为容错分支（非真实枚举，防协议漂移/旧版本形态再滑入假成功；
+ *     假成功代价 >> 误报失败代价，取并集防御）。
+ */
+function isFailedTerminalStatus(status: string | undefined): boolean {
+  return status === "failed" || status === "error";
+}
+
+/**
  * [P0-1 U3/D5②] appserver 轮成功收口的 parsed 三态（read 兜底后的 response + schema
- * 校验）。status='error' 终态先分流（§3.2 缺陷 B 不再假成功；schema 校验对失败形态
- * 无意义——error 终态的 response 是错误尾部，非结构化输出候选）。
+ * 校验）。失败终态（isFailedTerminalStatus，"interrupted" 不在其中——不误判失败）
+ * 先分流（§3.2 缺陷 B 不再假成功；schema 校验对失败形态无意义——失败终态的
+ * response 是错误尾部，非结构化输出候选）。
  */
 function parsedAppServerAttempt(task: AgentTaskSpec, r: SessionTurnResult): AttemptResult {
-  if (authoritativeTerminalStatus(r) === "error") return errorTerminalAppServerAttempt(r);
+  if (isFailedTerminalStatus(authoritativeTerminalStatus(r))) {
+    return failedTerminalAppServerAttempt(r);
+  }
   const schema = isPlainObject(task.schema) ? task.schema : undefined;
   return {
     kind: "parsed",
@@ -1719,22 +1736,36 @@ function parsedAppServerAttempt(task: AgentTaskSpec, r: SessionTurnResult): Atte
 }
 
 /**
- * [P0-1 U3/D5②] error 终态的 run-failed 合成（§5.2 F-3 文案）：exitCode=null 异常
- * 终态、无 rpcCode（终态 error 非 RPC error 帧，不参与漂移降级）、sessionId 留痕同
- * failedAppServerAttempt。message 附 read 兜底/delta 聚合的实际尾部内容（诊断信息
- * 不丢——§8 A4「尾部内容可见」）；内容全空（P-Z2 降级形态：final-frame 先到且
- * read 无错误信息）时不伪造错误详情，仅报终态 status——覆盖面收窄但不假成功。
+ * [P0-1 U3/D5② + ⛔P-Z2 门修正] failed 终态的 run-failed 合成（§5.2 F-3 文案）：
+ * exitCode=null 异常终态、无 rpcCode（终态失败非 RPC error 帧，不参与漂移降级）、
+ * sessionId 留痕同 failedAppServerAttempt。错误详情优先级：terminal 帧 errorCode/
+ * errorMessage（⛔P-Z2 实证——真实 failed 终态的错误详情只在 terminal 帧，read/
+ * delta 携带不了）> read 兜底/delta 聚合尾部（F-3 原文案，降级为兜底）> 「无返回
+ * 内容」（P-Z2 降级形态：final-frame 先到且 read 无错误信息——不伪造错误详情，
+ * 覆盖面收窄但不假成功）。
  */
-function errorTerminalAppServerAttempt(r: SessionTurnResult): AttemptResult {
-  const tail = r.response.trim();
+function failedTerminalAppServerAttempt(r: SessionTurnResult): AttemptResult {
+  const status = authoritativeTerminalStatus(r);
+  const detail = r.lastTerminalError;
+  const detailParts: string[] = [];
+  if (detail?.code !== undefined) detailParts.push(`errorCode: ${detail.code}`);
+  if (detail?.message !== undefined) detailParts.push(detail.message);
+  // 错误详情优先级（⛔P-Z2）：terminal 帧详情 > read 兜底/delta 聚合尾部 > 无返回内容
+  let body: string;
+  if (detailParts.length > 0) {
+    body = `服务端错误：${detailParts.join("：")}。`;
+  } else {
+    const tail = r.response.trim();
+    body =
+      tail !== ""
+        ? `服务端返回尾部：${tail.slice(-ZCODE_ERROR_TAIL_CHARS)}。`
+        : "服务端无返回内容（read 兜底/delta 聚合均为空）。";
+  }
   return {
     kind: "run-failed",
     output: syntheticAppServerOutput(null),
     message:
-      `engine_run_failed: app-server 终态 status=error（会话 ${r.sessionId}）。` +
-      (tail !== ""
-        ? `服务端返回尾部：${tail.slice(-ZCODE_ERROR_TAIL_CHARS)}\n`
-        : "服务端无返回内容（read 兜底/delta 聚合均为空）。\n") +
+      `engine_run_failed: app-server 终态 status=${status}（会话 ${r.sessionId}）。${body}\n` +
       `👉 恢复指引：错误内容来自模型/服务端；直接重跑，若持续出现核对 ZCode 桌面端凭据与模型配置（engine_credential_missing 同族排查）。`,
     sessionId: r.sessionId,
   };

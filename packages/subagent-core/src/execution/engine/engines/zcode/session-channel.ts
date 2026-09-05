@@ -366,6 +366,12 @@ export interface SessionTurnResult {
    * 假成功（final-frame 恒 success）。无 turn.terminal 到达时缺席。
    */
   lastTerminalStatus?: string;
+  /**
+   * 权威终态 turn.terminal 的错误详情（⛔P-Z2 实证：真实 failed 终态的 errorCode/
+   * errorMessage 只在 terminal 帧携带——read/delta 拿不到，丢即诊断信息永久丢失）。
+   * 先到/迟到都记录（与 lastTerminalStatus 同型）；至少其一存在才带此字段。
+   */
+  lastTerminalError?: { code?: string; message?: string };
 }
 
 // ============================================================
@@ -393,6 +399,8 @@ interface ActiveTurn {
   terminal: TerminalInfo | undefined;
   /** 权威终态 turn.terminal 的 status 记录（先到/迟到都记——D5①）。 */
   lastTerminalStatus: string | undefined;
+  /** 权威终态 turn.terminal 的错误详情（先到/迟到都记——⛔P-Z2，terminal 帧独有）。 */
+  lastTerminalError: { code?: string; message?: string } | undefined;
   /** 本轮生效阈值（openTurn 解析后的值，fire 时进 TurnTimeoutError 文案）。 */
   idleMs: number;
   ceilingMs: number;
@@ -658,6 +666,9 @@ export class SessionChannel {
         ...(opened.turn.lastTerminalStatus !== undefined
           ? { lastTerminalStatus: opened.turn.lastTerminalStatus }
           : {}),
+        ...(opened.turn.lastTerminalError !== undefined
+          ? { lastTerminalError: opened.turn.lastTerminalError }
+          : {}),
       };
     } finally {
       opened.stopTimers();
@@ -689,6 +700,7 @@ export class SessionChannel {
       finalUsage: undefined,
       terminal: undefined,
       lastTerminalStatus: undefined,
+      lastTerminalError: undefined,
       idleMs: 0,
       ceilingMs: 0,
       startedAt: Date.now(),
@@ -873,6 +885,18 @@ export class SessionChannel {
       const status =
         typeof params.status === "string" ? params.status : "unknown";
       turn.lastTerminalStatus = status;
+      // ⛔P-Z2 实证：真实 failed 终态的 errorCode/errorMessage 只在 terminal 帧携带
+      // （read/delta 拿不到）——先到/迟到都记录，消费层合成失败文案时优先采信。
+      const errorCode =
+        typeof params.errorCode === "string" ? params.errorCode : undefined;
+      const errorMessage =
+        typeof params.errorMessage === "string" ? params.errorMessage : undefined;
+      if (errorCode !== undefined || errorMessage !== undefined) {
+        turn.lastTerminalError = {
+          ...(errorCode !== undefined ? { code: errorCode } : {}),
+          ...(errorMessage !== undefined ? { message: errorMessage } : {}),
+        };
+      }
       if (turn.settled) {
         logger.warn(
           `权威终态晚于落定结果到达（会话 ${turn.sessionId}，已落定 source=${
