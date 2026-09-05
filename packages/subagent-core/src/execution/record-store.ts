@@ -696,7 +696,10 @@ export class RecordStore {
       collectMode: rec.collectMode ?? last.collectMode,
       batchFinalized: rec.batchFinalized ?? last.batchFinalized,
       result: pickStr(rec.result, last.result),
-      model: pickStr(rec.model, last.model),
+      // 类型收尾：两侧实参恒 string（rec.model 类型非可选；last.model 重建投影自带
+      // `?? ""`），pickStr 签名宽返回 string|undefined —— `?? ""` 运行时不可达，
+      // 仅满足 model 非可选类型，空串回退语义不变（cur 空 → src，src 也空 → ""）。
+      model: pickStr(rec.model, last.model) ?? "",
     };
   }
 

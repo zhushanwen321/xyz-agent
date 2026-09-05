@@ -33,7 +33,11 @@
 //   9. 豁免路径（断言 pi，覆写不落盘）：E1 直读轮终 running+resumable entry 走
 //      resumable 豁免判定 → 补发可达（判定侧另一分支，与协调器 hasRunningSync 同构）；
 //  10. P-rebuild：rebuildEntryRecord 新投影字段（resumable/sessionFile）不改变
-//      recoverEntryOnlyOrphans 的「只认 running 末条」候选判定。
+//      recoverEntryOnlyOrphans 的「只认 running 末条」候选判定；
+//  11. v2 断链 4（设计 §3.3 D4）延迟闭合：E1 waiting → 注册 settled 有界重扫 →
+//      成员补种终态 entry → settled 边沿重扫补发单批 + 落标 → 后续 settled 零处理；
+//  12. D4 上限：成员恒 running → settled 驱动 8 次重扫达限 → disposed（debug 留痕），
+//      第 9 次（成员此刻已终态）不再扫描。
 //
 // mock 手法对齐 collect-coordinator-service.test.ts：mock session-runner（不 spawn 真子
 // 进程）+ logger；record-store / config 走真实实现（tmpdir 自建自删，红线）。
@@ -55,7 +59,10 @@ const { loggerMock, runSpawnMock } = vi.hoisted(() => ({
     toolCalls: [],
   })),
 }));
-vi.mock("../core/logger.ts", () => ({ getLogger: () => loggerMock }));
+// mock logger：路径从 __tests__ 出发是 ../../core/（src/core/logger.ts——subagent-service
+// 经 ../core/logger.ts 引用的同一模块）。曾写 ../core/logger.ts 指向不存在的
+// src/execution/core/，vi.mock 静默失效（D4 上限用例首次断言日志时暴露）。
+vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner：execute 链经 kickOffBackground → runAndFinalize → runSpawn。
 // 路径从 __tests__ 解析必须命中真实模块（src/execution/session-runner.ts）——
@@ -92,8 +99,31 @@ const ENV_KEYS_TO_STRIP = [
 
 const ROOT_SESSION = "root-session-crash";
 
+/** settled handler 捕获 + 驱动（D4 重扫用例用）：pi 实装为列表分发（P-settled 定谳，
+ *  0.84.4 dist loader.js on() push 进数组 + runner.js emit() 遍历全部 handler），
+ *  捕获数组同构——emitAgentSettled 逐一调用已注册 handler，模拟一次 settled 边沿。 */
+interface SettledDriver {
+  /** 驱动一次 agent_settled 边沿（快照遍历，防 handler 内注册/变异干扰本轮）。 */
+  emitAgentSettled(): void;
+}
+
+function settledCapture(): { driver: SettledDriver; on: ReturnType<typeof vi.fn> } {
+  const handlers: Array<() => void> = [];
+  return {
+    driver: {
+      emitAgentSettled: () => {
+        for (const h of [...handlers]) h();
+      },
+    },
+    on: vi.fn((event: string, handler: () => void) => {
+      if (event === "agent_settled") handlers.push(handler);
+    }),
+  };
+}
+
 /** 种子 pi：appendEntry 真写主 session JSONL（每 entry 一行，pi 落盘形态）。 */
 function makeWritingPi(mainFile: string) {
+  const { driver, on } = settledCapture();
   return {
     appendEntry: vi.fn((customType: string, data: unknown) => {
       fs.appendFileSync(
@@ -111,17 +141,20 @@ function makeWritingPi(mainFile: string) {
     }),
     events: { emit: vi.fn() },
     sendMessage: vi.fn(),
-    on: vi.fn(),
+    on,
+    emitAgentSettled: driver.emitAgentSettled,
   };
 }
 
 /** 断言 pi：appendEntry 只记录不落盘（断言恢复侧写点用）。 */
 function makeAssertPi() {
+  const { driver, on } = settledCapture();
   return {
     appendEntry: vi.fn(),
     events: { emit: vi.fn() },
     sendMessage: vi.fn(),
-    on: vi.fn(),
+    on,
+    emitAgentSettled: driver.emitAgentSettled,
   };
 }
 
@@ -628,6 +661,88 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
       .map((c) => c[1] as Record<string, unknown>)
       .filter((d) => d.batchFinalized === true);
     expect(marks.map((m) => m.id)).toEqual(["sa-exempt"]);
+  });
+
+  // ============================================================
+  // v2 断链 4（设计 §3.3 D4）：E1 等待分支的 settled 有界重扫。等待不再死等——
+  // 成员延迟终态（冷路径 resume → 正常流落 entry）由 settled 边沿驱动重扫收敛。
+  // ============================================================
+
+  it("D4 延迟闭合：E1 仍有 running → 注册 settled 重扫（单注册）→ 成员补种终态 entry → 边沿重扫补发单批+落标 → disposed", () => {
+    const store = makeSeedStore();
+    store.reportSubagentRecord(memberRecord({ id: "sa-a" }));
+    store.reportSubagentRecord(
+      memberRecord({ id: "sa-a", status: "closed", closedReason: "gc", endedAt: 2000, result: "done-A" }),
+    );
+    // 在跑成员：末条 running（子进程活到重启后的形态，与既有 waiting 用例同构造）
+    store.reportSubagentRecord(memberRecord({ id: "sa-late" }));
+
+    // 断言 pi：orphan 覆写不落盘 → 主文件末条保持 running，E1 走等待分支（前提自检）
+    const pi = makeAssertPi();
+    const recovery = makeRecoveryService(pi);
+    const spy = spyNotifier(recovery);
+    recovery.recoverSyncCollectBatch();
+
+    // 等待分支：零补发 + 注册 settled 重扫恰一次（agent_settled 单注册断言）
+    expect(spy.notifyBatch).not.toHaveBeenCalled();
+    const settledRegistrations = pi.on.mock.calls.filter((c) => c[0] === "agent_settled");
+    expect(settledRegistrations).toHaveLength(1);
+
+    // 成员延迟终态：冷路径 resume → 正常流终态落 entry（reportSubagentRecord 真实写点同构）
+    const lateStore = makeSeedStore();
+    lateStore.reportSubagentRecord(
+      memberRecord({ id: "sa-late", status: "closed", endedAt: 9000, result: "late full result" }),
+    );
+
+    // settled 边沿 → 重扫一次：全员终态 → 补发单批（两成员，含延迟成员 result 全文）
+    pi.emitAgentSettled();
+    expect(spy.notifyBatch).toHaveBeenCalledTimes(1);
+    const batch = spy.notifyBatch.mock.calls[0]![0] as Array<Record<string, unknown>>;
+    expect(batch.map((m) => m.id).sort()).toEqual(["sa-a", "sa-late"]);
+    expect(batch.find((m) => m.id === "sa-late")!.result).toBe("late full result");
+
+    // 重扫落标：两成员统一补 batchFinalized（断言 pi 内存面）
+    const marks = pi.appendEntry.mock.calls
+      .filter((c) => c[0] === SUBAGENT_RECORD_CUSTOM_TYPE)
+      .map((c) => c[1] as Record<string, unknown>)
+      .filter((d) => d.batchFinalized === true);
+    expect(marks.map((m) => m.id).sort()).toEqual(["sa-a", "sa-late"]);
+
+    // disposed 验证：补发完成后再驱动 settled 边沿 → 零处理（无第二次补发）
+    pi.emitAgentSettled();
+    expect(spy.notifyBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("D4 上限：成员恒 running → settled 驱动 8 次重扫达限 disposed（debug 留痕）→ 第 9 次（成员已终态）不再扫描", () => {
+    const store = makeSeedStore();
+    store.reportSubagentRecord(memberRecord({ id: "sa-stuck" }));
+
+    const pi = makeAssertPi();
+    const recovery = makeRecoveryService(pi);
+    const spy = spyNotifier(recovery);
+    loggerMock.debug.mockClear(); // logger 是模块级共享，计数从本用例起算
+    recovery.recoverSyncCollectBatch();
+    expect(spy.notifyBatch).not.toHaveBeenCalled();
+    expect(pi.on.mock.calls.filter((c) => c[0] === "agent_settled")).toHaveLength(1);
+
+    // 连续 8 次 settled：每次重扫（成员末条恒 running → 每次都判「仍在等」）。
+    // waiting 判定过滤用消息前缀精确匹配（达限日志文案同样含 "still running" 词）。
+    const e1WaitingLogs = () => loggerMock.debug.mock.calls.map((c) => String(c[0])).filter((m) => m.startsWith("[subagents] E1 sync batch recovery:"));
+    for (let i = 0; i < 8; i++) pi.emitAgentSettled();
+    // 首扫 1 + 重扫 8 = 9 次 waiting 判定留痕；达限 debug 恰一次
+    expect(e1WaitingLogs()).toHaveLength(9);
+    const limitLogs = loggerMock.debug.mock.calls.map((c) => String(c[0])).filter((m) => m.startsWith("[subagents] E1 settled rescan: reached limit"));
+    expect(limitLogs).toHaveLength(1);
+    expect(spy.notifyBatch).not.toHaveBeenCalled();
+
+    // 第 9 次驱动时成员已补种终态：disposed 不再扫描（零补发 + waiting 日志不增）
+    const lateStore = makeSeedStore();
+    lateStore.reportSubagentRecord(
+      memberRecord({ id: "sa-stuck", status: "closed", endedAt: 9500, result: "too late" }),
+    );
+    pi.emitAgentSettled();
+    expect(spy.notifyBatch).not.toHaveBeenCalled();
+    expect(e1WaitingLogs()).toHaveLength(9);
   });
 
   it("P-rebuild：新投影字段不改变 entry-born 孤儿判定（轮终 running 末条无子文件锚仍入判定覆写）", () => {

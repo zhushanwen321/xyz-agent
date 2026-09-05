@@ -257,6 +257,11 @@ const ENV_SELF_RECORD_ID = "PI_SUBAGENT_SELF_RECORD_ID";
 const ENV_DEPTH = "PI_SUBAGENT_DEPTH";
 const ENV_ROOT_CWD = "PI_SUBAGENT_ROOT_CWD";
 
+/** [v2 D4] E1 等待分支 settled 有界重扫上限。无上限重扫 = 泄漏（设计 §3.3 D4 被否
+ *  谱系）；8 次覆盖重启后主 agent 对 resumable 成员的典型续跑轮次，达限仍有
+ *  running → disposed，交下次 session_start 收敛。 */
+const SETTLED_RESCAN_LIMIT = 8;
+
 /** resolveIdentity 的产物——一次确定、写入 record 后不再变。 */
 interface ResolvedIdentity {
   agent: string;
@@ -341,6 +346,11 @@ export class SubagentService {
    *  sync 成员触发闭合，陈旧快照会随批重投（新成员集新 hash，账本跨键不拦）→ 双重
    *  通知。flushBatch 闭包按本集过滤，陈旧成员零重投。id 唯一 per spawn，无误伤面。 */
   private readonly e9ConvertedIds = new Set<string>();
+  /** [v2 D4] E1 等待分支的 settled 有界重扫状态（null = 未注册）。disposed 后保持
+   *  非 null——同 session 内不再重复注册（补发完成/达限后 settled 边沿已无事可做，
+   *  单注册即单重扫）；initSession（revive）置 null 允许新 session 重新注册，旧
+   *  handler 的闭包 state 保持 disposed 永久惰化（pi.on 无 off，见 armSettledRescan）。 */
+  private settledRescanState: { disposed: boolean; scans: number } | null = null;
   /** [MF#4][MF#2] fork 深度按 async 调用链传递（AsyncLocalStorage），替代共享可变计数器。
    *  主 session=0；fork 进入子 session 期间推进为子深度，供嵌套 fork 经 ALS 读到自身深度作为
    *  parentForkDepth。并发 background fork 各自独立调用链，不再互相压低深度值。
@@ -491,6 +501,9 @@ export class SubagentService {
     this.initExecContextBaseline(envRoot, init.sessionId);
     // revive（dispose 的逆操作：/resume /fork /new 后复活）
     this._disposed = false;
+    // [v2 D4] settled 重扫状态随 revive 重置：新 session 的 E1 若再判「仍有 running」
+    // 可重新注册；旧 handler 闭包捕获旧 state（已 disposed 或属旧文件域），不会复活。
+    this.settledRescanState = null;
     this.store.revive();
     this.notifier.revive();
     // 孤儿终态恢复（放 initSession 末尾：setPi 已注入（appendEntry 可用）、
@@ -756,8 +769,10 @@ export class SubagentService {
    *    转换离场的，防双重通知），按 rootSessionId 过滤当前根；
    *  - 全员终态且账本无同成员集批记录 → notifyBatch 补发（内容 = 末条 entry 终态快照；
    *    账本 record 同 hash 幂等拒绝 = 已投递/已在账，两种结局都算「已处理」）；
-   *  - 仍有 running → 本次不动，等其自然终态走正常流（下次 session_start 重扫收敛——
-   *    每次重启要么幂等无操作要么推进，无振荡）；running 口径与协调器同构
+   *  - 仍有 running → 本次不动，注册 settled 有界重扫（D4，见 armSettledRescan）——
+   *    成员延迟终态（主 agent 冷路径 resume → 正常流落 entry）由 settled 边沿驱动
+   *    重扫收敛，不再依赖「下次 session_start」作唯一再驱动（v2 §2.4 断链 4）；
+   *    running 口径与协调器同构
    *    （resumable 豁免，v2 D3——覆写不可达的防御分支残余不被误判「仍在跑」）；
    *  - 补发尝试后统一补 batchFinalized 标记（账本拒绝也算已投递；直接用末条重建快照
    *    落标不经 getFullRecord——子文件缺失/已 GC 时标记仍可落盘，窗口自愈不依赖二次
@@ -768,8 +783,20 @@ export class SubagentService {
    *  相撞由账本 sync-batch:<hash> 幂等拒绝兜底。
    */
   recoverSyncCollectBatch(): void {
+    const outcome = this.runSyncCollectRecoveryScan();
+    // [v2 D4] 断链 4：等待分支不再死等——挂 settled 有界重扫（幂等单注册）。
+    if (outcome === "waiting") {
+      this.armSettledRescan();
+    }
+  }
+
+  /** [E1/D4] 单次「扫描→判定→可达则补发+落标」，E1 首扫与 settled 重扫共用同一实现
+   *  （防两处复制粘贴分岔）。三态返回：idle（无 sync 候选——已全部落标/E9 转换/异根，
+   *  无事可等）/ waiting（仍有 running 成员，本次不动）/ dispatched（全员终态，已补发
+   *  +统一落标）。 */
+  private runSyncCollectRecoveryScan(): "idle" | "waiting" | "dispatched" {
     const lastRecords = this.store.scanLastRecordEntries(this.mainSessionFile);
-    if (lastRecords.length === 0) return;
+    if (lastRecords.length === 0) return "idle";
     const rootFilter = this.sessionRootId;
     const candidates = lastRecords.filter(
       (r) =>
@@ -777,7 +804,7 @@ export class SubagentService {
         r.batchFinalized !== true &&
         (rootFilter === undefined || r.rootSessionId === rootFilter),
     );
-    if (candidates.length === 0) return;
+    if (candidates.length === 0) return "idle";
     // [v2 D3] 与协调器 hasRunningSync 同构口径（collect-coordinator.ts）：running+
     // resumable 视为已完成、不阻止补发——成功成员崩溃时的末条 entry 恒为轮终
     // running+resumable（SP-5 有意语义），旧口径只看 status !== "closed" 会把主场景
@@ -788,7 +815,7 @@ export class SubagentService {
         `[subagents] E1 sync batch recovery: ${running.length} member(s) still running, wait for natural completion`,
         { ids: running.map((r) => r.id) },
       );
-      return;
+      return "waiting";
     }
     // 全员终态：单条批补发（budget 热读与 flushBatch 同源）；账本同 hash 幂等拒绝也算
     // 已投递（批已在账/已销账，重放由账本承接）——两种结局统一补标。
@@ -801,6 +828,37 @@ export class SubagentService {
       `[subagents] E1 sync batch recovery: re-notified ${members.length} member(s) (ledger accepted=${accepted})`,
       { ids: members.map((m) => m.id) },
     );
+    return "dispatched";
+  }
+
+  /** [v2 D4] 注册 agent_settled 有界重扫（幂等：settledRescanState 非 null 不叠加注册
+   *  ——E1 现仅 session_start 单调用点，守卫是防第二入口引入时的注册叠加断言面）。
+   *  每次 settled 边沿重跑同一 E1 扫描（runSyncCollectRecoveryScan）：dispatched
+   *  （补发+落标完成，scan 的 warn 已留痕）或 idle（候选已被其他通路落标）→ disposed；
+   *  累计 SETTLED_RESCAN_LIMIT 次仍在等 → disposed + debug 留痕（后续事件零处理，下次
+   *  session_start 再收敛）。
+   *  pi.on 无 off（0.84.4 实装）——disposed 标志包装兑现退订（scheduler extension
+   *  index.ts subscribeSettled 同款先例）。P-settled 定谳（0.84.4 dist 实装证据）：
+   *  pi.on 为 per-extension 列表分发——loader.js `on()` 把 handler push 进
+   *  extension.handlers.get(event) 数组（非覆盖），runner.js `emit()` 对全部
+   *  extension 的全部 handler 逐一 await；故本注册与 ledger host 经
+   *  piAdapter.onAgentSettled 注册的 settled 分发互不干扰，无需降级并入 host 链。 */
+  private armSettledRescan(): void {
+    if (this.settledRescanState !== null) return;
+    const state = { disposed: false, scans: 0 };
+    this.settledRescanState = state;
+    this.pi?.on?.("agent_settled", () => {
+      if (state.disposed) return;
+      state.scans += 1;
+      const outcome = this.runSyncCollectRecoveryScan();
+      if (outcome === "waiting" && state.scans < SETTLED_RESCAN_LIMIT) return;
+      state.disposed = true;
+      if (outcome === "waiting") {
+        logger.debug(
+          `[subagents] E1 settled rescan: reached limit (${SETTLED_RESCAN_LIMIT}) with member(s) still running, disposed until next session_start`,
+        );
+      }
+    });
   }
 
   /** E1 末条 entry 终态快照 → BgNotifyRecord（补发成员；sync 仅 one-shot，round/

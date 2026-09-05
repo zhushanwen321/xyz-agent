@@ -72,13 +72,16 @@ graph TD
 |---|------|------|------|
 | 1 | W1：`recoverOrphanRecords` 参数为追加式第二参 `(rootSessionFilter?, mainSessionFile?)`，非设计 D3 字面的「与 recoverEntryOnlyOrphans 同款 mainSessionFile 前置」——领地外 record-store.test.ts（7 处）与 record-store-orphan-revive.test.ts（3 处）既有单参调用，前置会使 rootSessionId 被误读为文件路径；追加式既有调用面零改动且行为等价（undefined 时 merge 无源，与旧版一致） | 合理偏差（签名细节，语义符合 D3） | 接受，设计措辞以「追加式传参」为准 |
 | 2 | W1：merge 落点在 `finalizeOrphanRecord` 入口统一（覆盖 chatMode 分流 / IO 保守 / 终态覆写三分支），设计 D3 明示 chatMode 分支、未明示 IO-error 保守分支——该分支同样落 resumable entry，覆写语义同构，入口统一比逐分支选择性 merge 简单 | 合理偏差（超设计最小面的同构扩展） | 接受 |
+| 3 | W1 遗留 typecheck 错误（mergeOrphanLastEntry model 返回 string\|undefined vs SubagentRecord.model 非可选，vitest 不查类型未暴露），W2 轮编排者授权定向修复：`?? ""` 类型收尾（运行时不可达，两侧实参恒 string），typecheck exit 0 | 缺陷修复（非偏差） | 已修（W2 commit 内） |
+| 4 | W2：修复测试文件既有 logger mock 死路径（vi.mock 相对路径解析到不存在的模块，静默失效；D4 上限用例需断言 debug 留痕才暴露）——改为正确相对路径后 loggerMock 真正接管，既有 10 用例复跑全绿 | 合理偏差（领地内既有缺陷顺手修，非静默） | 接受 |
+| 5 | P-settled 定谳结论：pi dist extension 事件分发为**列表分发**（loader.js:233-238 handlers.push + runner.js:623-653 逐一 await），多次 pi.on 互不干扰——设计 D4 主路径实施，降级路径（并入 ledger host 分发链）未触发 | 探针定谳（非偏差） | 主路径成立 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
 | W1 | committed | 1（首轮绿） | 全量 3110 passed / 9 skipped（基线 3106 + 新增 4：kill-9 同构主用例 / async 对照 / 豁免路径 / P-rebuild）；主 agent 复跑核实 |
-| W2 | pending | 0 | — |
+| W2 | committed | 1（首轮绿 + 1 轮定向类型修复） | typecheck exit 0 + 全量 3112 passed / 9 skipped（+2：延迟闭合 / 上限 disposed）；P-settled 定谳列表分发（偏差 #5）；主 agent 复跑核实 |
 | W3 | pending | 0 | — |
 | W4 | pending | 0 | — |
 
