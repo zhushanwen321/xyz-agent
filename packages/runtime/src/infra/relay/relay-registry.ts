@@ -29,6 +29,7 @@ import {
 import { findPiExecutable } from '../pi/find-pi-executable.js'
 import { buildOutboundChildEnv } from '../spawn-env.js'
 import { createPiRelayLog, type PiSessionLog } from '../logger.js'
+import { toErrorMessage } from '../../utils/errors.js'
 import { RelayTee } from './relay-tee.js'
 import { getRelayChildrenDir, getRelayPidFilePath } from './relay-paths.js'
 
@@ -105,7 +106,7 @@ function writeFrame(conn: Socket, frame: Record<string, unknown>): void {
     conn.write(`${JSON.stringify(frame)}\n`)
   // eslint-disable-next-line taste/no-silent-catch -- 连接已死时丢帧是正确降级（丢的只是本连接转发帧，清理由 close/error 路径兜底）；事件回调内无调用方可传播，降级 debug 防日志噪声
   } catch (e) {
-    console.debug('[relay] frame write failed (connection half-closed or dead):', e instanceof Error ? e.message : e)
+    console.debug('[relay] frame write failed (connection half-closed or dead):', toErrorMessage(e))
   }
 }
 
@@ -290,7 +291,7 @@ export class RelayRegistry {
           })
         } catch (e) {
           // child stdin 已 destroyed：丢帧降级（子进程生命周期由 exit 帧链路接管），事件回调内无调用方可传播
-          console.debug(`[relay] stdin write threw (child stream destroyed) recordId=${entry.recordId}:`, e instanceof Error ? e.message : e)
+          console.debug(`[relay] stdin write threw (child stream destroyed) recordId=${entry.recordId}:`, toErrorMessage(e))
         }
       }
     })

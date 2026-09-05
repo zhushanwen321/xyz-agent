@@ -58,8 +58,8 @@ try {
 const STREAM_WRITE_RE = /\b(conn|socket|sock|probe|stdin|stdout|stderr)[?!]?\.(write|end)\s*\(/
 /** socket 接收入口定义：handleConnection(conn: Socket) 等形态。 */
 const CONN_ENTRY_RE = /(\w+)\((\w+):\s*(?:net\.)?Socket\b/
-/** try 开块（R1 豁免窗口）。 */
-const TRY_RE = /^\s*(?:\/\/[^\n]*\n)?\s*try\s*\{/
+/** try 开块（R1 豁免窗口；逐行测试，跨行注释形态不参与匹配）。 */
+const TRY_RE = /^\s*try\s*\{/
 /** readline interface 创建：const rl = createInterface( 形态。 */
 const CREATE_INTERFACE_RE = /\b(?:const|let)\s+(\w+)\s*=\s*createInterface\s*\(/
 
@@ -81,6 +81,12 @@ function collectTsFiles(dir, out = []) {
 function isCommentLine(line) {
   const t = line.trimStart()
   return t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')
+}
+
+/** 文件内存在 `<var>.on('error'` listener 的判定（R2/R4 共用；acceptOnce 时同认
+ *  `.once('error'`——R2 现行不认 once，该不对称是显式参数而非藏着的形态差异）。 */
+function fileHasErrorListener(lines, varName, { acceptOnce = false } = {}) {
+  return lines.some((l) => !isCommentLine(l) && (l.includes(`${varName}.on('error'`) || (acceptOnce && l.includes(`${varName}.once('error'`))))
 }
 
 const violations = []
@@ -112,16 +118,16 @@ for (const file of files) {
   })
 
   // R2：socket 接收入口必须挂 error listener
-  const entryDefs = new Map()
-  lines.forEach((line, i) => {
+  const entryDefs = new Set()
+  lines.forEach((line) => {
     if (isCommentLine(line)) return
     const m = line.match(CONN_ENTRY_RE)
     if (!m) return
     if (!/Connection/i.test(m[1])) return
-    entryDefs.set(m[2], i)
+    entryDefs.add(m[2])
   })
-  for (const [varName] of entryDefs) {
-    const hasErrorListener = lines.some((l) => !isCommentLine(l) && l.includes(`${varName}.on('error'`))
+  for (const varName of entryDefs) {
+    const hasErrorListener = fileHasErrorListener(lines, varName)
     if (!hasErrorListener) {
       violations.push(
         `${rel}：定义了 socket 接收入口但未挂 \`${varName}.on('error'\`——对端 RST（ECONNRESET）时 EventEmitter 无 listener 直接 throw → uncaughtException → 整机 shutdown。恢复动作：入口首行挂 error listener（destroy + warn，清理由 close 路径兜底，参照 relay-registry handleConnection）`,
@@ -137,7 +143,7 @@ for (const file of files) {
     if (m) rlVars.add(m[1])
   }
   for (const rlVar of rlVars) {
-    const hasErrorListener = lines.some((l) => !isCommentLine(l) && (l.includes(`${rlVar}.on('error'`) || l.includes(`${rlVar}.once('error'`)))
+    const hasErrorListener = fileHasErrorListener(lines, rlVar, { acceptOnce: true })
     if (!hasErrorListener) {
       violations.push(
         `${rel}：\`const ${rlVar} = createInterface(...)\` 但未挂 \`${rlVar}.on('error'\`——readline 把 input 流 error 转发到 interface 实例 re-emit，无 listener 直接 throw → uncaughtException（conn 层 listener 挡不住，2026-09-04 事故审计实测）。恢复动作：\`${rlVar}.on('error', () => {})\` 吞转发（真实处置归 conn 层 listener）`,
