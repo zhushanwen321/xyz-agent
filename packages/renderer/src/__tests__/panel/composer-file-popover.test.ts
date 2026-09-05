@@ -5,6 +5,10 @@
  * - U27 CommandPopover type='file' 渲染候选（DOM body 含文件名 button）
  * - U28 CommandPopover file 候选空 → PopoverContent 不渲染
  * - U29 file 候选含目录项 → 图标 folder（G16 映射验证）
+ * - U33 sid A→B 切换无残留（ADR-0049 回归）
+ * - LP 组 landing cwd 路（u5，landing-composer-session-file-symbols G1/D2）：
+ *   无 sessionId + cwd 有值 → open-fetch 边沿拉取渲染候选；拉取失败降级空候选
+ *   （浮层不渲染、无 unhandled rejection）；panel session 路用例全部保持
  * - U30 AddMenuPopover 有 session → 含「文件」「命令」，不含「引用」
  * - U31 AddMenuPopover 无 session（landing）→ 不含「文件」「引用」，含「命令」
  * - U32 Composer onAddSelect('file') → cmdType='file', cmdOpen=true
@@ -24,6 +28,13 @@ import { createPinia, setActivePinia } from 'pinia'
 const mockLoad = vi.fn()
 vi.mock('@/composables/features/search/useFileSearch', () => ({
   useFileSearch: () => ({ load: (...args: unknown[]) => mockLoad(...args) }),
+}))
+
+// open-fetch 直接 import composer domain（landing cwd 通道，u4）——mock 之隔离真实 WS 通路
+// （照 command-popover-symbols-format-age.test.ts 同目录先例）
+const getFileCandidatesByCwdMock = vi.hoisted(() => vi.fn())
+vi.mock('@/api/domains/composer', () => ({
+  getFileCandidatesByCwd: (...args: unknown[]) => getFileCandidatesByCwdMock(...args),
 }))
 
 import CommandPopover from '@/components/panel/CommandPopover.vue'
@@ -139,6 +150,68 @@ it('U33 sid A→B 切换后 B 的候选不显示 A 残留（ADR-0049 回归）',
   expect(btnsA2.some((b) => b.textContent?.includes('b.ts'))).toBe(false)
 
   wrapper.unmount()
+})
+
+// ── landing cwd 路（u5：无 sessionId + cwd 有值，$ 候选边沿拉） ──────────────────────
+
+describe('landing cwd 路（LP 组，u5 G1/D2）', () => {
+  let wrapper: ReturnType<typeof mount> | null = null
+
+  beforeEach(() => {
+    // open-fetch 的 1s 节流是模块级真实时钟（跨用例共享）——只 fake Date（flushPromises
+    // 依赖的 setImmediate/setTimeout 保持真实），用例间推进时钟跳出节流窗口
+    vi.useFakeTimers({ toFake: ['Date'] })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    wrapper?.unmount()
+    wrapper = null
+    document.body.innerHTML = ''
+  })
+
+  it('LP1 无 sessionId + cwd 有值 → open 边沿按 cwd 拉取，浮层渲染文件候选行', async () => {
+    getFileCandidatesByCwdMock.mockResolvedValueOnce([
+      { path: 'landing-main.ts', name: 'landing-main.ts', type: 'file' },
+    ])
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: false, type: 'file', cwd: '/tmp/landing-proj' },
+    })
+    await nextTick()
+    // 关闭态不预拉（open-fetch 仅 false→true 边沿触发）
+    expect(getFileCandidatesByCwdMock).not.toHaveBeenCalled()
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+    expect(getFileCandidatesByCwdMock).toHaveBeenCalledTimes(1)
+    expect(getFileCandidatesByCwdMock).toHaveBeenCalledWith('/tmp/landing-proj')
+    // 拉取结果渲染进浮层（用户可见 DOM）
+    const btn = Array.from(document.body.querySelectorAll('.cmd-row')).find((b) =>
+      b.textContent?.includes('landing-main.ts'),
+    )
+    expect(btn).toBeDefined()
+  })
+
+  it('LP2 拉取失败（mockRejectedValue）→ 降级空候选：浮层不渲染、无 unhandled rejection', async () => {
+    // 跳出 LP1 拉取留下的 1s 节流窗口（模块级节流，不推进时钟则本用例边沿被节流命中）
+    vi.advanceTimersByTime(1001)
+    getFileCandidatesByCwdMock.mockRejectedValueOnce(
+      Object.assign(new Error('cwd not found'), { code: 'not_found' }),
+    )
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: false, type: 'file', cwd: '/deleted-dir' },
+    })
+    await nextTick()
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+    expect(getFileCandidatesByCwdMock).toHaveBeenCalledTimes(1)
+    // 失败 → 降级空候选（§3.1 失败路径）：浮层不渲染；rejection 被 open-fetch catch，
+    // 不冒泡为 unhandled rejection（vitest 默认对 unhandled rejection 判失败，用例通过即无）
+    expect(document.body.querySelectorAll('.cmd-row')).toHaveLength(0)
+    // 本仓 reka-ui 版本 wrapper 属性为 data-reka-*（空选择器 data-radix-* 断言会空洞通过）
+    expect(document.body.querySelector('[data-reka-popper-content-wrapper]')).toBeNull()
+  })
 })
 
 // ── AddMenuPopover ──────────────────────────────────────────────────

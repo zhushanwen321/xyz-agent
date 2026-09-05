@@ -20,12 +20,17 @@
     <RetryIndicator :state="retryState" />
     <CompactQueueBadge :session-id="sessionId" />
     <!-- 命令浮层（§2d @/#//）：anchor = composer-box（slot），reka-ui Popover portal body。
-         composer-box 内 focus 算 inside 不触发 dismiss，键盘路由见 onKeydown -->
+         composer-box 内 focus 算 inside 不触发 dismiss，键盘路由见 onKeydown。
+         cwd：landing 态 $ 候选的 cwd 通道（landing-composer-session-file-symbols D2；
+         panel 有 sid 不消费。flow.currentCwd 是普通对象内嵌套 ComputedRef，模板不自动
+         解包，须显式 .value；可选链 + ?? null 兑容无 currentCwd 字段的旧 mock/flow 形态，
+         缺失即无 cwd 不弹，与 S4b 空态语义一致） -->
     <CommandPopover
       ref="commandPopoverRef"
       v-model:open="cmdOpen"
       :type="cmdType"
       :session-id="sessionId ?? undefined"
+      :cwd="flow.currentCwd?.value ?? null"
       :variant="variant"
       :project-skills="landingProjectSkills"
       :global-skills="landingGlobalSkills"

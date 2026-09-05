@@ -8,8 +8,9 @@
  * 运行：cd packages/runtime && npx vitest run test/file-service.test.ts
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { READ_TIMEOUT_MS } from '../src/services/file-service.js'
+import { READ_TIMEOUT_MS, FileService, type FileServiceOptions } from '../src/services/file-service.js'
 import { FileError } from '../src/services/file-error.js'
+import type { IFileExecutor, FsEntry } from '../src/services/ports/file-executor.js'
 
 describe('FileService · F6 文件操作超时', () => {
   beforeEach(() => {
@@ -161,5 +162,103 @@ describe('FileService · F6 文件操作超时', () => {
     await expect(promise1).rejects.toThrow('timeout-1')
     await expect(promise2).rejects.toThrow('timeout-2')
     await expect(promise3).rejects.toThrow('timeout-3')
+  })
+})
+
+/**
+ * searchFilesInCwd cwd 路用例（u2-runtime，landing `$` 候选数据通路）。
+ *
+ * mock 策略照 file-service-ignore-cache.test.ts 范式（IFileExecutor + ISessionService
+ * 构造注入，纯 mock 不触真实 fs）。覆盖验收条款：
+ * - 合法 cwd 返回 files（全量递归 + sortNodes 排序）
+ * - cwd 不存在（stat ENOENT）/ 非目录（stat type='file'）→ FileError('not_found')
+ *   结构化失败（设计 D6 准入边界，不做白名单）
+ * - session 路等价回归：searchFiles('s1') ≡ searchFilesInCwd(cwd)（薄包装行为不变），
+ *   且 session 不存在仍抛 session_not_found（requireCwd 保留在包装层）
+ */
+describe('FileService · searchFilesInCwd cwd 路 + searchFiles 薄包装等价回归', () => {
+  const executor = { listDir: vi.fn(), stat: vi.fn(), readFile: vi.fn() }
+  const sessionService = { getSummary: vi.fn() }
+
+  const svc = () =>
+    new FileService({
+      sessionService: sessionService as unknown as FileServiceOptions['sessionService'],
+      executor: executor as unknown as IFileExecutor,
+    })
+
+  const enoent = (): Error => Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+
+  /** /repo stat 目录命中，其余（.gitignore 等）ENOENT → 空 matcher，不读文件。 */
+  const statRepoDir = (p: string): Promise<{ type: 'dir'; size: number; mtimeMs: number }> =>
+    p === '/repo' ? Promise.resolve({ type: 'dir', size: 0, mtimeMs: 1 }) : Promise.reject(enoent())
+
+  /** 固定小目录树：顶层 b.ts + src/ + a.ts，src/ 下 x.ts。 */
+  const listRepo = async (p: string): Promise<FsEntry[]> => {
+    if (p === '/repo') {
+      return [
+        { name: 'b.ts', type: 'file' },
+        { name: 'src', type: 'dir' },
+        { name: 'a.ts', type: 'file' },
+      ]
+    }
+    if (p === '/repo/src') return [{ name: 'x.ts', type: 'file' }]
+    return []
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    sessionService.getSummary.mockReturnValue({ cwd: '/repo' })
+  })
+
+  it('cwd 路合法目录：返回扁平 FileNode[]（dir 在前 + name 降序，子目录递归）', async () => {
+    executor.stat.mockImplementation(statRepoDir)
+    executor.readFile.mockRejectedValue(enoent())
+    executor.listDir.mockImplementation(listRepo)
+
+    const files = await svc().searchFilesInCwd('/repo')
+
+    // sortNodes：dir 在前；同类型 name 降序（x.ts > b.ts > a.ts）
+    expect(files.map((n) => n.path)).toEqual(['src', 'src/x.ts', 'b.ts', 'a.ts'])
+    expect(files.every((n) => !n.path.startsWith('/'))).toBe(true) // path 相对 cwd，无前导斜杠
+  })
+
+  it('cwd 不存在（stat ENOENT）→ FileError("not_found")，且不进入递归（准入先行）', async () => {
+    executor.stat.mockRejectedValue(enoent())
+
+    await expect(svc().searchFilesInCwd('/gone')).rejects.toMatchObject({
+      name: 'FileError',
+      code: 'not_found',
+    })
+    expect(executor.listDir).not.toHaveBeenCalled()
+  })
+
+  it('cwd 是文件非目录（stat type=file）→ FileError("not_found")', async () => {
+    executor.stat.mockResolvedValue({ type: 'file', size: 3, mtimeMs: 1 })
+
+    await expect(svc().searchFilesInCwd('/repo')).rejects.toMatchObject({
+      name: 'FileError',
+      code: 'not_found',
+    })
+  })
+
+  it('session 路等价回归：searchFiles("s1") 与 searchFilesInCwd("…cwd") 结果一致（薄包装行为不变）', async () => {
+    executor.stat.mockImplementation(statRepoDir)
+    executor.readFile.mockRejectedValue(enoent())
+    executor.listDir.mockImplementation(listRepo)
+
+    const service = svc()
+    const viaSession = await service.searchFiles('s1')
+    const viaCwd = await service.searchFilesInCwd('/repo')
+    expect(viaSession).toEqual(viaCwd)
+    expect(viaSession.map((n) => n.path)).toEqual(['src', 'src/x.ts', 'b.ts', 'a.ts'])
+  })
+
+  it('session 路回归：session 不存在仍抛 session_not_found（requireCwd 保留在包装层）', async () => {
+    sessionService.getSummary.mockReturnValue(undefined)
+
+    await expect(svc().searchFiles('sX')).rejects.toMatchObject({
+      name: 'FileError',
+      code: 'session_not_found',
+    })
   })
 })

@@ -53,15 +53,14 @@ export function formatAge(ts: number, now = Date.now()): string {
  * session 候选派生（G2）：全量 session（跨 cwd）按 lastActiveAt 降序，
  * query 按 label/id 子串过滤（大小写不敏感——id 是 uuid 子串也要能命中），
  * hidden session 排除（与 sidebar 展示口径一致）。
- * landing 态（hasSessionId=false）返回空——设计 out-of-scope：无活跃 session 不弹 # 浮层。
+ * landing/panel 统一「有数据就列」（D1 删 hasSessionId 门：sessionStore 启动即常驻，
+ * landing 也直接列；D7：不做 landing 特殊过滤，跨 cwd 全量口径不变）。
  */
 export function buildSessionCandidates(
   sessions: SessionSummary[],
   query: string,
-  hasSessionId: boolean,
   now = Date.now(),
 ): SymbolCandidate[] {
-  if (!hasSessionId) return []
   const q = query.trim().toLowerCase()
   return sessions
     .filter((s) => !s.hidden)

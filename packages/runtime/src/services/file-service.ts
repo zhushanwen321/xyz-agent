@@ -187,7 +187,23 @@ export class FileService implements IFileService {
   }
 
   /**
-   * composer `#` 文件候选：全量递归当前 cwd（受 ignore + 深度上限 + 结果数上限）。
+   * composer `$` 文件候选（session 路）：薄包装 = requireCwd + 核心 searchFilesInCwd。
+   * session 在此链路只是 cwd 的定位器（设计 §2.4：requireCwd 后全部逻辑以 cwd 为轴），
+   * 与 landing cwd 路（file.search.cwd → searchFilesInCwd）共用同一扫描实现，无旁路。
+   * @throws FileError('session_not_found') —— session 不存在或无 cwd 抛（其余语义同核心方法）
+   */
+  async searchFiles(sessionId: string, showIgnored?: boolean): Promise<FileNode[]> {
+    const cwd = this.requireCwd(sessionId)
+    return this.searchFilesInCwd(cwd, showIgnored)
+  }
+
+  /**
+   * composer `$` 文件候选核心：全量递归给定 cwd（受 ignore + 深度上限 + 结果数上限）。
+   * landing cwd 路（file.search.cwd）与 panel session 路（file.search → searchFiles 薄包装）
+   * 共用本实现，扫描能力（ignore / 深度 8 / DoS 5000 / 并发 16）无旁路。
+   *
+   * cwd 准入边界（设计 D6）：不做目录白名单——cwd 不存在（stat ENOENT）或非目录
+   * （stat type !== 'dir'）→ FileError('not_found') 结构化失败（前端降级空候选）。
    *
    * 与 listTree 的关键差异（全量递归场景的安全要求）：
    * - **全量递归**（listTree 仅 2 层），深度上限 `MAX_SEARCH_DEPTH`（根 cwd=depth 0）
@@ -210,10 +226,16 @@ export class FileService implements IFileService {
    *   超限仓库（>5000 命中）截断成员随并发调度而异，为已声明的可接受范围。
    *
    * 返回扁平 FileNode[]（非嵌套树，给候选列表用）。排序同 sortNodes（dir 在前 + name 降序）。
-   * @throws FileError('session_not_found') —— 仅 session 不存在抛（其余 fs 错误 per-dir 容错）
+   * @throws FileError('not_found' | 'permission_denied' | 'timeout') —— cwd 不存在或非目录抛
+   *   not_found；准入 stat 经 callFs，EACCES/EPERM → permission_denied、超时 → timeout；
+   *   其余 fs 错误（递归期）per-dir 容错不抛
    */
-  async searchFiles(sessionId: string, showIgnored?: boolean): Promise<FileNode[]> {
-    const cwd = this.requireCwd(sessionId)
+  async searchFilesInCwd(cwd: string, showIgnored?: boolean): Promise<FileNode[]> {
+    // cwd 准入（设计 D6）：stat 校验目录存在性——ENOENT 经 callFs 分类为 not_found；非目录显式 not_found
+    const stat = await this.callFs(() => this.opts.executor.stat(cwd))
+    if (stat == null || stat.type !== 'dir') {
+      throw new FileError('not_found', `cwd 不存在或不是目录: ${cwd}`)
+    }
     const matcher = await this.loadMatcher(cwd)
     const showIgn = showIgnored ?? false
     const result: FileNode[] = []

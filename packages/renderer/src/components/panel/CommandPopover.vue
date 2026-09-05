@@ -89,7 +89,7 @@ import { useI18n } from 'vue-i18n'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
-import { iconKeyForCommand, filterAndSortFileCandidates } from '@xyz-agent/core'
+import { iconKeyForCommand, filterAndSortFileCandidates, toFileCandidates } from '@xyz-agent/core'
 import { SLASH_COMMAND_SOURCE_KEY } from './command-popover-source'
 import { buildSessionCandidates, buildSubagentCandidates } from './command-popover-symbols'
 import { useCommandPopoverOpenFetch } from './command-popover-open-fetch'
@@ -109,6 +109,9 @@ const props = defineProps<{
   type: CmdType
   /** session 通道订阅键（D8：session.commands 带 sessionId，走 events.on(sessionId)） */
   sessionId?: string
+  /** landing 态当前选定目录（Composer 传 flow.currentCwd；panel 态有 sessionId 不消费）。
+   *  $ file 路 landing（无 sid）按 cwd 边沿拉候选（open-fetch D2/D3）；无 cwd 无候选源不弹。 */
+  cwd?: string | null
   /** composer 形态：landing（新建任务空态）vs panel（对话态）。ADR-0050：slash 命令源按 variant 分支。
    *  landing 合并 globalSkills + projectSkills；panel 用 commandStore + compact。默认 'panel'。 */
   variant?: ComposerVariant
@@ -148,6 +151,8 @@ const { t } = useI18n()
 const commandStore = useCommandStore()
 /** file 候选加载（挂载 / 切 session 拉取，store 缓存幂等——ADR-0049；见 command-popover-file-candidates.ts） */
 const { fileCandidates } = useCommandPopoverFileCandidates(toRef(props, 'sessionId'))
+/** landing cwd 路 $ 候选（无 sid 时 open-fetch 边沿拉取结果，D2；panel 有 sid 走上方 fileCandidates） */
+const cwdFileCandidates = ref<ReturnType<typeof toFileCandidates>>([])
 // 四符号体系候选源：# sessionStore（sidebar 同款跨 cwd 全量）/ @ subagentStore（per-session 分区）
 const sessionStore = useSessionStore()
 const subagentStore = useSubagentStore()
@@ -219,8 +224,10 @@ interface CmdItem {
 
 const items = computed<CmdItem[]>(() => {
   if (props.type === 'file') {
+    // 数据源分路（D2）：panel（有 sid）= fileCandidates hook（store 缓存）；landing（无 sid）= cwd 路 ref
+    const source = props.sessionId ? fileCandidates.value : cwdFileCandidates.value
     const fq = (props.query ?? '').trim()
-    const sorted = filterAndSortFileCandidates(fileCandidates.value, fq)
+    const sorted = filterAndSortFileCandidates(source, fq)
     return sorted.map((f) => {
       // dirPath：path 去 basename 段的父目录（供第二行展示）；根目录文件 → ''
       const path = f.path ?? ''
@@ -239,8 +246,8 @@ const items = computed<CmdItem[]>(() => {
     })
   }
   if (props.type === 'session') {
-    // # session 候选（G2）：sessionStore 全量跨 cwd；landing 态（无 sessionId）纯函数返回空
-    return buildSessionCandidates(sessionStore.list, props.query ?? '', !!props.sessionId)
+    // # session 候选（G2/D1/D7）：sessionStore 全量跨 cwd 常驻，landing/panel 统一「有数据就列」
+    return buildSessionCandidates(sessionStore.list, props.query ?? '')
   }
   if (props.type === 'subagent') {
     // @ subagent 候选（G3）：当前 session 分区 + 固定尾部「新建」项；landing 态返回空
@@ -356,13 +363,18 @@ watch(
 
 /**
  * [打开主动拉]（U3 renderer 部分 + @ subagent 候源拉取）：浮层 open false→true 边沿按
- * type 分路拉（slash → getCommands 回填 / subagent → loadSubagents），1s 节流。
- * 实现在 command-popover-open-fetch.ts（行数约束拆分）。
+ * type 分路拉（slash → getCommands 回填 / subagent → loadSubagents / file landing → cwd 通道，
+ * D2/D3），1s 节流。实现在 command-popover-open-fetch.ts（行数约束拆分）。
  */
 useCommandPopoverOpenFetch({
   open: () => props.open,
   type: () => props.type,
   sessionId: () => props.sessionId,
+  cwd: () => props.cwd,
+  // landing cwd 路 $ 候选：raw FileNode[] → 候选形状（同 file-candidates hook 映射）→ 本地 ref
+  onCwdFileCandidates: (nodes) => {
+    cwdFileCandidates.value = toFileCandidates(nodes)
+  },
 })
 
 defineExpose({ handleKeydown })

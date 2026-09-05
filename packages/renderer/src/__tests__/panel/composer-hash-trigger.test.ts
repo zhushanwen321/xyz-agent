@@ -8,7 +8,8 @@
  * - U1-U6 ComposerInput 触发检测 emit 层：# → session-trigger / $ → file-trigger /
  *   @ → subagent-trigger（空格/行首 + 符号 + 非空白 → 触发；遇空格 → null 终止）
  * - U7-U9 CommandPopover file 分支 query 过滤 + 路径展示（$ 迁移后行为不变）
- * - S 组 session 浮层：sessionStore 候选/排序/两行展示/过滤/landing 空
+ * - S 组 session 浮层：sessionStore 候选/排序/两行展示/过滤；landing 有候选（S4 翻转：D1 删
+ *   hasSessionId 门，session 候选与目录/sessionId 无关，landing-composer-session-file-symbols G2）
  * - A 组 subagent 浮层：store 候选/新建项/选中插 chip/打开主动拉
  * - SL 组 slash 打开主动拉：open 边沿触发 session.getCommands + 节流
  * - B 组 bash 短路：suppressTriggers 下四路全 null；Composer wiring 下浮层不开
@@ -360,15 +361,19 @@ describe('CommandPopover session 候选（S 组，# session 语义）', () => {
     expect(rows[0]?.textContent ?? '').toContain('alpha 设计讨论')
   })
 
-  it('S4 landing 态（无 sessionId）候选为空 → 浮层不渲染', async () => {
+  it('S4 landing 态（无 sessionId）+ sessionStore 有数据 → # 浮层渲染候选行（D1 删门：session 候选与目录/sessionId 无关）', async () => {
     seedSessions()
     wrapper = mount(CommandPopover, {
       attachTo: document.body,
       props: { open: true, type: 'session' },
     })
     await nextTick()
-    expect(bodyRows()).toHaveLength(0)
-    expect(document.body.querySelector('[data-radix-popper-content-wrapper]')).toBeNull()
+    // landing（无 sessionId）与 panel 同源同列（G2/S4a：常驻 sessionStore 直接列，无拉取无门）
+    const rows = bodyRows()
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.textContent ?? '').toContain('alpha 设计讨论')
+    // PopoverContent 真实挂载（本仓 reka-ui 版本 wrapper 属性为 data-reka-*）
+    expect(document.body.querySelector('[data-reka-popper-content-wrapper]')).not.toBeNull()
   })
 })
 
