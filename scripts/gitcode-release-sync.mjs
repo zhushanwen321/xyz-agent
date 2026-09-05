@@ -160,13 +160,9 @@ function assetList(releaseJson) {
     .filter((a) => a.name);
 }
 
-/** 取预签名上传地址并 PUT 上传单个文件；返回上传耗时 ms。错误 throw（并发上传时
- * 由调用方收集汇总，不直接终止进程）。
- * PUT 走 curl 子进程：Node fetch(undici) 的 headersTimeout 默认 300s，200MB 级附件
- * 在跨境链路下必然 UND_ERR_HEADERS_TIMEOUT（2026-09-05 CI 实测），curl 无此限制。
- * 跨境单连接吞吐波动大（实测 0.09-0.4MB/s，晚高峰最低），必须配合 runSync 的
- * 多路并发使用；--max-time 1800 为单附件兜底。 */
-async function uploadAsset(tag, filePath, fileName) {
+/** 取预签名上传参数（最终 URL + curl header 参数串）。响应缺 upload_url/url 或 headers
+ * 缺 Content-Type 时就地补默认（octet-stream），错误 throw（文案与恢复指引保持不变）。 */
+async function fetchUploadTarget(tag, fileName) {
   const r = await apiCall('GET',
     `/repos/${repo}/releases/${encodeURIComponent(tag)}/upload_url?file_name=${encodeURIComponent(fileName)}`);
   if (!r.ok) {
@@ -184,7 +180,15 @@ async function uploadAsset(tag, filePath, fileName) {
     headerPairs.push(['Content-Type', 'application/octet-stream']);
   }
   const headerArgs = headerPairs.map(([k, v]) => `-H ${shellQuote(`${k}: ${v}`)}`).join(' ');
+  return { finalUrl, headerArgs };
+}
 
+/** curl PUT 到预签名地址，返回 { code, elapsedMs }。网络/超时错误 throw（文案不变）。
+ * PUT 走 curl 子进程：Node fetch(undici) 的 headersTimeout 默认 300s，200MB 级附件
+ * 在跨境链路下必然 UND_ERR_HEADERS_TIMEOUT（2026-09-05 CI 实测），curl 无此限制。
+ * 跨境单连接吞吐波动大（实测 0.09-0.4MB/s，晚高峰最低），必须配合 runSync 的
+ * 多路并发使用；--max-time 1800 为单附件兜底。 */
+async function curlPutUpload(filePath, finalUrl, headerArgs) {
   const t0 = performance.now();
   let code = '';
   try {
@@ -198,11 +202,19 @@ async function uploadAsset(tag, filePath, fileName) {
     const timedOut = e.killed === true || /curl: \(28\)/.test(String(e.stderr || ''));
     throw new Error(`curl 上传失败${timedOut ? '（30 分钟单附件超时）' : ''}：${String(e.stderr || e.message || e).slice(0, 200)}`);
   }
-  const elapsed = Math.round(performance.now() - t0);
+  return { code, elapsedMs: Math.round(performance.now() - t0) };
+}
+
+/** 取预签名上传地址并 PUT 上传单个文件；返回上传耗时 ms。错误 throw（并发上传时
+ * 由调用方收集汇总，不直接终止进程）。两阶段：fetchUploadTarget（API 限速内）→
+ * curlPutUpload（预签名直传，不占 API 配额）。 */
+async function uploadAsset(tag, filePath, fileName) {
+  const { finalUrl, headerArgs } = await fetchUploadTarget(tag, fileName);
+  const { code, elapsedMs } = await curlPutUpload(filePath, finalUrl, headerArgs);
   if (!/^2\d\d$/.test(code)) {
     throw new Error(`HTTP ${code}。恢复：429/5xx 直接重跑（脚本幂等）；403 可能是预签名地址过期（脚本每次现取，重跑即可）`);
   }
-  return elapsed;
+  return elapsedMs;
 }
 
 /** 匿名下载回读比对（走与终端用户相同的稳定直链） */
@@ -290,47 +302,19 @@ function pushRepoMirror() {
 
 /* ── 模式一：探针 ─────────────────────────────────────────── */
 
-async function runProbe({ large, skipRepo }) {
-  const results = [];
-  const record = (name, ok, detail) => {
-    results.push({ name, ok, detail });
-    console.log(`[${ok ? 'PASS' : 'FAIL'}] ${name}${detail ? ` —— ${detail}` : ''}`);
-  };
-
-  const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
-  const tag = `sync-probe-${stamp}`;
-  const tmpDir = mkdtempSync(join(tmpdir(), 'gitcode-probe-'));
-  const probeContent = randomBytes(4096).toString('hex');
-  const smallFile = join(tmpDir, 'gitcode-probe.txt');
-  writeFileSync(smallFile, probeContent);
-
-  console.log(`GitCode 写路径探针：repo=${repo}，探针 tag=${tag}${large ? '（含 200MB 大文件验证）' : ''}${skipRepo ? '（跳过仓库镜像）' : ''}\n`);
-
-  // 0. 仓库镜像（正式链路第一步：先推代码再同步附件）；git push 输出较慢属正常
-  if (!skipRepo) {
-    try {
-      const t0 = performance.now();
-      pushRepoMirror();
-      record('镜像仓库（origin 分支 + tags 强推对齐）', true, `${(Math.round(performance.now() - t0) / 1000).toFixed(1)}s`);
-    } catch (e) {
-      record('镜像仓库（origin 分支 + tags 强推对齐）', false, String(e.message || e).slice(0, 400));
-    }
-  }
-
-  let release;
+/** 探针步骤 0：仓库镜像（正式链路第一步：先推代码再同步附件）；git push 输出较慢属正常 */
+function probeRepoMirror(record) {
   try {
-    release = await createRelease({
-      tag,
-      name: 'GitCode 同步探针（跑完自动清理）',
-      body: 'gitcode-release-sync.mjs probe 自动创建，验证写路径后删除。',
-    });
-    record('创建 release（含不存在的 tag）', true, `release id=${release.id ?? '?'}`);
+    const t0 = performance.now();
+    pushRepoMirror();
+    record('镜像仓库（origin 分支 + tags 强推对齐）', true, `${(Math.round(performance.now() - t0) / 1000).toFixed(1)}s`);
   } catch (e) {
-    record('创建 release（含不存在的 tag）', false, e.message);
-    process.exit(1);
+    record('镜像仓库（origin 分支 + tags 强推对齐）', false, String(e.message || e).slice(0, 400));
   }
+}
 
-  // 1. 小文件上传 + API 侧确认在 assets 里
+/** 探针步骤 1：小文件上传 + API 侧确认在 assets 里。返回是否上传成功（供步骤 2 回读） */
+async function probeSmallUpload(record, tag, smallFile) {
   const smallName = 'gitcode-probe.txt';
   let uploaded = false;
   try {
@@ -349,29 +333,69 @@ async function runProbe({ large, skipRepo }) {
   } catch (e) {
     record('上传 4KB 附件', false, e.message);
   }
+  return uploaded;
+}
+
+/** 探针步骤 3（--large）：200MB 上传 + Range 探测总大小 */
+async function probeLargeUpload(record, tag, tmpDir) {
+  const bigName = 'gitcode-probe-200mb.bin';
+  const bigFile = join(tmpDir, bigName);
+  console.log(`生成 ${LARGE_PROBE_BYTES} bytes 测试文件…`);
+  // 内容熵无要求（只验证传输与远端大小），用固定字节填充避免 200MB 随机数生成耗时
+  writeFileSync(bigFile, Buffer.alloc(LARGE_PROBE_BYTES, 0x61));
+  try {
+    const ms = await uploadAsset(tag, bigFile, bigName);
+    record(`上传 200MB 附件（验证单文件上限）`, true, `PUT ${ms}ms（${Math.round(LARGE_PROBE_BYTES / 1024 / (ms / 1000))} KB/s，GitHub runner → GitCode 上行方向）`);
+    const p = await probeRemoteSize(tag, bigName);
+    record('Range 探测 200MB 附件', p.ok, `${p.detail}${p.total === LARGE_PROBE_BYTES ? '（与上传大小一致）' : ''}`);
+  } catch (e) {
+    record('上传 200MB 附件（验证单文件上限）', false, `${e.message}——若为大小上限拒绝，说明 222MB 安装包不能直传 GitCode Release，需回退分卷或对象存储方案`);
+  }
+}
+
+async function runProbe({ large, skipRepo }) {
+  const results = [];
+  const record = (name, ok, detail) => {
+    results.push({ name, ok, detail });
+    console.log(`[${ok ? 'PASS' : 'FAIL'}] ${name}${detail ? ` —— ${detail}` : ''}`);
+  };
+
+  const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+  const tag = `sync-probe-${stamp}`;
+  const tmpDir = mkdtempSync(join(tmpdir(), 'gitcode-probe-'));
+  const probeContent = randomBytes(4096).toString('hex');
+  const smallFile = join(tmpDir, 'gitcode-probe.txt');
+  writeFileSync(smallFile, probeContent);
+
+  console.log(`GitCode 写路径探针：repo=${repo}，探针 tag=${tag}${large ? '（含 200MB 大文件验证）' : ''}${skipRepo ? '（跳过仓库镜像）' : ''}\n`);
+
+  // 0. 仓库镜像
+  if (!skipRepo) probeRepoMirror(record);
+
+  let release;
+  try {
+    release = await createRelease({
+      tag,
+      name: 'GitCode 同步探针（跑完自动清理）',
+      body: 'gitcode-release-sync.mjs probe 自动创建，验证写路径后删除。',
+    });
+    record('创建 release（含不存在的 tag）', true, `release id=${release.id ?? '?'}`);
+  } catch (e) {
+    record('创建 release（含不存在的 tag）', false, e.message);
+    process.exit(1);
+  }
+
+  // 1. 小文件上传 + API 侧确认在 assets 里
+  const uploaded = await probeSmallUpload(record, tag, smallFile);
 
   // 2. 匿名下载回读
   if (uploaded) {
-    const v = await verifyAnonymousDownload(tag, smallName, probeContent);
+    const v = await verifyAnonymousDownload(tag, 'gitcode-probe.txt', probeContent);
     record('匿名（未登录）下载回读', v.ok, v.detail);
   }
 
-  // 3. 大文件（可选）：200MB 上传 + Range 探测总大小
-  if (large) {
-    const bigName = 'gitcode-probe-200mb.bin';
-    const bigFile = join(tmpDir, bigName);
-    console.log(`生成 ${LARGE_PROBE_BYTES} bytes 测试文件…`);
-    // 内容熵无要求（只验证传输与远端大小），用固定字节填充避免 200MB 随机数生成耗时
-    writeFileSync(bigFile, Buffer.alloc(LARGE_PROBE_BYTES, 0x61));
-    try {
-      const ms = await uploadAsset(tag, bigFile, bigName);
-      record(`上传 200MB 附件（验证单文件上限）`, true, `PUT ${ms}ms（${Math.round(LARGE_PROBE_BYTES / 1024 / (ms / 1000))} KB/s，GitHub runner → GitCode 上行方向）`);
-      const p = await probeRemoteSize(tag, bigName);
-      record('Range 探测 200MB 附件', p.ok, `${p.detail}${p.total === LARGE_PROBE_BYTES ? '（与上传大小一致）' : ''}`);
-    } catch (e) {
-      record('上传 200MB 附件（验证单文件上限）', false, `${e.message}——若为大小上限拒绝，说明 222MB 安装包不能直传 GitCode Release，需回退分卷或对象存储方案`);
-    }
-  }
+  // 3. 大文件（--large）：200MB 上传 + Range 探测总大小
+  if (large) await probeLargeUpload(record, tag, tmpDir);
 
   // 4. 清理
   deleteReleaseQuietly(release.id, tag);
