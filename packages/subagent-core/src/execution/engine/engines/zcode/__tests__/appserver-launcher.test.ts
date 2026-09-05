@@ -253,8 +253,11 @@ describe("exit 面", () => {
     const home = fs.mkdtempSync(path.join(tmpRoot, "home-"));
     const engineDataDir = fs.mkdtempSync(path.join(tmpRoot, "eng-"));
     const launcher = ensureAppServerLauncher(engineDataDir);
+    // 密封性：本测试自身可能跑在 app-server 宿主链路下（env 带 ZCODE_ENG_CLI_PATH），
+    // 不剥掉则「缺失」前置不成立，launcher 会拿到真 CLI 走正常启动路径（exit 1）而非配置错误 exit 2
+    const { ZCODE_ENG_CLI_PATH: _ambient, ...hermeticEnv } = process.env;
     const res = childProcess.spawnSync(process.execPath, [launcher], {
-      env: { ...process.env, HOME: home, ZCODE_ENG_V2_CONFIG: path.join(home, "v2.json") },
+      env: { ...hermeticEnv, HOME: home, ZCODE_ENG_V2_CONFIG: path.join(home, "v2.json") },
       encoding: "utf8",
       timeout: 15_000,
     });
