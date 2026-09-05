@@ -8,7 +8,7 @@
  *   updateFor(capturedSid)，结构性消除切 session 竞态——架构关键规则 8）。
  * - 失效类（D8：skill_missing/skill_read_failed/marker_malformed/mapping_unavailable）
  *   触发 toast（复用 useToast 模块级单例）；降级类（D6：budget_exceeded/context_window_unavailable）
- *   仅内联呈现，不 toast（场景 2③/2b② 只要求 badge 旁轻量提示）。
+ *   仅内联呈现，不 toast（场景 2③/2b② 的轻量提示要求，实施形态为消息内联提示行——impl-plan §5 R6）。
  * - 无消息锚点（clientUuid 缺省：steer/followUp 路径无 <!--xyz:msg:--> 标记）时降级为仅 toast，
  *   降级类此时也 toast（否则静默丢弃，违反「不得静默」；设计未规定该边界，取保守可用方向，
  *   见实施计划 §5 合理偏差登记）。
