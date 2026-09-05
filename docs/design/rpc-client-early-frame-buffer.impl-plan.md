@@ -54,7 +54,7 @@ graph TD
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
 | u-r1-frame-buffer | committed | 1 | 首派限流中断，接替程序重派完成；前任源码核验保留+测试修 2 处 TS 错；runtime 全量 4298 绿 |
-| u-r2-acceptance-docs | pending | 0 | — |
+| u-r2-acceptance-docs | committed | 1 | B1-B5 全 pass（B2 主判据 23/23 恒 1 sync 帧；辅② A/B 4550ms→550ms 缩短 4000ms）；文档回写 3 处；证据 /tmp/r2-accept/ |
 
 ## 7 残留风险与变更历史
 
