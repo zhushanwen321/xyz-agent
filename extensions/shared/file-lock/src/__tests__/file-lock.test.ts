@@ -136,19 +136,35 @@ describe("真实跨进程互斥（D5a/D1e 验收形态）", () => {
 		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "file-lock-xproc-"));
 		const target = path.join(tmpDir, "shared.json");
 		fs.writeFileSync(target, JSON.stringify({ n: 0 }), "utf-8");
-		try {
-			// 子进程脚本：--experimental-strip-types 直接跑 TS 源码（Node >= 22.6），
-			// 循环 50 次锁内读-改-写。exitCode 非 0 = 子进程自身失败（锁/IO 异常）。
-			const worker = `
+	try {
+		// 子进程脚本：--experimental-strip-types 直接跑 TS 源码（Node >= 22.6），
+		// 循环 50 次锁内读-改-写。exitCode 非 0 = 子进程自身失败（锁/IO 异常）。
+		// 锁获取形态：withFileLock 传 retries:0（单次 fail-fast）+ 外层 ELOCKED 固定
+		// 20ms 间隔重试自旋、30s 预算（对齐 runtime 侧 pi-settings-store.test.ts 的
+		// acquireLikePi 修复形态）——满载下临界区持有窗口可能被 OS 抢占拉长，默认
+		// fail-fast 预算会被偶发耗尽致子进程非零退出；重试预算保证合理时间内必能
+		// 拿到锁，互斥语义（lock-core 层）不受等待形态影响。
+		const worker = `
 import * as fs from "node:fs";
 import { withFileLock } from "${PKG_DIR}/src/file-lock.ts";
 const target = process.argv[2];
+async function lockedRmw() {
+	const deadline = Date.now() + 30_000;
+	for (;;) {
+		try {
+			return await withFileLock(target, async () => {
+				const cur = JSON.parse(fs.readFileSync(target, "utf-8"));
+				cur.n += 1;
+				fs.writeFileSync(target, JSON.stringify(cur), "utf-8");
+			}, { retries: 0 });
+		} catch (err) {
+			if (!err || err.code !== "ELOCKED" || Date.now() >= deadline) throw err;
+			await new Promise((r) => setTimeout(r, 20));
+		}
+	}
+}
 for (let i = 0; i < 50; i++) {
-	await withFileLock(target, async () => {
-		const cur = JSON.parse(fs.readFileSync(target, "utf-8"));
-		cur.n += 1;
-		fs.writeFileSync(target, JSON.stringify(cur), "utf-8");
-	});
+	await lockedRmw();
 }
 `;
 			// src 内相对 import 无 .ts 后缀（runtime tsc 无 allowImportingTsExtensions 的
@@ -191,5 +207,7 @@ register("./resolve-hook.mjs", import.meta.url);
 		} finally {
 			fs.rmSync(tmpDir, { recursive: true, force: true });
 		}
-	});
+		// 用例级预算须覆盖子进程 spawnSync timeout（60s，内含自旋重试预算 30s）：
+		// 文件级 20s 会在子进程合法重试期间先红——预算放宽不改变断言强度（终值精确 100）
+	}, 90_000);
 });
