@@ -43,6 +43,9 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     incrementInflight: vi.fn(),
     decrementInflight: vi.fn(),
     clearInflight: vi.fn(),
+    // [premature-timeout §5.2 D2] timeout 打标快照消费/清除（默认无打标 → take 返回空集）
+    takePrematureTimeoutIds: vi.fn(() => new Set<string>()),
+    clearPrematureTimeoutIds: vi.fn(),
     // w21：entry 载体帧喂 reducer 的接入点
     applyEntryFrame: vi.fn(),
   }

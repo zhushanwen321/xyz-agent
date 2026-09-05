@@ -862,6 +862,8 @@ export function createChatStore() {
         incrementInflight,
         decrementInflight,
         clearInflight,
+        takePrematureTimeoutIds: streamingStateMachine.takePrematureTimeoutIds,
+        clearPrematureTimeoutIds: streamingStateMachine.clearPrematureTimeoutIds,
       },
       sessionId,
       msg,
