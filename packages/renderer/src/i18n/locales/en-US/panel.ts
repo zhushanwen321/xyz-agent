@@ -301,6 +301,11 @@ export default {
     itemCount: '{count} items',
     cancel: 'Cancel queue',
   },
+  deferQueue: {
+    pendingHint: 'Send after compaction finishes',
+    cancelQueued: 'Cancel queued message',
+    submittedAwaitingDelivery: 'Submitted, awaiting delivery',
+  },
   contextChips: {
     directory: 'Directory',
     removeFromContext: 'Remove from context',

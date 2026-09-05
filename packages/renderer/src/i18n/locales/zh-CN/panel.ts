@@ -301,6 +301,11 @@ export default {
     itemCount: '{count} 条',
     cancel: '取消排队',
   },
+  deferQueue: {
+    pendingHint: '压缩结束后发送',
+    cancelQueued: '撤销排队',
+    submittedAwaitingDelivery: '已提交，等待投递',
+  },
   contextChips: {
     directory: '目录',
     removeFromContext: '从上下文移除',

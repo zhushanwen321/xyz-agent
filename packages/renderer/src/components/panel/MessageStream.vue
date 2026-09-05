@@ -84,6 +84,19 @@
       </Button>
     </div>
 
+    <!-- defer 队列 pending 气泡（session-occupancy u4b / D4 入队即显）：Virtualizer 之后的
+         文档流 block，视觉位于对话流末尾（所有已落盘消息之后）。条目按入队序排列；投递确认
+         （message_end(user) → core ① → confirmDelivery）后逐条出队转正常态（appendUser 入流，
+         条目从本区消失）。与 compacting 提示的堆叠：气泡属对话流内容，先于系统态行。 -->
+    <div v-if="pendingEntries.length > 0" class="py-1" data-testid="pending-bubble-list">
+      <PendingBubble
+        v-for="entry in pendingEntries"
+        :key="entry.id"
+        :entry="entry"
+        @remove="onRemovePending"
+      />
+    </div>
+
     <!-- 压缩中提示（瞬时态：isCompacting=true 时显示，完成后由 message.compactionSummary 持久化记录取代）。
          文档流 block（Virtualizer 之后），样式对齐 SystemNotice 横线分隔行；content-col 与对话流内容列对齐。
          ref 供 dev-only 断言：实测高度 vs COMPACTING_NOTICE_HEIGHT 常量漂移检测。 -->
@@ -191,6 +204,11 @@ import { isSubagentVirtualId, extractSubagentId, extractMainSessionId, useSubage
 import { Turn, SystemNotice, BashOutputBlock, TurnRail, ChatViewDepsKey } from '@xyz-agent/ui'
 import { useChatViewDeps } from '@/composables/panel/useChatViewDeps'
 import ForkNotice from './ForkNotice.vue'
+import PendingBubble from './message-stream/PendingBubble.vue'
+// defer 队列（u4b / D4）：pending 气泡数据源——per-session 分区只读快照（computed 内
+// peek 读 reactive 分区建立依赖，入队/确认出队/撤销实时反映；CompactQueueBadge 同款模式）。
+import { useCompactQueue } from '@/composables/panel/useCompactQueue'
+import type { QueuedMessage } from '@/composables/panel/useCompactQueue'
 import { useForkNoticeStream } from '@/composables/panel/useForkNoticeStream'
 import { useLoadMoreHistory } from '@/composables/panel/useLoadMoreHistory'
 import { useSessionActive } from '@/composables/panel/useSessionActive'
@@ -221,6 +239,15 @@ const currentMessages = computed(() => chat.getMessages(props.sessionId))
 
 /** session id（template 内多处引用：Turn :session-id / rail 等）。 */
 const sessionId = computed(() => props.sessionId)
+
+/** defer 队列 pending 条目（u4b / D4 入队即显）：per-session 分区只读快照。 */
+const deferQueue = useCompactQueue()
+const pendingEntries = computed<QueuedMessage[]>(() => deferQueue.peek(props.sessionId))
+
+/** × 撤销（未提交条目；已提交条目 UI 禁用不会触发——remove 对未知/已出队 id 本就 no-op）。 */
+function onRemovePending(id: string): void {
+  deferQueue.remove(props.sessionId, id)
+}
 
 /** 执行中 bash 瞬时态（W1 fix-chat-flow-order D2）：bashStart 置 / bashResult·错误路径清，
  *  不进 messages（执行中反馈 ephemeral 通道；run 结束后 bashExecution entry 入流承担持久语义）。 */

@@ -90,7 +90,27 @@ export interface SessionStoreLike {
  * 复用），无法闭包拿 createUseChat 的 deps，故独立定义所需子集。renderer 同名包装注入。
  */
 export interface EnsureStreamSubDeps {
-  chatApi: ChatApiPort
+  /**
+   * [u4b 收窄] handler 内 chatApi 的唯一用法是 streamSubscribe（ensureStreamSubscription
+   * 是订阅建立入口，不做 RPC）。宽→窄收窄对既有消费方结构兼容（完整 ChatApiPort 满足
+   * Pick 子集），u4b 的 submitQueuedEntry 依赖组装得以按实际用量窄化注入。
+   */
+  chatApi: Pick<ChatApiPort, 'streamSubscribe'>
+  toast: { error: (msg: string) => void }
+  t: (key: string, params?: Record<string, unknown>) => string
+  getCompactQueue: () => CompactQueueLike
+}
+
+/**
+ * [session-occupancy u4b / D5.1] submitQueuedEntry 的依赖注入（TD5 同款：模块级导出函数
+ * 拿不到 createUseChat 闭包 deps，接收显式 deps 子集；renderer flush 侧组装）。
+ */
+export interface SubmitQueuedEntryDeps {
+  /** send/steer/streamSubscribe：flush 逐条提交的全部 RPC 面（窄化注入，同上方收窄理由） */
+  chatApi: Pick<ChatApiPort, 'send' | 'steer' | 'streamSubscribe'>
+  /** chat store：send 通道挂 inflight 占位 + 透传 ensureStreamSubscription */
+  chat: ChatStoreInstance
+  sessionStore: SessionStoreLike
   toast: { error: (msg: string) => void }
   t: (key: string, params?: Record<string, unknown>) => string
   getCompactQueue: () => CompactQueueLike
@@ -400,6 +420,51 @@ export function ensureStreamSubscription(
     }
   })
   streamSubscriptions.set(sid, unsub)
+}
+
+/**
+ * [session-occupancy u4b / D5.1] defer 队列 flush 的逐条提交入口（send/steer 等价编排）。
+ *
+ * 为什么不直接复用 send()/steer()：send 的编排含 appendUser（defer 条目的入流由入队时的
+ * pending 气泡承担，重复插入会双气泡）+ pendingDirectSends 记录（rejected handler 据此回滚
+ * 乐观气泡——flush 无乐观气泡可回滚）+ addPendingSend（defer 条目无主 agent turn 占位语义）
+ * + isActive 时的 steer 路由（flush 时点路由已由队列语义决定，不容重判）；steer 的编排含
+ * pushPending 暂存（defer 条目不进 pendingBuffer——其确认走 message_end(user) ① 的队列
+ * 分区匹配，非腿 1 drainN 暂存取出）。故按 D5.1 提炼两通道的公共最小编排为本导出：
+ * - channel='send'（队首，启动新 run）：挂 inflight 占位（防确认帧被 message_end 处理序
+ *   ②「inflight>0 纯计数」误拦后漏配 ① 分区匹配，见 effects/user-delivery.ts）→
+ *   ensureStreamSubscription（订阅保障，与 send 同款）→ chatApi.send 携 clientUuid=条目 id
+ *   （D2 消歧：rejected 回带命中队列条目，兜底 handler 不重入队）。
+ * - channel='steer'（后续条目，并入当前 run）：仅 chatApi.steer——不挂占位（steer 条目
+ *   无确认配额语义，命中 ① 时不动计数）、不 pushPending（理由见上）。
+ *
+ * 占位三态闭环（挂/收/回滚）的「回滚」不在本函数：RPC reject 与 S1 窗口 rejected 两种
+ * 未投递判定的知晓方都是 flush 循环（per-entry 记账），回滚集中在 flush 侧执行
+ * （useCompactQueue.ts doFlush），本函数只负责「挂」。
+ *
+ * 错误处理：RPC 失败原样上抛（flush 侧 catch 决策留队/回滚/停止提交后续）——不 toast
+ * 不吞错（flush 的失败反馈由 useChat session.compacted handler 的 queueFlushFailed 承担）。
+ */
+export async function submitQueuedEntry(
+  sid: string,
+  entry: { id: string; text: string },
+  channel: 'send' | 'steer',
+  deps: SubmitQueuedEntryDeps,
+): Promise<void> {
+  if (channel === 'steer') {
+    await deps.chatApi.steer(sid, entry.text)
+    return
+  }
+  // 挂占位先于 RPC（乐观语义，对齐 send 的 incrementInflight 挂点）：确认帧到达时
+  // inflight>0 由 ① 分区匹配优先消费（回收占位），不被 ② 误拦。
+  deps.chat.incrementInflight(sid, 1)
+  ensureStreamSubscription(sid, deps.chat, deps.sessionStore, {
+    chatApi: deps.chatApi,
+    toast: deps.toast,
+    t: deps.t,
+    getCompactQueue: deps.getCompactQueue,
+  })
+  await deps.chatApi.send(sid, entry.text, { clientUuid: entry.id })
 }
 
 /**

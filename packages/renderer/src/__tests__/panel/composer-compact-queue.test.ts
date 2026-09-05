@@ -55,8 +55,9 @@ vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   resetNewTaskFlow: vi.fn(),
 }))
 vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
-  // chat: useCompactQueue.flush 依赖（TC15 flush 真实路径，非仅 useChat mock）
-  chat: { send: chatApiMock.send, steer: chatApiMock.steer },
+  // chat: useCompactQueue.flush 依赖（TC15 flush 真实路径，非仅 useChat mock）；
+  // [u4b] flush 经 submitQueuedEntry 编排（ensureStreamSubscription）需 streamSubscribe
+  chat: { send: chatApiMock.send, steer: chatApiMock.steer, streamSubscribe: vi.fn(() => () => {}) },
   model: { switchModel: vi.fn() },
   session: { setThinkingLevel: vi.fn(async (sessionId: string, level: string) => ({ sessionId, level })) },
   composer: { getMentionCandidates: vi.fn().mockResolvedValue([]), getFileCandidates: vi.fn().mockResolvedValue([]) },
@@ -231,22 +232,33 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
     expect(badge.text()).not.toContain('m1')
   })
 
-  it('TC15: compacted 成功（flush 清空队列）→ 队列清空 + badge 消失', async () => {
+  it('TC15: compacted 成功 → flush 提交（确认帧驱动出队）；确认出队后 badge 消失', async () => {
     const chat = useChatStore()
-    chat.setCompacting('s1', true)
     const queue = useCompactQueue()
     const wrapper = mountComposer({ sessionId: 's1' })
-    queue.enqueue('s1', 'm1')
+    const m1 = queue.enqueue('s1', 'm1')
     await wrapper.vm.$nextTick()
     expect(wrapper.find('[data-testid="compact-queue-badge"]').exists()).toBe(true)
 
-    // compacted 成功链路：flush 重放成功（send mock resolve）→ 队列清空 + 压缩态结束
+    // compacted 成功链路：flush 提交成功（send mock resolve）——[u4b] 提交 ≠ 出队（E2 退役），
+    // badge 保持（条目等确认帧）；压缩态结束
     await expect(queue.flush('s1')).resolves.toBe(true)
     chat.setCompacting('s1', false)
     await wrapper.vm.$nextTick()
 
+    expect(queue.count('s1')).toBe(1)
+    expect(wrapper.find('[data-testid="compact-queue-badge"]').exists()).toBe(true)
+
+    // 投递确认帧（core ① → confirmDelivery 出队）→ 队列清空 + badge 消失
+    chat.applyMessageEvent('s1', { type: 'message.message_end', payload: { sessionId: 's1', entry: {
+      type: 'message', id: `e-${crypto.randomUUID()}`, parentId: null, timestamp: new Date().toISOString(),
+      message: { role: 'user', content: [{ type: 'text', text: 'm1' }], timestamp: Date.now() },
+    } } })
+    await wrapper.vm.$nextTick()
+
     expect(queue.count('s1')).toBe(0)
     expect(wrapper.find('[data-testid="compact-queue-badge"]').exists()).toBe(false)
+    void m1
   })
 
   it('TC16: compacted 失败（队列保留）→ badge 仍在', async () => {

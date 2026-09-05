@@ -94,7 +94,7 @@ function emit(msg: ServerMessage): void {
 }
 
 describe('useChat session.compacted → flush 重放（compact-queued-messages W1）', () => {
-  it('TC9: compacted 成功（无 error）→ flush 重放 + 队列清空 + isCompacting 复位', async () => {
+  it('TC9: compacted 成功（无 error）→ flush 逐条提交（clientUuid 透传）+ 条目保持待确认 + isCompacting 复位', async () => {
     const chat = useChatStore()
     const { compact } = useChat()
     await compact('c-f')
@@ -108,11 +108,14 @@ describe('useChat session.compacted → flush 重放（compact-queued-messages W
     // 压缩成功广播（无 error）→ handler flush 重放
     emit({ type: 'session.compacted', payload: { sessionId: 'c-f', status: 'compacted' } })
     await vi.waitFor(() => {
-      expect(apiMock.send).toHaveBeenCalledWith('c-f', 'queued msg')
+      // [u4b / D5.1] send 等价编排：clientUuid = 条目 id 透传（S1 归属 + core ① 匹配资格）
+      expect(apiMock.send).toHaveBeenCalledWith('c-f', 'queued msg', undefined, { clientUuid: expect.any(String) })
     })
 
-    // 队列已清空 + isCompacting 复位 + flush 成功不 toast
-    expect(useCompactQueue().count('c-f')).toBe(0)
+    // [u4b] 提交 ≠ 出队（E2「成功即清队」退役）：条目保持 mode 已写等确认帧逐条出队 +
+    // isCompacting 复位 + flush 成功不 toast
+    expect(useCompactQueue().count('c-f')).toBe(1)
+    expect(useCompactQueue().peek('c-f')[0]!.mode).toBe('send')
     expect(chat.isCompacting('c-f')).toBe(false)
     expect(toastSpy.error).not.toHaveBeenCalled()
   })
