@@ -877,51 +877,68 @@ export class SessionChannel {
   private handleTelemetry(params: unknown): void {
     if (!isRecord(params)) return;
     if (params.kind === "turn.terminal") {
-      // 终态权威（A.2 ⑤）：status success/error 均算终态（旧实证：不归类挂到超时）。
-      // 归因放宽（P0-1 S5）：已落定 turn（final-frame 宽松终态先到）仍归因，
-      // 权威 status 只记录不改写落定结果（D5①——假成功的识破依据）。
-      const turn = this.lookupTurnForTerminal(extractPushSessionId(params));
-      if (turn === undefined) return;
-      const status =
-        typeof params.status === "string" ? params.status : "unknown";
-      turn.lastTerminalStatus = status;
-      // ⛔P-Z2 实证：真实 failed 终态的 errorCode/errorMessage 只在 terminal 帧携带
-      // （read/delta 拿不到）——先到/迟到都记录，消费层合成失败文案时优先采信。
-      const errorCode =
-        typeof params.errorCode === "string" ? params.errorCode : undefined;
-      const errorMessage =
-        typeof params.errorMessage === "string" ? params.errorMessage : undefined;
-      if (errorCode !== undefined || errorMessage !== undefined) {
-        turn.lastTerminalError = {
-          ...(errorCode !== undefined ? { code: errorCode } : {}),
-          ...(errorMessage !== undefined ? { message: errorMessage } : {}),
-        };
-      }
-      if (turn.settled) {
-        logger.warn(
-          `权威终态晚于落定结果到达（会话 ${turn.sessionId}，已落定 source=${
-            turn.terminal?.source
-          }）：turn.terminal status="${status}" 仅记录不改写（P0-1 D5①）`
-        );
-        return;
-      }
-      turn.settle({ status, source: "turn.terminal" });
+      this.applyTerminalTelemetry(params);
       return;
     }
     if (params.kind === "stream.chunk") {
-      // A.2 ④：stream.chunk 无文本（chunkLength 遥测）。A.5 未确认项：是否偶发
-      // 携带文本字段——保留旧实现的形态漂移兜底：带文本则当 delta 收（不变量 1）
-      const turn = this.lookupTurn(extractPushSessionId(params));
-      if (turn === undefined || turn.settled) return;
-      // 遥测到达即刷新 idle 主判定（P0-1 D1：telemetry 事件同算进展）
-      this.refreshIdle(turn);
-      for (const key of ["chunk", "text", "content"] as const) {
-        const v = params[key];
-        if (typeof v === "string" && v !== "") {
-          turn.deltas.push(v);
-          turn.callbacks.onTextDelta?.(v);
-          return;
-        }
+      this.applyStreamChunkTelemetry(params);
+    }
+  }
+
+  /** turn.terminal 遥测的吸收（含已落定 turn 的只记录路径，见 D5①）。 */
+  private applyTerminalTelemetry(params: Record<string, unknown>): void {
+    // 终态权威（A.2 ⑤）：status success/error 均算终态（旧实证：不归类挂到超时）。
+    // 归因放宽（P0-1 S5）：已落定 turn（final-frame 宽松终态先到）仍归因，
+    // 权威 status 只记录不改写落定结果（D5①——假成功的识破依据）。
+    const turn = this.lookupTurnForTerminal(extractPushSessionId(params));
+    if (turn === undefined) return;
+    const status =
+      typeof params.status === "string" ? params.status : "unknown";
+    turn.lastTerminalStatus = status;
+    this.recordTerminalError(turn, params);
+    if (turn.settled) {
+      logger.warn(
+        `权威终态晚于落定结果到达（会话 ${turn.sessionId}，已落定 source=${
+          turn.terminal?.source
+        }）：turn.terminal status="${status}" 仅记录不改写（P0-1 D5①）`
+      );
+      return;
+    }
+    turn.settle({ status, source: "turn.terminal" });
+  }
+
+  /** terminal 帧专属错误信息入账（⛔P-Z2 实证：真实 failed 终态的 errorCode/errorMessage
+   *  只在 terminal 帧携带，read/delta 拿不到——先到/迟到都记录，消费层合成失败
+   *  文案时优先采信）。二者均缺失时不挂 lastTerminalError 字段。 */
+  private recordTerminalError(
+    turn: ActiveTurn,
+    params: Record<string, unknown>
+  ): void {
+    const errorCode =
+      typeof params.errorCode === "string" ? params.errorCode : undefined;
+    const errorMessage =
+      typeof params.errorMessage === "string" ? params.errorMessage : undefined;
+    if (errorCode === undefined && errorMessage === undefined) return;
+    turn.lastTerminalError = {
+      ...(errorCode !== undefined ? { code: errorCode } : {}),
+      ...(errorMessage !== undefined ? { message: errorMessage } : {}),
+    };
+  }
+
+  /** stream.chunk 遥测的吸收（无文本遥测 + 文本字段漂移兜底）。 */
+  private applyStreamChunkTelemetry(params: Record<string, unknown>): void {
+    // A.2 ④：stream.chunk 无文本（chunkLength 遥测）。A.5 未确认项：是否偶发
+    // 携带文本字段——保留旧实现的形态漂移兜底：带文本则当 delta 收（不变量 1）
+    const turn = this.lookupTurn(extractPushSessionId(params));
+    if (turn === undefined || turn.settled) return;
+    // 遥测到达即刷新 idle 主判定（P0-1 D1：telemetry 事件同算进展）
+    this.refreshIdle(turn);
+    for (const key of ["chunk", "text", "content"] as const) {
+      const v = params[key];
+      if (typeof v === "string" && v !== "") {
+        turn.deltas.push(v);
+        turn.callbacks.onTextDelta?.(v);
+        return;
       }
     }
   }

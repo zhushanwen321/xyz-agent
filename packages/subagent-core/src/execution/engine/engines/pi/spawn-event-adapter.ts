@@ -158,6 +158,56 @@ function isExtensionUiRequest(obj: unknown): obj is ExtensionUiRequestEnvelope {
   );
 }
 
+/** 必填 string 字段提取：类型不符降级空串（字段容错——仍归类已知 method，不丢 method 信息）。 */
+function reqStr(r: Record<string, unknown>, key: string): string {
+  const v = r[key];
+  return typeof v === "string" ? v : "";
+}
+
+/** string[] 字段提取：数组剔除非字符串元素；非数组降级 onMissing（options 传 []，
+ *  widgetLines 传 undefined——两者对缺失值的载荷语义不同：前者恒挂键，后者键挂值 undefined）。 */
+function strArrayField<T extends string[] | undefined>(
+  r: Record<string, unknown>,
+  key: string,
+  onMissing: T,
+): string[] | T {
+  const v = r[key];
+  return Array.isArray(v)
+    ? v.filter((x): x is string => typeof x === "string")
+    : onMissing;
+}
+
+/** timeout 条件展开：非 number 不挂键（timeout?: number 的字段省略语义）。 */
+function optTimeout(r: Record<string, unknown>): { timeout?: number } {
+  return typeof r.timeout === "number" ? { timeout: r.timeout } : {};
+}
+
+/** placeholder 条件展开：非 string 不挂键。 */
+function optPlaceholder(r: Record<string, unknown>): { placeholder?: string } {
+  return typeof r.placeholder === "string" ? { placeholder: r.placeholder } : {};
+}
+
+/** prefill 条件展开：非 string 不挂键。 */
+function optPrefill(r: Record<string, unknown>): { prefill?: string } {
+  return typeof r.prefill === "string" ? { prefill: r.prefill } : {};
+}
+
+/** notifyType 条件展开：仅接受三种已知枚举值，其余不挂键。 */
+function optNotifyType(
+  r: Record<string, unknown>
+): { notifyType?: "info" | "warning" | "error" } {
+  const v = r.notifyType;
+  return v === "info" || v === "warning" || v === "error" ? { notifyType: v } : {};
+}
+
+/** widgetPlacement 条件展开：仅接受两种已知枚举值，其余不挂键。 */
+function optWidgetPlacement(
+  r: Record<string, unknown>
+): { widgetPlacement?: "aboveEditor" | "belowEditor" } {
+  const v = r.widgetPlacement;
+  return v === "aboveEditor" || v === "belowEditor" ? { widgetPlacement: v } : {};
+}
+
 /**
  * 从已通过 isExtensionUiRequest 守卫的 envelope 构造 ExtensionUiRequest 变体。
  *
@@ -166,6 +216,7 @@ function isExtensionUiRequest(obj: unknown): obj is ExtensionUiRequestEnvelope {
  *
  * 字段类型容错：协议字段类型不符（如 options 非数组）时，该字段降级为空数组/undefined
  *（数组类字段做元素类型过滤，剔除非字符串元素），仍归类为已知 method（不丢 method 信息）。
+ * 字段级提取/条件展开由上方字段 helper 承担，本函数只做 method 分发。
  */
 function buildExtensionUiRequest(env: ExtensionUiRequestEnvelope): ExtensionUiRequest {
   const r: Record<string, unknown> = env;
@@ -173,69 +224,58 @@ function buildExtensionUiRequest(env: ExtensionUiRequestEnvelope): ExtensionUiRe
     case "select":
       return {
         method: "select",
-        title: typeof r.title === "string" ? r.title : "",
-        options: Array.isArray(r.options)
-          ? r.options.filter((x): x is string => typeof x === "string")
-          : [],
-        ...(typeof r.timeout === "number" ? { timeout: r.timeout } : {}),
+        title: reqStr(r, "title"),
+        options: strArrayField(r, "options", []),
+        ...optTimeout(r),
       };
     case "confirm":
       return {
         method: "confirm",
-        title: typeof r.title === "string" ? r.title : "",
-        message: typeof r.message === "string" ? r.message : "",
-        ...(typeof r.timeout === "number" ? { timeout: r.timeout } : {}),
+        title: reqStr(r, "title"),
+        message: reqStr(r, "message"),
+        ...optTimeout(r),
       };
     case "input":
       return {
         method: "input",
-        title: typeof r.title === "string" ? r.title : "",
-        ...(typeof r.placeholder === "string" ? { placeholder: r.placeholder } : {}),
-        ...(typeof r.timeout === "number" ? { timeout: r.timeout } : {}),
+        title: reqStr(r, "title"),
+        ...optPlaceholder(r),
+        ...optTimeout(r),
       };
     case "editor":
       return {
         method: "editor",
-        title: typeof r.title === "string" ? r.title : "",
-        ...(typeof r.prefill === "string" ? { prefill: r.prefill } : {}),
+        title: reqStr(r, "title"),
+        ...optPrefill(r),
       };
     case "notify":
       return {
         method: "notify",
-        message: typeof r.message === "string" ? r.message : "",
-        ...(r.notifyType === "info" || r.notifyType === "warning" || r.notifyType === "error"
-          ? { notifyType: r.notifyType }
-          : {}),
+        message: reqStr(r, "message"),
+        ...optNotifyType(r),
       };
     case "setStatus":
       return {
         method: "setStatus",
-        statusKey: typeof r.statusKey === "string" ? r.statusKey : "",
+        statusKey: reqStr(r, "statusKey"),
         statusText: typeof r.statusText === "string" ? r.statusText : undefined,
       };
-    case "setWidget": {
-      const placement = r.widgetPlacement;
-      const widgetLines = Array.isArray(r.widgetLines)
-        ? r.widgetLines.filter((x): x is string => typeof x === "string")
-        : undefined;
+    case "setWidget":
       return {
         method: "setWidget",
-        widgetKey: typeof r.widgetKey === "string" ? r.widgetKey : "",
-        widgetLines,
-        ...(placement === "aboveEditor" || placement === "belowEditor"
-          ? { widgetPlacement: placement }
-          : {}),
+        widgetKey: reqStr(r, "widgetKey"),
+        widgetLines: strArrayField(r, "widgetLines", undefined),
+        ...optWidgetPlacement(r),
       };
-    }
     case "setTitle":
       return {
         method: "setTitle",
-        title: typeof r.title === "string" ? r.title : "",
+        title: reqStr(r, "title"),
       };
     case "set_editor_text":
       return {
         method: "set_editor_text",
-        text: typeof r.text === "string" ? r.text : "",
+        text: reqStr(r, "text"),
       };
     default:
       // 未知 method：保留全部原始字段，避免协议演进时丢信息

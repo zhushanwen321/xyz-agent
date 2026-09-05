@@ -17,7 +17,7 @@ export interface MirrorFlags {
 
 /**
  * 有值 flag 的解析规则表：成员是「后跟一个值」的 flag 名（含长短形式）。
- * 用于 mirrorMainProcessFlags 跳过其他 flag 的值时不误吃。
+ * 用于 parseMirrorFlagArgs 跳过其他 flag 的值时不误吃。
  */
 const VALUED_FLAGS = new Set<string>([
   "--extension", "-e",
@@ -26,6 +26,23 @@ const VALUED_FLAGS = new Set<string>([
   "--tools", "-t", "--exclude-tools", "-xt",
   "--fork", "--session-dir", "--mode",
   "--thinking", "--models",
+]);
+
+/** MirrorFlags 的布尔字段名（extensionPaths 数组字段单列，不进此表）。 */
+type MirrorBooleanKey = "noExtensions" | "approve" | "noContextFiles";
+
+/**
+ * 布尔镜像 flag 表：token（长/短形式）→ MirrorFlags 布尔字段。
+ * 用 Map 而非对象字面量查表——对象查表对 "__proto__"/"constructor" 等 token
+ * 会命中原型链返回非 undefined，Map.get 无此陷阱。
+ */
+const BOOLEAN_FLAGS = new Map<string, MirrorBooleanKey>([
+  ["--no-extensions", "noExtensions"],
+  ["-ne", "noExtensions"],
+  ["--approve", "approve"],
+  ["-a", "approve"],
+  ["--no-context-files", "noContextFiles"],
+  ["-nc", "noContextFiles"],
 ]);
 
 /** argv 中 flag 的起始索引：argv[0]=runtime, argv[1]=binary 路径。 */
@@ -39,7 +56,7 @@ const ARGV_FLAG_START = 2;
  * extension/approve 加载行为与主进程一致，且对任意 pi 宿主通用（不止 xyz-agent）。
  *
  * 解析规则：
- * - --no-extensions / -ne、--approve / -a：布尔 flag
+ * - --no-extensions / -ne、--approve / -a：布尔 flag（查 BOOLEAN_FLAGS 表）
  * - --no-context-files / -nc：布尔 flag（镜像理由：--extension 镜像会把
  *   @zhushanwen/pi-system-prompt 带进每个 subagent，该扩展靠子进程自己的
  *   argv 检测此 flag 决定是否注入全局 AGENTS.md——不镜像则用户 opt-out
@@ -56,26 +73,29 @@ let memoResult: MirrorFlags | undefined;
 
 export function mirrorMainProcessFlags(argv: readonly string[]): MirrorFlags {
   if (memoResult !== undefined && memoArgv === argv) return memoResult;
-  let hasNoExtensions = false;
-  let hasApprove = false;
-  let hasNoContextFiles = false;
+  const result = parseMirrorFlagArgs(
+    argv.length > ARGV_FLAG_START ? argv.slice(ARGV_FLAG_START) : [],
+  );
+  memoArgv = argv;
+  memoResult = result;
+  return result;
+}
+
+/** 纯解析：扫描 flag 区段（argv[2:]）构造 MirrorFlags，不做 memo。 */
+function parseMirrorFlagArgs(flagArgs: readonly string[]): MirrorFlags {
+  const flags: Record<MirrorBooleanKey, boolean> = {
+    noExtensions: false,
+    approve: false,
+    noContextFiles: false,
+  };
   const extensionPaths: string[] = [];
 
   // argv[0]=runtime(bun), argv[1]=pi binary 路径；flag 从 argv[2] 起
-  const flagArgs = argv.length > ARGV_FLAG_START ? argv.slice(ARGV_FLAG_START) : [];
-
   for (let i = 0; i < flagArgs.length; i++) {
     const tok = flagArgs[i];
-    if (tok === "--no-extensions" || tok === "-ne") {
-      hasNoExtensions = true;
-      continue;
-    }
-    if (tok === "--approve" || tok === "-a") {
-      hasApprove = true;
-      continue;
-    }
-    if (tok === "--no-context-files" || tok === "-nc") {
-      hasNoContextFiles = true;
+    const booleanKey = BOOLEAN_FLAGS.get(tok);
+    if (booleanKey !== undefined) {
+      flags[booleanKey] = true;
       continue;
     }
     // 等号形式 --extension=path / -e=path
@@ -106,8 +126,10 @@ export function mirrorMainProcessFlags(argv: readonly string[]): MirrorFlags {
     // 其他情况（未知 flag、--flag=val 形式、positional）忽略
   }
 
-  const result = { noExtensions: hasNoExtensions, approve: hasApprove, extensionPaths, noContextFiles: hasNoContextFiles };
-  memoArgv = argv;
-  memoResult = result;
-  return result;
+  return {
+    noExtensions: flags.noExtensions,
+    approve: flags.approve,
+    extensionPaths,
+    noContextFiles: flags.noContextFiles,
+  };
 }

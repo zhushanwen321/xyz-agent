@@ -64,6 +64,7 @@ import {
   deriveSessionFilePath,
   findSessionFileByHeaderId,
   parseSpawnLine,
+  type ParsedSpawnLine,
   type SpawnSessionHeader,
 } from "./spawn-event-adapter.ts";
 import type { SubagentStream } from "../../../stream-sink.ts";
@@ -137,6 +138,28 @@ export function mapAssistantMessageDelta(
   if (ame.type === "thinking_delta") return { type: "thinking_delta", delta: ame.delta ?? "" };
   if (ame.type === "text_delta" && ame.delta !== undefined) return { type: "text_delta", delta: ame.delta };
   return null;
+}
+
+/**
+ * [圈复杂度门禁提取] tool_execution_end 的 args 回填（自 createSpawnEventHandlers 的
+ * switch case 体迁出的纯函数，行为逐字节保持）：tool_end 可能缺 args，用 tool_start
+ * 寄存进 pendingTools 的 args 回填，命中后即消费（delete）。
+ *
+ * 与 mapAssistantMessageDelta 同域（SdkEvent 翻译纯函数），提取为模块级便于单测。
+ */
+function resolveToolEndArgs(
+  raw: SdkEvent,
+  pendingTools: Map<string, { toolName: string; args?: unknown }>,
+): unknown {
+  let args = raw.args;
+  if (raw.toolCallId) {
+    const pending = pendingTools.get(raw.toolCallId);
+    if (pending) {
+      if (args === undefined) args = pending.args;
+      pendingTools.delete(raw.toolCallId);
+    }
+  }
+  return args;
 }
 
 // ============================================================
@@ -1225,6 +1248,13 @@ function touchAliveMarkerForHeartbeat(sessionFile: string | undefined, pid: numb
 //   - buildSpawnInvocation：i. pi CLI 参数组装与入口解析
 //   - attachStdoutPump：stdout 逐行解析 + get_state 握手状态机 + agent_end keep-alive
 //   - waitForChildExit：close/error → exitCode（含统一 cleanup）
+//   - setupFreshChild：spawn 后同步装配（worktree pid 补全 / 记账 / stdio / prompt 命令）
+//   - armChatModeSettledWatchdog：chatMode 首轮 settled 两段守护挂载
+//   - attachAbortAndSpawnWatchdog：abort 监听 + spawn watchdog（返回 onAbort 供注销）
+//   - startGetStateHandshake：get_state 握手 fire-and-forget 启动（含 F2 catch 兜底）
+//   - backfillSessionFileByLookup：收尾 sessionFile 兜底反查（LC-4）
+//   - sweepDescendantsOnChildClose：收尾后代级联补杀（T2-② 后半）
+//   - resolveRunOutcome：成功/失败四分支判定
 // 拆分只移动代码不改行为——runSpawn 导出签名与事件语义不变。
 
 /** runSpawn 各阶段共享的可变状态（原闭包变量收拢，经参数在阶段函数间传递）。 */
@@ -1560,66 +1590,65 @@ function createSpawnEventHandlers(state: SpawnRunState): (raw: SdkEvent) => void
     }
   };
 
-  const handleSdkEvent = (raw: SdkEvent): void => {
-    // [T2-③ / D9 两段式] 有效协议事件行刷新中段无进展计时（本函数是 stdout pump
-    // 解析出的合法 SdkEvent 的唯一喂入口——LC-9 invalid 行不进入，天然不刷新）。
-    // 未挂载（非 chatMode / env 关闭）或已交棒（收尾段不刷新）时幂等 no-op。
-    refreshMidRoundNoProgress(record.id);
-    // [V2 模块 3] agent_settled：真空闲边界（agent_end 之后、post-run 完成后才 emit）。
-    // chatMode：arm idle timer（超时 SIGTERM 回收）+ 通知本轮完成（onRoundSettled）。
-    // 非 chatMode：忽略（agent_end handler 的一次性 kill 已处理，进程不会活到 agent_settled）。
-    if (isAgentSettledEvt(raw)) {
-      if (record.chatMode) {
-        // [T2-③ / D9 两段式] settled 到达：本轮等待结束，两段守护（中段无进展 +
-        // 收尾段上界）一并即清（resolveRun 在本分支同点调用，天然同清）。清除必须
-        // 先于后续逻辑——idle timer / 回调 / resolve 抛错时 watchdog 已确保撤下，
-        // 不会误杀下一个正常轮次。
-        disarmSettledWatchdog(record.id);
-        // [F-R2] 本闭包经 stdout data 回调同步调用（handleSdkEvent ← attachStdoutPump）：
-        // armIdleTimer → assertSafeTimerDelay fail-fast 的 throw 若逃出回调 = uncaughtException
-        // 崩宿主。包 try/catch 降级，错误经 bestEffort("error") 可见但不升级为进程崩溃；
-        // 后续 limiter.reset / onRoundSettled / resolveRun 照常执行（本轮完成通知不因 GC
-        // timer 故障丢失）。
-        // [T4② / PS-4] 降级语义修正：旧降级「不挂 idle timer」保住了「不崩进程」，却丢掉
-        // timer 承载的两个下游不变量——isIdle 放行门（hasIdleTimer=false → 轮次完成通知被
-        // lifecycle-predicates 吞）与进程回收（进程活着却无 timer 永久泄漏）。现降级改为
-        // 「挂 DEFAULT_IDLE_TIMEOUT_MS + warn 留痕」：非配置替换（配置错误已在 spawn 入口
-        // fail-fast，见 subagent-service），此处是防御性兜底，兜底必须可见且保住不变量。
-        const armIdleTimerOnTimeout = (): void => {
-          // onTimeout 复用现有 kill 路径：child.kill("SIGTERM") 触发 close → close handler
-          // 统一 cleanup（spawnedChildren.delete / get_stateListeners.clear / resolve）。
-          // 与 agent_end handler 现有 SIGTERM 分支一致，不新造 cleanup。
-          // [race-F4] 升级：idle timer SIGTERM 后挂住 → 30s 后 SIGKILL。
-          const child = getChildByRecord(record.id);
-          if (child && !child.killed) killChildWithEscalation(state, child, "idle timer");
-        };
-        try {
-          armIdleTimer(record.id, armIdleTimerOnTimeout, record.idleTimeoutMs);
-        } catch (err) {
-          bestEffort(err, "armIdleTimer (agent_settled chatMode)", "error");
-          try {
-            armIdleTimer(record.id, armIdleTimerOnTimeout, DEFAULT_IDLE_TIMEOUT_MS);
-            logger.warn(
-              `[session-runner] idleTimeoutMs invalid for ${record.id}, fell back to DEFAULT_IDLE_TIMEOUT_MS (${DEFAULT_IDLE_TIMEOUT_MS}ms) — idle GC and round notification gate stay active`,
-            );
-          } catch (fallbackErr) {
-            // 双重失败（理论上不可达：DEFAULT 恒在安全域内）——退回旧「不挂」语义但留痕。
-            bestEffort(fallbackErr, "armIdleTimer fallback (agent_settled chatMode)", "error");
-          }
-        }
-        // [SP-9] chatMode 每轮 reset turn-limiter：新一轮开始（续聊）时，
-        // maxTurns/graceTurns 不跨轮累计（续聊本质是无限轮，累计上限违背 G1）。
-        // reset steered/aborted 标志 + turnCount 归零，下一轮独立计数。
-        limiter.reset();
-        record.turnCount = 0;
-        ctx.onRoundSettled?.(record);
-        // [V2 决策 2] chatMode 首轮：agent_settled = 本轮真空闲，提前 resolve runSpawn
-        //（exit code 0，进程仍保活 idle timer armed）。runAndFinalize 拿到 result 后走
-        // chatMode 首轮分支（不进 finalize 分流），onRoundSettled 已 notify 主 agent。
-        state.resolveRun?.(0);
+  /**
+   * [圈复杂度门禁提取] agent_settled × chatMode 分支整体自 handleSdkEvent 迁入
+   * （只移动代码不改行为）。含 idle timer 挂载降级链 + 本轮完成通知 + 首轮提前 resolve。
+   */
+  const handleAgentSettledForChatMode = (): void => {
+    // [T2-③ / D9 两段式] settled 到达：本轮等待结束，两段守护（中段无进展 +
+    // 收尾段上界）一并即清（resolveRun 在本分支同点调用，天然同清）。清除必须
+    // 先于后续逻辑——idle timer / 回调 / resolve 抛错时 watchdog 已确保撤下，
+    // 不会误杀下一个正常轮次。
+    disarmSettledWatchdog(record.id);
+    // [F-R2] 本闭包经 stdout data 回调同步调用（handleSdkEvent ← attachStdoutPump）：
+    // armIdleTimer → assertSafeTimerDelay fail-fast 的 throw 若逃出回调 = uncaughtException
+    // 崩宿主。包 try/catch 降级，错误经 bestEffort("error") 可见但不升级为进程崩溃；
+    // 后续 limiter.reset / onRoundSettled / resolveRun 照常执行（本轮完成通知不因 GC
+    // timer 故障丢失）。
+    // [T4② / PS-4] 降级语义修正：旧降级「不挂 idle timer」保住了「不崩进程」，却丢掉
+    // timer 承载的两个下游不变量——isIdle 放行门（hasIdleTimer=false → 轮次完成通知被
+    // lifecycle-predicates 吞）与进程回收（进程活着却无 timer 永久泄漏）。现降级改为
+    // 「挂 DEFAULT_IDLE_TIMEOUT_MS + warn 留痕」：非配置替换（配置错误已在 spawn 入口
+    // fail-fast，见 subagent-service），此处是防御性兜底，兜底必须可见且保住不变量。
+    const armIdleTimerOnTimeout = (): void => {
+      // onTimeout 复用现有 kill 路径：child.kill("SIGTERM") 触发 close → close handler
+      // 统一 cleanup（spawnedChildren.delete / get_stateListeners.clear / resolve）。
+      // 与 agent_end handler 现有 SIGTERM 分支一致，不新造 cleanup。
+      // [race-F4] 升级：idle timer SIGTERM 后挂住 → 30s 后 SIGKILL。
+      const child = getChildByRecord(record.id);
+      if (child && !child.killed) killChildWithEscalation(state, child, "idle timer");
+    };
+    try {
+      armIdleTimer(record.id, armIdleTimerOnTimeout, record.idleTimeoutMs);
+    } catch (err) {
+      bestEffort(err, "armIdleTimer (agent_settled chatMode)", "error");
+      try {
+        armIdleTimer(record.id, armIdleTimerOnTimeout, DEFAULT_IDLE_TIMEOUT_MS);
+        logger.warn(
+          `[session-runner] idleTimeoutMs invalid for ${record.id}, fell back to DEFAULT_IDLE_TIMEOUT_MS (${DEFAULT_IDLE_TIMEOUT_MS}ms) — idle GC and round notification gate stay active`,
+        );
+      } catch (fallbackErr) {
+        // 双重失败（理论上不可达：DEFAULT 恒在安全域内）——退回旧「不挂」语义但留痕。
+        bestEffort(fallbackErr, "armIdleTimer fallback (agent_settled chatMode)", "error");
       }
-      return;
     }
+    // [SP-9] chatMode 每轮 reset turn-limiter：新一轮开始（续聊）时，
+    // maxTurns/graceTurns 不跨轮累计（续聊本质是无限轮，累计上限违背 G1）。
+    // reset steered/aborted 标志 + turnCount 归零，下一轮独立计数。
+    limiter.reset();
+    record.turnCount = 0;
+    ctx.onRoundSettled?.(record);
+    // [V2 决策 2] chatMode 首轮：agent_settled = 本轮真空闲，提前 resolve runSpawn
+    //（exit code 0，进程仍保活 idle timer armed）。runAndFinalize 拿到 result 后走
+    // chatMode 首轮分支（不进 finalize 分流），onRoundSettled 已 notify 主 agent。
+    state.resolveRun?.(0);
+  };
+
+  /**
+   * [圈复杂度门禁提取] SdkEvent.type switch 分派整体自 handleSdkEvent 迁入
+   * （只移动代码不改行为）。tool_end 的 args 回填另有模块级 resolveToolEndArgs。
+   */
+  const dispatchSdkEventByType = (raw: SdkEvent): void => {
     switch (raw.type) {
       case "tool_execution_start": {
         const toolName = raw.toolName ?? "";
@@ -1631,15 +1660,13 @@ function createSpawnEventHandlers(state: SpawnRunState): (raw: SdkEvent) => void
       }
       case "tool_execution_end": {
         const toolName = raw.toolName ?? "";
-        let args = raw.args;
-        if (raw.toolCallId) {
-          const pending = pendingTools.get(raw.toolCallId);
-          if (pending) {
-            if (args === undefined) args = pending.args;
-            pendingTools.delete(raw.toolCallId);
-          }
-        }
-        agentEvent({ type: "tool_end", toolName, args, result: raw.result, isError: raw.isError });
+        agentEvent({
+          type: "tool_end",
+          toolName,
+          args: resolveToolEndArgs(raw, pendingTools),
+          result: raw.result,
+          isError: raw.isError,
+        });
         return;
       }
       case "message_update": {
@@ -1666,6 +1693,21 @@ function createSpawnEventHandlers(state: SpawnRunState): (raw: SdkEvent) => void
       default:
         return;
     }
+  };
+
+  const handleSdkEvent = (raw: SdkEvent): void => {
+    // [T2-③ / D9 两段式] 有效协议事件行刷新中段无进展计时（本函数是 stdout pump
+    // 解析出的合法 SdkEvent 的唯一喂入口——LC-9 invalid 行不进入，天然不刷新）。
+    // 未挂载（非 chatMode / env 关闭）或已交棒（收尾段不刷新）时幂等 no-op。
+    refreshMidRoundNoProgress(record.id);
+    // [V2 模块 3] agent_settled：真空闲边界（agent_end 之后、post-run 完成后才 emit）。
+    // chatMode：arm idle timer（超时 SIGTERM 回收）+ 通知本轮完成（onRoundSettled）。
+    // 非 chatMode：忽略（agent_end handler 的一次性 kill 已处理，进程不会活到 agent_settled）。
+    if (isAgentSettledEvt(raw)) {
+      if (record.chatMode) handleAgentSettledForChatMode();
+      return;
+    }
+    dispatchSdkEventByType(raw);
   };
 
   return handleSdkEvent;
@@ -2096,6 +2138,106 @@ function attachStdoutPump(
     settleHandshakeNow();
   };
 
+  /**
+   * [圈复杂度门禁提取] header 行处理（自 data handler 的 kind 分支整体迁入，
+   * 只移动代码不改行为）：sessionFile 推导回填 + alive marker + worktree pid 补全
+   * + header 加速路径握手。
+   */
+  const handleHeaderLine = (parsed: Extract<ParsedSpawnLine, { kind: "header" }>): void => {
+    state.sessionHeader = parsed.header;
+    // 回填 record.sessionFile（deriveSessionFilePath 推导路径）
+    record.sessionFile = deriveSessionFilePath(parsed.header, sessionDir);
+    // [持久化 C] alive marker：running 期间崩溃恢复用。子进程 pid + session id。
+    // 与 in-process 逻辑对齐（记 sessionFile + pid），改为子进程 pid。
+    if (record.sessionFile && child.pid) {
+      writeAliveMarkerBestEffort(record.sessionFile, child.pid, parsed.header.id);
+    }
+    // [全局注册表] worktree 模式：补全注册表条目的 pid。
+    // create 时 pid 未知写 0 占位，此处拿到 child.pid 后回调 WorktreeManager.registerPid。
+    // 取代旧的 .session mapping sidecar——注册表是 reaper 的唯一数据源。
+    // [D5a] fire-and-forget：回调内部走跨进程锁（毫秒级），且实现方保证不
+    // reject（锁降级兜底）；stdout data 回调是同步上下文，不 await。
+    if (opts.worktree && child.pid) {
+      // 透传 record.sessionFile：填入 registry entry（reaper 据 pid 死活判孤儿），
+      // first header 时 sessionFile 已回填（deriveSessionFilePath 在本分支上方）。
+      try {
+        void ctx.onWorktreePid?.(opts.worktree.branch, child.pid, record.sessionFile);
+      } catch (err) {
+        // 同步段异常（回调本身 throw）不阻断 stdout 解析；锁内错误由回调内部 warn。
+        bestEffort(err, "onWorktreePid callback (first header)");
+      }
+    }
+    // FR-4 加速路径：header 到达即 finishHandshake（header 已提供 sessionId，
+    // 足以推导 sessionFile + 兜底查找，无需等 get_state response）。
+    // [#25] buildSpawnArgs 固定 --mode rpc，RPC mode 不发 header——此分支当前不触发，
+    // 仅为未来 mode 回切（如 json mode 调试）保留：届时 header 先到可省去 get_state 握手等待。
+    if (settleHandshake) {
+      finishHandshake({
+        ...(record.sessionFile ? { sessionFile: record.sessionFile } : {}),
+        sessionId: parsed.header.id,
+      });
+    }
+  };
+
+  /**
+   * [圈复杂度门禁提取] agent_end 路由（自 data handler 的 event 分支迁入，只移动
+   * 代码不改行为）。返回 true = chatMode 交棒形态——调用方据此跳过本行的
+   * handleSdkEvent 喂入。原实现用 continue（跳过当前行剩余、继续 for(line) 后续行，
+   * 不跳出整个 flush），提取后 return 于 for 循环体内同构。
+   */
+  const routeAgentEnd = (evt: { type: "agent_end"; willRetry?: boolean }): boolean => {
+    if (evt.willRetry) {
+      // agent 会重试，不能 kill。
+      return false;
+    }
+    if (record.chatMode) {
+      // [V2 决策 1] chatMode：对话模式进程不因轮次死。agent_end 不 kill、不 MF-3/MF-4。
+      // 等待 agent_settled（真空闲信号）arm idle timer + notify（onRoundSettled）。
+      // [T2-③ / D9 两段式] agent_end 到达 = 工作段结束：中段无进展计时让位收尾段
+      // 固定上界（清中段、已过时间不继承，从 agent_end 起独立计时 600s；未挂载 /
+      // 已交棒幂等 no-op——首轮与热路径轮共用本 pump 接线点）。
+      handoverMidRoundToSettled(record.id);
+      return true;
+    }
+    // [recursive-orchestration] 条件 kill：读子进程 session 文件算活跃后代
+    // （pending:register − unregister 差集）。有活跃后代（background subagent /
+    // workflow）→ 保持进程 idle，等后代完成时 notifier triggerTurn steer 唤醒；
+    // 无 → 正常完成，kill 触发 close → runSpawn resolve。
+    //
+    // [T1/RC-1] 处置决策异步化（fire-and-forget）：sessionFile 缺失（RC-1 握手失败
+    // 形态）时现场惰性 get_state 回补后再判定，见 runAgentEndDisposition。原同步
+    // 三分支逐行迁入该函数；异步化后决策最晚 1s（回补超时预算）落地，期间子进程
+    // 仍在原 watchdog 保护下，kill 延迟无语义影响。
+    void runAgentEndDisposition(state, child, sessionDir, registerGetStateListener);
+    return false;
+  };
+
+  /**
+   * [圈复杂度门禁提取] 事件行处理（自 data handler 的 event 分支迁入）：
+   * agent_end 路由（keep-alive / chatMode 交棒 / 条件 kill）+ 其余事件喂 handleSdkEvent。
+   */
+  const handleEventLine = (parsed: Extract<ParsedSpawnLine, { kind: "event" }>): void => {
+    // agent_end（willRetry=false）= agent 自然完成。rpc mode 子进程不自动退出
+    //（runRpcMode 末尾 return new Promise(() => {}) 长驻等命令），需主动 kill
+    // 触发 close → runSpawn resolve。willRetry=true 时 agent 会重试，不能 kill。
+    if (isAgentEndEvt(parsed.event) && routeAgentEnd(parsed.event)) return;
+    if (isSdkEvent(parsed.event)) handleSdkEvent(parsed.event);
+  };
+
+  /**
+   * [圈复杂度门禁提取] RPC response 行处理（自 data handler 的 response 分支迁入）：
+   * FR-4 get_state response 按 id 匹配 resolver。
+   */
+  const handleResponseLine = (parsed: Extract<ParsedSpawnLine, { kind: "response" }>): void => {
+    if (parsed.command === "get_state" && parsed.success && parsed.id) {
+      const resolver = get_stateListeners.get(parsed.id);
+      if (resolver) {
+        get_stateListeners.delete(parsed.id);
+        resolver(parsed.data);
+      }
+    }
+  };
+
   child.stdout.on("data", (data: string) => {
     // [T2-① / P-T2 降级 B] 子进程有输出 = keep-alive 仍有进展迹象：刷新静默计时。
     // 任何 stdout 活动（header / 事件行 / invalid 调试行）都算——keep-alive 的合法性
@@ -2108,85 +2250,18 @@ function attachStdoutPump(
     stdoutBuffer += data;
     const lines = stdoutBuffer.split("\n");
     stdoutBuffer = lines.pop() ?? ""; // 保留最后未完整行
+    // [圈复杂度门禁提取] 各 kind 分支体整体迁入上方 handleHeaderLine /
+    // handleEventLine / handleResponseLine（行为逐字节保持），本 handler 只留
+    // 缓冲切分 + kind 分派。
     for (const line of lines) {
       const parsed = parseSpawnLine(line);
       if (!parsed) continue;
       if (parsed.kind === "header") {
-        state.sessionHeader = parsed.header;
-        // 回填 record.sessionFile（deriveSessionFilePath 推导路径）
-        record.sessionFile = deriveSessionFilePath(parsed.header, sessionDir);
-        // [持久化 C] alive marker：running 期间崩溃恢复用。子进程 pid + session id。
-        // 与 in-process 逻辑对齐（记 sessionFile + pid），改为子进程 pid。
-        if (record.sessionFile && child.pid) {
-          writeAliveMarkerBestEffort(record.sessionFile, child.pid, parsed.header.id);
-        }
-        // [全局注册表] worktree 模式：补全注册表条目的 pid。
-        // create 时 pid 未知写 0 占位，此处拿到 child.pid 后回调 WorktreeManager.registerPid。
-        // 取代旧的 .session mapping sidecar——注册表是 reaper 的唯一数据源。
-        // [D5a] fire-and-forget：回调内部走跨进程锁（毫秒级），且实现方保证不
-        // reject（锁降级兜底）；stdout data 回调是同步上下文，不 await。
-        if (opts.worktree && child.pid) {
-          // 透传 record.sessionFile：填入 registry entry（reaper 据 pid 死活判孤儿），
-          // first header 时 sessionFile 已回填（deriveSessionFilePath 在本分支上方）。
-          try {
-            void ctx.onWorktreePid?.(opts.worktree.branch, child.pid, record.sessionFile);
-          } catch (err) {
-            // 同步段异常（回调本身 throw）不阻断 stdout 解析；锁内错误由回调内部 warn。
-            bestEffort(err, "onWorktreePid callback (first header)");
-          }
-        }
-        // FR-4 加速路径：header 到达即 finishHandshake（header 已提供 sessionId，
-        // 足以推导 sessionFile + 兜底查找，无需等 get_state response）。
-        // [#25] buildSpawnArgs 固定 --mode rpc，RPC mode 不发 header——此分支当前不触发，
-        // 仅为未来 mode 回切（如 json mode 调试）保留：届时 header 先到可省去 get_state 握手等待。
-        if (settleHandshake) {
-          finishHandshake({
-            ...(record.sessionFile ? { sessionFile: record.sessionFile } : {}),
-            sessionId: parsed.header.id,
-          });
-        }
+        handleHeaderLine(parsed);
       } else if (parsed.kind === "event") {
-        const evt = parsed.event;
-        // agent_end（willRetry=false）= agent 自然完成。rpc mode 子进程不自动退出
-        //（runRpcMode 末尾 return new Promise(() => {}) 长驻等命令），需主动 kill
-        // 触发 close → runSpawn resolve。willRetry=true 时 agent 会重试，不能 kill。
-        if (isAgentEndEvt(evt)) {
-          if (evt.willRetry) {
-            // agent 会重试，不能 kill。
-          } else if (record.chatMode) {
-            // [V2 决策 1] chatMode：对话模式进程不因轮次死。agent_end 不 kill、不 MF-3/MF-4。
-            // 等待 agent_settled（真空闲信号）arm idle timer + notify（onRoundSettled）。
-            // [T2-③ / D9 两段式] agent_end 到达 = 工作段结束：中段无进展计时让位收尾段
-            // 固定上界（清中段、已过时间不继承，从 agent_end 起独立计时 600s；未挂载 /
-            // 已交棒幂等 no-op——首轮与热路径轮共用本 pump 接线点）。
-            handoverMidRoundToSettled(record.id);
-            // 用 continue 而非 return：return 会跳出 stdout data handler 的 for(line) 循环，
-            // 丢弃同一 flush 内 agent_end 之后的事件（如紧随的 agent_settled）。continue 只
-            // 跳过当前行剩余（handleSdkEvent 对 agent_end 是 no-op），继续处理后续行。
-            continue;
-          } else {
-            // [recursive-orchestration] 条件 kill：读子进程 session 文件算活跃后代
-            // （pending:register − unregister 差集）。有活跃后代（background subagent /
-            // workflow）→ 保持进程 idle，等后代完成时 notifier triggerTurn steer 唤醒；
-            // 无 → 正常完成，kill 触发 close → runSpawn resolve。
-            //
-            // [T1/RC-1] 处置决策异步化（fire-and-forget）：sessionFile 缺失（RC-1 握手失败
-            // 形态）时现场惰性 get_state 回补后再判定，见 runAgentEndDisposition。原同步
-            // 三分支逐行迁入该函数；异步化后决策最晚 1s（回补超时预算）落地，期间子进程
-            // 仍在原 watchdog 保护下，kill 延迟无语义影响。
-            void runAgentEndDisposition(state, child, sessionDir, registerGetStateListener);
-          }
-        }
-        if (isSdkEvent(parsed.event)) handleSdkEvent(parsed.event);
+        handleEventLine(parsed);
       } else if (parsed.kind === "response") {
-        // FR-4: RPC response handling — 匹配 get_state 响应
-        if (parsed.command === "get_state" && parsed.success && parsed.id) {
-          const resolver = get_stateListeners.get(parsed.id);
-          if (resolver) {
-            get_stateListeners.delete(parsed.id);
-            resolver(parsed.data);
-          }
-        }
+        handleResponseLine(parsed);
       } else if (parsed.kind === "extension_ui_request") {
         // W3: 子进程发 UI 请求（ask_user）。入队 FIFO 串行处理，防止并发询问用户。
         enqueueUiRequest(parsed.id, parsed.request);
@@ -2306,6 +2381,298 @@ function waitForChildExit(
 }
 
 /**
+ * [圈复杂度门禁提取] spawn 后同步装配阶段（自 runSpawn 迁入，只移动代码不改行为）：
+ * worktree pid 同步补全 + spawnedChildren 记账 + record.pid + stdio 编码 +
+ * stdin 异步 error listener + 首条 prompt 命令。顺序敏感（见各段注释），整段迁移。
+ */
+function setupFreshChild(
+  state: SpawnRunState,
+  child: ChildProcessWithoutNullStreams,
+  task: string,
+): void {
+  const { record, opts, ctx } = state;
+  // [worktree-reaper-fix] 同步补全注册表 pid：spawn 返回后 child.pid 立即可得（Node.js
+  // 同步属性），无需等任何 stdout 事件。原补全点挂在 header 分支（下方 stdout handler 内），
+  // 而 RPC mode（buildSpawnArgs 固定 --mode rpc）不输出 header 行——pid 恒为 0，超
+  // SPAWN_GRACE_MS 后被 reaper 当孤儿误删活 worktree（2026-08-11 cw 递归编排整树失活事故）。
+  // header 分支调用保留：json mode 回切时仍能补全，updatePid 同 branch 覆盖写幂等，无副作用。
+  if (opts.worktree && child.pid) {
+    // [D5a] void：回调可能返回 Promise（锁内 RMW），契约保证不 reject，fire-and-forget。
+    void ctx.onWorktreePid?.(opts.worktree.branch, child.pid);
+  }
+  // [C1] track 子进程供 dispose 兜底 kill（sync + background 均注册——sync 无 controller，
+  // abortRunningControllers 跳过它，靠本 Map 兜底）。close/error 后按句守卫移除（已退出无需再 kill）。
+  spawnedChildren.set(record.id, child);
+  // [V2 决策 3] spawn 后 child.pid 同步立即可得，记录到 record 内存（lifecycle-manager
+  // 孤儿扫描用，Step 5 接入持久化）。resume spawn 时此处同样覆盖更新（pid 可能已变）。
+  if (child.pid !== undefined) record.pid = child.pid;
+
+  // [worktree-reaper-fix] 同步补全注册表 pid：spawn 返回后 child.pid 立即可得（Node.js
+  // 同步属性），无需等任何 stdout 事件。原补全点挂在 header 分支（下方 stdout handler 内），
+  // 而 RPC mode（buildSpawnArgs 固定 --mode rpc）不输出 header 行——pid 恒为 0，超
+  // SPAWN_GRACE_MS 后被 reaper 当孤儿误删活 worktree（2026-08-11 cw 递归编排整树失活事故）。
+  // header 分支调用保留：json mode 回切时仍能补全，updatePid 同 branch 覆盖写幂等，无副作用。
+  // [S1] 防御：必须放在 spawnedChildren.add 之后（onWorktreePid 抛错时子进程已被跟踪，
+  // dispose 兜底 kill 不会泄漏），且包 try/catch（补全失败不阻断 spawn 主流程——
+  // 注册表写失败最坏后果是条目停留 pid=0，由 reaper 宽限回收兜底）。
+  if (opts.worktree && child.pid) {
+    try {
+      // [D5a] void：回调可能返回 Promise（锁内 RMW），契约保证不 reject，fire-and-forget。
+      void ctx.onWorktreePid?.(opts.worktree.branch, child.pid);
+    } catch (err) {
+      logger.warn("[worktree] worktree pid registration failed (defensive)", {
+        branch: opts.worktree.branch,
+        pid: child.pid,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // stdout/stderr 用 utf8 编码：stream 自动按字符边界切分，避免多字节
+  // UTF-8（CJK/emoji）跨 chunk 时 toString() 产生 U+FFFD 替换符导致 JSON.parse 失败。
+  // [m2] 先 setEncoding 再注册 signal listener/watchdog：若 setEncoding 抛错，try/finally
+  //（下方）只清理 tempPromptFile，watchdog/signal listener 尚未注册则无需清理——避免泄漏。
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+
+  // [v4 A-1] 异步 stdin 'error' listener。writeStdinLine 的 try/catch 只覆盖同步 write 抛错；
+  // 子进程退出后内核回写 EPIPE 会以异步 stream 'error' event 到达，若无 listener 会让 Node
+  // 抛 unhandled 'error' 崩主进程（P1）。必须在首次 stdin 写入（下方 sendPromptCommand）前注册。
+  // handler 行为：①移出 spawnedChildren 标记 dead（与 child.on('error') 同模式）；
+  // ②recordEpipeFailure 合并同步/异步计数；③logger.warn 记录一次。
+  // [v4 A-1 裁决] handler 内**不 throw**——stream 'error' listener 内 throw 会经 Node 内部
+  // emit() 传播为 uncaughtException 崩主进程，违背 A-1 防崩核心目标。达阈值的 throw 留给
+  // 同步路径（PiEngine.deliverPrompt 的 catch 合并计数达 EPIPE_FAILURE_THRESHOLD 时同步 throw，不崩）。
+  // async handler 只移句柄 + 计数 + warn；进程已 dead（移句柄），下次投递检测
+  // dead 走冷路径，冷路径 write EPIPE 同步计数达阈值同步 throw——防死循环且不崩。
+  child.stdin.on("error", (err: Error) => {
+    // [M4] 按值守卫：resume spawn 已覆盖注册时不误删新 child（见 removeChildRegistration）
+    removeChildRegistration(record.id, child);
+    const count = recordEpipeFailure(record.id);
+    logger.warn(`[subagents] async stdin error for ${record.id}`, {
+      detail: err.message,
+      epipeCount: count,
+      threshold: EPIPE_FAILURE_THRESHOLD,
+      hint:
+        count >= EPIPE_FAILURE_THRESHOLD
+          ? "sync path will throw on next write EPIPE"
+          : undefined,
+    });
+  });
+
+  // 喂 prompt 命令驱动子进程开始处理 task。pi runRpcMode 只消费 stdin RpcCommand，
+  // 不读 positional arg；必须在 spawn 后主动写，否则子进程阻塞、totalTokens 恒 0。
+  // 时机安全：pipe 内核缓冲不丢；pi 在 rebindSession 后才挂 stdin reader。
+  sendPromptCommand(child, task);
+}
+
+/**
+ * [圈复杂度门禁提取] chatMode 首轮 settled 等待守护挂载（自 runSpawn 迁入）。
+ */
+function armChatModeSettledWatchdog(state: SpawnRunState, child: ChildProcess): void {
+  const { record } = state;
+  // [T2-③ / D9 两段式] chatMode 首轮 settled 等待守护（双挂载原语之首轮调用点；
+  // 热路径调用点在 subagent-service deliverMessage）。prompt 发出后挂**中段**无进展
+  // 检测（有效协议事件行刷新，连续静默 30min 判 wedged）；agent_end 到达时经 stdout
+  // pump 交棒**收尾段**固定上界（agent_end 后 600s，P-T2c 定案）；settled 到达
+  //（handleSdkEvent）/ close（waitForChildExit）/ resolveRun 任一发生即清——两段
+  // 合起来覆盖 LC-1 三 wedged 形态（agent_end 永不到达 / 收尾卡死 / settled 行丢失）。
+  // 到期处置（两段同构）：kill 层主 + settledWatchdogFired 段信息（收尾据此转 failed
+  // + 恢复指引，见 resolveRunOutcome），与被信号终止视为正常完成的既有语义区分。
+  if (record.chatMode) {
+    armMidRoundNoProgress(record.id, {
+      onMidTimeout: (fire) => {
+        logger.warn(
+          `[session-runner] settled watchdog (mid-round) fired for ${record.id}: no valid protocol event for ${fire.waitedMs / MS_PER_SECOND / SECONDS_PER_MINUTE} min, terminating (LC-1 wedge recovery)`,
+        );
+        state.settledWatchdogFired = fire;
+        killChildWithEscalation(state, child, "settled watchdog");
+      },
+      onSettleTimeout: (fire) => {
+        logger.warn(
+          `[session-runner] settled watchdog (settled phase) fired for ${record.id}: no agent_settled within ${fire.waitedMs / MS_PER_SECOND}s after agent_end, terminating (LC-1 wedge recovery)`,
+        );
+        state.settledWatchdogFired = fire;
+        killChildWithEscalation(state, child, "settled watchdog");
+      },
+    });
+  }
+}
+
+/**
+ * [圈复杂度门禁提取] abort 监听 + spawn watchdog 挂载（自 runSpawn 迁入，只移动
+ * 代码不改行为）。返回 onAbort 供收尾 removeEventListener（注册与注销同一句柄）。
+ */
+function attachAbortAndSpawnWatchdog(state: SpawnRunState, child: ChildProcess): () => void {
+  const { record, opts } = state;
+  // d. signal → proc.kill 监听（一次性，替代 session.abort）
+  // [race-F4] 用户取消同样升级：SIGTERM 后挂住 → 30s 后 SIGKILL 兑现取消语义。
+  const onAbort = (): void => {
+    killPiChild(child, record.id, "abort signal");
+  };
+  opts.signal?.addEventListener("abort", onAbort, { once: true });
+  // 前置检查：signal 在 spawn 前已 aborted 时 addEventListener 不会触发 onAbort，
+  // 子进程会跑到自然结束。立即 kill 兑现取消语义。
+  if (opts.signal?.aborted) onAbort();
+
+  // e. watchdog：子进程整体超时兜底。卡死在单 tool 内（turn_end 永不触发）时
+  //    limiter 失效，此 timer 保证最终 SIGTERM，防止 background 槽位/资源泄漏。
+  // [M-1] timeout 基于 maxTurns 动态计算（maxTurnsToWatchdogMs）：旧实现固定 30 分钟
+  //    误杀长任务，现按 maxTurns 线性估算（每 turn ~5 分钟，下限 30 分钟）。
+  // [预算语义对齐] maxTurns 未传/<=0 → 不挂 watchdog（不限，用户明确裁决——旧实现按
+  //    10 turns 估出 50min 默认 SIGTERM 且 maxTurns:0 也关不掉，已废）；
+  //    SPAWN_WATCHDOG_ENV 设置时按绝对时限兑底挂载（hang 泄漏防线 opt-in）。
+  // [R0] unref：不阻止 Node 进程退出。安全性由 SubagentService.dispose 保证——
+  // 主进程退出时（session_shutdown reason=quit）dispose 会 abort running controller
+  // → 本监听器 kill 子进程。无此 unref，watchdog timer 会拖住 event loop 阻止退出。
+  const watchdogMs = resolveSpawnWatchdogMs(opts.maxTurns);
+  if (watchdogMs !== undefined) {
+    state.watchdog = setTimeout(
+      () => killPiChild(child, record.id, "spawn watchdog"),
+      watchdogMs,
+    );
+    state.watchdog.unref();
+  }
+  return onAbort;
+}
+
+/**
+ * [圈复杂度门禁提取] get_state RPC 握手启动（自 runSpawn 迁入，fire-and-forget）。
+ */
+function startGetStateHandshake(
+  child: ChildProcessWithoutNullStreams,
+  pump: StdoutPumpHandles,
+): void {
+  // FR-4: get_state RPC 握手——spawn 后无条件启动。
+  // RPC mode（pi --mode rpc）不向 stdout 输出 header，record.sessionFile 无法靠 header
+  // 推导，必须通过 get_state RPC 查询子进程回填。json mode 下 header 会先到达触发提前
+  // resolve（加速路径），握手仍启动但无害——response 到达时外层已 resolve，resolver
+  // 因 resolved=true 直接 return。
+  //
+  // 时序：握手在 stdout pump（get_stateListeners 已就绪）之后启动。get_state 命令写入
+  // stdin，pi rebindSession 后读取并返回 response，经 stdout pump 匹配 resolver 触发 resolve。
+  // close handler await handshakeSettled，保证无论 task 多快结束，close 时 sessionFile 已回填。
+  // [#18] 握手状态变量已在 attachStdoutPump 内部（stdout handler 注册前）定义，此处直接发起握手。
+  // [F2] .catch 兜底：performGetStateHandshake 的 Promise executor 同步调 tryOnce →
+  // sendGetStateCommand → writeStdinLine 在 stdin 已断（EPIPE/ERR_STREAM_DESTROYED）时同步
+  // throw → executor 内同步异常被 Promise 构造器转为 reject。若无人接（旧实现只有 .then），
+  // reject 无人消费 → unhandledRejection（Node 15+ 默认 mode=throw）可崩父 pi 进程。
+  // catch 内：logger.error 留证 + pump.abandonHandshake 记录握手失败终态——close handler
+  // await 的 handshakeSettled 立即 settle，isHandshakePending() 归 false，不阻塞收尾链路
+  //（sessionFile 兜底由收尾时的 existsSync 校验 + findSessionFileByHeaderId 承担）。
+  void performGetStateHandshake(child, pump.registerGetStateListener).then((r) => {
+    // header 加速路径下 settleHandshake 已 undefined，跳过（避免覆盖 header 结果）。
+    // 超时兜底（r 为空对象）也经此分支 settle，但 record.sessionFile 不回填。
+    if (pump.isHandshakePending()) pump.finishHandshake(r);
+  }).catch((err: unknown) => {
+    const m = err instanceof Error ? err.message : String(err);
+    logger.error(`[session-runner] get_state handshake failed: ${m}`);
+    pump.abandonHandshake();
+  });
+}
+
+/**
+ * [圈复杂度门禁提取] sessionFile 兜底反查（LC-4，自 runSpawn 收尾迁入）。
+ */
+function backfillSessionFileByLookup(state: SpawnRunState, sessionDir: string): void {
+  const { record } = state;
+  // [持久化 A] sessionFile 兜底校验。
+  // identity custom entry 已改由子进程 session_start hook 写（M4 / V2 决策 5），
+  // 父进程不再 fs 补写——fs 补写的 entry 缺 id/parentId 污染 pi _buildIndex。
+  // 此处仅保留 sessionFile 路径兜底（deriveSessionFilePath/握手路径可能不准）。
+  //
+  // [T1/LC-4] findSessionFileByHeaderId 兜底查找移出 `if (record.sessionFile)` 守卫：
+  // 原守卫条件恰等于它要兜底的缺失本身——RC-1 握手失败留下的「sessionId 有、
+  // sessionFile 无」形态（两字段独立采集）永远不可达本兜底，下游 finalize marker /
+  // alive marker / identity 写入全部失去依据（PS-9 放大）。现在两种形态都反查：
+  // sessionFile 有但路径不存在（推导错 / pi 命名变化）；sessionFile 无而 sessionId 有
+  // （header 或握手部分成功，含 agent_end 惰性回补补入的 handshakeResult.sessionId）。
+  const lookupId = state.sessionHeader?.id ?? state.handshakeResult?.sessionId;
+  const needsLookup = record.sessionFile
+    ? !fs.existsSync(record.sessionFile)
+    : lookupId !== undefined;
+  if (lookupId && needsLookup) {
+    const actual = findSessionFileByHeaderId(sessionDir, lookupId);
+    if (actual && actual !== record.sessionFile) record.sessionFile = actual;
+  }
+}
+
+/**
+ * [圈复杂度门禁提取] keep-alive 上界处置的两步时序后半（T2-② 后代级联补杀，
+ * 自 runSpawn 收尾迁入）：close 确认死亡 + sessionFile 冻结为最终快照后 sweep。
+ */
+function sweepDescendantsOnChildClose(state: SpawnRunState, sessionDir: string): void {
+  const { record } = state;
+  // [T2-② / P-T2b 主路径] keep-alive 上界处置层主的两步时序后半：此刻 close 已发生
+  //（waitForChildExit 已 resolve = 层主确认死亡），且 sessionFile 已完成 LC-4 反查
+  // = 冻结为最终快照（pending entries 最完整，避开「kill 前采集」的垂死窗口漏项）。
+  // 从层主 sessionFile 差集采集活跃后代清单，对清单内每个后代迭代展开至叶（递归读
+  // 各后代的 pending 差集），kill 前做存活 + cmdline（pi/--mode rpc）校验防 pid 复用
+  // 误杀，逐个 escalation kill（SIGTERM→SIGKILL）。同步执行：后代树规模有限 + 每
+  // 步有界（ps 探测 3s 超时），不阻塞 runSpawn 收尾的可感时长。
+  if (state.sweepDescendantsOnClose) {
+    try {
+      const sweep = sweepDescendantsOfSession(record.sessionFile, sessionDir, "keep-alive watchdog");
+      if (sweep.killed.length > 0 || sweep.skipped.length > 0) {
+        logger.warn(
+          `[session-runner] descendant sweep (keep-alive watchdog): killed=[${sweep.killed.join(", ")}] skipped=${JSON.stringify(sweep.skipped)}`,
+        );
+      }
+    } catch (err) {
+      // sweep 整体失败不掩盖层主自身的收尾结果（best-effort 可见）
+      bestEffort(err, "descendant sweep (keep-alive watchdog)", "error");
+    }
+  }
+}
+
+/**
+ * [圈复杂度门禁提取] 成功/失败判定（三来源：exitCode + record.lastError + abort
+ * 原因；自 runSpawn 迁入，四分支行为逐字节保持）。
+ */
+function resolveRunOutcome(
+  state: SpawnRunState,
+  exitCode: number,
+  stderrBuffer: string,
+): { success: boolean; error: string | undefined } {
+  const { record, opts } = state;
+  let success: boolean;
+  let error: string | undefined;
+  if (state.settledWatchdogFired) {
+    // [T2-③ / D9] settled watchdog 到期回收 ≠ 正常完成：被信号终止视为正常完成的
+    // 既有语义（maxTurns 达限 kill）不适用于本形态——runSpawn 以错误返回（设计
+    // §6.2），错误消息含恢复指引（S-B 验收判据）。closedReason 的 "watchdog" 映射
+    // 由 finalize 侧按 error 标记承接（ClosedReason 枚举封闭，不在此擅自扩枚举）。
+    // 文案按触发段分叉窗长语义（D9 失败路径总表：中段标注 mid-round no-progress）。
+    const fire = state.settledWatchdogFired;
+    const windowDesc =
+      fire.phase === "mid-round"
+        ? `no valid protocol event for ${fire.waitedMs / MS_PER_SECOND / SECONDS_PER_MINUTE} min after prompt (mid-round no-progress)`
+        : `no agent_settled within ${fire.waitedMs / MS_PER_SECOND}s after agent_end (settled phase)`;
+    success = false;
+    error =
+      `subagent did not reach agent_settled (${windowDesc}; settled watchdog); the process was terminated to bound the wait. ` +
+      `Recovery: check state with subagents action:'list', then re-send your message to continue.`;
+  } else if (record.lastError) {
+    // LLM/provider error 或 abort error 已收口进 record.lastError
+    success = false;
+    error = record.lastError;
+  } else if (exitCode !== 0 && exitCode < SIGNAL_EXIT_CODE_THRESHOLD) {
+    // 非信号退出的非零 exit code = 子进程自身报错
+    success = false;
+    error = stderrBuffer.trim() || `pi subprocess exited with code ${exitCode}`;
+  } else if (opts.signal?.aborted) {
+    // 用户/调用方 signal 取消（非 maxTurns）——不算成功，但也不算 error
+    success = false;
+    error = undefined;
+  } else {
+    // exitCode === 0 或被信号终止（maxTurns 达限 kill）——均视为正常完成
+    success = true;
+    error = record.lastError;
+  }
+  return { success, error };
+}
+
+/**
  * spawn pi 子进程执行 session。
  *
  * 契约与 run() 一致：正常路径不抛错（prompt 失败/turn-limit abort/子进程崩溃
@@ -2400,135 +2767,16 @@ export async function runSpawn(
       env: childEnv,
     });
     state.proc = child;
-    // [worktree-reaper-fix] 同步补全注册表 pid：spawn 返回后 child.pid 立即可得（Node.js
-    // 同步属性），无需等任何 stdout 事件。原补全点挂在 header 分支（下方 stdout handler 内），
-    // 而 RPC mode（buildSpawnArgs 固定 --mode rpc）不输出 header 行——pid 恒为 0，超
-    // SPAWN_GRACE_MS 后被 reaper 当孤儿误删活 worktree（2026-08-11 cw 递归编排整树失活事故）。
-    // header 分支调用保留：json mode 回切时仍能补全，updatePid 同 branch 覆盖写幂等，无副作用。
-    if (opts.worktree && child.pid) {
-      // [D5a] void：回调可能返回 Promise（锁内 RMW），契约保证不 reject，fire-and-forget。
-      void ctx.onWorktreePid?.(opts.worktree.branch, child.pid);
-    }
-    // [C1] track 子进程供 dispose 兜底 kill（sync + background 均注册——sync 无 controller，
-    // abortRunningControllers 跳过它，靠本 Map 兜底）。close/error 后按句守卫移除（已退出无需再 kill）。
-    spawnedChildren.set(record.id, child);
-    // [V2 决策 3] spawn 后 child.pid 同步立即可得，记录到 record 内存（lifecycle-manager
-    // 孤儿扫描用，Step 5 接入持久化）。resume spawn 时此处同样覆盖更新（pid 可能已变）。
-    if (child.pid !== undefined) record.pid = child.pid;
+    // [圈复杂度门禁提取] spawn 后同步装配（worktree pid 补全 ×2 / 记账 / record.pid /
+    // stdio 编码 / stdin error listener / prompt 命令）整段迁入 setupFreshChild。
+    setupFreshChild(state, child, task);
 
-    // [worktree-reaper-fix] 同步补全注册表 pid：spawn 返回后 child.pid 立即可得（Node.js
-    // 同步属性），无需等任何 stdout 事件。原补全点挂在 header 分支（下方 stdout handler 内），
-    // 而 RPC mode（buildSpawnArgs 固定 --mode rpc）不输出 header 行——pid 恒为 0，超
-    // SPAWN_GRACE_MS 后被 reaper 当孤儿误删活 worktree（2026-08-11 cw 递归编排整树失活事故）。
-    // header 分支调用保留：json mode 回切时仍能补全，updatePid 同 branch 覆盖写幂等，无副作用。
-    // [S1] 防御：必须放在 spawnedChildren.add 之后（onWorktreePid 抛错时子进程已被跟踪，
-    // dispose 兜底 kill 不会泄漏），且包 try/catch（补全失败不阻断 spawn 主流程——
-    // 注册表写失败最坏后果是条目停留 pid=0，由 reaper 宽限回收兜底）。
-    if (opts.worktree && child.pid) {
-      try {
-        // [D5a] void：回调可能返回 Promise（锁内 RMW），契约保证不 reject，fire-and-forget。
-        void ctx.onWorktreePid?.(opts.worktree.branch, child.pid);
-      } catch (err) {
-        logger.warn("[worktree] worktree pid registration failed (defensive)", {
-          branch: opts.worktree.branch,
-          pid: child.pid,
-          err: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
+    // [圈复杂度门禁提取] chatMode 首轮 settled 守护挂载迁入 armChatModeSettledWatchdog。
+    armChatModeSettledWatchdog(state, child);
 
-    // stdout/stderr 用 utf8 编码：stream 自动按字符边界切分，避免多字节
-    // UTF-8（CJK/emoji）跨 chunk 时 toString() 产生 U+FFFD 替换符导致 JSON.parse 失败。
-    // [m2] 先 setEncoding 再注册 signal listener/watchdog：若 setEncoding 抛错，try/finally
-    //（下方）只清理 tempPromptFile，watchdog/signal listener 尚未注册则无需清理——避免泄漏。
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-
-    // [v4 A-1] 异步 stdin 'error' listener。writeStdinLine 的 try/catch 只覆盖同步 write 抛错；
-    // 子进程退出后内核回写 EPIPE 会以异步 stream 'error' event 到达，若无 listener 会让 Node
-    // 抛 unhandled 'error' 崩主进程（P1）。必须在首次 stdin 写入（下方 sendPromptCommand）前注册。
-    // handler 行为：①移出 spawnedChildren 标记 dead（与 child.on('error') 同模式）；
-    // ②recordEpipeFailure 合并同步/异步计数；③logger.warn 记录一次。
-    // [v4 A-1 裁决] handler 内**不 throw**——stream 'error' listener 内 throw 会经 Node 内部
-    // emit() 传播为 uncaughtException 崩主进程，违背 A-1 防崩核心目标。达阈值的 throw 留给
-    // 同步路径（PiEngine.deliverPrompt 的 catch 合并计数达 EPIPE_FAILURE_THRESHOLD 时同步 throw，不崩）。
-    // async handler 只移句柄 + 计数 + warn；进程已 dead（移句柄），下次投递检测
-    // dead 走冷路径，冷路径 write EPIPE 同步计数达阈值同步 throw——防死循环且不崩。
-    child.stdin.on("error", (err: Error) => {
-      // [M4] 按值守卫：resume spawn 已覆盖注册时不误删新 child（见 removeChildRegistration）
-      removeChildRegistration(record.id, child);
-      const count = recordEpipeFailure(record.id);
-      logger.warn(`[subagents] async stdin error for ${record.id}`, {
-        detail: err.message,
-        epipeCount: count,
-        threshold: EPIPE_FAILURE_THRESHOLD,
-        hint:
-          count >= EPIPE_FAILURE_THRESHOLD
-            ? "sync path will throw on next write EPIPE"
-            : undefined,
-      });
-    });
-
-    // 喂 prompt 命令驱动子进程开始处理 task。pi runRpcMode 只消费 stdin RpcCommand，
-    // 不读 positional arg；必须在 spawn 后主动写，否则子进程阻塞、totalTokens 恒 0。
-    // 时机安全：pipe 内核缓冲不丢；pi 在 rebindSession 后才挂 stdin reader。
-    sendPromptCommand(child, task);
-
-    // [T2-③ / D9 两段式] chatMode 首轮 settled 等待守护（双挂载原语之首轮调用点；
-    // 热路径调用点在 subagent-service deliverMessage）。prompt 发出后挂**中段**无进展
-    // 检测（有效协议事件行刷新，连续静默 30min 判 wedged）；agent_end 到达时经 stdout
-    // pump 交棒**收尾段**固定上界（agent_end 后 600s，P-T2c 定案）；settled 到达
-    //（handleSdkEvent）/ close（waitForChildExit）/ resolveRun 任一发生即清——两段
-    // 合起来覆盖 LC-1 三 wedged 形态（agent_end 永不到达 / 收尾卡死 / settled 行丢失）。
-    // 到期处置（两段同构）：kill 层主 + settledWatchdogFired 段信息（收尾据此转 failed
-    // + 恢复指引，见下方 success 判定），与被信号终止视为正常完成的既有语义区分。
-    if (record.chatMode) {
-      armMidRoundNoProgress(record.id, {
-        onMidTimeout: (fire) => {
-          logger.warn(
-            `[session-runner] settled watchdog (mid-round) fired for ${record.id}: no valid protocol event for ${fire.waitedMs / MS_PER_SECOND / SECONDS_PER_MINUTE} min, terminating (LC-1 wedge recovery)`,
-          );
-          state.settledWatchdogFired = fire;
-          killChildWithEscalation(state, child, "settled watchdog");
-        },
-        onSettleTimeout: (fire) => {
-          logger.warn(
-            `[session-runner] settled watchdog (settled phase) fired for ${record.id}: no agent_settled within ${fire.waitedMs / MS_PER_SECOND}s after agent_end, terminating (LC-1 wedge recovery)`,
-          );
-          state.settledWatchdogFired = fire;
-          killChildWithEscalation(state, child, "settled watchdog");
-        },
-      });
-    }
-
-    // d. signal → proc.kill 监听（一次性，替代 session.abort）
-    // [race-F4] 用户取消同样升级：SIGTERM 后挂住 → 30s 后 SIGKILL 兑现取消语义。
-    const onAbort = (): void => {
-      killPiChild(child, record.id, "abort signal");
-    };
-    opts.signal?.addEventListener("abort", onAbort, { once: true });
-    // 前置检查：signal 在 spawn 前已 aborted 时 addEventListener 不会触发 onAbort，
-    // 子进程会跑到自然结束。立即 kill 兑现取消语义。
-    if (opts.signal?.aborted) onAbort();
-
-    // e. watchdog：子进程整体超时兜底。卡死在单 tool 内（turn_end 永不触发）时
-    //    limiter 失效，此 timer 保证最终 SIGTERM，防止 background 槽位/资源泄漏。
-    // [M-1] timeout 基于 maxTurns 动态计算（maxTurnsToWatchdogMs）：旧实现固定 30 分钟
-    //    误杀长任务，现按 maxTurns 线性估算（每 turn ~5 分钟，下限 30 分钟）。
-    // [预算语义对齐] maxTurns 未传/<=0 → 不挂 watchdog（不限，用户明确裁决——旧实现按
-    //    10 turns 估出 50min 默认 SIGTERM 且 maxTurns:0 也关不掉，已废）；
-    //    SPAWN_WATCHDOG_ENV 设置时按绝对时限兑底挂载（hang 泄漏防线 opt-in）。
-    // [R0] unref：不阻止 Node 进程退出。安全性由 SubagentService.dispose 保证——
-    // 主进程退出时（session_shutdown reason=quit）dispose 会 abort running controller
-    // → 本监听器 kill 子进程。无此 unref，watchdog timer 会拖住 event loop 阻止退出。
-    const watchdogMs = resolveSpawnWatchdogMs(opts.maxTurns);
-    if (watchdogMs !== undefined) {
-      state.watchdog = setTimeout(
-        () => killPiChild(child, record.id, "spawn watchdog"),
-        watchdogMs,
-      );
-      state.watchdog.unref();
-    }
+    // [圈复杂度门禁提取] abort 监听 + spawn watchdog 挂载迁入 attachAbortAndSpawnWatchdog，
+    // 返回 onAbort 供下方收尾 removeEventListener（注册与注销同一句柄）。
+    const onAbort = attachAbortAndSpawnWatchdog(state, child);
 
     // [recursive-orchestration] agent_end 有活跃后代时的等待超时（不 kill 分支的兑底）。
     // 层主 subagent 空闲等待后代完成（steer 唤醒）期间不产生 turn，原 watchdog 已清；
@@ -2538,32 +2786,9 @@ export async function runSpawn(
     // stdout pump：逐行解析 → handleSdkEvent / enqueueUiRequest + get_state 握手状态机
     const pump = attachStdoutPump(child, state, sessionDir, handleSdkEvent);
 
-    // FR-4: get_state RPC 握手——spawn 后无条件启动。
-    // RPC mode（pi --mode rpc）不向 stdout 输出 header，record.sessionFile 无法靠 header
-    // 推导，必须通过 get_state RPC 查询子进程回填。json mode 下 header 会先到达触发提前
-    // resolve（加速路径），握手仍启动但无害——response 到达时外层已 resolve，resolver
-    // 因 resolved=true 直接 return。
-    //
-    // 时序：握手在 stdout pump（get_stateListeners 已就绪）之后启动。get_state 命令写入
-    // stdin，pi rebindSession 后读取并返回 response，经 stdout pump 匹配 resolver 触发 resolve。
-    // close handler await handshakeSettled，保证无论 task 多快结束，close 时 sessionFile 已回填。
-    // [#18] 握手状态变量已在 attachStdoutPump 内部（stdout handler 注册前）定义，此处直接发起握手。
-    // [F2] .catch 兜底：performGetStateHandshake 的 Promise executor 同步调 tryOnce →
-    // sendGetStateCommand → writeStdinLine 在 stdin 已断（EPIPE/ERR_STREAM_DESTROYED）时同步
-    // throw → executor 内同步异常被 Promise 构造器转为 reject。若无人接（旧实现只有 .then），
-    // reject 无人消费 → unhandledRejection（Node 15+ 默认 mode=throw）可崩父 pi 进程。
-    // catch 内：logger.error 留证 + pump.abandonHandshake 记录握手失败终态——close handler
-    // await 的 handshakeSettled 立即 settle，isHandshakePending() 归 false，不阻塞收尾链路
-    //（sessionFile 兜底由收尾时的 existsSync 校验 + findSessionFileByHeaderId 承担）。
-    void performGetStateHandshake(child, pump.registerGetStateListener).then((r) => {
-      // header 加速路径下 settleHandshake 已 undefined，跳过（避免覆盖 header 结果）。
-      // 超时兜底（r 为空对象）也经此分支 settle，但 record.sessionFile 不回填。
-      if (pump.isHandshakePending()) pump.finishHandshake(r);
-    }).catch((err: unknown) => {
-      const m = err instanceof Error ? err.message : String(err);
-      logger.error(`[session-runner] get_state handshake failed: ${m}`);
-      pump.abandonHandshake();
-    });
+    // [圈复杂度门禁提取] get_state 握手启动（fire-and-forget + F2 catch 兜底）迁入
+    // startGetStateHandshake。
+    startGetStateHandshake(child, pump);
 
     child.stderr.on("data", (data: string) => {
       // 截断防 OOM：失控子进程持续打 stderr 会耗尽父进程内存。保留尾部便于诊断。
@@ -2582,84 +2807,16 @@ export async function runSpawn(
     disarmKeepAliveNoProgressTimer(state);
     disarmSettledWatchdog(record.id);
 
-    // [持久化 A] sessionFile 兜底校验。
-    // identity custom entry 已改由子进程 session_start hook 写（M4 / V2 决策 5），
-    // 父进程不再 fs 补写——fs 补写的 entry 缺 id/parentId 污染 pi _buildIndex。
-    // 此处仅保留 sessionFile 路径兜底（deriveSessionFilePath/握手路径可能不准）。
-    //
-    // [T1/LC-4] findSessionFileByHeaderId 兜底查找移出 `if (record.sessionFile)` 守卫：
-    // 原守卫条件恰等于它要兜底的缺失本身——RC-1 握手失败留下的「sessionId 有、
-    // sessionFile 无」形态（两字段独立采集）永远不可达本兜底，下游 finalize marker /
-    // alive marker / identity 写入全部失去依据（PS-9 放大）。现在两种形态都反查：
-    // sessionFile 有但路径不存在（推导错 / pi 命名变化）；sessionFile 无而 sessionId 有
-    // （header 或握手部分成功，含 agent_end 惰性回补补入的 handshakeResult.sessionId）。
-    {
-      const lookupId = state.sessionHeader?.id ?? state.handshakeResult?.sessionId;
-      const needsLookup = record.sessionFile
-        ? !fs.existsSync(record.sessionFile)
-        : lookupId !== undefined;
-      if (lookupId && needsLookup) {
-        const actual = findSessionFileByHeaderId(sessionDir, lookupId);
-        if (actual && actual !== record.sessionFile) record.sessionFile = actual;
-      }
-    }
+    // [圈复杂度门禁提取] sessionFile 兜底反查（LC-4）迁入 backfillSessionFileByLookup。
+    backfillSessionFileByLookup(state, sessionDir);
 
-    // [T2-② / P-T2b 主路径] keep-alive 上界处置层主的两步时序后半：此刻 close 已发生
-    //（waitForChildExit 已 resolve = 层主确认死亡），且 sessionFile 已完成 LC-4 反查
-    // = 冻结为最终快照（pending entries 最完整，避开「kill 前采集」的垂死窗口漏项）。
-    // 从层主 sessionFile 差集采集活跃后代清单，对清单内每个后代迭代展开至叶（递归读
-    // 各后代的 pending 差集），kill 前做存活 + cmdline（pi/--mode rpc）校验防 pid 复用
-    // 误杀，逐个 escalation kill（SIGTERM→SIGKILL）。同步执行：后代树规模有限 + 每
-    // 步有界（ps 探测 3s 超时），不阻塞 runSpawn 收尾的可感时长。
-    if (state.sweepDescendantsOnClose) {
-      try {
-        const sweep = sweepDescendantsOfSession(record.sessionFile, sessionDir, "keep-alive watchdog");
-        if (sweep.killed.length > 0 || sweep.skipped.length > 0) {
-          logger.warn(
-            `[session-runner] descendant sweep (keep-alive watchdog): killed=[${sweep.killed.join(", ")}] skipped=${JSON.stringify(sweep.skipped)}`,
-          );
-        }
-      } catch (err) {
-        // sweep 整体失败不掩盖层主自身的收尾结果（best-effort 可见）
-        bestEffort(err, "descendant sweep (keep-alive watchdog)", "error");
-      }
-    }
+    // [圈复杂度门禁提取] 后代级联补杀 sweep（T2-② 两步时序后半）迁入
+    // sweepDescendantsOnChildClose。
+    sweepDescendantsOnChildClose(state, sessionDir);
 
     // 判定成功/失败（三来源：exitCode + record.lastError + abort 原因）
-    let success: boolean;
-    let error: string | undefined;
-    if (state.settledWatchdogFired) {
-      // [T2-③ / D9] settled watchdog 到期回收 ≠ 正常完成：被信号终止视为正常完成的
-      // 既有语义（maxTurns 达限 kill）不适用于本形态——runSpawn 以错误返回（设计
-      // §6.2），错误消息含恢复指引（S-B 验收判据）。closedReason 的 "watchdog" 映射
-      // 由 finalize 侧按 error 标记承接（ClosedReason 枚举封闭，不在此擅自扩枚举）。
-      // 文案按触发段分叉窗长语义（D9 失败路径总表：中段标注 mid-round no-progress）。
-      const fire = state.settledWatchdogFired;
-      const windowDesc =
-        fire.phase === "mid-round"
-          ? `no valid protocol event for ${fire.waitedMs / MS_PER_SECOND / SECONDS_PER_MINUTE} min after prompt (mid-round no-progress)`
-          : `no agent_settled within ${fire.waitedMs / MS_PER_SECOND}s after agent_end (settled phase)`;
-      success = false;
-      error =
-        `subagent did not reach agent_settled (${windowDesc}; settled watchdog); the process was terminated to bound the wait. ` +
-        `Recovery: check state with subagents action:'list', then re-send your message to continue.`;
-    } else if (record.lastError) {
-      // LLM/provider error 或 abort error 已收口进 record.lastError
-      success = false;
-      error = record.lastError;
-    } else if (exitCode !== 0 && exitCode < SIGNAL_EXIT_CODE_THRESHOLD) {
-      // 非信号退出的非零 exit code = 子进程自身报错
-      success = false;
-      error = stderrBuffer.trim() || `pi subprocess exited with code ${exitCode}`;
-    } else if (opts.signal?.aborted) {
-      // 用户/调用方 signal 取消（非 maxTurns）——不算成功，但也不算 error
-      success = false;
-      error = undefined;
-    } else {
-      // exitCode === 0 或被信号终止（maxTurns 达限 kill）——均视为正常完成
-      success = true;
-      error = record.lastError;
-    }
+    // [圈复杂度门禁提取] 四分支判定迁入 resolveRunOutcome（行为逐字节保持）。
+    const { success, error } = resolveRunOutcome(state, exitCode, stderrBuffer);
 
     // g. collectResult（完全复用——全部从 record 读）
     // [F-1] schemaExpected：schema/schemaEnv 任一存在即要求结构化产出（耦合形态
