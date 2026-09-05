@@ -162,7 +162,7 @@ deliverMessage（subagent-service.ts:1177）/ runSpawn（session-runner.ts:2453�
 [引擎] 触发超时入口 abort 链（D3 stop-outcome 三态裁决）：session/stop{sessionId}（3s）
   ├─ stop 有应答（成功=服务端接受停 turn / 协议性 error=会话已被 close 回收，控制面活）→ 止损确认，链终止（共享进程不杀）
   └─ stop 超时/连接级失败（控制面死，进程假死形态）→ killChain（SIGTERM→5s→SIGKILL）收割共享进程
-[outcome] engine_timeout: zcode turn 连续静默 30000ms（idle 判定，最后事件后）…止损路径：<stop 已送达 / stop 无应答已升级杀链>。
+[outcome] engine_timeout: zcode turn 连续静默 1800000ms（idle 判定，最后事件后）…止损路径：<stop 已送达 / stop 无应答已升级杀链>。
        👉 恢复指引：直接重跑本任务（瞬时故障已自动重试一次仍超时；重试在止损链终局后启动，无新旧任务双跑窗）；若持续出现，检查 ZCode 桌面端模型连通性或改用 engine: pi。
 ```
 
@@ -189,7 +189,7 @@ deliverMessage（subagent-service.ts:1177）/ runSpawn（session-runner.ts:2453�
 - **采用**：`openTurn` 的单一 300s timer 替换为两个 timer：
   - **idle 无进展检测（主判定）**：`ZCODE_TURN_IDLE_TIMEOUT_MS` 默认 **30min**，该 turn 的任何事件（session/event delta、telemetry stream.chunk/turn.terminal）刷新计时；连续静默达阈值 → 判「执行已不可推进」。
   - **总上界（回收兜底）**：`ZCODE_TURN_MAX_TIMEOUT_MS` 默认 **60min**（先验值，⛔P-Z0 门标定任务总时长分布，失败按预定义路径上调——见 §11），从 send 起固定不刷新，兜「事件持续但终态永不到达」的 chatty-wedge 形态。
-  - 两阈值均 env 可调、≤0 关闭（规则 19 opt-out）。fire 后动作统一走 D3（见 D2），channel 以带 `kind: "idle" | "ceiling"` 的类型化错误 reject。
+  - 两阈值均 env 可调、≤0 关闭（规则 19 opt-out；**关闭时 warn 日志明示后果——r3 复审 SG-5 补规格，A10① 断言依据**。注意与 settled 侧先例是刻意分歧：`XYZ_SUBAGENT_IDLE_TIMEOUT_MS` 先例 ≤0=非法回落且禁用后不认 env（lifecycle-manager.ts:57-78），本设计 ≤0=显式关闭语义，分歧显式登记）。fire 后动作统一走 D3（见 D2），channel 以带 `kind: "idle" | "ceiling"` 的类型化错误 reject。
 - **归属论证（与规则 19 相容性，本设计核心论证；v1.1 重写消除自相矛盾）**：按回收层定义（unbounded-wait-audit §2 目标 3），回收层是处置「执行已不可推进」的全部通道。修复前的问题不是「存在上界」而是**判定语义错了**——它把「墙钟到点」直接当「不可推进」的证据（实测 21% 是可推进的活跃流）。修复后两层的断言**必须分开说清，不再合并为「正常路径永不判死」一句（v1 该句与上界行为矛盾，被审查击穿）**：
   1. **idle 主判定**：「连续静默 30min」才是「不可推进」的有效证据（ADR-0047 的逆否面）——活跃事件流永不被 idle 判死，对任意时长的活跃任务零误杀；
   2. **总上界**：处置 idle 覆盖不了的 chatty-wedge（回收层「上界族」合法成员，量级按任务级粒度校准）。**对超上界人群它是显式接受的残余误杀面**——形态上即被否 B 方案的墙钟，差别仅在：量级经 ⛔P-Z0 门标定（非拍脑袋）、env 可调/可关、文案附自救指引（F-2）。保留它的代价裁决 = chatty-wedge 不设上界时任务挂到宿主重启的进程级泄漏代价，高于极长任务被上界误杀的代价（T001 34 任务最长 541s，先验远离上界；P-Z0 定论）。
@@ -229,7 +229,7 @@ deliverMessage（subagent-service.ts:1177）/ runSpawn（session-runner.ts:2453�
 - **采用**：channel 判死（idle/ceiling reject）后，engine 的 `attemptAppServerTurn` catch 分流触发**既有** `appServerAbortChain`，链体参数化扩展升级判据（`escalateOn: "turn-settled" | "stop-outcome"`，双入口分岔）：
   - **用户取消入口（`ctx.signal`，现状语义零改动）**：`escalateOn: "turn-settled"`——stop（3s）→ grace 窗口（3s）内 turn 落定即止（不杀共享进程）→ 超窗 killChain。此时 turn 尚 pending，`Promise.race([turn.then(…→true), delay])` 语义正确（现状无回归）。
   - **超时入口（v1.1 新接）**：`escalateOn: "stop-outcome"`——裁决点不在 turn（已 reject，race 恒真不可用——v1 击穿点），而在 **stop 请求应答三态**：①**成功应答** → 服务端接受停 turn，止损确认，链终止；②**协议性 error 应答**（如 session-not-found——有 error 应答帧本身即控制面活的证据；多因 runTurn finally 的 closeSession（1.5s best-effort）先行关闭了会话，见下方竞态推演）→ 链终止不升级（止损由 close 回收 + 服务端自治承担）；③**超时/连接级失败**（请求超时、写入失败、连接不可用——控制面死的证据）→ killChain 升级（`conn.shutdown`：SIGTERM→grace→SIGKILL，幂等）。
-  - 超时入口由 engine catch **await 链终局**（非 fire-and-forget：D6 重试时序依赖链终局信号，outcome 文案需含实际止损路径）；用户取消入口维持与 turn promise 并行推进的既有 fire-and-forget 语义（`:594-599` 注释）。三态判据的实现依据：`connection.request` 的 reject 形态可区分（error 应答帧 reject 携带 RPC code；超时/写入失败是连接级新 Error——`connection.ts:288-321`）。
+  - 超时入口由 engine catch **await 链终局**（非 fire-and-forget：D6 重试时序依赖链终局信号，outcome 文案需含实际止损路径）；用户取消入口维持与 turn promise 并行推进的既有 fire-and-forget 语义（`:594-599` 注释）。三态判据的实现依据：`connection.request` 的 reject 形态可区分（error 应答帧 reject 携带 RPC code；超时/写入失败是连接级新 Error——`connection.ts:288-321`）。**判据边缘登记（r2 复审 INFO-2）**：error 应答帧的 code 非 number（畸形帧）时 `err.code=undefined` → 误判连接级 → 升级杀链——A.3 错误码表全为 number 正常协议不可达（出处 `zcode-engine-appserver-resident.md:289-291`，r3 复审 INFO-1 补指针），且误杀后果止于共享进程（killChain 本就是超时形态合法终局之一）；实装若要绝对干净可用「reject 出自 settlePending 的 error 帧形态」（message 前缀）双保险，非必须。
   - **与 closeSession 的竞态推演**（超时路径必经）：channel timer reject → runTurn finally 立即 `closeSession`（1.5s）→ engine catch 触发链 → stop。**健康进程形态**：close 先行成功关会话 → stop 大概率拿到协议性 error（会话已关）→ 不杀（正确：控制面健康、会话已被 close 回收；**协议性 error 不升级是三态判据的关键设计——若把「stop 报错」一律升级，健康形态会被误杀并连坐并发任务**，审查建议方向「stop 失败→直接 kill」未区分此形态，修正后采用）。**进程假死形态**：close 本身 1.5s 超时放弃（best-effort），stop 3s 超时 → killChain 可达（正确：控制面死，只有杀进程能止损）。
   - **双入口并发**（超时后用户立即 cancel）：两链实例并发，stop 重复发送无害（服务端幂等停同一会话），shutdown 幂等（`killChainPromise` 共享，`connection.ts:206-207`）。
 - **反例重演（审查 M1 反例：idle 30min fire → reject → v1 链 race 恒真 → 恒走 `if (settled) return` → killChain 结构性不可达 → 假死进程永杀不掉、对端继续烧 token）**。修复后逐步推演（目标：把「stop 失败 → 升级 kill」推到真的可达）：
@@ -315,7 +315,7 @@ deliverMessage（subagent-service.ts:1177）/ runSpawn（session-runner.ts:2453�
 
 **本章结论：改动集中在 zcode 引擎三文件 + settled-watchdog 原语与两挂载点（共六文件），无新模块、无新依赖。**
 
-**新常量**（`constants.ts`，值均 env 可覆盖）：
+**新常量**（`constants.ts`，除中段阈值外均 env 可覆盖——D9 定案：中段 `SETTLED_MID_ROUND_NO_PROGRESS_MS` v1 不开 env，保持与 keep-alive 先例同为纯常量）：
 
 | 常量 | 默认值 | 语义 |
 |---|---|---|
@@ -326,7 +326,7 @@ deliverMessage（subagent-service.ts:1177）/ runSpawn（session-runner.ts:2453�
 
 **session-channel `openTurn` timer 状态机**：两 timer 各自独立 clearTimeout/重挂；事件到达点（`handleSessionEvent` / `handleTelemetry`）统一调 `refreshIdle(sessionId)`——create 应答在 `openTurn` 挂 timer 之前到达（runTurn 先 createSession 后 openTurn），不参与刷新；任一 fire → reject `TurnTimeoutError{kind, lastEventAt, elapsed}`（类型化，供 engine 分流与文案）。`SessionTurnOptions` 扩展：`turnTimeoutMs` 语义收窄为「显式总上界」（缺省走 env→默认 60min；D6 重试预算继承用它传剩余值）+ 新增 `idleTimeoutMs` 字段（缺省走 env→默认 30min）——两个内部传参点，工具面不暴露（D2）。
 
-**engine 分流**：`attemptAppServerTurn` catch 增加判别——`TurnTimeoutError` → fire `appServerAbortChain`（D3）+ `engine_timeout` outcome（D4）+ 进入重试判定（D6）；连接崩溃类（failAllTurns 错误标记）→ 同入重试判定；abort/漂移 → 既有路径不动。
+**engine 分流**：`attemptAppServerTurn` catch 增加判别——`TurnTimeoutError` → **await `appServerAbortChain` 链终局后**（D3 明文：非 fire-and-forget——D6 重试时序依赖链终局信号；用户取消入口才维持既有 fire-and-forget 形态）+ `engine_timeout` outcome（D4）+ 进入重试判定（D6）；连接崩溃类（failAllTurns 错误标记）→ 同入重试判定；abort/漂移 → 既有路径不动。
 
 **settled-watchdog 原语扩展**：`armSettledWatchdog` 语义改为「收尾段上界」（锚点：收到 agent_end 时 arm，settled/close 清）；新增 `armMidRoundNoProgress`（锚点：prompt 发出时 arm，有效协议事件刷新，agent_end 到达时 disarm 并交棒收尾段）。两挂载点（session-runner 首轮 / subagent-service 续聊）同步接两个原语；stdout pump 的合法行判别复用 invalidLineCount 同源解析结果。
 
@@ -334,7 +334,7 @@ deliverMessage（subagent-service.ts:1177）/ runSpawn（session-runner.ts:2453�
 
 | 错误形态 | 前缀/文案要点 | 止损动作 | 恢复指引 |
 |---|---|---|---|
-| idle 静默判死 | `engine_timeout`（含静默时长、最后事件时刻） | session/stop → grace → killChain | 重跑（已自动重试 1 次）；持续出现查 ZCode 连通性或 engine: pi |
+| idle 静默判死 | `engine_timeout`（含静默时长、最后事件时刻） | stop 三态裁决（成功/协议 error → 链终止；超时/连接级 → killChain，D3） | 重跑（已自动重试 1 次）；持续出现查 ZCode 连通性或 engine: pi |
 | 总上界判死 | `engine_timeout`（chatty 判定标注） | 同上 | 同上；env 可调/关上界 |
 | status=error 终态 | `engine_run_failed`（附尾部内容） | 会话已终态，无需止损 | 重跑；持续出现查凭据/模型配置 |
 | 连接崩溃（重试后仍失败） | `engine_run_failed`（已重试 1 次） | 连接自动重建 | 重跑；probe 核对协议漂移 |
@@ -343,22 +343,23 @@ deliverMessage（subagent-service.ts:1177）/ runSpawn（session-runner.ts:2453�
 
 ## 8. 验收（真实场景，非单测）
 
-**本章结论：改动规模 = 大（行为变更 + 接口调整），九个真实场景覆盖五条目标，含行为不变负面验证（A6）；加速验证用 env 调小阈值验机制，另跑默认值真实场景至少各 1 例。**
+**本章结论：改动规模 = 大（行为变更 + 接口调整），十一个真实场景覆盖五条目标（目标 1←A1/A6/A7/A10、目标 2←A2/A3/A8/A9、目标 3←A2/A11、目标 4←A4/A5、目标 5←A7/A8/A9，r3 复审 INFO-2 补行回溯），含行为不变负面验证（A6）与两止损分支各有的独立覆盖（A2/A11）；加速验证用 env 调小阈值验机制，另跑默认值真实场景至少各 1 例。**
 
 | # | 场景 | 回溯 §2 目标 | 真实流程/数据/路径 | 通过标准 |
 |---|---|---|---|---|
 | A1 | 长任务不误杀（复现 T001 541s 形态） | 目标 1 | 真实 zcode 任务跑 >10min（大仓深诊/长报告，与 sess_39cd51f9 同类）；全程观察 text_delta | 任务自然终态 parsed；总时长 >300s 无中断；无 engine_timeout |
-| A2 | 静默 wedged 回收 + 止损 | 目标 2/3 | 真实会话中途 SIGSTOP 挂起 app-server（事件流断）；观察 30min（或 env 调小至 60s 先验机制再跑 1 例默认值） | 30min（或缩阈值）内 `engine_timeout`；app-server 侧可落盘证据（journal / `ZCODE_POOL_DB_RELATIVE_PATH` SQLite usage 记录）证明 stop 已送达、判死时刻前后快照对比无新增 token 消耗（桌面端用量面板分辨率/刷新延迟不足，不作判据） |
+| A2 | 静默 wedged 回收 + killChain 止损（假死形态） | 目标 2/3 | 真实会话中途 SIGSTOP 挂起 app-server（事件流断）；观察 30min（或 env 调小至 60s 先验机制再跑 1 例默认值） | 30min（或缩阈值）内 `engine_timeout`；**killChain 路径可判定断言（r2 复审 MF 修正——SIGSTOP 冻结进程不处理请求不落盘，stop 送达证据在该形态结构性不可产生）**：stop 3s 超时后升级杀链（engine 日志链终局为连接级失败）→ 共享进程死亡（exit/close 事件）→ 判死时刻前后 app-server journal / SQLite usage 快照对比无新增 token 消耗（桌面端用量面板分辨率/刷新延迟不足，不作判据）；journal 检查顺带留意无重复 stop 副作用（D3 双入口并发，r2 INFO-1）；**outcome 文案止损路径为「stop 无应答已升级杀链」（D3 强制可观测面，r3 复审 SG-4 补——与 A11 对称）** |
 | A3 | chatty wedged 由上界回收 | 目标 2 | fake app-server（既有 conformance 基建）周期吐 stream.chunk 无终态；env `XYZ_ZCODE_TURN_MAX_TIMEOUT_MS=60000` 加速 | 60s 内 `engine_timeout`（ceiling 判定）；文案含 chatty 标注与 env 指引 |
 | A4 | status=error 不再假成功 | 目标 4 | 真实会话触发 error 终态（错误模型配置/失效凭据 send）；⛔P-Z2 先行确认事件序 | outcome 为 run-failed + 尾部内容可见；record/通知不呈成功形态（对照 S-B-1 先例：用户可感知面才是判据面） |
-| A5 | 瞬时失败自动重试 | 目标 4 | 真实任务执行中 kill 一次 app-server 进程（连接崩溃收割触发） | 引擎重建连接 + 新会话重跑一次；要么成功要么「已重试 1 次」的明确失败；不永久 pending |
+| A5 | 瞬时失败自动重试（无双跑窗） | 目标 4 | 真实任务执行中 kill 一次 app-server 进程（连接崩溃收割触发） | 引擎重建连接 + 新会话重跑一次；要么成功要么「已重试 1 次」的明确失败；不永久 pending；**无双跑窗断言（r2 复审 SG-6 补——D6/F-4 的负面断言落验收）：stop 在途 / killChain 完成前，app-server journal 不出现第二个 session/create 或新 turn 事件（重试严格在链终局后启动）** |
 | A6 | 正常快任务行为不变（负面） | 目标 1 | 跑 3 个 <5min 常规任务 | 无重试、无 timeout 前缀、行为与修复前一致 |
 | A7 | chatMode 长单轮不被 settled 误杀 | 目标 1 | conversation 模式派一个 >10min 单轮任务（修复前必被 10min 窗杀） | 该轮正常 settled；收尾段上界只在 agent_end 后计时 |
 | A8 | 收尾卡死回收（负面：吞 settled 行） | 目标 2 | relay wrapper 滤掉 agent_settled 行（impl-plan S-B 已验证的注入通道）；env 调小 `XYZ_SUBAGENT_SETTLED_WATCHDOG_MS=60000` 加速 | 60s 内 kill + 失败终态化（收尾段语义生效）；A7 证明该判定不影响工作段 |
 | A9 | 中段无事件回收（负面：版本偏斜形态） | 目标 2 | relay wrapper 同时滤掉 agent_end 与 agent_settled；env 调小中段阈值 | 中段静默判定触发回收（场景①覆盖不降级） |
-| A10 | env ≤0 关闭行为 + 超上界形态的用户可见逃生门（负面） | 目标 1 | ① `XYZ_ZCODE_TURN_MAX_TIMEOUT_MS=0` + `XYZ_ZCODE_TURN_IDLE_TIMEOUT_MS=0` 下跑 wedged 模拟：确认无 timer 判死、warn 提示出现、另一层语义（idle 关闭后静默 wedged 无自动回收）如实呈现；② 以 env 缩小上界（如 60s）等价模拟 >60min 合法任务被上界回收：验证 F-2 文案 + env 自救指引足以引导用户调参重跑 | 关闭态无隐式判死、warn 明示后果；F-2 文案含 env 调整示例且重跑成功 |
+| A10 | env ≤0 关闭行为 + 超上界形态的用户可见逃生门（负面） | 目标 1 | ① `XYZ_ZCODE_TURN_MAX_TIMEOUT_MS=0` + `XYZ_ZCODE_TURN_IDLE_TIMEOUT_MS=0` 下跑 wedged 模拟：确认无 timer 判死、warn 提示出现、另一层语义（idle 关闭后静默 wedged 无自动回收）如实呈现；①b 同法验 settled 侧 `XYZ_SUBAGENT_SETTLED_WATCHDOG_MS=0`（r2 复审 SG-1 补，挂 M3）；② 以 env 缩小上界（如 60s）等价模拟 >60min 合法任务被上界回收：验证 F-2 文案 + env 自救指引足以引导用户调参重跑 | 关闭态无隐式判死、warn 明示后果；F-2 文案含 env 调整示例且重跑成功 |
+| A11 | stop 送达止损分支（健康控制面 + turn 无终态形态） | 目标 3 | fake app-server（conformance 基建）注入「stop 应答成功、terminal 永不到达」——**用基建的 `hangOnly` 静默形态 + `stopBehavior:'none'`（r3 复审 SG-2 补：send 后静默才触发 idle；若沿用 A3 周期 chunk 形态会漂移到 ceiling 判定）**；env 调小 idle 至 60s（r2 复审 MF 补——F-1 两止损分支中 stop 成功送达分支此前零验收覆盖，A2 只覆盖 killChain 分支） | `engine_timeout` 发生且止损链**不升级**：fake state 文件（FAKE_STATE_FILE 流水）含 stop-recv 帧 + 共享进程存活（无 killChain 日志、进程不退）（r3 复审 SG-1 修正——fake 不产 usage 数据，快照断言在该场景恒真空转，改 state 流水证据）；outcome 止损路径文案为「stop 已送达」（对齐 D3 强制可观测面，r3 复审 SG-4 与 A2 对称） |
 
-**依赖说明**：A1/A4/A5/A6/A7 走真实 ZCode 桌面端 + 真实模型；A3 用 fake app-server（真实 app-server 无法注入 chatty-wedge，缺口如实标注——机制层等价）；A2 的 SIGSTOP 是真实进程信号非 mock。
+**依赖说明**：A1/A4/A5/A6/A7 走真实 ZCode 桌面端 + 真实模型；A3/A11 用 fake app-server（真实 app-server 无法注入 chatty-wedge / stop-送达+无终态形态，缺口如实标注——机制层等价；A11 的 FAKE_STATE_FILE 流水即其落盘证据，r3 复审 SG-3 补列）；A2 的 SIGSTOP 是真实进程信号非 mock。
 
 ## 9. 实施（迁移路径）
 
@@ -366,9 +367,9 @@ deliverMessage（subagent-service.ts:1177）/ runSpawn（session-runner.ts:2453�
 
 | 阶段 | 内容 | 交付终态的什么 | 验收 |
 |---|---|---|---|
-| M1 | U1（idle+ceiling timer）+ U2（清理+归类） | §5.1 成功路径 + F-1/F-2 | A1/A2/A3/A6 |
-| M2 | U3（status 分流）+ U4（重试）+ U5（dispose 收割） | F-3/F-4 + 崩溃收割闭合 | A4/A5 |
-| M3 | U6（settled 两段式）+ U7（文档回写） | F-5 + chatMode 长轮保护 | A7/A8/A9 |
+| M1 | U1（idle+ceiling timer）+ U2（清理+归类） | §5.1 成功路径 + F-1/F-2 | A1/A2/A3/A6 + **A11（stop 送达止损分支，U2 链行为）+ A10①②（zcode 侧 env，U1）**（r2 复审 SG-1 补映射） |
+| M2 | U3（status 分流）+ U4（重试）+ U5（dispose 收割） | F-3/F-4 + 崩溃收割闭合 | A4/A5（含无双跑窗断言） |
+| M3 | U6（settled 两段式）+ U7（文档回写） | F-5 + chatMode 长轮保护 | A7/A8/A9 + **A10①b（settled env 关闭，U6）** |
 
 ## 10. 下一层拆分
 
@@ -411,3 +412,5 @@ deliverMessage（subagent-service.ts:1177）/ runSpawn（session-runner.ts:2453�
   - MF3（60min 零探针+自相矛盾）→ 归属论证拆分重写（idle 层「活跃流零误杀」与上界层「显式接受的残余误杀面」分开陈述）；§2 目标 1 加 carve-out；F-2 补量化（T001 最长 541s，先验 6.6×）+ env 自救指引；§11 新增 ⛔P-Z0（任务总时长分布标定，降级路径预定义）。
   - S1（keep-alive 复核缺角）→ D9 中段登记残余误杀面 + P-Z1 扩展 chatMode 轮内 gap 类比采样；S2（迟到 terminal 路由）→ U1 补 lookupTurn 归因放宽；S3（崩溃类判据类型化）→ ChannelClosedError 与 TurnTimeoutError 两判据族并列（D6/F-4）；S4（A2 测量口径）→ 改 app-server journal/SQLite usage 快照对比；S5（负面验收缺位）→ 新增 A10（env ≤0 关闭行为 + 超上界逃生门等价模拟）；S6（clone 版本偏移）→ 引用处标注 0.84.2 落后实装 0.84.4 + 实施期 dist 复核标注。INFO（create 应答刷新源）→ 删除并注明先于挂 timer 到达。
   - 联动同步：正文决策（D1/D3/D6/D9）、终态数据流图（§4/§5.1 abort 链入口标注）、失败路径（F-2 量化）、§10 拆分（U1 归因放宽）、§8 验收（A2 口径/A10 新增）、§11 探针（P-Z0/P-Z1 扩展）七处全部同步。
+- v1.2（2026-09-05）：**第 2 轮聚焦复审修复**（1 MF/6 SG/2 INFO 全修，报告 .review/timeout-zcode-turn-r2.md；r1 三条 MF 修复全部经重演+源码核实验证成立——三态判据可判定性/链终局信号源可达性/P-Z0 数据源实存均确认）。①MF（A2 验收结构性不可满足，v1.1 修 S4 时自己引入）：SIGSTOP 冻结进程不处理请求不落盘，「证明 stop 已送达」断言在该形态不可判定——A2 断言改 killChain 路径可判定（stop 3s 超时 → 杀链 → 进程 exit/close → 快照无新增消耗）；新增 A11（stop 送达止损分支：fake app-server 注入 stop 应答成功+terminal 永不到达，断言链不升级+进程存活+文案「stop 已送达」）——F-1 两止损分支各有独立场景。②SG-1：§9 实施表补 A10 映射（①②挂 M1、①b settled env 挂 M3——v1.1 声称七处同步实漏此第八处）；③SG-2：§7 总表止损动作改三态表述（原「session/stop → grace → killChain」是用户取消入口的 grace 概念，超时入口无 grace 段）+ engine 分流段「fire」改「await 链终局后」（防实施者照抄用户取消入口的 void 形态使 D6 时序静默失效）；④SG-3：常量表头改「除中段阈值外均 env 可覆盖」（与 D9 中段不开 env 定案消矛盾）；⑤SG-4：F-1 示例 30000ms → 1800000ms（30s 数值会照抄进错误文案与 30min 行为不符）；⑥SG-5：「九个」→「十一个」（A10+A11）；⑦SG-6：A5 补无双跑窗断言（journal 不出现第二个 session/create 或新 turn 事件）；INFO-1（stop 幂等假设）→ A2 journal 检查顺带留意；INFO-2（畸形 code 帧误判边缘）→ D3 判据段登记 + 双保险可选。
+- v1.3（2026-09-05）：**第 3 轮聚焦复审 0 must-fix / 5 SG / 2 INFO，当轮全修收口**（报告 .review/timeout-zcode-turn-r3.md；三轮收敛 3→1→0 MF，r2 全部 9 条修复验证成立）。①SG-1：A11 快照断言改 fake state 流水证据（FAKE_STATE_FILE stop-recv 帧——fake 不产 usage 数据，快照在该场景恒真空转）；②SG-2：A11 注入形态写明 hangOnly + stopBehavior:'none'（send 后静默才触发 idle，防漂移 ceiling）；③SG-3：§8 依赖说明补 A11（fake/真实边界 11 场景全覆盖）；④SG-4：A2 补 outcome 文案断言（与 A11 对称，D3 强制可观测面）；⑤SG-5：D2 补 ≤0 关闭的 warn 规格（A10① 断言依据）+ 与 settled 先例的刻意分歧显式登记（先例 ≤0=非法回落禁用 env，本设计 ≤0=显式关闭）；⑥INFO：A.3 错误码表出处指针 + §8 结论五条目标行回溯补全。**设计就绪。**

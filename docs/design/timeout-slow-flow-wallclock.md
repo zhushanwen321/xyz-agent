@@ -34,7 +34,7 @@ xyz-agent 的架构分三层：renderer（Vue 前端）↔ runtime（Node WebSoc
 **改造后使用者（含未来开发者）能做到以下五件事：**
 
 1. **G1（慢网络更新）**：只要下载还在传字节，无论多慢都不被杀；拔网/卡死后 30s 内得到明确失败与续传指引。
-2. **G2（长命令）**：`!` 前缀执行 >5min 的合法命令（构建/测试套件）结果不丢；超过兜底上限时错误消息诚实告知「命令仍在运行、如何取消、去哪找回结果」。
+2. **G2（长命令）**：`!` 前缀执行 >5min 的合法命令（构建/测试套件）结果不丢；超过兜底上限时错误消息诚实告知「命令仍在运行、如何取消、去哪找回结果」。**边界声明（r3 复审 MF-B 补，对齐 G3 v1.1 先例）**：诚实告知承诺在默认配置下成立；env 逃生门（runtime >3660s 或 0）下 renderer 3660s backstop 先到时为失败 toast（无指引文案）——已知接受（D5 不变量收窄与 §7 错误规格表 env 行）。
 3. **G3（大 session 压缩）**：大 session 压缩不被 xyz 双端（renderer/runtime）误杀；renderer 恒不先于 runtime 判死（结构保证，不靠注释）。**边界声明（v1.1 收窄，审查 M2）**：压缩 LLM 调用本身在默认打包配置下受底层 provider SDK 默认 10min HTTP 墙钟约束（smart-context 默认接管且不设 timeoutMs、pi 原生 fallback 同样不设——smart-context D13-5 已知缺口，另立任务），本设计不承诺突破该层；>600s 压缩的完整治理见 §11 登记项 ③。
 4. **G4（worktree setup）**：超时由用户配置值唯一决定；infra 层不再有隐藏 2min 墙钟埋伏未来调用方。
 5. **G5（开发者）**：新增 RPC 命令忘记声明超时 → 编译期报错，而不是静默继承 65s 埋雷（compact 已发生过一次此类前科）。
@@ -115,7 +115,7 @@ xyz-agent 的架构分三层：renderer（Vue 前端）↔ runtime（Node WebSoc
 ```
 用户在 composer 输入 `!sleep 320 && echo done`
 │
-▼ renderer packages/renderer/src/api/domains/chat.ts:96 bash()
+▼ renderer packages/renderer/src/api/domains/chat.ts:97 bash()（r2 复审 INFO-2 行号勘误）
 │   └─ WS RPC `message.bash`（无显式超时 → 65s 墙钟罩整条命令执行；
 │      ack = reply 在 `await sendBash()` 完整等待命令跑完后才回——是命令完成通知非提交确认，
 │      session-message-handler.ts:517-531；与 message.send 的提交语义不同，v1.1 勘误）
@@ -196,13 +196,13 @@ xyz-agent 的架构分三层：renderer（Vue 前端）↔ runtime（Node WebSoc
 
 ### D2：bash RPC——拆小时级独立常量 + 超时诚实告知，不自动 abort（选定）
 
-- **采用**：`rpc-client.ts` 新增 `BASH_RPC_TIMEOUT_MS = 3_600_000`（1h），`:700` bash() 改用之；compact 回归自己的常量（见 D3）。env 逃生门 `XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS`（设 0 = 不限时，读一次缓存）。超时行为三点改进：① dispatcher catch 识别 `RpcTimeoutError`（字段化 commandType/timeoutMs，rpc-client D3a 既有类型）时，合成终态的 output 换成 §5.2 样例 6 的诚实文案（仍在运行 / abortBash 可取消 / 重开可查结果）；② **不自动 `abort_bash`**——超时是「停止等待」，不是「处决命令」；③ 迟到响应维持丢弃（timedOutIds/NULL_EVENTS 机制不动）。
+- **采用**：**`packages/shared` 新增 `BASH_RPC_TIMEOUT_MS = 3_600_000`（1h，与 D3 常量同文件——r2 复审 MF-1 修正落点：renderer 从不 import runtime 包（package.json deps 核实），常量留 runtime 则 D5 的 renderer 引用只能复制字面值，复活 D3 被否项②否决的双端常量漂移模式）**；runtime `rpc-client.ts` import 该常量，`:700` bash() 改用之；compact 回归自己的常量（见 D3）。env 逃生门 `XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS`（设 0 = 不限时，读一次缓存，覆盖读取留在 runtime 侧）。超时行为三点改进：① dispatcher catch 识别 `RpcTimeoutError`（字段化 commandType/timeoutMs，rpc-client D3a 既有类型）时，合成终态的 output 换成 §5.2 样例 6 的诚实文案（仍在运行 / abortBash 可取消 / 重开可查结果）；**①b（r2 复审 MF-3 补：envelope→toast 表面）——超时后 dispatcher 返回 `{blocked:true}`、session-message-handler blocked 分支回 error envelope（message 硬编码 'Bash execution failed'，:527-528）→ renderer useChat catch 弹 `bashFailed` toast——用户同时看到诚实气泡 +「失败」措辞 toast，与 G2 矛盾；处理：useChat catch 判别 RPC 错误时若该命令已收到合成终态（气泡已呈现超时三步指引），抑制失败 toast（气泡终态是权威呈现面，toast 冗余且误导）**；② **不自动 `abort_bash`**——超时是「停止等待」，不是「处决命令」；③ 迟到响应维持丢弃（timedOutIds/NULL_EVENTS 机制不动）。
 - **被否**：
   - **默认不挂（timeout=∞）**：dispatcher 的 `await` 永不 settle → `isBashRunning` 卡 true（finally 永不执行）→ 后续所有 bash 被 busy 预检拒绝 + pending 永挂。命令如 `tail -f` 确实永不结束，回收层必须有界兜底（规则 19 允许回收层默认有界 + opt-out，正是本形态）。
   - **显式参数必传**（bash() 加 timeout 必传参数）：把决策推给唯一调用方 dispatcher，dispatcher 仍需一个默认值——换汤不换药；composer 快捷命令也没有 per-command 超时的用户需求面。
   - **迟到响应广播补救**（超时后真实结果到达时替换/追加合成帧）：破坏 live≡reload 构造性等价（live 合成错误帧 + 迟到真实帧 = 两条 vs 文件一条；apply-entry-equivalence 守卫的根基）。pi 落盘已保证 reload 可见（⛔P1），补救是多余机制（准则 8）。
   - **超时后自动 abort_bash**：杀的是 1h 边界上仍在跑的合法命令——把「停止等待」升级成「处决」，重演 zcode「死后 app-server 继续烧」的反面（杀更糟：不可恢复）。层次原则对照：renderer 超时从不杀 runtime 任务（rend-api 普查核实），runtime 超时同样不杀 pi 任务。
-- **证据**：对照先例——pi bash 工具（base-tool-enhance）前后台默认 `null` 不限时：agent 面任务级不设墙钟；本处是 RPC 控制面等待，需回收层有界兜底 → 小时级。1h 取值对齐 worktree `TIMEOUT_MAX=3600`（用户可配上限先例，`worktree-config-helper.ts:53`）；>1h 的命令语义上应走 agent bash 工具（不限时）而非 composer 快捷通道。**为何不能用 idle 检测**：`sleep 320` 全程零输出但是合法活跃任务（ADR-0047「静默 ≠ 卡死」）；`bash_execution_update` 流事件只在有输出增量时发（rpc-client.ts:424-428 注释），安静命令零事件会被 idle 误杀——墙钟是此处唯一不误杀的兜底形态。
+- **证据**：对照先例——pi bash 工具（base-tool-enhance）前后台默认 `null` 不限时：agent 面任务级不设墙钟；本处是 RPC 控制面等待，需回收层有界兜底 → 小时级。1h 取值对齐 worktree `TIMEOUT_MAX=3600`（用户可配上限先例，`worktree-config-helper.ts:53`）；>1h 的命令语义上应走 agent bash 工具（不限时）而非 composer 快捷通道。**为何不能用 idle 检测**：`sleep 320` 全程零输出但是合法活跃任务（ADR-0047「静默 ≠ 卡死」）；`bash_execution_update` 是输出增量事件（delta 语义，rpc-client :424-428 的 update 事件复用 RPC id 防御注释佐证该流按增量驱动）——安静命令零事件会被 idle 误杀，墙钟是此处唯一不误杀的兜底形态（r2 复审 INFO-2 引用精确化）。
 - **效果**：§5.1 样例 2、§5.2 样例 6 成立（G2）。
 
 | 方案 | 长期架构合理性 | 短期实现成本 | 风险 | 裁决 |
@@ -251,7 +251,7 @@ xyz-agent 的架构分三层：renderer（Vue 前端）↔ runtime（Node WebSoc
 
 ### D5：renderer 65s——request 超时改必传 + 具名 backstop 常量（选定）
 
-- **采用**：`pending.ts` 的 `DEFAULT_TIMEOUT_MS`（:27）改名为导出的 `RPC_BACKSTOP_TIMEOUT_MS`（值不变 65_000，语义显性化：它是「≥ runtime CMD_TIMEOUT_MS 60s + 余量」的控制面兜底，不是任务超时）；`request.ts` `command(type, payload, timeout)` 第三参**必传**；`api/domains/**` 约 50 个调用点机械补参——有语义的用各自常量（compact→D3 shared、handoff→660s 既有、**message.bash→新 shared 常量 `BASH_RPC_TIMEOUT_MS + RENDERER_RPC_MARGIN_MS`（v1.1 补，审查 M1：实装 ack=命令完成通知非毫秒级，65s 兜底罩的是整条命令执行，D2 改 1h 后 renderer 65s 恒先判死——正是 D3 要消灭的双端竞态在 bash 链路的翻版，镜像 D3「runtime+余量」模式结构保证 renderer 恒不先判死**），其余统一 `RPC_BACKSTOP_TIMEOUT_MS`。现状佐证：>65s 的 `!` 命令今天就已先弹错误 toast（`useChat.ts:623-631` catch → `toast.error`）——本修复顺带消灭这个存量误报。
+- **采用**：`pending.ts` 的 `DEFAULT_TIMEOUT_MS`（:27）改名为导出的 `RPC_BACKSTOP_TIMEOUT_MS`（值不变 65_000，语义显性化：它是「≥ runtime CMD_TIMEOUT_MS 60s + 余量」的控制面兜底，不是任务超时）；`request.ts` `command(type, payload, timeout)` 第三参**必传**；`api/domains/**` 约 50 个调用点机械补参——有语义的用各自常量（compact→D3 shared、handoff→660s 既有、**message.bash→shared `BASH_RPC_TIMEOUT_MS + RENDERER_RPC_MARGIN_MS`（=3660s，v1.1 补——r2 复审 MF-1 同步：常量在 shared，D2 定案），其余统一 `RPC_BACKSTOP_TIMEOUT_MS`**。**不变量声明收窄（r2 复审 MF-2）**：「renderer 恒不先于 runtime 判死」**仅默认配置下成立**（3660 > 3600）；env 逃生门把 runtime 调成 >3660s 或 0（不限时）时，renderer 3660s backstop 会先到并弹失败 toast——**已知接受行为**（逃生门是用户显式解除 runtime 判死的极端配置；命令仍在跑的权威呈现是气泡诚实文案（D2① 合成终态 + ①b toast 抑制不含此形态——backstop 先到时气泡尚无终态，toast 是唯一提示），backstop 的语义就是 renderer 侧不死等兜底，保留误报优于两个替代：①拉配置下发链做联动（成本不成比例）；②renderer 侧 message.bash 传 `timeoutMs=0` 不限时（pending.ts:113-121 现成支持，不变量无条件成立——但 runtime 卡死且 WS 存活时 renderer 零提示、pending 永挂，违反规则 19 回收层有界原则；r3 复审 SG-A 补第三方案对比）。**现状佐证：>65s 的 `!` 命令今天就已先弹错误 toast（`packages/core/src/domain/chat/useChat.ts:623-632` catch → `toast.error`，r3 复审 MF-A 补包路径）——本修复顺带消灭默认配置下的这个存量误报。**
 - **被否**：
   - **自定义 lint 规则**（缺参报错）：规则本身是新代码 + 新失败面（准则 8 反面）；存量 50 点仍无显式化。
   - **高异步命令白名单注释锚点**：不防新增命令——compact 前科恰恰发生在「新增/改造命令时没人想起默认值」，白名单只覆盖已知名单。
@@ -271,10 +271,10 @@ xyz-agent 的架构分三层：renderer（Vue 前端）↔ runtime（Node WebSoc
 | 决策 | 动作 | 量级/形态 | 逃生门 |
 |---|---|---|---|
 | D1 updater | 删 1h 总钟 ×3 + idle 前移 | 停滞检测 30s | —（涓流靠进度条可见 + 用户取消） |
-| D2 bash RPC | 拆独立常量 | 1h 墙钟（回收层兜底档） | env `XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS=0` 不限时 |
+| D2 bash RPC | 拆独立常量（shared 落点，r2 复审 MF-1） | 1h 墙钟（回收层兜底档）+ 超时 envelope→toast 抑制（①b） | env `XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS=0` 不限时或 >3660s（r3 复审 INFO 补全形态；逃生门下 renderer 3660s backstop 误报为已知接受，D5） |
 | D3 compact | shared 常量对齐 | runtime 30min / renderer +60s | —（有界兜底，值保守） |
 | D4 shell-runner | timeout 必传 | 调用方显式（现生产值 60s~1h 用户可配） | 用户经 `config.setTimeout` |
-| D5 renderer 65s | timeout 必传 + 具名常量 | 调用方显式（backstop 65s 具名） | — |
+| D5 renderer 65s | timeout 必传 + 具名常量 | 调用方显式（backstop 65s 具名；message.bash=3660s，「恒不先判死」仅默认配置成立） | — |
 
 ## 7. 实现机制（把终态落到代码层）
 
@@ -284,13 +284,14 @@ xyz-agent 的架构分三层：renderer（Vue 前端）↔ runtime（Node WebSoc
 
 | 文件 | 改动 |
 |---|---|
-| `apps/electron/main/update/curl-download.ts` | 删 :46 常量、:270-279 totalTimer 块、:293-299 timedOut 分支；头注释更新（停滞检测为唯一保护）；**`mapCurlExitToError`（:193-207）exit 28 文案对齐错误规格表「下载停滞（30 秒无数据）已中断」语义（v1.1 补，删总钟后 exit 28 是 curl 侧唯一停滞出口，现有文案非停滞语义）** |
-| `apps/electron/main/update/download-asset.ts` | 删 :93 常量；:416 单段 timer 删 + idleTimer 前移至 fetch 前；:1010-1011 per-part 同；:668-673 错误文案改「idle 30s 停滞」语义 + 恢复指引（§5.2 样例 5） |
+| `apps/electron/main/update/curl-download.ts` | 删 :46 常量、:270-279 totalTimer 块、:293-299 timedOut 分支；头注释更新（停滞检测为唯一保护）；**`mapCurlExitToError`（:193-209）exit 28 文案按成因区分（r2 复审 SG-3 修正——exit 28 是双成因：`--connect-timeout 10s` 连接未建立 与 `--speed-time 30s` 传输停滞；单写「30 秒无数据停滞」会把 connect 失败误标）：stderr 判别 connect-timeout 信号 → 「连接超时（10 秒未建立连接）」；否则 → 「下载停滞（30 秒无数据）已中断」；删总钟后 exit 28 是 curl 侧唯一超时出口（双成因）** |
+| `apps/electron/main/update/download-asset.ts` | 删 :93 常量；:416 单段 timer 删 + idleTimer 前移至 fetch 前；:1010 per-part 只删总钟（r2 复审 SG-1 口径对齐 D1：idle 本就挂 :1011 fetch 前，无需前移）；:668-673 错误文案改「idle 30s 停滞」语义 + 恢复指引（§5.2 样例 5） |
 | `apps/electron/main/update/upgrade-fetch.ts` | :108-113 AbortError→non-fallback 注释论据改写（D1 联动检查）；分类行为不变 |
-| `packages/runtime/src/infra/pi/rpc-client.ts` | :89 旁新增 `BASH_RPC_TIMEOUT_MS=3_600_000`（env 读取）；:700 bash() 改用；:687 compact 改引 shared `COMPACT_RPC_TIMEOUT_MS` |
+| `packages/runtime/src/infra/pi/rpc-client.ts` | 改引 shared `BASH_RPC_TIMEOUT_MS`（r2 复审 MF-1：常量定义移 shared）+ env 覆盖读取 `XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS`（读一次缓存，留 runtime 侧）；:700 bash() 改用；:687 compact 改引 shared `COMPACT_RPC_TIMEOUT_MS` |
+| `packages/core/src/domain/chat/useChat.ts`（r3 复审 MF-A 补行——①b 落点；注意实装在 **core** 域非 renderer，renderer 同名文件是 121 行薄包装无 catch 块） | :623-632 catch 分支补 ①b：RPC 错误时查 `getExecutingBash(sid)`——**极性注意（r4 复审 MF 修正）：executingBash 是「命令执行中」瞬时态（bashStart 置 / bashResult·markBashError 清），「已收合成终态」= 查询为空（取反）——为空 → 抑制 `bashFailed` toast；非空（命令执行中 = env backstop 先到形态，D5 明确 toast 是唯一提示）→ 不抑制**。与 compact 先例的极性差异显式登记：manualCompactionState 是正向标志（终态到达置 true）、bash ①b 是反向标志（终态到达清空）——「查到非空」绝不抑制 |
 | `packages/runtime/src/services/session/message-dispatcher.ts` | sendBash catch 识别 `RpcTimeoutError` → §5.2 样例 6 诚实文案（三步恢复指引） |
-| `packages/shared/src/…（protocol.ts 或新 timeouts.ts）` | 新增 `COMPACT_RPC_TIMEOUT_MS=1_800_000`、`RENDERER_RPC_MARGIN_MS=60_000` |
-| `packages/renderer/src/api/domains/chat.ts` | :15 常量删，改 import shared + margin（=1860s） |
+| `packages/shared/src/…（protocol.ts 或新 timeouts.ts）` | 新增 `COMPACT_RPC_TIMEOUT_MS=1_800_000`、`RENDERER_RPC_MARGIN_MS=60_000`、`BASH_RPC_TIMEOUT_MS=3_600_000`（r2 复审 MF-1 补——renderer 从不 import runtime，常量必须落 shared） |
+| `packages/renderer/src/api/domains/chat.ts` | :102-105 `bash()` 补传 `BASH_RPC_TIMEOUT_MS + RENDERER_RPC_MARGIN_MS`（r3 复审 SG-D 从泛指行提亮——语义化取值不与机械补参混装）；:15 常量删，改 import shared + margin（=1860s） |
 | `packages/renderer/src/api/pending.ts` | :27 改名导出 `RPC_BACKSTOP_TIMEOUT_MS`；request 超时参数必传 |
 | `packages/renderer/src/api/request.ts` | `command()` 第三参必传 |
 | `packages/renderer/src/api/domains/**`（~50 点） | 机械补参（具名常量） |
@@ -303,7 +304,10 @@ xyz-agent 的架构分三层：renderer（Vue 前端）↔ runtime（Node WebSoc
 | 触发 | 用户可见 | 恢复指引 |
 |---|---|---|
 | 下载 idle 30s（undici/curl 双侧） | 「下载停滞（30 秒无数据）已中断」 | 重试自动断点续传 |
+| curl exit 28（r2 复审 SG-3 补：双成因） | connect 失败：「连接超时（10 秒未建立连接）」；传输停滞：「下载停滞（30 秒无数据）已中断」（stderr 判别成因） | 重试自动断点续传；connect 失败查网络/镜像源 |
 | bash >1h（env 可调/0=不限） | 「命令超 1 小时，已停止等待——可能仍在运行」 | ①abortBash 终止 ②重开 session 查结果 ③先取消再重跑 |
+| bash 超时后 blocked envelope → renderer（r2 复审 MF-3 补） | 气泡诚实终态（三步指引）为权威面；useChat 抑制 `bashFailed` toast（命令已收到合成终态时不再弹「失败」措辞 toast） | 见上行的三步指引 |
+| env 逃生门（runtime >3660s 或 0）下 renderer 3660s backstop 先到（r2 复审 MF-2 补，已知接受） | 失败 toast（此时气泡无终态，toast 是唯一提示） | 命令仍在跑——abortBash 或等完成；逃生门配置属用户显式行为（r3 复审 SG-B 标注：本列指引为文档级说明——toast 模板 `composable.bashFailed` 是固定 i18n 不含指引；逃生门形态属极端配置，不为它扩 toast 模板） |
 | compact 30min 无响应 | `session.compacted{error}` + 压缩按钮复位 | 重试；连续失败走 ensureActive 自愈链 |
 | shell-runner 漏传 timeout / request 漏传 timeout | 编译错误（不到运行时） | 按脚本/命令语义补显式值 |
 
@@ -316,7 +320,7 @@ xyz-agent 的架构分三层：renderer（Vue 前端）↔ runtime（Node WebSoc
 | P3 | 停滞检测双侧真实存在且 chunk 重置 | 代码核实（download-asset.ts:551,567-569；curl-download.ts:170-172）+ 既有测试 | ✅ 已核 | — |
 | P4 | 大 session compact 实际时长 ∈ 30min 余量内 | 构造 300k-1M token session 实测压缩耗时 | ⛔ M3 | 实测击穿 → 取值升 45/60min 并重跑外推论证 |
 | P5 | shared 常量双端可 import | protocol.ts 已被 runtime/renderer 双端引用（结构性） | ✅ 结构性 | — |
-| P6 | bash 超时路径全行为：诚实文案 + abortBash 释放 slot + 后续 bash 不 busy | 临时调小常量实测超时路径三断言 + 一次全时长（1h）抽样 | ⛔ M3 | slot 不释放 → sendBash 超时分支补 abort_bash 兜底（重评 D2 被否项，此时「杀」的代价可接受因为命令已无人等待且 slot 需回收） |
+| P6 | bash 超时路径全行为：诚实文案 + abortBash 释放 slot + 后续 bash 不 busy | 经 env 调小实测超时路径三断言（r3 复审 SG-C：顺带覆盖 env 通路）+ 一次全时长（1h）抽样 | ⛔ M3 | slot 不释放 → sendBash 超时分支补 abort_bash 兜底（重评 D2 被否项，此时「杀」的代价可接受因为命令已无人等待且 slot 需回收） |
 | P-T2c（已有） | 300k token compact = 40.1s | `subagent-core-unbounded-wait-audit.impl-plan.md:115` | ✅ 已测 | D3 取值外推的输入 |
 
 ## 9. 验收（真实场景，非单测非 mock）
@@ -328,8 +332,8 @@ xyz-agent 的架构分三层：renderer（Vue 前端）↔ runtime（Node WebSoc
 | 1 | 慢速下载存活 | G1 | dev app 指向本地 mock update feed（静态 server 服务 300MB 测试 DMG），经限速代理（如 nginx `limit_rate` / Network Link Conditioner）压到 <83KB/s，点「检查更新→下载」 | 持续活跃传输直至完成（总时长 >1h 不被杀），进度条单调推进，sha256 校验通过 |
 | 2 | 拔网快速失败 | G1（负面：不该拖死） | 同场景 1，下载中途杀掉代理进程 | ≤30s+余量内报「下载停滞」错误；随后重试，从断点续传（流量监控确认未重传已完成字节） |
 | 3 | 长 bash 结果不丢 | G2 | 真实 xyz dev app + 真实 pi，composer 敲 `!sleep 320 && echo done` | 气泡最终显示 `done`、exitCode 0；**全程无错误 toast（65s 存量误报随 D5 修复消灭）**；live 与重开后记录一致 |
-| 4 | 超限 bash 诚实失败 | G2（负面：不杀命令） | composer 敲 `!sleep 3700`（或临时调小常量缩样 + 一次全时长抽样）；到点后点取消，再发 `!echo hi` | 1h 到点错误消息含三步恢复指引；**超时到点后、abortBash 前，命令进程仍在运行（不处决——缩样时可用 `ps`/输出文件增量断言）**；abortBash 后 `echo hi` 正常执行（不 busy） |
-| 5 | 大 compact 不误杀 | G3 | 向真实 session 灌入 ~300k-500k token 文本（粘贴大文件）+ 慢模型构造耗时落在 300-600s 区间（testable 构造边界，v1.1），点「压缩」 | 压缩耗时 >300s 仍正常完成、对话流出现摘要；全程 renderer 无超时报错。**已知失败模式（不算本设计验收失败）**：实测耗时 >600s（撞 SDK 10min 墙）→ 按 §11 登记项 ③ 移交 smart-context D13-5 任务，场景改用更小构造复验 |
+| 4 | 超限 bash 诚实失败 | G2（负面：不杀命令） | composer 敲 `!sleep 3700`（或经 env `XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS` 调小缩样——r3 复审 SG-C：比改常量更贴近真实机制，顺带覆盖 env 读取/缓存/覆盖分支；+ 一次全时长抽样）；到点后点取消，再发 `!echo hi` | 1h 到点错误消息含三步恢复指引；**超时到点后、abortBash 前，命令进程仍在运行（不处决——缩样时可用 `ps`/输出文件增量断言）**；**blocked envelope 到达时无 `bashFailed` 失败 toast（r2 复审 MF-3 补断言——toast 抑制 ①b 生效，气泡终态是唯一呈现面）**；abortBash 后 `echo hi` 正常执行（不 busy） |
+| 5 | 大 compact 不误杀 | G3 | 向真实 session 灌入 ~300k-500k token 文本（粘贴大文件）+ 慢模型构造耗时落在 300-600s 区间（testable 构造边界，v1.1），点「压缩」 | 压缩耗时 >300s 仍正常完成、对话流出现摘要；全程 renderer 无超时报错。**已知失败模式（不算本设计验收失败）**：实测耗时 >600s（首层 LLM 调用被 SDK 600s 单请求墙切，r2 复审 INFO-1 措辞精确化）→ 按 §11 登记项 ③ 移交 smart-context D13-5 任务，场景改用更小构造复验 |
 | 6 | worktree 用户值生效 | G4 | `config.setTimeout` 配 3600 后走 git-cwt 创建含 `pnpm install` 的 worktree；另在分支上写一个漏传 timeout 的 shell-runner 调用 | 慢 install 创建成功；漏传调用 `tsc` 编译失败 |
 | 7 | 65s 显式化 | G5 | 全量 `pnpm typecheck`；临时删除任一 command 调用的第三参 | 编译报错指向该调用；~50 调用点全部显式具名常量 |
 
@@ -341,11 +345,11 @@ xyz-agent 的架构分三层：renderer（Vue 前端）↔ runtime（Node WebSoc
 
 | 单元 | 内容 | 对应验收 | justification（为什么这么拆） |
 |---|---|---|---|
-| U1 updater 墙钟删除 | D1 全部（curl/undici/per-part + idle 前移 + 注释联动） | 场景 1/2 | 三挂载点同根同模式，一个单元内闭环；前置 ⛔P2 探针门 |
+| U1 updater 墙钟删除 | D1 全部（curl/undici 删钟 + 单段 idle 前移 + per-part 只删钟（r2 复审 SG-1：idle 本在 fetch 前）+ 注释联动） | 场景 1/2 | 三挂载点同根同模式，一个单元内闭环；前置 ⛔P2 探针门 |
 | U2 bash RPC 独立化 | D2 全部（常量 + env + 诚实文案） | 场景 3/4 | 依赖 P1 落盘断言（迟到响应维持丢弃的前提）；apply-entry-equivalence 回归同批跑 |
 | U3 compact 对齐 | D3 全部（shared 常量 + 双端替换） | 场景 5 | 独立于 U1/U2；⛔P4 取值门在 M3 前完成 |
-| U4 shell-runner 必传 | D4（port + infra + 测试补参） | 场景 6 前半 | 最小独立单元，纯类型收紧 |
-| U5 renderer 65s 必传 | D5（pending/request/50 点，含 message.bash 语义化取值） | U4：场景 6；U5：场景 3/7（v1.1 勘误对应关系） | 机械大 diff 单独成单元便于 review；与 U4 并行 |
+| U4 shell-runner 必传 | D4（port + infra + 测试补参） | 场景 6（前半用户值生效 + 后半漏传编译拦截，r2 复审 SG-2 补全映射） | 最小独立单元，纯类型收紧 |
+| U5 renderer 65s 必传 | D5（pending/request/50 点，含 message.bash 语义化取值 + toast 抑制 ①b） | 场景 3/7 | 机械大 diff 单独成单元便于 review；与 U4 并行 |
 
 **实施路径**：M1 = P2 探针 + U1 → M2 = P1 探针 + U2 → M3 = P4/P6 探针 + U3 → M4 = U4 + U5 + 全量回归（typecheck / extensions 三连不涉及 / apply-entry-equivalence / electron 打包三阶段验证——update 代码属 main 进程，走 preflight→build→postbuild）。
 
@@ -363,3 +367,6 @@ xyz-agent 的架构分三层：renderer（Vue 前端）↔ runtime（Node WebSoc
   - M2（compact 30min 虚假覆盖）→ G3 边界收窄（30min 只兜 pi 无响应，不承诺突破 SDK 10min 层）；D3 取值论证改「≥ SDK 10min + fallback 重试链 + 余量」并修正「跟随 httpIdleTimeoutMs」的失实论据；场景 5 构造边界 300-600s 区间 + >600s 列已知失败模式；§11 登记项 ③ 从「暂缓」升格「已知缺口移交」（smart-context D13-5 另立任务）。反例重演：>600s 压缩被 SDK 600s 切——本设计不再承诺覆盖该形态，G3/论证/场景三处对齐。
   - S1→文件地图 curl 行补 exit 28 文案适配（mapCurlExitToError :193-207）；S2→per-part 表述勘误（只删钟不前移，idle 本就挂 fetch 前）+ P2 探针补 per-part 生产现成证据；S3→U4/U5 验收对应勘误；S4→场景 4 补「不处决」负面断言（ps/输出文件增量）。
   - 联动同步：正文决策（D1/D3/D5）、§3.2 现状、§4.2 数据流图、§5 终态（样例不受影响）、§7 文件地图/错误规格、§9 场景 3/4/5、§10 拆分（U5）、§11 登记项 ③、探针 P2；变更历史本条。
+- v1.2（2026-09-05）：**第 2 轮聚焦复审修复**（3 MF/3 SG/2 INFO 全修，报告 .review/timeout-slow-flow-r2.md；r1 两处 MF（M1 ack 语义/M2 compact 虚假覆盖）修复方向全部验证成立且核心事实源码复核相符，调用方全集经 grep 攻击确认完整）。v1.1 为修 M1 新引入的「message.bash 语义化超时」机制三缺口：①MF-1（常量落点自相矛盾）：`BASH_RPC_TIMEOUT_MS` 定义在 runtime rpc-client 但 D5 要 renderer 引用——renderer 从不 import runtime 包，按文件地图实施只能复制字面值复活 D3 被否的双端常量漂移——常量改落 shared（rpc-client import + env 覆盖读取留 runtime），§7 shared/rpc-client 两行与决策总览同步；②MF-2（env 逃生门击穿不变量）：renderer 3660s 编译期烤死 vs runtime env 可调 >3660s/0——逃生门配置下 3660s toast 误报回归；定案「已知接受」：不变量声明收窄到默认配置（D5），错误规格表补行，理由 = backstop 语义就是不死等兜底，保留误报优于配置下发链联动；③MF-3（envelope→toast 表面遗漏）：超时后 blocked envelope → 'Bash execution failed' toast 与诚实气泡并呈——D2 补 ①b（useChat 判别命令已收合成终态时抑制失败 toast，气泡是权威面），错误规格表补行、场景 4 补断言；④SG-1：per-part 口径在 §7/U1 两处残留清（只删钟不前移）；⑤SG-2：U4 行补场景 6 全映射、U5 行去嵌勘误文本；⑥SG-3：curl exit 28 双成因（connect-timeout/speed-time）文案按 stderr 判别区分，「唯一停滞出口」改「唯一超时出口（双成因）」；⑦INFO：场景 5 措辞精确化（首层被 SDK 600s 单请求墙切）、chat.ts bash() 行号 :96→:97、D2 引 rpc-client 注释精确化。
+- v1.3（2026-09-05）：**第 3 轮聚焦复审修复**（2 MF/4 SG/2 INFO 全修，报告 .review/timeout-slow-flow-r3.md；r2 三条 MF 修了两条半，两条新 MF 均文档级一句话，决策骨架不动；①b 判据可实现性验证成立——executingBash ephemeral 态现成读口 + compact 链 manualCompactionState 同款时序先例）。①MF-A（文件地图缺 ①b 落点）：§7 补 `packages/core/src/domain/chat/useChat.ts` 行（getExecutingBash 判别 + 抑制 toast；实装在 core 域非 renderer，同名薄包装无 catch）；4 处 useChat 引用补包路径与 :632；②MF-B（G2 未同步）：G2 补边界声明（诚实告知承诺默认配置下成立，env 逃生门形态例外——对齐 G3 v1.1 先例与 D5/错误规格表）；③SG-A：D5 被否清单补第三方案「renderer 传 timeoutMs=0」（不变量无条件成立但卡死零提示违反回收层有界原则）；④SG-B：env 行恢复指引标注文档级承载（toast 模板固定 i18n）；⑤SG-C：场景 4/P6 缩样改经 env（顺带覆盖 env 通路）；⑥SG-D：chat.ts 行补 :102-105 bash() 补传（从泛指行提亮）；⑦INFO：悬空 `**` 补闭合、决策总览 D2 行补 >3660s 形态。
+- v1.4（2026-09-05）：**第 4 轮聚焦复审 1 MF/1 SG 全修收口，设计就绪**（报告 .review/timeout-slow-flow-r4.md；四轮收敛 2→3→2→0 MF。r3 的 G2 边界声明与 §7 补行主体验证成立；r4 实锤主 agent 点名的攻击点：①b 判据极性反了——executingBash 是「执行中」瞬时态，「已收合成终态」= 查询为空（取反），v1.3 的「命中则抑制」按字面实现方向全反（默认超时失效 + env backstop 唯一提示被误吞）；修正为「为空→抑制、非空→不抑制」+ 与 compact 先例的正/反向标志极性差异显式登记。SG：§3.2 第 3 处 useChat 引用补包路径）。五个决策骨架四轮无新攻击面。

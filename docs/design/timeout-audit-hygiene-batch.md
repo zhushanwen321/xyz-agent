@@ -105,7 +105,7 @@ subagent tool execute(opts)                    opts = {task, engine?, model?, ..
         → 失败抛 ZcodePrepareError[model_not_available]（preparer.ts:178 起）
 ```
 
-workflow 路径（`execution/subprocess-agent-runner.ts`，下称 SAR）：run() 自带路由编排（:143 起），路由通过后非 pi 引擎在 :227-229 **直接 `route.engine.run(taskSpec)`**——既不经 subagent-service.execute()，也无任何 model 校验调用点；model 错误只能落在 engine.run 内部的 zcode prepare 期（已过 probe、journal 写入、并发池 acquire），以 errorResult（SAR「不 reject」契约）返回。即两条路径只是**路由时机**对齐、**校验覆盖**不对齐——workflow 域的 F2-B 形态（`agent({engine:'zcode', model:<pi id>})` 或 defaultEngine=zcode + pi id）现状无人修。
+workflow 路径（`execution/subprocess-agent-runner.ts`，下称 SAR）：run() 自带路由编排（:143 起），路由通过后非 pi 引擎在 :226-229 **直接 `route.engine.run(taskSpec)`**——既不经 subagent-service.execute()，也无任何 model 校验调用点；model 错误只能落在 engine.run 内部的 zcode prepare 期（已过 probe、journal 写入、并发池 acquire），以 errorResult（SAR「不 reject」契约）返回。即两条路径只是**路由时机**对齐、**校验覆盖**不对齐——workflow 域的 F2-B 形态（`agent({engine:'zcode', model:<pi id>})` 或 defaultEngine=zcode + pi id）现状无人修。
 
 配套的可发现性注入：`<available_provider_models>`（pi 段，教育 agent 用这些 id 派发）恒注入；`<available_zcode_models>`（zcode 段）**只在 defaultEngine≠pi 时注入**（`model-prompt.ts`，调用点 `extensions/universal/subagent-workflow/src/index.ts:662-663`）。
 
@@ -299,7 +299,7 @@ downloadAndExtract（tarball）     :308  🔴 无任何 timer：
 - **探针**：⛔ P2-1（实施期回归门）：defaultEngine=zcode 下 chat 派发带 zcode id，修复前后行为对比（前=必炸 F2-A，后=成功）。降级路径：若 reorder 引发未预期时序依赖（record/注册顺序），回退为「identity 拆分——agentConfig 解析保持在前、仅 model 解析延后」的窄改法，同样消灭 F2-A。
 
 **D2-2：派发期校验面 = `EnginePort.validateModel?(ref)` 可选方法，zcode 先实现（选定）**
-- **采用**：EnginePort 增可选 `validateModel(modelRef: string): { canonicalRef: string }`（throw 结构化错误）；zcode 实现直接委托 `resolveZcodeModelRef`（preparer.ts:178，含凭据与清单校验，同步读 v2 config——已存在机制）；pi 不实现（pi 走 D2-1 的现有链）。未实现 validateModel 的未来引擎：model 透传，其 prepare 期校验兜底（现状语义）。**调用点双路径覆盖（v1.1 补，审查 MF2）**：① chat 路径 executeViaEngine（:876）路由后调用；② workflow 路径 SAR run()（subprocess-agent-runner.ts:227-229）在 `route.engine.run(taskSpec)` 前对非 pi 引擎调用同一校验——SAR 已路由先行（:143），两路径共享同一校验入口与错误文案，workflow 域 `agent({engine:'zcode', model:<pi id>})` 同步期报 D2-3 场景 2 错误，不再 prepare 期晚炸（§2.2 现状登记的「校验覆盖不对齐」就此清账）。
+- **采用**：EnginePort 增可选 `validateModel(modelRef: string): { canonicalRef: string }`（throw 结构化错误）；zcode 实现直接委托 `resolveZcodeModelRef`（preparer.ts:178，含凭据与清单校验，同步读 v2 config——已存在机制）；pi 不实现（pi 走 D2-1 的现有链）。未实现 validateModel 的未来引擎：model 透传，其 prepare 期校验兜底（现状语义）。**调用点双路径覆盖（v1.1 补，审查 MF2）**：① chat 路径 executeViaEngine（:876）路由后调用；② workflow 路径 SAR run()（subprocess-agent-runner.ts:226-229，r3 复审行号精化）在 `route.engine.run(taskSpec)` 前对非 pi 引擎调用同一校验——SAR 已路由先行（:143），两路径共享同一校验入口与错误文案，workflow 域 `agent({engine:'zcode', model:<pi id>})` 同步期报 D2-3 场景 2 错误，不再 prepare 期晚炸（§2.2 现状登记的「校验覆盖不对齐」就此清账）。
 - **被否**：①「用 `listModels` 近似校验」——只有清单没有凭据判定（listZcodeModels 过滤了无凭据 provider，语义接近但 canonicalRef 归一化、短名缺省 provider 决策都在 resolveZcodeModelRef 里，重复实现 = 漂移源）；②「把 pi registry 校验也搬进 pi 引擎的 validateModel」——pi 链现有三层解析（override/agentConfig/ctxModel + thinkingLevel）语义远超「校验」，搬迁是大重构，准则 8 减法不做。
 - **证据**：zcode-engine.ts:397 prepare 期已在用 `resolveZcodeModelRef`（同一函数两处消费，无重复实现）；port.ts:181 `listModels?()` 已开创「可选能力面」先例。
 - **效果**：F2-B（场景 2）的失败从 prepare 期提前到派发同步期，错误消息拿到 zcode 清单数据。
@@ -350,7 +350,7 @@ downloadAndExtract（tarball）     :308  🔴 无任何 timer：
 #### 3.3.3 关键决策
 
 **D3-1：stall 语义 = 无进展检测（data 刷新），非总墙钟（选定）**
-- **采用**：timer 在「header 到达后」启动，每收到一个 body chunk（`final.on('data')`）刷新；60s 无字节 → 触发。
+- **采用**：timer 在「header 到达后」启动，每收到一个 body chunk 刷新；60s 无字节 → 触发。**刷新点双挂（r2 复审 MF 修正，同步 §3.3.2 方案表 A 与 §2.3 注记②——v1.1 变更历史已声明双挂但本决策正文漏同步，按正文实施会使 S1 攻击面回归）：流式路径挂 `final` ∪ `gunzip` 输出侧双 data 监听（pipe 背压会 pause final——慢解压 + 健康网时 final 侧静默，单挂 final 可饿死 timer 误杀）；integrity 路径无 pipe 耦合（buffer 全收），保持 `final` 单侧**。
 - **被否**：总墙钟（方案 B）。
 - **证据**：正面范本先例——普查 §3 登记的 liveness「ping×3 连击+成功清零」、心跳「每条消息重置计时器」（connection-manager.ts:30）：活动刷新是本项目对「慢速活跃流」的既定语义；方案 A 与 zcode 300s 误杀事故（活动不刷新的固定墙钟）形成正反对照。
 - **效果**：慢速合法下载（G3 不误杀）与挂死检测并存。
@@ -362,7 +362,7 @@ downloadAndExtract（tarball）     :308  🔴 无任何 timer：
 - **效果**：单一量级口径，配置行为可预期。
 
 **D3-3：覆盖阶段 = body 读取（两路径）；header 已有；解压不加（选定）**
-- **采用**：单点实现在 `downloadAndExtract`——integrity buffer promise（:340-346）与流式 pipe（:355-357）共用同一个 stall timer（挂在 `final` 的 data/end/error 上）。
+- **采用**：单点实现在 `downloadAndExtract`——integrity buffer promise（:340-346）与流式 pipe（:355-357）共用同一个 stall timer。**刷新点挂载（r2 复审 MF 修正）：integrity 路径挂 `final` 的 data/end/error；流式路径挂 `final` ∪ `gunzip` 输出侧双 data + 各自 error（D3-1 双挂定案的落点声明——v1.1 的「挂在 final 的 data/end/error 上」是 integrity 形态漏写到流式路径）**。
 - **被否/声明放弃**：①给 `extractTarStream`（gunzip/tar）单独加 timer——解压是本地 CPU 变换已收到的字节，无外部等待面；gunzip 挂起属代码 bug 而非网络故障，加 timer 是为新断言买保险（准则 8 减法），**声明放弃**并在此留痕；②只补 integrity 路径（方案 C）。
 - **证据**：§2.3 管线图——外部等待面只有 body 到达；fetchJson bodyTimer 同判（只保 body 不保 JSON.parse）。
 - **效果**：F3 全路径覆盖（integrity 包 + 无 integrity 包）。
@@ -504,7 +504,7 @@ downloadAndExtract（tarball）     :308  🔴 无任何 timer：
 | unit-1 | `packages/shared/src/quota-types.ts`、`packages/shared/src/protocol.ts`（:533 configure payload）、`packages/shared/src/provider.ts`（quota 配置类型） | fetchQuota 签名、reason 枚举、配置字段 |
 | | `packages/runtime/src/services/quota-service.ts`（configure/doFetch/persistQuotaConfig）、`quota-providers/opencode.ts` | 配置读写注入 + URL 拼接 + not_configured |
 | | `packages/renderer/src/composables/features/model/useQuotaConfigure.ts`、对应 Settings 组件、失败态文案 | 输入框 + 恢复指引 |
-| unit-2 | `packages/subagent-core/src/execution/subagent-service.ts`（execute 编排 :849-876）、`execution/subprocess-agent-runner.ts`（SAR 非 pi 分支校验调用点，v1.1 补）、`engine/port.ts`、`engine/engines/zcode/zcode-engine.ts`（validateModel 委托）、`shared/model-ref.ts` 或新错误构造（跨引擎候选） | 见 §3.2.3 四决策；含 V2-4② workflow 错误场景 |
+| unit-2 | `packages/subagent-core/src/execution/subagent-service.ts`（execute 编排 :849-876）、`execution/subprocess-agent-runner.ts`（SAR 非 pi 分支校验调用点，v1.1 补）、`execution/engine/port.ts`、`execution/engine/engines/zcode/zcode-engine.ts`（validateModel 委托，r2 复审 SG 补 execution/ 段）、`shared/model-ref.ts` 或新错误构造（跨引擎候选） | 见 §3.2.3 四决策；含 V2-4② workflow 错误场景 |
 | unit-3 | `packages/runtime/src/infra/installers/npm-installer.ts`（downloadAndExtract） | stall timer |
 | unit-4 | `packages/runtime/src/infra/system/trash.ts`、`packages/runtime/src/transport/session-message-handler.ts`（P4-1 视核实结果） | 降级分支删除 + 错误通道 |
 
@@ -514,7 +514,7 @@ downloadAndExtract（tarball）     :308  🔴 无任何 timer：
 - **P2-1**（⛔ unit-2 实施期）：execute() 编排 reorder 的时序回归（record 注册/emit 顺序依赖）——失败则收窄为「仅 model 解析延后」的窄改法。
 - **P2-2**（⛔ unit-2 实施期）：错误路径上 listModels 同步读 v2 config 的耗时——超预期则降级为仅列 provider 前缀。
 - **P3-1**（⛔ unit-3 实施期）：pipe 路径 destroy 后 gunzip 错误传播完整性——失败则在 extractTarStream reject 前显式 `gunzip.destroy()`。
-- **P4-1**（⛔ unit-4 实施期）：session.delete 在 trash throw 时的 WS 错误 reply 通道——若无统一外层收口则在 handler case 内补 try/catch → sendError。
+- **P4-1**（⛔ unit-4 实施期）：session.delete 在 trash throw 时的 WS 错误 reply 通道——正路（server.ts:416-434 外层统一收口）已源码核实存在，预期无需 case 内 try/catch；「若无统一收口则补 case 内 try/catch → sendError」为防御性登记（r2 复审 INFO-2 注明，非条件分支）。
 - **P1-1**（⛔ unit-1 实施期）：配置的 workspace URL 归一化（完整 URL vs 裸 `wrk_` id 两种输入的解析与校验，含非法输入报错文案）。
 
 ### 5.5 探针清单（汇总，可审计）
@@ -544,5 +544,7 @@ downloadAndExtract（tarball）     :308  🔴 无任何 timer：
   - MF1（active 分支 trash 非第一步）→ D4-1 证据按 active/scanned 两形态勘误 + 显式声明新语义（active 失败 = 会话已终止 + 文件保留 + 报错指引，重删走 scanned 路径）；「trash 提前到 destroy 前」记入被否谱系（trash 成功而 destroy 失败 → 会话活文件已删，更危险）；失败路径样例与 V4-1 按形态拆分断言。反例重演：active session + Finder 卡死 → 报错、会话终止、文件保留、重新 scan 后重删成功——v1 的「session 留在列表」不再出现在 active 断言中。
   - MF2（workflow 派发域遗漏）→ D2-2 补调用点双路径覆盖（SAR run() 非 pi 分支 engine.run 前同一校验）；V2-4 补④ workflow 错误场景；unit-2 补 SAR 文件。§2.2「派发=chat+workflow」定义下 G2 完整达成。
   - MF3（流式路径 final 无 error 监听）→ D3-4 补 final.on('error') + gunzip.destroy 同步；v1 失实声明修正；ECONNRESET 既有崩溃面顺带消除；P3-1 升级双断言。
-  - S1（背压饿死）→ D3-1 刷新点扩为 final ∪ gunzip 双挂；S2（非 pi 分支逐层语义）→ D2-1 补 opts.model/agentConfig.model/ctxModel/thinkingLevel 归趋表；S3（deleteByCwd）→ 调用方清单已有（v1 即含），补 V4-4 批量场景；S4（路径前缀）→ 四处已按实核修正（execution/、engine/ 前缀）。INFO（P4-1）→ server.ts 外层通道已核实，探针简化为直接验证。
+  - S1（背压饿死）→ D3-1 刷新点扩为 final ∪ gunzip 双挂；S2（非 pi 分支逐层语义）→ D2-1 补 opts.model/agentConfig.model/ctxModel/thinkingLevel 归趋表；S3（deleteByCwd）→ 调用方清单补 deleteByCwd 第三处（v1 漏登记，r2 复审 INFO-1 记述修正——v1 §2.4 只登记两调用点），补 V4-4 批量场景；S4（路径前缀）→ 四处已按实核修正（execution/、engine/ 前缀）。INFO（P4-1）→ server.ts 外层通道已核实，探针简化为直接验证。
   - 联动同步：§2.3/§2.4 现状注记、§3.2.3 D2-1/D2-2、§3.3.3 D3-1/D3-4/P3-1、§3.4.3 D4-1 + 失败路径样例、§4.2 V2-4/V4-1/V4-4、§5 unit-2/unit-4；变更历史本条。
+- v1.2（2026-09-05）：**第 2 轮聚焦复审修复**（1 MF/1 SG/3 INFO 全修，报告 .review/timeout-hygiene-r2.md；r1 三条 MF 修复全部经源码逐点核实验证成立——active/scanned 两分支编排、SAR catch 收口零新增错误通道、integrity/流式 error 监听双通道）。①MF（D3-1/D3-3 刷新点落空，P0-12 联动遗漏 + P0-2 delta 链失实）：v1.1 变更历史声称「刷新点扩为 final ∪ gunzip 双挂」但决策正文仍是 final 单挂——D3-1 补双挂定案（流式路径 final ∪ gunzip 输出侧双 data，pipe 背压 pause final 时单挂可饿死 timer——S1 攻击面回归；integrity 路径无 pipe 耦合保持 final 单侧）、D3-3 补挂载点分路径声明；②SG：§5.3 unit-2 两处路径补 execution/ 段（engine/port.ts、engine/engines/zcode/zcode-engine.ts）；③INFO-1：v1.1 变更历史 S3「调用方清单已有（v1 即含）」记述修正为「v1 漏登记、修复时补第三处」；④INFO-2：P4-1 条件式降级句补注「正路已核实存在，降级为防御性登记」。
+- v1.3（2026-09-05）：**第 3 轮聚焦复审 0 must-fix / 1 SG / 1 INFO，当轮全修收口**（报告 .review/timeout-hygiene-r3.md；三轮收敛 3→1→0 MF，r2 全部修复经重演验证成立——双挂反例消灭/慢速下载不受影响/四方位联动一致/五路径实核存在）。①SG：SAR 行号 :227-229→:226-229 两处精化（v1.2 变更历史「3 INFO 全修」实修 2 条的 delta 失实随之消除）；②INFO 登记：双挂后 stall 语义客观扩为「下载-解压管线零进展」——本地 I/O 停滞 >60s 会报 network 错误（归因略偏、行为无害、不在 G3 承诺范围），实施期知晓。**设计就绪。**
