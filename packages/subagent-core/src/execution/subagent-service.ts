@@ -348,8 +348,10 @@ export class SubagentService {
   private readonly e9ConvertedIds = new Set<string>();
   /** [v2 D4] E1 等待分支的 settled 有界重扫状态（null = 未注册）。disposed 后保持
    *  非 null——同 session 内不再重复注册（补发完成/达限后 settled 边沿已无事可做，
-   *  单注册即单重扫）；initSession（revive）置 null 允许新 session 重新注册，旧
-   *  handler 的闭包 state 保持 disposed 永久惰化（pi.on 无 off，见 armSettledRescan）。 */
+   *  单注册即单重扫）；initSession（revive）置 null 允许新 session 重新注册。
+   *  pi.on 无 off（见 armSettledRescan）：旧 handler 闭包捕获旧 state，未 disposed 时
+   *  遇 settled 边沿仍会执行，扫描 this.mainSessionFile 当前值（handler 不绑定注册时
+   *  的文件域）；dispose 的惰化处置见 dispose()。 */
   private settledRescanState: { disposed: boolean; scans: number } | null = null;
   /** [MF#4][MF#2] fork 深度按 async 调用链传递（AsyncLocalStorage），替代共享可变计数器。
    *  主 session=0；fork 进入子 session 期间推进为子深度，供嵌套 fork 经 ALS 读到自身深度作为
@@ -502,7 +504,11 @@ export class SubagentService {
     // revive（dispose 的逆操作：/resume /fork /new 后复活）
     this._disposed = false;
     // [v2 D4] settled 重扫状态随 revive 重置：新 session 的 E1 若再判「仍有 running」
-    // 可重新注册；旧 handler 闭包捕获旧 state（已 disposed 或属旧文件域），不会复活。
+    // 可重新注册。旧 handler 闭包捕获旧 state：正常时序（session_shutdown →
+    // session_start）下已随 dispose() 惰化；未经 dispose 的时序残留仍会在 settled
+    // 边沿执行——其扫描 this.mainSessionFile 当前值（非注册时的旧文件），行为等价于
+    // 新 session 多注册一次扫描，由账本 sync-batch:<hash> 幂等 + batchFinalized 候选
+    // 过滤收敛，无跨 session 污染面。
     this.settledRescanState = null;
     this.store.revive();
     this.notifier.revive();
@@ -913,6 +919,14 @@ export class SubagentService {
     if (this._disposed) return;
     this._disposed = true;
     this.stopGcTimer();
+    // [v2 D4] settled 重扫 handler 惰化：dispose 后 trailing settled 边沿若仍触发，
+    // 旧 handler 不得再跑扫描——notifier 随后将 dispose，notifyBatch 短路返回 false
+    // 且不写账，而 E1 dispatched 段不判 accepted 仍统一落标 → 批被标 batchFinalized
+    // 而通知从未写账（永久丢失，不可逆）。惰化后通知由下次重启的 E1 首扫兑现
+    // （成员无标记，候选可达）。与 initSession revive 重置不冲突：dispose 是终态置
+    // disposed，revive 置 null 是新 session 的重新注册，旧 state 对象随旧 handler
+    // 闭包保持 disposed 永久惰化。
+    if (this.settledRescanState !== null) this.settledRescanState.disposed = true;
     // [dispose stub] 第一时间换 stub，防 trailing ui_request 调到 stale handler 闭包
     // （仍持有 disposed session 的 ctx）产生误导性 console.error。stub 干净降级为 cancelled。
     // 必须在 emit/abort 之前——这些步骤可能同步触发 trailing pump。
