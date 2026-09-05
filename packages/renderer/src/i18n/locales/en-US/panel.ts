@@ -295,11 +295,6 @@ export default {
     followupLabel: 'FOLLOWUP new turn',
     itemCount: '{count} items',
   },
-  compactQueue: {
-    pending: 'Send after compaction',
-    itemCount: '{count} items',
-    cancel: 'Cancel queue',
-  },
   deferQueue: {
     pendingHint: 'Send after compaction finishes',
     cancelQueued: 'Cancel queued message',

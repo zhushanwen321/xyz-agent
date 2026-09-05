@@ -36,7 +36,9 @@ import {
   useComposerSubmit,
   useComposerSend,
   resolveSendRoute,
+  IDLE_SESSION_PHASE,
   type SendRoute,
+  type SessionPhase,
 } from '@xyz-agent/core/domain/composer'
 // input 域 3 个 composable 已迁 @xyz-agent/dom-core（ADR-0058）：history/dragdrop/restore
 import {
@@ -273,22 +275,42 @@ export function useComposerShell(params: ComposerShellParams) {
 
   const hasInput = computed(() => draft.value.trim().length > 0)
 
-  // ── D6 发送路由（u5b）：sessionPhase（occupancy 投影）→ sendRoute，导出供 P4 消费 ──
+  // ── D6 发送路由（u5b）+ 发送位四态（u6b）：sessionPhase（occupancy 投影）单一派生 ──
   // 数据源 = chat store sessionPhase（session.occupancy 帧驱动 + stateSnapshot 快照恢复）。
-  // 发送位四态（P4/u6b）与 ActivityStrip 从本 computed 取同一真值，与分发器行为同源不漂移。
+  // 发送位四态（D6 表「发送位」列）与 ActivityStrip 从同一真值取数，与分发器行为同源不漂移。
   //
   // turn 活跃判定取**并集**：occupancy 权威投影 ∨ 本地乐观视图（isActive = streaming 实体
   // ∨ 乐观 pendingSend）。本地 send 的乐观置位先于 runtime occupancy 广播（RPC RTT 窗口），
   // 只看投影会让窗口内 Enter 落 direct 被 canSend 守卫拦死（死键回退）——并集保持现状
   // isActive→steer 语义；settling/compacting/bash 维度无本地乐观源，由权威帧独占。
-  const sendRoute = computed<SendRoute>(() => {
+  // sendRoute（三值浓缩）与发送位（需原始 turn/compacting/bash 维度细分——如 settling 单独
+  // vs settling+compacting 的 stop/queue 分档）共用同一 effective phase，不双真源。
+  const effectivePhase = computed<SessionPhase>(() => {
     const sid = sessionIdRef.value
-    if (!sid) return 'direct' // landing（无 session）无 occupancy 记录 → 全 idle → direct
+    if (!sid) return IDLE_SESSION_PHASE // landing（无 session）无 occupancy 记录 → 全 idle
     const phase = chatStore.sessionPhase(sid)
-    // 本地乐观 busy 投影化为 dispatching（「已发起未确认」的 occupancy 语义）后过统一路由表
-    // ——判定逻辑单点在 resolveSendRoute，P4 复用同函数不漂移。
-    const effective = isActive.value && phase.turn === 'idle' ? { ...phase, turn: 'dispatching' as const } : phase
-    return resolveSendRoute(effective)
+    // 本地乐观 busy 投影化为 dispatching（「已发起未确认」的 occupancy 语义）后过统一派生
+    // ——判定逻辑单点在 resolveSendRoute / 发送位派生，消费方复用同源不漂移。
+    return isActive.value && phase.turn === 'idle' ? { ...phase, turn: 'dispatching' as const } : phase
+  })
+  const sendRoute = computed<SendRoute>(() => resolveSendRoute(effectivePhase.value))
+
+  /**
+   * [u6b] 发送位四态（D6 表「发送位」列）：send（↑ 直发）/ stop（■ 中止）/ queue（↑ 带时钟
+   * 角标排队）。派生自与 sendRoute 同源的 effectivePhase：
+   * - turn ∈ {dispatching, generating}（含 threshold 行 3）→ stop（turn 活跃，点击 abort）
+   * - settling 分档：单独 → stop（收尾期可中止）；settling + compacting/bash → queue
+   *   （turn 不活跃 + 其他维度忙——行 5/6 同构；D6 表未单列 settling+bash，按同构归 queue，
+   *   登记 impl-plan 偏差表）
+   * - compacting / bash（turn=idle）→ queue（行 5/6）
+   * - 全 idle → send（行 1）
+   */
+  const sendButtonState = computed<'send' | 'stop' | 'queue'>(() => {
+    const phase = effectivePhase.value
+    if (phase.turn === 'dispatching' || phase.turn === 'generating') return 'stop'
+    if (phase.turn === 'settling') return (phase.compacting || phase.bash) ? 'queue' : 'stop'
+    if (phase.compacting || phase.bash) return 'queue'
+    return 'send'
   })
 
   // ── bash 命令模式（core dispatch/bash；sendBash 注入）──
@@ -424,8 +446,9 @@ export function useComposerShell(params: ComposerShellParams) {
     onAbort,
     // send
     onSend,
-    // D6 发送路由（u5b 导出：P4 发送位四态 / ActivityStrip 同源消费）
+    // D6 发送路由 + 发送位四态（u5b 导出：分发器路由 / P4 发送位与 ActivityStrip 同源消费）
     sendRoute,
+    sendButtonState,
     // 派生状态
     hasInput,
     isBusy,

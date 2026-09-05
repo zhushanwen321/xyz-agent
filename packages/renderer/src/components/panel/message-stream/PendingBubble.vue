@@ -6,7 +6,7 @@
   disabled button 不派发 mouse 事件，tooltip 挂外层 span 承载）。
   投递确认（core message_end(user) ① → useCompactQueue.confirmDelivery）后条目出队，
   本气泡随分区响应式消失，正常气泡由 appendUser 插入对话流（转态，live ≡ reload）。
-  纯展示 + remove emit（QueueBubble/CompactQueueBadge 同范式）：队列状态持于
+  纯展示 + remove emit（QueueBubble 同范式）：队列状态持于
   useCompactQueue 分区，本组件不取数不持状态。视觉对齐 UserBubble 气泡基线
   （hairline border / bubble-bg / 纯灰 tokens，无 emoji）。
 -->

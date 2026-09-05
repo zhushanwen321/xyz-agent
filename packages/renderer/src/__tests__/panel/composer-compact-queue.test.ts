@@ -1,24 +1,25 @@
 /**
- * Composer compact 待发队列 UI 集成测试（compact-queued-messages W2，TC11-TC18）。
+ * Composer defer 队列 UI 集成测试（compact-queued-messages W2 → session-occupancy u4b/u6b）。
  *
- * 验证：
- * - TC11: compact 期间 ⏎ 发送 → 入队 + 输入清空 + badge 可见
- * - TC12: compact 期间发送按钮点击 → 入队（按钮可点非 spinner）
+ * 验证（入队行为 + 发送位 queue 态；队列可见性由对话流 PendingBubble 承接——独立 badge
+ * 组件已随 u6b/D7 展示统一移除，撤销/预览 UI 由 PendingBubble.test.ts 覆盖）：
+ * - TC11: compact 期间 ⏎ 发送 → 入队 + 输入清空 + 发送位 queue 态（时钟角标按钮）
+ * - TC12: compact 期间发送按钮点击 → 入队（按钮可点非 spinner，title=「排队发送 · ⏎」）
  * - TC13: compact 期间 `/` 前缀文本 → 拒绝入队 + toast + draft 保留
  * - TC13b: compact 期间 `!`/`!!` 前缀 bash 命令 → 拒绝入队 + toast + draft 保留（对称于 `/`）
- * - TC14: badge 显示条数 + 首条预览 + 取消按钮移除单条
- * - TC15: compacted 成功（flush 清空）→ 队列清空 + badge 消失
- * - TC16: compacted 失败（队列保留）→ badge 仍在
+ * - TC15: compacted 成功（flush 清空）→ 提交确认驱动出队
+ * - TC16: compacted 失败（队列保留）→ 队列不清
  * - TC17: compact 态无输入 → 发送按钮 disabled + title=sendHint + 点击不入队
  * - TC18: compact 期间 Alt+⏎ → 入队而非 followUp
+ * （原 TC14 badge 条数/预览/逐条取消为 badge 专属 UI，随组件移除；× 撤销在
+ *   message-stream/__tests__/PendingBubble.test.ts 覆盖）
  *
  * 策略（对齐 composer-bash-mode.test.ts 结构范本）：
  * - 真 pinia + 真 chatStore（[u5b] isCompacting 由 occupancy 投影派生——驱动方式 =
  *   chat.setOccupancy(sid, { turn:'idle', compacting:true, bash:false })，D6 defer 路由同源）
  * - mock useChat（spy 化 send/steer/followUp/compact...）+ useToast（断言 toastError）
  * - mock ComposerInput（emit input 设 draft + emit keydown Enter 触发 onSend）
- * - stub 子组件（保留真实 CompactQueueBadge——断言其 DOM）
- * - 每用例 useCompactQueue()._clearAllForTest() + resetChatModuleState() 隔离
+ * - stub 子组件；每用例 useCompactQueue()._clearAllForTest() + resetChatModuleState() 隔离
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/panel/composer-compact-queue.test.ts
  */
@@ -134,7 +135,7 @@ async function typeAndEnter(wrapper: ReturnType<typeof mountComposer>, text: str
 }
 
 describe('Composer compact 待发队列（TC11-TC18）', () => {
-  it('TC11: compact 期间 ⏎ 发送 → 入队 + 输入清空 + badge 可见', async () => {
+  it('TC11: compact 期间 ⏎ 发送 → 入队 + 输入清空 + 发送位 queue 态', async () => {
     const chat = useChatStore()
     chat.setOccupancy('s1', { turn: 'idle', compacting: true, bash: false })
     const wrapper = mountComposer({ sessionId: 's1' })
@@ -144,36 +145,31 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
     expect(useCompactQueue().peek('s1').map((m) => m.text)).toContain('hello')
     // 输入已清空（clearInput → ComposerInput.clear）
     expect(wrapper.findComponent(ComposerInputMock).vm.clear).toHaveBeenCalled()
-    // DOM：badge 可见 + 含条数文案 + 预览
-    const badge = wrapper.find('[data-testid="compact-queue-badge"]')
-    expect(badge.exists()).toBe(true)
-    expect(badge.text()).toContain('1 条')
-    expect(badge.text()).toContain('hello')
+    // DOM：发送位为 queue 态（时钟角标按钮）
+    expect(wrapper.find('.queue-send-btn').exists()).toBe(true)
     // 未走真实发送（send 未被调）
     expect(chatApiMock.send).not.toHaveBeenCalled()
   })
 
-  it('TC12: compact 期间发送按钮点击 → 入队（按钮可点非 spinner）', async () => {
+  it('TC12: compact 期间发送按钮点击 → 入队（按钮可点非 spinner，title=排队发送 · ⏎）', async () => {
     const chat = useChatStore()
     chat.setOccupancy('s1', { turn: 'idle', compacting: true, bash: false })
     const wrapper = mountComposer({ sessionId: 's1' })
     wrapper.findComponent(ComposerInputMock).vm.$emit('input', 'world')
     await wrapper.vm.$nextTick()
 
-    // 发送位在 compact 态是可点击 Button（title=queueSend「排队发送」），非 disabled
-    const sendBtn = wrapper.find('[title="排队发送"]')
+    // 发送位在 compact 态是可点击 queue 按钮（title=queueSend「排队发送 · ⏎」），非 disabled
+    const sendBtn = wrapper.find('.queue-send-btn')
     expect(sendBtn.exists()).toBe(true)
+    expect(sendBtn.attributes('title')).toBe('排队发送 · ⏎')
     expect(sendBtn.attributes('disabled')).toBeUndefined()
 
     await sendBtn.trigger('click')
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
-    // 入队 'world' + badge 显示
+    // 入队 'world'
     expect(useCompactQueue().peek('s1').map((m) => m.text)).toContain('world')
-    const badge = wrapper.find('[data-testid="compact-queue-badge"]')
-    expect(badge.exists()).toBe(true)
-    expect(badge.text()).toContain('world')
   })
 
   it('TC13: compact 期间 `/` 前缀文本 → 拒绝入队 + toast + draft 保留', async () => {
@@ -187,9 +183,8 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
     expect(chatApiMock.compact).not.toHaveBeenCalled()
     // toast 拒绝提示（zh-CN commandQueuedRejected）
     expect(toastMock.error).toHaveBeenCalledWith('压缩进行中，命令请等待完成后使用')
-    // draft 未清空（clear 未被调），badge 不出现
+    // draft 未清空（clear 未被调）
     expect(wrapper.findComponent(ComposerInputMock).vm.clear).not.toHaveBeenCalled()
-    expect(wrapper.find('[data-testid="compact-queue-badge"]').exists()).toBe(false)
   })
 
   it('TC13b: compact 期间 `!` 前缀 bash 命令 → 拒绝入队 + toast + draft 保留', async () => {
@@ -203,54 +198,26 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
     expect(chatApiMock.sendBash).not.toHaveBeenCalled()
     // toast 拒绝提示（与 `/` 命令同一文案，zh-CN commandQueuedRejected）
     expect(toastMock.error).toHaveBeenCalledWith('压缩进行中，命令请等待完成后使用')
-    // draft 未清空（clear 未被调），badge 不出现
+    // draft 未清空（clear 未被调）
     expect(wrapper.findComponent(ComposerInputMock).vm.clear).not.toHaveBeenCalled()
-    expect(wrapper.find('[data-testid="compact-queue-badge"]').exists()).toBe(false)
   })
 
-  it('TC14: badge 显示条数 + 首条预览 + 取消按钮移除单条', async () => {
-    const chat = useChatStore()
-    chat.setOccupancy('s1', { turn: 'idle', compacting: true, bash: false })
-    const queue = useCompactQueue()
-    const wrapper = mountComposer({ sessionId: 's1' })
-    const m1 = queue.enqueue('s1', 'm1')
-    queue.enqueue('s1', 'm2')
-    await wrapper.vm.$nextTick()
-
-    // badge 显示条数 + 首条预览（m1）
-    const badge = wrapper.find('[data-testid="compact-queue-badge"]')
-    expect(badge.exists()).toBe(true)
-    expect(badge.text()).toContain('2 条')
-    expect(badge.text()).toContain('m1')
-
-    // 取消第一条 → count 1 + 预览变 m2 + 文案变 '1 条'
-    await wrapper.find(`[data-testid="compact-queue-cancel-${m1.id}"]`).trigger('click')
-    expect(queue.count('s1')).toBe(1)
-    expect(queue.peek('s1').map((m) => m.text)).toEqual(['m2'])
-    await wrapper.vm.$nextTick()
-    expect(badge.text()).toContain('1 条')
-    expect(badge.text()).toContain('m2')
-    expect(badge.text()).not.toContain('m1')
-  })
-
-  it('TC15: compacted 成功 → flush 提交（确认帧驱动出队）；确认出队后 badge 消失', async () => {
+  it('TC15: compacted 成功 → flush 提交（确认帧驱动出队）', async () => {
     const chat = useChatStore()
     const queue = useCompactQueue()
     const wrapper = mountComposer({ sessionId: 's1' })
-    const m1 = queue.enqueue('s1', 'm1')
+    queue.enqueue('s1', 'm1')
     await wrapper.vm.$nextTick()
-    expect(wrapper.find('[data-testid="compact-queue-badge"]').exists()).toBe(true)
 
     // compacted 成功链路：flush 提交成功（send mock resolve）——[u4b] 提交 ≠ 出队（E2 退役），
-    // badge 保持（条目等确认帧）；压缩态结束（[u5b] occupancy compacting=false 驱动）
+    // 条目等确认帧；压缩态结束（[u5b] occupancy compacting=false 驱动）
     await expect(queue.flush('s1')).resolves.toBe(true)
     chat.setOccupancy('s1', { turn: 'idle', compacting: false, bash: false })
     await wrapper.vm.$nextTick()
 
     expect(queue.count('s1')).toBe(1)
-    expect(wrapper.find('[data-testid="compact-queue-badge"]').exists()).toBe(true)
 
-    // 投递确认帧（core ① → confirmDelivery 出队）→ 队列清空 + badge 消失
+    // 投递确认帧（core ① → confirmDelivery 出队）→ 队列清空
     chat.applyMessageEvent('s1', { type: 'message.message_end', payload: { sessionId: 's1', entry: {
       type: 'message', id: `e-${crypto.randomUUID()}`, parentId: null, timestamp: new Date().toISOString(),
       message: { role: 'user', content: [{ type: 'text', text: 'm1' }], timestamp: Date.now() },
@@ -258,18 +225,16 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
     await wrapper.vm.$nextTick()
 
     expect(queue.count('s1')).toBe(0)
-    expect(wrapper.find('[data-testid="compact-queue-badge"]').exists()).toBe(false)
-    void m1
   })
 
-  it('TC16: compacted 失败（队列保留）→ badge 仍在', async () => {
+  it('TC16: compacted 失败（队列保留）→ 队列不清', async () => {
     const chat = useChatStore()
     chat.setOccupancy('s1', { turn: 'idle', compacting: true, bash: false })
     const queue = useCompactQueue()
     const wrapper = mountComposer({ sessionId: 's1' })
     queue.enqueue('s1', 'm1')
     await wrapper.vm.$nextTick()
-    expect(wrapper.find('[data-testid="compact-queue-badge"]').exists()).toBe(true)
+    expect(queue.count('s1')).toBe(1)
 
     // compacted 失败：压缩态结束但队列未 flush（保留待下次重试；[u5b] 本用例直接驱动
     // store 投影不经 useChat handler，occupancy idle 的 flush 触发在 handler 集成测试覆盖）
@@ -277,7 +242,6 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
     await wrapper.vm.$nextTick()
 
     expect(queue.count('s1')).toBe(1)
-    expect(wrapper.find('[data-testid="compact-queue-badge"]').exists()).toBe(true)
   })
 
   it('TC17: compact 态无输入 → 发送按钮 disabled + title=sendHint + 点击不入队', async () => {
@@ -292,13 +256,12 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
     expect(sendBtn.exists()).toBe(true)
     expect(sendBtn.attributes('disabled')).toBeDefined()
 
-    // 点击不入队（onSend 入口 !canSend 守卫拦截）：badge 不出现 + count 0
+    // 点击不入队（onSend 入口 !canSend 守卫拦截）：count 0
     await sendBtn.trigger('click')
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
     expect(useCompactQueue().count('s1')).toBe(0)
-    expect(wrapper.find('[data-testid="compact-queue-badge"]').exists()).toBe(false)
   })
 
   it('TC18: compact 期间 Alt+⏎ → 入队而非 followUp', async () => {
@@ -314,9 +277,5 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
     // followUp 未被调（重路由到 onSend → 入队）
     expect(chatApiMock.followUp).not.toHaveBeenCalled()
     expect(useCompactQueue().peek('s1').map((m) => m.text)).toContain('alt-msg')
-    // DOM：badge 可见（入队结果反映到 UI）
-    const badge = wrapper.find('[data-testid="compact-queue-badge"]')
-    expect(badge.exists()).toBe(true)
-    expect(badge.text()).toContain('alt-msg')
   })
 })

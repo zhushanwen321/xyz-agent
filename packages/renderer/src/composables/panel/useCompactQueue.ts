@@ -4,9 +4,11 @@
  *
  * **符号名保留说明**（C-proc-10 最小爆炸半径裁决）：useCompactQueue / CompactQueue /
  * QueuedMessage 被 core CompactQueueLike 契约（useChat/user-delivery）、composer-shell、
- * CompactQueueBadge、i18n 及 core/renderer 双方测试广泛引用（>10 处）——本单元只改用户可见
+ * i18n 及 core/renderer 双方测试广泛引用（>10 处）——本单元只改用户可见
  * 语义（入队即 pending 气泡、撤销边界、flush 投递确认驱动），顶层符号与文件名保持不动；
  * 「defer 队列」术语的展示位由 pending 气泡 + i18n（panel.deferQueue.*）承接。
+ * [u6b] 独立 badge 组件已移除（D7 展示统一）：队列可见性由 PendingBubble（对话流内）
+ * 独立承接。
  *
  * 入队即显：条目由对话流尾部的 PendingBubble 组件渲染（半透明 + Clock + hover 标注），
  * 条目 id 作气泡 id（data-testid 锚点）。撤销（remove）仅对未提交条目（mode === undefined）

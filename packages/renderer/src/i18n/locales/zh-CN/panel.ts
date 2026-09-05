@@ -295,11 +295,6 @@ export default {
     followupLabel: 'FOLLOWUP 新轮',
     itemCount: '{count} 条',
   },
-  compactQueue: {
-    pending: '压缩后发送',
-    itemCount: '{count} 条',
-    cancel: '取消排队',
-  },
   deferQueue: {
     pendingHint: '压缩结束后发送',
     cancelQueued: '撤销排队',

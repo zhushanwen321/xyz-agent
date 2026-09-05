@@ -310,7 +310,8 @@ export function createChatStore() {
    * flush/取消的编排（调 chatApi.send/steer）留在 renderer shell（useCompactQueue.ts），
    * core 只经 deps.getCompactQueue() 注入调用——core 域文件不 import renderer api。
    * 组件消费点唯一：QueueBubble 经 Composer → chatStore.getQueueState 读 queueStates；
-   * CompactQueueBadge 经 useCompactQueue() 单例读 compact 暂存。pendingBuffer 属 drain
+   * compact 暂存经 useCompactQueue() 单例读（[u6b] 原 badge 展示组件已移除，PendingBubble 承接）。
+   * pendingBuffer 属 drain
    * 恢复机制留在 store（SSOT 检查点 2 裁决：不强行并入统一视图）。
    */
   const pendingBuffer = ref<Map<string, PendingItem[]>>(new Map())

@@ -1,11 +1,12 @@
 <template>
   <!--
     容器组件 · composer（panel/spec.md zone ④，draft-composer-states）。
-    v1 主路径 4 态：
-      S1 空 → S2 输入中 → S5 发送中（spinner）→ S6 流式中（stop + steer/followUp）
-    DEFERRED：
-      S3/S4（@/#// 附件浮层 G2-002）、S7-S9 双队列视图/失败回退/已排队多条。
-    steer/followUp：活跃态（isGenerating/派发空窗期）时 ⏎ 追加 steer，Alt+⏎ 追加 followUp，都不打断当前回合。
+    发送位四态（u6b / D6 表）：send（↑ idle 直发）/ stop（■ turn 活跃 / settling 单独）/
+    queue（↑ 时钟角标：compacting/bash/settling+compacting，点击入 defer 队列）/
+    spinner（isSending）。staging 模式优先（fork/handoff）。
+    steer/followUp/defer 路由：⏎/Alt+⏎ 全部汇入统一发送分发器（D6，composer-shell
+    sendRoute——turn 活跃→steer、占用→defer、idle→direct），Alt+⏎ 在 steer 路由行保留
+    followUp 语义。
     staging 优先（fork/handoff，与视觉层 boxClass/placeholder 优先级对齐）：staging 活跃时 ⏎/Alt+⏎
       均提交 staging（发送位也替换为 staging 发送按钮，streaming 中同样生效）；handoff 的
       streaming 拦截在 enterHandoffMode/handleHandoffSend（isSessionActive 守卫）。
@@ -18,7 +19,6 @@
     <!-- retry/queue 指示位（spec C10，#13，composer 上方独立行）：
          auto_retry_end / message_start 到达时 store 自动清 → state=undefined → 组件 v-if 消失 -->
     <RetryIndicator :state="retryState" />
-    <CompactQueueBadge :session-id="sessionId" />
     <!-- 命令浮层（§2d @/#//）：anchor = composer-box（slot），reka-ui Popover portal body。
          composer-box 内 focus 算 inside 不触发 dismiss，键盘路由见 onKeydown -->
     <CommandPopover
@@ -107,8 +107,11 @@
         <!-- 思考等级（spec §2c：click 出档位 popover；level 从 session 透传；reasoning 决定可用档集——non-reasoning 只 off） -->
         <ThinkingLevelPopover :level="currentThinkingLevel" :level-map="currentThinkingLevelMap" :supported-levels="currentSupportedLevels" @select="onThinkingSelect" />
 
-        <!-- 发送位：staging（fork/handoff，含 streaming 中）→staging send / S6 streaming/dispatching→stop /
-             S5 sending→spinner / compact→queue-send（可点，入队待重放）/ S1·S2 idle→send。
+        <!-- 发送位四态（u6b / D6 表「发送位」列）：staging（fork/handoff，含 streaming 中）→
+             staging send / stop（turn 活跃 dispatching|generating；settling 单独）→ ■ stop /
+             queue（compacting/bash/settling+compacting）→ ↑ 带时钟角标（可点入队，flush 于占用
+             解除后自动投递）/ S5 sending→spinner / 全 idle→send。
+             派生源 = shell sendButtonState（与分发器 sendRoute 同源 effectivePhase，不漂移）。
              staging 优先于 stop（用户决策）：streaming 中提交 fork 合法（对源只读）；需停止时
              先 Esc 退出 staging 再点 stop。staging 发送中（isSending）仍走 spinner。 -->
         <Button
@@ -124,7 +127,7 @@
           <ArrowUp class="size-[15px]" />
         </Button>
         <Button
-          v-else-if="isActive"
+          v-else-if="sendButtonState === 'stop'"
           variant="ghost"
           size="icon"
           class="stop-btn ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-surface-hover text-neutral-mid hover:bg-danger-soft hover:text-danger"
@@ -134,15 +137,17 @@
           <Square class="size-[13px]" />
         </Button>
         <Button
-          v-else-if="isCompacting"
+          v-else-if="sendButtonState === 'queue'"
           variant="default"
           size="icon"
-          class="ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-accent text-accent-fg transition-colors enabled:hover:bg-accent-hover disabled:bg-transparent disabled:text-[var(--neutral-dim)]"
+          class="queue-send-btn relative ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-accent text-accent-fg transition-colors enabled:hover:bg-accent-hover disabled:bg-transparent disabled:text-[var(--neutral-dim)]"
           :disabled="!canSubmit"
-          :title="canSubmit ? t('panel.composer.queueSend') : t('panel.composer.sendHint')"
+          :title="canSubmit ? `${t('panel.composer.queueSend')} · ⏎` : t('panel.composer.sendHint')"
           @click="onSend"
         >
           <ArrowUp class="size-[15px]" />
+          <!-- 时钟角标（D6 场景 1）：排队语义视觉锚点，右上角 1/4 尺寸 -->
+          <Clock class="absolute right-[2px] top-[2px] size-2" aria-hidden="true" />
         </Button>
         <div
           v-else-if="isSending"
@@ -172,7 +177,7 @@
 <script setup lang="ts">
 import { computed, createVNode, onBeforeUnmount, onMounted, provide, ref, render, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowUp, Loader2, Square, X } from '@lucide/vue'
+import { ArrowUp, Clock, Loader2, Square, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { ComposerInput, ComposerInputDepsKey, type ComposerInputDeps } from '@xyz-agent/ui/features/composer'
 import { ViewHost } from '@xyz-agent/ui/extension-host'
@@ -184,7 +189,6 @@ import ThinkingLevelPopover from './ThinkingLevelPopover.vue'
 import ContextChipsBar from './ContextChipsBar.vue'
 import RetryIndicator from './RetryIndicator.vue'
 import QueueBubble from './QueueBubble.vue'
-import CompactQueueBadge from './CompactQueueBadge.vue'
 import { useChatStore } from '@/stores/chat'
 import { useProjectSkills, useGlobalSkills } from '@/composables/features/settings/useProjectSkills'
 import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
@@ -292,8 +296,8 @@ onBeforeUnmount(() => {
 })
 /** composer-box 聚焦态：由 ComposerInput @focus/@blur 驱动（composer-box 经 CommandPopover
  *  PopoverAnchor as-child 包裹，ref 透传丢失，改由子组件 ComposerInput emit focus/blur）。 */
-/** 当前 panel 的 session 是否正在压缩上下文（#6，per-session） */
-const isCompacting = computed(() => (props.sessionId ? chatStore.isCompacting(props.sessionId) : false))
+// [u6b] 本地 isCompacting computed 已退役：压缩维度的唯一读口收敛到 shell sendButtonState
+// （occupancy 投影派生，与分发器 sendRoute 同源——双轨收口完成）。
 
 // composer-box 容器 ref（拖拽落位 + 视觉）——先声明，再喂给 shell
 const composerBoxRef = ref<HTMLElement | null>(null)
@@ -336,6 +340,7 @@ const {
   onAbort,
   onSend,
   sendRoute,
+  sendButtonState,
   canSubmit,
   boxClass,
   placeholder,

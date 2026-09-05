@@ -173,7 +173,7 @@ import PendingBubble from './message-stream/PendingBubble.vue'
 // 活动条（u6a / D7 展示统一）：compacting/bash/thinking 行的单一渲染位（原三处分散指示收编）。
 import ActivityStrip from './message-stream/ActivityStrip.vue'
 // defer 队列（u4b / D4）：pending 气泡数据源——per-session 分区只读快照（computed 内
-// peek 读 reactive 分区建立依赖，入队/确认出队/撤销实时反映；CompactQueueBadge 同款模式）。
+// peek 读 reactive 分区建立依赖，入队/确认出队/撤销实时反映）。
 import { useCompactQueue } from '@/composables/panel/useCompactQueue'
 import type { QueuedMessage } from '@/composables/panel/useCompactQueue'
 import { useForkNoticeStream } from '@/composables/panel/useForkNoticeStream'

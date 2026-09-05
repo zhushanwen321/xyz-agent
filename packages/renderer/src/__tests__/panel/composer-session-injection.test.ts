@@ -65,6 +65,8 @@ vi.mock('@/stores/chat', () => ({
     getRetryState: () => undefined,
     getQueueState: () => undefined,
     isCompacting: () => false,
+    // [u6b] 发送位四态渲染即读 occupancy 投影（sendButtonState ← effectivePhase），mock 需提供
+    sessionPhase: () => ({ turn: 'idle', compacting: false, bash: false }),
   }),
 }))
 // sessionStore mock：SessionItem（写入侧目标路由）与 Composer 壳 getActiveSessionId 共用
