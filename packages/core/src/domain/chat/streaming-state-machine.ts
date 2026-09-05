@@ -95,7 +95,9 @@ function finalizeStreamingMessage(
   const finalStatus = isErrorReason ? 'error' : 'complete'
   const finalError = errorText && m.role === 'assistant' ? errorText : m.error
   const isMarked = reason === 'timeout' && m.role === 'assistant'
-  if (isMarked) markedIds!.add(m.id)
+  // markedIds 仅 reason==='timeout' 时由 finalizeMessages 提供（与 isMarked 同条件），
+  // 显式判空替代非空断言——两处条件各自演化时不再 TypeError（S11）
+  if (isMarked && markedIds) markedIds.add(m.id)
   return {
     ...m,
     status: finalStatus,

@@ -878,7 +878,13 @@ export class RpcClient implements IPiEngine {
 
   /** 切换 pi 进程到指定 session 文件（restore / fork 用）。 */
   switchSession(sessionPath: string): Promise<void> {
-    // L6：switchSession 加载大 session 文件可能耗时，用 SLOW_TIMEOUT_MS（120s）避免误超时
+    // L6：switchSession 加载大 session 文件可能耗时，用 SLOW_TIMEOUT_MS（120s）避免误超时。
+    // [pi 锚点] switch_session 是永久重绑读写目标——pi-mono coding-agent/src/core/
+    // agent-session-runtime.ts switchSession（~:194-215，open 新 SessionManager →
+    // teardownCurrent → createRuntime 重绑）+ core/session-manager.ts `sessionFile`
+    // 字段（_setSessionFile :895-896 永久持有，_persist 每轮 appendFileSync 该路径）。
+    // 故 switchSession 成功后紧随的 get_state（model/thinkingLevel 读回，restore-seeding
+    // 播种依赖）返回的是新 session 的生效值（clone v0.84.2 核对，实装 0.84.4）。
     return this.sendCommand('switch_session', { sessionPath }, SLOW_TIMEOUT_MS).then(() => undefined)
   }
 

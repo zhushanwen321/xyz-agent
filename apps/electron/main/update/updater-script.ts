@@ -290,6 +290,8 @@ if [ -z "\$SRC_APP" ]; then
 fi
 # ditto 保签名/xattr/权限（Electron app 换装标准做法，不用 cp -R）
 if ! ditto "\$SRC_APP" "\$STAGED_APP"; then
+  # S7：清 staging 残留（部分拷贝可达数百 MB），再卸载挂载卷走 fail
+  rm -rf "\$STAGING_DIR"
   detach_and_fail "ditto copy failed"
 fi
 # 主二进制存在检查（RI1：不再用 [ -d .app ] 误判成功；解包产物必须是可运行 app）

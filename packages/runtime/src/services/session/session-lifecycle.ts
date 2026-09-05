@@ -41,6 +41,9 @@ import { normalizeInactiveSessionFileIfNeeded, readEffectiveModelFromState, seed
 // [arch 技术债登记，R3 ports 依赖倒置待收口] 下方五个 infra/pi 值 import（getSessionsDir /
 // cleanupMigrateResidues + persistModelBinding / hydrateBindingMeta / assertPiSessionFile）
 // 违反「services 禁止 import infra」三层规则（见 docs/architecture/runtime-three-layer-design.md 阶段 R3）。
+// 同属本登记的衍生直引面：services/session/restore-seeding.ts（本文件拆出，直引
+// session-file-utils 的 cleanupMigrateResidues / normalizeSessionFileInPlace /
+// persistModelBinding——S2 追加登记，随 R3 同批收口，中期经 services/ports 暴露）。
 // 未在本轮直接 port 化的原因：restore/fork 归一化管线是 W1 高危区（tmp+rename 原子覆盖 +
 // 附着断言），包一层 port 接口属于行为敏感重构，应随 R3 阶段统一落地（ISessionStore 等
 // port 扩展 + 专项测试），不在 review 修复批混入。hydrateBindingMeta 是注册表 SSOT 的

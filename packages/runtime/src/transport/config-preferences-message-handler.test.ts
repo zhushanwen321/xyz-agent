@@ -26,6 +26,11 @@ function mockCtx() {
     setStreamingIdleTimeout: vi.fn((timeout: number) => Math.min(Math.max(timeout, 60), 3600)),
     // ④b 用例：非偏好组消息经主 switch 命中未迁移的既有 case（getAutoRenameEnabled）所需 stub
     getAutoRenameEnabled: vi.fn(() => false),
+    // S15 it.each 参数化用例：worktree/默认基分支两组转发所需 stub
+    getWorktreeRootDir: vi.fn(() => '/wt'),
+    setWorktreeRootDir: vi.fn(),
+    getDefaultBaseBranch: vi.fn(() => 'main'),
+    setDefaultBaseBranch: vi.fn(),
   }
   const ctx = {
     send: vi.fn(),
@@ -108,6 +113,51 @@ describe('ConfigPreferencesMessageHandler · config.setStreamingIdleTimeout', ()
     expect(handled).toBe(true)
     expect(configService.setStreamingIdleTimeout).toHaveBeenCalledWith(7200)
     expect(replies[0].payload).toEqual({ timeout: 3600 })
+  })
+})
+
+describe('ConfigPreferencesMessageHandler · 偏好组转发参数化（S15：12 条转发 case 零断言补测）', () => {
+  it.each([
+    {
+      name: '⑤ config.getWorktreeRootDir 读取转发',
+      msg: { type: 'config.getWorktreeRootDir', payload: {} },
+      replyType: 'config.worktreeRootDir',
+      payload: { dir: '/wt' },
+      setter: undefined,
+    },
+    {
+      name: '⑥ config.setWorktreeRootDir 写转发（原值透传 + 生效值 reply）',
+      msg: { type: 'config.setWorktreeRootDir', payload: { dir: '/new-wt' } },
+      replyType: 'config.worktreeRootDir',
+      payload: { dir: '/wt' },
+      setter: { fn: 'setWorktreeRootDir', arg: '/new-wt' },
+    },
+    {
+      name: '⑦ config.getDefaultBaseBranch 读取转发',
+      msg: { type: 'config.getDefaultBaseBranch', payload: {} },
+      replyType: 'config.defaultBaseBranch',
+      payload: { baseBranch: 'main' },
+      setter: undefined,
+    },
+    {
+      name: '⑧ config.setDefaultBaseBranch 写转发（原值透传 + 生效值 reply）',
+      msg: { type: 'config.setDefaultBaseBranch', payload: { baseBranch: 'develop' } },
+      replyType: 'config.defaultBaseBranch',
+      payload: { baseBranch: 'main' },
+      setter: { fn: 'setDefaultBaseBranch', arg: 'develop' },
+    },
+  ])('$name', async ({ msg, replyType, payload, setter }) => {
+    const { ctx, replies, configService } = mockCtx()
+    const handler = new ConfigPreferencesMessageHandler(ctx)
+    const handled = await handler.handle({ ...msg, id: 's1' } as unknown as ClientMessage, WS)
+    expect(handled).toBe(true)
+    expect(ctx.sendError).not.toHaveBeenCalled()
+    expect(replies).toHaveLength(1)
+    expect(replies[0]).toMatchObject({ type: replyType, id: 's1' })
+    expect(replies[0].payload).toEqual(payload)
+    if (setter) {
+      expect(configService[setter.fn]).toHaveBeenCalledWith(setter.arg)
+    }
   })
 })
 

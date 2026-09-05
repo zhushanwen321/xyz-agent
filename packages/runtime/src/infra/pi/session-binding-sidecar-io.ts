@@ -64,10 +64,17 @@ export const sessionMetaCache = new Map<string, CachedSessionMeta>()
  * 经其 re-export 保持原 import 路径）；model 家族在 session-model-sidecar.ts 直接消费
  * 本模块。骨架随循环消除下沉至此，仅限 sidecar 家族模块消费，不作为公共 API。
  */
+/**
+ * sidecar 持久化形状（S12 序列化边界最小约束）：各家族 binding 的公共底座——
+ * JSON.stringify 产出的对象（preset/project/agent/model 家族字段各异，由各自
+ * 调用方类型进一步收窄；读侧经 readBindingSidecar 的 decode 守卫回调校验）。
+ */
+export type PersistedSidecarBinding = Readonly<Record<string, unknown>>
+
 export function persistBindingSidecar(
   filePath: string,
   sidecarPathOf: (fp: string) => string,
-  binding: object,
+  binding: PersistedSidecarBinding,
   tmpPrefix: string,
   opts?: { invalidateScanDir?: boolean },
 ): void {

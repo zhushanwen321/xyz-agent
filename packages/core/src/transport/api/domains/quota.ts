@@ -23,13 +23,18 @@ export interface QuotaResult {
   reason?: QuotaFetchFailureReason
 }
 
+/** reply → QuotaResult 纯投影（三个查询 RPC 的统一返回形状）。 */
+function toQuotaResult(reply: { data: NormalizedQuotaRow | null, lastFetchAt: number | null, reason?: QuotaFetchFailureReason }): QuotaResult {
+  return { data: reply.data, lastFetchAt: reply.lastFetchAt, reason: reply.reason }
+}
+
 /**
  * 读缓存不发起请求。浮层首屏即时填充（避免空白）。
  * 无缓存返回 `{ data: null, lastFetchAt: null }`。
  */
 export async function getCached(providerId: string): Promise<QuotaResult> {
   const reply = await command('quota.getCached', { providerId }, RPC_BACKSTOP_TIMEOUT_MS)
-  return { data: reply.data, lastFetchAt: reply.lastFetchAt, reason: reply.reason }
+  return toQuotaResult(reply)
 }
 
 /**
@@ -40,7 +45,7 @@ export async function getCached(providerId: string): Promise<QuotaResult> {
  */
 export async function fetchQuota(providerId: string): Promise<QuotaResult> {
   const reply = await command('quota.fetch', { providerId }, RPC_BACKSTOP_TIMEOUT_MS)
-  return { data: reply.data, lastFetchAt: reply.lastFetchAt, reason: reply.reason }
+  return toQuotaResult(reply)
 }
 
 /**
@@ -50,7 +55,7 @@ export async function fetchQuota(providerId: string): Promise<QuotaResult> {
  */
 export async function refreshQuota(providerId: string): Promise<QuotaResult> {
   const reply = await command('quota.refresh', { providerId }, RPC_BACKSTOP_TIMEOUT_MS)
-  return { data: reply.data, lastFetchAt: reply.lastFetchAt, reason: reply.reason }
+  return toQuotaResult(reply)
 }
 
 /**

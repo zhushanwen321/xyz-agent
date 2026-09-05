@@ -80,6 +80,13 @@ function getCachedMainSessionFile(): string | undefined {
  * 读错文件会整段漏判。此处按 id 从 sessions 目录解析为准；新 session 文件未 flush
  * 时（AGENTS.md 规则 6：首条 assistant 消息前可能不存在）返回 undefined，调用方
  * （fork 解析 / 孤儿恢复）对该场景本就无 entry 可读。
+ *
+ * [pi 锚点 ADR-0063 I4] getSessionFile attach 语义：返回 `this.sessionFile` 字段
+ * （pi-mono coding-agent/src/core/session-manager.ts :1011-1013），该字段仅在
+ * _setSessionFile（:884/:895-896，constructor 显式路径或 setSessionFile）与
+ * newSession（:953 生成 `<ts>_<sessionId>.jsonl`）时写入——session_start 事件时点
+ * extension ctx 持有的 sessionManager 若尚未重绑到 root session，getSessionFile
+ * 仍回旧值（与 E2E 实测一致）。clone v0.84.2 核对，实装 0.84.4。
  */
 function resolveMainSessionFileById(sessionId: string): string | undefined {
   const sessionsDir = path.join(getAgentDir(), "..", "sessions");

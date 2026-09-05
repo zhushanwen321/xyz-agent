@@ -25,7 +25,13 @@
     "index.ts"
   ],
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.84.4"
+    "@earendil-works/pi-coding-agent": "^0.84.4",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "typebox": {
+      "optional": true
+    }
   },
   "dependencies": {
     "@xyz-agent/extension-protocol": "workspace:*",

@@ -135,15 +135,9 @@ export function withCrossEngineHint(
   for (const id of engineIds) {
     if (id === DEFAULT_ENGINE_ID) continue; // pi 是裁决源本身，不参与反查
     const engine = getEngineFn(id);
-    if (engine === undefined || typeof engine.listModels !== "function") continue;
-    let ids: string[];
-    try {
-      // listModels 契约允许返回 null（= 与主 agent 模型体系一致，无引擎清单）——按零清单处理
-      ids = engine.listModels()?.map((m) => m.id) ?? [];
-    } catch {
-      continue; // 单引擎清单读取失败不阻塞反查（可发现性降级语义）
-    }
-    if (ids.includes(clean)) {
+    if (engine === undefined) continue;
+    // 单引擎清单读取失败/无清单（safeListModels → []）不阻塞反查（可发现性降级语义）
+    if (safeListModels(engine).includes(clean)) {
       matchCount++;
       matchedEngineId ??= id;
     }

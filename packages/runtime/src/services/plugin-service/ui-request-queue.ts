@@ -107,7 +107,7 @@ export class UiRequestQueue {
     const effective = resolveUiRequestTimeoutMs(typeof params.timeoutMs === 'number' ? params.timeoutMs : undefined)
     const fallbackTimer = setTimeout(
       () => this.expireFallback(requestId),
-      Math.min(effective + FALLBACK_MARGIN_MS, MAX_TIMER_DELAY_MS),
+      resolveFallbackDelayMs(effective),
     )
 
     const entry: QueuedRequest = { requestId, method, pluginId, params, resolve: () => {}, fallbackTimer }

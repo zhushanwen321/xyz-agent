@@ -210,16 +210,25 @@ function mapCurlExitToError(err: CurlExitError): UpdateError {
         err.exitCode,
         rawCause,
       )
-    case CURL_EXIT_TIMEOUT:
-      // 双成因文案：不把连接失败误标为「30 秒无数据停滞」（误导用户排查方向）
+    case CURL_EXIT_TIMEOUT: {
+      // 双成因文案：不把连接失败误标为「30 秒无数据停滞」（误导用户排查方向）。
+      // stderr 有内容但信号词未命中（curl 升级/本地化文案漂移）时 warn 留原文，
+      // 防「停滞」归类静默退化（S3）。
+      const isConnectTimeout = isCurlConnectTimeout(err.stderrText)
+      if (!isConnectTimeout && err.stderrText.trim().length > 0) {
+        console.warn(
+          `[curl-download] exit 28 stderr 未命中 connect-timeout 信号词，按停滞归类，原始 stderr：${err.stderrText.trim()}`,
+        )
+      }
       return new UpdateError(
-        isCurlConnectTimeout(err.stderrText)
+        isConnectTimeout
           ? `curl connection timeout (no connection within ${CURL_CONNECT_TIMEOUT_SECONDS}s, exit ${err.exitCode})`
           : `curl download stalled (no data for ${CURL_SPEED_TIME_SECONDS}s, exit ${err.exitCode})`,
         'downloading',
         'UPDATE_NETWORK_TIMEOUT',
         rawCause,
       )
+    }
     case CURL_EXIT_SSL_CONNECT_ERROR:
     case CURL_EXIT_RECV_ERROR:
     case CURL_EXIT_HTTP_ERROR:

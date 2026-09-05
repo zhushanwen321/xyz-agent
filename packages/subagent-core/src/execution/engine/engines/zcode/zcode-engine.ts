@@ -344,7 +344,7 @@ export class ZcodeEngine implements EnginePort {
     modelRef: string,
     cwd: string,
     basePrompt: string,
-    schema: object | undefined,
+    schema: JsonSchemaObject | undefined,
     usageAcc: { input: number; output: number; cacheRead: number; cacheWrite: number; has: boolean },
   ): Promise<AttemptResult> {
     const attemptStartedAt = Date.now();
@@ -962,7 +962,7 @@ export class ZcodeEngine implements EnginePort {
    * appendSystemPrompt 平铺，由上游解析进 appendSystemPrompt），task 正文居中，
    * schema 仿真段尾置（common/schema-emulation 公共层产出）。
    */
-  private buildPrompt(task: AgentCallOpts, schema: object | undefined): string {
+  private buildPrompt(task: AgentCallOpts, schema: JsonSchemaObject | undefined): string {
     const segments: string[] = [...(task.appendSystemPrompt ?? [])];
     segments.push(task.prompt);
     if (schema !== undefined) segments.push(buildSchemaEmulationSegment(schema));
@@ -1051,8 +1051,15 @@ function explicitTurnBudgetMs(): number | undefined {
   return parsed.state === "valid" && parsed.ms > 0 ? parsed.ms : undefined;
 }
 
-/** Record 形状 guard（task.schema 的运行时窄化——Record<string, unknown> 不满足 ajv 的 object 入参）。 */
-function isPlainObject(v: unknown): v is object {
+/**
+ * task.schema 的最小 JSON Schema 形状（S13：替代裸 object——序列化边界上表达
+ * 「ajv 可消费的 schema 对象」；具体关键字（type/properties/required…）由
+ * schema-emulation 层解释，此处只约束对象形态）。
+ */
+export type JsonSchemaObject = Readonly<Record<string, unknown>>
+
+/** Record 形状 guard（task.schema 的运行时窄化——JsonSchemaObject 不满足 ajv 的 object 入参）。 */
+function isPlainObject(v: unknown): v is JsonSchemaObject {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 

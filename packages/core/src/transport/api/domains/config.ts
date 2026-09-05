@@ -296,6 +296,11 @@ export function deleteAgent(agentId: string): Promise<void> {
   return command('config.deleteAgent', { agentId }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
+/** `{ config, corrupted? }` reply 归一（corrupted 缺省 = false），SystemPrompt/Terminal 两对 get/set 共用。 */
+function toCorruptedConfig<T>(reply: { config: T, corrupted?: boolean }): { config: T, corrupted: boolean } {
+  return { config: reply.config, corrupted: reply.corrupted ?? false }
+}
+
 // ── System prompt config（FR-4/FR-5）──
 // settings-handler reply config.systemPrompt 形状 `{ config, corrupted? }`；
 // setSystemPrompt 失败时走 sendError，command reject（前端 catch 提示）。
@@ -303,13 +308,13 @@ export function deleteAgent(agentId: string): Promise<void> {
 /** 读取系统提示词配置。corrupted=true 表示磁盘配置损坏已回退默认。 */
 export async function getSystemPrompt(): Promise<{ config: SystemPromptConfig; corrupted: boolean }> {
   const reply = await command('config.getSystemPrompt', {}, RPC_BACKSTOP_TIMEOUT_MS)
-  return { config: reply.config, corrupted: reply.corrupted ?? false }
+  return toCorruptedConfig(reply)
 }
 
 /** 保存系统提示词配置（replace + append）。失败时 runtime 返回 error envelope，command 会 reject。 */
 export async function setSystemPrompt(config: SystemPromptConfig): Promise<{ config: SystemPromptConfig; corrupted: boolean }> {
   const reply = await command('config.setSystemPrompt', { config }, RPC_BACKSTOP_TIMEOUT_MS)
-  return { config: reply.config, corrupted: reply.corrupted ?? false }
+  return toCorruptedConfig(reply)
 }
 
 /** 订阅系统提示词配置广播（多 panel 同步）。 */
@@ -326,13 +331,13 @@ export function onSystemPrompt(handler: (config: SystemPromptConfig, corrupted: 
 /** 读取终端配置。corrupted=true 表示磁盘配置损坏已回退默认。 */
 export async function getTerminalConfig(): Promise<{ config: TerminalConfig; corrupted: boolean }> {
   const reply = await command('config.getTerminalConfig', {}, RPC_BACKSTOP_TIMEOUT_MS)
-  return { config: reply.config, corrupted: reply.corrupted ?? false }
+  return toCorruptedConfig(reply)
 }
 
 /** 保存终端配置（shell/字体/scrollback/cursor/bell 等）。失败时 runtime 返回 error envelope，command 会 reject。 */
 export async function setTerminalConfig(config: TerminalConfig): Promise<{ config: TerminalConfig; corrupted: boolean }> {
   const reply = await command('config.setTerminalConfig', { config }, RPC_BACKSTOP_TIMEOUT_MS)
-  return { config: reply.config, corrupted: reply.corrupted ?? false }
+  return toCorruptedConfig(reply)
 }
 
 /** 订阅终端配置广播（多 panel 同步）。 */
