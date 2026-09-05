@@ -106,17 +106,18 @@ graph TD
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|-------------------------------------------|------|---------|
 | U1 | committed | 1 | e084a9ab7；typecheck exit 0 + vitest 91 passed（含 marker.test.ts 4 tests）；偏差 #2-#4 登记 |
-| U2 | committed | 1 | e71627b62；extensions 三连绿（26/26）+ check-extension-dependencies exit 0（含授权补登 extension-dependencies.json，偏差 #8）+ pi CLI 实测加载成功（marker/sync/event 帧形状吻合设计）；偏差 #9-#14 见 subagent 报告（session_start 双职责方案/Tool not found 双形态/AgentToolResult isError 兼容字段/显式 pi.on 注册/--no-extensions 实测形态/extension-logger 无 info 级） |
-| U3 | committed | 1 | 437988df4；typecheck exit 0 + 26/26 新测试 + 72/72 增量回归；偏差 #5-#7 登记（登记点改 BridgeHandler 入口 + server.ts 装配行并入 U4 + event 恒 null 例外 + 4 旧测试失败清单：bridge-sync 5 / bridge-reconnect 12） |
-| U4 | committed | 2 | 809d11129；全量 4280/4280 绿（17 failed→0 + 2 防回归锁）+ typecheck/lint/doc-symbol-drift 过；server.ts 装配行落地（偏差 #5 收口）+ registerTimeout 死分支删除（「无并存窗口」纪律）+ AGENTS.md 21 包；偏差 #15-#18 见报告 | 
-| U5 | pending | 0 | — |
+| U2 | committed | 2 | e71627b62 + 84c1372bd（R1 sync timeout）；extensions 三连绿 + check 过 + pi CLI 实测加载成功；偏差 #8-#14 |
+| U3 | committed | 1 | 437988df4；typecheck exit 0 + 26/26 新测试 + 72/72 增量回归；偏差 #5-#7 |
+| U4 | committed | 2 | 809d11129 + 16b013cdb 修复批；全量 4280 绿（17 failed→0 + 防回归锁）；偏差 #15-#18 |
+| U5 | committed（部分绿：V1 主形态 fail-by-R2，见 §7 残留①） | 2 | Gate B 两轮：V2/V3/V4/V5②③/V7/V8/V9 + P-4/P-7/P-9/P-10 + R1 自愈 + V1b 补验 pass；V1 主形态 R2 专项登记；证据 /tmp/bridge-gate-b{,2}/；设计 v4/v4.1 回写 |
 
 ## 7 残留风险与变更历史
 
-- 残留风险：①探针 P-9 附带登记：intercept 无回包时 turn 无界挂起（pi 不挂死、回包即恢复），超时文档 D1 不覆盖 intercept 通道——需要兜底时按设计 §4.1 降级路径加通道级 timeout；②**session_start 观察帧 attach 空窗丢失**（Gate B 实证，既有行为非本次回归）：runtime adapter attach 前的 pi 事件帧被 rpc-client 丢弃，插件 onPiEvent hook 收不到 session_start（agent_start 等后续事件正常）——根治方案 = rpc-client 早期帧缓冲回放，登记为后续架构改进项（本次以 R1 sync timeout 自愈工具注册链路，不动 rpc-client）；③**intercept 注入生产端**（上游既有）：handleBridgeIntercept 恒返回空 injectedMessages（bridge-interop.ts:258-260，01-plugin-hook-fix §5 检查点 2 未定案空间）——V6 注入断言按通道级口径验收，端到端注入待上游落地；④定向复审 NF-2（info）：intercept 畸形 {type:'text'} 缺 text 走 stringify 兜底无测试——后续随手补；⑤NF-3（out-of-scope）：bridge-handler.ts bridge:event 分支 console.log 为既有代码；⑥V7 packaged 全量冒烟简化为 staged 构建确认（prepare-builtin-extensions.sh 含包），发布前 prerelease 范围补全。
-- 阶段 5 记录（2026-09-05）：Gate A 绿（13 命令全 exit 0，4 包 9573 用例 + extension-protocol 91 + extensions 全家桶 + validate-runtime-bundle + 插件 E2E 安全场景，零容忍零命中，覆盖矩阵无缺口）。Gate B 首轮：V7/V9 pass、P-4 pi 侧 6ms、P-9/P-10 pass；V1-V5/V6/V8/P-7 因两个缺口回流——R1（本设计遗漏）：启动 sync 带 2s 通道级 timeout 自愈 attach 空窗丢帧（设计 v4 D5 分档修正）；R2（上游既有）：intercept 注入生产端登记不修。R1 修复后复验受影响场景（V1/V2/V3 全链/V4 全链/V5②③/V8/P-4 全链/P-7）。
+- 残留风险：①**R2（专项跟进，V1 主形态阻断）**：pi 0.84.4 下首个 prompt 后 registerTool 的工具对该 session LLM 永固不可见（Gate B 第二轮最小重放确证，断点需 pi 进程内动态调试；影响面 = 程序化极速首 prompt，真实手速 >5s 大概率不中）——修复候选：prompt 准入时序对齐 / bridge synced 通知 / pi 深挖，均超本设计 scope；P-8 结论受其污染需修复后复测；②探针 P-9 附带登记：intercept 无回包时 turn 无界挂起（pi 不挂死、回包即恢复）——需要兜底时按设计 §4.1 降级路径加通道级 timeout；③session_start 观察帧 attach 空窗丢失（既有行为）：插件 onPiEvent 收不到 session_start（后续事件正常）——根治 = rpc-client 早期帧缓冲，后续架构改进项；④intercept 注入生产端（上游既有）：handleBridgeIntercept 恒返回空 injectedMessages（01-plugin-hook-fix §5 检查点 2 未定案）——V6 按通道级口径验收；⑤NF-2（info）：intercept 畸形 {type:'text'} 缺 text 走 stringify 兜底无测试；⑥NF-3（out-of-scope）：bridge-handler.ts bridge:event 分支 console.log 既有；⑦V7 packaged 全量冒烟简化为 staged 确认（prepare-builtin-extensions.sh 含包），发布前 prerelease 补全；⑧Gate B 观测坑登记：runtime WS 60s 心跳踢连接（长脚本需 25s ping 保活）、tool_call_start 工具名字段 = payload.entry.toolName。
+- 阶段 5 记录（2026-09-05）：**Gate A 绿**（13 命令全 exit 0，4 包 9573 用例 + extension-protocol 91 + extensions 全家桶 + validate-runtime-bundle + 插件 E2E，零容忍零命中，覆盖矩阵无缺口）。**Gate B 两轮**：首轮 V7/V9/P-4 pi 侧/P-9/P-10 pass，V1-V6/V8 因 R1（启动 sync 帧丢失，本设计遗漏）+ 注入生产端（上游既有）回流——R1 修复 84c1372bd（sync 通道级 2s timeout，设计 v4 D5 分档）；第二轮回验 R1 自愈实证 pass，V2/V3 全链/V4 全链/V5②③/V8/P-7/P-4 全链 pass；**V1 主形态 fail-by-R2**（新缺口登记专项，V1b 补验 pass 证实 90s 不误杀）；V6 按通道级口径 pass（注入生产端上游登记）。**交付口径：Gate B 部分绿——8.5/9 场景 pass（V1 主形态 R2 阻断 + 注入断言上游缺），未宣称全绿**。证据目录 /tmp/bridge-gate-b（首轮）与 /tmp/bridge-gate-b2（第二轮，插件参数契约修正版）。
 - 阶段 3/4 记录（2026-09-05）：一致性审查 2 reviewer 并行（A=pi 侧与装配 9R/2U/2D，B=runtime 侧 8R/1U/2D）；3 条 unreasonable（B-U1 event 登记累积 / A-U1 intercept 类型退化 / A-U2 syncLoop 兜底缺口）+ 4 条 doc_errors 全部在 16b013cdb 修复闭合（偏差表 #8-#18 同批补齐）；定向复审全 pass + NF-1 文档回写（设计 v3.3）。合理偏差累计 18 项全登记于 §5。
 - 变更历史：
   - v1（2026-09-04）：初版。按设计 §5 U1-U5 展开，波次优化 U2∥U3 并行；偏差 #1 登记（mandatory 前移 U2）。
   - v2（2026-09-05）：U1-U4 执行期状态表更新；偏差 #2-#18 陆续登记。
   - v3（2026-09-05）：阶段 3/4 收口 + Gate A/B 首轮记录。
+  - v4（2026-09-05）：Gate B 第二轮（R1 复验）记录 + R2 专项登记 + 交付口径定稿。
