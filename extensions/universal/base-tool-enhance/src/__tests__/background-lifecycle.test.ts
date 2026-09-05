@@ -68,6 +68,40 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * 真实子进程链（spawn+exec+sleep+exit）满载下延迟不可预估，deadline 放宽到 10s；
+ * timeout 路径 / 真实 poller 定时器路径单独放宽到 8s（任务语义内最慢的等待对象）。
+ */
+const POLL_DEADLINE_MS = 10_000;
+const POLL_DEADLINE_SLOW_MS = 8_000;
+
+/**
+ * 轮询直到期望状态出现或超时：每次迭代先 pollTickForTest()（手动 tick 推进状态机）
+ * 再检查——固定 sleep 后单次 tick 单次断言是满载 flake 源，等状态而非猜时刻。
+ */
+async function pollUntilTicked(check: () => boolean, deadlineMs: number, what: string): Promise<void> {
+	const deadline = Date.now() + deadlineMs;
+	for (;;) {
+		pollTickForTest();
+		if (check()) return;
+		if (Date.now() > deadline) {
+			throw new Error(`timed out after ${deadlineMs}ms waiting for ${what}`);
+		}
+		await sleep(25);
+	}
+}
+
+/** 同 pollUntilTicked 但不手动 tick：语义含「真实定时器/事件自行推进」的用例专用。 */
+async function pollUntil(check: () => boolean, deadlineMs: number, what: string): Promise<void> {
+	const deadline = Date.now() + deadlineMs;
+	while (!check()) {
+		if (Date.now() > deadline) {
+			throw new Error(`timed out after ${deadlineMs}ms waiting for ${what}`);
+		}
+		await sleep(25);
+	}
+}
+
 function spawnBg(command: string, extra: { timeoutSec?: number; maxConcurrent?: number } = {}) {
 	return spawnBackgroundTask({
 		command,
@@ -126,8 +160,8 @@ describe("real spawn lifecycle (poll edge finalization)", () => {
 		expect(readRegistry(REGISTRY_PATH).get(task.taskId)?.state).toBe("running");
 		expect(readRegistry(REGISTRY_PATH).get(task.taskId)?.ownerPiPid).toBe(process.pid);
 
-		await sleep(700); // 等命令退出 + libuv reap
-		pollTickForTest();
+		// 轮询等命令退出 + libuv reap（tick 收尾；满载下延迟不可预估）
+		await pollUntilTicked(() => getTask(task.taskId)?.state === "exited", POLL_DEADLINE_MS, "task finalization");
 
 		const finalized = getTask(task.taskId);
 		expect(finalized?.state).toBe("exited");
@@ -148,8 +182,9 @@ describe("real spawn lifecycle (poll edge finalization)", () => {
 		const spawned = spawnBg("sleep 0.3 && echo auto");
 		if (!spawned.ok) throw new Error(spawned.error);
 		const { task } = spawned;
-		// 不手动 tick，等真实 2s 轮询边沿（命令 0.3s 已退出，首轮 tick 即收尾）
-		await sleep(2800);
+		// 不手动 tick，等真实 2s 轮询边沿（命令 0.3s 已退出，首轮 tick 即收尾）：
+		// 轮询等终态出现（真实定时器 + 满载下轮询边沿延迟不可预估）
+		await pollUntil(() => getTask(task.taskId)?.state === "exited", POLL_DEADLINE_SLOW_MS, "poller auto-finalization");
 		expect(getTask(task.taskId)?.state).toBe("exited");
 		// 无活跃条目后轮询器自停（防空转）
 		expect(getActiveTasks()).toHaveLength(0);
@@ -159,8 +194,7 @@ describe("real spawn lifecycle (poll edge finalization)", () => {
 		const spawned = spawnBg("sleep 0.2; exit 3");
 		if (!spawned.ok) throw new Error(spawned.error);
 		const { task } = spawned;
-		await sleep(600);
-		pollTickForTest();
+		await pollUntilTicked(() => getTask(task.taskId)?.exitCode === 3, POLL_DEADLINE_MS, "exitCode to surface");
 		expect(getTask(task.taskId)?.exitCode).toBe(3);
 		const registryEntry = readRegistry(REGISTRY_PATH).get(task.taskId);
 		expect(registryEntry?.exitCode).toBe(3);
@@ -171,8 +205,7 @@ describe("real spawn lifecycle (poll edge finalization)", () => {
 		setOnTaskExit((task) => seen.push(`${task.taskId}:${task.state}:${task.reason}`));
 		const spawned = spawnBg("true");
 		if (!spawned.ok) throw new Error(spawned.error);
-		await sleep(500);
-		pollTickForTest();
+		await pollUntilTicked(() => seen.length === 1, POLL_DEADLINE_MS, "onTaskExit callback to fire");
 		expect(seen).toHaveLength(1);
 		expect(seen[0]).toBe(`${spawned.task.taskId}:exited:natural`);
 	});
@@ -264,8 +297,7 @@ describe("bash_output tool", () => {
 		const spawned = spawnBg("sleep 0.2 && echo gone");
 		if (!spawned.ok) throw new Error(spawned.error);
 		const { task } = spawned;
-		await sleep(500);
-		pollTickForTest();
+		await pollUntilTicked(() => getTask(task.taskId)?.state === "exited", POLL_DEADLINE_MS, "task finalization");
 		unlinkSync(task.outputFile);
 		const detail = JSON.parse(await outputTool({ task_id: task.taskId })) as {
 			output: string;
@@ -280,8 +312,8 @@ describe("bash_output tool", () => {
 		const spawned = spawnBg("for i in $(seq 1 2100); do echo line$i; done");
 		if (!spawned.ok) throw new Error(spawned.error);
 		const { task } = spawned;
-		await sleep(900);
-		pollTickForTest();
+		// 轮询等 2100 行输出跑完退出收尾（满载下 shell 循环耗时不可预估）
+		await pollUntilTicked(() => getTask(task.taskId)?.state === "exited", POLL_DEADLINE_MS, "output loop to finish");
 		const detail = JSON.parse(await outputTool({ task_id: task.taskId })) as {
 			output: string;
 			truncated: boolean;
@@ -315,8 +347,8 @@ describe("bash_kill tool (killing intent, single-point finalization)", () => {
 		if (!spawned.ok) throw new Error(spawned.error);
 		const { task } = spawned;
 		await killTool(task.taskId);
-		await sleep(500); // SIGKILL 生效
-		pollTickForTest();
+		// 轮询到 kill 边沿收尾（SIGKILL 生效 + tick 终态化）
+		await pollUntilTicked(() => getTask(task.taskId)?.reason === "killed", POLL_DEADLINE_MS, "killed finalization");
 		const finalized = getTask(task.taskId);
 		expect(finalized?.state).toBe("exited");
 		expect(finalized?.reason).toBe("killed");
@@ -338,8 +370,7 @@ describe("bash_kill tool (killing intent, single-point finalization)", () => {
 		const spawned = spawnBg("sleep 0.2");
 		if (!spawned.ok) throw new Error(spawned.error);
 		const { task } = spawned;
-		await sleep(500);
-		pollTickForTest();
+		await pollUntilTicked(() => getTask(task.taskId)?.state === "exited", POLL_DEADLINE_MS, "task finalization");
 		const result = JSON.parse(await killTool(task.taskId)) as { killed: boolean; reason: string };
 		expect(result.killed).toBe(false);
 		expect(result.reason).toBe("already exited (code 0)");
@@ -387,7 +418,8 @@ describe("bash_kill tool (killing intent, single-point finalization)", () => {
 		const spawned = spawnBg("sleep 0.2");
 		if (!spawned.ok) throw new Error(spawned.error);
 		const { task } = spawned;
-		await sleep(500); // 进程已死但不 tick——单例表仍 running
+		// 轮询进程死透（不 tick——单例表仍 running 是本用例前提）
+		await pollUntil(() => !isPidAlive(task.pid), 5000, "process to die without poll edge");
 		expect(getTask(task.taskId)?.state).toBe("running");
 
 		const result = JSON.parse(await killTool(task.taskId)) as { killed: boolean; reason: string };
@@ -476,8 +508,12 @@ describe("explicit background timeout (D6)", () => {
 		}
 
 		// SIGKILL 已真实发出：轮询边沿收尾 → exited(reason:"timeout")，终态由边沿写
-		await sleep(500);
-		pollTickForTest();
+		//（timeout 路径满载下 SIGKILL 生效延迟不可预估，deadline 放宽到 8s）
+		await pollUntilTicked(
+			() => getTask(taskId)?.state === "exited" && getTask(taskId)?.reason === "timeout",
+			POLL_DEADLINE_SLOW_MS,
+			"timeout finalization",
+		);
 		const finalized = getTask(taskId);
 		expect(finalized?.state).toBe("exited");
 		expect(finalized?.reason).toBe("timeout");
@@ -550,13 +586,18 @@ describe("explicit background timeout (D6)", () => {
 		if (!spawned.ok) throw new Error(spawned.error);
 		const { task } = spawned;
 
-		await sleep(600); // 命令已退出（未到 1s deadline）
-		pollTickForTest();
+		// 轮询命令退出收尾（未到 1s deadline）
+		await pollUntilTicked(() => getTask(task.taskId)?.state === "exited", POLL_DEADLINE_SLOW_MS, "natural finalization");
 		expect(getTask(task.taskId)?.state).toBe("exited");
 		expect(getTask(task.taskId)?.reason).toBe("natural");
 
-		// 越过 deadline 的时间窗内不得再补杀（终态化必须已清 timer）
-		await sleep(900);
+		// 越过 deadline 的时间窗内不得再补杀（终态化必须已清 timer）：轮询真实时钟
+		// 越过 deadline+余量后断言——这里等待的是时钟流逝本身，非子进程事件
+		await pollUntil(
+			() => Date.now() >= task.startedAt + 1_000 + 500,
+			POLL_DEADLINE_SLOW_MS,
+			"real clock to pass the deadline window",
+		);
 		expect(killTreeCalls.length).toBe(before);
 		expect(getTask(task.taskId)?.state).toBe("exited");
 	});
@@ -571,7 +612,8 @@ describe("process-exit reap (D12)", () => {
 		expect(pids.every((pid) => isPidAlive(pid))).toBe(true);
 
 		reapBackgroundTasksNow();
-		await sleep(300); // SIGKILL 发出到进程表移除是异步的
+		// SIGKILL 发出到进程表移除是异步的：轮询等 pid 判死（满载下延迟不可预估）
+		await pollUntil(() => pids.every((pid) => !isPidAlive(pid)), 5000, "reaped pids to die");
 
 		for (const pid of pids) {
 			expect(isPidAlive(pid)).toBe(false);
@@ -596,6 +638,8 @@ describe("D15: abort signal does not propagate to background tasks", () => {
 		controller.abort();
 		expect(controller.signal.aborted).toBe(true);
 
+		// 非断言性观察窗口（留事件传播时间）：断言的是「任务不受 abort 影响」的
+		// 负向不变量，期望状态恒真，轮询语义不适用
 		await sleep(300);
 		// 任务不受中断影响：进程活、状态 running
 		expect(isPidAlive(task.pid)).toBe(true);

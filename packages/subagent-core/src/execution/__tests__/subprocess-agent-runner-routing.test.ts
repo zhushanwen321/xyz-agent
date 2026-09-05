@@ -141,7 +141,7 @@ afterEach(() => {
   if (prevDataDirEnv === undefined) delete process.env["XYZ_AGENT_DATA_DIR"];
   else process.env["XYZ_AGENT_DATA_DIR"] = prevDataDirEnv;
   clearEngines();
-  fs.rmSync(tmpRoot, { recursive: true, force: true });
+  fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 describe("SAR 路由集成（P4 验收 1/2/3）", () => {

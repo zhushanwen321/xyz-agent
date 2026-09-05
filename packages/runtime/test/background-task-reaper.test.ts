@@ -87,8 +87,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  for (const dir of tmpAgentDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
-  for (const dir of realAgentDirSessionDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  for (const dir of tmpAgentDirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  for (const dir of realAgentDirSessionDirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 // ── fixture helper ─────────────────────────────────────────────

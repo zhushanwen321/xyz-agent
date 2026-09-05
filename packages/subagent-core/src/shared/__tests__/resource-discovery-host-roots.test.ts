@@ -74,7 +74,7 @@ describe("C2 W2①: async 链 realpath 去重", () => {
     ws = tmpWorkspace();
   });
   afterEach(() => {
-    fs.rmSync(ws, { recursive: true, force: true });
+    fs.rmSync(ws, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("多链同文件（a.md 本体 + b.md symlink → a.md）清单只留 1 条", async () => {
@@ -171,7 +171,7 @@ describe("C2 W2④: hostRoots 同标签多根语义", () => {
     agentDir = path.join(ws, ".fake-agent");
   });
   afterEach(() => {
-    fs.rmSync(ws, { recursive: true, force: true });
+    fs.rmSync(ws, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("同标签两条 user-pi 根都被扫描（非靠后者整体覆盖）", async () => {
@@ -300,7 +300,7 @@ describe("C2 W2②: project-host 槽位序位", () => {
     hostRoot = path.join(ws, ".zcode", "agents");
   });
   afterEach(() => {
-    fs.rmSync(ws, { recursive: true, force: true });
+    fs.rmSync(ws, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("project-host 同名被 project-agents 遮蔽（project-agents 是项目级最高逃生门）", async () => {
@@ -364,7 +364,7 @@ describe("C2 红线 3: 单层扫描维持", () => {
     agentDir = path.join(ws, ".fake-agent");
   });
   afterEach(() => {
-    fs.rmSync(ws, { recursive: true, force: true });
+    fs.rmSync(ws, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("子目录不递归（nested/deep.md 不入清单）", async () => {
@@ -410,7 +410,7 @@ describe("C2 回归红线: pi 单条目形态快照", () => {
     agentDir = path.join(ws, ".fake-agent");
   });
   afterEach(() => {
-    fs.rmSync(ws, { recursive: true, force: true });
+    fs.rmSync(ws, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("与 pi 真实 agentDir 同构 fixture——source 标签与胜出路径逐项稳定", async () => {

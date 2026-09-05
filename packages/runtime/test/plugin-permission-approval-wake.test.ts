@@ -127,7 +127,7 @@ describe('权限审批唤醒链路（approve / revoke / 挂起期清理）', () 
     // 停掉 watchExternalIfActive 可能启动的 fs.watch，再清临时目录
     activator?.stopAllWatchers()
     vi.useRealTimers()
-    await rm(tmpDir, { recursive: true, force: true })
+    await rm(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /**

@@ -129,7 +129,7 @@ describe("T4① notify gate closedReason whitelist", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(pi.sendMessage).not.toHaveBeenCalled();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("kickOffChatRound.then still notifies for real failure closures (gc)", async () => {
@@ -150,7 +150,7 @@ describe("T4① notify gate closedReason whitelist", () => {
     )["kickOffChatRound"];
     kickOffChatRound.call(service, record, { task: "t", slug: "gate" }, {}, {}, undefined, 1000, undefined);
     await vi.waitFor(() => expect(pi.sendMessage).toHaveBeenCalled());
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 });
 
@@ -163,7 +163,7 @@ describe("T4② idleTimeoutMs entry fail-fast", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("execute rejects idleTimeoutMs above the setTimeout limit with the valid range in the message", async () => {
@@ -202,7 +202,7 @@ describe("T4④ shutdown flush blocked → pending persisted for replay", () => 
 
   afterEach(() => {
     _resetNotifyLedgerForTest();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("persists undelivered pending notifications as ledger entries on dispose when main agent is busy", () => {

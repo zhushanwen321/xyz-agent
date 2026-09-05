@@ -20,7 +20,7 @@ describe("finalized-marker", () => {
     sessionFile = path.join(tmpDir, "2026-01-01_uuid.jsonl");
   });
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   describe("write → read 往返", () => {

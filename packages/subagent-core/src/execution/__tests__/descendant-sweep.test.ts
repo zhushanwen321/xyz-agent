@@ -89,7 +89,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   clearPendingCursors();
-  fs.rmSync(sessionDir, { recursive: true, force: true });
+  fs.rmSync(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 /** 标准三层树：root（层主）→ child-sess → grand-sess（叶）。 */

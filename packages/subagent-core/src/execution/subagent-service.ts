@@ -16,6 +16,8 @@ import { MAX_TIMER_DELAY_MS } from "../shared/timer-delay.ts";
 import { mapToWorkflowAgentResult } from "./agent-result-mapper.ts";
 import { removeAliveMarker } from "./alive-store.ts";
 import { bestEffort } from "./best-effort.ts";
+import { CollectCoordinator } from "./collect-coordinator.ts";
+import { DEFAULT_COLLECT_SYNC } from "./config.ts";
 // [V2 决策 3] lifecycle-manager idle timer：chatMode 统一投递新 turn disarm（防误杀活进程）。
 // [T4②] DEFAULT_IDLE_TIMEOUT_MS：assertIdleTimeoutMsSafe 错误文案的缺省时长基准。
 // （[M3] hasIdleTimer / hasLiveProcessHandle 的 piAdapter.hasRunningBackground 过滤随通知簇
@@ -48,6 +50,7 @@ import type { ModelConfigService } from "./model-config-service.ts";
 import type { AgentConfig, ModelInfo, ResolvedModel } from "./model-resolver.ts";
 import { type NotifyHost, type PiLike, createNotifyHost } from "./notify-host.ts";
 // [T4④ / PS-5] flush 被门拦时的未投递 pending 落盘账本（persistUndeliveredNotificationsForReplay 消费）
+import type { BatchBudgetParams, BgNotifyRecord } from "./notifier.ts";
 import { getBoundNotifyLedger, NOTIFY_LEDGER_CUSTOM_TYPE } from "./notify-ledger.ts";
 import { getSubagentRecordsDir, getSubagentSessionDir } from "./path-encoding.ts";
 import { createRoundSettler } from "./round-settlement.ts";
@@ -238,6 +241,11 @@ const ENV_SELF_RECORD_ID = "PI_SUBAGENT_SELF_RECORD_ID";
 const ENV_DEPTH = "PI_SUBAGENT_DEPTH";
 const ENV_ROOT_CWD = "PI_SUBAGENT_ROOT_CWD";
 
+/** [v2 D4] E1 等待分支 settled 有界重扫上限。无上限重扫 = 泄漏（设计 §3.3 D4 被否
+ *  谱系）；8 次覆盖重启后主 agent 对 resumable 成员的典型续跑轮次，达限仍有
+ *  running → disposed，交下次 session_start 收敛。 */
+const SETTLED_RESCAN_LIMIT = 8;
+
 /** resolveIdentity 的产物——一次确定、写入 record 后不再变。 */
 interface ResolvedIdentity {
   agent: string;
@@ -310,12 +318,30 @@ export class SubagentService {
   /** [D4-①] 通知簇 host 面（notifyComplete/notifyClosed/pending 注册注销 + notifier
    *  实例封装，原私有通知簇四方法与模块函数的搬移落点——notify-host.ts）。
    *  deps 惰性求值（pi/session 级状态运行时可变），行为与原 constructor 内
-   *  createNotifier(this.piAdapter()) 逐字节等价。session_start revive，shutdown dispose。 */
+   *  createNotifier(this.piAdapter()) 逐字节等价。session_start revive，shutdown dispose。
+   *  [sync-collect 合并] toNotifyRecord/notify/notifyBatch 随批路由需要由 host 导出
+   *  （collectCoordinator 闭包与 E9/E1 直发路径消费，见 notify-host.ts 接口注释）。 */
   private readonly notifyHost: NotifyHost = createNotifyHost({
     getPi: () => this.pi,
     listRunning: () => this.store.listRunning(),
     getIsIdle: () => this.isIdleFn,
   });
+
+  /** collectCoordinator（subagent-sync-collect U2）：sync 批缓冲 + 闭合检测 + flush 分流。 */
+  private readonly collectCoordinator: CollectCoordinator;
+  /** [E9] dispose 时已转 async 写账的成员 id（revive 后 flushBatch 防御过滤用）。
+   *  背景：dispose 后同进程 revive（/resume /fork /new）时协调器内部缓冲仍持有已转换
+   *  成员快照（协调器无 drain API，U5 领地不含 collect-coordinator.ts）——若后续新
+   *  sync 成员触发闭合，陈旧快照会随批重投（新成员集新 hash，账本跨键不拦）→ 双重
+   *  通知。flushBatch 闭包按本集过滤，陈旧成员零重投。id 唯一 per spawn，无误伤面。 */
+  private readonly e9ConvertedIds = new Set<string>();
+  /** [v2 D4] E1 等待分支的 settled 有界重扫状态（null = 未注册）。disposed 后保持
+   *  非 null——同 session 内不再重复注册（补发完成/达限后 settled 边沿已无事可做，
+   *  单注册即单重扫）；initSession（revive）置 null 允许新 session 重新注册。
+   *  pi.on 无 off（见 armSettledRescan）：旧 handler 闭包捕获旧 state，未 disposed 时
+   *  遇 settled 边沿仍会执行，扫描 this.mainSessionFile 当前值（handler 不绑定注册时
+   *  的文件域）；dispose 的惰化处置见 dispose()。 */
+  private settledRescanState: { disposed: boolean; scans: number } | null = null;
   /** [MF#4][MF#2] fork 深度按 async 调用链传递（AsyncLocalStorage），替代共享可变计数器。
    *  主 session=0；fork 进入子 session 期间推进为子深度，供嵌套 fork 经 ALS 读到自身深度作为
    *  parentForkDepth。并发 background fork 各自独立调用链，不再互相压低深度值。
@@ -349,7 +375,7 @@ export class SubagentService {
   /** [D4-②] 轮次结算回调（原 buildSessionRunnerContext 内的 onRoundSettled 业务闭包
    *  搬移至 round-settlement.ts；deps 回调闭包惰性求值，session-runner agent_settled 时消费）。 */
   private readonly settleRound = createRoundSettler({
-    notifyComplete: (record) => this.notifyHost.notifyComplete(record),
+    notifyComplete: (record) => this.collectCoordinator.route(record),
     reportRecordTransition: (record) => this.store.reportRecordTransition(record),
     closeAfterRoundSettled: (record) => this.closeAfterRoundSettled(record),
   });
@@ -412,6 +438,68 @@ export class SubagentService {
     this.sessionsDir = sessionsDir;
     this.manifestStore = new ManifestStore(recordsDir);
     this.store = new RecordStore(sessionsDir, this.manifestStore, this.pi ?? undefined);
+    // collectCoordinator（subagent-sync-collect U2）：notifyComplete 唯一路由入口——
+    // async 直通（字节不变）/ sync 批缓冲 + 闭合检测。[U3 接线点] 已接线：flush =
+    // manifest 屏障（await 全部落盘）→ notifier.notifyBatch 单条批投递（幂等键
+    // sync-batch:<hash> + 闭合触发排程合批 flush：同宏任务去抖窗口收纳背靠背
+    // route——U8 拆批盲窗修复 → ledger 写账 → attemptDeliver 边沿投递）+
+    // batchFinalized 落标（出口①，见下方闭包注释）。屏障先于写账 = 「通知可达 ⇒
+    // 索引就位」的构造性保证（时序竞态修复，见 flushBatch 闭包注释）。
+    // [U8] 排程与 E9/E1 交互：dispose 经 convertPendingSyncBufferToAsync 先取消挂起
+    // 排程（取消而非同步 flush——双通道并发写账防护，见该函数注释）；E1 只在
+    // session_start 编排处运行（此前 dispose 已取消排程，补发直走 notifyBatch 不经
+    // 协调器），异常时序相撞由账本 sync-batch:<hash> 幂等拒绝兜底。
+    // [D4-① 合并] notifier 实例封装在 notifyHost 内（createNotifyHost 装配），本类
+    // 经 this.notifyHost.notify / notifyBatch / toNotifyRecord 出口消费。
+    this.collectCoordinator = new CollectCoordinator({
+      notifyAsync: (record) => {
+        const notify = this.notifyHost.toNotifyRecord(record);
+        if (notify) this.notifyHost.notify(notify);
+      },
+      toNotifyRecord: (record) => this.notifyHost.toNotifyRecord(record),
+      // 闭合判定数据源：listAllActive（原始 ExecutionRecord 内存态，携带 collectMode/
+      // batchFinalized 原始值）。[U3 修正] 原接 collectRecords——其经 recordToSubagent
+      // 投影丢 collectMode（U2 披露的投影缺口）→ 真链上闭合判定恒立即闭合、跨轮续累
+      // 失效（真链 trace 实证）。非终态 sync 成员必在内存（archive 只删终态；磁盘重建
+      // 残留属孤儿恢复域），内存视图语义完整。
+      listRecords: (limit) => this.store.listAllActive().slice(0, limit),
+      flushBatch: async (members) => {
+        // [E9 防御过滤] 排除 dispose 时已转 async 写账的成员（同进程 revive 后协调器
+        // 缓冲残留的陈旧快照，见 e9ConvertedIds 字段注释）；全被排除 → 空批零副作用
+        // 返回（成员已单独写账+落标，无需再动）。
+        const live = members.filter((m) => !this.e9ConvertedIds.has(m.id));
+        if (live.length === 0) return;
+        // 成员全量快照：getFullRecord 冷路径重建（成员在 notifyComplete 前已 archive，
+        // 内存无；闭合判定 hasRunningSync 的 listRecords 扫描已建 idToFile 索引，此处
+        // 命中）。快照在屏障前一次取定，屏障写与落标共用同一份（manifest 与落标 entry
+        // 字段同源）。getFullRecord 不可达（子 session 文件缺失/已 GC 的窗口）→ 跳过：
+        // 该窗口下 E1 本也收不到该成员（同样缺文件通路）；若误收，账本
+        // sync-batch:<hash> 幂等拒绝重发，行为收敛（设计 §3.1.3 幂等窗口段落明示）。
+        const fulls: SubagentRecord[] = [];
+        for (const m of live) {
+          const full = this.store.getFullRecord(m.id);
+          if (full) fulls.push(full);
+        }
+        // [时序屏障] 成员 manifest 写先于写账并 await 全部落盘——「通知可达 ⇒ 索引
+        // 就位」的构造性保证（by construction）：批通知的指针行消费依赖
+        // records/<sa-id>.json 反查索引，fire-and-forget 下「通知送达时已落盘」只是
+        // 大概率成立（探针实测 mtime 相对 notify entry ±2/3ms 方向不定）。写失败仍
+        // best-effort（debug 不阻断写账投递，语义与 doFinalizeRecord Step 4 一致）。
+        await this.writeSyncBatchManifestBarrier(fulls);
+        // 单条批投递：accepted=false（同成员集批已在账——E1 重建重发/重复 flush）或
+        // 空批/dispose → 零副作用返回，不落标（设计 §3.1.3 出口①绑「写账成功」）。
+        const accepted = this.notifyHost.notifyBatch(live, this.getCollectSyncBudget());
+        if (!accepted) return;
+        // batchFinalized 纯落标（设计 §3.1.3 两出口之一：批闭合 flush 写账成功后）。
+        // collectMode/batchFinalized 显式覆写在 appendBatchFinalizedEntry 内（防非
+        // entry 源重建丢标记）；末条 entry 带标记 → E1 重建扫描（collectMode=sync 且
+        // 无标记才收）据此排除，防双重通知。源序「写账先于落标」不变（v1 幂等窗口
+        // 语义）；manifest 已在屏障提前写，幂等窗口内崩溃时索引更早已就位。
+        for (const full of fulls) {
+          this.appendBatchFinalizedEntry(full);
+        }
+      },
+    });
     // #11：注册进程级 observability 单例——ui-request-queue.handleUiRequest 经
     // globalThis 桥接（notifyMissingHandlerGlobal）调到同一实例，共享
     // warnedMissingHandlerSessions 去重集合。未注册时 queue 走 fallback warn（不去重）。
@@ -455,6 +543,13 @@ export class SubagentService {
     this.initExecContextBaseline(envRoot, init.sessionId);
     // revive（dispose 的逆操作：/resume /fork /new 后复活）
     this._disposed = false;
+    // [v2 D4] settled 重扫状态随 revive 重置：新 session 的 E1 若再判「仍有 running」
+    // 可重新注册。旧 handler 闭包捕获旧 state：正常时序（session_shutdown →
+    // session_start）下已随 dispose() 惰化；未经 dispose 的时序残留仍会在 settled
+    // 边沿执行——其扫描 this.mainSessionFile 当前值（非注册时的旧文件），行为等价于
+    // 新 session 多注册一次扫描，由账本 sync-batch:<hash> 幂等 + batchFinalized 候选
+    // 过滤收敛，无跨 session 污染面。
+    this.settledRescanState = null;
     this.store.revive();
     this.notifyHost.revive();
     // 孤儿终态恢复（放 initSession 末尾：setPi 已注入（appendEntry 可用）、
@@ -527,11 +622,13 @@ export class SubagentService {
   /** 孤儿终态恢复委托（RecordStore.recoverOrphanRecords 的唯一调用入口，维持 store
    *  private 封装——与 recoverManifestTmpFiles 同模式；[D4] public 面收窄：唯一调用方
    *  是 initSession，转 private）。判定语义见 store 侧注释。
+   *  mainSessionFile 随调用透传（v2 D3 覆写 merge 数据源：主文件末条 entry 的批域
+   *  标记与轮终 result/model；initSession 先赋值后恢复，时序就绪）。
    *  随后跑 entry-born 孤儿恢复（无子文件锚的 register-only record，spawn 窗口期死亡，
    *  E2E 实测缺口）——主 session 文件经 getMainSessionFile 注入（构造期可空）。 */
   private recoverOrphanRecords(): void {
     try {
-      this.store.recoverOrphanRecords(this.sessionRootId ?? undefined);
+      this.store.recoverOrphanRecords(this.sessionRootId ?? undefined, this.mainSessionFile);
     } catch (err) {
       logger.warn("[subagents] orphan recovery failed", {
         reason: err instanceof Error ? err.message : String(err),
@@ -655,10 +752,273 @@ export class SubagentService {
    * listener 仍然存活。若 pending-notifications 先于本扩展执行 session_shutdown（后注册
    * 先执行的语义下会如此），listener 已注销，unregister 事件被静默丢弃。这是可接受的
    * 退化——进程退出后两侧状态本就不保证一致，下次 session_start 的 crash recovery 会修正。 */
+  /** [U4 deviation #8 接线] collectSync 预算热读（flush 时读值，与 getCollectSyncDefault
+   *  同款访问链 modelService.getGlobalConfig().collectSync）。节缺失/读失败 → undefined
+   *  → notifyBatch 落 buildBatchLlmContent 设计默认值（4000/24000，E5 不炸启动）。
+   *  sanitizeCollectSync 保证节存在时两字段必有合法正整数。 */
+  private getCollectSyncBudget(): BatchBudgetParams | undefined {
+    const cs = this.collectSyncSection();
+    return cs !== undefined ? { perItemChars: cs.perItemChars, totalChars: cs.totalChars } : undefined;
+  }
+
+  /** [E9 专用] batchFinalized 落标 + manifest fire-and-forget 写（设计 §3.1.5 E9）。
+   *  批通知路径（flush/E1）已改走「manifest 屏障 → 写账 → 纯落标」序列（「通知可达
+   *  ⇒ 索引就位」的构造性保证，见 flushBatch 闭包 / runSyncCollectRecoveryScan），
+   *  不再经本 helper；仅 E9 转换的成员保持原形态——其走 async 单条通知（全文注入、
+   *  无指针行消费），manifest 无时序要求，落标后 fire-and-forget 补写（list 后手动
+   *  反查的顺带索引）。
+   *  路径 = getFullRecord 冷路径重建 → appendBatchFinalizedEntry 纯落标 → fire
+   *  manifest。getFullRecord 不可达（子 session 文件缺失/已 GC）→ 跳过该成员
+   *  （详见 flushBatch 闭包注释）。 */
+  private markMembersBatchFinalized(memberIds: readonly string[]): void {
+    for (const id of memberIds) {
+      const full = this.store.getFullRecord(id);
+      if (!full) continue;
+      this.appendBatchFinalizedEntry(full);
+      // 反查索引缺失只影响指针行反查（session-reader 错误文案已指引绝对路径兜底），
+      // 不构成落标失败（与屏障路径的 best-effort 语义同源，仅无时序保证）。
+      void this.writeBatchMemberManifest(full).catch((err: unknown) => {
+        logger.debug(
+          `[subagents] batch-finalized manifest write failed (record=${full.id})`,
+          { reason: err instanceof Error ? err.message : String(err) },
+        );
+      });
+    }
+  }
+
+  /** batchFinalized 落标唯一出口（appendEntry 公共末步，纯落标）：显式覆写
+   *  collectMode/batchFinalized → reportSubagentRecord。覆写动机：recordToSubagent
+   *  投影已含两字段（U5 修复），但 getFullRecord 冷路径含 sidecar/manifest 重建分支
+   *  （非 entry 源），显式赋值防非 entry 源重建时丢标记。
+   *
+   *  [v2 D1 断链 1] 落标即「离开批 = 通知已/即将送达 = 指针行即将被消费」——成功
+   *  成员走 SP-5 改道 doFinalizeRoundToIdle（不写 manifest），批路径不补写则
+   *  records/<sa-id>.json 永不产生、session-reader 反查 0 命中。manifest 写点已从
+   *  本出口的 fire-and-forget 前移至各调用方：批通知路径（flush/E1）在写账前屏障
+   *  await 全部落盘（「通知可达 ⇒ 索引就位」的构造性保证）；E9 保持落标后
+   *  fire-and-forget（async 单条通知无指针行消费，无时序要求）。
+   *  rec 两来源（flush 的 getFullRecord 内存全量 / E1 的 rebuildEntryRecord 重建
+   *  快照）必需字段恒齐备（id/agentName←agent/rootSessionId/createdAt←startedAt），
+   *  task/slug/parentRecordId 等可选 undefined 自然缺省。 */
+  private appendBatchFinalizedEntry(rec: SubagentRecord): void {
+    this.store.reportSubagentRecord({ ...rec, collectMode: "sync", batchFinalized: true });
+  }
+
+  /** 批成员 manifest（sa- id → sessionFile 反查索引）写的唯一投影点（D2 字段投影 +
+   *  status 如实投影：成功成员此刻 record 实态 running+resumable → "running"，后续
+   *  message upgrade 走完整 finalize 时 Step 4 原子覆盖为 "closed"）。
+   *  返回原始 promise 不吞错——失败语义由调用方定：批通知路径经
+   *  writeSyncBatchManifestBarrier 的 allSettled（debug 不阻断写账）；E9 经
+   *  fire-and-forget catch（debug 不阻断落标）。 */
+  private writeBatchMemberManifest(rec: SubagentRecord): Promise<void> {
+    return this.manifestStore.writeManifest({
+      id: rec.id,
+      rootSessionId: rec.rootSessionId ?? "",
+      parentRecordId: rec.parentRecordId,
+      agentName: rec.agent,
+      status: rec.status,
+      createdAt: rec.startedAt,
+      completedAt: rec.endedAt,
+      sessionFile: rec.sessionFile,
+      task: rec.task,
+      slug: rec.slug,
+      model: rec.model,
+    });
+  }
+
+  /** [时序屏障] 批通知路径（flush/E1）专用：成员 manifest 并行写 + await 全部完成
+   *  （allSettled）后才允许写账投递——「通知可达 ⇒ 索引就位」的构造性保证。写失败
+   *  仅 debug 不阻断（best-effort 语义与 doFinalizeRecord Step 4 一致：反查索引缺失
+   *  只影响指针行反查，session-reader 错误文案已指引绝对路径兜底，不构成写账失败）。 */
+  private async writeSyncBatchManifestBarrier(recs: readonly SubagentRecord[]): Promise<void> {
+    const results = await Promise.allSettled(recs.map((rec) => this.writeBatchMemberManifest(rec)));
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i]!;
+      if (result.status === "rejected") {
+        logger.debug(
+          `[subagents] batch-finalized manifest write failed (record=${recs[i]!.id})`,
+          { reason: result.reason instanceof Error ? result.reason.message : String(result.reason) },
+        );
+      }
+    }
+  }
+
+  /** [E9] dispose 时批未闭合：缓冲中已终态未通知成员逐条转 async 语义写账（放弃攒批）
+   *  + 落 batchFinalized 标记（E1 重建扫描据此排除，防双重通知），交由既有 shutdown
+   *  flush / resume 重放兑底；仍在跑的成员走现有退出路径（disposeAllRecords 关闭，
+   *  与 async 一致）。写账用 notifier.notify 现有通路（ledger.record + attemptDeliver）。
+   *  源序：写账先于落标——写账后崩溃 → E1 重建收该成员，但 async notifyId 与批 hash
+   *  跨键不拦的重发属设计披露的 E9 残余窗（at-least-once 良性，PS-17 同族，v1 接受）。 */
+  private convertPendingSyncBufferToAsync(): void {
+    // [U8 拆批修复·E9 交互] 挂起的合批排程先取消——dispose 已选「放弃攒批转 async」
+    // 语义（最简语义 = 取消而非同步 flush）：放任排程触发会让 flushBatch（批 hash
+    // 通道）与下方逐条 notify（async id 通道）双通道并发写账 → 同成员双投递，且触发
+    // 点可能落在 notifier/store dispose 之后。取消后缓冲原样保留，本函数既有单通路
+    // 完整接管（协调器侧幂等：无排程时 no-op）。
+    this.collectCoordinator.cancelScheduledFlush();
+    const members = this.collectCoordinator.pendingMembers();
+    if (members.length === 0) return;
+    for (const member of members) {
+      this.e9ConvertedIds.add(member.id);
+      this.notifyHost.notify(member);
+    }
+    this.markMembersBatchFinalized(members.map((m) => m.id));
+    logger.warn(
+      `[subagents] E9 dispose: converted ${members.length} buffered sync member(s) to async notify`,
+      { ids: members.map((m) => m.id) },
+    );
+  }
+
+  /**
+   * [E1] sync 批崩溃恢复钩子（设计 §3.1.5 E1，index.ts session_start 恢复编排处调用，
+   * 须晚于 initSession——孤儿终态恢复先行收敛 running 成员，「全员终态」判定才可达）：
+   *
+   *  - 扫描主 session 文件每 id 末条 subagent-record entry（store.scanLastRecordEntries，
+   *    collectLastRecordEntries 同构 + 投影扩展含 collectMode/batchFinalized + 终态五
+   *    字段；禁走 collectRecords light 路径——主 session 落标 entry 对它不可见）；
+   *  - 只收 collectMode=sync 且无 batchFinalized 的成员（排除已通过批 flush 或 E9
+   *    转换离场的，防双重通知），按 rootSessionId 过滤当前根；
+   *  - 全员终态且账本无同成员集批记录 → manifest 屏障（await 落盘，「通知可达 ⇒
+   *    索引就位」构造性保证，与 flushBatch 同款）→ notifyBatch 补发（内容 = 末条
+   *    entry 终态快照；账本 record 同 hash 幂等拒绝 = 已投递/已在账，两种结局都算
+   *    「已处理」）；
+   *  - 仍有 running → 本次不动，注册 settled 有界重扫（D4，见 armSettledRescan）——
+   *    成员延迟终态（主 agent 冷路径 resume → 正常流落 entry）由 settled 边沿驱动
+   *    重扫收敛，不再依赖「下次 session_start」作唯一再驱动（v2 §2.4 断链 4）；
+   *    running 口径与协调器同构
+   *    （resumable 豁免，v2 D3——覆写不可达的防御分支残余不被误判「仍在跑」）；
+   *  - 补发尝试后统一补 batchFinalized 标记（账本拒绝也算已投递；直接用末条重建快照
+   *    落标不经 getFullRecord——子文件缺失/已 GC 时标记仍可落盘，窗口自愈不依赖二次
+   *    重启；补标自身崩溃重入幂等收敛，末条 entry last-writer-wins）。
+   *
+   *  async 化（时序屏障修复）：返回 Promise 但**内部自捕获不外抛**——宿主 index.ts
+   *  session_start 以同步 try/catch 调用（其 catch 兑现不到 promise 内的异常），
+   *  自捕获维持同款 warn 容错语义，浮动调用零适配、不产生 unhandled rejection。
+   *
+   *  [U8 拆批修复] 与协调器合批排程无交集：E1 只在 session_start 编排处运行（此前
+   *  dispose 已取消挂起排程），补发直走 notifier.notifyBatch 不经协调器；异常时序
+   *  相撞由账本 sync-batch:<hash> 幂等拒绝兜底。
+   */
+  async recoverSyncCollectBatch(): Promise<void> {
+    try {
+      const outcome = await this.runSyncCollectRecoveryScan();
+      // [v2 D4] 断链 4：等待分支不再死等——挂 settled 有界重扫（幂等单注册）。
+      if (outcome === "waiting") {
+        this.armSettledRescan();
+      }
+    } catch (err) {
+      // 与 index.ts 调用点原 try/catch 的 warn 容错同语义（该处 catch 对 async 化后
+      // 的 promise 异常兑现不到，容错收敛到本方法内部）。
+      logger.warn("[subagents] sync collect batch recovery failed", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /** [E1/D4] 单次「扫描→判定→可达则补发+落标」，E1 首扫与 settled 重扫共用同一实现
+   *  （防两处复制粘贴分岔）。三态返回：idle（无 sync 候选——已全部落标/E9 转换/异根，
+   *  无事可等）/ waiting（仍有 running 成员，本次不动）/ dispatched（全员终态，已补发
+   *  +统一落标）。async：补发前有 manifest 屏障 await（见函数头 E1 注释）。 */
+  private async runSyncCollectRecoveryScan(): Promise<"idle" | "waiting" | "dispatched"> {
+    const lastRecords = this.store.scanLastRecordEntries(this.mainSessionFile);
+    if (lastRecords.length === 0) return "idle";
+    const rootFilter = this.sessionRootId;
+    const candidates = lastRecords.filter(
+      (r) =>
+        r.collectMode === "sync" &&
+        r.batchFinalized !== true &&
+        (rootFilter === undefined || r.rootSessionId === rootFilter),
+    );
+    if (candidates.length === 0) return "idle";
+    // [v2 D3] 与协调器 hasRunningSync 同构口径（collect-coordinator.ts）：running+
+    // resumable 视为已完成、不阻止补发——成功成员崩溃时的末条 entry 恒为轮终
+    // running+resumable（SP-5 有意语义），旧口径只看 status !== "closed" 会把主场景
+    // （批内含成功成员）顶死在「等自然终态」永不补发（v2 §2.3 断链 3）。
+    const running = candidates.filter((r) => r.resumable !== true && r.status !== "closed");
+    if (running.length > 0) {
+      logger.debug(
+        `[subagents] E1 sync batch recovery: ${running.length} member(s) still running, wait for natural completion`,
+        { ids: running.map((r) => r.id) },
+      );
+      return "waiting";
+    }
+    // [时序屏障] manifest 先于写账 await 全部落盘——E1 补发同样是批通知（指针行消费
+    // 依赖反查索引），「通知可达 ⇒ 索引就位」的构造性保证与 flushBatch 同款。
+    await this.writeSyncBatchManifestBarrier(candidates);
+    // 全员终态：单条批补发（budget 热读与 flushBatch 同源）；账本同 hash 幂等拒绝也算
+    // 已投递（批已在账/已销账，重放由账本承接）——两种结局统一补标。
+    const members = candidates.map((r) => this.syncRebuildToNotifyMember(r));
+    const accepted = this.notifyHost.notifyBatch(members, this.getCollectSyncBudget());
+    for (const rec of candidates) {
+      this.appendBatchFinalizedEntry(rec);
+    }
+    logger.warn(
+      `[subagents] E1 sync batch recovery: re-notified ${members.length} member(s) (ledger accepted=${accepted})`,
+      { ids: members.map((m) => m.id) },
+    );
+    return "dispatched";
+  }
+
+  /** [v2 D4] 注册 agent_settled 有界重扫（幂等：settledRescanState 非 null 不叠加注册
+   *  ——E1 现仅 session_start 单调用点，守卫是防第二入口引入时的注册叠加断言面）。
+   *  每次 settled 边沿重跑同一 E1 扫描（runSyncCollectRecoveryScan）：dispatched
+   *  （补发+落标完成，scan 的 warn 已留痕）或 idle（候选已被其他通路落标）→ disposed；
+   *  累计 SETTLED_RESCAN_LIMIT 次仍在等 → disposed + debug 留痕（后续事件零处理，下次
+   *  session_start 再收敛）。
+   *  pi.on 无 off（0.84.4 实装）——disposed 标志包装兑现退订（scheduler extension
+   *  index.ts subscribeSettled 同款先例）。P-settled 定谳（0.84.4 dist 实装证据）：
+   *  pi.on 为 per-extension 列表分发——loader.js `on()` 把 handler push 进
+   *  extension.handlers.get(event) 数组（非覆盖），runner.js `emit()` 对全部
+   *  extension 的全部 handler 逐一 await；故本注册与 ledger host 经
+   *  piAdapter.onAgentSettled 注册的 settled 分发互不干扰，无需降级并入 host 链。 */
+  private armSettledRescan(): void {
+    if (this.settledRescanState !== null) return;
+    const state = { disposed: false, scans: 0 };
+    this.settledRescanState = state;
+    this.pi?.on?.("agent_settled", async () => {
+      if (state.disposed) return;
+      state.scans += 1;
+      // await 完整补发序列（manifest 屏障 → 写账 → 落标）：pi emit 对 handler 逐一
+      // await（P-settled 定谳，0.84.4 dist runner.js），async 化不改变分发语义。
+      const outcome = await this.runSyncCollectRecoveryScan();
+      if (outcome === "waiting" && state.scans < SETTLED_RESCAN_LIMIT) return;
+      state.disposed = true;
+      if (outcome === "waiting") {
+        logger.debug(
+          `[subagents] E1 settled rescan: reached limit (${SETTLED_RESCAN_LIMIT}) with member(s) still running, disposed until next session_start`,
+        );
+      }
+    });
+  }
+
+  /** E1 末条 entry 终态快照 → BgNotifyRecord（补发成员；sync 仅 one-shot，round/
+   *  sessionFile/patchFile 不透传——与 route() 缓冲快照的 one-shot 形态对齐）。 */
+  private syncRebuildToNotifyMember(rec: SubagentRecord): BgNotifyRecord {
+    return {
+      id: rec.id,
+      status: rec.status,
+      closedReason: rec.closedReason,
+      agent: rec.agent,
+      model: rec.model,
+      result: rec.result,
+      error: rec.error,
+      startedAt: rec.startedAt,
+      endedAt: rec.endedAt,
+    };
+  }
+
   dispose(): void {
     if (this._disposed) return;
     this._disposed = true;
     this.stopGcTimer();
+    // [v2 D4] settled 重扫 handler 惰化：dispose 后 trailing settled 边沿若仍触发，
+    // 旧 handler 不得再跑扫描——notifier 随后将 dispose，notifyBatch 短路返回 false
+    // 且不写账，而 E1 dispatched 段不判 accepted 仍统一落标 → 批被标 batchFinalized
+    // 而通知从未写账（永久丢失，不可逆）。惰化后通知由下次重启的 E1 首扫兑现
+    // （成员无标记，候选可达）。与 initSession revive 重置不冲突：dispose 是终态置
+    // disposed，revive 置 null 是新 session 的重新注册，旧 state 对象随旧 handler
+    // 闭包保持 disposed 永久惰化。
+    if (this.settledRescanState !== null) this.settledRescanState.disposed = true;
     // [dispose stub] 第一时间换 stub，防 trailing ui_request 调到 stale handler 闭包
     // （仍持有 disposed session 的 ctx）产生误导性 console.error。stub 干净降级为 cancelled。
     // 必须在 emit/abort 之前——这些步骤可能同步触发 trailing pump。
@@ -670,6 +1030,14 @@ export class SubagentService {
     // abortRunningControllers 需要在 disposeAllRecords archive 之前执行（archive 后 store 找不到 record）。
     this.store.abortRunningControllers();
     killAllSpawnedChildren();
+    // [E9] 批未闭合时缓冲终态成员逐条转 async 写账 + 落 batchFinalized（设计 §3.1.5 E9）。
+    // 必须在 disposeAllRecords 之前——它会把活跃 record（含 SP-5 成功回退的
+    // running+resumable 缓冲成员）全部 archive 清内存，之后再 getFullRecord 落标只剩
+    // 冷 idToFile（无目录扫描则 miss → 跳过落标 → E1 重建误收已转换成员）；先转换取
+    // 内存命中，与 flushBatch 出口①同款通路。同样在 flushPendingNotifications 之前
+    //（转换条目加入本次 flush）与 notifier/store dispose 之前（写账与 appendEntry
+    // 通道仍可用）。仍在跑成员不在此处理——后续 disposeAllRecords 按现有退出路径关闭。
+    this.convertPendingSyncBufferToAsync();
     // SP-4: 级联关闭所有活跃 record（parent-shutdown reason）
     // 在 abort/kill 之后执行：先终止子进程，再清理 record 状态。
     this.disposeAllRecords("parent-shutdown");
@@ -1056,7 +1424,7 @@ export class SubagentService {
       // [D4-①] 通知簇搬移 notify-host 后的遗留调用点修正：this.notifyComplete 方法已
       // 不存在（其余三处调用点均 this.notifyHost.notifyComplete），旧引用 throw
       // TypeError 被本 .catch 吞掉 → settled watchdog 失败通知静默丢失
-      .then(() => this.notifyHost.notifyComplete(record))
+      .then(() => this.collectCoordinator.route(record))
       .catch((err: unknown) => bestEffort(err, "settled watchdog hot-path finalize", "error"));
   }
 
@@ -1402,6 +1770,23 @@ export class SubagentService {
     return this.store.collectRecords(limit, statusFilter, this.sessionRootId ?? this.sessionId ?? undefined);
   }
 
+  /**
+   * collectSync.default 当前生效值（subagent-sync-collect U2，偏差#3 接线：
+   * startHandler 缺省 collect 解析用）。
+   * config 未配/读失败 → DEFAULT_COLLECT_SYNC.default 兜底（E5 不炸启动）。
+   * 新 session 生效语义与 engine 配置一致（globalConfig 由 ModelConfigService
+   * reloadGlobalConfig 刷新）。
+   */
+  /** collectSync 节单读取点（S9，code-simplify）：「读节」一处，「投影成 default 或
+   *  budget」各自 accessor 负责（getCollectSyncDefault / getCollectSyncBudget）。 */
+  private collectSyncSection() {
+    return this.modelService.getGlobalConfig().collectSync;
+  }
+
+  getCollectSyncDefault(): "async" | "sync" {
+    return this.collectSyncSection()?.default ?? DEFAULT_COLLECT_SYNC.default;
+  }
+
   /** [perf] 单 record 详情懒加载（全量：eventLog/displayItems/result/turns/tokens）。
    *  内存 running record 直接投影；磁盘 record 全量重建（per-file 缓存，stat 戳校验）。
    *  返回 undefined：id 不存在于内存与磁盘。 */
@@ -1474,6 +1859,10 @@ export class SubagentService {
       // 从 RunContext 回填；缺省 = pi 投影，存量调用方零感知）
       engine: opts.engine,
       engineFallback: opts.engineFallback,
+      // subagent-sync-collect U2（偏差#4 接线）：sync record 落 collectMode——
+      // 协调器路由判据 + startHandler pendingSyncCount 枚举含本条的数据源。
+      // undefined = async（缺省语义，旧记录零迁移）。
+      collectMode: opts.collect === "sync" ? "sync" : undefined,
       controller,
     });
 
@@ -1608,7 +1997,7 @@ export class SubagentService {
         await this.runEngineTask(record, opts, engine, signal);
         // cancel 抢先（closedReason='cancelled'）时 cancelBackground 自己 notify，跳过
         if (record.closedReason !== "cancelled") {
-          this.notifyHost.notifyComplete(record);
+          this.collectCoordinator.route(record);
         }
       } finally {
         this.pool.release();
@@ -1921,7 +2310,7 @@ export class SubagentService {
         // 是 disposeAllRecords 的编排性关闭（record 已关、告知由 list 的 closedReason
         // 表达）——迟到的完成回注不注入（可能已切换的）新 session。
         if (notifyGateAllowsDelivery(record.closedReason)) {
-          this.notifyHost.notifyComplete(record);
+          this.collectCoordinator.route(record);
         }
       })
       .catch((err: unknown) => {
@@ -2054,7 +2443,7 @@ export class SubagentService {
     // pending-notifications：cancel 注销（只记 registry 状态）
     this.notifyHost.emitPendingUnregister(record.id, "closed");
     // cancel 完成通知（与轮次收尾 .then 对称——cancel 抢先时 .then 跳过 notify）
-    this.notifyHost.notifyComplete(record);
+    this.collectCoordinator.route(record);
     return true;
   }
 

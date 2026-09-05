@@ -1250,6 +1250,43 @@ else
 fi
 
 # ============================================================================
+# 测试 flake 卫生检查（F5 no-bail + F3 递归删除重试）
+#   [HISTORICAL] 一族「测试自身引入的满载 flake」中两类静态可检模式：
+#     F5 - 根 package.json scripts.test 缺 --no-bail：pnpm 递归 first-fail 即中止
+#         尾部包执行，一次 flake 只暴露首个失败包，掩盖失败全貌（commit b7ec0298a）。
+#     F3 - 测试内 recursive 删除缺 maxRetries：teardown 递归删除与在途异步写竞争，
+#         满载下 ENOTEMPTY 满载 flake（commit d9ad39cb8）。
+#   F5 每次提交都跑（读一个 json，成本 ~0）；F3 仅 staged 命中测试文件 pattern
+#   （/test/、/__tests__/、.test.ts、.test.mjs、.spec.ts，排除 node_modules）时扫描，
+#   checker 内部按同一 pattern 过滤，无命中零成本。不设独立 SKIP_* 开关
+#   （R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
+# ============================================================================
+
+FLAKE_HYGIENE_CHECKER=".githooks/check_test_flake_hygiene.py"
+TEST_FILE_STAGED=$(echo "$STAGED_FILES" | grep -E "(/test/|/__tests__/|\.test\.(ts|mjs)|\.spec\.ts$)" | grep -v "node_modules" || true)
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    print_section "[测试 flake 卫生检查]"
+    if [ ! -f "$FLAKE_HYGIENE_CHECKER" ]; then
+        echo -e "${RED}[ERROR] 找不到检查脚本 $FLAKE_HYGIENE_CHECKER${NC}"
+        exit 1
+    fi
+    if [ -n "$TEST_FILE_STAGED" ]; then
+        echo -e "${BLUE}[INFO] staged 含测试文件，同时扫描 recursive 删除 maxRetries 规则...${NC}"
+    fi
+    # if ! 形态跑 checker：set -e 下非零退出会先于 EXIT_CODE=$? 捕获终止本 hook
+    if ! python3 "$FLAKE_HYGIENE_CHECKER"; then
+        echo ""
+        echo -e "${RED}[ERROR] 测试 flake 卫生检查失败${NC}"
+        echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}[OK] 测试 flake 卫生检查通过${NC}"
+else
+    echo -e "${YELLOW}[SKIP] 测试 flake 卫生检查已跳过${NC}"
+fi
+
+# ============================================================================
 # 全部通过
 # ============================================================================
 
@@ -1314,6 +1351,7 @@ echo -e "  ${GREEN}[+]${NC} i18n locale 双侧 key 对齐检查（zh-CN === en-U
 echo -e "  ${GREEN}[+]${NC} pi 边界可靠性护栏（G1 语义登记守卫 / G3 档位差分探针 / G4 subagent 通道禁则）"
 echo -e "  ${GREEN}[+]${NC} subagent-core 依赖闭包守卫（D9-① 闭包 + 检查点 5 worker 零宿主服务）"
 echo -e "  ${GREEN}[+]${NC} 文档-代码符号漂移守卫（C-proc-10：设计文档引用已删除/改名符号即拦截）"
+echo -e "  ${GREEN}[+]${NC} 测试 flake 卫生检查（F5 scripts.test --no-bail + F3 recursive 删除 maxRetries）"
 echo ""
 echo -e "${CYAN}Hook 脚本位置:${NC} .githooks/"
 echo ""

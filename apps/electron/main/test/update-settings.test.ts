@@ -45,12 +45,12 @@ describe('update-settings (升级设置存储 SSOT)', () => {
     mod = await loadModule()
     // 每个用例独立：清掉残留的 update-settings.json
     const dir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
+    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   afterEach(() => {
     const dir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
+    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ── 1. 无文件时 getUpdateSettings 返回默认值 ────────────────────

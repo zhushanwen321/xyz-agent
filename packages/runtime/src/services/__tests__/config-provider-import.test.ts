@@ -333,7 +333,7 @@ describe('T10: previewImport 端到端（真实 parseProviders + 真实 Pi fixtu
   afterEach(() => {
     if (prevHome === undefined) delete process.env.HOME
     else process.env.HOME = prevHome
-    rmSync(fakeHome, { recursive: true, force: true })
+    rmSync(fakeHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('previewImport(pi) 返回真实 Pi provider（deepseek-router + zhipu，gemini 丢弃），非 Mock 固定值', () => {
@@ -418,7 +418,7 @@ describe('T11: 孤儿凭据端到端（sa3 F1 · B.3/B.4/B.6）', () => {
     if (prevHome === undefined) delete process.env.HOME
     else process.env.HOME = prevHome
     if (prevModelsPath !== undefined) setModelsPath(prevModelsPath)
-    rmSync(fakeHome, { recursive: true, force: true })
+    rmSync(fakeHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('孤儿凭据 auth.json → preview 组 2 → apply → models.json 出现 openai（name/api/baseUrl/apiKey，models undefined）', async () => {

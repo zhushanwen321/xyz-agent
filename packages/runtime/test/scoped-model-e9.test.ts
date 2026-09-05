@@ -155,7 +155,7 @@ describe('E9: aggregateModels scoped 行为锁定', () => {
       expect(store.readAllSync()).toEqual({ openai: { authMethod: 'api_key' } })
     } finally {
       warnSpy.mockRestore()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })

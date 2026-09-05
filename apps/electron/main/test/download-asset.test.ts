@@ -127,7 +127,7 @@ describe('W3: download-asset (W3TC1-3)', () => {
     vi.restoreAllMocks()
     // 清理 tmp 目录内容（保留目录本身供下次用）
     const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ── W3TC1：happy path（sha256 匹配）────────────────────────────
@@ -311,7 +311,7 @@ describe('W3 multipart error path (S#10)', () => {
     globalThis.fetch = originalFetch
     vi.restoreAllMocks()
     const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ── W3TC5：某段 Range 返回 500 → downloadAsset rejects + 全部临时文件清理 ──
@@ -384,7 +384,7 @@ describe('RM3: multipart Range violation → fallback to single-stream', () => {
     globalThis.fetch = originalFetch
     vi.restoreAllMocks()
     const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 断言降级后无 .part-* / .downloading 残留（泄漏检查） */
@@ -535,7 +535,7 @@ describe('批次 5: resume-state 原子写序列（§3.7.2）', () => {
     globalThis.fetch = originalFetch
     vi.restoreAllMocks()
     const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('多段下载过程中 saveResumeState → 先写 resume-state.json.tmp 再 renameSync 到终态（验收③）', { timeout: 60_000 }, async () => {
@@ -627,7 +627,7 @@ describe('B-4: 断点续传判定边界（overshoot 信任窗口）', () => {
     globalThis.fetch = originalFetch
     vi.restoreAllMocks()
     const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ① 0 < overshoot <= SAVE_INTERVAL_BYTES 且 stat.size <= totalBytes → 信任 stat.size 续传
@@ -770,7 +770,7 @@ describe('RM3-4: 段失败 → 共享 signal 中断其余段', () => {
     globalThis.fetch = originalFetch
     vi.restoreAllMocks()
     const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('part-0 返回 500 → 其余三段挂起流收到 abort 被中断（非跑完），整批 rejects', { timeout: 30_000 }, async () => {

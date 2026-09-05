@@ -76,7 +76,7 @@ describe("WorktreeManager 对账歧义跳过老化（PS-12 措施⑤）", { time
 
   afterEach(() => {
     process.env.TMPDIR = ORIG_TMPDIR;
-    fs.rmSync(outerDir, { recursive: true, force: true });
+    fs.rmSync(outerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   /** 建一个物理 worktree（绕过 WorktreeManager.create 的脏树校验，路径布局同 create）。 */
@@ -174,7 +174,7 @@ describe("WorktreeManager 对账歧义跳过老化（PS-12 措施⑤）", { time
 
     // 出现对应：s-r2 pid 死 + c2 删除 → 1 活 pid ↔ 1 残留 → 自愈补写 c1
     await waitPidDead(sleeper.pid as number);
-    fs.rmSync(c2, { recursive: true, force: true });
+    fs.rmSync(c2, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     await mgr.scan();
     expect(registry.load().map((e) => e.branch)).toEqual(["pi-sub-r1"]);
     expect(escalationCalls()).toEqual([]);

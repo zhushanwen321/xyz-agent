@@ -41,7 +41,7 @@ describe("acquireLock / release（async）", () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lock-core-test-"));
 		target = path.join(tmpDir, "target.json");
 	});
-	afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+	afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
 
 	it("acquire 创建 <目标>.lock 目录，release 删除", async () => {
 		const release = await acquireLock(target);
@@ -94,7 +94,7 @@ describe("acquireLock / release（async）", () => {
 		seedDeadLock(target, 1_500);
 		await expect(acquireLock(target, { staleMs: 50 })).rejects.toMatchObject({ code: "ELOCKED" });
 		// 清理测试自造的锁目录（acquire 未持有，afterEach 的 rmSync 亦可清，显式表达意图）
-		fs.rmSync(`${target}.lock`, { recursive: true, force: true });
+		fs.rmSync(`${target}.lock`, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 	});
 
 	it("realpath:false：不存在的目标可锁；symlink 目标锁在 symlink 路径（不解析）", async () => {
@@ -137,7 +137,7 @@ describe("acquireLockSync", () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lock-core-sync-test-"));
 		target = path.join(tmpDir, "target.json");
 	});
-	afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+	afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
 
 	it("acquire/release 同构 async 版（目录创建与删除）", () => {
 		const release = acquireLockSync(target);
@@ -202,7 +202,7 @@ if (!fs.existsSync(target + ".lock")) {
 			// graceful exit 后锁目录不残留（等价 proper-lockfile signal-exit 清理语义）
 			expect(fs.existsSync(`${target}.lock`)).toBe(false);
 		} finally {
-			fs.rmSync(tmpDir, { recursive: true, force: true });
+			fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		}
 	});
 });

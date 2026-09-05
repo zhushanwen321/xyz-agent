@@ -320,7 +320,7 @@ describe("review-fix-loop.js fixAgent=fallow-scan 显式拒收（RX2-F2）", () 
   });
 
   afterEach(() => {
-    rmSync(sandboxDir, { recursive: true, force: true });
+    rmSync(sandboxDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   /** -e 探针体：AsyncFunction 复刻 worker 模板宿主形态（workerData/$ARGS/log 注入）。 */

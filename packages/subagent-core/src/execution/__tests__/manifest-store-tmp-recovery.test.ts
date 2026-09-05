@@ -54,7 +54,7 @@ describe("T5④ recoverTmpFiles per-file tolerance", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("processes remaining tmp files when one unlink fails mid-loop", async () => {

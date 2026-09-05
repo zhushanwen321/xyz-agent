@@ -61,7 +61,7 @@ describe("SubagentService", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   // ============================================================
@@ -702,7 +702,7 @@ describe("ModelConfigService ctxModel 缓存", () => {
     agentDir = makeTmpAgentDir();
   });
   afterEach(() => {
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   /** 最小 mock registry:空可用列表(ctxModel 路径不需要 lookup)。 */

@@ -54,7 +54,7 @@ describe('constants 延迟求值（module-eager-binding 回归守护）', () => 
     if (originalEnv === undefined) delete process.env.XYZ_AGENT_DATA_DIR
     else process.env.XYZ_AGENT_DATA_DIR = originalEnv
     for (const dir of tempDirs.splice(0)) {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 

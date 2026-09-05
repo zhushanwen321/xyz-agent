@@ -74,7 +74,7 @@ describe('scanPiSessions 目录列举 TTL 缓存（W26 D9-1）', () => {
   })
 
   afterEach(() => {
-    rmSync(sessionDir, { recursive: true, force: true })
+    rmSync(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     invalidateScanDirCache()
   })
 
@@ -207,7 +207,7 @@ describe('scanPiSessions 目录列举 TTL 缓存（W26 D9-1）', () => {
       const ids = scanPiSessions().map((s) => s.id)
       expect(ids).toEqual(['s2'])
     } finally {
-      rmSync(otherDir, { recursive: true, force: true })
+      rmSync(otherDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 

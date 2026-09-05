@@ -171,7 +171,7 @@ describe('equivalence: relay live ≡ reload（tee entry 帧 × getSubagentHisto
 
   afterEach(async () => {
     if (dir) {
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       dir = null
     }
   })

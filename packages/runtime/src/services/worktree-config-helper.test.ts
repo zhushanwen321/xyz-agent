@@ -18,7 +18,7 @@ describe('auto-rename enabled 标志文件', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs()
-    rmSync(tmpRoot, { recursive: true, force: true })
+    rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('getAutoRenameEnabledPath 解析到 <XYZ_AGENT_DATA_DIR>/pi/agent/auto-rename-enabled', () => {
@@ -60,7 +60,7 @@ describe('ensureAutoRenameDefault', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs()
-    rmSync(tmpRoot, { recursive: true, force: true })
+    rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('首次调用：创建 initialized 标记 + 开启 auto-rename', () => {
@@ -130,7 +130,7 @@ describe('rename-session 模型配置（config/rename-session-ext-config.json）
 
   afterEach(() => {
     vi.unstubAllEnvs()
-    rmSync(tmpRoot, { recursive: true, force: true })
+    rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('getRenameConfigPath 解析到 <XYZ_AGENT_DATA_DIR>/pi/agent/config/rename-session-ext-config.json', () => {
@@ -224,7 +224,7 @@ describe('rename-session-ext-config 写锁（D1e 跨进程锁）', () => {
     // 恢复锁参数默认值，避免压缩预算泄漏到后续用例
     setRenameConfigLockTimingForTest({})
     vi.unstubAllEnvs()
-    rmSync(tmpRoot, { recursive: true, force: true })
+    rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('写完释放锁：.lock 目录不残留（残留会困住后续写方）', () => {

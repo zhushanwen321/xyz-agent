@@ -29,7 +29,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(tmpRoot, { recursive: true, force: true });
+  rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 /** 读池 refs.json 的解析形态。 */
@@ -142,7 +142,7 @@ describe("releasePoolRef 引用计数与整池删除", () => {
   it("池目录不存在时 release → 无原生状态可清，视为成功不抛", () => {
     acquirePool(tmpRoot, "zcode", "ghost", "bg-1");
     // 归零但目录已被外部删除
-    rmSync(resolvePoolDir(tmpRoot, "zcode", "ghost"), { recursive: true, force: true });
+    rmSync(resolvePoolDir(tmpRoot, "zcode", "ghost"), { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     expect(() => releasePoolRef(tmpRoot, "zcode", "ghost", "bg-1")).not.toThrow();
   });
 

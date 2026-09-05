@@ -41,7 +41,7 @@ beforeEach(() => {
 
 afterEach(() => {
   resetCoreForTests();
-  rmSync(dataRoot, { recursive: true, force: true });
+  rmSync(dataRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 /** 构造可持久化的 WorkflowRun（对齐 lifecycle.test.ts makeEvictableRun 模式）。 */
@@ -378,7 +378,7 @@ describe("FileRunStore — stateFilePath / 端口语义", () => {
         join(altRoot, "workflow-state", "wf-x-2.jsonl"),
       );
     } finally {
-      rmSync(altRoot, { recursive: true, force: true });
+      rmSync(altRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 

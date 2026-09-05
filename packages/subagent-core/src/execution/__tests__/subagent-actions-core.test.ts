@@ -144,11 +144,17 @@ function makeService(over: Record<string, unknown> = {}): SubagentService {
     getRecordForAction: vi.fn(),
     closeSubagent: vi.fn(),
     deliverChatMessage: vi.fn(),
+    // [U2] startHandler 缺省 collect 解析读真实 config（偏差#3 接线）：stub 缺省 async
+    //（本文件不测 collect 语义，专项见 start-collect-guard.test.ts）。
+    getCollectSyncDefault: vi.fn(() => "async" as const),
     ...over,
   };
   return {
     execute: m.execute,
     cancel: m.cancel,
+    // [U2 偏差#3 接线] startHandler 经平铺访问器读 config 缺省 collect（真实 service
+    // 为平铺方法 subagent-service.ts:1786，非 queries 聚合面成员），stub 须同构挂载。
+    getCollectSyncDefault: m.getCollectSyncDefault,
     queries: {
       findRecord: m.findRecord,
       lookupRecordAnyState: m.lookupRecordAnyState,

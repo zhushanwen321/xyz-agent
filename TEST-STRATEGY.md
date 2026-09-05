@@ -275,3 +275,18 @@ pi 边界可靠性设计的测试面落地（2026-08-27 事故对 → 四支柱�
 | **F-1 retry 放大 3×（R5 发现）** | R3 失败表面化修复让 gate 终止的 run 从「静默 completed+{}」变为「failed+error」——新 error 恰好落入 `executeAgentCall` 的 retryable 分支，不可满足 schema 重试 3 轮（每轮含 ~25s gate teardown 窗口） | error 文案完全正确（归因清晰、可读、可恢复）；run 最终也确实失败 | 实测 attempts=3、4 个子进程 journal、235s vs 修复前同场景 67s（3× 放大）——时长/子进程数对照片刻暴露 |
 
 **落地形态**：修复 PR/commit 的验证记录应含 ①交互矩阵（哪怕三行：修复点 × 消费机制 × 处置结论）②修复前后同场景资源面对照表。单测锁不住这两面（R4/R5 的回归均在单测全绿下存活）——交互矩阵是设计期检查，资源面对照是实跑检查。
+
+## 测试自身引入的 flake 防规范 [from: subagent-sync-collect 满载 flake 模式族排查]
+
+> 沉淀来源：subagent-sync-collect 一轮「满载 flake」模式族排查。共同根因：**等待机制自身触碰被等待方持有的共享资源，或用固定 sleep 硬等真实外部事件**——开发机低载下全绿，CPU 满载/高并行下成批 flake。三条规范防复发，适用所有涉及真实子进程/文件系统/跨进程协作的测试与代码。
+
+**规范 1（F2 观察者效应）：等待机制禁止触碰被等待方的共享资源**。测试/代码中等待另一个进程或异步操作就绪时，等待机制自身不得获取/写入被等待方持有的共享资源（锁、文件等）。典型反例：用「试探性获取同一把锁」去等子进程持锁——探测本身制造竞争，满载下持锁窗口被 CPU 抢占拉长 20-250 倍，等待目标反而被探测拖死。就绪信号必须走只读/独立通道：stdout 行握手、进程内事件、挂牌文件（只读自己创建的文件）、消息式 RPC。
+`[HISTORICAL]` 案例锚：D1a 跨进程锁观察者效应（`packages/runtime/test/pi-settings-store.test.ts` 探测自制造竞争）→ commit `44464689a` 改 stdout 握手 + pi-faithful 重试。
+
+**规范 2（F4 固定 sleep 硬等）：等待真实外部事件必须轮询 + deadline**。等待真实外部事件（子进程退出/reap、文件落盘、WS 消息、watcher 建立基线）禁止「固定 sleep N 后单次断言」——必须轮询 + deadline（25-50ms 间隔，deadline 按最慢合理路径给足 5-10s），达到期望状态即通过。负向断言（断言某事不发生）放在对应正向条件确认之后再断言。**与 §1「timer 测试用 fake timers、禁止真实等待」的分界**：纯内存 mock 的微任务排空走 fake timers，不受本规范约束；本规范只管真实外部事件（fake 不了，只能轮询等）。E2E mock 轨同族规则（禁 `page.waitForTimeout` 固定值）见 [docs/testing/00-test-strategy-overview.md §6.1](docs/testing/00-test-strategy-overview.md)。
+`[HISTORICAL]` 生产侧同族案例：manifest fire-and-forget 写盘时序屏障 → commit `6dc9d20e9`（写盘完成设为 pre-ledger barrier，时序依赖显式化）。
+
+**规范 3：teardown 删除 recursive 目录必须带 maxRetries**。`rmSync(dir, { recursive: true })` 与在途异步写竞争 → 间歇 ENOTEMPTY；删除必须带 `maxRetries`（如 `maxRetries: 5, retryDelay: 20`），等待机制与探测一并只读化（规范 1）。pre-commit 护栏 `check_test_flake_hygiene.py` 落地中。
+`[HISTORICAL]` 案例锚：teardown ENOTEMPTY flake → commit `d9ad39cb8`（`packages/subagent-core/src/execution/__tests__/sync-collect-recovery.test.ts:252` rmSync 加 maxRetries）。
+
+**仍在修复中的活案例（pgrep 全机扫描跨包互踩）**：`extensions/universal/base-tool-enhance/src/__tests__/kill-tree.test.ts:66` 用 `pgrep -f "sleep 30"` 全机扫描验证子进程无残留——扫描范围覆盖全机进程，与并行运行的其他测试/无关进程互踩。验证「自己 spawn 的进程已死」应限定 pid/进程组（`pgrep -P <pid>`）或读自有句柄，禁止全机模式扫描做断言。

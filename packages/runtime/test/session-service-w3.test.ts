@@ -253,7 +253,7 @@ describe('SessionService · W3 副作用迁移（U7）', () => {
         // W11 后 xyz 已无任何直写 session JSONL 的代码路径（R1 无条件检查），文件字节不变
         expect(readFileSync(filePath, 'utf-8')).toBe(before)
       } finally {
-        rmSync(dir, { recursive: true, force: true })
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       }
     })
 
@@ -288,7 +288,7 @@ describe('SessionService · W3 副作用迁移（U7）', () => {
 
         expect(readFileSync(filePath, 'utf-8')).toBe(before)
       } finally {
-        rmSync(dir, { recursive: true, force: true })
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       }
     })
 

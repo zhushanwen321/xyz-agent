@@ -15,7 +15,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -54,7 +54,7 @@ describe('W3: update-self-healer (W3TC11)', () => {
     if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
     Object.defineProperty(process, 'execPath', { value: originalExecPath, configurable: true })
     vi.restoreAllMocks()
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 写 update-result.json */
@@ -128,7 +128,7 @@ describe('W3: update-self-healer (W3TC11)', () => {
     const written = JSON.parse(readFileSync(resultFile, 'utf-8'))
     expect(written.status).toBe('rolled-back')
 
-    rmSync(tmpAppDir, { recursive: true, force: true })
+    rmSync(tmpAppDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ── W3TC11a-linux-noop：status=replacing + linux APPIMAGE 设定但无 .old → no-op
@@ -150,7 +150,7 @@ describe('W3: update-self-healer (W3TC11)', () => {
     const written = JSON.parse(readFileSync(resultFile, 'utf-8'))
     expect(written.status).toBe('no-op')
 
-    rmSync(tmpAppDir, { recursive: true, force: true })
+    rmSync(tmpAppDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ── W3TC11a-mac：mac 平台 status=replacing + .old 存在 → 回滚 .app ─
@@ -188,7 +188,7 @@ describe('W3: update-self-healer (W3TC11)', () => {
     expect(written.status).toBe('rolled-back')
 
     // 清理
-    rmSync(tmpAppRoot, { recursive: true, force: true })
+    rmSync(tmpAppRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ── W3TC11a-mac-noop：mac 平台 status=replacing + 无 .old → no-op ─
@@ -216,7 +216,7 @@ describe('W3: update-self-healer (W3TC11)', () => {
     const written = JSON.parse(readFileSync(resultFile, 'utf-8'))
     expect(written.status).toBe('no-op')
 
-    rmSync(tmpAppRoot, { recursive: true, force: true })
+    rmSync(tmpAppRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ── W3TC11d：result 文件损坏 → 不抛，返回 false ────────────────
@@ -249,12 +249,12 @@ describe('cleanupCompletedUpdate', () => {
   beforeEach(() => {
     // 默认 app 版本 = 0.8.49（done 用例默认真 done：current >= target）
     electronMock.appVersion = '0.8.49'
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     mkdirSync(updateDir, { recursive: true })
   })
 
   afterEach(() => {
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 写 update-result.json */
@@ -452,7 +452,7 @@ describe('cleanupCompletedUpdate', () => {
       expect(written.status).toBe('rolled-back')
       expect(existsSync(`${resultFile}.tmp`)).toBe(false)
     } finally {
-      rmSync(tmpAppDir, { recursive: true, force: true })
+      rmSync(tmpAppDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       delete process.env.APPIMAGE
       if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
     }
@@ -505,7 +505,7 @@ describe('cleanupCompletedUpdate', () => {
     expect(existsSync(pendingFile)).toBe(false)
     expect(existsSync(updaterScript)).toBe(false)
 
-    rmSync(outsideDir, { recursive: true, force: true })
+    rmSync(outsideDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 })
 
@@ -526,13 +526,33 @@ describe('批次 5: updater.pid 互斥（§3.7.1 检查方）', () => {
 
   afterEach(() => {
     if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
-    if (existsSync(updateDir2)) rmSync(updateDir2, { recursive: true, force: true })
+    if (existsSync(updateDir2)) rmSync(updateDir2, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   function writeReplacingResult(): void {
     // 齐备的「应触发回滚」现场：replacing + .old 备份存在
     writeFileSync(resultFile, JSON.stringify({ status: 'replacing', version: '0.9.1' }))
     mkdirSync(path.join(updateDir2, 'TaiJi.app.old'), { recursive: true })
+  }
+
+  /**
+   * 只读探活等待：轮询 `ps -p <pid> -o command=`（与被测模块探活同款命令形态），
+   * 直到子进程 argv 可见且匹配 updater 脚本名。spawn fork 到 bash exec 完成之间
+   * 子进程可能尚不可见于 ps，满载下该窗口拉长——零等待直接调被测函数会因单次
+   * 探活误判「不存活」而误回滚。deadline 5s、间隔 25ms；只读探测，不触碰共享资源。
+   */
+  async function waitForUpdaterArgv(pid: number, scriptName: RegExp): Promise<void> {
+    const deadline = Date.now() + 5000
+    for (;;) {
+      try {
+        const out = spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' })
+        if (out.status === 0 && scriptName.test(out.stdout ?? '')) return
+      } catch { /* 进程尚未可见，继续轮询 */ }
+      if (Date.now() >= deadline) {
+        throw new Error(`updater process (pid=${pid}) not visible via ps within 5s (pattern: ${scriptName})`)
+      }
+      await new Promise((r) => setTimeout(r, 25))
+    }
   }
 
   it('验收②：pid 存活（win 平台仅存活检查）→ defer：不回滚 + 日志 updater in flight', async () => {
@@ -590,6 +610,9 @@ describe('批次 5: updater.pid 互斥（§3.7.1 检查方）', () => {
     writeFileSync(fakeScript, '#!/bin/bash\nsleep 30\n')
     const child = spawn('bash', [fakeScript], { detached: true, stdio: 'ignore' })
     try {
+      // 先等子进程 argv 经 ps 可见（只读探活），再调被测函数——避免 fork/exec 窗口内
+      // 单次探活误判不存活 → 误回滚
+      await waitForUpdaterArgv(child.pid!, /\/updater\.sh(?:\s|$)/)
       writeFileSync(pidFile, String(child.pid))
       writeReplacingResult()
 
@@ -612,6 +635,8 @@ describe('批次 5: updater.pid 互斥（§3.7.1 检查方）', () => {
     writeFileSync(fakeScript, '#!/bin/bash\nsleep 30\n')
     const child = spawn('bash', [fakeScript], { detached: true, stdio: 'ignore' })
     try {
+      // 同款只读探活等待（见 waitForUpdaterArgv 注释）
+      await waitForUpdaterArgv(child.pid!, /\/updater-linux\.sh(?:\s|$)/)
       writeFileSync(pidFile, String(child.pid))
       writeReplacingResult()
 
@@ -660,7 +685,7 @@ describe('批次 5: 清理矩阵与 self-healer 债务（m13/m14/m15/m18）', ()
   afterEach(() => {
     if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
     Object.defineProperty(process, 'execPath', { value: originalExecPath, configurable: true })
-    if (existsSync(updateDir2)) rmSync(updateDir2, { recursive: true, force: true })
+    if (existsSync(updateDir2)) rmSync(updateDir2, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('验收① m13：done 终态 + .old/.broken/.new/.staging 残留 → cleanup 后全清（rmSync recursive 吞目录）', async () => {

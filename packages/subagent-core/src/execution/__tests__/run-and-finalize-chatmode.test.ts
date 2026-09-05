@@ -129,7 +129,7 @@ describe("runAndFinalize chatMode idle 分流 (M2-A)", () => {
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   /** 直接调私有 runAndFinalize（mock runSpawn 后走完整分流逻辑）。 */

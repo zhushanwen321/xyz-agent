@@ -50,6 +50,27 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * 真实子进程链（spawn+exec+sleep+exit）满载下延迟不可预估，deadline 放宽到 10s。
+ */
+const POLL_DEADLINE_MS = 10_000;
+
+/**
+ * 轮询直到期望状态出现或超时：每次迭代先 pollTickForTest()（手动 tick 推进状态机）
+ * 再检查——固定 sleep 后单次 tick 单次断言是满载 flake 源，等状态而非猜时刻。
+ */
+async function pollUntilTicked(check: () => boolean, what: string): Promise<void> {
+	const deadline = Date.now() + POLL_DEADLINE_MS;
+	for (;;) {
+		pollTickForTest();
+		if (check()) return;
+		if (Date.now() > deadline) {
+			throw new Error(`timed out after ${POLL_DEADLINE_MS}ms waiting for ${what}`);
+		}
+		await sleep(25);
+	}
+}
+
 function spawnBg(command: string) {
 	return spawnBackgroundTask({
 		command,
@@ -154,8 +175,11 @@ describe("exit-edge notification (⑧⑨, poll edge wiring)", () => {
 		if (!spawned.ok) throw new Error(spawned.error);
 		const { task } = spawned;
 
-		await sleep(700);
-		pollTickForTest();
+		// 轮询到 exit 边沿收尾（handleTaskExit 同步完成 unregister emit + sendMessage）
+		await pollUntilTicked(
+			() => pi.events.emit.mock.calls.some((c) => c[0] === "pending:unregister"),
+			"pending:unregister (completed)",
+		);
 
 		expect(pi.events.emit).toHaveBeenCalledWith("pending:unregister", {
 			id: task.taskId,
@@ -184,8 +208,8 @@ describe("exit-edge notification (⑧⑨, poll edge wiring)", () => {
 
 		markKillingIntent(task.taskId, "killed");
 		killProcessTree(task.pid);
-		await sleep(500);
-		pollTickForTest();
+		// 轮询到 kill 边沿收尾（SIGKILL 生效 + tick 终态化）
+		await pollUntilTicked(() => getTask(task.taskId)?.reason === "killed", "reason=killed finalization");
 
 		expect(getTask(task.taskId)?.reason).toBe("killed");
 		expect(pi.events.emit).toHaveBeenCalledWith("pending:unregister", {
@@ -218,8 +242,11 @@ describe("exit-edge notification (⑧⑨, poll edge wiring)", () => {
 		if (!spawned.ok) throw new Error(spawned.error);
 		const { task } = spawned;
 
-		await sleep(700);
-		pollTickForTest();
+		// 轮询到 exit 边沿收尾（reason failed）
+		await pollUntilTicked(
+			() => pi.events.emit.mock.calls.some((c) => c[0] === "pending:unregister"),
+			"pending:unregister (failed)",
+		);
 
 		expect(pi.events.emit).toHaveBeenCalledWith("pending:unregister", {
 			id: task.taskId,
@@ -297,8 +324,14 @@ describe("D17: pi reference refresh (session replacement takeover)", () => {
 		const first = spawnBg("sleep 0.3 && echo one");
 		const second = spawnBg("sleep 0.3 && echo two");
 		if (!first.ok || !second.ok) throw new Error("spawn failed");
-		await sleep(700);
-		// 边沿回调内部全捕获：pollTick 不抛，两条任务都完成终态化
+		// 边沿回调内部全捕获：轮询到两条任务都完成终态化（每迭代 tick 后查）
+		await pollUntilTicked(
+			() =>
+				getTask(first.task.taskId)?.state === "exited" &&
+				getTask(second.task.taskId)?.state === "exited",
+			"both tasks to finalize",
+		);
+		// tick 不抛（异常全捕获）
 		expect(() => pollTickForTest()).not.toThrow();
 		expect(getTask(first.task.taskId)?.state).toBe("exited");
 		expect(getTask(second.task.taskId)?.state).toBe("exited");

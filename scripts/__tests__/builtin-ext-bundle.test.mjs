@@ -47,7 +47,7 @@ describe("builtin-ext-bundle (wave:builtin-ext-bundle)", () => {
 		// 构造残缺 staged：复制 permission（index.js + package.json）但故意不拷 2 个 wasm
 		const tmpScoped = join(REPO, ".cw/builtin-ext-bundle/tmp-staged/@zhushanwen");
 		const tmpPerm = join(tmpScoped, "pi-permission");
-		rmSync(tmpScoped, { recursive: true, force: true });
+		rmSync(tmpScoped, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		mkdirSync(tmpPerm, { recursive: true });
 		copyFileSync(join(STAGED, "pi-permission/index.js"), join(tmpPerm, "index.js"));
 		copyFileSync(join(STAGED, "pi-permission/package.json"), join(tmpPerm, "package.json"));
@@ -59,7 +59,7 @@ describe("builtin-ext-bundle (wave:builtin-ext-bundle)", () => {
 		} catch (err) {
 			exitCode = err.status ?? 1;
 		}
-		rmSync(tmpScoped, { recursive: true, force: true });
+		rmSync(tmpScoped, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		// fail-fast：缺 wasm 必须被拦截（exit 非 0），否则残缺产物会到 pi 加载时报错
 		expect(exitCode, "缺 wasm 时 verify-staged exit 非 0").not.toBe(0);
 	});
@@ -133,14 +133,14 @@ describe("verify-staged checkManifest failure branches (M6a-09, MF-3)", () => {
 	beforeEach(() => {
 		tmpScoped = join(REPO, ".cw/builtin-ext-bundle/tmp-verify/@zhushanwen");
 		tmpPkg = join(tmpScoped, "pi-test-pkg");
-		rmSync(tmpScoped, { recursive: true, force: true });
+		rmSync(tmpScoped, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		mkdirSync(tmpPkg, { recursive: true });
 		// 合法 index.js：过文件级检查（index.js 存在 + 无 .ts 残留），到达 checkManifest
 		writeFileSync(join(tmpPkg, "index.js"), "export default {};\n", "utf8");
 	});
 
 	afterEach(() => {
-		rmSync(tmpScoped, { recursive: true, force: true });
+		rmSync(tmpScoped, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 	});
 
 	/** 运行 verify-staged，返回 exit code（0=通过，非0=失败） */

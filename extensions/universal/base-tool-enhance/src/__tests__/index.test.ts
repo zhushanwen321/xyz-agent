@@ -127,7 +127,7 @@ describe("session_start chain: reconcile (M3, reap sunk into runtime by u-bte-re
 				reason: "cancelled",
 			});
 		} finally {
-			rmSync(dataDir, { recursive: true, force: true });
+			rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 			dataDirRef.dir = "/tmp/bte-fake-agent-dir";
 			resetNotifyForTest();
 		}

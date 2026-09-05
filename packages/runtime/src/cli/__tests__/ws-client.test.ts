@@ -21,7 +21,7 @@ beforeAll(() => {
 
 afterAll(() => {
   delete process.env.XYZ_AGENT_DATA_DIR
-  if (testDataDir) rmSync(testDataDir, { recursive: true, force: true })
+  if (testDataDir) rmSync(testDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 /** mock WebSocket：EventEmitter 桩（手动 emit open/message 驱动 rpc 状态机） */

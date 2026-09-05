@@ -82,7 +82,7 @@ describe('SkillRegistry watcher real fs (W5: 新建 skill 子目录触发 rescan
   })
 
   afterEach(() => {
-    rmSync(tempRoot, { recursive: true, force: true })
+    rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('W5a: 全局 watcher 在已扫描目录下新建 skill 子目录时触发 onChange（rescan + 通知）', async () => {
@@ -167,7 +167,7 @@ describe('SkillRegistry watcher real fs (W5: 新建 skill 子目录触发 rescan
         reg.dispose()
       }
     } finally {
-      rmSync(cwd, { recursive: true, force: true })
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   }, 30000)
 })

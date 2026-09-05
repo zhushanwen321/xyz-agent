@@ -29,7 +29,7 @@ describe('ProjectStore', () => {
     store = new ProjectStore(dir)
   })
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('save → load 往返：projects + activeProjectId 都持久化', () => {

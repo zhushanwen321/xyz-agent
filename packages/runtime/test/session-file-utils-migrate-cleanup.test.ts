@@ -38,7 +38,7 @@ describe('normalizeSessionFileInPlace rename 失败回滚（suggestion 6）', ()
       // 原目标（目录）未被触碰
       expect(existsSync(join(target, 'occupant.txt'))).toBe(true)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -51,7 +51,7 @@ describe('normalizeSessionFileInPlace rename 失败回滚（suggestion 6）', ()
       expect(readFileSync(target, 'utf-8')).toBe('new-content\n')
       expect(tmpMigrateNames(dir)).toEqual([])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })
@@ -82,7 +82,7 @@ describe('cleanupMigrateResidues（suggestion 6）', () => {
       expect(names).not.toContain(`${base}.tmp-migrate-111.jsonl`)
       expect(names).not.toContain(`${base}.tmp-migrate-222.jsonl`)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -95,7 +95,7 @@ describe('cleanupMigrateResidues（suggestion 6）', () => {
       expect(readdirSync(dir)).toEqual(['x.jsonl'])
       expect(() => cleanupMigrateResidues(join(dir, 'no-such-dir', 'x.jsonl'))).not.toThrow()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })

@@ -25,7 +25,18 @@ describe('relay env SSOT', () => {
     expect(isRelayActive({ ...full, [RELAY_ENV_SOCKET]: '' })).toBe(false);
     expect(isRelayActive({ ...full, [RELAY_ENV_NODE]: undefined })).toBe(false);
     expect(isRelayActive({})).toBe(false);
-    expect(isRelayActive(process.env)).toBe(false);
+    // [验收门修复] 宿主（pi 子进程链）可能注入 RELAY env——断言对象改为「清空 RELAY
+    // 键后的副本」：保留真实环境形态意图的同时对泄漏免疫（与 pi-invocation.test.ts
+    // 的 beforeEach 清理同病同修，不依赖 runner 环境）。
+    const sanitized: Record<string, string | undefined> = {
+      ...process.env,
+      [RELAY_ENV_SOCKET]: undefined,
+      [RELAY_ENV_NODE]: undefined,
+      [RELAY_ENV_SCRIPT]: undefined,
+      [RELAY_ENV_SESSION_ID]: undefined,
+      [RELAY_ENV_RECORD_ID]: undefined,
+    };
+    expect(isRelayActive(sanitized)).toBe(false);
   });
 
   it('env 名与退出码稳定（relay.mjs 镜像一致性由 conformance relay 断言锁定）', () => {

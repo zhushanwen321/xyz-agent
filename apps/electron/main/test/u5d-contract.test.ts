@@ -131,7 +131,7 @@ describe('u5d: 自动升级批次 5 收口契约', () => {
     if (originalArch) Object.defineProperty(process, 'arch', originalArch)
     globalThis.fetch = originalFetch
     vi.restoreAllMocks()
-    if (existsSync(updateDirPath())) rmSync(updateDirPath(), { recursive: true, force: true })
+    if (existsSync(updateDirPath())) rmSync(updateDirPath(), { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   function setArch(arch: string): void {

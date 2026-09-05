@@ -40,7 +40,7 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  await rm(tmpDir, { recursive: true, force: true })
+  await rm(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {

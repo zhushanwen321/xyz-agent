@@ -43,7 +43,7 @@ function makeTempRoot(): { root: string; configDir: string; cleanup: () => void 
   return {
     root,
     configDir,
-    cleanup: () => rmSync(root, { recursive: true, force: true }),
+    cleanup: () => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }),
   }
 }
 

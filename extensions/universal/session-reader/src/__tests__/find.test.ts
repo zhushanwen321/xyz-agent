@@ -43,9 +43,9 @@ async function makeSession(
 }
 
 /**
- * 建 records manifest（U5 fixture）。manifest 在 subagent 创建时写入 records/<sa-id>.json，
- * sessionFile 指向 alive subagent session 的绝对路径（find 用 extractSessionIdFromFilename
- * 从该路径提取 sessionId 建索引）。
+ * 建 records manifest（U5 fixture）。manifest 由终态 finalize 或 sync 批落标出口写入
+ * records/<sa-id>.json（创建时不写），sessionFile 指向 alive subagent session 的绝对路径
+ * （find 用 extractSessionIdFromFilename 从该路径提取 sessionId 建索引）。
  */
 async function makeRecordManifest(
   recordsDir: string,
@@ -145,7 +145,7 @@ describe('findSessions', () => {
     recordsDir = join(agentDir, 'subagents', '--Users-demo--', 'records')
   })
   afterEach(async () => {
-    await rm(agentDir, { recursive: true, force: true })
+    await rm(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('uuid 片段匹配正确的 session（sessionId 含 query）', async () => {

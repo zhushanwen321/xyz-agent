@@ -168,7 +168,7 @@ describe('fork handler 单次 scanSessions（W26 微项 12 find 合并）', () =
   })
 
   afterEach(() => {
-    rmSync(sessionsDir, { recursive: true, force: true })
+    rmSync(sessionsDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('fork 全链路 scanSessions 计数 = 1（facade 单次解析贯穿 lifecycle）', async () => {

@@ -45,7 +45,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   for (const engine of engines.splice(0)) await engine.dispose().catch(() => undefined);
-  fs.rmSync(tmpRoot, { recursive: true, force: true });
+  fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 interface ErrorScenario {

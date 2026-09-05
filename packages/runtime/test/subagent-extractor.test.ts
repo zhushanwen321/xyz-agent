@@ -39,7 +39,7 @@ describe('extractSubagentsFromSessionFile', () => {
   })
 
   afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true })
+    rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('extracts background subagent with bg-notify status update', () => {
@@ -751,7 +751,7 @@ describe('extractSubagentsFromSessionFile — background sessionFile 回退查�
   })
 
   afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true })
+    rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     mockSubagentDir.dir = ''
   })
 

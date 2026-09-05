@@ -372,7 +372,7 @@ describe("buildEnvBlock", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpGitRepo, { recursive: true, force: true });
+    fs.rmSync(tmpGitRepo, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("注入 cwd（Working directory 行）", async () => {
@@ -429,7 +429,7 @@ describe("buildEnvBlock", () => {
       // 但仍含 working directory（环境块始终输出）
       expect(block).toContain(`Working directory: ${nonGitDir}`);
     } finally {
-      fs.rmSync(nonGitDir, { recursive: true, force: true });
+      fs.rmSync(nonGitDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 

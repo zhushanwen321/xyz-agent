@@ -53,7 +53,7 @@ export function setup(): void {
 export function teardown(): void {
   if (testDataDir) {
     try {
-      rmSync(testDataDir, { recursive: true, force: true })
+      rmSync(testDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     } catch (e) {
       // best-effort cleanup；globalSetup teardown 失败不应阻断 vitest 退出
       console.warn(`[global-setup] teardown rmSync failed for ${testDataDir}:`, e instanceof Error ? e.message : e)

@@ -73,8 +73,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   resetCoreForTests();
-  rmSync(projRoot, { recursive: true, force: true });
-  rmSync(homeRoot, { recursive: true, force: true });
+  rmSync(projRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+  rmSync(homeRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 /** mkdir -p（目录存在即 resolveSkillPath 命中——检查的是目录而非 SKILL.md）。 */

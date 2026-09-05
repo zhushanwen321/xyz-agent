@@ -25,7 +25,7 @@ describe('parseZcodeProviders', () => {
     home = mkdtempSync(join(tmpdir(), 'zcode-parser-'))
   })
   afterEach(() => {
-    rmSync(home, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 把 config.json 写到 <home>/.zcode/v2/config.json。 */

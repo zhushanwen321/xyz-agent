@@ -26,7 +26,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(tmpAgentDir, { recursive: true, force: true });
+  fs.rmSync(tmpAgentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 /** 写一个最小合法的 manifest 到指定 records 目录。 */

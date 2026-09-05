@@ -93,7 +93,7 @@ describe("start 同步期裁决（U1 验收 3：非全等 → isError 且无 spa
 
   afterEach(() => {
     vi.restoreAllMocks();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("小写变体入参 → execute 同步 reject（问句式报错），buildSpawnArgs/spawn/appendEntry 均未被调", async () => {

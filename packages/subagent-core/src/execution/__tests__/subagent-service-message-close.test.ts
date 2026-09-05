@@ -122,7 +122,7 @@ describe("getRecordForAction 归属守卫（决策 3）", () => {
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("正常（rootSessionId 匹配）→ 返回可变 record", () => {
@@ -158,7 +158,7 @@ describe("closeSubagent 行为分流", () => {
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("running + force:false + 有活进程 → 置 closeAfterRound=true（不立即终态，等轮完）", async () => {
@@ -300,7 +300,7 @@ describe("cancelBackground CAS 抢锁（A2-1）——cancel 迟到不覆写已�
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("record 已 closed 未 archive（doFinalizeRecord Step 0 await 窗口形态）→ cancel 返回 false，不覆写终态/不写 tombstone/不 notify/不 archive", () => {
@@ -355,7 +355,7 @@ describe("[M5] closeAfterRound 消费点挂 onRoundSettled（chatMode 轮完成�
   afterEach(() => {
     service.dispose();
     _resetLifecycleState();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("热路径轮完成（onRoundSettled）+ closeAfterRound=true → 消费标志终态化（closed+user-close + archive）", async () => {
@@ -429,7 +429,7 @@ describe("[C2] close 现状语义 + sessionFile 条件透传", () => {
   afterEach(() => {
     service.dispose();
     _resetLifecycleState();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
 	it("close 语义：轮次通知（含指针行）发出后 closeAfterRoundSettled 终态化 + 终态通知，两条都送达", async () => {
@@ -529,7 +529,7 @@ describe("[C-4] onRoundSettled 轮次增量 + [C-1] close 终态通知", () => {
   afterEach(() => {
     service.dispose();
     _resetLifecycleState();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   /** 真实回调链（与生产一致：agent_settled → onRoundSettled），turns 经 updateFromEvent 累积。 */

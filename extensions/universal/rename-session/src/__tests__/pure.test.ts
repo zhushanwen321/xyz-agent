@@ -302,7 +302,7 @@ describe("环境变量覆盖", () => {
 		else process.env.PI_RENAME_THINKING_LEVEL = origThinkingLevel;
 
 		clearConfigCache();
-		fs.rmSync(tmpAgentDir, { recursive: true, force: true });
+		fs.rmSync(tmpAgentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 	});
 
 	it("PI_RENAME_ENABLED=true → enabled=true", () => {
@@ -427,7 +427,7 @@ describe("loadRenameConfig / saveRenameConfig", () => {
 		if (origEnv === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = origEnv;
 		clearConfigCache();
-		fs.rmSync(tmpAgentDir, { recursive: true, force: true });
+		fs.rmSync(tmpAgentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 	});
 
 	it("配置路径 = <agentDir>/config/rename-session-ext-config.json（走 getAgentDir，实例隔离）", () => {

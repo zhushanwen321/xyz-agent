@@ -231,7 +231,7 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
         const svc = new ModelConfigService({ agentDir: join(tmpRoot, "agent"), cwd: tmpRoot });
         svc.initModel({ modelRegistry: { getAvailable: () => [], find: () => undefined, hasConfiguredAuth: () => false }, sessionId: "cleanup" });
         setModelConfigService(svc);
-        rmSync(tmpRoot, { recursive: true, force: true });
+        rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
         tmpRoot = "";
       }
       if (prevDataDir === undefined) delete process.env["XYZ_AGENT_DATA_DIR"];
@@ -459,7 +459,7 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
       } finally {
         if (prevEnv === undefined) delete process.env.XYZ_AGENT_DATA_DIR;
         else process.env.XYZ_AGENT_DATA_DIR = prevEnv;
-        rmSync(dataDir, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
       }
     });
   });

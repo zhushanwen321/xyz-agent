@@ -39,7 +39,7 @@ beforeAll(() => {
 })
 
 afterAll(() => {
-  rmSync(rootDir, { recursive: true, force: true })
+  rmSync(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 describe('scanExternalSessions', () => {
@@ -133,7 +133,7 @@ describe('scanExternalSessions', () => {
       const forced = await scanExternalSessions(cacheDir, { force: true })
       expect(forced.items.some((m) => m.id === 'id-cache-b')).toBe(true)
     } finally {
-      rmSync(cacheDir, { recursive: true, force: true })
+      rmSync(cacheDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -170,7 +170,7 @@ describe('scanExternalSessions', () => {
       expect(spy.mock.calls.length).toBeGreaterThanOrEqual(Math.ceil(TOTAL / 100) - 1)
     } finally {
       spy.mockRestore()
-      rmSync(batchDir, { recursive: true, force: true })
+      rmSync(batchDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })
@@ -193,7 +193,7 @@ describe('scanExternalSessions name 三级定位（D3 二次修订轻量提取�
       const { items } = await scanExternalSessions(dir, { force: true })
       expect(items.find((m) => m.id === 'id-name-tail')?.name).toBe('NewName')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -213,7 +213,7 @@ describe('scanExternalSessions name 三级定位（D3 二次修订轻量提取�
       expect(meta).toBeDefined()
       expect(meta!.name).toBe('HeadName')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -229,7 +229,7 @@ describe('scanExternalSessions name 三级定位（D3 二次修订轻量提取�
       expect(meta).toBeDefined()
       expect(meta!.name).toBe(null)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -257,7 +257,7 @@ describe('scanExternalSessions name 三级定位（D3 二次修订轻量提取�
       expect(meta).toBeDefined()
       expect(meta!.name).toBe(null)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })
@@ -283,7 +283,7 @@ describe('readFirstLine 跨块多字节解码（r1-S2）', () => {
       expect(meta!.cwd).toBe(expectedCwd)
       expect(meta!.cwd.includes('\uFFFD')).toBe(false)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })
@@ -333,7 +333,7 @@ describe('cleanupTmpMigrateResidue（.tmp-import- 家族扩展）', () => {
       expect(existsSync(freshImport)).toBe(true)
       expect(existsSync(normal)).toBe(true)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -350,7 +350,7 @@ describe('cleanupTmpMigrateResidue（.tmp-import- 家族扩展）', () => {
       expect(removed).toBe(1)
       expect(existsSync(staleSub)).toBe(false)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })

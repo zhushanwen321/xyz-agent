@@ -112,7 +112,7 @@ describe('SessionService.getSubagentHistory engine routing (P5)', () => {
   })
 
   afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true })
+    rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     if (prevDataDir === undefined) delete process.env.XYZ_AGENT_DATA_DIR
     else process.env.XYZ_AGENT_DATA_DIR = prevDataDir
     vi.restoreAllMocks()

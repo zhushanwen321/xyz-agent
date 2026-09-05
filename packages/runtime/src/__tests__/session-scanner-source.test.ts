@@ -53,7 +53,7 @@ describe('SessionScanner W15 磁盘占位值来源标记', () => {
   afterEach(() => {
     delete process.env.XYZ_AGENT_DATA_DIR
     invalidateScanDirCache()
-    rmSync(dataDir, { recursive: true, force: true })
+    rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 窄 mock：结构性满足 scanner 窄接口（2 方法 = 实际消费面，S2 ISP 化无强转）。 */

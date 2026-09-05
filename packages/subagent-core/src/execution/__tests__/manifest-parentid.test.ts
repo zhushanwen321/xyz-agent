@@ -38,7 +38,7 @@ describe("ManifestStore — parentRecordId 落盘 (M3a)", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   // ── TC-m3a-new-record-parentid ──

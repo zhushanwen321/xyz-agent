@@ -182,7 +182,7 @@ test('R1: pi load goal/todo extension + session.create 成功', async () => {
   } finally {
     await cleanup()
     if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) {
-      fs.rmSync(dataDir, { recursive: true, force: true })
+      fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     } else {
       console.log('[cleanup] dataDir 保留:', dataDir)
     }
@@ -294,7 +294,7 @@ test('R2: 真实 todo tool 调用 → 协议格式含 __gui__ list-tree', async 
     console.log(`[R2] 注意：真实 __gui__ 格式为 { v:1, component: GuiComponent }（有包装层），list-tree items 用 label/icon 非 text/status`)
   } finally {
     await cleanup()
-    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(dataDir, { recursive: true, force: true })
+    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 })
 
@@ -382,6 +382,6 @@ test('R3: 真实 goal_control create → 协议格式含 __gui__ card', async ()
     }
   } finally {
     await cleanup()
-    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(dataDir, { recursive: true, force: true })
+    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 })

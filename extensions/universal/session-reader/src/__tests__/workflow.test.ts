@@ -282,7 +282,7 @@ describe('renderWorkflowOverview', () => {
 describe('readRunSnapshot', () => {
   let dir: string
   afterEach(async () => {
-    if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {})
+    if (dir) await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }).catch(() => {})
   })
 
   it('TC-w5-read-tail-fallback：末行半截 JSON 回退倒数第二行完整快照', async () => {

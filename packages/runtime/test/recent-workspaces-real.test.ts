@@ -44,7 +44,7 @@ describe('T1.10 (integration real): 数据目录与 pi 隔离 + 真实落盘', (
 
   afterEach(() => {
     if (tmpConfigDir) {
-      fs.rmSync(tmpConfigDir, { recursive: true, force: true })
+      fs.rmSync(tmpConfigDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
     // writeFileSync 默认委托真实实现；mockClear 只清调用记录，不动默认实现
     writeFileSyncMock.mockClear()
@@ -86,7 +86,7 @@ describe('E1/E2 (W0/W1 integration real): persist 失败不 crash + dirname 落�
     if (tmpDir) {
       // 只读目录无法 rmSync，先恢复权限
       try { fs.chmodSync(tmpDir, 0o755) } catch { /* 已删或权限已恢复 */ }
-      fs.rmSync(tmpDir, { recursive: true, force: true })
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -142,7 +142,7 @@ describe('T1.11 (integration real): atomicWrite temp+rename 原子性', () => {
 
   afterEach(() => {
     if (tmpDir) {
-      fs.rmSync(tmpDir, { recursive: true, force: true })
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
     // 场景 A 用 mockImplementationOnce，调用后自动回退到默认（委托真实实现）；
     // 这里只清调用记录。不动默认实现。

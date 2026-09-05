@@ -58,7 +58,7 @@ describe("ManifestStore", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   describe("writeManifest", () => {
@@ -108,7 +108,7 @@ describe("ManifestStore", () => {
       };
 
       // Delete the directory to cause write failure
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 
       await expect(store.writeManifest(record)).rejects.toThrow();
     });

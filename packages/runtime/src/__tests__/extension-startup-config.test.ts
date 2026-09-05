@@ -28,7 +28,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  rmSync(root, { recursive: true, force: true })
+  rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 /** 造一个 fixture extension 目录（package.json 含给定 xyz-agent 字段），返回目录路径。 */

@@ -2434,7 +2434,7 @@ main()
   .finally(() => {
     // 统一清理（对齐头注释「测试结束删除」）：全部 mkdtemp root 登记于 tempRoots
     for (const root of tempRoots) {
-      try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* 已清理 */ }
+      try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }); } catch { /* 已清理 */ }
     }
   })
   .catch((e) => {

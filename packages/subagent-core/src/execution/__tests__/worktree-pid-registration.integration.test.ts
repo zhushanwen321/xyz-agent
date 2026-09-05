@@ -118,7 +118,7 @@ async function cleanup(): Promise<void> {
     handle = undefined;
   }
   try {
-    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   } catch {
     // best-effort
   }

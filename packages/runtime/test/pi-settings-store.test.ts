@@ -254,13 +254,31 @@ describe('pi-settings-store', () => {
     // testTimeout（对齐 worktree-registry D5a 口径）。
     it('busy-waits and acquires after a cross-process holder releases (real subprocess)', { timeout: 30_000 }, async () => {
       writeSettings({ defaultModel: 'v1', packages: ['p1'] })
-      // 子进程 = 模拟 pi：持锁 150ms，锁内写 model 域字段后释放
+      // 子进程 = 模拟 pi：锁请求对齐 pi 真实语义（pi-settings-store 模块头注释引
+      // pi settings-manager acquireLockSyncWithRetry）——ELOCKED 时 CPU 自旋 20ms ×
+      // 最多 10 次（总等待 ≤200ms）重试取锁，耗尽才抛。单次 fail-fast 是模拟保真度
+      // 缺陷：与任何持锁窗口的一次碰撞（满载下窗口被 CPU 抢占拉长，实测 p99.9 从
+      // 0.4ms 涨到 35ms）即未捕获 ELOCKED 崩溃 exit 1；pi 形态只把碰撞降级为多等一轮。
+      // 持锁后锁内写 model 域字段、打印 LOCKED 握手标记（waitChildHoldsLock 依赖，
+      // 见下）、150ms 后释放退出。
       const lockEntry = createRequire(import.meta.url).resolve('proper-lockfile')
       const child = spawn(process.execPath, ['-e', `
         const lockfile = require(${JSON.stringify(lockEntry)})
         const fs = require('node:fs')
-        const release = lockfile.lockSync(${JSON.stringify(settingsPath)}, { realpath: false })
+        const acquireLikePi = () => {
+          for (let attempt = 0; ; attempt++) {
+            try {
+              return lockfile.lockSync(${JSON.stringify(settingsPath)}, { realpath: false })
+            } catch (e) {
+              if (e.code !== 'ELOCKED' || attempt >= 10) throw e
+              const spinUntil = Date.now() + 20
+              while (Date.now() < spinUntil) {}
+            }
+          }
+        }
+        const release = acquireLikePi()
         fs.writeFileSync(${JSON.stringify(settingsPath)}, JSON.stringify({ defaultModel: 'pi-child', packages: ['p1'] }), 'utf-8')
+        console.log('LOCKED')
         setTimeout(() => { release(); process.exit(0) }, 150)
       `])
       // 可观测性（设计文档 D6）：挂 stdout/stderr 双路监听进 ring buffer（50 行上限，
@@ -282,28 +300,35 @@ describe('pi-settings-store', () => {
         `\nchild ${name} (last ${CHILD_TAIL_LINES} lines):\n${lines.length === 0 ? '(empty)' : lines.slice(-CHILD_TAIL_LINES).join('\n')}`
       const failureContext = (): string =>
         `${streamTail('stdout', childStdoutLines)}${streamTail('stderr', childStderrLines)}\n👉 单跑复现：cd packages/runtime && npx vitest run test/pi-settings-store.test.ts`
-      // 确定性等子进程持锁（替代盲等固定 40ms sleep）：探测 lockSync 直至 ELOCKED。
-      // [HISTORICAL] 2026-08-20 PR #185 全量收尾实测 flaky：满载下子进程 spawn 慢于 40ms，
-      // 主进程抢先拿锁、锁内读到旧值 'v1'（waitedMs 断言照过，仅 defaultModel 断言红）。
-      // 子进程持锁窗口 150ms、探测间隔 2ms 必命中 ELOCKED；写入在 release 之前、主进程
-      // acquire 后才锁内重读，故拿到的必是 pi-child。
+      // stdout handshake 确定性等子进程持锁：子进程持锁成功打印 LOCKED 行，主进程等
+      // 该行出现（独立行缓冲检测叠加在上方 ring buffer 监听旁，防单行跨 data 事件被拆）。
+      // [HISTORICAL] 等待机制三代教训：
+      //   - v1 盲等 40ms sleep（PR #185 前）：满载下子进程 spawn 慢于 40ms，主进程
+      //     抢先拿锁、锁内读到旧值 'v1'（waitedMs 断言照过，仅 defaultModel 断言红）；
+      //   - v2 主进程 lockSync 试探探测（PR #185）：每次探测都重新制造「锁被主进程
+      //     持有」的窗口，满载下被 CPU 抢占拉长 20-250 倍（实测 p99.9 从 0.4ms 涨到
+      //     35ms），子进程单次 fail-fast 请求命中即 ELOCKED 崩溃 exit 1——2026-09-05
+      //     满载 flake 根因，确定性复现：主进程持锁 800ms + 同款子进程脚本 → exit 1；
+      //   - v3（现行）主进程不再触碰锁文件，竞争源从机制上消除，观测与被观测解耦。
+      // 子进程写入在 release 之前、主进程 acquire 后才锁内重读，故拿到的必是 pi-child。
+      let childStdoutRemainder = ''
+      let childSignaledLock = false
+      child.stdout?.on('data', (chunk: Buffer) => {
+        childStdoutRemainder += chunk.toString()
+        const lines = childStdoutRemainder.split('\n')
+        childStdoutRemainder = lines.pop() ?? ''
+        if (lines.some((line) => line.trim() === 'LOCKED')) childSignaledLock = true
+      })
       const waitChildHoldsLock = async (): Promise<void> => {
         const deadline = Date.now() + 10_000
-        while (Date.now() < deadline) {
-          let probeRelease: ReturnType<typeof lockfile.lockSync> | undefined
-          try {
-            probeRelease = lockfile.lockSync(settingsPath, { realpath: false })
-          } catch (e) {
-            if ((e as { code?: string }).code === 'ELOCKED') return // 子进程已持锁
-            throw e
-          }
-          probeRelease() // 子进程未起：让出锁重试
+        while (Date.now() < deadline && !childSignaledLock) {
           if (child.exitCode !== null) {
             throw new Error(`child exited (code ${child.exitCode}) before holding lock${failureContext()}`)
           }
           await new Promise((r) => setTimeout(r, 2))
         }
-        throw new Error(`child did not acquire lock within 10s${failureContext()}`)
+        if (childSignaledLock) return
+        throw new Error(`child did not signal LOCKED within 10s${failureContext()}`)
       }
       await waitChildHoldsLock()
       const t0 = Date.now()

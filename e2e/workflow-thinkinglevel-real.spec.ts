@@ -356,7 +356,7 @@ async function runProbeWorkflow(tc: string): Promise<{
   } catch (err) {
     ctx.listenWs?.close()
     await cleanup()
-    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(dataDir, { recursive: true, force: true })
+    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     throw err
   }
   return ctx
@@ -410,7 +410,7 @@ test('TC1: state.calls[0].opts.thinkingLevel === "high"（脚本请求值 → �
   } finally {
     ctx.listenWs?.close()
     await ctx.cleanup()
-    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(ctx.dataDir, { recursive: true, force: true })
+    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(ctx.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 })
 
@@ -478,7 +478,7 @@ test('TC2: 子进程 JSONL 含 thinking_level_change high + model_change（pi �
   } finally {
     ctx.listenWs?.close()
     await ctx.cleanup()
-    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(ctx.dataDir, { recursive: true, force: true })
+    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(ctx.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 })
 
@@ -551,6 +551,6 @@ test('TC3: workflowUpdate done + 子进程 JSONL 有 assistant 消息（完整�
   } finally {
     ctx.listenWs?.close()
     await ctx.cleanup()
-    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(ctx.dataDir, { recursive: true, force: true })
+    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(ctx.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 })

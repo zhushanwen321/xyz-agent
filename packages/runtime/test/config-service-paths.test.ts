@@ -61,7 +61,7 @@ afterEach(() => {
   // 还原 env
   if (savedEnv === undefined) delete process.env.XYZ_AGENT_DATA_DIR
   else process.env.XYZ_AGENT_DATA_DIR = savedEnv
-  rmSync(tmpDataDir, { recursive: true, force: true })
+  rmSync(tmpDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 describe('W1: config-service skill/agent 全局强制目录跟随 getConfigDir()', () => {
@@ -133,8 +133,8 @@ describe('W2: loadSkills(cwd) relative-path projectRoot resolution', () => {
   afterEach(() => {
     if (w2SavedEnv === undefined) delete process.env.XYZ_AGENT_DATA_DIR
     else process.env.XYZ_AGENT_DATA_DIR = w2SavedEnv
-    rmSync(w2DataDir, { recursive: true, force: true })
-    rmSync(w2ProjectDir, { recursive: true, force: true })
+    rmSync(w2DataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+    rmSync(w2ProjectDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('AC-4: discovery 配 .agents/skills 相对路径 → loadSkills(projectRoot) 扫描 <projectRoot>/.agents/skills', () => {

@@ -70,7 +70,7 @@ describe("execution 运行时面（U10① D6）", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   // ============================================================

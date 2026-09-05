@@ -41,7 +41,7 @@ beforeEach(() => {
 
 afterEach(() => {
   invalidateSettingsCache()
-  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 describe('PiRetrySettings · getRetryConfig（D7 缺省合并 + configured 语义）', () => {

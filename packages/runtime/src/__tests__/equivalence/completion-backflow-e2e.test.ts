@@ -189,7 +189,7 @@ describe.skipIf(!REAL_PI_READY)(`completion backflow e2e real pi${REAL_PI_READY 
     } finally {
       await parentFx?.dispose().catch(() => {})
       await childFx?.dispose().catch(() => {})
-      rmSync(dataRoot, { recursive: true, force: true })
+      rmSync(dataRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })

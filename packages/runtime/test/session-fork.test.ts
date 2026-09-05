@@ -36,7 +36,7 @@ describe('createForkedSessionFile', () => {
   })
 
   afterEach(async () => {
-    await Promise.all([rm(sourceDir, { recursive: true, force: true }), rm(targetDir, { recursive: true, force: true })])
+    await Promise.all([rm(sourceDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }), rm(targetDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })])
   })
 
   /** 构建测试 JSONL：session header + 3 turn（user/assistant/toolResult）。
@@ -169,7 +169,7 @@ describe('createForkedSessionFile · streaming JSONL 竞态（末行残行静默
     src = join(srcDir, 'streaming.jsonl')
   })
   afterEach(async () => {
-    await Promise.all([rm(srcDir, { recursive: true, force: true }), rm(tgtDir, { recursive: true, force: true })])
+    await Promise.all([rm(srcDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }), rm(tgtDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })])
   })
 
   it('末行 JSON 被截断时 fork 不崩溃，截断的 entry 不出现在 fork 文件中', async () => {
@@ -229,7 +229,7 @@ describe('createForkedSessionFile · 失败路径（源缺失 / fork 点不存�
     tgtDir = await mkdtemp(join(tmpdir(), 'fork-fail-tgt-'))
   })
   afterEach(async () => {
-    await Promise.all([rm(srcDir, { recursive: true, force: true }), rm(tgtDir, { recursive: true, force: true })])
+    await Promise.all([rm(srcDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }), rm(tgtDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })])
   })
 
   it('源文件不存在 → 抛错（含 source session file not found）', async () => {
@@ -261,7 +261,7 @@ describe('createForkedSessionFile · 多级 fork parentSession 指向直接父�
   let dir: string
 
   beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'fork-multi-')) })
-  afterEach(async () => { await rm(dir, { recursive: true, force: true }) })
+  afterEach(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }) })
 
   it('A→B→C 三级 fork：C.parentSession = B.path（直接父级），不透传成 A.path', async () => {
     // ── A：顶层 session（无 parentSession）──
@@ -321,7 +321,7 @@ describe('resolveEntryIdByTimestamp', () => {
     dir = await mkdtemp(join(tmpdir(), 'fork-resolve-test-'))
   })
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   const T0 = 1700000000000

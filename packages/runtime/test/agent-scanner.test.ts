@@ -25,7 +25,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  rmSync(root, { recursive: true, force: true })
+  rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 function writeAgent(dir: string, file: string, content: string): void {

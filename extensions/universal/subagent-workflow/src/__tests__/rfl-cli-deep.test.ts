@@ -52,7 +52,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(home, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 function writeRun(repoSlug: string, runId: string, state: Record<string, unknown> | string): string {

@@ -3,10 +3,42 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { getPiInvocation } from "../engine/engines/pi/pi-invocation.ts";
-import { RELAY_ENV_NODE, RELAY_ENV_SCRIPT, RELAY_ENV_SOCKET } from "../relay-env.ts";
+import {
+  RELAY_ENV_NODE,
+  RELAY_ENV_RECORD_ID,
+  RELAY_ENV_SCRIPT,
+  RELAY_ENV_SESSION_ID,
+  RELAY_ENV_SOCKET,
+} from "../relay-env.ts";
+
+// [验收门修复] getPiInvocation 的 relay 分支优先读宿主 RELAY env——根级 pnpm test
+// 进程若继承宿主（pi 子进程链）的 RELAY 身份，直连分支用例的 execPath/argv 断言
+// 会被改道（非自免疫，依赖 runner 环境）。文件级钩子对全部用例统一消毒：beforeEach
+// 删五键、afterEach 恢复原值——有泄漏无泄漏双向绿；第二组 relay 分支用例自设
+// RELAY_FULL 在清理之后执行，语义不受影响。
+const RELAY_ENV_KEYS = [
+  RELAY_ENV_SOCKET,
+  RELAY_ENV_NODE,
+  RELAY_ENV_SCRIPT,
+  RELAY_ENV_SESSION_ID,
+  RELAY_ENV_RECORD_ID,
+] as const;
+let savedRelayEnv: Record<string, string | undefined>;
+beforeEach(() => {
+  savedRelayEnv = {};
+  for (const key of RELAY_ENV_KEYS) savedRelayEnv[key] = process.env[key];
+  for (const key of RELAY_ENV_KEYS) delete process.env[key];
+});
+afterEach(() => {
+  for (const key of RELAY_ENV_KEYS) {
+    const value = savedRelayEnv[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
 
 describe("getPiInvocation", () => {
   const originalArgv = process.argv;

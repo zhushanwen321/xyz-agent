@@ -34,6 +34,7 @@ import type {
   SubagentRecord,
 } from "./types.ts";
 import { ResurrectDeniedError } from "./types.ts";
+import { COLLECT_SCAN_LIMIT } from "./collect-coordinator.ts";
 
 // ============================================================
 // 常量
@@ -105,6 +106,14 @@ export interface StartHandlerInput {
   idleTimeoutMs?: number;
   /** 执行引擎（三层路由第一层：本参数 > agent frontmatter engine > config defaultEngine）。 */
   engine?: string;
+  /**
+   * 同步收集模式（subagent-sync-collect U1 foundation）。undefined = config
+   * collectSync.default（缺省 "async"）。schema 层枚举限 "async"|"sync"；运行时
+   * 宽收 string 与 engine 字段同风格（pi 工具框架把 schema Static 解析为 string；
+   * 非法值 ≠ "sync" 按 async 处理，E4 守卫用精确 "sync" 判定）。透传
+   * service.execute（ExecuteOptions.collect；record.collectMode 落点归 U2 接线）。
+   */
+  collect?: string;
 }
 
 /** start 领域对象（宿主 adapter 包成 bg 工具结果）。 */
@@ -340,6 +349,21 @@ export async function startHandler(
   );
   if (slug.length > SLUG_MAX_LENGTH) throw new Error(`slug must be ≤${SLUG_MAX_LENGTH} chars (got ${slug.length}). Shorten to a kebab-case label, e.g. "fix-login", "extract-urls".`);
 
+  // ── collect 解析（subagent-sync-collect）──
+  // resolved = 显式参数 ?? config collectSync.default（U2 偏差#3 接线：经 service
+  // 公开访问器读真实 config，内部 DEFAULT 兑底——config 未配/读失败不炸）。
+  // E4 守卫放在 resolved 之后：显式 collect:"sync" + conversation 即拒；config 默认
+  // sync + conversation 同样被拦（同一守卫，无需改判定）。
+  const resolvedCollect = input.collect ?? service.getCollectSyncDefault();
+  // E4（设计 §3.1.5）：sync 仅支持 one-shot。immediate throw——校验先于 service.execute，
+  // 不产生半启动 record（与 skillPath 路径守卫同风格：参数语义校验前置）。
+  if (input.conversation === true && resolvedCollect === "sync") {
+    throw new Error(
+      'collect:"sync" only supports one-shot subagents — it cannot be combined with conversation:true. ' +
+      'Remove either conversation or collect (use collect:"async", or omit it, for conversational subagents).',
+    );
+  }
+
   const handle = await service.execute({
     task,
     slug,
@@ -357,10 +381,30 @@ export async function startHandler(
     conversation: input.conversation,
     idleTimeoutMs: input.idleTimeoutMs,
     engine: input.engine,
+    // B1（code-simplify 审查发现的行为缺口）：config collectSync.default=sync 且调用方
+    // 省略 collect 时，record 本体也要落 sync（设计 §3.1.3「缺省 = config 默认」作用于
+    // record，而非仅回显）——createRecordForMode 只认 opts.collect==="sync"，原样透传
+    // input.collect 会让 record 走 async 逐条通知而响应声称已入批。仅 sync 落值：
+    // async/缺省路径传 undefined 语义（旧 record 零迁移）字节不变。
+    collect: resolvedCollect === "sync" ? "sync" : input.collect,
     ctxModel,
     signal,
     // background detached 运行，完成由 notify 驱动新 turn。
   });
+
+  const response: BgResponse = {
+    status: "running",
+    mode: "background",
+    message: BG_MESSAGE,
+    notifyContract: NOTIFY_CONTRACT,
+  };
+  // 同步收集登记回显段（设计 §3.1.1）：仅 resolved 为 sync 时附段——async 响应
+  // 字节零变化（G3）。pendingSyncCount = 未闭合批 sync 成员总数（含本条，跨轮续累）。
+  // 本条 record 已由 createRecordForMode 落 collectMode（U2 偏差#4 接线），
+  // 枚举天然含本条，无需补偿。
+  if (resolvedCollect === "sync") {
+    response.collect = { mode: "sync", pendingSyncCount: countPendingSyncRecords(service) };
+  }
 
   return {
     kind: "bg",
@@ -369,13 +413,25 @@ export async function startHandler(
     slug: handle.details.slug,
     // registry 全等回显：record.model 由 resolved（裁决放行条目）拼接，原样透出。
     model: handle.details.model,
-    response: {
-      status: "running",
-      mode: "background",
-      message: BG_MESSAGE,
-      notifyContract: NOTIFY_CONTRACT,
-    },
+    response,
   };
+}
+
+/**
+ * 当前未闭合批的 sync 成员计数（pendingSyncCount 口径，设计 §3.1.3）：本进程全部
+ * record（含已终态未 flush 的缓冲成员，故 statusFilter="all"）中 collectMode="sync"
+ * 且无 batchFinalized 标记的数量。含调用方刚启动的本条（record 已带 collectMode 入
+ * 枚举——U2 偏差#4 接线）。
+ *
+ * 扫描上限与 service 冷路径全扫兑底同量级；常量用本 feature 已导出的
+ * COLLECT_SCAN_LIMIT（collect 域扫描上限单点定义，S4 code-simplify）。
+ */
+function countPendingSyncRecords(service: SubagentService): number {
+  let count = 0;
+  for (const r of service.queries.collectRecords(COLLECT_SCAN_LIMIT, "all")) {
+    if (r.collectMode === "sync" && r.batchFinalized !== true) count += 1;
+  }
+  return count;
 }
 
 // ============================================================

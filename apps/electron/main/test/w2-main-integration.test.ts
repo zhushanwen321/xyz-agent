@@ -32,7 +32,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  rmSync(tempDir, { recursive: true, force: true })
+  rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   delete process.env.XYZ_AGENT_DATA_DIR
 })
 

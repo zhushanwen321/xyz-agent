@@ -597,8 +597,8 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
     }
     rejectAll(new Error('pi fixture disposed'))
     rl.close()
-    rmSync(sessionDir, { recursive: true, force: true })
-    rmSync(agentDir, { recursive: true, force: true })
+    rmSync(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+    rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 
   // 冷启动就绪探针：get_state 是毫秒级只读 RPC；stdin 是管道，早写的数据缓冲到 pi

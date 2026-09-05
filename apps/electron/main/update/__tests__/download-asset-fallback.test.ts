@@ -128,7 +128,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
-  rmSync(TEST_DIR, { recursive: true, force: true })
+  rmSync(TEST_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 // ─── 验收①：undici 连接建立失败 → 置 flag → curl 路径接管 ────────────────────

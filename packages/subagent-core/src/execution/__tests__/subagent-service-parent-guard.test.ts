@@ -109,7 +109,7 @@ describe("[v4 A-5 / P7] getRecordForAction 直接父校验", () => {
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   // ---------- 身份 sa-A：直接父，放行孙级 B ----------

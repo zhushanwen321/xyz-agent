@@ -59,7 +59,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.XYZ_AGENT_DATA_DIR
-  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 describe('QuotaService.configure 写侧切换（A1-5 路径 1）', () => {

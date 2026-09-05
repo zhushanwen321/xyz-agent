@@ -130,7 +130,7 @@ describe('ExtensionService.getExtensionPaths 同名去重（P7）', () => {
     vi.restoreAllMocks()
     setSettingsPath(getActiveSettingsPath())
     for (const r of registeredRoots.splice(0)) {
-      rmSync(r, { recursive: true, force: true })
+      rmSync(r, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 

@@ -50,7 +50,7 @@ describe('cleanupTmpMigrateResidue（W3 残留清理）', () => {
   afterEach(() => {
     delete process.env.XYZ_AGENT_DATA_DIR
     invalidateScanDirCache()
-    rmSync(dataDir, { recursive: true, force: true })
+    rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('过期残留删除（根目录 + cwd 分组子目录两层都清）', () => {

@@ -149,7 +149,7 @@ describe("⛔5: 快照往返与实施前逐字节一致（codec 切换 D4）", (
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("含 live 字段 run 落盘行 === 改造前 serializeRun golden 字节", async () => {

@@ -80,7 +80,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   for (const engine of engines.splice(0)) await engine.dispose().catch(() => undefined);
-  fs.rmSync(tmpRoot, { recursive: true, force: true });
+  fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 interface ScenarioOverrides {
@@ -289,18 +289,13 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     expect(engineDir).toEqual(["appserver-launcher.cjs"]);
   }, 15_000);
 
-  it("maxTurns（pi 专属）→ engine_capability_unsupported 拒绝，不创建会话（U4：静默丢弃会造成假上限）", async () => {
-    const { engine, stateFile, workspace } = makeEngine();
-    await expect(engine.run(makeTask({ cwd: workspace, maxTurns: 10 }), makeCtx())).rejects.toThrowError(
-      /engine_capability_unsupported/,
-    );
-    // 恢复指引：去掉 maxTurns 或改用 pi 引擎
-    await expect(engine.run(makeTask({ cwd: workspace, maxTurns: 10 }), makeCtx())).rejects.toThrowError(
-      /maxTurns|engine: 'pi'/,
-    );
-    // 拒绝发生在 prepare 期（进程创建前）：fake 侧零流水（连惰性启动都没触发）
-    expect(readState(stateFile)).toHaveLength(0);
-  }, 10_000);
+  // [D3-④ 适配] 旧用例「maxTurns → engine.run 内 engine_capability_unsupported 拒绝」
+  // 已随 capability 拒绝上提宿主预检而失效（zcode-engine.ts :29-32/:250 注释：引擎内
+  // 不再做 shape 拒绝；gate 单点 = common/capability-gate.ts assertTaskShapeSupported，
+  // 宿主调用点 = subprocess-agent-runner.ts:157（workflow 域）+ subagent-service.ts:1900
+  // （chat 域 record 创建前））。该守护由 capability-gate.test.ts 承接（ZCODE_CAPS
+  // .maxTurns=false 声明位 + maxTurns 拦截矩阵 + engine_capability_unsupported 错误族
+  // /恢复指引），此处不再重复——直接 engine.run 传 maxTurns 现按引擎真实语义执行。
 
   it("per-session model：create 帧 model={providerId,modelId}（task.model 拆分）+ toolDenylist 透传", async () => {
     const { engine, stateFile, workspace } = makeEngine();

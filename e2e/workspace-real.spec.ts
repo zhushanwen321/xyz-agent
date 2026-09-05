@@ -106,6 +106,6 @@ test('T4.6 (e2e real): record → 重启 → list 一致（跨进程持久化 AC
     await expect(appB.page.getByTestId('workspace-item').filter({ hasText: 'sample-project' })).toBeVisible()
   } finally {
     await appB.cleanup()
-    fs.rmSync(dataDir, { recursive: true, force: true })
+    fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 })

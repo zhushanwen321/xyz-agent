@@ -87,6 +87,6 @@ test('U2 (e2e real): whenReady cleanupCompletedUpdate 清理 done 终态升级�
     expect(fs.readdirSync(updateDir), 'update 目录应为空').toEqual([])
   } finally {
     await cleanup()
-    fs.rmSync(dataDir, { recursive: true, force: true })
+    fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 })

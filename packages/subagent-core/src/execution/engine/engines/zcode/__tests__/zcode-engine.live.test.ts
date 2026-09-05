@@ -41,7 +41,7 @@ describe.skipIf(!LIVE)("ZcodeEngine 端到端真机（app-server 常驻，共享
     await engine.dispose().catch(() => undefined);
     for (const dir of [AS_DATA_ROOT, AS_WORK_CWD]) {
       try {
-        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
       } catch {
         // 尽力清理
       }

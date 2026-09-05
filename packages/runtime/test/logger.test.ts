@@ -23,6 +23,40 @@ describe('logger', () => {
   const LOG_ENV_KEYS = ['XYZ_LOG_MAX_BYTES', 'XYZ_LOG_KEEP_DAYS', 'XYZ_LOG_LEVEL'] as const
   let savedEnv: Record<string, string | undefined>
 
+  /**
+   * 轮询等待 dir 下前缀匹配 prefix 的文件内容包含 substr（写流 flush/fsync 落盘是
+   * 异步的，固定 sleep 满载下不可靠）。substr 省略时只等文件出现。
+   * 目录/文件尚未创建均视为未就绪继续轮询；deadline 默认 5s、间隔 25ms，
+   * 超时抛错并附当前实际内容便于定位。
+   */
+  async function waitForLogContent(
+    dir: string,
+    prefix: string,
+    substr?: string,
+    deadlineMs = 5000,
+  ): Promise<{ name: string; content: string }> {
+    const deadline = Date.now() + deadlineMs
+    let lastName = ''
+    let lastContent = ''
+    for (;;) {
+      try {
+        const name = readdirSync(dir).find((f) => f.startsWith(prefix))
+        if (name !== undefined) {
+          lastName = name
+          lastContent = readFileSync(join(dir, name), 'utf-8')
+          if (substr === undefined || lastContent.includes(substr)) return { name, content: lastContent }
+        }
+      } catch { /* 目录/文件尚未创建，继续轮询 */ }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `waitForLogContent timeout (${deadlineMs}ms): ${substr ?? `file ${prefix}*`} not found in ${dir}; `
+          + `last file: ${lastName}, actual content: ${JSON.stringify(lastContent)}`,
+        )
+      }
+      await new Promise((r) => setTimeout(r, 25))
+    }
+  }
+
   beforeEach(async () => {
     // 动态 import logger（每次 fresh），但 logger 是模块级单例，需 reset。
     // 用 vi.resetModules 让每个测试拿到干净的模块状态。
@@ -58,7 +92,9 @@ describe('logger', () => {
       if (v === undefined) delete process.env[k]
       else process.env[k] = v
     }
-    rmSync(tmpDir, { recursive: true, force: true })
+    // maxRetries 对齐 sync-collect-recovery.test.ts 先例：与刚 close 的真实写流
+    // 在途 flush/fsync 竞争时重试删除，消除满载下 ENOTEMPTY 偶发
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('initLogger 后 console.log 落盘到 runtime-YYYY-MM-DD.log', async () => {
@@ -66,13 +102,9 @@ describe('logger', () => {
     initLogger(tmpDir)
     // 恢复一个能被 logger patch 调用的 originalConsole（已屏蔽）
     console.log('test-message-12345')
-    // 等待 writeStream flush
-    await new Promise((r) => setTimeout(r, 50))
+    // 轮询等写流落盘（固定 sleep 满载下不够）
     const today = new Date().toISOString().slice(0, 10)
-    const files = readdirSync(logsDir)
-    expect(files.some((f) => f.startsWith(`runtime-${today}`))).toBe(true)
-    const logFile = files.find((f) => f.startsWith(`runtime-${today}`))!
-    const content = readFileSync(join(logsDir, logFile), 'utf-8')
+    const content = (await waitForLogContent(logsDir, `runtime-${today}`, 'test-message-12345')).content
     expect(content).toContain('test-message-12345')
   })
 
@@ -84,10 +116,12 @@ describe('logger', () => {
     console.info('info-should-be-filtered')
     console.warn('warn-should-pass')
     console.error('error-should-pass')
-    await new Promise((r) => setTimeout(r, 50))
     const today = new Date().toISOString().slice(0, 10)
+    // 先轮询等正向内容（error 最后写入，同一写流 FIFO——它落盘则 warn 必已落盘）
+    await waitForLogContent(logsDir, `runtime-${today}`, 'error-should-pass')
     const logFile = readdirSync(logsDir).find((f) => f.startsWith(`runtime-${today}`))!
     const content = readFileSync(join(logsDir, logFile), 'utf-8')
+    // 负向断言在正向已落盘之后：被过滤的 debug/info 根本没进写流，此刻读全文断言安全
     expect(content).not.toContain('debug-should-be-filtered')
     expect(content).not.toContain('info-should-be-filtered')
     expect(content).toContain('warn-should-pass')
@@ -102,9 +136,9 @@ describe('logger', () => {
     sessionLog.write('{"type":"agent_start"}')
     sessionLog.write('{"type":"message_start","message":{"role":"user"}}')
     sessionLog.end()
-    await new Promise((r) => setTimeout(r, 50))
+    // 轮询等两条 JSON 行落盘（最后一条出现 = 前一条已落盘，同一写流 FIFO）
     const today = new Date().toISOString().slice(0, 10)
-    const piLogFile = readdirSync(logsDir).find((f) => f.startsWith(`pi-${today}-${sid}`))!
+    const piLogFile = (await waitForLogContent(logsDir, `pi-${today}-${sid}`, '"type":"message_start"')).name
     expect(piLogFile).toBeDefined()
     const content = readFileSync(join(logsDir, piLogFile), 'utf-8')
     expect(content).toContain('"type":"agent_start"')
@@ -120,9 +154,9 @@ describe('logger', () => {
     sessionLog.write('{"a":1}')  // 无换行
     sessionLog.write('{"b":2}\n')  // 有换行
     sessionLog.end()
-    await new Promise((r) => setTimeout(r, 50))
+    // 轮询等两行落盘后再断言行数与顺序
     const today = new Date().toISOString().slice(0, 10)
-    const piLogFile = readdirSync(logsDir).find((f) => f.startsWith(`pi-${today}-test-sid-nl`))!
+    const piLogFile = (await waitForLogContent(logsDir, `pi-${today}-test-sid-nl`, '{"b":2}')).name
     const content = readFileSync(join(logsDir, piLogFile), 'utf-8')
     const lines = content.split('\n').filter((l) => l.trim())
     expect(lines).toHaveLength(2)
@@ -152,8 +186,9 @@ describe('logger', () => {
       await new Promise((r) => setImmediate(r))
       await new Promise((r) => setImmediate(r))
     }
-    await new Promise((r) => setTimeout(r, 100))
+    // 轮转异步完成（end 旧流 flush → rename → 开新流）：轮询等 .1 滚动文件出现
     const today = new Date().toISOString().slice(0, 10)
+    await waitForLogContent(logsDir, `runtime-${today}.log.1`)
     const files = readdirSync(logsDir).filter((f) => f.startsWith(`runtime-${today}`))
     // 应该有主文件 + .1 滚动文件
     expect(files.some((f) => f.endsWith('.log.1'))).toBe(true)
@@ -172,9 +207,9 @@ describe('logger', () => {
     initLogger(tmpDir)
     initLogger(tmpDir) // 重复调用
     console.log('after-double-init')
-    await new Promise((r) => setTimeout(r, 50))
     const today = new Date().toISOString().slice(0, 10)
-    const logFile = readdirSync(logsDir).find((f) => f.startsWith(`runtime-${today}`))!
+    // 轮询等落盘；此后不再有写入，出现次数断言稳定
+    const logFile = (await waitForLogContent(logsDir, `runtime-${today}`, 'after-double-init')).name
     const content = readFileSync(join(logsDir, logFile), 'utf-8')
     // 只出现一次（未重复 patch 不会写两遍）
     const matches = content.match(/after-double-init/g) ?? []
