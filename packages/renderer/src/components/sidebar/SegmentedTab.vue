@@ -41,7 +41,7 @@ const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: SidebarTab
-  /** running 态数量（badge 精确化：仅 running>0 亮蓝点，避免已完成任务也亮） */
+  /** 进行中桶数量（badge 精确化：仅 >0 亮蓝点；done 投影不计入，D8 与「进行中」桶同源 isDoneProjection） */
   subagentRunningCount: number
   workflowRunningCount: number
 }>()
@@ -54,13 +54,13 @@ interface TabDef {
   value: SidebarTab
   label: string
   icon: Component
-  /** 活跃任务时显示蓝点（如 running 态 subagent） */
+  /** 活跃任务时显示蓝点（进行中桶 > 0 时，D8 口径） */
   badge: boolean
 }
 
 /**
  * tabs 静态定义（count 数字已移除，不消费计数 props）。
- * badge 精确化：仅 running 态 > 0 亮蓝点（需关注的任务），已完成任务不亮。
+ * badge 精确化：仅进行中桶 > 0 亮蓝点（需关注的任务），已结束任务不亮（D8，与计数同源 isDoneProjection）。
  */
 const tabs = computed<TabDef[]>(() => [
   { value: 'sessions', label: t('sidebar.segmentedTab.session'), icon: MessageSquare, badge: false },

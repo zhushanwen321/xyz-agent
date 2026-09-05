@@ -28,7 +28,7 @@
 import { computed, onScopeDispose, reactive, watch, type ComputedRef, type Ref } from 'vue'
 import { registerSessionCleanup, useSessionScopedState } from '@/composables/useSessionScopedState'
 import { useSessionEvents } from '@/composables/features/chat/useSessionEvents'
-import { command } from '@/api/request'
+import { command } from '@xyz-agent/core/transport/api'
 import type { GenStatsFrame } from '@xyz-agent/shared'
 
 /** 分区容器（useSessionScopedState 响应式契约要求 reactive 容器：mutate 才触发下游失效） */

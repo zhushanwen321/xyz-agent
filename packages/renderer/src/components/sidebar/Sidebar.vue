@@ -99,6 +99,7 @@
         </template>
         <template v-else-if="sidebar.activeTab === 'subagents'">
           <SubagentList
+            :session-id="focusedSessionId"
             :subagents="subagentList"
             :is-loading="subagentStore.isLoading"
             :load-error="subagentStore.loadError"

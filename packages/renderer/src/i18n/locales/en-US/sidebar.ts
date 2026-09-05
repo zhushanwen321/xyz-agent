@@ -141,6 +141,16 @@ export default {
     turnsUnit: 'turns',
     tokUnit: 'tok',
   },
+  // Agents tab secondary status filter (design docs/design/subagent-sidebar-filter.md §3.4; D2 label "Ended")
+  subagentFilter: {
+    active: 'Active',
+    ended: 'Ended',
+    all: 'All',
+    emptyActive: 'No active background tasks',
+    emptyActiveHint: 'Nothing is running in this session',
+    viewAll: 'View all ({count})',
+    emptyEnded: 'No ended background tasks',
+  },
   workflowDetail: {
     backToList: 'Back to workflow list',
     pause: 'Pause',

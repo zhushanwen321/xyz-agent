@@ -17,7 +17,7 @@ import { watch } from 'vue'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
 import { useSubagentStore } from '@/stores/subagent'
 import { session as sessionApi } from '@/api'
-import { getFileCandidatesByCwd } from '@/api/domains/composer'
+import { getFileCandidatesByCwd } from '@xyz-agent/core/transport/api/domains/composer'
 import type { FileNode } from '@xyz-agent/shared'
 
 /** 打开主动拉节流窗口（浮层反复开关不刷屏） */
