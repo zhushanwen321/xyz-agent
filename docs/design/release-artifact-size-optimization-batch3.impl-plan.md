@@ -91,7 +91,16 @@ graph TD
 | u4 | committed | 1 | e94b9e17b（双构建 gzip 112.0MB→xz 81.6MB = -27.1%，两产物 file 断言均 ELF executable；位置修正已回写设计） |
 | u5 | committed | 1 | d3385ee92（与 u6 合并 commit，见偏差登记；grep linuxX64Deb 清零 + 双平台构建无 deb 产物） |
 | u6 | committed | 1 | d3385ee92（test:main 743 用例 0 失败含 23 个真实 hdiutil/ditto 集成用例；grep macArm64Zip 清零；typecheck 三 tsconfig 过；产物无 zip） |
+| 阶段3 审查 | committed | 1 | 双区并行 reviewer：更新链路面 unreasonable 0 / doc_errors 0（12 条 reasonable 全核实）；构建面 1 major（README 指引未收敛）+ 4 minor + 3 doc_errors → 修复批次 04473fb64 + 主 agent 修 doc_errors 82461df06 |
+| Gate A | committed | 1 | subagent 实跑：preflight --ci 10/10 exit 0 + validate-runtime-bundle exit 0（Plugin E2E 全 PASS）+ test:main 752 全绿（update 链路 337 用例验证 merge 交叠零失败）+ frontend 3755 全绿（shiki 18 新用例）+ 全量 38/39 包绿；唯一红灯 = extension-protocol tsc 编译 5s 超时（存量负载敏感，基点前文件零改动，有先例 d0f558b16）；lint 3E+2W 全归因存量/merge 带入（rpc-client max-lines 为 fix-zcode 侧 5 commit 增量）；零绕过违规（25 行命中逐条判定合法平台守卫） |
+| Gate B | committed | 1 | 主 agent 实跑（HEAD 新鲜产物：build:dir + dmg Format=ULFO 104M）：启动不白屏；S3 bash 2 span + python 18 span（--shiki 双主题）+ mermaid SVG 渲染 ✓；S5 pty `echo PTY_OK_B3` 回显 ✓；S9 真实 ULFO dmg 换装 exit 0 + marker 消失证明真实替换 + 同 inode 双挂载边界 exit 1 且错误信息含恢复指引 ✓；S10 部分——mock 桩被 isDev 双重保护隔离在打包产物外（刻意设计，main.ts:176），断言由 update 链路 337 用例等价覆盖，真机更新链路归 S11 CI |
 
 ## 7 残留风险与变更历史
 
+- 残留风险：S11 CI 端到端（beta tag + prerelease 验证脚本）blocked 待 push 授权——产物级数字（dmg 104M / AppImage xz 比例 / 全发布总量 ~200-320MB 核对）与 GitCode 镜像同步需真实发布验证；负向断言（无 zip/deb）已落 verify-ci-release.sh。
+- 残留风险（与本批零因果，Gate A 核实）：extension-protocol validation.test 的 tsc 编译用例 5s 超时临界（全量负载下 5981ms，间歇性红风险，建议调大 testTimeout）；lint 3E 存量（appserver-launcher 2 / check-core-dist-gate 1）+ rpc-client max-lines warning（fix-zcode merge 侧增量）——需独立任务。
+- 残留风险：renderer 对三个新脚本错误码（dmg mount failed 等）走通用降级文案，恢复指引（reboot/hdiutil detach）仅在 update-result.json 与日志可见——renderer 侧接线留待后续（LAUNCH_FAILURE_ERROR_KEYS 映射，实施期检查点③的答案）。
 - 2026-09-05 计划创建。设计阶段两轮对抗审查记录见 review 文件；S7 本地 linux AppImage 可行性与 S6 ULFO 收益数字为实施期门（设计 §5 待验证检查点）。
+- 2026-09-05 执行波次：u1∥u2 并行（波1）→ u3 → u4（被用户中断后主 agent 收尾产物断言）→ 应用户要求改两路并行（配置面 u5/u6 yml+CI ∥ 代码面 u5/u6 TS+测试，零文件交集）+ 验证合并（test:main 一次 + 双平台构建一次）；u5+u6 合并 commit d3385ee92。
+- 2026-09-05 中途事件：另一会话在本地执行 fix-zcode-subagent-failed merge（32 文件冲突），commit/全量测试被阻塞；本会话 8 文件修复备份至 /tmp 后等待，merge 由对侧完成后恢复（修复批次完好，重验后提交 04473fb64）。
+- 2026-09-06 Gate A/B 完成（详见状态表）。产物实测：asar 11.5M / dmg ULFO 104M / AppImage xz 较 gzip -27.1%。
