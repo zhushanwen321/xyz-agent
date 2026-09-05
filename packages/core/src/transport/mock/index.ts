@@ -210,8 +210,10 @@ function emit(sessionId: string, msg: ServerMessageUnion): void {
 /** emit 全量 queue_update（steering + followUp 镜像），驱动 QueueBubble 渲染 */
 function emitQueueUpdate(sessionId: string): void {
   const q = mockQueues.get(sessionId)
-  const steering = q?.steering.length ? q.steering : undefined
-  const followUp = q?.followUp.length ? q.followUp : undefined
+  // 发副本而非活引用：drain splice 会原地改 q.steering，按引用 emit 会让订阅方
+  // 已收到的入队帧事后被改空（快照语义）
+  const steering = q?.steering.length ? [...q.steering] : undefined
+  const followUp = q?.followUp.length ? [...q.followUp] : undefined
   // 两者皆空时仍 emit（空 payload），让 store 侧 queue_update handler delete queueState
   // pendingMessageCount = steering + followUp 条数和（W8 契约必填，对齐 event-adapter 翻译口径）
   emit(sessionId, {
