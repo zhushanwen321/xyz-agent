@@ -49,7 +49,8 @@ function createMockSessionStore(mainSessionFile: string, mainSessionId: string, 
     readSessionJsonlText: () => null,
     readSessionEndMeta: () => null,
     persistHandoffSidecar: () => {},
-    trash: () => {},
+    // G4/u-h4：port trash 签名改 Promise<void>（失败保留文件并 reject），本测试不触删除路径
+    trash: () => Promise.resolve(),
   }
 }
 

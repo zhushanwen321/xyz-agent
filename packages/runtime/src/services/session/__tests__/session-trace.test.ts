@@ -77,7 +77,7 @@ function makeSessionStore(metas: ScannedSessionMeta[]): ISessionStore {
     },
     readSessionEndMeta: (p: string) => readSessionEndMeta(p),
     persistHandoffSidecar: () => {},
-    trash: () => {},
+    trash: () => Promise.resolve(),
   }
 }
 

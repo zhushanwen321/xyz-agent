@@ -181,6 +181,10 @@ export interface ISessionStore {
    * 同文件双写方），W11 迁 sidecar（D3b 裁决）。
    */
   persistHandoffSidecar(filePath: string, newSessionId: string): void
-  /** 删除文件/目录到废纸篓（session 资源清理）。 */
-  trash(path: string): void
+  /**
+   * 删除文件/目录到废纸篓（session 资源清理）。
+   * Promise 语义（G4）：移废纸篓失败保留文件并 reject——rejection 必须传播给调用方
+   * （session-lifecycle），禁止断头成 unhandledRejection（timeout-audit-hygiene-batch u-h4）。
+   */
+  trash(path: string): Promise<void>
 }

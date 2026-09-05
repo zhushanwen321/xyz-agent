@@ -18,11 +18,12 @@ interface Captured {
   errors: { id: string | undefined; code: string; message: string; details?: Record<string, unknown> }[]
 }
 
-function makeHandler(createImpl: ReturnType<typeof vi.fn>, forkImpl?: ReturnType<typeof vi.fn>) {
+function makeHandler(createImpl: ReturnType<typeof vi.fn>, forkImpl?: ReturnType<typeof vi.fn>, deleteImpl?: ReturnType<typeof vi.fn>) {
   const cap: Captured = { replies: [], errors: [] }
   const sessionService = {
     create: createImpl,
     forkSession: forkImpl ?? vi.fn().mockResolvedValue({ id: 'forked' }),
+    delete: deleteImpl ?? vi.fn().mockResolvedValue(undefined),
     sendMessage: vi.fn().mockResolvedValue({ blocked: false }),
     steerMessage: vi.fn().mockResolvedValue(undefined),
     followUpMessage: vi.fn().mockResolvedValue(undefined),
@@ -105,6 +106,29 @@ describe('W1/L4: session.create/fork model 未配置返回 MODEL_NOT_CONFIGURED'
       ),
     ).rejects.toThrow('pi spawn failed')
     // handler 自身不 sendError（由 server.ts 统一 catch 处理）
+    expect(cap.errors).toHaveLength(0)
+  })
+})
+
+// u-h4/P4-1 回归锁（timeout-audit-hygiene-batch §3.4）：trash 失败时 delete case 不吞错误、
+// 不 reply 成功——错误向上抛给 server.ts handleMessage 外层统一 catch → sendError
+//（e.code ?? 'handler_error'），handler 内不加 try/catch（设计 P4-1 判定：外层收口已存在）。
+describe('u-h4: session.delete trash 失败错误通道', () => {
+  it('delete: sessionService.delete throw（移废纸篓失败）→ rethrow 不吞、不 reply session.deleted', async () => {
+    const trashError = new Error(
+      '移入废纸篓失败（Finder 未在 5s 内响应或命令失败）。文件已保留在原位置，未做任何删除：/s/abc.jsonl。👉 稍后重试删除；或手动在访达中将该文件拖入废纸篓。',
+    )
+    const { cap, handler } = makeHandler(
+      vi.fn().mockResolvedValue({ id: 's1' }),
+      undefined,
+      vi.fn().mockRejectedValue(trashError),
+    )
+    await expect(
+      handler.handleSessionMessage(msg('session.delete', { sessionId: 'del-1' }), WS),
+    ).rejects.toThrow('移入废纸篓失败')
+    // 关键：失败时绝不 reply session.deleted（否则前端误判删除成功）
+    expect(cap.replies).toHaveLength(0)
+    // handler 自身不 sendError——sendError 由 server.ts 外层统一收口负责
     expect(cap.errors).toHaveLength(0)
   })
 })

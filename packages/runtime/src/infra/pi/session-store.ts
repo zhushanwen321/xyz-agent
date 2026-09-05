@@ -106,7 +106,10 @@ export class PiSessionStore implements ISessionStore {
     persistHandoffSidecar(filePath, newSessionId)
   }
 
-  trash(path: string): void {
-    trash(path)
+  // await 传播 infra trash() 的 rejection（G4/P4-1：trash 失败必须经 session-lifecycle
+  // 上抛到 server.ts 外层收口 → renderer；此前 void 签名丢弃 Promise 断头成
+  // unhandledRejection，renderer 误收删除成功 reply——timeout-audit-hygiene-batch u-h4 修复轮）
+  async trash(path: string): Promise<void> {
+    await trash(path)
   }
 }
