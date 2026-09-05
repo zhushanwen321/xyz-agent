@@ -61,7 +61,7 @@ if [ "$DIR_ONLY" = true ]; then
         echo -e "  ${GREEN}✓ dir-only 模式：找到 $UNPACKED_COUNT 个 unpacked 目录${NC}"
     fi
 else
-    ARTIFACT_COUNT=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "*.dmg" -o -name "*.zip" -o -name "*.exe" -o -name "*.AppImage" -o -name "*.deb" \) | wc -l | tr -d ' ')
+    ARTIFACT_COUNT=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "*.dmg" -o -name "*.exe" -o -name "*.AppImage" \) | wc -l | tr -d ' ')
     if [ "$ARTIFACT_COUNT" -eq 0 ]; then
         echo -e "  ${RED}✗ 未找到任何构建产物${NC}"
         FAILED=1
@@ -429,7 +429,7 @@ fi
 
 echo -e "${BLUE}[4/6] Artifact sizes...${NC}"
 
-for f in "$OUTPUT_DIR"/*.dmg "$OUTPUT_DIR"/*.zip "$OUTPUT_DIR"/*.exe "$OUTPUT_DIR"/*.AppImage; do
+for f in "$OUTPUT_DIR"/*.dmg "$OUTPUT_DIR"/*.exe "$OUTPUT_DIR"/*.AppImage; do
     if [ -f "$f" ]; then
         SIZE_MB=$(du -m "$f" | cut -f1)
         echo -e "  ℹ  $(basename "$f"): ${SIZE_MB}MB"

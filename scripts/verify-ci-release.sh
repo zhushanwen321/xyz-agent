@@ -130,10 +130,13 @@ ERRORS=0
 echo "$ASSETS" | grep -q "\.dmg$" || { err "缺少 macOS .dmg"; ERRORS=$((ERRORS + 1)); }
 echo "$ASSETS" | grep -q "\.exe$" || { err "缺少 Windows .exe"; ERRORS=$((ERRORS + 1)); }
 echo "$ASSETS" | grep -q "AppImage" || { err "缺少 Linux AppImage"; ERRORS=$((ERRORS + 1)); }
+# 负向断言：zip/deb target 已删除（2026-09 产物形态收敛），残留即发布管线配置回退
+echo "$ASSETS" | grep -qE "\.zip$" && { err "unexpected .zip asset (zip target removed)"; ERRORS=$((ERRORS + 1)); }
+echo "$ASSETS" | grep -qE "\.deb$" && { err "unexpected .deb asset (deb target removed)"; ERRORS=$((ERRORS + 1)); }
 
 if [ "$ERRORS" -gt 0 ]; then
   echo ""
-  fatal "产物不完整，缺少 ${ERRORS} 个平台的构建产物"
+  fatal "产物校验失败（${ERRORS} 项问题，详见上方 ERROR）"
 fi
 
 log "验证通过：CI 成功，3 个平台产物完整（mac + win + linux）"

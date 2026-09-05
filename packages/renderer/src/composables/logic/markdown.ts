@@ -110,7 +110,7 @@ export function getHighlighter(): Promise<HighlighterCore> {
       // grammar aliases 覆盖，无需单独 import，见 import 区注释）
       langs: [typescript, javascript, vue, json, shellscript, markdown, css, html, yaml, python, go, rust],
       // [HISTORICAL] 必须用 JS 正则引擎，禁止回落默认 Oniguruma WASM：index.html CSP 是
-      // script-src 'self'，WebAssembly.instantiate 会被 CSP 拒绝（CompileError）→ createHighlighter
+      // script-src 'self'，WebAssembly.instantiate 会被 CSP 拒绝（CompileError）→ createHighlighterCore
       // 抛错 → 全部 markdown 渲染静默降级纯文本（2026-08-21 v0.9.3 起线上事故：对话流/气泡/
       // drawer skill 文档全部无格式 + 换行丢失）。防护：.githooks/check_csp_compatibility.py
       // 源码级拦 WebAssembly 用法；产物级扫描见 scripts/postbuild-validate.sh [3/6]。

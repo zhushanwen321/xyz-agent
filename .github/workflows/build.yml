@@ -157,7 +157,7 @@ jobs:
 
       # macOS 专属：在 mac runner 上跑 main 进程测试。
       # 动机：ci.yml 的 test job 在 ubuntu 跑 test:main，updater-script-integration.test.ts
-      # 里 mac happy-path / sha mismatch / unzip-fail 回滚用例用 it.skipIf(!IS_MAC) 跳过
+      # 里 mac happy-path / sha mismatch / dmg mount-fail 回滚用例用 it.skipIf(!IS_MAC) 跳过
       # （.app bundle 语义是 mac 特有，ubuntu 跑不了）。这些用例必须在 mac CI 上真正执行，
       # 否则「detached bash 升级脚本」最关键的决策树（sha 校验 + 备份 + 回滚）永远没回归覆盖。
       - name: Run main tests (macOS)

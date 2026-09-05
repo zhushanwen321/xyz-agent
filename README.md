@@ -15,10 +15,11 @@ AI Agent 桌面工作台（macOS / Windows / Linux），基于 Electron + Vue 3 
 ### macOS（Apple Silicon）
 
 ```bash
-curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJi-0.9.0-mac-arm64.zip -o /tmp/TaiJi.zip \
-  && unzip /tmp/TaiJi.zip -d /Applications \
-  && open /Applications/太极.app
+curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJi-0.9.0-mac-arm64.dmg -o /tmp/TaiJi.dmg \
+  && open /tmp/TaiJi.dmg
 ```
+
+打开后在安装窗口把「太极」拖入 Applications 完成安装（也可直接在 Release 页浏览器下载 dmg 双击安装）。
 
 若启动时提示「已损坏」或「无法验证开发者」，执行（curl 下载通常不需要，浏览器下载需要）：
 
@@ -33,8 +34,6 @@ curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJ
   && chmod +x ~/TaiJi.AppImage \
   && ~/TaiJi.AppImage
 ```
-
-`.deb` 包（`TaiJi-<版本>-amd64.deb`）同步发布于 Release 页。
 
 ### Windows
 
@@ -167,7 +166,7 @@ pnpm install
 # 开发模式（Vite HMR + Electron 主进程）
 pnpm dev
 
-# 生产构建（electron-builder，产出 DMG/ZIP/AppImage/deb/EXE）
+# 生产构建（electron-builder，产出 DMG/EXE/AppImage/manifest）
 pnpm build
 
 # 类型检查
@@ -241,7 +240,7 @@ pnpm build:e2e && pnpm test:e2e
 
 | 管线 | 产物 | 触发 tag | Workflow |
 |------|------|----------|----------|
-| Electron 打包 | DMG / ZIP / AppImage / deb / EXE | `v*` | `release.yml` |
+| Electron 打包 | DMG / EXE / AppImage / manifest | `v*` | `release.yml` |
 | npm 包发布 | `@zhushanwen/pi-*` + `@xyz-agent/extension-protocol` | `npm-*` | `release-npm.yml` |
 
 ## 文档索引
