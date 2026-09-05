@@ -53,7 +53,7 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| u-r1-frame-buffer | pending | 0 | — |
+| u-r1-frame-buffer | committed | 1 | 首派限流中断，接替程序重派完成；前任源码核验保留+测试修 2 处 TS 错；runtime 全量 4298 绿 |
 | u-r2-acceptance-docs | pending | 0 | — |
 
 ## 7 残留风险与变更历史
