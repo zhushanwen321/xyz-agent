@@ -109,6 +109,11 @@ mac:
     - target: zip
       arch:
         - arm64
+  # 语言裁剪（设计 §3.2）：构建时删除其余 lproj/pak（实测省 ~48MB/包）。
+  # en 必须在首位作回落，全删有启动风险。
+  # 格式差异：mac lproj 目录用下划线（zh_CN），win/linux pak 文件名用连字符（zh-CN），
+  # electron-builder 按「去扩展名小写后全等或前缀匹配」对账，见 app-builder-lib ElectronFramework.js。
+  electronLanguages: ["en", "zh_CN"]
   category: public.app-category.developer-tools
   icon: build/icon.icns
   minimumSystemVersion: 12.0.0
@@ -122,6 +127,8 @@ win:
     - target: nsis
       arch:
         - x64
+  # 语言裁剪：同 mac 注释（en 首位回落）
+  electronLanguages: ["en", "zh-CN"]
   icon: build/icon.ico
   # release asset 文件名带版本号（同 mac 注释，release-checker pattern 匹配）。
   # nsis target 的 ${ext} 解析为 exe。
@@ -143,6 +150,8 @@ linux:
     - target: deb
       arch:
         - x64
+  # 语言裁剪：同 mac 注释（en 首位回落）
+  electronLanguages: ["en", "zh-CN"]
   category: Development
   icon: build/icon-512.png
   # release asset 文件名带版本号（同 mac 注释，release-checker pattern 匹配）。
