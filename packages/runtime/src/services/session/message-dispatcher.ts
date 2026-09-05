@@ -26,6 +26,32 @@ const RANDOM_TOKEN_RADIX = 36
 const RANDOM_TOKEN_SLICE_START = 2
 
 /**
+ * 超时时长的人类可读格式（诚实文案用）：整小时/整分钟取整表述，其余折算秒。
+ * env 逃生门可把 bash RPC 超时调成任意值，文案必须如实反映实际等待上限（timeout-slow-flow-wallclock D2）。
+ */
+function formatTimeoutDuration(timeoutMs: number): string {
+  if (timeoutMs >= 3_600_000 && timeoutMs % 3_600_000 === 0) return `${timeoutMs / 3_600_000} 小时`
+  if (timeoutMs >= 60_000 && timeoutMs % 60_000 === 0) return `${timeoutMs / 60_000} 分钟`
+  return `${Math.round(timeoutMs / 1000)} 秒`
+}
+
+/**
+ * bash RPC 超时的合成终态诚实文案（§5.2 样例 6 三步恢复指引）。
+ *
+ * 设计要点：超时是「停止等待」不是「处决命令」——pi 侧命令可能仍在后台运行且照常落盘，
+ * 文案必须诚实告知这一事实 + 给出可操作出路（取消 / 重开查结果 / 先取消再重跑），
+ * 取代旧「[bash error] RPC ... timed out」的技术性误导措辞（用户误以为命令失败）。
+ */
+function buildBashTimeoutOutput(timeoutMs: number): string {
+  return [
+    `命令执行超过 ${formatTimeoutDuration(timeoutMs)}，已停止等待——命令可能仍在后台运行。`,
+    '① 点 bash 气泡的取消（abortBash）可终止它；',
+    '② 等它自然结束后，重开本 session 可在历史记录中看到完整结果；',
+    '③ 需要立即重跑请先取消再发送。',
+  ].join('\n')
+}
+
+/**
  * 生成短随机字符串，用作 sendBash / abortBash 的代次令牌后缀。
  * 与 `Date.now()` 拼接保证唯一性，比对即可判定是否被抢收口。
  */
@@ -407,6 +433,28 @@ export class MessageDispatcher {
       // 已有 cancelled bashResult 广播，此处不再发 message.error，避免双重报错。
       if (activeSession && myToken !== undefined && activeSession.bashRunToken !== myToken) {
         console.warn(`[message-dispatcher] sendBash: aborted during await (catch), skip duplicate error. sid=${sessionId}`)
+        return { blocked: true }
+      }
+      // [D2 timeout-slow-flow-wallclock] bash RPC 超时（RpcTimeoutError，字段化 commandType/
+      // timeoutMs）：合成终态换诚实文案（三步恢复指引），不自动 abort_bash——超时是「停止
+      // 等待」不是「处决命令」，pi 侧照常执行并 recordBashResult 落盘，重开 session 可见真实
+      // 结果；迟到响应维持既有丢弃机制（rpc-client timedOutIds/NULL_EVENTS，本分支不动）。
+      // 此处 pi 未卡死（bash 长跑是合法活跃任务，ADR-0047 静默≠卡死），与 abort() 的
+      // RpcTimeoutError→强杀自愈分支语义不同，不得复用强杀路径。
+      if (e instanceof RpcTimeoutError) {
+        const honestOutput = buildBashTimeoutOutput(e.timeoutMs)
+        // 错误帧不进待落列（立即发布）：xyz 合成帧，无 pi 落盘时序语义（同下方通用错误分支）。
+        this.publishBashResult(sessionId, {
+          command,
+          output: honestOutput,
+          exitCode: null,
+          cancelled: false,
+          truncated: false,
+          excludeFromContext: excludeFlag,
+          timestamp: Date.now(),
+        })
+        const bashErrMsg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
+        this.messageBus?.publish(sessionId, bashErrMsg)
         return { blocked: true }
       }
       // [S2] 对称兜底：与 abortBash「无论成败都广播 bashResult 终态」对称。

@@ -26,6 +26,7 @@ import type { ISessionServiceInternal } from '../services/session/session-intern
 import type { IManagedSessionView } from '../services/session/types.js'
 import type { IMessageBus } from '../services/message-bus/message-bus.js'
 import type { IPiEngine, IProcessManager, PiBashResult } from '../services/ports/pi-engine.js'
+import { RpcTimeoutError } from '../utils/errors.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { WorkspaceService } from '../services/workspace/workspace-service.js'
 
@@ -329,6 +330,67 @@ describe('MessageDispatcher sendBash —— 错误路径（T6, S2 对称兜底�
     expect(session.isBashRunning).toBe(false)
     // 返回 blocked（无 rejected 字段——执行失败非预检拒绝）
     expect(result).toEqual({ blocked: true })
+  })
+})
+
+describe('MessageDispatcher sendBash —— bash RPC 超时诚实终态（timeout-slow-flow-wallclock D2）', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('D2-1: RpcTimeoutError → 合成终态 output 换诚实文案（三步恢复指引）+ 不自动 abortBash + 返回 blocked', async () => {
+    const { dispatcher, abortBashFn, broadcasts, session } = makeMocks({
+      bashError: new RpcTimeoutError('bash', 3_600_000),
+    })
+    const result = await dispatcher.sendBash('s1', 'sleep 3700', false)
+
+    // 合成终态：诚实文案而非 [bash error] 技术措辞
+    const end = findBashResult(broadcasts)
+    expect(end).toBeDefined()
+    expect(end!.payload).toMatchObject({
+      sessionId: 's1',
+      command: 'sleep 3700',
+      exitCode: null,
+      cancelled: false,
+      truncated: false,
+      excludeFromContext: false,
+    })
+    expect(end!.payload.output).toContain('已停止等待')
+    expect(end!.payload.output).toContain('命令可能仍在后台运行')
+    expect(end!.payload.output).toContain('abortBash')
+    expect(end!.payload.output).toContain('重开本 session')
+    expect(end!.payload.output).toContain('先取消再发送')
+    // 旧技术措辞不再出现
+    expect(end!.payload.output).not.toContain('[bash error]')
+    // D2②：不自动 abort_bash——超时是「停止等待」不是「处决命令」
+    expect(abortBashFn).not.toHaveBeenCalled()
+    // finally isBashRunning 复位（slot 释放，后续 bash 不被 busy 拒绝）
+    expect(session.isBashRunning).toBe(false)
+    expect(result).toEqual({ blocked: true })
+  })
+
+  it('D2-2: 文案如实反映 env 自定义超时（90s → 「90 秒」；1h → 「1 小时」）', async () => {
+    const custom = makeMocks({ bashError: new RpcTimeoutError('bash', 90_000) })
+    await custom.dispatcher.sendBash('s1', 'cmd', false)
+    expect(findBashResult(custom.broadcasts)!.payload.output).toContain('命令执行超过 90 秒')
+
+    const hour = makeMocks({ bashError: new RpcTimeoutError('bash', 3_600_000) })
+    await hour.dispatcher.sendBash('s1', 'cmd', false)
+    expect(findBashResult(hour.broadcasts)!.payload.output).toContain('命令执行超过 1 小时')
+  })
+
+  it('D2-3: 超时路径仍广播 message.error（技术性 errMsg 进对话流，诊断信息保留）', async () => {
+    const { dispatcher, broadcasts } = makeMocks({ bashError: new RpcTimeoutError('bash', 3_600_000) })
+    await dispatcher.sendBash('s1', 'cmd', false)
+    const errMsg = broadcasts.find((m) => m.type === 'message.error')
+    expect(errMsg).toBeDefined()
+    expect(errMsg!.payload).toMatchObject({ sessionId: 's1', message: 'RPC command "bash" timed out after 3600000ms' })
+  })
+
+  it('D2-4: 非 RpcTimeoutError 的 transport 错误维持既有 [bash error] 文案（回归守卫）', async () => {
+    const { dispatcher, broadcasts } = makeMocks({ bashError: new Error('pi boom') })
+    await dispatcher.sendBash('s1', 'git status', false)
+    const end = findBashResult(broadcasts)
+    expect(end).toBeDefined()
+    expect(end!.payload.output).toBe('[bash error] pi boom')
   })
 })
 

@@ -4,6 +4,7 @@ import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
 import { RpcTimeoutError } from '../../utils/errors.js'
 import type { ThinkingLevel, ProviderId } from '@xyz-agent/shared'
+import { BASH_RPC_TIMEOUT_MS } from '@xyz-agent/shared'
 // B3 出站契约唯一构建器（U3 收口点；实现本体在 @xyz-agent/shared，此处走 runtime 门面）
 import { buildOutboundChildEnv } from '../spawn-env.js'
 import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
@@ -116,6 +117,34 @@ const STDERR_CRASH_MAX_BYTES = 1_000_000
 const STDERR_TAIL_LINES = 10
 
 /**
+ * bash RPC 超时解析（timeout-slow-flow-wallclock D2 env 逃生门）。
+ *
+ * 优先级：env `XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS`（0=不限时，非法/负值回退默认）>
+ * shared `BASH_RPC_TIMEOUT_MS`（1h）。env 覆盖读取刻意留在 runtime 侧（renderer 不可达
+ * 进程 env），renderer 侧 backstop 由 D5 的 shared 常量 + margin 独立取值。
+ *
+ * 读一次缓存：pi 是长驻子进程，超时决策在进程生命周期内稳定——若每次 bash() 重读 env，
+ * 运行中途改 env 会让「已等 59 分钟」与「刚改的 1 秒」并存于同一次等待，语义不可预测；
+ * 缓存后语义 = 「本次 runtime 进程启动后首个 bash 请求时的配置」（测试可经
+ * resetBashRpcTimeoutForTest 重置）。
+ */
+let cachedBashRpcTimeoutMs: number | null = null
+
+export function resolveBashRpcTimeoutMs(): number {
+  if (cachedBashRpcTimeoutMs === null) {
+    const raw = process.env.XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS
+    const parsed = raw !== undefined ? Number(raw) : Number.NaN
+    cachedBashRpcTimeoutMs = Number.isFinite(parsed) && parsed >= 0 ? parsed : BASH_RPC_TIMEOUT_MS
+  }
+  return cachedBashRpcTimeoutMs
+}
+
+/** 测试隔离：清空 env 逃生门缓存（对齐 core resetChatModuleStateForTest 先例）。生产勿调。 */
+export function resetBashRpcTimeoutForTest(): void {
+  cachedBashRpcTimeoutMs = null
+}
+
+/**
  * RPC 超时错误（integrity-hardening D3a：pi 半死自愈）。
  *
  * pi 事件循环卡死（native 模块 / 同步 IO 冻结）时一切 RPC 都以超时失败——这类失败
@@ -134,7 +163,8 @@ export class RpcClient implements IPiEngine {
   private pending = new Map<string, {
     resolve: (msg: PiMessage) => void
     reject: (err: Error) => void
-    timer: ReturnType<typeof setTimeout>
+    /** 超时 timer；undefined = 不限时（timeout ≤ 0，D2 env 逃生门 0=不限时形态） */
+    timer: ReturnType<typeof setTimeout> | undefined
   }>()
   /**
    * 已超时的 RPC id（S6 防御迟到响应被误当 event 广播）。
@@ -547,6 +577,13 @@ export class RpcClient implements IPiEngine {
    * If the response indicates failure (success: false), the promise is rejected.
    */
   /**
+   * timeout ≤ 0 = 不限时：不挂墙钟 timer，pending 等到响应/进程退出才 settle。
+   * 唯一合法入口是 bash RPC 的 env 逃生门 `XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS=0`
+   * （timeout-slow-flow-wallclock D2：0=不限时）——其余命令不得传 ≤0（控制面单请求
+   * 秒级是有界兜底档，规则 19）。clearTimeout(undefined) 是 no-op，resolve/reject
+   * 路径对无 timer 形态天然安全。
+   */
+  /**
    * 向 pi stdin 写入一行原始 JSON，不注册 pending、不等 RPC reply。
    *
    * 用于 pi 不回复 `{type:'response'}` 的命令（目前仅 `extension_ui_response`——
@@ -578,16 +615,18 @@ export class RpcClient implements IPiEngine {
       const id = this.nextId()
       const msg = JSON.stringify({ id, type, ...params }) + '\n'
 
-      const timer = setTimeout(() => {
-        this.pending.delete(id)
-        // S6: 标记此 id 已超时，handleMessage 收到带此 id 的迟到响应时丢弃而非广播为 event。
-        // 5s TTL 后自动从 Set 删除，避免无界增长；.unref() 避免阻止进程退出。
-        this.timedOutIds.add(id)
-        setTimeout(() => this.timedOutIds.delete(id), TIMED_OUT_ID_TTL_MS).unref()
-        // D3a：超时以 RpcTimeoutError 类型 reject（字段化 commandType/timeoutMs），调用方
-        // instanceof 判别后走强杀自愈路径，不再靠 message 字符串匹配。
-        reject(new RpcTimeoutError(type, timeout))
-      }, timeout)
+      const timer = timeout > 0
+        ? setTimeout(() => {
+          this.pending.delete(id)
+          // S6: 标记此 id 已超时，handleMessage 收到带此 id 的迟到响应时丢弃而非广播为 event。
+          // 5s TTL 后自动从 Set 删除，避免无界增长；.unref() 避免阻止进程退出。
+          this.timedOutIds.add(id)
+          setTimeout(() => this.timedOutIds.delete(id), TIMED_OUT_ID_TTL_MS).unref()
+          // D3a：超时以 RpcTimeoutError 类型 reject（字段化 commandType/timeoutMs），调用方
+          // instanceof 判别后走强杀自愈路径，不再靠 message 字符串匹配。
+          reject(new RpcTimeoutError(type, timeout))
+        }, timeout)
+        : undefined
 
       this.pending.set(id, {
         resolve: (msg) => {
@@ -787,12 +826,15 @@ export class RpcClient implements IPiEngine {
    * 直接执行 bash 命令（pi bash RPC）。
    *
    * excludeFromContext 透传规则：undefined 时不传该键（走 pi 默认），显式 true/false 时透传。
-   * bash 可能长跑，复用 COMPACT_TIMEOUT_MS（300s）避免误超时。
+   * bash 是任务级慢速流（合法耗时可达小时级），超时用独立常量 BASH_RPC_TIMEOUT_MS（1h，
+   * env `XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS` 可覆盖、0=不限时——resolveBashRpcTimeoutMs），
+   * 不再复用 compact 的 300s 常量（timeout-slow-flow-wallclock D2：跨粒级挪用是 `!sleep 320`
+   * 误杀的根因）。超时语义是「停止等待」非「处决」：不自动 abort_bash，pi 侧照常执行落盘。
    * 返回值归一为 PiBashResult（sendCommand 已归一 data ?? payload，此处按结构断言）。
    */
   async bash(command: string, excludeFromContext?: boolean): Promise<PiBashResult> {
     const args = excludeFromContext !== undefined ? { command, excludeFromContext } : { command }
-    const msg = await this.sendCommand('bash', args, COMPACT_TIMEOUT_MS)
+    const msg = await this.sendCommand('bash', args, resolveBashRpcTimeoutMs())
     // [W6] shape guard：pi 返回 malformed 数据时 fallback，避免下游因 undefined 字段崩溃。
     // [S1] fallback 不用 exitCode:1（会被前端误读为「命令失败」，实为 pi 协议异常），
     // 改用 exitCode:undefined（PiBashResult.exitCode 类型 number|undefined，dispatcher 广播时
