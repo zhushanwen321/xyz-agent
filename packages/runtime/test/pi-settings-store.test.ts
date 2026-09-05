@@ -259,7 +259,14 @@ describe('pi-settings-store', () => {
       const child = spawn(process.execPath, ['-e', `
         const lockfile = require(${JSON.stringify(lockEntry)})
         const fs = require('node:fs')
-        const release = lockfile.lockSync(${JSON.stringify(settingsPath)}, { realpath: false })
+        // [HISTORICAL] 2026-09-06 final-gates flaky：主进程探测循环每 2ms 抢占一次锁，
+        // 子进程单次 lockSync 可能撞上探测持有的瞬间窗口（ELOCKED 未捕获 → 子进程崩溃）。
+        // 子进程改为重试直至拿到锁。
+        let release
+        for (;;) {
+          try { release = lockfile.lockSync(${JSON.stringify(settingsPath)}, { realpath: false }); break }
+          catch (e) { if ((e && e.code) !== 'ELOCKED') throw e }
+        }
         fs.writeFileSync(${JSON.stringify(settingsPath)}, JSON.stringify({ defaultModel: 'pi-child', packages: ['p1'] }), 'utf-8')
         setTimeout(() => { release(); process.exit(0) }, 150)
       `])
