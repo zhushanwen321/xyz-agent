@@ -15,6 +15,7 @@
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "paths": {
+      "@zhushanwen/subagent-core/testing/*.ts": ["../packages/subagent-core/src/*.ts"],
       "@zhushanwen/subagent-core/*.ts": ["../packages/subagent-core/src/*.ts"]
     }
   },
