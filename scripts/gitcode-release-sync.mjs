@@ -10,6 +10,9 @@
  *   正式同步：node scripts/gitcode-release-sync.mjs sync <tag> <name> <notes-file> <artifacts-dir> [--prerelease]
  *     把 <artifacts-dir> 下所有文件同步到 GitCode 同 tag 的 Release（幂等：同名同大小跳过）；
  *     --prerelease 在 release 正文加测试版标注
+ *   本地中转同步（推荐给国内快速分发）：node scripts/gitcode-release-sync.mjs sync-from-github <tag> [--github-repo owner/repo]
+ *     本机 gh 拉取 GitHub Release 附件（走本地 proxy，快）→ 复用并发上传到 GitCode（国内上行，快）。
+ *     绕开 GitHub Actions runner → GitCode 的跨境慢链路；与 CI 自动同步幂等互不冲突。
  *
  * 环境变量（必填）：
  *   GITCODE_TOKEN  GitCode 私人令牌（GitHub Actions 中配置为 secret GITCODE_TOKEN）
@@ -455,6 +458,36 @@ function listFilesRecursive(dir) {
   return out;
 }
 
+/* ── 模式三：本地中转同步（gh 下载 GitHub Release → 并发上传 GitCode）── */
+
+async function runSyncFromGithub({ tag, githubRepo }) {
+  // prerelease 以版本号含 '-' 判断（beta/alpha 等测试版标注用）
+  const prerelease = tag.includes('-');
+  const tmpDir = mkdtempSync(join(tmpdir(), 'gitcode-sync-'));
+  try {
+    console.log(`[sync-from-github] 从 GitHub 拉取 release ${tag}（repo: ${githubRepo}，走本机 gh/proxy）…`);
+    const view = execSync(
+      `gh release view ${shellQuote(tag)} --repo ${shellQuote(githubRepo)} --json name,body`,
+      { encoding: 'utf8', timeout: 60000, shell: '/bin/bash' },
+    );
+    const meta = JSON.parse(view);
+    const notesFile = join(tmpDir, 'release-notes.md');
+    writeFileSync(notesFile, meta.body || '');
+
+    execSync(
+      `gh release download ${shellQuote(tag)} --repo ${shellQuote(githubRepo)} --dir ${shellQuote(tmpDir)} --clobber`,
+      { stdio: 'inherit', timeout: 3600000, shell: '/bin/bash' },
+    );
+
+    const assets = readdirSync(tmpDir).filter((f) => f !== 'release-notes.md');
+    if (assets.length === 0) die(`GitHub release ${tag} 没有附件可同步——确认 tag 正确、Release 已发布`);
+    console.log(`[sync-from-github] 下载完成（${assets.length} 个附件），开始上传 GitCode…`);
+    await runSync({ tag, name: meta.name || tag, notesFile, artifactsDir: tmpDir, prerelease });
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 /* ── 入口 ─────────────────────────────────────────────────── */
 
 const argv = process.argv.slice(2);
@@ -468,6 +501,15 @@ if (cmd === 'probe') {
   } catch (e) {
     die(String(e.message || e));
   }
+} else if (cmd === 'sync-from-github') {
+  const pos = argv.slice(1).filter((a) => !a.startsWith('--'));
+  const [tag] = pos;
+  const ghRepoIdx = argv.indexOf('--github-repo');
+  const githubRepo = ghRepoIdx >= 0 ? argv[ghRepoIdx + 1] : 'zhushanwen321/xyz-agent';
+  if (!tag) {
+    die('用法：node scripts/gitcode-release-sync.mjs sync-from-github <tag> [--github-repo owner/repo]');
+  }
+  await runSyncFromGithub({ tag, githubRepo });
 } else if (cmd === 'sync') {
   const pos = argv.slice(1).filter((a) => !a.startsWith('--'));
   const [tag, name, notesFile, artifactsDir] = pos;
@@ -483,6 +525,7 @@ if (cmd === 'probe') {
   node scripts/gitcode-release-sync.mjs probe [--large] [--no-repo]
   node scripts/gitcode-release-sync.mjs push-repo
   node scripts/gitcode-release-sync.mjs sync <tag> <release-name> <notes-file> <artifacts-dir> [--prerelease]
-环境变量：GITCODE_TOKEN（必填）、GITCODE_REPO=owner/repo（必填）`);
+  node scripts/gitcode-release-sync.mjs sync-from-github <tag> [--github-repo owner/repo]
+环境变量：GITCODE_TOKEN（必填）；sync-from-github 另需本机 gh 已登录`);
   process.exit(cmd ? 1 : 0);
 }
