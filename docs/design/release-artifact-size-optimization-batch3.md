@@ -46,7 +46,7 @@ renderer 触发 → IPC update:check → ReleaseChecker.checkForLatestRelease
 
 ### 2.3 renderer 语言 chunk 死重根因
 
-`markdown.ts:28` `import { createHighlighter } from 'shiki'`（full bundle）→ shiki full bundle 的 `langs-bundle-full` 模块内含 **235 个** `import("@shikijs/langs/<lang>")` 动态条目（node_modules/shiki/dist/langs-bundle-full-*.mjs 实测 grep 计数）→ rolldown 对每个动态入口产独立 chunk → 产物 `renderer/dist/assets/` 实测 **289 个语言 chunk 共 ~8.1MB**。而运行时只注册 13 语言（markdown.ts:55 SHIKI_LANGS），未注册语言一律回落 typescript（:122-134）——**~7.5MB 是模块图里存在、运行时永不加载的死重**。vite.config.ts:81 的 shiki 组 regex 已用负向前瞻排除 `@shikijs/langs/`，与死重成因无关，改造后无需同步。
+`markdown.ts:28` `import { createHighlighter } from 'shiki'`（full bundle）→ shiki full bundle 的 `langs-bundle-full` 模块内含 **235 个** `import("@shikijs/langs/<lang>")` 动态条目（node_modules/shiki/dist/langs-bundle-full-*.mjs 实测 grep 计数）→ rolldown 对每个动态入口产独立 chunk → 产物 `renderer/dist/assets/` 实测 **289 个语言 chunk 共 ~8.1MB**。而运行时只注册 13 语言（markdown.ts:55 SHIKI_LANGS），未注册语言一律回落 typescript（:122-134）——**~7.5MB 是模块图里存在、运行时永不加载的死重**。vite.config.ts:81 的 shiki 组 regex 已用负向前瞻排除 `@shikijs/langs/`，与死重成因无关，改造后无需同步（该文件 :66-67 关于「235 动态 chunk 按需分离」的注释随 full bundle 移除而失真，已在阶段 3 修复批次补 [HISTORICAL] 标注）。
 
 ### 2.4 node-pty 全平台 prebuilds
 
@@ -125,7 +125,7 @@ hdiutil attach 对 ULFO 完全透明（系统层解压），updater 脚本与人
 3. validate-release.ts:54 硬编码 key 列表删 `linuxX64Deb`。
 4. scripts/generate-manifest.sh:83-86 的扩展名正则删 `deb`（留着无害——匹配不到文件——清理是防误导）。
 5. build.yml:292 上传 glob 删 `*.deb` 行（同上：`if-no-files-found` 判定的是全部 glob 合计零文件，删行非阻塞，属语义清洁）。
-6. verify-ci-release.sh **无需改动**（只硬查 dmg/exe/AppImage，:130-132；附件数断言 `≥3`，:106）。
+6. verify-ci-release.sh **兼容性无需改动**（只硬查 dmg/exe/AppImage，:130-132；附件数断言 `≥3`，:106）——S11 要求的「无 zip/deb」负向断言（防 target 回潮）已在阶段 3 修复批次落地（04473fb64），非本单元范围。
 
 #### 3.3.3 mac 自动更新改走 dmg（核心改造，u6）
 

@@ -79,12 +79,13 @@ graph TD
 | u5+u6 | 阶段 2 验证合并（test:main 一次 + 双平台构建一次），未逐单元验证 | 应用户要求；规则 12 的「逐个验证」放宽，「逐个 commit」由 u1-u4 保留 | 2026-09-05 |
 | u6 | S1 新错误码（dmg mount failed 等）在 renderer LAUNCH_FAILURE_ERROR_KEYS 无映射，走通用降级文案 | renderer 明确禁改（并行领地边界）；无崩溃面；设计待验证检查点③登记的实施期事实 | 2026-09-05 |
 | u5+u6 | staged 12 处测试 rmSync 递归删除补 maxRetries/retryDelay（F3 flake 卫生检查拦截） | pre-commit MANDATORY 全部正面修复；多为存量，随本批测试文件 staged 被扫出 | 2026-09-05 |
+| u1 | lockfile 携带 jiti peer 重解析 1.21.7→2.7.0 伴生 churn（vite/vitest/eslint dev 工具链面） | pnpm add @shikijs/* 触发的 peer 图重排；两版本仍在 lock、hoisted 单拷贝，无运行时风险（阶段 3 审查核验） | 2026-09-06 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u1 | committed | 1 | ac01fab47（3729 用例 0 失败含 18 新增 fine-grained 用例；vite build 后语言死重 8.1MB→782KB、死语言 chunk 零命中；主 agent build:dir 复核 asar 18M→11M） |
+| u1 | committed | 1 | ac01fab47（3729 用例 0 失败含 18 新增 fine-grained 用例；vite build 后语言死重 8.1MB→782KB、死语言 chunk 零命中；主 agent build:dir 复核 asar 18M→11.5M） |
 | u2 | committed | 1 | db4f42fc7（yaml 解析断言三平台段排除就位；主 agent build:dir 断言 prebuilds 仅 darwin-arm64 且 pty.node/spawn-helper 在位） |
 | u3 | committed | 1 | 643387668（imageinfo Format: ULFO / Ratio 0.42 + 双构建 106M→104M(-1.77%) + 挂载冒烟 ditto exec 位在位；deviation 2 条已登记） |
 | u4 | committed | 1 | e94b9e17b（双构建 gzip 112.0MB→xz 81.6MB = -27.1%，两产物 file 断言均 ELF executable；位置修正已回写设计） |
