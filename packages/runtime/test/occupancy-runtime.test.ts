@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { EventInterpreter, updateSessionOccupancy } from '../src/services/session/event-interpreter.js'
 import { MessageDispatcher } from '../src/services/session/message-dispatcher.js'
 import { SessionLifecycle } from '../src/services/session/session-lifecycle.js'
+import { MessageBus } from '../src/services/message-bus/message-bus.js'
 import { RpcTimeoutError } from '../src/utils/errors.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { SessionOccupancy } from '../src/services/session/types.js'
@@ -430,7 +431,7 @@ describe('MessageDispatcher occupancy 挂点', () => {
 // ── Part D：lifecycle registerSession 初值（#10 respawn 衔接）────
 
 describe('SessionLifecycle.registerSession occupancy 初值（respawn 衔接）', () => {
-  function makeLifecycle() {
+  function makeLifecycle(bus: IMessageBus | null = null) {
     const svc: ILifecycleSessionOps = {
       getExtensionPaths: vi.fn(async () => []),
       getSkillPaths: vi.fn(() => []),
@@ -445,7 +446,7 @@ describe('SessionLifecycle.registerSession occupancy 初值（respawn 衔接）'
     }
     const registerDeps: ISessionRegisterDeps = {
       adapterFactory: vi.fn(() => ({ attach: vi.fn(), detach: vi.fn() }) as unknown as IEventAdapter),
-      getMessageBus: () => null,
+      getMessageBus: () => bus,
       broadcastGlobal: vi.fn(),
       notifyMessageComplete: vi.fn(),
     }
@@ -459,11 +460,59 @@ describe('SessionLifecycle.registerSession occupancy 初值（respawn 衔接）'
     return lifecycle
   }
 
+  function makeWs() {
+    return { readyState: 1, send: vi.fn() }
+  }
+
   it('respawn（restore）/create/fork 共用注册汇聚点：occupancy 从 idle 起步', async () => {
     const lifecycle = makeLifecycle()
     const session = await lifecycle.registerSession('s1', {} as unknown as IPiEngine, '/repo', 'r')
-    // pi 重 spawn 后无活跃 run → idle 起步（与三 flag 全 false 同语义）；restore 清场后
-    // bus 快照已清，renderer 重订阅无帧 = idle 缺省，两侧一致（转移 #10 衔接，无反例）。
+    // pi 重 spawn 后无活跃 run → idle 起步（与三 flag 全 false 同语义）；renderer 可观测性
+    // 由宣告帧保证（下方用例），bus 未注入（null）时状态照写不抛（null-safe）。
     expect(session.occupancy).toEqual({ turn: 'idle', compacting: false, bash: false })
+  })
+
+  it('Gate B V6b 回归：注册即写 occupancy idle 快照——restore 后重订阅回放 idle 帧修正 stale 分区', async () => {
+    const bus = new MessageBus()
+    // 复现 restore 前置态：压缩中死亡（compacting=true 曾写快照），onSessionExit 的
+    // clearSession 清场（转移 #10 的 idle 帧在 renderer 侧被 exited-unsub 抢先丢弃——
+    // renderer 分区 stale 只能靠 respawn 后的快照回放修正）。
+    bus.publish('s1', {
+      type: 'session.occupancy',
+      payload: { sessionId: 's1', turn: 'generating', compacting: true, bash: false },
+    } as ServerMessage)
+    bus.clearSession('s1')
+
+    const lifecycle = makeLifecycle(bus)
+    await lifecycle.registerSession('s1', {} as unknown as IPiEngine, '/repo', 'r')
+
+    // renderer respawn 后 subscribeSession → stateSnapshot 回放必含 idle 帧：
+    // setOccupancy(idle) 修正 stale + flush 触发条件（收到全 idle 帧）成立，队列可续投。
+    const replay = bus.subscribe('s1', makeWs())
+    const occ = replay.stateSnapshot.find((m) => m.type === 'session.occupancy')
+    expect(occ?.payload).toEqual({ sessionId: 's1', turn: 'idle', compacting: false, bash: false })
+  })
+
+  it('create（全新 sid）同样落 idle 快照：三入口汇聚点语义一致（renderer 缺省分区本就 idle，无行为变化）', async () => {
+    const bus = new MessageBus()
+    const lifecycle = makeLifecycle(bus)
+    await lifecycle.registerSession('fresh', {} as unknown as IPiEngine, '/repo', 'r')
+
+    const replay = bus.subscribe('fresh', makeWs())
+    const occ = replay.stateSnapshot.find((m) => m.type === 'session.occupancy')
+    expect(occ?.payload).toEqual({ sessionId: 'fresh', turn: 'idle', compacting: false, bash: false })
+  })
+
+  it('宣告帧经 IMessageBus.publish 下发（payload 形状与 shared protocol 一致）', async () => {
+    const publish = vi.fn()
+    const lifecycle = makeLifecycle({ publish } as unknown as IMessageBus)
+    await lifecycle.registerSession('s1', {} as unknown as IPiEngine, '/repo', 'r')
+
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(publish.mock.calls[0][0]).toBe('s1')
+    expect(publish.mock.calls[0][1]).toMatchObject({
+      type: 'session.occupancy',
+      payload: { sessionId: 's1', turn: 'idle', compacting: false, bash: false },
+    })
   })
 })

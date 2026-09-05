@@ -400,9 +400,13 @@ describe('wave:runtime-wiring · TC8 session.commands 激活发布（W12 快照�
     // 读快照发布（publishCommandsSnapshot 有 sessions.has 防护，须经真实 session 建立路径）。
     await service.initializeManagedSession('s-cmd', { getCommands: fakeClient.getCommands } as never, '/tmp', 't')
     // 播种 fetch 是 fire-and-forget（微任务链 applySnapshot），挂钩宏任务在其后——轮询等
-    // publish 落地（全量并行负载下固定 sleep 不可靠，2s 上限兜底）
+    // publish 落地（全量并行负载下固定 sleep 不可靠，2s 上限兜底）。等待条件必须是
+    // commands 帧本身而非「任意 publish」：registerSession 现含 occupancy idle 宣告帧
+    // （Gate B V6b 修复），任意帧出现 ≠ 播种链宏任务完成。
     const deadline = Date.now() + 2_000
-    while (vi.mocked(messageBus.publish).mock.calls.length === 0 && Date.now() < deadline) {
+    const hasCommandsPublish = () =>
+      vi.mocked(messageBus.publish).mock.calls.some((c) => c[1].type === 'session.commands')
+    while (!hasCommandsPublish() && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 10))
     }
 

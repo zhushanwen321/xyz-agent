@@ -391,7 +391,7 @@ ServerMessageMap += {
 - fork notice 定位基线迁移（P4 实施时实测）。
 - V2 ~100ms 档的「prompt 已入 turn 被 manual compact 中止、不续跑」实际表现——pi 行为边界（D2 已登记），实施期真实会话记录一次作佐证，不进验收判据。
 - V4a threshold 形态的构造方法（pi settings 文件路径 + 「上一 turn 未超阈值、本 turn 内推过」的稳定构造），实测难构造则降级为机制审查 + 源码时序断言。
-- 转移 #10（session.exited 全复位）与 respawn 后 occupancy 初值的衔接（P3 实施时定：respawn 恢复的 session 从 idle 起步还是拉取 pi 实际状态——pi 重 spawn 后无活跃 run，idle 起步即可，实施确认无反例）。
+- 转移 #10（session.exited 全复位）与 respawn 后 occupancy 初值的衔接（P3 实施时定：respawn 恢复的 session 从 idle 起步还是拉取 pi 实际状态——pi 重 spawn 后无活跃 run，idle 起步即可）【Gate B 反例已修复 2026-09-06】：原判定「实施确认无反例」被 V6b 端到端证伪——renderer 的 session.exited 兜底 handler 同步失效本地订阅（invalidateStreamSubscription），随后到达的转移 #10 idle 帧被丢弃，occupancy 分区残留 stale compacting=true；dead 占位吞掉消息流使其暂不可见，restore 后 stale 显形且永无帧修正（bus 快照已随 clearSession 清空、registerSession 不发帧），flush（触发条件 = 收到全 idle 帧）永不触发，defer 队列滞留至 runtime 重启。修复：registerSession 注册汇聚点显式 publish occupancy idle 宣告帧（写 state 快照 + 重订阅回放必达；不走 updateSessionOccupancy——初值即 idle 会被全等去重短路），respawn 后 idle 起步的 renderer 可观测性由宣告帧保证，不再依赖「无帧 = idle 缺省」假设。V6b 端到端重验 pass（压缩中 kill pi（compact failed elapsed=6.4s 命中压缩中）→ dead → 重新打开 → 无压缩行 + 发送位 idle + 队列消息自动续投）。
 - `removeQueuedTextFromSnapshot` 对「快照中不存在的实例」的幂等性【已核实 2026-09-05 u4a 期】：includes→filter 模式天然幂等——无快照/无维度/idx===-1 三处早退，命中后 filter 不可变写，对不存在实例调用 no-op 不抛错；ID1-ID3 单测锁定（effects-defer-confirmation.test.ts）。
 
 **迁移期双轨收口**：P3 落地前 renderer 仍消费 session.compacting/compacted（P1/P2 兼容现状）；P3 落地时 isCompacting 判定切到 occupancy 派生、setCompacting 通路废弃；P4 清理 TurnMeta 占位与 CompactQueueBadge。全程每阶段结束跑受影响模块增量测试 + 上述对应验收场景。
