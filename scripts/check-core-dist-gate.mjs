@@ -33,12 +33,16 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve as resolvePath } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
 const CORE_DIR = join(ROOT, 'packages', 'subagent-core')
 const PKG_PATH = join(CORE_DIR, 'package.json')
+
+// 纯函数导出面（scripts/__tests__/check-core-dist-gate.test.mjs 直挂单测——发布门禁
+// 解析逻辑的边界行为必须有机器锁定，见 MF-2）。仅 CLI 直跑时执行下方 main()。
+export { stripComments, parseExportBlocks, collectBundleClosure, extractSrcExportNames }
 
 let failures = 0
 function fail(msg) {
@@ -245,6 +249,8 @@ function diffSets(a, b) {
 
 // ---------- 入口发现（package.json exports 驱动，不写死清单）----------
 
+// main()：CLI 直跑才执行（vitest import 纯函数导出时不触发门禁扫描/exit）
+function main() {
 if (!existsSync(PKG_PATH)) {
   console.error(`✗ 未找到 ${PKG_PATH}——脚本须位于 <repo>/scripts/ 下运行`)
   process.exit(1)
@@ -431,3 +437,7 @@ if (failures === 0) {
 console.error(`✗ subagent-core dist 静态门失败：${failures} 项 FAIL（上方 ✗ 行）`)
 console.error('  排查顺序：① cd packages/subagent-core && pnpm build 后重跑；② 核对 tsup.config.ts 多入口与 package.json exports 一致；③ 重叠 module 可变状态按 globalThis[Symbol.for] 范式迁移（设计 §3.2 B-2）')
 process.exit(1)
+}
+
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(resolvePath(process.argv[1])).href
+if (isMain) main()

@@ -29,7 +29,8 @@
  */
 
 import { readFileSync, readdirSync, statSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve as resolvePath } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
@@ -51,14 +52,21 @@ function die(msg) {
   process.exit(1);
 }
 
-if (!token) {
-  die('缺少环境变量 GITCODE_TOKEN（GitCode 私人令牌）。'
-    + '配置方式：GitHub 仓库 Settings → Secrets and variables → Actions → New repository secret，'
-    + 'Name 填 GITCODE_TOKEN；或本地验证时 export GITCODE_TOKEN=<令牌> 后重跑。');
-}
-if (!repo || !/^[^/]+\/[^/]+$/.test(repo)) {
-  die(`缺少或非法的环境变量 GITCODE_REPO="${repo ?? ''}"（应为 owner/repo，如 zhushanwen321/xyz-agent）。`
-    + 'GitHub Actions 中配置为仓库 variable GITCODE_REPO；本地验证时 export GITCODE_REPO=<owner/repo>。');
+// 纯逻辑导出面（scripts/__tests__/gitcode-release-sync.test.mjs 单测——MF-3：发布同步
+// 关键分支不再只靠人工真发布验证）。token 在模块加载时读 env（测试先设 env 再动态 import）。
+export { assetList, fetchUploadTarget, buildExistingAssetMap }
+
+// env 校验收进 main()：vitest import 纯函数导出时不再因缺 token die（CLI 行为不变）
+function checkEnv() {
+  if (!token) {
+    die('缺少环境变量 GITCODE_TOKEN（GitCode 私人令牌）。'
+      + '配置方式：GitHub 仓库 Settings → Secrets and variables → Actions → New repository secret，'
+      + 'Name 填 GITCODE_TOKEN；或本地验证时 export GITCODE_TOKEN=<令牌> 后重跑。');
+  }
+  if (!repo || !/^[^/]+\/[^/]+$/.test(repo)) {
+    die(`缺少或非法的环境变量 GITCODE_REPO="${repo ?? ''}"（应为 owner/repo，如 zhushanwen321/xyz-agent）。`
+      + 'GitHub Actions 中配置为仓库 variable GITCODE_REPO；本地验证时 export GITCODE_REPO=<owner/repo>。');
+  }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -158,6 +166,11 @@ function assetList(releaseJson) {
       };
     })
     .filter((a) => a.name);
+}
+
+/** release 既有附件 → Map（同名去重取最后条目；runSync 幂等跳过判定的唯一入口） */
+function buildExistingAssetMap(releaseJson) {
+  return new Map(assetList(releaseJson).map((a) => [a.name, a.size]));
 }
 
 /** 取预签名上传参数（最终 URL + curl header 参数串）。响应缺 upload_url/url 或 headers
@@ -425,7 +438,7 @@ async function runSync({ tag, name, notesFile, artifactsDir, prerelease = false 
     console.log(`[sync] GitCode release 已存在，复用（幂等补齐附件）`);
   }
 
-  const existing = new Map(assetList(release).map((a) => [a.name, a.size]));
+  const existing = buildExistingAssetMap(release);
   const files = listFilesRecursive(artifactsDir);
   if (files.length === 0) die(`产物目录 ${artifactsDir} 下没有文件——检查构建产物路径是否正确`);
 
@@ -546,7 +559,9 @@ async function runSyncFromGithub({ tag, githubRepo }) {
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 
-if (cmd === 'probe') {
+async function main() {
+  checkEnv();
+  if (cmd === 'probe') {
   await runProbe({ large: argv.includes('--large'), skipRepo: argv.includes('--no-repo') });
 } else if (cmd === 'push-repo') {
   try {
@@ -582,3 +597,9 @@ if (cmd === 'probe') {
 环境变量：GITCODE_TOKEN（必填）；sync-from-github 另需本机 gh 已登录`);
   process.exit(cmd ? 1 : 0);
 }
+}
+
+// CLI 直跑才执行 main（vitest import 纯函数导出时不触发网络/env 校验）
+const isMain = process.argv[1]
+  && import.meta.url === pathToFileURL(resolvePath(process.argv[1])).href;
+if (isMain) await main();
