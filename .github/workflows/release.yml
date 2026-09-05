@@ -229,11 +229,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ── GitCode 镜像同步（国内下载加速）────────────────────────
-  # GitHub Releases 是唯一权威源（SSOT），本 job 只把附件镜像到 GitCode 同 tag 的
-  # Release，供国内用户加速下载；GitCode 侧被清理/下线不影响官方分发。
+  # GitHub Releases 是唯一权威源（SSOT），本 job 把仓库代码与 Release 附件镜像到
+  # GitCode（先推代码 + tags，再同步附件），供国内用户加速下载；GitCode 侧被
+  # 清理/下线不影响官方分发。
   # 依赖：secret GITCODE_TOKEN（GitCode 私人令牌）+ variable GITCODE_REPO（GitCode
-  # 仓库路径 owner/repo）。脚本幂等，job 失败直接重跑即可补齐附件。
-  # 写路径行为由 gitcode-sync-probe.yml 探针验证（2026-09 首次接入）。
+  # 仓库路径 owner/repo，必须是普通仓库——镜像仓（image repository）锁写会 400）。
+  # 脚本幂等，job 失败直接 re-run 即可补齐。
   gitcode-sync:
     name: Sync Release to GitCode
     needs: release
@@ -246,6 +247,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 全量历史 + tags：gitcode-sync 第一步把仓库分支/tags 强推对齐到 GitCode
+          fetch-depth: 0
+
+      - name: Mirror repo (branches + tags) to GitCode
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
+        run: node scripts/gitcode-release-sync.mjs push-repo
 
       - name: Download release assets
         env:

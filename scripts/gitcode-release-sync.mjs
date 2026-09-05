@@ -3,8 +3,10 @@
  * GitCode Release 同步脚本（GitHub Releases → GitCode Release 镜像）
  *
  * 用法：
- *   探针（验证写路径）：node scripts/gitcode-release-sync.mjs probe [--large]
+ *   探针（验证写路径）：node scripts/gitcode-release-sync.mjs probe [--large] [--no-repo]
  *     --large 追加一个 200MB 文件上传 + Range 探测，当场验证「单附件大小上限」
+ *     --no-repo 跳过仓库镜像推送（只验证 Release 写路径）
+ *   镜像仓库（分支 + tags 强推对齐 GitHub）：node scripts/gitcode-release-sync.mjs push-repo
  *   正式同步：node scripts/gitcode-release-sync.mjs sync <tag> <name> <notes-file> <artifacts-dir> [--prerelease]
  *     把 <artifacts-dir> 下所有文件同步到 GitCode 同 tag 的 Release（幂等：同名同大小跳过）；
  *     --prerelease 在 release 正文加测试版标注
@@ -28,6 +30,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
+import { execSync } from 'node:child_process';
 
 const API_BASE = 'https://api.gitcode.com/api/v5';
 const WEB_BASE = 'https://gitcode.com';
@@ -211,9 +214,42 @@ async function deleteReleaseQuietly(releaseId, tag) {
   }
 }
 
+/* ── 仓库镜像：把 origin 分支 + 全部 tags 强推对齐到 GitCode ── */
+
+/** GitCode https push 的认证格式官方未写明，按常见三种自动探测 */
+function resolveGitcodeRemote() {
+  const owner = repo.split('/')[0];
+  const candidates = [
+    `https://${owner}:${token}@gitcode.com/${repo}.git`,
+    `https://oauth2:${token}@gitcode.com/${repo}.git`,
+    `https://${token}@gitcode.com/${repo}.git`,
+  ];
+  for (const url of candidates) {
+    try {
+      execSync(`git ls-remote "${url}" HEAD`, { stdio: 'pipe', timeout: 60000 });
+      return url;
+    } catch { /* 试下一种认证格式 */ }
+  }
+  throw new Error(`GitCode 仓库 https 认证三种格式（user:token / oauth2:token / token）均失败。`
+    + `恢复：确认令牌未过期、对 ${repo} 有写权限、仓库已创建且已解除镜像状态（镜像仓锁写）`);
+}
+
+/** 强推 origin 分支 + tags 到 GitCode（--prune 保证与 GitHub 完全一致，防 drift） */
+function pushRepoMirror() {
+  const url = resolveGitcodeRemote();
+  execSync('git remote remove gitcode-sync 2>/dev/null || true', { stdio: 'pipe', shell: '/bin/bash' });
+  execSync(`git remote add gitcode-sync "${url}"`, { stdio: 'pipe' });
+  execSync(
+    'git push gitcode-sync --force --prune "+refs/remotes/origin/*:refs/heads/*" "+refs/tags/*:refs/tags/*"',
+    { stdio: 'inherit', timeout: 600000 },
+  );
+  execSync('git remote remove gitcode-sync', { stdio: 'pipe' });
+  console.log('[push-repo] 仓库镜像完成：origin 全部分支 + tags 已对齐到 GitCode');
+}
+
 /* ── 模式一：探针 ─────────────────────────────────────────── */
 
-async function runProbe({ large }) {
+async function runProbe({ large, skipRepo }) {
   const results = [];
   const record = (name, ok, detail) => {
     results.push({ name, ok, detail });
@@ -227,7 +263,18 @@ async function runProbe({ large }) {
   const smallFile = join(tmpDir, 'gitcode-probe.txt');
   writeFileSync(smallFile, probeContent);
 
-  console.log(`GitCode 写路径探针：repo=${repo}，探针 tag=${tag}${large ? '（含 200MB 大文件验证）' : ''}\n`);
+  console.log(`GitCode 写路径探针：repo=${repo}，探针 tag=${tag}${large ? '（含 200MB 大文件验证）' : ''}${skipRepo ? '（跳过仓库镜像）' : ''}\n`);
+
+  // 0. 仓库镜像（正式链路第一步：先推代码再同步附件）；git push 输出较慢属正常
+  if (!skipRepo) {
+    try {
+      const t0 = performance.now();
+      pushRepoMirror();
+      record('镜像仓库（origin 分支 + tags 强推对齐）', true, `${(Math.round(performance.now() - t0) / 1000).toFixed(1)}s`);
+    } catch (e) {
+      record('镜像仓库（origin 分支 + tags 强推对齐）', false, String(e.message || e).slice(0, 400));
+    }
+  }
 
   let release;
   try {
@@ -347,7 +394,13 @@ const argv = process.argv.slice(2);
 const cmd = argv[0];
 
 if (cmd === 'probe') {
-  await runProbe({ large: argv.includes('--large') });
+  await runProbe({ large: argv.includes('--large'), skipRepo: argv.includes('--no-repo') });
+} else if (cmd === 'push-repo') {
+  try {
+    pushRepoMirror();
+  } catch (e) {
+    die(String(e.message || e));
+  }
 } else if (cmd === 'sync') {
   const pos = argv.slice(1).filter((a) => !a.startsWith('--'));
   const [tag, name, notesFile, artifactsDir] = pos;
@@ -360,8 +413,9 @@ if (cmd === 'probe') {
   });
 } else {
   console.log(`用法：
-  node scripts/gitcode-release-sync.mjs probe [--large]
-  node scripts/gitcode-release-sync.mjs sync <tag> <release-name> <notes-file> <artifacts-dir>
+  node scripts/gitcode-release-sync.mjs probe [--large] [--no-repo]
+  node scripts/gitcode-release-sync.mjs push-repo
+  node scripts/gitcode-release-sync.mjs sync <tag> <release-name> <notes-file> <artifacts-dir> [--prerelease]
 环境变量：GITCODE_TOKEN（必填）、GITCODE_REPO=owner/repo（必填）`);
   process.exit(cmd ? 1 : 0);
 }
