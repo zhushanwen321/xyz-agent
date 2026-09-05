@@ -17,7 +17,7 @@
 
 > 摘录自设计 §1（逐字）：
 
-「目标：把单次发布总量压到约 **420-530MB（-52%~-62%）**，不动功能、不动 Electron/pi 本体。附带收益：GitCode 镜像同步上传时间（跨境 0.4-0.8MB/s）按比例下降。
+「目标：把单次发布总量压到约 **420-530MB（-52%~-62%）**，不动功能、不动 Electron/pi 本体。附带收益：GitCode 镜像同步上传时间（跨境 0.09-0.8MB/s，实测波动大，已驱动 GitCode 同步改并发上传）按比例下降。
 
 范围：本文只实施第一批（纯配置）+ 第二批（asar 瘦身）。第三批为产品决策项，只登记不实施（§5）。
 
@@ -57,7 +57,7 @@ graph TD
 |------|------|----------|
 | `cd apps/electron && pnpm run build:dir` | mac unpacked 产物核对（lproj/extensions/asar 体积/node-pty 存在性） | u2、u3、u4（u1 借 u2 佐证） |
 | `bash scripts/validate-runtime-bundle.sh` | runtime bundle Gate | u4 |
-| `bash scripts/preflight-check.sh --ci` | files 白名单/依赖一致性（CI 同款，build.yml:110） | u4 |
+| `bash scripts/preflight-check.sh --ci` | 打包前置 10 项检查（CI 同款，build.yml:110） | u4 |
 
 收尾全量：`bash scripts/validate-runtime-bundle.sh` + `bash scripts/preflight-check.sh --ci` + S1.5 打包产物启动冒烟（改动不触 src，无单测增量面；extensions/ 与 renderer 源码零改动，extensions 三连不适用）。
 
@@ -78,7 +78,7 @@ S6（CI 端到端发 beta）需 push 授权，独立于本流水线，完成后�
 |------|------|------|----------|
 | u1 | committed | 1 | 9b65257ea（diff 静态核验；build:dir 佐证配置解析） |
 | u2 | committed | 2 | db9379a7c（r1 轮 zh-CN 连字符 mac 不匹配 zh_CN.lproj，构建断言抓出后 fix 轮改 zh_CN 下划线；重构建断言 en.lproj 560K + zh_CN.lproj 564K 在位） |
-| u3 | committed | 1 | 2c5913c8c（build:dir 断言 extensions 15MB→6.2MB、.map/README/ARCHITECTURE 零残留、SKILL.md 7/7 保留） |
+| u3 | committed | 1 | 2c5913c8c（build:dir 断言 extensions 15MB→6.2MB、.map/README/ARCHITECTURE 零残留、SKILL.md 7/7 保留；u4 lockfile 刷新后终态 4.5M） |
 | u4 | committed | 1 | 3aa0dae10（preflight --ci 绿 + validate-runtime-bundle 绿 + build:dir 断言 asar 170MB→18MB、unpacked 含 node-pty pty.node/spawn-helper） |
 | 冒烟 S1.5 | committed | 1 | 主 agent 执行：隔离 userData+数据目录启动 build:dir 产物（生产实例共存，runtime 自适应 3211 端口未误杀）。GLM-5.3 会话收发（22.1K token）+ shiki python 高亮 + mermaid 流程图渲染 + pty `echo PTY_OK` 回显，全部通过（截图证据 /tmp 已清理，流程见变更历史） |
 | Gate A | committed | 1 | subagent 实跑：preflight --ci exit 0（10/10）+ validate-runtime-bundle exit 0（E2E 全 PASS）+ test:main 736 用例全过 0 skip + 零容忍绕过检查零命中；lint exit 1 为存量（区间内 0 改动文件，逐字比对归因），登记 §7 残留风险 |
@@ -97,3 +97,4 @@ S6（CI 端到端发 beta）需 push 授权，独立于本流水线，完成后�
   - 2026-09-05 u2 验收抓出 locale 格式缺陷（轮次 2）：electron-builder ElectronFramework.js 的语言匹配为「去扩展名小写后全等或 wanted 前缀匹配」，mac lproj 目录名下划线（zh_CN）与配置连字符（zh-CN）永不匹配，产物 zh_CN.lproj 被误删；fix 轮改 mac 段 `["en","zh_CN"]`（win/linux 保持 `zh-CN`），重构建断言双 lproj 在位。副作用评估：zh_CN 性别变体（FEMININE 等 3 个）被裁属预期，Chromium 回落标准 zh_CN。
   - 2026-09-05 S1.5 冒烟执行方式：生产实例（/Applications/TaiJi.app 占 3210 + 真实数据目录）共存约束下，以 `--user-data-dir`（隔离单实例锁）+ `XYZ_AGENT_DATA_DIR`（tmpdir 自建）双隔离启动打包产物；模型配置从生产目录只读拷贝（红线只禁写/删）。runtime 端口自适应落 3211，未触碰生产进程。验证后冒烟实例进程清零、临时目录删除。
   - 2026-09-05 阶段 3 一致性审查（zsw 引擎连续 2 次超时后改内置 Agent 通道派发）：unreasonable 0（终态/机制/领地/验收四区未发现）、reasonable 4 条（已入 §5 登记表）、doc_errors 2 条（§3.2 语言裁剪未回写 mac 下划线平台差异；§3.3/§5 引用了 preflight-check.sh 中不存在的「白名单一致性对账」机制）——均由主 agent 亲自修订设计文档并复核。审查附带独立复跑 validate-runtime-bundle.sh 与 preflight-check.sh --ci 双绿、asar 18M、SKILL.md 7/7 等断言。
+  - 2026-09-05 design-code-sync r1 对账：实施轮 asar 实测基线 170MB（commit 3aa0dae10），与设计 §2 的 155.9MB 差异来自构建时点依赖树快照不同，终态 18MB 优于 ≤25MB 承诺

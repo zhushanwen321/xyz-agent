@@ -7,7 +7,7 @@
 
 单次 GitHub Release 共 7 个附件约 **1.1GB**：dmg 181.5MB / mac zip 181.5MB（自动更新消费）/ win exe 160.7MB / win zip 221.5MB（无消费方）/ AppImage 201.5MB / deb 154MB / manifest KB 级。
 
-目标：把单次发布总量压到约 **420-530MB（-52%~-62%）**，不动功能、不动 Electron/pi 本体。附带收益：GitCode 镜像同步上传时间（跨境 0.4-0.8MB/s）按比例下降。
+目标：把单次发布总量压到约 **420-530MB（-52%~-62%）**，不动功能、不动 Electron/pi 本体。附带收益：GitCode 镜像同步上传时间（跨境 0.09-0.8MB/s，实测波动大，已驱动 GitCode 同步改并发上传）按比例下降。
 
 范围：本文只实施第一批（纯配置）+ 第二批（asar 瘦身）。第三批为产品决策项，只登记不实施（§5）。
 
@@ -32,13 +32,13 @@ mac unpacked .app = 463MB，构成：
 
 ### 3.1 修正记录（相对交接文档）
 
-1. **「排除 node-pty .pdb」已失效，从计划划掉**。electron-builder 26.15.3 默认排除 `.pdb`（`node_modules/app-builder-lib/out/util/appFileCopier.js:133-139`，`includePdb !== true` 即排；非 Windows 平台还默认排 `.dll`/`.exe`）。新鲜构建 unpacked 内 node-pty 仅 2.4MB、零 pdb。
+1. **「排除 node-pty .pdb」已失效，从计划划掉**。electron-builder 26.15.3 默认排除 `.pdb`（`node_modules/app-builder-lib/out/util/appFileCopier.js:130-132`，`includePdb !== true` 即排；非 Windows 平台还默认排 `.dll`/`.exe`）。新鲜构建 unpacked 内 node-pty 仅 2.4MB、零 pdb。
 2. **「升级 electron-builder v27 解锁 ULMO/zstd」当前不可行**。npm dist-tags：`latest=26.15.3`、`v26=26.16.0`、`next=27.0.0-alpha.8`——v27 无稳定版。ULMO 若做只能走 `afterAllArtifactBuild` 钩子 + `hdiutil convert -format ULMO`（第三批再议）。
 3. **asar 冗余比交接估算（102.2MB）大 32%**：实测 135MB。第二批收益相应上调。
 
 ### 3.2 第一批：纯配置（`apps/electron/electron-builder.yml`）
 
-1. **删 win zip target**：`win.target` 移除 `zip`，只留 `nsis`。依据：`apps/electron/main/release-checker.ts` ASSET_PATTERNS 只认 `-setup-x64.exe`；`scripts/verify-ci-release.sh:131-133` 只硬查 dmg/exe/AppImage；全仓无 `-setup-x64.zip` 消费方。代价：失去 win 免安装绿色版形态（产品已确认接受，2026-09-05 会话）。
+1. **删 win zip target**：`win.target` 移除 `zip`，只留 `nsis`。依据：`apps/electron/main/release-checker.ts` ASSET_PATTERNS 只认 `-setup-x64.exe`；`scripts/verify-ci-release.sh:130-132` 只硬查 dmg/exe/AppImage；全仓无 `-setup-x64.zip` 消费方。代价：失去 win 免安装绿色版形态（产品已确认接受，2026-09-05 会话）。
 2. **语言裁剪**：三段各加 `electronLanguages`——mac 段 `["en", "zh_CN"]`（下划线），win/linux 段 `["en", "zh-CN"]`（连字符）。依据：§2 locale paks 实测 48MB/包，保留 en（回落必需，全删有启动风险）+ zh-CN。electron-builder 原生字段，构建时删除不匹配 lproj/pak。**平台格式差异（实施期 r1 轮构建断言实证）**：electron-builder 的语言对账规则是「目录/文件名去扩展名小写后，与配置项全等或被配置项前缀匹配」（`app-builder-lib/out/electron/ElectronFramework.js:79-89`）——mac lproj 目录名是下划线格式（zh_CN.lproj），连字符写法在 mac 永不匹配、会误删中文 locale；win/linux 的 pak 文件名则是连字符格式（zh-CN.pak）。副作用：mac 的 zh_CN 性别变体（FEMININE 等 3 个）被裁属预期，Chromium 回落标准 zh_CN。
 3. **extensions filter 排垃圾**：extraResources 的 extensions filter 加 `!**/*.map`、`!**/README.md`、`!**/ARCHITECTURE.md`。依据：§2 实测 ~8.7MB/包垃圾（.map 合计 8.5M，md 仅零头），压缩态约 -2.5~3MB × 6 附件 ≈ -15~18MB/发布。现有 filter 已排 `.d.ts`/`*.test.*`/tree-sitter 源码，此处补齐同类。
    **禁止用 `!**/*.md` 通配**：staged extensions 内含 7 个 `skills/<name>/SKILL.md`（pi 内置 skills，运行时资源发现机制读取，实测产物清单），通配排除会造成内置 skills 静默消失的功能回归；故 md 只按精确文件名排（包根级文档实测仅 README.md / ARCHITECTURE.md 两种名字，workflows/README.md 为文档无运行时消费）。
@@ -73,8 +73,8 @@ mac unpacked .app = 463MB，构成：
 | S1 | mac 本地 `pnpm run build:dir` | 构建成功；.app 内 .lproj 只剩 en.lproj/zh_CN.lproj（及 zh-CN 变体若有）；Resources/extensions 无 *.map、根级无 README.md/ARCHITECTURE.md、**skills/*/SKILL.md 全部保留**且 ≤6.5MB；app.asar ≤25MB；**静态断言：app.asar.unpacked 内存在 node_modules/node-pty/prebuilds/darwin-arm64/pty.node 与 spawn-helper** |
 | S1.5 | **打包产物真实启动冒烟**（u4 核心验收；主 agent 执行：`open dist/builder-output/mac-arm64/TaiJi.app --args --remote-debugging-port=9222` + browser-automation 连 9222） | 应用启动不白屏；新建会话发一条消息收通（聊天链路）；打开终端面板建立 pty 会话（node-pty 路径，迁移最敏感面）；代码高亮渲染（shiki）；mermaid 渲染。注意：打包版可能与已开实例抢 3210 端口，先查 `lsof -i :3210` |
 | S2 | `bash scripts/validate-runtime-bundle.sh` | exit 0（Gate 全过） |
-| S3 | `bash scripts/preflight-check.sh --ci` | 白名单一致性检查过 |
-| S5 | 更新链路静态核对 | release-checker.ts ASSET_PATTERNS 与剩余附件形态一致（dmg/exe/AppImage/mac zip 均在 pattern 内，win zip 删除不影响）；pick-platform-asset.ts darwin 分支仍取 `-mac-arm64.zip` |
+| S3 | `bash scripts/preflight-check.sh --ci` | exit 0（10/10，含 [4/10] native external 探测与 [7/10] asarUnpack vs files 一致性） |
+| S5 | 更新链路静态核对 | release-checker.ts ASSET_PATTERNS 与剩余附件形态一致（exe/AppImage/mac zip/deb 均在 pattern 内，dmg 为安装形态不参与更新 pattern，win zip 删除不影响）；pick-platform-asset.ts darwin 分支仍取 `-mac-arm64.zip` |
 | S6 | CI 端到端 | 发 beta tag 后 prerelease 验证脚本 exit 0，附件数字符合预期（dmg ~120-130MB / exe ~110-120MB / AppImage ~160MB）——需用户授权 push，独立步骤 |
 
 ### 4.2 体积预期（压缩态，全发布）

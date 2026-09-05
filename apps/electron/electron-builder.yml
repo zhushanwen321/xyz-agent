@@ -5,7 +5,7 @@ productName: 太极
 # executableName / artifactName 统一用 TaiJi（拼音），与 productName「太极」品牌一致：
 # - 用拼音而非中文：可执行文件名 / 下载包名含中文有路径编码与跨工具链风险，拼音零风险。
 # - 不考虑 ≤0.8.40 旧版本自动升级兼容（旧版需手动下载新版重装），故 artifactName 可直接改名；
-#   release-checker.ts ASSET_NAME / postbuild-validate.sh / README 下载指引已同步改为 TaiJi-*。
+#   release-checker.ts ASSET_PATTERNS / postbuild-validate.sh / README 下载指引已同步改为 TaiJi-*。
 executableName: TaiJi
 directories:
   output: dist/builder-output
@@ -50,7 +50,7 @@ files:
 # dist/runtime 必须在 files 中存在，然后 asarUnpack 会把它从 asar
 # 中剔除到 app.asar.unpacked/ 目录。如果 files 排除了 dist/runtime，
 # 这里只会静默失败，产物中不会有 app.asar.unpacked/dist/runtime/。
-# 检查：scripts/preflight-check.sh [6/8] asarUnpack vs files consistency
+# 检查：scripts/preflight-check.sh [7/10] asarUnpack vs files consistency
 asarUnpack:
   - "dist/runtime/**/*"
   # node-pty native binary（prebuilds/<platform>/pty.node + spawn-helper）
