@@ -76,3 +76,8 @@ graph TD
 
 - v1（2026-09-05）：初版。用户评审以会话指令「开始规划开发」代替（夜间托管自治态），DAG/单元表随最终汇报呈现。
 - （一致性审查 reasonable 确认）①stopReason 全集映射实现为 isErrorStop 二分（error→error、其余五值+未识别兜底→complete），语义与设计等价且测试逐值覆盖；②registry complete handler 顺序调整（changed 提前 + 秒败追加加 !recovered）抑制恢复命中时的重复 error 气泡；③恢复指引收敛 Turn.vue 聚合单行不写死 30 分钟数值；④u-s2/u-s3 与 u-s1 衔接无损（timeout 收口后 complete 到达 refresh 构造性 no-op）。
+
+## 8 验收终态（2026-09-05）
+
+- **Gate A**：PASS；**Gate B**：P-F/P-G 探针门由单测层+装配层测试承载（chat-idle-refresh 15 例端到端模拟装配双形态 + Turn DOM 断言），S1-S4 单测可覆盖部分全绿——真实长任务编排场景的 P-F 标定（零帧窗分布）登记为发布前观察项（桥接连通性已由装配测试与 Gate B W5 旁证）。
+- 一致性审查：1 轮收敛（8 reasonable / 4 unreasonable：注释勘误已修 2、README 清扫已修、audit 指针已修 / 4 doc_errors 已修）。

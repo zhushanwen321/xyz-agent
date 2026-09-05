@@ -82,3 +82,8 @@ graph TD
 
 - v1（2026-09-05）：初版。用户评审以会话指令「开始规划开发」代替（夜间托管自治态），DAG/单元表随最终汇报呈现。
 - （一致性审查 reasonable 确认）D1-D10 全部逐条核对通过；单元衔接语义互补：u-z4 !disposed 短路防 u-z5 收割引发重试复活、teardown 不置 disposed 合法续跑、重试严格在 awaitConnFinalized 链终局后无双跑窗；turn.terminal 到达即 settle disarm（语义强于设计枚举的刷新源，无碍）；authoritativeTerminalStatus 合并 P-Z2 主线与降级为无条件保守判定（比设计二选一更完备）。
+
+## 8 验收终态（2026-09-05）
+
+- **Gate A**：PASS；**Gate B**：P-Z0/Z1 PASS 维持默认（58 任务标定）/ P-Z2 ✅ 已执行且**拦截 must-fix**——真实协议 status 枚举无 "error"，实装判据漂移已修正（isFailedTerminalStatus + lastTerminalError 透传，4a59e5a04）并真实链路复验 PASS（269s 退避 → engine_run_failed + errorCode 透传）；P-Z3/P-Z4 由机制层测试承载。附带：u-z2 一致性审查修复（alive 守卫 ab5acefe7）、u-h2 flake 根修（d0f558b16）。
+- 一致性审查：1 轮收敛（11 reasonable / 2 unreasonable：alive 守卫已修 + 探针门已补跑 / 2 doc_errors 已修）。

@@ -93,3 +93,8 @@ graph TD
 
 - v1（2026-09-05）：初版。用户评审以会话指令「开始规划开发」代替（夜间托管自治态），DAG/单元表随最终汇报呈现。
 - （一致性审查 reasonable 确认）D1-D5 逐条核对通过：idle 前移+三态文案、①b 极性与时序前提吻合、D3 双端 shared 同源对齐、D4/D5 编译期必传零残留、跨单元衔接（u-y2 dispatcher → u-y5 renderer/core）逐一成立。
+
+## 8 验收终态（2026-09-05）
+
+- **Gate A**：PASS；**Gate B**：P1/P2/P4 探针 PASS（单元内）；⛔P6 已执行并**拦截真实缺陷**（断言④：超时后 abortBash 守卫短路 abort 不触达 pi——修复 bc45b710d 孤儿标记 + {sent} 回执真实化 + message.error 技术帧删除）并真实链路复验五断言全 PASS；1h 全时长抽样登记发布前项。附带：u-y1 文案闭环（types.ts 停滞+续传指引）。
+- 一致性审查：1 轮收敛（11 reasonable / 5 unreasonable：P6 已补跑闭环、G1 文案已闭环、P4 形态已登记，其余登记项落偏差表 / 1 doc_error 已修）。

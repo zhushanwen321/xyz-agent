@@ -522,9 +522,9 @@ downloadAndExtract（tarball）     :308  🔴 无任何 timer：
 | ID | 验证的行为 | 探针 | 状态 | 失败时的降级路径 |
 |---|---|---|---|---|
 | P1-1 | workspace URL 输入归一化两形态均可解析 | 实现后单元测试 + 手工两种输入实测 | ⛔ unit-1 | 仅接受完整 URL（输入框 placeholder 指引），文档标注 |
-| P1-2 | opencode 自动发现端点存在且稳定 | 真实 cookie 探测 /api/workspaces 与首页 SSR | ⛔ unit-1 | 维持纯配置方案（方案 A 不依赖它） |
+| P1-2 | opencode 自动发现端点存在且稳定 | 真实 cookie 探测 /api/workspaces 与首页 SSR | ✅ 已执行（2026-09-05 Gate B）：端点及全部变体 5+ 次采样稳定 404（无凭证与 Bearer key 交叉验证，首页 SSR 无 workspace 数据）——**探针证伪，降级路径生效：维持纯配置方案，零损失** | 维持纯配置方案（方案 A 不依赖它） |
 | P2-1 | 路由先行 reorder 无时序回归 | V2-1/V2-4 全场景跑 + 既有 subagent 测试套件 | ⛔ unit-2 | 收窄为「仅 model 解析延后」窄改法 |
-| P2-2 | 错误路径 listModels 同步读耗时可接受 | v2 config 实测计时 | ⛔ unit-2 | 降级为 provider 前缀提示（不列全清单） |
+| P2-2 | 错误路径 listModels 同步读耗时可接受 | v2 config 实测计时 | ✅ 已执行（2026-09-05 Gate B）：组合全链路（validate 失败 + listModels 反查）p50=0.070ms/p95=0.076ms，冷启动 0.06-0.32ms，低于 100ms 阈值约 3 个数量级——**通过，维持实现** | 降级为 provider 前缀提示（不列全清单） |
 | P3-1 | destroy 后 pipe 链错误传播完整、无句柄泄漏 | stall 服务器实测 + process 活动句柄检查 | ⛔ unit-3 | extractTarStream reject 前显式 gunzip.destroy() |
 | P4-1 | trash throw 能到达 renderer（错误 reply） | Finder 繁忙注入实测删除报错可见 | ⛔ unit-4 | handler case 内补 try/catch → sendError |
 | —（代码追踪已证） | F2-A/B 两形态的时序根因（:850 先于 :867） | 本文 §2.2 代码证据链 + 普查当日实测（总报告 §4 #2） | ✅（代码级） | — |

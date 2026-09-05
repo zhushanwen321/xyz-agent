@@ -71,3 +71,9 @@ graph TD
 
 - v1（2026-09-05）：初版。用户评审以会话指令「开始规划开发」代替（夜间托管自治态），DAG/单元表随最终汇报呈现。
 - （一致性审查 reasonable 确认）①SDK 侧走 sync-types.sh 再生路径达成镜像一致（已同步设计 §5-I1）；②blocked 回包在管线累积为空时不带 injectedMessages 键（桥接层 ?? [] 恒带键，保持既有 block 回包形状 G4）；③warn 形状摘要 80 字符截断 + 循环引用兜底（WARN_SUMMARY_MAX_CHARS 具名）。
+
+## 8 验收终态（2026-09-05）
+
+- **Gate A**：PASS（全仓 ~18395 测试两轮 exit 0、lint 0、typecheck 15 项过、extensions 三连过）。
+- **Gate B**：W1-W5 全 pass（真实 pi + sandbox 插件，证据 /tmp/gate-b-i/）；⛔实施期门全部关闭（设计 v4.1 回写）。
+- 一致性审查：1 轮收敛（5 reasonable 登记 / 1 unreasonable=Gate B 未跑 → 已补跑闭环 / 2 doc_errors 已修）。

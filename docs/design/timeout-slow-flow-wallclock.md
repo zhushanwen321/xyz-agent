@@ -320,7 +320,7 @@ xyz-agent 的架构分三层：renderer（Vue 前端）↔ runtime（Node WebSoc
 | P3 | 停滞检测双侧真实存在且 chunk 重置 | 代码核实（download-asset.ts:551,567-569；curl-download.ts:170-172）+ 既有测试 | ✅ 已核 | — |
 | P4 | 大 session compact 实际时长 ∈ 30min 余量内 | 构造 300k-1M token session 实测压缩耗时 | ⛔ M3 | 实测击穿 → 取值升 45/60min 并重跑外推论证 |
 | P5 | shared 常量双端可 import | protocol.ts 已被 runtime/renderer 双端引用（结构性） | ✅ 结构性 | — |
-| P6 | bash 超时路径全行为：诚实文案 + abortBash 释放 slot + 后续 bash 不 busy | 经 env 调小实测超时路径三断言（r3 复审 SG-C：顺带覆盖 env 通路）+ 一次全时长（1h）抽样 | ⛔ M3 | slot 不释放 → sendBash 超时分支补 abort_bash 兜底（重评 D2 被否项，此时「杀」的代价可接受因为命令已无人等待且 slot 需回收） |
+| P6 | bash 超时路径全行为：诚实文案 + abortBash 释放 slot + 后续 bash 不 busy | 经 env 调小实测超时路径三断言（r3 复审 SG-C：顺带覆盖 env 通路）+ 一次全时长（1h）抽样 | ✅ 已执行（2026-09-05 Gate B，证据 /tmp/gate-b-p6 + /tmp/gate-b-reverify）：诚实文案/slot 复位/迟到不污染/abortBash 可取消/5min 不限时抽样全 PASS——断言④首拦真实缺陷（超时后 abortBash 被 isBashRunning 守卫短路，abort 不触达 pi）已修复（孤儿标记 orphanBashRunning + {sent} 回执真实化 + message.error 技术帧删除，bc45b710d）并复验通过 | 拦截修复后复验 PASS；1h 全时长抽样登记为发布前项（缩样 3000ms 已覆盖同构机制路径） |
 | P-T2c（已有） | 300k token compact = 40.1s | `subagent-core-unbounded-wait-audit.impl-plan.md:115` | ✅ 已测 | D3 取值外推的输入 |
 
 ## 9. 验收（真实场景，非单测非 mock）
