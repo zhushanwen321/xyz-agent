@@ -100,20 +100,26 @@ graph TD
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
 | u1-protocol | committed | 1 | typecheck 绿 + grep 7 处（:111/:487/:761/:1158/:1571），commit 577cbbeed |
-| u2-runtime | committed | 1+1（补接口授权轮） | vitest 18/18 + runtime typecheck 绿，commit 3a77447e6；blocker 已裁决（interfaces.ts 划入领地补 1 行） |
-| u2-runtime | pending | 0 | — |
+| u2-runtime | committed | 1+1（补接口授权轮） | vitest 18/18 + runtime typecheck 绿，commit 3a77447e6；blocker 已裁决（interfaces.ts 划入领地补 1 行）；审查返修已 commit 9ddd37eab |
 | u3-api | committed | 1 | frontend typecheck 绿 + grep :41-42，commit 97ebba367 |
 | u4-popover | committed | 1 | vitest 19/19 + typecheck 绿，commit b86d7cad6；5 条偏差已审（合理，见 §5） |
 | u5-wiring | committed | 1 | panel 517/517 全绿 + typecheck 绿，commit f970b925b；3 条偏差合理（flow.currentCwd?.value 解包 / reka 真选择器 / fake Date 节流隔离） |
 | u6-regression | committed | 1 | 全量 vitest 绿（subagent-core 6 例/TaiJi 宿主 env 注入净环境 12/12 绿；runtime thinking-e2e 1 例/基线同红实锤非本次引入）+ 三包 typecheck + lint 全绿；无领地外修复 |
-| u7-docs | pending | 0 | — |
+| u7-docs | committed | 1 | grep 3 处链接 + diff 仅 3 hunk，commit 33a8b407b |
+| 一致性审查 | 清零 | 1 轮 | A 区 2 unreasonable+2 doc_errors 已修（9ddd37eab+计划修正）；B 区 1 unreasonable 已修（daa4480d9）+0 doc_errors；reasonable 7 条入登记 |
+| Gate A | PASS | 1 | 全量 vitest 绿（3 处环境性红均基线对照实锤）+ 10 包 typecheck + 双 lint + 零容忍绕过 0 命中 + 覆盖矩阵无缺口 |
+| Gate B | PASS 8/8 | 1 | 真实 dev app（隔离数据目录）逐场景验证：S1/S2/S3/S4a/S4b/S5/S6/S7 全过（S2/S5 带 note：session_reader 在隔离目录读回受限、混合 chip 观察受时序限制，核心断言均过）；截图证据 /tmp/gateb-shots/ |
 
 ## 7 残留风险与变更历史
 
 **残留风险**：
-1. 设计 §5 待验证①：open-fetch 拉取结果注入 items 的形态（prop 下传 vs ref 直连）——u4 实施期按 CommandPopover.vue script 300 行上限落点，验收条款不变。
-2. 设计 §5 待验证②：mock 模式（VITE_MOCK=true）下 `file.search.cwd` 行为——u4/u5 实施时确认 mock 返回静态候选或空数组皆可（S1-S7 验收不依赖 mock）。
+1. 设计 §5 待验证①：open-fetch 拉取结果注入 items 的形态——已落地：open-fetch 经回调写入 CommandPopover 本地 ref（u4，script 294/300）。
+2. 设计 §5 待验证②：mock 模式行为——已落地：open-fetch 直接 import api domain（有先例），mock 下失败降级空态（u4 偏差登记）。
 3. 设计 D5 已知边界：换目录后旧 `$` chip 相对路径漂移——登记不处理（失败可见可恢复）。
+4. [阶段 3 审查新增] 存量测试空洞断言遗留：本仓 reka-ui 真实属性为 data-reka-popper-content-wrapper，存量 data-radix-* 选择器恒 null（断言空洞）。本次已修：u5 翻转/新增断言 + u4 两处负向用例（daa4480d9）。仍残留：composer-hash-trigger.test.ts:276/:475、command-popover-landing.test.ts:129、composer-slash-trigger.test.ts:191（各有 bodyRows 实体断言兑底，非裸奔）——留待后续批清理，非本计划范围。
 
 **变更历史**：
 - 2026-09-04 计划创建（来源设计 R2 复审 0 must-fix 后）。
+- 2026-09-04 执行期：u1-u5 依序 committed；u2 blocker（interfaces.ts 领地外）裁决划入 u2；u4/u5 偏差 8 条全部裁决登记。
+- 2026-09-04 u6 全量回归：绿（subagent-core 6 例=TaiJi 宿主 env 注入，净环境 12/12 绿；runtime thinking-e2e 1 例=基线同红实锤非本次引入）；三包 typecheck + lint 绿。
+- 2026-09-04 阶段 3 一致性审查（分区 A）：doc_errors 2 条修正——①u2 状态表残留 pending 行删除；②偏差登记第 1 条「计划领地列已补」与 §2 表矛盾，以本行澄清：interfaces.ts 领地补充以 §5 登记行为准，§2 领地列不改写历史。分区 A unreasonable 2 条（file-service.ts:190 注释 #→$ 术语、:231 @throws 补 permission_denied/timeout）打回 u2 定向修。
