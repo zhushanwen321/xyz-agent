@@ -20,6 +20,7 @@ vi.mock('@/api/request', () => ({
 import { getUsageStats } from '@/api/domains/usage'
 import { forceQuit, subagentAction } from '@/api/domains/session'
 import { session as mockSession } from '@/api/mock'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '@/api/pending'
 
 beforeEach(() => {
   commandMock.mockReset()
@@ -32,7 +33,7 @@ describe('usage 域 RPC 封装', () => {
 
     const result = await getUsageStats()
 
-    expect(commandMock).toHaveBeenCalledWith('usage.getStats', {})
+    expect(commandMock).toHaveBeenCalledWith('usage.getStats', {}, RPC_BACKSTOP_TIMEOUT_MS)
     expect(result).toBe(reply)
   })
 })
@@ -41,7 +42,7 @@ describe('session 域 forceQuit / subagentAction 封装', () => {
   it('forceQuit → command("session.forceQuit", { sessionId })', async () => {
     commandMock.mockResolvedValue(undefined)
     await forceQuit('sess-1')
-    expect(commandMock).toHaveBeenCalledWith('session.forceQuit', { sessionId: 'sess-1' })
+    expect(commandMock).toHaveBeenCalledWith('session.forceQuit', { sessionId: 'sess-1' }, RPC_BACKSTOP_TIMEOUT_MS)
   })
 
   it('subagentAction(action="cancel") → subagentId 透传', async () => {
@@ -51,7 +52,7 @@ describe('session 域 forceQuit / subagentAction 封装', () => {
       sessionId: 'sess-1',
       action: 'cancel',
       subagentId: 'sa-1',
-    })
+    }, RPC_BACKSTOP_TIMEOUT_MS)
   })
 
   it('subagentAction(action="start") → slug+task 展开、未传键不出现', async () => {
@@ -62,7 +63,7 @@ describe('session 域 forceQuit / subagentAction 封装', () => {
       action: 'start',
       slug: 'chat-x',
       task: '帮我修 bug',
-    })
+    }, RPC_BACKSTOP_TIMEOUT_MS)
   })
 })
 

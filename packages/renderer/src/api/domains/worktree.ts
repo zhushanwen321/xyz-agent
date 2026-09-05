@@ -10,6 +10,7 @@
  *
  * 依赖方向：api/request（command）+ shared（协议类型 ReplyPayloadMap）。
  */
+import { RPC_BACKSTOP_TIMEOUT_MS } from '../pending'
 import { command } from '../request'
 import type { ClientMessageMap, ServerMessageMap } from '@xyz-agent/shared'
 
@@ -37,16 +38,16 @@ export const worktreeApi = {
   async create(params: WorktreeCreateParams): Promise<WorktreeCreateReply> {
     // command 的泛型 K 由 type 字面量 'worktree.create' 推导，reply 类型由 ReplyPayloadMap['worktree.create']
     // 推导为 { cwd: string; branch: string }（与 WorktreeCreateReply 结构一致）。不显式传 K 避免约束冲突。
-    return command('worktree.create', params)
+    return command('worktree.create', params, RPC_BACKSTOP_TIMEOUT_MS)
   },
 
   /** 列出 cwd 所在仓库的本地和远程分支 + 默认分支名。 */
   async listBranches(cwd: string): Promise<WorktreeBranchesReply> {
-    return command('worktree.listBranches', { cwd })
+    return command('worktree.listBranches', { cwd }, RPC_BACKSTOP_TIMEOUT_MS)
   },
 
   /** 列出 cwd 所在 workspace 的所有 worktree。 */
   async list(cwd: string): Promise<WorktreeListReply> {
-    return command('worktree.list', { cwd })
+    return command('worktree.list', { cwd }, RPC_BACKSTOP_TIMEOUT_MS)
   },
 }

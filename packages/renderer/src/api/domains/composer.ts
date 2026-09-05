@@ -17,6 +17,7 @@
  * 返回空数组保留签名，避免 CommandPopover 大改。mock 侧仍返回 fixture（mock 模式不受影响）。
  */
 import type { FileNode } from '@xyz-agent/shared'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '../pending'
 import { command } from '../request'
 
 /**
@@ -25,7 +26,7 @@ import { command } from '../request'
  * @returns FileNode[]（扁平，path 相对 cwd 无前导斜杠）
  */
 export async function getFileCandidates(sessionId: string): Promise<FileNode[]> {
-  const reply = await command('file.search', { sessionId })
+  const reply = await command('file.search', { sessionId }, RPC_BACKSTOP_TIMEOUT_MS)
   return reply.files
 }
 

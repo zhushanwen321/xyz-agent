@@ -8,7 +8,12 @@
  * 注：mock 模式下不走本域（api/index 切到 mock 门面）。
  */
 import type { Message, ServerMessageUnion } from '@xyz-agent/shared'
-import { COMPACT_RPC_TIMEOUT_MS, RENDERER_RPC_MARGIN_MS } from '@xyz-agent/shared'
+import {
+  BASH_RPC_TIMEOUT_MS,
+  COMPACT_RPC_TIMEOUT_MS,
+  RENDERER_RPC_MARGIN_MS,
+} from '@xyz-agent/shared'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '../pending'
 import { command as sendCommand } from '../request'
 import * as events from '../events'
 
@@ -24,7 +29,7 @@ export interface HistoryResult {
  * historyTruncated=true 表示文件尾读截断了早期 turn（前端据此显隐「加载更多」）。
  */
 export async function getHistory(sessionId: string): Promise<HistoryResult> {
-  const reply = await sendCommand('session.history', { sessionId })
+  const reply = await sendCommand('session.history', { sessionId }, RPC_BACKSTOP_TIMEOUT_MS)
   return { messages: reply.messages, historyTruncated: reply.historyTruncated }
 }
 
@@ -33,7 +38,7 @@ export async function getHistory(sessionId: string): Promise<HistoryResult> {
  * 走 session.getFullHistory → runtime getFullHistory（全量文件读取，非尾读）。
  */
 export async function getFullHistory(sessionId: string): Promise<Message[]> {
-  const reply = await sendCommand('session.getFullHistory', { sessionId })
+  const reply = await sendCommand('session.getFullHistory', { sessionId }, RPC_BACKSTOP_TIMEOUT_MS)
   return reply.messages
 }
 
@@ -53,17 +58,18 @@ export function send(
   return sendCommand(
     'message.send',
     images ? { sessionId, content: text, images } : { sessionId, content: text },
+    RPC_BACKSTOP_TIMEOUT_MS,
   )
 }
 
 /** 追加 steer（当前回合工具调用结束后、下次 LLM 调用前投递） */
 export function steer(sessionId: string, text: string): Promise<void> {
-  return sendCommand('message.steer', { sessionId, content: text })
+  return sendCommand('message.steer', { sessionId, content: text }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 追加 follow-up（当前回合结束后开新轮） */
 export function followUp(sessionId: string, text: string): Promise<void> {
-  return sendCommand('message.follow_up', { sessionId, content: text })
+  return sendCommand('message.follow_up', { sessionId, content: text }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /**
@@ -82,7 +88,7 @@ export function compact(sessionId: string, customInstructions?: string): Promise
 
 /** 中断当前回合（DEFERRED 流转，§9 G-025） */
 export function abort(sessionId: string): Promise<void> {
-  return sendCommand('message.abort', { sessionId })
+  return sendCommand('message.abort', { sessionId }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /**
@@ -90,6 +96,14 @@ export function abort(sessionId: string): Promise<void> {
  *
  * `!`/`!!` 前缀输入的 shell 文本原样透传 pi bash RPC，结果经 message.bashStart/
  * message.bashResult 广播回对话流（不走 segment 提取 / segmentsToPrompt）。
+ *
+ * 超时 = BASH_RPC_TIMEOUT_MS + RENDERER_RPC_MARGIN_MS（1h + 60s = 3660s，语义化取值，
+ * timeout-slow-flow-wallclock D5）：校准链「renderer = runtime 第一刀（rpc-client
+ * BASH_RPC_TIMEOUT_MS）+ 余量」，双端引用同一 shared 常量编译期对齐——结构保证默认
+ * 配置下 renderer 恒不先于 runtime 判死，`!` 长命令（65s 存量误报 / 300s 前科）
+ * 不再被 renderer backstop 误杀。不变量仅默认配置成立：env 逃生门
+ * XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS 把 runtime 调成 >3660s 或 0（不限时）时，本 3660s
+ * backstop 先到为失败 toast——已知接受（D5 不变量收窄）。
  *
  * excludeFromContext 为 undefined 时只传 {sessionId, command}（与 send 的 images 空数组
  * 归一模式对称，避免 runtime 收到无意义的 excludeFromContext:false 键）。
@@ -102,12 +116,13 @@ export function bash(
   return sendCommand(
     'message.bash',
     excludeFromContext !== undefined ? { sessionId, command, excludeFromContext } : { sessionId, command },
+    BASH_RPC_TIMEOUT_MS + RENDERER_RPC_MARGIN_MS,
   )
 }
 
 /** 取消进行中的 bash 执行（调 pi abort_bash） */
 export function abortBash(sessionId: string): Promise<void> {
-  return sendCommand('message.abortBash', { sessionId })
+  return sendCommand('message.abortBash', { sessionId }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /**

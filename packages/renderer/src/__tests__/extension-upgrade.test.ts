@@ -13,6 +13,7 @@ vi.mock('../api/transport', () => ({
 }))
 
 vi.mock('../api/pending', () => ({
+  RPC_BACKSTOP_TIMEOUT_MS: 65_000,
   createCommandId: vi.fn(() => 'test-id'),
   register: vi.fn(() => Promise.resolve()),
   reject: vi.fn(),

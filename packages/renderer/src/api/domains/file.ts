@@ -10,6 +10,7 @@
  * 失败走 error envelope（routeInbound 对 type==='error' 走 pending.reject，code 透传到 Error.code）。
  */
 import type { FileNode } from '@xyz-agent/shared'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '../pending'
 import { command } from '../request'
 
 /**
@@ -17,7 +18,7 @@ import { command } from '../request'
  * ignored 节点始终返回并标 ignored=true，前端按 showIgnored 开关本地过滤。
  */
 export async function tree(sessionId: string): Promise<FileNode[]> {
-  const reply = await command('file.tree', { sessionId })
+  const reply = await command('file.tree', { sessionId }, RPC_BACKSTOP_TIMEOUT_MS)
   return reply.tree
 }
 
@@ -26,7 +27,7 @@ export async function tree(sessionId: string): Promise<FileNode[]> {
  * @param path 相对 cwd 的目录路径（如 'src/utils'）
  */
 export async function expand(sessionId: string, path: string): Promise<FileNode[]> {
-  const reply = await command('file.tree.expand', { sessionId, path })
+  const reply = await command('file.tree.expand', { sessionId, path }, RPC_BACKSTOP_TIMEOUT_MS)
   return reply.children
 }
 
@@ -43,6 +44,6 @@ export async function read(
 ): Promise<{ content: string; truncated: boolean }> {
   const payload: { path: string; sessionId?: string } = { path }
   if (sessionId !== undefined) payload.sessionId = sessionId
-  const reply = await command('file.read', payload)
+  const reply = await command('file.read', payload, RPC_BACKSTOP_TIMEOUT_MS)
   return { content: reply.content, truncated: reply.truncated }
 }

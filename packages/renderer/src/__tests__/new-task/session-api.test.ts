@@ -30,6 +30,7 @@ const transportMock = vi.hoisted(() => {
 
 vi.mock('@/api/transport', () => ({ send: transportMock.send }))
 vi.mock('@/api/pending', () => ({
+  RPC_BACKSTOP_TIMEOUT_MS: 65_000,
   createCommandId: vi.fn(() => 'pid-1'),
   register: vi.fn(() =>
     Promise.resolve({ session: { id: 's1', cwd: '/x', status: 'idle' } as SessionSummary }),

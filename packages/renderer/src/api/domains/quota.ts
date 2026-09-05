@@ -9,6 +9,7 @@
  * HANDOFF：.xyz-harness/coding-plan-quota/HANDOFF.md
  */
 import type { NormalizedQuotaRow, QuotaFetchFailureReason } from '@xyz-agent/shared'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '../pending'
 import { command } from '../request'
 
 /** getCached / fetch 的统一返回结构。 */
@@ -27,7 +28,7 @@ export interface QuotaResult {
  * 无缓存返回 `{ data: null, lastFetchAt: null }`。
  */
 export async function getCached(providerId: string): Promise<QuotaResult> {
-  const reply = await command('quota.getCached', { providerId })
+  const reply = await command('quota.getCached', { providerId }, RPC_BACKSTOP_TIMEOUT_MS)
   return { data: reply.data, lastFetchAt: reply.lastFetchAt, reason: reply.reason }
 }
 
@@ -38,7 +39,7 @@ export async function getCached(providerId: string): Promise<QuotaResult> {
  * 注意：带 10s throttle，10s 内重复 fetch 直接返回缓存。测试查询请用 refreshQuota。
  */
 export async function fetchQuota(providerId: string): Promise<QuotaResult> {
-  const reply = await command('quota.fetch', { providerId })
+  const reply = await command('quota.fetch', { providerId }, RPC_BACKSTOP_TIMEOUT_MS)
   return { data: reply.data, lastFetchAt: reply.lastFetchAt, reason: reply.reason }
 }
 
@@ -48,7 +49,7 @@ export async function fetchQuota(providerId: string): Promise<QuotaResult> {
  * 失败时 runtime 返回失败态（ok=true + data=null + reason），不抛错。
  */
 export async function refreshQuota(providerId: string): Promise<QuotaResult> {
-  const reply = await command('quota.refresh', { providerId })
+  const reply = await command('quota.refresh', { providerId }, RPC_BACKSTOP_TIMEOUT_MS)
   return { data: reply.data, lastFetchAt: reply.lastFetchAt, reason: reply.reason }
 }
 
@@ -65,6 +66,6 @@ export async function configure(
   apiKey?: string,
   workspace?: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const reply = await command('quota.configure', { providerId, enabled, cookie, fetcher, apiKey, workspace })
+  const reply = await command('quota.configure', { providerId, enabled, cookie, fetcher, apiKey, workspace }, RPC_BACKSTOP_TIMEOUT_MS)
   return { ok: reply.ok, error: reply.error }
 }

@@ -17,6 +17,7 @@ vi.mock('@/api/request', () => ({
 }))
 
 import { send } from '@/api/domains/chat'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '@/api/pending'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -32,7 +33,7 @@ describe('chat.send images 透传（slice6 TC5-TC6）', () => {
     expect(commandMock).toHaveBeenCalledWith('message.send', {
       sessionId: 's1',
       content: 'hi',
-    })
+    }, RPC_BACKSTOP_TIMEOUT_MS)
     const payload = commandMock.mock.calls[0]![1] as Record<string, unknown>
     expect('images' in payload).toBe(false)
   })
@@ -56,6 +57,6 @@ describe('chat.send images 透传（slice6 TC5-TC6）', () => {
       sessionId: 's1',
       content: 'hi',
       images: [{ data: 'BASE64', mimeType: 'image/png' }],
-    })
+    }, RPC_BACKSTOP_TIMEOUT_MS)
   })
 })

@@ -20,6 +20,7 @@ import type {
   ExtensionInteractMethod,
   RecommendedExtension,
 } from '@xyz-agent/shared'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '../pending'
 import { command } from '../request'
 import * as transport from '../transport'
 import * as events from '../events'
@@ -36,36 +37,36 @@ export function onExtensions(handler: (extensions: ExtensionInfo[]) => void): ()
  * 全局订阅，故需显式消费 reply 而非依赖广播）。
  */
 export function toggle(name: string, enabled: boolean): Promise<{ extensions: ExtensionInfo[] }> {
-  return command('extension.toggle', { name, enabled })
+  return command('extension.toggle', { name, enabled }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** npm 包名直装（单步：runtime 装完推 config.extensions，onExtensions 刷新） */
 export function install(source: string): Promise<void> {
-  return command('extension.install', { source })
+  return command('extension.install', { source }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 export function uninstall(name: string): Promise<void> {
-  return command('extension.uninstall', { name })
+  return command('extension.uninstall', { name }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 本地目录安装（多步第一步）：runtime 复制到 tempDir + 发现候选，回 extension.discovered */
 export function installDir(path: string): Promise<ExtensionDiscoveredPayload> {
-  return command('extension.installDir', { path })
+  return command('extension.installDir', { path }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** Git URL 安装（多步第一步）：runtime clone 到 tempDir + 发现候选，回 extension.discovered */
 export function installGitRepository(url: string): Promise<ExtensionDiscoveredPayload> {
-  return command('extension.installGit', { url })
+  return command('extension.installGit', { url }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 完成安装（多步第二步）：把选中候选从 tempDir 复制到 extensions/，runtime 推 config.extensions */
 export function finishInstall(tempDir: string, selected: string[]): Promise<void> {
-  return command('extension.finishInstall', { tempDir, selected })
+  return command('extension.finishInstall', { tempDir, selected }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 放弃安装：清理 tempDir（回 extension.installCancelled） */
 export function cancelInstall(tempDir: string): Promise<void> {
-  return command('extension.cancelInstall', { tempDir })
+  return command('extension.cancelInstall', { tempDir }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /**
@@ -78,7 +79,7 @@ export function cancelInstall(tempDir: string): Promise<void> {
  * 故需在此解包 .recommended 字段返回数组。
  */
 export async function fetchRecommended(): Promise<Array<RecommendedExtension & { installed: boolean }>> {
-  const reply = await command('extension.recommended', {})
+  const reply = await command('extension.recommended', {}, RPC_BACKSTOP_TIMEOUT_MS)
   return reply.recommended
 }
 
@@ -93,7 +94,7 @@ export async function fetchRecommended(): Promise<Array<RecommendedExtension & {
  * 而丢失（broker.ts async fire-and-forget），此处主动补拉确保扩展列表新鲜。
  */
 export async function scan(): Promise<void> {
-  await command('extension.list', {})
+  await command('extension.list', {}, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /**
@@ -102,7 +103,7 @@ export async function scan(): Promise<void> {
  * runtime 执行 npm install <pkg>@latest → 替换旧版 → 推 config.extensions 刷新。
  */
 export function upgrade(name: string): Promise<void> {
-  return command('extension.upgrade', { name })
+  return command('extension.upgrade', { name }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /**
@@ -110,7 +111,7 @@ export function upgrade(name: string): Promise<void> {
  * runtime 将 autoUpgrade 状态持久化到 extension-settings，启动时批量检查并升级。
  */
 export function setAutoUpgrade(name: string, enabled: boolean): Promise<void> {
-  return command('extension.setAutoUpgrade', { name, autoUpgrade: enabled })
+  return command('extension.setAutoUpgrade', { name, autoUpgrade: enabled }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 // ── Extension UI 交互（confirm/select/input/notify/editor）──────────
@@ -200,7 +201,7 @@ export function sendExtensionUIResponse(sessionId: string, requestId: string, me
  * 因实时 extension.ui_request 帧可能已入队同一请求（详见 useExtensionUI push 处 dedup）。
  */
 export async function getPendingRequests(sessionId: string): Promise<ExtensionUIRequest[]> {
-  const reply = await command('extension.getPendingRequests', { sessionId })
+  const reply = await command('extension.getPendingRequests', { sessionId }, RPC_BACKSTOP_TIMEOUT_MS)
   // reply.requests 是 unknown[]（runtime PendingUIRequest 未下沉 shared），用类型守卫收窄为 ExtensionUIRequest
   return reply.requests.filter((r): r is ExtensionUIRequest =>
     r != null && typeof r === 'object' &&
