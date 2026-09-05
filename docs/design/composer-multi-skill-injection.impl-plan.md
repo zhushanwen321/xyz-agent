@@ -74,7 +74,7 @@ graph TD
 | u2 | committed | 1 | 增量 27/27 绿（主 agent 重跑一致）；typecheck/守卫/lint 过；runtime 全量 2 存量失败=runtime 测试锁旧解析行为（u3 连带，补修中） |
 | u3 | committed | 1 | segments 39 绿 + core apply-entry/equivalence/store 144 绿（主 agent 重跑一致）；三包全量见 subagent 证据；**runtime message-converter.test.ts 2 用例锁旧行为待补修（领地缺口，轮次+1）** |
 | u4 | committed | 1 | dom-core 190 绿 + renderer 触发 10 绿（主 agent 重跑一致）；ui 555 绿；三包 typecheck 过 |
-| u5 | pending | 0 | - |
+| u5 | committed | 1 | 9 用例绿 + renderer 全量 3752 绿 + typecheck/lint 过（主 agent 重跑一致）；u4 漏交测试文件补账 f1782203a |
 | u6 | committed | 1 | LF framing 6/6 + 守卫 22 条绿（主 agent 重跑一致）；real-pi 探针抓出 u2 两缺陷（已修，见变更历史） |
 
 ## 7 残留风险与变更历史
