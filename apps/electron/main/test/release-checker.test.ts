@@ -5,7 +5,7 @@
  *   W2TC1 happy path：/releases/latest 返回 v0.9.0 → 返回非 null，version 正确，sha256 提取
  *   W2TC2 三重 prerelease 过滤：prerelease=true / draft=true / tag=v0.9.0-rc1 → null
  *   W2TC3 版本比较：同版本 / 更老版本 → null
- *   W2TC4 asset 平台分流：4 平台产物 + blockmap 干扰，断言各平台 downloadUrl
+ *   W2TC4 asset 平台分流：3 平台产物（dmg/exe/AppImage）+ blockmap/存量 zip 干扰，断言各平台 downloadUrl
  *   W2TC5 缓存：连续两次非 force 第二次不 fetch；force 强制刷新
  *   W2TC6 失败降级：fetch 抛错 / 403 / 404 / AbortError → null 不抛
  *   D6TC1 代理优先：配置代理时 fetch 带 dispatcher 参数
@@ -21,7 +21,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ReleaseChecker } from '../release-checker.js'
 import * as proxyConfig from '../update/proxy-config.js'
 
-/** 构造一个完整的 GitHubRelease JSON（含 4 平台 + blockmap 干扰资产） */
+/** 构造一个完整的 GitHubRelease JSON（含 3 平台 + blockmap/存量 zip 干扰资产） */
 function makeReleaseJson(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     tag_name: 'v0.9.0',
@@ -32,8 +32,8 @@ function makeReleaseJson(overrides: Record<string, unknown> = {}): Record<string
     html_url: 'https://github.com/zhushanwen321/xyz-agent/releases/tag/v0.9.0',
     assets: [
       {
-        name: 'TaiJi-mac-arm64.zip',
-        browser_download_url: 'https://example.com/mac-arm64.zip',
+        name: 'TaiJi-mac-arm64.dmg',
+        browser_download_url: 'https://example.com/mac-arm64.dmg',
         size: 1000,
         // 合法 64 位 hex（全 a 便于断言）
         digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -50,18 +50,19 @@ function makeReleaseJson(overrides: Record<string, unknown> = {}): Record<string
         size: 3000,
         digest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
       },
+      // 干扰①：blockmap 不应被选中（digest 用 sha512 以验证不会被误当 sha256）
       {
-        name: 'TaiJi-amd64.deb',
-        browser_download_url: 'https://example.com/amd64.deb',
-        size: 4000,
-        digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-      },
-      // 干扰：blockmap 不应被选中（digest 用 sha512 以验证不会被误当 sha256）
-      {
-        name: 'TaiJi-mac-arm64.zip.blockmap',
-        browser_download_url: 'https://example.com/mac-arm64.zip.blockmap',
+        name: 'TaiJi-mac-arm64.dmg.blockmap',
+        browser_download_url: 'https://example.com/mac-arm64.dmg.blockmap',
         size: 10,
-        digest: 'sha512:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+        digest: 'sha512:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      },
+      // 干扰②：存量历史 release 的 mac zip（批次 3 后只发 dmg）不得被选中
+      {
+        name: 'TaiJi-0.8.44-mac-arm64.zip',
+        browser_download_url: 'https://example.com/TaiJi-0.8.44-mac-arm64.zip',
+        size: 5000,
+        digest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
       },
     ],
     ...overrides,
@@ -106,7 +107,7 @@ describe('W2: ReleaseChecker 自动升级检测', () => {
     expect(result!.publishedAt).toBe('2025-12-01T00:00:00Z')
     expect(result!.htmlUrl).toContain('v0.9.0')
     // sha256 从 digest strip 'sha256:' 前缀（必须 64 位 hex 才被接受）
-    expect(result!.assets.macArm64Zip?.sha256).toBe(
+    expect(result!.assets.macArm64Dmg?.sha256).toBe(
       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     )
     expect(result!.assets.winX64Exe?.sha256).toBe(
@@ -167,27 +168,65 @@ describe('W2: ReleaseChecker 自动升级检测', () => {
   })
 
   // ── W2TC4：asset 平台分流 ─────────────────────────────────────
-  it('W2TC4: assets 含 4 平台 + blockmap 干扰 → 各平台 downloadUrl 正确，blockmap 不被选', async () => {
+  it('W2TC4: assets 含 3 平台 + blockmap/存量 zip 干扰 → 各平台 downloadUrl 正确，干扰不被选', async () => {
     globalThis.fetch = vi.fn(async () => jsonResponse(makeReleaseJson())) as typeof globalThis.fetch
 
     const checker = new ReleaseChecker()
     const result = await checker.checkForLatestRelease('0.8.14')
 
     expect(result).not.toBeNull()
-    expect(result!.assets.macArm64Zip?.downloadUrl).toBe('https://example.com/mac-arm64.zip')
+    expect(result!.assets.macArm64Dmg?.downloadUrl).toBe('https://example.com/mac-arm64.dmg')
     expect(result!.assets.winX64Exe?.downloadUrl).toBe('https://example.com/setup-x64.exe')
     expect(result!.assets.linuxX64AppImage?.downloadUrl).toBe('https://example.com/x86_64.AppImage')
-    expect(result!.assets.linuxX64Deb?.downloadUrl).toBe('https://example.com/amd64.deb')
     // size 透传
-    expect(result!.assets.macArm64Zip?.size).toBe(1000)
-    // blockmap 不应出现在任何分流字段（不存在该字段）
+    expect(result!.assets.macArm64Dmg?.size).toBe(1000)
+    // blockmap 与存量 mac zip 不应出现在任何分流字段（S8：ASSET_PATTERNS 只认 dmg）
     const allUrls = [
-      result!.assets.macArm64Zip?.downloadUrl,
+      result!.assets.macArm64Dmg?.downloadUrl,
       result!.assets.winX64Exe?.downloadUrl,
       result!.assets.linuxX64AppImage?.downloadUrl,
-      result!.assets.linuxX64Deb?.downloadUrl,
     ]
-    expect(allUrls).not.toContain('https://example.com/mac-arm64.zip.blockmap')
+    expect(allUrls).not.toContain('https://example.com/mac-arm64.dmg.blockmap')
+    expect(allUrls, '存量历史 zip 不得被 mac 分流选中').not.toContain(
+      'https://example.com/TaiJi-0.8.44-mac-arm64.zip',
+    )
+  })
+
+  // ── W2TC4b：ASSET_PATTERNS dmg 后缀匹配（S8：匹配 .dmg 不匹配 .zip）──
+  it('W2TC4b: TaiJi-<version>-mac-arm64.dmg（带版本号形态）→ macArm64Dmg 匹配；同形态 .zip 不匹配', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse(
+        makeReleaseJson({
+          assets: [
+            {
+              name: 'TaiJi-0.9.0-mac-arm64.dmg',
+              browser_download_url: 'https://example.com/TaiJi-0.9.0-mac-arm64.dmg',
+              size: 1000,
+              digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            },
+            {
+              name: 'TaiJi-0.9.0-mac-arm64.zip',
+              browser_download_url: 'https://example.com/TaiJi-0.9.0-mac-arm64.zip',
+              size: 2000,
+              digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            },
+          ],
+        }),
+      ),
+    ) as typeof globalThis.fetch
+
+    const checker = new ReleaseChecker()
+    const result = await checker.checkForLatestRelease('0.8.14')
+
+    expect(result).not.toBeNull()
+    expect(result!.assets.macArm64Dmg?.downloadUrl).toBe('https://example.com/TaiJi-0.9.0-mac-arm64.dmg')
+    // 批次 3 后 mac 只认 dmg（设计 §3.3.3-A）：zip 形态不进任何分流字段
+    const urls = [
+      result!.assets.macArm64Dmg?.downloadUrl,
+      result!.assets.winX64Exe?.downloadUrl,
+      result!.assets.linuxX64AppImage?.downloadUrl,
+    ]
+    expect(urls).not.toContain('https://example.com/TaiJi-0.9.0-mac-arm64.zip')
   })
 
   // ── W2TC5：缓存 ───────────────────────────────────────────────
@@ -307,8 +346,8 @@ describe('W2: ReleaseChecker 自动升级检测', () => {
         makeReleaseJson({
           assets: [
             {
-              name: 'TaiJi-mac-arm64.zip',
-              browser_download_url: 'https://example.com/mac.zip',
+              name: 'TaiJi-mac-arm64.dmg',
+              browser_download_url: 'https://example.com/mac.dmg',
               size: 1000,
               // sha512 前缀 → 必须拒绝，不能原样返回
               digest: `sha512:${sha512Hex}`,
@@ -324,13 +363,6 @@ describe('W2: ReleaseChecker 自动升级检测', () => {
               name: 'TaiJi-x86_64.AppImage',
               browser_download_url: 'https://example.com/appimage',
               size: 3000,
-              // 无前缀、纯 64 位 hex → 接受
-              digest: 'f'.repeat(64),
-            },
-            {
-              name: 'TaiJi-amd64.deb',
-              browser_download_url: 'https://example.com/deb',
-              size: 4000,
               // 无前缀、垃圾数据 → 拒绝
               digest: 'not-a-hex-string',
             },
@@ -344,13 +376,48 @@ describe('W2: ReleaseChecker 自动升级检测', () => {
 
     expect(result).not.toBeNull()
     // sha512 前缀：禁止原样返回（修复前的 bug 会返回 'sha512:...'）
-    expect(result!.assets.macArm64Zip?.sha256).toBeUndefined()
+    expect(result!.assets.macArm64Dmg?.sha256).toBeUndefined()
     // sha256 前缀但 hex 长度不对：拒绝
     expect(result!.assets.winX64Exe?.sha256).toBeUndefined()
-    // 无前缀、纯 64 位 hex：接受
-    expect(result!.assets.linuxX64AppImage?.sha256).toBe('f'.repeat(64))
     // 垃圾数据：拒绝
-    expect(result!.assets.linuxX64Deb?.sha256).toBeUndefined()
+    expect(result!.assets.linuxX64AppImage?.sha256).toBeUndefined()
+  })
+
+  it('W2TC7b: 无前缀纯 64 位 hex digest → 接受（三平台资产同分支）', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse(
+        makeReleaseJson({
+          assets: [
+            {
+              name: 'TaiJi-mac-arm64.dmg',
+              browser_download_url: 'https://example.com/mac.dmg',
+              size: 1000,
+              digest: 'f'.repeat(64),
+            },
+            {
+              name: 'TaiJi-setup-x64.exe',
+              browser_download_url: 'https://example.com/exe',
+              size: 2000,
+              digest: 'a'.repeat(64),
+            },
+            {
+              name: 'TaiJi-x86_64.AppImage',
+              browser_download_url: 'https://example.com/appimage',
+              size: 3000,
+              digest: 'b'.repeat(64),
+            },
+          ],
+        }),
+      ),
+    ) as typeof globalThis.fetch
+
+    const checker = new ReleaseChecker()
+    const result = await checker.checkForLatestRelease('0.8.14')
+
+    expect(result).not.toBeNull()
+    expect(result!.assets.macArm64Dmg?.sha256).toBe('f'.repeat(64))
+    expect(result!.assets.winX64Exe?.sha256).toBe('a'.repeat(64))
+    expect(result!.assets.linuxX64AppImage?.sha256).toBe('b'.repeat(64))
   })
 
   // ── W2TC2d：prerelease-test skill 的 beta release 不触发升级提示 ───

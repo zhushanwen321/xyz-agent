@@ -79,8 +79,9 @@ for (const file of fs.readdirSync(dir)) {
   if (!stat.isFile()) continue;
   // 排除任何已存在的 manifest 文件（manifest.json / manifest-*.json），避免把自己算进去
   if (/^manifest(-.*)?\.json$/.test(file)) continue;
-  // 只对实际产物算（.dmg/.zip/.exe/.AppImage/.deb）
-  if (!/\.(dmg|zip|exe|AppImage|deb)$/.test(file)) continue;
+  // 只对实际产物算（.dmg/.exe/.AppImage；mac zip 与 deb target 已删——设计 §3.3.3-C / §3.3.2b，
+  // 正则同步收紧防误导：留着匹配不到文件，但会让人误以为仍有 zip/deb 产物形态）
+  if (!/\.(dmg|exe|AppImage)$/.test(file)) continue;
   const buf = fs.readFileSync(fullPath);
   const sha256 = crypto.createHash("sha256").update(buf).digest("hex");
   assets[file] = { sha256, size: stat.size };

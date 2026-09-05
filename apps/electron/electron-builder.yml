@@ -113,9 +113,6 @@ mac:
     - target: dmg
       arch:
         - arm64
-    - target: zip
-      arch:
-        - arm64
   # 语言裁剪（设计 §3.2）：构建时删除其余 lproj/pak（实测省 ~48MB/包）。
   # en 必须在首位作回落，全删有启动风险。
   # 格式差异：mac lproj 目录用下划线（zh_CN），win/linux pak 文件名用连字符（zh-CN），
@@ -134,8 +131,9 @@ mac:
   icon: build/icon.icns
   minimumSystemVersion: 12.0.0
   # release asset 文件名带版本号（preflight 检查强制；release-checker 用平台后缀 pattern
-  # 如 -mac-arm64.zip 定位 asset，不依赖固定文件名——ad0bcf86a 起自动升级改走版本化 asset）。
-  # zip 和 dmg 共用此 pattern，${ext} 由 electron-builder 按 target 解析为 .zip / .dmg。
+  # 如 -mac-arm64.dmg 定位 asset，不依赖固定文件名——ad0bcf86a 起自动升级改走版本化 asset）。
+  # [HISTORICAL] dmg 单形态：mac zip target 已删（设计 §3.3.3-C），更新链路改消费 dmg，
+  # ${ext} 恒解析为 .dmg；存量 v0.8.44~v0.9.13 darwin 用户断供已拍板接受（设计 §2.5）。
   artifactName: TaiJi-${version}-mac-arm64.${ext}
 
 # dmg 压缩格式（设计 §3.3.2，docs/design/release-artifact-size-optimization-batch3.md）。
@@ -180,9 +178,6 @@ linux:
     - target: AppImage
       arch:
         - x64
-    - target: deb
-      arch:
-        - x64
   # 语言裁剪：同 mac 注释（en 首位回落）
   electronLanguages: ["en", "zh-CN"]
   # node-pty prebuilds 平台裁剪（设计 §3.2.2，同 mac 注释）：
@@ -194,8 +189,10 @@ linux:
   icon: build/icon-512.png
   # release asset 文件名带版本号（同 mac 注释，release-checker pattern 匹配）。
   # ${arch} 由 electron-builder 按 target ext 解析（getArtifactArchName）：
-  # AppImage(x64) -> x86_64，deb(x64) -> amd64，${ext} 解析为 AppImage / deb。
-  # 产物：TaiJi-${version}-x86_64.AppImage 和 TaiJi-${version}-amd64.deb。
+  # AppImage(x64) -> x86_64，${ext} 解析为 AppImage。
+  # 产物：TaiJi-${version}-x86_64.AppImage。
+  # [HISTORICAL] deb 附件已砍（2026-09 产品拍板，设计 §3.3.2b）：更新链路从不消费 deb，
+  # 三重拦截见设计 §2.1——纯下载死附件（v0.9.13 实测 161.5MB/版本）。
   artifactName: TaiJi-${version}-${arch}.${ext}
 
 # AppImage 内部压缩算法（设计 §3.3.1，docs/design/release-artifact-size-optimization-batch3.md）。

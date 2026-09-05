@@ -52,8 +52,8 @@ function makeFakeChild(): FakeChild {
 
 /** 下载目标 fixture（不真实访问，URL 仅作参数断言对象）。 */
 const ASSET: ReleaseAsset = {
-  name: 'TaiJi-0.9.13-mac-arm64.zip',
-  downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.13/TaiJi-0.9.13-mac-arm64.zip',
+  name: 'TaiJi-0.9.13-mac-arm64.dmg',
+  downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.13/TaiJi-0.9.13-mac-arm64.dmg',
   size: 1000,
 }
 
@@ -93,7 +93,7 @@ describe('u2-curl-download', () => {
   afterEach(() => {
     if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
     vi.useRealTimers()
-    rmSync(tmpDir, { recursive: true, force: true })
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   function stubPlatform(platform: string): void {

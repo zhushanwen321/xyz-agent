@@ -51,7 +51,7 @@ export function validateRelease(release: LatestReleaseInfo): void {
     throw new UpdateError(`invalid version: ${release.version}`, 'downloading')
   }
   const assets = release.assets
-  for (const key of ['macArm64Zip', 'winX64Exe', 'linuxX64AppImage', 'linuxX64Deb'] as const) {
+  for (const key of ['macArm64Dmg', 'winX64Exe', 'linuxX64AppImage'] as const) {
     const asset = assets[key]
     if (!asset) continue
     validateAsset(asset)

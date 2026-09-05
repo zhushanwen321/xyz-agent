@@ -74,9 +74,9 @@ const FIXTURE: LatestReleaseInfo = {
   publishedAt: '2025-12-01T00:00:00Z',
   htmlUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/tag/v0.9.0',
   assets: {
-    macArm64Zip: {
-      name: 'TaiJi-mac-arm64.zip',
-      downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJi-mac-arm64.zip',
+    macArm64Dmg: {
+      name: 'TaiJi-mac-arm64.dmg',
+      downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJi-mac-arm64.dmg',
       size: 1000,
       sha256: 'a'.repeat(64),
     },
