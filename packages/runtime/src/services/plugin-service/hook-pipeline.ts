@@ -113,42 +113,24 @@ export class HookPipeline {
         ) as Record<string, unknown>
 
         // 统一处理序（设计 §3.3-D2）：① 注入形状校验（合法条目 push 进累积）→
-        // ② block 判定。校验先于 block 判定——block 插件的畸形注入照样 warn，
-        // block 插件自身的合法注入进累积并随 blocked 回包透传（阻止与留言互不吞没）。
-        if (result && typeof result === 'object' && result.injectedMessages !== undefined) {
-          if (hookType === INJECTION_CONSUMING_HOOK_TYPE) {
-            collectInjectedMessages(result.injectedMessages, entry.pluginId, injectedMessages)
-          } else if (hasNonEmptyInjection(result.injectedMessages)) {
-            // D5 行 3：非消费 intercept hookType 返回非空注入 → 误用整体忽略 + warn
-            //（本行不做形状校验——畸形叠加是双重 warn 无意义，设计 r3 INFO）
-            console.warn(
-              `[plugin-service] ignoring injectedMessages from plugin ${entry.pluginId}: ` +
-              `hookType ${hookType} does not consume injected messages (only ${INJECTION_CONSUMING_HOOK_TYPE} does)`,
-            )
-          }
-        }
+        // ② block 判定 → ③ transform。各步判定收口在模块私有 helper，顺序由
+        // execute 主循环保证（校验先于 block 判定——block 插件的畸形注入照样
+        // warn，block 插件自身的合法注入进累积并随 blocked 回包透传，阻止与
+        // 留言互不吞没）。
+        applyInjectionCollection(result, hookType, entry, injectedMessages)
 
         // 检查是否被阻止
-        if (result && typeof result === 'object' && 'proceed' in result && result.proceed === false) {
-          const blocked: HookResult = {
-            blocked: true,
-            reason: (result.reason as string) ?? `Blocked by plugin ${entry.pluginId}`,
-            blockedBy: entry.pluginId,
-          }
-          // block 前已累积的注入（含 block 插件自身合法注入，push 在 block 判定之前
-          // 完成）随 blocked 回包透传（设计 §3.3-D2 block 交互定案）；空累积不带键，
-          // 保持既有 block 回包形状
-          if (injectedMessages.length > 0) blocked.injectedMessages = injectedMessages
-          return blocked
-        }
+        const blocked = buildBlockedResult(result, entry, injectedMessages)
+        if (blocked) return blocked
 
         // 检查是否需要转换内容
-        if (result && typeof result === 'object' && 'modifiedData' in result && result.modifiedData !== undefined) {
+        const modifiedData = extractModifiedData(result)
+        if (modifiedData !== undefined) {
           context = {
             ...context,
-            data: result.modifiedData,
+            data: modifiedData,
           }
-          transformedData = result.modifiedData
+          transformedData = modifiedData
         }
 
       } catch (err: unknown) {
@@ -190,6 +172,63 @@ export class HookPipeline {
       })
     }
   }
+}
+
+/**
+ * execute 单 handler 结果的注入步（设计 §3.3-D2 处理序 ①）：
+ * 消费型 hookType 逐条目形状校验并累积；非消费型返回非空注入 → 误用整体
+ * 忽略 + warn（D5 行 3；不做形状校验——畸形叠加是双重 warn 无意义，设计 r3 INFO）。
+ */
+function applyInjectionCollection(
+  result: Record<string, unknown>,
+  hookType: string,
+  entry: HookEntry,
+  injectedMessages: string[],
+): void {
+  if (!(result && typeof result === 'object' && result.injectedMessages !== undefined)) return
+  if (hookType === INJECTION_CONSUMING_HOOK_TYPE) {
+    collectInjectedMessages(result.injectedMessages, entry.pluginId, injectedMessages)
+  } else if (hasNonEmptyInjection(result.injectedMessages)) {
+    console.warn(
+      `[plugin-service] ignoring injectedMessages from plugin ${entry.pluginId}: ` +
+      `hookType ${hookType} does not consume injected messages (only ${INJECTION_CONSUMING_HOOK_TYPE} does)`,
+    )
+  }
+}
+
+/**
+ * execute 单 handler 结果的 block 步（设计 §3.3-D2 处理序 ②）：proceed === false 时
+ * 构造 blocked 回包，否则返回 undefined（放行）。
+ * block 前已累积的注入（含 block 插件自身合法注入，push 在 block 判定之前完成）随
+ * blocked 回包透传（设计 §3.3-D2 block 交互定案）；空累积不带键，保持既有 block 回包形状。
+ */
+function buildBlockedResult(
+  result: Record<string, unknown>,
+  entry: HookEntry,
+  injectedMessages: string[],
+): HookResult | undefined {
+  if (!(result && typeof result === 'object' && 'proceed' in result && result.proceed === false)) {
+    return undefined
+  }
+  const blocked: HookResult = {
+    blocked: true,
+    reason: (result.reason as string) ?? `Blocked by plugin ${entry.pluginId}`,
+    blockedBy: entry.pluginId,
+  }
+  if (injectedMessages.length > 0) blocked.injectedMessages = injectedMessages
+  return blocked
+}
+
+/**
+ * execute 单 handler 结果的 transform 步（设计 §3.3-D2 处理序 ③）：提取链上
+ * modifiedData（undefined = 无转换）。返回值语义 = 原判定
+ * `'modifiedData' in result && result.modifiedData !== undefined`。
+ */
+function extractModifiedData(result: Record<string, unknown>): unknown {
+  if (result && typeof result === 'object' && 'modifiedData' in result && result.modifiedData !== undefined) {
+    return result.modifiedData
+  }
+  return undefined
 }
 
 /**
