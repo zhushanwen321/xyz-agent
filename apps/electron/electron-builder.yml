@@ -84,6 +84,13 @@ extraResources:
       - "!**/__tests__/**"
       - "!**/*.test.*"
       - "!**/*.d.ts"
+      # 排除 sourcemap + 包根级文档（实测 ~8.7MB/包垃圾，设计 §3.2）。
+      # [禁令] 禁止用 !**/*.md 通配：staged extensions 含 7 个 skills/<name>/SKILL.md，
+      # 是 pi 内置 skills 的运行时资源（资源发现机制读取），通配会静默删除内置 skills；
+      # md 只按精确文件名排（包根级文档实测仅 README.md / ARCHITECTURE.md 两种名字）。
+      - "!**/*.map"
+      - "!**/README.md"
+      - "!**/ARCHITECTURE.md"
   # built-in xyz plugins（resources/plugins/<name>，如 statusline）。
   # prepare-builtin-plugins.sh 预编译 index.ts → index.js（与源同目录）；plugin-registry
   # 打包后扫描 <cwd>/resources/plugins（cwd=Resources），故 to 保持 resources/plugins 嵌套。
