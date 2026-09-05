@@ -320,7 +320,12 @@ export class RpcClient implements IPiEngine {
     })
 
     // Parse stdout JSONL
+    // rl error 吞转发（2026-09-04 事故审计）：pi 崩溃/被杀时 stdout 管道流错误被
+    // readline 转发到 interface 实例 re-emit——无 listener 直接 throw 成
+    // uncaughtException → 整机 shutdown（stderr 已有同款防护，见下方 stderr 段注释）；
+    // pi 退出处置归 exit/kill 链路，此处只堵转发逃逸。
     const rl = createInterface({ input: proc.stdout! })
+    rl.on('error', () => {})
     rl.on('line', (line) => {
       if (!line.trim()) return
       // tee 原始 JSONL 到 pi session 日志（架构约定 #4，卡死诊断证据）

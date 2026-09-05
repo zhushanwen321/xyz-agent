@@ -457,6 +457,12 @@ jobs:
       - name: Subagent-core closure guard (D9-①)
         run: node scripts/check-subagent-core-closure.mjs
 
+      # 流写逃逸护栏（2026-09-04 runtime 整机崩溃事故护栏，与 pre-commit 同源直调）：
+      # 裸流写 / socket error 未挂载静态扫描——防新增代码在事件回调里裸写半关闭/
+      # destroyed 流，逃逸为 uncaughtException → 整机 shutdown（D7 通则，CI 面同源拦截）。
+      - name: Unsafe stream writes guard
+        run: node scripts/check-unsafe-stream-writes.mjs
+
   # PR 构建检查：electron-builder 打包流程，不在 PR 上传产物。
   # dir-only=true：只产出 unpacked 目录，跳过安装器压缩（省 ~185s）。安装器配置回归交给 release.yml。
   # needs gate：lint/typecheck/sdk-sync + 4 个 test job + e2e-visual 任一已知失败时不浪费 mac runner（mac 构建 5-8min）。
