@@ -49,9 +49,16 @@ export interface ContenteditableCallbacks {
    */
   onDollarFileTrigger?: (payload: { query: string } | null) => void
   /**
-   * @ subagent 触发检测（四符号新符号，与 # 同「行首或空格后」规则）。可选，同上。
+   * @ subagent 触发检测（四符号体系新增，与 # 同「行首或空格后」规则）。可选，同上。
    */
   onSubagentTrigger?: (payload: { query: string } | null) => void
+  /**
+   * skill 触发检测（多 skill 注入设计 D1）：{query} 表示光标前有「非换行空白 + /」序列且
+   * query 合法（[a-z0-9-]{0,64}）；null 表示应关闭浮层（不命中 / query 非法如 /usr 的
+   * 第二个 /）。与 onSlashTrigger（行首命令域）正则互斥，同一次输入至多一路非 null。
+   * 可选：壳层（ui ComposerInput）接线前不传，dom-core 用 ?. 调用。
+   */
+  onSkillTrigger?: (payload: { query: string } | null) => void
   /**
    * [bash 豁免短路]（设计 D6）：返回 true 时 onInput 跳过全部符号触发检测并给所有
    * trigger 回调发 null（关闭浮层语义）——bash 模式（! / !! 前缀）下 $ 是变量、# 是注释、

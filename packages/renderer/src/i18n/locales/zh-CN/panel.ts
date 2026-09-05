@@ -281,6 +281,8 @@ export default {
     // 四符号体系（@ subagent 浮层）
     newSubagent: '＋ 新建 subagent',
     newSubagentPlaceholder: '新任务',
+    // skill 浮层已选项标记（多 skill 注入 D2）
+    skillSelected: '已选',
   },
   queue: {
     title: '队列',

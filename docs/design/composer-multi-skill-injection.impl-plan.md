@@ -73,9 +73,9 @@ graph TD
 | u1 | committed | 1 | 32/32 绿（主 agent 重跑一致）；commit 见 git log u1 |
 | u2 | committed | 1 | 增量 27/27 绿（主 agent 重跑一致）；typecheck/守卫/lint 过；runtime 全量 2 存量失败=runtime 测试锁旧解析行为（u3 连带，补修中） |
 | u3 | committed | 1 | segments 39 绿 + core apply-entry/equivalence/store 144 绿（主 agent 重跑一致）；三包全量见 subagent 证据；**runtime message-converter.test.ts 2 用例锁旧行为待补修（领地缺口，轮次+1）** |
-| u4 | pending | 0 | - |
+| u4 | committed | 1 | dom-core 190 绿 + renderer 触发 10 绿（主 agent 重跑一致）；ui 555 绿；三包 typecheck 过 |
 | u5 | pending | 0 | - |
-| u6 | pending | 0 | - |
+| u6 | committed | 1 | LF framing 6/6 + 守卫 22 条绿（主 agent 重跑一致）；real-pi 探针抓出 u2 两缺陷（已修，见变更历史） |
 
 ## 7 残留风险与变更历史
 
@@ -89,3 +89,4 @@ graph TD
 - 2026-09-06：初版（用户已豁免评审确认，直接基线）。
 - 2026-09-06（W1 后）：u1 committed（32 测试绿 + shared 全量 258 绿 + typecheck/eslint 过）。u2 领地补 `packages/shared/src/protocol.ts`（仅限新增提示广播消息类型，范式 `session.forkNotice`）——u1 完成通知后主 agent 核实发现提示广播需契约登记，属计划缺口修订。u1 两条合理偏差登记：① 指引行无句号（取 D7 正文定稿，场景 2 示意图句号属排版）；② 降级块解析区间可选吞入紧随指引行（可选组，hook 删指引行时块仍可识别）。
 - 2026-09-06（W3 后）：u6 PS-22 真实 pi 探针实证两处 u2 生产缺陷并打回修复（R1，28/28 + 探针绿）：① get_commands skill 项 name 恒带 `skill:` 前缀（pi agent-session.js:1996 实装），注入器映射与 block 插值改为剥前缀归一（设计未明说该形态，属设计盲区补齐）；② References 行 baseDir 恒用 `dirname(path)` 弃用 `sourceInfo.baseDir`——后者按 source 分链语义可变（.pi/skills 来源下为扫描根），与 pi 实装 `skill.baseDir=dirname(filePath)`（skills.js:236/:260）漂移。**设计 §5 检查点 1 的「sourceInfo 含 baseDir，D5 所需数据齐全」断言对 baseDir 字段不成立**——登记为设计文档待修项（阶段 3 doc_errors 预登记，设计文档 D4/D5 的 sourceInfo 表述与检查点 1 措辞需同步修正）。
+- 2026-09-06（W3 收口）：u4 committed。领地扩展追认（均为契约/门禁强制，设计文件地图未覆盖的环节）：① ui ComposerInput.vue（skill-trigger 转发链契约点）+ dom-core types.ts（onSkillTrigger 回调契约）；② command-popover-open-fetch.ts（skill 浮层打开边沿同源拉 getCommands）；③ i18n locales ×2（已选文案键，禁硬编码规范）；④ 新增 command-popover-skill-candidates.ts / composer-focus-ring.ts（vue_rules_checker 300 行门禁强制拆分，Composer 存量 301 行已超限一并正面修复）。**检查点 4 关闭（结论=不保证一致）**：landing 数据源 name 取自目录名（skill-scanner.ts:75），panel 数据源取自 SKILL.md frontmatter name（pi get_commands）——不一致时 landing 选出的 chip 走 skill_missing 透传+提示（D8 安全网，非静默）；主 agent 判定可接受，登记为已知边界。u4 另登记：dom-core 测试放 input/ 同目录（该包无 __tests__/ 惯例）；skill 触发无光标时返回 null（保守侧，设计未规定）。

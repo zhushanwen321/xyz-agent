@@ -18,7 +18,7 @@ const FETCH_THROTTLE_MS = 1_000
 
 export function useCommandPopoverOpenFetch(opts: {
   open: () => boolean
-  type: () => 'file' | 'slash' | 'session' | 'subagent'
+  type: () => 'file' | 'slash' | 'session' | 'subagent' | 'skill'
   sessionId: () => string | undefined
 }): void {
   const commandStore = useCommandStore()
@@ -31,7 +31,9 @@ export function useCommandPopoverOpenFetch(opts: {
       if (!open || prevOpen) return // 仅 false→true 边沿
       const sid = opts.sessionId()
       if (!sid) return // landing 态无数据源不拉（#/@ 候选为空不弹）
-      if (opts.type() === 'slash') {
+      // slash 与 skill（多 skill 注入 D1）同源：数据都在 pi get_commands → commandStore，
+      // 打开边沿同一节流窗口拉一次，双浮层共享最新快照
+      if (opts.type() === 'slash' || opts.type() === 'skill') {
         if (Date.now() - lastSlashFetchAt < FETCH_THROTTLE_MS) return
         lastSlashFetchAt = Date.now()
         void sessionApi

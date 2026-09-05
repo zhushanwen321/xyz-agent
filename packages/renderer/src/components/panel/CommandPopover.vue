@@ -46,6 +46,7 @@
           :key="item.id"
           class="cmd-row flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px] leading-[1.4] transition-colors"
           :class="i === activeIndex ? 'bg-surface text-accent' : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg'"
+          :aria-disabled="item.selected ? 'true' : undefined"
           @click="onSelect(item)"
           @mouseenter="activeIndex = i"
         >
@@ -75,7 +76,10 @@
             <span class="shrink-0 font-semibold" :class="i === activeIndex ? 'text-accent' : 'text-neutral-fg'">{{ item.displayName ?? item.name }}</span>
             <span v-if="item.description" class="shrink-0 text-neutral-faint">·</span>
             <span v-if="item.description" class="ml-auto shrink-0 truncate max-w-[520px] text-neutral-dim">{{ item.description }}</span>
-            <span v-else class="ml-auto shrink-0 text-[10px] text-neutral-dim">{{ item.kind }}</span>
+            <!-- skill 已选标记（多 skill 注入 D2）：命中 selectedSkillNames 的项显示「已选」，
+                 onSelect 守卫禁选（防同一 skill 重复注入全文） -->
+            <span v-if="item.selected" class="ml-auto shrink-0 text-[10px] text-neutral-dim">{{ t('panel.command.skillSelected') }}</span>
+            <span v-else-if="!item.description" class="ml-auto shrink-0 text-[10px] text-neutral-dim">{{ item.kind }}</span>
           </template>
         </div>
       </div>
@@ -92,6 +96,7 @@ import { useCommandStore } from '@/composables/features/command/useCommandStore'
 import { iconKeyForCommand, filterAndSortFileCandidates } from '@xyz-agent/core'
 import { SLASH_COMMAND_SOURCE_KEY } from './command-popover-source'
 import { buildSessionCandidates, buildSubagentCandidates } from './command-popover-symbols'
+import { buildSkillCandidates } from './command-popover-skill-candidates'
 import { useCommandPopoverOpenFetch } from './command-popover-open-fetch'
 import { useCommandPopoverDelivery } from './command-popover-delivery'
 import { useCommandPopoverFileCandidates } from './command-popover-file-candidates'
@@ -100,7 +105,7 @@ import type { SkillInfo } from '@xyz-agent/shared'
 import { useSessionStore } from '@/stores/session'
 import { useSubagentStore } from '@/stores/subagent'
 
-type CmdType = 'file' | 'slash' | 'session' | 'subagent'
+type CmdType = 'file' | 'slash' | 'session' | 'subagent' | 'skill'
 
 type ComposerVariant = 'panel' | 'landing'
 
@@ -114,6 +119,9 @@ const props = defineProps<{
   variant?: ComposerVariant
   /** 过滤 query（输入区 / 或 # 后的内容，空串/缺省=不过滤；file 按 name+path 过滤，slash 按命令名过滤） */
   query?: string
+  /** 已插入的 skill 名集合（多 skill 注入 D2 已选禁选数据面）：Composer 从当前 segments 取。
+   *  命中项显示「已选」并禁选（同一 skill 不重复注入全文，防上下文浪费）。默认空。 */
+  selectedSkillNames?: string[]
   /** landing 态全局 skill（useGlobalSkills → skillRegistry globalCache，W4 FR-5）。默认空。 */
   globalSkills?: SkillInfo[]
   /** landing 态当前 cwd 的项目 skill（useProjectSkills 按 cwd key 缓存，W3 ADR-0051）。默认空。 */
@@ -127,6 +135,8 @@ const emit = defineEmits<{
     name: string
     icon?: string
     description?: string
+    /** skill 路：SKILL.md 绝对路径（可得时带上）；缺省时 runtime 经 get_commands 权威映射解析 */
+    location?: string
     /** session 路（#）：选中 session 的 id + 显示 label */
     sessionId?: string
     label?: string
@@ -207,6 +217,10 @@ interface CmdItem {
   /** slash 路专用（skill 图标紫色）；session/subagent 路缺省 falsy */
   isSkill?: boolean
   description?: string
+  /** skill 路透传：SKILL.md 绝对路径（select payload → insertSkillChip dataset），可得时带上 */
+  location?: string
+  /** skill 路专用：已插入过（selectedSkillNames 命中）→「已选」禁选（多 skill 注入 D2 去重） */
+  selected?: boolean
   /** file 路副行（父目录）/ session·subagent 路副行（subText） */
   dirPath?: string
   subText?: string
@@ -246,6 +260,10 @@ const items = computed<CmdItem[]>(() => {
     // @ subagent 候选（G3）：当前 session 分区 + 固定尾部「新建」项；landing 态返回空
     const records = props.sessionId ? subagentStore.getRecordsBySession(props.sessionId) : []
     return buildSubagentCandidates(records, props.query ?? '', !!props.sessionId, t('panel.command.newSubagent'))
+  }
+  if (props.type === 'skill') {
+    // skill-only 候选（多 skill 注入 D1/D2）：分数据源 + query 过滤 + 已选标记（纯函数拆分）
+    return buildSkillCandidates(variant.value, props, props.sessionId ? commandStore.getCommands(props.sessionId) : [])
   }
   const all = slashCommands.value
   const q = (props.query ?? '').trim().toLowerCase()
@@ -292,11 +310,15 @@ function iconClass(item: { isSkill?: boolean }, isSelected: boolean): string {
 }
 
 function onSelect(item: CmdItem): void {
+  // 已选禁选守卫（多 skill 注入 D2）：命中 selectedSkillNames 的 skill 项不再派发 select
+  // （同一 skill 不重复注入全文）；键盘 Enter/Tab 与鼠标点击共用本函数，一处守卫双路生效
+  if (item.selected) return
   emit('select', {
     type: props.type,
     name: item.name,
     icon: item.icon,
     description: item.description,
+    location: item.location,
     sessionId: item.sessionId,
     label: item.label,
     subagentId: item.subagentId,

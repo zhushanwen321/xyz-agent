@@ -281,6 +281,8 @@ export default {
     // Four-symbol system (@ subagent popover)
     newSubagent: '＋ New subagent',
     newSubagentPlaceholder: 'New task',
+    // Skill popover selected marker (multi-skill injection D2)
+    skillSelected: 'Selected',
   },
   queue: {
     title: 'Queue',
