@@ -176,7 +176,8 @@ describe('RuntimeServer message.send（marker 通道废弃后的纯转发）', (
   })
 
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
-  expect(sendMessageMock).toHaveBeenCalledWith('sess-789', 'just a normal message', undefined)
+  // 第 4 参 clientUuid：payload 未带 → undefined（session-occupancy-send-closure D2 透传）
+  expect(sendMessageMock).toHaveBeenCalledWith('sess-789', 'just a normal message', undefined, undefined)
   })
 
   it('旧 renderer 残留 subagent 键 → 被忽略：sendMessage 收到原文（全文相等，无任何包装）', async () => {
@@ -257,6 +258,7 @@ describe('RuntimeServer message.send（marker 通道废弃后的纯转发）', (
   })
 
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
-  expect(sendMessageMock).toHaveBeenCalledWith('sess-img', 'see image', images)
+  // 第 4 参 clientUuid：payload 未带 → undefined（session-occupancy-send-closure D2 透传）
+  expect(sendMessageMock).toHaveBeenCalledWith('sess-img', 'see image', images, undefined)
   })
 })

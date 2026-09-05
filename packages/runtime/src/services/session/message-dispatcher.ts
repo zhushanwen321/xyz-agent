@@ -5,6 +5,9 @@
  * sendMessageHook 注册。
  *
  * sendMessage 经 sendPrompt 骨架(hook 拦截 → ensureActive → 标记活跃 → prompt)。
+ * [occupancy D2 拒绝转译] pi busy 类确定性拒绝(manual 压缩 / auto 压缩+post-run)经
+ * classifyPromptRejection 识别转译为 send.rejected{reason:'compacting'|'processing'},
+ * 不进 message.error 错误气泡;busy 预检按命中维度分型(isCompacting → 'compacting')。
  * [HISTORICAL] sendSubagentMessage(marker 拼装分支)已删除(composer 四符号设计 D2)——
  * 定向消息改走 session-service.subagentAction 直发 client.prompt,不经本骨架。
  *
@@ -32,6 +35,36 @@ const RANDOM_TOKEN_SLICE_START = 2
  */
 function randomTokenSuffix(): string {
   return Math.random().toString(RANDOM_TOKEN_RADIX).slice(RANDOM_TOKEN_SLICE_START)
+}
+
+/**
+ * pi prompt() 确定性拒绝的错误原文（session-occupancy-send-closure D2 转译识别依据）。
+ * 字符串受 pi-semantics PS-22 / PS-23 探针锁守卫（pi 版本 bump 时探针红 = 文案漂移，须同步此处）。
+ */
+const PI_REJECTION_COMPACTING = 'Cannot submit a prompt while compaction is in progress'
+const PI_REJECTION_PROCESSING = 'Agent is already processing'
+
+/** send.rejected 拒绝提示文案（人类可读中文，renderer toast 用；P1 阶段 'compacting' 会入队）。 */
+const REJECT_MESSAGE_COMPACTING = '压缩进行中，消息将自动排队'
+const REJECT_MESSAGE_BUSY = 'Agent 正在处理'
+
+export type PromptRejectionReason = 'compacting' | 'processing'
+
+/**
+ * 识别 pi prompt() 的 busy 类确定性拒绝（按错误消息原文），输出转译 reason；非 busy 类返回 null。
+ *
+ * 两个拒绝分支（pi 0.84.4 agent-session.js prompt()）：
+ * - manual 压缩中：`_compactionAbortController` 置位窗口 throw "Cannot submit a prompt while
+ *   compaction is in progress..." → 'compacting'
+ * - auto 压缩 / post-run settling 窗口：isStreaming getter（含 post-run）为 true 且无
+ *   streamingBehavior 时 throw "Agent is already processing..." → 'processing'
+ *
+ * 独立小函数（非内联）：单测直测映射表 + 未来探针/调用方复用。
+ */
+export function classifyPromptRejection(errorMessage: string): PromptRejectionReason | null {
+  if (errorMessage.includes(PI_REJECTION_COMPACTING)) return 'compacting'
+  if (errorMessage.includes(PI_REJECTION_PROCESSING)) return 'processing'
+  return null
 }
 
 export class MessageDispatcher {
@@ -65,8 +98,8 @@ export class MessageDispatcher {
    * 调用方（session-message-handler）必须据此走 error envelope（带请求 id）让 renderer
    * pending.reject，不得 reply success（round7 must-fix #3：避免「composer 清空 + 错误气泡」矛盾态）。
    */
-  async sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }> {
-    return this.sendPrompt(sessionId, content, images)
+  async sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>, clientUuid?: string): Promise<{ blocked: boolean; rejected?: boolean }> {
+    return this.sendPrompt(sessionId, content, images, clientUuid)
   }
 
   /**
@@ -75,11 +108,15 @@ export class MessageDispatcher {
    * @param hookContent  hook 审核的文本(用户原文)
    * @param images       shared 形状图片附件（{data;mimeType}），透传给 client.prompt。
    *                     undefined 时不传 images，走原路径。
+   * @param clientUuid   客户端幂等 id（message.send RPC 透传，session-occupancy-send-closure D2）。
+   *                     拒绝广播（预检与 catch 转译两路）原样带回，renderer 据此消歧发送来源
+   *                     （flush 重放的拒绝不重入队）；正常路径不消费。
    */
   private async sendPrompt(
     sessionId: string,
     hookContent: string,
     images?: Array<{ data: string; mimeType: string }>,
+    clientUuid?: string,
   ): Promise<{ blocked: boolean; rejected?: boolean }> {
     // ── BeforeSend hook ──
     // blocked: 已广播 message.error（错误气泡），此处返回 {blocked:true} 让 handler 改发 error envelope。
@@ -110,9 +147,20 @@ export class MessageDispatcher {
       // [D-009 预检] busy 时拒绝（send.rejected 广播，不调 pi.prompt）
       // [W3, U6] 加 isCompacting：compact 进行中时 prompt 会与压缩竞态，同样必须拒。
       // [composer-bash-execute W1] 加 isBashRunning：bash 执行中 prompt 会与 bash 竞态，双向互斥。
+      // [occupancy D2 预检分型] 按命中维度分型：isCompacting → 'compacting'（renderer 兜底入队
+      // 的触发源，与 pi 转译路径同语义）；isGenerating / isBashRunning → 'busy'（存量）。
       if (activeSession.isGenerating || activeSession.isCompacting || activeSession.isBashRunning) {
-        console.warn(`[message-dispatcher] preemptive reject (busy), sid=${sessionId}`)
-        const msg = { type: 'send.rejected' as const, payload: { sessionId, reason: 'busy' as const, message: 'Agent 正在处理' } }
+        const reason = activeSession.isCompacting ? ('compacting' as const) : ('busy' as const)
+        console.warn(`[message-dispatcher] preemptive reject (${reason}), sid=${sessionId}`)
+        const msg = {
+          type: 'send.rejected' as const,
+          payload: {
+            sessionId,
+            reason,
+            message: reason === 'compacting' ? REJECT_MESSAGE_COMPACTING : REJECT_MESSAGE_BUSY,
+            ...(clientUuid !== undefined && { clientUuid }),
+          },
+        }
         this.messageBus?.publish(sessionId, msg)
         return { blocked: true, rejected: true }
       }
@@ -138,7 +186,28 @@ export class MessageDispatcher {
     } catch (e) {
       const errMsg = toErrorMessage(e)
       console.error(`[message-dispatcher] prompt failed: sessionId=${sessionId}`, errMsg)
+      // 复位对转译/非转译两路同样生效（occupancy D2：转译的拒绝也意味着 turn 没跑起来，
+      // 与预检拒绝同构——单次复位，两分支不重复不遗漏）。
       if (activeSession) activeSession.isGenerating = false
+      // [occupancy D2 拒绝转译] pi busy 类确定性拒绝 → send.rejected 分型广播，不走
+      // message.error 错误气泡链路（busy 类不进对话流；非 busy 的 pi 错误保留现状）。
+      // 返回 rejected:true 与预检拒绝同构：handler 回 message.status{rejected} 让 renderer
+      // pending 干净 resolve（send.rejected 兜底已接管用户反馈；error envelope 会让 pending.reject
+      // 恢复草稿，与入队/回滚流程冲突）。
+      const rejectionReason = classifyPromptRejection(errMsg)
+      if (rejectionReason) {
+        const msg = {
+          type: 'send.rejected' as const,
+          payload: {
+            sessionId,
+            reason: rejectionReason,
+            message: rejectionReason === 'compacting' ? REJECT_MESSAGE_COMPACTING : REJECT_MESSAGE_BUSY,
+            ...(clientUuid !== undefined && { clientUuid }),
+          },
+        }
+        this.messageBus?.publish(sessionId, msg)
+        return { blocked: true, rejected: true }
+      }
       const errMsgMsg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
       this.messageBus?.publish(sessionId, errMsgMsg)
       // 与 hook 拦截同等对待：已广播 message.error 气泡，返回 blocked 让 handler 走 error envelope（sendError），

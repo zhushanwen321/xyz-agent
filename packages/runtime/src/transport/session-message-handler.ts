@@ -524,8 +524,10 @@ export class SessionMessageHandler {
         // 隐藏注释前缀）已废弃（composer 四符号设计 D2）——定向消息改走
         // session.subagentAction(message/start) 直达 subagent。旧 renderer 残留的 subagent
         // 键被解构忽略，不 resurrect marker 行为。
-        const { sessionId, content, images } = msg.payload
-        const result = await this.ctx.sessionService.sendMessage(sessionId, content, images)
+        // clientUuid（session-occupancy-send-closure D2）：客户端幂等 id 经 dispatcher 透传，
+        // 拒绝广播（预检与 pi 转译两路）原样带回——renderer 消歧发送来源（flush 重放不重入队）。
+        const { sessionId, content, images, clientUuid } = msg.payload
+        const result = await this.ctx.sessionService.sendMessage(sessionId, content, images, clientUuid)
         // D(round7-must-fix-3): hook 拦截时 dispatcher 已广播 message.error（错误气泡），
         // 此处必须走 error envelope（带 msg.id）让 renderer pending.reject，不得 reply success。
         // 否则 renderer 见 msg.id 且非 error → pending.resolve → composer 清空，与错误气泡矛盾。
