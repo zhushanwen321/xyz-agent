@@ -413,12 +413,32 @@ export type ObserverHookType = 'onPiEvent'
 export type HookType = InterceptorHookType | ObserverHookType
 
 /**
- * @proposed — 拦截器返回结果：允许/阻止/修改数据。
+ * @proposed — 拦截器返回结果：允许/阻止/修改数据/注入消息。
+ *
+ * 三个语义域互不混淆（plugin-intercept-injection 设计 §3.3-D1）：
+ * - 阻止：proceed:false — runtime 侧终止后续插件 hook 链并留痕；当前 pi 集成不阻止
+ *   agent turn（pi before_agent_start 无 block 槽位，turn 照常进行）
+ * - 改写：modifiedData — 改写当前 hook 事件的 data（如 onAfterToolResult 改写工具输出），
+ *   管线按「链上最后一个」覆盖语义透传（HookResult.transformedData）
+ * - 注入：injectedMessages — 新增 LLM 上下文消息，跨插件累积拼接（非改写、非阻止）
  */
 export interface InterceptorResult {
+  /**
+   * false = 终止后续插件 hook 链 + 留痕。诚实边界：pi 链路无 block 槽位，
+   * blocked 回包不阻止 agent turn（turn 照常进行）。
+   */
   proceed: boolean
+  /** proceed:false 时的原因描述（留痕 / blocked 回包用） */
   reason?: string
+  /** 改写语义：改写当前 hook 事件的 data（链上最后一个生效，非累积）。勿用于注入 */
   modifiedData?: unknown
+  /**
+   * 注入语义：向 LLM 上下文新增的消息文本。契约边界（D1）：仅 onBeforeAgentStart
+   * （bridge intercept 链路）被消费；其他 intercept hookType 返回非空值类型合法但
+   * 无运行时效果（管线 warn 留痕，作者应移除误用）。observe hook（onPiEvent）的
+   * 响应在 Worker 侧丢弃，此处误用注入无任何运行时信号，仅靠本注释约束。
+   */
+  injectedMessages?: string[]
 }
 
 /**
@@ -452,12 +472,19 @@ export type HookObserver = (context: HookContext) => Promise<InterceptorResult |
  */
 export type PiEventCallback = (eventName: string, data: unknown) => Promise<void>
 
-/** @internal — runtime 内部：Hook 通用返回结果（主线程塑形） */
+/**
+ * @internal — runtime 内部：Hook 通用返回结果（主线程塑形）。
+ * injectedMessages 与 transformedData 语义分叉（plugin-intercept-injection 设计 §3.3-D2/D3）：
+ * 前者为管线层逐插件形状校验后的合法条目跨插件累积拼接（priority 执行序），后者保持
+ * 「链上最后一个」覆盖语义；消费方为 handleBridgeIntercept 的注入映射。
+ */
 export interface HookResult {
   blocked: boolean
   blockedBy?: string
   reason?: string
   transformedData?: unknown
+  /** 注入语义（仅 onBeforeAgentStart 链路消费）：管线已校验的合法条目，跨插件累积 */
+  injectedMessages?: string[]
 }
 
 /** @internal — runtime 内部：Hook 被阻止时的详细结果 */

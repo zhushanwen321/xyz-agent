@@ -57,7 +57,7 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| u-i1-sdk-contract | pending | 0 | — |
+| u-i1-sdk-contract | committed | 1 | Wave1 交付+修复轮（mock.ts 存量类型错修复）；sync-types.sh 再生路径（偏差已登记）；plugin-sdk tsc exit 0 |
 | u-i2-pipeline | pending | 0 | — |
 | u-i3-bridge-mapping | pending | 0 | — |
 
