@@ -49,16 +49,6 @@ export interface MessageEffectContext {
   /** message_start 挂载 streaming 超时兜底 timer（防 complete 永不到的 pi 静默卡死）。 */
   armStreamingTimer: (sessionId: string) => void
   /**
-   * [W1 fix-chat-flow-order] bashStart 改写 ephemeral executingBash（不再建 streaming bash
-   * 消息）后，本 timer 挂点随之退役——armBashTimer 当前无 effect 调用方，保留 ctx/store
-   * 契约供手动注入 streaming bash 消息的种子场景防御（配套 finalizeBashOnly /
-   * markBashError 收口链不变，见 bash-effects.ts / timers.ts 注释）。
-   */
-  armBashTimer: (sessionId: string) => void
-  /** [W1 fix-chat-flow-order] bash timer 挂点退役后正常流转为 no-op；markBashError 兜底
-   *  路径仍调用（手动种子场景防御），保留既有契约。 */
-  clearBashTimer: (sessionId: string) => void
-  /**
    * 追加 user 消息（Segment[]，ADR-0043）。
    * m2 阶段 queue_update 投递时经 drainN 计数 FIFO 取 segments 后 appendUser 进对话流。
    */

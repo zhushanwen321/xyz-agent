@@ -328,9 +328,10 @@ export interface Message {
   /**
    * 消息级错误文本/标记（status:'error' 同源）。
    * - assistant turn：message.error / send.rejected 通道写入错误文本
-   * - bash 消息：finalizeBashOnly 超时收口置 'timeout'（与 cancelled:true 区分超时 vs 主动取消）
-   * - markBashError abortBash 失败兜底写入错误文本
-   * 前端按值区分渲染（如 BashOutputBlock 消费 'timeout' 显示「超时」而非「已取消」）。
+   * - bash 消息：markBashError abortBash 失败兜底写入错误文本
+   * 前端按值区分渲染（如 BashOutputBlock 消费 'timeout' 显示「超时」而非「已取消」——
+   * 'timeout' 值的原写方 bash timer 收口已随 dormant 契约删除
+   * （docs/design/timeout-streaming-ui-idle.md §5.4 D4），渲染兼容分支保留）。
    */
   error?: string
   /**

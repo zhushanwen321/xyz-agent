@@ -503,9 +503,9 @@ export const session = {
  * - 命令含 'fail' → error：exitCode:1 + 'command not found'（覆盖错误态视觉）
  * - 命令含 'empty' → empty-output：exitCode:0 + ''（覆盖空输出态）
  * - 命令含 'timeout' → 近似超时：cancelled:true + exitCode:null（覆盖取消态视觉；
- *   真实 timeout 由 finalizeBashOnly 置 error:'timeout'（W1 entry 化后仅手动种子场景
- *   可达，正常流转无 streaming bash 消息），bashResultEffect 构造 entry 不读 error
- *   字段、mock 无法注入该标记，用 cancelled 近似 + 长 delay 模拟 timer 到期）
+ *   bashResultEffect 构造 entry 不读 error 字段、mock 无法注入 error:'timeout'
+ *   标记（原写方 bash timer 收口已随 dormant 契约删除），用 cancelled 近似 + 长 delay
+ *   模拟超时节奏）
  * - 命令含 'truncate' → truncated:true（覆盖 W4 截断标记视觉）
  *
  * delay 是 bashStart→bashResult 间隔，让 streaming loading 态可见。
@@ -612,9 +612,8 @@ export const chat = {
     })
     // bashStart→bashResult 间 mockDelay 让 loading 态可见（W1 entry 化后 bashStart 写
     // ephemeral executingBash 瞬时执行反馈，非消息数组项）。timeout 分支用更长 delay 模拟
-    // bash timer 到期（真实超时态由 finalizeBashOnly 置 error:'timeout'，此处只能用
-    // cancelled:true 近似——bashResultEffect 构造 bashExecution entry 不含 error 字段，
-    // mock 无法注入 error:'timeout'）。
+    // 超时节奏（真实 error:'timeout' 无 mock 可注入的写方——bashResultEffect 构造
+    // bashExecution entry 不含 error 字段，此处只能用 cancelled:true 近似）。
     const branch = resolveBashMockBranch(command)
     await sleep(branch.delay)
     emit(sessionId, {

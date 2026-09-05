@@ -26,7 +26,7 @@ import {
   disposeLruEntry,
 } from './lru'
 import { findLastAssistantIndex } from './chunk-processor'
-import { findLastStreamingBashIndex, markBashError, clearExecutingBash } from './bash-effects'
+import { markBashError, clearExecutingBash } from './bash-effects'
 import { createChangeSetController } from './changeset'
 import { createHandoffController } from './handoff'
 import type {
@@ -852,8 +852,6 @@ export function createChatStore() {
         finalizeSession,
         clearPendingSend,
         armStreamingTimer,
-        armBashTimer,
-        clearBashTimer,
         appendUser,
         drainN,
         reconcilePending,
@@ -878,8 +876,8 @@ export function createChatStore() {
    */
   function finalizeSession(sessionId: string, reason: FinalizeReason, errorText?: string): void {
     streamingStateMachine.finalizeMessages(sessionId, reason, errorText)
-    // 清 pendingSend + streaming timer（bash timer 不清：W1 timer-decouple 解耦，bash timer 由
-    // bashResultEffect/markBashError/finalizeBashOnly 独立清，不应被 assistant 收口误清）。
+    // 清 pendingSend + streaming timer（bash 消息不经此收口：finalizeMessages 跳过 bash，
+    // 其生命周期由 bashResultEffect/markBashError 独立管理，不应被 assistant 收口误清）。
     // [M2 PR#116 review] clearStreamingTimer 此前被误删：正常 message.complete 路径不再清
     // streaming timer，阈值到期后 timer 仍会触发 finalizeSession('timeout')，造成已 complete 的
     // turn 被二次收口（幂等无功能损害，但浪费一次 finalize 调用 + DEV warn 噪音）。
@@ -887,21 +885,6 @@ export function createChatStore() {
     clearStreamingTimer(sessionId)
     // 收口日志：仅异常 reason 打 dev warn（保留诊断价值），normal/aborted 正常路径不打（去长对话噪音）
     if (isDevMode() && reason !== 'normal' && reason !== 'aborted') console.warn(`[chat] finalizeSession sid=${sessionId} reason=${reason}`)
-  }
-
-  /** bash timer 专用收口（W1 timer-decouple，C2 回归防护）：只把 streaming bash 消息推 error 态，**不**清 streaming timer / pendingSend / 调 finalizeSession。幂等（无 streaming bash 时 no-op）。背景见 ./README.md。 */
-  function finalizeBashOnly(sessionId: string): void {
-    const prev = messages.value.get(sessionId)?.value ?? []
-    // [S7] 复用 findLastStreamingBashIndex，与 bashResultEffect/markBashError 一致。
-    const realIdx = findLastStreamingBashIndex(prev, sessionId)
-    if (realIdx === -1) return
-    const next = prev.map((m, i) => i === realIdx ? {
-      ...m,
-      status: 'error' as const,
-      bashExecution: { ...m.bashExecution!, cancelled: true },
-      error: 'timeout',
-    } : m)
-    commitMessages(messages, sessionId, next)
   }
 
   /**
@@ -956,8 +939,8 @@ export function createChatStore() {
     clearSessionTimer(pendingSendTimers, sessionId)
   }
 
-  // ── timer（streaming + bash）：从 chat-timers.ts 提取，闭包注入 finalizeSession；阈值经 getter 读当前配置值（[idle-refresh]）──
-  const { armStreamingTimer, refreshStreamingTimer, clearStreamingTimer, armBashTimer, clearBashTimer, disposeAllTimers } = initTimers(finalizeSession, finalizeBashOnly, () => streamingIdleTimeoutMs)
+  // ── timer（streaming）：从 chat-timers.ts 提取，闭包注入 finalizeSession；阈值经 getter 读当前配置值（[idle-refresh]）──
+  const { armStreamingTimer, refreshStreamingTimer, clearStreamingTimer, disposeAllTimers } = initTimers(finalizeSession, () => streamingIdleTimeoutMs)
 
   /**
    * session 级错误统一入口：追加 error assistant 消息 + finalizeSession。
@@ -1110,7 +1093,7 @@ export function createChatStore() {
     // 07 文档 §3.3.2 cleanup 契约）。
     sessionStreamingFlags.delete(sessionId)
     // timer 清理（模块级 Map，非响应式）
-    for (const clear of [() => clearPendingSendTimer(sessionId), () => clearStreamingTimer(sessionId), () => clearBashTimer(sessionId), () => clearHandingOffTimer(sessionId)]) clear()
+    for (const clear of [() => clearPendingSendTimer(sessionId), () => clearStreamingTimer(sessionId), () => clearHandingOffTimer(sessionId)]) clear()
     disposeLruEntry(sessionId) // R5: 清理 LRU 时序记录，防止内存泄漏
   }
 
@@ -1164,8 +1147,6 @@ export function createChatStore() {
     addPendingSend,
     clearPendingSend,
     armStreamingTimer,
-    armBashTimer,
-    clearBashTimer,
     markSessionError,
     isCompacting,
     setCompacting,
@@ -1181,7 +1162,7 @@ export function createChatStore() {
     // store 持有自己的 messages ref，useChat 经此方法调用不碰 ref（解耦 pinia Store/factory
     // 产物的 messages 类型鸿沟：pinia Store.messages 被解包为 Map，factory 产物为 ShallowRef）。
     markStreamingBashError: (sessionId: string, errorText: string) =>
-      markBashError(messages, sessionId, errorText, clearBashTimer),
+      markBashError(messages, sessionId, errorText),
     /** 测试专用：暴露 D-3 streaming flag 惰性派生缓存（断言 disposeSession/LRU 驱逐的清理语义用，生产代码勿读）。 */
     _sessionStreamingFlagsForTest: sessionStreamingFlags,
     /** 测试专用：暴露 [W21] per-session reducer 累积态（断言 applyEntryFrame 喂入/清理语义用，生产代码勿读——W22 对账消费前不设正式读口）。 */

@@ -40,8 +40,6 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     finalizeSession: vi.fn(),
     clearPendingSend: vi.fn(),
     armStreamingTimer: vi.fn(),
-    armBashTimer: vi.fn(),
-    clearBashTimer: vi.fn(),
     // m2→W14：queue_update drain 接线 drainN（计数 FIFO）+ appendUser + 深度对账 reconcilePending
     drainN: vi.fn(() => []),
     reconcilePending: vi.fn(),

@@ -169,10 +169,10 @@ export function createStreamingStateMachine(deps: StreamingStateMachineDeps) {
     const markedIds = reason === 'timeout' ? new Set<string>() : undefined
     const next = prev.map((m) => {
       // [M1 PR#116 review] 跳过 bash 消息：bash 消息（role:'system' + bashExecution）的生命周期
-      // 由 finalizeBashOnly / bashResultEffect / markBashError 独立管理（W1 timer-decouple 解耦）。
+      // 由 bashResultEffect / markBashError 独立管理（W1 timer-decouple 解耦）。
       // 若此处统一翻终态，L1 放宽 bash↔assistant 并发后，assistant error → finalizeSession('error')
       // 会把共存中的 streaming bash 一并翻成 error，bashResult 到达时找不到 streaming bash →
-      // 真实结果被丢弃。与 W1 的 finalizeBashOnly 解耦对称。
+      // 真实结果被丢弃。
       if (m.bashExecution) return m
       const isStreaming = m.status === 'streaming'
       // toolCall 统一收口（无论 message 是否还 streaming；[W4] 收敛到此处单一路径，

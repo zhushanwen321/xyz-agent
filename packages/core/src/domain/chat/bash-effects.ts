@@ -82,8 +82,8 @@ export function clearExecutingBash(sessionId: string): void {
  * [S7 PR#116 review] 找到 messages 里最后一条 streaming bash 消息的索引（无则 -1）。
  *
  * [W1 fix-chat-flow-order] bashStart 不再创建消息后，正常流转中不会再有 streaming bash
- * 消息（bashExecution entry 恒 status:'complete'）；保留本函数供 store.finalizeBashOnly /
- * markBashError 的既有调用契约（手动注入 streaming bash 消息的种子场景仍可定位）。
+ * 消息（bashExecution entry 恒 status:'complete'）；保留本函数供 markBashError 的既有
+ * 调用契约（手动注入 streaming bash 消息的种子场景仍可定位）。
  *
  * 判定条件：`m.bashExecution`（bash 消息标志）+ `status === 'streaming'`。
  */
@@ -195,13 +195,9 @@ export function markBashError(
   messages: MessagesRef,
   sessionId: string,
   errorText: string,
-  clearBashTimer?: (sid: string) => void,
 ): void {
   // 错误路径清执行态（写方成对保证的第三腿：bashStart 置 / bashResult 清 / 此处兜底清）
   clearExecutingBash(sessionId)
-  // 清 bash 超时 timer（幂等；[W1 fix-chat-flow-order] bashStart 不再挂 timer 后通常为 no-op，
-  // 保留调用以维持既有契约——手动种子场景下仍有防御意义）
-  clearBashTimer?.(sessionId)
   const prev = messages.value.get(sessionId)?.value ?? []
   // [S7] 复用 findLastStreamingBashIndex（手动注入 streaming bash 消息的种子场景防御）。
   const realIdx = findLastStreamingBashIndex(prev, sessionId)
