@@ -380,7 +380,12 @@ export async function startHandler(
     conversation: input.conversation,
     idleTimeoutMs: input.idleTimeoutMs,
     engine: input.engine,
-    collect: input.collect,
+    // B1（code-simplify 审查发现的行为缺口）：config collectSync.default=sync 且调用方
+    // 省略 collect 时，record 本体也要落 sync（设计 §3.1.3「缺省 = config 默认」作用于
+    // record，而非仅回显）——createRecordForMode 只认 opts.collect==="sync"，原样透传
+    // input.collect 会让 record 走 async 逐条通知而响应声称已入批。仅 sync 落值：
+    // async/缺省路径传 undefined 语义（旧 record 零迁移）字节不变。
+    collect: resolvedCollect === "sync" ? "sync" : input.collect,
     ctxModel,
     signal,
     // background detached 运行，完成由 notify 驱动新 turn。

@@ -166,11 +166,28 @@ describe("startHandler collect forwarding + response collect segment", () => {
     expect(opts.collect).toBe("sync");
   });
 
-  it("omits collect in ExecuteOptions when not provided (undefined = config 默认语义)", async () => {
+  it("omits collect in ExecuteOptions when not provided (resolved≠sync 时保持 undefined，async 缺省语义)", async () => {
     const service = makeService();
     await startHandler(service, { ...BASE_INPUT }, undefined);
     const opts = service.execute.mock.calls[0]?.[0] as { collect?: string };
     expect(opts.collect).toBeUndefined();
+  });
+
+  it("B1：config default=sync + 省略 collect → execute 收 collect:\"sync\"（缺省解析作用于 record 本体）", async () => {
+    // 修复前：execute 收原始 input.collect=undefined → createRecordForMode 只认
+    // ==="sync" → record 走 async 逐条通知而响应声称已入批（设计 §3.1.3/types.ts:689
+    // 承诺「缺省 = config 默认」作用于 record）。修复后 resolved=sync 落值。
+    const service = makeService([], "sync");
+    await startHandler(service, { ...BASE_INPUT }, undefined);
+    const opts = service.execute.mock.calls[0]?.[0] as { collect?: string };
+    expect(opts.collect).toBe("sync");
+  });
+
+  it("B1：config default=sync 时显式 collect:\"async\" 优先（execute 收 \"async\"）", async () => {
+    const service = makeService([], "sync");
+    await startHandler(service, { ...BASE_INPUT, collect: "async" }, undefined);
+    const opts = service.execute.mock.calls[0]?.[0] as { collect?: string };
+    expect(opts.collect).toBe("async");
   });
 
   it("attaches collect segment counting this very record from the enumeration (U2 偏差#4：无 +1 补偿)", async () => {
