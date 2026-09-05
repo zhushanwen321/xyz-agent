@@ -5,7 +5,6 @@ export default {
   nextTurnSendFailed: '下轮消息发送失败：{msg}',
   stopFailed: '停止失败：{msg}',
   compactFailed: '压缩失败：{msg}',
-  queueFlushFailed: '排队消息重放失败，消息已保留',
   bashFailed: 'Bash 执行失败：{msg}',
   // `@` 定向消息（U2b）：空文本挡 + RPC 失败（错误可读，S8 恢复动作 = 重试 / 重新 @ 选择）
   subagentDirectiveEmpty: '定向消息内容为空，请输入发送给 subagent 的内容',

@@ -676,7 +676,7 @@ describe('send.rejected 兜底与回滚（session-occupancy D2 P1）', () => {
     f.dispose()
   })
 
-  it('验收③b flush 重放来源（无未决直发记录）：不重入队，保持既有 toast 反馈', async () => {
+  it('验收③b flush 重放来源（clientUuid 命中队列条目）：不重入队且静默（A1，D2 接管表 toast 删除）', async () => {
     const f = makeFixture()
     // 先完成一次 send（ack 后未决记录收口），再注入 flush 形态的 rejected
     await f.useChat.send('r3b', textToSegments('old'))
@@ -685,8 +685,10 @@ describe('send.rejected 兜底与回滚（session-occupancy D2 P1）', () => {
 
     // 队列条目不翻倍（重入队 = 双条目双投递）
     expect(f.compactQueue.enqueue).not.toHaveBeenCalled()
-    // 无乐观副作用可回滚（非直发来源），保持既有反馈
-    expect(f.toast.error).toHaveBeenCalledWith('Agent 正在处理')
+    // [A1] flush 来源静默：busy 类拒绝留队后由下一次 occupancy idle 帧自动重投（自愈路径），
+    // 不 toast——原「保持既有 toast 反馈」违背 D2 接管表（toast「Agent 正在处理」删除），
+    // 且与 flush 侧 queueFlushFailed 构成双 toast，一并消除。
+    expect(f.toast.error).not.toHaveBeenCalled()
     f.dispose()
   })
 
@@ -722,7 +724,7 @@ describe('send.rejected 兜底与回滚（session-occupancy D2 P1）', () => {
     f.dispose()
   })
 
-  it('RPC ack 后迟到 rejected：记录已收口，不重复回滚不入队（防御）', async () => {
+  it('RPC ack 后迟到 rejected：记录已收口，不重复回滚不入队（防御）；非队列来源保持 toast 反馈', async () => {
     const f = makeFixture()
     await f.useChat.send('r6', textToSegments('hi'))
     // ack 后乐观气泡属正常在途（message_end(user) 确认）——迟到 rejected 帧不得误删
@@ -732,6 +734,38 @@ describe('send.rejected 兜底与回滚（session-occupancy D2 P1）', () => {
     expect(f.chatStore.getMessages('r6').length).toBe(msgsBefore)
     expect(f.chatStore.getInflight('r6')).toBe(1)
     expect(f.compactQueue.enqueue).not.toHaveBeenCalled()
+    // [A1] 非队列来源的无记录迟到帧（真正孤儿帧）toast 保留——静默收窄只覆盖 flush
+    // 来源（clientUuid 命中队列条目）与本编排器直发（未决记录命中）两类。
+    expect(f.toast.error).toHaveBeenCalledWith('Agent 正在处理')
+    f.dispose()
+  })
+
+  it('验收⑤ editAndResend 被拒（竞态窗口）：乐观气泡回滚 + 不动 inflight + 入队自愈（A2）', async () => {
+    const f = makeFixture()
+    // 预置一条已完成的 user 消息作为编辑目标
+    await f.useChat.send('r7', textToSegments('original'))
+    f.emit('r7', msg('r7', 'message.message_start', { messageId: 'a1' }))
+    f.emit('r7', msg('r7', 'message.complete', { stopReason: 'end_turn' }))
+    const targetId = f.chatStore.getMessages('r7').find((m) => m.role === 'user')!.id
+    const inflightBefore = f.chatStore.getInflight('r7')
+
+    // 编辑重发（idle 态）——rejected 帧在 await 收口前注入（WS FIFO 时序）
+    const p = f.useChat.editAndResend('r7', targetId, textToSegments('edited'))
+    const editedId = f.chatStore.getMessages('r7').find((m) => m.role === 'user')!.id
+    f.emit('r7', msg('r7', 'send.rejected', { reason: 'compacting', message: 'Agent 正在处理', clientUuid: editedId }))
+    await p
+
+    // 气泡回滚：原消息已被截断（编辑语义）、编辑重发的乐观气泡被移除不残留
+    //（修复前残留 → 重开 session 消失，live ≠ reload）
+    expect(f.chatStore.getMessages('r7').filter((m) => m.role === 'user')).toHaveLength(0)
+    // inflight 不动：editAndResend 不挂配额（holdsInflight=false），handler 不 decrement
+    //（多扣会错抵后续 send/flush 占位——计数漂移）
+    expect(f.chatStore.getInflight('r7')).toBe(inflightBefore)
+    // 入队自愈（与 send 对齐）：编辑后原文入队等 occupancy idle 重投，内容不丢
+    expect(f.compactQueue.enqueue).toHaveBeenCalledTimes(1)
+    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('r7', 'edited')
+    // 静默（D2 接管表：toast「Agent 正在处理」删除）
+    expect(f.toast.error).not.toHaveBeenCalled()
     f.dispose()
   })
 })

@@ -19,7 +19,7 @@ export default {
     thinkingLevel: '思考级别',
     compacting: '压缩中…',
     queueSend: '排队发送',
-    commandQueuedRejected: '压缩进行中，命令请等待完成后使用',
+    commandQueuedRejected: '会话占用中，命令请等待完成后使用',
     sending: '发送中…',
     sendHint: '输入内容后发送',
     steerHint: '想补充什么？⏎ 加入当前任务 · Alt+⏎ 排到下一轮…',
@@ -296,7 +296,7 @@ export default {
     itemCount: '{count} 条',
   },
   deferQueue: {
-    pendingHint: '压缩结束后发送',
+    pendingHint: '占用结束后发送',
     cancelQueued: '撤销排队',
     submittedAwaitingDelivery: '已提交，等待投递',
   },

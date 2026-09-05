@@ -3,7 +3,7 @@
  *
  * 覆盖（三视角，用户可见 DOM 断言优先）：
  * - P1 组件黑盒·未提交态：气泡渲染（半透明 opacity-55 + Clock icon + hover 标注
- *   「压缩结束后发送」）+ × 可点（emit remove）
+ *   「占用结束后发送」）+ × 可点（emit remove）
  * - P2 组件黑盒·已提交态：× 禁用 + tooltip「已提交，等待投递」（D4 撤销边界——
  *   已进 pi 队列的条目无法从 pi 侧撤回）
  * - P3 MessageStream 集成·入队即显 + 确认转态：enqueue → 对话流尾部出现 pending 气泡
@@ -96,8 +96,8 @@ describe('PendingBubble 组件两态（P1-P2）', () => {
     const body = wrapper.find('[data-testid="pending-bubble-body"]')
     expect(body.classes()).toContain('opacity-55')
     expect(body.find('svg').exists()).toBe(true)
-    // hover 标注（i18n zh-CN：压缩结束后发送）
-    expect(body.attributes('title')).toBe('压缩结束后发送')
+    // hover 标注（i18n zh-CN：占用结束后发送——R3-doc1 泛化为占用维度中性措辞）
+    expect(body.attributes('title')).toBe('占用结束后发送')
     expect(body.text()).toContain('排队消息 A')
 
     // × 可点（未提交不 disabled）→ emit remove(id)

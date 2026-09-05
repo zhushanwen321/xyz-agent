@@ -181,8 +181,8 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
     // 队列为空（enqueue 未被调）+ compact RPC 未被调
     expect(useCompactQueue().count('s1')).toBe(0)
     expect(chatApiMock.compact).not.toHaveBeenCalled()
-    // toast 拒绝提示（zh-CN commandQueuedRejected）
-    expect(toastMock.error).toHaveBeenCalledWith('压缩进行中，命令请等待完成后使用')
+    // toast 拒绝提示（zh-CN commandQueuedRejected，R3-doc1 泛化：占用维度中性措辞）
+    expect(toastMock.error).toHaveBeenCalledWith('会话占用中，命令请等待完成后使用')
     // draft 未清空（clear 未被调）
     expect(wrapper.findComponent(ComposerInputMock).vm.clear).not.toHaveBeenCalled()
   })
@@ -196,8 +196,8 @@ describe('Composer compact 待发队列（TC11-TC18）', () => {
     // 队列为空（enqueue 未被调）+ sendBash 未被调（未静默降级为纯文本，也未执行 bash）
     expect(useCompactQueue().count('s1')).toBe(0)
     expect(chatApiMock.sendBash).not.toHaveBeenCalled()
-    // toast 拒绝提示（与 `/` 命令同一文案，zh-CN commandQueuedRejected）
-    expect(toastMock.error).toHaveBeenCalledWith('压缩进行中，命令请等待完成后使用')
+    // toast 拒绝提示（与 `/` 命令同一文案，zh-CN commandQueuedRejected，R3-doc1 泛化）
+    expect(toastMock.error).toHaveBeenCalledWith('会话占用中，命令请等待完成后使用')
     // draft 未清空（clear 未被调）
     expect(wrapper.findComponent(ComposerInputMock).vm.clear).not.toHaveBeenCalled()
   })

@@ -69,8 +69,11 @@ interface CompactQueuePartition {
 export interface CompactQueue {
   /** 入队一条待发消息，返回含 crypto.randomUUID() id 的条目（updateFor push） */
   enqueue(sid: string, text: string): QueuedMessage
-  /** 按 id 精确取消，未知 id no-op（不抛错）。撤销边界（D4）：仅未提交条目开放——UI 侧
-   *  按 mode 禁用 ×；本方法不做 mode 校验（记账 API 保持原子，边界归 UI 与 flush 记账） */
+  /** 按 id 精确取消，未知 id no-op（不抛错）。撤销边界（D4）：仅未提交条目（mode === undefined）
+   *  可撤；已提交条目（mode 已写）remove **no-op**——记账不变量下沉到 API 层（一致性审查
+   *  R3-U2）：已提交条目已进 pi 队列无法撤回，强行移除会使 send 条目的 inflight 占位悬空、
+   *  其确认帧经 core ① confirmDelivery 变未知 id（匹配作废，气泡永 pending）。UI 侧
+   *  PendingBubble × 按 mode 禁用是唯一撤销入口 */
   remove(sid: string, id: string): void
   /** 分区消息数（updateFor 内读 messages.length；调用方包进 computed 时依赖在 reactive 上建立） */
   count(sid: string): number
@@ -96,7 +99,9 @@ export interface CompactQueue {
    *   再次触发）；await 窗口内被确认出队/用户撤销的条目跳过。
    * - 成功判定（S1 per-entry）：每条提交 await 后查该条 clientUuid 是否命中 send.rejected
    *   （或窗口内出现无 uuid 拒绝——按 FIFO 归属当前条）→ 未投递：条目留队、回滚占位、
-   *   停止后续、返回 false；RPC reject → 同上。
+   *   停止后续、返回 false（busy 类拒绝留队静默自愈，等下一次 occupancy idle 帧重投——
+   *   调用方不 toast，A1）；RPC reject → 同上留队回滚，但原始错误上抛（传输级真错误，
+   *   调用方 toast「发送失败: {原因}」——A1 分流，与 S1 静默自愈区分）。
    * - 全部提交成功 → 返回 true，但**不出队**（条目保持 mode 已写，等待 message_end(user)
    *   确认帧逐条出队 + 转态——E2「成功即清队」语义退役）。
    * - 并发（S2）：per-session in-flight 守卫，flush 进行中重复触发复用同一 promise。
@@ -165,8 +170,10 @@ function createCompactQueue(): CompactQueue {
 
   function remove(sid: string, id: string): void {
     state.updateFor(sid, (p) => {
-      // 未知 id 时 filter 结果等同原数组（no-op，不抛错）
-      p.messages = p.messages.filter((m) => m.id !== id)
+      // 记账不变量下沉（R3-U2，接口 jsdoc 详注）：已提交条目（mode 已写）不可经 remove 撤除
+      // ——inflight 占位 / confirmDelivery 确认通路以「条目在队」为前提。保留条件：id 不同，
+      // 或 id 相同但已提交（no-op）。未知 id 时 filter 结果等同原数组（no-op，不抛错）。
+      p.messages = p.messages.filter((m) => m.id !== id || m.mode !== undefined)
     })
   }
 
@@ -286,12 +293,14 @@ function createCompactQueue(): CompactQueue {
         uuidLessBase = uuidLessRejections
         try {
           await submitQueuedEntry(sid, { id: entry.id, text: entry.text }, channel, submitDeps)
-        } catch {
+        } catch (e) {
           // RPC reject：消息未投出——留队 + 回滚占位（send 通道在 submitQueuedEntry 内挂的
           // inflight）+ 清提交标记 + 停止提交后续（后续条目依赖本条 send 注入的 run）。
+          // [A1] 原始错误上抛（非 return false）：传输级真错误与 S1 busy 拒绝（下方留队
+          // 静默自愈）分流——调用方（useChat occupancy handler）仅对上抛 toast「发送失败: {原因}」。
           if (channel === 'send') store.decrementInflight(sid, 1)
           setEntryMode(sid, entry.id, undefined)
-          return false
+          throw e
         }
         // S1 判定：WS FIFO（dispatcher 同步广播 → 同步 reply）保证 await 返回时本条的
         // rejected 已入集合/计数。触发 = 未实际投递：留队 + 回滚占位（重试时重挂）+ 清标记。

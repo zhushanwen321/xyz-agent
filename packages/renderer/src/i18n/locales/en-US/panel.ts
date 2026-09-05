@@ -19,7 +19,7 @@ export default {
     thinkingLevel: 'Thinking level',
     compacting: 'Compacting…',
     queueSend: 'Queue to send',
-    commandQueuedRejected: 'Compaction in progress, commands are disabled until it finishes',
+    commandQueuedRejected: 'Session busy, commands are disabled until it is free',
     sending: 'Sending…',
     sendHint: 'Type and send',
     steerHint: 'Add to current task with ⏎ · Queue for next turn with Alt+⏎…',
@@ -296,7 +296,7 @@ export default {
     itemCount: '{count} items',
   },
   deferQueue: {
-    pendingHint: 'Send after compaction finishes',
+    pendingHint: 'Will be sent when the session is free',
     cancelQueued: 'Cancel queued message',
     submittedAwaitingDelivery: 'Submitted, awaiting delivery',
   },

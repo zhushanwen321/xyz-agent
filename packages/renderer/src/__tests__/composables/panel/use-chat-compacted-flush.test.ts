@@ -9,7 +9,8 @@
  * - TC10：压缩失败（compacted{error}）→ occupancy 三路复位 compacting=false → 同样满足
  *   idle 条件 → 队列照常投递（设计 §3.5 行为变化声明：消息不丢优先，投递到未压缩上下文
  *   由 pi pre-prompt auto-compact 自治；与 W1「failed 不 flush」语义有意不同）
- * - TC11：occupancy idle 触发 flush 但重放失败（send RPC reject）→ queueFlushFailed toast + 队列保留
+ * - TC11：occupancy idle 触发 flush 但重放失败（send RPC reject）→ toast「发送失败: {原因}」
+ *   + 队列保留（A1：原 queueFlushFailed 固定文案退役）；TC11b：S1 busy 拒绝留队静默自愈无 toast
  *
  * 结构对齐 __tests__/useChat.test.ts：vi.hoisted apiMock（streamSubscribe 捕获 handler）+ emit helper
  * + beforeEach resetChatModuleState()（useChat 模块级状态隔离）。
@@ -22,6 +23,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { effectScope } from 'vue'
 import type { EffectScope } from 'vue'
 import type { ServerMessage } from '@xyz-agent/shared'
+import { dispatchSession } from '@/api/events'
 
 
 // vi.hoisted 保证 mock 工厂在模块加载前就绪；holder 捕获 streamSubscribe 注册的 handler
@@ -127,22 +129,52 @@ describe('useChat occupancy 全 idle → flush 触发（session-occupancy u5b）
     expect(toastSpy.error).not.toHaveBeenCalled()
   })
 
-  it('TC11: occupancy idle 触发 flush 但重放失败（send reject）→ queueFlushFailed toast + 队列保留', async () => {
+  it('TC11: occupancy idle 触发 flush 但重放失败（send RPC reject）→ toast「发送失败: {原因}」+ 队列保留（A1）', async () => {
     const chat = useChatStore()
     const { compact } = useChat()
     await compact('c-g')
     useCompactQueue().enqueue('c-g', 'q')
-    // flush 首条 send RPC 失败 → flush 返回 false → handler toast queueFlushFailed（队列保留，下次 idle 重试）
+    // flush 首条 send RPC 失败 → doFlush 留队回滚后原始错误上抛 → handler toast
+    // 「发送失败: {原因}」（设计 §3.5 错误规格表；原 queueFlushFailed 固定文案退役——
+    // 与 rejected 帧路径构成双 toast，A1 一并消除），队列保留，恢复后自动重试
     apiMock.send.mockRejectedValueOnce(new Error('rpc fail'))
 
     emit({ type: 'session.occupancy', payload: { sessionId: 'c-g', turn: 'idle', compacting: false, bash: false } })
     await vi.waitFor(() => {
-      expect(toastSpy.error).toHaveBeenCalledWith('排队消息重放失败，消息已保留')
+      // renderer 包装注入真实 i18n（zh-CN）：composable.sendFailed = '消息发送失败：{msg}'
+      expect(toastSpy.error).toHaveBeenCalledWith('消息发送失败：rpc fail')
     })
 
     // 队列保留（flush 失败不清空）+ isCompacting 复位（occupancy 派生）
     expect(useCompactQueue().count('c-g')).toBe(1)
     expect(chat.isCompacting('c-g')).toBe(false)
+  })
+
+  it('TC11b: flush 提交遇 S1 busy 拒绝（send.rejected 广播）→ 留队静默自愈，无任何 toast（A1）', async () => {
+    // 设计 D2 接管表 / §3.5：busy 类拒绝留队后由下一次 occupancy idle 帧自动重投（自愈路径），
+    // 静默——flush 返回 false 不再触发 queueFlushFailed toast。
+    const { compact } = useChat()
+    await compact('c-s1')
+    useCompactQueue().enqueue('c-s1', 'q')
+    // 模拟 runtime busy 预检：广播 send.rejected（带条目 id）后 reply resolve——
+    // dispatchSession 直投真实 events 通路（doFlush 的 S1 窗口订阅面，同 use-compact-queue.test 惯例）
+    const entryId = useCompactQueue().peek('c-s1')[0]!.id
+    apiMock.send.mockImplementationOnce(async () => {
+      dispatchSession('c-s1', {
+        type: 'send.rejected',
+        payload: { sessionId: 'c-s1', reason: 'busy', message: 'Agent 正在处理', clientUuid: entryId },
+      })
+    })
+
+    emit({ type: 'session.occupancy', payload: { sessionId: 'c-s1', turn: 'idle', compacting: false, bash: false } })
+    await vi.waitFor(() => {
+      // S1 判定生效：条目留队、占位回滚（重试时重挂重标）
+      expect(useCompactQueue().peek('c-s1')[0]!.mode).toBe(undefined)
+    })
+    // 静默：S1 留队无任何 toast（flush 来源的 rejected 帧静默 + flush false 不 toast）
+    expect(toastSpy.error).not.toHaveBeenCalled()
+    // 队列保留，等下一次 occupancy idle 帧重投
+    expect(useCompactQueue().count('c-s1')).toBe(1)
   })
 
   it('TC10: 压缩失败（compacted{error}）→ occupancy 三路复位 idle → 队列照常投递（u5b 行为变化）', async () => {

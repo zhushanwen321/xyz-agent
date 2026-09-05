@@ -3,9 +3,12 @@
  *
  * 覆盖（三视角，用户可见 DOM 断言优先）：
  * - P1 组件黑盒·四类状态各自渲染：compacting（manual→压缩中 / threshold→自动压缩）、
- *   bash（正在执行 + mono 命令）、thinking（turn=dispatching→思考中…）
+ *   bash（正在执行 + mono 命令）、thinking（turn=dispatching→思考中…）、
+ *   settling（turn=settling 且无 compacting/bash→行出现，R3-U1；文案复用 dispatching key，
+ *   P-1 探针 V8 校准点）
  * - P2 组件黑盒·优先级堆叠：compacting + bash 并存 → 两行且 compacting 在上；
  *   thinking 与 compacting/bash 互斥（「无以上但有 dispatching turn」才显示）；
+ *   settling 与 compacting 并存 → 仅 compacting 行（同档位幂等，不重复堆叠）；
  *   turn=generating 不渲染行（streaming 本体由 TurnMeta「工作中」承担，D6 活动条列）
  * - P3 组件黑盒·全 idle 不渲染（G3：无占用 = 无活动条）
  * - P4 MessageStream 集成·迁移收口：TurnMeta 旧 dispatching 占位不再渲染 + thinking 行接管；
@@ -155,6 +158,16 @@ describe('ActivityStrip · 四类状态各自渲染（P1）', () => {
     wrapper.unmount()
   })
 
+  it('turn=settling（无 compacting/bash）→ settling 行出现（R3-U1：D6 表行 4 活动条列，收尾窗口不回到无指示）', async () => {
+    const wrapper = await mountStrip({ occupancy: { turn: 'settling', compacting: false, bash: false } })
+    const row = wrapper.find('[data-testid="activity-strip-row-settling"]')
+    expect(row.exists()).toBe(true)
+    // 文案复用 dispatching key「思考中…」（P-1 探针 V8 校准点：P95 > 2s 常态化则换「收尾中…」）
+    expect(wrapper.find('[data-testid="activity-strip-text-settling"]').text()).toBe('思考中…')
+    expect(row.find('.animate-spin').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('turn=generating → 不渲染行（streaming 本体由 TurnMeta「工作中」承担，D6 活动条列）', async () => {
     const wrapper = await mountStrip({ occupancy: { turn: 'generating', compacting: false, bash: false } })
     expect(wrapper.find('[data-testid="activity-strip"]').exists()).toBe(false)
@@ -192,6 +205,15 @@ describe('ActivityStrip · 优先级堆叠与互斥（P2）', () => {
     const rows = wrapper.findAll('[data-testid^="activity-strip-row-"]')
     expect(rows).toHaveLength(1)
     expect(rows[0].attributes('data-testid')).toBe('activity-strip-row-bash')
+    wrapper.unmount()
+  })
+
+  it('settling + compacting → 仅 compacting 行（R3-U1 幂等：settling 与 compacting 并存不重复堆叠）', async () => {
+    const wrapper = await mountStrip({ occupancy: { turn: 'settling', compacting: true, bash: false } })
+    const rows = wrapper.findAll('[data-testid^="activity-strip-row-"]')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].attributes('data-testid')).toBe('activity-strip-row-compacting')
+    expect(wrapper.find('[data-testid="activity-strip-row-settling"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })

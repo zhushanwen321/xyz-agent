@@ -56,6 +56,14 @@ export interface CompactQueueEntrySnapshot {
 }
 
 export interface CompactQueueLike {
+  /**
+   * flush 队列（逐条提交，D5）。返回值三态契约 [A1 收窄]：
+   * - resolve true：全部条目提交编排完成；
+   * - resolve false：S1 busy 类拒绝（条目留队，等下一次 occupancy idle 帧自动重投）——
+   *   自愈路径，调用方不 toast；
+   * - reject：RPC reject（传输级真错误，如 WS 断连）——调用方 toast「发送失败: {原因}」
+   *   （设计 §3.5 错误规格表）。
+   */
   flush: (sid: string) => Promise<boolean>
   /** 入队一条待发消息，返回含 id 的条目（id 供 flush 提交时的 clientUuid 消歧，u4b 消费） */
   enqueue: (sid: string, text: string) => { id: string; text: string }
@@ -201,17 +209,18 @@ const manualCompactionState = new Map<string, boolean>()
  * [session-occupancy-send-closure D2] per-session 未决直发记录（sid → 本次 send 的
  * clientUuid + 入队用原文）。
  *
- * send() 在乐观插入（appendUser）时写入，供 ensureStreamSubscription 的 send.rejected
- * handler 消歧「直发被拒 vs flush 重放被拒」：
- * - 记录存在 → 本编排器的直发被拒 → 回滚乐观气泡 + inflight +（compacting 时）兜底入队；
- * - 记录不存在 → flush 重放 / editAndResend / 迟到帧 → 不回滚不入队（重入队会双条目双投递）。
+ * send() 在乐观插入（appendUser）时写入（editAndResend 自 A2 起同样写入，holdsInflight=false
+ * 区分），供 ensureStreamSubscription 的 send.rejected handler 消歧：
+ * - 记录存在 → 本编排器的直发被拒 → 回滚乐观气泡 +（holdsInflight 时）inflight 回滚 + 兜底入队；
+ * - 记录不存在 → flush 重放 / 迟到帧 → 不回滚不入队（重入队会双条目双投递；flush 来源
+ *   经 clientUuid 命中队列条目识别后静默，A1）。
  * payload.clientUuid 回带命中记录时为强确认（u2 落地后）；现状 runtime 未回带时以记录存在性兜底
  * 判定（WS FIFO 保证 rejected 帧先于 RPC reply 到达，故 send await resolve 后清除记录安全）。
  * 与 streamSubscriptions/manualCompactionState 同模式：模块级 Map + resetChatModuleStateForTest
  * 清理 + disposeSession 按 sid 删除（ADR-0049 全局 sid 协调器例外）。
  */
 // taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：未决直发记录（流程状态，非 GUI 数据）
-const pendingDirectSends = new Map<string, { clientUuid: string; text: string }>()
+const pendingDirectSends = new Map<string, { clientUuid: string; text: string; holdsInflight: boolean }>()
 
 /**
  * 重置 useChat 模块级状态（仅供测试隔离）。
@@ -303,7 +312,9 @@ export function ensureStreamSubscription(
         // 本编排器的未决直发被拒（payload 回带命中 / 现状 runtime 未回带两种形态）：
         // 回滚乐观副作用（与入队正交，全 reason）。
         chat.truncateFrom(sid, pending.clientUuid, true) // 移除未确认的乐观气泡（appendUser 尾插，其后无消息）
-        chat.decrementInflight(sid, 1) // 消除计数悬空（后续 steer 确认被错抵的根因）
+        // 消除计数悬空（后续 steer 确认被错抵的根因）——仅回收 send 通道挂的占位；
+        // editAndResend 不挂配额（steer-bubble u2 契约，A2 起 holdsInflight 区分）。
+        if (pending.holdsInflight) chat.decrementInflight(sid, 1)
         chat.clearPendingSend(sid)
         pendingDirectSends.delete(sid)
         // P3 全 reason 静默入队（D2 接管表）：toast 退役（三种拒绝统一 defer 语义——
@@ -313,9 +324,13 @@ export function ensureStreamSubscription(
         }
         return
       }
-      // 无未决直发记录（flush 重放 / editAndResend / 迟到帧）：无本编排器产生的乐观副作用
-      // 可回滚、不入队（uuidQueued 或无记录均指向非直发来源），保持既有反馈（现状行为）。
+      // 无未决直发记录（flush 重放 / 迟到帧）：[A1] flush 来源帧（clientUuid 命中队列条目）
+      // 静默 return——D2 接管表声明 toast「Agent 正在处理」删除，busy 类拒绝留队后由下一次
+      // occupancy idle 帧自动重投（自愈路径），与 flush 侧的 queueFlushFailed 双 toast 一并
+      // 消除；非队列来源的无记录迟到帧（真正孤儿帧）保持既有 toast 反馈。
+      // editAndResend 自 A2 起写未决记录走上方 pending 分支，不再落入此处。
       chat.clearPendingSend(sid)
+      if (uuidQueued) return
       deps.toast.error(rejectMessage ?? deps.t('composable.agentProcessing'))
       return
     }
@@ -400,8 +415,13 @@ export function ensureStreamSubscription(
           void deps
             .getCompactQueue()
             .flush(sid)
-            .then((ok) => {
-              if (!ok) deps.toast.error(deps.t('composable.queueFlushFailed'))
+            .catch((e) => {
+              // [A1 / §3.5] RPC reject（传输级真错误，如 WS 断连）：toast「发送失败: {原因}」，
+              // 气泡保持 pending、队列保留，恢复后 occupancy 快照 idle 自动重放。S1 busy 类
+              // 拒绝（flush resolve false）静默自愈：条目留队等下一次 idle 帧重投，不再 toast
+              //（queueFlushFailed 退役——与 rejected 帧路径的「Agent 正在处理」双 toast 一并消除）。
+              const msg = e instanceof Error ? e.message : String(e)
+              deps.toast.error(deps.t('composable.sendFailed', { msg }))
             })
         }
         break
@@ -467,7 +487,8 @@ export function ensureStreamSubscription(
  * （useCompactQueue.ts doFlush），本函数只负责「挂」。
  *
  * 错误处理：RPC 失败原样上抛（flush 侧 catch 决策留队/回滚/停止提交后续）——不 toast
- * 不吞错（flush 的失败反馈由 useChat session.compacted handler 的 queueFlushFailed 承担）。
+ * 不吞错（RPC reject 经 flush 上抛至 useChat occupancy handler toast「发送失败: {原因}」，
+ * S1 busy 拒绝静默自愈——A1 起 queueFlushFailed 退役）。
  */
 export async function submitQueuedEntry(
   sid: string,
@@ -615,8 +636,9 @@ export function createUseChat(deps: UseChatDeps) {
     const clientUuid = chat.appendUser(sid, segments)
     // [session-occupancy D2] 记录未决直发（clientUuid + 入队用原文），供 send.rejected handler
     // 消歧直发被拒 vs flush 重放被拒。入队 text 用未加标记的 promptText 原文（flush 重放
-    // 直发原文，带 `<!--xyz:msg:-->` 标记会污染重放文本）。
-    pendingDirectSends.set(sid, { clientUuid, text: promptText })
+    // 直发原文，带 `<!--xyz:msg:-->` 标记会污染重放文本）。holdsInflight=true：本通道挂了
+    // inflight 占位（下方 incrementInflight），被拒时 handler 同步回收。
+    pendingDirectSends.set(sid, { clientUuid, text: promptText, holdsInflight: true })
     // [steer-bubble u2 / docs/design/steer-followup-user-bubble-display.md D2 维护点 2]
     // send 乐观 +1：乐观插入即「已显示」，其自身投递的 message_end(user) 到达时被
     // inflight 计数抵消（不落入腿 2 includes 兜底——send 文本通常不在队列数组，但与
@@ -904,6 +926,12 @@ export function createUseChat(deps: UseChatDeps) {
     // appendUser 返回生成的 user message id（u-<uuid>），作为 clientUuid 传给 submitSegments
     // （写 segments.json sidecar + prompt 标记，建立 clientUuid ↔ pi userEntryId 映射）。
     const clientUuid = chat.appendUser(sessionId, segments)
+    // [A2] 记录未决直发（与 send 同一消歧/回滚通路）：editAndResend 仅 idle 态可用，
+    // 但提交到 ack 之间仍有竞态窗口（occupancy 刚翻忙）——被拒时 send.rejected handler
+    // 据此回滚乐观气泡（否则气泡残留，重开 session 消失，live ≠ reload）。
+    // holdsInflight=false：editAndResend 不挂 inflight 配额（steer-bubble u2 契约——其
+    // message_end 走腿 2 includes 不命中跳过，无需配额），handler 不 decrement。
+    pendingDirectSends.set(sessionId, { clientUuid, text: promptText, holdsInflight: false })
     ensureStreamSubscription(sessionId, chat, session, subDeps)
     chat.addPendingSend(sessionId)
     try {
@@ -915,6 +943,10 @@ export function createUseChat(deps: UseChatDeps) {
       chat.clearPendingSend(sessionId)
       const msg = e instanceof Error ? e.message : String(e)
       deps.toast.error(deps.t('composable.sendFailed', { msg }))
+    } finally {
+      // [A2] 未决记录收口（与 send finally 同款）：WS FIFO 保证 rejected 帧先于 RPC reply
+      // 处理（handler 已消费记录）；RPC 失败时无 rejected 帧，此处删除防泄漏。
+      pendingDirectSends.delete(sessionId)
     }
   }
 

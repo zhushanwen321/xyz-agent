@@ -7,6 +7,8 @@
  *   但判定收口进分发器后由本测试锁定不回退）
  * - 行 2（turn=dispatching）Enter → steer
  * - 行 4（turn=settling）Enter → defer 入队（pending 气泡可见）——投影驱动（现状该态走直发）
+ * - 行 6（bash=true 且 turn=idle）Enter → defer 入队（R3-U4 集成直测——core 纯函数层
+ *   已覆盖，此处锁 composer-shell 分发器对 bash 维度的消费不回退）
  * - Alt+⏎ 经分发器：steer 路由行 → followUp（下一轮语义保留）；defer → 入队
  *
  * occupancy 由 chat.setOccupancy 驱动（store 投影 = composer-shell sendRoute 的数据源）。
@@ -175,6 +177,21 @@ describe('Composer D6 统一发送分发器（路由行为）', () => {
 
     // 入队（occupancy idle 时自动投递）而非直发（现状该态 isActive=false 走直发被 pi 拒）
     expect(useCompactQueue().peek('s1').map((m) => m.text)).toContain('settling 中发送')
+    expect(chatApiMock.send).not.toHaveBeenCalled()
+    expect(chatApiMock.steer).not.toHaveBeenCalled()
+    expect(wrapper.findComponent(ComposerInputMock).vm.clear).toHaveBeenCalled()
+  })
+
+  it('行 6：bash=true 且 turn=idle ⏎ → defer 入队（R3-U4 集成直测，core 纯函数层外的分发器消费锁定）', async () => {
+    setPhase('idle', false, true)
+    const wrapper = mountComposer()
+    wrapper.findComponent(ComposerInputMock).vm.$emit('input', 'bash 忙时发送')
+    await wrapper.vm.$nextTick()
+
+    await pressKey(wrapper, {})
+
+    // bash 占用即 defer 路由（D6 表行 6）：入队而非直发
+    expect(useCompactQueue().peek('s1').map((m) => m.text)).toContain('bash 忙时发送')
     expect(chatApiMock.send).not.toHaveBeenCalled()
     expect(chatApiMock.steer).not.toHaveBeenCalled()
     expect(wrapper.findComponent(ComposerInputMock).vm.clear).toHaveBeenCalled()

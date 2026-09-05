@@ -4,12 +4,14 @@
  *
  * 覆盖契约（/tmp/cw-plan-w1.json contracts C1 + session-occupancy-send-closure u4b / D5）：
  * - enqueue 追加并返回含 id 条目（TC1）
- * - remove 按 id 精确取消，未知 id no-op（TC2）
+ * - remove 按 id 精确取消，未知 id no-op（TC2）；已提交条目（mode 已写）no-op——记账
+ *   不变量下沉（R3-U2，TC2b），未提交条目正常移除
  * - flush 空队列 no-op 返回 true（TC3）
  * - flush 调度：首个未提交条目 send（带 clientUuid=条目 id）+ 其余 steer，send 先于 steer（TC4）
  * - flush 提交成功 → **不出队**（E2「成功即清队」语义已退役）条目保持 mode 已写，
  *   确认帧（confirmDelivery）驱动出队；全确认后再次 flush 不再调 chatApi（TC5）
- * - flush 任一 RPC 失败 → 未投递条目留队返回 false；已提交在途条目不重发（TC6/F1）
+ * - flush 任一 RPC 失败 → 未投递条目留队 + 原始错误上抛（A1：调用方 toast「发送失败: {原因}」，
+ *   ≠ S1 busy 拒绝的 resolve false 静默自愈）；已提交在途条目不重发（TC6/F1）
  * - per-session 隔离（TC7）/ session 销毁 cleanup 移除分区（TC8）
  * - flush 期间 send.rejected 广播 → 未投递：留队 + 清提交标记 + 占位回滚（TC9 无 uuid 归属 /
  *   F2 带 clientUuid 精确归属），返回 false；steer 未被调（停止后续提交）（F2）
@@ -111,6 +113,30 @@ describe('useCompactQueue 队列基础（TC1-TC2）', () => {
     expect(() => queue.remove('s1', 'unknown-id')).not.toThrow()
     expect(queue.peek('s1').map((m) => m.text)).toEqual(['b'])
   })
+
+  it('TC2b: remove 对已提交条目（mode 已写）no-op，未提交条目正常移除（R3-U2 记账不变量下沉）', async () => {
+    const chat = useChatStore()
+    const queue = useCompactQueue()
+    const m1 = queue.enqueue('s1', 'm1')
+    // flush 提交 → m1 mode='send'（已提交在途，send 占位挂着等确认帧）
+    await expect(queue.flush('s1')).resolves.toBe(true)
+    expect(queue.peek('s1')[0]!.mode).toBe('send')
+    expect(chat.getInflight('s1')).toBe(1)
+
+    // 在途窗口新入队未提交条目（F3 同款构造）
+    const m2 = queue.enqueue('s1', 'm2')
+
+    // 已提交条目 remove 无效果：留队、mode 不变——inflight 占位与 confirmDelivery
+    // 确认通路不被破坏（否则占位悬空、确认帧变未知 id）
+    queue.remove('s1', m1.id)
+    expect(queue.peek('s1').map((m) => m.id)).toEqual([m1.id, m2.id])
+    expect(queue.peek('s1')[0]!.mode).toBe('send')
+    expect(chat.getInflight('s1')).toBe(1)
+
+    // 未提交条目正常移除（撤销边界 D4）
+    queue.remove('s1', m2.id)
+    expect(queue.peek('s1').map((m) => m.id)).toEqual([m1.id])
+  })
 })
 
 describe('useCompactQueue flush（TC3-TC6，u4b 投递确认驱动语义）', () => {
@@ -168,14 +194,16 @@ describe('useCompactQueue flush（TC3-TC6，u4b 投递确认驱动语义）', ()
     expect(apiMock.steer).not.toHaveBeenCalled()
   })
 
-  it('TC6: 第 2 条 steer RPC 失败 → 未投递条目留队返回 false；第 1 条已提交在途不重发', async () => {
+  it('TC6: 第 2 条 steer RPC 失败 → 未投递条目留队 + 原始错误上抛（A1）；第 1 条已提交在途不重发', async () => {
     const chat = useChatStore()
     const queue = useCompactQueue()
     queue.enqueue('s1', 'm1')
     queue.enqueue('s1', 'm2')
     apiMock.steer.mockRejectedValueOnce(new Error('rpc fail'))
 
-    await expect(queue.flush('s1')).resolves.toBe(false)
+    // [A1] RPC reject 上抛（传输级真错误，调用方 toast「发送失败: {原因}」）≠ S1 busy 拒绝
+    // （resolve false 静默自愈，TC9/F2）
+    await expect(queue.flush('s1')).rejects.toThrow('rpc fail')
     // [u4b per-entry 记账] m1 已提交（mode 'send'，等确认帧，不重发）；m2 未投递回滚
     // （mode 清除 + 占位不挂——steer 通道本就不挂）；队列两条都保留（E2 整队清除已退役）
     expect(queue.peek('s1').map((m) => m.text)).toEqual(['m1', 'm2'])
@@ -353,7 +381,8 @@ describe('useCompactQueue flush 逐条提交与确认驱动（u4b / D5）', () =
     // 第 2 条（首个 steer）RPC 失败
     apiMock.steer.mockRejectedValueOnce(new Error('rpc fail'))
 
-    await expect(queue.flush('s1')).resolves.toBe(false)
+    // [A1] RPC reject 上抛（≠ S1 busy 拒绝的 resolve false）
+    await expect(queue.flush('s1')).rejects.toThrow('rpc fail')
     // m1 已提交在途（mode send + 占位挂着）、m2 未投递回滚（mode 清除）、m3 未提交
     expect(queue.peek('s1').map((m) => m.mode)).toEqual(['send', undefined, undefined])
     expect(chat.getInflight('s1')).toBe(1)
