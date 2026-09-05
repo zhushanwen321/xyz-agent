@@ -71,8 +71,8 @@ graph TD
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
 | u1 | committed | 1 | 32/32 绿（主 agent 重跑一致）；commit 见 git log u1 |
-| u2 | in-progress | 1 | 派发中（后台） |
-| u3 | committed | 1 | segments 39 绿 + core apply-entry/equivalence/store 144 绿（主 agent 重跑一致）；三包全量见 subagent 证据 |
+| u2 | committed | 1 | 增量 27/27 绿（主 agent 重跑一致）；typecheck/守卫/lint 过；runtime 全量 2 存量失败=runtime 测试锁旧解析行为（u3 连带，补修中） |
+| u3 | committed | 1 | segments 39 绿 + core apply-entry/equivalence/store 144 绿（主 agent 重跑一致）；三包全量见 subagent 证据；**runtime message-converter.test.ts 2 用例锁旧行为待补修（领地缺口，轮次+1）** |
 | u4 | pending | 0 | - |
 | u5 | pending | 0 | - |
 | u6 | pending | 0 | - |

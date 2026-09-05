@@ -680,7 +680,7 @@ export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
 
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.deletedByCwd' | 'config.sessions' | 'session.history' | 'session.fullHistory' | 'session.switched'
-  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffStarted' | 'session.handoffComplete' | 'session.handoffAborted' | 'session.setProject'
+  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.skillNotice' | 'session.handoffStarted' | 'session.handoffComplete' | 'session.handoffAborted' | 'session.setProject'
   | 'project.loaded'
   | 'session.subagents' | 'session.subagentHistory'
   // [U7] 子代理引擎配置（Settings 引擎选择器；形状 = @xyz-agent/extension-protocol SubagentEngineConfigView，契约 SSOT 在彼处）
@@ -858,6 +858,25 @@ export interface SkillCacheInvalidatedPayload {
   /** scope='project' 时携带变更的项目根；setSkillDirs 全局配置变更场景缺省（影响所有 cwd）。 */
   cwd?: string
 }
+
+/**
+ * session.skillNotice 的事件种类（composer-multi-skill-injection §3.3 D6/D8，u5 呈现面据此
+ * 区分文案——两种降级 reason 的文案必须可区分，见设计场景 2b②）：
+ * - budget_exceeded：预检估算 > 0.8 × contextWindow，整条降级为标记模式（D6）
+ * - context_window_unavailable：get_session_stats 失败/无效，fail-safe 降级为标记模式（D6）
+ * - skill_missing：name 在 get_commands 无映射（已卸载/未装），标记原样透传（D8）
+ * - skill_read_failed：SKILL.md 读取失败（权限/损坏/映射缺 sourceInfo.path），标记原样透传（D8）
+ * - marker_malformed：`<xyz-skill/>` 标记被 BeforeSend hook 改写破坏至不可解析，残缺部分透传（D8/D9）
+ * - mapping_unavailable：get_commands RPC 整体失败，全部标记透传（映射服务不可用，降级块
+ *   依赖映射提供的 location 无从构建，故不走降级路径；契约要求「至少可区分」四类，此为第五类）
+ */
+export type SkillNoticeReason =
+  | 'budget_exceeded'
+  | 'context_window_unavailable'
+  | 'skill_missing'
+  | 'skill_read_failed'
+  | 'marker_malformed'
+  | 'mapping_unavailable'
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -1280,6 +1299,22 @@ export interface ServerMessageMapBase {
     newSessionId: string
     branchName?: string
     preview?: string
+  }
+  // session.skillNotice：composer 多 skill 注入的发送前处理结果提示广播（composer-multi-skill-injection
+  // D6/D8，范式对齐 session.forkNotice 的 session 级 push）。时机：message-dispatcher 三入口
+  // （sendPrompt/steerMessage/followUpMessage）在 client.prompt/steer/followUp 成功之后，
+  // 按注入器产出的 notices 逐条发布——消息已真正入队，提示描述的注入形态才成立；prompt 失败
+  // 路径不发（message.error 已覆盖）。renderer（u5）据此呈现 toast + 消息内联提示。
+  // clientUuid：sendPrompt 路径从发送文本中的 `<!--xyz:msg:<uuid>-->` 标记提取（非纯文本消息才有，
+  // 与 pi 侧 msg-id-mapper TAG_MATCH 同款全文正则）；steer/followUp 路径无 sidecar/clientUuid
+  // 链路，字段缺省（类型如实标注可选，u5 消费时按可空处理）。
+  // skills：受影响 skill 名列表（去重，保持首次出现顺序）；marker_malformed 的残缺片段无法
+  // 可靠提取 name 时可为空数组。
+  'session.skillNotice': {
+    sessionId: string
+    clientUuid?: string
+    reason: SkillNoticeReason
+    skills: string[]
   }
   // session.handoffStarted：handoff 开始时广播到源 session 对话流（B1 修复）。
   // 时机：runHandoff 发送 handoff prompt 给源 session pi 之前。
