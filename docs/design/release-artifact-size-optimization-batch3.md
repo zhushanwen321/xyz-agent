@@ -103,12 +103,14 @@ electron-builder 原生字段 `appimage.compression: "xz"`（linuxOptions.d.ts:1
 
 #### 3.3.2 dmg 格式 ULFO（纯配置，修正登记表「ULMO」措辞）
 
-electron-builder 原生字段 `dmg.format: "ULFO"`（macOptions.d.ts:261 枚举 `"UDRW"|"UDRO"|"UDCO"|"UDZO"|"UDBZ"|"ULFO"`；未设置时按 compression 推导默认 UDZO，dmg.js:122-131）。**第一二批 §5 登记表写的「ULMO」是 hdiutil 格式名（lzma），builder 类型面只暴露 ULFO（lzfse，macOS 10.11+）——本文按 builder 实际支持面修正为 ULFO**。
+electron-builder 原生字段 `dmg.format: "ULFO"`（DmgOptions 类型 macOptions.d.ts:261 枚举 `"UDRW"|"UDRO"|"UDCO"|"UDZO"|"UDBZ"|"ULFO"`；未设置时按 compression 推导默认 UDZO，dmg.js:122-131）。**[u3 实施修正] 配置位置是顶层 `dmg:` 段（与 mac/win/nsis 同级），不是 mac: 子段**——dmg-builder 运行时直读 `packager.config.dmg`（node_modules/dmg-builder/out/dmg.js:19），app-builder-lib scheme.json 的 MacConfiguration 无 dmg 属性，放 mac 段会被 schema 校验拒绝（26.15.3 实测复现）。**第一二批 §5 登记表写的「ULMO」是 hdiutil 格式名（lzma），builder 类型面只暴露 ULFO（lzfse，macOS 10.11+）——本文按 builder 实际支持面修正为 ULFO**。
+
+**收益实测（u3 双构建对比，实施期门①已解答）**：同 commit UDZO 111,226,141 B vs ULFO 109,260,933 B = **-1.77%**，远低于设计期预期 -10~15%——第一二批把 asar/locale/extensions 冗余清除后，dmg 内容以 Electron 本体二进制为主（zlib 已压得很紧），lzfse 增量空间有限。格式断言（imageinfo Format: ULFO / Compressed Ratio 0.42）、挂载透明、体积严格小于基线均成立；-2MB/发布的收益虽小但零风险零成本（纯配置）。
 
 | 候选 | 压缩 | 挂载速度 | 结论 |
 |---|---|---|---|
 | UDZO（现状默认，zlib） | 基线 | 基线 | 被否：保持现状无收益 |
-| **ULFO（lzfse）** | 预期再 -10~15%（⛔ 实施期实测） | 与 UDZO 相当或更快 | **采用** |
+| **ULFO（lzfse）** | **实测 -1.77%（u3，见下）** | 与 UDZO 相当或更快 | **采用** |
 | UDBZ（bzip2） | 最高 | 慢 + macOS 10.15 起弃用警告 | 被否 |
 | afterAllArtifactBuild 钩子 hdiutil convert ULMO | 同类收益 | — | 被否：需把纯 yml 配置改成 JS hook 形态，且转换若插错时序（generate-manifest 前后）会让 manifest fallback sha 与 digest 主源不一致——该不一致 CI 不报错、只在用户机以「下载校验失败」暴露（§2.2）；原生 format 在 builder 内部生成即终态，时序风险构造性不存在 |
 
@@ -168,7 +170,7 @@ hdiutil detach "$MOUNT_DIR" || hdiutil eject "$MOUNT_DIR" 2>/dev/null   # detach
 | D6 | deb 字段整体删除（非留空） | 保留 undefined 死字段 | §3.3.2b-2 |
 | D7 | prebuilds 用平台段 files | hook 删目录 / postinstall prune | §3.2.2 对比表 |
 
-探针状态：✅已测（本文引用的 file:line 断言均经实装源码核实；mountpoint 选址 + ULFO 挂载 + ditto 保权全链路经 r1 审查探针实测，dmg 内 .app 以 `ls -d $MOUNT_DIR/*.app` 命中亦已实测）；⛔实施期门——①ULFO 相对 UDZO 的实际压缩收益（本地构建对比）②本地 mac 构建 linux AppImage 的可行性（可行则本地验证 xz，否则降级 S11 CI 断言）③UpdateError UI 展示形态。
+探针状态：✅已测（本文引用的 file:line 断言均经实装源码核实；mountpoint 选址 + ULFO 挂载 + ditto 保权全链路经 r1 审查探针实测，dmg 内 .app 以 `ls -d $MOUNT_DIR/*.app` 命中亦已实测；**①ULFO 收益已测——u3 双构建对比实测 -1.77%**，见 §3.3.2）；⛔实施期门——②本地 mac 构建 linux AppImage 的可行性（可行则本地验证 xz，否则降级 S11 CI 断言）③UpdateError UI 展示形态。
 
 ### 3.4 不做清单（防误伤，继承第一二批 §3.4 并追加）
 
@@ -188,7 +190,7 @@ hdiutil detach "$MOUNT_DIR" || hdiutil eject "$MOUNT_DIR" 2>/dev/null   # detach
 | S8 更新改造单测 | vitest（main 包） | 模板生成断言：脚本含 hdiutil attach/ditto/detach 命令序列、mountpoint 在用户可写目录（`$TMPDIR` 下 mktemp）**且独立于 STAGING_DIR**、attach 失败走 fail 分支、detach 失败不阻断（无 fail 调用）、S2-S5 换装/回滚段未被改动；ASSET_PATTERNS 匹配 `TaiJi-x.y.z-mac-arm64.dmg` 且不匹配 `.zip`；pick-platform-asset darwin 分支返回 dmg；MacUpdater（platform-updater.ts:104）sha256 取自 macArm64Dmg 字段 |
 | S9 更新改造半真实 | 本地：真实构建新旧两版 ULFO dmg + 直接执行生成的 updater 脚本（测试环境注入模板变量跑 bash，不经 app） | 脚本跑完 exit 0：目标位置 .app 被替换为新版（比对 Info.plist 版本号）；.old 清理；模拟 attach 失败（喂损坏 dmg）→ 走 fail 分支 exit 非 0 且原 .app 未动；同文件双挂载边界（同一 dmg 先挂载不 detach，再对其跑脚本）→ 走 fail 分支 exit 非 0、错误信息含恢复指引、原 .app 未动（§3.3.3-B r2 边界） |
 | S10 更新冒烟（打包产物） | 打包产物内触发检查更新——**走 mock-release-checker 桩路线**（dev 桩返回本地 HTTP asset URL；hosts 劫持 GitHub API 的路线有 TLS 证书障碍不可行；downloadAsset 不做 host 白名单校验，白名单在 install 段 validateRelease——S10 恰到 install 前为止） | darwin 分支定位到 dmg asset、下载完成、弹出重启确认——install 段用 S9 已覆盖，此处到 install 前为止即 pass（install 真跑会换装测试机 app，S11 兜底） |
-| S11 CI 端到端（S6 同款，blocked 待 push 授权） | 发 beta tag → prerelease 验证脚本 | 附件清单 = dmg/exe/AppImage/manifest 且无 zip/deb（verify-ci-release.sh 需同步加「**无** zip/deb」负向断言，防回潮）；数字符合预期（dmg 较 UDZO 基线 -10%+ / AppImage -15%+ / 全发布 ~200-320MB）；GitCode 镜像同步成功 |
+| S11 CI 端到端（S6 同款，blocked 待 push 授权） | 发 beta tag → prerelease 验证脚本 | 附件清单 = dmg/exe/AppImage/manifest 且无 zip/deb（verify-ci-release.sh 需同步加「**无** zip/deb」负向断言，防回潮）；数字符合预期（dmg Format=ULFO 且体积 ≤ UDZO 基线——收益已按 u3 实测校准为 -1.77%；AppImage -15%+；全发布 ~200-320MB）；GitCode 镜像同步成功 |
 
 每个场景回溯 §1 目标：S1-S5→批次 A「不动功能」与死重清除；S6-S7→压缩格式目标；S8-S10→更新链路改造「用户视角一致」；S11→总量目标与 3 附件形态。
 
@@ -198,11 +200,11 @@ hdiutil detach "$MOUNT_DIR" || hdiutil eject "$MOUNT_DIR" 2>/dev/null   # detach
 |---|---|---|---|---|
 | u1 | shiki fine-grained（core import + 12 个静态 grammar import 覆盖 13 项 SHIKI_LANGS——bash/shell 由 shellscript 自带 aliases 覆盖 + 2 theme + 类型标注）+ 单测 | packages/renderer/src/composables/logic/markdown.ts + 其测试 | 无 | S1+S2+S3 |
 | u2 | node-pty prebuilds 平台裁剪（三平台段 files 各加排除行 + 注释） | apps/electron/electron-builder.yml | 无（与 u1 异文件可并行） | S4+S5 |
-| u3 | dmg ULFO（mac 段加 `dmg: format: ULFO` + 注释） | apps/electron/electron-builder.yml | u2（同文件串行） | S6 |
+| u3 | dmg ULFO（**顶层 dmg 段**加 `format: ULFO`——u3 实施修正：非 mac 子段，dmg-builder 直读 packager.config.dmg，mac 段被 schema 拒绝 + 注释） | apps/electron/electron-builder.yml | u2（同文件串行） | S6 |
 | u4 | AppImage xz（linux 段加 `appimage: compression: xz` + 注释） | apps/electron/electron-builder.yml | u3（同文件串行） | S7 |
 | u5 | 砍 deb（yml linux.target + release-checker pattern + shared 类型 + validate-release key + generate-manifest 正则 + build.yml glob/注释） | electron-builder.yml / release-checker.ts / packages/shared/src/update.ts / update/validate-release.ts / scripts/generate-manifest.sh / .github/workflows/build.yml | u4（同文件串行；checker 链与 u6 同文件亦串行） | 单测 + S11 负向断言 |
 | u6 | mac 更新走 dmg（A 定位链 5 处源码 + 类型 + B updater 脚本 S1 段 + C 删 zip target/build.yml 清理 + D 断供错误信息 + 测试同步：全仓 grep `macArm64Zip` 命中的 13 个测试文件逐一改） | release-checker.ts / pick-platform-asset.ts / update/platform-updater.ts / update/dev/mock-release-checker.ts / packages/shared/src/update.ts / updater-script.ts / validate-release.ts / electron-builder.yml / build.yml / orchestrator.ts（仅错误信息）+ 13 个测试文件 | u5（同文件串行、风险最后置） | S8+S9+S10 |
 
 拆分理由：规则 12「打包子系统改动逐个 commit 逐个验证」；u1-u2 无依赖可并行；u2→u3→u4→u5 同文件（yml）严格串行且各自原子小改；u6 动面最大（10 个源码文件 + 13 个测试文件）且含行为变更，置于流水线末端独立验收。dmg/AppImage 的产物级验证（S6/S7）依赖 u3/u4 的完整构建，CI dir-only 模式（build.yml:140-142）不产压缩 target，故 S6 用本地单 target 构建、S11 用 release 完整构建兜底。
 
-待验证检查点（实施期门，来自 §3.3.4 ⛔ 清单）：①ULFO 收益数字 ②本地 linux AppImage 构建可行性 ③UpdateError UI 展示形态。
+待验证检查点（实施期门，来自 §3.3.4 ⛔ 清单）：~~①ULFO 收益数字~~（u3 已解答：实测 -1.77%，远低于预期 -10~15%，原因与校准见 §3.3.2）②本地 linux AppImage 构建可行性 ③UpdateError UI 展示形态。

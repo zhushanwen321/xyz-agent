@@ -138,6 +138,19 @@ mac:
   # zip 和 dmg 共用此 pattern，${ext} 由 electron-builder 按 target 解析为 .zip / .dmg。
   artifactName: TaiJi-${version}-mac-arm64.${ext}
 
+# dmg 压缩格式（设计 §3.3.2，docs/design/release-artifact-size-optimization-batch3.md）。
+# [位置] dmg 是顶层字段（与 mac/win/nsis 同级），不是 mac 子段：dmg-builder 直读
+# packager.config.dmg（node_modules/dmg-builder/out/dmg.js:19），且 scheme.json 的
+# MacConfiguration 无 dmg 属性——放 mac 段会被 schema 校验拒绝（26.15.3 实测）。
+# ULFO = lzfse 压缩，macOS 10.11+ 即支持（本项目 minimumSystemVersion 12.0.0 兼容），
+# 挂载速度与默认 UDZO(zlib) 相当或更快，体积更小；hdiutil attach 对其透明，updater 无感知。
+# 不用 UDBZ（bzip2）：压缩率虽最高，但 macOS 10.15 起挂载弹弃用警告且解压慢。
+# [禁令] 不要改顶层 compression 字段来实现：packager.compression: maximum 会让
+# AppImage 隐式变 xz + dmg 推导为 UDBZ，副作用路径不可控（设计 §3.4 不做清单锁定）——
+# 各 target 压缩一律用显式字段（dmg.format / appimage.compression）。
+dmg:
+  format: ULFO
+
 win:
   target:
     - target: nsis

@@ -69,14 +69,18 @@ graph TD
 
 | Unit | 偏差 | 理由 | 登记时间 |
 |------|------|------|----------|
+| u1 | 领地外修改 packages/renderer/src/__tests__/markdown-renderer-incremental.test.ts（mock 契约 'shiki'→'shiki/core' 同步） | markdown.ts import 入口变化的直接下游 mock，不改则该文件 1 用例必红、「单测全绿」验收不可能达成；与 u2-u6 领地零冲突 | 2026-09-05 |
+| u1 | SHIKI_LANGS 增加 export（数组值与位置不动） | langs 改收静态 grammar 对象后 SHIKI_LANGS 失去运行时消费者触发 TS6133；export 后由新测试消费，避免测试侧抄第二份清单双源漂移 | 2026-09-05 |
+| u1 | 语言 grammar 未按「独立语言 chunk」产出而是内联进共享 vendor chunk | vite manualChunks 的 node_modules→vendor 归并（任务禁改 vite.config.ts）；验收语义全部满足（命中 1≤14 文件、782KB≤1.2MB、死语言零命中），数字优于设计预期 | 2026-09-05 |
+| u1 | 领地新增 packages/renderer/package.json + pnpm-lock.yaml（声明 @shikijs/langs/@shikijs/themes ^4.3.1） | pre-flight 依赖完整性检查拦截：import 未直接声明的传递依赖；lock 已有 4.3.1 解析，不引新版本 | 2026-09-05 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u1 | pending | — | — |
-| u2 | pending | — | — |
-| u3 | pending | — | — |
+| u1 | committed | 1 | ac01fab47（3729 用例 0 失败含 18 新增 fine-grained 用例；vite build 后语言死重 8.1MB→782KB、死语言 chunk 零命中；主 agent build:dir 复核 asar 18M→11M） |
+| u2 | committed | 1 | db4f42fc7（yaml 解析断言三平台段排除就位；主 agent build:dir 断言 prebuilds 仅 darwin-arm64 且 pty.node/spawn-helper 在位） |
+| u3 | committed | 1 | 待回填 commit hash（yaml OK + imageinfo Format: ULFO / Ratio 0.42 + 双构建对比 106M→104M（-1.77%）+ 挂载冒烟 ditto exec 位在位；deviation 2 条：配置位置实为顶层 dmg 段（schema 实测，设计已回写）、收益 -1.77% 远低预期（S11 标准已校准）） |
 | u4 | pending | — | — |
 | u5 | pending | — | — |
 | u6 | pending | — | — |
