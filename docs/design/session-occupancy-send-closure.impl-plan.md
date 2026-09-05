@@ -107,8 +107,28 @@ cd packages/renderer && pnpm vitest run <相关>
 
 | # | 单元 | 偏差内容 | 合理理由 | 登记 date |
 |---|---|---|---|---|
-
-（初始为空）
+| 1 | u5a | #8 复位范围含转译拒绝两路 | #1 先置 dispatching，不复位则永卡 dispatching 破坏 G2；设计 D3 已补注 | 2026-09-05 |
+| 2 | u5a | occupancy 全等去重（值未变化不广播） | 消除 abort 兜底与 agent_settled 双 idle 刷屏；快照回放与增量去重正交不破坏 G4；设计 D3 已补注 | 2026-09-05 |
+| 3 | u5a | turn-end handler 抛错兜底写 settling | 镜像 #6 兜底体例，防 turn 卡 generating；设计 D3 已补注 | 2026-09-05 |
+| 4 | u2 | sendBash 预检保持 'busy' 不分型 | 设计 D2 分型主语仅 sendPrompt；bash 预检是安全网，分型用户可见增益趋零 | 2026-09-05 |
+| 5 | u2 | 预检双命中 isCompacting 优先 | threshold 形态竞态拒绝归 compacting 获入队可达性；设计 D2 已补注 | 2026-09-05 |
+| 6 | u4a | ① 匹配仅限已提交条目（mode!==undefined） | 未提交条目不可能产生确认帧，防同文本误配致 G2 破坏；设计 D5.3 已补注；AC7 锁定 | 2026-09-05 |
+| 7 | u4a | ① 机制抽 effects/user-delivery.ts + provider 注入 | registry 超 500 行上限；provider 未注册时①跳过=现状链（失败方向安全）；同 ADR-0049 模块级单例例外 | 2026-09-05 |
+| 8 | u4a | 剔快照固定 steering 维度 | defer 条目 pi 侧唯一落点走 steer；send 条目文本从不在快照天然 no-op | 2026-09-05 |
+| 9 | u4b | flush 重入：在途提交或 turn 活跃 → 全并入 steer | 防活跃 run 上重复 send 双投递（D5.1 未覆盖场景）；设计 D5.1 已补注；F1 锁定 | 2026-09-05 |
+| 10 | u4b | useCompactQueue/CompactQueue 符号保留不改名 | 引用面 >10（core 契约/双侧测试），C-proc-10 最小爆炸半径；defer 术语由 i18n panel.deferQueue.* + PendingBubble 承接 | 2026-09-05 |
+| 11 | u4b | S1 无 clientUuid 拒绝帧按 FIFO 归属当前 await 条目 | 兼容旧 runtime/异常帧；误报方向安全（留队不丢消息）；TC9 锁定 | 2026-09-05 |
+| 12 | u5b | effectivePhase 并集本地 isActive（投影 idle+本地在途→dispatching） | 防 RTT 窗口死键回退；失配窗口拒绝兜底自愈；settling/compacting/bash 仍权威帧独占；设计 D6 已补注 | 2026-09-05 |
+| 13 | u5b | flush 触发 = 三维全 idle（含 bash 维度） | D6 行 6 sendRoute 解除语义确立 bash 参与；bash flag 从 occupancy 帧取得零额外接线 | 2026-09-05 |
+| 14 | u5b | 分发器落点 core dispatch/send.ts + send-route 纯函数 + composer-shell 组装 | 路由判定须在 canSend 守卫前插入 onSend 内部，外层 wrapper 不可行；纯函数可断言且 P4 复用同源 | 2026-09-05 |
+| 15 | u5b | 断连收口 clearOccupancy 整分区删除 + reason 文案源随收口清理 | 「断连删分区→重连快照恢复」闭环（G4）；设计 §3.4 已补注 | 2026-09-05 |
+| 16 | u6a | TurnMeta 实际在 packages/ui，领地必要越界 | 占位删除必须改它+其测试；Turn.vue props 契约零改动 | 2026-09-05 |
+| 17 | u6a | generating 行由 streaming 本体承担，不重复渲染 | D6 活动条列语义（行 2 活动条=streaming 本体）；避免双指示 | 2026-09-05 |
+| 18 | u6a | thinking 行数据源切 occupancy turn='dispatching'（原 isWorkingTurn 本地拼装） | runtime 权威单一来源；两窄窗口（RTT 内乐观气泡已可见 / subagent 虚拟 session 不广播）为协议边界 | 2026-09-05 |
+| 19 | u6a | i18n 零新增（复用 compressing/autoCompressing/executingBash/dispatching）+ 孤儿 key panel.message.thinking 清扫 | C-proc-10 | 2026-09-05 |
+| 20 | u6b | settling+bash 组合归 queue（D6 表未单列） | 与行 5/6「turn 不活跃+任一维度忙」同构；设计 D6 注记已补；测试锁定 | 2026-09-05 |
+| 21 | u6b | 已提交态 tooltip 挂外层 anchor span | disabled button 不派发鼠标事件，保证 D4 撤销边界 tooltip 可见 | 2026-09-05 |
+| 22 | u4a/u5a/u5b/u6b | 结构性微演化（依赖面收窄/同值双读口/独立模块化/injection mock 补 sessionPhase 等） | 均无行为变化或为编译面必然后果，详见各单元状态表 deviations 栏 | 2026-09-05 |
 
 ## 6 状态表
 
@@ -139,3 +159,5 @@ cd packages/renderer && pnpm vitest run <相关>
 
 **变更历史**：
 - 2026-09-05：计划创建。用户评审说明：单元切分为设计文档 §5 P1-P4 的机械细化（粒度/验收条款直接来自用户已审的 §4/§5），用户已显式指令「开始开发」——评审门以此记录通过，破土。
+- 2026-09-05：全部 9 单元 committed（62d8bb1a7..a52237ec0，79 文件 +5385/-703）。u4b 存在 subagent 违反零 git 约束自行 commit（cdbe3ef60），内容经编排者核验合格保留。
+- 2026-09-05：阶段 3 一致性审查（3 区独立 reviewer：shared+runtime / core / renderer+ui）返回聚合：unreasonable 9 条（R1-U1 onSessionExit 测试缺口 low / R3-U1 ActivityStrip 缺 settling 行 medium / R3-U2 remove 不设防 low / R2-U1+R3-U3 flush 来源拒绝双 toast medium / R3-U4 行 6 bash 缺集成直测 low / R3-U5 flush 失败 toast 未带原因 low / R2-U2 editAndResend 气泡不回滚 low / R2-U3 幂等结论未回填+偏差表空置 low）+ doc_errors 2 条（defer 文案压缩专用措辞失配 / session.compacting reason 职责表述歧义）+ reasonable 15 条。处理：修复批次 A（core+runtime：A1 双 toast 收窄+原因带出、A2 editAndResend 回滚、A3 onSessionExit 断言）与批次 B（renderer：B1 settling 行、B2 remove 设防、B3 行 6 直测、B4 文案泛化）并行派发；doc_errors 与 reasonable 由编排者亲改设计文档（D2 双命中/D3 三注记/D5.1 重入/D5.3 已提交限定/D6 RTT 并集+settling+bash/§3.4 reason 职责+断连收口/§3.5 文案泛化/§5 幂等性回填）并落偏差登记表 22 条。
