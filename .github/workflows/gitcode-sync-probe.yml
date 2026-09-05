@@ -6,11 +6,15 @@ name: GitCode Sync Probe
 # 依赖：secret GITCODE_TOKEN（GitCode 私人令牌）；输入 GITCODE_REPO（GitCode 仓库路径 owner/repo）。
 
 on:
+  # tag 触发（gitcode-probe-*）：探针改动未必都在默认分支，tag 触发绕开
+  # workflow_dispatch「workflow 文件必须在默认分支」的限制，用于调试期快速验证
+  push:
+    tags: ['gitcode-probe-*']
   workflow_dispatch:
     inputs:
       gitcode_repo:
-        description: 'GitCode 仓库路径（owner/repo，需已在 GitCode 建好）'
-        required: true
+        description: 'GitCode 仓库路径（owner/repo，留空用 variable GITCODE_REPO）'
+        required: false
         type: string
       probe_large_file:
         description: '追加 200MB 大文件上传验证（验证单附件大小上限，耗时几分钟）'
@@ -37,11 +41,15 @@ jobs:
       - name: Run GitCode sync probe
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-          GITCODE_REPO: ${{ inputs.gitcode_repo }}
+          GITCODE_REPO: ${{ inputs.gitcode_repo || vars.GITCODE_REPO }}
         run: |
           set -euo pipefail
           if [ -z "${GITCODE_TOKEN}" ]; then
             echo "::error::secret GITCODE_TOKEN 未配置 —— 仓库 Settings → Secrets and variables → Actions → New repository secret（Name: GITCODE_TOKEN，值: GitCode 私人令牌）后重跑"
+            exit 1
+          fi
+          if [ -z "${GITCODE_REPO}" ]; then
+            echo "::error::GitCode 仓库路径为空 —— workflow_dispatch 填 gitcode_repo，或配置仓库 variable GITCODE_REPO"
             exit 1
           fi
           EXTRA=""

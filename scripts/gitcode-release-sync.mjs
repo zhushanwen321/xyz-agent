@@ -62,7 +62,10 @@ async function apiCall(method, pathOrUrl, { body, extraHeaders = {} } = {}) {
     let res;
     try {
       const headers = { 'Private-Token': token, ...extraHeaders };
-      if (body !== undefined && !Buffer.isBuffer(body)) headers['Content-Type'] = 'application/json';
+      // URLSearchParams 由 fetch 自动设置 form content-type；Buffer 由调用方通过 extraHeaders 指定
+      if (body !== undefined && !Buffer.isBuffer(body) && !(body instanceof URLSearchParams)) {
+        headers['Content-Type'] = 'application/json';
+      }
       res = await fetch(url, { method, headers, body });
     } catch (e) {
       lastErr = e;
@@ -93,22 +96,42 @@ async function findReleaseByTag(tag) {
     + `恢复：401/403 检查 GITCODE_TOKEN 是否有效、是否过期；404 且确认仓库存在则可能是权限不足。`);
 }
 
-/** 创建 release；tag 不存在时的行为未经验证，失败时输出原始错误供定位 */
+/** 创建 release。GitCode 对 body 编码的行为未写明文档且实测 JSON 被 400 拒
+ * （"Request body parsing error, please check if the header content-type"），
+ * 故按 json → form → query 三种编码自动降级，成功形态打印进日志留档。 */
 async function createRelease({ tag, name, body, prerelease = false }) {
-  const payload = { tag_name: tag, name, body, prerelease };
-  const r = await apiCall('POST', `/repos/${repo}/releases`, { body: payload });
-  if (!r.ok) {
-    die(`创建 release 失败（HTTP ${r.status}）：${r.text.slice(0, 600)}\n`
-      + `常见原因：① 仓库 ${repo} 不存在或令牌无写权限 → 确认 GitCode 上已建仓库且令牌未过期；`
-      + `② 平台要求 tag 先存在 → 在 GitCode 网页端给仓库建 tag "${tag}"（或先导入 GitHub 仓库让 tag 随代码同步过去）后重跑。`);
+  const payload = { tag_name: tag, name, body, prerelease: String(prerelease) };
+  const formPairs = Object.entries(payload);
+  let lastResp;
+  for (const enc of ['json', 'form', 'query']) {
+    let path = `/repos/${repo}/releases`;
+    let reqBody;
+    if (enc === 'json') {
+      reqBody = JSON.stringify(payload);
+    } else if (enc === 'form') {
+      reqBody = new URLSearchParams(formPairs);
+    } else {
+      path += `?${new URLSearchParams(formPairs).toString()}`;
+    }
+    const r = await apiCall('POST', path, { body: reqBody });
+    lastResp = r;
+    if (r.ok) {
+      if (enc !== 'json') console.log(`[info] createRelease: json 编码被拒，${enc} 编码成功（后续调用沿用）`);
+      const created = r.json?.id ? r.json : await findReleaseByTag(tag);
+      if (created) return created;
+      die(`创建 release 返回 ${r.status} 但按 tag 回查不到，响应片段：${r.text.slice(0, 400)}`);
+    }
+    console.log(`[info] createRelease ${enc} 编码失败（HTTP ${r.status}）：${r.text.slice(0, 200)}`);
+    // 凭据/仓库问题是编码无关的，降级无意义，直接终止并给恢复动作
+    if (r.status === 401 || r.status === 403) {
+      die(`令牌无效或无写权限（HTTP ${r.status}）：${r.text.slice(0, 300)}。恢复：到 GitCode 个人设置检查私人令牌是否过期、是否授予目标仓库写权限`);
+    }
+    if (r.status === 404) {
+      die(`仓库 ${repo} 不存在或不可见（HTTP 404）。恢复：核对 GitHub variable GITCODE_REPO 与 GitCode 仓库路径一致（含大小写），仓库已创建`);
+    }
   }
-  const created = r.json?.id
-    ? r.json
-    : await findReleaseByTag(tag); // 响应无 id 时回查确认创建成功
-  if (!created) {
-    die(`创建 release 返回 ${r.status} 但按 tag 回查不到，响应片段：${r.text.slice(0, 400)}`);
-  }
-  return created;
+  die(`创建 release 三种编码均失败，最后响应（HTTP ${lastResp.status}）：${lastResp.text.slice(0, 500)}。`
+    + `恢复：到 docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-releases 核对接口契约后调整本脚本`);
 }
 
 /** release 的附件列表（字段名做了防御：name / file_name / path 任一形态） */
