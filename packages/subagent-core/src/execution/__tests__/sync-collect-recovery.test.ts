@@ -235,7 +235,11 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    // maxRetries：落标出口的 manifest fire-and-forget 原子写（tmp→fsync→rename，
+    // 断言 until 只等 rename 完成，链尾 fsyncDir 仍在飞）+ sessions-index fire 写
+    // 都可能与删除并发（ENOTEMPTY 竞态，根级全量并行时机器负载高会放大窗口）——
+    // 同款修法见 get-record-for-action-restart.test.ts / record-store-index.test.ts。
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   /** 种子 store：真实 RecordStore + 写文件 pi（种子经真实 toSubagentRecordEntry 序列化）。 */
