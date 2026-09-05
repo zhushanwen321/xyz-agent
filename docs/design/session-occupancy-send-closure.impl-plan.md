@@ -122,7 +122,9 @@ cd packages/renderer && pnpm vitest run <相关>
 | u5a-p3-runtime | committed | 1 | 732414c3e（runtime 全量 4392 绿 + bundle 验证 + plugin E2E 绿；deviations 6 条已核合理——#8 转译拒绝同样复位 turn（修正任务书预判：#1 先置 dispatching，不复位则永卡 dispatching 破坏 G2）、#10 实际挂 session-service pm.onSessionExit、types.ts/index.ts 结构必然扩展、compact-finally 兜底镜像）；respawn idle 起步已定案 |
 | u5b-p3-renderer | committed | 2 | 67f2d4acc（轮 1 交付 28 文件 + 轮 2 编排者修 pre-commit：Composer.vue script 超 300 行提取 drafts 工厂 + 签名类型收窄；core 1437 绿 / renderer 3768 绿；deviations 7 条已核合理——sendRoute 并集本地 isActive 防 RTT 死键窗、分发器落 core dispatch、flush 三维全 idle、store 主体实为 core createChatStore 故 stores/chat.ts 零改动） |
 | u6a-p4-strip | committed | 1 | d20a78813（ActivityStrip 16 用例绿 + ui 555 绿；deviations 6 条已核合理——TurnMeta 实际在 packages/ui 必要越界（Turn.vue 契约零改动）、generating 由 streaming 本体承担不重复渲染、thinking 数据源切 occupancy 权威（RTT/虚拟 session 两窄窗口登记）、i18n 零新增复用、fork notice 文档流定位核对结论落注释、flaky 1 例经单跑证实与改动无关） |
-| u6b-p4-composer | pending | 0 | — |
+| u6b-p4-composer | committed | 1 | a52237ec0（发送位四态 16 用例绿 + renderer 3799 绿；deviations 5 条已核合理——settling+bash 同构归 queue、injection mock 补 sessionPhase、注释级清扫越界零逻辑、title 按 D6 规格更新、真 Electron 截图留 Gate B；零残留 grep 断言由编排者复核） |
+
+**全部 9 单元 committed（2026-09-05），进入阶段 3 一致性审查。**
 
 ## 7 残留风险与变更历史
 
