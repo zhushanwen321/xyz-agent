@@ -481,6 +481,13 @@ export class SessionChannel {
   /** sessionId → 在途 turn（终态落定后仍保留到 runTurn 收尾——收尾帧数据吸收窗口）。 */
   private readonly activeTurns = new Map<string, ActiveTurn>();
   private readonly offHandlers: Array<() => void>;
+  /**
+   * [P0-1 U5/D7] dispose 标志：dispose 收割后 closeSession 短路——收割形态下连接
+   * 可能仍 alive（close 事件迟到，finalize 未跑、child 非 null），此时发 close
+   * request 会写死进程（请求挂到控制面超时）或触发惰性重建（凭空 spawn 无人使用的
+   * 进程，违背 dispose 防泄漏语义）；进程随即被引擎杀链回收，会话驻留随之消亡。
+   */
+  private disposed = false;
 
   constructor(conn: AppServerConnection) {
     this.conn = conn;
@@ -498,8 +505,21 @@ export class SessionChannel {
     ];
   }
 
-  /** 退订连接推送（R4 引擎 dispose 面的配套；不影响连接自身生命周期）。 */
+  /**
+   * [P0-1 U5/D7] dispose 前收割 + 退订：「退订 = 不会再有事件」在结构上蕴含「在途
+   * turn 不应再等」——close 缺失/被吞没形态（onClose 收割主路径未触发）下，在途
+   * turn 于退订前经既有 failAllTurns 收敛为明确失败，不再挂满自身 idle/总上界预算
+   * （设计 §3.4 退化路径闭合；race 窗口在引擎 shutdownRuntimeAndDisposeChannel，
+   * 量级与 awaitConnFinalized 同源 ZCODE_APPSERVER_HARVEST_GRACE_MS）。幂等：与
+   * onClose 收割先到者赢（turn.fail 的 settled 守卫——已落定 turn 不改写），
+   * activeTurns 已空则 no-op。不影响连接自身生命周期（R4）。
+   */
   dispose(): void {
+    this.disposed = true;
+    this.failAllTurns(
+      "zcode session channel 已 dispose：连接 close 事件未在收割窗口内到达，" +
+        "在途 turn 于退订前收割为明确失败（不再挂到 turn 自身预算耗尽）。恢复指引：直接重跑本任务。",
+    );
     for (const off of this.offHandlers.splice(0)) off();
   }
 
@@ -575,6 +595,9 @@ export class SessionChannel {
    * 对死连接发请求会触发惰性重建（凭空 spawn 一代无人使用的进程）。
    */
   async closeSession(sessionId: string): Promise<void> {
+    // [P0-1 U5/D7] dispose 收割后短路（先于 alive 守卫——收割形态下 alive 可仍为
+    // true，见 disposed 字段注释）
+    if (this.disposed) return;
     if (!this.conn.alive) return;
     try {
       await this.conn.request(

@@ -918,6 +918,12 @@ export class ZcodeEngine implements EnginePort {
    * turn 会错过收割、挂到 turnTimeoutMs（300s）。退订前等 onClose 触发（本方法先于
    * shutdown 订阅；channel 的订阅在构造期更早——其 failAllTurns 先于本 promise
    * resolve 执行）；ZCODE_APPSERVER_HARVEST_GRACE_MS 兜底防 `close` 永不到达时挂死。
+   * [P0-1 U5/D7] grace race 输掉（close 迟到/永不到达——stdio 被孙进程持有排空不
+   * 尽等病态形态）时，channel.dispose() 内置的 dispose 收割（failAllTurns 先于退订，
+   * SessionChannel.dispose）兜底在途 turn——退化终点从「挂满 turn 自身 idle/总上界
+   * 预算」收敛为「grace 窗口内明确失败」（设计 §3.4 退化路径闭合）；race 窗口与
+   * awaitConnFinalized 同源同量级（ZCODE_APPSERVER_HARVEST_GRACE_MS）。正常 close
+   * 先到时 onClose 收割先行，dispose 收割幂等 no-op（零回归）。
    */
   private async shutdownRuntimeAndDisposeChannel(rt: AppServerRuntime): Promise<void> {
     const harvested = new Promise<void>((resolve) => {
@@ -927,6 +933,7 @@ export class ZcodeEngine implements EnginePort {
       });
     });
     await rt.conn.shutdown({ graceMs: ZCODE_KILL_GRACE_MS });
+    // close 未在 grace 内到达 → 输掉 race → channel.dispose() 的内置收割兜底
     await Promise.race([harvested, delayResolved(ZCODE_APPSERVER_HARVEST_GRACE_MS, undefined)]);
     rt.channel.dispose();
   }
