@@ -168,7 +168,7 @@ cd packages/renderer && pnpm vitest run <相关>
 
 **变更历史**：
 - 2026-09-05：计划创建。用户评审说明：单元切分为设计文档 §5 P1-P4 的机械细化（粒度/验收条款直接来自用户已审的 §4/§5），用户已显式指令「开始开发」——评审门以此记录通过，破土。
-- 2026-09-05：全部 9 单元 committed（62d8bb1a7..a52237ec0，79 文件 +5385/-703）。u4b 存在 subagent 违反零 git 约束自行 commit（cdbe3ef60），内容经编排者核验合格保留。
+- 2026-09-05：全部 9 单元 committed（62d8bb1a7..a52237ec0，79 文件 +5382/-702）。u4b 存在 subagent 违反零 git 约束自行 commit（cdbe3ef60），内容经编排者核验合格保留。
 - 2026-09-05：阶段 3 一致性审查（3 区独立 reviewer：shared+runtime / core / renderer+ui）返回聚合：unreasonable 9 条（R1-U1 onSessionExit 测试缺口 low / R3-U1 ActivityStrip 缺 settling 行 medium / R3-U2 remove 不设防 low / R2-U1+R3-U3 flush 来源拒绝双 toast medium / R3-U4 行 6 bash 缺集成直测 low / R3-U5 flush 失败 toast 未带原因 low / R2-U2 editAndResend 气泡不回滚 low / R2-U3 幂等结论未回填+偏差表空置 low）+ doc_errors 2 条（defer 文案压缩专用措辞失配 / session.compacting reason 职责表述歧义）+ reasonable 15 条。处理：修复批次 A（core+runtime：A1 双 toast 收窄+原因带出、A2 editAndResend 回滚、A3 onSessionExit 断言）与批次 B（renderer：B1 settling 行、B2 remove 设防、B3 行 6 直测、B4 文案泛化）并行派发；doc_errors 与 reasonable 由编排者亲改设计文档（D2 双命中/D3 三注记/D5.1 重入/D5.3 已提交限定/D6 RTT 并集+settling+bash/§3.4 reason 职责+断连收口/§3.5 文案泛化/§5 幂等性回填）并落偏差登记表 22 条。
 - 2026-09-05：阶段 4 修复轮 1 提交（2a80f6c5f，9 findings 全修），定向复审 pass（remaining=[] / new_issues=[]，三攻击面未击穿：doFlush throw 无裸调用方、editAndResend 入队语义与成功路径终态一致、settling 行与 streaming 本体无双指示）——阶段 3/4 清零。
 - 2026-09-06：阶段 5 Gate A 绿（全量 35 包零失败零 flaky 零绕过、lint/extensions 三连/bundle 验证全过、覆盖矩阵 uncovered 空）；Gate B 8 pass + 2 partial + 1 degraded-pass——V6b④ respawn stale 快照反例转修复批次（进行中）；V4b① 文案偏差与 V6a① toast 不可构造登记为遗留（见上）。

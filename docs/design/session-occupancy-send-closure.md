@@ -211,8 +211,8 @@ pi 的自动压缩有两个触发点，占用组合不同、路由不同（「tu
 | 原流程段 | 接管后谁负责 |
 |---|---|
 | `clearPendingSend`（思考占位复位） | 保留，入队路径继续调用 |
-| toast「Agent 正在处理」 | **删除**（静默入队取代） |
-| optimistic `appendUser` 气泡（窗口 2 残留） | **新增回滚**：send.rejected 时若本次 send 有未确认气泡则移除（defer 入队会插入带 defer 标记的新气泡，避免双气泡） |
+| toast「Agent 正在处理」 | **删除**（静默入队取代）；**孤儿拒绝帧兜底保留**——无未决直发记录且 clientUuid 不命中队列的迟到帧（订阅重建窗口/runtime 异常）无文本可入队，保留既有 toast 反馈（修复轮 A1：孤儿帧静默会丢用户反馈） |
+| optimistic `appendUser` 气泡（窗口 2 残留） | **新增回滚**：send.rejected 时若本次 send 有未确认气泡则移除（defer 入队会插入带 defer 标记的新气泡，避免双气泡）；**editAndResend 被拒同样回滚**（修复轮 A2：写 pendingDirectSends、holdsInflight=false 不回收计数，静默兜底入队——与 send 同为 G1 闭环，编辑文本不因竞态拒绝丢失） |
 | `incrementInflight` 悬空 | **新增回滚**：与气泡回滚同步 decrement，消除计数漂移 |
 | message.error 错误气泡（pi 拒绝路径） | **转译后不再产生**（busy 类不进对话流）；非 busy 的 pi 错误保留现状 |
 
@@ -239,7 +239,7 @@ pi 的自动压缩有两个触发点，占用组合不同、路由不同（「tu
   转移实现为**幂等写**（非增量状态机）：每个挂点直接写目标值并广播 occupancy，值未变化不重复广播（三维全等去重，消除 abort 兜底与 agent_settled 撞出双 idle 等无变化帧），乱序 / 重复事件不产生错误状态。表中箭头是**期望前置态**（正常时序注释）而非守卫——retry / followUp 继续跑场景（settling 态收到下一 segment 的 assistant `message_start` → turn-start）由幂等写天然覆盖（settling→generating 直接写入）。两处实现期补强（一致性审查确认，2026-09-05）：#8 的复位范围含**转译拒绝两路**（#1 先于 client.prompt 置 dispatching，转译拒绝不复位则窗口 1 的拒绝令 turn 永卡 dispatching、flush 永不触发，破坏 G2）；#3 挂 handler 抛错兜底（turn-end 事件早段帧抛错时经 interpret 兜底分支同样写入 settling，镜像 #6 的兜底体例，防 turn 卡 generating）。全部 11 个挂点在现状代码中都有对应的 flag 写点（occupancy 与现有三个 flag 同源同点写入，P3 实施时把「写 flag」升级为「写 flag + 广播 occupancy」）。
 
 **D4：defer 队列（compactQueue 泛化）+ 入队即显 pending 气泡（选定）**
-- **采用**：compactQueue 重命名并泛化为 defer 队列，入队条件从「isCompacting」扩展为「sendRoute=defer」（见 D6 路由表）；flush 触发从 `session.compacted` 事件改为 **occupancy 广播全 idle 且队列非空**。入队即在对话流插入 pending 气泡（半透明 opacity 0.55 + Clock icon + hover 标注），hover 提供 × 撤销（`remove` API 已存在，补 UI）。条目携带 clientUuid 作为气泡 id。**撤销边界**：× 仅对**未提交**条目开放（in-flight 已提交进 pi 队列的条目无法从 pi 侧撤回——撤销入口禁用，tooltip「已提交，等待投递」；滞留条目同理，pi 队列残余未来仍会投递）。
+- **采用**：compactQueue 重命名并泛化为 defer 队列，入队条件从「isCompacting」扩展为「sendRoute=defer」（见 D6 路由表）；flush 触发从 `session.compacted` 事件改为 **occupancy 广播全 idle 且队列非空**。入队即在对话流插入 pending 气泡（半透明 opacity 0.55 + Clock icon + hover 标注），hover 提供 × 撤销（`remove` API 已存在，补 UI）。条目携带 clientUuid 作为气泡 id。**撤销边界**：× 仅对**未提交**条目开放（in-flight 已提交进 pi 队列的条目无法从 pi 侧撤回——撤销入口禁用，tooltip「已提交，等待投递」；滞留条目同理，pi 队列残余未来仍会投递）。**API 层设防**（修复轮 B2）：`remove` 对已提交（mode 已写）条目 no-op——记账不变量下沉，防调用方绕过 UI 移除已提交条目致 inflight 占位悬空、确认帧匹配作废。
 - **被否**：① badge-only（用户已明确要求入队可见气泡）；② defer 队列持久化到磁盘（YAGNI：defer 生命周期 = 单次占用时长，分钟级；重开 session 时已投递部分由 pi entry 重放恢复，未投递部分随内存丢——与 pendingBuffer 同档取舍）。
 - **证据**：steer-bubble 设计的 G1 原则「每条消息投递后气泡必然出现」；compactQueue 分区机制（useSessionScopedState）直接复用。
 - **效果**：G2 成立（场景 1/4）；三个队列概念（steer/followUp/defer）各归其位：steer/followUp 短延迟（当前回合内消费）维持 QueueBubble，defer 长延迟（占用解除才投递）入流显示。
@@ -247,7 +247,7 @@ pi 的自动压缩有两个触发点，占用组合不同、路由不同（「tu
 **D5：flush 走编排器语义 + 投递确认驱动（per-entry 记账），气泡转态闭环（选定）**
 - **采用**：flush 不再裸调 `chatApi.send`，出队与气泡转态**由投递确认帧（`message_end(user)`）驱动**，RPC resolve 只表示「已提交」不表示「已投递」：
   1. **逐条提交**：首条经 core `useChat.send` 的等价编排（**挂 inflight** + ensureStreamSubscription + chatApi.send，appendUser 替换为 pending 气泡维持）；后续条目经 steer 等价编排（chatApi.steer，**不 pushPending**——defer 条目的入流已由入队时的 pending 气泡承担）。**flush 重入**（前次提交部分在途时队列再次触发 flush）：存在在途提交或 turn 活跃 → 全部并入 steer 通道（防活跃 run 上重复 send 双投递，实现期演化，审查确认）。
-  2. **提交判定**：每 await 一条 RPC 后查该条是否触发 send.rejected（S1 窗口订阅标志，WS FIFO 保证 broadcast 先于 reply）——触发 → 未实际投递，条目留队首、停止提交后续，**并同步 `decrementInflight` 回滚该条目占位计数**（重试提交时重新挂——占位的挂/收/回滚三态闭环，杜绝悬空计数错抵后续 steer 确认，即 §2.2 窗口 2 要消灭的计数漂移经占位通道重生）；未触发 → 条目进 **in-flight 确认表**（未出队，气泡保持 pending）；RPC reject → 留队 + 同步回滚占位。
+  2. **提交判定**：每 await 一条 RPC 后查该条是否触发 send.rejected（S1 窗口订阅标志，WS FIFO 保证 broadcast 先于 reply）——触发 → 未实际投递，条目留队首、停止提交后续，**并同步 `decrementInflight` 回滚该条目占位计数**（重试提交时重新挂——占位的挂/收/回滚三态闭环，杜绝悬空计数错抵后续 steer 确认，即 §2.2 窗口 2 要消灭的计数漂移经占位通道重生）；未触发 → 条目进 **in-flight 确认表**（未出队，气泡保持 pending）；RPC reject → 留队 + 同步回滚占位 + **原始错误上抛**（doFlush 三态契约：true=提交完成 / false=S1 未投递静默自愈 / reject=传输级真错误，反馈由 useChat occupancy handler 统一 toast「发送失败： {原因}」——修复轮 A1，错误反馈集中在编排层）。
   3. **确认驱动出队与转态**（判据 = `message_end(user)` 到达 = pi 已注入并落盘 = 真投递；**匹配基准 = defer 队列分区本身**——renderer 本地状态（useSessionScopedState），断连收口 / LRU 驱逐均不清除，对齐 steer-bubble 设计 D 节已确立的 pendingBuffer / inflight 豁免惯例。**不依赖** inflight 计数与 queueStates 快照这两个载体——计数无身份、快照断连可清，均非可靠确认载体）：
      - **单一确认机制**：`message_end(user)` 帧的 content 文本与 defer 分区**已提交**条目做 **FIFO 文本匹配**（最早的同文本条目优先；仅已提交条目参与——未提交条目不可能产生确认帧，防被同文本他帧误配出队致投递必达破坏）→ 命中 → 该条目转态（pending→正常）+ 出队 + `removeQueuedTextFromSnapshot` 剔一个同文本实例（若快照含该文本，维持 queueStates 与 pi 队列对账）+ **仅当命中条目是 send 条目时 `decrementInflight` 回收其占位计数**（steer 条目不挂占位，命中不动计数——无条件 decrement 会对纯计数做多余扣减）；帧消费终止；未命中 defer 分区 → 落入现有处理链（见下）。
      - **message_end(user) 处理序（三分支优先级，单一入口内）**：① defer 分区 FIFO 匹配（上述，新增）；② inflight > 0 → 纯计数 decrement → return（**现有路径零改动**——恢复计数语义，不作出队信号）；③ 腿 2 快照 includes 命中（**现有正常 steer 路径零改动**，defer 帧未命中 ① 时的数量守恒兜底：drainN 无货则降级 appendUser，帧不丢气泡不丢）。
@@ -276,6 +276,7 @@ pi 的自动压缩有两个触发点，占用组合不同、路由不同（「tu
 
 **D7：展示统一 = ActivityStrip + 发送位四态（选定）**
 - **采用**：对话流尾部合并三处进行中指示为单一 ActivityStrip 组件（数据源 = sessionPhase，纵向堆叠、优先级 compacting > bash > generating > thinking；视觉沿用现有 system-notice 形态：spinner + `--text-xs` + hairline）。TurnMeta 的 dispatching「思考中…」占位迁入；CompactQueueBadge 独立行移除（pending 气泡 + QueueBubble 承接）；compacting / executing bash 行迁入。发送位四态见 D6 表。
+  **终态注记**（修复轮 B1/审查偏差 17，实现为权威）：实际优先级链 = compacting > bash > thinking/settling（thinking 与 settling 互斥同档，settling 行为 P-1 校准点、文案复用 dispatching key）；**generating 不渲染独立行**——由 TurnMeta streaming 本体承担（D6 活动条列语义，避免双指示）。
 - **被否**：仅统一压缩相关（用户已选「全部统一」；同类分散只解决一半下次复发）。
 - **接管副作用**：TurnMeta 占位迁移后 `useNoticeStack.forkNoticeBaseTop` 的定位基线变化——迁移时实测 fork notice 定位并同步 `COMPACTING_NOTICE_HEIGHT` 常量与 dev 断言；CompactQueueBadge 的 i18n key 与测试同批清扫（符号删除清扫纪律，C-proc-10）。
 - **效果**：G3 成立（场景 4/5）。
