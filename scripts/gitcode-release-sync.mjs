@@ -137,13 +137,14 @@ async function createRelease({ tag, name, body, prerelease = false }) {
     + `恢复：到 docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-releases 核对接口契约后调整本脚本`);
 }
 
-/** release 的附件列表（字段名做了防御：name / file_name / path 任一形态） */
+/** release 的附件列表（字段名做了防御：GitCode 实测非 GitHub 的 assets.size 形态，
+ * 探针观察到 size=-1 即字段名不匹配，候选覆盖 name/file_name/path × size/filesize） */
 function assetList(releaseJson) {
   const assets = releaseJson?.assets ?? releaseJson?.attach_files ?? releaseJson?.attachFiles ?? [];
   return (Array.isArray(assets) ? assets : [])
     .map((a) => ({
-      name: a.name ?? a.file_name ?? a.path ?? '',
-      size: Number(a.size ?? a.file_size ?? -1),
+      name: a.name ?? a.file_name ?? a.path ?? a.filename ?? '',
+      size: Number(a.size ?? a.filesize ?? a.file_size ?? a.attach_size ?? -1),
     }))
     .filter((a) => a.name);
 }
@@ -234,16 +235,21 @@ function resolveGitcodeRemote() {
     + `恢复：确认令牌未过期、对 ${repo} 有写权限、仓库已创建且已解除镜像状态（镜像仓锁写）`);
 }
 
-/** 强推 origin 分支 + tags 到 GitCode（--prune 保证与 GitHub 完全一致，防 drift） */
+/** 强推 origin 分支 + tags 到 GitCode（--prune 保证与 GitHub 完全一致，防 drift）。
+ * 超时 30 分钟：GitHub runner（海外）→ GitCode（国内）实测上行约 0.8MB/s，
+ * 首次全量（本仓 pack ≈ 490MB）需 10-20 分钟，仅首次；后续发布只推增量。 */
 function pushRepoMirror() {
   const url = resolveGitcodeRemote();
   execSync('git remote remove gitcode-sync 2>/dev/null || true', { stdio: 'pipe', shell: '/bin/bash' });
   execSync(`git remote add gitcode-sync "${url}"`, { stdio: 'pipe' });
-  execSync(
-    'git push gitcode-sync --force --prune "+refs/remotes/origin/*:refs/heads/*" "+refs/tags/*:refs/tags/*"',
-    { stdio: 'inherit', timeout: 600000 },
-  );
-  execSync('git remote remove gitcode-sync', { stdio: 'pipe' });
+  try {
+    execSync(
+      'git push gitcode-sync --progress --force --prune "+refs/remotes/origin/*:refs/heads/*" "+refs/tags/*:refs/tags/*" 2>&1',
+      { stdio: 'inherit', timeout: 1800000 },
+    );
+  } finally {
+    execSync('git remote remove gitcode-sync 2>/dev/null || true', { stdio: 'pipe', shell: '/bin/bash' });
+  }
   console.log('[push-repo] 仓库镜像完成：origin 全部分支 + tags 已对齐到 GitCode');
 }
 
@@ -298,10 +304,12 @@ async function runProbe({ large, skipRepo }) {
     const fresh = await findReleaseByTag(tag);
     const hit = assetList(fresh).find((a) => a.name === smallName);
     if (!hit) {
-      record('上传 4KB 附件', false, `PUT 返回 ${ms}ms 成功但 release assets 列表中找不到该文件（响应字段名可能不同，原始 assets：${JSON.stringify(assetList(fresh))}）`);
+      record('上传 4KB 附件', false, `PUT 返回 ${ms}ms 成功但 release assets 列表中找不到该文件（原始 assets：${JSON.stringify(fresh?.assets ?? fresh).slice(0, 500)}）`);
     } else {
       uploaded = true;
-      record('上传 4KB 附件', true, `PUT ${ms}ms，assets 确认 size=${hit.size}`);
+      // 打印原始条目：定位 GitCode 真实字段名（sync 幂等的 size 匹配依赖它）
+      const rawHit = (fresh?.assets ?? []).find((x) => JSON.stringify(x).includes(smallName));
+      record('上传 4KB 附件', true, `PUT ${ms}ms，size=${hit.size}（原始条目：${JSON.stringify(rawHit ?? {}).slice(0, 300)}）`);
     }
   } catch (e) {
     record('上传 4KB 附件', false, e.message);

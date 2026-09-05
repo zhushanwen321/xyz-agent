@@ -239,7 +239,8 @@ jobs:
     name: Sync Release to GitCode
     needs: release
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 45 分钟：含仓库镜像推送（跨境上行慢，首次全量 10-20 分钟；后续发布为增量）
+    timeout-minutes: 45
     if: >-
       !cancelled() &&
       needs.release.result == 'success' &&

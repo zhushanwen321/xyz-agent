@@ -33,7 +33,8 @@ jobs:
   probe:
     name: GitCode write-path probe
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 45 分钟：含首次全量仓库镜像推送（runner→GitCode 跨境上行约 0.8MB/s，490MB 历史需 10-20 分钟）
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
