@@ -140,7 +140,7 @@ runtime 用 node `readline` 解析 pi stdout JSONL（`packages/runtime/src/infra
 > </xyz-skills>
 > 请使用 read 工具加载上述 skill 文件后再继续任务。
 > ```
-> 模型自主 read 这几个 SKILL.md 并应用。**前端该消息仍显示为 skill chip badge（不是标记原文）**，chip 旁有一个轻量提示「已按标记模式注入（预算超限）」。
+> 模型自主 read 这几个 SKILL.md 并应用。**前端该消息仍显示为 skill chip badge（不是标记原文）**，消息流内联提示行（锚点 turn 之后）显示「已按标记模式注入（预算超限）」（实施形态：badge 位于 ui 包 UserBubble 内，提示以消息内联行呈现，降级/失效双 variant——实施落点见合理偏差登记）。
 >
 > 恢复指引：换大窗口模型 / 减少本次插入的 skill 数量，即可恢复全文注入模式。
 
@@ -170,7 +170,7 @@ runtime 用 node `readline` 解析 pi stdout JSONL（`packages/runtime/src/infra
 - **被否 1**：正则含 `^` 分支（`(?:^|\s)\/`）——实装（`contenteditable.ts:171-184`）各触发回调独立派发，行首 `/x` 会同时命中命令触发与新 skill 触发，两个浮层打架；仲裁规则：**行首（含换行后新行行首）归命令浮层，仅行中空白（非换行）后归 skill 浮层**，两个正则的触发域互斥无重叠。早期草案用 `[ \t]`——不含全角空格/NBSP，中文输入法全角空格后 `/` 不触发，与「对齐四符号体验」不一致，被否。
 - **被否 2**：空格后 `/` 弹全部命令——命令语义仍是「行首命令」（对齐 pi 命令模型），任意位置弹命令会让 `/compact` 等出现在句中造成语义混乱。
 - **被否 3**：维持仅行首触发——直接否掉本需求 G1。
-- **D5 翻案与误触发缓解**：空格后 `/` 触发当年被 D5 否决（路径文本 `看看 /usr/local/bin` 误弹）。缓解与量级：① 浮层 query 合法性过滤——skill 名 pattern 为 `[a-z0-9-]{1,64}`，query 一旦含 `/`、大写、下划线等非法字符**立即关闭浮层**（`/usr` 短暂弹出，输入到第二个 `/` 即关闭）；② 误弹量级：当前用户 skill 集（约 30 个，名多为多音节英文）下，常见路径短 token（`tmp`/`usr`/`var`/`home`）前缀命中 0~2 项，误弹为极小浮层且输入即收。**重审触发条件**：skill 集增长导致单字母/双字母前缀命中 > 5 项时，评估加最小 query 长度门槛（如 ≥2 字符才弹）。
+- **D5 翻案与误触发缓解**：空格后 `/` 触发当年被 D5 否决（路径文本 `看看 /usr/local/bin` 误弹）。缓解与量级：① 浮层 query 合法性过滤——skill 名 pattern 为 `[a-z0-9-]{1,64}`（**query 过滤含空串合法**：刚敲 `/` 尚无过滤词时列全量 skill，`{1,64}` 指 skill 名本体域；实施为 `{0,64}`），query 一旦含 `/`、大写、下划线等非法字符**立即关闭浮层**（`/usr` 短暂弹出，输入到第二个 `/` 即关闭）；② 误弹量级：当前用户 skill 集（约 30 个，名多为多音节英文）下，常见路径短 token（`tmp`/`usr`/`var`/`home`）前缀命中 0~2 项，误弹为极小浮层且输入即收。**重审触发条件**：skill 集增长导致单字母/双字母前缀命中 > 5 项时，评估加最小 query 长度门槛（如 ≥2 字符才弹）。
 - **证据**：`input-dom.ts:237-264`（四符号正则与 D5 注释）、`CommandPopover.vue:158-194`（variant 数据源分支）。
 - **效果**：G1 成立（§3.1 场景 1 的 `空一格键入 /rev`），且行首命令行为零变化（场景 6② 回归）。
 
@@ -195,8 +195,8 @@ runtime 用 node `readline` 解析 pi stdout JSONL（`packages/runtime/src/infra
 - **效果**：「复用 pi 的逻辑」落在权威映射与展开格式两处，而非复刻 pi 的发现逻辑。
 
 **D5：展开格式与 pi 逐字对齐 + 探针守卫（选定）**
-- **采用**：runtime 展开器产出的 block 格式与 pi `_expandSkillCommand` 逐字一致：`<skill name="..." location="...">\nReferences are relative to ${baseDir}.\n\n${body}\n</skill>`（body = SKILL.md 全文剥 frontmatter 后 trim）。每个标记在原位替换（保留 chip 与正文的相对位置），多个 block 之间与正文以空行分隔。`stripFrontmatter` 直接 import pi 的导出（`@earendil-works/pi-coding-agent` 包根导出，`dist/index.js:42` 已核实），不自己复刻。
-- **守卫**：`scripts/check-pi-semantics.mjs` 探针族新增一员——起真实 pi RPC 进程，发 `/skill:name` prompt，读 JSONL 落盘文本，与 xyz-agent 展开器同输入输出做 golden diff。pi 升级若改格式（如 tag 结构、References 行），CI 拦截。
+- **采用**：runtime 展开器产出的 block 格式与 pi `_expandSkillCommand` 逐字一致：`<skill name="..." location="...">\nReferences are relative to ${baseDir}.\n\n${body}\n</skill>`（body = SKILL.md 全文剥 frontmatter 后 trim；**baseDir = `dirname(SKILL.md path)`**，对齐 pi 实装 `skill.baseDir`，不取 `sourceInfo.baseDir`——见 §5 检查点 1 实施定案）。每个标记在原位替换（保留 chip 与正文的相对位置），多个 block 之间与正文以空行分隔。`stripFrontmatter` 剥离逻辑与 pi `dist/utils/frontmatter.js` 逐字镜像（实施修订：pi 包 exports 白名单仅 `.`/`./rpc-entry`/`./client`，深路径 import 被拦、包根 import 会将 TUI/WASM 静态依赖拖进 tsup bundle——镜像的漂移风险由下方探针守卫兜住）。
+- **守卫**：PS-22 探针（实施落点：runtime REAL_PI vitest 池 `pi-semantics-skill-expansion-golden.test.ts`，登记于 `docs/pi-semantics.json`；`REAL_PI_READY` 门控，无凭证环境自动 skip——CI 拦截能力以 REAL_PI 池为界）——起真实 pi RPC 进程，发 `/skill:name` prompt，读 JSONL 落盘文本，与 xyz-agent 展开器同输入输出做 golden diff。pi 升级若改格式（如 tag 结构、References 行），探针红。
 - **被否**：自造注入格式（如 markdown 代码块包裹）——与 pi 会话格式割裂，探针无法对齐。
 - **证据**：pi `agent-session.js:983-1007`（格式模板）、`utils/frontmatter.js` 导出。
 - **效果**：G5 的「零侵入」与长期防漂移；格式一致保证「整条消息 = 单个 skill block」的消息在 pi TUI 中可折叠渲染（pi TUI 的 `parseSkillBlock` 为整条文本锚定正则，仅此形态渲染为折叠组件；混排消息在 pi TUI 显示 XML 原文——已按受代价登记于 §3.5-④）。
@@ -246,6 +246,7 @@ runtime 用 node `readline` 解析 pi stdout JSONL（`packages/runtime/src/infra
 | skill name 无映射（已卸载/未装） | 标记原样透传 + 前端 toast + 消息内联提示 | 重装 skill 或删除该 chip 重发 |
 | SKILL.md 读取失败（权限/损坏） | 同上（透传 + 可见提示） | 检查文件权限；runtime 日志在 `<getDataDir>/logs/`（架构约定，非 `~/.pi/agent/logs/`） |
 | `<xyz-skill/>` 标记被 BeforeSend hook 改写破坏 | 标记残缺不展开，原样透传 + 可见提示 | 检查 plugin 的 BeforeSend hook 是否改写了消息文本 |
+| get_commands RPC 整体失败（映射不可用，实施期补充） | 全部标记原样透传 + 可见提示（不走降级——降级块的 location 数据源缺失）；reason=`mapping_unavailable` | 无需恢复；RPC 恢复后下一条消息自动恢复注入 |
 | contextWindow 获取失败（get_session_stats RPC 错误） | fail-safe：降级为标记模式（D6） | 无需恢复；RPC 恢复后下一条消息自动回到全文注入 |
 | 展开后超窗且降级后仍超窗（正文自身巨大） | 正常发送（降级已最小化注入量）；若真超窗，pi overflow 报错 + 一次 compact-and-retry | 发送前预防：缩短正文 / 减 skill；**发送后救援**（§2.3 失败模式 C）：fork 到该消息之前 / 换大窗口模型 / 新 session——巨大消息无法被 compaction 挤掉，会话内无法自愈 |
 | sidecar 丢失 | 兜底反解析标记还原 chip（含正文保留，D7） | 无需恢复；兜底也失败则该消息显示纯文本（与现状行为一致） |
@@ -323,8 +324,8 @@ runtime 用 node `readline` 解析 pi stdout JSONL（`packages/runtime/src/infra
 |---|---|---|---|---|
 | P1 | **runtime 注入器**（核心，先行） | `packages/runtime/src/services/session/skill-injector.ts`（新增）：标记解析、get_commands 权威映射、展开（import pi stripFrontmatter）、预检（CJK 感知估算 + 0.8 阈值常量）、降级块生成、失效/残缺透传+广播提示；`message-dispatcher.ts` 三入口挂载（hook 之后、client.prompt 之前） | 注入器是全链路枢纽且可独立测（纯函数 + RPC 查询）；先行实施可用手写标记文本验证，不依赖 UI 改动 | 场景 2/3/5（用脚本发构造消息） |
 | P2 | **序列化与反解析（含 core SSOT 升级）** | `segments.ts` skill 分支改产 `<xyz-skill/>` 标记；**`packages/core/src/domain/chat/apply-entry-convert.ts` 的 `parseSkillBlock` 升级**为两形态（标记 + block）全局反解析并修复前置正文丢失缺陷（D7，三链路共用 SSOT 一处改全覆盖）；`apply-entry-equivalence` 等价性守卫扩展覆盖「标记消息」两链路（live ≡ reload，架构关键规则 9）；现有测试更新（`segments.test.ts`、`store.test.ts`、`turn-skill-badge.test.ts`、command-popover 系列——全部锁定旧 `/skill:` 形态将变红） | 序列化格式是 renderer/runtime 契约变更点；core 反解析与序列化同批定义标记语法；等价性守卫是「live ≡ reload」的机器防线，必须随格式变更同步扩展 | 场景 1/4（含正文保留断言） |
-| P3 | **composer 触发与 chip + 提示呈现** | `input-dom.ts` 新增 skill 触发正则（`/[^\S\n]\/(\S*)$/` + query 过滤）；`contenteditable.ts` chip 抑制解除（skill 通道）；`chip-commands.ts` `insertSkillChip`；`CommandPopover.vue` skill-only variant + 已选禁选；**renderer 提示呈现**（降级「标记模式注入」badge 提示——文案区分「预算超限」vs「窗口信息获取失败」两种降级原因——+ 失效 toast/消息内联提示，复用现有 toast 机制，消息内联提示组件实施时定位） | UI 层最后做：P1/P2 就绪后插入即可端到端生效，避免 UI 先行却无注入的空转；提示呈现是场景 2/2b/3/3b 的验收依赖面 | 场景 1/2b/3/3b/6 |
-| P4 | **守卫与防御** | check-pi-semantics.mjs 新探针（golden diff）；rpc-client readline 替换 LF-only 读取器 | 守卫与防御独立于功能主线，可并行或收尾 | 场景 8/9 |
+| P3 | **composer 触发与 chip + 提示呈现** | `input-dom.ts` 新增 skill 触发正则（`/[^\S\n]\/(\S*)$/` + query 过滤）；`contenteditable.ts` chip 抑制解除（skill 通道）；`chip-commands.ts` `insertSkillChip`；`CommandPopover.vue` skill-only variant + 已选禁选；**renderer 提示呈现**（降级「标记模式注入」提示行——文案区分「预算超限」vs「窗口信息获取失败」两种降级原因——+ 失效 toast/消息内联提示，复用现有 toast 机制；实施形态 = 消息内联提示行 `SkillNoticeInline`，锚点 turn 之后渲染） | UI 层最后做：P1/P2 就绪后插入即可端到端生效，避免 UI 先行却无注入的空转；提示呈现是场景 2/2b/3/3b 的验收依赖面 | 场景 1/2b/3/3b/6 |
+| P4 | **守卫与防御** | PS-22 探针（golden diff，实施落点 = runtime REAL_PI vitest 池 + pi-semantics.json 登记）；rpc-client readline 替换 LF-only 读取器 | 守卫与防御独立于功能主线，可并行或收尾 | 场景 8/9 |
 
 ### 文件改动地图
 
@@ -336,18 +337,18 @@ runtime 用 node `readline` 解析 pi stdout JSONL（`packages/runtime/src/infra
 | `packages/renderer/src/components/panel/CommandPopover.vue` | skill-only variant + 已选禁选态 |
 | `packages/renderer/src/composables/panel/useCommandPopoverTrigger.ts` | skill 触发路由 |
 | `packages/renderer/src/components/panel/Composer.vue` | skill 触发转发（slash-trigger 之外新分路） |
-| **renderer 提示呈现**（降级 badge 提示 + 失效 toast/消息内联提示，复用现有 toast 机制；消息内联提示组件实施时定位具体文件） | 新增：场景 2③/3② 的呈现面 |
+| **renderer 提示呈现**（`useSkillNoticeStream.ts` + `SkillNoticeInline.vue` + MessageStream 内联行 + 失效 toast，复用现有 toast 机制；u5 实施落点） | 新增：场景 2③/3② 的呈现面 |
 | `packages/shared/src/segments.ts` | skill 序列化分支改 `<xyz-skill/>` 标记（单点） |
 | `packages/core/src/domain/chat/apply-entry-convert.ts` | **`parseSkillBlock` 升级**：两形态反解析 + 前置正文保留（D7 兜底，三链路 SSOT） |
 | `packages/runtime/src/services/session/skill-injector.ts` | **新增**：展开/预检/降级/失效提示 |
 | `packages/runtime/src/services/session/message-dispatcher.ts` | 三入口挂载注入器（hook 后、client.prompt 前） |
 | `packages/runtime/src/infra/pi/rpc-client.ts` | readline → LF-only 读取器（D10） |
-| `scripts/check-pi-semantics.mjs` | 新探针（展开格式 golden diff） |
+| `scripts/check-pi-semantics.mjs` | 不改（PS-22 探针实施落点改为 runtime REAL_PI vitest 池 `pi-semantics-skill-expansion-golden.test.ts` + `docs/pi-semantics.json` 登记，登记 schema 强制 guard.test 指向 .test.ts） |
 | 测试连带：`packages/shared/src/__tests__/segments.test.ts`、`packages/core/src/domain/chat/__tests__/store.test.ts`、`packages/renderer/src/__tests__/panel/turn-skill-badge.test.ts`、command-popover 系列测试、`apply-entry-equivalence` 等价性守卫 | 锁定旧 `/skill:` 形态的断言全部更新；等价性守卫扩展「标记消息」两链路 |
 
 ### 待验证检查点（实施期核实，不阻塞设计）
 
-1. ~~get_commands 返回的 sourceInfo 字段形态~~ **已核实（设计期）**：pi `skills.js:90-110` 的 `createSkillSourceInfo(filePath, baseDir, source)`——skill 项 sourceInfo 含 SKILL.md 路径与 baseDir，D5 References 行与 D7 反解析所需数据齐全。
+1. ~~get_commands 返回的 sourceInfo 字段形态~~ **已核实并修正（实施期）**：pi `skills.js:90-110` 的 `createSkillSourceInfo(filePath, baseDir, source)`——skill 项 sourceInfo 含 SKILL.md 路径；**但 baseDir 字段不可依赖**：`createSkillSourceInfo` 各分支原样透传 `dirname(filePath)`，而 `resource-loader.js:514-518` 的 extension 覆盖链（`findSourceInfoForPath` 命中时直接采用 extension `metadata.baseDir`）与 `:612` 兜底（`<...>` 形态无 baseDir 字段）使 `sourceInfo.baseDir` 与 pi 展开实际使用的 `skill.baseDir = dirname(filePath)`（`skills.js:236/:260`）可分离。实施定案：References 行 baseDir **恒用 `dirname(SKILL.md path)`**（对齐 pi 实装），弃用 `sourceInfo.baseDir`（实施 commit 448c2ef32）；另 get_commands 的 skill 项 name 恒带 `skill:` 前缀（`agent-session.js:1996`），消费侧需剥前缀归一。
 2. 两条发送前 RPC 的调用开销与缓存：`get_session_stats`（contextWindow）+ `get_commands`（name→path 权威映射）都是每条消息的额外往返（get_commands 返回全量命令 + skill 列表）。评估结果缓存（按 session + 失效事件：现有 `config.skillCacheInvalidated` 广播 / 模型切换事件触发失效）。
 3. 降级指引文本措辞与 pi system prompt `<available_skills>` 指引的措辞对齐（提升模型 read 遵循率）。
 4. landing 态（首条消息）浮层数据源复用 `useProjectSkills`/`useGlobalSkills` 时 name 与 get_commands name 的一致性（两边都应是 SKILL.md frontmatter name）。
@@ -361,3 +362,4 @@ runtime 用 node `readline` 解析 pi stdout JSONL（`packages/runtime/src/infra
 - 2026-09-05：初版（对齐三轮分析结论：pi 单 skill 限制根因、切点盲区后果链、方案 D 选型）。
 - 2026-09-05：第 3 版（R2 双复审 0 must-fix 后的 suggestion 收尾）。主审 4 条：D1 字符类 `[ \t]` → `[^\S\n]`（全角空格/NBSP 缺口，对齐 `#` 符号空白语义）+ 记入被否谱系；D6 补推演边界（代码密集非 CJK 内容 ÷4 低估 1~2 倍，检查点 6 校准样本扩三类）；新增场景 2b（fail-safe 降级 + 文案区分）与 3b（hook 破坏标记）；D10 效果栏验收指向 8→9 更正。影响面审 2 条：§3.5-③「内容无损」限定为仅显示层消费 + 标注编辑重发升级路径由 §3.5-⑤② 消除；D7 补 `<skill` 字面全局匹配边界 + 场景 4⑤ 存量格式回归断言。G1 表述精确化（空格/tab 后，行首归命令浮层）。
 - 2026-09-05：第 2 版（双审 7 must-fix + 13 suggestion 全修）。主要修订：D1 触发正则改 `/[ \t]\//`（行首让位命令浮层的仲裁）+ 误弹量级与重审条件；D6 估算改 CJK 感知公式（chars/2「双向保守」声称不实被否）、fail-open 改 fail-safe、补等效阈值推演与漏判-兜底关系；D5 删「pi TUI 正确渲染混排」声称（实装整条锚定不成立，登记 §3.5-④）；D7 兜底反解析实现位置定于 core `apply-entry-convert.ts`（三链路 SSOT）并修复其前置正文丢失缺陷；D9 补 hook 挂载顺序、幂等改结构化保证；新增 §3.5 影响面与已接受代价五项登记（store 判据失配、JSONL 累积、兜底误还原、pi TUI 显示、normalizeContent 投影面）；错误规格表修正三处（日志路径、fail-safe、降级后超窗的会话内救援路径）；§4 场景 2 补真实 token 校准、场景 4 补正文保留断言、场景 9 补例外声明；§5 改动地图补 core/renderer 提示/测试连带条目，待验证检查点 1 已核实关闭、新增检查点 6。
+- 2026-09-06：实施期一致性修订（阶段 3 双区审查 doc_errors + 合理偏差同步）。① 检查点 1 正式修正：sourceInfo.baseDir 不可依赖（extension 覆盖链 + 兜底无字段），References baseDir 恒用 dirname(path)，get_commands skill 项 name 恒带 `skill:` 前缀需剥前缀（实施 448c2ef32）；② D5 更新：baseDir 来源标注 + stripFrontmatter 改仓内镜像（exports 白名单与 tsup bundle 约束）+ 探针落点改 runtime REAL_PI vitest 池（CI skip 边界注明）；③ §3.4 错误规格表补 get_commands RPC 整体失败行（mapping_unavailable）；④ 场景 2③/P3/文件改动地图的提示形态措辞更新为「消息内联提示行」（实施落点 useSkillNoticeStream + SkillNoticeInline）；⑤ D1 补 query 空串合法语义（`{0,64}`）。

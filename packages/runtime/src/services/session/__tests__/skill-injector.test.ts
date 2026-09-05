@@ -341,15 +341,21 @@ describe('SkillInjector.inject', () => {
     ])
   })
 
-  it('baseDir 缺省：回退 dirname(path)，References 行仍逐字', async () => {
+  it('baseDir：sourceInfo.baseDir 不保证是 SKILL.md 所在目录，References 行仍用 dirname(path)', async () => {
+    // PS-22 真实 pi 探针实证：pi 展开的 References baseDir = skill.baseDir = dirname(filePath)
+    //（skills.js :236/:260）；而 get_commands 的 sourceInfo.baseDir 经 resource-loader.js
+    // :514-518 extension 覆盖链（findSourceInfoForPath 命中时 createSourceInfo 直接采用
+    // extension metadata.baseDir，可为 skill 提供方给的任意目录）与 :612 兜底
+    //（getDefaultSourceInfoForPath 的 `<...>` 形态返回对象无 baseDir 字段）装载，不可消费。
     const marker = buildSkillMarker('skill-a', skillAPath)
+    const scanRoot = join(tmpRoot, 'skills-root')
     const { client } = makeClient({
-      commands: [{ name: 'skill-a', source: 'skill', sourceInfo: { path: skillAPath, source: 'skill' } }],
+      commands: [{ name: 'skill:skill-a', source: 'skill', sourceInfo: { path: skillAPath, source: 'local', scope: 'user', baseDir: scanRoot } }],
       stats: { contextUsage: { tokens: 1, contextWindow: 100000, percent: 1 } },
     })
     const result = await injector.inject(client, marker)
-    // sourceInfo.baseDir 未给 → dirname(skillAPath) === skillADir
     expect(result.text).toContain(`References are relative to ${skillADir}.`)
+    expect(result.text).not.toContain(`References are relative to ${scanRoot}`)
   })
 
   it('无 frontmatter 闭合 ---：镜像 pi 行为原文保留（不剥），展开正文为全文 trim', async () => {

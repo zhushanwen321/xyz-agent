@@ -5,7 +5,7 @@
  * - W 组 Composer wiring（挂 Composer + stub CommandPopover）：空格/全角空格/NBSP 后 `/`
  *   触发 skill-only 浮层（场景 6④）；`/usr` 输到第二个 `/` 浮层关闭（场景 6①）；
  *   行首 `/` 仍命令浮层（场景 6② 回归）；`#`/`$`/`@` 无变化（场景 6③ 回归）；
- *   select payload → insertSkillChip（光标标记 chip、多个共存）+ 已选集合回传（场景 6⑥ 数据面）
+ *   select payload → insertSkillChip（光标标记 chip、多个共存）+ 已选集合回传（D2 已选禁选数据面）
  * - P 组 CommandPopover（真实组件）：panel 态从 commandStore 过滤 source:"skill" 且剥
  *   `skill:` 前缀；已选项「已选」禁选（onSelect 守卫）；landing 态 global+project 合并；
  *   select payload 携带 location（sourceInfo.path）
@@ -212,7 +212,7 @@ describe('Composer skill 触发 wiring（场景 6①②③④）', () => {
   })
 })
 
-describe('Composer skill chip 插入与已选回传（场景 6⑤⑥ 数据面）', () => {
+describe('Composer skill chip 插入与已选回传（D2 已选禁选数据面）', () => {
   afterEach(() => {
     document.body.innerHTML = ''
   })
@@ -303,7 +303,7 @@ describe('CommandPopover skill-only 候选（D1 数据源 + D2 已选禁选）',
     expect(bodyRows().some((r) => r.textContent?.includes('__xyz_reload'))).toBe(false)
   })
 
-  it('P2 场景 6⑥：已选项显示「已选」且禁选（不 emit select），未选项正常选', async () => {
+  it('P2 D2 已选禁选：已选项显示「已选」且禁选（不 emit select），未选项正常选', async () => {
     wrapper = mount(CommandPopover, {
       attachTo: document.body,
       props: { open: true, type: 'skill', sessionId: 's1', query: '', selectedSkillNames: ['alpha'] },

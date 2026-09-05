@@ -64,7 +64,17 @@ graph TD
 
 ## 5 合理偏差登记表
 
-（初始为空）
+（阶段 3 双区一致性审查收敛后登记；设计文档措辞已按 doc_sync 建议同步修订）
+
+| # | 偏差 | 理由 | 文档同步 |
+|---|------|------|----------|
+| R1 | 注入器新增第五类失效 reason `mapping_unavailable`：get_commands RPC 整体失败时全部标记透传+提示，不走降级 | 设计错误规格表盲区；降级块 location 数据源缺失，透传+提示对齐 D8 禁静默 | 设计 §3.4 已补行 |
+| R2 | PS-22 探针落点从 scripts/check-pi-semantics.mjs 改为 runtime REAL_PI vitest 池 + pi-semantics.json 登记 | 登记 schema 强制 guard.test 指向 .test.ts；防漂移效果等价（审查中真实 pi 实跑逐字 diff 绿） | 设计 D5 守卫段/文件改动地图已同步，注明 CI skip 边界 |
+| R3 | D6 预检从「预估展开后字符数」升级为「真实构建展开文本后估算」 | 消除展开开销估算误差；阈值公式与降级语义不变 | 无需（实现更精确，不违背 D6 声明） |
+| R4 | 注入点置于 ensureActive/busy 预检之后 | 设计只约束 hook 后/prompt 前；被拒消息零注入 RPC 属合理优化（调用序测试锁定 hook→ensureActive→inject→prompt） | 无需 |
+| R5 | contextWindow 无效值（非有限/≤0）并入 fail-safe 降级 | 设计 fail-safe 只提 RPC 错误；元数据异常同样按不可得处理，符合「宁可提早降级」 | 无需 |
+| R6 | u5 提示形态统一为「消息内联提示行」（锚点 turn 后，双 variant）而非「chip 旁附着提示」 | badge 在 ui 包 UserBubble（领地外）；场景 2③/2b②/3② 断言全部满足且两文案互斥 | 设计场景 2③/P3/改动地图已同步 |
+| R7 | SKILL_QUERY_PATTERN 用 `{0,64}`（设计写 `{1,64}`） | 空 query 合法是「刚敲 / 列全量」的必要语义，与触发正则 `\S*` 同源自洽；`{1,64}` 指 skill 名本体域 | 设计 D1 已补注 |
 
 ## 6 状态表
 
@@ -79,10 +89,10 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-- u5 提示呈现的具体组件挂点实施时定位（设计已声明「实施时定位」，非计划缺口）；u5 领地若需扩展必须先回报主 agent 审批
-- u3 领地含 renderer 既有测试文件（仅断言更新）——与 u4 的领地边界：u4 禁改既有测试断言，只新增测试
-- 检查点 5（steer/followUp 的 sidecar 写入路径）在 u2 实施期核实，若 steer 消息缺 sidecar，场景 4 对 steer 消息的覆盖受限——登记为已知边界，不阻塞
-- 待验证检查点 2/3/6（RPC 缓存、降级文案对齐、CJK 校准）分别落在 u2/u5/阶段 5，不单独设单元
+- u5 提示呈现的具体组件挂点实施时定位（设计已声明「实施时定位」，非计划缺口）；u5 领地若需扩展必须先回报主 agent 审批 → **已关闭**：落 renderer 消息内联行（R6，见 §5 登记表），未扩领地
+- u3 领地含 renderer 既有测试文件（仅断言更新）——与 u4 的领地边界：u4 禁改既有测试断言，只新增测试 → **已按此执行**
+- 检查点 5（steer/followUp 的 sidecar 写入路径现状）→ **u2 实施期核实关闭**：steer/followUp 消息无 `<!--xyz:msg:-->` 标记（clientUuid 仅普通发送链路注入），其 sidecar 覆盖受限为已知边界；对应 notice 无 clientUuid 时 u5 降级为仅 toast（R6 关联，§5 登记表 + 代码注释）
+- ~~待验证检查点 2/3/6（RPC 缓存、降级文案对齐、CJK 校准）分别落在 u2/u5/阶段 5~~ → **归属修正（审查 B-U2）与结论回写**：检查点 2 结论 = 实现采「无标记零 RPC；含 chip 消息每条两次往返（get_commands + get_session_stats）；无缓存」——仅 chip 消息发生往返、量级可接受，重审条件 = 用户感知发送延迟时评估缓存（结论回写自审查 A-U1）；检查点 3 归属修正为 u1/u2 领地（指引行 SSOT 在 skill-marker.ts，非 u5），主 agent 已核实关闭：pi `<available_skills>` 指引（skills.js formatSkillsForPrompt）为英文条件式「Use the read tool to load a skill's file when the task matches its description」+ 相对路径按 skill 目录解析指引；SKILL_FALLBACK_GUIDANCE「请使用 read 工具加载上述 skill 文件后再继续任务」核心动词语义对齐，指令式（必读）系用户显式插入意图的正确表达（照抄条件式反而弱化意图），降级块 location 为绝对路径使 pi 的相对路径解析指引不适用——**无需改动**；检查点 6 在阶段 5 场景 2⑤ 回填
 
 ### 变更历史
 
@@ -90,3 +100,5 @@ graph TD
 - 2026-09-06（W1 后）：u1 committed（32 测试绿 + shared 全量 258 绿 + typecheck/eslint 过）。u2 领地补 `packages/shared/src/protocol.ts`（仅限新增提示广播消息类型，范式 `session.forkNotice`）——u1 完成通知后主 agent 核实发现提示广播需契约登记，属计划缺口修订。u1 两条合理偏差登记：① 指引行无句号（取 D7 正文定稿，场景 2 示意图句号属排版）；② 降级块解析区间可选吞入紧随指引行（可选组，hook 删指引行时块仍可识别）。
 - 2026-09-06（W3 后）：u6 PS-22 真实 pi 探针实证两处 u2 生产缺陷并打回修复（R1，28/28 + 探针绿）：① get_commands skill 项 name 恒带 `skill:` 前缀（pi agent-session.js:1996 实装），注入器映射与 block 插值改为剥前缀归一（设计未明说该形态，属设计盲区补齐）；② References 行 baseDir 恒用 `dirname(path)` 弃用 `sourceInfo.baseDir`——后者按 source 分链语义可变（.pi/skills 来源下为扫描根），与 pi 实装 `skill.baseDir=dirname(filePath)`（skills.js:236/:260）漂移。**设计 §5 检查点 1 的「sourceInfo 含 baseDir，D5 所需数据齐全」断言对 baseDir 字段不成立**——登记为设计文档待修项（阶段 3 doc_errors 预登记，设计文档 D4/D5 的 sourceInfo 表述与检查点 1 措辞需同步修正）。
 - 2026-09-06（W3 收口）：u4 committed。领地扩展追认（均为契约/门禁强制，设计文件地图未覆盖的环节）：① ui ComposerInput.vue（skill-trigger 转发链契约点）+ dom-core types.ts（onSkillTrigger 回调契约）；② command-popover-open-fetch.ts（skill 浮层打开边沿同源拉 getCommands）；③ i18n locales ×2（已选文案键，禁硬编码规范）；④ 新增 command-popover-skill-candidates.ts / composer-focus-ring.ts（vue_rules_checker 300 行门禁强制拆分，Composer 存量 301 行已超限一并正面修复）。**检查点 4 关闭（结论=不保证一致）**：landing 数据源 name 取自目录名（skill-scanner.ts:75），panel 数据源取自 SKILL.md frontmatter name（pi get_commands）——不一致时 landing 选出的 chip 走 skill_missing 透传+提示（D8 安全网，非静默）；主 agent 判定可接受，登记为已知边界。u4 另登记：dom-core 测试放 input/ 同目录（该包无 __tests__/ 惯例）；skill 触发无光标时返回 null（保守侧，设计未规定）。
+- 2026-09-06（W4）：u5 committed（`ce15b2267`；其两条行为偏差按审查 B-U1 补登于此与 §5 登记表 R6：① 无 clientUuid（steer/followUp）时降级类 notice 亦降级为 toast.info——无锚点不内联，再不 toast 即静默，取保守可用方向；② 提示为会话内存态不写 sidecar，刷新后消失为接受行为，subscribe reconcile 回放经签名幂等去重不重复呈现）。u4 漏交测试文件补账 `f1782203a`。状态表全 committed `4900846b1`。
+- 2026-09-06（阶段 3 R1）：双区一致性审查（A 区 1U+2D+5R / B 区 3U+1D+2R；B-D1 与 A-D1 同源去重）。**W3 变更历史勘误（A-D2）**：前述「sourceInfo.baseDir 按 source 分链组装、.pi/skills 来源下为扫描根」归因不实——pi 实装 createSkillSourceInfo 各分支恒透传 dirname(filePath)，真正的可变来源是 resource-loader.js:514-518 的 extension 覆盖链（采用 extension metadata.baseDir）+ :612 兜底（无 baseDir 字段）；行为决策（恒用 dirname(path)）不变。修复批次：u2 注释归因勘误（含测试注释追补）、u4 测试场景编号勘误（自造「场景 6⑤⑥⑦」改决策号引用）、主 agent 修订设计文档五处与 impl-plan 登记表（A-U1/B-U1/B-U2 的登记缺口补齐）。剩余：检查点 6（CJK 校准）在阶段 5 场景 2⑤ 回填。

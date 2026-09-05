@@ -297,8 +297,11 @@ export class SkillInjector {
         const body = stripFrontmatterPi(readFileSync(path, 'utf-8')).trim()
         // References 行 baseDir 取 SKILL.md 所在目录（dirname(path)）——pi 展开用的 skill.baseDir
         // 恒为 skillDir = dirname(filePath)（skills.js :236/:260 实装锚点）。不用 sourceInfo.baseDir：
-        // 它经 createSkillSourceInfo 按 source 分链组装、语义随来源可变（PS-22 真实 pi 探针实证
-        // .pi/skills 来源下是扫描根而非 SKILL.md 所在目录），golden diff 抓到漂移后弃用。
+        // skills.js 的 createSkillSourceInfo 分支（:90-110）虽恒透传 skillDir，但装载链上游可变——
+        // resource-loader.js :514-518 的 extension 覆盖链（findSourceInfoForPath 命中时 createSourceInfo
+        // 直接采用 extension metadata.baseDir）与 :612 兜底（getDefaultSourceInfoForPath 的 `<...>`
+        // 形态返回对象无 baseDir 字段），使 get_commands 的 sourceInfo.baseDir 不保证是 SKILL.md
+        // 所在目录（PS-22 真实 pi 探针实证漂移），golden diff 抓到后弃用。
         const baseDir = dirname(path)
         // pi _expandSkillCommand 模板（agent-session.js 0.84.4 :997）逐字：
         // `<skill name="..." location="...">\nReferences are relative to <baseDir>.\n\n<body>\n</skill>`

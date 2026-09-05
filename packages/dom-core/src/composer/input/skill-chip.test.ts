@@ -1,11 +1,11 @@
 /**
- * insertSkillChip / 多 skill chip 解析单测（多 skill 注入 u4，设计 D2 + 验收场景 6⑤⑦）。
+ * insertSkillChip / 多 skill chip 解析单测（多 skill 注入 u4，设计 D2 补充断言）。
  *
  * 覆盖：
  * - insertSkillChip：光标处插入（insertChipAtSelection 通用机制）、dataset 完整
  *   （chipType=skill / chipName / 可选 chipLocation）、× 删除、Backspace 整块删除
  * - 多个共存（不清已存在 chip，与 insertSlashChip「最前唯一」命令语义区分）
- * - 场景 6⑦：getSegmentsFromEl 对多个 skill chip 与正文混排解析正确（既有能力补断言锁定）
+ * - D2 混排解析锁定：getSegmentsFromEl 对多个 skill chip 与正文混排解析正确（既有能力补断言）
  *
  * 运行：cd packages/dom-core && npx vitest run src/composer/input/skill-chip.test.ts
  */
@@ -98,7 +98,7 @@ describe('useComposerChipCommands insertSkillChip（D2：光标处、多个共�
     cleanup = c.cleanup
   })
 
-  it('场景 6⑤：多个共存——重复插入不清除已有 skill chip', () => {
+  it('D2 多共存：重复插入不清除已有 skill chip', () => {
     const c = setup()
     c.insertSkillChip('code-review')
     c.insertSkillChip('code-simplify')
@@ -125,7 +125,7 @@ describe('useComposerChipCommands insertSkillChip（D2：光标处、多个共�
     cleanup = c.cleanup
   })
 
-  it('场景 6⑤：× 删除——点 chip-x 移除 chip 与相邻 spacer，onChanged 同步', () => {
+  it('D2 × 删除：点 chip-x 移除 chip 与相邻 spacer，onChanged 同步', () => {
     const c = setup('正文 ')
     c.insertSkillChip('code-review')
     const chip = c.el.querySelector('.slash-chip') as HTMLElement
@@ -136,7 +136,7 @@ describe('useComposerChipCommands insertSkillChip（D2：光标处、多个共�
     cleanup = c.cleanup
   })
 
-  it('场景 6⑤：Backspace 整块删除——光标在 chip 后 spacer 末尾时一次删整块', () => {
+  it('D2 Backspace 整块删除：光标在 chip 后 spacer 末尾时一次删整块', () => {
     const c = setup('正文 ')
     c.insertSkillChip('code-review')
     // 显式把光标放进 chip 后 ZWSP spacer 文本节点末尾（同既有 chip-commands 测试的
@@ -151,7 +151,7 @@ describe('useComposerChipCommands insertSkillChip（D2：光标处、多个共�
   })
 })
 
-describe('场景 6⑦：getSegmentsFromEl 多 skill chip 与正文混排解析（既有能力补断言锁定）', () => {
+describe('D2 混排解析锁定：getSegmentsFromEl 多 skill chip 与正文混排（既有能力补断言）', () => {
   it('正文 + 两个 skill chip + 正文：segments 交错且顺序保持', () => {
     const el = document.createElement('div')
     // 手工构造（模拟 insertSkillChip × 2 + 正文混排后的 DOM；ZWSP 为 spacer，解析时被过滤）
