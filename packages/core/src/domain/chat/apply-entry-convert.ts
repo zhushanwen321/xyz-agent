@@ -21,28 +21,93 @@ import type {
   ThinkingBlock,
   ToolCall,
 } from '@xyz-agent/shared'
-import { textToSegments } from '@xyz-agent/shared'
+import {
+  parseSkillMarkers,
+  parseSkillsFallbackBlocks,
+  textToSegments,
+} from '@xyz-agent/shared'
 
 import { isLooseRecord, isPlainRecord, normalizePiToolResult } from './apply-entry-utils'
 
-// ── user 消息 skill block 剖离（迁移自 message-converter parseSkillBlock）──────────
+// ── user 消息 skill 标记反解析（D7 兜底通道，三链路共用 SSOT）──────────────────────
 
 /**
- * Parse `<skill name="xxx" location="...">...</skill>` blocks from
- * a user message's text content. Returns the extracted skill segment and the
- * remaining user text; `null` if no skill block is found.
+ * pi 原生 skill block 正则（存量格式，pi `_expandSkillCommand` 展开产物）：
+ * `<skill name="..." location="..." ...>…</skill>`，紧随的空行分隔符一并吞入匹配区间——
+ * pi 固定以 `block + "\n\n" + args` 拼接，吞掉 `\n\n` 后切片产出的 args 文本不带前导换行，
+ * 与升级前 `match[3].trim()` 语义产出等价（场景 4⑤ 存量回归）。非贪婪匹配首个闭合标签
+ * + g 标志全局迭代（多 block 全还原——升级前「只取首个」是捕获组锚定 `$` 的副产物，
+ * 非契约）。骨架与升级前正则一致（属性 name → 可选 location → 其余属性透吃）。
+ */
+const PI_SKILL_BLOCK_RE = /<skill\s+name="([^"]+)"(?:\s+location="([^"]+)")?[^>]*>[\s\S]*?<\/skill>(?:\n\n)?/g
+
+/** name/location → skill segment（location 空串归一为缺省，与 buildSkillMarker 序列化端对称：往返幂等）。 */
+function toSkillSegment(name: string, location: string | undefined): Segment {
+  return location !== undefined && location !== ''
+    ? { type: 'skill', name, location }
+    : { type: 'skill', name }
+}
+
+/**
+ * 反解析 user 消息文本中的 skill 标记为 Segment[]（D7 兜底通道：sidecar 丢失/旧版本
+ * 会话时的 chip 还原路径；live message_end 帧 / runtime 历史重建 / 文件重放三链路共用
+ * 本函数，一处升级全覆盖）。无命中返回 null（调用方回退 textToSegments 纯文本）。
+ *
+ * 两形态全局匹配，命中区间按位置排序后与区间外正文交错产出 text + skill + text + …：
+ * ① xyz 私有标记（本设计 segmentsToText 序列化产物）：`<xyz-skill .../>` 单标记与
+ *   `<xyz-skills>` 降级块（解析复用 shared skill-marker SSOT 的 index/length 位置切片）。
+ *   标记前后的正文全部保留为 text segment——专防升级前「捕获组从第一个 <skill 开始、
+ *   block 前正文不在任何捕获组直接丢弃」的缺陷回归。
+ * ② pi 原生 block（升级前存量消息）：保持存量行为等价——block 前置 + `\n\nargs` 在后
+ *   产出 `[skill, args-text]`（`\n\n` 吞入区间实现，见 PI_SKILL_BLOCK_RE）；block 前
+ *   正文升级前直接丢弃，升级后保留（缺陷修复，D7）。
+ *
+ * 优先级（apply-entry 测试锁定）：降级块先扫描并整体占用区间（含块内嵌套标记与紧随
+ * 指引行——指引行是块的组成部分，不作正文残留）；单标记与 pi block 后扫描，起点落入
+ * 已占用区间的命中跳过。pi block 与两类 xyz 标记的正则前缀互不重叠（`<skill` vs
+ * `<xyz-skill`），互不误命中。
  */
 function parseSkillBlock(text: string): Segment[] | null {
-  const match = text.match(/<skill\s+name="([^"]+)"(?:\s+location="([^"]+)")?[^>]*>[\s\S]*?<\/skill>([\s\S]*)$/)
-  if (!match) return null
-  const skillSeg: Segment = match[2]
-    ? { type: 'skill', name: match[1], location: match[2] }
-    : { type: 'skill', name: match[1] }
-  const segments: Segment[] = [skillSeg]
-  const userText = match[3].trim()
-  if (userText) {
-    segments.push({ type: 'text', text: userText })
+  interface Hit {
+    start: number
+    end: number
+    segs: Segment[]
   }
+  const hits: Hit[] = []
+  const occupied = (start: number) => hits.some((h) => start >= h.start && start < h.end)
+
+  // ① 降级块优先（整体区间消费块内全部标记，防单标记解析二次命中重复产出）
+  for (const block of parseSkillsFallbackBlocks(text)) {
+    hits.push({
+      start: block.index,
+      end: block.index + block.length,
+      segs: block.skills.map((s) => toSkillSegment(s.name, s.location)),
+    })
+  }
+  // ② xyz 单标记（块内嵌标记已被 ① 消费，区间内跳过）
+  for (const m of parseSkillMarkers(text)) {
+    if (occupied(m.index)) continue
+    hits.push({ start: m.index, end: m.index + m.length, segs: [toSkillSegment(m.name, m.location)] })
+  }
+  // ③ pi 原生 block（存量形态）
+  for (const m of text.matchAll(PI_SKILL_BLOCK_RE)) {
+    if (occupied(m.index)) continue
+    hits.push({ start: m.index, end: m.index + m[0].length, segs: [toSkillSegment(m[1], m[2])] })
+  }
+  if (hits.length === 0) return null
+
+  // 区间排序 + 正文切片：标记间与首尾正文原样保留（空串不产 text segment）
+  hits.sort((a, b) => a.start - b.start)
+  const segments: Segment[] = []
+  let cursor = 0
+  for (const h of hits) {
+    const before = text.slice(cursor, h.start)
+    if (before) segments.push({ type: 'text', text: before })
+    segments.push(...h.segs)
+    cursor = h.end
+  }
+  const tail = text.slice(cursor)
+  if (tail) segments.push({ type: 'text', text: tail })
   return segments
 }
 
@@ -249,9 +314,9 @@ export function convertMessageBody(
   const acc = collectContentParts(normalizeContentParts(body), baseId, body, fallbackTs)
   const msg = buildMessage(body, entryId, baseId, fallbackTs, acc)
 
-  // For user messages, parse <skill> blocks injected by pi backend.
-  // content 统一为 Segment[]：有 skill 标签时拆出 skill segment + 后续 user text，
-  // 无 skill 标签时用 textToSegments 包成纯 text segment。
+  // For user messages, resolve skill markers back to segments（D7 兜底通道）。
+  // content 统一为 Segment[]：命中 xyz 私有标记 / pi 原生 block 时产出交错的
+  // text + skill + text + …（标记前后正文全保留），无命中时 textToSegments 纯 text。
   if (body.role === 'user' && acc.textContent) {
     msg.content = parseSkillBlock(acc.textContent) ?? textToSegments(acc.textContent)
   }
