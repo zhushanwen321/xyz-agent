@@ -69,7 +69,7 @@ xyz-agent 的架构分三层：renderer（Vue 前端）↔ runtime（Node WebSoc
 **bash RPC 借用了 compact 的 300s 常量，且超时后迟到结果被双重吞掉。**用户在输入框敲 `!sleep 320 && echo done`（模拟 5min+ 的构建/测试）：
 
 - runtime 侧 `rpc-client.ts:700` `bash()` 调 `sendCommand('bash', args, COMPACT_TIMEOUT_MS)`——:89 定义的 300_000ms 常量本是给 compact（LLM 压缩 RPC）用的，:695 注释自认「bash 可能长跑，复用 COMPACT_TIMEOUT_MS（300s）避免误超时」；`bash()` 签名 `(command, excludeFromContext?)` **无 timeout 参数**。
-- t=65s：**renderer 先判死（v1.1 补层，审查 M1）**：`chat.ts` bash() 无显式超时 → pending 65s reject → `useChat.ts:623-631` catch → `toast.error(bashFailed)`——现状任何 >65s 的 `!` 命令就已先弹错误 toast（ack 并非毫秒级返回，见 §4.2）。
+- t=65s：**renderer 先判死（v1.1 补层，审查 M1）**：`chat.ts` bash() 无显式超时 → pending 65s reject → `packages/core/src/domain/chat/useChat.ts:623-632` catch（:628-631 toast）→ `toast.error(bashFailed)`——现状任何 >65s 的 `!` 命令就已先弹错误 toast（ack 并非毫秒级返回，见 §4.2）。
 - t=300s：rpc-client 超时回调（:497-506）`pending.delete` + `timedOutIds.add(id)`（:97 TTL=5s）+ reject `RpcTimeoutError`。dispatcher 的 catch（`message-dispatcher.ts:405-429`）广播一条**合成错误终态**（`[bash error] timeout`）+ `message.error`，气泡收口显示失败；finally 复位 `isBashRunning`（:432-437）。
 - **pi 侧 bash 并没有被 abort**（无自动 `abort_bash`），继续跑。
 - t=320s 命令真实完成：pi 迟到的 `response` 到达 rpc-client `handleMessage`（:436-440）：id 已不在 pending；距超时已 >5s、id 已出 `timedOutIds` → 落入 listener 路径 → event-adapter `NULL_EVENTS` 集合含 `'response'`（`event-adapter.ts:1020-1024`）→ **吞掉，RPC 结果无人消费**。
