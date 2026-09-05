@@ -255,13 +255,44 @@ export function cleanupExpiredPoolRefs(
   }
 }
 
-/** 单池 TTL 清理（见 cleanupExpiredPoolRefs 语义分解）。 */
+/** 单池 TTL 清理（见 cleanupExpiredPoolRefs 语义分解）。两阶段见下方辅助函数。 */
 function cleanupPoolByTtl(poolDir: string, ttlMs: number, fs: PoolFsDeps, now: number): void {
   const file = readPoolRefs(poolDir, fs);
   const hadRefs = Object.keys(file.refs).length > 0;
-  let changed = false;
 
   // 1. refs 条目决策：journal 超龄（或 journal 不在 + 条目 ts 超龄）→ 移除
+  let changed = removeExpiredRefEntries(poolDir, file, ttlMs, fs, now);
+
+  // 2. 无主超龄 journal（无任何 refs 条目对应——refs 丢失/损坏重建场景）：按 mtime 删。
+  // readdir 失败 → 中止本池清理（阶段 1 的 refs 变更不落盘，下次扫描按原 refs 重算）。
+  let entries: DirEntryLike[];
+  try {
+    entries = fs.readdirSync(poolDir);
+  } catch {
+    return;
+  }
+  if (removeOrphanJournals(poolDir, file, entries, ttlMs, fs, now)) changed = true;
+
+  if (!changed) return;
+  writePoolRefs(poolDir, file, fs);
+  if (hadRefs && Object.keys(file.refs).length === 0) {
+    deletePoolNativeState(poolDir, fs);
+  }
+}
+
+/**
+ * TTL 阶段 1——refs 条目决策（直接变更 file.refs，按需删对应 journal）：
+ * journal 超龄 → 删 journal + 移除条目；journal 不在 + 条目 ts 超龄 → 移除（孤儿条目）。
+ * 返回 refs 是否有变更。
+ */
+function removeExpiredRefEntries(
+  poolDir: string,
+  file: PoolRefsFile,
+  ttlMs: number,
+  fs: PoolFsDeps,
+  now: number,
+): boolean {
+  let changed = false;
   for (const [taskId, entry] of Object.entries(file.refs)) {
     const journalPath = join(poolDir, `${JOURNAL_PREFIX}${sanitizeSeg(taskId)}${JOURNAL_SUFFIX}`);
     if (fs.existsSync(journalPath)) {
@@ -276,14 +307,22 @@ function cleanupPoolByTtl(poolDir: string, ttlMs: number, fs: PoolFsDeps, now: n
       changed = true;
     }
   }
+  return changed;
+}
 
-  // 2. 无主超龄 journal（无任何 refs 条目对应——refs 丢失/损坏重建场景）：按 mtime 删
-  let entries: DirEntryLike[];
-  try {
-    entries = fs.readdirSync(poolDir);
-  } catch {
-    return;
-  }
+/**
+ * TTL 阶段 2——无主超龄 journal 回收。ownedSegments 基于阶段 1 变更后的 refs
+ * （仍有 refs 对应的 journal 不动）。返回是否有删除。
+ */
+function removeOrphanJournals(
+  poolDir: string,
+  file: PoolRefsFile,
+  entries: DirEntryLike[],
+  ttlMs: number,
+  fs: PoolFsDeps,
+  now: number,
+): boolean {
+  let changed = false;
   const ownedSegments = new Set(Object.keys(file.refs).map((taskId) => sanitizeSeg(taskId)));
   for (const entry of entries) {
     if (!isJournalFile(entry.name)) continue;
@@ -303,12 +342,7 @@ function cleanupPoolByTtl(poolDir: string, ttlMs: number, fs: PoolFsDeps, now: n
       );
     }
   }
-
-  if (!changed) return;
-  writePoolRefs(poolDir, file, fs);
-  if (hadRefs && Object.keys(file.refs).length === 0) {
-    deletePoolNativeState(poolDir, fs);
-  }
+  return changed;
 }
 
 /** journal 文件名 → taskId 段（journal-<seg>.jsonl → seg；形态不符返回 undefined）。 */

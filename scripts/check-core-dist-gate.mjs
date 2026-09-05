@@ -56,6 +56,19 @@ function ok(msg) {
  * 误报。已知局限：模板串 ${} 内嵌引号会提前结束字符串状态（倾向误报而非漏报，
  * 与依赖闭包守卫的 fail-closed 取向一致）。
  */
+/** 行注释跳过：consume 到行尾（不含换行符——\n 留给主循环作为普通字符输出）。 */
+function skipLineComment(text, i) {
+  while (i < text.length && text[i] !== '\n') i++
+  return i
+}
+
+/** 块注释跳过：consume 整段（含闭合定界符；EOF 处未闭合时越过末尾，主循环随之结束）。 */
+function skipBlockComment(text, i) {
+  i += 2
+  while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++
+  return i + 2
+}
+
 function stripComments(text) {
   let out = ''
   let i = 0
@@ -81,13 +94,11 @@ function stripComments(text) {
       continue
     }
     if (c === '/' && next === '/') {
-      while (i < text.length && text[i] !== '\n') i++
+      i = skipLineComment(text, i)
       continue
     }
     if (c === '/' && next === '*') {
-      i += 2
-      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++
-      i += 2
+      i = skipBlockComment(text, i)
       continue
     }
     out += c

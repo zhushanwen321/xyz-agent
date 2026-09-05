@@ -666,6 +666,16 @@ function handleWorkerLog(run: WorkflowRun, msg: LogMsg, deps: LifecycleDeps): vo
  *    completion 不投递——rebuild 不改 status，第 1 层拦不住跨 runtime 代际的迟到
  *    结果（S7-second 竞态：旧失败结果投给新 worker 劫持重跑 pending → 假成功）。
  */
+/**
+ * M4: agent-call 消息 IPC 字段校验谓词——畸形（opts 非对象/缺失、callId 非数字、
+ * prompt 缺失）= true。提取为谓词保持 dispatchAgentCall 主流程可读（圈复杂度门禁）。
+ */
+function isMalformedAgentCallMsg(msg: AgentCallMsg): boolean {
+  return typeof msg.callId !== "number" || !Number.isFinite(msg.callId) ||
+    typeof msg.opts !== "object" || msg.opts === null ||
+    typeof msg.opts.prompt !== "string";
+}
+
 function dispatchAgentCall(
   run: WorkflowRun,
   msg: AgentCallMsg,
@@ -674,9 +684,7 @@ function dispatchAgentCall(
   // M4: IPC 字段校验——畸形 agent-call 消息（opts 非对象/缺失、callId 非数字、prompt 缺失）
   // 不写 trace / 不 postAgentResult——这类消息通常意味着 worker 模块版本不匹配或内存损坏，
   // 回发结果给 worker 也没意义（worker 可能已崩）。仅记日志，让 worker timeout/exit 路径接管。
-  if (typeof msg.callId !== "number" || !Number.isFinite(msg.callId) ||
-      typeof msg.opts !== "object" || msg.opts === null ||
-      typeof msg.opts.prompt !== "string") {
+  if (isMalformedAgentCallMsg(msg)) {
     logger.error(`[workflow] malformed agent-call message: callId=${JSON.stringify(msg.callId)}, opts=${JSON.stringify(msg.opts)?.slice(0, MALFORMED_MSG_LOG_PREVIEW_CHARS)}`);
     return;
   }
@@ -693,12 +701,14 @@ function dispatchAgentCall(
   // slug 复用 agentName（超长截断），live record 的 slug 仅用于 TUI 展示。
   const liveSlug = agentName.length > SLUG_MAX_LENGTH ? agentName.slice(0, SLUG_MAX_LENGTH) : agentName;
   const now = new Date().toISOString();
+  // 未显式指定 model 的展示口径（live record 与 trace node 共用，两处一致）。
+  const model = msg.opts.model ?? "default";
   // live record：收口 agent 执行过程中的 text/thinking/toolCalls/usage，
   // 供 TUI 在 agent 运行期间显示进度（getEventLog/getCurrentActivity）。
   // 完成时由下方 .then 清除（终态由 node.result 承载）。
   const liveRecord = createRecord(String(msg.callId), {
     agent: agentName,
-    model: msg.opts.model ?? "default",
+    model,
     mode: "background",
     task: msg.opts.prompt,
     slug: liveSlug,
@@ -708,7 +718,7 @@ function dispatchAgentCall(
     stepIndex: msg.callId,
     agent: agentName,
     task: msg.opts.prompt,
-    model: msg.opts.model ?? "default",
+    model,
     status: "running" as const,
     phase: msg.phase,
     startedAt: now,
