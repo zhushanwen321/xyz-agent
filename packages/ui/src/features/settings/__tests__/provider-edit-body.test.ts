@@ -112,6 +112,9 @@ function makeQuotaState(): QuotaConfigureState {
     cookieInput: ref(''),
     apiKeyInput: ref(''),
     apiKeyConfigured: ref(false),
+    workspaceInput: ref(''),
+    workspaceConfigured: ref(false),
+    needsWorkspace: ref(false),
     testStatus: ref<QuotaTestStatus>('idle'),
     testError: ref(''),
     quotaData: ref<NormalizedQuotaRow | null>(null),
@@ -127,6 +130,7 @@ function makeQuotaState(): QuotaConfigureState {
     selectFetcher: async () => {},
     saveCookie: async () => {},
     saveApiKey: async () => {},
+    saveWorkspace: async () => {},
     testQuery: async () => {},
     reset: () => {},
   }

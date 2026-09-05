@@ -20,6 +20,7 @@ vi.mock('../../../../core/src/transport/api/request', () => ({
 }))
 
 import { removeByCwd } from '@xyz-agent/core/transport/api/domains/session'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '../../../../core/src/transport/api/pending'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -34,7 +35,7 @@ describe('session.removeByCwd（W2TC1）', () => {
 
     // command 被调一次，type + payload 正确
     expect(commandMock).toHaveBeenCalledTimes(1)
-    expect(commandMock).toHaveBeenCalledWith('session.deleteByCwd', { cwd: '/p' })
+    expect(commandMock).toHaveBeenCalledWith('session.deleteByCwd', { cwd: '/p' }, RPC_BACKSTOP_TIMEOUT_MS)
     // reply 解包为 BatchDeleteResult
     expect(result).toEqual({ cwd: '/p', deleted: ['s1'], failed: [] })
   })
@@ -49,7 +50,7 @@ describe('session.removeByCwd（W2TC1）', () => {
 
     const result = await removeByCwd('/proj')
 
-    expect(commandMock).toHaveBeenCalledWith('session.deleteByCwd', { cwd: '/proj' })
+    expect(commandMock).toHaveBeenCalledWith('session.deleteByCwd', { cwd: '/proj' }, RPC_BACKSTOP_TIMEOUT_MS)
     expect(result.deleted).toHaveLength(3)
     expect(result.failed).toEqual([{ sessionId: 's4', error: 'EPERM' }])
   })
@@ -58,6 +59,6 @@ describe('session.removeByCwd（W2TC1）', () => {
     commandMock.mockRejectedValueOnce(new Error('network'))
 
     await expect(removeByCwd('/p')).rejects.toThrow('network')
-    expect(commandMock).toHaveBeenCalledWith('session.deleteByCwd', { cwd: '/p' })
+    expect(commandMock).toHaveBeenCalledWith('session.deleteByCwd', { cwd: '/p' }, RPC_BACKSTOP_TIMEOUT_MS)
   })
 })

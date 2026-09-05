@@ -37,13 +37,15 @@ describe('D6a: server.setServices 注册 onSessionDestroyed 汇聚清理', () =>
     expect(registered).toHaveBeenCalledTimes(1)
     const handler = registered.mock.calls[0]![0]
 
-    // 模拟挂起的 ask-user 请求（pending 缓存）+ bridge 请求（bridgeRequestIds）
+    // 模拟挂起的 ask-user 请求（pending 缓存）+ bridge 请求（bridgeRequestIds）。
+    // bridge 登记走 addBridgeRequest（marker 通道唯一入口，旧 registerTimeout 的
+    // bridge: 前缀分支已删）；bridge 请求不产 extension-ui kind → 不入 pendingRequests
     server.registerExtensionTimeout('s1', 'req-ask', 'ask-user', { question: 'continue?' })
-    server.registerExtensionTimeout('s1', 'req-bridge', 'bridge:tool', {})
     server.registerExtensionTimeout('s2', 'req-other', 'ask-user', { question: 'other' })
     const mgr = (server as unknown as { extensionTimeoutMgr: ExtensionTimeoutManager }).extensionTimeoutMgr
-    // cachePendingRequest 对 ask-user 与 bridge 请求都入 pending 缓存 → s1 有 2 条
-    expect(mgr.getPendingRequests('s1')).toHaveLength(2)
+    mgr.addBridgeRequest('s1', 'req-bridge')
+    // pending 缓存只含 ask-user（bridge 请求经 marker 通道不经 pendingRequests）
+    expect(mgr.getPendingRequests('s1')).toHaveLength(1)
     expect(mgr.isBridgeRequest('req-bridge')).toBe(true)
 
     // 触发点传 summary（removeSessionEntry 删除前缓存；Map 无条目时是最小形状，id 恒可靠）

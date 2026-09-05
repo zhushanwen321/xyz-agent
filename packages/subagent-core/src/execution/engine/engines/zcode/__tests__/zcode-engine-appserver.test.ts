@@ -80,7 +80,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   for (const engine of engines.splice(0)) await engine.dispose().catch(() => undefined);
-  fs.rmSync(tmpRoot, { recursive: true, force: true });
+  fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 interface ScenarioOverrides {
@@ -289,17 +289,17 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     expect(engineDir).toEqual(["appserver-launcher.cjs"]);
   }, 15_000);
 
-  it("maxTurns（pi 专属）→ engine_capability_unsupported 拒绝，不创建会话（U4：静默丢弃会造成假上限）", async () => {
+  it("maxTurns（pi 专属）→ 引擎内不再拒绝（[D3-④] 能力拒绝上提宿主 capability-gate，防双轨拦截复活）", async () => {
+    // [D3-④ 合并注] capability 拒绝唯一实现 = common/capability-gate（两调用点 = chat 域
+    // executeViaEngine 同步段 + SAR run 前，拒绝语义 engine_capability_unsupported 由
+    // capability-gate.test.ts 承载）。引擎域 run() 不做 shape 检查——本用例反转回归面：
+    // maxTurns 直传引擎不得再被拒（曾因引擎内残留拦截与 gate 形成双轨）。
     const { engine, stateFile, workspace } = makeEngine();
-    await expect(engine.run(makeTask({ cwd: workspace, maxTurns: 10 }), makeCtx())).rejects.toThrowError(
-      /engine_capability_unsupported/,
-    );
-    // 恢复指引：去掉 maxTurns 或改用 pi 引擎
-    await expect(engine.run(makeTask({ cwd: workspace, maxTurns: 10 }), makeCtx())).rejects.toThrowError(
-      /maxTurns|engine: 'pi'/,
-    );
-    // 拒绝发生在 prepare 期（进程创建前）：fake 侧零流水（连惰性启动都没触发）
-    expect(readState(stateFile)).toHaveLength(0);
+    const r = await engine.run(makeTask({ cwd: workspace, maxTurns: 10 }), makeCtx());
+    expect(r.outcome.error).toBeUndefined();
+    expect(r.outcome.content).toBe(GOLDEN_FULL_TEXT);
+    // 正常走 app-server 流程（create×1——maxTurns 对 zcode 无通道，静默不透传）
+    expect(sentFrames(stateFile, "session/create")).toHaveLength(1);
   }, 10_000);
 
   it("per-session model：create 帧 model={providerId,modelId}（task.model 拆分）+ toolDenylist 透传", async () => {

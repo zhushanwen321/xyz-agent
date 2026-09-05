@@ -43,13 +43,29 @@
  *     sendPushes?:  [frame, ...]       send 应答前逐帧推送（推送流 + 终态帧全显式
  *                                      逐字回放，不经 withExtra 改写）
  *     sendResult?:  object             缺省 {accepted:true}
+ *     crashAfterSendMs?: number        [P0-1 U4] send 应答后 N ms 自杀 exit(1)（连接
+ *                                      崩溃收割注入——onClose → failAllTurns 在途
+ *                                      turn 收割；进程死 → 下次 request 惰性重建
+ *                                      boot 新代重读 scenario，重试轮/下一任务形态
+ *                                      切换经测试侧 rewriteScenario）
+ *     rebootSendPushes?: [frame, ...]  [P0-1 U4] 非首代进程（本 fake 启动时 state 流水
+ *                                      已有 boot 记录——崩溃/杀链后的重建代）的 send
+ *                                      推送序列，替代 sendPushes：崩溃后惰性重建的
+ *                                      重试轮拿到不同行为（如完整终态流）——首轮挂起
+ *                                      + 重试轮成功的静态注入通道（同任务重试轮无法
+ *                                      经测试侧 rewriteScenario 插手，run 整体 await）
  *     readError?:   {code,message,data} read 应答 error 帧（read 兜底降级链断言）
  *     readResult?:  object             覆盖 read 应答
- *     stopBehavior?: 'terminal'|'none'  session/stop 的行为（R4 abort 链断言面）：
+ *     stopBehavior?: 'terminal'|'none'|'hang'
+ *                                      session/stop 的行为（R4 abort 链断言面）：
  *                                      'terminal'（缺省）= stop 时推送该会话的
  *                                      turn.terminal 终态帧（stop 优雅生效——不杀
  *                                      进程的 abort 路径）；'none' = 只应答不推终态
- *                                      （grace 窗口耗尽 → killChain 兜底路径）
+ *                                      （grace 窗口耗尽 → killChain 兜底路径）；
+ *                                      'hang' = 连应答都不给（P0-1 U2 超时入口态③——
+ *                                      控制面假死注入，stop 3s 超时 → 连接级失败判据）
+ *     stopError?:   {code,message,data} stop 应答 error 帧（P0-1 U2 超时入口态②——
+ *                                      协议性 error（如会话已回收）注入，断言不升级杀链）
  *   }
  *
  * 多会话支持（R4 引擎接线 / RA3 双会话地基）：
@@ -77,6 +93,19 @@ if (process.env.FAKE_SESSION_SCENARIO) {
   } catch (err) {
     log('scenario-load-failed', { message: String(err && err.message) });
   }
+}
+
+// [P0-1 U4] 本进程代数（state 流水已有 boot 记录数 + 1）：崩溃/杀链后的惰性重建代
+// ≥2——rebootSendPushes 仅对重建代生效（重试轮拿到与首轮不同的推送序列）
+let BOOT_GEN = 1;
+if (STATE_FILE && SCENARIO && SCENARIO.rebootSendPushes) {
+  try {
+    const priorBoots = fs
+      .readFileSync(STATE_FILE, 'utf8')
+      .split('\n')
+      .filter((l) => l.includes('"ev":"boot"')).length;
+    BOOT_GEN = priorBoots + 1;
+  } catch { /* 流水读失败按首代处理 */ }
 }
 
 let seq = 0;
@@ -206,13 +235,33 @@ async function handleRequest(f) {
       if (SCENARIO && SCENARIO.sendError) {
         return replyErr(id, SCENARIO.sendError.code, SCENARIO.sendError.message, SCENARIO.sendError.data);
       }
-      // 推送帧逐字回放（STAMP_SESSION 时按目标会话归因改写）
-      pushFrames(SCENARIO && SCENARIO.sendPushes, String(params.sessionId || ''));
+      // 推送帧逐字回放（STAMP_SESSION 时按目标会话归因改写）；重建代走 rebootSendPushes
+      // （U4：重试轮的不同行为通道）
+      const pushes =
+        BOOT_GEN > 1 && SCENARIO && SCENARIO.rebootSendPushes
+          ? SCENARIO.rebootSendPushes
+          : SCENARIO && SCENARIO.sendPushes;
+      pushFrames(pushes, String(params.sessionId || ''));
+      // [P0-1 U4] 崩溃收割注入：应答后 N ms 自杀（onClose → failAllTurns 在途 turn
+      // 收割的确定性触发面；exit(1) 非零码与 test/suicide 同形态）
+      const crashAfterSendMs = SCENARIO && SCENARIO.crashAfterSendMs;
+      if (typeof crashAfterSendMs === 'number' && crashAfterSendMs >= 0) {
+        setTimeout(() => {
+          log('crash-injected', { afterMs: crashAfterSendMs });
+          process.exit(1);
+        }, crashAfterSendMs).unref();
+      }
       return reply(id, (SCENARIO && SCENARIO.sendResult) || { accepted: true });
     }
     case 'session/stop': {
-      // [R4] abort 链断言面：缺省推终态（stop 优雅生效）；stopBehavior:'none' 只应答
+      // [R4] abort 链断言面：缺省推终态（stop 优雅生效）；stopBehavior:'none' 只应答；
+      // stopError 注入协议性 error 应答帧（P0-1 U2 态②——不升级杀链判据）；
+      // stopBehavior:'hang' 永不应答（态③——stop 3s 超时 = 连接级失败判据）
       const behavior = (SCENARIO && SCENARIO.stopBehavior) || 'terminal';
+      if (behavior === 'hang') return;
+      if (SCENARIO && SCENARIO.stopError) {
+        return replyErr(id, SCENARIO.stopError.code, SCENARIO.stopError.message, SCENARIO.stopError.data);
+      }
       if (behavior === 'terminal') {
         pushFrames([TURN_TERMINAL_FRAME], String(params.sessionId || ''));
       }

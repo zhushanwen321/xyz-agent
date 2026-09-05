@@ -10,6 +10,7 @@ import { SCOPED_MODEL_REGEX } from '../services/provider-extras-store.js'
 import { attachSupportedLevelsSafe } from './message-broker.js'
 import { toErrorMessage } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
+import { ConfigPreferencesMessageHandler } from './config-preferences-message-handler.js'
 
 /** Interface for server methods needed by this handler */
 export interface SettingsHandlerContext extends MessageHandlerContext {
@@ -56,10 +57,17 @@ function reconcileDefaultModelAfterProviderChange(
 }
 
 export class SettingsMessageHandler {
-  constructor(private ctx: SettingsHandlerContext) {}
+  /** workspace 偏好组子 handler（worktree/streaming-idle/基分支 12 条简单转发，控本文件 max-lines） */
+  private preferencesHandler: ConfigPreferencesMessageHandler
+
+  constructor(private ctx: SettingsHandlerContext) {
+    this.preferencesHandler = new ConfigPreferencesMessageHandler(ctx)
+  }
 
   // eslint-disable-next-line max-lines-per-function -- config.* 路由 switch，case 数随业务增长天然偏长，拆分收益低于可读性损失（同 session-message-handler 先例）
   async handleSettingsMessage(msg: ClientMessage, ws: WsType): Promise<boolean> {
+    // 偏好组先行（子 handler 未命中返回 false 继续本 switch——精确匹配无顺序依赖，行为等价）
+    if (await this.preferencesHandler.handle(msg, ws)) return true
     switch (msg.type) {
       case 'config.getProviders':
         // scoped-model design §3.3 D7：reply 与广播（message-broker.buildProviderListMsgs）均含 scopedModels。
@@ -459,51 +467,6 @@ export class SettingsMessageHandler {
         // 回显请求值会污染前端 pending 确认
         const effective = await this.ctx.modelService.setThinkingLevel(sid as string, level as string)
         this.ctx.reply(ws, msg.id, 'session.thinkingLevelSet', { sessionId: sid, level: effective })
-        return true
-      }
-      case 'config.setWorktreeRootDir': {
-        this.ctx.configService.setWorktreeRootDir(msg.payload.dir)
-        this.ctx.reply(ws, msg.id, 'config.worktreeRootDir', { dir: this.ctx.configService.getWorktreeRootDir() })
-        return true
-      }
-      case 'config.getWorktreeRootDir': {
-        this.ctx.reply(ws, msg.id, 'config.worktreeRootDir', { dir: this.ctx.configService.getWorktreeRootDir() })
-        return true
-      }
-      case 'config.setSetupScript': {
-        this.ctx.configService.setSetupScript(msg.payload.script)
-        this.ctx.reply(ws, msg.id, 'config.setupScript', { script: this.ctx.configService.getSetupScript() })
-        return true
-      }
-      case 'config.getSetupScript': {
-        this.ctx.reply(ws, msg.id, 'config.setupScript', { script: this.ctx.configService.getSetupScript() })
-        return true
-      }
-      case 'config.setBareSetupScript': {
-        this.ctx.configService.setBareSetupScript(msg.payload.script)
-        this.ctx.reply(ws, msg.id, 'config.bareSetupScript', { script: this.ctx.configService.getBareSetupScript() })
-        return true
-      }
-      case 'config.getBareSetupScript': {
-        this.ctx.reply(ws, msg.id, 'config.bareSetupScript', { script: this.ctx.configService.getBareSetupScript() })
-        return true
-      }
-      case 'config.setTimeout': {
-        this.ctx.configService.setTimeout(msg.payload.timeout)
-        this.ctx.reply(ws, msg.id, 'config.worktreeTimeout', { timeout: this.ctx.configService.getTimeout() })
-        return true
-      }
-      case 'config.getTimeout': {
-        this.ctx.reply(ws, msg.id, 'config.worktreeTimeout', { timeout: this.ctx.configService.getTimeout() })
-        return true
-      }
-      case 'config.setDefaultBaseBranch': {
-        this.ctx.configService.setDefaultBaseBranch(msg.payload.baseBranch)
-        this.ctx.reply(ws, msg.id, 'config.defaultBaseBranch', { baseBranch: this.ctx.configService.getDefaultBaseBranch() })
-        return true
-      }
-      case 'config.getDefaultBaseBranch': {
-        this.ctx.reply(ws, msg.id, 'config.defaultBaseBranch', { baseBranch: this.ctx.configService.getDefaultBaseBranch() })
         return true
       }
       case 'config.setAutoRenameEnabled': {

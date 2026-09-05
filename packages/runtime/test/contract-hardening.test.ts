@@ -398,7 +398,7 @@ describe('命令执行发送段闭环（executeCommand → plugin.commands.invok
   })
 
   afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true })
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 模拟 Worker 侧 invoke.result 回传（经真实 dispatch → deliverInvokeResult → pending） */
@@ -482,7 +482,7 @@ describe('invoke.result 回传归属校验（D2 回传段：handlerId 必须属�
 
   afterEach(() => {
     warnSpy.mockRestore()
-    rmSync(tmpDir, { recursive: true, force: true })
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 归属拒绝类 warn 的全部调用文案（滤除无关 warn，如 broadcastFn 缺失提示） */
@@ -538,8 +538,9 @@ describe('invoke.result 回传归属校验（D2 回传段：handlerId 必须属�
 
       // pending 保持挂起（未被 forged resolve）：推进超时窗口后以超时 reject。
       // 若归属校验缺失，pending 已被 resolve('forged')，此 rejects 断言失败。
-      vi.advanceTimersByTime(10_000)
-      await expect(pending).rejects.toThrow('Command execution timeout: p1:cmd1')
+      // （D4 后命令默认超时 = DEFAULT_TOOL_EXECUTE_TIMEOUT_MS 30min）
+      vi.advanceTimersByTime(1_800_000)
+      await expect(pending).rejects.toThrow("Command 'p1:cmd1' timed out after 30min")
     } finally {
       vi.useRealTimers()
     }
@@ -573,8 +574,8 @@ describe('invoke.result 回传归属校验（D2 回传段：handlerId 必须属�
       expect(warns).toHaveLength(1)
       expect(warns[0]).toContain('h-A')
 
-      vi.advanceTimersByTime(10_000)
-      await expect(pending).rejects.toThrow('Command execution timeout: p1:cmd1')
+      vi.advanceTimersByTime(1_800_000)
+      await expect(pending).rejects.toThrow("Command 'p1:cmd1' timed out after 30min")
     } finally {
       vi.useRealTimers()
     }
@@ -685,7 +686,7 @@ describe('session 创建入口收敛触发 notifySessionCreated', () => {
 
   afterEach(() => {
     setMigrationGate(Promise.resolve())
-    rmSync(tmpDir, { recursive: true, force: true })
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('lifecycle.create 成功 → notifySessionCreated 恰好一次且 summary 为新 session', async () => {

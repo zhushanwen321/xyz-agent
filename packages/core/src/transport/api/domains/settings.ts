@@ -15,6 +15,7 @@
 import * as configDomain from './config'
 import * as extensionDomain from './extension'
 import { command } from '../request'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '../pending'
 import type { ServerMessageMap } from '@xyz-agent/shared'
 
 // [W4] SystemSettings 类型 + SYSTEM_KEY/DEFAULT_SYSTEM/getSystem/updateSystem 持久化已迁
@@ -43,6 +44,8 @@ type SetupScriptReply = ServerMessageMap['config.setupScript']
 type BareSetupScriptReply = ServerMessageMap['config.bareSetupScript']
 /** worktree 创建超时时间配置 reply 类型。 */
 type WorktreeTimeoutReply = ServerMessageMap['config.worktreeTimeout']
+/** 对话流式空闲超时阈值配置 reply 类型（clamp 后生效值，秒）。 */
+type StreamingIdleTimeoutReply = ServerMessageMap['config.streamingIdleTimeout']
 /** 默认基分支配置 reply 类型。 */
 type DefaultBaseBranchReply = ServerMessageMap['config.defaultBaseBranch']
 /** 自动重命名 session 配置 reply 类型。 */
@@ -62,97 +65,107 @@ type SmartContextExcludedModelsReply = ServerMessageMap['config.smartContextExcl
 
 /** 设置 worktree 专用目录（持久化到 settings.json）。 */
 export async function setWorktreeRootDir(dir: string): Promise<WorktreeRootDirReply> {
-  return command('config.setWorktreeRootDir', { dir })
+  return command('config.setWorktreeRootDir', { dir }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 读取 worktree 专用目录配置。 */
 export async function getWorktreeRootDir(): Promise<WorktreeRootDirReply> {
-  return command('config.getWorktreeRootDir', {})
+  return command('config.getWorktreeRootDir', {}, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 设置 worktree 初始化脚本（持久化到 settings.json）。 */
 export async function setSetupScript(script: string): Promise<SetupScriptReply> {
-  return command('config.setSetupScript', { script })
+  return command('config.setSetupScript', { script }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 读取 worktree 初始化脚本配置。 */
 export async function getSetupScript(): Promise<SetupScriptReply> {
-  return command('config.getSetupScript', {})
+  return command('config.getSetupScript', {}, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 设置 bare-workspace 初始化脚本（持久化到 settings.json）。 */
 export async function setBareSetupScript(script: string): Promise<BareSetupScriptReply> {
-  return command('config.setBareSetupScript', { script })
+  return command('config.setBareSetupScript', { script }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 读取 bare-workspace 初始化脚本配置。 */
 export async function getBareSetupScript(): Promise<BareSetupScriptReply> {
-  return command('config.getBareSetupScript', {})
+  return command('config.getBareSetupScript', {}, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 设置 worktree 创建超时时间（秒，持久化到 settings.json）。 */
 export async function setWorktreeTimeout(timeout: number): Promise<WorktreeTimeoutReply> {
-  return command('config.setTimeout', { timeout })
+  return command('config.setTimeout', { timeout }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 读取 worktree 创建超时时间配置。 */
 export async function getWorktreeTimeout(): Promise<WorktreeTimeoutReply> {
-  return command('config.getTimeout', {})
+  return command('config.getTimeout', {}, RPC_BACKSTOP_TIMEOUT_MS)
+}
+
+/** 设置对话流式空闲超时阈值（秒；runtime clamp 到 [60, 3600]，reply 返回生效值）。 */
+export async function setStreamingIdleTimeout(timeout: number): Promise<StreamingIdleTimeoutReply> {
+  return command('config.setStreamingIdleTimeout', { timeout }, RPC_BACKSTOP_TIMEOUT_MS)
+}
+
+/** 读取对话流式空闲超时阈值（秒，未配置时 runtime 回默认 1800）。 */
+export async function getStreamingIdleTimeout(): Promise<StreamingIdleTimeoutReply> {
+  return command('config.getStreamingIdleTimeout', {}, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 设置默认基分支（持久化到 settings.json）。 */
 export async function setDefaultBaseBranch(baseBranch: string): Promise<DefaultBaseBranchReply> {
-  return command('config.setDefaultBaseBranch', { baseBranch })
+  return command('config.setDefaultBaseBranch', { baseBranch }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 读取默认基分支配置。 */
 export async function getDefaultBaseBranch(): Promise<DefaultBaseBranchReply> {
-  return command('config.getDefaultBaseBranch', {})
+  return command('config.getDefaultBaseBranch', {}, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 设置自动重命名 session 开关。 */
 export async function setAutoRenameEnabled(enabled: boolean): Promise<AutoRenameEnabledReply> {
-  return command('config.setAutoRenameEnabled', { enabled })
+  return command('config.setAutoRenameEnabled', { enabled }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 读取自动重命名 session 配置。 */
 export async function getAutoRenameEnabled(): Promise<AutoRenameEnabledReply> {
-  return command('config.getAutoRenameEnabled', {})
+  return command('config.getAutoRenameEnabled', {}, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 设置 rename 标题生成模型（"provider/modelId"，空串 = 清除回未设置）。 */
 export async function setRenameModel(model: string): Promise<RenameModelReply> {
-  return command('config.setRenameModel', { model })
+  return command('config.setRenameModel', { model }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 读取 rename 标题生成模型（"provider/modelId"，空串 = 未设置）。 */
 export async function getRenameModel(): Promise<RenameModelReply> {
-  return command('config.getRenameModel', {})
+  return command('config.getRenameModel', {}, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 读取智能上下文压缩配置全量（compactModel 空串 = 未设置；thresholds 为 token 绝对数）。 */
 export async function getSmartContextConfig(): Promise<SmartContextConfigReply> {
-  return command('config.getSmartContextConfig', {})
+  return command('config.getSmartContextConfig', {}, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 设置智能上下文压缩开关。 */
 export async function setSmartContextEnabled(enabled: boolean): Promise<SmartContextEnabledReply> {
-  return command('config.setSmartContextEnabled', { enabled })
+  return command('config.setSmartContextEnabled', { enabled }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 设置压缩模型（"provider/modelId"，空串 = 跟随当前会话模型）。 */
 export async function setSmartContextCompactModel(model: string): Promise<SmartContextCompactModelReply> {
-  return command('config.setSmartContextCompactModel', { model })
+  return command('config.setSmartContextCompactModel', { model }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 设置 3 档提醒阈值（token 绝对数，runtime 侧 clamp 升序 3 档）。 */
 export async function setSmartContextThresholds(thresholds: number[]): Promise<SmartContextThresholdsReply> {
-  return command('config.setSmartContextThresholds', { thresholds })
+  return command('config.setSmartContextThresholds', { thresholds }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 设置排除模型列表（每条完整 provider/modelId，runtime 侧过滤无 "/" 条目去重）。 */
 export async function setSmartContextExcludedModels(models: string[]): Promise<SmartContextExcludedModelsReply> {
-  return command('config.setSmartContextExcludedModels', { models })
+  return command('config.setSmartContextExcludedModels', { models }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 // [W4] getSystem/updateSystem（纯前端 localStorage 持久化）已迁 @xyz-agent/core

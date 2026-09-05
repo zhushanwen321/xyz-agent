@@ -436,7 +436,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   async sendBash(sessionId: string, command: string, excludeFromContext?: boolean): Promise<{ blocked: boolean; rejected?: boolean }> {
     return this.dispatcher.sendBash(sessionId, command, excludeFromContext)
   }
-  async abortBash(sessionId: string): Promise<void> { return this.dispatcher.abortBash(sessionId) }
+  async abortBash(sessionId: string): Promise<{ sent: boolean }> { return this.dispatcher.abortBash(sessionId) }
   /**
    * W1（fix-chat-flow-order 探针 ②）：run 级联结束（pi agent_settled，晚于 pi finally 的
    * bash 落盘 flush）→ dispatcher 按序发布 per-session bash 待落列（D2 双分支延迟的 flush 腿）。

@@ -24,8 +24,17 @@ export interface PendingRequest<T = unknown> {
   timeoutMs?: number
 }
 
-/** per-request 超时（ms）。需 ≥ runtime rpc-client CMD_TIMEOUT_MS（60s）+ 余量，防误超时。 */
-const DEFAULT_TIMEOUT_MS = 65_000
+/**
+ * 控制面 RPC 兜底超时（backstop，65s，值与历史 DEFAULT_TIMEOUT_MS 一致）。
+ *
+ * 语义显性化（timeout-slow-flow-wallclock D5 具名化）：它是「≥ runtime rpc-client
+ * CMD_TIMEOUT_MS（60s）+ 余量」的 renderer 侧控制面兜底，不是任务超时。调用方必须
+ * 按命令语义显式传参——长任务命令（bash/compact/handoff）传各自校准链常量，控制面
+ * 单请求传本值。timeout 参数必传化（register/command 双层，G5）后漏传 = 编译错误：
+ * 新增长任务命令忘声明超时在编译期报错，而非静默继承 65s 埋雷（compact 65s 误杀
+ * 大 session 前科的同根预防）。
+ */
+export const RPC_BACKSTOP_TIMEOUT_MS = 65_000
 
 /**
  * [Q1-5] pendingMap 容量上限：超限时驱逐最老（Map 迭代序 = 插入序，首个 key 即最老）。
@@ -110,10 +119,12 @@ function evictOldestIfOverflow(): void {
  * 注册 pending 请求，返回与之关联的 Promise。
  *
  * @param id 命令 id（createCommandId() 生成）
- * @param timeoutMs 超时毫秒数，默认 65s。超时后自动 reject（error.code='timeout'）+ 清理。
- *                 传 0 禁用超时（向后兼容极少数长操作场景，如 compact 300s）。
+ * @param timeoutMs 超时毫秒数（必传：调用方按命令语义显式决策——控制面传
+ *                 RPC_BACKSTOP_TIMEOUT_MS，长任务传各自校准链常量；暗默认已在
+ *                 D5 必传化中删除）。超时后自动 reject（error.code='timeout'）+ 清理。
+ *                 传 0 禁用超时（极少数自带应用层等待语义的场景）。
  */
-export function register<T>(id: string, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<T> {
+export function register<T>(id: string, timeoutMs: number): Promise<T> {
   evictOldestIfOverflow()
   return new Promise<T>((resolve, reject) => {
     const entry: PendingRequest = {

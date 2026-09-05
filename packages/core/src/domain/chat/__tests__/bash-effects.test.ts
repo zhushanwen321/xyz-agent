@@ -171,7 +171,7 @@ describe('markBashError：错误路径兜底清执行态', () => {
   })
 })
 
-describe('findLastStreamingBashIndex（契约保留：store.finalizeBashOnly / 手动种子场景）', () => {
+describe('findLastStreamingBashIndex（契约保留：markBashError / 手动种子场景）', () => {
   it('命中最后一条 streaming bash，无则 -1', () => {
     const mk = (status: Message['status']): Message => ({
       id: 'bash-x',

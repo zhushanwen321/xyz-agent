@@ -55,6 +55,7 @@ import { normalizePiToolResult } from '../apply-entry'
 import type { RetryState, QueueState, FinalizeReason } from '../store-types'
 import type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
 export type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
+import { recoverPrematureTimeoutMessages } from './complete-recovery'
 import {
   readString,
   readNumber,
@@ -304,7 +305,12 @@ function insertContentBlockByIndex(blocks: ContentBlock[], block: ContentBlock):
 const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> = {
   // ── 主流式生命周期（chunk 创建/收口 + isGenerating 派生）──
   'message.message_start': (ctx, sid, payload) => {
-    const { messages, queueStates, clearPendingSend, armStreamingTimer, reconcilePending } = ctx
+    const { messages, queueStates, clearPendingSend, armStreamingTimer, reconcilePending, clearPrematureTimeoutIds } = ctx
+    // [premature-timeout §5.2 D2 时机③] 新 turn 开始 → 旧 turn 的 timeout 打标作废
+    //（防跨 turn 错配：turn A 超时打标未恢复 → 用户发新 prompt → 本帧到达 → 清 A 标，
+    // turn B 的 complete 不命中任何标记，无误恢复旧气泡——设计 §5.2 反例重演第 2 条）。
+    // 快照与实体字段的清扫都在 clearPrematureTimeoutIds 内闭环（streaming-state-machine）。
+    clearPrematureTimeoutIds(sid)
     // G-023: message_start 清 QueueBubble。只清 queueStates 显示态——pending→complete 的
     // 转换完全由 queue_update 的 countDrained 精确驱动（pi 保证 queue_update(drain) 先于
     // message_start 到达，见 agent-session.ts:515-536 注释 "remove it BEFORE emitting"）。
@@ -392,15 +398,22 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
         ...(shouldOverrideContent ? { content: finalContent } : {}),
       } satisfies Message
     })
+    // ── [premature-timeout §5.2 D2] 误判收口自愈：恢复分支（实现见 ./complete-recovery.ts）──
+    if (changed) commitMessages(messages, sid, next)
+    const recovered = recoverPrematureTimeoutMessages({
+      messages, sessionId: sid, base: changed ? next : prev, stopReason, errorMessage, finalContent, payload, lastAssistantIdx,
+      takePrematureTimeoutIds: ctx.takePrematureTimeoutIds,
+    })
     // 秒败 turn（message_start 丢失/未广播）无 streaming 气泡可收口：错误信息必须以纯 error
     // 气泡落进聊天流，否则 complete 事件被消费后错误只剩 stopReason 标志，用户不可见。
-    if (isErrorStop && errorMessage && !changed) {
+    // [premature-timeout] 恢复命中时抑制追加——errorMessage 已按追加形态双通道写进命中实体，
+    // 再追加纯 error 气泡会重复展示同一错误。
+    if (isErrorStop && errorMessage && !changed && !recovered) {
       commitMessages(messages, sid, [
         ...prev,
         { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: errorMessage, status: 'error', timestamp: Date.now() },
       ])
     }
-    if (changed) commitMessages(messages, sid, next)
     // 统一收口（finalizeSession 幂等：entity 已改则 no-op，只清 pendingSend + timer）
     // 此处 message status 已改终态 → finalizeSession 内走「只补 toolCall 收口」分支。
     const reason: FinalizeReason = isErrorStop ? 'error' : (stopReason === 'aborted' ? 'aborted' : 'normal')

@@ -1,8 +1,13 @@
 /**
- * Plugin UI Dialog RPC — 串行排队 + 60s 超时 + WS 往返
+ * Plugin UI Dialog RPC — 串行排队 + 到期取消/兜底收尾 + WS 往返
  *
  * 验证 showConfirm/showSelect/showInput 通过 handleUiRequest
  * 向前端广播 UI 请求，并通过 handleUiResponse 接收结果。
+ *
+ * timeout-plugin-service D2：语义计时权威在 Worker 侧 ui-api（opts.timeout，默认 30min），
+ * queue 层退为防泄漏兜底（effective + 60s，clamp timer 域）——兜底到期 = 取消收尾
+ * （resolve undefined + broadcast plugin:uiRequestExpired + 放行串行队列），不再替答
+ * （旧 60s confirm=false 替答语义已删）。
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -10,6 +15,7 @@ import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 import { PluginRegistry } from '../src/services/plugin-service/plugin-registry.js'
 import type { IMessageBroker, ISessionService } from '../src/interfaces.js'
 import type { IPluginServiceDeps } from '../src/services/plugin-service/plugin-types.js'
+import { DEFAULT_UI_REQUEST_TIMEOUT_MS } from '../src/services/plugin-service/api/ui-api.js'
 
 // ── Fixtures ──────────────────────────────────────────────────
 
@@ -221,7 +227,7 @@ describe('UI Dialog — serial queue', () => {
   })
 })
 
-describe('UI Dialog — 60s timeout', () => {
+describe('UI Dialog — 防泄漏兜底收尾（D2，不再替答）', () => {
   beforeEach(() => {
     vi.useFakeTimers()
   })
@@ -229,22 +235,31 @@ describe('UI Dialog — 60s timeout', () => {
     vi.useRealTimers()
   })
 
-  it('showConfirm resolves with default (false) after timeout', async () => {
-    const { service } = createService()
+  it('fallback expiry (default effective + 60s) cancels instead of substituting an answer', async () => {
+    const { service, broker } = createService()
     const methods = getUiHandlers(service)
 
     const confirmPromise = methods.get('plugin.ui.showConfirm')!({
       pluginId: 'p1', title: 'T', message: 'Timeout test',
     })
 
-    // Advance past 60s
-    vi.advanceTimersByTime(61_000)
+    // 默认 effective（30min）+ 兜底余量 60s 之前：不得提前收尾（旧 60s 替答已删）
+    vi.advanceTimersByTime(DEFAULT_UI_REQUEST_TIMEOUT_MS)
+    expect(broker.messages.some(m => m.type === 'plugin:uiRequestExpired')).toBe(false)
 
+    vi.advanceTimersByTime(60_000)
     const result = await confirmPromise
-    expect(result).toBe(false)
+
+    // 收尾 = resolve undefined（收口 promise），不是替答 false
+    expect(result).toBeUndefined()
+    // 撤窗广播无条件发出
+    const expired = broker.messages.find(m => m.type === 'plugin:uiRequestExpired')
+    expect(expired).toBeDefined()
+    expect((expired!.payload as Record<string, unknown>).requestId).toBeTruthy()
+    expect((expired!.payload as Record<string, unknown>).pluginId).toBe('p1')
   })
 
-  it('showSelect resolves with undefined after timeout', async () => {
+  it('showSelect resolves with undefined after fallback expiry', async () => {
     const { service } = createService()
     const methods = getUiHandlers(service)
 
@@ -252,13 +267,13 @@ describe('UI Dialog — 60s timeout', () => {
       pluginId: 'p1', title: 'T', options: ['A'],
     })
 
-    vi.advanceTimersByTime(61_000)
+    vi.advanceTimersByTime(DEFAULT_UI_REQUEST_TIMEOUT_MS + 60_000)
 
     const result = await selectPromise
     expect(result).toBeUndefined()
   })
 
-  it('showInput resolves with undefined after timeout', async () => {
+  it('showInput resolves with undefined after fallback expiry', async () => {
     const { service } = createService()
     const methods = getUiHandlers(service)
 
@@ -266,9 +281,30 @@ describe('UI Dialog — 60s timeout', () => {
       pluginId: 'p1', title: 'T',
     })
 
-    vi.advanceTimersByTime(61_000)
+    vi.advanceTimersByTime(DEFAULT_UI_REQUEST_TIMEOUT_MS + 60_000)
 
     const result = await inputPromise
     expect(result).toBeUndefined()
+  })
+
+  it('fallback expiry advances the serial queue (head-of-line released)', async () => {
+    const { service, broker } = createService()
+    const methods = getUiHandlers(service)
+    const internals = getInternals(service)
+
+    const promise1 = methods.get('plugin.ui.showConfirm')!({ pluginId: 'p1', title: 'Q1', message: 'First?' })
+    const promise2 = methods.get('plugin.ui.showConfirm')!({ pluginId: 'p1', title: 'Q2', message: 'Second?' })
+    expect(internals.uiRequestQueue.length).toBe(1)
+
+    vi.advanceTimersByTime(DEFAULT_UI_REQUEST_TIMEOUT_MS + 60_000)
+
+    await promise1 // 兜底收尾 + 放行（串行防死锁保留）
+    // 队列第二项被 dispatch 成活跃，B 的兜底起点 = B 入队时刻（同刻）→ 同样到期收尾
+    vi.advanceTimersByTime(DEFAULT_UI_REQUEST_TIMEOUT_MS + 60_000)
+    await promise2
+
+    const expiredCount = broker.messages.filter(m => m.type === 'plugin:uiRequestExpired').length
+    expect(expiredCount).toBe(2)
+    expect(internals.activeUiRequest).toBeNull()
   })
 })

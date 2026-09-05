@@ -75,6 +75,8 @@ import {
   ZCODE_HOST_DB_SUFFIX,
   ZCODE_KILL_GRACE_MS,
   ZCODE_SHARED_POOL_KEY,
+  ZCODE_TURN_MAX_TIMEOUT_ENV,
+  parseZcodeTurnTimeoutEnv,
 } from "./constants.ts";
 import {
   mapZcodeOutcomeUsage,
@@ -92,7 +94,12 @@ import {
 import { ensureAppServerLauncher } from "./appserver-launcher.ts";
 import { readZcodeSessionView } from "./reader.ts";
 import { AppServerConnection, buildAppServerEnv, isAppServerRpcError } from "./connection.ts";
-import { SessionChannel, type SessionCreateParams, type SessionTurnResult } from "./session-channel.ts";
+import {
+  SessionChannel,
+  TurnTimeoutError,
+  type SessionCreateParams,
+  type SessionTurnResult,
+} from "./session-channel.ts";
 
 const logger = getLogger("subagents");
 
@@ -143,6 +150,13 @@ export class ZcodeEngine implements EnginePort {
   private readonly deps: ZcodeEngineDeps;
   private probeCache: ProbeReport | undefined;
   private appserverRuntime: AppServerRuntime | undefined;
+  /**
+   * [P0-1 U4] 引擎停机标志（dispose 置位，不重置——dispose 后首个 run 走重建路径
+   * 不受影响）：瞬时重试判定据此排除 dispose 收割引发的崩溃形态——停机后的重试轮
+   * 会经 ensureAppServerRuntime 惰性重建进程（复活已停机引擎），违背 dispose 防泄漏
+   * 语义。
+   */
+  private disposed = false;
 
   constructor(deps: ZcodeEngineDeps) {
     this.deps = deps;
@@ -308,8 +322,19 @@ export class ZcodeEngine implements EnginePort {
   }
 
   /**
-   * 首轮执行 + schema 仿真重试编排：schema 任务校验失败时重试一次（强化 JSON 输出
-   * 指令）。重试轮是独立会话的独立 LLM 调用：token 计入 outcome.usage 总量；事件面
+   * 首轮执行 + 双重试编排（常驻路径）：
+   * - **schema 仿真重试**（既有语义）：parsed 但校验失败时重试一次（强化 JSON 输出
+   *   指令——与 structured-output 的重试语义对齐）。
+   * - **瞬时失败自动重试一次**（[P0-1 U4/D6]）：末次 attempt 为 timeout 类（idle/
+   *   ceiling）或连接崩溃类失败且非用户 abort → 用新会话重跑一次（attempt 本就每次
+   *   新建会话）。重试轮 prompt 用 basePrompt 原样重跑（失败形态非 schema），文案补
+   *   「已自动重试一次」句（retried 标记仅对真实发生的重试生效）。
+   *
+   * 两次重试一次封顶各自独立（D6 被否①：多次重试/指数退避不做——重跑一轮=整任务
+   * 重算，一次封顶）。组合序：瞬时重试在前、schema 重试在后——瞬时重试轮 parsed 且
+   * 校验失败时仍进 schema 重试（末次 attempt 语义，schema 重试编排保持现状不动）。
+   *
+   * 重试轮是独立会话的独立 LLM 调用：token 计入 outcome.usage 总量；事件面
    * text_delta 按实际流出（含失败轮——journal 记录真实流水），message_end/turn_end
    * 只在最终轮终态后合成（不变量 2/5）。
    */
@@ -322,8 +347,46 @@ export class ZcodeEngine implements EnginePort {
     schema: object | undefined,
     usageAcc: { input: number; output: number; cacheRead: number; cacheWrite: number; has: boolean },
   ): Promise<AttemptResult> {
+    const attemptStartedAt = Date.now();
     let final = await this.attemptAppServerTurn(task, ctx, modelRef, cwd, basePrompt);
     accumulateUsage(usageAcc, final);
+    // [P0-1 U4/D6] 瞬时失败自动重试一次：判据 = run-failed 且 transient 形态标记
+    // （类型化，不经字符串反推；RPC 错误/status=error 终态等有应答的精确归类形态
+    // 构造处即无 transient——含协议漂移类，漂移不再降级 spawn、直接报错）+ 非用户
+    // 已取消 + 非引擎停机（dispose 收割引发的崩溃不重试——停机后惰性重建 = 复活
+    // 进程，违背 dispose 防泄漏语义）。
+    // 预算继承（P-Z4）：显式总上界预算下重试轮上界 = 剩余（总 − 已耗尽），剩余不足
+    // 最小下限不重试直接终态化；重试轮启动即 journal 出声（D6：重试事实记入 journal）。
+    if (
+      final.kind === "run-failed" &&
+      final.transient !== undefined &&
+      ctx.signal?.aborted !== true &&
+      !this.disposed
+    ) {
+      const budget = resolveTransientRetryBudget(explicitTurnBudgetMs(), Date.now() - attemptStartedAt);
+      if (budget.state === "depleted") {
+        logger.warn(
+          `[zcode-engine] 末次 attempt 瞬时失败（${final.transient}）——显式总上界预算剩余不足 ${ZCODE_TURN_RETRY_MIN_BUDGET_MS}ms，不重试直接终态化（预算继承：重试不重置总预算）`,
+        );
+      } else {
+        logger.warn(
+          `[zcode-engine] 末次 attempt 瞬时失败（${final.transient}）——止损链已终局，新会话自动重试一次` +
+            (budget.state === "inherit"
+              ? `（预算继承：重试轮总上界=剩余 ${budget.remainingMs}ms，不重置总预算）`
+              : "（无显式总上界预算，重试轮走 env/默认上界）"),
+        );
+        const retry = await this.attemptAppServerTurn(task, ctx, modelRef, cwd, basePrompt, {
+          // 预算继承传递点（D2 内部传参面）：显式预算 → 剩余值；无显式预算 → 缺省
+          // （channel 侧走同一 env/默认，与首轮行为一致）
+          ...(budget.state === "inherit" ? { turnTimeoutMs: budget.remainingMs } : {}),
+          // 重试事实进文案：「已自动重试一次」句仅对真实发生的重试生效（未重试形态
+          // 不含——与行为一致，§5.2 F-1/F-4）
+          retried: true,
+        });
+        accumulateUsage(usageAcc, retry);
+        final = retry;
+      }
+    }
     if (final.kind === "parsed" && final.schemaResult !== undefined && !final.schemaResult.ok && schema !== undefined) {
       const retryPrompt = appendSchemaRetryDirective(basePrompt, final.schemaResult.error);
       const retry = await this.attemptAppServerTurn(task, ctx, modelRef, cwd, retryPrompt);
@@ -355,6 +418,10 @@ export class ZcodeEngine implements EnginePort {
   /**
    * 单轮常驻执行：runTurn 组合面 + D3 abort 链 + 事件前移（text_delta 实时流出；
    * 终态数据经 read 兜底收口后才 resolve——不变量 1/2）。
+   *
+   * @param opts turnTimeoutMs：显式总上界传参面（D2 内部传参点）——U4/D6 预算继承
+   *   向重试轮传剩余值；缺省不传（channel 走 env→默认，首轮行为）。
+   *   retried：瞬时重试轮标记——失败文案补「已自动重试一次」句（F-1/F-4）。
    */
   private async attemptAppServerTurn(
     task: AgentCallOpts,
@@ -362,6 +429,7 @@ export class ZcodeEngine implements EnginePort {
     modelRef: string,
     cwd: string,
     prompt: string,
+    opts: { turnTimeoutMs?: number; retried?: boolean } = {},
   ): Promise<AttemptResult> {
     const rt = this.ensureAppServerRuntime();
     const { providerId, modelId } = splitZcodeModelRef(modelRef);
@@ -385,13 +453,18 @@ export class ZcodeEngine implements EnginePort {
           poolKey: ZCODE_SHARED_POOL_KEY,
         });
       },
+      // 显式总上界传参（D2/U4：缺省缺席——channel 侧 resolveTurnTimerMs 走 env→默认）
+      ...(opts.turnTimeoutMs !== undefined ? { turnTimeoutMs: opts.turnTimeoutMs } : {}),
     });
 
     // D3 abort 链：signal abort → ① session/stop {sessionId} ② grace 窗口确认终态
     // ③ stop 失败/超时 → killChain 杀共享进程（接受连坐——协议已不可信）→ 在途
     // 其他任务走崩溃路径。capabilities.interrupt 维持 kill-only 不升级（C4）。
+    // [P0-1 U2] 用户取消入口 = escalateOn:"turn-settled"（grace 窗口确认 turn 落定，
+    // 现状语义零改动）；channel 超时判死（TurnTimeoutError）走 catch 分流的
+    // escalateOn:"stop-outcome" 入口（stop 应答三态裁决）。
     const onAbort = (): void => {
-      void this.appServerAbortChain(rt, turn, () => currentSessionId, sessionCreated);
+      void this.appServerAbortChain(rt, turn, () => currentSessionId, sessionCreated, { escalateOn: "turn-settled" });
     };
     if (ctx.signal !== undefined) {
       if (ctx.signal.aborted) onAbort();
@@ -406,7 +479,32 @@ export class ZcodeEngine implements EnginePort {
       return parsedAppServerAttempt(task, r);
     } catch (err) {
       if (ctx.signal?.aborted === true) return abortedAppServerAttempt(ctx);
-      return failedAppServerAttempt(err, currentSessionId);
+      // [P0-1 U2] 超时入口（D3 v1.1）：turn 已被 channel 判死 reject——升级判据不能
+      // 再挂在 turn 落定上（race 恒真，killChain 结构性不可达的 v1 击穿点），改以
+      // stop 应答三态裁决。await 链终局（非 fire-and-forget）：outcome 止损文案与
+      // 重试时序（D6，u-z4）都依赖链终局信号——止损完成前不合成终态。
+      if (err instanceof TurnTimeoutError) {
+        const stopPath = await this.appServerAbortChain(
+          rt,
+          turn,
+          () => currentSessionId,
+          sessionCreated,
+          { escalateOn: "stop-outcome" },
+        );
+        // [P0-1 U4] timeout 类（idle/ceiling 都算）是 D6 明文的可重试形态——结构化
+        // 标记（TurnTimeoutError 类型化判据，不经字符串匹配，D4 同精神）
+        return timeoutAppServerAttempt(err, currentSessionId, stopPath, { retried: opts.retried });
+      }
+      // [P0-1 U4] 连接崩溃收割形态（failAllTurns 的错误，D6 第二可重试形态）判据：
+      // 非 RPC error（服务端无明确应答——有应答即精确错误归类，非瞬时崩溃面）且
+      // conn 不存活。时序可靠性：catch 时刻紧随 onClose 收割，连接重建仅由
+      // conn.request 惰性触发——本链路中 runTurn finally 的 closeSession 对死连接
+      // 短路（channel 侧 !alive 守卫）、stop 只属 abort/超时入口（前者已被
+      // signal.aborted 短路、后者走上一分支）——此刻无 request 可重建，判据可靠。
+      if (!isAppServerRpcError(err) && !rt.conn.alive) {
+        return failedAppServerAttempt(err, currentSessionId, { retried: opts.retried, transient: "conn-closed" });
+      }
+      return failedAppServerAttempt(err, currentSessionId, { retried: opts.retried });
     } finally {
       if (currentSessionId !== undefined) rt.activeSessions.delete(currentSessionId);
       if (ctx.signal !== undefined) ctx.signal.removeEventListener("abort", onAbort);
@@ -414,45 +512,119 @@ export class ZcodeEngine implements EnginePort {
   }
 
   /**
-   * D3 abort 链执行体（fire-and-forget——与 turn promise 并行推进）：
-   * stop 帧（超时 ZCODE_APPSERVER_STOP_TIMEOUT_MS）→ grace 窗口内 turn 落定即止
-   * （不杀共享进程）→ 超时 killChain（conn.shutdown 全序：SIGTERM→grace→SIGKILL）。
-   * turn 的最终落定由 attempt 主路径 await 收口，本链不直接产出终态。abort 与
-   * create 竞态（signal 先到、session 未建立）：等会话建立（带上限）再发 stop——
-   * 否则 stop 永远发不出，直接连坐杀共享进程。
+   * killChain 后等待连接 finalize 实际完成（child 置空 + onClose 广播）再宣告链终局：
+   * shutdown resolve 于 `exit` 事件，而 finalize 挂 `close`（stdio 排空）——两者之间的
+   * 事件窗口内 conn.child 仍非 null，紧接的下一任务 request 会复用垂死进程（写入成功
+   * 但必败，走崩溃路径）而非触发重建。与 shutdownRuntimeAndDisposeChannel 的
+   * HARVEST_GRACE 同款 race 形态（close 永不到达不挂死）。超时入口的 await 链终局
+   * 语义（D6 重试时序依据）因此是「进程收割确认完成」而非「SIGTERM 已发出」。
+   */
+  private async awaitConnFinalized(rt: AppServerRuntime): Promise<void> {
+    if (!rt.conn.alive) return;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => finish(), ZCODE_APPSERVER_HARVEST_GRACE_MS);
+      if (typeof timer.unref === "function") timer.unref();
+      const off = rt.conn.onClose(() => finish());
+      function finish(): void {
+        clearTimeout(timer);
+        off(); // Set.delete 幂等——并发触发无副作用
+        resolve();
+      }
+    });
+  }
+
+  /**
+   * D3 abort 链执行体（双入口分岔，P0-1 U2 参数化——设计
+   * timeout-zcode-turn-and-settled-watchdog.md §6 D3 v1.1）：
+   * - **用户取消入口**（`escalateOn: "turn-settled"`，现状语义零改动；fire-and-forget——
+   *   与 turn promise 并行推进）：stop 帧（超时 ZCODE_APPSERVER_STOP_TIMEOUT_MS）→
+   *   grace 窗口内 turn 落定即止（不杀共享进程）→ 超窗 killChain（conn.shutdown 全序：
+   *   SIGTERM→grace→SIGKILL）。turn 的最终落定由 attempt 主路径 await 收口，本链不
+   *   直接产出终态。abort 与 create 竞态（signal 先到、session 未建立）：等会话建立
+   *   （带上限）再发 stop——否则 stop 永远发不出，直接连坐杀共享进程。
+   * - **超时入口**（`escalateOn: "stop-outcome"`，channel 判死后由 catch await 链终局）：
+   *   turn 已 reject，对它 race 恒真不可用（v1 击穿点）——升级判据改挂在 **stop 应答
+   *   三态**：①成功应答 → 服务端接受停 turn，止损确认，链终止；②协议性 error 应答
+   *   （有 error 帧即控制面活的证据，多因 runTurn finally 的 closeSession 先行关会话，
+   *   健康形态竞态）→ 链终止**不升级**（止损由 close 回收 + 服务端自治承担；把
+   *   「stop 报错」一律升级会误杀健康共享进程并连坐并发任务）；③超时/写入失败/进程
+   *   死等连接级失败（控制面死）→ killChain 升级。判据实现依据：error 应答帧 reject
+   *   携带 number code（isAppServerRpcError）；连接级失败是无 code 的新 Error
+   *   （connection.request 三态 reject 形态）。返回值即止损路径（超时入口的 outcome
+   *   文案素材——D3 强制可观测面）。
    */
   private async appServerAbortChain(
     rt: AppServerRuntime,
     turn: Promise<SessionTurnResult>,
     getSessionId: () => string | undefined,
     sessionCreated: Promise<void>,
-  ): Promise<void> {
+    entry: { escalateOn: "turn-settled" | "stop-outcome" },
+  ): Promise<AbortChainStopPath> {
+    const graceRaceThenKill = async (): Promise<AbortChainStopPath> => {
+      const settled = await Promise.race([
+        turn.then(
+          () => true,
+          () => true,
+        ),
+        delayResolved(ZCODE_APPSERVER_ABORT_GRACE_MS, false),
+      ]);
+      if (settled) return "settled-in-grace"; // stop 生效：终态在 grace 窗口内到达，共享进程不杀
+      logger.warn(
+        `[zcode-engine] abort grace 窗口内未见终态——killChain 收割共享进程（接受连坐，在途任务走崩溃路径）`,
+      );
+      await rt.conn.shutdown({ graceMs: ZCODE_KILL_GRACE_MS });
+      await this.awaitConnFinalized(rt);
+      return "escalated-kill";
+    };
+
     let sessionId = getSessionId();
     if (sessionId === undefined) {
       await Promise.race([sessionCreated, delayResolved(ZCODE_APPSERVER_STOP_TIMEOUT_MS, undefined)]);
       sessionId = getSessionId();
-    }
-    if (sessionId !== undefined) {
-      try {
-        await rt.conn.request("session/stop", { sessionId }, { timeoutMs: ZCODE_APPSERVER_STOP_TIMEOUT_MS });
-      } catch (err) {
-        logger.debug(
-          `[zcode-engine] session/stop 失败（${errMessage(err)}）——grace 后走 killChain 兜底`,
-        );
+      if (sessionId === undefined) {
+        // 会话始终未建立：超时入口实际不可达（TurnTimeoutError 只能发生在 openTurn
+        // 挂 timer 后，彼时 create 已成功），防御分支——无会话即无在途任务可止损；
+        // 用户取消入口保持既有语义：跳过 stop，grace race 兜底（create 竞态挂死形态）
+        if (entry.escalateOn === "stop-outcome") return "no-session";
+        return graceRaceThenKill();
       }
     }
-    const settled = await Promise.race([
-      turn.then(
-        () => true,
-        () => true,
-      ),
-      delayResolved(ZCODE_APPSERVER_ABORT_GRACE_MS, false),
-    ]);
-    if (settled) return; // stop 生效：终态在 grace 窗口内到达，共享进程不杀
-    logger.warn(
-      `[zcode-engine] abort grace 窗口内未见终态——killChain 收割共享进程（接受连坐，在途任务走崩溃路径）`,
-    );
-    await rt.conn.shutdown({ graceMs: ZCODE_KILL_GRACE_MS });
+    // [u-z2 修复轮] alive 守卫（与 closeSession 的 `!conn.alive` return 同款防御，
+    // 对称补齐）：进程在 turn 判死/abort 与本链发 stop 之间 finalize 完成的微窗口内，
+    // request 首行 ensureStarted 会惰性 spawn 新一代进程再写 stop 帧——凭空拉起无人
+    // 使用的进程，且 stop-outcome 入口会拿到新进程的「成功应答」误报止损确认。
+    // 不 alive = 连接级失败形态（进程已死即已收割）：超时入口直接落杀链终局（等同
+    // 三态的连接级失败分支）；用户取消入口跳过 stop 落回 grace race（turn 已被
+    // failAllTurns 收割则立即 settled，语义零变化）。
+    if (!rt.conn.alive) {
+      if (entry.escalateOn === "stop-outcome") return "stop-unreachable-killed";
+      return graceRaceThenKill();
+    }
+    try {
+      await rt.conn.request("session/stop", { sessionId }, { timeoutMs: ZCODE_APPSERVER_STOP_TIMEOUT_MS });
+    } catch (err) {
+      if (entry.escalateOn === "stop-outcome") {
+        if (isAppServerRpcError(err)) {
+          // ② 协议性 error：控制面活、会话已被回收（健康形态竞态）——不升级
+          logger.debug(
+            `[zcode-engine] session/stop 报协议性 error（${errMessage(err)}）——会话已回收，控制面存活，不升级杀链`,
+          );
+          return "stop-rejected";
+        }
+        // ③ 连接级失败（请求超时/写入失败/进程死）：控制面死，只有杀进程能止损
+        logger.warn(
+          `[zcode-engine] session/stop 无应答（${errMessage(err)}）——升级 killChain 收割共享进程（超时入口，接受连坐）`,
+        );
+        await rt.conn.shutdown({ graceMs: ZCODE_KILL_GRACE_MS });
+        await this.awaitConnFinalized(rt);
+        return "stop-unreachable-killed";
+      }
+      logger.debug(
+        `[zcode-engine] session/stop 失败（${errMessage(err)}）——grace 后走 killChain 兜底`,
+      );
+    }
+    if (entry.escalateOn === "stop-outcome") return "stop-acked"; // ① 成功应答：止损确认，链终止
+    return graceRaceThenKill();
   }
 
   // ── 常驻运行时管理（D1/D6）──────────────────────
@@ -498,6 +670,12 @@ export class ZcodeEngine implements EnginePort {
    * turn 会错过收割、挂到 turnTimeoutMs（300s）。退订前等 onClose 触发（本方法先于
    * shutdown 订阅；channel 的订阅在构造期更早——其 failAllTurns 先于本 promise
    * resolve 执行）；ZCODE_APPSERVER_HARVEST_GRACE_MS 兜底防 `close` 永不到达时挂死。
+   * [P0-1 U5/D7] grace race 输掉（close 迟到/永不到达——stdio 被孙进程持有排空不
+   * 尽等病态形态）时，channel.dispose() 内置的 dispose 收割（failAllTurns 先于退订，
+   * SessionChannel.dispose）兜底在途 turn——退化终点从「挂满 turn 自身 idle/总上界
+   * 预算」收敛为「grace 窗口内明确失败」（设计 §3.4 退化路径闭合）；race 窗口与
+   * awaitConnFinalized 同源同量级（ZCODE_APPSERVER_HARVEST_GRACE_MS）。正常 close
+   * 先到时 onClose 收割先行，dispose 收割幂等 no-op（零回归）。
    */
   private async shutdownRuntimeAndDisposeChannel(rt: AppServerRuntime): Promise<void> {
     const harvested = new Promise<void>((resolve) => {
@@ -507,6 +685,7 @@ export class ZcodeEngine implements EnginePort {
       });
     });
     await rt.conn.shutdown({ graceMs: ZCODE_KILL_GRACE_MS });
+    // close 未在 grace 内到达 → 输掉 race → channel.dispose() 的内置收割兜底
     await Promise.race([harvested, delayResolved(ZCODE_APPSERVER_HARVEST_GRACE_MS, undefined)]);
     rt.channel.dispose();
   }
@@ -520,6 +699,9 @@ export class ZcodeEngine implements EnginePort {
    * ensureAppServerRuntime 自动重建（与崩溃重建同一代码路径，不变量 4）。
    */
   async dispose(): Promise<void> {
+    // [P0-1 U4] 停机标志先行：在途任务的瞬时重试判定据此短路（dispose 收割引发的
+    // 崩溃不再触发重试轮——重试轮会经惰性重建复活已停机引擎）
+    this.disposed = true;
     const rt = this.appserverRuntime;
     if (rt === undefined) return;
     this.appserverRuntime = undefined;
@@ -672,6 +854,17 @@ export class ZcodeEngine implements EnginePort {
   }
 
   /**
+   * [u-h2 D2-2] 派发同步期 model 校验：委托 resolveZcodeModelRef（与 run prepare 期
+   * 同一函数——canonicalRef 归一化、短名缺省 provider、凭据与清单校验单一权威，无双实现）。
+   * modelRef undefined = 返回引擎缺省模型 canonical 全名（ZCODE_FALLBACK_DEFAULT_MODEL，
+   * D2-1 ctxModel 不透传的承接面）。校验失败原样抛 ZcodePrepareError，由编排层
+   * （engine/model-validation.ts）包装成「引擎与模型不配套」文案。
+   */
+  validateModel(modelRef: string | undefined): { canonicalRef: string } {
+    return { canonicalRef: resolveZcodeModelRef(modelRef, this.deps.sources) };
+  }
+
+  /**
    * D6 read 三级降级：①sqlite 原生读取 → ②宿主 event journal 重放（对齐点①接线：
    * replayJournalToSessionView 复用 live reducer，重放等价性见 §3.3.6）→ ③outcome-only。
    * sessionId 缺失（解析失败的 run 无法定位 session）跳过①级；②级依赖
@@ -797,6 +990,15 @@ type AttemptResult =
       message: string;
       /** appserver 路径失败时已建立的会话 id（错误规格表 -32004 行：按任务失败上报含会话 id）。 */
       sessionId?: string;
+      /**
+       * [P0-1 U4/D6] 瞬时失败形态标记（重试判定判据——类型化字段，不经字符串
+       * 反推）：timeout = channel 判死（TurnTimeoutError，idle/ceiling 都算——D6
+       * 明文两类均可重试）；conn-closed = 连接崩溃收割（failAllTurns 形态，判据 =
+       * 非 RPC error 且 conn 不存活——catch 时刻重建仅由 conn.request 惰性触发，
+       * 此前无 request，判据可靠）。缺席 = 非瞬时形态（RPC 错误/status=error 终态/
+       * send 未送达等），不参与重试（D6 被否③：status='error' 终态 v1 不重试）。
+       */
+      transient?: "timeout" | "conn-closed";
     }
   | {
       kind: "parsed";
@@ -804,6 +1006,50 @@ type AttemptResult =
       payload: ZcodeTerminalPayload;
       schemaResult?: { ok: true; parsed: unknown } | { ok: false; error: string; tail: string };
     };
+
+/**
+ * [P0-1 U4/D6] 瞬时失败自动重试的最小剩余预算下限（ms）：显式总上界预算下，剩余
+ * 低于此值不再重试直接终态化（D6「剩余不足一个最小下限（如 5min）」——重跑一轮
+ * 整任务的最小耗时估计，剩余更小的重试注定再被上界回收，白烧一轮 token）。
+ * 单消费方（本文件重试编排），故为模块常量不进 constants.ts（跨文件共享才上移）。
+ */
+export const ZCODE_TURN_RETRY_MIN_BUDGET_MS = 300_000;
+
+/** resolveTransientRetryBudget 的判定结果（可判别联合——inherit 分支剩余值必有）。 */
+export type ZcodeTurnRetryBudget =
+  | { state: "inherit"; remainingMs: number }
+  | { state: "depleted" }
+  | { state: "unbounded" };
+
+/**
+ * [P0-1 U4/D6 预算继承] 重试轮预算判定（纯函数，P-Z4 探针「显式预算下重试轮不
+ * 重置总预算」的数学本体——剩余 = 总预算 − 已耗尽）：显式总上界预算存在时重试轮
+ * 上界收窄为剩余（不重置），剩余不足最小下限则不重试；非显式（env 未设/非法/
+ * ≤0 显式关闭）为 unbounded——无「总预算」可言，重试轮走 env/默认全新上界（与
+ * 首轮同源，行为一致），不受预算门禁。
+ */
+export function resolveTransientRetryBudget(
+  totalBudgetMs: number | undefined,
+  consumedMs: number,
+): ZcodeTurnRetryBudget {
+  if (totalBudgetMs === undefined) return { state: "unbounded" };
+  const remainingMs = totalBudgetMs - consumedMs;
+  return remainingMs >= ZCODE_TURN_RETRY_MIN_BUDGET_MS
+    ? { state: "inherit", remainingMs }
+    : { state: "depleted" };
+}
+
+/**
+ * 显式总上界预算读取（P-Z4 门禁的「显式」判定——D6「显式设置了 turnTimeoutMs
+ * （env 或内部传参）」在引擎侧的唯一来源是 env；引擎内部传参点只用于向重试轮传
+ * 剩余值）：env 设置为正数 → 显式预算；未设/非法（走默认）与 ≤0（显式关闭上界）
+ * 均非显式预算（undefined → unbounded）。读 process.env 直连（与 session-channel
+ * 的 resolveTurnTimerMs 同源同通道，vi.stubEnv 可测——D2 env 通道一致性）。
+ */
+function explicitTurnBudgetMs(): number | undefined {
+  const parsed = parseZcodeTurnTimeoutEnv(process.env[ZCODE_TURN_MAX_TIMEOUT_ENV]);
+  return parsed.state === "valid" && parsed.ms > 0 ? parsed.ms : undefined;
+}
 
 /** Record 形状 guard（task.schema 的运行时窄化——Record<string, unknown> 不满足 ajv 的 object 入参）。 */
 function isPlainObject(v: unknown): v is object {
@@ -858,8 +1104,12 @@ function turnResultToPayload(r: SessionTurnResult): ZcodeTerminalPayload {
  * -32010 → 单会话一任务是结构保证（busy 不排队不打断），文案引导附带 sessionId/state
  * 流水报告；其余（连接崩溃/会话失败/协议漂移）→ engine_run_failed + 恢复指引
  * （漂移不再降级 spawn——直接报错）。sessionId 已建立时随文案透出。
+ *
+ * retried（[P0-1 U4] §5.2 F-4「已重试 1 次」）：仅在瞬时重试真实发生后为 true——
+ * 兜底行恢复指引补「已自动重试一次仍失败」句（未重试形态不含，与行为一致）；专属
+ * 归类行（credential/busy）有独立恢复指引，不掺重试事实（错误规格表行的归类语义优先）。
  */
-function buildAppServerRunFailedMessage(err: unknown, sessionId?: string): string {
+function buildAppServerRunFailedMessage(err: unknown, sessionId?: string, retried = false): string {
   if (
     isAppServerRpcError(err) &&
     err.code === ZCODE_APPSERVER_ERR_MODEL_CONFIG_MISSING &&
@@ -879,9 +1129,12 @@ function buildAppServerRunFailedMessage(err: unknown, sessionId?: string): strin
   }
   const code = isAppServerRpcError(err) && err.code !== undefined ? `（code ${err.code}）` : "";
   const sid = sessionId !== undefined ? `（会话 ${sessionId}）` : "";
+  const retryNote = retried
+    ? `恢复指引：直接重跑本任务（瞬时故障已自动重试一次仍失败；重试用的是崩溃后自动重建的新会话）。`
+    : `恢复指引：直接重跑本任务（连接崩溃后自动重建进程）；`;
   return (
     `engine_run_failed: app-server 会话执行失败${code}${sid}: ${errMessage(err).slice(-ZCODE_ERROR_TAIL_CHARS)}。` +
-    `恢复指引：直接重跑本任务（连接崩溃后自动重建进程）；若持续失败（疑似 zcode 升级后协议漂移——` +
+    `${retryNote}若持续失败（疑似 zcode 升级后协议漂移——` +
     `-32601/-32602 类错误），重启 ZCode 或固定 zcode 版本后重试，或改用 engine: pi。`
   );
 }
@@ -931,8 +1184,42 @@ function buildAppServerCreateParams(
   };
 }
 
-/** appserver 轮成功收口的 parsed 三态（read 兜底后的 response + schema 校验）。 */
+/**
+ * 权威终态 status 提取（P0-1 U3/D5② + ⛔P-Z2 降级路径约束「只消费
+ * source="turn.terminal" 的 status」）：turn.terminal 到达（先到/迟到）时 u-z1 的
+ * lastTerminalStatus 必有记录（channel 无条件先记再 settle/不改写落定）；缺席说明
+ * 终态仅由 final-frame 宽松判定落定（恒 settle success，不可信）——无权威 status
+ * 可消费，不据此判失败。
+ */
+function authoritativeTerminalStatus(r: SessionTurnResult): string | undefined {
+  if (r.lastTerminalStatus !== undefined) return r.lastTerminalStatus;
+  return r.terminal.source === "turn.terminal" ? r.terminal.status : undefined;
+}
+
+/**
+ * 失败终态判据（⛔P-Z2 门修正）：真实 status 枚举 = ["success","interrupted",
+ * "failed"]（app-server dist schema f.enum 实证，**无 "error"**——v1 判据
+ * `=== "error"` 对真实 failed 终态漏分流即假成功，本修复轮根修）。裁决：
+ *   - "failed" → run-failed（模型/服务端真实失败——§5.2 F-3）；
+ *   - "interrupted" → 不分流（用户中断，不属引擎失败——随宿主 abort 主路径收口，
+ *     引擎侧不抢先把它终态化为失败）；
+ *   - "error" → 保留为容错分支（非真实枚举，防协议漂移/旧版本形态再滑入假成功；
+ *     假成功代价 >> 误报失败代价，取并集防御）。
+ */
+function isFailedTerminalStatus(status: string | undefined): boolean {
+  return status === "failed" || status === "error";
+}
+
+/**
+ * [P0-1 U3/D5②] appserver 轮成功收口的 parsed 三态（read 兜底后的 response + schema
+ * 校验）。失败终态（isFailedTerminalStatus，"interrupted" 不在其中——不误判失败）
+ * 先分流（§3.2 缺陷 B 不再假成功；schema 校验对失败形态无意义——失败终态的
+ * response 是错误尾部，非结构化输出候选）。
+ */
 function parsedAppServerAttempt(task: AgentCallOpts, r: SessionTurnResult): AttemptResult {
+  if (isFailedTerminalStatus(authoritativeTerminalStatus(r))) {
+    return failedTerminalAppServerAttempt(r);
+  }
   const schema = isPlainObject(task.schema) ? task.schema : undefined;
   return {
     kind: "parsed",
@@ -944,17 +1231,149 @@ function parsedAppServerAttempt(task: AgentCallOpts, r: SessionTurnResult): Atte
   };
 }
 
-/** appserver 轮失败收口的 run-failed 三态（结构化文案 + 会话 id 留痕）。 */
-function failedAppServerAttempt(err: unknown, currentSessionId: string | undefined): AttemptResult {
+/**
+ * [P0-1 U3/D5② + ⛔P-Z2 门修正] failed 终态的 run-failed 合成（§5.2 F-3 文案）：
+ * exitCode=null 异常终态、sessionId 留痕同 failedAppServerAttempt。错误详情优先级：
+ * terminal 帧 errorCode/errorMessage（⛔P-Z2 实证——真实 failed 终态的错误详情只在
+ * terminal 帧，read/delta 携带不了）> read 兜底/delta 聚合尾部（F-3 原文案，降级为
+ * 兜底）> 「无返回内容」（P-Z2 降级形态：final-frame 先到且 read 无错误信息——不
+ * 伪造错误详情，覆盖面收窄但不假成功）。
+ */
+function failedTerminalAppServerAttempt(r: SessionTurnResult): AttemptResult {
+  const status = authoritativeTerminalStatus(r);
+  const detail = r.lastTerminalError;
+  const detailParts: string[] = [];
+  if (detail?.code !== undefined) detailParts.push(`errorCode: ${detail.code}`);
+  if (detail?.message !== undefined) detailParts.push(detail.message);
+  // 错误详情优先级（⛔P-Z2）：terminal 帧详情 > read 兜底/delta 聚合尾部 > 无返回内容
+  let body: string;
+  if (detailParts.length > 0) {
+    body = `服务端错误：${detailParts.join("：")}。`;
+  } else {
+    const tail = r.response.trim();
+    body =
+      tail !== ""
+        ? `服务端返回尾部：${tail.slice(-ZCODE_ERROR_TAIL_CHARS)}。`
+        : "服务端无返回内容（read 兜底/delta 聚合均为空）。";
+  }
   return {
     kind: "run-failed",
     output: syntheticAppServerOutput(null),
-    message: buildAppServerRunFailedMessage(err, currentSessionId),
+    message:
+      `engine_run_failed: app-server 终态 status=${status}（会话 ${r.sessionId}）。${body}\n` +
+      `👉 恢复指引：错误内容来自模型/服务端；直接重跑，若持续出现核对 ZCode 桌面端凭据与模型配置（engine_credential_missing 同族排查）。`,
+    sessionId: r.sessionId,
+  };
+}
+
+/** appserver 轮失败收口的 run-failed 三态（结构化文案 + 会话 id 留痕）。 */
+function failedAppServerAttempt(
+  err: unknown,
+  currentSessionId: string | undefined,
+  opts: { retried?: boolean; transient?: "timeout" | "conn-closed" } = {},
+): AttemptResult {
+  return {
+    kind: "run-failed",
+    output: syntheticAppServerOutput(null),
+    message: buildAppServerRunFailedMessage(err, currentSessionId, opts.retried === true),
+    // [P0-1 U4/D6] 瞬时失败形态标记（重试判定判据——timeout 形态走
+    // timeoutAppServerAttempt，此处只承载 conn-closed）
+    ...(opts.transient !== undefined ? { transient: opts.transient } : {}),
     // 错误规格表 -32004 行「按任务失败上报（含会话 id）」：create 成功后运行中失败
     // （-32004/-32010 等）时留痕会话 id——经 applyRunFailedOutcome 落 outcome.sessionId
     // 与 handle.sessionRef（create 阶段失败无会话，缺省不带）
     ...(currentSessionId !== undefined ? { sessionId: currentSessionId } : {}),
   };
+}
+
+/**
+ * D3 abort 链的止损路径终局（P0-1 U2）：超时入口的 outcome 文案素材（D3 强制可观测
+ * 面——r3 SG-4，A2/A11 验收断言「outcome 止损路径为 stop 已送达 / 升级杀链」的载体）；
+ * settled-in-grace / escalated-kill 两值只由用户取消入口产生，超时入口不可达（保留
+ * 联合完整供文案兜底）。
+ */
+type AbortChainStopPath =
+  | "stop-acked"
+  | "stop-rejected"
+  | "stop-unreachable-killed"
+  | "no-session"
+  | "settled-in-grace"
+  | "escalated-kill";
+
+/**
+ * [P0-1 U2] channel 判死（TurnTimeoutError）后的收口三态：engine_timeout 前缀
+ * （D4——与 engine_run_failed 分流，下游按前缀分流不经字符串反推超时语义），走
+ * run-failed kind 承载（exitCode=null 异常终态口径与杀链超时合成终态一致）。sessionId
+ * 留痕同 failedAppServerAttempt。
+ * [P0-1 U4/D6] timeout 类（idle/ceiling 都算）恒标 transient——D6 明文的可重试形态；
+ * retried 时文案补「已自动重试一次」句（F-1）。
+ */
+function timeoutAppServerAttempt(
+  err: TurnTimeoutError,
+  currentSessionId: string | undefined,
+  stopPath: AbortChainStopPath,
+  opts: { retried?: boolean } = {},
+): AttemptResult {
+  return {
+    kind: "run-failed",
+    output: syntheticAppServerOutput(null),
+    message: buildAppServerTimeoutMessage(err, currentSessionId, stopPath, opts.retried === true),
+    transient: "timeout",
+    ...(currentSessionId !== undefined ? { sessionId: currentSessionId } : {}),
+  };
+}
+
+/** 止损路径的可观测文案（§5.2 F-1：stop 已送达 / stop 无应答已升级杀链两分支各具名）。 */
+function stopPathText(stopPath: AbortChainStopPath): string {
+  switch (stopPath) {
+    case "stop-acked":
+      return "session/stop 已送达（服务端接受停 turn）";
+    case "stop-rejected":
+      return "session/stop 报协议性 error（会话已被回收，控制面存活——止损由会话回收承担，不升级杀链）";
+    case "stop-unreachable-killed":
+      return `session/stop 无应答已升级杀链（SIGTERM→${ZCODE_KILL_GRACE_MS}ms→SIGKILL 收割共享进程）`;
+    case "no-session":
+      return "会话未建立（任务未开始执行，无在途消耗）";
+    default:
+      // settled-in-grace / escalated-kill 只属用户取消入口；超时入口不可达，防御兜底
+      return "grace 窗口内终态落定或已走杀链";
+  }
+}
+
+/**
+ * 超时族 outcome 文案（D4 + §5.2 F-1/F-2，两形态有别）：idle 主判定静默时长 + 最后
+ * 事件时刻（诊断面）；ceiling 总上界判死附 env 自救通道（XYZ_ZCODE_TURN_MAX_TIMEOUT_MS
+ * 可调/0 关闭——§2 目标 5 的用户可见出口）。恢复指引共段：重跑 + 连通性排查 + engine: pi。
+ * retried（[P0-1 U4] §5.2 F-1 样例句，u-z2 留的补句义务）：仅在瞬时重试真实发生后
+ * 为 true——恢复指引补「瞬时故障已自动重试一次仍超时；重试在止损链终局后启动，无
+ * 新旧任务双跑窗」句（未重试形态不含，与行为一致）。
+ */
+function buildAppServerTimeoutMessage(
+  err: TurnTimeoutError,
+  sessionId: string | undefined,
+  stopPath: AbortChainStopPath,
+  retried = false,
+): string {
+  const sid = sessionId !== undefined ? `（会话 ${sessionId}）` : "";
+  const lastEventText =
+    err.lastEventAt !== undefined
+      ? `，最后事件 ${new Date(err.lastEventAt).toISOString()}`
+      : "，整轮未观察到任何事件（进程假死/协议静默形态）";
+  const head =
+    err.kind === "idle"
+      ? `engine_timeout: zcode turn 连续静默 ${err.thresholdMs}ms（idle 判定${lastEventText}，总耗时 ${err.elapsed}ms）${sid}。`
+      : `engine_timeout: zcode turn 总上界 ${err.thresholdMs}ms 内未观察到终态（chatty-wedge 判定——事件流仍活跃而终态未到达，总耗时 ${err.elapsed}ms）${sid}。`;
+  const selfHelp =
+    err.kind === "ceiling"
+      ? `若本任务属合法超长任务（预期超过 ${err.thresholdMs}ms），重跑前设 ${ZCODE_TURN_MAX_TIMEOUT_ENV} 为更大毫秒值或 0 关闭总上界（关闭后 chatty 形态不再自动回收，静默 wedged 仍由 idle 层兜底——自行权衡）。`
+      : "";
+  const rerunGuide = retried
+    ? `👉 恢复指引：直接重跑本任务（瞬时故障已自动重试一次仍超时；重试在止损链终局后启动，无新旧任务双跑窗）；`
+    : `👉 恢复指引：直接重跑本任务；`;
+  return (
+    `${head}止损路径：${stopPathText(stopPath)}。\n` +
+    `${rerunGuide}${selfHelp}若持续出现，检查 ZCode 桌面端模型连通性或改用 engine: pi。`
+  );
 }
 
 /**

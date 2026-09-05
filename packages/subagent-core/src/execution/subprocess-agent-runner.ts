@@ -32,6 +32,7 @@ import { HOST_TIMEOUT_ABORT_REASON } from "./engine/common/kill-chain.ts";
 import { JOURNAL_INITIAL_POOL_KEY, wireEventJournal } from "./engine/common/journal-wiring.ts";
 import { createPiEngine } from "./engine/engines/pi/registration.ts";
 import type { EnginePort, RunContext } from "./engine/port.ts";
+import { validateModelForEngine } from "./engine/model-validation.ts";
 import { routeEngineForHost, type EngineRouteResult, type EngineRoutingInput } from "./engine/routing.ts";
 import { getEngine } from "./engine/registry.ts";
 import type { AgentOutcome } from "./engine/types.ts";
@@ -155,6 +156,16 @@ export class SubprocessAgentRunner implements AgentRunner {
       // [D6 合流] opts（AgentCallOpts）直传预检——TaskShapeForGate 是结构子集，
       // conversation/fork/worktree/maxTurns 均在合流形状字段表内。
       assertTaskShapeSupported(route.engineId, route.engine.capabilities(), opts);
+      // [u-h2 D2-2 调用点②] workflow 域非 pi 引擎的派发同步期 model 校验——与 chat
+      // 路径（subagent-service.executeViaEngine）共享同一入口 validateModelForEngine
+      // 与同一错误文案（V2-4④：agent({engine:'zcode', model:<pi id>}) 同步期报
+      // 「引擎与模型不配套」，不再落 engine.run 的 prepare 期晚炸）。校验对象是显式
+      // opts.model（frontmatter model 的解析归 pi 链，workflow 域非 pi 路径现状不消费
+      // ——维持现状语义不扩散）。「不 reject」契约：throw 由本 try 的 catch 收口
+      // errorResult，不进入 journal 创建与 engine.run（零 record/spawn 副作用）。
+      if (route.engineId !== "pi") {
+        validateModelForEngine(route.engine, opts.model);
+      }
     } catch (err) {
       // buildRoutingInput 的 agent 解析期校验（未注册 frontmatter engine）、路由失败
       //（probe + strict/守卫）与预检拒绝（engine_capability_unsupported）一并在此

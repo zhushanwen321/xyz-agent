@@ -32,6 +32,7 @@ import type { ChatStoreInstance } from './store'
 import type { ChatApiPort, WriteSegmentsFn } from './api-port'
 import { splitHistoryBeforeAnchor } from './mutations'
 import { createMessageCoalescer } from './delta-coalescer'
+import { getExecutingBash } from './bash-effects'
 
 /**
  * SessionStoreLike —— useChat 消费 session store 的最小结构类型。
@@ -626,6 +627,19 @@ export function createUseChat(deps: UseChatDeps) {
     try {
       await deps.chatApi.bash(sid, command, excludeFromContext)
     } catch (e) {
+      // [①b timeout-slow-flow-wallclock D2/r4 极性修正] RPC 错误 reject（error envelope /
+      // backstop 超时）与 bashResult 合成终态帧的到达时序：runtime 先广播终态帧再回 error
+      // envelope，本 catch 执行时终态帧已被 bashResultEffect 消费。executingBash 是「命令
+      // 执行中」瞬时态（bashStart 置 / bashResult·markBashError 清），「已收合成终态」=
+      // 查询为空（取反）——为空 → 气泡已呈现终态（超时三步指引或错误输出），它是权威
+      // 呈现面，再弹「失败」措辞 toast 冗余且误导（如超时后命令仍在跑，toast 却说 failed），
+      // 抑制；非空（命令仍在执行 = env 逃生门下 renderer backstop 先到的形态）→ toast 是
+      // 唯一提示，不抑制。与 compact 先例极性相反：manualCompactionState 是正向标志（终态
+      // 到达置 true），此处是反向标志（终态到达清空）——「查到非空」绝不抑制。
+      if (!getExecutingBash(sid)) {
+        console.warn(`[useChat] sendBash RPC failed after terminal frame already rendered, toast suppressed, sid=${sid}`, e)
+        return
+      }
       const msg = e instanceof Error ? e.message : String(e)
       deps.toast.error(deps.t('composable.bashFailed', { msg }))
     }

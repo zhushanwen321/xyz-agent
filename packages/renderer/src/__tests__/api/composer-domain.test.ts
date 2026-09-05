@@ -24,6 +24,7 @@ vi.mock('@xyz-agent/core/transport/ws-client', () => ({
 // mock pending：register 返回可控 Promise，create 返回固定 id
 const registerMock = vi.fn()
 vi.mock('../../../../core/src/transport/api/pending', () => ({
+  RPC_BACKSTOP_TIMEOUT_MS: 65_000,
   createCommandId: () => 'test-id',
   register: (id: string) => registerMock(id),
   reject: vi.fn(),

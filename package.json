@@ -14,7 +14,7 @@
     "prepare": "bash .githooks/install-hooks.sh",
     "postinstall": "bash scripts/fix-node-pty-permissions.sh",
     "build:e2e": "pnpm --filter @xyz-agent/electron build:e2e",
-    "test": "pnpm --filter './packages/**' --filter './apps/**' --filter './extensions/**' --no-bail test",
+    "test": "pnpm --filter './packages/**' --filter './apps/**' --filter './extensions/**' --no-bail run test",
     "test:e2e": "playwright test",
     "dev:smoke": "node scripts/dev-smoke.mjs",
     "changeset": "changeset",

@@ -40,7 +40,8 @@ import { PiEngine } from "./engine/engines/pi/pi-engine.ts";
 import { PI_POOL_KEY } from "./engine/engines/pi/pi-engine.ts";
 import type { ChatRoundTicket, PiEngineService } from "./engine/engines/pi/pi-engine.ts";
 import type { EnginePort, RunContext } from "./engine/port.ts";
-import { DEFAULT_ENGINE_ID, getEngine } from "./engine/registry.ts";
+import { DEFAULT_ENGINE_ID, getEngine, listEngines } from "./engine/registry.ts";
+import { validateModelForEngine, withCrossEngineHint } from "./engine/model-validation.ts";
 import { type EngineRouteResult, routeEngineForHost } from "./engine/routing.ts";
 import type { AgentOutcome } from "./engine/types.ts";
 import { ManifestStore } from "./manifest-store.ts";
@@ -55,7 +56,6 @@ import type { StatusFilter } from "./record-store.ts";
 import { RecordStore } from "./record-store.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import {
-  getChildByRecord,
   killAllSpawnedChildren,
   killRecordChildWithEscalation,
   registerSpawnedChildForRecord,
@@ -67,9 +67,9 @@ import {
 // 双挂载点之一在编排层热路径（deliverChatMessage，prompt 发出后），disarm 站点散布
 // cancel/close/终态化路径（原语幂等，见 settled-watchdog.ts 头注释）。
 import {
-  armSettledWatchdog,
+  armMidRoundNoProgress,
   disarmSettledWatchdog,
-  SETTLED_WATCHDOG_TIMEOUT_MS,
+  type SettledWatchdogFireInfo,
 } from "./settled-watchdog.ts";
 import { isIdle, isResumable } from "./lifecycle-predicates.ts";
 import { startIdleGc } from "./idle-gc.ts";
@@ -773,8 +773,14 @@ export class SubagentService {
     // mode 固定 background（sync 模式已删除）
     const mode: ExecutionMode = "background";
 
-    // ── 1. IDENTITY 解析（确认 → agentConfig → resolveModel）──
-    const identity = await this.resolveIdentity(opts);
+    // ── 1. IDENTITY 前置解析：agentConfig（agent .md 加载）保持在最前 ──
+    // [u-h2 D2-1] 路由先行：model 解析从「路由之前」移到「路由之后、按目标引擎分支」
+    // （修 F2-A/B 时序根因——曾 :850 先解析 model 再 :867 路由）。agentConfig 是路由
+    // 第二层输入（frontmatter engine）必须先解析；显式 agent ref 校验语义不变。
+    const agent = opts.agent ?? DEFAULT_AGENT_NAME;
+    const agentConfig = opts.agent
+      ? this.modelService.getRequiredAgentConfig(opts.agent)
+      : undefined;
 
     // ── 1.5 引擎路由（D2 单轨 + D3-② 路由单点：统一经 routeEngineForHost）──
     // 唯一实现在 engine/routing.ts（pi 同步短路 + registry 注入 + 兜底回本地 pi 实例
@@ -782,9 +788,12 @@ export class SubagentService {
     // 创建前完成——兜底时 record 按 pi 语义创建 + engineFallback 留痕（D5 字节级守护
     // 只约束「无 fallback 的纯缺省路径」）；守卫命中/strict 时在此 throw，不产生孤儿
     // record。pi 请求路径同步短路（routed 非 Promise，零微任务——缺省路径时序不变）。
+    // [u-h2 D2-1] 路由先行于 pi 链 model 解析：agentConfig 是路由第二层输入（frontmatter
+    // engine）已前置解析；pi 的 resolveModel 移到路由之后、按目标引擎分支执行——非 pi
+    // 请求不被 pi registry 解析错误拦截（F2-A/B 时序根因），model 校验归目标引擎（D2-2）。
     const routingInput = {
       callEngine: opts.engine,
-      agentEngine: identity.agentConfig?.engine,
+      agentEngine: agentConfig?.engine,
       globalDefaultEngine: this.modelService.getGlobalConfig().defaultEngine,
     };
     const routed = routeEngineForHost({
@@ -797,7 +806,7 @@ export class SubagentService {
       piEngine: this.chatPiEngine,
     });
     const route: EngineRouteResult = routed instanceof Promise ? await routed : routed;
-    return this.executeViaEngine(opts, identity, route, mode);
+    return this.executeViaEngine(opts, { agent, agentConfig }, route, mode);
   }
 
   /**
@@ -881,14 +890,19 @@ export class SubagentService {
     if (!result.ok) {
       throw new Error(result.message);
     }
-    // [T2③ / LC-1] 热路径轮 settled 等待固定硬上限（双挂载原语之热路径调用点，首轮
+    // [T2③ / D9 两段式] 热路径轮 settled 等待守护（双挂载原语之热路径调用点，首轮
     // 调用点在 session-runner runSpawn）。原挂载位在 deliverMessage prompt 写入成功后
     // 的同步段——D2 协议知识下沉 PiEngine.deliverPrompt 后编排层在 interact 返回点
     // arm（deliverPrompt 热路径段无 await，返回点距 prompt 发出仅差微任务链；窗口口径
     // 「整轮含 turn 执行与收尾」不受影响）。冷路径（EPIPE 兜底/resume）下 runSpawn 的
-    // 首轮 arm 与此处重复挂载由原语幂等（先清旧 timer）吸收 = 窗口重置，无害。settled
-    // 到达 / 进程 close / cancel/close 终态化处置后即清（disarm 站点散布上述路径，幂等）。
-    armSettledWatchdog(record.id, () => this.onHotPathSettledWatchdogTimeout(record));
+    // 首轮 arm 与此处重复挂载由原语幂等（先清旧 timer）吸收 = 窗口重置，无害。
+    // prompt 发出后挂**中段**无进展检测（有效协议事件行刷新，连续静默判 wedged）+
+    // agent_end 交棒收尾段固定上界；settled 到达（PiEngine.handleSdkEvent 的 disarm）/
+    // 进程 close / cancel/close 终态化处置后即清（disarm 站点散布上述路径，幂等）。
+    armMidRoundNoProgress(record.id, {
+      onMidTimeout: (fire) => this.onHotPathSettledWatchdogTimeout(record, fire),
+      onSettleTimeout: (fire) => this.onHotPathSettledWatchdogTimeout(record, fire),
+    });
   }
 
   /**
@@ -1020,6 +1034,9 @@ export class SubagentService {
    * [T2③] 热路径轮 settled watchdog 到期处置（对齐 u-t2a 首轮形态：kill + 该轮失败
    * 终态化 + 失败通知，error 含 'settled watchdog' 标记与恢复指引）。
    *
+   * [D9 两段式] 两段（mid-round 无进展 / settled 收尾段上界）共用本处置，fire 信息
+   *（段 + 窗长）由原语注入，失败文案按段分叉窗长语义。
+   *
    * 与首轮的差异：runSpawn 已返回（无收尾链路承接 settledWatchdogFired 标记），失败
    * 终态化在本回调内完成。chatMode 按 MF-6 语义回退 running-resumable（与首轮 watchdog
    * 经 runAndFinalize 失败分支的最终形态一致——对话可冷路径复活）；非 chatMode 终态
@@ -1028,10 +1045,14 @@ export class SubagentService {
    * 回调在 timer 触发的同步上下文执行：同步段只做 kill + CAS（不抛），异步收尾
    * fire-and-forget 且 catch 归 bestEffort——错误逃出回调 = uncaughtException 崩宿主。
    */
-  private onHotPathSettledWatchdogTimeout(record: ExecutionRecord): void {
+  private onHotPathSettledWatchdogTimeout(record: ExecutionRecord, fire: SettledWatchdogFireInfo): void {
+    const windowDesc =
+      fire.phase === "mid-round"
+        ? `no valid protocol event for ${fire.waitedMs / MS_PER_SECOND / SECONDS_PER_MINUTE} min after prompt (mid-round no-progress)`
+        : `no agent_settled within ${fire.waitedMs / MS_PER_SECOND}s after agent_end (settled phase)`;
     logger.warn(
-      `[subagents] settled watchdog fired for ${record.id}: no agent_settled within ` +
-        `${SETTLED_WATCHDOG_TIMEOUT_MS / MS_PER_SECOND / SECONDS_PER_MINUTE} min of hot-path prompt, terminating (LC-1 wedge recovery)`,
+      `[subagents] settled watchdog (${fire.phase}) fired for ${record.id}: ${windowDesc}, ` +
+        `terminating (LC-1 wedge recovery)`,
     );
     killRecordChildWithEscalation(record.id, "settled watchdog (hot path)");
     const failedResult: AgentResult = {
@@ -1040,7 +1061,7 @@ export class SubagentService {
       durationMs: Date.now() - record.startedAt,
       success: false,
       error:
-        `subagent did not reach agent_settled within ${SETTLED_WATCHDOG_TIMEOUT_MS / MS_PER_SECOND / SECONDS_PER_MINUTE} min (settled watchdog); ` +
+        `subagent did not reach agent_settled (${windowDesc}; settled watchdog); ` +
         `the process was terminated to bound the wait. ` +
         `Recovery: check state with subagents action:'list', then re-send your message to continue.`,
       sessionId: record.id,
@@ -1411,30 +1432,94 @@ export class SubagentService {
 
   // ── 执行内部：身份解析 + record 创建 ──────────
 
-  /** 步骤 1：身份解析。agentConfig → resolveModel（三层：override → agentConfig → 主 agent model）。 */
-  private async resolveIdentity(opts: ExecuteOptions): Promise<ResolvedIdentity> {
+  /** 步骤 1：身份解析。agentConfig → resolveModel（三层：override → agentConfig → 主 agent model）。
+   *
+   * [u-h2] pi 未命中跨引擎候选（D2-4）：resolveModel 抛 notFoundError（pi registry
+   * 全等裁决未命中）时反查其他已注册引擎清单，唯一命中则追加「该 id 属于引擎 X」
+   * 候选段（场景 3）；其余裁决失败（孪生歧义/auth）与命中路径原样返回（零回归）。
+   * execute() 与 executeAndAwait() 两个派发路径共享本方法，故 chat 与 workflow 域的
+   * pi 校验同享场景 3 文案。
+   */
+  private async resolveIdentity(
+    opts: ExecuteOptions,
+    pre?: { agent: string; agentConfig: AgentConfig | undefined },
+  ): Promise<ResolvedIdentity> {
     // agentRef 语义（S2）：agent 参数 = .md 绝对路径；不传 = 不加载 agentConfig，
     // 直接用 override → 主 agent model。DEFAULT_AGENT_NAME 仅作 record 显示名
     // （TUI 层 extractAgentName 共用，保证显示一致）。
-    const agent = opts.agent ?? DEFAULT_AGENT_NAME;
+    const agent = pre?.agent ?? opts.agent ?? DEFAULT_AGENT_NAME;
     // 显式 agent ref（用户点名）失败必须报错，不静默降级：无 require 的 loadByPath
     // 对相对路径/裸名/文件缺失都返回 undefined → agentConfig undefined → resolveModel
     // 静默回落 override→主 agent model，用户拿到的 subagent 无 systemPrompt/工具白名单
     // 且零反馈。require:true 让失败抛出带 <available_subagents> 指引的错误（对齐
     // workflow name not found 反馈风格）；不传 agent = 默认 general-purpose 语义，
     // agentConfig 保持 undefined（合法缺省，走 override → ctxModel 兑底）。
-    const agentConfig = opts.agent
-      ? this.modelService.getRequiredAgentConfig(opts.agent)
-      : undefined;
+    // [u-h2 D2-1] execute() 已在路由前解析 agentConfig（pre 通道），此处复用不二次加载。
+    const agentConfig = pre
+      ? pre.agentConfig
+      : opts.agent
+        ? this.modelService.getRequiredAgentConfig(opts.agent)
+        : undefined;
 
-    const resolved = this.modelService.resolveModel(
-      opts.agent ?? "",
-      { model: opts.model, thinkingLevel: opts.thinkingLevel },
-      opts.ctxModel,
-      agentConfig,
-    );
+    let resolved: ResolvedModel;
+    try {
+      resolved = this.modelService.resolveModel(
+        opts.agent ?? "",
+        { model: opts.model, thinkingLevel: opts.thinkingLevel },
+        opts.ctxModel,
+        agentConfig,
+      );
+    } catch (err) {
+      throw withCrossEngineHint(err, listEngines(), (id) => {
+        try {
+          return getEngine(id);
+        } catch {
+          return undefined; // 清单快照与注册表并发变化的防御：取不到引擎按未注册处理
+        }
+      });
+    }
 
     return { agent, agentConfig, resolved };
+  }
+
+  /**
+   * [u-h2 D2-1③] 非 pi 引擎的 identity 解析：跳过 pi registry 三层解析（ctxModel 主
+   * agent model 不透传——主 agent 的 pi id 对目标引擎大概率无效，缺省语义归引擎）。
+   *
+   * 逐层语义（设计 D2-1 归趋表）：
+   *   - model 源 = engineModel（调用参数 opts.model > agentConfig.model frontmatter，
+   *     agent 作者声明不忽略——配错在 validateModel 同步报错，不落引擎缺省静默续跑）；
+   *   - 无显式 model → 校验/留痕走引擎缺省（validateModel(undefined) 的 canonicalRef）；
+   *   - thinkingLevel 直接透传（引擎中立参数，不涉 registry）。
+   *
+   * 引擎未实现 validateModel 时 modelRef 原样透传（其 prepare 期校验兜底，现状语义）。
+   */
+  private resolveIdentityForEngine(
+    engine: EnginePort,
+    engineModel: string | undefined,
+    agent: string,
+    agentConfig: AgentConfig | undefined,
+    opts: ExecuteOptions,
+  ): ResolvedIdentity {
+    const canonical = validateModelForEngine(engine, engineModel);
+    // record.model 留痕：canonical（引擎裁决全名，含短名→缺省 provider 归一化）；
+    // 引擎未实现校验面且无显式 model 时为空串（记录形态退化，生产不可达——注册表
+    // 内非 pi 引擎均实现 validateModel；防御性拼接避免 throw 打断兜底语义）。
+    const modelStr = canonical ?? engineModel ?? "";
+    const slashIdx = modelStr.indexOf("/");
+    return {
+      agent,
+      agentConfig,
+      resolved: {
+        model: {
+          id: slashIdx > 0 ? modelStr.slice(slashIdx + 1) : "",
+          name: modelStr,
+          provider: slashIdx > 0 ? modelStr.slice(0, slashIdx) : modelStr,
+          reasoning: false,
+        },
+        thinkingLevel: opts.thinkingLevel ?? agentConfig?.thinkingLevel,
+      },
+    };
   }
 
   /** 步骤 2：按 mode 生成 id + controller，创建 record 并注册。
@@ -1493,12 +1578,13 @@ export class SubagentService {
   /**
    * chat 域统一执行入口（D2 单轨：全引擎——含 pi——经此进入 EnginePort）。路由
    *（routeEngineForHost：三层 + pi 同步短路 + probe/守卫）已由 execute 完成——这里
-   * 只剩 unsupported 预检 → record 创建+盖章 → worktree → detached 引擎 run。
+   * 只剩 unsupported 预检 → identity（pi 链解析 / 非 pi 按目标引擎校验，
+   * [u-h2 D2-1/D2-2]）→ record 创建+盖章 → worktree → detached 引擎 run。
    * 全部同步拒绝发生在 record 创建前（不产生孤儿 record）。
    */
   private async executeViaEngine(
     opts: ExecuteOptions,
-    identity: ResolvedIdentity,
+    preIdentity: { agent: string; agentConfig: AgentConfig | undefined },
     route: EngineRouteResult,
     mode: ExecutionMode,
   ): Promise<ExecutionHandle> {
@@ -1509,24 +1595,40 @@ export class SubagentService {
     // 创建前、不产生孤儿 record」不变量（其后的 kickOffEngineRun 是 fire-and-forget，
     // 检查若只落在 engine.run 内则拒绝异步化为「派发成功 + 静默失败 record」）。
     assertTaskShapeSupported(engine.id, engine.capabilities(), opts);
+
+    // identity 按路由结果分支构造（[u-h2 D2-1] 路由先行）：
+    //   - pi：pi 链三层解析在路由后执行（现状三层解析链行为零变化；含 resolveModel
+    //     失败的跨引擎候选提示，D2-4）；
+    //   - 非 pi：跳过 pi registry，model 按目标引擎校验（同步期 throw，record 创建前
+    //     ——场景 2 错误；ctxModel 不透传，缺省语义归引擎，D2-1③）。
+    const isPiRoute = route.engineId === DEFAULT_ENGINE_ID;
+    // [u-h2 D2-1③] 非 pi 的 model 源 = 调用参数 > agent .md frontmatter（作者声明不
+    // 忽略）——frontmatter 声明须真正透传给引擎（taskSpec.model 消费 opts.model），
+    // 不能只进 record 留痕；无显式 model 时引擎落自身缺省（validateModel(undefined) 裁决）。
+    const engineModel = isPiRoute ? undefined : (opts.model ?? preIdentity.agentConfig?.model);
+    const identity = isPiRoute
+      ? await this.resolveIdentity(opts, preIdentity)
+      : this.resolveIdentityForEngine(engine, engineModel, preIdentity.agent, preIdentity.agentConfig, opts);
+
     // record 盖章路由结果（D5 字节级守护的执行侧落点）：
     //   - pi 纯缺省/显式 pi：不盖 engine 键（pi record entry 序列化产物不得新增 engine
     //     键，undefined 经 JSON 省略）——与旧 pi 主路径 piOpts 剥离语义逐字节一致；
     //   - pi 兜底：engine='pi' + engineFallback 留痕（engine = 实际执行引擎，from=请求
     //     引擎留痕）；
-    //   - 非 pi：engine=route.engineId 显式留痕（+engineFallback 如有）。
-    const recordOpts: ExecuteOptions =
-      route.engineId === DEFAULT_ENGINE_ID
-        ? route.engineFallback !== undefined
-          ? { ...opts, engine: DEFAULT_ENGINE_ID, engineFallback: route.engineFallback }
-          : opts.engine === undefined
-            ? opts
-            : { ...opts, engine: undefined }
-        : {
-          ...opts,
-          engine: route.engineId,
-          ...(route.engineFallback !== undefined ? { engineFallback: route.engineFallback } : {}),
-        };
+    //   - 非 pi：engine=route.engineId 显式留痕（+engineFallback 如有）+ model 覆写
+    //     （frontmatter 声明透传，u-h2 D2-1③）。
+    const recordOpts: ExecuteOptions = isPiRoute
+      ? route.engineFallback !== undefined
+        ? { ...opts, engine: DEFAULT_ENGINE_ID, engineFallback: route.engineFallback }
+        : opts.engine === undefined
+          ? opts
+          : { ...opts, engine: undefined }
+      : {
+        ...opts,
+        ...(engineModel !== undefined ? { model: engineModel } : {}),
+        engine: route.engineId,
+        ...(route.engineFallback !== undefined ? { engineFallback: route.engineFallback } : {}),
+      };
     const record = this.createRecordForMode(identity, recordOpts, mode);
     this.notifyHost.emitPendingRegister(record.id, record.agent);
 
@@ -1561,7 +1663,7 @@ export class SubagentService {
       }
     }
 
-    if (route.engineId === DEFAULT_ENGINE_ID) {
+    if (isPiRoute) {
       // pi：record 耦合执行（runSpawn 直驱 record 记账）——预备轮次经 EnginePort 交接
       //（kickOffChatRound），编排收尾（notify/终态迁移）与旧 pi 主路径语义一致。
       this.kickOffChatRound(
@@ -1574,7 +1676,7 @@ export class SubagentService {
       );
     } else {
       // 非 pi 引擎：engine.run 自足执行（handle+outcome），编排侧 journal 接线 + 终态迁移
-      this.kickOffEngineRun(record, opts, engine);
+      this.kickOffEngineRun(record, recordOpts, engine);
     }
     return { mode: "background", subagentId: record.id, sessionFile: record.sessionFile, details: project(record) };
   }

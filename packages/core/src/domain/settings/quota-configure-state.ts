@@ -30,6 +30,15 @@ export interface QuotaConfigureState {
   apiKeyInput: Ref<string>
   /** 是否已配置专属 API Key（provider.quota.apiKeySet） */
   apiKeyConfigured: Ref<boolean>
+  /**
+   * Workspace 地址输入值（资源维度 fetcher 如 opencode，timeout-audit-hygiene-batch D1-1）。
+   * 接受完整 URL 或裸 wrk_ id；保存时归一化为规范 URL。
+   */
+  workspaceInput: Ref<string>
+  /** 是否已配置 workspace（provider.quota.workspace 非空） */
+  workspaceConfigured: Ref<boolean>
+  /** 当前 fetcher 是否需要 workspace 配置（QuotaPreset.requiresWorkspace；false = 隐藏输入框） */
+  needsWorkspace: Ref<boolean>
   /** 测试查询状态 */
   testStatus: Ref<QuotaTestStatus>
   /** 测试查询错误信息（testStatus='error' 且无 reason 时有值） */
@@ -60,6 +69,11 @@ export interface QuotaConfigureState {
   saveCookie: () => Promise<void>
   /** 保存专属 API Key（api-key 类，空字符串 = 清除，复用 provider.apiKey） */
   saveApiKey: () => Promise<void>
+  /**
+   * 保存 Workspace 地址（资源维度 fetcher；输入先经归一化校验，非法输入落 configureError；
+   * 空字符串 = 清除已有配置）
+   */
+  saveWorkspace: () => Promise<void>
   /** 测试查询（触发 quota.refresh，绕过 throttle） */
   testQuery: () => Promise<void>
   /** 重置状态（provider 切换时调用） */

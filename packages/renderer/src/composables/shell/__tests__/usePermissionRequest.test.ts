@@ -7,6 +7,8 @@
  *  - TC3: approve 失败（RPC reject）→ pending=false（错误路径重置，项目规则#3 状态卡死防护）
  *  - TC4: revoke 成功/失败 → pending=false
  *  - TC5: 重复初始化幂等（HMR 防 listener 翻倍）：bus.on 只注册一次 handler
+ *  - TC6-TC8: plugin:permissionRequestExpired 超时撤窗（timeout-plugin-service D3，
+ *    取消非判拒）：命中撤回 / pluginId 不匹配 noop / 无挂起 noop 幂等
  *
  * 运行：cd packages/renderer && npx vitest run src/composables/shell/__tests__/usePermissionRequest.test.ts
  */
@@ -15,6 +17,7 @@ import { InternalEventBus } from '@xyz-agent/core'
 import type { InternalEvent } from '@xyz-agent/core'
 import { initPermissionRequest, usePermissionRequest } from '../usePermissionRequest'
 import { PERMISSION_TRANSPORT_KEY } from '@xyz-agent/ui/extension-host'
+import { dispatchGlobal } from '@xyz-agent/core/transport/api'
 
 // mock RPC 回传域（approve/revoke 走 command → ws-client，测试环境不连 WS）
 const approvePermissions = vi.fn()
@@ -140,5 +143,52 @@ describe('usePermissionRequest permissionRequest 闭环', () => {
     const state = usePermissionRequest()
     expect(state.pluginId).toBe('p1')
     expect(state.pending).toBe(true)
+  })
+
+  // ── plugin:permissionRequestExpired 超时撤窗（timeout-plugin-service D3） ──
+
+  /** 通过 global 通道模拟 runtime 撤窗广播（payload { pluginId }，无 sessionId） */
+  function emitPermissionExpired(pluginId: string) {
+    dispatchGlobal({ type: 'plugin:permissionRequestExpired', payload: { pluginId } })
+  }
+
+  it('TC6: expired 广播命中当前弹窗 → pending=false（超时撤窗，取消非判拒）', () => {
+    const { app } = makeApp()
+    initPermissionRequest(app as never, bus)
+
+    emitPermissionRequest(bus, 'p1', ['shell'])
+    const state = usePermissionRequest()
+    expect(state.pending).toBe(true)
+
+    emitPermissionExpired('p1')
+    expect(state.pending).toBe(false)
+  })
+
+  it('TC7: expired 广播 pluginId 不匹配 → noop（陈旧广播不得误撤后到插件的新审批弹窗）', () => {
+    const { app } = makeApp()
+    initPermissionRequest(app as never, bus)
+
+    emitPermissionRequest(bus, 'p2', ['fs'])
+    const state = usePermissionRequest()
+    expect(state.pending).toBe(true)
+
+    // 旧插件 p1 的迟到 expired 广播：当前弹窗属于 p2，不应被撤
+    emitPermissionExpired('p1')
+    expect(state.pending).toBe(true)
+    expect(state.pluginId).toBe('p2')
+
+    // p2 自己的 expired 才撤
+    emitPermissionExpired('p2')
+    expect(state.pending).toBe(false)
+  })
+
+  it('TC8: 无挂起弹窗时 expired 广播 → noop 幂等（迟到批准对已删 pending noop 的前端对称面）', () => {
+    const { app } = makeApp()
+    initPermissionRequest(app as never, bus)
+
+    const state = usePermissionRequest()
+    expect(state.pending).toBe(false)
+    emitPermissionExpired('p1')
+    expect(state.pending).toBe(false)
   })
 })

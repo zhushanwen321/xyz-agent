@@ -33,6 +33,7 @@ import { app, ipcMain, shell } from 'electron'
 import type { LatestReleaseInfo, IProxyConfig, UpdateSettings, UpdateCheckResult, ProxyTestResult, UpdateInstallResult } from '@xyz-agent/shared'
 import type { IpcHandlerDeps } from '../interfaces.js'
 import { UpdateError } from '../update/types.js'
+import type { UpdateErrorInfo } from '../update/types.js'
 import { readProxyConfig, writeProxyConfig, resolveProxyUrl } from '../update/proxy-config.js'
 import { validateRelease } from '../update/validate-release.js'
 import { writePendingUpdate, readPendingUpdate } from '../update/pending-update.js'
@@ -146,7 +147,9 @@ async function testProxyConnection(config: IProxyConfig): Promise<ProxyTestResul
     // 提取 cause + 判定错误码。
     const undiciErr = err instanceof CurlFetchError && err.undiciError !== undefined ? err.undiciError : err
     const classified = classifyNetError(undiciErr, 'downloading', proxyUrl)
-    let info = classified.toUserFriendly()
+    // timeout 成因分流（F1）：testProxy 探测超时（'timeout (aborted)' 泛化形态）给中性
+    // 超时话术——无下载语境，停滞文案的「断点续传」指引在本场景是误导
+    let info = resolveTimeoutUserCopy(classified.toUserFriendly(), classified.message)
     // D2（v3 修订）testProxy 统一准绳：公网 EHOSTUNREACH 也给代理语境话术。
     // 用户此刻在测代理，「网络连接失败 + 检查防火墙可访问 GitHub」语境错位；
     // 不加映射表变体是因为该话术仅 testProxy 场景有意义，入枚举会污染
@@ -293,6 +296,37 @@ async function resolveUpdateDownloadShortCircuit(
 }
 
 /**
+ * UPDATE_NETWORK_TIMEOUT 的用户可见文案按成因分流（design-code-sync F1，
+ * timeout-slow-flow-wallclock §7 错误规格表）：该码有三个真实来源，停滞文案若覆盖
+ * connect 成因会把用户引向「查传输停滞」而真实问题是网络/代理不可达。
+ * 判别依据 = 诊断 message（英文串是落盘诊断通道的原始记录，见 net-errors NOTE）：
+ * - connect 形态（mapCurlExitToError connect 档 'curl connection timeout (...)'，
+ *   curl --connect-timeout 10s 连接未建立）→ 连接超时话术
+ * - 停滞形态（'... stalled ...'，undici 双路径 + curl --speed-time）→ 映射表
+ *   停滞 + 断点续传文案（不覆写）
+ * - 泛化形态（'timeout (aborted)'，testProxy 探测超时等；无下载语境，「断点续传」
+ *   指引不适用）→ 中性超时话术
+ * 对齐本文件 testProxy 的 EHOSTUNREACH handler 内覆写先例（场景特化话术不入共享映射表，
+ * 避免 download/install 共用的错误码空间被单场景污染）。
+ */
+function resolveTimeoutUserCopy(info: UpdateErrorInfo, diagnosticMessage: string): UpdateErrorInfo {
+  if (info.code !== 'UPDATE_NETWORK_TIMEOUT') return info
+  if (/connection timeout/i.test(diagnosticMessage)) {
+    return {
+      ...info,
+      message: '连接超时（10 秒未建立连接）',
+      suggestion: '请检查网络连接或代理设置后重试',
+    }
+  }
+  if (/stalled/i.test(diagnosticMessage)) return info
+  return {
+    ...info,
+    message: '连接或响应超时',
+    suggestion: '请检查网络连接是否稳定，或尝试配置代理服务器',
+  }
+}
+
+/**
  * update:download 失败收尾：构造 errorPayload（UpdateError 用户友好形态 / 通用形态）、
  * D7 落盘、推 update:error 事件后 throw 可序列化对象（与 install catch 一致）。
  * 恒 throw。
@@ -301,7 +335,7 @@ function reportUpdateDownloadError(deps: IpcHandlerDeps, err: unknown): never {
   const win = deps.getMainWindow()
   let errorPayload
   if (err instanceof UpdateError) {
-    const f = err.toUserFriendly()
+    const f = resolveTimeoutUserCopy(err.toUserFriendly(), err.message)
     errorPayload = { stage: f.stage, message: f.message, errorCode: f.code, suggestion: f.suggestion }
     // D7: download 失败落盘
     appendUpdateError({

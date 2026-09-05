@@ -465,23 +465,48 @@ async function runSyncFromGithub({ tag, githubRepo }) {
   const prerelease = tag.includes('-');
   const tmpDir = mkdtempSync(join(tmpdir(), 'gitcode-sync-'));
   try {
-    console.log(`[sync-from-github] 从 GitHub 拉取 release ${tag}（repo: ${githubRepo}，走本机 gh/proxy）…`);
+    console.log(`[sync-from-github] 从 GitHub 拉取 release ${tag}（repo: ${githubRepo}，走本机 proxy）…`);
     const view = execSync(
-      `gh release view ${shellQuote(tag)} --repo ${shellQuote(githubRepo)} --json name,body`,
+      `gh release view ${shellQuote(tag)} --repo ${shellQuote(githubRepo)} --json name,body,assets`,
       { encoding: 'utf8', timeout: 60000, shell: '/bin/bash' },
     );
     const meta = JSON.parse(view);
     const notesFile = join(tmpDir, 'release-notes.md');
     writeFileSync(notesFile, meta.body || '');
 
-    execSync(
-      `gh release download ${shellQuote(tag)} --repo ${shellQuote(githubRepo)} --dir ${shellQuote(tmpDir)} --clobber`,
-      { stdio: 'inherit', timeout: 3600000, shell: '/bin/bash' },
-    );
-
-    const assets = readdirSync(tmpDir).filter((f) => f !== 'release-notes.md');
+    // 下载用 curl 直链而非 gh release download：实测 gh 的下载实现把每连接压到
+    // 0.07-0.09MB/s（同代理下 curl 单连接 1.36MB/s、4 连接合计 ~5MB/s，2026-09-05 实测），
+    // 1.1GB 会拖到 40 分钟以上；curl 多文件并行走满代理容量（~4 分钟）。
+    const assets = (meta.assets || []).map((a) => ({ name: a.name, url: a.browser_download_url, size: a.size }));
     if (assets.length === 0) die(`GitHub release ${tag} 没有附件可同步——确认 tag 正确、Release 已发布`);
-    console.log(`[sync-from-github] 下载完成（${assets.length} 个附件），开始上传 GitCode…`);
+    const DOWNLOAD_CONCURRENCY = 4;
+    const failures = [];
+    let next = 0;
+    const t0 = performance.now();
+    const workers = Array.from({ length: Math.min(DOWNLOAD_CONCURRENCY, assets.length) }, async () => {
+      while (next < assets.length) {
+        const a = assets[next++];
+        const dest = join(tmpDir, a.name);
+        try {
+          await execP(
+            `curl -sSL --max-time 900 -o ${shellQuote(dest)} ${shellQuote(a.url)}`,
+            { timeout: 900000, shell: '/bin/bash', maxBuffer: 10 * 1024 * 1024 },
+          );
+          const actual = statSync(dest).size;
+          if (actual !== a.size) throw new Error(`大小不符（${actual} vs ${a.size}）`);
+          console.log(`[sync-from-github] 已下载：${a.name}（${(a.size / 1048576).toFixed(1)}MB）`);
+        } catch (e) {
+          failures.push(`${a.name} —— ${String(e.message || e).slice(0, 200)}`);
+        }
+      }
+    });
+    await Promise.all(workers);
+    if (failures.length > 0) {
+      die(`下载失败 ${failures.length}/${assets.length} 个附件：\n  - ${failures.join('\n  - ')}\n`
+        + '恢复：检查本机代理后重跑（已下载完成的附件会被 curl 重下覆盖，耗时可控）。');
+    }
+    const elapsed = Math.round((performance.now() - t0) / 1000);
+    console.log(`[sync-from-github] 下载完成：${assets.length} 个附件，耗时 ${elapsed}s（${(1100.5 / Math.max(elapsed, 1)).toFixed(1)}MB/s 级）。开始上传 GitCode…`);
     await runSync({ tag, name: meta.name || tag, notesFile, artifactsDir: tmpDir, prerelease });
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });

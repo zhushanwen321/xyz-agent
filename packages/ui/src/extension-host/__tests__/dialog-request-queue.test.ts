@@ -31,9 +31,15 @@ class MockDialogRequestSource implements DialogRequestSource {
     const spy = vi.fn()
     return spy as unknown as () => void
   })
+  onUiRequestExpired = vi.fn((handler: (e: { sessionId: string; requestId: string }) => void): (() => void) => {
+    this.expiredHandler = handler
+    const spy = vi.fn()
+    return spy as unknown as () => void
+  })
 
   requestHandler: ((req: DialogRequest) => void) | null = null
   timeoutHandler: ((e: { sessionId: string; requestId: string }) => void) | null = null
+  expiredHandler: ((e: { sessionId: string; requestId: string }) => void) | null = null
 
   triggerUiRequest(req: Partial<DialogRequest> & { requestId: string; sessionId: string }): void {
     this.requestHandler?.(makeRequest(req))
@@ -41,6 +47,10 @@ class MockDialogRequestSource implements DialogRequestSource {
 
   triggerTimeout(sessionId: string, requestId: string): void {
     this.timeoutHandler?.({ sessionId, requestId })
+  }
+
+  triggerExpired(sessionId: string, requestId: string): void {
+    this.expiredHandler?.({ sessionId, requestId })
   }
 }
 
@@ -212,12 +222,65 @@ describe('DialogRequestQueue', () => {
     source.triggerTimeout('A', 'r1')
     // stop 后 emit 不入队
     expect(q.pendingCount.value).toBe(0)
-    // onUiRequest/onUiTimeout 返回的 unsubscribe 均被调用
+    // onUiRequest/onUiTimeout/onUiRequestExpired 返回的 unsubscribe 均被调用
     expect(source.onUiRequest).toHaveBeenCalledTimes(1)
     expect(source.onUiTimeout).toHaveBeenCalledTimes(1)
+    expect(source.onUiRequestExpired).toHaveBeenCalledTimes(1)
     const unsubUiRequest = source.onUiRequest.mock.results[0]?.value as () => void
     const unsubUiTimeout = source.onUiTimeout.mock.results[0]?.value as () => void
+    const unsubUiRequestExpired = source.onUiRequestExpired.mock.results[0]?.value as () => void
     expect(unsubUiRequest).toHaveBeenCalledTimes(1)
     expect(unsubUiTimeout).toHaveBeenCalledTimes(1)
+    expect(unsubUiRequestExpired).toHaveBeenCalledTimes(1)
+  })
+
+  // ── timeout-plugin-service D2 超时撤窗（plugin:uiRequestExpired 消费） ──
+
+  it('TC-9 expired 撤窗：onUiRequestExpired 按 requestId 出队（含排队中非队首），不发回传（UI_TIMEOUT 无替答）', () => {
+    const sid = ref<string | null>('A')
+    const { source, transport, scope, getQueue } = createHarness(sid)
+    try {
+      source.triggerUiRequest({ sessionId: 'A', requestId: 'r1', source: 'plugin' })
+      source.triggerUiRequest({ sessionId: 'A', requestId: 'r2', source: 'plugin' })
+      const q = getQueue()
+      // 排队中的非队首请求 r2 到期撤窗（D2：广播无条件发出，含从未展示的排队项）
+      source.triggerExpired('A', 'r2')
+      expect(q.pendingCount.value).toBe(1)
+      expect(q.currentRequest.value?.requestId).toBe('r1')
+      // 撤窗不发回传（插件侧已收 UI_TIMEOUT reject；回传会伪装成用户应答）
+      expect(transport.sendPiResponse).not.toHaveBeenCalled()
+      expect(transport.sendPluginResponse).not.toHaveBeenCalled()
+
+      // 队首 r1 撤窗后队列清空
+      source.triggerExpired('A', 'r1')
+      expect(q.pendingCount.value).toBe(0)
+      expect(q.currentRequest.value).toBeUndefined()
+      expect(transport.sendPluginResponse).not.toHaveBeenCalled()
+    } finally {
+      scope.stop()
+    }
+  })
+
+  it('TC-10 expired miss noop 幂等：未知/已出队 requestId 无副作用（V4b：广播无条件发出，miss 是正常时序）', () => {
+    const sid = ref<string | null>('A')
+    const { source, transport, scope, getQueue } = createHarness(sid)
+    try {
+      const q = getQueue()
+      // 空队列收到未知 requestId 的撤窗广播
+      source.triggerExpired('A', 'unknown')
+      expect(q.pendingCount.value).toBe(0)
+      expect(q.currentRequest.value).toBeUndefined()
+
+      // 已展示请求正常 respond 出队后，迟到 expired 广播不再有副作用
+      source.triggerUiRequest({ sessionId: 'A', requestId: 'r1', source: 'plugin' })
+      q.respond('r1', true)
+      expect(transport.sendPluginResponse).toHaveBeenCalledTimes(1)
+      source.triggerExpired('A', 'r1')
+      // 迟到撤窗不产生第二次回传、不改变状态
+      expect(transport.sendPluginResponse).toHaveBeenCalledTimes(1)
+      expect(q.pendingCount.value).toBe(0)
+    } finally {
+      scope.stop()
+    }
   })
 })

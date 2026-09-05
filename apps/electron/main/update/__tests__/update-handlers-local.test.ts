@@ -489,6 +489,8 @@ describe('u6 D5/D8: update:testProxy 双引擎', () => {
 
     // 分类走 undici 侧（UPDATE_NETWORK_TIMEOUT），curl 未被触发
     expect(result).toMatchObject({ success: false, code: 'UPDATE_NETWORK_TIMEOUT' })
+    // 泛化 timeout 形态（F1 分流）→ 中性超时话术：无下载语境，不给停滞/续传文案
+    expect(result).toMatchObject({ message: '连接或响应超时', suggestion: '请检查网络连接是否稳定，或尝试配置代理服务器' })
     expect(curlRunner).not.toHaveBeenCalled()
     // engine 诊断字段：非 CurlFetchError 上抛形态 = 仅 undici 失败
     expect(errorLogMocks.appendUpdateError).toHaveBeenCalledWith(

@@ -5,9 +5,10 @@
 //     收敛到 killRecordChildWithEscalation（spy 断言调用点与参数）；
 //   - T2⑥/PS-1：disposeAllRecords 补三回收面（controller.abort + kill + disarm idle timer
 //     + disarm settled watchdog）；
-//   - T2③/LC-1：热路径投递 armSettledWatchdog（挂载点 D2 下沉后在编排层 deliverChatMessage
-//     的 interact 返回点 + 到期 onTimeout 处置：kill + 失败终态化 + error 含
-//     'settled watchdog' 标记与恢复指引）；
+//   - T2③/LC-1 + D9：热路径投递 armMidRoundNoProgress（挂载点 D2 下沉后在编排层
+//     deliverChatMessage 的 interact 返回点；挂载中段无进展检测 + 到期 onMidTimeout/
+//     onSettleTimeout 处置：kill + 失败终态化 + error 含 'settled watchdog' 标记与恢复
+//     指引；agent_end 交棒收尾段的接线在 session-runner stdout pump，两路径共用）；
 //   - T2⑧/PS-3：非 EPIPE 热路径写失败 re-arm idle timer（进程不再裸奔；挂载位 D2
 //     下沉后在 PiEngine.deliverPrompt 的非 EPIPE catch——编排层无法区分错误类别）。
 //
@@ -61,7 +62,7 @@ import { ModelConfigService } from "../model-config-service.ts";
 import type { RecordStore } from "../record-store.ts";
 import { SubagentService } from "../subagent-service.ts";
 import type { PiLike } from "../subagent-service.ts";
-import { armSettledWatchdog, hasSettledWatchdog, SETTLED_WATCHDOG_TIMEOUT_MS, _resetSettledWatchdogsForTest } from "../settled-watchdog.ts";
+import { armSettledWatchdog, hasSettledWatchdog, SETTLED_MID_ROUND_NO_PROGRESS_MS, _resetSettledWatchdogsForTest } from "../settled-watchdog.ts";
 import { armIdleTimer, hasIdleTimer, _resetLifecycleState } from "../lifecycle-manager.ts";
 import type { ExecutionRecord } from "../types.ts";
 
@@ -160,7 +161,7 @@ describe("T2④ service-side kill convergence", () => {
     _resetLifecycleState();
     _resetSettledWatchdogsForTest();
     spawnedMap.clear();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("cancelBackground (via cancel) routes through killRecordChildWithEscalation", async () => {
@@ -245,7 +246,7 @@ describe("T2③ hot-path settled watchdog", () => {
     _resetLifecycleState();
     _resetSettledWatchdogsForTest();
     spawnedMap.clear();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("arms the settled watchdog after a successful hot-path prompt", async () => {
@@ -257,7 +258,7 @@ describe("T2③ hot-path settled watchdog", () => {
     expect(hasSettledWatchdog(record.id)).toBe(true);
   });
 
-  it("onTimeout: kills the child, fails the round, error carries 'settled watchdog' marker and recovery hint", async () => {
+  it("onMidTimeout: kills the child, fails the round, error carries 'settled watchdog' marker and recovery hint", async () => {
     // fake timers 必须先于 arm 生效（useFakeTimers 不接管已存在的真实 timer）
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const record = makeRecord({ id: "sa-hot-timeout" });
@@ -266,7 +267,9 @@ describe("T2③ hot-path settled watchdog", () => {
     await deliverChat(service, record, "hello", false);
     expect(hasSettledWatchdog(record.id)).toBe(true);
 
-    await vi.advanceTimersByTimeAsync(SETTLED_WATCHDOG_TIMEOUT_MS + 1);
+    // [D9 两段式] 热路径 prompt 发出后挂中段：静默满中段窗长触发（本测试 mock 了
+    // session-runner，无 stdout pump 驱动事件刷新/交棒，中段静默形态直达）
+    await vi.advanceTimersByTimeAsync(SETTLED_MID_ROUND_NO_PROGRESS_MS + 1);
 
     // kill 收敛入口被触发（onTimeout 第一步）
     expect(killChildSpy).toHaveBeenCalledWith(record.id, "settled watchdog (hot path)");
@@ -300,7 +303,7 @@ describe("T2⑧ non-EPIPE hot-path failure re-arms idle timer", () => {
     _resetLifecycleState();
     _resetSettledWatchdogsForTest();
     spawnedMap.clear();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("re-arms the idle timer (default duration) and rethrows on non-EPIPE write failure", async () => {

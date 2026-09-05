@@ -211,7 +211,10 @@ export class RuntimeServer implements IMessageBroker {
     // `messaging` 是 MessageHandlerContext 的共享实现（D7：send/sendError/reply 三方法
     // 逐字相同，此前在 4 个 context 对象里复制了 4 份）。每个 handler 的 context 由
     // `...messaging` 铺底 + 各自的领域依赖组成。
-    this.bridgeHandler = new BridgeHandler(this.pluginService ?? null)
+    // 第二参注入 extensionTimeoutMgr：marker 通道（method 恒 'select'）识别出的 bridge
+    // 请求由 BridgeHandler 入口登记进 bridgeRequestIds（impl-plan 偏差 #5——生产装配点
+    // 必须传，否则前端误发 ui_response 的拦截依据丢失）。
+    this.bridgeHandler = new BridgeHandler(this.pluginService ?? null, this.extensionTimeoutMgr)
     const messaging: MessageHandlerContext = {
       send: (ws, msg) => this.broker.send(ws, msg),
       sendError: (ws, code, message, id, details) => this.broker.sendError(ws, code, message, id, details),

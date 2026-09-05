@@ -128,7 +128,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
-  rmSync(TEST_DIR, { recursive: true, force: true })
+  rmSync(TEST_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 // ─── 验收①：undici 连接建立失败 → 置 flag → curl 路径接管 ────────────────────
@@ -441,7 +441,7 @@ describe('u4-final-failure-undici-classification', () => {
     const asset = smallAsset('never-downloaded')
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(fetchFailedWith('EHOSTUNREACH')))
     downloadViaCurlMock.mockRejectedValue(new UpdateError(
-      'curl download timeout (exit 28, connect 10s / idle 30s)',
+      'curl download stalled (no data for 30s, exit 28)',
       'downloading',
       'UPDATE_NETWORK_TIMEOUT',
     ))

@@ -9,7 +9,7 @@ import { PluginStorage } from './plugin-storage.js'
 import { SessionDataStore } from './session-data-store.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
 import { PluginHost } from './plugin-host.js'
-import { PluginActivator } from './plugin-activator.js'
+import { PluginActivator, PERMISSION_TIMEOUT_MS } from './plugin-activator.js'
 import { registerAllRpcMethods } from './plugin-rpc-setup.js'
 import { bootstrapPluginService } from './plugin-lifecycle.js'
 import { ActiveSessionResolver, SessionEventDispatch, sessionInfoFromSummary } from './api/session-api.js'
@@ -33,6 +33,33 @@ import { PendingTracker } from '../../utils/async/pending-tracker.js'
 // type-only：IMessageBus 不反向依赖 plugin-service，无运行时环（与 message-dispatcher 同款约束）
 // wave:perf-w09（接口收敛）：依赖 publish 抽象而非 MessageBus 具体类
 import type { IMessageBus } from '../message-bus/message-bus.js'
+
+/**
+ * XYZ_PLUGIN_PERMISSION_TIMEOUT_MS 读取（timeout-plugin-service D3）：权限审批
+ * 等待的全局逃生门。合法正数生效；缺失/非法 warn 回落 undefined → Activator 构造
+ * 函数落 PERMISSION_TIMEOUT_MS（回落权威单一在构造函数，此处只解析 env）。
+ *
+ * 形态对齐 subagent-core lifecycle-manager getEnvIdleTimeoutMs 先例：「以为设了
+ * 超长等待、实际回落默认」的静默语义漂移不可见，非法必须 warn 留痕。
+ *
+ * §11 检查点结论（C-proc-09 核对）：runtime 进程自读 env，不进任何白名单——
+ * 入站方向 ENV_WHITELIST_PREFIXES（shared/constants.ts）已含裸 'XYZ_' 前缀天然
+ * 放行；出站方向 runtime 不向子进程注入此变量（消费点仅 runtime 自身），且
+ * SPAWN_ENV_FORWARD_REFERENCE 为纯文档性登记不参与过滤（runtime 自身行为开关
+ * 不登记，XYZ_LOG_LEVEL 族 U0-② 同款结论）。
+ */
+function readEnvPermissionTimeoutMs(): number | undefined {
+  const raw = process.env.XYZ_PLUGIN_PERMISSION_TIMEOUT_MS
+  if (!raw) return undefined
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    console.warn(
+      `[plugin-service] XYZ_PLUGIN_PERMISSION_TIMEOUT_MS="${raw}" is invalid (expected a positive millisecond number) — falling back to default ${PERMISSION_TIMEOUT_MS}ms (30min); set a plain ms value (e.g. 1800000) to override`,
+    )
+    return undefined
+  }
+  return parsed
+}
 
 // （BC）findTsxImportArg / resolveEsmLoaderExecArgv 原从本文件导出（实现迁至
 // plugin-esm-execargv.ts，max-lines 拆分），re-export 保持既有导入路径稳定
@@ -159,6 +186,14 @@ export class PluginService implements IPluginService {
     // （plugin:uiRequest 归 stream 类，分配 seq + 入 ring 可回放），不再 broadcast；
     // sid undefined（无活跃 session 的弹窗仍须必达全部连接）或 bus 未装配 → 保持全局广播。
     this.uiRequestQueue = new UiRequestQueue((type, payload) => {
+      // 撤窗广播不走 session 级 bus（D2 收尾修正，与 D3 permissionRequestExpired 直发
+      // 形态对称）：expired payload 无 sessionId 语义（renderer onGlobal 按 requestId
+      // 反查撤窗，extension-host-dialog.ts），bus.publish(sid) 落 session 级帧
+      // onGlobal 永不可达 → 撤窗生产常态失效。直发 global 通道，raw payload 不注 sid。
+      if (type === 'plugin:uiRequestExpired') {
+        this.broadcastOrBroker(type, `ui_${payload.requestId}`, payload)
+        return
+      }
       const active = this.activeSessionResolver.resolve()
       const sid = active?.id
       const fullPayload = { ...payload, sessionId: sid }
@@ -185,6 +220,13 @@ export class PluginService implements IPluginService {
       permissionChecker: this.permissionChecker,
       onPermissionRequest: (payload) =>
         this.broadcastOrBroker('plugin:permissionRequest', `perm_${payload.pluginId}`, payload),
+      // 审批等待到期取消（timeout-plugin-service D3）：广播供前端撤回无人应答的
+      // 审批弹窗（迟到批准对已删 pending noop 幂等；旧版前端未消费此帧无异常，P-11）。
+      onPermissionRequestExpired: (payload) =>
+        this.broadcastOrBroker('plugin:permissionRequestExpired', `permExpired_${payload.pluginId}`, payload),
+      // permissionTimeoutMs 转正（D3）：env 逃生门接线，undefined（缺失/非法已 warn）
+      // 由 Activator 构造函数回落 PERMISSION_TIMEOUT_MS。
+      permissionTimeoutMs: readEnvPermissionTimeoutMs(),
     })
   }
 
@@ -596,7 +638,8 @@ export class PluginService implements IPluginService {
    * 实现在 api/commands-executor.ts（max-lines 拆分迁出，行为不变）：复合键查
    * registry → rpcServer.notify 向 Worker 发 plugin.commands.invoke → Worker 执行
    * handler 后经 plugin.commands.invoke.result 回传结果/错误 → deliverInvokeResult
-   * resolve/reject 对应 pending（超时 COMMAND_EXECUTE_TIMEOUT_MS）。命令表按插件
+   * resolve/reject 对应 pending（超时取值链见 api/commands-executor.ts，D4：命令
+   * 定义 timeoutMs 声明优先，默认 DEFAULT_TOOL_EXECUTE_TIMEOUT_MS 30min）。命令表按插件
    * 隔离（B 无法覆盖/注销 A 的同名命令）。
    */
   async executeCommand(pluginId: string, commandId: string, args?: Record<string, unknown>): Promise<unknown> {
@@ -661,6 +704,7 @@ export class PluginService implements IPluginService {
       deps: this.deps,
       broadcastStatusBarItems: () => this.statusBarRegistry.broadcastAll(),
       handleUiRequest: (method, params, pluginId) => this.uiRequestQueue.handleRequest(method, params, pluginId),
+      cancelUiRequest: (requestId) => this.uiRequestQueue.cancelRequest(requestId),
       syncToolsToBridge: () => this.syncToolsToBridge(),
       getDescriptor: (pluginId) => this.registry.getDescriptor(pluginId),
       sessionDataStore: this.sessionDataStore,

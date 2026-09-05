@@ -7,14 +7,15 @@
  * deep watch 变化后全量 save；runtime WriteBackCache debounce 落盘）。
  */
 import type { ProjectStoreState } from '@xyz-agent/shared'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '../pending'
 import { command } from '../request'
 
 /** 全量加载 project 列表（runtime project.load → project.loaded reply）。 */
 export async function load(): Promise<ProjectStoreState> {
-  return command('project.load', {})
+  return command('project.load', {}, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 全量保存（runtime project.save → project.loaded reply；ack 语义，前端不读 reply 数据）。 */
 export async function save(state: ProjectStoreState): Promise<void> {
-  await command('project.save', state)
+  await command('project.save', state, RPC_BACKSTOP_TIMEOUT_MS)
 }

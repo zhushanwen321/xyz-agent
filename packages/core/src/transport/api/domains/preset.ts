@@ -12,6 +12,7 @@
  * 与 session 域同构（command helper 收敛 4 行 RPC 模板，调用方从 reply 解包字段）。
  */
 import type { PiLaunchPreset } from '@xyz-agent/shared'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '../pending'
 import { command } from '../request'
 
 /**
@@ -20,7 +21,7 @@ import { command } from '../request'
  * type=preset.list（runtime PresetMessageHandler 处理）。
  */
 export async function list(): Promise<PiLaunchPreset[]> {
-  const reply = await command('preset.list', {})
+  const reply = await command('preset.list', {}, RPC_BACKSTOP_TIMEOUT_MS)
   return reply.presets
 }
 
@@ -30,7 +31,7 @@ export async function list(): Promise<PiLaunchPreset[]> {
  * 缺省值 'builtin:full'（runtime 在无配置时返回全工具模式）。
  */
 export async function getDefault(): Promise<string> {
-  const reply = await command('preset.getDefault', {})
+  const reply = await command('preset.getDefault', {}, RPC_BACKSTOP_TIMEOUT_MS)
   return reply.presetId
 }
 
@@ -40,7 +41,7 @@ export async function getDefault(): Promise<string> {
  * presetId 必须是已存在的预设 id（runtime 校验存在性，不存在抛错）。
  */
 export function setDefault(presetId: string): Promise<void> {
-  return command('preset.setDefault', { presetId })
+  return command('preset.setDefault', { presetId }, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /**
@@ -49,7 +50,7 @@ export function setDefault(presetId: string): Promise<void> {
  * runtime PresetService.savePreset 写入 pi-presets.json。
  */
 export async function create(preset: PiLaunchPreset): Promise<PiLaunchPreset> {
-  const reply = await command('preset.create', { preset })
+  const reply = await command('preset.create', { preset }, RPC_BACKSTOP_TIMEOUT_MS)
   return reply.preset
 }
 
@@ -59,7 +60,7 @@ export async function create(preset: PiLaunchPreset): Promise<PiLaunchPreset> {
  * 内置预设的 name/id/builtin 字段不可改（runtime PresetGuardError 拦截）。
  */
 export async function update(preset: PiLaunchPreset): Promise<PiLaunchPreset> {
-  const reply = await command('preset.update', { preset })
+  const reply = await command('preset.update', { preset }, RPC_BACKSTOP_TIMEOUT_MS)
   return reply.preset
 }
 
@@ -68,5 +69,5 @@ export async function update(preset: PiLaunchPreset): Promise<PiLaunchPreset> {
  * ack 型（reply void）。
  */
 export function remove(presetId: string): Promise<void> {
-  return command('preset.delete', { presetId })
+  return command('preset.delete', { presetId }, RPC_BACKSTOP_TIMEOUT_MS)
 }

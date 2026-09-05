@@ -75,6 +75,9 @@ function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
     setBareSetupScript: vi.fn(),
     getTimeout: vi.fn(() => 60),
     setTimeout: vi.fn(),
+    // 对话流式空闲超时 stub（worktree 测试不涉及，默认 1800s）
+    getStreamingIdleTimeout: vi.fn(() => 1800),
+    setStreamingIdleTimeout: vi.fn((timeout: number) => timeout),
     getDefaultBaseBranch: vi.fn(() => 'origin/main'),
     setDefaultBaseBranch: vi.fn(),
     // auto-rename 开关 stub（worktree 测试不涉及，默认关闭）
@@ -550,6 +553,8 @@ describe('WorktreeService setup 脚本', () => {
         scriptPath: setupScriptPath,
         args: ['/project/feat-test'],
         cwd: '/project/feat-test',
+        // timeout 必传后（D4）：断言用户配置值（getTimeout()=60s → 60_000ms）显式透传
+        timeout: 60_000,
       }),
     )
   })

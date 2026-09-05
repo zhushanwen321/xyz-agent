@@ -328,11 +328,20 @@ export interface Message {
   /**
    * 消息级错误文本/标记（status:'error' 同源）。
    * - assistant turn：message.error / send.rejected 通道写入错误文本
-   * - bash 消息：finalizeBashOnly 超时收口置 'timeout'（与 cancelled:true 区分超时 vs 主动取消）
-   * - markBashError abortBash 失败兜底写入错误文本
-   * 前端按值区分渲染（如 BashOutputBlock 消费 'timeout' 显示「超时」而非「已取消」）。
+   * - bash 消息：markBashError abortBash 失败兜底写入错误文本
+   * 前端按值区分渲染（如 BashOutputBlock 消费 'timeout' 显示「超时」而非「已取消」——
+   * 'timeout' 值的原写方 bash timer 收口已随 dormant 契约删除
+   * （docs/design/timeout-streaming-ui-idle.md §5.4 D4），渲染兼容分支保留）。
    */
   error?: string
+  /**
+   * [premature-timeout] UI idle 超时收口标记（docs/design/timeout-streaming-ui-idle.md §5.2 D2）。
+   * true = 该气泡是 idle timer 收口的「UI 误判窗口」产物（timeout → error 是前端兜底强推，
+   * 非 pi 真实终态）：renderer 据此显示超时提示 + 恢复指引；迟到的 message.complete 到达时
+   * 由 registry 恢复分支清标并恢复真实终态（权威 content/usage 覆盖）。
+   * live 态标记，不持久化——reload 从 session JSONL 重建权威状态（设计 §4.2 恢复窗口矩阵④）。
+   */
+  prematureTimeout?: boolean
   /** 上下文压缩摘要（W07-C，message.compactionSummary） */
   compactionSummary?: CompactionSummary
   /** 分支摘要（W07-C，message.branchSummary） */

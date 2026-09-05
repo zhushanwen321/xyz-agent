@@ -37,6 +37,7 @@ const pendingMock = vi.hoisted(() => ({
 
 vi.mock('@xyz-agent/core/transport/ws-client', () => ({ send: transportMock.send }))
 vi.mock('../../../../core/src/transport/api/pending', () => ({
+  RPC_BACKSTOP_TIMEOUT_MS: 65_000,
   createCommandId: vi.fn(() => 'pid-1'),
   register: pendingMock.register,
   reject: vi.fn(),

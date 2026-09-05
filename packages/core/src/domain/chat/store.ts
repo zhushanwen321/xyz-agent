@@ -26,7 +26,7 @@ import {
   disposeLruEntry,
 } from './lru'
 import { findLastAssistantIndex } from './chunk-processor'
-import { findLastStreamingBashIndex, markBashError, clearExecutingBash } from './bash-effects'
+import { markBashError, clearExecutingBash } from './bash-effects'
 import { createChangeSetController } from './changeset'
 import { createHandoffController } from './handoff'
 import type {
@@ -60,13 +60,23 @@ interface PendingItem {
 }
 
 /**
- * streaming 超时默认值：10min。
+ * streaming idle 无进展检测默认阈值：30min（1_800_000ms）。
  *
- * W6 调整：原 24h 形同虚设。降到 10min 作为 runtime pi watchdog（5min ABORT）之后的第二道 UI 兜底——
- * runtime watchdog 先检测 pi 卡死并自动 abort（广播 message.error），前端 streaming 超时只处理
- * runtime 自身也卡死的极端场景（runtime 主进程卡死时 watchdog 跑不了）。
+ * [idle-refresh] 语义变更（docs/design/timeout-streaming-ui-idle.md §5.1 D1）：
+ * streaming timer 从「固定总时长墙钟」改为「纯活动刷新的 idle 无进展检测」——
+ * 消息活动帧（text_delta/tool_call 等）经 store.applyMessageEvent 刷新计时，
+ * 到期 = 「阈值时长内零帧」。默认 1800s 对齐 keep-alive 30min 无进展先例
+ * （runtime 进程死亡判死 180s、stream_warn 提示 120s，UI 是最后兜底须更宽：
+ * 1800s = 10× 进程判死、15× 提示阈值）。单一权威口径：默认 1800s + 合法域
+ * clamp 60–3600s（§4.3/§5.3 D3；配置链 RPC 由后续单元接入）。
  */
-export const DEFAULT_STREAMING_TIMEOUT_MS = 600_000 // 10min
+export const DEFAULT_STREAMING_IDLE_TIMEOUT_MS = 1_800_000
+
+/** [idle-refresh] idle 阈值合法域下界 60s（§5.3 D3 单一权威口径，与上界配对使用）。 */
+export const STREAMING_IDLE_TIMEOUT_MIN_MS = 60_000
+
+/** [idle-refresh] idle 阈值合法域上界 3600s（§5.3 D3 单一权威口径）。 */
+export const STREAMING_IDLE_TIMEOUT_MAX_MS = 3_600_000
 
 /**
  * [E-4] toolCall overlay 形态挂载到分区最后一条 assistant（subagent entry 帧消费，§6.1）。
@@ -230,21 +240,6 @@ function mergeBaselineWithLive(baseline: Message[], partition: Message[]): Messa
 }
 
 /**
- * 读 streaming 超时阈值（D-003 阈值可配置 + D-016 IPC）。
- * [D-016] 经 IPC 读主进程 env（非 import.meta.env，Vite 不暴露 XYZ_ 前缀）。
- * 留在模块作用域以控制 setup 函数行数（max-lines-per-function）。
- *
- * [w4 归位] IPC 接线经 PlatformPort 注入属另一个 wave（标 TODO @platform-port-wave）。
- * 当前 const env = undefined（实际未读 window.electronAPI），返回 DEFAULT_STREAMING_TIMEOUT_MS。
- */
-function readStreamingTimeoutMs(): number {
-  // TODO @platform-port-wave: 接 IPC — window.electronAPI?.getStreamingTimeout?.()
-  const env = undefined
-  const parsed = env ? Number(env) : Number.NaN
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STREAMING_TIMEOUT_MS
-}
-
-/**
  * 构造 chat 域全部 state + actions（无参）。factory 模式与归位历史见 ./README.md。
  * 内部用 onScopeDispose（清 timer），调用方需在 effectScope 上下文内执行本 factory。
  */
@@ -352,15 +347,29 @@ export function createChatStore() {
   /** getHistory 加载失败的 session（#2 AC-2.6：landing 重试出口，不永久卡住） */
   const failedHistory = ref<Set<string>>(new Set())
 
-  // ── 超时兜底 timer（D-003 阈值可配置 + D-007 真收口）──
+  // ── 超时兜底 timer（[idle-refresh] 阈值可变配置源 + D-007 真收口）──
 
   /**
-   * streaming 超时阈值。默认 10min（600_000ms，DEFAULT_STREAMING_TIMEOUT_MS）。
-   * W6 调整：原 24h 形同虚设，降到 10min 作为 runtime pi watchdog（5min ABORT）之后的第二道
-   * UI 兜底——runtime watchdog 先 abort 广播 message.error，本 timer 只兜底 runtime 自身卡死。
-   * 可经 env XYZ_STREAMING_TIMEOUT_MS 配置（IPC 从主进程读，D-016）。
+   * streaming idle 阈值（可变配置源，[idle-refresh] §6 store 行）。
+   * 默认 DEFAULT_STREAMING_IDLE_TIMEOUT_MS（1800s）；经 setStreamingIdleTimeoutMs 更新
+   * （非法值 clamp 进合法域），arm 与 refresh 同为读当前值挂点——进行中 turn 在阈值变更后的下一活动帧即按新值重挂 idle 窗口，计时基线（已流逝时间）不清零（设计 §5.3 实施期演进裁决）。配置链水合（settings
+   * RPC → 本 action）由后续单元接线；本单元只落「读当前值」挂点。
    */
-  const STREAMING_TIMEOUT_MS = readStreamingTimeoutMs()
+  let streamingIdleTimeoutMs: number = DEFAULT_STREAMING_IDLE_TIMEOUT_MS
+
+  /**
+   * 设置 streaming idle 阈值（ms）。非法值（< 60s 或 > 3600s，§5.3 D3 单一权威合法域）
+   * clamp 进域 + warn（错误可操作：warn 带入参值/合法域/实际生效值）。
+   */
+  function setStreamingIdleTimeoutMs(ms: number): void {
+    const clamped = Math.min(Math.max(ms, STREAMING_IDLE_TIMEOUT_MIN_MS), STREAMING_IDLE_TIMEOUT_MAX_MS)
+    if (clamped !== ms) {
+      console.warn(
+        `[chat] streamingIdleTimeoutMs=${ms}ms 超出合法域 [${STREAMING_IDLE_TIMEOUT_MIN_MS}, ${STREAMING_IDLE_TIMEOUT_MAX_MS}]ms，已 clamp 至 ${clamped}ms（docs/design/timeout-streaming-ui-idle.md §5.3 D3）`,
+      )
+    }
+    streamingIdleTimeoutMs = clamped
+  }
   /** pendingSend 空窗期 timer 阈值（D-015/F4，接管 dispatchingTimer 30s 语义） */
   const PENDING_SEND_TIMEOUT_MS = 30_000
   /**
@@ -821,8 +830,17 @@ export function createChatStore() {
     }
   }
 
-  /** message.* 事件单一入口（F2 消除 double-dispatch）：经 dispatchMessageEvent 查 effects/registry.ts 执行全部副作用。非 message.* / 未注册 type no-op。重构等价性见 ./README.md。 */
+  /**
+   * message.* 事件单一入口（F2 消除 double-dispatch）：经 dispatchMessageEvent 查 effects/registry.ts 执行全部副作用。非 message.* / 未注册 type no-op。重构等价性见 ./README.md。
+   *
+   * [idle-refresh] 入口挂 idle 计时刷新（§5.1 D1：所有 message.* 帧必经，core headless 可测）。
+   * 排除清单唯一成员 `message.stream_warn`（§5.7 D7）：它本身是「120s 无活动」的断言帧，
+   * 刷新它 = 给挂死流续命一轮阈值。终态帧（complete/error/stream_error）照常刷新无害——
+   * dispatch 内 finalizeSession 本就清 timer。timer 已被 finalize 清掉时 refresh 构造性
+   * no-op（P-H：迟到帧不复活 timer）。
+   */
   function applyMessageEvent(sessionId: string, msg: ServerMessage): void {
+    if (msg.type !== 'message.stream_warn') refreshStreamingTimer(sessionId)
     dispatchMessageEvent(
       {
         messages,
@@ -833,8 +851,6 @@ export function createChatStore() {
         finalizeSession,
         clearPendingSend,
         armStreamingTimer,
-        armBashTimer,
-        clearBashTimer,
         appendUser,
         drainN,
         reconcilePending,
@@ -843,6 +859,8 @@ export function createChatStore() {
         incrementInflight,
         decrementInflight,
         clearInflight,
+        takePrematureTimeoutIds: streamingStateMachine.takePrematureTimeoutIds,
+        clearPrematureTimeoutIds: streamingStateMachine.clearPrematureTimeoutIds,
       },
       sessionId,
       msg,
@@ -857,30 +875,15 @@ export function createChatStore() {
    */
   function finalizeSession(sessionId: string, reason: FinalizeReason, errorText?: string): void {
     streamingStateMachine.finalizeMessages(sessionId, reason, errorText)
-    // 清 pendingSend + streaming timer（bash timer 不清：W1 timer-decouple 解耦，bash timer 由
-    // bashResultEffect/markBashError/finalizeBashOnly 独立清，不应被 assistant 收口误清）。
+    // 清 pendingSend + streaming timer（bash 消息不经此收口：finalizeMessages 跳过 bash，
+    // 其生命周期由 bashResultEffect/markBashError 独立管理，不应被 assistant 收口误清）。
     // [M2 PR#116 review] clearStreamingTimer 此前被误删：正常 message.complete 路径不再清
-    // streaming timer，10min 后 timer 仍会触发 finalizeSession('timeout')，造成已 complete 的
+    // streaming timer，阈值到期后 timer 仍会触发 finalizeSession('timeout')，造成已 complete 的
     // turn 被二次收口（幂等无功能损害，但浪费一次 finalize 调用 + DEV warn 噪音）。
     clearPendingSend(sessionId)
     clearStreamingTimer(sessionId)
     // 收口日志：仅异常 reason 打 dev warn（保留诊断价值），normal/aborted 正常路径不打（去长对话噪音）
     if (isDevMode() && reason !== 'normal' && reason !== 'aborted') console.warn(`[chat] finalizeSession sid=${sessionId} reason=${reason}`)
-  }
-
-  /** bash timer 专用收口（W1 timer-decouple，C2 回归防护）：只把 streaming bash 消息推 error 态，**不**清 streaming timer / pendingSend / 调 finalizeSession。幂等（无 streaming bash 时 no-op）。背景见 ./README.md。 */
-  function finalizeBashOnly(sessionId: string): void {
-    const prev = messages.value.get(sessionId)?.value ?? []
-    // [S7] 复用 findLastStreamingBashIndex，与 bashResultEffect/markBashError 一致。
-    const realIdx = findLastStreamingBashIndex(prev, sessionId)
-    if (realIdx === -1) return
-    const next = prev.map((m, i) => i === realIdx ? {
-      ...m,
-      status: 'error' as const,
-      bashExecution: { ...m.bashExecution!, cancelled: true },
-      error: 'timeout',
-    } : m)
-    commitMessages(messages, sessionId, next)
   }
 
   /**
@@ -935,8 +938,8 @@ export function createChatStore() {
     clearSessionTimer(pendingSendTimers, sessionId)
   }
 
-  // ── timer（streaming + bash）：从 chat-timers.ts 提取，闭包注入 finalizeSession ──
-  const { armStreamingTimer, clearStreamingTimer, armBashTimer, clearBashTimer, disposeAllTimers } = initTimers(finalizeSession, finalizeBashOnly, STREAMING_TIMEOUT_MS)
+  // ── timer（streaming）：从 chat-timers.ts 提取，闭包注入 finalizeSession；阈值经 getter 读当前配置值（[idle-refresh]）──
+  const { armStreamingTimer, refreshStreamingTimer, clearStreamingTimer, disposeAllTimers } = initTimers(finalizeSession, () => streamingIdleTimeoutMs)
 
   /**
    * session 级错误统一入口：追加 error assistant 消息 + finalizeSession。
@@ -1089,7 +1092,7 @@ export function createChatStore() {
     // 07 文档 §3.3.2 cleanup 契约）。
     sessionStreamingFlags.delete(sessionId)
     // timer 清理（模块级 Map，非响应式）
-    for (const clear of [() => clearPendingSendTimer(sessionId), () => clearStreamingTimer(sessionId), () => clearBashTimer(sessionId), () => clearHandingOffTimer(sessionId)]) clear()
+    for (const clear of [() => clearPendingSendTimer(sessionId), () => clearStreamingTimer(sessionId), () => clearHandingOffTimer(sessionId)]) clear()
     disposeLruEntry(sessionId) // R5: 清理 LRU 时序记录，防止内存泄漏
   }
 
@@ -1126,6 +1129,16 @@ export function createChatStore() {
     decrementInflight,
     clearInflight,
     applyMessageEvent,
+    /**
+     * [idle-refresh] 纯活动刷新 streaming idle 计时（timer 存活才重挂，无 timer no-op）。
+     * store 公开 action：供 routeInbound 默认兜底路径（原 FALLBACK）的 onSubagentStreamDelta
+     * 桥接实现
+     * （renderer 装配层）按帧解析父 sid 后调用——subagent.stream_delta 旁路帧不经
+     * applyMessageEvent（subagent store 消费域），父 session 的 idle 刷新走本入口。
+     */
+    refreshStreamingTimer,
+    /** [idle-refresh] 设置 streaming idle 阈值（非法值 clamp 进 60–3600s 合法域 + warn）。配置链水合挂点（后续单元接线）。 */
+    setStreamingIdleTimeoutMs,
     isGenerating,
     isActive,
     finalizeSession,
@@ -1148,7 +1161,7 @@ export function createChatStore() {
     // store 持有自己的 messages ref，useChat 经此方法调用不碰 ref（解耦 pinia Store/factory
     // 产物的 messages 类型鸿沟：pinia Store.messages 被解包为 Map，factory 产物为 ShallowRef）。
     markStreamingBashError: (sessionId: string, errorText: string) =>
-      markBashError(messages, sessionId, errorText, clearBashTimer),
+      markBashError(messages, sessionId, errorText),
     // W3 H3 LRU
     touchLru,
     evictIfNeeded,
@@ -1168,8 +1181,6 @@ export function createChatStore() {
      */
     testInternals: {
       armStreamingTimer,
-      armBashTimer,
-      clearBashTimer,
       /** D-3 streaming flag 惰性派生缓存（断言 disposeSession/LRU 驱逐清理语义用，生产代码勿读）。 */
       _sessionStreamingFlagsForTest: sessionStreamingFlags,
       /** [W21] per-session reducer 累积态（断言 applyEntryFrame 喂入/清理语义用，生产代码勿读）。 */
@@ -1222,6 +1233,7 @@ export type ChatStoreOps = Pick<
   | 'clearPendingSend' | 'markSessionError' | 'setCompacting' | 'setHandingOff'
   | 'appendSystemNotice' | 'appendSubagentDirective' | 'truncateFrom'
   | 'applyFileChanges' | 'disposeSession' | 'markStreamingBashError'
+  | 'refreshStreamingTimer' | 'setStreamingIdleTimeoutMs'
   | 'touchLru' | 'evictIfNeeded' | 'evictSessionWithVirtual' | 'evictVirtualKey'
   | 'incrementInflight' | 'decrementInflight' | 'clearInflight'
   | 'testInternals'

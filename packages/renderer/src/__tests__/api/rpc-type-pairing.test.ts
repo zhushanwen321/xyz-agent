@@ -16,7 +16,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ClientMessageMap, ReplyPayloadMap, ServerMessageMap } from '@xyz-agent/shared'
-import { command } from '@xyz-agent/core/transport/api'
+import { command, RPC_BACKSTOP_TIMEOUT_MS } from '@xyz-agent/core/transport/api'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // [tc-transport-consolidation u5] domain 真源已迁 core（壳 api/domains 仅剩 settings IPC 门面），
@@ -34,7 +34,8 @@ function silentCommand<K extends keyof ReplyPayloadMap>(
   type: K,
   payload: ClientMessageMap[K],
 ): Promise<ReplyPayloadMap[K]> {
-  const p = command(type, payload)
+  // timeoutMs 必传化（D5/G5）后本文件只验证编译期类型契约，超时值不参与断言——统一传 backstop
+  const p = command(type, payload, RPC_BACKSTOP_TIMEOUT_MS)
   void p.catch(() => {})
   return p
 }

@@ -875,7 +875,7 @@ describe('createChatStore factory', () => {
       expect(tc.endTime).toBeUndefined()
     })
 
-    it('bash 消息跳过 finalizeSession（finalizeBashOnly 独立域）', () => {
+    it('bash 消息跳过 finalizeSession（bash 收口链独立域）', () => {
       const sid = 's1'
       sut.store.setMessages(sid, [{
         id: 'b1', role: 'system', content: '', status: 'streaming', timestamp: 1,

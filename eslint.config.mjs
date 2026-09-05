@@ -111,6 +111,20 @@ export default [
       'max-lines': 'off',
     },
   },
+  // [HISTORICAL] session-channel.ts 是 zcode 单任务会话通道的唯一聚合点：A.2 协议帧序
+  // SSOT（create/subscribe/send/终态双保险判定/read/close）+ P0-1 turn 等待两 timer
+  // 状态机（idle 主判定 + 总上界兜底，timeout-zcode-turn-and-settled-watchdog.md §6 D1，
+  // 2026-09-05 落地后超限）。职责内聚（帧序分发、终态判定与 idle 刷新共享同一
+  // ActiveTurn 状态），行数超 500。拆分违反该设计 §7「无新模块」约束，属独立重构任务。
+  // 与 event-adapter/session-service 等 override 同型——唯一聚合中心，短期避免阻塞。
+  {
+    files: [
+      'packages/subagent-core/src/execution/engine/engines/zcode/session-channel.ts',
+    ],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
   // [HISTORICAL] useContenteditableInput.ts 是 composer 富文本输入的唯一聚合点：
   // 视觉行移动（getClientRects+caretRangeFromPoint）+ segments 解析（getSegmentsFromEl）
   // + 草稿/光标/IME/粘贴事件处理 + Cmd+V 双通路图片粘贴。各职责共享 savedRange/preferredX
@@ -410,21 +424,25 @@ export default [
   },
   // zcode-engine.ts：zcode app-server 常驻引擎的唯一聚合中心（连接池 + 会话生命周期 +
   // 降级链 + 错误归类，packages 域上限 500 下 1038 行）。拆分方向（连接层 / 会话层 /
-  // 归类层）属独立重构任务，短期 override 至 1150 避免阻塞。
+  // 归类层）属独立重构任务，短期 override 至 1150 避免阻塞。U2 超时收口 + U3 终态
+  // status 分流（timeout-zcode-turn-and-settled-watchdog.md，2026-09-05）后 1165 行——
+  // 与 session-runner 同型提额至 1300（U4 重试扩展/U5 dispose 收割还将落在同文件）。
   {
     files: ['packages/subagent-core/src/execution/engine/engines/zcode/zcode-engine.ts'],
     rules: {
-      'max-lines': ['warn', { max: 1150, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 1300, skipBlankLines: true, skipComments: true }],
     },
   },
   // subagent-service.ts 单列：旧位 2141 行即超 extensions 域 1000 上限（基线存量，
   // 迁移前已在告警），抽离后 1245 行；无界等待修复（OR-3 消息层超时 + 收殓下沉）
-  // 后 1415 行。短期 override 至 1450 避免阻塞，长期拆分（service 门面 / record
-  // 子图 / spawn 编排三段）待独立重构。
+  // 后 1415 行；u-h2 engine-aware model validation（route first、按目标 engine
+  // 校验，2026-09-05）+21 行 → 1471 行。该文件是编排聚合点（与 event-adapter
+  // 同型先例），不拆文件；短期 override 至 1500 避免阻塞，长期拆分（service 门面 /
+  // record 子图 / spawn 编排三段）待独立重构。
   {
     files: ['packages/subagent-core/src/execution/subagent-service.ts'],
     rules: {
-      'max-lines': ['warn', { max: 1450, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 1500, skipBlankLines: true, skipComments: true }],
     },
   },
   // session-reader tool-handler：聚合工具处理中枢（多工具入口 + 渲染调度），

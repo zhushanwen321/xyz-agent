@@ -13,8 +13,8 @@
 
 import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
-import type { NormalizedQuotaRow, ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchFailureReason } from '@xyz-agent/shared'
-import { matchQuotaPreset } from '@xyz-agent/shared'
+import type { NormalizedQuotaRow, ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchFailureReason, QuotaFetcherConfig } from '@xyz-agent/shared'
+import { matchQuotaPreset, normalizeQuotaWorkspaceUrl } from '@xyz-agent/shared'
 import { QUOTA_FETCHERS } from './quota-providers/index.js'
 import { QuotaCache } from './quota-cache.js'
 import { getApiKeyForProvider, getProviderConfig } from '../infra/pi/pi-provider-store.js'
@@ -227,6 +227,9 @@ export class QuotaService {
    *
    * @param fetcher - 用户手动选择的 fetcher id（可选）。未传时保留既有 fetcher 不变。
    * @param apiKey - Coding Plan 专属 API Key（可选，api-key 类）。空字符串 = 清除专属 key，复用 provider.apiKey。
+   * @param workspace - 资源维度 fetcher（opencode）的 workspace 地址（可选，D1-1）。
+   *   接受完整 URL 或裸 wrk_ id（归一化为规范 URL 存储，P1-1）；空字符串 = 清除；
+   *   非法输入返回 ok:false（不发请求可区分 not_configured）。
    */
   async configure(
     providerId: string,
@@ -234,6 +237,7 @@ export class QuotaService {
     cookie?: string,
     fetcher?: string,
     apiKey?: string,
+    workspace?: string,
   ): Promise<QuotaConfigureResult> {
     // 确保 secrets 目录存在
     // [W4] 临时清零 umask 保证 mode 0o700 不被进程 umask 过滤（mkdirSync 的 mode 受 umask 影响）。
@@ -293,13 +297,32 @@ export class QuotaService {
       }
     }
 
-    // 持久化 quota 配置到 config/providers.json（fetcher/enabled/cookieSet/apiKeySet）
+    // workspace 归一化校验（D1-1/P1-1）：非法输入 fail-fast（不落半成品配置），错误面
+    // 返回给调用方（renderer 已本地预校验，此处是直接 RPC 调用者的防御线）
+    let normalizedWorkspace: string | null | undefined
+    if (workspace !== undefined) {
+      const trimmed = workspace.trim()
+      if (!trimmed) {
+        // 空字符串 = 清除（恢复未配置态，查询报 not_configured）
+        normalizedWorkspace = null
+      } else {
+        const normalized = normalizeQuotaWorkspaceUrl(trimmed)
+        if (!normalized.ok) {
+          logger.warn('[quota] invalid workspace input', { providerId, error: normalized.error })
+          return { ok: false, error: normalized.error }
+        }
+        normalizedWorkspace = normalized.url
+      }
+    }
+
+    // 持久化 quota 配置到 config/providers.json（fetcher/enabled/cookieSet/apiKeySet/workspace）
     const persistOk = await this.persistQuotaConfig(
       providerId,
       enabled,
       fetcher,
       cookieSet,
       apiKeySet,
+      normalizedWorkspace,
     )
     if (!persistOk) {
       return { ok: false, error: 'failed to persist quota config' }
@@ -324,6 +347,8 @@ export class QuotaService {
     fetcher: string | undefined,
     cookieSet: boolean | undefined,
     apiKeySet: boolean | undefined,
+    /** undefined = 本次不动 workspace；null = 清除；string = 归一化 URL 写入 */
+    workspace: string | null | undefined,
   ): Promise<boolean> {
     if (!this.providerExists(providerId)) {
       logger.warn('[quota] provider not found in aggregated provider list, cannot persist quota', { providerId })
@@ -335,17 +360,23 @@ export class QuotaService {
     }
     const legacyQuota = this.readQuotaFallback(providerId)
     try {
-      await this.extrasStore.modify(providerId, current => ({
-        ...current,
-        quota: {
-          fetcher: fetcher ?? current?.quota?.fetcher ?? legacyQuota?.fetcher,
-          enabled,
-          // 保留既有 cookieSet，除非本次明确写入新 cookie
-          cookieSet: cookieSet ?? current?.quota?.cookieSet ?? legacyQuota?.cookieSet,
-          // 保留既有 apiKeySet，除非本次明确传入新值（含空字符串清除）
-          apiKeySet: apiKeySet ?? current?.quota?.apiKeySet ?? legacyQuota?.apiKeySet,
-        },
-      }))
+      await this.extrasStore.modify(providerId, current => {
+        // workspace 三态（对齐 apiKeySet 的「本次明确传入才动」语义，清除态显式落 undefined）
+        const nextWorkspace =
+          workspace === undefined ? (current?.quota?.workspace ?? legacyQuota?.workspace) : workspace === null ? undefined : workspace
+        return {
+          ...current,
+          quota: {
+            fetcher: fetcher ?? current?.quota?.fetcher ?? legacyQuota?.fetcher,
+            enabled,
+            // 保留既有 cookieSet，除非本次明确写入新 cookie
+            cookieSet: cookieSet ?? current?.quota?.cookieSet ?? legacyQuota?.cookieSet,
+            // 保留既有 apiKeySet，除非本次明确传入新值（含空字符串清除）
+            apiKeySet: apiKeySet ?? current?.quota?.apiKeySet ?? legacyQuota?.apiKeySet,
+            workspace: nextWorkspace,
+          },
+        }
+      })
       return true
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -391,7 +422,12 @@ export class QuotaService {
     }
 
     try {
-      const outcome = await fetcher.fetchQuota(resolved.credential, resolved.kind)
+      // D1-2：per-provider 只读配置注入（首期仅 workspaceUrl——资源维度 fetcher 的
+      // workspace 归一化地址，经 readQuotaFallback 双读 providers.json/models.json 旧值）
+      const config: QuotaFetcherConfig = {
+        workspaceUrl: this.readQuotaFallback(providerId)?.workspace,
+      }
+      const outcome = await fetcher.fetchQuota(resolved.credential, resolved.kind, config)
 
       if (outcome.ok) {
         // 成功：更新缓存，清除失败标记

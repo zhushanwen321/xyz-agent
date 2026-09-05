@@ -30,8 +30,6 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     finalizeSession: vi.fn(),
     clearPendingSend: vi.fn(),
     armStreamingTimer: vi.fn(),
-    armBashTimer: vi.fn(),
-    clearBashTimer: vi.fn(),
     // m2→W14：queue_update drain 接线 drainN（计数 FIFO）+ appendUser + 深度对账 reconcilePending
     //（对齐 core __tests__/effects.test.ts 形态；本套用例不触发 queue_update，返回空数组即可）
     drainN: vi.fn(() => []),
@@ -43,6 +41,9 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     incrementInflight: vi.fn(),
     decrementInflight: vi.fn(),
     clearInflight: vi.fn(),
+    // [premature-timeout §5.2 D2] timeout 打标快照消费/清除（默认无打标 → take 返回空集）
+    takePrematureTimeoutIds: vi.fn(() => new Set<string>()),
+    clearPrematureTimeoutIds: vi.fn(),
     // w21：entry 载体帧喂 reducer 的接入点
     applyEntryFrame: vi.fn(),
   }
