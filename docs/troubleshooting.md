@@ -254,6 +254,9 @@ CI=true ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install   # 约 6-7s 重建本地�
 | `XYZ_AGENT_PACKAGED` | 打包标记 | `1` | 未设置 |
 | `ELECTRON_RUN_AS_NODE` | Node 模式 | `1`（runtime 子进程） | 未设置 |
 | `VITE_MOCK=true` | Mock 模式 | — | 可选 |
+| `XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS` | bash RPC 超时逃生门（0=不限时） | 未设置（默认 1h） | 可选 |
+
+> 注意：`XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS` 在 runtime 进程生命周期内**读一次即缓存**（`rpc-client.ts` resolveBashRpcTimeoutMs——中途改 env 不生效且无提示，超时决策须进程内稳定）。改后必须重启应用/`pnpm dev` 才生效。
 
 ## 历史排查规则 [HISTORICAL]（从 AGENTS.md 外移 2026-08-17）
 
@@ -296,6 +299,15 @@ pi 的 models-store.json 远端目录周期刷新（PS-11）可引入大小写�
 
 - 排查路径：① 查 `<agentDir>/models-store.json` 的 mtime/新增条目（大小写变体家族）；② 派发侧走 G4 孪生守卫复现——start 同步期对含歧义大小写变体的 registry 拒单并报「registry 含歧义大小写变体」；③ 确认派发模型入参是全等 id（`assertCanonicalModelRef`），禁裸串拼 `--model`（`check_subagent_channels.py` 拦截）
 - 预防：新代码不拼 `--model` 字符串（shared/model-ref.ts 唯一入口）；能力面一律消费注册表 supportedLevels（C-pi-12）；机制详情见观察项 #6（PS-01）
+
+### 共享 pre-commit hook 被旧版 install-hooks.sh 覆盖（2026-09-04 流写护栏事故复发）
+
+bare repo + worktree 结构下，`.bare/hooks/pre-commit` 是全部 worktree 共享的运行时副本，由各 worktree 自己的 `.githooks/install-hooks.sh`（SSOT 在各自分支）在 `pnpm install` 的 prepare 阶段生成。**任一旧分支 worktree 跑 `pnpm install`，都会用它分支的旧版源无条件覆盖共享副本**——护栏段静默消失（旧版源既没有护栏段也没有安装后自检，覆盖时零告警）。
+
+- 现象：本地 commit 不再触发流写逃逸护栏（或整套 pre-commit 检查行为变旧）；曾两次实际发生（2026-09-04 S2 验收发现 SSOT 缺口、当晚 design-code-sync R3 发现被旧源覆盖复发）
+- 检测：`grep -c 'UNSAFE_STREAM_CHECKER=' <bare>/hooks/pre-commit`（bare 目录用 `git rev-parse --git-common-dir` 推导）——结果为 0 即被旧源覆盖；新版 install-hooks.sh 安装后自带同款自检（源缺段时 exit 1），但拦不住旧源覆盖（旧源无自检）
+- 恢复：在含最新护栏段的分支（≥ 4ecea728f）worktree 里跑 `bash .githooks/install-hooks.sh` 重装共享副本
+- 根治：旧 worktree 的分支更新到含护栏段与自检的基线后自然消除；在合并前，任何 worktree 的 `pnpm install` 后建议复跑上面的检测命令。CI invariant（ci.yml 独立跑护栏脚本）在本地失效窗口期兜底拦新增裸写点
 
 ## 周期轮询/兜底定时器的合法性判定（2026-08-28）
 

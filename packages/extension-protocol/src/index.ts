@@ -81,6 +81,17 @@ export {
 } from './extensions/session-manager/types'
 export { SESSION_MANAGER_MARKER, SESSION_MANAGER_ACTIONS } from './extensions/session-manager/marker'
 
+// ── plugin-bridge 协议（plugin system bridge：插件工具/事件/拦截经 select 通道 + marker 桥接；实现在 extensions/taiji/plugin-bridge + runtime bridge-handler）──
+export type {
+  BridgeMethod,
+  BridgeRequest,
+  BridgeToolExecuteResponse,
+  BridgeSyncPayload,
+  BridgeInterceptResponse,
+  BridgeErrorResponse,
+} from './extensions/plugin-bridge/types'
+export { BRIDGE_MARKER, BRIDGE_METHODS } from './extensions/plugin-bridge/marker'
+
 // ── subagent-engine 协议（引擎可发现性：engines.json 状态文件 + 引擎配置视图；实现在 extensions/universal/subagent-workflow + runtime RPC）──
 export type {
   SubagentEnginesFile,

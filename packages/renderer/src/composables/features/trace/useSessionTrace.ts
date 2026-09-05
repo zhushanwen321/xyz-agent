@@ -16,7 +16,8 @@
  *
  * 订阅生命周期：loadTrace 时 ensureIncrementSubscription（Set 去重防重复注册，规则 2）；
  * 不随 TraceView 卸载退订（切回对话视图增量继续收集，切回 Trace 不丢数据）；
- * 分区 cleanup 由 useSidebar.deleteSession 经 triggerSessionCleanups 统一编排
+ * 分区 cleanup 由 useSidebar.deleteSession（代理 core use-session，编排本体在
+ * core/domain/session/use-session.ts）经 triggerSessionCleanups 统一编排
  * （ADR-0049；含 events 退订与 loading 缓冲丢弃）。
  */
 import { computed, reactive, ref } from 'vue'
@@ -31,7 +32,7 @@ import type {
   TraceSessionHeader,
 } from '@xyz-agent/core/domain/session-trace'
 import { session as sessionApi } from '@/api'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 
 /** 主区视图态（SegmentedTab「对话 | Trace」，D5a；默认对话）。 */
 export type TraceMainView = 'chat' | 'trace'

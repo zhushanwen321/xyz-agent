@@ -165,7 +165,7 @@ import {
 } from '@/components/ui/collapsible'
 import { GroupCard } from '@xyz-agent/ui/features/settings'
 import SettingRow from '../SettingRow.vue'
-import { getRetryConfig, setRetryConfig, onRetryConfig } from '@/api/domains/config'
+import { getRetryConfig, setRetryConfig, onRetryConfig } from '@xyz-agent/core/transport/api/domains/config'
 import { useToast } from '@/composables/useToast'
 import {
   LLM_RETRY_DOMAIN,

@@ -29,7 +29,7 @@ vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 import type { EnginePort } from "../engine/port.ts";
 import { clearEngines, getEngine, registerEngine } from "../engine/registry.ts";
-import { getChildByRecord, killAllSpawnedChildren, spawnedChildren } from "../session-runner.ts";
+import { getChildByRecord, killAllSpawnedChildren, spawnedChildren } from "../engine/engines/pi/session-runner.ts";
 
 /**
  * 假 child：只关心 killed 标记 + kill 调用（killAllSpawnedChildren 遍历用）。

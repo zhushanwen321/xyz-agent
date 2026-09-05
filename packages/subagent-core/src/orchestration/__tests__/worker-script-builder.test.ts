@@ -225,7 +225,7 @@ describe("buildWorkerScript — W2 agent() returnMeta mode", () => {
 // ── thinkingLevel 参数透传（agent() 三分支） ──
 // 验证 thinkingLevel 在 string / task-agent / object.prompt 三个分支均被透传至
 // agent-call 的 opts，且加入 _knownFields 白名单（object.prompt 分支整体透传，
-// 不被 unknown-fields warn 误报）。底层 AgentCallOpts→mapToExecuteOptions→
+// 不被 unknown-fields warn 误报）。底层 AgentCallOpts（D6 合流后 EnginePort 直传，
 // buildSpawnArgs 拼 pi CLI --model provider/modelId:thinkingLevel 已打通，
 // 此处只验入口层 wiring。
 

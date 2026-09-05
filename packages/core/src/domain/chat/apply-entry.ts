@@ -347,11 +347,21 @@ function deriveBashExecutionMessage(body: PiMessageBody, baseId: string, fallbac
   }
 }
 
-/** compactionSummary role 的派生段 → system 消息 + compactionSummary 字段。 */
-function deriveCompactionSummaryMessage(body: PiMessageBody, baseId: string, fallbackTs: number): Message {
-  const ts = body.timestamp ?? fallbackTs
-  const summary = typeof body.summary === 'string' ? body.summary : undefined
-  const tokensBefore = typeof body.tokensBefore === 'number' ? body.tokensBefore : undefined
+// ── compaction / branchSummary 双形态共享构造核心（D13 联动 u6.2，行为逐字等价收敛）──
+//
+// message entry 的特殊 role（compactionSummary / branchSummary）与专用 entry 类型
+// （compaction / branch_summary）双形态存储（见 applyMessageEntry 注释）——两对派生段
+// 仅「id / ts 来源 + 字段归一」异源（调用方算好传入），Message 构造逐字同构，收敛为
+// 共享构造核心；fromId 归一留在调用方（role 形态 typeof 收窄 vs entry 形态类型直传，
+// 两形态语义刻意不同构）。append 由 collector 落账段统一承担（transient fold 架构）。
+
+/** compaction 构造核心（双形态共用）：summary 缺失 → 中文 fallback「上下文已压缩」。 */
+function deriveCompactionSummaryMessageCore(
+  baseId: string,
+  ts: number,
+  summary: string | undefined,
+  tokensBefore: number | undefined,
+): Message {
   return {
     id: baseId,
     role: 'system',
@@ -360,6 +370,16 @@ function deriveCompactionSummaryMessage(body: PiMessageBody, baseId: string, fal
     compactionSummary: { summary, tokensBefore, timestamp: ts },
     timestamp: ts,
   }
+}
+
+/** compactionSummary role 的派生段 → system 消息 + compactionSummary 字段。 */
+function deriveCompactionSummaryMessage(body: PiMessageBody, baseId: string, fallbackTs: number): Message {
+  return deriveCompactionSummaryMessageCore(
+    baseId,
+    body.timestamp ?? fallbackTs,
+    typeof body.summary === 'string' ? body.summary : undefined,
+    typeof body.tokensBefore === 'number' ? body.tokensBefore : undefined,
+  )
 }
 
 /**
@@ -380,59 +400,51 @@ function deriveCustomRoleMessage(body: PiMessageBody, baseId: string, fallbackTs
   }
 }
 
-/** branchSummary role 的派生段 → system 消息 + branchSummary 字段。 */
-function deriveBranchSummaryRoleMessage(body: PiMessageBody, baseId: string, fallbackTs: number): Message {
-  const ts = body.timestamp ?? fallbackTs
-  const rawSummary = typeof body.summary === 'string' ? body.summary : undefined
+/** branchSummary 构造核心（双形态共用）：content 缺失 fallback 空串（summary 原值透传，'' 保留 ''）。 */
+function deriveBranchSummaryMessageCore(
+  baseId: string,
+  ts: number,
+  rawSummary: string | undefined,
+  fromId: string | undefined,
+): Message {
   return {
     id: baseId,
     role: 'system',
     content: rawSummary ?? '',
     status: 'complete',
-    branchSummary: {
-      summary: rawSummary,
-      fromId: typeof body.fromId === 'string' ? body.fromId : undefined,
-      timestamp: ts,
-    },
+    branchSummary: { summary: rawSummary, fromId, timestamp: ts },
     timestamp: ts,
   }
+}
+
+/** branchSummary role 的派生段 → system 消息 + branchSummary 字段。 */
+function deriveBranchSummaryRoleMessage(body: PiMessageBody, baseId: string, fallbackTs: number): Message {
+  return deriveBranchSummaryMessageCore(
+    baseId,
+    body.timestamp ?? fallbackTs,
+    typeof body.summary === 'string' ? body.summary : undefined,
+    typeof body.fromId === 'string' ? body.fromId : undefined,
+  )
 }
 
 /** compaction entry 的派生段：pi 压缩记录 → system 消息 + compactionSummary 字段（SystemNotice「上下文已压缩」）。 */
 function deriveCompactionEntryMessage(entry: PiCompactionEntry, baseId: string): Message {
-  const ts = toMs(entry.timestamp)
-  const summary = typeof entry.summary === 'string' ? entry.summary : undefined
-  const tokensBefore = typeof entry.tokensBefore === 'number' ? entry.tokensBefore : undefined
-  return {
-    id: baseId,
-    role: 'system',
-    content: summary ?? '上下文已压缩',
-    status: 'complete',
-    compactionSummary: {
-      summary,
-      tokensBefore,
-      timestamp: ts,
-    },
-    timestamp: ts,
-  }
+  return deriveCompactionSummaryMessageCore(
+    baseId,
+    toMs(entry.timestamp),
+    typeof entry.summary === 'string' ? entry.summary : undefined,
+    typeof entry.tokensBefore === 'number' ? entry.tokensBefore : undefined,
+  )
 }
 
 /** branch_summary entry 的派生段：summary 原值透传（'' 保留 ''，缺失 → undefined），content 缺失 fallback 空字符串。 */
 function deriveBranchSummaryEntryMessage(entry: PiBranchSummaryEntry, baseId: string): Message {
-  const ts = toMs(entry.timestamp)
-  const rawSummary = typeof entry.summary === 'string' ? entry.summary : undefined
-  return {
-    id: baseId,
-    role: 'system',
-    content: rawSummary ?? '',
-    status: 'complete',
-    branchSummary: {
-      summary: rawSummary,
-      fromId: entry.fromId,
-      timestamp: ts,
-    },
-    timestamp: ts,
-  }
+  return deriveBranchSummaryMessageCore(
+    baseId,
+    toMs(entry.timestamp),
+    typeof entry.summary === 'string' ? entry.summary : undefined,
+    entry.fromId,
+  )
 }
 
 /**

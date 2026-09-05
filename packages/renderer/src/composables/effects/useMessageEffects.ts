@@ -3,8 +3,8 @@
  *
  * core use-connection 是 headless（零 store / 零 DOM），入站消息的副作用回调
  * （session.exited / message.complete / session.subagents / session.subagentEntriesAppended /
- * session.workflowUpdate / 全局 error）与 runtime 崩溃清理（finalizeAllStreaming /
- * clearAllPending）统一归位到本层。
+ * session.workflowUpdate / subagent.stream_delta / 全局 error）与 runtime 崩溃清理
+ * （finalizeAllStreaming / clearAllPending）统一归位到本层。
  *
  * 本文件是 renderer 层（可 import store），供 useConnection 装配点经
  * setConnectionPorts 注入 core（ConnectionPorts.effects / onRuntimeUnavailable）。
@@ -22,8 +22,8 @@ import { useToast } from '@/composables/useToast'
 import { handleCompletion } from '@/composables/effects/useCompletionNotify'
 import { invalidateStreamSubscription } from '@xyz-agent/core'
 import type { InboundEffects } from '@xyz-agent/core'
-import { subagentVirtualId } from '@xyz-agent/shared'
-import type { PiEntry, PiToolCallEntryForm, ServerMessageMap, SubagentRecord } from '@xyz-agent/shared'
+import { resolveSubagentParentSessionId, subagentVirtualId } from '@xyz-agent/shared'
+import type { PiEntry, PiToolCallEntryForm, ServerMessage, ServerMessageMap, SubagentRecord } from '@xyz-agent/shared'
 
 const t = i18n.global.t
 
@@ -46,7 +46,7 @@ function handleSessionExited(sessionId: string, payload: { code: number | null; 
   //（UI 卡「进行中…」）。放 markDead 之后：错误消息/dead 态等 UI 反馈先落地
   invalidateStreamSubscription(sessionId)
   // D6b（integrity-hardening §3.6）：pi 死后清掉该 session 挂起的 ask-user / dialog 分区
-  //（对齐 deleteSession 路径 useSidebar 的 extensionUIStore.clearSession 写法）。
+  //（对齐 deleteSession 路径 core use-session cleanup hooks 的 extensionUIStore.clearSession 写法）。
   // 不清则切走再切回（restore 起新 pi）后旧请求重弹，作答发给新进程被静默丢弃（M8 幽灵弹窗）。
   useExtensionUIStore().clearSession(sessionId)
   // reason 可能含多行 stderr，toast 只取首行（完整内容在聊天流 error 消息里）
@@ -106,6 +106,23 @@ function handleWorkflowUpdate(sessionId: string, update: ServerMessageMap['sessi
   useWorkflowStore().triggerWorkflowReload(sessionId, update.status ?? 'unknown')
 }
 
+/**
+ * [idle-refresh] 处理 subagent.stream_delta 帧（docs/design/timeout-streaming-ui-idle.md §5.1 D1 桥接）。
+ *
+ * sync subagent/workflow 编排期父 session 的 message.* 帧构造性为零（生产端不消费
+ * onUpdate），子代理活跃信号走本帧旁路——core routeInbound FALLBACK 按 type 识别后
+ * 经 InboundEffects 调用本回调。解析 payload.sessionId（shared 纯函数双形态归一：
+ * relay tee 通道三段式虚拟 id `subagent:<mainSessionId>:<subagentId>` → 提取父 sid；
+ * 旧 widget 通道主 sid 原样）后刷新父 session 的 streaming idle timer，防「子面板
+ * 在打字、父气泡被判无进展」。sessionId 缺失（坏形状帧）no-op——解析是纯字符串
+ * 函数无失败形态，无 id 即无可刷新目标。
+ */
+function handleSubagentStreamDelta(frame: ServerMessage): void {
+  const sid = (frame.payload as { sessionId?: string } | null)?.sessionId
+  if (typeof sid !== 'string' || !sid) return
+  useChatStore().refreshStreamingTimer(resolveSubagentParentSessionId(sid))
+}
+
 /** 全局 error 兜底（无 sessionId 无 id 的 server-push error → toast 提示）。 */
 function handleGlobalError(message: string): void {
   useToast().error(message)
@@ -135,6 +152,7 @@ export function createInboundEffects(): InboundEffects {
     onMessageComplete: handleMessageComplete,
     onSubagents: handleSubagents,
     onSubagentEntries: handleSubagentEntries,
+    onSubagentStreamDelta: handleSubagentStreamDelta,
     onWorkflowUpdate: handleWorkflowUpdate,
     onGlobalError: handleGlobalError,
     onSessionError: handleSessionError,

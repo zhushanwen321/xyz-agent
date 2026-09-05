@@ -11,26 +11,35 @@
 import type { Component } from "@earendil-works/pi-tui";
 import { visibleWidth } from "@earendil-works/pi-tui";
 
-import { computeElapsedSeconds } from "@zhushanwen/subagent-core/execution/execution-record.ts";
-import type { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
-import type { SubagentRecord } from "@zhushanwen/subagent-core/execution/types.ts";
-import { displayAgentName } from "@zhushanwen/subagent-core/shared/agent-ref.ts";
+import { computeElapsedSeconds } from "@zhushanwen/subagent-core";
+import type { SubagentService } from "@zhushanwen/subagent-core";
+import type { SubagentRecord } from "@zhushanwen/subagent-core";
+import { displayAgentName } from "@zhushanwen/subagent-core";
 import {
   firstLine,
   formatDisplayItem,
   formatElapsedSeconds,
   formatEventLine,
   formatTokens,
-  padToVisible,
   sanitizeLabel,
-  segFillColored,
   shortId,
   spinnerGlyph,
   statusGlyph,
   type ThemeLike,
-  truncLine,
-  wrapText,
 } from "./format.ts";
+import {
+  b,
+  dash,
+  dashes,
+  padToVisible,
+  plainBorder,
+  segFillColored,
+  termRows,
+  titleBorder,
+  truncLine,
+  walled,
+  wrapText,
+} from "./tui-kit.ts";
 import {
   applyFilter,
   type DetailKeyContext,
@@ -61,8 +70,6 @@ const BORDER_WIDTH = 2;
 const SPLIT_FIXED_LINES = 6;
 /** 终端最小行数（低于此回退紧凑空列表框）。 */
 const MIN_TERM_ROWS = 8;
-/** terminal.rows 读不到时的兜底行数（防 duck-type 失败）。 */
-const TERM_ROWS_FALLBACK = 24;
 /** 自画视觉边距：框外左右各 1 列空白（盖住底下对话流）。 */
 const PAD_COLS = 2;
 /** 自画视觉边距：框外顶底各 1 行空白。 */
@@ -145,7 +152,7 @@ export class SubagentsListComponent implements Component {
     if (this.frameRecords !== undefined && Date.now() - this.frameAt <= FRAME_TTL_MS) {
       return this.frameRecords;
     }
-    const records = this.service.collectRecords(LIST_LIMIT);
+    const records = this.service.queries.collectRecords(LIST_LIMIT);
     this.frameRecords = records;
     this.frameAt = Date.now();
     return records;
@@ -153,7 +160,7 @@ export class SubagentsListComponent implements Component {
 
   /** [perf] 选中项详情数据：优先全量（懒加载 + per-file 缓存），拿不到回退 light。 */
   private fullRecordOf(r: SubagentRecord): SubagentRecord {
-    return this.service.getFullRecord(r.id) ?? r;
+    return this.service.queries.getFullRecord(r.id) ?? r;
   }
 
   invalidate(): void {
@@ -162,7 +169,7 @@ export class SubagentsListComponent implements Component {
   }
 
   render(width: number): string[] {
-    const rows = this.termRows();
+    const rows = termRows(this.tui);
     const key = `${width}x${rows}`;
     if (key === this.cachedKey && this.cachedLines) return this.cachedLines;
     const lines = this.buildLines(width, rows);
@@ -180,7 +187,7 @@ export class SubagentsListComponent implements Component {
     // contentLines = 详情内容总行数（含元数据/段头/eventLog/result/error，单一数据源）。
     // 与 renderRightDetail 的 viewH + max 计算保持一致。
     // [perf] 详情长度需重数据：选中项懒加载全量（带缓存）。
-    const innerRows = Math.max(MIN_INNER_ROWS, this.termRows() - PAD_ROWS);
+    const innerRows = Math.max(MIN_INNER_ROWS, termRows(this.tui) - PAD_ROWS);
     const bodyH = Math.max(1, innerRows - SPLIT_FIXED_LINES);
     const detailCtx: DetailKeyContext = {
       viewportHeight: bodyH,
@@ -197,12 +204,6 @@ export class SubagentsListComponent implements Component {
       this.invalidate();
       this.tui.requestRender();
     }
-  }
-
-  /** 安全读 terminal.rows（兜底防 duck-type 失败）。 */
-  private termRows(): number {
-    const rows = this.tui.terminal?.rows;
-    return typeof rows === "number" && rows > 0 ? rows : TERM_ROWS_FALLBACK;
   }
 
   // ── 内部：渲染 ──────────────────────────────────────────
@@ -267,32 +268,9 @@ export class SubagentsListComponent implements Component {
     return result;
   }
 
-  // ── 边框着色 helper（统一 borderMuted，避 ANSI 嵌套失色）──
-
-  /** 着色框线字符（borderMuted）。所有 ╭╮╰╯├┤┬┴─│ 统一走这里。 */
-  private b(s: string): string {
-    return this.theme.fg("borderMuted", s);
-  }
-  /** 着色单字符填充用的 `─`（供 segFillColored 的 fillStyled）。 */
-  private dash(): string {
-    return this.theme.fg("borderMuted", "─");
-  }
-  /** 满宽 `─` 填充串（borderMuted）。n 次单字符着色，ANSI 自然延续。 */
-  private dashes(n: number): string {
-    return this.dash().repeat(Math.max(0, n));
-  }
-  /** 顶/底框行：`╭` + 着色标题填充 + `╮`（或 ╰╯）。每段独立着色，无嵌套。 */
-  private titleBorder(left: string, titleStyled: string, right: string, contentWidth: number): string {
-    return this.b(left) + segFillColored(titleStyled, this.dash(), contentWidth) + this.b(right);
-  }
-  /** 纯线顶/底框（无标题）：`╭` + `─`×W + `╮`。 */
-  private plainBorder(left: string, right: string, contentWidth: number): string {
-    return this.b(left) + this.dashes(contentWidth) + this.b(right);
-  }
-  /** 内容行墙：`│` + 内容(pad 到 contentWidth) + `│`，墙字符 borderMuted。 */
-  private walled(content: string, contentWidth: number): string {
-    return `${this.b("│")}${padToVisible(content, contentWidth)}${this.b("│")}`;
-  }
+  // ── 边框着色 helper 家族（b/dash/dashes/titleBorder/plainBorder/walled）──
+  // 已收敛 ./tui-kit.ts 自由函数形态（post-convergence C4，WorkflowsView 形态胜出）；
+  // 此处经 kit 导入消费，边框字符统一 borderMuted（避 ANSI 嵌套失色）。
 
   // ── 分支 1：终端太小 ──────────────────────────────────
 
@@ -301,9 +279,9 @@ export class SubagentsListComponent implements Component {
     const contentWidth = Math.max(1, width - BORDER_WIDTH);
     const msg = t.fg("warning", `Terminal too small (need >=${MIN_TERM_ROWS} rows)`);
     return [
-      this.plainBorder("╭", "╮", contentWidth),
-      this.walled(padToVisible(msg, contentWidth), contentWidth),
-      this.plainBorder("╰", "╯", contentWidth),
+      plainBorder(t, "╭", "╮", contentWidth),
+      walled(t, padToVisible(msg, contentWidth), contentWidth),
+      plainBorder(t, "╰", "╯", contentWidth),
     ];
   }
 
@@ -314,12 +292,12 @@ export class SubagentsListComponent implements Component {
     const contentWidth = Math.max(1, width - BORDER_WIDTH);
     const title = t.fg("accent", t.bold(` ${TITLE_SPLIT} `));
     return [
-      this.titleBorder("╭", title, "╮", contentWidth),
-      this.walled("", contentWidth),
-      this.walled(truncLine(t.fg("dim", "(no subagent records)"), contentWidth), contentWidth),
-      this.walled("", contentWidth),
-      this.walled(truncLine(t.fg("dim", "Esc to exit"), contentWidth), contentWidth),
-      this.plainBorder("╰", "╯", contentWidth),
+      titleBorder(t, "╭", title, "╮", contentWidth),
+      walled(t, "", contentWidth),
+      walled(t, truncLine(t.fg("dim", "(no subagent records)"), contentWidth), contentWidth),
+      walled(t, "", contentWidth),
+      walled(t, truncLine(t.fg("dim", "Esc to exit"), contentWidth), contentWidth),
+      plainBorder(t, "╰", "╯", contentWidth),
     ];
   }
 
@@ -331,7 +309,7 @@ export class SubagentsListComponent implements Component {
     // 左右列宽：左按比例，右占余下（减去分隔符 1 列）
     const leftWidth = Math.max(COL_MIN_WIDTH, Math.floor(contentWidth * LEFT_COL_RATIO));
     const rightWidth = Math.max(COL_MIN_WIDTH, contentWidth - leftWidth - 1);
-    const sep = this.b("│");
+    const sep = b(t, "│");
 
     // 满屏可用 body 高 = 内框高 - 固定行（顶框/filter/分区线/底分区线/footer/底框 = 6）
     // rows 参数已是内框高（顶底空白边距已在 buildLines 扣除）。
@@ -349,7 +327,7 @@ export class SubagentsListComponent implements Component {
     const lines: string[] = [];
 
     // 顶框（嵌入标题，分段着色）
-    lines.push(this.titleBorder("╭", t.fg("accent", t.bold(` ${TITLE_SPLIT} `)), "╮", contentWidth));
+    lines.push(titleBorder(t, "╭", t.fg("accent", t.bold(` ${TITLE_SPLIT} `)), "╮", contentWidth));
 
     // filter 行（阶段 2 时隐藏 filter 提示，显示锚定提示）
     const filterLine = inDetail
@@ -357,7 +335,7 @@ export class SubagentsListComponent implements Component {
       : (this.state.filterText
         ? `${t.fg("dim", "filter: ")}${t.bold(this.state.filterText)}${t.fg("accent", "_")}`
         : `${t.fg("dim", "filter: ")}${t.fg("accent", "_")}`);
-    lines.push(this.walled(padToVisible(truncLine(filterLine, contentWidth), contentWidth), contentWidth));
+    lines.push(walled(t, padToVisible(truncLine(filterLine, contentWidth), contentWidth), contentWidth));
 
     // 分区线（嵌入左/右标题，分段着色）
     const leftTitleStyled = t.fg("accent", t.bold(` ${TITLE_LEFT} `));
@@ -365,8 +343,8 @@ export class SubagentsListComponent implements Component {
       ? t.fg("accent", t.bold(` ${TITLE_RIGHT}${this.detailScrollInfo(selectedFull, bodyH, detailContent?.length)} `))
       : t.fg("accent", t.bold(` ${TITLE_RIGHT} `));
     lines.push(
-      this.b("├") + segFillColored(leftTitleStyled, this.dash(), leftWidth)
-      + this.b("┬") + segFillColored(rightTitleStyled, this.dash(), rightWidth) + this.b("┤"),
+      b(t, "├") + segFillColored(leftTitleStyled, dash(t), leftWidth)
+        + b(t, "┬") + segFillColored(rightTitleStyled, dash(t), rightWidth) + b(t, "┤"),
     );
 
     // body：左列 record 列表 + 右列（预览 or 完整翻屏）
@@ -394,20 +372,20 @@ export class SubagentsListComponent implements Component {
       const l = leftLines[i] ?? "";
       const r = rightLines[i] ?? "";
       const row = `${padToVisible(truncLine(l, leftWidth), leftWidth)}${sep}${padToVisible(truncLine(r, rightWidth), rightWidth)}`;
-      lines.push(this.walled(padToVisible(row, contentWidth), contentWidth));
+      lines.push(walled(t, padToVisible(row, contentWidth), contentWidth));
     }
 
     // 底分区线
-    lines.push(this.b("├") + this.dashes(leftWidth) + this.b("┴") + this.dashes(rightWidth) + this.b("┤"));
+    lines.push(b(t, "├") + dashes(t, leftWidth) + b(t, "┴") + dashes(t, rightWidth) + b(t, "┤"));
 
     // footer（双文案）
     const footer = inDetail
       ? t.fg("dim", "Esc back to list · Up/Dn/PgUp/PgDn/Home/End scroll detail" + this.cancelHint(selected))
       : t.fg("dim", "Up/Dn navigate · Enter detail · type to filter · Esc exit");
-    lines.push(this.walled(padToVisible(truncLine(footer, contentWidth), contentWidth), contentWidth));
+    lines.push(walled(t, padToVisible(truncLine(footer, contentWidth), contentWidth), contentWidth));
 
     // 底框
-    lines.push(this.plainBorder("╰", "╯", contentWidth));
+    lines.push(plainBorder(t, "╰", "╯", contentWidth));
 
     return lines;
   }

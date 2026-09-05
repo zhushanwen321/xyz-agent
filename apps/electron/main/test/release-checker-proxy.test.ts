@@ -26,8 +26,8 @@ function makeReleaseJson(overrides: Record<string, unknown> = {}): Record<string
     html_url: 'https://github.com/zhushanwen321/xyz-agent/releases/tag/v0.9.0',
     assets: [
       {
-        name: 'TaiJi-mac-arm64.zip',
-        browser_download_url: 'https://example.com/mac-arm64.zip',
+        name: 'TaiJi-mac-arm64.dmg',
+        browser_download_url: 'https://example.com/mac-arm64.dmg',
         size: 1000,
         digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       },

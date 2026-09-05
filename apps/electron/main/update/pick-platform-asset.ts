@@ -1,7 +1,7 @@
 /**
  * 按当前平台选择 release 对应的 asset。
  *
- * 与 orchestrator 的 pickAsset 同源逻辑：darwin → macArm64Zip，win32 → winX64Exe，
+ * 与 orchestrator 的 pickAsset 同源逻辑：darwin → macArm64Dmg，win32 → winX64Exe，
  * linux → linuxX64AppImage。抽成独立模块供 orchestrator / preloaded-update 复用，
  * 避免两处平台分流逻辑漂移。
  *
@@ -17,7 +17,7 @@ import type { LatestReleaseInfo, ReleaseAsset } from '@xyz-agent/shared'
  */
 export function pickPlatformAsset(release: LatestReleaseInfo): ReleaseAsset | undefined {
   switch (process.platform) {
-    case 'darwin': return release.assets.macArm64Zip
+    case 'darwin': return release.assets.macArm64Dmg
     case 'win32': return release.assets.winX64Exe
     case 'linux': return release.assets.linuxX64AppImage
     default: return undefined

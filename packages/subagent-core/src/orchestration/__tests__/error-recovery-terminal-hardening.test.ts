@@ -22,7 +22,7 @@ import {
   handleWorkerError,
   handleWorkerExit,
   handleWorkerMessage,
-} from "../error-recovery.ts";
+} from "../worker-message-pump.ts";
 import { Budget } from "../models/budget.ts";
 import { RunRuntime } from "../models/run-runtime.ts";
 import { toRunSnapshot } from "../run-snapshot.ts";
@@ -239,7 +239,7 @@ describe("[OR-6] log 消息消费 + 未知类型 default 留痕", () => {
     expect(run.state.errorLogs).toEqual([{ level: "log", message: "step 1 done" }]);
     expect(run.state.status).toBe("running"); // 不触发终态
     expect(deps.store.save).not.toHaveBeenCalled();
-    expect(deps.log).toHaveBeenCalledWith("debug", "workflow:error-recovery", "worker log", {
+    expect(deps.log).toHaveBeenCalledWith("debug", "workflow:worker-message-pump", "worker log", {
       runId: "wf-log-1",
       phase: "build",
       message: "step 1 done",
@@ -289,7 +289,7 @@ describe("[OR-6] log 消息消费 + 未知类型 default 留痕", () => {
     await handleWorkerMessage(run, { type: "future-unknown-type", payload: 1 }, deps, makeHandlers());
 
     expect(warnSpy.mock.calls.map((c) => String(c[0])).some((m) => m.includes("unknown worker message type") && m.includes("future-unknown-type"))).toBe(true);
-    expect(deps.log).toHaveBeenCalledWith("warn", "workflow:error-recovery", "unknown worker message type", {
+    expect(deps.log).toHaveBeenCalledWith("warn", "workflow:worker-message-pump", "unknown worker message type", {
       runId: "wf-log-3",
       type: "future-unknown-type",
     });

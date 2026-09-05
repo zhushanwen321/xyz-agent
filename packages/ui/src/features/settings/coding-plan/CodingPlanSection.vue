@@ -157,6 +157,34 @@
           @update:model-value="$emit('update:cookieInput', String($event ?? ''))"
         />
       </div>
+      <!-- Workspace 地址（资源维度 fetcher 如 opencode-go，D1-1）：完整 URL 或裸 wrk_ id，
+           保存时 runtime 归一化为规范 URL；未配置时查询报 not_configured -->
+      <div v-if="needsWorkspace" class="mt-2" data-testid="quota-workspace-block">
+        <Label class="mb-1 block text-[10px] text-neutral-mid">
+          {{ t('settings.providerEdit.quotaWorkspaceLabel') }}
+          <span class="normal-case text-neutral-dim">{{ t('settings.providerEdit.quotaWorkspaceHint') }}</span>
+        </Label>
+        <div class="flex gap-1.5">
+          <Input
+            :model-value="workspaceInput"
+            class="h-8 flex-1 font-mono text-[11px]"
+            :placeholder="workspaceConfigured ? t('settings.providerEdit.quotaWorkspaceSetPlaceholder') : t('settings.providerEdit.quotaWorkspacePlaceholder')"
+            data-testid="quota-workspace-input"
+            @update:model-value="$emit('update:workspaceInput', String($event ?? ''))"
+          />
+          <Button
+            variant="secondary"
+            class="gap-1 px-2 py-1 text-[11px] text-neutral-mid"
+            :disabled="configuring"
+            data-testid="quota-save-workspace-btn"
+            @click="$emit('saveWorkspace')"
+          >
+            <Loader2 v-if="configuring" class="animate-spin" />
+            {{ t('settings.providerEdit.quotaWorkspaceSave') }}
+          </Button>
+        </div>
+        <p class="mt-1 text-[10px] text-neutral-dim">{{ t('settings.providerEdit.quotaWorkspaceHelp') }}</p>
+      </div>
       <!-- 帮助链接 -->
       <p v-if="helpUrl" class="mt-1.5 flex items-start gap-1 text-[10px] text-neutral-dim">
         <ExternalLink class="mt-0.5 size-3 shrink-0" />
@@ -273,6 +301,12 @@ const props = withDefaults(defineProps<{
   apiKeyInput?: string
   /** 是否已配置专属 API Key（控制占位符提示） */
   apiKeyConfigured?: boolean
+  /** Workspace 地址输入值（资源维度 fetcher 如 opencode-go，D1-1） */
+  workspaceInput?: string
+  /** 是否已配置 workspace（provider.quota.workspace 非空） */
+  workspaceConfigured?: boolean
+  /** 当前 fetcher 是否需要 workspace 配置（QuotaPreset.requiresWorkspace） */
+  needsWorkspace?: boolean
   testStatus: QuotaTestStatus
   testErrorMsg: string
   /** 最近一次查询失败原因（A2-4 reason 透传；null = 无失败或非 reason 型错误） */
@@ -295,6 +329,9 @@ const props = withDefaults(defineProps<{
   fetcherId: undefined,
   apiKeyInput: '',
   apiKeyConfigured: false,
+  workspaceInput: '',
+  workspaceConfigured: false,
+  needsWorkspace: false,
   testFailReason: null,
   authKinds: () => [],
   oauthReady: false,
@@ -310,8 +347,11 @@ defineEmits<{
   saveCookie: []
   /** 保存专属 API Key（api-key 类） */
   saveApiKey: []
+  /** 保存 Workspace 地址（资源维度 fetcher，D1-1） */
+  saveWorkspace: []
   'update:cookieInput': [value: string]
   'update:apiKeyInput': [value: string]
+  'update:workspaceInput': [value: string]
 }>()
 
 const { t } = useI18n()
@@ -351,7 +391,7 @@ const supportsOauth = computed(() => props.authKinds.includes('oauth'))
 /** 「查看上次成功数据」展开态（B-3 / design §3.4：失败态下旧缓存折叠展示） */
 const showLastSuccess = ref(false)
 
-/** 失败态文案：reason 可区分时用带恢复指引的专属文案（A2-4 全 4 reason），否则回退 testErrorMsg/通用文案 */
+/** 失败态文案：reason 可区分时用带恢复指引的专属文案（A2-4 全 reason），否则回退 testErrorMsg/通用文案 */
 const failMessage = computed(() => {
   if (props.testFailReason === 'unauthorized') return t('settings.providerEdit.quotaFetchFailUnauthorized')
   if (props.testFailReason === 'network') return t('settings.providerEdit.quotaFetchFailNetwork')
@@ -363,6 +403,9 @@ const failMessage = computed(() => {
       : t('settings.providerEdit.quotaFetchFailNoSubscription')
   }
   if (props.testFailReason === 'parse') return t('settings.providerEdit.quotaFetchFailParse')
+  // not_configured（D1-3，timeout-audit-hygiene-batch）：必填 workspace 缺失——指引去配置，
+  // 而非检查凭证（病根在配置缺失，凭证指引会把用户带偏）
+  if (props.testFailReason === 'not_configured') return t('settings.providerEdit.quotaFetchFailNotConfigured')
   return props.testErrorMsg || t('settings.providerEdit.quotaTestFail')
 })
 

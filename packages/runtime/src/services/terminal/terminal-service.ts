@@ -33,7 +33,8 @@ export interface TerminalServiceDeps {
    * seq 不入 ring 直传）、terminal.alive/exit=stream（分配 seq 入 ring，可回放）。
    *
    * [终态语义：publish-only，不叠加 broker.broadcast] terminal.data 是 transient 无 seq，
-   * 若叠加盲广播，已订阅 renderer 会双 dispatch（seq-gap 对无 seq 消息不去重，分支 3 直通）
+   * 若叠加盲广播，已订阅 renderer 会双 dispatch（evalSeqGap 对无 seq 消息不去重，
+   * core/coordination/subscription-state.ts 分支 3 直通）
    * → 终端输出重复渲染。与 02 文档 D1-1 对 plugin:viewUpdate（同为 transient）的
    * 「publish 且不再 broadcast」定案同判据。renderer 侧 useSessionStreamSync 对 list 内
    * session 全量订阅（terminal 只在 session panel 打开时 spawn，该 session 必然已订阅）。

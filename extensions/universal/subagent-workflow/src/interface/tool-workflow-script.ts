@@ -27,23 +27,23 @@ import { Text } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
 
 import {
-	guiComponent,
-	type GuiContext,
-	type GuiRenderResult,
-	guiResult,
-	isGuiCapable,
+  guiComponent,
+  type GuiContext,
+  type GuiRenderResult,
+  guiResult,
+  isGuiCapable,
 } from "@xyz-agent/extension-protocol";
 // C5②/C5⑦：创作闭环统一走 core barrel（generateWorkflowScript/saveWorkflow/
 // deleteWorkflow/lintScript 均为 barrel 导出面；深路径在 npm/vendored 形态不可达）
 import {
-	deleteWorkflow,
-	generateWorkflowScript,
-	lintScript,
-	saveWorkflow,
+  deleteWorkflow,
+  generateWorkflowScript,
+  lintScript,
+  saveWorkflow,
 } from "@zhushanwen/subagent-core";
-import type { WorkflowScriptRegistry } from "@zhushanwen/subagent-core/orchestration/models/workflow-script-registry.ts";
+import type { WorkflowScriptRegistry } from "@zhushanwen/subagent-core";
 import { toGuiCtx } from "./gui-mappers.ts";
-import { renderTextFallback } from "./views/format.ts";
+import { renderTextFallback } from "./format.ts";
 
 // ── Parameter schema ─────────────────────────────────────────
 

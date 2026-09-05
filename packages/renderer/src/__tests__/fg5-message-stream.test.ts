@@ -18,7 +18,7 @@ import {
   hasFailedTool,
 } from '@/composables/logic/messageTurns'
 import { useChatStore } from '@/stores/chat'
-import * as mockApi from '@/api/mock'
+import * as mockApi from '@xyz-agent/core/transport/mock'
 import type { Message } from '@xyz-agent/shared'
 import { textToSegments } from '@xyz-agent/shared'
 
@@ -509,7 +509,12 @@ describe('FG5 chat store 块类型扩展', () => {
     })
     const msg = store.getMessages('sx')[0]
     expect(msg.role).toBe('system')
-    expect(msg.branchSummary).toEqual({ summary: '新分支', fromId: 'msg-9' })
+    // [D13 renderer-deepening] branchSummary 直插已 entry 化（与 replay 同路径）——
+    // branchSummary 恒带 timestamp（帧缺省时取当前时刻），与文件侧重放形态一致；
+    // content fallback 收敛 reducer 语义（summary 缺失 → 空串，原 'Branched' 占位消灭）
+    expect(msg.content).toBe('新分支')
+    expect(msg.branchSummary).toMatchObject({ summary: '新分支', fromId: 'msg-9' })
+    expect(typeof msg.branchSummary?.timestamp).toBe('number')
   })
 
   it('mock getHistory 返回 fixture 全字段（G2-006 契约）', async () => {

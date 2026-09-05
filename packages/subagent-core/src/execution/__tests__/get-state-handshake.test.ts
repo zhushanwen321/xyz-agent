@@ -14,7 +14,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { requestGetStateOnce } from "../get-state-handshake.ts";
+import { requestGetStateOnce } from "../engine/engines/pi/get-state-handshake.ts";
 import type { ChildProcess } from "node:child_process";
 
 /** 最小 FakeChild：只需 stdin.write 行为（成功 / 可注入同步 throw）。 */

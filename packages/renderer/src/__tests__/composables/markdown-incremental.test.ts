@@ -20,14 +20,14 @@ import type {
   MarkdownSegment,
 } from '@/composables/logic/markdown'
 
-// stub shiki：避免真实 WASM/语法加载；codeToHtml 计数同时用作「前缀零重渲染」的可观测探针
+// stub shiki：避免真实语法加载（fine-grained 后入口是 shiki/core）；codeToHtml 计数同时用作「前缀零重渲染」的可观测探针
 const fakeCodeToHtml = vi.fn((code: string) => `<pre class="shiki"><code>${code}</code></pre>`)
 
 /** 每用例拿到干净的 markdown 模块（renderMarkdown 内部缓存 markdown-it 实例 + highlighter 单例） */
 async function freshModule(): Promise<typeof import('@/composables/logic/markdown')> {
   vi.resetModules()
-  vi.doMock('shiki', () => ({
-    createHighlighter: () =>
+  vi.doMock('shiki/core', () => ({
+    createHighlighterCore: () =>
       Promise.resolve({
         codeToHtml: fakeCodeToHtml,
         getLoadedLanguages: () => ['typescript', 'javascript', 'vue'],

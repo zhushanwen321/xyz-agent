@@ -153,8 +153,13 @@ export interface ISessionService {
    * excludeFromContext 透传给 pi bash RPC（控制是否进 LLM 上下文）。
    */
   sendBash(sessionId: string, command: string, excludeFromContext?: boolean): Promise<{ blocked: boolean; rejected?: boolean }>
-  /** 取消进行中的 bash 执行（pi abort_bash）。 */
-  abortBash(sessionId: string): Promise<void>
+  /**
+   * 取消进行中的 bash 执行（pi abort_bash）。
+   *
+   * 返回 sent = abort_bash RPC 是否发出且 pi 确认（P6 断言④回执真实化）：
+   * 守卫短路（无 bash 在跑且无孤儿标记）或发送失败均为 false，调用方不得据此回 aborted。
+   */
+  abortBash(sessionId: string): Promise<{ sent: boolean }>
   switchModel(sessionId: string, provider: string, modelId: string): Promise<string>
   compact(sessionId: string, customInstructions?: string): Promise<void>
   getHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean }>
@@ -494,6 +499,10 @@ export interface IConfigService {
   getTimeout(): number
   /** 写入 worktree 创建超时时间到 config.json.worktreeTimeout。 */
   setTimeout(timeout: number): void
+  /** 读取对话流式空闲超时阈值（config.json.streamingIdleTimeout，秒），默认 1800 秒（timeout-streaming-ui-idle §5.3 D3）。 */
+  getStreamingIdleTimeout(): number
+  /** 写入对话流式空闲超时阈值：clamp 到 [60, 3600] 秒后落盘，返回生效值。 */
+  setStreamingIdleTimeout(timeout: number): number
   /** 读取默认基分支（config.json.defaultBaseBranch），默认 'origin/main'。 */
   getDefaultBaseBranch(): string
   /** 写入默认基分支到 config.json.defaultBaseBranch。 */

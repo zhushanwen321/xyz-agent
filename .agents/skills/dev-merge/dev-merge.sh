@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # dev-merge.sh — 将当前 feat worktree 的分支合并到兄弟 dev-x.x.x 集成 worktree。
 #
-# 用法（cwd 必须在待合并 feat worktree 根目录）：
-#   bash .agents/skills/dev-merge/dev-merge.sh merge   <dev-branch>   # 预检 + 合并
-#   bash .agents/skills/dev-merge/dev-merge.sh cleanup <dev-branch>   # 确认已合并后删当前 worktree + 分支
+# 用法（cwd 必须在待合并 feat worktree 根目录；用当前 worktree 内的脚本副本动态拼路径，禁止写死其他 worktree 目录——会随其 cleanup 过期）：
+#   bash "$(git rev-parse --show-toplevel)/.agents/skills/dev-merge/dev-merge.sh" merge   <dev-branch>   # 预检（目标 worktree 缺失时自动创建）+ 合并
+#   bash "$(git rev-parse --show-toplevel)/.agents/skills/dev-merge/dev-merge.sh" cleanup <dev-branch>   # 确认已合并后删当前 worktree + 分支
 #
 # 退出码：
 #   0  成功
@@ -35,7 +35,24 @@ DEV_DIR="$WS_ROOT/$DEV_BRANCH"
 list_dev_worktrees() { ls "$WS_ROOT" | grep '^dev-' | tr '\n' ' ' || true; }
 
 [[ -n "$DEV_BRANCH" ]] || die "缺少目标分支参数（如 dev-0.9.11）。可用 dev worktree: $(list_dev_worktrees)"
-[[ -d "$DEV_DIR" ]] || die "目标 worktree $WS_ROOT/$DEV_BRANCH 不存在。可用 dev worktree: $(list_dev_worktrees)"
+
+# merge 时目标 worktree 缺失 → 自动创建（cleanup 不创建：清理语义下目标必须已存在）
+# 复用全局 worktree-manipulate 的创建脚本：分支已存在则检出，不存在则基于 main 新建
+# （本仓库 dev 集成分支惯例从 main fork），并经 .bare/custom-hooks/setup-worktree.sh
+# 完成 pnpm 依赖安装 + Electron/pi 缓存链接——merge commit 的 pre-commit 检查依赖它们
+CREATE_WORKTREE_SH="$HOME/.agents/skills/worktree-manipulate/create-worktree/create-worktree.sh"
+if [[ ! -d "$DEV_DIR" ]]; then
+  if [[ "$SUBCMD" != "merge" ]]; then
+    die "目标 worktree $DEV_DIR 不存在，无法 cleanup。可用 dev worktree: $(list_dev_worktrees)"
+  fi
+  [[ -f "$CREATE_WORKTREE_SH" ]] || die "创建脚本不存在: $CREATE_WORKTREE_SH。恢复动作: 先安装 worktree-manipulate skill，或手动创建 worktree: git -C $CUR_DIR worktree add $DEV_DIR -b $DEV_BRANCH main"
+  echo ">> 目标 worktree $DEV_DIR 不存在，自动创建（分支 $DEV_BRANCH 基于 main，含依赖安装，可能需要数分钟）"
+  if ! bash "$CREATE_WORKTREE_SH" "$DEV_BRANCH" main; then
+    die "自动创建 worktree 失败。恢复动作: bash $CREATE_WORKTREE_SH $DEV_BRANCH main；或改用已存在的 dev worktree: $(list_dev_worktrees)"
+  fi
+  [[ -d "$DEV_DIR" ]] || die "创建脚本已执行但 $DEV_DIR 仍不存在，中止"
+  echo "OK: worktree $DEV_DIR 已自动创建（分支 $DEV_BRANCH 基于 main）"
+fi
 
 # ── 公共预检：两边 worktree 都必须干净（tracked 改动）──
 check_clean() {

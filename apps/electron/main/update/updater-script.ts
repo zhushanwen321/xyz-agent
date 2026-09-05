@@ -11,10 +11,10 @@
  * 2026-08 自动升级可靠性优化批次 1）：
  * - 核心不变量（G1 安装中断不装坏）：S4 换装成功前正式位置零接触——任一失败点上
  *   .app 要么是完整新版、要么是完整旧版。
- * - 状态机：S0 守卫（只读卷检测 → PID 等待退出 → sha256）→ S1 staging 解压
- *   （同卷临时目录）→ S2 mv 内层 .app 为 .app.new → S3 备份 mv（.app → .app.old）
- *   → S4 原子换装（.app.new → .app，失败回滚 .old）→ S5 xattr / rm .old /
- *   写 done → open 重启。
+ * - 状态机：S0 守卫（只读卷检测 → PID 等待退出 → sha256）→ S1 staging 解包
+ *   （dmg 挂载 + ditto 拷贝到同卷临时目录）→ S2 mv 内层 .app 为 .app.new
+ *   → S3 备份 mv（.app → .app.old）→ S4 原子换装（.app.new → .app，失败回滚
+ *   .old）→ S5 xattr / rm .old / 写 done → open 重启。
  * - 残余窗口（诚实边界，无法自愈）：S3→S4 两条同目录 rename 之间中断 = .app 缺失 +
  *   .old/.new 双份完整，自愈代码运行在 app 内无执行机会。手动恢复出口见
  *   docs/troubleshooting.md「升级中断手动恢复」。
@@ -47,8 +47,8 @@
 export interface UpdaterScriptVars {
   /** app bundle 路径（如 /Applications/太极.app） */
   appBundle: string
-  /** 下载的 zip 路径 */
-  zipPath: string
+  /** 下载的 dmg 路径 */
+  dmgPath: string
   /** 64 位 hex sha256（verify-before-replace 用） */
   sha256: string
   /** 日志输出路径 */
@@ -119,7 +119,7 @@ function jsonEscapeString(s: string): string {
  *         等待退出是「不拆运行中进程底座」的守卫，模板侧同样 fail-fast 兜底）
  */
 export function buildUpdaterScript(vars: UpdaterScriptVars): string {
-  const { appBundle, zipPath, sha256, logPath, resultPath, appName, targetVersion, parentPid } = vars
+  const { appBundle, dmgPath, sha256, logPath, resultPath, appName, targetVersion, parentPid } = vars
   if (!parentPid) {
     // 模板契约：无 PARENT_PID 就没有可靠的「等待 app 退出」守卫，宁可拒绝升级
     // 也不静默跳过等待（静默跳过 = 升级脚本可能拆掉运行中进程的底座）。
@@ -131,7 +131,7 @@ export function buildUpdaterScript(vars: UpdaterScriptVars): string {
   const safeVersion = shellEscapeDoubleQuote(jsonEscapeString(targetVersion))
   return MAC_UPDATER_TEMPLATE
     .replace(/\{\{APP_BUNDLE\}\}/g, shellEscapeDoubleQuote(appBundle))
-    .replace(/\{\{ZIP_PATH\}\}/g, shellEscapeDoubleQuote(zipPath))
+    .replace(/\{\{DMG_PATH\}\}/g, shellEscapeDoubleQuote(dmgPath))
     .replace(/\{\{SHA256\}\}/g, shellEscapeDoubleQuote(sha256))
     .replace(/\{\{LOG_PATH\}\}/g, shellEscapeDoubleQuote(logPath))
     .replace(/\{\{RESULT_PATH\}\}/g, shellEscapeDoubleQuote(resultPath))
@@ -176,7 +176,9 @@ export function buildLinuxUpdaterScript(vars: LinuxUpdaterScriptVars): string {
 //
 // STAGING_DIR 与 $APP 同目录（同卷保证 mv 是 rename、原子成立）；固定名字
 // （.staging.<basename>）使「S1 前清残留」可寻址（上次中断残留的 staging/.new
-// 在本次解压前统一清除）。
+// 在本次解包前统一清除）。S1 解包原语 = dmg 挂载 + ditto（保签名/xattr，批次 3
+// 设计 §3.3.3-B）：mountpoint 建在 $TMPDIR（/Volumes 是 root:wheel 755 普通用户
+// 不可写）且独立于 $STAGING_DIR（detach 失败滞留挂载时 staging 清理不得波及挂载卷）。
 const MAC_UPDATER_TEMPLATE = `#!/bin/bash
 # mac 升级脚本：staging 状态机（设计 .tmp/update-reliability.tech-design.md §3.3）
 # S0 守卫（只读卷 → PID 等待退出 → sha256）→ S1 staging 解压 → S2 mv 为 .app.new
@@ -253,27 +255,53 @@ done
 echo "[\$(date)] parent process (pid \$PARENT_PID) exited"
 
 # ── S0c: sha256 校验（verify-before-replace：download 期已验，detached 独立再验一次）──
-ACTUAL="\$(shasum -a 256 "{{ZIP_PATH}}" | awk '{print \$1}')"
+ACTUAL="\$(shasum -a 256 "{{DMG_PATH}}" | awk '{print \$1}')"
 if [ "\$ACTUAL" != "{{SHA256}}" ]; then
   fail "sha mismatch"
 fi
 echo "[\$(date)] sha ok"
 
-# ── S1/S2 残留清理（状态机恢复方：上次中断残留的 staging/.new 本次解压前清除；
+# ── S1/S2 残留清理（状态机恢复方：上次中断残留的 staging/.new 本次解包前清除；
 #    不触碰 .app / .old）──
 rm -rf "\$STAGING_DIR" "\$APP_NEW"
 
-# ── S1: staging 解压（同卷临时目录，正式位置零接触）──
+# ── S1: staging 解包（dmg 挂载 + ditto 拷贝，同卷临时目录，正式位置零接触）──
 echo "[\$(date)] [stage] S1 extract begin"
-if ! unzip -q -o "{{ZIP_PATH}}" -d "\$STAGING_DIR"; then
-  rm -rf "\$STAGING_DIR"
-  fail "extract failed"
+# mountpoint 选址约束（设计 §3.3.3）：必须建在用户可写目录（/Volumes 是
+# root:wheel 755，普通用户 mktemp 必败）；且必须独立于 \$STAGING_DIR——
+# detach 失败不阻断的语义下挂载卷可能滞留，staging 清理不得波及活跃挂载卷。
+MOUNT_DIR=\$(mktemp -d "\${TMPDIR:-/tmp}/taiji-dmg.XXXXXX") || fail "mktemp mountpoint failed"
+# 挂载中失败路径的统一出口：先卸载再走 fail（错误码进 result.json），
+# 孤儿挂载点由系统重启回收
+detach_and_fail() {
+  hdiutil detach "\$MOUNT_DIR" 2>/dev/null
+  fail "\$1"
+}
+# attach 失败 → 卸载刚建的空挂载点后 fail。同 inode dmg 在前次挂载未 detach 时
+# 重挂载会报「资源忙」exit 1（r2 审查实测，触发需双重罕见叠加），错误信息带
+# 恢复动作（重启系统或手动 hdiutil detach 后重试，设计 §3.3.3-B）。
+if ! hdiutil attach -nobrowse -readonly "{{DMG_PATH}}" -mountpoint "\$MOUNT_DIR"; then
+  hdiutil detach "\$MOUNT_DIR" 2>/dev/null
+  fail "dmg mount failed (reboot the system or run hdiutil detach manually, then retry)"
 fi
-# 主二进制存在检查（RI1：不再用 [ -d .app ] 误判成功；解压产物必须是可运行 app）
+SRC_APP=\$(ls -d "\$MOUNT_DIR"/*.app 2>/dev/null | head -1)
+if [ -z "\$SRC_APP" ]; then
+  detach_and_fail "no .app in dmg"
+fi
+# ditto 保签名/xattr/权限（Electron app 换装标准做法，不用 cp -R）
+if ! ditto "\$SRC_APP" "\$STAGED_APP"; then
+  # S7：清 staging 残留（部分拷贝可达数百 MB），再卸载挂载卷走 fail
+  rm -rf "\$STAGING_DIR"
+  detach_and_fail "ditto copy failed"
+fi
+# 主二进制存在检查（RI1：不再用 [ -d .app ] 误判成功；解包产物必须是可运行 app）
 if [ ! -x "\$MAIN_BINARY" ]; then
   rm -rf "\$STAGING_DIR"
-  fail "extract failed"
+  detach_and_fail "extract failed"
 fi
+# detach 失败不阻断（无 fail 调用）：卷句柄滞留不影响已拷出的 .app，S2-S4 换装
+# 继续；孤儿挂载点由系统重启回收，不构成更新失败理由
+hdiutil detach "\$MOUNT_DIR" || hdiutil eject "\$MOUNT_DIR" 2>/dev/null
 
 # ── S2: 两步中转——staging 内层 .app mv 为 .app.new（同卷 rename，原子）──
 echo "[\$(date)] [stage] S2 promote begin"

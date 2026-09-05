@@ -6,7 +6,7 @@
  * - state 类：分配 seq、写快照（同 key 覆盖）、不入 ring——last-value 语义，重连由快照恢复；
  * - stream 类：分配 seq、入 O(1) 环形缓冲（覆盖写）——可按 seq 回放；
  * - transient 类：不分配 seq、不入 ring、不写快照，直传订阅者——高频瞬时流（delta / terminal 输出），
- *   丢失可接受（routeInbound 对无 seq 消息直接 dispatch，core/coordination/seq-gap.ts 分支 3）。
+ *   丢失可接受（routeInbound 对无 seq 消息直接 dispatch，core/coordination/subscription-state.ts evalSeqGap 分支 3）。
  *
  * gap 判定（R-03 裁决，wave:perf-w06）：**本模块不判定 gap**。旧实现 subscribe 返回的
  * `seqCounter > streamRing.length` gauge 是死代码（handler 用 `let gap = false` 覆盖丢弃，且

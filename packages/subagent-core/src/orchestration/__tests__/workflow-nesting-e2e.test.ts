@@ -24,7 +24,7 @@ vi.mock("../lifecycle.ts", () => ({
   scheduleTimeBudget: vi.fn(() => undefined),
 }));
 
-import { handleWorkerMessage } from "../error-recovery.ts";
+import { handleWorkerMessage } from "../worker-message-pump.ts";
 import { executeNestedWorkflow, type LauncherDeps } from "../launcher.ts";
 import { runWorkflow } from "../lifecycle.ts";
 import { Budget } from "../models/budget.ts";

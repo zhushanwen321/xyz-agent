@@ -25,7 +25,7 @@ import { useI18n } from 'vue-i18n'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { GroupCard } from '@xyz-agent/ui/features/settings'
 import SettingRow from '../SettingRow.vue'
-import { getSubagentEngineConfig, setSubagentDefaultEngine } from '@/api/domains/session'
+import { getSubagentEngineConfig, setSubagentDefaultEngine } from '@xyz-agent/core/transport/api/domains/session'
 
 const { t } = useI18n()
 

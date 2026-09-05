@@ -5,18 +5,20 @@
  * - TC5 send 不传 images → message.send payload 不含 images 键（既有行为不变）
  * - TC6 send 传 images → payload 含 images 数组（对齐 protocol.ts:199）
  *
- * mock 策略：vi.mock('@/api/request') 捕获 command 调用（chat.ts 经 command 发 message.send）。
+ * mock 策略：vi.mock core request 模块捕获 command 调用（chat.ts 经 command 发 message.send；
+ * domains 已迁 core，桥不转发 mock——说明符直指 core 模块文件，跨包相对路径）。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/api/chat-send-images.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 const commandMock = vi.fn()
-vi.mock('@/api/request', () => ({
+vi.mock('../../../../core/src/transport/api/request', () => ({
   command: (...args: unknown[]) => commandMock(...args),
 }))
 
-import { send } from '@/api/domains/chat'
+import { send } from '@xyz-agent/core/transport/api/domains/chat'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '../../../../core/src/transport/api/pending'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -32,7 +34,7 @@ describe('chat.send images 透传（slice6 TC5-TC6）', () => {
     expect(commandMock).toHaveBeenCalledWith('message.send', {
       sessionId: 's1',
       content: 'hi',
-    })
+    }, RPC_BACKSTOP_TIMEOUT_MS)
     const payload = commandMock.mock.calls[0]![1] as Record<string, unknown>
     expect('images' in payload).toBe(false)
   })
@@ -56,6 +58,6 @@ describe('chat.send images 透传（slice6 TC5-TC6）', () => {
       sessionId: 's1',
       content: 'hi',
       images: [{ data: 'BASE64', mimeType: 'image/png' }],
-    })
+    }, RPC_BACKSTOP_TIMEOUT_MS)
   })
 })

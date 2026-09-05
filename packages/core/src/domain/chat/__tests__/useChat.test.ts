@@ -16,6 +16,7 @@ import { effectScope, nextTick } from 'vue'
 import { textToSegments } from '@xyz-agent/shared'
 import type { ServerMessage } from '@xyz-agent/shared'
 import { createChatStore } from '../store'
+import { getExecutingBash as getExecutingBashForTest } from '../bash-effects'
 import { createUseChat, resetChatModuleStateForTest } from '../useChat'
 import type { UseChatDeps } from '../useChat'
 
@@ -625,6 +626,63 @@ describe('subagent.directive 广播消费', () => {
     // e3 从未 send（未 ensureStreamSubscription）→ streamHandlers 无条目，emit 天然 no-op
     f.emit('e3', directiveMsg('e3', 'rec-1', 'build-api', '未订阅'))
     expect(f.chatStore.getMessages('e3').length).toBe(0)
+    f.dispose()
+  })
+})
+
+// ── ①b toast 抑制（timeout-slow-flow-wallclock D2/r4 极性修正）────────────────
+//
+// 极性（§7 useChat 行为权威表述）：executingBash 是「命令执行中」瞬时态（bashStart 置 /
+// bashResult·markBashError 清），「已收合成终态」= getExecutingBash 查询为空（取反）——
+// 为空 → 抑制 bashFailed toast（气泡终态是权威呈现面）；非空（命令仍在执行 = env backstop
+// 先到形态）→ 不抑制（toast 是唯一提示）。
+describe('sendBash ①b toast 抑制（D2 极性：空→抑制 / 非空→不抑制）', () => {
+  it('终态帧先于 error envelope 到达（executingBash 为空）→ 抑制 bashFailed toast，气泡终态是权威面', async () => {
+    const f = makeFixture()
+    // bash RPC 挂起：手动控制 reject 时机（模拟 runtime 先广播合成终态帧、后回 error envelope）
+    let rejectBash: (e: unknown) => void = () => {}
+    f.chatApi.bash.mockImplementation(
+      () => new Promise((_resolve, reject) => { rejectBash = reject }),
+    )
+    const sending = f.useChat.sendBash('b1', 'sleep 3700', false)
+    // bashStart 到达：executingBash 置位
+    f.emit('b1', msg('b1', 'message.bashStart', { command: 'sleep 3700', excludeFromContext: false, timestamp: 1724000000000 }))
+    // 合成终态帧到达（dispatcher catch 的诚实文案帧）：executingBash 清空
+    f.emit('b1', msg('b1', 'message.bashResult', {
+      command: 'sleep 3700', output: '命令执行超过 1 小时，已停止等待……', exitCode: null,
+      cancelled: false, truncated: false, excludeFromContext: false, timestamp: 1724000000001,
+    }))
+    expect(getExecutingBashForTest('b1')).toBeUndefined()
+    // error envelope（blocked → 'Bash execution failed'）此时刻达
+    rejectBash(new Error('Bash execution failed'))
+    await sending
+    expect(f.toast.error).not.toHaveBeenCalled()
+    f.dispose()
+  })
+
+  it('终态帧未到达（executingBash 非空 = env backstop 先到形态）→ 不抑制，toast 是唯一提示', async () => {
+    const f = makeFixture()
+    let rejectBash: (e: unknown) => void = () => {}
+    f.chatApi.bash.mockImplementation(
+      () => new Promise((_resolve, reject) => { rejectBash = reject }),
+    )
+    const sending = f.useChat.sendBash('b2', 'sleep 3700', false)
+    // bashStart 到达（命令确实在 runtime 执行中），bashResult 未到（runtime 3600s 未到点）
+    f.emit('b2', msg('b2', 'message.bashStart', { command: 'sleep 3700', excludeFromContext: false, timestamp: 1724000000000 }))
+    expect(getExecutingBashForTest('b2')).toBeDefined()
+    // renderer backstop（3660s 或中间态 65s）先 reject
+    rejectBash(new Error('request timeout after 3660000ms'))
+    await sending
+    expect(f.toast.error).toHaveBeenCalledTimes(1)
+    expect(f.toast.error).toHaveBeenCalledWith(expect.stringContaining('request timeout after 3660000ms'))
+    f.dispose()
+  })
+
+  it('命令从未到达 runtime（executingBash 从未置位）→ 抑制 toast（无终态可呈现，行为归 deviations 登记）', async () => {
+    const f = makeFixture()
+    f.chatApi.bash.mockRejectedValue(new Error('transport unavailable (ws not open)'))
+    await f.useChat.sendBash('b3', 'echo hi', false)
+    expect(f.toast.error).not.toHaveBeenCalled()
     f.dispose()
   })
 })

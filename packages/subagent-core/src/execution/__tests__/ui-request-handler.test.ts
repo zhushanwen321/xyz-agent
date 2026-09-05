@@ -18,8 +18,8 @@ import { PassThrough } from "node:stream";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { ASK_USER_RPC_PROMPT } from "../session-runner.ts";
-import { parseSpawnLine } from "../spawn-event-adapter.ts";
+import { ASK_USER_RPC_PROMPT } from "../engine/engines/pi/session-runner.ts";
+import { parseSpawnLine } from "../engine/engines/pi/spawn-event-adapter.ts";
 import { parseChannel } from "../ui-channels.ts";
 import { createUiRequestQueue, type UiRequest, type UiRequestHandler } from "../ui-request-queue.ts";
 

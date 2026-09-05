@@ -68,7 +68,7 @@ import { clearEngines, registerEngine } from "../engine/registry.ts";
 import type {
   AgentEvent,
   AgentOutcome,
-  AgentTaskSpec,
+  AgentCallOpts,
   EngineCapabilities,
   EngineHandle,
   ProbeReport,
@@ -76,7 +76,7 @@ import type {
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
 import { toSubagentRecordEntry } from "../record-entry.ts";
-import { getChildByRecord } from "../session-runner.ts";
+import { getChildByRecord } from "../engine/engines/pi/session-runner.ts";
 import { SubagentService } from "../subagent-service.ts";
 import type { ExecuteOptions } from "../types.ts";
 
@@ -86,7 +86,7 @@ const mockSpawn = vi.mocked(spawn);
 // 假引擎（EnginePort 最小实现；run 行为由每个用例注入）
 // ============================================================
 
-/** zcode 形态 capabilities（conversation/steer unsupported、sandbox none）。 */
+/** zcode 形态 capabilities（conversation/steer unsupported、sandbox none、maxTurns false）。 */
 const ZCODE_LIKE_CAPS: EngineCapabilities = {
   schemaEnforcement: "emulated",
   steer: "unsupported",
@@ -98,10 +98,11 @@ const ZCODE_LIKE_CAPS: EngineCapabilities = {
   resume: "cold",
   interrupt: "kill-only",
   permissionMode: "native",
+  maxTurns: false,
 };
 
 interface CapturedRun {
-  task: AgentTaskSpec;
+  task: AgentCallOpts;
   ctx: RunContext;
 }
 
@@ -111,7 +112,7 @@ class FakeEngine implements EnginePort {
   /** U2：probe 结果注入（路由期 routeEngine 消费；缺省 ok——probe 通过的常态）。 */
   probeFailed = false;
   /** run 实现注入（缺省：挂起不 resolve——record 保持 running 便于内存断言）。 */
-  runImpl: (task: AgentTaskSpec, ctx: RunContext) => Promise<{ handle: EngineHandle; outcome: AgentOutcome }>;
+  runImpl: (task: AgentCallOpts, ctx: RunContext) => Promise<{ handle: EngineHandle; outcome: AgentOutcome }>;
 
   constructor(id: string) {
     this.id = id;
@@ -132,7 +133,7 @@ class FakeEngine implements EnginePort {
         }
       : { ok: true, engineVersion: "fake", checks: [{ name: "bin", ok: true }] };
   }
-  async run(task: AgentTaskSpec, ctx: RunContext): Promise<{ handle: EngineHandle; outcome: AgentOutcome }> {
+  async run(task: AgentCallOpts, ctx: RunContext): Promise<{ handle: EngineHandle; outcome: AgentOutcome }> {
     this.runs.push({ task, ctx });
     return this.runImpl(task, ctx);
   }
@@ -222,7 +223,7 @@ function baseOpts(agentDir: string, extra: Partial<ExecuteOptions> = {}): Execut
 
 /** 挂起 run 的引擎路径下取内存 running record 的 engine 盖章（collectRecords 内存源投影）。 */
 function runningEngineTag(service: SubagentService, id: string): string | undefined {
-  const rec = service.collectRecords(10, "running").find((r) => r.id === id);
+  const rec = service.queries.collectRecords(10, "running").find((r) => r.id === id);
   return rec?.engine;
 }
 
@@ -308,7 +309,7 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     const handle = await service.execute(baseOpts(agentDir));
     await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
 
-    const rec = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
+    const rec = service.queries.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
     expect(rec).toBeDefined();
     expect(rec?.engine).toBeUndefined();
     expect(JSON.stringify(toSubagentRecordEntry(rec!))).not.toContain("engine");
@@ -320,10 +321,10 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
 
     expect(zcode.runs.length).toBe(0);
-    // piEngine 只是注册表占位——pi 缺省路径不查注册表（上一用例已验证零注册场景），
-    // 此处断言 piEngine 也未被消费（pi 原路径不走 EnginePort）
+    // piEngine 只是注册表占位——D2 单轨后 pi chat 走 Service 内部 DI 的 PiEngine 实例
+    //（chatPiEngine，经 EnginePort 交接轮次），registry 占位实例仍未被 chat 域消费
     expect(piEngine.runs.length).toBe(0);
-    const rec = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
+    const rec = service.queries.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
     expect(rec?.engine).toBeUndefined();
   });
 
@@ -342,7 +343,7 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     expect((err as { recovery?: string }).recovery).toContain("engine: pi");
     expect((err as { recovery?: string }).recovery).toContain("不传该参数");
     expect(zcode.runs.length).toBe(0);
-    expect(service.collectRecords(10, "all")).toHaveLength(0);
+    expect(service.queries.collectRecords(10, "all")).toHaveLength(0);
   });
 
   it("[预检] fork:true / worktree:true 同步拒绝", async () => {
@@ -354,7 +355,39 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
       /engine_capability_unsupported/,
     );
     expect(zcode.runs.length).toBe(0);
-    expect(service.collectRecords(10, "all")).toHaveLength(0);
+    expect(service.queries.collectRecords(10, "all")).toHaveLength(0);
+  });
+
+  it("[D3-④] zcode + maxTurns → 同步拒绝（record 创建前，不产生孤儿 record）——旧形态的 engine.run 内异步拒绝废弃", async () => {
+    // 旧形态：Service 层预检不查 maxTurns → record 创建 + kickOffEngineRun →
+    // zcode run 内硬编码 shape 检查 throw → failed record（异步化）。
+    // D3-④ 检查点钉死后：capabilities.maxTurns 位驱动，record 创建前同步 throw。
+    const { service, zcode } = setup(agentDir);
+    const err = await service
+      .execute(baseOpts(agentDir, { engine: "zcode", maxTurns: 5 }))
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain("engine_capability_unsupported");
+    expect((err as Error).message).toContain("maxTurns");
+    expect((err as { recovery?: string }).recovery).toContain("engine: pi");
+    // 「不产生孤儿 record」断言落点（V4④）：store 无新增条目、引擎未被触达
+    expect(zcode.runs.length).toBe(0);
+    expect(service.queries.collectRecords(10, "all")).toHaveLength(0);
+  });
+
+  it("[V4⑤ 反向] pi + maxTurns/fork/conversation/worktree → 零拦截（pi 既有合法能力无回归）", async () => {
+    const { service, zcode } = setup(agentDir);
+    // maxTurns=3（V4⑤ 场景原样）：正常进入 pi 轮次（spawn 被调），无同步拒绝
+    const handle = await service.execute(baseOpts(agentDir, { maxTurns: 3 }));
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+    expect(zcode.runs.length).toBe(0);
+    expect(service.queries.collectRecords(10, "running").find((r) => r.id === handle.subagentId)).toBeDefined();
+    // fork / conversation 组合同样直通（第二次 spawn 被调，无 engine_capability_unsupported）
+    await service.execute(baseOpts(agentDir, { fork: true, conversation: true }));
+    await vi.waitFor(() => expect(mockSpawn.mock.calls.length).toBeGreaterThanOrEqual(2));
+    // pi + worktree：预检放行（caps.sandbox='emulated'）——execute 不因能力被拒而
+    // reject（worktree 创建成败是另一维度，与拦截无关）
+    await expect(service.execute(baseOpts(agentDir, { worktree: true }))).resolves.toBeTypeOf("object");
   });
 
   // ============================================================
@@ -367,14 +400,14 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toContain("engine_not_found");
     expect((err as Error).message).toContain("zcode");
-    expect(service.collectRecords(10, "all")).toHaveLength(0);
+    expect(service.queries.collectRecords(10, "all")).toHaveLength(0);
   });
 
   // ============================================================
   // 5. 引擎分支骨架（D10 终止链 + 终态迁移）
   // ============================================================
 
-  it("[骨架] taskSpec 字段正确（task/cwd/model/effort/schema/persona）", async () => {
+  it("[骨架] 合流任务形状字段正确（prompt/cwd/model/thinkingLevel/schema/skillPath/appendSystemPrompt——D6 直传）", async () => {
     const { service, zcode } = setup(agentDir);
     await service.execute(
       baseOpts(agentDir, {
@@ -388,12 +421,14 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     );
     await vi.waitFor(() => expect(zcode.runs.length).toBe(1));
     const { task, ctx } = zcode.runs[0];
-    expect(task.task).toBe("do work");
-    expect(task.slug).toBe("routing-test");
+    // [D6 合流] task = AgentCallOpts（host-task-spec 从 ExecuteOptions 直译）
+    expect(task.prompt).toBe("do work");
+    expect(task.description).toBe("routing-test");
     expect(task.model).toBe("zcode/glm");
-    expect(task.effort).toBe("high");
+    expect(task.thinkingLevel).toBe("high");
     expect(task.schema).toEqual({ type: "object" });
-    expect(task.persona).toEqual({ skillPath: "/tmp/skill.md", appendSystemPrompt: ["extra"] });
+    expect(task.skillPath).toBe("/tmp/skill.md");
+    expect(task.appendSystemPrompt).toEqual(["extra"]);
     expect(ctx.poolKey).toBe("shared");
   });
 
@@ -403,7 +438,7 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     const handle = await service.execute(baseOpts(agentDir, { engine: "zcode" }));
 
     // record 终态化即 archive（无 sessionFile 不可磁盘重建）→ 内存查询落空
-    await vi.waitFor(() => expect(service.findRecord(handle.subagentId)).toBeUndefined());
+    await vi.waitFor(() => expect(service.queries.findRecord(handle.subagentId)).toBeUndefined());
     // 完成通知（chat 域宿主职责）：notifier 立即 flush（无其他 running）→ result 进 sendMessage 正文
     await vi.waitFor(() => {
       const sent = pi.sendMessage.mock.calls.some((c) => String(c[0]?.content).includes("hello result"));
@@ -417,7 +452,7 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
       Promise.resolve({ handle: fakeHandle(), outcome: { ...doneOutcome(""), error: "engine_run_failed: boom", engineId: "zcode" } });
     const handle = await service.execute(baseOpts(agentDir, { engine: "zcode" }));
 
-    await vi.waitFor(() => expect(service.findRecord(handle.subagentId)).toBeUndefined());
+    await vi.waitFor(() => expect(service.queries.findRecord(handle.subagentId)).toBeUndefined());
     await vi.waitFor(() => {
       const sent = pi.sendMessage.mock.calls.some((c) => String(c[0]?.content).includes("boom"));
       expect(sent).toBe(true);
@@ -482,7 +517,7 @@ describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
     await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
     expect(piEngine.runs.length).toBe(0);
 
-    const rec = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
+    const rec = service.queries.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
     expect(rec?.engine).toBe("pi");
     expect(rec?.engineFallback).toEqual({ from: "zcode", reason: "engine_probe_failed" });
     // entry（register 写点）含 engineFallback——兜底路径允许新增键（D5 只约束纯缺省路径）
@@ -498,7 +533,7 @@ describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
     );
     expect(mockSpawn).not.toHaveBeenCalled();
     expect(zcode.runs.length).toBe(0);
-    expect(service.collectRecords(10, "all")).toHaveLength(0);
+    expect(service.queries.collectRecords(10, "all")).toHaveLength(0);
   });
 
   it("[journal] taskId=record.id + onPoolResolved retarget 落 engines/zcode/<poolKey>/，journalPath 同源回填", async () => {
@@ -522,7 +557,7 @@ describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
       });
     };
     const handle = await service.execute(baseOpts(agentDir, { engine: "zcode" }));
-    await vi.waitFor(() => expect(service.findRecord(handle.subagentId)).toBeUndefined());
+    await vi.waitFor(() => expect(service.queries.findRecord(handle.subagentId)).toBeUndefined());
 
     // journal 文件名 = journal-<record.id>.jsonl，落在 engines/zcode/<poolKey>/ 下
     const journalPath = resolveJournalPath(agentDir, "zcode", POOL, handle.subagentId);
@@ -553,7 +588,7 @@ describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
       });
     };
     const handle = await service.execute(baseOpts(agentDir, { engine: "zcode" }));
-    await vi.waitFor(() => expect(service.findRecord(handle.subagentId)).toBeUndefined());
+    await vi.waitFor(() => expect(service.queries.findRecord(handle.subagentId)).toBeUndefined());
 
     const h = lastRecordEntry(pi)?.engineHandle;
     expect(h?.sessionRef).toEqual({ dbPath: "sessions.db" });
@@ -637,7 +672,7 @@ describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
     const handle = await service.execute(baseOpts(agentDir));
     await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
 
-    const rec = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
+    const rec = service.queries.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
     const entryJson = JSON.stringify(toSubagentRecordEntry(rec!));
     expect(entryJson).not.toContain("engineFallback");
     expect(entryJson).not.toContain("engineHandle");
@@ -660,7 +695,7 @@ describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
       const h = await service.execute(baseOpts(agentDir, { engine: "zcode" }));
       // 等本条终态化（record 离开内存）再发下一条——泄漏形态下第 7 条 acquire 永久
       // 排队、record 永卡 running，本 waitFor 即超时失败
-      await vi.waitFor(() => expect(service.findRecord(h.subagentId)).toBeUndefined());
+      await vi.waitFor(() => expect(service.queries.findRecord(h.subagentId)).toBeUndefined());
     }
     // 7 次引擎 run 全部真实执行（第 7 次未被泄漏槽阻塞）
     expect(zcode.runs.length).toBe(7);

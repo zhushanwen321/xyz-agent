@@ -227,3 +227,70 @@ jobs:
           files: release-artifacts/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── GitCode 镜像同步（国内下载加速）────────────────────────
+  # GitHub Releases 是唯一权威源（SSOT），本 job 把仓库代码与 Release 附件镜像到
+  # GitCode（先推代码 + tags，再同步附件），供国内用户加速下载；GitCode 侧被
+  # 清理/下线不影响官方分发。
+  # 依赖：secret GITCODE_TOKEN（GitCode 私人令牌）+ variable GITCODE_REPO（GitCode
+  # 仓库路径 owner/repo，必须是普通仓库——镜像仓（image repository）锁写会 400）。
+  # 脚本幂等，job 失败直接 re-run 即可补齐。
+  gitcode-sync:
+    name: Sync Release to GitCode
+    needs: release
+    runs-on: ubuntu-latest
+    # 150 分钟：附件走 runner→GitCode 跨境链路（单连接 0.09-0.4MB/s 且波动大），
+    # 脚本 3 路并发上传，1.1GB 预计 15-60 分钟（随时段波动）；单附件另有 30 分钟兜底。
+    # 脚本幂等，超时/失败 re-run 只补剩余附件。
+    timeout-minutes: 150
+    if: >-
+      !cancelled() &&
+      needs.release.result == 'success' &&
+      (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 全量历史 + tags：gitcode-sync 第一步把仓库分支/tags 强推对齐到 GitCode
+          fetch-depth: 0
+
+      - name: Mirror repo (branches + tags) to GitCode
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
+        run: node scripts/gitcode-release-sync.mjs push-repo
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./apps/electron/package.json').version")
+          mkdir -p release-artifacts
+          # 从刚创建的 GitHub Release 拉全部附件（含 release-notes.md，若构建阶段生成）
+          gh release download "v${VERSION}" --repo "${{ github.repository }}" \
+            --dir release-artifacts --clobber
+          ls -la release-artifacts
+
+      - name: Sync to GitCode
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GITCODE_REPO}" ]; then
+            echo "::error::variable GITCODE_REPO 未配置 —— 仓库 Settings → Secrets and variables → Actions → Variables → New repository variable（Name: GITCODE_REPO，值: GitCode 仓库路径 owner/repo）"
+            exit 1
+          fi
+          if [ -z "${GITCODE_TOKEN}" ]; then
+            echo "::error::secret GITCODE_TOKEN 未配置 —— Settings → Secrets and variables → Actions → New repository secret（值: GitCode 私人令牌）"
+            exit 1
+          fi
+          VERSION=$(node -p "require('./apps/electron/package.json').version")
+          NOTES=""
+          [ -f release-artifacts/release-notes.md ] && NOTES="release-artifacts/release-notes.md"
+          # prerelease 以版本号含 '-' 判断（不能用 GITHUB_REF：workflow_dispatch 时是分支名，必含 '-'）
+          PRERELEASE_FLAG=""
+          case "v${VERSION}" in *-*) PRERELEASE_FLAG="--prerelease" ;; esac
+          node scripts/gitcode-release-sync.mjs sync \
+            "v${VERSION}" "xyz-agent v${VERSION}" "${NOTES}" release-artifacts ${PRERELEASE_FLAG}

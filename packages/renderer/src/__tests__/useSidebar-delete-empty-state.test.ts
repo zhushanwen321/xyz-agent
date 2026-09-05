@@ -1,13 +1,17 @@
 /**
- * useSidebar 删除路径空态承接 enterEmptyChatState 单测（D7，panel-view-derivation 设计）。
+ * useSidebar 删除路径空态出口单测（原 useSidebar 版迁移改指，u5.2；D5 显式行为变化承接）。
+ *
+ * [语义调整记录·合并终态] 删除路径空态出口 = core enterEmptyChatState()（push chat +
+ * startFlow 进 landing，D7 空态承接）。本文件初版曾按 renderer-deepening D5 锁「只 push
+ * 不 startFlow」——那是 fork 时点的 core 现状；main 侧 2026-08-31（af96fa94c）以 D7 空态
+ * 承接修复 flow=idle 死态（landing 渲染需 flow 活跃），dev-merge dev-0.9.14 合并裁决采纳
+ * main 语义（更新的产品决策且经其验收），本测试改锁合并终态语义。
  *
  * 覆盖：
- * - deleteSession / deleteFolder 的 4 处空态出口（各自删空分支 + S4 兜底分支）统一编排
- *   push({ view: 'chat' }) + startFlow()——终态下 landing 渲染需 flow 活跃，flow=idle
- *   会落入无输入面死态 empty
- * - 成功回退路径（selectSession(next) 成功）不触发空态承接（flow 不进 landing）
- * - 排除保护：newSession 延迟 create 分支（L258）不使用 helper——无参 startFlow 的
- *   pendingCwd=null 会清掉 newSession 刚回灌的 fallback cwd
+ * - deleteSession / deleteFolder 的 4 处空态出口（各自删空分支 + S4 兜底分支）统一 push
+ *   { view: 'chat' } 空态 + startFlow 进 landing（enterEmptyChatState 承接）
+ * - 成功回退路径（selectSession(next) 成功，经 core 12 步链含流订阅）不触发空态出口
+ * - 排除保护：newSession 延迟 create 分支不调无参 startFlow——fallback cwd 保留不被清
  *
  * mock 策略：真实 useSidebar + 真实 useNewTaskFlow（app-bootstrap.test.ts 先例：不 mock
  * flow 状态机，防「组件层绿但 state 停 idle」盲区），只 mock @/api 域 + workspaceStore
@@ -105,8 +109,8 @@ beforeEach(() => {
   workspaceStoreMock.defaultCwd = undefined
 })
 
-describe('deleteSession 空态承接（D7）', () => {
-  it('D7-U1: 删唯一 session（删空分支）→ push chat 空态 + startFlow 进 landing（非 empty 死态）', async () => {
+describe('deleteSession 空态出口（合并终态，enterEmptyChatState 承接）', () => {
+  it('D7-U1: 删唯一 session（删空分支）→ push chat 空态 + startFlow 进 landing', async () => {
     const scope = effectScope()
     const sidebar = scope.run(() => useSidebar())!
     seedSessions([{ cwd: '/proj', ids: ['s1'] }])
@@ -118,13 +122,13 @@ describe('deleteSession 空态承接（D7）', () => {
     await sidebar.deleteSession('s1')
 
     expect(pushSpy).toHaveBeenCalledWith({ view: 'chat' })
-    // 核心断言：flow 被编排进 landing（空态有输入面承接），不是 idle 死态
+    // 核心断言：空态承接 push + startFlow（D7；flow=idle 死态修复，main af96fa94c 语义）
     expect(useNewTaskFlow().state.value).toBe('landing')
 
     scope.stop()
   })
 
-  it('D7-U2: 删 active 后 selectSession(next) reject（S4 兜底分支）→ 空态承接进 landing', async () => {
+  it('D7-U2: 删 active 后 selectSession(next) reject（S4 兜底分支）→ push chat 空态 + startFlow 进 landing', async () => {
     const scope = effectScope()
     const sidebar = scope.run(() => useSidebar())!
     seedSessions([{ cwd: '/proj', ids: ['s1', 's2'] }])
@@ -142,7 +146,7 @@ describe('deleteSession 空态承接（D7）', () => {
     scope.stop()
   })
 
-  it('D7-U3: 删 active 后 selectSession(next) 成功回退 → 不触发空态承接（flow 停 idle）', async () => {
+  it('D7-U3: 删 active 后 selectSession(next) 成功回退 → 不触发空态出口（flow 停 idle）', async () => {
     const scope = effectScope()
     const sidebar = scope.run(() => useSidebar())!
     seedSessions([{ cwd: '/proj', ids: ['s1', 's2'] }])
@@ -157,7 +161,7 @@ describe('deleteSession 空态承接（D7）', () => {
   })
 })
 
-describe('deleteFolder 空态承接（D7）', () => {
+describe('deleteFolder 空态出口（合并终态，enterEmptyChatState 承接）', () => {
   it('D7-U4: 删文件夹后列表空（删空分支）→ push chat 空态 + startFlow 进 landing', async () => {
     const scope = effectScope()
     const sidebar = scope.run(() => useSidebar())!
@@ -176,7 +180,7 @@ describe('deleteFolder 空态承接（D7）', () => {
     scope.stop()
   })
 
-  it('D7-U5: 删文件夹后 selectSession(next) reject（S4 兜底分支）→ 空态承接进 landing', async () => {
+  it('D7-U5: 删文件夹后 selectSession(next) reject（S4 兜底分支）→ push chat 空态 + startFlow 进 landing', async () => {
     const scope = effectScope()
     const sidebar = scope.run(() => useSidebar())!
     seedSessions([
@@ -214,8 +218,8 @@ describe('newSession 延迟 create 分支排除保护（D7 排除说明）', () 
     expect(pushSpy).toHaveBeenCalledWith({ view: 'chat' })
     const flow = useNewTaskFlow()
     expect(flow.state.value).toBe('landing')
-    // 排除保护核心：L258 只 push 不重复 startFlow。若误用 helper（无参 startFlow
-    // 二次触发），pendingCwd 会被置 null，刚回灌的 fallback cwd 丢失。
+    // 排除保护核心：newSession 延迟 create 分支只 push 不重复 startFlow。若误用无参
+    // startFlow 二次触发，pendingCwd 会被置 null，刚回灌的 fallback cwd 丢失。
     // landing 态无绑定 session，公开面 currentCwd 即 pendingCwd 的派生视图
     expect(flow.currentCwd.value).toBe('/repo')
 

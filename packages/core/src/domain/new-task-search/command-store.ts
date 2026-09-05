@@ -3,7 +3,7 @@
  *
  * 来源：packages/renderer/src/stores/command.ts（pinia setup store）迁移为纯 factory。
  * 迁移约束（IF1）：不依赖 pinia；状态/操作函数语义逐条等价；消费方自行 .value（无 pinia unwrap）。
- * renderer 旧 store 保留，待消费方迁移（strangler 逐域绞杀 §11.2）完成后删除。
+ * 壳旧 store 已随双轨收口（D7）删除，本 factory 是 command 状态的唯一实现。
  *
  * 与源 store 的差异（core 包约束 + PlatformPort）：
  *  - storage 经参数注入（KVStorage async 接口），不直连 localStorage。

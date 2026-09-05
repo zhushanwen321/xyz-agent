@@ -16,7 +16,7 @@ import { providePlatform } from '@xyz-agent/core'
 import type { WebSocketLike } from '@xyz-agent/core/platform/port'
 import { LocalStorageAdapter } from '@/composables/shell/local-storage-adapter'
 
-/** 注入桌面平台端口：LocalStorageAdapter（KVStorage）+ ipc（null）+ wsFactory（原生 WebSocket）。 */
+/** 注入桌面平台端口：LocalStorageAdapter（KVStorage）+ wsFactory（原生 WebSocket）。 */
 export function provideDesktopPlatform(): void {
   providePlatform({
     kind: 'electron',
@@ -25,8 +25,5 @@ export function provideDesktopPlatform(): void {
       // native WebSocket 是 platform 的具体 WS 实现；WebSocketLike 为抽象端口，此处声明接口满足。
       create: (url: string): WebSocketLike => new WebSocket(url) as unknown as WebSocketLike,
     },
-    // ipc: null —— deferred（spike③ 未通过），见 core/platform/port.ts 的 IpcBridge 注释；
-    // 当前主路径仍是 @/lib/ipc.ts（renderer 直接 import electronAPI）。
-    ipc: null,
   })
 }

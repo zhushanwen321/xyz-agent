@@ -315,7 +315,7 @@ async function safeAbort(
 /**
  * workflow() 嵌套调用的 Engine 实现。
  *
- * Worker 脚本内调 workflow(name, args) 时，error-recovery.dispatchWorkflowCall 路由
+ * Worker 脚本内调 workflow(name, args) 时，worker-message-pump.dispatchWorkflowCall 路由
  * 到 deps.onWorkflowCall，后者（Interface 层 makeDeps 注入）委托本函数。
  *
  * 流程（6 步）：

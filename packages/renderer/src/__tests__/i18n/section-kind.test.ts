@@ -10,25 +10,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
-import type { FileNode, SessionGroup } from '@xyz-agent/shared'
-import { useCommandStore } from '@/stores/command'
-import { useFileSearchStore } from '@/stores/fileSearch'
 
 const mockGetFileCandidates = vi.fn()
 const mockSessionList = vi.fn()
 vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   composer: { getFileCandidates: (...args: unknown[]) => mockGetFileCandidates(...(args as [string])) },
   session: { list: () => mockSessionList() },
-}))
-
-const mockStoreGet = vi.fn()
-const mockStoreSet = vi.fn()
-vi.mock('@/stores/fileSearch', () => ({
-  useFileSearchStore: () => ({
-    get: (...args: unknown[]) => mockStoreGet(...(args as [string])),
-    set: (...args: unknown[]) => mockStoreSet(...(args as [string, FileNode[]])),
-    invalidate: vi.fn(),
-  }),
 }))
 
 const mockSetupInvalidation = vi.fn(() => vi.fn())
@@ -43,16 +30,12 @@ beforeEach(() => {
   setActivePinia(createPinia())
   mockGetFileCandidates.mockReset()
   mockSessionList.mockReset()
-  mockStoreGet.mockReset()
-  mockStoreSet.mockReset()
   mockGetFileCandidates.mockResolvedValue([])
   mockSessionList.mockResolvedValue([])
-  mockStoreGet.mockReturnValue(null)
 })
 
 describe('U1: useSearch Section.kind 字段完整性', () => {
   it('空查询场景返回 recents + suggested 两 section，kind 分别为 recent / suggested', async () => {
-    useCommandStore()
     const { query } = useSearch(ref('sid-1'))
     const sections = await query('', { activeSessionId: 'sid-1' })
     // 期望：返回至少含 1 个 recent + 1 个 suggested（取决于 fixture 是否有内容，mock 端 fixture 至少有 SEARCH_RECENTS 3 条 + 建议 3 条）
@@ -65,7 +48,6 @@ describe('U1: useSearch Section.kind 字段完整性', () => {
   })
 
   it('非空查询返回四类分组，kind 覆盖 command / file / symbol / session', async () => {
-    useCommandStore()
     const { query } = useSearch(ref('sid-1'))
     const sections = await query('commit', { activeSessionId: 'sid-1' })
     const kinds = sections.map((s: Section) => s.kind)
@@ -74,7 +56,6 @@ describe('U1: useSearch Section.kind 字段完整性', () => {
   })
 
   it('所有 Section 都有非 undefined 的 kind 字段', async () => {
-    useCommandStore()
     const { query } = useSearch(ref('sid-1'))
     const sections = await query('test', { activeSessionId: 'sid-1' })
     for (const s of sections) {

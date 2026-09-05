@@ -102,8 +102,9 @@ export interface SearchPorts {
   isMock: boolean
   /** macOS 平台标志（壳适配 navigator.platform.includes('Mac')；D8 收编，C-W3-5） */
   isMac: boolean
-  /** mock 搜索 fixture（isMock=true 时 query 走此源） */
-  searchMock: SearchDataPort['searchMock']
+  /** mock 搜索 fixture（isMock=true 时 query 走此源）。[tc u3/D4-②] 可选——real 构建下壳不装配
+   *  （mock 模块链须可 DCE，无条件属性引用会把它拽进生产包）；isMock=true 缺失时 search.query 显式抛错 */
+  searchMock?: SearchDataPort['searchMock']
   /** file 直调读取（AC-6.9 不经吞错层） */
   fileRead: FileReadPort['read']
   /** composer 文件候选（AC-4.5） */

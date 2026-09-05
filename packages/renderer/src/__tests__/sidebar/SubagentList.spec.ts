@@ -323,10 +323,10 @@ describe('SubagentList 引擎 icon（U3 D8 三分支 / D9 最左位置）', () =
     expect(icon.attributes('title')).toBe('pi')
   })
 
-  it('分支2 engine=zcode → zcode icon（viewBox 0 0 24 24 path），title 显示 zcode', () => {
+  it('分支2 engine=zcode → zcode icon（Z.ai 品牌标，扩边留白 viewBox -8 -8 40 40），title 显示 zcode', () => {
     const icon = mountIcon({ engine: 'zcode' })
     expect(icon.exists()).toBe(true)
-    expect(icon.attributes('viewBox')).toBe('0 0 24 24')
+    expect(icon.attributes('viewBox')).toBe('-8 -8 40 40')
     expect(icon.find('path').exists()).toBe(true)
     expect(icon.attributes('title')).toBe('zcode')
   })

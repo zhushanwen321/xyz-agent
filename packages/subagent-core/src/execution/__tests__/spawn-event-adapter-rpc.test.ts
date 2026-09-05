@@ -2,7 +2,7 @@
 //
 // W1 红灯测试：spawn-event-adapter.ts 协议层重写 — Pi 原生格式 + method 平铺。
 //
-// 测试对象：extensions/universal/subagent-workflow/src/execution/spawn-event-adapter.ts（改造）
+// 测试对象：packages/subagent-core/src/execution/engine/engines/pi/spawn-event-adapter.ts（改造）
 // 契约来源：.fix-plans/00-master-summary.md §二（统一接口契约）+ §一冲突 2/判定顺序
 //
 // 核心改动：
@@ -18,7 +18,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { parseSpawnLine } from "../spawn-event-adapter.ts";
+import { parseSpawnLine } from "../engine/engines/pi/spawn-event-adapter.ts";
 
 // ── Pi 原生协议样本构造（来源：rpc-types.ts L230-265 真实类型） ──────────
 // 10 种 method，全部 {type:"extension_ui_request", id, method, ...平铺字段}。

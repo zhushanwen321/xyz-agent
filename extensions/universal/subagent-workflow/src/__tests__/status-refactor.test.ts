@@ -21,7 +21,7 @@ import { createNotifier } from "@zhushanwen/subagent-core/execution/notifier.ts"
 import type { BgNotifyRecord, BgNotifier, NotifierHost } from "@zhushanwen/subagent-core/execution/notifier.ts";
 import { mapExternalState } from "../interface/subagent-actions.ts";
 import { statusGlyph } from "../interface/format.ts";
-import type { ClosedReason, ExecutionRecord, ExecutionStatus } from "@zhushanwen/subagent-core/execution/types.ts";
+import type { ClosedReason, ExecutionRecord, ExecutionStatus } from "@zhushanwen/subagent-core";
 
 // 投递内核经通知域窄端口注入（notifier 不再直接 import session-delivery）——
 // BgNotifier dedupKey 用例依赖真实内核 dedupe 语义，注入真实 createDelivery；

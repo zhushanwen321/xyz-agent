@@ -16,7 +16,7 @@ import { useWorkflowStore, agentCallVirtualId } from '@/stores/workflow'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
 import { openSubagent } from '@xyz-agent/core/domain/drawer'
-import * as sessionApi from '@/api/domains/session'
+import * as sessionApi from '@xyz-agent/core/transport/api/domains/session'
 
 export function useSidebarSubagentActions(focusedSessionId: Ref<string | null>) {
   const { t } = useI18n()

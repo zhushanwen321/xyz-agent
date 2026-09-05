@@ -221,7 +221,7 @@ describe('B. 回放帧触发 ROUTE_TABLE effects 与 crossSession 分发', () =>
     expect(effects.onSessionExited).toHaveBeenCalledWith('s1', { sessionId: 's1', code: 0, reason: 'done' })
   })
 
-  it('B4: 回放的 extension:widget（CROSS_SESSION_TYPES）→ dispatchSession + dispatchCrossSession', async () => {
+  it('B4: 回放的 extension:widget（crossSession 声明条目）→ dispatchSession + dispatchCrossSession', async () => {
     const { ports } = setup()
     const subscribe = ports.subscribe as ReturnType<typeof vi.fn>
     subscribe.mockResolvedValueOnce({

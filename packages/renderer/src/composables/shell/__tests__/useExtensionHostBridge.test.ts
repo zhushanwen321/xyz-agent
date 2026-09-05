@@ -16,10 +16,10 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { computed, nextTick } from 'vue'
-import { InternalEventBus, MessageBusBridge, providePlatform, type ContributionRegistry } from '@xyz-agent/core'
+import { EXTENSION_BRIDGE_TYPES, InternalEventBus, MessageBusBridge, providePlatform, registerMountPoints, type ContributionRegistry } from '@xyz-agent/core'
 import type { InternalEvent } from '@xyz-agent/core'
-import { dispatchCrossSession, dispatchGlobal } from '@/api/events'
-import { createWsPluginMessageSource, EXTENSION_BRIDGE_TYPES, initExtensionHostBridge } from '../useExtensionHostBridge'
+import { dispatchCrossSession, dispatchGlobal } from '@xyz-agent/core/transport/api'
+import { createWsPluginMessageSource, initExtensionHostBridge } from '../useExtensionHostBridge'
 import {
   DIALOG_REQUEST_SOURCE_KEY,
   UI_RESPONSE_TRANSPORT_KEY,
@@ -30,17 +30,32 @@ import {
   type StatusBarSource,
   type PluginViewsSource,
 } from '@xyz-agent/ui/extension-host'
-import { connect, disconnect } from '@/lib/ws-client'
-import { createMockPlatform } from '@/mock/mock-ws'
+import { connect, disconnect } from '@xyz-agent/core/transport/ws-client'
+import { createMockPlatform } from '@xyz-agent/core/transport/mock/mock-ws'
 
-// mock transport：MF-4 断言 mountPoints.sync 发送（真实 transport.send 在单测环境不可观测、
-// 且会裸调 ws-client）。模式对齐 usePermissionRequest.test.ts（顶层 vi.fn + 工厂转发）。
+// mock ws-client.send：MF-4 断言 mountPoints.sync 发送（真实 send 在单测环境不可观测）。
+// D5 后 bridge 直连 core ws-client——mock 须拦截该模块本身；importOriginal 保留真实
+// connect/disconnect/getState（TC11/TC12 建连 + watch connected 依赖真实状态机）。
+// 模式对齐 usePermissionRequest.test.ts（顶层 vi.fn + 工厂转发）。
 const transportSendSpy = vi.fn()
-vi.mock('@/api/transport', () => ({
-  send: (...args: unknown[]) => transportSendSpy(...args),
-  connect: vi.fn(),
-  on: vi.fn(),
-}))
+vi.mock('@xyz-agent/core/transport/ws-client', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    send: (...args: unknown[]) => transportSendSpy(...args),
+  }
+})
+
+/**
+ * 模拟 bootstrap step 4（u6 注册收敛）：bridge 装配后不再自行触发注册，生产由 App.vue
+ * onMounted 的 bootstrap 第 4 步执行；测试显式调用补齐该前置。registerMountPoints 读
+ * setExtensionRegistries 最新注入的实例（幂等）；ensureMountPointsSync 的模块级守卫使
+ * watch 闭包引用首次装配的 mountPoints 实例——各装配点统一补注册，watch 无论引用哪个
+ * 实例 list() 均为全量挂载点。
+ */
+async function simulateBootstrapRegistration(): Promise<void> {
+  await registerMountPoints()
+}
 
 function makeBridge() {
   const bus = new InternalEventBus()
@@ -149,7 +164,8 @@ describe('createWsPluginMessageSource 过滤条件（FR1/AC1）', () => {
   })
 
   it('TC5: EXTENSION_BRIDGE_TYPES 字面量 5 项 + 每项行为级验证（进 bridge 产出非 error 事件）', () => {
-    // 字面量锁：与 core EXTENSION_HANDLERS（message-bus-bridge.ts）的 5 个 key 精确一致
+    // 字面量锁：EXTENSION_BRIDGE_TYPES 已是 core SSOT（派生自 EXTENSION_HANDLERS keys），
+    // 锁 5 项防 handlers 增删时白名单悄悄漂移（消费方 source filter 行为随之变化无信号）
     expect(EXTENSION_BRIDGE_TYPES).toEqual([
       'extension:widget',
       'extension:widgetGui',
@@ -198,6 +214,7 @@ describe('initExtensionHostBridge provide CompanionBand 契约（FR2/FR7，TC10�
 
     const result = initExtensionHostBridge(app as never)
     bridge = result.bridge
+    void simulateBootstrapRegistration()
 
     const sourceProvided = provided.find((p) => p.key === DIALOG_REQUEST_SOURCE_KEY)
     const transportProvided = provided.find((p) => p.key === UI_RESPONSE_TRANSPORT_KEY)
@@ -238,6 +255,7 @@ describe('MF-2 响应式桥（分区后建时序 + global scope）', () => {
     }
     const result = initExtensionHostBridge(app as never)
     bridge = result.bridge
+    void simulateBootstrapRegistration()
     const viewHostSource = provided.find((p) => p.key === VIEW_HOST_SOURCE_KEY)?.value as ViewHostSource
     const statusBarSource = provided.find((p) => p.key === STATUS_BAR_SOURCE_KEY)?.value as StatusBarSource
     const viewsSource = provided.find((p) => p.key === VIEWS_SOURCE_KEY)?.value as PluginViewsSource
@@ -396,6 +414,10 @@ describe('MF-1 挂载点上报时序（mountPoints.sync 连接就绪后发送）
     }
     const result = initExtensionHostBridge(app as never)
     bridge = result.bridge
+    // 装配后补 bootstrap step 4 前置（见 simulateBootstrapRegistration 注释）——本组用例
+    // 焦点是「已注册挂载点在 connected 时补发」的上报时序，非注册本身。注册不发 send，
+    // 不影响「未连接不发送」断言。
+    void simulateBootstrapRegistration()
   }
 
   it('TC11: 初始未连接不发送；首次建连进入 connected 后补发全量挂载点', async () => {

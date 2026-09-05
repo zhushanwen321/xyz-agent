@@ -79,7 +79,7 @@ vi.mock( "@zhushanwen/subagent-core/execution/alive-store.ts", () => ({
   writeAliveMarker: vi.fn(),
 }));
 
-vi.mock( "@zhushanwen/subagent-core/execution/temp-prompt.ts", () => ({
+vi.mock( "@zhushanwen/subagent-core/execution/engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -98,11 +98,11 @@ import {
   RELAY_EXIT_CODES,
   RELAY_PROTOCOL_VERSION,
   isRelayActive,
-} from "@zhushanwen/subagent-core/execution/relay-env.ts";
-import { getPiInvocation } from "@zhushanwen/subagent-core/execution/pi-invocation.ts";
-import { runSpawn, type RunOptions, type SessionRunnerContext } from "@zhushanwen/subagent-core/execution/session-runner.ts";
+} from "@zhushanwen/subagent-core/relay-env";
+import { getPiInvocation } from "@zhushanwen/subagent-core/execution/engine/engines/pi/pi-invocation.ts";
+import { runSpawn, type RunOptions, type SessionRunnerContext } from "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts";
 import { createRecord } from "@zhushanwen/subagent-core/execution/execution-record.ts";
-import { waitForSpawn } from "@zhushanwen/subagent-core/execution/__tests__/helpers/spawn-mock.ts";
+import { waitForSpawn } from "@zhushanwen/subagent-core/testing/execution/__tests__/helpers/spawn-mock.ts";
 
 const mockSpawn = vi.mocked(spawn);
 

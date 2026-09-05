@@ -144,7 +144,7 @@
     },
     {
       "id": "C-pi-07",
-      "summary": "pi JSONL 唯一写方 = pi 进程（绝对写规则）；合法边界仅登记三类：sidecar 四后缀 / fork 文件创建型 / restore 归一化白名单",
+      "summary": "pi JSONL 唯一写方 = pi 进程（绝对写规则）；合法边界仅登记三类：sidecar 六后缀 / fork 文件创建型 / restore 归一化白名单",
       "scope": [
         "global"
       ],
@@ -1618,9 +1618,9 @@
       "id": "C-ext-17",
       "summary": "非 pi 引擎分支终止链三路径全覆盖：spawn 子进程注册 session-runner spawnedChildren 记账（shutdown 收割兜底）、record AbortController 的 signal wire 到 RunContext.signal（用户 cancel 经 kill-chain 两级）、会话级联挂 dispose() 既有编排（abortRunningControllers → killAllSpawnedChildren）——不留孤儿进程",
       "scope": [
-        "extensions/universal/subagent-workflow/src/execution/subagent-service.ts",
-        "extensions/universal/subagent-workflow/src/execution/session-runner.ts",
-        "extensions/universal/subagent-workflow/src/execution/engine/port.ts"
+        "packages/subagent-core/src/execution/subagent-service.ts",
+        "packages/subagent-core/src/execution/engine/engines/pi/session-runner.ts",
+        "packages/subagent-core/src/execution/engine/port.ts"
       ],
       "authority": [
         "architecture/subagent-engine-gui-visibility.md#d1-终态架构--职责分层--协议闭合"
@@ -1732,6 +1732,26 @@
       ]
     },
     {
+      "id": "C-ext-20",
+      "summary": "zcode 引擎单一 app-server 形态（2026-09 用户拍板）：禁 CLI spawn 链回归（zcode --json 单轮与 probe 冒烟/protocol-drift 降级已删，漂移直接报错）；共享宿主 HOME（禁 HOME 池化回归，spawn env 不覆写 HOME，与 GUI 共写同一 SQLite）；poolKey 恒 'shared'，handle.dbPath 绝对锚定 ZCODE_HOST_DB_SUFFIX（runtime 读侧白名单同源）",
+      "scope": [
+        "packages/subagent-core/src/execution/engine/engines/zcode/**",
+        "packages/runtime/src/services/session/**"
+      ],
+      "authority": [
+        "design/zcode-engine-appserver-resident.md",
+        "../AGENTS.md"
+      ],
+      "dimensions": [
+        "arch-boundary"
+      ],
+      "enforcement": [
+        {
+          "type": "none"
+        }
+      ]
+    },
+    {
       "id": "C-proc-08",
       "summary": "pi 语义依赖机器登记 + 探针 + 版本门禁：docs/pi-semantics.json（PS-xx 条目，probe/observe 分型）是唯一机器登记源，scripts/check-pi-semantics.mjs（pre-commit + CI）守 schema/探针存在性/四包版本一致（pi-coding-agent ≡ pi-ai ≡ pi-agent-core ≡ runtime pin）；pi 升级 PR 必查两项——pi-ai exports 是否移除 ./compat、changelog 是否提及 ModelManager 迁移（PS-15 时间炸弹）；探针族红 = 语义漂移，先复核锚点再更新 verifiedWith",
       "scope": [
@@ -1760,7 +1780,7 @@
         "extensions/universal/subagent-workflow/**"
       ],
       "authority": [
-        "../packages/subagent-core/src/execution/session-runner.ts"
+        "../packages/subagent-core/src/execution/engine/engines/pi/session-runner.ts"
       ],
       "dimensions": [
         "data-governance"
@@ -1796,6 +1816,93 @@
         {
           "type": "machine",
           "hook": "check-pi-sync.mjs"
+        }
+      ]
+    },
+    {
+      "id": "C-data-15",
+      "summary": "per-session 模型/思考档位必须持久化到独立 sidecar <sessionFile>.model.json（persistBindingSidecar 家族：原子写 + sessionMetaCache 失效 + JSONL 不存在不创建守卫），禁只存内存；BINDING_FIELDS 矩阵登记 modelId/thinkingLevel 绑定字段且 restore 列='none'（扫描值禁覆写 get_state 读回的播种真值）；全部写点写生效值；purgeSessionSidecars 清单必须含 .model.json 防孤儿；sidecar 是 best-effort 显示缓存非权威（权威 = pi 会话文件 entries，restore 读回覆写过期值自愈）",
+      "scope": [
+        "packages/runtime/src/**"
+      ],
+      "authority": [
+        "design/composer-model-session-isolation.md#33-关键决策与权衡"
+      ],
+      "dimensions": [
+        "data-governance"
+      ],
+      "enforcement": [
+        {
+          "type": "machine",
+          "hook": "check_pi_direct_write.py"
+        },
+        {
+          "type": "review",
+          "agent": "review-data-governance"
+        }
+      ]
+    },
+    {
+      "id": "C-data-16",
+      "summary": "全局默认模型不得由 session 级模型切换改写：ModelService.switchModel 禁广播 config.defaults（source=model-switch），settingsStore.defaultModel 单一语义 = Settings 配置值（消费点不得因 session 级切换写默认或弹「默认模型自动更新」toast）；landing 新任务默认模型显式化为 lastUsedModel KV（仅显式选择写入，staging 试选不写），landing 兜底链 currentModel || lastUsedModel || defaultModel 仅限 landing 态",
+      "scope": [
+        "packages/runtime/src/**",
+        "packages/core/src/**",
+        "packages/renderer/src/**"
+      ],
+      "authority": [
+        "design/composer-model-session-isolation.md#33-关键决策与权衡"
+      ],
+      "dimensions": [
+        "business-logic",
+        "data-governance"
+      ],
+      "enforcement": [
+        {
+          "type": "review",
+          "agent": "review-business-logic"
+        }
+      ]
+    },
+    {
+      "id": "C-state-10",
+      "summary": "thinking 档位对齐 watch 仅挂「用户显式切模型」：watch 回调以入口 armed 快照（consumeArmedRestore 执行前捕获）为门禁判据（禁读消费块后的 armed 值），无 armed 快照时全部对齐分支（无档位设最高档/同体系映射/跨体系重置）一律跳过——切 session 焦点等非用户动作禁触发对齐 setThinkingLevel RPC；可用性校验分支（数据不一致安全网）保持不门禁；armed 生命周期沿用既有防线（显式 onModelSelect 设立，成功/失败/换绑/5s 过期清）零新状态",
+      "scope": [
+        "packages/core/src/**"
+      ],
+      "authority": [
+        "design/composer-model-session-isolation.md#33-关键决策与权衡"
+      ],
+      "dimensions": [
+        "business-logic"
+      ],
+      "enforcement": [
+        {
+          "type": "review",
+          "agent": "review-business-logic"
+        }
+      ]
+    },
+    {
+      "id": "C-comm-13",
+      "summary": "chat 流式 UI 判死必须 idle 语义：streaming timer 只由活动刷新计时（message 帧挂 refresh，stream_warn 除外），禁固定墙钟；活跃性定义含编排期子代理产出——subagent.stream_delta 帧经 route-inbound 桥接刷新父 session timer，禁止旁路帧不经 chat store 的静默检测；timeout 收口必须打标（Message.prematureTimeout）并允许迟到 message.complete 自愈恢复真实终态；阈值经 settings 配置链读写持久化（默认 1800s、clamp 60–3600s 单一权威 DEFAULT_STREAMING_IDLE_TIMEOUT_MS），禁新增 env 死配置口",
+      "scope": [
+        "packages/core/src/domain/chat/**",
+        "packages/core/src/coordination/**",
+        "packages/renderer/src/composables/effects/**",
+        "packages/shared/src/subagent-frame.ts"
+      ],
+      "authority": [
+        "design/timeout-streaming-ui-idle.md",
+        "../AGENTS.md"
+      ],
+      "dimensions": [
+        "business-logic"
+      ],
+      "enforcement": [
+        {
+          "type": "review",
+          "agent": "review-business-logic"
         }
       ]
     }

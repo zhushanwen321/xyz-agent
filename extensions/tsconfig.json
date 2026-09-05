@@ -13,7 +13,11 @@
     "lib": ["ES2022"],
     "types": ["node"],
     "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "paths": {
+      "@zhushanwen/subagent-core/testing/*.ts": ["../packages/subagent-core/src/*.ts"],
+      "@zhushanwen/subagent-core/*.ts": ["../packages/subagent-core/src/*.ts"]
+    }
   },
   "include": ["**/*.ts"],
   "exclude": [

@@ -25,6 +25,7 @@ import { ZCODE_APPSERVER_GOLDEN } from "../golden-sample.ts";
 import {
   SessionChannel,
   SUBSCRIBE_DELIVERY_KIND,
+  TurnTimeoutError,
   extractAssistantText,
   extractCreatedSessionId,
   extractReadUsage,
@@ -137,10 +138,14 @@ function makeChannel(overrides: ScenarioOverrides = {}): ChannelHandle {
       : {}),
   };
   writeFileSync(scenarioFile, JSON.stringify(scenario));
+  // buildAppServerEnv 2026-09 共享宿主 HOME 改版后只收单参 baseEnv（不再覆写 HOME）；
+  // 旧两参形态 (homeDir, extraEnv) 的第一参被展开成字符索引对象——PATH 进不了子 env，
+  // spawn("node") 无 PATH 可查 → ENOENT。此处传 env 对象本体（与 zcode-engine-*
+  // 引擎测试的 deps.processEnv 同模式）。
   const conn = new AppServerConnection({
     cliPath: FAKE_CLI,
     cwd: workspacePath,
-    env: buildAppServerEnv(join(TMP, `home-${connSeq}`), {
+    env: buildAppServerEnv({
       PATH: process.env.PATH ?? "",
       FAKE_STATE_FILE: stateFile,
       FAKE_SESSION_SCENARIO: scenarioFile,
@@ -568,16 +573,23 @@ describe("close（D4 用后即毁）", () => {
     expect(sentFrames(stateFile, "session/close")).toHaveLength(1);
   }, 10_000);
 
-  it("终态超时（turn.terminal 与收尾帧均未达）→ reject 超时语境且 close 仍被调用", async () => {
+  it("终态超时（turn.terminal 与收尾帧均未达）→ TurnTimeoutError（ceiling 形态，P0-1 两 timer 语义）且 close 仍被调用", async () => {
     const onlyRunning = [ZCODE_APPSERVER_GOLDEN.pushStream[0]]; // 仅 state.updated，无终态
     const { ch, stateFile, workspacePath } = makeChannel({
       replaceSendPushes: onlyRunning,
     });
-    await expect(
-      ch.runTurn({ workspacePath, mode: "yolo" }, "做点什么", {
-        turnTimeoutMs: 250,
+    const err = await ch
+      .runTurn({ workspacePath, mode: "yolo" }, "做点什么", {
+        turnTimeoutMs: 250, // P0-1 语义收窄：显式总上界（不再是固定墙钟预算）
       })
-    ).rejects.toThrow(/终态/);
+      .then(
+        () => {
+          throw new Error("should reject");
+        },
+        (e: unknown) => e
+      );
+    expect(err).toBeInstanceOf(TurnTimeoutError);
+    expect((err as TurnTimeoutError).kind).toBe("ceiling");
     expect(sentFrames(stateFile, "session/close")).toHaveLength(1);
   }, 10_000);
 });

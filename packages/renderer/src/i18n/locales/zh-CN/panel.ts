@@ -104,6 +104,9 @@ export default {
     // [W4 turn-attribution] 后台续跑 turn 起点行（Turn.vue trigger==='bg-notify'）与 bash 执行中瞬时行前缀（MessageStream.vue）
     turnTriggerBgNotify: '后台任务完成 · 已继续处理',
     executingBash: '正在执行',
+    // [premature-timeout] idle 超时误判收口的恢复指引（Turn.vue，docs/design/timeout-streaming-ui-idle.md §4.2；
+    // 不写死阈值数字——阈值用户可调，写死会漂移）
+    prematureTimeoutNotice: '响应已超时收口。若任务仍在后台进行，完成后将自动恢复显示；确认已停止可重新发送。',
   },
   git: {
     title: 'Git',
@@ -148,6 +151,7 @@ export default {
     quotaFailNetwork: '网络异常或服务不可用',
     quotaFailNoSubscription: '未检测到有效订阅',
     quotaFailParse: '额度响应解析失败',
+    quotaFailNotConfigured: '未配置 Workspace，请在设置中填写后重试',
     window5h: '5h',
     windowWeek: '本周',
     windowMonth: '本月',
@@ -250,10 +254,12 @@ export default {
     switchModel: '切换模型',
     searchPlaceholder: '搜索模型…',
     noMatch: '无匹配模型',
+    placeholder: '\u2026',
   },
   thinkingLevel: {
     title: '思考级别',
     level: '级别',
+    placeholder: '\u2026',
   },
   command: {
     title: '命令',

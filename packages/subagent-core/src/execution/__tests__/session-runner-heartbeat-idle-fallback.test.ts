@@ -76,7 +76,7 @@ vi.mock("../session-pending.ts", () => ({
   listActivePendingFromSessionFile: vi.fn(() => ({ items: [] })),
 }));
 
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -90,7 +90,7 @@ vi.mock("../lifecycle-manager.ts", async (importOriginal) => {
 });
 
 import { DEFAULT_IDLE_TIMEOUT_MS, hasIdleTimer, _resetLifecycleState } from "../lifecycle-manager.ts";
-import { runSpawn } from "../session-runner.ts";
+import { runSpawn } from "../engine/engines/pi/session-runner.ts";
 import {
   emitStdoutLine,
   type FakeChild,

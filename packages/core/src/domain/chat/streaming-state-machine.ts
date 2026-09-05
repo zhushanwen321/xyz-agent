@@ -12,10 +12,101 @@
  * 业务参数。store.ts 仅做 ref 委托（6 处调用点），不再有模块级 *Impl 反模式
  * （原为绕 max-lines-per-function 拆分）。
  */
-import type { ContentBlock, Message } from '@xyz-agent/shared'
+import type { ContentBlock, Message, ToolCall } from '@xyz-agent/shared'
 import { commitMessages, type MessagesRef } from './mutations'
 import { findLastAssistantIndex } from './chunk-processor'
 import type { FinalizeReason } from './store-types'
+
+/**
+ * finalizeMessages 的 per-message 终态映射助手（模块作用域纯函数，不依赖工厂闭包；
+ * 从原 map 回调按职责拆出——bash 跳过 → toolCall 收口 → 终态实体清扫 / streaming 收口，
+ * 分支条件与原实现逐字节等价，行为由 streaming-state-machine.test.ts + store.test.ts 锁）。
+ */
+function finalizeMessage(
+  m: Message,
+  reason: FinalizeReason,
+  errorText: string | undefined,
+  markedIds: Set<string> | undefined,
+): Message {
+  // [M1 PR#116 review] 跳过 bash 消息：bash 消息（role:'system' + bashExecution）的生命周期
+  // 由 bashResultEffect / markBashError 独立管理（W1 timer-decouple 解耦）。
+  // 若此处统一翻终态，L1 放宽 bash↔assistant 并发后，assistant error → finalizeSession('error')
+  // 会把共存中的 streaming bash 一并翻成 error，bashResult 到达时找不到 streaming bash →
+  // 真实结果被丢弃。
+  if (m.bashExecution) return m
+  // toolCall 收口对终态/streaming 两分支共用，只算一次（与原实现一致）
+  const toolCalls = finalizeToolCalls(reason, m.toolCalls)
+  const isStreaming = m.status === 'streaming'
+  if (!isStreaming) return sweepFinalizedMessage(m, reason, toolCalls)
+  return finalizeStreamingMessage(m, reason, errorText, toolCalls, markedIds)
+}
+
+/** toolCall 统一收口（无论 message 是否还 streaming；[W4] 收敛到单一路径，避免
+ * message.complete 局部 finalizeToolCalls 与此两套映射漂移）。
+ * - error/stream_error → toolCall 'error'；其它非 normal/aborted → 'end_not_received'（设 endTime）；
+ *   normal/aborted 不设 endTime（与原逻辑一致）。
+ * - 延迟到达的真实 tool_call_end 会用真实 output 覆盖收口值（end_not_received → completed）。
+ * - toolCalls 为 undefined 时保持 undefined（等价原 `?.map`）。 */
+function finalizeToolCalls(reason: FinalizeReason, toolCalls: ToolCall[] | undefined): ToolCall[] | undefined {
+  if (!toolCalls) return undefined
+  return toolCalls.map((tc): typeof tc => {
+    if (tc.status !== 'running') return tc
+    const tcIsError = reason === 'error' || reason === 'stream_error'
+    return {
+      ...tc,
+      status: tcIsError ? 'error' : 'end_not_received',
+      ...(reason !== 'normal' && reason !== 'aborted' ? { endTime: Date.now() } : {}),
+    }
+  })
+}
+
+/** message 已终态（如 message.complete handler 已改 status）时只补 toolCall 收口。
+ * [premature-timeout] 时机②/④ 实体侧落实：非 timeout 真实终态覆盖后，残留打标作废
+ *（清实体字段——UI 恢复指引承诺的「自动恢复」已不可能发生，指引须随字段消失）。
+ * 无 running toolCall 且无残留标记则原样返回（保持引用稳定，避免无谓 re-render）。 */
+function sweepFinalizedMessage(m: Message, reason: FinalizeReason, toolCalls: ToolCall[] | undefined): Message {
+  const needsMarkSweep = reason !== 'timeout' && m.prematureTimeout === true
+  const needsToolCalls = m.toolCalls?.some((tc) => tc.status === 'running') ?? false
+  if (needsMarkSweep || needsToolCalls) {
+    return {
+      ...m,
+      ...(needsToolCalls ? { toolCalls } : {}),
+      ...(needsMarkSweep ? { prematureTimeout: undefined } : {}),
+    }
+  }
+  return m
+}
+
+/** message 仍 streaming → 转终态 + 收口 toolCall。
+ * [M2 error-visibility] 追加形态双通道（SSOT docs/architecture/conversation-error-visibility.md §3.3.2）：
+ * errorText 写 Message.error 字段（message.ts:269 注释明确用途对口），content 保持崩溃前正常正文不动。
+ * 旧 `${content}\n\n${errorText}` 拼接把 errorText 混进 content，渲染层无法区分哪段是错误。
+ * 仅 assistant 消息写 error；非 assistant（user 提问等）保持 m.error 原值不写。
+ * [premature-timeout] timeout 收口的 assistant 打标 + id 入快照（仅本次真实收口实体；
+ * bash 跳过分支已提前 return，非 assistant 无 streaming 形态不进此路径）。 */
+function finalizeStreamingMessage(
+  m: Message,
+  reason: FinalizeReason,
+  errorText: string | undefined,
+  toolCalls: ToolCall[] | undefined,
+  markedIds: Set<string> | undefined,
+): Message {
+  const isErrorReason = reason === 'error' || reason === 'stream_error' || reason === 'timeout' || reason === 'disconnect' || reason === 'restart'
+  const finalStatus = isErrorReason ? 'error' : 'complete'
+  const finalError = errorText && m.role === 'assistant' ? errorText : m.error
+  const isMarked = reason === 'timeout' && m.role === 'assistant'
+  // markedIds 仅 reason==='timeout' 时由 finalizeMessages 提供（与 isMarked 同条件），
+  // 显式判空替代非空断言——两处条件各自演化时不再 TypeError（S11）
+  if (isMarked && markedIds) markedIds.add(m.id)
+  return {
+    ...m,
+    status: finalStatus,
+    content: m.content,
+    error: finalError,
+    toolCalls,
+    ...(isMarked ? { prematureTimeout: true } : {}),
+  }
+}
 
 /** 工厂依赖注入接口：全部 refs + setter + helpers 由 store 装配，本模块不直连外部状态。 */
 export interface StreamingStateMachineDeps {
@@ -35,6 +126,18 @@ export interface StreamingStateMachineDeps {
  */
 export function createStreamingStateMachine(deps: StreamingStateMachineDeps) {
   const { messages, compactingSessions, handingOffSessions, retryStates, queueStates, pendingSend, setCompacting, setHandingOff } = deps
+
+  /**
+   * [premature-timeout §5.2 D2] per-session timeout 打标 id 快照（finalizeMessages 现场记录）。
+   * 恢复只作用于该 id 集内、且仍处 timeout error 态的实体——不按「session 内存在标记」盲匹配
+   * （防跨 turn 错配）。生命周期（清除时机全集，设计 §5.2 标记生命周期规格）：
+   * ① 恢复命中：registry complete handler takePrematureTimeoutIds 读并清；
+   * ② 该 session 任一非 timeout 的 finalizeSession（finalizeMessages 内联，真实终态覆盖后标记失效；
+   *    resetTransientStates/finalizeAllStreaming 内部走 finalizeSession，时机④随之覆盖）；
+   * ③ 该 session 下一条 message_start（registry handler clearPrematureTimeoutIds，防跨 turn 错配）；
+   * ④ resetTransientStates（见②——disconnect 默认 reason 经 finalizeMessages 非 timeout 分支清）。
+   */
+  const prematureTimeoutIds = new Map<string, Set<string>>()
 
   /**
    * subagent streaming delta 吸收纯逻辑（W4，模块作用域）：
@@ -140,48 +243,46 @@ export function createStreamingStateMachine(deps: StreamingStateMachineDeps) {
    *
    * 把 streaming/running 实体推到终态（reason 决定 message.status + toolCall.status 映射），
    * 同步收口 running toolCall。幂等（sealed 后实体不变）。
+   *
+   * [premature-timeout §5.2 D2] reason==='timeout' 时给本次真实收口的 assistant 实体打
+   * `prematureTimeout: true` 标记（「UI 误判窗口的收口，非真实终态」），并把 id 集记入快照供
+   * 迟到的 message.complete 恢复分支定位；不写 errorText（维持现状，超时文案由 renderer 据标记
+   * 渲染本地化文本，core 保持 headless）。reason!=='timeout'（真实终态覆盖）清快照——时机②，
+   * resetTransientStates / finalizeAllStreaming 内部走 finalizeSession，时机④随之覆盖。
    */
   function finalizeMessages(sessionId: string, reason: FinalizeReason, errorText?: string): void {
     const prev = messages.value.get(sessionId)?.value
     if (!prev) return
-    const next = prev.map((m) => {
-      // [M1 PR#116 review] 跳过 bash 消息：bash 消息（role:'system' + bashExecution）的生命周期
-      // 由 finalizeBashOnly / bashResultEffect / markBashError 独立管理（W1 timer-decouple 解耦）。
-      // 若此处统一翻终态，L1 放宽 bash↔assistant 并发后，assistant error → finalizeSession('error')
-      // 会把共存中的 streaming bash 一并翻成 error，bashResult 到达时找不到 streaming bash →
-      // 真实结果被丢弃。与 W1 的 finalizeBashOnly 解耦对称。
-      if (m.bashExecution) return m
-      const isStreaming = m.status === 'streaming'
-      // toolCall 统一收口（无论 message 是否还 streaming；[W4] 收敛到此处单一路径，
-      // 避免 message.complete 局部 finalizeToolCalls 与此两套映射漂移）。
-      // - error/stream_error → toolCall 'error'；其它非 normal/aborted → 'end_not_received'（设 endTime）；
-      //   normal/aborted 不设 endTime（与原逻辑一致）。
-      // 延迟到达的真实 tool_call_end 会用真实 output 覆盖收口值（end_not_received → completed）。
-      const toolCalls = m.toolCalls?.map((tc): typeof tc => {
-        if (tc.status !== 'running') return tc
-        const tcIsError = reason === 'error' || reason === 'stream_error'
-        return {
-          ...tc,
-          status: tcIsError ? 'error' : 'end_not_received',
-          ...(reason !== 'normal' && reason !== 'aborted' ? { endTime: Date.now() } : {}),
-        }
-      })
-      if (!isStreaming) {
-        // message 已终态（如 message.complete handler 已改 status），只补 toolCall 收口。
-        // 无 running toolCall 则原样返回（保持引用稳定，避免无谓 re-render）。
-        return m.toolCalls?.some((tc) => tc.status === 'running') ? { ...m, toolCalls } : m
-      }
-      // message 仍 streaming → 转终态 + 收口 toolCall
-      const isErrorReason = reason === 'error' || reason === 'stream_error' || reason === 'timeout' || reason === 'disconnect' || reason === 'restart'
-      const finalStatus = isErrorReason ? 'error' : 'complete'
-      // [M2 error-visibility] 追加形态双通道（SSOT docs/architecture/conversation-error-visibility.md §3.3.2）：
-      // errorText 写 Message.error 字段（message.ts:269 注释明确用途对口），content 保持崩溃前正常正文不动。
-      // 旧 `${content}\n\n${errorText}` 拼接把 errorText 混进 content，渲染层无法区分哪段是错误。
-      // 仅 assistant 消息写 error；非 assistant（user 提问等）保持 m.error 原值不写。
-      const finalError = errorText && m.role === 'assistant' ? errorText : m.error
-      return { ...m, status: finalStatus, content: m.content, error: finalError, toolCalls } satisfies Message
-    })
+    if (reason !== 'timeout') {
+      // 时机②/④：真实终态收口后旧打标作废（防后续 complete 误恢复已被覆盖的实体）
+      prematureTimeoutIds.delete(sessionId)
+    }
+    const markedIds = reason === 'timeout' ? new Set<string>() : undefined
+    const next = prev.map((m) => finalizeMessage(m, reason, errorText, markedIds))
+    if (markedIds && markedIds.size > 0) prematureTimeoutIds.set(sessionId, markedIds)
     commitMessages(messages, sessionId, next)
+  }
+
+  /**
+   * [premature-timeout §5.2 D2] 读并清 per-session 打标 id 快照（恢复消费口，时机①）。
+   * registry complete handler 恢复分支调用；无快照返回空集（complete 对未打标 session no-op）。
+   */
+  function takePrematureTimeoutIds(sessionId: string): ReadonlySet<string> {
+    const ids = prematureTimeoutIds.get(sessionId)
+    prematureTimeoutIds.delete(sessionId)
+    return ids ?? new Set<string>()
+  }
+
+  /**
+   * [premature-timeout §5.2 D2] 清 per-session 打标（message_start 新 turn 作废旧标，时机③）。
+   * 快照与实体字段一并清：残留的 prematureTimeout:true 会让 renderer 恢复指引行悬空显示
+   * （指引承诺的「自动恢复」已随新 turn 开始不可能发生）。幂等；无标记时零额外 commit。
+   */
+  function clearPrematureTimeoutIds(sessionId: string): void {
+    prematureTimeoutIds.delete(sessionId)
+    const prev = messages.value.get(sessionId)?.value
+    if (!prev?.some((m) => m.prematureTimeout === true)) return
+    commitMessages(messages, sessionId, prev.map((m) => (m.prematureTimeout === true ? { ...m, prematureTimeout: undefined } : m)))
   }
 
   return {
@@ -190,5 +291,7 @@ export function createStreamingStateMachine(deps: StreamingStateMachineDeps) {
     finalizeMessages,
     collectFinalizeCandidates,
     clearIndependentTransient,
+    takePrematureTimeoutIds,
+    clearPrematureTimeoutIds,
   }
 }

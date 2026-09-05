@@ -19,7 +19,7 @@ import type { Ref } from 'vue'
 import type { NormalizedQuotaRow, QuotaFetchFailureReason } from '@xyz-agent/shared'
 import i18n from '@/i18n'
 import { useQuotaStore, type QuotaCacheEntry } from '@/stores/quota'
-import * as quotaApi from '@/api/domains/quota'
+import * as quotaApi from '@xyz-agent/core/transport/api/domains/quota'
 
 /** quota 失败 reason → panel.context 的 i18n key（简短原因，恢复指引长文案在 settings.providerEdit）。 */
 const QUOTA_FAIL_REASON_KEYS: Record<QuotaFetchFailureReason, string> = {
@@ -27,6 +27,7 @@ const QUOTA_FAIL_REASON_KEYS: Record<QuotaFetchFailureReason, string> = {
   network: 'panel.context.quotaFailNetwork',
   'no-subscription': 'panel.context.quotaFailNoSubscription',
   parse: 'panel.context.quotaFailParse',
+  not_configured: 'panel.context.quotaFailNotConfigured',
 }
 
 // i18n.global.t 的类型窄化 cast（对齐 useChat/useConnection 的非 setup composable 模式）：

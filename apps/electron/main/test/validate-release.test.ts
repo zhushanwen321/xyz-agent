@@ -22,8 +22,8 @@ import { UpdateError } from '../update/types.js'
 
 /** 合法的 mac asset（GitHub 域名 + https + 64 位 hex sha256） */
 const VALID_MAC = {
-  name: 'TaiJi-mac-arm64.zip',
-  downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJi-mac-arm64.zip',
+  name: 'TaiJi-mac-arm64.dmg',
+  downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJi-mac-arm64.dmg',
   size: 1000,
   sha256: 'a'.repeat(64),
 }
@@ -36,15 +36,15 @@ function makeRelease(overrides: Partial<LatestReleaseInfo> = {}): LatestReleaseI
     releaseNotes: '## changes',
     publishedAt: '2025-12-01T00:00:00Z',
     htmlUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/tag/v0.9.0',
-    assets: { macArm64Zip: { ...VALID_MAC } },
+    assets: { macArm64Dmg: { ...VALID_MAC } },
     ...overrides,
   }
 }
 
 /** 覆盖某个 asset */
 function withAsset(
-  key: 'macArm64Zip' | 'winX64Exe' | 'linuxX64AppImage' | 'linuxX64Deb',
-  asset: LatestReleaseInfo['assets']['macArm64Zip'],
+  key: 'macArm64Dmg' | 'winX64Exe' | 'linuxX64AppImage',
+  asset: LatestReleaseInfo['assets']['macArm64Dmg'],
 ): LatestReleaseInfo {
   const release = makeRelease()
   release.assets = { [key]: asset } as LatestReleaseInfo['assets']
@@ -63,21 +63,21 @@ describe('validate-release', () => {
 
   it('objects.githubusercontent.com 域名合法 → 不抛', () => {
     const release = makeRelease()
-    release.assets.macArm64Zip!.downloadUrl =
+    release.assets.macArm64Dmg!.downloadUrl =
       'https://objects.githubusercontent.com/xyz/asset.zip?token=abc'
     expect(() => validateRelease(release)).not.toThrow()
   })
 
   it('sha256 缺失（undefined）合法 → 不抛（仅 size 校验时 size 不查格式）', () => {
     const release = makeRelease()
-    release.assets.macArm64Zip!.sha256 = undefined
+    release.assets.macArm64Dmg!.sha256 = undefined
     expect(() => validateRelease(release)).not.toThrow()
   })
 
-  it('所有 4 个 asset 都存在且合法 → 不抛', () => {
+  it('所有 3 个 asset 都存在且合法 → 不抛', () => {
     const release = makeRelease()
     release.assets = {
-      macArm64Zip: { ...VALID_MAC },
+      macArm64Dmg: { ...VALID_MAC },
       winX64Exe: {
         name: 'xyz-agent-win-x64.exe',
         downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/xyz-agent-win-x64.exe',
@@ -88,11 +88,6 @@ describe('validate-release', () => {
         name: 'xyz-agent-linux-x64.AppImage',
         downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/xyz-agent-linux-x64.AppImage',
         size: 3000,
-      },
-      linuxX64Deb: {
-        name: 'xyz-agent-linux-x64.deb',
-        downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/xyz-agent-linux-x64.deb',
-        size: 4000,
       },
     }
     expect(() => validateRelease(release)).not.toThrow()
@@ -126,7 +121,7 @@ describe('validate-release', () => {
 
   // ── asset.name 路径遍历 + shell 注入 ───────────────────────────
   it('name 含 ../（路径遍历）→ 抛', () => {
-    const release = withAsset('macArm64Zip', {
+    const release = withAsset('macArm64Dmg', {
       ...VALID_MAC,
       name: '../../etc/passwd',
     })
@@ -134,7 +129,7 @@ describe('validate-release', () => {
   })
 
   it('name 含分号（shell 元字符）→ 抛', () => {
-    const release = withAsset('macArm64Zip', {
+    const release = withAsset('macArm64Dmg', {
       ...VALID_MAC,
       name: 'evil;rm -rf.zip',
     })
@@ -142,7 +137,7 @@ describe('validate-release', () => {
   })
 
   it('name 含空格 → 抛', () => {
-    const release = withAsset('macArm64Zip', {
+    const release = withAsset('macArm64Dmg', {
       ...VALID_MAC,
       name: 'evil name.zip',
     })
@@ -150,7 +145,7 @@ describe('validate-release', () => {
   })
 
   it('name 含美元符号（$ 变量展开）→ 抛', () => {
-    const release = withAsset('macArm64Zip', {
+    const release = withAsset('macArm64Dmg', {
       ...VALID_MAC,
       name: 'evil$HOME.zip',
     })
@@ -158,7 +153,7 @@ describe('validate-release', () => {
   })
 
   it('name 含反引号（命令替换）→ 抛', () => {
-    const release = withAsset('macArm64Zip', {
+    const release = withAsset('macArm64Dmg', {
       ...VALID_MAC,
       name: 'evil`whoami`.zip',
     })
@@ -166,14 +161,14 @@ describe('validate-release', () => {
   })
 
   it('name 含斜杠（路径分隔符）→ 抛', () => {
-    const release = withAsset('macArm64Zip', {
+    const release = withAsset('macArm64Dmg', {
       ...VALID_MAC,
       name: 'sub/dir.zip',
     })
     expect(() => validateRelease(release)).toThrow(/invalid asset name/)
   })
 
-  it('winX64Exe asset name 非法 → 抛（不只检查 macArm64Zip）', () => {
+  it('winX64Exe asset name 非法 → 抛（不只检查 macArm64Dmg）', () => {
     const release = withAsset('winX64Exe', {
       ...VALID_MAC,
       name: '../evil.exe',
@@ -184,64 +179,64 @@ describe('validate-release', () => {
   // ── downloadUrl SSRF 防护 ───────────────────────────────────────
   it('downloadUrl 是 http://（非 https）→ 抛', () => {
     const release = makeRelease()
-    release.assets.macArm64Zip!.downloadUrl =
+    release.assets.macArm64Dmg!.downloadUrl =
       'http://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/mac.zip'
     expect(() => validateRelease(release)).toThrow(/must be https/)
   })
 
   it('downloadUrl 是 file://（本地文件读取 SSRF）→ 抛', () => {
     const release = makeRelease()
-    release.assets.macArm64Zip!.downloadUrl = 'file:///etc/passwd'
+    release.assets.macArm64Dmg!.downloadUrl = 'file:///etc/passwd'
     expect(() => validateRelease(release)).toThrow(/must be https/)
   })
 
   it('downloadUrl 非白名单域名（内网探测 SSRF）→ 抛', () => {
     const release = makeRelease()
-    release.assets.macArm64Zip!.downloadUrl =
+    release.assets.macArm64Dmg!.downloadUrl =
       'https://169.254.169.254/latest/meta-data/' // AWS metadata endpoint
     expect(() => validateRelease(release)).toThrow(/host not allowed/)
   })
 
   it('downloadUrl 非白名单域名（example.com）→ 抛', () => {
     const release = makeRelease()
-    release.assets.macArm64Zip!.downloadUrl = 'https://example.com/mac.zip'
+    release.assets.macArm64Dmg!.downloadUrl = 'https://example.com/mac.zip'
     expect(() => validateRelease(release)).toThrow(/host not allowed/)
   })
 
   it('downloadUrl localhost（内网探测）→ 抛', () => {
     const release = makeRelease()
-    release.assets.macArm64Zip!.downloadUrl = 'https://localhost:8080/mac.zip'
+    release.assets.macArm64Dmg!.downloadUrl = 'https://localhost:8080/mac.zip'
     expect(() => validateRelease(release)).toThrow(/host not allowed/)
   })
 
   it('downloadUrl 非法格式（无法 parse）→ 抛', () => {
     const release = makeRelease()
-    release.assets.macArm64Zip!.downloadUrl = 'not-a-url'
+    release.assets.macArm64Dmg!.downloadUrl = 'not-a-url'
     expect(() => validateRelease(release)).toThrow(/invalid download url/)
   })
 
   // ── sha256 格式 ─────────────────────────────────────────────────
   it('sha256 非 64 位（太短 abc123）→ 抛', () => {
     const release = makeRelease()
-    release.assets.macArm64Zip!.sha256 = 'abc123'
+    release.assets.macArm64Dmg!.sha256 = 'abc123'
     expect(() => validateRelease(release)).toThrow(/invalid sha256 format/)
   })
 
   it('sha256 含非 hex 字符 → 抛', () => {
     const release = makeRelease()
-    release.assets.macArm64Zip!.sha256 = 'g'.repeat(64) // g 不是 hex
+    release.assets.macArm64Dmg!.sha256 = 'g'.repeat(64) // g 不是 hex
     expect(() => validateRelease(release)).toThrow(/invalid sha256 format/)
   })
 
   it('sha256 含分号（shell 注入到校验脚本）→ 抛', () => {
     const release = makeRelease()
-    release.assets.macArm64Zip!.sha256 = 'a'.repeat(63) + ';' // 64 字符但含 ;
+    release.assets.macArm64Dmg!.sha256 = 'a'.repeat(63) + ';' // 64 字符但含 ;
     expect(() => validateRelease(release)).toThrow(/invalid sha256 format/)
   })
 
   it('sha256 大写 hex 合法 → 不抛（大小写不敏感）', () => {
     const release = makeRelease()
-    release.assets.macArm64Zip!.sha256 = 'A'.repeat(64)
+    release.assets.macArm64Dmg!.sha256 = 'A'.repeat(64)
     expect(() => validateRelease(release)).not.toThrow()
   })
 

@@ -16,9 +16,11 @@
  * [P4 s5 drawer-widget-removal] selectSession 内 consumePendingOpen / cleanupSessionState 内
  * clearPendingOpen 已删除：pendingOpen 路由机制随 tasks 域移除（PluginViewContainer 承接）。
  *
- * w5 壳组合项（本次不进 core，C-W3-4）：ensureStreamSubscription / chat.touchLru /
- * evictIfNeeded / clearUnread / fileTree 预加载 / flow.cancelFlow——壳包装本 factory 时
- * 按 renderer 时序补齐（ensureStreamSubscription 须先于 syncSessionToPanel）。
+ * [renderer-deepening D3/D4] 原 w5 壳组合项（ensureStreamSubscription / chat.touchLru /
+ * evictIfNeeded / clearUnread / fileTree 预加载 / flow.cancelFlow，原 C-W3-4「壳补齐时序」
+ * 立场）已升级为 sessionEntry 端口束（SessionEntryPort，api-port.ts）注入 selectSession
+ * 完整 12 步切入链——链本体在本文件单点编排（唯一载体），原三份实现（core/壳新/壳旧）的
+ * 时序漂移由此收口。时序采壳版 panel-first（D4 行为纠正：panel/navigation 先于 hydrate）。
  *
  * 命名说明：IF4 字面签名写 useSession；core 内 factory 统一 create* 前缀
  * （createSessionStore/createChatStore/createUseChat 先例），故命名 createUseSession。
@@ -26,8 +28,7 @@
 import { computed, onScopeDispose } from 'vue'
 import type { BatchDeleteResult, Message, SessionGroup, SessionSummary } from '@xyz-agent/shared'
 import { triggerSessionCleanups } from '../../foundation/use-session-scoped-state'
-import type { SessionApiPort } from './api-port'
-import type { PanelOrchestrationPort } from './effects/panel-orchestration'
+import type { SessionApiPort, PanelOrchestrationPort, SessionEntryPort } from './api-port'
 import type { createSessionStore } from './store'
 
 /**
@@ -140,6 +141,11 @@ export interface UseSessionDeps {
    * 回复丢失事故）的 selectSession；缺省走 core headless selectSession（headless/mobile 形态）。
    */
   selectSessionFallback?: (id: string) => Promise<void>
+  /**
+   * sessionEntry 端口束（可选，D3）：切入链的跨域步骤（flow 取消/未读/流订阅/LRU/文件树）。
+   * 成员级可选、缺省 no-op——headless 路径零新增步骤执行完整链，时序按 D4 统一链。
+   */
+  sessionEntry?: SessionEntryPort
 }
 
 // ── session.list server-push 订阅（#7 方案 A；CLAUDE.md 规则 #2 防重复注册）──
@@ -185,6 +191,17 @@ export function resetSessionListSubForTest(): void {
 export function createUseSession(deps: UseSessionDeps) {
   const { store, api, panel, navigation, chat, hooks } = deps
 
+  // ── sessionEntry 端口解析（D3）：成员级可选 → 显式 no-op 默认，链内零 undefined 崩溃面 ──
+  const noop = (): void => {}
+  const entry: Required<SessionEntryPort> = {
+    cancelActiveFlow: deps.sessionEntry?.cancelActiveFlow ?? noop,
+    clearUnread: deps.sessionEntry?.clearUnread ?? noop,
+    ensureStreamSubscription: deps.sessionEntry?.ensureStreamSubscription ?? noop,
+    touchRecency: deps.sessionEntry?.touchRecency ?? noop,
+    preloadFileTree: deps.sessionEntry?.preloadFileTree ?? noop,
+    evictLru: deps.sessionEntry?.evictLru ?? noop,
+  }
+
   /**
    * 当前焦点 panel 绑定的 session（UI 高亮 SSOT）。
    * 与 store.activeId 解耦：activeId 收敛为导航/启动语义，不再驱动 UI 高亮。
@@ -218,20 +235,23 @@ export function createUseSession(deps: UseSessionDeps) {
   }
 
   /**
-   * 选择 session：switchSession api + 更新 activeId + 载入 panel + 首次历史回填。
-   * switchSession 失败（mock id 不存在）抛错，UI 层捕获；不更新 activeId。
-   *
-   * 首次进入该 session 时拉取历史注入 chat store（UC-2 切换可见块类型丰富度）。
-   * getHistory 失败 → 标记 failedHistory，landing 显重试出口（AC-2.6），不永久卡住——
-   * 失败消化不抛（主流程不因 hydrate 失败中断）。
-   *
-   * 非 core 编排项（ensureStreamSubscription/touchLru/evictIfNeeded/clearUnread/fileTree
-   * 预加载/flow.cancelFlow）由 w5 壳组合层补齐（C-W3-4），保持 renderer 时序。
+   * 切入链主体（原壳 useSidebar.postLoadSession，D3 入 core）：统一链步 4-12。
+   * 前置：switchSession 已成功 + activeId 已置——ensureStreamSubscription /
+   * syncSessionToPanel 依赖当前 activeId 路由到正确 session 分区（ADR-0049 + 架构约定 #7）。
    */
-  async function selectSession(id: string): Promise<void> {
-    await api.switchSession(id)
-    store.setActiveId(id)
-    // 历史回填：features 层跨 api+stores，是 hydrate 的正确编排点
+  async function runEntryChain(id: string): Promise<void> {
+    // 4. 清未读：用户主动查看该 session，未读 badge 即消
+    entry.clearUnread(id)
+    // 5. 流订阅：[C-W3-4 / 2026-07-29 handoff 回复丢失事故] 必须先于 syncSessionToPanel——
+    //    panel 载入后 MessageStream 挂载，订阅必须先就绪否则 snapshot 回放事件被丢
+    entry.ensureStreamSubscription(id)
+    // 6. LRU recency：panel 载入前刷新，确保当前 session 不被本链末尾的驱逐逐出（W3 H3）
+    entry.touchRecency(id)
+    // 7. panel 载入（D4 panel-first：panel 立即挂载，历史异步回填）
+    syncSessionToPanel(id)
+    // 8. 导航
+    navigation.push({ view: 'chat', sessionId: id })
+    // 9. 历史回填：features 层跨 api+stores，是 hydrate 的正确编排点
     // 切入刷新（后台 session reconcile）：首次等价 hydrate；已 hydrate 则增量刷新到最新
     // entries（turn 可能在前端不在场时完成）+ 保留尾部 streaming 实体（进行中轮次不断链）。
     if (!chat.isHydrated(id)) {
@@ -258,8 +278,36 @@ export function createUseSession(deps: UseSessionDeps) {
         console.warn(`[use-session] background reconcile refresh failed for ${id}:`, e)
       }
     }
-    syncSessionToPanel(id)
-    navigation.push({ view: 'chat', sessionId: id })
+    // 10. 文件树预加载：切 session 即拉取，侧栏「文件」tab 计数立即更新。fire-and-forget 失败不阻断
+    entry.preloadFileTree(id)
+    // 11. [lru-panel-exempt-fix] 驱逐前刷新 panel 绑定 session 的 LRU recency——若在驱逐侧
+    //     加 panel 检查会让 deleteSession 流程中被删 session 被 exempt 拦截（内存泄漏）
+    const panelSessionId = panel.focusedSessionId()
+    if (panelSessionId) entry.touchRecency(panelSessionId)
+    // 12. LRU 驱逐
+    entry.evictLru(panelSessionId)
+  }
+
+  /**
+   * 选择 session：完整 12 步切入链（D3/D4，renderer-deepening）——链的唯一载体，改时序只改这里。
+   * 1 cancelActiveFlow → 2 switchSession → 3 setActiveId → 4 clearUnread →
+   * 5 ensureStreamSubscription → 6 touchRecency → 7 syncSessionToPanel → 8 navigation.push →
+   * 9 hydrate/reconcile → 10 preloadFileTree → 11 touchRecency(panel 绑定 session) → 12 evictLru。
+   *
+   * 时序采壳版（D4 行为纠正）：panel/navigation 先于 hydrate——panel 立即挂载、历史异步
+   * 回填；旧 core hydrate-first 让 panel 载入等历史 RPC 返回，切换感知延迟长（UX 回退）。
+   * 失败语义：switchSession 失败抛错由 UI 层捕获（不更新 activeId，后续步骤全部短路）；
+   * hydrate 失败标 failedHistory 不抛穿（AC-2.6 landing 显重试出口），尾部步骤照常执行。
+   */
+  async function selectSession(id: string): Promise<void> {
+    // 1. flow 活跃（landing/overlay）时切 session → cancelled（AC-3.10，防 overlay 卡死 + landing 残留）
+    entry.cancelActiveFlow()
+    // 2. 通知 runtime 切换（失败抛错，后续步骤全部短路）
+    await api.switchSession(id)
+    // 3. activeId（步 5/7 依赖 activeId 路由到正确 session 分区）
+    store.setActiveId(id)
+    // 4-12
+    await runEntryChain(id)
   }
 
   /**

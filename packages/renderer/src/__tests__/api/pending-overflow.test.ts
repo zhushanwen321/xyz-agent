@@ -11,7 +11,7 @@
  * 6. 被驱逐 id 的迟到 error envelope 同样静默丢弃（对称路径）
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import * as pending from '@/api/pending'
+import * as pending from '@xyz-agent/core/transport/api'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 /** 构造 resolveEnvelope 入参（payload 用 as 断言对齐 ServerMessage 联合 payload） */

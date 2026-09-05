@@ -21,10 +21,10 @@ export * from './bash-effects'
 export * from './effect-types'
 export * from './truncate-tool-output'
 export { dispatchMessageEvent } from './effects/registry'
-export { createChatStore, DEFAULT_STREAMING_TIMEOUT_MS } from './store'
+export { createChatStore, DEFAULT_STREAMING_IDLE_TIMEOUT_MS, STREAMING_IDLE_TIMEOUT_MIN_MS, STREAMING_IDLE_TIMEOUT_MAX_MS } from './store'
 export * from './derive-status'
 export { createStreamingStateMachine, type StreamingStateMachineDeps } from './streaming-state-machine'
-export type { ChatStoreInstance } from './store'
+export type { ChatStoreInstance, ChatStoreReaders, ChatStoreOps } from './store'
 // w5 chat-use-chat：useChat composable 迁移（createUseChat factory + ChatApiPort）
 // w6 chat-ui-and-shell：chat 域纯逻辑（turn 分组/摘要）迁入
 export * from './message-turns'

@@ -42,7 +42,11 @@ export type { PluginHostContract as PluginHost } from './plugin-host.js'
 
 const DEACTIVATE_TIMEOUT_MS = 5_000
 const ACTIVATE_TIMEOUT_MS = 30_000
-const PERMISSION_TIMEOUT_MS = 30_000
+// 权限审批等待默认值（timeout-plugin-service D3）：审批对象是「等一个不在场的人」，
+// 量级按本仓「等人工」裁决值 30min（dialog-queue DEFAULT_DIALOG_TIMEOUT_MS 同源），
+// 不再是 30s 判拒。全局逃生门 = env XYZ_PLUGIN_PERMISSION_TIMEOUT_MS（生产装配点
+// plugin-service.ts 接线解析，缺失/非法回落本常量——回落权威单一在此）。
+export const PERMISSION_TIMEOUT_MS = 1_800_000
 
 interface PendingReply {
   resolve: (success: boolean) => void
@@ -62,12 +66,31 @@ export interface PermissionCheckerLike {
 export interface ActivatorOptions {
   permissionChecker?: PermissionCheckerLike
   onPermissionRequest?: (payload: { pluginId: string; permissions: PluginPermission[] }) => void
-  /** 覆盖权限审批超时（测试用） */
+  /**
+   * 权限审批等待到期取消回调（timeout-plugin-service D3）。生产装配点注入
+   * `plugin:permissionRequestExpired` 广播（前端撤回无人应答的审批弹窗）；
+   * 未注入时到期取消只落日志与状态，无广播（单测/内嵌场景）。
+   */
+  onPermissionRequestExpired?: (payload: { pluginId: string }) => void
+  /**
+   * 覆盖权限审批超时（ms）。timeout-plugin-service D3 转正：生产装配点经
+   * XYZ_PLUGIN_PERMISSION_TIMEOUT_MS env 接线（合法正数生效，缺失/非法 warn 回落
+   * PERMISSION_TIMEOUT_MS）；测试可直接传小值加速。
+   */
   permissionTimeoutMs?: number
+  /**
+   * 覆盖 activate 生命周期握手超时（ms）。timeout-plugin-service D4：activate 是
+   * 控制面单请求（默认 30s 保持不动），本参数是逃生门——重初始化插件的 onActivate
+   * 做重活（拉配置、建连接、预热缓存）时可放宽（对齐 fork 版 plugin-host-process
+   * 构造器 loadTimeoutMs 先例；契约要求 onActivate 保持轻量，重活应移到首个工具
+   * 调用或命令 handler）。测试可传小值加速超时路径。
+   */
+  activateTimeoutMs?: number
 }
 
 interface PendingPermission {
-  resolve: (approved: boolean) => void
+  /** 结局三态：true=批准 / false=显式拒绝或挂起期清理唤醒 / 'timeout'=等待到期（D3 取消语义） */
+  resolve: (outcome: boolean | 'timeout') => void
   timer: ReturnType<typeof setTimeout>
 }
 
@@ -106,7 +129,10 @@ export class PluginActivator {
   /** 权限检查（可选） */
   private permissionChecker?: PermissionCheckerLike
   private onPermissionRequest?: (payload: { pluginId: string; permissions: PluginPermission[] }) => void
+  private onPermissionRequestExpired?: (payload: { pluginId: string }) => void
   private permissionTimeoutMs: number
+  /** activate 生命周期握手超时（D4：默认 ACTIVATE_TIMEOUT_MS 30s 不动，构造选项可覆盖） */
+  private activateTimeoutMs: number
   /** 待审批的权限请求 */
   private pendingPermissions = new Map<string, PendingPermission>()
 
@@ -116,7 +142,11 @@ export class PluginActivator {
   constructor(options?: ActivatorOptions) {
     this.permissionChecker = options?.permissionChecker
     this.onPermissionRequest = options?.onPermissionRequest
+    this.onPermissionRequestExpired = options?.onPermissionRequestExpired
     this.permissionTimeoutMs = options?.permissionTimeoutMs ?? PERMISSION_TIMEOUT_MS
+    // 对齐 U7 形态（plugin-host.ts 构造器 loadTimeoutMs ?? LOAD_PLUGIN_TIMEOUT_MS）：
+    // 生产装配不传 → 默认 30s 不动；仅测试/重初始化插件场景传覆盖值。
+    this.activateTimeoutMs = options?.activateTimeoutMs ?? ACTIVATE_TIMEOUT_MS
   }
 
   /** 注册插件描述符，构建 activationEvent 索引 */
@@ -219,27 +249,9 @@ export class PluginActivator {
     this.pluginStates.set(pluginId, 'ACTIVATING')
 
     try {
-      // 0. 权限检查（在分配 Worker 之前）
-      if (this.permissionChecker && descriptor.permissions.length > 0) {
-        const unapproved = this.permissionChecker.getUnapproved(pluginId, descriptor.permissions)
-        if (unapproved.length > 0) {
-          // 先注册 pending promise，再通知外部（避免回调中立即 resolve 时竞态）
-          const approvalPromise = this.waitForPermissionApproval(pluginId)
-          this.onPermissionRequest?.({ pluginId, permissions: unapproved })
-          // 等待审批结果
-          const approved = await approvalPromise
-          // 等待期间状态被外部改写（deactivate/disable → DEACTIVATING/UNLOADED、
-          // uninstall removeDescriptor → 已删除、crash → CRASHED）→ 本次激活作废：
-          // 继续走 assignWorker 会把已停用/已卸载的插件拉回 ACTIVE（approve → 快速
-          // disable 竞态）。removeDescriptor 场景下此处同时防住「卸载后幽灵 setState
-          // 复活」（状态已从 Map 删除，!== ACTIVATING 提前 return，不再回写）。
-          if (this.pluginStates.get(pluginId) !== 'ACTIVATING') return
-          if (!approved) {
-            this.setState(pluginId, 'UNLOADED')
-            return
-          }
-        }
-      }
+      // 0. 权限检查（在分配 Worker 之前）：false = 激活作废（拒绝/到期/等待期状态被
+      // 外部改写），helper 内已终一化状态并发出对应广播/侧写
+      if (!(await this.gateOnPermissionApproval(pluginId, descriptor))) return
 
       // 1. 分配 Worker（sandbox 传 pluginDir：fork 子进程 env 注入 XYZ_PLUGIN_SANDBOX_DIR，
       // ESM loader initialize() 在进程启动时读此 env 做路径边界判定）
@@ -251,7 +263,7 @@ export class PluginActivator {
       // 3. 发送 activate 消息并等待 Worker 回复
       const handle = host.getWorkerHandle(pluginId)
       if (!handle) {
-        this.setState(pluginId, 'UNLOADED')
+        this.settleActivationFailure(pluginId)
         return
       }
 
@@ -260,36 +272,92 @@ export class PluginActivator {
         { type: 'activate', pluginId, pluginDir: descriptor.pluginPath, event },
         pluginId,
         'activate',
-        ACTIVATE_TIMEOUT_MS,
+        this.activateTimeoutMs,
       )
 
       if (success) {
         this.contexts.set(pluginId, { subscriptions: [] })
         this.setState(pluginId, 'ACTIVE')
       } else {
-        this.setState(pluginId, 'UNLOADED')
+        this.settleActivationFailure(pluginId)
       }
     } catch (err: unknown) {
       console.error(`[plugin-activator] failed to activate ${pluginId}:`, err)
-      this.setState(pluginId, 'UNLOADED')
+      this.settleActivationFailure(pluginId)
     } finally {
       // D6 取消标志消费（finally 覆盖全部出口：成功 / 异常 / 审批作废与权限拒绝
-      // 的早退 return）：激活期间收到过 deactivatePlugin 请求时——
-      // - 成功 → 立即反卷真实 deactivate：此时插件在 Worker 内确实 active，必须
-      //   发 deactivate 消息清理 hooks/subscriptions，只改状态会留下 Worker 侧幽灵激活
-      // - 未成功（作废/失败/拒绝）→ 状态仍处中间态（DEACTIVATING）时终一化 UNLOADED；
-      //   已是稳定态（UNLOADED）不重复写。removeDescriptor 已删状态时严禁回写
-      //  （卸载后幽灵 setState 复活，见上方早退检查注释）。
-      if (this.deactivateRequested.delete(pluginId)) {
-        if (this.pluginStates.get(pluginId) === 'ACTIVE') {
-          await this.deactivatePlugin(pluginId, host)
-        } else {
-          const s = this.pluginStates.get(pluginId)
-          if (s === 'DEACTIVATING' || s === 'ACTIVATING') {
-            this.setState(pluginId, 'UNLOADED')
-          }
-        }
-      }
+      // 的早退 return），语义见 consumeDeactivateRequest。
+      await this.consumeDeactivateRequest(pluginId, host)
+    }
+  }
+
+  /**
+   * 激活流程阶段 0：权限门（在分配 Worker 之前）。
+   * 返回 false = 本次激活作废（审批被拒 / 等待到期取消 / 等待期状态被外部改写），
+   * 调用方直接 return（状态终一化与 expired 广播在此完成）；true = 通过（含无需
+   * 审批场景），继续 assignWorker。
+   */
+  private async gateOnPermissionApproval(
+    pluginId: string,
+    descriptor: PluginDescriptor,
+  ): Promise<boolean> {
+    if (!this.permissionChecker || descriptor.permissions.length === 0) return true
+    const unapproved = this.permissionChecker.getUnapproved(pluginId, descriptor.permissions)
+    if (unapproved.length === 0) return true
+
+    // 先注册 pending promise，再通知外部（避免回调中立即 resolve 时竞态）
+    const approvalPromise = this.waitForPermissionApproval(pluginId)
+    this.onPermissionRequest?.({ pluginId, permissions: unapproved })
+    // 等待审批结果（true=批准 / false=拒绝或挂起期清理唤醒 / 'timeout'=等待到期）
+    const approval = await approvalPromise
+    // 等待期间状态被外部改写（deactivate/disable → DEACTIVATING/UNLOADED、
+    // uninstall removeDescriptor → 已删除、crash → CRASHED）→ 本次激活作废：
+    // 继续走 assignWorker 会把已停用/已卸载的插件拉回 ACTIVE（approve → 快速
+    // disable 竞态）。removeDescriptor 场景下此处同时防住「卸载后幽灵 setState
+    // 复活」（状态已从 Map 删除，!== ACTIVATING 提前 return，不再回写）。
+    // 注意此检查必须先于 'timeout' 分流：作废的激活连 expired 广播也不发
+    //（广播语义 = 「审批弹窗确实在等人且已到期撤回」，作废路径的 pending 已被
+    // 消费/清理，弹窗命运归接管方）。
+    if (this.pluginStates.get(pluginId) !== 'ACTIVATING') return false
+    if (approval === 'timeout') {
+      // 审批等待到期（timeout-plugin-service D3）：取消而非判拒——「没人答」
+      // 不记录成「用户拒绝了插件」（权限存储不受影响，重触发激活时同一批权限
+      // 重新弹审批）。置 UNLOADED（未装载态，状态机允许后续 activation event
+      // 重触发激活）；expired 广播供前端撤回无人应答的弹窗（迟到批准对已删
+      // pending noop 幂等，resolvePermissionApproval miss 不炸）。
+      console.warn(
+        `[plugin-activator] permission approval for ${pluginId} timed out after ${this.permissionTimeoutMs}ms — activation cancelled (plugin left UNLOADED, not rejected). ` +
+          `Recovery: re-trigger the activation event to approve again; tune the wait via env XYZ_PLUGIN_PERMISSION_TIMEOUT_MS (ms).`,
+      )
+      this.onPermissionRequestExpired?.({ pluginId })
+      this.setState(pluginId, 'UNLOADED')
+      return false
+    }
+    if (!approval) {
+      this.setState(pluginId, 'UNLOADED')
+      return false
+    }
+    return true
+  }
+
+  /**
+   * D6 取消标志消费（doActivatePlugin 的 finally 出口）：激活期间收到过
+   * deactivatePlugin 请求时——
+   * - 成功 → 立即反卷真实 deactivate：此时插件在 Worker 内确实 active，必须
+   *   发 deactivate 消息清理 hooks/subscriptions，只改状态会留下 Worker 侧幽灵激活
+   * - 未成功（作废/失败/拒绝）→ 状态仍处中间态（DEACTIVATING）时终一化 UNLOADED；
+   *   已是稳定态（UNLOADED）不重复写。removeDescriptor 已删状态时严禁回写
+   *  （卸载后幽灵 setState 复活，见 gateOnPermissionApproval 早退检查注释）。
+   */
+  private async consumeDeactivateRequest(pluginId: string, host: PluginHost): Promise<void> {
+    if (!this.deactivateRequested.delete(pluginId)) return
+    if (this.pluginStates.get(pluginId) === 'ACTIVE') {
+      await this.deactivatePlugin(pluginId, host)
+      return
+    }
+    const s = this.pluginStates.get(pluginId)
+    if (s === 'DEACTIVATING' || s === 'ACTIVATING') {
+      this.setState(pluginId, 'UNLOADED')
     }
   }
 
@@ -411,13 +479,15 @@ export class PluginActivator {
 
   /**
    * 等待权限审批结果。
-   * 返回 Promise，超时自动拒绝。
+   * 结局三态（timeout-plugin-service D3）：true=批准 / false=显式拒绝或挂起期清理
+   * 唤醒 / 'timeout'=等待到期——超时与拒绝可区分，上游据此走取消分支（撤窗广播 +
+   * UNLOADED 可重触发）而非判拒。
    */
-  private waitForPermissionApproval(pluginId: string): Promise<boolean> {
+  private waitForPermissionApproval(pluginId: string): Promise<boolean | 'timeout'> {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.pendingPermissions.delete(pluginId)
-        resolve(false)
+        resolve('timeout')
       }, this.permissionTimeoutMs)
 
       this.pendingPermissions.set(pluginId, { resolve, timer })
@@ -431,7 +501,15 @@ export class PluginActivator {
    */
   resolvePermissionApproval(pluginId: string, approved: boolean): void {
     const pending = this.pendingPermissions.get(pluginId)
-    if (!pending) return
+    if (!pending) {
+      // miss noop 维持（幂等安全）：到期取消 / 挂起期清理后迟到的审批响应在此吞掉，
+      // 不炸。debug 留痕供「用户点了批准但插件没装上」类问题归因（前端撤窗缺位时
+      // 旧版前端仍可能派发迟到批准，D3 已知限制）。
+      console.debug(
+        `[plugin-activator] resolvePermissionApproval(${pluginId}, ${approved}) miss — no pending approval (already settled or cleaned up); late response ignored`,
+      )
+      return
+    }
 
     clearTimeout(pending.timer)
     this.pendingPermissions.delete(pluginId)
@@ -631,6 +709,23 @@ export class PluginActivator {
     if (descriptor) descriptor.status = state
   }
 
+  /**
+   * 激活失败终态写点（V6② crash 连坐守护）。
+   *
+   * 激活在飞期间同宿主 load 超时 / Worker crash 链（plugin-host handleWorkerCrash →
+   * PluginService crash callback → markCrashed）已把本插件置 CRASHED 时，激活自身的
+   * 失败终态不得覆盖为 UNLOADED——handleWorkerRebuilt 只重载 CRASHED 态插件，覆盖会让
+   * 被连坐插件在 rebuild 后被跳过（Gate B V6② 实测：同宿主正常插件未自动重载，需手动
+   * toggle 恢复）。UNLOADED 的合法语义（首次安装锁 / 权限被拒 / 审批等待超时取消 /
+   * 无 crash 参与的激活握手失败）不受影响：仅当状态已被 crash 链接管（CRASHED）时让位。
+   * 权限等待路径不经此守卫：其作废检查（state !== 'ACTIVATING' 提前 return）已天然
+   * 保留 CRASHED。
+   */
+  private settleActivationFailure(pluginId: string): void {
+    if (this.pluginStates.get(pluginId) === 'CRASHED') return
+    this.setState(pluginId, 'UNLOADED')
+  }
+
   /** 根据 ActivationEvent 解析匹配的 pluginId 列表 */
   private resolveCandidates(event: ActivationEvent): string[] {
     const matched = new Set<string>()
@@ -670,6 +765,17 @@ export class PluginActivator {
         // 旧 timer 不误删新 entry——旧实现无条件 delete 是回复错配的帮凶）
         if (this.pendingReplies.get(key)?.timer === timer) {
           this.pendingReplies.delete(key)
+        }
+        // D4 错误规格（activate 超时行）：UNLOADED 保持 + 消息提示 activateTimeoutMs
+        // 覆盖通道。只 activate 打——deactivate 超时是 D6 登记不动项（本地清理
+        // 兜底已安全，维持静默 resolve(false)）。迟到的 activated 回复经 pending
+        // miss noop（handleWorkerReply 守卫），不炸。
+        if (op === 'activate') {
+          console.warn(
+            `[plugin-activator] activate reply for ${pluginId} timed out after ${timeoutMs}ms — ` +
+              `plugin left UNLOADED (pass activateTimeoutMs option to extend; ` +
+              `onActivate should stay lightweight — move heavy initialization to the first tool/command)`,
+          )
         }
         resolve(false)
       }, timeoutMs)

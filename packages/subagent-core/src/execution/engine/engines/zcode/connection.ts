@@ -117,16 +117,18 @@ function errMessage(err: unknown): string {
 
 /**
  * 组装 app-server 子进程 env：嵌套防护经公共 nesting-guard（注入统一
- * XYZ_AGENT_SUBAGENT=1 + 剥离引擎原生嵌套标记），HOME 最后落（隔离 HOME 是 provider
- * 配置与 db 的定位锚，基 env 同名键不许覆盖），遥测关闭（旧实现实证：隔离 HOME 内
- * 不写遥测标识）。与 launcher.buildZcodeEnv 同惯例，app-server 形态多一层
- * ZCODE_MODEL_TELEMETRY_ENABLED=false（设计 D10 启动基线）。
+ * XYZ_AGENT_SUBAGENT=1 + 剥离引擎原生嵌套标记），遥测关闭（旧实现实证）。
+ * 2026-09 起共享宿主 HOME——不再覆写 HOME：db/plugins/MCP 继承宿主 ~/.zcode/
+ * （引擎会话与 GUI 共写同一 SQLite，WAL 并发安全），HOME 依赖副作用（如 pnpm
+ * store 路径翻转）随之消失。凭据不在此层注入：CLI 形态 app-server 只从
+ * ~/.zcode/cli/config.json 读 provider（GUI 登录态在 v2/config.json），由
+ * launcherScript 指向的 fs 拦截 wrapper 把该读取重定向为「真实文件 + v2
+ * provider 注入」内存合并（同 id 时 v2 整条优先——见 appserver-launcher.ts）。
  */
-export function buildAppServerEnv(homeDir: string, baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+export function buildAppServerEnv(baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   return {
     ...buildNestedSpawnEnv(baseEnv),
     ZCODE_MODEL_TELEMETRY_ENABLED: "false",
-    HOME: homeDir,
   };
 }
 
@@ -143,6 +145,12 @@ export interface AppServerConnectionOptions {
   /** 完整子进程 env（buildAppServerEnv 产物或调用方自行组装）。 */
   env: NodeJS.ProcessEnv;
   /**
+   * fs 拦截 wrapper 脚本路径（appserver-launcher.ts 落盘产物）。设置时 spawn 的
+   * script 换为本路径（cliPath 经 env ZCODE_ENG_CLI_PATH 传给 wrapper）——共享宿主
+   * HOME 形态的凭据供数机制；缺省 undefined = 直接 spawn cliPath（测试 fake 直连）。
+   */
+  launcherScript?: string;
+  /**
    * stderr tee 落盘路径（append；引擎数据目录由 R4 注入，测试用 tmp 目录）。
    * 懒打开：首条 stderr 才建文件，无 stderr 的短命连接零文件；写失败静默降级
    * （取证面不能拖垮主通道）。
@@ -155,9 +163,10 @@ export interface AppServerConnectionOptions {
   /** 反向请求 handler 表（缺省 D9 常量表；测试注入故障 handler 用）。 */
   reverseHandlers?: Readonly<Record<string, (params: unknown) => unknown>>;
   /**
-   * [R4] 每代进程 spawn 成功后的同步回调（engine 写 pidfile / 采集 pid 的唯一时点）。
-   * 与 RunContext.onChildSpawned 无关：常驻进程不进宿主 spawnedChildren（D6——
-   * 其生命周期归引擎 dispose）。不抛保证：回调异常吞掉记 warn，不影响帧泵。
+   * [R4] 每代进程 spawn 成功后的同步回调。pidfile 机制删除后引擎侧不再传——现为
+   * 测试专有的代级观测面（采集 spawn 时序 / 子进程句柄）。与 RunContext.onChildSpawned
+   * 无关：常驻进程不进宿主 spawnedChildren（D6——其生命周期归引擎 dispose）。
+   * 不抛保证：回调异常吞掉记 warn，不影响帧泵。
    */
   onSpawned?: (child: ChildProcess) => void;
 }
@@ -192,6 +201,7 @@ export class AppServerConnection {
   private readonly requestTimeoutMs: number;
   private readonly reverseHandlers: Readonly<Record<string, (params: unknown) => unknown>>;
   private readonly onSpawned: ((child: ChildProcess) => void) | undefined;
+  private readonly launcherScript: string | undefined;
 
   /** 当前代子进程；null = 无活进程（未启动或已死，下次使用重建）。 */
   private child: ChildProcess | null = null;
@@ -217,6 +227,7 @@ export class AppServerConnection {
 
   constructor(opts: AppServerConnectionOptions) {
     this.cliPath = opts.cliPath;
+    this.launcherScript = opts.launcherScript;
     this.cwd = opts.cwd;
     this.env = opts.env;
     this.stderrLogPath = opts.stderrLogPath;
@@ -363,7 +374,8 @@ export class AppServerConnection {
     this.generation += 1;
     const gen = this.generation;
 
-    const child = spawn(this.nodeBin, [this.cliPath, "app-server", "--cwd", this.cwd], {
+    const script = this.launcherScript ?? this.cliPath;
+    const child = spawn(this.nodeBin, [script, "app-server", "--cwd", this.cwd], {
       env: this.env,
       stdio: ["pipe", "pipe", "pipe"],
     });

@@ -47,7 +47,7 @@
 //     };
 //   });
 //   vi.mock("../alive-store.ts", () => ({ writeAliveMarker: vi.fn() }));
-//   vi.mock("../temp-prompt.ts", () => ({
+//   vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
 //     writePromptToTempFile: vi.fn(async (agent: string) => {
 //       const safeName = agent.replace(/[^\w.-]+/g, "_");
 //       return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -61,7 +61,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
 import { createRecord } from "../../execution-record.ts";
-import type { RunOptions, SessionRunnerContext } from "../../session-runner.ts";
+import type { RunOptions, SessionRunnerContext } from "../../engine/engines/pi/session-runner.ts";
 
 /** FakeChild 的假 pid（满足 ChildProcess.pid 形状，无真实进程语义）。 */
 const FAKE_PID = 12345;

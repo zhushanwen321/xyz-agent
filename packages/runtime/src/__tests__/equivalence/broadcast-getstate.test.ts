@@ -342,7 +342,8 @@ describe.skipIf(!REAL_PI_READY)(
       }
       expect(liveEndEntries.length).toBeGreaterThanOrEqual(2) // 非空守卫（防 0==0 空转）
 
-      const reducerLive = store._entryStatesForTest.get(sid)
+      // u6.1 收编：_entryStatesForTest 已并入 testInternals 命名空间（对齐 core custom-start-equivalence.test.ts 的嵌套路径）
+      const reducerLive = store.testInternals._entryStatesForTest.get(sid)
       expect(reducerLive).toBeDefined()
 
       // 单通道参照：仅 message_end 流重放（W21 同构基底）

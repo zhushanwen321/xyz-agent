@@ -124,6 +124,7 @@ export type ClientMessageType =
   | 'config.setSetupScript' | 'config.getSetupScript'
   | 'config.setBareSetupScript' | 'config.getBareSetupScript'
   | 'config.setTimeout' | 'config.getTimeout'
+  | 'config.setStreamingIdleTimeout' | 'config.getStreamingIdleTimeout'
   | 'config.setDefaultBaseBranch' | 'config.getDefaultBaseBranch'
   | 'config.setAutoRenameEnabled' | 'config.getAutoRenameEnabled'
   | 'config.setRenameModel' | 'config.getRenameModel'
@@ -538,7 +539,12 @@ export interface ClientMessageMap {
   // Coding Plan 额度查询
   'quota.fetch': { providerId: string }
   'quota.getCached': { providerId: string }
-  'quota.configure': { providerId: string; enabled: boolean; cookie?: string; fetcher?: string; apiKey?: string }
+  /**
+   * quota.configure：Coding Plan 额度查询配置。
+   * workspace（D1-1）：资源维度 fetcher（opencode）的 workspace 地址——完整 URL 或裸 wrk_ id
+   * 均可（runtime 归一化存储）；空字符串 = 清除（恢复未配置态，查询报 not_configured）。
+   */
+  'quota.configure': { providerId: string; enabled: boolean; cookie?: string; fetcher?: string; apiKey?: string; workspace?: string }
   /** 强制刷新额度（绕过 throttle，Settings 测试查询用）。 */
   'quota.refresh': { providerId: string }
   /** usage.getStats：拉取用量统计数据（无参数）。 */
@@ -559,6 +565,12 @@ export interface ClientMessageMap {
   'config.setTimeout': { timeout: number }
   /** config.getTimeout：读取 worktree 创建超时时间配置（前端读取）。 */
   'config.getTimeout': Record<string, never>
+  /** config.setStreamingIdleTimeout：设置对话流式空闲超时阈值（秒，前端写入）。
+   *  clamp 校验语义（docs/design/timeout-streaming-ui-idle.md §5.3 D3 单一权威口径）：
+   *  合法域 [60, 3600] 秒，越界不拒绝而是 clamp 到边界，reply 返回 clamp 后生效值。 */
+  'config.setStreamingIdleTimeout': { timeout: number }
+  /** config.getStreamingIdleTimeout：读取对话流式空闲超时阈值（秒，未配置时回默认 1800）。 */
+  'config.getStreamingIdleTimeout': Record<string, never>
   /** config.setDefaultBaseBranch：设置默认基分支（前端写入）。 */
   'config.setDefaultBaseBranch': { baseBranch: string }
   /** config.getDefaultBaseBranch：读取默认基分支配置（前端读取）。 */
@@ -744,6 +756,15 @@ export type ServerMessageType =
   | 'plugin:statusBarUpdate' | 'plugin:messageDecoration' | 'plugin:config'
   | 'plugin:statusSetUpdate'
   | 'plugin:uiRequest'
+  // plugin:uiRequestExpired：plugin dialog 到期取消下行（timeout-plugin-service D2，
+  // runtime UiRequestQueue cancelRequest / 防泄漏兜底生产）。广播无条件发出（含排队中
+  // 从未展示的请求）；前端对未展示/已关闭弹窗的撤窗 miss 须 noop 幂等。
+  | 'plugin:uiRequestExpired'
+  // plugin:permissionRequestExpired：权限审批到期取消下行（timeout-plugin-service D3，
+  // runtime PluginActivator 审批等待超时生产——取消非判拒：插件置 UNLOADED 且可经
+  // 重触发 activation event 重新激活 + 重新弹审批）。前端收到后撤回该插件的审批弹窗；
+  // 迟到批准对已删 pending noop 幂等（旧版前端未消费此帧时无异常回退，P-11）。
+  | 'plugin:permissionRequestExpired'
   | 'plugin:viewUpdate'
   | 'extension:widget' | 'extension:widgetGui' | 'extension:status' | 'extension:notify'
   | 'extension:setEditorText'
@@ -777,6 +798,7 @@ export type ServerMessageType =
   | 'config.setupScript'
   | 'config.bareSetupScript'
   | 'config.worktreeTimeout'
+  | 'config.streamingIdleTimeout'
   | 'config.defaultBaseBranch'
   | 'config.autoRenameEnabled'
   | 'config.renameModel'
@@ -907,7 +929,7 @@ export interface ServerMessageMapBase {
   // 用 Record<string, unknown> 保持 shared 依赖最小化（与 extension:widgetGui.gui:unknown 同先例）。
   'plugin:config': { pluginId: string; config: Record<string, unknown> }
   // plugin:viewUpdate：plugin views.update 下行广播（plugin-rpc-setup.ts handleViewUpdate 生产，
-  // 带 sessionId 走 session 通道 + CROSS_SESSION_TYPES crossSession 分发到 ExtensionHost）。
+  // 带 sessionId 走 session 通道 + crossSession 声明条目分发到 ExtensionHost）。
   // guiTree 用 unknown[] 保持 shared 包依赖最小化（与 extension:widgetGui 的 gui:unknown 同先例），
   // 消费端（core MessageBusBridge parseViewUpdate → ViewHostStore）用 isGuiComponent 守卫收窄。
   'plugin:viewUpdate': {
@@ -924,6 +946,18 @@ export interface ServerMessageMapBase {
   //（消费端 parseUiRequest 对 method 超界兜底 'input'，未知字段原样保留），与 runtime
   // UiBroadcastFn 的 Record<string, unknown> 同形。
   'plugin:uiRequest': { requestId: string; sessionId?: string } & Record<string, unknown>
+  // plugin:uiRequestExpired：plugin dialog 到期取消下行（timeout-plugin-service D2，
+  // runtime UiRequestQueue cancelRequest / 防泄漏兜底两路径共用此帧）。与 plugin:uiRequest
+  // 契约形态一致（requestId 必带 + 索引签名透传 dialog 字段）；pluginId 必带（前端按插件
+  // 定位撤窗）。广播无条件发出（含排队中从未展示的请求——前端对未展示/已关闭弹窗的撤窗
+  // miss 须 noop 幂等，P-11：旧版前端未消费此帧时无异常回退）。
+  'plugin:uiRequestExpired': { requestId: string; pluginId: string; sessionId?: string } & Record<string, unknown>
+  // plugin:permissionRequestExpired：权限审批到期取消下行（timeout-plugin-service D3，
+  // runtime PluginActivator 审批等待超时生产）。pluginId 必带（前端按插件定位撤窗）。
+  // 与 D2 的 plugin:uiRequestExpired 同为「取消非替答」语义——插件置 UNLOADED（未装载
+  // 态）而非「被拒」，重触发 activation event 即可重新激活 + 重新弹审批；前端撤窗
+  // miss noop 幂等（P-11：旧版前端未消费此帧时无异常回退）。
+  'plugin:permissionRequestExpired': { pluginId: string } & Record<string, unknown>
   'model.list': { models: ModelInfo[] }
   // model:capabilityDrift：runtime 能力注册表在线对账（reconcileModelCapabilities）发现
   // 配置聚合与 pi 合并清单漂移时经 setCapabilityDriftSink 广播（drift 项已同步记 runtime
@@ -1208,6 +1242,8 @@ export interface ServerMessageMapBase {
   'config.bareSetupScript': { script: string }
   /** config.worktreeTimeout：config.getTimeout 的 reply。 */
   'config.worktreeTimeout': { timeout: number }
+  /** config.streamingIdleTimeout：config.get/setStreamingIdleTimeout 的 reply（clamp 后生效值，秒）。 */
+  'config.streamingIdleTimeout': { timeout: number }
   /** config.defaultBaseBranch：config.getDefaultBaseBranch 的 reply。 */
   'config.defaultBaseBranch': { baseBranch: string }
   /** config.autoRenameEnabled：config.getAutoRenameEnabled 的 reply。 */
@@ -1640,6 +1676,8 @@ export interface ReplyPayloadMap {
   'config.getBareSetupScript': ServerMessageMap['config.bareSetupScript']
   'config.setTimeout': ServerMessageMap['config.worktreeTimeout']
   'config.getTimeout': ServerMessageMap['config.worktreeTimeout']
+  'config.setStreamingIdleTimeout': ServerMessageMap['config.streamingIdleTimeout']
+  'config.getStreamingIdleTimeout': ServerMessageMap['config.streamingIdleTimeout']
   'config.setDefaultBaseBranch': ServerMessageMap['config.defaultBaseBranch']
   'config.getDefaultBaseBranch': ServerMessageMap['config.defaultBaseBranch']
   'config.setAutoRenameEnabled': ServerMessageMap['config.autoRenameEnabled']

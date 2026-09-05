@@ -4,7 +4,7 @@
  * 覆盖目标（设计 .tmp/update-reliability.tech-design.md §3.3.1 状态机 + §4.2 验收语义，
  * 验收条款②：S1/S2/S3/S4 中断注入与磁盘满场景）
  * ------------------------------------------------------------------
- * 字符串正确 ≠ bash 真的能跑通。本文件构造迷你 .app bundle + 真实 zip，
+ * 字符串正确 ≠ bash 真的能跑通。本文件构造迷你 .app bundle + 真实 dmg，
  * 把 buildUpdaterScript 生成脚本写到磁盘真实执行，断言 exit code / 落盘文件 /
  * 回滚行为。核心用例（对应 §4.2 场景语义，脚本侧状态断言）：
  *
@@ -27,7 +27,8 @@
  * Mock 策略
  * ------------------------------------------------------------------
  * - 文件系统：每用例 mkdtempSync 独立临时目录，afterEach 清理。
- * - zip：系统 zip CLI 生成真实 zip（让 unzip 段真实执行）；缺 CLI 则 it.skipIf 跳过。
+ * - dmg：hdiutil create -srcfolder 生成真实 dmg（让 attach/ditto/detach 段真实
+ *   执行，批次 3 §3.3.3-B 解包原语）；缺 hdiutil/ditto 则 it.skipIf 跳过。
  * - open 重启行：测试前替换为 echo（避免真启动 GUI），文档化确定性变换。
  * - parentPid：默认 '9999999'（超过 macOS/linux pid_max，kill -0 立即失败 =
  *   模拟「app 已退出」）；超时用例用真实存活进程模拟「app 未退出」。
@@ -63,10 +64,9 @@ function hasCommand(cmd: string): boolean {
   return r.status === 0
 }
 
-const HAS_ZIP = hasCommand('zip')        // 生成最小 zip 用
-const HAS_UNZIP = hasCommand('unzip')    // 脚本里解压用
+const HAS_HDIUTIL = hasCommand('hdiutil') // 生成 dmg + 脚本挂载/卸载 + 磁盘满用例的小容量镜像
+const HAS_DITTO = hasCommand('ditto')     // 脚本 dmg→staging 拷贝用（批次 3 解包原语）
 const HAS_SHASUM = hasCommand('shasum')  // mac 脚本 sha256 用
-const HAS_HDIUTIL = hasCommand('hdiutil') // 磁盘满用例的小容量镜像
 const IS_MAC = process.platform === 'darwin'
 
 // ──────────────────────────────────────────────────────────────────
@@ -87,7 +87,7 @@ afterEach(() => {
     spawnSync('hdiutil', ['detach', mnt, '-force'])
   }
   try {
-    rmSync(tmpDir, { recursive: true, force: true })
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   } catch (e) {
     console.warn('[warn] tmpDir 清理失败（可能挂载点残留）:', e)
   }
@@ -105,42 +105,54 @@ function sha256OfFile(filePath: string): string {
 }
 
 /**
- * 构造最小 .app bundle（Contents/MacOS/<binaryName> + Info.plist）并 zip。
+ * 构造最小 .app bundle（Contents/MacOS/<binaryName> + Info.plist）并打成真实 dmg。
  *
- * 主二进制 chmod 755：脚本对解压产物做 `-x` 可执行检查（RI1 守卫），
- * zip 需携带可执行位。writeFileSync 默认 0644，必须显式 chmod。
+ * - dmg 根含 .app（hdiutil create -srcfolder <buildRoot>：镜像根 = 源目录内容），
+ *   与脚本 S1 的 `ls -d "$MOUNT_DIR"/*.app` 定位链一致。
+ * - 主二进制 chmod 755：脚本对解包产物做 `-x` 可执行检查（RI1 守卫），
+ *   hdiutil 镜像保留 POSIX 权限位。writeFileSync 默认 0644，必须显式 chmod。
  */
-function buildMinimalAppZip(opts: {
+function buildMinimalAppDmg(opts: {
   appBundleName?: string
   binaryName?: string
   /** 塞进 .app 根的版本标记文件内容（如 'NEW-V-B'），中断用例断言残留物完整性 */
   versionMarker?: string
   /** 主二进制填充大小（字节，随机不可压内容），磁盘满用例用 5MB 撑爆小卷 */
   binarySize?: number
-} = {}): { zipPath: string; appBundleName: string; binaryName: string; sha256: string } {
+  /** true = 空壳 .app（无 Contents/MacOS/<binary>），主二进制检查拦截用例用 */
+  hollow?: boolean
+} = {}): { dmgPath: string; appBundleName: string; binaryName: string; sha256: string } {
   const appBundleName = opts.appBundleName ?? 'xyz-agent.app'
   const binaryName = opts.binaryName ?? 'xyz-agent'
-  const buildRoot = path.join(tmpDir, 'build')
+  const buildRoot = path.join(tmpDir, opts.hollow ? 'build-hollow' : 'build')
   const appDir = path.join(buildRoot, appBundleName)
-  mkdirSync(path.join(appDir, 'Contents', 'MacOS'), { recursive: true })
-  writeFileSync(path.join(appDir, 'Contents', 'Info.plist'), '{}\n')
-  const binaryPath = path.join(appDir, 'Contents', 'MacOS', binaryName)
-  if (opts.binarySize) {
-    writeFileSync(binaryPath, crypto.randomBytes(opts.binarySize))
+  if (opts.hollow) {
+    // 空壳：只有 Contents/Info.plist，无 MacOS/<binary>（RI1 误判成功防护用例）
+    mkdirSync(path.join(appDir, 'Contents'), { recursive: true })
+    writeFileSync(path.join(appDir, 'Contents', 'Info.plist'), '{}\n')
   } else {
-    writeFileSync(binaryPath, '#!/bin/bash\necho fake app\n')
+    mkdirSync(path.join(appDir, 'Contents', 'MacOS'), { recursive: true })
+    writeFileSync(path.join(appDir, 'Contents', 'Info.plist'), '{}\n')
+    const binaryPath = path.join(appDir, 'Contents', 'MacOS', binaryName)
+    if (opts.binarySize) {
+      writeFileSync(binaryPath, crypto.randomBytes(opts.binarySize))
+    } else {
+      writeFileSync(binaryPath, '#!/bin/bash\necho fake app\n')
+    }
+    chmodSync(binaryPath, 0o755)
   }
-  chmodSync(binaryPath, 0o755)
   if (opts.versionMarker) {
     writeFileSync(path.join(appDir, 'VERSION_MARKER'), opts.versionMarker)
   }
 
-  const zipPath = path.join(tmpDir, `${appBundleName}.zip`)
-  const r = spawnSync('zip', ['-r', '-q', zipPath, appBundleName], { cwd: buildRoot })
+  const dmgPath = path.join(tmpDir, `${appBundleName}.dmg`)
+  const r = spawnSync('hdiutil', [
+    'create', '-srcfolder', buildRoot, '-format', 'UDZO', '-ov', dmgPath,
+  ])
   if (r.status !== 0) {
-    throw new Error(`zip 失败 status=${r.status} stderr=${r.stderr?.toString()}`)
+    throw new Error(`hdiutil create 失败 status=${r.status} stderr=${r.stderr?.toString()}`)
   }
-  return { zipPath, appBundleName, binaryName, sha256: sha256OfFile(zipPath) }
+  return { dmgPath, appBundleName, binaryName, sha256: sha256OfFile(dmgPath) }
 }
 
 function writeScriptToTmp(script: string, name = 'updater.sh'): string {
@@ -187,8 +199,12 @@ function killGroup(child: ChildProcess): void {
   } catch { /* 已退出 */ }
 }
 
-/** 轮询等条件成立，超时抛错（快速失败暴露问题，不挂死整个 run）。 */
-async function waitFor(desc: string, cond: () => boolean, timeoutMs = 8000): Promise<void> {
+/**
+ * 轮询等条件成立，超时抛错（快速失败暴露问题，不挂死整个 run）。
+ * 默认 15s：dmg 解包链（hdiutil create/attach/ditto，批次 3）单用例实测 ~8s，
+ * 全量 run 并发负载下 8s 会误报超时（成功路径立即返回，超时只影响失败路径速度）。
+ */
+async function waitFor(desc: string, cond: () => boolean, timeoutMs = 15_000): Promise<void> {
   const start = Date.now()
   while (!cond()) {
     if (Date.now() - start > timeoutMs) {
@@ -241,7 +257,7 @@ function shortenWaitLimit(script: string): string {
 
 /** mac 用标准 vars（parentPid 默认死 PID：kill -0 立即失败 = 模拟 app 已退出）。 */
 function makeMacVars(opts: {
-  zipPath: string
+  dmgPath: string
   sha256: string
   appBundleName?: string
   binaryName?: string
@@ -253,7 +269,7 @@ function makeMacVars(opts: {
   const binaryName = opts.binaryName ?? 'xyz-agent'
   return {
     appBundle: opts.appBundle ?? path.join(tmpDir, 'installed', appBundleName),
-    zipPath: opts.zipPath,
+    dmgPath: opts.dmgPath,
     sha256: opts.sha256,
     logPath: path.join(tmpDir, 'updater.log'),
     resultPath: path.join(tmpDir, 'update-result.json'),
@@ -264,11 +280,11 @@ function makeMacVars(opts: {
 }
 
 // ════════════════════════════════════════════════════════════════
-// bash 语法检查（不依赖 zip/unzip，最稳）
+// bash 语法检查（不依赖 hdiutil/ditto，最稳）
 // ════════════════════════════════════════════════════════════════
 describe('updater-script integration: bash 语法检查', () => {
   it('mac 脚本：buildUpdaterScript 产物 bash -n 通过（语法正确、无残留占位符炸）', () => {
-    const script = buildUpdaterScript(makeMacVars({ zipPath: '/tmp/x.zip', sha256: 'a'.repeat(64) }))
+    const script = buildUpdaterScript(makeMacVars({ dmgPath: '/tmp/x.dmg', sha256: 'a'.repeat(64) }))
     const scriptPath = writeScriptToTmp(script)
 
     expect(script, '执行产物不应残留 {{...}} 占位符').not.toMatch(/\{\{[^}]+\}\}/)
@@ -295,23 +311,23 @@ describe('updater-script integration: bash 语法检查', () => {
 
   it('mac 脚本：sha256 含特殊字符也不破坏 bash 语法（防御注入）', () => {
     const weirdButHex = '0'.repeat(64)
-    const script = buildUpdaterScript(makeMacVars({ zipPath: '/tmp/x.zip', sha256: weirdButHex }))
+    const script = buildUpdaterScript(makeMacVars({ dmgPath: '/tmp/x.dmg', sha256: weirdButHex }))
     const r = spawnSync('bash', ['-n', writeScriptToTmp(script)], { encoding: 'utf8' })
     expect(r.status).toBe(0)
   })
 })
 
 // ════════════════════════════════════════════════════════════════
-// MAC 脚本：端到端 happy path（真 .app + 真 zip + 真 unzip）
+// MAC 脚本：端到端 happy path（真 .app + 真 dmg + 真 attach/ditto/detach）
 // ════════════════════════════════════════════════════════════════
-describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-script integration: mac 端到端', () => {
+describe.skipIf(!IS_MAC || !HAS_HDIUTIL || !HAS_DITTO || !HAS_SHASUM)('updater-script integration: mac 端到端', () => {
   it(
     'happy path（M1 脚本侧）：S0→S5 走通 → exit 0、新 .app 就位、result done（合法 JSON）、无任何残留',
     () => {
-      const { zipPath, sha256, appBundleName, binaryName } = buildMinimalAppZip({
+      const { dmgPath, sha256, appBundleName, binaryName } = buildMinimalAppDmg({
         versionMarker: 'NEW-V-B',
       })
-      const vars = makeMacVars({ zipPath, sha256, appBundleName, binaryName })
+      const vars = makeMacVars({ dmgPath, sha256, appBundleName, binaryName })
       const appDir = path.dirname(vars.appBundle)
       mkdirSync(appDir, { recursive: true })
       // 预置：旧 .app（OLD_MARKER）+ 上次残留的过期 .old（$APP 在位时应被清掉）
@@ -364,8 +380,8 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-scrip
   it(
     'sha mismatch：exit 1、旧 .app 完好、不产生 .old/staging、result failed 且为合法 JSON',
     () => {
-      const { zipPath, appBundleName } = buildMinimalAppZip()
-      const vars = makeMacVars({ zipPath, sha256: '0'.repeat(64) })
+      const { dmgPath, appBundleName } = buildMinimalAppDmg()
+      const vars = makeMacVars({ dmgPath, sha256: '0'.repeat(64) })
       mkdirSync(path.dirname(vars.appBundle), { recursive: true })
       mkdirSync(vars.appBundle, { recursive: true })
       writeFileSync(path.join(vars.appBundle, 'OLD_MARKER'), 'preserved')
@@ -393,7 +409,7 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-scrip
       const evilVersion = '0.9.0","injected":"pwned'
       const payload = path.join(tmpDir, 'payload.bin')
       writeFileSync(payload, 'tampered')
-      const vars = makeMacVars({ zipPath: payload, sha256: '0'.repeat(64), targetVersion: evilVersion })
+      const vars = makeMacVars({ dmgPath: payload, sha256: '0'.repeat(64), targetVersion: evilVersion })
 
       const script = stripOpenLine(buildUpdaterScript(vars))
       const r = runBash(writeScriptToTmp(script))
@@ -409,14 +425,14 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-scrip
   )
 
   it(
-    'unzip 失败（伪 zip，sha 对）：exit 1、旧 .app 完好、staging 已清理、error=extract failed',
+    'dmg 挂载失败（伪 dmg，sha 对）：exit 1、旧 .app 完好、error=dmg mount failed（含恢复指引）',
     () => {
-      // sha 对、但内容不是合法 zip：让校验段过、解压段炸（RI1 核心分支）
-      const { zipPath, appBundleName } = buildMinimalAppZip()
-      writeFileSync(zipPath, 'this is not a valid zip file content')
-      const realSha = sha256OfFile(zipPath)
+      // sha 对、但内容不是合法 dmg：让校验段过、挂载段炸（attach 失败分支，§3.3.3-B）
+      const { dmgPath, appBundleName } = buildMinimalAppDmg()
+      writeFileSync(dmgPath, 'this is not a valid dmg file content')
+      const realSha = sha256OfFile(dmgPath)
 
-      const vars = makeMacVars({ zipPath, sha256: realSha, appBundleName })
+      const vars = makeMacVars({ dmgPath, sha256: realSha, appBundleName })
       mkdirSync(path.dirname(vars.appBundle), { recursive: true })
       mkdirSync(vars.appBundle, { recursive: true })
       writeFileSync(path.join(vars.appBundle, 'OLD_MARKER'), 'untouched')
@@ -424,35 +440,31 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-scrip
       const script = stripOpenLine(buildUpdaterScript(vars))
       const r = runBash(writeScriptToTmp(script))
 
-      expect(r.status, 'unzip 失败应 exit 1').toBe(1)
+      expect(r.status, 'dmg 挂载失败应 exit 1').toBe(1)
       // 正式位置零接触（G1：S4 前失败 = 旧版完好）
       expect(existsSync(path.join(vars.appBundle, 'OLD_MARKER'))).toBe(true)
-      // staging 已清理（失败分支 rm -rf）
+      // staging 未产生（挂载失败在 ditto 之前；S1 前残留清理后保持空）
       expect(existsSync(path.join(tmpDir, 'installed', `.staging.${appBundleName}`))).toBe(false)
 
       const result = JSON.parse(readFileSync(vars.resultPath, 'utf8')) as { status: string; error: string }
       expect(result.status).toBe('failed')
-      expect(result.error).toBe('extract failed')
+      // 错误码 + 恢复动作（r2 审查边界：同 inode dmg 滞留挂载 → 资源忙，指引重启/手动 detach）
+      expect(result.error).toContain('dmg mount failed')
+      expect(result.error).toContain('hdiutil detach')
     },
     20_000,
   )
 
   it(
-    '解压产物缺主二进制（zip 只有空壳）→ exit 1、error=extract failed、旧 .app 完好（RI1 误判成功防护）',
+    '解包产物缺主二进制（dmg 内只有空壳 .app）→ exit 1、error=extract failed、旧 .app 完好（RI1 误判成功防护）',
     () => {
-      // 构造「合法 zip 但没有 Contents/MacOS/<bin>」：unzip 成功、主二进制检查拦截。
+      // 构造「合法 dmg 但 .app 没有 Contents/MacOS/<bin>」：attach/ditto 成功、主二进制检查拦截。
       const appBundleName = 'xyz-agent.app'
-      const buildRoot = path.join(tmpDir, 'build-hollow')
-      const appDir = path.join(buildRoot, appBundleName)
-      mkdirSync(path.join(appDir, 'Contents'), { recursive: true })
-      writeFileSync(path.join(appDir, 'Contents', 'Info.plist'), '{}\n') // 无 MacOS/<binary>
-      const zipPath = path.join(tmpDir, 'hollow.zip')
-      const zr = spawnSync('zip', ['-r', '-q', zipPath, appBundleName], { cwd: buildRoot })
-      expect(zr.status).toBe(0)
+      const { dmgPath, sha256 } = buildMinimalAppDmg({ appBundleName, hollow: true })
 
       const vars = makeMacVars({
-        zipPath,
-        sha256: sha256OfFile(zipPath),
+        dmgPath,
+        sha256,
         appBundleName,
         binaryName: 'xyz-agent',
       })
@@ -475,12 +487,12 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-scrip
 // ════════════════════════════════════════════════════════════════
 // MAC 脚本：状态机中断注入（kill 进程组）与失败分支
 // ════════════════════════════════════════════════════════════════
-describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-script integration: mac 状态机中断注入', () => {
+describe.skipIf(!IS_MAC || !HAS_HDIUTIL || !HAS_DITTO || !HAS_SHASUM)('updater-script integration: mac 状态机中断注入', () => {
   it(
     'S1 中断（M2 脚本侧）：staging 解压完成后 kill → 正式位置零接触 + staging 残留 + result 未写',
     async () => {
-      const { zipPath, sha256, appBundleName, binaryName } = buildMinimalAppZip({ versionMarker: 'NEW-V-B' })
-      const vars = makeMacVars({ zipPath, sha256, appBundleName, binaryName })
+      const { dmgPath, sha256, appBundleName, binaryName } = buildMinimalAppDmg({ versionMarker: 'NEW-V-B' })
+      const vars = makeMacVars({ dmgPath, sha256, appBundleName, binaryName })
       const appDir = path.dirname(vars.appBundle)
       const stagingDir = path.join(appDir, `.staging.${appBundleName}`)
       mkdirSync(appDir, { recursive: true })
@@ -515,8 +527,8 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-scrip
   it(
     'S3→S4 残余窗口中断（M3b 脚本侧）：备份与换装之间 kill → $APP 缺失 + .old/.new 双份完整',
     async () => {
-      const { zipPath, sha256, appBundleName, binaryName } = buildMinimalAppZip({ versionMarker: 'NEW-V-B' })
-      const vars = makeMacVars({ zipPath, sha256, appBundleName, binaryName })
+      const { dmgPath, sha256, appBundleName, binaryName } = buildMinimalAppDmg({ versionMarker: 'NEW-V-B' })
+      const vars = makeMacVars({ dmgPath, sha256, appBundleName, binaryName })
       const appDir = path.dirname(vars.appBundle)
       mkdirSync(appDir, { recursive: true })
       mkdirSync(vars.appBundle, { recursive: true })
@@ -550,8 +562,8 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-scrip
   it(
     'S4 后 done 前中断（M3a 脚本侧）：换装完成 kill → $APP 完整新版 + .old 在（self-healer 可判定状态）',
     async () => {
-      const { zipPath, sha256, appBundleName, binaryName } = buildMinimalAppZip({ versionMarker: 'NEW-V-B' })
-      const vars = makeMacVars({ zipPath, sha256, appBundleName, binaryName })
+      const { dmgPath, sha256, appBundleName, binaryName } = buildMinimalAppDmg({ versionMarker: 'NEW-V-B' })
+      const vars = makeMacVars({ dmgPath, sha256, appBundleName, binaryName })
       mkdirSync(path.dirname(vars.appBundle), { recursive: true })
       mkdirSync(vars.appBundle, { recursive: true })
       writeFileSync(path.join(vars.appBundle, 'OLD_MARKER'), 'old-vA')
@@ -582,13 +594,13 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-scrip
   it(
     '等待超时 abort（M6）：父进程不退 → failed(app still running)、旧 .app 完好、运行中进程不被打扰',
     async () => {
-      const { zipPath, sha256, appBundleName, binaryName } = buildMinimalAppZip()
+      const { dmgPath, sha256, appBundleName, binaryName } = buildMinimalAppDmg()
       // 真实存活的「父进程」：sleep 30 模拟挂住不退的 app。
       // noop exit listener 必须挂：否则 sleep 退出后成为 vitest 进程的僵尸（未收割），
       // bash kill -0 对僵尸恒真，等待循环永远不 break。
       const parent = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' })
       parent.once('exit', () => {})
-      const vars = makeMacVars({ zipPath, sha256, appBundleName, binaryName, parentPid: String(parent.pid) })
+      const vars = makeMacVars({ dmgPath, sha256, appBundleName, binaryName, parentPid: String(parent.pid) })
       mkdirSync(path.dirname(vars.appBundle), { recursive: true })
       mkdirSync(vars.appBundle, { recursive: true })
       writeFileSync(path.join(vars.appBundle, 'OLD_MARKER'), 'untouched')
@@ -618,14 +630,14 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-scrip
   it(
     '等待退出正向路径：父进程 1s 后退出 → 脚本等到再继续 → 升级完成（kill -0 立即返回语义，P12）',
     async () => {
-      const { zipPath, sha256, appBundleName, binaryName } = buildMinimalAppZip({ versionMarker: 'NEW-V-B' })
+      const { dmgPath, sha256, appBundleName, binaryName } = buildMinimalAppDmg({ versionMarker: 'NEW-V-B' })
       // 父进程用「孤儿化」模式：sleep 的 stdout/stderr 必须全部重定向 —— 否则
       // stderr 仍持有 spawnSync 的管道写端，spawnSync 会阻塞到 sleep 死亡才返回
       // （捕获到的 pid 已死，等待语义完全测不到）。父 bash 立即退出 → sleep 归
       // launchd 收割，无僵尸 → kill -0 语义真实。
       const parentPid = spawnSync('bash', ['-c', 'sleep 1 >/dev/null 2>&1 & pid=$!; echo $pid'])
         .stdout.toString().trim()
-      const vars = makeMacVars({ zipPath, sha256, appBundleName, binaryName, parentPid })
+      const vars = makeMacVars({ dmgPath, sha256, appBundleName, binaryName, parentPid })
       mkdirSync(path.dirname(vars.appBundle), { recursive: true })
       mkdirSync(vars.appBundle, { recursive: true })
       writeFileSync(path.join(vars.appBundle, 'OLD_MARKER'), 'old-vA')
@@ -647,8 +659,8 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-scrip
   it(
     '备份失败 abort（RM7）：APP_DIR 只读 → failed(backup failed)、旧 .app 完好、.old 不被破坏',
     async () => {
-      const { zipPath, sha256, appBundleName, binaryName } = buildMinimalAppZip({ versionMarker: 'NEW-V-B' })
-      const vars = makeMacVars({ zipPath, sha256, appBundleName, binaryName })
+      const { dmgPath, sha256, appBundleName, binaryName } = buildMinimalAppDmg({ versionMarker: 'NEW-V-B' })
+      const vars = makeMacVars({ dmgPath, sha256, appBundleName, binaryName })
       const appDir = path.dirname(vars.appBundle)
       mkdirSync(appDir, { recursive: true })
       mkdirSync(vars.appBundle, { recursive: true })
@@ -685,8 +697,8 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-scrip
   it(
     '换装失败回滚：S4 mv 失败 → 回滚 .old 成功 → failed(swap failed) + 旧 .app 完整恢复',
     async () => {
-      const { zipPath, sha256, appBundleName, binaryName } = buildMinimalAppZip({ versionMarker: 'NEW-V-B' })
-      const vars = makeMacVars({ zipPath, sha256, appBundleName, binaryName })
+      const { dmgPath, sha256, appBundleName, binaryName } = buildMinimalAppDmg({ versionMarker: 'NEW-V-B' })
+      const vars = makeMacVars({ dmgPath, sha256, appBundleName, binaryName })
       mkdirSync(path.dirname(vars.appBundle), { recursive: true })
       mkdirSync(vars.appBundle, { recursive: true })
       writeFileSync(path.join(vars.appBundle, 'OLD_MARKER'), 'old-vA-rollback')
@@ -698,7 +710,7 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-scrip
 
       // 等 S3 完成，趁暂停删掉 .new（模拟 staging 内容消失 → S4 mv 必失败）
       await waitFor('S3 完成', () => existsSync(`${vars.appBundle}.old`) && !existsSync(vars.appBundle))
-      rmSync(`${vars.appBundle}.new`, { recursive: true, force: true })
+      rmSync(`${vars.appBundle}.new`, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       rmSync(flag) // 放行 → S4 mv 源缺失失败 → 回滚 .old
       await exited
 
@@ -719,9 +731,9 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-scrip
     () => {
       // 只读检测是脚本第一步（case /Volumes/*），在任何文件系统操作前退出——
       // 因此可以用 /Volumes 下的虚拟路径真实执行而不需要真挂载。
-      const { zipPath, sha256, binaryName } = buildMinimalAppZip()
+      const { dmgPath, sha256, binaryName } = buildMinimalAppDmg()
       const vars = makeMacVars({
-        zipPath,
+        dmgPath,
         sha256,
         appBundle: '/Volumes/TaiJi-Integration-Test/太极.app',
         binaryName,
@@ -744,13 +756,14 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-scrip
 })
 
 // ════════════════════════════════════════════════════════════════
-// MAC 脚本：磁盘满（M4 + P10：unzip 磁盘满必须非 0 退出）
+// MAC 脚本：磁盘满（M4 + P10：ditto 磁盘满必须非 0 退出）
 // ════════════════════════════════════════════════════════════════
-describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM || !HAS_HDIUTIL)('updater-script integration: mac 磁盘满（P10）', () => {
+describe.skipIf(!IS_MAC || !HAS_HDIUTIL || !HAS_DITTO || !HAS_SHASUM)('updater-script integration: mac 磁盘满（P10）', () => {
   it(
-    '小容量卷上解压 5MB 不可压产物 → ENOSPC → unzip 非零退出、error=extract failed、旧 app 完好',
+    '小容量卷上 ditto 拷入 5MB 不可压产物 → ENOSPC → ditto 非零退出、error=ditto copy failed、旧 app 完好',
     (ctx) => {
-      // 3MB HFS+ 镜像当「应用卷」；5MB 随机字节二进制（zip 存储不压缩）必撑爆。
+      // 3MB HFS+ 镜像当「应用卷」；5MB 随机字节二进制必撑爆（ditto 无压缩）。
+      // 更新 dmg 挂载在 $TMPDIR（S1 选址约束），只有 ditto 落 staging 在小卷上。
       const imgPath = path.join(tmpDir, 'tiny.dmg')
       const mountDir = path.join(tmpDir, 'mnt')
       mkdirSync(mountDir, { recursive: true })
@@ -767,8 +780,8 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM || !HAS_HDIUTIL
         mkdirSync(path.join(appBundle, 'Contents', 'MacOS'), { recursive: true })
         writeFileSync(path.join(appBundle, 'OLD_MARKER'), 'old-vA-on-tiny-vol')
 
-        const { zipPath, sha256, binaryName } = buildMinimalAppZip({ appBundleName, binaryName: 'xyz-agent', binarySize: 5 * 1024 * 1024 })
-        const vars = makeMacVars({ zipPath, sha256, appBundleName, binaryName, appBundle })
+        const { dmgPath, sha256, binaryName } = buildMinimalAppDmg({ appBundleName, binaryName: 'xyz-agent', binarySize: 5 * 1024 * 1024 })
+        const vars = makeMacVars({ dmgPath, sha256, appBundleName, binaryName, appBundle })
 
         const script = stripOpenLine(buildUpdaterScript(vars))
         const r = runBash(writeScriptToTmp(script), 30_000)
@@ -776,14 +789,14 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM || !HAS_HDIUTIL
         expect(r.status, '磁盘满应 exit 1').toBe(1)
         const result = JSON.parse(readFileSync(vars.resultPath, 'utf8')) as { status: string; error: string }
         expect(result.status).toBe('failed')
-        expect(result.error).toBe('extract failed')
+        expect(result.error).toBe('ditto copy failed')
         // 旧 app 完好（G1：失败路径上正式位置是完整旧版）
         expect(existsSync(path.join(appBundle, 'OLD_MARKER')), '旧 app 必须完好').toBe(true)
 
-        // P10 本体断言：unzip 自己必须报错（日志含 unzip 错误输出），而不是靠
-        // 主二进制检查兜底——若 unzip 静默返回 0，P10 降级路径（比对 zip 文件数）触发。
+        // P10 本体断言：ditto 自己必须报错（日志含 ditto 错误输出），而不是靠
+        // 主二进制检查兜底——若 ditto 静默返回 0，主二进制检查才兜底拦截。
         const log = readFileSync(vars.logPath, 'utf8')
-        expect(log, 'unzip 应在磁盘满时输出错误（P10）').toMatch(/unzip:|No space left|Disk Full|I\/O error|error/i)
+        expect(log, 'ditto 应在磁盘满时输出错误（P10）').toMatch(/ditto:|No space left|Disk Full|I\/O error|error/i)
       } finally {
         spawnSync('hdiutil', ['detach', mountDir, '-force'])
       }
@@ -899,10 +912,11 @@ describe('updater-script integration: 脚本依赖的 CLI 工具', () => {
     expect(HAS_SHASUM, 'shasum 应在 PATH 中（macOS 标配）').toBe(true)
   })
 
-  it('unzip 可用（mac 脚本解压依赖）', () => {
-    if (!HAS_UNZIP) {
-      console.warn('[warn] unzip 不在 PATH，mac 端到端用例已跳过')
+  it('hdiutil + ditto 可用（mac 脚本 dmg 挂载/拷贝/卸载依赖，批次 3 解包原语）', () => {
+    if (!HAS_HDIUTIL || !HAS_DITTO) {
+      console.warn('[warn] hdiutil/ditto 不在 PATH，mac 端到端用例已跳过')
     }
-    expect(typeof HAS_UNZIP).toBe('boolean')
+    expect(HAS_HDIUTIL, 'hdiutil 应在 PATH 中（macOS 标配）').toBe(true)
+    expect(HAS_DITTO, 'ditto 应在 PATH 中（macOS 标配）').toBe(true)
   })
 })

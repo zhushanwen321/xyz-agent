@@ -13,8 +13,8 @@
 
 import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
-import type { NormalizedQuotaRow, ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchFailureReason } from '@xyz-agent/shared'
-import { matchQuotaPreset } from '@xyz-agent/shared'
+import type { NormalizedQuotaRow, ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchFailureReason, QuotaFetcherConfig } from '@xyz-agent/shared'
+import { matchQuotaPreset, normalizeQuotaWorkspaceUrl } from '@xyz-agent/shared'
 import { QUOTA_FETCHERS } from './quota-providers/index.js'
 import { QuotaCache } from './quota-cache.js'
 import { getApiKeyForProvider, getProviderConfig } from '../infra/pi/pi-provider-store.js'
@@ -227,6 +227,9 @@ export class QuotaService {
    *
    * @param fetcher - 用户手动选择的 fetcher id（可选）。未传时保留既有 fetcher 不变。
    * @param apiKey - Coding Plan 专属 API Key（可选，api-key 类）。空字符串 = 清除专属 key，复用 provider.apiKey。
+   * @param workspace - 资源维度 fetcher（opencode）的 workspace 地址（可选，D1-1）。
+   *   接受完整 URL 或裸 wrk_ id（归一化为规范 URL 存储，P1-1）；空字符串 = 清除；
+   *   非法输入返回 ok:false（不发请求可区分 not_configured）。
    */
   async configure(
     providerId: string,
@@ -234,77 +237,133 @@ export class QuotaService {
     cookie?: string,
     fetcher?: string,
     apiKey?: string,
+    workspace?: string,
   ): Promise<QuotaConfigureResult> {
-    // 确保 secrets 目录存在
-    // [W4] 临时清零 umask 保证 mode 0o700 不被进程 umask 过滤（mkdirSync 的 mode 受 umask 影响）。
-    // 文件级 mode 0o600 同理在写入时设置。恢复原 umask 以免影响调用方其他 IO。
-    if (!existsSync(this.secretsDir)) {
-      const prevUmask = process.umask(0)
-      try {
-        mkdirSync(this.secretsDir, { recursive: true, mode: SECRET_DIR_MODE })
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        logger.warn('[quota] failed to create secrets dir', { providerId, error: msg })
-        return { ok: false, error: msg }
-      } finally {
-        process.umask(prevUmask)
-      }
-    }
+    // 各阶段按 secrets 目录 → cookie → apiKey → workspace 归一化 → 持久化的固定序执行，
+    // 任一阶段失败 fail-fast（错误文案与 log 侧写由阶段 helper 原样产生，行为不变）。
+    const dirError = this.ensureSecretsDir(providerId)
+    if (dirError !== undefined) return { ok: false, error: dirError }
 
     // cookie 写入 secrets（cookie 类）
     let cookieSet: boolean | undefined
     if (cookie !== undefined) {
-      try {
-        this.writeSecretFile(this.getCookiePath(providerId), cookie)
-        cookieSet = true
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        logger.warn('[quota] failed to write cookie', { providerId, error: msg })
-        return { ok: false, error: msg }
-      }
+      const cookieError = this.writeCookieSecret(providerId, cookie)
+      if (cookieError !== undefined) return { ok: false, error: cookieError }
+      cookieSet = true
     }
 
     // Coding Plan 专属 API Key 写入 secrets（api-key 类，可选）
     let apiKeySet: boolean | undefined
     if (apiKey !== undefined) {
-      try {
-        const keyPath = this.getApiKeyPath(providerId)
-        if (apiKey) {
-          // 非空 = 写入专属 key
-          this.writeSecretFile(keyPath, apiKey)
-          apiKeySet = true
-        } else {
-          // 空字符串 = 清除专属 key，fallback 到 provider.apiKey
-          if (existsSync(keyPath)) {
-            try {
-              unlinkSync(keyPath)
-            } catch (cleanupErr) {
-              // 清理失败不阻断主流程（下次写入会覆盖）
-              const cleanupMsg = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)
-              logger.debug('[quota] failed to remove api key file', { providerId, error: cleanupMsg })
-            }
-          }
-          apiKeySet = false
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        logger.warn('[quota] failed to write apiKey', { providerId, error: msg })
-        return { ok: false, error: msg }
-      }
+      const keyResult = this.writeApiKeySecret(providerId, apiKey)
+      if ('error' in keyResult) return { ok: false, error: keyResult.error }
+      apiKeySet = keyResult.apiKeySet
     }
 
-    // 持久化 quota 配置到 config/providers.json（fetcher/enabled/cookieSet/apiKeySet）
+    // workspace 归一化校验（D1-1/P1-1）：非法输入 fail-fast（不落半成品配置），错误面
+    // 返回给调用方（renderer 已本地预校验，此处是直接 RPC 调用者的防御线）
+    let normalizedWorkspace: string | null | undefined
+    if (workspace !== undefined) {
+      const wsResult = this.normalizeWorkspaceInput(providerId, workspace)
+      if ('error' in wsResult) return { ok: false, error: wsResult.error }
+      normalizedWorkspace = wsResult.value
+    }
+
+    // 持久化 quota 配置到 config/providers.json（fetcher/enabled/cookieSet/apiKeySet/workspace）
     const persistOk = await this.persistQuotaConfig(
       providerId,
       enabled,
       fetcher,
       cookieSet,
       apiKeySet,
+      normalizedWorkspace,
     )
     if (!persistOk) {
       return { ok: false, error: 'failed to persist quota config' }
     }
     return { ok: true }
+  }
+
+  /**
+   * configure 阶段 helper 之一：确保 secrets 目录存在（失败返回 error 文案）。
+   * [W4] 临时清零 umask 保证 mode 0o700 不被进程 umask 过滤（mkdirSync 的 mode 受 umask 影响）。
+   * 文件级 mode 0o600 同理在写入时设置。恢复原 umask 以免影响调用方其他 IO。
+   */
+  private ensureSecretsDir(providerId: string): string | undefined {
+    if (existsSync(this.secretsDir)) return undefined
+    const prevUmask = process.umask(0)
+    try {
+      mkdirSync(this.secretsDir, { recursive: true, mode: SECRET_DIR_MODE })
+      return undefined
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.warn('[quota] failed to create secrets dir', { providerId, error: msg })
+      return msg
+    } finally {
+      process.umask(prevUmask)
+    }
+  }
+
+  /** configure 阶段 helper 之二：cookie 写入 secrets（失败返回 error 文案）。 */
+  private writeCookieSecret(providerId: string, cookie: string): string | undefined {
+    try {
+      this.writeSecretFile(this.getCookiePath(providerId), cookie)
+      return undefined
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.warn('[quota] failed to write cookie', { providerId, error: msg })
+      return msg
+    }
+  }
+
+  /**
+   * configure 阶段 helper 之三：Coding Plan 专属 API Key 写入/清除。
+   * 非空 = 写入专属 key（apiKeySet=true）；空字符串 = 清除专属 key，fallback 到
+   * provider.apiKey（apiKeySet=false）。写失败返回 error 文案（调用方 fail-fast）。
+   */
+  private writeApiKeySecret(providerId: string, apiKey: string): { apiKeySet: boolean } | { error: string } {
+    try {
+      const keyPath = this.getApiKeyPath(providerId)
+      if (apiKey) {
+        // 非空 = 写入专属 key
+        this.writeSecretFile(keyPath, apiKey)
+        return { apiKeySet: true }
+      }
+      // 空字符串 = 清除专属 key，fallback 到 provider.apiKey
+      if (existsSync(keyPath)) {
+        try {
+          unlinkSync(keyPath)
+        } catch (cleanupErr) {
+          // 清理失败不阻断主流程（下次写入会覆盖）
+          const cleanupMsg = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)
+          logger.debug('[quota] failed to remove api key file', { providerId, error: cleanupMsg })
+        }
+      }
+      return { apiKeySet: false }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.warn('[quota] failed to write apiKey', { providerId, error: msg })
+      return { error: msg }
+    }
+  }
+
+  /**
+   * configure 阶段 helper 之四：workspace 输入归一化（D1-1/P1-1）。
+   * 空字符串 = 清除（value:null，恢复未配置态，查询报 not_configured）；裸 wrk_ id
+   * 归一化为规范 URL 存储（P1-1）；非法输入返回 error 文案（调用方 fail-fast）。
+   */
+  private normalizeWorkspaceInput(
+    providerId: string,
+    workspace: string,
+  ): { value: string | null } | { error: string } {
+    const trimmed = workspace.trim()
+    if (!trimmed) return { value: null }
+    const normalized = normalizeQuotaWorkspaceUrl(trimmed)
+    if (!normalized.ok) {
+      logger.warn('[quota] invalid workspace input', { providerId, error: normalized.error })
+      return { error: normalized.error }
+    }
+    return { value: normalized.url }
   }
 
   /**
@@ -324,6 +383,8 @@ export class QuotaService {
     fetcher: string | undefined,
     cookieSet: boolean | undefined,
     apiKeySet: boolean | undefined,
+    /** undefined = 本次不动 workspace；null = 清除；string = 归一化 URL 写入 */
+    workspace: string | null | undefined,
   ): Promise<boolean> {
     if (!this.providerExists(providerId)) {
       logger.warn('[quota] provider not found in aggregated provider list, cannot persist quota', { providerId })
@@ -335,23 +396,50 @@ export class QuotaService {
     }
     const legacyQuota = this.readQuotaFallback(providerId)
     try {
-      await this.extrasStore.modify(providerId, current => ({
-        ...current,
-        quota: {
-          fetcher: fetcher ?? current?.quota?.fetcher ?? legacyQuota?.fetcher,
-          enabled,
-          // 保留既有 cookieSet，除非本次明确写入新 cookie
-          cookieSet: cookieSet ?? current?.quota?.cookieSet ?? legacyQuota?.cookieSet,
-          // 保留既有 apiKeySet，除非本次明确传入新值（含空字符串清除）
-          apiKeySet: apiKeySet ?? current?.quota?.apiKeySet ?? legacyQuota?.apiKeySet,
-        },
-      }))
+      await this.extrasStore.modify(providerId, current => {
+        // workspace 三态（对齐 apiKeySet 的「本次明确传入才动」语义，清除态显式落 undefined）
+        const existingQuota = current?.quota
+        return {
+          ...current,
+          quota: {
+            fetcher: QuotaService.inheritQuotaField(fetcher, existingQuota?.fetcher, legacyQuota?.fetcher),
+            enabled,
+            // 保留既有 cookieSet，除非本次明确写入新 cookie
+            cookieSet: QuotaService.inheritQuotaField(cookieSet, existingQuota?.cookieSet, legacyQuota?.cookieSet),
+            // 保留既有 apiKeySet，除非本次明确传入新值（含空字符串清除）
+            apiKeySet: QuotaService.inheritQuotaField(apiKeySet, existingQuota?.apiKeySet, legacyQuota?.apiKeySet),
+            workspace: QuotaService.resolveWorkspaceValue(workspace, existingQuota, legacyQuota),
+          },
+        }
+      })
       return true
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       logger.warn('[quota] failed to persist quota config to providers.json', { providerId, error: msg })
       return false
     }
+  }
+
+  /**
+   * quota 字段继承链（A1-3 读源切换）：显式新值 → providers.json 既有值 →
+   * models.json legacy quota 兜底。?? 短路链与原内联写法逐字等价（仅消重复）。
+   */
+  private static inheritQuotaField<T>(next: T | undefined, current: T | undefined, legacy: T | undefined): T | undefined {
+    return next ?? current ?? legacy
+  }
+
+  /**
+   * workspace 三态继承：undefined = 本次不动（继承既有值）；null = 清除（落 undefined）；
+   * string = 归一化 URL 写入。与 apiKeySet 的「本次明确传入才动」语义对齐。
+   */
+  private static resolveWorkspaceValue(
+    workspace: string | null | undefined,
+    current: ProviderExtras['quota'] | undefined,
+    legacyQuota: ProviderExtras['quota'] | undefined,
+  ): string | undefined {
+    if (workspace === undefined) return current?.workspace ?? legacyQuota?.workspace
+    if (workspace === null) return undefined
+    return workspace
   }
 
   /**
@@ -391,7 +479,12 @@ export class QuotaService {
     }
 
     try {
-      const outcome = await fetcher.fetchQuota(resolved.credential, resolved.kind)
+      // D1-2：per-provider 只读配置注入（首期仅 workspaceUrl——资源维度 fetcher 的
+      // workspace 归一化地址，经 readQuotaFallback 双读 providers.json/models.json 旧值）
+      const config: QuotaFetcherConfig = {
+        workspaceUrl: this.readQuotaFallback(providerId)?.workspace,
+      }
+      const outcome = await fetcher.fetchQuota(resolved.credential, resolved.kind, config)
 
       if (outcome.ok) {
         // 成功：更新缓存，清除失败标记

@@ -24,7 +24,7 @@
  * 「releaseRuntime → 改 status」原子顺序。
  *
  * **G3-001**（run 一次性生命周期）：AbortController 一次性无法复用，runtime 释放后
- * 只有两类重建——rebuildRuntime（error-recovery，崩溃重试路径，run 保持 running、
+ * 只有两类重建——rebuildRuntime（worker-message-pump，崩溃重试路径，run 保持 running、
  * replaceRuntime 原子换新）与 abort/terminate 的终态释放（transition("done") 内
  * releaseRuntime，run 不再恢复）。
  * （旧并发门闩 gate 抽象已删——no-op 无生产语义，实际并发由 SubagentService
@@ -42,12 +42,11 @@ import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
 import { validateRunArgs } from "./args-validator.ts";
 import {
   closeOutInFlightCalls,
-  emitPendingUnregister,
-  emitTerminalSideEffects,
+  finalizeRun,
   handleWorkerError,
   handleWorkerExit,
   handleWorkerMessage,
-} from "./error-recovery.ts";
+} from "./worker-message-pump.ts";
 import { Budget } from "./models/budget.ts";
 import type { LifecycleDeps, RunStore, WorkerHandlers } from "./models/ports.ts";
 import { RunRuntime } from "./models/run-runtime.ts";
@@ -125,17 +124,17 @@ function broadcastAbortToWorker(run: WorkflowRun, reason: string): void {
   }
 }
 
-// ── makeHandlers（路由 worker 事件到 error-recovery handle* 函数） ──────
+// ── makeHandlers（路由 worker 事件到 worker-message-pump handle* 函数） ──────
 
 /**
  * 构造 WorkerHandlers——将 worker 的 onMessage/onError/onExit 事件路由到
- * error-recovery 的 handleWorker* 函数。
+ * worker-message-pump 的 handleWorker* 函数。
  *
  * 闭包捕获 run + deps。runtime 重建（replaceRuntime）后 run 实例不变、deps 不变，
- * 故 handlers 对新 worker 仍有效（lifecycle 与 error-recovery 共用 handlers）。
+ * 故 handlers 对新 worker 仍有效（lifecycle 与 worker-message-pump 共用 handlers）。
  *
  * **onExit G-025**：handleWorkerExit 内部检查 handle.isCurrent（stale exit 丢弃）。
- * 本函数不在 onExit 里重复检查——error-recovery.handleWorkerExit 是单一守卫点。
+ * 本函数不在 onExit 里重复检查——worker-message-pump.handleWorkerExit 是单一守卫点。
  *
  * **workerErrorCount**：onError 触发时递增（C.5 跨 runtime 存活的重试计数载体）。
  * 注意 handleWorkerError 内部也会递增——这里 onError 递增是 worker 事件层面的
@@ -144,10 +143,10 @@ function broadcastAbortToWorker(run: WorkflowRun, reason: string): void {
  */
 function makeHandlers(run: WorkflowRun, deps: LifecycleDeps): WorkerHandlers {
   // [OR-7] per-run deps 视图：包装 onRunDone，把「run 终态」转译为「移除 signal abort
-  // listener」。error-recovery 全部终态路径（handleReturn / handleWorkerError /
+  // listener」。worker-message-pump 全部终态路径（handleReturn / handleWorkerError /
   // handleScriptError / handleWorkerExit / 预算终止 / time_limited / [OR-2] rebuild
-  // 失败收敛）都经 handlers 调用链消费本视图——消息面终态在此统一收口；
-  // abortRun / terminateRunningRuns 两个 lifecycle 自有终态路径另行显式 dispose。
+  // 失败收敛——均经 finalizeRun）都经 handlers 调用链消费本视图——消息面终态在此
+  // 统一收口；abortRun / terminateRunningRuns 两个 lifecycle 自有终态路径另行显式 dispose。
   const depsWithTerminalCleanup: LifecycleDeps = {
     ...deps,
     onRunDone: (doneRun: WorkflowRun): void => {
@@ -155,7 +154,7 @@ function makeHandlers(run: WorkflowRun, deps: LifecycleDeps): WorkerHandlers {
       deps.onRunDone?.(doneRun);
     },
   };
-  // 自引用——error-recovery rebuildRuntime 需要 handlers 参数（handlers 引用自身）
+  // 自引用——worker-message-pump rebuildRuntime 需要 handlers 参数（handlers 引用自身）
   const handlers: WorkerHandlers = {
     async onMessage(raw: unknown): Promise<void> {
       await handleWorkerMessage(run, raw, depsWithTerminalCleanup, handlers);
@@ -213,7 +212,7 @@ export function scheduleTimeBudget(
 /**
  * rfl 仪表（tier-1 §7.1）：向 spec.args 原地注入稳定 _runId。runAndWait 与
  * executeNestedWorkflow 两个 args 入口都经 runWorkflow 这一 choke point；
- * rebuildRuntime 复用 run.spec.args 同一对象（error-recovery.ts），worker rebuild
+ * rebuildRuntime 复用 run.spec.args 同一对象（worker-message-pump.ts），worker rebuild
  * 后脚本侧 $ARGS._runId 不漂移——修复「rebuild 回退 run-<Date.now()> 导致同一
  * 逻辑 run 碎裂到多个 state 目录」。注入在 validateRunArgs 之后，不参与脚本
  * 参数 schema 校验（引擎内部字段）。
@@ -426,20 +425,16 @@ export async function abortRun(
   // [OR-3] 先广播 abort 再 transition（transition 内 releaseRuntime→terminate，
   // terminate 之后广播发不进去）——worker 侧 pending 优雅解阻
   broadcastAbortToWorker(run, reason ?? `Workflow aborted (${doneReason})`);
-  // A4: transition 内部 releaseRuntime（cleanup before mutate）
-  run.transition("done", doneReason);
   // [OR-7] run 终态：移除 signal abort listener（幂等；abort 由 signal 触发时
-  // listener 已在 onAbort 内自移除，此处为其余 abort 入口的收口）
+  // listener 已在 onAbort 内自移除，此处为其余 abort 入口的收口；即使 finalizeRun
+  // 因并发终态化让位，WeakMap 条目也应清除，不依赖 transition 成败）
   disposeSignalAbortListener(run);
-  // [OR-8] 终态收口残留 in-flight call（先收口再落盘——快照不再含 running 节点）
-  closeOutInFlightCalls(run);
-  await deps.store.save(run);
-  deps.log?.("debug", "workflow:lifecycle", "abortRun transition done", { runId, reason: run.state.reason });
-  // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
-  // [OR-4][B-4] M12 同款围栏（emit pending:unregister + onRunDone 各自独立 try）——
-  // listener 同步抛错不再跳过 onRunDone 或把错误抛给 abort 调用方；错误 error 留痕后
-  // 本函数仍按 abort 成功语义正常返回（内存态已终态）。
-  emitTerminalSideEffects(run, deps, `abortRun (done,${doneReason})`);
+  // A4 + C-4: transition 内部 releaseRuntime（cleanup before mutate）；到达 done 终态
+  // → 注销 pending-notification + 通知 Interface 层（D5-② 终态 coda 收敛为
+  // worker-message-pump 的 finalizeRun 单写点——OR-8 in-flight 收口 + save best-effort
+  // （SW-DATA-3）不再向上抛，内存态已终态，调用方无需因落盘失败收到 abort 异常；
+  // OR-4/B-4 unregister 与 onRunDone 各自独立围栏）
+  await finalizeRun(run, deps, doneReason, { context: `abortRun (${doneReason})` });
 }
 
 // ── terminateRunningRuns（session 切换/关闭：终止全部 running run） ────────
@@ -451,11 +446,12 @@ export async function abortRun(
  * done,failed 持久化落盘——重启后 kill-9 恢复不误判，也不再存在「挂起待恢复」
  * 的中间态。
  *
- * per-run 行为：`state.error = reason` → `transition("done","failed")`（内部先
- * releaseRuntime，A4）→ `await store.save(run)` → `eventBus.emit("pending:unregister",
- * {reason:"failed"})`。
+ * per-run 行为：`state.error = reason` → `finalizeRun(run, deps, "failed",
+ * {notifyDone:false})`（transition("done","failed") 内部先 releaseRuntime，A4 →
+ * save best-effort → `eventBus.emit("pending:unregister", {reason:"failed"})`）。
  *
- * **不调 deps.onRunDone**：对齐 session_start 恢复先例（index.ts kill-9 恢复只发
+ * **不调 deps.onRunDone**（经 finalizeRun 的 notifyDone:false 承载，D5-②）：
+ * 对齐 session_start 恢复先例（index.ts kill-9 恢复只发
  * unregister、不发 onRunDone）——session 切换/关闭语境下主 agent 已离开本 session，
  * 注入完成通知只会把消息发给已离开的 session。
  *
@@ -480,18 +476,19 @@ export async function terminateRunningRuns(
       run.state.error = reason;
       // [OR-3] 同 abortRun：先广播 abort 再 transition（worker 侧 pending 优雅解阻）
       broadcastAbortToWorker(run, reason);
-      // A4: transition 内部先 releaseRuntime（cleanup before mutate）
-      run.transition("done", "failed");
       // [OR-7] run 终态：移除 signal abort listener（terminateRunningRuns 不走
-      // onRunDone——本路径显式收口）
+      // onRunDone——本路径显式收口，不依赖 finalizeRun 的 notifyDone 分支）
       disposeSignalAbortListener(run);
-      // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
-      closeOutInFlightCalls(run);
-      await deps.store.save(run);
-      // C-4: run 到达 done 终态 → 注销 pending-notification（reason 固定 "failed"）。
-      // [B-4] M12 同款围栏：emit 单独 try（listener 同步抛错 error 留痕不中断本 run
-      // 收尾日志与其余 run 的终止；本路径不调 onRunDone——session 离开语境不发完成通知）。
-      emitPendingUnregister(run, deps, "terminateRunningRuns");
+      // A4 + C-4: transition 内部 releaseRuntime（cleanup before mutate）；done 终态 →
+      // 注销 pending-notification（D5-② 终态 coda 收敛为 finalizeRun 单写点）。
+      // notifyDone: false——**不调 deps.onRunDone**（真差异经参数承载）：对齐
+      // session_start 恢复先例（index.ts kill-9 恢复只发 unregister、不发
+      // onRunDone）——session 切换/关闭语境下主 agent 已离开本 session，注入完成
+      // 通知只会把消息发给已离开的 session。OR-8 in-flight 收口由 finalizeRun 承载。
+      await finalizeRun(run, deps, "failed", {
+        context: "terminateRunningRuns",
+        notifyDone: false,
+      });
       deps.log?.("debug", "workflow:lifecycle", "run terminated", { runId: run.runId, reason: run.state.reason });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

@@ -17,7 +17,7 @@
  */
 import { onScopeDispose } from 'vue'
 import type { ServerMessage } from '@xyz-agent/shared'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import { useChatStore } from '@/stores/chat'
 import { useSidebar } from '@/composables/features/sidebar/useSidebar'
 

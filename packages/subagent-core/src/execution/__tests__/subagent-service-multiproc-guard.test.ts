@@ -34,7 +34,7 @@ vi.mock("../alive-store.ts", () => ({
   findForeignLiveInstance: foreignLiveSpy,
 }));
 
-vi.mock("../session-runner.ts", () => ({
+vi.mock("../engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(),
   killAllSpawnedChildren: vi.fn(),
   getChildByRecord: vi.fn(() => undefined),

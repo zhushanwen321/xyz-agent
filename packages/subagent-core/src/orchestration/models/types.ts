@@ -13,7 +13,7 @@
  * 层归属：Engine（数据结构 + 不变式守卫）。
  */
 
-import type { ExecutionRecord } from "../../execution/types.ts";
+import type { ExecutionRecord, WorktreeHandle } from "../../execution/types.ts";
 
 // ── 状态机 ────────────────────────────────────────────────────
 
@@ -65,7 +65,37 @@ export function canRunTransition(from: RunStatus, to: RunStatus): boolean {
 // ── Agent 调用 ────────────────────────────────────────────────
 
 /**
- * 单次 agent 调用的输入选项。
+ * slug 最大长度（D6 合流迁入本文件，原权威定义在已删除的 execution/execute-options-mapper.ts）。
+ * 历史值 20 偏紧——描述性 slug 如 "audit-structured-output"（23）/ "fix-subagent-wf-tools"（21）
+ * 会撞上限，放宽到 35 兼顾「短到能塞进 TUI 标题行」与「容纳合理描述性 kebab-case 名」。
+ * 放本文件的原因：约束对象是 AgentCallOpts.description（slug 的源字段，见下方 slug 派生说明），
+ * 与字段同文件；worker-message-pump（live record slug 截断）与壳侧 tool schema maxLength 共享引用。
+ */
+export const SLUG_MAX_LENGTH = 35;
+
+/**
+ * 单次 agent 调用的任务声明（D6 任务形状合流后的单一形状）。
+ *
+ * [D6 合流裁决] 本类型 = 原 AgentCallOpts（workflow 调用方声明，18 字段）与原
+ * AgentTaskSpec（engine 中立任务声明，已删除）的合流形态，从模型脚本 agent() API
+ * 到 EnginePort.run 直达 pi 边界一次映射——SAR 链路上的 ExecuteOptions/AgentTaskSpec
+ * 中间态消除（设计 docs/design/subagent-dual-track-convergence.md §3.3 D6 / 终态四）。
+ *
+ * 终态命名按变化轴裁定为 AgentCallOpts，理由：
+ *   - 字段演进的首要驱动轴是「调用方要表达的任务语义」（agent() API 是唯一生产写入方，
+ *     合流字段中 prompt/description/skill/skillPath/schemaEnv/thinkingLevel 等多数派
+ *     已是调用方命名）；
+ *   - 原 AgentTaskSpec 的中立重命名层（task/slug/effort/persona）与调用方命名是
+ *     形式同构、语义同构的假差异（prompt≡task、slug=description 截断、effort≡thinkingLevel、
+ *     persona≡skillPath+appendSystemPrompt 平铺），按「消假差异」原则并入调用方命名；
+ *   - 持久化兼容反向锁定 prompt 形态：jsonl run 快照的 AgentCall.opts 与 worker 消息
+ *     opts 均以 prompt 字段落盘，改名会破坏旧快照重水合。
+ *
+ * 引擎中立字段的并入方式（可选字段，原 AgentTaskSpec 独有字段去向）：
+ *   - graceTurns / conversation / idleTimeoutMs / denyTools / permissionMode：可选并入；
+ *   - persona.agentRef：裁撤（无生产写入方、无消费者——pi 走 agent 字段解析身份）；
+ *   - requires：裁撤（P4 形状预留、无生产写入方；且并入需 import EngineCapabilities
+ *     形成 orchestration↔engine 类型环）。将来能力依赖声明下钻时在本形状上加回。
  *
  * D-12 仅重组执行编排，AgentCallOpts 形状保持兼容。
  */
@@ -101,14 +131,20 @@ export interface AgentCallOpts {
  */
   timeoutMs?: number;
  /**
- * Turn 上限（turn limiter 用）。
- *
- * [预算语义对齐] 未传或 <=0 = 不限 turn；此时也不按 turns 估算 spawn watchdog——
- * 仅当 env XYZ_SUBAGENT_SPAWN_WATCHDOG_MS 设置时才按绝对时限挂 watchdog（见
- * session-runner.resolveSpawnWatchdogMs）。mapToExecuteOptions 原样透传到
- * ExecuteOptions.maxTurns → 引擎 task-spec → runSpawn。
- */
+  * Turn 上限（turn limiter 用）。
+  *
+  * [预算语义对齐] 未传或 <=0 = 不限 turn；此时也不按 turns 估算 spawn watchdog——
+  * 仅当 env XYZ_SUBAGENT_SPAWN_WATCHDOG_MS 设置时才按绝对时限挂 watchdog（见
+  * session-runner.resolveSpawnWatchdogMs）。pi 边界直出为 ExecuteOptions.maxTurns
+  * → runSpawn（D6 合流后无中间映射层）。
+  */
   maxTurns?: number;
+ /**
+  * Turn limiter 的宽限轮数（原 AgentTaskSpec.graceTurns 并入）：超 maxTurns 后
+  * 允许继续的轮数（等待在途工具收尾）。pi 引擎消费；workflow agent() 无写入方，
+  * chat 域（ExecuteOptions.graceTurns 同名透传）经 host-task-spec 填充。
+  */
+  graceTurns?: number;
  /**
  * Skill name to load (e.g. "code-review"). Resolved to SKILL.md path
  * and injected via --skill flag in the subprocess.
@@ -129,18 +165,18 @@ export interface AgentCallOpts {
  */
   agent?: string;
  /**
- * System prompt injection CONTENT (not file paths).
- * Set by agent-opts-resolver: schema structured-output instruction string.
- * Agent systemPrompt is NOT included here (handled by resolveIdentity/agentConfig).
- * mapToExecuteOptions passes this through to ExecuteOptions.appendSystemPrompt
- * (same name/semantics, transparent passthrough).
- */
+  * System prompt injection CONTENT (not file paths).
+  * Set by agent-opts-resolver: schema structured-output instruction string.
+  * Agent systemPrompt is NOT included here (handled by resolveIdentity/agentConfig).
+  * pi 边界直出为 ExecuteOptions.appendSystemPrompt（同名同义透传，D6 合流后无中间映射层）。
+  */
   appendSystemPrompt?: string[];
  /**
- * Schema JSON for PI_WORKFLOW_SCHEMA env var.
- * Set by agent-opts-resolver when opts.schema is present; passed as env var
- * to activate the structured-output tool + hook.
- */
+  * Schema JSON for PI_WORKFLOW_SCHEMA env var.
+  * Set by agent-opts-resolver when opts.schema is present (值 = stringifySchemaCached
+  * compact，与 schema 派生等值); passed as env var to activate the structured-output
+  * tool + hook. pi 边界直出时 schema 派生优先、本字段兜底（解耦形态通道，生产不可达）。
+  */
   schemaEnv?: string;
  /**
  * Per-call 工作目录（ADR-029 决策 1）。传给 child_process.spawn 的 cwd option。
@@ -159,11 +195,36 @@ export interface AgentCallOpts {
    * agent() → execute-agent-call → SAR 路由层。
    */
   engine?: string;
-  /** Filesystem isolation: when true, creates a new git worktree for the agent. Independent of fork. */
-  worktree?: boolean;
+  /** Filesystem isolation: when true, creates a new git worktree for the agent. Independent of fork.
+   * [D6 合流] 类型扩展为 boolean | WorktreeHandle（原 AgentTaskSpec.worktree 的超集）——
+   * WorktreeHandle 形态仅在 chat 域（复用外部已创建的 worktree）出现，workflow agent()
+   * 恒传 boolean。 */
+  worktree?: boolean | WorktreeHandle;
   /** When true, agent() resolves {value, sessionFile, worktreePath, error} instead of a bare value.
-   * Worker-layer flag only — not forwarded to ExecuteOptions (mapToExecuteOptions drops it). */
+   * Worker-layer flag only — not consumed by any engine (dropped at the pi boundary). */
   returnMeta?: boolean;
+ /**
+  * 可持续对话模式（原 AgentTaskSpec.conversation 并入）：true = record 标记 chatMode，
+  * 轮次完成进 idle 态等待 message 续聊。chat 域（ExecuteOptions.conversation 同名）经
+  * host-task-spec 填充；workflow agent() 无写入方。
+  */
+  conversation?: boolean;
+ /**
+  * 空闲超时毫秒数（原 AgentTaskSpec.idleTimeoutMs 并入，仅 conversation 模式有意义）。
+  * 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms；显式 0/负 = 禁用
+  * idle GC。chat 域经 host-task-spec 填充。
+  */
+  idleTimeoutMs?: number;
+ /**
+  * 工具 denylist（原 AgentTaskSpec.denyTools 并入，中立新增面）：各引擎做语法映射
+  * （zcode buildZcodeArgv 消费；pi 链路暂无对应面）。无 workflow 写入方，预留形状。
+  */
+  denyTools?: string[];
+ /**
+  * 中立权限模式（原 AgentTaskSpec.permissionMode 并入，预留形状）：映射按各引擎
+  * capabilities.permissionMode。无生产写入方/消费者。
+  */
+  permissionMode?: string;
 }
 
 /**
@@ -190,6 +251,24 @@ export interface ToolCallEntry {
 }
 
 /**
+ * 失败分诊结构化标签（D5-③，r1 MF4 钉正语义）。
+ *
+ * - stale_context：pi session context 被 compact/cancel/替换——重试无意义（同 call
+ *   再次失败），不重试。
+ * - schema_deterministic：确定性 schema 失败（SO tool 从未调用 / gate 终止 /
+ *   不可满足 schema）——同 schema 重试必同结果，不重试。
+ * - unknown：其余一切失败（瞬态 provider 错误、spawn 失败等）——**默认可重试**。
+ *
+ * **语义守恒（最高优先约束）**：unknown（含字段缺省）= 可重试——保持收敛前的
+ * 默认重试语义；仅 stale_context 与 schema_deterministic 两态维持不重试特判。
+ * 词表归属（产出侧单点识别）：stale_context / schema_deterministic 的识别词表
+ * （stale 词表与确定性 schema 失败标记前缀）保留在产出侧
+ * execution/engine/engines/pi/output-collector.ts 包内——词表漂移的失效模式是
+ * failureKind=unknown → 保守重试（安全默认），不再是静默漏诊。
+ */
+export type AgentFailureKind = "stale_context" | "schema_deterministic" | "unknown";
+
+/**
  * 单次 agent 调用的结果（统一形态）。
  *
  * Engine 直接消费 SubprocessAgentRunner 返回值；callCache replay 时 worker
@@ -198,6 +277,16 @@ export interface ToolCallEntry {
 export interface AgentResult {
  /** Raw text output from the agent. */
   content: string;
+ /**
+ * [D5-③] 失败分诊结构化标签（AgentFailureKind）。产出侧唯一识别点 =
+ * execution/engine/engines/pi/output-collector.ts（collectResult 对最终 error
+ * 分类后写入，经 agent-result-mapper / AgentOutcome 透传到本形态）；消费侧
+ * execute-agent-call 读本字段分诊，不再扫 error 文案子串。
+ *
+ * 仅在 error !== undefined 时有意义（成功时缺省）；缺省视为 unknown = 可重试
+ * （语义守恒，见 AgentFailureKind）。
+ */
+  failureKind?: AgentFailureKind;
  /**
  * Parsed structured output.
  * Present when `schema` was provided and the output was valid JSON.

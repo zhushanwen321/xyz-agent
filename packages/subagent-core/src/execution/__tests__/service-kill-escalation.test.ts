@@ -15,7 +15,7 @@ import {
   _resetServiceKillStateForTest,
   killRecordChildWithEscalation,
   spawnedChildren,
-} from "../session-runner.ts";
+} from "../engine/engines/pi/session-runner.ts";
 
 const SIGKILL_ESCALATION_MS = 30_000;
 

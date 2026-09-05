@@ -1,17 +1,22 @@
 // src/execution/engine/engines/pi/pi-engine.ts
 //
-// PiEngine（P1 回填）：现有 pi spawn 执行链的引擎适配器。设计权威源：
-// docs/architecture/subagent-engine-abstraction.md §3.3.1（PiEngine = 现有 spawn 链回填，
-// 行为零变化）、D1（四面 + handle 契约 + abort 分级）、D3（capabilities 链路接通口径）。
+// PiEngine：pi 执行链的引擎边界（dual-track-convergence D2 后形态）。设计权威源：
+// docs/architecture/subagent-engine-abstraction.md §3.3.1 / D1（四面 + handle 契约 +
+// abort 分级）、D3（capabilities 链路接通口径）、docs/design/subagent-dual-track-convergence.md
+// §3.3 D2（pi 执行轨物理下沉 + Service 旧轨收敛）+ D6（任务形状合流：run 入参 =
+// AgentCallOpts 单一形状，本文件内一次直出为 spawn 编排参数，无中间态还原）。
 //
-// 定位是「薄适配层」而非重新实现：不物理移动 session-runner.ts / pi-invocation.ts 等
-// 现有文件（现有 40+ 测试的 import 路径零变化），run 委托 SubagentService.executeAndAwait
-// （其内 runSpawn 即 pi 引擎本体），interact 委托现有 chatMode 交互面
-// （getRecordForAction + deliverMessage / closeSubagent / cancel 直通），read 第①级委托
-// 共享 reader readPiSessionView（engines/pi/reader.ts——W3B 双端复用面）。
+// 四件套物理归属 engines/pi/（launcher=session-runner / parser=spawn-event-adapter /
+// preparer=temp-prompt+argv-mirror / reader=reader.ts），本文件是引擎边界：
+//   - run：chat 域轮次（ChatRoundTicket 交接——编排层预建 record/identity 后经
+//     EnginePort 进入）与 workflow 域（executeAndAwait 委托）两分支；
+//   - interact：原生实现（D2——原编排层 deliverMessage/resumeRound 的 pi RPC stdin
+//     协议知识下沉：sendPromptCommand 直调 + streamingBehavior 映射 + EPIPE 兜底 +
+//     冷路径 resume 交接），编排层经 engine.interact 调用；
+//   - read：第①级委托共享 reader readPiSessionView（engines/pi/reader.ts）。
 //
-// pi 专有语义的隔离点在 task-spec-mapper.ts（effort↔thinkingLevel、persona↔skillPath、
-// schemaEnv 派生）——本文件只做委托与形态映射，不出现第二个 pi 语义翻译点。
+// pi 专有语义的隔离点在 agentCallToExecuteOptions（本文件的直出映射：prompt→task、
+// description→slug 截断、schemaEnv 派生）——本文件不出现第二个 pi 语义翻译点。
 
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
@@ -19,17 +24,19 @@ import * as path from "node:path";
 
 import { getLogger } from "../../../../core/logger.ts";
 
-import type { AgentResult as WorkflowAgentResult } from "../../../../orchestration/models/types.ts";
-import type { PiInvocation } from "../../../pi-invocation.ts";
-import { getPiInvocation } from "../../../pi-invocation.ts";
+import type { AgentCallOpts, AgentResult as WorkflowAgentResult } from "../../../../orchestration/models/types.ts";
+import { SLUG_MAX_LENGTH } from "../../../../orchestration/models/types.ts";
+import { stringifySchemaCached } from "../../../../shared/schema-jsonify.ts";
+import type { PiInvocation } from "./pi-invocation.ts";
+import { getPiInvocation } from "./pi-invocation.ts";
+import type { AgentConfig, ModelInfo, ResolvedModel } from "../../../model-resolver.ts";
 import type { StatusFilter } from "../../../record-store.ts";
 import type { SubagentStream } from "../../../stream-sink.ts";
-import type { AgentEvent, ExecutionRecord, ExecuteOptions, SubagentRecord } from "../../../types.ts";
+import type { AgentEvent, AgentResult, ExecutionRecord, ExecuteOptions, SubagentRecord } from "../../../types.ts";
 import type { EnginePort, EngineRunResult, RunContext } from "../../port.ts";
 import { replayJournalToSessionView } from "../../common/journal-replay.ts";
 import type {
   AgentOutcome,
-  AgentTaskSpec,
   EngineCapabilities,
   EngineHandle,
   InteractAction,
@@ -37,8 +44,22 @@ import type {
   ProbeReport,
   SessionView,
 } from "../../types.ts";
-import { taskSpecToExecuteOptions } from "./task-spec-mapper.ts";
 import { readPiSessionView } from "./reader.ts";
+import type { SessionRunnerContext, SpawnResumeOpts } from "./session-runner.ts";
+import { getChildByRecord, killRecordChildWithEscalation, spawnedChildren } from "./session-runner.ts";
+import {
+  acquireActivateLock,
+  armIdleTimer,
+  DEFAULT_IDLE_TIMEOUT_MS,
+  disarmIdleTimer,
+} from "../../../lifecycle-manager.ts";
+import { bestEffort } from "../../../best-effort.ts";
+import {
+  clearEpipeFailure,
+  EPIPE_FAILURE_THRESHOLD,
+  recordEpipeFailure,
+  sendPromptCommand,
+} from "./stdin-writer.ts";
 
 const logger = getLogger("subagents");
 
@@ -57,11 +78,63 @@ const PROBE_VERSION_TIMEOUT_MS = 10_000;
 /** interact 经 sessionFile 兜底定位 record 时的 collectRecords 扫描上限。 */
 const INTERACT_SCAN_LIMIT = 1000;
 
+/** chat 域轮次的身份快照（编排层 resolveIdentity 的产物形态——引擎侧透传给 launcher；
+ *  身份解析产物是 host 编排件，不并入任务声明 AgentCallOpts，见 ChatRoundTicket 注释）。 */
+export interface ChatRoundIdentity {
+  agent: string;
+  agentConfig: AgentConfig | undefined;
+  resolved: ResolvedModel;
+}
+
+/**
+ * chat 域预备轮次交接包（D2 单轨）：编排层（executeViaEngine / 冷路径续轮）预建的
+ * record/opts/identity/host 上下文经 run 的 ctx.taskId 交接给引擎。
+ *
+ * [u-3b D6 双形态消化评估结论：双形态保留（结构性裁决，非过渡态）]
+ * run 的 task 形参（AgentCallOpts，任务声明）与 ticket 是两个变化轴的载体，不可合一：
+ *   - task 形参 = 纯数据任务声明（跨引擎持久化语义，workflow 域由 SAR 直传）；
+ *   - ticket = chat 域 host 编排交接件，主体是运行期对象与 Service 内部形态——
+ *     ① ctx: SessionRunnerContext 回调簇 / signal / priority / stream 是运行期句柄
+ *        （port 设计 §3.3.5 删字段去向：运行期对象不入任务声明）；
+ *     ② record: ExecutionRecord 是 Service 内部 record 生命周期对象；
+ *     ③ resume: SpawnResumeOpts 是 session-runner 私有 spawn 选项；
+ *     ④ opts: ExecuteOptions 是 Service 内部编排形状（D6 明确保留的类型），且是
+ *        forkFromSessionFile 的唯一 lossless 载体（该字段仅 pi chat 域消费，不入
+ *        合流形状——chat pi fork-from 链路 = 壳 fork-from action → ExecuteOptions
+ *        .forkFromSessionFile → 本 ticket → runChatRound → runAndFinalize → runSpawn，
+ *        全程不经任务声明，由 pi-engine 测试锁定零回归）。
+ * 把任一类塞进 AgentCallOpts 会让 engine 契约反向耦合 execution 内部类型。故 chat
+ * 分支 ticket 优先消费（task 形参仅满足 port 签名），workflow 分支消费 task 形参——
+ * 这是「编排交接」与「任务声明」的职责分界，不是待消除的中间态。
+ */
+export interface ChatRoundTicket {
+  record: ExecutionRecord;
+  opts: ExecuteOptions;
+  identity: ChatRoundIdentity;
+  ctx: SessionRunnerContext;
+  signal: AbortSignal | undefined;
+  priority: number;
+  stream?: SubagentStream;
+  /** resume 选项（冷路径续轮）：重开已 idle 的 session 续聊。undefined = 新 session。 */
+  resume?: SpawnResumeOpts;
+}
+
 /**
  * PiEngine 委托的编排服务面——SubagentService 的结构子集（鸭子类型：生产实现是
  * SubagentService 单例；测试可注入 fake，不必构造整个 Service）。
  * 为什么用结构接口而非直接 import SubagentService 类型：pi-engine 只依赖它实际消费的
  * 方法面，防 Service 内部演进（增删私有方法）连锁影响引擎适配层。
+ *
+ * chat 域轮次面（takeChatRound/runChatRound/resumeChatRound/reportRecordTransition）
+ * 声明为可选项（u-2c 聚合后形态）：两处生产绑定（registration.ts / SAR）均绑
+ * subagentService.asEngineService（= piEngineServiceAdapter），可选面实际恒被提供——
+ * 并非「仅 chat 绑定的实例提供、SAR 的实例不提供」。两域分支改由 taskId 空间区分：
+ * chat ticket 的 key 是 record.id（编排层预建时 set），SAR 的 taskId 是独立铸造的
+ * `sa-<uuid>`（subprocess-agent-runner.ts），恒不在 ticket map 中 → run 的
+ * takeChatRound 探测恒 miss → 恒走 executeAndAwait 分支。可选面保留 optional 的意义
+ * 是测试可注入仅含 workflow 面的 fake；requireResumeFace / runChatTicket 的 throw
+ * 分支在生产绑定（asEngineService 全量提供）下不可达，仅防 fake 绑定漏面时静默
+ * 丢消息/丢轮次。
  */
 export interface PiEngineService {
   executeAndAwait(
@@ -71,10 +144,17 @@ export interface PiEngineService {
     stream?: SubagentStream,
   ): Promise<WorkflowAgentResult>;
   getRecordForAction(id: string): ExecutionRecord;
-  deliverMessage(record: ExecutionRecord, text: string, interrupt: boolean): Promise<void>;
   closeSubagent(record: ExecutionRecord, force: boolean): Promise<void>;
   cancel(id: string): boolean;
   collectRecords(limit: number, statusFilter?: StatusFilter): SubagentRecord[];
+  /** chat 域轮次交接（run 的 chat 分支入口）：按 taskId 取走预备包（一次性消费）。 */
+  takeChatRound?(taskId: string): ChatRoundTicket | undefined;
+  /** 执行预备的 chat 轮次（编排归 Service：pool 槽 + runSpawn + 终态迁移）。 */
+  runChatRound?(ticket: ChatRoundTicket): Promise<AgentResult>;
+  /** 冷路径续轮（interact message 分支的编排回调：守卫 + record 迁移 + 预备轮次 kick-off）。 */
+  resumeChatRound?(record: ExecutionRecord, text: string): void;
+  /** record 状态迁移上报（热路径投递后让 runtime 派生缓存失效 / GUI 回流）。 */
+  reportRecordTransition?(record: ExecutionRecord): void;
 }
 
 /** PiEngine 构造依赖。 */
@@ -142,6 +222,8 @@ export class PiEngine implements EnginePort {
       interrupt: "kill-only",
       // argv-mirror 镜像主进程 --approve 等 flag
       permissionMode: "native",
+      // [D3-④] turn limiter + spawn watchdog 估算兑现轮数上限（预检 gate 据此放行）
+      maxTurns: true,
     };
   }
 
@@ -197,14 +279,19 @@ export class PiEngine implements EnginePort {
     return report;
   }
 
-  /** D1 主语义：映射中立声明 → ExecuteOptions，委托 executeAndAwait（行为零变化）。 */
-  async run(task: AgentTaskSpec, ctx: RunContext): Promise<EngineRunResult> {
+  /** D1 主语义：合流任务声明（AgentCallOpts）一次直出 spawn 编排参数，委托
+   *  executeAndAwait（行为零变化——D6 后无 spec 往返中间态）。 */
+  async run(task: AgentCallOpts, ctx: RunContext): Promise<EngineRunResult> {
     const service = this.requireService();
-    const opts = taskSpecToExecuteOptions(task, {
-      ctxModel: ctx.ctxModel,
-      // 解耦形态兜底（schema 缺失时才生效，派生优先——见 mapper 注释）
-      ...(ctx.schemaEnv !== undefined ? { schemaEnvFallback: ctx.schemaEnv } : {}),
-    });
+    // [D2 单轨] chat 域轮次：编排层（executeViaEngine / 冷路径续轮）预建的
+    // record/identity/host 上下文经 ctx.taskId 交接（ChatRoundTicket）。chat 域任务
+    // 由 ticket lossless 携带（record/identity/SessionRunnerContext/
+    // forkFromSessionFile/resume 是 host 编排件，不入任务声明——双形态保留的结构性
+    // 裁决见 ChatRoundTicket 注释），task 形参仅满足 port 签名；workflow 域（SAR）
+    // 无 ticket，走下方 executeAndAwait 分支。
+    const ticket = service.takeChatRound?.(ctx.taskId);
+    if (ticket) return this.runChatTicket(service, ticket);
+    const opts = agentCallToExecuteOptions(task, ctx.ctxModel);
     // P4 引擎留痕（D9①）：record 侧投影——实际执行引擎 id 恒 pi（本引擎身份）；
     // engineFallback 由路由层经 RunContext 透传（无 fallback 缺省，record 字段零噪声）
     opts.engine = PI_ENGINE_ID;
@@ -222,10 +309,10 @@ export class PiEngine implements EnginePort {
   }
 
   /**
-   * D1 可选面：chatMode 交互控制面直通现有实现（message=deliverMessage /
-   * close=closeSubagent / cancel=cancel）。message 的 interrupt 语义（steer 抢占 vs
-   * followUp 排队）中立 action 未携带——P1 恒 false（followUp，与 tool 面默认一致）；
-   * 后续 wave 如需抢占语义再扩展 InteractAction（设计 §3.3.5 的载荷形状）。
+   * D1 交互控制面：message 分支原生实现（D2——原编排层 deliverMessage/resumeRound 的
+   * pi RPC stdin 协议知识下沉引擎边界）；close=closeSubagent / cancel=cancel 委托编排面。
+   * message 的 interrupt（steer 抢占 vs followUp 排队）映射为 pi streamingBehavior——
+   * pi 权威裁决 busy/idle：busy 时 followUp 入队/steer 抢占，idle 时开新 turn。
    */
   async interact(handle: EngineHandle, action: InteractAction): Promise<InteractResult> {
     const service = this.requireService();
@@ -239,14 +326,9 @@ export class PiEngine implements EnginePort {
       }
       const record = this.resolveRecord(service, handle);
       if (!record) return notResumable(handle);
-      if (action.kind === "message") {
-        await service.deliverMessage(record, action.payload, false);
-        return { ok: true, delivered: true };
-      }
-      await service.closeSubagent(record, action.payload?.force === true);
-      return { ok: true, delivered: true };
+      return await this.interactRecord(record, action);
     } catch (err) {
-      // 现有交互面以 throw 表达业务拒绝（not ready / EPIPE 兜底耗尽等，文案自带行动语言）
+      // 投递/交互面以 throw 表达业务拒绝（not ready / EPIPE 兜底耗尽等，文案自带行动语言）
       // ——转结构化失败，调用方拿 code+message 而非异常
       return {
         ok: false,
@@ -254,6 +336,233 @@ export class PiEngine implements EnginePort {
         message: err instanceof Error ? err.message : String(err),
       };
     }
+  }
+
+  /**
+   * interact 的 record 锚定形态（编排层直传已归属校验的 record——chat 域编排面
+   * deliverChatMessage 的调用入口；port face interact = handle 解析 + 本方法）。
+   * 不做二次 store 查找/归属校验：调用方（编排层）持有同一 record 对象，与旧直调
+   * 形态的字段读写逐字节一致。
+   */
+  async interactRecord(record: ExecutionRecord, action: InteractAction): Promise<InteractResult> {
+    const service = this.requireService();
+    try {
+      return await this.interactRecordInner(service, record, action);
+    } catch (err) {
+      // 投递/交互面以 throw 表达业务拒绝（not ready / EPIPE 兜底耗尽等，文案自带行动语言）
+      // ——转结构化失败，调用方拿 code+message 而非异常
+      return {
+        ok: false,
+        code: "engine_interact_failed",
+        message: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  /** interact 两形态的公共主体（cancel 归 handle 形态——record 锚定形态的调用方用
+   *  编排层 cancel，不走这里）。 */
+  private async interactRecordInner(
+    service: PiEngineService,
+    record: ExecutionRecord,
+    action: InteractAction,
+  ): Promise<InteractResult> {
+    if (action.kind === "message") {
+      await this.deliverPrompt(service, record, action.payload, action.interrupt === true);
+      return { ok: true, delivered: true };
+    }
+    if (action.kind === "close") {
+      await service.closeSubagent(record, action.payload?.force === true);
+      return { ok: true, delivered: true };
+    }
+    throw new Error(
+      `[pi-engine] cancel is handle-form only (record-anchored callers use the orchestration cancel). ` +
+        `Recovery: internal wiring error — use interact(handle, {kind:'cancel'}) instead.`,
+    );
+  }
+
+  /**
+   * message 投递原生实现（协议知识下沉的本体，V2 决策 3）：按**进程死活**分流，不按
+   * record.status——
+   *
+   *   热路径（进程活）：prompt + streamingBehavior 直写 child.stdin（sendPromptCommand）。
+   *   冷路径（进程死）：acquireActivateLock + 编排侧续轮回调（resumeChatRound——重开
+   *     session + prompt；仅崩溃/timeout kill/跨重启命中）。
+   *
+   * EPIPE 兜底：stdin 管道断（进程实际已死但 close 事件未到）→ 按值守卫清理死句柄 +
+   * 连续失败计数 → 冷路径 resume + 原消息重放；连续达阈值（防死循环）throw 行动语言。
+   */
+  private async deliverPrompt(
+    service: PiEngineService,
+    record: ExecutionRecord,
+    text: string,
+    interrupt: boolean,
+  ): Promise<void> {
+    // 新 turn，disarm idle timer（防 turn 期间误杀活进程，V2 决策 4）
+    disarmIdleTimer(record.id);
+    const child = getChildByRecord(record.id);
+    if (child && !child.killed) {
+      // 热路径：进程活（running/idle 都可能是热路径——V2 进程长驻，idle 态进程仍在内存）
+      record.status = "running";
+      // 刷新 pid 内存记账（resume spawn 后 child.pid 已变，顺便更新）
+      if (child.pid !== undefined) record.pid = child.pid;
+      try {
+        sendPromptCommand(child, text, { streamingBehavior: interrupt ? "steer" : "followUp" });
+        // 热路径成功，清零 EPIPE 连续失败计数（[v4 A-1] 计数器在 stdin-writer）
+        clearEpipeFailure(record.id);
+        // [race-F5] 写后死进程检测：write 同步成功只代表数据进了内核 pipe 缓冲，子进程
+        // 可能在读取前死亡（gate/idle kill 竞速）。exitCode/signalCode 已非 null = 进程已死
+        //（close 事件可能尚未到达），缓冲中的消息将被静默丢弃。只 warn 留证（含消息类型），
+        // 不抛错不重试：终态回收已由 kill 路径保证，对死进程重试反而可能二次写。
+        if (child.exitCode !== null || child.signalCode !== null) {
+          logger.warn(
+            `[subagents] deliverMessage: child ${record.id} died around stdin write, message may be lost`,
+            {
+              msgType: interrupt ? "steer" : "followUp",
+              exitCode: child.exitCode,
+              signalCode: child.signalCode,
+            },
+          );
+        }
+        // 轮始执行态信号清除 + 迁移上报（residual-fixes U3 补全，与冷路径续轮对称）：
+        // 新一轮开跑 = 无轮终信号——清上一轮 result（§5.4 isStreaming 公式要求
+        // result undefined 才显示 streaming）与 resumable，appendEntry 让 runtime/W18
+        // 派生缓存失效、GUI 侧从 waiting 切回 spinner。仅在投递成功后清（失败保留
+        // 上一轮信号，EPIPE 兜底走续轮时由其再清）。
+        record.result = undefined;
+        record.resumable = undefined;
+        service.reportRecordTransition?.(record);
+      } catch (err) {
+        // EPIPE 兜底：stdin 管道已断，进程实际已死但 close 事件尚未到达。
+        // 检测 EPIPE 关键词 → 进程按 dead 处理 → 自动转冷路径 resume + 消息重放。
+        // 本兜底不持 activateLock，但与冷路径共用续轮的在途守卫（编排侧
+        // resumesInFlight）：resume 已在途时兜底的续轮调用被拒（throw 行动语言），
+        // 不会二次 spawn。
+        if (err instanceof Error && err.message.includes("EPIPE")) {
+          logger.warn(`[subagents] EPIPE on hot path for ${record.id}, falling back to cold path resume`, {
+            detail: err.message,
+          });
+          // 清理 spawnedChildren 中的死进程条目（让续轮能重新 spawn）。
+          // [M4] 按值守卫：仅当 Map 当前值仍是本次写 EPIPE 的 child 才删——若已被 resume
+          // spawn 覆盖为新 child（close 事件先于本 catch 到达的极端时序），不误删新注册
+          //（与 session-runner removeChildRegistration 同语义）。
+          if (spawnedChildren.get(record.id) === child) {
+            spawnedChildren.delete(record.id);
+          }
+          // 递增连续 EPIPE 计数（[v4 A-1] helper 合并同步/异步路径计数）
+          const count = recordEpipeFailure(record.id);
+          if (count >= EPIPE_FAILURE_THRESHOLD) {
+            // 连续达阈值 EPIPE → 不再尝试 resume，throw 含恢复指引
+            clearEpipeFailure(record.id);
+            throw new Error(
+              `[subagents] EPIPE fallback exhausted for ${record.id}: ${count} consecutive EPIPE failures. ` +
+                `Recovery: use action:'close' to clean up, then action:'start' a new subagent.`,
+            );
+          }
+          // 冷路径 resume + 原消息重放（v4 B-1: status 已 running，续轮守卫直接放行）
+          this.requireResumeFace(service)(record, text);
+          return;
+        }
+        // [T2⑧ / PS-3] 非 EPIPE 写失败（如 ERR_STREAM_DESTROYED——错误分类只认 "EPIPE"
+        // 子串，过窄）：deliverPrompt 入口已无条件 disarmIdleTimer，若直接 rethrow 不
+        // re-arm——「timer armed」这个防泄漏前提在失败路径永久丢失：进程无人回收
+        //（无 timer、无轮、record=running）泄漏至宿主退出，hasRunningBackground 恒真
+        // 还会顺延其他完成通知。rethrow 前再武装 idle timer（含防御性降级），恢复进程
+        // 回收通道 + 通知放行门；调用方错误语义不变（仍 rethrow）。re-arm 挂载位在本
+        // catch（引擎边界）而非编排层 interactRecord：只有这里能区分「stdin 写失败」
+        // 与业务拒绝，编排层盲目 re-arm 会误武装。
+        this.rearmIdleTimerAfterHotPathFailure(record, err);
+        // 非 EPIPE 错误——不应发生，重新抛出让调用方处理
+        throw err;
+      }
+      return;
+    }
+    // 冷路径：进程死（idle timer reap / 崩溃 / 跨重启），record 应为 idle-resumable → resume spawn。
+    // D3：acquireActivateLock 双保险——注意锁只覆盖续轮同步段，释放在子进程注册
+    //（session-runner spawnedChildren.set）之前（中间隔 pool.acquire await + tempFile 等异步点）。
+    // 真正的单写者守卫是续轮的在途守卫（编排侧 resumesInFlight）：锁释放后、child
+    // 注册前到达的第二次冷路径 message 在续轮处被拒，不会二次 spawn。
+    const releaseLock = await acquireActivateLock(record.id);
+    try {
+      this.requireResumeFace(service)(record, text);
+    } finally {
+      releaseLock();
+    }
+  }
+
+  /**
+   * [T2⑧ / PS-3] 热路径非 EPIPE 写失败后的 idle timer 再武装（deliverPrompt 入口
+   * 无条件 disarm 的对称恢复）。首选 record.idleTimeoutMs（armIdleTimer 对超域值
+   * fail-fast throw，U1），非法时防御性降级 DEFAULT_IDLE_TIMEOUT_MS；两级都失败落
+   * bestEffort 留证（不再向上抛——本方法服务于「进程回收通道不丢」，错误本体由
+   * 调用方 rethrow）。超时处置 = killRecordChildWithEscalation（与 idle GC 常规路径
+   * 同款升级杀链）。
+   */
+  private rearmIdleTimerAfterHotPathFailure(record: ExecutionRecord, cause: unknown): void {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    const onTimeout = (): void => {
+      killRecordChildWithEscalation(record.id, "idle timer (hot-path failure fallback)");
+    };
+    try {
+      armIdleTimer(record.id, onTimeout, record.idleTimeoutMs);
+    } catch {
+      try {
+        armIdleTimer(record.id, onTimeout, DEFAULT_IDLE_TIMEOUT_MS);
+      } catch (fallbackErr) {
+        bestEffort(fallbackErr, "rearmIdleTimer fallback (deliverPrompt non-EPIPE failure)", "error");
+        return;
+      }
+    }
+    logger.warn(
+      `[subagents] deliverPrompt hot path failed for ${record.id}; idle timer re-armed to keep process recovery bounded`,
+      { detail },
+    );
+  }
+
+  /** chat 域轮次执行回调的守卫提取（可选项缺失 = 引擎绑定形态错误——chat 编排面
+   *  必须由 chat 绑定的适配器提供；静默 no-op 会丢消息，宁可显式 throw）。 */
+  private requireResumeFace(service: PiEngineService): (record: ExecutionRecord, text: string) => void {
+    const resume = service.resumeChatRound;
+    if (!resume) {
+      throw new Error(
+        `[pi-engine] chat resume face unavailable on this engine binding (workflow-only service binding). ` +
+          `Recovery: internal wiring error — message delivery requires the chat-bound engine instance; report this.`,
+      );
+    }
+    return resume;
+  }
+
+  /**
+   * chat 轮次执行（run 的 chat 分支主体）：编排归 Service（runChatRound——pool 槽 +
+   * runSpawn + 终态迁移，行为零变化），引擎侧构造 handle/outcome。chat 编排不消费
+   * 返回值（notify/终态迁移在编排侧 kickOff 回调），handle/outcome 是 port 契约的
+   * 形态完备（interact/read 以 recordId/sessionFile 定位）。
+   */
+  private async runChatTicket(service: PiEngineService, ticket: ChatRoundTicket): Promise<EngineRunResult> {
+    const runChatRound = service.runChatRound;
+    if (!runChatRound) {
+      throw new Error(
+        `[pi-engine] chat round runner unavailable on this engine binding (workflow-only service binding). ` +
+          `Recovery: internal wiring error — chat rounds require the chat-bound engine instance; report this.`,
+      );
+    }
+    const result = await runChatRound(ticket);
+    const sessionFile = ticket.record.sessionFile;
+    return {
+      handle: {
+        data: {
+          v: 1,
+          engineId: PI_ENGINE_ID,
+          // pi 定位符：recordId（interact 控制面 key）+ sessionFile（read 第①级）
+          sessionRef: {
+            recordId: ticket.record.id,
+            ...(sessionFile !== undefined ? { sessionFile } : {}),
+          },
+          poolKey: PI_POOL_KEY,
+          adapterVersion: PI_ADAPTER_VERSION,
+        },
+      },
+      outcome: chatResultToOutcome(result, sessionFile, ticket.record.worktreeHandle?.path),
+    };
   }
 
   /**
@@ -329,6 +638,68 @@ export class PiEngine implements EnginePort {
 
 // ── 模块级纯函数（可单测）──
 
+/**
+ * [D6 一次直出] 合流任务声明 AgentCallOpts → ExecuteOptions（pi spawn 编排参数）。
+ *
+ * 这是 pi 边界的唯一任务形状映射点，取代已删除的两级链路
+ * （execute-options-mapper.mapToExecuteOptions → task-spec-mapper.taskSpecToExecuteOptions
+ * ——原链路 AgentCallOpts→ExecuteOptions→AgentTaskSpec→ExecuteOptions 三态两映射，
+ * 缺省路径付双份多引擎税）。逐字段等值性（合流前 ↔ 合流后）：
+ *   task           ← prompt（原 prompt→ExecuteOptions.task→spec.task 恒等往返）
+ *   slug           ← description ?? agent ?? "workflow-agent"，超 SLUG_MAX_LENGTH(35) 截断
+ *                    （原 mapToExecuteOptions 的派生规则原样内联；截断常量迁至
+ *                    orchestration/models/types.ts 与 description 字段同文件）
+ *   agent          ← agent（原 spec.agent ?? persona.agentRef——agentRef 无生产写入方，
+ *                    恒 undefined，随 PersonaSpec 裁撤）
+ *   model          ← model（显式 override 透传，ctxModel 不压扁填底）
+ *   thinkingLevel  ← thinkingLevel（原 effort 恒等映射层删除）
+ *   skillPath / appendSystemPrompt ← 同名平铺（原 persona 收拢/还原层删除——往返恒等）
+ *   schema         ← schema
+ *   schemaEnv      ← schema 派生优先（stringifySchemaCached compact，与
+ *                    agent-opts-resolver 同函数同缓存，逐字节等值）；无 schema 时
+ *                    schemaEnv 兜底（原 RunContext.schemaEnv 兜底通道的合流形态等价
+ *                    ——SAR 填 ctx.schemaEnv 的源即 opts.schemaEnv）；均无 → undefined
+ *                    （BC-6：childEnv 不注入）
+ *   maxTurns / graceTurns / fork / worktree / cwd / conversation / idleTimeoutMs ← 同名
+ *   ctxModel       ← runCtx.ctxModel（运行期字段，D-008 兼底链路）
+ *   engine / engineFallback 由 run 调用方追加（P4 引擎留痕，D9①）
+ * 调用方扩展字段（scene/timeoutMs/skill/schemaEnv 已述/engine/returnMeta）中引擎
+ * 不消费的：timeoutMs 由 SAR mergeTimeoutSignal 合并进 signal、engine 由 SAR 路由层
+ * 消费、scene/returnMeta 为 worker 层字段——均不入 spawn 参数。
+ *
+ * 字段完整性对照表（实施期门⑤产物）固化在 __tests__/spawn-opts-direct.test.ts，
+ * 逐字段断言覆盖。
+ */
+export function agentCallToExecuteOptions(
+  task: AgentCallOpts,
+  ctxModel?: ModelInfo,
+): ExecuteOptions {
+  // slug：优先 description，缺失回落 agent 名（保证非空）。超长截断。
+  const rawSlug = task.description ?? task.agent ?? "workflow-agent";
+  return {
+    task: task.prompt,
+    slug: rawSlug.length > SLUG_MAX_LENGTH ? rawSlug.slice(0, SLUG_MAX_LENGTH) : rawSlug,
+    agent: task.agent,
+    model: task.model,
+    thinkingLevel: task.thinkingLevel,
+    skillPath: task.skillPath,
+    appendSystemPrompt: task.appendSystemPrompt,
+    schema: task.schema,
+    // schemaEnv 派生优先（等值依据见函数注释）；无 schema 且调用方持有预编码值时兜底
+    schemaEnv: task.schema !== undefined
+      ? stringifySchemaCached(task.schema, "compact")
+      : task.schemaEnv,
+    maxTurns: task.maxTurns,
+    graceTurns: task.graceTurns,
+    ctxModel,
+    fork: task.fork,
+    worktree: task.worktree,
+    cwd: task.cwd,
+    conversation: task.conversation,
+    idleTimeoutMs: task.idleTimeoutMs,
+  };
+}
+
 /** sessionRef 取 string 值的运行时 guard（Record 索引读经 typeof 收窄，非裸取）。 */
 function refString(ref: Record<string, string>, key: string): string | undefined {
   const v = ref[key];
@@ -384,10 +755,34 @@ function isInvocationResolvable(invocation: PiInvocation): boolean {
   return false;
 }
 
+/** execution AgentResult（chat 轮次）→ AgentOutcome（port 契约形态完备；chat 编排
+ *  侧不消费——终态迁移/notify 在编排层）。 */
+function chatResultToOutcome(
+  result: AgentResult,
+  sessionFile: string | undefined,
+  worktreePath: string | undefined,
+): AgentOutcome {
+  return {
+    content: result.text,
+    ...(result.parsedOutput !== undefined ? { parsedOutput: result.parsedOutput } : {}),
+    durationMs: result.durationMs,
+    ...(result.error !== undefined ? { error: result.error } : {}),
+    sessionId: result.sessionId,
+    ...(sessionFile !== undefined ? { sessionFile } : {}),
+    ...(worktreePath !== undefined ? { worktreePath } : {}),
+    // toolCalls 不映射（execution ToolCall ≠ AgentOutcome 的 orchestration ToolCallEntry，
+    // chat 编排侧不消费本 outcome——终态记账在编排层 record 通路）
+    engineId: PI_ENGINE_ID,
+  };
+}
+
 /** orchestration AgentResult → AgentOutcome（补 engineId；exitCode 无来源缺省）。 */
 function workflowResultToOutcome(wf: WorkflowAgentResult, ctx?: RunContext): AgentOutcome {
   return {
     content: wf.content,
+    // [D5-③] 失败分诊标签透传（产出侧 output-collector → mapper → 此处 → SAR →
+    // executeAgentCall 读字段分诊）。成功路径 undefined 不落键。
+    ...(wf.failureKind !== undefined ? { failureKind: wf.failureKind } : {}),
     parsedOutput: wf.parsedOutput,
     usage: wf.usage,
     durationMs: wf.durationMs,

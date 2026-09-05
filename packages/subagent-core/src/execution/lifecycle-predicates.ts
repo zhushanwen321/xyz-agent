@@ -20,7 +20,7 @@
 // 故 isIdle 在这两个检查点恒为 true——notify 守卫与 early-return 判据可靠。
 
 import { hasIdleTimer } from "./lifecycle-manager.ts";
-import { getChildByRecord } from "./session-runner.ts";
+import { getChildByRecord } from "./engine/engines/pi/session-runner.ts";
 import type { ExecutionRecord } from "./types.ts";
 
 /**

@@ -10,7 +10,8 @@
  *   （useFileChangeInvalidation.watchFileChangesForInvalidation，C-W3-3）/ t（i18n）
  * - commandStore：壳单例 useCommandStore()（core createCommandStore 实例，须在
  *   providePlatform 之后——AppShell 时序保证）
- * - fileSearchStore：createFileSearchStore() 模块级单例（Sidebar/Composer 共享缓存）
+ * - fileSearchStore：壳单例 useFileSearchStore()（core createFileSearchStore 实例，
+ *   D7 收口后与 CommandPopover 侧 useFileSearch/useSearch 共享同一缓存）
  * - storage：getPlatform().storage（recents 持久化，C-W3-4）
  * - fileTree：fileTreeStore.selectFile + useFileTree().loadTree（FileTreePort）
  * - appCommandActions：newSession/goOverview（壳传入）+ toggleSidebar（useSidebarStore）
@@ -20,22 +21,20 @@
  * goOverview 是 useSidebar 实例方法（Sidebar 已实例化），由调用方传入避免重复实例化。
  */
 import { ref } from 'vue'
-import { createFileSearchStore, getPlatform } from '@xyz-agent/core'
+import { getPlatform } from '@xyz-agent/core'
 import type { SearchDeps } from '@xyz-agent/core'
-import * as fileApi from '@/api/domains/file'
-import * as composerApi from '@/api/domains/composer'
-import * as sessionApi from '@/api/domains/session'
-import * as mockApi from '@/api/mock'
+import * as fileApi from '@xyz-agent/core/transport/api/domains/file'
+import * as composerApi from '@xyz-agent/core/transport/api/domains/composer'
+import * as sessionApi from '@xyz-agent/core/transport/api/domains/session'
+import * as mockApi from '@xyz-agent/core/transport/mock'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
+import { useFileSearchStore } from '@/composables/features/search/useFileSearchStore'
 import { useFileTree } from '@/composables/features/file-tree/useFileTree'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useSidebarStore } from '@/stores/sidebar'
 import { usePresetStore } from '@/stores/preset'
 import { watchFileChangesForInvalidation } from '@/composables/features/file-tree/useFileChangeInvalidation'
 import i18n from '@/i18n'
-
-/** file search store 单例（Sidebar SearchModal 与 CommandPopover 共享 session 级缓存）。 */
-let fileSearchStoreInstance: ReturnType<typeof createFileSearchStore> | null = null
 
 export interface SearchModalShellDeps {
   selectSession: (id: string) => Promise<void>
@@ -45,16 +44,21 @@ export interface SearchModalShellDeps {
 
 export function useSearchModalDeps(shell: SearchModalShellDeps): SearchDeps {
   const commandStore = useCommandStore()
-  if (!fileSearchStoreInstance) fileSearchStoreInstance = createFileSearchStore()
+  const fileSearchStore = useFileSearchStore()
   const sidebarStore = useSidebarStore()
   const presetStore = usePresetStore()
   const fileTreeStore = useFileTreeStore()
 
+  // [tc-transport-consolidation D4-②] isMock 构建期常量：searchMock 引用点整体条件化——
+  // 生产构建（VITE_MOCK 非 true）下 mockApi.search 属性引用随死分支 DCE，mock 模块链
+  // 摇除（A7 探针门）；mock 构建下注入 core mock fixture（SearchPorts.searchMock 可选）。
+  const isMock = import.meta.env.VITE_MOCK === 'true'
+
   return {
     ports: {
-      isMock: import.meta.env.VITE_MOCK === 'true',
+      isMock,
       isMac: navigator.platform.includes('Mac'),
-      searchMock: mockApi.search.query,
+      searchMock: isMock ? mockApi.search.query : undefined,
       fileRead: (path, sessionId) => fileApi.read(path, sessionId).then(() => {}),
       fileCandidates: composerApi.getFileCandidates,
       sessionList: sessionApi.list,
@@ -67,7 +71,7 @@ export function useSearchModalDeps(shell: SearchModalShellDeps): SearchDeps {
       t: i18n.global.t,
     },
     commandStore,
-    fileSearchStore: fileSearchStoreInstance,
+    fileSearchStore,
     storage: getPlatform().storage,
     fileTree: {
       loadTree: (sid) => useFileTree().loadTree(sid),

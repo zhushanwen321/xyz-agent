@@ -1,36 +1,21 @@
 // src/execution/engine/engines/zcode/preparer.ts
 //
-// ZcodeEngine preparer（P3）：spawn 前唯一副作用模块（设计 §3.3.7）——隔离 HOME 池化
-// + 池内 config.json 引导（凭据 + model.main）。TS 重写自 zsub 的
-// bootstrapIsolatedHome / model-router.js（真机验证过的机制），差异点：
+// ZcodeEngine prepare 期模型解析件（P3 起源，2026-09 收缩）：隔离 HOME 池化与
+// 池内 config 引导随 CLI spawn 链删除（共享宿主 HOME——app-server 的凭据经
+// appserver-launcher fs 拦截注入 v2 provider，本文件只剩 v2 单源的模型引用
+// 解析/校验/清单：
 //   - **凭据源 = v2 config 单源（2026-08-25 用户拍板）**：只读 `~/.zcode/v2/config.json`
 //     （ZCode 桌面登录态落点，GUI 管理面）。曾泛化过「v2 + cli config 双源合并」，
 //     但 `~/.zcode/cli/config.json` 不在 GUI 管理面、可能残留历史验证配置
 //     （8/24 zsub 开发残留把默认模型劫持到失效 router 端点的 401 事故），撤掉依赖；
-//   - 池目录必须经 resolvePoolDir（paths.ts SSOT，禁自拼——池布局要与 journal/refs
-//     共享同一形状，设计 §3.3.9）；
 //   - 凭据缺失/模型不可解析抛结构化 ZcodePrepareError（错误码对齐设计 §3.3.3：
 //     engine_credential_missing / model_not_available），一律先于进程创建。
-//
-// 为什么池按 provider+model 隔离（与设计 §3.3.9「agent 名池」不同）：并发 run 指向
-// 同一 HOME 但模型不同时，config.json 的 model.main 会出现「后写覆盖先写」的串池——
-// zsub 的 per-model HOME 池正是防这个；本引擎以 provider+model 为隔离粒度，agent 维度
-// 的池化留给宿主 refs.json（W3 对齐点）。
-//
-// [R4 D7] app-server 常驻 HOME 语义（锁/派生/pidfile 孤儿回收/allProviders 引导/
-// 凭据内容 hash 刷新）拆至同目录 appserver-home.ts——单一关注点分立。
 
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { resolvePoolDir } from "../../paths.ts";
-import { writeAtomicFileSync } from "../../../../shared/atomic-write.ts";
-import {
-  ZCODE_FALLBACK_DEFAULT_MODEL,
-  ZCODE_POOL_CONFIG_SUFFIX,
-  ZCODE_V2_CONFIG_PATH_SUFFIX,
-} from "./constants.ts";
+import { ZCODE_FALLBACK_DEFAULT_MODEL, ZCODE_V2_CONFIG_PATH_SUFFIX } from "./constants.ts";
 
 // ============================================================
 // 结构化错误（prepare 期——进程创建前 reject 的载体）
@@ -66,8 +51,6 @@ export interface ZcodeProviderEntry {
 interface SourceConfig {
   /** provider 注册表（来自 v2 config，逐条运行时 guard）。 */
   providers: Map<string, ZcodeProviderEntry>;
-  /** 源文件 mtime（池 config 免重写的比对基准；不可读 = 0）。 */
-  mtimeMs: number;
 }
 
 /** unknown 的 Record 窄化 guard（替代 as 全可选断言——taste/no-unsafe-cast）。 */
@@ -81,7 +64,7 @@ export function isProviderEntry(v: unknown): v is ZcodeProviderEntry {
 }
 
 export function readSourceConfig(absPath: string): SourceConfig {
-  const empty: SourceConfig = { providers: new Map(), mtimeMs: 0 };
+  const empty: SourceConfig = { providers: new Map() };
   let raw: string;
   try {
     raw = fs.readFileSync(absPath, "utf8");
@@ -95,18 +78,12 @@ export function readSourceConfig(absPath: string): SourceConfig {
     return empty;
   }
   if (!isRecord(parsed)) return empty;
-  const conf: SourceConfig = { providers: new Map(), mtimeMs: 0 };
+  const conf: SourceConfig = { providers: new Map() };
   const provider = parsed["provider"];
   if (isRecord(provider)) {
     for (const [id, entry] of Object.entries(provider)) {
       if (isProviderEntry(entry)) conf.providers.set(id, entry);
     }
-  }
-  try {
-    conf.mtimeMs = fs.statSync(absPath).mtimeMs;
-  } catch {
-    // 源被并发删除等场景：mtime 取 0（比对恒不触发重写，池内完好配置继续用）
-    conf.mtimeMs = 0;
   }
   return conf;
 }
@@ -253,114 +230,6 @@ export function listZcodeModels(sources?: ZcodeSourcePaths): Array<{ id: string;
 }
 
 // ============================================================
-// 池 key 与目录
+// 池 key 与目录（2026-09 删除：HOME 池化随 CLI spawn 链一并退役——共享宿主 HOME
+// 后无隔离池、无 config 引导，本文件只剩 v2 单源的模型解析/清单校验件）
 // ============================================================
-
-/** provider id 安全化（builtin:bigmodel → builtin-bigmodel；zsub providerDirName 同构）。 */
-function sanitizeProviderDirName(p: string): string {
-  return p.replace(/[^A-Za-z0-9._-]/g, "-");
-}
-
-/**
- * 池 key：`home-<provider>-<modelShort>`（zsub homePoolDir 同构——provider+model 维度
- * 隔离防并发串池，见文件头注释）。model 短名只清洗路径敌对字符（分隔符/空白），
- * 保留点号（GLM-5.3 / mimo-v2.5-pro 原样——zsub 同判）；进入文件系统时由
- * resolvePoolDir 的 sanitizeSeg 再做一层统一编码。
- */
-export function computeZcodePoolKey(modelRef: string): string {
-  const provider = providerOf(modelRef);
-  const short = modelShort(modelRef).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  return `home-${sanitizeProviderDirName(provider)}-${short.length > 0 ? short : "default"}`;
-}
-
-// ============================================================
-// 隔离 HOME 引导（bootstrapIsolatedHome TS 重写）
-// ============================================================
-
-export interface ZcodePreparedHome {
-  /** 规范化模型全名 provider/model。 */
-  modelRef: string;
-  /** 池 key（handle.poolKey 数据源）。 */
-  poolKey: string;
-  /** 池目录绝对路径 = 隔离 HOME。 */
-  homeDir: string;
-  /** 池内 config.json 绝对路径。 */
-  configPath: string;
-  /** 本次是否实际重写了 config（mtime 免重写命中时 false——resume/复用轮零开销）。 */
-  wroteConfig: boolean;
-}
-
-/**
- * 池 config 是否需要重写（zsub homeNeedsBootstrap 同构）：
- *   1. 池目录或池内 config.json 不存在（首次建池）；
- *   2. 池内 config.json 损坏（torn write 防线：mtime 看似新但内容不完整）；
- *   3. 任一「实际被用到的」源 config 的 mtime 比池内 config 新（凭据/模型清单刷新过）。
- * 源不可读但池配置完好：保留池现状——没有更好依据时不破坏可用状态。
- */
-function homeNeedsBootstrap(configPath: string, sourceMtimeMs: number): boolean {
-  if (!fs.existsSync(configPath)) return true;
-  let poolMtimeMs = 0;
-  try {
-    JSON.parse(fs.readFileSync(configPath, "utf8"));
-    poolMtimeMs = fs.statSync(configPath).mtimeMs;
-  } catch {
-    return true;
-  }
-  return sourceMtimeMs > poolMtimeMs;
-}
-
-/** 池 config.json 缩进（人读友好——与 zsub 产出的文件形态一致）。 */
-export const CONFIG_INDENT_SPACES = 2;
-
-/**
- * 引导隔离 HOME 的 provider 配置（spawn 前调用）。
- *
- * - 只写 {model, provider}，刻意不含 plugins 块：第二重门禁——subagent 进程在隔离
- *   HOME 下不加载宿主插件（含 subagent-workflow 自身），物理隔断递归派发。
- * - tmp+rename 原子写：跨进程并发 bootstrap 下读者永远看到完整文件。进程内无需
- *   zsub 的互斥链——本实现全同步 fs（无 await 让出点），单线程事件循环天然不交错。
- * - 只写目标 provider 一个条目（spawn 池每池单 provider 单模型，凭据落盘面最小）。
- */
-export function prepareZcodeHome(opts: {
-  engineDataDir: string;
-  modelRef: string;
-  sources?: ZcodeSourcePaths;
-}): ZcodePreparedHome {
-  const { engineDataDir, modelRef } = opts;
-  const poolKey = computeZcodePoolKey(modelRef);
-  const homeDir = resolvePoolDir(engineDataDir, "zcode", poolKey);
-  const configPath = path.join(homeDir, ...ZCODE_POOL_CONFIG_SUFFIX);
-
-  const v2Path = opts.sources?.v2ConfigPath ?? defaultV2ConfigPath();
-  const v2 = readSourceConfig(v2Path);
-  const provider = providerOf(modelRef);
-  const entry = v2.providers.get(provider);
-  if (entry === undefined) {
-    // provider 不在 v2 注册表：模型引用不可解释（resolve 期漏网或直接调用）
-    throw new ZcodePrepareError(
-      "model_not_available",
-      `未知 provider "${provider}"（v2 config 无该条目：${v2Path}）。` +
-        `恢复指引：先经 resolveZcodeModelRef 校验模型引用，或先在 ZCode 桌面端配置该 provider 后重试。`,
-    );
-  }
-  if (!hasApiKey(entry)) {
-    // provider 存在但无凭据：resolve 与 bootstrap 之间凭据被撤（并发改动）
-    throw new ZcodePrepareError(
-      "engine_credential_missing",
-      `provider "${provider}" 存在但未配置 apiKey（${v2Path} 重读无凭据）。` +
-        `恢复指引：确认 ZCode 桌面端登录态有效后重试；凭据配置说明见 docs/research/agent-engine-zcode.md。`,
-    );
-  }
-
-  const hitSourceMtime = v2.mtimeMs;
-  let wroteConfig = false;
-  if (homeNeedsBootstrap(configPath, hitSourceMtime)) {
-    const payload = JSON.stringify({ model: { main: modelRef }, provider: { [provider]: entry } }, null, CONFIG_INDENT_SPACES);
-    // tmp+rename 原子写（shared/atomic-write 统一原语，U6b 迁移——rename 失败时
-    // 原语清残留 tmp，避免污染 HOME 目录；tmp 文件不参与读取，best-effort 语义不变）
-    writeAtomicFileSync(configPath, payload);
-    wroteConfig = true;
-  }
-  return { modelRef, poolKey, homeDir, configPath, wroteConfig };
-}
-

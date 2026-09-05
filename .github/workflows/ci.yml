@@ -252,6 +252,12 @@ jobs:
       - name: Test - builtin-ext-bundle
         run: pnpm exec vitest run scripts/__tests__/builtin-ext-bundle.test.mjs
 
+      # R1-R3 新增 scripts 层护栏测试（check-unsafe-stream-writes / check-core-dist-gate /
+      # gitcode-release-sync，纯函数 + mock fetch，不依赖 staged 产物）接入 CI——护栏测试
+      # 自身也需要回归保护。
+      - name: Test - scripts guards
+        run: pnpm exec vitest run scripts/__tests__/check-unsafe-stream-writes.test.mjs scripts/__tests__/check-core-dist-gate.test.mjs scripts/__tests__/gitcode-release-sync.test.mjs
+
   # E2E 视觉回归（mock 轨 visual-chromium）：只跑像素 diff baseline（S2 W3 交付的
   # visual-chromium project，testMatch **/visual/** + chromium.launch + spawn vite @ VITE_MOCK=true）。
   # 只需 chromium（无需 electron 二进制/build:e2e）。runner 用 macos-latest 与 baseline 生成
@@ -456,6 +462,12 @@ jobs:
       # 同上行 G4 的挂载理由）。
       - name: Subagent-core closure guard (D9-①)
         run: node scripts/check-subagent-core-closure.mjs
+
+      # 流写逃逸护栏（2026-09-04 runtime 整机崩溃事故护栏，与 pre-commit 同源直调）：
+      # 裸流写 / socket error 未挂载静态扫描——防新增代码在事件回调里裸写半关闭/
+      # destroyed 流，逃逸为 uncaughtException → 整机 shutdown（D7 通则，CI 面同源拦截）。
+      - name: Unsafe stream writes guard
+        run: node scripts/check-unsafe-stream-writes.mjs
 
   # PR 构建检查：electron-builder 打包流程，不在 PR 上传产物。
   # dir-only=true：只产出 unpacked 目录，跳过安装器压缩（省 ~185s）。安装器配置回归交给 release.yml。

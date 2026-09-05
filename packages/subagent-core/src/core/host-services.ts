@@ -45,16 +45,32 @@ export interface HostServices {
  *  供无自有数据根的轻宿主显式采用；core 自身不静默兜底到该值。 */
 export const DEFAULT_DATA_ROOT: string = join(homedir(), ".subagent-core");
 
-// 模块级配置态：configureCore 覆盖式写入（重复调用以后者覆盖——测试切宿主依赖此语义）。
-let configuredHost: HostServices | undefined;
+// 配置态持有：globalThis[Symbol.for] slot（post-convergence D9 根治）。模块级 `let`
+// 在 dist 双形态（主 bundle × 子入口 bundle 各持模块副本）下会被分裂——configureCore
+// 只写主 bundle 副本，子入口侧恒 undefined。slot 对象形态（非直接存值）规避
+// 「undefined 值与无 key 不可区分」；范式与 execution/subagent-service.ts 进程单例
+// slot 同型。读写语义不变：configureCore 覆盖式写入
+// （重复调用以后者覆盖——测试切宿主依赖此语义）。
+const HOST_SLOT_KEY = Symbol.for("@zhushanwen/subagent-core.host-services");
+
+type HostSlot = { current: HostServices | undefined };
+
+function getHostSlot(): HostSlot {
+  let slot = Reflect.get(globalThis, HOST_SLOT_KEY) as HostSlot | undefined;
+  if (!slot) {
+    slot = { current: undefined };
+    Reflect.set(globalThis, HOST_SLOT_KEY, slot);
+  }
+  return slot;
+}
 
 export function configureCore(host: HostServices): void {
-  configuredHost = host;
+  getHostSlot().current = host;
 }
 
 /** 测试隔离专用：清空配置态（生产禁用——生产宿主配置一次后生命周期与进程一致）。 */
 export function resetCoreForTests(): void {
-  configuredHost = undefined;
+  getHostSlot().current = undefined;
 }
 
 const NULL_HOST: HostServices = {
@@ -93,5 +109,5 @@ const NULL_HOST: HostServices = {
 };
 
 export function getHostServices(): HostServices {
-  return configuredHost ?? NULL_HOST;
+  return getHostSlot().current ?? NULL_HOST;
 }

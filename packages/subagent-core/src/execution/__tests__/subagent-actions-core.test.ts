@@ -132,17 +132,35 @@ function makeRec(over: Partial<SubagentRecord> = {}): SubagentRecord {
 }
 
 function makeService(over: Record<string, unknown> = {}): SubagentService {
-  return {
+  // 聚合面形态对齐 subagent-service.ts D4：queries（读模型）与 chatActions（对话
+  // action 面）分组挂载，mock 按同构 key 装配（over 仍传平铺 key，最小化快照用例改动）。
+  const m = {
     execute: vi.fn(),
-    findRecord: vi.fn(() => undefined),
     cancel: vi.fn(() => false),
+    findRecord: vi.fn(() => undefined),
     collectRecords: vi.fn(() => [] as SubagentRecord[]),
     getFullRecord: vi.fn(() => undefined as SubagentRecord | undefined),
     lookupRecordAnyState: vi.fn(() => undefined as SubagentRecord | undefined),
     getRecordForAction: vi.fn(),
     closeSubagent: vi.fn(),
-    deliverMessage: vi.fn(),
+    deliverChatMessage: vi.fn(),
     ...over,
+  };
+  return {
+    execute: m.execute,
+    cancel: m.cancel,
+    queries: {
+      findRecord: m.findRecord,
+      lookupRecordAnyState: m.lookupRecordAnyState,
+      collectRecords: m.collectRecords,
+      getFullRecord: m.getFullRecord,
+      onChange: vi.fn(() => () => {}),
+    },
+    chatActions: {
+      getRecordForAction: m.getRecordForAction,
+      closeSubagent: m.closeSubagent,
+      deliverChatMessage: m.deliverChatMessage,
+    },
   } as unknown as SubagentService;
 }
 
@@ -587,11 +605,11 @@ describe("⛔4 messageHandler（守卫 + upgrade + 投递，快照 = pi-sw 实�
     });
   });
 
-  it("chatMode record → deliverMessage(text trim + interrupt) + 领域对象", async () => {
-    const deliverMessage = vi.fn(async () => {});
+  it("chatMode record → deliverChatMessage(text trim + interrupt) + 领域对象", async () => {
+    const deliverChatMessage = vi.fn(async () => {});
     const chatRecord = makeExecRecord({ id: "bg-1", chatMode: true, slug: "src-slug" });
     const r = await messageHandler(
-      makeService({ getRecordForAction: vi.fn(() => chatRecord), deliverMessage }),
+      makeService({ getRecordForAction: vi.fn(() => chatRecord), deliverChatMessage }),
       { subagentId: "bg-1", text: "  go on  ", interrupt: true },
     );
     expect(r).toEqual({
@@ -600,18 +618,18 @@ describe("⛔4 messageHandler（守卫 + upgrade + 投递，快照 = pi-sw 实�
       slug: "src-slug",
       response: { delivered: true },
     });
-    expect(deliverMessage).toHaveBeenCalledWith(chatRecord, "go on", true);
+    expect(deliverChatMessage).toHaveBeenCalledWith(chatRecord, "go on", true);
   });
 
   it("one-shot upgrade：非 chatMode running record 收 message → 置位 chatMode 后投递", async () => {
-    const deliverMessage = vi.fn(async () => {});
+    const deliverChatMessage = vi.fn(async () => {});
     const upgradeRec = makeExecRecord({ id: "bg-1", chatMode: false, status: "running" });
     await messageHandler(
-      makeService({ getRecordForAction: vi.fn(() => upgradeRec), deliverMessage }),
+      makeService({ getRecordForAction: vi.fn(() => upgradeRec), deliverChatMessage }),
       { subagentId: "bg-1", text: "hi" },
     );
     expect(upgradeRec.chatMode).toBe(true);
-    expect(deliverMessage).toHaveBeenCalledWith(upgradeRec, "hi", false);
+    expect(deliverChatMessage).toHaveBeenCalledWith(upgradeRec, "hi", false);
   });
 
   it("getRecordForAction 拒绝 + 无终态快照 → 原错误透传（文案最准原则）", async () => {

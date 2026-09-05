@@ -50,6 +50,8 @@ export type {
 // LLM 重试配置域（类型 + D8 合法域常量 + 校验纯函数，renderer 表单与 runtime 写入侧共用）
 export type { LlmRetryConfig, LlmRetryProviderConfig } from './llm-retry'
 export { LLM_RETRY_DOMAIN, validateLlmRetryConfig } from './llm-retry'
+// RPC 超时校准链常量 SSOT（timeout-slow-flow-wallclock D2/D3，renderer/runtime 双端编译期对齐）
+export { BASH_RPC_TIMEOUT_MS, COMPACT_RPC_TIMEOUT_MS, RENDERER_RPC_MARGIN_MS } from './timeouts'
 export * from './extension'
 export * from './git'
 export * from './plugin'
@@ -102,6 +104,8 @@ export {
   isAgentCallVirtualId,
   extractAgentCallSessionId,
 } from './virtual-session-id'
+// subagent.stream_delta 帧父 session 解析（idle-refresh 桥接纯函数，双通道形态归一）
+export { resolveSubagentParentSessionId } from './subagent-frame'
 // Coding Plan 额度查询类型
 export type {
   QuotaWindow,
@@ -111,7 +115,10 @@ export type {
   QuotaAuthKind,
   QuotaFetchFailureReason,
   QuotaFetchOutcome,
+  QuotaFetcherConfig,
+  QuotaWorkspaceNormalizeResult,
 } from './quota-types'
+export { normalizeQuotaWorkspaceUrl } from './quota-types'
 export type { QuotaPreset } from './quota-presets'
 export { QUOTA_PRESETS, matchQuotaPreset } from './quota-presets'
 // normalizeSubagentStatus 已下沉至 runtime（packages/runtime/src/services/session/subagent-status.ts，

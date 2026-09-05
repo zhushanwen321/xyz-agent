@@ -6,8 +6,10 @@
  * - getDefault() → WS payload type=preset.getDefault，解包 reply.presetId 返回 string
  * - setDefault(id) → WS payload type=preset.setDefault + { presetId }，ack 型返回 void
  *
- * mock 策略：mock transport（捕获 send payload）+ pending（返回可控 reply），
- * 验证 preset.* 消息 payload 形状与 reply 解包。不 mock @/api（直接测 domains/preset 真实实现）。
+ * mock 策略：mock core ws-client（捕获 send payload）+ core pending 源文件相对路径
+ * （返回可控 reply），验证 preset.* 消息 payload 形状与 reply 解包。不 mock @/api
+ * （直接测 domains/preset 真实实现）。request 已下沉 core（tc u1），mock 目标须与
+ * core 内相对 import 同一模块 ID 才能拦截。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/api/preset-domain.test.ts
  */
@@ -33,14 +35,15 @@ const pendingMock = vi.hoisted(() => ({
   register: vi.fn(),
 }))
 
-vi.mock('@/api/transport', () => ({ send: transportMock.send }))
-vi.mock('@/api/pending', () => ({
+vi.mock('@xyz-agent/core/transport/ws-client', () => ({ send: transportMock.send }))
+vi.mock('../../../../core/src/transport/api/pending', () => ({
+  RPC_BACKSTOP_TIMEOUT_MS: 65_000,
   createCommandId: vi.fn(() => 'pid-1'),
   register: pendingMock.register,
   reject: vi.fn(),
 }))
 
-import { list, getDefault, setDefault, create, update, remove } from '@/api/domains/preset'
+import { list, getDefault, setDefault, create, update, remove } from '@xyz-agent/core/transport/api/domains/preset'
 
 beforeEach(() => {
   transportMock.sent.length = 0

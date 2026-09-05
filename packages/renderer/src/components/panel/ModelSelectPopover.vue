@@ -142,6 +142,7 @@ const groups = computed<ModelGroup[]>(() => {
 const selectedValue = computed(() => props.selected ?? '')
 
 const currentName = computed(() => {
+  if (!selectedValue.value) return t('panel.modelSelect.placeholder')
   const id = bareModelId(selectedValue.value)
   return settingsStore.models.value.find((m) => m.id === id)?.name ?? id
 })

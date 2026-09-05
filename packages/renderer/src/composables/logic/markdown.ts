@@ -25,9 +25,31 @@ import MarkdownIt from 'markdown-it'
 import markdownItKatex from 'markdown-it-katex'
 import type Token from 'markdown-it/lib/token.mjs'
 import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
-import { createHighlighter } from 'shiki'
+import { createHighlighterCore } from 'shiki/core'
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
-import type { Highlighter } from 'shiki'
+import type { HighlighterCore } from 'shiki/core'
+// fine-grained 静态 grammar/theme import（release 附件体积优化批三 §3.2.1）：
+// 不走 shiki full bundle（其模块图含全量 200+ 语言的动态 import 入口 → 产物 289 个死
+// 语言 chunk 8.1MB）。core + 显式 import 后死模块从模块图构造性消失。解析依赖扁平
+// node_modules（node-linker=hoisted，ADR-0032）。
+// 禁止 import bash.mjs / shell.mjs——它们只是 shellscript 的别名 re-export；bash/shell
+// 由 shellscript grammar 自带 aliases=["bash","sh","shell","zsh"] 自动注册（getLoadedLanguages
+// 天然含 alias 键，fallback 判定不变）。vue 单模块默认导出内嵌全部派生 grammar
+// （html-derivative / markdown-vue 等），跨语言嵌入由 13 语言全注册满足。
+import typescript from '@shikijs/langs/typescript'
+import javascript from '@shikijs/langs/javascript'
+import vue from '@shikijs/langs/vue'
+import json from '@shikijs/langs/json'
+import shellscript from '@shikijs/langs/shellscript'
+import markdown from '@shikijs/langs/markdown'
+import css from '@shikijs/langs/css'
+import html from '@shikijs/langs/html'
+import yaml from '@shikijs/langs/yaml'
+import python from '@shikijs/langs/python'
+import go from '@shikijs/langs/go'
+import rust from '@shikijs/langs/rust'
+import minDark from '@shikijs/themes/min-dark'
+import minLight from '@shikijs/themes/min-light'
 import i18n from '@/i18n'
 
 const t = i18n.global.t
@@ -51,8 +73,14 @@ export interface MarkdownEnv {
   localFiles?: Set<string>
 }
 
-/** 代码块高亮覆盖的语言（按 wave review 要点：ts/vue/json/bash/md + 常见派生） */
-const SHIKI_LANGS = ['typescript', 'javascript', 'vue', 'json', 'bash', 'shell', 'markdown', 'css', 'html', 'yaml', 'python', 'go', 'rust']
+/**
+ * 代码块高亮覆盖的语言清单（按 wave review 要点：ts/vue/json/bash/md + 常见派生）。
+ * fine-grained 后不再作为 createHighlighter 入参（grammar 改静态 import，见 getHighlighter），
+ * 语义 = 高亮覆盖面 SSOT：highlightShikiSync 的 fallback 判定走 getLoadedLanguages()
+ * （其返回值天然含 bash/shell 等 alias 键——shellscript grammar aliases 自动注册），
+ * 本清单导出供单测驱动「13 语言逐个高亮」断言，防清单与注册面漂移。
+ */
+export const SHIKI_LANGS = ['typescript', 'javascript', 'vue', 'json', 'bash', 'shell', 'markdown', 'css', 'html', 'yaml', 'python', 'go', 'rust']
 
 /**
  * 双主题：min-dark / min-light（透明底，v6 代码块底色走 token 体系）。
@@ -65,21 +93,24 @@ const SHIKI_LANGS = ['typescript', 'javascript', 'vue', 'json', 'bash', 'shell',
 const SHIKI_DARK = 'min-dark'
 const SHIKI_LIGHT = 'min-light'
 
-/** shiki 单例（全局一次，避免重复 WASM/语法加载） */
-let highlighterPromise: Promise<Highlighter> | null = null
+/** shiki 单例（全局一次，避免重复语法加载） */
+let highlighterPromise: Promise<HighlighterCore> | null = null
 let cachedMarkdown: MarkdownIt | null = null
 
 /**
- * 获取（惰性创建）shiki highlighter 单例。
- * 导出供 CodeBlock / DiffView 等组件复用同一单例，避免重复 WASM/语法加载。
+ * 获取（惰性创建）shiki highlighter 单例（fine-grained core 版）。
+ * 导出供 CodeBlock / DiffView 等组件复用同一单例，避免重复语法加载。
  */
-export function getHighlighter(): Promise<Highlighter> {
+export function getHighlighter(): Promise<HighlighterCore> {
   if (!highlighterPromise) {
-    highlighterPromise = createHighlighter({
-      themes: [SHIKI_DARK, SHIKI_LIGHT],
-      langs: SHIKI_LANGS,
+    highlighterPromise = createHighlighterCore({
+      // 静态 import 的 theme 对象（与 SHIKI_DARK/SHIKI_LIGHT 同名：min-dark / min-light）
+      themes: [minDark, minLight],
+      // 静态 import 的 grammar 对象（SHIKI_LANGS 的 13 项：bash/shell 由 shellscript 的
+      // grammar aliases 覆盖，无需单独 import，见 import 区注释）
+      langs: [typescript, javascript, vue, json, shellscript, markdown, css, html, yaml, python, go, rust],
       // [HISTORICAL] 必须用 JS 正则引擎，禁止回落默认 Oniguruma WASM：index.html CSP 是
-      // script-src 'self'，WebAssembly.instantiate 会被 CSP 拒绝（CompileError）→ createHighlighter
+      // script-src 'self'，WebAssembly.instantiate 会被 CSP 拒绝（CompileError）→ createHighlighterCore
       // 抛错 → 全部 markdown 渲染静默降级纯文本（2026-08-21 v0.9.3 起线上事故：对话流/气泡/
       // drawer skill 文档全部无格式 + 换行丢失）。防护：.githooks/check_csp_compatibility.py
       // 源码级拦 WebAssembly 用法；产物级扫描见 scripts/postbuild-validate.sh [3/6]。
@@ -119,7 +150,7 @@ function encodeBase64(text: string): string {
  * 用 shiki 单例同步高亮一段代码（调用前需 await getHighlighter）。
  * 返回双主题 HTML（带 --shiki-dark/--shiki-light 变量的 span），未知语言 fallback typescript。
  */
-function highlightShikiSync(hl: Highlighter, code: string, lang: string): string {
+function highlightShikiSync(hl: HighlighterCore, code: string, lang: string): string {
   const resolved = hl.getLoadedLanguages().includes(lang) ? lang : 'typescript'
   try {
     return hl.codeToHtml(code, {

@@ -17,6 +17,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as aliveStore from "../alive-store.ts";
 import { maybeCleanupExpiredSessionFiles } from "../session-file-gc.ts";
 
+// [D8] 引擎池 TTL 兜底走 getEngineDataDir() 解析 dataDir——测试必须钉到 tmpAgentDir，
+// 防止命中真实 XYZ_AGENT_DATA_DIR（或宿主 fallback）误清开发机数据。
+vi.mock("../engine/common/data-dir.ts", () => ({
+  getEngineDataDir: () => tmpAgentDir,
+}));
+
 // ============================================================
 // helpers
 // ============================================================
@@ -289,5 +295,34 @@ describe("maybeCleanupExpiredSessionFiles", () => {
     );
     maybeCleanupExpiredSessionFiles(tmpAgentDir, "/cwd");
     expect(fs.existsSync(tmp)).toBe(true);
+  });
+});
+
+describe("[D8] 引擎池 TTL 兜底（maybeCleanupExpiredSessionFiles 挂载 cleanupExpiredPoolRefs）", () => {
+  /** 池内建一个 journal 并把 mtime 设为指定天数前。 */
+  function createPoolJournal(poolKey: string, taskId: string, daysAgo: number): string {
+    const poolDir = path.join(tmpAgentDir, "engines", "zcode", poolKey);
+    fs.mkdirSync(poolDir, { recursive: true });
+    const journal = path.join(poolDir, `journal-${taskId}.jsonl`);
+    fs.writeFileSync(journal, "{}\n", "utf-8");
+    const targetTime = Date.now() / 1000 - daysAgo * 86400;
+    fs.utimesSync(journal, targetTime, targetTime);
+    return journal;
+  }
+
+  it("超龄 journal 随概率门触发回收（engines/<engineId>/<poolKey>/ 下）", () => {
+    forceCleanupTrigger();
+    const oldJournal = createPoolJournal("home-p-m", "bg-1", 31);
+    const youngJournal = createPoolJournal("home-p-m", "bg-2", 5);
+    maybeCleanupExpiredSessionFiles(tmpAgentDir, "/cwd");
+    expect(fs.existsSync(oldJournal)).toBe(false);
+    expect(fs.existsSync(youngJournal)).toBe(true);
+  });
+
+  it("概率门跳过时引擎池不动", () => {
+    forceCleanupSkip();
+    const oldJournal = createPoolJournal("home-p-m", "bg-3", 31);
+    maybeCleanupExpiredSessionFiles(tmpAgentDir, "/cwd");
+    expect(fs.existsSync(oldJournal)).toBe(true);
   });
 });

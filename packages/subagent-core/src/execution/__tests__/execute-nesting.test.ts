@@ -132,7 +132,7 @@ vi.mock("../manifest-store.ts", () => {
 
 // temp-prompt：mock 掉真实 fs.promises I/O，消除 fake-timers 下的 flaky 竞态
 // （详见 run-spawn-integration.test.ts 同名 mock 的注释）。
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -242,7 +242,8 @@ function setup(): SetupResult {
 
 const ctxModel: ModelInfo = { id: "m", name: "M", provider: "p", reasoning: false };
 
-/** execCtxAls.run 的 duck-type（绕过 import AsyncLocalStorage，足够本组用例）。 */
+/** [D3-⑤] execNesting（公共层 ExecutionNestingContext）.run 的 duck-type（绕过
+ * import AsyncLocalStorage，足够本组用例——私字段经 Reflect 取，机制与旧 execCtxAls 同构）。 */
 interface ExecCtxAls {
   run: <T>(store: { recordId: string | undefined; depth: number }, cb: () => T) => T;
 }
@@ -267,7 +268,7 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
     await waitForSpawn(mockSpawn);
     await driveChildToCompletion(lastSpawnedChild());
 
-    // 等 detached promise 链跑完（kickOffBackground 的 .then notify）
+    // 等 detached promise 链跑完（kickOffChatRound 的 .then notify）
     await new Promise<void>((r) => setTimeout(r, 10));
 
     expect(acquireSpy).toHaveBeenCalled();
@@ -283,16 +284,16 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
   it("[D-033] execCtxAls depth=MAX 时 execute 抛错（nestingDepth=MAX+1 被拒）", async () => {
     const { service } = setup();
 
-    const execCtxAls = Reflect.get(service, "execCtxAls") as ExecCtxAls;
+    const execNesting = Reflect.get(service, "execNesting") as ExecCtxAls;
 
     await expect(
-      execCtxAls.run({ recordId: "parent", depth: MAX_FORK_DEPTH }, () =>
+      execNesting.run({ recordId: "parent", depth: MAX_FORK_DEPTH }, () =>
         service.execute({ task: "too deep", ctxModel }),
       ),
     ).rejects.toThrow(/nesting depth/);
 
     // 无副作用：guard 在 createRecordForMode 之前，record 未创建
-    expect(service.collectRecords(10)).toHaveLength(0);
+    expect(service.queries.collectRecords(10)).toHaveLength(0);
     // guard 在 spawn 之前——不应 spawn 任何子进程
     expect(mockSpawn).not.toHaveBeenCalled();
   });
@@ -300,9 +301,9 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
   it("[D-033] execCtxAls depth=MAX-1 时 execute 不抛（nestingDepth=MAX 允许）", async () => {
     const { service } = setup();
 
-    const execCtxAls = Reflect.get(service, "execCtxAls") as ExecCtxAls;
+    const execNesting = Reflect.get(service, "execNesting") as ExecCtxAls;
 
-    const execPromise = execCtxAls.run({ recordId: "parent", depth: MAX_FORK_DEPTH - 1 }, () =>
+    const execPromise = execNesting.run({ recordId: "parent", depth: MAX_FORK_DEPTH - 1 }, () =>
       service.execute({ task: "at limit", ctxModel }),
     );
     await waitForSpawn(mockSpawn);

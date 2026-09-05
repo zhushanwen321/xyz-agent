@@ -35,9 +35,9 @@ import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { countActiveFromEntries } from "@zhushanwen/pi-pending-notifications";
 import { createDelivery } from "@xyz-agent/session-delivery";
 
-import type { DiscoveryRoot, HostServices } from "@zhushanwen/subagent-core/core/host-services.ts";
-import type { LogLevel } from "@zhushanwen/subagent-core/core/logger.ts";
-import type { NotifyDomainPorts } from "@zhushanwen/subagent-core/core/notify-ports.ts";
+import type { DiscoveryRoot, HostServices } from "@zhushanwen/subagent-core";
+import type { LogLevel } from "@zhushanwen/subagent-core";
+import type { NotifyDomainPorts } from "@zhushanwen/subagent-core";
 
 /**
  * core 包（@zhushanwen/subagent-core）agents/ 资产进 pi 发现面的注入根（C5⑥，

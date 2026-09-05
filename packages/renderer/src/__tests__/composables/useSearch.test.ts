@@ -21,7 +21,7 @@
  *
  * mock 策略：
  *  - vi.mock('@/api')：composer.getFileCandidates / session.list
- *  - vi.mock('@/stores/fileSearch')：store.get/set/invalidate
+ *  - vi.mock('@/composables/features/search/useFileSearchStore')：store.get/set/invalidate（D7 收口后壳单例模块）
  *  - vi.mock('@/composables/features/search/useFileSearch')：setupInvalidation 返 vi.fn()（验证 AC-4.10 接线）
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useSearch.test.ts
@@ -48,7 +48,7 @@ import { ref } from 'vue'
 import type { FileNode, SessionGroup } from '@xyz-agent/shared'
 import type { AppCommand, SearchItem } from '@xyz-agent/core'
 import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/command/useCommandStore'
-import { useFileSearchStore } from '@/stores/fileSearch'
+import { useFileSearchStore } from '@/composables/features/search/useFileSearchStore'
 
 // ── mock：api domain ──
 const mockGetFileCandidates = vi.fn()
@@ -58,10 +58,10 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
   session: { list: () => mockSessionList() },
 }))
 
-// ── mock：fileSearch store（缓存可控） ──
+// ── mock：fileSearch store 壳单例（D7 收口后 useSearch 经此模块取 core 实例；缓存可控） ──
 const mockStoreGet = vi.fn()
 const mockStoreSet = vi.fn()
-vi.mock('@/stores/fileSearch', () => ({
+vi.mock('@/composables/features/search/useFileSearchStore', () => ({
   useFileSearchStore: () => ({
     get: (...args: unknown[]) => mockStoreGet(...(args as [string])),
     set: (...args: unknown[]) => mockStoreSet(...(args as [string, FileNode[]])),

@@ -7,7 +7,7 @@
  *  - 选择变更 → setSubagentDefaultEngine 调用 + 本地态更新；
  *  - RPC 失败兜底 ['pi']（runtime 同语义）。
  *
- * mock 策略：vi.mock('@/api/domains/session') 替换引擎配置读写。
+ * mock 策略：vi.mock('@xyz-agent/core/transport/api/domains/session') 替换引擎配置读写。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/settings/subagent-engine-section.test.ts
  */
@@ -20,7 +20,7 @@ const sessionApiMock = vi.hoisted(() => ({
   setSubagentDefaultEngine: vi.fn(async () => ({ engineId: 'pi' })),
 }))
 
-vi.mock('@/api/domains/session', () => sessionApiMock)
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => sessionApiMock)
 
 import SubagentEngineSection from '@/components/settings/agent/SubagentEngineSection.vue'
 import zhCN from '@/i18n/locales/zh-CN/settings'

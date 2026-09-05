@@ -34,7 +34,7 @@ vi.mock("node:child_process", async () => {
 import {
   looksLikePiRpcProcess,
   sweepDescendantsOfSession,
-} from "../session-runner.ts";
+} from "../engine/engines/pi/session-runner.ts";
 import {
   clearPendingCursors,
   listActivePendingFromSessionFile,

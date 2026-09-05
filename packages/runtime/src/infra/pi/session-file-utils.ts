@@ -10,6 +10,22 @@ import { atomicWrite } from '../../utils/fs-utils.js'
 import { parseJsonl, readTailEntries } from '../../utils/jsonl.js'
 import { join, dirname, basename } from 'node:path'
 import { getSessionsDir } from './pi-paths.js'
+// model sidecar 家族（单向依赖：本文件经 scanSessionMeta 消费 readModelBinding；该家族
+// 与下方 preset/project/agent 家族共用的 IO 骨架已下沉 './session-binding-sidecar-io.ts'
+// 叶子模块，双方各自单向依赖叶子——原两模块函数级循环引用已消除）。
+import { readModelBinding, type ModelBindingFields } from './session-model-sidecar.js'
+// sidecar IO 骨架 + 扫描缓存治理状态（叶子模块）：骨架原属本文件，model sidecar 家族
+// 拆出后为消除 ⇄ 循环引用下沉；本文件 import 供 preset/project/agent 家族与缓存治理
+// 调用点使用，并 re-export 维持原导出路径（消费方 import 路径零改动）。
+import {
+  invalidateScanDirCache,
+  lookupScanDirCache,
+  persistBindingSidecar,
+  readBindingSidecar,
+  refreshScanDirCache,
+  sessionMetaCache,
+} from './session-binding-sidecar-io.js'
+export { invalidateScanDirCache, persistBindingSidecar, readBindingSidecar } from './session-binding-sidecar-io.js'
 
 // ── 类型定义 ─────────────────────────────────────────────────
 
@@ -257,57 +273,22 @@ export function projectSidecarPath(filePath: string): string {
   return filePath + '.project.json'
 }
 
-/**
- * sidecar 家族公共写入（preset/project/agent binding 共用骨架）：
- * 空路径守卫 + JSONL 未落盘守卫（规则 #6：绝不创建 sidecar）+ 原子写 + 双层缓存失效
- * （sessionMetaCache 必失效；scanDirCache 默认失效，见 invalidateScanDir 说明）。
- * 差异点参数化：sidecar 路径 helper、tmpfile 前缀、目录级扫描缓存的豁免开关。
- *
- * invalidateScanDir 默认 true（sidecar-binding-sync 设计文档决策 2）：binding 写点的唯一
- * 列表消费方是扫描侧，写后不失效无正当场景——不失效则紧跟的列表广播命中 1s TTL 窗口内的
- * pre-write 快照返回 stale 数据；此前逐调用方 opt-in 已产出多个漏改实例（设计文档缺陷 B），
- * 故收敛为默认开。确需跳过时必须显式传 { invalidateScanDir: false } 并附注释说明理由。
- */
-function persistBindingSidecar(
-  filePath: string,
-  sidecarPathOf: (fp: string) => string,
-  binding: object,
-  tmpPrefix: string,
-  opts?: { invalidateScanDir?: boolean },
-): void {
-  if (!filePath) return
-  if (!existsSync(filePath)) {
-    // 文件不存在（pi 延迟写入窗口 / 首 turn 前崩溃）：绝不创建文件，直接跳过（规则 #6 / ES-RL-1）。
-    return
-  }
-  try {
-    // 原子写（tmpfile + rename）：与 persistSessionEnd 一致，防止并发读读到半写的 sidecar。
-    atomicWrite(sidecarPathOf(filePath), JSON.stringify(binding), `${tmpPrefix}-${Date.now()}`)
-    // sidecar 写入后主动失效 sessionMetaCache：缓存键只含 JSONL 的 (mtimeMs, size)，
-    // sidecar 变更不变 JSONL stat → 命中缓存返回旧值。
-    sessionMetaCache.delete(filePath)
-    // 默认失效，显式 false 才跳过（opt-out 语义与理由要求见函数 docstring）。
-    if (opts?.invalidateScanDir !== false) {
-      invalidateScanDirCache()
-    }
-  // eslint-disable-next-line taste/no-silent-catch -- file write: failure must not crash caller
-  } catch (e) {
-    console.error(`[session-file-utils] ${tmpPrefix} binding persist failed: ${filePath}`, e)
-  }
-}
+// model binding sidecar 家族（modelSidecarPath/persistModelBinding/readModelBinding +
+// ModelBindingFields 字段声明）已迁至 './session-model-sidecar.ts'（本文件 max-lines
+// 行数合规）；scanSessionMeta 第七读经该模块的 readModelBinding 供给。
+// [re-export 登记] persistModelBinding / readModelBinding 经本模块转出是 mock 链刚需：
+// restore 播种测试（session-lifecycle-restore-seeding.test.ts）以硬编码 factory 替换本模块
+// 并经 importActual 取「本模块导出的 persistModelBinding」委托真值落盘，session-lifecycle
+// 的写点 import 也锚定本模块路径——re-export 缺失会使 actual 侧拿到 undefined。
+// readModelBinding 转出（2026-09-04）：session-service tryPersistModelBinding（D1 写点③
+// 兜底）的「缺失才写」守卫消费，services 层 infra value import 白名单只认本模块。
+export { persistModelBinding, readModelBinding } from './session-model-sidecar.js'
 
-/**
- * sidecar 家族公共读取：读文件 + JSON.parse + 调用方字段守卫回调。
- * sidecar 不存在/损坏/守卫不过 → undefined（降级不抛错）。
- */
-function readBindingSidecar<T>(sidecarPath: string, decode: (binding: unknown) => T | undefined): T | undefined {
-  try {
-    const raw = readFileSync(sidecarPath, 'utf-8')
-    return decode(JSON.parse(raw))
-  } catch {
-    return undefined
-  }
-}
+// persistBindingSidecar / readBindingSidecar 公共骨架已迁 './session-binding-sidecar-io.ts'
+// （model sidecar 家族拆出后为消除 ⇄ 循环引用下沉；骨架私有闭包 sessionMetaCache /
+// scanDirCache 家族一并迁入，全仓唯一实例不变）。本文件经 re-export 维持原导出路径，
+// preset/project/agent 家族（下方 persistProjectBinding / persistAgentBinding /
+// persistPresetBinding）与 read* 调用点零改动。
 
 /**
  * 将 session 归属 project 持久化到 sidecar `.project.json`（D14：Project 直接关联 Session）。
@@ -424,6 +405,9 @@ export function readAgentBinding(filePath: string): { spawnSource: 'user' | 'age
     return undefined
   })
 }
+
+// persistModelBinding / readModelBinding 已迁 './session-model-sidecar.ts'
+// （scanSessionMeta 第七读经该模块供给，指针注释见 projectSidecarPath 之后）。
 
 /**
  * 将 launch preset 绑定持久化到 sidecar `.preset.json`（设计文档 §4）。
@@ -821,7 +805,7 @@ function removeStaleResiduesInDir(dir: string, cutoff: number): number {
 // ── Session 扫描 ─────────────────────────────────────────────
 
 /** scanPiSessions 返回的单条 session 元信息（持久化会话扫描结果）。 */
-export interface ScannedSessionMeta {
+export interface ScannedSessionMeta extends ModelBindingFields {
   id: string
   filePath: string
   cwd: string
@@ -858,33 +842,19 @@ export interface ScannedSessionMeta {
    * 记录 spawn 该 session 的父 agent session。undefined = 非 agent 管理的普通 session。
    */
   parentAgentSessionId?: string
+  // modelId / thinkingLevel 字段声明随 model sidecar 家族迁至 './session-model-sidecar.ts'
+  // （ModelBindingFields，本接口 extends 收编）；BindingFieldKey 的 OptionalKeys 派生对
+  // extends 字段照常生效，session-binding-fields.ts 注册表不受影响。
 }
 
 // 绑定字段注册表已抽出至 './session-binding-fields.ts'（BINDING_FIELDS / hydrateBindingMeta /
 // CREATE_DERIVED_CALLERS 单一权威源，sidecar-binding-sync 设计文档；抽出原因：本文件
 // 聚焦 sidecar 文件 IO 与缓存治理，lint max-lines 预算留给 IO 逻辑）。
 
-/**
- * W3 文件级 mtime+size 缓存（INVAR-cache-1 模块级跨两阶段共享）。
- *
- * scanPiSessions（header+name+outcome 三读合一）与 scannedToSummary（取 outcome）共享此缓存。
- * 缓存键含 (path, mtimeMs, size)（INVAR-cache-2 SR4）——同 ms 内并发 append mtimeMs 不变但
- * size 变 → miss，消除竞态。无上限（INVAR-cache-6，每条~几百字节，10k session≈数 MB）。
- * 不跨进程（runtime 重启清空，首次 scan 冷读）。
- *
- * [KNOWN-LIMIT 无界增长] 缓存以 filePath 为键，删除 session 不会主动清条目（deleteSession
- * 走 trash 不回调此模块）。长时间运行的 runtime + 频繁创建/删除 session 时条目累积，
- * 但单条 ~几百字节、且 filePath 含 sessionId 不会重复，实测量级可控（数千条 ≈ 1MB）。
- * 若未来 session 生命周期变长/创建频繁导致内存压力，可在此加 LRU 上限或定期 sweep
- * （按 lastModified 淘汰 stale 条目）。当前 runtime 进程为 session 级常驻，生命周期内
- * session 总数有限，暂不引入淘汰逻辑。
- */
-interface CachedSessionMeta {
-  mtimeMs: number
-  size: number
-  meta: ScannedSessionMeta
-}
-const sessionMetaCache = new Map<string, CachedSessionMeta>()
+// sessionMetaCache（W3 文件级 mtime+size 缓存，含 INVAR-cache 与 KNOWN-LIMIT 完整说明）
+// 与 CachedSessionMeta 类型已迁 './session-binding-sidecar-io.ts'（persistBindingSidecar
+// 骨架的私有闭包，随骨架下沉；经上方 import 的 Map 引用操作，全仓唯一实例不变）。
+// 下方两个治理函数留本文件维持原导出路径（测试与 session-store 直接消费）。
 
 /** 仅供测试重置缓存用（生产不调）。 */
 export function _resetSessionMetaCacheForTest(): void {
@@ -960,6 +930,9 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
     projectId,
     spawnSource: agentBinding?.spawnSource,
     parentAgentSessionId: agentBinding?.parentAgentSessionId,
+    // 第七读：model binding sidecar（model binding，'./session-model-sidecar.ts'）——
+    // 无 sidecar 时返回 undefined，对象展开零字段，与逐字段 `?.` 赋 undefined 等价。
+    ...readModelBinding(filePath),
   }
   sessionMetaCache.set(filePath, { mtimeMs: fstat.mtimeMs, size: fstat.size, meta })
   return meta
@@ -979,20 +952,6 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
  */
 export const SCAN_DIR_TTL_MS = 1000
 
-/** 目录列举缓存条目。dir 不匹配（XYZ_AGENT_DATA_DIR 切换 / 测试隔离）即整体失效。 */
-interface ScanDirCacheEntry {
-  dir: string
-  entries: ScannedSessionMeta[]
-  expiresAt: number
-}
-let scanDirCache: ScanDirCacheEntry | null = null
-/**
- * 上次 scanPiSessions 观测的 Date.now()（时钟回拨检测，终审 suggestion）。
- * now < lastNow = 系统时钟后跳（NTP 校时 / 手动改时）→ TTL 判定基于的墙钟不可信，
- * 缓存视为过期强制重扫，否则 now < expiresAt 在回拨窗口内恒真（列表视图冻结）。
- */
-let scanDirLastNow = 0
-
 /** scanPiSessions 的分层选项（wave:perf-w26 D9-1 消费方分层）。 */
 export interface ScanSessionsOptions {
   /**
@@ -1002,18 +961,11 @@ export interface ScanSessionsOptions {
   force?: boolean
 }
 
-/**
- * 显式失效目录列举 TTL 缓存（wave:perf-w26 D9-1）。
- *
- * session delete / fork / rename（runtime 自写文件的操作）后调用——这些写不经 pi 延迟
- * 落盘，显式失效让下一次列表构建立即可见。create 走 pi 延迟落盘，靠 TTL 自然过期，
- * 不调此函数。亦供测试重置（测试间目录隔离）。
- */
-export function invalidateScanDirCache(): void {
-  scanDirCache = null
-  // 回拨检测基准一并重置：缓存条目与观测基准同生命周期重建（测试间/显式失效后无跨窗口泄漏）
-  scanDirLastNow = 0
-}
+// scanDirCache / scanDirLastNow / ScanDirCacheEntry / invalidateScanDirCache 已迁
+// './session-binding-sidecar-io.ts'（persistBindingSidecar 骨架的私有闭包随迁；let 可变
+// 绑定不可跨模块赋值，scanPiSessions 的缓存读写经 lookupScanDirCache /
+// refreshScanDirCache 函数对）。invalidateScanDirCache 经上方 re-export 维持原导出路径
+// （session-store / import-service / 测试直接消费）。
 
 /**
  * 扫描 pi 的 sessions 目录（按 cwd 分组的子目录结构）。
@@ -1028,18 +980,18 @@ export function invalidateScanDirCache(): void {
 export function scanPiSessions(opts?: ScanSessionsOptions): ScannedSessionMeta[] {
   const dir = getSessionsDir()
   const now = Date.now()
-  // 时钟回拨防护（终审 suggestion）：now 落到上次观测之前 → 墙钟被回拨，expiresAt 的
-  // 单调性假设失效 → 缓存不可信，强制重扫并以回拨后的时钟重建基准（几行代码的轻量防护）
-  const clockWentBackwards = now < scanDirLastNow
-  scanDirLastNow = now
-  if (!opts?.force && !clockWentBackwards && scanDirCache && scanDirCache.dir === dir && now < scanDirCache.expiresAt) {
+  // TTL 命中/时钟回拨检测/快照写回归属于 './session-binding-sidecar-io.ts'（lookup 内含
+  // 回拨防护：now 落到上次观测之前 → 缓存不可信强制 miss，并以回拨后的时钟重建基准；
+  // 观测基准在命中判断前无条件更新，与原内联实现时序一致）。
+  const snapshot = lookupScanDirCache(dir, now, opts?.force === true)
+  if (snapshot !== null) {
     // 浅拷贝数组：消费者可安全 sort/splice，不污染缓存本体（meta 元素引用与
     // sessionMetaCache 共享，现状已是只读契约）。
-    return [...scanDirCache.entries]
+    return [...snapshot]
   }
   const results = scanPiSessionsFromDisk(dir)
   // force 刷新同样写缓存：随后 1s 内的列表构建消费方零 IO 读到最新视图。
-  scanDirCache = { dir, entries: results, expiresAt: now + SCAN_DIR_TTL_MS }
+  refreshScanDirCache(dir, now, SCAN_DIR_TTL_MS, results)
   return [...results]
 }
 

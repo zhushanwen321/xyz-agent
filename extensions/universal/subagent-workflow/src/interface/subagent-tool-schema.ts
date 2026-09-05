@@ -12,16 +12,17 @@
 // 编译本 schema 并断言 required/description/enum/pattern 存活——SW 自身测试环境
 // 把 typebox alias 到 mock（丢 options），SO 侧测试以真实构造为对照基准。
 //
-// 层归属：Interface（工具 schema 的家）。SLUG_MAX_LENGTH 权威定义回归 core 侧
-// execution/execute-options-mapper.ts（subagent-core 包抽离 u1-move：core 切面不得
-// 反向 import 壳侧 interface，常量随之内化）——此处 re-export 保持既有 import 路径。
+// 层归属：Interface（工具 schema 的家）。SLUG_MAX_LENGTH 权威定义在 core 侧
+// orchestration/models/types.ts（[D6 合流迁址] 原 execution/execute-options-mapper.ts
+// 已随 mapper 删除，常量迁至 AgentCallOpts.description 字段同文件；core 切面不得
+// 反向 import 壳侧 interface 的约束不变）——此处 re-export 保持既有 import 路径。
 
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 
-import { THINKING_ORDER } from "@zhushanwen/subagent-core/shared/model-ref.ts";
+import { THINKING_ORDER } from "@zhushanwen/subagent-core";
 
-import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core/execution/execute-options-mapper.ts";
+import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core";
 
 export { SLUG_MAX_LENGTH };
 

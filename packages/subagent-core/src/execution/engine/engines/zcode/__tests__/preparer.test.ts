@@ -1,6 +1,8 @@
-// preparer.test.ts —— 池目录 SSOT / 原子写 / mtime 免重写 / 无 plugins 块 / 凭据与模型
-// 前置错误（验收 3）。凭据源 = v2 config 单源（2026-08-25 拍板：不读
-// ~/.zcode/cli/config.json——GUI 不管理该文件，可能残留历史验证配置）。
+// preparer.test.ts —— v2 单源模型解析 / 模型可发现性 / 凭据与模型前置错误。
+// 凭据源 = v2 config 单源（2026-08-25 拍板：不读 ~/.zcode/cli/config.json——GUI 不
+// 管理该文件，可能残留历史验证配置）。原 HOME 池化面（池目录 SSOT / 原子写 /
+// mtime 免重写 / 池 config 无 plugins 块）已随「共享宿主 HOME」重构删除（2026-09：
+// app-server 侧凭据经 appserver-launcher fs 拦截注入，不再建池写 config）。
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -8,17 +10,9 @@ import * as path from "node:path";
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { resolvePoolDir } from "../../../paths.ts";
-import {
-  ZcodePrepareError,
-  computeZcodePoolKey,
-  listZcodeModels,
-  prepareZcodeHome,
-  resolveZcodeModelRef,
-} from "../preparer.ts";
+import { ZcodePrepareError, listZcodeModels, resolveZcodeModelRef } from "../preparer.ts";
 
 let tmpRoot: string;
-let dataDir: string;
 let v2Path: string;
 
 function writeJson(p: string, v: unknown): void {
@@ -41,7 +35,6 @@ function seedSources(): void {
 
 beforeEach(() => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "zcode-preparer-"));
-  dataDir = path.join(tmpRoot, "data");
   v2Path = path.join(tmpRoot, "v2-config.json");
   seedSources();
 });
@@ -127,102 +120,5 @@ describe("listZcodeModels（U7 可发现性）", () => {
 
   it("v2 不可读 → 空清单（fail-safe）", () => {
     expect(listZcodeModels({ v2ConfigPath: path.join(tmpRoot, "absent.json") })).toEqual([]);
-  });
-});
-
-describe("computeZcodePoolKey", () => {
-  it("provider 特殊字符安全化 + model 短名保留点号（zsub homePoolDir 同构）", () => {
-    expect(computeZcodePoolKey("builtin:bigmodel-coding-plan/GLM-5.3")).toBe(
-      "home-builtin-bigmodel-coding-plan-GLM-5.3",
-    );
-    expect(computeZcodePoolKey("router/mimo-v2.5-pro")).toBe("home-router-mimo-v2.5-pro");
-  });
-});
-
-describe("prepareZcodeHome（验收 3）", () => {
-  it("池目录 = resolvePoolDir SSOT，config.json 原子写且无 plugins 块", () => {
-    const prepared = prepareZcodeHome({
-      engineDataDir: dataDir,
-      modelRef: `${PROVIDER_A}/GLM-5.3`,
-      sources: { v2ConfigPath: v2Path },
-    });
-    expect(prepared.wroteConfig).toBe(true);
-    // 池目录必须与 paths.ts SSOT 同源（禁自拼）
-    expect(prepared.homeDir).toBe(resolvePoolDir(dataDir, "zcode", prepared.poolKey));
-    expect(prepared.poolKey).toBe("home-builtin-bigmodel-coding-plan-GLM-5.3");
-
-    const written = JSON.parse(fs.readFileSync(prepared.configPath, "utf8")) as Record<string, unknown>;
-    expect(written["model"]).toEqual({ main: `${PROVIDER_A}/GLM-5.3` });
-    expect(Object.keys(written["provider"] as Record<string, unknown>)).toEqual([PROVIDER_A]);
-    // 第二重门禁：刻意不写 plugins 块（防递归 + 不加载宿主插件）
-    expect("plugins" in written).toBe(false);
-    // 原子写：无 tmp 残留
-    const leftovers = fs.readdirSync(path.dirname(prepared.configPath)).filter((f) => f.includes(".tmp-"));
-    expect(leftovers).toEqual([]);
-    // 只写目标 provider（每池单 provider 单模型，凭据落盘面最小）
-    const providerEntry = (written["provider"] as Record<string, { options?: { apiKey?: string } }>)[PROVIDER_A]!;
-    expect(providerEntry.options?.apiKey).toBe("key-a");
-  });
-
-  it("mtime 比对免重写：源未变时第二次 prepare 零写入", () => {
-    const opts = {
-      engineDataDir: dataDir,
-      modelRef: `${PROVIDER_A}/GLM-5.3`,
-      sources: { v2ConfigPath: v2Path },
-    };
-    const first = prepareZcodeHome(opts);
-    expect(first.wroteConfig).toBe(true);
-    const statAfterFirst = fs.statSync(first.configPath);
-    const second = prepareZcodeHome(opts);
-    expect(second.wroteConfig).toBe(false);
-    expect(fs.statSync(second.configPath).mtimeMs).toBe(statAfterFirst.mtimeMs);
-  });
-
-  it("源 config 变新（mtime 推进）触发重写（凭据刷新传播）", async () => {
-    const opts = {
-      engineDataDir: dataDir,
-      modelRef: `${PROVIDER_A}/GLM-5.3`,
-      sources: { v2ConfigPath: v2Path },
-    };
-    prepareZcodeHome(opts);
-    // 源 mtime 推到未来（模拟桌面端刷新 apiKey）
-    const future = new Date(Date.now() + 10_000);
-    fs.utimesSync(v2Path, future, future);
-    const again = prepareZcodeHome(opts);
-    expect(again.wroteConfig).toBe(true);
-  });
-
-  it("池 config 损坏（torn write 形态）时重建", () => {
-    const opts = {
-      engineDataDir: dataDir,
-      modelRef: `${PROVIDER_A}/GLM-5.3`,
-      sources: { v2ConfigPath: v2Path },
-    };
-    const first = prepareZcodeHome(opts);
-    fs.writeFileSync(first.configPath, "{ torn", "utf8");
-    const again = prepareZcodeHome(opts);
-    expect(again.wroteConfig).toBe(true);
-    expect(() => JSON.parse(fs.readFileSync(again.configPath, "utf8"))).not.toThrow();
-  });
-
-  it("v2 注册表内非默认 provider（如自定义 UUID provider）也能建池", () => {
-    const prepared = prepareZcodeHome({
-      engineDataDir: dataDir,
-      modelRef: `${PROVIDER_B}/mimo-v2.5-pro`,
-      sources: { v2ConfigPath: v2Path },
-    });
-    const written = JSON.parse(fs.readFileSync(prepared.configPath, "utf8")) as {
-      provider: Record<string, { options?: { apiKey?: string } }>;
-    };
-    expect(written.provider[PROVIDER_B]!.options?.apiKey).toBe("key-b");
-  });
-
-  it("模型引用在 v2 不存在 → model_not_available", () => {
-    try {
-      prepareZcodeHome({ engineDataDir: dataDir, modelRef: "ghost/m", sources: { v2ConfigPath: v2Path } });
-      expect.unreachable("should throw");
-    } catch (err) {
-      expect((err as ZcodePrepareError).code).toBe("model_not_available");
-    }
   });
 });

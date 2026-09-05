@@ -29,6 +29,7 @@ import {
 import { findPiExecutable } from '../pi/find-pi-executable.js'
 import { buildOutboundChildEnv } from '../spawn-env.js'
 import { createPiRelayLog, type PiSessionLog } from '../logger.js'
+import { toErrorMessage } from '../../utils/errors.js'
 import { RelayTee } from './relay-tee.js'
 import { getRelayChildrenDir, getRelayPidFilePath } from './relay-paths.js'
 
@@ -89,10 +90,38 @@ export interface RelayRegistryOptions {
   piCommand?: string
 }
 
-/** 单帧写出（JSONL 协议，base64 封装字节保精确）。 */
+/**
+ * 单帧写出（JSONL 协议，base64 封装字节保精确）。
+ *
+ * 连接级容错（2026-09-04 runtime 整机崩溃事故）：对端半关闭（FIN 已达、本端
+ * writable 仍在）时 `destroyed` 为 false 但 `conn.write()` 走 writeAfterFIN 同步抛
+ * EPIPE——异常发生在 child stdout 'data' 回调等事件链中，无捕获即进程级
+ * uncaughtException → 整机 graceful shutdown（全部 session 中断）。流写失败只影响
+ * 本连接（清理由 close/error 路径的 kill-on-disconnect 兜底），吞掉降级为 debug
+ * 日志，禁止把连接级故障升级为进程级故障。`writableEnded` 覆盖本端已 end 的对称场景。
+ */
 function writeFrame(conn: Socket, frame: Record<string, unknown>): void {
+  if (conn.destroyed || conn.writableEnded) return
+  try {
+    conn.write(`${JSON.stringify(frame)}\n`)
+  // eslint-disable-next-line taste/no-silent-catch -- 连接已死时丢帧是正确降级（丢的只是本连接转发帧，清理由 close/error 路径兜底）；事件回调内无调用方可传播，降级 debug 防日志噪声
+  } catch (e) {
+    console.debug('[relay] frame write failed (connection half-closed or dead):', toErrorMessage(e))
+  }
+}
+
+/**
+ * 连接关闭的同步安全包装：destroyed socket 上 `end()` 同步抛 ERR_STREAM_DESTROYED
+ * （child error/exit 回调与 conn close 的竞态窗口可达），best-effort 关闭即可。
+ */
+function endConn(conn: Socket): void {
   if (conn.destroyed) return
-  conn.write(`${JSON.stringify(frame)}\n`)
+  try {
+    conn.end()
+  // eslint-disable-next-line taste/no-silent-catch -- 竞态窗口内已 destroyed：无需再关，无信息可记
+  } catch {
+    // 已 destroyed（竞态）：无需再关
+  }
 }
 
 /** kill(pid, 0) 探活。EPERM 视为活（存在但不可杀——不是本进程组的孤儿）。 */
@@ -207,6 +236,14 @@ export class RelayRegistry {
 
   /** socket server 的 connection 入口：等待握手 → 校验 → 注册 + spawn + 字节泵。 */
   handleConnection(conn: Socket): void {
+    // 连接级 error 兜底（对端 RST → ECONNRESET 等）：socket 'error' 无 listener 时
+    // EventEmitter emit 直接 throw → uncaughtException → 整机崩溃（与 writeFrame 的
+    // EPIPE 同族，2026-09-04 事故审计补齐）。错误只归本连接——destroy 后由 'close'
+    // 走既有 kill-on-disconnect / 注册清理路径，不升级故障域。
+    conn.on('error', (err) => {
+      console.warn('[relay] connection error, destroying:', err.message)
+      conn.destroy()
+    })
     const handshakeTimer = setTimeout(() => {
       console.warn('[relay] handshake timeout, closing connection')
       conn.destroy()
@@ -214,6 +251,11 @@ export class RelayRegistry {
     handshakeTimer.unref()
 
     const rl = createInterface({ input: conn })
+    // readline 会把 input 流的 'error' 转发到 interface 实例上 re-emit（Node 文档
+    // Interface 'error' 事件）——rl 无 listener 时同样 throw 成 uncaughtException，
+    // 是 conn 层 listener 之外的独立逃逸路径（事故审计发现的第二颗地雷）。转发只是
+    // 通知机制，真实处置已在 conn 层 listener（destroy + 清理路径），此处 no-op 吞掉。
+    rl.on('error', () => {})
     rl.once('close', () => clearTimeout(handshakeTimer))
 
     let handshaked = false
@@ -225,7 +267,7 @@ export class RelayRegistry {
         const frame = this.tryParseFrame(line)
         if (frame === null || frame.kind !== 'handshake') {
           writeFrame(conn, { kind: 'reject', reason: 'malformed', supported: [RELAY_PROTOCOL_VERSION] })
-          conn.end()
+          endConn(conn)
           return
         }
         this.registerHandshake(conn, frame)
@@ -239,10 +281,18 @@ export class RelayRegistry {
         const entry = this.entries.get(conn)
         if (!entry) return
         const bytes = Buffer.from(frame.b64, 'base64')
-        entry.child.stdin?.write(bytes, (err) => {
-          // EPIPE = 子进程已死（exit 帧链路接管），忽略避免未处理流错误
-          if (err) console.debug(`[relay] stdin write failed (child may be dead) recordId=${entry.recordId}:`, err.message)
-        })
+        // 同步抛防护（对齐 writeFrame 事故修复）：Writable.write 在 destroyed 流上
+        // 同步抛 ERR_STREAM_DESTROYED，readline 回调中无捕获即 uncaughtException；
+        // 异步错误（EPIPE）走既有 callback 分支。
+        try {
+          entry.child.stdin?.write(bytes, (err) => {
+            // EPIPE = 子进程已死（exit 帧链路接管），忽略避免未处理流错误
+            if (err) console.debug(`[relay] stdin write failed (child may be dead) recordId=${entry.recordId}:`, err.message)
+          })
+        } catch (e) {
+          // child stdin 已 destroyed：丢帧降级（子进程生命周期由 exit 帧链路接管），事件回调内无调用方可传播
+          console.debug(`[relay] stdin write threw (child stream destroyed) recordId=${entry.recordId}:`, toErrorMessage(e))
+        }
       }
     })
   }
@@ -266,21 +316,21 @@ export class RelayRegistry {
     // 版本协商：v > runtime 支持版本 → reject(reason:'version') + 断连（代理退出码 10）
     if (typeof frame.v !== 'number' || frame.v > RELAY_PROTOCOL_VERSION) {
       writeFrame(conn, { kind: 'reject', reason: 'version', supported: [RELAY_PROTOCOL_VERSION] })
-      conn.end()
+      endConn(conn)
       console.warn(`[relay] handshake rejected: version v=${String(frame.v)} > supported ${RELAY_PROTOCOL_VERSION}`)
       return
     }
     // 归属校验：字段形状 + env 归属键（防任意本地进程挂载借道 spawn，见两谓词注释）
     if (!hasValidHandshakeFrameShape(frame) || !isHandshakeEnvOwnershipValid(frame)) {
       writeFrame(conn, { kind: 'reject', reason: 'identity', supported: [RELAY_PROTOCOL_VERSION] })
-      conn.end()
+      endConn(conn)
       console.warn('[relay] handshake rejected: identity/env validation failed')
       return
     }
     // 同 recordId 重复注册：旧条目可能还活着（异常重连），拒绝新连接防双代理同 id
     if (this.recordIdToConn.has(frame.recordId)) {
       writeFrame(conn, { kind: 'reject', reason: 'duplicate', supported: [RELAY_PROTOCOL_VERSION] })
-      conn.end()
+      endConn(conn)
       console.warn(`[relay] handshake rejected: duplicate recordId=${frame.recordId}`)
       return
     }
@@ -334,7 +384,7 @@ export class RelayRegistry {
       // extension 走既有失败路径（§7 错误表：代理层失败不设独立错误面）
       console.error(`[relay] spawn failed recordId=${frame.recordId}:`, e)
       writeFrame(conn, { kind: 'exit', code: SPAWN_FAILURE_EXIT_CODE, signal: null })
-      conn.end()
+      endConn(conn)
       return undefined
     }
   }
@@ -373,14 +423,14 @@ export class RelayRegistry {
       console.error(`[relay] child error recordId=${entry.recordId}:`, err)
       this.cleanupEntry(entry)
       writeFrame(conn, { kind: 'exit', code: SPAWN_FAILURE_EXIT_CODE, signal: null })
-      conn.end()
+      endConn(conn)
     })
 
     child.once('exit', (code, signal) => {
       // 正常/被杀退出：exit 帧传播 → 关连接 → 清理（tee 销毁、pid 文件删除、注销）
       this.cleanupEntry(entry)
       writeFrame(conn, { kind: 'exit', code, signal: signal ?? null })
-      conn.end()
+      endConn(conn)
       console.log(`[relay] child exited recordId=${entry.recordId} code=${String(code)} signal=${String(signal)}`)
     })
 

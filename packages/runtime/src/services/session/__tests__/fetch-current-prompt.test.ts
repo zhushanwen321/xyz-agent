@@ -51,7 +51,7 @@ function makeSessionStore(): ISessionStore {
     readSessionJsonlText: () => null,
     readSessionEndMeta: () => null,
     persistHandoffSidecar: () => {},
-    trash: () => {},
+    trash: () => Promise.resolve(),
   }
 }
 

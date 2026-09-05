@@ -209,6 +209,9 @@
         :cookie-input="quotaCookieInput"
         :api-key-input="quotaApiKeyInput"
         :api-key-configured="quotaApiKeyConfigured"
+        :workspace-input="quotaWorkspaceInput"
+        :workspace-configured="quotaWorkspaceConfigured"
+        :needs-workspace="quotaNeedsWorkspace"
         :test-status="quotaTestStatus"
         :test-error-msg="quotaTestError"
         :quota-row="quotaData"
@@ -228,40 +231,22 @@
         @test-query="quotaTestQuery"
         @save-cookie="quotaSaveCookie"
         @save-api-key="quotaSaveApiKey"
+        @save-workspace="quotaSaveWorkspace"
         @update:cookie-input="quotaCookieInput = $event"
         @update:api-key-input="quotaApiKeyInput = $event"
+        @update:workspace-input="quotaWorkspaceInput = $event"
       />
 
-      <!-- 测试连接 / 自动发现 -->
-      <div class="flex flex-wrap gap-2">
-        <Button
-          variant="secondary"
-          class="gap-1.5 px-2.5 py-1.5 text-[12px] text-neutral-mid [&_svg]:size-3.5"
-          :disabled="testing || discovering"
-          @click="testConnection"
-        >
-          <Loader2 v-if="testing" class="animate-spin" />
-          <Wifi v-else />
-          {{ testing ? t('settings.providerEdit.testing') : t('settings.providerEdit.testConnection') }}
-        </Button>
-        <Button
-          variant="secondary"
-          class="gap-1.5 px-2.5 py-1.5 text-[12px] text-neutral-mid [&_svg]:size-3.5"
-          :disabled="discovering || testing"
-          @click="autoDiscover"
-        >
-          <Loader2 v-if="discovering" class="animate-spin" />
-          <RefreshCw v-else />
-          {{ discovering ? t('settings.providerEdit.discovering') : t('settings.providerEdit.autoDiscover') }}
-        </Button>
-      </div>
-
-      <div v-if="testResult" class="flex items-center gap-1.5 text-[12px]" :class="testResult === 'ok' ? 'text-success' : 'text-danger'">
-        <CheckCircle2 v-if="testResult === 'ok'" class="size-3.5" />
-        <AlertCircle v-else class="size-3.5" />
-        {{ testResult === 'ok' ? t('settings.providerEdit.testOk', { count: localModels.length }) : t('settings.providerEdit.testFail') }}
-      </div>
-      <div v-if="discoverResult" class="text-[12px] text-neutral-mid">{{ discoverResult }}</div>
+      <!-- 测试连接 / 自动发现（纯展示块抽为 ProviderTestDiscoverSection，编排仍在 useProviderEdit） -->
+      <ProviderTestDiscoverSection
+        :testing="testing"
+        :discovering="discovering"
+        :test-result="testResult"
+        :discover-result="discoverResult"
+        :model-count="localModels.length"
+        @test="testConnection"
+        @discover="autoDiscover"
+      />
     </div>
 
     <!--
@@ -368,7 +353,7 @@ import { Button, Input, Select, SelectTrigger, SelectValue, SelectContent, Selec
 import { provide, watch, ref, computed, toRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  Eye, EyeOff, Loader2, Wifi, RefreshCw, CheckCircle2, AlertCircle,
+  Eye, EyeOff,
   X, Trash2,
 } from '@lucide/vue'
 import { matchQuotaPreset } from '@xyz-agent/shared'
@@ -380,6 +365,7 @@ import {
 import { useQuotaConfigureFactory as useQuotaConfigure } from '../injection-keys'
 import CodingPlanSection from '../coding-plan/CodingPlanSection.vue'
 import ModelListSection from '../common/ModelListSection.vue'
+import ProviderTestDiscoverSection from './ProviderTestDiscoverSection.vue'
 import { useSettingsToast as useToast } from '../injection-keys'
 
 const props = defineProps<{
@@ -426,6 +412,9 @@ const {
   cookieInput: quotaCookieInput,
   apiKeyInput: quotaApiKeyInput,
   apiKeyConfigured: quotaApiKeyConfigured,
+  workspaceInput: quotaWorkspaceInput,
+  workspaceConfigured: quotaWorkspaceConfigured,
+  needsWorkspace: quotaNeedsWorkspace,
   testStatus: quotaTestStatus,
   testError: quotaTestError,
   testFailReason: quotaTestFailReason,
@@ -441,6 +430,7 @@ const {
   selectFetcher: quotaSelectFetcher,
   saveCookie: quotaSaveCookie,
   saveApiKey: quotaSaveApiKey,
+  saveWorkspace: quotaSaveWorkspace,
   testQuery: quotaTestQuery,
 } = quotaFactory(matchedPreset, toRef(props, 'provider'))
 

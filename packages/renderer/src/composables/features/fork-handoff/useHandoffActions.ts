@@ -26,7 +26,7 @@ import { triggerEnterHandoffMode } from '@/composables/panel/useHandoffModeChann
  * Handoff 操作 composable。
  *
  * @param focusedSessionId 焦点 panel 绑定的 session（来自 useSidebar，驱动 ⌘H 快捷键的 handoff 源）。
- *   注入而非内部派生：focusedSessionId 是 useSidebar 的派生状态，复用避免重复定义 + 单一来源。
+ *   注入而非内部派生：focusedSessionId 是 useSidebar 的派生状态（代理 core use-session），复用避免重复定义 + 单一来源。
  */
 export function useHandoffActions(focusedSessionId: Ref<string | null>) {
   const chat = useChatStore()
