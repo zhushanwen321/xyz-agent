@@ -227,3 +227,56 @@ jobs:
           files: release-artifacts/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── GitCode 镜像同步（国内下载加速）────────────────────────
+  # GitHub Releases 是唯一权威源（SSOT），本 job 只把附件镜像到 GitCode 同 tag 的
+  # Release，供国内用户加速下载；GitCode 侧被清理/下线不影响官方分发。
+  # 依赖：secret GITCODE_TOKEN（GitCode 私人令牌）+ variable GITCODE_REPO（GitCode
+  # 仓库路径 owner/repo）。脚本幂等，job 失败直接重跑即可补齐附件。
+  # 写路径行为由 gitcode-sync-probe.yml 探针验证（2026-09 首次接入）。
+  gitcode-sync:
+    name: Sync Release to GitCode
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: >-
+      !cancelled() &&
+      needs.release.result == 'success' &&
+      startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./apps/electron/package.json').version")
+          mkdir -p release-artifacts
+          # 从刚创建的 GitHub Release 拉全部附件（含 release-notes.md，若构建阶段生成）
+          gh release download "v${VERSION}" --repo "${{ github.repository }}" \
+            --dir release-artifacts --clobber
+          ls -la release-artifacts
+
+      - name: Sync to GitCode
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GITCODE_REPO}" ]; then
+            echo "::error::variable GITCODE_REPO 未配置 —— 仓库 Settings → Secrets and variables → Actions → Variables → New repository variable（Name: GITCODE_REPO，值: GitCode 仓库路径 owner/repo）"
+            exit 1
+          fi
+          if [ -z "${GITCODE_TOKEN}" ]; then
+            echo "::error::secret GITCODE_TOKEN 未配置 —— Settings → Secrets and variables → Actions → New repository secret（值: GitCode 私人令牌）"
+            exit 1
+          fi
+          VERSION=$(node -p "require('./apps/electron/package.json').version")
+          NOTES=""
+          [ -f release-artifacts/release-notes.md ] && NOTES="release-artifacts/release-notes.md"
+          PRERELEASE_FLAG=""
+          case "${GITHUB_REF}" in *-*) PRERELEASE_FLAG="--prerelease" ;; esac
+          node scripts/gitcode-release-sync.mjs sync \
+            "v${VERSION}" "xyz-agent v${VERSION}" "${NOTES}" release-artifacts ${PRERELEASE_FLAG}

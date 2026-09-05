@@ -5,8 +5,9 @@
  * 用法：
  *   探针（验证写路径）：node scripts/gitcode-release-sync.mjs probe [--large]
  *     --large 追加一个 200MB 文件上传 + Range 探测，当场验证「单附件大小上限」
- *   正式同步：node scripts/gitcode-release-sync.mjs sync <tag> <name> <notes-file> <artifacts-dir>
- *     把 <artifacts-dir> 下所有文件同步到 GitCode 同 tag 的 Release（幂等：同名同大小跳过）
+ *   正式同步：node scripts/gitcode-release-sync.mjs sync <tag> <name> <notes-file> <artifacts-dir> [--prerelease]
+ *     把 <artifacts-dir> 下所有文件同步到 GitCode 同 tag 的 Release（幂等：同名同大小跳过）；
+ *     --prerelease 在 release 正文加测试版标注
  *
  * 环境变量（必填）：
  *   GITCODE_TOKEN  GitCode 私人令牌（GitHub Actions 中配置为 secret GITCODE_TOKEN）
@@ -275,11 +276,13 @@ async function runProbe({ large }) {
 
 /* ── 模式二：正式同步 ─────────────────────────────────────── */
 
-async function runSync({ tag, name, notesFile, artifactsDir }) {
-  const body = notesFile ? readFileSync(notesFile, 'utf8') : '';
+async function runSync({ tag, name, notesFile, artifactsDir, prerelease = false }) {
+  // GitCode 的 prerelease 展示位（release_status 字段）行为未验证，用文本标注兜底
+  const notes = notesFile ? readFileSync(notesFile, 'utf8') : '';
+  const body = prerelease ? `【测试版 Pre-release】\n\n${notes}` : notes;
   let release = await findReleaseByTag(tag);
   if (!release) {
-    release = await createRelease({ tag, name, body });
+    release = await createRelease({ tag, name, body, prerelease });
     console.log(`[sync] 已创建 GitCode release：${WEB_BASE}/${repo}/releases/tag/${tag}`);
   } else {
     console.log(`[sync] GitCode release 已存在，复用（幂等补齐附件）`);
@@ -323,11 +326,15 @@ const cmd = argv[0];
 if (cmd === 'probe') {
   await runProbe({ large: argv.includes('--large') });
 } else if (cmd === 'sync') {
-  const [, tag, name, notesFile, artifactsDir] = argv;
+  const pos = argv.slice(1).filter((a) => !a.startsWith('--'));
+  const [tag, name, notesFile, artifactsDir] = pos;
   if (!tag || !name || !artifactsDir) {
-    die('用法：node scripts/gitcode-release-sync.mjs sync <tag> <release-name> <notes-file|空串> <artifacts-dir>');
+    die('用法：node scripts/gitcode-release-sync.mjs sync <tag> <release-name> <notes-file|空串> <artifacts-dir> [--prerelease]');
   }
-  await runSync({ tag, name, notesFile: notesFile || null, artifactsDir });
+  await runSync({
+    tag, name, notesFile: notesFile || null, artifactsDir,
+    prerelease: argv.includes('--prerelease'),
+  });
 } else {
   console.log(`用法：
   node scripts/gitcode-release-sync.mjs probe [--large]
