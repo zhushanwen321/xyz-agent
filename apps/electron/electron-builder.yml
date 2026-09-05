@@ -122,12 +122,9 @@ win:
     - target: nsis
       arch:
         - x64
-    - target: zip
-      arch:
-        - x64
   icon: build/icon.ico
   # release asset 文件名带版本号（同 mac 注释，release-checker pattern 匹配）。
-  # nsis target 的 ${ext} 解析为 exe，zip target 的 ${ext} 解析为 zip。
+  # nsis target 的 ${ext} 解析为 exe。
   # [HISTORICAL] 版本号必须在 setup 之前（TaiJi-<v>-setup-<arch>.exe）：release-checker
   # ASSET_PATTERNS.winX64Exe 用 '-setup-x64.exe' 后缀匹配，setup 在 version 前会导致
   # win 自动升级检测永远匹配不到 release asset（M7-01 P0）。

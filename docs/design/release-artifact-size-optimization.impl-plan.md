@@ -1,6 +1,6 @@
 # Release 附件体积优化（第一批+第二批） 实施计划
 
-基线: <待基线 commit 后回填> | 来源设计: docs/design/release-artifact-size-optimization.md | 日期: 2026-09-05
+基线: 45a581c7e | 来源设计: docs/design/release-artifact-size-optimization.md | 日期: 2026-09-05
 审查报告: docs/design/release-artifact-size-optimization.review-r1.md（must_fix 结论见 §7）
 
 ## 0 章节映射
