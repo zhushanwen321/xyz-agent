@@ -120,7 +120,7 @@ export class CollectCoordinator {
     const snapshotRecord = this.deps.toNotifyRecord(record);
     if (!snapshotRecord) return "sync-skipped";
     this.buffer.push(snapshotRecord);
-    return this.closeDetected() ? "sync-flushed" : "sync-buffered";
+    return this.armFlushIfClosed() ? "sync-flushed" : "sync-buffered";
   }
 
   /** 诊断/测试：当前缓冲成员数（= 已终态未 flush 的 sync 成员数，含合批窗口内成员）。 */
@@ -143,8 +143,9 @@ export class CollectCoordinator {
   }
 
   /** 闭合判定 + 合批排程武装：缓冲非空 && 无非终态 sync 成员 → 排程 flush。
-   *  已有排程挂起时幂等（同窗口合批，不重复定时器）。 */
-  private closeDetected(): boolean {
+   *  已有排程挂起时幂等（同窗口合批，不重复定时器）。（S6 改名：原名 closeDetected
+   *  读作纯检测，实带副作用——武装排程改状态，名实相符优先。） */
+  private armFlushIfClosed(): boolean {
     if (this.buffer.length === 0) return false;
     if (this.hasRunningSync()) return false;
     this.scheduleFlush();

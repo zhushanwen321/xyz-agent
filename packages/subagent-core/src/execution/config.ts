@@ -164,11 +164,9 @@ function sanitizeParsedConfig(parsed: Partial<SubagentsGlobalConfig>): Subagents
   };
 }
 
-/** maxConcurrent 校验：正整数，否则默认。 */
+/** maxConcurrent 校验：正整数，否则默认（S5：委托 sanitizePositiveInt，正整数规则单点化）。 */
 function sanitizeMaxConcurrent(value: unknown): number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0
-    ? value
-    : DEFAULT_MAX_CONCURRENT;
+  return sanitizePositiveInt(value, DEFAULT_MAX_CONCURRENT);
 }
 
 /**

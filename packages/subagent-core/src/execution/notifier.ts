@@ -183,7 +183,10 @@ function formatChars(n: number): string {
   return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
-/** 截断指针行（设计 §3.1.2 样例）：主 agent 据此按需 session_read 取回全文。 */
+/** 截断指针行（设计 §3.1.2 样例）：主 agent 据此按需 session_read 取回全文。
+ *  [S8 code-simplify 口径注] 本函数的 X（total - kept）= **丢弃**字符数；而
+ *  session-reader result-action.ts formatResultTruncation 同模板的 X = **保留**
+ *  字符数（limit）——同模板异语义，统一字符串 = 行为变更，勿顺手改口径。 */
 function buildTruncationPointer(id: string, kept: number, total: number): string {
   return `[truncated ${formatChars(total - kept)} of ${formatChars(total)} chars — full result: session_read {"action":"result","session":"${id}"}]`;
 }
@@ -214,16 +217,16 @@ export function buildBatchLlmContent(
   records: readonly BgNotifyRecord[],
   budget: BatchBudgetParams = DEFAULT_BATCH_BUDGET,
 ): string {
+  // 入口一次物化（S1，code-simplify）：closed 成员 outcome 兑底仅此一处，bodies/计数/
+  // 条目全部读物化结果——「单一权威 deriveOutcome」从注释承诺变构造事实。幂等纯函数，
+  // 与原四处各自推导逐字节等价；running 原样透传零拷贝。
+  const mat = records.map(withMaterializedOutcome);
   let finished = 0;
   let failed = 0;
   let cancelled = 0;
   // 各条目参与预算的正文（§3.1.2 口径）；null = 该条目不展示 result 正文。
-  const bodies = records.map((record): string | null => {
-    const outcome =
-      record.status === "closed"
-        ? record.outcome ?? deriveOutcome(record.closedReason, record.error)
-        : undefined;
-    if (record.status === "closed" && outcome !== "completed") return null;
+  const bodies = mat.map((record): string | null => {
+    if (record.status === "closed" && record.outcome !== "completed") return null;
     return record.result ?? "(empty)";
   });
   const plan = computeBatchBudget(
@@ -231,9 +234,9 @@ export function buildBatchLlmContent(
     budget.perItemChars,
     budget.totalChars,
   );
-  const items = records.map((record, i) => {
+  const items = mat.map((record, i) => {
     if (record.status === "closed") {
-      const outcome = record.outcome ?? deriveOutcome(record.closedReason, record.error);
+      const outcome = record.outcome;
       if (outcome === "completed") finished += 1;
       else if (outcome === "failed") failed += 1;
       else if (outcome === "cancelled") cancelled += 1;
@@ -241,13 +244,11 @@ export function buildBatchLlmContent(
     const body = bodies[i];
     if (body === null || body.length <= plan.effectivePerItem) {
       // 未触预算（含 failed/cancelled 条目）：U3 基线字节不变。
-      return buildLlmContent(withMaterializedOutcome(record));
+      return buildLlmContent(record);
     }
     // 截断：正文保留前 limit 字符 + 省略号，尾接指针行（kept=0 纯清单时省略号一并省略）。
     const kept = body.slice(0, plan.effectivePerItem);
-    const truncated = buildLlmContent(
-      withMaterializedOutcome({ ...record, result: plan.listOnly ? "" : `${kept}…` }),
-    );
+    const truncated = buildLlmContent({ ...record, result: plan.listOnly ? "" : `${kept}…` });
     // 纯清单时 result 置空会在 buildLlmContent 内残留头行尾换行（"Result:\n" + ""），
     // 收掉该空行让条目严格为「头行 + 指针行」两行形态（设计 §3.1.2 纯清单退化）。
     const stripped = plan.listOnly ? truncated.replace(/\n$/, "") : truncated;
@@ -452,6 +453,37 @@ export function createNotifier(host: NotifierHost): BgNotifier {
   };
   let handle: DeliveryHandle = createHandle();
 
+  /** 四步投递链尾部共用段（S2，code-simplify）：notify 单条与 notifyBatch 逐行同构
+   *  的收尾——原两份手写拷贝使注释宣称的「同一四步链」无结构强制，现单点实现。
+   *  ledger 在 → ①写账（拒绝 = false，幂等去重：同 notifyId 已在账/已销账）→
+   *  ②attemptDeliver（settled 边沿 + isIdle 二次复查，③④销账/重放在 ledger 内）；
+   *  ledger 缺（旧装配 / 部分测试，含 jiti 单例分裂的失效形态）→ 内核路径降级 +
+   *  降级留痕 warn（C-ext-06 配套，不改变向后兼容行为）。返回 false 仅 notifyBatch
+   *  消费（调用方跳过落标）；notify 忽略（fire-and-forget）。闭包读 let handle：
+   *  revive 重建后自然指向新 handle。 */
+  function deliverViaLedgerOrKernel(notifyId: string, content: string, details: object): boolean {
+    const ledger = getBoundNotifyLedger();
+    if (ledger) {
+      if (!ledger.record(notifyId, content, details)) return false;
+      ledger.attemptDeliver();
+      return true;
+    }
+    notifyLogger.warn("notify ledger not bound, falling back to delivery kernel path (at-most-once)", {
+      notifyId,
+    });
+    handle.send({
+      payload: {
+        kind: "custom",
+        customType: NOTIFY_CUSTOM_TYPE,
+        content,
+        display: true,
+        details,
+      },
+      dedupeKey: notifyId,
+    });
+    return true;
+  }
+
   return {
     notify(record: BgNotifyRecord): void {
       if (disposed) return;
@@ -474,31 +506,9 @@ export function createNotifier(host: NotifierHost): BgNotifier {
       // 投递尝试）→ ②courier 边沿投递（settled 边沿 + 120s 看门狗 + isIdle 二次
       // 复查）→ ③回执销账 / ④重放幂等均在 ledger 内。record 返回 false = 同
       // notifyId 已在账或已销账（幂等去重，含重启恢复后的已送达账号零重发）。
-      const ledger = getBoundNotifyLedger();
-      if (ledger) {
-        if (!ledger.record(notifyId, content, payload)) return;
-        ledger.attemptDeliver();
-        return;
-      }
-
-      // 无 ledger 装配（旧装配 / 部分测试）：内核路径——合批窗口 / settled 边沿 /
-      // dedupe（按 notifyId，key 规则与旧 dedupeKey 一致：id 或 id:round）不变。
-      // [C-ext-06 配套] 降级留痕：bind 缺失（含 jiti 单例分裂致跨模块读不到绑定的
-      // 失效形态）本是无声分岔，U2 at-least-once 在此退化为内核路径——warn 一条
-      // 供诊断检索，不改变向后兼容行为。
-      notifyLogger.warn("notify ledger not bound, falling back to delivery kernel path (at-most-once)", {
-        notifyId,
-      });
-      handle.send({
-        payload: {
-          kind: "custom",
-          customType: NOTIFY_CUSTOM_TYPE,
-          content,
-          display: true,
-          details: payload,
-        },
-        dedupeKey: notifyId,
-      });
+      // 无 ledger 装配时内核路径降级 + 降级留痕（C-ext-06 配套，见 helper 注释）。
+      // 单条通知为 fire-and-forget，返回值忽略。
+      deliverViaLedgerOrKernel(notifyId, content, payload);
     },
 
     notifyBatch(records: readonly BgNotifyRecord[], budget?: BatchBudgetParams): boolean {
@@ -522,32 +532,9 @@ export function createNotifier(host: NotifierHost): BgNotifier {
       // 否则批 entry 永不销账、重投至放弃。顶层 notifyId 键对 extractBatch 透明（多键无感）。
       const details = { batch: true as const, notifyId: batchNotifyId, items: payloads };
 
-      // 与 notify 同一四步链：①写账（单 entry）→ ②attemptDeliver（settled 边沿 +
-      // isIdle 二次复查——闭合触发即 flush：主 agent STOP 等通知时立刻投递，busy 则
-      // 挂 pending 等边沿）→ ③④销账/重放幂等均在 ledger。返回 false = 同成员集批
-      // 已在账（E1 重建重发 / 重复 flush）→ 调用方跳过落标。
-      const ledger = getBoundNotifyLedger();
-      if (ledger) {
-        if (!ledger.record(batchNotifyId, content, details)) return false;
-        ledger.attemptDeliver();
-        return true;
-      }
-
-      // 无 ledger 装配（旧装配 / 部分测试）：内核路径降级（同 notify 的降级留痕风格）。
-      notifyLogger.warn("notify ledger not bound, falling back to delivery kernel path (at-most-once)", {
-        notifyId: batchNotifyId,
-      });
-      handle.send({
-        payload: {
-          kind: "custom",
-          customType: NOTIFY_CUSTOM_TYPE,
-          content,
-          display: true,
-          details,
-        },
-        dedupeKey: batchNotifyId,
-      });
-      return true;
+      // 与 notify 同一四步链（deliverViaLedgerOrKernel，S2 提取）：返回 false = 同成
+      // 员集批已在账（E1 重建重发 / 重复 flush）→ 调用方跳过落标。
+      return deliverViaLedgerOrKernel(batchNotifyId, content, details);
     },
 
     flushPendingNotifications(): void {

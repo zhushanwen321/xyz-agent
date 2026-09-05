@@ -694,7 +694,7 @@ export class SubagentService {
    *  → notifyBatch 落 buildBatchLlmContent 设计默认值（4000/24000，E5 不炸启动）。
    *  sanitizeCollectSync 保证节存在时两字段必有合法正整数。 */
   private getCollectSyncBudget(): BatchBudgetParams | undefined {
-    const cs = this.modelService.getGlobalConfig().collectSync;
+    const cs = this.collectSyncSection();
     return cs !== undefined ? { perItemChars: cs.perItemChars, totalChars: cs.totalChars } : undefined;
   }
 
@@ -1977,8 +1977,14 @@ export class SubagentService {
    * 新 session 生效语义与 engine 配置一致（globalConfig 由 ModelConfigService
    * reloadGlobalConfig 刷新）。
    */
+  /** collectSync 节单读取点（S9，code-simplify）：「读节」一处，「投影成 default 或
+   *  budget」各自 accessor 负责（getCollectSyncDefault / getCollectSyncBudget）。 */
+  private collectSyncSection() {
+    return this.modelService.getGlobalConfig().collectSync;
+  }
+
   getCollectSyncDefault(): "async" | "sync" {
-    return this.modelService.getGlobalConfig().collectSync?.default ?? DEFAULT_COLLECT_SYNC.default;
+    return this.collectSyncSection()?.default ?? DEFAULT_COLLECT_SYNC.default;
   }
 
   /** [perf] 单 record 详情懒加载（全量：eventLog/displayItems/result/turns/tokens）。

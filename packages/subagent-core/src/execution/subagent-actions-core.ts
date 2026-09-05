@@ -34,6 +34,7 @@ import type {
   SubagentRecord,
 } from "./types.ts";
 import { ResurrectDeniedError } from "./types.ts";
+import { COLLECT_SCAN_LIMIT } from "./collect-coordinator.ts";
 
 // ============================================================
 // 常量
@@ -422,12 +423,12 @@ export async function startHandler(
  * 且无 batchFinalized 标记的数量。含调用方刚启动的本条（record 已带 collectMode 入
  * 枚举——U2 偏差#4 接线）。
  *
- * 扫描上限 1000 与 service 冷路径全扫兑底同量级（COLD_LOOKUP_SCAN_LIMIT 同值，
- * 该常量未导出故字面量 + 注释锚定）。
+ * 扫描上限与 service 冷路径全扫兑底同量级；常量用本 feature 已导出的
+ * COLLECT_SCAN_LIMIT（collect 域扫描上限单点定义，S4 code-simplify）。
  */
 function countPendingSyncRecords(service: SubagentService): number {
   let count = 0;
-  for (const r of service.collectRecords(1000, "all")) {
+  for (const r of service.collectRecords(COLLECT_SCAN_LIMIT, "all")) {
     if (r.collectMode === "sync" && r.batchFinalized !== true) count += 1;
   }
   return count;

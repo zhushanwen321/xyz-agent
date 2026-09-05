@@ -270,6 +270,9 @@ async function resolveSessionId(
   action: SessionReadAction,
   agentDir: string,
   source?: 'main' | 'subagent',
+  /** S3（code-simplify）：批量调用方（doResult）预取的 manifest 列表——省去逐 id
+   *  重复全量扫 subagents/ 树（N+1）。单 id 调用点不传，行为零变化。 */
+  prefetchedManifests?: RecordManifest[],
 ): Promise<ResolveResult> {
   const session = stripHash(requireStr(rawSession, 'session', action))
 
@@ -293,9 +296,9 @@ async function resolveSessionId(
     return { kind: 'ok', sessionId: headerId, fileName: expanded }
   }
 
-  // ② sa-id 前缀 → record manifest 精确反查
+  // ② sa-id 前缀 → record manifest 精确反查（批量调用方传预取列表，S3：避免逐 id 全量重扫）
   if (session.startsWith('sa-')) {
-    const manifests = await listRecordManifests(agentDir)
+    const manifests = prefetchedManifests ?? (await listRecordManifests(agentDir))
     const hits = manifests.filter((m) => m.id === session)
     if (hits.length === 0) {
       throw err(formatSaIdNotFound(session))

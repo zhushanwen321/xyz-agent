@@ -15,6 +15,7 @@
  */
 import type { Entry, ParseResult } from './core/parser.js'
 import type { MatchedSession } from './discovery/find.js'
+import { listRecordManifests, type RecordManifest } from './discovery/subagents.js'
 import type { ResolveResult, SessionReadAction, SessionReadParams, ToolResult } from './tool-handler.js'
 
 /** result 批量上限（design subagent-sync-collect §3.1.3：一次最多 10 个）。 */
@@ -36,6 +37,8 @@ export interface ResultActionDeps {
     action: SessionReadAction,
     agentDir: string,
     source?: 'main' | 'subagent',
+    /** S3：批量预取的 manifest 列表（避免逐 id 重复全量扫描）；单 id 不传。 */
+    prefetchedManifests?: RecordManifest[],
   ): Promise<ResolveResult>
   disambiguate(query: string, candidates: MatchedSession[]): ToolResult
   safeParse(fileName: string): Promise<ParseResult>
@@ -48,6 +51,12 @@ export interface ResultActionDeps {
  *
  * 与 record 侧 text_delta 直累积同构：同一 message 内多个 text 块无分隔拼接
  *（流式 delta 逐段 append），thinking/toolCall 块不入 record.text，此处同样排除。
+ *
+ * [S7 code-simplify 登记] 本包内第 4 个同構「text 块提取」变体（其余三处均在
+ * tool-handler.ts / discovery/find.ts）：messageReadableText（'' join + 占位符）、
+ * extractContentText（'\n' join）、extractTextFromContent（' ' join + 空返 undefined）。
+ * 本变体的 '' 无分隔拼接是 A4 取回逐字节一致锁定的硬理由（对齐 record.result 的
+ * 流式 delta 无分隔累积），不可与带分隔符的变体合并——差异是行为敏感点，勿「顺手统一」。
  */
 function assistantMessageText(content: unknown): string {
   if (typeof content === 'string') return content
@@ -112,6 +121,12 @@ interface ResultItem {
 }
 
 /** result 截断尾提示（design §3.1.3：超出截断 + 提示读原文件）。 */
+/** result 条目截断提示行。
+ *
+ * [S8 code-simplify 口径注] 本函数的 X = **保留**字符数（limit）；而 subagent-core
+ * notifier.ts buildTruncationPointer 同模板的 X = **丢弃**字符数（total - kept）。
+ * 两处措辞同构但口径相反（主 agent 会先后消费两种通知），统一字符串 = 行为变更，
+ * 勿顺手改口径——读本行时先确认在消费哪一侧。 */
 function formatResultTruncation(
   raw: string,
   sessionFile: string,
@@ -180,9 +195,14 @@ export async function doResult(
 ): Promise<ToolResult> {
   const ids = parseResultSessionList(params.session, deps)
   const limit = resolveResultLimit(params.limit)
+  // S3（code-simplify）：sa- 形态走 manifest 反查，逐 id 调用会重复全量扫 subagents/ 树
+  //（N+1）——批量入口预取一次注入。uuid 片段/路径形态不经 manifest，不预取。
+  const prefetchedManifests = ids.some((id) => id.startsWith('sa-'))
+    ? await listRecordManifests(agentDir)
+    : undefined
   const items: ResultItem[] = []
   for (const id of ids) {
-    const resolved = await deps.resolveSessionId(id, 'result', agentDir, params.source)
+    const resolved = await deps.resolveSessionId(id, 'result', agentDir, params.source, prefetchedManifests)
     if (resolved.kind === 'multi') return deps.disambiguate(resolved.query, resolved.candidates)
     const { entries } = await deps.safeParse(resolved.fileName)
     const text = extractFinalAssistantText(entries)
