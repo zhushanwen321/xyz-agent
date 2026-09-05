@@ -14,6 +14,9 @@
  *   回退 undici 直连兜底），参数数组传参不走 shell，无注入面（D6）。
  *
  * [HISTORICAL] 不变量：
+ * - 停滞检测是本模块唯一超时形态（timeout-slow-flow-wallclock D1）：外层总墙钟已删除，
+ *   连接与传输停滞由 curl 内部 --connect-timeout 10 + --speed-limit 1 --speed-time 30
+ *   覆盖（exit 28 双成因，映射文案按 stderr 判别区分）；只要传输持续（≥1B/s）就不会被杀。
  * - exit 33（服务器对续传 Range 回 200 等 range error）→ 删 temp 后从头重下一次
  *   （等价 undici 路径「200 回退覆盖写」语义，D6）；重试仍失败按映射抛出，不无限重试。
  * - exit 7（连接失败）抛 {@link CurlConnectionError}：D10 第二步→第三步（判定代理
@@ -39,12 +42,6 @@ import { UpdateError } from './types.js'
 
 // ─── 常量（对齐口径见各注释；download-asset 的同名常量未导出，故本地声明） ────
 
-/** ms → s 换算因子（错误消息里的超时秒数展示）。 */
-const MS_PER_SECOND = 1000
-
-/** 总时长上限 1h：对齐 download-asset 的 DOWNLOAD_TIMEOUT_MS（3600s 慢速网络兜底）。 */
-const CURL_TOTAL_TIMEOUT_MS = 3_600_000
-
 /** 空闲中止：30s 无有效字节即中止（--speed-limit 1 --speed-time 30），对齐 IDLE_TIMEOUT_MS。 */
 const CURL_SPEED_TIME_SECONDS = 30
 
@@ -64,7 +61,7 @@ const CURL_EXIT_OK = 0
 const CURL_EXIT_CONNECT_FAILED = 7
 /** 22：HTTP 状态错误（-f 语义：≥400 时不落 body 即退出，http_code 仍经 -w 输出）。 */
 const CURL_EXIT_HTTP_ERROR = 22
-/** 28：超时（connect-timeout / speed-time 触发）。 */
+/** 28：超时（connect-timeout / speed-time 触发；删总钟后是 curl 侧唯一超时出口——双成因，文案按 stderr 判别）。 */
 const CURL_EXIT_TIMEOUT = 28
 /** 33：HTTP range error——续传 Range 被服务器以 200 拒绝等。 */
 const CURL_EXIT_RANGE_ERROR = 33
@@ -189,6 +186,19 @@ function parseHttpCode(stdoutText: string): string | undefined {
   return match?.[1]
 }
 
+/**
+ * curl exit 28 的 stderr 成因判别（timeout-slow-flow-wallclock D1 + r2 复审 SG-3）。
+ *
+ * exit 28 双成因：--connect-timeout 10s（连接未建立）与 --speed-time 30s（传输停滞）。
+ * stderr 判别 connect-timeout 信号词 → 连接超时；否则（含 stderr 为空）按停滞。
+ * 典型 stderr：connect-timeout = "curl: (28) Connection timed out after N milliseconds"
+ * / "Failed to connect..."；speed-time = "curl: (28) Operation too slow. Less than
+ * N bytes/sec transferred the last M seconds"。
+ */
+function isCurlConnectTimeout(stderrText: string): boolean {
+  return /connection timed out|failed to connect/i.test(stderrText)
+}
+
 /** 把单次 curl 的原始退出码映射为用户可见错误（D6 exit code 表）。 */
 function mapCurlExitToError(err: CurlExitError): UpdateError {
   const rawCause = err.stderrText.trim() || undefined
@@ -201,8 +211,11 @@ function mapCurlExitToError(err: CurlExitError): UpdateError {
         rawCause,
       )
     case CURL_EXIT_TIMEOUT:
+      // 双成因文案：不把连接失败误标为「30 秒无数据停滞」（误导用户排查方向）
       return new UpdateError(
-        `curl download timeout (exit ${err.exitCode}, connect ${CURL_CONNECT_TIMEOUT_SECONDS}s / idle ${CURL_SPEED_TIME_SECONDS}s)`,
+        isCurlConnectTimeout(err.stderrText)
+          ? `curl connection timeout (no connection within ${CURL_CONNECT_TIMEOUT_SECONDS}s, exit ${err.exitCode})`
+          : `curl download stalled (no data for ${CURL_SPEED_TIME_SECONDS}s, exit ${err.exitCode})`,
         'downloading',
         'UPDATE_NETWORK_TIMEOUT',
         rawCause,
@@ -235,8 +248,10 @@ function mapCurlExitToError(err: CurlExitError): UpdateError {
  *
  * - 进度：500ms 轮询 statSync(tempPath).size 推 onProgress（只推原始字节，节流
  *   与百分比折算归调用方——D6「复用现有节流回调」）；temp 未创建时跳过该轮。
- * - 总时长上限：CURL_TOTAL_TIMEOUT_MS 到点 kill 子进程并抛 UPDATE_NETWORK_TIMEOUT
- *   （对齐 download-asset 的 DOWNLOAD_TIMEOUT_MS watchdog 语义）。
+ * - 无外层总墙钟（timeout-slow-flow-wallclock D1）：停滞检测由 curl 内部
+ *   --connect-timeout 10（连接未建立）+ --speed-limit 1 --speed-time 30（30s
+ *   平均速率 <1B/s）覆盖，触发即 exit 28 → mapCurlExitToError 按 stderr 判别成因；
+ *   只要传输持续（≥1B/s），无论多久都不被杀。
  * - 'error'（spawn 失败，如 ENOENT）原样上抛；'close' 按 exit code 分流
  *   （0 成功 / 其他抛内部 CurlExitError 由外层映射）。
  */
@@ -267,17 +282,6 @@ async function runCurlOnce(
     }, PROGRESS_POLL_INTERVAL_MS)
   }
 
-  let timedOut = false
-  const totalTimer = setTimeout(() => {
-    timedOut = true
-    try {
-      child.kill()
-    } catch (killErr) {
-      // best-effort：kill 失败（进程恰好已退出）不影响 close 路径收尾
-      console.warn('[curl-download] kill on total timeout failed:', killErr)
-    }
-  }, CURL_TOTAL_TIMEOUT_MS)
-
   try {
     await new Promise<void>((resolve, reject) => {
       let settled = false
@@ -291,13 +295,7 @@ async function runCurlOnce(
       child.once('close', (code: number | null) => {
         if (settled) return
         settled = true
-        if (timedOut) {
-          reject(new UpdateError(
-            `curl download exceeded total timeout (${CURL_TOTAL_TIMEOUT_MS / MS_PER_SECOND}s), killed`,
-            'downloading',
-            'UPDATE_NETWORK_TIMEOUT',
-          ))
-        } else if (code === CURL_EXIT_OK) {
+        if (code === CURL_EXIT_OK) {
           resolve()
         } else {
           reject(new CurlExitError(code ?? CURL_EXIT_UNKNOWN, stderrText, parseHttpCode(stdoutText)))
@@ -306,7 +304,6 @@ async function runCurlOnce(
     })
   } finally {
     activeCurlChildren.delete(child)
-    clearTimeout(totalTimer)
     if (progressTimer) clearInterval(progressTimer)
   }
 }

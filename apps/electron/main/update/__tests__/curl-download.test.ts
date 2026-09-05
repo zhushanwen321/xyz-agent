@@ -247,17 +247,52 @@ describe('u2-curl-download', () => {
     expect(connErr.rawCause).toContain('Failed to connect')
   })
 
-  it('u2-exit28: 超时（connect-timeout / speed-time）映射 UPDATE_NETWORK_TIMEOUT', async () => {
+  it('u2-exit28-stalled: 传输停滞（speed-time 触发，stderr 无 connect 信号）映射 UPDATE_NETWORK_TIMEOUT，文案为停滞语义', async () => {
     const child = makeFakeChild()
     spawnMock.mockReturnValueOnce(child)
 
     const promise = downloadViaCurl(ASSET, { tempPath })
-    child.stderr.emit('data', 'curl: (28) Operation timed out')
+    // curl --speed-time 触发时的典型 stderr 形态
+    child.stderr.emit('data', 'curl: (28) Operation too slow. Less than 1 bytes/sec transferred the last 30 seconds')
     child.emit('close', 28, null)
 
     const caught = await captureRejection(promise)
     expect(caught).toBeInstanceOf(UpdateError)
-    expect((caught as UpdateError).errorCode).toBe('UPDATE_NETWORK_TIMEOUT')
+    const err = caught as UpdateError
+    expect(err.errorCode).toBe('UPDATE_NETWORK_TIMEOUT')
+    expect(err.message).toContain('stalled')
+    expect(err.message).toContain('30s')
+    expect(err.message).not.toContain('connection timeout')
+  })
+
+  it('u2-exit28-connect-timeout: 连接超时（connect-timeout 触发，stderr 含 connect 信号）文案区别于停滞，不误标「30 秒无数据」', async () => {
+    const child = makeFakeChild()
+    spawnMock.mockReturnValueOnce(child)
+
+    const promise = downloadViaCurl(ASSET, { tempPath })
+    // curl --connect-timeout 触发时的典型 stderr 形态
+    child.stderr.emit('data', 'curl: (28) Connection timed out after 10001 milliseconds')
+    child.emit('close', 28, null)
+
+    const caught = await captureRejection(promise)
+    const err = caught as UpdateError
+    expect(err.errorCode).toBe('UPDATE_NETWORK_TIMEOUT')
+    expect(err.message).toContain('connection timeout')
+    expect(err.message).toContain('10s')
+    expect(err.message).not.toContain('stalled')
+  })
+
+  it('u2-exit28-no-stderr: stderr 无判别信号（为空/未知形态）时按停滞文案（设计口径：判别 connect 信号，否则停滞）', async () => {
+    const child = makeFakeChild()
+    spawnMock.mockReturnValueOnce(child)
+
+    const promise = downloadViaCurl(ASSET, { tempPath })
+    child.emit('close', 28, null)
+
+    const caught = await captureRejection(promise)
+    const err = caught as UpdateError
+    expect(err.errorCode).toBe('UPDATE_NETWORK_TIMEOUT')
+    expect(err.message).toContain('stalled')
   })
 
   it('u2-exit35: SSL 连接错误映射 UPDATE_NETWORK_FAILED', async () => {
@@ -354,23 +389,21 @@ describe('u2-curl-download', () => {
     await promise
   })
 
-  // ── 验收 ①：总时长上限（fake timers） ─────────────────────────────────────
+  // ── 验收 ①：总墙钟已删（timeout-slow-flow-wallclock D1），慢速存活（fake timers） ──
 
-  it('u2-total-timeout: 1h 总上限到点 kill 子进程并抛 UPDATE_NETWORK_TIMEOUT（对齐 DOWNLOAD_TIMEOUT_MS）', async () => {
+  it('u2-no-total-timeout: 慢速但持续传输跨旧总钟边界（>2×3600s）不被外层 kill、不 reject——停滞检测归 curl 内部 --speed-time', async () => {
     vi.useFakeTimers()
     const child = makeFakeChild()
     spawnMock.mockReturnValueOnce(child)
 
     const promise = downloadViaCurl(ASSET, { tempPath })
-    // 先挂 rejection 捕获再推进时钟：reject 发生在 advanceTimersByTimeAsync 的
-    // await 边界内，事后挂 handler 会被 Node 判为 unhandled rejection
-    const caughtPromise = captureRejection(promise)
-    await vi.advanceTimersByTimeAsync(3_600_000)
+    // 推进到旧总钟（3600s）的 2 倍：外层已无任何时间墙钟，不应 kill 子进程
+    await vi.advanceTimersByTimeAsync(2 * 3_600_000)
 
-    expect(child.kill).toHaveBeenCalledTimes(1)
-    const caught = await caughtPromise
-    expect(caught).toBeInstanceOf(UpdateError)
-    expect((caught as UpdateError).errorCode).toBe('UPDATE_NETWORK_TIMEOUT')
+    expect(child.kill).not.toHaveBeenCalled()
+    // curl 内部 --speed-time 未触发（持续有字节）→ exit 0 正常完成
+    child.emit('close', 0, null)
+    await expect(promise).resolves.toEqual({ tempPath })
   })
 
   // ── 验收 ③：子进程生命周期（before-quit 清杀 + 完成注销） ──────────────────
