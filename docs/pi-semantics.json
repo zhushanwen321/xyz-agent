@@ -377,13 +377,13 @@
  },
  {
   "id": "PS-22",
-  "claim": "/skill:name 的展开格式 = `<skill name=\"<skillName>\" location=\"<SKILL.md abs path>\">\\nReferences are relative to <skillDir>.\\n\\n<body>\\n</skill>`（body = stripFrontmatter 剥 frontmatter 后 trim；args 有则 block + \"\\n\\n\" + args；name 缺 frontmatter 时回退父目录名）；且 get_commands 的 skill 项 name 恒带 `skill:` 前缀（`skill:${skill.name}`），sourceInfo.path/baseDir 为 resolve 后绝对路径——runtime 注入器（skill-injector）对同输入的展开输出与 pi 落盘文本逐字 golden diff 由 PS-22 探针守卫（composer-multi-skill-injection D5 / 场景 8）",
+  "claim": "/skill:name 的展开格式 = `<skill name=\"<skillName>\" location=\"<SKILL.md abs path>\">\\nReferences are relative to <skillDir>.\\n\\n<body>\\n</skill>`（body = stripFrontmatter 剥 frontmatter 后 trim；args 有则 block + \"\\n\\n\" + args；name 缺 frontmatter 时回退父目录名）；且 get_commands 的 skill 项 name 恒带 `skill:` 前缀（`skill:${skill.name}`），sourceInfo.path 为 resolve 后绝对路径（baseDir 不可依赖：extension 覆盖链可改写、兜底形态缺字段，References 行以 dirname(path) 为准）——runtime 注入器（skill-injector）对同输入的展开输出与 pi 落盘文本逐字 golden diff 由 PS-22 探针守卫（composer-multi-skill-injection D5 / 场景 8）",
   "piAnchor": [
    {
     "pkg": "pi-coding-agent",
     "distPath": "dist/core/agent-session.js",
     "symbol": "_expandSkillCommand / getCommands（skill 项）",
-    "note": ":983-1007 展开模板 :997（stripFrontmatter :995 trim）；:1998 name: `skill:${skill.name}`（前缀实锤）；name 回退父目录名 core/skills.js:244-245，sourceInfo 见 skills.js:90-110 createSkillSourceInfo（path/baseDir）"
+    "note": ":983-1007 展开模板 :997（stripFrontmatter :995 trim）；:1996 name: `skill:${skill.name}`（前缀实锤；:1998 为 source: \"skill\"）；name 回退父目录名 core/skills.js:244-245，sourceInfo 见 skills.js:90-110 createSkillSourceInfo（path 可依赖；baseDir 不可依赖——resource-loader.js:514-518 extension 覆盖链可改写、:612 兜底形态无该字段，References 行以 dirname(path) 为准）"
    },
    {
     "pkg": "pi-coding-agent",
