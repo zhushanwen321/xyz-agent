@@ -259,14 +259,14 @@ F1 写点仅在落标出口（sync 批成员专属路径——async 成员无 ba
 
 依赖：W1 → W2 串行（同域递进，W2 重扫复用 W1 判定）；W3 依赖 W1 的 sessionFile 投影（E1 路径 manifest），可与 W2 并行；W4 收尾。
 
-**探针清单（运行时断言与检查点，⛔ = 实施期门，均带降级路径）**：
+**探针清单（运行时断言与检查点；四条已于 2026-09-05 实施回填 ✅，降级路径均未触发）**：
 
 | ID | 验证的行为 | 探针 | 状态 | 失败时的降级路径 |
 |----|-----------|------|------|-----------------|
-| P-orphan | orphan 覆写 entry 保留 collectMode/batchFinalized/result/model（仅补 undefined/空值，不覆盖覆写自带字段）；批域字段对非 sync 成员恒 no-op | W1 真实序列种子测试（子文件 + 无 sidecar 构造，走 finalizeOrphanRecord 路径）断言覆写 entry 字段 + async 对照用例（批域字段不出现、result 补齐） | ⛔ W1 内 | 若 merge 与覆写序列化冲突（如 undefined 字段被序列化为显式 null），merge 改为构造 entry data 后显式 delete undefined 键（与 toSubagentRecordEntry 的自然缺省语义对齐） |
-| P-settled | 同一 pi 实例多次 `pi.on("agent_settled")` 注册互不干扰（W2 重扫注册不影响 ledger host 已注册的 settled 分发，反之亦然） | 读 pi dist 事件分发实现 + W2 单测双注册断言 | ⛔ W2 实施前 | 若事件分发为单 handler 覆盖语义，E1 重扫并入 ledger host 的 settled 分发链（host 装配处追加 handler 数组），不独立注册 |
-| P-manifest | running 状态 manifest 不触发 collectRecords 孤儿补充投影（有 entry 的成员永不被 manifest 补充覆盖） | W3 不变量测试：落标+写 manifest 后重启重建，断言 list 投影与无 manifest 时一致 | ⛔ W3 内 | collectRecords 补充路径对 status="running" 的 manifest 跳过（补丁位：`record-store.ts:541-565` 循环守卫） |
-| P-rebuild | rebuildEntryRecord 新增 resumable/sessionFile 投影对 `recoverEntryOnlyOrphans` 候选过滤行为不变 | 既有 recoverEntryOnlyOrphans 测试复跑 + 新投影字段的用例 | ⛔ W1 内 | 若行为变化，recoverEntryOnlyOrphans 守卫显式忽略新字段（保持其「只认 running 末条」语义） |
+| P-orphan | orphan 覆写 entry 保留 collectMode/batchFinalized/result/model（仅补 undefined/空值，不覆盖覆写自带字段）；批域字段对非 sync 成员恒 no-op | W1 真实序列种子测试（子文件 + 无 sidecar 构造，走 finalizeOrphanRecord 路径）断言覆写 entry 字段 + async 对照用例（批域字段不出现、result 补齐） | ✅ W1（sync-collect-recovery.test.ts:600/:660/:701 + 区1 反向锁定 :678，mutation 验证） | 若 merge 与覆写序列化冲突（如 undefined 字段被序列化为显式 null），merge 改为构造 entry data 后显式 delete undefined 键（与 toSubagentRecordEntry 的自然缺省语义对齐） |
+| P-settled | 同一 pi 实例多次 `pi.on("agent_settled")` 注册互不干扰（W2 重扫注册不影响 ledger host 已注册的 settled 分发，反之亦然） | 读 pi dist 事件分发实现 + W2 单测双注册断言 | ✅ W2（dist 定谳列表分发：loader.js handlers.push + runner.js 逐 handler await；用例 :752/:797 + 区1 dispose 惰化 :829，mutation 验证） | 若事件分发为单 handler 覆盖语义，E1 重扫并入 ledger host 的 settled 分发链（host 装配处追加 handler 数组），不独立注册 |
+| P-manifest | running 状态 manifest 不触发 collectRecords 孤儿补充投影（有 entry 的成员永不被 manifest 补充覆盖） | W3 不变量测试：落标+写 manifest 后重启重建，断言 list 投影与无 manifest 时一致 | ✅ W3（不变量用例 :906 + E1 路径 manifest 断言 :600/:701；Gate B 独立复核） | collectRecords 补充路径对 status="running" 的 manifest 跳过（补丁位：`record-store.ts:541-565` 循环守卫） |
+| P-rebuild | rebuildEntryRecord 新增 resumable/sessionFile 投影对 `recoverEntryOnlyOrphans` 候选过滤行为不变 | 既有 recoverEntryOnlyOrphans 测试复跑 + 新投影字段的用例 | ✅ W1（用例 :877 + 白名单投影可见 :347） | 若行为变化，recoverEntryOnlyOrphans 守卫显式忽略新字段（保持其「只认 running 末条」语义） |
 
 ---
 
