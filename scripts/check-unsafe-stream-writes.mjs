@@ -32,7 +32,11 @@
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
+// 纯检测函数导出面（scripts/__tests__/check-unsafe-stream-writes.test.mjs 单测——
+// S14：误报会污染 allowlist 治理，检测核心须机器锁定）。仅 CLI 直跑时执行 main()
+export { scanFileLines, collectTsFiles, isCommentLine }
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
@@ -90,21 +94,21 @@ function fileHasErrorListener(lines, varName, { acceptOnce = false } = {}) {
 }
 
 const violations = []
-const files = collectTsFiles(RUNTIME_SRC)
 
-for (const file of files) {
-  const rel = relative(ROOT, file)
-  const lines = readFileSync(file, 'utf-8').split('\n')
-
+/**
+ * 单文件 R1/R2/R4 检测（纯函数：输入行数组与豁免集合，输出违规串数组）——
+ * allowlistHits 命中回写由调用方容器承担（S14 抽出供单测）。
+ */
+function scanFileLines(rel, lines, allowlistSet, hitsOut) {
+  const found = []
   // R1：裸流写检测
   lines.forEach((line, i) => {
     if (isCommentLine(line)) return
     const m = line.match(STREAM_WRITE_RE)
     if (!m) return
     const loc = `${rel}@${i + 1}`
-    if (allowlist.has(loc)) {
-      allowlistHits.add(loc)
-      console.log(`ℹ ${loc}：allowlist 豁免命中（流变量裸写，确认仍在 best-effort 形态）`)
+    if (allowlistSet.has(loc)) {
+      hitsOut?.add(loc)
       return
     }
     // 豁免：向上 8 行窗口内有 try 开块
@@ -112,7 +116,7 @@ for (const file of files) {
     for (let j = i; j >= windowStart; j--) {
       if (TRY_RE.test(lines[j])) return
     }
-    violations.push(
+    found.push(
       `${loc}：流变量 \`${m[1]}.${m[2]}\` 裸调用无 try 防护——半关闭/destroyed 流上同步抛 EPIPE/ERR_STREAM_DESTROYED，事件回调中逃逸即 uncaughtException → 整机 shutdown（2026-09-04 事故形态）。恢复动作：try-catch 包裹（参照 relay-registry writeFrame/endConn）；确属 best-effort 误报形态则编辑 scripts/check-unsafe-stream-writes.allowlist.txt 登记 \`${loc}\` 并随本次 commit 提交`,
     )
   })
@@ -129,7 +133,7 @@ for (const file of files) {
   for (const varName of entryDefs) {
     const hasErrorListener = fileHasErrorListener(lines, varName)
     if (!hasErrorListener) {
-      violations.push(
+      found.push(
         `${rel}：定义了 socket 接收入口但未挂 \`${varName}.on('error'\`——对端 RST（ECONNRESET）时 EventEmitter 无 listener 直接 throw → uncaughtException → 整机 shutdown。恢复动作：入口首行挂 error listener（destroy + warn，清理由 close 路径兜底，参照 relay-registry handleConnection）`,
       )
     }
@@ -145,27 +149,46 @@ for (const file of files) {
   for (const rlVar of rlVars) {
     const hasErrorListener = fileHasErrorListener(lines, rlVar, { acceptOnce: true })
     if (!hasErrorListener) {
-      violations.push(
+      found.push(
         `${rel}：\`const ${rlVar} = createInterface(...)\` 但未挂 \`${rlVar}.on('error'\`——readline 把 input 流 error 转发到 interface 实例 re-emit，无 listener 直接 throw → uncaughtException（conn 层 listener 挡不住，2026-09-04 事故审计实测）。恢复动作：\`${rlVar}.on('error', () => {})\` 吞转发（真实处置归 conn 层 listener）`,
       )
     }
   }
+  return found
 }
 
-// allowlist 生命周期告警：未命中条目 = 已失效（代码修复/删除）或登记笔误，提示清理。
-// 不改退出码——僵尸条目是审计噪声而非漏洞；漂移条目错误附着到同文件同行号新违规的
-// 窗口由「豁免命中提示行」承载观测（两路合起来覆盖条目全生命周期）。
-const staleEntries = [...allowlist].filter((e) => !allowlistHits.has(e))
-if (staleEntries.length > 0) {
-  console.warn(`⚠ check-unsafe-stream-writes：${staleEntries.length} 条 allowlist 条目本次扫描未命中（已失效或笔误，请清理；allowlist 仅对 R1 生效，R2/R4 违规无豁免通道，须直接修复代码）：`)
-  for (const e of staleEntries) console.warn(`  ⚠ ${e}`)
+function main() {
+  const files = collectTsFiles(RUNTIME_SRC)
+
+  for (const file of files) {
+    const rel = relative(ROOT, file)
+    const lines = readFileSync(file, 'utf-8').split('\n')
+    violations.push(...scanFileLines(rel, lines, allowlist, allowlistHits))
+  }
+
+  // allowlist 豁免命中提示（检测核心保持纯函数——命中回写 allowlistHits，观测输出归 CLI 层）
+  for (const loc of allowlistHits) {
+    console.log(`ℹ ${loc}：allowlist 豁免命中（流变量裸写，确认仍在 best-effort 形态）`)
+  }
+
+  // allowlist 生命周期告警：未命中条目 = 已失效（代码修复/删除）或登记笔误，提示清理。
+  // 不改退出码——僵尸条目是审计噪声而非漏洞；漂移条目错误附着到同文件同行号新违规的
+  // 窗口由「豁免命中提示行」承载观测（两路合起来覆盖条目全生命周期）。
+  const staleEntries = [...allowlist].filter((e) => !allowlistHits.has(e))
+  if (staleEntries.length > 0) {
+    console.warn(`⚠ check-unsafe-stream-writes：${staleEntries.length} 条 allowlist 条目本次扫描未命中（已失效或笔误，请清理；allowlist 仅对 R1 生效，R2/R4 违规无豁免通道，须直接修复代码）：`)
+    for (const e of staleEntries) console.warn(`  ⚠ ${e}`)
+  }
+
+  if (violations.length > 0) {
+    console.error(`✗ check-unsafe-stream-writes：${violations.length} 处流写逃逸风险\n`)
+    for (const v of violations) console.error(`  ✗ ${v}`)
+    console.error('\n恢复动作：逐条加防护后重跑 node scripts/check-unsafe-stream-writes.mjs；确认误报/豁免形态时编辑 scripts/check-unsafe-stream-writes.allowlist.txt 登记 路径@行号（随 commit 提交，传参登记不生效）')
+    process.exit(1)
+  }
+
+  console.log(`✓ check-unsafe-stream-writes：${files.length} 个文件扫描通过（R1 裸流写 / R2 socket error 挂载 / R4 readline 转发吞咽）`)
 }
 
-if (violations.length > 0) {
-  console.error(`✗ check-unsafe-stream-writes：${violations.length} 处流写逃逸风险\n`)
-  for (const v of violations) console.error(`  ✗ ${v}`)
-  console.error('\n恢复动作：逐条加防护后重跑 node scripts/check-unsafe-stream-writes.mjs；确认误报/豁免形态时编辑 scripts/check-unsafe-stream-writes.allowlist.txt 登记 路径@行号（随 commit 提交，传参登记不生效）')
-  process.exit(1)
-}
-
-console.log(`✓ check-unsafe-stream-writes：${files.length} 个文件扫描通过（R1 裸流写 / R2 socket error 挂载 / R4 readline 转发吞咽）`)
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(join(process.argv[1])).href
+if (isMain) main()
