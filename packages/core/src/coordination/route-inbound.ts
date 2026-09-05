@@ -197,6 +197,61 @@ function applySeqGap(sid: string, msg: ServerMessage): boolean {
 }
 
 /**
+ * 路由序言的 session 半边（dispatchRouted 有 sid 分支提取，行为零改变）：
+ * seqGate → dispatchSession → crossSession? → payloadGuard → sessionEffect → stream_delta 桥接。
+ * 闭包变量 resolved.events / effectsCtx 改经参数注入。
+ */
+function dispatchSessionRouted(
+  entry: RouteTableEntry | undefined,
+  msg: ServerMessage,
+  sid: string,
+  events: TransportPorts['events'],
+  effectsCtx: InboundEffects,
+): void {
+  if (!applySeqGap(sid, msg)) return
+  events.dispatchSession(sid, msg)
+  // ADR-0060：crossSession 声明条目（原白名单）在 seqGate 之后、dispatchSession 之后
+  // 额外分发到全局消费者——gate drop 的重复消息 crossSession 也不发（防 ExtensionHost
+  // 重复处理，与 session 通道 drop 语义一致）。
+  if (entry?.crossSession) {
+    events.dispatchCrossSession(msg)
+  }
+  // 跳过型守卫（D2 守卫两类分置）：只门控 effect 调用，不门控 dispatchSession/
+  // crossSession 分发（per-session 订阅者可能自带消费逻辑）。
+  if (entry?.payloadGuard && !entry.payloadGuard(msg.payload)) return
+  entry?.sessionEffect?.(sid, msg.payload, effectsCtx)
+  // [idle-refresh] subagent.stream_delta 桥接（§5.1 D1）：该 type 不在 ROUTE_TABLE /
+  // CROSS_SESSION_TYPES（唯一关切是活跃信号，无需独立路由条目），恒走默认兜底路径
+  // （原 FALLBACK）——此处按 type 识别后透传原始 frame，父 sid 解析与
+  // refreshStreamingTimer 调用由 effects 实现方完成（见 InboundEffects.onSubagentStreamDelta
+  // 注释）。非本 type 帧不调用（no-op）；未注册回调时跳过（生产接线前行为与现状一致）。
+  if (msg.type === 'subagent.stream_delta') {
+    effectsCtx.onSubagentStreamDelta?.(msg)
+  }
+}
+
+/**
+ * 路由序言的 global 半边（dispatchRouted 无 sid 分支提取，行为零改变）：
+ * dispatchGlobal → globalEffect? → L9 前缀 warn。默认路径为纯兜底（阶段 B 后
+ * 零 type 特判）：'error' 的无 sid 兜底已并入条目 globalEffect（含 !msg.id 守卫），
+ * 未命中条目的消息只做通道分发 + L9 warn。
+ */
+function dispatchGlobalRouted(
+  entry: RouteTableEntry | undefined,
+  msg: ServerMessage,
+  events: TransportPorts['events'],
+  effectsCtx: InboundEffects,
+): void {
+  events.dispatchGlobal(msg)
+  entry?.globalEffect?.(msg, effectsCtx)
+  // L9：session 级消息（type 以 session./message. 开头）缺失 sessionId 时 warn，
+  // 让 runtime bug 可见（违反隔离要求应有 fail-fast 信号，而非静默降级到 global 丢弃）
+  if (msg.type.startsWith('session.') || msg.type.startsWith('message.')) {
+    console.warn('[core/coordination] session-level message missing sessionId, routed to global:', msg.type)
+  }
+}
+
+/**
  * ROUTE_TABLE —— 精确 type 匹配的声明式条目表（DM3，TC1；Q1-4：Record 直查 O(1)）。
  *
  * type 即 Record key（type 互斥，精确匹配同一消息只命中一条）。查表必须经
@@ -385,38 +440,10 @@ export function configureRouteInbound(
       : undefined
 
     if (typeof sid === 'string' && sid) {
-      if (!applySeqGap(sid, msg)) return
-      resolved.events.dispatchSession(sid, msg)
-      // ADR-0060：crossSession 声明条目（原白名单）在 seqGate 之后、dispatchSession 之后
-      // 额外分发到全局消费者——gate drop 的重复消息 crossSession 也不发（防 ExtensionHost
-      // 重复处理，与 session 通道 drop 语义一致）。
-      if (entry?.crossSession) {
-        resolved.events.dispatchCrossSession(msg)
-      }
-      // 跳过型守卫（D2 守卫两类分置）：只门控 effect 调用，不门控 dispatchSession/
-      // crossSession 分发（per-session 订阅者可能自带消费逻辑）。
-      if (entry?.payloadGuard && !entry.payloadGuard(msg.payload)) return
-      entry?.sessionEffect?.(sid, msg.payload, effectsCtx)
-      // [idle-refresh] subagent.stream_delta 桥接（§5.1 D1）：该 type 不在 ROUTE_TABLE /
-      // CROSS_SESSION_TYPES（唯一关切是活跃信号，无需独立路由条目），恒走默认兜底路径
-      // （原 FALLBACK）——此处按 type 识别后透传原始 frame，父 sid 解析与
-      // refreshStreamingTimer 调用由 effects 实现方完成（见 InboundEffects.onSubagentStreamDelta
-      // 注释）。非本 type 帧不调用（no-op）；未注册回调时跳过（生产接线前行为与现状一致）。
-      if (msg.type === 'subagent.stream_delta') {
-        effectsCtx.onSubagentStreamDelta?.(msg)
-      }
+      dispatchSessionRouted(entry, msg, sid, resolved.events, effectsCtx)
       return
     }
-
-    resolved.events.dispatchGlobal(msg)
-    entry?.globalEffect?.(msg, effectsCtx)
-    // L9：session 级消息（type 以 session./message. 开头）缺失 sessionId 时 warn，
-    // 让 runtime bug 可见（违反隔离要求应有 fail-fast 信号，而非静默降级到 global 丢弃）
-    if (msg.type.startsWith('session.') || msg.type.startsWith('message.')) {
-      console.warn('[core/coordination] session-level message missing sessionId, routed to global:', msg.type)
-    }
-    // 默认路径为纯兜底（阶段 B 后零 type 特判）：'error' 的无 sid 兜底已并入条目
-    // globalEffect（含 !msg.id 守卫），未命中条目的消息只做通道分发 + L9 warn。
+    dispatchGlobalRouted(entry, msg, resolved.events, effectsCtx)
   }
 
   // 回放 dispatcher：subscription-state 的 subscribeSession 回放入口（C1 注入）。

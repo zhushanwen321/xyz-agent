@@ -108,10 +108,13 @@ export interface ArmedModelSwitchIntent {
  *    幂等（value 已等于当前）/ 未命中（含记忆未加载 E7①）/ 不可用 → 清 armed 回落既有分支。
  * 3. 不匹配——RPC 在途 / providers 刷新等无关触发 → 不动 armed，等待匹配触发（规则 3）。
  *
+ * armed 传 null（无 armed 快照）时直通 false 走既有分支——规则判定前的空值门卫
+ * 内迁于此（替代调用侧 `snapshot && …` 短路，判定顺序与副作用零变化）。
+ *
  * @returns true = 已消费并 onReset（调用方 return 跳过既有分支）；false = 走既有分支
  */
 function consumeArmedRestore(args: {
-  armed: ArmedModelSwitchIntent
+  armed: ArmedModelSwitchIntent | null
   deps: ThinkingLevelSyncDeps
   currentModelId: string
   currentValue: string | undefined
@@ -120,6 +123,7 @@ function consumeArmedRestore(args: {
   onReset: (level: string) => void
 }): boolean {
   const { armed, deps, currentModelId, currentValue, map, supported, onReset } = args
+  if (!armed) return false
   const inFlight = deps.getInFlightCount?.() ?? 0
   if (Date.now() - armed.at > ARMED_EXPIRY_MS && inFlight === 0) {
     // 规则 1：过期 token 只清不消费——陈旧 token 若被消费即「chip 突跳伪恢复」（D3 被否②a）
@@ -144,6 +148,54 @@ function consumeArmedRestore(args: {
   // 幂等 / 未命中 / 不可用 → 清 armed 回落既有分支（D5）
   deps.clearArmed?.()
   return false
+}
+
+/**
+ * 分支 3：首次触发（oldMap===undefined）的可用性安全网——当前档位在新模型可用则
+ * 保留，不可用才重置到最高可用档一次（不门禁：挂载首触发可达，数据不一致时的兜底，
+ * 避免无 oldMap 无法判定体系时误触发冗余 RPC）。
+ */
+function applyFirstTriggerAvailability(args: {
+  current: string
+  map: Record<string, string | null> | undefined
+  supported: string[] | undefined
+  onReset: (level: string) => void
+}): void {
+  const { current, map, supported, onReset } = args
+  const currentKey = resolveThinkingKey(current, map, highestAvailableLevel(supported))
+  const available = normalizeSupportedLevels(supported)
+  if (available.includes(currentKey)) return
+  const highest = highestAvailableLevel(supported)
+  onReset(resolveThinkingValue(highest, map))
+}
+
+/**
+ * 分支 4：同体系切换（isSameThinkingScheme 成立）——旧 map 反查当前 value 的 UI key，
+ * 直接映射到新模型 value；key 在新模型不可用时按跨体系语义重置，value 未变不发冗余 RPC。
+ */
+function applySameSchemeMapping(args: {
+  current: string
+  oldMap: Record<string, string | null> | undefined
+  map: Record<string, string | null> | undefined
+  supported: string[] | undefined
+  onReset: (level: string) => void
+}): void {
+  const { current, oldMap, map, supported, onReset } = args
+  const currentKey = resolveThinkingKey(current, oldMap)
+  // 防御：current 既不在 oldMap 的 value 里又非合法 ThinkingLevel 时，
+  // resolveThinkingKey 缺省 fallback 到默认五档最高档；该 key 若在新模型的
+  // 可用档中不可用，resolveThinkingValue 会走 v ?? key 回退把不可用档原样发给
+  // runtime。此时走跨体系重置（重置到最高可用档）。
+  const available = normalizeSupportedLevels(supported)
+  if (!available.includes(currentKey)) {
+    const highest = highestAvailableLevel(supported)
+    const resetValue = resolveThinkingValue(highest, map)
+    if (resetValue !== current) onReset(resetValue)
+    return
+  }
+  const newValue = resolveThinkingValue(currentKey, map)
+  // value 变了才重置（同体系同 value 时不触发冗余 RPC）
+  if (newValue !== current) onReset(newValue)
 }
 
 export function useThinkingLevelSync(
@@ -192,16 +244,15 @@ export function useThinkingLevelSync(
     // 对齐分支。禁止读消费块之后的 armed 值（D5 被否③）。
       const armedSnapshot = deps.getArmed?.() ?? null
       if (
-        armedSnapshot &&
-      consumeArmedRestore({
-        armed: armedSnapshot,
-        deps,
-        currentModelId: currentModelId.value,
-        currentValue: currentThinkingLevel.value,
-        map,
-        supported,
-        onReset,
-      })
+        consumeArmedRestore({
+          armed: armedSnapshot,
+          deps,
+          currentModelId: currentModelId.value,
+          currentValue: currentThinkingLevel.value,
+          map,
+          supported,
+          onReset,
+        })
       ) {
         return // 命中恢复已 onReset，跳过既有分支防双重 onReset（D4）
       }
@@ -220,12 +271,7 @@ export function useThinkingLevelSync(
       // 首次触发（无 oldMap 可比）→ 可用性检查，与原逻辑一致
       // [U5/D5] 分支 3 保持不门禁：数据不一致时的可用性安全网（不可用才重置一次）
       if (oldMap === undefined) {
-        const currentKey = resolveThinkingKey(current, map, highestAvailableLevel(supported))
-        const available = normalizeSupportedLevels(supported)
-        if (!available.includes(currentKey)) {
-          const highest = highestAvailableLevel(supported)
-          onReset(resolveThinkingValue(highest, map))
-        }
+        applyFirstTriggerAvailability({ current, map, supported, onReset })
         return
       }
       // [U5/D5] 分支 4/5 门禁：无入口快照时同体系映射与跨体系重置一并跳过
@@ -233,21 +279,7 @@ export function useThinkingLevelSync(
       if (!armedSnapshot) return
       // 模型切换：同体系 → 直接映射当前档位 key 到新模型 value
       if (isSameThinkingScheme(oldSupported, supported)) {
-        const currentKey = resolveThinkingKey(current, oldMap)
-        // 防御：current 既不在 oldMap 的 value 里又非合法 ThinkingLevel 时，
-        // resolveThinkingKey 缺省 fallback 到默认五档最高档；该 key 若在新模型的
-        // 可用档中不可用，resolveThinkingValue 会走 v ?? key 回退把不可用档原样发给
-        // runtime。此时走跨体系重置（重置到最高可用档）。
-        const available = normalizeSupportedLevels(supported)
-        if (!available.includes(currentKey)) {
-          const highest = highestAvailableLevel(supported)
-          const resetValue = resolveThinkingValue(highest, map)
-          if (resetValue !== current) onReset(resetValue)
-          return
-        }
-        const newValue = resolveThinkingValue(currentKey, map)
-        // value 变了才重置（同体系同 value 时不触发冗余 RPC）
-        if (newValue !== current) onReset(newValue)
+        applySameSchemeMapping({ current, oldMap, map, supported, onReset })
         return
       }
       // 跨体系 → 重置到新模型最高可用档（value 未变则不触发冗余 RPC）
