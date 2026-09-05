@@ -11,7 +11,8 @@
  * - Mock SessionService.getRpcClient to simulate connected/disconnected states
  * - Mock PluginService.getBridgeSyncPayload/handleBridgeToolExecute/handleBridgeIntercept
  * - Test handleBridgeRequest under various reconnection scenarios
- * - Test registerExtensionTimeout for bridge: methods (timeout exclusion)
+ * - Bridge 请求不排前端超时 + addBridgeRequest 登记（registerTimeout 误传 bridge: 的
+ *   防回归锁在 extension-timeout-manager.test.ts）
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'

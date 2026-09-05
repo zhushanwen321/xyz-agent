@@ -20,7 +20,8 @@ export interface BridgeRequest {
   toolCallId?: string
   /** tool_execute 专属：工具入参 */
   params?: Record<string, unknown>
-  /** tool_execute 专属：发起调用的 session */
+  /** 发起请求的 session（tool_execute/event/intercept 携带，供 runtime 按 session 路由
+   * 防跨 session 串台；bridge:sync 全局快照请求不带） */
   sessionId?: string
   /** event / intercept 专属：pi 原生事件名 */
   eventName?: string

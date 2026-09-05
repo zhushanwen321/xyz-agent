@@ -329,9 +329,10 @@ export default function pluginBridgeExtension(pi: ExtensionAPI): void {
 			{ signal },
 		);
 		if (raw === null) return cancelledResult(toolName);
-		// Tool not found = 清单 miss（曾注册后插件装卸）——触发一次重同步再返回错误，
-		// 后续 turn 重试即命中新清单（设计 §3.3-D4 miss 重同步；防抖见 ensureSynced）。
-		// 兼容两种形态：错误闭环 {error:'Tool not found…'} 与工具结果
+		// Tool not found = 清单 miss（曾注册后插件装卸）——触发一次重同步，等待其完成后
+		// 即返回 Tool not found（不重新校验）：R2（pi 0.84.4）下本 session 新注册工具对
+		// LLM 永固不可见，恢复时点 = 下个 session（设计 §3.3-D4 R2 登记修正；防抖见
+		// ensureSynced）。兼容两种形态：错误闭环 {error:'Tool not found…'} 与工具结果
 		// {content:'Tool not found…', isError:true}（runtime bridge-interop 实装形态）
 		if (isToolNotFound(raw)) {
 			await ensureSynced(ctx);

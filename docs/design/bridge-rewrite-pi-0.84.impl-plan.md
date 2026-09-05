@@ -1,6 +1,6 @@
 # bridge extension 重写适配 pi 0.84.4 实施计划
 
-基线: d42f24efc | 来源设计: docs/design/bridge-rewrite-pi-0.84.md（v3，审查循环 1MF/7SG→0MF/4SG→0MF/0SG/1info 终态通过，报告 docs/design/bridge-rewrite-pi-0.84.review.md）| 日期: 2026-09-04
+基线: d42f24efc | 来源设计: docs/design/bridge-rewrite-pi-0.84.md（v4.1，含 Gate B 两轮回写：R1 sync timeout 分档 / R2 专项登记；初版经审查循环 1MF/7SG→0MF/4SG→0MF/0SG/1info 终态通过，报告 docs/design/bridge-rewrite-pi-0.84.review.md）| 日期: 2026-09-04
 
 ## 0 章节映射
 
@@ -99,7 +99,7 @@ graph TD
 | 15 | U4 rpc-client.test.ts 领地微扩：删 U5d 死分支用例 | 删 sendExtensionUiResponse `{id,response}` 死分支使其必失败，全量绿是硬验收——按「测已删除旧机制的用例删除并注释」原则处理，留 [HISTORICAL] 注释指向 bridge-marker-channel.test.ts | U4 交付 |
 | 16 | U4 event-adapter-bridge.test.ts 与 plugin-hook-bridge.test.ts 零改动 | 逐用例核对确认不含旧 bridge:* method 帧用例（前者测 setWidget/setStatus 翻译，后者测 hook 机制），与被删分支无关 | U4 交付 |
 | 17 | U4 electron-builder.yml 零改动 | apps/electron/resources/pi（pi Bun binary，prepare-pi-resources.sh 产物，untracked）与被删的仓库根 resources/pi 是两个不同目录，yml 的 from 指向前者 | U4 交付 |
-| 18 | U4 收尾（协调者授权）：registerTimeout 的 bridge: 前缀分支删除 + extension-timeout-manager.test / server-destroyed-converged-cleanup / bridge-marker-channel / bridge-sync / bridge-reconnect 连带测试改造 | 「新链路上线即旧链路删除，无并存窗口」纪律——旧 event-adapter bridge:* 分支删后该分支生产不可达（registerExtensionTimeout 只由 extension-ui kind 触发）；登记单源化到 addBridgeRequest + 2 条防回归锁（registerTimeout 误传 bridge: 不得登记） | U4 收尾（授权） |
+| 18 | U4 收尾（协调者授权）：registerTimeout 的 bridge: 前缀分支删除 + extension-timeout-manager.test / server-destroyed-converged-cleanup / bridge-marker-channel / bridge-sync / bridge-reconnect / plugin-hook-map.test.ts（旧 bridge/index.ts 路径注释改指新包 pi.on 注册段）连带测试改造 | 「新链路上线即旧链路删除，无并存窗口」纪律——旧 event-adapter bridge:* 分支删后该分支生产不可达（registerExtensionTimeout 只由 extension-ui kind 触发）；登记单源化到 addBridgeRequest + 2 条防回归锁（registerTimeout 误传 bridge: 不得登记）。[sync 补登 2026-09-05] plugin-hook-map.test.ts 的注释清扫（809d11129 实改）当时漏登，台账对齐 | U4 收尾（授权） |
 
 ## 6 状态表
 
@@ -121,3 +121,4 @@ graph TD
   - v2（2026-09-05）：U1-U4 执行期状态表更新；偏差 #2-#18 陆续登记。
   - v3（2026-09-05）：阶段 3/4 收口 + Gate A/B 首轮记录。
   - v4（2026-09-05）：Gate B 第二轮（R1 复验）记录 + R2 专项登记 + 交付口径定稿。
+  - v5（2026-09-05）：design-code-sync 第 1 轮同步修复回写：偏差 #18 扩围清单补登 plugin-hook-map.test.ts（809d11129 实改、台账漏登）；头部来源设计版本锚 v3→v4.1（Gate B 回写后设计已演进）。对应设计文档 v4.2（详见其变更历史）。
