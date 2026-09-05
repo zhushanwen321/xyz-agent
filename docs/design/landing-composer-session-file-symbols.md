@@ -262,7 +262,7 @@ ComposerInput.getSegments()  ← chip DOM → segment（insertSessionChip/insert
 | U4 | 候选派生与拉取 | `packages/renderer/src/components/panel/command-popover-symbols.ts` · `command-popover-open-fetch.ts` · `CommandPopover.vue` · `command-popover-file-candidates.ts` | symbols：`buildSessionCandidates` 删第三参（D1）；open-fetch：守卫按 type 分路 + file 路边沿拉（D2/D3，拉取结果存本地 ref 经 props/回传入 items——落点实施期定，验收标准不变）；CommandPopover：新 `cwd` prop + items 的 session 分支去 `!!props.sessionId`、file 分支 landing 走 cwd 数据 | 四文件同属「候选派生」职责簇，一起改才能保持 items 派生的单一出口；拆开提交会有中间态编译不过 |
 | U5 | Composer 接线 | `packages/renderer/src/components/panel/Composer.vue` | `:cwd="flow.currentCwd"` 传 CommandPopover（landing 态有值、panel 态无消费方不受影响） | 一行接线，独立可评审 |
 | U6 | 测试 | `__tests__/panel/composer-hash-trigger.test.ts`（S4 翻转为「landing 有候选」、A5 保留）、`__tests__/panel/command-popover-symbols*.test.ts`（删参签名）、`__tests__/panel/composer-file-popover.test.ts`（cwd 路新增）、runtime `file-service` 测试（拆分等价 + cwd 路新增）、协议一致性测试 | 见 TEST-STRATEGY 三视角：构建者（纯函数签名）+ 使用者（浮层 DOM 断言，landing mount 场景）+ 观察者（live≡reload） | 测试是各单元的验收载体，但汇总一个单元便于跑全量回归 |
-| U7 | 文档回写 | `docs/architecture/composer-symbol-system.md` | §1 Out 清单第 5 条（landing 态 `@`/`#` 浮层）改为仅 `@` 并链接本文；§5 待验证清单第 4 条（landing 空态处理）同步修订；决策记录增补（landing `#`/`$` 通道设计，指向本文 D1-D6） | C-proc-10：设计决策变更同批回写登记 |
+| U7 | 文档回写 | `docs/architecture/composer-symbol-system.md` | §1 Out 清单第 5 条（landing 态 `@`/`#` 浮层）改为仅 `@` 并链接本文；§5 待验证清单第 4 条（landing 空态处理）同步修订；决策记录增补（landing `#`/`$` 通道设计，指向本文 D1-D7） | C-proc-10：设计决策变更同批回写登记 |
 
 **待验证（设计阶段无法确定，诚实标注）**：
 

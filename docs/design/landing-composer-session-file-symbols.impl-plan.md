@@ -1,6 +1,6 @@
 # landing-composer-session-file-symbols 实施计划
 
-基线: <待评审后 commit> | 来源设计: docs/design/landing-composer-session-file-symbols.md | 日期: 2026-09-04
+基线: 0aeb0b652 | 来源设计: docs/design/landing-composer-session-file-symbols.md | 日期: 2026-09-04
 
 ## 0 章节映射
 
@@ -91,6 +91,8 @@ graph TD
 | u4-popover | open-fetch 直接 import api domain 而非 '@/api' 门面 | mock 域未扩 getFileCandidatesByCwd（领地外）；直接 import 有既有先例；mock 下失败降级空态符合计划待验证② | 无需改设计 |
 | u4-popover | file-candidates 仅修 1 行过时注释 | 原注释与实际门不符 | 无需改设计 |
 | u4-popover | cwd 拉取失败主动清空本地 ref | 防换目录后失败时残留脏候选，保证失败→无浮层恒成立，有专项用例 | 合理增强 |
+| u4-popover | 落点选择：open-fetch 经 onCwdFileCandidates 回调写入 CommandPopover 本地 ref（cwdFileCandidates），未拆新文件 | 设计 §5 待验证①授权的实施期落点，script 294/300 | 状态表 u4 行所称第 5 条偏差即本条（登记补录于 design-code-sync R1） |
+| u5-wiring | LP 组 fake Date 节流隔离 | open-fetch 1s 节流依赖 Date.now（模块级真实时钟），测试以 toFake:['Date'] + 固定 NOW 传参隔离跨用例污染（composer-hash-trigger.test.ts:295） | 状态表 u5 行所称第 3 条偏差即本条（登记补录于 design-code-sync R1） |
 | u5-wiring | 绑定用 flow.currentCwd?.value ?? null 而非字面 prop | flow 是普通对象嵌套 ComputedRef 模板不自动解包；?. 同时防御领地外测试 mock 缺字段（退化为 S4b 空态语义） | 合理偏差，接受 |
 | u5-wiring | 新断言改用 data-reka-popper-content-wrapper 真选择器 | 旧 data-radix-* 是恒 null 空选择器（旧 S4/A5/U8 该断言空洞）；仅新/翻转断言改真选择器，旧断言未动（A5 仍有 bodyRows 实体断言护栏） | 登记残留风险：旧空洞断言留待后续批清理 |
 | （初始空位） | | | |
@@ -120,6 +122,7 @@ graph TD
 
 **变更历史**：
 - 2026-09-04 计划创建（来源设计 R2 复审 0 must-fix 后）。
-- 2026-09-04 执行期：u1-u5 依序 committed；u2 blocker（interfaces.ts 领地外）裁决划入 u2；u4/u5 偏差 8 条全部裁决登记。
+- 2026-09-04 执行期：u1→u3/u2（W2 并行）→u4→u5 依次 committed；u2 blocker（interfaces.ts 领地外）裁决划入 u2；u4/u5 偏差全部裁决登记（含 design-code-sync R1 补录 2 条）。
 - 2026-09-04 u6 全量回归：绿（subagent-core 6 例=TaiJi 宿主 env 注入，净环境 12/12 绿；runtime thinking-e2e 1 例=基线同红实锤非本次引入）；三包 typecheck + lint 绿。
 - 2026-09-04 阶段 3 一致性审查（分区 A）：doc_errors 2 条修正——①u2 状态表残留 pending 行删除；②偏差登记第 1 条「计划领地列已补」与 §2 表矛盾，以本行澄清：interfaces.ts 领地补充以 §5 登记行为准，§2 领地列不改写历史。分区 A unreasonable 2 条（file-service.ts:190 注释 #→$ 术语、:231 @throws 补 permission_denied/timeout）打回 u2 定向修。
+- 2026-09-05 design-code-sync R1（终态全量）：2 must-fix（F-01 偏差登记缺 2 行已补录、F-02 file.search case 注释与拆分后行为矛盾→fixer 修）+ 3 suggestion（F-03 存量 # 注释 5 处→fixer 修、F-04 基线占位符已回填 0aeb0b652、F-05 composer.ts 头注释 mock 偏差说明→fixer 修）+ 2 info（F-06 依序措辞已修、F-07 设计 U7 行 D1-D6→D1-D7 已修）；无 contested。收敛轨迹：R1 待修 7 → 聚焦复审待确认。

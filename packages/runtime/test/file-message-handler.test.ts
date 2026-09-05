@@ -1,5 +1,5 @@
 /**
- * FileMessageHandler 单测 — file.search case（composer # 文件候选入口）。
+ * FileMessageHandler 单测 — file.search case（composer $ 文件候选入口）。
  *
  * 直接注入 mock ctx + mock fileService，覆盖 switch 分支的 reply/error 两条路径。
  * 模板照 tree-message-handler.test.ts（mock-ctx 捕获 reply/errors）。

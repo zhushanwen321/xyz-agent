@@ -69,8 +69,9 @@ export class FileMessageHandler {
         }
       }
       case 'file.search': {
-        // composer # 文件候选：全量递归当前 cwd（受 ignore + 深度上限 + 结果数上限）。
-        // searchFiles 内部 per-dir 容错（单子目录错误跳过不中断），仅 session_not_found 抛出。
+        // composer $ 文件候选：全量递归当前 cwd（受 ignore + 深度上限 + 结果数上限）。
+        // 准入错误抛出（session_not_found / cwd 目录已删 not_found / permission_denied / timeout），
+        // 递归期 per-dir 容错跳过（单子目录错误不中断整体）。
         const { sessionId, showIgnored } = msg.payload
         try {
           const files = await this.ctx.fileService.searchFiles(sessionId, showIgnored)

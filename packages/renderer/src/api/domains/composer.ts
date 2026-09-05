@@ -1,7 +1,9 @@
 /**
- * Composer 域 —— `#` 文件候选 WS 封装（composer 工具区）。
+ * Composer 域 —— `$` 文件候选 WS 封装（composer 工具区）。
  *
  * real 模式下（VITE_MOCK !== 'true'）由 api/index 注入，替代 mock 静态 fixture。
+ * 例外：getFileCandidatesByCwd 由 open-fetch（command-popover-open-fetch）直接 import
+ * （绕过门面注入），mock 模式下走 real command 失败降级空候选（见 impl-plan §5 u4 偏差）。
  *
  * 请求-响应形态（对称 file.ts）：
  * - getFileCandidates → file.search → 'file.search:result' 同步 reply，返回 FileNode[]
@@ -20,7 +22,7 @@ import type { FileNode } from '@xyz-agent/shared'
 import { command } from '../request'
 
 /**
- * 拉 `#` 文件候选（全量递归当前 cwd，受 ignore + 深度上限 + 结果数上限）。
+ * 拉 `$` 文件候选（全量递归当前 cwd，受 ignore + 深度上限 + 结果数上限）。
  * @param sessionId 当前 session（取其 cwd 作为搜索根）
  * @returns FileNode[]（扁平，path 相对 cwd 无前导斜杠）
  */
