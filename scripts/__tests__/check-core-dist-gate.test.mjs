@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, dirname } from 'node:path'
+import { join } from 'node:path'
 import {
   stripComments,
   parseExportBlocks,
@@ -89,7 +89,7 @@ describe('collectBundleClosure', () => {
       expect(markers.has('src/fake.ts')).toBe(false)
       expect(markers.has('src/c.ts')).toBe(true)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })
