@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api/events'
 import { __clearSessionCleanupRegistryForTest } from '@/composables/useSessionScopedState'
 import { __clearInFlightGenStatsForTest } from '@/composables/features/model/useGenStats'
 import type { GenStatsFrame, ServerMessage } from '@xyz-agent/shared'

@@ -12,12 +12,14 @@
  * 新增 badge 类型只需在此判别联合加一个 case + 渲染层加一个分支，
  * 不需要改正则、加 Message 字段、改 send 链路签名。
  */
+import { buildSkillMarker } from './skill-marker'
 
 /**
  * Segment 判别联合。type 字段是判别器（discriminant），switch(type) 可穷尽检查。
  *
  * - text: 纯文本段（用户输入的文字）
- * - skill: skill 命令段（/skill:xxx），含 name 和可选的 SKILL.md 文件路径
+ * - skill: skill 命令段，含 name 和可选的 SKILL.md 文件路径
+ *   （序列化为 `<xyz-skill/>` 私有标记，见 segmentsToText；D3）
  * - file: 文件引用段（未来从 drawer/diff 选取追加到 composer），含路径和可选行范围
  * - mention: @mention 段（未来 @user 等），含 name
  * - session: session 引用段（composer # session chip），sessionId 是 TUI session_read
@@ -53,11 +55,17 @@ export type Segment =
 /**
  * Segment[] → 纯文本（归一化展示用 + pi prompt 序列化的唯一实现）。
  *
- * skill → `/skill:name`，file → `path`（可选 `:L<s>-L<e>` 行范围），mention → `@name`，
+ * skill → `<xyz-skill name=".." location=".."/>` 私有标记（D3，runtime 注入器只认该标记
+ * 展开注入；构建复用 skill-marker SSOT 保证转义/属性顺序与解析端一致）。标记格式变更的
+ * 展示面影响——复制消息、编辑重发草稿回填等 normalizeContent 消费方看到标记原文而非
+ * `/skill:name`——已登记于设计 §3.5-⑤（composer-multi-skill-injection.md）判定可接受。
+ * 手打 `/skill:name` 文本不经此路径也不被 runtime 处理（G5：与 pi 原生行为零偏差）。
+ * file → `path`（可选 `:L<s>-L<e>` 行范围），mention → `@name`，
  * session → `#sessionId`（TUI session_read 协议），subagent → 空串（路由标记不进 prompt），
  * text → 原文，image → 裸 path 独占一行（对齐 pi TUI，LLM 自己调 read 工具读），
  * handoff → `[handoff from sourceLabel]`（来源标记，文档内容在 text segment 中）。
- * skill 段后若紧跟 text 段，中间补一个空格分隔（修复零宽空格被过滤导致的粘连 bug）。
+ * skill 段后若紧跟 text 段，中间补一个空格分隔（修复零宽空格被过滤导致的粘连 bug；
+ * 标记形态下同样需要——`/>` 与正文直接粘连）。
  * image 后紧跟 text 不补空格（image 产出的 `\n${path}\n` 已有换行分隔，再补空格会污染行首）。
  *
  * 收敛说明：原本 segmentsToPrompt 与 segmentsToText 分两份实现，因为 file inline 需要
@@ -94,7 +102,9 @@ export function segmentsToText(segments: Segment[]): string {
         parts.push(seg.text)
         break
       case 'skill':
-        parts.push(`/skill:${seg.name}`)
+        // D3：产 `<xyz-skill/>` 私有标记（location 可得时带上，作为降级模式与反解析的
+        // 自描述数据）。反解析对偶实现在 core parseSkillBlock（两形态，D7 兜底通道）。
+        parts.push(buildSkillMarker(seg.name, seg.location))
         break
       case 'file': {
         // D2 格式：行范围序列化（path:L<n> 单行 / path:L<s>-L<e> 多行）。
@@ -147,12 +157,9 @@ export function segmentsToText(segments: Segment[]): string {
  * 纯文本 → Segment[]（无 badge 时产出单个 text segment）。
  *
  * 用于构造不含 badge 的 user message（如 mock 数据、从纯文本恢复的消息）。
- * 不做反向解析（不从字符串提取 /skill: 前缀）——结构化 segments 应从 composer DOM 直接产出。
- *
- * 已知限制：此函数用于从纯文本恢复 Segment[]（如读取 pi JSONL 历史），不做反向解析——
- * 历史 user message 中的 /skill: 等前缀不会还原为 badge segment。新消息的 badge 由
- * composer DOM 直接产出结构化 segments，不经此函数。历史回读时 badge 信息会丢失，
- * 表现为纯文本展示（不影响功能正确性，仅丢失可视化标记）。
+ * 不做反向解析（本函数不做任何标记提取）——结构化 segments 应从 composer DOM 直接产出；
+ * 历史 user message 中的 skill 标记反解析由 core parseSkillBlock 负责（D7 兜底通道，
+ * 两形态含 xyz 私有标记与 pi 原生 block），不经此函数。
  */
 export function textToSegments(text: string): Segment[] {
   if (!text) return []

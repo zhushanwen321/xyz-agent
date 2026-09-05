@@ -294,6 +294,8 @@ export default {
     // Four-symbol system (@ subagent popover)
     newSubagent: '＋ New subagent',
     newSubagentPlaceholder: 'New task',
+    // Skill popover selected marker (multi-skill injection D2)
+    skillSelected: 'Selected',
   },
   queue: {
     title: 'Queue',
@@ -347,6 +349,14 @@ export default {
     view: 'View',
     viewBranch: 'View branch',
     dismiss: 'Dismiss',
+  },
+  skillNotice: {
+    degradeBudget: 'Injected as markers (budget exceeded); the model can read the skill files itself',
+    degradeWindow: 'Context window info unavailable; injected as markers',
+    missing: 'skill {names} not found; passed through as-is',
+    readFailed: 'failed to read skill {names}; passed through as-is',
+    malformed: 'malformed skill marker; passed through as-is',
+    mappingUnavailable: 'skill mapping unavailable; passed through as-is',
   },
   retryIndicator: {
     retrying: 'Retrying',

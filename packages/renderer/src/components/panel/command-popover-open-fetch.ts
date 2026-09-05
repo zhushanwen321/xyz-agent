@@ -25,7 +25,7 @@ const FETCH_THROTTLE_MS = 1_000
 
 export function useCommandPopoverOpenFetch(opts: {
   open: () => boolean
-  type: () => 'file' | 'slash' | 'session' | 'subagent'
+  type: () => 'file' | 'slash' | 'session' | 'subagent' | 'skill'
   sessionId: () => string | undefined
   /** landing 态当前选定目录（Composer 传 flow.currentCwd；file 路 cwd 通道专用，panel 不消费） */
   cwd: () => string | null | undefined
@@ -43,8 +43,10 @@ export function useCommandPopoverOpenFetch(opts: {
       if (!open || prevOpen) return // 仅 false→true 边沿
       const type = opts.type()
       const sid = opts.sessionId()
-      if (type === 'slash') {
-        if (!sid) return // landing 态无 session 通道不拉（slash 候选源 per-session）
+      if (!sid) return // landing 态无 session 通道不拉（slash/skill 候选源 per-session；#/@ 候选为空不弹）
+      // slash 与 skill（多 skill 注入 D1）同源：数据都在 pi get_commands → commandStore，
+      // 打开边沿同一节流窗口拉一次，双浮层共享最新快照
+      if (type === 'slash' || type === 'skill') {
         if (Date.now() - lastSlashFetchAt < FETCH_THROTTLE_MS) return
         lastSlashFetchAt = Date.now()
         void sessionApi

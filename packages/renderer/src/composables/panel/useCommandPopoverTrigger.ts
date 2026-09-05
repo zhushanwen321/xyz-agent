@@ -1,12 +1,14 @@
 /**
  * Composer 命令浮层触发态机（架构审查 F7，从 Composer.vue 拆出）。
  *
- * 职责（单一变化轴「slash/file/session/subagent 浮层触发 + CommandPopover 联动」）：
- * - 四路触发态标记（slash/file/session/subagent TriggerActive）：区分「输入区符号触发」
+ * 职责（单一变化轴「slash/file/session/subagent/skill 浮层触发 + CommandPopover 联动」）：
+ * - 五路触发态标记（slash/file/session/subagent/skill TriggerActive）：区分「输入区符号触发」
  *   与「+菜单触发」两条打开浮层路径——仅输入区路径设 true，使后续 trigger:null 能正确关闭浮层。
- * - onSlashTrigger / onFileTrigger / onSessionTrigger / onSubagentTrigger：输入区触发
- *   事件路由（开/关浮层 + 记 query 透传过滤）。四符号语义（composer-symbol-system）：
- *   $ 文件（file-trigger emit）/ # session（session-trigger）/ @ subagent（subagent-trigger）/ / 命令。
+ * - onSlashTrigger / onFileTrigger / onSessionTrigger / onSubagentTrigger / onSkillTrigger：
+ *   输入区触发事件路由（开/关浮层 + 记 query 透传过滤）。五符号语义（composer-symbol-system
+ *   + 多 skill 注入 D1）：$ 文件（file-trigger emit）/ # session（session-trigger）/
+ *   @ subagent（subagent-trigger）/ 行首 / 命令（slash-trigger）/ 行中空白后 / skill（skill-trigger，
+ *   两 / 触发域正则互斥）。
  * - onAddSelect：+ 菜单打开 slash 浮层（不设触发态，防普通键误关）。
  * - onCmdSelect：选中后插 chip（slash/file/session/subagent），清过滤文本 + 复位触发态。
  * - pendingSlash watch：消费 SearchModal 经 commandStore 注入的 slash 请求。
@@ -25,15 +27,17 @@ import type CommandPopover from '@/components/panel/CommandPopover.vue'
 /** + 菜单「附件」项的图片类型过滤扩展名（「图片」入口 pickFile filters 用） */
 const IMAGE_FILTER_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']
 
-/** 命令浮层四路类型（四符号体系：$/file、#//session、@/subagent、//slash） */
-export type CommandPopoverType = 'file' | 'slash' | 'session' | 'subagent'
+/** 命令浮层五路类型（四符号体系 + skill：$/file、#//session、@/subagent、//slash、空格后 //skill） */
+export type CommandPopoverType = 'file' | 'slash' | 'session' | 'subagent' | 'skill'
 
-/** 浮层选中 payload（四路归一；name 保留兼容 slash/file，session/subagent 走专属字段） */
+/** 浮层选中 payload（五路归一；name 保留兼容 slash/file，session/subagent 走专属字段） */
 export interface CommandSelectPayload {
   type: CommandPopoverType
   name: string
   icon?: string
   description?: string
+  /** skill 路：SKILL.md 绝对路径（可得时带上，chip dataset 携带供反解析）；缺省时 runtime 经 get_commands 权威映射解析 */
+  location?: string
   /** session 路：选中 session 的 id（TUI session_read 协议消费） */
   sessionId?: string
   /** session 路：显示 label（人可读标题，chip 展示用） */
@@ -54,11 +58,13 @@ export function useCommandPopoverTrigger(
   fileQuery: Ref<string>
   sessionQuery: Ref<string>
   subagentQuery: Ref<string>
+  skillQuery: Ref<string>
   commandPopoverRef: Ref<InstanceType<typeof CommandPopover> | null>
   onSlashTrigger: (payload: { query: string } | null) => void
   onFileTrigger: (payload: { query: string } | null) => void
   onSessionTrigger: (payload: { query: string } | null) => void
   onSubagentTrigger: (payload: { query: string } | null) => void
+  onSkillTrigger: (payload: { query: string } | null) => void
   onAddSelect: (type: 'attach' | 'image' | 'slash') => Promise<void>
   onCmdSelect: (payload: CommandSelectPayload) => void
 } {
@@ -87,6 +93,10 @@ export function useCommandPopoverTrigger(
   const subagentTriggerActive = ref(false)
   /** @ subagent 过滤 query（输入区 @ 后内容），透传给 CommandPopover 过滤 */
   const subagentQuery = ref('')
+  /** skill 触发态标记（多 skill 注入 D1：行中空白后 / 的新分路，同上语义） */
+  const skillTriggerActive = ref(false)
+  /** skill 过滤 query（输入区空格后 / 的内容），透传给 CommandPopover 过滤 */
+  const skillQuery = ref('')
   const commandPopoverRef = ref<InstanceType<typeof CommandPopover> | null>(null)
 
   /**
@@ -139,6 +149,8 @@ export function useCommandPopoverTrigger(
   const onSessionTrigger = makeTriggerHandler(sessionTriggerActive, sessionQuery, 'session')
   /** 输入区 @ 触发 → subagent 浮层（四符号体系） */
   const onSubagentTrigger = makeTriggerHandler(subagentTriggerActive, subagentQuery, 'subagent')
+  /** 输入区空格后 / 触发 → skill 浮层（多 skill 注入 D1；与 onSlashTrigger 行首命令域正则互斥） */
+  const onSkillTrigger = makeTriggerHandler(skillTriggerActive, skillQuery, 'skill')
 
   /** + 菜单选择：
    *  - attach（任意文件）：调 pickFile IPC（无 filters），选中后插文本路径到输入区。canceled 静默 return。
@@ -185,8 +197,10 @@ export function useCommandPopoverTrigger(
     cmdOpen.value = true
   }
 
-  /** 命令浮层选中：四路各先清「符号+query」过滤文本再插对应 chip。
+  /** 命令浮层选中：五路各先清「符号+query」过滤文本再插对应 chip。
    *  - slash：clearSlashQueryText → insertSlashChip
+   *  - skill（行中空白后 / 触发）：clearSkillQueryText → insertSkillChip（光标处标记 chip，
+   *    多个共存——与 slash 的「最前唯一」命令 chip 通道区分，多 skill 注入 D2）
    *  - file（$ 触发）：clearDollarFileQueryText → insertFileChip（绿色 file chip，
    *    与原 insertMentionChip('#') 等价——dom-core 内 # 委托 insertFileChip，直接走本名）
    *  - session（# 触发）：clearSessionQueryText → insertSessionChip（显示 label 非 uuid）
@@ -199,10 +213,14 @@ export function useCommandPopoverTrigger(
     fileTriggerActive.value = false // 复位 $ 触发态标记
     sessionTriggerActive.value = false // 复位 # 触发态标记
     subagentTriggerActive.value = false // 复位 @ 触发态标记
+    skillTriggerActive.value = false // 复位 skill 触发态标记
     inputRef.value?.focus()
     if (payload.type === 'slash') {
       inputRef.value?.clearSlashQueryText()
       inputRef.value?.insertSlashChip(payload.name, payload.icon)
+    } else if (payload.type === 'skill') {
+      inputRef.value?.clearSkillQueryText()
+      inputRef.value?.insertSkillChip(payload.name, payload.location, payload.icon)
     } else if (payload.type === 'session') {
       inputRef.value?.clearSessionQueryText()
       inputRef.value?.insertSessionChip(payload.sessionId ?? '', payload.label ?? payload.name)
@@ -225,11 +243,13 @@ export function useCommandPopoverTrigger(
     fileQuery,
     sessionQuery,
     subagentQuery,
+    skillQuery,
     commandPopoverRef,
     onSlashTrigger,
     onFileTrigger,
     onSessionTrigger,
     onSubagentTrigger,
+    onSkillTrigger,
     onAddSelect,
     onCmdSelect,
   }

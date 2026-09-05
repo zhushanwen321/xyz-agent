@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { defineComponent, h, ref, nextTick } from 'vue'
 import { mount, type VueWrapper } from '@vue/test-utils'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api/events'
 import {
   triggerSessionCleanups,
   __clearSessionCleanupRegistryForTest,

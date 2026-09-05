@@ -512,7 +512,7 @@ describe('createChatStore factory', () => {
       // 引用断言：drainN 从深响应式 pendingBuffer 取出的 segments 是 reactive Proxy，
       // toRaw 解回原引用（与 pending-drain-fifo.test.ts 同判据——FIFO 取最早的精确判据）
       expect(toRaw(msgs[0].content)).toBe(segs)
-      expect(segmentsToText(msgs[0].content as Segment[])).toBe('/skill:deploy --prod')
+      expect(segmentsToText(msgs[0].content as Segment[])).toBe('<xyz-skill name="deploy"/> --prod')
     })
   })
 

@@ -16,7 +16,8 @@
  */
 import { computed, onMounted, onScopeDispose, ref, type ComputedRef, type Ref } from 'vue'
 import type { VirtualizerHandle } from 'virtua/vue'
-import type { MessageTurn, RenderItem } from '@/composables/logic/messageTurns'
+import type { MessageTurn } from '@/composables/logic/messageTurns'
+import type { SkillNoticeStreamItem } from '@/composables/panel/useSkillNoticeStream'
 import { turnStableId } from '@xyz-agent/core/domain/chat'
 import { useTurnExpansion } from '@/composables/panel/useTurnExpansion'
 import { useTurnExpansionStore } from '@/stores/turn-expansion'
@@ -32,8 +33,11 @@ const EMPTY_SET: ReadonlySet<string> = Object.freeze(new Set<string>()) as Reado
 /** useMessageStreamRail 依赖（由 MessageStream.vue 注入，避免重复读取 store/props）。 */
 export interface UseMessageStreamRailDeps {
   sessionId: ComputedRef<string>
-  /** 完整渲染项列表（turn + system 穿插），railTurns 派生自此。 */
-  renderItems: ComputedRef<RenderItem[]>
+  /** 完整渲染项列表（turn + system 穿插），railTurns 派生自此。
+   *  [u5] 类型为 MessageStream 的 streamItems 基准（core RenderItem + skillNotice 拼接项）——
+   *  rail 的 jump/active 下标空间必须与 Virtualizer :data 一致；本模块只消费 turn 项
+   *  （kind==='turn' 窄化），notice 项自然跳过。 */
+  renderItems: ComputedRef<ReadonlyArray<SkillNoticeStreamItem>>
   /** 滚动容器 el（closest('section') 算 panelRightEdge + ResizeObserver 横向重定位）。 */
   scrollEl: Ref<HTMLElement | null>
   /** [cw wave w4] virtua VirtualizerHandle ref（单一 virtua 路径：rail jump/active 都走 virta API）。

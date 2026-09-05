@@ -16,6 +16,8 @@ vi.mock('node:child_process', () => ({
     spawnArgsCapture.push({ args: [...args], cwd: options?.cwd })
     const fakeProc = {
       on: vi.fn(),
+      off: vi.fn(),
+      removeListener: vi.fn(),
       stdout: { on: vi.fn() },
       stderr: { on: vi.fn() },
       stdin: { write: vi.fn() },

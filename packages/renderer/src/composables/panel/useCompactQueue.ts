@@ -33,8 +33,8 @@
  * 时分区随 session 销毁）。所有公开方法显式接收 sid 并经 updateFor 操作分区——不依赖
  * 全局活跃 sid，兼容 split 多 panel。
  */
-import { reactive, ref } from 'vue'
-import type { Ref } from 'vue'
+import { computed, reactive, ref, unref } from 'vue'
+import type { ComputedRef, Ref } from 'vue'
 import type { ServerMessage } from '@xyz-agent/shared'
 import { setCompactQueueProviderForEffects, submitQueuedEntry } from '@xyz-agent/core'
 import type { SubmitQueuedEntryDeps } from '@xyz-agent/core'
@@ -327,3 +327,20 @@ function createCompactQueue(): CompactQueue {
 // 已由 App.vue setup 创建（app 级 effect scope，见上方单例注释），此处直接返回缓存实例。
 // 未注册时 core ① 整体跳过（帧落现有处理链），注册失败方向安全。
 setCompactQueueProviderForEffects(() => useCompactQueue())
+
+/**
+ * MessageStream 侧 per-session 组装封装（自 MessageStream.vue 拆出，≤300 行规范）：
+ * pending 气泡数据源快照 + × 撤销 handler（未提交条目；已提交条目 UI 禁用不会触发——
+ * remove 对未知/已出队 id 本就 no-op）。
+ */
+export function useSessionPendingEntries(sessionId: ComputedRef<string> | Ref<string>): {
+  pendingEntries: ComputedRef<QueuedMessage[]>
+  onRemovePending: (id: string) => void
+} {
+  const queue = useCompactQueue()
+  const pendingEntries = computed<QueuedMessage[]>(() => queue.peek(unref(sessionId)))
+  const onRemovePending = (id: string): void => {
+    queue.remove(unref(sessionId), id)
+  }
+  return { pendingEntries, onRemovePending }
+}

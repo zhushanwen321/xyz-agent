@@ -376,6 +376,29 @@
   "verifiedWith": "0.84.4"
  },
  {
+  "id": "PS-24",
+  "claim": "/skill:name 的展开格式 = `<skill name=\"<skillName>\" location=\"<SKILL.md abs path>\">\\nReferences are relative to <skillDir>.\\n\\n<body>\\n</skill>`（body = stripFrontmatter 剥 frontmatter 后 trim；args 有则 block + \"\\n\\n\" + args；name 缺 frontmatter 时回退父目录名）；且 get_commands 的 skill 项 name 恒带 `skill:` 前缀（`skill:${skill.name}`），sourceInfo.path 为 resolve 后绝对路径（baseDir 不可依赖：extension 覆盖链可改写、兜底形态缺字段，References 行以 dirname(path) 为准）——runtime 注入器（skill-injector）对同输入的展开输出与 pi 落盘文本逐字 golden diff 由 PS-24 探针守卫（composer-multi-skill-injection D5 / 场景 8；编号自 PS-22 改——与 session-occupancy-send-closure 的 PS-22 撞号）",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "_expandSkillCommand / getCommands（skill 项）",
+    "note": ":983-1007 展开模板 :997（stripFrontmatter :995 trim）；:1996 name: `skill:${skill.name}`（前缀实锤；:1998 为 source: \"skill\"）；name 回退父目录名 core/skills.js:244-245，sourceInfo 见 skills.js:90-110 createSkillSourceInfo（path 可依赖；baseDir 不可依赖——resource-loader.js:514-518 extension 覆盖链可改写、:612 兜底形态无该字段，References 行以 dirname(path) 为准）"
+   },
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/modes/rpc/jsonl.js",
+    "symbol": "serializeJsonLine / attachJsonlLineReader",
+    "note": "帧协议 LF-only（:5-17 注释明示 readline 按 Unicode 分隔符拆帧的坑）——runtime rpc-client 的 LF-only 读取器是它的对端（D10），同一探针文件族守卫"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-skill-expansion-golden.test.ts"
+  },
+  "verifiedWith": "0.84.4"
+ },
+ {
   "id": "PS-21",
   "claim": "注册工具的 parameters schema 是 pi 注入给模型的权威展示面：agent-session 把注册工具装入 agent.state.tools，agent-core 每轮流式调用经 createContextSnapshot 把 state.tools 带入请求上下文，pi-ai provider 层 convertTools 对每个工具取 tool.parameters 原样映射进 provider 请求体（anthropic input_schema / openai function.parameters）——API tools 段即模型可见的 schema 全文，ASP/任务文本不放 schema 重复不影响模型拿到结构",
   "piAnchor": [

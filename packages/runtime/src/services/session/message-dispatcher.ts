@@ -24,6 +24,7 @@ import type { WorkspaceService } from '../workspace/workspace-service.js'
 import type { IMessageBus } from '../message-bus/message-bus.js'
 import { toErrorMessage, RpcTimeoutError } from '../../utils/errors.js'
 import { updateSessionOccupancy } from './event-interpreter.js'
+import { SkillInjector, type SkillNotice } from './skill-injector.js'
 
 /** 生成代次 token 用的进制（base-36：数字 + 小写字母，紧凑且无符号字符）。 */
 const RANDOM_TOKEN_RADIX = 36
@@ -76,6 +77,9 @@ export class MessageDispatcher {
     private readonly pm: IProcessManager,
     private readonly workspaceService: WorkspaceService,
     private messageBus?: IMessageBus,
+    // [composer-multi-skill-injection D9] skill 注入器：三入口统一调用（hook 之后、
+    // client 发送之前）；构造注入便于测试替换 spy（每入口恰好单次调用的结构化幂等）。
+    private readonly injector: SkillInjector = new SkillInjector(),
   ) {}
 
   /**
@@ -196,8 +200,12 @@ export class MessageDispatcher {
     }
     // ── 发送 prompt + 错误广播 ──
     const promptText = hookOutcome.modifiedContent ?? hookContent
+    // [composer-multi-skill-injection D9] 注入器：BeforeSend hook 之后、client.prompt 之前
+    // 统一处理（展开 / 预检降级 / 失效透传）。hook 审核的是用户原文，注入器处理改写后文本；
+    // hook 若破坏标记完整性，注入器内部走残缺透传 + notice（D8）。每入口恰好单次调用。
+    const injection = await this.injector.inject(client, promptText)
     try {
-      await client.prompt(promptText, images)
+      await client.prompt(injection.text, images)
     } catch (e) {
       const errMsg = toErrorMessage(e)
       console.error(`[message-dispatcher] prompt failed: sessionId=${sessionId}`, errMsg)
@@ -237,6 +245,9 @@ export class MessageDispatcher {
       // renderer pending.reject 触发 Composer 恢复草稿。否则 handler reply success → pending.resolve 误判发送成功。
       return { blocked: true }
     }
+    // [D6/D8] 发送成功后才发布 skillNotice：消息已真正入队，提示描述的注入形态才成立；
+    // prompt 失败路径不发（上方 message.error 已覆盖用户可见错误）。
+    this.publishSkillNotices(sessionId, promptText, injection.notices)
     return { blocked: false }
   }
 
@@ -632,14 +643,47 @@ export class MessageDispatcher {
     this.messageBus?.publish(sessionId, cancelMsg)
   }
 
+  /**
+   * [composer-multi-skill-injection D6/D8] 发布 skill 注入提示广播（session.skillNotice，
+   * payload 契约见 protocol.ts）。三入口共用：注入器产出的 notices 逐条定向发布。
+   *
+   * clientUuid 从发送文本提取（`<!--xyz:msg:<uuid>-->`，与 pi 侧 msg-id-mapper TAG_MATCH
+   * 同款全文正则——全文匹配使降级拼接把块放到标记之后也不影响提取）；纯文本消息与
+   * steer/followUp 路径无此标记 → payload 缺省该字段（类型可空，u5 按可空消费）。
+   */
+  private publishSkillNotices(sessionId: string, sentText: string, notices: SkillNotice[]): void {
+    if (notices.length === 0) return
+    const clientUuid = sentText.match(/<!--xyz:msg:(u-[0-9a-fA-F-]{36})-->/)?.[1]
+    for (const notice of notices) {
+      const msg = {
+        type: 'session.skillNotice' as const,
+        payload: {
+          sessionId,
+          ...(clientUuid !== undefined ? { clientUuid } : {}),
+          reason: notice.reason,
+          skills: notice.skills,
+        },
+      }
+      this.messageBus?.publish(sessionId, msg)
+    }
+  }
+
   async steerMessage(sessionId: string, content: string): Promise<void> {
     const client = this.getClientOrThrow(sessionId, 'steer')
-    await client.steer(content)
+    // [composer-multi-skill-injection D9] 注入器：入队前统一处理（与 sendPrompt 同构）。
+    // steer 路径现状无 BeforeSend hook 调用点（hook 仅注册在 sendMessage 骨架），
+    // 「hook 之后」约束在此自然成立。
+    const injection = await this.injector.inject(client, content)
+    await client.steer(injection.text)
+    this.publishSkillNotices(sessionId, content, injection.notices)
   }
 
   async followUpMessage(sessionId: string, content: string): Promise<void> {
     const client = this.getClientOrThrow(sessionId, 'followUp')
-    await client.followUp(content)
+    // [composer-multi-skill-injection D9] 同 steerMessage：入队前统一处理，恰一次调用。
+    const injection = await this.injector.inject(client, content)
+    await client.followUp(injection.text)
+    this.publishSkillNotices(sessionId, content, injection.notices)
   }
 
   /**

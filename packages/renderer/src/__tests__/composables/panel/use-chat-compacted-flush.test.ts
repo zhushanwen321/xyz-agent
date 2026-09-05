@@ -23,7 +23,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { effectScope } from 'vue'
 import type { EffectScope } from 'vue'
 import type { ServerMessage } from '@xyz-agent/shared'
-import { dispatchSession } from '@/api/events'
+import { dispatchSession } from '@xyz-agent/core/transport/api/events'
 
 
 // vi.hoisted 保证 mock 工厂在模块加载前就绪；holder 捕获 streamSubscribe 注册的 handler

@@ -294,6 +294,8 @@ export default {
     // 四符号体系（@ subagent 浮层）
     newSubagent: '＋ 新建 subagent',
     newSubagentPlaceholder: '新任务',
+    // skill 浮层已选项标记（多 skill 注入 D2）
+    skillSelected: '已选',
   },
   queue: {
     title: '队列',
@@ -347,6 +349,14 @@ export default {
     view: '查看',
     viewBranch: '查看分支',
     dismiss: '关闭',
+  },
+  skillNotice: {
+    degradeBudget: '已按标记模式注入（预算超限），模型可自行读取 skill 文件',
+    degradeWindow: '窗口信息获取失败，已按标记模式注入',
+    missing: 'skill {names} 不存在，已按原文透传',
+    readFailed: 'skill {names} 读取失败，已按原文透传',
+    malformed: 'skill 标记已损坏，已按原文透传',
+    mappingUnavailable: 'skill 映射服务不可用，已按原文透传',
   },
   retryIndicator: {
     retrying: '重试中',

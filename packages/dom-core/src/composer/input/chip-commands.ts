@@ -103,6 +103,39 @@ export function useComposerChipCommands(
     onChanged()
   }
 
+  /**
+   * 插入 skill 标记 chip（多 skill 注入设计 D2）：类比 insertFileChip 走 insertChipAtSelection
+   * 通用机制——插在光标处、多个共存（与 insertSlashChip 的「最前唯一」命令语义区分，
+   * 不清除已存在 chip）、× 删除 / Backspace 整块删除（复用 .slash-chip 的既有删除通路）。
+   *
+   * DOM 形态复用 .slash-chip class + dataset.chipType='skill'：getSegmentsFromEl 的 skill
+   * 分支（chipType==='skill' → skill segment，带 chipLocation 则带上）零改动即可解析
+   * 任意位置多个 skill chip（D2 证据：数据模型层零改动），视觉复用 ComposerInput 的
+   * .slash-chip 紫色 chip 样式。
+   * location 可选（panel 态 sourceInfo.path / landing 态 SkillInfo.sourcePath，可得时带上）；
+   * 缺失时 segment 不带 location，runtime 注入器以 name 经 get_commands 权威映射解析（D4）。
+   */
+  function insertSkillChip(name: string, location?: string, icon?: string): void {
+    const el = getEl()
+    if (!el) return
+    restoreSelection()
+    el.focus()
+    const chip = document.createElement('span')
+    chip.className = 'slash-chip'
+    chip.contentEditable = 'false'
+    chip.dataset.chipType = 'skill'
+    chip.dataset.chipName = name
+    if (location) chip.dataset.chipLocation = location
+    renderIconInto(chip, icon)
+    const label = document.createElement('span')
+    label.className = 'chip-label'
+    label.textContent = name
+    chip.appendChild(label)
+    chip.appendChild(makeXButton(chip))
+    insertChipAtSelection(el, chip)
+    onChanged()
+  }
+
   /** 插入 # 文件引用内联 chip（结构化 file segment，ADR-0040）。 */
   function insertFileChip(path: string, lineRange?: [number, number]): void {
     const el = getEl()
@@ -259,6 +292,7 @@ export function useComposerChipCommands(
 
   return {
     insertSlashChip,
+    insertSkillChip,
     insertMentionChip,
     insertFileChip,
     insertImageBadge,

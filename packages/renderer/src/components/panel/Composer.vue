@@ -34,6 +34,7 @@
       :variant="variant"
       :project-skills="landingProjectSkills"
       :global-skills="landingGlobalSkills"
+      :selected-skill-names="selectedSkillNames"
       :query="popoverQuery"
       @select="onCmdSelect"
     >
@@ -83,6 +84,7 @@
           @input="onInputChange"
           @keydown="onKeydown"
           @slash-trigger="onSlashTrigger"
+          @skill-trigger="onSkillTrigger"
           @file-trigger="onFileTrigger"
           @session-trigger="onSessionTrigger"
           @subagent-trigger="onSubagentTrigger"
@@ -201,6 +203,7 @@ import { useChatStore } from '@/stores/chat'
 import { useProjectSkills, useGlobalSkills } from '@/composables/features/settings/useProjectSkills'
 import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverTrigger'
+import { useComposerFocusRing } from '@/composables/panel/composer-focus-ring'
 import { useComposerShell, createComposerDrafts, type ShellInputInstance } from '@/composables/panel/composer-shell'
 import type { DraftStore } from '@xyz-agent/dom-core/composer/input'
 import { handleImagePaste } from '@/composables/panel/useImageAttachment'
@@ -244,53 +247,35 @@ const {
   fileQuery,
   sessionQuery,
   subagentQuery,
+  skillQuery,
   commandPopoverRef,
   onSlashTrigger,
   onFileTrigger,
   onSessionTrigger,
   onSubagentTrigger,
+  onSkillTrigger,
   onAddSelect,
   onCmdSelect,
 } = useCommandPopoverTrigger(inputRef, sessionIdRef)
 
-/** 命令浮层过滤 query 四路映射（四符号体系：$ file / # session / @ subagent / / slash） */
+/** 命令浮层过滤 query 五路映射（四符号体系 + skill：$ file / # session / @ subagent / 行首 / slash / 空格后 / skill） */
 const popoverQuery = computed(() => {
   if (cmdType.value === 'file') return fileQuery.value
   if (cmdType.value === 'session') return sessionQuery.value
   if (cmdType.value === 'subagent') return subagentQuery.value
+  if (cmdType.value === 'skill') return skillQuery.value
   return slashQuery.value
 })
 
+/**
+ * 已插入 skill 名集合（多 skill 注入 D2 已选禁选数据面）：从 composer 当前 segments 取，
+ * 透传 CommandPopover.selectedSkillNames。显式刷新（非 computed）——getSegments 读 DOM
+ * 非响应式，随 onInputChange 同步刷新（chip 插入/删除走 onChanged → emit input，
+ * 与 refreshAttachedItems 同一模式）。
+ */
+const selectedSkillNames = ref<string[]>([])
+
 const isSending = ref(false)
-/** composer-box 聚焦态（v6 §6.1 .focused：border-accent + 3px accent 外环 --accent-ring）。
- *  boxClass（composer-shell）三级链 staging>bash>steer>hasInput 无 focus 分支，故在壳层补：
- *  focus 优先级低于 staging/steer（二者有独立视觉：staging bg-accent-soft / steer 呼吸），
- *  用 ! 前缀压过 hasInput 的 2px 微环 Tailwind 内联工具类。 */
-const isFocused = ref(false)
-/** focus ring class：staging/bash/steer 活跃时不叠加（它们已含 accent border + ring），
- *  否则聚焦时输出 3px accent 外环（覆盖 hasInput 的 2px 微环）。
- *  排除条件用 steer/bash 共享视觉特征 `border-[var(--accent)]`（Plan 04 删
- *  animate-steer-breathe 后原字符串条件变死代码，F3 修复）。 */
-const focusRingClass = computed<Array<string>>(() => {
-  if (!isFocused.value) return ['']
-  const exclusive = String(boxClass.value[0] ?? '')
-  if (
-    exclusive.includes('border-[var(--accent)]')
-    || staging.activeStaging.value
-  ) {
-    return ['']
-  }
-  // 3px accent-ring 外环（v6 §6.1 .focused 真值；与 staging/bash 分支的 shadow-[0_0_0_3px_var(--accent-ring)] 同视觉语言）
-  return ['!border-[var(--accent)] ![box-shadow:0_0_0_3px_var(--accent-ring)]']
-})
-/** composer-box focusin/focusout：子元素（ComposerInput）聚焦算 box 聚焦（v6 .focused 态）。
- *  focusout 时 relatedTarget 仍在 box 内则保持（composer-box 内子元素切换不退出聚焦）。 */
-function onBoxFocusIn(): void {
-  isFocused.value = true
-}
-function onBoxFocusOut(): void {
-  isFocused.value = false
-}
 // focusin/focusout 用原生 listener 注册（非 template @focusin）：composer-box 经
 // CommandPopover 的 PopoverAnchor as-child 包裹，Vue template 事件绑定在 clone element 时丢失。
 // ref 指向真实 DOM，addEventListener 稳定生效。
@@ -356,6 +341,14 @@ const {
   // 传 ComposerInput suppressTriggers——bash 模式下 $/#/@/ 全部不触发浮层（设计 D6 豁免）
   isBashMode,
 } = shell
+
+// composer-box 聚焦态 + 聚焦环视觉（v6 §6.1 .focused）：从本组件拆出（script 行数约束，
+// 见 composer-focus-ring.ts）；依赖 shell 的 boxClass/staging，故在解构后调用
+const { focusRingClass, onBoxFocusIn, onBoxFocusOut } = useComposerFocusRing(
+  boxClass,
+  () => !!staging.activeStaging.value,
+)
+
 watch(
   () => props.sessionId,
   (newId, oldId) => {
@@ -380,10 +373,15 @@ watch(
   },
 )
 
-/** ComposerInput input 事件 → 维护 draft（纯文本，用于发送判断）+ 刷新 image chips */
+/** ComposerInput input 事件 → 维护 draft（纯文本，用于发送判断）+ 刷新 image chips + 已选 skill 集合 */
 function onInputChange(text: string): void {
   draft.value = text
   refreshAttachedItems()
+  // 已选禁选数据面（多 skill 注入 D2）：skill segment 有 name，其余类型跳过
+  // （TS 5.5 推断 type predicate：filter 后 s 收窄为 skill segment）
+  selectedSkillNames.value = (inputRef.value?.getSegments() ?? [])
+    .filter((s) => s.type === 'skill')
+    .map((s) => s.name)
   // 用户修改了内容，重置浏览历史状态（下次按上重新从最后一条开始）
   resetBrowsing()
 }

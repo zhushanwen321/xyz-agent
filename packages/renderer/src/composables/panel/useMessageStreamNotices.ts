@@ -47,6 +47,19 @@ export const COMPACTING_NOTICE_HEIGHT = 24
  */
 export const EXECUTING_BASH_NOTICE_HEIGHT = 24
 
+/**
+ * 像素常量（design §4.1 附录 A）：itemSize 是 virta 的初始估算 hint（非强制，virta 自动从
+ * 实测项重估）。与原手写虚拟滚动的 ESTIMATED_TURN_HEIGHT 一致，平滑迁移期减少首屏估算误差。
+ * （[cw wave w3] 自 MessageStream.vue 随 ≤300 行拆分迁入——virta 布局常量族同源聚拢。）
+ */
+export const ESTIMATED_TURN_HEIGHT = 200
+
+/**
+ * load-more 按钮预留高度（B2 强绑 DOM：Button h-8 + py-2 ≈ 48px，取 44 为历史值，避免定位回归）。
+ * [cw wave w3] 通过 <Virtualizer :startMargin> 喂入 virta（design §4.11）：virta getItemOffset 已含 startMargin。
+ */
+export const LOAD_MORE_RESERVED_HEIGHT = 44
+
 /** 容器侧响应式依赖（getter/ComputedRef 注入，避免本 composable 反向依赖虚拟滚动/状态计算） */
 export interface MessageStreamNoticesDeps {
   /** 当前 session id（响应式，状态查询键） */

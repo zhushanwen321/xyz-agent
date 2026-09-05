@@ -117,3 +117,62 @@ export function buildSubagentCandidates(
   })
   return items
 }
+
+// ── slash 路（行首命令浮层）候选派生（自 CommandPopover.vue 拆出，≤300 行规范）──────────
+
+/** slash 名归一化：补 / 前缀（pi 返回 'goal' → '/goal'，含路由前缀供 onSelect → pi 路由）。 */
+export function normalizedSlashName(name: string): string {
+  return name.startsWith('/') ? name : `/${name}`
+}
+
+/** skill 显示名：剥离 /skill: 或 / 前缀，只留 skill 名（icon 已表示类型）。 */
+export function skillDisplayName(name: string): string {
+  if (name.startsWith('/skill:')) return name.slice('/skill:'.length)
+  if (name.startsWith('/')) return name.slice(1)
+  return name
+}
+
+export interface SlashCandidateInput {
+  id: string
+  name: string
+  kind: string
+  icon?: string
+  description?: string
+}
+
+/**
+ * slash 路候选（行首命令浮层）：query 过滤（子串匹配）+ CmdItem 组装。
+ * skill 命令去 /skill: 前缀显名（icon 已表示类型）；displayName 仅用于模板，onSelect 传完整
+ * name；声明侧无 icon（schema v2 无 icon 字段）——iconKeyForCommand 按 name/source 推断
+ * （builtin 命中 / skill→star / extension→terminal）。
+ */
+export function buildSlashCandidates(
+  all: SlashCandidateInput[],
+  query: string | undefined,
+  iconKeyForCommand: (name: string, kind: string) => string,
+): Array<{
+  id: string
+  name: string
+  displayName: string
+  kind: string
+  icon: string
+  isSkill: boolean
+  description?: string
+  dirPath: undefined
+}> {
+  const q = (query ?? '').trim().toLowerCase()
+  const filtered = q ? all.filter((c) => normalizedSlashName(c.name).toLowerCase().includes(q)) : all
+  return filtered.map((c) => {
+    const name = normalizedSlashName(c.name)
+    return {
+      id: c.id,
+      name,
+      displayName: c.kind === 'skill' ? skillDisplayName(c.name) : name,
+      kind: c.kind,
+      icon: c.icon ?? iconKeyForCommand(c.name, c.kind),
+      isSkill: c.kind === 'skill' || name.startsWith('/skill:'),
+      description: c.description,
+      dirPath: undefined,
+    }
+  })
+}
