@@ -66,10 +66,10 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| u-y1-updater-idle | pending | 0 | — |
-| u-y2-bash-rpc-independence | pending（blocked-by: rpc-client 计划） | 0 | — |
-| u-y3-compact-align | pending（blocked-by: rpc-client 计划） | 0 | — |
-| u-y4-shell-runner-required | pending | 0 | — |
+| u-y1-updater-idle | committed | 1 | P2 探针余量 32.3x 走正常路径（idle 前移）；main 全量 741 绿；upgrade-fetch 注释联动（授权修复轮）；types.ts UI 文案留 design-code-sync 裁决 |
+| u-y2-bash-rpc-independence | pending（blocked-by: rpc-client 计划 ✓ 已解除，待派发） | 0 | — |
+| u-y3-compact-align | pending（blocked-by: rpc-client 计划 ✓ 已解除，待派发） | 0 | — |
+| u-y4-shell-runner-required | committed | 1 | 编译拦截验证 + 唯一生产调用点已显式传参零破坏；用户值生效测试 |
 | u-y5-renderer-required | pending（blocked-by: u-y2 常量 + streaming-ui u-s3） | 0 | — |
 
 ## 7 残留风险与变更历史

@@ -26,6 +26,9 @@ import { toErrorMessage } from '../../utils/errors.js'
 /** 每个 hook handler 的执行超时（ms） */
 const HOOK_HANDLER_TIMEOUT_MS = 5_000
 
+/** describeShape 的 warn 摘要截断上限（chars）：防超大条目刷日志 */
+const WARN_SUMMARY_MAX_CHARS = 80
+
 /**
  * observe 类 hookType 集合（D2-2）：fire-and-forget 语义，经 notifyObservers 以
  * rpcServer.notify 零往返派发（无 pending 登记、无超时定时器、不等响应）。
@@ -229,5 +232,7 @@ function describeShape(value: unknown): string {
   } catch {
     text = String(value) // 循环引用等 JSON 序列化失败 → 兜底
   }
-  return text.length > 80 ? `${text.slice(0, 80)}…` : text
+  return text.length > WARN_SUMMARY_MAX_CHARS
+    ? `${text.slice(0, WARN_SUMMARY_MAX_CHARS)}…`
+    : text
 }

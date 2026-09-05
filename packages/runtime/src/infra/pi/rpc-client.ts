@@ -519,6 +519,9 @@ export class RpcClient implements IPiEngine {
       try {
         listener(msg)
       } catch (e) {
+        // 降级策略：重放的 per-帧隔离（D5）——单帧 listener throw 只 console.error 留痕，
+        // 重放循环继续处理剩余帧，不向 onEvent 调用方传播（重放发生在 attach 调用栈内，
+        // 传播会炸掉 session 创建链）。与直通路径吞为 parse error 的行为差异是设计定案。
         console.error('[rpc] early frame replay: listener threw on a buffered frame (isolated, continuing):', e)
       }
     }
