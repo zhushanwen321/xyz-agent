@@ -44,6 +44,11 @@ const MAX_SYNC_ATTEMPTS = 30;
 const SYNC_RETRY_MS = 2_000;
 const MS_PER_SECOND = 1_000;
 
+// 首个 prompt 准入闸超时（R2 真相修复，设计 §3.3-D4）：等首轮 sync 终态的上限，
+// 量级 = 控制面准入级（秒级，覆盖一次 2s 退避 + 余量）；Degraded（runtime 插件服务
+// 挂）下到顶放行——prompt 不因 sync 永败而堵死
+const PROMPT_GATE_TIMEOUT_MS = 5_000;
+
 /** 日志/错误文本里回包预览的截断长度（防大 payload 刷屏；截断只影响留痕不影响协议） */
 const RESPONSE_PREVIEW_LENGTH = 200;
 
@@ -217,8 +222,10 @@ export default function pluginBridgeExtension(pi: ExtensionAPI): void {
 
 	// 闭包状态（约定：禁模块级 let——同进程多 session 共享会串台）。
 	// syncInFlight 兼作启动循环与 miss 重同步的防抖句柄（设计 §3.3-D4：
-	// 同一时刻仅一个重同步 in flight）。
+	// 同一时刻仅一个重同步 in flight）。firstSyncSettled = 首轮 sync 终态
+	// （成功或循环走完，永不 reject），供 prompt 准入闸有界等待。
 	let syncInFlight: Promise<void> | null = null;
+	let firstSyncSettled: Promise<void> | null = null;
 
 	/** 注册 sync 清单中的全部工具。registerTool 是 Map 覆盖语义（loader.js），重复
 	 * 注册幂等——miss 重同步/多 session 重同步安全；pi 无 unregisterTool，卸载插件的
@@ -299,12 +306,20 @@ export default function pluginBridgeExtension(pi: ExtensionAPI): void {
 	}
 
 	/** 防抖入口：启动 sync 与 miss 重同步共用——同一时刻仅一个循环 in flight，
-	 * 并发触发者等待同一个 promise（设计 §3.3-D4）。 */
+	 * 并发触发者等待同一个 promise（设计 §3.3-D4）。首轮发起时记录终态
+	 * （miss 重同步不覆盖——准入闸语义是「首个 prompt 前至少完成一轮」）。 */
 	function ensureSynced(ctx: ExtensionContext): Promise<void> {
 		if (syncInFlight) return syncInFlight;
 		syncInFlight = runSyncLoop(ctx).finally(() => {
 			syncInFlight = null;
 		});
+		if (!firstSyncSettled) {
+			// runSyncLoop 自带整体兜底不 reject，吞异常形态是防御（闸只关心终态不关心结果）
+			firstSyncSettled = syncInFlight.then(
+				() => undefined,
+				() => undefined,
+			);
+		}
 		return syncInFlight;
 	}
 
@@ -330,9 +345,10 @@ export default function pluginBridgeExtension(pi: ExtensionAPI): void {
 		);
 		if (raw === null) return cancelledResult(toolName);
 		// Tool not found = 清单 miss（曾注册后插件装卸）——触发一次重同步，等待其完成后
-		// 即返回 Tool not found（不重新校验）：R2（pi 0.84.4）下本 session 新注册工具对
-		// LLM 永固不可见，恢复时点 = 下个 session（设计 §3.3-D4 R2 登记修正；防抖见
-		// ensureSynced）。兼容两种形态：错误闭环 {error:'Tool not found…'} 与工具结果
+		// 即返回 Tool not found（不重新校验：本 turn 的 toolCall 已发出无法重试；R2 真相
+		// 修正——pi 0.84.4 registerTool 后下一个 LLM 请求即携带新工具，下一 turn 模型
+		// 重试即命中新清单，恢复时点 = 下一 turn 而非下个 session。防抖见 ensureSynced）。
+		// 兼容两种形态：错误闭环 {error:'Tool not found…'} 与工具结果
 		// {content:'Tool not found…', isError:true}（runtime bridge-interop 实装形态）
 		if (isToolNotFound(raw)) {
 			await ensureSynced(ctx);
@@ -397,6 +413,21 @@ export default function pluginBridgeExtension(pi: ExtensionAPI): void {
 	// 多条注入收窄为单条 CustomMessage 的 content 数组（pi 0.84.4 result 机制只有单
 	// message 槽位；类型零丢失——消息边界变化对 LLM 上下文等价，设计 §3.2 对比三 a 登记项）
 	pi.on("before_agent_start", async (data, ctx) => {
+		// 首个 prompt 准入闸（R2 真相修复，设计 §3.3-D4）：R2 动态实证（2026-09-05，
+		// /tmp/bridge-r2 payload 探针）pi 0.84.4 无固化——registerTool 完成后下一个 LLM
+		// 请求即携带新工具；真实缺口是窗口：sync 完成前发出的 prompt 无插件工具，若该
+		// prompt 要求调插件工具，模型留下「没有该工具」的上下文自述后会锚定自身旧结论
+		// （弱模型在工具已入清单的请求里仍答「没有」，Gate B2 观测的「永固不可见」实为
+		// 此记忆污染）。闸在 pi prompt 必经钩子上等首轮 sync 终态（before_agent_start
+		// 晚于 session_start，pi 启动序列保证），单点覆盖 runtime 的全部 prompt 入口；
+		// 有界 5s 到顶放行——Degraded 不堵死 prompt。首轮 settle 后 race 立即返回（零成本）；
+		// null 防御 = session_start 未曾触发的异常形态，放行。
+		if (firstSyncSettled) {
+			await Promise.race([
+				firstSyncSettled,
+				new Promise<void>((resolve) => setTimeout(resolve, PROMPT_GATE_TIMEOUT_MS)),
+			]);
+		}
 		const raw = await callBridge(
 			ctx,
 			{

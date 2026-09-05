@@ -1,6 +1,6 @@
 # bridge extension 重写适配 pi 0.84.4 实施计划
 
-基线: d42f24efc | 来源设计: docs/design/bridge-rewrite-pi-0.84.md（v4.1，含 Gate B 两轮回写：R1 sync timeout 分档 / R2 专项登记；初版经审查循环 1MF/7SG→0MF/4SG→0MF/0SG/1info 终态通过，报告 docs/design/bridge-rewrite-pi-0.84.review.md）| 日期: 2026-09-04
+基线: d42f24efc | 来源设计: docs/design/bridge-rewrite-pi-0.84.md（v4.4，含 Gate B 两轮回写：R1 sync timeout 分档 / R2 真相反转 + 准入闸收口；初版经审查循环 1MF/7SG→0MF/4SG→0MF/0SG/1info 终态通过，报告 docs/design/bridge-rewrite-pi-0.84.review.md）| 日期: 2026-09-04
 
 ## 0 章节映射
 
@@ -109,11 +109,11 @@ graph TD
 | U2 | committed | 2 | e71627b62 + 84c1372bd（R1 sync timeout）；extensions 三连绿 + check 过 + pi CLI 实测加载成功；偏差 #8-#14 |
 | U3 | committed | 1 | 437988df4；typecheck exit 0 + 26/26 新测试 + 72/72 增量回归；偏差 #5-#7 |
 | U4 | committed | 2 | 809d11129 + 16b013cdb 修复批；全量 4280 绿（17 failed→0 + 防回归锁）；偏差 #15-#18 |
-| U5 | committed（部分绿：V1 主形态 fail-by-R2，见 §7 残留①） | 2 | Gate B 两轮：V2/V3/V4/V5②③/V7/V8/V9 + P-4/P-7/P-9/P-10 + R1 自愈 + V1b 补验 pass；V1 主形态 R2 专项登记；证据 /tmp/bridge-gate-b{,2}/；设计 v4/v4.1 回写 |
+| U5 | committed（R2 专项收口后全绿：V1 主形态阻断撤销，见 §7 残留① + v6） | 2 | Gate B 两轮：V2/V3/V4/V5②③/V7/V8/V9 + P-4/P-7/P-9/P-10 + R1 自愈 + V1b 补验 pass；V1 主形态 R2 专项登记（后收口）；证据 /tmp/bridge-gate-b{,2}/ + /tmp/bridge-r2/；设计 v4-v4.4 回写 |
 
 ## 7 残留风险与变更历史
 
-- 残留风险：①**R2（专项跟进，V1 主形态阻断）**：pi 0.84.4 下首个 prompt 后 registerTool 的工具对该 session LLM 永固不可见（Gate B 第二轮最小重放确证，断点需 pi 进程内动态调试；影响面 = 程序化极速首 prompt，真实手速 >5s 大概率不中）——修复候选：prompt 准入时序对齐 / bridge synced 通知 / pi 深挖，均超本设计 scope；P-8 结论受其污染需修复后复测；②探针 P-9 附带登记：intercept 无回包时 turn 无界挂起（pi 不挂死、回包即恢复）——需要兜底时按设计 §4.1 降级路径加通道级 timeout；③session_start 观察帧 attach 空窗丢失（既有行为）：插件 onPiEvent 收不到 session_start（后续事件正常）——根治 = rpc-client 早期帧缓冲，后续架构改进项；④intercept 注入生产端（上游既有）：handleBridgeIntercept 恒返回空 injectedMessages（01-plugin-hook-fix §5 检查点 2 未定案）——V6 按通道级口径验收；⑤NF-2（info）：intercept 畸形 {type:'text'} 缺 text 走 stringify 兜底无测试；⑥NF-3（out-of-scope）：bridge-handler.ts bridge:event 分支 console.log 既有；⑦V7 packaged 全量冒烟简化为 staged 确认（prepare-builtin-extensions.sh 含包），发布前 prerelease 补全；⑧Gate B 观测坑登记：runtime WS 60s 心跳踢连接（长脚本需 25s ping 保活）、tool_call_start 工具名字段 = payload.entry.toolName。
+- 残留风险：①~~R2（专项跟进，V1 主形态阻断）~~ **已收口（2026-09-05 R2 专项，见 v6）**：真相反转——pi 0.84.4 无「永固不可见」缺陷（registerTool 后下一个 LLM 请求即携带新工具，payload 级探针实证），v4 登记的「永固」实为上下文记忆污染（窗口内首 prompt 留下「无此工具」自述，弱模型锚定旧结论）；修复 = bridge 侧首 prompt 准入闸（before_agent_start 上 race(firstSyncSettled, 5s)，设计 v4.4 §3.3-D4），极速首 prompt 实测首个请求即带工具直接调用成功；P-8 复测 pass（恢复时点 = 下一 turn）；V1 fail-by-R2 撤销（机制等价证据充分，standalone runtime 全链复测并入残留⑦ prerelease 冒烟）；②探针 P-9 附带登记：intercept 无回包时 turn 无界挂起（pi 不挂死、回包即恢复）——需要兜底时按设计 §4.1 降级路径加通道级 timeout；③session_start 观察帧 attach 空窗丢失（既有行为）：插件 onPiEvent 收不到 session_start（后续事件正常）——根治 = rpc-client 早期帧缓冲，后续架构改进项；④intercept 注入生产端（上游既有）：handleBridgeIntercept 恒返回空 injectedMessages（01-plugin-hook-fix §5 检查点 2 未定案）——V6 按通道级口径验收；⑤NF-2（info）：intercept 畸形 {type:'text'} 缺 text 走 stringify 兜底无测试；⑥NF-3（out-of-scope）：bridge-handler.ts bridge:event 分支 console.log 既有；⑦V7 packaged 全量冒烟简化为 staged 确认（prepare-builtin-extensions.sh 含包），发布前 prerelease 补全（**准入闸修复后并入 V1 主形态 standalone 全链复测**）；⑧Gate B 观测坑登记：runtime WS 60s 心跳踢连接（长脚本需 25s ping 保活）、tool_call_start 工具名字段 = payload.entry.toolName。
 - 阶段 5 记录（2026-09-05）：**Gate A 绿**（13 命令全 exit 0，4 包 9573 用例 + extension-protocol 91 + extensions 全家桶 + validate-runtime-bundle + 插件 E2E，零容忍零命中，覆盖矩阵无缺口）。**Gate B 两轮**：首轮 V7/V9/P-4 pi 侧/P-9/P-10 pass，V1-V6/V8 因 R1（启动 sync 帧丢失，本设计遗漏）+ 注入生产端（上游既有）回流——R1 修复 84c1372bd（sync 通道级 2s timeout，设计 v4 D5 分档）；第二轮回验 R1 自愈实证 pass，V2/V3 全链/V4 全链/V5②③/V8/P-7/P-4 全链 pass；**V1 主形态 fail-by-R2**（新缺口登记专项，V1b 补验 pass 证实 90s 不误杀）；V6 按通道级口径 pass（注入生产端上游登记）。**交付口径：Gate B 部分绿——8.5/9 场景 pass（V1 主形态 R2 阻断 + 注入断言上游缺），未宣称全绿**。证据目录 /tmp/bridge-gate-b（首轮）与 /tmp/bridge-gate-b2（第二轮，插件参数契约修正版）。
 - 阶段 3/4 记录（2026-09-05）：一致性审查 2 reviewer 并行（A=pi 侧与装配 9R/2U/2D，B=runtime 侧 8R/1U/2D）；3 条 unreasonable（B-U1 event 登记累积 / A-U1 intercept 类型退化 / A-U2 syncLoop 兜底缺口）+ 4 条 doc_errors 全部在 16b013cdb 修复闭合（偏差表 #8-#18 同批补齐）；定向复审全 pass + NF-1 文档回写（设计 v3.3）。合理偏差累计 18 项全登记于 §5。
 - 变更历史：
@@ -122,3 +122,4 @@ graph TD
   - v3（2026-09-05）：阶段 3/4 收口 + Gate A/B 首轮记录。
   - v4（2026-09-05）：Gate B 第二轮（R1 复验）记录 + R2 专项登记 + 交付口径定稿。
   - v5（2026-09-05）：design-code-sync 第 1 轮同步修复回写：偏差 #18 扩围清单补登 plugin-hook-map.test.ts（809d11129 实改、台账漏登）；头部来源设计版本锚 v3→v4.1（Gate B 回写后设计已演进）。对应设计文档 v4.2（详见其变更历史）。
+  - v6（2026-09-05）：**R2 专项收口**（来源设计 v4.4）：真相反转（payload 级动态实证：pi 0.84.4 registerTool 后下一个 LLM 请求即携带新工具，无固化；「永固不可见」= 上下文记忆污染误判）+ bridge 侧首 prompt 准入闸修复（firstSyncSettled race 5s）+ 测试 +4（准入闸四形态，全套 34/34）+ 极速首 prompt 实测（首个请求带工具直接调用，修复前同场景 90s 探索循环）+ P-8 复测 pass（miss 重同步新工具同 session 下一 turn 命中）。残留①收口、⑦并入 V1 全链复测。证据 /tmp/bridge-r2/（node loader 注入探针 + PAYLOAD 逐请求 tools 日志）。

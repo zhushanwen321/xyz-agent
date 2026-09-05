@@ -298,3 +298,93 @@ describe("启动 sync（设计 §3.3-D4）", () => {
 		}
 	});
 });
+
+describe("首 prompt 准入闸（R2 真相修复，设计 §3.3-D4）", () => {
+	/** 触发 before_agent_start handler（intercept 转发前的准入闸所在） */
+	function triggerBeforeAgentStart(handlers: Map<string, Array<(data: unknown, ctx: unknown) => unknown>>, ctx: unknown) {
+		const handler = handlers.get("before_agent_start")?.[0];
+		if (!handler) throw new Error("before_agent_start handler not registered");
+		return handler({ type: "before_agent_start", prompt: "hi" }, ctx);
+	}
+
+	it("sync 挂起时闸等待：before_agent_start 5s 内不放行，到顶放行后 intercept 转发照常", async () => {
+		vi.useFakeTimers();
+		try {
+			// bridge:sync 永不回包（挂起）；bridge:intercept 正常回包
+			const selectMock = methodRouter({ "bridge:intercept": [JSON.stringify({ injectedMessages: [] })] });
+			const { handlers, ctx } = createHarness(selectMock);
+			triggerSessionStart(handlers, ctx);
+			await vi.advanceTimersByTimeAsync(0);
+
+			let settled = false;
+			const handlerP = (triggerBeforeAgentStart(handlers, ctx) as Promise<unknown>).then((r) => {
+				settled = true;
+				return r;
+			});
+			// microtask flush 后闸仍在等（sync 未终态）
+			await vi.advanceTimersByTimeAsync(0);
+			expect(settled).toBe(false);
+
+			// 闸超时 5s 到顶：放行（不依赖 sync 结果）
+			await vi.advanceTimersByTimeAsync(5_000);
+			await handlerP;
+			expect(settled).toBe(true);
+			// 放行后 intercept 转发照常发起
+			expect(callsOf(selectMock, "bridge:intercept")).toHaveLength(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("sync 先完成时闸零等待：before_agent_start 立即放行，不引入额外交互", async () => {
+		const selectMock = methodRouter({
+			"bridge:sync": [SYNC_PAYLOAD],
+			"bridge:intercept": [JSON.stringify({ injectedMessages: [] })],
+		});
+		const { registered, handlers, ctx } = createHarness(selectMock);
+		triggerSessionStart(handlers, ctx);
+		await vi.waitFor(() => expect(registered).toHaveLength(1));
+
+		// 首轮已 settle——闸 race 立即返回（无 timer 推进的真实时钟下直接完成）
+		const result = (await triggerBeforeAgentStart(handlers, ctx)) as undefined;
+		expect(result).toBeUndefined();
+		// 首轮成功后不因闸再发 sync（ensureSynced 防抖 + firstSyncSettled 已 settle）
+		expect(callsOf(selectMock, "bridge:sync")).toHaveLength(1);
+		expect(callsOf(selectMock, "bridge:intercept")).toHaveLength(1);
+	});
+
+	it("session_start 未触发（firstSyncSettled null 防御形态）：闸直接放行", async () => {
+		const selectMock = methodRouter({ "bridge:intercept": [JSON.stringify({ injectedMessages: [] })] });
+		const { handlers, ctx } = createHarness(selectMock);
+		// 不 trigger session_start——直接触发 before_agent_start
+		const result = await triggerBeforeAgentStart(handlers, ctx);
+		expect(result).toBeUndefined();
+		expect(callsOf(selectMock, "bridge:intercept")).toHaveLength(1);
+	});
+
+	it("Degraded 中闸有界：放行不等 30 次重试走完，prompt 不被 sync 永败堵死", async () => {
+		vi.useFakeTimers();
+		try {
+			const selectMock = methodRouter({}); // 所有 method 回 undefined → sync 恒失败
+			const { handlers, ctx } = createHarness(selectMock);
+			triggerSessionStart(handlers, ctx);
+			await vi.advanceTimersByTimeAsync(0);
+
+			let settled = false;
+			const handlerP = (triggerBeforeAgentStart(handlers, ctx) as Promise<unknown>).then((r) => {
+				settled = true;
+				return r;
+			});
+			// 只推进闸超时（5s）——远小于 30×2s 循环，handler 必须已放行
+			await vi.advanceTimersByTimeAsync(5_000);
+			await handlerP;
+			expect(settled).toBe(true);
+			// sync 循环仍在跑（未到 30 次顶），闸不等待其完成
+			const syncCalls = callsOf(selectMock, "bridge:sync").length;
+			expect(syncCalls).toBeGreaterThan(0);
+			expect(syncCalls).toBeLessThan(30);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
