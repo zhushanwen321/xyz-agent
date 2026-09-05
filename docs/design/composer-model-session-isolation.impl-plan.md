@@ -139,11 +139,12 @@ graph TD
 - R3（D5 边界，现状行为）：分支 3 不门禁 + providers 迟到的既有错钳窗口（value∈{xhigh,max} 被五档归一误判钳到 high）——非本设计引入、D5 前后等价；V3/Gate B 偶发红先查此窗口再怀疑门禁回归（排查锚点：该 RPC 时序紧邻 config.providers 广播）。
 - R4（流程）：设计文档/勘误 commit 触发 pre-commit `check-doc-symbol-drift.mjs`，须绿；设计文档含大量 file:line 引用，若报悬空引用按现行源码修正文档。
 - R5（探针降级）：A2 写失败走 E1 吞错不阻塞（验收转 V2 占位路径）；A1 门失败先核对门禁取值时点——必须为 consume 执行前的入口快照（`thinking-level-sync.ts:192` armedSnapshot 局部变量），禁止读消费块之后的 armed 值（U5 首次实施即误此处，r3 裁决，见 D5 被否③）。
-- R6（Gate B V4 冻结项，升级用户裁决）：档位记忆跨写缺陷（u3 记录 watch 域，疑似先在于本分支）：真实 app 中「设 flash=低 → 切 glm-5.3」后 mem[flash] 被改写 max（32ms 内与模型切换同窗落定，且最终自动档位读取污染值）；纪元判据修复（`1f5024380`）覆盖单测可复现的两类中间 flush（W1 切走 / W2 切回），但 app 实测仍存在第三形态（怀疑 pi set_model 触发的 thinking_level_changed 广播与模型广播合并/交错的更细中间 flush，单测未复现）。2 轮修复未绿，按阈值冻结。影响面：G2 记忆准确性在「切模型」场景退化（手选档位记录本身正确）；V1/V2/V3/V5/V6 全部通过不受影响。
+- R6（Gate B V4，第三轮追击修复已落地、**待实机复验**）：档位记忆跨写缺陷（u3 记录 watch 域，先在于本分支）三轮收敛：① 纪元判据（`1f5024380`）覆盖「模型变、档位不变」方向两类窗口（W1 切走 / W2 切回，单测绿）；② 第三形态「档位变、模型未变」取证闭环——pi setModel 内部归一档位（_getThinkingLevelForModelSwitch）emit thinking_level_changed → runtime 独立帧 session.thinkingLevelSet{level}（不经 300ms 防抖、早于模型回包）→ renderer useChat 单字段写 → store 呈 (旧模型, 新档位) 瞬态；③ 记录 watch 增加 armed 不匹配守卫（armed 在途且 modelId ≠ 目标不入表）+ 单测 W5。已知边界（诚实登记）：level 先落形态下 (目标模型, 归一值) 的落表被既有判据一并跳过（记录缺失非污染，后续手选档照常补记）。**剩余动作**：core 单测/typecheck + 真实 app V4 场景复验通过后方可关闭本条；V1/V2/V3/V5/V6 不受影响。
 - R7（Gate B 观察注记，非缺陷）：V2 的「…」占位窗口在快路径不可观测——restore 真值播种与会话面板渲染同时到达（~0.7s），用户直接看到真值；占位渲染由 renderer 单测 DOM 断言覆盖。E6 自愈实证：删除 sidecar 后首次 restore 即被写点⑤重建（符合设计）。
 
 **变更历史**：
 
+- 2026-09-04：V4 第三形态追击（用户授权第三轮，dev-0.9.14 worktree 直改待验证）：取证闭环第三形态根因（pi setModel 内部归一档位 emit thinking_level_changed → 独立帧 session.thinkingLevelSet{level} 早于模型回包 → renderer useChat 单字段写 → (旧模型, 新档位) 瞬态，纪元判据镜像方向不命中）；记录 watch 增加 armed 不匹配守卫（`model-thinking.ts`）+ 单测 W5（跨写回归套件）；设计 D6 追击段同步、R6 改「待实机复验」。待办：core 单测/typecheck 绿 + 真实 app V4 场景复验 → commit 关闭 R6。
 - 2026-09-04：design-code-sync 第 2 轮修复（3 must-fix：失效注释 R-A1 / U4 hash R-C1 / 历史缺条目 R-C2 本条；17 suggestion + 4 info 当轮全修，本体 `a0acc7d4c`）。聚焦复审 24 条全部处置、0 must-fix（R-A9 方案替换经源码核实正当：读回失败 = fallback 请求值仍写的自愈设计）；复审新抓 4 条 low/info（blockquote 出处措辞、`.agent.json` 序数、兜底链首环旧词 pendingModel、测试 describe 台账标签）当轮修讫，循环终止。
 - 2026-09-04：design-code-sync 定向修正（`e2130fb93`）：偏差 #9① 补关闭标注（写点③注释已由 Gate B 实证后改写为 turn-end ensure 机制归属表述，第 1 轮 F7 关闭）。
 - 2026-09-04：design-code-sync 第 1 轮修复（`00b72a97b`，F1-F7）：设计 D6 纪元判据同步（Gate B `1f5024380`）/ R2 闭环标注 / §5 文件改动地图补 Gate A 提取产物 / session-lifecycle.ts 注释校准；同 commit 回写登记但未入本变更历史（违反 C-proc-10，本轮 R-C2 补记）。

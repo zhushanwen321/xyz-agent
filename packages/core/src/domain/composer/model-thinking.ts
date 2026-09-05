@@ -313,6 +313,20 @@ export function useComposerModelThinking(
    * level 从未生效于该 modelId 的时序中间态。判据为纯时序纪元一致性，非用户意图判别
    * （D6 被否②的轴未触碰）。换绑（prev sid ≠ sid）不跳过——新 session 的既有真值属新纪元，
    * 条件 b 记录保持。
+   *
+   * [第三形态守卫（V4 第三轮追击）] 切模型链还有第二个瞬态方向「档位变、模型未变」：
+   * pi setModel 内部为新模型归一档位（_getThinkingLevelForModelSwitch：pi 侧 per-model
+   * 记忆档 > 全局默认 > 保持）并 emit thinking_level_changed，runtime 转为独立帧
+   * session.thinkingLevelSet{level}（不经 300ms 防抖，早于 model.switched 回包与原子
+   * state_changed 到达），renderer useChat handler 只写 thinkingLevel 单字段——flush 呈
+   * (旧模型, 新档位)，纪元判据（只拦「模型变、档位不变」镜像方向）不命中，pi 归一值被
+   * 反查写进旧模型槽位（V4 第三轮实测 mem[flash] ← max，32ms 内落定）。守卫：armed 在途
+   * 而 flush 的 modelId ≠ armed 目标 → 本 flush 的 level 变化属切换链、从未生效于该
+   * modelId，不入表；modelId 落到目标后的 flush 照常按既有判据入表。时序依据：本 flush
+   * 只 level 变化时 sync watch（观察源 map/supported 均随 modelId 派生）不触发，armed
+   * 不会被先消费；armed 已被消费的 flush 其 modelId 恒等于目标，守卫自然不再拦截。
+   * 代价（启发式边界，同 D5 门禁声明）：armed 在途窗口内对旧模型的手选档不入表——
+   * 窗口毫秒级且真值必现于后续 flush，可接受。
    */
   watch(
     [sessionId, currentModelId, currentThinkingLevel],
@@ -321,6 +335,9 @@ export function useComposerModelThinking(
       if (!level) return
       // 同 session 内模型已变而档位未变 → level 是旧模型纪元遗留，本 flush 不入表
       if (prev && prev[0] === sid && prev[1] !== modelId && prev[2] === level) return
+      // 第三形态（档位先变、模型未变）：armed 在途且 modelId ≠ 目标 → level 变化属切换链
+      //（pi 归一值经独立帧先落），从未生效于该 modelId，不入表
+      if (armed.value && armed.value.modelId !== modelId) return
       // 记录的是 UI key（D1：跨模型恢复的语义是档位名而非实现值）——value 经当前模型 map 反查
       const uiKey = resolveThinkingKey(level, getThinkingLevelMap(modelId))
       // 可用性校验（E5 防线）：体系外脏值（transient 窗口值/异常快照）不入表

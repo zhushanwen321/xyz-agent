@@ -824,6 +824,12 @@ describe('useComposerModelThinking · 记录 watch 门禁（D2 双条件）', ()
 //
 // 生产保真 harness：realisticSetLevel 让 setThinkingLevel 回包真实写 store（useModel 时序：
 // await RPC → applySnapshot({thinkingLevel}) → resolve），否则第二次 store 写无法驱动。
+//
+// [第三形态（档位先变、模型未变）] 切模型链的第二个瞬态方向：pi setModel 内部归一档位
+//（_getThinkingLevelForModelSwitch）emit thinking_level_changed → runtime 独立帧
+// session.thinkingLevelSet{level}（不经 300ms 防抖）早于模型回包落库，renderer useChat
+// handler 单字段写 thinkingLevel → flush 呈 (旧模型, 新档位)。既有纪元判据只拦「模型变、
+// 档位不变」镜像方向，不命中 → 记录 watch 增加 armed 不匹配守卫（W5）。
 const fiveLevelMap = () => ({ ...sameContentMap(), max: 'x' })
 const fiveLevels = [...fourLevels, 'max']
 
@@ -906,6 +912,32 @@ describe('useComposerModelThinking · 跨写污染回归（Gate B：错配对不
     const h = mountCrossWrite()
     // 换绑到 s2（模型 Y、档位 'm'）：sid 变化使错配跳过判据不命中，新 session 真值照常入表
     h.sessionId.value = 's2'
+    h.sessionRef.value = { modelId: 'p/Y', thinkingLevel: 'm' }
+    await nextTick()
+    expect(lookup('p/Y')).toBe('medium')
+    h.scope.stop()
+  })
+
+  it('W5/第三形态·档位先变：「(旧模型, 新档位)」经 pi 归一事件先落不入表——armed 在途守卫（主回归点）', async () => {
+    const h = mountCrossWrite()
+    // 切 X → Y：armed={p/Y} 设立，switchModel RPC 在途（不 resolve——模型回包未到）
+    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
+    // pi setModel 内部归一档位 emit thinking_level_changed → 独立帧 session.thinkingLevelSet
+    // 先于模型回包落库：applySnapshot 只写 thinkingLevel → store=(p/X,'x')（旧模型×新档位）
+    h.sessionRef.value = { modelId: 'p/X', thinkingLevel: 'x' }
+    await nextTick()
+    // 该 flush 的 level 变化属切换链（pi 归一值从未生效于 X）——不得写穿 mem[X]
+    //（修复前此处 record(p/X,'max')，即真实 app V4 第三形态观测的 mem[flash] ← max）
+    expect(lookup('p/X')).toBe('low')
+    // 模型回包落库：store=(p/Y,'x')。同 flush 内 sync watch 消费 armed（lookup(Y)='max'
+    // 幂等命中清），记录 watch 既有纪元判据跳过（模型变、档位未变）——双向无污染
+    h.pending[0].applyAndResolve('p/Y')
+    await nextTick()
+    expect(h.setLevelCalls).toHaveLength(0)
+    expect(lookup('p/X')).toBe('low')
+    expect(lookup('p/Y')).toBe('max')
+    // RPC 收尾；此后（armed 已清）模型上的手选档照常入表——守卫不过度拦截正常记录
+    await p
     h.sessionRef.value = { modelId: 'p/Y', thinkingLevel: 'm' }
     await nextTick()
     expect(lookup('p/Y')).toBe('medium')

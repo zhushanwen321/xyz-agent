@@ -219,10 +219,10 @@ const regularModelId = computed(
 
 **D6：记录 watch 维持「生效即记录」+ 漂移文档修正（选定）**
 
-- **采用**：记录 watch 不加新门禁——机制 ⑥ 的污染输入是机制 ⑤ 的改写值，D5 消灭后记录值回归真值（含 session 加载即记录，u3 条件 b 原语义，保持）。同批修正两处漂移登记：`model-service.ts` 失效注释（「pi 侧 setModel 持久化全局默认」→ 按 0.84.4 实装改写）+ u3 设计文档「关键事实⑤」勘误（附本设计链接）。**Gate B 纪元精确化（V4 冻结批次补记）**：Gate B 实测发现跨纪元中间 flush 仍会污染记忆（切模型的生效链是两次独立 store 写——modelId 回包先落、恢复档位回包后落，中间 flush 读到错配对），已加 **sessionId 纪元判据**（观察源加 sessionId，跳过「同 session、modelId 已变而 level 未变」的中间 flush，commit `1f5024380`）——被拒收的对中 level 从未生效于该 modelId，故「值生效即记录」语义保持，非用户意图判别轴（不违背被否②）；第三形态（app 实测）未覆盖，冻结于 impl-plan R6。
+- **采用**：记录 watch 不加新门禁——机制 ⑥ 的污染输入是机制 ⑤ 的改写值，D5 消灭后记录值回归真值（含 session 加载即记录，u3 条件 b 原语义，保持）。同批修正两处漂移登记：`model-service.ts` 失效注释（「pi 侧 setModel 持久化全局默认」→ 按 0.84.4 实装改写）+ u3 设计文档「关键事实⑤」勘误（附本设计链接）。**Gate B 纪元精确化（V4 冻结批次补记）**：Gate B 实测发现跨纪元中间 flush 仍会污染记忆（切模型的生效链是两次独立 store 写——modelId 回包先落、恢复档位回包后落，中间 flush 读到错配对），已加 **sessionId 纪元判据**（观察源加 sessionId，跳过「同 session、modelId 已变而 level 未变」的中间 flush，commit `1f5024380`）——被拒收的对中 level 从未生效于该 modelId，故「值生效即记录」语义保持，非用户意图判别轴（不违背被否②）；第三形态（app 实测）另见下段。**第三形态追击（第三轮，根因闭环）**：取证确认第二瞬态方向「档位变、模型未变」——pi setModel 内部经 _getThinkingLevelForModelSwitch 为新模型归一档位（pi 侧 per-model 记忆档 > 全局默认 > 保持）并 emit thinking_level_changed，runtime 转独立帧 session.thinkingLevelSet{level}（不经 300ms 防抖、早于 `model.switched` 回包与原子 `state_changed` 到达），renderer useChat handler 单字段写 thinkingLevel → store 呈 (旧模型, 新档位) 瞬态，纪元判据（只拦「模型变、档位不变」镜像方向）不命中 → pi 归一值写穿旧模型槽位（实测 mem[flash] ← max）。修复 = 记录 watch 增加 **armed 不匹配守卫**（armed 在途且 modelId ≠ 目标 → level 变化属切换链、从未生效于该 modelId，不入表；单测 W5）。已知边界：level 先落形态下 (目标模型, 归一值) 的落表被既有判据一并跳过——记录缺失非污染，后续手选档照常补记。
 - **被否**：给记录 watch 加「仅用户手选才记录」门禁——u3 对抗审查已裁决过该问题（判别轴错位，D2 被否③），重开无新证据；且 session 加载值入表是「切回模型恢复上次档位」的正当数据来源。
 - **证据**：`model-thinking.ts` 记录 watch（条件 b 注释 + 纪元判据）；`docs/design/model-thinking-level-memory.md` §1。
-- **效果**：D5 消灭主要污染源；Gate B 发现跨纪元中间 flush 残留，已加时序精确化（覆盖单测可复现的两类窗口），第三形态冻结于 impl-plan R6——G2 在切模型场景存在已知退化，待后续治理；文档与实装一致（漂移守卫纪律 C-proc-10 同向）。
+- **效果**：D5 消灭主要污染源；Gate B 发现跨纪元中间 flush 残留，已加时序精确化（覆盖单测可复现的两类窗口）；第三形态由第三轮 armed 不匹配守卫关闭（实机 V4 场景复验待跑，状态见 impl-plan R6）——文档与实装一致（漂移守卫纪律 C-proc-10 同向）。
 
 ### 3.4 终态物理数据流图
 
