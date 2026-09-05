@@ -75,3 +75,4 @@ graph TD
 ## 变更历史
 
 - v1（2026-09-05）：初版。用户评审以会话指令「开始规划开发」代替（夜间托管自治态），DAG/单元表随最终汇报呈现。
+- （一致性审查 reasonable 确认）①stopReason 全集映射实现为 isErrorStop 二分（error→error、其余五值+未识别兜底→complete），语义与设计等价且测试逐值覆盖；②registry complete handler 顺序调整（changed 提前 + 秒败追加加 !recovered）抑制恢复命中时的重复 error 气泡；③恢复指引收敛 Turn.vue 聚合单行不写死 30 分钟数值；④u-s2/u-s3 与 u-s1 衔接无损（timeout 收口后 complete 到达 refresh 构造性 no-op）。

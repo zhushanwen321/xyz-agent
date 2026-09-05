@@ -352,8 +352,7 @@ export function createChatStore() {
   /**
    * streaming idle 阈值（可变配置源，[idle-refresh] §6 store 行）。
    * 默认 DEFAULT_STREAMING_IDLE_TIMEOUT_MS（1800s）；经 setStreamingIdleTimeoutMs 更新
-   * （非法值 clamp 进合法域），arm/refresh 挂载时经 getter 读当前值——进行中 timer 不受
-   * 更新影响，下一次挂载生效（对齐「保存后新 turn 生效」先例）。配置链水合（settings
+   * （非法值 clamp 进合法域），arm 与 refresh 同为读当前值挂点——进行中 turn 在阈值变更后的下一活动帧即按新值重挂 idle 窗口，计时基线（已流逝时间）不清零（设计 §5.3 实施期演进裁决）。配置链水合（settings
    * RPC → 本 action）由后续单元接线；本单元只落「读当前值」挂点。
    */
   let streamingIdleTimeoutMs: number = DEFAULT_STREAMING_IDLE_TIMEOUT_MS

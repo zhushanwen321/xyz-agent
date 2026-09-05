@@ -51,7 +51,8 @@ graph TD
 
 ## 5 合理偏差登记表
 
-（初始为空）
+- （一致性审查 U3 登记）u-h2：record.model 留痕记 `validateModelForEngine` 返回的 canonicalRef（短名归一化为全名）而非设计 D2-1 字面的 raw ref——代码注释已自述理由（留痕用 canonical 形态便于跨引擎对照），实现优于字面设计，设计目标（同步期可分流错误）不受影响。
+- （一致性审查 U5 登记）⛔P4 探针构造形态：实测 178k tokens（三 turn 构造）低于设计标称 300k-1M 区间——pi 0.84.4 cutPoint 机制（20k 保留窗口 + turn 边界切分）要求多 turn 且 cutPoint 前有 context message，单巨型 turn 被判 too small；178k 与 P-T2c 300k 锚点线性外推覆盖取值论证（189 倍余量），结论方向不受影响。附带发现：单巨型 turn session 手动 compact 被 pi 判 "Nothing to compact (session too small)"——pi 既有行为，登记观察。
 
 ## 6 状态表
 
@@ -71,3 +72,4 @@ graph TD
 ## 变更历史
 
 - v1（2026-09-05）：初版。用户评审以会话指令「开始规划开发」代替（夜间托管自治态），DAG/单元表随最终汇报呈现。
+- （一致性审查 reasonable 确认）G1-G4 四链逐条核对通过：u-h1 D1-1~D1-4（not_configured 不发 HTTP 有测试断言）、u-h2 双路径同入口、u-h3 双挂载+MF3 补接线、u-h4 两层 Promise 错误链 + server.ts 收口核实成立。

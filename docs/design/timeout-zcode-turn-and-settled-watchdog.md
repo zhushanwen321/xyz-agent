@@ -315,7 +315,7 @@ deliverMessage（subagent-service.ts:1177）/ runSpawn（session-runner.ts:2453�
 
 **本章结论：改动集中在 zcode 引擎三文件 + settled-watchdog 原语与两挂载点（共六文件），无新模块、无新依赖。**
 
-**新常量**（`constants.ts`，除中段阈值外均 env 可覆盖——D9 定案：中段 `SETTLED_MID_ROUND_NO_PROGRESS_MS` v1 不开 env，保持与 keep-alive 先例同为纯常量）：
+**新常量**（zcode 侧两常量落 `engines/zcode/constants.ts`；settled 侧 `SETTLED_MID_ROUND_NO_PROGRESS_MS` 与 `SETTLED_WATCHDOG_TIMEOUT_MS` 定义在 `execution/settled-watchdog.ts` 模块内原位（一致性审查 DE1 修正）——除中段阈值外均 env 可覆盖，D9 定案：中段阈值 v1 不开 env，保持与 keep-alive 先例同为纯常量）：
 
 | 常量 | 默认值 | 语义 |
 |---|---|---|
@@ -385,7 +385,7 @@ deliverMessage（subagent-service.ts:1177）/ runSpawn（session-runner.ts:2453�
 | U6 | `settled-watchdog.ts` 两段式原语 + 两挂载点改造 + env `XYZ_SUBAGENT_SETTLED_WATCHDOG_MS` | P0-4 独立主题，与 zcode 侧无文件交集，可并行 |
 | U7 | 文档回写三处（unbounded-wait-audit §7.2 被否谱系 / impl-plan §5 清账 / settled-watchdog 头注释） | C-proc-10 纪律：随 U6 同 commit，登记即债务修复即清账 |
 
-**文件改动地图**：`engines/zcode/{constants,session-channel,zcode-engine}.ts`（U1-U5）；`execution/{settled-watchdog,session-runner,subagent-service}.ts`（U6）；`docs/design/{subagent-core-unbounded-wait-audit.md, subagent-core-unbounded-wait-audit.impl-plan.md, timeout-zcode-turn-and-settled-watchdog.md}`（U7）。
+**文件改动地图**：`engines/zcode/{constants,session-channel,zcode-engine}.ts`（U1-U5）；`execution/{settled-watchdog,session-runner,subagent-service}.ts`（U6）；`docs/design/{subagent-core-unbounded-wait-audit.md, subagent-core-unbounded-wait-audit.impl-plan.md}`（U7——设计文档自身不在回写清单内，一致性审查 DE2 修正）。
 
 ## 11. 待验证检查点（探针清单，准则 7）
 

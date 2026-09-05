@@ -111,7 +111,7 @@ export interface InboundEffects {
    * executeSubagent 不消费 onUpdate），子代理活跃信号走本帧旁路（relay tee / 旧
    * widget 通道，不经 chat store.applyMessageEvent）。本回调在 routeInbound FALLBACK
    * 路径按 type 识别后调用（该 type 不在 ROUTE_TABLE/CROSS_SESSION_TYPES，帧与
-   * payload.sessionId 在挂载点完全可见；pending 分流与 seq gap 均不拦截）。
+   * payload.sessionId 在挂载点完全可见；pending 分流不拦截（旁路帧无 pending id），seq gap 与 session 通道同 gate——gap drop 帧不触发刷新，route-inbound.test.ts 锁定）。
    *
    * 实现方（renderer 装配层，useMessageEffects 范本）：解析 payload.sessionId
    * （shared resolveSubagentParentSessionId——三段式虚拟 id `subagent:<mainSessionId>:<subagentId>`

@@ -45,7 +45,7 @@ graph TD
 
 ## 4 测试策略
 
-- **增量（单元开发期）**：`cd packages/runtime && pnpm test`（vitest run；u-i2/u-i3 新增测试 + 既有 hook-pipeline/bridge-interop 测试不回归）。`cd packages/plugin-sdk && pnpm typecheck`（无 test script 则 typecheck 兜底）。
+- **增量（单元开发期）**：`cd packages/runtime && pnpm test`（vitest run；u-i2/u-i3 新增测试 + 既有 hook-pipeline/bridge-interop 测试不回归）。plugin-sdk 包无 typecheck script，验证用 `cd packages/plugin-sdk && npx tsc --noEmit`（一致性审查 DE1 修正）。
 - **阶段收尾**：`pnpm extensions:typecheck && pnpm extensions:lint && pnpm extensions:test`（plugin-bridge 侧契约面）；全量 `pnpm test` 在阶段 5。
 - **Gate B（§4 W1-W5）**：真实场景——standalone runtime + 真实 pi 进程 + 测试插件（复用 bridge 验收基建 /tmp/bridge-gate-b2 形态），行为断言非日志断言。
 
@@ -70,3 +70,4 @@ graph TD
 ## 变更历史
 
 - v1（2026-09-05）：初版。用户评审以会话指令「开始规划开发」代替（夜间托管自治态），DAG/单元表随最终汇报呈现。
+- （一致性审查 reasonable 确认）①SDK 侧走 sync-types.sh 再生路径达成镜像一致（已同步设计 §5-I1）；②blocked 回包在管线累积为空时不带 injectedMessages 键（桥接层 ?? [] 恒带键，保持既有 block 回包形状 G4）；③warn 形状摘要 80 字符截断 + 循环引用兜底（WARN_SUMMARY_MAX_CHARS 具名）。
