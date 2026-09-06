@@ -114,6 +114,8 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
 | 22 | D4④ badge 壳侧方案：effectScope + 惰性装配 useBackgroundTasks 实例（app 级常驻——tab 未激活也亮） | 本表 | 实证约束：initExtensionHostBridge 在 main.ts 模块体调用、先于 pinia 装配，非组件上下文同步装配即抛错；惰性化后首次组件渲染期装配；refCount 语义不破坏（badge 实例与列表实例同 sid 时 refCount=2 仍单条物理 events.on）；useBackgroundTasks.ts 零改动（对比 store 模块级读入口方案需提升 per-instance 分区=双真相） |
 | 23 | barrel 追认：ui/extension-host/index.ts 补导出 L2_TAB_BADGE_SOURCE_KEY / NATIVE_VIEWS_KEY（1 行） | 本表 | barrel 缺导出致壳经 barrel import 得 undefined Symbol（壳测试实测抓出；ui 包内测试走相对路径故未暴露）——属第一轮 l2-tab-item.ts 契约变更的必要组成，编排方追认 |
 | 24 | 实现细节合并：badge 串显防护（入参 sid ≠ 焦点 sid 返回空 map）；builtin 贡献 view title 按 D4① 原文静态「后台命令」（静态贡献数据链路，同文件 tasks 中文 description 既有范式；组件内运行时文案全走 i18n key）；行内终止不加 toast（D10④ 未要求，kill RPC 失败降级 console.debug 自然自愈）；存量测试断言同步 5 处（builtin 新增 view 的直接后果，核心语义全保留） | 本表 | 与设计语义一致 / 仓内既有范式 |
+| 25 | testid 登记形态：list 侧无现成主题清单文档 → 按 docs/testing/README 指引新建 docs/testing/14-background-task-sidebar.md（组件树 + 双侧 31 testid 表）；README 索引表加行；05-side-drawer.md 补 cross-ref 并修正「tab 栏无 testid」过时注记（DrawerPanel.vue:41 既有 drawer-tab-{key} 模板已落地） | 本表 | 领地条款「docs/testing（testid 清单文档）」目录范围内的轻量新建，格式仿既有 05/09 |
+| 26 | en 术语裁量：'Background commands'（设计 §1 只裁决中文「后台命令」；en 侧与 subagent 的 'background tasks' 区分）；zh 状态名词「孤儿任务」与 drawer 动作语义「孤儿回收」刻意区分 | 本表 | 任务授权「按语境微调」范围；术语主裁决不受影响 |
 
 ## 6 状态表
 
@@ -128,7 +130,7 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
 | u-renderer-store | pending | 0 | — |
 | u-renderer-list | committed | 0 | git log --grep=u-renderer-list；renderer 3793 / core 1399 / ui 564 全绿 + 三包 typecheck 绿；领地扩展（壳接线）已落地；deviations ㉑-㉔入登记表；i18n key 清单 18 个（sidebar.backgroundTaskList.*）已收集 |
 | u-drawer | committed | 0 | git log --grep=u-drawer；ui 564 tests 绿（57 files）+ drawer 相关 28 tests 绿 + vue-tsc 绿；deviations ⑰-⑳入登记表；i18n key 清单 21 个（panel.sideDrawer.bashTask*）已收集待传 u-i18n-docs |
-| u-i18n-docs | pending | 0 | 等 u-renderer-list key 清单落定后派发 |
+| u-i18n-docs | committed | 0 | git log --grep=u-i18n-docs；check:i18n 188 tests 绿（en/zh key 全等）+ renderer 3793 绿 + 根级 lint 绿；deviations ㉕㉖入登记表 |
 
 ## 7 残留风险与变更历史
 
@@ -147,3 +149,4 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
   - 2026-09-06 u-drawer committed（DetailPanel + DrawerPanel TabMeta + PanelContainer 分支；ui/renderer 绿；deviations ⑰-⑳；21 个 i18n key 收集待传 u-i18n-docs）。
   - 2026-09-06 u-renderer-list 主体完成并核验（三包全绿），上报 D4②④ 壳侧生产接线缺口（NATIVE_VIEWS_KEY 注入 + badge 源 provide，壳文件不在原领地）——授权领地扩展（useExtensionHostBridge.ts + useBackgroundTasks.ts），原 dev 续作接线中。
   - 2026-09-06 u-renderer-list committed（L2 视图 + 注入契约路由 + badge 壳接线，三包全绿；barrel 导出经编排方追认；deviations ㉑-㉔）。
+  - 2026-09-06 u-i18n-docs committed（39 key zh/en 落地 + testid 清单 14-background-task-sidebar.md + feature-map 2026-09-06）——**状态表 8 单元全 committed，转入阶段 3 一致性审查**。

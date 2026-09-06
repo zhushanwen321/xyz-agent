@@ -166,4 +166,30 @@ export default {
     emptyHint: 'Workflows are multi-step automation scripts. Start one in chat and its progress appears here',
     agentsLabel: '{done}/{total}',
   },
+  // "Background commands" L2 view (background-task-sidebar-view D10). Term ruling (design §1):
+  // distinct from subagent "background tasks"
+  backgroundTaskList: {
+    filter: {
+      active: 'Running',
+      ended: 'Ended',
+      all: 'All',
+    },
+    emptyAllTitle: 'No background commands',
+    emptyAllHint: 'Ask AI to run a command in the background during a conversation and it will appear here',
+    emptyActive: 'No running background commands',
+    emptyEnded: 'No finished background commands',
+    viewAll: 'View all ({count})',
+    kill: 'Terminate',
+    killConfirm: 'Confirm terminate',
+    pidLabel: 'pid',
+    exitLabel: 'exit',
+    status: {
+      running: 'Running',
+      killing: 'Terminating',
+      orphaned: 'Orphaned',
+      killed: 'Terminated',
+      succeeded: 'Succeeded',
+      failed: 'Failed',
+    },
+  },
 }
