@@ -92,14 +92,23 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
 |---|------|----------|------|
 | 1 | writeRegistryEntry 不变量登记点数为 5 而非设计枚举的 4（第 5 点 = process-exit-guard.ts reapBackgroundTasksNow 的终态写，同序成立） | 设计 §3.3 D6-en 措辞已同步修正；extension task-store.ts 注释登记 5 点 | 对设计事实性枚举的修正补全，5 个调用点顺序全部 grep + 实读核实 |
 | 2 | u-ext 接替续作合规修补：删除测试文件重复的 `vi.setConfig({testTimeout:20000})`（两处留一）+ 补 `afterAll rmSync(DATA_DIR)` 清理 | 本表 | 无语义变化的合规性修补，满足测试红线「mkdtempSync 自建自删」 |
+| 3 | D2 事件钩子②实现为 pi 原始 `tool_execution_end`（toolName==='bash'），设计初版文字「message.tool_call bash 工具调用结束」 | 设计 §3.3 D2 措辞已同步修正（pi-protocol.ts toolName 字段已核） | 挂点位置（EventAdapter 旁路）与语义（覆盖 spawn 路径）与设计定案一致，仅事件名按 pi 实流澄清 |
+| 4 | D6 身份验证两档实现形态统一为「总是异步现测（≤1s）+ pidStartMatchesRegistered 内按有/无 pidStartTime 分档」 | 本表 | 档①比对左值只能来自现测，两档共用同一探测出口；分档语义经 reaper 复用件完整保留，无行为差异 |
+| 5 | killTask ①/②分界的属主判活由锁外取值移入锁内 fresh.ownerPiPid 现测 | 本表（前任实现与 D6「锁内判定时序」有偏差，接替修正向设计收敛） | 消除 stale 窗口：判活后锁内使用前死亡会留下无人终态化的 killing 条目；与③收尾同源统一 |
+| 6 | shared/src/index.ts 未显式导出 4 个 backgroundTask 镜像类型（index.ts 在 u-proto 领地外） | 本表 | 下游可经 `ServerMessageMap['backgroundTask.tasks']['tasks'][number]` 索引取用，无消费阻塞；需具名导入时由消费单元提出、收尾阶段统一放行 |
+| 7 | renderer api domain 未接 api/index.ts 门面（isMock 三元 + mock 轨） | 本表 | 领地约束下有意推迟，门面接线归消费单元（u-renderer-store/u-drawer）；既有 usage/terminal 等域同样存在不经门面直接 import 的范式 |
+| 8 | u-proto 领地扩展：新增 `packages/shared/__tests__/protocol.test.ts`（13 用例，编译期字面量断言 + 运行期样例断言）；并在 renderer domain 补 `BackgroundTaskMirrorEqualsContract` Equal 全等守卫（前任注释声称双向守卫实际仅单向，补实并修正注释） | 本表 | 派发 task 授权「shared 包该域类型测试文件一并补」；shared 侧原无编译期守卫覆盖，补强验收条款「类型形状与 D3 逐字段一致」的守卫力 |
+| 9 | renderer domain 未新增行为单测文件（api/__tests__ 在领地外） | 本表 | domain 为 3 个薄转发函数，类型链由 vue-tsc 守卫；如需 command 调用参数断言测试（仿 usage-forcequit-domains.test.ts 范式），须扩领地后补 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u-proto | dev 进行中 | 0 | 接替 dev 续作（前任半成品：protocol.ts +101 / api domain 63 行） |
+| u-proto | committed | 0 | git log --grep=u-proto；shared 239 tests 绿（22 files）+ shared/renderer 双包 tsc 绿；deviations ⑥⑦⑧⑨入登记表 |
 | u-ext | committed | 0 | git log --grep=u-ext；base-tool-enhance 242 tests 绿（12 files）；typecheck/lint exit 0；deviations ①②入登记表 |
-| u-runtime-svc | dev 进行中 | 0 | 接替 dev 续作（前任半成品：background-task/ 7 文件 / reaper +89 / event-adapter +40） |
+| u-runtime-svc | committed | 0 | git log --grep=u-runtime-svc；runtime 全量 4398 tests 绿（402 files，含 background-task 域 30 tests + reaper 回归）；deviations ③④⑤入登记表 |
+| u-runtime-rpc | dev 进行中 | 0 | W2 已派发 |
+| u-renderer-store | dev 进行中 | 0 | W2 已派发 |
 | u-runtime-rpc | pending | 0 | — |
 | u-renderer-store | pending | 0 | — |
 | u-renderer-list | pending | 0 | — |
