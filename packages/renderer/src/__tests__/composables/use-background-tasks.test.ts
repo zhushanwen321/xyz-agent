@@ -401,6 +401,30 @@ describe('损坏拍与断连恢复（S7/S6）', () => {
     expect(host.tasks.current.value.loaded).toBe(true)
   })
 
+  it('S7 坏形状 reply（契约外值）：按失败拍处理——fetchFailed 置位 + 分区缓存保留，不空表降级', async () => {
+    const host = mountHost('A')
+    await settle()
+    resolveList('A', [task('t1', 'running')])
+    await settle()
+    expect(host.tasks.current.value.tasks.map((t) => t.taskId)).toEqual(['t1'])
+
+    // 垃圾对象（无 tasks 数组）→ 契约外形状：fetchFailed 置位，缓存/loaded/corrupted 原样保留
+    void host.tasks.refresh('A')
+    resolveListRaw('A', { garbage: true })
+    await settle()
+    expect(host.tasks.current.value.fetchFailed).toBe(true)
+    expect(host.tasks.current.value.tasks.map((t) => t.taskId)).toEqual(['t1'])
+    expect(host.tasks.current.value.loaded).toBe(true)
+    expect(host.tasks.current.value.corrupted).toBe(false)
+
+    // undefined（契约外值）同款：缓存保留不清空
+    void host.tasks.refresh('A')
+    resolveListRaw('A', undefined)
+    await settle()
+    expect(host.tasks.current.value.fetchFailed).toBe(true)
+    expect(host.tasks.current.value.tasks.map((t) => t.taskId)).toEqual(['t1'])
+  })
+
   it('S6 重连恢复腿：ws disconnected→connected 边沿重拉当前 sid（非边沿不触发）', async () => {
     const host = mountHost('A')
     await settle()

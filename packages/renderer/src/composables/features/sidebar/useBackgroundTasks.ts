@@ -113,17 +113,18 @@ interface ListReplySnapshot {
 }
 
 /**
- * list reply 前向兼容解析：协议 corrupted 字段（backgroundTask.tasks payload，u-proto 并行
- * 落地中）就位后 api domain 将透传 reply 对象，当前返回纯数组——运行时结构探测两形态，
- * corrupted 缺省按 false（外部格式不信任 + 运行时 guard 范式）；坏形状按空表降级（下拍自愈）。
+ * list reply 形状收窄：生产路径为 api domain 透传的全形对象（backgroundTask.tasks payload：
+ * { sessionId, tasks, corrupted? }，corrupted 语义见协议 SSOT）；数组形态为前向兼容防御分支
+ * （防 api domain 折叠回纯数组的旧契约回退）。返回 null = 契约外形状——按失败拍处理
+ * （fetchInto 置 fetchFailed=true 并保留分区缓存，不空表降级不清缓存，外部格式不信任防线）。
  */
-function parseListReply(raw: unknown): ListReplySnapshot {
+function parseListReply(raw: unknown): ListReplySnapshot | null {
   if (Array.isArray(raw)) return { tasks: raw, corrupted: false }
   if (typeof raw === 'object' && raw !== null && Array.isArray((raw as { tasks?: unknown }).tasks)) {
     const reply = raw as { tasks: BackgroundTaskEntry[]; corrupted?: unknown }
     return { tasks: reply.tasks, corrupted: reply.corrupted === true }
   }
-  return { tasks: [], corrupted: false }
+  return null
 }
 
 // ── 已销毁 session 抑制表（迟到写入不得僵尸式重建分区，参照 useContextUsage）──
@@ -195,7 +196,7 @@ export function useBackgroundTasks(sessionIdRef: Ref<string | null | undefined>)
     if (existing) return existing
     const shared: Promise<ListReplySnapshot | null> = backgroundTaskApi
       .list(sid)
-      .then((raw): ListReplySnapshot => parseListReply(raw))
+      .then((raw): ListReplySnapshot | null => parseListReply(raw))
       .catch((err: unknown) => {
         // debug 级：可重试瞬态 + transport/pending 层已记错误，避免断连期刷屏（§3.1 断连路径）。
         console.debug('[background-tasks] list failed, keep cached partition', sid, err)
