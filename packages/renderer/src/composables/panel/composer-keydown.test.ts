@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import { computed, ref } from 'vue'
-import type { StagingAction } from '@xyz-agent/core/domain/composer/types'
+import type { StagingAction } from '@xyz-agent/core/domain/composer'
 import { useComposerKeydown, type ComposerKeydownDeps } from './composer-keydown'
 import type { ShellInputInstance } from './composer-shell'
 
