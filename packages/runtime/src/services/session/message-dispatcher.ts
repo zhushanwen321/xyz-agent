@@ -370,7 +370,20 @@ export class MessageDispatcher {
     }
 
     // ── ensureActive(必要时 restore)──
-    const client = await this.ensureActiveForBash(sessionId)
+    // [时序不变量 timeout-tick-parity] 必须保持 HEAD 内联 try/await/catch 形态：
+    // 任何 Promise 组合子（async 包装 / .catch 链）都会使衍生 promise 在 resolve 路径
+    // 多一拍微任务，bashStart 广播与 reserveBashSlot 置位整体晚一拍，race 测试 W1 的
+    // 1-tick 断言（bashStart 已广播 / isBashRunning 已置位）即落空（U08 两轮实测）。
+    let client: IPiEngine
+    try {
+      client = await this.svc.ensureActive(sessionId)
+    } catch (e) {
+      const errMsg = `Failed to restore session: ${toErrorMessage(e)}`
+      console.error(`[message-dispatcher] ${errMsg}`)
+      const errMsgObj = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
+      this.messageBus?.publish(sessionId, errMsgObj)
+      throw e
+    }
 
     // ── busy 预检 + 占槽（W2: bash↔streaming 放宽并发，对齐 pi-tui）──
     // 语义变化（w2）：bash 不再与 AI streaming（isGenerating）互斥，允许 streaming 期间执行 bash。
@@ -402,22 +415,6 @@ export class MessageDispatcher {
       this.releaseBashReservation(activeSession, myToken)
     }
     return { blocked: false }
-  }
-
-  /**
-   * sendBash 阶段 1：ensureActive(必要时 restore)，失败时广播 message.error 后 rethrow。
-   * 文案带 sendBash 前缀（与 sendMessage 同骨架但诊断串不同，故不共用）。
-   */
-  private async ensureActiveForBash(sessionId: string): Promise<IPiEngine> {
-    try {
-      return await this.svc.ensureActive(sessionId)
-    } catch (e) {
-      const errMsg = `Failed to restore session: ${toErrorMessage(e)}`
-      console.error(`[message-dispatcher] sendBash: ${errMsg}`)
-      const errMsgObj = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
-      this.messageBus?.publish(sessionId, errMsgObj)
-      throw e
-    }
   }
 
   /**
