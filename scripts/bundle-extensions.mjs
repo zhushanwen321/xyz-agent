@@ -155,6 +155,106 @@ const RELAY_DIR_PACKAGES = new Set(["subagent-workflow"]);
 const SUBAGENT_CORE_WORKFLOWS_DIR = join(REPO_ROOT, "packages", "subagent-core", "workflows");
 const WORKFLOW_DIR_PACKAGES = new Set(["subagent-workflow"]);
 
+// permission 特殊处理（R1）：拷 2 个 wasm 到 staged 与 index.js 同目录
+async function copyPermissionWasm(outDir, extraAssets) {
+	for (const [depRel, outName] of PERMISSION_WASM) {
+		const src = join(REPO_ROOT, "node_modules", depRel);
+		const dest = join(outDir, outName);
+		if (!existsSync(src)) {
+			throw new Error(
+				`permission wasm 源缺失: ${src}（先 pnpm install 确保依赖安装）`,
+			);
+		}
+		await copyFile(src, dest);
+		extraAssets.push(outName);
+	}
+}
+
+// relay 代理 CLI（E-1）：零依赖脚本保持源形态整目录拷贝（不 bundle，见常量注释）
+async function copyRelayDir(srcDir, outDir, extraAssets) {
+	const src = join(srcDir, "relay");
+	if (!existsSync(src)) {
+		throw new Error(
+			`relay dir missing: ${src}（E-1 资产已登记但源码目录缺失 = 打包配置回归）`,
+		);
+	}
+	await cp(src, join(outDir, "relay"), { recursive: true });
+	extraAssets.push("relay/");
+}
+
+// 内置 workflow 脚本资产（u1-staged / 设计 D1）：源在 packages/subagent-core/workflows/
+//（u1-move 后 E 包不再持有），整目录拷到 E staged 目录。拷贝动机与 manifest 字段的
+// 关系、scriptPath 锚定原理、V1-④ 双形态探针命令见 WORKFLOW_DIR_PACKAGES 常量注释。
+async function copyWorkflowDir(outDir, extraAssets) {
+	if (!existsSync(SUBAGENT_CORE_WORKFLOWS_DIR)) {
+		throw new Error(
+			`workflows dir missing: ${SUBAGENT_CORE_WORKFLOWS_DIR}（subagent-core 包 workflow 资产缺失 = 打包配置回归）`,
+		);
+	}
+	await cp(SUBAGENT_CORE_WORKFLOWS_DIR, join(outDir, "workflows"), { recursive: true });
+	extraAssets.push("workflows/");
+}
+
+// 按包名 short 分发的三类特殊资产拷贝（顺序敏感：permission → relay → workflows，
+// 与 extraAssets 汇总顺序及 fail-fast 先后一致）
+async function copySpecialAssets(short, srcDir, outDir, extraAssets) {
+	if (short === "permission") await copyPermissionWasm(outDir, extraAssets);
+	if (RELAY_DIR_PACKAGES.has(short)) await copyRelayDir(srcDir, outDir, extraAssets);
+	if (WORKFLOW_DIR_PACKAGES.has(short)) await copyWorkflowDir(outDir, extraAssets);
+}
+
+// 改写 staged 副本 package.json：pi.extensions 指向 ./index.js（不改源码 package.json）
+async function stagePackageJson(srcDir, outDir) {
+	const pkg = JSON.parse(await readFile(join(srcDir, "package.json"), "utf8"));
+	if (pkg.pi && Array.isArray(pkg.pi.extensions)) {
+		pkg.pi.extensions = ["./index.js"];
+	}
+	await writeFile(join(outDir, "package.json"), JSON.stringify(pkg, null, 2) + "\n", "utf8");
+	return pkg;
+}
+
+// 文档随 staged 产物自描述（有则拷无则跳过；原 prepare-builtin-extensions.sh 的
+// rsync 步骤下沉至此，bundle 管线内「mandatory 包 → 源码目录 → staged 产物」单一 owner）
+async function copyDocAssets(srcDir, outDir) {
+	const docAssets = [];
+	for (const doc of ["README.md", "ARCHITECTURE.md"]) {
+		const src = join(srcDir, doc);
+		if (existsSync(src)) {
+			await copyFile(src, join(outDir, doc));
+			docAssets.push(doc);
+		}
+	}
+	return docAssets;
+}
+
+// M6a-04：pi.{agents,skills,workflows} 引用的资源目录随 bundle 拷贝。
+// 引用值是相对路径（如 "./agents"），解析到源码目录后整目录拷贝（filter 排除
+// node_modules）。缺失即 fail-fast（manifest 声明了但源码缺 = 打包配置回归）。
+async function copyManifestResourceDirs(pkg, srcDir, outDir) {
+	const copiedManifestDirs = [];
+	for (const field of MANIFEST_RESOURCE_FIELDS) {
+		const refs = pkg.pi?.[field];
+		if (!Array.isArray(refs)) continue;
+		for (const ref of refs) {
+			if (typeof ref !== "string") continue;
+			const rel = ref.replace(/^\.\//, "");
+			const src = join(srcDir, rel);
+			const dest = join(outDir, rel);
+			if (!existsSync(src)) {
+				throw new Error(
+					`pi.${field} 引用缺失: ${src}（源码目录 ${srcDir} 缺 ${rel}）`,
+				);
+			}
+			await cp(src, dest, {
+				recursive: true,
+				filter: (s) => !s.includes(`${sep}node_modules${sep}`),
+			});
+			copiedManifestDirs.push(`${field}:${rel}`);
+		}
+	}
+	return copiedManifestDirs;
+}
+
 async function bundleOne(pkgName) {
 	const short = pkgName.replace(/^@zhushanwen\/pi-/, "");
 	const srcDir = srcDirFor(pkgName);
@@ -184,89 +284,12 @@ async function bundleOne(pkgName) {
 		logLevel: "warning",
 	});
 
-	// permission 特殊处理（R1）：拷 2 个 wasm 到 staged 与 index.js 同目录
-	let extraAssets = [];
-	if (short === "permission") {
-		for (const [depRel, outName] of PERMISSION_WASM) {
-			const src = join(REPO_ROOT, "node_modules", depRel);
-			const dest = join(outDir, outName);
-			if (!existsSync(src)) {
-				throw new Error(
-					`permission wasm 源缺失: ${src}（先 pnpm install 确保依赖安装）`,
-				);
-			}
-			await copyFile(src, dest);
-			extraAssets.push(outName);
-		}
-	}
+	const extraAssets = [];
+	await copySpecialAssets(short, srcDir, outDir, extraAssets);
 
-	// relay 代理 CLI（E-1）：零依赖脚本保持源形态整目录拷贝（不 bundle，见常量注释）
-	if (RELAY_DIR_PACKAGES.has(short)) {
-		const src = join(srcDir, "relay");
-		if (!existsSync(src)) {
-			throw new Error(
-				`relay dir missing: ${src}（E-1 资产已登记但源码目录缺失 = 打包配置回归）`,
-			);
-		}
-		await cp(src, join(outDir, "relay"), { recursive: true });
-		extraAssets.push("relay/");
-	}
-
-	// 内置 workflow 脚本资产（u1-staged / 设计 D1）：源在 packages/subagent-core/workflows/
-	//（u1-move 后 E 包不再持有），整目录拷到 E staged 目录。拷贝动机与 manifest 字段的
-	// 关系、scriptPath 锚定原理、V1-④ 双形态探针命令见 WORKFLOW_DIR_PACKAGES 常量注释。
-	if (WORKFLOW_DIR_PACKAGES.has(short)) {
-		if (!existsSync(SUBAGENT_CORE_WORKFLOWS_DIR)) {
-			throw new Error(
-				`workflows dir missing: ${SUBAGENT_CORE_WORKFLOWS_DIR}（subagent-core 包 workflow 资产缺失 = 打包配置回归）`,
-			);
-		}
-		await cp(SUBAGENT_CORE_WORKFLOWS_DIR, join(outDir, "workflows"), { recursive: true });
-		extraAssets.push("workflows/");
-	}
-
-	// 改写 staged 副本 package.json：pi.extensions 指向 ./index.js（不改源码 package.json）
-	const pkg = JSON.parse(await readFile(join(srcDir, "package.json"), "utf8"));
-	if (pkg.pi && Array.isArray(pkg.pi.extensions)) {
-		pkg.pi.extensions = ["./index.js"];
-	}
-	await writeFile(join(outDir, "package.json"), JSON.stringify(pkg, null, 2) + "\n", "utf8");
-
-	// 文档随 staged 产物自描述（有则拷无则跳过；原 prepare-builtin-extensions.sh 的
-	// rsync 步骤下沉至此，bundle 管线内「mandatory 包 → 源码目录 → staged 产物」单一 owner）
-	const docAssets = [];
-	for (const doc of ["README.md", "ARCHITECTURE.md"]) {
-		const src = join(srcDir, doc);
-		if (existsSync(src)) {
-			await copyFile(src, join(outDir, doc));
-			docAssets.push(doc);
-		}
-	}
-
-	// M6a-04：pi.{agents,skills,workflows} 引用的资源目录随 bundle 拷贝。
-	// 引用值是相对路径（如 "./agents"），解析到源码目录后整目录拷贝（filter 排除
-	// node_modules）。缺失即 fail-fast（manifest 声明了但源码缺 = 打包配置回归）。
-	const copiedManifestDirs = [];
-	for (const field of MANIFEST_RESOURCE_FIELDS) {
-		const refs = pkg.pi?.[field];
-		if (!Array.isArray(refs)) continue;
-		for (const ref of refs) {
-			if (typeof ref !== "string") continue;
-			const rel = ref.replace(/^\.\//, "");
-			const src = join(srcDir, rel);
-			const dest = join(outDir, rel);
-			if (!existsSync(src)) {
-				throw new Error(
-					`pi.${field} 引用缺失: ${src}（源码目录 ${srcDir} 缺 ${rel}）`,
-				);
-			}
-			await cp(src, dest, {
-				recursive: true,
-				filter: (s) => !s.includes(`${sep}node_modules${sep}`),
-			});
-			copiedManifestDirs.push(`${field}:${rel}`);
-		}
-	}
+	const pkg = await stagePackageJson(srcDir, outDir);
+	const docAssets = await copyDocAssets(srcDir, outDir);
+	const manifestDirs = await copyManifestResourceDirs(pkg, srcDir, outDir);
 
 	const jsStat = await stat(join(outDir, "index.js"));
 	return {
@@ -275,7 +298,7 @@ async function bundleOne(pkgName) {
 		size: jsStat.size,
 		warnings: result.warnings || [],
 		extraAssets,
-		manifestDirs: copiedManifestDirs,
+		manifestDirs,
 		docAssets,
 	};
 }

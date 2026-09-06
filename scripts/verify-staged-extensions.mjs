@@ -128,38 +128,45 @@ function classifyImportError(err) {
 	return { kind: "unknown", msg };
 }
 
-async function main() {
+function assertStagedDirExists() {
 	if (!existsSync(STAGED)) {
 		console.error(`[verify-staged] ✗ staged 目录不存在: ${STAGED}`);
 		console.error(`[verify-staged] 恢复: bash scripts/prepare-builtin-extensions.sh`);
 		process.exit(1);
 	}
+}
 
+async function listStagedPackageDirs() {
 	const entries = await readdir(STAGED, { withFileTypes: true });
 	const pkgDirs = entries
 		.filter((e) => e.isDirectory() && e.name.startsWith("pi-"))
 		.map((e) => e.name)
 		.sort();
-
 	if (pkgDirs.length === 0) {
 		console.error(`[verify-staged] ✗ staged 无 pi-* 包目录: ${STAGED}`);
 		console.error(`[verify-staged] 恢复: bash scripts/prepare-builtin-extensions.sh`);
 		process.exit(1);
 	}
+	return pkgDirs;
+}
 
-	// SSOT 集合断言：staged 包集合必须与 mandatory-extensions.json 派生集合完全相等
-	//（多/少都 fail）。逐包校验只保证「发现的包各自合格」，bundle-extensions.mjs 或
-	// extraResources 拷贝漏掉部分包时会静默放行（PR #185 review S2：13 包漏 1 剩 12 全 pass）。
-	const mandatoryPath = join(REPO_ROOT, "packages/shared/src/mandatory-extensions.json");
-	let expectedDirs;
+function readExpectedDirs(mandatoryPath) {
 	try {
 		const mandatory = JSON.parse(readFileSync(mandatoryPath, "utf8"));
-		expectedDirs = mandatory.map((p) => p.name.replace(/^@zhushanwen\//, "")).sort();
+		return mandatory.map((p) => p.name.replace(/^@zhushanwen\//, "")).sort();
 	} catch (err) {
 		console.error(`[verify-staged] ✗ 无法读取 mandatory-extensions.json SSOT: ${mandatoryPath}`);
 		console.error(`[verify-staged] ${err.message}`);
 		process.exit(1);
 	}
+}
+
+// SSOT 集合断言：staged 包集合必须与 mandatory-extensions.json 派生集合完全相等
+//（多/少都 fail）。逐包校验只保证「发现的包各自合格」，bundle-extensions.mjs 或
+// extraResources 拷贝漏掉部分包时会静默放行（PR #185 review S2：13 包漏 1 剩 12 全 pass）。
+function assertPackageSetMatchesSSOT(pkgDirs) {
+	const mandatoryPath = join(REPO_ROOT, "packages/shared/src/mandatory-extensions.json");
+	const expectedDirs = readExpectedDirs(mandatoryPath);
 	const stagedSet = new Set(pkgDirs);
 	const missingFromStaged = expectedDirs.filter((d) => !stagedSet.has(d));
 	const extraInStaged = pkgDirs.filter((d) => !expectedDirs.includes(d));
@@ -174,71 +181,81 @@ async function main() {
 		console.error(`[verify-staged] 恢复: 重新运行 bash scripts/prepare-builtin-extensions.sh；仍不一致则核对 packages/shared/src/mandatory-extensions.json`);
 		process.exit(1);
 	}
+}
 
-	console.log(`=== verify-staged-extensions ===`);
-	console.log(`staged: ${STAGED}`);
-	console.log(`packages: ${pkgDirs.length}`);
-	console.log("");
+/**
+ * 对单个 staged 包做两层校验（文件结构 + dry-run import）。
+ * 返回 { status: "verified" | "skipped" | "failed", ... }——与原 main 内联逻辑的
+ * failed/skipped/verified 三分类一一对应，每包至多一个结论（前序校验失败即短路）。
+ */
+async function verifyPackage(pkgDir) {
+	const indexJs = join(pkgDir, "index.js");
 
+	// 文件级校验 1：index.js 存在
+	if (!existsSync(indexJs)) {
+		return { status: "failed", reason: "缺 index.js（bundle 失败或未运行 prepare）" };
+	}
+
+	// 文件级校验 2：无 .ts 残留（R3 关键防护）
+	const files = await readdir(pkgDir);
+	const tsResidue = files.filter((f) => f.endsWith(".ts"));
+	if (tsResidue.length > 0) {
+		return {
+			status: "failed",
+			reason: `残留 .ts 文件 [${tsResidue.join(", ")}]，resolver fallback 会旁路 bundle（R3）`,
+		};
+	}
+
+	// manifest 校验（M6a-09 + M6a-04）：pi.extensions 指向存在的入口；
+	// pi.{agents,skills,workflows} 引用文件存在（bundle 已拷贝，缺失 = 拷贝逻辑回归）
+	const manifestFailures = checkManifest(pkgDir);
+	if (manifestFailures.length > 0) {
+		return { status: "failed", reason: manifestFailures.join("; ") };
+	}
+
+	// dry-run import：加载 index.js，捕获依赖缺失 / 语法错误
+	try {
+		await import(pathToFileURL(indexJs).href);
+		return { status: "verified" };
+	} catch (err) {
+		const { kind } = classifyImportError(err);
+		const firstLine = String(err.message || err).split("\n")[0];
+		if (kind === "external" || kind === "interop") {
+			return { status: "skipped", kind, msg: firstLine };
+		}
+		return { status: "failed", reason: firstLine };
+	}
+}
+
+async function verifyAllPackages(pkgDirs) {
 	const verified = [];
 	const skipped = [];
 	const failed = [];
-
 	for (const pkg of pkgDirs) {
-		const pkgDir = join(STAGED, pkg);
-		const indexJs = join(pkgDir, "index.js");
-
-		// 文件级校验 1：index.js 存在
-		if (!existsSync(indexJs)) {
-			failed.push({ pkg, reason: "缺 index.js（bundle 失败或未运行 prepare）" });
-			continue;
-		}
-
-		// 文件级校验 2：无 .ts 残留（R3 关键防护）
-		const files = await readdir(pkgDir);
-		const tsResidue = files.filter((f) => f.endsWith(".ts"));
-		if (tsResidue.length > 0) {
-			failed.push({
-				pkg,
-				reason: `残留 .ts 文件 [${tsResidue.join(", ")}]，resolver fallback 会旁路 bundle（R3）`,
-			});
-			continue;
-		}
-
-		// manifest 校验（M6a-09 + M6a-04）：pi.extensions 指向存在的入口；
-		// pi.{agents,skills,workflows} 引用文件存在（bundle 已拷贝，缺失 = 拷贝逻辑回归）
-		const manifestFailures = checkManifest(pkgDir);
-		if (manifestFailures.length > 0) {
-			failed.push({ pkg, reason: manifestFailures.join("; ") });
-			continue;
-		}
-
-		// dry-run import：加载 index.js，捕获依赖缺失 / 语法错误
-		try {
-			await import(pathToFileURL(indexJs).href);
+		const outcome = await verifyPackage(join(STAGED, pkg));
+		if (outcome.status === "verified") {
 			verified.push(pkg);
-		} catch (err) {
-			const { kind } = classifyImportError(err);
-			const firstLine = String(err.message || err).split("\n")[0];
-			if (kind === "external" || kind === "interop") {
-				skipped.push({ pkg, kind, msg: firstLine });
-			} else {
-				failed.push({ pkg, reason: firstLine });
-			}
+		} else if (outcome.status === "skipped") {
+			skipped.push({ pkg, kind: outcome.kind, msg: outcome.msg });
+		} else {
+			failed.push({ pkg, reason: outcome.reason });
 		}
 	}
+	return { verified, skipped, failed };
+}
 
-	// pi-permission wasm 校验（运行时 bash 解析必需）
+// pi-permission wasm 校验（运行时 bash 解析必需）
+function checkPermissionWasm(failed) {
 	const permDir = join(STAGED, "pi-permission");
-	if (existsSync(permDir)) {
-		for (const w of ["tree-sitter-bash.wasm", "web-tree-sitter.wasm"]) {
-			if (!existsSync(join(permDir, w))) {
-				failed.push({ pkg: "pi-permission", reason: `缺 ${w}（permission 将无法解析 bash）` });
-			}
+	if (!existsSync(permDir)) return;
+	for (const w of ["tree-sitter-bash.wasm", "web-tree-sitter.wasm"]) {
+		if (!existsSync(join(permDir, w))) {
+			failed.push({ pkg: "pi-permission", reason: `缺 ${w}（permission 将无法解析 bash）` });
 		}
 	}
+}
 
-	// 输出结果
+function printPackageOutcomes(verified, skipped) {
 	if (verified.length > 0) {
 		console.log(`✓ import 通过 (${verified.length}):`);
 		for (const p of verified) console.log(`    - ${p}`);
@@ -250,18 +267,36 @@ async function main() {
 			console.log(`    - ${pkg} [${kind}]: ${msg}`);
 		}
 	}
+}
 
-	if (failed.length > 0) {
-		console.error("");
-		console.error(`✗ 失败 (${failed.length}):`);
-		for (const { pkg, reason } of failed) {
-			console.error(`    - ${pkg}: ${reason}`);
-		}
-		console.error("");
-		console.error(`[verify-staged] 校验未通过，dev/build 中断。`);
-		console.error(`[verify-staged] 恢复: 重新运行 bash scripts/prepare-builtin-extensions.sh`);
-		process.exit(1);
+function printFailuresAndExit(failed) {
+	console.error("");
+	console.error(`✗ 失败 (${failed.length}):`);
+	for (const { pkg, reason } of failed) {
+		console.error(`    - ${pkg}: ${reason}`);
 	}
+	console.error("");
+	console.error(`[verify-staged] 校验未通过，dev/build 中断。`);
+	console.error(`[verify-staged] 恢复: 重新运行 bash scripts/prepare-builtin-extensions.sh`);
+	process.exit(1);
+}
+
+async function main() {
+	assertStagedDirExists();
+	const pkgDirs = await listStagedPackageDirs();
+	assertPackageSetMatchesSSOT(pkgDirs);
+
+	console.log(`=== verify-staged-extensions ===`);
+	console.log(`staged: ${STAGED}`);
+	console.log(`packages: ${pkgDirs.length}`);
+	console.log("");
+
+	const { verified, skipped, failed } = await verifyAllPackages(pkgDirs);
+	checkPermissionWasm(failed);
+
+	// 输出结果
+	printPackageOutcomes(verified, skipped);
+	if (failed.length > 0) printFailuresAndExit(failed);
 
 	console.log("");
 	console.log(`[verify-staged] ✓ 全部通过（${verified.length} import + ${skipped.length} 降级 / ${pkgDirs.length} 包）`);
