@@ -271,6 +271,35 @@ describe('W23 review Fix-1: finalize 粘滞（停顿后继续不回占位横跳�
     expect(wrapper.find('[data-testid="md-streaming-fence"]').exists()).toBe(false)
     expect(wrapper.find('.md-codeblock').exists()).toBe(true)
   })
+
+  it('finalize 后 content 被改写（非 append-only 延长）→ 粘滞解除，finalize 保持 false 回占位', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const { calls, renderMarkdownIncremental } = finalizeAwareMock()
+    const shouldFinalizeStreamingFence = vi.fn(({ complete, silenceMs }: { complete: boolean; silenceMs: number }) =>
+      complete || silenceMs >= 200,
+    )
+    const wrapper = mountMd(
+      { content: '```ts\ncode', streaming: true },
+      { renderMarkdownIncremental, shouldFinalizeStreamingFence, streamingFenceSilenceMs: 200 },
+    )
+    await flushRaf()
+    expect(calls[0].finalize).toBe(false)
+
+    // 静默 ≥ 阈值 → finalize 转完整（记录粘滞快照 = 当帧 content）
+    await vi.advanceTimersByTimeAsync(250)
+    await nextTick()
+    await nextTick()
+    expect(calls[calls.length - 1].finalize).toBe(true)
+    expect(wrapper.find('.md-codeblock').exists()).toBe(true)
+
+    // content 被改写（非快照的 append-only 延长）→ 前缀等价不成立 → 粘滞解除：
+    // silenceMs≈0 判定 false 且无快照可维持 → finalize 保持 false，占位回归
+    await wrapper.setProps({ content: '```mermaid\ngraph LR' } as never)
+    await flushRaf()
+    expect(calls[calls.length - 1].finalize).toBe(false)
+    expect(wrapper.find('[data-testid="md-streaming-fence"]').exists()).toBe(true)
+    expect(wrapper.find('.md-codeblock').exists()).toBe(false)
+  })
 })
 
 describe('W23 review Fix-2: 占位段固定哨兵 key（spinner 动画不因重建重启）', () => {
