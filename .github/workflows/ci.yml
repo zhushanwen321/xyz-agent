@@ -87,33 +87,9 @@ jobs:
       - name: TypeCheck - pi extensions
         run: pnpm extensions:typecheck
 
-  # SDK 类型同步防漂移：runtime 的 plugin-types 是 single source of truth，
-  # plugin-sdk/src/types.ts 由 sync-types.sh 自动生成。此 job 重新生成并要求
-  # git diff 为空——任何对 runtime plugin-types 的改动必须同步刷新 SDK types，
-  # 否则 CI 失败（防止两份文件再次漂移）。
-  sdk-sync:
-    name: SDK types in sync
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install dependencies
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-        run: pnpm install --frozen-lockfile
-
-      - name: Check plugin-sdk types are synced with runtime
-        working-directory: packages/plugin-sdk
-        run: pnpm run check-sync
+  # SDK 类型同步 job 已删除（D28 方向反转，2026-09-05）：plugin-sdk/src/types.ts
+  # 现为契约 SSOT，runtime 经 plugin-types 薄壳 re-export 消费——不存在「两份
+  # 文件需保持同步」的漂移面，sync-types.sh 生成方向已不存在。
 
   # Test 拆分为 4 个并行 job（原串行 214s → 关键路径 ~120s，省 ~95s）。
   # runner 分钟数总量不变（ubuntu 充足），build gate 语义保持（任一失败不启动 build）。
@@ -468,6 +444,11 @@ jobs:
       # destroyed 流，逃逸为 uncaughtException → 整机 shutdown（D7 通则，CI 面同源拦截）。
       - name: Unsafe stream writes guard
         run: node scripts/check-unsafe-stream-writes.mjs
+      # vitest alias ↔ tsconfig paths 一致性——subagent-core 深路径 alias（vitest
+      # 运行时解析）必须有 tsconfig paths 镜像（静态工具解析），两侧漂移即拦截
+      # （PR #198 曾因缺失镜像一次产生 138 条 unresolved-import 假阳性）。
+      - name: Alias-tsconfig sync guard
+        run: node scripts/check-alias-tsconfig-sync.mjs
 
   # PR 构建检查：electron-builder 打包流程，不在 PR 上传产物。
   # dir-only=true：只产出 unpacked 目录，跳过安装器压缩（省 ~185s）。安装器配置回归交给 release.yml。

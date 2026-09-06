@@ -1,22 +1,21 @@
 /**
- * !! 此文件由 packages/plugin-sdk/scripts/sync-types.sh 自动生成 !!
- * !! 请勿手动编辑 —— 修改 runtime 的 plugin-types 后重跑 sync-types.sh  !!
+ * 插件系统契约类型 —— single source of truth（D28 方向反转，2026-09-05）。
  *
- * 来源（single source of truth）:
- *   packages/runtime/src/services/plugin-service/plugin-types.ts
- *   packages/runtime/src/services/plugin-service/plugin-types/{descriptor-types,rpc-protocol,hook-types}.ts
- *   packages/extension-protocol/src/core/types.ts（GuiComponent 渲染协议类型）
+ * 本文件是 xyz-agent 插件契约的权威定义：面向插件作者对外发布，刻意保持
+ * 零依赖自包含（第三方插件作者无需装整个 monorepo）。
  *
- * 生成规则：
- *   - 拍平 runtime 主文件的 re-export shim + 3 个子域文件 + extension-protocol 协议类型 → 单个自包含文件
- *   - 剥离所有 import（SDK 保持零依赖，第三方插件作者无需装整个 monorepo）
- *   - runtime 内部 service 接口（ISessionService / IConfigService /
- *     IModelService / IPluginInstaller）替换为 `unknown`
- *   - 剥离不应进 SDK 的内部类型：IPluginServiceDeps（PluginService 构造参数）、
- *     BridgeSyncPayload（plugin-service 内部塑形对象）
+ * 消费方（runtime 侧薄壳，保持其既有导入面不变）：
+ *   packages/runtime/src/services/plugin-service/plugin-types.ts          （主域 + Bridge/AgentAPI/Tool 等）
+ *   packages/runtime/src/services/plugin-service/plugin-types/hook-types.ts（Hook 域）
+ *   descriptor / rpc 子域仍由 runtime 本地文件定义，与本文件同构（过渡形态）。
  *
- * D28: 本文件刻意与 runtime 的 plugin-types 镜像而非 re-export，这是有意的跨包
- * 契约重复——sync 脚本是它的「真相源」，避免 SDK 引入对 @xyz-agent/runtime 的依赖。
+ * 修改契约：直接编辑本文件（对外类型名/结构零变化承诺——published API 兼容）。
+ *
+ * 历史：2026-09-05 前本文件由 packages/plugin-sdk/scripts/sync-types.sh 从
+ * runtime 的 plugin-types 自动生成（runtime 为真相源的镜像方向）；D28 审计
+ * 记录了当时的刻意重复理由。方向反转为「SDK 为 SSOT、runtime re-export」后
+ * sync-types.sh 已删除（生成方向不再存在），依赖方向 = runtime → SDK 单向，
+ * SDK 仍零依赖。
  */
 
 /**
