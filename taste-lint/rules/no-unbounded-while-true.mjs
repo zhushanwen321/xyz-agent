@@ -11,6 +11,154 @@
  * 豁免：测试文件、迁移文件、含 // taste:allow-unbounded-loop 注释的文件
  */
 
+/** 直接退出语句（break/return/throw）——循环体内出现即视为有界 */
+function isDirectExit(stmt) {
+  return (
+    stmt.type === 'BreakStatement' ||
+    stmt.type === 'ReturnStatement' ||
+    stmt.type === 'ThrowStatement'
+  );
+}
+
+/** 语句位置既可能是单语句也可能是语句列表（if 分支 / 循环体），统一成列表 */
+function toStatementList(node) {
+  return Array.isArray(node) ? node : [node];
+}
+
+/** if 语句：检查条件中的比较，递归两个分支 */
+function walkIfStatement(stmt, state) {
+  collectComparedIds(stmt.test, state);
+  if (stmt.consequent) walkStatements(toStatementList(stmt.consequent), state);
+  if (stmt.alternate) walkStatements(toStatementList(stmt.alternate), state);
+}
+
+/** try-catch：递归 block 和 handler */
+function walkTryStatement(stmt, state) {
+  walkStatements(stmt.block?.body ?? [], state);
+  if (stmt.handler?.body) walkStatements(stmt.handler.body.body ?? [], state);
+  if (stmt.finalizer) walkStatements(stmt.finalizer.body ?? [], state);
+}
+
+/** for / do-while：递归进入 body（循环头部的 init/test/update 不参与收集） */
+function walkLoopBody(stmt, state) {
+  if (stmt.body) walkStatements(toStatementList(stmt.body), state);
+}
+
+/** switch：递归每个 case 的语句列表 */
+function walkSwitchStatement(stmt, state) {
+  for (const c of stmt.cases ?? []) {
+    walkStatements(c.consequent ?? [], state);
+  }
+}
+
+/** 嵌套 block（如 for 循环体） */
+function walkBlockStatement(stmt, state) {
+  walkStatements(stmt.body, state);
+}
+
+/** 表达式语句：检查更新表达式和赋值表达式，其余表达式递归找比较 */
+function walkExpressionStatement(stmt, state) {
+  const expr = stmt.expression;
+
+  // i++ / ++i / i-- / --i
+  if (expr.type === 'UpdateExpression') {
+    const arg = expr.argument;
+    if (arg.type === 'Identifier') state.updatedIds.add(arg.name);
+    return;
+  }
+
+  // i += 1 / i -= 1
+  if (
+    expr.type === 'AssignmentExpression' &&
+    (expr.operator === '+=' || expr.operator === '-=') &&
+    expr.left.type === 'Identifier'
+  ) {
+    state.updatedIds.add(expr.left.name);
+    return;
+  }
+
+  // 表达式中可能嵌套比较（如函数调用参数），递归检查
+  collectComparedIds(expr, state);
+}
+
+/** 声明初始化式中可能有比较（const done = i >= MAX；普通赋值的右侧不在此列） */
+function walkVariableDeclaration(stmt, state) {
+  for (const decl of stmt.declarations ?? []) {
+    if (decl.init) collectComparedIds(decl.init, state);
+  }
+}
+
+// 表驱动分发，落空（嵌套 while(true)、for-of/for-in、单语句 if 分支之外的所有形态）静默
+// 跳过——与原 if 链逐分支等价
+const STATEMENT_WALKERS = new Map([
+  ['IfStatement', walkIfStatement],
+  ['TryStatement', walkTryStatement],
+  ['ForStatement', walkLoopBody],
+  ['DoWhileStatement', walkLoopBody],
+  ['SwitchStatement', walkSwitchStatement],
+  ['BlockStatement', walkBlockStatement],
+  ['ExpressionStatement', walkExpressionStatement],
+  ['VariableDeclaration', walkVariableDeclaration],
+]);
+
+/**
+ * 递归遍历语句列表，收集：
+ * - 直接退出语句（break/return/throw）
+ * - 被递增的标识符（i++, ++i, i += 1）
+ * - 出现在比较表达式中的标识符（i < MAX）
+ */
+function walkStatements(nodes, state) {
+  for (const stmt of nodes) {
+    if (!stmt) continue;
+
+    if (isDirectExit(stmt)) {
+      state.hasDirectExit = true;
+      continue;
+    }
+
+    const walker = STATEMENT_WALKERS.get(stmt.type);
+    if (walker) walker(stmt, state);
+  }
+}
+
+const COMPARISON_OPERATORS = ['<', '>', '<=', '>=', '===', '!==', '==', '!='];
+
+/**
+ * 从表达式中收集出现在比较运算符两侧的标识符
+ */
+function collectComparedIds(expr, state) {
+  if (!expr) return;
+
+  if (expr.type === 'BinaryExpression') {
+    if (COMPARISON_OPERATORS.includes(expr.operator)) {
+      if (expr.left.type === 'Identifier') state.comparedIds.add(expr.left.name);
+      if (expr.right.type === 'Identifier') state.comparedIds.add(expr.right.name);
+    }
+    collectComparedIds(expr.left, state);
+    collectComparedIds(expr.right, state);
+    return;
+  }
+
+  // 穿透 LogicalExpression（&& / ||）和 ConditionalExpression（?:）
+  if (expr.type === 'LogicalExpression') {
+    collectComparedIds(expr.left, state);
+    collectComparedIds(expr.right, state);
+    return;
+  }
+  if (expr.type === 'ConditionalExpression') {
+    collectComparedIds(expr.test, state);
+    collectComparedIds(expr.consequent, state);
+    collectComparedIds(expr.alternate, state);
+    return;
+  }
+
+  // 穿透 CallExpression 参数（如 fn(i < MAX)）
+  if (expr.type === 'CallExpression') {
+    for (const arg of expr.arguments ?? []) collectComparedIds(arg, state);
+    return;
+  }
+}
+
 /**
  * 检查 while(true) 循环体是否有迭代上限保护
  * @param {import('eslint').Rule.Node} whileNode
@@ -21,142 +169,15 @@ function checkHasLimit(whileNode) {
   // 单语句 body 无法可靠分析，放过
   if (body.type !== 'BlockStatement') return true;
 
-  let hasDirectExit = false;
-  const updatedIds = new Set();
-  const comparedIds = new Set();
-
-  /**
-   * 递归遍历语句列表，收集：
-   * - 直接退出语句（break/return/throw）
-   * - 被递增的标识符（i++, ++i, i += 1）
-   * - 出现在比较表达式中的标识符（i < MAX）
-   */
-  function walkStatements(nodes) {
-    for (const stmt of nodes) {
-      if (!stmt) continue;
-
-      if (
-        stmt.type === 'BreakStatement' ||
-        stmt.type === 'ReturnStatement' ||
-        stmt.type === 'ThrowStatement'
-      ) {
-        hasDirectExit = true;
-        continue;
-      }
-
-      // if 语句：检查条件中的比较，递归两个分支
-      if (stmt.type === 'IfStatement') {
-        collectComparedIds(stmt.test);
-        if (stmt.consequent) walkStatements(Array.isArray(stmt.consequent) ? stmt.consequent : [stmt.consequent]);
-        if (stmt.alternate) walkStatements(Array.isArray(stmt.alternate) ? stmt.alternate : [stmt.alternate]);
-        continue;
-      }
-
-      // try-catch：递归 block 和 handler
-      if (stmt.type === 'TryStatement') {
-        walkStatements(stmt.block?.body ?? []);
-        if (stmt.handler?.body) walkStatements(stmt.handler.body.body ?? []);
-        if (stmt.finalizer) walkStatements(stmt.finalizer.body ?? []);
-        continue;
-      }
-
-      // for/while/do-while/switch：递归进入 body
-      if (stmt.type === 'ForStatement' || stmt.type === 'DoWhileStatement') {
-        if (stmt.body) walkStatements(Array.isArray(stmt.body) ? stmt.body : [stmt.body]);
-        continue;
-      }
-      if (stmt.type === 'SwitchStatement') {
-        for (const c of stmt.cases ?? []) {
-          walkStatements(c.consequent ?? []);
-        }
-        continue;
-      }
-
-      // BlockStatement（如 for 循环体嵌套的 block）
-      if (stmt.type === 'BlockStatement') {
-        walkStatements(stmt.body);
-        continue;
-      }
-
-      // ExpressionStatement：检查更新表达式和赋值表达式
-      if (stmt.type === 'ExpressionStatement') {
-        const expr = stmt.expression;
-
-        // i++ / ++i / i-- / --i
-        if (expr.type === 'UpdateExpression') {
-          const arg = expr.argument;
-          if (arg.type === 'Identifier') updatedIds.add(arg.name);
-          continue;
-        }
-
-        // i += 1 / i -= 1
-        if (
-          expr.type === 'AssignmentExpression' &&
-          (expr.operator === '+=' || expr.operator === '-=') &&
-          expr.left.type === 'Identifier'
-        ) {
-          updatedIds.add(expr.left.name);
-          continue;
-        }
-
-        // 表达式中可能嵌套比较（如函数调用参数），递归检查
-        collectComparedIds(expr);
-        continue;
-      }
-
-      // VariableDeclaration：const i = 0 之类的声明中可能有初始比较（少见但兜底）
-      if (stmt.type === 'VariableDeclaration') {
-        for (const decl of stmt.declarations ?? []) {
-          if (decl.init) collectComparedIds(decl.init);
-        }
-      }
-    }
-  }
-
-  /**
-   * 从表达式中收集出现在比较运算符两侧的标识符
-   */
-  function collectComparedIds(expr) {
-    if (!expr) return;
-
-    if (expr.type === 'BinaryExpression') {
-      if (['<', '>', '<=', '>=', '===', '!==', '==', '!='].includes(expr.operator)) {
-        if (expr.left.type === 'Identifier') comparedIds.add(expr.left.name);
-        if (expr.right.type === 'Identifier') comparedIds.add(expr.right.name);
-      }
-      collectComparedIds(expr.left);
-      collectComparedIds(expr.right);
-      return;
-    }
-
-    // 穿透 LogicalExpression（&& / ||）和 ConditionalExpression（?:）
-    if (expr.type === 'LogicalExpression') {
-      collectComparedIds(expr.left);
-      collectComparedIds(expr.right);
-      return;
-    }
-    if (expr.type === 'ConditionalExpression') {
-      collectComparedIds(expr.test);
-      collectComparedIds(expr.consequent);
-      collectComparedIds(expr.alternate);
-      return;
-    }
-
-    // 穿透 CallExpression 参数（如 fn(i < MAX)）
-    if (expr.type === 'CallExpression') {
-      for (const arg of expr.arguments ?? []) collectComparedIds(arg);
-      return;
-    }
-  }
-
-  walkStatements(body.body);
+  const state = { hasDirectExit: false, updatedIds: new Set(), comparedIds: new Set() };
+  walkStatements(body.body, state);
 
   // 有直接退出语句（break/return/throw），视为有界
-  if (hasDirectExit) return true;
+  if (state.hasDirectExit) return true;
 
   // 有计数器递增 + 同一计数器出现在比较表达式中，视为有界
-  for (const id of updatedIds) {
-    if (comparedIds.has(id)) return true;
+  for (const id of state.updatedIds) {
+    if (state.comparedIds.has(id)) return true;
   }
 
   return false;
