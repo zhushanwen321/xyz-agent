@@ -417,6 +417,50 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
     })
   })
 
+  // 复杂度债务重构锚定：handleAgentEnd 的 errorMessage 条件透出与 finalContent 提取
+  // 已提取为独立 helper（extractAgentEndFields / extractFinalContent），本套件锚定原分支语义。
+  describe('FR-4: agent_end — errorMessage passthrough + finalContent extraction', () => {
+    it('stopReason=error exposes errorMessage and joins text content blocks', async () => {
+      dispatchOne(adapter, {
+        type: 'agent_end',
+        messages: [
+          {
+            stopReason: 'error',
+            usage: { input: 10, output: 5, totalTokens: 15 },
+            errorMessage: 'provider overloaded',
+            content: [
+              { type: 'text', text: 'part1 ' },
+              { type: 'image', source: 'ignored' }, // 非 text block 被过滤
+              { type: 'text', text: 'part2' },
+            ],
+          },
+        ],
+      })
+      await flushAsync()
+
+      expect(sent).toHaveLength(1)
+      expect(sent[0].type).toBe('message.complete')
+      expect(sent[0].payload).toMatchObject({
+        stopReason: 'error',
+        errorMessage: 'provider overloaded',
+        content: 'part1 part2',
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      })
+    })
+
+    it('stopReason=stop drops errorMessage (field stays absent from payload)', async () => {
+      dispatchOne(adapter, {
+        type: 'agent_end',
+        messages: [{ stopReason: 'stop', errorMessage: 'should be dropped' }],
+      })
+      await flushAsync()
+
+      expect(sent).toHaveLength(1)
+      expect(sent[0].type).toBe('message.complete')
+      expect((sent[0].payload as Record<string, unknown>).errorMessage).toBeUndefined()
+    })
+  })
+
   // ════════════════════════════════════════════════════════════════════
   // FR-4b: turn_end — 每 turn 用量更新（不转发 message.complete）
   // pi 0.80.3：1 agent 循环 = N 个 turn，每 turn_end 带 usage。

@@ -73,7 +73,20 @@ async function sleepOrAborted(ms: number, signal: AbortSignal): Promise<boolean>
   }
 }
 
-export async function runDeviceCodeFlow(opts: DeviceCodeFlowOptions): Promise<DeviceCodeFlowResult> {
+/** 轮询时序参数（由 opts 一次性解析，循环内只读）。 */
+interface PollTimings {
+  /** 轮询间隔下限 ms（RFC 8628 §3.2 禁止高频轮询，缺省 1s） */
+  minIntervalMs: number
+  /** slow_down 无服务器 interval 时的增量 ms（RFC 8628 §3.5 为 5s） */
+  slowDownIncrementMs: number
+  /** 绝对超时时刻 ms */
+  deadline: number
+  /** 初始轮询间隔 ms（RFC 8628 §3.2：服务器省略 interval 时客户端默认 5s） */
+  intervalMs: number
+}
+
+/** opts → 轮询时序参数（与原内联初始化逐表达式等价，Date.now() 调用时机不变）。 */
+function resolvePollTimings(opts: DeviceCodeFlowOptions): PollTimings {
   // eslint-disable-next-line no-magic-numbers -- RFC 8628 §3.2 轮询间隔下限 1s
   const minIntervalMs = opts.minIntervalMs ?? 1_000
   // eslint-disable-next-line no-magic-numbers -- RFC 8628 §3.5 slow_down 增量 5s
@@ -81,7 +94,29 @@ export async function runDeviceCodeFlow(opts: DeviceCodeFlowOptions): Promise<De
   // eslint-disable-next-line no-magic-numbers -- expiresInSeconds 秒转毫秒
   const deadline = Date.now() + opts.expiresInSeconds * 1_000
   // eslint-disable-next-line no-magic-numbers -- RFC 8628 §3.2 默认间隔 5s（秒转毫秒）
-  let intervalMs = Math.max(minIntervalMs, Math.floor((opts.intervalSeconds ?? 5) * 1_000))
+  const intervalMs = Math.max(minIntervalMs, Math.floor((opts.intervalSeconds ?? 5) * 1_000))
+  return { minIntervalMs, slowDownIncrementMs, deadline, intervalMs }
+}
+
+/**
+ * slow_down 间隔更新（RFC 8628 §3.5）：服务器返回有效正 intervalSeconds 时直接采用
+ * （服务器值优先，防 WSL/VM 时钟漂移下客户端自计数永远早轮询）；否则按规范 +5s。
+ */
+function nextIntervalAfterSlowDown(
+  serverInterval: number | undefined,
+  currentIntervalMs: number,
+  minIntervalMs: number,
+  slowDownIncrementMs: number,
+): number {
+  // eslint-disable-next-line no-magic-numbers -- 秒转毫秒
+  return typeof serverInterval === 'number' && Number.isFinite(serverInterval) && serverInterval > 0
+    ? Math.max(minIntervalMs, Math.floor(serverInterval * 1_000))
+    : Math.max(minIntervalMs, currentIntervalMs + slowDownIncrementMs)
+}
+
+export async function runDeviceCodeFlow(opts: DeviceCodeFlowOptions): Promise<DeviceCodeFlowResult> {
+  const { minIntervalMs, slowDownIncrementMs, deadline, intervalMs: initialIntervalMs } = resolvePollTimings(opts)
+  let intervalMs = initialIntervalMs
   let attempt = 0
 
   // waitBeforeFirstPoll：授权页打开需要时间，先等一轮再开始轮询，
@@ -105,14 +140,7 @@ export async function runDeviceCodeFlow(opts: DeviceCodeFlowOptions): Promise<De
       return { ok: false, reason: 'failed', message: result.message }
     }
     if (result.status === 'slow_down') {
-      const serverInterval = result.intervalSeconds
-      intervalMs =
-        typeof serverInterval === 'number' &&
-        Number.isFinite(serverInterval) &&
-        serverInterval > 0
-          ? // eslint-disable-next-line no-magic-numbers -- 秒转毫秒
-          Math.max(minIntervalMs, Math.floor(serverInterval * 1_000))
-          : Math.max(minIntervalMs, intervalMs + slowDownIncrementMs)
+      intervalMs = nextIntervalAfterSlowDown(result.intervalSeconds, intervalMs, minIntervalMs, slowDownIncrementMs)
     }
     const remainingMs = deadline - Date.now()
     if (remainingMs <= 0) {

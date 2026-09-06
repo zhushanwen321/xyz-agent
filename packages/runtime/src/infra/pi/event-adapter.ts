@@ -280,52 +280,101 @@ function handleToolExecutionEnd(event: PiToolExecutionEndEvent, _sid: string): P
   }]
 }
 
-/** agent_end — extract stop reason, usage, responseModel, diagnostics, errorMessage, content */
-function handleAgentEnd(event: PiAgentEndEvent, sid: string): PiTranslatedEvent[] {
-  // W1：messages 为空数组 / undefined 时降级为 turn-end{stopReason:'error'}，不抛 TypeError。
-  // 异常会从 translate() 抛出 → 经 EventAdapter.attach 的整批 try-catch 被吞 →
-  // agent_end 整批事件丢失 → isGenerating 永不复位 + message.complete 不送达。
-  // messages 可能在 pi 内部异常 / 会话尚未产出任何 assistant 消息时为空。
-  const messages = event.messages
-  if (!messages || messages.length === 0) {
-    console.warn(`[EventAdapter] agent_end with empty messages (degraded to turn-end{error}) sid=${sid}`)
-    return [{
-      kind: 'turn-end',
-      message: { type: 'message.complete', payload: { sessionId: sid, stopReason: 'error' } },
-      stopReason: 'error',
-    }]
-  }
-  // pi 事件是强类型契约（ADR-0037）。agent_end.messages 的 usage/stopReason 由 PiAgentEndMessage
-  // 覆盖（PiUsage 已镜像 pi 字段名 input/output/cacheRead/cacheWrite）。但 pi 在此还附带
-  // responseModel / diagnostics / errorMessage 等运行时字段（超出 PiAgentEndMessage 声明范围，
-  // pi AgentMessage 实际形态比声明的 union 更宽）——这些用 as 提取。
-  const lastMsg = messages[messages.length - 1]
+/**
+ * pi agent_end lastMsg 的运行时扩展字段（超出 PiAgentEndMessage 声明范围——pi 在此还附带
+ * responseModel / diagnostics / errorMessage / content 等运行时字段，pi AgentMessage
+ * 实际形态比声明的 union 更宽——用 as 提取）。
+ */
+interface AgentEndRuntimeExtras {
+  responseModel?: string
+  diagnostics?: Record<string, unknown>
+  errorMessage?: string
+  content?: unknown
+}
+
+/**
+ * agent_end 空 messages 降级（W1）：messages 为空数组 / undefined 时降级为
+ * turn-end{stopReason:'error'}，不抛 TypeError。
+ * 异常会从 translate() 抛出 → 经 EventAdapter.attach 的整批 try-catch 被吞 →
+ * agent_end 整批事件丢失 → isGenerating 永不复位 + message.complete 不送达。
+ * messages 可能在 pi 内部异常 / 会话尚未产出任何 assistant 消息时为空。
+ */
+function emptyMessagesDegradedTurnEnd(sid: string): PiTranslatedEvent[] {
+  console.warn(`[EventAdapter] agent_end with empty messages (degraded to turn-end{error}) sid=${sid}`)
+  return [{
+    kind: 'turn-end',
+    message: { type: 'message.complete', payload: { sessionId: sid, stopReason: 'error' } },
+    stopReason: 'error',
+  }]
+}
+
+/**
+ * 从 lastMsg 提取 stopReason / usage / responseModel / diagnostics / errorMessage。
+ * errorMessage 仅在 error / tool_use 两种 stopReason 下透出（pi 契约，其余为 undefined）。
+ */
+function extractAgentEndFields(
+  lastMsg: PiAgentEndEvent['messages'][number],
+  extras: AgentEndRuntimeExtras,
+): {
+  rawReason: string
+  usage: PiAgentEndEvent['messages'][number]['usage']
+  responseModel: string | undefined
+  diagnostics: Record<string, unknown> | undefined
+  errorMessage: string | undefined
+} {
   const rawReason = lastMsg.stopReason ?? 'stop'
   const usage = lastMsg.usage
-  const lastMsgExtra = lastMsg as unknown as {
-    responseModel?: string
-    diagnostics?: Record<string, unknown>
-    errorMessage?: string
-    content?: unknown
+  return {
+    rawReason,
+    usage,
+    responseModel: extras.responseModel,
+    diagnostics: extras.diagnostics,
+    errorMessage: (rawReason === 'error' || rawReason === 'tool_use') ? extras.errorMessage : undefined,
   }
-  const responseModel = lastMsgExtra.responseModel
-  const diagnostics = lastMsgExtra.diagnostics
-  const errorMessage = (rawReason === 'error' || rawReason === 'tool_use') ? lastMsgExtra.errorMessage : undefined
-  // 提取完整文本 content：pi agent_end 携带最终 AssistantMessage，content[] 含 streaming 全部文本。
-  // 透出给前端用权威源覆盖客户端累积值，消除末尾 delta 的 async 渲染竞态（如 ** 未闭合不渲染加粗）。abort 路径为空不覆盖。
-  // content 在 PiAgentEndMessage 中是 unknown，此处按 pi 运行时形态（content block 数组）提取。
-  const finalContent = (Array.isArray(lastMsgExtra.content) ? lastMsgExtra.content : [] as unknown[])
+}
+
+/**
+ * 提取完整文本 content：pi agent_end 携带最终 AssistantMessage，content[] 含 streaming 全部文本。
+ * 透出给前端用权威源覆盖客户端累积值，消除末尾 delta 的 async 渲染竞态（如 ** 未闭合不渲染加粗）。abort 路径为空不覆盖。
+ * content 在 PiAgentEndMessage 中是 unknown，此处按 pi 运行时形态（content block 数组）提取。
+ */
+function extractFinalContent(extras: AgentEndRuntimeExtras): string {
+  return (Array.isArray(extras.content) ? extras.content : [] as unknown[])
     .filter((c): c is { type: string; text?: string } => typeof c === 'object' && c !== null && (c as { type?: unknown }).type === 'text')
     .map((c) => c.text ?? '')
     .join('')
+}
+
+/** pi usage → WS payload usage（xyz-agent 字段名翻译：input/output/totalTokens → inputTokens/outputTokens/totalTokens，缺省 0）。 */
+function toUsageTokens(usage: PiAgentEndEvent['messages'][number]['usage']): {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+} | undefined {
+  return usage
+    ? { inputTokens: usage.input ?? 0, outputTokens: usage.output ?? 0, totalTokens: usage.totalTokens ?? 0 }
+    : undefined
+}
+
+/** agent_end — extract stop reason, usage, responseModel, diagnostics, errorMessage, content */
+function handleAgentEnd(event: PiAgentEndEvent, sid: string): PiTranslatedEvent[] {
+  if (!event.messages || event.messages.length === 0) {
+    return emptyMessagesDegradedTurnEnd(sid)
+  }
+  // pi 事件是强类型契约（ADR-0037）。agent_end.messages 的 usage/stopReason 由 PiAgentEndMessage
+  // 覆盖（PiUsage 已镜像 pi 字段名 input/output/cacheRead/cacheWrite）。运行时扩展字段经
+  // AgentEndRuntimeExtras（as）提取。
+  const lastMsg = event.messages[event.messages.length - 1]
+  const extras = lastMsg as unknown as AgentEndRuntimeExtras
+  const { rawReason, usage, responseModel, diagnostics, errorMessage } = extractAgentEndFields(lastMsg, extras)
+  const finalContent = extractFinalContent(extras)
+  const stopReason = STOP_REASON_MAP[rawReason] ?? rawReason
   const message: ServerMessage = {
     type: 'message.complete',
     payload: {
       sessionId: sid,
-      stopReason: STOP_REASON_MAP[rawReason] ?? rawReason,
-      usage: usage
-        ? { inputTokens: usage.input ?? 0, outputTokens: usage.output ?? 0, totalTokens: usage.totalTokens ?? 0 }
-        : undefined,
+      stopReason,
+      usage: toUsageTokens(usage),
       responseModel,
       diagnostics,
       errorMessage,
@@ -340,7 +389,7 @@ function handleAgentEnd(event: PiAgentEndEvent, sid: string): PiTranslatedEvent[
     // 不能用 usage.input——那是单 turn 增量 input（不含 cacheRead 的 context 大头），值很小。
     inputTokens: usage?.totalTokens,
     totalTokens: usage?.totalTokens ?? 0,
-    stopReason: STOP_REASON_MAP[rawReason] ?? rawReason,
+    stopReason,
     usage,
   }]
 }
