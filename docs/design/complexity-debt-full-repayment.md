@@ -1,7 +1,7 @@
 # 继承复杂度债务全量清零（第二批）设计
 
-> 状态：对抗式审查修订版 v2（主审 needs-fix 3MF + 影响面 4MF 已全部落实，待聚焦复审）
-> 日期：2026-09-06 | 上游：docs/todo/complexity-debt-inventory.md（SSOT）
+> 状态：已通过 design-code-sync 三轮校准（2026-09-06，所有等级当轮修不留尾巴：A-A12-01/A-EVID-02/B2-F1/B2-F2 已清零；B1-01/B2-F3..F6/A-SCOPE-03/A-EVID-04 已修；A12 deferred 至主会话收口见 impl-plan §7）
+> 日期：2026-09-06 | 上游：docs/todo/complexity-debt-inventory.md（SSOT；A12 deferred 待主会话删除）
 > 前序：第一批 21 项已偿还（commit e6c2bb9b9，130→109），范式已对抗式复审实证（零 must-fix）
 
 ## 1 背景/目标
@@ -109,3 +109,5 @@
 - 2026-09-06 v1 创建
 - 2026-09-06 v2 落实主审 3MF（A2 扩为改动包全清单、A3 扩 extensions 三连、分区按 fallow 实测重写）+ 影响面 4MF（taste-lint 补规则测试先行 + A8 lint findings diff、Composer.vue 必拆 composable + ADR-0049、bundle-extensions 产物比对 A9、每波一 commit + 两级回滚）+ 10 suggestion（electron 更新族/自检手段/归类缝/测试指路/抽样标准/冒烟标准/A1 抽验/e2e 量化等）+ 2 info（SSOT 日期笔误顺手修、cjs 头注释漂移顺手修）
 - 2026-09-06 v2.1 落实聚焦复审 MF-R1（taste-lint 规则测试执行通道：A2 追加根级 `pnpm exec vitest run taste-lint`，覆盖修前与波收口两次）+ 2 处数字表述修正（rules/ 21 文件 = 17 规则 + 4 测试；update 族专测 11 个）。复审者预声明：满足即 can-approve → **阶段 0 通过**
+
+- 2026-09-06 v2.2 design-code-sync 三轮校准（B1-01 旁注）：v2.1 写「rules/ 21 文件 = 17 规则 + 4 测试」是设计期时点（U01 修前），U01 commit c65ce3759 落地 no-unbounded-while-true.test.mjs 后终态为 **rules/ 22 文件 = 17 规则 + 5 测试**；§4 预测「22-26 个 unit」实际 27 unit（偏差原因：U22/U23 拆分为独立单元，extensions 39 函数按包细粒度超出 6-8 预测上沿，U01 配套新测试文件独立计 5 unit 也贡献一项），均已在 impl-plan §6 状态表 + §2 单元列表固化；其余 v2/v2.1 文本不动。

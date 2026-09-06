@@ -28,7 +28,7 @@
 | U02 | Composer.vue onKeydown(20)、SettingsModal.vue onKeydown(18) | packages/renderer/src/components/panel/Composer.vue、packages/renderer/src/components/settings/SettingsModal.vue（+ 新 composable 文件，按项目目录约定） | 无 | plain | Composer script 299/300 行硬拦：**必拆 composable**；ADR-0049 checklist 核对 | vue-tsc 0 错误；cyclo≤12；vue_rules_checker 过（pre-commit） |
 | U03 | downloadAsset(35)、cleanupCompletedUpdate(35)、maybeRollbackInterruptedUpdate(25)、getDescendantPids(16) | apps/electron/main/update/download-asset.ts、apps/electron/main/update/update-self-healer.ts、apps/electron/main/supervisor/process-control.ts | 无 | plain | 行为漂移=事故级；报告列既有测试覆盖分支清单 | 包 vitest 0 failed；cyclo≤12 |
 | U04 | runAndFinalize(31)（2369 行巨型文件） | packages/subagent-core/src/execution/subagent-service.ts | 无 | plain | **锚定测试先行**：先补特征用例修前绿，再重构；报告逐分支行为等价证据 | 包 vitest 0 failed；cyclo≤12 |
-| U05 | validateFixResult(27)、reconcileIssues(26)（.cjs 运行时） | packages/subagent-core/workflows/review-fix-loop-utils.cjs | 无 | plain | 纯提取不改导出；**顺手修正头注释过时测试路径** | subagent-core vitest 含 review-fix-loop-utils.test.ts 0 failed；node --check；cyclo≤12 |
+| U05 | validateFixResult(29)（commit message 实测 d44be8434）+ reconcileIssues(26)（.cjs 运行时） | packages/subagent-core/workflows/review-fix-loop-utils.cjs | 无 | plain | 纯提取不改导出；**顺手修正头注释过时测试路径**；impl-plan 立项时估 27、commit 实测 29（design-code-sync B2-F4 校准） | subagent-core vitest 含 review-fix-loop-utils.test.ts 0 failed；node --check；cyclo≤12 |
 | U06 | bundleOne(20)、validate(28)、main(25)（CI/pre-commit 关键链路） | scripts/bundle-extensions.mjs、scripts/render-constraints.mjs、scripts/verify-staged-extensions.mjs | 无 | plain | 真实干跑 diff 输出锚定；bundle-extensions 产物比对走全局 A9 | 各脚本干跑 diff 为空；node --check；cyclo≤12 |
 | U07 | setServices(26)、handleFileMessage(23)、handleBridgeRequest(20)、handleGitMessage(19)、handlePresetMessage(19) | packages/runtime/src/transport/{server,file-message-handler,bridge-handler,git-message-handler,preset-message-handler}.ts | 无 | plain | — | runtime vitest 0 failed；tsc 0 错误；cyclo≤12 |
 | U08 | handlePluginMessage(18)、sendBash(24)、createForkedSessionFile(19)、findSubagentSessionFile(17)、tailReadHistory(16) | packages/runtime/src/transport/plugin-message-handler.ts、packages/runtime/src/services/session/{message-dispatcher,session-fork,subagent-extractor}.ts、packages/runtime/src/services/session-history.ts | 无 | plain | session-fork 触碰 pi session 文件语义（EEXIST 红线） | 同 U07；文件操作时序逐条确认 |
@@ -113,6 +113,8 @@ graph TD
 |------|------|------|------|
 | U17 | U18 staged 文件被同批 add 带入 U17 commit（fab5876ac 含两 unit） | 接受：内容均已单独验证，同 extensions 域合批不损回滚粒度 | 已裁决 |
 | U17/U16 | 同文件非目标函数顺手消重（mapCacheEntryToStep、runAndWait lint 段） | 接受：行为零漂移有锚定，消真差异 | 已裁决 |
+| A8 (跨 unit) | chore(A8) = da366ff74 涉及 eslint.config.mjs max-lines override for complexity-refactor products 6 文件 + U11 device-code-flow.ts 重定位 eslint-disable 注释 + merge skill 脚本删 stale anyChange——前项按 event-adapter precedent 治理、后项属 A8/A11 阶段顺带 merge skill 清理 pre-existing unused var | 接受：max-lines override 全部对应 U 系列产物且 cyclo ≤12 按 precedent 处理；device-code-flow 重定位属 U11 文件同 lint governance 上下文搭车；merge skill 清理属 A8 阶段同 lint commit 内联（已在 commit message "drop stale anyChange"声明） | 已裁决 |
+| A6 (跨 unit) | fix(A6) = 72f3fecd4 涉及 4 U 领地文件（U03 update-self-healer / U05 review-fix-loop-utils / U08 message-dispatcher / U12 segments） | 接受：按 A6 对抗式复审建议单 commit 收口；不属任何 U unit commit，按 A 阶段追溯（已在 §6 footer 标注） | 已裁决 |
 
 ## 6 状态表
 
@@ -146,20 +148,39 @@ graph TD
 | U26 | committed | 1 | 0db23f064 |
 | U27 | committed | 1 | c407af332 |
 
-（2026-09-06 终态校准：27/27 committed。轮次说明：U03 含 1 轮时序修复、U08 含 3 轮（PiBashResult 泄漏 + 竞态时序 ×2）、U07 含断言修订补 commit cc79cff3b。U18 并入 fab5876ac、U23 并入 c6d96b070、U25 并入 8c9e2da43——同域 staged 合批，均已单独验证。）
+（2026-09-06 终态校准：27/27 committed。轮次说明：U03 含 1 轮时序修复（66b942b0e → 50612b2d5）、U08 含 3 轮（01ddc2041 r1 落地后 r2 试 async 去 try/catch wrapper 不充分、r3 12dc75582 恢复 inline try/await/catch 原貌并保留原 console.error prefix——r2 改动以 amend 形式合并进 r3 commit，未单独落盘为独立提交）、U07 含断言修订补 commit cc79cff3b（TC-w4-3a assertion recalibration 漏在 U07 r1 commit、cc79cff3b 补 commit 校准）。U18 并入 fab5876ac、U23 并入 c6d96b070、U25 并入 8c9e2da43——同域 staged 合批，均已单独验证。design-code-sync 复审修复 commit：A6 对抗式复审建议落地为独立 fix commit 72f3fecd4（涉及 U03 update-self-healer、U08 message-dispatcher、U12 segments、U05 review-fix-loop-utils 共 4 文件，按 A6 复审路径单 commit 收口；不属任何 U 的 unit commit，按 A 阶段追溯）；A8 lint 治理落地为独立 chore commit da366ff74（涉及 eslint.config.mjs 加 max-lines override for complexity-refactor products 6 文件、U11 device-code-flow.ts 顺带重定位 eslint-disable 注释、merge skill 脚本 update-readme-install.mjs 删 stale anyChange——搭车改动均已声明见 §5）。）
+
+### 验收证据（A1-A12 终态落盘）
+
+- **A1 fallow=0**：`fallow health --max-cyclomatic 15 --sort cyclomatic --top 423` 复测超阈条目 0（2026-09-06 主会话实测，重构前 109）。
+- **A2 各改动包 vitest 0 failed**：runtime 4800+ / subagent-core 3256+ / shared 259 / core 1677 / renderer 3767 / dom-core 176+ / ui 45+ / electron 760 / extensions 三连 / permission 578 / plan 64。
+- **A3 静态检查全绿**：extensions:typecheck + lint + test 三连 exit 0；tsc / vue-tsc / node --check 0 错误。
+- **A5 metrics-gate fail=0**（RC=0）。
+- **A6 对抗式复审**：0 must-fix；建议修复落独立 fix commit 72f3fecd4。
+- **A7 字面量抽样比对零漂移**：错误文案 / 调用时序 / 事件顺序逐字节不变。
+- **A8 lint 治理**：落独立 chore commit da366ff74。
+- **A9 bundle-extensions 产物 diff 逐字节一致**（staged 产物目录不受 git 跟踪，唯一防漂移防线，主会话真实干跑）。
+- **A10 e2e**：playwright TC1 + run-a1.mjs 环境性失败（重构前同样失败，定性非漂移）。
+- **A11 design-code-sync 三轮校准收口**（B-1 / B-2 / A 分区，4 must-fix + 7 minor 全部当轮修）。
+- **A12 deferred**（见 §7 残留风险第 6 条）。
 
 ## 7 残留风险与变更历史
 
 ### 残留风险
 
-1. U02 拆 composable 触发 ADR-0049：若 onKeydown 持有 per-session 状态，必须 useSessionScopedState 工厂——reviewer 按 ADR-0049 checklist 核对；拆错目录归属算 doc_errors 级偏差。
-2. U04 subagent-service 2369 行文件多函数并存（runAndFinalize 仅其一）：worker 严格限定只动目标函数链路，报告须声明未触碰同文件其他函数。
-3. U06/U27 脚本干跑有副作用（render-constraints 会重写 docs/constraints.md、verify-staged-extensions 读 staged 区）：干跑前 git stash 工作区、干跑后 diff 恢复，主会话执行而非 worker。
-4. 高并发（波内 6-7 worker）可能触发 provider 限流：worker 失败率异常时降半并发重派，不静默重试。
-5. 本机高负载（load>4）时 runtime real-pi 类用例漂移假红：以单跑复跑为准（第一批实证教训）。
+> design-code-sync 三轮校准（B2-F1，2026-09-06）：以下逐条标注终态——已执行/已消解的标 [终态：已消解 + 证据 commit]，仍存真风险的标 [终态：持久性运维注意事项] 并保留持续观测。
+
+1. [终态：已消解 + 证据 commit 69300aa25] **U02 拆 composable 触发 ADR-0049**：U02 commit 69300aa25 落地 useComposerKeydown composable（路径 `packages/renderer/src/composables/panel/composer-keydown.ts`，归属 renderer/composables/panel 子目录符合项目目录约定），commit message 明示"ADR-0049 checklist clean"（Pure UI dispatcher, no per-session state），Composer.vue script 299→280 行过 vue_rules_checker MAX_SCRIPT_LINES=300 硬拦。SettingsModal.vue(197 行) 不受限一并降至 18→3。dev-→fix 0 轮已绿。
+2. [终态：已消解 + 证据 commit 3f5fda9b3] **U04 subagent-service 2369 行文件多函数并存**：U04 commit 3f5fda9b3 落地 runAndFinalize 31→11 拆分（11 个提取 helper），commit 声明 worker 仅动目标函数链路，subagent-core vitest 0 failed 锚定。其他函数未被触碰——按 wave 互斥领地执行。
+3. [终态：已消解 + 证据 commits 3d104f42f + c407af332] **U06/U27 脚本干跑副作用**：U06 commit 3d104f42f 落地脚本关键链路重构（render-constraints / bundle-extensions / verify-staged-extensions 三脚本目标函数均重构至 cyclo≤12，终值以 commit message 与 fallow 复测为准），commit message 声明 worker 自检 `node --check` 锚定、干跑 diff 在 A9 主会话执行；U27 commit c407af332 落地脚本+dom-core+spec 重构（dev-smoke 17→8、visual-capture 20→7、verify-scheduler 19/19 拆分），同上 A9 主会话干跑 diff 锚定。**残留运维注意事项**：U06/U27 后续若改函数路径需主会话重跑 A9 产物 diff 锚定（bundle-extensions 产物字节一致）。
+4. [终态：已消解 + 证据 commits 全 U 系列] **高并发 provider 限流**：本轮 5 波 / 波内 6-7 worker 的派发规模按用户指令「进入开发后尽量用高并发度」执行，全程 0 worker 因 provider 限流失败/重派——A 阶段各 unit 1 轮 commit 即绿（U08 例外，详见 §6 footer 三轮说明），说明并发上限在本工作区负载下未触及 provider 限流阈值。**残留运维注意事项**：下次并发派发 >7 worker 时需前置监控失败率，触发阈值时降半并发。
+5. [终态：已消解 + 证据 commits 全 U 系列] **本机高负载 (load>4) runtime real-pi 用例假红**：A2 验收覆盖各改动包全量 vitest（runtime / subagent-core / core / shared / extensions 等），以单跑复跑为准；A3 extensions 三连 exit 0、APass 全过，未触发 load>4 假红场景。**残留运维注意事项**：后续若复现 load>4 假红，单跑复跑仍为第一处置（第一批实证 + 本批再实证）。
+6. [新增登记 / A12 deferred] **A12 待执行（docs/todo/complexity-debt-inventory.md 终态删除 + 日期笔误顺手修正）**：A12 未在本轮提交中执行。**触发条件**：A1-A11 全绿 + 设计文档 §3 A12 描述（"git log 含删除记录"）的删除 commit 落地；**实施主体**：design-code-sync 聚合 agent 不执行（属领地外主会话收口动作），由主会话在 A1-A11 全绿后单独发 chore 收口 commit（顺手修 docs/todo/complexity-debt-inventory.md 的日期标注笔误（第 1 行写 2026-09-16，实为 2026-09-04 前后普查），本批实施期即应修正而非遗留）。当前文件仍存在 = A12 deferred 标记。
 
 ### 变更历史
 
 - 2026-09-06 创建：27 unit / 93 文件 / 109 函数，脚本校验全覆盖、零交集、≤5 文件/unit。用户本轮消息「进入开发后尽量用高并发度」= 评审确认 + 并发度指令（波内 6-7，超出全局默认 5 以用户指令为准）→ 按预授权进入阶段 2。
 
 - 2026-09-06 状态表校准至终态：27/27 unit committed（以 git log a76440034..HEAD 为准）；A1-A12 验收执行中，A11 design-code-sync 校准记录随轮次追加。
+
+- 2026-09-06 design-code-sync 三轮校准收口（终态）：A-A12-01 已 defer（A12 = docs/todo/complexity-debt-inventory.md 删除推迟至主会话收口，见 §7 残留风险第 6 条触发条件）；A-EVID-02 已落盘（见 §6 验收证据小节）；B2-F1 残留风险 1-5 已逐条标注终态（见 §7 残留风险）；B2-F2 变更历史即本条。补 commit pointers：A1 fallow health 复测、A2 vitest 全包 green、A3 extensions 三连 exit 0、A4 tsc/vue-tsc/node --check 全 0 错误、A5 metrics-gate fail=0、A6 = 72f3fecd4（4 文件跨 U 复审建议收口）、A7 字面量抽样比对零漂移、A8 = da366ff74（lint governance chore，3 文件含 max-lines override + device-code-flow 重定位 + merge skill 清理）、A9 bundle-extensions 产物 diff 字节一致、A10 e2e TC1 + run-a1.mjs 主会话执行（design-code-sync 聚合 agent 不跑环境性测试，定性为"主会话实测锚定"）、A11 本条收口、A12 deferred。
