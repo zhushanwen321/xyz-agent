@@ -181,6 +181,17 @@ describe('/schedule command', () => {
     expect(result).toBe('Usage: /schedule <schedule> <prompt>')
   })
 
+  it('treats prototype-chain key names as unknown (Map lookup, no Object.prototype hit)', async () => {
+    // 路由表用 Map 查找的语义锚：普通对象下标会把 "constructor"/"toString"/"__proto__"
+    // 解析到 Object.prototype（constructor 被当 handler 调用返回对象、__proto__ 直接 TypeError），
+    // 这里必须与其它未知子命令同走创建任务分支（无 schedule 输入 → usage 文案）。
+    for (const key of ['constructor', 'toString', '__proto__']) {
+      expect(await executeScheduleCommand(service, key)).toBe(
+        'Usage: /schedule <schedule> <prompt>',
+      )
+    }
+  })
+
   it('no args returns TUI not-implemented message', async () => {
     const result = await executeScheduleCommand(service, '')
     expect(result).toContain('not yet implemented')

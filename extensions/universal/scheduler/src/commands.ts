@@ -105,23 +105,31 @@ async function handleToggleKeyword(
 /**
  * 子命令路由表。查表未命中（落空）= 创建任务分支，与原 if 链的顺序语义一致。
  * list/rm 保持同步返回、run 保持 await——不改变 async 边界内的微任务时序。
+ * 用 Map 而非普通对象：first 是外部输入（/schedule 命令参数），普通对象查表会命中
+ * Object.prototype 上的键（如 "constructor"/"__proto__"），导致错误路由；Map 只查自身键。
  */
-const SUBCOMMAND_HANDLERS: Record<string, SubcommandHandler> = {
-  list: service => service.list().message,
-  on: (service, parts) => handleToggleKeyword(service, parts, 'on'),
-  off: (service, parts) => handleToggleKeyword(service, parts, 'off'),
-  rm: (service, parts) => {
-    const id = parts[1]
-    if (!id) return 'Usage: /schedule rm <id>'
-    return service.delete(id).message
-  },
-  run: async (service, parts) => {
-    const id = parts[1]
-    if (!id) return 'Usage: /schedule run <id>'
-    const result = await service.run(id)
-    return result.message
-  },
-}
+const SUBCOMMAND_HANDLERS: ReadonlyMap<string, SubcommandHandler> = new Map<string, SubcommandHandler>([
+  ['list', service => service.list().message],
+  ['on', (service, parts) => handleToggleKeyword(service, parts, 'on')],
+  ['off', (service, parts) => handleToggleKeyword(service, parts, 'off')],
+  [
+    'rm',
+    (service, parts) => {
+      const id = parts[1]
+      if (!id) return 'Usage: /schedule rm <id>'
+      return service.delete(id).message
+    },
+  ],
+  [
+    'run',
+    async (service, parts) => {
+      const id = parts[1]
+      if (!id) return 'Usage: /schedule run <id>'
+      const result = await service.run(id)
+      return result.message
+    },
+  ],
+])
 
 /** 创建任务分支（路由落空）：once 前缀 → once 任务；cron 前缀 → recurring cron 任务；其余按 interval schedule 解析。 */
 async function createTaskFromArgs(
@@ -164,7 +172,7 @@ export async function executeScheduleCommand(
   const first = parts[0]!.toLowerCase()
 
   // 子命令路由：查表命中走对应分支，落空走创建任务分支
-  const handler = SUBCOMMAND_HANDLERS[first]
+  const handler = SUBCOMMAND_HANDLERS.get(first)
   if (handler) return handler(service, parts)
 
   return createTaskFromArgs(service, parts, first)

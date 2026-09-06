@@ -183,19 +183,23 @@ function formatUnknownTool(name: string, args: Record<string, unknown>): string 
   }
 }
 
-/** 工具名 → 参数摘要 formatter 表（design §3.3 D1 表；phase-start 无参数维度恒返常量）。 */
-const TOOL_SUMMARY_FORMATTERS: Record<string, ArgsFormatter> = {
-  bash: formatBashArgs,
-  read: formatReadArgs,
-  edit: formatEditArgs,
-  write: formatWriteArgs,
-  subagent: formatSubagentArgs,
-  head: formatHeadArgs,
-  todo: formatTodoArgs,
-  'coding-workflow-gate': formatCwGateArgs,
-  'coding-workflow-init': formatCwInitArgs,
-  'coding-workflow-phase-start': () => 'cw-phase-start',
-}
+/**
+ * 工具名 → 参数摘要 formatter 表（design §3.3 D1 表；phase-start 无参数维度恒返常量）。
+ * 用 Map 而非普通对象：name 是外部输入（pi session JSONL 的 toolName），普通对象查表会
+ * 命中 Object.prototype 上的键（如 "constructor"），导致把非函数当 formatter 调用；Map 只查自身键。
+ */
+const TOOL_SUMMARY_FORMATTERS: ReadonlyMap<string, ArgsFormatter> = new Map([
+  ['bash', formatBashArgs],
+  ['read', formatReadArgs],
+  ['edit', formatEditArgs],
+  ['write', formatWriteArgs],
+  ['subagent', formatSubagentArgs],
+  ['head', formatHeadArgs],
+  ['todo', formatTodoArgs],
+  ['coding-workflow-gate', formatCwGateArgs],
+  ['coding-workflow-init', formatCwInitArgs],
+  ['coding-workflow-phase-start', () => 'cw-phase-start'],
+])
 
 /**
  * 按工具类型把 ToolCallInfo 映射成参数摘要串（design §3.3 D1 表，表驱动分发）。
@@ -210,6 +214,6 @@ const TOOL_SUMMARY_FORMATTERS: Record<string, ArgsFormatter> = {
  */
 export function formatToolCallSummary(tc: ToolCallInfo): string {
   const { name, arguments: args } = tc
-  const formatter = TOOL_SUMMARY_FORMATTERS[name]
+  const formatter = TOOL_SUMMARY_FORMATTERS.get(name)
   return formatter !== undefined ? formatter(args) : formatUnknownTool(name, args)
 }

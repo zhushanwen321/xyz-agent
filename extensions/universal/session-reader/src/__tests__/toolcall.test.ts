@@ -210,6 +210,19 @@ describe('formatToolCallSummary — coding-workflow-* / unknown fallback', () =>
     circ.self = circ
     expect(formatToolCallSummary({ id: 'c1', name: 'my-tool', arguments: circ })).toBe('my-tool')
   })
+
+  it('treats prototype-chain key names as unknown (Map lookup, no Object.prototype hit)', () => {
+    // 表驱动用 Map 查找的语义锚：普通对象下标会把 "constructor"/"toString"/"__proto__"
+    // 解析到 Object.prototype（formatter 命中非函数成员返回对象/抛 TypeError），
+    // 这里必须与其它未知 toolName 同走 formatUnknownTool fallback 分支。
+    expect(formatToolCallSummary({ id: 'c1', name: 'constructor', arguments: {} })).toBe(
+      'constructor',
+    )
+    expect(formatToolCallSummary({ id: 'c1', name: 'toString', arguments: {} })).toBe('toString')
+    expect(formatToolCallSummary({ id: 'c1', name: '__proto__', arguments: { a: 1 } })).toBe(
+      '__proto__: {"a":1}',
+    )
+  })
 })
 
 describe('extractToolCalls — 提取 + coerceArgs 兜底', () => {
