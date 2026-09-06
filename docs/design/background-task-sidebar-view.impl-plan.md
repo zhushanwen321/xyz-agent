@@ -99,6 +99,10 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
 | 7 | renderer api domain 未接 api/index.ts 门面（isMock 三元 + mock 轨） | 本表 | 领地约束下有意推迟，门面接线归消费单元（u-renderer-store/u-drawer）；既有 usage/terminal 等域同样存在不经门面直接 import 的范式 |
 | 8 | u-proto 领地扩展：新增 `packages/shared/__tests__/protocol.test.ts`（13 用例，编译期字面量断言 + 运行期样例断言）；并在 renderer domain 补 `BackgroundTaskMirrorEqualsContract` Equal 全等守卫（前任注释声称双向守卫实际仅单向，补实并修正注释） | 本表 | 派发 task 授权「shared 包该域类型测试文件一并补」；shared 侧原无编译期守卫覆盖，补强验收条款「类型形状与 D3 逐字段一致」的守卫力 |
 | 9 | renderer domain 未新增行为单测文件（api/__tests__ 在领地外） | 本表 | domain 为 3 个薄转发函数，类型链由 vue-tsc 守卫；如需 command 调用参数断言测试（仿 usage-forcequit-domains.test.ts 范式），须扩领地后补 |
+| 10 | 测试文件落位跟仓内既有惯例：renderer 集中 `src/__tests__/lib/` 与 `src/__tests__/composables/`，core 放域旁 `__tests__/`（非源文件旁新建 __tests__ 目录） | 本表 | renderer 无 `src/lib/__tests__` 惯例，useContextUsage 等先例同位；满足领地条款「各自 __tests__」语义 |
+| 11 | DrawerControlState.selectedBackgroundTaskId 采用 D5① 字面的可选成员（?: string），未仿 selectedSubagentId 必填+null 形态 | 本表 | 必填会迫使 core control.ts createDefaultControlState（领地外）同步加初始化；语义对齐（undefined=未选中），core 单测含可选性锚 |
+| 12 | filterBackgroundTasks 内置排序（active=startedAt 升序 / ended=endedAt 倒序 / all=active 置顶+ended 倒序） | 本表 | S1 验收口径的排序落进 SSOT，列表/计数/badge/icon/排序五方同源，消费层不再各写排序 |
+| 13 | D8①「模块级单 listener」落实为 per-sid 订阅表 refCount + 实例 listener 各写各分区 | 本表 | useSessionScopedState 是 per-instance Map（工厂契约 + useContextUsage 先例），物理 events.on 订阅按 sid 收敛为一条，handler 闭包捕获注册时 sid → updateFor(capturedSid) 结构性消除 M1 竞态 |
 
 ## 6 状态表
 
@@ -108,7 +112,7 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
 | u-ext | committed | 0 | git log --grep=u-ext；base-tool-enhance 242 tests 绿（12 files）；typecheck/lint exit 0；deviations ①②入登记表 |
 | u-runtime-svc | committed | 0 | git log --grep=u-runtime-svc；runtime 全量 4398 tests 绿（402 files，含 background-task 域 30 tests + reaper 回归）；deviations ③④⑤入登记表 |
 | u-runtime-rpc | dev 进行中 | 0 | W2 已派发 |
-| u-renderer-store | dev 进行中 | 0 | W2 已派发 |
+| u-renderer-store | committed | 0 | git log --grep=u-renderer-store；renderer 3760 tests 绿（361 files）+ core 1399 tests 绿（95 files）+ 双包 typecheck 绿；deviations ⑩⑪⑫⑬入登记表 |
 | u-runtime-rpc | pending | 0 | — |
 | u-renderer-store | pending | 0 | — |
 | u-renderer-list | pending | 0 | — |
@@ -124,3 +128,6 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
   - 2026-09-06 计划创建（设计 R4 收敛版），用户豁免计划评审确认。
   - 2026-09-06 中断恢复校准：发现工作区存在 W1 三单元（u-proto/u-ext/u-runtime-svc）领地内未提交半成品（`git diff --stat` 383 insertions + untracked 2 处，无领地外改动），无 committed 证据 → 状态表按 pending 重算；原 dev 会话不可用，按接替程序补派新 dev（附 diff 证据包，先核验现状再续作）。
   - 2026-09-06 u-ext committed（接替 dev 核验前任半成品全部正确 + 2 处合规修补）；doc fix：设计 D6-en writeRegistryEntry 枚举 4→5（第 5 点 process-exit-guard 终态写，实施期核实）。
+  - 2026-09-06 u-proto committed（fbd4bf76f；接替核验前任契约吻合 + Equal 守卫做实 + shared 域测试 13 用例；Equal 分支字面量 1/2→true/false 消 lint warning，负向探针验证守卫生效）。
+  - 2026-09-06 u-runtime-svc committed（b9d937c10；接替核验前任约 90% 正确 + 2 修正：verifyIdentity 死代码收敛、killTask 属主判活移入锁内）；doc fix：D2 钩子②事件名澄清。
+  - 2026-09-06 u-renderer-store committed（renderer/core 双包全绿；分桶/icon SSOT + useSessionScopedState 范式 + drawer 类型扩展）。
