@@ -1549,7 +1549,9 @@ export interface ServerMessageMapBase {
   // tasks 元素是 shared 协议镜像 BackgroundTaskRegistryEntry（逐字段同构 extension-protocol 同名
   // 契约，D9；等价性由 renderer api domain 编译期守卫）。
   // backgroundTask.list 的 reply（registry 全量投影；目录/文件不存在 → 空数组）。
-  'backgroundTask.tasks': { sessionId: string; tasks: BackgroundTaskRegistryEntry[] }
+  // corrupted=true = registry 解析失败被 .corrupt 隔离的「损坏空表」（S7 错误条依据，
+  // 区分于真空表；缺省/false = 正常拍，仿 config.systemPrompt 同名字段先例）。
+  'backgroundTask.tasks': { sessionId: string; tasks: BackgroundTaskRegistryEntry[]; corrupted?: boolean }
   // backgroundTask.output 的 reply。text = 输出尾部窗口内容（lost 时为空串）；truncated = 超出
   // 窗口上界截断；lost = 输出文件不可用（已清理/丢失，§3.1 失败路径「输出不可用」分支）。
   'backgroundTask.outputResult': { sessionId: string; taskId: string; text: string; truncated: boolean; lost: boolean }
@@ -1559,7 +1561,8 @@ export interface ServerMessageMapBase {
   // 对齐 plugin:statusBarUpdate 命名规则；经 IMessageBus.publish(sessionId, msg) 定向推）。
   // 广播只做增量刷新、不做唯一真相——renderer 切换/激活 session 后仍须主动 list 拉取
   //（架构约定「runtime broadcast 时序竞争」C6：拉取兜底是唯一真相入口）。
-  'backgroundTask:updated': { sessionId: string; tasks: BackgroundTaskRegistryEntry[] }
+  // corrupted 语义与 backgroundTask.tasks 同源（损坏空表标记，S7）；缺省/false = 正常拍。
+  'backgroundTask:updated': { sessionId: string; tasks: BackgroundTaskRegistryEntry[]; corrupted?: boolean }
 }
 
 /**

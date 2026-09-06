@@ -123,6 +123,7 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
 | 31 | 行内终止确认态 mouseleave 复位 + 确认态 testid 切换（bg-task-kill ↔ bg-task-kill-confirm） | 本表 | D10④ 未定义 hover 离开归宿；离开即复位防误触发，与 SessionItem hover 范式同构 |
 | 32 | session 销毁迟到写入抑制表 suppressedSids（在途 RPC resolve / 退订窗口广播不僵尸式重建分区） | 本表 | D8④ 清理分区之外的泄漏路径加固，ADR-0049 生命周期延伸，测试覆盖 |
 | 33 | DetailPanel fetchSeq 序号守卫（切任务后在途旧 output reply 作废）+ 首拉未 loaded 过渡态渲染空白容器（不渲染空态/筛选条防闪烁） | 本表 | D7/D10 未定义的竞态与瞬态防御，与 capturedSid 同一竞态思想延伸 |
+| 34 | corrupted sticky 判定（任一拍 corrupted===true 置位；损坏后 .corrupt rename 自然拍的 corrupted:false 空表拍与 optional 缺省拍均不清位；仅 tasks 非空自愈拍清位）+ 重连 refresh 落点为每实例 watch 连接态（非壳层 badge 实例——跨实例分区不共享，RPC 经模块级去重收敛一次）+ fetchInto 重构为共享 RPC 快照各实例写各自分区（修复既有「复用实例分区永不写入」缺陷，in-flight 去重语义保留） | 本表 | sticky 源自 runtime 实测损坏拍时序（损坏检测拍后下一拍自然发 corrupted:false 空表广播，最后一拍严格判定会闪断）；S7 语义「自愈后错误条消失」= tasks 非空拍；fetchInto 重构是重连 refresh 正确性的前置 |
 
 ## 6 状态表
 
@@ -158,3 +159,4 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
   - 2026-09-06 u-renderer-list committed（L2 视图 + 注入契约路由 + badge 壳接线，三包全绿；barrel 导出经编排方追认；deviations ㉑-㉔）。
   - 2026-09-06 u-i18n-docs committed（39 key zh/en 落地 + testid 清单 14-background-task-sidebar.md + feature-map 2026-09-06）——**状态表 8 单元全 committed，转入阶段 3 一致性审查**。
   - 2026-09-06 阶段 3 三分区审查收齐（extensions/runtime/前端，独立上下文）：聚合后 unreasonable 3 条（①corrupted 协议链路断裂 S7 不可实现——runtime 与前端两区共同发现 ②S6 断连提示+重连重拉未实现 ③u-ext 测试 afterEach 清理不对称 low）、doc_errors 6 条（主 agent 修订设计 D3 corrupted 字段/D6 表 ④b 行/边界注②措辞/§1 tail 上界/S1 tailSummary 措辞/本表 u-ext 领地通配）、reasonable 8 条（登记表 #27-#33）。修复批 3 路并行派发（①拆 runtime 侧透传 + renderer 侧消费两路）。
+  - 2026-09-06 阶段 4 修复批次完成：①corrupted 端到端链路（protocol 字段 + handler/service 透传 + api domain 全形返回 + store sticky 判定 + ListView 错误条 + locales）②S6 断连提示条 + 连接恢复自动重拉（含 fetchInto 共享快照重构修复既有双实例缺陷）③u-ext afterEach 清理（1d534a37c）。联合态终验：shared 239 / runtime 4417 / renderer 3808 全绿。新增偏差 #34（corrupted sticky 语义 + 损坏拍时序）登记。

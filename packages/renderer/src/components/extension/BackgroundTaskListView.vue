@@ -15,6 +15,28 @@
       点击行开 drawer bashTask tab（D5④）。
   -->
   <div data-testid="background-task-list" class="flex h-full min-h-0 flex-col gap-1 p-1">
+    <!-- 损坏错误条（S7）：sticky 判定（曾收到 corrupted===true 拍；损坏后一拍的 corrupted:false
+         空表广播不清位防闪断），由自愈拍（tasks 非空）清位后消失。与全量空态并存（设计 §3.1：
+         列表该拍显示空态 + 错误条）。 -->
+    <div
+      v-if="partition.corrupted"
+      data-testid="bg-task-corrupt-banner"
+      class="flex shrink-0 items-center gap-1.5 rounded-sm bg-warn-soft px-2 py-1 text-[length:var(--text-2xs)] text-warn"
+    >
+      <AlertTriangle class="size-3.5 shrink-0" />
+      <span class="min-w-0 flex-1">{{ t(corruptBannerKey) }}</span>
+    </div>
+    <!-- 断连提示条（S6）：断连 &&（拉取失败 || 未拉到过数据）时的降级提示；WS 重连后由
+         重连恢复腿自动重拉（connected 边沿），数据/连接态恢复即消失。 -->
+    <div
+      v-if="showDisconnectBanner"
+      data-testid="bg-task-disconnect-banner"
+      class="flex shrink-0 items-center gap-1.5 rounded-sm bg-bg-input px-2 py-1 text-[length:var(--text-2xs)] text-neutral-mid"
+    >
+      <WifiOff class="size-3.5 shrink-0" />
+      <span class="min-w-0 flex-1">{{ t(disconnectBannerKey) }}</span>
+    </div>
+
     <!-- 全量空态：0 计数槽是纯噪音，不渲染筛选条（D10③） -->
     <div
       v-if="isGloballyEmpty"
@@ -153,9 +175,10 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, SquareTerminal, X } from '@lucide/vue'
+import { AlertTriangle, Check, SquareTerminal, WifiOff, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { getState } from '@/lib/ws-client'
 import { useBackgroundTasks } from '@/composables/features/sidebar/useBackgroundTasks'
 import { useBackgroundTaskBucketFilter } from '@/composables/features/sidebar/useBackgroundTaskBucketFilter'
 import {
@@ -190,6 +213,8 @@ const killKey = 'sidebar.backgroundTaskList.kill'
 const killConfirmKey = 'sidebar.backgroundTaskList.killConfirm'
 const pidLabelKey = 'sidebar.backgroundTaskList.pidLabel'
 const exitLabelKey = 'sidebar.backgroundTaskList.exitLabel'
+const corruptBannerKey = 'sidebar.backgroundTaskList.corruptBanner'
+const disconnectBannerKey = 'sidebar.backgroundTaskList.disconnectBanner'
 
 /** 三桶筛选选项（label key 集中登记；顺序 = 渲染顺序：运行中/已结束/全部，D10）。 */
 const FILTER_OPTIONS: Array<{ value: BackgroundTaskFilterValue; labelKey: string }> = [
@@ -230,6 +255,14 @@ const visibleTasks = computed(() => filterBackgroundTasks(partition.value.tasks,
 /** 全量空态（成功拉到过一次且 0 条）——loaded 区分「从未拉取」与「拉到空表」。 */
 const isGloballyEmpty = computed(() => partition.value.loaded && partition.value.tasks.length === 0)
 const hasTasks = computed(() => partition.value.tasks.length > 0)
+
+// ── 断连提示条（S6）：断连 &&（拉取失败 || 未拉到过数据）。已 loaded 且无失败时断连仅
+//    显示旧缓存（缓存可用，无需告警）；重连由 store 重连恢复腿自动重拉，恢复即消失。 ──
+const wsState = getState()
+const showDisconnectBanner = computed(() => {
+  if (wsState.value === 'connected') return false
+  return partition.value.fetchFailed || !partition.value.loaded
+})
 
 // ── running 行实时计时（1s tick；仅驱动 elapsedLabel 重算，测试用 fake timers）──
 const NOW_TICK_INTERVAL_MS = 1000

@@ -23,7 +23,8 @@ import { command } from '../request'
 // 全等断言惯用法（比 extends 严：可选性/字面量成员任一差异即 false）。
 // 任一侧字段漂移（改名/增删/可选性/枚举成员）→ Equal 求值 false → Expect 约束在
 // 本文件 TS 2344 编译红（renderer typecheck 覆盖此处，shared __tests__ 不在 tsc include）。
-// 零运行时产物；list() 返回类型标注（Shared → Contract 单向可赋值）之上的强断言补全。
+// 零运行时产物；守卫只比较条目元素形状（payload ['tasks'][number]），payload 顶层
+// 会话分区字段（sessionId/corrupted）不在契约镜像范围。
 type Equal<X, Y> = (<T>() => T extends X ? true : false) extends (<T>() => T extends Y ? true : false) ? true : false
 type Expect<T extends true> = T
 export type BackgroundTaskMirrorEqualsContract = Expect<Equal<
@@ -34,15 +35,18 @@ export type BackgroundTaskMirrorEqualsContract = Expect<Equal<
 /**
  * 拉取 session 的后台任务全量（runtime 直读 registry 的投影；目录/文件不存在 → 空数组）。
  *
+ * 返回 backgroundTask.tasks reply payload 全形（sessionId + tasks + corrupted），不折叠为
+ * 纯数组——corrupted=true = registry 解析失败被 .corrupt 隔离的「损坏空表」（S7 错误条
+ * 依据，区分于真空表），缺省/false = 正常拍（仿 config.systemPrompt 同名字段先例；
+ * runtime 拉取路逐字透传 service 的 BackgroundTaskListResult，广播 backgroundTask:updated
+ * payload 的 corrupted 同源语义）。
+ *
  * 首次调用同时把 session 加入 runtime watched 集合（D8③，后续变更经 backgroundTask:updated
  * 广播推回）；renderer 在切换/激活 session、打开后台命令 tab 时主动调用（架构约定「runtime
  * broadcast 时序竞争」C6——广播只做增量刷新，拉取兜底是唯一真相入口）。
  */
-export async function list(sessionId: string): Promise<BackgroundTaskRegistryEntry[]> {
-  const reply = await command('backgroundTask.list', { sessionId })
-  // D9 结构等价守卫：shared 镜像（reply.tasks）→ extension-protocol 契约的赋值，
-  // 任一侧字段漂移（改名/缺失/必选性变化）即编译错误。
-  return reply.tasks
+export function list(sessionId: string): Promise<ServerMessageMap['backgroundTask.tasks']> {
+  return command('backgroundTask.list', { sessionId })
 }
 
 /**

@@ -35,6 +35,16 @@ import type { BackgroundTaskEntry } from '@/lib/background-task-bucket'
 const listMock = vi.hoisted(() => vi.fn())
 vi.mock('@/api/domains/background-task', () => ({ list: listMock }))
 
+// ── mock 边界：ws 连接态受控 ref（重连恢复腿驱动；默认 connected，既有用例零影响）──
+const wsMock = vi.hoisted(() => ({ ref: null as null | { value: string } }))
+vi.mock('@/lib/ws-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/ws-client')>()
+  const { ref } = await import('vue')
+  const stateRef = ref<string>('connected')
+  wsMock.ref = stateRef
+  return { ...actual, getState: () => stateRef }
+})
+
 // ── 共享测试基建 ─────────────────────────────────────────────
 
 interface Deferred {
@@ -106,17 +116,18 @@ function resolveList(sid: string, tasks: BackgroundTaskEntry[]): void {
   entry.resolve(tasks)
 }
 
-/** 广播 backgroundTask:updated（真实 session 通道分发）。 */
-function dispatchUpdated(sid: string, tasks: BackgroundTaskEntry[]): void {
+/** 广播 backgroundTask:updated（真实 session 通道分发）；corrupted 缺省 = 协议 optional 缺省拍。 */
+function dispatchUpdated(sid: string, tasks: BackgroundTaskEntry[], corrupted?: boolean): void {
   events.dispatchSession(sid, {
     type: 'backgroundTask:updated',
-    payload: { sessionId: sid, tasks },
+    payload: corrupted === undefined ? { sessionId: sid, tasks } : { sessionId: sid, tasks, corrupted },
   })
 }
 
 beforeEach(() => {
   pendingLists = []
   listMock.mockClear()
+  if (wsMock.ref) wsMock.ref.value = 'connected'
 })
 
 afterEach(() => {
@@ -312,5 +323,114 @@ describe('session 销毁 cleanup', () => {
     resolveList('A', [task('fresh', 'running')])
     await settle()
     expect(host.tasks.current.value.tasks.map((t) => t.taskId)).toEqual(['fresh'])
+  })
+})
+
+// ── 损坏拍与断连恢复（S7/S6，一致性审查修复批次）──
+
+/** resolve 指定 sid 的在途 list 为任意形状（前向兼容 corrupted 透传的对象形态探测）。 */
+function resolveListRaw(sid: string, raw: unknown): void {
+  const idx = pendingLists.findIndex((e) => e.sid === sid)
+  if (idx < 0) throw new Error(`测试编排错误：sid ${sid} 无在途 list`)
+  const [entry] = pendingLists.splice(idx, 1)
+  ;(entry.resolve as (v: unknown) => void)(raw)
+}
+
+describe('损坏拍与断连恢复（S7/S6）', () => {
+  it('S7 sticky：corrupted===true 置位；损坏后一拍的 corrupted:false 空表广播不清位（防闪断）', async () => {
+    const host = mountHost('A')
+    await settle()
+    resolveList('A', [])
+    await settle()
+    expect(host.tasks.current.value.corrupted).toBe(false)
+
+    // 损坏检测拍：corrupted===true（runtime 安全降级空表）
+    dispatchUpdated('A', [], true)
+    await settle()
+    expect(host.tasks.current.value.corrupted).toBe(true)
+
+    // 损坏后自然拍（.corrupt rename → stat=undefined → D1 空表重建）：corrupted:false 空表
+    // ——sticky 不清位，错误条不闪断
+    dispatchUpdated('A', [], false)
+    await settle()
+    expect(host.tasks.current.value.corrupted).toBe(true)
+
+    // 协议 optional 缺省拍（等价 false）同样不清位
+    dispatchUpdated('A', [])
+    await settle()
+    expect(host.tasks.current.value.corrupted).toBe(true)
+
+    // 自愈拍（extension 自愈空表重建，条目出现）→ 清位
+    dispatchUpdated('A', [task('t9', 'running')])
+    await settle()
+    expect(host.tasks.current.value.corrupted).toBe(false)
+  })
+
+  it('S7 拉取路同型消费：list reply 前向兼容对象形状（tasks + corrupted）置位分区', async () => {
+    const host = mountHost('A')
+    await settle()
+    // 协议落地后 api domain 透传 reply 对象（当前返回数组——运行时结构探测两形态）
+    resolveListRaw('A', { tasks: [], corrupted: true })
+    await settle()
+    expect(host.tasks.current.value.corrupted).toBe(true)
+    expect(host.tasks.current.value.loaded).toBe(true)
+    expect(host.tasks.current.value.tasks).toHaveLength(0)
+
+    // 自愈：重发拉取（首次 RPC settle 后 in-flight 已清），对象形状 corrupted:false + 条目非空 → 清位
+    void host.tasks.refresh('A')
+    resolveListRaw('A', { tasks: [task('t-recover', 'running')], corrupted: false })
+    await settle()
+    expect(host.tasks.current.value.corrupted).toBe(false)
+  })
+
+  it('S6 拉取失败：分区 fetchFailed 置位（缓存保留）；成功拍翻回 false', async () => {
+    const host = mountHost('A')
+    await settle()
+    const idx = pendingLists.findIndex((e) => e.sid === 'A')
+    const [entry] = pendingLists.splice(idx, 1)
+    entry.reject(new Error('ws closed'))
+    await settle()
+    expect(host.tasks.current.value.fetchFailed).toBe(true)
+    expect(host.tasks.current.value.loaded).toBe(false)
+
+    // 成功拍：refresh 重发（首次已 settle 清 in-flight），翻回 false
+    void host.tasks.refresh('A')
+    resolveList('A', [task('t1', 'running')])
+    await settle()
+    expect(host.tasks.current.value.fetchFailed).toBe(false)
+    expect(host.tasks.current.value.loaded).toBe(true)
+  })
+
+  it('S6 重连恢复腿：ws disconnected→connected 边沿重拉当前 sid（非边沿不触发）', async () => {
+    const host = mountHost('A')
+    await settle()
+    resolveList('A', [task('t1', 'running')])
+    await settle()
+    expect(listMock).toHaveBeenCalledTimes(1) // 挂载期仅拉取腿一次（watch 非 immediate）
+
+    if (!wsMock.ref) throw new Error('ws mock 未初始化')
+    wsMock.ref.value = 'disconnected'
+    await nextTick()
+    wsMock.ref.value = 'connected'
+    await settle()
+    expect(listMock).toHaveBeenCalledTimes(2) // connected 边沿触发 refresh
+    expect(listMock).toHaveBeenLastCalledWith('A')
+    resolveList('A', [task('t1', 'running')])
+    await settle()
+    expect(host.tasks.current.value.loaded).toBe(true)
+  })
+
+  it('fetchInto 共享 RPC 时各实例分区独立写入（复用者分区不丢写）', async () => {
+    const h1 = mountHost('A')
+    const h2 = mountHost('A')
+    await settle()
+    expect(listMock).toHaveBeenCalledTimes(1) // in-flight 去重：两实例共享同一 RPC
+
+    resolveList('A', [task('t-shared', 'running')])
+    await settle()
+    expect(h1.tasks.current.value.loaded).toBe(true)
+    expect(h1.tasks.current.value.tasks.map((t) => t.taskId)).toEqual(['t-shared'])
+    expect(h2.tasks.current.value.loaded).toBe(true)
+    expect(h2.tasks.current.value.tasks.map((t) => t.taskId)).toEqual(['t-shared'])
   })
 })

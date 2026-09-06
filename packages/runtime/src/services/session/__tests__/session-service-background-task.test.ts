@@ -85,6 +85,13 @@ function writeRegistry(entries: BackgroundTaskRegistryEntry[], sessionId: string
   utimesSync(registryPath(sessionId), new Date(BASE_MTIME + ++mtimeTick * 1_000), new Date(BASE_MTIME + mtimeTick * 1_000))
 }
 
+/** 写非法 JSON registry（模拟损坏）并强制递增 mtime（触发 last-seen 变更判定）。 */
+function writeBrokenRegistry(sessionId: string): void {
+  mkdirSync(join(agentDir, 'base-tool-enhance', sessionId), { recursive: true })
+  writeFileSync(registryPath(sessionId), '{ broken json', 'utf8')
+  utimesSync(registryPath(sessionId), new Date(BASE_MTIME + ++mtimeTick * 1_000), new Date(BASE_MTIME + mtimeTick * 1_000))
+}
+
 // ── SessionService 最小装置 ───────────────────────────────────────
 
 interface Setup {
@@ -178,9 +185,45 @@ describe('backgroundTask:updated 广播（D3）', () => {
     expect(payload.sessionId).toBe(SID_A)
     expect(payload.tasks).toHaveLength(1)
     expect(payload.tasks[0]).toMatchObject({ taskId: TASK_ID, state: 'exited', exitCode: 1 })
+    // 正常拍显式 corrupted:false（审查修复：S7 错误条需要区分真空表与损坏空表）
+    expect(payload.corrupted).toBe(false)
     // mtime 未再变：轮询重复 tick 不重播（D2 单广播源）
     service.backgroundTasks.checkForChanges()
     expect(messageBus.publish).toHaveBeenCalledTimes(1)
+  })
+
+  it('损坏拍广播 corrupted=true（.corrupt 隔离）；自愈后恢复拍 corrupted=false（审查修复验收②③）', () => {
+    vi.useFakeTimers()
+    const { service, messageBus } = createSetup()
+    writeRegistry([makeEntry(SID_A)], SID_A)
+    service.backgroundTasks.markWatched(SID_A)
+
+    // 损坏：registry 被覆写为非法 JSON → mtime 变化 → 检测 → 广播 corrupted=true 空表
+    writeBrokenRegistry(SID_A)
+    service.backgroundTasks.checkForChanges()
+    const calls = vi.mocked(messageBus.publish).mock.calls.filter(([, m]) => m.type === 'backgroundTask:updated')
+    expect(calls).toHaveLength(1)
+    const corruptPayload = calls[0][1].payload as ServerMessage<'backgroundTask:updated'>['payload']
+    expect(corruptPayload.sessionId).toBe(SID_A)
+    expect(corruptPayload.corrupted).toBe(true)
+    expect(corruptPayload.tasks).toHaveLength(0)
+
+    // 单广播源不破坏（验收③）：corrupted=true 广播恰一次——parse 失败仅在首拍隔离一次，
+    // 共享 last-seen 判定不受透传影响（损坏拍后 .corrupt rename 引起的文件消失是另一拍
+    // 合法变化，发 corrupted:false 空表，不重复损坏广播）
+    service.backgroundTasks.checkForChanges()
+    const callsAfter = vi.mocked(messageBus.publish).mock.calls.filter(([, m]) => m.type === 'backgroundTask:updated')
+    expect(callsAfter.filter(([, m]) => (m.payload as { corrupted?: boolean }).corrupted === true)).toHaveLength(1)
+
+    // 自愈：合法 registry 重新落盘 → 后续拍 corrupted=false + 条目恢复（S7 错误条消失依据）
+    vi.mocked(messageBus.publish).mockClear()
+    writeRegistry([makeEntry(SID_A)], SID_A)
+    service.backgroundTasks.checkForChanges()
+    const healedCalls = vi.mocked(messageBus.publish).mock.calls.filter(([, m]) => m.type === 'backgroundTask:updated')
+    expect(healedCalls).toHaveLength(1)
+    const healedPayload = healedCalls[0][1].payload as ServerMessage<'backgroundTask:updated'>['payload']
+    expect(healedPayload.corrupted).toBe(false)
+    expect(healedPayload.tasks).toHaveLength(1)
   })
 })
 

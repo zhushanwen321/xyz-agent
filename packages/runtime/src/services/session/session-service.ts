@@ -949,10 +949,10 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    * 逐字段镜像（u-proto D9，结构兼容直赋）。
    */
   private publishBackgroundTasksUpdate(sessionId: string): void {
-    const { entries } = this.backgroundTasks.listTasks(sessionId)
+    const { entries, corrupted } = this.backgroundTasks.listTasks(sessionId)
     const msg: ServerMessage = {
       type: 'backgroundTask:updated',
-      payload: { sessionId, tasks: entries },
+      payload: { sessionId, tasks: entries, corrupted },
     }
     this.messageBus?.publish(sessionId, msg)
   }

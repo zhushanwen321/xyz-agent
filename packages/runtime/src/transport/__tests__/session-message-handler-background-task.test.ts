@@ -21,7 +21,7 @@
  * 运行：cd packages/runtime && npx vitest run src/transport/__tests__/session-message-handler-background-task.test.ts
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -151,7 +151,7 @@ describe('SessionMessageHandler backgroundTask 端口缺省', () => {
 // ── backgroundTask.list ─────────────────────────────────────────
 
 describe('SessionMessageHandler backgroundTask.list', () => {
-  it('reply backgroundTask.tasks 形状：sessionId 必带 + registry 全量投影；markWatched 基线不广播', async () => {
+  it('reply backgroundTask.tasks 形状：sessionId 必带 + registry 全量投影 + corrupted:false 正常拍；markWatched 基线不广播', async () => {
     writeRegistry([makeEntry(), makeEntry({ taskId: 'bt-1789-other', state: 'exited', exitCode: 0 })])
     const onTasksChanged = vi.fn()
     const svc = makeService(onTasksChanged)
@@ -168,6 +168,7 @@ describe('SessionMessageHandler backgroundTask.list', () => {
         expect.objectContaining({ taskId: TASK_ID, state: 'running' }),
         expect.objectContaining({ taskId: 'bt-1789-other', state: 'exited', exitCode: 0 }),
       ],
+      corrupted: false,
     })
     // markWatched 基线语义：拉取时点即已见状态，list 本身不触发变更回调
     expect(onTasksChanged).not.toHaveBeenCalled()
@@ -191,7 +192,52 @@ describe('SessionMessageHandler backgroundTask.list', () => {
     expect(onTasksChanged).toHaveBeenCalledWith(SID)
   })
 
-  it('目录/文件不存在（垃圾 sid）→ 空数组回执，不抛错', async () => {
+  it('损坏 registry（非法 JSON）→ reply corrupted=true + 空表（S7 错误条依据，.corrupt 隔离保留现场）', async () => {
+    mkdirSync(join(agentDir, 'base-tool-enhance', SID), { recursive: true })
+    writeFileSync(registryPath(), '{ broken json', 'utf8')
+    const svc = makeService()
+    const ctx = mockContext(fakeSessionService(svc))
+    const handler = new SessionMessageHandler(ctx)
+    const ws = mockWs()
+
+    await handler.handleSessionMessage(msg('backgroundTask.list', { sessionId: SID }), ws)
+
+    expect(ctx.reply).toHaveBeenCalledWith(ws, 'msg-1', 'backgroundTask.tasks', {
+      sessionId: SID,
+      tasks: [],
+      corrupted: true,
+    })
+    // D1 语义：损坏现场隔离为 .corrupt（人工恢复入口）
+    expect(existsSync(`${registryPath()}.corrupt`)).toBe(true)
+  })
+
+  it('损坏后自愈（重新写入合法 registry）→ 后续 list 拍 corrupted=false（审查修复验收②）', async () => {
+    mkdirSync(join(agentDir, 'base-tool-enhance', SID), { recursive: true })
+    writeFileSync(registryPath(), '{ broken json', 'utf8')
+    const svc = makeService()
+    const ctx = mockContext(fakeSessionService(svc))
+    const handler = new SessionMessageHandler(ctx)
+    const ws = mockWs()
+
+    // 损坏拍
+    await handler.handleSessionMessage(msg('backgroundTask.list', { sessionId: SID }, 'msg-corrupt'), ws)
+    expect(ctx.reply).toHaveBeenCalledWith(ws, 'msg-corrupt', 'backgroundTask.tasks', {
+      sessionId: SID,
+      tasks: [],
+      corrupted: true,
+    })
+
+    // 自愈：合法 registry 重新落盘（extension 空表重建/AI 新任务路径）→ 后续拍恢复
+    writeRegistry([makeEntry()])
+    await handler.handleSessionMessage(msg('backgroundTask.list', { sessionId: SID }, 'msg-healed'), ws)
+    expect(ctx.reply).toHaveBeenCalledWith(ws, 'msg-healed', 'backgroundTask.tasks', {
+      sessionId: SID,
+      tasks: [expect.objectContaining({ taskId: TASK_ID, state: 'running' })],
+      corrupted: false,
+    })
+  })
+
+  it('目录/文件不存在（垃圾 sid）→ 空数组回执 + corrupted:false（非损坏，常态空表），不抛错', async () => {
     const svc = makeService()
     const ctx = mockContext(fakeSessionService(svc))
     const handler = new SessionMessageHandler(ctx)
@@ -202,6 +248,7 @@ describe('SessionMessageHandler backgroundTask.list', () => {
     expect(ctx.reply).toHaveBeenCalledWith(ws, 'msg-1', 'backgroundTask.tasks', {
       sessionId: 'nonexistent-sid',
       tasks: [],
+      corrupted: false,
     })
     expect(ctx.sendError).not.toHaveBeenCalled()
   })

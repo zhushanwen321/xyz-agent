@@ -191,5 +191,8 @@ export default {
       succeeded: 'Succeeded',
       failed: 'Failed',
     },
+    // S7 corrupted banner / S6 disconnect banner (consistency review fix batch)
+    corruptBanner: 'Task data corrupted and ignored (.corrupt preserved for inspection)',
+    disconnectBanner: 'Connection lost — will refresh automatically after reconnect',
   },
 }

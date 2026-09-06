@@ -625,9 +625,9 @@ export class SessionMessageHandler {
         if (!port) {
           return this.ctx.sendError(ws, 'background_task_unsupported', 'background task service not available', msg.id, { sessionId: listSid })
         }
-        const { entries } = port.listTasks(listSid)
+        const { entries, corrupted } = port.listTasks(listSid)
         port.markWatched(listSid)
-        return this.ctx.reply(ws, msg.id, 'backgroundTask.tasks', { sessionId: listSid, tasks: entries })
+        return this.ctx.reply(ws, msg.id, 'backgroundTask.tasks', { sessionId: listSid, tasks: entries, corrupted })
       }
       case 'backgroundTask.output': {
         // 输出尾部按需读（D7）。tail undefined = 条目不存在 / 输出文件不可读（§3.1 失败

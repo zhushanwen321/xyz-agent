@@ -4,17 +4,21 @@
  *
  * 职责：registry 全量投影的 per-session Map 分区（useSessionScopedState，ADR-0049）+
  * 变更通道编排。两个数据来源：
- * - 拉取腿（C6 唯一真相入口）：watch sid 变化 / 调 refresh() 时 `backgroundTask.list`
- *   RPC（切换/激活 session、打开 plugin tab 由消费层触发）；模块级 in-flight 去重
- *   （同 sid 并发拉取复用同一 Promise，参照 useContextUsage）；
+ * - 拉取腿（C6 唯一真相入口）：watch sid 变化 / WS 重连 connected 边沿 / 调 refresh() 时
+ *   `backgroundTask.list` RPC（切换/激活 session、打开 plugin tab 由消费层触发）；模块级
+ *   in-flight 去重（同 sid 并发拉取复用同一 RPC Promise，各实例消费快照写各自分区，参照
+ *   useContextUsage）；
  * - 广播腿（增量刷新）：`backgroundTask:updated` session 级广播——订阅收敛为**模块级
  *   refCount**（AGENTS 规则 2：同 sid 多实例只开一条底层 events.on 物理订阅；消费组件
  *   ——列表视图 + split mode 下 per-pane 多实例的 DetailPanel——只读写分区状态，不各自挂
  *   listener）。物理 handler 闭包捕获注册时 sid，分发经实例 listener →
  *   `updateFor(capturedSid)` 写「消息所属 sid」分区，结构性消除切 session 竞态（M1）。
  *
- * 分区形态：{ tasks: 全量投影, loaded: 是否成功拉到过一次 }。loaded 区分「从未拉取」与
- * 「拉到空表」（S6 全量空态判定需要）。拉取失败保留分区缓存不降级（下次切入/refresh 自愈）。
+ * 分区形态：{ tasks: 全量投影, loaded: 是否成功拉到过一次, corrupted: 损坏拍 sticky 标志,
+ * fetchFailed: 最近一次 list RPC 失败 }。loaded 区分「从未拉取」与「拉到空表」（S6 全量空态
+ * 判定需要）；corrupted/fetchFailed 分别驱动损坏错误条（S7，sticky——损坏后一拍的 corrupted:false
+ * 空表广播不清位，由 tasks 非空的自愈拍清位）与断连提示条（S6）。拉取失败保留分区缓存不降级
+ * （下次切入/refresh/重连自愈）。
  *
  * 生命周期：session 销毁经 registerSessionCleanup 挂进 useSidebar.deleteSession 编排——
  * 清分区 + 抑制在途写入（迟到的 RPC resolve / 广播不得把已销毁 session 的分区僵尸式写回：
@@ -26,6 +30,7 @@
 import { computed, onScopeDispose, reactive, watch } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import * as events from '@/api/events'
+import { getState } from '@/lib/ws-client'
 import { registerSessionCleanup, useSessionScopedState } from '@/composables/useSessionScopedState'
 import * as backgroundTaskApi from '@/api/domains/background-task'
 import type { BackgroundTaskEntry } from '@/lib/background-task-bucket'
@@ -39,15 +44,19 @@ export interface BackgroundTasksPartition {
   tasks: BackgroundTaskEntry[]
   /** 是否成功拉到过一次 list reply（空表也算）——区分「从未拉取」与「拉到空表」。 */
   loaded: boolean
+  /** 该拍 registry 解析失败（runtime 安全降级空表；协议 corrupted 字段，缺省按 false 前向兼容，S7）。 */
+  corrupted: boolean
+  /** 最近一次 list RPC 失败（断连提示条条件之一，S6；成功拍翻回 false）。 */
+  fetchFailed: boolean
 }
 
 function createPartition(): BackgroundTasksPartition {
-  return reactive({ tasks: [] as BackgroundTaskEntry[], loaded: false })
+  return reactive({ tasks: [] as BackgroundTaskEntry[], loaded: false, corrupted: false, fetchFailed: false })
 }
 
 // ── 模块级 refCount 广播订阅（AGENTS 规则 2：同 sid 多实例共享单条物理订阅）──
 
-type BroadcastListener = (sid: string, tasks: BackgroundTaskEntry[]) => void
+type BroadcastListener = (sid: string, tasks: BackgroundTaskEntry[], corrupted: boolean) => void
 
 /** 各实例注册的分区写入 listener（物理 handler 分发时遍历；各实例写各自的分区 Map，幂等）。 */
 // @data-owner #24
@@ -70,11 +79,12 @@ function acquireBroadcastSubscription(sid: string): void {
     if (msg.type !== UPDATED_TYPE) return
     // session 通道 handler 无泛型收窄（events.ts 宽 MessageHandler）；payload 形状由
     // shared protocol.ts ServerMessageMap 契约化，运行时仅守卫 tasks 数组（坏形状跳过本拍，
-    // 下拍广播/拉取自愈）。
-    const payload = msg.payload as { tasks?: unknown }
+    // 下拍广播/拉取自愈）。corrupted 缺省按 false（协议字段前向兼容，S7）。
+    const payload = msg.payload as { tasks?: unknown; corrupted?: unknown }
     if (!Array.isArray(payload.tasks)) return
+    const corrupted = payload.corrupted === true
     for (const listener of broadcastListeners) {
-      listener(sid, payload.tasks as BackgroundTaskEntry[])
+      listener(sid, payload.tasks as BackgroundTaskEntry[], corrupted)
     }
   })
   sidSubscriptions.set(sid, { count: 1, unsub })
@@ -93,7 +103,28 @@ function releaseBroadcastSubscription(sid: string): void {
 // ── 模块级拉取 in-flight 去重（同 sid 并发 refresh/恢复腿复用同一 Promise）──
 
 // @data-owner #24
-const inflightFetches = new Map<string, Promise<void>>()
+const inflightFetches = new Map<string, Promise<ListReplySnapshot | null>>()
+
+/** 单次 list RPC 的解析结果快照（RPC 结果与分区写入解耦：in-flight 去重共享同一 RPC，
+ *  各实例消费快照写各自分区——旧形态共享 void Promise 会让复用者的分区永不更新）。 */
+interface ListReplySnapshot {
+  tasks: BackgroundTaskEntry[]
+  corrupted: boolean
+}
+
+/**
+ * list reply 前向兼容解析：协议 corrupted 字段（backgroundTask.tasks payload，u-proto 并行
+ * 落地中）就位后 api domain 将透传 reply 对象，当前返回纯数组——运行时结构探测两形态，
+ * corrupted 缺省按 false（外部格式不信任 + 运行时 guard 范式）；坏形状按空表降级（下拍自愈）。
+ */
+function parseListReply(raw: unknown): ListReplySnapshot {
+  if (Array.isArray(raw)) return { tasks: raw, corrupted: false }
+  if (typeof raw === 'object' && raw !== null && Array.isArray((raw as { tasks?: unknown }).tasks)) {
+    const reply = raw as { tasks: BackgroundTaskEntry[]; corrupted?: unknown }
+    return { tasks: reply.tasks, corrupted: reply.corrupted === true }
+  }
+  return { tasks: [], corrupted: false }
+}
 
 // ── 已销毁 session 抑制表（迟到写入不得僵尸式重建分区，参照 useContextUsage）──
 
@@ -131,46 +162,65 @@ export function useBackgroundTasks(sessionIdRef: Ref<string | null | undefined>)
 
   const scoped = useSessionScopedState<BackgroundTasksPartition>(normalizedSid, createPartition)
 
+  /** 快照写入分区的统一应用（广播/拉取两路同型，S7 sticky 语义唯一实现点）：
+   *  corrupted 按来源拍判定置位，但**不按最后拍严格清位**——runtime 实测时序：损坏检测拍
+   *  （.corrupt rename）后下一拍 stat=undefined 属真实文件消失，会自然发出一条 corrupted:false
+   *  空表广播（D1 空表重建既有语义、单广播源判定内）——若该拍清位，错误条会在损坏后一拍闪断。
+   *  故 corrupted 置位后由「恢复条目拍」（tasks 非空，extension 自愈空表重建/新任务出现）清位。 */
+  function applySnapshot(p: BackgroundTasksPartition, tasks: BackgroundTaskEntry[], corrupted: boolean): void {
+    p.tasks = tasks
+    p.loaded = true
+    if (corrupted) p.corrupted = true
+    else if (tasks.length > 0) p.corrupted = false
+  }
+
   /** 实例分区写入 listener：写「消息所属 sid」（capturedSid）分区，非当前视图 sid 也合法
    *  （分区写入与视图无关；视图显示由 current 按 sidRef 派生）。 */
-  const listener: BroadcastListener = (sid, tasks) => {
+  const listener: BroadcastListener = (sid, tasks, corrupted) => {
     if (suppressedSids.has(sid)) return
-    scoped.updateFor(sid, (p) => {
-      p.tasks = tasks
-      p.loaded = true
-    })
+    scoped.updateFor(sid, (p) => applySnapshot(p, tasks, corrupted))
   }
   broadcastListeners.add(listener)
 
   /**
-   * 发起/复用同 sid 的 list RPC；resolve 后写「发起时 sid」分区（闭包捕获，非实时 sid）。
+   * 发起/复用同 sid 的 list RPC（模块级去重：并发复用同一 RPC Promise，list 只发一次）；
+   * 复用者与发起者**各自**消费快照写各自分区（分区 per-instance，共享 void Promise 会让
+   * 复用者分区永不更新）。RPC 失败统一在上游 catch 成 null（debug 单次），各实例据 null
+   * 置分区 fetchFailed（保留缓存不降级，S6 断连提示条条件之一），调用方无需 try-catch。
    * 回滚窗口说明：RPC 往返期间若更新的广播先落地，较旧的 reply 会短暂覆盖（list reply
-   * 是当下 registry 全量快照，后到写赢）；下一拍广播 / 下次切入重拉自愈，不做 recency 对账
-   *（useContextUsage 的复杂度源于「无值占位帧」语义，本域 reply 恒为全量快照，无此问题）。
+   * 是当下 registry 全量快照，后到写赢）；下一拍广播 / 下次切入重拉自愈，不做 recency 对账。
    */
-  function fetchInto(sid: string): Promise<void> {
+  function requestSharedList(sid: string): Promise<ListReplySnapshot | null> {
     const existing = inflightFetches.get(sid)
     if (existing) return existing
-    const promise = backgroundTaskApi
+    const shared: Promise<ListReplySnapshot | null> = backgroundTaskApi
       .list(sid)
-      .then((tasks) => {
-        if (suppressedSids.has(sid)) return
-        scoped.updateFor(sid, (p) => {
-          p.tasks = tasks
-          p.loaded = true
-        })
-      })
+      .then((raw): ListReplySnapshot => parseListReply(raw))
       .catch((err: unknown) => {
-        // RPC 失败：保留分区缓存不降级（分区缓存 = 失败兜底显示），下次切入/refresh 自愈。
         // debug 级：可重试瞬态 + transport/pending 层已记错误，避免断连期刷屏（§3.1 断连路径）。
         console.debug('[background-tasks] list failed, keep cached partition', sid, err)
+        return null
       })
       .finally(() => {
         // settle 即清条目（下次切入重拉）；比对引用防误删后来者
-        if (inflightFetches.get(sid) === promise) inflightFetches.delete(sid)
+        if (inflightFetches.get(sid) === shared) inflightFetches.delete(sid)
       })
-    inflightFetches.set(sid, promise)
-    return promise
+    inflightFetches.set(sid, shared)
+    return shared
+  }
+
+  function fetchInto(sid: string): Promise<void> {
+    return requestSharedList(sid).then((reply) => {
+      if (suppressedSids.has(sid)) return
+      scoped.updateFor(sid, (p) => {
+        if (reply) {
+          applySnapshot(p, reply.tasks, reply.corrupted)
+          p.fetchFailed = false
+        } else {
+          p.fetchFailed = true
+        }
+      })
+    })
   }
 
   async function refresh(targetSid?: string): Promise<void> {
@@ -194,6 +244,14 @@ export function useBackgroundTasks(sessionIdRef: Ref<string | null | undefined>)
       void fetchInto(sid)
     }
   }, { immediate: true })
+
+  // 重连恢复腿（S6）：runtime 重启/WS 断连后 ring 为空（重放无补偿），列表停留旧缓存——
+  // connected 边沿重拉当前焦点 sid。每实例各自 watch 并写各自分区（badge 常驻实例 + 列表
+  // 视图实例同 sid 时 RPC 经 requestSharedList 去重收敛为一次）；不 immediate（挂载期由
+  // 拉取腿覆盖，仅响应断→连边沿）。
+  watch(getState(), (s) => {
+    if (s === 'connected') void refresh()
+  })
 
   // cleanup 编排：session 销毁（useSidebar.deleteSession → triggerSessionCleanups）时
   // 清分区 + 抑制迟到写入（在途 RPC resolve / 退订前的广播）。分区删除本身已由

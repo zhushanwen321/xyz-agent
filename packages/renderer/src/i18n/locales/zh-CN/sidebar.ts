@@ -190,5 +190,8 @@ export default {
       succeeded: '已成功',
       failed: '已失败',
     },
+    // S7 损坏错误条 / S6 断连提示条（一致性审查修复批次）
+    corruptBanner: '任务数据损坏，已忽略（.corrupt 保留现场）',
+    disconnectBanner: '连接断开，重连后自动刷新',
   },
 }

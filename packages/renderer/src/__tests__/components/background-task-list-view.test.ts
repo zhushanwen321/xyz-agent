@@ -32,7 +32,7 @@ import * as backgroundTaskApi from '@/api/domains/background-task'
 import type { BackgroundTaskEntry } from '@/lib/background-task-bucket'
 
 // ── mock：任务分区状态根（测试直接 mutate 模拟 list reply / 广播）──
-let partitionState: { tasks: BackgroundTaskEntry[]; loaded: boolean }
+let partitionState: { tasks: BackgroundTaskEntry[]; loaded: boolean; corrupted: boolean; fetchFailed: boolean }
 vi.mock('@/composables/features/sidebar/useBackgroundTasks', () => ({
   useBackgroundTasks: () => ({
     current: computed(() => partitionState),
@@ -44,6 +44,16 @@ vi.mock('@/composables/features/sidebar/useBackgroundTasks', () => ({
 vi.mock('@/api/domains/background-task', () => ({
   kill: vi.fn(),
 }))
+
+// ── mock：ws 连接态受控 ref（断连提示条驱动；默认 connected，既有用例零影响）──
+const wsMock = vi.hoisted(() => ({ ref: null as null | { value: string } }))
+vi.mock('@/lib/ws-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/ws-client')>()
+  const { ref } = await import('vue')
+  const stateRef = ref<string>('connected')
+  wsMock.ref = stateRef
+  return { ...actual, getState: () => stateRef }
+})
 
 // ── i18n 文件内 override：t(key, named) → `key(k=v)`（key 引用 + 参数双断言面）──
 vi.mock('vue-i18n', async (importOriginal) => {
@@ -118,7 +128,7 @@ beforeEach(() => {
   _resetDrawerForTest()
   bindDrawerSessionId(ref(SID))
   usePanelStore().loadSession(ROOT_PANEL_ID, SID)
-  partitionState = reactive({ tasks: [], loaded: true })
+  partitionState = reactive({ tasks: [], loaded: true, corrupted: false, fetchFailed: false })
   vi.mocked(backgroundTaskApi.kill).mockResolvedValue({ sessionId: SID, taskId: 'bt-r1', killed: true, reason: 'killed' })
   vi.useFakeTimers({ now: FIXED_NOW })
 })
@@ -126,6 +136,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   __clearSessionCleanupRegistryForTest()
+  if (wsMock.ref) wsMock.ref.value = 'connected'
 })
 
 describe('BackgroundTaskListView 三桶筛选（D10②③ / S1 / S6）', () => {
@@ -366,6 +377,86 @@ describe('BackgroundTaskListView 点击行开 drawer（D5④）', () => {
     expect(control.selectedBackgroundTaskId).toBe('bt-e1')
     expect(control.activeTab).toBe('bashTask')
     expect(control.isOpen).toBe(true)
+    wrapper.unmount()
+  })
+})
+
+// ── 损坏错误条与断连提示条（S7/S6，一致性审查修复批次）──
+
+describe('BackgroundTaskListView 损坏错误条（S7）', () => {
+  it('损坏拍（corrupted + 空表）：错误条与全量空态并存；自愈拍（corrupted=false）错误条消失', async () => {
+    partitionState.tasks = []
+    partitionState.corrupted = true
+    const wrapper = mountList()
+    await flushPromises()
+
+    // 错误条出现（用户可见 DOM 断言，i18n key 引用形态）+ 与空态并存（设计 §3.1）
+    const banner = wrapper.find('[data-testid="bg-task-corrupt-banner"]')
+    expect(banner.exists()).toBe(true)
+    expect(banner.text()).toContain('sidebar.backgroundTaskList.corruptBanner')
+    expect(wrapper.find('[data-testid="bg-task-empty"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="bg-task-filterbar"]').exists()).toBe(false)
+
+    // 自愈拍（extension 自愈空表重建 / corrupted 翻回 false）→ 错误条消失
+    partitionState.corrupted = false
+    await flushPromises()
+    expect(wrapper.find('[data-testid="bg-task-corrupt-banner"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('防御形态：corrupted 且仍有条目时错误条照常显示', async () => {
+    partitionState.tasks = [R1]
+    partitionState.corrupted = true
+    const wrapper = mountList()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="bg-task-corrupt-banner"]').exists()).toBe(true)
+    expect(wrapper.findAll('[data-testid="bg-task-item"]').length).toBeGreaterThan(0)
+    wrapper.unmount()
+  })
+})
+
+describe('BackgroundTaskListView 断连提示条（S6）', () => {
+  function setWs(state: string): void {
+    if (!wsMock.ref) throw new Error('ws mock 未初始化')
+    wsMock.ref.value = state
+  }
+
+  it('断连 && 未拉到过数据：提示条出现；loaded 且无失败（旧缓存可用）不提示', async () => {
+    partitionState.tasks = []
+    partitionState.loaded = false
+    setWs('disconnected')
+    const wrapper = mountList()
+    await flushPromises()
+
+    // 断连 && 未 loaded → 提示条（i18n key 引用 DOM 断言）
+    const banner = wrapper.find('[data-testid="bg-task-disconnect-banner"]')
+    expect(banner.exists()).toBe(true)
+    expect(banner.text()).toContain('sidebar.backgroundTaskList.disconnectBanner')
+
+    // 已 loaded 且无拉取失败：断连期显示旧缓存，不提示（任务条件：拉取失败/未 loaded 才提示）
+    partitionState.loaded = true
+    partitionState.fetchFailed = false
+    await flushPromises()
+    expect(wrapper.find('[data-testid="bg-task-disconnect-banner"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('断连 && 拉取失败：提示条出现；重连（connected）后消失', async () => {
+    partitionState.tasks = [R1]
+    partitionState.loaded = true
+    partitionState.fetchFailed = true
+    setWs('disconnected')
+    const wrapper = mountList()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="bg-task-disconnect-banner"]').exists()).toBe(true)
+
+    // 重连恢复：数据拍与连接态恢复 → 提示条消失
+    setWs('connected')
+    partitionState.fetchFailed = false
+    await flushPromises()
+    expect(wrapper.find('[data-testid="bg-task-disconnect-banner"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })

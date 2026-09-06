@@ -247,13 +247,22 @@ describe('backgroundTask RPC 请求 payload 形状（D3）', () => {
 })
 
 describe('backgroundTask 回执/广播 payload 形状（D3）', () => {
-  it('tasks 回执：sessionId + RegistryEntry 全量投影', () => {
+  it('tasks 回执：sessionId + RegistryEntry 全量投影 + corrupted 损坏标记（缺省/false=正常拍）', () => {
     const reply: ServerMessageMapBase['backgroundTask.tasks'] = {
       sessionId: 'sess-1',
       tasks: [runningEntry],
+      corrupted: false,
     }
     expect(reply.tasks[0].taskId).toBe('bt-1')
     expect(reply.tasks[0].state).toBe('running')
+    // S7 错误条依据：损坏空表与真空表可区分（一致性审查修复，仿 config.systemPrompt 同名字段）
+    const corruptReply: ServerMessageMapBase['backgroundTask.tasks'] = {
+      sessionId: 'sess-1',
+      tasks: [],
+      corrupted: true,
+    }
+    expect(corruptReply.corrupted).toBe(true)
+    expect(corruptReply.tasks).toHaveLength(0)
   })
 
   it('outputResult 回执：text/truncated/lost 三字段齐备（lost 时 text 空串）', () => {
@@ -276,12 +285,20 @@ describe('backgroundTask 回执/广播 payload 形状（D3）', () => {
     expect(reply.reason).toBe('killed')
   })
 
-  it('backgroundTask:updated 广播：冒号 camelCase 命名 + sessionId + tasks 全量', () => {
+  it('backgroundTask:updated 广播：冒号 camelCase 命名 + sessionId + tasks 全量 + corrupted 标记', () => {
     const broadcast: ServerMessageMapBase['backgroundTask:updated'] = {
       sessionId: 'sess-1',
       tasks: [runningEntry],
+      corrupted: false,
     }
     expect(broadcast.tasks).toHaveLength(1)
+    // corrupted 与 list 回执同源语义：损坏拍广播同样携带（renderer 错误条增删依据）
+    const corruptBroadcast: ServerMessageMapBase['backgroundTask:updated'] = {
+      sessionId: 'sess-1',
+      tasks: [],
+      corrupted: true,
+    }
+    expect(corruptBroadcast.corrupted).toBe(true)
   })
 })
 
