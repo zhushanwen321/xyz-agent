@@ -305,25 +305,25 @@ function resolveGitcodeRemote() {
  * 首次全量（本仓 pack ≈ 490MB）需 10-20 分钟，仅首次；后续发布只推增量。
  * push 前必须确保非 shallow：GitCode receive 端拒绝 shallow update
  * （探针实测 "remote rejected ... (shallow update not allowed)"）。 */
-function pushRepoMirror() {
+function pushRepoMirror(refSource = 'origin') {
   const url = resolveGitcodeRemote();
   execSync('git remote remove gitcode-sync 2>/dev/null || true', { stdio: 'pipe', shell: '/bin/bash' });
   execSync(`git remote add gitcode-sync "${url}"`, { stdio: 'pipe' });
   try {
     const isShallow = execSync('git rev-parse --is-shallow-repository', { encoding: 'utf8' }).trim() === 'true';
     if (isShallow) {
-      console.log('[push-repo] 当前仓库为 shallow，先 fetch 全量历史（GitHub 内网，约 1-3 分钟）…');
-      execSync('git fetch --unshallow origin "+refs/heads/*:refs/remotes/origin/*" "+refs/tags/*:refs/tags/*"',
+      console.log(`[push-repo] 当前仓库为 shallow，先 fetch ${refSource} 全量历史（约 1-3 分钟）…`);
+      execSync(`git fetch --unshallow ${refSource} "+refs/heads/*:refs/remotes/${refSource}/*" "+refs/tags/*:refs/tags/*"`,
         { stdio: 'inherit', timeout: 600000 });
     }
     execSync(
-      'git push gitcode-sync --progress --force --prune "+refs/remotes/origin/*:refs/heads/*" "+refs/tags/*:refs/tags/*" 2>&1',
+      `git push gitcode-sync --progress --force --prune "+refs/remotes/${refSource}/*:refs/heads/*" "+refs/tags/*:refs/tags/*" 2>&1`,
       { stdio: 'inherit', timeout: 1800000 },
     );
   } finally {
     execSync('git remote remove gitcode-sync 2>/dev/null || true', { stdio: 'pipe', shell: '/bin/bash' });
   }
-  console.log('[push-repo] 仓库镜像完成：origin 全部分支 + tags 已对齐到 GitCode');
+  console.log(`[push-repo] 仓库镜像完成：${refSource} 全部分支 + tags 已对齐到 GitCode`);
 }
 
 /* ── 模式一：探针 ─────────────────────────────────────────── */
@@ -583,7 +583,7 @@ function githubRepoFromArgs(args) {
 
 const USAGE = `用法：
   node scripts/gitcode-release-sync.mjs probe [--large] [--no-repo]
-  node scripts/gitcode-release-sync.mjs push-repo
+  node scripts/gitcode-release-sync.mjs push-repo [--ref-source <remote>]
   node scripts/gitcode-release-sync.mjs sync <tag> <release-name> <notes-file> <artifacts-dir> [--prerelease]
   node scripts/gitcode-release-sync.mjs sync-from-github <tag> [--github-repo owner/repo]
 环境变量：GITCODE_TOKEN（必填）；sync-from-github 另需本机 gh 已登录`;
@@ -593,9 +593,17 @@ const COMMANDS = {
   probe: async (args) => {
     await runProbe({ large: args.includes('--large'), skipRepo: args.includes('--no-repo') });
   },
-  'push-repo': async () => {
+  'push-repo': async (args) => {
+    // --ref-source <remote>：镜像引用的来源远端（默认 origin = CI checkout 场景）。
+    // 本地 bare-repo workspace 里 origin 指向本地 .bare，须显式传 github——
+    // 否则会把本地 .bare 的分支状态（可能含已删分支/落后分支）推上 GitCode 造成 drift。
+    const srcIdx = args.indexOf('--ref-source');
+    const refSource = srcIdx >= 0 ? args[srcIdx + 1] : 'origin';
+    if (!refSource || refSource.startsWith('--')) {
+      die('用法：node scripts/gitcode-release-sync.mjs push-repo [--ref-source <remote>]（本地环境传 --ref-source github）');
+    }
     try {
-      pushRepoMirror();
+      pushRepoMirror(refSource);
     } catch (e) {
       die(String(e.message || e));
     }

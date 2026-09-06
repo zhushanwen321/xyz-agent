@@ -98,7 +98,7 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-- 残留风险（S11 已执行，镜像侧未闭环）：GitCode 同步 job 在 405MB 新体积下仍失败——3 大附件 3 路并发 curl PUT 全部 30min 单件超时（2026-09-06 深夜 00:53-01:23 北京，单附件有效吞吐 <0.1MB/s）。结论：runner 直传路线即使配并发优化 + 体积降 63% 仍不可靠，瓶颈在跨境链路不在并发度；候选处置 = 低峰（8-16 点）重 dispatch（幂等补齐）/ 本地中转 sync-from-github（国内上行 5-20MB/s，需 GITCODE_TOKEN 本地 export）/ release.yml 把 gitcode-sync 改 continue-on-error 防止镜像失败否决整 run（本次 verify-ci-release.sh 因 job 失败对完好产物误判 FATAL）。
+- 残留风险（S11 已执行，镜像侧未闭环）：GitCode 同步 job 在 405MB 新体积下仍失败——3 大附件 3 路并发 curl PUT 全部 30min 单件超时（2026-09-06 深夜 00:53-01:23 北京，单附件有效吞吐 <0.1MB/s）。结论：runner 直传路线即使配并发优化 + 体积降 63% 仍不可靠，瓶颈在跨境链路不在并发度；候选处置 = 低峰（8-16 点）重 dispatch（幂等补齐）/ 本地中转 sync-from-github（国内上行 5-20MB/s，需 GITCODE_TOKEN 本地 export）/ release.yml 把 gitcode-sync 改 continue-on-error 防止镜像失败否决整 run（本次 verify-ci-release.sh 因 job 失败对完好产物误判 FATAL）。【清账 2026-09-16】本条已整体解决：本地中转实测闭环（406MB/85s 上传、CDN 下载 14.9MB/s）；CI gitcode-sync job 直接移除（continue-on-error 方案被取代），镜像收敛到 merge skill 阶段 6.5 本地执行（附件 sync-from-github + 仓库 push-repo --ref-source github + README 安装版本自动更新）。
 - 残留风险（与本批零因果，Gate A 核实）：extension-protocol validation.test 的 tsc 编译用例 5s 超时临界（全量负载下 5981ms，间歇性红风险，建议调大 testTimeout）；lint 3E 存量（appserver-launcher 2 / check-core-dist-gate 1）+ rpc-client max-lines warning（fix-zcode merge 侧增量）——需独立任务。
 - 残留风险：renderer 对三个新脚本错误码（dmg mount failed 等）走通用降级文案，恢复指引（reboot/hdiutil detach）仅在 update-result.json 与日志可见——renderer 侧接线留待后续（LAUNCH_FAILURE_ERROR_KEYS 映射，实施期检查点③的答案）。
 - 2026-09-05 计划创建。设计阶段两轮对抗审查记录见 review 文件；S7 本地 linux AppImage 可行性与 S6 ULFO 收益数字为实施期门（设计 §5 待验证检查点）。
