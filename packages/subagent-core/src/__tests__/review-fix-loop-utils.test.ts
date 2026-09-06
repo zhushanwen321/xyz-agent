@@ -1194,8 +1194,8 @@ describe("T-2 端到端：normIssueId/findIssueKey 在 validateFixResult 的真�
 
 // ── T-3：reconcile 新 ID severity:"unknown" 守卫分支 ──────────────────────
 // validateFixResult 的 tracked severity 交叉核对：trackedIssues 中某 ID 的 severity
-// 为 "unknown"（reconcileIssues 给新发现 ID 的默认值，review-fix-loop-utils.cjs:596
-// `severity: "unknown"`）时不覆盖 fix agent 自报 severity——守卫在 cjs:294-299（仅认
+// 为 "unknown"（reconcileIssues 给新发现 ID 的默认值，review-fix-loop-utils.cjs:935
+// `severity: "unknown"`）时不覆盖 fix agent 自报 severity——守卫在 cjs:347-355（仅认
 // critical/major/minor/trivial 为真实等级）。现有 MF-4 测试覆盖了 major/critical/minor
 // tracked + 无此 ID，缺 "unknown" 分支。守卫目的：新发现 ID 的 severity 尚未由 reviewer
 // 结构化确认（reconcile 默认 unknown），不应凭默认值把合法 minor deferral 误升级为违规。
