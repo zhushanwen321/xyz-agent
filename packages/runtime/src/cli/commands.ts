@@ -64,6 +64,145 @@ export function formatDefaultModel(provider: string, modelId: string): string {
   return `${provider}/${modelId}`
 }
 
+// ── 各命令实现（executeCommand case 提取：参数解析 + WS 消息构造 + 响应格式化，
+//    错误/成功文案与调用时序逐字节保持）──────────────────────
+
+async function runListProviders(json: boolean): Promise<string> {
+  const reply = await rpc<{ providers?: Array<Record<string, unknown>> }>(
+    'config.getProviders',
+    {}
+  )
+  const providers = reply.providers ?? []
+  if (json) return JSON.stringify(providers, null, JSON_INDENT)
+  return formatProviders(providers)
+}
+
+function runGetDefaultModel(): string {
+  // config.getProviders reply 是 { providers }，不含 defaultModel。
+  // defaultModel 只通过 config.defaults 订阅推送（CLI 无订阅），故直接读 settings.json。
+  // settings.json 在 getPiAgentDir()（~/.xyz-agent/pi/agent/settings.json），由 getSettingsPath() 返回；
+  // 磁盘格式是 { defaultProvider: string, defaultModel: string } 两个独立字符串字段（见 pi-provider-store.ts updateSettingsFields）。
+  try {
+    const raw = readFileSync(getSettingsPath(), 'utf-8')
+    const settings = JSON.parse(raw) as { defaultProvider?: string; defaultModel?: string }
+    const dp = settings.defaultProvider
+    const dm = settings.defaultModel
+    return dp && dm ? `${dp}/${dm}` : 'not set'
+  } catch {
+    // settings.json 不存在或解析失败 → 未设置默认模型
+    return 'not set'
+  }
+}
+
+async function runSetDefaultModel(flags: Record<string, string | boolean>): Promise<string> {
+  const provider = flags.provider as string
+  const model = flags.model as string
+  if (!provider || !model) {
+    throw new Error('Usage: xyz-settings set-default-model --provider <p> --model <m>')
+  }
+  await rpc('config.setDefaultModel', { provider, modelId: model })
+  return `default_model = ${formatDefaultModel(provider, model)}`
+}
+
+async function runSwitchSessionModel(flags: Record<string, string | boolean>): Promise<string> {
+  const session = flags.session as string
+  const provider = flags.provider as string
+  const model = flags.model as string
+  if (!session || !provider || !model) {
+    throw new Error('Usage: xyz-settings switch-session-model --session <id> --provider <p> --model <m>')
+  }
+  await rpc('model.switch', { sessionId: session, provider, modelId: model })
+  return `session ${session.slice(0, SESSION_ID_DISPLAY_LEN)}... model = ${formatDefaultModel(provider, model)}`
+}
+
+async function runSetThinking(flags: Record<string, string | boolean>): Promise<string> {
+  const session = flags.session as string
+  const level = flags.level as string
+  if (!session || !level) {
+    throw new Error('Usage: xyz-settings set-thinking --session <id> --level <off|minimal|low|medium|high|xhigh>')
+  }
+  await rpc('session.setThinkingLevel', { sessionId: session, level })
+  return `session ${session.slice(0, SESSION_ID_DISPLAY_LEN)}... thinking = ${level}`
+}
+
+// ── Phase 2：高危写命令 ──────────────────────────
+
+async function runSetProvider(flags: Record<string, string | boolean>): Promise<string> {
+  const name = flags.name as string
+  const provider = flags.provider as string
+  if (!name || !provider) {
+    throw new Error('Usage: xyz-settings set-provider --name <id> --provider <openai|anthropic|google|openrouter>')
+  }
+  // apiKey 从 stdin 或环境变量读取，禁止 CLI 参数（安全）
+  const apiKey = flags['api-key-stdin']
+    ? await readStdin()
+    : (process.env.XYZ_AGENT_API_KEY ?? '')
+  // 协议（protocol.ts:138）：config.setProvider payload = { providerId } & SetProviderData。
+  // SetProviderData（protocol.ts:58）含 apiKey/name/baseUrl/models 等字段；provider 类型走 type 字段。
+  const payload: Record<string, unknown> = { providerId: name, type: provider }
+  if (apiKey) payload.apiKey = apiKey
+  await rpc('config.setProvider', payload)
+  return `provider ${name} (${provider}) configured` + (apiKey ? ' [apiKey:set]' : ' [apiKey:unchanged]')
+}
+
+async function runSetSkillDirs(flags: Record<string, string | boolean>): Promise<string> {
+  const skillDirs = flags['skill-dirs'] as string
+  if (!skillDirs) {
+    throw new Error('Usage: xyz-settings set-skill-dirs --skill-dirs <path1,path2,...>')
+  }
+  await rpc('config.setSkillDirs', { dirs: skillDirs.split(',').map(s => s.trim()) })
+  return `skill_dirs = ${skillDirs}`
+}
+
+async function runSetAgentDirs(flags: Record<string, string | boolean>): Promise<string> {
+  const agentDirs = flags['agent-dirs'] as string
+  if (!agentDirs) {
+    throw new Error('Usage: xyz-settings set-agent-dirs --agent-dirs <path1,path2,...>')
+  }
+  await rpc('config.setAgentDirs', { dirs: agentDirs.split(',').map(s => s.trim()) })
+  return `agent_dirs = ${agentDirs}`
+}
+
+async function runDeleteProvider(flags: Record<string, string | boolean>): Promise<string> {
+  const name = flags.name as string
+  if (!name) {
+    throw new Error('Usage: xyz-settings delete-provider --name <id>')
+  }
+  await rpc('config.deleteProvider', { providerId: name })
+  return `provider ${name} deleted`
+}
+
+async function runDiscoverModels(flags: Record<string, string | boolean>, json: boolean): Promise<string> {
+  // 协议（protocol.ts:141）：{ baseUrl, apiKey?, providerType?, providerId? }。
+  // handler（settings-message-handler.ts:197-209）把 baseUrl 作为位置参数传给
+  // modelService.discoverModelsFromApi(baseUrl, ...)，必填；apiKey 缺省时用 providerId 查已配置 provider。
+  const baseUrl = flags['base-url'] as string
+  if (!baseUrl) {
+    throw new Error(
+      'Usage: xyz-settings discover-models --base-url <url> [--name <provider-id>] [--provider <type>] [--api-key-stdin]',
+    )
+  }
+  const providerId = (flags.name as string) || undefined
+  const providerType = (flags.provider as string) || undefined
+  const apiKey = flags['api-key-stdin']
+    ? await readStdin()
+    : (process.env.XYZ_AGENT_API_KEY ?? undefined)
+  const payload: Record<string, unknown> = { baseUrl }
+  if (providerId) payload.providerId = providerId
+  if (providerType) payload.providerType = providerType
+  if (apiKey) payload.apiKey = apiKey
+  const reply = await rpc<{ models?: Array<{ id: string }>; success?: boolean; error?: string }>(
+    'config.discoverModels',
+    payload,
+  )
+  if (reply.success === false) {
+    throw new Error(reply.error ?? 'discover failed')
+  }
+  const models = reply.models ?? []
+  if (json) return JSON.stringify(models, null, JSON_INDENT)
+  return models.map(m => `  ${m.id}`).join('\n')
+}
+
 // ── 命令执行 ──────────────────────────────────
 
 export async function executeCommand(args: ParsedArgs): Promise<string> {
@@ -71,141 +210,35 @@ export async function executeCommand(args: ParsedArgs): Promise<string> {
   const json = flags.json === true
 
   switch (command) {
-    case 'list-providers': {
-      const reply = await rpc<{ providers?: Array<Record<string, unknown>> }>(
-        'config.getProviders',
-        {}
-      )
-      const providers = reply.providers ?? []
-      if (json) return JSON.stringify(providers, null, JSON_INDENT)
-      return formatProviders(providers)
-    }
+    case 'list-providers':
+      return runListProviders(json)
 
-    case 'get-default-model': {
-      // config.getProviders reply 是 { providers }，不含 defaultModel。
-      // defaultModel 只通过 config.defaults 订阅推送（CLI 无订阅），故直接读 settings.json。
-      // settings.json 在 getPiAgentDir()（~/.xyz-agent/pi/agent/settings.json），由 getSettingsPath() 返回；
-      // 磁盘格式是 { defaultProvider: string, defaultModel: string } 两个独立字符串字段（见 pi-provider-store.ts updateSettingsFields）。
-      try {
-        const raw = readFileSync(getSettingsPath(), 'utf-8')
-        const settings = JSON.parse(raw) as { defaultProvider?: string; defaultModel?: string }
-        const dp = settings.defaultProvider
-        const dm = settings.defaultModel
-        return dp && dm ? `${dp}/${dm}` : 'not set'
-      } catch {
-        // settings.json 不存在或解析失败 → 未设置默认模型
-        return 'not set'
-      }
-    }
+    case 'get-default-model':
+      return runGetDefaultModel()
 
-    case 'set-default-model': {
-      const provider = flags.provider as string
-      const model = flags.model as string
-      if (!provider || !model) {
-        throw new Error('Usage: xyz-settings set-default-model --provider <p> --model <m>')
-      }
-      await rpc('config.setDefaultModel', { provider, modelId: model })
-      return `default_model = ${formatDefaultModel(provider, model)}`
-    }
+    case 'set-default-model':
+      return runSetDefaultModel(flags)
 
-    case 'switch-session-model': {
-      const session = flags.session as string
-      const provider = flags.provider as string
-      const model = flags.model as string
-      if (!session || !provider || !model) {
-        throw new Error('Usage: xyz-settings switch-session-model --session <id> --provider <p> --model <m>')
-      }
-      await rpc('model.switch', { sessionId: session, provider, modelId: model })
-      return `session ${session.slice(0, SESSION_ID_DISPLAY_LEN)}... model = ${formatDefaultModel(provider, model)}`
-    }
+    case 'switch-session-model':
+      return runSwitchSessionModel(flags)
 
-    case 'set-thinking': {
-      const session = flags.session as string
-      const level = flags.level as string
-      if (!session || !level) {
-        throw new Error('Usage: xyz-settings set-thinking --session <id> --level <off|minimal|low|medium|high|xhigh>')
-      }
-      await rpc('session.setThinkingLevel', { sessionId: session, level })
-      return `session ${session.slice(0, SESSION_ID_DISPLAY_LEN)}... thinking = ${level}`
-    }
+    case 'set-thinking':
+      return runSetThinking(flags)
 
-    // ── Phase 2：高危写命令 ──────────────────────────
+    case 'set-provider':
+      return runSetProvider(flags)
 
-    case 'set-provider': {
-      const name = flags.name as string
-      const provider = flags.provider as string
-      if (!name || !provider) {
-        throw new Error('Usage: xyz-settings set-provider --name <id> --provider <openai|anthropic|google|openrouter>')
-      }
-      // apiKey 从 stdin 或环境变量读取，禁止 CLI 参数（安全）
-      const apiKey = flags['api-key-stdin']
-        ? await readStdin()
-        : (process.env.XYZ_AGENT_API_KEY ?? '')
-      // 协议（protocol.ts:138）：config.setProvider payload = { providerId } & SetProviderData。
-      // SetProviderData（protocol.ts:58）含 apiKey/name/baseUrl/models 等字段；provider 类型走 type 字段。
-      const payload: Record<string, unknown> = { providerId: name, type: provider }
-      if (apiKey) payload.apiKey = apiKey
-      await rpc('config.setProvider', payload)
-      return `provider ${name} (${provider}) configured` + (apiKey ? ' [apiKey:set]' : ' [apiKey:unchanged]')
-    }
+    case 'set-skill-dirs':
+      return runSetSkillDirs(flags)
 
-    case 'set-skill-dirs': {
-      const skillDirs = flags['skill-dirs'] as string
-      if (!skillDirs) {
-        throw new Error('Usage: xyz-settings set-skill-dirs --skill-dirs <path1,path2,...>')
-      }
-      await rpc('config.setSkillDirs', { dirs: skillDirs.split(',').map(s => s.trim()) })
-      return `skill_dirs = ${skillDirs}`
-    }
+    case 'set-agent-dirs':
+      return runSetAgentDirs(flags)
 
-    case 'set-agent-dirs': {
-      const agentDirs = flags['agent-dirs'] as string
-      if (!agentDirs) {
-        throw new Error('Usage: xyz-settings set-agent-dirs --agent-dirs <path1,path2,...>')
-      }
-      await rpc('config.setAgentDirs', { dirs: agentDirs.split(',').map(s => s.trim()) })
-      return `agent_dirs = ${agentDirs}`
-    }
+    case 'delete-provider':
+      return runDeleteProvider(flags)
 
-    case 'delete-provider': {
-      const name = flags.name as string
-      if (!name) {
-        throw new Error('Usage: xyz-settings delete-provider --name <id>')
-      }
-      await rpc('config.deleteProvider', { providerId: name })
-      return `provider ${name} deleted`
-    }
-
-    case 'discover-models': {
-      // 协议（protocol.ts:141）：{ baseUrl, apiKey?, providerType?, providerId? }。
-      // handler（settings-message-handler.ts:197-209）把 baseUrl 作为位置参数传给
-      // modelService.discoverModelsFromApi(baseUrl, ...)，必填；apiKey 缺省时用 providerId 查已配置 provider。
-      const baseUrl = flags['base-url'] as string
-      if (!baseUrl) {
-        throw new Error(
-          'Usage: xyz-settings discover-models --base-url <url> [--name <provider-id>] [--provider <type>] [--api-key-stdin]',
-        )
-      }
-      const providerId = (flags.name as string) || undefined
-      const providerType = (flags.provider as string) || undefined
-      const apiKey = flags['api-key-stdin']
-        ? await readStdin()
-        : (process.env.XYZ_AGENT_API_KEY ?? undefined)
-      const payload: Record<string, unknown> = { baseUrl }
-      if (providerId) payload.providerId = providerId
-      if (providerType) payload.providerType = providerType
-      if (apiKey) payload.apiKey = apiKey
-      const reply = await rpc<{ models?: Array<{ id: string }>; success?: boolean; error?: string }>(
-        'config.discoverModels',
-        payload,
-      )
-      if (reply.success === false) {
-        throw new Error(reply.error ?? 'discover failed')
-      }
-      const models = reply.models ?? []
-      if (json) return JSON.stringify(models, null, JSON_INDENT)
-      return models.map(m => `  ${m.id}`).join('\n')
-    }
+    case 'discover-models':
+      return runDiscoverModels(flags, json)
 
     default:
       throw new Error(

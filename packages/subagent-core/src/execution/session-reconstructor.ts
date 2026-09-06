@@ -274,39 +274,16 @@ interface PendingToolCall {
 }
 
 // ============================================================
-// 公开函数
+// 全量重建内部 helper（按处理阶段拆分：读文件 → 扫身份 → 重建 turns → 组装）
 // ============================================================
 
 /**
- * 从 session.jsonl 重建完整 SubagentRecord 数据。
- *
- *   ╔══════════════════════════════════════════════════════════════════╗
- *   ║  1. readFileSync(sessionFile) + 逐行 JSON.parse（跳 header）       ║
- *   ║     （损坏行静默跳过；失败 → undefined）                           ║
- *   ║  2. 扫 custom entry（customType:"subagent-identity"）→ 身份        ║
- *   ║     缺 identity → undefined（无法构造 record）                     ║
- *   ║  3. 顺序遍历 message entries：                                    ║
- *   ║     - role:"assistant" → 开新 Turn                                ║
- *   ║       text/thinking 累积；usage → usageDelta                      ║
- *   ║       toolCall block → 待匹配队列；stopReason error → lastError  ║
- *   ║     - role:"toolResult" → 配对 toolCallId                         ║
- *   ║       产 InternalToolCall(done/failed)推进请求 Turn              ║
- *   ║  4. 闭合所有 turn；算 turnCount/totalTokens/result/eventLog       ║
- *   ╚══════════════════════════════════════════════════════════════════╝
- *
- * 返回 undefined：文件缺失/空/损坏/缺 identity entry/无 assistant message。
- * 不抛——消费方（collectRecords）降级跳过该 record。
- *
- * status 由最后一条 assistant message 的 stopReason 推导（error/aborted → failed，
- * 其余 → done）。cancelled 由 tombstone override（record-store 层），本函数不感知。
- *
- * [perf] 本函数是重路径（全文读 + 全 entry 解析）。列表扫描用 readIdentityHeader
- * （只读头部 identity），详情才走本函数（RecordStore.getFullRecord 懒加载）。
+ * 读文件 + 逐行 JSON.parse（session.jsonl = newline-delimited JSON）。
+ * 第 1 行是 session header（type:"session"，跳过）；后续每行一个 entry。
+ * 损坏行静默跳过（与 SDK parseSessionEntries 行为一致）。
+ * @returns 文件缺失/读失败 → undefined；否则 entry 数组（可能为空）。
  */
-export function reconstructFromFile(sessionFile: string): ReconstructedRecord | undefined {
-  // 读文件 + 逐行 JSON.parse（session.jsonl = newline-delimited JSON）。
-  // 第 1 行是 session header（跳过）；后续每行一个 entry。
-  // 损坏行静默跳过（与 SDK parseSessionEntries 行为一致）。
+function readJsonlEntries(sessionFile: string): JsonlEntry[] | undefined {
   let raw: string;
   try {
     raw = fs.readFileSync(sessionFile, "utf-8");
@@ -338,10 +315,18 @@ export function reconstructFromFile(sessionFile: string): ReconstructedRecord | 
       void _e; // 损坏行跳过（不阻断后续行）。
     }
   }
+  return entries;
+}
 
-  if (entries.length === 0) return undefined;
+/** 身份/模型扫描产出（identity custom entry + 途经的 model/thinking_level change）。 */
+interface IdentityScan {
+  identity: SubagentIdentityData | undefined;
+  model: string;
+  thinkingLevel: string | undefined;
+}
 
-  // ── 扫身份 custom entry（必须存在，否则无法构造 record）──
+/** 扫 identity custom entry（必须存在，否则无法构造 record）+ 途经 model/thinking_level。 */
+function scanIdentityAndModel(entries: JsonlEntry[]): IdentityScan {
   let identity: SubagentIdentityData | undefined;
   let model = "";
   let thinkingLevel: string | undefined;
@@ -357,14 +342,95 @@ export function reconstructFromFile(sessionFile: string): ReconstructedRecord | 
       if (typeof entry.thinkingLevel === "string") thinkingLevel = entry.thinkingLevel;
     }
   }
-  if (!identity) return undefined; // 缺身份 → 无法构造 record。
+  return { identity, model, thinkingLevel };
+}
 
-  // ── 重建 turns[] ──
+/** message entries 重建产出（turns + 跨 entry 累积状态）。 */
+interface RebuiltTurns {
+  turns: Turn[];
+  lastError: string | undefined;
+  totalTokens: number;
+  /** 最后一条 entry 的时间戳（ms），推导 endedAt（避免重建 record 耗时随墙钟无限增长）。 */
+  lastEntryTsMs: number | undefined;
+}
+
+/**
+ * assistant message → 填充调用方已创建的空 Turn：text/thinking 累积；toolCall block 进
+ * 待匹配队列；usage → usageDelta（token 总量增量返回给调用方累加）。
+ *
+ * stopReason 语义（与 updateFromEvent 一致）：error/aborted → 设 lastError；
+ * stop（正常结束）→ 清 lastError（镜像 turn_end 的清除语义，即前序 turn 的瞬态
+ * error 在后续成功 turn 后恢复，不误判 success=false）；其余 stopReason → 保持
+ * prevLastError 原值。 [v4 B-1] status 恒 closed 后 lastStopReason 不再参与推导，死变量已删。
+ *
+ * content 非数组 → 跳过 usage/stopReason 处理（镜像原实现的 continue）：turn 仍存在
+ * （由调用方 push），lastError 透传 prevLastError、token 增量为 0。
+ */
+function applyAssistantMessage(
+  msg: JsonlAssistantMessage,
+  turn: Turn,
+  pending: PendingToolCall[],
+  prevLastError: string | undefined,
+): { lastError: string | undefined; totalTokensDelta: number } {
+  if (!Array.isArray(msg.content)) {
+    return { lastError: prevLastError, totalTokensDelta: 0 };
+  }
+  for (const block of msg.content) {
+    if (block.type === "text") {
+      turn.text += block.text;
+    } else if (block.type === "thinking") {
+      turn.thinking += block.thinking;
+    } else if (block.type === "toolCall") {
+      pending.push({
+        toolCallId: block.id,
+        toolName: block.name,
+        args: block.arguments,
+        turn,
+        startedTs: msg.timestamp,
+      });
+    }
+  }
+
+  let totalTokensDelta = 0;
+  if (msg.usage) {
+    const u = toAgentUsage(msg.usage);
+    turn.usageDelta = addUsage(turn.usageDelta, u);
+    totalTokensDelta = u.input + u.output + u.cacheRead + u.cacheWrite;
+  }
+
+  let lastError = prevLastError;
+  if (msg.stopReason === "error" || msg.stopReason === "aborted") {
+    lastError = msg.errorMessage ?? msg.stopReason;
+  } else if (msg.stopReason === "stop") {
+    lastError = undefined;
+  }
+  return { lastError, totalTokensDelta };
+}
+
+/** toolResult message → 按 toolCallId 配对回填 InternalToolCall；未配对（孤儿）→ 丢弃。 */
+function applyToolResultMessage(msg: JsonlToolResultMessage, pending: PendingToolCall[]): void {
+  const idx = pending.findIndex((p) => p.toolCallId === msg.toolCallId);
+  if (idx >= 0) {
+    const p = pending[idx];
+    pending.splice(idx, 1);
+    const tc: InternalToolCall = {
+      toolName: p.toolName,
+      args: p.args,
+      result: { content: msg.content, details: msg.details },
+      isError: msg.isError ?? false,
+      _status: msg.isError ? "failed" : "done",
+      startedTs: p.startedTs,
+    };
+    p.turn.toolCalls.push(tc);
+  }
+}
+
+/** 顺序遍历 entries 重建 turns[]（assistant 开 turn / toolResult 配对回填；user 跳过）。 */
+function rebuildTurns(entries: JsonlEntry[]): RebuiltTurns {
   const turns: Turn[] = [];
   const pending: PendingToolCall[] = [];
   let lastError: string | undefined;
   let totalTokens = 0;
-  /** 最后一条 entry 的时间戳（ms），推导 endedAt（避免重建 record 耗时随墙钟无限增长）。 */
   let lastEntryTsMs: number | undefined;
 
   for (const entry of entries) {
@@ -383,80 +449,37 @@ export function reconstructFromFile(sessionFile: string): ReconstructedRecord | 
     if (msg.role === "assistant") {
       const turn = emptyTurn();
       turns.push(turn);
-
-      if (!Array.isArray(msg.content)) continue;
-      for (const block of msg.content) {
-        if (block.type === "text") {
-          turn.text += block.text;
-        } else if (block.type === "thinking") {
-          turn.thinking += block.thinking;
-        } else if (block.type === "toolCall") {
-          pending.push({
-            toolCallId: block.id,
-            toolName: block.name,
-            args: block.arguments,
-            turn,
-            startedTs: msg.timestamp,
-          });
-        }
-      }
-
-      if (msg.usage) {
-        const u = toAgentUsage(msg.usage);
-        turn.usageDelta = addUsage(turn.usageDelta, u);
-        totalTokens += u.input + u.output + u.cacheRead + u.cacheWrite;
-      }
-
-      // stopReason 驱动 lastError（与 updateFromEvent 一致）：
-      // error/aborted → 设 lastError；stop（正常结束）→ 清 lastError（镜像 turn_end 的清除语义，
-      // 即前序 turn 的瞬态 error 在后续成功 turn 后恢复，不误判 success=false）。
-      // [v4 B-1] status 恒 closed 后 lastStopReason 不再参与推导，死变量已删。
-      if (msg.stopReason === "error" || msg.stopReason === "aborted") {
-        lastError = msg.errorMessage ?? msg.stopReason;
-      } else if (msg.stopReason === "stop") {
-        lastError = undefined;
-      }
+      const applied = applyAssistantMessage(msg, turn, pending, lastError);
+      totalTokens += applied.totalTokensDelta;
+      lastError = applied.lastError;
     } else if (msg.role === "toolResult") {
-      const idx = pending.findIndex((p) => p.toolCallId === msg.toolCallId);
-      if (idx >= 0) {
-        const p = pending[idx];
-        pending.splice(idx, 1);
-        const tc: InternalToolCall = {
-          toolName: p.toolName,
-          args: p.args,
-          result: { content: msg.content, details: msg.details },
-          isError: msg.isError ?? false,
-          _status: msg.isError ? "failed" : "done",
-          startedTs: p.startedTs,
-        };
-        p.turn.toolCalls.push(tc);
-      }
-      // 未配对（孤儿 toolResult）→ 丢弃。
+      applyToolResultMessage(msg, pending);
     }
     // role:"user" → 跳过（task 来自 identity custom entry）。
   }
+  return { turns, lastError, totalTokens, lastEntryTsMs };
+}
 
-  if (turns.length === 0) return undefined; // 无 assistant message → 空壳，降级。
-
-  // 闭合所有 turn（重建的是历史，全是已完成 turn）。
-  for (const turn of turns) {
-    turn.closed = true;
-  }
-
-  const turnCount = turns.length;
-  const resultText = turns
-    .map((t) => t.text)
-    .filter((t) => t.length > 0)
-    .join("\n\n");
-
-  // eventLog 从 turns[] 派生（与活态 record 的 getEventLog 同形，消费方无感知差异）。
-  const eventLog = deriveEventLog(turns, lastError, identity.startedAt);
-
+/** 组装 ReconstructedRecord（终态投影：status 恒 closed/gc + 身份字段归一化 + 派生数据）。 */
+function buildReconstructedRecord(
+  sessionFile: string,
+  identity: SubagentIdentityData,
+  rebuilt: RebuiltTurns,
+  eventLog: AgentEventLogEntry[],
+  model: string,
+  thinkingLevel: string | undefined,
+): ReconstructedRecord {
   // 终态 status：最后一条 assistant message 的 stopReason 推导（与 finalizeRecord 的判定一致）。
   // SP-1：done/failed 合并为 closed，cancelled 由 tombstone override（record-store 层），本函数不感知。
   const status: ExecutionStatus = "closed";
   // closedReason 统 gc（通用完成/失败）。error/aborted 的区分由 error 字段保留。
   const closedReason: import("./types.ts").ClosedReason = "gc";
+
+  const turnCount = rebuilt.turns.length;
+  const resultText = rebuilt.turns
+    .map((t) => t.text)
+    .filter((t) => t.length > 0)
+    .join("\n\n");
 
   // rootSessionId 归一化：新文件读 rootSessionId，旧文件 fallback parentSessionId。
   const rootSessionId = identity.rootSessionId ?? identity.parentSessionId;
@@ -472,17 +495,72 @@ export function reconstructFromFile(sessionFile: string): ReconstructedRecord | 
     sessionFile,
     status,
     closedReason,
-    turns,
+    turns: rebuilt.turns,
     turnCount,
-    totalTokens,
-    lastError,
+    totalTokens: rebuilt.totalTokens,
+    lastError: rebuilt.lastError,
     model,
     thinkingLevel,
-    endedAt: lastEntryTsMs,
+    endedAt: rebuilt.lastEntryTsMs,
     result: resultText.length > 0 ? resultText : undefined,
-    error: lastError,
+    error: rebuilt.lastError,
     eventLog,
   };
+}
+
+// ============================================================
+// 公开函数
+// ============================================================
+
+/**
+ * 从 session.jsonl 重建完整 SubagentRecord 数据。
+ *
+ *   ╔══════════════════════════════════════════════════════════════════╗
+ *   ║  1. readFileSync(sessionFile) + 逐行 JSON.parse（跳 header）       ║
+ *   ║     （损坏行静默跳过；失败 → undefined）                           ║
+ *   ║  2. 扫 custom entry（customType:"subagent-identity"）→ 身份        ║
+ *   ║     缺 identity → undefined（无法构造 record）                     ║
+ *   ║  3. 顺序遍历 message entries：                                    ║
+ *   ║     - role:"assistant" → 开新 Turn                                ║
+ *   ║       text/thinking 累积；usage → usageDelta                      ║
+ *   ║       toolCall block → 待匹配队列；stopReason error → lastError  ║
+ *   ║     - role:"toolResult" → 配对 toolCallId                         ║
+ *   ║       产 InternalToolCall(done/failed)推进请求 Turn              ║
+ *   ║  4. 闭合所有 turn；算 turnCount/totalTokens/result/eventLog       ║
+ *   ╚══════════════════════════════════════════════════════════════════╝
+ *
+ * 返回 undefined：文件缺失/空/损坏/缺 identity entry/无 assistant message。
+ * 不抛——消费方（collectRecords）降级跳过该 record。
+ *
+ * status 由最后一条 assistant message 的 stopReason 推导（error/aborted → failed，
+ * 其余 → done）。cancelled 由 tombstone override（record-store 层），本函数不感知。
+ *
+ * [perf] 本函数是重路径（全文读 + 全 entry 解析）。列表扫描用 readIdentityHeader
+ * （只读头部 identity），详情才走本函数（RecordStore.getFullRecord 懒加载）。
+ */
+export function reconstructFromFile(sessionFile: string): ReconstructedRecord | undefined {
+  // 1. 读文件 + 逐行 JSON.parse（readJsonlEntries：损坏行静默跳过；文件缺失 → undefined）。
+  const entries = readJsonlEntries(sessionFile);
+  if (!entries || entries.length === 0) return undefined;
+
+  // 2. 扫身份 custom entry（scanIdentityAndModel：identity 缺失 → 无法构造 record）。
+  const { identity, model, thinkingLevel } = scanIdentityAndModel(entries);
+  if (!identity) return undefined; // 缺身份 → 无法构造 record。
+
+  // 3. 重建 turns[]（rebuildTurns：assistant 开 turn / toolResult 配对回填）。
+  const rebuilt = rebuildTurns(entries);
+  if (rebuilt.turns.length === 0) return undefined; // 无 assistant message → 空壳，降级。
+
+  // 4. 闭合所有 turn（重建的是历史，全是已完成 turn）。
+  for (const turn of rebuilt.turns) {
+    turn.closed = true;
+  }
+
+  // eventLog 从 turns[] 派生（与活态 record 的 getEventLog 同形，消费方无感知差异）。
+  // 必须在闭合 turn 之后派生（deriveEventLog 读 turn.closed）。
+  const eventLog = deriveEventLog(rebuilt.turns, rebuilt.lastError, identity.startedAt);
+
+  return buildReconstructedRecord(sessionFile, identity, rebuilt, eventLog, model, thinkingLevel);
 }
 
 // ============================================================

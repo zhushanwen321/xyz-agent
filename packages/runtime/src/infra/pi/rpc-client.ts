@@ -115,6 +115,137 @@ const STDERR_CRASH_MAX_BYTES = 1_000_000
 /** 错误消息 / exitCallback 载荷里的 stderr 尾部行数（展示路径，D4 后语义不变） */
 const STDERR_TAIL_LINES = 10
 
+// ── start 提取 helper（复杂度债务偿还，行为保持提取：按处理阶段下沉，主函数只留编排）──
+
+/**
+ * start 的 model 参数解析（P1，pi-assumption final gate）：附着恢复路径不拼 --model——
+ * pi CLI model 恒优先于 session entry 恢复，全局默认兜底一旦拼进 args，用户切换过的
+ * 模型就被静默压回默认。modelRef 读取保持无条件（与提取前求值顺序一致）。
+ */
+function resolveStartModel(options: RpcClientOptions): string | undefined {
+  const modelRef = getDefaultModel()
+  return options.inheritSessionModel
+    ? undefined
+    : options.model ?? (modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '')
+}
+
+/**
+ * start 的出站 env 构建（B3 出站契约收口，docs/design/env-propagation-boundary.md §5-U3）：
+ * 白名单过滤父 env 为基座 → extras 在基座之上整体覆盖 → deny 清单兜底剥除
+ * XYZ_AGENT_PACKAGED / XYZ_RUNTIME_TOKEN。旧私有第二份 buildSafeEnv 已被共享构建器取代
+ * （重复实现漂移消灭）。
+ */
+function buildPiOutboundEnv(options: RpcClientOptions): NodeJS.ProcessEnv {
+  const outboundExtras: Record<string, string> = {}
+  for (const [key, value] of Object.entries(options.env ?? {})) {
+    // 旧私有实现对 undefined extras 键跳过不写（「undefined=删除」语义属 main 侧
+    // safe-env）。保留跳过行为：防上游误传 undefined 时吞掉白名单基座继承键
+    // （R2 远距离爆炸防线，如 PATH 被删 → hooks 里 command not found）。
+    if (value !== undefined) outboundExtras[key] = value
+  }
+  // D4/G4 观测补齐（file-lock-unification-and-reaper-sink §3.2-D4 / U3-3）：xyz 托管
+  // 环境恒注入 extension 日志开关——extension-logger 见此变量即落盘 INFO 级日志
+  // （XYZ_AGENT_DEBUG=1 的 DEBUG 全量语义不变，两变量并存取更详细；均未注入的裸 pi
+  // 独立用户保持 no-op，零磁盘影响）。走 extras 通道随构建器出站（C-proc-09 唯一
+  // 构建点，不绕过直接拼 env）；托管语义恒为 '1'，不开放 options.env 覆盖。
+  outboundExtras.XYZ_AGENT_EXT_LOG = '1'
+  const env = buildOutboundChildEnv({ parentEnv: process.env, extras: outboundExtras })
+
+  // xyz-pi agent 目录：~/.xyz-agent/pi/agent/
+  // 开发模式和打包模式统一使用此目录，不使用系统 pi 的 ~/.pi/agent/
+  env.PI_CODING_AGENT_DIR = getPiAgentDir()
+  return env
+}
+
+/** start 的 skill/extension 路径 args（每个路径走独立参数，pi 原生 loader 加载）。 */
+function appendSkillAndExtensionArgs(args: string[], options: RpcClientOptions): void {
+  if (options.skillPaths?.length) {
+    for (const skillPath of options.skillPaths) {
+      args.push('--skill', skillPath)
+    }
+  }
+  if (options.extensionPaths?.length) {
+    for (const extPath of options.extensionPaths) {
+      args.push('--extension', extPath)
+    }
+  }
+}
+
+/** tools/excludeTools/noTools 三者互斥判定（W-RT-6：任两组同时出现即冲突）。 */
+function toolOptionConflict(hasNoTools: boolean, hasTools: boolean, hasExcludeTools: boolean): boolean {
+  return (hasNoTools && hasTools)
+    || (hasNoTools && hasExcludeTools)
+    || (hasTools && hasExcludeTools)
+}
+
+/**
+ * start 的 tools/excludeTools/noTools args（Preset 启动参数，设计文档 §2.5 / 附录 A）。
+ *
+ * tools/excludeTools 用逗号连接（pi 单参数多值语义）；开关类 push 单 flag；
+ * W-RT-6：三者互斥，按优先级 noTools > tools > excludeTools 取一个，
+ * 同时出现多个时 warn（不抛错，避免运行时炸），保持单写者语义清晰。
+ */
+function appendToolArgs(args: string[], options: RpcClientOptions): void {
+  const hasTools = !!options.tools?.length
+  const hasExcludeTools = !!options.excludeTools?.length
+  const hasNoTools = !!options.noTools
+  if (toolOptionConflict(hasNoTools, hasTools, hasExcludeTools)) {
+    console.warn('[rpc] conflicting tool options detected, using priority: noTools > tools > excludeTools')
+  }
+  if (hasNoTools) {
+    args.push('--no-tools')
+  } else if (hasTools) {
+    args.push('--tools', options.tools!.join(','))
+  } else if (hasExcludeTools) {
+    args.push('--exclude-tools', options.excludeTools!.join(','))
+  }
+}
+
+/**
+ * start 的 pi CLI args 数组构建（与提取前拼接顺序逐字节一致）。
+ *
+ * --approve: 强制信任 cwd（trustOverride=true），让 pi 加载项目级 .pi/skills 和 .pi/extensions。
+ * 短期方案：xyz-agent 的 RPC 模式无交互 UI，pi 原生信任流程在 hasUI=false 时默认拒绝，
+ * 导致 <cwd>/.pi/ 下的 skill/extension 被跳过。--approve 绕过信任确认，代价是所有
+ * 项目自动信任（失去 pi 信任机制对恶意 .pi/extensions 的安全防护）。
+ *
+ * 三个 flag 的交互（架构约定 #11：extension 通过 --extension CLI 参数
+ * 在 pi 启动时注入路径，pi 原生 loader 加载）：
+ * - --no-extensions：抑制 pi 自动发现/加载的全局扩展（内置/全局扩展目录），不影响显式注入的扩展。
+ * - --extension <path>：显式注入 xyz-agent 管理的扩展路径（appendSkillAndExtensionArgs），
+ *   走独立参数，不受 --no-extensions 影响；扩展数据隔离在 ~/.xyz-agent/ 数据目录。
+ * - --approve：绕过项目级 .pi/skills 和 .pi/extensions 的信任确认。
+ * 因此 xyz-agent 的 extension 走 --extension 显式注入 + ~/.xyz-agent/ 数据目录隔离，
+ * 不依赖 --approve 加载项目级 .pi/extensions；--approve 实际主要为信任项目级 .pi/skills
+ * （skills 加载见 pi 的 skills.ts）。
+ * TODO(follow-up): 实现 Project Trust UI，让用户逐项目确认信任，移除全局 --approve。
+ * 当前为产品决策（local-first 工具，所有项目可信），非临时 hack。
+ */
+function buildPiArgs(options: RpcClientOptions, model: string | undefined, sessionDir: string): string[] {
+  const args = ['--mode', 'rpc', '--no-extensions', '--approve']
+  if (model) args.push('--model', model)
+  // --system-prompt: 替换 pi 核心系统提示词（身份/工具列表/指引/pi 文档路径 4 段）。
+  // 动态段（project_context/skills/日期/cwd）仍由 pi 照常拼接。空白/未传不拼。
+  if (options.systemPrompt?.trim()) {
+    args.push('--system-prompt', options.systemPrompt)
+  }
+  appendSkillAndExtensionArgs(args, options)
+  appendToolArgs(args, options)
+  if (options.noSkills) {
+    args.push('--no-skills')
+  }
+  if (options.noContextFiles) {
+    args.push('--no-context-files')
+  }
+  if (options.thinkingLevel) {
+    // thinkingLevel 走 --thinking（pi 参数名，非 --thinking-level，附录 A.4）。
+    args.push('--thinking', options.thinkingLevel)
+  }
+  // 使用 pi 的 sessions 目录
+  args.push('--session-dir', sessionDir)
+  return args
+}
+
 /**
  * bash RPC 超时解析（timeout-slow-flow-wallclock D2 env 逃生门）。
  *
@@ -220,103 +351,11 @@ export class RpcClient implements IPiEngine {
   constructor(private options: RpcClientOptions = {}) {}
 
   async start(): Promise<void> {
-    const modelRef = getDefaultModel()
-    // P1（pi-assumption final gate）：附着恢复路径不拼 --model——pi CLI model 恒优先于
-    // session entry 恢复，全局默认兜底一旦拼进 args，用户切换过的模型就被静默压回默认。
-    const model = this.options.inheritSessionModel
-      ? undefined
-      : this.options.model ?? (modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '')
-
-    // B3 出站契约收口（docs/design/env-propagation-boundary.md §5-U3）：白名单过滤父
-    // env 为基座 → extras 在基座之上整体覆盖 → deny 清单兜底剥除 XYZ_AGENT_PACKAGED /
-    // XYZ_RUNTIME_TOKEN。旧私有第二份 buildSafeEnv 已被共享构建器取代（重复实现漂移消灭）。
-    const outboundExtras: Record<string, string> = {}
-    for (const [key, value] of Object.entries(this.options.env ?? {})) {
-      // 旧私有实现对 undefined extras 键跳过不写（「undefined=删除」语义属 main 侧
-      // safe-env）。保留跳过行为：防上游误传 undefined 时吞掉白名单基座继承键
-      // （R2 远距离爆炸防线，如 PATH 被删 → hooks 里 command not found）。
-      if (value !== undefined) outboundExtras[key] = value
-    }
-    // D4/G4 观测补齐（file-lock-unification-and-reaper-sink §3.2-D4 / U3-3）：xyz 托管
-    // 环境恒注入 extension 日志开关——extension-logger 见此变量即落盘 INFO 级日志
-    // （XYZ_AGENT_DEBUG=1 的 DEBUG 全量语义不变，两变量并存取更详细；均未注入的裸 pi
-    // 独立用户保持 no-op，零磁盘影响）。走 extras 通道随构建器出站（C-proc-09 唯一
-    // 构建点，不绕过直接拼 env）；托管语义恒为 '1'，不开放 options.env 覆盖。
-    outboundExtras.XYZ_AGENT_EXT_LOG = '1'
-    const env = buildOutboundChildEnv({ parentEnv: process.env, extras: outboundExtras })
-
-    // xyz-pi agent 目录：~/.xyz-agent/pi/agent/
-    // 开发模式和打包模式统一使用此目录，不使用系统 pi 的 ~/.pi/agent/
-    env.PI_CODING_AGENT_DIR = getPiAgentDir()
-
-    // --approve: 强制信任 cwd（trustOverride=true），让 pi 加载项目级 .pi/skills 和 .pi/extensions。
-    // 短期方案：xyz-agent 的 RPC 模式无交互 UI，pi 原生信任流程在 hasUI=false 时默认拒绝，
-    // 导致 <cwd>/.pi/ 下的 skill/extension 被跳过。--approve 绕过信任确认，代价是所有
-    // 项目自动信任（失去 pi 信任机制对恶意 .pi/extensions 的安全防护）。
-    //
-    // 三个 flag 的交互（见下方 args 拼接，架构约定 #11：extension 通过 --extension CLI 参数
-    // 在 pi 启动时注入路径，pi 原生 loader 加载）：
-    // - --no-extensions：抑制 pi 自动发现/加载的全局扩展（内置/全局扩展目录），不影响显式注入的扩展。
-    // - --extension <path>：显式注入 xyz-agent 管理的扩展路径（本文件下方 extensionPaths 循环），
-    //   走独立参数，不受 --no-extensions 影响；扩展数据隔离在 ~/.xyz-agent/ 数据目录。
-    // - --approve：绕过项目级 .pi/skills 和 .pi/extensions 的信任确认。
-    // 因此 xyz-agent 的 extension 走 --extension 显式注入 + ~/.xyz-agent/ 数据目录隔离，
-    // 不依赖 --approve 加载项目级 .pi/extensions；--approve 实际主要为信任项目级 .pi/skills
-    // （skills 加载见 pi 的 skills.ts）。
-    // TODO(follow-up): 实现 Project Trust UI，让用户逐项目确认信任，移除全局 --approve。
-    // 当前为产品决策（local-first 工具，所有项目可信），非临时 hack。
-    const args = ['--mode', 'rpc', '--no-extensions', '--approve']
-    if (model) args.push('--model', model)
-    // --system-prompt: 替换 pi 核心系统提示词（身份/工具列表/指引/pi 文档路径 4 段）。
-    // 动态段（project_context/skills/日期/cwd）仍由 pi 照常拼接。空白/未传不拼。
-    if (this.options.systemPrompt?.trim()) {
-      args.push('--system-prompt', this.options.systemPrompt)
-    }
-    if (this.options.skillPaths?.length) {
-      for (const skillPath of this.options.skillPaths) {
-        args.push('--skill', skillPath)
-      }
-    }
-    if (this.options.extensionPaths?.length) {
-      for (const extPath of this.options.extensionPaths) {
-        args.push('--extension', extPath)
-      }
-    }
-    // Preset 启动参数（设计文档 §2.5 / 附录 A）：6 个字段映射到 pi CLI args。
-    // tools/excludeTools 用逗号连接（pi 单参数多值语义）；开关类 push 单 flag；
-    // thinkingLevel 走 --thinking（pi 参数名，非 --thinking-level）。
-    // W-RT-6：tools/excludeTools/noTools 三者互斥，按优先级 noTools > tools > excludeTools 取一个，
-    // 同时出现多个时 warn（不抛错，避免运行时炸），保持单写者语义清晰。
-    const hasTools = !!this.options.tools?.length
-    const hasExcludeTools = !!this.options.excludeTools?.length
-    const hasNoTools = !!this.options.noTools
-    if (
-      (hasNoTools && hasTools)
-      || (hasNoTools && hasExcludeTools)
-      || (hasTools && hasExcludeTools)
-    ) {
-      console.warn('[rpc] conflicting tool options detected, using priority: noTools > tools > excludeTools')
-    }
-    if (hasNoTools) {
-      args.push('--no-tools')
-    } else if (hasTools) {
-      args.push('--tools', this.options.tools!.join(','))
-    } else if (hasExcludeTools) {
-      args.push('--exclude-tools', this.options.excludeTools!.join(','))
-    }
-    if (this.options.noSkills) {
-      args.push('--no-skills')
-    }
-    if (this.options.noContextFiles) {
-      args.push('--no-context-files')
-    }
-    if (this.options.thinkingLevel) {
-      args.push('--thinking', this.options.thinkingLevel)
-    }
-
-    // 使用 pi 的 sessions 目录
-    const sessionDir = getSessionsDir()
-    args.push('--session-dir', sessionDir)
+    // P1（pi-assumption final gate）：附着恢复路径不拼 --model——见 resolveStartModel。
+    const model = resolveStartModel(this.options)
+    // B3 出站契约收口（docs/design/env-propagation-boundary.md §5-U3）——见 buildPiOutboundEnv。
+    const env = buildPiOutboundEnv(this.options)
+    const args = buildPiArgs(this.options, model, getSessionsDir())
 
     const piCmd = this.options.piCommand ?? 'pi'
 
@@ -348,7 +387,17 @@ export class RpcClient implements IPiEngine {
     }
 
     const proc = this.proc
+    this.wireProcessHandlers(proc)
+    // Wait briefly to confirm process didn't exit immediately
+    await this.awaitStartupSettled(proc)
+  }
 
+  /**
+   * start 的进程事件接线（error / exit / stdout JSONL 解析 / stdout+stderr stream error /
+   * stderr 全量收集）。与提取前注册顺序一致：error → exit → readline line → stdout error
+   * → stderr data/error。
+   */
+  private wireProcessHandlers(proc: ChildProcess): void {
     proc.on('error', (err) => {
       console.error('[rpc] spawn error:', err)
       this.rejectAll(new Error(`Failed to spawn pi: ${err.message}`))
@@ -401,20 +450,11 @@ export class RpcClient implements IPiEngine {
     // 作为死亡通知的唯一出口（避免「stream error 通知 + exit 通知」双触发）。
     // 刻意调 ChildProcess 原生 kill 而非 this.kill()：后者置 _killing=true，
     // exit 处理器会跳过 exitCallbacks —— 死亡通知整条丢失。
-    const killProcAfterStreamError = (stream: 'stdout' | 'stderr'): void => {
-      try {
-        this.proc?.kill('SIGKILL')
-      } catch (e) {
-        // best-effort 降级：kill 抛错说明进程已死，exit 事件已/将至并走唯一出口，无需传播
-        console.error(`[rpc] SIGKILL after ${stream} stream error failed (process may already be dead):`, e)
-      }
-    }
-
     proc.stdout?.on('error', (err: NodeJS.ErrnoException) => {
       console.error('[rpc] stdout stream error:', err)
       this._exited = true
       this.rejectAll(new Error(`pi stdout stream error: ${err.message}`))
-      killProcAfterStreamError('stdout')
+      this.killProcAfterStreamError('stdout')
     })
 
     // 收集 stderr 用于错误诊断，同时转发到日志
@@ -440,12 +480,30 @@ export class RpcClient implements IPiEngine {
         console.error('[rpc] stderr stream error:', err)
         this._exited = true
         this.rejectAll(new Error(`pi stderr stream error: ${err.message}`))
-        killProcAfterStreamError('stderr')
+        this.killProcAfterStreamError('stderr')
       })
     }
+  }
 
-    // Wait briefly to confirm process didn't exit immediately
-    await new Promise<void>((resolve, reject) => {
+  /**
+   * stream error 后 SIGKILL 加速进程死亡（W2，死亡通知唯一出口语义）——
+   * 细节与降级理由见 wireProcessHandlers 内 stdout 段注释。
+   */
+  private killProcAfterStreamError(stream: 'stdout' | 'stderr'): void {
+    try {
+      this.proc?.kill('SIGKILL')
+    } catch (e) {
+      // best-effort 降级：kill 抛错说明进程已死，exit 事件已/将至并走唯一出口，无需传播
+      console.error(`[rpc] SIGKILL after ${stream} stream error failed (process may already be dead):`, e)
+    }
+  }
+
+  /**
+   * start 的启动确认窗口：等 STARTUP_DELAY_MS 确认进程没有立即退出；
+   * 窗口内 exit / error 即 reject（消息含 stderr 尾部）。
+   */
+  private awaitStartupSettled(proc: ChildProcess): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
       let settled = false
       const onExit = (code: number | null) => {
         if (settled) return

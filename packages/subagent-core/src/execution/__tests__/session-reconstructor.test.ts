@@ -376,4 +376,197 @@ describe("reconstructFromFile", () => {
       expect(rec!.result).toBe("survived");
     });
   });
+
+  // ============================================================
+  // 分支覆盖补充（特征锚定，守护行为保持重构）
+  // ============================================================
+  describe("分支覆盖补充（特征锚定）", () => {
+    it("无 session header（第 1 行非 header）→ 该行仍按普通 entry 解析，正常重建", () => {
+      writeJsonl([
+        identityEntry({ id: "r1", agent: "w", mode: "sync", task: "t", startedAt: 100 }),
+        assistantEntry([{ type: "text", text: "no header" }]),
+      ]);
+      const rec = reconstructFromFile(filePath);
+      expect(rec).toBeDefined();
+      expect(rec!.result).toBe("no header");
+    });
+
+    it("首行（header 位）损坏 JSON → 跳过该行，后续行仍解析", () => {
+      const fd = fs.openSync(filePath, "w");
+      fs.writeSync(fd, "CORRUPTED FIRST LINE\n");
+      fs.writeSync(fd, `${JSON.stringify(identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }))}\n`);
+      fs.writeSync(fd, `${JSON.stringify(assistantEntry([{ type: "text", text: "after corrupt header" }]))}\n`);
+      fs.closeSync(fd);
+      const rec = reconstructFromFile(filePath);
+      expect(rec).toBeDefined();
+      expect(rec!.result).toBe("after corrupt header");
+    });
+
+    it("文件只有空白行 → undefined（entries 为空）", () => {
+      fs.writeFileSync(filePath, "\n\n   \n", "utf-8");
+      expect(reconstructFromFile(filePath)).toBeUndefined();
+    });
+
+    it("identity custom entry 的 data 非法（缺 task）→ undefined", () => {
+      writeJsonl([
+        headerLine(),
+        identityEntry({ id: "r1", agent: "w", mode: "background", startedAt: 100 }), // 缺 task
+        assistantEntry([{ type: "text", text: "orphan identity" }]),
+      ]);
+      expect(reconstructFromFile(filePath)).toBeUndefined();
+    });
+
+    it("model_change → model = provider/modelId（多次出现时后写覆盖）", () => {
+      writeJsonl([
+        headerLine(),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
+        { type: "model_change", provider: "p1", modelId: "m1", timestamp: new Date(500).toISOString() },
+        assistantEntry([{ type: "text", text: "first" }], { ts: 1000 }),
+        { type: "model_change", provider: "p2", modelId: "m2", timestamp: new Date(1500).toISOString() },
+        assistantEntry([{ type: "text", text: "second" }], { ts: 2000 }),
+      ]);
+      const rec = reconstructFromFile(filePath);
+      expect(rec!.model).toBe("p2/m2");
+    });
+
+    it("model_change 字段非字符串（provider 缺失）→ model 保持空串", () => {
+      writeJsonl([
+        headerLine(),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
+        { type: "model_change", provider: 42, modelId: "m1", timestamp: new Date(500).toISOString() },
+        assistantEntry([{ type: "text", text: "ok" }]),
+      ]);
+      const rec = reconstructFromFile(filePath);
+      expect(rec!.model).toBe("");
+    });
+
+    it("thinking_level_change → thinkingLevel 恢复；无该 entry → undefined", () => {
+      writeJsonl([
+        headerLine(),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
+        { type: "thinking_level_change", thinkingLevel: "high", timestamp: new Date(500).toISOString() },
+        assistantEntry([{ type: "text", text: "ok" }]),
+      ]);
+      const withLevel = reconstructFromFile(filePath);
+      expect(withLevel!.thinkingLevel).toBe("high");
+
+      writeJsonl([
+        headerLine(),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
+        assistantEntry([{ type: "text", text: "ok" }]),
+      ]);
+      const withoutLevel = reconstructFromFile(filePath);
+      expect(withoutLevel!.thinkingLevel).toBeUndefined();
+    });
+
+    it("entry.timestamp 非法（Date.parse NaN）→ endedAt 回落 message.timestamp", () => {
+      writeJsonl([
+        headerLine(),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
+        { ...(assistantEntry([{ type: "text", text: "bad ts" }], { ts: 7777 }) as Record<string, unknown>), timestamp: "not-a-date" },
+      ]);
+      const rec = reconstructFromFile(filePath);
+      expect(rec!.endedAt).toBe(7777);
+    });
+
+    it("assistant message 无 content（非数组）→ 空 turn，usage 与 stopReason 均被跳过", () => {
+      writeJsonl([
+        headerLine(),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
+        {
+          type: "message",
+          timestamp: new Date(3000).toISOString(),
+          message: {
+            role: "assistant",
+            content: "not-an-array",
+            usage: { input: 100, output: 100 },
+            stopReason: "error",
+            errorMessage: "boom",
+            timestamp: 3000,
+          },
+        },
+      ]);
+      const rec = reconstructFromFile(filePath);
+      // turn 在 content 校验前已创建 → record 存在
+      expect(rec).toBeDefined();
+      expect(rec!.turnCount).toBe(1);
+      expect(rec!.turns[0].text).toBe("");
+      expect(rec!.totalTokens).toBe(0); // usage 被 continue 跳过
+      expect(rec!.lastError).toBeUndefined(); // stopReason=error 也被跳过
+      expect(rec!.error).toBeUndefined();
+      expect(rec!.endedAt).toBe(3000);
+    });
+
+    it("assistant message content 合法但无 usage → totalTokens 0，正常重建", () => {
+      writeJsonl([
+        headerLine(),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
+        {
+          type: "message",
+          timestamp: new Date(1000).toISOString(),
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "no usage" }],
+            stopReason: "stop",
+            timestamp: 1000,
+          },
+        },
+      ]);
+      const rec = reconstructFromFile(filePath);
+      expect(rec!.result).toBe("no usage");
+      expect(rec!.totalTokens).toBe(0);
+    });
+
+    it("孤儿 toolCall（toolResult 未到达）→ toolCalls 空，turn_end label 兜底 'turn'", () => {
+      writeJsonl([
+        headerLine(),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
+        assistantEntry([{ type: "toolCall", id: "c1", name: "read", arguments: { path: "/x" } }]),
+      ]);
+      const rec = reconstructFromFile(filePath);
+      expect(rec).toBeDefined();
+      expect(rec!.turns[0].toolCalls).toHaveLength(0);
+      const turnEnd = rec!.eventLog.find((e) => e.type === "turn_end");
+      expect(turnEnd?.label).toBe("turn"); // 空 text turn 的摘要兜底
+    });
+
+    it("stopReason 非 error/aborted/stop（如 length）→ lastError 保持前值不清除", () => {
+      writeJsonl([
+        headerLine(),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
+        assistantEntry([{ type: "text", text: "oops" }], {
+          stopReason: "error", errorMessage: "transient", ts: 1000,
+        }),
+        assistantEntry([{ type: "text", text: "truncated" }], { stopReason: "length", ts: 2000 }),
+      ]);
+      const rec = reconstructFromFile(filePath);
+      expect(rec!.lastError).toBe("transient");
+      expect(rec!.error).toBe("transient");
+    });
+
+    it("toolResult 配对 → result.content/details 透传，startedTs 取 assistant timestamp", () => {
+      writeJsonl([
+        headerLine(),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
+        assistantEntry([{ type: "toolCall", id: "c9", name: "bash", arguments: { command: "ls" } }]),
+        toolResultEntry("c9", "bash", { text: "file1\nfile2" }),
+      ]);
+      const rec = reconstructFromFile(filePath);
+      const tc = rec!.turns[0].toolCalls[0];
+      expect(tc.result).toEqual({ content: [{ type: "text", text: "file1\nfile2" }], details: undefined });
+      expect(tc.startedTs).toBe(1000);
+    });
+
+    it("identity 的 chatMode/worktree/forkDepth 经展开透传到 record", () => {
+      writeJsonl([
+        headerLine(),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100, chatMode: true, worktree: true, forkDepth: 2 }),
+        assistantEntry([{ type: "text", text: "ok" }]),
+      ]);
+      const rec = reconstructFromFile(filePath);
+      expect(rec!.chatMode).toBe(true);
+      expect(rec!.worktree).toBe(true);
+      expect(rec!.forkDepth).toBe(2);
+    });
+  });
 });

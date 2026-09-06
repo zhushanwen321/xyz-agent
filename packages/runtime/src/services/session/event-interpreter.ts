@@ -281,17 +281,73 @@ export class EventInterpreter {
     }
   }
 
+  /**
+   * 单事件编排入口。复杂度债务偿还时按处理阶段拆为五段 switch（行为保持提取）：
+   * - 本函数：结构编排 case（tool-call 异步 handler / compaction 终态）+ 余量分流；
+   * - handleConversationEvent：对话内容流帧（message / subagent-stream / record 失效）；
+   * - handleTurnLifecycleEvent：turn 生命周期（turn-start/end/usage + settled + trace）；
+   * - handleRoutingEvent：server 路由回调（status/bridge/extension/session-manager）；
+   * - handleMetaEvent：元数据与观测 hook 回调（thinking/renamed/hook）。
+   * 五段合计覆盖与原单一 switch 的 case 集合逐一对应，命中语义与分发顺序不变。
+   */
   private handle(ev: PiTranslatedEvent): void {
     switch (ev.kind) {
-      case 'noop':
+      case 'tool-call-start':
+        // hook 改写是异步的：handler 内部 await 后 send（不阻塞本循环）
+        void this.handleToolCallStart(ev)
         return
+      case 'tool-call-index':
+        // 缓存 toolCall 产出顺序锚点（pi toolcall_start），tool-call-start 到达时附到 WS 帧
+        this.toolCallContentIndex.set(ev.toolCallId, ev.contentIndex)
+        return
+      case 'tool-call-end':
+        void this.handleToolCallEnd(ev)
+        return
+      case 'compaction-start':
+        this.handleCompactionStart(ev)
+        return
+      case 'compaction-end':
+        this.handleCompactionEnd(ev)
+        return
+    }
+    if (this.handleConversationEvent(ev)) return
+    if (this.handleTurnLifecycleEvent(ev)) return
+    if (this.handleRoutingEvent(ev)) return
+    this.handleMetaEvent(ev)
+  }
+
+  /** 对话内容流事件的编排（原 handle 同名 case 逐字迁移）。命中返回 true。 */
+  private handleConversationEvent(ev: PiTranslatedEvent): boolean {
+    switch (ev.kind) {
+      case 'noop':
+        return true
       case 'message':
         this.opts.send(ev.message)
         // subagent bg-notify：更新内存态终态 → 广播 session.subagents
         this.handleSubagentBgNotify(ev.message)
         // workflow-result（run 完成）：广播 session.workflows 增量信号
         this.handleWorkflowResult(ev.message)
-        return
+        return true
+      case 'subagent-stream':
+        // 路径 A-1：subagent 逐字 streaming → subagent.stream_delta WS 帧
+        this.opts.send({
+          type: 'subagent.stream_delta' as ServerMessageType,
+          payload: { sessionId: ev.sessionId, recordId: ev.recordId, lines: ev.lines },
+        })
+        return true
+      case 'record-entry-appended':
+        // W18：自描述 record entry 到达 → 派生缓存失效（sessionService 防抖增量重拉）。
+        // 事件 payload 不进数据缓存——entry 扫描是唯一数据写路径。
+        this.opts.onRecordEntriesInvalidated?.(this.sessionId, ev.customType)
+        return true
+      default:
+        return false
+    }
+  }
+
+  /** turn 生命周期事件的编排（原 handle 同名 case 逐字迁移）。命中返回 true。 */
+  private handleTurnLifecycleEvent(ev: PiTranslatedEvent): boolean {
+    switch (ev.kind) {
       case 'turn-start':
         // 记 messageId（file_changes 挂载目标）+ 推进回合代际（W18 帧序三件套）。
         // [R-09 简化] 原 turn-start 同步采 baseline 快照已删除——diffSnapshots 的 baseline
@@ -307,21 +363,10 @@ export class EventInterpreter {
         // ping 在 turn 进行中持续，turn-end / agent_end / onSilentAbort 停止（见各分支）。
         // turn 间不探测（AC-3）：startPingLoop 在 turn-start 调用，确保只在 turn 内跑。
         this.startPingLoop()
-        return
-      case 'tool-call-start':
-        // hook 改写是异步的：handler 内部 await 后 send（不阻塞本循环）
-        void this.handleToolCallStart(ev)
-        return
-      case 'tool-call-index':
-        // 缓存 toolCall 产出顺序锚点（pi toolcall_start），tool-call-start 到达时附到 WS 帧
-        this.toolCallContentIndex.set(ev.toolCallId, ev.contentIndex)
-        return
-      case 'tool-call-end':
-        void this.handleToolCallEnd(ev)
-        return
+        return true
       case 'turn-end':
         this.handleTurnEnd(ev)
-        return
+        return true
       case 'turn-usage':
         // pi turn_end 的单 turn 用量：回写 context.update（用量在前），再触发 onTurnUsage
         //（turn 级副作用：project sidecar 兜底等）。
@@ -329,24 +374,50 @@ export class EventInterpreter {
         // message.complete 仍由 turn-end/agent_end 独占）。
         this.opts.onContextUpdate?.(ev.sessionId, { inputTokens: ev.inputTokens, totalTokens: ev.totalTokens })
         this.opts.onTurnUsage?.(ev.sessionId)
-        return
+        return true
+      case 'agent-settled':
+        // W1（fix-chat-flow-order）：run 级联结束（晚于 pi finally 的 bash 落盘 flush）→
+        // dispatcher 按序发布 per-session bash 待落列（见 opts.onAgentSettled 注释）。
+        this.opts.onAgentSettled?.(this.sessionId)
+        return true
+      case 'trace-trigger':
+        // session-trace 增量腿（A33）：触发事件到达 → 追赶式 since 补拉（fire-and-forget，
+        // 不阻塞本批次；拉到 delta 后由 syncTraceEntries 广播 session.traceEntryAppended）。
+        this.opts.onTraceSync?.(this.sessionId, ev.trigger)
+        return true
+      default:
+        return false
+    }
+  }
+
+  /** server 路由回调事件的编排（原 handle 同名 case 逐字迁移）。命中返回 true。 */
+  private handleRoutingEvent(ev: PiTranslatedEvent): boolean {
+    switch (ev.kind) {
       case 'status-set':
         this.opts.onStatusSetUpdate?.({ sessionId: this.sessionId, key: ev.key, text: ev.text, textRaw: ev.textRaw })
-        return
+        return true
       case 'status-broadcast':
         this.opts.send(ev.message)
-        return
+        return true
       case 'bridge-ui':
         this.opts.onBridgeUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.data)
-        return
+        return true
       case 'session-manager-ui':
         // fire-and-forget（不 await），由 SessionManagerHandler 异步处理并回写 response，
         // 不走前端 UI 超时流程。
         this.opts.onSessionManagerRequest?.(ev.requestId, ev.sessionId, ev.action, ev.params)
-        return
+        return true
       case 'extension-ui':
         this.opts.onExtensionUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.payload)
-        return
+        return true
+      default:
+        return false
+    }
+  }
+
+  /** 元数据与观测 hook 回调事件的编排（原 handle 同名 case 逐字迁移）。 */
+  private handleMetaEvent(ev: PiTranslatedEvent): void {
+    switch (ev.kind) {
       case 'thinking-level':
         // W7/W9 数据源治理：thinking_level_changed 只做失效——markDirty 置 dirty + 防抖重拉
         // get_state（唯一写路径），事件 payload 不再是 thinkingLevel 的数据源（session.thinkingLevelSet
@@ -363,34 +434,6 @@ export class EventInterpreter {
       case 'hook':
         // agent_start 等纯观测事件（无 WS 帧产出）
         this.opts.executeHooks?.('onPiEvent', { event: ev.eventType, ...ev.data }).catch(() => {})
-        return
-      case 'subagent-stream':
-        // 路径 A-1：subagent 逐字 streaming → subagent.stream_delta WS 帧
-        this.opts.send({
-          type: 'subagent.stream_delta' as ServerMessageType,
-          payload: { sessionId: ev.sessionId, recordId: ev.recordId, lines: ev.lines },
-        })
-        return
-      case 'record-entry-appended':
-        // W18：自描述 record entry 到达 → 派生缓存失效（sessionService 防抖增量重拉）。
-        // 事件 payload 不进数据缓存——entry 扫描是唯一数据写路径。
-        this.opts.onRecordEntriesInvalidated?.(this.sessionId, ev.customType)
-        return
-      case 'agent-settled':
-        // W1（fix-chat-flow-order）：run 级联结束（晚于 pi finally 的 bash 落盘 flush）→
-        // dispatcher 按序发布 per-session bash 待落列（见 opts.onAgentSettled 注释）。
-        this.opts.onAgentSettled?.(this.sessionId)
-        return
-      case 'compaction-start':
-        this.handleCompactionStart(ev)
-        return
-      case 'compaction-end':
-        this.handleCompactionEnd(ev)
-        return
-      case 'trace-trigger':
-        // session-trace 增量腿（A33）：触发事件到达 → 追赶式 since 补拉（fire-and-forget，
-        // 不阻塞本批次；拉到 delta 后由 syncTraceEntries 广播 session.traceEntryAppended）。
-        this.opts.onTraceSync?.(this.sessionId, ev.trigger)
         return
     }
   }

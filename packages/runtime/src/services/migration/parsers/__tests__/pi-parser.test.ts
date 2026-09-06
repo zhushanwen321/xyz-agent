@@ -35,7 +35,7 @@ describe('parsePiProviders', () => {
     home = mkdtempSync(join(tmpdir(), 'pi-parser-'))
   })
   afterEach(() => {
-    rmSync(home, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 把 fixture JSON 写到 <home>/.pi/agent/<target>。 */
@@ -455,5 +455,62 @@ describe('parsePiProviders', () => {
     const result = parsePiProviders(home)!
     expect(result.orphanCredentials).toHaveLength(0)
     expect(result.warnings!.some((w) => w.includes('credential weird') && w.includes('malformed'))).toBe(true)
+  })
+
+  // ══ W4 补充：分支覆盖缺口锚定 ══
+
+  // 锚定 `if (config.api && !PI_SUPPORTED_PROTOCOLS.has(config.api))` 的另一侧：
+  // api 字段缺失（undefined）时 provider 保留（不 skip），api 原样 undefined 透传。
+  it('W4-a: api 字段缺失的 provider → 保留进结果（不 skip），api 为 undefined', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: {
+        noapi: { name: 'NoApi', models: [{ id: 'm', name: 'M' }] },
+        normal: { name: 'Normal', api: 'openai-completions', models: [{ id: 'm2', name: 'M2' }] },
+      },
+    }))
+
+    const result = parsePiProviders(home)!
+
+    expect(result.providers).toHaveLength(2)
+    const noapi = result.providers.find((x) => x._sourceName === 'noapi')!
+    expect(noapi.api).toBeUndefined()
+    expect(noapi.name).toBe('NoApi')
+    expect(result.parseError).toBeUndefined()
+    // api 缺失不产生顶层 warnings（不属于丢弃场景）
+    expect(result.warnings).toBeUndefined()
+  })
+
+  // 锚定 `authEntry?.key ?? configApiKey` 的 ?? 另一侧：auth entry 存在但无 key 字段
+  // → 回退 models.json 的 apiKey（区别于 T9 的「auth 文件不存在」路径）。
+  it('W4-b: auth entry 存在但无 key → apiKey 回退 models.json 的值', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { zhipu: { name: 'Zhipu', api: 'openai-completions', apiKey: 'sk-fake-zhipu-in-models', models: [{ id: 'm', name: 'M' }] } },
+    }))
+    // zhipu 在 auth.json 有条目，但没有 key 字段（只有无关字段）
+    writePiAgentFile('auth.json', JSON.stringify({ zhipu: { type: 'api_key' } }))
+
+    const result = parsePiProviders(home)!
+    const zhipu = result.providers.find((x) => x._sourceName === 'zhipu')!
+    expect(zhipu.apiKey).toBe('sk-fake-zhipu-in-models')
+    expect(zhipu._credentialType).toBe('plaintext')
+    expect(zhipu._apiKeyExtracted).toBe(true)
+  })
+
+  // 锚定 hasEnvBundle 第三条件（Object.keys().length > 0）的另一侧：空 env 包 `{}` 不算
+  // env-bundle，继续按 key 前缀判定（key=$VAR → env 态）。
+  it('W4-c: auth entry env 为空包 {} → 不判 env-bundle，按 key 前缀判 env', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { zhipu: { name: 'Zhipu', api: 'openai-completions', models: [{ id: 'm', name: 'M' }] } },
+    }))
+    writePiAgentFile('auth.json', JSON.stringify({
+      zhipu: { type: 'api_key', key: '$ZHIPU_API_KEY', env: {} },
+    }))
+
+    const result = parsePiProviders(home)!
+    const zhipu = result.providers.find((x) => x._sourceName === 'zhipu')!
+    expect(zhipu._credentialType).toBe('env')
+    expect(zhipu._envVarName).toBe('ZHIPU_API_KEY')
+    expect(zhipu.apiKey).toBe('$ZHIPU_API_KEY')
+    expect(zhipu._warnings.some((w) => w.includes('env bundle'))).toBe(false)
   })
 })
