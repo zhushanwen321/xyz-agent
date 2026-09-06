@@ -452,10 +452,11 @@ jobs:
 
   # PR 构建检查：electron-builder 打包流程，不在 PR 上传产物。
   # dir-only=true：只产出 unpacked 目录，跳过安装器压缩（省 ~185s）。安装器配置回归交给 release.yml。
-  # needs gate：lint/typecheck/sdk-sync + 4 个 test job + e2e-visual 任一已知失败时不浪费 mac runner（mac 构建 5-8min）。
+  # needs gate：lint/typecheck + 4 个 test job + e2e-visual 任一已知失败时不浪费 mac runner（mac 构建 5-8min）。
+  # （sdk-sync 已随 plugin-types SSOT 收敛删除——SDK 升权威源、runtime 薄壳 re-export，无同步可查。）
   build:
     name: Build
-    needs: [lint, typecheck, sdk-sync, test-runtime, test-renderer, test-main, test-extensions, e2e-visual]
+    needs: [lint, typecheck, test-runtime, test-renderer, test-main, test-extensions, e2e-visual]
     uses: ./.github/workflows/build.yml
     with:
       upload-artifacts: false
