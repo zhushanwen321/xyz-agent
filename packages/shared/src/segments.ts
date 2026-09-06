@@ -75,7 +75,8 @@ export type Segment =
 function needsBoundarySpace(prev: Segment | null, seg: Segment): boolean {
   if (!prev || prev.type === 'text' || prev.type === 'image' || seg.type === 'image') return false
   if (seg.type === 'text') {
-    return seg.text !== '' && !seg.text.startsWith(' ')
+    // truthiness 语义与基线一致：text 为 undefined/null 脏数据时不补空格（非空串才补）
+    return !!seg.text && !seg.text.startsWith(' ')
   }
   return true
 }

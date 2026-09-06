@@ -247,7 +247,7 @@ function writeRolledBackMarker(version: string | undefined, reason?: string): vo
   writeResultFileAtomic(
     JSON.stringify({
       status: 'rolled-back',
-      ...(version ? { version } : {}),
+      ...(typeof version === 'string' ? { version } : {}),
       at: new Date().toISOString(),
       ...(reason ? { reason } : {}),
     }),

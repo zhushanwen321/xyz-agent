@@ -329,18 +329,6 @@ function findIssueKey(issues, issueId) {
 }
 
 /**
- * ES3 硬校验（5.3-P1 红线）：(1) deferred 只允许 minor/trivial；(2) must-fix 必须全进
- * fixes[]——mustFixIds 中未修复且未显式处理的 ID 判 violation（漏修）。mustFixIds
- * 为 null/undefined 时仅做 (1)（无 aggregator 数据的降级路径，wave 2 限制）。
- * trackedIssues（state.issues）可选：deferred 的 severity 与追踪表交叉核对（MF-4）——
- * 追踪条目以追踪 severity 为准（must-fix 追踪皆 critical/major，defer 即违规），
- * 仅追踪无此 ID（S-x minor）时采信 fix agent 自报。
- * idMap（可选，本轮表格号→台账键）：仅在 deferred 交叉核对「查台账」的输入上翻译——
- * L2/L3 改键后 fixer 申报的表格号需翻译才能命中台账。mustFixIds 与 fixes[].issue_id
- * 的集合比较（第 2 项）**双侧保持表格号空间不翻译**——它们同源（aggregated.md），
- * 翻译任一侧都会制造假失配（must-fix-not-fixed 误杀整 run）。
- */
-/**
  * deferred 条目的有效 severity（m9 交叉核对）：自报 severity 可被单边绕过（fix agent
  * 与审核方同一 LLM，有少干活动机，把 must-fix 标 minor 塞进 deferred 即过旧校验）——
  * 与追踪表交叉核对：trackedIssues 中能找到的 ID 以其追踪 severity 为准；追踪表无此 ID
@@ -398,6 +386,18 @@ function collectMustFixNotFixedViolations(result, mustFixIds) {
   return violations;
 }
 
+/**
+ * ES3 硬校验（5.3-P1 红线）：(1) deferred 只允许 minor/trivial；(2) must-fix 必须全进
+ * fixes[]——mustFixIds 中未修复且未显式处理的 ID 判 violation（漏修）。mustFixIds
+ * 为 null/undefined 时仅做 (1)（无 aggregator 数据的降级路径，wave 2 限制）。
+ * trackedIssues（state.issues）可选：deferred 的 severity 与追踪表交叉核对（MF-4）——
+ * 追踪条目以追踪 severity 为准（must-fix 追踪皆 critical/major，defer 即违规），
+ * 仅追踪无此 ID（S-x minor）时采信 fix agent 自报。
+ * idMap（可选，本轮表格号→台账键）：仅在 deferred 交叉核对「查台账」的输入上翻译——
+ * L2/L3 改键后 fixer 申报的表格号需翻译才能命中台账。mustFixIds 与 fixes[].issue_id
+ * 的集合比较（第 2 项）**双侧保持表格号空间不翻译**——它们同源（aggregated.md），
+ * 翻译任一侧都会制造假失配（must-fix-not-fixed 误杀整 run）。
+ */
 function validateFixResult(result, mustFixIds, trackedIssues, idMap) {
   const violations = collectDeferredViolations(result, trackedIssues, idMap);
   if (Array.isArray(mustFixIds) && mustFixIds.length > 0) {

@@ -379,7 +379,7 @@ export class MessageDispatcher {
       client = await this.svc.ensureActive(sessionId)
     } catch (e) {
       const errMsg = `Failed to restore session: ${toErrorMessage(e)}`
-      console.error(`[message-dispatcher] ${errMsg}`)
+      console.error(`[message-dispatcher] sendBash: ${errMsg}`)
       const errMsgObj = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
       this.messageBus?.publish(sessionId, errMsgObj)
       throw e
