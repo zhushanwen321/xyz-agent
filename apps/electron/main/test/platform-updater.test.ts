@@ -55,9 +55,9 @@ const MAC_RELEASE = {
   publishedAt: '',
   htmlUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/tag/v0.9.0',
   assets: {
-    macArm64Zip: {
-      name: 'TaiJi-mac-arm64.zip',
-      downloadUrl: 'https://example.com/mac.zip',
+    macArm64Dmg: {
+      name: 'TaiJi-mac-arm64.dmg',
+      downloadUrl: 'https://example.com/mac.dmg',
       size: 1000,
       sha256: 'a'.repeat(64),
     },
@@ -115,7 +115,7 @@ describe('W3: platform-updater (W3TC5-7)', () => {
     vi.restoreAllMocks()
     delete process.env.APPIMAGE
     const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 设置 process.platform + execPath 桩 */
@@ -130,7 +130,7 @@ describe('W3: platform-updater (W3TC5-7)', () => {
     const { MacUpdater } = await loadModule()
     const updater = new MacUpdater()
 
-    const ref = updater.prepareUpdate('/tmp/downloaded.zip', MAC_RELEASE as never)
+    const ref = updater.prepareUpdate('/tmp/downloaded.dmg', MAC_RELEASE as never)
 
     expect(ref.kind).toBe('detached-script')
     expect(ref).toMatchObject({ kind: 'detached-script', scriptPath: expect.stringContaining('updater.sh') })
@@ -155,7 +155,7 @@ describe('W3: platform-updater (W3TC5-7)', () => {
     const { MacUpdater } = await loadModule()
     const updater = new MacUpdater()
 
-    expect(() => updater.prepareUpdate('/tmp/dl.zip', MAC_RELEASE as never)).toThrow(/dev mode/)
+    expect(() => updater.prepareUpdate('/tmp/dl.dmg', MAC_RELEASE as never)).toThrow(/dev mode/)
     expect(childProcessMocks.spawn).not.toHaveBeenCalled()
   })
 
@@ -165,10 +165,10 @@ describe('W3: platform-updater (W3TC5-7)', () => {
     const updater = new MacUpdater()
     const releaseNoSha = {
       ...MAC_RELEASE,
-      assets: { macArm64Zip: { name: 'mac.zip', downloadUrl: 'x', size: 1 /* 无 sha256 */ } },
+      assets: { macArm64Dmg: { name: 'mac.dmg', downloadUrl: 'x', size: 1 /* 无 sha256 */ } },
     }
 
-    expect(() => updater.prepareUpdate('/tmp/dl.zip', releaseNoSha as never)).toThrow(/missing sha256/)
+    expect(() => updater.prepareUpdate('/tmp/dl.dmg', releaseNoSha as never)).toThrow(/missing sha256/)
   })
 
   // ── W3TC6：WinUpdater（u2a 改造：cmd wrapper 写盘 + detached spawn）──

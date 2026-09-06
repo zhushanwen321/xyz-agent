@@ -4,7 +4,7 @@ import * as path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { cleanupTempPrompt, writePromptToTempFile } from "../temp-prompt.ts";
+import { cleanupTempPrompt, writePromptToTempFile } from "../engine/engines/pi/temp-prompt.ts";
 
 describe("writePromptToTempFile", () => {
   it("创建临时目录 + 写入 prompt 文件", async () => {

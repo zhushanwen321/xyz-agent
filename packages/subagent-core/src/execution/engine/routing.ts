@@ -150,7 +150,8 @@ export async function routeEngine(opts: EngineRouteOptions): Promise<EngineRoute
   }
   // 守卫 a/b（首期合流）：显式指定（调用参数或 step 级）= 能力依赖声明，静默换引擎
   // 违反意图——沙箱类任务被静默卸除安全能力正是要防的形态（D9① 原文）。守卫 b 的
-  // 独立载体（AgentTaskSpec.requires）下钻后在本分支前独立判定，首期显式 engine 即声明。
+  // 独立载体（合流形状 AgentCallOpts 上的能力依赖声明字段，requires 已随 D6 裁撤）
+  // 下钻后在本分支前独立判定，首期显式 engine 即声明。
   if (routing.source === "call") {
     throw probeFailedError(routing.engineId, report, "engine 来自调用参数显式指定（能力依赖声明）——不兜底");
   }
@@ -215,4 +216,77 @@ function describeRoutingSource(routing: EngineRoutingInput): string | undefined 
     return `agent frontmatter engine='${routing.agentEngine}'`;
   }
   return undefined;
+}
+
+// ============================================================
+// routeEngineForHost：宿主两调用点的统一编排（D3-② 路由单点）
+// ============================================================
+
+/** routeEngineForHost 的参数（宿主装配：本地 pi 引擎 + 路由三件注入）。 */
+export interface HostRouteOptions {
+  /** 三层路由输入（调用方装配：调用参数 / frontmatter / 全局默认）。 */
+  routing: EngineRoutingInput;
+  /**
+   * 守卫 c 判据：调用方显式指定的 model（与 routeEngine.taskModel 同口径——解析后的
+   * 兼底 model 恒非空会把一切兜底误判为 model 绑定命中，故只传显式值）。
+   */
+  taskModel?: string;
+  /** engineRouting.strict（config.json）：true = 一切 probe 失败直接报错。 */
+  strict: boolean;
+  /** 探针执行体（生产 = registry 引擎 .probe()；测试可注入）。 */
+  probe: (engineId: string) => Promise<ProbeReport>;
+  /**
+   * 本地 pi 引擎实例（chat 域 = Service 的 chatPiEngine；workflow 域 = SAR 的 per-session
+   * DI 实例）。pi 请求与「非 pi 兜底回 pi」两种形态都由它接管——不依赖 registry 全局
+   * 注册态（单测注入 mock 时全局单例不可见；生产环境两者是同一进程单例对象）。
+   */
+  piEngine: EnginePort;
+  /** 非 pi 引擎获取（缺省 registry.getEngine；测试注入）。 */
+  getEngineFn?: (engineId: string) => EnginePort;
+  /** 非 pi 注册表存在性检查（缺省 registry.hasEngine）。 */
+  hasEngineFn?: (engineId: string) => boolean;
+  /** 非 pi 注册表清单（缺省 registry.listEngines）。 */
+  listEnginesFn?: () => string[];
+}
+
+/**
+ * 宿主侧统一路由编排（D3-②：唯一实现，两调用点——SubagentService.execute 与
+ * SAR.run）。把原先散在两调用点的「pi 同步短路 + registry 注入（本地 pi 恒可用，
+ * engine_not_found 文案不把本地 pi 漏报成未注册）+ 兜底回 pi 时换本地实例」收敛到本函数。
+ *
+ * 返回值形态（时序契约）：pi 请求路径**同步返回** EngineRouteResult（非 Promise）——
+ * 不引入微任务边界，SAR 的「run 内首个 await 前已触达 executeAndAwait」缺省路径时序
+ * 与旧形态逐字节一致；非 pi 路径返回 Promise（probe 编排固有异步），调用方统一用
+ * `routed instanceof Promise ? await routed : routed` 消费（pi 路径零 await）。
+ */
+export function routeEngineForHost(opts: HostRouteOptions): EngineRouteResult | Promise<EngineRouteResult> {
+  const routing = resolveEngineRouting(opts.routing);
+
+  // pi 请求（缺省/显式 pi）：本地 DI 实例同步短路——pi 恒免探、无 fallback 可言，
+  // 不经 routeEngine 的 await/probe（「缺省路径行为零变化」A1 硬约束）。
+  if (routing.engineId === DEFAULT_ENGINE_ID) {
+    return {
+      engine: opts.piEngine,
+      engineId: DEFAULT_ENGINE_ID,
+      requestedEngineId: DEFAULT_ENGINE_ID,
+      source: routing.source,
+    };
+  }
+
+  return routeEngine({
+    routing: opts.routing,
+    taskModel: opts.taskModel,
+    strict: opts.strict,
+    probe: opts.probe,
+    // 本地 pi 恒可用（per-session DI 绑定）——get/has/list 注入同一口径：
+    // probe 失败兜底回 pi 时取本地实例接管，engine_not_found 文案不漏报本地 pi。
+    getEngineFn: (engineId) =>
+      engineId === DEFAULT_ENGINE_ID ? opts.piEngine : (opts.getEngineFn?.(engineId) ?? getEngine(engineId)),
+    hasEngineFn: (engineId) =>
+      engineId === DEFAULT_ENGINE_ID || (opts.hasEngineFn?.(engineId) ?? hasEngine(engineId)),
+    listEnginesFn: () => {
+      const listed = opts.listEnginesFn?.() ?? listEngines();
+      return listed.includes(DEFAULT_ENGINE_ID) ? listed : [DEFAULT_ENGINE_ID, ...listed];
+    },
+  });
 }

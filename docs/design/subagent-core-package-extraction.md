@@ -238,6 +238,8 @@ interface NotifyDomainPorts {
 - **证据**：本仓两条 npm 发布管线（main 稳定 + dev-npm 预发布）为既有机制。
 - **效果**：目标 5 成立。
 
+> **[2026-09 post-convergence 补注]** 深路径豁免终止（出处：[subagent-post-convergence-architecture.md](subagent-post-convergence-architecture.md) §3.2 B-2 / D5-补注）——壳侧生产代码深路径归零，豁免条款不再适用：曾保留的 `./*` → src 开发态通配已删除，生产消费收口到主入口 barrel（137 符号，逐名可审）与上列受控子入口（4 条语义子入口 + `./workflows/*`）；删通配后壳再写深路径 = tsc 编译错误（不再是风格问题）。D5「无宿主触点证据不放宽」判据由 post-convergence 收口首次执行——补注而非推翻。
+
 **D6：zcode 侧渐进替换次序 = utils → workflow 运行时 → spawn 驱动（选定）**
 
 - **采用**：三步风险递增：**2a** 删 vendor utils 改 npm 依赖（zcode 侧 require core 的 `workflows/review-fix-loop-utils.cjs` 子路径；纯函数、零 I/O、对照面现成、立即消灭 5 分叉点）；**2b** workflow-manager/workflow-script 替换为 core orchestration，zcode 侧内置 workflow 脚本副本删除、直接使用 core 的 `workflows/` 资产（worker 契约随 core）；**2c** runner-spawn/driver/model-router/slots/pool 替换为 core `engines/zcode` + 执行链，daemon 改为「core 宿主壳」（经 HostServices 接 task-notification）。

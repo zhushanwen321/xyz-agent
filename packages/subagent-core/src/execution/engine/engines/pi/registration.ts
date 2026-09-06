@@ -13,7 +13,7 @@ import { registerEngine } from "../../registry.ts";
 import { PI_ENGINE_ID, PiEngine } from "./pi-engine.ts";
 import type { PiEngineService } from "./pi-engine.ts";
 
-export { PI_ADAPTER_VERSION, PI_ENGINE_ID, PI_POOL_KEY, PiEngine } from "./pi-engine.ts";
+export { PI_ADAPTER_VERSION, PI_ENGINE_ID, PiEngine } from "./pi-engine.ts";
 export type { PiEngineDeps, PiEngineService } from "./pi-engine.ts";
 
 /**
@@ -31,5 +31,7 @@ export function createPiEngine(getService: () => PiEngineService | null): PiEngi
  * 只会拿到引擎实例，真正 run 时才解析服务。
  */
 export function registerPiEngine(): void {
-  registerEngine(PI_ENGINE_ID, () => createPiEngine(getSubagentService));
+  // [D4 聚合连带] 查询/交互面聚合后 Service 不再整体结构化兼容 PiEngineService——
+  // 经 asEngineService 显式视图适配（成员集合与原直绑等价）。
+  registerEngine(PI_ENGINE_ID, () => createPiEngine(() => getSubagentService()?.asEngineService ?? null));
 }

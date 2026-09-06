@@ -19,7 +19,7 @@
  * 状态更新方（TerminalView useTerminal alive/exit handler）→ markAlive(sid) / markExited(sid)
  */
 import { defineStore } from 'pinia'
-import { terminalApi } from '@/api/domains/terminal'
+import { terminalApi } from '@xyz-agent/core/transport/api/domains/terminal'
 import { createTerminalWriteQueue } from '@xyz-agent/core/domain/drawer'
 
 export const useTerminalWriteQueueStore = defineStore('terminal-write-queue', () => {

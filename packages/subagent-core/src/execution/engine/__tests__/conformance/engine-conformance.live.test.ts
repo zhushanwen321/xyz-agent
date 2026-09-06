@@ -25,10 +25,11 @@ import { describe, expect, it } from "vitest";
 import { getSubagentService } from "../../../subagent-service.ts";
 import { ZcodeEngine } from "../../engines/zcode/zcode-engine.ts";
 import { createPiEngine } from "../../engines/pi/registration.ts";
+import type { PiEngineService } from "../../engines/pi/pi-engine.ts";
 import type { RunContext } from "../../port.ts";
 import type { AgentEvent } from "../../../types.ts";
-import type { AgentTaskSpec } from "../../types.ts";
-import { getPiInvocation } from "../../../pi-invocation.ts";
+import type { AgentCallOpts } from "../../../../orchestration/models/types.ts";
+import { getPiInvocation } from "../../engines/pi/pi-invocation.ts";
 import {
   RELAY_ENV_NODE,
   RELAY_ENV_RECORD_ID,
@@ -51,8 +52,8 @@ describe.skipIf(!LIVE)("conformance run 层（真实 spawn，手动门）", () =
       testCtx.skip("SubagentService 未装配（需在真实会话进程内运行）");
       return;
     }
-    const engine = createPiEngine(() => service);
-    const task: AgentTaskSpec = { task: "Reply with the single word: ok", slug: "live-c2" };
+    const engine = createPiEngine(() => service as unknown as PiEngineService);
+    const task: AgentCallOpts = { prompt: "Reply with the single word: ok", description: "live-c2" };
     const ctx: RunContext = { taskId: "sa-live-pi-c2", poolKey: "shared" };
     const { outcome } = await engine.run(task, ctx);
     expect(outcome.error).toBeUndefined();
@@ -68,9 +69,9 @@ describe.skipIf(!LIVE)("conformance run 层（真实 spawn，手动门）", () =
   }, 60_000);
 
   // [R6] 常驻通道的 conformance run 层（RA8「C1-C8 适配后全绿」的 live 面）：
-  // XYZ_ZCODE_MODE=appserver 定向（不探不降）跑最小任务——C2 outcome + C3 stream
-  // 不变量（app-server 设计 §3.4 不变量 1）。更深断言（schema/abort/进程锚定）由
-  // engines/zcode/__tests__/zcode-engine.live.test.ts 的 [R6] app-server 段承载。
+  // 跑最小任务——C2 outcome + C3 stream 不变量（app-server 设计 §3.4 不变量 1）。
+  // 2026-09 起单一 app-server 形态即缺省路径（无模式钉扎 env）；更深断言（schema/
+  // abort/进程锚定）由 engines/zcode/__tests__/zcode-engine.live.test.ts 承载。
   it("zcode：app-server 常驻通道 run 全链（C2 outcome 无 error + C3 stream 事件不变量）", async (testCtx) => {
     const model = process.env["ZCODE_E2E_MODEL"];
     if (model === undefined || model === "") {
@@ -79,11 +80,10 @@ describe.skipIf(!LIVE)("conformance run 层（真实 spawn，手动门）", () =
     }
     const engine = new ZcodeEngine({
       engineDataDir: () => "/tmp/zcode-conformance-live-appserver",
-      processEnv: { ...process.env, XYZ_ZCODE_MODE: "appserver" },
     });
     const events: AgentEvent[] = [];
     const { outcome } = await engine.run(
-      { task: "Reply with the single word: ok", slug: "live-appserver-c2", model, cwd: "/tmp" },
+      { prompt: "Reply with the single word: ok", description: "live-appserver-c2", model, cwd: "/tmp" },
       { taskId: "sa-live-zcode-appserver", poolKey: "", onEvent: (e) => events.push(e) },
     );
     expect(outcome.error).toBeUndefined();
@@ -200,9 +200,9 @@ describe.skipIf(!LIVE)("conformance relay 变体（经代理 spawn 全链，手�
     }
 
     try {
-      const engine = createPiEngine(() => service);
+      const engine = createPiEngine(() => service as unknown as PiEngineService);
       const events: AgentEvent[] = [];
-      const task: AgentTaskSpec = { task: "Reply with the single word: ok", slug: "live-relay-c2" };
+      const task: AgentCallOpts = { prompt: "Reply with the single word: ok", description: "live-relay-c2" };
       const ctx: RunContext = {
         taskId: "sa-live-pi-relay",
         poolKey: "shared",
@@ -221,7 +221,7 @@ describe.skipIf(!LIVE)("conformance relay 变体（经代理 spawn 全链，手�
         else process.env[key] = savedEnv[key];
       }
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 });

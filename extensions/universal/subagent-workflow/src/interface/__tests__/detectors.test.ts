@@ -24,7 +24,7 @@ import {
   findFlattenedArgKeys,
 } from "@zhushanwen/subagent-core/orchestration/args-meta.ts";
 import { TOOL_TOP_LEVEL } from "../tool-workflow";
-import { parseResourceMeta } from "@zhushanwen/subagent-core/shared/meta-parser.ts";
+import { parseResourceMeta } from "@zhushanwen/subagent-core";
 
 // 宿主 reservedKeys 注入（与 tool-workflow ARGS_META_OPTIONS 等值契约）
 const OPT = { reservedKeys: TOOL_TOP_LEVEL };

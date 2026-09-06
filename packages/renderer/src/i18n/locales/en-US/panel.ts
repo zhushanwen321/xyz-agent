@@ -104,6 +104,9 @@ export default {
     // [W4 turn-attribution] bg-notify trigger turn origin row (Turn.vue) + executing-bash transient row prefix (MessageStream.vue)
     turnTriggerBgNotify: 'Background task finished · resumed',
     executingBash: 'Running',
+    // [premature-timeout] recovery guidance for idle-timeout premature close (Turn.vue, docs/design/timeout-streaming-ui-idle.md §4.2;
+    // no hardcoded threshold — user-adjustable, a literal would drift)
+    prematureTimeoutNotice: 'Response timed out and was closed. If the task is still running, it will be restored automatically when it completes; resend if you confirmed it stopped.',
   },
   git: {
     title: 'Git',
@@ -148,6 +151,7 @@ export default {
     quotaFailNetwork: 'network error or service unavailable',
     quotaFailNoSubscription: 'no active subscription detected',
     quotaFailParse: 'failed to parse quota response',
+    quotaFailNotConfigured: 'no Workspace configured — set it in Settings and retry',
     window5h: '5h',
     windowWeek: 'This week',
     windowMonth: 'This month',
@@ -250,10 +254,12 @@ export default {
     switchModel: 'Switch model',
     searchPlaceholder: 'Search models…',
     noMatch: 'No matching models',
+    placeholder: '\u2026',
   },
   thinkingLevel: {
     title: 'Thinking level',
     level: 'Level',
+    placeholder: '\u2026',
   },
   command: {
     title: 'Commands',

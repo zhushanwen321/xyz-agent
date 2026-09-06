@@ -35,6 +35,9 @@ export function mapToWorkflowAgentResult(
 ): WorkflowAgentResult {
   return {
     content: r.text,
+    // [D5-③] 失败分诊标签透传（产出侧 output-collector 写入，消费侧
+    // executeAgentCall 读字段分诊）。成功路径 undefined 不落键。
+    ...(r.failureKind !== undefined ? { failureKind: r.failureKind } : {}),
     parsedOutput: r.parsedOutput,
     error: r.success ? undefined : (r.error || "Agent call failed (aborted or unknown error)"),
     durationMs: r.durationMs,

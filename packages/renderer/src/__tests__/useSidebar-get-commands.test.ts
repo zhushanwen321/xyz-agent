@@ -15,7 +15,7 @@ import { it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { effectScope } from 'vue'
 import type { SessionGroup, SessionSummary } from '@xyz-agent/shared'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 
 // mock sessionApi：getCommands/getContext 用 spy 断言「不被调用」。
 vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },

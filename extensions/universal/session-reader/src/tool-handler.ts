@@ -766,29 +766,22 @@ async function doDetail(params: SessionReadParams, agentDir: string): Promise<To
 /** search action 的默认命中数上限。 */
 const SEARCH_DEFAULT_LIMIT = 20
 
-/** search：session 内全文检索（design §3.4 search，M3 新实现）。 */
-async function doSearch(
-  params: SessionReadParams,
-  agentDir: string,
-  signal?: AbortSignal,
-): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'search', agentDir, params.source)
-  if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
-  const pattern = requireStr(params.pattern, 'pattern', 'search')
-  const scope = params.scope ?? 'all'
-  const limit = params.limit ?? SEARCH_DEFAULT_LIMIT
-  const { entries } = await safeParse(resolved.fileName)
-  const tree = buildTreeView(entries)
-  const turns = segmentTurns(entries, new Set(tree.leafPath))
-  const regex = compilePattern(pattern)
-  // S-3：启发式降级时在 header 标注，避免 LLM 把 0 hit(s) 误读为「无匹配」（静默错数据）
-  const degraded = isCatastrophicPattern(pattern)
-  const hits: Array<{
-    turnIndex: number
-    entryIndex: number
-    role: string
-    matchSnippet: string
-  }> = []
+/** search 单条命中（turn 内 entry 定位 + 角色 + 摘要片段）。 */
+interface SearchHit {
+  turnIndex: number
+  entryIndex: number
+  role: string
+  matchSnippet: string
+}
+
+/** search 扫描阶段：遍历 turns 收集命中；每 turn 前检查 abort（MF-5 尽早退出）。 */
+function collectSearchHits(
+  turns: Turn[],
+  regex: RegExp,
+  scope: NonNullable<SessionReadParams['scope']>,
+  signal: AbortSignal | undefined,
+): SearchHit[] {
+  const hits: SearchHit[] = []
   for (const t of turns) {
     // MF-5：Esc/abort 后 pi 已丢弃本 turn 结果，尽早退出避免继续扫描长 session
     if (signal?.aborted) {
@@ -810,14 +803,46 @@ async function doSearch(
       }
     }
   }
-  const truncated = hits.length > limit
-  const sliced = truncated ? hits.slice(0, limit) : hits
+  return hits
+}
+
+/** search 收口阶段：结果文本组装（header 标注降级/scope/截断 + 逐行命中列表）。 */
+function formatSearchText(
+  pattern: string,
+  degraded: boolean,
+  scope: NonNullable<SessionReadParams['scope']>,
+  sliced: SearchHit[],
+  truncated: boolean,
+): string {
   const lines = sliced.map(
     (h) => `  T${pad(h.turnIndex)} #${h.entryIndex} ${h.role}: ${h.matchSnippet}`,
   )
-  const text = `${sliced.length} hit(s) for /${pattern}/${degraded ? '（已降级为字面子串匹配）' : ''}${
+  return `${sliced.length} hit(s) for /${pattern}/${degraded ? '（已降级为字面子串匹配）' : ''}${
     scope !== 'all' ? ' scope=' + scope : ''
   }${truncated ? ` (truncated, showing first ${sliced.length})` : ''}\n${lines.join('\n')}`
+}
+
+/** search：session 内全文检索（design §3.4 search，M3 新实现）。 */
+async function doSearch(
+  params: SessionReadParams,
+  agentDir: string,
+  signal?: AbortSignal,
+): Promise<ToolResult> {
+  const resolved = await resolveSessionId(params.session, 'search', agentDir, params.source)
+  if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
+  const pattern = requireStr(params.pattern, 'pattern', 'search')
+  const scope = params.scope ?? 'all'
+  const limit = params.limit ?? SEARCH_DEFAULT_LIMIT
+  const { entries } = await safeParse(resolved.fileName)
+  const tree = buildTreeView(entries)
+  const turns = segmentTurns(entries, new Set(tree.leafPath))
+  const regex = compilePattern(pattern)
+  // S-3：启发式降级时在 header 标注，避免 LLM 把 0 hit(s) 误读为「无匹配」（静默错数据）
+  const degraded = isCatastrophicPattern(pattern)
+  const hits = collectSearchHits(turns, regex, scope, signal)
+  const truncated = hits.length > limit
+  const sliced = truncated ? hits.slice(0, limit) : hits
+  const text = formatSearchText(pattern, degraded, scope, sliced, truncated)
   return { content: [{ type: 'text', text }], details: { hits: sliced, truncated } }
 }
 
@@ -1187,8 +1212,16 @@ function extractFiles(turns: Turn[]): ToolResult {
 /** commits 提取的 hash 前后上下文字符数（次路径关键词判定窗口）。 */
 const COMMIT_CONTEXT_CHARS = 30
 
-function extractCommits(turns: Turn[]): ToolResult {
-  // 建 toolCallId → bash command 映射（用于判定 toolResult 是否来自 git 命令）
+/** commits 预设的单条提取结果（hash + 来源 turn + 置信来源 + 上下文片段）。 */
+interface CommitItem {
+  hash: string
+  turn: number
+  source: 'git-cmd' | 'commit-context'
+  context: string
+}
+
+/** 建 toolCallId → bash command 映射（用于判定 toolResult 是否来自 git 命令）。 */
+function collectBashCommands(turns: Turn[]): Map<string, string> {
   const bashCmds = new Map<string, string>()
   for (const t of turns) {
     for (const e of t.entries) {
@@ -1201,16 +1234,39 @@ function extractCommits(turns: Turn[]): ToolResult {
       }
     }
   }
+  return bashCmds
+}
 
-  type CommitItem = {
-    hash: string
-    turn: number
-    source: 'git-cmd' | 'commit-context'
-    context: string
+/** 单条 toolResult 文本的 hash 提取：git-cmd 全收（高置信），否则按上下文关键词过滤（次路径）。 */
+function matchCommitsInResult(
+  text: string,
+  turnIndex: number,
+  isGitBash: boolean,
+  high: CommitItem[],
+  low: CommitItem[],
+): void {
+  for (const m of text.matchAll(SHORT_HASH_RE)) {
+    const hash = m[0]
+    const idx = m.index ?? 0
+    const ctx = text
+      .slice(Math.max(0, idx - COMMIT_CONTEXT_CHARS), idx + hash.length + COMMIT_CONTEXT_CHARS)
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (isGitBash) {
+      high.push({ hash, turn: turnIndex, source: 'git-cmd', context: ctx })
+    } else if (COMMIT_CTX_RE.test(ctx)) {
+      low.push({ hash, turn: turnIndex, source: 'commit-context', context: ctx })
+    }
   }
+}
+
+/** 主扫描阶段：遍历 toolResult entry，分类收集高/低置信 commit 候选。 */
+function collectCommitCandidates(
+  turns: Turn[],
+  bashCmds: Map<string, string>,
+): { high: CommitItem[]; low: CommitItem[] } {
   const high: CommitItem[] = []
   const low: CommitItem[] = []
-
   for (const t of turns) {
     for (const e of t.entries) {
       if (e.message?.role !== 'toolResult') continue
@@ -1219,23 +1275,14 @@ function extractCommits(turns: Turn[]): ToolResult {
       if (text === '') continue
       const cmd = msg.toolCallId !== undefined ? bashCmds.get(msg.toolCallId) : undefined
       const isGitBash = msg.toolName === 'bash' && cmd !== undefined && GIT_CMD_RE.test(cmd)
-      for (const m of text.matchAll(SHORT_HASH_RE)) {
-        const hash = m[0]
-        const idx = m.index ?? 0
-        const ctx = text
-          .slice(Math.max(0, idx - COMMIT_CONTEXT_CHARS), idx + hash.length + COMMIT_CONTEXT_CHARS)
-          .replace(/\s+/g, ' ')
-          .trim()
-        if (isGitBash) {
-          high.push({ hash, turn: t.index, source: 'git-cmd', context: ctx })
-        } else if (COMMIT_CTX_RE.test(ctx)) {
-          low.push({ hash, turn: t.index, source: 'commit-context', context: ctx })
-        }
-      }
+      matchCommitsInResult(text, t.index, isGitBash, high, low)
     }
   }
+  return { high, low }
+}
 
-  // 去重：高置信优先，同 hash 保留首次
+/** 收口阶段：去重，高置信优先，同 hash 保留首次。 */
+function dedupeCommits(high: CommitItem[], low: CommitItem[]): CommitItem[] {
   const seen = new Set<string>()
   const items: CommitItem[] = []
   for (const c of high) {
@@ -1248,6 +1295,14 @@ function extractCommits(turns: Turn[]): ToolResult {
     seen.add(c.hash)
     items.push(c)
   }
+  return items
+}
+
+function extractCommits(turns: Turn[]): ToolResult {
+  // 建 toolCallId → bash command 映射（用于判定 toolResult 是否来自 git 命令）
+  const bashCmds = collectBashCommands(turns)
+  const { high, low } = collectCommitCandidates(turns, bashCmds)
+  const items = dedupeCommits(high, low)
 
   return renderExtractItems(
     'commits',

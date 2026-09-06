@@ -23,7 +23,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import { __clearSessionCleanupRegistryForTest } from '@/composables/useSessionScopedState'
 import { __clearInFlightContextFetchForTest } from '@/composables/features/model/useContextUsage'
 
@@ -33,10 +33,10 @@ import ContextCapacityPopover from '@/components/panel/ContextCapacityPopover.vu
 // vitest 注入 VITE_MOCK=true 使 '@/api' 门面默认指向 mock 门面（mock getContext 会返回
 // 固定真值，污染「无值/在途」断言），须重指才能与断言共用同一 vi.fn。
 const getContextMock = vi.hoisted(() => vi.fn())
-vi.mock('@/api/domains/session', () => ({ getContext: getContextMock }))
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({ getContext: getContextMock }))
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
-  const session = await import('@/api/domains/session')
+  const session = await import('@xyz-agent/core/transport/api/domains/session')
   return { ...actual, session }
 })
 

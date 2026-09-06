@@ -72,7 +72,7 @@ vi.mock("../alive-store.ts", () => ({
   writeAliveMarker: vi.fn(),
 }));
 
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -81,7 +81,7 @@ vi.mock("../temp-prompt.ts", () => ({
 }));
 
 import { DialogGlobalQueue } from "../dialog-queue.ts";
-import { runSpawn, type SessionRunnerContext } from "../session-runner.ts";
+import { runSpawn, type SessionRunnerContext } from "../engine/engines/pi/session-runner.ts";
 import { type ChannelHandler,createUiChannelRegistry } from "../ui-channels.ts";
 import { createUiRequestHandlerForMode } from "../ui-request-handler-factory.ts";
 import {
@@ -168,7 +168,7 @@ function makeAskUserCtx(
     },
     modelRegistry: undefined,
     model: undefined,
-  } as SessionRunnerContext;
+  } as unknown as SessionRunnerContext;
   const handler = createUiRequestHandlerForMode(ctx as never, registry, dialogQueue);
   return makeCtxBase({
     ...overrides,
@@ -315,11 +315,11 @@ describe("ask_user 跨进程 transit e2e (#34)", () => {
     // 验证：连续 emit 两个 ask_user，channel handler 按顺序被调，response 按顺序写回。
     const registry = createUiChannelRegistry();
     const callOrder: string[] = [];
-    const channelHandler: ChannelHandler = vi.fn(async (req: { id: string }) => {
-      callOrder.push(req.id);
+    const channelHandler: ChannelHandler = vi.fn(async (req: unknown) => {
+      callOrder.push((req as { id: string }).id);
       // 加延迟让两个请求有机会并发（若队列没串行）
       await new Promise((r) => setTimeout(r, 15));
-      return { value: `ans-${req.id}` };
+      return { value: `ans-${(req as { id: string }).id}` };
     });
     registry.register("ask_user", channelHandler);
 

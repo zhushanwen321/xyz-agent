@@ -3,7 +3,7 @@
  *
  * 来源：packages/renderer/src/stores/fileSearch.ts（pinia setup store）迁移为纯 factory。
  * 迁移约束（IF1）：不依赖 pinia；状态/操作函数语义逐条等价；消费方自行 .value（无 pinia unwrap）。
- * renderer 旧 store 保留，待消费方迁移（strangler 逐域绞杀 §11.2）完成后删除。
+ * 壳旧 store 已随双轨收口（D7）删除，本 factory 是 fileSearch 缓存的唯一实现。
  *
  * 职责：缓存 file.search 结果（FileNode[]），同 session 重复打开 CommandPopover 浮层
  * 不重新递归（大仓库下递归耗时）。失效由 useFileSearch.setupInvalidation 驱动

@@ -16,7 +16,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // mock session-runner：index.ts factory 顶层唯一引用点是 killAllSpawnedChildren。
 const killAllSpawnedChildrenMock = vi.fn();
-vi.mock("@zhushanwen/subagent-core/execution/session-runner.ts", () => ({
+vi.mock("@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts", () => ({
   killAllSpawnedChildren: killAllSpawnedChildrenMock,
 }));
 

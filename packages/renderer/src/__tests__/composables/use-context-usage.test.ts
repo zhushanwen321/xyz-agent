@@ -25,7 +25,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { defineComponent, h, ref, nextTick } from 'vue'
 import { mount, type VueWrapper } from '@vue/test-utils'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import {
   triggerSessionCleanups,
   __clearSessionCleanupRegistryForTest,
@@ -43,10 +43,10 @@ import type {
 // vitest 注入 VITE_MOCK=true 使 '@/api' 门面默认指向 mock 门面，须重指才能与断言共用
 // 同一 vi.fn（对齐 useSubagentListSync.test.ts 的双 mock 形态）。
 const getContextMock = vi.hoisted(() => vi.fn())
-vi.mock('@/api/domains/session', () => ({ getContext: getContextMock }))
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({ getContext: getContextMock }))
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
-  const session = await import('@/api/domains/session')
+  const session = await import('@xyz-agent/core/transport/api/domains/session')
   return { ...actual, session }
 })
 

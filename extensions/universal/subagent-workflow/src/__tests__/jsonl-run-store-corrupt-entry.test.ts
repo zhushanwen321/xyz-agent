@@ -31,14 +31,15 @@ import * as path from "node:path";
 
 import type { CustomEntry } from "@earendil-works/pi-coding-agent";
 
-import { Budget } from "@zhushanwen/subagent-core/orchestration/models/budget.ts";
-import { Trace } from "@zhushanwen/subagent-core/orchestration/models/trace.ts";
-import type { RunSpec } from "@zhushanwen/subagent-core/orchestration/models/run-spec.ts";
-import type { ExecutionTraceNode } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
-import { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
-import { SNAPSHOT_VERSION } from "@zhushanwen/subagent-core/orchestration/run-snapshot.ts";
+import { Budget } from "@zhushanwen/subagent-core";
+import { Trace } from "@zhushanwen/subagent-core";
+import type { RunSpec } from "@zhushanwen/subagent-core";
+import type { ExecutionTraceNode } from "@zhushanwen/subagent-core";
+import { WorkflowRun } from "@zhushanwen/subagent-core";
+// SNAPSHOT_VERSION 随 c721646f1 codec 迁 core 后壳模块不再 re-export，改从 barrel 消费
+import { SNAPSHOT_VERSION } from "@zhushanwen/subagent-core";
 import { JsonlRunStore, WORKFLOW_RECORD_CUSTOM_TYPE } from "../jsonl-run-store.ts";
-import { mkCtx, mkPi } from "@zhushanwen/subagent-core/orchestration/__tests__/test-mocks.ts";
+import { mkCtx, mkPi } from "@zhushanwen/subagent-core/testing/orchestration/__tests__/test-mocks.ts";
 
 function makeSpec(): RunSpec {
   return {

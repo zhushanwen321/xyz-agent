@@ -1,15 +1,15 @@
-// zcode-engine-appserver.test.ts —— [R4] 引擎接线测试：全部跑 __fixtures__/
-// fake-appserver.mjs 子进程（scenario 注入），绝不 spawn 真 zcode.cjs。覆盖：
-// 模式分派骨架 / 事件时序前移（text_delta 流式 + 终态 message_end/turn_end +
+// zcode-engine-appserver.test.ts —— 引擎接线测试（2026-09 起单一 app-server 形态）：
+// 全部跑 __fixtures__/fake-appserver.mjs 子进程（scenario 注入），绝不 spawn 真
+// zcode.cjs。覆盖：事件时序前移（text_delta 流式 + 终态 message_end/turn_end +
 // resolve 严格晚于末事件——不变量 2）/ usage 映射（与 parser.mapZcodeUsage 同源）/
-// per-session model 透传 / 常驻 HOME 锚定（poolKey='home-appserver' + allProviders
-// config + fake 侧 HOME/env 断言）/ onHandleReady 回调时点（create 应答后）与
-// onPoolResolved 时点（prepare 期，先于首事件）/ abort 链 D3（stop 帧先发 → stop
-// 优雅生效不杀进程 / stop 无效 grace 耗尽 → killChain 连坐）/ 凭据刷新（内容 hash
-// 不一致 → config 重写 + 连接重建）/ dispose（幂等 / close 帧先于 SIGTERM / dispose
-// 后 run 重建——不变量 4）/ 多会话并发不串线（RA3 地基，FAKE_STAMP_SESSION）/
-// -32603 Model config missing 错误归类 / capabilities 断言（eventGranularity 翻转
-// 无下游破坏的生产零消费方守卫）。
+// per-session model 透传 / 共享宿主 HOME（poolKey 恒 'shared'、HOME 正向透传、
+// argv=app-server --cwd engineDataDir、无池 config/lockfile/pidfile）/
+// onHandleReady 回调时点（create 应答后）与 onPoolResolved 时点（prepare 期，
+// 先于首事件）/ abort 链 D3（stop 帧先发 → stop 优雅生效不杀进程 / stop 无效
+// grace 耗尽 → killChain 连坐）/ 连接复用（跨任务 boot 1）/ dispose（幂等 /
+// close 帧先于 SIGTERM / dispose 后 run 重建——不变量 4）/ 多会话并发不串线
+// （RA3 地基，FAKE_STAMP_SESSION）/ -32603 Model config missing 错误归类 /
+// capabilities 断言（eventGranularity 翻转无下游破坏的生产零消费方守卫）。
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -19,17 +19,23 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EngineRunResult, RunContext } from "../../../port.ts";
-import type { AgentEvent, AgentTaskSpec } from "../../../types.ts";
+import type { AgentEvent } from "../../../types.ts";
+import type { AgentCallOpts } from "../../../../../orchestration/models/types.ts";
 import { getLogger } from "../../../../../core/logger.ts";
-import { resolvePoolDir } from "../../../paths.ts";
-import { ZCODE_APPSERVER_POOL_KEY, ZCODE_POOL_CONFIG_SUFFIX } from "../constants.ts";
+import { ZCODE_SHARED_POOL_KEY } from "../constants.ts";
 import { ZCODE_APPSERVER_GOLDEN } from "../golden-sample.ts";
 import { AppServerConnection } from "../connection.ts";
 import { SessionChannel } from "../session-channel.ts";
-import { ZcodeEngine, pinnedZcodeMode, type ZcodeEngineDeps } from "../zcode-engine.ts";
+import { ZcodeEngine, type ZcodeEngineDeps } from "../zcode-engine.ts";
 
 const FAKE_CLI = fileURLToPath(new URL("./__fixtures__/fake-appserver.mjs", import.meta.url));
 const PROVIDER = "test-provider";
+
+/** 宿主 zcode 会话 db 期望值的独立展开（①级读取钥匙）——刻意不 import 实现的
+ * hostZcodeDbPath（自指断言：实现改错时断言仍绿），路径知识独立于实现复述。 */
+function expectedHostDbPath(): string {
+  return path.resolve(os.homedir(), ".zcode", "cli", "db", "db.sqlite");
+}
 
 /** 与 zcode-engine.ts 同一 facade 单例引用（spy 它的方法即拦截引擎的 warn 出声）。 */
 const subagentsLogger = getLogger("subagents");
@@ -74,7 +80,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   for (const engine of engines.splice(0)) await engine.dispose().catch(() => undefined);
-  fs.rmSync(tmpRoot, { recursive: true, force: true });
+  fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 interface ScenarioOverrides {
@@ -122,9 +128,7 @@ function makeEngine(overrides: ScenarioOverrides = {}): EngineHandle_ {
     sources: { v2ConfigPath: v2Path },
     processEnv: {
       PATH: process.env.PATH ?? "",
-      // [R5] 钉扎 appserver 定向（定向不探不降）：本文件测常驻路径本体；缺省路径的
-      // 探针门控/降级链见 zcode-engine-degrade.test.ts
-      XYZ_ZCODE_MODE: "appserver",
+      HOME: "/fake-host-home",
       FAKE_STATE_FILE: stateFile,
       FAKE_SESSION_SCENARIO: scenarioFile,
       ...(overrides.stampSession === true ? { FAKE_STAMP_SESSION: "1" } : {}),
@@ -185,44 +189,13 @@ function bootEnv(stateFile: string): Record<string, unknown> {
   return isRecord(env) ? env : {};
 }
 
-function makeTask(overrides?: Partial<AgentTaskSpec>): AgentTaskSpec {
-  return { task: "做点什么", slug: "s", model: `${PROVIDER}/m1`, ...overrides };
+function makeTask(overrides?: Partial<AgentCallOpts>): AgentCallOpts {
+  return { prompt: "做点什么", description: "s", model: `${PROVIDER}/m1`, ...overrides };
 }
 
 function makeCtx(overrides?: Partial<RunContext>): RunContext {
   return { taskId: "sa-appserver", poolKey: "", ...overrides };
 }
-
-// ============================================================
-// 模式分派骨架（D2——降级链归 R5，此处只验分派点）
-// ============================================================
-
-describe("模式分派（XYZ_ZCODE_MODE）", () => {
-  it("pinnedZcodeMode 三态：定向值原样；缺省/未知值 undefined（undefined → 缺省 appserver 路径的探针门控 run 分派由 degrade 套件覆盖）", () => {
-    expect(pinnedZcodeMode({ XYZ_ZCODE_MODE: "spawn" })).toBe("spawn");
-    expect(pinnedZcodeMode({ XYZ_ZCODE_MODE: "appserver" })).toBe("appserver");
-    expect(pinnedZcodeMode({})).toBeUndefined();
-    expect(pinnedZcodeMode({ XYZ_ZCODE_MODE: "garbage" })).toBeUndefined();
-  });
-
-  it("spawn 定向：launch 通道走原 spawn 路径（不 spawn app-server——boot 计数 0）", async () => {
-    const fakeLaunch = vi.fn(() => {
-      throw new Error("spawn 定向下不应走 app-server 连接；launch fake 仅供模式断言");
-    });
-    // spawn 定向 + 无 launch fake 会真 spawn zcode.cjs（缺省路径不存在）——用
-    // launch fake 拦截即可证明走了 spawn 分支
-    const { engine } = { engine: new ZcodeEngine({
-      engineDataDir: () => dataDir,
-      cliPath: FAKE_CLI,
-      sources: { v2ConfigPath: v2Path },
-      processEnv: { PATH: process.env.PATH ?? "", XYZ_ZCODE_MODE: "spawn" },
-      launch: fakeLaunch as unknown as ZcodeEngineDeps["launch"],
-    }) };
-    engines.push(engine);
-    await expect(engine.run(makeTask(), makeCtx())).rejects.toThrow(/无法启动 zcode CLI/);
-    expect(fakeLaunch).toHaveBeenCalledTimes(1);
-  });
-});
 
 // ============================================================
 // 事件时序前移 + usage 映射 + 句柄回调时点（不变量 2/3）
@@ -269,9 +242,11 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     expect(outcome.usage).toEqual({ input: 12599, output: 17, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 1 });
     expect(outcome.exitCode).toBe(0);
 
-    // handle 锚定：poolKey=home-appserver，sessionRef 相对锚 HOME
-    expect(handle.data.poolKey).toBe(ZCODE_APPSERVER_POOL_KEY);
-    expect(handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: ".zcode/cli/db/db.sqlite" });
+    // handle 锚定：poolKey 恒 'shared'，sessionRef.dbPath = 宿主 HOME 绝对路径
+    // （期望值独立展开，见 expectedHostDbPath 注释——不调实现函数）
+    expect(handle.data.poolKey).toBe(ZCODE_SHARED_POOL_KEY);
+    expect(handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: expectedHostDbPath() });
+    expect(String(handle.data.sessionRef["dbPath"]).startsWith("/")).toBe(true);
   }, 15_000);
 
   it("回调时点：onPoolResolved（prepare 期）先于 onHandleReady（create 应答后）先于首事件", async () => {
@@ -287,36 +262,45 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
         },
       }),
     );
-    expect(order[0]).toBe(`pool:${ZCODE_APPSERVER_POOL_KEY}`);
-    expect(order[1]).toBe(`handle:${ZCODE_APPSERVER_POOL_KEY}:${GOLDEN_SESSION_ID}`);
+    expect(order[0]).toBe(`pool:${ZCODE_SHARED_POOL_KEY}`);
+    expect(order[1]).toBe(`handle:${ZCODE_SHARED_POOL_KEY}:${GOLDEN_SESSION_ID}`);
     expect(order[2]).toBe("event");
   }, 15_000);
 
-  it("常驻 HOME 锚定 + allProviders config + fake 侧 env/argv（HOME=池目录、遥测关、argv=app-server --cwd HOME）", async () => {
+  it("共享宿主 HOME：HOME 正向透传、遥测关、argv=app-server --cwd engineDataDir、无池 config/lockfile/pidfile、onChildSpawned 零调用", async () => {
     const { engine, stateFile, workspace } = makeEngine();
-    const { handle } = await engine.run(makeTask({ cwd: workspace }), makeCtx());
-    const homeDir = resolvePoolDir(dataDir, "zcode", ZCODE_APPSERVER_POOL_KEY);
-    expect(handle.data.poolKey).toBe(ZCODE_APPSERVER_POOL_KEY);
-    // 常驻 config：allProviders（本测试源只有 test-provider 一个带 key 条目）
-    const configPath = path.join(homeDir, ...ZCODE_POOL_CONFIG_SUFFIX);
-    const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
-    expect(Object.keys(written["provider"] as object)).toEqual([PROVIDER]);
-    // fake 侧 boot env：HOME=常驻 HOME、遥测 false、嵌套标记
+    const onChildSpawned = vi.fn();
+    const { handle } = await engine.run(makeTask({ cwd: workspace }), makeCtx({ onChildSpawned }));
+    expect(handle.data.poolKey).toBe(ZCODE_SHARED_POOL_KEY);
+    // fake 侧 boot env：base env 携带的宿主 HOME 值原样透传（buildAppServerEnv 不覆写
+    // HOME 键——launcher 同进程 import() 也不改 env）、遥测 false、统一嵌套标记
     const env = bootEnv(stateFile);
-    expect(env["home"]).toBe(homeDir);
+    expect(env["home"]).toBe("/fake-host-home");
     expect(env["telemetry"]).toBe("false");
     expect(env["unifiedNested"]).toBe("1");
     const boot = readState(stateFile).find((e) => e.ev === "boot");
-    expect(boot?.["argv"]).toEqual(["app-server", "--cwd", homeDir]);
-    // 锁文件落 HOME
-    expect(fs.existsSync(path.join(homeDir, "lockfile"))).toBe(true);
-    // pidfile 已写（app-server 进程 pid——与 lockfile.pid 分离）
-    const pidfile = JSON.parse(fs.readFileSync(path.join(homeDir, "appserver.pid"), "utf8")) as { pid: number };
-    const lockfilePid = (JSON.parse(fs.readFileSync(path.join(homeDir, "lockfile"), "utf8")) as { pid: number }).pid;
-    expect(typeof pidfile.pid).toBe("number");
-    expect(pidfile.pid).not.toBe(lockfilePid); // D7 pid 归属分离：app-server pid ≠ 宿主 pid
-    expect(lockfilePid).toBe(process.pid); // lockfile.pid = 持锁宿主（本测试进程）
+    expect(boot?.["argv"]).toEqual(["app-server", "--cwd", dataDir]);
+    // D6：app-server 常驻进程是引擎自管资源（dispose 收割），不进宿主终止链——
+    // run 全程 onChildSpawned 不被调用（宿主 killAll 不误杀共享进程）
+    expect(onChildSpawned).not.toHaveBeenCalled();
+    // 池化时代的产物全部不存在：engines/zcode/ 只含 fs 拦截 launcher，无池
+    // config/lockfile/pidfile/journal 目录
+    const engineDir = fs.readdirSync(path.join(dataDir, "engines", "zcode"));
+    expect(engineDir).toEqual(["appserver-launcher.cjs"]);
   }, 15_000);
+
+  it("maxTurns（pi 专属）→ 引擎内不再拒绝（[D3-④] 能力拒绝上提宿主 capability-gate，防双轨拦截复活）", async () => {
+    // [D3-④ 合并注] capability 拒绝唯一实现 = common/capability-gate（两调用点 = chat 域
+    // executeViaEngine 同步段 + SAR run 前，拒绝语义 engine_capability_unsupported 由
+    // capability-gate.test.ts 承载）。引擎域 run() 不做 shape 检查——本用例反转回归面：
+    // maxTurns 直传引擎不得再被拒（曾因引擎内残留拦截与 gate 形成双轨）。
+    const { engine, stateFile, workspace } = makeEngine();
+    const r = await engine.run(makeTask({ cwd: workspace, maxTurns: 10 }), makeCtx());
+    expect(r.outcome.error).toBeUndefined();
+    expect(r.outcome.content).toBe(GOLDEN_FULL_TEXT);
+    // 正常走 app-server 流程（create×1——maxTurns 对 zcode 无通道，静默不透传）
+    expect(sentFrames(stateFile, "session/create")).toHaveLength(1);
+  }, 10_000);
 
   it("per-session model：create 帧 model={providerId,modelId}（task.model 拆分）+ toolDenylist 透传", async () => {
     const { engine, stateFile, workspace } = makeEngine();
@@ -328,28 +312,28 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     expect(create.params["mode"]).toBe("yolo");
   }, 15_000);
 
-  it("effort → create 帧 thoughtLevel 透传（F15a：spec.effort 映射协议通道）", async () => {
+  it("thinkingLevel → create 帧 thoughtLevel 透传（F15a：task 声明映射协议通道）", async () => {
     const { engine, stateFile, workspace } = makeEngine();
-    await engine.run(makeTask({ cwd: workspace, effort: "high" }), makeCtx());
+    await engine.run(makeTask({ cwd: workspace, thinkingLevel: "high" }), makeCtx());
     const create = sentFrames(stateFile, "session/create")[0];
     expect(create.params["thoughtLevel"]).toBe("high");
   }, 15_000);
 
-  it("effort 未传/空白 → create 帧无 thoughtLevel 键（A.2 ① strict 对象不设空键，防 -32602）", async () => {
+  it("thinkingLevel 未传/空白 → create 帧无 thoughtLevel 键（A.2 ① strict 对象不设空键，防 -32602）", async () => {
     const { engine, stateFile, workspace } = makeEngine();
-    await engine.run(makeTask({ cwd: workspace, effort: "  " }), makeCtx());
+    await engine.run(makeTask({ cwd: workspace, thinkingLevel: "  " }), makeCtx());
     const create = sentFrames(stateFile, "session/create")[0];
     expect("thoughtLevel" in create.params).toBe(false);
   }, 15_000);
 
-  it("effort=medium（非常见档位）→ warn 一行提示且 thoughtLevel 键仍透传（RX2-F1：提示不拦截）", async () => {
+  it("thinkingLevel=medium（非常见档位）→ warn 一行提示且 thoughtLevel 键仍透传（RX2-F1：提示不拦截）", async () => {
     const { engine, stateFile, workspace } = makeEngine();
     const warns: string[] = [];
     const warnSpy = vi.spyOn(subagentsLogger, "warn").mockImplementation(((msg: string) => {
       warns.push(msg);
     }) as typeof subagentsLogger.warn);
     try {
-      await engine.run(makeTask({ cwd: workspace, effort: "medium" }), makeCtx());
+      await engine.run(makeTask({ cwd: workspace, thinkingLevel: "medium" }), makeCtx());
     } finally {
       warnSpy.mockRestore();
     }
@@ -364,14 +348,14 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     expect(create.params["thoughtLevel"]).toBe("medium");
   }, 15_000);
 
-  it("effort=high（常见档位）→ 零 thoughtLevel 提示（RX2-F1：常见档位不出声）", async () => {
+  it("thinkingLevel=high（常见档位）→ 零 thoughtLevel 提示（RX2-F1：常见档位不出声）", async () => {
     const { engine, workspace } = makeEngine();
     const warns: string[] = [];
     const warnSpy = vi.spyOn(subagentsLogger, "warn").mockImplementation(((msg: string) => {
       warns.push(msg);
     }) as typeof subagentsLogger.warn);
     try {
-      await engine.run(makeTask({ cwd: workspace, effort: "high" }), makeCtx());
+      await engine.run(makeTask({ cwd: workspace, thinkingLevel: "high" }), makeCtx());
     } finally {
       warnSpy.mockRestore();
     }
@@ -490,7 +474,7 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     expect(outcome.error).toContain("-32004");
     expect(outcome.error).toContain(GOLDEN_SESSION_ID);
     expect(outcome.sessionId).toBe(GOLDEN_SESSION_ID);
-    expect(handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: ".zcode/cli/db/db.sqlite" });
+    expect(handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: expectedHostDbPath() });
   }, 15_000);
 });
 
@@ -582,8 +566,8 @@ describe("abort 链（D3）", () => {
     expect(handle.data.sessionRef["sessionId"]).toBeUndefined();
     // 不变量 3：poolKey 声明先于首个事件（error）——journal writer 重定向先于落盘，
     // 落盘池与 handle.poolKey 同值同源（短路分支不满足即落 shared 占位池漂移）
-    expect(order).toEqual([`pool:${ZCODE_APPSERVER_POOL_KEY}`, "event:error"]);
-    expect(handle.data.poolKey).toBe(ZCODE_APPSERVER_POOL_KEY);
+    expect(order).toEqual([`pool:${ZCODE_SHARED_POOL_KEY}`, "event:error"]);
+    expect(handle.data.poolKey).toBe(ZCODE_SHARED_POOL_KEY);
     expect(readState(stateFile)).toHaveLength(0); // 连惰性启动都没触发
   }, 10_000);
 
@@ -598,33 +582,17 @@ describe("abort 链（D3）", () => {
 });
 
 // ============================================================
-// 凭据刷新（D7：内容 hash 不一致 → config 重写 + 连接重建）
+// 连接复用（共享宿主 HOME：无凭据刷新机制——登录态轮换后常驻连接用旧凭据，
+// 引擎进程重启才生效；跨任务连接复用本身仍是 D1 不变量）
 // ============================================================
 
-describe("凭据刷新", () => {
-  it("同内容源：第二任务复用连接（boot 1）+ config 不重写", async () => {
+describe("连接复用", () => {
+  it("第二任务复用常驻连接（boot 1），两会话独立 create", async () => {
     const { engine, stateFile, workspace } = makeEngine();
     await engine.run(makeTask({ cwd: workspace }), makeCtx());
     await engine.run(makeTask({ cwd: workspace }), makeCtx());
     expect(bootCount(stateFile)).toBe(1);
     expect(sentFrames(stateFile, "session/create")).toHaveLength(2);
-  }, 20_000);
-
-  it("apiKey 变更：config 重写 + 旧连接关闭重建（boot 2）", async () => {
-    const { engine, stateFile, workspace } = makeEngine();
-    await engine.run(makeTask({ cwd: workspace }), makeCtx());
-    const homeDir = resolvePoolDir(dataDir, "zcode", ZCODE_APPSERVER_POOL_KEY);
-    const configPath = path.join(homeDir, ...ZCODE_POOL_CONFIG_SUFFIX);
-    const before = fs.readFileSync(configPath, "utf8");
-    // 变更凭据内容（同文件重写——mtime 变但内容才是判据；此处两者都变）
-    writeJson(v2Path, {
-      provider: { [PROVIDER]: { options: { apiKey: "k-v2", baseURL: "https://t.example" }, models: { m1: {} } } },
-    });
-    await engine.run(makeTask({ cwd: workspace }), makeCtx());
-    const after = fs.readFileSync(configPath, "utf8");
-    expect(after).not.toBe(before);
-    expect(after).toContain("k-v2");
-    expect(bootCount(stateFile)).toBe(2); // 连接重建（旧进程被杀、新进程读新配置）
   }, 20_000);
 });
 
@@ -702,8 +670,6 @@ describe("dispose", () => {
     const ghostRt = {
       conn,
       channel: new SessionChannel(conn),
-      homePoolKey: ZCODE_APPSERVER_POOL_KEY,
-      homeDir: resolvePoolDir(dataDir, "zcode", ZCODE_APPSERVER_POOL_KEY),
       activeSessions: new Set<string>(["sess_ghost"]),
     };
     (engine as unknown as { appserverRuntime: unknown }).appserverRuntime = ghostRt;
@@ -757,7 +723,7 @@ describe("多会话并发（单常驻进程双会话不串线）", () => {
 // ============================================================
 
 describe("capabilities（D5：仅 eventGranularity 变）", () => {
-  it("appserver 路径声明 eventGranularity='stream'，其余能力位与 spawn 钉扎测试一致", () => {
+  it("单一 app-server 形态声明 eventGranularity='stream'，其余能力位与设计声明一致", () => {
     const { engine } = makeEngine();
     expect(engine.capabilities()).toEqual({
       schemaEnforcement: "emulated",
@@ -770,6 +736,7 @@ describe("capabilities（D5：仅 eventGranularity 变）", () => {
       resume: "cold",
       interrupt: "kill-only",
       permissionMode: "native",
+      maxTurns: false,
     });
   });
 

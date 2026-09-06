@@ -27,10 +27,10 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { JsonlRunStore } from "../jsonl-run-store.ts";
-import { parseResourceMeta } from "@zhushanwen/subagent-core/shared/meta-parser.ts";
+import { parseResourceMeta } from "@zhushanwen/subagent-core";
 import { normalizeRef } from "@zhushanwen/subagent-core/shared/agent-ref.ts";
-import { type LauncherDeps, runAndWait } from "@zhushanwen/subagent-core/orchestration/launcher.ts";
-import type { LifecycleDeps } from "@zhushanwen/subagent-core/orchestration/models/ports.ts";
+import { type LauncherDeps, runAndWait } from "@zhushanwen/subagent-core";
+import type { LifecycleDeps } from "@zhushanwen/subagent-core";
 import type { AgentRunner } from "@zhushanwen/subagent-core/orchestration/models/ports.ts";
 import type { AgentResult, AgentUsage } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
 import {
@@ -38,8 +38,8 @@ import {
   WorkflowScript,
   type WorkflowSource,
 } from "@zhushanwen/subagent-core/orchestration/models/workflow-script.ts";
-import type { WorkflowScriptRegistry } from "@zhushanwen/subagent-core/orchestration/models/workflow-script-registry.ts";
-import { WorkerHostImpl } from "@zhushanwen/subagent-core/orchestration/worker-host.ts";
+import type { WorkflowScriptRegistry } from "@zhushanwen/subagent-core";
+import { WorkerHostImpl } from "@zhushanwen/subagent-core";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WORKFLOWS_DIR = join(__dirname, "..", "..", "node_modules", "@zhushanwen", "subagent-core", "workflows");

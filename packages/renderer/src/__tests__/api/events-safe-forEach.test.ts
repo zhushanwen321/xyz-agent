@@ -7,7 +7,7 @@
  * 运行：npx vitest run src/__tests__/api/events-safe-forEach.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 const msg: ServerMessage = { type: 'config.sessions', payload: { groups: [] } }

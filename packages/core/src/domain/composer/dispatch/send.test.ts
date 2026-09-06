@@ -14,7 +14,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { computed, ref } from 'vue'
 import { useComposerSend, type ComposerSendDeps } from './send'
-import type { BashCommandExtract } from './bash'
+import type { BashCommandExtract } from '../types'
 import type { StagingAction, StagingConfig } from '../types'
 import type { Segment } from '@xyz-agent/shared'
 
@@ -32,19 +32,23 @@ interface DepsControl {
   localThinkingLevel: string | undefined
 }
 
+// 各 spy = 真实签名（ComposerSendDeps 对应成员类型）& vi.fn 能力：
+// 裸 vi.fn 推导 Mock<Procedure> 无法赋给具体签名字段
+type Spy<T> = T & ReturnType<typeof vi.fn>
+
 interface Spies {
-  stagingSend: ReturnType<typeof vi.fn<(text: string, staging: StagingConfig) => Promise<boolean>>>
-  getStagingConfig: ReturnType<typeof vi.fn>
-  clearInput: ReturnType<typeof vi.fn>
-  restoreSegments: ReturnType<typeof vi.fn>
-  submitFirstMessage: ReturnType<typeof vi.fn>
-  send: ReturnType<typeof vi.fn>
-  compact: ReturnType<typeof vi.fn>
-  enqueueCompact: ReturnType<typeof vi.fn>
-  toastError: ReturnType<typeof vi.fn>
-  trySendBash: ReturnType<typeof vi.fn>
-  extractBashCommand: ReturnType<typeof vi.fn>
-  getSegments: ReturnType<typeof vi.fn>
+  stagingSend: Spy<(text: string, staging: StagingConfig) => Promise<boolean>>
+  getStagingConfig: Spy<() => StagingConfig>
+  clearInput: Spy<() => void>
+  restoreSegments: Spy<(segments: Segment[]) => void>
+  submitFirstMessage: Spy<ComposerSendDeps['flow']['submitFirstMessage']>
+  send: Spy<(sessionId: string, segments: Segment[]) => Promise<void>>
+  compact: Spy<(sessionId: string, customInstructions?: string) => Promise<void>>
+  enqueueCompact: Spy<(sessionId: string, text: string) => void>
+  toastError: Spy<(msg: string) => void>
+  trySendBash: Spy<(rawText: string) => Promise<boolean>>
+  extractBashCommand: Spy<(text: string) => BashCommandExtract>
+  getSegments: Spy<() => Segment[]>
 }
 
 const SEGMENTS: Segment[] = [{ type: 'text', text: 'hello' }] as unknown as Segment[]
@@ -65,18 +69,18 @@ function setup(initial?: Partial<DepsControl>): { deps: ComposerSendDeps; spies:
     ...initial,
   }
   const spies: Spies = {
-    stagingSend: vi.fn(async () => ctrl.stagingSendReturn),
-    getStagingConfig: vi.fn(() => ({})),
-    clearInput: vi.fn(),
-    restoreSegments: vi.fn(),
-    submitFirstMessage: vi.fn(async () => {}),
-    send: vi.fn(async () => {}),
-    compact: vi.fn(async () => {}),
-    enqueueCompact: vi.fn(),
-    toastError: vi.fn(),
-    trySendBash: vi.fn(async () => ctrl.bashTryReturn),
-    extractBashCommand: vi.fn(() => ctrl.bashExtract),
-    getSegments: vi.fn(() => SEGMENTS),
+    stagingSend: vi.fn(async () => ctrl.stagingSendReturn) as unknown as Spies['stagingSend'],
+    getStagingConfig: vi.fn((): StagingConfig => ({})),
+    clearInput: vi.fn(() => {}),
+    restoreSegments: vi.fn((_segments: Segment[]) => {}),
+    submitFirstMessage: vi.fn(async () => {}) as unknown as Spies['submitFirstMessage'],
+    send: vi.fn(async (_sessionId: string, _segments: Segment[]) => {}),
+    compact: vi.fn(async (_sessionId: string, _customInstructions?: string) => {}),
+    enqueueCompact: vi.fn((_sessionId: string, _text: string) => {}),
+    toastError: vi.fn((_msg: string) => {}),
+    trySendBash: vi.fn(async (_rawText: string) => ctrl.bashTryReturn),
+    extractBashCommand: vi.fn((_text: string) => ctrl.bashExtract),
+    getSegments: vi.fn((): Segment[] => SEGMENTS),
   }
   const isSending = ref(false)
   const deps: ComposerSendDeps = {
@@ -93,7 +97,7 @@ function setup(initial?: Partial<DepsControl>): { deps: ComposerSendDeps; spies:
     canSend: computed(() => ctrl.canSend),
     isCompacting: computed(() => ctrl.isCompacting),
     draft: computed(() => ctrl.draft),
-    inputRef: computed(() => ({ getSegments: spies.getSegments })),
+    inputRef: computed(() => ({ getSegments: spies.getSegments })) as unknown as ComposerSendDeps['inputRef'],
     sessionIdRef: computed(() => ctrl.sessionId),
     variantRef: computed(() => ctrl.variant),
     composerBash: {
@@ -166,6 +170,14 @@ describe('useComposerSend.onSend', () => {
     await useComposerSend(deps).onSend()
     expect(spies.enqueueCompact).toHaveBeenCalledWith('s1', 'queued msg')
     expect(spies.clearInput).toHaveBeenCalledTimes(1)
+  })
+
+  it('⑤b isCompacting + sessionId 为空（S6 守卫落空兜底）→ return，不入队不清输入不 toast', async () => {
+    const { deps, spies } = setup({ isCompacting: true, sessionId: null })
+    await useComposerSend(deps).onSend()
+    expect(spies.enqueueCompact).not.toHaveBeenCalled()
+    expect(spies.clearInput).not.toHaveBeenCalled()
+    expect(spies.toastError).not.toHaveBeenCalled()
   })
 
   it('⑥ landing + bash empty → return，不提交', async () => {

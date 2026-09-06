@@ -27,7 +27,7 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
   },
 }))
 
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import { useSidebar } from '@/composables/features/sidebar/useSidebar'
 import { useSessionStore } from '@/stores/session'
 

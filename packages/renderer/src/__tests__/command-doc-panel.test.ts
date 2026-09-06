@@ -23,7 +23,7 @@ import { ChatViewDepsKey } from '@xyz-agent/ui'
 
 // file.read mock：捕获调用参数，返回预设 content。两路守门（带/不带 sessionId）都走这个 mock。
 const readMock = vi.fn()
-vi.mock('@/api/domains/file', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/file', () => ({
   read: vi.fn((path: string, sessionId?: string) => readMock(path, sessionId)),
 }))
 

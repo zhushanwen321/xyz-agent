@@ -237,17 +237,10 @@ describe('RpcClient W1', () => {
     expect(sent.cancelled).toBeUndefined()
   })
 
-  // ── U5d: bridge 场景——response 是对象且无 method → {id, response} ──
-  it('U5d: sendExtensionUiResponse(response=object, no method) → bridge {id, response} format', () => {
-    const payload = { content: 'tool result', isError: false }
-    client.sendExtensionUiResponse('rb-1', payload)
-    const sent = lastWrittenJson()
-    expect(sent.id).toBe('rb-1')
-    expect(sent.response).toEqual(payload)
-    expect(sent.confirmed).toBeUndefined()
-    expect(sent.cancelled).toBeUndefined()
-    expect(sent.value).toBeUndefined()
-  })
+  // [HISTORICAL] U5d「bridge 场景 {id, response} 包裹格式」用例已删除：旧 bridge 通道的
+  // `{id, response}` 死分支随 bridge 重写清理（设计 bridge-rewrite-pi-0.84 §3.3-D6），
+  // 唯一调用方 bridge-handler 已全改 JSON.stringify + 'select'（value 通道），该形态无
+  // 生产调用方。bridge 通道回包形状由 test/bridge-marker-channel.test.ts 覆盖。
 
   // ── U6: compact/getCommands/getSessionStats 用归一后的 data（删 readRpcData 后仍工作） ──
   it('U6a: compact returns normalized data (works without readRpcData)', async () => {

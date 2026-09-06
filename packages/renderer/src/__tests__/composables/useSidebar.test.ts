@@ -36,7 +36,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 // ── api 层 mock ──
-vi.mock('@/api/domains/session', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({
   switchSession: mocks.switchSession,
   list: mocks.list,
   remove: mocks.remove,
@@ -50,36 +50,36 @@ vi.mock('@/api/domains/session', () => ({
   getWorkflows: vi.fn().mockResolvedValue([]),
   getAgentCallHistory: vi.fn().mockResolvedValue([]),
 }))
-vi.mock('@/api/domains/chat', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/chat', () => ({
   getHistory: mocks.getHistory,
   send: vi.fn(),
   streamSubscribe: vi.fn(),
 }))
-vi.mock('@/api/events', () => ({
+vi.mock('@xyz-agent/core/transport/api', () => ({
   on: vi.fn(() => () => {}),
   onGlobalType: vi.fn(() => () => {}),
   dispatchSession: vi.fn(),
 }))
-vi.mock('@/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
-vi.mock('@/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
+vi.mock('@xyz-agent/core/transport/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
+vi.mock('@xyz-agent/core/transport/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
 // ── TC-5 onConnected 依赖的 domain：importActual 部分覆盖（保其他导出可用），scan/listRecent 可控 ──
-vi.mock('@/api/domains/extension', async (importActual) => {
-  const actual = await importActual<typeof import('@/api/domains/extension')>()
+vi.mock('@xyz-agent/core/transport/api/domains/extension', async (importActual) => {
+  const actual = await importActual<typeof import('@xyz-agent/core/transport/api/domains/extension')>()
   return { ...actual, scan: mocks.extensionScan }
 })
-vi.mock('@/api/domains/workspace', async (importActual) => {
-  const actual = await importActual<typeof import('@/api/domains/workspace')>()
+vi.mock('@xyz-agent/core/transport/api/domains/workspace', async (importActual) => {
+  const actual = await importActual<typeof import('@xyz-agent/core/transport/api/domains/workspace')>()
   return { ...actual, listRecent: mocks.workspaceListRecent }
 })
 // project domain 全量 stub（initApp 的 useProjectStoreSafe().init 依赖；仅 load/save 两导出）
-vi.mock('@/api/domains/project', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/project', () => ({
   load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }),
   save: vi.fn().mockResolvedValue(undefined),
 }))
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
-  const session = await import('@/api/domains/session')
-  const chat = await import('@/api/domains/chat')
+  const session = await import('@xyz-agent/core/transport/api/domains/session')
+  const chat = await import('@xyz-agent/core/transport/api/domains/chat')
   return { ...actual, session, chat }
 })
 
@@ -211,7 +211,7 @@ describe('useSidebar 接缝（TC-1..TC-4）', () => {
   })
 
   it('TC-2 deleteSession 代理 core：api.remove 调 + S3 清理 + wasActive 回退 selectSession', async () => {
-    const removeMock = (await import('@/api/domains/session')).remove as ReturnType<typeof vi.fn>
+    const removeMock = (await import('@xyz-agent/core/transport/api/domains/session')).remove as ReturnType<typeof vi.fn>
     removeMock.mockResolvedValue(undefined)
     const sidebar = useSidebar()
     useSessionStore().applySnapshot({ groups: [group([summary('s1'), summary('s2')])] })
@@ -269,7 +269,7 @@ describe('useSidebar 接缝（TC-1..TC-4）', () => {
   })
 
   it('TC-5 重连 onConnected 对聚焦 session 重拉 subagent/workflow（首连不拉；分区数据刷新用户可见）', async () => {
-    const sessionDomain = await import('@/api/domains/session')
+    const sessionDomain = await import('@xyz-agent/core/transport/api/domains/session')
     const getSubagentsMock = sessionDomain.getSubagents as ReturnType<typeof vi.fn>
     const getWorkflowsMock = sessionDomain.getWorkflows as ReturnType<typeof vi.fn>
     const record: SubagentRecord = {
@@ -306,7 +306,7 @@ describe('useSidebar 接缝（TC-1..TC-4）', () => {
   })
 
   it('TC-5b 重连时空焦点（无聚焦 session）不触发重拉', async () => {
-    const sessionDomain = await import('@/api/domains/session')
+    const sessionDomain = await import('@xyz-agent/core/transport/api/domains/session')
     const getSubagentsMock = sessionDomain.getSubagents as ReturnType<typeof vi.fn>
     const sidebar = useSidebar()
 

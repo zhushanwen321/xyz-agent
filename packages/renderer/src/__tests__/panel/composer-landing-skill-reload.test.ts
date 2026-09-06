@@ -49,7 +49,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ServerMessage, SkillInfo } from '@xyz-agent/shared'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 
 // ── getGlobalSkills 可控 mock（hoisted：vi.mock 工厂早于 import 求值）──
 // TC5-Composer 中途改返回值模拟 runtime 重扫 globalCache 后缓存更新。
@@ -58,7 +58,7 @@ const getGlobalSkillsMock = vi.hoisted(() => vi.fn().mockResolvedValue([]))
 // ── onSkillCacheInvalidated 接真实 events.onGlobalType：让 dispatchGlobal 广播能端到端触达
 // useGlobalSkills 的订阅回调（loadGlobal(true) force 重拉）。这是「真实订阅链路」验证的关键。
 vi.mock('@/api', async () => {
-  const realEvents = await import('@/api/events')
+  const realEvents = await import('@xyz-agent/core/transport/api')
   return {
     model: { switchModel: vi.fn() },
     session: { setThinkingLevel: vi.fn() },

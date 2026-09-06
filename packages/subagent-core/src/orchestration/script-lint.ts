@@ -136,6 +136,36 @@ function stripStringsAndComments(line: string): string {
     .replace(/\/\*[\s\S]*?\*\//g, "");
 }
 
+/** 注释行判定：行注释开头或块注释续行开头（* 与斜杠星号前缀）。 */
+function isCommentLine(trimmed: string): boolean {
+  return trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*");
+}
+
+/** 括号平衡增量：圆/花/方括号开符计 +1，闭符计 -1，其余 0。 */
+function bracketDepthDelta(text: string): number {
+  let delta = 0;
+  for (const ch of text) {
+    if (ch === "(" || ch === "{" || ch === "[") delta++;
+    if (ch === ")" || ch === "}" || ch === "]") delta--;
+  }
+  return delta;
+}
+
+// 检测行内「agent(」字面量对象调用起点；命中返回替换后的调用头圆括号及其后原文
+//（计括号用），未命中 / 非字面量实参返回 undefined。
+//
+// 非字面量实参（agent(callVar) / agent(expr)）返回 undefined：description 等选项在调用点
+// 静态不可见，checkAgentDescription 无法验证运行时构造的调用——继续报 warning 即误报
+// （review-fix-loop 的 agent(call) 三连误报根因）。
+// 形如 agent( 换行 { 的多行字面量调用（argTail 为空）保留原追踪行为。
+function matchAgentCallHead(codeLine: string): string | undefined {
+  if (!/\bagent\s*\(/.test(codeLine)) return undefined;
+  const afterAgent = codeLine.replace(/^.*?\bagent\s*\(/, "(");
+  const argTail = afterAgent.trimStart().slice(1).trimStart();
+  if (argTail.length > 0 && !argTail.startsWith("{")) return undefined;
+  return afterAgent;
+}
+
 /**
  * 遍历 source 中所有 agent 调用的行范围，对每个调用执行 callback。
  *
@@ -150,9 +180,6 @@ function stripStringsAndComments(line: string): string {
  * 内嵌的 agent() 调用——它们同样被 `\bagent\s*\(` 匹配）。
  *
  * 匹配前逐行剔除字符串/注释内容（MF-4）：字符串字面量里的 "agent(s)" 不再误触发。
- * 非字面量实参（agent(callVar) / agent(expr)）跳过不回调：description 等选项在调用点
- * 静态不可见，checkAgentDescription 无法验证运行时构造的调用——继续报 warning 即误报
- * （review-fix-loop 的 agent(call) 三连误报根因）。
  *
  * @param callback (startLine, endLine) 0-based 行号
  */
@@ -170,31 +197,22 @@ function forEachAgentCallRange(
     const trimmed = line.trim();
 
     // 跳过注释
-    if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) {
+    if (isCommentLine(trimmed)) {
       continue;
     }
 
     // 匹配/计括号都用剔除字符串与注释后的行，避免字面量内容干扰
     const codeLine = stripStringsAndComments(line);
 
-    // 检测 agent 调用开始
-    if (!inAgentCall && /\bagent\s*\(/.test(codeLine)) {
+    if (!inAgentCall) {
+      // 检测 agent 调用开始（非字面量实参 → undefined，跳过本行）
+      const afterAgent = matchAgentCallHead(codeLine);
+      if (afterAgent === undefined) continue;
       inAgentCall = true;
       depth = 0;
       agentStartLine = i;
       // 从 agent( 开始计括号
-      const afterAgent = codeLine.replace(/^.*?\bagent\s*\(/, "(");
-      // 非字面量实参（agent(callVar) / agent(expr)）→ 跳过（见函数头注释）。
-      // 形如 `agent(` 换行 `{` 的多行字面量调用（argTail 为空）保留原追踪行为。
-      const argTail = afterAgent.trimStart().slice(1).trimStart();
-      if (argTail.length > 0 && !argTail.startsWith("{")) {
-        inAgentCall = false;
-        continue;
-      }
-      for (const ch of afterAgent) {
-        if (ch === "(" || ch === "{" || ch === "[") depth++;
-        if (ch === ")" || ch === "}" || ch === "]") depth--;
-      }
+      depth += bracketDepthDelta(afterAgent);
       if (depth <= 0) {
         // 单行 agent 调用
         callback(agentStartLine, i);
@@ -203,15 +221,10 @@ function forEachAgentCallRange(
       continue;
     }
 
-    if (inAgentCall) {
-      for (const ch of codeLine) {
-        if (ch === "(" || ch === "{" || ch === "[") depth++;
-        if (ch === ")" || ch === "}" || ch === "]") depth--;
-      }
-      if (depth <= 0) {
-        callback(agentStartLine, i);
-        inAgentCall = false;
-      }
+    depth += bracketDepthDelta(codeLine);
+    if (depth <= 0) {
+      callback(agentStartLine, i);
+      inAgentCall = false;
     }
   }
 }
@@ -613,6 +626,54 @@ function checkMetaFieldQuality(field: string, value: string): LintFinding[] {
   return findings;
 }
 
+/** 对象的 keys 全部收集进集合（非对象安全退化：不加任何 key）。 */
+function collectObjectKeys(src: unknown, out: Set<string>): void {
+  if (src === null || typeof src !== "object") return;
+  for (const k of Object.keys(src as Record<string, unknown>)) out.add(k);
+}
+
+/** patternProperties 的 `^word\\d+$` 形态提取 word 前缀作参数名（其余形态不加）。 */
+function collectPatternPropertyNames(pp: unknown, out: Set<string>): void {
+  if (pp === null || typeof pp !== "object") return;
+  for (const p of Object.keys(pp as Record<string, unknown>)) {
+    const m = p.match(/^\^([a-zA-Z]+)\\d\+\$$/);
+    if (m) out.add(m[1] as string);
+  }
+}
+
+/** W1 参数名集合 = parameters.properties keys + patternProperties 的 word 前缀。 */
+function collectDeclaredParamNames(parameters: unknown): Set<string> {
+  const paramNames = new Set<string>();
+  if (parameters === null || typeof parameters !== "object") return paramNames;
+  const params = parameters as Record<string, unknown>;
+  collectObjectKeys(params.properties, paramNames);
+  collectPatternPropertyNames(params.patternProperties, paramNames);
+  return paramNames;
+}
+
+/** W1：单字段内已声明参数名的 ':'/'=' 形态检查（文案见 finding）。 */
+function findParamNameFindings(
+  field: string,
+  value: string,
+  paramNames: ReadonlySet<string>,
+): LintFinding[] {
+  const findings: LintFinding[] = [];
+  // W1：已声明参数名的 ':'/'=' 形态（参数名转义防 RegExp 注入崩溃——exec-review F2；
+  // ':' 形态加 \\b 前缀防子串误报（subtask: 不命中 task——exec-review F6））
+  for (const name of paramNames) {
+    const nameEsc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${nameEsc}:\\s`).test(value) || new RegExp(`\\b${nameEsc}=\\S`).test(value)) {
+      findings.push({
+        severity: "error",
+        line: 1,
+        message: `meta.${field} 包含已声明参数名 '${name}'（'${name}:' / '${name}=' 形态）——参数契约请 read 脚本文件的 @pi-meta parameters 查询，description/when/notFor 只放路由信息`,
+        suggestion: `从 meta.${field} 移除 '${name}: ...' / '${name}=...'，改在 parameters/usage 中声明`,
+      });
+    }
+  }
+  return findings;
+}
+
 /**
  * W1-W3：SSOT lint（m4）——保 §5.1 注入段 description 短单句、不含已声明参数名。
  * 仅对 parseResourceMeta 解析成功的 meta 执行（旧 const meta 格式不检查）。
@@ -624,44 +685,16 @@ function checkMetaFieldQuality(field: string, value: string): LintFinding[] {
  */
 function checkMetaQuality(meta: { description?: string; when?: string; notFor?: string; parameters?: Record<string, unknown> }): LintFinding[] {
   const findings: LintFinding[] = [];
-  const description = meta.description ?? "";
-
-  // W1 参数名集合
-  const paramNames = new Set<string>();
-  if (meta.parameters && typeof meta.parameters === "object") {
-    const props = (meta.parameters as Record<string, unknown>).properties;
-    if (props !== null && typeof props === "object") {
-      for (const k of Object.keys(props as Record<string, unknown>)) paramNames.add(k);
-    }
-    const pp = (meta.parameters as Record<string, unknown>).patternProperties;
-    if (pp !== null && typeof pp === "object") {
-      for (const p of Object.keys(pp as Record<string, unknown>)) {
-        const m = p.match(/^\^([a-zA-Z]+)\\d\+\$$/);
-        if (m) paramNames.add(m[1] as string);
-      }
-    }
-  }
+  const paramNames = collectDeclaredParamNames(meta.parameters);
 
   const fields: Array<[string, string]> = [
-    ["description", description],
+    ["description", meta.description ?? ""],
     ["when", meta.when ?? ""],
     ["notFor", meta.notFor ?? ""],
   ];
   for (const [field, value] of fields) {
     if (value.length === 0) continue;
-    // W1：已声明参数名的 ':'/'=' 形态（参数名转义防 RegExp 注入崩溃——exec-review F2；
-    // ':' 形态加 \\b 前缀防子串误报（subtask: 不命中 task——exec-review F6））
-    for (const name of paramNames) {
-      const nameEsc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      if (new RegExp(`\\b${nameEsc}:\\s`).test(value) || new RegExp(`\\b${nameEsc}=\\S`).test(value)) {
-        findings.push({
-          severity: "error",
-          line: 1,
-          message: `meta.${field} 包含已声明参数名 '${name}'（'${name}:' / '${name}=' 形态）——参数契约请 read 脚本文件的 @pi-meta parameters 查询，description/when/notFor 只放路由信息`,
-          suggestion: `从 meta.${field} 移除 '${name}: ...' / '${name}=...'，改在 parameters/usage 中声明`,
-        });
-      }
-    }
+    findings.push(...findParamNameFindings(field, value, paramNames));
     findings.push(...checkMetaFieldQuality(field, value));
   }
   return findings;

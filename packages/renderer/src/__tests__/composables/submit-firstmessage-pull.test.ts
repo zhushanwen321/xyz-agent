@@ -17,7 +17,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { textToSegments } from '@xyz-agent/shared'
 import type { SessionSummary } from '@xyz-agent/shared'
 
-vi.mock('@/api/domains/session', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({
   create: vi.fn(),
   // getCommands/getSubagents/getWorkflows RPC 客户端保留（被 store 方法/sync composables/独立场景用），
   // submitFirstMessage 不应直接调它们——用 spy 断言 not called。
@@ -30,19 +30,19 @@ vi.mock('@/api/domains/session', () => ({
 // 门面重定向
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
-  const session = await import('@/api/domains/session')
+  const session = await import('@xyz-agent/core/transport/api/domains/session')
   return { ...actual, session }
 })
 
-vi.mock('@/api/events', () => ({
+vi.mock('@xyz-agent/core/transport/api', () => ({
   on: vi.fn(() => () => {}),
   onGlobalType: vi.fn(() => () => {}),
   dispatchSession: vi.fn(),
 }))
 
 // file tree 依赖（loadTree 保留）
-vi.mock('@/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
-vi.mock('@/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
+vi.mock('@xyz-agent/core/transport/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
+vi.mock('@xyz-agent/core/transport/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
 
 // mock useChat（submitFirstMessage 调 chat.send，stub 为 noop 避免触发 WS）
 vi.mock('@/composables/features/chat/useChat', () => ({

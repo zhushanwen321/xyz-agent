@@ -24,8 +24,8 @@ import type { AgentToolResult, Theme } from "@earendil-works/pi-coding-agent";
 import type {
   ListResponse,
   SubagentToolResult,
-} from "@zhushanwen/subagent-core/execution/types.ts";
-import { displayAgentName } from "@zhushanwen/subagent-core/shared/agent-ref.ts";
+} from "@zhushanwen/subagent-core";
+import { displayAgentName } from "@zhushanwen/subagent-core";
 import {
   extractAgentName,
   firstLineSanitized,

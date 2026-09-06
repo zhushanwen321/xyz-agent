@@ -3,6 +3,8 @@
 // M6: worktree cleanup not gated by patchOk (decoupled)
 // M9: store.save not fire-and-forget (has .catch)
 // M12: budget-done transition and onRunDone in separate try blocks
+//   （D5-② coda 收敛后语义不变、落点转移：budget-done 分支改调 finalizeRun 单写点，
+//   transition / unregister+onRunDone 的错误分离在 finalizeRun 函数体内断言）
 // [u1-move] M10（notifyDone 序列化守卫，读壳侧 interface/helpers.ts 源文本）随壳件
 // 留守 pi extension 包：src/__tests__/robustness-medium-batch2-interface.test.ts。
 
@@ -37,7 +39,7 @@ describe("M6: worktree cleanup not gated by patchOk", () => {
 // ── M9: store.save has .catch (not fire-and-forget) ──────────
 
 describe("M9: store.save not fire-and-forget in dispatchAgentCall", () => {
-  const src = readSrc(join("src", "orchestration", "error-recovery.ts"));
+  const src = readSrc(join("src", "orchestration", "worker-message-pump.ts"));
 
   it("no bare `void deps.store.save` without .catch", () => {
     // 查找所有 void deps.store.save(run) 的出现
@@ -48,18 +50,27 @@ describe("M9: store.save not fire-and-forget in dispatchAgentCall", () => {
   });
 });
 
-// ── M12: budget-done has separate try blocks ─────────────────
+// ── M12: budget-done coda 经 finalizeRun 单写点（错误分离语义不变） ──
 
 describe("M12: budget-done separates transition and onRunDone error handling", () => {
-  const src = readSrc(join("src", "orchestration", "error-recovery.ts"));
+  const src = readSrc(join("src", "orchestration", "worker-message-pump.ts"));
 
-  it("budget-done block has more than one catch (transition vs onRunDone separated)", () => {
+  it("budget-done branch delegates to finalizeRun (D5-② single coda write point)", () => {
     // 找到 budget isExceeded 块
     const budgetMatch = src.match(/budget\.isExceeded\(\)[\s\S]*?\}\s*\}\s*\)/);
     expect(budgetMatch).toBeTruthy();
     const budgetBlock = budgetMatch![0];
-    // 修复后应有多个 catch（至少 2 个：一个给 transition，一个给 onRunDone/emit）
-    const catchCount = (budgetBlock.match(/\bcatch\b/g) || []).length;
+    // coda 收敛后：budget-done 分支只调 finalizeRun（transition/save/unregister/onRunDone
+    // 四步不再内联复制）
+    expect(budgetBlock).toContain("finalizeRun(run, deps, \"budget_limited\"");
+  });
+
+  it("finalizeRun body separates transition and onRunDone error handling (>= 2 catch)", () => {
+    // finalizeRun 函数体：transition 的 try/catch 与 unregister/onRunDone 的 try/catch
+    // 分离（M12 语义锚定不变，随 coda 收敛转移至单写点内）
+    const fnMatch = src.match(/export async function finalizeRun\([\s\S]*?\n\}/);
+    expect(fnMatch, "finalizeRun 函数定义应存在").toBeTruthy();
+    const catchCount = (fnMatch![0].match(/\bcatch\b/g) || []).length;
     expect(catchCount).toBeGreaterThanOrEqual(2);
   });
 });

@@ -188,6 +188,16 @@ function findSimilarSuggestions(
     .slice(0, MODEL_LIST_LIMIT);
 }
 
+/**
+ * [u-h2 D2-4] notFoundError 的结构化标记：编排层（pi 未命中跨引擎反查）据此区分
+ * 「pi registry 未命中」与孪生歧义/auth 等其他裁决失败——只有未命中形态做反查。
+ */
+interface NotFoundMarker {
+  refNotFound: true;
+  /** 裁决的原始输入串（strip thinking 后缀前的原样值），跨引擎反查的匹配源。 */
+  refInput: string;
+}
+
 /** 规则⑤未命中错误：问句候选 + 合法串全集（无候选时）+ 继承指引。 */
 function notFoundError(
   input: string,
@@ -195,7 +205,7 @@ function notFoundError(
   provider: string,
   id: string,
   source: ModelRefSource,
-): Error {
+): Error & NotFoundMarker {
   const lines = [
     `Model "${input}"${prefix} is not a registry entry. ` +
       `Registry match is case-sensitive — the string must equal a registry entry exactly, including letter case.`,
@@ -230,7 +240,10 @@ function notFoundError(
   }
 
   lines.push(`Or omit the \`model\` param to inherit the main agent model.`);
-  return new Error(lines.join("\n"));
+  const err = new Error(lines.join("\n")) as Error & NotFoundMarker;
+  err.refNotFound = true;
+  err.refInput = input;
+  return err;
 }
 
 // ============================================================

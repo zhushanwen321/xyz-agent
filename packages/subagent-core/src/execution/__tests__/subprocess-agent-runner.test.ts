@@ -11,7 +11,8 @@
 //   T3.7  (正常): onEvent 桥接 AgentEvent 透传
 //   T3.17 (NFR): mergeTimeoutSignal listener 清理
 //   T3.18 (NFR): dispose 兜底覆盖（delegate 后子进程进 spawnedChildren）
-//   T3.19 (NFR): AgentCallOpts→ExecuteOptions 映射保真
+//   T3.19 (NFR): AgentCallOpts→ExecuteOptions 直出保真（D6 合流后映射在 PiEngine 边界，
+//                本组用例经真实 PiEngine 链路锁定 spawn 参数形态）
 
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,9 +27,10 @@ import { configureCore, resetCoreForTests } from "../../core/host-services.ts";
 
 import type { AgentCallOpts, AgentResult } from "../../orchestration/models/types.ts";
 import { ModelConfigService, setModelConfigService } from "../model-config-service.ts";
-import type { ModelRegistryLike } from "../model-resolver.ts";
+import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
 import { replayJournal } from "../engine/common/event-journal.ts";
 import type { SubprocessAgentRunnerDeps } from "../subprocess-agent-runner.ts";
+import type { SubagentService } from "../subagent-service.ts";
 import { SubprocessAgentRunner } from "../subprocess-agent-runner.ts";
 
 // ── 测试辅助 ──
@@ -46,17 +48,17 @@ function makeMockResult(overrides: Partial<AgentResult> = {}): AgentResult {
   };
 }
 
-/** 创建 mock SubagentService（只实现 executeAndAwait） */
-function createMockService(impl?: typeof vi.fn) {
+/** 创建 mock SubagentService（只实现 executeAndAwait）。
+ *  [D4 聚合连带] SAR 构造器经 asEngineService 显式视图取 PiEngineService——fake 的
+ *  face 即自身，getter 直接返回 self。 */
+function createMockService(impl?: typeof vi.fn): SubagentService {
   const executeAndAwait = impl ?? vi.fn().mockResolvedValue(makeMockResult());
-  return { executeAndAwait } as unknown as {
-    executeAndAwait: (
-      opts: Record<string, unknown>,
-      signal?: AbortSignal,
-      onEvent?: (e: Record<string, unknown>) => void,
-      stream?: unknown,
-    ) => Promise<AgentResult>;
-  };
+  // partial mock（仅 executeAndAwait + asEngineService self-引用）——SAR 测试路径
+  // 不触达其余成员，经 unknown 双跳收敛到 SubagentService 视图
+  const partial: { executeAndAwait: typeof executeAndAwait; asEngineService?: unknown } = { executeAndAwait };
+  const service = partial as unknown as SubagentService;
+  partial.asEngineService = service;
+  return service;
 }
 
 function makeBaseOpts(): AgentCallOpts {
@@ -171,7 +173,7 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
           return Promise.resolve(makeMockResult());
         }),
       );
-      const ctxModel = { id: "ctx-model", provider: "test", input: [] };
+      const ctxModel: ModelInfo = { id: "ctx-model", name: "Ctx Model", provider: "test", reasoning: false };
       const deps: SubprocessAgentRunnerDeps = { subagentService: mockService, ctxModel };
       const sar = new SubprocessAgentRunner(deps);
 
@@ -189,7 +191,7 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
           return Promise.resolve(makeMockResult());
         }),
       );
-      const ctxModel = { id: "ctx-model", provider: "test", input: [] };
+      const ctxModel: ModelInfo = { id: "ctx-model", name: "Ctx Model", provider: "test", reasoning: false };
       const deps: SubprocessAgentRunnerDeps = { subagentService: mockService, ctxModel };
       const sar = new SubprocessAgentRunner(deps);
 
@@ -225,7 +227,7 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
         const svc = new ModelConfigService({ agentDir: join(tmpRoot, "agent"), cwd: tmpRoot });
         svc.initModel({ modelRegistry: { getAvailable: () => [], find: () => undefined, hasConfiguredAuth: () => false }, sessionId: "cleanup" });
         setModelConfigService(svc);
-        rmSync(tmpRoot, { recursive: true, force: true });
+        rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
         tmpRoot = "";
       }
       if (prevDataDir === undefined) delete process.env["XYZ_AGENT_DATA_DIR"];
@@ -305,8 +307,8 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
           return Promise.resolve(makeMockResult());
         }),
       );
-      const oldModel = { id: "old-model", provider: "test", input: [] };
-      const newModel = { id: "new-model", provider: "test", input: [] };
+      const oldModel: ModelInfo = { id: "old-model", name: "Old Model", provider: "test", reasoning: false };
+      const newModel: ModelInfo = { id: "new-model", name: "New Model", provider: "test", reasoning: false };
       const deps: SubprocessAgentRunnerDeps = { subagentService: mockService, ctxModel: oldModel };
       const sar = new SubprocessAgentRunner(deps);
 
@@ -453,7 +455,7 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
       } finally {
         if (prevEnv === undefined) delete process.env.XYZ_AGENT_DATA_DIR;
         else process.env.XYZ_AGENT_DATA_DIR = prevEnv;
-        rmSync(dataDir, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
       }
     });
   });
@@ -491,8 +493,8 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
   // ────────────────────────────────────────────────
   // T3.19: AgentCallOpts → ExecuteOptions 映射保真
   // ────────────────────────────────────────────────
-  describe("T3.19 映射保真", () => {
-    it("prompt → task, agent → agent, schemaEnv 透传", async () => {
+  describe("T3.19 直出保真（D6：映射点在 PiEngine.agentCallToExecuteOptions，SAR 直传零映射）", () => {
+    it("prompt → task, agent → agent, schemaEnv 透传（经 pi 边界直出）", async () => {
       let capturedOpts: Record<string, unknown> | undefined;
       const mockService = createMockService(
         vi.fn().mockImplementation((opts: Record<string, unknown>) => {

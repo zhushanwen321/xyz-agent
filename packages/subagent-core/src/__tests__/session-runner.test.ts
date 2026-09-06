@@ -12,7 +12,7 @@
  * 因带 delta 字段被误判为 text_delta。正向判定（只放行 text_delta）根治。
  */
 import { describe, it, expect } from "vitest";
-import { mapAssistantMessageDelta } from "../execution/session-runner.js";
+import { mapAssistantMessageDelta } from "../execution/engine/engines/pi/session-runner.js";
 
 describe("mapAssistantMessageDelta: assistantMessageEvent → streaming 事件分流", () => {
   it("text_delta → forward 为 text_delta", () => {

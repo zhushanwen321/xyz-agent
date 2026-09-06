@@ -13,7 +13,8 @@
  * 运行：cd packages/runtime && npx vitest run test/session-file-utils.test.ts
  */
 import { describe, it, expect } from 'vitest'
-import { applyHeaderCwdFallback } from '../src/services/session/session-lifecycle.js'
+// applyHeaderCwdFallback 自 session-lifecycle 迁出（max-lines 行数合规），权威源在 restore-seeding。
+import { applyHeaderCwdFallback } from '../src/services/session/restore-seeding.js'
 
 describe('applyHeaderCwdFallback（F3 归一化管线内 header cwd 降级，纯字符串变换）', () => {
   it('替换首行 session header 的 cwd，其余 entry 原样保留', () => {

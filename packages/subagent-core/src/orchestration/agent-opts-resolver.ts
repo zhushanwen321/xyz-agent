@@ -10,7 +10,7 @@
  * agent ref 处理（systemPrompt/model/thinkingLevel）已移交 resolveIdentity（execution 层，
  * 经 getAgentConfig + resolveModel 完整覆盖），消除双重注入与 model 层级混乱。
  *
- * 调用方：engine/error-recovery.ts dispatchAgentCall（每次 agent-call 消息）。
+ * 调用方：engine/worker-message-pump.ts dispatchAgentCall（每次 agent-call 消息）。
  * - skill → resolveSkillPath → skillPath（--skill）
  * - schema → 结构化输出指令内容直传 appendSystemPrompt（--append-system-prompt）+ schemaEnv（PI_WORKFLOW_SCHEMA）
  *

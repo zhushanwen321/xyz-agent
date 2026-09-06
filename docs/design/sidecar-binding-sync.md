@@ -205,7 +205,7 @@ type BindingFieldKey = Exclude<OptionalKeys<ScannedSessionMeta>, 'parentSession'
 export const BINDING_FIELDS: Record<BindingFieldKey, FieldSpec> = { ... }
 ```
 
-  排除集 { parentSession, forkEntryId }（header 派生字段，经核实即全集——`ScannedSessionMeta` 可选字段仅 7 个 = 2 排除 + 5 绑定）。给 `ScannedSessionMeta` 新增第 6 个绑定字段而未登记表 = **编译错误**，对任意类型（boolean/timestamp/枚举）的字段都生效——第一轮草案的 `T[K] extends string | undefined` 写法会静默放过非 string 字段（而本设计 §3.2 自举的威胁模型例子 `.star.json` 收藏标记恰可能是 boolean），已否决。「新字段必经之路」正是 scanSessionMeta 填充 meta，此守卫卡在必经之路上。
+  排除集 { parentSession, forkEntryId }（header 派生字段，经核实即全集——`ScannedSessionMeta` 可选字段仅 7 个 = 2 排除 + 5 绑定；〔设计时快照〕composer-model-session-isolation D1 后终态 9 个 = 2 排除 + 7 绑定，新增 modelId/thinkingLevel 经 `ModelBindingFields` extends 收编，见 `session-binding-fields.ts` 注册表注释）。给 `ScannedSessionMeta` 新增第 6 个绑定字段而未登记表 = **编译错误**，对任意类型（boolean/timestamp/枚举）的字段都生效——第一轮草案的 `T[K] extends string | undefined` 写法会静默放过非 string 字段（而本设计 §3.2 自举的威胁模型例子 `.star.json` 收藏标记恰可能是 boolean），已否决。「新字段必经之路」正是 scanSessionMeta 填充 meta，此守卫卡在必经之路上。
 - 残余边界（诚实声明）：**必填字段不受保护**（如未来某绑定字段被误声明为必填）——绑定字段天然可选（sidecar 缺失 = undefined），误声明必填会在 `scanSessionMeta` 构造处理想类型冲突，但非编译硬错；此边界写入 unit 4 的 checklist 注释。
 - 被否的更强形态：`ManagedSession` 实例字段 / toSummary 输出也从表派生（全表驱动重构，编译期覆盖所有同步点）。
 - 理由：当前 5 字段规模全表驱动重构收益/成本比不成立；类型键约束以 ~15 行拿到「漏登记」这一最大风险面的编译期拦截；字段增长到 ~8+ 或出现第二类消费方时再升级，届时注册表是平滑过渡的中间态（数据结构已就位，只扩大类型派生范围）。

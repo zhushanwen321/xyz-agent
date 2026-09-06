@@ -5,7 +5,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createTurnLimiter } from "../turn-limiter.ts";
+import { createTurnLimiter } from "../engine/engines/pi/turn-limiter.ts";
 
 describe("SP-9: turn-limiter chatMode semantics (maxTurns reset per round)", () => {
   describe("TC-1: chatMode 多轮后 maxTurns 每轮 reset（不累计）", () => {

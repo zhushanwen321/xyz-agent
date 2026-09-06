@@ -283,21 +283,23 @@ async function run(opts) {
   return 0
 }
 
-function parseArgs(argv) {
-  const opts = {}
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]
-    const next = argv[i + 1]
-    if (a === '--target' && next) { opts.target = next; i++ }
-    else if (a === '--page' && next) { opts.page = next; i++ }
-    else if (a === '--out-dir' && next) { opts.outDir = next; i++ }
-    else if (a === '--port' && next) { opts.port = Number(next); i++ }
-    else if (a === '--url' && next) { opts.url = next; i++ }
-    else if (a === '--cdp-url' && next) { opts.cdpUrl = next; i++ }
-    else if (a === '--selector' && next) { opts.selector = next; i++ }
-    else if (a === '--ready-timeout' && next) { opts.readyTimeout = Number(next); i++ }
-    else if (a === '-h' || a === '--help') {
-      console.log(`用法: node scripts/visual-capture.mjs --target demo|devapp|mock [options]
+/**
+ * CLI 参数表：flag → opts key。numeric=true 的取值经 Number() 转换
+ * （--port / --ready-timeout），其余为字符串原样。--help 不进表（见 parseArgs 落空分支）。
+ */
+const ARG_SPECS = [
+  { flag: '--target', key: 'target' },
+  { flag: '--page', key: 'page' },
+  { flag: '--out-dir', key: 'outDir' },
+  { flag: '--port', key: 'port', numeric: true },
+  { flag: '--url', key: 'url' },
+  { flag: '--cdp-url', key: 'cdpUrl' },
+  { flag: '--selector', key: 'selector' },
+  { flag: '--ready-timeout', key: 'readyTimeout', numeric: true },
+]
+
+function printVisualCaptureHelp() {
+  console.log(`用法: node scripts/visual-capture.mjs --target demo|devapp|mock [options]
   --target      必需：demo(.tmp/v6 vite:1421) | devapp(CDP:9222) | mock(renderer vite+VITE_MOCK)
   --page        截图命名（默认 page，影响输出目录名 <date>-<page> 与文件名 <target>-<page>.png）
   --out-dir     输出目录（默认 .xyz-harness/visual/<YYYY-MM-DD>-<page>/）
@@ -306,6 +308,18 @@ function parseArgs(argv) {
   --cdp-url     devapp CDP 端点（默认 http://localhost:9222）
   --selector    局部元素截图（CSS 选择器，默认整页 fullPage）
   --ready-timeout  dev server ready 超时 ms（默认 60000）`)
+}
+
+function parseArgs(argv) {
+  const opts = {}
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]
+    const spec = ARG_SPECS.find((s) => s.flag === a)
+    if (spec && argv[i + 1]) {
+      opts[spec.key] = spec.numeric ? Number(argv[i + 1]) : argv[i + 1]
+      i++
+    } else if (a === '-h' || a === '--help') {
+      printVisualCaptureHelp()
       process.exit(0)
     }
   }

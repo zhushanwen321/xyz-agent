@@ -7,7 +7,7 @@
  * - providerId 为 null 时跳过
  * - 数据写入 store 后 computed 自动响应式更新
  *
- * mock 策略：vi.mock('@/api/domains/quota') 替换 RPC 层，vi.mock('@/stores/quota') 替换 store。
+ * mock 策略：vi.mock('@xyz-agent/core/transport/api/domains/quota') 替换 RPC 层，vi.mock('@/stores/quota') 替换 store。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/use-quota-query.test.ts
  */
@@ -16,7 +16,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import type { NormalizedQuotaRow } from '@xyz-agent/shared'
 
-vi.mock('@/api/domains/quota', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/quota', () => ({
   getCached: vi.fn(),
   fetchQuota: vi.fn(),
   configure: vi.fn(),
@@ -50,7 +50,7 @@ vi.mock('@/i18n', () => ({
   default: { global: { t: (key: string) => key } },
 }))
 
-import * as quotaApi from '@/api/domains/quota'
+import * as quotaApi from '@xyz-agent/core/transport/api/domains/quota'
 import { useQuotaQuery } from '@/composables/features/model/useQuotaQuery'
 import { useQuotaStore } from '@/stores/quota'
 

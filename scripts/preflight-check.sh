@@ -206,7 +206,7 @@ fi
 
 # ── 6. artifactName 版本号检查（含 ${version}）──────────────────────
 # release asset 文件名需带版本号（便于归档识别）。release-checker 用 pattern 匹配
-# 平台后缀（如 -mac-arm64.zip）定位 asset，不依赖固定文件名。
+# 平台后缀（如 -mac-arm64.dmg）定位 asset，不依赖固定文件名。
 echo ""
 echo -e "${BLUE}[6/10] artifactName versioned (contains \${version})...${NC}"
 

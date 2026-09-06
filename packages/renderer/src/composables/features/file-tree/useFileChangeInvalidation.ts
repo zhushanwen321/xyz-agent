@@ -92,7 +92,7 @@ function scheduleOverlayRefresh(sid: string): void {
 async function refreshOverlay(sid: string): Promise<void> {
   try {
     const result = await gitApi.status(sid)
-    // W19 review Fix-1：RPC 在途期间 session 可能已被 deleteSession（useSidebar
+    // W19 review Fix-1：RPC 在途期间 session 可能已被 deleteSession（core use-session
     // cleanupSessionState 的销毁序列删 fileTree 分桶 + chat messages 分区）——回写前查
     // chat store messages 分区（session 存活权威信号），已销毁 sid 跳过，防 300ms timer
     // 为其重建孤儿 gitOverlay/dirChangeCounts 分桶。不查 fileTree 自身分桶：「从未建桶」

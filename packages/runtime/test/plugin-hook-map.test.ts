@@ -27,7 +27,7 @@ function createMockBroker(): IMessageBroker {
   }
 }
 
-// ── 常量：pi 侧 bridge extension 转发的事件全集（resources/pi/agent/extensions/bridge/index.ts EVENTS） ──
+// ── 常量：pi 侧 bridge extension 转发的事件全集（extensions/taiji/plugin-bridge/src/index.ts 的 pi.on 注册段，select+BRIDGE_MARKER 通道） ──
 
 const PI_BRIDGE_EVENTS = [
   'agent_start',
@@ -156,10 +156,13 @@ describe('bridge:tool_execute 唯一 tool 执行入口', () => {
     return out
   }
 
-  it('TC-w4-3a: bridge-handler.ts 的 bridge:tool_execute case 只调 handleBridgeToolExecute', () => {
+  it('TC-w4-3a: bridge-handler.ts 的 bridge:tool_execute case 经 sendBridgeToolExecute 委托 handleBridgeToolExecute（U07 case 体提取后形态）', () => {
     const content = readFileSync(join(srcRoot, 'transport/bridge-handler.ts'), 'utf-8')
     const caseBlock = content.slice(content.indexOf("case 'bridge:tool_execute'"), content.indexOf("case 'bridge:event'"))
-    expect(caseBlock).toContain('handleBridgeToolExecute')
+    // 路由层经 sendBridgeToolExecute 私有方法委托（提取后 case 块仅保留委托调用）
+    expect(caseBlock).toContain('sendBridgeToolExecute')
+    // 委托目标仍是 plugin-service.handleBridgeToolExecute（唯一 tool 执行入口意图不变）
+    expect(content).toContain('this.pluginService?.handleBridgeToolExecute')
     // 路由层不得直连 RPC 服务器（invoke 只在 service/adaptor 层）
     expect(caseBlock).not.toContain('rpcServer.invoke')
     expect(caseBlock).not.toContain('plugin.tool.execute')

@@ -25,7 +25,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { ComputedRef } from 'vue'
-import type { ExtensionUIRequest } from '@/api/domains/extension'
+import type { ExtensionUIRequest } from '@xyz-agent/core/transport/api/domains/extension'
 
 export const useExtensionUIStore = defineStore('extension-ui', () => {
   // ── state ──

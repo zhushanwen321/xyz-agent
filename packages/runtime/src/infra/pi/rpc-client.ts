@@ -4,6 +4,7 @@ import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
 import { RpcTimeoutError } from '../../utils/errors.js'
 import type { ThinkingLevel, ProviderId } from '@xyz-agent/shared'
+import { BASH_RPC_TIMEOUT_MS, COMPACT_RPC_TIMEOUT_MS } from '@xyz-agent/shared'
 // B3 出站契约唯一构建器（U3 收口点；实现本体在 @xyz-agent/shared，此处走 runtime 门面）
 import { buildOutboundChildEnv } from '../spawn-env.js'
 import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
@@ -86,7 +87,6 @@ export interface RpcClientOptions {
 }
 
 const CMD_TIMEOUT_MS = 60_000
-const COMPACT_TIMEOUT_MS = 300_000
 const KILL_TIMEOUT_MS = 2_000
 /** 快速操作超时（L6：getState/getCommands 等毫秒级 RPC，10s 足够，60s 等太久才报错） */
 const FAST_TIMEOUT_MS = 10_000
@@ -95,6 +95,15 @@ const SLOW_TIMEOUT_MS = 120_000
 const STARTUP_DELAY_MS = 500
 /** timedOutIds 条目存活时间（S6：超时后迟到响应的防御窗口，5s 后清理避免 Set 无界增长） */
 const TIMED_OUT_ID_TTL_MS = 5_000
+/**
+ * 早期帧缓冲上限（early-frame-buffer 设计 D3，docs/design/rpc-client-early-frame-buffer.md）。
+ *
+ * listener 空窗（pi spawn → EventAdapter attach，中间隔着 getState RPC 往返）期间到达的
+ * 非 response 帧进 FIFO 缓冲而非无条件丢弃；上限是防泄漏的回收层有界兜底——正常启动序列
+ * <10 帧（估计值，B2 观测核实），256 帧仅覆盖「listener 永不到达」异常形态（帧为 KB 级
+ * JSONL，约数百 KB 上界）。超限丢最旧（重放 = 最近 256 帧连续窗口），warn 一次不刷屏。
+ */
+const EARLY_FRAME_BUFFER_MAX = 256
 /**
  * stderr 崩溃取证缓冲的字节上限（D4/G4：异常退出全量落盘的内存防御边界）。
  *
@@ -105,6 +114,165 @@ const TIMED_OUT_ID_TTL_MS = 5_000
 const STDERR_CRASH_MAX_BYTES = 1_000_000
 /** 错误消息 / exitCallback 载荷里的 stderr 尾部行数（展示路径，D4 后语义不变） */
 const STDERR_TAIL_LINES = 10
+
+// ── start 提取 helper（复杂度债务偿还，行为保持提取：按处理阶段下沉，主函数只留编排）──
+
+/**
+ * start 的 model 参数解析（P1，pi-assumption final gate）：附着恢复路径不拼 --model——
+ * pi CLI model 恒优先于 session entry 恢复，全局默认兜底一旦拼进 args，用户切换过的
+ * 模型就被静默压回默认。modelRef 读取保持无条件（与提取前求值顺序一致）。
+ */
+function resolveStartModel(options: RpcClientOptions): string | undefined {
+  const modelRef = getDefaultModel()
+  return options.inheritSessionModel
+    ? undefined
+    : options.model ?? (modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '')
+}
+
+/**
+ * start 的出站 env 构建（B3 出站契约收口，docs/design/env-propagation-boundary.md §5-U3）：
+ * 白名单过滤父 env 为基座 → extras 在基座之上整体覆盖 → deny 清单兜底剥除
+ * XYZ_AGENT_PACKAGED / XYZ_RUNTIME_TOKEN。旧私有第二份 buildSafeEnv 已被共享构建器取代
+ * （重复实现漂移消灭）。
+ */
+function buildPiOutboundEnv(options: RpcClientOptions): NodeJS.ProcessEnv {
+  const outboundExtras: Record<string, string> = {}
+  for (const [key, value] of Object.entries(options.env ?? {})) {
+    // 旧私有实现对 undefined extras 键跳过不写（「undefined=删除」语义属 main 侧
+    // safe-env）。保留跳过行为：防上游误传 undefined 时吞掉白名单基座继承键
+    // （R2 远距离爆炸防线，如 PATH 被删 → hooks 里 command not found）。
+    if (value !== undefined) outboundExtras[key] = value
+  }
+  // D4/G4 观测补齐（file-lock-unification-and-reaper-sink §3.2-D4 / U3-3）：xyz 托管
+  // 环境恒注入 extension 日志开关——extension-logger 见此变量即落盘 INFO 级日志
+  // （XYZ_AGENT_DEBUG=1 的 DEBUG 全量语义不变，两变量并存取更详细；均未注入的裸 pi
+  // 独立用户保持 no-op，零磁盘影响）。走 extras 通道随构建器出站（C-proc-09 唯一
+  // 构建点，不绕过直接拼 env）；托管语义恒为 '1'，不开放 options.env 覆盖。
+  outboundExtras.XYZ_AGENT_EXT_LOG = '1'
+  const env = buildOutboundChildEnv({ parentEnv: process.env, extras: outboundExtras })
+
+  // xyz-pi agent 目录：~/.xyz-agent/pi/agent/
+  // 开发模式和打包模式统一使用此目录，不使用系统 pi 的 ~/.pi/agent/
+  env.PI_CODING_AGENT_DIR = getPiAgentDir()
+  return env
+}
+
+/** start 的 skill/extension 路径 args（每个路径走独立参数，pi 原生 loader 加载）。 */
+function appendSkillAndExtensionArgs(args: string[], options: RpcClientOptions): void {
+  if (options.skillPaths?.length) {
+    for (const skillPath of options.skillPaths) {
+      args.push('--skill', skillPath)
+    }
+  }
+  if (options.extensionPaths?.length) {
+    for (const extPath of options.extensionPaths) {
+      args.push('--extension', extPath)
+    }
+  }
+}
+
+/** tools/excludeTools/noTools 三者互斥判定（W-RT-6：任两组同时出现即冲突）。 */
+function toolOptionConflict(hasNoTools: boolean, hasTools: boolean, hasExcludeTools: boolean): boolean {
+  return (hasNoTools && hasTools)
+    || (hasNoTools && hasExcludeTools)
+    || (hasTools && hasExcludeTools)
+}
+
+/**
+ * start 的 tools/excludeTools/noTools args（Preset 启动参数，设计文档 §2.5 / 附录 A）。
+ *
+ * tools/excludeTools 用逗号连接（pi 单参数多值语义）；开关类 push 单 flag；
+ * W-RT-6：三者互斥，按优先级 noTools > tools > excludeTools 取一个，
+ * 同时出现多个时 warn（不抛错，避免运行时炸），保持单写者语义清晰。
+ */
+function appendToolArgs(args: string[], options: RpcClientOptions): void {
+  const hasTools = !!options.tools?.length
+  const hasExcludeTools = !!options.excludeTools?.length
+  const hasNoTools = !!options.noTools
+  if (toolOptionConflict(hasNoTools, hasTools, hasExcludeTools)) {
+    console.warn('[rpc] conflicting tool options detected, using priority: noTools > tools > excludeTools')
+  }
+  if (hasNoTools) {
+    args.push('--no-tools')
+  } else if (hasTools) {
+    args.push('--tools', options.tools!.join(','))
+  } else if (hasExcludeTools) {
+    args.push('--exclude-tools', options.excludeTools!.join(','))
+  }
+}
+
+/**
+ * start 的 pi CLI args 数组构建（与提取前拼接顺序逐字节一致）。
+ *
+ * --approve: 强制信任 cwd（trustOverride=true），让 pi 加载项目级 .pi/skills 和 .pi/extensions。
+ * 短期方案：xyz-agent 的 RPC 模式无交互 UI，pi 原生信任流程在 hasUI=false 时默认拒绝，
+ * 导致 <cwd>/.pi/ 下的 skill/extension 被跳过。--approve 绕过信任确认，代价是所有
+ * 项目自动信任（失去 pi 信任机制对恶意 .pi/extensions 的安全防护）。
+ *
+ * 三个 flag 的交互（架构约定 #11：extension 通过 --extension CLI 参数
+ * 在 pi 启动时注入路径，pi 原生 loader 加载）：
+ * - --no-extensions：抑制 pi 自动发现/加载的全局扩展（内置/全局扩展目录），不影响显式注入的扩展。
+ * - --extension <path>：显式注入 xyz-agent 管理的扩展路径（appendSkillAndExtensionArgs），
+ *   走独立参数，不受 --no-extensions 影响；扩展数据隔离在 ~/.xyz-agent/ 数据目录。
+ * - --approve：绕过项目级 .pi/skills 和 .pi/extensions 的信任确认。
+ * 因此 xyz-agent 的 extension 走 --extension 显式注入 + ~/.xyz-agent/ 数据目录隔离，
+ * 不依赖 --approve 加载项目级 .pi/extensions；--approve 实际主要为信任项目级 .pi/skills
+ * （skills 加载见 pi 的 skills.ts）。
+ * TODO(follow-up): 实现 Project Trust UI，让用户逐项目确认信任，移除全局 --approve。
+ * 当前为产品决策（local-first 工具，所有项目可信），非临时 hack。
+ */
+function buildPiArgs(options: RpcClientOptions, model: string | undefined, sessionDir: string): string[] {
+  const args = ['--mode', 'rpc', '--no-extensions', '--approve']
+  if (model) args.push('--model', model)
+  // --system-prompt: 替换 pi 核心系统提示词（身份/工具列表/指引/pi 文档路径 4 段）。
+  // 动态段（project_context/skills/日期/cwd）仍由 pi 照常拼接。空白/未传不拼。
+  if (options.systemPrompt?.trim()) {
+    args.push('--system-prompt', options.systemPrompt)
+  }
+  appendSkillAndExtensionArgs(args, options)
+  appendToolArgs(args, options)
+  if (options.noSkills) {
+    args.push('--no-skills')
+  }
+  if (options.noContextFiles) {
+    args.push('--no-context-files')
+  }
+  if (options.thinkingLevel) {
+    // thinkingLevel 走 --thinking（pi 参数名，非 --thinking-level，附录 A.4）。
+    args.push('--thinking', options.thinkingLevel)
+  }
+  // 使用 pi 的 sessions 目录
+  args.push('--session-dir', sessionDir)
+  return args
+}
+
+/**
+ * bash RPC 超时解析（timeout-slow-flow-wallclock D2 env 逃生门）。
+ *
+ * 优先级：env `XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS`（0=不限时，非法/负值回退默认）>
+ * shared `BASH_RPC_TIMEOUT_MS`（1h）。env 覆盖读取刻意留在 runtime 侧（renderer 不可达
+ * 进程 env），renderer 侧 backstop 由 D5 的 shared 常量 + margin 独立取值。
+ *
+ * 读一次缓存：pi 是长驻子进程，超时决策在进程生命周期内稳定——若每次 bash() 重读 env，
+ * 运行中途改 env 会让「已等 59 分钟」与「刚改的 1 秒」并存于同一次等待，语义不可预测；
+ * 缓存后语义 = 「本次 runtime 进程启动后首个 bash 请求时的配置」（测试可经
+ * resetBashRpcTimeoutForTest 重置）。
+ */
+let cachedBashRpcTimeoutMs: number | null = null
+
+export function resolveBashRpcTimeoutMs(): number {
+  if (cachedBashRpcTimeoutMs === null) {
+    const raw = process.env.XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS
+    const parsed = raw !== undefined ? Number(raw) : Number.NaN
+    cachedBashRpcTimeoutMs = Number.isFinite(parsed) && parsed >= 0 ? parsed : BASH_RPC_TIMEOUT_MS
+  }
+  return cachedBashRpcTimeoutMs
+}
+
+/** 测试隔离：清空 env 逃生门缓存（对齐 core resetChatModuleStateForTest 先例）。生产勿调。 */
+export function resetBashRpcTimeoutForTest(): void {
+  cachedBashRpcTimeoutMs = null
+}
 
 /**
  * RPC 超时错误（integrity-hardening D3a：pi 半死自愈）。
@@ -125,7 +293,8 @@ export class RpcClient implements IPiEngine {
   private pending = new Map<string, {
     resolve: (msg: PiMessage) => void
     reject: (err: Error) => void
-    timer: ReturnType<typeof setTimeout>
+    /** 超时 timer；undefined = 不限时（timeout ≤ 0，D2 env 逃生门 0=不限时形态） */
+    timer: ReturnType<typeof setTimeout> | undefined
   }>()
   /**
    * 已超时的 RPC id（S6 防御迟到响应被误当 event 广播）。
@@ -137,6 +306,20 @@ export class RpcClient implements IPiEngine {
    */
   private timedOutIds = new Set<string>()
   private listeners = new Set<PiEventListener>()
+  /**
+   * 早期帧缓冲（early-frame-buffer 设计 D1-D3）：pi spawn 到首个 listener attach 之间的
+   * 空窗里，非 response 帧（与直通分支同一帧集，D2）进此 FIFO 而非丢弃；首个 listener
+   * 注册（onEvent）时同步按序重放，随后缓冲一次性关闭（D1/D3）。
+   *
+   * 一次性语义：关闭标记置位后不再复位——listeners 再次空集（adapter detach 形态）恢复
+   * 现状直通丢弃语义，绝不重新武装、不重放陈旧帧（r2 复审 S3）。生命周期随 client 对象
+   * GC 释放（kill 后无新帧，无显式 destroy，r1 审查 SG-4）。
+   */
+  private earlyFrameBuffer: PiMessage[] = []
+  /** 缓冲一次性关闭标记：唯一置位点 = 首个 listener 注册的重放 */
+  private earlyFrameBufferClosed = false
+  /** 累计超限丢弃帧数（溢出 warn 一次时携带计数，防 256+ 帧洪泛刷屏） */
+  private earlyFrameBufferDropped = 0
   private msgCounter = 0
   private _exited = false
   private _killing = false
@@ -168,103 +351,11 @@ export class RpcClient implements IPiEngine {
   constructor(private options: RpcClientOptions = {}) {}
 
   async start(): Promise<void> {
-    const modelRef = getDefaultModel()
-    // P1（pi-assumption final gate）：附着恢复路径不拼 --model——pi CLI model 恒优先于
-    // session entry 恢复，全局默认兜底一旦拼进 args，用户切换过的模型就被静默压回默认。
-    const model = this.options.inheritSessionModel
-      ? undefined
-      : this.options.model ?? (modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '')
-
-    // B3 出站契约收口（docs/design/env-propagation-boundary.md §5-U3）：白名单过滤父
-    // env 为基座 → extras 在基座之上整体覆盖 → deny 清单兜底剥除 XYZ_AGENT_PACKAGED /
-    // XYZ_RUNTIME_TOKEN。旧私有第二份 buildSafeEnv 已被共享构建器取代（重复实现漂移消灭）。
-    const outboundExtras: Record<string, string> = {}
-    for (const [key, value] of Object.entries(this.options.env ?? {})) {
-      // 旧私有实现对 undefined extras 键跳过不写（「undefined=删除」语义属 main 侧
-      // safe-env）。保留跳过行为：防上游误传 undefined 时吞掉白名单基座继承键
-      // （R2 远距离爆炸防线，如 PATH 被删 → hooks 里 command not found）。
-      if (value !== undefined) outboundExtras[key] = value
-    }
-    // D4/G4 观测补齐（file-lock-unification-and-reaper-sink §3.2-D4 / U3-3）：xyz 托管
-    // 环境恒注入 extension 日志开关——extension-logger 见此变量即落盘 INFO 级日志
-    // （XYZ_AGENT_DEBUG=1 的 DEBUG 全量语义不变，两变量并存取更详细；均未注入的裸 pi
-    // 独立用户保持 no-op，零磁盘影响）。走 extras 通道随构建器出站（C-proc-09 唯一
-    // 构建点，不绕过直接拼 env）；托管语义恒为 '1'，不开放 options.env 覆盖。
-    outboundExtras.XYZ_AGENT_EXT_LOG = '1'
-    const env = buildOutboundChildEnv({ parentEnv: process.env, extras: outboundExtras })
-
-    // xyz-pi agent 目录：~/.xyz-agent/pi/agent/
-    // 开发模式和打包模式统一使用此目录，不使用系统 pi 的 ~/.pi/agent/
-    env.PI_CODING_AGENT_DIR = getPiAgentDir()
-
-    // --approve: 强制信任 cwd（trustOverride=true），让 pi 加载项目级 .pi/skills 和 .pi/extensions。
-    // 短期方案：xyz-agent 的 RPC 模式无交互 UI，pi 原生信任流程在 hasUI=false 时默认拒绝，
-    // 导致 <cwd>/.pi/ 下的 skill/extension 被跳过。--approve 绕过信任确认，代价是所有
-    // 项目自动信任（失去 pi 信任机制对恶意 .pi/extensions 的安全防护）。
-    //
-    // 三个 flag 的交互（见下方 args 拼接，架构约定 #11：extension 通过 --extension CLI 参数
-    // 在 pi 启动时注入路径，pi 原生 loader 加载）：
-    // - --no-extensions：抑制 pi 自动发现/加载的全局扩展（内置/全局扩展目录），不影响显式注入的扩展。
-    // - --extension <path>：显式注入 xyz-agent 管理的扩展路径（本文件下方 extensionPaths 循环），
-    //   走独立参数，不受 --no-extensions 影响；扩展数据隔离在 ~/.xyz-agent/ 数据目录。
-    // - --approve：绕过项目级 .pi/skills 和 .pi/extensions 的信任确认。
-    // 因此 xyz-agent 的 extension 走 --extension 显式注入 + ~/.xyz-agent/ 数据目录隔离，
-    // 不依赖 --approve 加载项目级 .pi/extensions；--approve 实际主要为信任项目级 .pi/skills
-    // （skills 加载见 pi 的 skills.ts）。
-    // TODO(follow-up): 实现 Project Trust UI，让用户逐项目确认信任，移除全局 --approve。
-    // 当前为产品决策（local-first 工具，所有项目可信），非临时 hack。
-    const args = ['--mode', 'rpc', '--no-extensions', '--approve']
-    if (model) args.push('--model', model)
-    // --system-prompt: 替换 pi 核心系统提示词（身份/工具列表/指引/pi 文档路径 4 段）。
-    // 动态段（project_context/skills/日期/cwd）仍由 pi 照常拼接。空白/未传不拼。
-    if (this.options.systemPrompt?.trim()) {
-      args.push('--system-prompt', this.options.systemPrompt)
-    }
-    if (this.options.skillPaths?.length) {
-      for (const skillPath of this.options.skillPaths) {
-        args.push('--skill', skillPath)
-      }
-    }
-    if (this.options.extensionPaths?.length) {
-      for (const extPath of this.options.extensionPaths) {
-        args.push('--extension', extPath)
-      }
-    }
-    // Preset 启动参数（设计文档 §2.5 / 附录 A）：6 个字段映射到 pi CLI args。
-    // tools/excludeTools 用逗号连接（pi 单参数多值语义）；开关类 push 单 flag；
-    // thinkingLevel 走 --thinking（pi 参数名，非 --thinking-level）。
-    // W-RT-6：tools/excludeTools/noTools 三者互斥，按优先级 noTools > tools > excludeTools 取一个，
-    // 同时出现多个时 warn（不抛错，避免运行时炸），保持单写者语义清晰。
-    const hasTools = !!this.options.tools?.length
-    const hasExcludeTools = !!this.options.excludeTools?.length
-    const hasNoTools = !!this.options.noTools
-    if (
-      (hasNoTools && hasTools)
-      || (hasNoTools && hasExcludeTools)
-      || (hasTools && hasExcludeTools)
-    ) {
-      console.warn('[rpc] conflicting tool options detected, using priority: noTools > tools > excludeTools')
-    }
-    if (hasNoTools) {
-      args.push('--no-tools')
-    } else if (hasTools) {
-      args.push('--tools', this.options.tools!.join(','))
-    } else if (hasExcludeTools) {
-      args.push('--exclude-tools', this.options.excludeTools!.join(','))
-    }
-    if (this.options.noSkills) {
-      args.push('--no-skills')
-    }
-    if (this.options.noContextFiles) {
-      args.push('--no-context-files')
-    }
-    if (this.options.thinkingLevel) {
-      args.push('--thinking', this.options.thinkingLevel)
-    }
-
-    // 使用 pi 的 sessions 目录
-    const sessionDir = getSessionsDir()
-    args.push('--session-dir', sessionDir)
+    // P1（pi-assumption final gate）：附着恢复路径不拼 --model——见 resolveStartModel。
+    const model = resolveStartModel(this.options)
+    // B3 出站契约收口（docs/design/env-propagation-boundary.md §5-U3）——见 buildPiOutboundEnv。
+    const env = buildPiOutboundEnv(this.options)
+    const args = buildPiArgs(this.options, model, getSessionsDir())
 
     const piCmd = this.options.piCommand ?? 'pi'
 
@@ -296,7 +387,17 @@ export class RpcClient implements IPiEngine {
     }
 
     const proc = this.proc
+    this.wireProcessHandlers(proc)
+    // Wait briefly to confirm process didn't exit immediately
+    await this.awaitStartupSettled(proc)
+  }
 
+  /**
+   * start 的进程事件接线（error / exit / stdout JSONL 解析 / stdout+stderr stream error /
+   * stderr 全量收集）。与提取前注册顺序一致：error → exit → readline line → stdout error
+   * → stderr data/error。
+   */
+  private wireProcessHandlers(proc: ChildProcess): void {
     proc.on('error', (err) => {
       console.error('[rpc] spawn error:', err)
       this.rejectAll(new Error(`Failed to spawn pi: ${err.message}`))
@@ -320,7 +421,12 @@ export class RpcClient implements IPiEngine {
     })
 
     // Parse stdout JSONL
+    // rl error 吞转发（2026-09-04 事故审计）：pi 崩溃/被杀时 stdout 管道流错误被
+    // readline 转发到 interface 实例 re-emit——无 listener 直接 throw 成
+    // uncaughtException → 整机 shutdown（stderr 已有同款防护，见下方 stderr 段注释）；
+    // pi 退出处置归 exit/kill 链路，此处只堵转发逃逸。
     const rl = createInterface({ input: proc.stdout! })
+    rl.on('error', () => {})
     rl.on('line', (line) => {
       if (!line.trim()) return
       // tee 原始 JSONL 到 pi session 日志（架构约定 #4，卡死诊断证据）
@@ -344,20 +450,11 @@ export class RpcClient implements IPiEngine {
     // 作为死亡通知的唯一出口（避免「stream error 通知 + exit 通知」双触发）。
     // 刻意调 ChildProcess 原生 kill 而非 this.kill()：后者置 _killing=true，
     // exit 处理器会跳过 exitCallbacks —— 死亡通知整条丢失。
-    const killProcAfterStreamError = (stream: 'stdout' | 'stderr'): void => {
-      try {
-        this.proc?.kill('SIGKILL')
-      } catch (e) {
-        // best-effort 降级：kill 抛错说明进程已死，exit 事件已/将至并走唯一出口，无需传播
-        console.error(`[rpc] SIGKILL after ${stream} stream error failed (process may already be dead):`, e)
-      }
-    }
-
     proc.stdout?.on('error', (err: NodeJS.ErrnoException) => {
       console.error('[rpc] stdout stream error:', err)
       this._exited = true
       this.rejectAll(new Error(`pi stdout stream error: ${err.message}`))
-      killProcAfterStreamError('stdout')
+      this.killProcAfterStreamError('stdout')
     })
 
     // 收集 stderr 用于错误诊断，同时转发到日志
@@ -383,12 +480,30 @@ export class RpcClient implements IPiEngine {
         console.error('[rpc] stderr stream error:', err)
         this._exited = true
         this.rejectAll(new Error(`pi stderr stream error: ${err.message}`))
-        killProcAfterStreamError('stderr')
+        this.killProcAfterStreamError('stderr')
       })
     }
+  }
 
-    // Wait briefly to confirm process didn't exit immediately
-    await new Promise<void>((resolve, reject) => {
+  /**
+   * stream error 后 SIGKILL 加速进程死亡（W2，死亡通知唯一出口语义）——
+   * 细节与降级理由见 wireProcessHandlers 内 stdout 段注释。
+   */
+  private killProcAfterStreamError(stream: 'stdout' | 'stderr'): void {
+    try {
+      this.proc?.kill('SIGKILL')
+    } catch (e) {
+      // best-effort 降级：kill 抛错说明进程已死，exit 事件已/将至并走唯一出口，无需传播
+      console.error(`[rpc] SIGKILL after ${stream} stream error failed (process may already be dead):`, e)
+    }
+  }
+
+  /**
+   * start 的启动确认窗口：等 STARTUP_DELAY_MS 确认进程没有立即退出；
+   * 窗口内 exit / error 即 reject（消息含 stderr 尾部）。
+   */
+  private awaitStartupSettled(proc: ChildProcess): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
       let settled = false
       const onExit = (code: number | null) => {
         if (settled) return
@@ -436,10 +551,70 @@ export class RpcClient implements IPiEngine {
     } else if (msg.id && this.timedOutIds.has(msg.id)) {
       // S6: 该 id 的请求已超时 reject，pi 迟到的响应丢弃（不当 event 广播给 listeners，
       // 避免幽灵 UI 副作用）。timedOutIds 由 sendCommand 超时回调写入，5s TTL 后自动清理。
+      // D2：此分支帧与 pending 命中的 response 帧同样不进早期帧缓冲（有独立的
+      // 请求-响应配对 / 迟到丢弃语义，与 listener 无关）。
       return
+    } else if (this.listeners.size === 0 && !this.earlyFrameBufferClosed) {
+      // 早期帧缓冲（early-frame-buffer D1）：listener 空窗（spawn → EventAdapter attach）
+      // 期间的非 response 帧不再无条件丢弃，入 FIFO 待首个 listener 注册时重放。
+      // 缓冲已关闭后 listeners 再空集（detach 形态）落回本行 else 直通丢弃 = 现状语义。
+      this.bufferEarlyFrame(msg)
     } else {
       for (const listener of this.listeners) {
         listener(msg)
+      }
+    }
+  }
+
+  /**
+   * 把 listener 空窗期间到达的帧存入早期帧缓冲（early-frame-buffer D3）。
+   *
+   * 调用前提（handleMessage 缓冲分支保证）：非 response 帧 + listeners 空集 + 缓冲未关闭。
+   * 上限 EARLY_FRAME_BUFFER_MAX：超限丢最旧 + warn 一次（含累计丢弃数，防帧洪泛刷屏；
+   * 持续超限 = listener 迟到/未注册，恢复指引指向 session 初始化链排查）。
+   */
+  private bufferEarlyFrame(msg: PiMessage): void {
+    if (this.earlyFrameBuffer.length >= EARLY_FRAME_BUFFER_MAX) {
+      this.earlyFrameBuffer.shift()
+      this.earlyFrameBufferDropped++
+      if (this.earlyFrameBufferDropped === 1) {
+        console.warn(
+          `[rpc] early frame buffer overflow: >${EARLY_FRAME_BUFFER_MAX} frames without a listener, `
+          + `dropping oldest (dropped=${this.earlyFrameBufferDropped}, further drops silent). `
+          + 'Listener not attached — check the session initialization chain if this persists.',
+        )
+      }
+    }
+    this.earlyFrameBuffer.push(msg)
+  }
+
+  /**
+   * 首个 listener 注册时同步按序重放早期帧缓冲，随后一次性关闭缓冲（D1/D3）。
+   *
+   * 顺序性：重放发生在 onEvent 调用栈内的同步普通循环——Node 单线程事件循环保证重放与
+   * handleMessage 不会交错（stdout 'data' 回调排队在后），因此「重放帧（旧）→ 直通帧（新）」
+   * 的全序与 pi 输出序一致（G3 构造性成立）。异步重放（setImmediate/微任务）因引入交错
+   * 窗口被设计否决。
+   *
+   * 关闭先于重放循环：标记置位 + 缓冲引用搬空后才开始调用 listener，即使重放中出现再入
+   * （防御性——listener 回调内同步触达 handleMessage 的路径不存在），帧也走直通而非重新入队。
+   *
+   * per-帧 try-catch（D5）：一帧 throw 不中断后续帧重放，也不炸到 onEvent 调用方——重放
+   * 发生在 attach 调用栈内，无隔离会中断 session 创建链。与直通路径（listener throw 被
+   * readline line handler 的 catch 吞为 parse error）的既有不对称是先例对齐，非本设计引入。
+   */
+  private replayEarlyFrameBuffer(listener: PiEventListener): void {
+    this.earlyFrameBufferClosed = true
+    const buffered = this.earlyFrameBuffer
+    this.earlyFrameBuffer = []
+    for (const msg of buffered) {
+      try {
+        listener(msg)
+      } catch (e) {
+        // 降级策略：重放的 per-帧隔离（D5）——单帧 listener throw 只 console.error 留痕，
+        // 重放循环继续处理剩余帧，不向 onEvent 调用方传播（重放发生在 attach 调用栈内，
+        // 传播会炸掉 session 创建链）。与直通路径吞为 parse error 的行为差异是设计定案。
+        console.error('[rpc] early frame replay: listener threw on a buffered frame (isolated, continuing):', e)
       }
     }
   }
@@ -460,8 +635,11 @@ export class RpcClient implements IPiEngine {
   }
 
   /**
-   * Send a raw command and wait for a response with matching id.
-   * If the response indicates failure (success: false), the promise is rejected.
+   * timeout ≤ 0 = 不限时：不挂墙钟 timer，pending 等到响应/进程退出才 settle。
+   * 唯一合法入口是 bash RPC 的 env 逃生门 `XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS=0`
+   * （timeout-slow-flow-wallclock D2：0=不限时）——其余命令不得传 ≤0（控制面单请求
+   * 秒级是有界兜底档，规则 19）。clearTimeout(undefined) 是 no-op，resolve/reject
+   * 路径对无 timer 形态天然安全。
    */
   /**
    * 向 pi stdin 写入一行原始 JSON，不注册 pending、不等 RPC reply。
@@ -495,16 +673,18 @@ export class RpcClient implements IPiEngine {
       const id = this.nextId()
       const msg = JSON.stringify({ id, type, ...params }) + '\n'
 
-      const timer = setTimeout(() => {
-        this.pending.delete(id)
-        // S6: 标记此 id 已超时，handleMessage 收到带此 id 的迟到响应时丢弃而非广播为 event。
-        // 5s TTL 后自动从 Set 删除，避免无界增长；.unref() 避免阻止进程退出。
-        this.timedOutIds.add(id)
-        setTimeout(() => this.timedOutIds.delete(id), TIMED_OUT_ID_TTL_MS).unref()
-        // D3a：超时以 RpcTimeoutError 类型 reject（字段化 commandType/timeoutMs），调用方
-        // instanceof 判别后走强杀自愈路径，不再靠 message 字符串匹配。
-        reject(new RpcTimeoutError(type, timeout))
-      }, timeout)
+      const timer = timeout > 0
+        ? setTimeout(() => {
+          this.pending.delete(id)
+          // S6: 标记此 id 已超时，handleMessage 收到带此 id 的迟到响应时丢弃而非广播为 event。
+          // 5s TTL 后自动从 Set 删除，避免无界增长；.unref() 避免阻止进程退出。
+          this.timedOutIds.add(id)
+          setTimeout(() => this.timedOutIds.delete(id), TIMED_OUT_ID_TTL_MS).unref()
+          // D3a：超时以 RpcTimeoutError 类型 reject（字段化 commandType/timeoutMs），调用方
+          // instanceof 判别后走强杀自愈路径，不再靠 message 字符串匹配。
+          reject(new RpcTimeoutError(type, timeout))
+        }, timeout)
+        : undefined
 
       this.pending.set(id, {
         resolve: (msg) => {
@@ -552,9 +732,21 @@ export class RpcClient implements IPiEngine {
   /**
    * Register an event listener for non-response messages from pi.
    * Returns an unsubscribe function.
+   *
+   * 早期帧缓冲（early-frame-buffer D1/D3）：首个 listener 注册时在返回前同步按序重放
+   * listener 空窗期间缓冲的帧（见 replayEarlyFrameBuffer）；之后缓冲一次性关闭。后续
+   * listener（含关闭后 listeners 再空集的再注册）不触发重放——现状 Set 语义，只收直通帧。
+   * 真实调用形态恒定：event-adapter attach 恒为首 listener，handoff-service（ensureActive）
+   * 恒为后续 listener，无行为回归。
    */
   onEvent(listener: PiEventListener): () => void {
+    // 首注册判定必须在 add 之前（add 后 size 恒 ≥1）；缓冲已关闭时即使当前 listeners 空
+    // 也属「后续注册」——一次性语义，不重放陈旧帧（r2 复审 S3）。
+    const isFirstListener = this.listeners.size === 0 && !this.earlyFrameBufferClosed
     this.listeners.add(listener)
+    if (isFirstListener) {
+      this.replayEarlyFrameBuffer(listener)
+    }
     return () => { this.listeners.delete(listener) }
   }
 
@@ -684,7 +876,10 @@ export class RpcClient implements IPiEngine {
   }
 
   async compact(customInstructions?: string): Promise<PiCompactionResult> {
-    const msg = await this.sendCommand('compact', customInstructions ? { customInstructions } : {}, COMPACT_TIMEOUT_MS)
+    // timeout-slow-flow-wallclock D3：压缩是 LLM 调用链（分钟级），超时回归自有常量
+    // COMPACT_RPC_TIMEOUT_MS（30min，shared SSOT）——不再与 bash 共用（300s 前科已由 D2 拆除），
+    // renderer backstop 引同一常量 + RENDERER_RPC_MARGIN_MS（编译期对齐，恒不先于本层判死）。
+    const msg = await this.sendCommand('compact', customInstructions ? { customInstructions } : {}, COMPACT_RPC_TIMEOUT_MS)
     return msg.data as unknown as PiCompactionResult
   }
 
@@ -692,12 +887,15 @@ export class RpcClient implements IPiEngine {
    * 直接执行 bash 命令（pi bash RPC）。
    *
    * excludeFromContext 透传规则：undefined 时不传该键（走 pi 默认），显式 true/false 时透传。
-   * bash 可能长跑，复用 COMPACT_TIMEOUT_MS（300s）避免误超时。
+   * bash 是任务级慢速流（合法耗时可达小时级），超时用独立常量 BASH_RPC_TIMEOUT_MS（1h，
+   * env `XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS` 可覆盖、0=不限时——resolveBashRpcTimeoutMs），
+   * 不再复用 compact 的 300s 常量（timeout-slow-flow-wallclock D2：跨粒级挪用是 `!sleep 320`
+   * 误杀的根因）。超时语义是「停止等待」非「处决」：不自动 abort_bash，pi 侧照常执行落盘。
    * 返回值归一为 PiBashResult（sendCommand 已归一 data ?? payload，此处按结构断言）。
    */
   async bash(command: string, excludeFromContext?: boolean): Promise<PiBashResult> {
     const args = excludeFromContext !== undefined ? { command, excludeFromContext } : { command }
-    const msg = await this.sendCommand('bash', args, COMPACT_TIMEOUT_MS)
+    const msg = await this.sendCommand('bash', args, resolveBashRpcTimeoutMs())
     // [W6] shape guard：pi 返回 malformed 数据时 fallback，避免下游因 undefined 字段崩溃。
     // [S1] fallback 不用 exitCode:1（会被前端误读为「命令失败」，实为 pi 协议异常），
     // 改用 exitCode:undefined（PiBashResult.exitCode 类型 number|undefined，dispatcher 广播时
@@ -738,7 +936,13 @@ export class RpcClient implements IPiEngine {
 
   /** 切换 pi 进程到指定 session 文件（restore / fork 用）。 */
   switchSession(sessionPath: string): Promise<void> {
-    // L6：switchSession 加载大 session 文件可能耗时，用 SLOW_TIMEOUT_MS（120s）避免误超时
+    // L6：switchSession 加载大 session 文件可能耗时，用 SLOW_TIMEOUT_MS（120s）避免误超时。
+    // [pi 锚点] switch_session 是永久重绑读写目标——pi-mono coding-agent/src/core/
+    // agent-session-runtime.ts switchSession（~:194-215，open 新 SessionManager →
+    // teardownCurrent → createRuntime 重绑）+ core/session-manager.ts `sessionFile`
+    // 字段（_setSessionFile :895-896 永久持有，_persist 每轮 appendFileSync 该路径）。
+    // 故 switchSession 成功后紧随的 get_state（model/thinkingLevel 读回，restore-seeding
+    // 播种依赖）返回的是新 session 的生效值（clone v0.84.2 核对，实装 0.84.4）。
     return this.sendCommand('switch_session', { sessionPath }, SLOW_TIMEOUT_MS).then(() => undefined)
   }
 
@@ -773,27 +977,24 @@ export class RpcClient implements IPiEngine {
    * pi 对 extension_ui_response 不回 RPC reply（rpc-mode.ts 直接 resolve pending 后 return），
    * 故用 sendRaw 写入（不等 reply，不注册 pending，避免 60s timer 泄漏）。
    *
-   * 两种 payload 格式（吸收 extension-message-handler 的 buildExtensionUiResponse 映射）：
-   *
-   * 1. extension UI 场景（带 method）——pi 鸭子类型字段检测（rpc-mode.ts:136-149）：
+   * payload 格式（吸收 extension-message-handler 的 buildExtensionUiResponse 映射）——
+   * pi 鸭子类型字段检测（rpc-mode.ts:136-149）：
    *    - response === null → {id, cancelled:true}（取消 / 超时）
    *    - method === 'confirm' → {id, confirmed:boolean}
-   *    - 其余（select/input/editor）→ {id, value:string}
+   *    - 其余（select/input/editor）→ {id, value:string}（对象经 String 会变
+   *      '[object Object]'，调用方传对象前必须自行 JSON.stringify——设计
+   *      bridge-rewrite-pi-0.84 §3.3-D1 序列化陷阱）
    *
-   * 2. bridge 场景（无 method）——pi bridge extension 的 pendingExtensionRequests 期望
-   *    `{response: <payload>}` 包裹结构（见 transport/bridge-handler.ts:32）：
-   *    - response 是对象 → {id, response}（原样发）
-   *
-   * 判定优先级：null（取消）> bridge（无 method 且对象）> confirm > value。
+   * 判定优先级：null（取消）> confirm > value。
+   * [HISTORICAL] 旧 bridge 场景的 `{id, response}` 包裹分支（method===undefined 且
+   * response 是对象）已删除：唯一调用方 bridge-handler 已全改 stringify+'select'，
+   * 该形态无生产调用方。
    */
   sendExtensionUiResponse(id: string, response: unknown, method?: string): void {
     let payload: Record<string, unknown>
     if (response === null) {
       // 取消 / 超时（无论 method）
       payload = { type: 'extension_ui_response', id, cancelled: true }
-    } else if (method === undefined && typeof response === 'object') {
-      // bridge 场景：response 是完整对象 + 无 method → {id, response}
-      payload = { type: 'extension_ui_response', id, response }
     } else if (method === 'confirm') {
       payload = { type: 'extension_ui_response', id, confirmed: response as boolean }
     } else {
@@ -815,10 +1016,7 @@ export class RpcClient implements IPiEngine {
       let settled = false
 
       const done = () => {
-        if (!settled) {
-          settled = true
-          resolve()
-        }
+        if (!settled) { settled = true; resolve() }
       }
 
       const killTimer = setTimeout(() => {
@@ -829,9 +1027,8 @@ export class RpcClient implements IPiEngine {
 
       proc.on('exit', () => {
         clearTimeout(killTimer)
-        // Safety net: clean up any pending requests that weren't rejected
-        // by the unexpected-exit handler (because _killing=true skips it).
-        // Without this, callers await until their own CMD_TIMEOUT_MS (60s).
+        // Safety net: clean up pending requests not rejected by the unexpected-exit
+        // handler (_killing=true skips it), so callers don't await their own 60s timeout.
         this.rejectAll(new Error('pi process killed'))
         done()
       })

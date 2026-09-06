@@ -29,7 +29,7 @@ vi.mock('../settings-transport-adapter', () => ({
   createSettingsTransport: vi.fn(() => ({})),
 }))
 vi.mock('@/platform/desktop-platform', () => ({ provideDesktopPlatform: vi.fn() }))
-vi.mock('@/mock/mock-ws', () => ({ createMockPlatform: vi.fn() }))
+vi.mock('@xyz-agent/core/transport/mock/mock-ws', () => ({ createMockPlatform: vi.fn() }))
 
 // ── @/i18n 包装 spy：委托真实 setLocale（保留端到端 locale 真变化断言）──
 const setLocaleSpy = vi.fn()

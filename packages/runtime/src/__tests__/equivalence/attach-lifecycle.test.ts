@@ -40,7 +40,8 @@ import {
 } from './pi-fixture.js'
 import { assertPiSessionFile } from '../../infra/pi/session-attach-assert.js'
 import { createForkedSessionFile } from '../../services/session/session-fork.js'
-import { applyHeaderCwdFallback } from '../../services/session/session-lifecycle.js'
+// applyHeaderCwdFallback 自 session-lifecycle 迁出（max-lines 行数合规），权威源在 restore-seeding。
+import { applyHeaderCwdFallback } from '../../services/session/restore-seeding.js'
 
 /**
  * 等 turn 完成的上限（真实 LLM 调用）。本文件用例最重（双冷启动 + 双轮 turn 等待），

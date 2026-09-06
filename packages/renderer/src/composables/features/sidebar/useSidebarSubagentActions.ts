@@ -16,7 +16,8 @@ import { useWorkflowStore, agentCallVirtualId } from '@/stores/workflow'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
 import { openSubagent } from '@xyz-agent/core/domain/drawer'
-import * as sessionApi from '@/api/domains/session'
+import * as sessionApi from '@xyz-agent/core/transport/api/domains/session'
+import { toErrorMessage } from '../../../lib/error-message'
 
 export function useSidebarSubagentActions(focusedSessionId: Ref<string | null>) {
   const { t } = useI18n()
@@ -40,7 +41,7 @@ export function useSidebarSubagentActions(focusedSessionId: Ref<string | null>) 
     try {
       await subagentStore.cancelSubagent(sid, subagentId)
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       toastError(t('sidebar.cancelSubagentFailed', { msg }))
     }
   }
@@ -73,7 +74,7 @@ export function useSidebarSubagentActions(focusedSessionId: Ref<string | null>) 
       await sessionApi.workflowAction(sid, payload.action, payload.runId)
       void workflowStore.loadWorkflows(sid)
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       toastError(t('sidebar.workflowOpFailed', { msg }))
     }
   }

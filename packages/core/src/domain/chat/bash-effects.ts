@@ -12,7 +12,8 @@
  *   turn 内 notice 承担持久语义——规则 9 双通路以此分工（设计 D2 张力声明）。
  * - message.bashResult（dispatcher 双分支延迟或立即发布）：构造 bashExecution message
  *   entry（形态对照 apply-entry.ts bashExecution case 消费的 PiEntry 结构）→
- *   applyEntryFrame 喂 per-session reducer state + overlay 投影 commit（customStart 同款）。
+ *   applyEntryFrameWithOverlay 骨架（喂 per-session reducer state + overlay 投影 + commit，
+ *   effects/entry-overlay.ts——[u6.2 D13 联动] 从本文件与 registry 三处 effect 内联收敛）。
  *
  * 探针 ①（0.84.1 dist 实测，excludeFromContext bash 是否写 session entry）：**写**。
  * recordBashResult 对 exclude 无分支（agent-session.js:2225-2248，excludeFromContext 只是
@@ -28,8 +29,8 @@ import type { Message, ServerMessage } from '@xyz-agent/shared'
 import type { PiMessageEntry } from '@xyz-agent/shared'
 import type { MessageEffectContext, MessageEffectHandler } from './effect-types'
 import { readString, readNumber, readBool } from './readers'
-import { applyEntry, createInitialChatViewState } from './apply-entry'
 import { commitMessages, type MessagesRef } from './mutations'
+import { applyEntryFrameWithOverlay } from './effects/entry-overlay'
 import { shallowRef } from 'vue'
 
 /** payload 读取用宽松 record（与主文件其他 effect 一致，readers 安全窄化） */
@@ -82,8 +83,8 @@ export function clearExecutingBash(sessionId: string): void {
  * [S7 PR#116 review] 找到 messages 里最后一条 streaming bash 消息的索引（无则 -1）。
  *
  * [W1 fix-chat-flow-order] bashStart 不再创建消息后，正常流转中不会再有 streaming bash
- * 消息（bashExecution entry 恒 status:'complete'）；保留本函数供 store.finalizeBashOnly /
- * markBashError 的既有调用契约（手动注入 streaming bash 消息的种子场景仍可定位）。
+ * 消息（bashExecution entry 恒 status:'complete'）；保留本函数供 markBashError 的既有
+ * 调用契约（手动注入 streaming bash 消息的种子场景仍可定位）。
  *
  * 判定条件：`m.bashExecution`（bash 消息标志）+ `status === 'streaming'`。
  */
@@ -119,7 +120,6 @@ export const bashStartEffect: MessageEffectHandler = (_ctx: MessageEffectContext
  * 构造性等于 pi 落盘时序——本 handler 无论延迟或立即到达都走同一条 entry 化路径。
  */
 export const bashResultEffect: MessageEffectHandler = (ctx: MessageEffectContext, sid: string, payload: Payload) => {
-  const { messages, applyEntryFrame } = ctx
   const command = readString(payload, 'command') ?? ''
   const cancelled = readBool(payload, 'cancelled')
   // abortBash 合成哨兵帧（command:'' + cancelled:true，dispatcher.abortBash 兜底广播，
@@ -159,13 +159,9 @@ export const bashResultEffect: MessageEffectHandler = (ctx: MessageEffectContext
       ...(fullOutputPath !== undefined && { fullOutputPath }),
     },
   }
-  // 权威喂入：per-session reducer state（与重开 replayEntries 同一个 applyEntry）
-  applyEntryFrame(sid, entry)
-  // overlay 投影（customStart 同款）：渲染 ref 消费同一份派生——bashExecution 投影不依赖
-  // 前置 state（apply-entry bashExecution case 无条件 append），空 state 派生即本条消息。
-  const derived = applyEntry(createInitialChatViewState(), entry)
-  const prev = messages.value.get(sid)?.value ?? []
-  commitMessages(messages, sid, [...prev, ...derived.messages])
+  // 权威喂入 + overlay 投影 + commit（骨架 helper）：bashExecution 投影不依赖前置
+  // state（apply-entry bashExecution case 无条件 append），空 state 派生即本条消息。
+  applyEntryFrameWithOverlay(ctx, sid, entry)
   // 终态到达清执行态（与 bashStartEffect 置位成对）
   clearExecutingBash(sid)
 }
@@ -195,13 +191,9 @@ export function markBashError(
   messages: MessagesRef,
   sessionId: string,
   errorText: string,
-  clearBashTimer?: (sid: string) => void,
 ): void {
   // 错误路径清执行态（写方成对保证的第三腿：bashStart 置 / bashResult 清 / 此处兜底清）
   clearExecutingBash(sessionId)
-  // 清 bash 超时 timer（幂等；[W1 fix-chat-flow-order] bashStart 不再挂 timer 后通常为 no-op，
-  // 保留调用以维持既有契约——手动种子场景下仍有防御意义）
-  clearBashTimer?.(sessionId)
   const prev = messages.value.get(sessionId)?.value ?? []
   // [S7] 复用 findLastStreamingBashIndex（手动注入 streaming bash 消息的种子场景防御）。
   const realIdx = findLastStreamingBashIndex(prev, sessionId)

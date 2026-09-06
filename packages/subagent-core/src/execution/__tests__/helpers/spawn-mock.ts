@@ -47,7 +47,7 @@
 //     };
 //   });
 //   vi.mock("../alive-store.ts", () => ({ writeAliveMarker: vi.fn() }));
-//   vi.mock("../temp-prompt.ts", () => ({
+//   vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
 //     writePromptToTempFile: vi.fn(async (agent: string) => {
 //       const safeName = agent.replace(/[^\w.-]+/g, "_");
 //       return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -60,8 +60,10 @@ import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
+import { vi } from "vitest";
+
 import { createRecord } from "../../execution-record.ts";
-import type { RunOptions, SessionRunnerContext } from "../../session-runner.ts";
+import type { RunOptions, SessionRunnerContext } from "../../engine/engines/pi/session-runner.ts";
 
 /** FakeChild 的假 pid（满足 ChildProcess.pid 形状，无真实进程语义）。 */
 const FAKE_PID = 12345;
@@ -194,8 +196,9 @@ export function makeRecord(id = "run-1") {
   return createRecord(id, {
     agent: "general-purpose",
     model: "test-model",
-    mode: "sync",
+    mode: "background",
     task: "do something",
+    slug: "spawn-mock",
     startedAt: 1_000_000,
     rootSessionId: "root-session",
     parentRecordId: undefined,
@@ -239,4 +242,148 @@ export function makeCtx(overrides: Partial<SessionRunnerContext> = {}): SessionR
     rootCwd: "/tmp/test",
     ...overrides,
   };
+}
+
+// ── mock 模块工厂（session-runner 系测试共享，从 keep-alive-no-progress /
+// recursive-visibility-env 的逐字重复 mock 块收敛为单源）──
+//
+// 使用模式（vi.mock 工厂内 await import 本文件，免疫 hoist 时序）：
+//   vi.mock("node:child_process", async () =>
+//     (await import("./helpers/spawn-mock.ts")).childProcessModule());
+//
+// 本段保持「无 session-runner / alive-store / session-pending 值依赖」——本文件会被
+// 各 vi.mock 工厂 await import（求值时机 = 被 mock 模块首次请求），若再值依赖
+// session-runner 会构成「mock 工厂 → 本文件 → session-runner → node:child_process
+// （mock 求值中）」循环。需要值依赖这些模块的测试文件侧装配放
+// session-runner-mocks.ts（只被测试文件顶层静态 import）。
+
+/** 共享 logger mock 单例（复核失败 warn 留痕断言用；vi.clearAllMocks 统一重置）。 */
+export const loggerMock = { debug: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+/** "../../core/logger.ts" mock 工厂。 */
+export function coreLoggerModule() {
+  return { getLogger: () => loggerMock };
+}
+
+/** "node:child_process" mock 工厂（spawn 返回 FakeChild + execFile err-first 兜底）。 */
+export function childProcessModule() {
+  return {
+    spawn: vi.fn(() => new FakeChild()),
+    // buildEnvBlock 用 execFile 异步取 git branch：默认 err-first 兜底（catch → branch=""），
+    // 形态同 worktree-manager.test.ts 的 setupExecFile
+    execFile: vi.fn(
+      (
+        _cmd: string,
+        _args: readonly string[],
+        _opts: unknown,
+        cb: (err: Error | null, stdout?: string, stderr?: string) => void,
+      ) => cb(new Error("execFile not configured in this test")),
+    ),
+  };
+}
+
+/** "node:fs" mock 工厂（fs 侧写方法 vi.fn 化，promises 保留 actual）。 */
+export async function fsModule(): Promise<Record<string, unknown>> {
+  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+  return {
+    default: {
+      ...actual,
+      mkdirSync: vi.fn(),
+      existsSync: vi.fn(() => false),
+      appendFileSync: vi.fn(),
+      writeFileSync: vi.fn(),
+      readdirSync: vi.fn(() => []),
+    },
+    mkdirSync: vi.fn(),
+    existsSync: vi.fn(() => false),
+    appendFileSync: vi.fn(),
+    writeFileSync: vi.fn(),
+    readdirSync: vi.fn(() => []),
+    promises: actual.promises,
+  };
+}
+
+/** "../alive-store.ts" mock 工厂（keep-alive 系超集：marker 读写 + pid 存活判定兜底）。 */
+export function aliveStoreModule() {
+  return {
+    writeAliveMarker: vi.fn(),
+    // [T5②] keep-alive 心跳刷新读取现有 marker id（缺失兜底 record.id）
+    readAliveMarker: vi.fn(() => undefined),
+    isProcessAlive: vi.fn(() => false),
+  };
+}
+
+/** "../session-pending.ts" mock 工厂（keep-alive 判定统一 count>0：有活跃后代 → keep-alive 分支）。 */
+export function sessionPendingModule() {
+  return {
+    readActivePendingFromSessionFile: vi.fn(() => ({ count: 1, recentUnregister: false })),
+    prunePendingCursor: vi.fn(),
+    listActivePendingFromSessionFile: vi.fn(() => ({ items: [] })),
+  };
+}
+
+/** "../engine/engines/pi/temp-prompt.ts" mock 工厂（prompt 落 /tmp/fake-<agent>，收尾 no-op）。 */
+export function tempPromptModule() {
+  return {
+    writePromptToTempFile: vi.fn(async (agent: string) => {
+      const safeName = agent.replace(/[^\w.-]+/g, "_");
+      return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
+    }),
+    cleanupTempPrompt: vi.fn(async () => {}),
+  };
+}
+
+// ── recursive-visibility / schema-env 族 fixture（env 断言族专用，与上方 makeRecord 系
+// 默认值不同：/fake/* 路径 + test/model 形态参与 PI_SUBAGENT_* 断言，逐字保留原值）──
+
+/** 构造 env 注入断言族的 ExecutionRecord（可 override id/depth）。 */
+export function makeVisibilityRecord(overrides: { id?: string; depth?: number } = {}) {
+  return createRecord(overrides.id ?? "sa-test-record", {
+    agent: "general-purpose",
+    model: "test/model",
+    mode: "background",
+    slug: "t",
+    task: "test task",
+    startedAt: Date.now(),
+    rootSessionId: "should-be-overridden-by-sessionRootId-source",
+    parentRecordId: undefined,
+    depth: overrides.depth ?? 0,
+  });
+}
+
+/** 构造 env 注入断言族的 RunOptions（可 override 关键字段）。 */
+export function makeRunOpts(overrides: Partial<RunOptions> = {}): RunOptions {
+  return {
+    resolved: { model: { provider: "test", id: "model", name: "Model", reasoning: false }, thinkingLevel: undefined },
+    agentConfig: undefined,
+    appendSystemPrompt: undefined,
+    skillPath: undefined,
+    schema: undefined,
+    maxTurns: undefined,
+    graceTurns: undefined,
+    signal: undefined,
+    onEvent: undefined,
+    ...overrides,
+  };
+}
+
+/** 构造 env 注入断言族的 SessionRunnerContext（可 override 关键字段）。 */
+export function makeVisibilityCtx(overrides: Partial<SessionRunnerContext> = {}): SessionRunnerContext {
+  return {
+    cwd: "/fake/cwd",
+    agentDir: "/fake/agent",
+    skillDirs: [],
+    mainCwd: "/fake/cwd",
+    sessionRootId: "root-main-session",
+    rootCwd: "/fake/cwd",
+    ...overrides,
+  };
+}
+
+/** 取最近一次 spawn 调用传入的 env（跨进程身份注入断言用）。 */
+export function getLastSpawnEnv<T extends { mock: { calls: unknown[][] } }>(
+  mockSpawn: T,
+): Record<string, string | undefined> {
+  const opts = mockSpawn.mock.calls.at(-1)?.[2] as { env?: Record<string, string | undefined> } | undefined;
+  return opts?.env ?? {};
 }

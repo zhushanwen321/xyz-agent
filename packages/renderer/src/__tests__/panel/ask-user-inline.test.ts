@@ -17,7 +17,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import Panel from '@/components/panel/Panel.vue'
-import type { ExtensionUIRequest } from '@/api/domains/extension'
+import type { ExtensionUIRequest } from '@xyz-agent/core/transport/api/domains/extension'
 
 // ── vi.hoisted：mock 状态在 vi.mock 工厂执行前就绪，且可在 it 中改值 ──
 // 不用 vue ref（hoisted 回调先于 import 初始化，引用 ref 触发 TDZ）；

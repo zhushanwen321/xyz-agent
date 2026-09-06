@@ -20,7 +20,7 @@ function readSrc(relPath: string): string {
 // ── M4: node.live cleared before stale guard ─────────────────
 
 describe("M4: dispatchAgentCall .then() clears node.live before stale guard", () => {
-  const src = readSrc(join("src", "orchestration", "error-recovery.ts"));
+  const src = readSrc(join("src", "orchestration", "worker-message-pump.ts"));
 
   it("node.live = undefined appears before the stale guard return", () => {
     // 找到 .then 回调中的 stale guard 和 node.live 清理的相对顺序
@@ -41,7 +41,7 @@ describe("M4: dispatchAgentCall .then() clears node.live before stale guard", ()
 // ── M7: handleWorkerMessage shape validation ─────────────────
 
 describe("M7: handleWorkerMessage validates msg before dereferencing", () => {
-  const src = readSrc(join("src", "orchestration", "error-recovery.ts"));
+  const src = readSrc(join("src", "orchestration", "worker-message-pump.ts"));
 
   it("handleWorkerMessage has shape guard for msg before dereferencing opts", () => {
     // handleWorkerMessage 中 `raw as WorkerMsg` 后应有 typeof/形状校验

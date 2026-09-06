@@ -6,28 +6,31 @@
  * - U16 getFileCandidates：pending.resolve {files} → 解包返回 FileNode[]
  * - U17 getMentionCandidates：返回空数组（@ 已废弃）
  *
- * mock 策略：vi.mock('@/api/transport') 捕获 send + vi.mock('@/api/pending') 控制 create/register。
+ * mock 策略：vi.mock('@xyz-agent/core/transport/ws-client') 捕获 send +
+ * vi.mock(core pending 源文件相对路径) 控制 create/register——request 已下沉 core
+ * （tc u1），mock 目标须与 core 内相对 import 同一模块 ID 才能拦截。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/api/composer-domain.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// 捕获 transport.send 的调用（返回 true = 消息已送出；request.command 对 send false
-// 会走 fast-fail reject，mock 须符合 transport.send 的真实 boolean 契约）
+// 捕获 ws-client.send 的调用（返回 true = 消息已送出；request.command 对 send false
+// 会走 fast-fail reject，mock 须符合 ws-client.send 的真实 boolean 契约）
 const sendMock = vi.fn((): boolean => true)
-vi.mock('@/api/transport', () => ({
+vi.mock('@xyz-agent/core/transport/ws-client', () => ({
   send: (...args: unknown[]) => sendMock(...args),
 }))
 
 // mock pending：register 返回可控 Promise，create 返回固定 id
 const registerMock = vi.fn()
-vi.mock('@/api/pending', () => ({
+vi.mock('../../../../core/src/transport/api/pending', () => ({
+  RPC_BACKSTOP_TIMEOUT_MS: 65_000,
   createCommandId: () => 'test-id',
   register: (id: string) => registerMock(id),
   reject: vi.fn(),
 }))
 
-import { getFileCandidates, getMentionCandidates } from '@/api/domains/composer'
+import { getFileCandidates, getMentionCandidates } from '@xyz-agent/core/transport/api/domains/composer'
 
 beforeEach(() => {
   vi.clearAllMocks()

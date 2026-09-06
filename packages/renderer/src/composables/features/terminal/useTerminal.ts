@@ -48,10 +48,10 @@
  */
 import { computed, markRaw, reactive, ref, type ComputedRef, type Ref } from 'vue'
 import type { ServerMessage } from '@xyz-agent/shared'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import { registerSessionCleanup } from '@/composables/useSessionScopedState'
 import { useTerminalWriteQueueStore } from '@/stores/terminal-write-queue'
-import { terminalApi } from '@/api/domains/terminal'
+import { terminalApi } from '@xyz-agent/core/transport/api/domains/terminal'
 
 /** 命令式输出 buffer（D-6.2）：append-only 非响应式 chunk 数组 + 单调版本号。 */
 export interface TerminalBuffer {

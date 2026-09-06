@@ -8,16 +8,23 @@
  * 职责：
  * - 重试：3 次 + 指数退避（BACKOFF_MS = [1000, 2000, 4000]）
  * - 预算：超限不重试（直接 markDone failed）
- * - stale-context：不重试（直接 markDone failed）
- * - [MF-1] 确定性 schema 失败：不重试（直接 markDone failed）
+ * - stale-context（result.failureKind="stale_context"）：不重试（直接 markDone failed）
+ * - [MF-1] 确定性 schema 失败（result.failureKind="schema_deterministic"）：不重试
+ *   （直接 markDone failed）
  * - 成功：consume usage + incrementCallCount + markDone + trace.update(completed)
+ *
+ * [D5-③ 结构化分诊] 失败分诊读 AgentResult.failureKind 字段（产出侧唯一识别点 =
+ * execution/engine/engines/pi/output-collector.ts 的 classifyFailureKind，词表归属
+ * 见其文件头）。本模块不再扫 error 文案子串——**语义守恒（r1 MF4）**：unknown
+ * （含字段缺省）= 可重试，保持收敛前的默认重试语义；仅 stale_context（不重试、
+ * 换参重发场景由调用方编排）与 schema_deterministic 维持特判。
  *
  * 关键设计：
  * - **usage 透传**：result.usage 直接交给 budget.consume，加权由 Budget 内部的权重常量
- * 处理（见 budget.ts）。此函数不再做 usage 形状的改写。
+ *   处理（见 budget.ts）。此函数不再做 usage 形状的改写。
  * - **参数显式化**：runner 直接传入（而非 ctx.getRun(runId).pool），无 runId 查找 / pool 守卫。
  * - **stale-state 检查**：signal.aborted 时早返回。WorkflowRun 状态由调用方 lifecycle
- * 持有，executeAgentCall 只关心单次 call 生命周期。
+ *   持有，executeAgentCall 只关心单次 call 生命周期。
  *
  * 层归属：Engine。零 infra 依赖（runner 是 AgentRunner port，budget/trace/call 是 Engine 模型）。
  *
@@ -41,69 +48,6 @@ const BACKOFF_EXPONENT_BASE = 2;
 /** 最大尝试次数（含首次）：initial + 2 retries = 3。 */
 const MAX_ATTEMPTS = 3;
 
-/**
- * Stale context 检测模式（P1-5；W4b 对齐 pi 0.84.x 真实文案）。
- *
- * pi session context 被 compact/cancel 时报告的模式。这种情况下重试无意义——
- * 同样的 call 会再次失败。直接 markDone failed 终止单次调用。
- *
- * W4b：原 "stale context"/"stalecontext" 与 pi 真实文案零匹配（真实文案为
- * "This extension ctx is stale after session replacement or reload. ..."——
- * runner.ts:544（dist runner.js:352），词序是 "ctx is stale" 而非 "stale context"），stale 分诊对
- * 真实文案失效。现对齐：
- * - "ctx is stale"：真实文案核心子串（词序修正）
- * - "stale after session replacement"：scheduler 已验证 marker（runtime.ts
- *   STALE_CTX_MARKER，同文案锚定）
- * - "context canceled"/"aborted"：保留——abort 族错误同样不重试（signal.aborted
- *   分支的先行分诊，防边界竞态漏网），删除会放宽重试语义。
- */
-export const STALE_CONTEXT_PATTERNS = [
-  "ctx is stale",
-  "stale after session replacement",
-  "context canceled",
-  "aborted",
-] as const;
-
-/**
- * 判断错误信息是否表示 stale/canceled pi session context。
- * 命中时不重试——重试只会再次失败（P1-5）。
- */
-export function isStaleContextErrorMsg(msg: string | undefined): boolean {
-  if (!msg) return false;
-  const lower = msg.toLowerCase();
-  return STALE_CONTEXT_PATTERNS.some((p) => lower.includes(p));
-}
-
-/**
- * [MF-1] 确定性 schema 失败标记（error 文本前缀，产出方 = output-collector 的
- * describeMissingParsedOutput）。
- *
- * 标记 SSOT 放本模块（与 STALE_CONTEXT_PATTERNS 同布局：orchestration 持表、
- * execution 值引用；反向引用会形成 execute-agent-call → output-collector →
- * execute-agent-call 运行时循环）。
- *
- * 标记词逐字核对不命中 STALE_CONTEXT_PATTERNS 任一 pattern 与
- * isStaleContextErrorMsg 的子串匹配（否则归因 error 被误诊 stale-context，
- * 虽然同样不重试但归因语义被污染；output-collector.test 有交叉锁定）。
- *
- * 三态可重试性矩阵（F-1 归因）：
- * | 归因态                     | 带本标记 | 可重试性 | 理由 |
- * |----------------------------|---------|---------|------|
- * | ① 从未调用 SO tool         | 是      | 不可重试 | 缺 extension 是环境确定性（C1 安装盲区），同环境重试必同结果 |
- * | ② SO 调用 isError（gate 终止/不可满足 schema） | 是 | 不可重试 | 同 schema 重试必同结果（第五轮实测：3 attempts/4 子进程/235s 纯烧钱） |
- * | ③ 调用过但无 details        | 否      | 可重试   | 可能瞬态（details 提取/序列化异常），保留既有重试语义 |
- */
-export const DETERMINISTIC_SCHEMA_FAILURE_PREFIX = "Structured output failed deterministically:";
-
-/**
- * [MF-1] 判断错误信息是否为确定性 schema 失败（命中标记前缀）。
- * 命中时不重试——同 schema 重试必同结果（矩阵见 DETERMINISTIC_SCHEMA_FAILURE_PREFIX）。
- */
-export function isDeterministicSchemaFailureMsg(msg: string | undefined): boolean {
-  if (!msg) return false;
-  return msg.includes(DETERMINISTIC_SCHEMA_FAILURE_PREFIX);
-}
-
 // ── 内部 helper ──────────────────────────────────────────────
 
 /**
@@ -124,7 +68,7 @@ function backoffDelay(retryIndex: number): number {
  * rebuild 竞态窗口中，重跑 dispatch 已 append 同 stepIndex 新节点，旧代际
  * finalize 的 update 会命中新节点，TUI/中间快照短暂可见错误终态。正确性论证：
  * 运行期 calls Map 写点仅 discardInFlightCalls 的 delete 与 dispatchAgentCall 的
- * set 两族（error-recovery.ts isOrphanedCall 文档注释既定），故实例不等 ⟺ 本
+ * set 两族（worker-message-pump.ts isOrphanedCall 文档注释既定），故实例不等 ⟺ 本
  * finalize 属于被丢弃/被替换的旧代际——与 dispatch 层 .then/.catch 守卫
  * （S7-second 修复，8353f6b60）同一判定语义，本守卫只是把它前移到 trace.update
  * 之前。markDone 与 sessionId/sessionFile 同步保留（markDone 在孤儿实例上无害，
@@ -208,16 +152,18 @@ export async function executeAgentCall(
     budget.consume(result.usage);
   }
 
-  // stale-context：不重试（P1-5）
-  if (result.error !== undefined && isStaleContextErrorMsg(result.error)) {
+  // stale-context（D5-③ 结构化分诊：读 failureKind 字段，词表识别在产出侧
+  // output-collector）：不重试（P1-5）
+  if (result.error !== undefined && result.failureKind === "stale_context") {
     finalizeCall(call, result, trace, isOrphaned);
     budget.incrementCallCount();
     return;
   }
 
-  // [MF-1] 确定性 schema 失败：不重试（gate 终止/不可满足 schema 同 schema 重试必同
-  // 结果——重试纯烧钱；三态可重试性矩阵见 DETERMINISTIC_SCHEMA_FAILURE_PREFIX）
-  if (result.error !== undefined && isDeterministicSchemaFailureMsg(result.error)) {
+  // [MF-1] 确定性 schema 失败（failureKind="schema_deterministic"）：不重试
+  // （gate 终止/不可满足 schema 同 schema 重试必同结果——重试纯烧钱；三态矩阵
+  // 见产出侧 output-collector 的确定性失败标记注释）
+  if (result.error !== undefined && result.failureKind === "schema_deterministic") {
     finalizeCall(call, result, trace, isOrphaned);
     budget.incrementCallCount();
     return;

@@ -9,14 +9,15 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import { getSubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
-import type { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
-import { displayAgentName } from "@zhushanwen/subagent-core/shared/agent-ref.ts";
+import { getSubagentService } from "@zhushanwen/subagent-core";
+import type { SubagentService } from "@zhushanwen/subagent-core";
+import { displayAgentName } from "@zhushanwen/subagent-core";
 import { messageHandler, startHandler } from "./subagent-actions.ts";
 import { parseSubagentRpcCommand } from "./command-actions.ts";
 import type { SubagentRpcAction } from "./command-actions.ts";
 import { LIST_LIMIT } from "./list-shared.ts";
 import { createSubagentsView } from "./list-view.ts";
+import { toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 /**
  * subagent-directive custom_message 的 customType。
@@ -84,7 +85,7 @@ async function rpcCancel(
     );
   } catch (err) {
     // service.cancel 内部 assertReady 在 session_shutdown 并发 dispose 时会抛
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = toErrorMessage(err);
     ctx.ui.notify(`Failed to cancel subagent ${recordId}: ${msg}`, "warning");
   }
 }
@@ -115,7 +116,7 @@ async function rpcMessage(
     );
     ctx.ui.notify(`Message delivered to subagent ${result.slug} (${result.subagentId})`, "info");
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = toErrorMessage(err);
     ctx.ui.notify(`Failed to message subagent ${recordId}: ${msg}`, "warning");
   }
 }
@@ -149,7 +150,7 @@ async function rpcStart(
     );
     ctx.ui.notify(`Started subagent ${result.slug} (${result.subagentId})`, "info");
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = toErrorMessage(err);
     ctx.ui.notify(`Failed to start subagent ${slug}: ${msg}`, "warning");
   }
 }
@@ -230,7 +231,7 @@ export function registerSubagentsCommand(pi: ExtensionAPI): void {
           if (!service) return null;
           // collectRecords 合并内存(running) + 磁盘重建 record，按 rootSessionId 过滤。
           // cancel 只对 running 有效，但全部列出便于用户辨认（终态 record 会被 service 拒绝）。
-          const records = service.collectRecords(LIST_LIMIT);
+          const records = service.queries.collectRecords(LIST_LIMIT);
           if (records.length === 0) return null;
           return records.map((r) => ({
             label: r.id,

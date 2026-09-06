@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import * as events from '../api/events'
+import * as events from '@xyz-agent/core/transport/api'
 
 describe('events 全局通道', () => {
   it('onGlobalType 注册后，dispatchGlobal 同 type 触发 handler，off 后不再触发', () => {
@@ -33,10 +33,10 @@ describe('events 全局通道', () => {
     off()
   })
 
-  it('dispatch（旧名）仍按 sessionId 路由，向后兼容', () => {
+  it('dispatchSession 按 sessionId 路由到 on 订阅者', () => {
     const seen: string[] = []
     const off = events.on('sess-2', (msg) => seen.push(msg.type))
-    events.dispatch('sess-2', { type: 'message.complete', payload: { sessionId: 'sess-2' } })
+    events.dispatchSession('sess-2', { type: 'message.complete', payload: { sessionId: 'sess-2' } })
     expect(seen).toEqual(['message.complete'])
     off()
   })

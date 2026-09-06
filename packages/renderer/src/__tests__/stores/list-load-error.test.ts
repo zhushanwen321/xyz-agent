@@ -18,7 +18,7 @@ const getWorkflowsMock = vi.hoisted(() => vi.fn(() => Promise.resolve([])))
 const getSubagentsMock = vi.hoisted(() => vi.fn(() => Promise.resolve([])))
 const getSubagentHistoryMock = vi.hoisted(() => vi.fn(() => Promise.resolve([])))
 
-vi.mock('@/api/domains/session', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({
   list: listMock,
   getWorkflows: getWorkflowsMock,
   getSubagents: getSubagentsMock,
@@ -41,7 +41,7 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
     getSubagentHistory: getSubagentHistoryMock,
   },
 }))
-vi.mock('@/api/events', () => ({
+vi.mock('@xyz-agent/core/transport/api', () => ({
   on: vi.fn(() => () => {}),
   dispatchSession: vi.fn(),
   dispatchGlobal: vi.fn(),

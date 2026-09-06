@@ -148,34 +148,33 @@ export function countActiveFromEntries(
 	entries: unknown[],
 	opts?: CountActiveOptions,
 ): CountActiveResult {
-	const unregistered = new Set<string>();
-	for (const raw of entries as EntryLike[]) {
-		// S-10：entries 元素可能是 null/undefined（外部调用方/坏数据），
-		// EntryLike 断言前先守卫，避免访问 raw.customType 抛 TypeError 炸掉差集判定。
-		if (!raw || typeof raw !== "object") continue;
-		if (raw.customType !== "pending:unregister") continue;
-		const data = (raw.data ?? {}) as UnregisterEntryData;
-		if (typeof data.id === "string") unregistered.add(data.id);
-	}
-
-	const active: PendingEntry[] = [];
-	const seen = new Set<string>();
-	for (const raw of entries as EntryLike[]) {
-		if (!raw || typeof raw !== "object") continue;
-		if (raw.customType !== "pending:register") continue;
-		const data = (raw.data ?? {}) as RegisterEntryData;
-		if (typeof data.id !== "string" || unregistered.has(data.id) || seen.has(data.id)) continue;
-		seen.add(data.id);
-		const entry = normalizeRegisterEntry(data, "");
-		if (opts?.types && !opts.types.includes(entry.type)) continue;
-		active.push(entry);
-	}
+	// 与 rebuildFromEntries 共用单趟扫描（S-10 守卫一致），分流 register/unregister
+	const { registerEntries, unregisteredIds } = scanPendingEntries(entries);
+	const active = filterActiveRegisters(registerEntries, unregisteredIds, opts);
 
 	return {
 		count: active.length,
 		ids: active.map((e) => e.id),
 		entries: active,
 	};
+}
+
+/** 差集过滤：跳过 id 非法 / 已注销 / 重复 register 的 entry，按 opts.types 过滤类型。 */
+function filterActiveRegisters(
+	registerEntries: Array<{ data: RegisterEntryData }>,
+	unregisteredIds: Set<string>,
+	opts?: CountActiveOptions,
+): PendingEntry[] {
+	const active: PendingEntry[] = [];
+	const seen = new Set<string>();
+	for (const { data } of registerEntries) {
+		if (typeof data.id !== "string" || unregisteredIds.has(data.id) || seen.has(data.id)) continue;
+		seen.add(data.id);
+		const entry = normalizeRegisterEntry(data, "");
+		if (opts?.types && !opts.types.includes(entry.type)) continue;
+		active.push(entry);
+	}
+	return active;
 }
 
 /** rebuildFromEntries 的结果：重建后的活跃列表 + 需要补注销的 entry */

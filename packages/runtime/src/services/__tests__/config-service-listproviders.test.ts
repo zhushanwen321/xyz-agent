@@ -132,6 +132,43 @@ describe('TC4: catalog override——hasOverride + 字段优先取 override', ()
   })
 })
 
+// ── W2 重构特征锚定补充（listProviders 提取 helper 后的分支缺口）──
+
+describe('TC5 补充: catalog apiKeySet 双源判定——override.apiKey（models.json 手填 key 旧数据）', () => {
+  it('auth.json 无凭据但 override.apiKey 非空 → apiKeySet=true + status=connected', () => {
+    const svc = makeService({
+      models: { openai: { apiKey: 'sk-manual', models: [{ id: 'gpt-x' }] } },
+      authIds: [],
+    })
+    const openai = byId(svc)['openai']
+    expect(openai.kind).toBe('catalog')
+    expect(openai.apiKeySet).toBe(true)
+    expect(openai.status).toBe('connected')
+  })
+
+  it('catalog 无 override 且 auth.json 无凭据 → apiKeySet=false + status=not_configured', () => {
+    const svc = makeService({
+      models: { openai: { name: 'Renamed OpenAI' } },
+      authIds: [],
+    })
+    const openai = byId(svc)['openai']
+    expect(openai.apiKeySet).toBe(false)
+    expect(openai.status).toBe('not_configured')
+    // override 只改 name：name 覆盖生效、hasOverride=true
+    expect(openai.name).toBe('Renamed OpenAI')
+    expect(openai.hasOverride).toBe(true)
+  })
+
+  it('catalog 无 override → name 回退 builtinP.name（非 id）', () => {
+    const svc = makeService({ authIds: ['anthropic'] })
+    const anthropic = byId(svc)['anthropic']
+    expect(anthropic.hasOverride).toBe(false)
+    // builtin anthropic 模板 name 非空且不等于 id
+    expect(anthropic.name).toBeTruthy()
+    expect(anthropic.name).not.toBe('anthropic')
+  })
+})
+
 describe('TC5: apiKeySet 派生——catalog 来自 auth.json，custom 来自 models.json', () => {
   it('catalog 凭据在 auth.json（models.json 无 apiKey）→ apiKeySet=true', () => {
     const svc = makeService({ authIds: ['openai'] })

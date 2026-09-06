@@ -1,5 +1,18 @@
 # @zhushanwen/subagent-core
 
+## 0.5.0
+
+### Major Changes
+
+- 9520e5294: **subagent-core: zcode engine drops the CLI spawn chain and HOME pools — single app-server mode with shared host HOME**
+
+  - The zcode engine now runs exclusively over the app-server RPC channel; the CLI spawn fallback chain is deleted. This removes the probe gate (10s protocol smoke probe gating first use of the resident channel), the protocol-drift first-failure degradation (drift-class RPC errors `-32601`/`-32602` falling back to a spawn rerun with `degraded` records), and the `XYZ_ZCODE_MODE=appserver|spawn` pinning env — protocol drift now surfaces as an actionable error instead of degrading
+  - HOME pooling is deleted: spawn env no longer overrides HOME, so db/plugins/MCP all inherit the host HOME and engine sessions write the real `~/.zcode/cli/db/db.sqlite` (shared with the GUI, WAL-concurrency safe). The pooled-HOME machinery (directory lock + pid + heartbeat, orphan pidfile recovery, derived `home-appserver-N` directories, per-pool `config.json` seeding) is gone
+  - Credentials are supplied via a new fs-interception launcher (`appserver-launcher.ts`): the CLI-form app-server only reads providers from `~/.zcode/cli/config.json` while the GUI keeps login credentials in `~/.zcode/v2/config.json`, so the engine spawns a wrapper that patches `fs.readFileSync`/`fsPromises.readFile`/`existsSync` to redirect reads of the former to an in-memory merge of "real file + v2 provider injection" (v2 entry wins wholesale on id collision — v2 is the authoritative credential source, replicating the GUI's direct `modelConfig` hand-off out of process). HOME keeps its real value; the drift surface is that a zcode upgrade changing the config read path/way fails loudly with missing baseURL / Model config is missing
+  - Breaking export removals from the `engines/zcode/constants` semantic subentry (the export face is the semver contract): `ZCODE_POOL_CONFIG_SUFFIX`, `ZCODE_POOL_DB_RELATIVE_PATH`, `ZCODE_APPSERVER_POOL_KEY`, `ZCODE_APPSERVER_LOCKFILE_NAME`, `ZCODE_APPSERVER_PIDFILE_NAME`, `ZCODE_APPSERVER_LOCK_HEARTBEAT_MS`, `ZCODE_APPSERVER_MAX_DERIVED_HOMES`, `ZCODE_APPSERVER_PIDFILE_GRACE_MS`, `ZCODE_MODE_ENV_VAR`, `ZCODE_APPSERVER_PROBE_BUDGET_MS`, `ZCODE_APPSERVER_DRIFT_RPC_CODES`, `ZCODE_APPSERVER_PROBE_CONN_ENV` — all twelve anchored only the deleted spawn-fallback/HOME-pool machinery
+  - `ZCODE_ADAPTER_VERSION` bumps `1.0.0` → `2.0.0` (handle.adapterVersion data source — golden-sample alignment anchor for the new single-mode form)
+  - Journal grouping key is now the fixed `'shared'` (`ZCODE_SHARED_POOL_KEY`, mirroring the pi engine's `PI_POOL_KEY` — journals land in `engines/zcode/shared/`), and `handle.sessionRef.dbPath` is an absolute path anchored on `ZCODE_HOST_DB_SUFFIX` instead of a pool-relative one
+
 ## 0.4.0
 
 ### Minor Changes

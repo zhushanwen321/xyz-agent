@@ -76,7 +76,7 @@ vi.mock("../session-pending.ts", () => ({
   listActivePendingFromSessionFile: vi.fn(() => ({ items: [] })),
 }));
 
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -90,7 +90,7 @@ vi.mock("../lifecycle-manager.ts", async (importOriginal) => {
 });
 
 import { DEFAULT_IDLE_TIMEOUT_MS, hasIdleTimer, _resetLifecycleState } from "../lifecycle-manager.ts";
-import { runSpawn } from "../session-runner.ts";
+import { runSpawn } from "../engine/engines/pi/session-runner.ts";
 import {
   emitStdoutLine,
   type FakeChild,
@@ -199,8 +199,9 @@ describe("T4② armIdleTimer fail-fast falls back to DEFAULT + warn", () => {
     );
 
     const record = makeRecord("sa-settled-fallback");
-    record.chatMode = true;
-    record.idleTimeoutMs = 600_000;
+    const mutable = record as { chatMode: boolean; idleTimeoutMs: number };
+    mutable.chatMode = true;
+    mutable.idleTimeoutMs = 600_000;
     const promise = runSpawn(record, "Task: settled fallback", makeOpts(), makeCtx());
     await waitForSpawn();
     const child = lastSpawnedChild();

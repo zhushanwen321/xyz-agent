@@ -8,101 +8,31 @@
 // ── mock 策略 ──
 //
 // 复用 execute-nesting.test.ts 的 spawn / node:fs / manifest-store / temp-prompt / alive-store
-// / finalized-marker mock 范式（见该文件头部详细注释）。本文件 **不驱动 FakeChild 完成**——
-// 被测的两个分支都在 runSpawn 之前抛/收尾（worktree create 在步骤 2.5，runSpawn 在步骤 5），
-// 因此 spawn 即使被调也无人驱动，测试在抛错后立即断言即可结束。
+// / finalized-marker mock 范式，已收敛到 ./helpers/subagent-service-mocks.ts 单源（四文件
+// 共享）。本文件 **不驱动 FakeChild 完成**——被测的两个分支都在 runSpawn 之前抛/收尾
+// （worktree create 在步骤 2.5，runSpawn 在步骤 5），因此 spawn 即使被调也无人驱动，
+// 测试在抛错后立即断言即可结束。
 //
 // worktreeManager 是 SubagentService 构造时 new 出的私有字段（WorktreeManager 实例，非模块）。
 // 测试 2 用 vi.spyOn(Reflect.get(service, "worktreeManager"), "create") 注入抛错，无需模块级 mock。
 
-import { PassThrough } from "node:stream";
-
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// ── mock modules（与 execute-nesting.test.ts 同范式）──
+import {
+  aliveStoreModule,
+  childProcessModule,
+  finalizedMarkerModule,
+  fsSyncModule,
+  manifestStoreModule,
+  tempPromptModule,
+} from "./helpers/subagent-service-mocks.ts";
 
-vi.mock("node:child_process", async () => {
-  const { EventEmitter } = await import("node:events");
-  const { PassThrough } = await import("node:stream");
-
-  class FakeChild extends EventEmitter {
-    pid = 12345;
-    stdout = new PassThrough();
-    stderr = new PassThrough();
-    killed = false;
-    killSignal: string | undefined;
-    kill(sig?: string): boolean {
-      this.killed = true;
-      this.killSignal = sig;
-      return true;
-    }
-  }
-
-  return {
-    spawn: vi.fn(() => new FakeChild()),
-    // buildEnvBlock 的 git branch 调用（execFile 异步）：默认 err-first 兜底 → catch → branch=""
-    execFile: vi.fn(
-      (
-        _cmd: string,
-        _args: readonly string[],
-        _opts: unknown,
-        cb: (err: Error | null, stdout?: string, stderr?: string) => void,
-      ) => cb(new Error("execFile not configured in this test")),
-    ),
-  };
-});
-
-vi.mock("node:fs", async () => {
-  const actual = await import("node:fs");
-  return {
-    default: {
-      ...actual,
-      mkdirSync: vi.fn(),
-      existsSync: vi.fn(() => false),
-      appendFileSync: vi.fn(),
-      writeFileSync: vi.fn(),
-      readdirSync: vi.fn(() => []),
-    },
-    mkdirSync: vi.fn(),
-    existsSync: vi.fn(() => false),
-    appendFileSync: vi.fn(),
-    writeFileSync: vi.fn(),
-    readdirSync: vi.fn(() => []),
-    promises: actual.promises,
-  };
-});
-
-vi.mock("../alive-store.ts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../alive-store.ts")>();
-  return {
-    ...actual,
-    writeAliveMarker: vi.fn(),
-    removeAliveMarker: vi.fn(),
-  };
-});
-
-vi.mock("../finalized-marker.ts", () => ({
-  writeFinalized: vi.fn(),
-  readFinalized: vi.fn(() => false),
-}));
-
-vi.mock("../manifest-store.ts", () => {
-  class FakeManifestStore {
-    writeManifest = vi.fn(async () => {});
-    readManifest = vi.fn(async () => null);
-    listAllSync = vi.fn(() => []);
-    recoverTmpFiles = vi.fn(async () => []);
-  }
-  return { ManifestStore: FakeManifestStore };
-});
-
-vi.mock("../temp-prompt.ts", () => ({
-  writePromptToTempFile: vi.fn(async (agent: string) => {
-    const safeName = agent.replace(/[^\w.-]+/g, "_");
-    return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
-  }),
-  cleanupTempPrompt: vi.fn(async () => {}),
-}));
+vi.mock("node:child_process", () => childProcessModule());
+vi.mock("node:fs", async (importOriginal) => fsSyncModule(await importOriginal<typeof import("node:fs")>()));
+vi.mock("../alive-store.ts", async (importOriginal) => aliveStoreModule(await importOriginal<typeof import("../alive-store.ts")>()));
+vi.mock("../finalized-marker.ts", () => finalizedMarkerModule());
+vi.mock("../manifest-store.ts", () => manifestStoreModule());
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => tempPromptModule());
 
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
@@ -127,7 +57,7 @@ interface SetupResult {
 
 function setup(): SetupResult {
   const agentDir = "/tmp/exec-await-worktree-it"; // fs 已 mock，路径不需真实存在
-  const modelService = new ModelConfigService({ agentDir });
+  const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
   modelService.initModel({
     modelRegistry: makeEmptyRegistry(),
     sessionId: "exec-await-worktree-it",
@@ -219,7 +149,7 @@ describe("executeAndAwait worktree 失败收尾", () => {
     }) as Parameters<WorktreeManager["cleanup"]>[0];
     let resolveCreate!: (h: unknown) => void;
     vi.spyOn(worktreeManager, "create").mockImplementation(
-      () => new Promise((r) => { resolveCreate = r; }) as ReturnType<WorktreeManager["create"]>,
+      () => new Promise<unknown>((r) => { resolveCreate = r; }) as ReturnType<WorktreeManager["create"]>,
     );
     const cleanupSpy = vi.spyOn(worktreeManager, "cleanup").mockResolvedValue(undefined);
 

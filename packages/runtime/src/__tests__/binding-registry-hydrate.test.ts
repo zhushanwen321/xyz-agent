@@ -22,13 +22,15 @@ import type { ScannedSessionMeta } from '../infra/pi/session-file-utils.js'
 
 // ── 公共夹具 ─────────────────────────────────────────────────────────
 
-/** 四字段样例值集合（值本身无语义，仅需非 undefined 且可区分键名）；类型对齐 hydrate 形参，spawnSource 字面量经上下文收窄进枚举 */
+/** 七字段样例值集合（值本身无语义，仅需非 undefined 且可区分键名）；类型对齐 hydrate 形参，spawnSource 字面量经上下文收窄进枚举 */
 const SAMPLE_META: Partial<Pick<ScannedSessionMeta, BindingFieldKey>> = {
   launchPresetId: 'preset-x',
   projectId: 'proj-x',
   spawnSource: 'agent',
   parentAgentSessionId: 'pa-x',
   handedOffTo: 'next-x',
+  modelId: 'model-x',
+  thinkingLevel: 'high',
 }
 
 function freshSession(): Record<string, unknown> {
@@ -92,7 +94,7 @@ describe('hydrateBindingMeta · 设计文档 §3.3 决策 1 矩阵（期望硬�
     expect(sUndef.launchPresetId).toBe('pk-fallback')
   })
 
-  it('create 入口：四个 options 字段传入即生效；handedOffTo 为 create=none 不落对象', () => {
+  it('create 入口：六个 options 字段传入即生效；handedOffTo 为 create=none 不落对象', () => {
     const s = freshSession()
     hydrateBindingMeta(
       s,
@@ -102,6 +104,8 @@ describe('hydrateBindingMeta · 设计文档 §3.3 决策 1 矩阵（期望硬�
         spawnSource: 'user',
         parentAgentSessionId: 'pa-c',
         handedOffTo: 'must-not-leak',
+        modelId: 'model-c',
+        thinkingLevel: 'high',
       },
       'create',
     )
@@ -109,6 +113,8 @@ describe('hydrateBindingMeta · 设计文档 §3.3 决策 1 矩阵（期望硬�
     expect(s.projectId).toBe('proj-c')
     expect(s.spawnSource).toBe('user')
     expect(s.parentAgentSessionId).toBe('pa-c')
+    expect(s.modelId).toBe('model-c')
+    expect(s.thinkingLevel).toBe('high')
     expect(Object.hasOwn(s, 'handedOffTo')).toBe(false)
   })
 
@@ -130,6 +136,8 @@ describe('hydrateBindingMeta · 设计文档 §3.3 决策 1 矩阵（期望硬�
           spawnSource: undefined,
           parentAgentSessionId: undefined,
           handedOffTo: undefined,
+          modelId: undefined,
+          thinkingLevel: undefined,
         },
         entry,
       )
@@ -152,6 +160,8 @@ describe('hydrateBindingMeta · 设计文档 §3.3 决策 1 矩阵（期望硬�
       spawnSource:          { create: true,  handoff: false, restore: true,  fork: false },
       parentAgentSessionId: { create: true,  handoff: false, restore: true,  fork: false },
       handedOffTo:          { create: false, handoff: false, restore: true,  fork: false },
+      modelId:              { create: true,  handoff: true,  restore: false, fork: true  },
+      thinkingLevel:        { create: true,  handoff: true,  restore: false, fork: true  },
     }
 
     const entries: BindingEntryKind[] = ['create', 'handoff', 'restore', 'fork']
@@ -182,6 +192,8 @@ describe('hydrateBindingMeta · 设计文档 §3.3 决策 1 矩阵（期望硬�
       spawnSource: true,
       parentAgentSessionId: true,
       handedOffTo: true,
+      modelId: true,
+      thinkingLevel: true,
     }) as BindingFieldKey[]).sort()
     expect(matrixKeys).toEqual(registryKeys)
   })

@@ -5,13 +5,14 @@
  * 设计文档：docs/page-design/archive/v3/coding-plan-quota/design.md
  */
 
-import type { QuotaWindow, QuotaWins, NormalizedQuotaRow, ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchFailureReason, QuotaFetchOutcome } from '@xyz-agent/shared'
+import type { QuotaWindow, QuotaWins, NormalizedQuotaRow, ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchFailureReason, QuotaFetchOutcome, QuotaFetcherConfig } from '@xyz-agent/shared'
 import { logger } from '../../infra/logger.js'
+import { toErrorMessage } from '../../utils/errors.js'
 
 /** 无限窗口（未订阅/不支持）。pct=null 前端整行隐藏。 */
 export const INFINITE_WIN: QuotaWindow = { pct: null, resetSec: null }
 
-export type { QuotaWindow, QuotaWins, NormalizedQuotaRow, ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchFailureReason, QuotaFetchOutcome }
+export type { QuotaWindow, QuotaWins, NormalizedQuotaRow, ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchFailureReason, QuotaFetchOutcome, QuotaFetcherConfig }
 
 /** HTTP 401/403：凭证无效/过期（unauthorized 判定）。 */
 const HTTP_UNAUTHORIZED = 401
@@ -57,7 +58,7 @@ export async function fetchQuotaJson<T>(
     return { ok: true, data }
   } catch (err) {
     // fetch 网络异常 / 超时 → network（架构约定 #4 落盘，禁止静默 catch）
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = toErrorMessage(err)
     logger.debug(`[${logTag}] fetch failed`, { error: msg })
     return { ok: false, reason: 'network' }
   }

@@ -66,7 +66,7 @@ vi.mock("../execution/alive-store.ts", () => ({
   writeAliveMarker: vi.fn(),
 }));
 
-vi.mock("../execution/temp-prompt.ts", () => ({
+vi.mock("../execution/engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string, content: string) => {
     captured.calls++;
     captured.content = content;
@@ -79,7 +79,7 @@ vi.mock("../execution/temp-prompt.ts", () => ({
 import { spawn } from "node:child_process";
 
 import { createRecord } from "../execution/execution-record.ts";
-import { runSpawn, type RunOptions, type SessionRunnerContext } from "../execution/session-runner.ts";
+import { runSpawn, type RunOptions, type SessionRunnerContext } from "../execution/engine/engines/pi/session-runner.ts";
 
 const mockSpawn = vi.mocked(spawn);
 
@@ -116,8 +116,9 @@ function makeRecord() {
   return createRecord(`append-asm-${seq}`, {
     agent: "general-purpose",
     model: "test/model",
-    mode: "sync",
+    mode: "background",
     task: "test task",
+    slug: "append-asm",
     startedAt: Date.now(),
     rootSessionId: "s1",
     parentRecordId: undefined,
@@ -127,7 +128,7 @@ function makeRecord() {
 
 function makeRunOpts(overrides: Partial<RunOptions> = {}): RunOptions {
   return {
-    resolved: { model: { provider: "test", id: "model" }, thinkingLevel: undefined },
+    resolved: { model: { provider: "test", id: "model", name: "Model", reasoning: false }, thinkingLevel: undefined },
     agentConfig: undefined,
     appendSystemPrompt: undefined,
     skillPath: undefined,
@@ -178,7 +179,7 @@ describe("writeAppendSystemPromptFile 组装（经 runSpawn 驱动）", () => {
   it("全片段组装：env block → agent body → 调用方片段 → wrap-up hint，顺序稳定", async () => {
     const content = await captureAppendContent(
       makeRunOpts({
-        agentConfig: { systemPrompt: "AGENT-BODY-MARKER" },
+        agentConfig: { name: "worker", systemPrompt: "AGENT-BODY-MARKER" },
         appendSystemPrompt: ["FRAG-ONE", "FRAG-TWO"],
         maxTurns: 5,
       }),
@@ -207,7 +208,7 @@ describe("writeAppendSystemPromptFile 组装（经 runSpawn 驱动）", () => {
   });
 
   it("ask_user RPC 提示 mode 门控：rpc（gui 响应）注入，json（headless）不注入", async () => {
-    const opts = makeRunOpts({ agentConfig: { tools: ["ask_user"] } });
+    const opts = makeRunOpts({ agentConfig: { name: "worker", systemPrompt: "", tools: ["ask_user"] } });
     const rpcContent = await captureAppendContent(opts, makeCtx({ mode: "rpc" }));
     expect(rpcContent).toContain("ask_user Tool Availability");
     const jsonContent = await captureAppendContent(opts, makeCtx({ mode: "json" }));
@@ -217,7 +218,7 @@ describe("writeAppendSystemPromptFile 组装（经 runSpawn 驱动）", () => {
 
   it("mode 响应但 tools 不含 ask_user → 不注入", async () => {
     const content = await captureAppendContent(
-      makeRunOpts({ agentConfig: { tools: ["read", "bash"] } }),
+      makeRunOpts({ agentConfig: { name: "worker", systemPrompt: "", tools: ["read", "bash"] } }),
       makeCtx({ mode: "rpc" }),
     );
     expect(content).not.toContain("ask_user Tool Availability");

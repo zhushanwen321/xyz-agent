@@ -12,7 +12,7 @@
  *   - 范围切换 30 天↔全部（窗口外 6 月数据出现）
  *
  * mock 策略：
- *   - vi.mock('@/api/domains/usage')（同 UsagePage.test.ts）
+ *   - vi.mock('@xyz-agent/core/transport/api/domains/usage')（同 UsagePage.test.ts）
  *   - ResizeObserver / clientWidth 全局补丁（UsageDailyChart 真实渲染需要）
  *   - vi.useFakeTimers 固定 2026-08-25：range>0 的日期窗口与 30 天断言确定性
  */
@@ -20,12 +20,12 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } 
 import { mount, flushPromises } from '@vue/test-utils'
 import type { UsageRow, UsageStatsResult } from '@xyz-agent/shared'
 
-vi.mock('@/api/domains/usage', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/usage', () => ({
   getUsageStats: vi.fn(),
 }))
 
 import UsagePage from '@/components/settings/usage/UsagePage.vue'
-import { getUsageStats } from '@/api/domains/usage'
+import { getUsageStats } from '@xyz-agent/core/transport/api/domains/usage'
 
 const mockedGetUsageStats = vi.mocked(getUsageStats)
 

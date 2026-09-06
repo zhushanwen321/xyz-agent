@@ -6,12 +6,13 @@
 // 为什么单独一层：执行层现有四个核心类型（ExecuteOptions/AgentEvent/AgentResult/AgentRunner
 // port）的中立是「碰巧的，不是设计的」——thinkingLevel 是 pi 7 档枚举、skillPath 假设引擎有
 // --skill flag、conversation/idleTimeoutMs 是 pi chatMode 专属形态（设计 §2.1）。本文件把
-// 「agent 调用」的引擎无关语义显式化为 AgentTaskSpec / AgentOutcome 等类型，EnginePort
-// （port.ts）与其下各引擎适配器都以本层为唯一契约点。
+// 「agent 调用」的引擎无关语义显式化为 AgentOutcome 等类型，EnginePort（port.ts）与其下
+// 各引擎适配器都以本层为唯一契约点。
 //
-// 泛化原则（D2）：从现有类型泛化，不另起炉灶——字段与 execution/types.ts 的
-// ExecuteOptions、orchestration/models/types.ts 的 AgentResult 逐一锚定，标注「泛化」的
-// 条目语义有变，标注「新增」为引擎层新引入。
+// [D6 任务形状合流] 原本层的任务声明类型 AgentTaskSpec/PersonaSpec 已并入
+// orchestration/models/types.ts 的 AgentCallOpts（单一任务形状，SAR 直产、pi 边界一次
+// 直出——docs/design/subagent-dual-track-convergence.md §3.3 D6）。本文件不再定义任务
+// 声明；EnginePort.run 的入参即 AgentCallOpts（字段裁定与裁撤记录见其类型注释）。
 //
 // AgentResult 消歧（设计 §2.1/§3.3.5）：仓内有两个同名 AgentResult——
 //   ① orchestration 层 workflow 消费的那份（orchestration/models/types.ts，主字段
@@ -21,109 +22,14 @@
 //      ——record 内部投影，保持原名不动。
 // 引擎层终态命名 AgentOutcome，与两者不同名，消除「同名不同义」。
 
-import type { AgentUsage, ToolCallEntry } from "../../orchestration/models/types.ts";
-import type { AgentUsageTotal, ToolCall, WorktreeHandle } from "../types.ts";
+import type { AgentFailureKind, AgentUsage, ToolCallEntry } from "../../orchestration/models/types.ts";
+import type { AgentUsageTotal, ToolCall } from "../types.ts";
 
 // AgentEvent 8 种事件原样保留，唯一权威定义仍是 execution/types.ts——引擎层 re-export
 // 不复制第二份（设计 §3.3.5）；经 shared/agent-event.ts 的既有出口转发，维持「shared/
 // 是类型共享层」的架构约定。新增粗粒度约束（coarse 引擎至少合成一次 message_end +
 // 一次 turn_end）由 conformance 套件断言（P4），不在类型层编码。
 export type { AgentEvent } from "../../shared/agent-event.ts";
-
-// ============================================================
-// AgentTaskSpec（= 现有 ExecuteOptions 泛化，D2）
-// ============================================================
-
-/** 人设（persona）注入规格：原 skillPath + appendSystemPrompt 收拢进一个语义单元（D2）。 */
-export interface PersonaSpec {
-  /**
-   * agent 名/路径。与 AgentTaskSpec.agent 的分工：agent 是 resolveIdentity 的身份解析
-   * 键（模型/系统提示等身份语义）；agentRef 是 persona 注入通道的定位符——引擎按
-   * capabilities.personaInjection 决定注入通道（file/flag/prompt）时用它定位人设。
-   * pi 引擎不消费此字段（身份解析走 spec.agent），留给 flag/file 通道的引擎。
-   */
-  agentRef?: string;
-  /**
-   * 原 ExecuteOptions.skillPath。公共 persona 路由三策略（file/flag/prompt）的分流
-   * 载体（D4）——超长 prompt 时优先 file/flag 通道分流的落点。
-   */
-  skillPath?: string;
-  /** 追加系统提示内容数组（原样透传；schema 仿真段由公共降级层拼装后放入，P2）。 */
-  appendSystemPrompt?: string[];
-}
-
-/**
- * 引擎无关的 agent 任务声明（= ExecuteOptions 泛化，字段逐条锚定设计 §3.3.5）。
- *
- * 与 ExecuteOptions 的差异（泛化点）：
- *   - thinkingLevel（pi 7 档枚举语义）→ effort?: string，各引擎自行映射或忽略；
- *   - skillPath + appendSystemPrompt → persona（PersonaSpec）；
- *   - conversation/idleTimeoutMs 保留原名透传——属 interact 交互控制面的 task 标志（D1），
- *     不是 pi 专有语义的泄漏，而是「任务声明里声明交互模式」的中立表达；
- *   - 删字段去向：signal/ctxModel/onComplete 是运行期句柄，移入 RunContext（port.ts）；
- *     schemaEnv 内化到 PiEngine（从 task.schema 派生，见 engines/pi/task-spec-mapper.ts）。
- *
- * 新增（为后续 wave 预留形状，P1 无生产写入方）：
- *   - denyTools：中立工具 denylist（附录 A 该行的载体）；
- *   - permissionMode：中立权限模式（映射按 capabilities.permissionMode）。
- */
-export interface AgentTaskSpec {
-  /** 原样（ExecuteOptions.task）。 */
-  task: string;
-  /** 原样（ExecuteOptions.slug，≤35 字符）。 */
-  slug: string;
-  /** 原样（ExecuteOptions.agent，resolveIdentity 的 agent ref）。 */
-  agent?: string;
-  /** 原样（ExecuteOptions.model；在引擎 provider 体系内解释，D9②）。 */
-  model?: string;
-  /**
-   * 泛化：原 ExecuteOptions.thinkingLevel。引擎无关的推理投入档位字符串——
-   * pi 引擎把它原值映射回 thinkingLevel 7 档；其他引擎自行映射（CC 5 档）或忽略
-   * （kimi ❌）。不定义联合枚举：档位集合是引擎私有语义，中立层只透传字符串。
-   */
-  effort?: string;
-  /** 泛化：原 skillPath + appendSystemPrompt 收拢（D2）。 */
-  persona?: PersonaSpec;
-  /**
-   * 原样（ExecuteOptions.schema）。native/emulated 分流依据（D4 硬边界）：pi 的
-   * PI_WORKFLOW_SCHEMA env 注入链路按 native 直传，公共仿真层只服务 emulated 引擎。
-   */
-  schema?: Record<string, unknown>;
-  /**
-   * 原样（ExecuteOptions.maxTurns）。pi 引擎专属（turn limiter + spawn watchdog
-   * 估算依赖 pi 的 turn_end 事件流）；其他引擎 prepare 期显式拒绝（U4，同 fork 模式）。
-   * 显式 0 压过 SPAWN_WATCHDOG_ENV 兑底（SP-6 参数 > env，U5）；undefined 未传才由
-   * env 兑底。
-   */
-  maxTurns?: number;
-  /** 原样（ExecuteOptions.graceTurns）。 */
-  graceTurns?: number;
-  /** 原样（ExecuteOptions.fork）。pi 专属；其他引擎 prepare 期按 capabilities 拒绝。 */
-  fork?: boolean;
-  /**
-   * 原样（ExecuteOptions.worktree）。公共层职责（worktree-manager），非引擎职责——
-   * 引擎只把它当 spawn cwd 的来源之一。
-   */
-  worktree?: boolean | WorktreeHandle;
-  /** 原样（ExecuteOptions.cwd）。 */
-  cwd?: string;
-  /** 原样（ExecuteOptions.conversation，interact 控制面的 task 标志，D1）。 */
-  conversation?: boolean;
-  /** 原样（ExecuteOptions.idleTimeoutMs，同上）。 */
-  idleTimeoutMs?: number;
-  /** 新增：中立工具 denylist。各引擎做语法映射（附录 A「工具 denylist」行的载体）。 */
-  denyTools?: string[];
-  /** 新增：中立权限模式。映射按 capabilities.permissionMode（kimi fixed auto = ignored）。 */
-  permissionMode?: string;
-  /**
-   * [P4 形状预留，D9① 守卫 b 的独立载体] 任务对引擎能力的显式依赖声明。
-   * 首期无生产写入方：守卫 b 与守卫 a 合流（显式 engine 即能力依赖声明）——调用方
-   * 按引擎 id 表达依赖。下钻时机（AgentTaskSpec 泛化成熟后）：调用方改按能力表达
-   * （如 requires: { sandbox: 'native' }），路由层将本字段与各引擎 capabilities()
-   * 对照，无引擎满足时报 engine_capability_unsupported（调用前拒绝，D11 处置三级）。
-   */
-  requires?: Partial<EngineCapabilities>;
-}
 
 // ============================================================
 // AgentOutcome（锚定 orchestration 层 AgentResult，§3.3.5）
@@ -136,6 +42,13 @@ export interface AgentTaskSpec {
 export interface AgentOutcome {
   /** 原样（AgentResult.content）。 */
   content: string;
+  /**
+   * 原样（AgentResult.failureKind，D5-③ 失败分诊结构化标签）。产出侧唯一识别点 =
+   * engines/pi/output-collector（collectResult 分类写入）；缺省 = unknown = 可重试
+   * （消费侧 executeAgentCall 只读字段分诊，不扫 error 文案）。非 pi 引擎不产出，
+   * 恒缺省（unknown 语义）。
+   */
+  failureKind?: AgentFailureKind;
   /**
    * 原样（AgentResult.parsedOutput）。native 引擎直传 / 仿真层 ajv 产出（D4 硬分流：
    * native 路径公共层不做二次校验、不改写其结果）。
@@ -274,6 +187,15 @@ export interface EngineCapabilities {
   interrupt: "native" | "kill-only";
   /** kimi headless 固定 auto = ignored；GUI 据此隐藏/提示。 */
   permissionMode: "native" | "fixed" | "ignored";
+  /**
+   * [D3-④ r3 裁定] maxTurns 轮数上限的执行能力位（pi = true：turn limiter + spawn
+   * watchdog 估算兑现；zcode = false：无 turn_end 语义，静默丢弃会造成「传了上限却
+   * 失控」假象）。调用前预检（common/capability-gate）按本位拦「声明不支持的能力」
+   * ——pi 不拦 maxTurns（已支持能力，由 turn-limiter 执行）、zcode 同步拒绝。
+   * 现状 11 个能力位无可承载 maxTurns 的语义位（fork 拦截可借 session 分叉通道族判，
+   * maxTurns 无可借位），故扩位而非保留引擎内硬编码 shape 检查。
+   */
+  maxTurns: boolean;
 }
 
 // ============================================================
@@ -296,7 +218,12 @@ export interface ProbeReport {
  * 声明 conversation unsupported 的引擎调用前拒绝（engine_capability_unsupported）。
  */
 export type InteractAction =
-  | { kind: "message"; payload: string }
+  /**
+   * interrupt：true = steer（抢占）/ false|缺省 = followUp（排队）——pi streamingBehavior
+   * 语义的中立承载（D1 §3.3.5「后续 wave 如需抢占语义再扩展 InteractAction」的兑现，
+   * chat 域投递经 engine.interact 接通时落地；不支持抢占的引擎忽略）。
+   */
+  | { kind: "message"; payload: string; interrupt?: boolean }
   | { kind: "close"; payload?: { force: boolean } }
   | { kind: "cancel" };
 

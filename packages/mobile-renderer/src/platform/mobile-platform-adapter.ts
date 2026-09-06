@@ -1,12 +1,14 @@
 // MobilePlatformAdapter —— §9 PlatformPort 三端口实现（mobile 壳侧）。
 //
-// 实现 core P0 已导出的 PlatformPort 接口（kind/storage/webSocket/ipc 四字段），
+// 实现 core P0 已导出的 PlatformPort 接口（kind/storage/webSocket 三字段），
 // kind='mobile'。对接 core/src/platform/port.ts 的 providePlatform/getPlatform 注入点。
 //
 // pre-P0/P1 stub 形态：
 //   - storage：内存 Map（进程重启丢），get 不存在 key 返回 null（对齐 core KVStorage 契约）
 //   - webSocket：create(url) 返回不建立真实连接的 mock 对象（D2 远程 deferred）
-//   - ipc：null（mobile 无 electron 主进程，桌面独占能力）
+//
+// ipc 不在 PlatformPort（mobile 无 electron 主进程，桌面独占能力；electronAPI 实际
+// 访问点在 renderer 壳 lib/ipc.ts）。
 //
 // TODO(P1): websocket 对接 core transport（P1 ws-client 迁入 core 后，mobile D2
 // 远程连接落地时，create 返回真实 WebSocket 实例或远程代理）。
@@ -68,8 +70,5 @@ export function createMobilePlatformAdapter(): PlatformPort {
     kind: 'mobile',
     storage: new InMemoryStorage(),
     webSocket: new MobileWebSocketFactory(),
-    // ipc: null —— mobile 无 electron 主进程；且 ipc 字段整体 deferred（spike③ 未通过），
-    // 见 core/platform/port.ts 的 IpcBridge 注释。
-    ipc: null,
   }
 }

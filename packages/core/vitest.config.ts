@@ -5,6 +5,8 @@ import { defineConfig } from 'vitest/config'
 // 无 vue plugin、无 happy-dom、无 coverage threshold（P0 骨架阶段，覆盖率随 P3 域迁移滚动校准）。
 export default defineConfig({
   test: {
+    reporters: ['default', 'junit'],
+    outputFile: { junit: './test-results/vitest-junit.xml' },
     environment: 'node',
   },
 })

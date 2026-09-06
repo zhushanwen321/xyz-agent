@@ -6,7 +6,8 @@
  *   （core/extension-host/plugin-message-source.ts 注释明确「壳把 transport 层适配成 source 注入」）
  * - 创建 InternalEventBus + MessageBusBridge（归一 plugin:* → bus 事件）
  * - 创建 ViewHostStore + StatusBarController（消费 bus，ui 组件数据源）
- * - 注入 MountPointRegistry/ContributionRegistry 到 core bootstrap（setExtensionRegistries）+ 触发注册
+ * - 注入 MountPointRegistry/ContributionRegistry 到 core bootstrap（setExtensionRegistries；
+ *   注册触发收敛为 bootstrap 第 4/5 步——App.vue onMounted 编排，本模块不再自行触发）
  * - app.provide ViewHost/StatusBar 的 inject key
  *
  * 消息流：WS 下行 → route-inbound（events 正规通道）→ 本适配器 →
@@ -27,11 +28,10 @@ import { reactive, shallowReactive, watch } from 'vue'
 import {
   ContributionRegistry,
   createSessionScopedMap,
+  EXTENSION_BRIDGE_TYPES,
   InternalEventBus,
   MessageBusBridge,
   MountPointRegistry,
-  registerMountPoints,
-  scanContributions,
   setExtensionRegistries,
   StatusBarController,
   NotificationHostController,
@@ -48,7 +48,7 @@ import {
   type ViewCacheEntry,
   type StatusBarSessionState,
 } from '@xyz-agent/core'
-import { getState as getWsState } from '@/lib/ws-client'
+import { getState as getWsState, send } from '@xyz-agent/core/transport/ws-client'
 import {
   DIALOG_REQUEST_SOURCE_KEY,
   PluginSettingsDataSourceKey,
@@ -62,26 +62,19 @@ import {
 import { SLASH_COMMAND_SOURCE_KEY } from '@/components/panel/command-popover-source'
 import { createDialogRequestSource, createUiResponseTransport } from './extension-host-dialog'
 import type { ServerMessage } from '@xyz-agent/shared'
-import { onCrossSession, onGlobal } from '@/api/events'
-import { onPlugins } from '@/api/domains/plugin'
-import * as transport from '@/api/transport'
+import { onCrossSession, onGlobal } from '@xyz-agent/core/transport/api'
+import { onPlugins } from '@xyz-agent/core/transport/api/domains/plugin'
 import { createNotifyToastHandler } from './notify-toast'
 import type { ContributionRecord } from '@xyz-agent/core'
 
 /** 把 renderer 的 WS 消息流（events 通道的 plugin:/extension: 下行）适配成 PluginMessageSource。 */
 
 /**
- * extension:* 下行进 bridge 的精确白名单（与 core MessageBusBridge 的 EXTENSION_HANDLERS
- * 5 个 key 一致，见 message-bus-bridge.ts）。plugin:* 前缀全放行，extension:* 只放行白名单内 type——
- * 其余（如 extension.error）由 source filter 静默丢弃，不进 bridge（source 职责边界）。
+ * extension:* 下行进 bridge 的精确白名单——core 导出 SSOT（D10②，派生自
+ * message-bus-bridge.ts EXTENSION_HANDLERS 的 keys），本文件 import 同一份。
+ * plugin:* 前缀全放行，extension:* 只放行白名单内 type——其余（如 extension.error）
+ * 由 source filter 静默丢弃，不进 bridge（source 职责边界）。
  */
-export const EXTENSION_BRIDGE_TYPES: readonly string[] = [
-  'extension:widget',
-  'extension:widgetGui',
-  'extension:status',
-  'extension:notify',
-  'extension.ui_request',
-]
 
 /**
  * 过滤条件：plugin:* 前缀 OR EXTENSION_BRIDGE_TYPES 精确白名单。
@@ -89,7 +82,7 @@ export const EXTENSION_BRIDGE_TYPES: readonly string[] = [
  * ADR-0060：数据源从 raw-message-tap 旁路改为 events 正规双订阅（route-inbound 单一真相源）：
  * - onGlobal：收无 sid 的 plugin:*（statusBarUpdate/notification/uiRequest 等走 global 通道）
  * - onCrossSession：收带 sid 的 extension:*（widget/widgetGui/status/notify/ui_request/ui_timeout
- *   + plugin:uiRequest/plugin:viewUpdate，route-inbound CROSS_SESSION_TYPES 白名单分发，
+ *   + plugin:uiRequest/plugin:viewUpdate，route-inbound 声明式条目 crossSession 字段分发，
  *   全局单例消费者 ExtensionHost 接收）
  * 经 source filter 后消息集合与旧 raw-tap 全量订阅等价（plugin:* 无 sid + extension.* 带 sid）。
  */
@@ -190,11 +183,38 @@ function ensureMountPointsSync(mountPoints: MountPointRegistry): void {
   if (mountPointsSyncWatchRegistered) return
   mountPointsSyncWatchRegistered = true
   const sendSync = (): void => {
-    transport.send({ type: 'plugin.mountPoints.sync', payload: { mountPoints: mountPoints.list() } })
+    send({ type: 'plugin.mountPoints.sync', payload: { mountPoints: mountPoints.list() } })
   }
   // immediate：init 时若已 connected（防御）立即发送；否则等待首次建连 / 重连进入 connected
   watch(getWsState(), (s) => {
     if (s === 'connected') sendSync()
+  }, { immediate: true })
+}
+
+/**
+ * builtin command/slashCommand 声明 → CommandRegistry 同步（§11-5 自查修正，u6）。
+ *
+ * 原在装配期同步循环执行（依赖旧装配顺序：bridge 内 scanContributions 先行、registerBuiltin
+ * 已填充 contributions）。注册收敛 bootstrap 第 5 步（App.vue onMounted）后，装配期（main.ts
+ * mount 前）contributions 尚空——装配期快照会永久丢失 builtin 声明（goal/todo 的 slash
+ * description 元数据）。改挂 watch(connected) 重放：bootstrap step5 由 await 链微任务接续，
+ * 结构性先于 connected（真实分支 connected 需 WS onopen + auth 宏任务；mock 分支 200ms
+ * setTimeout），connected 后声明必已就绪；消费点 CommandPopover 为用户交互，远晚于 connected。
+ * 幂等（registerFromContribution 同 id 覆盖），重连/重跑无害。模块级守卫对齐
+ * ensureMountPointsSync（HMR / 测试多次 init 只挂一个 watcher）。
+ */
+let commandDeclarationsSyncWatchRegistered = false
+function ensureCommandDeclarationsSync(
+  contributions: ContributionRegistry,
+  commandRegistry: CommandRegistry,
+): void {
+  if (commandDeclarationsSyncWatchRegistered) return
+  commandDeclarationsSyncWatchRegistered = true
+  watch(getWsState(), (s) => {
+    if (s !== 'connected') return
+    for (const c of contributions.getContributions()) {
+      if (c.type === 'command' || c.type === 'slashCommand') commandRegistry.registerFromContribution(c)
+    }
   }, { immediate: true })
 }
 
@@ -256,9 +276,8 @@ export function initExtensionHostBridge(app: App): {
   const mountPoints = new MountPointRegistry()
   const contributions = new ContributionRegistry(bus)
   setExtensionRegistries({ mountPoints, contributions })
-  // fire-and-forget：注册失败由 bootstrap 内部 warn 降级（ES2），不阻塞启动
-  void registerMountPoints()
-  void scanContributions()
+  // 仅注入注册表：注册触发收敛为 bootstrap 第 4/5 步（App.vue onMounted 编排，u6 去重）——
+  // 本装配点不再自行 registerMountPoints/scanContributions。
 
   // W3 slash 收编（D1 归一）：CommandRegistry 实例化（与 ViewHostStore/StatusBarController 并列，03 文档 D3-3）。
   // ActivationManager 的 trigger 适配为 no-op——runtime 暂无激活 RPC 通道（plugin-message-handler 无
@@ -275,7 +294,7 @@ export function initExtensionHostBridge(app: App): {
     execute: async (id, args) => {
       const cmd = commandRegistry.get(id)
       if (!cmd) return
-      transport.send({
+      send({
         type: 'plugin.executeCommand',
         payload: { pluginId: cmd.pluginId, commandId: id, args: args as Record<string, unknown> | undefined },
       })
@@ -283,11 +302,10 @@ export function initExtensionHostBridge(app: App): {
   }
   // execute 闭包引用 commandRegistry，最早调用时序在本行创建 registry 实例之后，const 无 TDZ 风险
   const commandRegistry = new CommandRegistry({ bus, activationManager, executor: commandExecutor })
-  // 同步 ContributionRegistry 的 command + slashCommand 声明（scanContributions 同步段已 registerBuiltin）。
-  // 收编后 CommandRegistry 成为 slash 命令统一消费源（03 文档 D3-1：声明提供 description 元数据，执行仍走 pi）。
-  for (const c of contributions.getContributions()) {
-    if (c.type === 'command' || c.type === 'slashCommand') commandRegistry.registerFromContribution(c)
-  }
+  // builtin command + slashCommand 声明同步进 CommandRegistry（收编后是 slash 命令统一消费源，
+  // 03 文档 D3-1：声明提供 description 元数据，执行仍走 pi）。装配期 contributions 尚空
+  // （注册已收敛 bootstrap 第 5 步），改 connected 后重放同步（见 ensureCommandDeclarationsSync 注释）。
+  ensureCommandDeclarationsSync(contributions, commandRegistry)
   // CommandPopover 数据源：resolveSlashCommands 合并源（registry 声明 ∪ commandStore pi 真源）。
   // 壳提供真实 registry 实现，组件注入（单测 global.provide mock）。
   app.provide(SLASH_COMMAND_SOURCE_KEY, {

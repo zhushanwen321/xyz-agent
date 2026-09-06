@@ -104,26 +104,34 @@ function truncateLabel(label: string): string {
   return label.length > TOOL_LABEL_MAX ? label.slice(0, TOOL_LABEL_MAX) : label;
 }
 
+/** usage 单字段求和（undefined 视为 0——与旧 `(a ?? 0) + (b ?? 0)` 内联式逐字等价）。 */
+function sumUsageField(a: number | undefined, b: number | undefined): number {
+  return (a ?? 0) + (b ?? 0);
+}
+
+/** prev 为空时 next 的规范化拷贝（cost 保留原值，可能 undefined——与旧首条分支逐字等价）。 */
+function usageFromNext(next: AgentUsage): AgentUsage {
+  return {
+    input: next.input ?? 0,
+    output: next.output ?? 0,
+    cacheRead: next.cacheRead ?? 0,
+    cacheWrite: next.cacheWrite ?? 0,
+    cost: next.cost,
+  };
+}
+
 /**
  * 累加两个 AgentUsage（field-wise）。prev 为空时返回 next 的拷贝。
  * 供 message_end 把 usage 增量并入 turn.usageDelta。
  */
 function addUsage(prev: AgentUsage | undefined, next: AgentUsage): AgentUsage {
-  if (prev === undefined) {
-    return {
-      input: next.input ?? 0,
-      output: next.output ?? 0,
-      cacheRead: next.cacheRead ?? 0,
-      cacheWrite: next.cacheWrite ?? 0,
-      cost: next.cost,
-    };
-  }
+  if (prev === undefined) return usageFromNext(next);
   return {
-    input: (prev.input ?? 0) + (next.input ?? 0),
-    output: (prev.output ?? 0) + (next.output ?? 0),
-    cacheRead: (prev.cacheRead ?? 0) + (next.cacheRead ?? 0),
-    cacheWrite: (prev.cacheWrite ?? 0) + (next.cacheWrite ?? 0),
-    cost: (prev.cost ?? 0) + (next.cost ?? 0),
+    input: sumUsageField(prev.input, next.input),
+    output: sumUsageField(prev.output, next.output),
+    cacheRead: sumUsageField(prev.cacheRead, next.cacheRead),
+    cacheWrite: sumUsageField(prev.cacheWrite, next.cacheWrite),
+    cost: sumUsageField(prev.cost, next.cost),
   };
 }
 
@@ -274,6 +282,141 @@ function indexToolStart(record: ExecutionRecord, turn: Turn, toolName: string): 
   }
 }
 
+// ── 各事件处理器（updateFromEvent 按 case 分发，每个处理器单一职责）──
+
+/** text_delta：流式累积进当前 turn 的 text（完整内容，非切片）。 */
+function applyTextDelta(
+  record: ExecutionRecord,
+  event: Extract<AgentEvent, { type: "text_delta" }>,
+): void {
+  currentTurn(record).text += event.delta;
+}
+
+/** thinking_delta：流式累积进当前 turn 的 thinking（完整内容）。 */
+function applyThinkingDelta(
+  record: ExecutionRecord,
+  event: Extract<AgentEvent, { type: "thinking_delta" }>,
+): void {
+  currentTurn(record).thinking += event.delta;
+}
+
+/** tool_start：push 一个 running 的 InternalToolCall（带 startedTs）+ 弹尾索引入册。 */
+function applyToolStart(
+  record: ExecutionRecord,
+  event: Extract<AgentEvent, { type: "tool_start" }>,
+): void {
+  const tc: InternalToolCall = {
+    toolName: event.toolName,
+    args: event.args,
+    result: undefined,
+    isError: false,
+    _status: "running",
+    startedTs: Date.now(),
+  };
+  const turn = currentTurn(record);
+  turn.toolCalls.push(tc);
+  indexToolStart(record, turn, event.toolName);
+}
+
+/**
+ * tool_end 定位：索引弹尾 O(1) 命中 running 同名 toolCall；索引 miss（无记录 / 槽位
+ * 已非 running）回退 findRunningToolCall 跨 turn 倒序全扫兜底。
+ * 返回 [turn, index]；两路都 miss 返回 undefined。
+ */
+function matchRunningToolCall(
+  record: ExecutionRecord,
+  toolName: string,
+): readonly [Turn, number] | undefined {
+  const byName = runningToolIndex.get(record);
+  const arr = byName?.get(toolName);
+  if (arr !== undefined && arr.length > 0) {
+    const item = arr[arr.length - 1];
+    arr.pop();
+    const tc = item.turn.toolCalls[item.idx];
+    if (tc !== undefined && tc._status === "running") {
+      return [item.turn, item.idx] as const;
+    }
+  }
+  // 兜底：重建 record 的历史 running toolCall（索引未覆盖）、索引项被外部路径
+  // 置非 running 等场景——保持与旧实现一致的跨 turn 倒序全扫。
+  return findRunningToolCall(record, toolName);
+}
+
+/**
+ * tool_end：命中则回填 result/isError/_status；未命中（SDK 发了 tool_end 但无对应
+ * tool_start，如外部注入的工具）直接 push 一个已完成的 InternalToolCall，避免数据丢失。
+ */
+function applyToolEnd(
+  record: ExecutionRecord,
+  event: Extract<AgentEvent, { type: "tool_end" }>,
+): void {
+  const matched = matchRunningToolCall(record, event.toolName);
+  if (matched !== undefined) {
+    const [turn, i] = matched;
+    const tc = turn.toolCalls[i]!;
+    tc.args = event.args ?? tc.args;
+    tc.result = event.result;
+    tc.isError = event.isError ?? false;
+    tc._status = event.isError ? "failed" : "done";
+    return;
+  }
+  currentTurn(record).toolCalls.push({
+    toolName: event.toolName,
+    args: event.args,
+    result: event.result,
+    isError: event.isError ?? false,
+    _status: event.isError ? "failed" : "done",
+    startedTs: Date.now(),
+  });
+}
+
+/**
+ * turn_end：闭合当前 turn，记 closedTs（真实墙钟），turnCount++，清 lastError。
+ * 正常闭合清 lastError：瞬态 error 恢复后不应误判 success=false
+ * （若 turn_end 后 message_end 报 error，会在 message_end 处理器重新写回）。
+ */
+function applyTurnEnd(record: ExecutionRecord): void {
+  const turn = currentTurn(record);
+  turn.closed = true;
+  turn.closedTs = Date.now();
+  record.turnCount += 1;
+  record.lastError = undefined;
+}
+
+/**
+ * message_end：usage 增量存进末 turn.usageDelta（直接写末 turn，不开新 turn）；
+ * totalTokens 累加；error（stopReason=error）记进 lastError。
+ *
+ * usageDelta 按 message_end **累加**（非覆盖）——同一 turn 内若多次 message_end
+ * 到达（或 turn_end 后的滞后 message_end 落到 currentTurn 开的新 turn），
+ * 累加保证不丢 usage。getTotalUsage 扁平求和所有 turn，归属 turn 的精确性
+ * 不影响最终 total（无消费方读单 turn usage）。
+ */
+function applyMessageEnd(
+  record: ExecutionRecord,
+  event: Extract<AgentEvent, { type: "message_end" }>,
+): void {
+  if (event.usage) {
+    const turn = currentTurn(record);
+    turn.usageDelta = addUsage(turn.usageDelta, event.usage);
+    // totalTokens 累加四项之和（保留旧语义，投影直接读）
+    record.totalTokens +=
+      (event.usage.input ?? 0) + (event.usage.output ?? 0) +
+      (event.usage.cacheRead ?? 0) + (event.usage.cacheWrite ?? 0);
+  }
+  if (event.error) {
+    record.lastError = event.error;
+  }
+}
+
+/** error：存 record.lastError（getEventLog 派生 error 条目用）。 */
+function applyErrorEvent(
+  record: ExecutionRecord,
+  event: Extract<AgentEvent, { type: "error" }>,
+): void {
+  record.lastError = event.message;
+}
+
 /**
  * 从 AgentEvent 更新 record。所有数据收口进 record.turns[]。
  *   - text/thinking：流式累积进 currentTurn()（完整内容，非切片）
@@ -293,116 +436,32 @@ function indexToolStart(record: ExecutionRecord, turn: Turn, toolName: string): 
 export function updateFromEvent(record: ExecutionRecord, event: AgentEvent): void {
   switch (event.type) {
     // ── text / thinking：流式累积进当前 turn ──
-    case "text_delta": {
-      currentTurn(record).text += event.delta;
-      return;
-    }
-    case "thinking_delta": {
-      currentTurn(record).thinking += event.delta;
-      return;
-    }
+    case "text_delta":
+      return applyTextDelta(record, event);
+    case "thinking_delta":
+      return applyThinkingDelta(record, event);
 
-    // ── tool_start：push 一个 running 的 InternalToolCall（带 startedTs）──
-    case "tool_start": {
-      const tc: InternalToolCall = {
-        toolName: event.toolName,
-        args: event.args,
-        result: undefined,
-        isError: false,
-        _status: "running",
-        startedTs: Date.now(),
-      };
-      const turn = currentTurn(record);
-      turn.toolCalls.push(tc);
-      indexToolStart(record, turn, event.toolName);
-      return;
-    }
+    // ── tool_start/end：push 进 currentTurn().toolCalls（含完整 result）──
+    case "tool_start":
+      return applyToolStart(record, event);
+    case "tool_end":
+      return applyToolEnd(record, event);
 
-    // ── tool_end：索引弹尾 O(1) 定位 running 同名 toolCall，miss 回退全扫兜底 ──
-    case "tool_end": {
-      let matched: readonly [Turn, number] | undefined;
-      const byName = runningToolIndex.get(record);
-      const arr = byName?.get(event.toolName);
-      if (arr !== undefined && arr.length > 0) {
-        const item = arr[arr.length - 1];
-        arr.pop();
-        const tc = item.turn.toolCalls[item.idx];
-        if (tc !== undefined && tc._status === "running") {
-          matched = [item.turn, item.idx] as const;
-        }
-      }
-      if (matched === undefined) {
-        // 兜底：重建 record 的历史 running toolCall（索引未覆盖）、索引项被外部路径
-        // 置非 running 等场景——保持与旧实现一致的跨 turn 倒序全扫。
-        matched = findRunningToolCall(record, event.toolName);
-      }
-      if (matched !== undefined) {
-        const [turn, i] = matched;
-        const tc = turn.toolCalls[i]!;
-        tc.args = event.args ?? tc.args;
-        tc.result = event.result;
-        tc.isError = event.isError ?? false;
-        tc._status = event.isError ? "failed" : "done";
-        return;
-      }
-      // 匹配失败（SDK 发了 tool_end 但无对应 tool_start，如外部注入的工具）：
-      // 直接 push 一个已完成的 InternalToolCall，避免数据丢失。
-      currentTurn(record).toolCalls.push({
-        toolName: event.toolName,
-        args: event.args,
-        result: event.result,
-        isError: event.isError ?? false,
-        _status: event.isError ? "failed" : "done",
-        startedTs: Date.now(),
-      });
-      return;
-    }
+    // ── turn_end：闭合当前 turn ──
+    case "turn_end":
+      return applyTurnEnd(record);
 
-    // ── turn_end：闭合当前 turn，记 closedTs，turnCount++，清 lastError ──
-    case "turn_end": {
-      const turn = currentTurn(record);
-      turn.closed = true;
-      turn.closedTs = Date.now();
-      record.turnCount += 1;
-      // turn 正常闭合意味着本段执行成功——清掉运行期可能记录的瞬态 error，
-      // 避免瞬态 error 恢复后 session-runner 仍据 lastError 误判 success=false。
-      // （若 turn_end 后 message_end 报 error，会在 message_end 分支重新写回 lastError。）
-      record.lastError = undefined;
-      return;
-    }
+    // ── message_end：usage 增量累加 + totalTokens 累加 ──
+    case "message_end":
+      return applyMessageEnd(record, event);
 
-    // ── message_end：usage 增量累加进 currentTurn().usageDelta，totalTokens 累加 ──
-    //
-    // usageDelta 按 message_end **累加**（非覆盖）——同一 turn 内若多次 message_end
-    // 到达（或 turn_end 后的滞后 message_end 落到 currentTurn 开的新 turn），
-    // 累加保证不丢 usage。getTotalUsage 扁平求和所有 turn，归属 turn 的精确性
-    // 不影响最终 total（无消费方读单 turn usage）。
-    case "message_end": {
-      if (event.usage) {
-        const turn = currentTurn(record);
-        turn.usageDelta = addUsage(turn.usageDelta, event.usage);
-        // totalTokens 累加四项之和（保留旧语义，投影直接读）
-        record.totalTokens +=
-          (event.usage.input ?? 0) + (event.usage.output ?? 0) +
-          (event.usage.cacheRead ?? 0) + (event.usage.cacheWrite ?? 0);
-      }
-      // message_end 的 error（stopReason=error）也记进 lastError
-      if (event.error) {
-        record.lastError = event.error;
-      }
-      return;
-    }
-
-    // ── error：存 record.lastError（getEventLog 派生 error 条目）──
-    case "error": {
-      record.lastError = event.message;
-      return;
-    }
+    // ── error：存 record.lastError ──
+    case "error":
+      return applyErrorEvent(record, event);
 
     // ── compaction：不产生数据（不变）──
-    case "compaction": {
+    case "compaction":
       return;
-    }
 
     default: {
       // 穷尽性检查：新增 AgentEvent variant 时编译期报错
@@ -881,6 +940,46 @@ export function snapshot(record: ExecutionRecord): RecordSnapshot {
 /** subprocess JSONL 事件（JSON.parse 结果）。duck-typed，对应 SDK SdkEvent。 */
 type JsonlEvent = Record<string, unknown>;
 
+// ── 各 case 翻译器（jsonlToAgentEvent 按 case 分发，每个翻译器单一职责）──
+
+/** tool_execution_start → tool_start。toolName 非字符串归一空串（与原实现一致）。 */
+function translateToolExecutionStart(raw: JsonlEvent): AgentEvent[] {
+  const toolName = typeof raw.toolName === "string" ? raw.toolName : "";
+  return [{ type: "tool_start", toolName, args: raw.args }];
+}
+
+/** tool_execution_end → tool_end。isError 仅在 === true 时成立；result 原样透传。 */
+function translateToolExecutionEnd(raw: JsonlEvent): AgentEvent[] {
+  const toolName = typeof raw.toolName === "string" ? raw.toolName : "";
+  const isError = raw.isError === true;
+  return [{
+    type: "tool_end",
+    toolName,
+    args: raw.args,
+    result: raw.result as ToolCallResult | undefined,
+    isError,
+  }];
+}
+
+/**
+ * message_update → thinking_delta / text_delta。
+ *   ame.type === "thinking_delta"（delta 非字符串归一空串）
+ *   其余 ame（delta 有值）→ text_delta（delta 非字符串 String() 归一）
+ *   ame 缺失 / delta 缺失 → 不产出。
+ */
+function translateMessageUpdate(raw: JsonlEvent): AgentEvent[] {
+  const ame = raw.assistantMessageEvent as Record<string, unknown> | undefined;
+  if (ame?.type === "thinking_delta") {
+    const delta = typeof ame.delta === "string" ? ame.delta : "";
+    return [{ type: "thinking_delta", delta }];
+  }
+  if (ame !== undefined && ame.delta !== undefined) {
+    const delta = typeof ame.delta === "string" ? ame.delta : String(ame.delta);
+    return [{ type: "text_delta", delta }];
+  }
+  return [];
+}
+
 /**
  * 把一条 JSONL 事件翻译成 AgentEvent。
  *
@@ -900,35 +999,14 @@ export function jsonlToAgentEvent(raw: JsonlEvent): AgentEvent[] {
     case "tool_execution_update":
       return [];
 
-    case "tool_execution_start": {
-      const toolName = typeof raw.toolName === "string" ? raw.toolName : "";
-      return [{ type: "tool_start", toolName, args: raw.args }];
-    }
+    case "tool_execution_start":
+      return translateToolExecutionStart(raw);
 
-    case "tool_execution_end": {
-      const toolName = typeof raw.toolName === "string" ? raw.toolName : "";
-      const isError = raw.isError === true;
-      return [{
-        type: "tool_end",
-        toolName,
-        args: raw.args,
-        result: raw.result as ToolCallResult | undefined,
-        isError,
-      }];
-    }
+    case "tool_execution_end":
+      return translateToolExecutionEnd(raw);
 
-    case "message_update": {
-      const ame = raw.assistantMessageEvent as Record<string, unknown> | undefined;
-      if (ame?.type === "thinking_delta") {
-        const delta = typeof ame.delta === "string" ? ame.delta : "";
-        return [{ type: "thinking_delta", delta }];
-      }
-      if (ame !== undefined && ame.delta !== undefined) {
-        const delta = typeof ame.delta === "string" ? ame.delta : String(ame.delta);
-        return [{ type: "text_delta", delta }];
-      }
-      return [];
-    }
+    case "message_update":
+      return translateMessageUpdate(raw);
 
     case "turn_end": {
       return [{ type: "turn_end" }];

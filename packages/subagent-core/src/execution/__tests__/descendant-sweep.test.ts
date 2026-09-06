@@ -34,7 +34,7 @@ vi.mock("node:child_process", async () => {
 import {
   looksLikePiRpcProcess,
   sweepDescendantsOfSession,
-} from "../session-runner.ts";
+} from "../engine/engines/pi/session-runner.ts";
 import {
   clearPendingCursors,
   listActivePendingFromSessionFile,
@@ -89,7 +89,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   clearPendingCursors();
-  fs.rmSync(sessionDir, { recursive: true, force: true });
+  fs.rmSync(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 /** 标准三层树：root（层主）→ child-sess → grand-sess（叶）。 */
@@ -123,8 +123,8 @@ function psResult(stdout: string): ReturnType<typeof spawnSync> {
 
 /** ps 探测默认桩：全部存活 pid 返回 pi rpc 形态。 */
 function stubCmdlineByPid(): void {
-  mockSpawnSync.mockImplementation((_cmd: string, args: readonly string[]) => {
-    const pid = Number(args[1]);
+  mockSpawnSync.mockImplementation((_cmd: string, args?: readonly string[]) => {
+    const pid = Number(args?.[1]);
     return psResult(`node /usr/local/bin/pi --mode rpc --no-extensions --session-dir /tmp/sess-${pid}\n`);
   });
 }
@@ -189,8 +189,8 @@ describe("[T2-②] sweepDescendantsOfSession（迭代补杀）", () => {
   it("cmdline 非 pi --mode rpc → pid 复用守卫拦截，不杀（但迭代继续展开其后代）", () => {
     const { rootFile, childFile, grandFile } = writeThreeLevelTree();
     // 伪造无关进程占住 child 的 pid；grand 正常
-    mockSpawnSync.mockImplementation((_cmd: string, args: readonly string[]) => {
-      const pid = Number(args[1]);
+    mockSpawnSync.mockImplementation((_cmd: string, args?: readonly string[]) => {
+      const pid = Number(args?.[1]);
       return psResult(
         pid === ALIVE_PID_CHILD ? "vim notes.txt\n" : "pi --mode rpc\n",
       );

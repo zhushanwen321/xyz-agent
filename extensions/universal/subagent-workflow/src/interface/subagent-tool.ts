@@ -16,13 +16,14 @@ import type { AgentToolResult, ExtensionAPI, ExtensionContext, Theme } from "@ea
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 import type { Static } from "typebox";
 
-import { getSubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
-import type { SubagentToolResult } from "@zhushanwen/subagent-core/execution/types.ts";
+import { getSubagentService } from "@zhushanwen/subagent-core";
+import type { SubagentToolResult } from "@zhushanwen/subagent-core";
 import { extractAgentName } from "./format.ts";
 import { toGuiCtx } from "./gui-mappers.ts";
 import { adapter, cancelHandler, closeHandler, forkFromHandler, listHandler, messageHandler, startHandler } from "./subagent-actions.ts";
 import { SubagentParams } from "./subagent-tool-schema.ts";
 import { type RenderContext,renderSubagentCall, renderSubagentResult } from "./tool-render.ts";
+import { toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 // ============================================================
 // 回调类型（抽 alias 绕 registerTool(unknown) 的 TS2307 误报）
@@ -261,7 +262,7 @@ const subagentRenderCall: SubagentRenderCallCb = (args, theme, ctx) => {
     // streaming 中间态（partial JSON）或 service 未就绪 → 降级不显示 model（renderCall 不应崩）。
     // 不阻断渲染，不污染 TUI。开发期开 XYZ_AGENT_DEBUG=1 可写文件日志排查。
     renderCallLogger.debug("renderCall model resolution failed, degrading", {
-      reason: err instanceof Error ? err.message : String(err),
+      reason: toErrorMessage(err),
     });
   }
   return renderSubagentCall(args, theme, ctx, resolved);

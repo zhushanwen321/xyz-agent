@@ -14,7 +14,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { effectScope, nextTick } from 'vue'
 
 // mock sessionApi（loadSubagents 内部调用）
-vi.mock('@/api/domains/session', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({
   getSubagents: vi.fn().mockResolvedValue([]),
   getSubagentHistory: vi.fn().mockResolvedValue([]),
 }))
@@ -23,7 +23,7 @@ vi.mock('@/api/domains/session', () => ({
 // 保证 store 与断言用的是同一个 vi.fn()。
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
-  const session = await import('@/api/domains/session')
+  const session = await import('@xyz-agent/core/transport/api/domains/session')
   return { ...actual, session }
 })
 
@@ -31,7 +31,7 @@ import { useSubagentListSync } from '@/composables/features/chat/useSubagentList
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useSubagentStore } from '@/stores/subagent'
-import * as sessionApi from '@/api/domains/session'
+import * as sessionApi from '@xyz-agent/core/transport/api/domains/session'
 
 beforeEach(() => {
   setActivePinia(createPinia())

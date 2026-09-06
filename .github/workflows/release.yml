@@ -227,3 +227,10 @@ jobs:
           files: release-artifacts/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+# ── GitCode 镜像同步 ────────────────────────
+# 2026-09-16 起移除 CI 自动镜像（原 gitcode-sync job）：runner 跨境直传大附件
+# 必然超时（0.09-0.4MB/s），且镜像失败会污染 run conclusion 误导 verify-ci-release。
+# 镜像（仓库代码 + README + Release 附件）收敛到 merge skill 阶段 6.5 本地执行：
+#   scripts/gitcode-release-sync.mjs sync-from-github（下载+传附件）
+#   scripts/gitcode-release-sync.mjs push-repo --ref-source github（代码+README 镜像）

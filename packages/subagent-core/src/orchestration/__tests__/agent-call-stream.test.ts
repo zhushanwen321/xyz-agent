@@ -8,7 +8,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { handleWorkerMessage } from "../error-recovery.ts";
+import { handleWorkerMessage } from "../worker-message-pump.ts";
 import type { LifecycleDeps, WorkerHandlers } from "../models/ports.ts";
 import { Trace } from "../models/trace.ts";
 import type { WorkflowRun } from "../models/workflow-run.ts";
@@ -122,7 +122,7 @@ describe("U5: widgetKey 格式", () => {
       expect(setWidget.mock.calls.length).toBeGreaterThanOrEqual(1);
     });
 
-    const widgetKey = setWidget.mock.calls[0][0] as string;
+    const widgetKey = setWidget.mock.calls[0]![0] as string;
     expect(widgetKey).toBe("subagent-stream-wf-test-123-2");
   });
 });

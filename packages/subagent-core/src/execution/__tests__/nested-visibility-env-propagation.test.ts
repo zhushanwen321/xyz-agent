@@ -9,96 +9,28 @@
 //   TC-3d: 子进程 execute 创建的 record.rootSessionId = env 贯穿的真 ROOT
 //   TC-3e: 子进程 collectRecords 用 sessionRootId 过滤
 //
-// mock 策略与 recursive-visibility-baseline.test.ts 一致。
-
-import type { PassThrough } from "node:stream";
+// mock 策略与 recursive-visibility-baseline.test.ts 一致（已收敛
+// ./helpers/subagent-service-mocks.ts 四文件共享单源）。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  aliveStoreModule,
+  childProcessModule,
+  finalizedMarkerModule,
+  fsSyncModule,
+  manifestStoreModule,
+  tempPromptModule,
+} from "./helpers/subagent-service-mocks.ts";
+
 // ── mock modules ──
 
-vi.mock("node:child_process", async () => {
-  const { EventEmitter } = await import("node:events");
-  const { PassThrough } = await import("node:stream");
-
-  class FakeChild extends EventEmitter {
-    pid = 12345;
-    stdout = new PassThrough();
-    stderr = new PassThrough();
-    killed = false;
-    killSignal: string | undefined;
-    kill(sig?: string): boolean {
-      this.killed = true;
-      this.killSignal = sig;
-      return true;
-    }
-  }
-
-  return {
-    spawn: vi.fn(() => new FakeChild()),
-    // buildEnvBlock 用 execFile 异步取 git branch：默认 err-first 兜底（catch → branch=""）
-    execFile: vi.fn(
-      (
-        _cmd: string,
-        _args: readonly string[],
-        _opts: unknown,
-        cb: (err: Error | null, stdout?: string, stderr?: string) => void,
-      ) => cb(new Error("execFile not configured in this test")),
-    ),
-  };
-});
-
-vi.mock("node:fs", async () => {
-  const actual = await import("node:fs");
-  return {
-    default: {
-      ...actual,
-      mkdirSync: vi.fn(),
-      existsSync: vi.fn(() => false),
-      appendFileSync: vi.fn(),
-      writeFileSync: vi.fn(),
-      readdirSync: vi.fn(() => []),
-    },
-    mkdirSync: vi.fn(),
-    existsSync: vi.fn(() => false),
-    appendFileSync: vi.fn(),
-    writeFileSync: vi.fn(),
-    readdirSync: vi.fn(() => []),
-    promises: actual.promises,
-  };
-});
-
-vi.mock("../alive-store.ts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../alive-store.ts")>();
-  return {
-    ...actual,
-    writeAliveMarker: vi.fn(),
-    removeAliveMarker: vi.fn(),
-  };
-});
-
-vi.mock("../finalized-marker.ts", () => ({
-  writeFinalized: vi.fn(),
-  readFinalized: vi.fn(() => false),
-}));
-
-vi.mock("../manifest-store.ts", () => {
-  class FakeManifestStore {
-    writeManifest = vi.fn(async () => {});
-    readManifest = vi.fn(async () => null);
-    listAllSync = vi.fn(() => []);
-    recoverTmpFiles = vi.fn(async () => []);
-  }
-  return { ManifestStore: vi.fn(function (_recordsDir: string) { return new FakeManifestStore(); }) };
-});
-
-vi.mock("../temp-prompt.ts", () => ({
-  writePromptToTempFile: vi.fn(async (agent: string) => {
-    const safeName = agent.replace(/[^\w.-]+/g, "_");
-    return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
-  }),
-  cleanupTempPrompt: vi.fn(async () => {}),
-}));
+vi.mock("node:child_process", () => childProcessModule());
+vi.mock("node:fs", async (importOriginal) => fsSyncModule(await importOriginal<typeof import("node:fs")>()));
+vi.mock("../alive-store.ts", async (importOriginal) => aliveStoreModule(await importOriginal<typeof import("../alive-store.ts")>()));
+vi.mock("../finalized-marker.ts", () => finalizedMarkerModule());
+vi.mock("../manifest-store.ts", () => manifestStoreModule());
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => tempPromptModule());
 
 import { spawn } from "node:child_process";
 
@@ -119,40 +51,8 @@ const ENV_ROOT_CWD = "PI_SUBAGENT_ROOT_CWD";
 
 // ── helpers ──
 
-interface FakeChild {
-  pid: number;
-  stdout: PassThrough;
-  stderr: PassThrough;
-  killed: boolean;
-  killSignal: string | undefined;
-  kill(sig?: string): boolean;
-  emit(event: string, ...args: unknown[]): boolean;
-}
-
-function lastSpawnedChild(): FakeChild {
-  const result = mockSpawn.mock.results.at(-1);
-  if (!result) throw new Error("spawn was not called yet");
-  return result.value as FakeChild;
-}
-
 function getLastSpawnEnv(): Record<string, string | undefined> {
   return (mockSpawn.mock.calls.at(-1)?.[2]?.env as Record<string, string | undefined>) ?? {};
-}
-
-function sessionHeader(id = "env-prop-session"): Record<string, unknown> {
-  return { type: "session", id, timestamp: "2026-08-11T00-00-00-000Z", cwd: "/tmp/test" };
-}
-
-function emitStdoutLine(child: FakeChild, obj: Record<string, unknown>): void {
-  child.stdout.write(`${JSON.stringify(obj)}\n`);
-}
-
-async function driveChildToCompletion(child: FakeChild, events: Record<string, unknown>[] = []): Promise<void> {
-  emitStdoutLine(child, sessionHeader());
-  for (const e of events) emitStdoutLine(child, e);
-  child.stdout.end();
-  child.stderr.end();
-  child.emit("close", 0);
 }
 
 function makeEmptyRegistry(): ModelRegistryLike {
@@ -167,7 +67,7 @@ const ctxModel: ModelInfo = { id: "m", name: "M", provider: "p", reasoning: fals
 
 function setupService(sessionId: string, env?: Record<string, string>): SubagentService {
   const agentDir = "/tmp/env-prop-it";
-  const modelService = new ModelConfigService({ agentDir });
+  const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
   modelService.initModel({
     modelRegistry: makeEmptyRegistry(),
     sessionId,
@@ -225,8 +125,8 @@ describe("TC-3: PI_SUBAGENT_ROOT_SESSION_ID env 贯穿正确", () => {
     const sessionRootId = Reflect.get(service, "sessionRootId") as string;
     expect(sessionRootId).toBe("root-main-session");
 
-    // B 的 execCtxBaseline 记录了 B 自己的身份（recordId + depth）
-    const baseline = Reflect.get(service, "execCtxBaseline") as { recordId: string; depth: number };
+    // B 的嵌套基线记录了 B 自己的身份（recordId + depth；[D3-⑤] execNesting 公共层）
+    const baseline = (Reflect.get(service, "execNesting") as { baseline(): { recordId: string; depth: number } | null }).baseline()!;
     expect(baseline.recordId).toBe("sa-a-record");
     expect(baseline.depth).toBe(1);
   });
@@ -241,6 +141,7 @@ describe("TC-3: PI_SUBAGENT_ROOT_SESSION_ID env 贯穿正确", () => {
     // execute 创建 record（模拟 B 内创建 C）
     const handle = await service.execute({
       task: "nested task",
+      slug: "test",
       ctxModel,
     });
     const store = Reflect.get(service, "store") as RecordStore;
@@ -268,6 +169,7 @@ describe("TC-3: PI_SUBAGENT_ROOT_SESSION_ID env 贯穿正确", () => {
       agent: "worker",
       model: "test/model",
       mode: "background",
+      slug: "t",
       task: "deep nested",
       startedAt: Date.now(),
       rootSessionId: "root-main-session",
@@ -277,7 +179,7 @@ describe("TC-3: PI_SUBAGENT_ROOT_SESSION_ID env 贯穿正确", () => {
     store.register(recordC);
 
     // collectRecords（不带 filter）用 this.sessionRootId 过滤
-    const viaService = service.collectRecords(100);
+    const viaService = service.queries.collectRecords(100);
     const ids = viaService.map((r) => r.id);
 
     // C 的 record 归 ROOT（rootSessionId=root-main-session），能被子进程查到

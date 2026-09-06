@@ -422,6 +422,66 @@ describe("parseGoalArgs — --criteria 分号拆分（U20/U21）", () => {
 	});
 });
 
+// ── parseGoalArgs — 子命令路由（表驱动 + update/set 分支）──
+
+describe("parseGoalArgs — 子命令路由", () => {
+	it("空串 / status → status", () => {
+		expect(parseGoalArgs("")).toEqual({ action: "status" });
+		expect(parseGoalArgs("   ")).toEqual({ action: "status" });
+		expect(parseGoalArgs("STATUS")).toEqual({ action: "status" });
+	});
+
+	it.each(["resume", "pause", "clear", "history"] as const)(
+		"%s（含大小写混写）→ 对应 action",
+		(action) => {
+			expect(parseGoalArgs(action)).toEqual({ action });
+			expect(parseGoalArgs(`  ${action.toUpperCase()} `)).toEqual({ action });
+		},
+	);
+
+	it("update 无参 → { action: update }（无 objective，上层报错）", () => {
+		expect(parseGoalArgs("update")).toEqual({ action: "update" });
+		expect(parseGoalArgs("UPDATE")).toEqual({ action: "update" });
+	});
+
+	it("update 带 objective（无 --criteria）→ objective 全量保留", () => {
+		expect(parseGoalArgs("update ship v2 --draft")).toEqual({
+			action: "update",
+			objective: "ship v2 --draft",
+		});
+	});
+
+	it("update 仅接 --criteria（分隔标记要求前导空白）→ 整体作 objective（锚定现状）", () => {
+		const parsed = parseGoalArgs("update --criteria a;b");
+		expect(parsed.action).toBe("update");
+		expect(parsed.objective).toBe("--criteria a;b");
+		expect(parsed.criteria).toBeUndefined();
+	});
+
+	it("未知文本 → set 路径：objective 剥 --tokens flag + budget 透传", () => {
+		expect(parseGoalArgs("write docs --tokens 3000")).toEqual({
+			action: "set",
+			objective: "write docs",
+			budget: { tokenBudget: 3000 },
+		});
+		expect(parseGoalArgs("write docs")).toEqual({
+			action: "set",
+			objective: "write docs",
+			budget: {},
+		});
+	});
+
+	it("仅 --tokens（剥空 objective）→ status（非 set）", () => {
+		expect(parseGoalArgs("--tokens 500")).toEqual({ action: "status" });
+	});
+
+	it("原型链键名（constructor 等）不命中路由表 → set 路径", () => {
+		const parsed = parseGoalArgs("constructor");
+		expect(parsed.action).toBe("set");
+		expect(parsed.objective).toBe("constructor");
+	});
+});
+
 // ── /goal set（提示词触发器：sendUserMessage 让 AI 调 goal_control create）──
 
 describe("handleGoalCommand — set (提示词触发器 + #11/D25 拒绝非终态)", () => {

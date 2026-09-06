@@ -56,8 +56,10 @@ export default [
   // settings/workspace/composer 共 9 个域），天然需要超 500 行。拆分到 per-domain 文件需要重构
   // 内部共享函数（pushSession/emit/sleep/fixtureSessions 等），收益不抵成本。fixture 数据已拆到
   // data.ts/settings-data.ts/composer-data.ts/workflow-data.ts。
+  // [tc-transport-consolidation u3→u5] 文件已迁 core（原 packages/renderer/src/api/mock/index.ts），
+  // 豁免 glob 跟随真源路径。
   {
-    files: ['packages/renderer/src/api/mock/index.ts'],
+    files: ['packages/core/src/transport/mock/index.ts'],
     rules: {
       'max-lines': 'off',
     },
@@ -87,6 +89,23 @@ export default [
       'max-lines': 'off',
     },
   },
+  // [HISTORICAL] 复杂度债务偿还（docs/design/complexity-debt-full-repayment.md）产物：
+  // 以下文件因行为保持提取（helper 签名/花括号/JSDoc 开销）代码行超 max-lines 阈值。
+  // 职责内聚（每文件均为单一子系统的高复杂度函数原地拆解，cyclo 已全部 ≤12），
+  // 按行数再拆属独立重构任务。第一批：rpc-client / session-lifecycle / 两个
+  // message-handler / session-reconstructor；第二批：download-asset。
+  {
+    files: [
+      'packages/runtime/src/infra/pi/rpc-client.ts',
+      'packages/runtime/src/services/session/session-lifecycle.ts',
+      'packages/runtime/src/transport/session-message-handler.ts',
+      'packages/runtime/src/transport/settings-message-handler.ts',
+      'packages/subagent-core/src/execution/session-reconstructor.ts',
+    ],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
   // [HISTORICAL] renderer markdown 渲染唯一适配层：markdown-it 配置 + fence 规则覆盖 +
   // filepath core rule + KaTeX + segments 拆分 + D-5 增量渲染（findStableBoundary/
   // renderIncremental，2026-08-16 W22 落地）。职责内聚（都消费同一 markdown-it 单例与
@@ -105,6 +124,20 @@ export default [
   // 解耦），属独立重构任务。与上方 4 个 override 同性质——唯一聚合中心，行数超 500。
   {
     files: ['packages/shared/src/protocol.ts'],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
+  // [HISTORICAL] session-channel.ts 是 zcode 单任务会话通道的唯一聚合点：A.2 协议帧序
+  // SSOT（create/subscribe/send/终态双保险判定/read/close）+ P0-1 turn 等待两 timer
+  // 状态机（idle 主判定 + 总上界兜底，timeout-zcode-turn-and-settled-watchdog.md §6 D1，
+  // 2026-09-05 落地后超限）。职责内聚（帧序分发、终态判定与 idle 刷新共享同一
+  // ActiveTurn 状态），行数超 500。拆分违反该设计 §7「无新模块」约束，属独立重构任务。
+  // 与 event-adapter/session-service 等 override 同型——唯一聚合中心，短期避免阻塞。
+  {
+    files: [
+      'packages/subagent-core/src/execution/engine/engines/zcode/session-channel.ts',
+    ],
     rules: {
       'max-lines': 'off',
     },
@@ -198,13 +231,16 @@ export default [
   // max-lines-per-function 规则不适用（项目已裁定该场景为误报，对齐 renderer chat.ts 同款 override）。
   // B6 *Impl 消除（FR2 内联）后函数体 345 行；深模块化已由 streaming-state-machine 承担（FR1），
   // 不再为绕行数拆分模块级函数（B6 反模式）。
+  // [u6.1] D6 facet 收口：testInternals 命名空间 + ChatStoreReaders/ChatStoreOps 类型及
+  // 编译期完备性/互斥断言就地挂本文件（facet 与 return 面同文件才能锚定 Pick 键集），
+  // 文件总行数超 500——对齐 renderer stores/chat.ts 同款「唯一聚合中心」总行数豁免。
   {
     files: ['packages/core/src/domain/chat/store.ts'],
     rules: {
       'max-lines-per-function': 'off',
-      // chat store 聚合中心（packages 域上限 500 下 580 行，live/reload 双通路共用
-      // reducer 的等价性设计要求单一 applyEntry 归属地）。拆分属独立重构，短期 override。
-      'max-lines': ['warn', { max: 650, skipBlankLines: true, skipComments: true }],
+      // chat store 聚合中心：live/reload 双通路共用 reducer 的等价性设计要求单一 applyEntry
+      // 归属地，拆分属独立重构——行数豁免（总行数豁免理由见上 [u6.1] 注释）。
+      'max-lines': 'off',
     },
   },
   // [HISTORICAL] buildWorkerScript 是 worker 源码生成器——返回单一字符串数组的纯模板函数，
@@ -378,11 +414,15 @@ export default [
   // 在原域合规（≤1000）的文件不应因路径迁移即触发拆分。抽离已显著瘦身（旧位行数：
   // subagent-service 2141→1245、session-runner 1781→844、record-store 1234→800），
   // 进一步拆分属独立重构任务，长期方向登记于 subagent-core 抽离 impl-plan 残留风险。
+  //
+  // [u-2a] session-runner.ts 再从 execution/ 根物理迁入 engines/pi/（pi 执行轨道下沉，
+  // A1 零回归约束 = rename 级搬运不拆分），override 路径同步跟随（1111891ce rename
+  // 先例同型）。长期拆分方向：interact 交接 / stdin 写入等可按轴再拆，待独立重构。
   {
     files: [
       'packages/subagent-core/src/execution/execution-record.ts',
       'packages/subagent-core/src/execution/record-store.ts',
-      'packages/subagent-core/src/orchestration/error-recovery.ts',
+      'packages/subagent-core/src/orchestration/worker-message-pump.ts',
       'packages/subagent-core/src/shared/resource-discovery.ts',
     ],
     rules: {
@@ -392,29 +432,34 @@ export default [
   // session-runner.ts 单列：迁移后 844 行；无界等待修复（OR-3 收殓 + per-call 超时
   // 透传 + SIGKILL 升级链）后 1266 行。拆分方向（runner 编排 / 进程收割 / 恢复扫描）
   // 属独立重构任务，短期 override 至 1400 避免阻塞。
+  // [u-2a] 文件物理迁入 engines/pi/（rename 级搬运），本条目路径同步跟随。
   {
-    files: ['packages/subagent-core/src/execution/session-runner.ts'],
+    files: ['packages/subagent-core/src/execution/engine/engines/pi/session-runner.ts'],
     rules: {
       'max-lines': ['warn', { max: 1400, skipBlankLines: true, skipComments: true }],
     },
   },
   // zcode-engine.ts：zcode app-server 常驻引擎的唯一聚合中心（连接池 + 会话生命周期 +
   // 降级链 + 错误归类，packages 域上限 500 下 1038 行）。拆分方向（连接层 / 会话层 /
-  // 归类层）属独立重构任务，短期 override 至 1150 避免阻塞。
+  // 归类层）属独立重构任务，短期 override 至 1150 避免阻塞。U2 超时收口 + U3 终态
+  // status 分流（timeout-zcode-turn-and-settled-watchdog.md，2026-09-05）后 1165 行——
+  // 与 session-runner 同型提额至 1300（U4 重试扩展/U5 dispose 收割还将落在同文件）。
   {
     files: ['packages/subagent-core/src/execution/engine/engines/zcode/zcode-engine.ts'],
     rules: {
-      'max-lines': ['warn', { max: 1150, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 1300, skipBlankLines: true, skipComments: true }],
     },
   },
   // subagent-service.ts 单列：旧位 2141 行即超 extensions 域 1000 上限（基线存量，
   // 迁移前已在告警），抽离后 1245 行；无界等待修复（OR-3 消息层超时 + 收殓下沉）
-  // 后 1415 行。短期 override 至 1450 避免阻塞，长期拆分（service 门面 / record
-  // 子图 / spawn 编排三段）待独立重构。
+  // 后 1415 行；u-h2 engine-aware model validation（route first、按目标 engine
+  // 校验，2026-09-05）+21 行 → 1471 行。该文件是编排聚合点（与 event-adapter
+  // 同型先例），不拆文件；短期 override 至 1500 避免阻塞，长期拆分（service 门面 /
+  // record 子图 / spawn 编排三段）待独立重构。
   {
     files: ['packages/subagent-core/src/execution/subagent-service.ts'],
     rules: {
-      'max-lines': ['warn', { max: 1450, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 1500, skipBlankLines: true, skipComments: true }],
     },
   },
   // session-reader tool-handler：聚合工具处理中枢（多工具入口 + 渲染调度），
@@ -428,10 +473,12 @@ export default [
   },
   // download-asset：下载状态机 + 断点续传 + 双引擎降级链（curl/undici 编排 D4/D5/D10）
   // 的单主题模块（apps 域上限 500 下 736 行）。引擎编排段拆分待独立重构，短期 override。
+  // [2026-09-06 U03 复杂度重构] 断点续传/校验链/错误分类阶段化提取后 806 代码行——
+  // cyclo 已全降 ≤12，按行数再拆属独立任务，对齐 subagent-service 等大文件豁免水平放宽至 1000。
   {
     files: ['apps/electron/main/update/download-asset.ts'],
     rules: {
-      'max-lines': ['warn', { max: 800, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 1000, skipBlankLines: true, skipComments: true }],
     },
   },
   // provider-config-helper：provider 配置读改/清洗/凭据应用聚合中心（505 行）。

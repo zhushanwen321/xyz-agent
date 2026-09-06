@@ -25,7 +25,7 @@ vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner：runSpawn 受控返回 result，killAllSpawnedChildren 空实现。
 // 注意：必须在 import SubagentService 之前 mock（vi.mock 提升到顶部）。
-vi.mock("../session-runner.ts", () => ({
+vi.mock("../engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(),
   killAllSpawnedChildren: vi.fn(),
   getChildByRecord: vi.fn(() => undefined),
@@ -34,8 +34,8 @@ vi.mock("../session-runner.ts", () => ({
   spawnedChildren: new Map(),
 }));
 
-import { runSpawn } from "../session-runner.ts";
-import type { SessionRunnerContext } from "../session-runner.ts";
+import { runSpawn } from "../engine/engines/pi/session-runner.ts";
+import type { SessionRunnerContext } from "../engine/engines/pi/session-runner.ts";
 import { createRecord } from "../execution-record.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo } from "../model-resolver.ts";
@@ -63,11 +63,15 @@ function makeTmpAgentDir(): string {
 }
 
 function makePi(): PiLike & {
-  appendEntry: ReturnType<typeof vi.fn>;
-  events: { emit: ReturnType<typeof vi.fn> };
-  sendMessage: ReturnType<typeof vi.fn>;
+  appendEntry: ReturnType<typeof vi.fn<(customType: string, data?: unknown) => void>>;
+  events: { emit: ReturnType<typeof vi.fn<(channel: string, data: unknown) => void>> };
+  sendMessage: ReturnType<typeof vi.fn<(message: Parameters<PiLike["sendMessage"]>[0], options?: Parameters<PiLike["sendMessage"]>[1]) => void>>;
 } {
-  return { appendEntry: vi.fn(), events: { emit: vi.fn() }, sendMessage: vi.fn() };
+  return {
+    appendEntry: vi.fn((customType: string, data?: unknown) => {}),
+    events: { emit: vi.fn((channel: string, data: unknown) => {}) },
+    sendMessage: vi.fn(() => {}),
+  };
 }
 
 function makeResult(success: boolean): AgentResult {
@@ -120,7 +124,7 @@ describe("runAndFinalize chatMode idle 分流 (M2-A)", () => {
 
   beforeEach(() => {
     agentDir = makeTmpAgentDir();
-    modelService = new ModelConfigService({ agentDir });
+    modelService = new ModelConfigService({ agentDir, cwd: agentDir });
     service = new SubagentService({ cwd: agentDir, modelService });
     service.initSession({ pi: makePi(), sessionId: "root-session" });
     internals = service as unknown as ServiceInternals;
@@ -129,7 +133,7 @@ describe("runAndFinalize chatMode idle 分流 (M2-A)", () => {
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   /** 直接调私有 runAndFinalize（mock runSpawn 后走完整分流逻辑）。 */
@@ -141,6 +145,8 @@ describe("runAndFinalize chatMode idle 分流 (M2-A)", () => {
       agentDir,
       skillDirs: [],
       mainCwd: agentDir,
+      sessionRootId: "s-root",
+      rootCwd: agentDir,
     };
     const identity = {
       agent: "general-purpose",

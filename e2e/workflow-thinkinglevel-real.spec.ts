@@ -356,7 +356,7 @@ async function runProbeWorkflow(tc: string): Promise<{
   } catch (err) {
     ctx.listenWs?.close()
     await cleanup()
-    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(dataDir, { recursive: true, force: true })
+    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     throw err
   }
   return ctx
@@ -410,7 +410,7 @@ test('TC1: state.calls[0].opts.thinkingLevel === "high"（脚本请求值 → �
   } finally {
     ctx.listenWs?.close()
     await ctx.cleanup()
-    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(ctx.dataDir, { recursive: true, force: true })
+    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(ctx.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 })
 
@@ -478,9 +478,57 @@ test('TC2: 子进程 JSONL 含 thinking_level_change high + model_change（pi �
   } finally {
     ctx.listenWs?.close()
     await ctx.cleanup()
-    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(ctx.dataDir, { recursive: true, force: true })
+    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(ctx.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 })
+
+/**
+ * 轮询主 session JSONL 落盘（pi 延迟写入策略：create reply 已给路径但文件稍后才写）。
+ * 15s deadline 内每秒查存在性，超时返回最新已知值（存在性断言由调用方继续）。
+ */
+async function waitForMainSessionJsonl(mainSessionFile: string | null): Promise<string | null> {
+  let mainFile = mainSessionFile
+  const fileDeadline = Date.now() + 15_000
+  while ((!mainFile || !fs.existsSync(mainFile)) && Date.now() < fileDeadline) {
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+  return mainFile
+}
+
+/** 读 stateFile 快照并取 calls[0]（定位子进程文件 + 失败诊断共用该形状）。 */
+function readStateCall0(stateFile: string): { snapshot: any; call0: any } {
+  const snapshot = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
+  return { snapshot, call0: snapshot?.state?.calls?.[0] }
+}
+
+/** TC3 子进程 session 文件未命中时的诊断（diag 落盘 + 日志；断言由调用方继续）。 */
+function diagnoseMissingSubFileTc3(dataDir: string, events: any[], call0: any, snapshot: any): void {
+  writeDiag('tc3', dataDir, events, {
+    call0: { sessionId: call0?.sessionId, sessionFile: call0?.sessionFile },
+    candidates: findSubagentSessionFiles(dataDir).slice(0, 10).map((f) => path.basename(f)),
+    runStatus: snapshot?.state?.status,
+    callStatus: call0?.status,
+  })
+  console.log(`[TC3] 未找到子进程 session 文件，diag → /tmp/tc3-diag.json`)
+}
+
+/**
+ * TC3 核心断言 2：子进程 JSONL 有 assistant 消息（真实 provider 跑完产出）。
+ * agent call failed（环境原因 provider key 不可用、文件链完整）时降级 skip
+ * （分层降级，TC1/TC2 已覆盖核心断言），返回 null = 调用方立即 return。
+ */
+function assertAssistantMessagesTc3(entries: any[], call0: any): any[] | null {
+  const assistantMsgs = entries.filter(
+    (e) => e.type === 'message' && e.message?.role === 'assistant',
+  )
+  if (assistantMsgs.length === 0 && call0?.status === 'failed') {
+    console.log(`[TC3] agent call failed（status=${call0.status}, error=${call0.error ?? call0.result?.error ?? '(无)'}），provider key 不可用？skip assistant 断言`)
+    test.skip(true, '真实 provider 调用失败（stateFile calls[0].status=failed），TC1/TC2 已通过')
+    return null
+  }
+  expect(assistantMsgs.length, '子进程 JSONL 应有 assistant 消息（真实 provider 跑完产出）').toBeGreaterThan(0)
+  return assistantMsgs
+}
 
 // ── TC3: 完整跑通（done 信号 + 真实 provider 产出） ────────────────────
 
@@ -503,11 +551,7 @@ test('TC3: workflowUpdate done + 子进程 JSONL 有 assistant 消息（完整�
 
     // 核心断言 2：子进程 JSONL 有 assistant 消息（真实 provider 跑完产出）
     // 定位链同 TC2：主 session JSONL → stateFile → calls[0].sessionId → 全量扫描匹配
-    let mainFile = ctx.mainSessionFile
-    const fileDeadline = Date.now() + 15_000
-    while ((!mainFile || !fs.existsSync(mainFile)) && Date.now() < fileDeadline) {
-      await new Promise((r) => setTimeout(r, 1000))
-    }
+    const mainFile = await waitForMainSessionJsonl(ctx.mainSessionFile)
     expect(mainFile, '主 session JSONL 路径应存在').toBeTruthy()
     expect(fs.existsSync(mainFile!), '主 session JSONL 文件应已写入').toBe(true)
 
@@ -515,35 +559,19 @@ test('TC3: workflowUpdate done + 子进程 JSONL 有 assistant 消息（完整�
     expect(link, '主 session JSONL 应含 workflow-state-link custom entry').toBeTruthy()
     expect(fs.existsSync(link!.stateFile), 'stateFile 应已写入').toBe(true)
 
-    const snapshot = JSON.parse(fs.readFileSync(link!.stateFile, 'utf8'))
-    const call0 = snapshot?.state?.calls?.[0]
+    const { snapshot, call0 } = readStateCall0(link!.stateFile)
 
     // 定位链 3：同 TC2——优先 calls[0].sessionFile，fallback 全量扫描
     const subFile = locateSubagentSessionFile(ctx.dataDir, call0, ctx.mainSessionFile)
     if (!subFile) {
-      writeDiag('tc3', ctx.dataDir, ctx.events, {
-        call0: { sessionId: call0?.sessionId, sessionFile: call0?.sessionFile },
-        candidates: findSubagentSessionFiles(ctx.dataDir).slice(0, 10).map((f) => path.basename(f)),
-        runStatus: snapshot?.state?.status,
-        callStatus: call0?.status,
-      })
-      console.log(`[TC3] 未找到子进程 session 文件，diag → /tmp/tc3-diag.json`)
+      diagnoseMissingSubFileTc3(ctx.dataDir, ctx.events, call0, snapshot)
     }
     expect(subFile, '应能找到子进程 session 文件').toBeTruthy()
 
     const entries = readSessionEntries(subFile!)
     expect(entries, '子进程 session 文件应可解析').toBeTruthy()
-    const assistantMsgs = entries!.filter(
-      (e) => e.type === 'message' && e.message?.role === 'assistant',
-    )
-    if (assistantMsgs.length === 0 && call0?.status === 'failed') {
-      // 真实 provider key 不可用等环境原因：agent call 失败但文件链完整。
-      // TC3 降级 skip（分层降级，TC1/TC2 已覆盖核心断言，不受影响）。
-      console.log(`[TC3] agent call failed（status=${call0.status}, error=${call0.error ?? call0.result?.error ?? '(无)'}），provider key 不可用？skip assistant 断言`)
-      test.skip(true, '真实 provider 调用失败（stateFile calls[0].status=failed），TC1/TC2 已通过')
-      return
-    }
-    expect(assistantMsgs.length, '子进程 JSONL 应有 assistant 消息（真实 provider 跑完产出）').toBeGreaterThan(0)
+    const assistantMsgs = assertAssistantMessagesTc3(entries!, call0)
+    if (!assistantMsgs) return
 
     // 增强断言（不强制）：PROBE-OK 回复出现
     const allText = assistantMsgs.map((e) => JSON.stringify(e.message?.content ?? '')).join(' ')
@@ -551,6 +579,6 @@ test('TC3: workflowUpdate done + 子进程 JSONL 有 assistant 消息（完整�
   } finally {
     ctx.listenWs?.close()
     await ctx.cleanup()
-    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(ctx.dataDir, { recursive: true, force: true })
+    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(ctx.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 })

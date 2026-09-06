@@ -1,7 +1,7 @@
 // src/execution/__tests__/subagent-service-notify-gate.test.ts
 //
 // [u-svc / T4] 通知可靠性（subagent-service 侧三措施）：
-//   - T4①/PS-2：kickOffBackground.then notify 门按 closedReason 白名单放行——
+//   - T4①/PS-2：kickOffChatRound.then notify 门按 closedReason 白名单放行——
 //     parent-new/parent-fork 不注入（可能已切换的）新 session（A-6 决策落实）；
 //   - T4②/PS-4：idleTimeoutMs 非法值（>2^31-1 / 非有限值）在 spawn 入口同步 fail-fast，
 //     错误含合法范围（不静默 clamp、不静默不挂）；
@@ -23,7 +23,7 @@ const { loggerMock } = vi.hoisted(() => ({
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 const { killChildSpy } = vi.hoisted(() => ({ killChildSpy: vi.fn() }));
-vi.mock("../session-runner.ts", () => ({
+vi.mock("../engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(),
   killAllSpawnedChildren: vi.fn(),
   getChildByRecord: vi.fn(() => undefined),
@@ -76,7 +76,7 @@ function setup(initOverrides: Partial<{ isIdle: () => boolean }> = {}): {
   pi: MockPi;
 } {
   const agentDir = makeTmpAgentDir();
-  const modelService = new ModelConfigService({ agentDir });
+  const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
   const service = new SubagentService({ cwd: agentDir, modelService });
   const pi = makePi();
   service.initSession({ pi, sessionId: "root-session", isIdle: initOverrides.isIdle });
@@ -95,18 +95,19 @@ describe("T4① notify gate closedReason whitelist", () => {
     expect(notifyGateAllowsDelivery(undefined)).toBe(true);
   });
 
-  it("kickOffBackground.then does not inject parent-new closed records into the session", async () => {
+  it("kickOffChatRound.then does not inject parent-new closed records into the session", async () => {
     const { agentDir, service, pi } = setup();
     const record = createRecord("sa-gate-new", {
       agent: "general-purpose",
       model: "test/model",
       mode: "background",
+      slug: "t",
       task: "test",
       startedAt: 1000,
       rootSessionId: "root-session",
       controller: new AbortController(),
     });
-    // 模拟 disposeAllRecords 先行编排性关闭后，迟到的 kickOffBackground.then 回注
+    // 模拟 disposeAllRecords 先行编排性关闭后，迟到的 kickOffChatRound.then 回注
     record.closedReason = "parent-new";
     const stub = vi.fn().mockResolvedValue({
       text: "",
@@ -118,23 +119,27 @@ describe("T4① notify gate closedReason whitelist", () => {
       toolCalls: [],
     });
     (service as unknown as Record<string, unknown>).runAndFinalize = stub;
-    const kickOffBackground = (
+    // [D4 后形态] 轮次编排入口 kickOffChatRound（私有，bracket 调用先例见
+    // subagent-service-recovery-bounds.test.ts privateFn）；opts 形参仍是 ExecuteOptions
+    //（task/slug），chat 分支由 ticket lossless 携带——task 声明形参不参与校验。
+    const kickOffChatRound = (
       service as unknown as Record<string, (...args: unknown[]) => void>
-    )["kickOffBackground"];
-    kickOffBackground.call(service, record, { task: "t" }, {}, {}, undefined, 1000, undefined);
+    )["kickOffChatRound"];
+    kickOffChatRound.call(service, record, { task: "t", slug: "gate" }, {}, {}, undefined, 1000, undefined);
     await vi.waitFor(() => expect(stub).toHaveBeenCalled());
     await Promise.resolve();
     await Promise.resolve();
     expect(pi.sendMessage).not.toHaveBeenCalled();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
-  it("kickOffBackground.then still notifies for real failure closures (gc)", async () => {
+  it("kickOffChatRound.then still notifies for real failure closures (gc)", async () => {
     const { agentDir, service, pi } = setup();
     const record = createRecord("sa-gate-gc", {
       agent: "general-purpose",
       model: "test/model",
       mode: "background",
+      slug: "t",
       task: "test",
       startedAt: 1000,
       rootSessionId: "root-session",
@@ -142,12 +147,12 @@ describe("T4① notify gate closedReason whitelist", () => {
     });
     record.closedReason = "gc";
     (service as unknown as Record<string, unknown>).runAndFinalize = vi.fn().mockResolvedValue({});
-    const kickOffBackground = (
+    const kickOffChatRound = (
       service as unknown as Record<string, (...args: unknown[]) => void>
-    )["kickOffBackground"];
-    kickOffBackground.call(service, record, { task: "t" }, {}, {}, undefined, 1000, undefined);
+    )["kickOffChatRound"];
+    kickOffChatRound.call(service, record, { task: "t", slug: "gate" }, {}, {}, undefined, 1000, undefined);
     await vi.waitFor(() => expect(pi.sendMessage).toHaveBeenCalled());
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 });
 
@@ -160,30 +165,30 @@ describe("T4② idleTimeoutMs entry fail-fast", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("execute rejects idleTimeoutMs above the setTimeout limit with the valid range in the message", async () => {
-    await expect(service.execute({ task: "x", idleTimeoutMs: MAX_TIMER_DELAY_MS + 1 })).rejects.toThrow(
+    await expect(service.execute({ task: "x", slug: "test", idleTimeoutMs: MAX_TIMER_DELAY_MS + 1 })).rejects.toThrow(
       new RegExp(`${MAX_TIMER_DELAY_MS}`),
     );
-    await expect(service.execute({ task: "x", idleTimeoutMs: 3_000_000_000 })).rejects.toThrow(/2\^31-1/);
+    await expect(service.execute({ task: "x", slug: "test", idleTimeoutMs: 3_000_000_000 })).rejects.toThrow(/2\^31-1/);
   });
 
   it("execute rejects non-finite idleTimeoutMs", async () => {
-    await expect(service.execute({ task: "x", idleTimeoutMs: Number.NaN })).rejects.toThrow(/not a finite number/);
+    await expect(service.execute({ task: "x", slug: "test", idleTimeoutMs: Number.NaN })).rejects.toThrow(/not a finite number/);
   });
 
   it("rejects before any record is created (no side effects)", async () => {
     const internals = service as unknown as ServiceInternals;
-    await expect(service.executeAndAwait({ task: "x", idleTimeoutMs: 3_000_000_000 })).rejects.toThrow();
+    await expect(service.executeAndAwait({ task: "x", slug: "test", idleTimeoutMs: 3_000_000_000 })).rejects.toThrow();
     expect(internals.store.listRunning()).toHaveLength(0);
   });
 
   it("accepts valid values (0 = explicit disable, positive within limit)", async () => {
     // 校验通过后执行链继续（runSpawn 被 mock，返回 undefined result 会在后续流程抛错/
     // 返回——但绝不能是 idleTimeoutMs 校验错误）
-    await expect(service.execute({ task: "x", idleTimeoutMs: 0 })).rejects.not.toThrow(/idleTimeoutMs/);
+    await expect(service.execute({ task: "x", slug: "test", idleTimeoutMs: 0 })).rejects.not.toThrow(/idleTimeoutMs/);
   });
 });
 
@@ -199,7 +204,7 @@ describe("T4④ shutdown flush blocked → pending persisted for replay", () => 
 
   afterEach(() => {
     _resetNotifyLedgerForTest();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("persists undelivered pending notifications as ledger entries on dispose when main agent is busy", () => {
@@ -256,7 +261,7 @@ describe("T4④ shutdown flush blocked → pending persisted for replay", () => 
     // idle service：flush 投出（无门拦），dispose 无复写动作
     const idleService = new SubagentService({
       cwd: agentDir,
-      modelService: new ModelConfigService({ agentDir }),
+      modelService: new ModelConfigService({ agentDir, cwd: agentDir }),
     });
     const piIdle = makePi();
     idleService.initSession({ pi: piIdle, sessionId: "root-session", isIdle: () => true });

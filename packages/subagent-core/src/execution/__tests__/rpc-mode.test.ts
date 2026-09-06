@@ -6,8 +6,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { buildSpawnArgs } from "../session-runner.ts";
-import { parseSpawnLine } from "../spawn-event-adapter.ts";
+import { buildSpawnArgs } from "../engine/engines/pi/session-runner.ts";
+import { parseSpawnLine } from "../engine/engines/pi/spawn-event-adapter.ts";
 
 describe("buildSpawnArgs - RPC mode", () => {
   const baseParams = {

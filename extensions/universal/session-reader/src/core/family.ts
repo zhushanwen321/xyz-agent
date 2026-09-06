@@ -134,24 +134,12 @@ function resolveParentSessionId(
   return null
 }
 
-/**
- * 从已读入的 session headers + subagent identity entries 建家族索引（纯逻辑，无 IO）。
- *
- * - headers（type=session）→ byId + childrenOf（parentSession 文件路径反查父 sessionId）
- * - subagentIdentities（type=custom, customType=subagent-identity）→ subagentsByRoot
- * - fileStats 原样存入 index，供 cleanedUp 判断
- *
- * 坏数据容错：identity 缺 rootSessionId/slug 跳过；parentSession 反查不到父（父文件
- * 未被扫描到）该 entry 不进 childrenOf——均不报错，符合 pi 坏 session 容错（design §2）。
- */
-export function buildFamilyIndex(
+/** 阶段 1：headers → byId（SessionRef 组装，mtime/size 从 fileStats 取，取不到为 0）。 */
+function buildById(
   headers: Entry[],
-  subagentIdentities: Entry[],
   fileStats: Map<string, { mtime: number; size: number }>,
-): FamilyIndex {
+): Map<string, SessionRef> {
   const byId = new Map<string, SessionRef>()
-
-  // 1. headers → byId
   for (const h of headers) {
     const stat = fileStats.get(h.id)
     const ref: SessionRef = {
@@ -164,8 +152,17 @@ export function buildFamilyIndex(
     if (h.parentSession) ref.parentSession = h.parentSession
     byId.set(h.id, ref)
   }
+  return byId
+}
 
-  // 2. childrenOf：parentSession（文件路径）→ 反查父 sessionId → key 用父 sessionId
+/**
+ * 阶段 2：childrenOf——parentSession（文件路径）→ 反查父 sessionId → key 用父 sessionId。
+ * 反查不到父 → 无法建反查关系，跳过（不报错，design §2 容错）。
+ */
+function buildChildrenOf(
+  headers: Entry[],
+  byId: Map<string, SessionRef>,
+): Map<string, SessionRef[]> {
   const childrenOf = new Map<string, SessionRef[]>()
   for (const h of headers) {
     if (!h.parentSession) continue
@@ -177,8 +174,17 @@ export function buildFamilyIndex(
     list.push(childRef)
     childrenOf.set(parentSid, list)
   }
+  return childrenOf
+}
 
-  // 3. subagentIdentities → subagentsByRoot
+/**
+ * 阶段 3：subagentIdentities → subagentsByRoot。
+ * 坏数据（缺 rootSessionId/slug）跳过，不报错（design §2 容错）。
+ */
+function buildSubagentsByRoot(
+  subagentIdentities: Entry[],
+  fileStats: Map<string, { mtime: number; size: number }>,
+): Map<string, SubagentRef[]> {
   const subagentsByRoot = new Map<string, SubagentRef[]>()
   for (const ident of subagentIdentities) {
     if (!isSubagentIdentityData(ident.data)) continue // 坏数据（缺 rootSessionId/slug）跳过
@@ -207,7 +213,27 @@ export function buildFamilyIndex(
     list.push(ref)
     subagentsByRoot.set(ident.data.rootSessionId, list)
   }
+  return subagentsByRoot
+}
 
+/**
+ * 从已读入的 session headers + subagent identity entries 建家族索引（纯逻辑，无 IO）。
+ *
+ * - headers（type=session）→ byId + childrenOf（parentSession 文件路径反查父 sessionId）
+ * - subagentIdentities（type=custom, customType=subagent-identity）→ subagentsByRoot
+ * - fileStats 原样存入 index，供 cleanedUp 判断
+ *
+ * 坏数据容错：identity 缺 rootSessionId/slug 跳过；parentSession 反查不到父（父文件
+ * 未被扫描到）该 entry 不进 childrenOf——均不报错，符合 pi 坏 session 容错（design §2）。
+ */
+export function buildFamilyIndex(
+  headers: Entry[],
+  subagentIdentities: Entry[],
+  fileStats: Map<string, { mtime: number; size: number }>,
+): FamilyIndex {
+  const byId = buildById(headers, fileStats)
+  const childrenOf = buildChildrenOf(headers, byId)
+  const subagentsByRoot = buildSubagentsByRoot(subagentIdentities, fileStats)
   return { byId, childrenOf, subagentsByRoot, fileStats }
 }
 

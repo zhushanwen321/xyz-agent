@@ -21,12 +21,13 @@ import { session as sessionApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useToast } from '@/composables/useToast'
 import { triggerEnterHandoffMode } from '@/composables/panel/useHandoffModeChannel'
+import { toErrorMessage } from '../../../lib/error-message'
 
 /**
  * Handoff 操作 composable。
  *
  * @param focusedSessionId 焦点 panel 绑定的 session（来自 useSidebar，驱动 ⌘H 快捷键的 handoff 源）。
- *   注入而非内部派生：focusedSessionId 是 useSidebar 的派生状态，复用避免重复定义 + 单一来源。
+ *   注入而非内部派生：focusedSessionId 是 useSidebar 的派生状态（代理 core use-session），复用避免重复定义 + 单一来源。
  */
 export function useHandoffActions(focusedSessionId: Ref<string | null>) {
   const chat = useChatStore()
@@ -74,7 +75,7 @@ export function useHandoffActions(focusedSessionId: Ref<string | null>) {
     } catch (e) {
       // RPC 失败 → 恢复 handingOff（handoff turn 仍在跑，稍后 handoffComplete 会跳新 session）
       chat.setHandingOff(sessionId, true)
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       toastError(t('panel.message.handoffAbortFailed', { error: msg }))
       console.warn('[handoff] abortHandoff RPC failed, handoff turn may continue:', e)
     }

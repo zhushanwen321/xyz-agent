@@ -4,7 +4,7 @@
  * 职责：构建应用级命令列表（新建/收起侧栏/概览），注册到 commandStore.appCommands，
  * 供 useCommandRegistry 聚合进搜索命令源 + useSearchJump.confirmCommand 按 name 查找执行 action。
  *
- * 接线层级：stores/command（registerApp）+ stores/sidebar（toggleCollapsed）。
+ * 接线层级：core 单例经壳适配 useCommandStore（registerApp）+ stores/sidebar（toggleCollapsed）。
  * actions 由调用方（useSidebar.initApp）注入，避免与 useSidebar 循环 import
  * （useSidebar.initApp 调本函数，本函数若再 import useSidebar 会成环）。
  *
@@ -13,8 +13,8 @@
  *    出现在搜索结果里）。⌘K 的快捷键由 Sidebar keymap 兜底。
  *  - 命令按 name 唯一标识，pi slash 命令带 / 前缀（/commit）天然不与应用命令撞名（D-009）。
  *
- * 依赖方向：stores/command（registerApp）+ stores/sidebar（toggleCollapsed）。
- * 不依赖 api，不依赖 useCommandRegistry（registerApp 在 store 层，无需 session 上下文），不依赖 useSidebar（actions 注入破环）。
+ * 依赖方向：core 单例经壳适配 useCommandStore（registerApp）+ stores/sidebar（toggleCollapsed）。
+ * 不依赖 api，不依赖 useCommandRegistry（本模块直接调 commandStore.registerApp，无需 session 上下文），不依赖 useSidebar（actions 注入破环）。
  */
 import type { AppCommand } from '@xyz-agent/core'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'

@@ -11,7 +11,7 @@
  * 窗口行渲染、分档配色等视觉测试需 E2E 或浏览器环境验证。
  * 本测试聚焦于：数据流（quota API 调用）+ 容量区回归。
  *
- * mock 策略：vi.mock('@/api') + vi.mock('@/api/domains/quota') 替换 RPC，
+ * mock 策略：vi.mock('@/api') + vi.mock('@xyz-agent/core/transport/api/domains/quota') 替换 RPC，
  * mount 组件 + 手动设置 session/settings store 状态。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/panel/context-capacity-quota.test.ts
@@ -49,7 +49,7 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
   },
 }))
 
-vi.mock('@/api/domains/quota', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/quota', () => ({
   getCached: vi.fn(),
   fetchQuota: vi.fn(),
   refreshQuota: vi.fn(),
@@ -66,8 +66,8 @@ import ContextCapacityPopover from '@/components/panel/ContextCapacityPopover.vu
 import { useSessionStore } from '@/stores/session'
 import { getSettingsStore, __resetSettingsStoreForTesting } from '@xyz-agent/core'
 import { useQuotaStore } from '@/stores/quota'
-import * as quotaApi from '@/api/domains/quota'
-import * as events from '@/api/events'
+import * as quotaApi from '@xyz-agent/core/transport/api/domains/quota'
+import * as events from '@xyz-agent/core/transport/api'
 
 beforeEach(() => {
   setActivePinia(createPinia())

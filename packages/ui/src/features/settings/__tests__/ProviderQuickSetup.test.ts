@@ -95,6 +95,17 @@ describe('认证 radio 条件渲染（TC1）', () => {
   })
 })
 
+describe('初始认证方式默认回退（resolveInitialAuthMethod 默认链）', () => {
+  it('api_key 模式且无 envVars → 默认明文（plaintext 兜底，不落 env）', async () => {
+    const w = await mountSetup({ template: tpl({ authMode: 'api_key', envVars: [] }) })
+    // 默认即明文态：输入框直接可见，env select 不存在
+    expect(query('[data-testid="credential-apikey-input"]')).toBeTruthy()
+    expect(query('[data-testid="credential-envvar-select"]')).toBeNull()
+    expect(query('[data-testid="footer-hint"]')!.textContent).toContain('footerHintPlaintext')
+    w.unmount()
+  })
+})
+
 describe('内置信息块（TC2）', () => {
   it('推荐环境变量行 + 模型列表 code 标签', async () => {
     const w = await mountSetup({ template: tpl({ envVars: ['OPENAI_API_KEY'], baseUrl: 'https://api.openai.com/v1' }) })

@@ -156,9 +156,17 @@ describe("subagent tool runtime handler — 错误文案含纠正正例", () => 
   // 平铺检测 guard（hasFlattenedStartFields）已删除，源码不应再含此表达式。
   it("startHandler throw 含 Correct 纠正正例（平铺形态）", () => {
     // [D6②] startHandler 内核（含 Correct 文案）已下沉 core subagent-actions-core，
-    // 断言目标跟随文案权威源（resolve 方式同 prompt-quality-batch1 U4 先例）。
+    // 断言目标跟随文案权威源。锚点用 ./workflows/* 子入口（exports 映射包根真实目录，
+    // 随源码走不依赖 dist 构建——relay-env 锚在 require 条件下落 dist/，CI 不构建
+    // workspace 包时 resolve 直接 MODULE_NOT_FOUND）。
+    const coreRoot = join(
+      dirname(
+        createRequire(import.meta.url).resolve("@zhushanwen/subagent-core/workflows/README.md"),
+      ),
+      "..",
+    );
     const actionsSrc = readFileSync(
-      createRequire(import.meta.url).resolve("@zhushanwen/subagent-core/execution/subagent-actions-core.ts"),
+      join(coreRoot, "src/execution/subagent-actions-core.ts"),
       "utf-8",
     );
     // 四处 throw（input 缺失 / task 空白 / slug 空白 / slug 超长）都应含 Correct 正例。

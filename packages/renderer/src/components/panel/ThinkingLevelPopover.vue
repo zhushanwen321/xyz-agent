@@ -109,7 +109,7 @@ const availableOptions = computed<ThinkingLevelOption[]>(() => {
 })
 
 const currentLabel = computed(
-  () => getDisplayLabel(level.value, props.levelMap, t),
+  () => props.level ? getDisplayLabel(level.value, props.levelMap, t) : t('panel.thinkingLevel.placeholder'),
 )
 
 function onSelect(opt: ThinkingLevelOption): void {

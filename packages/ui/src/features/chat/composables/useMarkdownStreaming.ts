@@ -46,6 +46,38 @@ function escapeHtmlForFallback(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
+/**
+ * streaming-fence finalize 判定（纯函数，状态写回由调用方负责）：
+ * 显式判定（forceFinalize / 壳 shouldFinalizeStreamingFence / complete 兜底）叠加
+ * silence-finalize 粘滞（W23 review Fix-1）：已 finalize 的 open fence 在新 token 到达后
+ * 保持完整渲染，不回占位横跳——「静默 ≥阈值 → finalize 转完整代码块 → 新 token 到达
+ * silenceMs≈0 → finalize=false → 占位回归（已渲染代码从屏幕消失）→ 再静默又完整」每次
+ * 「停顿后继续」横跳的修复。协议（IncrementalMarkdownResult）不暴露 openFence offset，
+ * 用内容前缀等价判据：流式 content 只会 append，finalize 快照的前缀未变则保持 finalize，
+ * 改写/清空即解除（stickyAfter 置 null）。代价：粘滞期间同消息后续新开 fence 不再走占位
+ * （闭合 fence 渲染与 finalize 无关、输出相同，仅损失占位优化，无正确性影响）。
+ */
+function resolveStreamingFinalize(
+  text: string,
+  opts: { forceFinalize?: boolean } | undefined,
+  complete: boolean,
+  silenceMs: number,
+  shouldFinalize: ChatViewDeps['shouldFinalizeStreamingFence'],
+  currentSticky: string | null,
+): { finalize: boolean; stickyAfter: string | null } {
+  let finalize =
+    opts?.forceFinalize === true ||
+    (shouldFinalize?.({ complete, silenceMs }) ?? complete)
+  let stickyAfter = currentSticky
+  if (!finalize && currentSticky !== null) {
+    if (text.startsWith(currentSticky)) finalize = true
+    else stickyAfter = null
+  }
+  // finalize 发生且消息未完成 → 记录粘滞快照（complete 天然逐帧 finalize，无需粘滞）
+  if (finalize && !complete) stickyAfter = text
+  return { finalize, stickyAfter }
+}
+
 export function useMarkdownStreaming(
   props: { content: string; sessionId?: string | null; streaming?: boolean },
   deps: ChatViewDeps,
@@ -98,62 +130,85 @@ export function useMarkdownStreaming(
   }
 
   /**
-   * 渲染执行体：优先 deps.renderMarkdownIncremental（前缀缓存 + tail 增量 + streaming-fence 占位），
-   * 未 provide 时回退 renderMarkdown 全量（等价旧版）。序号守卫 + 失败降级转义纯文本。
+   * 渲染执行体（编排）：空文本重置 → 序号取号 → 按能力分发（增量 D-5/全量回退）→ 失败降级。
+   * 序号守卫 + 失败降级转义纯文本语义在 runIncrementalRender / runFullRender / handleRenderFailure。
    */
   async function runRender(text: string, opts?: { forceFinalize?: boolean }): Promise<void> {
     if (disposed) return
     if (!text.trim()) {
-      segments.value = []
-      incrementalCache = null
-      finalizedStickyPrefix = null
-      clearFenceFinalizeTimer()
+      resetForEmptyText()
       return
     }
     const seq = ++renderSeq
     try {
       if (deps.renderMarkdownIncremental) {
-        // complete 语义：streaming !== true（false/undefined = 消息完成或静态内容，占位判定直接 finalize）
-        const complete = props.streaming !== true
-        const silenceMs = performance.now() - lastContentAt
-        let finalize =
-          opts?.forceFinalize === true ||
-          (deps.shouldFinalizeStreamingFence?.({ complete, silenceMs }) ?? complete)
-        // 粘滞（W23 review Fix-1）：已 finalize 的 open fence 在新 token 到达后保持完整渲染，
-        // 不回占位横跳。内容不再是 finalize 快照的 append-only 延长（被改写）时解除。
-        if (!finalize && finalizedStickyPrefix !== null) {
-          if (text.startsWith(finalizedStickyPrefix)) finalize = true
-          else finalizedStickyPrefix = null
-        }
-        // finalize 发生且消息未完成 → 记录粘滞快照（complete 天然逐帧 finalize，无需粘滞）
-        if (finalize && !complete) finalizedStickyPrefix = text
-        const r = await deps.renderMarkdownIncremental(text, incrementalCache, props.sessionId ?? undefined, {
-          finalizeOpenFence: finalize,
-        })
-        incrementalCache = r.cache
-        // 卸载后不应用结果、不重挂 finalize 定时器（W23 review Fix-3）
-        if (disposed) return
-        if (seq === renderSeq) {
-          segments.value = [...r.prefixSegments, ...r.tailSegments]
-          armFenceFinalizeTimer(r.tailSegments, complete)
-        }
+        await runIncrementalRender(deps.renderMarkdownIncremental, text, opts, seq)
       } else {
-        const segs = await deps.renderMarkdown(text, props.sessionId ?? undefined)
-        if (disposed) return
-        if (seq === renderSeq) segments.value = segs
+        await runFullRender(text, seq)
       }
     } catch (e) {
-      // [HISTORICAL] 降级必须出声（2026-08 CSP 拦截 shiki WASM 事故：此 catch 曾静默吞错，
-      // 全部 markdown 渲染无声退化纯文本，线上多版本无任何日志可查）。降级行为保留
-      // （保证消息可读），但每次失败都打 error，错误可见才可诊断。
-      console.error('[chat/markdown] render failed, fallback to escaped plain text:', e)
-      if (!disposed && seq === renderSeq) {
-        segments.value = [{ type: 'text', content: escapeHtmlForFallback(text) }]
-        // 增量缓存可能已被半途污染（renderIncremental 抛错前原地改写），作废重建保证下帧正确
-        incrementalCache = null
-        finalizedStickyPrefix = null
-        clearFenceFinalizeTimer()
-      }
+      handleRenderFailure(e, text, seq)
+    }
+  }
+
+  /** 空文本重置：清段 + 作废增量缓存与粘滞快照 + 撤销未触发的 fence finalize 定时器 */
+  function resetForEmptyText(): void {
+    segments.value = []
+    incrementalCache = null
+    finalizedStickyPrefix = null
+    clearFenceFinalizeTimer()
+  }
+
+  /** 增量路径（D-5/W23）：finalize 判定（含粘滞）→ 壳增量渲染 → 序号守卫应用 + 重排 finalize 定时器 */
+  async function runIncrementalRender(
+    renderIncremental: NonNullable<ChatViewDeps['renderMarkdownIncremental']>,
+    text: string,
+    opts: { forceFinalize?: boolean } | undefined,
+    seq: number,
+  ): Promise<void> {
+    // complete 语义：streaming !== true（false/undefined = 消息完成或静态内容，占位判定直接 finalize）
+    const complete = props.streaming !== true
+    const silenceMs = performance.now() - lastContentAt
+    const { finalize, stickyAfter } = resolveStreamingFinalize(
+      text,
+      opts,
+      complete,
+      silenceMs,
+      deps.shouldFinalizeStreamingFence,
+      finalizedStickyPrefix,
+    )
+    finalizedStickyPrefix = stickyAfter
+    const r = await renderIncremental(text, incrementalCache, props.sessionId ?? undefined, {
+      finalizeOpenFence: finalize,
+    })
+    incrementalCache = r.cache
+    // 卸载后不应用结果、不重挂 finalize 定时器（W23 review Fix-3）
+    if (disposed) return
+    if (seq === renderSeq) {
+      segments.value = [...r.prefixSegments, ...r.tailSegments]
+      armFenceFinalizeTimer(r.tailSegments, complete)
+    }
+  }
+
+  /** 全量回退路径（壳未 provide 增量能力，等价旧版）：壳全量渲染 → 卸载/序号守卫后应用 */
+  async function runFullRender(text: string, seq: number): Promise<void> {
+    const segs = await deps.renderMarkdown(text, props.sessionId ?? undefined)
+    if (disposed) return
+    if (seq === renderSeq) segments.value = segs
+  }
+
+  /** 渲染失败降级：出声 + 卸载/序号守卫内转义纯文本回填 + 作废缓存/粘滞 + 撤销 finalize 定时器 */
+  function handleRenderFailure(e: unknown, text: string, seq: number): void {
+    // [HISTORICAL] 降级必须出声（2026-08 CSP 拦截 shiki WASM 事故：此 catch 曾静默吞错，
+    // 全部 markdown 渲染无声退化纯文本，线上多版本无任何日志可查）。降级行为保留
+    // （保证消息可读），但每次失败都打 error，错误可见才可诊断。
+    console.error('[chat/markdown] render failed, fallback to escaped plain text:', e)
+    if (!disposed && seq === renderSeq) {
+      segments.value = [{ type: 'text', content: escapeHtmlForFallback(text) }]
+      // 增量缓存可能已被半途污染（renderIncremental 抛错前原地改写），作废重建保证下帧正确
+      incrementalCache = null
+      finalizedStickyPrefix = null
+      clearFenceFinalizeTimer()
     }
   }
 

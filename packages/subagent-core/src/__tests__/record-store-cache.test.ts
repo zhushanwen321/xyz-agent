@@ -66,7 +66,6 @@ describe("RecordStore per-file cache + light scan [perf]", () => {
           agent: opts.agent ?? "worker",
           mode: "background",
           task: "test task",
-          slug: "test",
           startedAt: opts.startedAt ?? 1000,
           rootSessionId: opts.rootSessionId ?? "root-1",
           depth: 0,
@@ -266,7 +265,6 @@ describe("RecordStore per-file cache + light scan [perf]", () => {
     const mem = {
       id: "sa-1",
       agent: "worker",
-      slug: "test",
       status: "running",
       mode: "background",
       startedAt: 1000,

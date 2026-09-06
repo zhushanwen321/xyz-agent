@@ -9,7 +9,7 @@ description: >-
 
 # merge
 
-执行 9 阶段合并发布流程，最终通过 GitHub Release 交付 Electron 产物（DMG/EXE/AppImage）。
+执行 9 阶段合并发布流程，最终通过 GitHub Release 交付 Electron 产物（DMG/EXE/AppImage）；阶段 6.5 完成 GitCode 国内镜像（附件 + 代码/README）与 README 安装版本更新（中英双页、国内/国外双通道）。
 
 > **双发布线**：本项目同时维护两条独立的发布线：
 > - **Electron 发布线**（`v*` tag → `release.yml` → DMG/EXE/AppImage）—— 阶段 4
@@ -370,6 +370,57 @@ bash scripts/postbuild-validate.sh
 bash scripts/validate-runtime-bundle.sh
 ```
 
+### 阶段 6.5: GitCode 国内镜像同步（Electron 发布线）
+
+> **前置**：阶段 6 已 exit 0（GitHub Release 产物完整）。**目的**：国内用户下载加速——GitCode CDN 实测约 15 MB/s，GitHub 跨境直连 0.4-0.8 MB/s。
+> CI 的 gitcode-sync job 已于 2026-09-16 移除（runner 跨境直传大附件必然超时，且镜像失败会污染 run conclusion 误导 verify-ci-release.sh）——镜像全部收敛到本阶段本地执行。
+> prerelease（`*-beta.*`，prerelease skill 线）不走本阶段：README 安装段永远指向最新正式版。
+
+**前置 env**：`GITCODE_TOKEN`（本地 `~/.zshrc` 已 export，命令内 `source ~/.zshrc` 取得）；`GITCODE_REPO=qq_18433817/xyz-agent`（GitHub variable GITCODE_REPO 的权威值，勿凭记忆写 owner）。
+
+#### 6.5.1 附件镜像（下载 GitHub → 上传 GitCode，幂等可重跑）
+
+```bash
+cd $WS_ROOT/main && source ~/.zshrc >/dev/null 2>&1; GITCODE_REPO=qq_18433817/xyz-agent \
+  node scripts/gitcode-release-sync.mjs sync-from-github "v$(node -p "require('./package.json').version")"
+```
+
+脚本输出「完成：N 个文件（新传 X，跳过 Y）」即成功；失败重跑只补缺失件。预期 405MB 级耗时约 1-3 分钟（3 路并发，单路 1.4-2.5MB/s）。
+
+#### 6.5.2 README 安装版本更新（中英双页 + 国内/国外双通道）
+
+```bash
+cd $WS_ROOT/main && node .agents/skills/merge/scripts/update-readme-install.mjs "$(node -p "require('./package.json').version")"
+```
+
+脚本只替换 README.md / README_EN.md 的 `<!-- INSTALL:BEGIN/END -->` 区块内版本号（区块含国内 GitCode / 国外 GitHub 双通道安装命令；文件名后缀安全——纯三段 semver 替换）。**人工过目** `git diff README.md README_EN.md` 后提交推送：
+
+```bash
+cd $WS_ROOT/main
+git add README.md README_EN.md
+git commit -m "docs: bump install version to v$(node -p "require('./package.json').version") in README"
+git push github HEAD:main
+```
+
+> README commit 是发布后的 docs 跟进（晚于 tag），属预期；push main 通常不触发 release workflow（tag 已存在），CI 至多多跑一轮常规测试。
+
+#### 6.5.3 仓库镜像（代码 + README 一起对齐 GitCode）
+
+```bash
+cd $WS_ROOT/main && source ~/.zshrc >/dev/null 2>&1; git fetch github --prune \
+  && GITCODE_REPO=qq_18433817/xyz-agent node scripts/gitcode-release-sync.mjs push-repo --ref-source github
+```
+
+⚠️ **`--ref-source github` 本地必传**：本地 bare-repo workspace 的 `origin` 指向本地 `.bare`，不传会把本地分支状态（含已删/落后分支）推上 GitCode 造成 drift。`git fetch github --prune` 先刷新远端跟踪引用，保证 GitCode 与 GitHub 分支集严格一致（--force --prune 对齐）。首次全量约 2 分钟（pack ≈ 490MB），后续发布秒级增量。
+
+#### 6.5.4 验证（GitCode 匿名直链可达）
+
+```bash
+curl -sL -o /dev/null -w '%{http_code}\n' -r 0-1048575 --max-time 60 \
+  "https://gitcode.com/qq_18433817/xyz-agent/releases/download/v$(node -p "require('./package.json').version")/TaiJi-$(node -p "require('./package.json').version")-mac-arm64.dmg"
+# 期望输出 206（302→CDN→Range 206）；404 = 附件缺失，回 6.5.1 重跑
+```
+
 ### 阶段 7: 清理（终结阶段）
 
 ⚠️ **终结步骤**：阶段 7 是整个 merge 流程的**最后一步**。`remove-worktree.sh` 执行完毕后**立即输出合并总结收尾**，禁止再调用任何 bash 工具做"删除确认"或执行额外任务。
@@ -408,6 +459,7 @@ cd $WS_ROOT/main && bash .agents/skills/merge/scripts/remove-worktree.sh <branch
 | 6N | ⚠️ npm 发布（阶段 4N，可选） | 仅含 extensions/ 改动时执行：人工定 type（check + apply 脚本）+ npm-* tag |
 | 7 | 创建 Release（阶段 5） | |
 | 8 | ⚠️ 确认交付物（阶段 6） | `bash scripts/verify-ci-release.sh ...` |
+| 8.5 | ⚠️ GitCode 镜像 + README 版本（阶段 6.5） | sync-from-github → update-readme-install → commit/push → push-repo --ref-source github → curl 206 验证 |
 | 9 | 清理 worktree（阶段 7，终结步骤） | 删除后直接输出总结，不再调 bash |
 
 ### 2. 执行约束

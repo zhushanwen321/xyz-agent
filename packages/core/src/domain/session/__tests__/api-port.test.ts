@@ -19,7 +19,7 @@ describe('SessionApiPort 类型契约', () => {
       remove: async (): Promise<void> => {},
       removeByCwd: async (): Promise<BatchDeleteResult> => ({ cwd: '/a', deleted: [], failed: [] }),
       migrateImage: async (): Promise<{ path: string }> => ({ path: '/data/x.png' }),
-      onConfigSessions: async (): Promise<() => void> => () => {},
+      onConfigSessions: (): (() => void) => () => {},
     }
     expect(fake).toBeDefined()
   })
@@ -37,7 +37,7 @@ describe('SessionApiPort 类型契约', () => {
         void p
         return { path: '/data/x.png' }
       },
-      onConfigSessions: async (): Promise<() => void> => () => {},
+      onConfigSessions: (): (() => void) => () => {},
     }
     expect(received).toBeUndefined()
     expect(typeof fake.migrateImage).toBe('function')

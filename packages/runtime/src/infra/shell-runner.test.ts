@@ -11,6 +11,7 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ShellRunner } from './shell-runner.js'
+import { ShellRunnerError } from '../services/ports/shell-runner.js'
 import type { SpawnFn } from '../services/ports/shell-runner.js'
 
 /** 构造注入用假 spawn：同步 emit close(0)，并暴露捕获到的 spawn options。 */
@@ -52,7 +53,8 @@ describe('ShellRunner env 出站接线（U4-B8）', () => {
 
     const { spawnFn, getOptions } = createFakeSpawn()
     const runner = new ShellRunner({ spawn: spawnFn })
-    const result = await runner.execute({ scriptPath: '/tmp/setup.sh', cwd: '/tmp' })
+    // timeout 必传（port 契约）：120_000 = 改造前 infra 暗默认值，保持既有行为不变。
+    const result = await runner.execute({ scriptPath: '/tmp/setup.sh', cwd: '/tmp', timeout: 120_000 })
 
     expect(result.exitCode).toBe(0)
     const env = getOptions()?.env as Record<string, string>
@@ -71,9 +73,36 @@ describe('ShellRunner env 出站接线（U4-B8）', () => {
 
     const { spawnFn, getOptions } = createFakeSpawn()
     const runner = new ShellRunner({ spawn: spawnFn })
-    await runner.execute({ scriptPath: '/tmp/setup.sh', cwd: '/tmp' })
+    await runner.execute({ scriptPath: '/tmp/setup.sh', cwd: '/tmp', timeout: 120_000 })
 
     const env = getOptions()?.env as Record<string, string>
     expect(env.SOME_RANDOM_SESSION_VAR).toBeUndefined()
+  })
+})
+
+describe('ShellRunner 超时用户值生效（timeout-slow-flow-wallclock D4）', () => {
+  it('调用方传入的 timeout 驱动超时判定：到期 SIGTERM + ShellRunnerError(timeout)，消息含用户值', async () => {
+    // child 永不 close（模拟脚本挂死）；timeout=5ms 远小于旧暗默认 120s——
+    // 若实现忽略调用方值回退暗默认，本测试在 vitest 超时内不会收到 reject，直接失败。
+    const killSignals: (string | undefined)[] = []
+    const neverClosingSpawn = vi.fn((_cmd: string, _args: string[], _opts: Record<string, unknown>) => {
+      const c = new EventEmitter() as never as { stdout: EventEmitter; stderr: EventEmitter; kill: (signal?: string) => void }
+      c.stdout = new EventEmitter()
+      c.stderr = new EventEmitter()
+      c.kill = (signal?: string) => { killSignals.push(signal) }
+      return c
+    })
+
+    const runner = new ShellRunner({ spawn: neverClosingSpawn as unknown as SpawnFn })
+    const pending = runner.execute({ scriptPath: '/tmp/hang.sh', cwd: '/tmp', timeout: 5 })
+    await expect(pending).rejects.toMatchObject({ code: 'timeout' })
+    expect(killSignals).toContain('SIGTERM')
+    // 错误消息回显调用方传入的量级（5ms），证明判定来自用户值而非内部默认
+    await expect(pending).rejects.toThrow(/5ms/)
+  })
+
+  it('ShellRunnerError.timeout 分类可用（port 契约不变式）', () => {
+    const err = new ShellRunnerError('timeout', 'probe')
+    expect(err.code).toBe('timeout')
   })
 })

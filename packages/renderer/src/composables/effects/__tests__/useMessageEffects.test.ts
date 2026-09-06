@@ -9,6 +9,8 @@
  * - onSubagents → applyRecords；onWorkflowUpdate → triggerWorkflowReload
  * - onSubagentEntries → chatStore.applySubagentEntries（虚拟分区 id 经 shared 工厂构造，
  *   E-4 relay tee entry 帧兜底接线）
+ * - onSubagentStreamDelta → chatStore.refreshStreamingTimer(父sid)（[idle-refresh]
+ *   timeout-streaming-ui-idle.md §5.1 D1 桥接：双形态解析 + 坏形状 no-op）
  * - onGlobalError → toast
  * - onSessionError → markSessionError + toast（D6b：带 sid error envelope 兜底展示）
  * - handleRuntimeUnavailable → finalizeAllStreaming + clearAllPending（T5）
@@ -16,12 +18,13 @@
  * 运行：cd packages/renderer && npx vitest run src/composables/effects/__tests__/useMessageEffects.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import type { PiEntry, ServerMessageMap, SubagentRecord } from '@xyz-agent/shared'
+import type { PiEntry, ServerMessage, ServerMessageMap, SubagentRecord } from '@xyz-agent/shared'
 
 const storeMocks = vi.hoisted(() => ({
   markSessionError: vi.fn(),
   finalizeAllStreaming: vi.fn(),
   applySubagentEntries: vi.fn(),
+  refreshStreamingTimer: vi.fn(),
   markDead: vi.fn(),
   clearAllPending: vi.fn(),
   clearSession: vi.fn(),
@@ -39,6 +42,7 @@ vi.mock('@/stores/chat', () => ({
     markSessionError: storeMocks.markSessionError,
     finalizeAllStreaming: storeMocks.finalizeAllStreaming,
     applySubagentEntries: storeMocks.applySubagentEntries,
+    refreshStreamingTimer: storeMocks.refreshStreamingTimer,
   }),
 }))
 vi.mock('@/stores/session', () => ({
@@ -133,6 +137,39 @@ describe('createInboundEffects（§11.4 InboundEffects 接线）', () => {
     effects.onSubagentEntries!('s-main', 'rec-9', entries)
 
     expect(storeMocks.applySubagentEntries).toHaveBeenCalledWith('subagent:s-main:rec-9', entries)
+  })
+
+  it('onSubagentStreamDelta → refreshStreamingTimer(父sid)（[idle-refresh] tee 通道虚拟 id 三段式解析）', () => {
+    effects.onSubagentStreamDelta!({
+      type: 'subagent.stream_delta',
+      payload: { sessionId: 'subagent:s-main:bg-1', recordId: 'bg-1', lines: ['partial'] },
+    } as unknown as ServerMessage)
+
+    // 虚拟 id 解析出父 session id 后刷新（编排期父气泡 idle 计时得以续命）
+    expect(storeMocks.refreshStreamingTimer).toHaveBeenCalledTimes(1)
+    expect(storeMocks.refreshStreamingTimer).toHaveBeenCalledWith('s-main')
+  })
+
+  it('onSubagentStreamDelta → 旧 widget 通道主 sid 原样刷新（双形态兼容）', () => {
+    effects.onSubagentStreamDelta!({
+      type: 'subagent.stream_delta',
+      payload: { sessionId: 's-main-raw', recordId: 'bg-1', lines: ['partial'] },
+    } as unknown as ServerMessage)
+
+    expect(storeMocks.refreshStreamingTimer).toHaveBeenCalledWith('s-main-raw')
+  })
+
+  it('onSubagentStreamDelta → payload.sessionId 缺失 no-op（坏形状帧防御，纯函数解析无失败形态）', () => {
+    effects.onSubagentStreamDelta!({
+      type: 'subagent.stream_delta',
+      payload: { recordId: 'bg-1', lines: ['partial'] },
+    } as unknown as ServerMessage)
+    effects.onSubagentStreamDelta!({
+      type: 'subagent.stream_delta',
+      payload: null,
+    } as unknown as ServerMessage)
+
+    expect(storeMocks.refreshStreamingTimer).not.toHaveBeenCalled()
   })
 
   it('onWorkflowUpdate → triggerWorkflowReload(sid, status)；status 缺省按 "unknown"（防御运行时坏形状）', () => {

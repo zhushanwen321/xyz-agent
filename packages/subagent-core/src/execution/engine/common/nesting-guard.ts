@@ -8,6 +8,13 @@
 //
 // 为什么 env 标记是唯一跨引擎可靠手段（被否方案见设计）：「隔离目录里不装扩展」
 // 依赖配置洁癖，且 opencode/CC 会吃项目级配置；env 由宿主显式控制，随 spawn 必达。
+//
+// [D3-⑤ 嵌套防护合一] 进程内执行嵌套上下文（原 SubagentService.execCtxAls，pi 路径
+// 私有）并入本文件——「嵌套防护」的两层机制（跨进程 env 标记 / 进程内 ALS 深度计数）
+// 单点于公共层。设计权威源：docs/design/subagent-dual-track-convergence.md §3.3 D3-⑤
+// + 双轨清单 #10。
+
+import { AsyncLocalStorage } from "node:async_hooks";
 
 import { nestedSpawnRejectedError } from "./errors.ts";
 
@@ -46,5 +53,64 @@ export function buildNestedSpawnEnv(baseEnv: SpawnEnv): SpawnEnv {
 export function assertNotNestedSpawn(env: SpawnEnv): void {
   if (env[NESTED_SPAWN_ENV] === "1") {
     throw nestedSpawnRejectedError();
+  }
+}
+
+// ============================================================
+// [D3-⑤] 进程内执行嵌套上下文（原 SubagentService.execCtxAls 下沉）
+// ============================================================
+
+/** 执行嵌套状态：当前正在跑的 record 身份 + 递归深度（D-033 通用嵌套深度护栏的计数载体）。 */
+export interface ExecutionNestingState {
+  recordId: string | undefined;
+  depth: number;
+}
+
+/**
+ * 进程内执行嵌套上下文（[D3-⑤] 从 SubagentService 的 execCtxAls 私有字段并入公共层）。
+ *
+ * 机制（原样迁移，行为零变化）：
+ *   - ALS 按异步调用链传递当前 record 身份：B run() 期间包 this 上下文，B 内创建 C 时
+ *     读到 B → C.parentRecordId=B.id、C.depth=B.depth+1；主 session 链上无 store → 顶层。
+ *   - 进程级基线兜底 [ALS 断裂修复]：pi RPC mode 的 stdin JSONL 是事件回调式
+ *     （attachJsonlLineReader stream.on("data")），每个命令是独立异步链，enterWith 的
+ *     store 不会贯穿到后续 tool 调用事件（实测：递归第二层 parentRecordId/depth 丢失
+ *     而 rootSessionId 正确）。基线 = 本进程自己的身份（initSession 从 env 读取）：
+ *     读 ALS store 失败时兜底，保证「本进程派发的 subagent 都是本进程记录的孩子」。
+ *
+ * 实例归属：per-Service（基线随宿主进程身份而异），Service 构造时创建并持有。
+ * 深度上限判据（MAX_FORK_DEPTH）留在调用方——上限常量属 execution 层
+ * （session-context-resolver），公共层只提供状态存取单点。
+ */
+export class ExecutionNestingContext {
+  private readonly als = new AsyncLocalStorage<ExecutionNestingState>();
+  private baselineState: ExecutionNestingState | null = null;
+
+  /** 建立进程级基线（initSession：有 env 自我标记 → env 身份；根进程 → null 顶层）。 */
+  setBaseline(state: ExecutionNestingState | null): void {
+    this.baselineState = state;
+  }
+
+  /** 读当前嵌套状态：ALS store 优先，断裂时基线兜底（顶层 = null）。 */
+  current(): ExecutionNestingState | null {
+    return this.als.getStore() ?? this.baselineState;
+  }
+
+  /**
+   * 读进程级基线（与 current() 的差异：不看 ALS store——直接父归属校验等场景要的是
+   * 「本进程自己的身份」而非「当前异步链正在跑的 record 身份」）。
+   */
+  baseline(): ExecutionNestingState | null {
+    return this.baselineState;
+  }
+
+  /** 包裹执行（B run() 期间挂 B 身份——内层创建 C 时 current() 读到 B）。 */
+  run<T>(state: ExecutionNestingState, fn: () => T): T {
+    return this.als.run(state, fn);
+  }
+
+  /** 顶层 enterWith（initSession 建立基线身份后挂入当前异步链）。 */
+  enterWith(state: ExecutionNestingState): void {
+    this.als.enterWith(state);
   }
 }

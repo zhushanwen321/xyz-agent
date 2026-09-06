@@ -80,7 +80,16 @@ import { isProcessAlive } from "../alive-store.ts";
 import { encodeCwd } from "../path-encoding.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
 
-const mockExecFile = vi.mocked(execFile);
+// 被测链路（gitRunAsync）调用四参形态（file, args, options, callback）；vi.mocked
+// 直接包 execFile 会推导到无 options 重载，显式绑定四参签名
+const mockExecFile = vi.mocked(
+  execFile as unknown as (
+    file: string,
+    args: readonly string[],
+    options: unknown,
+    callback: (err: Error | null, stdout: string, stderr: string) => void,
+  ) => void,
+);
 const mockExistsSync = vi.mocked(fs.existsSync);
 const mockIsProcessAlive = vi.mocked(isProcessAlive);
 
@@ -95,7 +104,7 @@ type ExecFileResult = {
 };
 function setupExecFile(impl?: (args: readonly string[]) => ExecFileResult): void {
   mockExecFile.mockImplementation(
-    (_cmd: string, args: readonly string[], _opts: unknown, cb: (err: Error | null, stdout?: string, stderr?: string) => void) => {
+    (_cmd: string, args: readonly string[], _opts: unknown, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
       const r = impl ? impl(args) : { stdout: "" };
       if (r.err) cb(r.err, r.stdout ?? "", r.stderr ?? "");
       else cb(null, r.stdout ?? "", r.stderr ?? "");
@@ -178,7 +187,7 @@ describe("WorktreeManager", () => {
       await mgr.create(MAIN_CWD, RECORD_ID);
 
       expect(mockAdd).toHaveBeenCalledTimes(1);
-      const entry = mockAdd.mock.calls[0][0] as { repo: string; branch: string; pid: number };
+      const entry = mockAdd.mock.calls[0]![0] as { repo: string; branch: string; pid: number };
       expect(entry.repo).toBe(MAIN_CWD);
       expect(entry.branch).toBe(`pi-sub-${RECORD_ID}`);
       expect(entry.pid).toBe(0);
@@ -266,7 +275,7 @@ describe("WorktreeManager", () => {
       let maxWriteActive = 0;
       let addCount = 0;
       mockExecFile.mockImplementation(
-        (_cmd: string, args: readonly string[], _opts: unknown, cb: (err: Error | null, stdout?: string, stderr?: string) => void) => {
+        (_cmd: string, args: readonly string[], _opts: unknown, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
           const isAdd = args[0] === "worktree" && args[1] === "add";
           if (isAdd) {
             // 只对写命令（worktree add）计并发——读命令（status/rev-parse）无锁可并行是设计预期
@@ -442,7 +451,7 @@ describe("WorktreeManager", () => {
       let maxActive = 0;
       // 异步完成 cb：若队列失效，后继命令的 impl 入口会先于前驱 cb 到达 → active=2
       mockExecFile.mockImplementation(
-        (_cmd: string, args: readonly string[], _opts: unknown, cb: (err: Error | null, stdout?: string, stderr?: string) => void) => {
+        (_cmd: string, args: readonly string[], _opts: unknown, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
           active++;
           maxActive = Math.max(maxActive, active);
           setTimeout(() => {

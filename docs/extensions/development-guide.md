@@ -1096,6 +1096,87 @@ function process(items: string[]): string[] {
 }
 ```
 
+### 11.5 超时契约（plugin-service 超时粒度）🔵
+
+> 插件作者面对的超时 API 面与到期行为。量级裁定原则：**超时按被保护对象的粒度校准**——
+> 等插件业务代码跑完的任务级等待 = 30min 兜底 + 作者声明覆盖；等人工的弹窗/审批 = 30min
+> + 取消非替答；生命周期握手（activate）= 控制面秒级。设计权威源：
+> `docs/design/timeout-plugin-service-granularity.md`。
+
+**onActivate 轻量契约 [规范]**：`onActivate` 的协议语义是生命周期握手（声明注册工具/hooks/
+命令清单），控制面超时 30s。`onActivate` 内**禁止**重初始化（拉配置、建连接、预热缓存等
+长耗时操作）——把这些移到首个工具调用或命令 handler 内懒执行。宿主装配侧有
+`ActivatorOptions.activateTimeoutMs` 覆盖参数（对重初始化类插件的逃生门），但契约优先：
+靠声明轻量化而不是靠调大超时。
+
+**工具执行超时（registerTool `timeoutMs` 声明）**：插件工具被 pi agent 调用后，执行超时
+按以下取值链裁决（声明值合法性校验在注册入口，非 number 直接抛 `INVALID_TIMEOUT_MS`）：
+
+| 声明 | 生效值 | 语义 |
+|------|--------|------|
+| 缺省 / 非法值 | 30min（`DEFAULT_TOOL_EXECUTE_TIMEOUT_MS`） | 防挂死兜底，不误杀长工具 |
+| `timeoutMs > 0` | 声明值（clamp 到 timer 域上界） | 作者声明的该工具执行上界 |
+| `timeoutMs <= 0` 或 `Infinity` | 不限时（显式 opt-out） | 「最了解执行时长的一方」显式接管 |
+
+到期行为：pi agent 收到 `isError` 诚实消息（含等待时长 / 默认还是声明值 / handler 可能
+仍在跑且结果将被丢弃 / 调整指引），例如：
+
+```
+Plugin tool 'slow-tool' timed out after 30min (default; plugin handler may still be
+running, its result will be discarded). Plugin authors: pass timeoutMs in registerTool()
+to extend or opt out (<=0 = no limit).
+```
+
+pi agent 自行决策重试/换路径；插件侧无感知、不被卸载。
+
+**命令执行超时（命令定义级 `timeoutMs` 声明）**：用户点击 UI（状态栏按钮/命令面板）触发的
+插件命令，执行超时取值链与工具 `registerTool` 完全同款（上表适用；校验同在注册入口，
+非 number 抛 `INVALID_TIMEOUT_MS`），缺省默认 30min，`<=0` / `Infinity` 显式 opt-out。
+命令并发执行有 busy 守卫：同一命令 handler 未返回前重复触发会被拒绝，提示含已等待时长
+（命令进度反馈/可取消能力为后续演进项）。到期行为与工具一致（诚实 `isError`，含调整指引
+`pass timeoutMs in the command definition`），保留 `code: -32000`。
+
+**UI 弹窗超时（`ctx.ui.showConfirm` / `showSelect` / `showInput` 末位 `opts.timeout`）**：
+
+```typescript
+const ok = await ctx.ui.showConfirm("发布", "确认发布 v1.2.0？", { timeout: 10 * 60_000 });
+```
+
+- `opts.timeout`（毫秒）= 从调用到拿到结果的**最长全程等待，含串行排队时间**（前面还有
+  其他插件的弹窗未关闭时，排队也在计时）。缺省/非法回落默认 30min；无 opt-out（「等人工」
+  不允许无界等待——串行队列 head-of-line 阻塞）。`notify` / `updateStatusBarItem` 纯展示
+  类无等待语义，不设 `opts`。
+- **到期 = 取消非替答**：弹窗在前端被撤回（`plugin:uiRequestExpired` 广播），调用
+  reject `Error`（`code: 'UI_TIMEOUT'`）——超时是独立可 catch 的错误类别，与「用户点取消」
+  可区分（不再被替答 `false`）。插件 catch 后自行决策：重发提问 / 放弃操作 / 走默认路径。
+
+```typescript
+try {
+  const ok = await ctx.ui.showConfirm("发布", "确认发布？", { timeout: 600_000 });
+} catch (err) {
+  if ((err as { code?: string }).code === "UI_TIMEOUT") {
+    // 用户 10min 未响应，弹窗已撤回。可重发提问或放弃，按业务默认行为处理
+  }
+}
+```
+
+**权限审批超时（`XYZ_PLUGIN_PERMISSION_TIMEOUT_MS` env）**：插件首次激活弹出的权限审批，
+等待超时默认 30min。全局调整用环境变量（合法正数毫秒生效，缺失/非法 warn 回落默认）：
+
+```bash
+XYZ_PLUGIN_PERMISSION_TIMEOUT_MS=600000  # 10min
+```
+
+到期语义 = **取消非判拒**：本次激活取消（插件置 UNLOADED 未装载态，不写任何「拒绝」记录），
+前端撤回审批弹窗；**再次触发激活事件（如重发 slash command）即可重新激活 + 重新弹审批**。
+等待窗口内（未超时）重触发不会产生第二个弹窗，原审批继续有效。
+
+**已知限制（pi abort 不传播）**：pi turn 被 abort 后，正在执行的插件工具调用**不会被中断**
+——pi 侧 bridge 调用路径无 signal/abort 传播，runtime 是该链路唯一墙钟。默认 30min 窗口内
+handler 会继续跑完（结果被丢弃，不阻塞其他 turn/session）。缓解：可能被 abort 的长工具
+**声明小的 `timeoutMs`**（如任务合理时长上限）。该缺口的根治（signal 传播）已独立登记，
+不在插件作者可解范围内。
+
 ---
 
 ## 12. 类型安全 **[规范]**

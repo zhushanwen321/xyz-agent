@@ -22,11 +22,13 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
 }))
 
 import { useFileSearch } from '@/composables/features/search/useFileSearch'
-import { useFileSearchStore } from '@/stores/fileSearch'
+import { useFileSearchStore, __resetFileSearchStoreForTesting } from '@/composables/features/search/useFileSearchStore'
 import { useChatStore } from '@/stores/chat'
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  // core 单例模块级缓存：reset 隔离用例间缓存（D7 收口，对齐 __resetCommandStoreForTesting 先例）
+  __resetFileSearchStoreForTesting()
   vi.clearAllMocks()
 })
 

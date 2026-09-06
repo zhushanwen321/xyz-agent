@@ -73,7 +73,7 @@ vi.mock("../alive-store.ts", () => ({
 // temp-prompt：mock 掉真实 fs.promises I/O（mkdtemp/writeFile/rm）。
 // 原先保留真实实现导致 fake-timers 测试偶发 flaky——writePromptToTempFile 的真实异步
 // I/O 在 CI 慢机器上无法在 advanceTimersByTimeAsync 的有限步数内 resolve，spawn 永不触发。
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -81,7 +81,7 @@ vi.mock("../temp-prompt.ts", () => ({
   cleanupTempPrompt: vi.fn(async () => {}),
 }));
 
-import { runSpawn } from "../session-runner.ts";
+import { runSpawn } from "../engine/engines/pi/session-runner.ts";
 import {
   emitStdoutLine,
   type FakeChild,

@@ -31,6 +31,114 @@ const PLACEMENT_BY_TYPE: Record<Exclude<ContributionType, 'view' | 'menu'>, stri
   configuration: 'settings',
 }
 
+// ── 解析：PluginContributes v2 → ContributionRecord[]（按 type 分段 helper）──
+//
+// parseContributes 的分段提取：每段只解析一种 contribution type，段内循环体与
+// 原内联实现逐字节一致；parseContributes 按原 push 顺序 concat 各段，
+// 跨段顺序（view→menu→command→statusBarItem→slashCommand→configuration）即注册顺序。
+
+function parseViewContributions(pluginId: string, c: PluginContributes): ContributionRecord[] {
+  const out: ContributionRecord[] = []
+  for (const v of c.views ?? []) {
+    out.push({
+      pluginId,
+      contributionId: v.id,
+      type: 'view',
+      placement: v.placement,
+      available: false,
+      view: {
+        viewType: v.viewType ?? 'gui',
+        title: v.title,
+        initialVisibility: v.initialVisibility ?? 'hidden',
+      },
+    })
+  }
+  return out
+}
+
+function parseMenuContributions(pluginId: string, c: PluginContributes): ContributionRecord[] {
+  const out: ContributionRecord[] = []
+  for (const [placement, items] of Object.entries(c.menus ?? {})) {
+    for (const m of items ?? []) {
+      out.push({
+        pluginId,
+        // menus 无天然 id，合成 id（T3 取舍）
+        contributionId: `${placement}::${m.command}`,
+        type: 'menu',
+        placement,
+        available: false,
+        menu: { group: m.group, when: m.when },
+      })
+    }
+  }
+  return out
+}
+
+function parseCommandContributions(pluginId: string, c: PluginContributes): ContributionRecord[] {
+  const out: ContributionRecord[] = []
+  for (const cmd of c.commands ?? []) {
+    out.push({
+      pluginId,
+      contributionId: cmd.command,
+      type: 'command',
+      placement: PLACEMENT_BY_TYPE.command,
+      available: false,
+      command: { title: cmd.title, category: cmd.category, keybinding: cmd.keybinding, when: cmd.when },
+    })
+  }
+  return out
+}
+
+function parseStatusBarItemContributions(pluginId: string, c: PluginContributes): ContributionRecord[] {
+  const out: ContributionRecord[] = []
+  for (const item of c.statusBarItems ?? []) {
+    out.push({
+      pluginId,
+      contributionId: item.id,
+      type: 'statusBarItem',
+      placement: PLACEMENT_BY_TYPE.statusBarItem,
+      available: false,
+      statusBarItem: {
+        text: item.text,
+        alignment: item.alignment ?? 'right',
+        priority: item.priority,
+        scope: item.scope ?? 'global',
+        commandId: item.commandId,
+      },
+    })
+  }
+  return out
+}
+
+function parseSlashCommandContributions(pluginId: string, c: PluginContributes): ContributionRecord[] {
+  const out: ContributionRecord[] = []
+  for (const s of c.slashCommands ?? []) {
+    out.push({
+      pluginId,
+      contributionId: s.name,
+      type: 'slashCommand',
+      placement: PLACEMENT_BY_TYPE.slashCommand,
+      available: false,
+      slashCommand: { name: s.name, description: s.description },
+    })
+  }
+  return out
+}
+
+function parseConfigurationContribution(pluginId: string, c: PluginContributes): ContributionRecord[] {
+  if (!c.configuration) return []
+  return [
+    {
+      pluginId,
+      contributionId: 'configuration',
+      type: 'configuration',
+      placement: PLACEMENT_BY_TYPE.configuration,
+      available: false,
+      configuration: { properties: c.configuration.properties },
+    },
+  ]
+}
+
 export class ContributionRegistry {
   private contributions = new Map<string, ContributionRecord>()
 
@@ -146,81 +254,18 @@ export class ContributionRegistry {
 
   // ── 解析：PluginContributes v2 → ContributionRecord[] ──────────────
 
+  /**
+   * 逐段解析 PluginContributes v2。各 type 段提取为模块级 helper（见文件头分段
+   * helper 区），此处只按原 push 顺序 concat——跨段顺序即注册顺序，不可重排。
+   */
   private parseContributes(pluginId: string, c: PluginContributes): ContributionRecord[] {
-    const out: ContributionRecord[] = []
-    for (const v of c.views ?? []) {
-      out.push({
-        pluginId,
-        contributionId: v.id,
-        type: 'view',
-        placement: v.placement,
-        available: false,
-        view: {
-          viewType: v.viewType ?? 'gui',
-          title: v.title,
-          initialVisibility: v.initialVisibility ?? 'hidden',
-        },
-      })
-    }
-    for (const [placement, items] of Object.entries(c.menus ?? {})) {
-      for (const m of items ?? []) {
-        out.push({
-          pluginId,
-          // menus 无天然 id，合成 id（T3 取舍）
-          contributionId: `${placement}::${m.command}`,
-          type: 'menu',
-          placement,
-          available: false,
-          menu: { group: m.group, when: m.when },
-        })
-      }
-    }
-    for (const cmd of c.commands ?? []) {
-      out.push({
-        pluginId,
-        contributionId: cmd.command,
-        type: 'command',
-        placement: PLACEMENT_BY_TYPE.command,
-        available: false,
-        command: { title: cmd.title, category: cmd.category, keybinding: cmd.keybinding, when: cmd.when },
-      })
-    }
-    for (const item of c.statusBarItems ?? []) {
-      out.push({
-        pluginId,
-        contributionId: item.id,
-        type: 'statusBarItem',
-        placement: PLACEMENT_BY_TYPE.statusBarItem,
-        available: false,
-        statusBarItem: {
-          text: item.text,
-          alignment: item.alignment ?? 'right',
-          priority: item.priority,
-          scope: item.scope ?? 'global',
-          commandId: item.commandId,
-        },
-      })
-    }
-    for (const s of c.slashCommands ?? []) {
-      out.push({
-        pluginId,
-        contributionId: s.name,
-        type: 'slashCommand',
-        placement: PLACEMENT_BY_TYPE.slashCommand,
-        available: false,
-        slashCommand: { name: s.name, description: s.description },
-      })
-    }
-    if (c.configuration) {
-      out.push({
-        pluginId,
-        contributionId: 'configuration',
-        type: 'configuration',
-        placement: PLACEMENT_BY_TYPE.configuration,
-        available: false,
-        configuration: { properties: c.configuration.properties },
-      })
-    }
-    return out
+    return [
+      ...parseViewContributions(pluginId, c),
+      ...parseMenuContributions(pluginId, c),
+      ...parseCommandContributions(pluginId, c),
+      ...parseStatusBarItemContributions(pluginId, c),
+      ...parseSlashCommandContributions(pluginId, c),
+      ...parseConfigurationContribution(pluginId, c),
+    ]
   }
 }

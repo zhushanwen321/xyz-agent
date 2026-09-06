@@ -13,9 +13,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { computeRenderSignature } from "../WorkflowsView.ts";
-import type { ExecutionRecord } from "@zhushanwen/subagent-core/execution/types.ts";
-import type { ExecutionTraceNode, WorkerLogEntry } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
-import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
+import type { ExecutionRecord } from "@zhushanwen/subagent-core";
+import type { ExecutionTraceNode, WorkerLogEntry } from "@zhushanwen/subagent-core";
+import type { WorkflowRun } from "@zhushanwen/subagent-core";
 
 // ── Fixtures（duck typing，对齐 detail-content-session-file.test.ts 先例）──
 

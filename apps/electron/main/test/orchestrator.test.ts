@@ -54,7 +54,7 @@ async function loadModule() {
   return await import('../update/orchestrator.js')
 }
 
-/** LatestReleaseInfo fixture（mac + deb 都覆盖） */
+/** LatestReleaseInfo fixture（mac + linux 都覆盖） */
 const MAC_RELEASE: LatestReleaseInfo = {
   version: '0.9.0',
   tagName: 'v0.9.0',
@@ -62,7 +62,7 @@ const MAC_RELEASE: LatestReleaseInfo = {
   publishedAt: '',
   htmlUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/tag/v0.9.0',
   assets: {
-    macArm64Zip: { name: 'mac.zip', downloadUrl: 'https://x/mac.zip', size: 1000, sha256: 'a'.repeat(64) },
+    macArm64Dmg: { name: 'mac.dmg', downloadUrl: 'https://x/mac.dmg', size: 1000, sha256: 'a'.repeat(64) },
     linuxX64AppImage: { name: 'app.AppImage', downloadUrl: 'https://x/app', size: 3000 },
   },
 }
@@ -89,7 +89,7 @@ describe('W3: orchestrator (W3TC8-9)', () => {
     if (originalArch) Object.defineProperty(process, 'arch', originalArch)
     vi.restoreAllMocks()
     const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   function setPlatform(platform: string): void {
@@ -180,13 +180,17 @@ describe('W3: orchestrator (W3TC8-9)', () => {
   })
 
   // ── W3TC9b：无 platform asset → 抛 UpdateError ─────────────────
-  it('W3TC9b: 当前平台无 asset（如 unknown 平台）→ downloadUpdate 抛 UpdateError', async () => {
+  it('W3TC9b: 当前平台无 asset（如 unknown 平台）→ downloadUpdate 抛 UpdateError（含 release 页链接）', async () => {
     setPlatform('freebsd')
     // performUpdate 组合函数已随批次 3 删除：无 asset 守卫在 downloadUpdate 内（pickPlatformAsset）
     const { downloadUpdate } = await loadModule()
+    // 批次 3 §3.3.3-D：断供错误信息并入 release.htmlUrl——存量 darwin 用户
+    // （本版本起只发 dmg）报错时有一键手动下载出路（错误信息可操作）
     await expect(
       downloadUpdate(MAC_RELEASE),
-    ).rejects.toThrow(/no asset for platform freebsd/)
+    ).rejects.toThrow(
+      `no asset for platform freebsd (release page: ${MAC_RELEASE.htmlUrl})`,
+    )
     // downloadAsset 不应被调
     expect(downloadMocks.downloadAsset).not.toHaveBeenCalled()
   })
@@ -206,7 +210,7 @@ describe('W3: orchestrator (W3TC8-9)', () => {
     // downloadAsset 被调一次，传入了 darwin 平台的 mac asset
     expect(downloadMocks.downloadAsset).toHaveBeenCalledTimes(1)
     const downloadArg = downloadMocks.downloadAsset.mock.calls[0][0]
-    expect(downloadArg.name).toBe('mac.zip')
+    expect(downloadArg.name).toBe('mac.dmg')
     // downloadUpdate 不再写 replacing 标记（T2：迁移到 installUpdate）。
     // 预下载只下载不替换，写 replacing 会导致 self-healer 误判需要回滚。
     expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'update-result.json'))).toBe(false)

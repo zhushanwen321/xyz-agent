@@ -32,7 +32,7 @@ import {
   _getBranchCacheSizeForTest,
   _resetBranchCacheForTest,
   buildEnvBlock,
-} from "../session-runner.ts";
+} from "../engine/engines/pi/session-runner.ts";
 
 /** execFile mock 回填 br-<cwd>（branch 与 cwd 一一对应，淘汰行为可断言）。 */
 function stubGitBranchSuccess(): void {

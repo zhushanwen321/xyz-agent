@@ -6,7 +6,7 @@
 //
 // 通过 handleWorkerMessage 触发 dispatchAgentCall / dispatchWorkflowCall（内部函数不 export）。
 // Mock 构造模式参考 orchestration/__tests__/agent-call-catch-fallback.test.ts 和
-// orchestration/__tests__/error-recovery-workflow-call.test.ts。
+// orchestration/__tests__/worker-message-pump-workflow-call.test.ts。
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -22,7 +22,7 @@ vi.mock("../core/logger.ts", () => ({
   getLogger: () => loggerMock,
 }));
 
-import { handleWorkerMessage } from "../orchestration/error-recovery.ts";
+import { handleWorkerMessage } from "../orchestration/worker-message-pump.ts";
 import type { LifecycleDeps, WorkerHandlers } from "../orchestration/models/ports.ts";
 import { Trace } from "../orchestration/models/trace.ts";
 import type { AgentResult } from "../orchestration/models/types.ts";

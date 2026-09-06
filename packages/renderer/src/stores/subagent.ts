@@ -37,7 +37,8 @@ export {
   extractMainSessionId,
 } from '@xyz-agent/shared'
 import { session as sessionApi } from '@/api'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
+import { toErrorMessage } from '../lib/error-message'
 
 /**
  * fetchAndInject 的 chat 注入回调类型。
@@ -211,7 +212,7 @@ export const useSubagentStore = defineStore('subagent', () => {
       // M1：失败不覆盖现有分区，设 loadError；strike 重置（「连续 RPC 成功且空」语义纯净，
       // 读失败与数据空不同通道，不让 RPC 故障累计出误清分区）
       emptyResultStrikes.delete(sessionId)
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       console.error('[subagent-store] loadSubagents failed:', e)
       loadError.value = msg
     } finally {

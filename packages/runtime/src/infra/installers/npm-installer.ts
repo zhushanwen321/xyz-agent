@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, renameSync } from 'node:fs
 import { join } from 'node:path'
 import http from 'node:http'
 import https from 'node:https'
-import { createGunzip } from 'node:zlib'
+import { createGunzip, type Gunzip } from 'node:zlib'
 import crypto from 'node:crypto'
 import semver from 'semver'
 import { extract as tarExtract } from 'tar'
@@ -283,12 +283,15 @@ function verifyIntegrity(
  * - integrity 路径：先 buffer 化并校验，再 `gunzip.write(buffer); gunzip.end()`
  * - 流式路径：`final.pipe(gunzip)`
  *
+ * `fail` 把源流侧错误（final 'error'）接到本 promise 的 reject——pipe 不转发源侧
+ * 错误，不显式接线则源侧断流时 promise 永不 settle 且产生未处理 'error' 事件。
+ *
  * 错误处理（gunzip/extract 失败 → NpmInstallError('extract')）与 finish 解析对所有
  * 调用方一致，原本在 downloadAndExtract 内重复两遍。
  */
 function extractTarStream(
   tmpDir: string,
-  feedGunzip: (gunzip: NodeJS.WritableStream) => void,
+  feedGunzip: (gunzip: Gunzip, fail: (err: Error) => void) => void,
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const gunzip = createGunzip()
@@ -300,7 +303,7 @@ function extractTarStream(
       reject(new NpmInstallError('extract', `Tar extract failed: ${err.message}`))
     })
     extract.on('finish', resolve)
-    feedGunzip(gunzip)
+    feedGunzip(gunzip, reject)
     gunzip.pipe(extract as unknown as NodeJS.WritableStream)
   })
 }
@@ -334,14 +337,52 @@ async function downloadAndExtract(
   // 如果有 integrity/shasum，先完整下载到 buffer 校验，再解压
   const needsIntegrityCheck = Boolean(dist.integrity || dist.shasum)
 
+  // ── stall 兜底：body 阶段 60s 无进展 → destroy → 可重试 network 错误 ──
+  // 语义是无进展检测（data 事件刷新 timer），非总墙钟——慢速但持续的下载永不触发。
+  // timer 在 header 到达后启动（此处），窗口复用 options.timeout 单旋钮（与 header
+  // 阶段 / fetchJson body 阶段同值同源）。刷新点分路径挂载：integrity 路径无 pipe
+  // 耦合，final 单侧；流式路径 final ∪ gunzip 输出侧双挂——pipe 背压会 pause final，
+  // 慢解压 + 健康网时 final 侧静默，单挂可饿死 timer 误杀。解压阶段是本地 CPU
+  // 变换已收到的字节，无外部等待面，不覆盖。
+  const stallMs = timeout ?? DEFAULT_TIMEOUT
+  const stallError = new Error(`no data received for ${stallMs}ms (stalled connection)`)
+  let stallTriggered = false
+  let stallTimer: NodeJS.Timeout | undefined
+  let activeGunzip: Gunzip | undefined
+
+  const clearStallTimer = (): void => {
+    if (stallTimer) {
+      clearTimeout(stallTimer)
+      stallTimer = undefined
+    }
+  }
+  const destroyByStall = (): void => {
+    stallTriggered = true
+    stallTimer = undefined
+    final.destroy(stallError)
+    // 流式路径同步销毁 gunzip，防 pipe 悬挂；两侧 'error' 竞速 settle 同一 promise，
+    // 由下方 catch 统一归因（stallTriggered）收敛为 network 错误
+    activeGunzip?.destroy(stallError)
+  }
+
   try {
+    stallTimer = setTimeout(destroyByStall, stallMs)
     if (needsIntegrityCheck) {
       // 下载到内存，校验完整性，再写入 tmp 目录
       const buffer = await new Promise<Buffer>((resolve, reject) => {
         const chunks: Buffer[] = []
-        final.on('data', (chunk: Buffer) => { chunks.push(chunk) })
-        final.on('end', () => { resolve(Buffer.concat(chunks)) })
-        final.on('error', reject)
+        final.on('data', (chunk: Buffer) => {
+          chunks.push(chunk)
+          stallTimer?.refresh()
+        })
+        final.on('end', () => {
+          clearStallTimer()
+          resolve(Buffer.concat(chunks))
+        })
+        final.on('error', (err) => {
+          clearStallTimer()
+          reject(err)
+        })
       })
       verifyIntegrity(buffer, dist, packageName)
 
@@ -352,7 +393,17 @@ async function downloadAndExtract(
       })
     } else {
       // 无 integrity 信息，直接流式解压（pipe 下载流给 gunzip）
-      await extractTarStream(tmpDir, (gunzip) => {
+      await extractTarStream(tmpDir, (gunzip, fail) => {
+        activeGunzip = gunzip
+        // pipe 不转发源侧错误：final 的 'error' 必须显式接线到 reject
+        // （此前无监听，中途 ECONNRESET 即未处理 'error' 事件，进程级风险）
+        final.on('error', (err) => {
+          clearStallTimer()
+          fail(err)
+        })
+        final.on('data', () => { stallTimer?.refresh() })
+        gunzip.on('data', () => { stallTimer?.refresh() })
+        final.on('end', clearStallTimer)
         final.pipe(gunzip)
       })
     }
@@ -363,9 +414,18 @@ async function downloadAndExtract(
     }
     renameSync(tmpDir, targetDir)
   } catch (e) {
+    clearStallTimer()
     // 清理失败的 tmp 目录
     if (existsSync(tmpDir)) {
       rmSync(tmpDir, { recursive: true, force: true })
+    }
+    if (stallTriggered) {
+      // stall 触发后的任何 settle 都归因断流，对外收敛为可重试 network 错误
+      // （先到者可能是 gunzip 侧被包装的 extract 语义，此处统一覆盖）
+      throw new NpmInstallError(
+        'network',
+        `Download failed: ${stallError.message}. 👉 Retry the install once the network is available.`,
+      )
     }
     throw e
   }

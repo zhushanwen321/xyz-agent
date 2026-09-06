@@ -8,10 +8,16 @@
 pre-commit 检查，防止 store/composable/组件回退到直调底层通道。
 
 白名单（合法直调点）：
-  ws-client：
-    - api/transport.ts             传输封装层（send 的唯一真实消费者）
+  ws-client（tc-transport-consolidation D5 后形态：api/transport.ts 死代码已删，
+  extension-host 出站直连 core ws-client send——合法直调点 = 两 bridge 文件 +
+  单例装配）：
+    - composables/shell/useExtensionHostBridge.ts  bridge 直连（mountPoints.sync /
+      executeCommand 出站，D5 批准形态）
+    - composables/shell/extension-host-dialog.ts   bridge 直连（plugin.uiResponse 出站，
+      D5 批准形态）
     - api/singleton.ts             单例装配（防御性放行 send）
-    - composables/useConnection.ts 传输层（connect/disconnect/getState）
+  （u4 后 composables/useConnection.ts 已不 import 任何 ws-client 说明符——连接编排
+  经 core use-connection 直连真实模块，白名单成员资格失效，条目已删。）
   electronAPI：
     - api/ipc-transport.ts         IPC 封装层（electronAPI 的唯一真实消费者）
     - api/singleton.ts             单例装配（createIpcTransport(window.electronAPI)）
@@ -31,7 +37,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCAN_ROOT = PROJECT_ROOT / "packages" / "renderer" / "src"
 
 WS_WHITELIST = {
-    "api/transport.ts",
+    "composables/shell/useExtensionHostBridge.ts",
+    "composables/shell/extension-host-dialog.ts",
     "api/singleton.ts",
     "composables/useConnection.ts",
 }
@@ -59,7 +66,11 @@ def scan_ws() -> list[str]:
         # [HISTORICAL] __tests__/ 排除：单元测试测 ws-client.send 本身是其职责，
         # 与业务代码（store/composable/组件）直调底层通道是两回事。规则目标是
         # 防止业务侧绕过 api 门面，不是禁止测试。
-        if rel.startswith("__tests__/"):
+        # [tc-transport-consolidation u4] 排除条件从 startswith("__tests__/") 修正为
+        # 目录段匹配：嵌套 __tests__/（如 composables/shell/__tests__/）同样排除——
+        # u4 改锚后 extension-host-dialog.test 经 vi.mock 拦截 core ws-client.send，
+        # 顶级前缀匹配漏掉嵌套测试目录造成误报（与既有 [HISTORICAL] 意图一致）。
+        if rel.startswith("__tests__/") or "/__tests__/" in rel:
             continue
         text = f.read_text(encoding="utf-8")
         for ln_no, line in enumerate(text.splitlines(), 1):
@@ -83,8 +94,8 @@ def scan_ipc() -> list[str]:
         if f.suffix not in (".ts", ".vue"):
             continue
         rel = f.relative_to(SCAN_ROOT).as_posix()
-        # [HISTORICAL] __tests__/ 排除（与 scan_ws 同理，见上方注释）
-        if rel.startswith("__tests__/"):
+        # [HISTORICAL] __tests__/ 排除（与 scan_ws 同理，见上方注释；含嵌套目录段匹配）
+        if rel.startswith("__tests__/") or "/__tests__/" in rel:
             continue
         text = f.read_text(encoding="utf-8")
         for ln_no, line in enumerate(text.splitlines(), 1):

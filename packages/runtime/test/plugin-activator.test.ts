@@ -281,3 +281,268 @@ describe('external plugin activation hard lock（§6.6 激活侧，IF3）', () =
     expect(host.loadPlugin).toHaveBeenCalled()
   })
 })
+
+/**
+ * 沉默 host：postMessage 后 Worker 不回复（activate 超时路径用——回复型 mock 会在
+ * microtask 内 resolve，永远走不到超时 timer）。
+ */
+function createSilentHost(): ActivatorHost {
+  return {
+    assignWorker: vi.fn(() => Promise.resolve('worker-1')),
+    loadPlugin: vi.fn(() => Promise.resolve()),
+    getWorkerHandle: vi.fn(() => ({
+      workerId: 'worker-1',
+      postMessage: vi.fn(),
+    })),
+    terminateWorker: vi.fn(() => Promise.resolve()),
+  }
+}
+
+describe('activate 超时覆盖参数（timeout-plugin-service D4：控制面 30s 保持 + activateTimeoutMs 逃生门）', () => {
+  it('activateTimeoutMs 覆盖生效：注入小值后超时 → UNLOADED + warn 含 activateTimeoutMs 覆盖指引', async () => {
+    vi.useFakeTimers()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const activator = new PluginActivator({ activateTimeoutMs: 100 })
+      const desc = makeDescriptor({ pluginId: 'slow-activate' })
+      activator.registerDescriptors([desc])
+
+      const host = createSilentHost()
+      const pending = activator.activatePlugin('slow-activate', { type: 'onStartupFinished' }, host)
+
+      await vi.advanceTimersByTimeAsync(100)
+      await pending
+
+      expect(activator.getState('slow-activate')).toBe('UNLOADED')
+      const warns = warnSpy.mock.calls.map((c: unknown[]) => String(c[0]))
+        .filter((msg: string) => msg.includes('activate reply'))
+      expect(warns).toHaveLength(1)
+      expect(warns[0]).toContain('timed out after 100ms')
+      expect(warns[0]).toContain('activateTimeoutMs')
+    } finally {
+      warnSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('默认 30s 回归：未传 activateTimeoutMs 时 29_999ms 仍等待、30_000ms 超时 UNLOADED', async () => {
+    vi.useFakeTimers()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const activator = new PluginActivator()
+      const desc = makeDescriptor({ pluginId: 'default-timeout' })
+      activator.registerDescriptors([desc])
+
+      const host = createSilentHost()
+      const pending = activator.activatePlugin('default-timeout', { type: 'onStartupFinished' }, host)
+
+      await vi.advanceTimersByTimeAsync(29_999)
+      expect(activator.getState('default-timeout')).toBe('ACTIVATING')
+
+      await vi.advanceTimersByTimeAsync(1)
+      await pending
+
+      expect(activator.getState('default-timeout')).toBe('UNLOADED')
+      expect(warnSpy.mock.calls.map((c: unknown[]) => String(c[0]))
+        .some((msg: string) => msg.includes('timed out after 30000ms'))).toBe(true)
+    } finally {
+      warnSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('deactivate 超时不打 activateTimeoutMs 指引（D6 登记不动项维持静默）', async () => {
+    vi.useFakeTimers()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const activator = new PluginActivator()
+      const desc = makeDescriptor({ pluginId: 'silent-deact' })
+      activator.registerDescriptors([desc])
+
+      // 先用回复型 host 激活成功，再换沉默 host 停用（deactivate 回复永不到达）
+      await activator.activatePlugin('silent-deact', { type: 'onStartupFinished' }, createMockHost(activator, 'activated'))
+      expect(activator.getState('silent-deact')).toBe('ACTIVE')
+
+      const pending = activator.deactivatePlugin('silent-deact', createSilentHost())
+      await vi.advanceTimersByTimeAsync(5_000)
+      await pending
+
+      // deactivate 超时（5s）后仍完成本地清理（D6 现状），且无 activate 超时类 warn
+      expect(activator.getState('silent-deact')).toBe('UNLOADED')
+      expect(warnSpy.mock.calls.map((c: unknown[]) => String(c[0]))
+        .some((msg: string) => msg.includes('activateTimeoutMs'))).toBe(false)
+    } finally {
+      warnSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('超时后迟到的 activated 回复 miss noop：状态不被复活', async () => {
+    vi.useFakeTimers()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const activator = new PluginActivator({ activateTimeoutMs: 50 })
+      const desc = makeDescriptor({ pluginId: 'late-reply' })
+      activator.registerDescriptors([desc])
+
+      // postMessage 后手动控制回复时机：超时到期后再补发 activated 回复
+      let posted = false
+      const host: ActivatorHost = {
+        assignWorker: vi.fn(() => Promise.resolve('worker-1')),
+        loadPlugin: vi.fn(() => Promise.resolve()),
+        getWorkerHandle: vi.fn((pluginId: string) => ({
+          workerId: 'worker-1',
+          postMessage: vi.fn(() => { posted = true }),
+        })),
+        terminateWorker: vi.fn(() => Promise.resolve()),
+      }
+      const pending = activator.activatePlugin('late-reply', { type: 'onStartupFinished' }, host)
+
+      await vi.advanceTimersByTimeAsync(50)
+      await pending
+      expect(activator.getState('late-reply')).toBe('UNLOADED')
+
+      // 迟到的 activated 回复：pending 已删，miss noop，状态不复活
+      expect(posted).toBe(true)
+      activator.handleWorkerReply({ type: 'activated', pluginId: 'late-reply' })
+      expect(activator.getState('late-reply')).toBe('UNLOADED')
+    } finally {
+      warnSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+})
+
+// ── V6② crash 连坐状态守护 ─────────────────────────────────────
+// 设计 §6.5：load 超时 ≈ Worker event loop 卡死 ≈ 同宿主一切 RPC 不可响应，
+// terminate + rebuild（连带同宿主其他插件重载）与 crash 路径处理完全一致。
+// crash 链（plugin-host handleWorkerCrash → PluginService crash callback →
+// markCrashed）把同宿主插件置 CRASHED 后，激活在飞的插件其失败终态不得把
+// CRASHED 覆盖为 UNLOADED——handleWorkerRebuilt 只重载 CRASHED 态插件，
+// 覆盖会让被连坐插件在 rebuild 后被跳过（Gate B V6② 实测失败形态：同宿主
+// 正常插件未自动重载，手动 toggle 才恢复）。
+describe('crash 连坐状态守护（V6②：markCrashed 的 CRASHED 不被激活失败终态覆盖为 UNLOADED）', () => {
+  /** 一轮 microtask 清空（激活流程推进到挂起点） */
+  const flushAsync = () => new Promise<void>((r) => setImmediate(r))
+
+  it('激活在飞 loadPlugin 被拒 + markCrashed 连坐 → 终态 CRASHED（非 UNLOADED）', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const activator = new PluginActivator()
+      activator.registerDescriptors([makeDescriptor({ pluginId: 'collateral-load' })])
+
+      let rejectLoad!: (err: Error) => void
+      const host: ActivatorHost = {
+        assignWorker: vi.fn(() => Promise.resolve('worker-1')),
+        // load 挂起：模拟死循环插件卡死 Worker 后本插件 load 未获回复
+        loadPlugin: vi.fn(() => new Promise<void>((_, reject) => { rejectLoad = reject })),
+        getWorkerHandle: vi.fn(() => ({
+          workerId: 'worker-1',
+          postMessage: vi.fn(),
+        })),
+        terminateWorker: vi.fn(() => Promise.resolve()),
+      }
+
+      const pending = activator.activatePlugin('collateral-load', { type: 'onStartupFinished' }, host)
+      await flushAsync()
+      expect(host.loadPlugin).toHaveBeenCalledTimes(1)
+
+      // 同宿主 load 超时 crash 链连坐：markCrashed 先落地
+      activator.markCrashed('collateral-load')
+      rejectLoad(new Error('loadPlugin timeout for worker worker-1 after 10000ms'))
+      await pending
+
+      expect(activator.getState('collateral-load')).toBe('CRASHED')
+    } finally {
+      errSpy.mockRestore()
+    }
+  })
+
+  it('激活在飞中 crash 清理句柄（getWorkerHandle undefined）→ 终态 CRASHED（非 UNLOADED）', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const activator = new PluginActivator()
+      activator.registerDescriptors([makeDescriptor({ pluginId: 'collateral-handle' })])
+
+      let resolveLoad!: () => void
+      const host: ActivatorHost = {
+        assignWorker: vi.fn(() => Promise.resolve('worker-1')),
+        loadPlugin: vi.fn(() => new Promise<void>((resolve) => { resolveLoad = resolve })),
+        // crash 链 removeIndexEntries 后句柄已清理：激活醒来时拿不到 handle
+        getWorkerHandle: vi.fn(() => undefined),
+        terminateWorker: vi.fn(() => Promise.resolve()),
+      }
+
+      const pending = activator.activatePlugin('collateral-handle', { type: 'onStartupFinished' }, host)
+      await flushAsync()
+
+      // crash 连坐先落地，load 回复再唤醒挂起中的激活
+      activator.markCrashed('collateral-handle')
+      resolveLoad()
+      await pending
+
+      expect(activator.getState('collateral-handle')).toBe('CRASHED')
+    } finally {
+      errSpy.mockRestore()
+    }
+  })
+
+  it('激活在飞中 crash 后 activate 握手收到 error 回复 → 终态 CRASHED（非 UNLOADED）', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const activator = new PluginActivator()
+      activator.registerDescriptors([makeDescriptor({ pluginId: 'collateral-handshake' })])
+
+      let resolveLoad!: () => void
+      const host: ActivatorHost = {
+        assignWorker: vi.fn(() => Promise.resolve('worker-1')),
+        loadPlugin: vi.fn(() => new Promise<void>((resolve) => { resolveLoad = resolve })),
+        // Worker 已被 crash 链 terminate：activate 消息无人应答（postMessage 空），
+        // 握手结局由迟到 error 回复 resolve(false) 收敛（handleWorkerReply 路径）
+        getWorkerHandle: vi.fn(() => ({
+          workerId: 'worker-1',
+          postMessage: vi.fn(),
+        })),
+        terminateWorker: vi.fn(() => Promise.resolve()),
+      }
+
+      const pending = activator.activatePlugin('collateral-handshake', { type: 'onStartupFinished' }, host)
+      await flushAsync()
+
+      activator.markCrashed('collateral-handshake')
+      resolveLoad()
+      await flushAsync()
+      // 挂在 activate 握手上后，注入 error 回复（resolve(false) → 失败终态写点）
+      activator.handleWorkerReply({ type: 'error', pluginId: 'collateral-handshake', error: 'worker terminated' })
+      await pending
+
+      expect(activator.getState('collateral-handshake')).toBe('CRASHED')
+    } finally {
+      errSpy.mockRestore()
+    }
+  })
+
+  it('对照组（无 crash 连坐）：同样的 load 失败路径仍落 UNLOADED（合法语义不回退）', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const activator = new PluginActivator()
+      activator.registerDescriptors([makeDescriptor({ pluginId: 'plain-fail' })])
+
+      const host: ActivatorHost = {
+        assignWorker: vi.fn(() => Promise.resolve('worker-1')),
+        loadPlugin: vi.fn(() => Promise.reject(new Error('module not found'))),
+        getWorkerHandle: vi.fn(() => ({
+          workerId: 'worker-1',
+          postMessage: vi.fn(),
+        })),
+        terminateWorker: vi.fn(() => Promise.resolve()),
+      }
+
+      await activator.activatePlugin('plain-fail', { type: 'onStartupFinished' }, host)
+
+      expect(activator.getState('plain-fail')).toBe('UNLOADED')
+    } finally {
+      errSpy.mockRestore()
+    }
+  })
+})

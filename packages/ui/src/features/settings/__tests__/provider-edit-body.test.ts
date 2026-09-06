@@ -29,7 +29,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import type { Ref } from 'vue'
 import type {
   ProviderInfo,
@@ -112,6 +112,9 @@ function makeQuotaState(): QuotaConfigureState {
     cookieInput: ref(''),
     apiKeyInput: ref(''),
     apiKeyConfigured: ref(false),
+    workspaceInput: ref(''),
+    workspaceConfigured: ref(false),
+    needsWorkspace: ref(false),
     testStatus: ref<QuotaTestStatus>('idle'),
     testError: ref(''),
     quotaData: ref<NormalizedQuotaRow | null>(null),
@@ -127,6 +130,7 @@ function makeQuotaState(): QuotaConfigureState {
     selectFetcher: async () => {},
     saveCookie: async () => {},
     saveApiKey: async () => {},
+    saveWorkspace: async () => {},
     testQuery: async () => {},
     reset: () => {},
   }
@@ -631,5 +635,33 @@ describe('添加模型表单：reasoning 思考开关（D4）', () => {
     const added = models.find((m) => m.id === 'glm-5.4-preview')
     expect(added).toBeTruthy()
     expect(added!.reasoning).toBe(false)
+  })
+})
+
+// ══ 场景 ⑦：Coding Plan workspace 输入回写（D1-1 资源维度 fetcher 透传面）══════
+
+describe('quota workspace 输入回写注入态', () => {
+  it('CodingPlanSection 上抛 update:workspaceInput → 写回注入的 quotaWorkspaceInput ref', async () => {
+    // 捕获注入的 quota state（ProviderEditBody 透传给 CodingPlanSection 的 workspace 真源）
+    let state: QuotaConfigureState | undefined
+    quotaFactoryStub.mockImplementationOnce(() => {
+      state = makeQuotaState()
+      return state
+    })
+    wrapper = mountBody(OAUTH_P)
+    await flushPromises()
+
+    // cookie 类 + 资源维度 fetcher → CodingPlanSection 渲染 workspace 块
+    state!.isCookieAuth.value = true
+    state!.needsWorkspace.value = true
+    await nextTick()
+    const input = document.body.querySelector<HTMLInputElement>('[data-testid="quota-workspace-input"]')
+    expect(input).toBeTruthy()
+
+    input!.value = 'wrk_9'
+    input!.dispatchEvent(new Event('input'))
+    await nextTick()
+
+    expect(state!.workspaceInput.value).toBe('wrk_9')
   })
 })

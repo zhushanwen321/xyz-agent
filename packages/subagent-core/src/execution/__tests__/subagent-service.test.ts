@@ -36,18 +36,18 @@ function makeTmpAgentDir(): string {
 }
 
 function makeModelService(agentDir: string): ModelConfigService {
-  return new ModelConfigService({ agentDir });
+  return new ModelConfigService({ agentDir, cwd: agentDir });
 }
 
 function makePi(): PiLike & {
-  appendEntry: ReturnType<typeof vi.fn>;
-  events: { emit: ReturnType<typeof vi.fn> };
-  sendMessage: ReturnType<typeof vi.fn>;
+  appendEntry: ReturnType<typeof vi.fn<(customType: string, data?: unknown) => void>>;
+  events: { emit: ReturnType<typeof vi.fn<(channel: string, data: unknown) => void>> };
+  sendMessage: ReturnType<typeof vi.fn<(message: Parameters<PiLike["sendMessage"]>[0], options?: Parameters<PiLike["sendMessage"]>[1]) => void>>;
 } {
   return {
-    appendEntry: vi.fn(),
-    events: { emit: vi.fn() },
-    sendMessage: vi.fn(),
+    appendEntry: vi.fn((customType: string, data?: unknown) => {}),
+    events: { emit: vi.fn((channel: string, data: unknown) => {}) },
+    sendMessage: vi.fn(() => {}),
   };
 }
 
@@ -61,7 +61,7 @@ describe("SubagentService", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   // ============================================================
@@ -75,7 +75,7 @@ describe("SubagentService", () => {
 
     it("未 initSession 时 findRecord/cancel 抛 'pi not injected'", () => {
       const service = new SubagentService({ cwd: agentDir, modelService });
-      expect(() => service.findRecord("any")).toThrow(/pi not injected/);
+      expect(() => service.queries.findRecord("any")).toThrow(/pi not injected/);
       expect(() => service.cancel("any")).toThrow(/pi not injected/);
     });
 
@@ -83,7 +83,7 @@ describe("SubagentService", () => {
       const service = new SubagentService({ cwd: agentDir, modelService });
       service.initSession({ pi: makePi(), sessionId: "s1" });
       // findRecord 现在能过 assertReady,但 record 不存在 → 返回 undefined
-      expect(service.findRecord("missing")).toBeUndefined();
+      expect(service.queries.findRecord("missing")).toBeUndefined();
     });
 
     it("dispose 后 findRecord 抛含 'disposed' 且带恢复指引", () => {
@@ -92,8 +92,8 @@ describe("SubagentService", () => {
       const service = new SubagentService({ cwd: agentDir, modelService });
       service.initSession({ pi: makePi(), sessionId: "s1" });
       service.dispose();
-      expect(() => service.findRecord("any")).toThrow(/disposed/);
-      expect(() => service.findRecord("any")).toThrow(/session ended|session_start|new session/i);
+      expect(() => service.queries.findRecord("any")).toThrow(/disposed/);
+      expect(() => service.queries.findRecord("any")).toThrow(/session ended|session_start|new session/i);
     });
 
     it("dispose 幂等(多次调用不抛)", () => {
@@ -113,7 +113,7 @@ describe("SubagentService", () => {
       // revive
       service.initSession({ pi: makePi(), sessionId: "s2" });
       // 现在 assertReady 又通过(findRecord 返回 undefined 而非 disposed)
-      expect(service.findRecord("any")).toBeUndefined();
+      expect(service.queries.findRecord("any")).toBeUndefined();
     });
   });
 
@@ -125,7 +125,7 @@ describe("SubagentService", () => {
     it("findRecord 不存在的 id 返回 undefined", () => {
       const service = new SubagentService({ cwd: agentDir, modelService });
       service.initSession({ pi: makePi(), sessionId: "s1" });
-      expect(service.findRecord("nonexistent-id")).toBeUndefined();
+      expect(service.queries.findRecord("nonexistent-id")).toBeUndefined();
     });
 
     it("cancel 不存在的 id 返回 false(不抛错,boolean 契约不变)", () => {
@@ -140,16 +140,13 @@ describe("SubagentService", () => {
   // ============================================================
 
   describe("状态查询", () => {
-    it("listRunning 初始为空数组", () => {
-      const service = new SubagentService({ cwd: agentDir, modelService });
-      service.initSession({ pi: makePi(), sessionId: "s1" });
-      expect(service.listRunning()).toEqual([]);
-    });
+    // [D4] listRunning 已从 Service 删除（零生产调用方）——初始空态语义由
+    // collectRecords 用例与 store 层 listRunning 测试覆盖。
 
     it("collectRecords 返回数组(空 sessions 目录时为空)", () => {
       const service = new SubagentService({ cwd: agentDir, modelService });
       service.initSession({ pi: makePi(), sessionId: "s1" });
-      const records = service.collectRecords(100);
+      const records = service.queries.collectRecords(100);
       expect(Array.isArray(records)).toBe(true);
     });
 
@@ -157,7 +154,7 @@ describe("SubagentService", () => {
       const service = new SubagentService({ cwd: agentDir, modelService });
       service.initSession({ pi: makePi(), sessionId: "s1" });
       const listener = vi.fn();
-      const unsubscribe = service.onChange(listener);
+      const unsubscribe = service.queries.onChange(listener);
       expect(typeof unsubscribe).toBe("function");
       expect(() => unsubscribe()).not.toThrow();
     });
@@ -218,6 +215,7 @@ describe("SubagentService", () => {
         agent: "general-purpose",
         model: "test/model",
         mode: "background",
+        slug: "t",
         task: "long task",
         startedAt: 1_000_000,
         rootSessionId: "s1",
@@ -233,8 +231,9 @@ describe("SubagentService", () => {
       const record = createRecord(id, {
         agent: "general-purpose",
         model: "test/model",
-        mode: "sync",
+        mode: "background",
         task: "sync task",
+        slug: "test",
         startedAt: 1_000_000,
         rootSessionId: "s1",
         // sync 不传 controller → controller === undefined
@@ -250,13 +249,14 @@ describe("SubagentService", () => {
         agent: "general-purpose",
         model: "test/model",
         mode: "background",
+        slug: "t",
         task: "done task",
         startedAt: 1_000_000,
         rootSessionId: "s1",
         controller,
       });
       // 直接改 status 模拟终态（不走 CAS——测试不关心状态机，只关心 dispose 的 abort 过滤）
-      record.status = "done";
+      record.status = "closed";
       getStore(service).register(record);
       return record;
     }
@@ -362,7 +362,8 @@ describe("SubagentService", () => {
 
       const service = new SubagentService({ cwd: agentDir, modelService });
       service.initSession({ pi: makePi(), sessionId: "s1" });
-      service.setUiRequestHandler(staleHandler);
+      // [D4-④] setUiRequestHandler 已删——handler 注入走 initSession 参数（唯一入口）
+      service.initSession({ pi: makePi(), sessionId: "s1", uiRequestHandler: staleHandler });
 
       service.dispose();
 
@@ -427,6 +428,7 @@ describe("SubagentService", () => {
       try {
         await service.execute({
           task: "worktree without fork (decoupled)",
+          slug: "test",
           worktree: true,
           fork: false,
           ctxModel: { id: "ctx-model", name: "Ctx", provider: "p", reasoning: false },
@@ -443,6 +445,7 @@ describe("SubagentService", () => {
       try {
         await service.execute({
           task: "worktree with fork",
+          slug: "test",
           worktree: true,
           fork: true,
           ctxModel: { id: "ctx-model", name: "Ctx", provider: "p", reasoning: false },
@@ -460,6 +463,7 @@ describe("SubagentService", () => {
       try {
         await service.execute({
           task: "default path",
+          slug: "test",
           worktree: false,
           fork: false,
           ctxModel: { id: "ctx-model", name: "Ctx", provider: "p", reasoning: false },
@@ -473,7 +477,7 @@ describe("SubagentService", () => {
     // ============================================================
     // create-await 竞态守卫（Phase 2）：create 的 await 窗口内 dispose/cancel
     // 可把 record CAS 成 closed——守卫须主动 cleanup + early-failed 返回，不 kickOff。
-    // 实现约束固化：「赋值 record.worktreeHandle → 终态检查 → kickOffBackground」
+    // 实现约束固化：「赋值 record.worktreeHandle → 终态检查 → 轮次 kick-off」
     // 必须同一同步段（中间禁止 await），本用例即该不变量的回归锚点。
     // ============================================================
     it("守卫：create await 窗口内 dispose 抢先 → cleanup 被调 + early-failed 返回（不 kickOff）", async () => {
@@ -487,12 +491,13 @@ describe("SubagentService", () => {
       }) as Parameters<WorktreeManager["cleanup"]>[0];
       let resolveCreate!: (h: unknown) => void;
       vi.spyOn(wtm, "create").mockImplementation(
-        () => new Promise((r) => { resolveCreate = r; }) as ReturnType<WorktreeManager["create"]>,
+        () => new Promise<unknown>((r) => { resolveCreate = r; }) as ReturnType<WorktreeManager["create"]>,
       );
       const cleanupSpy = vi.spyOn(wtm, "cleanup").mockResolvedValue(undefined);
 
       const execP = service.execute({
         task: "guard test",
+        slug: "test",
         worktree: true,
         fork: false,
         ctxModel: { id: "ctx-model", name: "Ctx", provider: "p", reasoning: false },
@@ -529,7 +534,7 @@ describe("SubagentService", () => {
   //
   // [未覆盖路径] 需 mock spawn 才能跑完 runSpawn 的路径，本文件约定不 mock spawn
   // （见文件头——execute 集成测试在 execute-nesting.test.ts / run-spawn-integration.test.ts）：
-  //   - finalizeRecord status="done"（sync/background 正常完成 → unregister(done)）
+  //   - finalizeRecord status="closed"（background 正常完成 → unregister(closed)）
   //   - finalizeRecord status="cancelled" 经 runAndFinalize 路径（cancel 抢先 CAS 时
   //     runAndFinalize 侧 tryTransition 失败跳过 finalizeRecord，由 cancelBackground 侧 emit——
   //     本块 cancel 用例覆盖的即此后端 emit）
@@ -572,6 +577,7 @@ describe("SubagentService", () => {
         agent: "general-purpose",
         model: "test/model",
         mode: "background",
+        slug: "t",
         task: "cancel target",
         startedAt: 1_000_000,
         rootSessionId: "s1",
@@ -588,12 +594,13 @@ describe("SubagentService", () => {
 
       const handle = await service.execute({
         task: "wt fail bg",
+        slug: "test",
         worktree: true,
         fork: true,
         ctxModel,
       });
 
-      // worktree create 抛错在 kickOffBackground 之前（execute 同步 catch），返回 background 形状
+      // worktree create 抛错在轮次 kick-off 之前（executeViaEngine 同步 catch），返回 background 形状
       expect(handle.mode).toBe("background");
 
       // createRecordForMode 生成的 subagentId 带 sa- 前缀（sa-<uuid>）
@@ -670,7 +677,7 @@ describe("SubagentService", () => {
       injectRunningBackground(service, "bg-running-1");
       injectRunningBackground(service, "bg-running-2");
       const terminal = injectRunningBackground(service, "bg-done");
-      terminal.status = "done"; // 模拟终态，dispose 不应为其 emit
+      terminal.status = "closed"; // 模拟终态，dispose 不应为其 emit
 
       service.dispose();
 
@@ -704,7 +711,7 @@ describe("ModelConfigService ctxModel 缓存", () => {
     agentDir = makeTmpAgentDir();
   });
   afterEach(() => {
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   /** 最小 mock registry:空可用列表(ctxModel 路径不需要 lookup)。 */

@@ -153,7 +153,7 @@ export class Trace {
   /**
  * 按 stepIndex 移除节点（崩溃重建清理在飞 call 用）。
  *
- * 正常运行不调用（append-only 不变式）。仅 error-recovery 的 discardInFlightCalls
+ * 正常运行不调用（append-only 不变式）。仅 worker-message-pump 的 discardInFlightCalls
  * （rebuildRuntime 内，F2）清理被旧 runtime abort 的在飞 call 时用——移除其 trace
  * 节点，让重跑重发 agent-call 时 append 全新节点走全新执行路径（避免 stale
  * "running" 节点残留 + trace.update 命中旧节点导致新节点 orphan）。

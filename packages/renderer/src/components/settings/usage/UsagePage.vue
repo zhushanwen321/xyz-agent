@@ -231,7 +231,7 @@ import { ref, computed, onMounted, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Loader2, BarChart3 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { getUsageStats } from '@/api/domains/usage'
+import { getUsageStats } from '@xyz-agent/core/transport/api/domains/usage'
 import type { UsageStatsResult } from '@xyz-agent/shared'
 
 import UsageLedger from './UsageLedger.vue'

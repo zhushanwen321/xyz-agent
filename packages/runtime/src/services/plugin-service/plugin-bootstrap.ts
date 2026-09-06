@@ -114,86 +114,91 @@ if (parentPort) {
 
 export async function handleMessage(msg: HostToWorkerMessage): Promise<void> {
   switch (msg.type) {
-    case 'load': {
-      try {
-        // sandbox 模式下初始化 require 拦截（S1-W3：msg.pluginPath 是入口文件路径，
-        // CJS 拦截器的边界判定需要插件根目录——与 fork env 注入处（plugin-host-process）
-        // 同款 dirname 修正，两处各自在「宿主传入点→边界判定消费点」的转换处完成）
-        if (msg.trustLevel === 'sandbox') {
-          initSandbox(pathDirname(msg.pluginPath))
-        }
+    case 'load':
+      return handleLoad(msg)
+    case 'activate':
+      return handleActivate(msg)
+    case 'deactivate':
+      return handleDeactivate(msg)
+    case 'rpc':
+      return handleRpcMessage(msg)
+  }
+}
 
-        const moduleUrl = pathToFileURL(msg.pluginPath).href
-        const mod = (await import(moduleUrl)) as PluginModule
-        loadedModules.set(msg.pluginId, mod)
-        post({ type: 'loaded', pluginId: msg.pluginId })
-      } catch (e: unknown) {
-        post({ type: 'error', pluginId: msg.pluginId, error: String(e) })
-      }
-      break
+async function handleLoad(msg: Extract<HostToWorkerMessage, { type: 'load' }>): Promise<void> {
+  try {
+    // sandbox 模式下初始化 require 拦截（S1-W3：msg.pluginPath 是入口文件路径，
+    // CJS 拦截器的边界判定需要插件根目录——与 fork env 注入处（plugin-host-process）
+    // 同款 dirname 修正，两处各自在「宿主传入点→边界判定消费点」的转换处完成）
+    if (msg.trustLevel === 'sandbox') {
+      initSandbox(pathDirname(msg.pluginPath))
     }
 
-    case 'activate': {
-      const mod = loadedModules.get(msg.pluginId)
-      if (!mod) {
-        post({ type: 'error', pluginId: msg.pluginId, error: 'Module not loaded' })
-        break
-      }
-      try {
-        const context = createPluginContext(msg.pluginId, msg.pluginDir)
-        await mod.activate(context)
-        post({ type: 'activated', pluginId: msg.pluginId })
-      } catch (e: unknown) {
-        post({ type: 'error', pluginId: msg.pluginId, error: String(e) })
-      }
-      break
-    }
+    const moduleUrl = pathToFileURL(msg.pluginPath).href
+    const mod = (await import(moduleUrl)) as PluginModule
+    loadedModules.set(msg.pluginId, mod)
+    post({ type: 'loaded', pluginId: msg.pluginId })
+  } catch (e: unknown) {
+    post({ type: 'error', pluginId: msg.pluginId, error: String(e) })
+  }
+}
 
-    case 'deactivate': {
-      const mod = loadedModules.get(msg.pluginId)
-      if (mod?.deactivate) {
-        try {
-          await mod.deactivate()
-        } catch (e: unknown) {
-          // deactivate 失败时发送 error 而非 deactivated
-          post({ type: 'error', pluginId: msg.pluginId, error: String(e) })
-          break
-        }
-      }
-      // P-1：deactivate 成功后清理该插件全部本地 hook handler + 摘除执行器——
-      // 与主线程 togglePlugin(false) 清 hookRegistry 对偶，禁用插件的 hook 不再执行
-      disposePluginHooks(msg.pluginId)
-      // Fix-7：对偶清理本地 tool handler——与主线程清 toolRegistry 对称，
-      // 禁用插件的工具 handler 不残留（迟到的 tool.execute 落「handler not found」）
-      disposePluginTools(msg.pluginId)
-      post({ type: 'deactivated', pluginId: msg.pluginId })
-      break
-    }
+async function handleActivate(msg: Extract<HostToWorkerMessage, { type: 'activate' }>): Promise<void> {
+  const mod = loadedModules.get(msg.pluginId)
+  if (!mod) {
+    post({ type: 'error', pluginId: msg.pluginId, error: 'Module not loaded' })
+    return
+  }
+  try {
+    const context = createPluginContext(msg.pluginId, msg.pluginDir)
+    await mod.activate(context)
+    post({ type: 'activated', pluginId: msg.pluginId })
+  } catch (e: unknown) {
+    post({ type: 'error', pluginId: msg.pluginId, error: String(e) })
+  }
+}
 
-    case 'rpc': {
-      if (msg.response) {
-        rpcClient.handleResponse(msg.response)
-      }
-      if (msg.notification) {
-        rpcClient.handleNotification(msg.notification)
-        // D2-2 observe 快捷路径：主线程 observe 类 hook 经无 id 通知到达，直接执行
-        // handler，fire-and-forget（不产生响应，零往返）。handler 抛错按「异常放行」
-        // 语义记 Worker 侧日志丢弃。
-        if (msg.notification.method === 'plugin.hooks.invoke') {
-          executeHookRequest(msg.notification.params).catch((e: unknown) => {
-            console.error('[plugin-bootstrap] hook notification handler error:', toErrorMessage(e))
-          })
-        }
-      }
-      if (msg.request) {
-        // P-8：handleIncomingRequest 分支内已逐分支兜底，这里再挂一层 catch 防御
-        // 未来新增分支遗漏导致的 unhandled rejection
-        handleIncomingRequest(msg.request).catch((e: unknown) => {
-          console.error('[plugin-bootstrap] incoming request failed:', toErrorMessage(e))
-        })
-      }
-      break
+async function handleDeactivate(msg: Extract<HostToWorkerMessage, { type: 'deactivate' }>): Promise<void> {
+  const mod = loadedModules.get(msg.pluginId)
+  if (mod?.deactivate) {
+    try {
+      await mod.deactivate()
+    } catch (e: unknown) {
+      // deactivate 失败时发送 error 而非 deactivated
+      post({ type: 'error', pluginId: msg.pluginId, error: String(e) })
+      return
     }
+  }
+  // P-1：deactivate 成功后清理该插件全部本地 hook handler + 摘除执行器——
+  // 与主线程 togglePlugin(false) 清 hookRegistry 对偶，禁用插件的 hook 不再执行
+  disposePluginHooks(msg.pluginId)
+  // Fix-7：对偶清理本地 tool handler——与主线程清 toolRegistry 对称，
+  // 禁用插件的工具 handler 不残留（迟到的 tool.execute 落「handler not found」）
+  disposePluginTools(msg.pluginId)
+  post({ type: 'deactivated', pluginId: msg.pluginId })
+}
+
+function handleRpcMessage(msg: Extract<HostToWorkerMessage, { type: 'rpc' }>): void {
+  if (msg.response) {
+    rpcClient.handleResponse(msg.response)
+  }
+  if (msg.notification) {
+    rpcClient.handleNotification(msg.notification)
+    // D2-2 observe 快捷路径：主线程 observe 类 hook 经无 id 通知到达，直接执行
+    // handler，fire-and-forget（不产生响应，零往返）。handler 抛错按「异常放行」
+    // 语义记 Worker 侧日志丢弃。
+    if (msg.notification.method === 'plugin.hooks.invoke') {
+      executeHookRequest(msg.notification.params).catch((e: unknown) => {
+        console.error('[plugin-bootstrap] hook notification handler error:', toErrorMessage(e))
+      })
+    }
+  }
+  if (msg.request) {
+    // P-8：handleIncomingRequest 分支内已逐分支兜底，这里再挂一层 catch 防御
+    // 未来新增分支遗漏导致的 unhandled rejection
+    handleIncomingRequest(msg.request).catch((e: unknown) => {
+      console.error('[plugin-bootstrap] incoming request failed:', toErrorMessage(e))
+    })
   }
 }
 

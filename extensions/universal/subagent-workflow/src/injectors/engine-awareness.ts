@@ -10,13 +10,24 @@
 // 只改注入不改路由会出现「prompt 说引擎 B、实际派发跑引擎 A」，权威信息源说谎）
 // → sendMessage 对话流通知（D3/D4，短文案不含任何模型清单）→ 更新 lastEngine。
 //
-// 本模块是无状态纯编排（依赖注入式，可测）；状态（lastEngine）与宿主能力
-// （readConfig / applyRead / sendMessage）由 index.ts engine handler 装配注入。
+// 本模块的编排核心（runEngineAwarenessTurn）是无状态纯编排（依赖注入式，可测）；
+// 生产装配在下方 setupEngineAwarenessInjector（D7-④：接线从 index.ts 内联第 4 处
+// 收编至此，与另三个 injector 的 setup* 同形）——lastEngine 的 per-session 存取经
+// 参数注入（index.ts sessionState 装配），其余宿主能力（readConfig / applyRead /
+// sendMessage）在装配函数内组装。
 
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import type {
+  BeforeAgentStartEvent,
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
-import type { GlobalConfigReadResult } from "@zhushanwen/subagent-core/execution/config.ts";
-import { DEFAULT_ENGINE_ID, normalizeEngineId } from "@zhushanwen/subagent-core/execution/engine/registry.ts";
+import { readGlobalConfig, type GlobalConfigReadResult } from "@zhushanwen/subagent-core";
+import { DEFAULT_ENGINE_ID, normalizeEngineId } from "@zhushanwen/subagent-core";
+import { buildEngineModelsPromptAppend, buildSubagentEngineSection } from "@zhushanwen/subagent-core";
+import { getModelConfigService } from "@zhushanwen/subagent-core";
 
 const logger = getLogger("subagents");
 
@@ -116,4 +127,69 @@ export function runEngineAwarenessTurn(deps: EngineAwarenessDeps): EngineAwarene
     `[engine-awareness] default engine changed: ${last} -> ${target} (route reloaded, notice sent)`,
   );
   return { outcome: "changed", from: last, to: target };
+}
+
+// ── 生产装配（D7-④：接线从 index.ts 内联收编为统一 setup 函数）─────────────
+//
+// 注册链尾 before_agent_start handler：per-turn 检测编排 + 恒在状态段/引擎清单段
+// 渲染。原 index.ts 内联第 4 处接线（[engine-awareness U3] 标记区域）收编于此——
+// index.ts 的注入链序由四个 setup 调用（subagents → workflows → provider models →
+// engine）的先后表达，不再靠内联闭包 + 注释维护。
+//
+// 编排依据（自 index.ts 随迁的设计注释）：
+// - sendMessage 不设 triggerTurn（D3）——切换是用户主动行为，无需唤醒 AI 立即行动；
+//   P1 探针已证此形态消息进入本 turn LLM 上下文（证据：真机 pi rpc payload dump +
+//   0.84.4 dist sendMessage→_appendCustomMessage→agent.state.messages.push→
+//   createContextSnapshot 调用链）。
+// - 段序：状态段在前（文案声明 "listed ... below"），清单段在后；provider models 段
+//   由更早注册的 handler 注入、位于上方——本 handler 恒链尾注册（D7：段内容变化只断
+//   system prompt 尾部 cache 前缀）。apply 后 getGlobalConfig() 即新值——通知、状态段、
+//   路由三处同 turn 对齐（G2）。
+// - fail-safe：任何异常不注入不阻塞 agent loop；service 未装配（null）或
+//   systemPrompt 非 string 同样静默跳过。
+
+/** per-session lastEngine 存取（生产装配由 index.ts sessionState 提供）。 */
+export interface EngineAwarenessSessionAccessors {
+  /** per-session lastEngine 读取（undefined = 未基线化，D1b）。 */
+  getLastEngine(sessionId: string): string | undefined;
+  /** per-session lastEngine 写入（仅合法引擎 id，不写 undefined）。 */
+  setLastEngine(sessionId: string, engine: string): void;
+}
+
+/**
+ * 注册引擎感知 before_agent_start handler（链尾）。
+ *
+ * 每 turn：① runEngineAwarenessTurn 检测编排（§2.3 数据流 ①② 步）；② 恒在状态段
+ * <current_subagent_engine>（D6）+ 引擎清单段 <available_<engine>_models> 渲染追加
+ * （③ 渲染归本函数）。渲染拼装 = 状态段 + 清单段、空段剔除、\n\n 连接、尾部追加
+ * （engine-section-stability.test.ts 的链模拟复刻此形态，源码锚点断言保真）。
+ */
+export function setupEngineAwarenessInjector(
+  pi: ExtensionAPI,
+  session: EngineAwarenessSessionAccessors,
+): void {
+  pi.on("before_agent_start", (event: BeforeAgentStartEvent, ctx: ExtensionContext) => {
+    try {
+      const service = getModelConfigService();
+      if (service === null || typeof event.systemPrompt !== "string") return undefined;
+      const sid = ctx.sessionManager.getSessionId();
+      runEngineAwarenessTurn({
+        readConfig: () => readGlobalConfig(getAgentDir()),
+        applyRead: (read) => service.applyGlobalConfig(read),
+        sendMessage: (message) => {
+          // D3：不设 triggerTurn——切换是用户主动行为，无需唤醒 AI 立即行动
+          pi.sendMessage(message, {});
+        },
+        getLastEngine: () => session.getLastEngine(sid),
+        setLastEngine: (engine) => session.setLastEngine(sid, engine),
+      });
+      const defaultEngine = service.getGlobalConfig().defaultEngine;
+      const append = [buildSubagentEngineSection(defaultEngine), buildEngineModelsPromptAppend(defaultEngine)]
+        .filter((part) => part !== "")
+        .join("\n\n");
+      return { systemPrompt: `${event.systemPrompt}\n\n${append}` };
+    } catch {
+      return undefined;
+    }
+  });
 }

@@ -10,7 +10,7 @@ import {
   disarmIdleTimer,
   _resetLifecycleState,
 } from "../lifecycle-manager.ts";
-import { spawnedChildren } from "../session-runner.ts";
+import { spawnedChildren } from "../engine/engines/pi/session-runner.ts";
 import type { ChildProcess } from "node:child_process";
 import type { ExecutionRecord } from "../types.ts";
 
@@ -25,7 +25,6 @@ function makeRecord(overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
     thinkingLevel: undefined,
     mode: "background",
     task: "test",
-    slug: "test",
     startedAt: Date.now(),
     rootSessionId: "root",
     parentRecordId: undefined,

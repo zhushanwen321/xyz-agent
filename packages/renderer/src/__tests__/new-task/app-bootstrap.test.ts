@@ -179,13 +179,10 @@ describe('App 启动编排（initApp：连接建立后始终进 landing 落地�
       }),
     )
     const initPromise = useSidebar().initApp()
-    // 让 newSession()（同步进 landing）的微任务跑完，但 loadSessions() 仍 pending（await 未返回）。
-    // 新轨 initApp 在 newSession 前多一步 await projectStore.init（D14 归属约束），需推进其
-    // 微任务 startFlow 才进 landing；生产环境 Landing onMounted 有 idle 兜底 startFlow
-    // （双入口幂等），真实场景 state=idle 窗口不存在——本测试不挂载 Landing，仅验 initApp 入口。
-    for (let i = 0; i < 50 && useNewTaskFlow().state.value === 'idle'; i++) {
-      await Promise.resolve()
-    }
+    // 让 newSession()（同步进 landing）前的编排微任务跑完（useSidebar.initApp 在 newSession 前
+    // 多一个 await projectStore.init()——D14 归属透传时序，多 flush 数轮），但 loadSessions() 仍
+    // pending（deferred list 未 resolve，await 未返回）
+    for (let i = 0; i < 10; i++) await Promise.resolve()
 
     const flow = useNewTaskFlow()
     // 核心：loadSessions 仍在途，但 state 已离开 idle 进 landing → chip 可点不抛错

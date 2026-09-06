@@ -79,10 +79,10 @@ export class SessionScanner {
       isBareWorkspace: detectBareWorkspaceCached(s.cwd),
       status: (outcome ?? 'idle') as SessionStatus,
       lastActiveAt: s.lastModified,
-      // W15 占位语义显式化：扫描读不出 modelId/tokenCount 真值，''/0 是占位而非权威空值。
+      // modelId 来自 scanSessionMeta 第七读的 .model.json sidecar（scan 占位语义）。
       // source:'scan' 标记让合并侧（core mergeViewSnapshot 守卫）能按来源分流——扫描占位
       // 空值不覆盖实例/广播真值（#2 空串覆盖事故防线）；owner 快照的显式空值不受此守卫。
-      modelId: '',
+      modelId: s.modelId ?? '',
       tokenCount: 0,
       source: 'scan',
       sessionFile: s.filePath,
@@ -97,6 +97,7 @@ export class SessionScanner {
       // 透传 agent binding（scanSessionMeta 第六读，同缓存契约）。
       spawnSource: s.spawnSource,
       parentAgentSessionId: s.parentAgentSessionId,
+      thinkingLevel: s.thinkingLevel,
     }
   }
 }

@@ -6,7 +6,7 @@ import type { ExtensionAPI, ExtensionContext, Theme, ThemeColor } from "@earendi
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
-import type { PlanSessionMap } from "./state.js";
+import type { PlanSessionMap, PlanState } from "./state.js";
 import { getPlanState, persistPlanState, resetPlanState } from "./state.js";
 import { listTemplates, loadTemplate } from "./templates.js";
 import { updatePlanWidget } from "./widget.js";
@@ -171,6 +171,172 @@ function renderPlanResult(
   }
 }
 
+// ── Action executors (one per switch case) ─────────────────────────
+
+/** Execute result envelope (shared shape returned by every action). */
+interface ActionResult {
+  content: Array<{ type: "text"; text: string }>;
+  details: PlanDetails;
+}
+
+function executeListTemplate(projectDir: string): ActionResult {
+  const templates = listTemplates(projectDir);
+  return {
+    content: [{ type: "text" as const, text: `${templates.length} templates available` }],
+    details: { action: "list-template", templates },
+  };
+}
+
+function executeSelectTemplate(
+  pi: ExtensionAPI,
+  params: Record<string, unknown>,
+  state: PlanState,
+  projectDir: string,
+): ActionResult {
+  const templateName = params.templateName as string;
+  if (!templateName) {
+    throw new Error("templateName is required for select-template");
+  }
+  const content = loadTemplate(templateName, projectDir);
+  if (!content) {
+    throw new Error(`Template not found: ${templateName}`);
+  }
+  state.templateName = templateName;
+  state.phase = "writing";
+  persistPlanState(pi, state);
+  return {
+    content: [{ type: "text" as const, text: `Template selected: ${templateName}` }],
+    details: { action: "select-template", templateName, content, phase: state.phase },
+  };
+}
+
+function executeCreateTemplate(params: Record<string, unknown>, projectDir: string): ActionResult {
+  const templateName = params.templateName as string;
+  const templateContent = params.templateContent as string;
+  if (!templateName || !templateContent) {
+    throw new Error("templateName and templateContent are required for create-template");
+  }
+  const sanitizedName = templateName.replace(/[^a-zA-Z0-9_-]/g, "");
+  if (!sanitizedName) {
+    throw new Error("Invalid template name: must contain alphanumeric characters");
+  }
+  const templateDir = path.join(projectDir, ".pi", "plan-templates");
+  fs.mkdirSync(templateDir, { recursive: true });
+  const filePath = path.join(templateDir, `${sanitizedName}.md`);
+  fs.writeFileSync(filePath, templateContent);
+  return {
+    content: [{ type: "text" as const, text: `Template created: ${sanitizedName}` }],
+    details: {
+      action: "create-template",
+      templateName: sanitizedName,
+      templateDir: relativePath(filePath, projectDir),
+    },
+  };
+}
+
+function executeAbort(
+  pi: ExtensionAPI,
+  sessions: PlanSessionMap,
+  sessionId: string,
+  ctx: ExtensionContext,
+): ActionResult {
+  const updatedState = resetPlanState(pi, sessions, sessionId, ctx);
+  updatePlanWidget(ctx, updatedState);
+  restoreFullToolSet(pi);
+  return {
+    content: [{ type: "text" as const, text: "Plan mode aborted. Full tool access restored." }],
+    details: { action: "abort" },
+  };
+}
+
+/** Build execution options filtered by available capabilities. */
+async function buildExecOptions(pi: ExtensionAPI): Promise<string[]> {
+  const execOptions = ["Subagent-driven execution"];
+  const hasGoal = (await import("./compact.js")).detectGoalCapability(pi);
+  if (hasGoal) execOptions.push("Goal-driven execution (/goal)");
+  execOptions.push("Single-agent (current session)");
+  execOptions.push("Modify the plan first", "Save for later");
+  return execOptions;
+}
+
+/** Map the user's execution-method choice to the chosenMode string. */
+function chosenModeFromChoice(choice: string): string {
+  if (choice === "Subagent-driven execution") return "subagent";
+  if (choice === "Goal-driven execution (/goal)") return "goal";
+  return "single-agent";
+}
+
+/** Outcome of the complete-action execution-method prompt. */
+type CompleteChoiceOutcome =
+  | { kind: "cancelled"; result: ActionResult }
+  | { kind: "mode"; chosenMode: string };
+
+/**
+ * Prompt the user for an execution method (no-op selection when headless).
+ * Cancel / "Modify the plan first" / "Save for later" → cancelled with a
+ * complete-cancelled result; otherwise the mapped chosenMode.
+ */
+async function resolveCompleteChoice(ctx: ExtensionContext, pi: ExtensionAPI): Promise<CompleteChoiceOutcome> {
+  const execOptions = await buildExecOptions(pi);
+
+  if (typeof ctx.ui.select !== "function") {
+    return { kind: "mode", chosenMode: "single-agent" };
+  }
+  const choice = await ctx.ui.select("Plan is ready. Choose execution method:", execOptions);
+  if (!choice || choice === "Modify the plan first" || choice === "Save for later") {
+    return {
+      kind: "cancelled",
+      result: {
+        content: [
+          { type: "text" as const, text: `User chose: ${choice ?? "cancelled"}. Staying in plan mode.` },
+        ],
+        details: { action: "complete-cancelled", reason: choice ?? "cancelled" },
+      },
+    };
+  }
+  return { kind: "mode", chosenMode: chosenModeFromChoice(choice) };
+}
+
+/** complete action: prompt for execution mode, persist final phase, restore tools, reset state. */
+async function executeComplete(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  params: Record<string, unknown>,
+  state: PlanState,
+  sessions: PlanSessionMap,
+  sessionId: string,
+  projectDir: string,
+): Promise<ActionResult> {
+  const choice = await resolveCompleteChoice(ctx, pi);
+  if (choice.kind === "cancelled") {
+    return choice.result;
+  }
+  const chosenMode = choice.chosenMode;
+
+  // Persist final phase before cleanup
+  const planFilePath = state.planFilePath;
+  const isolation = (params.isolation as string) ?? "direct";
+  state.phase = "complete";
+  persistPlanState(pi, state);
+
+  // Restore full tool set
+  restoreFullToolSet(pi);
+
+  // Execute completion handler (compact/tree setup)
+  const { handlePlanComplete } = await import("./compact.js");
+  handlePlanComplete(pi, ctx, state, isolation, chosenMode);
+
+  // Reset state and clear widget — same as abort
+  const updatedState = resetPlanState(pi, sessions, sessionId, ctx);
+  updatePlanWidget(ctx, updatedState);
+
+  const displayPath = relativePath(planFilePath, projectDir);
+  return {
+    content: [{ type: "text" as const, text: `Plan approved. File: ${displayPath}` }],
+    details: { action: "complete", planFilePath: displayPath, isolation, execMode: chosenMode },
+  };
+}
+
 // ── Register tool ──────────────────────────────────────────────────
 
 export function registerPlanTool(
@@ -240,113 +406,20 @@ export function registerPlanTool(
       const projectDir = ctx.cwd;
 
       switch (action) {
-        case "list-template": {
-          const templates = listTemplates(projectDir);
-          return {
-            content: [{ type: "text" as const, text: `${templates.length} templates available` }],
-            details: { action: "list-template", templates },
-          };
-        }
+        case "list-template":
+          return executeListTemplate(projectDir);
 
-        case "select-template": {
-          const templateName = params.templateName as string;
-          if (!templateName) {
-            throw new Error("templateName is required for select-template");
-          }
-          const content = loadTemplate(templateName, projectDir);
-          if (!content) {
-            throw new Error(`Template not found: ${templateName}`);
-          }
-          state.templateName = templateName;
-          state.phase = "writing";
-          persistPlanState(pi, state);
-          return {
-            content: [{ type: "text" as const, text: `Template selected: ${templateName}` }],
-            details: { action: "select-template", templateName, content, phase: state.phase },
-          };
-        }
+        case "select-template":
+          return executeSelectTemplate(pi, params, state, projectDir);
 
-        case "create-template": {
-          const templateName = params.templateName as string;
-          const templateContent = params.templateContent as string;
-          if (!templateName || !templateContent) {
-            throw new Error("templateName and templateContent are required for create-template");
-          }
-          const sanitizedName = templateName.replace(/[^a-zA-Z0-9_-]/g, "");
-          if (!sanitizedName) {
-            throw new Error("Invalid template name: must contain alphanumeric characters");
-          }
-          const templateDir = path.join(projectDir, ".pi", "plan-templates");
-          fs.mkdirSync(templateDir, { recursive: true });
-          const filePath = path.join(templateDir, `${sanitizedName}.md`);
-          fs.writeFileSync(filePath, templateContent);
-          return {
-            content: [{ type: "text" as const, text: `Template created: ${sanitizedName}` }],
-            details: {
-              action: "create-template",
-              templateName: sanitizedName,
-              templateDir: relativePath(filePath, projectDir),
-            },
-          };
-        }
+        case "create-template":
+          return executeCreateTemplate(params, projectDir);
 
-        case "complete": {
-          // Build execution options filtered by available capabilities
-          const execOptions = ["Subagent-driven execution"];
-          const hasGoal = (await import("./compact.js")).detectGoalCapability(pi);
-          if (hasGoal) execOptions.push("Goal-driven execution (/goal)");
-          execOptions.push("Single-agent (current session)");
-          execOptions.push("Modify the plan first", "Save for later");
+        case "complete":
+          return await executeComplete(pi, ctx, params, state, sessions, sessionId, projectDir);
 
-          let chosenMode = "single-agent";
-          if (typeof ctx.ui.select === "function") {
-            const choice = await ctx.ui.select("Plan is ready. Choose execution method:", execOptions);
-            if (!choice || choice === "Modify the plan first" || choice === "Save for later") {
-              return {
-                content: [
-                  { type: "text" as const, text: `User chose: ${choice ?? "cancelled"}. Staying in plan mode.` },
-                ],
-                details: { action: "complete-cancelled", reason: choice ?? "cancelled" },
-              };
-            }
-            if (choice === "Subagent-driven execution") chosenMode = "subagent";
-            else if (choice === "Goal-driven execution (/goal)") chosenMode = "goal";
-            else chosenMode = "single-agent";
-          }
-
-          // Persist final phase before cleanup
-          const planFilePath = state.planFilePath;
-          const isolation = (params.isolation as string) ?? "direct";
-          state.phase = "complete";
-          persistPlanState(pi, state);
-
-          // Restore full tool set
-          restoreFullToolSet(pi);
-
-          // Execute completion handler (compact/tree setup)
-          const { handlePlanComplete } = await import("./compact.js");
-          handlePlanComplete(pi, ctx, state, isolation, chosenMode);
-
-          // Reset state and clear widget — same as abort
-          const updatedState = resetPlanState(pi, sessions, sessionId, ctx);
-          updatePlanWidget(ctx, updatedState);
-
-          const displayPath = relativePath(planFilePath, projectDir);
-          return {
-            content: [{ type: "text" as const, text: `Plan approved. File: ${displayPath}` }],
-            details: { action: "complete", planFilePath: displayPath, isolation, execMode: chosenMode },
-          };
-        }
-
-        case "abort": {
-          const updatedState = resetPlanState(pi, sessions, sessionId, ctx);
-          updatePlanWidget(ctx, updatedState);
-          restoreFullToolSet(pi);
-          return {
-            content: [{ type: "text" as const, text: "Plan mode aborted. Full tool access restored." }],
-            details: { action: "abort" },
-          };
-        }
+        case "abort":
+          return executeAbort(pi, sessions, sessionId, ctx);
       }
     },
   });

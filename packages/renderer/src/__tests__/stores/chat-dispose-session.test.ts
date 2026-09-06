@@ -38,7 +38,7 @@ describe('chat store disposeSession（W1：清理 per-session 全部状态）', 
     store.hydrate(sid, [makeMessage('m1')])
     store.addPendingSend(sid)
     store.setCompacting(sid, true)
-    store.armStreamingTimer(sid)
+    store.testInternals.armStreamingTimer(sid)
     // retryStates / queueStates 需通过 applyMessageEvent 写入，此处验证清空用 get 判 undefined
     store.markHistoryFailed(sid)
 

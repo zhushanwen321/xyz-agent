@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
-vi.mock('@/api/domains/session', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({
   switchSession: vi.fn().mockResolvedValue(undefined),
   getCommands: vi.fn().mockResolvedValue({ commands: [] }),
   getContext: vi.fn().mockResolvedValue({}),
@@ -28,7 +28,7 @@ vi.mock('@/api/domains/session', () => ({
 const { chatStreamSubscribeMock } = vi.hoisted(() => ({
   chatStreamSubscribeMock: vi.fn(() => () => {}),
 }))
-vi.mock('@/api/domains/chat', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/chat', () => ({
   send: vi.fn().mockResolvedValue(undefined),
   abort: vi.fn().mockResolvedValue(undefined),
   steer: vi.fn().mockResolvedValue(undefined),
@@ -45,12 +45,12 @@ vi.mock('@/api/domains/chat', () => ({
 // 门面重定向：store 经 @/api 导入 session/chat，需指向上面 mock 的命名空间
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
-  const session = await import('@/api/domains/session')
-  const chat = await import('@/api/domains/chat')
+  const session = await import('@xyz-agent/core/transport/api/domains/session')
+  const chat = await import('@xyz-agent/core/transport/api/domains/chat')
   return { ...actual, session, chat }
 })
 
-vi.mock('@/api/events', () => ({
+vi.mock('@xyz-agent/core/transport/api', () => ({
   on: vi.fn(() => () => {}),
   onGlobalType: vi.fn(() => () => {}),
   dispatchSession: vi.fn(),
@@ -65,8 +65,8 @@ vi.mock('@/composables/useMessageBusSubscription', () => ({
 }))
 
 // file tree 依赖（selectSession 会调 loadTree——保留，文件树不在 stateSnapshot 覆盖范围）
-vi.mock('@/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
-vi.mock('@/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
+vi.mock('@xyz-agent/core/transport/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
+vi.mock('@xyz-agent/core/transport/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
 
 import { session as sessionApi, chat as chatApi } from '@/api'
 import { useSidebar } from '@/composables/features/sidebar/useSidebar'

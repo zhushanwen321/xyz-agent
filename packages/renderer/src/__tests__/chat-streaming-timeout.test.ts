@@ -1,89 +1,115 @@
 /**
- * Chat store streaming 超时阈值回归测试（W6）。
+ * Chat store streaming idle 语义回归测试（[idle-refresh] docs/design/timeout-streaming-ui-idle.md）。
  *
- * 锁定 W6 改动：streaming 超时从 24h（86_400_000ms，等于放弃主动检测）降到
- * 10min（600_000ms）。理由：24h 的 streaming 消息对用户毫无价值——pi 进程早已
- * 挂死，但 UI 永远显示「生成中」直到用户手动停止。10min 是合理的「认定 pi 已挂」
- * 上限（远超正常 LLM 响应时间，但不会让用户干等一天）。
+ * 语义演变：原 W6「10min 固定墙钟」（600_000ms，任何活动帧
+ * 都不刷新计时）改为「纯活动刷新的 idle 无进展检测」（§5.1 D1）——
+ *   - 常量更名 DEFAULT_STREAMING_IDLE_TIMEOUT_MS = 1_800_000（30min，默认 1800s 单一权威）
+ *   - 到期 = 「阈值时长内零帧」：活动帧（text_delta 等）经 applyMessageEvent 刷新计时
+ *   - stream_warn 排除刷新（§5.7 D7：它是「无活动」断言帧，刷新 = 给挂死流续命）
+ *   - finalize 后迟到帧 no-op 不复活 timer（§9 P-H 构造性语义）
  *
- * 当前实现问题：DEFAULT_STREAMING_TIMEOUT_MS = 86_400_000（24h），
- * streaming 消息在 10min 时不会被 timer finalize，UI 卡「生成中」直到 24h。
- *
- * 预期（W6 后）：
- *   - DEFAULT_STREAMING_TIMEOUT_MS = 600_000（10min）
- *   - streaming 消息在 10min + 1s 后被 timer finalize 为 error 态
- *
- * 注：常量未从 chat.ts 导出，故通过行为（timer 触发时机）间接断言阈值。
- *
- * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/chat-streaming-timeout.test.ts
+ * 运行：npx vitest run src/__tests__/chat-streaming-timeout.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import * as chatModule from '@/stores/chat'
 import { useChatStore } from '@/stores/chat'
 
-describe('chat store streaming 超时阈值 = 10min（W6，原 24h）', () => {
+const IDLE_MS = 1_800_000
+
+describe('chat store streaming idle 语义（30min 零帧收口 + 活动刷新）', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     setActivePinia(createPinia())
   })
   afterEach(() => vi.useRealTimers())
 
-  it('DEFAULT_STREAMING_TIMEOUT_MS 常量值为 600_000（10min），非 86_400_000（24h）', () => {
-    // DEFAULT_STREAMING_TIMEOUT_MS 已由 chat.ts 导出（W6），直接断言其值。
-    const timeout = (chatModule as unknown as { DEFAULT_STREAMING_TIMEOUT_MS?: number }).DEFAULT_STREAMING_TIMEOUT_MS
-    expect(timeout).toBe(600_000)
-    expect(timeout).not.toBe(86_400_000)
+  it('DEFAULT_STREAMING_IDLE_TIMEOUT_MS 常量值为 1_800_000（30min），旧墙钟常量名不再存在', () => {
+    const timeout = (chatModule as unknown as Record<string, unknown>).DEFAULT_STREAMING_IDLE_TIMEOUT_MS
+    expect(timeout).toBe(1_800_000)
   })
 
-  it('streaming 消息在 10min + 1s 后被 timer finalize（转 error 态）', () => {
+  it('零帧 30min 到期 finalize（error 态）——挂死流有出路', () => {
     const store = useChatStore()
-    const sid = 's-timeout-10min'
+    const sid = 's-idle-zero-frame'
     store.applyMessageEvent(sid, {
       type: 'message.message_start',
       payload: { sessionId: sid, messageId: 'a1' },
     })
     expect(store.isGenerating(sid)).toBe(true)
 
-    // 推进 10min + 1s（600_100ms）
-    // W6：10min 阈值到期 → timer 触发 finalizeSession('timeout') → streaming 转 error
-    // 当前 24h 阈值，10min 不会触发 → 仍 streaming，红灯
-    vi.advanceTimersByTime(600_000 + 1_000)
-
-    // 关键断言：10min 后应已收口（当前 24h，未触发，红灯）
+    vi.advanceTimersByTime(IDLE_MS)
     expect(store.isGenerating(sid)).toBe(false)
-    const after = store.getMessages(sid)
-    expect(after[0].status).toBe('error')
+    expect(store.getMessages(sid)[0].status).toBe('error')
   })
 
-  it('streaming 消息在 10min - 1s 时仍未被 finalize（守卫：未到阈值不误触发）', () => {
+  it('阈值前零帧不误触发', () => {
     const store = useChatStore()
-    const sid = 's-timeout-before'
+    const sid = 's-idle-before'
     store.applyMessageEvent(sid, {
       type: 'message.message_start',
       payload: { sessionId: sid, messageId: 'a2' },
     })
-    expect(store.isGenerating(sid)).toBe(true)
-
-    // 推进 10min - 1s（599_000ms）—— 未到 10min 阈值，不应触发
-    vi.advanceTimersByTime(599_000)
-
-    // 守卫断言：未到阈值仍 streaming（W6 实现后应通过；当前 24h 阈值下也通过）
+    vi.advanceTimersByTime(IDLE_MS - 1)
     expect(store.isGenerating(sid)).toBe(true)
   })
 
-  it('24h 时 streaming 消息仍 streaming（W6 后 24h 不再是阈值，但 24h 内更早的 10min 已收口）', () => {
-    // 此测试锁定语义：W6 后阈值是 10min，24h 远超阈值，消息早应在 10min 收口。
-    // 当前实现 24h 阈值，推进 10min 不触发 → 仍 streaming（红灯，证阈值未降）。
+  it('活动帧刷新：周期性 delta 累计远超旧 10min 墙钟仍 streaming（活跃流不误判，G1）', () => {
     const store = useChatStore()
-    const sid = 's-timeout-24h'
+    const sid = 's-idle-active'
     store.applyMessageEvent(sid, {
       type: 'message.message_start',
       payload: { sessionId: sid, messageId: 'a3' },
     })
-
-    // 推进 10min：W6 后应已收口；当前 24h 阈值未触发
-    vi.advanceTimersByTime(600_000)
+    // 3 轮「推 28min → delta」：累计 84min >> 旧 10min 墙钟，全程 streaming
+    for (let round = 0; round < 3; round++) {
+      vi.advanceTimersByTime(28 * 60 * 1000)
+      store.applyMessageEvent(sid, {
+        type: 'message.text_delta',
+        payload: { sessionId: sid, delta: `chunk-${round}` },
+      })
+      expect(store.isGenerating(sid)).toBe(true)
+    }
+    // 活动停止后零帧满阈值 → 收口
+    vi.advanceTimersByTime(IDLE_MS)
     expect(store.isGenerating(sid)).toBe(false)
+  })
+
+  it('stream_warn 不刷新（D7）：warn 后零帧仍在原阈值窗口内收口', () => {
+    const store = useChatStore()
+    const sid = 's-idle-warn'
+    store.applyMessageEvent(sid, {
+      type: 'message.message_start',
+      payload: { sessionId: sid, messageId: 'a4' },
+    })
+    vi.advanceTimersByTime(1_000_000)
+    store.applyMessageEvent(sid, {
+      type: 'message.stream_warn',
+      payload: { sessionId: sid, content: '长时间无响应' },
+    })
+    // warn 不重置计时：自 message_start 起满 30min 即收口（若被 warn 刷新，此处仍 streaming）
+    vi.advanceTimersByTime(800_000)
+    expect(store.isGenerating(sid)).toBe(false)
+  })
+
+  it('finalize 后迟到 delta no-op 不复活 timer（P-H）：无二次收口', () => {
+    const store = useChatStore()
+    const sid = 's-idle-late'
+    store.applyMessageEvent(sid, {
+      type: 'message.message_start',
+      payload: { sessionId: sid, messageId: 'a5' },
+    })
+    vi.advanceTimersByTime(IDLE_MS)
+    expect(store.isGenerating(sid)).toBe(false)
+    expect(store.getMessages(sid)[0].status).toBe('error')
+    // 迟到活动帧：refresh 构造性 no-op（timer 已随 finalize 清除）
+    store.applyMessageEvent(sid, {
+      type: 'message.text_delta',
+      payload: { sessionId: sid, delta: 'late' },
+    })
+    // 长时间推进：无复活 timer，无新增消息，终态不变
+    vi.advanceTimersByTime(IDLE_MS * 2)
+    expect(store.getMessages(sid)).toHaveLength(1)
+    expect(store.getMessages(sid)[0].status).toBe('error')
   })
 })

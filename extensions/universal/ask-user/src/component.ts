@@ -214,6 +214,7 @@ export class AskUserComponent implements Component {
 	/**
 	 * options 模式的输入处理（从 handleInput 拆出）。
 	 * 含：Esc 回退/确认取消、←/→ 切 tab、↑/↓ 移光标、Enter 确认、Space toggle。
+	 * 主函数只留编排：Esc → tab 导航 → 光标导航 → 确认键，各阶段命中即终止。
 	 */
 	private handleOptionsInput(data: string, state: QuestionState, q: Question): void {
 		// Esc → 回退到上一个问题；在首个问题时进入确认取消覆盖层
@@ -221,59 +222,87 @@ export class AskUserComponent implements Component {
 			this.escBackOrConfirm();
 			return;
 		}
+		if (this.handleTabNavKeys(data)) return;
+		if (this.handleCursorNavKeys(data, state, q)) return;
+		this.handleOptionConfirmKeys(data, state, q);
+	}
 
-		// ← / → 切换问题 tab（多问题，options 模式）
+	/** ← / → 切换问题 tab（多问题，options 模式）。返回 true 表示已消费该按键。 */
+	private handleTabNavKeys(data: string): boolean {
 		if (!this.isSingle && matchesKey(data, "right")) {
 			this.gotoTab(Math.min(this.activeTab + 1, this.questions.length));
-			return;
+			return true;
 		}
 		if (!this.isSingle && matchesKey(data, "left")) {
 			this.gotoTab(Math.max(this.activeTab - 1, 0));
-			return;
+			return true;
 		}
+		return false;
+	}
 
+	/** ↑/↓ 移动选项光标（↓ 受 Other 行下界约束）。返回 true 表示已消费该按键。 */
+	private handleCursorNavKeys(data: string, state: QuestionState, q: Question): boolean {
 		if (matchesKey(data, "up")) {
 			state.cursorIndex = Math.max(0, state.cursorIndex - 1);
 			this.rerender();
-			return;
+			return true;
 		}
 		if (matchesKey(data, "down")) {
 			const max = allOptions(q).length - 1;
 			state.cursorIndex = Math.min(max, state.cursorIndex + 1);
 			this.rerender();
-			return;
+			return true;
 		}
+		return false;
+	}
 
+	/** Other 行 Enter 进编辑器 / 多选 Space toggle + Enter 确认 / 单选 Enter 确认。 */
+	private handleOptionConfirmKeys(data: string, state: QuestionState, q: Question): void {
 		const opts = allOptions(q);
 		const onOther = state.cursorIndex === opts.length - 1;
 
 		// Other row → Enter opens freeform editor
 		if (onOther && matchesKey(data, "enter")) {
-			state.savedOptionsCursorIndex = state.cursorIndex;
-			state.mode = "freeform";
-			state.draftText = state.freeTextValue ?? state.freeDraft ?? "";
-			state.cursorIndex = state.draftText.length;
-			this.rerender();
+			this.openOtherEditor(state);
 			return;
 		}
 
 		if (q.multiSelect && !onOther) {
-			if (matchesKey(data, "space")) {
-				this.toggleIndex(state, state.cursorIndex);
-				return;
-			}
-			if (matchesKey(data, "enter")) {
-				state.selectedIndices.add(state.cursorIndex);
-				this.afterConfirm(state);
-				return;
-			}
+			this.handleMultiSelectConfirmKeys(data, state);
 		} else if (!q.multiSelect && !onOther) {
-			if (matchesKey(data, "enter")) {
-				state.selectedIndex = state.cursorIndex;
-				state.freeTextValue = null;
-				this.afterConfirm(state);
-				return;
-			}
+			this.handleSingleSelectConfirmKeys(data, state);
+		}
+	}
+
+	/** Other 行 Enter：进 freeform 编辑器，预填已提交文本或上一次草稿。 */
+	private openOtherEditor(state: QuestionState): void {
+		state.savedOptionsCursorIndex = state.cursorIndex;
+		state.mode = "freeform";
+		state.draftText = state.freeTextValue ?? state.freeDraft ?? "";
+		state.cursorIndex = state.draftText.length;
+		this.rerender();
+	}
+
+	/** 多选（非 Other 行）：Space toggle；Enter 选中光标项并确认前进。 */
+	private handleMultiSelectConfirmKeys(data: string, state: QuestionState): void {
+		if (matchesKey(data, "space")) {
+			this.toggleIndex(state, state.cursorIndex);
+			return;
+		}
+		if (matchesKey(data, "enter")) {
+			state.selectedIndices.add(state.cursorIndex);
+			this.afterConfirm(state);
+			return;
+		}
+	}
+
+	/** 单选（非 Other 行）：Enter 选中光标项（清 Other 文本）并确认前进。 */
+	private handleSingleSelectConfirmKeys(data: string, state: QuestionState): void {
+		if (matchesKey(data, "enter")) {
+			state.selectedIndex = state.cursorIndex;
+			state.freeTextValue = null;
+			this.afterConfirm(state);
+			return;
 		}
 	}
 

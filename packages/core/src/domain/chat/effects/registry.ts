@@ -39,6 +39,7 @@
 import type {
   ContentBlock,
   Message,
+  PiBranchSummaryEntry,
   PiCompactionEntry,
   PiCustomMessageEntry,
   PiEntry,
@@ -50,10 +51,11 @@ import type {
   SteerFollowUpMode,
   ToolCall,
 } from '@xyz-agent/shared'
-import { applyEntry, createInitialChatViewState, normalizePiToolResult } from '../apply-entry'
+import { normalizePiToolResult } from '../apply-entry'
 import type { RetryState, QueueState, FinalizeReason } from '../store-types'
 import type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
 export type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
+import { recoverPrematureTimeoutMessages } from './complete-recovery'
 import {
   readString,
   readNumber,
@@ -67,12 +69,14 @@ import {
   readChangeSetStatus,
 } from '../readers'
 import { findLastAssistantIndex, findToolCallOwner } from '../chunk-processor'
-import { commitMessages, type MessagesRef } from '../mutations'
+import { commitMessages } from '../mutations'
 import { truncateToolCall } from '../truncate-tool-output'
 import { bashStartEffect, bashResultEffect } from '../bash-effects'
+import { applyEntryFrameWithOverlay } from './entry-overlay'
 // [TODO @i18n-migration] core/i18n 落地后恢复 i18n.global.t 调用（§0.3 列为后续迁移）。
-// 当前 branchSummary 的 summary 兜底文案用硬编码英文占位（summary 几乎总在场，兜底罕见）；
-// compactionSummary 已 W6 entry 化，兜底文案收敛到 reducer 中文 fallback（live/reload 一致）。
+// compactionSummary（W6）/ branchSummary（D13 renderer-deepening）均已 entry 化：两者的
+// summary 兜底收敛到 reducer（compaction 中文 fallback「上下文已压缩」/ branchSummary
+// 空串），live/reload 一致，本文件不再持有占位文案。
 
 /**
  * 计数差集：返回 prev 比 next 多出的元素（按出现次数，非子串匹配）。
@@ -97,6 +101,77 @@ function countDrained(prev: string[], next: string[]): string[] {
     }
   }
   return drained
+}
+
+/** W06-B：帧数组 → 快照 state（空数组视为无内容，不设维度字段）。 */
+function queueStateOf(steering: string[] | undefined, followUp: string[] | undefined): QueueState {
+  const state: QueueState = {}
+  if (steering?.length) state.steering = steering
+  if (followUp?.length) state.followUp = followUp
+  return state
+}
+
+/**
+ * [steer-bubble u2 / D2 维护点 1] pending→complete 驱动的腿 1 消费：计数差集找出「被 drain
+ * 投递的」条数（prev 比 new 多出的元素）。
+ * [B1] 不能用 includes（子串语义）——重复文本 'A' 入队两条、drain 一条后 new=['A']，
+ * includes('A')===true 会漏判，第二条 pending 永久卡住。计数差集按出现次数精确匹配。
+ * [W14] 差集数组的 length = N，drainN 计数 FIFO 取前 N 条（不按文本匹配——pi 入队存
+ * skill 展开后文本 ≠ 提交原文，文本相等匹配在该场景必丢消息，D1 表末行 + D6）。
+ * steer / follow-up 各自差集各自计数（sendMode 隔离，防跨类型同文本误取——W5 语义保留）。
+ * 调用时序与原内联逐字一致：steer drain → steer appendUser 循环 → followUp drain →
+ * followUp appendUser 循环 → 两维度 inflight 各按实取数累加。
+ *
+ * 腿 1 消费点 inflight += 实取数（m = drainN 实际返回数组长度，两维度各算各的）：
+ * drain 帧是投递证据，这些气泡「已显示待 message_end 确认」。按实取数 m 计而非差集
+ * N——m < N 的差额 = 扩展注入等 buffer 无货条目，未显示即不确认，其 message_end
+ * 到达时走腿 2 includes 兜底。m = 0 时 incrementInflight no-op（不产生零值条目）。
+ *
+ * [steer-bubble Gate B AC-4 / dev 验证开关] globalThis.__XYZ_STEER_SKIP_LEG1__ = true 时
+ * 跳过腿 1 消费（模拟 drain 帧丢失——真实链路其余部分不动，快照照常写入），用于 AC-4
+ * 确定性触发验证腿 2 独立承担显示（devtools console 设置；产线无人设置恒 false）。
+ */
+function drainDeliveredByDiff(
+  ctx: MessageEffectContext,
+  sid: string,
+  prev: QueueState | undefined,
+  steering: string[] | undefined,
+  followUp: string[] | undefined,
+): void {
+  const skipLeg1 =
+    (globalThis as { __XYZ_STEER_SKIP_LEG1__?: boolean }).__XYZ_STEER_SKIP_LEG1__ === true
+  if (!prev || skipLeg1) return
+  const steerN = countDrained(prev.steering ?? [], steering ?? []).length
+  const steerDrained = ctx.drainN(sid, 'steer', steerN)
+  for (const segs of steerDrained) ctx.appendUser(sid, segs)
+  const followN = countDrained(prev.followUp ?? [], followUp ?? []).length
+  const followDrained = ctx.drainN(sid, 'follow-up', followN)
+  for (const segs of followDrained) ctx.appendUser(sid, segs)
+  ctx.incrementInflight(sid, steerDrained.length)
+  ctx.incrementInflight(sid, followDrained.length)
+}
+
+/**
+ * [steer-bubble u2 / D4] 快照写入/删条目：帧数组（steering/followUp）驱动 QueueBubble 快照。
+ * 投递侧 reconcilePending 裁剪已移除（见 queue_update handler 注释）；帧内
+ * pendingMessageCount 字段投递侧裁剪移除后前端已无消费方（仅 event-adapter 翻译附带，
+ * 与帧数组等值——W14 D6 的同源公式）。
+ */
+function commitQueueSnapshot(
+  queueStates: MessageEffectContext['queueStates'],
+  sid: string,
+  state: QueueState,
+): void {
+  const hasContent = !!state.steering?.length || !!state.followUp?.length
+  if (!hasContent) {
+    if (queueStates.value.has(sid)) {
+      const nextMap = new Map(queueStates.value)
+      nextMap.delete(sid)
+      queueStates.value = nextMap
+    }
+  } else {
+    queueStates.value = new Map(queueStates.value).set(sid, state)
+  }
 }
 
 /**
@@ -231,7 +306,7 @@ function confirmUserDeliveryOnMessageEnd(
  * finalizeSession 后实体已终态 → 此函数返回 false → delta handler 早 return。
  */
 function isLastAssistantStreaming(
-  messages: MessagesRef,
+  messages: Pick<MessageEffectContext, 'messages'>['messages'],
   sid: string,
 ): boolean {
   const list = messages.value.get(sid)?.value
@@ -240,6 +315,43 @@ function isLastAssistantStreaming(
     if (list[i].role === 'assistant') return list[i].status === 'streaming'
   }
   return false
+}
+
+/**
+ * [u6.2 D13 联动] sealed-guard + 定位 + commit 骨架（原 6 处 streaming 类 effect 内联
+ * 重复：text_delta / thinking_start / thinking_end / thinking_delta / tool_call_start /
+ * tool_call_update，行为逐字等价收敛）：
+ *
+ * 1. sealed guard（D-010）：最后一条 assistant 非 streaming（finalizeSession 已收口）→
+ *    早 return，晚到的 delta/更新幂等丢弃。
+ * 2. 定位：locate 在 prev 上找目标 assistant 下标（多数用 findLastAssistantIndex；
+ *    tool_call_update 用 findToolCallOwner 按 toolCallId ID 锚定——见其调用点注释），
+ *    无命中（idx < 0）→ return。
+ * 3. 更新 + commit：update 返回新 message（copy-on-write）落盘；返回 undefined 表示
+ *    本次不落盘（thinking_end 的空 thinking 分支——原实现该处直接 return 不 commit）。
+ *
+ * 副作用顺序说明：6 处调用点中 5 处（text_delta / thinking_start / thinking_delta /
+ * tool_call_start / tool_call_update）的 payload 读取与派生构造（含 randomUUID 兜底 id、
+ * Date.now 生成）整体前移到 guard 之前，与原内联顺序（guard → 定位 → 读 payload → 更新）
+ * 相比是顺序前移而非一致——纯读取、无观察面调用，故与基线行为等价；留在 update 闭包内
+ * 的读取仅 tool_call_update 的 readDetail（thinking_end 无 payload 读取）。约束：前移段
+ * 不得加入有观察面的调用（console/log/事件 emit），否则破坏与基线的顺序等价。
+ */
+function updateStreamingAssistant(
+  ctx: Pick<MessageEffectContext, 'messages'>,
+  sid: string,
+  locate: (prev: Message[]) => number,
+  update: (msg: Message) => Message | undefined,
+): void {
+  if (!isLastAssistantStreaming(ctx.messages, sid)) return
+  const prev = ctx.messages.value.get(sid)?.value ?? []
+  const idx = locate(prev)
+  if (idx < 0) return
+  const updated = update(prev[idx])
+  if (updated === undefined) return
+  const next = [...prev]
+  next[idx] = updated
+  commitMessages(ctx.messages, sid, next)
 }
 
 /**
@@ -264,7 +376,12 @@ function insertContentBlockByIndex(blocks: ContentBlock[], block: ContentBlock):
 const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> = {
   // ── 主流式生命周期（chunk 创建/收口 + isGenerating 派生）──
   'message.message_start': (ctx, sid, payload) => {
-    const { messages, queueStates, clearPendingSend, armStreamingTimer, reconcilePending } = ctx
+    const { messages, queueStates, clearPendingSend, armStreamingTimer, reconcilePending, clearPrematureTimeoutIds } = ctx
+    // [premature-timeout §5.2 D2 时机③] 新 turn 开始 → 旧 turn 的 timeout 打标作废
+    //（防跨 turn 错配：turn A 超时打标未恢复 → 用户发新 prompt → 本帧到达 → 清 A 标，
+    // turn B 的 complete 不命中任何标记，无误恢复旧气泡——设计 §5.2 反例重演第 2 条）。
+    // 快照与实体字段的清扫都在 clearPrematureTimeoutIds 内闭环（streaming-state-machine）。
+    clearPrematureTimeoutIds(sid)
     // G-023: message_start 清 QueueBubble。只清 queueStates 显示态——pending→complete 的
     // 转换完全由 queue_update 的 countDrained 精确驱动（pi 保证 queue_update(drain) 先于
     // message_start 到达，见 agent-session.ts:515-536 注释 "remove it BEFORE emitting"）。
@@ -352,15 +469,22 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
         ...(shouldOverrideContent ? { content: finalContent } : {}),
       } satisfies Message
     })
+    // ── [premature-timeout §5.2 D2] 误判收口自愈：恢复分支（实现见 ./complete-recovery.ts）──
+    if (changed) commitMessages(messages, sid, next)
+    const recovered = recoverPrematureTimeoutMessages({
+      messages, sessionId: sid, base: changed ? next : prev, stopReason, errorMessage, finalContent, payload, lastAssistantIdx,
+      takePrematureTimeoutIds: ctx.takePrematureTimeoutIds,
+    })
     // 秒败 turn（message_start 丢失/未广播）无 streaming 气泡可收口：错误信息必须以纯 error
     // 气泡落进聊天流，否则 complete 事件被消费后错误只剩 stopReason 标志，用户不可见。
-    if (isErrorStop && errorMessage && !changed) {
+    // [premature-timeout] 恢复命中时抑制追加——errorMessage 已按追加形态双通道写进命中实体，
+    // 再追加纯 error 气泡会重复展示同一错误。
+    if (isErrorStop && errorMessage && !changed && !recovered) {
       commitMessages(messages, sid, [
         ...prev,
         { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: errorMessage, status: 'error', timestamp: Date.now() },
       ])
     }
-    if (changed) commitMessages(messages, sid, next)
     // 统一收口（finalizeSession 幂等：entity 已改则 no-op，只清 pendingSend + timer）
     // 此处 message status 已改终态 → finalizeSession 内走「只补 toolCall 收口」分支。
     const reason: FinalizeReason = isErrorStop ? 'error' : (stopReason === 'aborted' ? 'aborted' : 'normal')
@@ -434,85 +558,62 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
 
   // ── 文本流（纯 chunk 更新，不翻 lifecycle flag）──
   'message.text_delta': (ctx, sid, payload) => {
-    const { messages } = ctx
-    // [D-010 sealed] finalizeSession 后晚到 delta 幂等丢弃
-    if (!isLastAssistantStreaming(messages, sid)) return
-    const prev = messages.value.get(sid)?.value ?? []
-    const idx = findLastAssistantIndex(prev)
-    if (idx < 0) return
+    // [D-010 sealed] finalizeSession 后晚到 delta 幂等丢弃（guard 在骨架 helper 内）
     const delta = readString(payload, 'delta') ?? ''
-    const next = [...prev]
-    // 首个 text_delta push text 块到 contentBlocks（幂等：已含 text 块则不重复 push）。
-    // 插入位置按 contentIndex 有序插入（§11 检查点 3），无 index 时退化为 append。
-    const prevBlocks = next[idx].contentBlocks ?? []
-    const contentBlocks = prevBlocks.some((b) => b.type === 'text')
-      ? prevBlocks
-      : insertContentBlockByIndex(prevBlocks, { type: 'text', refId: 'text', ...(readNumber(payload, 'contentIndex') !== undefined ? { contentIndex: readNumber(payload, 'contentIndex') } : {}) } satisfies ContentBlock)
-    next[idx] = { ...next[idx], content: next[idx].content + delta, contentBlocks }
-    commitMessages(messages, sid, next)
+    const contentIndex = readNumber(payload, 'contentIndex')
+    updateStreamingAssistant(ctx, sid, findLastAssistantIndex, (m) => {
+      // 首个 text_delta push text 块到 contentBlocks（幂等：已含 text 块则不重复 push）。
+      // 插入位置按 contentIndex 有序插入（§11 检查点 3），无 index 时退化为 append。
+      const prevBlocks = m.contentBlocks ?? []
+      const contentBlocks = prevBlocks.some((b) => b.type === 'text')
+        ? prevBlocks
+        : insertContentBlockByIndex(prevBlocks, { type: 'text', refId: 'text', ...(contentIndex !== undefined ? { contentIndex } : {}) } satisfies ContentBlock)
+      return { ...m, content: m.content + delta, contentBlocks }
+    })
   },
 
   // ── thinking 流（折进 trace，W05 endTime）──
   'message.thinking_start': (ctx, sid, payload) => {
-    const { messages } = ctx
     // [D-010 sealed]
-    if (!isLastAssistantStreaming(messages, sid)) return
-    const prev = messages.value.get(sid)?.value ?? []
-    const idx = findLastAssistantIndex(prev)
-    if (idx < 0) return
     const blockId = readString(payload, 'thinkingId') ?? `th-${crypto.randomUUID()}`
-    const next = [...prev]
-    const thinking = [...(next[idx].thinking ?? []), { id: blockId, content: '', collapsed: true, startTime: Date.now() }]
-    // push 到 contentBlocks（refId 复用 blockId，防两处分别 randomUUID 断链）。
-    // 按 contentIndex 有序插入（§11 检查点 3），无 index 时退化为 append。
-    const contentBlocks = insertContentBlockByIndex(next[idx].contentBlocks ?? [], { type: 'thinking', refId: blockId, ...(readNumber(payload, 'contentIndex') !== undefined ? { contentIndex: readNumber(payload, 'contentIndex') } : {}) } satisfies ContentBlock)
-    next[idx] = { ...next[idx], thinking, contentBlocks }
-    commitMessages(messages, sid, next)
+    const contentIndex = readNumber(payload, 'contentIndex')
+    updateStreamingAssistant(ctx, sid, findLastAssistantIndex, (m) => {
+      const thinking = [...(m.thinking ?? []), { id: blockId, content: '', collapsed: true, startTime: Date.now() }]
+      // push 到 contentBlocks（refId 复用 blockId，防两处分别 randomUUID 断链）。
+      // 按 contentIndex 有序插入（§11 检查点 3），无 index 时退化为 append。
+      const contentBlocks = insertContentBlockByIndex(m.contentBlocks ?? [], { type: 'thinking', refId: blockId, ...(contentIndex !== undefined ? { contentIndex } : {}) } satisfies ContentBlock)
+      return { ...m, thinking, contentBlocks }
+    })
   },
 
   'message.thinking_end': (ctx, sid) => {
-    const { messages } = ctx
     // [D-010 sealed]
-    if (!isLastAssistantStreaming(messages, sid)) return
-    const prev = messages.value.get(sid)?.value ?? []
     // W05-A：给最后 ThinkingBlock 设 endTime（字段已存在 message.ts:30）。
     // payload 仅 {sessionId}（event-adapter thinking_end 不带额外字段）。
-    const idx = findLastAssistantIndex(prev)
-    if (idx < 0) return
-    const thinking = prev[idx].thinking
-    if (!thinking || thinking.length === 0) return
-    const lastIdx = thinking.length - 1
-    const next = [...prev]
-    const nextThinking = [...thinking]
-    nextThinking[lastIdx] = { ...nextThinking[lastIdx], endTime: Date.now() }
-    next[idx] = { ...next[idx], thinking: nextThinking }
-    commitMessages(messages, sid, next)
+    updateStreamingAssistant(ctx, sid, findLastAssistantIndex, (m) => {
+      const thinking = m.thinking
+      if (!thinking || thinking.length === 0) return undefined // 空 thinking：不落盘（原 return 语义）
+      const nextThinking = [...thinking]
+      nextThinking[nextThinking.length - 1] = { ...nextThinking[nextThinking.length - 1], endTime: Date.now() }
+      return { ...m, thinking: nextThinking }
+    })
   },
 
   'message.thinking_delta': (ctx, sid, payload) => {
-    const { messages } = ctx
     // [D-010 sealed]
-    if (!isLastAssistantStreaming(messages, sid)) return
-    const prev = messages.value.get(sid)?.value ?? []
-    const idx = findLastAssistantIndex(prev)
-    if (idx < 0) return
     const delta = readString(payload, 'delta') ?? ''
-    const next = [...prev]
-    const thinking = [...(next[idx].thinking ?? [])]
-    const last = thinking[thinking.length - 1]
-    if (last) thinking[thinking.length - 1] = { ...last, content: last.content + delta }
-    next[idx] = { ...next[idx], thinking }
-    commitMessages(messages, sid, next)
+    updateStreamingAssistant(ctx, sid, findLastAssistantIndex, (m) => {
+      const thinking = [...(m.thinking ?? [])]
+      const last = thinking[thinking.length - 1]
+      if (last) thinking[thinking.length - 1] = { ...last, content: last.content + delta }
+      // last 不存在时仍写回 thinking（可能 undefined → []）——原实现同语义（无条件 commit）
+      return { ...m, thinking }
+    })
   },
 
   // ── tool_call 流（ID 锚定，W05 detail；[W21] 输入换 entry 形态）──
   'message.tool_call_start': (ctx, sid, payload) => {
-    const { messages } = ctx
     // [D-010 sealed]
-    if (!isLastAssistantStreaming(messages, sid)) return
-    const prev = messages.value.get(sid)?.value ?? []
-    const idx = findLastAssistantIndex(prev)
-    if (idx < 0) return
     // [W21] 输入从直译平铺 payload 改为 toolCall entry 形态（event-adapter 翻译时重构，
     // interpreter 补 contentIndex/messageId 锚点）。entry 缺失（异常帧）降级丢弃；
     // toolCallId 缺失时 fallback 随机 id（迁移前同款宽容防御：异常事件不断流）。
@@ -529,13 +630,13 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     }
     // goal_control create 的 input.objective 只在此刻可得（tool result details 不回传），提前提取。
     // [P4 s5 w2] tasks 域已删除（D5 存根过渡到期），objective 提取随 tasks store 一并移除。
-    const next = [...prev]
-    const toolCalls = [...(next[idx].toolCalls ?? []), call]
-    // push 到 contentBlocks（callId 复用，与 toolCalls[].id 一致）。
-    // 按 contentIndex 有序插入（§11 检查点 3），无 index 时退化为 append。
-    const contentBlocks = insertContentBlockByIndex(next[idx].contentBlocks ?? [], { type: 'toolCall', refId: callId, ...(entry.contentIndex !== undefined ? { contentIndex: entry.contentIndex } : {}) } satisfies ContentBlock)
-    next[idx] = { ...next[idx], toolCalls, contentBlocks }
-    commitMessages(messages, sid, next)
+    updateStreamingAssistant(ctx, sid, findLastAssistantIndex, (m) => {
+      // push 到 contentBlocks（callId 复用，与 toolCalls[].id 一致）。
+      // 按 contentIndex 有序插入（§11 检查点 3），无 index 时退化为 append。
+      const toolCalls = [...(m.toolCalls ?? []), call]
+      const contentBlocks = insertContentBlockByIndex(m.contentBlocks ?? [], { type: 'toolCall', refId: callId, ...(entry.contentIndex !== undefined ? { contentIndex: entry.contentIndex } : {}) } satisfies ContentBlock)
+      return { ...m, toolCalls, contentBlocks }
+    })
   },
 
   'message.tool_call_end': (ctx, sid, payload) => {
@@ -612,24 +713,19 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   },
 
   'message.tool_call_update': (ctx, sid, payload) => {
-    const { messages } = ctx
     // [D-010 sealed]
-    if (!isLastAssistantStreaming(messages, sid)) return
-    const prev = messages.value.get(sid)?.value ?? []
     // W05-A：Extension 工具调用进度更新。event-adapter tool_execution_update
     // 生产端只发 detail（string | object），消费对齐生产端（不臆造 progress）。
     const callId = readString(payload, 'toolCallId')
     if (!callId) return
     // ID 锚定（见 tool_call_end 注释），避免乱序命中错误 message。
-    const idx = findToolCallOwner(prev, callId)
-    if (idx < 0) return
-    const detail = readDetail(payload, 'detail')
-    const next = [...prev]
-    const toolCalls = (next[idx].toolCalls ?? []).map((c) =>
-      c.id === callId ? { ...c, detail } : c,
-    )
-    next[idx] = { ...next[idx], toolCalls }
-    commitMessages(messages, sid, next)
+    updateStreamingAssistant(ctx, sid, (prev) => findToolCallOwner(prev, callId), (m) => {
+      const detail = readDetail(payload, 'detail')
+      const toolCalls = (m.toolCalls ?? []).map((c) =>
+        c.id === callId ? { ...c, detail } : c,
+      )
+      return { ...m, toolCalls }
+    })
   },
 
   // ── Bash 执行（W1 fix-chat-flow-order：bashStart 写 ephemeral executingBash 不建消息项；
@@ -640,7 +736,6 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
 
   // ── pi CustomMessage 注入（扩展向对话流注入结构化通知）──
   'message.customStart': (ctx, sid, payload) => {
-    const { messages } = ctx
     // [custom 双管线收敛（data-source-governance 审计问题 4）] 实时侧不再独立构造 system
     // 消息 + display 覆写：payload 重构为 custom_message entry（与 pi 持久化形态同构），
     // 经 ctx.applyEntryFrame 喂与文件重放（get_entries → replayEntries）同一个 applyEntry
@@ -666,14 +761,9 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       details: payload['details'],
       display: payload['display'] === true || payload['display'] === false ? payload['display'] : undefined,
     }
-    // 权威喂入：per-session reducer state（与重开 replayEntries 同一个 applyEntry）
-    ctx.applyEntryFrame(sid, entry)
-    // overlay 投影：渲染 ref 消费同一份派生（W21 裁决：ref 不由 reducer state 直接投影，
-    // 收敛归 W22）——applyEntry 在空 state 上派生本条消息（custom_message 投影不依赖前置
-    // state，id 已由 entry.id 提供），commit 进 messages ref。
-    const derived = applyEntry(createInitialChatViewState(), entry)
-    const prev = messages.value.get(sid)?.value ?? []
-    commitMessages(messages, sid, [...prev, ...derived.messages])
+    // 权威喂入 + overlay 投影 + commit（骨架 helper）：渲染 ref 消费同一份派生
+    //（W21 裁决：ref 不由 reducer state 直接投影，收敛归 W22）
+    applyEntryFrameWithOverlay(ctx, sid, entry)
   },
 
   // ── 运行态 / 元信息（system 提示行，W05-A/W07-C）──
@@ -683,7 +773,6 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   // 与 message.status 运行过程态正交（§3.3.6 死代码清理，原空 handler 删除）。
 
   'message.compactionSummary': (ctx, sid, payload) => {
-    const { messages } = ctx
     // [W6 fix-chat-flow-order] compaction 双路径收尾（最后一个未 entry 化的 live 消息类型）。
     // 判定依据（0.84.1 dist 实测）：帧数据源 = runtime event-interpreter 从 pi compaction_end
     // 事件 result 提取 { summary, tokensBefore, timestamp }（event-interpreter handleCompactionEnd），
@@ -711,31 +800,35 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       ...(summary.summary !== undefined && { summary: summary.summary }),
       ...(summary.tokensBefore !== undefined && { tokensBefore: summary.tokensBefore }),
     }
-    // 权威喂入：per-session reducer state（与重开 replayEntries 同一个 applyEntry）
-    ctx.applyEntryFrame(sid, entry)
-    // overlay 投影（customStart/bash 同款）：compaction 投影不依赖前置 state（reducer
-    // compaction case 无条件 append），空 state 派生即本条消息。
-    const derived = applyEntry(createInitialChatViewState(), entry)
-    const prev = messages.value.get(sid)?.value ?? []
-    commitMessages(messages, sid, [...prev, ...derived.messages])
+    // 权威喂入 + overlay 投影 + commit（骨架 helper）：compaction 投影不依赖前置 state
+    //（reducer compaction case 无条件 append），空 state 派生即本条消息。
+    applyEntryFrameWithOverlay(ctx, sid, entry)
   },
 
   'message.branchSummary': (ctx, sid, payload) => {
-    const { messages } = ctx
-    const prev = messages.value.get(sid)?.value ?? []
-    // W07-C：分支摘要。作 system 提示行。
+    // [D13 renderer-deepening] branchSummary live entry 化（该设计第二处有意行为变化）：
+    // 原直插 Message（fallback 文案 'Branched'）改为构造 branch_summary entry 走
+    // applyEntryFrame + overlay 投影（compactionSummary W6 同款范式）——live 与 reload
+    // 共用 reducer 的 branch_summary case，fallback 收敛为 reducer 语义 `rawSummary ?? ''`
+    // （live 'Branched' 字面 fallback 放弃；此前 live 显示 'Branched'、重开投影为空串的
+    // 行为不一致消灭）。等价性断言见 __tests__/branch-summary-equivalence.test.ts
+    //（live ≡ reload 逐字段一致）。
+    //
+    // entry 注入两个异源字段（customStart/compaction 同款，差异归一见等价性测试）：
+    // id 客户端生成 `br-<uuid>`（重开侧为 pi uuidv7 entry id——id 值异源属 W21 已裁决
+    // 差异类）；timestamp 帧值 ?? 客户端时钟（重开侧为 pi 落盘时刻，差值为投递延迟）。
     const summary = readBranchSummary(payload)
-    commitMessages(messages, sid, [
-      ...prev,
-      {
-        id: `br-${crypto.randomUUID()}`,
-        role: 'system',
-        content: summary.summary ?? 'Branched',
-        status: 'complete',
-        timestamp: summary.timestamp ?? Date.now(),
-        branchSummary: summary,
-      },
-    ])
+    const entry: PiBranchSummaryEntry = {
+      type: 'branch_summary',
+      id: `br-${crypto.randomUUID()}`,
+      parentId: null,
+      timestamp: new Date(summary.timestamp ?? Date.now()).toISOString(),
+      ...(summary.summary !== undefined && { summary: summary.summary }),
+      ...(summary.fromId !== undefined && { fromId: summary.fromId }),
+    }
+    // 权威喂入 + overlay 投影 + commit（骨架 helper）：branch_summary 投影不依赖前置
+    // state（reducer branch_summary case 无条件 append），空 state 派生即本条消息。
+    applyEntryFrameWithOverlay(ctx, sid, entry)
   },
 
   // ── 自动重试 / 队列（W06-B，store 级状态机）──
@@ -765,62 +858,22 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   },
 
   'message.queue_update': (ctx, sid, payload) => {
-    const { queueStates, drainN, appendUser, incrementInflight } = ctx
     // W06-B：消息队列更新。payload（event-adapter）：{ steering?, followUp? }。
     // pi 发空数组 []（_emitQueueUpdate 总展开为数组），空数组视为无内容（length 判断）。
-    const state: QueueState = {}
+    // 分三阶段 helper（读取 / 腿 1 消费 / 快照落盘），编排顺序与原内联一致。
     const steering = readStringArray(payload, 'steering')
-    if (steering?.length) state.steering = steering
     const followUp = readStringArray(payload, 'followUp')
-    if (followUp?.length) state.followUp = followUp
-
-    // pending→complete 驱动：计数差集找出「被 drain 投递的」条数（prev 比 new 多出的元素）。
-    // [B1] 不能用 includes（子串语义）——重复文本 'A' 入队两条、drain 一条后 new=['A']，
-    // includes('A')===true 会漏判，第二条 pending 永久卡住。计数差集按出现次数精确匹配。
-    // [W14] 差集数组的 length = N，drainN 计数 FIFO 取前 N 条（不按文本匹配——pi 入队存
-    // skill 展开后文本 ≠ 提交原文，文本相等匹配在该场景必丢消息，D1 表末行 + D6）。
-    // steer / follow-up 各自差集各自计数（sendMode 隔离，防跨类型同文本误取——W5 语义保留）。
-    const prev = queueStates.value.get(sid)
-    // [steer-bubble Gate B AC-4 / dev 验证开关] globalThis.__XYZ_STEER_SKIP_LEG1__ = true 时
-    // 跳过腿 1 消费（模拟 drain 帧丢失——真实链路其余部分不动，快照照常写入），用于 AC-4
-    // 确定性触发验证腿 2 独立承担显示（devtools console 设置；产线无人设置恒 false）。
-    const skipLeg1 =
-      (globalThis as { __XYZ_STEER_SKIP_LEG1__?: boolean }).__XYZ_STEER_SKIP_LEG1__ === true
-    if (prev && !skipLeg1) {
-      const steerN = countDrained(prev.steering ?? [], steering ?? []).length
-      const steerDrained = drainN(sid, 'steer', steerN)
-      for (const segs of steerDrained) appendUser(sid, segs)
-      const followN = countDrained(prev.followUp ?? [], followUp ?? []).length
-      const followDrained = drainN(sid, 'follow-up', followN)
-      for (const segs of followDrained) appendUser(sid, segs)
-      // [steer-bubble u2 / docs/design/steer-followup-user-bubble-display.md D2 维护点 1]
-      // 腿 1 消费点 inflight += 实取数（m = drainN 实际返回数组长度，两维度各算各的）：
-      // drain 帧是投递证据，这些气泡「已显示待 message_end 确认」。按实取数 m 计而非差集
-      // N——m < N 的差额 = 扩展注入等 buffer 无货条目，未显示即不确认，其 message_end
-      // 到达时走腿 2 includes 兜底。m = 0 时 incrementInflight no-op（不产生零值条目）。
-      incrementInflight(sid, steerDrained.length)
-      incrementInflight(sid, followDrained.length)
-    }
+    const state = queueStateOf(steering, followUp)
+    const prev = ctx.queueStates.value.get(sid)
+    drainDeliveredByDiff(ctx, sid, prev, steering, followUp)
 
     // [steer-bubble u2 / D4] 投递侧 reconcilePending 裁剪已移除：drain 后立即裁到深度会
     // 吃掉腿 2（message_end(user)）还没回填的 segments——pi 时序保证 drain 帧先于
     // message_end（P1 探针），立即裁剪会让腿 2 的 segments 回填在正常路径下永远失效；
     // 且断连等场景 prev 缺失时以本帧深度裁空 buffer 是丢消息的不可逆放大器（F3）。
     // buffer 存活到 message_end 是 D2 双腿的工作前提；僵尸改由 G-023 时点
-    // （message_start(assistant)）条件清理（见该 handler）。帧数组（steering/followUp）
-    // 仍驱动 QueueBubble 快照写入；帧内 pendingMessageCount 字段投递侧裁剪移除后
-    // 前端已无消费方（仅 event-adapter 翻译附带，与帧数组等值——W14 D6 的同源公式）。
-
-    const hasContent = !!state.steering?.length || !!state.followUp?.length
-    if (!hasContent) {
-      if (queueStates.value.has(sid)) {
-        const nextMap = new Map(queueStates.value)
-        nextMap.delete(sid)
-        queueStates.value = nextMap
-      }
-    } else {
-      queueStates.value = new Map(queueStates.value).set(sid, state)
-    }
+    // （message_start(assistant)）条件清理（见该 handler）。
+    commitQueueSnapshot(ctx.queueStates, sid, state)
   },
 
   // ── FileChanges 通道（W10，ADR-0024 D5 baseline diff）──

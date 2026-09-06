@@ -51,7 +51,7 @@ describe('parseCodexProviders', () => {
     home = mkdtempSync(join(tmpdir(), 'codex-parser-'))
   })
   afterEach(() => {
-    rmSync(home, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     vi.unstubAllEnvs()
   })
 
@@ -254,5 +254,86 @@ wire_api = "responses"
     // null auth.json：未崩溃，apiKeyExtracted=false（无回退 key）
     expect(result!.providers[0]._apiKeyExtracted).toBe(false)
     expect(result!.providers[0].apiKey).toBeUndefined()
+  })
+
+  // ── W4 补充：config.toml 无 [model_providers] 表 → providers=[] 且顶层 warnings 省略 ──
+  // 锚定 `config.model_providers ?? {}` 兜底分支：不产出任何 provider，也不产出 warnings 字段。
+  it('W4-a: config 无 model_providers 表 → providers=[]，warnings undefined', () => {
+    writeCodexConfig(`model = "gpt-5.5"
+model_provider = "custom"
+`)
+
+    const result = parseCodexProviders(home)
+
+    expect(result).not.toBeNull()
+    expect(result!.providers).toHaveLength(0)
+    expect(result!.parseError).toBeUndefined()
+    expect(result!.warnings).toBeUndefined()
+  })
+
+  // ── W4 补充：顶层 model 缺失 → models=[] 且无 incomplete warning ──
+  // 锚定 `if (topModel)` 的另一侧：无顶层 model 时不 push 占位 model、不产 model list incomplete 警告。
+  it('W4-b: 顶层 model 缺失 → models=[]，_warnings 无 model list incomplete 提示', () => {
+    writeCodexConfig(`
+[model_providers.custom]
+name = "Router"
+base_url = "http://192.168.1.202:9981/v1"
+wire_api = "responses"
+`)
+
+    const result = parseCodexProviders(home)
+
+    expect(result).not.toBeNull()
+    expect(result!.providers).toHaveLength(1)
+    const provider = result!.providers[0]
+    expect(provider.models).toHaveLength(0)
+    expect(provider._warnings.some((w) => w.includes('model list incomplete'))).toBe(false)
+  })
+
+  // ── W4 补充：http_headers 透传到 ParsedProvider.headers（结构锚定）──
+  it('W4-c: http_headers 表 → provider.headers 逐键透传', () => {
+    writeCodexConfig(`model = "gpt-5.5"
+[model_providers.custom]
+name = "Router"
+base_url = "http://192.168.1.202:9981/v1"
+wire_api = "responses"
+
+[model_providers.custom.http_headers]
+"X-Custom-Header" = "custom-value"
+"Authorization-Hint" = "placeholder"
+`)
+
+    const result = parseCodexProviders(home)
+
+    expect(result).not.toBeNull()
+    expect(result!.providers).toHaveLength(1)
+    expect(result!.providers[0].headers).toEqual({
+      'X-Custom-Header': 'custom-value',
+      'Authorization-Hint': 'placeholder',
+    })
+  })
+
+  // ── W4 补充：id 含 openai 且 env_key 提取到值 → env 优先，不走 auth.json 回退 ──
+  // 锚定 `if (!apiKey && id.toLowerCase().includes('openai') && authData.OPENAI_API_KEY)` 的
+  // `!apiKey` 短路另一侧：env_key 已提取时 auth.json 的 OPENAI_API_KEY 不覆盖。
+  it('W4-d: id 含 openai 且 env_key 有值 → apiKey 用 env 值，auth.json 回退不生效', () => {
+    const toml = `model = "gpt-5.5"
+[model_providers.openai-env]
+name = "OpenAI Env"
+base_url = "https://api.openai.com/v1"
+env_key = "ROUTER_KEY"
+wire_api = "responses"
+`
+    writeCodexConfig(toml)
+    writeFileSync(join(home, '.codex', 'auth.json'), JSON.stringify({ OPENAI_API_KEY: 'sk-fake-openai-from-auth' }))
+    vi.stubEnv('ROUTER_KEY', 'sk-fake-from-env')
+
+    const result = parseCodexProviders(home)
+
+    expect(result).not.toBeNull()
+    const provider = result!.providers[0]
+    expect(provider._sourceName).toBe('openai-env')
+    expect(provider.apiKey).toBe('sk-fake-from-env')
+    expect(provider._apiKeyExtracted).toBe(true)
   })
 })

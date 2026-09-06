@@ -107,13 +107,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertCircle, Bot, ChevronLeft, Clock, Lock } from '@lucide/vue'
 import { Button } from '@xyz-agent/ui'
 import { useDrawerControl, openWorkflow } from '@xyz-agent/core/domain/drawer'
 import { usePanelStore } from '@/stores/panel'
-import { useChatStore } from '@/stores/chat'
 import {
   useSubagentStore,
   isSubagentVirtualId,
@@ -125,28 +124,19 @@ import {
   isAgentCallVirtualId,
   extractAgentCallSessionId,
 } from '@/stores/workflow'
-import { getAgentCallHistory } from '@/api/domains/session'
-import type { Message, SubagentRecord, WorkflowAgentCall } from '@xyz-agent/shared'
+import type { SubagentRecord, WorkflowAgentCall } from '@xyz-agent/shared'
 import MessageStream from './MessageStream.vue'
 import { DEFAULT_ENGINE_ID } from '@/constants/engine-icons'
+// u6.1 chat facet 收口：对话流数据编排（chat store ops 面消费）下沉 composable，
+// 组件只保留 readers 面消费
+import { useSubagentTabData } from '@/composables/panel/useSubagentTabData'
 
 const { t } = useI18n()
 const panelStore = usePanelStore()
-const chatStore = useChatStore()
 const subagentStore = useSubagentStore()
 const workflowStore = useWorkflowStore()
 
 const { selectedSubagentId, enteredFrom } = useDrawerControl()
-
-/**
- * subscribeStream 的 drawer scope token（U8 已落地）。
- * subagent store 的 streamUnsub 是单例 Map<scope, unsub>，按此 token keyed（非 panelId）。
- * drawer 单实例同一时刻只订阅一个 subagent：切换 selectedSubagentId 时先 stopStream 清旧，
- * 再 subscribeStream 起新（同 token 覆盖，store 内部先 stop 再 set）。
- */
-const STREAM_SCOPE = 'drawer:subagent'
-
-const loadError = ref<string | null>(null)
 
 /** 从 workflowStore records 查找指定 acsId 的 agent call（agentcall 入口的元信息来源） */
 function findAgentCall(acsId: string): WorkflowAgentCall | undefined {
@@ -223,10 +213,11 @@ const currentRecord = computed<SubagentRecord | null>(() => {
   return record ?? null
 })
 
-/** record 实际执行引擎（缺省映射 pi，与 runtime extractRecordEngine 同语义，D5） */
-function recordEngine(record: SubagentRecord): string {
-  return record.engine || DEFAULT_ENGINE_ID
-}
+// 对话流数据编排（loadError 兜底态 + 加载/停止；recordEngine 供 coarse 提示与兜底判断复用）
+const { loadError, loadSubagentData, stopSubagentStream, recordEngine } = useSubagentTabData({
+  currentRecord,
+  noOutcomeText: () => t('panel.sideDrawer.subagentNoOutcome'),
+})
 
 /**
  * 运行中 coarse 提示可见性（U4 D7）：非 pi 引擎 + 任务真在跑（窄口径同
@@ -255,90 +246,18 @@ const outcomeSummaryText = computed<string | null>(() => {
   return outcome !== undefined ? outcome : null
 })
 
-/**
- * 客户端 outcome-only 兜底投影（读链空结果时，U4 A8）：形状对齐 runtime
- * subagent-engine-history 的 ③级 outcomeOnlyMessages（user task + result/error 摘要）。
- */
-function outcomeFallbackMessages(record: SubagentRecord): Message[] {
-  const base = record.startedAt ?? Date.now()
-  const isErrorOutcome = record.result === undefined && record.error !== undefined
-  const messages: Message[] = []
-  if (record.task.length > 0) {
-    messages.push({ id: `outcome-u-${record.subagentId}`, role: 'user', content: record.task, status: 'complete', timestamp: base })
-  }
-  messages.push({
-    id: `outcome-a-${record.subagentId}`,
-    role: 'assistant',
-    content: record.result ?? record.error ?? t('panel.sideDrawer.subagentNoOutcome'),
-    status: isErrorOutcome ? 'error' : 'complete',
-    timestamp: record.endedAt ?? base,
-  })
-  return messages
-}
-
-/**
- * 按虚拟 id 类型加载对话流数据并注入 chatStore 虚拟分区。
- * - subagent 三段式：fetchAndInject 拉历史 + 恒订阅 stream_delta（E-4 / R3 消解：不再依赖
- *   isRunning 陈旧缓存判定订阅时机——entry 帧消费走 routeInbound 兜底链不依赖 drawer，
- *   stream_delta 订阅打开即挂，非 running 时空转零成本）
- * - agentcall 两段式：快照只读，仅拉历史（D4：不接实时流式）
- */
-async function loadSubagentData(vid: string): Promise<void> {
-  loadError.value = null
-  try {
-    if (isSubagentVirtualId(vid)) {
-      const mainSessionId = extractMainSessionId(vid)
-      const subId = extractSubagentId(vid)
-      await subagentStore.fetchAndInject(mainSessionId, subId, (id, msgs) => chatStore.setMessages(id, msgs))
-      // U4 A8 兜底：非 pi record 读链异常返回空（③级保底失效等异常形态）→ 客户端
-      // outcome 投影顶上，详情页不白屏。pi 空结果行为不变（正常空 session 也可能是空）。
-      const record = currentRecord.value
-      if (
-        record &&
-        recordEngine(record) !== DEFAULT_ENGINE_ID &&
-        chatStore.getMessages(vid).length === 0 &&
-        (record.result !== undefined || record.error !== undefined)
-      ) {
-        chatStore.setMessages(vid, outcomeFallbackMessages(record))
-      }
-      // 恒订阅（U8 scope token；E-4 R3 消解点：订阅时机与 record 状态机解耦）
-      subagentStore.subscribeStream(
-        STREAM_SCOPE,
-        mainSessionId,
-        subId,
-        vid,
-        (id, lines) => chatStore.applySubagentStreamDelta(id, lines),
-        (id) => chatStore.finalizeSubagentStream(id),
-      )
-    } else if (isAgentCallVirtualId(vid)) {
-      // D4：agentcall 快照只读。mainSid 从 panelStore 取（虚拟 id 两段式不含 mainSid）。
-      const mainSessionId = panelStore.focusedSessionId
-      const acsId = extractAgentCallSessionId(vid)
-      if (!mainSessionId) return
-      const history = await getAgentCallHistory(mainSessionId, acsId)
-      chatStore.setMessages(vid, history)
-      // [MUST_FIX 1] 登记 agentcall 虚拟 key 到主 session 清理映射：agentcall 两段式无 mainSid
-      // 前缀，LRU isVirtualKeyOf 覆盖不到，deleteSession 须经此映射清 agentcall 虚拟分区（防泄漏）。
-      // 原 overlay 时代由 workflow.selectAgentCall 内部登记；overlay 移除后 SubagentTab 显式接管。
-      workflowStore.registerAgentCall(mainSessionId, vid)
-    }
-  } catch (e) {
-    loadError.value = e instanceof Error ? e.message : String(e)
-  }
-}
-
 /** selectedSubagentId 变化：停旧订阅 + 加载新数据（immediate 覆盖 onMounted 首次加载） */
 watch(
   selectedSubagentId,
   (vid, oldVid) => {
-    if (oldVid) subagentStore.stopStream(STREAM_SCOPE)
+    if (oldVid) stopSubagentStream()
     if (vid) void loadSubagentData(vid)
   },
   { immediate: true },
 )
 
 onBeforeUnmount(() => {
-  subagentStore.stopStream(STREAM_SCOPE)
+  stopSubagentStream()
 })
 
 function reload(): void {

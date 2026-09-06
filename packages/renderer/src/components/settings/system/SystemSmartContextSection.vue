@@ -111,7 +111,7 @@ import {
   setSmartContextEnabled,
   setSmartContextExcludedModels,
   setSmartContextThresholds,
-} from '@/api/domains/settings'
+} from '@xyz-agent/core/transport/api/domains/settings'
 import { useToast } from '@/composables/useToast'
 import {
   MODEL_UNSET_SENTINEL,

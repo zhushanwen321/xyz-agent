@@ -16,102 +16,32 @@
 //   4. forkDepth 基线：env PI_SUBAGENT_FORK_DEPTH → fork spawn env 递增
 //
 // mock 策略与 execute-nesting.test.ts 一致（spawn → FakeChild，fs 同步方法 mock，
-// temp-prompt / alive-store / finalized-marker / manifest-store mock）。
-
-import type { PassThrough } from "node:stream";
+// temp-prompt / alive-store / finalized-marker / manifest-store mock；已收敛
+// ./helpers/subagent-service-mocks.ts 四文件共享单源）。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  aliveStoreModule,
+  childProcessModule,
+  finalizedMarkerModule,
+  fsSyncModule,
+  manifestStoreModule,
+  tempPromptModule,
+} from "./helpers/subagent-service-mocks.ts";
+
 // ── mock modules（同 execute-nesting.test.ts）──
 
-vi.mock("node:child_process", async () => {
-  const { EventEmitter } = await import("node:events");
-  const { PassThrough } = await import("node:stream");
-
-  class FakeChild extends EventEmitter {
-    pid = 12345;
-    stdout = new PassThrough();
-    stderr = new PassThrough();
-    killed = false;
-    killSignal: string | undefined;
-    kill(sig?: string): boolean {
-      this.killed = true;
-      this.killSignal = sig;
-      return true;
-    }
-  }
-
-  return {
-    spawn: vi.fn(() => new FakeChild()),
-    // buildEnvBlock 用 execFile 异步取 git branch：默认 err-first 兜底（catch → branch=""）
-    execFile: vi.fn(
-      (
-        _cmd: string,
-        _args: readonly string[],
-        _opts: unknown,
-        cb: (err: Error | null, stdout?: string, stderr?: string) => void,
-      ) => cb(new Error("execFile not configured in this test")),
-    ),
-  };
-});
-
-vi.mock("node:fs", async () => {
-  const actual = await import("node:fs");
-  return {
-    default: {
-      ...actual,
-      mkdirSync: vi.fn(),
-      existsSync: vi.fn(() => false),
-      appendFileSync: vi.fn(),
-      writeFileSync: vi.fn(),
-      readdirSync: vi.fn(() => []),
-    },
-    mkdirSync: vi.fn(),
-    existsSync: vi.fn(() => false),
-    appendFileSync: vi.fn(),
-    writeFileSync: vi.fn(),
-    readdirSync: vi.fn(() => []),
-    promises: actual.promises,
-  };
-});
-
-vi.mock("../alive-store.ts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../alive-store.ts")>();
-  return {
-    ...actual,
-    writeAliveMarker: vi.fn(),
-    removeAliveMarker: vi.fn(),
-  };
-});
-
-vi.mock("../finalized-marker.ts", () => ({
-  writeFinalized: vi.fn(),
-  readFinalized: vi.fn(() => false),
-}));
-
-vi.mock("../manifest-store.ts", () => {
-  class FakeManifestStore {
-    writeManifest = vi.fn(async () => {});
-    readManifest = vi.fn(async () => null);
-    listAllSync = vi.fn(() => []);
-    recoverTmpFiles = vi.fn(async () => []);
-  }
-  // vi.fn 包裹：构造参数（recordsDir）可从 mock.calls 断言（[MF-3] 目录统一验证）。
-  // 注意用普通 function（箭头函数不能被 new 调用）。
-  return { ManifestStore: vi.fn(function (_recordsDir: string) { return new FakeManifestStore(); }) };
-});
-
-vi.mock("../temp-prompt.ts", () => ({
-  writePromptToTempFile: vi.fn(async (agent: string) => {
-    const safeName = agent.replace(/[^\w.-]+/g, "_");
-    return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
-  }),
-  cleanupTempPrompt: vi.fn(async () => {}),
-}));
+vi.mock("node:child_process", () => childProcessModule());
+vi.mock("node:fs", async (importOriginal) => fsSyncModule(await importOriginal<typeof import("node:fs")>()));
+vi.mock("../alive-store.ts", async (importOriginal) => aliveStoreModule(await importOriginal<typeof import("../alive-store.ts")>()));
+vi.mock("../finalized-marker.ts", () => finalizedMarkerModule());
+vi.mock("../manifest-store.ts", () => manifestStoreModule());
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => tempPromptModule());
 
 import { spawn } from "node:child_process";
 
-import { waitForSpawn } from "./helpers/spawn-mock.ts";
+import { waitForSpawn, lastSpawnedChild } from "./helpers/spawn-mock.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
 import { ManifestStore } from "../manifest-store.ts";
@@ -128,41 +58,8 @@ const ENV_DEPTH = "PI_SUBAGENT_DEPTH";
 const ENV_ROOT_CWD = "PI_SUBAGENT_ROOT_CWD";
 const ENV_FORK_DEPTH = "PI_SUBAGENT_FORK_DEPTH";
 
-interface FakeChild {
-  pid: number;
-  stdout: PassThrough;
-  stderr: PassThrough;
-  killed: boolean;
-  killSignal: string | undefined;
-  kill(sig?: string): boolean;
-  emit(event: string, ...args: unknown[]): boolean;
-}
-
-function lastSpawnedChild(): FakeChild {
-  const result = mockSpawn.mock.results.at(-1);
-  if (!result) throw new Error("spawn was not called yet");
-  return result.value as FakeChild;
-}
-
 function getLastSpawnEnv(): Record<string, string | undefined> {
   return (mockSpawn.mock.calls.at(-1)?.[2]?.env as Record<string, string | undefined>) ?? {};
-}
-
-function sessionHeader(id = "baseline-session"): Record<string, unknown> {
-  return { type: "session", id, timestamp: "2026-08-11T00-00-00-000Z", cwd: "/tmp/test" };
-}
-
-function emitStdoutLine(child: FakeChild, obj: Record<string, unknown>): void {
-  child.stdout.write(`${JSON.stringify(obj)}\n`);
-}
-
-/** 驱动 FakeChild 完成：header + 可选事件 + close(0)（runSpawn 自然 resolve）。 */
-async function driveChildToCompletion(child: FakeChild, events: Record<string, unknown>[] = []): Promise<void> {
-  emitStdoutLine(child, sessionHeader());
-  for (const e of events) emitStdoutLine(child, e);
-  child.stdout.end();
-  child.stderr.end();
-  child.emit("close", 0);
 }
 
 // ── 辅助：service 构造 ──
@@ -177,7 +74,7 @@ function makePi() {
 
 function setup(env: Record<string, string>): { service: SubagentService; store: RecordStore } {
   const agentDir = "/tmp/baseline-it";
-  const modelService = new ModelConfigService({ agentDir });
+  const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
   modelService.initModel({
     modelRegistry: makeEmptyRegistry(),
     sessionId: "baseline-it",
@@ -227,7 +124,7 @@ describe("进程级基线兜底（ALS 断裂修复，pi 事件回调模型）", 
     const { service, store } = setup({});
 
     // 不在 execCtxAls.run 内调用（模拟 ALS 断裂：事件回调上下文读不到 store）
-    const handle = await service.execute({ task: "child of parent", ctxModel });
+    const handle = await service.execute({ task: "child of parent", slug: "test", ctxModel });
 
     const rec = store.collectRecords(10, "all", "root-main").find((r) => r.id === handle.subagentId);
     expect(rec).toBeDefined();
@@ -239,7 +136,7 @@ describe("进程级基线兜底（ALS 断裂修复，pi 事件回调模型）", 
     // 旧实现传 this.sessionId（子进程自己的 session id ≠ ROOT）→ 子进程内列表恒空。
     // 子进程的本进程 sessionId 是 "baseline-it"（initSession 注入），而 record 归属
     // root-main（env 贯穿的真 ROOT）——能查到即证明过滤用的是 sessionRootId。
-    const viaService = service.collectRecords(10);
+    const viaService = service.queries.collectRecords(10);
     expect(viaService.map((r) => r.id)).toContain(handle.subagentId);
     expect(viaService[0]!.rootSessionId).toBe("root-main");
   });
@@ -247,7 +144,7 @@ describe("进程级基线兜底（ALS 断裂修复，pi 事件回调模型）", 
   it("[顶层] 无 env（根进程）：parentRecordId undefined / depth 0", async () => {
     const { service, store } = setup({});
 
-    const handle = await service.execute({ task: "top level", ctxModel });
+    const handle = await service.execute({ task: "top level", slug: "test", ctxModel });
 
     const rec = store.collectRecords(10, "all", "baseline-it").find((r) => r.id === handle.subagentId);
     expect(rec).toBeDefined();
@@ -261,10 +158,10 @@ describe("进程级基线兜底（ALS 断裂修复，pi 事件回调模型）", 
     process.env[ENV_DEPTH] = "0";
 
     const { service, store } = setup({});
-    const execCtxAls = Reflect.get(service, "execCtxAls") as ExecCtxAls;
+    const execNesting = Reflect.get(service, "execNesting") as ExecCtxAls;
 
-    const handle = await execCtxAls.run({ recordId: "sa-inline-parent", depth: 3 }, () =>
-      service.execute({ task: "inline nested", ctxModel }),
+    const handle = await execNesting.run({ recordId: "sa-inline-parent", depth: 3 }, () =>
+      service.execute({ task: "inline nested", slug: "test", ctxModel }),
     );
 
     const rec = store.collectRecords(10, "all", "root-main").find((r) => r.id === handle.subagentId);
@@ -281,14 +178,14 @@ describe("进程级基线兜底（ALS 断裂修复，pi 事件回调模型）", 
 
     const { service } = setup({});
 
-    const execPromise = service.execute({ task: "fork child", ctxModel, fork: true });
+    const execPromise = service.execute({ task: "fork child", slug: "test", ctxModel, fork: true });
     await waitForSpawn(mockSpawn);
     const childEnv = getLastSpawnEnv();
 
     // 742 行 parentDepth = forkDepthAls.getStore() ?? forkDepthBaseline —— ALS 断裂时基线=1，+1 → 2
     expect(childEnv.PI_SUBAGENT_FORK_DEPTH).toBe("2");
 
-    const child = lastSpawnedChild();
+    const child = lastSpawnedChild(mockSpawn);
     child.emit("close", 0);
     await execPromise;
   });
@@ -303,7 +200,7 @@ describe("进程级基线兜底（ALS 断裂修复，pi 事件回调模型）", 
     // MAX_FORK_DEPTH 至少 > 5 才不会被误拒；这里验证基线参与计数的方式是
     // 用直接深度断言——execute 不抛错说明 nestingDepth=6 未超限，护栏不误伤。
     // （MAX_FORK_DEPTH 具体值由 session-context-resolver 定义，这里不硬编码。）
-    await expect(service.execute({ task: "deep but allowed", ctxModel })).resolves.toBeDefined();
+    await expect(service.execute({ task: "deep but allowed", slug: "test", ctxModel })).resolves.toBeDefined();
   });
 
   it("[MF-3 回归] 有 ENV_ROOT_CWD（worktree 子进程）：sessions 与 records 两套目录统一编码在 ROOT cwd 段", () => {
@@ -314,7 +211,7 @@ describe("进程级基线兜底（ALS 断裂修复，pi 事件回调模型）", 
 
     const agentDir = "/tmp/baseline-it";
     const checkoutPath = "/var/folders/worktree/pi-subagents/--root-project--/branch";
-    const modelService = new ModelConfigService({ agentDir });
+    const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
     modelService.initModel({
       modelRegistry: makeEmptyRegistry(),
       sessionId: "baseline-it",

@@ -20,7 +20,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick, defineComponent, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 // ── Composer 路径 mock（U9-U10）—— vi.mock factory 必须早于 import ──

@@ -618,7 +618,7 @@ describe("runAndWait model 透传", () => {
     );
     expect(result.reason).toBe("completed");
     expect(vi.mocked(runWorkflow)).toHaveBeenCalledTimes(1);
-    const spec = vi.mocked(runWorkflow).mock.calls[0][0] as RunSpec;
+    const spec = vi.mocked(runWorkflow).mock.calls[0]![0] as RunSpec;
     expect(spec.model).toBe("zai-coding-cn/glm-5.3-flash");
   });
 
@@ -628,7 +628,7 @@ describe("runAndWait model 透传", () => {
     setupRunWorkflow(childRun);
 
     await runAndWait("child-wf", {}, deps);
-    const spec = vi.mocked(runWorkflow).mock.calls[0][0] as RunSpec;
+    const spec = vi.mocked(runWorkflow).mock.calls[0]![0] as RunSpec;
     expect(spec.model).toBeUndefined();
   });
 });

@@ -12,7 +12,7 @@ import { type ProviderInfo, type BuiltinProviderTemplate, type ProviderId } from
 import { isCatalogProvider, deriveEnabled, getMergedCatalogModels } from './provider-catalog.js'
 import type { IConfigStore, ConfigModelDefinition, ConfigProviderConfig } from './ports/config.js'
 import type { AuthStorage, CredentialWriter } from './auth/auth-storage.js'
-import type { XyzProviderStore } from './provider-extras-store.js'
+import type { XyzProviderStore, ProviderExtras } from './provider-extras-store.js'
 import { readAllExtrasWithFallback, type ProviderExtrasReader } from './migration/provider-extras-migration.js'
 import { pickModelCapabilityFields } from './model-mapper.js'
 
@@ -257,6 +257,142 @@ export function setDefaultModel(configStore: IConfigStore, provider: ProviderId,
 // ── Provider 列举 / 查询 ──
 
 /**
+ * catalog 候选 id 收集：(auth.json keys ∪ models.json catalog keys)（F1 修复核心的集合前半）。
+ * 旧实现只遍历 models.json providers，catalog 凭据在 auth.json（models.json 无条目）时不显示。
+ * 现聚合 auth.json 有凭据的 catalog provider，即使 models.json 无该条目也显示。
+ */
+function collectCatalogCandidateIds(
+  providers: Record<string, ConfigProviderConfig>,
+  authIds: string[],
+): Set<string> {
+  const catalogCandidateIds = new Set<string>()
+  for (const id of authIds) {
+    if (isCatalogProvider(id)) catalogCandidateIds.add(id)
+  }
+  for (const [id] of Object.entries(providers)) {
+    if (isCatalogProvider(id)) catalogCandidateIds.add(id)
+  }
+  return catalogCandidateIds
+}
+
+/**
+ * catalog 源 models 装配（B-2 聚合层配合，design §3.6）：混合合并——builtin 副本（未被
+ * override 同 id 覆盖的）+ override 条目，替换旧「override 非空即整体替换」。旧逻辑与 pi
+ * 真实行为漂移：pi 侧 catalog override 与内置目录合并显示、内置模型恒在（design D1 探针实测）。
+ * source 在合并点标注（不做事后猜测）：override 条目（含同 id 覆盖 builtin 的）标 'override'——
+ * 它已被用户定义覆盖；builtin 副本条目标 'builtin'。builtin 在前与 design §3.1 场景 A
+ * 的混合列表形态一致（内置在前、自定义追加在后）。
+ * 远程目录 overlay（settings-provider 页进入时刷新）：合并逻辑收拢在 provider-catalog
+ * 单点（D4，与 pi-provider-store 校验视图同源）——快照打底，仅 fresh 态 overlay 并入
+ * （同 id 覆盖、新 id 追加，对齐 pi mergeModels 语义；expired/never-seen 态等于纯快照），
+ * override 用户定义仍最高优先。
+ */
+function buildCatalogProviderModels(
+  providerId: string,
+  builtinP: BuiltinProviderTemplate,
+  overrideModels: ConfigModelDefinition[],
+  modelStates?: Record<string, { enabled: boolean }>,
+): ProviderInfo['models'] {
+  const overrideIds = new Set(overrideModels.map(m => m.id))
+  const mergedCatalog = getMergedCatalogModels(providerId)
+  const mergedBuiltin = new Map<string, BuiltinProviderTemplate['models'][number]>(
+    (mergedCatalog?.models ?? builtinP.models ?? []).map(m => [m.id, m]),
+  )
+  const builtinNotOverridden = [...mergedBuiltin.values()].filter(m => !overrideIds.has(m.id))
+  return [
+    ...builtinNotOverridden.map(m => ({ ...toProviderModel(m, modelStates), source: 'builtin' as const })),
+    ...overrideModels.map(m => ({ ...toUserInfoModel(m, modelStates), source: 'override' as const })),
+  ]
+}
+
+/** catalog 源展示字段回退链装配（override 优先，逐字段回退 builtin 模板 / extras 标注 / id）。 */
+function resolveCatalogDisplayFields(
+  id: string,
+  override: ConfigProviderConfig | undefined,
+  builtinP: BuiltinProviderTemplate,
+  extras: ProviderExtras | undefined,
+): Pick<ProviderInfo, 'name' | 'api' | 'baseUrl' | 'authMethod'> {
+  return {
+    name: override?.name || builtinP.name || id,
+    api: override?.api ?? builtinP.api,
+    baseUrl: override?.baseUrl ?? builtinP.baseUrl,
+    // 显式标注（extras.authMethod）优先；无标注退回 apiKey 格式推断（I6）
+    authMethod: extras?.authMethod ?? deriveAuthMethod(override),
+  }
+}
+
+/** catalog 源单条 ProviderInfo 装配（listProviders catalog 循环体提取，行为逐字保持）。 */
+function buildCatalogProviderInfo(
+  id: string,
+  override: ConfigProviderConfig | undefined,
+  builtinP: BuiltinProviderTemplate,
+  extras: ProviderExtras | undefined,
+  authIdSet: Set<string>,
+  enabledModels: string[],
+): ProviderInfo {
+  // C1 契约「catalog 凭据 = id ∈ auth.json keys」；override?.apiKey 是 catalog provider
+  // 手动填 key 的旧数据（迁移前错位）合理扩展，双源判定避免遗漏。
+  const apiKeySet = authIdSet.has(id) || !!override?.apiKey
+  const overrideModels = override?.models ?? []
+  const display = resolveCatalogDisplayFields(id, override, builtinP, extras)
+  // id 来自 models.json / auth.json 的磁盘 key（反序列化边界，design D5）→ as ProviderId 提升
+  // key 顺序与 HEAD catalog 循环逐字对齐（apiKeySet 先于 authMethod；JSON 序列化字节序不变）
+  return {
+    id: id as ProviderId,
+    name: display.name,
+    api: display.api,
+    baseUrl: display.baseUrl,
+    apiKeySet,
+    authMethod: display.authMethod,
+    // catalog 凭据在 auth.json：apiKeySet 已含 auth.json 判定（authIdSet.has(id)），
+    // 与旧 status 逻辑（hasCredentialSync(id)）等价，避免重复读 auth.json。
+    status: apiKeySet ? 'connected' as const : 'not_configured' as const,
+    models: buildCatalogProviderModels(id, builtinP, overrideModels, extras?.modelStates),
+    // DM3：enabled 从 enabledModels 派生，不读 models.json provider.enabled（F2）
+    enabled: deriveEnabled(id, enabledModels),
+    kind: 'catalog' as const,
+    hasOverride: !!override,
+    quota: extras?.quota,
+  }
+}
+
+/** custom 源单条 ProviderInfo 装配（listProviders custom 循环体提取，行为逐字保持）。 */
+function buildCustomProviderInfo(
+  id: string,
+  config: ConfigProviderConfig,
+  extras: ProviderExtras | undefined,
+  authIdSet: Set<string>,
+  enabledModels: string[],
+): ProviderInfo {
+  const userModels = (config.models ?? []).map(m => toUserInfoModel(m, extras?.modelStates))
+  const apiKeySet = !!config.apiKey
+  // id 来自 models.json 的磁盘 key（反序列化边界，design D5）→ as ProviderId 提升
+  return {
+    id: id as ProviderId,
+    name: config.name || id,
+    // W2：回填 provider 级 api 字段，修复前端编辑 provider 时 type 下拉丢失（P0-1）
+    api: config.api,
+    baseUrl: config.baseUrl,
+    apiKeySet,
+    // 显式标注（extras.authMethod）优先；无标注退回 apiKey 格式推断（I6）
+    authMethod: extras?.authMethod ?? deriveAuthMethod(config),
+    // M6 status 派生：apiKey 或 auth.json 凭据任一 → connected。
+    // B3：复用 authIdSet（listProviders 开头批量读），消除每次循环 hasCredentialSync 的 N+1 读盘。
+    status: (config.apiKey || authIdSet.has(id))
+      ? 'connected' as const
+      : 'not_configured' as const,
+    // T9/M5 models 合并：用户自定义 models 非空 → 保留；为空 → builtin models 兜底
+    models: userModels.length > 0
+      ? userModels
+      : (builtinProvidersById.get(id)?.models.map(m => toProviderModel(m, extras?.modelStates)) ?? userModels),
+    // DM3：enabled 从 enabledModels 派生，不读 models.json provider.enabled（F2）
+    enabled: deriveEnabled(id, enabledModels),
+    kind: 'custom' as const,
+    quota: extras?.quota,
+  }
+}
+
+/**
  * catalog ∪ custom 双源聚合 provider 列表。
  * 纯函数：configStore / authStorage / extrasStore 经参数注入（原 ConfigService.listProviders 搬迁）。
  *
@@ -281,100 +417,20 @@ export function listProviders(
   const catalogIdsHandled = new Set<string>()
 
   // ── catalog 源：(auth.json keys ∪ models.json catalog keys) ∩ builtinData（F1 修复核心）──
-  // 旧实现只遍历 models.json providers，catalog 凭据在 auth.json（models.json 无条目）时不显示。
-  // 现聚合 auth.json 有凭据的 catalog provider，即使 models.json 无该条目也显示。
-  const catalogCandidateIds = new Set<string>()
-  for (const id of authIds) {
-    if (isCatalogProvider(id)) catalogCandidateIds.add(id)
-  }
-  for (const [id] of Object.entries(models.providers)) {
-    if (isCatalogProvider(id)) catalogCandidateIds.add(id)
-  }
+  const catalogCandidateIds = collectCatalogCandidateIds(models.providers, authIds)
 
   for (const id of catalogCandidateIds) {
     const builtinP = builtinProvidersById.get(id)
     if (!builtinP) continue // 只聚合 builtin 内的 catalog provider（∩ builtinData）
     catalogIdsHandled.add(id)
-    const override = models.providers[id]
-    const hasOverride = !!override
-    // A1-3：xyz 私有字段读 providers.json（双读回退，models.json 寄生字段仅兜底）
-    const extras = extrasAll[id]
-    // C1 契约「catalog 凭据 = id ∈ auth.json keys」；override?.apiKey 是 catalog provider
-    // 手动填 key 的旧数据（迁移前错位）合理扩展，双源判定避免遗漏。
-    const apiKeySet = authIdSet.has(id) || !!override?.apiKey
-    const overrideModels = override?.models ?? []
-    // B-2 聚合层配合（design §3.6）：混合合并——builtin 副本（未被 override 同 id 覆盖的）
-    // + override 条目，替换旧「override 非空即整体替换」。旧逻辑与 pi 真实行为漂移：pi 侧
-    // catalog override 与内置目录合并显示、内置模型恒在（design D1 探针实测）。source 在
-    // 合并点标注（不做事后猜测）：override 条目（含同 id 覆盖 builtin 的）标 'override'——
-    // 它已被用户定义覆盖；builtin 副本条目标 'builtin'。builtin 在前与 design §3.1 场景 A
-    // 的混合列表形态一致（内置在前、自定义追加在后）。
-    const overrideIds = new Set(overrideModels.map(m => m.id))
-    // 远程目录 overlay（settings-provider 页进入时刷新）：合并逻辑收拢在 provider-catalog
-    // 单点（D4，与 pi-provider-store 校验视图同源）——快照打底，仅 fresh 态 overlay 并入
-    // （同 id 覆盖、新 id 追加，对齐 pi mergeModels 语义；expired/never-seen 态等于纯快照），
-    // override 用户定义仍最高优先。
-    const mergedCatalog = getMergedCatalogModels(id)
-    const mergedBuiltin = new Map<string, BuiltinProviderTemplate['models'][number]>(
-      (mergedCatalog?.models ?? builtinP.models ?? []).map(m => [m.id, m]),
-    )
-    const builtinNotOverridden = [...mergedBuiltin.values()].filter(m => !overrideIds.has(m.id))
-    // id 来自 models.json / auth.json 的磁盘 key（反序列化边界，design D5）→ as ProviderId 提升
-    result.push({
-      id: id as ProviderId,
-      name: override?.name || builtinP.name || id,
-      api: override?.api ?? builtinP.api,
-      baseUrl: override?.baseUrl ?? builtinP.baseUrl,
-      apiKeySet,
-      // 显式标注（extras.authMethod）优先；无标注退回 apiKey 格式推断（I6）
-      authMethod: extras?.authMethod ?? deriveAuthMethod(override),
-      // catalog 凭据在 auth.json：apiKeySet 已含 auth.json 判定（authIdSet.has(id)），
-      // 与旧 status 逻辑（hasCredentialSync(id)）等价，避免重复读 auth.json。
-      status: apiKeySet ? 'connected' as const : 'not_configured' as const,
-      models: [
-        ...builtinNotOverridden.map(m => ({ ...toProviderModel(m, extras?.modelStates), source: 'builtin' as const })),
-        ...overrideModels.map(m => ({ ...toUserInfoModel(m, extras?.modelStates), source: 'override' as const })),
-      ],
-      // DM3：enabled 从 enabledModels 派生，不读 models.json provider.enabled（F2）
-      enabled: deriveEnabled(id, enabledModels),
-      kind: 'catalog' as const,
-      hasOverride,
-      quota: extras?.quota,
-    })
+    result.push(buildCatalogProviderInfo(id, models.providers[id], builtinP, extrasAll[id], authIdSet, enabledModels))
   }
 
   // ── custom 源：models.json providers where !isCatalogProvider(id)（保留旧逻辑，kind='custom'）──
   // catalogIdsHandled 已收录 models.json 里的 catalog 条目（上面聚合时加入），此处跳过避免重复。
   for (const [id, config] of Object.entries(models.providers)) {
     if (catalogIdsHandled.has(id)) continue
-    // A1-3：xyz 私有字段读 providers.json（双读回退，models.json 寄生字段仅兜底）
-    const extras = extrasAll[id]
-    const userModels = (config.models ?? []).map(m => toUserInfoModel(m, extras?.modelStates))
-    const apiKeySet = !!config.apiKey
-    // id 来自 models.json 的磁盘 key（反序列化边界，design D5）→ as ProviderId 提升
-    result.push({
-      id: id as ProviderId,
-      name: config.name || id,
-      // W2：回填 provider 级 api 字段，修复前端编辑 provider 时 type 下拉丢失（P0-1）
-      api: config.api,
-      baseUrl: config.baseUrl,
-      apiKeySet,
-      // 显式标注（extras.authMethod）优先；无标注退回 apiKey 格式推断（I6）
-      authMethod: extras?.authMethod ?? deriveAuthMethod(config),
-      // M6 status 派生：apiKey 或 auth.json 凭据任一 → connected。
-      // B3：复用 authIdSet（listProviders 开头批量读），消除每次循环 hasCredentialSync 的 N+1 读盘。
-      status: (config.apiKey || authIdSet.has(id))
-        ? 'connected' as const
-        : 'not_configured' as const,
-      // T9/M5 models 合并：用户自定义 models 非空 → 保留；为空 → builtin models 兜底
-      models: userModels.length > 0
-        ? userModels
-        : (builtinProvidersById.get(id)?.models.map(m => toProviderModel(m, extras?.modelStates)) ?? userModels),
-      // DM3：enabled 从 enabledModels 派生，不读 models.json provider.enabled（F2）
-      enabled: deriveEnabled(id, enabledModels),
-      kind: 'custom' as const,
-      quota: extras?.quota,
-    })
+    result.push(buildCustomProviderInfo(id, config, extrasAll[id], authIdSet, enabledModels))
   }
 
   return result
@@ -500,6 +556,142 @@ function applyProviderLevelFields(
 }
 
 /**
+ * 基础字段装配（从 setProvider 模型合并 arrow 提取）：name / contextWindow / input /
+ * thinkingLevelMap。保持原赋值顺序；thinkingLevelMap 非法值静默忽略 + 显式 undefined 时
+ * 删除 base 残留（buildMap() returned undefined (all passthrough)）语义不变。
+ */
+function applyModelBaseFields(
+  model: Record<string, unknown>,
+  m: Record<string, unknown>,
+  base: Partial<ConfigModelDefinition>,
+): void {
+  if (m.name) model.name = String(m.name)
+  if (typeof m.contextWindow === 'number') model.contextWindow = m.contextWindow
+  if (Array.isArray(m.input)) {
+    model.input = (m.input as unknown[]).filter(
+      (v): v is 'text' | 'image' => v === 'text' || v === 'image',
+    )
+  }
+  if (isValidThinkingLevelMap(m.thinkingLevelMap)) {
+    model.thinkingLevelMap = m.thinkingLevelMap
+  } else if (m.thinkingLevelMap === undefined && base.thinkingLevelMap) {
+    // buildMap() returned undefined (all passthrough) → remove from model
+    delete model.thinkingLevelMap
+  }
+}
+
+/** model 级 enabled 收集到 modelStatesUpdates（G3 写侧切换；显式传值才记录，id 为空跳过）。 */
+function recordModelStateUpdate(
+  modelStatesUpdates: Record<string, { enabled: boolean }>,
+  id: string,
+  enabled: unknown,
+): void {
+  if (typeof enabled === 'boolean' && id) {
+    modelStatesUpdates[id] = { enabled }
+  }
+}
+
+/** api / baseUrl 回写（review must_fix #1：前端回传的 model 级值必须写回，否则编辑保存即丢失）。 */
+function applyModelRoutingFields(model: Record<string, unknown>, m: Record<string, unknown>): void {
+  if (typeof m.api === 'string') model.api = m.api
+  if (typeof m.baseUrl === 'string') model.baseUrl = m.baseUrl
+}
+
+/**
+ * 校验型字段装配（B-4b 模型写入白名单：reasoning/maxTokens/cost/headers，全是 pi
+ * ModelDefinitionSchema 内字段）。undefined = 不变（base spread 保留）；显式传值走校验，
+ * 非法值 throw 上抛（handler try-catch 转 sendError）而非静默丢弃——静默会让「保存成功
+ * 但参数丢失」无从排查。与存量字段（name/contextWindow 等的静默忽略）模式不同：新字段
+ * 从第一天就走校验路径，存量字段保持行为兼容不动。保持原校验顺序（reasoning → maxTokens
+ * → cost → headers），throw 文案逐字节不变。
+ */
+function applyValidatedModelFields(
+  model: Record<string, unknown>,
+  m: Record<string, unknown>,
+  id: string,
+): void {
+  if (m.reasoning !== undefined) {
+    if (typeof m.reasoning !== 'boolean') {
+      throw new Error(`Invalid reasoning for model "${id}": must be a boolean`)
+    }
+    model.reasoning = m.reasoning
+  }
+  if (m.maxTokens !== undefined) {
+    if (typeof m.maxTokens !== 'number' || !Number.isInteger(m.maxTokens) || m.maxTokens <= 0) {
+      throw new Error(`Invalid maxTokens for model "${id}": must be a positive integer`)
+    }
+    model.maxTokens = m.maxTokens
+  }
+  if (m.cost !== undefined) {
+    // 四字段必填对齐 pi ModelCostSchema（缺字段写入 → pi 拒载整个 models.json）
+    model.cost = sanitizeModelCost(m.cost, `cost for model "${id}"`)
+  }
+  if (m.headers !== undefined) {
+    // 清空语义对齐 provider 级：传 {} 即清空（pi Record 允许空对象）
+    model.headers = sanitizeHeaders(m.headers, `headers for model "${id}"`)
+  }
+}
+
+/**
+ * compat 透传/清洗/删除（前端 compat 编辑器回传的兼容性覆盖必须写回，否则编辑保存即丢失
+ * 用户手动配置的 compat）。类型守卫对齐 isValidThinkingLevelMap：必须排除 null
+ * （typeof null === 'object'）与数组（typeof [] === 'object'），否则下游遍历 null 会崩
+ * 或把数组当对象写入。显式 undefined + base 有值 → 删除（「清除所有 compat」按钮语义）。
+ */
+function applyModelCompat(
+  model: Record<string, unknown>,
+  m: Record<string, unknown>,
+  base: Partial<ConfigModelDefinition>,
+): void {
+  if (m.compat != null && typeof m.compat === 'object' && !Array.isArray(m.compat)) {
+    // sanitize compat（守卫通过后、赋值前）：
+    // - 剔除 __proto__/prototype/constructor 防 prototype pollution（compat 类型是
+    //   Record<string, unknown> 前向兼容扩展点，不能假定 key 安全）
+    // - 剔除 undefined value（避免 JSON 序列化丢 key 造成困惑）
+    // 不做 key 白名单：compat schema 未稳定，白名单会限制前向扩展。
+    const sanitized: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(m.compat)) {
+      if (k === '__proto__' || k === 'prototype' || k === 'constructor') continue
+      if (v === undefined) continue
+      sanitized[k] = v
+    }
+    model.compat = sanitized
+  } else if (m.compat === undefined && base.compat) {
+    // 前端 clearAll 发 undefined → 删除盘上已有的 compat（对齐 thinkingLevelMap undefined 分支），
+    // 否则 base spread 会保留旧 compat，导致「清除所有 compat」按钮失效。
+    delete model.compat
+  }
+}
+
+/**
+ * 单个 model 条目合并（setProvider 模型合并 arrow 提取，白名单装配 + G3 收集）。
+ * 字段赋值/校验顺序与原实现逐字保持：base spread → 基础字段 → enabled 剥除与收集 →
+ * api/baseUrl → 校验型字段 → compat。
+ */
+function mergeProviderModel(
+  m: Record<string, unknown>,
+  existingModels: ConfigModelDefinition[],
+  modelStatesUpdates: Record<string, { enabled: boolean }>,
+): ConfigModelDefinition {
+  const id = String(m.id ?? '')
+  const base = existingModels.find(em => em.id === id) ?? {} as Partial<ConfigModelDefinition>
+  const model: Record<string, unknown> = { ...base, id }
+  applyModelBaseFields(model, m, base)
+  // review must_fix #1：前端回传的 model 级 api/baseUrl 必须写回，
+  // 否则编辑保存即丢失（新模型 base={} 全丢，编辑现有模型被 base 旧值覆盖）。
+  // 对齐 provider 级的「if (m.X !== undefined) model.X = ...」模式。
+  // enabled 例外（G3）：pi schema 外寄生字段不写 models.json，迁 providers.json
+  // modelStates——base 残留的旧 enabled（迁移失败窗口数据）一并剥除，保证本
+  // 路径不再序列化该字段进 models.json。
+  delete model.enabled
+  recordModelStateUpdate(modelStatesUpdates, id, m.enabled)
+  applyModelRoutingFields(model, m)
+  applyValidatedModelFields(model, m, id)
+  applyModelCompat(model, m, base)
+  return model as unknown as ConfigModelDefinition
+}
+
+/**
  * 新建 / 更新 provider（wave3 边界1 白名单守卫 + I9 auth.json 清理 + catalog 分体系）。
  * 纯函数：configStore / authStorage / extrasStore / credentialWriter 经参数注入
  * （原 ConfigService.setProvider 逐字搬迁）。
@@ -554,85 +746,7 @@ export async function setProvider(
     // G3 写侧切换：model 级 enabled 收集到 providers.json modelStates（下方 modify 落盘），
     // 不再写 models.json（pi schema 外寄生字段）。
     const modelStatesUpdates: Record<string, { enabled: boolean }> = {}
-    merged.models = rawModels.map(m => {
-      const id = String(m.id ?? '')
-      const base = existingModels.find(em => em.id === id) ?? {} as Partial<ConfigModelDefinition>
-      const model: Record<string, unknown> = { ...base, id }
-      if (m.name) model.name = String(m.name)
-      if (typeof m.contextWindow === 'number') model.contextWindow = m.contextWindow
-      if (Array.isArray(m.input)) {
-        model.input = (m.input as unknown[]).filter(
-          (v): v is 'text' | 'image' => v === 'text' || v === 'image',
-        )
-      }
-      if (isValidThinkingLevelMap(m.thinkingLevelMap)) {
-        model.thinkingLevelMap = m.thinkingLevelMap
-      } else if (m.thinkingLevelMap === undefined && base.thinkingLevelMap) {
-        // buildMap() returned undefined (all passthrough) → remove from model
-        delete model.thinkingLevelMap
-      }
-      // review must_fix #1：前端回传的 model 级 api/baseUrl 必须写回，
-      // 否则编辑保存即丢失（新模型 base={} 全丢，编辑现有模型被 base 旧值覆盖）。
-      // 对齐 provider 级的「if (m.X !== undefined) model.X = ...」模式。
-      // enabled 例外（G3）：pi schema 外寄生字段不写 models.json，迁 providers.json
-      // modelStates——base 残留的旧 enabled（迁移失败窗口数据）一并剥除，保证本
-      // 路径不再序列化该字段进 models.json。
-      delete model.enabled
-      if (typeof m.enabled === 'boolean' && id) {
-        modelStatesUpdates[id] = { enabled: m.enabled }
-      }
-      if (typeof m.api === 'string') model.api = m.api
-      if (typeof m.baseUrl === 'string') model.baseUrl = m.baseUrl
-      // B-4b 模型写入白名单补全：reasoning/maxTokens/cost/headers 全是 pi
-      // ModelDefinitionSchema 内字段（0.84.1 model-config.js），此前白名单缺失导致前端
-      // 回传即丢。undefined = 不变（base spread 保留）；显式传值走校验，非法值 throw
-      // 上抛（handler try-catch 转 sendError）而非静默丢弃——静默会让「保存成功但参数
-      // 丢失」无从排查。与存量字段（name/contextWindow 等的静默忽略）模式不同：新字段
-      // 从第一天就走校验路径，存量字段保持行为兼容不动。
-      if (m.reasoning !== undefined) {
-        if (typeof m.reasoning !== 'boolean') {
-          throw new Error(`Invalid reasoning for model "${id}": must be a boolean`)
-        }
-        model.reasoning = m.reasoning
-      }
-      if (m.maxTokens !== undefined) {
-        if (typeof m.maxTokens !== 'number' || !Number.isInteger(m.maxTokens) || m.maxTokens <= 0) {
-          throw new Error(`Invalid maxTokens for model "${id}": must be a positive integer`)
-        }
-        model.maxTokens = m.maxTokens
-      }
-      if (m.cost !== undefined) {
-        // 四字段必填对齐 pi ModelCostSchema（缺字段写入 → pi 拒载整个 models.json）
-        model.cost = sanitizeModelCost(m.cost, `cost for model "${id}"`)
-      }
-      if (m.headers !== undefined) {
-        // 清空语义对齐 provider 级：传 {} 即清空（pi Record 允许空对象）
-        model.headers = sanitizeHeaders(m.headers, `headers for model "${id}"`)
-      }
-      // compat 透传：前端 compat 编辑器回传的兼容性覆盖必须写回，
-      // 否则编辑保存即丢失用户手动配置的 compat（隐性数据丢失 bug）。
-      // 类型守卫对齐 isValidThinkingLevelMap：必须排除 null（typeof null === 'object'）
-      // 与数组（typeof [] === 'object'），否则下游遍历 null 会崩或把数组当对象写入。
-      if (m.compat != null && typeof m.compat === 'object' && !Array.isArray(m.compat)) {
-        // sanitize compat（守卫通过后、赋值前）：
-        // - 剔除 __proto__/prototype/constructor 防 prototype pollution（compat 类型是
-        //   Record<string, unknown> 前向兼容扩展点，不能假定 key 安全）
-        // - 剔除 undefined value（避免 JSON 序列化丢 key 造成困惑）
-        // 不做 key 白名单：compat schema 未稳定，白名单会限制前向扩展。
-        const sanitized: Record<string, unknown> = {}
-        for (const [k, v] of Object.entries(m.compat)) {
-          if (k === '__proto__' || k === 'prototype' || k === 'constructor') continue
-          if (v === undefined) continue
-          sanitized[k] = v
-        }
-        model.compat = sanitized
-      } else if (m.compat === undefined && base.compat) {
-        // 前端 clearAll 发 undefined → 删除盘上已有的 compat（对齐 thinkingLevelMap undefined 分支），
-        // 否则 base spread 会保留旧 compat，导致「清除所有 compat」按钮失效。
-        delete model.compat
-      }
-      return model as unknown as ConfigModelDefinition
-    })
+    merged.models = rawModels.map(m => mergeProviderModel(m, existingModels, modelStatesUpdates))
     // G3 写侧切换：model 级 enabled 落 providers.json modelStates。await 对齐 authMethod
     // 的 MF-1 语义：modify 失败 reject 上抛（handler try-catch 转 sendError），不静默吞。
     // extrasStore 未注入时丢弃 + warn（宁丢不写错位——生产恒注入）。

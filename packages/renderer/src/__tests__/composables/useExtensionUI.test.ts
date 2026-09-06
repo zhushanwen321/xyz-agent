@@ -24,7 +24,7 @@ import { InternalEventBus } from '@xyz-agent/core'
 // onUIRequest 已移除（bus 订阅替代）；onUITimeout/getPendingRequests/sendExtensionUIResponse 保留 WS/RPC（C3）。
 const uiTimeoutHandlers = new Map<string, Array<(requestId: string) => void>>()
 
-vi.mock('@/api/domains/extension', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/extension', () => ({
   onUITimeout: (sid: string, handler: (requestId: string) => void) => {
     const arr = uiTimeoutHandlers.get(sid) ?? []
     arr.push(handler)
@@ -57,7 +57,7 @@ vi.mock('@/composables/shell/useExtensionHostBridge', async (importOriginal) => 
 })
 
 import { useExtensionUI, askUserFilter, __resetExtensionBusSubscriptionForTesting } from '@/composables/useExtensionUI'
-import { sendExtensionUIResponse, getPendingRequests } from '@/api/domains/extension'
+import { sendExtensionUIResponse, getPendingRequests } from '@xyz-agent/core/transport/api/domains/extension'
 import { useExtensionUIStore } from '@/stores/extension-ui'
 
 /** 在独立 effectScope 内运行，模拟单 Panel 实例的完整生命周期 */

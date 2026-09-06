@@ -120,6 +120,16 @@ export function useSearch(
     // AC-5.2：mock 模式走 searchMock fixture（search 无 real WS domain，D-026）。
     // 返回已是 Section[] 形态（{label, items}），符号占位恒加入（与 real 轨 groupByType 对齐 D-001）。
     if (ports.isMock) {
+      // [tc u3/D4-②] searchMock 可选端口守卫：isMock=true 而未装配属壳装配错误——显式抛错
+      // 指向恢复动作（恢复路径：检查 useSearchModalDeps 的 VITE_MOCK 分支与 mock 模块导入），
+      // 不装配静默返空 stub（会掩盖装配错误，被否方案见设计 D4 契约前置决策）。
+      if (!ports.searchMock) {
+        throw new Error(
+          'search: isMock=true 但 SearchPorts.searchMock 未装配——mock 构建下壳必须在 ' +
+            'useSearchModalDeps 注入 core transport/mock 的 search.query；' +
+            '请检查 VITE_MOCK 构建配置与 ports 装配（real 构建不应进入此分支）',
+        )
+      }
       const mockSections = await ports.searchMock(q)
       // BC-9 守卫：旧响应丢弃
       if (seq !== loadSeq) return []

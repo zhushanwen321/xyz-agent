@@ -39,6 +39,11 @@ export interface ProviderExtras {
     enabled: boolean
     cookieSet?: boolean
     apiKeySet?: boolean
+    /**
+     * 资源维度 fetcher（opencode）的 workspace 归一化地址（规范 URL，非凭证明文存储——
+     * 用户浏览器地址栏可见的同一 URL，timeout-audit-hygiene-batch D1-1）。
+     */
+    workspace?: string
   }
   /** 模型启停（自 models.json providers.<id>.models[].enabled 迁入，key = modelId）。 */
   modelStates?: Record<string, { enabled: boolean }>

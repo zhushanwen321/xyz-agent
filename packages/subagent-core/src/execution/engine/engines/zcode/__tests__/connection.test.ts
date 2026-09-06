@@ -63,7 +63,6 @@ interface FakeHandle {
   conn: AppServerConnection;
   stateFile: string;
   stderrLog: string;
-  homeDir: string;
   cwd: string;
 }
 
@@ -88,10 +87,10 @@ function makeConnection(opts: FakeOpts = {}): FakeHandle {
   connSeq += 1;
   const stateFile = join(TMP, `state-${connSeq}.jsonl`);
   const stderrLog = join(TMP, `stderr-${connSeq}.log`);
-  const homeDir = join(TMP, `home-${connSeq}`);
   const cwd = join(TMP, `cwd-${connSeq}`);
   const base: NodeJS.ProcessEnv = {
     PATH: process.env.PATH ?? "",
+    HOME: "/fake-host-home",
     FAKE_STATE_FILE: stateFile,
     ...(opts.stderrLines ? { FAKE_STDERR: "1" } : {}),
     ...(opts.extraKeys ? { FAKE_EXTRA_KEYS: "1" } : {}),
@@ -101,12 +100,12 @@ function makeConnection(opts: FakeOpts = {}): FakeHandle {
   const conn = new AppServerConnection({
     cliPath: FAKE_CLI,
     cwd,
-    env: buildAppServerEnv(homeDir, base),
+    env: buildAppServerEnv(base),
     stderrLogPath: stderrLog,
     ...(opts.reverseHandlers ? { reverseHandlers: opts.reverseHandlers } : {}),
   });
   CONNECTIONS.push(conn);
-  return { conn, stateFile, stderrLog, homeDir, cwd };
+  return { conn, stateFile, stderrLog, cwd };
 }
 
 afterEach(async () => {
@@ -171,7 +170,7 @@ describe("四帧型分发（NDJSON，无 jsonrpc 字段）", () => {
     const { conn, stateFile } = makeConnection();
     await conn.request("test/echo", { a: 1 });
     const frames = readState(stateFile)
-      .map((e) => e.frame)
+      .map((e) => (e as Record<string, unknown>).frame)
       .filter((f): f is Record<string, unknown> => isRecord(f) && f.method === "test/echo");
     expect(frames).toHaveLength(1);
     expect(Object.keys(frames[0]).sort()).toEqual(["id", "method", "params"]);
@@ -254,7 +253,7 @@ describe("请求-应答 id 关联", () => {
     expect(b).toEqual({ who: "b", delayMs: 30 });
     expect(c).toEqual({ who: "c" });
     const ids = readState(stateFile)
-      .map((e) => e.frame)
+      .map((e) => (e as Record<string, unknown>).frame)
       .filter((f): f is { id: number } => isRecord(f) && typeof f.method === "string" && typeof f.id === "number")
       .map((f) => f.id);
     expect(ids).toHaveLength(3);
@@ -297,10 +296,10 @@ describe("反向请求应答（D9）", () => {
     ]);
     // 反向应答帧出站精确键集 {id, result}（无 jsonrpc、无未知键）
     const answerFrame = readState(stateFile)
-      .map((e) => e.frame)
+      .map((e) => (e as Record<string, unknown>).frame)
       .find((f): f is Record<string, unknown> => isRecord(f) && typeof f.id === "string");
     expect(answerFrame).toBeDefined();
-    expect(Object.keys(answerFrame).sort()).toEqual(["id", "result"]);
+    expect(Object.keys(answerFrame!).sort()).toEqual(["id", "result"]);
   });
 
   it("未知反向请求 → 回 {id, result:{}}（不答会 15s 超时断连，旧实测 -32022）", async () => {
@@ -385,9 +384,9 @@ describe("stderr tee 落盘", () => {
 
 // ------------------------------------------- env 惯例（构造注入面）
 
-describe("env 惯例（沿用 launcher 惯例的参数化注入）", () => {
-  it("buildAppServerEnv：HOME 隔离 + 遥测关闭 + nesting guard 剥离/注入（fake 侧 env 快照）", async () => {
-    const { conn, stateFile, homeDir } = makeConnection({ polluteNested: true });
+describe("env 惯例（共享宿主 HOME 形态）", () => {
+  it("buildAppServerEnv：HOME 正向透传（共享宿主）+ 遥测关闭 + nesting guard 剥离/注入（fake 侧 env 快照）", async () => {
+    const { conn, stateFile } = makeConnection({ polluteNested: true });
     await conn.request("test/echo", {});
     const envEvents = readState(stateFile).filter((e) => e.ev === "env");
     expect(envEvents).toHaveLength(1);
@@ -397,7 +396,9 @@ describe("env 惯例（沿用 launcher 惯例的参数化注入）", () => {
       nested?: string;
       unifiedNested?: string;
     };
-    expect(snap.home).toBe(homeDir);
+    // 共享宿主 HOME 契约（2026-09 起）：base env 携带的宿主 HOME 值原样透传到子进程
+    // env（不覆写、不剥离——db/plugins/MCP 全继承宿主 HOME）
+    expect(snap.home).toBe("/fake-host-home");
     expect(snap.telemetry).toBe("false");
     expect(snap.nested).toBeUndefined();
     expect(snap.unifiedNested).toBe("1");

@@ -45,7 +45,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrig
 import { GroupCard } from '@xyz-agent/ui/features/settings'
 import SettingRow from '../SettingRow.vue'
 import { type SystemSettings } from '@xyz-agent/core'
-import { getAutoRenameEnabled, getRenameModel, setAutoRenameEnabled, setRenameModel } from '@/api/domains/settings'
+import { getAutoRenameEnabled, getRenameModel, setAutoRenameEnabled, setRenameModel } from '@xyz-agent/core/transport/api/domains/settings'
 import { useToast } from '@/composables/useToast'
 import {
   MODEL_UNSET_SENTINEL,

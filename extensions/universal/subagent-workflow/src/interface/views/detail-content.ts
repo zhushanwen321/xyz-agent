@@ -12,29 +12,31 @@
 
 import { Key, matchesKey } from "@earendil-works/pi-tui";
 
-import { getAllToolCalls, projectLiveProgress } from "@zhushanwen/subagent-core/execution/execution-record.ts";
-import type { AgentEventLogEntry } from "@zhushanwen/subagent-core/execution/types.ts";
-import type { ExecutionTraceNode } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
-import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
+import { getAllToolCalls, projectLiveProgress } from "@zhushanwen/subagent-core";
+import type { AgentEventLogEntry } from "@zhushanwen/subagent-core";
+import type { ExecutionTraceNode } from "@zhushanwen/subagent-core";
+import type { WorkflowRun } from "@zhushanwen/subagent-core";
 import {
-  BOX_BORDER_CHARS,
-  BUDGET_TOKENS_DIVISOR,
   ELLIPSIS,
   formatActivityLine,
   formatElapsed,
   formatElapsedSeconds,
-  formatEventLine,
   formatTokenStat,
-  MAX_TOOL_CALLS_DISPLAY,
-  OUTPUT_TRUNCATE_BYTES,
-  PAGE_SCROLL_DEFAULT,
-  PROMPT_FOLD_LINES,
+  formatTraceEventLine,
   statusDotStr,
   type ThemeLike,
-} from "./format.ts";
+} from "../format.ts";
+import { PAGE_SCROLL_DEFAULT } from "../tui-kit.ts";
+import {
+  BOX_BORDER_CHARS,
+  BUDGET_TOKENS_DIVISOR,
+  MAX_TOOL_CALLS_DISPLAY,
+  OUTPUT_TRUNCATE_BYTES,
+  PROMPT_FOLD_LINES,
+} from "./view-constants.ts";
 
-// ── 共享常量（BOX_BORDER_CHARS / BUDGET_TOKENS_DIVISOR / MAX_TOOL_CALLS_DISPLAY
-//    已上移到 format.ts，供 WorkflowsView + detail-content 共用，避免重复定义）──
+// ── 共享常量（BOX_BORDER_CHARS / BUDGET_TOKENS_DIVISOR / MAX_TOOL_CALLS_DISPLAY 等）
+//    落位 ./view-constants.ts（post-convergence C4：views 专属常量自 format.ts 沉回 views/）──
 
 /** 探测宽度：足够大避免截断折行影响行数统计（对齐 subagents DETAIL_LEN_PROBE_WIDTH）。 */
 const DETAIL_LEN_PROBE_WIDTH = 9999;
@@ -232,7 +234,7 @@ function renderActivitySection(
     const start = eventLog.length - showCount;
     for (let i = start; i < eventLog.length; i++) {
       const entry = eventLog[i] as AgentEventLogEntry;
-      rightLines.push(theme.fg("dim", `  ${formatEventLine(entry, theme)}`.slice(0, mainWidth - BOX_BORDER_CHARS)));
+      rightLines.push(theme.fg("dim", `  ${formatTraceEventLine(entry, theme)}`.slice(0, mainWidth - BOX_BORDER_CHARS)));
     }
     if (totalCount === 0 && !live.currentActivity) {
       rightLines.push(theme.fg("dim", "  (starting...)"));

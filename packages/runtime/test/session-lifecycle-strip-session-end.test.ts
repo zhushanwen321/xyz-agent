@@ -11,7 +11,8 @@
  * 运行：cd packages/runtime && npx vitest run test/session-lifecycle-strip-session-end.test.ts
  */
 import { describe, it, expect } from 'vitest'
-import { stripSessionEndEntries } from '../src/services/session/session-lifecycle.js'
+// stripSessionEndEntries 自 session-lifecycle 迁出（max-lines 行数合规），权威源在 restore-seeding。
+import { stripSessionEndEntries } from '../src/services/session/restore-seeding.js'
 
 describe('W9: stripSessionEndEntries', () => {
   it('剔除含 "type":"session_end" 的行，保留其他行（双引号 JSON.stringify 格式）', () => {

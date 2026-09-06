@@ -310,6 +310,20 @@ describe('replayFoldEntries', () => {
     expect(msg).toContain('skipping corrupted scheduler entry')
   })
 
+  // ── fork 场景安全：未知 taskId 的 advance/toggle 为静默 no-op，不触发逐条 catch ──
+  it('advance/toggle 对不存在的 taskId 为 no-op（无 upsert 时不产生副作用、不触发逐条 catch warn）', () => {
+    loggerMock.warn.mockClear()
+    const entries = [
+      entry({ op: 'advance', taskId: 'ghost', nextRunAt: 200, at: 100, status: 'success' }),
+      entry({ op: 'toggle', taskId: 'ghost', enabled: false }),
+      entry({ op: 'delete', taskId: 'ghost' }),
+    ]
+    const result = replayFoldEntries(entries, '/s.json')
+    expect(result.size).toBe(0)
+    // no-op 提前返回路径不抛错——MF-2 的逐条跳过 warn 不应被触发
+    expect(loggerMock.warn).not.toHaveBeenCalled()
+  })
+
   afterEach(() => {
     vi.restoreAllMocks()
   })

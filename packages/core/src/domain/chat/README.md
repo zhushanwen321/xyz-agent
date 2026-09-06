@@ -48,7 +48,8 @@ A session 的 token 提交只失效 A 的 flag，不再触发跨 session 的全 
 `role:'system', status:'streaming'`——纯 bash 执行期间若计入此集合，`isGenerating(sid)===true`
 → `isActive(sid)===true`，用户发普通消息会被错误路由到 steer，Composer isBusy 为真，停止按钮按
 assistant abort 动作而非 abortBash，与「bash 不阻塞」核心承诺矛盾。bash 消息生命周期由
-`finalizeBashOnly` / `bashResultEffect` / `markBashError` 独立管理（不依赖此 `isGenerating` 派生）。
+`bashResultEffect` / `markBashError` 独立管理（不依赖此 `isGenerating` 派生；原 `finalizeBashOnly`
+随 dormant bash timer 契约删除——2026-09-05 u-s3，见 git 历史）。
 
 ## 响应式策略
 
@@ -92,8 +93,8 @@ ADR-0024 D7，待 flow-2 实施时加入 `ServerMessageType` 联合）。数据�
   见 `chat-changeset.ts` 顶部注释。
 - **streaming 状态机（B6）**：3 个原模块级状态机编排函数 + 2 个新提取的瞬态清理 helper 内聚
   为 factory（`streaming-state-machine.ts`），本 store 仅委托。
-- **timers（D-003/D-007）**：streaming + bash timer 从 `chat-timers.ts` 提取，闭包注入
-  `finalizeSession` / `finalizeBashOnly`。
+- **timers（D-003/D-007）**：streaming timer 从 `chat-timers.ts` 提取，闭包注入
+  `finalizeSession`（bash timer 已随 dormant 契约删除，2026-09-05 u-s3）。
 - **LRU（W3 H3）**：驱逐依赖（messages/hydrated 稳定 ref + `isLruExempt` 闭包）在 setup 时构造
   一次复用（`makeLruEvictDeps` 内部又用 getter 延迟读取，无快照陈旧），三个 evict 函数共享，
   避免每次 evict 重建闭包对象。
@@ -104,21 +105,21 @@ ADR-0024 D7，待 flow-2 实施时加入 `ServerMessageType` 联合）。数据�
 
 session 级统一收口：把 streaming/running 实体推到终态 + 清 pendingSend + 清 timer。幂等
 （D-010 sealed）：重复调用不报错，sealed 后实体不变。不处理 usage 回填（message.complete
-handler 单独 enrichment）。bash timer 不在此清（W1 timer-decouple 解耦，由 bashResultEffect/
-markBashError/finalizeBashOnly 独立清，不应被 assistant 收口误清）。`reason` 决定 message.status
+handler 单独 enrichment）。bash 侧独立清理由 bashResultEffect/
+markBashError 承载，不应被 assistant 收口误清（原 finalizeBashOnly 已随 dormant 契约删除）。`reason` 决定 message.status
 + toolCall.status 终态映射（见 `FinalizeReason`）。
 
 > `[M2 PR#116 review]` clearStreamingTimer 此前被误删：正常 message.complete 路径不再清 streaming
 > timer，10min 后 timer 仍会触发 `finalizeSession('timeout')`，造成已 complete 的 turn 被二次收口
 > （幂等无功能损害，但浪费一次 finalize 调用 + DEV warn 噪音）。
 
-### finalizeBashOnly — bash timer 专用收口（W1 timer-decouple，C2 回归防护）
+### [已删除] finalizeBashOnly — 原 bash timer 专用收口（W1 timer-decouple，C2 回归防护）
 
-L1 放宽 bash↔streaming 并发后，bash 与 assistant turn 可能共存。原 bash timer 到期调
-`finalizeSession('timeout')` 会把正在 streaming 的 assistant turn 一并收口（C2 回归）。此函数
-只把 streaming bash 消息推到 error 态（cancelled=true），**不**清 streaming timer、**不**清
-pendingSend、**不**调 `finalizeSession`——bash timer 不应碰 streaming 域。幂等：无 streaming
-bash 消息时 no-op（与 bashResultEffect/markBashError 的 findLastIndex 一致）。
+> 本函数随 dormant bash timer 契约整链删除（2026-09-05，u-s3 / commit d8427b695，见设计
+> docs/design/timeout-streaming-ui-idle.md §5.4 D4）。历史语义存档：bash 与 assistant turn
+> 并发时，bash timer 到期只把 streaming bash 消息推到 error 态（cancelled=true），不清
+> streaming timer / pendingSend、不调 finalizeSession——防止误收口正在 streaming 的 turn。
+> 现行 bash 错误路径由 `markBashError`（store.ts 保留）与 `bashResultEffect` 承载。
 
 ### finalizeAllStreaming / resetTransientStates — 断连兜底全清
 

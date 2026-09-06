@@ -108,7 +108,10 @@ export function classifyUndiciFailure(err: unknown): UndiciFailureClass {
   ) {
     return 'non-fallback'
   }
-  // D4 AbortError 总超时行：总预算已耗尽，curl 同样会超时
+  // D4 AbortError 行（timeout-slow-flow-wallclock D1 联动改写注释，归类不变）：
+  // 总墙钟已删除后 AbortError 来源为 idle 停滞中止（30s 无进展）/ 用户取消 /
+  // per-part 共享中止——均非「连接建立类故障」，换引擎收益不确定，保守不降级
+  //（降级是白名单优化，未知形态维持直接失败语义）。
   if (err instanceof Error && (err.name === 'AbortError' || err.message.includes('aborted'))) {
     return 'non-fallback'
   }

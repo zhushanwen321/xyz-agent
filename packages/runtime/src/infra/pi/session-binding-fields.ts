@@ -24,8 +24,9 @@ type OptionalKeys<T> = { [K in keyof T]-?: undefined extends T[K] ? K : never }[
  * 排除集是 header 派生字段（parseSessionHeader 从 JSONL 首行提取，非 sidecar 绑定），
  * 不走本注册表回填（parentSession / forkEntryId 由 initializeManagedSession 在 fork 入口
  * 显式透传，见 forkSession 的 parentSessionKey）。已核实的全集事实：ScannedSessionMeta
- * 可选字段恰好 7 个 = 2 排除 + 5 绑定（handedOffTo / launchPresetId / projectId /
- * spawnSource / parentAgentSessionId）；outcome 与 name 是 `| null` 非 `| undefined`，
+ * 可选字段恰好 9 个 = 2 排除 + 7 绑定（handedOffTo / launchPresetId / projectId /
+ * spawnSource / parentAgentSessionId + modelId / thinkingLevel——后两者经 ModelBindingFields
+ * extends 收编，声明在 session-model-sidecar.ts）；outcome 与 name 是 `| null` 非 `| undefined`，
  * 天然不进 OptionalKeys。决策 4 残余边界：必填字段不受此守卫保护——绑定字段天然可选
  *（sidecar 缺失 = undefined），误声明必填会在 scanSessionMeta 构造处撞理想类型冲突。
  */
@@ -122,6 +123,26 @@ export const BINDING_FIELDS: Record<BindingFieldKey, BindingFieldSpec> = {
       handoff: 'none', // 承接者自身未交接（源 session 才被标记 handedOffTo）
       restore: 'meta', // 同型修复：「已交接」标记重开后保留
       fork: 'none', // fork 不写 handoff sidecar（现状保持）
+    },
+  },
+  // D1 设计决策：restore='none' — 扫描值禁覆写 D2 播种真值（get_state 读回）。
+  // modelId/thinkingLevel 的权威值来自 pi get_state（RPC 回执），restore 路径不从
+  // sidecar 回填，防止覆盖 pi 从 model_change/thinking_level_change entry 恢复的终态。
+  // create/handoff/fork='options'：Landing Chip / preset / 源 session 传入的生效值写入 sidecar。
+  modelId: {
+    entries: {
+      create: 'options',
+      handoff: 'options',
+      restore: 'none',
+      fork: 'options',
+    },
+  },
+  thinkingLevel: {
+    entries: {
+      create: 'options',
+      handoff: 'options',
+      restore: 'none',
+      fork: 'options',
     },
   },
 }

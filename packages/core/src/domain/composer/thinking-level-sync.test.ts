@@ -16,8 +16,9 @@
  *
  * 运行：cd packages/core && pnpm vitest run src/domain/composer/thinking-level-sync.test.ts
  */
+import type { ThinkingLevel } from './thinking-levels'
 import { describe, it, expect, vi } from 'vitest'
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import {
   useThinkingLevelSync,
   type ArmedModelSwitchIntent,
@@ -34,23 +35,29 @@ const mapB = { low: 'l', medium: 'm' }
 const supportedDefault = ['off', 'minimal', 'low', 'medium', 'high']
 
 describe('useThinkingLevelSync', () => {
-  it('case1: currentThinkingLevel 无值 → 设新模型最高可用档（immediate 同步）', () => {
+  it('case1: currentThinkingLevel 无值 + armed 显式切换 → 设新模型最高可用档（immediate 同步）', () => {
     const currentModelId = ref('p/m1')
     const currentThinkingLevel = ref<string | undefined>(undefined)
     const onReset = vi.fn()
+    // [U5/D5] 分支 2 门禁后，无档位设最高档只挂显式切换——用 armed 解锁分支（记忆未命中回落）
+    const fake = fakeArmedState({ modelId: 'p/m1', at: Date.now() })
     const deps: ThinkingLevelSyncDeps = {
       getThinkingLevelMap: vi.fn((id: string) => (id === 'p/m1' ? mapA : undefined)),
       getSupportedLevels: vi.fn((id: string) => (id === 'p/m1' ? supportedA : undefined)),
+      getArmed: fake.getArmed,
+      clearArmed: fake.clearArmed,
     }
-    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
     // highestAvailableLevel(supportedA) = 'high'；resolveThinkingValue('high', mapA) = 'h'
     expect(onReset).toHaveBeenCalledWith('h')
   })
 
-  it('case2: 同体系切换 → 映射迁移当前档位 value', async () => {
+  it('case2: 同体系切换（armed 显式切换）→ 映射迁移当前档位 value', async () => {
     const currentModelId = ref('p/m1')
     const currentThinkingLevel = ref<string | undefined>(undefined)
     const onReset = vi.fn()
+    // [U5/D5] 分支 2/4 门禁后，两阶段各需 armed 解锁
+    const fake = fakeArmedState({ modelId: 'p/m1', at: Date.now() })
     const deps: ThinkingLevelSyncDeps = {
       getThinkingLevelMap: vi.fn((id: string) => {
         if (id === 'p/m1') return mapA
@@ -58,14 +65,17 @@ describe('useThinkingLevelSync', () => {
         return undefined
       }),
       getSupportedLevels: vi.fn(() => supportedA),
+      getArmed: fake.getArmed,
+      clearArmed: fake.clearArmed,
     }
-    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
     // immediate：current undefined → onReset('h')
     expect(onReset).toHaveBeenCalledWith('h')
 
     // 模拟 session 载入/用户选档 → current 有值
     currentThinkingLevel.value = 'h'
-    // 切到同体系模型 → map: mapA → mapASame
+    // 显式切到同体系模型 → map: mapA → mapASame
+    fake.setArmed({ modelId: 'p/m2', at: Date.now() })
     currentModelId.value = 'p/m2'
     await nextTick()
     // isSameThinkingScheme(mapA, mapASame) = true（key 集合相同）
@@ -86,12 +96,16 @@ describe('useThinkingLevelSync', () => {
       }),
       getSupportedLevels: vi.fn((id: string) => (id === 'p/m1' ? supportedA : supportedDefault)),
     }
-    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
-    // immediate：current 'h' 有值，oldMap undefined → 第二分支可用性检查
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
+    // immediate：current 'h' 有值，oldMap undefined → 分支 3 可用性检查
     // resolveThinkingKey('h', mapA) = 'high'；available(mapA) = ['off','high'] includes 'high' → 不重置
     expect(onReset).not.toHaveBeenCalled()
 
-    // 切到跨体系模型
+    // [U5/D5] 显式切到跨体系模型（armed 解锁分支 5）
+    const fake = fakeArmedState()
+    deps.getArmed = fake.getArmed
+    deps.clearArmed = fake.clearArmed
+    fake.setArmed({ modelId: 'p/m3', at: Date.now() })
     currentModelId.value = 'p/m3'
     await nextTick()
     // isSameThinkingScheme(mapA, mapB) = false（新语义可用集：['off','high'] vs 五档）
@@ -109,8 +123,8 @@ describe('useThinkingLevelSync', () => {
       getThinkingLevelMap: vi.fn(() => undefined),
       getSupportedLevels: vi.fn(() => undefined),
     }
-    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
-    // immediate：current 'high' 有值，oldMap undefined → 第二分支
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
+    // immediate：current 'high' 有值，oldMap undefined → 分支 3
     // resolveThinkingKey('high', undefined) = 'high'（isThinkingLevel 直接命中）
     // normalizeSupportedLevels(undefined) = 默认五档 includes 'high' → true → 不重置
     expect(onReset).not.toHaveBeenCalled()
@@ -126,7 +140,7 @@ describe('useThinkingLevelSync', () => {
     }
     const currentThinkingLevelMap = useThinkingLevelSync(
       currentModelId,
-      currentThinkingLevel,
+      computed(() => currentThinkingLevel.value),
       onReset,
       deps,
     )
@@ -146,8 +160,12 @@ describe('useThinkingLevelSync', () => {
       // non-reasoning 模型的 supportedLevels = ['off']（pi 同源计算两级门控产物）
       getSupportedLevels: vi.fn((id: string) => (id === 'p/nonreasoning' ? ['off'] : supportedA)),
     }
-    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
-    // 切到 non-reasoning 模型：可用档只有 ['off']，当前 'h' 不可用
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
+    // [U5/D5] 显式切到 non-reasoning 模型（armed 解锁对齐分支）：可用档只有 ['off']，当前 'h' 不可用
+    const fake = fakeArmedState()
+    deps.getArmed = fake.getArmed
+    deps.clearArmed = fake.clearArmed
+    fake.setArmed({ modelId: 'p/nonreasoning', at: Date.now() })
     currentModelId.value = 'p/nonreasoning'
     await nextTick()
     // highestAvailableLevel(['off']) = 'off'；resolveThinkingValue('off', undefined) = 'off'
@@ -163,7 +181,7 @@ describe('useThinkingLevelSync', () => {
       // non-reasoning：pi 同源计算产物 = ['off']（map 写得再多也压不过两级门控）
       getSupportedLevels: vi.fn(() => ['off']),
     }
-    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
     // immediate 首次触发：oldMap === undefined，current 'h' 有值
     // currentKey = resolveThinkingKey('h', map) = 'high'；
     // normalizeSupportedLevels(['off']) 不含 'high' → 重置
@@ -180,7 +198,7 @@ describe('useThinkingLevelSync', () => {
       getThinkingLevelMap: vi.fn(() => undefined), // xiaomi-token-plan-cn/mimo-v2.5-pro 场景
       getSupportedLevels: vi.fn(() => supportedDefault),
     }
-    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
     currentModelId.value = 'p/mimo'
     await nextTick()
     // 可用集五档（无 max），最高可用档 = high → onReset('high')
@@ -232,9 +250,9 @@ describe('useThinkingLevelSync · armed 记忆恢复消费', () => {
       clearArmed: fake.clearArmed,
       getInFlightCount: () => 0,
       // 记忆存在且可用——若过期 token 被误消费会 onReset('l') 而非既有分支的 'high'
-      getRememberedLevel: vi.fn(() => 'low'),
+      getRememberedLevel: vi.fn((): ThinkingLevel | undefined => 'low'),
     })
-    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
     expect(onReset).not.toHaveBeenCalled() // immediate：armed null 零副作用
 
     fake.setArmed({ modelId: 'p/m2', at: Date.now() - 6000 }) // 已过期 6s
@@ -256,9 +274,9 @@ describe('useThinkingLevelSync · armed 记忆恢复消费', () => {
       getArmed: fake.getArmed,
       clearArmed: fake.clearArmed,
       getInFlightCount: () => 1, // 慢 RPC 在途：finally 撤销计数晚于本次 flush（E10 豁免窗）
-      getRememberedLevel: vi.fn(() => 'low'),
+      getRememberedLevel: vi.fn((): ThinkingLevel | undefined => 'low'),
     })
-    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
     fake.setArmed({ modelId: 'p/m2', at: Date.now() - 6000 })
     currentModelId.value = 'p/m2'
     await nextTick()
@@ -279,7 +297,7 @@ describe('useThinkingLevelSync · armed 记忆恢复消费', () => {
       getInFlightCount: () => 0,
       getRememberedLevel: vi.fn((id: string) => (id === 'p/m2' ? 'low' : undefined)),
     })
-    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
     fake.setArmed({ modelId: 'p/m2', at: Date.now() })
     currentModelId.value = 'p/m2'
     await nextTick()
@@ -305,7 +323,7 @@ describe('useThinkingLevelSync · armed 记忆恢复消费', () => {
       getInFlightCount: () => 0,
       getRememberedLevel: vi.fn((id: string) => (id === 'p/plain2' ? 'high' : undefined)),
     }
-    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
     fake.setArmed({ modelId: 'p/plain2', at: Date.now() })
     currentModelId.value = 'p/plain2'
     await nextTick()
@@ -326,7 +344,7 @@ describe('useThinkingLevelSync · armed 记忆恢复消费', () => {
       clearArmed: fake.clearArmed,
       getRememberedLevel,
     })
-    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
     fake.setArmed({ modelId: 'p/m2', at: Date.now() })
     currentModelId.value = 'p/m2'
     await nextTick()
@@ -343,7 +361,7 @@ describe('useThinkingLevelSync · armed 记忆恢复消费', () => {
     const onReset = vi.fn()
     const fake = fakeArmedState()
     const deps = crossDeps({ getArmed: fake.getArmed, clearArmed: fake.clearArmed })
-    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
     fake.setArmed({ modelId: 'p/m2', at: Date.now() })
     currentModelId.value = 'p/m2'
     await nextTick()
@@ -361,9 +379,9 @@ describe('useThinkingLevelSync · armed 记忆恢复消费', () => {
       getArmed: fake.getArmed,
       clearArmed: fake.clearArmed,
       // m2 可用集为默认五档（无 max），记忆值 'max' 不可用
-      getRememberedLevel: vi.fn(() => 'max'),
+      getRememberedLevel: vi.fn((): ThinkingLevel | undefined => 'max'),
     })
-    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
     fake.setArmed({ modelId: 'p/m2', at: Date.now() })
     currentModelId.value = 'p/m2'
     await nextTick()
@@ -392,7 +410,7 @@ describe('useThinkingLevelSync · armed 记忆恢复消费', () => {
       clearArmed: fake.clearArmed,
       getRememberedLevel: vi.fn((id: string) => (id === 'p/m3' ? 'high' : undefined)),
     }
-    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
 
     // 阶段 1：armed 目标是 m3，但先切到 m2（RPC 在途换目标等价形态）→ 不匹配
     fake.setArmed({ modelId: 'p/m3', at: Date.now() })
@@ -412,25 +430,118 @@ describe('useThinkingLevelSync · armed 记忆恢复消费', () => {
     expect(onReset).toHaveBeenLastCalledWith('h2')
   })
 
-  it('回归基线：getArmed 注入但返回 null → 与现状一致，记忆查询零调用', async () => {
+  it('回归基线：getArmed 注入但返回 null → 消费块零副作用 + [U5/D5] 对齐分支全被门禁', async () => {
     const currentModelId = ref('p/m1')
     const currentThinkingLevel = ref<string | undefined>('h')
     const onReset = vi.fn()
     const fake = fakeArmedState() // armed 恒 null
-    const getRememberedLevel = vi.fn(() => 'low')
+    const getRememberedLevel = vi.fn((): ThinkingLevel | undefined => 'low')
     const deps = crossDeps({
       getArmed: fake.getArmed,
       clearArmed: fake.clearArmed,
       getRememberedLevel,
     })
-    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
     currentModelId.value = 'p/m2'
     await nextTick()
-    // 消费块零副作用：armed null 早退，记忆查询从未发起，行为与既有用例 case3 完全一致
+    // 消费块零副作用：armed null 早退，记忆查询从未发起
     expect(fake.getArmed).toHaveBeenCalled()
     expect(getRememberedLevel).not.toHaveBeenCalled()
     expect(fake.clearArmed).not.toHaveBeenCalled()
+    // [U5/D5] 无入口快照 → 跨体系重置分支被门禁，全程零 onReset（不发生 setThinkingLevel）
+    expect(onReset).not.toHaveBeenCalled()
+  })
+})
+
+// ══════════ [U5/D5] armed 入口快照门禁 ══════════
+//
+// 设计 composer-model-session-isolation D5：对齐只挂「用户显式切模型」。门禁判据 =
+// 回调入口 armed 快照（consumeArmedRestore 执行前捕获）——分支 2/4/5 无快照一律跳过，
+// 分支 3（可用性校验）保持不门禁。
+
+describe('useThinkingLevelSync · U5 D5 门禁', () => {
+  it('a) armed null + 换绑触发（oldMap 有值、模型变化）→ 不发 onReset（分支 4/5 被门禁，探针 A1 单测层）', async () => {
+    const currentModelId = ref('p/m1')
+    const currentThinkingLevel = ref<string | undefined>('h')
+    const onReset = vi.fn()
+    // 换绑形态：getArmed 未注入（消费块零副作用）等价于 armed 恒 null
+    const deps = crossDeps()
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
+    // immediate：oldMap undefined → 分支 3（不门禁），'h' 可用 → 不重置
+    expect(onReset).not.toHaveBeenCalled()
+
+    currentModelId.value = 'p/m2' // 跨体系，oldMap 有值
+    await nextTick()
+    expect(onReset).not.toHaveBeenCalled() // 分支 5 被门禁，无 setThinkingLevel
+  })
+
+  it('b) armed 非 null + 记忆未命中 → 对齐分支照常执行（同体系映射 onReset 一次）', async () => {
+    const currentModelId = ref('p/m1')
+    const currentThinkingLevel = ref<string | undefined>('h')
+    const onReset = vi.fn()
+    const fake = fakeArmedState()
+    // m2 = mapASame（与 m1 同体系）：命中对齐分支 4
+    const deps: ThinkingLevelSyncDeps = {
+      getThinkingLevelMap: vi.fn((id: string) => (id === 'p/m1' ? mapA : mapASame)),
+      getSupportedLevels: vi.fn(() => supportedA),
+      getArmed: fake.getArmed,
+      clearArmed: fake.clearArmed,
+      getRememberedLevel: vi.fn(() => undefined), // 记忆未命中
+    }
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
+    fake.setArmed({ modelId: 'p/m2', at: Date.now() })
+    currentModelId.value = 'p/m2'
+    await nextTick()
+    // consume 回落清 armed，但入口快照非 null → 分支 4 放行：'h' → 'h2' 恰一次
+    expect(fake.clearArmed).toHaveBeenCalledTimes(1)
     expect(onReset).toHaveBeenCalledTimes(1)
-    expect(onReset).toHaveBeenCalledWith('high')
+    expect(onReset).toHaveBeenCalledWith('h2')
+  })
+
+  it('c) armed 非 null + 记忆命中 → consume 路径 onReset(记忆换算值)，既有分支不二次触发', async () => {
+    const currentModelId = ref('p/m1')
+    const currentThinkingLevel = ref<string | undefined>('h')
+    const onReset = vi.fn()
+    const fake = fakeArmedState()
+    const deps = crossDeps({
+      getArmed: fake.getArmed,
+      clearArmed: fake.clearArmed,
+      getRememberedLevel: vi.fn((id: string) => (id === 'p/m2' ? 'low' : undefined)),
+    })
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
+    fake.setArmed({ modelId: 'p/m2', at: Date.now() })
+    currentModelId.value = 'p/m2'
+    await nextTick()
+    // 恢复值 resolveThinkingValue('low', mapB) = 'l'；若无 D4 return，分支 5 会再发 'high'
+    expect(onReset).toHaveBeenCalledTimes(1)
+    expect(onReset).toHaveBeenCalledWith('l')
+  })
+
+  it('d) armed null + 挂载首触发（oldMap undefined）+ 当前档位不可用 → 分支 3 照常 onReset 最高档（不门禁）', () => {
+    const currentModelId = ref('p/nonreasoning')
+    const currentThinkingLevel = ref<string | undefined>('h')
+    const onReset = vi.fn()
+    const deps: ThinkingLevelSyncDeps = {
+      getThinkingLevelMap: vi.fn(() => ({ off: 'off', high: 'h' })),
+      getSupportedLevels: vi.fn(() => ['off']),
+    }
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
+    // immediate：oldMap undefined → 分支 3 可用性安全网（D5 明确不门禁）
+    // 'high' ∉ ['off'] → onReset('off') 恰一次
+    expect(onReset).toHaveBeenCalledTimes(1)
+    expect(onReset).toHaveBeenCalledWith('off')
+  })
+
+  it('e) armed null + current 无值（landing 形态）→ 不发 onReset（分支 2 被门禁）', () => {
+    const currentModelId = ref('p/m1')
+    const currentThinkingLevel = ref<string | undefined>(undefined)
+    const onReset = vi.fn()
+    const deps: ThinkingLevelSyncDeps = {
+      getThinkingLevelMap: vi.fn(() => mapA),
+      getSupportedLevels: vi.fn(() => supportedA),
+    }
+    useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
+    // landing 初值由 u3 followRememberedOrDefault 双路径覆盖（D5「双路径冗余」论证）
+    expect(onReset).not.toHaveBeenCalled()
   })
 })

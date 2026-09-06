@@ -71,3 +71,14 @@ export function oncePerProcess<T>(key: string, fn: () => T): T {
 		throw error;
 	}
 }
+
+/**
+ * 从任意 thrown 值提取可读的错误信息字符串：Error → `.message`，其它 → `String(value)`。
+ *
+ * 收敛各 extension 包散落的 `e instanceof Error ? e.message : String(e)` 样板
+ * （与 core/renderer/runtime/subagent-core/electron 各自持有的同名 helper 同实现——
+ * 本包是 extensions 体系的共享归宿，业务包不再各自内联）。
+ */
+export function toErrorMessage(e: unknown): string {
+	return e instanceof Error ? e.message : String(e);
+}

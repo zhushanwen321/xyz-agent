@@ -238,6 +238,18 @@ describe('MarkdownRenderer · H2 rAF trailing 节流', () => {
     pending.forEach((cb) => cb(0))
   }
 
+  /**
+   * 等待 DOM 满足条件（nextTick 轮询，上限 20 轮）。
+   *
+   * 渲染赋值到达 DOM 的微任务跳数是实现细节（deps.renderMarkdown 是 async mock，赋值链
+   * runRender → runFullRender → mock 每层 async 边界加一跳；U26 phase extraction 增加了跳数，
+   * 曾使「固定 2 次 nextTick 后断言」确定性失败——触发已发生、update flush 落在断言之后）。
+   * 测试契约是「flush 后 DOM 最终呈现期望内容」，不是固定 tick 数；最终断言保持原强度不变。
+   */
+  async function waitForDom(check: () => boolean): Promise<void> {
+    for (let i = 0; i < 20 && !check(); i++) await nextTick()
+  }
+
   it('H2-1 (AC-1): 一帧内 100 次 content 变化 → renderMarkdown 调用远小于 100（节流合并）', async () => {
     mockRenderMarkdown.mockResolvedValue([{ type: 'text', content: '<p>x</p>' }])
     const wrapper = mountMd({ content: '' })
@@ -351,8 +363,7 @@ describe('MarkdownRenderer · H2 rAF trailing 节流', () => {
     const wrapper = mountMd({ content: 'bad' })
     await nextTick()
     flushRAF()
-    await nextTick()
-    await nextTick()
+    await waitForDom(() => wrapper.html().includes('bad'))
     // 降级：纯文本 segment 可见（escapeHtmlForFallback）
     expect(wrapper.find('.md-render > div').html()).toContain('bad')
 
@@ -360,8 +371,7 @@ describe('MarkdownRenderer · H2 rAF trailing 节流', () => {
     mockRenderMarkdown.mockResolvedValueOnce([{ type: 'text', content: '<p>recovered</p>' }])
     await wrapper.setProps({ content: 'recovered' })
     flushRAF()
-    await nextTick()
-    await nextTick()
+    await waitForDom(() => wrapper.html().includes('<p>recovered</p>'))
     // 后续渲染正常，显示新内容（非降级纯文本）
     expect(wrapper.find('.md-render > div').html()).toContain('<p>recovered</p>')
   })

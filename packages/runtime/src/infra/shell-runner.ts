@@ -29,9 +29,6 @@ import { pickProxyExtras } from './installers/npm-git-installer.js'
 import { ShellRunnerError } from '../services/ports/shell-runner.js'
 import type { IShellRunner, ShellRunnerExecuteOptions, ShellRunnerResult, SpawnFn } from '../services/ports/shell-runner.js'
 
-/** 默认超时 ms。setup-worktree.sh 通常含 npm install，给 2 分钟兜底。 */
-const DEFAULT_TIMEOUT_MS = 120_000
-
 /**
  * SIGTERM 后等待 SIGKILL 的升级延迟。
  * SIGTERM 可被脚本捕获/忽略（trap），npm install 子进程可能不在同一进程组——
@@ -54,7 +51,8 @@ export class ShellRunner implements IShellRunner {
 
   execute(opts: ShellRunnerExecuteOptions): Promise<ShellRunnerResult> {
     const { scriptPath, args, cwd, onOutput } = opts
-    const timeout = opts.timeout ?? DEFAULT_TIMEOUT_MS
+    // timeout 为 port 层必传（无暗默认）：用户配置值唯一决定量级，超时决策显式留给调用方。
+    const timeout = opts.timeout
 
     // 用 bash 执行脚本而非直接 spawn(scriptPath)：git 跟踪的脚本默认 644（无 +x 位），
     // 直接 spawn 会 EACCES。bash 只需文件可读即可执行，跨平台一致且不依赖文件权限位。

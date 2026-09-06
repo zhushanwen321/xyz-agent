@@ -1,5 +1,5 @@
 /**
- * fileSearchStore 单测（U20-U23）。
+ * fileSearchStore 单测（U20-U23）—— D7 收口后经壳 useFileSearch 编排 × core fileSearch 单例验证。
  *
  * 覆盖 session 级缓存语义：
  * - U20 首次 load：写缓存，api 调 1 次
@@ -19,10 +19,13 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
 }))
 
 import { useFileSearch } from '@/composables/features/search/useFileSearch'
-import { useFileSearchStore } from '@/stores/fileSearch'
+import { useFileSearchStore, __resetFileSearchStoreForTesting } from '@/composables/features/search/useFileSearchStore'
 
 beforeEach(() => {
+  // useFileSearch → useFileChangeInvalidation → chatStore（pinia）模块链需要 active pinia
   setActivePinia(createPinia())
+  // core 单例模块级缓存：reset 隔离用例间缓存（对齐 __resetCommandStoreForTesting 先例）
+  __resetFileSearchStoreForTesting()
   vi.clearAllMocks()
 })
 

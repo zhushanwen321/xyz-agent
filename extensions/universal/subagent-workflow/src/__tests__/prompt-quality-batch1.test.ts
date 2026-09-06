@@ -66,10 +66,18 @@ describe("U2: notifyDone 终止性原因追加防偷懒收尾", () => {
 describe("U3: not-found 错误含退路指引", () => {
   const toolWorkflowSrc = readSrc("src/interface/tool-workflow.ts");
   const toolWorkflowScriptSrc = readSrc("src/interface/tool-workflow-script.ts");
-  // [D6②] cancel not-found 文案权威源已随领域内核下沉 core subagent-actions-core
-  //（读 core 源文件——resolve 方式同下方 U4 的 createRequire 先例，exports ./* → src/*）
+  // [D6②] cancel not-found 文案权威源已随领域内核下沉 core subagent-actions-core。
+  // 锚点用 ./workflows/* 子入口（exports 映射包根真实目录，随源码走不依赖 dist 构建——
+  // relay-env 锚在 require 条件下落 dist/，CI 不构建 workspace 包时 resolve 直接
+  // MODULE_NOT_FOUND）
+  const coreRoot = join(
+    dirname(
+      createRequire(import.meta.url).resolve("@zhushanwen/subagent-core/workflows/README.md"),
+    ),
+    "..",
+  );
   const subagentActionsCoreSrc = readFileSync(
-    createRequire(import.meta.url).resolve("@zhushanwen/subagent-core/execution/subagent-actions-core.ts"),
+    join(coreRoot, "src/execution/subagent-actions-core.ts"),
     "utf-8",
   );
 

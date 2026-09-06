@@ -2,8 +2,8 @@
  * Composer 工具条的模型 + 思考等级状态管理。
  *
  * 从 Composer.vue 拆出（script setup 行数合规）。职责：
- * - currentModelId：当前选中模型（session 已建读自身 sessionId 对应真值，landing 态读 flow 选定 → 全局默认）
- * - currentThinkingLevel：当前思考等级（session 已建读自身 sessionId 对应真值，landing 态用 localThinkingLevel）
+ * - currentModelId：当前选中模型（[D3] session 已建读自身真值，空值→占位；landing 态读兜底链 currentModel → lastUsedModel → 全局默认）
+ * - currentThinkingLevel：当前思考等级（[D3] session 已建读自身真值，空值→占位；landing 态用 localThinkingLevel）
  * - currentThinkingLevelMap：当前模型的思考档位映射 + 切模型自动重置（委托 useThinkingLevelSync）
  * - onModelSelect / onThinkingSelect：切换处理，session 已建走 RPC，landing 态延迟到首发提交后 apply
  * - Staging Mode（ADR-0056）：enter/exit 快照隔离 + getStagingConfig 导出暂存配置
@@ -46,6 +46,11 @@ import {
   resolveThinkingValue,
 } from './thinking-levels'
 import { loadOnce, lookup, onLoaded, record } from './model-thinking-memory'
+import {
+  loadOnce as loadLastUsedOnce,
+  lookup as lookupLastUsed,
+  record as recordLastUsed,
+} from './last-used-model'
 
 /** useComposerModelThinking 的注入依赖（壳层 Composer 从各 store/composable 派生后注入）。 */
 export interface ModelThinkingDeps {
@@ -176,18 +181,33 @@ export function useComposerModelThinking(
     sessionId.value ? getSessionState(sessionId.value) ?? null : null,
   )
 
-  /** 常规态思考等级（不受 staging 影响，供 enterStagingMode 快照读取） */
-  const regularThinkingLevel = computed(
-    () => sessionState.value?.thinkingLevel ?? localThinkingLevel.value,
-  )
+  /**
+   * 常规态思考等级（不受 staging 影响，供 enterStagingMode 快照读取）。
+   * [D3 显示分流] 已建 session 空值 → 返回 undefined 作为占位信号（不回落 landing 残留）；
+   * landing 态 → localThinkingLevel。
+   */
+  const regularThinkingLevel = computed(() => {
+    if (sessionId.value !== null) {
+      // 已建态：读 session 真值；空值 → undefined 占位，不回落 landing 残留
+      return sessionState.value?.thinkingLevel
+    }
+    // landing 态：localThinkingLevel
+    return localThinkingLevel.value
+  })
 
   /**
    * 常规态模型 id（不受 staging 影响，供 enterStagingMode 快照读取）。
-   * 用 || 而非 ??：session.list 广播里的已退出/磁盘 session 的 modelId 硬编码为 ''（空串）。
+   * [D3 显示分流] 已建 session 空值 → 返回 '' 占位（不回落 landing 残留 / 全局默认）；
+   * landing 态 → 兜底链 currentModel || lastUsedModel || defaultModel。
    */
-  const regularModelId = computed(
-    () => sessionState.value?.modelId || currentModel.value || defaultModel.value || '',
-  )
+  const regularModelId = computed(() => {
+    if (sessionId.value !== null) {
+      // 已建态：读 session 真值；空串 → '' 占位，不兜底到其他模型
+      return sessionState.value?.modelId ?? ''
+    }
+    // landing 态：兜底链 currentModel || lastUsedModel || defaultModel
+    return currentModel.value || lookupLastUsed() || defaultModel.value || ''
+  })
 
   /** 当前思考等级：staging 活跃时读快照，否则读常规态真值 */
   const currentThinkingLevel = computed(
@@ -198,7 +218,7 @@ export function useComposerModelThinking(
 
   /**
    * 当前选中模型 id（"provider/modelId" 复合串）。
-   * staging 活跃时读暂存快照，否则读常规态真值（session > landing pendingModel > 全局默认）。
+   * staging 活跃时读暂存快照，否则读常规态真值（session > landing 兜底链 currentModel > lastUsedModel > 全局默认）。
    */
   const currentModelId = computed(
     () => stagingModel.value !== null
@@ -231,10 +251,11 @@ export function useComposerModelThinking(
   /**
    * landing 未 authored 的 local 档位跟随模型重设：可用(lookup(当前模型)) ?? 最高可用档
    * （value 形态，localThinkingLevel 存 value——§2.2 关键事实①）。
-   * 为什么需要：landing 挂载时 sync watch 的「无档位」分支会自动设最高可用档，该 auto 值经
-   * 首发透传（send → flow apply）会以「用户从未选择」的身份进入已建态记录 watch——纯态轴
-   * 门禁挡不住它（D2 被否③：判别轴错位，污染只是从挂载时点换到首发时点）。跟随重设让
-   * auto 值本身 memory-aware，污染在源头消灭；顺带让新任务默认档贴合用户习惯（G1 延伸）。
+   * 为什么需要：[U5/D5] 门禁后 landing 无值初值唯一来源就是本 watch（sync watch 的「无档位」
+   * 分支 2 被 armed 快照恒 null 恒拦截；历史上该分支自动设最高可用档，该 auto 值经首发
+   * 透传（send → flow apply）会以「用户从未选择」的身份进入已建态记录 watch——纯态轴
+   * 门禁挡不住它，D2 被否③：判别轴错位）。跟随重设让 auto 值本身 memory-aware，污染在
+   * 源头消灭；顺带让新任务默认档贴合用户习惯（G1 延伸）。
    * 为什么记忆要过可用性校验（一致性审查 U-fix-2 同步，D2 公式）：能力注册表变化致记忆键
    * 失效时（如 max 档被下线），不过校验会让 landing 短暂显示不可用档——E3/D5 的可用性
    * 回落防线延伸到跟随路径，失效即回落最高可用档。
@@ -263,6 +284,8 @@ export function useComposerModelThinking(
   // 恒 undefined，跟随/恢复自然回落最高档/现有规则（E7①）；加载完成回调补一次跟随重设，
   // 消灭「landing 在毫秒级窗口内不碰档位直接发送」才会踩中的 auto 值覆写窗口。
   loadOnce()
+  // [D4] lastUsedModel KV 预载（landing 兜底链消费点）
+  loadLastUsedOnce()
   let disposed = false
   onLoaded(() => {
     // split panel 实例可能在预载完成前被销毁——死实例的 localThinkingLevel 不再写
@@ -278,12 +301,43 @@ export function useComposerModelThinking(
    * 切模型自动对齐、session 加载既有状态（immediate 覆盖最后一种，mount 即记录载入值）。
    * 条件 a（态轴）：landing 悬空值（sessionId 空）与 staging 试选值（stagingModel 非空——
    * fork/handoff 暂存取消时不该入表）不入表；其生效时点（新 session 建立）必进已建态由门禁补上。
+   *
+   * [Gate B 跨写污染修复] 观察源含 sessionId（第 0 位），用于识别「跨纪元错配 flush」：
+   * 切模型的回包链是两次独立 store 写——switchModel 回包 applySnapshot({modelId}) 先落，
+   * consume 恢复的 setThinkingLevel 回包 applySnapshot({thinkingLevel}) 后落，两次写之间
+   * 夹着一个 watch flush。该 flush 上 (modelId, level) 是「模型已变、档位尚未对齐」的
+   * 跨纪元快照（切走 = 新模型×旧档位；切回 = 旧模型×新纪元档位），把后者反查入表会把
+   * 旧模型槽位写成新模型的记忆档（mem[flash] ← mem[glm-5.3] 的 max，KV 写穿持久化，
+   * 即 V4 Gate B 实测污染）。纪元一致的真值必然出现在后续「level 变化」的 flush
+   * （恢复/手选/对齐回包）上，届时照常入表——「生效即记录」语义不变（D6），拒收的只是
+   * level 从未生效于该 modelId 的时序中间态。判据为纯时序纪元一致性，非用户意图判别
+   * （D6 被否②的轴未触碰）。换绑（prev sid ≠ sid）不跳过——新 session 的既有真值属新纪元，
+   * 条件 b 记录保持。
+   *
+   * [第三形态守卫（V4 第三轮追击）] 切模型链还有第二个瞬态方向「档位变、模型未变」：
+   * pi setModel 内部为新模型归一档位（_getThinkingLevelForModelSwitch：pi 侧 per-model
+   * 记忆档 > 全局默认 > 保持）并 emit thinking_level_changed，runtime 转为独立帧
+   * session.thinkingLevelSet{level}（不经 300ms 防抖，早于 model.switched 回包与原子
+   * state_changed 到达），renderer useChat handler 只写 thinkingLevel 单字段——flush 呈
+   * (旧模型, 新档位)，纪元判据（只拦「模型变、档位不变」镜像方向）不命中，pi 归一值被
+   * 反查写进旧模型槽位（V4 第三轮实测 mem[flash] ← max，32ms 内落定）。守卫：armed 在途
+   * 而 flush 的 modelId ≠ armed 目标 → 本 flush 的 level 变化属切换链、从未生效于该
+   * modelId，不入表；modelId 落到目标后的 flush 照常按既有判据入表。时序依据：本 flush
+   * 只 level 变化时 sync watch（观察源 map/supported 均随 modelId 派生）不触发，armed
+   * 不会被先消费；armed 已被消费的 flush 其 modelId 恒等于目标，守卫自然不再拦截。
+   * 代价（启发式边界，同 D5 门禁声明）：armed 在途窗口内对旧模型的手选档不入表——
+   * 窗口毫秒级且真值必现于后续 flush，可接受。
    */
   watch(
-    [currentModelId, currentThinkingLevel],
-    ([modelId, level]) => {
-      if (!sessionId.value || stagingModel.value !== null) return
+    [sessionId, currentModelId, currentThinkingLevel],
+    ([sid, modelId, level], prev) => {
+      if (!sid || stagingModel.value !== null) return
       if (!level) return
+      // 同 session 内模型已变而档位未变 → level 是旧模型纪元遗留，本 flush 不入表
+      if (prev && prev[0] === sid && prev[1] !== modelId && prev[2] === level) return
+      // 第三形态（档位先变、模型未变）：armed 在途且 modelId ≠ 目标 → level 变化属切换链
+      //（pi 归一值经独立帧先落），从未生效于该 modelId，不入表
+      if (armed.value && armed.value.modelId !== modelId) return
       // 记录的是 UI key（D1：跨模型恢复的语义是档位名而非实现值）——value 经当前模型 map 反查
       const uiKey = resolveThinkingKey(level, getThinkingLevelMap(modelId))
       // 可用性校验（E5 防线）：体系外脏值（transient 窗口值/异常快照）不入表
@@ -327,6 +381,8 @@ export function useComposerModelThinking(
       // armed 将从不设立（记忆恢复整体失效）。镜像 staging 分支的写前判定。
       const reselect = targetModelId === currentModelId.value
       setPendingModel(targetModelId)
+      // [D4] lastUsedModel 写入（仅显式选模型，staging 试选不写——入口已在上方 staging return）
+      recordLastUsed(targetModelId)
       // re-select 同模型不设 armed（理由同 staging 分支）——无反应性变化 watch 必不触发，
       // 悬留 token 被 5s 内无关刷新经规则 2 消费会把记忆值写回 local（恢复通路不检查
       // localAuthored，会覆写用户 authored 值）= D3 规则 5 要消灭的「chip 突跳伪恢复」形态
@@ -340,6 +396,10 @@ export function useComposerModelThinking(
     inFlightCallIds.add(callId)
     try {
       await switchModel(sessionId.value, payload.provider, payload.modelId)
+      // [D4] lastUsedModel 写入（仅显式选模型，staging 试选不写——入口已在上方 staging return）。
+      // 置于 RPC 成功后、clearArmedIfOwner 之前：RPC 失败 = 本次切换未生效，landing 粘滞
+      // 默认不指向切换失败的模型（与 armed「失败清」防线同向）
+      recordLastUsed(targetModelId)
       // [u3·D3 规则 5「成功清」] 时序依据（D3 证据②）：applySnapshot 在 switchModel 内同步
       // 执行，watch flush 微任务于 applySnapshot 时刻入队，本 await 续段晚于 flush——
       // watch 回调总是先跑。故此处只对「回调未能消费」的残留 token 生效（pi 静默换模 /
@@ -394,8 +454,10 @@ export function useComposerModelThinking(
    * 之后 chip 切换只改 staging 值，不影响源 session。
    */
   function enterStagingMode(): void {
-    stagingModel.value = currentModelId.value
+    // 先快照再切 stagingModel：stagingModel 置位后 currentModelId/currentThinkingLevel
+    // 即切读 staging 分支，反序快照会把 undefined 写进 stagingThinking（UF1b）
     stagingThinking.value = currentThinkingLevel.value
+    stagingModel.value = currentModelId.value
   }
 
   /**

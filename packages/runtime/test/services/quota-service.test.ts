@@ -66,7 +66,7 @@ function readExtras(providerId: string): Record<string, unknown> | undefined {
 }
 
 afterEach(() => {
-  rmSync(tmpDir, { recursive: true, force: true })
+  rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 describe('QuotaService — 偏差 #B: providerId→fetcher 映射', () => {
@@ -87,7 +87,7 @@ describe('QuotaService — 偏差 #B: providerId→fetcher 映射', () => {
     // 新实现经 matchQuotaPreset 命中 zhipu，调到 mock fetcher
     expect(mockFetchQuota).toHaveBeenCalledTimes(1)
     // api-key 凭证仍用 providerId 查（getApiKeyForProvider('my-glm')），kind 按来源形态传递
-    expect(mockFetchQuota).toHaveBeenCalledWith('key-for-my-glm', 'api-key')
+    expect(mockFetchQuota).toHaveBeenCalledWith('key-for-my-glm', 'api-key', { workspaceUrl: undefined })
   })
 
   it('name 关键字匹配：provider name 含 zhipu 命中 zhipu preset', async () => {
@@ -172,7 +172,7 @@ describe('QuotaService — 手动选择 fetcher（任务 1）', () => {
     // 走手动指定的 kimi-coding（独立 mock 实例）而非 baseUrl 匹配的 zhipu；
     // zhipu 的 mock 未被调用 = 优先级退化回 preset 匹配时可证伪
     expect(kimiMockFetchQuota).toHaveBeenCalledTimes(1)
-    expect(kimiMockFetchQuota).toHaveBeenCalledWith('key-for-my-glm', 'api-key')
+    expect(kimiMockFetchQuota).toHaveBeenCalledWith('key-for-my-glm', 'api-key', { workspaceUrl: undefined })
     expect(mockFetchQuota).not.toHaveBeenCalled()
     expect(result.data?.label).toBe('kimi')
   })
@@ -354,7 +354,7 @@ describe('QuotaService — getCredential fallback: api-key 类无专属 key 时�
     await svc.fetch('glm-id')
 
     // 无专属 key → fallback 用 provider.apiKey（'provider-key-glm-id'）
-    expect(mockFetchQuota).toHaveBeenCalledWith('provider-key-glm-id', 'api-key')
+    expect(mockFetchQuota).toHaveBeenCalledWith('provider-key-glm-id', 'api-key', { workspaceUrl: undefined })
   })
 
   it('secrets 目录有专属 API Key 文件时优先用专属 key（不 fallback）', async () => {
@@ -370,7 +370,7 @@ describe('QuotaService — getCredential fallback: api-key 类无专属 key 时�
     await svc.fetch('glm-id')
 
     // 有专属 key → 用专属 key（'quota-exclusive-key'），不走 fallback
-    expect(mockFetchQuota).toHaveBeenCalledWith('quota-exclusive-key', 'api-key')
+    expect(mockFetchQuota).toHaveBeenCalledWith('quota-exclusive-key', 'api-key', { workspaceUrl: undefined })
   })
 })
 
@@ -464,7 +464,7 @@ describe('QuotaService — A2-2: api-key 形态优先级（secrets > auth.json >
 
     await svc.fetch('glm-id')
 
-    expect(mockFetchQuota).toHaveBeenCalledWith('secrets-key', 'api-key')
+    expect(mockFetchQuota).toHaveBeenCalledWith('secrets-key', 'api-key', { workspaceUrl: undefined })
   })
 
   it('无 secrets key 时 auth.json api_key 优先于 models.json apiKey（场景 A 断链修复）', async () => {
@@ -478,7 +478,7 @@ describe('QuotaService — A2-2: api-key 形态优先级（secrets > auth.json >
 
     await svc.fetch('glm-id')
 
-    expect(mockFetchQuota).toHaveBeenCalledWith('auth-json-key', 'api-key')
+    expect(mockFetchQuota).toHaveBeenCalledWith('auth-json-key', 'api-key', { workspaceUrl: undefined })
   })
 
   it('auth.json 无凭证时 fallback models.json apiKey（现状保留）', async () => {
@@ -491,7 +491,7 @@ describe('QuotaService — A2-2: api-key 形态优先级（secrets > auth.json >
 
     await svc.fetch('glm-id')
 
-    expect(mockFetchQuota).toHaveBeenCalledWith('key-for-glm-id', 'api-key')
+    expect(mockFetchQuota).toHaveBeenCalledWith('key-for-glm-id', 'api-key', { workspaceUrl: undefined })
   })
 
   it('getAuthCredential 未注入时跳过 auth.json 来源（向后兼容）', async () => {
@@ -503,7 +503,7 @@ describe('QuotaService — A2-2: api-key 形态优先级（secrets > auth.json >
 
     await svc.fetch('glm-id')
 
-    expect(mockFetchQuota).toHaveBeenCalledWith('key-for-glm-id', 'api-key')
+    expect(mockFetchQuota).toHaveBeenCalledWith('key-for-glm-id', 'api-key', { workspaceUrl: undefined })
   })
 
   it('getAuthCredential 抛异常不阻断来源链（降级 models.json）', async () => {
@@ -518,7 +518,7 @@ describe('QuotaService — A2-2: api-key 形态优先级（secrets > auth.json >
 
     await svc.fetch('glm-id')
 
-    expect(mockFetchQuota).toHaveBeenCalledWith('key-for-glm-id', 'api-key')
+    expect(mockFetchQuota).toHaveBeenCalledWith('key-for-glm-id', 'api-key', { workspaceUrl: undefined })
   })
 })
 
@@ -544,7 +544,7 @@ describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
 
     // auth 数组序 ['api-key','oauth']：api-key 形态有凭证（models.json）则用 api-key，
     // oauth 凭证不回灌 api-key 形态（形态语义隔离）
-    expect(kimiMockFetchQuota).toHaveBeenCalledWith('key-for-kimi-id', 'api-key')
+    expect(kimiMockFetchQuota).toHaveBeenCalledWith('key-for-kimi-id', 'api-key', { workspaceUrl: undefined })
   })
 
   it('kimi 场景：无 api-key 凭证（secrets/auth.json/models.json 全 miss）但有 oauth 凭证 → 按数组序降级用 oauth', async () => {
@@ -568,7 +568,7 @@ describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
 
     // api-key 形态全 miss → 数组序下一形态 oauth，凭证取 access，kind='oauth'
     expect(kimiMockFetchQuota).toHaveBeenCalledTimes(1)
-    expect(kimiMockFetchQuota).toHaveBeenCalledWith('oauth-access-token', 'oauth')
+    expect(kimiMockFetchQuota).toHaveBeenCalledWith('oauth-access-token', 'oauth', { workspaceUrl: undefined })
   })
 
   it('cookie 类 fetcher：凭证从 secrets cookie 文件读，kind=cookie', async () => {
@@ -588,7 +588,7 @@ describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
     await svc.fetch('mimo-id')
 
     // cookie 形态只认 secrets cookie 文件（auth.json api_key 不参与），kind='cookie'
-    expect(mockFetchQuota).toHaveBeenCalledWith('session=abc', 'cookie')
+    expect(mockFetchQuota).toHaveBeenCalledWith('session=abc', 'cookie', { workspaceUrl: undefined })
   })
 
   it('api-key/oauth 形态全 miss（fetcher.auth 不含 cookie）→ 不发请求返回缓存', async () => {

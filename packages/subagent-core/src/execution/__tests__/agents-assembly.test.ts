@@ -30,9 +30,9 @@ import {
   clearFileCache,
   discoverResources,
   getCachedFileContent,
-  type DiscoveryRoot,
   type ScanConfig,
 } from "../../shared/resource-discovery.ts";
+import type { DiscoveryRoot } from "../../core/host-services.ts";
 import { discoverAgents } from "../agents-assembly.ts";
 
 // ── oracle：pi 壳 discoverAllAgents 装配循环的逐句同构（消费同一批 core 原语）──
@@ -98,7 +98,7 @@ describe("discoverAgents", () => {
   afterEach(() => {
     resetCoreForTests();
     clearFileCache();
-    fs.rmSync(outerDir, { recursive: true, force: true });
+    fs.rmSync(outerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("与 pi 壳现装配循环产出等值（同序同名同字段）——多形态 fixture 对照", async () => {

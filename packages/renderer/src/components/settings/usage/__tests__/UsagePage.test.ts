@@ -16,7 +16,7 @@
  * mock 策略（对齐 PluginContributionsPage.test.ts 装配方式）：
  *   - vue-i18n 由 vitest.config.ts setupFiles（vitest-i18n-setup.ts）全局 mock，
  *     t() 从 zh-CN locale 取值，无需在测试里 app.use(i18n)
- *   - vi.mock('@/api/domains/usage') 替掉 WS RPC 门面（onMounted 即拉数据）
+ *   - vi.mock('@xyz-agent/core/transport/api/domains/usage') 替掉 WS RPC 门面（onMounted 即拉数据）
  *   - 仅 stub UsageDailyChart（内部用 ResizeObserver，happy-dom 无实现）；其余子组件
  *     （UsageLedger/UsageDetailTable 等）真实渲染，保证 testid 断言来自真实聚合管线
  */
@@ -24,12 +24,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import type { UsageRow, UsageStatsResult } from '@xyz-agent/shared'
 
-vi.mock('@/api/domains/usage', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/usage', () => ({
   getUsageStats: vi.fn(),
 }))
 
 import UsagePage from '@/components/settings/usage/UsagePage.vue'
-import { getUsageStats } from '@/api/domains/usage'
+import { getUsageStats } from '@xyz-agent/core/transport/api/domains/usage'
 
 const mockedGetUsageStats = vi.mocked(getUsageStats)
 

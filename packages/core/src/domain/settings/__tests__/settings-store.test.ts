@@ -5,6 +5,7 @@
  * setSkillDirs/setAgentDirs/setExtensionDirs 经 IF1 transport 转发；四个乐观 toggle
  * （旧值返回 + state 更新 + 找不到默认返回）；getSettingsStore 惰性单例。
  */
+import type { ModelInfo,  ProviderId } from '@xyz-agent/shared'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   provideSettingsTransport,
@@ -23,7 +24,8 @@ import type { ProviderInfo, ExtensionInfo } from '@xyz-agent/shared'
 function makeFakeTransport(): SettingsTransport {
   return {
     listProviders: vi.fn(async () => ({ providers: [] })),
-    listModels: vi.fn(async () => []),
+    listModels: vi.fn(async () => [] as ModelInfo[]),
+    setScopedModels: vi.fn(async (_models: string[]): Promise<string[]> => []),
     setProvider: vi.fn(async () => {}),
     discoverModels: vi.fn(async () => ({ success: true })),
     setSkillDirs: vi.fn(async () => {}),
@@ -52,7 +54,7 @@ beforeEach(() => {
 describe('settings-store setSystem（状态合并 + IF3 持久化 + 失败回滚）', () => {
   it('合并状态 + storage 落盘（SYSTEM_KEY）', async () => {
     const storage = new InMemoryStorage()
-    providePlatform({ kind: 'mock', storage, webSocket: { create: () => ({}) as never }, ipc: null })
+    providePlatform({ kind: 'mock', storage, webSocket: { create: () => ({}) as never } })
     const store = createSettingsStore()
     await store.setSystem({ theme: 'light' })
     expect(store.system.value.theme).toBe('light')
@@ -64,7 +66,7 @@ describe('settings-store setSystem（状态合并 + IF3 持久化 + 失败回滚
 
   it('持久化失败 → 还原快照 + throw', async () => {
     const storage = new InMemoryStorage()
-    providePlatform({ kind: 'mock', storage, webSocket: { create: () => ({}) as never }, ipc: null })
+    providePlatform({ kind: 'mock', storage, webSocket: { create: () => ({}) as never } })
     const store = createSettingsStore()
     await store.setSystem({ theme: 'dark' }) // 基线（先成功，mock 在基线后生效）
     vi.spyOn(storage, 'set').mockImplementationOnce(async () => {
@@ -83,7 +85,7 @@ describe('settings-store fail-fast', () => {
 
   it('transport 未注入 → setSkillDirs throw 含 getSettingsTransport', async () => {
     const storage = new InMemoryStorage()
-    providePlatform({ kind: 'mock', storage, webSocket: { create: () => ({}) as never }, ipc: null })
+    providePlatform({ kind: 'mock', storage, webSocket: { create: () => ({}) as never } })
     const store = createSettingsStore()
     await expect(store.setSkillDirs([{ path: '/a', enabled: true, scope: 'global' }])).rejects.toThrow('getSettingsTransport')
   })
@@ -92,7 +94,7 @@ describe('settings-store fail-fast', () => {
 describe('settings-store 路径配置经 IF1 transport 转发', () => {
   it('setSkillDirs/setAgentDirs/setExtensionDirs 调用对应 transport 方法', async () => {
     const storage = new InMemoryStorage()
-    providePlatform({ kind: 'mock', storage, webSocket: { create: () => ({}) as never }, ipc: null })
+    providePlatform({ kind: 'mock', storage, webSocket: { create: () => ({}) as never } })
     const transport = makeFakeTransport()
     provideSettingsTransport(transport)
     const store = createSettingsStore()
@@ -108,7 +110,7 @@ describe('settings-store 路径配置经 IF1 transport 转发', () => {
 describe('settings-store 乐观 toggle', () => {
   function seedProvider(): ProviderInfo {
     return {
-      id: 'p1',
+      id: 'p1' as ProviderId,
       name: 'P1',
       apiKeySet: true,
       status: 'connected',

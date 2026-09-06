@@ -26,7 +26,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(tmpAgentDir, { recursive: true, force: true });
+  fs.rmSync(tmpAgentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 /** 写一个最小合法的 manifest 到指定 records 目录。 */
@@ -36,7 +36,7 @@ function writeManifest(recordsDir: string, id: string): string {
     id,
     rootSessionId: "sess-1",
     agentName: "worker",
-    status: "completed",
+    status: "closed",
     createdAt: Date.now(),
   };
   const filePath = path.join(recordsDir, `${id}.json`);

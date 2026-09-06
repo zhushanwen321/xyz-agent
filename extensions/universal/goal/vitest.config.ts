@@ -6,6 +6,8 @@ const piStub = path.resolve(__dirname, "src/__tests__/stubs/pi-sdk.ts");
 
 export default defineConfig({
 	test: {
+		reporters: ["default", "junit"],
+		outputFile: { junit: "./test-results/vitest-junit.xml" },
 		include: ["src/**/*.test.ts"],
 	},
 	resolve: {

@@ -131,6 +131,94 @@ export interface TailReadResult {
  * 规则 #6：文件不存在返回 { messages: [], truncated: false } 不抛（pi 延迟写入）。
  * AC-12：末行损坏复用 readTailBytes 的残行丢弃（INVAR-tail-3）。
  */
+/**
+ * 尾读加载阶段：按 fileSize/TAIL_WINDOW 二分（全量读 or 尾读窗口），窗口 turn 不足时
+ * fallback 全量读。
+ *
+ * 返回 null = 空结果早退（readTailBytes openSync 失败如 EACCES / fallback 读到 ENOENT）——
+ * B6：EACCES 时不进 fallback（fallback readFile 会重复抛 EACCES 未捕获）；规则 #6：
+ * ENOENT 不抛（pi 延迟写入）。AC-12：末行损坏复用 readTailBytes 的残行丢弃（INVAR-tail-3）。
+ */
+async function loadTailEntries(
+  filePath: string,
+  fileSize: number,
+  tailWindow: number,
+  maxTurns: number,
+): Promise<{ entries: unknown[]; didFullRead: boolean } | null> {
+  // W-Runtime2：是否全量读了整个文件（fileSize<=TAIL_WINDOW 或 fallback 全量读）。
+  // 决定 truncated 判定方式：全量读时 userMsgIndices 是文件全部 turn，可按数量精确判定；
+  // 只读了尾窗口时窗口外 turn 数未知，truncated 保守认定 true（宁可多显示「加载更多」也别漏）。
+  let didFullRead = false
+
+  // 收集尾部 entries（先尝试尾读窗口，不够再全量）
+  let entries: unknown[]
+  if (fileSize <= tailWindow) {
+    // 文件小于窗口，全量读（offset=0 无残行丢弃）
+    const tailEntries = readTailBytes(filePath, tailWindow)
+    // B6: readTailBytes 返回 null（文件 openSync 失败，如 EACCES）→ 直接返回空，
+    // 不进 fallback（fallback readFile 会重复抛 EACCES 未捕获）。
+    if (tailEntries === null) return null
+    entries = tailEntries
+    didFullRead = true
+  } else {
+    // 尾读窗口
+    const tailEntries = readTailBytes(filePath, tailWindow)
+    // B6: readTailBytes 返回 null（文件 openSync 失败，如 EACCES）→ 直接返回空，
+    // 不进 fallback（fallback readFile 会重复抛 EACCES 未捕获）。
+    if (tailEntries === null) return null
+    entries = tailEntries
+    // 检查尾读窗口内是否有足够 turn；不够则 fallback 全量读
+    const turnCount = entries.filter(isTurnBoundary).length
+    if (turnCount < maxTurns) {
+      try {
+        const content = await readFile(filePath, 'utf-8')
+        entries = parseJsonl(content)
+        didFullRead = true
+      } catch (e) {
+        if (isEnoent(e)) return null
+        throw e
+      }
+    }
+  }
+  return { entries, didFullRead }
+}
+
+/** 收集全部 turn 边界索引（D11：turn = user message 到下一个 user message 之前）。 */
+function collectTurnBoundaryIndices(entries: unknown[]): number[] {
+  const userMsgIndices: number[] = []
+  for (let i = 0; i < entries.length; i++) {
+    if (isTurnBoundary(entries[i])) userMsgIndices.push(i)
+  }
+  return userMsgIndices
+}
+
+/**
+ * 窗口起点索引：倒数第 maxTurns 个 user message 的位置（0-based：length - maxTurns）。
+ * D11：turn = user message 到下一个 user message 之前。窗口含 maxTurns 个完整 turn。
+ */
+function computeWindowStart(userMsgIndices: number[], maxTurns: number): number {
+  let windowStart = 0
+  if (userMsgIndices.length > maxTurns) {
+    windowStart = userMsgIndices[userMsgIndices.length - maxTurns]
+  }
+  return windowStart
+}
+
+/**
+ * 收集窗口内全部 object entry（正序）——四类筛选交给 mapSessionEntries（共享单点，CQ1）。
+ * windowStart 基于 turn 边界（isTurnBoundary 在原始 entries 上算），此处只做 index 截窗；
+ * 非 object entry（parseJsonl/readTailBytes 可能返回裸数字/字符串/null）跳过，避免 mapper 抛错。
+ */
+function collectWindowEntries(entries: unknown[], windowStart: number): PiSessionEntry[] {
+  const windowEntries: PiSessionEntry[] = []
+  for (let i = windowStart; i < entries.length; i++) {
+    const entry = entries[i]
+    if (typeof entry !== 'object' || entry === null) continue
+    windowEntries.push(entry as PiSessionEntry)
+  }
+  return windowEntries
+}
+
 export async function tailReadHistory(
   filePath: string,
   sessionStore: ISessionStore,
@@ -150,65 +238,14 @@ export async function tailReadHistory(
   // eslint-disable-next-line no-magic-numbers -- dynamic tail window based on maxTurns
   const TAIL_WINDOW = Math.max(256 * 1024, maxTurns * 32 * 1024)
 
-  // W-Runtime2：是否全量读了整个文件（fileSize<=TAIL_WINDOW 或 fallback 全量读）。
-  // 决定 truncated 判定方式：全量读时 userMsgIndices 是文件全部 turn，可按数量精确判定；
-  // 只读了尾窗口时窗口外 turn 数未知，truncated 保守认定 true（宁可多显示「加载更多」也别漏）。
-  let didFullRead = false
-
-  // 收集尾部 entries（先尝试尾读窗口，不够再全量）
-  let entries: unknown[]
-  if (fileSize <= TAIL_WINDOW) {
-    // 文件小于窗口，全量读（offset=0 无残行丢弃）
-    const tailEntries = readTailBytes(filePath, TAIL_WINDOW)
-    // B6: readTailBytes 返回 null（文件 openSync 失败，如 EACCES）→ 直接返回空，
-    // 不进 fallback（fallback readFile 会重复抛 EACCES 未捕获）。
-    if (tailEntries === null) return { messages: [], truncated: false }
-    entries = tailEntries
-    didFullRead = true
-  } else {
-    // 尾读窗口
-    const tailEntries = readTailBytes(filePath, TAIL_WINDOW)
-    // B6: readTailBytes 返回 null（文件 openSync 失败，如 EACCES）→ 直接返回空，
-    // 不进 fallback（fallback readFile 会重复抛 EACCES 未捕获）。
-    if (tailEntries === null) return { messages: [], truncated: false }
-    entries = tailEntries
-    // 检查尾读窗口内是否有足够 turn；不够则 fallback 全量读
-    const turnCount = entries.filter(isTurnBoundary).length
-    if (turnCount < maxTurns) {
-      try {
-        const content = await readFile(filePath, 'utf-8')
-        entries = parseJsonl(content)
-        didFullRead = true
-      } catch (e) {
-        if (isEnoent(e)) return { messages: [], truncated: false }
-        throw e
-      }
-    }
-  }
+  const loaded = await loadTailEntries(filePath, fileSize, TAIL_WINDOW, maxTurns)
+  if (!loaded) return { messages: [], truncated: false }
+  const { entries, didFullRead } = loaded
 
   // 确定窗口起点：从尾部数 maxTurns 个 user message，最早的那个 user message 的索引即为起点。
-  // D11：turn = user message 到下一个 user message 之前。窗口含 maxTurns 个完整 turn。
-  const userMsgIndices: number[] = []
-  for (let i = 0; i < entries.length; i++) {
-    if (isTurnBoundary(entries[i])) userMsgIndices.push(i)
-  }
-
-  // 窗口起点索引：倒数第 maxTurns 个 user message 的位置
-  let windowStart = 0
-  if (userMsgIndices.length > maxTurns) {
-    // 取倒数第 maxTurns 个 user message（0-based：length - maxTurns）
-    windowStart = userMsgIndices[userMsgIndices.length - maxTurns]
-  }
-
-  // 收集窗口内全部 object entry（正序）——四类筛选交给 mapSessionEntries（共享单点，CQ1）。
-  // windowStart 基于 turn 边界（isTurnBoundary 在原始 entries 上算），此处只做 index 截窗；
-  // 非 object entry（parseJsonl/readTailBytes 可能返回裸数字/字符串/null）跳过，避免 mapper 抛错。
-  const windowEntries: PiSessionEntry[] = []
-  for (let i = windowStart; i < entries.length; i++) {
-    const entry = entries[i]
-    if (typeof entry !== 'object' || entry === null) continue
-    windowEntries.push(entry as PiSessionEntry)
-  }
+  const userMsgIndices = collectTurnBoundaryIndices(entries)
+  const windowStart = computeWindowStart(userMsgIndices, maxTurns)
+  const windowEntries = collectWindowEntries(entries, windowStart)
 
   // AC-5 turn 外扩（D14）：若窗口首条是孤立 toolResult（窗口外有对应 assistant），
   // convertHistory 内部 warn 丢弃（不额外拉取，外扩逻辑在 convertHistory 处理）。

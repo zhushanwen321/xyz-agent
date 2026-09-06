@@ -75,6 +75,10 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  * 把 parseYaml 结果（unknown）校验为类型化 ResourceMeta，失败返 null（语义非法，非语法错）。
  * 严格化（exec-review minor-2..5）：kind 专属字段不可串类、description 必填、
  * phase detail 非字符串/parameters 非对象均 reject（消除「静默丢弃非法字段」）。
+ *
+ * 结构（行为保持提取，主函数只留公共校验 + kind 分派；各分支校验顺序不可调换）：
+ * workflow → typecheckWorkflowMeta（串类 → phases → parameters）；
+ * agent → typecheckAgentMeta（串类 → examples → tools → model/engine → maxTurns → disallowedTools → skills）。
  */
 function typecheckMeta(raw: unknown, kind: ResourceKind): ResourceMeta | null {
   if (!isPlainObject(raw)) return null;
@@ -87,99 +91,140 @@ function typecheckMeta(raw: unknown, kind: ResourceKind): ResourceMeta | null {
   const notFor = isString(o.notFor) ? o.notFor : undefined;
 
   if (kind === "workflow") {
-    // minor-2：agent 专属字段不可出现在 workflow（串类 reject）
-    if (
-      o.examples !== undefined || o.tools !== undefined || o.model !== undefined
-      || o.engine !== undefined || o.maxTurns !== undefined
-      || o.disallowedTools !== undefined || o.skills !== undefined
-    ) {
-      return null;
-    }
-    // phases 必填数组，元素为 string | {title:string, detail?:string}
-    if (!Array.isArray(o.phases)) return null;
-    const phases: WorkflowMeta["phases"] = [];
-    for (const p of o.phases) {
-      if (isString(p)) {
-        phases.push(p);
-      } else if (isPlainObject(p) && isNonEmptyString(p.title)) {
-        // minor-4：detail 存在但非字符串 → reject（不再静默丢弃）
-        if (p.detail !== undefined && !isString(p.detail)) return null;
-        phases.push(isString(p.detail) ? { title: p.title, detail: p.detail } : { title: p.title });
-      } else {
-        return null;
-      }
-    }
-    // minor-5：parameters 存在但非 plain object → reject（不再静默当 undefined）
-    const parameters = o.parameters;
-    if (parameters !== undefined && !isPlainObject(parameters)) return null;
-    const usage = isString(o.usage) ? o.usage : undefined;
-
-    const meta: WorkflowMeta = {
-      kind: "workflow",
-      name: o.name,
-      description: o.description,
-      phases,
-      ...(parameters !== undefined ? { parameters: parameters as Record<string, unknown> } : {}),
-      ...(usage !== undefined ? { usage } : {}),
-      ...(when !== undefined ? { when } : {}),
-      ...(notFor !== undefined ? { notFor } : {}),
-    };
-    return meta;
+    return typecheckWorkflowMeta(o, o.name, o.description, when, notFor);
   }
+  return typecheckAgentMeta(o, o.name, o.description, when, notFor);
+}
 
-  // kind === "agent"
-  // minor-2：workflow 专属字段不可出现在 agent（串类 reject）
-  if (o.phases !== undefined || o.parameters !== undefined || o.usage !== undefined) return null;
-  let examples: RoutingExample[] | undefined;
-  if (o.examples !== undefined) {
-    if (!Array.isArray(o.examples)) return null;
-    const exs: RoutingExample[] = [];
-    for (const e of o.examples) {
-      if (
-        isPlainObject(e) &&
-        isString(e.match) &&
-        isString(e.action) &&
-        typeof e.positive === "boolean"
-      ) {
-        exs.push({ match: e.match, action: e.action, positive: e.positive });
-      } else {
-        return null;
-      }
-    }
-    examples = exs;
-  }
-  let tools: string[] | undefined;
-  if (o.tools !== undefined) {
-    if (Array.isArray(o.tools)) {
-      if (!o.tools.every(isString)) return null;
-      tools = o.tools as string[];
-    } else if (isString(o.tools)) {
-      // 兼容 agent .md 的逗号分隔字符串约定（如 `tools: read, bash, grep`）
-      const parts = o.tools.split(",").map((s) => s.trim()).filter(Boolean);
-      tools = parts.length > 0 ? parts : undefined;
+/** minor-2 串类守卫（workflow 分支）：agent 专属字段任一出现 → reject。 */
+function hasAgentOnlyFields(o: Record<string, unknown>): boolean {
+  return (
+    o.examples !== undefined || o.tools !== undefined || o.model !== undefined
+    || o.engine !== undefined || o.maxTurns !== undefined
+    || o.disallowedTools !== undefined || o.skills !== undefined
+  );
+}
+
+/** minor-2 串类守卫（agent 分支）：workflow 专属字段任一出现 → reject。 */
+function hasWorkflowOnlyFields(o: Record<string, unknown>): boolean {
+  return o.phases !== undefined || o.parameters !== undefined || o.usage !== undefined;
+}
+
+/**
+ * phases 元素校验（string | {title:string, detail?:string}）：合法元素逐个投影，
+ * 任一非法 → null。
+ * minor-4：detail 存在但非字符串 → reject（不再静默丢弃）。
+ */
+function typecheckPhases(rawPhases: unknown[]): WorkflowMeta["phases"] | null {
+  const phases: WorkflowMeta["phases"] = [];
+  for (const p of rawPhases) {
+    if (isString(p)) {
+      phases.push(p);
+    } else if (isPlainObject(p) && isNonEmptyString(p.title)) {
+      if (p.detail !== undefined && !isString(p.detail)) return null;
+      phases.push(isString(p.detail) ? { title: p.title, detail: p.detail } : { title: p.title });
     } else {
       return null;
     }
   }
-  const model = isString(o.model) ? o.model : undefined;
-  const engine = isString(o.engine) ? o.engine : undefined;
-  // D3 可选执行字段（maxTurns/disallowedTools/skills）：与 tools 同风格投影
-  // （空数组 [] 同 tools 保留键——列表字段族空列表语义一致）。严格层对非法类型
-  // reject（minor-2..5 既有精神：不静默丢弃非法字段）——宽容降级是
-  // parseAgentProfile（agent-registry）的职责，不在本严格层。
-  if (o.maxTurns !== undefined && (typeof o.maxTurns !== "number" || !Number.isFinite(o.maxTurns))) {
-    return null;
-  }
-  const maxTurns = typeof o.maxTurns === "number" ? o.maxTurns : undefined;
-  const disallowedTools = parseStringListField(o.disallowedTools);
-  if (disallowedTools === null) return null;
-  const skills = parseStringListField(o.skills);
-  if (skills === null) return null;
+  return phases;
+}
 
-  const meta: AgentMeta = {
+/** workflow meta 组装（校验全过后的纯投影——可选字段缺席不进键）。 */
+function buildWorkflowMeta(
+  name: string,
+  description: string,
+  phases: WorkflowMeta["phases"],
+  parameters: Record<string, unknown> | undefined,
+  usage: string | undefined,
+  when: string | undefined,
+  notFor: string | undefined,
+): WorkflowMeta {
+  return {
+    kind: "workflow",
+    name,
+    description,
+    phases,
+    ...(parameters !== undefined ? { parameters } : {}),
+    ...(usage !== undefined ? { usage } : {}),
+    ...(when !== undefined ? { when } : {}),
+    ...(notFor !== undefined ? { notFor } : {}),
+  };
+}
+
+/** workflow 分支校验（顺序 = 串类 → phases → parameters；usage 宽容投影）。 */
+function typecheckWorkflowMeta(
+  o: Record<string, unknown>,
+  name: string,
+  description: string,
+  when: string | undefined,
+  notFor: string | undefined,
+): WorkflowMeta | null {
+  // minor-2：agent 专属字段不可出现在 workflow（串类 reject）
+  if (hasAgentOnlyFields(o)) return null;
+  // phases 必填数组，元素为 string | {title:string, detail?:string}
+  const rawPhases = o.phases;
+  if (!Array.isArray(rawPhases)) return null;
+  const phases = typecheckPhases(rawPhases);
+  if (phases === null) return null;
+  // minor-5：parameters 存在但非 plain object → reject（不再静默当 undefined）
+  const parameters = o.parameters;
+  if (parameters !== undefined && !isPlainObject(parameters)) return null;
+  const usage = isString(o.usage) ? o.usage : undefined;
+  return buildWorkflowMeta(name, description, phases, parameters, usage, when, notFor);
+}
+
+/**
+ * examples 校验三态：undefined → 缺席（不进 meta）；非数组 → null；
+ * 元素须为 {match: string, action: string, positive: boolean}，任一非法 → null。
+ */
+function typecheckExamples(raw: unknown): RoutingExample[] | null | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return null;
+  const exs: RoutingExample[] = [];
+  for (const e of raw) {
+    if (
+      isPlainObject(e) &&
+      isString(e.match) &&
+      isString(e.action) &&
+      typeof e.positive === "boolean"
+    ) {
+      exs.push({ match: e.match, action: e.action, positive: e.positive });
+    } else {
+      return null;
+    }
+  }
+  return exs;
+}
+
+/**
+ * maxTurns 校验三态：undefined → 缺席；非 number 或非有限值（NaN/Infinity）→ null；
+ * 合法 number 原样投影。
+ */
+function typecheckMaxTurns(raw: unknown): number | null | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return null;
+  return raw;
+}
+
+/** agent meta 组装（校验全过后的纯投影——可选字段缺席不进键）。 */
+function buildAgentMeta(
+  name: string,
+  description: string,
+  examples: RoutingExample[] | undefined,
+  tools: string[] | undefined,
+  model: string | undefined,
+  engine: string | undefined,
+  maxTurns: number | undefined,
+  disallowedTools: string[] | undefined,
+  skills: string[] | undefined,
+  when: string | undefined,
+  notFor: string | undefined,
+): AgentMeta {
+  return {
     kind: "agent",
-    name: o.name,
-    description: o.description,
+    name,
+    description,
     ...(examples !== undefined ? { examples } : {}),
     ...(tools !== undefined ? { tools } : {}),
     ...(model !== undefined ? { model } : {}),
@@ -190,7 +235,36 @@ function typecheckMeta(raw: unknown, kind: ResourceKind): ResourceMeta | null {
     ...(when !== undefined ? { when } : {}),
     ...(notFor !== undefined ? { notFor } : {}),
   };
-  return meta;
+}
+
+/** agent 分支校验（顺序 = 串类 → examples → tools → model/engine → maxTurns → disallowedTools → skills）。 */
+function typecheckAgentMeta(
+  o: Record<string, unknown>,
+  name: string,
+  description: string,
+  when: string | undefined,
+  notFor: string | undefined,
+): AgentMeta | null {
+  // minor-2：workflow 专属字段不可出现在 agent（串类 reject）
+  if (hasWorkflowOnlyFields(o)) return null;
+  const examples = typecheckExamples(o.examples);
+  if (examples === null) return null;
+  // tools 三态经 parseStringListField（数组逐元素 string / 逗号分隔字符串 / 非法形态 → null）
+  const tools = parseStringListField(o.tools);
+  if (tools === null) return null;
+  const model = isString(o.model) ? o.model : undefined;
+  const engine = isString(o.engine) ? o.engine : undefined;
+  // D3 可选执行字段（maxTurns/disallowedTools/skills）：与 tools 同风格投影
+  // （空数组 [] 同 tools 保留键——列表字段族空列表语义一致）。严格层对非法类型
+  // reject（minor-2..5 既有精神：不静默丢弃非法字段）——宽容降级是
+  // parseAgentProfile（agent-registry）的职责，不在本严格层。
+  const maxTurns = typecheckMaxTurns(o.maxTurns);
+  if (maxTurns === null) return null;
+  const disallowedTools = parseStringListField(o.disallowedTools);
+  if (disallowedTools === null) return null;
+  const skills = parseStringListField(o.skills);
+  if (skills === null) return null;
+  return buildAgentMeta(name, description, examples, tools, model, engine, maxTurns, disallowedTools, skills, when, notFor);
 }
 
 /**

@@ -151,6 +151,33 @@ describe('parseRunSnapshot', () => {
     expect(overview!.steps[1].contentPreview).toBe('OK')
   })
 
+  it('TC-w5-parse-new-status-unknown：NEW call.status 非 done/running/pending（如 failed）→ step.status=pending', () => {
+    // call.status 出现三态外的值（如上游异常态）时收窄为 pending，其余字段照常提取
+    const fixture = {
+      ...NEW_SNAPSHOT_FIXTURE,
+      state: {
+        ...NEW_SNAPSHOT_FIXTURE.state,
+        calls: [
+          {
+            id: 3,
+            opts: { description: 'step-3' },
+            status: 'failed',
+            result: { content: 'partial', durationMs: 9 },
+          },
+        ],
+      },
+    }
+    const overview = parseRunSnapshot(fixture, 'wf-status-runid', '/abs/wf.jsonl')
+    expect(overview).not.toBeNull()
+    expect(overview!.steps).toHaveLength(1)
+    const step = overview!.steps[0]
+    expect(step.index).toBe(3)
+    expect(step.status).toBe('pending')
+    expect(step.description).toBe('step-3')
+    expect(step.contentPreview).toBe('partial')
+    expect(step.durationMs).toBe(9)
+  })
+
   it('TC-w5-parse-old：OLD 格式 (无 v) 尽力解析为 legacy overview，step status 推测', () => {
     const overview = parseRunSnapshot(OLD_SNAPSHOT_FIXTURE, 'wf-old-link', '/abs/wf-old.jsonl')
     expect(overview).not.toBeNull()
@@ -198,6 +225,37 @@ describe('extractCallSessionFiles', () => {
   it('v1 快照（wf-run-v1）行为不变：state.calls 提取', () => {
     const files = extractCallSessionFiles(NEW_SNAPSHOT_FIXTURE)
     expect(files).toEqual(['/abs/session.jsonl'])
+  })
+
+  it('OLD 快照（无 v，callCache）从 value 顶层与 value.result 提取 sessionFile', () => {
+    const files = extractCallSessionFiles({
+      callCache: [
+        { key: 0, value: { sessionFile: '/abs/old-call0.jsonl' } },
+        { key: 1, value: { result: { sessionFile: '/abs/old-call1.jsonl' } } },
+      ],
+    })
+    expect(files).toEqual(['/abs/old-call0.jsonl', '/abs/old-call1.jsonl'])
+  })
+
+  it('OLD 快照 value 无 sessionFile / value 非对象 → 跳过该 call，不产出路径', () => {
+    // 对齐 OLD_SNAPSHOT_FIXTURE 形状（旧 pi 不持久化 sessionFile）+ value 非对象脏数据回退 call 本身
+    const files = extractCallSessionFiles({
+      callCache: [
+        { key: 7, value: { content: '', usage: { input: 0 } } },
+        { key: 8, value: 42 },
+        { key: 9, sessionFile: '/abs/bare-call.jsonl' },
+      ],
+    })
+    expect(files).toEqual(['/abs/bare-call.jsonl'])
+  })
+
+  it('快照非对象 / calls 容器缺失 / call 元素非对象 → 空数组', () => {
+    expect(extractCallSessionFiles(null)).toEqual([])
+    expect(extractCallSessionFiles('wf-run-v1')).toEqual([])
+    expect(extractCallSessionFiles({ v: 'wf-run-v1', state: null })).toEqual([])
+    expect(extractCallSessionFiles({ v: 'wf-run-v1', state: {} })).toEqual([])
+    expect(extractCallSessionFiles({ callCache: 'not-an-array' })).toEqual([])
+    expect(extractCallSessionFiles({ callCache: [null, 7, 'x'] })).toEqual([])
   })
 })
 
@@ -282,7 +340,7 @@ describe('renderWorkflowOverview', () => {
 describe('readRunSnapshot', () => {
   let dir: string
   afterEach(async () => {
-    if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {})
+    if (dir) await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }).catch(() => {})
   })
 
   it('TC-w5-read-tail-fallback：末行半截 JSON 回退倒数第二行完整快照', async () => {

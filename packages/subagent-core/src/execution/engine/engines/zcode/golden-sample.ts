@@ -1,52 +1,14 @@
 // src/execution/engine/engines/zcode/golden-sample.ts
 //
-// golden 语料内嵌副本（双通道并存，R3 扩充）：
+// golden 语料内嵌副本（2026-09 收缩：CLI spawn 链删除后只剩 app-server 通道语料——
+// spawn 单 JSON 样本（ZCODE_GOLDEN_STDOUT）随 probe 干跑/spawn 回归一并删除）：
 //
-//   ① spawn 单 JSON（D7）：probe「干跑校验」的内嵌 golden 样本——zcode 无官方契约，
-//      探针必须做已知样本回归（对 embed 样本跑 parser，格式漂移在入口拦截而非运行中
-//      静默挂死）。来源：2026-08-25 验收前置门真机实录（zcode 0.16.5），完整原文与采集
-//      元数据见 __tests__/__fixtures__/zcode-golden-spawn.json。为什么不直接读 fixture
-//      文件：probe 在生产运行（npm 包安装形态）也要可用，__tests__ 不在稳定交付面内
-//      ——内嵌副本以代码为交付载体。spawn 降级路径（设计 D2 保留）持续消费本语料
-//      （zcode-engine probe 干跑 + conformance spawn 回归），故 R3 帧序列语料落地为
-//      并存新增而非删除替换——漂移防御的主力语料已切换到 ②（登记于 impl-plan 偏差表）。
-//
-//   ② app-server NDJSON 帧序列（R3，D8-②）：常驻通道的 golden 帧序列语料，四类样本
-//      （create 应答 / 推送流 / 终态帧 / read 应答，附录 A.2 任务生命周期帧序）。
-//      来源：按 A.2 协议权威 + 旧 zsw 实现真机抓包形态合成（非实录，fixture _meta
-//      如实标注）；真机冒烟后替换。双副本 diff 机制沿用 ① 的先例：fixture
-//      __tests__/__fixtures__/zcode-golden-appserver.json 是采集 SSOT，此处为运行时
-//      副本，更新样本需同步改两处（session-channel 测试 diff 校验；R6 conformance
-//      迁移后由 golden 回放层接管）。
-
-/** [①spawn] 实录 stdout 原文（单 JSON：sessionId/traceId/turnId/response/usage/eventCount/projection）。 */
-export const ZCODE_GOLDEN_STDOUT = `{
-  "sessionId": "sess_35852a0f-1302-4e20-9e48-87f47527abe3",
-  "traceId": "9fffaebd-749e-468b-af3f-2a89e3347785",
-  "turnId": "turn_99879260-1c9b-4e97-afe1-c2e7abeaf5b9",
-  "response": "ok",
-  "usage": {
-    "source": "provider",
-    "modelRequestCount": 1,
-    "inputTokens": 12599,
-    "outputTokens": 17,
-    "totalTokens": 12616,
-    "cacheReadTokens": 512,
-    "cacheWriteTokens": 0,
-    "reasoningTokens": 0,
-    "webFetchRequests": 0,
-    "webSearchRequests": 0
-  },
-  "eventCount": 17,
-  "projection": {
-    "status": "idle",
-    "turnCount": 1,
-    "totalTokenCount": 12616,
-    "contextUsed": 12616,
-    "contextWindow": 1000000
-  }
-}
-`;
+//   app-server NDJSON 帧序列（R3，D8-②）：常驻通道的 golden 帧序列语料，四类样本
+//   （create 应答 / 推送流 / 终态帧 / read 应答，附录 A.2 任务生命周期帧序）。
+//   来源：按 A.2 协议权威 + 旧 zsw 实现真机抓包形态合成（非实录，fixture _meta
+//   如实标注）；真机冒烟后替换。fixture __tests__/__fixtures__/zcode-golden-appserver.json
+//   是采集 SSOT，此处为运行时副本，更新样本需同步改两处（session-channel 测试
+//   diff 校验）。
 
 // ============================================================
 // [②app-server] NDJSON 帧序列语料（R3，附录 A.2 帧序逐字）

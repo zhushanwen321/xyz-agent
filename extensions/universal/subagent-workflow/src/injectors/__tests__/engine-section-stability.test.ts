@@ -9,15 +9,19 @@
 // 1. 段渲染确定性：pi / zcode / ghost 三形态多次独立调用逐字节相等（toBe 级）；
 // 2. 引擎切换只变尾部：provider models 段前缀不变，变化只发生在 engine 段位置（尾部）；
 // 3. 段序守护：engine 段恒位于 provider models 段之后（恒链尾）。双保险实现：
-//    a) handler 链模拟——真实导入 setupModelListInjector + 复刻 index.ts engine
-//       handler 的渲染拼装（检测编排部分归 engine-awareness.test.ts），模拟 pi 的
+//    a) handler 链模拟——真实导入 setupModelListInjector + 复刻 engine handler
+//       （D7-④ 起为 engine-awareness.ts 的 setupEngineAwarenessInjector）的渲染
+//       拼装（检测编排部分归 engine-awareness.test.ts），模拟 pi 的
 //       before_agent_start 链式叠加语义；
-//    b) index.ts 源码级结构断言——锚定注册序与拼装形态。
+//    b) 源码级结构断言——index.ts 锚定注册序（四个 setup 调用先后），engine-awareness.ts
+//       锚定拼装形态。
 //
-// 源码级断言的脆弱性权衡（刻意为之）：engine handler 是 index.ts 内联闭包（无法
-// 导入），而 before_agent_start 多 handler 的段序由注册序唯一决定，「注册序」这一
-// 事实只存在于 index.ts 源码中——源码结构断言是唯一能锚定它的方式。重构挪动注册
-// 位置导致本断言失败属预期行为（提醒同步更新链模拟与守护锚点），不是误报。
+// 源码级断言的脆弱性权衡（刻意为之）：engine handler 的生产实现装配依赖
+// ModelConfigService 单例与 sessionState 存取器（getModelConfigService() 在测试环境
+// 恒 null，导入后 handler 直接早退），链模拟仍以复刻形态锚定拼装保真；而
+// before_agent_start 多 handler 的段序由注册序唯一决定，「注册序」这一事实只存在于
+// index.ts 源码中——源码结构断言是唯一能锚定它的方式。重构挪动注册位置导致本断言
+// 失败属预期行为（提醒同步更新链模拟与守护锚点），不是误报。
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -29,12 +33,12 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 // C5①：formatModelList/ModelEntry 下沉 core barrel（setupModelListInjector 留 injector）
 import { formatModelList, type ModelEntry } from "@zhushanwen/subagent-core";
 import { MODEL_LIST_GUIDE, setupModelListInjector } from "../model-list-injector.ts";
-import type { EnginePort } from "@zhushanwen/subagent-core/execution/engine/port.ts";
+import type { EnginePort } from "@zhushanwen/subagent-core";
 import { clearEngines, registerEngine } from "@zhushanwen/subagent-core/execution/engine/registry.ts";
 import {
 	buildEngineModelsPromptAppend,
 	buildSubagentEngineSection,
-} from "@zhushanwen/subagent-core/execution/engine/model-prompt.ts";
+} from "@zhushanwen/subagent-core";
 
 // ── 测试数据 ────────────────────────────────────────────
 
@@ -68,8 +72,9 @@ const ZCODE_MODELS: Array<{ id: string; name?: string }> = [
 const BASE = "You are a coding agent.\n\n# System\nCore prompt body.";
 
 /**
- * engine handler 的追加段拼装（与 index.ts engine handler 同款：状态段 + 清单段、
- * 空段剔除、\n\n 连接）。复刻保真由下方「段序守护」describe 的源码锚点断言保证。
+ * engine handler 的追加段拼装（与 engine-awareness.ts setupEngineAwarenessInjector
+ * 内 handler 同款：状态段 + 清单段、空段剔除、\n\n 连接）。复刻保真由下方「段序守护」
+ * describe 的源码锚点断言保证。
  */
 function composeEngineAppend(defaultEngine: string | undefined): string {
 	return [buildSubagentEngineSection(defaultEngine), buildEngineModelsPromptAppend(defaultEngine)]
@@ -262,7 +267,8 @@ describe("段序守护：engine 段恒链尾（D7）", () => {
 		const { handlers, api } = capturePi();
 		// 真实导入 model list injector（provider models 段的生产渲染路径）
 		setupModelListInjector(api);
-		// 复刻 index.ts engine handler 的渲染拼装部分（检测编排部分归 engine-awareness.test.ts）
+		// 复刻 engine handler（engine-awareness.ts setupEngineAwarenessInjector）的渲染
+		// 拼装部分（检测编排部分归 engine-awareness.test.ts）
 		const defaultEngine = "zcode";
 		handlers.push((event) => {
 			const append = composeEngineAppend(defaultEngine);
@@ -302,8 +308,9 @@ describe("段序守护：engine 段恒链尾（D7）", () => {
 		expect(statusIdx).toBeLessThan(providerIdx);
 	});
 
-	it("index.ts 源码级守护：engine handler 注册序在 model list injector 之后（段序由注册序唯一决定）", () => {
+	it("源码级守护：engine handler 注册序在 model list injector 之后（段序由注册序唯一决定）", () => {
 		const src = readFileSync(fileURLToPath(new URL("../../index.ts", import.meta.url)), "utf8");
+		const eaSrc = readFileSync(fileURLToPath(new URL("../engine-awareness.ts", import.meta.url)), "utf8");
 		const lineOf = (needle: string): number => {
 			const idx = src.indexOf(needle);
 			if (idx < 0) throw new Error(`index.ts 中未找到守护锚点：${needle}`);
@@ -311,33 +318,39 @@ describe("段序守护：engine 段恒链尾（D7）", () => {
 		};
 
 		// 注册序：subagents → workflows → provider models → engine handler（链尾，D7）。
-		// engine handler 是唯一的直接 pi.on("before_agent_start")（其余三段经 setup* 间接注册），
-		// 恰出现一次的断言让「链尾」语义精确成立；未来若新增直接注册需人工复核段序。
-		expect(src.split('pi.on("before_agent_start"')).toHaveLength(2);
+		// D7-④：index.ts 不再有直接 pi.on("before_agent_start") 注册——四段注入全部经
+		// setup* 函数（engine 段经 setupEngineAwarenessInjector）。「零直接注册」断言让
+		// 「链尾」语义精确成立；未来若新增直接注册需人工复核段序。
+		expect(src.split('pi.on("before_agent_start"')).toHaveLength(1);
 		const lineSubagents = lineOf("setupSubagentListInjector(pi);");
 		const lineWorkflows = lineOf("setupWorkflowListInjector(pi);");
 		const lineModels = lineOf("setupModelListInjector(pi);");
-		const lineEngineHandler = lineOf('pi.on("before_agent_start"');
+		const lineEngineSetup = lineOf("setupEngineAwarenessInjector(pi,");
 		expect(lineSubagents).toBeLessThan(lineWorkflows);
 		expect(lineWorkflows).toBeLessThan(lineModels);
-		expect(lineModels).toBeLessThan(lineEngineHandler);
+		expect(lineModels).toBeLessThan(lineEngineSetup);
+
+		// engine handler 的唯一注册点在 engine-awareness.ts（setupEngineAwarenessInjector
+		// 内恰一处 pi.on("before_agent_start")）。
+		expect(eaSrc.split('pi.on("before_agent_start"')).toHaveLength(2);
 
 		// engine handler 内渲染调用序：状态段在清单段之前（append 内段序：状态段 → 清单段）。
-		// 两个调用在 index.ts 中位于同一行（数组字面量），行号无法区分先后——用字符偏移断言
-		const offsetStatusCall = src.indexOf("buildSubagentEngineSection(defaultEngine)");
-		const offsetModelsCall = src.indexOf("buildEngineModelsPromptAppend(defaultEngine)");
+		// 两个调用在 engine-awareness.ts 中位于同一行（数组字面量），行号无法区分先后——
+		// 用字符偏移断言
+		const offsetStatusCall = eaSrc.indexOf("buildSubagentEngineSection(defaultEngine)");
+		const offsetModelsCall = eaSrc.indexOf("buildEngineModelsPromptAppend(defaultEngine)");
 		if (offsetStatusCall < 0 || offsetModelsCall < 0) {
-			throw new Error("index.ts 中未找到 engine 段渲染调用锚点");
+			throw new Error("engine-awareness.ts 中未找到 engine 段渲染调用锚点");
 		}
-		expect(offsetStatusCall).toBeGreaterThan(src.indexOf('pi.on("before_agent_start"'));
+		expect(offsetStatusCall).toBeGreaterThan(eaSrc.indexOf('pi.on("before_agent_start"'));
 		expect(offsetStatusCall).toBeLessThan(offsetModelsCall);
 
 		// 链模拟复刻保真锚点：append 拼装形态（空段剔除 + \n\n 连接 + 尾部追加模板）。
-		// 这些锚点保证 composeEngineAppend 与 index.ts 生产拼装的一致性——生产形态
-		// 变化会先在这里红，提醒同步更新本文件全部复刻点。
-		expect(src).toContain('[buildSubagentEngineSection(defaultEngine), buildEngineModelsPromptAppend(defaultEngine)]');
-		expect(src).toContain('.filter((part) => part !== "")');
-		expect(src).toContain('.join("\\n\\n")');
-		expect(src).toContain("${event.systemPrompt}\\n\\n${append}");
+		// 这些锚点保证 composeEngineAppend 与生产拼装（engine-awareness.ts）的一致性——
+		// 生产形态变化会先在这里红，提醒同步更新本文件全部复刻点。
+		expect(eaSrc).toContain('[buildSubagentEngineSection(defaultEngine), buildEngineModelsPromptAppend(defaultEngine)]');
+		expect(eaSrc).toContain('.filter((part) => part !== "")');
+		expect(eaSrc).toContain('.join("\\n\\n")');
+		expect(eaSrc).toContain("${event.systemPrompt}\\n\\n${append}");
 	});
 });

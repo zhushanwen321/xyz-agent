@@ -2,7 +2,7 @@
  * SystemPage 集成测试共享 helper（system-page-rename-model / system-page-smart-context）。
  *
  * 提取两测试文件重复的构造样板：
- *  - settings API mock 集（auto-rename 4 + smart-context 5 函数）与 '@/api/domains/settings'
+ *  - settings API mock 集（auto-rename 4 + smart-context 5 函数）与 '@xyz-agent/core/transport/api/domains/settings'
  *    mock 模块工厂（含 getSystem/updateSystem 空实现——stores/settings → '@/api' → mock/index
  *    转发引用 real 域导出，工厂缺导出会在模块加载时抛 "No export defined"）。
  *  - useToast / useCommandStore / lib/ipc 三组模块 mock 工厂。
@@ -37,7 +37,7 @@ export type SettingsApiMocks = ReturnType<typeof createSettingsApiMocks>
 /** settings API mock 单例——mock 模块工厂与测试断言共享同一批 vi.fn 实例。 */
 export const settingsApiMocks = createSettingsApiMocks()
 
-/** '@/api/domains/settings' 的 mock 模块工厂（引用 settingsApiMocks 单例）。 */
+/** '@xyz-agent/core/transport/api/domains/settings' 的 mock 模块工厂（引用 settingsApiMocks 单例）。 */
 export function settingsApiModule() {
   return {
     ...settingsApiMocks,

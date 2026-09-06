@@ -22,10 +22,10 @@
 import type { Component } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 
-import { displayAgentName } from "@zhushanwen/subagent-core/shared/agent-ref.ts";
-import { deriveOutcome } from "@zhushanwen/subagent-core/execution/execution-record.ts";
-import { CLOSED_REASONS } from "@zhushanwen/subagent-core/execution/types.ts";
-import type { ClosedReason, ExecutionOutcome } from "@zhushanwen/subagent-core/execution/types.ts";
+import { displayAgentName } from "@zhushanwen/subagent-core";
+import { deriveOutcome } from "@zhushanwen/subagent-core";
+import { CLOSED_REASONS } from "@zhushanwen/subagent-core";
+import type { ClosedReason, ExecutionOutcome } from "@zhushanwen/subagent-core";
 import {
   firstLineSanitized,
   padToVisible,

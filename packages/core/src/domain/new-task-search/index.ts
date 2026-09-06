@@ -2,9 +2,9 @@
  * new-task-search 域入口 —— @xyz-agent/core 的搜索/命令/文件候选域（p3-strangler-domains W1）。
  *
  * 承接架构文档 §10.2（旧层 → core/domain/* 映射）：renderer lib/search-types + match-engine +
- * file-candidates + file-match 下沉为本域类型/纯函数模块；renderer stores/command.ts + fileSearch.ts
- * 迁移为纯 factory。renderer 消费方迁移为后续 WorkUnit，旧文件保留至消费方全部迁移后删除
- * （strangler 逐域绞杀）。
+ * file-candidates + file-match 下沉为本域类型/纯函数模块；command/fileSearch store 收口为本域
+ * 纯 factory（D7 双轨收口，壳 stores/command.ts + fileSearch.ts 已删除）——本域是唯一实现，
+ * 壳消费方经 composables/features 适配层消费 core 单例。
  */
 export * from './types'
 export * from './match-engine'

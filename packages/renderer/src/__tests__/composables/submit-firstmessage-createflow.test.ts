@@ -21,7 +21,7 @@ vi.mock('@xyz-agent/core', async (importActual) => {
 })
 
 // session api 门面（createSessionFlow ctx.api 注入用，但壳内 buildCreateFlowApiPort 代理这些）
-vi.mock('@/api/domains/session', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({
   create: vi.fn(),
   removeByCwd: vi.fn(),
   migrateImage: vi.fn(),
@@ -33,16 +33,16 @@ vi.mock('@/api/domains/session', () => ({
 }))
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
-  const session = await import('@/api/domains/session')
+  const session = await import('@xyz-agent/core/transport/api/domains/session')
   return { ...actual, session }
 })
-vi.mock('@/api/events', () => ({
+vi.mock('@xyz-agent/core/transport/api', () => ({
   on: vi.fn(() => () => {}),
   onGlobalType: vi.fn(() => () => {}),
   dispatchSession: vi.fn(),
 }))
-vi.mock('@/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
-vi.mock('@/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
+vi.mock('@xyz-agent/core/transport/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
+vi.mock('@xyz-agent/core/transport/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
 
 // useChat：stub send/sendBash 为 spy，断言调/不调 + 参数
 const sendMock = vi.fn().mockResolvedValue(undefined)

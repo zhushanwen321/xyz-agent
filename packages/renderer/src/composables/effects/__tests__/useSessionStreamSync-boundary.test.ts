@@ -24,7 +24,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { effectScope } from 'vue'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import { bindSessionStreamSync } from '../useSessionStreamSync'
 import { useSessionStore } from '@/stores/session'
 import { useChatStore } from '@/stores/chat'

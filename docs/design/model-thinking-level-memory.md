@@ -40,7 +40,7 @@
 **Out of scope**：
 
 - runtime / shared 协议任何改动（本设计纯 renderer + core）
-- 「最后使用的模型」记忆（需求只涉及档位；该能力 runtime 已覆盖——composer 切模型经 `model.switch` 广播 `config.defaults`，且 defaultModel/defaultProvider 的持久化由 pi 侧完成，重启后 landing 默认模型即最后切换的模型，见 §2.2 关键事实 ⑤）
+- 「最后使用的模型」记忆（需求只涉及档位；该能力 runtime 已覆盖——composer 切模型经 `model.switch` 广播 `config.defaults`，且 defaultModel/defaultProvider 的持久化由 pi 侧完成（**【勘误】** pi 0.84.4 实装：`setModel` 不传 `options.persist` 时不写 settings.json，粘滞默认仅单次运行内成立；勘误来源：[composer-model-session-isolation](./composer-model-session-isolation.md)），重启后 landing 默认模型即最后切换的模型，见 §2.2 关键事实 ⑤）
 - **session 切换时跨体系档位重置的既有行为**（关联发现：现状从 A 体系模型的 session 切到 B 体系模型的 session 时，sync watch 也会触发并把新前台 session 档位重置到最高可用档——疑似既有边界问题。本设计不改变它，但 armed 门禁（D3）保证记忆恢复不叠加进这条路径。是否修它另行决策）
 - 档位记忆的管理 UI（查看/清除入口）
 - per-project 维度的记忆（全局一份数据库，理由见 D6）
@@ -95,7 +95,7 @@
 - **可用档唯一权威 = `supportedLevels`**：runtime 能力注册表按 pi 同源计算下发（`ProviderInfo.models[].supportedLevels`），本地不做任何 pi 语义推算（U6 约束，thinking-levels.ts:73 的 `normalizeSupportedLevels` 只做归一）。任何「某档位可用吗」的判定必须查它。
 - **RPC 失败不写 store**（U6）：switchModel / setThinkingLevel 失败时显示保持旧真值。
 - **对齐规则无记忆**：sync watch 的决策输入只有「切换前后两个模型的 map + supportedLevels」，没有任何用户历史。
-- **composer 切模型会更新全局默认模型**：runtime `model.switch` 编排尾部广播 `config.defaults`（source: 'model-switch'），defaultModel/defaultProvider 的持久化由 pi 侧 setModel 完成（packages/runtime/src/services/model-service.ts:93-110）——重启后 landing 态的 fallback 默认模型 = 最后一次切换到的模型。本设计必须与该事实共存：landing 挂载时 sync watch 的「无档位」分支会自动设最高可用档（thinking-level-sync.ts:85-89），若无豁免，该自动值会污染记忆表（对策见 D2）。
+- **composer 切模型会更新全局默认模型**：runtime `model.switch` 编排尾部广播 `config.defaults`（source: 'model-switch'），defaultModel/defaultProvider 的持久化由 pi 侧 setModel 完成（packages/runtime/src/services/model-service.ts:93-110）——重启后 landing 态的 fallback 默认模型 = 最后一次切换到的模型。**【勘误】** pi 0.84.4 实装：`setModel` 不传 `options.persist` 时只写 session 级 entries，不写 settings.json（全局默认）；「粘滞默认」仅在单次运行内靠 volatile 广播成立，重启即丢（勘误来源：[composer-model-session-isolation](./composer-model-session-isolation.md)）。本设计必须与该事实共存：landing 挂载时 sync watch 的「无档位」分支会自动设最高可用档（thinking-level-sync.ts:85-89），若无豁免，该自动值会污染记忆表（对策见 D2）。
 - **持久化先例**：renderer UI 偏好已有 KV 范式——SystemSettings 经 `getPlatform().storage`（KVStorage：`get/set/remove` 异步接口，platform/port.ts:12；renderer 注入 LocalStorageAdapter）持久化，key `xyz-agent:system-settings`，损坏数据回退默认值（settings-store.ts:96 `setSystem` + system-storage.ts）。
 
 ### 2.3 根因
@@ -198,7 +198,7 @@
 **landing 自动初值 memory-aware（有意的行为变更）**：landing 挂载时 sync watch「无档位」分支现状自动设最高可用档（thinking-level-sync.ts:85-89），该自动值经首发无条件透传（send.ts:179 透传 `localThinkingLevel` → flow.ts:269,276-277 apply 给新 session）会以「用户从未选择」的身份进入已建态——纯态轴门禁挡不住它（判别轴错位：门禁轴是「态」，污染轴是「值是否用户 authored」）。故 landing 态的自动初值改为 memory-aware：**未 authored 的 local 档位跟随模型变化重设为 `可用(lookup(当前模型)) ?? 最高可用档`**（E3/D5 可用性校验延伸到跟随路径——能力注册表变化致记忆键失效时回落最高档而非显示不可用档；含 defaultModel 晚到的 `'' → 真实模型` 路径——不能依赖 sync `!current` 分支重跑：该分支要求 current 为 undefined，挂载 immediate 触发时已被 `''` 模型消费过一次，defaultModel 到达后 current 已 defined、走「首触发」分支，包装层无介入点）。实现：model-thinking 层设 `localAuthored` 标志（onThinkingSelect 的**用户显式入口**置位；sync onReset 通路指向内部对齐函数、不置位）+ landing 跟随 watch（`sessionId 为空 && !localAuthored` → 重设 local，**`{ immediate: true }` 且模型变化触发**——immediate 覆盖 defaultModel **早到**路径（挂载时模型已就绪且后续不变，非 immediate 则永不触发、auto 值透传覆写 memory），变化触发覆盖**晚到**路径，两路径缺一即间歇性缺陷）。**仅 landing 态生效**——已建但无档位的 session 初值行为保持现状（最高可用档），记忆表绝不主动触碰已建 session（G3）。
 
 - **被否 ①**：只记用户手动选择（初版）——需来源标注，且自动对齐场景「同一路径两次结果不同」，不可预期。
-- **被否 ②**：任何态都记录（初版）——landing 挂载自动值确定性污染（§2.2 事实 ⑤ 放大：重启后默认模型即最后切换的模型）。
+- **被否 ②**：任何态都记录（初版）——landing 挂载自动值确定性污染（§2.2 事实 ⑤ 放大：重启后默认模型即最后切换的模型；**注：pi 0.84.4 实勘误后该行为仅单次运行内成立，见 §2.2 关键事实⑤勘误**）。
 - **被否 ③**：仅「sessionId 非空」单轴门禁（第 1 轮修复版）——轴错位，击穿反例：landing 自动初值经「新建任务不碰档位直接发送」的默认流程透传进新 session → 已建态记录 watch 触发 → memory 被 auto 值覆写，污染只是从挂载时点换到首发时点，且触发频率更高；同轮发现 staging 态 sessionId 为源 session 非空 id（model-thinking.ts:160-173 staging 分支只写快照、不动 sessionId），单轴门禁对 staging 全程敞开，与 B5/§3.4 图声称矛盾。
 - **被否 ④**：保留 auto-init 现状 + 「landing pending 透传值」打标跳过——flow → 记录 watch 的跨模块 authored 标记链路脆弱（「首个快照」判定易碎），且保留「新任务默认最高档」与用户记忆档位的体验割裂；memory-aware 方案同时消灭污染源并让新任务默认档贴合习惯，且实现（authored 标志 + 跟随 watch）收敛在 model-thinking 单文件内，与被否 ④ 的跨模块打标不同构。
 - **被否 ⑤**：「memory-aware 初值挂 onReset 包装层，信号 = `localThinkingLevel === undefined`」（第 2 轮初版）——被 defaultModel 晚到路径击穿：挂载 immediate watch 在 defaultModel 到达前消费 `!current` 分支（currentModelId=''、memory[''] miss）→ local 被填 'high'；defaultModel=M 到达后 watch 重触发时 current 已 defined，走「首触发」分支而非 `!current`（'high' 可用时连 onReset 都不调）→ 包装层无介入点 → 自动值经首发透传覆写 memory[M]，MF-A 污染在晚到路径原样复发，且早到/晚到均为活路径（间歇性）。修复 = authored 标志 + landing 跟随 watch（见采用项）。

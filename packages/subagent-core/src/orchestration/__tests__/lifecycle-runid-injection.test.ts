@@ -9,7 +9,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-import { rebuildRuntime } from "../error-recovery.ts";
+import { rebuildRuntime } from "../worker-message-pump.ts";
 import { runWorkflow } from "../lifecycle.ts";
 import type { RunSpec } from "../models/run-spec.ts";
 import type { LifecycleDeps } from "../models/ports.ts";
@@ -73,11 +73,11 @@ describe("A4 rebuild 后 _runId 稳定（tier-1 §7.1）", () => {
     const runId = await runWorkflow(spec, deps);
     expect(deps.startCalls.length).toBe(1);
 
-    const run = deps.runs.get(runId);
+    const run = deps.runs.get(runId)!;
     expect(run).toBeTruthy();
     expect(run.state.status).toBe("running");
 
-    // 触发 rebuild（对齐 error-recovery handleWorkerError 的恢复路径）
+    // 触发 rebuild（对齐 worker-message-pump handleWorkerError 的恢复路径）
     rebuildRuntime(run, deps, {
       onMessage: vi.fn(),
       onError: vi.fn(),

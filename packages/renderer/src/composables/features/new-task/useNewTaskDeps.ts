@@ -20,7 +20,7 @@ import { usePresetStore } from '@/stores/preset'
 import { usePiPresets } from '@/composables/features/settings/usePiPresets'
 import { useToast } from '@/composables/useToast'
 import { workspace as workspaceApi } from '@/api'
-import { worktreeApi } from '@/api/domains/worktree'
+import { worktreeApi } from '@xyz-agent/core/transport/api/domains/worktree'
 import { pickDirectory as ipcPickDirectory } from '@/lib/ipc'
 
 export function useNewTaskDeps(): NewTaskDeps {

@@ -11,9 +11,8 @@
  *  - update 透传：Section 的 update 事件原样透传为容器 update。
  *
  * mock 策略：
- *  - vi.mock('@/api/domains/settings') 捕获 getAutoRenameEnabled / setAutoRenameEnabled。
+ *  - vi.mock('@xyz-agent/core/transport/api/domains/settings') 捕获 getAutoRenameEnabled / setAutoRenameEnabled。
  *  - vi.mock('@/composables/useToast') 隔离 toast 全局副作用。
- *  - vi.mock('@/stores/command') 避免 useCommandStore 真实 pinia store 初始化报错（容器用例挂 SystemShortcutSection 需要）。
  *  - vi.mock('@/lib/ipc') mock listSystemSounds（容器用例挂 SystemSoundSection onMounted 调用）。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/settings/system-page-auto-rename.test.ts
@@ -44,7 +43,7 @@ const settingsMock = vi.hoisted(() => ({
   setSmartContextExcludedModels: vi.fn(() => Promise.resolve({ models: [] })),
 }))
 
-vi.mock('@/api/domains/settings', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/settings', () => ({
   getAutoRenameEnabled: settingsMock.getAutoRenameEnabled,
   setAutoRenameEnabled: settingsMock.setAutoRenameEnabled,
   getRenameModel: settingsMock.getRenameModel,

@@ -22,7 +22,7 @@ function makeBaseManifest(overrides: Partial<ManifestRecord> = {}): ManifestReco
     id: "rec-test",
     rootSessionId: "session-main",
     agentName: "worker",
-    status: "completed",
+    status: "closed",
     createdAt: 1000,
     ...overrides,
   };
@@ -38,7 +38,7 @@ describe("ManifestStore — parentRecordId 落盘 (M3a)", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   // ── TC-m3a-new-record-parentid ──
@@ -71,7 +71,7 @@ describe("ManifestStore — parentRecordId 落盘 (M3a)", () => {
       id: "rec-old",
       rootSessionId: "session-main",
       agentName: "worker",
-      status: "completed",
+      status: "closed",
       createdAt: 2000,
       // 无 parentRecordId —— 旧版本写的
     };
@@ -104,7 +104,7 @@ describe("ManifestStore — parentRecordId 落盘 (M3a)", () => {
       id: "rec-minimal",
       rootSessionId: "session-main",
       agentName: "worker",
-      status: "completed",
+      status: "closed",
       createdAt: 3000,
     };
     fs.writeFileSync(

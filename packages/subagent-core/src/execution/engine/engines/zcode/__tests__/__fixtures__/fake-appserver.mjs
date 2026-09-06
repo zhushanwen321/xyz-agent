@@ -43,13 +43,29 @@
  *     sendPushes?:  [frame, ...]       send 应答前逐帧推送（推送流 + 终态帧全显式
  *                                      逐字回放，不经 withExtra 改写）
  *     sendResult?:  object             缺省 {accepted:true}
+ *     crashAfterSendMs?: number        [P0-1 U4] send 应答后 N ms 自杀 exit(1)（连接
+ *                                      崩溃收割注入——onClose → failAllTurns 在途
+ *                                      turn 收割；进程死 → 下次 request 惰性重建
+ *                                      boot 新代重读 scenario，重试轮/下一任务形态
+ *                                      切换经测试侧 rewriteScenario）
+ *     rebootSendPushes?: [frame, ...]  [P0-1 U4] 非首代进程（本 fake 启动时 state 流水
+ *                                      已有 boot 记录——崩溃/杀链后的重建代）的 send
+ *                                      推送序列，替代 sendPushes：崩溃后惰性重建的
+ *                                      重试轮拿到不同行为（如完整终态流）——首轮挂起
+ *                                      + 重试轮成功的静态注入通道（同任务重试轮无法
+ *                                      经测试侧 rewriteScenario 插手，run 整体 await）
  *     readError?:   {code,message,data} read 应答 error 帧（read 兜底降级链断言）
  *     readResult?:  object             覆盖 read 应答
- *     stopBehavior?: 'terminal'|'none'  session/stop 的行为（R4 abort 链断言面）：
+ *     stopBehavior?: 'terminal'|'none'|'hang'
+ *                                      session/stop 的行为（R4 abort 链断言面）：
  *                                      'terminal'（缺省）= stop 时推送该会话的
  *                                      turn.terminal 终态帧（stop 优雅生效——不杀
  *                                      进程的 abort 路径）；'none' = 只应答不推终态
- *                                      （grace 窗口耗尽 → killChain 兜底路径）
+ *                                      （grace 窗口耗尽 → killChain 兜底路径）；
+ *                                      'hang' = 连应答都不给（P0-1 U2 超时入口态③——
+ *                                      控制面假死注入，stop 3s 超时 → 连接级失败判据）
+ *     stopError?:   {code,message,data} stop 应答 error 帧（P0-1 U2 超时入口态②——
+ *                                      协议性 error（如会话已回收）注入，断言不升级杀链）
  *   }
  *
  * 多会话支持（R4 引擎接线 / RA3 双会话地基）：
@@ -59,15 +75,6 @@
  *                          （缺省关：R2/R3 单会话用例的字节级行为不变。）
  *   session/stop           应答 {stopped:true}；按 scenario.stopBehavior 决定是否
  *                          推送终态帧（见上）。stopTerminal 推送同样受 STAMP 改写。
- *
- * 探针连接支持（R5 降级链——D8 冒烟探针 / D2 门控断言面）：
- *   ZCODE_APPSERVER_PROBE_CONN=1  本进程是探针连接（引擎 runAppServerSmokeProbe 叠加
- *                          的 env 标记）：scenario 只读 FAKE_PROBE_SCENARIO（常驻
- *                          主连接的 FAKE_SESSION_SCENARIO 不作用于探针——故障注入可
- *                          只命中主连接或只命中探针）；env 快照记 probe 标志。
- *   FAKE_PROBE_SCENARIO=<path>    仅探针进程消费的 JSON：
- *     { createError?: {code,message,data} }  探针 create 应答 error 帧（探针失败注入）
- *     { hangCreate?: true }                   create 永不应答（预算超时注入）
  */
 import fs from 'node:fs';
 import readline from 'node:readline';
@@ -77,25 +84,28 @@ const EXTRA_KEYS = process.env.FAKE_EXTRA_KEYS === '1';
 const PROTOCOL_AS_PUSH = process.env.FAKE_PROTOCOL_PUSH === '1';
 // [R4] 多会话推送改写开关（见文件头注释）
 const STAMP_SESSION = process.env.FAKE_STAMP_SESSION === '1';
-// [R5] 探针连接判定（引擎探针在 env 叠 ZCODE_APPSERVER_PROBE_CONN=1——见 appserver-probe.ts）
-const IS_PROBE = process.env.ZCODE_APPSERVER_PROBE_CONN === '1';
 
-// 会话场景（R3/R5）：启动时读取一次（env 固化语义与其他 FAKE_ 开关一致）。探针进程
-// 只读 FAKE_PROBE_SCENARIO（与主连接的故障注入互不串扰）
+// 会话场景（R3）：启动时读取一次（env 固化语义与其他 FAKE_ 开关一致）
 let SCENARIO = null;
-if (process.env.FAKE_SESSION_SCENARIO && !IS_PROBE) {
+if (process.env.FAKE_SESSION_SCENARIO) {
   try {
     SCENARIO = JSON.parse(fs.readFileSync(process.env.FAKE_SESSION_SCENARIO, 'utf8'));
   } catch (err) {
     log('scenario-load-failed', { message: String(err && err.message) });
   }
 }
-if (process.env.FAKE_PROBE_SCENARIO && IS_PROBE) {
+
+// [P0-1 U4] 本进程代数（state 流水已有 boot 记录数 + 1）：崩溃/杀链后的惰性重建代
+// ≥2——rebootSendPushes 仅对重建代生效（重试轮拿到与首轮不同的推送序列）
+let BOOT_GEN = 1;
+if (STATE_FILE && SCENARIO && SCENARIO.rebootSendPushes) {
   try {
-    SCENARIO = JSON.parse(fs.readFileSync(process.env.FAKE_PROBE_SCENARIO, 'utf8'));
-  } catch (err) {
-    log('scenario-load-failed', { message: String(err && err.message) });
-  }
+    const priorBoots = fs
+      .readFileSync(STATE_FILE, 'utf8')
+      .split('\n')
+      .filter((l) => l.includes('"ev":"boot"')).length;
+    BOOT_GEN = priorBoots + 1;
+  } catch { /* 流水读失败按首代处理 */ }
 }
 
 let seq = 0;
@@ -130,7 +140,6 @@ log('env', {
   telemetry: process.env.ZCODE_MODEL_TELEMETRY_ENABLED,
   nested: process.env.ZSW_NESTED,
   unifiedNested: process.env.XYZ_AGENT_SUBAGENT,
-  probe: process.env.ZCODE_APPSERVER_PROBE_CONN,
 });
 log('boot', { pid: process.pid, argv: process.argv.slice(2) });
 if (process.env.FAKE_STDERR === '1') {
@@ -212,8 +221,6 @@ async function handleRequest(f) {
       process.exit(1);
       return; // 不可达（exit 先行），保持 switch 完整
     case 'session/create': {
-      // [R5] 探针预算超时注入：hangCreate 时永不应答（探针 deadline 收割判据）
-      if (SCENARIO && SCENARIO.hangCreate) return;
       if (SCENARIO && SCENARIO.createError) {
         return replyErr(id, SCENARIO.createError.code, SCENARIO.createError.message, SCENARIO.createError.data);
       }
@@ -228,13 +235,33 @@ async function handleRequest(f) {
       if (SCENARIO && SCENARIO.sendError) {
         return replyErr(id, SCENARIO.sendError.code, SCENARIO.sendError.message, SCENARIO.sendError.data);
       }
-      // 推送帧逐字回放（STAMP_SESSION 时按目标会话归因改写）
-      pushFrames(SCENARIO && SCENARIO.sendPushes, String(params.sessionId || ''));
+      // 推送帧逐字回放（STAMP_SESSION 时按目标会话归因改写）；重建代走 rebootSendPushes
+      // （U4：重试轮的不同行为通道）
+      const pushes =
+        BOOT_GEN > 1 && SCENARIO && SCENARIO.rebootSendPushes
+          ? SCENARIO.rebootSendPushes
+          : SCENARIO && SCENARIO.sendPushes;
+      pushFrames(pushes, String(params.sessionId || ''));
+      // [P0-1 U4] 崩溃收割注入：应答后 N ms 自杀（onClose → failAllTurns 在途 turn
+      // 收割的确定性触发面；exit(1) 非零码与 test/suicide 同形态）
+      const crashAfterSendMs = SCENARIO && SCENARIO.crashAfterSendMs;
+      if (typeof crashAfterSendMs === 'number' && crashAfterSendMs >= 0) {
+        setTimeout(() => {
+          log('crash-injected', { afterMs: crashAfterSendMs });
+          process.exit(1);
+        }, crashAfterSendMs).unref();
+      }
       return reply(id, (SCENARIO && SCENARIO.sendResult) || { accepted: true });
     }
     case 'session/stop': {
-      // [R4] abort 链断言面：缺省推终态（stop 优雅生效）；stopBehavior:'none' 只应答
+      // [R4] abort 链断言面：缺省推终态（stop 优雅生效）；stopBehavior:'none' 只应答；
+      // stopError 注入协议性 error 应答帧（P0-1 U2 态②——不升级杀链判据）；
+      // stopBehavior:'hang' 永不应答（态③——stop 3s 超时 = 连接级失败判据）
       const behavior = (SCENARIO && SCENARIO.stopBehavior) || 'terminal';
+      if (behavior === 'hang') return;
+      if (SCENARIO && SCENARIO.stopError) {
+        return replyErr(id, SCENARIO.stopError.code, SCENARIO.stopError.message, SCENARIO.stopError.data);
+      }
       if (behavior === 'terminal') {
         pushFrames([TURN_TERMINAL_FRAME], String(params.sessionId || ''));
       }

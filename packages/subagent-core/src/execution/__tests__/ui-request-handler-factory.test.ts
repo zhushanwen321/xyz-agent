@@ -9,7 +9,10 @@
 // realHandler 路由：channel 命中 → channelHandler（经 coerceUiResponse 形变）；未命中 → defaultDialogForward（dialog 转发结果，fire-and-forget 转发 ctx.ui.* 后回 ack，未知 method warn + ack）。
 // 测接口契约，不测实现细节。
 
-import type { ExtensionContext, ExtensionMode } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+
+// ExtensionMode 未从 pi 包根 re-export（实装 0.84.4 核对），从权威 ExtensionContext 派生
+type ExtensionMode = ExtensionContext["mode"];
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { loggerMock } = vi.hoisted(() => ({
@@ -39,14 +42,17 @@ function makeCtx(mode: ExtensionMode): ExtensionContext {
     },
     modelRegistry: undefined,
     model: undefined,
-  } as ExtensionContext;
+  } as unknown as ExtensionContext;
 }
 
 /** 带 mock ctx.ui 的 ExtensionContext（GUI fire-and-forget 转发测试用）。
  *  dialog method（select/confirm/input/editor）返回 undefined/true/"" 兜底，
  *  fire-and-forget method（notify/setStatus/setWidget/setTitle/setEditorText）是 void spy。 */
-function makeCtxWithUi(mode: ExtensionMode = "rpc"): ExtensionContext & { ui: Record<string, ReturnType<typeof vi.fn>> } {
-  const ui: Record<string, ReturnType<typeof vi.fn>> = {
+// ui 成员 = 真实签名 & vi.fn 能力（映射交叉）：调用点走真实签名，mock 打点方法可达
+type MockedUi = { [K in keyof ExtensionUIContext]: ExtensionUIContext[K] & ReturnType<typeof vi.fn> };
+
+function makeCtxWithUi(mode: ExtensionMode = "rpc"): Omit<ExtensionContext, "ui"> & { ui: MockedUi } {
+  const ui = {
     select: vi.fn(async () => undefined),
     confirm: vi.fn(async () => true),
     input: vi.fn(async () => ""),
@@ -67,8 +73,8 @@ function makeCtxWithUi(mode: ExtensionMode = "rpc"): ExtensionContext & { ui: Re
     },
     modelRegistry: undefined,
     model: undefined,
-    ui,
-  } as unknown as ExtensionContext & { ui: Record<string, ReturnType<typeof vi.fn>> };
+    ui: ui as unknown as MockedUi,
+  } as unknown as Omit<ExtensionContext, "ui"> & { ui: MockedUi };
 }
 
 function dialogReq(id: string, channel?: string): UiRequest {

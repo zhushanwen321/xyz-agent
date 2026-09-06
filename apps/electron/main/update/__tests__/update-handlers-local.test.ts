@@ -97,10 +97,10 @@ const FIXTURE: LatestReleaseInfo = {
   publishedAt: '2025-12-01T00:00:00Z',
   htmlUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/tag/v0.9.11',
   assets: {
-    macArm64Zip: {
-      name: 'TaiJi-mac-arm64.zip',
+    macArm64Dmg: {
+      name: 'TaiJi-mac-arm64.dmg',
       downloadUrl:
-        'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.11/TaiJi-mac-arm64.zip',
+        'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.11/TaiJi-mac-arm64.dmg',
       size: 1000,
       sha256: 'a'.repeat(64),
     },
@@ -159,7 +159,7 @@ describe('u6 D1: update:download 本地短路', () => {
 
     // 短路① miss（无 preloaded）；短路② 命中：pending 版本与请求严格相等 + manual 目录有匹配产物
     pendingMocks.readPendingUpdate.mockReturnValue(FIXTURE)
-    claimMocks.tryClaimManualAsset.mockResolvedValue('/tmp/xyz-agent-update/TaiJi-mac-arm64.zip')
+    claimMocks.tryClaimManualAsset.mockResolvedValue('/tmp/xyz-agent-update/TaiJi-mac-arm64.dmg')
 
     const handler = handlers.get('update:download')!
     const result = await handler({}, { version: '0.9.11' })
@@ -255,11 +255,11 @@ describe('u6 D1: update:getPreloaded miss 后认领', () => {
     // 第一次读 miss，认领写登记后重读命中
     preloadedMocks.readPreloadedUpdateRaw.mockResolvedValue({
       release: FIXTURE,
-      filePath: '/tmp/xyz-agent-update/TaiJi-mac-arm64.zip',
+      filePath: '/tmp/xyz-agent-update/TaiJi-mac-arm64.dmg',
     })
     preloadedMocks.readPreloadedUpdateRaw.mockResolvedValueOnce(null)
     pendingMocks.readPendingUpdate.mockReturnValue(FIXTURE)
-    claimMocks.tryClaimManualAsset.mockResolvedValue('/tmp/xyz-agent-update/TaiJi-mac-arm64.zip')
+    claimMocks.tryClaimManualAsset.mockResolvedValue('/tmp/xyz-agent-update/TaiJi-mac-arm64.dmg')
 
     const handler = handlers.get('update:getPreloaded')!
     const result = await handler({}, {})
@@ -270,7 +270,7 @@ describe('u6 D1: update:getPreloaded miss 后认领', () => {
     expect(preloadedMocks.readPreloadedUpdateRaw).toHaveBeenCalledTimes(2)
     expect(preloadedMocks.readPreloadedUpdateRaw).toHaveBeenNthCalledWith(1, '0.8.14')
     expect(preloadedMocks.readPreloadedUpdateRaw).toHaveBeenNthCalledWith(2, '0.8.14')
-    expect(result).toEqual({ release: FIXTURE, filePath: '/tmp/xyz-agent-update/TaiJi-mac-arm64.zip' })
+    expect(result).toEqual({ release: FIXTURE, filePath: '/tmp/xyz-agent-update/TaiJi-mac-arm64.dmg' })
   })
 
   it('preloaded miss + pending null（常态）→ 返回 null，不触认领', async () => {
@@ -489,6 +489,8 @@ describe('u6 D5/D8: update:testProxy 双引擎', () => {
 
     // 分类走 undici 侧（UPDATE_NETWORK_TIMEOUT），curl 未被触发
     expect(result).toMatchObject({ success: false, code: 'UPDATE_NETWORK_TIMEOUT' })
+    // 泛化 timeout 形态（F1 分流）→ 中性超时话术：无下载语境，不给停滞/续传文案
+    expect(result).toMatchObject({ message: '连接或响应超时', suggestion: '请检查网络连接是否稳定，或尝试配置代理服务器' })
     expect(curlRunner).not.toHaveBeenCalled()
     // engine 诊断字段：非 CurlFetchError 上抛形态 = 仅 undici 失败
     expect(errorLogMocks.appendUpdateError).toHaveBeenCalledWith(

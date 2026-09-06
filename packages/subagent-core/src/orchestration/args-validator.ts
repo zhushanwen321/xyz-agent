@@ -58,6 +58,57 @@ function formatMessage(name: string, errors: readonly unknown[]): string {
   );
 }
 
+// ── validateRunArgs 阶段 helper（按 预处理/编译 提取，主函数只留编排） ────
+
+/** schema.properties 提取（畸形/缺失 → {}，null-scan 在空 properties 上安全退化）。 */
+function extractSchemaProperties(schema: Record<string, unknown>): Record<string, unknown> {
+  return schema.properties !== null && typeof schema.properties === "object"
+    ? (schema.properties as Record<string, unknown>)
+    : {};
+}
+
+/** 单个 property 声明是否 nullable（type 含 "null" 或 type === "null"）。 */
+function isNullableProp(prop: unknown): boolean {
+  if (prop === null || typeof prop !== "object") return false;
+  const propType = (prop as Record<string, unknown>).type;
+  return Array.isArray(propType)
+    ? (propType as unknown[]).includes("null")
+    : propType === "null";
+}
+
+/**
+ * null-scan：null 值视为缺失（coerceTypes 会把 null→"" 放行 required，绕过 fail-fast）。
+ * 只删 schema 未声明 nullable 的键——type 含 "null"（如 ["string","null"]）的合法 null
+ * 输入保留（m3 exec-review M1 探针实证：全键删除会拒掉 nullable required 的合法值）。
+ */
+function deleteNonNullableNullArgs(
+  args: Record<string, unknown>,
+  schema: Record<string, unknown>,
+): void {
+  const properties = extractSchemaProperties(schema);
+  for (const key of Object.keys(args)) {
+    if (args[key] !== null) continue;
+    if (!isNullableProp(properties[key])) delete args[key];
+  }
+}
+
+/** ajv 编译（畸形 schema → 结构化 ArgsValidationError，不泄漏原始 throw）。 */
+function compileSchema(
+  parameters: Record<string, unknown>,
+  scriptName: string,
+): ReturnType<Ajv["compile"]> {
+  try {
+    return ajv.compile(parameters);
+  } catch (err) {
+    // 真畸形 schema（如 type:'not-a-type'）→ 结构化 ArgsValidationError，不泄漏原始 throw
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new ArgsValidationError(
+      scriptName,
+      `Workflow '${scriptName}' has an invalid parameter schema: ${detail}. Read the workflow script file (location from <available_workflows>) to inspect it.`,
+    );
+  }
+}
+
 /**
  * 校验 spec.parameters（JSON Schema draft-07）对 spec.args 的约束。
  *
@@ -79,38 +130,9 @@ export function validateRunArgs(spec: RunSpec): void {
     );
   }
 
-  // null-scan：null 值视为缺失（coerceTypes 会把 null→"" 放行 required，绕过 fail-fast）。
-  // 只删 schema 未声明 nullable 的键——type 含 "null"（如 ["string","null"]）的合法 null
-  // 输入保留（m3 exec-review M1 探针实证：全键删除会拒掉 nullable required 的合法值）。
-  const schema = parameters as Record<string, unknown>;
-  const properties =
-    schema.properties !== null && typeof schema.properties === "object"
-      ? (schema.properties as Record<string, unknown>)
-      : {};
-  for (const key of Object.keys(args)) {
-    if (args[key] !== null) continue;
-    const prop = properties[key];
-    let isNullable = false;
-    if (prop !== null && typeof prop === "object") {
-      const propType = (prop as Record<string, unknown>).type;
-      isNullable = Array.isArray(propType)
-        ? (propType as unknown[]).includes("null")
-        : propType === "null";
-    }
-    if (!isNullable) delete args[key];
-  }
+  deleteNonNullableNullArgs(args, parameters);
 
-  let validate: ReturnType<Ajv["compile"]>;
-  try {
-    validate = ajv.compile(parameters);
-  } catch (err) {
-    // 真畸形 schema（如 type:'not-a-type'）→ 结构化 ArgsValidationError，不泄漏原始 throw
-    const detail = err instanceof Error ? err.message : String(err);
-    throw new ArgsValidationError(
-      scriptName,
-      `Workflow '${scriptName}' has an invalid parameter schema: ${detail}. Read the workflow script file (location from <available_workflows>) to inspect it.`,
-    );
-  }
+  const validate = compileSchema(parameters, scriptName);
 
   if (!validate(args)) {
     throw new ArgsValidationError(

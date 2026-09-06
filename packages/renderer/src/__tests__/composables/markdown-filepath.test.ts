@@ -29,10 +29,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // renderMarkdown 用于功能验收（AC-3/4/5/6/8/10/11，间接走 filepathCoreRule + code_inline renderer）。
 import { renderMarkdown, PATH_CANDIDATE_RE, BASENAME_CANDIDATE_RE } from '@/composables/logic/markdown'
 
-// stub shiki：避免真实 WASM/语法加载，测试聚焦路径识别逻辑
+// stub shiki：避免真实语法加载，测试聚焦路径识别逻辑（fine-grained 后入口是 shiki/core）
 const fakeCodeToHtml = vi.fn((code: string) => `<pre class="shiki"><code>${code}</code></pre>`)
-vi.mock('shiki', () => ({
-  createHighlighter: vi.fn(() =>
+vi.mock('shiki/core', () => ({
+  createHighlighterCore: vi.fn(() =>
     Promise.resolve({
       codeToHtml: fakeCodeToHtml,
       getLoadedLanguages: () => ['typescript', 'javascript', 'vue'],
@@ -43,8 +43,8 @@ vi.mock('shiki', () => ({
 /** 同 freshRender 但重置模块拿到干净 markdown-it 实例 */
 async function freshRender(content: string, env?: { filePaths?: Set<string>; localFiles?: Set<string> }): Promise<string> {
   vi.resetModules()
-  vi.doMock('shiki', () => ({
-    createHighlighter: () =>
+  vi.doMock('shiki/core', () => ({
+    createHighlighterCore: () =>
       Promise.resolve({
         codeToHtml: fakeCodeToHtml,
         getLoadedLanguages: () => ['typescript', 'javascript', 'vue'],

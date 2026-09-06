@@ -7,7 +7,7 @@
 // （meta=null 单行兜底）与 parseResourceMeta 严格层新字段投影断言
 // （AgentMeta 扩 maxTurns/disallowedTools/skills 的 typecheckMeta 行为）。
 
-import { describe, expect, fail, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { parseResourceMeta } from "../../shared/meta-parser.ts";
 import { parseAgentProfile } from "../agent-registry.ts";
@@ -172,7 +172,7 @@ body`,
       "agent",
     );
     expect(meta).not.toBeNull();
-    if (meta?.kind !== "agent") return fail("kind 应为 agent");
+    if (meta?.kind !== "agent") return expect.fail("kind 应为 agent");
     expect(meta.maxTurns).toBe(2);
     expect(meta.disallowedTools).toEqual(["write"]);
     expect(meta.skills).toEqual(["code-review"]);
@@ -200,7 +200,7 @@ body`,
       "agent",
     );
     expect(meta).not.toBeNull();
-    if (meta?.kind !== "agent") return fail("kind 应为 agent");
+    if (meta?.kind !== "agent") return expect.fail("kind 应为 agent");
     expect("disallowedTools" in meta).toBe(true);
     expect(meta.disallowedTools).toEqual([]);
     expect("skills" in meta).toBe(true);
@@ -224,7 +224,7 @@ body`,
       "agent",
     );
     expect(meta).not.toBeNull();
-    if (meta?.kind !== "agent") return fail("kind 应为 agent");
+    if (meta?.kind !== "agent") return expect.fail("kind 应为 agent");
     expect("maxTurns" in meta).toBe(false);
     expect("disallowedTools" in meta).toBe(false);
     expect("skills" in meta).toBe(false);

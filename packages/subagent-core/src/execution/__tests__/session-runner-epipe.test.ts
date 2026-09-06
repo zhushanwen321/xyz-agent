@@ -57,7 +57,7 @@ vi.mock("../session-pending.ts", () => ({
   prunePendingCursor: vi.fn(),
 }));
 
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -69,8 +69,8 @@ import {
   EPIPE_FAILURE_THRESHOLD,
   recordEpipeFailure,
   resetAllEpipeFailures,
-} from "../stdin-writer.ts";
-import { runSpawn, spawnedChildren } from "../session-runner.ts";
+} from "../engine/engines/pi/stdin-writer.ts";
+import { runSpawn, spawnedChildren } from "../engine/engines/pi/session-runner.ts";
 import { _resetLifecycleState } from "../lifecycle-manager.ts";
 import {
   FakeChild,

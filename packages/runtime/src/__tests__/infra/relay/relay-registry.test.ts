@@ -12,6 +12,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initRelayServer, deinitRelayServer, isRelayServerActive, getActiveRelaySocketPath } from '../../../infra/relay/relay-server.js'
+import { RelayRegistry } from '../../../infra/relay/relay-registry.js'
 import { getRelaySocketPath, getRelayPidFilePath, getRelayChildrenDir } from '../../../infra/relay/relay-paths.js'
 import { topicOf } from '../../../services/message-bus/message-bus.js'
 import { RELAY_PROTOCOL_VERSION, RELAY_ENV_SOCKET, RELAY_ENV_SESSION_ID, RELAY_ENV_RECORD_ID, RELAY_ENV_NODE, RELAY_ENV_SCRIPT } from '@zhushanwen/subagent-core/relay-env'
@@ -56,6 +57,11 @@ class TestAgent {
 
   send(frame: Record<string, unknown>): void {
     this.conn.write(`${JSON.stringify(frame)}\n`)
+  }
+
+  /** 对端主动 FIN（半关闭）：只关发送侧，接收侧保持——模拟代理进程退出后 socket 半关闭。 */
+  halfClose(): void {
+    this.conn.end()
   }
 
   dataUp(): Array<Buffer> {
@@ -152,6 +158,12 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
       "  process.stdin.setEncoding('utf-8')",
       "  let buf = ''",
       "  process.stdin.on('data', (d) => { buf += d; const nl = buf.indexOf('\\n'); if (nl !== -1) { process.stdout.write('ECHO:' + buf.slice(0, nl) + '\\n'); buf = buf.slice(nl + 1) } })",
+      '}',
+      "// stream 模式：持续向 stdout 吐数据（半关闭容错测试——子进程在连接死亡后仍输出）",
+      "if (mode === 'stream') {",
+      "  let i = 0",
+      "  const timer = setInterval(() => { process.stdout.write(`chunk-${i++}\\n`) }, 10)",
+      "  process.on('SIGTERM', () => { clearInterval(timer); process.exit(0) })",
       '}',
       "// hang/events 模式挂住事件循环：立即退出会与 stdout pipe flush 竞态丢数据",
       "if (mode === 'hang' || mode === 'events') setTimeout(() => {}, 60000)",
@@ -416,6 +428,56 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     agent.destroy()
     await waitFor(() => existsSync(marker), 30_000, 'SIGTERM marker (kill-on-disconnect)')
     await waitFor(() => !existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'pid file cleaned after kill')
+  })
+
+  // 2026-09-04 runtime 整机崩溃事故回归：对端 FIN 后本端 conn 自动 end()
+  // （allowHalfOpen=false 默认）——destroyed=false 但 writableEnded=true，子进程
+  // stdout 后续 data 回调里 writeFrame 同步抛 writeAfterFIN（EPIPE），逃逸即
+  // uncaughtException → 整机 graceful shutdown。修复：writeFrame guard + 吞异常。
+  t('半关闭容错：对端 FIN 后子进程持续输出，writeFrame 不逃逸、进程存活（事故回归）', async () => {
+    await startServer()
+    const socketPath = getActiveRelaySocketPath()!
+    const agent = new TestAgent(socketPath)
+    await agent.opened
+    const ready = join(workDir, 'ready-marker-halfclose')
+    const hs = validHandshake({ argv: [fakePi, 'stream'] })
+    ;(hs.env as Record<string, string>).XYZ_TEST_READY_MARKER = ready
+    agent.send(hs)
+    await waitFor(() => agent.frames.some((f) => f.kind === 'accept'), 30_000, 'accept frame')
+    await waitFor(() => existsSync(ready), 30_000, 'fake-pi streaming')
+    // 收到若干流帧证明字节泵在转发，再半关闭
+    await waitFor(() => agent.dataUp().length > 0, 30_000, 'stream frames flowing')
+    agent.halfClose()
+    // 修复前：writeFrame 在此处同步抛 EPIPE → uncaughtException → 测试 worker 崩溃；
+    // 修复后：帧被丢弃，进程存活。等足够多 chunk 走过半关闭窗口。
+    await new Promise((r) => setTimeout(r, 500))
+    // 存活断言：新连接仍可握手注册（进程未崩、注册表未坏）；recordId 覆盖需同步 env 归属键
+    const probe = new TestAgent(socketPath)
+    await probe.opened
+    // env 归属键同步 recordId（isHandshakeEnvOwnershipValid 校验 env 与帧一致）；
+    // spread 断言：validHandshake 自建 env 对象，形状自证
+    const probeEnv = { ...(validHandshake().env as Record<string, string>), [RELAY_ENV_RECORD_ID]: 'rec-probe' }
+    probe.send(validHandshake({ argv: [fakePi, 'hang'], recordId: 'rec-probe', env: probeEnv }))
+    await waitFor(() => probe.frames.some((f) => f.kind === 'accept'), 30_000, 'probe accepted after half-close')
+    probe.destroy()
+    agent.destroy()
+  })
+
+  // 同族事故面：对端 RST（非正常 close）→ conn 'error' ECONNRESET，无 listener 时
+  // EventEmitter emit 直接 throw → uncaughtException。真实 RST 无法在 unix socket
+  // 环回模拟（resetAndDestroy 仅支持 TCP），改为单元级直验 handleConnection 的
+  // error 挂载：emit('error') 无 listener 同步 throw 是逃逸机制本身，not.toThrow
+  // 即守护「listener 已挂 + 吞掉」。
+  t('RST 容错（单元级）：conn error 事件不逃逸（error listener 吞掉并 destroy）', async () => {
+    const registry = new RelayRegistry({ projectRoot: workDir, dataDir, publish, piCommand: process.execPath })
+    const sock = new net.Socket() // 未连接实例：仅验证事件挂载行为，不涉及 IO
+    registry.handleConnection(sock)
+    const rst = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' })
+    // 修复前：无 error listener → emit('error') 同步 throw（测试进程即崩）；
+    // 修复后：listener 接住 → warn + destroy，不抛
+    expect(() => sock.emit('error', rst)).not.toThrow()
+    expect(sock.destroyed).toBe(true)
+    sock.destroy()
   })
 
   t('deinitRelayServer：running 子进程全部杀链收割', async () => {

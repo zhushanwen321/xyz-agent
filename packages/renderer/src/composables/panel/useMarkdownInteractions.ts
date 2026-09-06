@@ -28,7 +28,7 @@ import { findByBasename } from '@/lib/file-basename'
 // Wave 5 的「BrowserPane 外链导出按钮」降级出口由 BrowserPane.vue 自行 import openExternal，
 // 本 composable 不再需要它（tsconfig noUnusedLocals: true，未用 import 会编译失败）。
 import { useSearchModal } from '@xyz-agent/core'
-import * as fileApi from '@/api/domains/file'
+import * as fileApi from '@xyz-agent/core/transport/api/domains/file'
 import { useCodeblockCopy } from './useCodeblockCopy'
 
 /** 外链协议判定（http(s):// 才走 openExternal；锚点等走默认行为） */

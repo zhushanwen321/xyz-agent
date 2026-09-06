@@ -7,6 +7,7 @@
  * store.test.ts 保留为 createChatStore 委托后的集成回归（行为等价锁定）。
  */
 import { describe, it, expect, vi } from 'vitest'
+import type { ShallowRef } from 'vue'
 import { ref, shallowRef } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 import { createStreamingStateMachine } from '../streaming-state-machine'

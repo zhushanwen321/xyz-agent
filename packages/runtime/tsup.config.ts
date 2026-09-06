@@ -48,7 +48,10 @@ export default defineConfig({
   // §3.2）——utils/file-lock.ts 经 ./core 子入口复用自实现 mkdir 锁（纯 TS 源码包，
   // exports 直指 src，esbuild 直接编译无需 build 前置）。替换原 proper-lockfile
   //（本地封装已删；package.json 依赖保留仅供测试作对端持锁者，不进 bundle）
-  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', '@xyz-agent/session-delivery', '@xyz-agent/core', '@zhushanwen/subagent-core', '@zhushanwen/pi-file-lock', '@earendil-works/pi-ai', 'chokidar', '@iarna/toml'],
+  // xyz-agent-plugin-sdk：插件契约 SSOT（D28 方向反转）——runtime 的 plugin-types
+  // 薄壳 re-export 其类型与 PermissionConstants 常量值。纯 TS 源码包（main 直指
+  // src/index.ts，零 dependencies），esbuild 直接编译，同 pi-file-lock 先例
+  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', '@xyz-agent/session-delivery', '@xyz-agent/core', '@zhushanwen/subagent-core', '@zhushanwen/pi-file-lock', '@earendil-works/pi-ai', 'chokidar', '@iarna/toml', 'xyz-agent-plugin-sdk'],
   // platform: 'node' 已自动处理所有 node:* 内置模块，无需手动 external
   // node-pty 是 native module（含 .node 二进制），不能打包进 JS bundle：
   // 其 JS 入口用 node-gyp-build 动态 require prebuilds/<platform>/*.node，

@@ -27,20 +27,18 @@ import { join as pathJoin } from "node:path";
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey } from "@earendil-works/pi-tui";
+import { Key, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
   countAllToolCalls,
   getAllToolCalls,
   projectLiveProgress,
-} from "@zhushanwen/subagent-core/execution/execution-record.ts";
-import type { ExecutionTraceNode } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
-import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
-import { saveWorkflow } from "@zhushanwen/subagent-core/orchestration/workflow-files.ts";
-import { displayAgentName } from "@zhushanwen/subagent-core/shared/agent-ref.ts";
+} from "@zhushanwen/subagent-core";
+import type { ExecutionTraceNode } from "@zhushanwen/subagent-core";
+import type { WorkflowRun } from "@zhushanwen/subagent-core";
+import { saveWorkflow } from "@zhushanwen/subagent-core";
+import { displayAgentName } from "@zhushanwen/subagent-core";
 import {
-  BOX_BORDER_CHARS,
-  BUDGET_TOKENS_DIVISOR,
   buildPhaseGroups,
   ELLIPSIS,
   formatActivityLine,
@@ -49,13 +47,22 @@ import {
   formatElapsedSeconds,
   formatPhaseLine,
   formatStatusBadge,
-  padVisible,
-  SIDEBAR_WIDTH,
   statusDotStr,
-  TERM_ROWS_FALLBACK,
   type ThemeLike,
-  visibleLen,
-} from "./format.ts";
+} from "../format.ts";
+import {
+  b,
+  dashes,
+  padToVisible,
+  plainBorder,
+  termRows,
+  walled,
+} from "../tui-kit.ts";
+import {
+  BOX_BORDER_CHARS,
+  BUDGET_TOKENS_DIVISOR,
+  SIDEBAR_WIDTH,
+} from "./view-constants.ts";
 
 // L2 详情内容构建 + 滚动按键（纯函数）抽到 detail-content.ts（view 与其测试直接 import）。
 import { buildDetailContent, detailContentLength, type DetailScrollContext, processDetailKey } from "./detail-content.ts";
@@ -77,30 +84,10 @@ const TICK_MS = 200;
 /** 可打印 ASCII 字符下限（用于 save overlay 输入过滤）。 */
 const PRINTABLE_CHAR_MIN = 32;
 
-// ── 边框着色 helper（统一 borderMuted，避 ANSI 嵌套失色）──────────
-// 对齐 subagents list-component.ts 的 b/dash/dashes/titleBorder/plainBorder/walled。
-// 所有 ╭╮╰╯├┤┬┴─│ 统一走 borderMuted token，保证边框颜色一致。
-
-/** 着色单个框线字符（borderMuted）。 */
-function b(theme: ThemeLike, s: string): string {
-  return theme.fg("borderMuted", s);
-}
-/** 着色单字符填充用的 ─（本文件 dashes() 满宽填充复用）。 */
-function dash(theme: ThemeLike): string {
-  return theme.fg("borderMuted", "─");
-}
-/** 满宽 ─ 填充串（borderMuted）。n 次单字符着色，ANSI 自然延续。 */
-function dashes(theme: ThemeLike, n: number): string {
-  return dash(theme).repeat(Math.max(0, n));
-}
-/** 纯线顶/底框（无标题）：左角 + ─×W + 右角。 */
-function plainBorder(theme: ThemeLike, left: string, right: string, contentWidth: number): string {
-  return b(theme, left) + dashes(theme, contentWidth) + b(theme, right);
-}
-/** 内容行墙：│ + 内容(pad 到 contentWidth) + │，墙字符 borderMuted。 */
-function walled(theme: ThemeLike, content: string, contentWidth: number): string {
-  return `${b(theme, "│")}${padVisible(content, contentWidth)}${b(theme, "│")}`;
-}
+// ── 边框着色 helper 家族（b/dash/dashes/titleBorder/plainBorder/walled）──
+// 单定义 ../tui-kit.ts（post-convergence C4）：本文件原私有自由函数副本与
+// subagents list-component 的方法形态副本收敛为 kit 一份（本文件形态胜出），
+// 统一 borderMuted token，所有 ╭╮╰╯├┤┬┴─│ 颜色一致。
 
 // ── Minimal TUI duck-types（避免直接 import TUI/KeybindingsManager 类型 ──
 // 共享类型 fallback 不导出 TUI 类，
@@ -142,17 +129,17 @@ export interface ViewActions {
  *
  * | 签名字段 | 消费点 |
  * |---|---|
- * | run.state.status | WorkflowsView.ts renderHeader :652 / detail-content.ts :75（statusDotStr+statusLabel）/ renderFooter :695-699 |
- * | 秒桶 Math.floor(now/1000) | renderHeader :651 formatElapsed（现算 elapsed）+ detail-content.ts :69-72（now 参与未完成节点 elapsed）|
- * | completed/total（节点 status 推导）| renderHeader :649-652 |
- * | budget 量化值（tokens round-k + cost toFixed(4)=BUDGET_COST_DECIMALS，与 :654 同精度——第 3-4 位小数变化是可见变化）| renderHeader :654 / saveTraceToFile :942 |
+ * | run.state.status | WorkflowsView.ts renderHeader :629 / detail-content.ts :75（statusDotStr+statusLabel）/ renderFooter :666-678 |
+ * | 秒桶 Math.floor(now/1000) | renderHeader :628 formatElapsed（现算 elapsed）+ detail-content.ts :69-72（now 参与未完成节点 elapsed）|
+ * | completed/total（节点 status 推导）| renderHeader :626-629 |
+ * | budget 量化值（tokens round-k + cost toFixed(4)=BUDGET_COST_DECIMALS，与 :631 同精度——第 3-4 位小数变化是可见变化）| renderHeader :631 / saveTraceToFile :980 |
  * | run.state.errorLogs 指纹 = length+末条 level:message（errorLogs 仅经 push + slice(-MAX_ERROR_LOGS) 变异——append-only + 前向淘汰、条目不可变；封顶后 length 不变内容移，单取 length 会漏失效，而任何可见变化必伴随 length 变或末条变，故 length+末条是完备且最小的指纹）| detail-content.ts :174-191（renderWorkerLogSection：total 标签 + 末 20 条）|
- * | 节点 stepIndex | nodeParts 首字段（trace 数组序参与拼接，节点重排→签名变）/ saveTraceToFile :947（trace 导出 `### [#stepIndex]` 标题）|
+ * | 节点 stepIndex | nodeParts 首字段（trace 数组序参与拼接，节点重排→签名变）/ saveTraceToFile :987（trace 导出 `### [#stepIndex]` 标题）|
  * | 节点 sessionFile | detail-content.ts :314-317（renderSessionSection）|
- * | 节点 status | 节点行 :832 statusDotStr / detail :75 |
- * | live.totalTokens | 节点行 :836 / detail :79 / :275 |
- * | 工具计数（签名路径用 countAllToolCalls 免克隆计数，与 getAllToolCalls(node.live).length 恒等——projectLiveProgress 投影无 toolCallCount 字段，不得引用）| 节点行 :837 / detail :80 / :223 |
- * | live.elapsedSeconds | 节点行 :838 / detail :81 / :276 |
+ * | 节点 status | 节点行 :844 statusDotStr / detail :75 |
+ * | live.totalTokens | 节点行 :819 / detail :79 / :275 |
+ * | 工具计数（签名路径用 countAllToolCalls 免克隆计数，与 getAllToolCalls(node.live).length 恒等——projectLiveProgress 投影无 toolCallCount 字段，不得引用）| 节点行 :820 / detail :80 / :223 |
+ * | live.elapsedSeconds | 节点行 :821 / detail :81 / :276 |
  * | live.turns | detail :224 / :276 |
  * | live.eventLog.length（append-only，长度变化即尾部窗口右移出新事件）| detail :222（filter turn_end）+ :231-235 |
  * | live.currentActivity（type+label 均入签名）| detail :227-228 |
@@ -291,14 +278,9 @@ export function createWorkflowsView(
     };
 
  // ── L2 详情滚动辅助 ──
-    /** 安全读 terminal.rows（duck-type 失败兜底，对齐 subagents termRows）。 */
-    function termRows(): number {
-      const rows = tui.terminal?.rows;
-      return typeof rows === "number" && rows > 0 ? rows : TERM_ROWS_FALLBACK;
-    }
     /** L2 右侧 detail viewport 高度（与 renderLayout 的 viewH 同源）。 */
     function detailViewportHeight(): number {
-      return Math.max(MIN_BODY_LINES, bodyHeight(termRows()));
+      return Math.max(MIN_BODY_LINES, bodyHeight(termRows(tui)));
     }
     /** 重置 detail 滚动到底部对齐（切 agent / 进 L2 时调用）。 */
     function resetDetailScroll(): void {
@@ -309,6 +291,8 @@ export function createWorkflowsView(
  // ── Key handling（SDK Component.handleInput 模式，对齐 main） ──
  // matchesKey(data, KeyId) 处理终端转义序列差异（xterm/iTerm/kitty），
  // 优于手写 \x1b[A 等原始序列。escape/ctrl+c 在 keybindings 里同映射到 exit。
+ // 阶段化编排（形态 1）：主函数只留「saveMode 拦截 → 各键阶段短路链」，
+ // 各 handle*Key 返回是否消费该键；阶段顺序与原单函数 if 链逐一对齐。
     function handleInput(data: string): void {
       if (state.disposed) return;
 
@@ -318,108 +302,123 @@ export function createWorkflowsView(
         return;
       }
 
- // Escape / ctrl+c: level back or exit
-      if (matchesKey(data, Key.escape)) {
-        if (state.level === 0) {
-          wrappedDone();
-          return;
-        }
-        state.level = (state.level - 1) as NavLevel;
+      if (handleEscapeKey(data)) return;
+      if (handleDetailScrollKey(data)) return;
+      if (handleNavUpKey(data)) return;
+      if (handleNavDownKey(data)) return;
+      if (handleEnterKey(data)) return;
+      handleShortcutKeys(data);
+    }
+
+    /** escape/ctrl+c：L0 关闭 overlay（wrappedDone），否则降一级并重绘。 */
+    function handleEscapeKey(data: string): boolean {
+      if (!matchesKey(data, Key.escape)) return false;
+      if (state.level === 0) {
+        wrappedDone();
+        return true;
+      }
+      state.level = (state.level - 1) as NavLevel;
+      state.promptExpanded = false;
+      cache.key = undefined;
+      requestRender();
+      return true;
+    }
+
+    /** L2 详情滚动键（委托 processDetailKey）。非 L2 / 无节点 / 未命中 → 返回 false 落到导航键
+     *  （与原嵌套 if 跳过语义一致：L2 无节点时 up/down 仍可切 agent）。 */
+    function handleDetailScrollKey(data: string): boolean {
+      if (state.level !== NAV_LEVEL_DETAIL) return false;
+      const node = currentPhaseAgents()[state.agentIdx];
+      if (!node) return false;
+      const detailCtx: DetailScrollContext = {
+        viewportHeight: detailViewportHeight(),
+        contentLines: detailContentLength(node, state, run, theme),
+        isRunning: node.status === "running",
+      };
+      const r = processDetailKey(
+        data,
+        { scrollOffset: state.detailScrollOffset, followTail: state.followTail },
+        detailCtx,
+      );
+      if (!r.handled) return false;
+      state.detailScrollOffset = r.scrollOffset;
+      state.followTail = r.followTail;
+      cache.key = undefined;
+      requestRender();
+      return true;
+    }
+
+    /** up：L0 上移 phase / L1、L2 上移 agent（L2 同时重置详情滚动）。命中 up 即消费（无条件重绘收尾）。 */
+    function handleNavUpKey(data: string): boolean {
+      if (!matchesKey(data, Key.up)) return false;
+      if (state.level === 0 && state.phaseIdx > 0) {
+        state.phaseIdx--;
+        state.agentIdx = 0;
+        state.phaseScrollOffset = 0; // 切 phase → 重置滚动
+        state.agentScrollOffset = 0; // 切 phase → 重置滚动
+      } else if (state.level === 1 && state.agentIdx > 0) {
+        state.agentIdx--;
+        // agentScrollOffset 由 renderLevel1 自动调整
+      } else if (state.level === NAV_LEVEL_DETAIL && state.agentIdx > 0) {
+        state.agentIdx--;
         state.promptExpanded = false;
-        cache.key = undefined;
-        requestRender();
-        return;
+        resetDetailScroll(); // 切 agent → 底部对齐（对齐 subagents 进详情即钉底）
       }
+      cache.key = undefined;
+      requestRender();
+      return true;
+    }
 
- // ── L2 详情滚动（PgUp/PgDn/Home/End，对齐 subagents processKey 阶段 2） ──
- // up/down 在 L2 用于切 agent，故滚动键独立于此；未命中则落到下面的 up/down/enter。
-      if (state.level === NAV_LEVEL_DETAIL) {
-        const node = currentPhaseAgents()[state.agentIdx];
-        if (node) {
-          const detailCtx: DetailScrollContext = {
-            viewportHeight: detailViewportHeight(),
-            contentLines: detailContentLength(node, state, run, theme),
-            isRunning: node.status === "running",
-          };
-          const r = processDetailKey(
-            data,
-            { scrollOffset: state.detailScrollOffset, followTail: state.followTail },
-            detailCtx,
-          );
-          if (r.handled) {
-            state.detailScrollOffset = r.scrollOffset;
-            state.followTail = r.followTail;
-            cache.key = undefined;
-            requestRender();
-            return;
-          }
-        }
-      }
-
- // Navigation: up/down
-      if (matchesKey(data, Key.up)) {
-        if (state.level === 0 && state.phaseIdx > 0) {
-          state.phaseIdx--;
+    /** down：L0/L1/L2 逐级下移（边界截停）。命中 down 即消费（无条件重绘收尾）。 */
+    function handleNavDownKey(data: string): boolean {
+      if (!matchesKey(data, Key.down)) return false;
+      if (state.level === 0) {
+        const live = buildPhaseGroups([...run.state.trace.toArray()]);
+        if (state.phaseIdx < live.length - 1) {
+          state.phaseIdx++;
           state.agentIdx = 0;
           state.phaseScrollOffset = 0; // 切 phase → 重置滚动
           state.agentScrollOffset = 0; // 切 phase → 重置滚动
-        } else if (state.level === 1 && state.agentIdx > 0) {
-          state.agentIdx--;
-          // agentScrollOffset 由 renderLevel1 自动调整
-        } else if (state.level === NAV_LEVEL_DETAIL && state.agentIdx > 0) {
-          state.agentIdx--;
+        }
+      } else if (state.level === 1) {
+        const agents = currentPhaseAgents();
+        if (state.agentIdx < agents.length - 1) state.agentIdx++;
+        // agentScrollOffset 由 renderLevel1 自动调整
+      } else if (state.level === NAV_LEVEL_DETAIL) {
+        const agents = currentPhaseAgents();
+        if (state.agentIdx < agents.length - 1) {
+          state.agentIdx++;
           state.promptExpanded = false;
-          resetDetailScroll(); // 切 agent → 底部对齐（对齐 subagents 进详情即钉底）
+          resetDetailScroll(); // 切 agent → 底部对齐
         }
-        cache.key = undefined;
-        requestRender();
-        return;
       }
-      if (matchesKey(data, Key.down)) {
-        if (state.level === 0) {
-          const live = buildPhaseGroups([...run.state.trace.toArray()]);
-          if (state.phaseIdx < live.length - 1) {
-            state.phaseIdx++;
-            state.agentIdx = 0;
-            state.phaseScrollOffset = 0; // 切 phase → 重置滚动
-            state.agentScrollOffset = 0; // 切 phase → 重置滚动
-          }
-        } else if (state.level === 1) {
-          const agents = currentPhaseAgents();
-          if (state.agentIdx < agents.length - 1) state.agentIdx++;
-          // agentScrollOffset 由 renderLevel1 自动调整
-        } else if (state.level === NAV_LEVEL_DETAIL) {
-          const agents = currentPhaseAgents();
-          if (state.agentIdx < agents.length - 1) {
-            state.agentIdx++;
-            state.promptExpanded = false;
-            resetDetailScroll(); // 切 agent → 底部对齐
-          }
-        }
-        cache.key = undefined;
-        requestRender();
-        return;
-      }
+      cache.key = undefined;
+      requestRender();
+      return true;
+    }
 
- // Enter: drill down (L0→L1→L2) or toggle prompt (L2)
-      if (matchesKey(data, Key.enter)) {
-        if (state.level === 0 && currentPhaseAgents().length > 0) {
-          state.level = 1;
-          state.agentIdx = 0;
-          state.agentScrollOffset = 0; // 进 L1 → 重置滚动
-        } else if (state.level === 1) {
-          state.level = NAV_LEVEL_DETAIL;
-          state.promptExpanded = false;
-          resetDetailScroll(); // 进 L2 → 底部对齐
-        } else if (state.level === NAV_LEVEL_DETAIL) {
-          state.promptExpanded = !state.promptExpanded;
-          // 展开/折叠改变内容长度，render 路径 clamp 收敛；保持当前锚点语义
-        }
-        cache.key = undefined;
-        requestRender();
-        return;
+    /** enter：L0→L1→L2 逐级下钻 / L2 切换 prompt 展开。命中 enter 即消费（无条件重绘收尾）。 */
+    function handleEnterKey(data: string): boolean {
+      if (!matchesKey(data, Key.enter)) return false;
+      if (state.level === 0 && currentPhaseAgents().length > 0) {
+        state.level = 1;
+        state.agentIdx = 0;
+        state.agentScrollOffset = 0; // 进 L1 → 重置滚动
+      } else if (state.level === 1) {
+        state.level = NAV_LEVEL_DETAIL;
+        state.promptExpanded = false;
+        resetDetailScroll(); // 进 L2 → 底部对齐
+      } else if (state.level === NAV_LEVEL_DETAIL) {
+        state.promptExpanded = !state.promptExpanded;
+        // 展开/折叠改变内容长度，render 路径 clamp 收敛；保持当前锚点语义
       }
+      cache.key = undefined;
+      requestRender();
+      return true;
+    }
 
+    /** lifecycle 快捷键（链尾，命中即消费且不再回退）：a abort（仅 running）/ s 进 save mode / S 导出 trace。 */
+    function handleShortcutKeys(data: string): void {
  // ── Lifecycle shortcuts (no restart per D-9; no pause/resume — one-shot) ──
       if (data === "a") {
         if (run.state.status === "running") {
@@ -444,7 +443,6 @@ export function createWorkflowsView(
  // ── Trace export（对齐 main 的 S 键）：导出完整 trace 到 Markdown 文件 ──
       if (data === "S") {
         saveTraceToFile(run, ctx);
-        return;
       }
     }
 
@@ -641,12 +639,12 @@ function renderHeader(
   lines.push(walled(theme, nameLine, contentWidth));
 
   if (run.spec.description) {
-    const maxDesc = contentWidth - visibleLen(rightPart) - 1;
+    const maxDesc = contentWidth - visibleWidth(rightPart) - 1;
     const descText = run.spec.description.length > maxDesc
       ? run.spec.description.slice(0, maxDesc - 1) + ELLIPSIS
       : run.spec.description;
     const descPart = theme.fg("dim", descText);
-    const padLen = Math.max(0, contentWidth - visibleLen(descPart) - visibleLen(rightPart));
+    const padLen = Math.max(0, contentWidth - visibleWidth(descPart) - visibleWidth(rightPart));
     lines.push(`${b(theme, "│")}${descPart}${" ".repeat(padLen)}${rightPart}${b(theme, "│")}`);
   } else {
     lines.push(walled(theme, rightPart, contentWidth));
@@ -691,7 +689,7 @@ function mergeBody(
 ): void {
   const bodyHeightVal = Math.max(leftLines.length, rightLines.length);
   for (let i = 0; i < bodyHeightVal; i++) {
-    const left = padVisible(leftLines[i] ?? "", SIDEBAR_WIDTH);
+    const left = padToVisible(leftLines[i] ?? "", SIDEBAR_WIDTH);
     lines.push(left + b(theme, "│") + (rightLines[i] ?? ""));
   }
 }
@@ -766,19 +764,16 @@ function renderLevel0(
 
 // ── Level 1: Agent selection ──────────────────────────────────
 
-function renderLevel1(
-  lines: string[],
-  _run: WorkflowRun,
+/** L1 左列：sidebar title + phase list（固定高度 viewport + 滚动，只构建可见行）。
+ *  与 renderLevel0 左列同构——本 helper 只供 renderLevel1（renderLevel0 不在本单元目标内，不并轨，
+ *  避免扩大行为面；后续如消重可让 L0 复用）。 */
+function buildLevelSidebar(
   phases: ReturnType<typeof buildPhaseGroups>,
   state: ViewState,
   theme: ThemeLike,
-  mainWidth: number,
-  now: number,
   bodyH: number,
-): void {
+): string[] {
   const leftLines: string[] = [];
-  const rightLines: string[] = [];
-
  // Left: sidebar title + phase list（固定高度 viewport + 滚动，只构建可见行）
   leftLines.push(theme.fg("muted", "Phases"));
   leftLines.push(dashes(theme, SIDEBAR_WIDTH));
@@ -789,10 +784,18 @@ function renderLevel1(
   state.phaseScrollOffset = phaseStart;
   while (leftLines.length < bodyH) leftLines.push("");
   leftLines.length = bodyH;
+  return leftLines;
+}
 
- // Right: agent list（固定高度 viewport + 滚动）
+/** L1 右列 header：phase 名 · agent 计数（无 phase 时 "(no phase)" 占位，两分支都补分隔线）。 */
+function pushLevel1Header(
+  rightLines: string[],
+  phases: ReturnType<typeof buildPhaseGroups>,
+  state: ViewState,
+  theme: ThemeLike,
+  mainWidth: number,
+): void {
   const currentPhase = phases[state.phaseIdx];
-  const agents = currentPhase?.nodes ?? [];
   if (currentPhase) {
     rightLines.push(theme.fg("muted", currentPhase.name
       ? `${currentPhase.name} · ${currentPhase.nodes.length} agents`
@@ -802,28 +805,67 @@ function renderLevel1(
     rightLines.push(theme.fg("muted", "(no phase)"));
     rightLines.push(dashes(theme, mainWidth));
   }
+}
+
+/** L1 agent 行统计三元组：live 路径优先（运行中从 node.live 读实时 token/tool + elapsed），
+ *  终态回退 result 统计。 */
+function level1AgentCells(
+  node: ExecutionTraceNode,
+  now: number,
+): { tokStr: string; tcCount: number; elapsed: string } {
+  if (node.live) {
+    const live = projectLiveProgress(node.live);
+    return {
+      tokStr: live.totalTokens > 0 ? `${Math.round(live.totalTokens / BUDGET_TOKENS_DIVISOR)}k tok` : "",
+      tcCount: getAllToolCalls(node.live).length,
+      elapsed: formatElapsedSeconds(live.elapsedSeconds),
+    };
+  }
+  const elapsed = formatElapsed(
+    node.startedAt,
+    node.completedAt ? new Date(node.completedAt).getTime() : now,
+  );
+  const tok = node.result?.usage;
+  return {
+    tokStr: tok ? `${Math.round((tok.input + tok.output) / BUDGET_TOKENS_DIVISOR)}k tok` : "",
+    tcCount: node.result?.toolCalls?.length ?? 0,
+    elapsed,
+  };
+}
+
+/** L1 单个 agent 展示行：pointer + 状态点 + agent/model + tok/tools/elapsed（live 与终态同模板）。 */
+function formatLevel1AgentLine(
+  node: ExecutionTraceNode,
+  theme: ThemeLike,
+  now: number,
+  selected: boolean,
+): string {
+  const pointer = selected ? "❯ " : "  ";
+  const dot = statusDotStr(node.status, theme);
+  const { tokStr, tcCount, elapsed } = level1AgentCells(node, now);
+  return `${pointer}${dot} ${displayAgentName(node.agent)}    ${node.model}    ${tokStr} · ${tcCount} tools · ${elapsed}`;
+}
+
+function renderLevel1(
+  lines: string[],
+  _run: WorkflowRun,
+  phases: ReturnType<typeof buildPhaseGroups>,
+  state: ViewState,
+  theme: ThemeLike,
+  mainWidth: number,
+  now: number,
+  bodyH: number,
+): void {
+  const leftLines = buildLevelSidebar(phases, state, theme, bodyH);
+
+ // Right: agent list（固定高度 viewport + 滚动）
+  const rightLines: string[] = [];
+  pushLevel1Header(rightLines, phases, state, theme, mainWidth);
+  const currentPhase = phases[state.phaseIdx];
+  const agents = currentPhase?.nodes ?? [];
   const { startIdx: agentStart, viewportH: agentViewportH } = computeViewport(agents.length, state.agentIdx, bodyH);
   for (let i = agentStart; i < agentStart + agentViewportH && i < agents.length; i++) {
-    const node = agents[i];
-    const pointer = i === state.agentIdx ? "❯ " : "  ";
-    const dot = statusDotStr(node.status, theme);
-    // Live 路径优先：运行中从 node.live 读实时 token/tool 计数 + elapsed。
-    if (node.live) {
-      const live = projectLiveProgress(node.live);
-      const tokStr = live.totalTokens > 0 ? `${Math.round(live.totalTokens / BUDGET_TOKENS_DIVISOR)}k tok` : "";
-      const tcCount = getAllToolCalls(node.live).length;
-      const elapsed = formatElapsedSeconds(live.elapsedSeconds);
-      rightLines.push(`${pointer}${dot} ${displayAgentName(node.agent)}    ${node.model}    ${tokStr} · ${tcCount} tools · ${elapsed}`);
-    } else {
-      const elapsed = formatElapsed(
-        node.startedAt,
-        node.completedAt ? new Date(node.completedAt).getTime() : now,
-      );
-      const tok = node.result?.usage;
-      const tokStr = tok ? `${Math.round((tok.input + tok.output) / BUDGET_TOKENS_DIVISOR)}k tok` : "";
-      const tcCount = node.result?.toolCalls?.length ?? 0;
-      rightLines.push(`${pointer}${dot} ${displayAgentName(node.agent)}    ${node.model}    ${tokStr} · ${tcCount} tools · ${elapsed}`);
-    }
+    rightLines.push(formatLevel1AgentLine(agents[i], theme, now, i === state.agentIdx));
   }
   state.agentScrollOffset = agentStart;
   while (rightLines.length < bodyH) rightLines.push("");
@@ -857,7 +899,7 @@ function renderLevel2(
     const pointer = i === state.agentIdx ? "❯ " : "  ";
     const maxNameWidth = SIDEBAR_WIDTH - AGENT_NAME_BUDGET;
     const agentRef = displayAgentName(a.agent);
-    const agentName = visibleLen(agentRef) > maxNameWidth
+    const agentName = visibleWidth(agentRef) > maxNameWidth
       ? agentRef.slice(0, maxNameWidth - 1) + ELLIPSIS
       : agentRef;
     leftLines.push(`${pointer}${agentName}`);
@@ -909,40 +951,69 @@ const TRACE_ACTIVITY_WIDTH = 80;
  * 导出完整 workflow trace 到 Markdown 文件。
  * 路径：<agentDir>/workflow-traces/{runId}.md（agentDir = getAgentDir()，实例隔离）
  * 对齐 main 的 saveTraceToFile（WorkflowsView.ts:365-396）。
+ * 阶段化编排：header 行 + 逐 phase 逐 node 全段同步拼完后，才走 mkdir→write→notify 异步链
+ * （与原单函数时序一致：文件内容构建全部先于首次 fs 调用）。
  */
 function saveTraceToFile(run: WorkflowRun, ctx: ExtensionContext): void {
   const dir = pathJoin(getAgentDir(), "workflow-traces");
   const filePath = pathJoin(dir, `${run.runId}.md`);
-  const lines: string[] = [];
-  lines.push(`# Workflow Trace: ${run.spec.scriptName} (${run.runId})`, "");
-  lines.push(`Status: ${run.state.status} | Started: ${run.meta.startedAt ?? "-"} | Duration: ${formatElapsed(run.meta.startedAt)}`);
-  const budget = run.state.budget;
-  lines.push(`Budget: ${budget.usedTokens}/${budget.maxTokens ?? "unlimited"} tokens, $${budget.usedCost.toFixed(BUDGET_COST_DECIMALS)}`, "");
+  const lines = traceHeaderLines(run);
   const phases = buildPhaseGroups([...run.state.trace.toArray()]);
   for (const pg of phases) {
     lines.push(`## Phase: ${pg.name || "(unnamed)"}`, "");
     for (const node of pg.nodes) {
-      lines.push(`### [#${node.stepIndex}] ${node.agent} — ${node.status}`);
-      lines.push(`- Model: ${node.model}`);
-      lines.push(`- Duration: ${formatElapsed(node.startedAt, node.completedAt ? new Date(node.completedAt).getTime() : Date.now())}`, "");
-      lines.push("**Prompt:**", node.task, "");
-      const toolCalls = node.result?.toolCalls ?? [];
-      if (toolCalls.length > 0) {
-        lines.push("**Activity:**");
-        for (const tc of toolCalls) lines.push(`- ${formatActivityLine(tc, TRACE_ACTIVITY_WIDTH)}`);
-        lines.push("");
-      }
-      lines.push("**Outcome:**");
-      if (node.status === "running") lines.push("Still running...");
-      else if (node.result?.error) lines.push(node.result.error);
-      else if (node.result?.content) lines.push(node.result.content.slice(0, TRACE_OUTCOME_SLICE));
-      lines.push("");
+      lines.push(...traceNodeLines(node));
     }
   }
   fsPromises.mkdir(dir, { recursive: true })
     .then(() => fsPromises.writeFile(filePath, lines.join("\n"), "utf8"))
     .then(() => ctx.ui.notify(`Trace saved: ${filePath}`, "info"))
     .catch((err: Error) => ctx.ui.notify(`Save failed: ${err.message}`, "error"));
+}
+
+/** trace 导出头部三行：标题 + 空行、Status/Started/Duration、Budget + 空行。 */
+function traceHeaderLines(run: WorkflowRun): string[] {
+  const lines: string[] = [];
+  lines.push(`# Workflow Trace: ${run.spec.scriptName} (${run.runId})`, "");
+  lines.push(`Status: ${run.state.status} | Started: ${run.meta.startedAt ?? "-"} | Duration: ${formatElapsed(run.meta.startedAt)}`);
+  const budget = run.state.budget;
+  lines.push(`Budget: ${budget.usedTokens}/${budget.maxTokens ?? "unlimited"} tokens, $${budget.usedCost.toFixed(BUDGET_COST_DECIMALS)}`, "");
+  return lines;
+}
+
+/** 单节点全段：### 标题 + Model/Duration + Prompt + Activity + Outcome（行序同原单函数版）。 */
+function traceNodeLines(node: ExecutionTraceNode): string[] {
+  const lines: string[] = [];
+  lines.push(`### [#${node.stepIndex}] ${node.agent} — ${node.status}`);
+  lines.push(`- Model: ${node.model}`);
+  lines.push(`- Duration: ${formatElapsed(node.startedAt, node.completedAt ? new Date(node.completedAt).getTime() : Date.now())}`, "");
+  lines.push("**Prompt:**", node.task, "");
+  lines.push(...traceActivityLines(node));
+  lines.push(...traceOutcomeLines(node));
+  return lines;
+}
+
+/** 单节点 Activity 段：**Activity:** + 每条 toolCall 一行 + 空行；无 toolCall 时整段省略。 */
+function traceActivityLines(node: ExecutionTraceNode): string[] {
+  const lines: string[] = [];
+  const toolCalls = node.result?.toolCalls ?? [];
+  if (toolCalls.length > 0) {
+    lines.push("**Activity:**");
+    for (const tc of toolCalls) lines.push(`- ${formatActivityLine(tc, TRACE_ACTIVITY_WIDTH)}`);
+    lines.push("");
+  }
+  return lines;
+}
+
+/** 单节点 Outcome 段：**Outcome:** + running/error/content（截断）三态互斥 + 空行。 */
+function traceOutcomeLines(node: ExecutionTraceNode): string[] {
+  const lines: string[] = [];
+  lines.push("**Outcome:**");
+  if (node.status === "running") lines.push("Still running...");
+  else if (node.result?.error) lines.push(node.result.error);
+  else if (node.result?.content) lines.push(node.result.content.slice(0, TRACE_OUTCOME_SLICE));
+  lines.push("");
+  return lines;
 }
 
 // ── Save overlay（缺陷 #3 恢复，从 main 移植简化版）────────────

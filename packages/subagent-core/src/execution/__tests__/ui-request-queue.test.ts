@@ -55,7 +55,7 @@ describe("UI 请求队列", () => {
   it("多个 extension_ui_request 按 FIFO 顺序处理", async () => {
     const callOrder: string[] = [];
     // 每个请求返回独立的可控 Promise
-    const resolvers: Array<(v: unknown) => void> = [];
+    const resolvers: Array<(v: UiResponse) => void> = [];
 
     const handler: UiRequestHandler = vi.fn((req: UiRequest) => {
       callOrder.push(req.title ?? "");
@@ -94,7 +94,7 @@ describe("UI 请求队列", () => {
 
   it("第一个请求未 resolve 时第二个不调用 uiRequestHandler", async () => {
     const callOrder: string[] = [];
-    let firstResolve: (v: unknown) => void;
+    let firstResolve: (v: UiResponse) => void;
 
     const handler: UiRequestHandler = vi.fn((req: UiRequest) => {
       callOrder.push(req.title ?? "");
@@ -154,5 +154,145 @@ describe("UI 请求队列 — timeout 字段透传（LC-3/T2⑦）", () => {
 
     expect(received).toHaveLength(1);
     expect(received[0].timeout).toBe(5000);
+  });
+});
+
+// ── extractMethodFields 字段复制链路（经 createUiRequestQueue → handleUiRequest 锁定）──
+// 13 个 method-specific 字段的复制语义：typed 守卫字段（string/number/array）验型通过才复制、
+// presence-only 字段（statusText/widgetLines/widgetPlacement）仅 in 检查直赋、缺失字段不复制。
+// 协议形状来自 JSON 反序列化，坏类型运行时可达——用例以 as unknown as 构造越界形状做防御锁定。
+
+describe("UI 请求队列 — method-specific 字段复制（extractMethodFields 链路）", () => {
+  function makeQueue(handler: UiRequestHandler): { enqueue: ReturnType<typeof createUiRequestQueue> } {
+    const child = makeFakeChild();
+    const ctx = { uiRequestHandler: handler } as Parameters<
+      typeof createUiRequestQueue
+    >[1];
+    return { enqueue: createUiRequestQueue(child, ctx) };
+  }
+
+  it("全字段请求：typed 守卫字段与 presence-only 字段全部复制到 UiRequest", async () => {
+    const received: UiRequest[] = [];
+    const { enqueue } = makeQueue((req) => {
+      received.push(req);
+      return Promise.resolve<UiResponse>({ ack: true });
+    });
+
+    // 13 字段全量形状（协议 union 无单变体携带全部字段，运行时平铺可达）
+    const req = {
+      method: "select",
+      title: "t",
+      options: ["a", "b"],
+      message: "m",
+      placeholder: "p",
+      prefill: "pf",
+      notifyType: "warning",
+      statusKey: "sk",
+      statusText: "st",
+      widgetKey: "wk",
+      widgetLines: ["l1"],
+      widgetPlacement: "belowEditor",
+      text: "tx",
+      timeout: 2500,
+    } as unknown as Parameters<ReturnType<typeof createUiRequestQueue>>[1];
+
+    enqueue("r1", req);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({
+      title: "t",
+      options: ["a", "b"],
+      message: "m",
+      placeholder: "p",
+      prefill: "pf",
+      notifyType: "warning",
+      statusKey: "sk",
+      statusText: "st",
+      widgetKey: "wk",
+      widgetLines: ["l1"],
+      widgetPlacement: "belowEditor",
+      text: "tx",
+      timeout: 2500,
+    });
+  });
+
+  it("typed 守卫字段类型不符时跳过复制，其余字段照常", async () => {
+    const received: UiRequest[] = [];
+    const { enqueue } = makeQueue((req) => {
+      received.push(req);
+      return Promise.resolve<UiResponse>({ ack: true });
+    });
+
+    const req = {
+      method: "select",
+      title: "kept-title", // 合法（title 非法值会在链路上游 startsWith 处炸掉整条请求，见下一条用例）
+      options: "not-array", // string ≠ array → 跳过
+      timeout: "5000", // string ≠ number → 跳过
+      message: "kept",
+    } as unknown as Parameters<ReturnType<typeof createUiRequestQueue>>[1];
+
+    enqueue("r1", req);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(received).toHaveLength(1);
+    expect(received[0].title).toBe("kept-title");
+    expect("options" in received[0]).toBe(false);
+    expect("timeout" in received[0]).toBe(false);
+    expect(received[0].message).toBe("kept");
+  });
+
+  it("typed 非法 title（number）在上游 startsWith 处炸链路 → handler 不被调、单请求失败被吞不阻塞队列", async () => {
+    // HEAD 真实行为锚定（探针实证）：title: 42 在 extractMethodFields 之前的环节
+    // 触发 str.startsWith is not a function，异常被 handleUiRequest 的 .catch 吞掉
+    //（注释声明的「单个请求失败不阻塞后续」语义）——守卫的「跳过该字段」对 title 不可达。
+    const received: UiRequest[] = [];
+    const { enqueue } = makeQueue((req) => {
+      received.push(req);
+      return Promise.resolve<UiResponse>({ ack: true });
+    });
+
+    const badReq = {
+      method: "select",
+      title: 42,
+      message: "kept",
+    } as unknown as Parameters<ReturnType<typeof createUiRequestQueue>>[1];
+    enqueue("r1", badReq);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(received).toHaveLength(0); // handler 未被调（链路在上游失败）
+
+    // 队列不阻塞：后续合法请求照常处理
+    enqueue("r2", {
+      method: "select",
+      title: "Q2",
+      options: [JSON.stringify({ question: "Q2", options: [{ label: "A" }] })],
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(received).toHaveLength(1);
+    expect(received[0].title).toBe("Q2");
+  });
+
+  it("presence-only 字段仅 in 检查直赋；未声明的字段不复制（保持 UiRequest 可选）", async () => {
+    const received: UiRequest[] = [];
+    const { enqueue } = makeQueue((req) => {
+      received.push(req);
+      return Promise.resolve<UiResponse>({ ack: true });
+    });
+
+    // statusText 存在但值为 undefined（statusText: string | undefined 变体合法形态）→ 仍复制
+    const req = {
+      method: "setStatus",
+      statusKey: "k",
+      statusText: undefined,
+      unknownField: "should-not-copy",
+    } as unknown as Parameters<ReturnType<typeof createUiRequestQueue>>[1];
+
+    enqueue("r1", req);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(received).toHaveLength(1);
+    expect("statusText" in received[0]).toBe(true);
+    expect(received[0].statusText).toBeUndefined();
+    expect("unknownField" in received[0]).toBe(false);
   });
 });

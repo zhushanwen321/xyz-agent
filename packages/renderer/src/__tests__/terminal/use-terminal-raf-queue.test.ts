@@ -39,7 +39,7 @@ const terminalApiMock = vi.hoisted(() => ({
   kill: vi.fn(() => Promise.resolve()),
   attach: vi.fn(() => Promise.resolve()),
 }))
-vi.mock('@/api/domains/terminal', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/terminal', () => ({
   terminalApi: terminalApiMock,
 }))
 
@@ -82,7 +82,7 @@ vi.mock('@/stores/session', () => ({
 
 import { useTerminal } from '@/composables/features/terminal/useTerminal'
 import TerminalView from '@/components/panel/TerminalView.vue'
-import { dispatchSession } from '@/api/events'
+import { dispatchSession } from '@xyz-agent/core/transport/api'
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
 
 // happy-dom 无 ResizeObserver（TerminalView 依赖），polyfill

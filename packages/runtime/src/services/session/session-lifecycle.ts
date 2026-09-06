@@ -20,121 +20,49 @@
  * registerDeps(注册装配依赖)。
  */
 import { basename } from 'node:path'
-import { existsSync, unlinkSync, readFileSync } from 'node:fs'
+import { existsSync, unlinkSync } from 'node:fs'
 import { unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import type { SessionSummary, BatchDeleteResult, ServerMessage } from '@xyz-agent/shared'
 import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import type { ILifecycleSessionOps, ISessionRegistry, ISessionRegisterDeps, IManagedSessionRecord } from './session-internal.js'
-import type { IManagedSessionView } from './types.js'
+import type { IManagedSessionView, ScannedSession } from './types.js'
 import { buildPresetClientOptions } from './launch-params.js'
+import type { PresetClientOptions } from './launch-params.js'
+import type { PresetResolution } from '../preset-service.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED, SESSION_NOT_FOUND } from '../../utils/errors.js'
 import { createForkedSessionFile, resolveEntryIdByTimestamp } from './session-fork.js'
+// restore 附着辅助（F2/F3 归一化 + U2/D1 生效值播种 + get_state 共用解析）——
+// 自本文件迁出（max-lines 行数合规），函数体逐字节等价，见 restore-seeding.ts。
+import { normalizeInactiveSessionFileIfNeeded, readEffectiveModelFromState, seedRestoreMetaOverride } from './restore-seeding.js'
 
-// [arch 技术债登记，R3 ports 依赖倒置待收口] 下方四个 infra/pi 值 import（getSessionsDir /
-// normalizeSessionFileInPlace + cleanupMigrateResidues / assertPiSessionFile / hydrateBindingMeta）
+// [arch 技术债登记，R3 ports 依赖倒置待收口] 下方五个 infra/pi 值 import（getSessionsDir /
+// cleanupMigrateResidues + persistModelBinding / hydrateBindingMeta / assertPiSessionFile）
 // 违反「services 禁止 import infra」三层规则（见 docs/architecture/runtime-three-layer-design.md 阶段 R3）。
+// 同属本登记的衍生直引面：services/session/restore-seeding.ts（本文件拆出，直引
+// session-file-utils 的 cleanupMigrateResidues / normalizeSessionFileInPlace /
+// persistModelBinding——S2 追加登记，随 R3 同批收口，中期经 services/ports 暴露）。
 // 未在本轮直接 port 化的原因：restore/fork 归一化管线是 W1 高危区（tmp+rename 原子覆盖 +
 // 附着断言），包一层 port 接口属于行为敏感重构，应随 R3 阶段统一落地（ISessionStore 等
 // port 扩展 + 专项测试），不在 review 修复批混入。hydrateBindingMeta 是注册表 SSOT 的
 // 统一回填入口（sidecar-binding-sync 设计文档拍板接线在此），同样随 R3 收口。新写
 // services 代码不得再效仿此处直引 infra。
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
-import { normalizeSessionFileInPlace, cleanupMigrateResidues } from '../../infra/pi/session-file-utils.js'
+// persistModelBinding 锚定本模块路径是 mock 链刚需：restore 播种测试以硬编码 factory
+// 替换本模块并经 importActual 取 re-export 的真身委托落盘（勿改为直引
+// session-model-sidecar.js，否则真身链断、写点③⑤ 断言红）。
+import { cleanupMigrateResidues, persistModelBinding } from '../../infra/pi/session-file-utils.js'
 // 绑定字段注册表模块（BINDING_FIELDS / hydrateBindingMeta / CREATE_DERIVED_CALLERS SSOT）
 import { hydrateBindingMeta } from '../../infra/pi/session-binding-fields.js'
 import { assertPiSessionFile } from '../../infra/pi/session-attach-assert.js'
 
-/**
- * 匹配 `"type":"session_end"` 或 `'type':'session_end'`（容忍引号/空格差异）。
- * 用单/双引号字符类容忍 JSON.stringify（双引号）与手写（单引号）两种写法。
- *
- * stripSessionEndEntries（变换）与 containsSessionEndLine（F2/F3 分流判定）共用同一正则
- * ——判定与变换必须同源，否则会出现「判进 F3 却剔不干净」或反向的缝隙。
- */
-const SESSION_END_RE = /["']type["']\s*:\s*["']session_end["']/
-
-/**
- * 检测 JSONL 文本是否含 session_end 行（W1 restore-fork-attach-fix F2/F3 分流判定）。
- *
- * 与 stripSessionEndEntries 同款正则逐行检测。W1 设计文档明令禁止用
- * `stripSessionEndEntries(原文) === 原文` 字符串全等做本判定——strip 函数有末尾换行
- * 规范化副作用（原文末尾无 `\n` 时即使零剔除也产出不等文本），全等会把几乎所有文件
- * 误判进 F3 归一化路径。
- */
-function containsSessionEndLine(jsonlContent: string): boolean {
-  for (const line of jsonlContent.split('\n')) {
-    if (line !== '' && SESSION_END_RE.test(line)) return true
-  }
-  return false
-}
-
-/**
- * 从 JSONL 文本中剔除 session_end 行。
- *
- * 背景（动机经 restore-fork-attach-fix §2.3 复核改判保留）：B7 sidecar 方案下 runtime
- * 不再往 JSONL 写 session_end（改写 .meta.json sidecar），但历史 session（迁移前写入的）
- * JSONL 仍可能含 `type:"session_end"` 行。pi 侧 `_buildIndex`（pi-mono
- * session-manager.ts）对所有非 session entry 无差别执行 `byId.set(entry.id);
- * leafId = entry.id`——legacy session_end 行无 id 无 parentId，使 leafId=undefined →
- * 后续 appendMessage 的 parentId 断链 → 全部旧历史不进 LLM 上下文（AI 失忆）。
- * 因此 restore 必须在附着前剔除该类行。
- *
- * 实现按行扫描：命中 SESSION_END_RE 的整行丢弃，其余行原样保留（含换行）。纯文本扫描
- * 不解析 JSON，避免格式异常的行被误吞。
- *
- * @param jsonlContent 原始 JSONL 文本
- * @returns 剔除 session_end 行后的文本（行数可能减少；末尾换行统一补一个）
- */
-export function stripSessionEndEntries(jsonlContent: string): string {
-  const lines = jsonlContent.split('\n')
-  const kept: string[] = []
-  for (const line of lines) {
-    if (line === '') continue // split 末尾产生的空串（原末尾换行）跳过，末尾统一补回
-    if (SESSION_END_RE.test(line)) continue
-    kept.push(line)
-  }
-  // 末尾统一补一个换行（W2/A-06 注释修正：pi 读取侧按行 trim 分行——session-manager.js
-  // parseSessionEntries/parseSessionEntryLine 对内容先 trim 再 split("\n")，末尾 \n 非必须；
-  // 补 \n 是保守对齐 pi 写出格式，非 pi 期望）
-  return kept.length > 0 ? kept.join('\n') + '\n' : ''
-}
-
-/**
- * 对 JSONL 文本首行的 session header 应用 cwd fallback（W11 引入，语义随 W1 更新）。
- *
- * 纯字符串变换（不落盘）：restoreSession 的 F3 归一化管线内调用——session 原始 cwd 已被
- * 删除时，把首行 header 的 cwd 改为 fallback 值，使 pi switch_session 不因 cwd 不存在
- * 失败（pi 加载 header cwd 死路径的 session 直接 throw MissingSessionCwdError，pi-mono
- * session-cwd.ts；RPC switch_session 无 cwdOverride 字段，只能由 xyz 在附着前修）。
- * 变换产物经 normalizeSessionFileInPlace 原地 rename-over 落回原文件。
- *
- * 防御语义与原实现一致：首行缺失/非 session 类型/JSON parse 失败 → 原样返回（不抛）。
- *
- * @param jsonlContent stripSessionEndEntries 后的 JSONL 文本
- * @param fallbackCwd  降级 cwd（调用方传 homedir()）
- * @returns 首行 header.cwd 替换为 fallbackCwd 后的文本；无法解析时原样返回
- */
-export function applyHeaderCwdFallback(jsonlContent: string, fallbackCwd: string): string {
-  const lines = jsonlContent.split('\n')
-  if (!lines[0]) return jsonlContent
-  try {
-    const header = JSON.parse(lines[0])
-    if (typeof header !== 'object' || header === null || header.type !== 'session') {
-      return jsonlContent
-    }
-    header.cwd = fallbackCwd
-    lines[0] = JSON.stringify(header)
-    return lines.join('\n')
-  } catch {
-    // 首行 JSON parse 失败：原样返回（交 pi switch_session 报错），不阻断 restore 主流程
-    return jsonlContent
-  }
-}
+// stripSessionEndEntries / applyHeaderCwdFallback / containsSessionEndLine /
+// SESSION_END_RE / normalizeInactiveSessionFileIfNeeded / get_state 生效值解析与
+// restore 播种已迁 './restore-seeding.ts'（本文件 max-lines 行数合规）。
 
 // D8-3 迁移 promise gate（06 §3.3，perf W29）：provider 迁移（apiKey → auth.json +
 // enabledModels 白名单）完成前禁止 spawn pi——迁移窗口内 spawn 的 session 会读到迁移前
@@ -152,6 +80,79 @@ export function setMigrationGate(gate: Promise<unknown>): void {
 /** 当前 gate（测试断言/重置用）。 */
 export function getMigrationGate(): Promise<unknown> {
   return migrationGate
+}
+
+// ── create / forkSession 提取 helper（复杂度债务偿还，行为保持提取）──
+// 以下类型与模块级纯函数是 create / forkSession 按处理阶段拆分的载体：
+// 主函数只留编排，分支细节下沉。结构与原内联参数类型逐字段一致（公共签名不动）。
+
+/** create options 形状（create() 公共签名与本文件 helper 签名共用，字段 doc 为权威）。 */
+interface CreateOptions {
+  hidden?: boolean
+  /** Launch preset id（设计文档 §5，绑定到新 session 并解析为 pi 启动参数）。 */
+  presetId?: string
+  /** 归属 project id（D14 语义修正，2026-08-04）：创建时归属当前 activeProject；空 = 默认项目兑底。 */
+  projectId?: string
+  /** Landing Model Chip 传入值，覆盖 preset.modelOverride（C-RL-6 优先级）。 */
+  modelOverride?: string
+  /** Landing Thinking Chip 传入值，覆盖 preset.thinkingLevel（C-RL-6 优先级）。 */
+  thinkingOverride?: string
+  /** 发起来源：'user' | 'agent'。agent-managed session 标记。 */
+  spawnSource?: 'user' | 'agent'
+  /** 父 agent session id（spawnSource='agent' 时必填）。 */
+  parentAgentSessionId?: string
+  /**
+   * label 是否为语义性命名（需持久化到 pi session_info 且防 auto-rename 覆盖）。
+   * true：handoff 承接名 / agent-managed 显式命名。false（默认）：前端派生 prompt
+   * 预览名 display-only（见 persistExplicitLabel docstring 的 A' 修正）。
+   */
+  persistLabel?: boolean
+}
+
+/** forkSession options 形状（原 forkSession 内联参数类型的具名别名，仅本文件 helper 签名复用）。 */
+interface ForkOptions {
+  fromMessageTimestamp?: number
+  fromMessageRole?: string
+  modelOverride?: string
+  thinkingOverride?: string
+}
+
+/** get_state 读回的生效值播种形状（U2；registerSession metaOverride 参数的内联类型别名）。 */
+interface EffectiveMetaOverride {
+  modelId?: string
+  thinkingLevel?: string
+}
+
+/**
+ * create 入口 cwd 存在性解析（INV-7）：cwd 可能已被删除（worktree 清理/手动删目录），
+ * 降级 homedir（与 restoreSession 对称）。前端 useNewTaskFlow 通过比对「请求 cwd」vs
+ * 「reply session.cwd」判断是否 fallback 并 toast。
+ */
+function resolveCreateCwd(cwd: string | undefined): string {
+  const requestedCwd = cwd ?? process.cwd()
+  return existsSync(requestedCwd) ? requestedCwd : (() => {
+    console.warn(`[session-lifecycle] create cwd does not exist: ${requestedCwd}, falling back to home`)
+    return homedir()
+  })()
+}
+
+/**
+ * D1 写点③ 生效值解析（create）：get_state 读回真值优先于请求值（C-pi-13 写点写生效值；
+ * pattern 引擎静默换模时读回值才是真值）。hydrate 与 persistModelBinding 两个写点共用。
+ */
+function resolveCreateEffectiveModelId(
+  presetClientOptions: PresetClientOptions,
+  createMetaOverride: EffectiveMetaOverride | undefined,
+): string | undefined {
+  return createMetaOverride?.modelId ?? presetClientOptions.model
+}
+
+function resolveCreateEffectiveThinkingLevel(
+  presetClientOptions: PresetClientOptions,
+  createMetaOverride: EffectiveMetaOverride | undefined,
+): string | undefined {
+  return createMetaOverride?.thinkingLevel
+    ?? (typeof presetClientOptions.thinkingLevel === 'string' ? presetClientOptions.thinkingLevel : undefined)
 }
 
 export class SessionLifecycle implements ISessionRegistry {
@@ -223,6 +224,8 @@ export class SessionLifecycle implements ISessionRegistry {
   async registerSession(
     id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean,
     parentSession?: string, forkEntryId?: string, modelOverride?: string,
+    /** U2: restore/create get_state 读回的生效值播种，优先级高于 modelOverride/全局默认。 */
+    metaOverride?: { modelId?: string; thinkingLevel?: string },
   ): Promise<IManagedSessionRecord> {
     const send = (msg: ServerMessage) => {
       // wave:perf-w09（02 文档 D1-2）：session 级消息单通道——payload 带 sessionId 的消息
@@ -257,11 +260,13 @@ export class SessionLifecycle implements ISessionRegistry {
     // 正确显示用户选定的模型（create/fork/handoff 路径透传 effectiveModel）。pi 进程的模型
     // 已由 createSession 时 client options.model 设定，此处只补齐元数据层缺口。
     // 无 override 时 fallback 全局默认（与原行为一致）。
+    // U2 播种优先级：metaOverride > modelOverride > 全局默认（hydrateBindingMeta 后续回填按矩阵语义）。
     const defaultModelRef = this.configStore.getDefaultModel()
     const fallbackModelId = defaultModelRef ? `${defaultModelRef.provider}/${defaultModelRef.modelId}` : ''
     const session: IManagedSessionRecord = {
       id, cwd, label,
-      modelId: modelOverride ?? fallbackModelId,
+      modelId: metaOverride?.modelId ?? modelOverride ?? fallbackModelId,
+      thinkingLevel: metaOverride?.thinkingLevel,
       createdAt: Date.now(), lastActiveAt: Date.now(),
       // W10：inputTokens/tokenCount 退化为恒 0 派生基线（types 必填字段保留）——真值由
       // usage 实例快照持有，读点（getInputTokens / toSummary.tokenCount）从实例派生，
@@ -339,53 +344,16 @@ export class SessionLifecycle implements ISessionRegistry {
     }
   }
 
-  async create(cwd?: string, label?: string, options?: {
-    hidden?: boolean
-    /** Launch preset id（设计文档 §5，绑定到新 session 并解析为 pi 启动参数）。 */
-    presetId?: string
-    /** 归属 project id（D14 语义修正，2026-08-04）：创建时归属当前 activeProject；空 = 默认项目兑底。 */
-    projectId?: string
-    /** Landing Model Chip 传入值，覆盖 preset.modelOverride（C-RL-6 优先级）。 */
-    modelOverride?: string
-    /** Landing Thinking Chip 传入值，覆盖 preset.thinkingLevel（C-RL-6 优先级）。 */
-    thinkingOverride?: string
-    /** 发起来源：'user' | 'agent'。agent-managed session 标记。 */
-    spawnSource?: 'user' | 'agent'
-    /** 父 agent session id（spawnSource='agent' 时必填）。 */
-    parentAgentSessionId?: string
-    /**
-     * label 是否为语义性命名（需持久化到 pi session_info 且防 auto-rename 覆盖）。
-     * true：handoff 承接名 / agent-managed 显式命名。false（默认）：前端派生 prompt
-     * 预览名 display-only（见 persistExplicitLabel docstring 的 A' 修正）。
-     */
-    persistLabel?: boolean
-  }): Promise<SessionSummary> {
+  async create(cwd?: string, label?: string, options?: CreateOptions): Promise<SessionSummary> {
     const tempId = crypto.randomUUID()
-    const requestedCwd = cwd ?? process.cwd()
-    // INV-7: cwd 可能已被删除（worktree 清理/手动删目录），降级 homedir（与 restoreSession 对称）。
-    // 前端 useNewTaskFlow 通过比对「请求 cwd」vs「reply session.cwd」判断是否 fallback 并 toast。
-    const sessionCwd = existsSync(requestedCwd) ? requestedCwd : (() => {
-      console.warn(`[session-lifecycle] create cwd does not exist: ${requestedCwd}, falling back to home`)
-      return homedir()
-    })()
+    const sessionCwd = resolveCreateCwd(cwd)
 
     // 启动 pi 前检查 model 配置,避免 pi 因无 model 直接 exit(1)
     if (!this.configStore.getDefaultModel()) {
       throw errorWithCode('No model configured. Please configure a provider and model in Settings before starting a session.', MODEL_NOT_CONFIGURED)
     }
 
-    // Preset 解析（设计文档 §5/§8.1）：presetId 存在时委托 PresetService.resolve，
-    // 返回 PresetResolution 供 options 映射；undefined（presetService 未注入/preset 被删）
-    // 时 fallback 现有 svc.getExtensionPaths/getSkillPaths 逻辑。
-    const presetId = options?.presetId
-    const resolution = presetId ? await this.svc.getLaunchPresetOptions(presetId, sessionCwd) : undefined
-
-    const allExtPaths = resolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
-    // preset + override 字段经 buildPresetClientOptions 统一构建（S-RT-4 消除三处重复），
-    // 含 C-RL-6 优先级（Landing 传入 > preset 字段）与 thinkingLevel 合法值校验（S-RT-5）。
-    const presetClientOptions = buildPresetClientOptions(
-      resolution, options?.modelOverride, options?.thinkingOverride,
-    )
+    const { presetId, resolution, allExtPaths, presetClientOptions } = await this.resolveCreateLaunch(sessionCwd, options)
     // D8-3（perf W29）：迁移完成前 spawn pi 会读到未迁移配置——gate 等待。
     // gate 恒 resolve（迁移失败已 catch），正常迁移 <10ms 不可感知。
     await migrationGate
@@ -396,13 +364,100 @@ export class SessionLifecycle implements ISessionRegistry {
       ...presetClientOptions,
     })
 
-    // 从 pi 获取真实 session ID
+    // 从 pi 获取真实 session ID + U2: 顺带读回生效 model+thinkingLevel（D2 设计）。
+    // （getState / piSessionId 空值门禁 / 失败 safeDestroy 清理细节见 readBackCreateState。）
+    const { piSessionId: id, sessionFilePath, createMetaOverride } = await this.readBackCreateState(client, tempId)
+
+    // 用 pi 的真实 ID 替换临时 ID
+    if (id !== tempId) {
+      this.pm.rekey(tempId, id)
+    }
+
+    const session = await this.registerCreateSession(
+      id, client, sessionCwd, label, sessionFilePath, options, presetClientOptions, createMetaOverride,
+    )
+
+    // W1 → A'：仅语义性命名（options.persistLabel=true：handoff/agent-managed）持久化；
+    // 前端派生 prompt 预览名 display-only（防覆盖守卫恢复，详见 persistExplicitLabel docstring）
+    if (options?.persistLabel) {
+      await this.persistExplicitLabel(client, id, label, 'create')
+    }
+
+    this.persistCreateBindings(session, presetId, options, presetClientOptions, createMetaOverride)
+
+    // hidden session（公共 session）不记工作区历史——cwd 是数据目录，不应污染最近工作区列表。
+    // homedir 过滤（含降级 homedir）由 WorkspaceService.record 统一负责（方案A，一处堵死全部路径），
+    // lifecycle 层不再关心 cwd 是否降级。
+    if (!options?.hidden) {
+      this.workspaceService.record(sessionCwd)
+    }
+    const createdSummary = this.svc.toSummary(session)
+    // S3-W2：创建入口收敛点（create 路径）——触发插件 didCreateSession 定向投递。
+    this.svc.notifySessionCreated(createdSummary)
+    return createdSummary
+  }
+
+  /**
+   * create 的 launch 参数解析（preset + extension/skill/systemPrompt 求值，spawn 前）。
+   *
+   * 求值时序与提取前一致：getLaunchPresetOptions → getExtensionPaths →
+   * buildPresetClientOptions 均在 migrationGate 等待之前；getSkillPaths 仍在主流程
+   * createSession options 构造时（gate 之后）求值。
+   *
+   * Preset 解析（设计文档 §5/§8.1）：presetId 存在时委托 PresetService.resolve，
+   * 返回 PresetResolution 供 options 映射；undefined（presetService 未注入/preset 被删）
+   * 时 fallback 现有 svc.getExtensionPaths/getSkillPaths 逻辑。
+   */
+  private async resolveCreateLaunch(
+    sessionCwd: string,
+    options: CreateOptions | undefined,
+  ): Promise<{
+    presetId: string | undefined
+    resolution: PresetResolution | undefined
+    allExtPaths: string[]
+    presetClientOptions: PresetClientOptions
+  }> {
+    const presetId = options?.presetId
+    const resolution = presetId ? await this.svc.getLaunchPresetOptions(presetId, sessionCwd) : undefined
+    const allExtPaths = resolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
+    // preset + override 字段经 buildPresetClientOptions 统一构建（S-RT-4 消除三处重复），
+    // 含 C-RL-6 优先级（Landing 传入 > preset 字段）与 thinkingLevel 合法值校验（S-RT-5）。
+    const presetClientOptions = buildPresetClientOptions(
+      resolution, options?.modelOverride, options?.thinkingOverride,
+    )
+    return { presetId, resolution, allExtPaths, presetClientOptions }
+  }
+
+  /**
+   * create 的 get_state 读回段：真实 session ID + session 文件路径 + U2 生效值播种。
+   *
+   * U2: 从同一 get_state 读回 pi 生效 model + thinkingLevel，通过 metaOverride 播种。
+   * create 路径：pattern 引擎可能静默换模，读回值是真值（而非请求值）。
+   * 解析与 restore 播种共用 readEffectiveModelFromState（restore-seeding）。
+   *
+   * 两条失败分支都在本段收口（与提取前同序）：getState 抛错 → safeDestroy(tempId) +
+   * 「Failed to get session state from pi」；pi 无 session id → safeDestroy(tempId) +
+   * 「pi did not return a session ID」。
+   */
+  private async readBackCreateState(client: IPiEngine, tempId: string): Promise<{
+    piSessionId: string
+    sessionFilePath: string | undefined
+    createMetaOverride: EffectiveMetaOverride | undefined
+  }> {
     let piSessionId: string
     let sessionFilePath: string | undefined
+    let createMetaOverride: EffectiveMetaOverride | undefined
     try {
       const stateData = await client.getState()
       piSessionId = (stateData?.sessionId as string) ?? ''
       sessionFilePath = stateData?.sessionFile as string | undefined
+      const readback = readEffectiveModelFromState(stateData)
+      if (readback.modelId || readback.thinkingLevel) {
+        createMetaOverride = {
+          modelId: readback.modelId,
+          thinkingLevel: readback.thinkingLevel,
+        }
+      }
     } catch (e) {
       await this.safeDestroy(tempId)
       throw new Error(`Failed to get session state from pi: ${toErrorMessage(e)}`)
@@ -412,35 +467,53 @@ export class SessionLifecycle implements ISessionRegistry {
       await this.safeDestroy(tempId)
       throw new Error('pi did not return a session ID')
     }
+    return { piSessionId, sessionFilePath, createMetaOverride }
+  }
 
-    // 用 pi 的真实 ID 替换临时 ID
-    const id = piSessionId
-    if (id !== tempId) {
-      this.pm.rekey(tempId, id)
-    }
-
-    // M3: registerSession 失败时（adapterFactory/attach 可能抛错），
-    // pi 进程已 spawn 但未进 sessions Map → 不可见不可销毁的僵尸进程。
-    // try-catch + safeDestroy 保证异常时清理 pi 进程。
-    let session: IManagedSessionView
+  /**
+   * create 的 registerSession 注册段（M3）：registerSession 失败时（adapterFactory/attach
+   * 可能抛错），pi 进程已 spawn 但未进 sessions Map → 不可见不可销毁的僵尸进程。
+   * try-catch + safeDestroy 保证异常时清理 pi 进程。
+   */
+  private async registerCreateSession(
+    id: string,
+    client: IPiEngine,
+    sessionCwd: string,
+    label: string | undefined,
+    sessionFilePath: string | undefined,
+    options: CreateOptions | undefined,
+    presetClientOptions: PresetClientOptions,
+    createMetaOverride: EffectiveMetaOverride | undefined,
+  ): Promise<IManagedSessionView> {
     try {
       // Staging Mode（ADR-0056）：透传 effectiveModel（presetClientOptions.model，已含 C-RL-6 优先级解析）
       // 让 session 元数据 modelId 反映实际启动模型，前端 composer chip 正确显示。
-      session = await this.registerSession(
+      // U2: metaOverride（get_state 读回值）优先级高于 presetClientOptions.model。
+      return await this.registerSession(
         id, client, sessionCwd, label ?? basename(sessionCwd), sessionFilePath, options?.hidden,
-        undefined, undefined, presetClientOptions.model,
+        undefined, undefined, presetClientOptions.model, createMetaOverride,
       )
     } catch (initErr) {
       await this.safeDestroy(id)
       throw initErr
     }
+  }
 
-    // W1 → A'：仅语义性命名（options.persistLabel=true：handoff/agent-managed）持久化；
-    // 前端派生 prompt 预览名 display-only（防覆盖守卫恢复，详见 persistExplicitLabel docstring）
-    if (options?.persistLabel) {
-      await this.persistExplicitLabel(client, id, label, 'create')
-    }
-
+  /**
+   * create 的绑定落盘段（refreshAll → hydrate → sidecar persist 家族 → model binding）。
+   *
+   * 文件操作时序与提取前一致：只写 sidecar（*.preset.json / *.project.json / *.agent.json /
+   * *.model.json），不创建/触碰 pi session 文件本体——sessionFilePath 不存在（pi 首次
+   * flush 前的延迟写入窗口）时各守卫跳过（persistPresetBinding/persistProjectBinding/
+   * persistAgentBinding 内部 existsSync 守卫 + 本段 persistModelBinding 前置 if）。
+   */
+  private persistCreateBindings(
+    session: IManagedSessionView,
+    presetId: string | undefined,
+    options: CreateOptions | undefined,
+    presetClientOptions: PresetClientOptions,
+    createMetaOverride: EffectiveMetaOverride | undefined,
+  ): void {
     // [HISTORICAL] 不再调 ensureSessionFile 提前创建 session 文件。
     // 之前的实现在此处用 openSync(wx) 创建含 session+session_info 两行的最小文件，理由是
     // 「pi 延迟写入期间 scanPiSessions 找不到该 session」。但这与 pi 0.80.3 SessionManager._persist
@@ -460,22 +533,48 @@ export class SessionLifecycle implements ISessionRegistry {
       projectId: options?.projectId,
       spawnSource: options?.spawnSource,
       parentAgentSessionId: options?.parentAgentSessionId,
+      // D1 写点③（一致性修复）：hydrate 值与 registerSession 播种同源——createMetaOverride
+      //（get_state 读回生效值）优先于请求值 presetClientOptions，消除「请求值覆写读回真值」
+      //（C-pi-13 写点写生效值；pattern 引擎静默换模时读回值才是真值）。
+      modelId: resolveCreateEffectiveModelId(presetClientOptions, createMetaOverride),
+      thinkingLevel: resolveCreateEffectiveThinkingLevel(presetClientOptions, createMetaOverride),
     }, 'create')
+    this.persistCreateSidecars(session, presetId, options)
+    // D1 写点③ create/landing：落盘生效值（读回真值优先）。注意：Gate B 实证 create 瞬间
+    // pi 尚未首 flush、sessionFilePath 恒 undefined，本写点常态被守卫跳过（偏差 #9①）——
+    // 从未显式切模型的 session 的 .model.json 由写点③的 turn-end ensure
+    // （tryPersistModelBinding，session-state-projection）补写，V1 文件断言由其满足；
+    // 本段仅在文件已 materialize 的少见时序生效。
+    if (session.sessionFilePath) {
+      persistModelBinding(
+        session.sessionFilePath,
+        resolveCreateEffectiveModelId(presetClientOptions, createMetaOverride) ?? '',
+        resolveCreateEffectiveThinkingLevel(presetClientOptions, createMetaOverride) ?? '',
+      )
+    }
+  }
+
+  /**
+   * create 的 sidecar 落盘（preset / project / agent 三绑定，创建语义）。
+   *
+   * 各 persist* 内部有 existsSync 守卫：pi 延迟写入窗口（sessionFilePath 未落盘）时跳过
+   * （ES-RL-1）；空 projectId（默认项目创建）不写 sidecar——等价于未归类。
+   */
+  private persistCreateSidecars(
+    session: IManagedSessionView,
+    presetId: string | undefined,
+    options: CreateOptions | undefined,
+  ): void {
     // 持久化 preset 绑定到 .preset.json sidecar（设计文档 §4）。
     // presetId 存在时写 sidecar，供 fork/restore 继承；sessionFilePath 不存在（pi 延迟写入窗口）
     // 时 persistPresetBinding 内部 existsSync 守卫跳过（ES-RL-1，wave2 实现）。
-    if (presetId) {
-      if (session.sessionFilePath) {
-        this.sessionStore.persistPresetBinding(session.sessionFilePath, presetId)
-      }
+    if (presetId && session.sessionFilePath) {
+      this.sessionStore.persistPresetBinding(session.sessionFilePath, presetId)
     }
     // 持久化归属 project 到 .project.json sidecar（D14 语义修正，2026-08-04）。
-    // pi 延迟写入窗口（sessionFilePath 未落盘）时 sidecar 写入内部 existsSync 守卫跳过。
     // 空 projectId（默认项目创建）不写 sidecar——等价于未归类，读取侧一致兑底默认项目。
-    if (options?.projectId) {
-      if (session.sessionFilePath) {
-        this.sessionStore.persistProjectBinding(session.sessionFilePath, options.projectId)
-      }
+    if (options?.projectId && session.sessionFilePath) {
+      this.sessionStore.persistProjectBinding(session.sessionFilePath, options.projectId)
     }
     // .agent.json sidecar 落盘（重启恢复链路，G-1）——与 preset/project 同模式：
     // pi 延迟写入窗口（sessionFilePath 未落盘）时 existsSync 守卫跳过，内存态兑底见上方 hydrate。
@@ -483,16 +582,6 @@ export class SessionLifecycle implements ISessionRegistry {
       // parentAgentSessionId 可选（#15）：spawnSource 单独成立即持久化，防异常路径下 badge 重启丢失
       this.sessionStore.persistAgentBinding(session.sessionFilePath, options.spawnSource, options.parentAgentSessionId)
     }
-    // hidden session（公共 session）不记工作区历史——cwd 是数据目录，不应污染最近工作区列表。
-    // homedir 过滤（含降级 homedir）由 WorkspaceService.record 统一负责（方案A，一处堵死全部路径），
-    // lifecycle 层不再关心 cwd 是否降级。
-    if (!options?.hidden) {
-      this.workspaceService.record(sessionCwd)
-    }
-    const createdSummary = this.svc.toSummary(session)
-    // S3-W2：创建入口收敛点（create 路径）——触发插件 didCreateSession 定向投递。
-    this.svc.notifySessionCreated(createdSummary)
-    return createdSummary
   }
 
   async renameSession(sessionId: string, newName: string): Promise<void> {
@@ -548,7 +637,7 @@ export class SessionLifecycle implements ISessionRegistry {
       // withEphemeralPi 内 switchSession（pi 报错，见其 docstring 的 @param 语义），
       // 预读 ENOENT 会短路该分工。restoreSession 无此守卫（既有行为保持，不动）。
       if (existsSync(target.filePath)) {
-        this.normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack)
+        normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack)
       }
       await this.pm.withEphemeralPi(target.filePath, (c) => c.setSessionName(newName))
     }
@@ -595,6 +684,8 @@ export class SessionLifecycle implements ISessionRegistry {
     try { unlinkSync(filePath + '.handoff.json') } catch { void 0 }
     // 清理 agent binding sidecar（agent-managed-session；delete 是唯一清理点，防孤儿 sidecar）
     try { unlinkSync(filePath + '.agent.json') } catch { void 0 }
+    // 清理 model binding sidecar（model binding；delete 是唯一清理点，防孤儿 sidecar）
+    try { unlinkSync(filePath + '.model.json') } catch { void 0 }
     // 清理归一化残留 .tmp-migrate-*.jsonl（差距复审 suggestion 6，与 sidecar 同点 best-effort）
     cleanupMigrateResidues(filePath)
     // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
@@ -668,47 +759,6 @@ export class SessionLifecycle implements ISessionRegistry {
     return { cwd, deleted, failed }
   }
 
-  /**
-   * 附着前 F2/F3 分流归一化（restore-fork-attach-fix W1 形态；p1p4-closure W1 起
-   * renameSession 非活跃分支共用——两处附着前检测/变换必须同源，否则行为漂移）。
-   *
-   * 判定：containsSessionEndLine(raw) || cwdFellBack。禁止用
-   * stripSessionEndEntries(raw) === raw 字符串全等——strip 有末尾换行规范化副作用
-   * （原文末尾无 \n 时零剔除也产出不等文本），见 containsSessionEndLine。
-   *
-   * 变换（F3 一次性归一化，legacy 文件；每文件最多一次，产物收敛到 F2，幂等）：
-   * - strip session_end：legacy 行无 id/parentId，pi _buildIndex 对所有非 session
-   *   entry 无差别 byId.set(entry.id); leafId = entry.id（pi-mono session-manager.ts），
-   *   session_end 使 leafId=undefined → 新 entry parentId 断链 → 历史不进 LLM 上下文
-   * - header cwd fallback：仅 cwd 死时应用（cwdFellBack）——pi 0.84.1 switchSession
-   *   内 assertSessionCwdExists 对死 cwd 硬拒绝（pi-mono coding-agent/src/core/
-   *   agent-session-runtime.ts switchSession，binary strings 实证见 findings §4.1；
-   *   抛 MissingSessionCwdError，pi-mono session-cwd.ts；RPC switch_session 不透传
-   *   cwdOverride，只能由 xyz 附着前修）
-   *
-   * 落盘经 normalizeSessionFileInPlace（同目录临时名 rename-over 原子替换，路径
-   * 不变，登记表 §4 ⑨ 合法形态）。判定未命中（正常文件）时零变换：不写不拷贝，
-   * 调用方直附着原文件。
-   *
-   * @param filePath    目标 session JSONL 绝对路径（原地归一化，路径不变）
-   * @param cwdFellBack 调用方已判定的 session cwd 死路径标记（检测源 = scanner 从
-   *                    header 读出的 ScannedSession.cwd）
-   */
-  private normalizeInactiveSessionFileIfNeeded(filePath: string, cwdFellBack: boolean): void {
-    // 附着前清扫该文件的 .tmp-migrate-* 崩溃/失败残留（差距复审 suggestion 6；F2/F3
-    // 两路都过此处——F2 判定未命中会提前 return，清扫必须在其前）。此刻无归一化在途
-    //（restore 已销毁同 id 会话），同 basename 残留必然 stale，best-effort 清除。
-    cleanupMigrateResidues(filePath)
-    const raw = readFileSync(filePath, 'utf-8')
-    const needsNormalize = containsSessionEndLine(raw) || cwdFellBack
-    if (!needsNormalize) return
-    let cleaned = stripSessionEndEntries(raw)
-    if (cwdFellBack) {
-      cleaned = applyHeaderCwdFallback(cleaned, homedir())
-    }
-    normalizeSessionFileInPlace(filePath, cleaned)
-  }
-
   /** 从持久化文件恢复 session。 */
   async restoreSession(sessionId: string): Promise<SessionSummary> {
     const target = this.svc.findScannedSession(sessionId)
@@ -778,7 +828,7 @@ export class SessionLifecycle implements ISessionRegistry {
       // tmp 孤儿文件、原会话文件永不更新（P0 数据丢失），已整体删除。
       // 判定/变换逻辑抽至 normalizeInactiveSessionFileIfNeeded（renameSession 非活跃
       // 分支共用，p1p4-closure W1），行为不变。
-      this.normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack)
+      normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack)
       // F2 直附着（归一化判定未命中）：零拷贝零改写，pi 的读写目标 = 登记路径 = 原文件。
       await client.switchSession(target.filePath)
       // W2（restore-fork-attach-fix F4）：附着必断言（I1「登记路径 ≡ pi 写路径」）——
@@ -795,11 +845,21 @@ export class SessionLifecycle implements ISessionRegistry {
       throw e
     }
 
+    // U2: get_state 读回 pi 生效 model + thinkingLevel（D2 设计）。
+    // switchSession 成功后 pi 已附着会话文件，get_state 返回当前生效值。
+    // r3 校准：metaOverride 恒提供（读回成功/失败两路径同构），每字段独立走
+    // 「读回值 → sidecar 扫描值 → ''」兜底链。restore 从不播种全局默认：空串经
+    // registerSession 的 ?? 短路阻断 modelOverride/fallbackModelId，composer 按 D3
+    // 显示占位而非假值，快照收敛自愈。
+    // hydrateBindingMeta restore='none' 不覆写播种值（D1 裁决），所以兜底链在此完成不经过 hydrate。
+    const restoreMetaOverride = await seedRestoreMetaOverride(client, sessionId, target)
+
     // M3: registerSession 失败时清理 pi 进程（与 create 同模式）
     let session: IManagedSessionView
     try {
       session = await this.registerSession(
         id, client, sessionCwd, target.name ?? basename(sessionCwd), target.filePath,
+        undefined, undefined, undefined, undefined, restoreMetaOverride,
       )
     } catch (initErr) {
       await this.safeDestroy(id)
@@ -813,6 +873,7 @@ export class SessionLifecycle implements ISessionRegistry {
     // sidecar-binding-sync：restore 全量回填（矩阵 restore 列）——修复缺陷 A-1：原来只回填
     // launchPresetId，projectId/spawnSource/parentAgentSessionId/handedOffTo 不回填导致
     // 重开后归属/徽标丢失、广播回退默认项目。期望值来自 findScannedSession 全字段 meta。
+    // D1 裁决：restore 列 = 'none'，modelId/thinkingLevel 不经 hydrate 回填（播种由上方 metaOverride 完成）。
     hydrateBindingMeta(session, {
       launchPresetId: presetId, // 已含 BUILTIN_PRESET_IDS.FULL 兜底的解析值（resolved-in-entry）
       projectId: target.projectId,
@@ -872,15 +933,7 @@ export class SessionLifecycle implements ISessionRegistry {
     if (!source) {
       throw new Error(`fork: source session not found: ${srcSessionId}`)
     }
-    // piEntryId 缺失（RPC 路径读取的 session）时，读 JSONL 按 timestamp + role 匹配 entryId
-    let resolvedEntryId = fromPiEntryId
-    if (!resolvedEntryId) {
-      resolvedEntryId = await resolveEntryIdByTimestamp(
-        source.filePath,
-        options?.fromMessageTimestamp,
-        options?.fromMessageRole,
-      )
-    }
+    const resolvedEntryId = await this.resolveForkEntryId(source, fromPiEntryId, options)
 
     // FR-20 parentSession fallback：源 session 可能尚未落盘（pi 延迟写入窗口，
     // 内存 active session 的 sessionFilePath=undefined）。fork 时若用未落盘的临时路径
@@ -914,32 +967,11 @@ export class SessionLifecycle implements ISessionRegistry {
     this.sessionStore.invalidateScanCache()
 
     // 3. spawn 新 pi 进程（与 restore 同模式）
-    // fork 继承源 session 的 preset（设计文档 §4.5）。
-    // W-RT-5：优先读 active 源 session 的内存态 launchPresetId（pi 延迟写入窗口下
-    // sidecar 未写时，内存态兜底——getSession 返回 ManagedSession 实例，as 读 launchPresetId 字段），
-    // 再 fallback 到扫描结果的 sidecar 值（source.launchPresetId），
-    // 最后兜底 'builtin:full'（FR-10，历史 session 无 sidecar）。
-    // existsSync 兜底的**spawn cwd 参数**（pi 进程工作目录）；会话文件 header.cwd 的兜底
-    // 在 createForkedSessionFile 生成 newHeader 时完成（W1 F1/MF2——fork 文件是创建型
-    // 新文件，生成时兜底是最早、最便宜的拦截点）。
-    const sessionCwd = existsSync(source.cwd) ? source.cwd : homedir()
-    const forkPresetId = (this.get(srcSessionId) as { launchPresetId?: string } | undefined)?.launchPresetId
-      ?? source.launchPresetId
-      ?? BUILTIN_PRESET_IDS.FULL
-    // fork 继承源 session 的归属 project（D14 语义修正，2026-08-04）：
-    // 与 preset 同模式——active 内存态兑底（延迟写入窗口），fallback 扫描 sidecar 值。
-    // 无归属（undefined）= 默认项目，不写 fork sidecar。
-    const forkProjectId = (this.get(srcSessionId) as { projectId?: string } | undefined)?.projectId
-      ?? source.projectId
-    const forkResolution = await this.svc.getLaunchPresetOptions(forkPresetId, sessionCwd)
-    const allExtPaths = forkResolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
-    // Staging Mode（ADR-0056）：override 优先于源 preset 的 modelOverride/thinkingLevel（见 buildPresetClientOptions
-    // 内 C-RL-6 优先级）。undefined 时仅继承源 preset（旧行为），不影响现有 fork。
-    const presetClientOptions = buildPresetClientOptions(
-      forkResolution,
-      options?.modelOverride,
-      options?.thinkingOverride,
-    )
+    // fork 继承源 session 的 preset（设计文档 §4.5）。spawn cwd / 继承绑定 / launch 参数
+    // 解析细节见各 resolve helper（求值时序与提取前一致，均在 migrationGate 等待之前）。
+    const sessionCwd = this.resolveForkSpawnCwd(source)
+    const { forkPresetId, forkProjectId } = this.resolveForkInheritedBindings(srcSessionId, source)
+    const { forkResolution, allExtPaths, presetClientOptions } = await this.resolveForkLaunch(sessionCwd, forkPresetId, options)
     // D8-3（perf W29）：fork 同样 spawn pi——gate 等待（06 审查修正：fork 是第三处 spawn 点）。
     await migrationGate
     const client = await this.pm.createSession(forkedId, sessionCwd, {
@@ -949,6 +981,129 @@ export class SessionLifecycle implements ISessionRegistry {
       ...presetClientOptions,
     })
 
+    // 4. switch_session 附着 fork 产物正式文件 + sidecar 写入（失败清理见 attachForkedFile）
+    await this.attachForkedFile(client, srcSessionId, forkedId, forkedFilePath, forkPresetId, forkProjectId, presetClientOptions)
+
+    // 5. 初始化 managed session（adapter、入 sessions Map）
+    // FR-2 active 路径回传血缘：parentSession + forkEntryId 透传到 IManagedSessionView，
+    // toSummary 输出到 SessionSummary，前端据此渲染 fork 父子关系。
+    // （registerSession 失败的孤儿清理见 registerForkedSession。）
+    const session = await this.registerForkedSession(
+      forkedId, client, sessionCwd, label, forkedFilePath, sourceActive, srcSessionId, resolvedEntryId, presetClientOptions,
+    )
+
+    // W1 → A'：fork 显式 label（用户显式命名，语义性）持久化；当前前端恒不传 label
+    //（undefined no-op），WS 协议保留该字段，传入时持久化（见 persistExplicitLabel docstring）
+    await this.persistExplicitLabel(client, forkedId, label, 'forkSession')
+
+    void this.svc.fetchAndBroadcastContext(forkedId)
+    // sidecar-binding-sync：fork 选择性继承回填（矩阵 fork 列）——修复缺陷 A-2：原来只写
+    // .project.json sidecar 不 patch 内存，fork 产物活跃期广播 projectId 恒 undefined、
+    // 重启才恢复。spawnSource/parentAgentSessionId/handedOffTo 刻意不传（fork none 语义，
+    // 与防御性 unlink .agent.json 并存）。forkProjectId 无归属时 undefined → skip → 现状等价。
+    hydrateBindingMeta(session, {
+      launchPresetId: forkPresetId,
+      projectId: forkProjectId,
+      modelId: presetClientOptions.model,
+      thinkingLevel: typeof presetClientOptions.thinkingLevel === 'string' ? presetClientOptions.thinkingLevel : undefined,
+    }, 'fork')
+    const forkedSummary = this.svc.toSummary(session)
+    // S3-W2：创建入口收敛点（forkSession 路径）——新 session 诞生，插件 didCreate 投递。
+    this.svc.notifySessionCreated(forkedSummary)
+    return forkedSummary
+  }
+
+  /**
+   * fork 的 fork 点 entryId 解析：piEntryId 缺失（RPC 路径读取的 session）时，
+   * 读 JSONL 按 timestamp + role 匹配 entryId（S6 随 Facade 编排迁入）。
+   */
+  private async resolveForkEntryId(
+    source: ScannedSession,
+    fromPiEntryId: string | undefined,
+    options: ForkOptions | undefined,
+  ): Promise<string> {
+    let resolvedEntryId = fromPiEntryId
+    if (!resolvedEntryId) {
+      resolvedEntryId = await resolveEntryIdByTimestamp(
+        source.filePath,
+        options?.fromMessageTimestamp,
+        options?.fromMessageRole,
+      )
+    }
+    return resolvedEntryId
+  }
+
+  /**
+   * fork 的 spawn cwd 兜底（existsSync 存在性判定）。
+   *
+   * existsSync 兜底的**spawn cwd 参数**（pi 进程工作目录）；会话文件 header.cwd 的兜底
+   * 在 createForkedSessionFile 生成 newHeader 时完成（W1 F1/MF2——fork 文件是创建型
+   * 新文件，生成时兜底是最早、最便宜的拦截点）。
+   */
+  private resolveForkSpawnCwd(source: ScannedSession): string {
+    return existsSync(source.cwd) ? source.cwd : homedir()
+  }
+
+  /**
+   * fork 的继承绑定解析（preset + 归属 project）。
+   *
+   * W-RT-5：优先读 active 源 session 的内存态 launchPresetId（pi 延迟写入窗口下
+   * sidecar 未写时，内存态兜底——getSession 返回 ManagedSession 实例，as 读 launchPresetId 字段），
+   * 再 fallback 到扫描结果的 sidecar 值（source.launchPresetId），
+   * 最后兜底 'builtin:full'（FR-10，历史 session 无 sidecar）。
+   *
+   * fork 继承源 session 的归属 project（D14 语义修正，2026-08-04）：
+   * 与 preset 同模式——active 内存态兑底（延迟写入窗口），fallback 扫描 sidecar 值。
+   * 无归属（undefined）= 默认项目，不写 fork sidecar。
+   */
+  private resolveForkInheritedBindings(srcSessionId: string, source: ScannedSession): {
+    forkPresetId: string
+    forkProjectId: string | undefined
+  } {
+    const active = this.get(srcSessionId) as { launchPresetId?: string; projectId?: string } | undefined
+    return {
+      forkPresetId: active?.launchPresetId ?? source.launchPresetId ?? BUILTIN_PRESET_IDS.FULL,
+      forkProjectId: active?.projectId ?? source.projectId,
+    }
+  }
+
+  /**
+   * fork 的 launch 参数解析（preset 解析 + extension 求值 + presetClientOptions 构建）。
+   * Staging Mode（ADR-0056）：override 优先于源 preset 的 modelOverride/thinkingLevel（见
+   * buildPresetClientOptions 内 C-RL-6 优先级）。undefined 时仅继承源 preset（旧行为），不影响现有 fork。
+   */
+  private async resolveForkLaunch(
+    sessionCwd: string,
+    forkPresetId: string,
+    options: ForkOptions | undefined,
+  ): Promise<{
+    forkResolution: PresetResolution | undefined
+    allExtPaths: string[]
+    presetClientOptions: PresetClientOptions
+  }> {
+    const forkResolution = await this.svc.getLaunchPresetOptions(forkPresetId, sessionCwd)
+    const allExtPaths = forkResolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
+    const presetClientOptions = buildPresetClientOptions(
+      forkResolution,
+      options?.modelOverride,
+      options?.thinkingOverride,
+    )
+    return { forkResolution, allExtPaths, presetClientOptions }
+  }
+
+  /**
+   * fork 的 switch_session 附着段（W1 直附着 + W2 附着断言 + sidecar 写入家族）。
+   * 失败（L5）时清理孤儿 fork 文件（已写出但 pi 未能加载）+ 失效目录 TTL 缓存 + rethrow。
+   */
+  private async attachForkedFile(
+    client: IPiEngine,
+    srcSessionId: string,
+    forkedId: string,
+    forkedFilePath: string,
+    forkPresetId: string,
+    forkProjectId: string | undefined,
+    presetClientOptions: PresetClientOptions,
+  ): Promise<void> {
     try {
       // 4. W1（restore-fork-attach-fix F1）：pi 的 switch_session 永久重绑读写目标
       //（pi-mono session-manager.ts setSessionFile 把传入路径存为永久 sessionFile，_persist
@@ -974,6 +1129,15 @@ export class SessionLifecycle implements ISessionRegistry {
       if (forkProjectId) {
         this.sessionStore.persistProjectBinding(forkedFilePath, forkProjectId)
       }
+      // 写 model binding 到 forkedFilePath 的 sidecar（model binding）：fork 继承源模型与思考等级。
+      // effectiveModel/effectiveThinkingLevel = override > preset.modelOverride 生效值（C-RL-6 优先级）。
+      if (presetClientOptions.model) {
+        persistModelBinding(
+          forkedFilePath,
+          presetClientOptions.model,
+          typeof presetClientOptions.thinkingLevel === 'string' ? presetClientOptions.thinkingLevel : '',
+        )
+      }
     } catch (e) {
       // L5: switchSession 失败时清理孤儿 fork 文件（已写出但 pi 未能加载）
       await this.safeDestroy(forkedId)
@@ -983,19 +1147,30 @@ export class SessionLifecycle implements ISessionRegistry {
       this.sessionStore.invalidateScanCache()
       throw e
     }
+  }
 
-    // 5. 初始化 managed session（adapter、入 sessions Map）
-    // FR-2 active 路径回传血缘：parentSession + forkEntryId 透传到 IManagedSessionView，
-    // toSummary 输出到 SessionSummary，前端据此渲染 fork 父子关系。
-    // parentSession 键与 createForkedSessionFile 写入 header 的 resolvedParentSession 一致
-    //（源 sessionFilePath 落盘→用文件路径；未落盘→用源 sessionId）。
-    // M3: registerSession 失败时清理 pi 进程（与 create/restore 同模式）
+  /**
+   * fork 的 managed session 注册段（M3 + FR-2 血缘透传）。
+   * parentSession 键与 createForkedSessionFile 写入 header 的 resolvedParentSession 一致
+   *（源 sessionFilePath 落盘→用文件路径；未落盘→用源 sessionId）。
+   * 失败（L5）时清理孤儿 fork 文件（已写出但 session 未进 Map）+ 失效目录 TTL 缓存 + rethrow。
+   */
+  private async registerForkedSession(
+    forkedId: string,
+    client: IPiEngine,
+    sessionCwd: string,
+    label: string | undefined,
+    forkedFilePath: string,
+    sourceActive: IManagedSessionRecord | undefined,
+    srcSessionId: string,
+    resolvedEntryId: string,
+    presetClientOptions: PresetClientOptions,
+  ): Promise<IManagedSessionView> {
     const parentSessionKey = sourceActive?.sessionFilePath ?? srcSessionId
-    let session: IManagedSessionView
     try {
       // Staging Mode（ADR-0056）：透传 effectiveModel（presetClientOptions.model）让 fork 新 session
       // 元数据 modelId 反映实际启动模型（override > 源 preset.modelOverride）。
-      session = await this.registerSession(
+      return await this.registerSession(
         forkedId, client, sessionCwd, label ?? basename(sessionCwd), forkedFilePath,
         undefined, parentSessionKey, resolvedEntryId, presetClientOptions.model,
       )
@@ -1007,24 +1182,6 @@ export class SessionLifecycle implements ISessionRegistry {
       this.sessionStore.invalidateScanCache()
       throw initErr
     }
-
-    // W1 → A'：fork 显式 label（用户显式命名，语义性）持久化；当前前端恒不传 label
-    //（undefined no-op），WS 协议保留该字段，传入时持久化（见 persistExplicitLabel docstring）
-    await this.persistExplicitLabel(client, forkedId, label, 'forkSession')
-
-    void this.svc.fetchAndBroadcastContext(forkedId)
-    // sidecar-binding-sync：fork 选择性继承回填（矩阵 fork 列）——修复缺陷 A-2：原来只写
-    // .project.json sidecar 不 patch 内存，fork 产物活跃期广播 projectId 恒 undefined、
-    // 重启才恢复。spawnSource/parentAgentSessionId/handedOffTo 刻意不传（fork none 语义，
-    // 与防御性 unlink .agent.json 并存）。forkProjectId 无归属时 undefined → skip → 现状等价。
-    hydrateBindingMeta(session, {
-      launchPresetId: forkPresetId,
-      projectId: forkProjectId,
-    }, 'fork')
-    const forkedSummary = this.svc.toSummary(session)
-    // S3-W2：创建入口收敛点（forkSession 路径）——新 session 诞生，插件 didCreate 投递。
-    this.svc.notifySessionCreated(forkedSummary)
-    return forkedSummary
   }
 
 }

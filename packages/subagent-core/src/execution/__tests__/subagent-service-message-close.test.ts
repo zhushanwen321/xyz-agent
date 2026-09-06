@@ -20,7 +20,7 @@ const { loggerMock, killEscalationSpy } = vi.hoisted(() => ({
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner（import 链需要 runSpawn/killAllSpawnedChildren/getChildByRecord 存在）
-vi.mock("../session-runner.ts", () => ({
+vi.mock("../engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(),
   killAllSpawnedChildren: vi.fn(),
   getChildByRecord: vi.fn(() => undefined),
@@ -30,12 +30,13 @@ vi.mock("../session-runner.ts", () => ({
 }));
 
 import { createRecord, updateFromEvent } from "../execution-record.ts";
+import { createNotifyHost } from "../notify-host.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import { RecordStore } from "../record-store.ts";
 import { SubagentService } from "../subagent-service.ts";
 import type { PiLike } from "../subagent-service.ts";
 import type { ExecutionRecord } from "../types.ts";
-import { getChildByRecord } from "../session-runner.ts";
+import { getChildByRecord } from "../engine/engines/pi/session-runner.ts";
 
 // [T2④] kill 收敛入口 spy（工厂引用，断言服务侧三条路径收敛到它）
 const killRecordChildWithEscalationMock = killEscalationSpy;
@@ -95,7 +96,7 @@ function setup(): {
   pi: MockPi;
 } {
   const agentDir = makeTmpAgentDir();
-  const modelService = new ModelConfigService({ agentDir });
+  const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
   const service = new SubagentService({ cwd: agentDir, modelService });
   // [C2] pi 提为外层引用（对照 real-chain :139-140 形态）——close 现状语义断言需读
   // pi.sendMessage.mock.calls（末条通知 content 指针行），内联构造不保留引用。
@@ -121,23 +122,23 @@ describe("getRecordForAction 归属守卫（决策 3）", () => {
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("正常（rootSessionId 匹配）→ 返回可变 record", () => {
     const record = makeRecord({ rootSessionId: sessionRootId });
     store.register(record);
-    expect(service.getRecordForAction(record.id)).toBe(record);
+    expect(service.chatActions.getRecordForAction(record.id)).toBe(record);
   });
 
   it("不存在 → throw not found or not owned", () => {
-    expect(() => service.getRecordForAction("sa-nonexistent")).toThrow(/not found or not owned/);
+    expect(() => service.chatActions.getRecordForAction("sa-nonexistent")).toThrow(/not found or not owned/);
   });
 
   it("rootSessionId 不匹配 → throw not found or not owned（不区分 not found vs not owned，防信息泄露）", () => {
     const record = makeRecord({ id: "sa-other", rootSessionId: "other-session" });
     store.register(record);
-    expect(() => service.getRecordForAction("sa-other")).toThrow(/not found or not owned/);
+    expect(() => service.chatActions.getRecordForAction("sa-other")).toThrow(/not found or not owned/);
   });
 });
 
@@ -157,7 +158,7 @@ describe("closeSubagent 行为分流", () => {
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("running + force:false + 有活进程 → 置 closeAfterRound=true（不立即终态，等轮完）", async () => {
@@ -167,7 +168,7 @@ describe("closeSubagent 行为分流", () => {
     const record = makeRecord({ status: "running" });
     store.register(record);
 
-    await service.closeSubagent(record, false);
+    await service.chatActions.closeSubagent(record, false);
 
     expect(record.closeAfterRound).toBe(true);
     expect(record.status).toBe("running"); // 仍 running
@@ -181,7 +182,7 @@ describe("closeSubagent 行为分流", () => {
     record.sessionFile = path.join(agentDir, "test.jsonl");
     store.register(record);
 
-    await service.closeSubagent(record, false);
+    await service.chatActions.closeSubagent(record, false);
 
     expect(record.status).toBe("closed");
     expect(store.getMutable(record.id)).toBeUndefined(); // archived
@@ -191,7 +192,7 @@ describe("closeSubagent 行为分流", () => {
     const record = makeRecord({ status: "running", sessionFile: path.join(agentDir, "run.jsonl") });
     store.register(record);
 
-    await service.closeSubagent(record, true);
+    await service.chatActions.closeSubagent(record, true);
 
     // v4 B-1：cancelled 折入 closed（closedReason='cancelled' 区分用户取消语义）
     expect(record.status).toBe("closed");
@@ -203,7 +204,7 @@ describe("closeSubagent 行为分流", () => {
     const record = makeRecord({ status: "closed" });
     store.register(record);
 
-    await service.closeSubagent(record, false);
+    await service.chatActions.closeSubagent(record, false);
 
     expect(record.status).toBe("closed"); // 不变
   });
@@ -223,7 +224,7 @@ describe("closeSubagent 行为分流", () => {
     expect(hasIdleTimer(record.id)).toBe(true);
 
     try {
-      await service.closeSubagent(record, false);
+      await service.chatActions.closeSubagent(record, false);
     } finally {
       disarmIdleTimer(record.id); // 断言失败路径的兜底清理
     }
@@ -242,7 +243,7 @@ describe("closeSubagent 行为分流", () => {
     record.sessionFile = path.join(agentDir, "path-b.jsonl");
     store.register(record);
 
-    await service.closeSubagent(record, false);
+    await service.chatActions.closeSubagent(record, false);
 
     expect(record.status).toBe("closed");
     expect(record.closedReason).toBe("user-close");
@@ -269,7 +270,7 @@ describe("closeSubagent 行为分流", () => {
     expect(hasIdleTimer(record.id)).toBe(true);
 
     try {
-      await service.closeSubagent(record, true);
+      await service.chatActions.closeSubagent(record, true);
     } finally {
       disarmIdleTimer(record.id); // 断言失败路径的兜底清理
     }
@@ -299,7 +300,7 @@ describe("cancelBackground CAS 抢锁（A2-1）——cancel 迟到不覆写已�
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("record 已 closed 未 archive（doFinalizeRecord Step 0 await 窗口形态）→ cancel 返回 false，不覆写终态/不写 tombstone/不 notify/不 archive", () => {
@@ -354,7 +355,7 @@ describe("[M5] closeAfterRound 消费点挂 onRoundSettled（chatMode 轮完成�
   afterEach(() => {
     service.dispose();
     _resetLifecycleState();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("热路径轮完成（onRoundSettled）+ closeAfterRound=true → 消费标志终态化（closed+user-close + archive）", async () => {
@@ -428,7 +429,7 @@ describe("[C2] close 现状语义 + sessionFile 条件透传", () => {
   afterEach(() => {
     service.dispose();
     _resetLifecycleState();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
 	it("close 语义：轮次通知（含指针行）发出后 closeAfterRoundSettled 终态化 + 终态通知，两条都送达", async () => {
@@ -473,8 +474,10 @@ describe("[C2] close 现状语义 + sessionFile 条件透传", () => {
 
     // running + 无活进程（getChildByRecord mock undefined）→ isResumable 放行 →
     // 非 chatMode 映射 closed 通知，立即 flush（无其他 running background）
-    const svc = service as unknown as { notifyComplete(r: ExecutionRecord): void };
-    svc.notifyComplete(record);
+    // [D4-①] notifyComplete 已随通知簇搬至 notify-host——按轴直接构造（同 pi/store
+    // 注入，行为与经 Service 的原路径等价；dedup 集为空与单次调用断言相容）
+    createNotifyHost({ getPi: () => pi, listRunning: () => store.listRunning(), getIsIdle: () => undefined })
+      .notifyComplete(record);
 
     expect(pi.sendMessage).toHaveBeenCalledTimes(1);
     const msg = pi.sendMessage.mock.calls[0]![0] as {
@@ -493,8 +496,8 @@ describe("[C2] close 现状语义 + sessionFile 条件透传", () => {
     record.sessionFile = path.join(agentDir, "c2-chat.jsonl");
     store.register(record);
 
-    const svc = service as unknown as { notifyComplete(r: ExecutionRecord): void };
-    svc.notifyComplete(record);
+    createNotifyHost({ getPi: () => pi, listRunning: () => store.listRunning(), getIsIdle: () => undefined })
+      .notifyComplete(record);
 
     expect(pi.sendMessage).toHaveBeenCalledTimes(1);
     const msg = pi.sendMessage.mock.calls[0]![0] as {
@@ -526,7 +529,7 @@ describe("[C-4] onRoundSettled 轮次增量 + [C-1] close 终态通知", () => {
   afterEach(() => {
     service.dispose();
     _resetLifecycleState();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   /** 真实回调链（与生产一致：agent_settled → onRoundSettled），turns 经 updateFromEvent 累积。 */
@@ -601,7 +604,7 @@ describe("[C-4] onRoundSettled 轮次增量 + [C-1] close 终态通知", () => {
       updateFromEvent(record, { type: "text_delta", delta: "LAST-ROUND-INCREMENT" });
       updateFromEvent(record, { type: "turn_end" });
       settleRound(record); // 第 1 条：轮次通知
-      await service.closeSubagent(record, false); // idle close（D2 路径②）
+      await service.chatActions.closeSubagent(record, false); // idle close（D2 路径②）
     } finally {
       disarmIdleTimer(record.id);
     }
@@ -651,7 +654,7 @@ describe("[C-4] onRoundSettled 轮次增量 + [C-1] close 终态通知", () => {
     record.sessionFile = path.join(agentDir, "oneshot-close.jsonl");
     store.register(record);
 
-    await service.closeSubagent(record, false); // resumable → closeChatIdle → notifyClosed 拒绝
+    await service.chatActions.closeSubagent(record, false); // resumable → closeChatIdle → notifyClosed 拒绝
 
     expect(record.status).toBe("closed");
     expect(pi.sendMessage).not.toHaveBeenCalled();
@@ -672,7 +675,7 @@ describe("[C-4] onRoundSettled 轮次增量 + [C-1] close 终态通知", () => {
       updateFromEvent(record, { type: "turn_end" });
       settleRound(record); // 轮终：onRoundSettled 写 record.result = "ok"
       expect(record.result).toBe("ok"); // 前提锚点：轮终真实值在位
-      await service.closeSubagent(record, false); // idle close → completeRecord + archive
+      await service.chatActions.closeSubagent(record, false); // idle close → completeRecord + archive
     } finally {
       disarmIdleTimer(record.id);
     }

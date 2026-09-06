@@ -17,7 +17,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useExtensionUIStore } from '@/stores/extension-ui'
-import type { ExtensionUIRequest } from '@/api/domains/extension'
+import type { ExtensionUIRequest } from '@xyz-agent/core/transport/api/domains/extension'
 
 beforeEach(() => {
   setActivePinia(createPinia())

@@ -2,13 +2,13 @@
  * ModelService 单测 —— 瘦身后的 switchModel 编排行为验证。
  *
  * session 级状态（modelId/thinkingLevel/inputTokens/usagePercent）单一 owner 是 SessionService；
- * ModelService 瘦身后职责仅为「广播 config.defaults」+ 委托 SessionService.switchModel
- * 做 session 级 RPC/缓存/broadcast。usagePercent 不再在此计算。
+ * ModelService 瘦身后职责仅为委托 SessionService.switchModel 做 session 级 RPC/缓存/broadcast。
+ * D4 移除 config.defaults 广播——全局默认回归 Settings 配置单一语义。
  *
- * 全局默认模型持久化归 pi 侧 setModel（D1d 移除 xyz 冗余写，消除双写窗口）。
+ * 全局默认模型持久化：pi 0.84.4 实装中 setModel 不写 settings.json，
+ * xyz 不再冗余写（D1d）。
  *
- * 测试边界：ModelService 是编排层（session 级委托 sessionService，
- * config.defaults 广播委托 broker）。全部依赖 mock，不 spawn pi、不碰真配置文件。
+ * 测试边界：ModelService 是编排层（session 级委托 sessionService）。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ModelService, ModelDiscoveryError } from '../src/services/model-service.js'
@@ -88,7 +88,7 @@ describe('ModelService · switchModel 编排（瘦身后）', () => {
     expect(sessionService.switchModel).toHaveBeenCalledWith('s1', 'anthropic', 'claude-4')
   })
 
-  it('不再冗余写 configService.setDefaultModel（D1d：pi 侧 setModel 已持久化，xyz 双写会开丢字段窗口）', async () => {
+  it('不再冗余写 configService.setDefaultModel（D1d：pi 0.84.4 setModel 不持久化全局默认，xyz 也不写）', async () => {
     const sessionService = makeMockSessionService()
     const configService = makeMockConfigService([])
     const { broker } = makeMockBroker()
@@ -103,7 +103,7 @@ describe('ModelService · switchModel 编排（瘦身后）', () => {
     expect(configService.setDefaultModel).not.toHaveBeenCalled()
   })
 
-  it('广播 config.defaults（全局默认模型，landing Composer fallback）', async () => {
+  it('D4：switchModel 不再广播 config.defaults（全局默认回归 Settings 配置单一语义）', async () => {
     const sessionService = makeMockSessionService()
     const configService = makeMockConfigService([])
     const { broker, broadcasts } = makeMockBroker()
@@ -113,12 +113,9 @@ describe('ModelService · switchModel 编排（瘦身后）', () => {
 
     await svc.switchModel('s1', 'openai' as ProviderId, 'gpt-4')
 
-    const configDefaults = broadcasts.find((m) => m.type === 'config.defaults')
-    expect(configDefaults).toBeDefined()
-    expect(configDefaults!.payload).toMatchObject({
-      defaultModel: 'openai/gpt-4',
-      source: 'model-switch',
-    })
+    // D4：session 级切换不再改全局默认，config.defaults 帧不产生
+    const configDefaults = broadcasts.filter((m) => m.type === 'config.defaults')
+    expect(configDefaults).toHaveLength(0)
   })
 
   it('不再自己广播 session.state_changed（交由 sessionService.switchModel 内部负责）', async () => {
@@ -131,9 +128,9 @@ describe('ModelService · switchModel 编排（瘦身后）', () => {
 
     await svc.switchModel('s1', 'anthropic' as ProviderId, 'claude-4')
 
-    // ModelService 只广播 config.defaults，不广播 session.state_changed
+    // D4：ModelService 不再广播任何消息（config.defaults 已移除，session.state_changed 由 sessionService 负责）
     const types = broadcasts.map((m) => m.type)
-    expect(types).toContain('config.defaults')
+    expect(types).not.toContain('config.defaults')
     expect(types).not.toContain('session.state_changed')
   })
 

@@ -19,11 +19,12 @@ import type { UiRequest } from "./dialog-queue.ts";
 // 类型再导出：dialog-queue.ts 是 UiRequest/UiResponse/UiRequestHandler 的规范来源，
 // 本模块再导出供测试 import（避免测试直接依赖 dialog-queue 内部实现）。
 export type { UiRequest, UiRequestHandler, UiResponse } from "./dialog-queue.ts";
-import type { SessionRunnerContext } from "./session-runner.ts";
-import type { ExtensionUiRequest } from "./spawn-event-adapter.ts";
-import { respond } from "./stdin-writer.ts";
+import type { SessionRunnerContext } from "./engine/engines/pi/session-runner.ts";
+import type { ExtensionUiRequest } from "./engine/engines/pi/spawn-event-adapter.ts";
+import { respond } from "./engine/engines/pi/stdin-writer.ts";
 import { parseChannel } from "./ui-channels.ts";
 import { notifyMissingHandlerGlobal } from "./ui-request-observability.ts";
+import { toErrorMessage } from "../core/error-message.ts";
 
 const logger = getLogger("subagents");
 
@@ -62,7 +63,7 @@ export function createUiRequestQueue(
     // .finally 照常释放 processing 推进队列（单个请求失败不阻塞后续 UI 请求）。
     handleUiRequest(child, id, request, ctx, signal)
       .catch((err: unknown) => {
-        const m = err instanceof Error ? err.message : String(err);
+        const m = toErrorMessage(err);
         logger.error(`[subagents] ui request ${id} (${request.method}) failed unexpectedly: ${m}`);
       })
       .finally(() => {
@@ -157,28 +158,58 @@ async function handleUiRequest(
     // [R3] 子进程已退出，跳过写入
     if (signal?.aborted) return;
     logger.error("[subagents] uiRequestHandler threw", {
-      detail: err instanceof Error ? err.message : String(err),
+      detail: toErrorMessage(err),
     });
     respond(child, id, { cancelled: true }, signal);
   }
 }
 
+/** method-specific 字段值守卫（与原 inline 判定 1:1：`typeof === "string"` / `"number"` / `Array.isArray`）。 */
+function isStringValue(value: unknown): boolean {
+  return typeof value === "string";
+}
+
+function isNumberValue(value: unknown): boolean {
+  return typeof value === "number";
+}
+
+function isArrayValue(value: unknown): boolean {
+  return Array.isArray(value);
+}
+
+/** extractMethodFields 字段复制规格表（与 Pi rpc-types.ts 1:1，序 = 原复制序）。
+ *  guard = in 命中后的值类型守卫（验不过不复制）；null = 仅 in 检查直赋
+ *（原 statusText/widgetLines/widgetPlacement 无类型守卫的形态）。 */
+const METHOD_FIELD_COPY_SPECS: ReadonlyArray<{
+  key: string;
+  guard: ((value: unknown) => boolean) | null;
+}> = [
+  { key: "title", guard: isStringValue },
+  { key: "options", guard: isArrayValue },
+  { key: "message", guard: isStringValue },
+  { key: "placeholder", guard: isStringValue },
+  { key: "prefill", guard: isStringValue },
+  { key: "notifyType", guard: isStringValue },
+  { key: "statusKey", guard: isStringValue },
+  { key: "statusText", guard: null },
+  { key: "widgetKey", guard: isStringValue },
+  { key: "widgetLines", guard: null },
+  { key: "widgetPlacement", guard: null },
+  { key: "text", guard: isStringValue },
+  { key: "timeout", guard: isNumberValue },
+];
+
 /** 从 ExtensionUiRequest 提取 method-specific 字段到 UiRequest（与 Pi rpc-types.ts 1:1）。
- *  按 method 变体类型安全地复制对应字段；缺失字段不复制（保持 UiRequest 可选）。 */
+ *  按 method 变体类型安全地复制对应字段；缺失字段不复制（保持 UiRequest 可选）。
+ *  断言说明：source/out 的 Record 断言仅为动态 key 索引，复制经 in 检查 + guard 运行时守卫。 */
 function extractMethodFields(req: ExtensionUiRequest): Partial<UiRequest> {
   const out: Partial<UiRequest> = {};
-  if ("title" in req && typeof req.title === "string") out.title = req.title;
-  if ("options" in req && Array.isArray(req.options)) out.options = req.options;
-  if ("message" in req && typeof req.message === "string") out.message = req.message;
-  if ("placeholder" in req && typeof req.placeholder === "string") out.placeholder = req.placeholder;
-  if ("prefill" in req && typeof req.prefill === "string") out.prefill = req.prefill;
-  if ("notifyType" in req && typeof req.notifyType === "string") out.notifyType = req.notifyType;
-  if ("statusKey" in req && typeof req.statusKey === "string") out.statusKey = req.statusKey;
-  if ("statusText" in req) out.statusText = req.statusText;
-  if ("widgetKey" in req && typeof req.widgetKey === "string") out.widgetKey = req.widgetKey;
-  if ("widgetLines" in req) out.widgetLines = req.widgetLines;
-  if ("widgetPlacement" in req) out.widgetPlacement = req.widgetPlacement;
-  if ("text" in req && typeof req.text === "string") out.text = req.text;
-  if ("timeout" in req && typeof req.timeout === "number") out.timeout = req.timeout;
+  const source: Record<string, unknown> = req;
+  for (const { key, guard } of METHOD_FIELD_COPY_SPECS) {
+    if (!(key in source)) continue;
+    const value = source[key];
+    if (guard !== null && !guard(value)) continue;
+    (out as Record<string, unknown>)[key] = value;
+  }
   return out;
 }

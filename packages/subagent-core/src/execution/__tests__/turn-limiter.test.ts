@@ -1,7 +1,7 @@
 // src/__tests__/turn-limiter.test.ts
 import { describe, expect, it, vi } from "vitest";
 
-import { createTurnLimiter } from "../turn-limiter.ts";
+import { createTurnLimiter } from "../engine/engines/pi/turn-limiter.ts";
 
 describe("createTurnLimiter", () => {
   it("does nothing before maxTurns", () => {

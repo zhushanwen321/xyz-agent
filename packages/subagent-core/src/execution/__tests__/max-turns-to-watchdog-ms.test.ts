@@ -23,7 +23,7 @@ import {
   maxTurnsToWatchdogMs,
   resolveSpawnWatchdogMs,
   SPAWN_WATCHDOG_ENV,
-} from "../session-runner.ts";
+} from "../engine/engines/pi/session-runner.ts";
 
 const MIN_MS = 60_000;
 /** watchdog floor（session-runner WATCHDOG_FLOOR_MINUTES=30 的毫秒值）。 */

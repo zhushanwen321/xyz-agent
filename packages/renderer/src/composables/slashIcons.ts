@@ -6,7 +6,7 @@
  * - @xyz-agent/ui 把 key 绑定到 lucide 组件（SLASH_ICON_COMPONENTS，跨前端壳共享 SSOT）
  * - 本文件仅保持 renderer 消费方 import 路径不变（CommandPopover / Composer / CommandDocPanel）
  *
- * 命令专属 icon key 推断（iconKeyForCommand）已在 core 实现，消费方直接
- * `import { iconKeyForCommand } from '@xyz-agent/core'`（见 stores/command.ts）。
+ * 命令专属 icon key 推断（iconKeyForCommand）已在 core 实现（domain/new-task-search/command-store.ts），
+ * 消费方直接 `import { iconKeyForCommand } from '@xyz-agent/core'`。
  */
 export { SLASH_ICON_COMPONENTS } from '@xyz-agent/ui'

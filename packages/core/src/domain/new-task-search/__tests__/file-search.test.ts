@@ -20,14 +20,14 @@ function fileNode(path: string, name?: string): FileNode {
 
 /** 构造 useFileSearch 依赖（端口 mock） */
 function makeDeps(overrides?: {
-  fileCandidates?: ReturnType<typeof vi.fn>
-  watchFileChanges?: ReturnType<typeof vi.fn>
+  fileCandidates?: FileCandidatesPort['getFileCandidates'] & ReturnType<typeof vi.fn>
+  watchFileChanges?: FileChangeWatchPort['watchFileChanges'] & ReturnType<typeof vi.fn>
 }) {
   const fileSearchStore = createFileSearchStore()
   const fileCandidates: FileCandidatesPort['getFileCandidates'] =
-    overrides?.fileCandidates ?? vi.fn(async () => [] as FileNode[])
+    overrides?.fileCandidates ?? vi.fn(async (_sessionId: string): Promise<FileNode[]> => [])
   const watchFileChanges: FileChangeWatchPort['watchFileChanges'] =
-    overrides?.watchFileChanges ?? vi.fn(() => () => {})
+    overrides?.watchFileChanges ?? vi.fn((_sid: string, _cb: (sid: string) => void) => () => {})
   return {
     fileSearchStore,
     deps: { fileSearchStore, fileCandidates, watchFileChanges },

@@ -365,3 +365,27 @@ describe('plugin-bootstrap deactivate clears local tool handlers (Fix-7)', () =>
     }])
   })
 })
+
+describe('plugin-bootstrap activate lifecycle branch (U09 重构前覆盖缺口补测)', () => {
+  it("activate for a module that was never loaded → posts {type:'error', error:'Module not loaded'}", async () => {
+    const errorPosts: Array<{ type: string; pluginId?: string; error?: string }> = []
+    // 覆盖 beforeEach 注入的 rpc 收集器：本用例只关心 error 消息；
+    // 下个用例的 beforeEach 会重新注入 rpc 收集器，无跨用例污染
+    setPostMessage((msg: unknown) => {
+      const m = msg as { type: string; pluginId?: string; error?: string }
+      if (m.type === 'error') errorPosts.push(m)
+    })
+
+    await handleMessage({
+      type: 'activate',
+      pluginId: 'never-loaded-plugin',
+      pluginDir: '/tmp/never-loaded-plugin',
+      event: { type: 'onStartupFinished' },
+    })
+    await new Promise(resolve => setImmediate(resolve))
+
+    expect(errorPosts).toEqual([
+      { type: 'error', pluginId: 'never-loaded-plugin', error: 'Module not loaded' },
+    ])
+  })
+})

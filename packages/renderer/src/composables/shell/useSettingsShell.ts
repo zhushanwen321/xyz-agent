@@ -7,7 +7,7 @@
  * matchMedia 系统色监听仍在旧 useSettings，ui ProviderEditModal 的 3 个注入 key 无 provide 点。
  *
  * 本模块导出两个函数：
- *  - bootstrapSettingsCore()：在 App.vue setup（连接前）调用——platform 注入 + transport 注入 +
+ *  - bootstrapSettingsCore()：在 App.vue setup（连接前）调用——transport 注入 +
  *    core useSettings().init()（挂常驻订阅）。上提是为消除「订阅注册晚于 sendInitialState 首推」竞态
  *    （[HISTORICAL] 2026-08-05，详见该函数注释）。
  *  - useSettingsShell()：在 AppShell setup（连接后渲染）调用——provide 3 个 ui 注入 key +
@@ -19,8 +19,8 @@
  *
  * [HISTORICAL] 2026-08-04：providePlatform 原只在此调用，但 AppShell 仅在连接成功后渲染
  * （App.vue v-if connectionState==='connected'）→ core ws-client.connect 的 getPlatform()
- * fail-fast 死锁（永远「连接中」）。注入已上提至 main.ts（platform/desktop-platform.ts），
- * 此处保留原调用（providePlatform 幂等，模块级单例覆盖无害）。
+ * fail-fast 死锁（永远「连接中」）。注入已上提至 main.ts；platform 装配分叉已收敛为
+ * main.ts 的 resolvePlatform() 唯一一处（本函数原有的兜底注入段已删——D2 R2 收敛）。
  *
  * core 零 DOM（架构 §11.0.1 DOM 审计）：applySystemToDom + matchMedia 是浏览器 API，下沉壳。
  * 完整 bootstrap.ts 合并（跨域 transport/session/extension-host 统一编排）留给后续壳整合 wave，
@@ -39,9 +39,6 @@ import {
   applySystemToDom,
 } from '@xyz-agent/ui/features/settings'
 import { createSettingsTransport } from './settings-transport-adapter'
-import { provideDesktopPlatform } from '@/platform/desktop-platform'
-import { createMockPlatform } from '@/mock/mock-ws'
-import { providePlatform } from '@xyz-agent/core'
 import { useToast } from '@/composables/useToast'
 import { useQuotaConfigure } from '@/composables/features/model/useQuotaConfigure'
 import { config } from '@/api'
@@ -49,25 +46,20 @@ import { setLocale } from '@/i18n'
 import type { Locale } from '@/i18n'
 
 /**
- * settings 域核心初始化（platform 注入 + transport 注入 + 订阅注册）。
+ * settings 域核心初始化（transport 注入 + 订阅注册）。
  *
  * [HISTORICAL] 2026-08-05 模型选择器数据丢失修复：原订阅注册（useSettings().init）在 AppShell setup
  * 调用，但 AppShell 仅在 connectionState==='connected' 时渲染（App.vue v-if）→ 订阅注册永远晚于
  * WS 连接 sendInitialState 首推 → 首条 model.list / config.defaults 投递到空 handler Set → 丢失 →
  * settingsStore.models / defaultModel 永空 → 模型选择器下拉空 + landing 按钮文案空。
  *
- * 本函数上提到 App.vue setup（与 useConnection().init 同级、在 onMounted 连接前）调用，确保订阅在
+ * 本函数上提到 App.vue setup（在 onMounted bootstrap 提交连接编排前）调用，确保订阅在
  * 首推前注册，从根因消除竞态。dispose 不在此触发（留 App.vue onBeforeUnmount），订阅跨断重连常驻
  * （global handler 存于模块级 Map，dispatcher 重连后复用同一 handler，无需重注册）。
  *
- * providePlatform 幂等（main.ts 已先注入，模块级单例覆盖），重复调用无害。
+ * platform 注入不在本函数职责内（原兜底注入段已删）：分叉唯一装配点 = main.ts resolvePlatform()。
  */
 export function bootstrapSettingsCore(): void {
-  if (import.meta.env.VITE_MOCK === 'true') {
-    providePlatform(createMockPlatform())
-  } else {
-    provideDesktopPlatform()
-  }
   provideSettingsTransport(createSettingsTransport())
   void useSettings().init()
 }

@@ -20,14 +20,14 @@ import type {
   MarkdownSegment,
 } from '@/composables/logic/markdown'
 
-// stub shiki：避免真实 WASM/语法加载；codeToHtml 计数同时用作「前缀零重渲染」的可观测探针
+// stub shiki：避免真实语法加载（fine-grained 后入口是 shiki/core）；codeToHtml 计数同时用作「前缀零重渲染」的可观测探针
 const fakeCodeToHtml = vi.fn((code: string) => `<pre class="shiki"><code>${code}</code></pre>`)
 
 /** 每用例拿到干净的 markdown 模块（renderMarkdown 内部缓存 markdown-it 实例 + highlighter 单例） */
 async function freshModule(): Promise<typeof import('@/composables/logic/markdown')> {
   vi.resetModules()
-  vi.doMock('shiki', () => ({
-    createHighlighter: () =>
+  vi.doMock('shiki/core', () => ({
+    createHighlighterCore: () =>
       Promise.resolve({
         codeToHtml: fakeCodeToHtml,
         getLoadedLanguages: () => ['typescript', 'javascript', 'vue'],
@@ -180,6 +180,40 @@ describe('findStableBoundary — 9 形态矩阵（精确 offset）', () => {
     expect(findStableBoundary('   \n')).toBe(0)
     expect(findStableBoundary('hello')).toBeNull()
     expect(findStableBoundary('hello\n')).toBe(0)
+  })
+
+  // W7 复杂度重构分支锚定：scanMarkdownBlocks 状态转移 helper 拆分后的逐分支行为快照。
+  // 各断言的预期值都以「重构前实现」实跑标定（特征锚定），守护转移条件不被提取改写。
+  it('M10 主题分隔线自成块（--- 与 *** 变体；缩进形态仍闭合段落）', async () => {
+    const { findStableBoundary } = await freshModule()
+    // 'para'(0-3) \n(4) \n(5) '---'(6-8) \n(9) \n(10) 'streaming'(11) → --- 后闭合，边界 11
+    expect(findStableBoundary('para\n\n---\n\nstreaming')).toBe(11)
+    // *** 变体同形态
+    expect(findStableBoundary('para\n\n***\n\nstreaming')).toBe(11)
+    // 缩进 2 的 --- 仍匹配 THEMATIC（前导 ≤3 空格）→ 自成块，'streaming' 行首可切 → 7
+    expect(findStableBoundary('  ---\n\nstreaming')).toBe(7)
+  })
+
+  it('M11 setext = 下划线无上方开放段落 → 按普通段落文本（不闭合、不产生边界）', async () => {
+    const { findStableBoundary } = await freshModule()
+    // '===' 前是空行（无开放段落）→ 走段落分支 paraOpen=true，'streaming' 是 lazy 续行
+    // → 全文单一开放段，唯一合法边界 0（若误判 setext 闭合会得到 6）
+    expect(findStableBoundary('para\n\n===\nstreaming')).toBe(0)
+  })
+
+  it('M12 缩进 4 的 fence 标记行是段落/缩进代码形态（不是 fence 开行）', async () => {
+    const { findStableBoundary } = await freshModule()
+    // '    ```ts' 缩进 4 > FENCE_MAX_INDENT → 不开 fence；tail 首行缩进 → 续行形态拒绝，
+    // 'para' 段开放 → 边界 0（若误判 fence 开行会得到 6）
+    expect(findStableBoundary('para\n\n    ```ts\nx')).toBe(0)
+  })
+
+  it('M13 引用行终止列表上下文：引用后的新列表标记行可作边界', async () => {
+    const { findStableBoundary } = await freshModule()
+    // '- a'(0-2) \n(3) ''(4) \n(5) '> q'(6-8) \n(9) ''(10) \n(11) '- b streaming'(12)
+    // '> q' 顶格引用行终止列表（listOpen true→false）→ '- b streaming' 不与前缀列表续并 → 边界 10
+    // （若引用不终止列表，'- b streaming' 被拒，边界退到 '> q' 行首 5）
+    expect(findStableBoundary('- a\n\n> q\n\n- b streaming')).toBe(10)
   })
 
   it('纯函数属性：同输入同输出（重复调用结果恒等）', async () => {
@@ -465,6 +499,87 @@ describe('renderIncremental — 缓存协议 / segId / 降级 / 占位', () => {
     expect(r.mode).toBe('fallback-full')
     expect(r.prefixSegments).toEqual([])
     expect(r.tailSegments.length).toBeGreaterThan(0)
+    expect(cache.boundary).toBe(0)
+  })
+
+  // W7 复杂度重构分支锚定：renderIncremental 阶段 helper 拆分后的逐分支行为快照
+  // （预期值以「重构前实现」实跑标定，守护提取不改写分支条件与执行顺序）。
+
+  it('P11 边界前进且新增稳定区全空白：只推进边界不产新段（前缀数组引用恒等）', async () => {
+    const m = await freshModule()
+    const cache = m.createIncrementalRenderCache()
+    const r1 = await m.renderIncremental('A\n\nB', cache)
+    expect(r1.stableBoundary).toBe(3)
+    expect(r1.prefixSegments.length).toBe(1)
+
+    // 第二帧尾加空行：新边界 6，piece = 'B\n\n' 含非空白 → 'B' 段并入前缀（新建数组），tail 空
+    const r2 = await m.renderIncremental('A\n\nB\n\n', cache)
+    expect(r2.mode).toBe('incremental')
+    expect(r2.stableBoundary).toBe(6)
+    expect(r2.prefixSegments).not.toBe(r1.prefixSegments)
+    expect(r2.prefixSegments.length).toBe(2)
+    expect(r2.tailSegments).toEqual([])
+    expect(cache.boundary).toBe(6)
+    expect(cache.prefixText).toBe('A\n\nB\n\n')
+
+    // 第三帧只加空行：piece = '\n\n' 全空白 → pieceSegs=[]，前缀数组原引用保留（零重渲染）
+    const r3 = await m.renderIncremental('A\n\nB\n\n\n\n', cache)
+    expect(r3.mode).toBe('incremental')
+    expect(r3.stableBoundary).toBe(8)
+    expect(r3.prefixSegments).toBe(r2.prefixSegments)
+    expect(r3.prefixSegments.length).toBe(2)
+    expect(r3.tailSegments).toEqual([])
+  })
+
+  it('P12 无 cache 且边界 0：前缀空白分支（不渲染前缀）+ tail 全文从 segId 0 起', async () => {
+    const m = await freshModule()
+    // 'hello\nworld' 单一开放段（breaks:true 同一 <p>）→ boundary 0，前缀空
+    const r = await m.renderIncremental('hello\nworld')
+    expect(r.mode).toBe('incremental')
+    expect(r.stableBoundary).toBe(0)
+    expect(r.prefixSegments).toEqual([])
+    expect(r.tailSegments.length).toBe(1)
+    expect(r.tailSegments[0].type).toBe('text')
+    expect(r.tailSegments[0].content).toContain('<br')
+    expect(r.tailSegments[0].segId).toBe(0)
+  })
+
+  it('P12b 无 cache 且 tail 全空白：tail 空白分支不渲染、不产段', async () => {
+    const m = await freshModule()
+    const r = await m.renderIncremental('A\n\nB\n\n')
+    expect(r.mode).toBe('incremental')
+    expect(r.stableBoundary).toBe(6)
+    expect(r.prefixSegments.length).toBe(1)
+    expect(r.tailSegments).toEqual([])
+  })
+
+  it('P13 空 info fence 占位：lang 归一 text、mermaid false', async () => {
+    const m = await freshModule()
+    const r = await m.renderIncremental('para\n\n```\ncode streaming', m.createIncrementalRenderCache())
+    expect(r.mode).toBe('incremental')
+    const ph = r.tailSegments[r.tailSegments.length - 1]
+    expect(ph.type).toBe('streaming-fence')
+    expect(ph.lang).toBe('text')
+    expect(ph.mermaid).toBe(false)
+    expect(ph.content).toBe('code streaming')
+  })
+
+  it('P14 env 签名失效且新边界不前进：重置走正常路径（非 fallback），env 引用同步', async () => {
+    const m = await freshModule()
+    const cache = m.createIncrementalRenderCache()
+    const envA = { filePaths: new Set(['src/a.ts']) }
+    await m.renderIncremental('A\n\nB', cache, envA)
+    expect(cache.boundary).toBe(3)
+
+    // env 引用变化 + 新内容 boundary 0：reset 后 boundary 不前进 → 前缀缓存保持空、tail 全文
+    const envB = { filePaths: new Set(['src/b.ts']) }
+    const r = await m.renderIncremental('hello\nworld', cache, envB)
+    expect(r.mode).toBe('incremental')
+    expect(r.stableBoundary).toBe(0)
+    expect(r.prefixSegments).toEqual([])
+    expect(r.tailSegments.length).toBe(1)
+    // env 引用签名已同步为新引用（下一帧同 env 命中缓存校验）
+    expect(cache.envFilePaths).toBe(envB.filePaths)
     expect(cache.boundary).toBe(0)
   })
 })

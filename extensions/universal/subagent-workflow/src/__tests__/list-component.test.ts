@@ -15,8 +15,8 @@ import { afterEach,beforeEach, describe, expect, it, vi } from "vitest";
 import type { ThemeLike } from "../interface/format.ts";
 import { SubagentsListComponent } from "../interface/list-component.ts";
 import type { KeyHandler, KeyResult, TuiLike, ViewState } from "../interface/list-shared.ts";
-import type { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
-import type { SubagentRecord } from "@zhushanwen/subagent-core/execution/types.ts";
+import type { SubagentService } from "@zhushanwen/subagent-core";
+import type { SubagentRecord } from "@zhushanwen/subagent-core";
 
 // ── KeyResult 常量（语义清晰，避到处写字面量对象） ──
 
@@ -38,12 +38,22 @@ function makeTheme(): ThemeLike {
 
 /** service stub：list-component 只调 collectRecords(limit) 单参数 + getFullRecord（[perf]
  *  选中项详情懒加载，mock 回 undefined → fullRecordOf 回退 light record，与旧行为一致）。
- *  与 tool-action.test.ts 同模式：部分对象直接断言为 SubagentService（duck-type）。 */
+ *  与 tool-action.test.ts 同模式：部分对象直接断言为 SubagentService（duck-type）。
+ *  [D4 聚合跟随] 读面经 service.queries（成员与平铺键同引用，spy 断言不受影响）。 */
 function makeService(records: SubagentRecord[] = []): SubagentService {
+  const collectRecords = vi.fn(() => records);
+  const getFullRecord = vi.fn(() => undefined as SubagentRecord | undefined);
   return {
-    collectRecords: vi.fn(() => records),
-    getFullRecord: vi.fn(() => undefined as SubagentRecord | undefined),
-  } as SubagentService;
+    collectRecords,
+    getFullRecord,
+    queries: {
+      collectRecords,
+      getFullRecord,
+      findRecord: vi.fn(() => undefined),
+      lookupRecordAnyState: vi.fn(() => undefined),
+      onChange: vi.fn(() => () => {}),
+    },
+  } as unknown as SubagentService;
 }
 
 /** record fixture（参考 tool-action.test.ts，字段见 types.ts SubagentRecord）。 */

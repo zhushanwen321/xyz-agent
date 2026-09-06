@@ -33,14 +33,14 @@ vi.mock("node:child_process", async () => {
 });
 
 // buildSpawnArgs 包装为 spy（保留真实实现）——「显式 ref 拒单不触达 spawn 参数组装」的承重断言。
-vi.mock("../session-runner.ts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../session-runner.ts")>();
+vi.mock("../engine/engines/pi/session-runner.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../engine/engines/pi/session-runner.ts")>();
   return { ...actual, buildSpawnArgs: vi.fn(actual.buildSpawnArgs) };
 });
 
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
-import { buildSpawnArgs } from "../session-runner.ts";
+import { buildSpawnArgs } from "../engine/engines/pi/session-runner.ts";
 import type { PiLike } from "../subagent-service.ts";
 import { SubagentService } from "../subagent-service.ts";
 

@@ -33,6 +33,10 @@ export interface ScannedSessionMeta {
   spawnSource?: 'user' | 'agent'
   /** 父 agent session id（从 .agent.json sidecar 读，agent-managed-session，与 infra/pi/session-file-utils 版本对齐）。 */
   parentAgentSessionId?: string
+  /** session 绑定的模型 id（从 .model.json sidecar 读，model binding，与 infra/pi/session-file-utils 版本对齐）。 */
+  modelId?: string
+  /** session 绑定的思考等级（从 .model.json sidecar 读，model binding，与 infra/pi/session-file-utils 版本对齐）。 */
+  thinkingLevel?: string
 }
 
 /** session 终态类型（W4，ADR 0042）。与 infra/pi/session-file-utils 的 SessionOutcome 结构对齐。 */
@@ -181,6 +185,10 @@ export interface ISessionStore {
    * 同文件双写方），W11 迁 sidecar（D3b 裁决）。
    */
   persistHandoffSidecar(filePath: string, newSessionId: string): void
-  /** 删除文件/目录到废纸篓（session 资源清理）。 */
-  trash(path: string): void
+  /**
+   * 删除文件/目录到废纸篓（session 资源清理）。
+   * Promise 语义（G4）：移废纸篓失败保留文件并 reject——rejection 必须传播给调用方
+   * （session-lifecycle），禁止断头成 unhandledRejection（timeout-audit-hygiene-batch u-h4）。
+   */
+  trash(path: string): Promise<void>
 }

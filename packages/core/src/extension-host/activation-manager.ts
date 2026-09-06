@@ -1,9 +1,20 @@
 /**
  * activation-manager.ts —— ActivationManager（IF7/TC6）。
  *
+ * [DORMANT] 懒激活机制当前未生效，等 runtime 激活 RPC 落地：
+ * - 生产注入 no-op trigger（renderer useExtensionHostBridge.ts 装配点：
+ *   `new ActivationManager({ trigger: { ensureActivated: async () => {} } })`）——
+ *   runtime 侧无 plugin.triggerActivation RPC（plugin-message-handler 无该 case），
+ *   壳无法适配真实 trigger。
+ * - registerActivationEvents 生产零调用（activationEvents 注册表无人填充），
+ *   仅测试调用——注册表未命中时 ensureActivated 恒 no-op。
+ * - 类本身有真实消费方（CommandRegistry.execute → ensureActivated），但在上述
+ *   两事实下整条激活链路等价于直通：不触发、不报错。
+ * runtime 落地激活 RPC 后：壳装配点换真实 trigger 适配 + bootstrap 填注册表，
+ * 本注释随之移除。
+ *
  * 懒激活状态机：查 activationEvents 注册表 → 幂等判定 → 经注入的 ActivationTrigger 触发。
- * 壳（桌面壳 bootstrap）把 runtime 激活 RPC（plugin.triggerActivation，s3 新增）适配成
- * ActivationTrigger 注入；单测注入 MockActivationTrigger（vi.fn 构造）驱动幂等与事件路由。
+ * 单测注入 MockActivationTrigger（vi.fn 构造）驱动幂等与事件路由。
  *
  * 契约（IF7）：
  * - 幂等：同一 pluginId 重复 ensureActivated 只触发一次（isActivated 缓存判定）

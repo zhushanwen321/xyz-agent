@@ -5,7 +5,7 @@
  * 是真需要 mock 测试的依赖（子进程/文件系统/线程）。
  *
  * 编排层共享类型（WorkerHandlers / LifecycleDeps）——打破 lifecycle ↔
- * error-recovery 循环依赖：2 个 engine 函数文件各自独立，共用同一组
+ * worker-message-pump 循环依赖：2 个 engine 函数文件各自独立，共用同一组
  * 依赖签名（D-12）。
  *
  * 层归属：Engine。零 infra 依赖（AC-1）。
@@ -71,7 +71,7 @@ export interface WorkerHost {
 
 /**
  * Worker 线程事件回调集合——WorkerHost.start 的入参，由 lifecycle
- * 构造并注入。2 个 engine 文件（lifecycle / error-recovery）共用此签名，
+ * 构造并注入。2 个 engine 文件（lifecycle / worker-message-pump）共用此签名，
  * 避免各自定义形状不一致的 handler bag（打破循环依赖）。
  *
  * 所有回调返回 Promise——允许 engine 层在回调内做 await persistState 等异步操作。
@@ -88,7 +88,7 @@ export interface WorkerHandlers {
 // ── 编排层共享类型 2: LifecycleDeps ────────────────────────────
 
 /**
- * lifecycle / error-recovery 2 个 engine 函数文件的共同依赖 bag。
+ * lifecycle / worker-message-pump 2 个 engine 函数文件的共同依赖 bag。
  *
  * 取代旧 4 个 Context factory（errorHandlerContext / agentCallContext /
  * budgetCallbacks / 旧 terminate bag，AC-2 目标）。函数签名 `(deps: LifecycleDeps, ...)`
@@ -142,7 +142,7 @@ export interface LifecycleDeps {
  * workflow() 嵌套调用回调（可选）。Worker 脚本内调 workflow(name, args) 时触发。
  *
  * 由 Interface 层 makeDeps 注入（闭包捕获 registry + deps）。Engine 层的
- * error-recovery.handleWorkerMessage 收到 workflow-call 消息后调本回调，
+ * worker-message-pump.handleWorkerMessage 收到 workflow-call 消息后调本回调，
  * 拿到子 workflow 执行结果后 postMessage(workflow-result) 回 worker。
  *
  * 不注入时 workflow() 返回 error result（向后兼容，不影响非嵌套场景）。

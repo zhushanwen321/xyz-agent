@@ -44,7 +44,6 @@ describe("resolveAgentOpts schema prompt wording + M2 content passthrough", () =
       prompt: "x",
       agent: "/abs/path/worker.md",
       description: "test",
-      slug: "test",
     };
     const result = resolveAgentOpts(opts);
 

@@ -49,7 +49,8 @@ function createMockSessionStore(mainSessionFile: string, mainSessionId: string, 
     readSessionJsonlText: () => null,
     readSessionEndMeta: () => null,
     persistHandoffSidecar: () => {},
-    trash: () => {},
+    // G4/u-h4：port trash 签名改 Promise<void>（失败保留文件并 reject），本测试不触删除路径
+    trash: () => Promise.resolve(),
   }
 }
 
@@ -70,7 +71,7 @@ describe('SessionService.getSubagents', () => {
   })
 
   afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true })
+    rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('extracts subagent list from main session JSONL', async () => {
@@ -196,7 +197,7 @@ describe('SessionService.getSubagentHistory', () => {
   })
 
   afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true })
+    rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     if (prevDataDir === undefined) delete process.env.XYZ_AGENT_DATA_DIR
     else process.env.XYZ_AGENT_DATA_DIR = prevDataDir
   })

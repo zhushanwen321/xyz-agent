@@ -5,7 +5,7 @@ import * as path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { getPiInvocation } from "../pi-invocation.ts";
+import { getPiInvocation } from "../engine/engines/pi/pi-invocation.ts";
 import { RELAY_ENV_NODE, RELAY_ENV_SCRIPT, RELAY_ENV_SOCKET } from "../relay-env.ts";
 
 describe("getPiInvocation", () => {

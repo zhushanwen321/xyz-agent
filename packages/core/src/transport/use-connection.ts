@@ -17,35 +17,41 @@
  * - visibilityState / addEventListener → visibility 端口（isVisible/onVisibilityChange）
  * - VITE_MOCK/DEV 环境标志 → env 端口（isMock/isDev）
  * - 对话流清理（chat finalize / extension UI pending）→ onRuntimeUnavailable 端口
- * - 入站 dispatcher 经 configureRouteInbound(ports) 安装，effects 经端口注入——
- *   本文件零 import 任何 store（renderer useMessageEffects 实现回调，§11.4）
- * - WS 能力复用 core ws-client（同一模块级单例；renderer lib/ws-client 是 re-export shim）
+ * - 入站 dispatcher 经 configureRouteInbound() 安装（缺省直连 transport/api 真实模块，
+ *   D3 后壳层不再注入三件套），effects 经端口注入——本文件零 import 任何 store
+ *   （renderer useMessageEffects 实现回调，§11.4）
+ * - WS 能力复用 core ws-client（同一模块级单例）
  *
- * 依赖方向：use-connection → ws-client + coordination/route-inbound + shared（端口常量）。
+ * 依赖方向：use-connection → ws-client + transport/api/pending + coordination/route-inbound
+ *   + shared（端口常量）。
  */
 import { watch } from 'vue'
+import type { ServerMessage } from '@xyz-agent/shared'
 import { connect, disconnect, getState, onMessage, onQueueDrop, setFailed, setRestarting } from './ws-client'
 import {
   configureRouteInbound,
   type InboundEffects,
-  type TransportPorts,
 } from '../coordination/route-inbound'
 import { resubscribeAll } from '../coordination/subscription-state'
+import * as pendingApi from './api/pending'
+import { transportUnavailableError } from './errors'
 import { BASE_PORT, DEV_PORT_OFFSET } from '@xyz-agent/shared'
 
 // ── 端口契约（§10.2 D-1：renderer 装配点注入实现） ─────────────────
 
 /**
- * use-connection 的壳层端口面。
+ * use-connection 的壳层端口面（D3 收窄后：全部是真随壳变化的端口）。
  *
  * renderer（composables/useConnection.ts 装配点）注入实现：
  * - ipc → lib/ipc（getRuntimePort/getRuntimePortOffset/onRuntimePort/restartRuntime 等）
  * - visibility → visibilityState + visibilitychange 监听（壳层 DOM 实现）
  * - env → VITE_MOCK / DEV（core 不能读构建环境标志，由壳读）
- * - pending/events/subscribe → TransportPorts 三件套（configureRouteInbound 透传）
  * - effects → useMessageEffects（renderer 层 store 副作用，§11.4）
- * - toast/t → 壳层 UI/i18n
+ * - t → 壳层 i18n
  * - onRuntimeUnavailable → runtime 崩溃/重启用尽时的对话流清理
+ *
+ * pending/events/subscribe 三件套已删除（D3）：入站分发与 pending 清理直连
+ * core transport/api 真实模块，不再经壳注入。
  */
 export interface ConnectionPorts {
   ipc: {
@@ -69,11 +75,7 @@ export interface ConnectionPorts {
     isMock: boolean
     isDev: boolean
   }
-  pending: TransportPorts['pending']
-  events: TransportPorts['events']
-  subscribe: TransportPorts['subscribe']
   effects: InboundEffects
-  toast: { error(message: string): void }
   t(key: string, params?: Record<string, unknown>): string
   /** runtime 崩溃/重启用尽清理（renderer 实现：chat finalize + extension UI pending 清理） */
   onRuntimeUnavailable(reason: 'restart' | 'disconnect'): void
@@ -166,20 +168,25 @@ function armDisconnectGrace(): void {
 /**
  * 安装入站分发器（幂等：仅安装一次）。onMessage 占用 ws-client 单槽。
  *
- * configureRouteInbound 一次性注入三件套端口（pending/events/subscribe）+ effect 回调
- * （session.exited/message.complete/session.subagents/session.workflowUpdate/全局 error），
- * 内部 setSubscriptionPorts 把端口灌入 core subscription-state（gap 检测副作用依赖）。
+ * configureRouteInbound 缺省直连 transport/api 真实模块（D3：pending/events/subscribe
+ * 三件套不再经壳注入）+ 注入 effect 回调（session.exited/message.complete/
+ * session.subagents/session.workflowUpdate/全局 error），内部 setSubscriptionPorts 把
+ * subscribe RPC + replay dispatcher 灌入 core subscription-state（gap 检测副作用依赖）。
+ *
+ * dispatcher 可选注入（D9）——core 内部测试 seam，与 configureRouteInbound 的可选 ports
+ * 同体例，不出现在壳装配面（壳装配仍只调 useConnection().init()）：注入时直接安装
+ * （不调 configureRouteInbound，defaultPorts 不参与），测试可经真实 configureRouteInbound
+ * 的 TransportPorts 显式传参替换三件套，消 vi.mock 模块内部；缺省按现状构造，生产行为不变。
  */
-function ensureDispatcher(ports: ConnectionPorts): void {
+export function ensureDispatcher(
+  ports: ConnectionPorts,
+  dispatcher?: (msg: ServerMessage) => void,
+): void {
   if (dispatcherInstalled) return
   dispatcherInstalled = true
-  const dispatcher = configureRouteInbound(
-    { pending: ports.pending, events: ports.events, subscribe: ports.subscribe },
-    ports.effects,
-  )
   // route-inbound 是消息分发单一真相源（ADR-0060：raw-message-tap 旁路已移除）。
   // ExtensionHost 经 events.onCrossSession/onGlobal 正规通道订阅。
-  removeTransportListener = onMessage(dispatcher)
+  removeTransportListener = onMessage(dispatcher ?? configureRouteInbound(undefined, ports.effects))
 }
 
 /**
@@ -274,10 +281,9 @@ export function useConnection() {
       // 没了 = 流物理不可能恢复，不走断连宽限（等下去没有意义），且清掉已 armed 的宽限
       // timer（避免到期二次触发）。
       if (newState === 'restarting' || newState === 'failed') {
-        ports.pending.rejectAll(
-          Object.assign(
-            new Error(ports.t(newState === 'restarting' ? 'connection.runtimeRestarting' : 'connection.runtimeUnavailable')),
-            { code: 'disconnected' },
+        pendingApi.rejectAll(
+          transportUnavailableError(
+            ports.t(newState === 'restarting' ? 'connection.runtimeRestarting' : 'connection.runtimeUnavailable'),
           ),
         )
         clearDisconnectGrace()
@@ -286,10 +292,9 @@ export function useConnection() {
       }
       if (oldState === 'connected' && newState !== 'connected') {
         // 网络断连路径（ws onclose → disconnected/reconnecting）：code='disconnected' 供调用方
-        // （useFileTree catch 等）识别传输断开类失败（对齐 request.ts send-fail reject）。
-        ports.pending.rejectAll(
-          Object.assign(new Error(ports.t('connection.disconnectedError')), { code: 'disconnected' }),
-        )
+        // （useFileTree catch 等）识别传输断开类失败——构造统一走 transport/errors 工厂单点
+        // （与 request.ts send-fail reject 同源，D10①）。
+        pendingApi.rejectAll(transportUnavailableError(ports.t('connection.disconnectedError')))
         // 在途流不立即收口：等重连结果（ring 回放补齐终态），DISCONNECT_GRACE_MS 超时兜底。
         // 语义论证见 armDisconnectGrace 注释。
         armDisconnectGrace()
@@ -303,16 +308,13 @@ export function useConnection() {
     // pre-auth 队列丢弃 → 立即 reject 对应 pending（任何模式都安装，对齐 stateWatch 体例）。
     // 队列消息与 request 层 pending 一一对应：TCP open → auth.result 窗口内 send() 入队的
     // 消息在 auth 失败 / 断连清队时永无 reply，若不在此 reject，pending 要等 request 层
-    // 65s sweep 才收口。错误构造对齐 stateWatch 断连分支（code='disconnected' 供调用方
+    // 65s sweep 才收口。错误构造走 transport/errors 工厂单点（code='disconnected' 供调用方
     // 识别传输断开类失败）；无 id 消息（非 RPC 型，如 flush 前 close 的 notify）无 pending 可收，跳过。
     if (!removeQueueDropListener) {
       removeQueueDropListener = onQueueDrop((msgs) => {
         for (const msg of msgs) {
           if (typeof msg.id !== 'string') continue
-          ports.pending.reject(
-            msg.id,
-            Object.assign(new Error(ports.t('connection.disconnectedError')), { code: 'disconnected' }),
-          )
+          pendingApi.reject(msg.id, transportUnavailableError(ports.t('connection.disconnectedError')))
         }
       })
     }

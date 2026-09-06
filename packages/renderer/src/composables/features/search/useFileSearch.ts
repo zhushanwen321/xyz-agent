@@ -9,10 +9,10 @@
  * 范式对称 useFileTree（同属 composables/features，跨 store 编排在 composable 层 watch，
  * stores 间禁止 import）。
  *
- * 依赖方向：useFileSearch → fileSearchStore + api/composer + chatStore（watch only）。
+ * 依赖方向：useFileSearch → fileSearchStore（core 单例壳适配，D7 收口）+ api/composer + chatStore（watch only）。
  */
 import type { Ref } from 'vue'
-import { useFileSearchStore } from '@/stores/fileSearch'
+import { useFileSearchStore } from '@/composables/features/search/useFileSearchStore'
 import { composer as composerApi } from '@/api'
 import { watchFileChangesForInvalidation } from '@/composables/features/file-tree/useFileChangeInvalidation'
 import type { FileNode } from '@xyz-agent/shared'

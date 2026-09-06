@@ -11,7 +11,7 @@
  *   启动瞬间的读取窗口可接受——与旧 pinia 版 setup 同步读的差异）
  *
  * 消费方契约：core 实例的 ref 需显式 .value（无 pinia 解包）。
- * 旧 pinia stores/command.ts 无消费方后保留（后续 wave 删除，本 wave 不触碰）。
+ * [D7 收口] 旧 pinia stores/command.ts 已删（renderer-deepening u2.1），本单例是唯一 command SSOT。
  */
 import { createCommandStore, getPlatform } from '@xyz-agent/core'
 

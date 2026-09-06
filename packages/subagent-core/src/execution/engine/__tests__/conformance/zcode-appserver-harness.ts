@@ -38,7 +38,7 @@ export interface AppserverHarness {
   dispose(): Promise<void>;
 }
 
-/** 组装连到 fake-appserver 的常驻引擎（XYZ_ZCODE_MODE=appserver 定向——不探不降）。 */
+/** 组装连到 fake-appserver 的常驻引擎（单一 app-server 形态——2026-09 起无模式分派）。 */
 export function makeAppserverHarness(opts: AppserverHarnessOptions = {}): AppserverHarness {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "zcode-conformance-appserver-"));
   const dataDir = path.join(tmpRoot, "data");
@@ -78,9 +78,6 @@ export function makeAppserverHarness(opts: AppserverHarnessOptions = {}): Appser
     sources: { v2ConfigPath: v2Path },
     processEnv: {
       PATH: process.env.PATH ?? "",
-      // 定向 appserver（R5 D2①）：不探不降——conformance 测常驻路径本体，缺省路径的
-      // 探针门控/降级链归 zcode-engine-degrade.test.ts
-      XYZ_ZCODE_MODE: "appserver",
       FAKE_STATE_FILE: stateFile,
       FAKE_SESSION_SCENARIO: scenarioFile,
     },
@@ -92,7 +89,7 @@ export function makeAppserverHarness(opts: AppserverHarnessOptions = {}): Appser
     dataDir,
     dispose: () =>
       engine.dispose().finally(() => {
-        fs.rmSync(tmpRoot, { recursive: true, force: true });
+        fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
       }),
   };
 }
@@ -114,8 +111,8 @@ export function readFakeState(file: string): Array<Record<string, unknown>> {
 /** fake 收到的客户端帧方法名序列（abort 链「stop 先于杀链」断言面）。 */
 export function sentMethodNames(stateFile: string): string[] {
   return readFakeState(stateFile)
-    .map((e) => e["frame"])
-    .filter((f): f is Record<string, unknown> => typeof f === "object" && f !== null && typeof f["method"] === "string")
+    .map((e) => (e as Record<string, unknown>)["frame"])
+    .filter((f): f is Record<string, unknown> => typeof f === "object" && f !== null && typeof (f as Record<string, unknown>)["method"] === "string")
     .map((f) => f["method"] as string);
 }
 

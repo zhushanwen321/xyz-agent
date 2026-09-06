@@ -33,6 +33,11 @@ interface FileShard {
  */
 type ScanRowResult = UsageRow | 'skip' | null
 
+/** 空分片降级（scanFile 读流失败时返回）：mtime/size 键保留，文件未变更期间不重读。 */
+function emptyShard(fileStat: { mtimeMs: number; size: number }): FileShard {
+  return { mtimeMs: fileStat.mtimeMs, size: fileStat.size, rows: [], skippedLines: 0, cwd: null }
+}
+
 // ── 服务主体 ─────────────────────────────────────────────────
 
 export class UsageStatsService {
@@ -138,40 +143,54 @@ export class UsageStatsService {
       input: createReadStream(filePath, { encoding: 'utf-8' }),
       crlfDelay: Infinity,
     })
+    // rl error 吞转发（2026-09-04 事故审计）：readline 把 input 流 error 转发到
+    // interface 实例 re-emit，与 for-await 的 iterator listener 多播共存；文件级
+    // 容错由下方 try/catch 承担（双保险：iterator rejection / 裸 emit 两路都不逃逸）
+    rl.on('error', () => {})
 
-    for await (const line of rl) {
-      if (!line.trim()) continue
+    try {
+      for await (const line of rl) {
+        if (!line.trim()) continue
 
-      let entry: Record<string, unknown>
-      try {
-        entry = JSON.parse(line) as Record<string, unknown>
-      } catch {
-        skippedLines++
-        continue
+        let entry: Record<string, unknown>
+        try {
+          entry = JSON.parse(line) as Record<string, unknown>
+        } catch {
+          skippedLines++
+          continue
+        }
+
+        // 提取 cwd：逐行读直到找到第一个 type==='session' entry
+        // 容错首行为 session_info 的旧文件——继续读找 session entry
+        if (!foundSessionEntry && entry.type === 'session' && typeof entry.cwd === 'string') {
+          cwd = entry.cwd
+          foundSessionEntry = true
+        }
+
+        // 按原顺序尝试三类判定；'skip' 短路（timestamp 无效行不再计入任何桶）
+        const row =
+          this.rowFromAssistant(entry, cwd) ??
+          this.rowFromToolResult(entry, cwd) ??
+          this.rowFromCompactionEntry(entry, cwd)
+
+        if (row === 'skip') {
+          skippedLines++
+          continue
+        }
+        if (row) {
+          rows.push(row)
+        }
+
+        // 其余行 continue
       }
-
-      // 提取 cwd：逐行读直到找到第一个 type==='session' entry
-      // 容错首行为 session_info 的旧文件——继续读找 session entry
-      if (!foundSessionEntry && entry.type === 'session' && typeof entry.cwd === 'string') {
-        cwd = entry.cwd
-        foundSessionEntry = true
-      }
-
-      // 按原顺序尝试三类判定；'skip' 短路（timestamp 无效行不再计入任何桶）
-      const row =
-        this.rowFromAssistant(entry, cwd) ??
-        this.rowFromToolResult(entry, cwd) ??
-        this.rowFromCompactionEntry(entry, cwd)
-
-      if (row === 'skip') {
-        skippedLines++
-        continue
-      }
-      if (row) {
-        rows.push(row)
-      }
-
-      // 其余行 continue
+    } catch {
+      // 单文件读失败 → 空分片降级，不打断整个聚合（与上方 readdir 失败返回空结果的
+      // 容错语义一致）；mtime/size 键保留，下次变更时重读。
+      // 范围声明：本 catch 同时兜住循环体内 rowFrom* 的逻辑异常（非仅流错误）——有意
+      // 取舍，聚合容错优先于显式失败；代价是该文件数据点静默缺失至文件变更。排查
+      // 入口 = 空分片 + skippedLines 归零（收紧为仅流错误须 rethrow 逻辑异常，属行为
+      // 变更另走设计）。
+      return emptyShard(fileStat)
     }
 
     return {

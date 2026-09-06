@@ -15,8 +15,20 @@ import { clearEngines, registerEngine } from "../registry.ts";
 function stubEngine(id: string): EnginePort {
   return {
     id,
-    capabilities: () => ({ conversation: "unsupported", steer: "unsupported", sandbox: "none" }),
-    probe: async () => ({ ok: true, engineVersion: "test" }),
+    capabilities: () => ({
+      schemaEnforcement: "emulated",
+      steer: "unsupported",
+      conversation: "unsupported",
+      personaInjection: "prompt",
+      eventGranularity: "coarse",
+      sandbox: "none",
+      sessionRead: "outcome-only",
+      resume: "unsupported",
+      interrupt: "kill-only",
+      permissionMode: "ignored",
+      maxTurns: false,
+    }),
+    probe: async () => ({ ok: true, engineVersion: "test", checks: [] }),
     run: async () => {
       throw new Error("unused");
     },
@@ -38,7 +50,7 @@ beforeEach(() => {
 
 afterEach(() => {
   clearEngines();
-  fs.rmSync(tmpRoot, { recursive: true, force: true });
+  fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 describe("syncEnginesFile", () => {

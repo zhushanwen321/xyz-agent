@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import * as mockApi from '@/api/mock'
+import * as mockApi from '@xyz-agent/core/transport/mock'
 import { useChatStore } from '@/stores/chat'
 
 describe('FG1 mock + chat store 数据流', () => {

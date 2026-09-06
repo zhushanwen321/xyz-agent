@@ -109,25 +109,56 @@ export interface LoadedSessionsIndex {
 // 条目级校验（ES3：单条目损坏仅丢弃该条目，不放大为整体失效）
 // ============================================================
 
-/** 正条目类型谓词：镜像 isIdentityData（session-reconstructor.ts:244-253）的字段检查 + 索引特有戳/形态字段。 */
-function isPositiveIndexEntry(raw: unknown): raw is SessionsIndexEntry {
-  if (typeof raw !== "object" || raw === null) return false;
-  const v = raw as Record<string, unknown>;
+// 以下字段组谓词按原 isPositiveIndexEntry 的检查顺序切分（stamp/identity → 会话描述
+// → 可选 string → depth/model/thinkingLevel），组内与组间短路求值顺序不变。
+
+/** 执行模式白名单：宽容历史 "sync" 值（ExecutionMode 现值仅 "background"，"sync" 是旧数据合法值，放行不丢弃）。 */
+function isKnownIndexMode(mode: unknown): boolean {
+  return mode === "sync" || mode === "background";
+}
+
+/** 戳 + 身份字段组（mtimeMs/size/id/agent/mode）。 */
+function hasStampAndIdentityFields(v: Record<string, unknown>): boolean {
   return (
     typeof v.mtimeMs === "number" &&
     typeof v.size === "number" &&
     typeof v.id === "string" &&
     typeof v.agent === "string" &&
-    // 宽容历史 "sync" 值（ExecutionMode 现值仅 "background"，"sync" 是旧数据合法值，放行不丢弃）
-    (v.mode === "sync" || v.mode === "background") &&
-    typeof v.task === "string" &&
-    typeof v.slug === "string" &&
-    typeof v.startedAt === "number" &&
+    isKnownIndexMode(v.mode)
+  );
+}
+
+/** 会话描述字段组（task/slug/startedAt）。 */
+function hasSessionDescFields(v: Record<string, unknown>): boolean {
+  return typeof v.task === "string" && typeof v.slug === "string" && typeof v.startedAt === "number";
+}
+
+/** 可选 string 字段组（rootSessionId/parentRecordId：undefined 表示缺失，合法）。 */
+function hasOptionalStringFields(v: Record<string, unknown>): boolean {
+  return (
     (v.rootSessionId === undefined || typeof v.rootSessionId === "string") &&
-    (v.parentRecordId === undefined || typeof v.parentRecordId === "string") &&
+    (v.parentRecordId === undefined || typeof v.parentRecordId === "string")
+  );
+}
+
+/** 深度/模型/思考档字段组（model 空串合法——尾部探测拿不到 model 的合法结果，DS4）。 */
+function hasModelFields(v: Record<string, unknown>): boolean {
+  return (
     typeof v.depth === "number" &&
     typeof v.model === "string" && // 空串合法（DS4）
     (v.thinkingLevel === undefined || typeof v.thinkingLevel === "string")
+  );
+}
+
+/** 正条目类型谓词：镜像 isIdentityData（session-reconstructor.ts:244-253）的字段检查 + 索引特有戳/形态字段。 */
+function isPositiveIndexEntry(raw: unknown): raw is SessionsIndexEntry {
+  if (typeof raw !== "object" || raw === null) return false;
+  const v = raw as Record<string, unknown>;
+  return (
+    hasStampAndIdentityFields(v) &&
+    hasSessionDescFields(v) &&
+    hasOptionalStringFields(v) &&
+    hasModelFields(v)
   );
 }
 
@@ -153,6 +184,86 @@ export function validateIndexEntry(
 // 读侧（IF1：永不抛）
 // ============================================================
 
+/** 磁盘顶层已通过形态校验后的窄化视图（version 数值 + entries 对象）。
+ *  type alias（非 interface）——赋给 Record<string, unknown> 依赖隐式索引签名。 */
+type ValidIndexTop = {
+  version: number;
+  entries: Record<string, unknown>;
+};
+
+/** unknown → Node fs 错误码（非 Error 或无 code → undefined）。 */
+function errorCodeOf(err: unknown): string | undefined {
+  return err instanceof Error && "code" in err && typeof err.code === "string" ? err.code : undefined;
+}
+
+/** 读索引文件文本。读失败 → null：ENOENT = 正常首跑保持静默；其余读失败（EACCES 等
+ * 长期权限异常）留 debug 线索——空索引回退本身可自愈，但权限类异常不会自己消失，需可诊断。 */
+function readIndexFile(indexPath: string, encDir: string): string | null {
+  try {
+    return fs.readFileSync(indexPath, "utf-8");
+  } catch (err) {
+    const code = errorCodeOf(err);
+    if (code !== "ENOENT") {
+      logger.debug("[subagents] sessions-index read failed, fallback to empty", {
+        detail: { dir: encDir, code },
+      });
+    }
+    return null;
+  }
+}
+
+/** JSON.parse 索引内容。损坏（截断/外部编辑）→ null，走 debug：可降级自愈场景，不 console.error。 */
+function parseIndexJson(raw: string, indexPath: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    logger.debug("[subagents] sessions-index corrupted JSON, fallback to empty", {
+      detail: { path: indexPath, error: err instanceof Error ? err.message : String(err) },
+    });
+    return null;
+  }
+}
+
+/** DM1 头部字段形态守卫（version 数值 + entries 非空 object 非数组）。 */
+function isIndexTopHeader(v: Record<string, unknown>): v is ValidIndexTop {
+  return (
+    typeof v.version === "number" &&
+    typeof v.entries === "object" &&
+    v.entries !== null &&
+    !Array.isArray(v.entries)
+  );
+}
+
+/** 顶层结构校验（DM1）。不符 → null（两条 debug 文案与判定条件一一对应）。 */
+function readTopLevel(parsed: unknown, indexPath: string): ValidIndexTop | null {
+  if (typeof parsed !== "object" || parsed === null) {
+    logger.debug("[subagents] sessions-index invalid top-level shape, fallback to empty", {
+      detail: { path: indexPath },
+    });
+    return null;
+  }
+  const top = parsed as Record<string, unknown>;
+  if (!isIndexTopHeader(top)) {
+    logger.debug("[subagents] sessions-index invalid header fields, fallback to empty", {
+      detail: { path: indexPath },
+    });
+    return null;
+  }
+  return top;
+}
+
+/** 逐条校验收集：坏条目仅丢弃该条目，其余保留（ES3 条目级降级）。 */
+function collectValidEntries(
+  entriesObj: Record<string, unknown>,
+): Map<string, SessionsIndexEntry | SessionsIndexNegativeEntry> {
+  const entries = new Map<string, SessionsIndexEntry | SessionsIndexNegativeEntry>();
+  for (const [key, value] of Object.entries(entriesObj)) {
+    const entry = validateIndexEntry(value);
+    if (entry !== undefined) entries.set(key, entry);
+  }
+  return entries;
+}
+
 /**
  * 读取指定目录（<enc> 段）的 sessions-index.json。永不抛：
  *   - 文件不存在/读失败/JSON.parse 失败/顶层结构不符/版本低于自身
@@ -167,50 +278,14 @@ export function loadIndex(encDir: string): LoadedSessionsIndex {
   const empty: LoadedSessionsIndex = { entries: new Map(), higherVersion: false };
   const indexPath = path.join(encDir, INDEX_FILENAME);
 
-  let raw: string;
-  try {
-    raw = fs.readFileSync(indexPath, "utf-8");
-  } catch (err) {
-    // ENOENT = 正常首跑，保持静默；其余读失败（EACCES 等长期权限异常）留 debug 线索
-    // ——空索引回退本身可自愈，但权限类异常不会自己消失，需可诊断。
-    const code = err instanceof Error && "code" in err && typeof err.code === "string" ? err.code : undefined;
-    if (code !== "ENOENT") {
-      logger.debug("[subagents] sessions-index read failed, fallback to empty", {
-        detail: { dir: encDir, code },
-      });
-    }
-    return empty;
-  }
+  const raw = readIndexFile(indexPath, encDir);
+  if (raw === null) return empty;
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    // 损坏（截断/外部编辑）走 debug：可降级自愈场景，不 console.error
-    logger.debug("[subagents] sessions-index corrupted JSON, fallback to empty", {
-      detail: { path: indexPath, error: err instanceof Error ? err.message : String(err) },
-    });
-    return empty;
-  }
+  const parsed = parseIndexJson(raw, indexPath);
+  if (parsed === null) return empty;
 
-  if (typeof parsed !== "object" || parsed === null) {
-    logger.debug("[subagents] sessions-index invalid top-level shape, fallback to empty", {
-      detail: { path: indexPath },
-    });
-    return empty;
-  }
-  const top = parsed as Record<string, unknown>;
-  if (
-    typeof top.version !== "number" ||
-    typeof top.entries !== "object" ||
-    top.entries === null ||
-    Array.isArray(top.entries)
-  ) {
-    logger.debug("[subagents] sessions-index invalid header fields, fallback to empty", {
-      detail: { path: indexPath },
-    });
-    return empty;
-  }
+  const top = readTopLevel(parsed, indexPath);
+  if (top === null) return empty;
 
   if (top.version > INDEX_VERSION) {
     // 高版本：整体忽略（entries 即使合法也不消费）；调用方据 higherVersion 抑制写盘
@@ -224,12 +299,7 @@ export function loadIndex(encDir: string): LoadedSessionsIndex {
     return empty;
   }
 
-  const entries = new Map<string, SessionsIndexEntry | SessionsIndexNegativeEntry>();
-  for (const [key, value] of Object.entries(top.entries)) {
-    const entry = validateIndexEntry(value);
-    if (entry !== undefined) entries.set(key, entry);
-  }
-  return { entries, higherVersion: false };
+  return { entries: collectValidEntries(top.entries), higherVersion: false };
 }
 
 // ============================================================

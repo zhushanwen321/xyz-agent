@@ -28,7 +28,7 @@
  */
 import { session as sessionApi, git as gitApi, workspace as workspaceApi } from '@/api'
 import type { ProviderId } from '@xyz-agent/shared'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import { createSessionFlow, useNewTaskFlow as useCoreNewTaskFlow } from '@xyz-agent/core'
 import type { CreateSessionFlowCtx, SessionApiPort } from '@xyz-agent/core'
 import { useSessionStore } from '@/stores/session'
@@ -41,7 +41,7 @@ import { useModel } from '@/composables/features/model/useModel'
 import { useFileTree } from '@/composables/features/file-tree/useFileTree'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useToast } from '@/composables/useToast'
-import { worktreeApi } from '@/api/domains/worktree'
+import { worktreeApi } from '@xyz-agent/core/transport/api/domains/worktree'
 import { pickDirectory } from '@/lib/ipc'
 import i18n from '@/i18n'
 

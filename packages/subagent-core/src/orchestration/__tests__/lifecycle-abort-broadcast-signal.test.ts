@@ -324,7 +324,7 @@ describe("[OR-7] signal abort listener run 终态移除", () => {
 describe("[B-2] runWorkflow fail-fast throw 路径不泄漏 signal abort listener", () => {
   /** signal 上当前真实挂载的 abort listener 数（EventTarget 权威查询，非 spy 计数）。 */
   function liveListenerCount(signal: AbortSignal): number {
-    return getEventListeners(signal).length;
+    return getEventListeners(signal, "abort").length;
   }
 
   it("budgetTimeMs 越界 fail-fast 重试 12 次 → 每次拒绝后 listener 计数归零（无 MaxListeners 累积）", async () => {

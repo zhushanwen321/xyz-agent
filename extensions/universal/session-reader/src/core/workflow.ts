@@ -18,6 +18,11 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null
 }
 
+/** unknown → string 收窄（非 string → undefined）。快照可选字符串字段的统一入口。 */
+function strOr(v: unknown): string | undefined {
+  return typeof v === 'string' ? v : undefined
+}
+
 /** 字符串截断（超 max 加省略号）。概览预览用，全文走 detail。 */
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max) + '…'
@@ -108,6 +113,22 @@ function mapBudget(b: Record<string, unknown>): WorkflowBudget {
   }
 }
 
+/** call.status 字符串收窄为合法三态（未知值 → 'pending'）。 */
+function normalizeCallStatus(raw: string): WorkflowStep['status'] {
+  return raw === 'done' || raw === 'running' || raw === 'pending' ? raw : 'pending'
+}
+
+/** 「顶层字段优先、result 回退」的 session 关联字段提取（NEW call 与 OLD value 共用形态）。 */
+function pickSessionRefs(
+  top: Record<string, unknown>,
+  result: Record<string, unknown>,
+): Pick<WorkflowStep, 'sessionId' | 'sessionFile'> {
+  return {
+    sessionId: strOr(top.sessionId) ?? strOr(result.sessionId),
+    sessionFile: strOr(top.sessionFile) ?? strOr(result.sessionFile),
+  }
+}
+
 /** NEW state.calls[] 单项 → WorkflowStep。sessionFile/sessionId 顶层优先回退 result。 */
 function mapCallToStep(call: unknown, fallbackIndex: number): WorkflowStep {
   if (!isRecord(call)) return { index: fallbackIndex, status: 'pending' }
@@ -115,36 +136,20 @@ function mapCallToStep(call: unknown, fallbackIndex: number): WorkflowStep {
   const result = isRecord(call.result) ? call.result : {}
 
   const index = typeof call.id === 'number' ? call.id : fallbackIndex
-  const rawStatus = typeof call.status === 'string' ? call.status : ''
-  const status: WorkflowStep['status'] =
-    rawStatus === 'done' || rawStatus === 'running' || rawStatus === 'pending'
-      ? rawStatus
-      : 'pending'
-
-  const sessionFile =
-    typeof call.sessionFile === 'string'
-      ? call.sessionFile
-      : typeof result.sessionFile === 'string'
-        ? result.sessionFile
-        : undefined
-  const sessionId =
-    typeof call.sessionId === 'string'
-      ? call.sessionId
-      : typeof result.sessionId === 'string'
-        ? result.sessionId
-        : undefined
-  const content = typeof result.content === 'string' ? result.content : undefined
+  const status = normalizeCallStatus(strOr(call.status) ?? '')
+  const refs = pickSessionRefs(call, result)
+  const content = strOr(result.content)
 
   return {
     index,
     status,
-    description: typeof opts.description === 'string' ? opts.description : undefined,
-    model: typeof opts.model === 'string' ? opts.model : undefined,
-    thinkingLevel: typeof opts.thinkingLevel === 'string' ? opts.thinkingLevel : undefined,
+    description: strOr(opts.description),
+    model: strOr(opts.model),
+    thinkingLevel: strOr(opts.thinkingLevel),
     attempts: typeof call.attempts === 'number' ? call.attempts : undefined,
     durationMs: typeof result.durationMs === 'number' ? result.durationMs : undefined,
-    sessionId,
-    sessionFile,
+    sessionId: refs.sessionId,
+    sessionFile: refs.sessionFile,
     contentPreview: content !== undefined ? truncate(content, CONTENT_PREVIEW_MAX) : undefined,
   }
 }
@@ -155,44 +160,73 @@ function mapCacheEntryToStep(entry: unknown, index: number): WorkflowStep {
   const value = isRecord(entry.value) ? entry.value : {}
   const result = isRecord(value.result) ? value.result : {}
 
-  // sessionFile: value.sessionFile 或 value.result.sessionFile（OLD 多数缺失，探针 112 文件 0）
-  const sessionFile =
-    typeof value.sessionFile === 'string'
-      ? value.sessionFile
-      : typeof result.sessionFile === 'string'
-        ? result.sessionFile
-        : undefined
-  const sessionId =
-    typeof value.sessionId === 'string'
-      ? value.sessionId
-      : typeof result.sessionId === 'string'
-        ? result.sessionId
-        : undefined
+  // sessionFile/sessionId: value.sessionFile 或 value.result.sessionFile（OLD 多数缺失，探针 112 文件 0）
+  const refs = pickSessionRefs(value, result)
   // content：真实 OLD 数据 value.content（wf-skip-ok）与测试 fixture value.result.content 并存
-  const content =
-    typeof result.content === 'string'
-      ? result.content
-      : typeof value.content === 'string'
-        ? value.content
-        : undefined
+  const content = strOr(result.content) ?? strOr(value.content)
   // OLD 无 status 字段：有 sessionFile 或非空 content → done，否则 pending
   //（空 content 如 wf-skip-ok 的 '' 不算完成标志，对齐 TC-w5-parse-old expected status='pending'；
   // content 仍提取为 contentPreview=''）
   const hasContent = content !== undefined && content.length > 0
   const status: WorkflowStep['status'] =
-    sessionFile !== undefined || hasContent ? 'done' : 'pending'
+    refs.sessionFile !== undefined || hasContent ? 'done' : 'pending'
 
   return {
     index,
     status,
     durationMs: typeof result.durationMs === 'number' ? result.durationMs : undefined,
-    sessionId,
-    sessionFile,
+    sessionId: refs.sessionId,
+    sessionFile: refs.sessionFile,
     contentPreview: content !== undefined ? truncate(content, CONTENT_PREVIEW_MAX) : undefined,
   }
 }
 
 // ---- parseRunSnapshot（unknown → WorkflowOverview | null）----
+
+/** NEW 格式装配（v=wf-run-v1/v2）：state.* / meta.* / spec.* → WorkflowOverview。 */
+function parseNewRunSnapshot(
+  snapshot: Record<string, unknown>,
+  v: 'wf-run-v1' | 'wf-run-v2',
+  runId: string,
+  stateFile: string,
+): WorkflowOverview {
+  const state = isRecord(snapshot.state) ? snapshot.state : {}
+  const meta = isRecord(snapshot.meta) ? snapshot.meta : {}
+  const spec = isRecord(snapshot.spec) ? snapshot.spec : {}
+  const callsRaw = Array.isArray(state.calls) ? state.calls : []
+  return {
+    runId,
+    stateFile,
+    status: strOr(state.status) ?? '',
+    version: v,
+    script: strOr(spec.scriptName) ?? strOr(spec.name),
+    startedAt: strOr(meta.startedAt),
+    completedAt: strOr(meta.completedAt),
+    reason: strOr(state.reason),
+    error: strOr(state.error),
+    budget: mapBudget(isRecord(state.budget) ? state.budget : {}),
+    steps: callsRaw.map((c, i) => mapCallToStep(c, i)),
+  }
+}
+
+/** OLD 格式装配（无 v）：顶层 status/name/startedAt/budget + callCache → WorkflowOverview。 */
+function parseLegacyRunSnapshot(
+  snapshot: Record<string, unknown>,
+  runId: string,
+  stateFile: string,
+): WorkflowOverview {
+  const callCacheRaw = Array.isArray(snapshot.callCache) ? snapshot.callCache : []
+  return {
+    runId,
+    stateFile,
+    status: strOr(snapshot.status) ?? '',
+    version: 'legacy',
+    script: strOr(snapshot.name),
+    startedAt: strOr(snapshot.startedAt),
+    budget: mapBudget(isRecord(snapshot.budget) ? snapshot.budget : {}),
+    steps: callCacheRaw.map((c, i) => mapCacheEntryToStep(c, i)),
+  }
+}
 
 /**
  * 把 readRunSnapshot 返回的原始快照对象类型化为 WorkflowOverview（纯逻辑零 IO）。
@@ -216,43 +250,12 @@ export function parseRunSnapshot(
   // NEW 格式（v === 'wf-run-v1' || 'wf-run-v2'，v2 读取面形状兼容 v1）
   const v = snapshot.v
   if (v === 'wf-run-v1' || v === 'wf-run-v2') {
-    const state = isRecord(snapshot.state) ? snapshot.state : {}
-    const meta = isRecord(snapshot.meta) ? snapshot.meta : {}
-    const spec = isRecord(snapshot.spec) ? snapshot.spec : {}
-    const callsRaw = Array.isArray(state.calls) ? state.calls : []
-    return {
-      runId,
-      stateFile,
-      status: typeof state.status === 'string' ? state.status : '',
-      version: v,
-      script:
-        typeof spec.scriptName === 'string'
-          ? spec.scriptName
-          : typeof spec.name === 'string'
-            ? spec.name
-            : undefined,
-      startedAt: typeof meta.startedAt === 'string' ? meta.startedAt : undefined,
-      completedAt: typeof meta.completedAt === 'string' ? meta.completedAt : undefined,
-      reason: typeof state.reason === 'string' ? state.reason : undefined,
-      error: typeof state.error === 'string' ? state.error : undefined,
-      budget: mapBudget(isRecord(state.budget) ? state.budget : {}),
-      steps: callsRaw.map((c, i) => mapCallToStep(c, i)),
-    }
+    return parseNewRunSnapshot(snapshot, v, runId, stateFile)
   }
 
   // OLD 格式（无 v，有 callCache 数组或顶层 status 字符串）
   if (Array.isArray(snapshot.callCache) || typeof snapshot.status === 'string') {
-    const callCacheRaw = Array.isArray(snapshot.callCache) ? snapshot.callCache : []
-    return {
-      runId,
-      stateFile,
-      status: typeof snapshot.status === 'string' ? snapshot.status : '',
-      version: 'legacy',
-      script: typeof snapshot.name === 'string' ? snapshot.name : undefined,
-      startedAt: typeof snapshot.startedAt === 'string' ? snapshot.startedAt : undefined,
-      budget: mapBudget(isRecord(snapshot.budget) ? snapshot.budget : {}),
-      steps: callCacheRaw.map((c, i) => mapCacheEntryToStep(c, i)),
-    }
+    return parseLegacyRunSnapshot(snapshot, runId, stateFile)
   }
 
   return null
@@ -260,71 +263,72 @@ export function parseRunSnapshot(
 
 // ---- renderWorkflowOverview（WorkflowOverview → 人类可读文本）----
 
+/** 头行：`run: <runId> [status] (script?) started=<ISO> completed?=<ISO> reason?`。 */
+function renderOverviewHead(overview: WorkflowOverview): string {
+  const headParts = [`run: ${overview.runId}`, `[${overview.status}]`]
+  if (overview.script) headParts.push(`(${overview.script})`)
+  if (overview.startedAt) headParts.push(`started=${overview.startedAt}`)
+  if (overview.completedAt) headParts.push(`completed=${overview.completedAt}`)
+  if (overview.reason) headParts.push(`reason=${overview.reason}`)
+  return headParts.join(' ')
+}
+
+/** budget max 段 `/ max=<tokens>tok $<cost> <timeMs>ms`（max 三字段全缺 → undefined 不拼）。 */
+function renderBudgetMax(b: WorkflowBudget): string | undefined {
+  const hasMax = b.maxTokens !== undefined || b.maxCost !== undefined || b.maxTimeMs !== undefined
+  if (!hasMax) return undefined
+  const maxParts: string[] = ['/ max=']
+  if (b.maxTokens !== undefined) maxParts.push(`${b.maxTokens}tok`)
+  if (b.maxCost !== undefined) maxParts.push(`$${b.maxCost}`)
+  if (b.maxTimeMs !== undefined) maxParts.push(`${b.maxTimeMs}ms`)
+  return maxParts.join('')
+}
+
+/** budget 行 `budget: used=<tokens>tok $<cost> calls=<n> / max=...`（缺省字段省略，不输出 undefined 字面量）。 */
+function renderBudgetLine(b: WorkflowBudget): string {
+  const budgetParts: string[] = ['budget:']
+  if (b.usedTokens !== undefined) budgetParts.push(`used=${b.usedTokens}tok`)
+  if (b.usedCost !== undefined) budgetParts.push(`$${b.usedCost}`)
+  if (b.totalCallCount !== undefined) budgetParts.push(`calls=${b.totalCallCount}`)
+  const maxPart = renderBudgetMax(b)
+  if (maxPart !== undefined) budgetParts.push(maxPart)
+  return budgetParts.join(' ')
+}
+
+/** steps 块单行；sessionFile 缺则标 `（无 sessionFile，OLD 格式未持久化）`（TC-wf-step-sessionfile-link）。 */
+function renderStepLine(step: WorkflowStep): string {
+  const stepParts = [`  #${step.index}`, `[${step.status}]`]
+  if (step.description) stepParts.push(step.description)
+  const tail: string[] = []
+  if (step.model) tail.push(`model=${step.model}`)
+  if (step.durationMs !== undefined) tail.push(`${step.durationMs}ms`)
+  if (step.attempts !== undefined) tail.push(`attempts=${step.attempts}`)
+  if (step.sessionId) tail.push(`call=${truncate(step.sessionId, SESSION_ID_PREVIEW_MAX)}`)
+  let line = stepParts.join(' ')
+  if (tail.length > 0) line += ' · ' + tail.join(' · ')
+  if (step.sessionFile) {
+    line += ' ' + step.sessionFile
+  } else {
+    line += ' （无 sessionFile，OLD 格式未持久化）'
+  }
+  return line
+}
+
 /**
  * 渲染 WorkflowOverview 为人类可读文本（纯逻辑零 IO）。
  *
- * 输出结构（IF-renderWorkflowOverview）：
- * - 头行：`run: <runId> [status] (script?) started=<ISO> completed?=<ISO> reason?`
- * - budget 行：`budget: used=<tokens>tok $<cost> calls=<n> / max=<tokens>tok $<cost> <timeMs>ms`
- *   （缺省字段省略，不输出 undefined 字面量）
- * - steps 块每行：`  #<index> [status] <description> · model=<model> · <durationMs>ms ·
- *   attempts=<n> · call=<sessionId截断> <sessionFile>`
- *   sessionFile 缺则标 `（无 sessionFile，OLD 格式未持久化）`（TC-wf-step-sessionfile-link）
- * - error 行（如有 state.error）
+ * 输出结构（IF-renderWorkflowOverview）：头行 → budget 行 → steps 块每行
+ * （`  #<index> [status] <description> · model=<model> · <durationMs>ms · attempts=<n> ·
+ * call=<sessionId截断> <sessionFile>`）→ error 行（如有 state.error）。
  *
  * 每个 step 的 call sessionId/sessionFile 是 LLM 跳 outline/detail 的入口（m0 resolveSessionId
  * 三形态：sessionId/绝对路径/sa-id 均可深读）。多 run 场景由 doWorkflow 循环拼接多段（w6）。
  */
 export function renderWorkflowOverview(overview: WorkflowOverview): string {
   const lines: string[] = []
-
-  // 头行
-  const headParts = [`run: ${overview.runId}`, `[${overview.status}]`]
-  if (overview.script) headParts.push(`(${overview.script})`)
-  if (overview.startedAt) headParts.push(`started=${overview.startedAt}`)
-  if (overview.completedAt) headParts.push(`completed=${overview.completedAt}`)
-  if (overview.reason) headParts.push(`reason=${overview.reason}`)
-  lines.push(headParts.join(' '))
-
-  // budget 行（缺字段省略）
-  const budgetParts: string[] = ['budget:']
-  if (overview.budget.usedTokens !== undefined) budgetParts.push(`used=${overview.budget.usedTokens}tok`)
-  if (overview.budget.usedCost !== undefined) budgetParts.push(`$${overview.budget.usedCost}`)
-  if (overview.budget.totalCallCount !== undefined) budgetParts.push(`calls=${overview.budget.totalCallCount}`)
-  const hasMax =
-    overview.budget.maxTokens !== undefined ||
-    overview.budget.maxCost !== undefined ||
-    overview.budget.maxTimeMs !== undefined
-  if (hasMax) {
-    const maxParts: string[] = ['/ max=']
-    if (overview.budget.maxTokens !== undefined) maxParts.push(`${overview.budget.maxTokens}tok`)
-    if (overview.budget.maxCost !== undefined) maxParts.push(`$${overview.budget.maxCost}`)
-    if (overview.budget.maxTimeMs !== undefined) maxParts.push(`${overview.budget.maxTimeMs}ms`)
-    budgetParts.push(maxParts.join(''))
-  }
-  lines.push(budgetParts.join(' '))
-
-  // steps 块
-  for (const step of overview.steps) {
-    const stepParts = [`  #${step.index}`, `[${step.status}]`]
-    if (step.description) stepParts.push(step.description)
-    const tail: string[] = []
-    if (step.model) tail.push(`model=${step.model}`)
-    if (step.durationMs !== undefined) tail.push(`${step.durationMs}ms`)
-    if (step.attempts !== undefined) tail.push(`attempts=${step.attempts}`)
-    if (step.sessionId) tail.push(`call=${truncate(step.sessionId, SESSION_ID_PREVIEW_MAX)}`)
-    let line = stepParts.join(' ')
-    if (tail.length > 0) line += ' · ' + tail.join(' · ')
-    if (step.sessionFile) {
-      line += ' ' + step.sessionFile
-    } else {
-      line += ' （无 sessionFile，OLD 格式未持久化）'
-    }
-    lines.push(line)
-  }
-
-  // error 行
+  lines.push(renderOverviewHead(overview))
+  lines.push(renderBudgetLine(overview.budget))
+  for (const step of overview.steps) lines.push(renderStepLine(step))
   if (overview.error) lines.push(`error: ${overview.error}`)
-
   return lines.join('\n')
 }

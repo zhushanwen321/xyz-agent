@@ -190,6 +190,7 @@ import { useProjectSkills, useGlobalSkills } from '@/composables/features/settin
 import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverTrigger'
 import { useComposerShell, type ShellInputInstance } from '@/composables/panel/composer-shell'
+import { useComposerKeydown } from '@/composables/panel/composer-keydown'
 import type { DraftStore } from '@xyz-agent/dom-core/composer/input'
 import { handleImagePaste } from '@/composables/panel/useImageAttachment'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
@@ -393,42 +394,21 @@ function onInputChange(text: string): void {
   resetBrowsing()
 }
 
-/** 键盘：staging 优先 ⏎ 提交（fork/handoff，含 streaming 中）；无 staging 时 ⏎ 发送/steer，Alt+⏎ follow-up，⇧⏎ 换行，↑/↓ 翻历史。命令浮层 open 时优先路由到浮层。 */
-function onKeydown(e: KeyboardEvent): void {
-  if (cmdOpen.value && commandPopoverRef.value?.handleKeydown(e)) return
-  if (e.isComposing) return // IME 组合中不拦截（与 useContenteditableInput 守卫一致）
-  // Staging Esc 路由：经 staging.handleEsc → activeStaging.handleEsc（fork/handoff 互斥下不会同时活跃）
-  if (staging.handleEsc(e)) return
-  // shift/ctrl/alt/meta + 方向键是选区扩展/按词移动/段首段尾跳转，放行原生行为（不拦截）
-  const bareArrow = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey
-  if (bareArrow && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-    e.preventDefault()
-    const dir = e.key === 'ArrowUp' ? 'up' : 'down'
-    if (inputRef.value?.moveCaretVertical(dir) === 'moved') return
-    if (dir === 'up') handleArrowUp()
-    else handleArrowDown()
-    return
-  }
-  if (e.key !== 'Enter' || e.shiftKey) return
-  e.preventDefault()
-  // staging（fork/handoff）优先于 steer/followUp：模式 chip 在时 Enter/Alt+Enter 均提交 staging，
-  // 不注入当前对话（streaming 中 fork-ask 合法——对源 session 只读；handoff 的 streaming
-  // 拦截在 enterHandoffMode 入口 + handleHandoffSend 兑底，此处无需区分）。
-  if (staging.activeStaging.value) {
-    onSend()
-    return
-  }
-  if (e.altKey) {
-    // Alt+⏎：压缩期间重路由到 onSend（入队待重放）——onFollowUp 无 isActive 守卫，
-    // 直通会走 pi followUp RPC 留陈旧队列。非压缩态保持 followUp。
-    if (isCompacting.value) onSend()
-    else onFollowUp()
-  } else if (isActive.value) {
-    onSteer()
-  } else {
-    onSend()
-  }
-}
+/** 键盘分发（composer-keydown.ts，U02 拆出）：staging 优先 ⏎ 提交（fork/handoff，含 streaming 中）；
+ *  无 staging 时 ⏎ 发送/steer，Alt+⏎ follow-up，⇧⏎ 换行，↑/↓ 翻历史。命令浮层 open 时优先路由到浮层。 */
+const onKeydown = useComposerKeydown({
+  cmdOpen,
+  commandPopoverRef,
+  inputRef: shellInputRef,
+  staging,
+  isActive,
+  isCompacting,
+  handleArrowUp,
+  handleArrowDown,
+  onSteer,
+  onFollowUp,
+  onSend,
+})
 
 /**
  * stop 按钮点击：先尝试取消进行中的 staging 操作（handoff inflight），否则普通 LLM turn abort。

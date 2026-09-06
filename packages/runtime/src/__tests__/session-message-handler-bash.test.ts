@@ -24,7 +24,8 @@ function makeHandler(sessionOverrides: Record<string, ReturnType<typeof vi.fn>> 
   const cap: Captured = { replies: [], errors: [] }
   const sessionService = {
     sendBash: vi.fn().mockResolvedValue({ blocked: false }),
-    abortBash: vi.fn().mockResolvedValue(undefined),
+    // P6 断言④回执真实化：abortBash 返回 { sent }，默认 sent=true（abort_bash 发出且 pi 确认）
+    abortBash: vi.fn().mockResolvedValue({ sent: true }),
     // 其他方法 stub（handler 构造可能引用，保留最小实现避免 NPE）
     sendMessage: vi.fn().mockResolvedValue({ blocked: false }),
     ensureActive: vi.fn().mockResolvedValue(undefined),
@@ -125,7 +126,7 @@ describe('SessionMessageHandler —— message.bash 路由', () => {
 })
 
 describe('SessionMessageHandler —— message.abortBash 路由', () => {
-  // T14: abortBash → 调 dispatcher.abortBash + reply status{aborted}
+  // T14: abortBash（sent=true，abort_bash 已发出且 pi 确认）→ reply status{aborted}
   it('T14: message.abortBash → 调 abortBash(sid) + reply message.status{aborted}', async () => {
     const { ctx, cap, handler } = makeHandler()
     await handler.handleSessionMessage(
@@ -143,5 +144,29 @@ describe('SessionMessageHandler —— message.abortBash 路由', () => {
       payload: { sessionId: 's1', status: 'aborted' },
     })
     expect(cap.errors).toHaveLength(0)
+  })
+
+  // T14b（P6 断言④回执真实化）：sent=false（守卫短路无 bash 可取消 / abort_bash 发送失败）
+  // → 不得谎报 aborted，走 error envelope（renderer useChat.abortBash catch → stopFailed 兜底）
+  it('T14b: abortBash 返回 {sent:false} → sendError(abort_bash_not_sent)，不得回 message.status{aborted}', async () => {
+    const { cap, handler } = makeHandler({
+      abortBash: vi.fn().mockResolvedValue({ sent: false }),
+    })
+    await handler.handleSessionMessage(
+      msg('message.abortBash', { sessionId: 's1' }),
+      WS,
+    )
+
+    // 不得回 aborted（未发送 abort 时谎报已取消 = P6 实证缺口）
+    const abortedReply = cap.replies.find((r) => r.payload.status === 'aborted')
+    expect(abortedReply).toBeUndefined()
+    expect(cap.replies).toHaveLength(0)
+    // error envelope（诚实报错）
+    expect(cap.errors).toHaveLength(1)
+    expect(cap.errors[0]).toMatchObject({
+      id: 'm1',
+      code: 'abort_bash_not_sent',
+      details: { sessionId: 's1' },
+    })
   })
 })

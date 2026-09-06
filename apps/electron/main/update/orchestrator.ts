@@ -162,7 +162,7 @@ export async function downloadUpdate(
     // 0.5 架构门控（批次 5 m8）：Intel mac 直接拒绝，不下载任何字节。
     // 落点在 downloadUpdate 入口、pickPlatformAsset 之前——预下载与手动下载共用本入口，
     // 因此预下载同样被拦住，不会先下完 ~170MB 才在 install 阶段被拒。
-    // 修复的是「静默装错架构产物」：pickPlatformAsset 对 darwin 一律返回 macArm64Zip，
+    // 修复的是「静默装错架构产物」：pickPlatformAsset 对 darwin 一律返回 macArm64Dmg，
     // Intel mac 装上 arm64 包会得到一个打不开的 app。
     if (process.platform === 'darwin' && process.arch !== 'arm64') {
       throw new UpdateUnsupportedError(
@@ -180,10 +180,14 @@ export async function downloadUpdate(
       )
     }
 
-    // 1. 选 asset
+    // 1. 选 asset。断供错误信息并入 release 页链接：存量 darwin 用户（本版本
+    //    只发 dmg 后）报错时有一键手动下载出路（设计 §3.3.3-D「错误信息可操作」）
     const asset = pickPlatformAsset(release)
     if (!asset) {
-      throw new UpdateError(`no asset for platform ${process.platform}`, 'downloading')
+      throw new UpdateError(
+        `no asset for platform ${process.platform} (release page: ${release.htmlUrl})`,
+        'downloading',
+      )
     }
 
     // 2. 下载 + 校验（downloadAsset 内部已校验 sha256/size）

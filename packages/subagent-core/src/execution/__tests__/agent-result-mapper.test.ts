@@ -57,6 +57,22 @@ describe("mapToWorkflowAgentResult (D-A10)", () => {
     expect(result.parsedOutput).toEqual(parsedData);
   });
 
+  // ── D5-③: failureKind 分诊标签透传（产出侧 output-collector → 消费侧 executeAgentCall） ──
+
+  it("failureKind 三态逐值透传（stale_context / schema_deterministic / unknown）", () => {
+    for (const kind of ["stale_context", "schema_deterministic", "unknown"] as const) {
+      const r: SubagentsAgentResult = { ...minimalResult, success: false, error: "boom", failureKind: kind };
+      const result = mapToWorkflowAgentResult(r);
+      expect(result.failureKind).toBe(kind);
+    }
+  });
+
+  it("failureKind 缺省（成功路径/上游未写）→ 不落键（消费侧视为 unknown = 可重试）", () => {
+    const result = mapToWorkflowAgentResult(minimalResult);
+    expect(result.failureKind).toBeUndefined();
+    expect("failureKind" in result).toBe(false);
+  });
+
   // ── T3.14: 失败路径 ──
 
   it("映射失败: success=false 且 error → 填入 error 字段", () => {
@@ -74,7 +90,7 @@ describe("mapToWorkflowAgentResult (D-A10)", () => {
     const result = mapToWorkflowAgentResult(r);
     expect(result.error).toBeDefined();
     expect(typeof result.error).toBe("string");
-    expect(result.error.length).toBeGreaterThan(0);
+    expect(result.error!.length).toBeGreaterThan(0);
   });
 
   it("映射成功: success=true 且 error 存在 → error=undefined（不误填）", () => {
@@ -143,7 +159,7 @@ describe("mapToWorkflowAgentResult (D-A10)", () => {
   });
 
   it("映射 toolCalls: 无 toolCalls → undefined", () => {
-    const r: SubagentsAgentResult = { ...minimalResult, toolCalls: undefined };
+    const r = { ...minimalResult, toolCalls: undefined } as unknown as SubagentsAgentResult;
     const result = mapToWorkflowAgentResult(r);
     expect(result.toolCalls).toBeUndefined();
   });

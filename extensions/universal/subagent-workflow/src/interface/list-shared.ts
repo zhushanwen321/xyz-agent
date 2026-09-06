@@ -6,8 +6,8 @@
 // 按键处理 processKey 仍留 list-view，由 list-view factory 注入给组件（KeyHandler 类型在此），
 // 故 list-component 无需 import list-view，循环消除。
 
-import type { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
-import type { SubagentRecord } from "@zhushanwen/subagent-core/execution/types.ts";
+import type { SubagentService } from "@zhushanwen/subagent-core";
+import type { SubagentRecord } from "@zhushanwen/subagent-core";
 
 // ============================================================
 // 常量

@@ -71,7 +71,7 @@ vi.mock("../alive-store.ts", () => ({
   writeAliveMarker: vi.fn(),
 }));
 
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string, content: string) => {
     captured.content = content;
     const safeName = agent.replace(/[^\w.-]+/g, "_");
@@ -83,7 +83,7 @@ vi.mock("../temp-prompt.ts", () => ({
 import { spawn } from "node:child_process";
 
 import { createRecord } from "../execution-record.ts";
-import { runSpawn, type RunOptions, type SessionRunnerContext } from "../session-runner.ts";
+import { runSpawn, type RunOptions, type SessionRunnerContext } from "../engine/engines/pi/session-runner.ts";
 
 const mockSpawn = vi.mocked(spawn);
 
@@ -117,8 +117,9 @@ function makeRecord() {
   return createRecord("wt-guidance-1", {
     agent: "general-purpose",
     model: "test/model",
-    mode: "sync",
+    mode: "background",
     task: "test task",
+    slug: "test",
     startedAt: Date.now(),
     rootSessionId: "s1",
     parentRecordId: undefined,
@@ -128,7 +129,7 @@ function makeRecord() {
 
 function makeRunOpts(overrides: Partial<RunOptions> = {}): RunOptions {
   return {
-    resolved: { model: { provider: "test", id: "model" }, thinkingLevel: undefined },
+    resolved: { model: { provider: "test", id: "model", name: "Model", reasoning: false }, thinkingLevel: undefined },
     agentConfig: undefined,
     appendSystemPrompt: undefined,
     skillPath: undefined,

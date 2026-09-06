@@ -94,18 +94,18 @@ export class MacUpdater implements PlatformUpdater {
     const appBundle = path.dirname(path.dirname(path.dirname(process.execPath)))
     // 布局守卫：dirname×3 假设标准 .app/Contents/MacOS/<binary> 布局。若 execPath 不符
     // （如开发期改了 cwd、或将来改成非 .app 打包），appBundle 不以 .app 结尾，后续
-    // unzip/unlink 会破坏意外路径。提前 fail-fast 比静默写错更安全。
+    // ditto/unlink 会破坏意外路径。提前 fail-fast 比静默写错更安全。
     if (!appBundle.endsWith('.app')) {
       throw new UpdateError(`unexpected app bundle path (not .app): ${appBundle}`, 'replacing')
     }
     // toLowerCase：GitHub digest 可能返回大写 hex，而 updater.sh 的 `shasum -a 256`
     // 输出小写。注入前统一小写，避免 [ "$ACTUAL" != "$SHA256" ] 字符串比较大写 vs 小写
     // 误判为不匹配（导致正确下载被错误回滚）。download-asset.ts 的下载期校验已小写化。
-    const sha256 = release.assets.macArm64Zip?.sha256?.toLowerCase()
+    const sha256 = release.assets.macArm64Dmg?.sha256?.toLowerCase()
     if (!sha256) throw new UpdateError('mac asset missing sha256', 'downloading')
     const script = buildUpdaterScript({
       appBundle,
-      zipPath: downloadedFilePath,
+      dmgPath: downloadedFilePath,
       sha256,
       logPath: getUpdaterLogPath(),
       resultPath: getUpdateResultFile(),

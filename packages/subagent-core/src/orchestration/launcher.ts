@@ -31,7 +31,9 @@ import type { LifecycleDeps } from "./models/ports.ts";
 import type { RunSpec } from "./models/run-spec.ts";
 import type { DoneReason } from "./models/types.ts";
 import type { WorkflowRun } from "./models/workflow-run.ts";
+import type { WorkflowScript } from "./models/workflow-script.ts";
 import type { WorkflowScriptRegistry } from "./models/workflow-script-registry.ts";
+import type { LintResult } from "./script-lint.ts";
 import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
 
 // ── 常量 ─────────────────────────────────────────────────────
@@ -104,6 +106,14 @@ function pollInterval(): Promise<void> {
     const timer = setTimeout(resolve, STATUS_POLL_INTERVAL_MS);
     timer.unref?.();
   });
+}
+
+/** lint findings 摘要串（runAndWait / executeNestedWorkflow 共用同一错误文案格式）。 */
+function formatLintErrorSummary(lintResult: LintResult): string {
+  return lintResult.findings
+    .filter((f) => f.severity === "error")
+    .map((f) => `L${f.line}: ${f.message}`)
+    .join("; ");
 }
 
 /**
@@ -243,11 +253,9 @@ export async function runAndWait(
   // 2. lint 校验（失败抛错——脚本本身有问题，不应静默吞）
   const lintResult = script.validate();
   if (!lintResult.valid) {
-    const errors = lintResult.findings
-      .filter((f) => f.severity === "error")
-      .map((f) => `L${f.line}: ${f.message}`)
-      .join("; ");
-    throw new Error(`Workflow script '${name}' has lint errors: ${errors}`);
+    throw new Error(
+      `Workflow script '${name}' has lint errors: ${formatLintErrorSummary(lintResult)}`,
+    );
   }
 
   // 3. 构建 RunSpec
@@ -312,19 +320,118 @@ async function safeAbort(
 
 // ── executeNestedWorkflow（workflow() 嵌套调用实现） ────────
 
+/** 父 run 的循环检测链：[...parentChain, parentScriptName]（顶层 run 无 chain 时前段为空）。 */
+function buildParentChain(parentRun: WorkflowRun): string[] {
+  return [...(parentRun.spec.parentWorkflowChain ?? []), parentRun.spec.scriptName];
+}
+
+/** Step 2 的 signal 继承产物（childController + 父 signal/回调——finally 移除 listener 用）。 */
+interface InheritedSignal {
+  childController: AbortController;
+  parentSignal: AbortSignal | undefined;
+  onParentAbort: () => void;
+}
+
+/**
+ * Step 2: signal 继承——子 run 响应父 run abort（parentController → childController）。
+ *
+ * [L-2] onParentAbort 提取为命名函数以便 finally removeEventListener，防子 run 完成后
+ * parentSignal 上残留 listener（多次嵌套调用会累积）。
+ */
+function inheritParentSignal(parentRun: WorkflowRun): InheritedSignal {
+  const childController = new AbortController();
+  const parentSignal = parentRun.runtime?.controller.signal;
+  const onParentAbort = (): void => childController.abort();
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      childController.abort();
+    } else {
+      parentSignal.addEventListener("abort", onParentAbort, { once: true });
+    }
+  }
+  return { childController, parentSignal, onParentAbort };
+}
+
+/**
+ * Step 4: 构建 RunSpec（共享父 Budget + 循环链）。
+ *
+ * budget 共享（F-7 方案 B）：子 run 直接复用父 Budget 引用（budgetRef），consume 实时
+ * 累加到父 Budget，消除并行嵌套下的超支窗口，无需 sync-back。
+ */
+function buildNestedSpec(
+  args: Record<string, unknown>,
+  parentRun: WorkflowRun,
+  script: WorkflowScript,
+  chain: string[],
+): RunSpec {
+  return {
+    scriptSource: script.toExecutable(),
+    args,
+    budgetRef: parentRun.state.budget,
+    // Run-level override 传播（与父 run 对齐）：子 run 继承父 run 的 model/thinkingLevel，
+    // 否则嵌套 workflow 丢失父 run 的模型指定，回落主 agent 模型。
+    model: parentRun.spec.model,
+    thinkingLevel: parentRun.spec.thinkingLevel,
+    scriptName: script.name,
+    scriptPath: script.path,
+    description: script.meta.description,
+    parameters: script.meta.parameters,
+    parentWorkflowChain: chain,
+  };
+}
+
+/**
+ * 嵌套 workflow timeout 从父 run 完整传导：父 spec.budgetTimeMs 显式设定时原样作为子 run
+ * 轮询 deadline（不 min(DEFAULT) 封顶——旧实现把父 time:2h 截断到 10min，违背「显式传参
+ * 完整生效」语义）；父未设 → undefined，无 deadline（不限）。
+ * [U2] 预算语义统一：父 budgetTimeMs <=0（含 0/负）与 undefined 同义 = 不限——与
+ * lifecycle.runWorkflow 的 budgetTimeMs 判定（>0 才挂 scheduleTimeBudget）对齐。
+ */
+function resolveNestedTimeoutMs(parentRun: WorkflowRun): number | undefined {
+  const raw = parentRun.spec.budgetTimeMs;
+  return raw !== undefined && raw > 0 ? raw : undefined;
+}
+
+/**
+ * Step 6: 结果转换（budget 已通过共享 budgetRef 实时同步，无需 sync-back）。
+ * completed → content = 字符串原样 / 其余 JSON.stringify；非 completed → error result。
+ */
+function toNestedCallResult(
+  name: string,
+  result: WorkflowRunResult,
+): { content: string; parsedOutput?: unknown; error?: string } {
+  if (result.reason === "completed") {
+    const scriptResult = result.scriptResult;
+    return {
+      content:
+        typeof scriptResult === "string"
+          ? scriptResult
+          : JSON.stringify(scriptResult ?? ""),
+      parsedOutput:
+        typeof scriptResult === "object" && scriptResult !== null
+          ? scriptResult
+          : undefined,
+    };
+  }
+  return {
+    content: "",
+    error: result.error ?? `Workflow '${name}' ended: ${result.reason}`,
+  };
+}
+
 /**
  * workflow() 嵌套调用的 Engine 实现。
  *
- * Worker 脚本内调 workflow(name, args) 时，error-recovery.dispatchWorkflowCall 路由
+ * Worker 脚本内调 workflow(name, args) 时，worker-message-pump.dispatchWorkflowCall 路由
  * 到 deps.onWorkflowCall，后者（Interface 层 makeDeps 注入）委托本函数。
  *
- * 流程（6 步）：
+ * 流程（6 步，Step 2-6 的机制细节见各 helper）：
  * 1. 循环检测——name 已在 parentWorkflowChain 中则拒绝（防 A→B→A 死循环）
- * 2. signal 继承——子 run 响应父 run abort（parentController → childController）
+ * 2. signal 继承——子 run 响应父 run abort（inheritParentSignal）
  * 3. registry.get + lint——失败返回 error result（不抛错，让脚本 soft-fail）
  * 4. 构建 RunSpec（共享父 Budget 引用 + parentWorkflowChain 延长）+ runWorkflow
  * 5. pollRunToResult 轮询至 done（复用 runAndWait 的轮询逻辑）
- * 6. 结果转换（budget 已通过共享引用实时同步）
+ * 6. 结果转换（toNestedCallResult）
  *
  * 不走 runAndWait：runAndWait 内部构建 RunSpec 不支持 parentWorkflowChain 与 budget
  * 共享引用，故直接构建 spec + runWorkflow + pollRunToResult。
@@ -342,10 +449,7 @@ export async function executeNestedWorkflow(
   deps: LauncherDeps,
 ): Promise<{ content: string; parsedOutput?: unknown; error?: string }> {
   // Step 1: 循环检测——parentWorkflowChain 不存在时为 []（顶层 run）
-  const chain = [
-    ...(parentRun.spec.parentWorkflowChain ?? []),
-    parentRun.spec.scriptName,
-  ];
+  const chain = buildParentChain(parentRun);
   if (chain.includes(name)) {
     return {
       content: "",
@@ -354,21 +458,10 @@ export async function executeNestedWorkflow(
   }
 
   // Step 2: signal 继承——子 run 响应父 run abort
-  // [L-2] 提取命名 onParentAbort 以便 finally removeEventListener，防子 run 完成后
-  //  parentSignal 上残留 listener（多次嵌套调用会累积）。
-  const childController = new AbortController();
-  const parentSignal = parentRun.runtime?.controller.signal;
-  const onParentAbort = (): void => childController.abort();
-  if (parentSignal) {
-    if (parentSignal.aborted) {
-      childController.abort();
-    } else {
-      parentSignal.addEventListener("abort", onParentAbort, { once: true });
-    }
-  }
+  const { childController, parentSignal, onParentAbort } = inheritParentSignal(parentRun);
 
   // Step 3+：registry 查找 + lint + RunSpec + runWorkflow + poll 全程 try（m3 E8——
-  // try 起点提到 Step 2 的 listener 注册之后，覆盖 Step 3-6。runWorkflow throw
+  // try 起点在 Step 2 的 listener 注册之后，覆盖 Step 3-6。runWorkflow throw
   // （含 chokepoint ArgsValidationError）与 not found/lint 早返回均走 finally 移除
   // parentSignal listener——修复原 try 外 runWorkflow 的泄漏路径）。
   try {
@@ -379,76 +472,30 @@ export async function executeNestedWorkflow(
     }
     const lintResult = script.validate();
     if (!lintResult.valid) {
-      const errors = lintResult.findings
-        .filter((f) => f.severity === "error")
-        .map((f) => `L${f.line}: ${f.message}`)
-        .join("; ");
       return {
         content: "",
-        error: `Workflow script '${name}' has lint errors: ${errors}`,
+        error: `Workflow script '${name}' has lint errors: ${formatLintErrorSummary(lintResult)}`,
       };
     }
 
-    // Step 4: 构建 RunSpec（共享父 Budget + 循环链）+ 启动子 workflow
-    // budget 共享（F-7 方案 B）：子 run 直接复用父 Budget 引用（budgetRef），consume 实时
-    // 累加到父 Budget，消除并行嵌套下的超支窗口，无需 Step 6 的 sync-back。
-    const spec: RunSpec = {
-      scriptSource: script.toExecutable(),
-      args,
-      budgetRef: parentRun.state.budget,
-      // Run-level override 传播（与父 run 对齐）：子 run 继承父 run 的 model/thinkingLevel，
-      // 否则嵌套 workflow 丢失父 run 的模型指定，回落主 agent 模型。
-      model: parentRun.spec.model,
-      thinkingLevel: parentRun.spec.thinkingLevel,
-      scriptName: script.name,
-      scriptPath: script.path,
-      description: script.meta.description,
-      parameters: script.meta.parameters,
-      parentWorkflowChain: chain,
-    };
+    // Step 4: 构建 RunSpec + 启动子 workflow
+    // budgetRef（共享 Budget）已在 spec 透传给子 run 处理 token/cost 预算，
+    // resolveNestedTimeoutMs 的 budgetTimeMs 只服务 pollRunToResult 的轮询 deadline
+    // （wall-clock 兜底）。
+    const spec = buildNestedSpec(args, parentRun, script, chain);
     const runId = await runWorkflow(spec, deps, childController.signal);
 
     // Step 5: 轮询至 done（复用 runAndWait 的轮询逻辑）
-    // [H-1] 嵌套 workflow timeout 从父 run 完整传导：父 spec.budgetTimeMs 显式设定时
-    //  原样作为子 run 轮询 deadline（不 min(DEFAULT) 封顶——旧实现把父 time:2h 截断到
-    //  10min，违背「显式传参完整生效」语义）；父未设 → undefined，无 deadline（不限）。
-    //  budgetRef（共享 Budget）已在 Step 4 透传给子 run 处理 token/cost 预算，
-    //  此处的 budgetTimeMs 只服务 pollRunToResult 的轮询 deadline（wall-clock 兜底）。
-    // [U2] 预算语义统一：父 budgetTimeMs <=0（含 0/负）与 undefined 同义 = 不限——
-    //  与 lifecycle.runWorkflow 的 budgetTimeMs 判定（>0 才挂 scheduleTimeBudget）对齐。
-    //  旧实现 0 传导给子 run 后 deadline=now 立即超时（"timed out after 0ms"），与
-    //  lifecycle 的 0=不限 语义分裂。pollRunToResult 内亦对非正值兜底归一（双写防漂移），
-    //  此处显式归一是传导语义的文档化表达。
-    const rawNestedTimeoutMs = parentRun.spec.budgetTimeMs;
-    const nestedTimeoutMs =
-      rawNestedTimeoutMs !== undefined && rawNestedTimeoutMs > 0 ? rawNestedTimeoutMs : undefined;
-
     const result = await pollRunToResult(
       runId,
       deps,
       childController.signal,
-      nestedTimeoutMs,
+      resolveNestedTimeoutMs(parentRun),
       "Aborted by parent signal",
     );
 
-    // Step 6: 结果转换（budget 已通过共享 budgetRef 实时同步，无需 sync-back）
-    if (result.reason === "completed") {
-      const scriptResult = result.scriptResult;
-      return {
-        content:
-          typeof scriptResult === "string"
-            ? scriptResult
-            : JSON.stringify(scriptResult ?? ""),
-        parsedOutput:
-          typeof scriptResult === "object" && scriptResult !== null
-            ? scriptResult
-            : undefined,
-      };
-    }
-    return {
-      content: "",
-      error: result.error ?? `Workflow '${name}' ended: ${result.reason}`,
-    };
+    // Step 6: 结果转换
+    return toNestedCallResult(name, result);
   } catch (err) {
     // m3：chokepoint 校验失败 → {error}（§5.3 指引文案），非 ArgsValidationError 保持传播
     // （dispatchWorkflowCall 的 .catch 兜底转 postResult，worker 不崩）。

@@ -87,12 +87,12 @@ vi.mock('@/composables/features/chat/useSessionDerivations', () => ({
 }))
 vi.mock('@/composables/features/chat/useSubagentListSync', () => ({ useSubagentListSync: vi.fn() }))
 vi.mock('@/composables/features/chat/useWorkflowListSync', () => ({ useWorkflowListSync: vi.fn() }))
-vi.mock('@/api/events', () => ({
+vi.mock('@xyz-agent/core/transport/api', () => ({
   onGlobalType: vi.fn(() => () => {}),
   dispatchSession: vi.fn(),
   dispatchGlobal: vi.fn(),
 }))
-vi.mock('@/api/domains/session', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({
   list: vi.fn().mockResolvedValue([]),
 }))
 vi.mock('@/composables/useToast', () => ({

@@ -34,7 +34,7 @@ vi.mock("../alive-store.ts", () => ({
   findForeignLiveInstance: foreignLiveSpy,
 }));
 
-vi.mock("../session-runner.ts", () => ({
+vi.mock("../engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(),
   killAllSpawnedChildren: vi.fn(),
   getChildByRecord: vi.fn(() => undefined),
@@ -63,7 +63,7 @@ function makePi(): PiLike {
 
 function setup(): { agentDir: string; service: SubagentService; store: RecordStore } {
   const agentDir = makeTmpAgentDir();
-  const modelService = new ModelConfigService({ agentDir });
+  const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
   const service = new SubagentService({ cwd: agentDir, modelService });
   service.initSession({ pi: makePi(), sessionId: "root-session" });
   const store = (service as unknown as { store: RecordStore }).store;
@@ -79,7 +79,7 @@ describe("T5① child process skips orphan recovery scan", () => {
     recover: ReturnType<typeof vi.spyOn>;
     entryOnly: ReturnType<typeof vi.spyOn>;
   } => {
-    const modelService = new ModelConfigService({ agentDir });
+    const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
     const svc = new SubagentService({ cwd: agentDir, modelService });
     const store = (svc as unknown as { store: RecordStore }).store;
     const recover = vi.spyOn(store, "recoverOrphanRecords").mockImplementation(() => {});
@@ -95,7 +95,7 @@ describe("T5① child process skips orphan recovery scan", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("root process (no self-record env) runs the orphan recovery scan", () => {
@@ -127,7 +127,7 @@ describe("T5③ cold-lookup running candidate foreign-instance guard", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   const stubColdCandidate = (record: {
@@ -150,9 +150,9 @@ describe("T5③ cold-lookup running candidate foreign-instance guard", () => {
     });
     foreignLiveSpy.mockReturnValue({ pid: 4242, id: "sa-foreign", startedAt: Date.now() });
 
-    expect(() => service.getRecordForAction("sa-foreign")).toThrow(ResurrectDeniedError);
+    expect(() => service["getRecordForAction"]("sa-foreign")).toThrow(ResurrectDeniedError);
     try {
-      service.getRecordForAction("sa-foreign");
+      service["getRecordForAction"]("sa-foreign");
     } catch (err) {
       expect((err as Error).message).toContain("4242");
       expect((err as Error).message).toContain("double-write");
@@ -168,7 +168,7 @@ describe("T5③ cold-lookup running candidate foreign-instance guard", () => {
       sessionFile: "/tmp/fake-session-2.jsonl",
       rootSessionId: "root-session",
     });
-    const found = service.getRecordForAction("sa-cold");
+    const found = service["getRecordForAction"]("sa-cold");
     expect(found.id).toBe("sa-cold");
   });
 });

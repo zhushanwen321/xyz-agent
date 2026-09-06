@@ -549,4 +549,55 @@ describe('provider-importer', () => {
     expect(applyOut.result.imported[0]).toMatchObject({ id: 'openai', status: 'skipped' })
     expect(upsertProvider).not.toHaveBeenCalled()
   })
+
+  // ══ W4 补充：分支覆盖缺口锚定 ══
+
+  // 锚定 apply 阶段孤儿凭据 `if (!tpl)` 分支（sa3-i2 只覆盖了 preview 阶段的模板匹配失败）：
+  // 匹配不到内置模板 → failed 条目 reason='no built-in template match' + failedCount 计数
+  // + 不调 upsertProvider + 部分失败缓存保留（可重试）。
+  it('W4-a: applyImport 勾选匹配不到内置模板的孤儿凭据 → failed reason=no built-in template match, failedCount=1', async () => {
+    vi.mocked(parseProviders).mockReturnValue({
+      providers: [],
+      orphanCredentials: [fo({ providerId: 'unknown-provider-xyz' })],
+    })
+
+    const prev = previewImport('pi')
+    if (!('importId' in prev)) throw new Error('preview should succeed')
+    const applyOut = await applyImport(prev.importId, ['unknown-provider-xyz'])
+
+    if (!('result' in applyOut)) throw new Error('apply should succeed')
+    expect(applyOut.result.imported).toHaveLength(1)
+    expect(applyOut.result.imported[0]).toMatchObject({
+      id: 'unknown-provider-xyz',
+      status: 'failed',
+      reason: 'no built-in template match',
+    })
+    expect(applyOut.result.failedCount).toBe(1)
+    expect(upsertProvider).not.toHaveBeenCalled()
+
+    // W4/W5：failedCount>0 → 缓存不删，同 importId 再次 apply 仍可取到（非 PREVIEW_EXPIRED）
+    const second = await applyImport(prev.importId, ['unknown-provider-xyz'])
+    expect('result' in second).toBe(true)
+  })
+
+  // 锚定 reason 三元表达式的另一侧：upsertProvider 抛非 Error 值（如字符串）→ reason 用 String(e) 原文。
+  it('W4-b: upsertProvider 抛非 Error 值 → reason 为 String(e) 原文', async () => {
+    vi.mocked(parseProviders).mockReturnValue(result([fp({ _sourceName: 'A' })]))
+    vi.mocked(upsertProvider).mockImplementation(() => {
+      throw 'raw string failure'
+    })
+
+    const prev = previewImport('pi')
+    if (!('importId' in prev)) throw new Error('preview should succeed')
+    const applyOut = await applyImport(prev.importId, ['A'])
+
+    if (!('result' in applyOut)) throw new Error('apply should succeed')
+    expect(applyOut.result.imported).toHaveLength(1)
+    expect(applyOut.result.imported[0]).toMatchObject({
+      id: 'A',
+      status: 'failed',
+      reason: 'raw string failure',
+    })
+    expect(applyOut.result.failedCount).toBe(1)
+  })
 })

@@ -17,7 +17,7 @@
  * 运行：npx vitest run src/__tests__/stores/chat-send-rejected.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ServerMessage } from '@xyz-agent/shared'
@@ -219,8 +219,13 @@ describe('send.rejected Composer DOM 断言（用户可见行为）', () => {
     wrapper.findComponent(ComposerInputMock).vm.$emit('input', 'hello')
     await wrapper.vm.$nextTick()
     wrapper.findComponent(ComposerInputMock).vm.$emit('keydown', new KeyboardEvent('keydown', { key: 'Enter' }))
-    await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick() // flush async send
+    // flushPromises（setTimeout 宏任务边界）排空全部 microtask（send 链路 + Vue render job），
+    // 不依赖固定 nextTick 计数——U24/U25 onSend phase extraction（commit 8c9e2da43）把分流分支
+    // 提取为 async helper（routeStaging/sendActiveMessage），正常发送路径多出 async 包装
+    // microtask hop，addPendingSend 后的组件 render flush 因此晚一个 tick。store 语义与 DOM
+    // 终态不变（settled 后 add/clear/re-add 均即时响应），microtask 均在浏览器 paint 前排空，
+    // 用户可见行为无差异。
+    await flushPromises()
     // send 后 pendingSend 置位 → isActive=true（空窗期，停止按钮可见）
     expect(chat.isActive('s-dom-reject')).toBe(true)
     expect(wrapper.find('.stop-btn').exists()).toBe(true)
@@ -229,7 +234,7 @@ describe('send.rejected Composer DOM 断言（用户可见行为）', () => {
       type: 'send.rejected',
       payload: { sessionId: 's-dom-reject', reason: 'busy', message: 'Agent 正在处理' },
     })
-    await wrapper.vm.$nextTick()
+    await flushPromises()
     // store 侧：clearPendingSend → isActive=false
     expect(chat.isActive('s-dom-reject')).toBe(false)
     // DOM 断言 1：停止按钮消失（用户可重新发送）
