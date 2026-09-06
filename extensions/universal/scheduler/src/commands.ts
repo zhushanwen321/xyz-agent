@@ -84,11 +84,69 @@ export function registerScheduleCommand(
   })
 }
 
+/** 单个子命令处理器。service 非空由 executeScheduleCommand 前置保证；parts 为 tokenize 后参数。 */
+type SubcommandHandler = (service: SchedulerService, parts: string[]) => string | Promise<string>
+
+/**
+ * on/off 共享：取 <id>，缺失返回 usage（文案与原 ${first} 一致——handler 仅在
+ * first === 'on' | 'off' 时被查表命中，keyword 即 first 的小写值）。
+ */
+async function handleToggleKeyword(
+  service: SchedulerService,
+  parts: string[],
+  keyword: 'on' | 'off',
+): Promise<string> {
+  const id = parts[1]
+  if (!id) return `Usage: /schedule ${keyword} <id>`
+  const result = await service.toggle(id, keyword === 'on')
+  return result.message
+}
+
+/**
+ * 子命令路由表。查表未命中（落空）= 创建任务分支，与原 if 链的顺序语义一致。
+ * list/rm 保持同步返回、run 保持 await——不改变 async 边界内的微任务时序。
+ */
+const SUBCOMMAND_HANDLERS: Record<string, SubcommandHandler> = {
+  list: service => service.list().message,
+  on: (service, parts) => handleToggleKeyword(service, parts, 'on'),
+  off: (service, parts) => handleToggleKeyword(service, parts, 'off'),
+  rm: (service, parts) => {
+    const id = parts[1]
+    if (!id) return 'Usage: /schedule rm <id>'
+    return service.delete(id).message
+  },
+  run: async (service, parts) => {
+    const id = parts[1]
+    if (!id) return 'Usage: /schedule run <id>'
+    const result = await service.run(id)
+    return result.message
+  },
+}
+
+/** 创建任务分支（路由落空）：once 前缀 → once 任务；cron 前缀 → recurring cron 任务；其余按 interval schedule 解析。 */
+async function createTaskFromArgs(
+  service: SchedulerService,
+  parts: string[],
+  first: string,
+): Promise<string> {
+  const kind = first === 'once' ? 'once' as const : first === 'cron' ? 'recurring' as const : undefined
+  const scheduleStart = kind ? 1 : 0
+  const scheduleInput = parts[scheduleStart]
+  if (!scheduleInput) return 'Usage: /schedule <schedule> <prompt>'
+
+  const prompt = parts.slice(scheduleStart + 1).join(' ')
+  if (!prompt) return 'Usage: /schedule <schedule> <prompt>'
+
+  const result = await service.create(prompt, scheduleInput, { kind })
+  return result.message
+}
+
 /**
  * Core logic for /schedule command. Extracted for testability (handler returns
  * void per SDK contract; tests call this function directly to assert output).
  *
  * 命令层只保留参数路由与 usage 文案（C6），业务调用全部走 SchedulerService。
+ * 主函数只留编排：service 守卫 → 空 args → tokenize → 查表分发 → 创建分支。
  */
 export async function executeScheduleCommand(
   service: SchedulerService | null,
@@ -105,40 +163,9 @@ export async function executeScheduleCommand(
   const parts = tokenizeQuoted(trimmed)
   const first = parts[0]!.toLowerCase()
 
-  // 子命令路由
-  if (first === 'list') {
-    return service.list().message
-  }
+  // 子命令路由：查表命中走对应分支，落空走创建任务分支
+  const handler = SUBCOMMAND_HANDLERS[first]
+  if (handler) return handler(service, parts)
 
-  if (first === 'on' || first === 'off') {
-    const id = parts[1]
-    if (!id) return `Usage: /schedule ${first} <id>`
-    const result = await service.toggle(id, first === 'on')
-    return result.message
-  }
-
-  if (first === 'rm') {
-    const id = parts[1]
-    if (!id) return 'Usage: /schedule rm <id>'
-    return service.delete(id).message
-  }
-
-  if (first === 'run') {
-    const id = parts[1]
-    if (!id) return 'Usage: /schedule run <id>'
-    const result = await service.run(id)
-    return result.message
-  }
-
-  // 创建任务分支
-  const kind = first === 'once' ? 'once' as const : first === 'cron' ? 'recurring' as const : undefined
-  const scheduleStart = kind ? 1 : 0
-  const scheduleInput = parts[scheduleStart]
-  if (!scheduleInput) return 'Usage: /schedule <schedule> <prompt>'
-
-  const prompt = parts.slice(scheduleStart + 1).join(' ')
-  if (!prompt) return 'Usage: /schedule <schedule> <prompt>'
-
-  const result = await service.create(prompt, scheduleInput, { kind })
-  return result.message
+  return createTaskFromArgs(service, parts, first)
 }
