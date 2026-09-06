@@ -65,80 +65,91 @@ export type Segment =
  * segmentsToPrompt 仅是 trim 包装。展示格式（含末尾换行）与 pi prompt 格式（trim）的差异
  * 由调用方决定是否 trim，不再分两份逻辑。
  */
+/**
+ * 判定 seg 的序列化文本前是否补一个空格分隔（边界空格规则单点化，替代拆分前的两处 if）：
+ * - prev 为 null（首段）/ text / image → 不补（text 自带间距；image 产出 `\n${path}\n` 前后已有换行）
+ * - seg 是 image → 不补（补空格会污染行首，产出 `\n /path`）
+ * - seg 是 text → 仅当文本非空且不以空格开头时补（chip→text 粘连修复；text 自带前导空格则不重复补）
+ * - 其余 chip→chip / chip→text → 补
+ */
+function needsBoundarySpace(prev: Segment | null, seg: Segment): boolean {
+  if (!prev || prev.type === 'text' || prev.type === 'image' || seg.type === 'image') return false
+  if (seg.type === 'text') {
+    return seg.text !== '' && !seg.text.startsWith(' ')
+  }
+  return true
+}
+
+function serializeFileSegment(seg: Extract<Segment, { type: 'file' }>): string {
+  // D2 格式：行范围序列化（path:L<n> 单行 / path:L<s>-L<e> 多行）。
+  // lineRange 必须进 prompt 文本，否则 LLM 看不到行号（review M1）。
+  let fileText = seg.path
+  if (seg.lineRange) {
+    // 归一化 lineRange：防负数 / s>e 产出非法 prompt 文本（L0、L5-L3 等）。
+    // 输入边界防御——上游 composer/DiffView 正常不会传非法值，此处兜底保证序列化恒合法。
+    const [s0, e0] = seg.lineRange
+    const s = Math.max(1, s0)
+    const e = Math.max(s, e0)
+    fileText += s === e ? `:L${s}` : `:L${s}-L${e}`
+  }
+  return fileText
+}
+
+/**
+ * 各 segment type 的序列化器表（表驱动分发）。
+ * key 由映射类型穷尽声明：新增 Segment 成员而漏加 key 时 tsc 编译失败（穷尽守卫）。
+ */
+const SEGMENT_SERIALIZERS: { [K in Segment['type']]: (seg: Extract<Segment, { type: K }>) => string } = {
+  text: (seg) => seg.text,
+  skill: (seg) => `/skill:${seg.name}`,
+  file: serializeFileSegment,
+  mention: (seg) => `@${seg.name}`,
+  session: (seg) => {
+    // # 前缀对齐 TUI session_read 协议（stripHash 消费 #<sessionId>）；
+    // label 只用于 UI 展示，不进 prompt（LLM 不需要标题，uuid 已可定位）
+    return `#${seg.sessionId}`
+  },
+  subagent: () => {
+    // 路由标记：发送链路据 segments 含 subagent 段分流到 subagentAction RPC，
+    // 文本本体走 RPC text 字段；若序列化进 prompt 会污染主 agent 上下文（见设计 3.3.8）
+    return ''
+  },
+  image: (seg) => {
+    // 对齐 pi TUI 粘贴行为：裸路径进 prompt 文本，LLM 自己调 read 工具读。
+    // 与 pi TUI（insertTextAtCursor 裸路径粘在光标处）的细微差异：xyz-agent 让每个图片
+    // 路径独占一行（前后补换行），LLM 更易解析路径边界，多图时每行一个。
+    // 不再用 [图片 N] 匿名占位——该占位对 LLM 无意义（非 vision 模型看不到图，
+    // vision 模型不需要锚点），且会被 LLM 当文件名瞎找。
+    // 图片持久化在 <dataDir>/attachments/<sessionId>/（非 pi TUI 的 /tmp），切换 session 不丢。
+    return `\n${seg.path}\n`
+  },
+  handoff: (seg) => {
+    // handoff badge 来源标记：sourceLabel 标识交接来源 session，pi 看到纯文本标记。
+    // 文档内容在同一条消息的 text segment 中，此处只输出来源标记供 LLM 识别上下文。
+    return `[handoff from ${seg.sourceLabel}]`
+  },
+}
+
+/**
+ * 单段序列化分发。cast 安全性：seg.type 是判别器，查表命中必然是同 type 的序列化器；
+ * 表 key 由映射类型穷尽（tsc 守卫）。`| undefined` 落空分支 = 运行时脏数据（TS 类型外），
+ * 与拆分前 switch 无 default 的落空行为一致——产出空文本，不抛错。
+ */
+function serializeSegment(seg: Segment): string {
+  const serialize = SEGMENT_SERIALIZERS[seg.type] as ((seg: Segment) => string) | undefined
+  return serialize ? serialize(seg) : ''
+}
+
 export function segmentsToText(segments: Segment[]): string {
   if (segments.length === 0) return ''
   const parts: string[] = []
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]
     const prev = i > 0 ? segments[i - 1] : null
-    // chip→chip / chip→text 边界补空格（skill→file / file→mention / skill→text 等）。
-    // image 段例外——image 产出 `\n${path}\n`（前后已有换行），不需要再补空格。
-    // handoff 结尾是 ]，紧接其他 chip 类时仍需补空格（与 skill 同理）。
-    if (prev && prev.type !== 'text' && prev.type !== 'image' && seg.type !== 'text' && seg.type !== 'image') {
+    if (needsBoundarySpace(prev, seg)) {
       parts.push(' ')
     }
-    switch (seg.type) {
-      case 'text':
-        // 前一个 segment 是 chip 类（skill/file/mention）且当前 text 不以空格开头时，补空格分隔。
-        // 但 image 段例外——image 产出 `\n${path}\n`（前后已有换行），紧跟的 text 不需要再补空格，
-        // 否则产出 `\n/path\n 文本`（行首空格污染 pi prompt）。
-        if (
-          prev &&
-          prev.type !== 'text' &&
-          prev.type !== 'image' && // image 已有 \n 分隔，不补空格
-          seg.text &&
-          !seg.text.startsWith(' ')
-        ) {
-          parts.push(' ')
-        }
-        parts.push(seg.text)
-        break
-      case 'skill':
-        parts.push(`/skill:${seg.name}`)
-        break
-      case 'file': {
-        // D2 格式：行范围序列化（path:L<n> 单行 / path:L<s>-L<e> 多行）。
-        // lineRange 必须进 prompt 文本，否则 LLM 看不到行号（review M1）。
-        let fileText = seg.path
-        if (seg.lineRange) {
-          // 归一化 lineRange：防负数 / s>e 产出非法 prompt 文本（L0、L5-L3 等）。
-          // 输入边界防御——上游 composer/DiffView 正常不会传非法值，此处兜底保证序列化恒合法。
-          const [s0, e0] = seg.lineRange
-          const s = Math.max(1, s0)
-          const e = Math.max(s, e0)
-          fileText += s === e ? `:L${s}` : `:L${s}-L${e}`
-        }
-        parts.push(fileText)
-        break
-      }
-      case 'mention':
-        parts.push(`@${seg.name}`)
-        break
-      case 'session':
-        // # 前缀对齐 TUI session_read 协议（stripHash 消费 #<sessionId>）；
-        // label 只用于 UI 展示，不进 prompt（LLM 不需要标题，uuid 已可定位）
-        parts.push(`#${seg.sessionId}`)
-        break
-      case 'subagent':
-        // 路由标记：发送链路据 segments 含 subagent 段分流到 subagentAction RPC，
-        // 文本本体走 RPC text 字段；若序列化进 prompt 会污染主 agent 上下文（见设计 3.3.8）
-        parts.push('')
-        break
-      case 'image':
-        // 对齐 pi TUI 粘贴行为：裸路径进 prompt 文本，LLM 自己调 read 工具读。
-        // 与 pi TUI（insertTextAtCursor 裸路径粘在光标处）的细微差异：xyz-agent 让每个图片
-        // 路径独占一行（前后补换行），LLM 更易解析路径边界，多图时每行一个。
-        // 不再用 [图片 N] 匿名占位——该占位对 LLM 无意义（非 vision 模型看不到图，
-        // vision 模型不需要锚点），且会被 LLM 当文件名瞎找。
-        // 图片持久化在 <dataDir>/attachments/<sessionId>/（非 pi TUI 的 /tmp），切换 session 不丢。
-        parts.push(`\n${seg.path}\n`)
-        break
-      case 'handoff':
-        // handoff badge 来源标记：sourceLabel 标识交接来源 session，pi 看到纯文本标记。
-        // 文档内容在同一条消息的 text segment 中，此处只输出来源标记供 LLM 识别上下文。
-        parts.push(`[handoff from ${seg.sourceLabel}]`)
-        break
-    }
+    parts.push(serializeSegment(seg))
   }
   return parts.join('')
 }

@@ -107,4 +107,65 @@ describe('parseBgNotifyDetails', () => {
     expect(rec.status).toBe('closed')
     expect(rec.closedReason).toBe('gc')
   })
+
+  // ── parseSingleRecord 空串拒绝语义（必需字段空串视为缺失，非仅 undefined）──────
+  it('id 为空串 → null（空串拒绝，非 string 类型缺失分支）', () => {
+    expect(parseBgNotifyDetails({ id: '', status: 'done', agent: 'x', startedAt: 1 })).toBeNull()
+  })
+
+  it('agent 为空串 → null（空串拒绝）', () => {
+    expect(parseBgNotifyDetails({ id: 'x', status: 'done', agent: '', startedAt: 1 })).toBeNull()
+  })
+
+  it('可选字段类型非法 → 字段不写入（保持 undefined，不抛错）', () => {
+    const rec = parseBgNotifyDetails({
+      id: 'x',
+      status: 'running',
+      agent: 'y',
+      startedAt: 1,
+      model: 123,
+      result: null,
+      error: [1],
+      endedAt: 'later',
+      patchFile: {},
+      closedReason: true,
+      round: '3',
+    }) as BgNotifyRecord
+    expect(rec.model).toBeUndefined()
+    expect(rec.result).toBeUndefined()
+    expect(rec.error).toBeUndefined()
+    expect(rec.endedAt).toBeUndefined()
+    expect(rec.patchFile).toBeUndefined()
+    expect(rec.closedReason).toBeUndefined()
+    expect(rec.round).toBeUndefined()
+  })
+
+  it('record 属性写入顺序锁定（JSON.stringify 依赖属性序，重排即 WS 帧/落盘字节漂移）', () => {
+    const rec = parseBgNotifyDetails({
+      id: 'x',
+      status: 'done',
+      agent: 'y',
+      startedAt: 1,
+      model: 'm',
+      result: 'r',
+      error: 'e',
+      endedAt: 2,
+      patchFile: 'p',
+      closedReason: 'c',
+      round: 1,
+    }) as BgNotifyRecord
+    expect(Object.keys(rec)).toEqual([
+      'id',
+      'status',
+      'agent',
+      'startedAt',
+      'model',
+      'result',
+      'error',
+      'endedAt',
+      'patchFile',
+      'closedReason',
+      'round',
+    ])
+  })
 })

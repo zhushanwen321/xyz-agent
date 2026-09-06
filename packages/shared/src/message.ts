@@ -234,21 +234,75 @@ export function parseBgNotifyDetails(details: unknown): BgNotifyDetails | null {
   return parseSingleRecord(d)
 }
 
+// ── parseSingleRecord 内部 helper（按处理阶段拆分：必需字段解析 / 可选字段拷贝）──────
+// 模块私有，不进导出面。判定语义（含空串拒绝、属性写入顺序）与拆分前逐字节一致。
+
+/** 字符串字段窄化：非 string → null（防御性解析，不信任运行时形状） */
+function asRecordString(v: unknown): string | null {
+  return typeof v === 'string' ? v : null
+}
+
+/** 数值字段窄化：非 number → null */
+function asRecordNumber(v: unknown): number | null {
+  return typeof v === 'number' ? v : null
+}
+
+/** status 字面量校验：=== 链与 BgNotifyRecord.status 联合逐一对齐（v4 两态 + legacy 三态），非法值 → null */
+function asBgNotifyStatus(v: unknown): BgNotifyRecord['status'] | null {
+  return v === 'done' || v === 'failed' || v === 'cancelled' || v === 'closed' || v === 'running' ? v : null
+}
+
+/** 必需字段（id/status/agent/startedAt）解析：任一缺失/空串/类型非法 → null */
+function parseRequiredRecordFields(d: Record<string, unknown>): Pick<BgNotifyRecord, 'id' | 'status' | 'agent' | 'startedAt'> | null {
+  const id = asRecordString(d.id)
+  const status = asBgNotifyStatus(d.status)
+  const agent = asRecordString(d.agent)
+  const startedAt = asRecordNumber(d.startedAt)
+  // !id / !agent 沿用空串拒绝语义（空串视为缺失，与拆分前一致）
+  if (!id || !status || !agent || startedAt === null) return null
+  return { id, status, agent, startedAt }
+}
+
+/** 单个可选字段的拷贝 writer（窄化 + 条件写入） */
+type RecordFieldWriter = (record: BgNotifyRecord, d: Record<string, unknown>) => void
+
+function stringFieldWriter(field: 'model' | 'result' | 'error' | 'patchFile' | 'closedReason'): RecordFieldWriter {
+  return (record, d) => {
+    const value = asRecordString(d[field])
+    if (value !== null) record[field] = value
+  }
+}
+
+function numberFieldWriter(field: 'endedAt' | 'round'): RecordFieldWriter {
+  return (record, d) => {
+    const value = asRecordNumber(d[field])
+    if (value !== null) record[field] = value
+  }
+}
+
+/** 可选字段拷贝表：数组顺序 = record 属性写入顺序（JSON.stringify 序列化依赖属性序，重排即 WS 帧/落盘字节漂移） */
+const OPTIONAL_RECORD_FIELD_WRITERS: ReadonlyArray<RecordFieldWriter> = [
+  stringFieldWriter('model'),
+  stringFieldWriter('result'),
+  stringFieldWriter('error'),
+  numberFieldWriter('endedAt'),
+  stringFieldWriter('patchFile'),
+  stringFieldWriter('closedReason'),
+  numberFieldWriter('round'),
+]
+
+function copyOptionalRecordFields(d: Record<string, unknown>, record: BgNotifyRecord): void {
+  for (const write of OPTIONAL_RECORD_FIELD_WRITERS) {
+    write(record, d)
+  }
+}
+
 /** 防御性解析单条 BgNotifyRecord（必需字段 id/status/agent/startedAt 缺失返回 null） */
 function parseSingleRecord(d: Record<string, unknown>): BgNotifyRecord | null {
-  const id = typeof d.id === 'string' ? d.id : null
-  const status = d.status === 'done' || d.status === 'failed' || d.status === 'cancelled' || d.status === 'closed' || d.status === 'running' ? d.status : null
-  const agent = typeof d.agent === 'string' ? d.agent : null
-  const startedAt = typeof d.startedAt === 'number' ? d.startedAt : null
-  if (!id || !status || !agent || startedAt === null) return null
-  const record: BgNotifyRecord = { id, status, agent, startedAt }
-  if (typeof d.model === 'string') record.model = d.model
-  if (typeof d.result === 'string') record.result = d.result
-  if (typeof d.error === 'string') record.error = d.error
-  if (typeof d.endedAt === 'number') record.endedAt = d.endedAt
-  if (typeof d.patchFile === 'string') record.patchFile = d.patchFile
-  if (typeof d.closedReason === 'string') record.closedReason = d.closedReason
-  if (typeof d.round === 'number') record.round = d.round
+  const required = parseRequiredRecordFields(d)
+  if (!required) return null
+  const record: BgNotifyRecord = { ...required }
+  copyOptionalRecordFields(d, record)
   return record
 }
 
