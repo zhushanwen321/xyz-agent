@@ -53,7 +53,6 @@ function bumpVersions(block) {
   return { out, total };
 }
 
-let anyChange = false;
 let failed = false;
 for (const file of README_FILES) {
   const path = join(repoRoot, file);
@@ -83,7 +82,6 @@ for (const file of README_FILES) {
   }
   writeFileSync(path, content.slice(0, beginIdx + BEGIN.length) + out + content.slice(endIdx));
   console.log(`[ok] ${file} 版本号已更新为 v${version}（${total} 处）`);
-  anyChange = true;
 }
 
 process.exit(failed ? 1 : 0);

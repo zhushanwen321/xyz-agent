@@ -108,9 +108,9 @@ function nextIntervalAfterSlowDown(
   minIntervalMs: number,
   slowDownIncrementMs: number,
 ): number {
-  // eslint-disable-next-line no-magic-numbers -- 秒转毫秒
   return typeof serverInterval === 'number' && Number.isFinite(serverInterval) && serverInterval > 0
-    ? Math.max(minIntervalMs, Math.floor(serverInterval * 1_000))
+    ? // eslint-disable-next-line no-magic-numbers -- 秒转毫秒
+    Math.max(minIntervalMs, Math.floor(serverInterval * 1_000))
     : Math.max(minIntervalMs, currentIntervalMs + slowDownIncrementMs)
 }
 
