@@ -278,6 +278,139 @@ async function matchSubagentMetadata(
   )
 }
 
+// ============================================================
+// findSessions 编排 helpers（按处理阶段拆分：收集 → 匹配 → 排序截断 → 预览补读）
+// ============================================================
+
+/** meta + header → 候选构造（ref.cwd 归一化空串 + parentSession 按需挂载）。 */
+function buildCandidate(
+  meta: SessionFileMeta,
+  header: SessionHeader,
+  src: SessionSource,
+): Candidate {
+  const ref: SessionRef = {
+    sessionId: header.id,
+    // 完整绝对路径（与 parentSession 同构，便于 family 按 includes(sid) 反查）
+    fileName: meta.path,
+    mtime: meta.mtime,
+    sizeBytes: meta.size,
+    cwd: header.cwd ?? '',
+  }
+  if (header.parentSession) ref.parentSession = header.parentSession
+  return { meta, ref, source: src }
+}
+
+/** 步骤 0+1：按来源收集文件列表（source 过滤在文件列表层）+ 逐个首行扫描建候选（cwd 过滤在此应用）。 */
+async function collectCandidates(
+  agentDir: string,
+  sourceFilter: SessionSource | undefined,
+  cwdFilter: string | undefined,
+): Promise<Candidate[]> {
+  // source 过滤在文件列表层：source==='main' 只扫 sessions/、'subagent' 只扫 subagents/、
+  // undefined 两者合并——决策二性能意图：不扫被过滤目录。两路目录扫描相互独立 →
+  // Promise.allSettled（AGENTS.md：独立请求用 allSettled），任一目录不存在（roots.ts
+  // 静默返回空数组）不影响另一路。
+  const sources: SessionSource[] =
+    sourceFilter === undefined ? ['main', 'subagent'] : [sourceFilter]
+  const listResults = await Promise.allSettled(
+    sources.map(async (src) => ({
+      src,
+      files: await (src === 'main' ? listMainSessions(agentDir) : listSubagentSessions(agentDir)),
+    })),
+  )
+
+  // 首行扫描建候选 SessionRef（按来源打 source 标记）
+  const candidates: Candidate[] = []
+  for (const r of listResults) {
+    if (r.status !== 'fulfilled') continue
+    const { src, files } = r.value
+    for (const meta of files) {
+      const header = parseHeader(await readFirstLine(meta.path))
+      if (!header) continue // 非 session 文件/坏 header → 跳过
+      if (cwdFilter !== undefined && (header.cwd ?? '') !== cwdFilter) continue
+      candidates.push(buildCandidate(meta, header, src))
+    }
+  }
+  return candidates
+}
+
+/** 步骤 2 关键词层（U5 扩展）：manifest 元数据（+ P-fallback identity 回退）与首消息预览并列匹配，命中任一即入选。 */
+async function matchByKeywords(
+  candidates: Candidate[],
+  query: string,
+  agentDir: string,
+): Promise<Matched[]> {
+  const manifestIndex = await buildManifestIndex(
+    agentDir,
+    candidates.some((c) => c.source === 'subagent'),
+  )
+  const keywordHits: Matched[] = []
+  for (const c of candidates) {
+    // - subagent 候选：先查 manifest 索引（命中走元数据子串，未命中 P-fallback 读尾行 identity）；
+    //   元数据命中即入选（preview 留空，第 5 步补读首消息），未命中仍可走首消息 fallback
+    // - main / subagent 元数据未命中：首消息预览 query 子串匹配（m0 现状路径不变）
+    if (c.source === 'subagent' && (await matchSubagentMetadata(c, query, manifestIndex))) {
+      keywordHits.push({ ...c })
+      continue
+    }
+    const text = await readFirstUserMessageText(c.meta.path)
+    if (text && text.includes(query)) {
+      keywordHits.push({ ...c, preview: text.slice(0, PREVIEW_MAX) })
+    }
+  }
+  return keywordHits
+}
+
+/** 步骤 2 三路匹配：recent / uuid 片段（sessionId 或文件路径含 query）/ 名称关键词+U5 元数据。 */
+async function matchCandidates(
+  candidates: Candidate[],
+  query: string,
+  agentDir: string,
+): Promise<Matched[]> {
+  if (query === 'recent') {
+    // recent：不经片段匹配，全部候选按 mtime 倒序后截 limit
+    return candidates.map((c) => ({ ...c }))
+  }
+  // 先 uuid 片段匹配（sessionId 或文件路径含 query）——cheap，已有 header
+  const uuidHits = candidates.filter(
+    (c) => c.ref.sessionId.includes(query) || c.meta.path.includes(query),
+  )
+  if (uuidHits.length > 0) {
+    return uuidHits.map((c) => ({ ...c }))
+  }
+  if (looksLikeUuidFragment(query)) {
+    // query 像 uuid 片段但无匹配 → uuid 写错的可能性高，不对全部候选深读首消息
+    return []
+  }
+  return matchByKeywords(candidates, query, agentDir)
+}
+
+/** 步骤 3+4：mtime 倒序 + limit 截断（truncated 标记是否截断）。 */
+function sortByMtimeAndTruncate(
+  matched: Matched[],
+  limit: number,
+): { items: Matched[]; truncated: boolean } {
+  matched.sort((a, b) => b.ref.mtime - a.ref.mtime)
+  const truncated = matched.length > limit
+  return { items: truncated ? matched.slice(0, limit) : matched, truncated }
+}
+
+/** 步骤 5：填 firstMessagePreview（recent/uuid 路径未读，对最终 limit 个补读——最多 limit 个 IO）。 */
+async function fillFirstMessagePreviews(sliced: Matched[]): Promise<MatchedSession[]> {
+  const result: MatchedSession[] = []
+  for (const m of sliced) {
+    const out: MatchedSession = { ...m.ref, source: m.source }
+    if (m.preview !== undefined) {
+      out.firstMessagePreview = m.preview
+    } else {
+      const text = await readFirstUserMessageText(m.meta.path)
+      if (text) out.firstMessagePreview = text.slice(0, PREVIEW_MAX)
+    }
+    result.push(out)
+  }
+  return result
+}
+
 /**
  * 按 query 找 session（接口冻结，design §3.4 find action）。
  *
@@ -294,101 +427,14 @@ export async function findSessions(
   const cwdFilter = opts?.cwd
   const sourceFilter = opts?.source
 
-  // 0. 按来源收集文件列表（source 过滤在文件列表层：source==='main' 只扫 sessions/、
-  //    'subagent' 只扫 subagents/、undefined 两者合并——决策二性能意图：不扫被过滤目录）。
-  //    两路目录扫描相互独立 → Promise.allSettled（AGENTS.md：独立请求用 allSettled），
-  //    任一目录不存在（roots.ts 静默返回空数组）不影响另一路。
-  const sources: SessionSource[] =
-    sourceFilter === undefined ? ['main', 'subagent'] : [sourceFilter]
-  const listResults = await Promise.allSettled(
-    sources.map(async (src) => ({
-      src,
-      files: await (src === 'main' ? listMainSessions(agentDir) : listSubagentSessions(agentDir)),
-    })),
-  )
+  // 0+1. 按来源收集文件列表 → 首行扫描建候选
+  const candidates = await collectCandidates(agentDir, sourceFilter, cwdFilter)
+  // 2. 三路匹配（recent / uuid 片段 / 名称关键词+U5 元数据）
+  const matched = await matchCandidates(candidates, query, agentDir)
+  // 3+4. mtime 倒序 + limit 截断
+  const { items, truncated } = sortByMtimeAndTruncate(matched, limit)
+  // 5. 填 firstMessagePreview（对最终 limit 个补读）
+  const matches = await fillFirstMessagePreviews(items)
 
-  // 1. 首行扫描建候选 SessionRef（cwd 过滤在此应用；按来源打 source 标记）
-  const candidates: Candidate[] = []
-  for (const r of listResults) {
-    if (r.status !== 'fulfilled') continue
-    const { src, files } = r.value
-    for (const meta of files) {
-      const headerLine = await readFirstLine(meta.path)
-      const header = parseHeader(headerLine)
-      if (!header) continue // 非 session 文件/坏 header → 跳过
-      if (cwdFilter !== undefined && (header.cwd ?? '') !== cwdFilter) continue
-      const ref: SessionRef = {
-        sessionId: header.id,
-        // 完整绝对路径（与 parentSession 同构，便于 family 按 includes(sid) 反查）
-        fileName: meta.path,
-        mtime: meta.mtime,
-        sizeBytes: meta.size,
-        cwd: header.cwd ?? '',
-      }
-      if (header.parentSession) ref.parentSession = header.parentSession
-      candidates.push({ meta, ref, source: src })
-    }
-  }
-
-  // 2. 匹配
-  let matched: Matched[]
-  if (query === 'recent') {
-    // recent：不经片段匹配，全部候选按 mtime 倒序后截 limit
-    matched = candidates.map((c) => ({ ...c }))
-  } else {
-    // 先 uuid 片段匹配（sessionId 或文件路径含 query）——cheap，已有 header
-    const uuidHits = candidates.filter(
-      (c) => c.ref.sessionId.includes(query) || c.meta.path.includes(query),
-    )
-    if (uuidHits.length > 0) {
-      matched = uuidHits.map((c) => ({ ...c }))
-    } else if (looksLikeUuidFragment(query)) {
-      // query 像 uuid 片段但无匹配 → uuid 写错的可能性高，不对全部候选深读首消息
-      matched = []
-    } else {
-      // 关键词层（U5 扩展）：subagent manifest 元数据 task/slug/agentName（+ P-fallback identity
-      // 回退）与 main/subagent 首消息预览并列匹配，命中任一即入选（TC-find-match-priority）。
-      // - subagent 候选：先查 manifest 索引（命中走元数据子串，未命中 P-fallback 读尾行 identity）；
-      //   元数据命中即入选（preview 留空，第 5 步补读首消息），未命中仍可走首消息 fallback
-      // - main / subagent 元数据未命中：首消息预览 query 子串匹配（m0 现状路径不变）
-      const manifestIndex = await buildManifestIndex(
-        agentDir,
-        candidates.some((c) => c.source === 'subagent'),
-      )
-      const keywordHits: Matched[] = []
-      for (const c of candidates) {
-        if (c.source === 'subagent' && (await matchSubagentMetadata(c, query, manifestIndex))) {
-          keywordHits.push({ ...c })
-          continue
-        }
-        const text = await readFirstUserMessageText(c.meta.path)
-        if (text && text.includes(query)) {
-          keywordHits.push({ ...c, preview: text.slice(0, PREVIEW_MAX) })
-        }
-      }
-      matched = keywordHits
-    }
-  }
-
-  // 3. mtime 倒序
-  matched.sort((a, b) => b.ref.mtime - a.ref.mtime)
-
-  // 4. 截断
-  const truncated = matched.length > limit
-  const sliced = truncated ? matched.slice(0, limit) : matched
-
-  // 5. 填 firstMessagePreview（recent/uuid 路径未读，这里对最终 limit 个补读——最多 limit 个 IO）
-  const result: MatchedSession[] = []
-  for (const m of sliced) {
-    const out: MatchedSession = { ...m.ref, source: m.source }
-    if (m.preview !== undefined) {
-      out.firstMessagePreview = m.preview
-    } else {
-      const text = await readFirstUserMessageText(m.meta.path)
-      if (text) out.firstMessagePreview = text.slice(0, PREVIEW_MAX)
-    }
-    result.push(out)
-  }
-
-  return { matches: result, truncated }
+  return { matches, truncated }
 }

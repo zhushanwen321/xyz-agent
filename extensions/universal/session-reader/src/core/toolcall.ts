@@ -102,11 +102,107 @@ function numArg(args: Record<string, unknown>, k: string): number | undefined {
   return typeof v === 'number' ? v : undefined
 }
 
+// ---------------------------------------------------------------------------
+// 各工具参数摘要 formatter（design §3.3 D1 表的表驱动形态，每个 case 体一个函数）
+// ---------------------------------------------------------------------------
+
+/** 单工具参数摘要 formatter：输入归一化后的 arguments，输出摘要串（参数缺失时优雅降级）。 */
+type ArgsFormatter = (args: Record<string, unknown>) => string
+
+function formatBashArgs(args: Record<string, unknown>): string {
+  const cmd = strArg(args, 'command')
+  return cmd !== undefined ? `bash: ${truncate(cmd, BASH_CMD_MAX_CHARS)}` : 'bash'
+}
+
+function formatReadArgs(args: Record<string, unknown>): string {
+  const p = strArg(args, 'path')
+  return p !== undefined ? `read: ${basename(p)}` : 'read'
+}
+
+function formatEditArgs(args: Record<string, unknown>): string {
+  const p = strArg(args, 'path')
+  const edits = args.edits
+  const blocks = Array.isArray(edits) ? edits.length : undefined
+  const head = p !== undefined ? `edit: ${basename(p)}` : 'edit'
+  return blocks !== undefined ? `${head} (${blocks} blocks)` : head
+}
+
+function formatWriteArgs(args: Record<string, unknown>): string {
+  const p = strArg(args, 'path')
+  const c = strArg(args, 'content')
+  const head = p !== undefined ? `write: ${basename(p)}` : 'write'
+  if (c === undefined) return head
+  // utf8 字节转 KB 取整；小文件至少 1KB（0KB 无信息量）
+  const kb = Math.max(1, Math.round(Buffer.byteLength(c, 'utf8') / BYTES_PER_KB))
+  return `${head} (${kb}KB)`
+}
+
+function formatSubagentArgs(args: Record<string, unknown>): string {
+  const task = strArg(args, 'task')
+  return task !== undefined ? `subagent: ${truncate(task, SUBAGENT_TASK_MAX_CHARS)}` : 'subagent'
+}
+
+function formatHeadArgs(args: Record<string, unknown>): string {
+  const p = strArg(args, 'path')
+  // limit 可能是 number 或 string（实测 number，防御 string）
+  const lim: number | string | undefined = numArg(args, 'limit') ?? strArg(args, 'limit')
+  const head = p !== undefined ? `head: ${basename(p)}` : 'head'
+  return lim !== undefined ? `${head} (${lim})` : head
+}
+
+function formatTodoArgs(args: Record<string, unknown>): string {
+  const action = strArg(args, 'action')
+  if (action === undefined) return 'todo'
+  // id 可能是 number（todo 列表 id）或 string
+  const id = args.id
+  const idStr =
+    typeof id === 'string' ? id : typeof id === 'number' ? String(id) : undefined
+  return idStr !== undefined ? `todo: ${action}(${idStr})` : `todo: ${action}`
+}
+
+function formatCwGateArgs(args: Record<string, unknown>): string {
+  const phase = args.phase
+  return phase !== undefined ? `cw-gate: phase=${String(phase)}` : 'cw-gate'
+}
+
+function formatCwInitArgs(args: Record<string, unknown>): string {
+  const slug = strArg(args, 'slug')
+  return slug !== undefined ? `cw-init: ${slug}` : 'cw-init'
+}
+
 /**
- * 按工具类型把 ToolCallInfo 映射成参数摘要串（design §3.3 D1 表）。
+ * 未知工具 fallback（原 switch default）：arguments 非空 → name: <json 前50>；
+ * 空对象 → 仅 name（{} 无信息量）。
+ */
+function formatUnknownTool(name: string, args: Record<string, unknown>): string {
+  if (Object.keys(args).length === 0) return name
+  try {
+    return `${name}: ${truncate(JSON.stringify(args), ARGS_JSON_MAX_CHARS)}`
+  } catch {
+    return name
+  }
+}
+
+/** 工具名 → 参数摘要 formatter 表（design §3.3 D1 表；phase-start 无参数维度恒返常量）。 */
+const TOOL_SUMMARY_FORMATTERS: Record<string, ArgsFormatter> = {
+  bash: formatBashArgs,
+  read: formatReadArgs,
+  edit: formatEditArgs,
+  write: formatWriteArgs,
+  subagent: formatSubagentArgs,
+  head: formatHeadArgs,
+  todo: formatTodoArgs,
+  'coding-workflow-gate': formatCwGateArgs,
+  'coding-workflow-init': formatCwInitArgs,
+  'coding-workflow-phase-start': () => 'cw-phase-start',
+}
+
+/**
+ * 按工具类型把 ToolCallInfo 映射成参数摘要串（design §3.3 D1 表，表驱动分发）。
  *
- * 参数缺失时优雅降级（只输出工具名或省略对应维度）。未知工具 fallback 带 arguments JSON
- * 前 50 字；arguments 为空对象时省略 JSON（`{}` 无信息量）。
+ * 参数缺失时优雅降级（只输出工具名或省略对应维度）。未知工具（表落空）走
+ * formatUnknownTool：带 arguments JSON 前 50 字；arguments 为空对象时省略 JSON
+ * （`{}` 无信息量）。
  *
  * 单位口径：edit 的 blocks 是参数维度（edits 数组长度），write 的 KB 是参数维度（content 字节），
  * 这两者已含参数规模；O2/O3 的 toolResult 摘要在此基础再加结果规模时，bash/read 单独 append
@@ -114,70 +210,6 @@ function numArg(args: Record<string, unknown>, k: string): number | undefined {
  */
 export function formatToolCallSummary(tc: ToolCallInfo): string {
   const { name, arguments: args } = tc
-
-  switch (name) {
-    case 'bash': {
-      const cmd = strArg(args, 'command')
-      return cmd !== undefined ? `bash: ${truncate(cmd, BASH_CMD_MAX_CHARS)}` : 'bash'
-    }
-    case 'read': {
-      const p = strArg(args, 'path')
-      return p !== undefined ? `read: ${basename(p)}` : 'read'
-    }
-    case 'edit': {
-      const p = strArg(args, 'path')
-      const edits = args.edits
-      const blocks = Array.isArray(edits) ? edits.length : undefined
-      const head = p !== undefined ? `edit: ${basename(p)}` : 'edit'
-      return blocks !== undefined ? `${head} (${blocks} blocks)` : head
-    }
-    case 'write': {
-      const p = strArg(args, 'path')
-      const c = strArg(args, 'content')
-      const head = p !== undefined ? `write: ${basename(p)}` : 'write'
-      if (c === undefined) return head
-      // utf8 字节转 KB 取整；小文件至少 1KB（0KB 无信息量）
-      const kb = Math.max(1, Math.round(Buffer.byteLength(c, 'utf8') / BYTES_PER_KB))
-      return `${head} (${kb}KB)`
-    }
-    case 'subagent': {
-      const task = strArg(args, 'task')
-      return task !== undefined ? `subagent: ${truncate(task, SUBAGENT_TASK_MAX_CHARS)}` : 'subagent'
-    }
-    case 'head': {
-      const p = strArg(args, 'path')
-      // limit 可能是 number 或 string（实测 number，防御 string）
-      const lim: number | string | undefined = numArg(args, 'limit') ?? strArg(args, 'limit')
-      const head = p !== undefined ? `head: ${basename(p)}` : 'head'
-      return lim !== undefined ? `${head} (${lim})` : head
-    }
-    case 'todo': {
-      const action = strArg(args, 'action')
-      if (action === undefined) return 'todo'
-      // id 可能是 number（todo 列表 id）或 string
-      const id = args.id
-      const idStr =
-        typeof id === 'string' ? id : typeof id === 'number' ? String(id) : undefined
-      return idStr !== undefined ? `todo: ${action}(${idStr})` : `todo: ${action}`
-    }
-    case 'coding-workflow-gate': {
-      const phase = args.phase
-      return phase !== undefined ? `cw-gate: phase=${String(phase)}` : 'cw-gate'
-    }
-    case 'coding-workflow-init': {
-      const slug = strArg(args, 'slug')
-      return slug !== undefined ? `cw-init: ${slug}` : 'cw-init'
-    }
-    case 'coding-workflow-phase-start':
-      return 'cw-phase-start'
-    default: {
-      // 未知工具：arguments 非空 → name: <json 前50>；空对象 → 仅 name（{} 无信息量）
-      if (Object.keys(args).length === 0) return name
-      try {
-        return `${name}: ${truncate(JSON.stringify(args), ARGS_JSON_MAX_CHARS)}`
-      } catch {
-        return name
-      }
-    }
-  }
+  const formatter = TOOL_SUMMARY_FORMATTERS[name]
+  return formatter !== undefined ? formatter(args) : formatUnknownTool(name, args)
 }

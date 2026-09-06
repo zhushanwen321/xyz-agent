@@ -330,6 +330,61 @@ function leafParsedBytes(turns: Turn[]): number {
   return parsedBytes
 }
 
+/** allBranches：对每个 brief 标注所在 turn 的 forkPoint（找到才标 branch）。 */
+function applyBranchLabels(briefs: TurnBrief[], turns: Turn[], tree: TreeView): void {
+  for (const b of briefs) {
+    const fp = findBranchForkPoint(turns[b.index], tree)
+    if (fp !== undefined) b.branch = fp
+  }
+}
+
+/**
+ * 降级序逐行渲染（design §3.5 算法 1 step3）：level 0 全有；超预算降到 level 1
+ * 砍 assistantBrief；仍超降到 level 2 砍 toolSummary（骨架）。
+ * 直接改写 brief 的 assistantBrief/toolSummary 字段，返回行缓存。
+ */
+function renderDegradingLines(
+  briefs: TurnBrief[],
+  tree: TreeView,
+  perTurnCharBudget: number,
+): string[] {
+  const lineCache: string[] = []
+  for (const b of briefs) {
+    const branchSize = b.branch !== undefined ? tree.branches.get(b.branch) : undefined
+    let line = formatLine(b, LINE_LEVEL_FULL, branchSize)
+    if (line.length > perTurnCharBudget) {
+      // 超预算：先砍 assistantBrief（level 1），仍超再砍 toolSummary（level 2，骨架）
+      b.assistantBrief = ''
+      line = formatLine(b, LINE_LEVEL_NO_ASSISTANT, branchSize)
+      if (line.length > perTurnCharBudget) {
+        b.toolSummary = ''
+        line = formatLine(b, LINE_LEVEL_SKELETON, branchSize)
+      }
+    }
+    lineCache.push(line)
+  }
+  return lineCache
+}
+
+/** 总预算截断（从尾部丢弃）：就地截短 lines 与 briefs，返回最终 totalChars 与 truncated。 */
+function truncateToTotalBudget(
+  briefs: TurnBrief[],
+  lines: string[],
+  budget: number,
+): { totalChars: number; truncated: number | undefined } {
+  let totalChars = lines.reduce((s, l) => s + l.length, 0)
+  if (totalChars / CHARS_PER_TOKEN <= budget) return { totalChars, truncated: undefined }
+  let kept = lines.length
+  while (kept > 0 && totalChars / CHARS_PER_TOKEN > budget) {
+    kept--
+    totalChars -= lines[kept].length
+  }
+  const truncated = lines.length - kept
+  lines.length = kept
+  briefs.length = kept
+  return { totalChars, truncated }
+}
+
 export function renderOutline(
   turns: Turn[],
   tree: TreeView,
@@ -365,46 +420,16 @@ export function renderOutline(
   const briefs: TurnBrief[] = turns.map(computeBrief)
 
   // allBranches：标注 forkPoint
-  if (allBranches) {
-    for (const b of briefs) {
-      const fp = findBranchForkPoint(turns[b.index], tree)
-      if (fp !== undefined) b.branch = fp
-    }
-  }
+  if (allBranches) applyBranchLabels(briefs, turns, tree)
 
   // 2. perTurnBudget（token → chars×4）
   const perTurnCharBudget = (budget / turns.length) * CHARS_PER_TOKEN
 
-  // 3. 降级序：level 0 全有；超预算降到 level 1 砍 assistantBrief；仍超降到 level 2 砍 toolSummary（骨架）。design §3.5 算法 1 step3
-  const lineCache: string[] = []
-  for (const b of briefs) {
-    const branchSize = b.branch !== undefined ? tree.branches.get(b.branch) : undefined
-    let line = formatLine(b, LINE_LEVEL_FULL, branchSize)
-    if (line.length > perTurnCharBudget) {
-      // 超预算：先砍 assistantBrief（level 1），仍超再砍 toolSummary（level 2，骨架）
-      b.assistantBrief = ''
-      line = formatLine(b, LINE_LEVEL_NO_ASSISTANT, branchSize)
-      if (line.length > perTurnCharBudget) {
-        b.toolSummary = ''
-        line = formatLine(b, LINE_LEVEL_SKELETON, branchSize)
-      }
-    }
-    lineCache.push(line)
-  }
+  // 3. 降级序渲染：level 0 全有 → level 1 砍 assistantBrief → level 2 骨架
+  const lineCache = renderDegradingLines(briefs, tree, perTurnCharBudget)
 
   // 4. 总预算截断（从尾部丢弃）
-  let totalChars = lineCache.reduce((s, l) => s + l.length, 0)
-  let truncated: number | undefined
-  if (totalChars / CHARS_PER_TOKEN > budget) {
-    let kept = lineCache.length
-    while (kept > 0 && totalChars / CHARS_PER_TOKEN > budget) {
-      kept--
-      totalChars -= lineCache[kept].length
-    }
-    truncated = lineCache.length - kept
-    lineCache.length = kept
-    briefs.length = kept
-  }
+  const { totalChars, truncated } = truncateToTotalBudget(briefs, lineCache, budget)
 
   const tokenEstimate = Math.ceil(totalChars / CHARS_PER_TOKEN)
   return { turns: briefs, stats, tokenEstimate, truncated }

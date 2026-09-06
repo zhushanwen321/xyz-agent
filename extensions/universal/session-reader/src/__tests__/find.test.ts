@@ -145,7 +145,7 @@ describe('findSessions', () => {
     recordsDir = join(agentDir, 'subagents', '--Users-demo--', 'records')
   })
   afterEach(async () => {
-    await rm(agentDir, { recursive: true, force: true })
+    await rm(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('uuid 片段匹配正确的 session（sessionId 含 query）', async () => {
@@ -254,6 +254,20 @@ describe('findSessions', () => {
     // query 非 uuid 特征（z 非十六进制），走首消息 fallback 仍无匹配
     const result = await findSessions('zzznotexist', agentDir)
     expect(result).toEqual({ matches: [], truncated: false })
+  })
+
+  it('uuid 片段命中路径的 firstMessagePreview 补读（命中时未读首消息，第 5 步补）', async () => {
+    // uuid 片段直接命中 → 不走关键词层（preview 未读），最终结果仍应补读出首消息预览
+    await makeSession(slugDir, {
+      name: 'a.jsonl',
+      id: '019cafe0-aaaa-bbbb',
+      cwd: '/demo',
+      firstUserText: 'uuid 命中后补读的预览文本',
+    })
+    const { matches } = await findSessions('019cafe0', agentDir)
+    expect(matches).toHaveLength(1)
+    expect(matches[0].sessionId).toBe('019cafe0-aaaa-bbbb')
+    expect(matches[0].firstMessagePreview).toBe('uuid 命中后补读的预览文本')
   })
 
   it('firstMessagePreview 截断到 80 字符', async () => {

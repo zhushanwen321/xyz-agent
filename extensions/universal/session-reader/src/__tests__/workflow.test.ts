@@ -151,6 +151,33 @@ describe('parseRunSnapshot', () => {
     expect(overview!.steps[1].contentPreview).toBe('OK')
   })
 
+  it('TC-w5-parse-new-status-unknown：NEW call.status 非 done/running/pending（如 failed）→ step.status=pending', () => {
+    // call.status 出现三态外的值（如上游异常态）时收窄为 pending，其余字段照常提取
+    const fixture = {
+      ...NEW_SNAPSHOT_FIXTURE,
+      state: {
+        ...NEW_SNAPSHOT_FIXTURE.state,
+        calls: [
+          {
+            id: 3,
+            opts: { description: 'step-3' },
+            status: 'failed',
+            result: { content: 'partial', durationMs: 9 },
+          },
+        ],
+      },
+    }
+    const overview = parseRunSnapshot(fixture, 'wf-status-runid', '/abs/wf.jsonl')
+    expect(overview).not.toBeNull()
+    expect(overview!.steps).toHaveLength(1)
+    const step = overview!.steps[0]
+    expect(step.index).toBe(3)
+    expect(step.status).toBe('pending')
+    expect(step.description).toBe('step-3')
+    expect(step.contentPreview).toBe('partial')
+    expect(step.durationMs).toBe(9)
+  })
+
   it('TC-w5-parse-old：OLD 格式 (无 v) 尽力解析为 legacy overview，step status 推测', () => {
     const overview = parseRunSnapshot(OLD_SNAPSHOT_FIXTURE, 'wf-old-link', '/abs/wf-old.jsonl')
     expect(overview).not.toBeNull()
@@ -282,7 +309,7 @@ describe('renderWorkflowOverview', () => {
 describe('readRunSnapshot', () => {
   let dir: string
   afterEach(async () => {
-    if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {})
+    if (dir) await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }).catch(() => {})
   })
 
   it('TC-w5-read-tail-fallback：末行半截 JSON 回退倒数第二行完整快照', async () => {
