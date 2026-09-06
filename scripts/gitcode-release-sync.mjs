@@ -53,8 +53,8 @@ function die(msg) {
 }
 
 // 纯逻辑导出面（scripts/__tests__/gitcode-release-sync.test.mjs 单测——MF-3：发布同步
-// 关键分支不再只靠人工真发布验证）。token 在模块加载时读 env（测试先设 env 再动态 import）。
-export { assetList, fetchUploadTarget, buildExistingAssetMap }
+// 关键分支不再只靠人工真发布验证）。token/repo 在模块加载时读 env（测试先设 env 再动态 import）。
+export { apiCall, assetList, buildExistingAssetMap, checkEnv, createRelease, fetchUploadTarget }
 
 // env 校验收进 main()：vitest import 纯函数导出时不再因缺 token die（CLI 行为不变）
 function checkEnv() {
@@ -115,39 +115,52 @@ async function findReleaseByTag(tag) {
     + `恢复：401/403 检查 GITCODE_TOKEN 是否有效、是否过期；404 且确认仓库存在则可能是权限不足。`);
 }
 
+/** 按编码形态构造创建请求：json 请求体 / form 表单 / query 查询串（body 空） */
+function encodeReleaseRequest(enc, payload) {
+  const base = `/repos/${repo}/releases`;
+  if (enc === 'json') {
+    return { path: base, body: JSON.stringify(payload) };
+  }
+  const form = new URLSearchParams(Object.entries(payload));
+  if (enc === 'form') {
+    return { path: base, body: form };
+  }
+  return { path: `${base}?${form.toString()}`, body: undefined };
+}
+
+/** 凭据/仓库问题的失败是编码无关的，降级无意义，直接终止并给恢复动作 */
+function dieOnEncodingIrrelevantFailure(r) {
+  if (r.status === 401 || r.status === 403) {
+    die(`令牌无效或无写权限（HTTP ${r.status}）：${r.text.slice(0, 300)}。恢复：到 GitCode 个人设置检查私人令牌是否过期、是否授予目标仓库写权限`);
+  }
+  if (r.status === 404) {
+    die(`仓库 ${repo} 不存在或不可见（HTTP 404）。恢复：核对 GitHub variable GITCODE_REPO 与 GitCode 仓库路径一致（含大小写），仓库已创建`);
+  }
+}
+
+/** 创建成功响应 → release 对象：带 id 直接用；缺 id 按 tag 回查（回查不到才 die） */
+async function resolveCreatedRelease(r, tag) {
+  const created = r.json?.id ? r.json : await findReleaseByTag(tag);
+  if (created) return created;
+  die(`创建 release 返回 ${r.status} 但按 tag 回查不到，响应片段：${r.text.slice(0, 400)}`);
+}
+
 /** 创建 release。GitCode 对 body 编码的行为未写明文档且实测 JSON 被 400 拒
  * （"Request body parsing error, please check if the header content-type"），
  * 故按 json → form → query 三种编码自动降级，成功形态打印进日志留档。 */
 async function createRelease({ tag, name, body, prerelease = false }) {
   const payload = { tag_name: tag, name, body, prerelease: String(prerelease) };
-  const formPairs = Object.entries(payload);
   let lastResp;
   for (const enc of ['json', 'form', 'query']) {
-    let path = `/repos/${repo}/releases`;
-    let reqBody;
-    if (enc === 'json') {
-      reqBody = JSON.stringify(payload);
-    } else if (enc === 'form') {
-      reqBody = new URLSearchParams(formPairs);
-    } else {
-      path += `?${new URLSearchParams(formPairs).toString()}`;
-    }
+    const { path, body: reqBody } = encodeReleaseRequest(enc, payload);
     const r = await apiCall('POST', path, { body: reqBody });
     lastResp = r;
     if (r.ok) {
       if (enc !== 'json') console.log(`[info] createRelease: json 编码被拒，${enc} 编码成功（后续调用沿用）`);
-      const created = r.json?.id ? r.json : await findReleaseByTag(tag);
-      if (created) return created;
-      die(`创建 release 返回 ${r.status} 但按 tag 回查不到，响应片段：${r.text.slice(0, 400)}`);
+      return resolveCreatedRelease(r, tag);
     }
     console.log(`[info] createRelease ${enc} 编码失败（HTTP ${r.status}）：${r.text.slice(0, 200)}`);
-    // 凭据/仓库问题是编码无关的，降级无意义，直接终止并给恢复动作
-    if (r.status === 401 || r.status === 403) {
-      die(`令牌无效或无写权限（HTTP ${r.status}）：${r.text.slice(0, 300)}。恢复：到 GitCode 个人设置检查私人令牌是否过期、是否授予目标仓库写权限`);
-    }
-    if (r.status === 404) {
-      die(`仓库 ${repo} 不存在或不可见（HTTP 404）。恢复：核对 GitHub variable GITCODE_REPO 与 GitCode 仓库路径一致（含大小写），仓库已创建`);
-    }
+    dieOnEncodingIrrelevantFailure(r);
   }
   die(`创建 release 三种编码均失败，最后响应（HTTP ${lastResp.status}）：${lastResp.text.slice(0, 500)}。`
     + `恢复：到 docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-releases 核对接口契约后调整本脚本`);
@@ -559,44 +572,62 @@ async function runSyncFromGithub({ tag, githubRepo }) {
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 
-async function main() {
-  checkEnv();
-  if (cmd === 'probe') {
-  await runProbe({ large: argv.includes('--large'), skipRepo: argv.includes('--no-repo') });
-} else if (cmd === 'push-repo') {
-  try {
-    pushRepoMirror();
-  } catch (e) {
-    die(String(e.message || e));
-  }
-} else if (cmd === 'sync-from-github') {
-  const pos = argv.slice(1).filter((a) => !a.startsWith('--'));
-  const [tag] = pos;
-  const ghRepoIdx = argv.indexOf('--github-repo');
-  const githubRepo = ghRepoIdx >= 0 ? argv[ghRepoIdx + 1] : 'zhushanwen321/xyz-agent';
-  if (!tag) {
-    die('用法：node scripts/gitcode-release-sync.mjs sync-from-github <tag> [--github-repo owner/repo]');
-  }
-  await runSyncFromGithub({ tag, githubRepo });
-} else if (cmd === 'sync') {
-  const pos = argv.slice(1).filter((a) => !a.startsWith('--'));
-  const [tag, name, notesFile, artifactsDir] = pos;
-  if (!tag || !name || !artifactsDir) {
-    die('用法：node scripts/gitcode-release-sync.mjs sync <tag> <release-name> <notes-file|空串> <artifacts-dir> [--prerelease]');
-  }
-  await runSync({
-    tag, name, notesFile: notesFile || null, artifactsDir,
-    prerelease: argv.includes('--prerelease'),
-  });
-} else {
-  console.log(`用法：
+/** 位置参数（过滤 -- 开头的选项 token） */
+const positionalArgs = (args) => args.filter((a) => !a.startsWith('--'));
+
+/** --github-repo 取值：缺省用默认仓，显式给出但值缺失时为 undefined（与原 argv 直取一致） */
+function githubRepoFromArgs(args) {
+  const idx = args.indexOf('--github-repo');
+  return idx >= 0 ? args[idx + 1] : 'zhushanwen321/xyz-agent';
+}
+
+const USAGE = `用法：
   node scripts/gitcode-release-sync.mjs probe [--large] [--no-repo]
   node scripts/gitcode-release-sync.mjs push-repo
   node scripts/gitcode-release-sync.mjs sync <tag> <release-name> <notes-file> <artifacts-dir> [--prerelease]
   node scripts/gitcode-release-sync.mjs sync-from-github <tag> [--github-repo owner/repo]
-环境变量：GITCODE_TOKEN（必填）；sync-from-github 另需本机 gh 已登录`);
-  process.exit(cmd ? 1 : 0);
-}
+环境变量：GITCODE_TOKEN（必填）；sync-from-github 另需本机 gh 已登录`;
+
+/** 子命令分派表：args = argv.slice(1)（不含子命令名） */
+const COMMANDS = {
+  probe: async (args) => {
+    await runProbe({ large: args.includes('--large'), skipRepo: args.includes('--no-repo') });
+  },
+  'push-repo': async () => {
+    try {
+      pushRepoMirror();
+    } catch (e) {
+      die(String(e.message || e));
+    }
+  },
+  'sync-from-github': async (args) => {
+    const [tag] = positionalArgs(args);
+    const githubRepo = githubRepoFromArgs(args);
+    if (!tag) {
+      die('用法：node scripts/gitcode-release-sync.mjs sync-from-github <tag> [--github-repo owner/repo]');
+    }
+    await runSyncFromGithub({ tag, githubRepo });
+  },
+  sync: async (args) => {
+    const [tag, name, notesFile, artifactsDir] = positionalArgs(args);
+    if (!tag || !name || !artifactsDir) {
+      die('用法：node scripts/gitcode-release-sync.mjs sync <tag> <release-name> <notes-file|空串> <artifacts-dir> [--prerelease]');
+    }
+    await runSync({
+      tag, name, notesFile: notesFile || null, artifactsDir,
+      prerelease: args.includes('--prerelease'),
+    });
+  },
+};
+
+async function main() {
+  checkEnv();
+  const run = COMMANDS[cmd];
+  if (!run) {
+    console.log(USAGE);
+    process.exit(cmd ? 1 : 0);
+  }
+  await run(argv.slice(1));
 }
 
 // CLI 直跑才执行 main（vitest import 纯函数导出时不触发网络/env 校验）
