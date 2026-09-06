@@ -138,6 +138,76 @@ function makeTempWorkspace(label) {
 
 // ── pi RPC session 封装 ──
 
+// ── stdout RPC 流处理（从 spawnSession 的 stdout 回调提取的模块级 helper 链）──
+
+/**
+ * 处理一段 pi stdout 文本：累积行缓冲，按 \n 切行逐行分发。
+ * @param {string} text
+ * @param {{ stdoutBuf: string, turnEndResolver: { resolve: (v: unknown) => void } | null, sessionFileCache: string | null }} state
+ * @param {unknown[]} captured
+ * @param {Map<string, { resolve: (v: unknown) => void }>} pending
+ */
+function consumeStdoutChunk(text, state, captured, pending) {
+  state.stdoutBuf += text
+  let nl
+  while ((nl = state.stdoutBuf.indexOf('\n')) >= 0) {
+    const line = state.stdoutBuf.slice(0, nl)
+    state.stdoutBuf = state.stdoutBuf.slice(nl + 1)
+    consumeRpcLine(line, state, captured, pending)
+  }
+}
+
+/** 解析一行 JSON 并按序分发：captured → sessionFile 缓存 → pending resolve → turn_end resolve。 */
+function consumeRpcLine(line, state, captured, pending) {
+  if (!line.trim()) return
+  let msg
+  try {
+    msg = JSON.parse(line)
+  } catch (_) {
+    return // 非 JSON banner
+  }
+  captured.push(msg)
+  cacheSessionFile(msg, state)
+  resolvePendingResponse(msg, pending)
+  resolveTurnEndWaiter(msg, state)
+}
+
+/** get_state response 里的 sessionFile 进缓存（供 getJsonlSnippet() 同步读 JSONL 证据）。 */
+function cacheSessionFile(msg, state) {
+  if (
+    msg &&
+    msg.type === 'response' &&
+    msg.data &&
+    typeof msg.data.sessionFile === 'string'
+  ) {
+    state.sessionFileCache = msg.data.sessionFile
+  }
+}
+
+/** response 按 id 命中 pending 表则 resolve 并移除。 */
+function resolvePendingResponse(msg, pending) {
+  if (msg && msg.type === 'response' && msg.id) {
+    const p = pending.get(msg.id)
+    if (p) {
+      pending.delete(msg.id)
+      p.resolve(msg)
+    }
+  }
+}
+
+/** turn_end（非 toolUse 才是真回合结束；toolUse 会继续下一轮）→ 唤醒 waitForTurnEnd。 */
+function resolveTurnEndWaiter(msg, state) {
+  if (msg && msg.type === 'turn_end') {
+    const stopReason =
+      (msg.message && msg.message.stopReason) || msg.stopReason || ''
+    if (stopReason !== 'toolUse' && state.turnEndResolver) {
+      const r = state.turnEndResolver
+      state.turnEndResolver = null
+      r.resolve({ ok: true, stopReason })
+    }
+  }
+}
+
 /**
  * spawn 一个 pi 进程（加载 scheduler extension，关 builtin tools 强制模型只用 schedule 工具）。
  * 返回 RPC 控制 API。
@@ -172,52 +242,12 @@ function spawnSession(opts) {
   const pending = new Map()
   /** @type {unknown[]} */ // 所有 stdout JSON 消息（response / streaming / turn_end 等）
   const captured = []
-  let stdoutBuf = ''
+  // 跨 chunk 可变状态：stdout 行缓冲 / turn_end 等待者 / sessionFile 缓存
+  const state = { stdoutBuf: '', turnEndResolver: null, sessionFileCache: null }
   let stderrBuf = ''
-  let turnEndResolver = null
-  // 缓存 get_state response 里的 sessionFile，供 getJsonlSnippet() 同步读取 JSONL 证据
-  let sessionFileCache = null
 
   child.stdout.on('data', (d) => {
-    stdoutBuf += d.toString('utf-8')
-    let nl
-    while ((nl = stdoutBuf.indexOf('\n')) >= 0) {
-      const line = stdoutBuf.slice(0, nl)
-      stdoutBuf = stdoutBuf.slice(nl + 1)
-      if (!line.trim()) continue
-      let msg
-      try {
-        msg = JSON.parse(line)
-      } catch (_) {
-        continue // 非 JSON banner
-      }
-      captured.push(msg)
-      if (
-        msg &&
-        msg.type === 'response' &&
-        msg.data &&
-        typeof msg.data.sessionFile === 'string'
-      ) {
-        sessionFileCache = msg.data.sessionFile
-      }
-      if (msg && msg.type === 'response' && msg.id) {
-        const p = pending.get(msg.id)
-        if (p) {
-          pending.delete(msg.id)
-          p.resolve(msg)
-        }
-      }
-      // turn_end（非 toolUse 才是真回合结束；toolUse 会继续下一轮）
-      if (msg && msg.type === 'turn_end') {
-        const stopReason =
-          (msg.message && msg.message.stopReason) || msg.stopReason || ''
-        if (stopReason !== 'toolUse' && turnEndResolver) {
-          const r = turnEndResolver
-          turnEndResolver = null
-          r.resolve({ ok: true, stopReason })
-        }
-      }
-    }
+    consumeStdoutChunk(d.toString('utf-8'), state, captured, pending)
   })
 
   child.stderr.on('data', (d) => {
@@ -238,11 +268,11 @@ function spawnSession(opts) {
       const timer = setTimeout(() => {
         if (!done) {
           done = true
-          turnEndResolver = null
+          state.turnEndResolver = null
           resolve({ ok: false })
         }
       }, timeoutMs)
-      turnEndResolver = {
+      state.turnEndResolver = {
         resolve: (v) => {
           if (!done) {
             done = true
@@ -315,10 +345,10 @@ function spawnSession(opts) {
    * 用于 A 类场景的 JSONL 持久化证据（验证 V4 appendEntry 落盘）。
    */
   function getJsonlSnippet(maxLines = 8) {
-    if (!sessionFileCache || !existsSync(sessionFileCache)) return ''
+    if (!state.sessionFileCache || !existsSync(state.sessionFileCache)) return ''
     let content
     try {
-      content = readFileSync(sessionFileCache, 'utf-8')
+      content = readFileSync(state.sessionFileCache, 'utf-8')
     } catch (_) {
       return ''
     }
@@ -1249,6 +1279,76 @@ const C_CLASS = ['S11', 'S13', 'S15']
 
 // ── main ──
 
+/** 参数 → 待跑场景名列表；未知参数返回 null（调用方打印 usage 后 exit 2）。 */
+function selectScenarioList(arg) {
+  if (arg === 'all') {
+    return [...A_CLASS, ...B_CLASS_IMPL, ...B_CLASS_FOLLOWUP, ...C_CLASS]
+  }
+  if (arg === 'aclass') {
+    return [...A_CLASS]
+  }
+  if (arg === 'bclass') {
+    return [...B_CLASS_IMPL, ...B_CLASS_FOLLOWUP]
+  }
+  if (arg === 'v') {
+    // 仅打印 V 对照（需先有 S 结果，这里跑 A 类后对照）
+    return [...A_CLASS, ...B_CLASS_IMPL]
+  }
+  if (SCENARIOS[arg]) {
+    return [arg]
+  }
+  return null
+}
+
+/** 执行单个场景：注册表未命中返回 null；异常包装为 FAIL result（不中断后续场景）。 */
+async function executeScenario(name, piBin) {
+  try {
+    const fn = SCENARIOS[name]
+    return typeof fn === 'function' ? await fn(piBin) : null
+  } catch (err) {
+    return {
+      name,
+      status: 'FAIL',
+      evidence: `exception: ${err && err.stack ? err.stack : String(err)}`,
+    }
+  }
+}
+
+/** 汇总统计：A 类已跑/通过/失败、B 类通过/followup、C 类 followup。 */
+function collectSummaryCounts(results) {
+  const aRan = results.filter((r) => A_CLASS.includes(r.name))
+  const aPass = aRan.filter((r) => r.status === 'PASS')
+  const aFail = aRan.filter((r) => r.status === 'FAIL')
+  const bPass = results.filter(
+    (r) => B_CLASS_IMPL.includes(r.name) && r.status === 'PASS',
+  )
+  const bFollowup = results.filter(
+    (r) =>
+      (B_CLASS_IMPL.includes(r.name) || B_CLASS_FOLLOWUP.includes(r.name)) &&
+      r.status === 'FOLLOWUP',
+  )
+  const cFollowup = results.filter(
+    (r) => C_CLASS.includes(r.name) && r.status === 'FOLLOWUP',
+  )
+  return { aRan, aPass, aFail, bPass, bFollowup, cFollowup }
+}
+
+/** 汇总打印：A/B/C 分类计数 + V-gates 状态分布。 */
+function printSummary({ aRan, aPass, aFail, bPass, bFollowup, cFollowup }, vResults) {
+  console.log(`${TAG} ============================================================`)
+  console.log(`${TAG} A-class: ${aPass.length}/${aRan.length} PASS`)
+  if (aFail.length > 0) {
+    console.log(`${TAG}   ❌ A-class FAIL (BLOCKER): ${aFail.map((r) => r.name).join(', ')}`)
+  }
+  console.log(`${TAG} B-class: ${bPass.length} PASS, ${bFollowup.length} followup`)
+  console.log(`${TAG} C-class: ${cFollowup.length} followup`)
+  console.log(
+    `${TAG} V-gates: ${vResults.filter((v) => v.status === 'CONFIRMED').length} confirmed, ` +
+      `${vResults.filter((v) => v.status === 'PARTIAL').length} partial, ` +
+      `${vResults.filter((v) => v.status === 'NEEDS-FOLLOWUP').length} needs-followup`,
+  )
+}
+
 async function main() {
   const piBin = locatePiBinary()
   console.log(`${TAG} ============================================================`)
@@ -1266,19 +1366,8 @@ async function main() {
   console.log(`${TAG} extension: ${EXTENSION_PATH}`)
 
   const arg = process.argv[2] || 'aclass'
-  let toRun = []
-  if (arg === 'all') {
-    toRun = [...A_CLASS, ...B_CLASS_IMPL, ...B_CLASS_FOLLOWUP, ...C_CLASS]
-  } else if (arg === 'aclass') {
-    toRun = [...A_CLASS]
-  } else if (arg === 'bclass') {
-    toRun = [...B_CLASS_IMPL, ...B_CLASS_FOLLOWUP]
-  } else if (arg === 'v') {
-    // 仅打印 V 对照（需先有 S 结果，这里跑 A 类后对照）
-    toRun = [...A_CLASS, ...B_CLASS_IMPL]
-  } else if (SCENARIOS[arg]) {
-    toRun = [arg]
-  } else {
+  const toRun = selectScenarioList(arg)
+  if (!toRun) {
     console.log(`${TAG} unknown scenario: ${arg}`)
     console.log(`${TAG} usage: node verify-scheduler-e2e.cjs [S1..S17|aclass|bclass|all|v]`)
     return 2
@@ -1288,19 +1377,8 @@ async function main() {
   for (const name of toRun) {
     console.log(`${TAG} ------------------------------------------------------------`)
     console.log(`${TAG} running ${name} ...`)
-    try {
-      const fn = SCENARIOS[name]
-      const r = typeof fn === 'function' ? await fn(piBin) : null
-      if (r) {
-        results.push(r)
-        printResult(r)
-      }
-    } catch (err) {
-      const r = {
-        name,
-        status: 'FAIL',
-        evidence: `exception: ${err && err.stack ? err.stack : String(err)}`,
-      }
+    const r = await executeScenario(name, piBin)
+    if (r) {
       results.push(r)
       printResult(r)
     }
@@ -1313,37 +1391,12 @@ async function main() {
   for (const v of vResults) printResult(v)
 
   // 汇总
-  console.log(`${TAG} ============================================================`)
-  const aRan = results.filter((r) => A_CLASS.includes(r.name))
-  const aPass = aRan.filter((r) => r.status === 'PASS')
-  const aFail = aRan.filter((r) => r.status === 'FAIL')
-  const bPass = results.filter(
-    (r) => B_CLASS_IMPL.includes(r.name) && r.status === 'PASS',
-  )
-  const bFollowup = results.filter(
-    (r) =>
-      (B_CLASS_IMPL.includes(r.name) || B_CLASS_FOLLOWUP.includes(r.name)) &&
-      r.status === 'FOLLOWUP',
-  )
-  const cFollowup = results.filter(
-    (r) => C_CLASS.includes(r.name) && r.status === 'FOLLOWUP',
-  )
-
-  console.log(`${TAG} A-class: ${aPass.length}/${aRan.length} PASS`)
-  if (aFail.length > 0) {
-    console.log(`${TAG}   ❌ A-class FAIL (BLOCKER): ${aFail.map((r) => r.name).join(', ')}`)
-  }
-  console.log(`${TAG} B-class: ${bPass.length} PASS, ${bFollowup.length} followup`)
-  console.log(`${TAG} C-class: ${cFollowup.length} followup`)
-  console.log(
-    `${TAG} V-gates: ${vResults.filter((v) => v.status === 'CONFIRMED').length} confirmed, ` +
-      `${vResults.filter((v) => v.status === 'PARTIAL').length} partial, ` +
-      `${vResults.filter((v) => v.status === 'NEEDS-FOLLOWUP').length} needs-followup`,
-  )
+  const counts = collectSummaryCounts(results)
+  printSummary(counts, vResults)
 
   // 任一已跑场景 FAIL = exit 1；aclass 聚合跑全 6 个且全过 = exit 0
   // （单场景跑成功也返回 0，便于分场景驱动；gate 用 aclass 聚合判定）
-  const code = results.length > 0 && aFail.length === 0 ? 0 : 1
+  const code = results.length > 0 && counts.aFail.length === 0 ? 0 : 1
   console.log(`${TAG} exit code: ${code}`)
   return code
 }

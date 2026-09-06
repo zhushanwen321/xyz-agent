@@ -101,18 +101,117 @@ const KILL_GRACE_MS = 2000
 // ---------------------------------------------------------------------------
 
 /**
+ * 解析 options 默认值并推导 url（纯函数；主流程只做编排）。
+ * @param {SmokeOptions} options
+ */
+function resolveSmokeOptions(options) {
+  const port = options.port ?? DEFAULT_PORT
+  return {
+    devCmd: options.devCmd ?? DEFAULT_DEV_CMD,
+    url: `http://localhost:${port}`,
+    readyTimeout: options.readyTimeout ?? DEFAULT_READY_TIMEOUT,
+    consoleSettleMs: options.consoleSettleMs ?? DEFAULT_CONSOLE_SETTLE_MS,
+    mountSelectors: options.mountSelectors ?? DEFAULT_MOUNT_SELECTORS,
+    ignorePatterns: options.ignorePatterns ?? DEFAULT_IGNORE_PATTERNS,
+  }
+}
+
+/**
+ * 单个 chunk 的行级收集：保留全部非空行进 outputLines（超时诊断取尾部），
+ * 命中 vite 编译 pattern 的行进 stderrErrors。
+ */
+function collectChunkLines(text, { outputLines, stderrErrors }) {
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    outputLines.push(line)
+    if (VITE_COMPILE_PATTERNS.some((p) => p.test(trimmed))) {
+      stderrErrors.push(trimmed)
+    }
+  }
+}
+
+/**
+ * spawn dev server（VITE_MOCK 经子进程 env 注入）并挂 stdout/stderr 双流收集 +
+ * spawn error 监听。返回 ChildProcess。
+ * @param {string} devCmd
+ * @param {{ outputLines: string[], stderrErrors: string[] }} sinks
+ */
+function spawnDevServer(devCmd, sinks) {
+  const child = spawn(devCmd, {
+    shell: true,
+    env: { ...process.env, VITE_MOCK: 'true' },
+    cwd: process.cwd(),
+  })
+  const onChunk = (chunk) => collectChunkLines(chunk.toString(), sinks)
+  child.stdout.on('data', onChunk)
+  child.stderr.on('data', onChunk)
+  child.on('error', (err) => {
+    // spawn 本身失败（如命令不存在）
+    sinks.stderrErrors.push(`[dev-smoke] spawn error: ${err.message}`)
+  })
+  return child
+}
+
+/**
+ * ready 失败（超时 / child 提前退出）→ exit 2 结果（detail 附 vite 输出尾部诊断）。
+ */
+function makeReadyTimeoutResult({ url, readyTimeout, readyReason, child, sinks, consoleErrors, pageErrors, missingMounts }) {
+  const tail = sinks.outputLines.slice(-50).join('\n')
+  const reason = readyReason === 'child-exited'
+    ? `spawn 的 dev server 提前退出（exitCode=${child.exitCode} signalCode=${child.signalCode}）—— 常见原因：${DEFAULT_PORT} 端口被占（vite strictPort 退出）/ 命令错 / 依赖未装`
+    : `${url} 在 ${readyTimeout}ms 内未 ready`
+  return makeResult({
+    exitCode: 2,
+    stderrErrors: sinks.stderrErrors,
+    consoleErrors,
+    pageErrors,
+    missingMounts,
+    readyMs: readyTimeout,
+    detail: `DEV_SERVER_READY_TIMEOUT: ${reason}。vite 输出尾部:\n${tail}`,
+  })
+}
+
+/**
+ * 注册 page 双通道错误监听：console type=error（经 ignorePatterns 过滤已知噪声）+
+ * pageerror 未捕获异常（无白名单，确定性失败）。
+ */
+function attachPageErrorListeners(page, { consoleErrors, pageErrors, ignorePatterns }) {
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') {
+      const text = msg.text()
+      if (!ignorePatterns.some((p) => p.test(text))) {
+        consoleErrors.push(text)
+      }
+    }
+  })
+  page.on('pageerror', (err) => {
+    pageErrors.push(err.stack ? `${err.name}: ${err.message}\n${err.stack}` : String(err))
+  })
+}
+
+/**
+ * 逐个断言挂载点可见（waitForSelector 超时的 selector 记入 missingMounts，不中断后续）。
+ * waitForSelector 给 consoleSettleMs + 缓冲，足够 vite 按需编译 + Vue mount。
+ */
+async function assertMountsVisible(page, mountSelectors, mountTimeout, missingMounts) {
+  for (const sel of mountSelectors) {
+    try {
+      await page.waitForSelector(sel, { state: 'visible', timeout: mountTimeout })
+    } catch {
+      missingMounts.push(sel)
+    }
+  }
+}
+
+/**
  * 运行 dev 冒烟闸门。
  * @param {SmokeOptions} [options]
  * @returns {Promise<SmokeResult>}
  */
 export async function runSmoke(options = {}) {
-  const devCmd = options.devCmd ?? DEFAULT_DEV_CMD
-  const port = options.port ?? DEFAULT_PORT
-  const url = `http://localhost:${port}`
-  const readyTimeout = options.readyTimeout ?? DEFAULT_READY_TIMEOUT
-  const consoleSettleMs = options.consoleSettleMs ?? DEFAULT_CONSOLE_SETTLE_MS
-  const mountSelectors = options.mountSelectors ?? DEFAULT_MOUNT_SELECTORS
-  const ignorePatterns = options.ignorePatterns ?? DEFAULT_IGNORE_PATTERNS
+  const { devCmd, url, readyTimeout, consoleSettleMs, mountSelectors, ignorePatterns } =
+    resolveSmokeOptions(options)
 
   /** @type {string[]} */
   const stderrErrors = []
@@ -124,6 +223,7 @@ export async function runSmoke(options = {}) {
   const missingMounts = []
   // 保留全部 vite 输出行，超时诊断时取尾部
   const outputLines = []
+  const sinks = { outputLines, stderrErrors }
 
   /** @type {import('node:child_process').ChildProcess | null} */
   let child = null
@@ -132,46 +232,13 @@ export async function runSmoke(options = {}) {
 
   try {
     // ---- (1) spawn dev server（VITE_MOCK 经子进程 env 注入）----
-    child = spawn(devCmd, {
-      shell: true,
-      env: { ...process.env, VITE_MOCK: 'true' },
-      cwd: process.cwd(),
-    })
-    const collectOutput = (chunk) => {
-      const text = chunk.toString()
-      for (const line of text.split('\n')) {
-        const trimmed = line.trim()
-        if (!trimmed) continue
-        outputLines.push(line)
-        if (VITE_COMPILE_PATTERNS.some((p) => p.test(trimmed))) {
-          stderrErrors.push(trimmed)
-        }
-      }
-    }
-    child.stdout.on('data', collectOutput)
-    child.stderr.on('data', collectOutput)
-    child.on('error', (err) => {
-      // spawn 本身失败（如命令不存在）
-      stderrErrors.push(`[dev-smoke] spawn error: ${err.message}`)
-    })
+    child = spawnDevServer(devCmd, sinks)
 
     // ---- (2) 轮询 dev server ready（ECONNREFUSED 继续轮询；child 退出立即判失败，
     //      避免连到 1420 上可能已存在的别的 dev 实例导致假结果；超时则 exit 2）----
     const ready = await pollReady(url, readyTimeout, child)
     if (!ready.ok) {
-      const tail = outputLines.slice(-50).join('\n')
-      const reason = ready.reason === 'child-exited'
-        ? `spawn 的 dev server 提前退出（exitCode=${child.exitCode} signalCode=${child.signalCode}）—— 常见原因：${DEFAULT_PORT} 端口被占（vite strictPort 退出）/ 命令错 / 依赖未装`
-        : `${url} 在 ${readyTimeout}ms 内未 ready`
-      return makeResult({
-        exitCode: 2,
-        stderrErrors,
-        consoleErrors,
-        pageErrors,
-        missingMounts,
-        readyMs: readyTimeout,
-        detail: `DEV_SERVER_READY_TIMEOUT: ${reason}。vite 输出尾部:\n${tail}`,
-      })
+      return makeReadyTimeoutResult({ url, readyTimeout, readyReason: ready.reason, child, sinks, consoleErrors, pageErrors, missingMounts })
     }
     const readyMs = ready.ms
 
@@ -192,31 +259,12 @@ export async function runSmoke(options = {}) {
 
     // ---- (4) 注册 page 监听 + goto ----
     const page = await browser.newPage()
-    page.on('console', (msg) => {
-      if (msg.type() === 'error') {
-        const text = msg.text()
-        if (!ignorePatterns.some((p) => p.test(text))) {
-          consoleErrors.push(text)
-        }
-      }
-    })
-    page.on('pageerror', (err) => {
-      // 未捕获异常无白名单，确定性失败
-      pageErrors.push(err.stack ? `${err.name}: ${err.message}\n${err.stack}` : String(err))
-    })
+    attachPageErrorListeners(page, { consoleErrors, pageErrors, ignorePatterns })
 
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: readyTimeout })
 
     // ---- (5) 断言挂载点可见 ----
-    // waitForSelector 给 consoleSettleMs + 缓冲，足够 vite 按需编译 + Vue mount
-    const mountTimeout = consoleSettleMs + 5000
-    for (const sel of mountSelectors) {
-      try {
-        await page.waitForSelector(sel, { state: 'visible', timeout: mountTimeout })
-      } catch {
-        missingMounts.push(sel)
-      }
-    }
+    await assertMountsVisible(page, mountSelectors, consoleSettleMs + 5000, missingMounts)
 
     // ---- (6) settle 静默窗口（收集 mount 后异步产生的 error）----
     await sleep(consoleSettleMs)
