@@ -205,11 +205,62 @@ export async function downloadAsset(
   const downloadedBytes = resolveResumeStartBytes(resumeState, tempPath, finalPath)
 
   // 3. 引擎编排（u4：双引擎降级 + D10 三步链，设计 §3.4 数据流图）。
-  //    curl flag 分流 / 多段 probe / 单段兜底三条路径提取到 runEngineOrchestration，
-  //    降级时序（probe → 多段 → 分类失败 curl 接管 → 单段兜底）保持不变。
-  await runEngineOrchestration(asset, {
+  //    - A/D5 flag 分流：enginePreference 已置 curl（此前连接建立失败）→ 跳过 undici
+  //      直接 curl 整文件（授权坏场景每次 undici 连接失败都是白付的失败延迟）。
+  //    - B/D7 probe 经 upgradeFetch（双引擎）：usedEngine='curl' → 本次放弃多段直接
+  //      curl 整文件；flag 置位与否由 upgradeFetch 内部按 D4 判定，这里不做置位决策。
+  //    - C/D 多段/单段失败按 D4 分类：连接建立失败 → 置 flag + 降级 curl；瞬时类/流中断
+  //      → 仅本次降级；HTTP/磁盘/超时类（non-fallback：含 idle 停滞中止/用户取消，D1 删总钟
+  //      后 AbortError 均非「连接建立类故障」，保守不降级）原样上抛不降级。
+  //    [时序不变量 timeout-tick-parity] 编排分支保持提取前的同步判断形态（if/else 直达
+  //    首个 IO await 调用点），禁止 async 编排 wrapper：从本函数进入到首个 IO await
+  //    （curl 链 / probe / downloadSingleStream→fetch）之间的 await 挂起点必须与提取前
+  //    逐一 tick 对齐——D1 idle 用例以 fake timers + 同步 enqueue 编排数据流，多一个
+  //    await tick 即使 fetch 晚到、测试的 source 捕获错位（2026-09 U03 实证）。
+  const orchestrationCtx: IEngineOrchestrationContext = {
     tempPath, finalPath, downloadedBytes, resumeState, onProgress, proxyConfig, proxyUrl,
-  })
+  }
+  let handledByCurl = false
+  if (getEnginePreference() === 'curl') {
+    await runCurlDownloadChain(asset, {
+      tempPath: orchestrationCtx.tempPath,
+      finalPath: orchestrationCtx.finalPath,
+      downloadedBytes: orchestrationCtx.downloadedBytes,
+      onProgress: orchestrationCtx.onProgress,
+      proxyUrl: orchestrationCtx.proxyUrl,
+    })
+    handledByCurl = true
+  }
+
+  if (!handledByCurl) {
+    let useMultiPart = false
+    // [S#1 / business-logic] 多段启用阈值用 release 声明的 asset.size，而非 probe 返回的
+    // 真实 totalBytes：此判定在 probe 之前，目的是先过滤掉小文件，避免对每个小文件都发一次
+    // HEAD probe（额外 RTT）。即使 release 声明 size 被误填偏小，导致大文件误走单段下载，
+    // probe 仍会兜底判 supported=false；多段只是加速优化，单段下载本身完全正确，无正确性风险。
+    if (!resumeState && asset.size && asset.size >= MIN_MULTI_PART_SIZE) {
+      const probed = await probeMultiPartSupport(asset, proxyUrl)
+      if (probed.usedEngine === 'curl') {
+        // D7：probe 引擎为 curl → 本次放弃多段（多段是 undici 的加速优化），直接整文件
+        // curl 下载。多段前提即无续传状态，此处 downloadedBytes 恒为 0。
+        await runCurlDownloadChain(asset, { tempPath, finalPath, downloadedBytes: 0, onProgress, proxyUrl })
+        handledByCurl = true
+      } else if (probed.supported) {
+        // [RM3] 服务器/代理不遵守 Range（任一段非 206 或段长不符）→ 整批放弃多段：
+        // 不设 useMultiPart，落入下方单段路径完整下载。此时 downloadedBytes=0（进多段
+        // 的前提就是无续传状态），单段全新请求不带 Range 头，既有 206/200 分类天然
+        // 兼容「忽略 Range 回 200」的服务器，sha256 校验兜底产物正确性。
+        const multiOutcome = await attemptMultiPartDownload(asset, orchestrationCtx, probed.totalBytes)
+        useMultiPart = multiOutcome.useMultiPart
+        handledByCurl = multiOutcome.handledByCurl
+      }
+    }
+
+    // 4. 单段下载（续传或 Probe 未通过时走此路径），失败按 D4 分类降级 curl。
+    if (!useMultiPart && !handledByCurl) {
+      await downloadSingleStreamWithFallback(asset, orchestrationCtx)
+    }
+  }
 
   // 5. 校验链前统一清理 resume-state（D6：undici / curl 两引擎同点清理，不散落）。
   //    curl 续传以 temp 实际落盘字节为准（-C -），state 只服务 undici 续传。
@@ -281,69 +332,10 @@ interface IEngineOrchestrationContext {
   proxyUrl?: string
 }
 
-/**
- * 引擎编排（downloadAsset 阶段 3，u4：双引擎降级 + D10 三步链）：
- *   - A/D5 flag 分流：enginePreference 已置 curl → 跳过 undici 直接 curl 整文件。
- *   - B/D7 probe（attemptMultiPartWhenEligible）：usedEngine='curl' → 本次放弃多段直接
- *     curl 整文件；undici 支持则尝试多段。
- *   - C/D 多段/单段失败按 D4 分类降级：连接建立失败 → 置 flag + 降级 curl；瞬时类/流中断
- *     → 仅本次降级；HTTP/磁盘/总超时类（non-fallback）原样上抛不降级。
- */
-async function runEngineOrchestration(asset: ReleaseAsset, ctx: IEngineOrchestrationContext): Promise<void> {
-  if (getEnginePreference() === 'curl') {
-    await runCurlDownloadChain(asset, {
-      tempPath: ctx.tempPath, finalPath: ctx.finalPath, downloadedBytes: ctx.downloadedBytes,
-      onProgress: ctx.onProgress, proxyUrl: ctx.proxyUrl,
-    })
-    return
-  }
-
-  const multiOutcome = await attemptMultiPartWhenEligible(asset, ctx)
-  // 多段被 curl 接管（handledByCurl）或多段成功在途（useMultiPart）→ 不走单段兜底；
-  // 其余（未达多段门槛 / probe 不支持 / 多段降级单段）→ 单段下载 + 分类降级 curl。
-  if (multiOutcome.handledByCurl || multiOutcome.useMultiPart) {
-    return
-  }
-  await downloadSingleStreamWithFallback(asset, ctx)
-}
-
 /** 多段尝试结果：handledByCurl = 本次下载已由 curl 引擎接管；useMultiPart = 多段下载已成功。 */
 interface IMultiPartOutcome {
   handledByCurl: boolean
   useMultiPart: boolean
-}
-
-/** 未尝试多段的默认结局（走单段兜底）。 */
-const MULTI_PART_NOT_ATTEMPTED: IMultiPartOutcome = { handledByCurl: false, useMultiPart: false }
-
-/**
- * 多段下载资格判定 + probe + 尝试（downloadAsset 阶段 3 的 undici 多段路径）。
- *
- * [S#1 / business-logic] 多段启用阈值用 release 声明的 asset.size，而非 probe 返回的
- * 真实 totalBytes：此判定在 probe 之前，目的是先过滤掉小文件，避免对每个小文件都发一次
- * HEAD probe（额外 RTT）。即使 release 声明 size 被误填偏小，导致大文件误走单段下载，
- * probe 仍会兜底判 supported=false；多段只是加速优化，单段下载本身完全正确，无正确性风险。
- */
-async function attemptMultiPartWhenEligible(
-  asset: ReleaseAsset,
-  ctx: IEngineOrchestrationContext,
-): Promise<IMultiPartOutcome> {
-  if (!ctx.resumeState && asset.size && asset.size >= MIN_MULTI_PART_SIZE) {
-    const probed = await probeMultiPartSupport(asset, ctx.proxyUrl)
-    if (probed.usedEngine === 'curl') {
-      // D7：probe 引擎为 curl → 本次放弃多段（多段是 undici 的加速优化），直接整文件
-      // curl 下载。多段前提即无续传状态，此处 downloadedBytes 恒为 0。
-      await runCurlDownloadChain(asset, {
-        tempPath: ctx.tempPath, finalPath: ctx.finalPath, downloadedBytes: 0,
-        onProgress: ctx.onProgress, proxyUrl: ctx.proxyUrl,
-      })
-      return { handledByCurl: true, useMultiPart: false }
-    }
-    if (probed.supported) {
-      return attemptMultiPartDownload(asset, ctx, probed.totalBytes)
-    }
-  }
-  return MULTI_PART_NOT_ATTEMPTED
 }
 
 /**
