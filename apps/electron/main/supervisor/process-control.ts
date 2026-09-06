@@ -325,6 +325,45 @@ export function spawnRuntimeProcess(port: number, onExit?: (code: number | null)
 }
 
 /**
+ * 查询单个 PID 的直接子进程 PID 列表（pgrep -P，getDescendantPids 的 BFS 单步）。
+ *
+ * 静默分支（输出为空 / pgrep exit 1 无匹配 / ENOENT 无 pgrep）与其他真实错误
+ * 统一返回 []——对 BFS 编排语义一致（该分支无后代），差异只在可观测性
+ * （真实错误经 reportPgrepFailure warn），由调用方继续处理队列剩余分支。
+ */
+function queryChildPids(pid: number): number[] {
+  try {
+    // execFileSync 不经 shell（pid 已是 number 无注入风险，但更稳健——避免 shell 解析/路径差异）。
+    // 原实现用 `pgrep -P ${pid} 2>/dev/null || true` + shell:true 吞 stderr 和 exit code 1；
+    // execFileSync 不支持 shell 重定向，需在 catch 里处理 pgrep 无匹配时 exit code 1。
+    const output = execFileSync('pgrep', ['-P', String(pid)], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim()
+    if (!output) return []
+    return output.split('\n').map(Number).filter(n => !isNaN(n) && n > 0)
+  } catch (e) {
+    reportPgrepFailure(pid, e)
+    return []
+  }
+}
+
+/**
+ * pgrep 失败的可观测性兜底（原 getDescendantPids catch 内联逻辑）。
+ *
+ * exit 1（无子进程，属正常）与 ENOENT（pgrep 不存在，极少见）静默不阻断 stop 流程；
+ * 其他真实错误才 warn。
+ */
+function reportPgrepFailure(pid: number, e: unknown): void {
+  // execFileSync 抛出的错误对象带 status（exit code）/ code（spawn 错误如 ENOENT）字段。
+  const status = (e && typeof e === 'object' && 'status' in e) ? e.status : undefined
+  const code = (e && typeof e === 'object' && 'code' in e) ? e.code : undefined
+  if (status !== 1 && code !== 'ENOENT') {
+    console.warn(`[runtime] getDescendantPids failed for PID ${pid}:`, e instanceof Error ? e.message : String(e))
+  }
+}
+
+/**
  * 递归获取指定 PID 的所有后代进程 PID（广度优先，按代排列：子→孙→...）。
  *
  * [HISTORICAL] 仅支持 macOS/Linux（依赖 pgrep -P）。
@@ -338,30 +377,9 @@ export function getDescendantPids(parentPid: number): number[] {
   const result: number[] = []
   const queue = [parentPid]
   while (queue.length > 0) {
-    const pid = queue.shift()!
-    try {
-      // execFileSync 不经 shell（pid 已是 number 无注入风险，但更稳健——避免 shell 解析/路径差异）。
-      // 原实现用 `pgrep -P ${pid} 2>/dev/null || true` + shell:true 吞 stderr 和 exit code 1；
-      // execFileSync 不支持 shell 重定向，需在 catch 里处理 pgrep 无匹配时 exit code 1。
-      const output = execFileSync('pgrep', ['-P', String(pid)], {
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }).trim()
-      if (output) {
-        const childPids = output.split('\n').map(Number).filter(n => !isNaN(n) && n > 0)
-        result.push(...childPids)
-        queue.push(...childPids)
-      }
-    } catch (e) {
-      // pgrep 无子进程时 exit code 1（execFileSync 会抛）属正常，静默 continue；
-      // ENOENT（pgrep 不存在，极少见）也不阻断 stop 流程；其他真实错误才 warn。
-      // execFileSync 抛出的错误对象带 status（exit code）/ code（spawn 错误如 ENOENT）字段。
-      const status = (e && typeof e === 'object' && 'status' in e) ? e.status : undefined
-      const code = (e && typeof e === 'object' && 'code' in e) ? e.code : undefined
-      if (status !== 1 && code !== 'ENOENT') {
-        console.warn(`[runtime] getDescendantPids failed for PID ${pid}:`, e instanceof Error ? e.message : String(e))
-      }
-    }
+    const childPids = queryChildPids(queue.shift()!)
+    result.push(...childPids)
+    queue.push(...childPids)
   }
   return result
 }

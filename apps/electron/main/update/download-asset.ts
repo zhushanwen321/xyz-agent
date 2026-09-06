@@ -200,117 +200,223 @@ export async function downloadAsset(
   // undici 路径仍按原样用 proxyConfig 构造 ProxyAgent）
   const proxyUrl = proxyConfig ? resolveProxyUrl(proxyConfig) : undefined
 
-  // 2. 检查是否有断点续传状态
+  // 2. 检查是否有断点续传状态（恢复判定提取到 resolveResumeStartBytes）
   const resumeState = loadResumeState()
-  let downloadedBytes = 0
-  if (resumeState && resumeState.tempPath === tempPath && resumeState.finalPath === finalPath) {
-    // 有断点续传状态，检查临时文件是否存在
-    if (existsSync(tempPath)) {
-      const stat = statSync(tempPath)
-      // [B-4] 保存口径已统一为 statSync（保存时刻真实落盘字节），续传判定以 stat.size
-      // 为准：不大于 state 直接从 stat.size 续传；略大于 state（超出量 ≤ SAVE_INTERVAL_BYTES，
-      // 保存后 pipe 仍异步刷盘、硬崩溃常落在两次保存之间）同样信任真实落盘字节续传——
-      // 崩溃续传不再退化为全量重下，内容正确性由 [m5] totalBytes 一致性校验（206 响应）
-      // + 最终 sha256/size 校验兜底。只有 stat.size 显著大于 state（残文件被外部追加等）
-      // 或超过 totalBytes 上界才作废重下。
-      const overshoot = stat.size - resumeState.downloadedBytes
-      if (overshoot <= 0 || (overshoot <= SAVE_INTERVAL_BYTES && stat.size <= resumeState.totalBytes)) {
-        downloadedBytes = stat.size
-        console.log(`[download] resuming from ${downloadedBytes} bytes (state ${resumeState.downloadedBytes})`)
-      } else {
-        // temp 比 state 记录的大很多，异常 → 重新下载
-        console.log(`[download] resume state mismatch (temp ${stat.size} > state ${resumeState.downloadedBytes}), restarting download`)
-        clearResumeState()
-      }
-    } else {
-      // 临时文件不存在，重新下载
-      console.log(`[download] temp file not found, restarting download`)
-      clearResumeState()
-    }
-  }
+  const downloadedBytes = resolveResumeStartBytes(resumeState, tempPath, finalPath)
 
   // 3. 引擎编排（u4：双引擎降级 + D10 三步链，设计 §3.4 数据流图）。
-  //    - A/D5 flag 分流：enginePreference 已置 curl（此前连接建立失败）→ 跳过 undici
-  //      直接 curl 整文件（授权坏场景每次 undici 连接失败都是白付的失败延迟）。
-  //    - B/D7 probe 经 upgradeFetch（双引擎）：usedEngine='curl' → 本次放弃多段直接
-  //      curl 整文件；flag 置位与否由 upgradeFetch 内部按 D4 判定，这里不做置位决策。
-  //    - C/D 多段/单段失败按 D4 分类：连接建立失败 → 置 flag + 降级 curl；瞬时类/流中断
-  //      → 仅本次降级；HTTP/磁盘/超时类（non-fallback：含 idle 停滞中止/用户取消，D1 删总钟
-  //      后 AbortError 均非「连接建立类故障」，保守不降级）原样上抛不降级。
-  let handledByCurl = false
-  if (getEnginePreference() === 'curl') {
-    await runCurlDownloadChain(asset, {
-      tempPath, finalPath, downloadedBytes, onProgress, proxyUrl,
-    })
-    handledByCurl = true
-  }
-
-  if (!handledByCurl) {
-    let useMultiPart = false
-    // [S#1 / business-logic] 多段启用阈值用 release 声明的 asset.size，而非 probe 返回的
-    // 真实 totalBytes：此判定在 probe 之前，目的是先过滤掉小文件，避免对每个小文件都发一次
-    // HEAD probe（额外 RTT）。即使 release 声明 size 被误填偏小，导致大文件误走单段下载，
-    // probe 仍会兜底判 supported=false；多段只是加速优化，单段下载本身完全正确，无正确性风险。
-    if (!resumeState && asset.size && asset.size >= MIN_MULTI_PART_SIZE) {
-      const probed = await probeMultiPartSupport(asset, proxyUrl)
-      if (probed.usedEngine === 'curl') {
-        // D7：probe 引擎为 curl → 本次放弃多段（多段是 undici 的加速优化），直接整文件
-        // curl 下载。多段前提即无续传状态，此处 downloadedBytes 恒为 0。
-        await runCurlDownloadChain(asset, { tempPath, finalPath, downloadedBytes: 0, onProgress, proxyUrl })
-        handledByCurl = true
-      } else if (probed.supported) {
-        try {
-          const multiResult = await downloadMultiPart(asset, probed.totalBytes, onProgress, proxyConfig)
-          // [RM3] 服务器/代理不遵守 Range（任一段非 206 或段长不符）→ 整批放弃多段：
-          // 不设 useMultiPart，落入下方单段路径完整下载。此时 downloadedBytes=0（进多段
-          // 的前提就是无续传状态），单段全新请求不带 Range 头，既有 206/200 分类天然
-          // 兼容「忽略 Range 回 200」的服务器，sha256 校验兜底产物正确性。
-          useMultiPart = !multiResult.degradedToSingle
-        } catch (err) {
-          // C：多段失败编排。RangeNotRespectedError 已在 downloadMultiPart 内部消化为
-          // degradedToSingle（降级单段语义保持），到这里的是网络/磁盘/HTTP 分类错误。
-          if (classifyUndiciFailure(err) === 'non-fallback') {
-            throw err
-          }
-          // 置位判定收敛在 upgrade-fetch（D5）：仅连接建立失败档实际置 flag，
-          // 瞬时类/流中断只本次降级不记忆（下次调用重探 undici 多段）。
-          markEnginePreferenceFromUndiciFailure(err)
-          await runCurlDownloadChain(asset, {
-            tempPath, finalPath, downloadedBytes: 0, onProgress, proxyUrl, undiciError: err,
-          })
-          logUndiciEngineFallback(err, proxyUrl)
-          handledByCurl = true
-        }
-      }
-    }
-
-    // 4. 单段下载（续传或 Probe 未通过时走此路径），失败按 D4 分类降级 curl。
-    if (!useMultiPart && !handledByCurl) {
-      try {
-        await downloadSingleStream(asset, { tempPath, finalPath, downloadedBytes, resumeState, onProgress, proxyConfig })
-      } catch (err) {
-        // D：单段失败编排——连接建立失败/瞬时类/流中断 → 降级 curl（downloadViaCurl 以
-        // -C - 从 temp 现有字节续传，语义对齐）；HTTP/磁盘/超时类（non-fallback）原样上抛。
-        if (classifyUndiciFailure(err) === 'non-fallback') {
-          throw err
-        }
-        markEnginePreferenceFromUndiciFailure(err)
-        await runCurlDownloadChain(asset, {
-          tempPath, finalPath, downloadedBytes, onProgress, proxyUrl, undiciError: err,
-        })
-        logUndiciEngineFallback(err, proxyUrl)
-      }
-    }
-  }
+  //    curl flag 分流 / 多段 probe / 单段兜底三条路径提取到 runEngineOrchestration，
+  //    降级时序（probe → 多段 → 分类失败 curl 接管 → 单段兜底）保持不变。
+  await runEngineOrchestration(asset, {
+    tempPath, finalPath, downloadedBytes, resumeState, onProgress, proxyConfig, proxyUrl,
+  })
 
   // 5. 校验链前统一清理 resume-state（D6：undici / curl 两引擎同点清理，不散落）。
   //    curl 续传以 temp 实际落盘字节为准（-C -），state 只服务 undici 续传。
   clearResumeState()
 
-  // 6. 校验：sha256 优先，缺失降级 size，再缺失拒绝
-  //    [BLOCKER 4] 旧实现 `else if (asset.size && asset.size > 0)`：若 size=0 且无 sha256，
-  //    完全跳过校验——攻击者可让下载文件被任意篡改而无校验拦截。改为：
-  //    sha256 和非零 size 至少有一个，否则拒绝（正常 release 必有其一）。
+  // 6. 校验：sha256 优先，缺失降级 size，再缺失拒绝（[BLOCKER 4] 拒绝全缺，见 helper）
+  await verifyDownloadedAsset(asset, tempPath)
+
+  // 7. rename .downloading → 最终文件名（权限/失败错误分类见 renameToFinalPath）
+  renameToFinalPath(tempPath, finalPath)
+  return { filePath: finalPath }
+}
+
+/**
+ * 断点续传恢复判定（downloadAsset 阶段 2）：决定本次下载的续传起点字节数。
+ *
+ * 仅当 state 与本次 temp/final 路径完全匹配时才考虑续传；temp 文件缺失或
+ * state 显著失真时清 state 重下。返回 0 表示全新下载。
+ */
+function resolveResumeStartBytes(
+  resumeState: IResumeState | null,
+  tempPath: string,
+  finalPath: string,
+): number {
+  if (!resumeState || resumeState.tempPath !== tempPath || resumeState.finalPath !== finalPath) {
+    return 0
+  }
+  // 有断点续传状态，检查临时文件是否存在
+  if (existsSync(tempPath)) {
+    const stat = statSync(tempPath)
+    // [B-4] 保存口径已统一为 statSync（保存时刻真实落盘字节），续传判定以 stat.size
+    // 为准：不大于 state 直接从 stat.size 续传；略大于 state（超出量 ≤ SAVE_INTERVAL_BYTES，
+    // 保存后 pipe 仍异步刷盘、硬崩溃常落在两次保存之间）同样信任真实落盘字节续传——
+    // 崩溃续传不再退化为全量重下，内容正确性由 [m5] totalBytes 一致性校验（206 响应）
+    // + 最终 sha256/size 校验兜底。只有 stat.size 显著大于 state（残文件被外部追加等）
+    // 或超过 totalBytes 上界才作废重下。
+    const overshoot = stat.size - resumeState.downloadedBytes
+    if (overshoot <= 0 || (overshoot <= SAVE_INTERVAL_BYTES && stat.size <= resumeState.totalBytes)) {
+      const downloadedBytes = stat.size
+      console.log(`[download] resuming from ${downloadedBytes} bytes (state ${resumeState.downloadedBytes})`)
+      return downloadedBytes
+    }
+    // temp 比 state 记录的大很多，异常 → 重新下载
+    console.log(`[download] resume state mismatch (temp ${stat.size} > state ${resumeState.downloadedBytes}), restarting download`)
+    clearResumeState()
+    return 0
+  }
+  // 临时文件不存在，重新下载
+  console.log(`[download] temp file not found, restarting download`)
+  clearResumeState()
+  return 0
+}
+
+/** 引擎编排上下文（downloadAsset 装配层 → curl/undici 路径共享参数）。 */
+interface IEngineOrchestrationContext {
+  /** `.downloading` temp 路径 */
+  tempPath: string
+  /** 最终文件路径 */
+  finalPath: string
+  /** 续传起点字节数（resolveResumeStartBytes 的判定结果） */
+  downloadedBytes: number
+  /** 已加载的断点续传状态（多段资格判定 / 单段 m5 校验用） */
+  resumeState: IResumeState | null
+  /** 进度回调（0-100 百分比） */
+  onProgress?: (percent: number) => void
+  /** 代理配置（undici ProxyAgent 构造用） */
+  proxyConfig?: IProxyConfig
+  /** 完整代理 URL（upgradeFetch / downloadViaCurl 吃 URL 形态） */
+  proxyUrl?: string
+}
+
+/**
+ * 引擎编排（downloadAsset 阶段 3，u4：双引擎降级 + D10 三步链）：
+ *   - A/D5 flag 分流：enginePreference 已置 curl → 跳过 undici 直接 curl 整文件。
+ *   - B/D7 probe（attemptMultiPartWhenEligible）：usedEngine='curl' → 本次放弃多段直接
+ *     curl 整文件；undici 支持则尝试多段。
+ *   - C/D 多段/单段失败按 D4 分类降级：连接建立失败 → 置 flag + 降级 curl；瞬时类/流中断
+ *     → 仅本次降级；HTTP/磁盘/总超时类（non-fallback）原样上抛不降级。
+ */
+async function runEngineOrchestration(asset: ReleaseAsset, ctx: IEngineOrchestrationContext): Promise<void> {
+  if (getEnginePreference() === 'curl') {
+    await runCurlDownloadChain(asset, {
+      tempPath: ctx.tempPath, finalPath: ctx.finalPath, downloadedBytes: ctx.downloadedBytes,
+      onProgress: ctx.onProgress, proxyUrl: ctx.proxyUrl,
+    })
+    return
+  }
+
+  const multiOutcome = await attemptMultiPartWhenEligible(asset, ctx)
+  // 多段被 curl 接管（handledByCurl）或多段成功在途（useMultiPart）→ 不走单段兜底；
+  // 其余（未达多段门槛 / probe 不支持 / 多段降级单段）→ 单段下载 + 分类降级 curl。
+  if (multiOutcome.handledByCurl || multiOutcome.useMultiPart) {
+    return
+  }
+  await downloadSingleStreamWithFallback(asset, ctx)
+}
+
+/** 多段尝试结果：handledByCurl = 本次下载已由 curl 引擎接管；useMultiPart = 多段下载已成功。 */
+interface IMultiPartOutcome {
+  handledByCurl: boolean
+  useMultiPart: boolean
+}
+
+/** 未尝试多段的默认结局（走单段兜底）。 */
+const MULTI_PART_NOT_ATTEMPTED: IMultiPartOutcome = { handledByCurl: false, useMultiPart: false }
+
+/**
+ * 多段下载资格判定 + probe + 尝试（downloadAsset 阶段 3 的 undici 多段路径）。
+ *
+ * [S#1 / business-logic] 多段启用阈值用 release 声明的 asset.size，而非 probe 返回的
+ * 真实 totalBytes：此判定在 probe 之前，目的是先过滤掉小文件，避免对每个小文件都发一次
+ * HEAD probe（额外 RTT）。即使 release 声明 size 被误填偏小，导致大文件误走单段下载，
+ * probe 仍会兜底判 supported=false；多段只是加速优化，单段下载本身完全正确，无正确性风险。
+ */
+async function attemptMultiPartWhenEligible(
+  asset: ReleaseAsset,
+  ctx: IEngineOrchestrationContext,
+): Promise<IMultiPartOutcome> {
+  if (!ctx.resumeState && asset.size && asset.size >= MIN_MULTI_PART_SIZE) {
+    const probed = await probeMultiPartSupport(asset, ctx.proxyUrl)
+    if (probed.usedEngine === 'curl') {
+      // D7：probe 引擎为 curl → 本次放弃多段（多段是 undici 的加速优化），直接整文件
+      // curl 下载。多段前提即无续传状态，此处 downloadedBytes 恒为 0。
+      await runCurlDownloadChain(asset, {
+        tempPath: ctx.tempPath, finalPath: ctx.finalPath, downloadedBytes: 0,
+        onProgress: ctx.onProgress, proxyUrl: ctx.proxyUrl,
+      })
+      return { handledByCurl: true, useMultiPart: false }
+    }
+    if (probed.supported) {
+      return attemptMultiPartDownload(asset, ctx, probed.totalBytes)
+    }
+  }
+  return MULTI_PART_NOT_ATTEMPTED
+}
+
+/**
+ * 多段下载执行 + 失败分类编排（仅 probe supported 后进入）。
+ *
+ * [RM3] 服务器/代理不遵守 Range（任一段非 206 或段长不符）→ 整批放弃多段：
+ * 不设 useMultiPart，落入单段路径完整下载。此时 downloadedBytes=0（进多段
+ * 的前提就是无续传状态），单段全新请求不带 Range 头，既有 206/200 分类天然
+ * 兼容「忽略 Range 回 200」的服务器，sha256 校验兜底产物正确性。
+ */
+async function attemptMultiPartDownload(
+  asset: ReleaseAsset,
+  ctx: IEngineOrchestrationContext,
+  totalBytes: number,
+): Promise<IMultiPartOutcome> {
+  try {
+    const multiResult = await downloadMultiPart(asset, totalBytes, ctx.onProgress, ctx.proxyConfig)
+    return { handledByCurl: false, useMultiPart: !multiResult.degradedToSingle }
+  } catch (err) {
+    // C：多段失败编排。RangeNotRespectedError 已在 downloadMultiPart 内部消化为
+    // degradedToSingle（降级单段语义保持），到这里的是网络/磁盘/HTTP 分类错误。
+    if (classifyUndiciFailure(err) === 'non-fallback') {
+      throw err
+    }
+    // 置位判定收敛在 upgrade-fetch（D5）：仅连接建立失败档实际置 flag，
+    // 瞬时类/流中断只本次降级不记忆（下次调用重探 undici 多段）。
+    markEnginePreferenceFromUndiciFailure(err)
+    await runCurlDownloadChain(asset, {
+      tempPath: ctx.tempPath, finalPath: ctx.finalPath, downloadedBytes: 0,
+      onProgress: ctx.onProgress, proxyUrl: ctx.proxyUrl, undiciError: err,
+    })
+    logUndiciEngineFallback(err, ctx.proxyUrl)
+    return { handledByCurl: true, useMultiPart: false }
+  }
+}
+
+/**
+ * 单段下载（undici）+ 失败分类降级 curl（downloadAsset 阶段 4 的单段兜底路径；
+ * 续传或 Probe 未通过时走此路径）。
+ *
+ * D：单段失败编排——连接建立失败/瞬时类/流中断 → 降级 curl（downloadViaCurl 以
+ * -C - 从 temp 现有字节续传，语义对齐）；HTTP/磁盘/超时类（non-fallback）原样上抛。
+ */
+async function downloadSingleStreamWithFallback(asset: ReleaseAsset, ctx: IEngineOrchestrationContext): Promise<void> {
+  try {
+    await downloadSingleStream(asset, {
+      tempPath: ctx.tempPath,
+      finalPath: ctx.finalPath,
+      downloadedBytes: ctx.downloadedBytes,
+      resumeState: ctx.resumeState,
+      onProgress: ctx.onProgress,
+      proxyConfig: ctx.proxyConfig,
+    })
+  } catch (err) {
+    if (classifyUndiciFailure(err) === 'non-fallback') {
+      throw err
+    }
+    markEnginePreferenceFromUndiciFailure(err)
+    await runCurlDownloadChain(asset, {
+      tempPath: ctx.tempPath, finalPath: ctx.finalPath, downloadedBytes: ctx.downloadedBytes,
+      onProgress: ctx.onProgress, proxyUrl: ctx.proxyUrl, undiciError: err,
+    })
+    logUndiciEngineFallback(err, ctx.proxyUrl)
+  }
+}
+
+/**
+ * 下载产物完整性校验（downloadAsset 阶段 6）。
+ *
+ * [BLOCKER 4] sha256 优先；缺失降级 size（非零）；二者全缺拒绝——正常 release 必有其一。
+ * 校验失败必须删除半下载文件（best-effort，清理失败仅 console.warn），避免下次误用残文件。
+ */
+async function verifyDownloadedAsset(asset: ReleaseAsset, tempPath: string): Promise<void> {
   if (asset.sha256) {
     const actualSha = await hashFileSha256(tempPath)
     if (actualSha !== asset.sha256.toLowerCase()) {
@@ -335,13 +441,19 @@ export async function downloadAsset(
       `no integrity check available (sha256 and size both missing) for ${asset.name}`,
     )
   }
+}
 
-  // 7. rename .downloading → 最终文件名
+/**
+ * rename .downloading → 最终文件名 + 落定失败错误分类（downloadAsset 阶段 7）。
+ *
+ * [W-6] 优先用 errno code（EACCES/EPERM）精确匹配，子串 'permission' 仅作非英文
+ * OS message 的 fallback。[m9] 非 permission 失败用独立错误码 UPDATE_FILE_RENAME_FAILED
+ * （不复用 UPDATE_INTEGRITY_FAILED，语义错配）。
+ */
+function renameToFinalPath(tempPath: string, finalPath: string): void {
   try {
     renameSync(tempPath, finalPath)
   } catch (renameErr) {
-    // 权限错误分类。[W-6] 优先用 errno code（EACCES/EPERM）精确匹配，
-    // 子串 'permission' 仅作非英文 OS message 的 fallback。
     const renameErrno = getNodeErrnoCode(renameErr)
     if (renameErrno === 'EACCES' || renameErrno === 'EPERM' ||
         (renameErr instanceof Error && renameErr.message.toLowerCase().includes('permission'))) {
@@ -351,16 +463,12 @@ export async function downloadAsset(
         'UPDATE_PERMISSION_DENIED',
       )
     }
-    // [m9] 归一化落定失败此前复用 UPDATE_INTEGRITY_FAILED（「安装包完整性校验失败」），
-    // 语义错配：完整性没问题，是文件系统把 .downloading 改名到终态时失败（跨卷 / 占用 /
-    // 只读等）。改用独立错误码，前端文案才可能对症（见 types.ts UPDATE_ERROR_MESSAGES）。
     throw new UpdateError(
       `file rename failed: ${toErrorMessage(renameErr)}`,
       'replacing',
       'UPDATE_FILE_RENAME_FAILED',
     )
   }
-  return { filePath: finalPath }
 }
 
 /** 单段流式下载的执行上下文（downloadAsset 编排层 / curl 链 undici 直连回退共用）。 */
