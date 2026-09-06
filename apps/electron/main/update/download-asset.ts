@@ -1192,6 +1192,15 @@ async function downloadPart(
     })
   } catch (err) {
     writeStream?.destroy()
+    // [RM3-CI] 失败清理必须先等 fd 生命周期落定：createWriteStream 的 open 是异步
+    //（threadpool）操作，段失败链路（共享 abort → 流 error → reject）可能跑在 open
+    // 完成之前——下方 unlinkSync 会 ENOENT 扑空，随后 open 完成把 .part 文件「复活」
+    // 成永久残留（CI mac 高负载 threadpool 拥塞下必现；本地快路径 open 先完成，
+    // 从不暴露）。'close' 事件保证在 open 完成（拿到 fd 或失败关闭）之后发出，
+    // await 它使清理确定作用于终态文件；close 已发出（罕见）则直接跳过。
+    if (writeStream && !writeStream.closed) {
+      await new Promise<void>((resolve) => { writeStream!.once('close', resolve) })
+    }
     // [MUST-FIX #4] 失败时 best-effort 删除本段已写的 part 临时文件，保证单段失败自清理。
     // 旧实现只 destroy writeStream，清理完全依赖 downloadMultiPart 的 catch（Promise.all 层），
     // 但若本段 reject 先于其他段完成，其他段的 .part-i 可能正被并发写，downloadMultiPart

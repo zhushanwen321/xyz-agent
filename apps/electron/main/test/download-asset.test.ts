@@ -27,11 +27,18 @@ import { UpdateError } from '../update/types.js'
 const fsSpy = vi.hoisted(() => ({
   writeCalls: [] as Array<{ path: string; data: string }>,
   renameCalls: [] as Array<{ from: string; to: string }>,
+  /** >0 时 createWriteStream 的 open 延迟 N ms（模拟 CI threadpool 拥塞），默认 0 完全透传 */
+  writeStreamOpenDelayMs: 0,
 }))
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
   const realWriteFileSync = actual.writeFileSync
   const realRenameSync = actual.renameSync
+  const realCreateWriteStream = actual.createWriteStream
+  // createWriteStream 的 open 是异步 threadpool 操作，CI 高负载下其完成可能晚于
+  // 下载失败链路的 unlinkSync。经文档化 options.fs 钩子延迟 open，确定性复现该时序
+  // （open/write/writev/close 全部取真实现，仅 open 时机被推迟，语义不变）。
+  const realStreamFs = { open: actual.open, write: actual.write, writev: actual.writev, close: actual.close }
   return {
     ...actual,
     writeFileSync: vi.fn((...a: Parameters<typeof actual.writeFileSync>) => {
@@ -42,6 +49,23 @@ vi.mock('node:fs', async (importOriginal) => {
       fsSpy.renameCalls.push({ from: String(a[0]), to: String(a[1]) })
       return realRenameSync(...a)
     }),
+    createWriteStream: (...a: Parameters<typeof actual.createWriteStream>) => {
+      const delay = fsSpy.writeStreamOpenDelayMs
+      if (delay <= 0) return realCreateWriteStream(...a)
+      const [file, options] = a
+      const delayedOpen = (...openArgs: unknown[]) => {
+        setTimeout(() => (realStreamFs.open as (...oa: unknown[]) => void)(...openArgs), delay)
+      }
+      return realCreateWriteStream(file, {
+        ...options,
+        fs: {
+          open: delayedOpen,
+          write: realStreamFs.write,
+          writev: realStreamFs.writev,
+          close: realStreamFs.close,
+        },
+      })
+    },
   }
 })
 
@@ -761,24 +785,13 @@ describe('RM3-4: 段失败 → 共享 signal 中断其余段', () => {
   let originalFetch: typeof globalThis.fetch
   let downloadAsset: typeof import('../update/download-asset.js')['downloadAsset']
 
-  beforeEach(async () => {
-    originalFetch = globalThis.fetch
-    const mod = await loadModule()
-    downloadAsset = mod.downloadAsset
-  })
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch
-    vi.restoreAllMocks()
-    const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
-  })
-
-  it('part-0 返回 500 → 其余三段挂起流收到 abort 被中断（非跑完），整批 rejects', { timeout: 30_000 }, async () => {
-    const expectedSha = sha256Hex(MULTI_PART_CONTENT)
-    // 每个健康段的可观察状态：aborted = 该段 fetch 的 signal 收到 abort
-    const partAborted = new Map<number, { aborted: boolean }>()
-    globalThis.fetch = vi.fn(async (_url, init) => {
+  /**
+   * RM3 共享 abort 场景的 fetch mock：part-0 返回 HTTP 500；健康段（part-1..3）
+   * 返回 206 流——发出 64 字节后挂起（永不自然结束），直到所属 fetch signal 收到
+   * abort 才 error。每个健康段的可观察状态记入 partAborted（aborted = signal 收到 abort）。
+   */
+  function makeSharedAbortFetchMock(partAborted: Map<number, { aborted: boolean }>) {
+    return vi.fn(async (_url, init) => {
       const method = (init?.method as string | undefined) ?? 'GET'
       if (method === 'HEAD') {
         return makeHeadResponse(MULTI_PART_CONTENT.length)
@@ -793,8 +806,6 @@ describe('RM3-4: 段失败 → 共享 signal 中断其余段', () => {
       if (start === 0) {
         return new Response('Internal Server Error', { status: 500 })
       }
-      // 健康段：发出一小块后挂起（永不自然结束），直到 signal abort 才 error——
-      // 若共享 abort 失效，该段 promise 永不 settle，下面的 waitFor 先给出明确失败
       const signal = init?.signal as AbortSignal | undefined
       const obs = { aborted: false }
       partAborted.set(start, obs)
@@ -817,6 +828,27 @@ describe('RM3-4: 段失败 → 共享 signal 中断其余段', () => {
         },
       })
     }) as unknown as typeof globalThis.fetch
+  }
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch
+    const mod = await loadModule()
+    downloadAsset = mod.downloadAsset
+  })
+
+  afterEach(() => {
+    fsSpy.writeStreamOpenDelayMs = 0
+    globalThis.fetch = originalFetch
+    vi.restoreAllMocks()
+    const updateDir = path.join(TMP_DATA_DIR, 'update')
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('part-0 返回 500 → 其余三段挂起流收到 abort 被中断（非跑完），整批 rejects', { timeout: 30_000 }, async () => {
+    const expectedSha = sha256Hex(MULTI_PART_CONTENT)
+    // 每个健康段的可观察状态：aborted = 该段 fetch 的 signal 收到 abort
+    const partAborted = new Map<number, { aborted: boolean }>()
+    globalThis.fetch = makeSharedAbortFetchMock(partAborted)
 
     const pending = downloadAsset({
       name: 'rm3-shared-abort.zip',
@@ -846,6 +878,44 @@ describe('RM3-4: 段失败 → 共享 signal 中断其余段', () => {
       const leftovers = readdirSync(updateDir).filter((f) => /\.part-\d+$/.test(f))
       expect(leftovers).toEqual([])
     }
+  })
+
+  // [RM3-CI 回归] 失败清理与 createWriteStream 异步 open 的竞争。
+  // open 是 threadpool 异步操作：CI mac 高负载下（同文件 suite 84s、threadpool 拥塞）
+  // 部分段失败链路（共享 abort → 流 error → reject → catch → unlinkSync）会跑在
+  // open 完成之前——unlink 扑空（ENOENT）后 open 完成把 .part 文件「复活」成永久
+  // 残留。本地快路径 open 先完成，该缺陷从不暴露（CI run 34037936933 确定性红 vs
+  // 本地全绿）。注入 50ms open 延迟确定性复现该时序：实现必须等 writeStream 'close'
+  // （fd 生命周期终态）落定后再清理，清理才能确定作用于已存在（或从未创建）的文件。
+  it('open 完成晚于失败清理（CI threadpool 拥塞形态）→ 段失败清理仍无 .part 残留', { timeout: 30_000 }, async () => {
+    fsSpy.writeStreamOpenDelayMs = 50
+    const expectedSha = sha256Hex(MULTI_PART_CONTENT)
+    const partAborted = new Map<number, { aborted: boolean }>()
+    globalThis.fetch = makeSharedAbortFetchMock(partAborted)
+
+    const pending = downloadAsset({
+      name: 'rm3-open-race.zip',
+      downloadUrl: 'https://example.com/rm3-open-race.zip',
+      size: MULTI_PART_CONTENT.length,
+      sha256: expectedSha,
+    })
+    pending.catch(() => {})
+
+    await vi.waitFor(() => {
+      expect(partAborted.size).toBe(3)
+      for (const obs of partAborted.values()) {
+        expect(obs.aborted).toBe(true)
+      }
+    }, { timeout: 5_000, interval: 50 })
+
+    await expect(pending).rejects.toThrow(/HTTP 500/)
+
+    // 给被延迟的 open 留出完成窗口（50ms）：残留若会「复活」，此刻已在盘上
+    await new Promise<void>((resolve) => setTimeout(resolve, 100))
+
+    const updateDir = path.join(TMP_DATA_DIR, 'update')
+    const leftovers = readdirSync(updateDir).filter((f) => /\.part-\d+$/.test(f))
+    expect(leftovers).toEqual([])
   })
 })
 
