@@ -161,14 +161,28 @@ function buildTodoListText(todoList: Todo[], options: { expanded: boolean }, the
 
 import { Text } from "@earendil-works/pi-tui";
 
+/** content[0] 提取 text（缺失/非 text 类型 → 空串） */
+function firstContentText(r: { content: Array<{ type: string; text?: string }> }): string {
+	const text = r.content[0];
+	return text?.type === "text" ? (text.text ?? "") : "";
+}
+
 export function renderTodoResult(result: unknown, options: { expanded: boolean }, theme: Theme): Text {
 	const r = result as { content: Array<{ type: string; text?: string }>; details?: unknown };
 	const details = r.details as TodoDetails | undefined;
 	if (!details) {
-		const text = r.content[0];
-		return new Text(text?.type === "text" ? (text.text ?? "") : "", 0, 0);
+		return new Text(firstContentText(r), 0, 0);
 	}
+	return renderDetailedTodoResult(r, options, theme, details);
+}
 
+/** 有 details 时按 action 分发渲染（switch 每个 case 体独立成函数） */
+function renderDetailedTodoResult(
+	r: { content: Array<{ type: string; text?: string }> },
+	options: { expanded: boolean },
+	theme: Theme,
+	details: TodoDetails,
+): Text {
 	const todoList = details.todos;
 
 	switch (details.action) {
@@ -179,20 +193,36 @@ export function renderTodoResult(result: unknown, options: { expanded: boolean }
 		case "add":
 		case "update":
 		case "delete": {
-			const text = r.content[0];
-			const msg = text?.type === "text" ? (text.text ?? "") : "";
-			const listText = buildTodoListText(todoList, options, theme);
-			return new Text(
-				theme.fg("success", "\u2713 ") + theme.fg("muted", msg) + "\n\n" + listText,
-				0,
-				0,
-			);
+			return renderMutationTodoResult(r, options, theme, todoList);
 		}
 
 		default: {
-			const text = r.content[0];
-			const msg = text?.type === "text" ? (text.text ?? "") : "";
-			return new Text(theme.fg("dim", msg || "Done"), 0, 0);
+			return renderFallbackTodoResult(r, theme);
 		}
 	}
+}
+
+/** add/update/delete：确认消息 + 空行 + 全量列表 */
+function renderMutationTodoResult(
+	r: { content: Array<{ type: string; text?: string }> },
+	options: { expanded: boolean },
+	theme: Theme,
+	todoList: Todo[],
+): Text {
+	const msg = firstContentText(r);
+	const listText = buildTodoListText(todoList, options, theme);
+	return new Text(
+		theme.fg("success", "\u2713 ") + theme.fg("muted", msg) + "\n\n" + listText,
+		0,
+		0,
+	);
+}
+
+/** 其余/未知 action：dim 文案，空文案兜底 "Done" */
+function renderFallbackTodoResult(
+	r: { content: Array<{ type: string; text?: string }> },
+	theme: Theme,
+): Text {
+	const msg = firstContentText(r);
+	return new Text(theme.fg("dim", msg || "Done"), 0, 0);
 }
