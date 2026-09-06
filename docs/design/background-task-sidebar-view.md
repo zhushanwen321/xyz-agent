@@ -52,7 +52,7 @@ AI 继续干别的；测试在后台跑
 
 | 数据面 | 位置 | 新鲜度 | 缺陷（对 UI 而言） |
 |---|---|---|---|
-| pi 进程内单例表 | `extensions/universal/base-tool-enhance/src/background/task-store.ts:42`（模块级 Map，无订阅 API；:14-26 为 D6-en 不变量注释块） | 实时 | 不出进程；他进程/重启前的任务不在表内 |
+| pi 进程内单例表 | `extensions/universal/base-tool-enhance/src/background/task-store.ts:42`（模块级 Map，无订阅 API；:16-29 为 D6-en 不变量注释块） | 实时 | 不出进程；他进程/重启前的任务不在表内 |
 | registry.json | `<piAgentDir>/base-tool-enhance/<sessionId>/registry.json`（extension 侧统一写入口 `registry.ts:179`；runtime reaper 写 orphaned `background-task-reaper.ts:308`；两侧共用 `<registry.json>.lock` proper-lockfile 磁盘协议，跨进程互斥已核实） | 每次状态迁移原子写（tmp+rename，锁内 RMW） | **无变更广播**——reader 需自行发现变化 |
 | outputFile | `<...>/<sessionId>/<task_id>.log`（子进程持 fd 直写，`spawn-background.ts:150`） | 实时（可随时 tail；`output-tail.ts:34-74` 字节窗口从文件末尾读） | stdout/stderr 混流无标记 |
 | 完成通知 | `pi.sendMessage` customType `background-bash`（`notify.ts:152-155`）→ `message.customStart` → 对话流 SystemNotice | exit 边沿 | 仅对话流展示，非结构化状态；kill 路径不发（`notify.ts:146`） |
