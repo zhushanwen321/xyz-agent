@@ -24,7 +24,7 @@ describe('extractWorkflowsFromSessionFile', () => {
   })
 
   afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true })
+    rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('正常映射：主 session JSONL 含 workflow-state-link + state 文件含 wf-run-v2 快照（2 个 trace 节点）', () => {
@@ -454,10 +454,15 @@ describe('extractWorkflowsFromSessionFile', () => {
       join(__dirname, '..', '..', '..', 'extensions', 'universal', 'session-reader', 'src', 'discovery', 'workflows.ts'),
       'utf-8',
     )
-    const isNewLine = srDiscoverySrc.match(/const isNew = s\.v === '([^']+)[^\n]*/)
+    // [U19] isNew 判定可内联（const isNew = s.v === ...）或抽为 isNewSnapshotFormat
+    // helper（return s.v === ...），两形态任一即命中；正则锚定 s.v === 比较本体，
+    // 保证仍真实探测版本字面量而非恒真
+    const isNewLine =
+      srDiscoverySrc.match(/const isNew = s\.v === '[^']+'[^\n]*/) ??
+      srDiscoverySrc.match(/function isNewSnapshotFormat\([\s\S]*?return s\.v === '[^']+'[^\n]*/)
     expect(
       isNewLine,
-      'session-reader discovery/workflows.ts 的 isNew 版本判定未找到——判定写法是否变了？',
+      'session-reader discovery/workflows.ts 的 isNew 版本判定未找到（内联或 isNewSnapshotFormat helper 两形态均未命中）——判定写法是否变了？',
     ).not.toBeNull()
     expect(
       isNewLine![0].includes(`'${current}'`),
