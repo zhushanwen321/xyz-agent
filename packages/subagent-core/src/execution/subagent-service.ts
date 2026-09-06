@@ -1839,17 +1839,14 @@ export class SubagentService {
     /** resume 选项（M2-B1）：透传 runSpawn，重开已 idle 的 session 续聊。undefined = 新 session。 */
     resume?: SpawnResumeOpts,
   ): Promise<AgentResult> {
+    // [U04 阶段化提取] 主函数只留编排，按「装配（池槽/worktree/深度）→ 执行（ALS 包装
+    // spawn）→ 回收（finally）→ 错误收口 → 终态收口」分段；行为逐字节不变。
     const pooled = record.mode === "background";
     let acquired = false;
     if (pooled) {
-      try {
-        await this.pool.acquire(priority, this.effectiveMaxConcurrentFor(record), signal);
-        acquired = true;
-      } catch {
-        // S1: 排队中被 abort（signal.aborted）走 cancelled，与已运行被 abort 一致。
-        if (signal?.aborted) return this.finalizeAborted(record);
-        return this.finalizeFailed(record, new Error("aborted"));
-      }
+      const acquireFailure = await this.acquirePoolOrFinalize(record, signal, priority);
+      if (acquireFailure !== undefined) return acquireFailure;
+      acquired = true;
     }
     // onEvent 直通（原此处曾有 onUpdate(project(record)) 节流回流包装——生产死路径，
     // 三调用点恒 onUpdate: undefined、仅测试触达，已按 swf-perf-impl ledger #22 删除
@@ -1857,78 +1854,24 @@ export class SubagentService {
     // ExecuteOptions.onUpdate 字段一并删除，未来误用将编译期失败而非静默无效。
     const onEvent = rawOnEvent;
 
-    // 解析 worktree 参数：boolean → WorktreeHandle | undefined（true/undefined 由 run 内部处理）
-    let worktreeHandle: WorktreeHandle | undefined;
-    if (typeof opts.worktree === "object") {
-      worktreeHandle = opts.worktree;
-    }
-    // [MF#4][MF#2] fork 深度护栏：ALS 传递深度（主 session 链无 store→0，fork 推进 +1）。
-    const parentDepth = this.forkDepthAls.getStore() ?? this.forkDepthBaseline;
-    const effectiveDepth = opts.fork ? parentDepth + 1 : parentDepth;
+    const worktreeHandle = this.resolveWorktreeHandle(opts);
+    const { parentDepth, effectiveDepth } = this.resolveForkDepths(opts);
 
     let result: AgentResult;
     try {
-      // 嵌套上下文包在 forkDepthAls 内层：B run() 期间挂 {recordId:B.id,depth:B.depth}，
-      // B 内创建 C 时 createRecordForMode 读到 B → C 挂到 B 名下。两层 ALS 独立但同生命周期。
-      result = await this.forkDepthAls.run(effectiveDepth, () =>
-        this.execNesting.run(
-          { recordId: record.id, depth: record.depth },
-          () => runSpawn(record, opts.task, {
-            resolved: identity.resolved,
-            agentConfig: identity.agentConfig,
-            appendSystemPrompt: opts.appendSystemPrompt,
-            skillPath: opts.skillPath,
-            schema: opts.schema,
-            schemaEnv: opts.schemaEnv, // D-A6 bridge: workflow 编排层透传 schema 到 childEnv
-            maxTurns: opts.maxTurns,
-            graceTurns: opts.graceTurns,
-            signal,
-            onEvent,
-            stream, // text_delta streaming（background 路径有值，workflow 路径 undefined）
-            fork: opts.fork,
-            // [v8.5 B] fork-from 显式源（ExecuteOptions.forkFromSessionFile）优先于
-            // opts.fork 推导的 mainSessionFile；undefined = 旧语义不变。
-            forkSource: opts.forkFromSessionFile,
-            worktree: worktreeHandle,
-            parentForkDepth: parentDepth, // [MF#4] 父链深度，不从 opts 读
-          }, ctx, resume),
-        ),
+      result = await this.runSpawnNested(
+        record, opts, ctx, identity, signal, onEvent, stream, resume,
+        worktreeHandle, parentDepth, effectiveDepth,
       );
     } catch (err) {
       // run() 正常路径不抛错，但创建期异常（createAndConfigureSession 失败）
       // 会逃逸出 run() —— 合成 failed result + 收尾。
       // swallow（不 re-throw）：sync 调用方拿到合成 failed result，background 的
       // .then 正常跑 notify。避免异常逃逸到 tool 层 + record 卡 running。
-      //
-      // MF-6（决策 6 spec §3.1）：chatMode（含 resume）spawn/创建失败不销毁对话——回退 idle
-      //（可恢复），让 agent 可重试 message 或 close。与一次性模式（finalizeFailed 终态销毁）区分。
-      if (record.chatMode) {
-        const errMsg = toErrorMessage(err);
-        const failedResult: AgentResult = {
-          text: "",
-          turns: record.turnCount,
-          durationMs: Date.now() - record.startedAt,
-          success: false,
-          error: errMsg,
-          sessionId: record.id,
-          toolCalls: [],
-        };
-        if (tryTransition(record, "closed", "gc")) {
-          // 回退 idle（record.result 由 finalizeRoundToIdle 设为 error 兜底文本，notify 可读）。
-          await this.finalizeRoundToIdle(record, failedResult);
-        }
-        return failedResult;
-      }
-      result = await this.finalizeFailed(record, err);
-      return result;
+      if (record.chatMode) return this.finalizeChatSpawnFailure(record, err);
+      return this.finalizeFailed(record, err);
     } finally {
-      if (pooled && acquired) this.pool.release();
-      // 清除 streaming widget（subagent 终态，幂等）
-      stream?.dispose();
-      // [review MF1] 清除在途 resume 守卫（幂等）：本轮收尾——无论轮次完成（early return）、
-      // MF-6 失败回退 resumable、abort 还是终态化，record 都可再次接受冷路径 message。
-      // execute() 新建 record 不在集合，delete 是 no-op。
-      this.resumesInFlight.delete(record.id);
+      this.releaseRoundResources(record, pooled && acquired, stream);
     }
 
     // [V2 决策 2/3] chatMode 首轮闭环：runSpawn 因 agent_settled 提前 resolve（onRoundSettled
@@ -1943,48 +1886,203 @@ export class SubagentService {
 
     // v4 B-1: status 恒为 closed。cancelled 折入 closed（closedReason='cancelled'）。
     const aborted = signal?.aborted === true;
-    // closedReason 派生：aborted → cancelled；否则 success → user-close，!success → gc。
-    const closedReason: ClosedReason = aborted ? "cancelled" : result.success ? "user-close" : "gc";
+    await this.settleFinalOutcome(record, result, aborted, this.deriveClosedReason(aborted, result.success));
+    return result;
+  }
 
-    // CAS 抢锁：抢到则完整收尾；没抢到（cancel 已先设 closed+cancelled）则跳过
-    if (tryTransition(record, "closed", closedReason)) {
-      if (record.chatMode && !aborted && result.success) {
-        if (record.closeAfterRound) {
-          // close 优雅关闭（force:false）：当前轮完成后终态化为 closed。
-          record.closeAfterRound = undefined;
-          await this.finalizeRecord(record, result, "closed", "user-close");
-        } else {
-          // 对话模式轮次成功完成 → 保持 running（旧 idle 折入 running，finalizeRoundToIdle 设回 running）。
-          await this.finalizeRoundToIdle(record, result);
-        }
-      } else if (record.chatMode && (!result.success || aborted)) {
-        // MF-6：chatMode 轮次失败/取消不销毁对话——回退 running-resumable（旧 idle，可恢复）。
-        if (record.closeAfterRound) {
-          // [M5] 优雅关闭挂起的失败/取消轮：轮已完成即兑现 close 意图终态化（含本轮 result），
-          // 不再回退 resumable——否则标志残留到下一轮，record 已被 tool 谎报 closed。
-          record.closeAfterRound = undefined;
-          await this.finalizeRecord(record, result, "closed", closedReason);
-        } else {
-          await this.finalizeRoundToIdle(record, result);
-        }
-      } else if (!record.chatMode && !aborted && result.success) {
-        if (record.closeAfterRound) {
-          // [M5] 非 chatMode（one-shot）busy 时 close(force:false) 置的标志在本轮完成时消费
-          // 终态化（对齐 close schema 文案 "release its resources"）。旧代码走
-          // finalizeRoundToIdle 不消费——tool 返回 {closed:true} 谎报，record 永久
-          // running-resumable、5min idle timer 杀进程、期间还能继续收 message。
-          record.closeAfterRound = undefined;
-          await this.finalizeRecord(record, result, "closed", "user-close");
-        } else {
-          // [SP-5] one-shot 成功完成 → 保持 running（旧 idle），等待 message 触发 upgrade。
-          await this.finalizeRoundToIdle(record, result);
-        }
+  /** [U04 提取·装配] 池槽获取：pooled（background）record 排队 acquire。成功返回 undefined
+   *  继续执行；失败返回终态 result 供调用方 early-return（该路径在 try/finally 之前，
+   *  不触发轮次资源回收——与原控制流逐字节一致）。 */
+  private async acquirePoolOrFinalize(
+    record: ExecutionRecord,
+    signal: AbortSignal | undefined,
+    priority: number,
+  ): Promise<AgentResult | undefined> {
+    try {
+      await this.pool.acquire(priority, this.effectiveMaxConcurrentFor(record), signal);
+    } catch {
+      // S1: 排队中被 abort（signal.aborted）走 cancelled，与已运行被 abort 一致。
+      if (signal?.aborted) return this.finalizeAborted(record);
+      return this.finalizeFailed(record, new Error("aborted"));
+    }
+    return undefined;
+  }
+
+  /** [U04 提取·装配] 解析 worktree 参数：boolean → WorktreeHandle | undefined（true/undefined 由 run 内部处理）。 */
+  private resolveWorktreeHandle(opts: ExecuteOptions): WorktreeHandle | undefined {
+    return typeof opts.worktree === "object" ? opts.worktree : undefined;
+  }
+
+  /** [U04 提取·装配] [MF#4][MF#2] fork 深度护栏：ALS 传递深度（主 session 链无 store→0，fork 推进 +1）。 */
+  private resolveForkDepths(opts: ExecuteOptions): { parentDepth: number; effectiveDepth: number } {
+    const parentDepth = this.forkDepthAls.getStore() ?? this.forkDepthBaseline;
+    const effectiveDepth = opts.fork ? parentDepth + 1 : parentDepth;
+    return { parentDepth, effectiveDepth };
+  }
+
+  /** [U04 提取·执行] runSpawn 的两层 ALS 包装（forkDepthAls 外层 + execNesting 内层）。 */
+  private runSpawnNested(
+    record: ExecutionRecord,
+    opts: ExecuteOptions,
+    ctx: SessionRunnerContext,
+    identity: ResolvedIdentity,
+    signal: AbortSignal | undefined,
+    onEvent: ((event: AgentEvent) => void) | undefined,
+    stream: SubagentStream | undefined,
+    resume: SpawnResumeOpts | undefined,
+    worktreeHandle: WorktreeHandle | undefined,
+    parentDepth: number,
+    effectiveDepth: number,
+  ): Promise<AgentResult> {
+    // 嵌套上下文包在 forkDepthAls 内层：B run() 期间挂 {recordId:B.id,depth:B.depth}，
+    // B 内创建 C 时 createRecordForMode 读到 B → C 挂到 B 名下。两层 ALS 独立但同生命周期。
+    return this.forkDepthAls.run(effectiveDepth, () =>
+      this.execNesting.run(
+        { recordId: record.id, depth: record.depth },
+        () => runSpawn(record, opts.task, {
+          resolved: identity.resolved,
+          agentConfig: identity.agentConfig,
+          appendSystemPrompt: opts.appendSystemPrompt,
+          skillPath: opts.skillPath,
+          schema: opts.schema,
+          schemaEnv: opts.schemaEnv, // D-A6 bridge: workflow 编排层透传 schema 到 childEnv
+          maxTurns: opts.maxTurns,
+          graceTurns: opts.graceTurns,
+          signal,
+          onEvent,
+          stream, // text_delta streaming（background 路径有值，workflow 路径 undefined）
+          fork: opts.fork,
+          // [v8.5 B] fork-from 显式源（ExecuteOptions.forkFromSessionFile）优先于
+          // opts.fork 推导的 mainSessionFile；undefined = 旧语义不变。
+          forkSource: opts.forkFromSessionFile,
+          worktree: worktreeHandle,
+          parentForkDepth: parentDepth, // [MF#4] 父链深度，不从 opts 读
+        }, ctx, resume),
+      ),
+    );
+  }
+
+  /** [U04 提取·回收] 轮次资源回收（finally 语义，幂等）：池槽归还（仅 pooled 且 acquire
+   *  成功）、streaming widget 清除、在途 resume 守卫清除。 */
+  private releaseRoundResources(
+    record: ExecutionRecord,
+    holdSlot: boolean,
+    stream: SubagentStream | undefined,
+  ): void {
+    if (holdSlot) this.pool.release();
+    // 清除 streaming widget（subagent 终态，幂等）
+    stream?.dispose();
+    // [review MF1] 清除在途 resume 守卫（幂等）：本轮收尾——无论轮次完成（early return）、
+    // MF-6 失败回退 resumable、abort 还是终态化，record 都可再次接受冷路径 message。
+    // execute() 新建 record 不在集合，delete 是 no-op。
+    this.resumesInFlight.delete(record.id);
+  }
+
+  /** [U04 提取·错误收口] MF-6（决策 6 spec §3.1）：chatMode（含 resume）spawn/创建失败
+   *  不销毁对话——回退 idle（可恢复），让 agent 可重试 message 或 close。与一次性模式
+   *  （finalizeFailed 终态销毁）区分。返回合成 failed result（swallow，不 re-throw）。 */
+  private async finalizeChatSpawnFailure(record: ExecutionRecord, err: unknown): Promise<AgentResult> {
+    const errMsg = toErrorMessage(err);
+    const failedResult: AgentResult = {
+      text: "",
+      turns: record.turnCount,
+      durationMs: Date.now() - record.startedAt,
+      success: false,
+      error: errMsg,
+      sessionId: record.id,
+      toolCalls: [],
+    };
+    if (tryTransition(record, "closed", "gc")) {
+      // 回退 idle（record.result 由 finalizeRoundToIdle 设为 error 兜底文本，notify 可读）。
+      await this.finalizeRoundToIdle(record, failedResult);
+    }
+    return failedResult;
+  }
+
+  /** [U04 提取·收口派生] closedReason 派生：aborted → cancelled；否则 success → user-close，!success → gc。 */
+  private deriveClosedReason(aborted: boolean, success: boolean): ClosedReason {
+    return aborted ? "cancelled" : success ? "user-close" : "gc";
+  }
+
+  /** [U04 提取·终态收口] CAS 抢锁：抢到则按 chatMode 分流完整收尾；没抢到（cancel 已先设
+   *  closed+cancelled）则跳过。 */
+  private async settleFinalOutcome(
+    record: ExecutionRecord,
+    result: AgentResult,
+    aborted: boolean,
+    closedReason: ClosedReason,
+  ): Promise<void> {
+    if (!tryTransition(record, "closed", closedReason)) return;
+    if (record.chatMode) {
+      await this.settleChatRoundOutcome(record, result, aborted, closedReason);
+    } else {
+      await this.settleOneShotOutcome(record, result, aborted, closedReason);
+    }
+  }
+
+  /** [U04 提取·终态收口] chatMode 轮次分流（原 A/B 分支，De Morgan 等价拆分）：
+   *  成功轮（!aborted && success）与失败/取消轮（其补集 !success || aborted）各自处理
+   *  closeAfterRound 挂起语义。 */
+  private async settleChatRoundOutcome(
+    record: ExecutionRecord,
+    result: AgentResult,
+    aborted: boolean,
+    closedReason: ClosedReason,
+  ): Promise<void> {
+    if (!aborted && result.success) {
+      if (record.closeAfterRound) {
+        // close 优雅关闭（force:false）：当前轮完成后终态化为 closed。
+        await this.consumeCloseAfterRound(record, result, "user-close");
       } else {
-        // 非 chatMode 失败/取消 或其他终态：一次性销毁（archive + worktree cleanup）。
-        await this.finalizeRecord(record, result, "closed", closedReason);
+        // 对话模式轮次成功完成 → 保持 running（旧 idle 折入 running，finalizeRoundToIdle 设回 running）。
+        await this.finalizeRoundToIdle(record, result);
+      }
+    } else {
+      // MF-6：chatMode 轮次失败/取消不销毁对话——回退 running-resumable（旧 idle，可恢复）。
+      if (record.closeAfterRound) {
+        // [M5] 优雅关闭挂起的失败/取消轮：轮已完成即兑现 close 意图终态化（含本轮 result），
+        // 不再回退 resumable——否则标志残留到下一轮，record 已被 tool 谎报 closed。
+        await this.consumeCloseAfterRound(record, result, closedReason);
+      } else {
+        await this.finalizeRoundToIdle(record, result);
       }
     }
-    return result;
+  }
+
+  /** [U04 提取·终态收口] one-shot（非 chatMode）分流（原 C/D 分支）：成功轮消费
+   *  closeAfterRound 挂起标志；失败/取消一次性销毁。 */
+  private async settleOneShotOutcome(
+    record: ExecutionRecord,
+    result: AgentResult,
+    aborted: boolean,
+    closedReason: ClosedReason,
+  ): Promise<void> {
+    if (!aborted && result.success) {
+      if (record.closeAfterRound) {
+        // [M5] 非 chatMode（one-shot）busy 时 close(force:false) 置的标志在本轮完成时消费
+        // 终态化（对齐 close schema 文案 "release its resources"）。旧代码走
+        // finalizeRoundToIdle 不消费——tool 返回 {closed:true} 谎报，record 永久
+        // running-resumable、5min idle timer 杀进程、期间还能继续收 message。
+        await this.consumeCloseAfterRound(record, result, "user-close");
+      } else {
+        // [SP-5] one-shot 成功完成 → 保持 running（旧 idle），等待 message 触发 upgrade。
+        await this.finalizeRoundToIdle(record, result);
+      }
+    } else {
+      // 非 chatMode 失败/取消 或其他终态：一次性销毁（archive + worktree cleanup）。
+      await this.finalizeRecord(record, result, "closed", closedReason);
+    }
+  }
+
+  /** [U04 提取·终态收口] closeAfterRound 挂起标志消费（原三处分支的公共收尾序列）：
+   *  清标志 + 终态化 closed。reason：成功轮恒 user-close；失败/取消轮用派生值。 */
+  private async consumeCloseAfterRound(
+    record: ExecutionRecord,
+    result: AgentResult,
+    reason: ClosedReason,
+  ): Promise<void> {
+    record.closeAfterRound = undefined;
+    await this.finalizeRecord(record, result, "closed", reason);
   }
 
   /**
