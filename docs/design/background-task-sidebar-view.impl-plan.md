@@ -1,6 +1,6 @@
 # background-task sidebar view 实施计划
 
-基线: 2409f2eb2 | 来源设计: docs/design/background-task-sidebar-view.md | 日期: 2026-09-06
+基线: 577d969eb | 来源设计: docs/design/background-task-sidebar-view.md | 日期: 2026-09-06
 
 ## 0 章节映射
 
