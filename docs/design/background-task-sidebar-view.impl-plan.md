@@ -98,7 +98,7 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
 | 6 | shared/src/index.ts 未显式导出 4 个 backgroundTask 镜像类型（index.ts 在 u-proto 领地外） | 本表 | 下游可经 `ServerMessageMap['backgroundTask.tasks']['tasks'][number]` 索引取用，无消费阻塞；需具名导入时由消费单元提出、收尾阶段统一放行 |
 | 7 | renderer api domain 未接 api/index.ts 门面（isMock 三元 + mock 轨） | 本表 | 领地约束下有意推迟，门面接线归消费单元（u-renderer-store/u-drawer）；既有 usage/terminal 等域同样存在不经门面直接 import 的范式 |
 | 8 | u-proto 领地扩展：新增 `packages/shared/__tests__/protocol.test.ts`（13 用例，编译期字面量断言 + 运行期样例断言）；并在 renderer domain 补 `BackgroundTaskMirrorEqualsContract` Equal 全等守卫（前任注释声称双向守卫实际仅单向，补实并修正注释） | 本表 | 派发 task 授权「shared 包该域类型测试文件一并补」；shared 侧原无编译期守卫覆盖，补强验收条款「类型形状与 D3 逐字段一致」的守卫力 |
-| 9 | renderer domain 未新增行为单测文件（api/__tests__ 在领地外） | 本表 | domain 为 3 个薄转发函数，类型链由 vue-tsc 守卫；如需 command 调用参数断言测试（仿 usage-forcequit-domains.test.ts 范式），须扩领地后补 |
+| 9 | renderer domain 未新增行为单测文件（api/__tests__ 在领地外）。**2026-09-07 更新**：一致性审查修复批 58630771d 已新增 packages/renderer/src/api/__tests__/background-task-domain.test.ts（6 用例），本条「未新增行为单测」前半失效；该文件系 corrupted 链路修复的必要组成（授权见变更历史） | 本表 | domain 为 3 个薄转发函数，类型链由 vue-tsc 守卫；如需 command 调用参数断言测试（仿 usage-forcequit-domains.test.ts 范式），须扩领地后补 |
 | 10 | 测试文件落位跟仓内既有惯例：renderer 集中 `src/__tests__/lib/` 与 `src/__tests__/composables/`，core 放域旁 `__tests__/`（非源文件旁新建 __tests__ 目录） | 本表 | renderer 无 `src/lib/__tests__` 惯例，useContextUsage 等先例同位；满足领地条款「各自 __tests__」语义 |
 | 11 | DrawerControlState.selectedBackgroundTaskId 采用 D5① 字面的可选成员（?: string），未仿 selectedSubagentId 必填+null 形态 | 本表 | 必填会迫使 core control.ts createDefaultControlState（领地外）同步加初始化；语义对齐（undefined=未选中），core 单测含可选性锚 |
 | 12 | filterBackgroundTasks 内置排序（active=startedAt 升序 / ended=endedAt 倒序 / all=active 置顶+ended 倒序） | 本表 | S1 验收口径的排序落进 SSOT，列表/计数/badge/icon/排序五方同源，消费层不再各写排序 |
@@ -124,18 +124,17 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
 | 32 | session 销毁迟到写入抑制表 suppressedSids（在途 RPC resolve / 退订窗口广播不僵尸式重建分区） | 本表 | D8④ 清理分区之外的泄漏路径加固，ADR-0049 生命周期延伸，测试覆盖 |
 | 33 | DetailPanel fetchSeq 序号守卫（切任务后在途旧 output reply 作废）+ 首拉未 loaded 过渡态渲染空白容器（不渲染空态/筛选条防闪烁） | 本表 | D7/D10 未定义的竞态与瞬态防御，与 capturedSid 同一竞态思想延伸 |
 | 34 | corrupted sticky 判定（任一拍 corrupted===true 置位；损坏后 .corrupt rename 自然拍的 corrupted:false 空表拍与 optional 缺省拍均不清位；仅 tasks 非空自愈拍清位）+ 重连 refresh 落点为每实例 watch 连接态（非壳层 badge 实例——跨实例分区不共享，RPC 经模块级去重收敛一次）+ fetchInto 重构为共享 RPC 快照各实例写各自分区（修复既有「复用实例分区永不写入」缺陷，in-flight 去重语义保留） | 本表 | sticky 源自 runtime 实测损坏拍时序（损坏检测拍后下一拍自然发 corrupted:false 空表广播，最后一拍严格判定会闪断）；S7 语义「自愈后错误条消失」= tasks 非空拍；fetchInto 重构是重连 refresh 正确性的前置 |
+| 35 | u-renderer-store 领地扩展登记——docs/architecture/data-source-registry.md 新增 #24 条目（data-owner 注解的登记义务产物） | 本表 | 授权归属 u-renderer-store 单元（commit 27203c851 随包提交） |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u-proto | committed | 0 | git log --grep=u-proto；shared 239 tests 绿（22 files）+ shared/renderer 双包 tsc 绿；deviations ⑥⑦⑧⑨入登记表 |
+| u-proto | committed | 0 | fbd4bf76f；shared 239 tests 绿（22 files）+ shared/renderer 双包 tsc 绿；deviations ⑥⑦⑧⑨入登记表 |
 | u-ext | committed | 0 | git log --grep=u-ext；base-tool-enhance 242 tests 绿（12 files）；typecheck/lint exit 0；deviations ①②入登记表 |
 | u-runtime-svc | committed | 0 | git log --grep=u-runtime-svc；runtime 全量 4398 tests 绿（402 files，含 background-task 域 30 tests + reaper 回归）；deviations ③④⑤入登记表 |
 | u-runtime-rpc | committed | 0 | git log --grep=u-runtime-rpc；runtime 全量 4414 tests 绿（404 files，含接线用例 + skill-paths 修复后回归）+ typecheck 绿；领地扩展①②已落地；deviations ⑭⑮⑯入登记表 |
 | u-renderer-store | committed | 0 | git log --grep=u-renderer-store；renderer 3760 tests 绿（361 files）+ core 1399 tests 绿（95 files）+ 双包 typecheck 绿；deviations ⑩⑪⑫⑬入登记表 |
-| u-runtime-rpc | pending | 0 | — |
-| u-renderer-store | pending | 0 | — |
 | u-renderer-list | committed | 0 | git log --grep=u-renderer-list；renderer 3793 / core 1399 / ui 564 全绿 + 三包 typecheck 绿；领地扩展（壳接线）已落地；deviations ㉑-㉔入登记表；i18n key 清单 18 个（sidebar.backgroundTaskList.*）已收集 |
 | u-drawer | committed | 0 | git log --grep=u-drawer；ui 564 tests 绿（57 files）+ drawer 相关 28 tests 绿 + vue-tsc 绿；deviations ⑰-⑳入登记表；i18n key 清单 21 个（panel.sideDrawer.bashTask*）已收集待传 u-i18n-docs |
 | u-i18n-docs | committed | 0 | git log --grep=u-i18n-docs；check:i18n 188 tests 绿（en/zh key 全等）+ renderer 3793 绿 + 根级 lint 绿；deviations ㉕㉖入登记表 |
@@ -162,7 +161,7 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
   - 2026-09-06 u-renderer-list 主体完成并核验（三包全绿），上报 D4②④ 壳侧生产接线缺口（NATIVE_VIEWS_KEY 注入 + badge 源 provide，壳文件不在原领地）——授权领地扩展（useExtensionHostBridge.ts + useBackgroundTasks.ts），原 dev 续作接线中。
   - 2026-09-06 u-renderer-list committed（L2 视图 + 注入契约路由 + badge 壳接线，三包全绿；barrel 导出经编排方追认；deviations ㉑-㉔）。
   - 2026-09-06 u-i18n-docs committed（39 key zh/en 落地 + testid 清单 14-background-task-sidebar.md + feature-map 2026-09-06）——**状态表 8 单元全 committed，转入阶段 3 一致性审查**。
-  - 2026-09-06 阶段 3 三分区审查收齐（extensions/runtime/前端，独立上下文）：聚合后 unreasonable 3 条（①corrupted 协议链路断裂 S7 不可实现——runtime 与前端两区共同发现 ②S6 断连提示+重连重拉未实现 ③u-ext 测试 afterEach 清理不对称 low）、doc_errors 6 条（主 agent 修订设计 D3 corrupted 字段/D6 表 ④b 行/边界注②措辞/§1 tail 上界/S1 tailSummary 措辞/本表 u-ext 领地通配）、reasonable 8 条（登记表 #27-#33）。修复批 3 路并行派发（①拆 runtime 侧透传 + renderer 侧消费两路）。
-  - 2026-09-06 阶段 4 修复批次完成：①corrupted 端到端链路（protocol 字段 + handler/service 透传 + api domain 全形返回 + store sticky 判定 + ListView 错误条 + locales）②S6 断连提示条 + 连接恢复自动重拉（含 fetchInto 共享快照重构修复既有双实例缺陷）③u-ext afterEach 清理（1d534a37c）。联合态终验：shared 239 / runtime 4417 / renderer 3808 全绿。新增偏差 #34（corrupted sticky 语义 + 损坏拍时序）登记。
+  - 2026-09-06 阶段 3 三分区审查收齐（extensions/runtime/前端，独立上下文）：聚合后 unreasonable 3 条（①corrupted 协议链路断裂 S7 不可实现——runtime 与前端两区共同发现 ②S6 断连提示+重连重拉未实现 ③u-ext 测试 afterEach 清理不对称 low）、doc_errors 6 条（主 agent 修订设计 D3 corrupted 字段/D6 表 ④b 行/边界注②措辞/§1 tail 上界/S1 tailSummary 措辞/本表 u-ext 领地通配）、reasonable 8 条（固化为登记表 #27-#33，其中 fetchSeq 守卫与首拉过渡态 2 条合并为 #33）。修复批 3 路并行派发（①拆 runtime 侧透传 + renderer 侧消费两路）。
+  - 2026-09-06 阶段 4 修复批次完成：①corrupted 端到端链路（commit 58630771d：protocol 字段 + handler/service 透传 + api domain 全形返回 + store sticky 判定 + ListView 错误条 + locales）②S6 断连提示条 + 连接恢复自动重拉（commit 58630771d；含 fetchInto 共享快照重构修复既有双实例缺陷）③u-ext afterEach 清理（1d534a37c）。联合态终验：shared 239 / runtime 4417 / renderer 3808 全绿。新增偏差 #34（corrupted sticky 语义 + 损坏拍时序）登记。
   - 2026-09-07 定向复审（只审修复批次影响面）：10 reasonable 确认修复正确（含 runtime 判定零改动、重连无风暴、无领地外行为）、2 unreasonable low（parseListReply 注释漂移 + 坏形状伪成功降级）、0 doc_errors。二轮修复 committed（71a285420，renderer 3809 绿）——**unreasonable 清零，阶段 4 收敛（2 轮 < 3 阈值），转入阶段 5 双级验收**。
   - 2026-09-07 **阶段 5 双绿达成**：Gate A GREEN（全量命令 exit 0 + 零容忍扫描干净 + 覆盖矩阵 27/28，uncovered 1 项 wiring 弱覆盖入残留风险）；Gate B GREEN（S1-S7 七场景全 pass + P2/P3/P4/P5/P7 全过 + dev-0.9.15 检查点 pass，真实 pnpm dev + AI 会话注入 + CDP 驱动零 mock，28 张截图 /tmp/gateb-shots/，环境已清理）。Windows Get-Process 检查点 blocked（macOS 环境限制，设计预留项）。S4 孤儿收殓触发面差异已回写设计（运行期 ~1.5s 收殓优于设计「启动收殓 5s+」，最终态一致）。**流水线交付完成。**

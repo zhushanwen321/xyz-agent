@@ -52,7 +52,7 @@ AI 继续干别的；测试在后台跑
 
 | 数据面 | 位置 | 新鲜度 | 缺陷（对 UI 而言） |
 |---|---|---|---|
-| pi 进程内单例表 | `extensions/universal/base-tool-enhance/src/background/task-store.ts:28`（模块级 Map，无订阅 API） | 实时 | 不出进程；他进程/重启前的任务不在表内 |
+| pi 进程内单例表 | `extensions/universal/base-tool-enhance/src/background/task-store.ts:42`（模块级 Map，无订阅 API；:14-26 为 D6-en 不变量注释块） | 实时 | 不出进程；他进程/重启前的任务不在表内 |
 | registry.json | `<piAgentDir>/base-tool-enhance/<sessionId>/registry.json`（extension 侧统一写入口 `registry.ts:179`；runtime reaper 写 orphaned `background-task-reaper.ts:308`；两侧共用 `<registry.json>.lock` proper-lockfile 磁盘协议，跨进程互斥已核实） | 每次状态迁移原子写（tmp+rename，锁内 RMW） | **无变更广播**——reader 需自行发现变化 |
 | outputFile | `<...>/<sessionId>/<task_id>.log`（子进程持 fd 直写，`spawn-background.ts:150`） | 实时（可随时 tail；`output-tail.ts:34-74` 字节窗口从文件末尾读） | stdout/stderr 混流无标记 |
 | 完成通知 | `pi.sendMessage` customType `background-bash`（`notify.ts:152-155`）→ `message.customStart` → 对话流 SystemNotice | exit 边沿 | 仅对话流展示，非结构化状态；kill 路径不发（`notify.ts:146`） |
@@ -60,7 +60,7 @@ AI 继续干别的；测试在后台跑
 
 **plugin 区与 widget 系现状**（关键背景）：
 - sidebar plugins tab 的视图清单来自 `ContributionRegistry` 的 `sidebar.tab` 贡献——**只有 builtin 静态声明一条路**（`packages/core/src/extension-host/builtin-contributions.ts`），且 builtin 现无任何 views 声明、`bootstrap.ts:63-71` `loadExternal([])` 恒传空数组 → **plugins tab 现状恒「暂无插件视图」空态**。本设计将是第一个真实 sidebar.tab 视图。
-- todo/goal 刻意不进 sidebar：经 `guiSetWidget`（`extension-protocol/src/core/helpers.ts:76-80`，NUL marker 编码）→ pi stdout `extension_ui_request{setWidget}` → EventAdapter（`event-adapter.ts:415-493`）→ WS `extension:widgetGui` → `ViewHostStore`（`view-host-store.ts:95-110`，(sessionId, viewId) 双键分区）→ **对话流 WidgetArea 消费**（`Panel.vue:78`）。
+- todo/goal 刻意不进 sidebar：经 `guiSetWidget`（`extension-protocol/src/core/helpers.ts:65-74`，NUL marker 编码）→ pi stdout `extension_ui_request{setWidget}` → EventAdapter（`event-adapter.ts:415-493`）→ WS `extension:widgetGui` → `ViewHostStore`（`view-host-store.ts:95-110`，(sessionId, viewId) 双键分区）→ **对话流 WidgetArea 消费**（`Panel.vue:78`）。
 - **GuiComponent 词汇表 9 类型全纯展示零交互**（`extension-protocol/src/core/types.ts`；`ListTree.vue` 0 emit）：无 onClick/onSelect/按钮原语；TreeItem.status 三态（running/done/failed）不含 killing/orphaned；无计时原语。事件回传只有 `extension.ui_request` 阻塞模态（confirm/select/input/editor）——不是列表点击。
 - custom 逃生口（`custom` 类型 + `GUI_CUSTOM_REGISTRY_KEY` 编译期注册）机制存在但**生产代码零 provide 者**。
 - **drawer 是硬编码 7-tab 机制**：`core/domain/drawer/types.ts` `SideDrawerTab` 联合类型 + `DrawerPanel.vue` tabs 数组 + `PanelContainer.vue:107-143` v-if chain 三处同步；'drawer.tab' 贡献挂载点仅存在于类型注释、零消费者。
@@ -152,11 +152,11 @@ pi 进程（每 session 一个）                     runtime（Node sidecar） 
 **D2：变更检测 = 三触发面（pi 事件钩子 / 2s mtime 轮询 / service 自写自检），共享同一变更判定（选定）**
 - **采用**：BackgroundTaskService 对「watched sessionId 集合」（见 D8 ③）每 2s 轮询：stat 各 registry.json 的 mtime，变化才重读+广播。另挂两个 runtime 内已有事件钩子做即时检查——① EventAdapter 流出的 customType `background-bash` 消息（exit 边沿，零延迟；`event-adapter.ts:657-672` 已透传 customType，挂点确认可行）；② EventAdapter 流出的 pi 原始 `tool_execution_end` 事件且 `toolName==='bash'`（覆盖 spawn 路径；实施期澄清：设计初版文字「message.tool_call bash 工具调用结束」在 pi 事件流中的实际形态即 tool_execution_end，`pi-protocol.ts` toolName 字段已核，挂点位置与语义不变）。**事件钩子触发的是对 watched 集合的一次完整变更检测（与轮询共享同一 last-seen mtime 状态），不是第二广播源**——同一变化至多广播一次，renderer 不双渲染。钩子对整个 watched 集合跑检查（非按消息 sid 定向），规避 session 替换后 customStart 投递新 session 与 registry 目录在旧 session 的错位（该错位只损失定向性，不损失正确性）。**service 自写自检**：service 自身写 registry（kill 的 killing 预写 / 分支②③终态写）成功后自触发一次变更检测——killing 状态即时广播，不占轮询节拍。
 - **被否**：① 纯 fs.watch——registry 是 tmp+rename 原子写，watch 文件本体会在 rename 时断链，须 watch 目录；Linux recursive watch 支持不稳，还得自配轮询兜底，复杂度不匹配收益；② extension 主动通知（= 方案 C，双源问题）。
-- **证据**：exit 通知链路已经过 runtime（`message.customStart`）；任务状态秒级变化的本源（poller 2s tick，`poller.ts:16`）决定了 2s 轮询不劣化感知；spawn/exit 均**先写 registry 后发通知/返回**（`spawn-background.ts:216-220`、`poller.ts:79-86`），事件到达时 registry 已是最新——即时检查读到的是终值，无双读竞态。
+- **证据**：exit 通知链路已经过 runtime（`message.customStart`）；任务状态秒级变化的本源（poller 2s tick，`poller.ts:23`）决定了 2s 轮询不劣化感知；spawn/exit 均**先写 registry 后发通知/返回**（`spawn-background.ts:216-220`、`poller.ts:79-86`），事件到达时 registry 已是最新——即时检查读到的是终值，无双读竞态。
 - **效果**：常见路径（exit）零延迟翻转；其余迁移（killing）≤2s；单广播源，无双发。
 
 **D3：WS 协议 = 3 个拉取/操作 RPC + 1 个 session 级广播（选定）**
-- **采用**：仿 `session.getCommands` 范式（`session-message-handler.ts:443-449` 的 handler 注册 + `protocol.ts` 类型登记）：
+- **采用**：仿 `session.getCommands` 范式（`session-message-handler.ts:466` 的 handler 注册 + `protocol.ts` 类型登记）：
   - `backgroundTask.list {sessionId}` → 回 `backgroundTask.tasks {sessionId, tasks: RegistryEntry[], corrupted?: boolean}`（读 registry 全量；目录/文件不存在 → 空数组；**该 RPC 同时把 session 加入 watched 集合**，见 D8 ③；`corrupted:true` = 该拍 registry 解析失败、tasks 为安全降级空表——§3.1 失败路径错误条与 S7 断言的信号源，实施期一致性审查补入：R1-R4 未发现 D3 形状与 §3.1/S7 的此矛盾，审查期闭合）
   - `backgroundTask.output {sessionId, taskId, maxBytes?}` → 回 `backgroundTask.outputResult {sessionId, taskId, text, truncated, lost}`（读 `<task_id>.log` 尾部，默认 32KB 上界，对齐 bash_output 的 tail 语义）
   - `backgroundTask.kill {sessionId, taskId}` → 回 `backgroundTask.killResult {sessionId, taskId, killed, reason}`（reason 枚举：`killed` / `already-exited` / `identity-unverifiable` / `registry-write-failed`，见 D6）
@@ -173,7 +173,7 @@ pi 进程（每 session 一个）                     runtime（Node sidecar） 
 - **效果**：「插件规范」落点成立（声明 + L2 宿主机制沿用）；渲染载体升级为原生组件，G2/G3 交互可达；角标与桶判据同源（G1 增强，R4 提为首期）。
 
 **D5：drawer 接入 = 照 4 点既有范式加第 8 个 tab（选定）**
-- **采用**：① `core/domain/drawer/types.ts` `SideDrawerTab` 加 `'bashTask'` + `DrawerControlState` 加 `selectedBackgroundTaskId?: string`（仿 selectedSubagentId 先例）；② `DrawerPanel.vue` tabs 数组加 TabMeta；③ `PanelContainer.vue:107-143` v-if chain 加 `BackgroundTaskDetailPanel`；④ 列表 item 点击 `openDrawerTab('bashTask', {taskId})`。
+- **采用**：① `core/domain/drawer/types.ts` `SideDrawerTab` 加 `'bashTask'` + `DrawerControlState` 加 `selectedBackgroundTaskId?: string`（仿 selectedSubagentId 先例）；② `DrawerPanel.vue` tabs 数组加 TabMeta；③ `PanelContainer.vue:107-143` v-if chain 加 `BackgroundTaskDetailPanel`；④ 列表 item 点击 `openDrawerTab('bashTask', {taskId})`（实施形态：经 `DrawerControlState.selectedBackgroundTaskId` 直写后调 `openDrawerTab('bashTask')`，偏差 #17；OpenDrawerOptions 不扩展 taskId）。
 - **被否**：模态对话框/行内展开（详情信息量大，drawer 是本应用重详情的既有范式——subagent/workflow 同款）。
 - **证据**：drawer 4 点同步范式（R1 审查逐点核实：SideDrawerTab 恰 7 成员/tabs 数组/v-if/兼容层）；`useSideDrawer.ts:79-106` 兼容层；宽度持久化 `useDrawerSplitWidth` 自动承接。
 - **效果**：G2 落点；与 subagent/workflow 详情交互一致，无新学习成本。
@@ -195,7 +195,7 @@ pi 进程（每 session 一个）                     runtime（Node sidecar） 
 | ④b | **身份比对失败**（有判定结果 = start-time 不匹配 = pid 已被复用） | 不发 kill 信号；按③路径为原条目收尾（原进程已死，pid 归新主）——③锁内判活重查发现复用者存活时拒绝终态化，回 `identity-unverifiable`（宁不杀勿误杀，可重试）。实施期审查确认设计矩阵初版无此行，实现按本行落地（`background-task-service.ts` mismatch → finalizeDeadEntry 路径） | 同③ | 同③（不通知 AI） |
 | ⑤ | 任一锁内写失败（intent 预写/终态写） | **中止 kill**（未发信号则不杀；已发信号则条目按①②既有路径收尾），回 `registry-write-failed` | 失败分支：条目停留原状态 | 兜底：下次 app 启动 reaper 全量扫描（触发面 B）；属主活分支由 poller 自然收尾 |
 
-**身份验证两档（分支④的判定）**：① 条目有 `pidStartTime` → 平台 start-time 严格比对（复用 reaper `pidStartMatchesRegistered`，macOS/Linux `ps -o lstart=`）；② 字段缺省（Windows spawn 时普遍读不到，`spawn-background.ts:196-199`）→ **按需现测**：macOS/Linux `ps` 补测目标 pid start time 后同比对；Windows 按 `Get-Process` `.StartTime`（或 CIM `Win32_Process` CreationDate）取值，**输出格式固化 ISO 8601 / DMTF（locale 无关）**后与条目 startedAt 同口径比对（kill 是用户显式动作，一次性 ~百 ms 探测成本可接受）；探测**异步执行（或短超时 ≤1s），不阻塞 runtime 事件循环**（reaper 的 spawnSync 5s 先例是启动期语境，不照搬到在役 RPC 路径）；③ 现测也不可得（含 Windows 权限拒绝 AccessDenied）→ 分支④拒绝。**被否：照抄 reaper「保守跳过」**——reaper 是无人值守自治扫描（宁漏杀勿误杀），UI kill 是用户显式指令且有人工反馈回路，正确策略是「补全验证材料」而非放弃；否则 Windows 上 G3 系统性失效（R1 M2-ii 反例）。
+**身份验证两档（分支④的判定）**：① 条目有 `pidStartTime` → 平台 start-time 严格比对（复用 reaper `pidStartMatchesRegistered`，macOS/Linux `ps -o lstart=`）；② 字段缺省（Windows spawn 时普遍读不到，`spawn-background.ts:192/:204`）→ **按需现测**：macOS/Linux `ps` 补测目标 pid start time 后同比对；Windows 按 `Get-Process` `.StartTime`（或 CIM `Win32_Process` CreationDate）取值，**输出格式固化 ISO 8601 / DMTF（locale 无关）**后与条目 startedAt 同口径比对（kill 是用户显式动作，一次性 ~百 ms 探测成本可接受）；探测**异步执行（或短超时 ≤1s），不阻塞 runtime 事件循环**（reaper 的 spawnSync 5s 先例是启动期语境，不照搬到在役 RPC 路径）；③ 现测也不可得（含 Windows 权限拒绝 AccessDenied）→ 分支④拒绝。**被否：照抄 reaper「保守跳过」**——reaper 是无人值守自治扫描（宁漏杀勿误杀），UI kill 是用户显式指令且有人工反馈回路，正确策略是「补全验证材料」而非放弃；否则 Windows 上 G3 系统性失效（R1 M2-ii 反例）。
 
 **D6-en（enabling change，base-tool-enhance 唯一改动）：poller 终态化时合并读回 registry killing 状态**
 - **采用**：`poller.ts` exit 边沿 finalize 时，若内存 entry 无 intent，**读回该条目的 registry 条目：`state==='killing'` 且内存 intent 缺省 ↔ reason=killed**（经 registryPath；读失败按无 intent 处理，不阻塞终态化）。信号等价性依据：killing 条目在 registry 中的唯一可读信号就是 state 字段（bash_kill/timeout 落盘同样剥离 intent，`taskToRegistryEntry` 明文剥离；协议零改动，与 D9 一致）。效果：① 分支①的 reason 语义正确（killed 而非 natural，C4 在 UI 代杀路径收窄）；② `handleTaskExit` 对 killed 不 sendMessage（既有语义）→ **主路径 AI 零感知、不被唤醒**。改动与 extension 自身设计自洽（「intent 写入单例表与 registry 两侧」本就是其声明行为，缺的只是读回）。同 app 发布版本内耦合（builtin 打包，mandatory-extensions 同 bundle，无版本漂移面；独立 pi CLI 用户无 UI，不受影响；dev-link 本地开发存在旧 extension × 新 runtime 的临时偏斜，已知可接受）。**配套加固（U6 内，2 行）**：`armBackgroundTimeout` 在 pid 已死（`isRecordedPidStillOriginal` 为假）时跳过 `markKillingIntent('timeout')`——否则 UI kill 与 timeout 到期同秒重叠时，内存 intent 被无条件覆盖为 timeout → reason=timeout ≠ killed → sendMessage 唤醒 AI（R2-S1 残余窗口）。接受语义微移：到期前 ~2s 内自然死亡的任务改标 natural（仅影响 AI 通知文案）；该加固同时**改善既有** AI bash_kill × timeout 交叉行为（原：bash_kill 后 timeout 到点无条件覆盖 intent → 误报「timed out」；加固后保持 killed 无通知）。**不变量登记（U6 注释级）**：intent 不可丢失依赖纪律性约束「extension 对某条目的每次 registry 写都先经该条目的内存状态更新」（已枚举全部 5 个 `writeRegistryEntry` 调用点成立：spawn=新条目 / bash_kill 先 mark / timeout 先 mark / poller=终态 / process-exit-guard reapBackgroundTasksNow=终态；实施期 grep 核实修正，设计初版枚举 4 点漏计第 5 点，两处终态写同序均成立）；runtime 预写的 killing 不会被 stale 内存态冲回即依赖此约束，未来新增写路径（如 maintenance 类）须保持。
@@ -242,7 +242,7 @@ pi 进程（每 session 一个）                     runtime（Node sidecar） 
 | P4 | kill 后任务进程树真死（不只父进程） | dev 环境：UI 杀 `sh -c 'sleep 300 & sleep 300'` → `ps aux \| grep sleep` 确认子进程同殁 | ⛔ 实施期门 | 失败 → killProcessTree 平台分支 bug（C3 复用件），修 bug 而非改设计 |
 | P5 | 属主死分支：kill 孤儿 → registry 锁内写 orphaned，列表 ≤3s 翻转 | dev 环境：强杀 pi 进程后 UI kill 遗留任务 | ⛔ 实施期门 | 写失败 → 分支⑤语义（registry-write-failed + 启动期 reaper 兜底），探针失败仅延迟恢复，不破坏正确性 |
 | P6 | session A 广播不进 session B 分区 | vitest：双 session store 分区，publish(sid=A) 后断言 B 分区无变化 | ⛔ 实施期门 | 失败 = D8 分区实现 bug，修实现；无设计降级 |
-| P7 | UI kill 后对话流**无**新增 background-bash 消息、AI 无被唤醒的新 turn | dev 环境：UI 杀 AI 发起的 dev server → 观察对话流与会话状态（R1 M1 新增；主路径口径，timeout 交叉窗口经 U6 加固构造性关闭） | ⛔ 实施期门 | 失败 → D6-en intent 读回未生效（extension 侧），属实现 bug 非设计降级；不接受唤醒副作用上线 |
+| P7 | UI kill 后对话流**无**新增 background-bash 消息、AI 无被唤醒的新 turn | dev 环境：UI 杀 AI 发起的 dev server → 观察对话流与会话状态（R1 M1 新增；主路径口径，timeout 交叉窗口经 U6 加固收窄至 SIGKILL 生效前的毫秒级重叠窗，见 D6-en 边界注②） | ⛔ 实施期门 | 失败 → D6-en intent 读回未生效（extension 侧），属实现 bug 非设计降级；不接受唤醒副作用上线 |
 
 ## 4. 验收（真实场景）
 
@@ -253,7 +253,7 @@ pi 进程（每 session 一个）                     runtime（Node sidecar） 
 | S1 | 后台任务全程可见（G1/G2） | 让 AI「后台跑 pnpm test」→ 切该 session 的插件→后台命令 tab：验证筛选槽三桶计数与切换（运行中→已结束→全部），守到测试结束 | 默认「运行中」桶只含运行中任务、计数正确；结束 ≤3s icon 翻转为 exited 语义色（成功=success 点 / 失败=danger 点，色档由 bucket SSOT `backgroundTaskStatusIcon` 派生）并自动归入「已结束」桶（计数 +1 / 运行中 -1，角标随消）；「全部」桶运行中置顶 + 分隔线 + 历史倒序；点击行 drawer 显示 exitCode 与输出尾部（`backgroundTask.output` 按需拉取，D7——实施期审查修正初版误写的「tailSummary」展示位，该字段是 RegistryEntry 数据字段、无 UI 展示位）与对话流 background-bash 消息内容一致 |
 | S2 | 长驻任务可控且不惊扰 AI（G3） | 让 AI 起 `pnpm dev`（force-longrun 自动后台）→ 列表行内两段式终止（✕→✓），再起一个用 drawer「终止任务」→ 持续观察对话流 30s | 两条路径均 ≤5s 变终态（killing 翻转即时；killed 终态最坏 ~4s，P3 同框口径；reason=killed）；`lsof -i :1420` 确认端口释放、`ps aux \| grep vite` 无残留；**对话流无新增 background-bash 消息、会话无新 turn（AI 未被唤醒）、pending 通知标 cancelled** |
 | S3 | session 隔离（G4） | session A 起后台任务 → 切 session B 看插件 tab → 切回 A | B 的列表不含 A 的任务（空态或仅 B 自己的历史）；切回 A 立即见 running 行（拉取兜底生效，不依赖广播） |
-| S4 | 历史与孤儿（G1） | 跑完几个任务后完全退出 app 再启动；再模拟强杀 pi（kill -9 pi 进程）后重启 app | 重启后终态历史仍在（registry 持久）；孤儿任务显示 orphaned（info 色 icon），不悬挂 running——**Gate B 实测修正**：孤儿收殓实际由 runtime 在运行期 ~1.5s 内自动完成（事件钩子触发面比「启动收殓 5s+」更积极，强杀 pi 当拍即殁、无遗留可杀），启动收殓仅作兜底；最终态与设计一致 |
+| S4 | 历史与孤儿（G1） | 跑完几个任务后完全退出 app 再启动；再模拟强杀 pi（kill -9 pi 进程）后重启 app | 重启后终态历史仍在（registry 持久）；孤儿任务显示 orphaned（info 色 icon），不悬挂 running——**Gate B 实测修正**：孤儿收殓实际由 runtime 在运行期 ~1.5s 内自动完成——收殓链路是 pi 进程退出收敛（pm.onSessionExit → session-service removeSessionEntry 收殓挂点 reapSessionBackgroundTasks，即 §2.2 已登记的 reaper「session 删除」触发面；强杀 pi 当拍即殁、无遗留可杀），启动收殓仅作兜底；D2 事件钩子无收殓能力（强杀 pi 后事件流终止，钩子不可能触发）；最终态与设计一致 |
 | S5 | 输出跟随（G2） | drawer 打开 running 任务（如 `pnpm test`），观察输出区 | 尾部输出持续滚动增长（2s 节拍）；终态后停止轮询（DevTools network 无持续请求） |
 | S6 | 负面行为（G4/稳定性/筛选边界） | 无任务 session 打开 tab（全量空态）；全部已结束 session 的默认视图（运行中空桶）；只有运行中时切「已结束」（已结束空桶）；对终态任务开 drawer；断开 WS（杀 runtime 再自动重启） | 全量空态不渲染筛选条；运行中空桶显示「查看全部 (N)」且点击跳转正确；已结束空桶仅文案；终态 drawer 无 kill 按钮；WS 重连后列表自动重拉恢复（筛选桶选择保留），无白屏/报错 |
 | S7 | 数据损坏降级（G1 稳健性，R1 新增） | 手工把 registry.json 改成非法 JSON → 打开后台任务 tab；再让 AI 发起一个新后台任务 | 损坏拍显示空态 + 「任务数据损坏」错误条；AI 发起新任务后（extension 自愈空表重建）错误条消失、新任务正常出现；`.corrupt` 现场文件存在 |

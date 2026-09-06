@@ -10,7 +10,8 @@
     （undefined=未选中 → PanelContainer 不注入本组件，DrawerPanel 空态 fallback 承载）；
   - 任务条目：useBackgroundTasks 分区只读（分区状态根由 u-renderer-store 持有；本组件不拉
     list、不挂广播——广播刷新由 store 编排）；条目从分区消失（registry LRU 淘汰/损坏自愈清表）
-    时用最后已知快照兜底渲染元信息（避免 drawer 内容空白），输出跟随以分区条目消失为停止信号；
+    时用最后已知快照兜底渲染元信息（避免 drawer 内容空白）；输出跟随持续至任务终态/drawer
+    关闭/组件卸载（快照冻结语义，impl-plan 偏差 #19——条目消失非停止条件）；
   - 输出：backgroundTask.output 按需 tail（D7：打开/切任务拉一次；running 且 drawer 打开时
     每 2s 重拉。drawer 关闭 = DrawerPanel aside v-if 收起 = 本组件卸载，与组件卸载同一停止
     机制；任务终态由 store 分区条目 state 驱动跟随启停）；
@@ -204,7 +205,7 @@ function stopFollow(): void {
   followTimer = null
 }
 
-/** 跟随条件 = 条目活跃（running/killing）；终态/条目消失即停（D7 停止条件） */
+/** 跟随条件 = 条目活跃（running/killing，含条目消失后回落 entrySnapshot 的最后已知状态）；终态即停（D7 停止条件；条目消失非停止条件——快照冻结语义，impl-plan 偏差 #19） */
 const following = computed(() => {
   const value = displayEntry.value
   return value !== null && isActiveBackgroundTaskState(value.state)
