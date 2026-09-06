@@ -26,7 +26,8 @@ vi.mock("../../core/logger.ts", () => ({
 
 import { doFinalizeRecord, doFinalizeRoundToIdle } from "../finalize-record.ts";
 import { ManifestStore } from "../manifest-store.ts";
-import type { AgentResult, ExecutionRecord } from "../types.ts";
+import { getSubagentSessionDir } from "../path-encoding.ts";
+import type { AgentResult, ExecutionRecord, WorktreeHandle } from "../types.ts";
 
 function makeMinimalRecord(overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
   return {
@@ -267,6 +268,149 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
       // manifest sessionFile 同步保持 undefined
       const manifest = await manifestStore.readManifest("rec-ps9-miss");
       expect(manifest?.sessionFile).toBeUndefined();
+      loggerMock.error.mockClear();
+    });
+  });
+
+  // ── Step 3a 判别 wiring：closedReason → tombstone vs finalized（MF-1 fix / v4 B-1）──
+  //
+  // record 带 sessionFile 直接命中 writeFinalizedOrTombstone 的核心判别分支：
+  //   cancelled → writeCancelledTombstone（防重建丢失 cancelled 语义）
+  //   其余 reason → writeFinalized（真实 reason 进 sidecar 内容，磁盘重建还原 closedReason）
+  // 两路 sidecar 互斥（BC-4）：断言「写了哪个 + 没写哪个」双向锁定。
+  describe("writeFinalizedOrTombstone 判别 wiring（closedReason → tombstone vs finalized）", () => {
+    it("closedReason=cancelled → tombstone sidecar 携带 id/status/agent/startedAt/endedAt 且不写 .finalized", async () => {
+      const sessionFile = path.join(tmpDir, "session.jsonl");
+      const record = makeMinimalRecord({
+        id: "rec-wire-cancelled",
+        sessionFile,
+        // 预设 endedAt 会被 Step 1 completeRecord 冻结值覆盖（见下方 endedAt 断言注释）
+        endedAt: 5678,
+      });
+
+      await doFinalizeRecord(makeDeps(), record, makeMinimalResult(), "closed", "cancelled");
+
+      // tombstone 写出且内容为完整 CancelledTombstone（经 readCancelledTombstone 形态校验的
+      // 字段逐项断言，不用 objectContaining 放宽——重建链路靠这些字段还原）
+      expect(fs.existsSync(`${sessionFile}.cancelled`)).toBe(true);
+      const tomb = JSON.parse(fs.readFileSync(`${sessionFile}.cancelled`, "utf-8")) as {
+        id: string;
+        status: string;
+        agent: string;
+        startedAt: number;
+        endedAt: number;
+      };
+      expect(tomb.id).toBe("rec-wire-cancelled");
+      expect(tomb.status).toBe("cancelled");
+      expect(tomb.agent).toBe("worker");
+      expect(tomb.startedAt).toBe(1000);
+      // endedAt 来自 completeRecord 冻结后的 record.endedAt（Step 1 先于 Step 3a，
+      // record 预设的 endedAt 会被冻结值覆盖）——tombstone 携带真实收尾时间戳
+      expect(tomb.endedAt).toBe(record.endedAt);
+      expect(typeof tomb.endedAt).toBe("number");
+      // 互斥：cancelled 路径绝不写 finalized（否则重建判「正常结束」，cancelled 语义丢失）
+      expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(false);
+    });
+
+    it.each(["user-close", "gc"] as const)(
+      "closedReason=%s → .finalized 内容携带真实 reason 且不写 tombstone",
+      async (reason) => {
+        const sessionFile = path.join(tmpDir, "session.jsonl");
+        const record = makeMinimalRecord({ id: `rec-wire-${reason}`, sessionFile });
+
+        await doFinalizeRecord(makeDeps(), record, makeMinimalResult(), "closed", reason);
+
+        // finalized sidecar 写出且内容 = 真实 reason（磁盘重建用它还原 closedReason，
+        // 不再一律硬编码 gc）
+        expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
+        expect(fs.readFileSync(`${sessionFile}.finalized`, "utf-8")).toBe(reason);
+        // 互斥：非 cancelled 路径不写 tombstone
+        expect(fs.existsSync(`${sessionFile}.cancelled`)).toBe(false);
+      },
+    );
+  });
+
+  // ── Step 0 collectPatch wiring：worktreeHandle 置位 → patch 收集 + patchFile 回填 ──
+  //
+  // [MF#3] patchFile 必须写到 worktree 之外（sessionsDir/<branch>.patch），避免被
+  // cleanup 删除；仅 patch.written=true（diff 非空且写盘成功）才回填 record.patchFile，
+  // 避免悬空路径让 `git apply` 打不存在的文件。
+  describe("collectPatchIfWorktree wiring（worktreeHandle 置位 + patch.written 回填）", () => {
+    const mainCwd = "/tmp/collect-patch-main-repo";
+    const branch = "subagent-b1";
+    const handle: WorktreeHandle = {
+      path: "/tmp/collect-patch-checkout",
+      branch,
+      baseCommit: "abc123",
+      mainCwd,
+    };
+
+    function makeWorktreeDeps(
+      collectPatch: ReturnType<typeof vi.fn>,
+    ): ReturnType<typeof makeDeps> & { agentDir: string } {
+      const agentDir = "/tmp/collect-patch-agent-dir";
+      // 覆写 worktreeManager / modelService 为 stub（与外层 makeDeps 同款 unknown 断言——
+      // FinalizeDeps 的 ModelConfigService/WorktreeManager 是宽接口，stub 只需覆盖本次路径）
+      return {
+        ...makeDeps(),
+        modelService: { getAgentDir: () => agentDir },
+        worktreeManager: { collectPatch, cleanup: vi.fn() },
+        agentDir,
+      } as unknown as ReturnType<typeof makeDeps> & { agentDir: string };
+    }
+
+    it("patch.written=true → collectPatch 收到 handle + sessionsDir/<branch>.patch，record.patchFile 回填", async () => {
+      const { agentDir, ...deps } = makeWorktreeDeps(vi.fn().mockResolvedValue({
+        patchFile: "/ignored/collector-picked-path.patch",
+        failed: false,
+        written: true,
+      }));
+      const sessionsDir = getSubagentSessionDir(agentDir, mainCwd);
+      const expectedPatchFile = path.join(sessionsDir, `${branch}.patch`);
+      const record = makeMinimalRecord({ id: "rec-patch", worktreeHandle: handle });
+
+      await doFinalizeRecord(deps, record, makeMinimalResult(), "closed", "gc");
+
+      // collectPatch 被调用，patchFile 由 finalize-record 拼装（sessionsDir/<branch>.patch）
+      expect(deps.worktreeManager.collectPatch).toHaveBeenCalledTimes(1);
+      expect(deps.worktreeManager.collectPatch).toHaveBeenCalledWith(handle, expectedPatchFile);
+      // sessionsDir 已 mkdir（recursive）——patchFile 的父目录真实存在
+      expect(fs.existsSync(sessionsDir)).toBe(true);
+      // [MF#3] patchFile 落在 worktree 之外（不会被 Step 3 cleanup 连带删除）
+      expect(expectedPatchFile.startsWith(handle.path)).toBe(false);
+      // patch.written=true → record.patchFile 回填为 finalize-record 拼装的路径
+      expect(record.patchFile).toBe(expectedPatchFile);
+    });
+
+    it("patch.written=false（空 diff / 写失败）→ record.patchFile 不回填（避免悬空路径）", async () => {
+      const { agentDir, ...deps } = makeWorktreeDeps(vi.fn().mockResolvedValue({
+        patchFile: "/ignored/never-written.patch",
+        failed: false,
+        written: false,
+      }));
+      const record = makeMinimalRecord({ id: "rec-patch-empty", worktreeHandle: handle });
+
+      await doFinalizeRecord(deps, record, makeMinimalResult(), "closed", "gc");
+
+      expect(deps.worktreeManager.collectPatch).toHaveBeenCalledTimes(1);
+      expect(record.patchFile).toBeUndefined();
+    });
+
+    it("collectPatch 抛错 → best-effort 不阻断 finalize 链（manifest 照写、cleanup 照执行）", async () => {
+      const { agentDir, ...deps } = makeWorktreeDeps(vi.fn().mockRejectedValue(new Error("git died")));
+      const sessionFile = path.join(tmpDir, "session.jsonl");
+      const record = makeMinimalRecord({ id: "rec-patch-err", sessionFile, worktreeHandle: handle });
+
+      await expect(
+        doFinalizeRecord(deps, record, makeMinimalResult(), "closed", "gc"),
+      ).resolves.toBeUndefined();
+
+      // Step 0 失败不影响后续步骤：finalized sidecar 与 manifest 照常落地
+      expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
+      const manifest = await manifestStore.readManifest("rec-patch-err");
+      expect(manifest?.status).toBe("closed");
+      expect(deps.worktreeManager.cleanup).toHaveBeenCalledTimes(1);
+      expect(record.patchFile).toBeUndefined();
       loggerMock.error.mockClear();
     });
   });
