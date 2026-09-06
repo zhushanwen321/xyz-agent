@@ -90,15 +90,16 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
 
 | # | 偏差 | 固化位置 | 理由 |
 |---|------|----------|------|
-| （空） | | | |
+| 1 | writeRegistryEntry 不变量登记点数为 5 而非设计枚举的 4（第 5 点 = process-exit-guard.ts reapBackgroundTasksNow 的终态写，同序成立） | 设计 §3.3 D6-en 措辞已同步修正；extension task-store.ts 注释登记 5 点 | 对设计事实性枚举的修正补全，5 个调用点顺序全部 grep + 实读核实 |
+| 2 | u-ext 接替续作合规修补：删除测试文件重复的 `vi.setConfig({testTimeout:20000})`（两处留一）+ 补 `afterAll rmSync(DATA_DIR)` 清理 | 本表 | 无语义变化的合规性修补，满足测试红线「mkdtempSync 自建自删」 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u-proto | pending | 0 | — |
-| u-ext | pending | 0 | — |
-| u-runtime-svc | pending | 0 | — |
+| u-proto | dev 进行中 | 0 | 接替 dev 续作（前任半成品：protocol.ts +101 / api domain 63 行） |
+| u-ext | committed | 0 | git log --grep=u-ext；base-tool-enhance 242 tests 绿（12 files）；typecheck/lint exit 0；deviations ①②入登记表 |
+| u-runtime-svc | dev 进行中 | 0 | 接替 dev 续作（前任半成品：background-task/ 7 文件 / reaper +89 / event-adapter +40） |
 | u-runtime-rpc | pending | 0 | — |
 | u-renderer-store | pending | 0 | — |
 | u-renderer-list | pending | 0 | — |
@@ -112,3 +113,5 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
 - P2/P3/P4/P5/P7 为实施期门：单测能覆盖的进单元验收，真实进程/时序类（P4/P7）留阶段 5 dev 手测。
 - 变更历史：
   - 2026-09-06 计划创建（设计 R4 收敛版），用户豁免计划评审确认。
+  - 2026-09-06 中断恢复校准：发现工作区存在 W1 三单元（u-proto/u-ext/u-runtime-svc）领地内未提交半成品（`git diff --stat` 383 insertions + untracked 2 处，无领地外改动），无 committed 证据 → 状态表按 pending 重算；原 dev 会话不可用，按接替程序补派新 dev（附 diff 证据包，先核验现状再续作）。
+  - 2026-09-06 u-ext committed（接替 dev 核验前任半成品全部正确 + 2 处合规修补）；doc fix：设计 D6-en writeRegistryEntry 枚举 4→5（第 5 点 process-exit-guard 终态写，实施期核实）。

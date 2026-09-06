@@ -222,9 +222,15 @@ export function spawnBackgroundTask(opts: SpawnBackgroundOptions): SpawnBackgrou
 }
 
 /**
- * 后台显式 timeout（D6：任务寿命可由使用者显式约束）。到点：pid 身份校验通过则
+ * 后台显式 timeout（D6：任务寿命可由使用者显式约束）。到点：pid 身份校验通过 →
  * kill-tree + 两侧标 killing intent（reason 候选 timeout）——实际终态由轮询器边沿
- * 收尾写（单一终态归属），此处不写终态。
+ * 收尾写（单一终态归属），此处不写终态。身份校验不过（登记原进程已不在：已死或
+ * pid 复用嫌疑）→ 跳过 kill **且跳过 intent 标记**（D6-en/R2-S1 加固）：无条件
+ * markKillingIntent("timeout") 会把 UI 代杀 / AI bash_kill 刚预写的 killed 改写成
+ * timeout → reason=timeout → sendMessage 误报「timed out」唤醒 AI；跳过后由轮询器
+ * 边沿按事实收尾（自然死亡 → natural；registry 预写 killing → 经 D6-en 读回判
+ * killed）。接受语义微移：到期前 ~2s 内自然死亡的任务改标 natural（仅影响 AI
+ * 通知文案）。
  */
 function armBackgroundTimeout(task: BackgroundTask, timeoutSec: number): void {
 	const timer = setTimeout(() => {
@@ -240,9 +246,14 @@ function armBackgroundTimeout(task: BackgroundTask, timeoutSec: number): void {
 					startedAt: task.startedAt,
 				},
 			});
-		} else {
-			killProcessTree(task.pid);
+			// D6-en/R2-S1 加固：登记原进程已不在时同样跳过 intent 标记——内存 intent
+			// 是本进程权威（task-store.ts 头部不变量），被无条件改写为 timeout 即丢失
+			// killed 语义（D6-en 读回与 AI bash_kill 预写双双失效）。此处提前 return
+			// 时轮询器必在跑（本任务仍是活跃条目，惰性自停条件是活跃数为 0），边沿
+			// 收尾不受影响。
+			return;
 		}
+		killProcessTree(task.pid);
 		const marked = markKillingIntent(task.taskId, "timeout");
 		if (marked === undefined) return;
 		writeRegistryEntry(marked.registryPath, taskToRegistryEntry(marked));

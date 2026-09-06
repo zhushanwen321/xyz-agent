@@ -15,9 +15,9 @@
 
 import { isPidAlive } from "../kill-tree.ts";
 import { readTailSummary } from "./output-tail.ts";
-import { taskToRegistryEntry, writeRegistryEntry } from "./registry.ts";
+import { readRegistry, taskToRegistryEntry, writeRegistryEntry } from "./registry.ts";
 import { finalizeTask, getActiveTasks } from "./task-store.ts";
-import type { BackgroundTask } from "./types.ts";
+import type { BackgroundTask, BackgroundTaskEndReason } from "./types.ts";
 
 /** 轮询间隔（设计文档 §3.5：约 2s）。 */
 export const POLL_INTERVAL_MS = 2000;
@@ -71,17 +71,34 @@ export function pollTickForTest(): void {
 
 /**
  * exit 边沿收尾（单一终态归属）：读 exitCode → 组装 tail 摘要 → reason 判定
- * （intent.killed → "killed"、intent.timeout → "timeout"、无 intent → "natural"；
- * "process-exit" 由收殓路径直接调 finalizeTask，不经这里）→ 单例表 + registry
- * 两侧写终态 → 触发 onTaskExit 回调（M3 接入点）。
+ * （内存 intent 优先：intent.killed → "killed"、intent.timeout → "timeout"；intent
+ * 缺省 → 读回 registry：state==="killing" → "killed"（D6-en，跨进程 UI 代杀预写），
+ * 否则/读失败 → "natural"；"process-exit" 由收殓路径直接调 finalizeTask，不经这里）
+ * → 单例表 + registry 两侧写终态 → 触发 onTaskExit 回调（M3 接入点）。
  */
 function finalizeExitedTask(task: BackgroundTask): void {
 	const exitCode = task.child?.exitCode ?? null;
-	const reason = task.intent?.reason ?? "natural";
+	const reason = task.intent !== undefined ? task.intent.reason : readBackReasonFromRegistry(task);
 	const endedAt = Date.now();
 	const tailSummary = readTailSummary(task.outputFile);
 	const finalized = finalizeTask(task.taskId, { exitCode, reason, endedAt, tailSummary });
 	if (finalized === undefined) return;
 	writeRegistryEntry(finalized.registryPath, taskToRegistryEntry(finalized));
 	onTaskExitCallback?.(finalized);
+}
+
+/**
+ * D6-en intent 读回：内存 intent 缺省时读回本条目的 registry 条目——
+ * state==="killing" ↔ reason=killed。跨进程 UI 代杀（runtime kill handler）只写
+ * registry 侧 killing（对 pi 内存表不可见），且 killing 条目落盘剥离 intent
+ * （taskToRegistryEntry），state 字段是唯一可读信号；判 killed 后 handleTaskExit
+ * 不 sendMessage → 主路径 AI 零感知（background-task-sidebar-view 设计 D6-en）。
+ * 读失败/条目缺失/状态非 killing → 按无 intent（"natural"）处理，不阻塞终态化
+ * （readRegistry 对读失败/损坏一律返回空表，读侧无锁依赖 tmp+rename 原子写）。
+ * 内存 intent 存在时不进入本函数（本进程 bash_kill/timeout 预写是内存权威，
+ * 不读回——见 task-store.ts 头部不变量登记）。
+ */
+function readBackReasonFromRegistry(task: BackgroundTask): BackgroundTaskEndReason {
+	const entry = readRegistry(task.registryPath).get(task.taskId);
+	return entry?.state === "killing" ? "killed" : "natural";
 }
