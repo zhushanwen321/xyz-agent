@@ -119,6 +119,78 @@ function raceResultWithDeadline(
 	});
 }
 
+// ──────────────────────── classifyRisk 分步 helper ────────────────────────
+
+/**
+ * 构造 CallLLMOptions（timeout 秒→毫秒的换算由调用方完成后传入；
+ * signal 透传 callLLM → completeSimple，abort 时 reject 或 resolve(aborted)
+ * 都会归一为 ok:false）。
+ */
+function buildCallOptions(
+	model: Model<Api>,
+	ctx: ToolInvocationContext,
+	config: ClassifierConfig,
+	timeoutMs: number | undefined,
+	signal: AbortSignal | undefined,
+): CallLLMOptions {
+	return {
+		model,
+		systemPrompt: CLASSIFIER_SYSTEM_PROMPT,
+		messages: buildMessages(ctx),
+		...(timeoutMs !== undefined ? { timeoutMs } : {}),
+		...(signal !== undefined ? { signal } : {}),
+		// thinkingLevel 直接透传（含 "off"）；llm-shared 内部会把 "off" 映射为不传 reasoning（provider 默认）
+		reasoning: config.thinkingLevel,
+	};
+}
+
+/** 记录 LLM 调用失败日志（G3 语义：abort 与 error 分开记，即使行为上两者都 fallback 无差别）。 */
+function logFailedCall(
+	result: Extract<CallLLMResult, { ok: false }>,
+	onLog?: (msg: string) => void,
+): void {
+	if (result.stopReason === "aborted") {
+		onLog?.(`[pi-permission] classifier: LLM call aborted (stopReason=aborted), returning fallback`);
+	} else {
+		const stopDetail = result.stopReason !== undefined ? ` (stopReason=${result.stopReason})` : "";
+		onLog?.(`[pi-permission] classifier: LLM call failed: ${result.error}${stopDetail}, returning fallback`);
+	}
+}
+
+/** raceWithDeadline 已收窄的结果形态（timeout/aborted 无 result 字段）。 */
+type SettledRace =
+	| { kind: "ok"; result: CallLLMResult }
+	| { kind: "timeout" }
+	| { kind: "aborted" };
+
+/** settleRacedResult 的输出：fallback = fail-closed ask；ok = 继续解析文本。 */
+type SettledOutcome =
+	| { kind: "fallback"; result: ClassifierResult }
+	| { kind: "ok"; result: Extract<CallLLMResult, { ok: true }> };
+
+/**
+ * race 结果归一：timeout / aborted / ok:false → fail-closed fallback（保留日志区分），
+ * 成功原样透传（调用方收窄后取 content）。
+ */
+function settleRacedResult(settled: SettledRace, timeoutMs: number | undefined, onLog?: (msg: string) => void): SettledOutcome {
+	if (settled.kind === "timeout") {
+		onLog?.(`[pi-permission] classifier: timed out after ${timeoutMs}ms`);
+		return { kind: "fallback", result: { ...CLASSIFY_FALLBACK_RESULT } };
+	}
+	if (settled.kind === "aborted") {
+		onLog?.(`[pi-permission] classifier: aborted by signal`);
+		return { kind: "fallback", result: { ...CLASSIFY_FALLBACK_RESULT } };
+	}
+
+	// ok:false → fallback（fail-closed）。stopReason 独立透传字段保留日志区分
+	const result = settled.result;
+	if (!result.ok) {
+		logFailedCall(result, onLog);
+		return { kind: "fallback", result: { ...CLASSIFY_FALLBACK_RESULT } };
+	}
+	return { kind: "ok", result };
+}
+
 // ──────────────────────── createClassifier ────────────────────────
 
 /**
@@ -148,21 +220,12 @@ export function createClassifier(deps: ClassifierDeps): {
 		// 实证 classifier 真实用到 OAuth/配置的模型（而非 fail-closed 降级）。
 		onLog?.(`[pi-permission] classifier: using model ${model.id}`);
 
-		// 2. 构造 CallLLMOptions（timeout 秒→毫秒；signal 透传 callLLM → completeSimple，
-		//    abort 时 reject 或 resolve(aborted) 都会归一为 ok:false）
+		// 2. 构造 CallLLMOptions
 		const timeoutMs = config.timeout > 0 ? config.timeout * MILLIS_PER_SECOND : undefined;
-		const callPromise = callLLM({
-			model,
-			systemPrompt: CLASSIFIER_SYSTEM_PROMPT,
-			messages: buildMessages(ctx),
-			...(timeoutMs !== undefined ? { timeoutMs } : {}),
-			...(signal !== undefined ? { signal } : {}),
-			// thinkingLevel 直接透传（含 "off"）；llm-shared 内部会把 "off" 映射为不传 reasoning（provider 默认）
-			reasoning: config.thinkingLevel,
-		});
+		const callPromise = callLLM(buildCallOptions(model, ctx, config, timeoutMs, signal));
 
 		// 3. 等待 callLLM + 外层超时/中止兜底（provider 不支持 timeoutMs/signal 时防永挂）
-		let settled: { kind: "ok"; result: CallLLMResult } | { kind: "timeout" } | { kind: "aborted" };
+		let settled: SettledRace;
 		try {
 			settled = await raceResultWithDeadline(callPromise, timeoutMs, signal);
 		} catch (error) {
@@ -171,30 +234,14 @@ export function createClassifier(deps: ClassifierDeps): {
 			return { ...CLASSIFY_FALLBACK_RESULT };
 		}
 
-		if (settled.kind === "timeout") {
-			onLog?.(`[pi-permission] classifier: timed out after ${timeoutMs}ms`);
-			return { ...CLASSIFY_FALLBACK_RESULT };
-		}
-		if (settled.kind === "aborted") {
-			onLog?.(`[pi-permission] classifier: aborted by signal`);
-			return { ...CLASSIFY_FALLBACK_RESULT };
-		}
-
-		// 4. ok:false → fallback（fail-closed）。stopReason 独立透传字段保留日志区分
-		//    （G3 语义：abort 与 error 分开记，即使行为上两者都 fallback 无差别）。
-		const result = settled.result;
-		if (!result.ok) {
-			if (result.stopReason === "aborted") {
-				onLog?.(`[pi-permission] classifier: LLM call aborted (stopReason=aborted), returning fallback`);
-			} else {
-				const stopDetail = result.stopReason !== undefined ? ` (stopReason=${result.stopReason})` : "";
-				onLog?.(`[pi-permission] classifier: LLM call failed: ${result.error}${stopDetail}, returning fallback`);
-			}
-			return { ...CLASSIFY_FALLBACK_RESULT };
+		// 4. timeout / aborted / ok:false → fail-closed fallback；成功 → 收窄透传
+		const settledOutcome = settleRacedResult(settled, timeoutMs, onLog);
+		if (settledOutcome.kind === "fallback") {
+			return settledOutcome.result;
 		}
 
 		// 5. 提取文本 → 三层容错解析
-		return parseClassifierResponse(result.content);
+		return parseClassifierResponse(settledOutcome.result.content);
 	}
 
 	return { classifyRisk };
