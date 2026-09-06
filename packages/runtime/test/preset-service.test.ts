@@ -116,7 +116,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  rmSync(tmpDir, { recursive: true, force: true })
+  rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 function piPresetsPath(): string {
@@ -658,6 +658,52 @@ describe('PresetService · PR #117 review fixes', () => {
     // 第二次读应仍是原值（缓存未被污染）
     const second = presetService.getPreset('uuid-clone')!
     expect(second.name).toBe('original')
+  })
+})
+
+describe('PresetService · parsePresetsFileFromDisk 容错分支覆盖', () => {
+  it('顶层是 JSON 数组 → 空骨架兜底不抛错（getAllPresets 返回 DEFAULT）', () => {
+    writeFileSync(piPresetsPath(), JSON.stringify([{ id: 'x' }]), 'utf-8')
+    expect(presetService.getAllPresets().map(p => p.id)).toEqual(DEFAULT_PRESETS.map(p => p.id))
+  })
+
+  it('顶层是 JSON null → 空骨架兜底不抛错', () => {
+    writeFileSync(piPresetsPath(), 'null', 'utf-8')
+    expect(presetService.getAllPresets().map(p => p.id)).toEqual(DEFAULT_PRESETS.map(p => p.id))
+  })
+
+  it('presets 字段非数组（对象）→ presets 兜底空，usage/perCwdDefaults/defaultPresetId 仍透传', () => {
+    writeFileSync(
+      piPresetsPath(),
+      JSON.stringify({
+        presets: { id: 'not-an-array' },
+        usage: { 'custom-1': { count: 3, lastUsed: 42 } },
+        perCwdDefaults: { '/work': 'custom-1' },
+        defaultPresetId: 'custom-1',
+      }),
+      'utf-8',
+    )
+    // 无合法 preset → defaultPresetId 指向不存在的 id，getDefaultPresetId 兜底 builtin:full（W-RT-3 语义）
+    expect(presetService.getDefaultPresetId()).toBe(BUILTIN_PRESET_IDS.FULL)
+    expect(presetService.getUsage()).toEqual({ 'custom-1': { count: 3, lastUsed: 42 } })
+    expect(presetService.getCwdDefaults()).toEqual({ '/work': 'custom-1' })
+  })
+
+  it('usage/perCwdDefaults 非 Record 形状（数组/标量）→ 丢弃为 undefined，不抛错', () => {
+    writeFileSync(
+      piPresetsPath(),
+      JSON.stringify({
+        presets: [],
+        usage: ['bad'],
+        perCwdDefaults: 'bad',
+        defaultPresetId: 123,
+      }),
+      'utf-8',
+    )
+    expect(presetService.getUsage()).toEqual({})
+    expect(presetService.getCwdDefaults()).toEqual({})
+    // defaultPresetId 非字符串 → undefined → 兜底 builtin:full
+    expect(presetService.getDefaultPresetId()).toBe(BUILTIN_PRESET_IDS.FULL)
   })
 })
 

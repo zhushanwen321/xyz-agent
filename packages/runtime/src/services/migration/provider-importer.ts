@@ -36,7 +36,7 @@ import type {
 import { getProviderNames, upsertProvider, ensureProviderInWhitelist, type PiProviderConfig } from '../../infra/pi/pi-provider-store.js'
 import { createPreview, consumePreview, deletePreview } from './preview-cache.js'
 import { parseProviders } from './provider-parser.js'
-import type { ParsedProvider, ParsedOrphanCredential } from './provider-parser.js'
+import type { ParseResult, ParsedProvider, ParsedOrphanCredential } from './provider-parser.js'
 // sa3 F1：内置 provider 模板（B4 铁律——只取 name/api/baseUrl 补全定义，**不复制 models**，
 // 内置 model 由 pi catalog 无条件加载，复制会与内置升级漂移）。
 import builtinData from '../../generated/builtin-providers.json'
@@ -110,7 +110,22 @@ export function previewImport(
   const existingIds = new Set(getProviderNames())
 
   // 构造脱敏 preview（关键：不含 apiKey 值，只留 apiKeyExtracted 布尔 + credentialType 六态）
-  const items: ProviderPreviewItem[] = parsed.providers.map((p) => ({
+  const items = buildPreviewItems(parsed.providers, existingIds)
+
+  // ══ sa3 F1：孤儿凭据 → 组 2（B.3）══（匹配/未匹配分流见 collectOrphanPreviewItems）
+  const { orphanItems, extraWarnings } = collectOrphanPreviewItems(parsed.orphanCredentials ?? [])
+
+  // 日志只记 id/source/count（不记 apiKey，DM1）
+  console.log(`[provider-importer] preview source=${source} importId=${importId} providerCount=${items.length} orphanCount=${orphanItems.length}`)
+
+  return { importId, preview: buildPreviewPayload(source, parsed, items, orphanItems, extraWarnings) }
+}
+
+/**
+ * 组 1 脱敏项构造：ParsedProvider → ProviderPreviewItem（不含 apiKey 值，DM1）。
+ */
+function buildPreviewItems(providers: ParsedProvider[], existingIds: Set<string>): ProviderPreviewItem[] {
+  return providers.map((p) => ({
     id: p._sourceName,
     name: p._sourceName,
     protocol: p.api ?? 'unknown',
@@ -123,14 +138,21 @@ export function previewImport(
     conflict: existingIds.has(p._sourceName) ? 'duplicate-id' : 'none',
     warnings: p._warnings,
   }))
+}
 
-  // ══ sa3 F1：孤儿凭据 → 组 2（B.3）══
-  // auth.json 有、models.json 无定义的 providerId（pi 内置 provider 的凭据）：
-  // - 匹配到内置模板 → 组 2 可勾选项（凭据 + 模板补全定义）
-  // - 匹配不到 → 顶层 warning「未识别的凭据，无法匹配内置模板，跳过」（B.6）
+/**
+ * 组 2 构造（sa3 F1，B.3）：孤儿凭据逐条匹配内置模板。
+ *
+ * auth.json 有、models.json 无定义的 providerId（pi 内置 provider 的凭据）：
+ * - 匹配到内置模板 → 组 2 可勾选项（凭据 + 模板补全定义）
+ * - 匹配不到 → 顶层 warning「未识别的凭据，无法匹配内置模板，跳过」（B.6）
+ */
+function collectOrphanPreviewItems(
+  orphanCredentials: ParsedOrphanCredential[],
+): { orphanItems: ProviderPreviewOrphanItem[]; extraWarnings: string[] } {
   const orphanItems: ProviderPreviewOrphanItem[] = []
   const extraWarnings: string[] = []
-  for (const oc of parsed.orphanCredentials ?? []) {
+  for (const oc of orphanCredentials) {
     const tpl = matchBuiltinTemplate(oc.providerId)
     if (!tpl) {
       extraWarnings.push(`credential ${oc.providerId}: no built-in template match, skipped`)
@@ -148,21 +170,27 @@ export function previewImport(
       warnings: oc.warnings,
     })
   }
+  return { orphanItems, extraWarnings }
+}
 
-  // 日志只记 id/source/count（不记 apiKey，DM1）
-  console.log(`[provider-importer] preview source=${source} importId=${importId} providerCount=${items.length} orphanCount=${orphanItems.length}`)
-
+/**
+ * preview 顶层 payload 组装：组 1 / parseError / 合并 warnings / 组 2（有项才出字段，shared SSOT 可选字段）。
+ */
+function buildPreviewPayload(
+  source: ProviderSource,
+  parsed: ParseResult,
+  items: ProviderPreviewItem[],
+  orphanItems: ProviderPreviewOrphanItem[],
+  extraWarnings: string[],
+): ProviderImportPreview {
   return {
-    importId,
-    preview: {
-      source,
-      providers: items,
-      ...(orphanItems.length > 0 ? { orphanCredentials: orphanItems } : {}),
-      // B2：透出 parseError 和顶层 warnings（即使 providers 非空，parseError 也可能存在——
-      // 部分损坏场景）。ProviderImportPreview 的 parseError/warnings 是可选字段（shared SSOT）。
-      ...(parsed.parseError ? { parseError: parsed.parseError } : {}),
-      ...(parsed.warnings?.length || extraWarnings.length ? { warnings: [...(parsed.warnings ?? []), ...extraWarnings] } : {}),
-    },
+    source,
+    providers: items,
+    ...(orphanItems.length > 0 ? { orphanCredentials: orphanItems } : {}),
+    // B2：透出 parseError 和顶层 warnings（即使 providers 非空，parseError 也可能存在——
+    // 部分损坏场景）。ProviderImportPreview 的 parseError/warnings 是可选字段（shared SSOT）。
+    ...(parsed.parseError ? { parseError: parsed.parseError } : {}),
+    ...(parsed.warnings?.length || extraWarnings.length ? { warnings: [...(parsed.warnings ?? []), ...extraWarnings] } : {}),
   }
 }
 

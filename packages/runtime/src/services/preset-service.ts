@@ -171,42 +171,30 @@ export class PresetService {
 
   /**
    * 从磁盘读取并解析 pi-presets.json（容错，S-RT-2 抽出以便 loadPresetsFile 复用）。
+   *
+   * 主函数只留编排：读文件容错（readPresetsObject）→ presets 逐项 coerce →
+   * usage/perCwdDefaults/defaultPresetId 透传兜底。
    */
   private parsePresetsFileFromDisk(path: string): PiPresetsFile {
     if (!existsSync(path)) {
       return { presets: [], version: 1 }
     }
-    let raw: unknown
-    try {
-      raw = JSON.parse(readFileSync(path, 'utf-8'))
-    } catch (e) {
-      console.warn(`[preset-service] pi-presets.json is not valid JSON, ignoring: ${stringifyError(e)}`)
+    const obj = readPresetsObject(path)
+    if (!obj) {
       return { presets: [], version: 1 }
     }
-    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-      console.warn('[preset-service] pi-presets.json top-level is not an object, ignoring')
-      return { presets: [], version: 1 }
-    }
-    const obj = raw as Record<string, unknown>
-    const presets = Array.isArray(obj['presets']) ? obj['presets'] as unknown[] : []
     // 逐项类型守卫：只接受形似 PiLaunchPreset 的对象，丢弃畸形项（防御性，不抛错）。
     // W-RT-1：coercePreset 内含 toolMode/extensionMode 枚举白名单校验。
-    const validPresets: PiLaunchPreset[] = []
-    for (const p of presets) {
-      const typed = coercePreset(p)
-      if (typed) validPresets.push(typed)
-    }
+    const presets = coercePresetsArray(
+      Array.isArray(obj['presets']) ? obj['presets'] as unknown[] : [],
+    )
     // 透传 usage/perCwdDefaults（FR-14/FR-15 的持久化字段，load 容错不做强类型守卫，
     // 与 defaultPresetId 同策略：只校验顶层存在性，值合法性由消费方在使用时兜底）
-    const usage = (typeof obj['usage'] === 'object' && obj['usage'] !== null && !Array.isArray(obj['usage']))
-      ? obj['usage'] as Record<string, unknown>
-      : undefined
-    const perCwdDefaults = (typeof obj['perCwdDefaults'] === 'object' && obj['perCwdDefaults'] !== null && !Array.isArray(obj['perCwdDefaults']))
-      ? obj['perCwdDefaults'] as Record<string, unknown>
-      : undefined
+    const usage = coerceRecordField(obj['usage'])
+    const perCwdDefaults = coerceRecordField(obj['perCwdDefaults'])
     const defaultPresetId = typeof obj['defaultPresetId'] === 'string' ? obj['defaultPresetId'] as string : undefined
     return {
-      presets: validPresets,
+      presets,
       defaultPresetId,
       // usage/perCwdDefaults 用 as 保持 PiPresetsFile 兼容（值是 Record<string, PresetUsageEntry|string>，
       // 已知字段类型不安全但与原实现一致——load 容错不抛错，消费方信任读到的形状）
@@ -618,6 +606,49 @@ export class PresetService {
 }
 
 // ── 内部 helpers ──────────────────────────────────────────────────
+
+/**
+ * 读 pi-presets.json 原始内容并校验顶层形状（容错）。
+ *
+ * 容错策略（与 config-service.loadAppConfig L216-232 对齐）：
+ *   - JSON 畸形 → console.warn + undefined（调用方兜底空骨架，不抛错）
+ *   - 顶层非对象/数组/null → console.warn + undefined
+ */
+function readPresetsObject(path: string): Record<string, unknown> | undefined {
+  let raw: unknown
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf-8'))
+  } catch (e) {
+    console.warn(`[preset-service] pi-presets.json is not valid JSON, ignoring: ${stringifyError(e)}`)
+    return undefined
+  }
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    console.warn('[preset-service] pi-presets.json top-level is not an object, ignoring')
+    return undefined
+  }
+  return raw as Record<string, unknown>
+}
+
+/** presets 数组逐项 coerce（coercePreset 校验失败的畸形项直接丢弃）。 */
+function coercePresetsArray(presets: unknown[]): PiLaunchPreset[] {
+  const validPresets: PiLaunchPreset[] = []
+  for (const p of presets) {
+    const typed = coercePreset(p)
+    if (typed) validPresets.push(typed)
+  }
+  return validPresets
+}
+
+/**
+ * coerce Record 形状的持久化字段（usage/perCwdDefaults 共用，FR-14/FR-15）：
+ * 普通对象原样透传，其余（缺失/数组/标量）返回 undefined。不做强类型守卫，
+ * 值合法性由消费方在使用时兜底（与 defaultPresetId 同策略）。
+ */
+function coerceRecordField(value: unknown): Record<string, unknown> | undefined {
+  return (typeof value === 'object' && value !== null && !Array.isArray(value))
+    ? value as Record<string, unknown>
+    : undefined
+}
 
 /**
  * 把磁盘读到的 raw（unknown）尝试 coerce 成 PiLaunchPreset。

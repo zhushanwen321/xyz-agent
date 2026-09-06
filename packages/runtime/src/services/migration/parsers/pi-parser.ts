@@ -81,57 +81,79 @@ function classifyCredential(
   providerId: string,
 ): CredentialClassify {
   const rawKey = authEntry?.key ?? configApiKey
+
+  // 凭据形态六态：plaintext / env($VAR,${VAR}) / env-bundle(env 包) / oauth / command(!) / missing(无线索)
+  // 主函数只留编排；判定优先级 env 包 > oauth > 有 key（前缀细分）由 helper 调用顺序固定。
+  const envBundle = classifyEnvBundleCredential(authEntry, providerId)
+  if (envBundle) return envBundle
+
+  const oauth = classifyOauthCredential(authEntry, providerId)
+  if (oauth) return oauth
+
+  if (rawKey) return classifyKeyCredential(rawKey, providerId)
+
+  // 无 authEntry 且无 config.apiKey：无任何 key 线索
+  return { credentialType: 'missing', warnings: [] }
+}
+
+/** env 包凭据判定（命中返回 env-bundle 分类；否则 undefined 落到下一优先级）。 */
+function classifyEnvBundleCredential(
+  authEntry: PiAuthJson[string] | undefined,
+  providerId: string,
+): CredentialClassify | undefined {
   const hasEnvBundle = authEntry?.env != null && typeof authEntry.env === 'object' && Object.keys(authEntry.env).length > 0
+  if (!hasEnvBundle) return undefined
+  // env 包凭据：有凭据（key 内嵌在 env 包里）但 Phase 1 不支持落盘（models.json apiKey
+  // 是纯字符串无 env 字段），apiKey 不写（undefined），避免 pi 运行时 resolveConfigValueOrThrow 硬抛错
+  return {
+    credentialType: 'env-bundle',
+    warnings: [`provider ${providerId}: env bundle credentials not supported in Phase 1, apiKey omitted (will be supported in Phase 2)`],
+  }
+}
+
+/** OAuth 凭据判定（命中返回 oauth 分类；否则 undefined 落到下一优先级）。 */
+function classifyOauthCredential(
+  authEntry: PiAuthJson[string] | undefined,
+  providerId: string,
+): CredentialClassify | undefined {
   // 主判定 type==='oauth'；兼容缺 type 的旧格式：有 access 字段且无 key 也判 oauth。
   // 旧字段名 token/refreshToken 已废弃（pi 真实格式是 access/refresh，见 auth/types.d.ts
   // OAuthCredential），不再作为判定依据。
   const isOauth = authEntry?.type === 'oauth' || (!authEntry?.key && !!authEntry?.access)
+  if (!isOauth) return undefined
+  // OAuth 凭据：Phase 1 不支持，不取 token 作 apiKey（token 不是 api_key 语义）
+  return {
+    credentialType: 'oauth',
+    warnings: [`provider ${providerId}: OAuth credentials, apiKey not extracted (OAuth support planned for Phase 2)`],
+  }
+}
 
-  // 凭据形态六态：plaintext / env($VAR,${VAR}) / env-bundle(env 包) / oauth / command(!) / missing(无线索)
-  if (hasEnvBundle) {
-    // env 包凭据：有凭据（key 内嵌在 env 包里）但 Phase 1 不支持落盘（models.json apiKey
-    // 是纯字符串无 env 字段），apiKey 不写（undefined），避免 pi 运行时 resolveConfigValueOrThrow 硬抛错
+/** 有 key 时的前缀分类：!command / $$ 字面量 / $env 引用 / plaintext。 */
+function classifyKeyCredential(rawKey: string, providerId: string): CredentialClassify {
+  // 边界：同时 $ 和 ! → 优先 command（更危险保守判定）
+  if (rawKey.startsWith('!')) {
     return {
-      credentialType: 'env-bundle',
-      warnings: [`provider ${providerId}: env bundle credentials not supported in Phase 1, apiKey omitted (will be supported in Phase 2)`],
+      credentialType: 'command',
+      apiKey: rawKey, // 保留原样，pi 运行时执行 shell 命令取值
+      warnings: [`provider ${providerId}: apiKey starts with '!' — pi executes this as a shell command at runtime (command injection surface), imported as-is`],
     }
   }
-  if (isOauth) {
-    // OAuth 凭据：Phase 1 不支持，不取 token 作 apiKey（token 不是 api_key 语义）
-    return {
-      credentialType: 'oauth',
-      warnings: [`provider ${providerId}: OAuth credentials, apiKey not extracted (OAuth support planned for Phase 2)`],
-    }
-  }
-  if (rawKey) {
-    // 有 key：按前缀判 plaintext / env($VAR/${VAR}) / command(!)
-    // 边界：同时 $ 和 ! → 优先 command（更危险保守判定）
-    if (rawKey.startsWith('!')) {
-      return {
-        credentialType: 'command',
-        apiKey: rawKey, // 保留原样，pi 运行时执行 shell 命令取值
-        warnings: [`provider ${providerId}: apiKey starts with '!' — pi executes this as a shell command at runtime (command injection surface), imported as-is`],
-      }
-    }
-    if (rawKey.startsWith('$$')) {
-      // pi 的 $$ 是字面量转义：$$OPENAI_API_KEY 解析为字面量字符串 $OPENAI_API_KEY（单 $），
-      // 不是 env 引用。按明文处理，apiKey 保留原转义串（pi 运行时负责还原字面量）。
-      return { credentialType: 'plaintext', apiKey: rawKey, warnings: [] }
-    }
-    if (rawKey.startsWith('$')) {
-      // 单 $ / ${ 才是 env 引用（$$ 已在上面拦截，不会多剥一个 $）
-      const envVarName = rawKey.startsWith('${') ? rawKey.replace(/^\$\{/, '').replace(/\}$/, '') : rawKey.replace(/^\$/, '')
-      return {
-        credentialType: 'env',
-        apiKey: rawKey, // 保留原占位串（pi 运行时解析 $VAR / ${VAR}）
-        envVarName,
-        warnings: [`provider ${providerId}: apiKey is an env var reference (${rawKey}) — ensure ${envVarName} is set in the environment after import`],
-      }
-    }
+  if (rawKey.startsWith('$$')) {
+    // pi 的 $$ 是字面量转义：$$OPENAI_API_KEY 解析为字面量字符串 $OPENAI_API_KEY（单 $），
+    // 不是 env 引用。按明文处理，apiKey 保留原转义串（pi 运行时负责还原字面量）。
     return { credentialType: 'plaintext', apiKey: rawKey, warnings: [] }
   }
-  // 无 authEntry 且无 config.apiKey：无任何 key 线索
-  return { credentialType: 'missing', warnings: [] }
+  if (rawKey.startsWith('$')) {
+    // 单 $ / ${ 才是 env 引用（$$ 已在上面拦截，不会多剥一个 $）
+    const envVarName = rawKey.startsWith('${') ? rawKey.replace(/^\$\{/, '').replace(/\}$/, '') : rawKey.replace(/^\$/, '')
+    return {
+      credentialType: 'env',
+      apiKey: rawKey, // 保留原占位串（pi 运行时解析 $VAR / ${VAR}）
+      envVarName,
+      warnings: [`provider ${providerId}: apiKey is an env var reference (${rawKey}) — ensure ${envVarName} is set in the environment after import`],
+    }
+  }
+  return { credentialType: 'plaintext', apiKey: rawKey, warnings: [] }
 }
 
 /**
