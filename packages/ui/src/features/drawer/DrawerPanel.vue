@@ -101,7 +101,7 @@
 import { Comment, computed, useSlots } from 'vue'
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { BookOpen, Bot, FileText, GitBranch, Globe, Pin, PinOff, Terminal as TerminalIcon, Workflow, X } from '@lucide/vue'
+import { BookOpen, Bot, FileText, GitBranch, Globe, Pin, PinOff, SquareTerminal, Terminal as TerminalIcon, Workflow, X } from '@lucide/vue'
 import { Button } from '@xyz-agent/ui'
 import type { SideDrawerTab } from '@xyz-agent/core/domain/drawer'
 
@@ -205,6 +205,16 @@ const tabs = computed<TabMeta[]>(() => {
       icon: Workflow,
       emptyText: t('panel.sideDrawer.noWorkflow'),
       emptyHint: t('panel.sideDrawer.workflowHint'),
+    },
+    // bashTask tab（2026-09 background-task-sidebar-view D5②）：后台命令详情。内容由壳层
+    // （PanelContainer）经默认 slot v-if chain 注入 BackgroundTaskDetailPanel（未选中任务
+    // 不注入 → 本组件空态 fallback），延续 ui 库不 import renderer 组件的留壳 slot 模式。
+    {
+      key: 'bashTask',
+      label: t('panel.sideDrawer.tabBashTask'),
+      icon: SquareTerminal,
+      emptyText: t('panel.sideDrawer.noBashTask'),
+      emptyHint: t('panel.sideDrawer.bashTaskHint'),
     },
   ]
   return base

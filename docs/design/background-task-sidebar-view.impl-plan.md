@@ -106,6 +106,10 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
 | 14 | 组装点形态：SessionService 构造器组装 BackgroundTaskService 公有成员 `backgroundTasks` + `SessionHandlerContext.sessionService` 交叉可选属性端口（server.ts 组合根零改动） | 本表 | 设计改动地图未说明 ctx 注入点（既有惯例在 server.ts 组装，属领地外）；结构兼容直接通过类型检查，端口缺省 `background_task_unsupported` 防御分支对齐 handoffService 惯例 |
 | 15 | backgroundTask:updated 广播为 server-push live 形态（bus 分配 seq、不带 id） | 本表 | 与 session.exited publish 同款先例（协议 id/seq 互斥），D7 语义一致 |
 | 16 | D2 触发面②接线形态：index.ts 闭包 `(_sid) => sessionService.backgroundTasks?.checkForChanges()` 直连，不消费 sid、不加薄委托层 | 本表 | checkForChanges 对整个 watched 集合跑检测（只损失定向性不损失正确性，D2 既有语义）；`?.` 承担端口缺省静默 no-op 防御；最小改动 |
+| 17 | drawer 读侧经 core 已导出 `getDrawerControlState()` 直读分区（零 core 改动）；写侧约定 = `openDrawerTab('bashTask')` 前直写 `selectedBackgroundTaskId`（OpenDrawerOptions 无 taskId 通道，types.ts 未扩展） | 本表 | core control.ts 无专用 computed（u-renderer-store 领地仅 types.ts）；写侧指引已传达 u-renderer-list（D5④ 落地点） |
+| 18 | kill 传输层失败（RPC reject：WS 断开/超时，非 D6 矩阵回执）不 toast，复位两段式供重试 | 本表 | 设计失败路径未定义该分支文案，不造词（规则 21）；连接态由全局连接指示承载，console.debug 留痕 |
+| 19 | 条目从分区消失（registry LRU 淘汰/损坏自愈清表）时以最后已知快照兜底渲染元信息、跟随以『分区条目消失』为停止信号 | 本表 | 设计未定义的罕见场景防御，防 drawer 内容空白 |
+| 20 | 实现细节合并：running 已运行时长以输出跟随 2s interval 顺带刷新（零额外 timer）；元信息附状态色点（复用 bucket SSOT backgroundTaskStatusIcon，禁二次判定）；killing 隐藏 kill 按钮（D10④ 已发令不重复发同语义）；i18n 测试断言用 override t(key)→'key(k=v)' 形态（ui vitest.setup.ts 先例路径），locale 落地后不破测 | 本表 | 均为与设计语义一致的最小实现选择 |
 
 ## 6 状态表
 
@@ -118,9 +122,9 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
 | u-renderer-store | committed | 0 | git log --grep=u-renderer-store；renderer 3760 tests 绿（361 files）+ core 1399 tests 绿（95 files）+ 双包 typecheck 绿；deviations ⑩⑪⑫⑬入登记表 |
 | u-runtime-rpc | pending | 0 | — |
 | u-renderer-store | pending | 0 | — |
-| u-renderer-list | pending | 0 | — |
-| u-drawer | pending | 0 | — |
-| u-i18n-docs | pending | 0 | — |
+| u-renderer-list | dev 进行中 | 0 | W3 已派发；核验时须确认 useExtensionHostBridge 既有断言同步 + D5④ selectedBackgroundTaskId 写侧落地（偏差 #17 指引） |
+| u-drawer | committed | 0 | git log --grep=u-drawer；ui 564 tests 绿（57 files）+ drawer 相关 28 tests 绿 + vue-tsc 绿；deviations ⑰-⑳入登记表；i18n key 清单 21 个（panel.sideDrawer.bashTask*）已收集待传 u-i18n-docs |
+| u-i18n-docs | pending | 0 | 等 u-renderer-list key 清单落定后派发 |
 
 ## 7 残留风险与变更历史
 
@@ -135,3 +139,5 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
   - 2026-09-06 u-runtime-svc committed（b9d937c10；接替核验前任约 90% 正确 + 2 修正：verifyIdentity 死代码收敛、killTask 属主判活移入锁内）；doc fix：D2 钩子②事件名澄清。
   - 2026-09-06 u-renderer-store committed（renderer/core 双包全绿；分桶/icon SSOT + useSessionScopedState 范式 + drawer 类型扩展）。
   - 2026-09-06 u-runtime-rpc 上报两处领地外必改并获授权扩展：① test/skill-paths.test.ts vi.mock 工厂缺 execFile 导出（既有基建缺口，接线后 process-probe 顶层 promisify 撞 mock 抛错致全量 8 failed）；② index.ts:432 组合根 EventAdapter 第三参未接线（D2 触发面②，文件改动地图遗漏点）——已登记单元表领地扩展，原 dev 续作定向修复。
+  - 2026-09-06 u-runtime-rpc committed（7ddb78df4；全量 4414 tests 绿；领地扩展①skill-paths mock 补 execFile、②index.ts D2 触发面②接线均已落地；deviations ⑭⑮⑯）。
+  - 2026-09-06 u-drawer committed（DetailPanel + DrawerPanel TabMeta + PanelContainer 分支；ui/renderer 绿；deviations ⑰-⑳；21 个 i18n key 收集待传 u-i18n-docs）。

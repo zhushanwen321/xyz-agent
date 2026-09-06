@@ -136,6 +136,12 @@
                selectedWorkflowName + 各自 store），不依赖 panelSessionId，延续默认 slot 注入模式 -->
           <SubagentTab v-else-if="drawerTab === 'subagent'" />
           <WorkflowTab v-else-if="drawerTab === 'workflow'" />
+          <!-- bashTask tab（2026-09 background-task-sidebar-view D5③）：后台命令详情。未选中
+               任务（selectedBackgroundTaskId undefined）不注入 → DrawerPanel 空态 fallback
+               （C2 v-if chain 语义与 browser 无 URL 同款） -->
+          <BackgroundTaskDetailPanel
+            v-else-if="drawerTab === 'bashTask' && bashTaskSelected"
+          />
           <!-- header-extra：AC-13 unread badge 壳侧挂载点（W4；chatStore 消息数感知，C3 壳层职责） -->
           <template #header-extra>
             <div
@@ -170,6 +176,7 @@ import {
   setDrawerTab,
   toggleDrawerDock,
   browserUrl,
+  getDrawerControlState,
 } from '@xyz-agent/core/domain/drawer'
 import { DrawerPanel } from '@xyz-agent/ui/features/drawer'
 import { StatusBar } from '@xyz-agent/ui/extension-host'
@@ -189,6 +196,7 @@ import CommandDocPanel from '@/components/panel/CommandDocPanel.vue'
 import BrowserPane from '@/components/panel/BrowserPane.vue'
 import SubagentTab from '@/components/panel/SubagentTab.vue'
 import WorkflowTab from '@/components/panel/WorkflowTab.vue'
+import BackgroundTaskDetailPanel from '@/components/extension/BackgroundTaskDetailPanel.vue'
 import AsyncErrorFallback, { LAZY_RETRY_KEY } from '@/components/ui/AsyncErrorFallback.vue'
 
 // D-8 抽屉面板懒加载（§3.3 边界判据：首屏不渲染 + 重依赖）：
@@ -282,6 +290,12 @@ function statusOf(l: PanelLeaf) {
  *  值等价）。 */
 bindDrawerSessionId(computed<string | null>(() => usePanelStore().focusedSessionId))
 const { isOpen: drawerOpen, activeTab: drawerTab, docked: drawerDocked } = useDrawerControl()
+
+/** bashTask tab 选中态（D5①：selectedBackgroundTaskId undefined=未选中 → 不注入本面板，
+ *  DrawerPanel 空态 fallback 承载；core per-session 分区直读，写入方 = 列表 item 点击 D5④） */
+const bashTaskSelected = computed(
+  () => getDrawerControlState().selectedBackgroundTaskId !== undefined,
+)
 
 /** panel 的 session（git 状态数据源） */
 const panelSessionId = computed<string | null>(() => leaf.value?.sessionId ?? null)
