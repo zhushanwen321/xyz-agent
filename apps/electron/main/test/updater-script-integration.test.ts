@@ -912,7 +912,9 @@ describe('updater-script integration: 脚本依赖的 CLI 工具', () => {
     expect(HAS_SHASUM, 'shasum 应在 PATH 中（macOS 标配）').toBe(true)
   })
 
-  it('hdiutil + ditto 可用（mac 脚本 dmg 挂载/拷贝/卸载依赖，批次 3 解包原语）', () => {
+  // hdiutil/ditto 是 macOS-only 工具：test-main job 在 ubuntu（ci.yml「只跑 ubuntu
+  // 上能跑的子集」）上必然缺失，非 mac 跳过；mac 上仍实跑守护解包原语依赖。
+  it.skipIf(!IS_MAC)('hdiutil + ditto 可用（mac 脚本 dmg 挂载/拷贝/卸载依赖，批次 3 解包原语）', () => {
     if (!HAS_HDIUTIL || !HAS_DITTO) {
       console.warn('[warn] hdiutil/ditto 不在 PATH，mac 端到端用例已跳过')
     }
