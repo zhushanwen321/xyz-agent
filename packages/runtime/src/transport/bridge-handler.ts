@@ -49,85 +49,25 @@ export class BridgeHandler {
     try {
       switch (method) {
         // 同步工具 schema（塑形由 plugin-service 负责）
-        case 'bridge:sync': {
-          const payload = this.pluginService?.getBridgeSyncPayload
-            ? this.pluginService.getBridgeSyncPayload()
-            : { tools: [], commands: [], success: true }
-          client.sendExtensionUiResponse(requestId, JSON.stringify(payload), 'select')
-          return
-        }
-
+        case 'bridge:sync':
+          return this.sendBridgeSync(requestId, client)
         // 执行 bridge 工具（ADR-0012 契约）；请求对象构造是 transport↔service 边界编组
-        case 'bridge:tool_execute': {
-          if (!this.pluginService?.handleBridgeToolExecute) {
-            client.sendExtensionUiResponse(
-              requestId,
-              JSON.stringify({ content: 'Plugin system not available', isError: true }),
-              'select',
-            )
-            return
-          }
-          const result = await this.pluginService.handleBridgeToolExecute({
-            type: 'bridge.tool.execute',
-            toolName: data.toolName as string,
-            parameters: (data.params as Record<string, unknown>) ?? {},
-            toolCallId: (data.toolCallId as string) ?? '',
-            sessionId,
-          })
-          client.sendExtensionUiResponse(requestId, JSON.stringify(result), 'select')
-          return
-        }
-
+        // await 不可省：拒绝必须留在 try 内（外层 catch 回错误响应，行为与原内联一致）
+        case 'bridge:tool_execute':
+          return await this.sendBridgeToolExecute(requestId, sessionId, data, client)
         // fire-and-forget 事件
-        case 'bridge:event': {
-          console.log(`[server] bridge event: ${data.eventName as string} from session ${sessionId}`)
-          this.pluginService?.handleBridgeEvent?.(
-            data.eventName as string,
-            (data.data as Record<string, unknown>) ?? {},
-            sessionId,
-          )
-          // response=null → sendExtensionUiResponse 发 {cancelled:true}（非旧 {response:null}）。
-          // 无功能影响：bridge 扩展对 bridge:event 的响应 void 丢弃
-          // （见 extensions/taiji/plugin-bridge/src/index.ts observeHandler——void callBridge）。
-          client.sendExtensionUiResponse(requestId, null)
-          return
-        }
-
+        case 'bridge:event':
+          return this.sendBridgeEvent(requestId, sessionId, data, client)
         // 拦截（before_agent_start 判定下沉 plugin-service）
-        case 'bridge:intercept': {
-          const eventName = data.eventName as string
-          const eventData = (data.data as Record<string, unknown>) ?? {}
-          const result = this.pluginService?.handleBridgeIntercept
-            ? await this.pluginService.handleBridgeIntercept(eventName, eventData, sessionId)
-            : {}
-          client.sendExtensionUiResponse(requestId, JSON.stringify(result), 'select')
-          return
-        }
-
+        case 'bridge:intercept':
+          return await this.sendBridgeIntercept(requestId, sessionId, data, client)
         // marker 通道解析失败哨兵（event-adapter 折叠产出）：回 E5 malformed 错误（含恢复
         // 指引），warn 留痕（raw payload 进日志），不透传前端。第 7 处回包点，同用
         // stringify+'select' 序列化（防漏登记，设计 §3.3-D6）。
-        case 'bridge:malformed': {
-          console.warn(`[server] malformed bridge request from session ${sessionId}, raw payload:`, data.raw)
-          client.sendExtensionUiResponse(
-            requestId,
-            JSON.stringify({
-              error: 'malformed bridge request',
-              hint: 'bridge extension and runtime protocol mismatch — redeploy same-version runtime+bridge',
-            }),
-            'select',
-          )
-          return
-        }
-
-        default: {
-          console.warn(`[server] Unknown bridge method: ${method}`)
-          client.sendExtensionUiResponse(
-            requestId,
-            JSON.stringify({ error: `Unknown bridge method: ${method}` }),
-            'select',
-          )
-        }
+        case 'bridge:malformed':
+          return this.sendBridgeMalformed(requestId, sessionId, data, client)
+        default:
+          return this.sendUnknownBridgeMethod(requestId, method, client)
       }
     } catch (e) {
       console.error(`[server] bridge request failed: ${method}`, e)
@@ -136,12 +76,106 @@ export class BridgeHandler {
         // 内部走 sendRaw 直接写 stdin），不会抛异步超时错误；但 stdin.write 可能同步抛，
         // 故仍保留 try/catch 兜底。
         client.sendExtensionUiResponse(requestId, JSON.stringify({ error: String(e) }), 'select')
-         
+
       } catch (sendErr) {
         console.error(`[bridge-handler] failed to send error response to pi: ${toErrorMessage(sendErr)}`)
         // Cannot propagate further — both pi and frontend channels exhausted
       }
     }
+  }
+
+  /** 同步工具 schema 回包（塑形由 plugin-service 负责）：stringify+'select' 序列化契约。 */
+  private sendBridgeSync(requestId: string, client: IPiEngine): void {
+    const payload = this.pluginService?.getBridgeSyncPayload
+      ? this.pluginService.getBridgeSyncPayload()
+      : { tools: [], commands: [], success: true }
+    client.sendExtensionUiResponse(requestId, JSON.stringify(payload), 'select')
+  }
+
+  /** 执行 bridge 工具（ADR-0012 契约）；请求对象构造是 transport↔service 边界编组。 */
+  private async sendBridgeToolExecute(
+    requestId: string,
+    sessionId: string,
+    data: Record<string, unknown>,
+    client: IPiEngine,
+  ): Promise<void> {
+    if (!this.pluginService?.handleBridgeToolExecute) {
+      client.sendExtensionUiResponse(
+        requestId,
+        JSON.stringify({ content: 'Plugin system not available', isError: true }),
+        'select',
+      )
+      return
+    }
+    const result = await this.pluginService.handleBridgeToolExecute({
+      type: 'bridge.tool.execute',
+      toolName: data.toolName as string,
+      parameters: (data.params as Record<string, unknown>) ?? {},
+      toolCallId: (data.toolCallId as string) ?? '',
+      sessionId,
+    })
+    client.sendExtensionUiResponse(requestId, JSON.stringify(result), 'select')
+  }
+
+  /** fire-and-forget 事件转发。 */
+  private sendBridgeEvent(
+    requestId: string,
+    sessionId: string,
+    data: Record<string, unknown>,
+    client: IPiEngine,
+  ): void {
+    console.log(`[server] bridge event: ${data.eventName as string} from session ${sessionId}`)
+    this.pluginService?.handleBridgeEvent?.(
+      data.eventName as string,
+      (data.data as Record<string, unknown>) ?? {},
+      sessionId,
+    )
+    // response=null → sendExtensionUiResponse 发 {cancelled:true}（非旧 {response:null}）。
+    // 无功能影响：bridge 扩展对 bridge:event 的响应 void 丢弃
+    // （见 extensions/taiji/plugin-bridge/src/index.ts observeHandler——void callBridge）。
+    client.sendExtensionUiResponse(requestId, null)
+  }
+
+  /** 拦截（before_agent_start 判定下沉 plugin-service）。 */
+  private async sendBridgeIntercept(
+    requestId: string,
+    sessionId: string,
+    data: Record<string, unknown>,
+    client: IPiEngine,
+  ): Promise<void> {
+    const eventName = data.eventName as string
+    const eventData = (data.data as Record<string, unknown>) ?? {}
+    const result = this.pluginService?.handleBridgeIntercept
+      ? await this.pluginService.handleBridgeIntercept(eventName, eventData, sessionId)
+      : {}
+    client.sendExtensionUiResponse(requestId, JSON.stringify(result), 'select')
+  }
+
+  /** marker 通道解析失败哨兵回包：E5 malformed 错误 + 恢复指引。 */
+  private sendBridgeMalformed(
+    requestId: string,
+    sessionId: string,
+    data: Record<string, unknown>,
+    client: IPiEngine,
+  ): void {
+    console.warn(`[server] malformed bridge request from session ${sessionId}, raw payload:`, data.raw)
+    client.sendExtensionUiResponse(
+      requestId,
+      JSON.stringify({
+        error: 'malformed bridge request',
+        hint: 'bridge extension and runtime protocol mismatch — redeploy same-version runtime+bridge',
+      }),
+      'select',
+    )
+  }
+
+  private sendUnknownBridgeMethod(requestId: string, method: string, client: IPiEngine): void {
+    console.warn(`[server] Unknown bridge method: ${method}`)
+    client.sendExtensionUiResponse(
+      requestId,
+      JSON.stringify({ error: `Unknown bridge method: ${method}` }),
+      'select',
+    )
   }
 
   /** Handle statusSetUpdate events from event-adapter */

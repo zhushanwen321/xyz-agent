@@ -35,6 +35,7 @@ interface GitImpls {
   stage?: ReturnType<typeof vi.fn>
   unstage?: ReturnType<typeof vi.fn>
   checkoutByCwd?: ReturnType<typeof vi.fn>
+  getFileDiff?: ReturnType<typeof vi.fn>
 }
 
 function makeHandler(impls: GitImpls = {}) {
@@ -58,6 +59,7 @@ function makeHandler(impls: GitImpls = {}) {
     checkout: impls.checkout ?? vi.fn().mockResolvedValue(undefined),
     checkoutByCwd: impls.checkoutByCwd ?? vi.fn().mockResolvedValue(undefined),
     createBranch: impls.createBranch ?? vi.fn().mockResolvedValue(undefined),
+    getFileDiff: impls.getFileDiff ?? vi.fn().mockResolvedValue({ patch: '', binary: false }),
     /** perf W17：写操作成功后的状态缓存失效入口（被测新行为） */
     invalidateStatusCache: vi.fn(),
   }
@@ -87,6 +89,10 @@ function createBranchMsg(sessionId: string, name: string, id = 'm1'): ClientMess
 
 function commitMsg(sessionId: string, message: string, id = 'm1'): ClientMessage {
   return { type: 'git.commit', id, payload: { sessionId, message } } as unknown as ClientMessage
+}
+
+function diffMsg(sessionId: string, path: string, id = 'm1'): ClientMessage {
+  return { type: 'git.diff', id, payload: { sessionId, path } } as unknown as ClientMessage
 }
 
 const WS = {} as never
@@ -306,5 +312,36 @@ describe('W17 审查 Fix-2 全链：checkout(sessionId) 按 cwd 失效（同 wor
     // session B 再取 status：按 cwd 失效 ⇒ 重执行一组（6+1+3=10）；只 invalidate(sid-a) 则命中缓存停在 7
     await handler.handleGitMessage(statusMsg('sid-b'), WS)
     expect(exec.mock.calls.length).toBe(10)
+  })
+})
+
+describe('GitMessageHandler git.diff 路由（U07 覆盖缺口补齐）', () => {
+  it('getFileDiff 成功 → reply git.diff:result {sessionId, patch, binary}', async () => {
+    const { cap, handler, gitService } = makeHandler({
+      getFileDiff: vi.fn().mockResolvedValue({ patch: 'diff --git a/x b/x', binary: false }),
+    })
+
+    await handler.handleGitMessage(diffMsg('s1', 'x/a.ts'), WS)
+
+    expect(gitService.getFileDiff).toHaveBeenCalledWith('s1', 'x/a.ts')
+    expect(cap.errors).toHaveLength(0)
+    expect(cap.replies).toHaveLength(1)
+    expect(cap.replies[0]).toEqual({
+      id: 'm1',
+      type: 'git.diff:result',
+      payload: { sessionId: 's1', patch: 'diff --git a/x b/x', binary: false },
+    })
+  })
+
+  it('getFileDiff 失败(GitError)→error envelope（code/sessionId 透传），不 reply', async () => {
+    const { cap, handler } = makeHandler({
+      getFileDiff: vi.fn().mockRejectedValue(new GitError('git_failed', 'diff boom')),
+    })
+
+    await handler.handleGitMessage(diffMsg('s1', 'x/a.ts', 'm2'), WS)
+
+    expect(cap.replies).toHaveLength(0)
+    expect(cap.errors).toHaveLength(1)
+    expect(cap.errors[0]).toMatchObject({ id: 'm2', code: 'git_failed', message: 'diff boom', details: { sessionId: 's1' } })
   })
 })
