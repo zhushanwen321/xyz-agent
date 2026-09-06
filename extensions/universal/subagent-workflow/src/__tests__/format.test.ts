@@ -1,4 +1,6 @@
 // src/__tests__/format.test.ts
+import os from "node:os";
+
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
 
@@ -6,6 +8,7 @@ import {
   formatElapsed,
   formatElapsedSeconds,
   formatTokens,
+  formatToolCall,
   padToVisible,
   sanitizeLabel,
   segFillColored,
@@ -14,6 +17,7 @@ import {
   statusGlyph,
   truncLine,
   wrapText,
+  type ThemeLike,
 } from "../interface/format.ts";
 
 // ============================================================
@@ -489,5 +493,101 @@ describe("shortId", () => {
   it("keeps sa- prefix for subagent id (sa-<uuid> → sa-<uuid 前3段>)", () => {
     // sa- 前缀 subagent ID（保留前缀 + UUID 前 3 段）
     expect(shortId("sa-550e8400-e29b-41d4-a716-446655440000")).toBe("sa-550e8400-e29b-41d4");
+  });
+});
+
+// ============================================================
+// formatToolCall（表驱动分发：toolName → formatter，落空走 unknown 分支）
+// ============================================================
+// theme stub：tag 透传为 `tag(text)` 形态，断言输出即可同时钉住「文案 + 着色 token + 拼接顺序」。
+const markingTheme: ThemeLike = {
+  fg: (color, text) => `${color}(${text})`,
+  bg: (color, text) => `${color}(${text})`,
+  bold: (text) => `bold(${text})`,
+  underline: (text) => `u(${text})`,
+};
+
+describe("formatToolCall", () => {
+  it("formats bash with $ prefix and truncates long commands at 60 chars", () => {
+    expect(formatToolCall("bash", { command: "echo hi" }, markingTheme)).toBe(
+      "muted($ )toolOutput(echo hi)",
+    );
+    const long = "x".repeat(80);
+    expect(formatToolCall("bash", { command: long }, markingTheme)).toBe(
+      `muted($ )toolOutput(${"x".repeat(60)}...)`,
+    );
+    // command 缺省兜底 "..."
+    expect(formatToolCall("bash", {}, markingTheme)).toBe("muted($ )toolOutput(...)");
+  });
+
+  it("formats read with optional :start-end range and file_path priority", () => {
+    expect(formatToolCall("read", { file_path: "/tmp/a.ts" }, markingTheme)).toBe(
+      "muted(read )accent(/tmp/a.ts)",
+    );
+    expect(
+      formatToolCall("read", { path: "/tmp/a.ts", offset: 3, limit: 10 }, markingTheme),
+    ).toBe("muted(read )accent(/tmp/a.ts)warning(:3-12)");
+    // 仅 offset（无 limit）→ 单起始行号
+    expect(formatToolCall("read", { path: "/tmp/a.ts", offset: 5 }, markingTheme)).toBe(
+      "muted(read )accent(/tmp/a.ts)warning(:5)",
+    );
+    // file_path 优先于 path
+    expect(
+      formatToolCall("read", { file_path: "/p1.ts", path: "/p2.ts" }, markingTheme),
+    ).toBe("muted(read )accent(/p1.ts)");
+  });
+
+  it("formats write with line count suffix and edit/ls as plain paths", () => {
+    expect(formatToolCall("write", { file_path: "/a.md", content: "one\ntwo" }, markingTheme)).toBe(
+      "muted(write )accent(/a.md)dim( (2 lines))",
+    );
+    expect(formatToolCall("write", { file_path: "/a.md", content: "one" }, markingTheme)).toBe(
+      "muted(write )accent(/a.md)",
+    );
+    expect(formatToolCall("edit", { file_path: "/a.ts" }, markingTheme)).toBe(
+      "muted(edit )accent(/a.ts)",
+    );
+    // ls 默认 "."（与 read/write/edit 的 "..." 兜底不同源——语义差异保留）
+    expect(formatToolCall("ls", {}, markingTheme)).toBe("muted(ls )accent(.)");
+  });
+
+  it("formats find and grep with pattern and in-path suffix", () => {
+    expect(formatToolCall("find", { pattern: "*.ts", path: "/src" }, markingTheme)).toBe(
+      "muted(find )accent(*.ts)dim( in /src)",
+    );
+    expect(formatToolCall("grep", { pattern: "foo", path: "/src" }, markingTheme)).toBe(
+      "muted(grep )accent(/foo/)dim( in /src)",
+    );
+  });
+
+  it("falls back to unknown branch with args JSON preview (50-char truncate)", () => {
+    const args = { alpha: 1 };
+    expect(formatToolCall("web_search", args, markingTheme)).toBe(
+      `accent(web_search)dim( ${JSON.stringify(args)})`,
+    );
+    const longArgs = { blob: "y".repeat(80) };
+    const json = JSON.stringify(longArgs);
+    expect(formatToolCall("custom", longArgs, markingTheme)).toBe(
+      `accent(custom)dim( ${json.slice(0, 50)}...)`,
+    );
+  });
+
+  it("treats prototype-chain key names as unknown (Map lookup, no Object.prototype hit)", () => {
+    // 表驱动用 Map 查找的语义锚：普通对象下标会把 "constructor" 解析到原型链，
+    // 这里必须与其它未知 toolName 同走 default 分支。
+    expect(formatToolCall("constructor", {}, markingTheme)).toBe(
+      "accent(constructor)dim( {})",
+    );
+  });
+
+  it("abbreviates home-prefixed paths to ~ (display only)", () => {
+    const home = os.homedir();
+    expect(formatToolCall("edit", { file_path: `${home}/x/y.ts` }, markingTheme)).toBe(
+      "muted(edit )accent(~/x/y.ts)",
+    );
+    // 非 home 前缀路径原样
+    expect(formatToolCall("edit", { file_path: "/opt/x.ts" }, markingTheme)).toBe(
+      "muted(edit )accent(/opt/x.ts)",
+    );
   });
 });

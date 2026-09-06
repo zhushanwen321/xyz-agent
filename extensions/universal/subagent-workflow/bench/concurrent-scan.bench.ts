@@ -90,29 +90,54 @@ const USAGE = `用法: npx tsx bench/concurrent-scan.bench.ts <sessionsDir> [--w
   --limit N      collectRecords limit（默认 ${DEFAULT_LIMIT}）
   --seed N       随机种子（默认 ${DEFAULT_SEED}，固定种子可复现变异序列）`;
 
+/** 数值 flag → ParsedArgs 字段映射（表驱动分发；未列出的 `--flag` 落空 = 未知参数错误，与原 else 分支一致）。 */
+const NUMERIC_FLAG_FIELDS: Readonly<Record<string, "workers" | "iters" | "limit" | "seed">> = {
+	"--workers": "workers",
+	"--iters": "iters",
+	"--limit": "limit",
+	"--seed": "seed",
+};
+
+/** 解析非负整数值 flag（--workers/--iters/--limit/--seed 共用；失败文案含收到的原值）。 */
+function parseNonNegativeIntFlag(raw: string | undefined, flag: string): { ok: true; value: number } | { ok: false; error: string } {
+	const n = raw !== undefined ? Number(raw) : NaN;
+	if (!Number.isInteger(n) || n < 0) {
+		return { ok: false, error: `${flag} 需要非负整数参数（收到 "${raw ?? ""}"）\n${USAGE}` };
+	}
+	return { ok: true, value: n };
+}
+
+/** 位置参数与数值 flag 解析后的收口校验（缺 sessionsDir / workers/iters/limit 正整数域检查）。 */
+function finalizeParsedArgs(
+	value: ParsedArgs,
+	sessionsDir: string | undefined,
+): { ok: true; value: ParsedArgs } | { ok: false; error: string } {
+	if (sessionsDir === undefined) {
+		return { ok: false, error: `缺少位置参数 sessionsDir\n${USAGE}` };
+	}
+	value.sessionsDir = sessionsDir;
+	if (value.workers <= 0 || value.iters <= 0 || value.limit <= 0) {
+		return { ok: false, error: `--workers/--iters/--limit 必须为正整数\n${USAGE}` };
+	}
+	return { ok: true, value };
+}
+
 function parseArgs(argv: readonly string[]): { ok: true; value: ParsedArgs } | { ok: false; error: string } {
 	let sessionsDir: string | undefined;
-	let workers = DEFAULT_WORKERS;
-	let iters = DEFAULT_ITERS;
-	let limit = DEFAULT_LIMIT;
-	let seed = DEFAULT_SEED;
+	const value: ParsedArgs = { sessionsDir: "", workers: DEFAULT_WORKERS, iters: DEFAULT_ITERS, limit: DEFAULT_LIMIT, seed: DEFAULT_SEED };
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
 		if (a === "--help" || a === "-h") {
 			return { ok: false, error: USAGE };
 		}
 		if (a.startsWith("--")) {
-			const key = a;
-			const raw = i + 1 < argv.length ? argv[i + 1] : undefined;
-			const n = raw !== undefined ? Number(raw) : NaN;
-			if (!Number.isInteger(n) || n < 0) {
-				return { ok: false, error: `${key} 需要非负整数参数（收到 "${raw ?? ""}"）\n${USAGE}` };
+			const field = NUMERIC_FLAG_FIELDS[a];
+			if (field === undefined) {
+				return { ok: false, error: `未知参数 ${a}\n${USAGE}` };
 			}
-			if (key === "--workers") workers = n;
-			else if (key === "--iters") iters = n;
-			else if (key === "--limit") limit = n;
-			else if (key === "--seed") seed = n;
-			else return { ok: false, error: `未知参数 ${key}\n${USAGE}` };
+			const parsed = parseNonNegativeIntFlag(i + 1 < argv.length ? argv[i + 1] : undefined, a);
+			if (!parsed.ok) return parsed;
+			value[field] = parsed.value;
 			i++;
 		} else if (sessionsDir === undefined) {
 			sessionsDir = a;
@@ -120,13 +145,7 @@ function parseArgs(argv: readonly string[]): { ok: true; value: ParsedArgs } | {
 			return { ok: false, error: `多余的位置参数 ${a}（只需 sessionsDir）\n${USAGE}` };
 		}
 	}
-	if (sessionsDir === undefined) {
-		return { ok: false, error: `缺少位置参数 sessionsDir\n${USAGE}` };
-	}
-	if (workers <= 0 || iters <= 0 || limit <= 0) {
-		return { ok: false, error: `--workers/--iters/--limit 必须为正整数\n${USAGE}` };
-	}
-	return { ok: true, value: { sessionsDir, workers, iters, limit, seed } };
+	return finalizeParsedArgs(value, sessionsDir);
 }
 
 // ============================================================
@@ -244,48 +263,55 @@ process.on("unhandledRejection", (reason: unknown) => {
 	runtimeErrors.push(`unhandledRejection: ${String(reason)}`);
 });
 
-async function main(): Promise<number> {
-	const parsedArgv = parseArgs(process.argv.slice(ARGV_ARGS_OFFSET));
-	if (!parsedArgv.ok) {
-		process.stderr.write(`${parsedArgv.error}\n`);
-		return 1;
-	}
-	const { sessionsDir, workers, iters, limit, seed } = parsedArgv.value;
-	const resolvedSessionsDir = path.resolve(sessionsDir);
-	const encDir = path.dirname(resolvedSessionsDir);
-	const indexPath = path.join(encDir, INDEX_FILENAME);
-	const rng = mulberry32(seed);
-	const randInt = (n: number): number => Math.floor(rng() * n);
+/** 真实 pi subagents 数据目录（原目录防护与文案恢复动作共用；从 homedir 动态推导）。 */
+function realSubagentsDirPath(): string {
+	return path.join(os.homedir(), ".pi", "agent", "subagents");
+}
 
+/** 目录校验三连（fail fast，错误可操作）。返回错误文案；通过时附带 *.jsonl 绝对路径表。 */
+function checkSessionsDir(
+	sessionsDir: string,
+	resolvedSessionsDir: string,
+): { ok: true; jsonlFiles: string[] } | { ok: false; error: string } {
 	if (!fs.existsSync(sessionsDir) || !fs.statSync(sessionsDir).isDirectory()) {
-		process.stderr.write(`sessionsDir 不是目录: ${sessionsDir}\n先复制真实 <enc> 段副本：cp -R ~/.pi/agent/subagents/<enc> /tmp/bench-enc/\n`);
-		return 1;
+		return {
+			ok: false,
+			error: `sessionsDir 不是目录: ${sessionsDir}\n先复制真实 <enc> 段副本：cp -R ~/.pi/agent/subagents/<enc> /tmp/bench-enc/\n`,
+		};
 	}
 	// 原目录防护：真实 pi subagents 数据目录禁止跑 bench（本 bench 会 append 污染 session 文件），
 	// 必须先复制副本。路径从 homedir 动态推导
-	const realSubagentsDir = path.join(os.homedir(), ".pi", "agent", "subagents");
+	const realSubagentsDir = realSubagentsDirPath();
 	if (resolvedSessionsDir === realSubagentsDir || resolvedSessionsDir.startsWith(`${realSubagentsDir}${path.sep}`)) {
-		process.stderr.write(
-			`拒绝在真实数据目录运行 bench（concurrent 会 append 污染 session 文件）: ${resolvedSessionsDir}\n` +
-			`请先 cp -R 到 /tmp 副本：cp -R ${realSubagentsDir}/<enc> /tmp/bench-enc/\n`,
-		);
-		return 1;
+		return {
+			ok: false,
+			error:
+				`拒绝在真实数据目录运行 bench（concurrent 会 append 污染 session 文件）: ${resolvedSessionsDir}\n` +
+				`请先 cp -R 到 /tmp 副本：cp -R ${realSubagentsDir}/<enc> /tmp/bench-enc/\n`,
+		};
 	}
 	const jsonlFiles = fs
 		.readdirSync(sessionsDir)
 		.filter((f) => f.endsWith(".jsonl"))
 		.map((f) => path.join(sessionsDir, f));
 	if (jsonlFiles.length === 0) {
-		process.stderr.write(`sessionsDir 内没有 *.jsonl: ${sessionsDir}（应指向 <enc>/sessions）\n`);
-		return 1;
+		return { ok: false, error: `sessionsDir 内没有 *.jsonl: ${sessionsDir}（应指向 <enc>/sessions）\n` };
 	}
+	return { ok: true, jsonlFiles };
+}
 
-	// ── ground truth：单进程无索引全量探测 ──
-	rmIndexArtifacts(encDir);
-	const gtStore = new RecordStore(sessionsDir);
+/** ground truth：单进程无索引全量探测 + 判 0 恒真防护。返回 { ok: false } 表示已写 stderr 拒绝。 */
+function buildGroundTruth(args: {
+	sessionsDir: string;
+	encDir: string;
+	limit: number;
+	resolvedSessionsDir: string;
+}): { ok: true; gt: string[]; recordCount: number } | { ok: false } {
+	rmIndexArtifacts(args.encDir);
+	const gtStore = new RecordStore(args.sessionsDir);
 	let gtRecords: readonly SubagentRecord[];
 	try {
-		gtRecords = gtStore.collectRecords(limit, "all");
+		gtRecords = gtStore.collectRecords(args.limit, "all");
 	} finally {
 		gtStore.dispose();
 	}
@@ -294,32 +320,55 @@ async function main(): Promise<number> {
 	// 断言失去防护意义——直接拒绝
 	if (gt.length === 0) {
 		process.stderr.write(
-			`ground truth 为空（0 条记录）：${resolvedSessionsDir} 的 jsonl 均无 subagent 记录，` +
-			`该 enc 段无 subagent 记录，请换一个含 jsonl 记录的段复制：cp -R ${realSubagentsDir}/<enc> /tmp/bench-enc/\n`,
+			`ground truth 为空（0 条记录）：${args.resolvedSessionsDir} 的 jsonl 均无 subagent 记录，` +
+			`该 enc 段无 subagent 记录，请换一个含 jsonl 记录的段复制：cp -R ${realSubagentsDirPath()}/<enc> /tmp/bench-enc/\n`,
 		);
-		return 1;
+		return { ok: false };
 	}
-	await waitIndexSettle(encDir, SETTLE_TIMEOUT_MS);
-	process.stdout.write(
-		`[concurrent-scan bench] 目录=${sessionsDir}\n  ground truth: 单进程全量探测 ${gtRecords.length} 条（jsonl=${jsonlFiles.length}）\n`,
-	);
+	return { ok: true, gt, recordCount: gtRecords.length };
+}
+
+/** 变异统计（报告用：覆盖文件集与 append/touch 次数）。 */
+interface MutationStats {
+	mutated: Set<string>;
+	appendCount: number;
+	touchCount: number;
+}
+
+/** 单次变异：掷硬币选 append（纯日志行）或 touch（只改 mtime）。 */
+function mutateOne(file: string, iter: number, rng: () => number, stats: MutationStats): void {
+	stats.mutated.add(file);
+	if (rng() < APPEND_PROBABILITY) {
+		appendPureLogLine(file, iter, Math.floor(rng() * MUTATION_TAG_RANGE));
+		stats.appendCount++;
+	} else {
+		touchFile(file);
+		stats.touchCount++;
+	}
+}
+
+/** rng → [0, n) 整数（mulberry32 消耗一次；原 main 内 randInt 闭包的显式参数形态）。 */
+function randIntWith(rng: () => number, n: number): number {
+	return Math.floor(rng() * n);
+}
+
+/** 并发阶段：预变异 + N 实例 × M 轮交错扫描，轮间随机变异。返回 D4 汇总与观测数据。 */
+async function runConcurrentPhase(args: {
+	sessionsDir: string;
+	indexPath: string;
+	workers: number;
+	iters: number;
+	limit: number;
+	jsonlFiles: readonly string[];
+	rng: () => number;
+	gt: readonly string[];
+}): Promise<{ mismatches: string[]; stats: MutationStats; indexRewrites: number; elapsed: number }> {
+	const { sessionsDir, indexPath, workers, iters, limit, jsonlFiles, rng, gt } = args;
+	const stats: MutationStats = { mutated: new Set(), appendCount: 0, touchCount: 0 };
 
 	// ── 预变异：保证每个实例首扫都有戳不匹配 → 各自 dirty → 落盘交错 ──
-	const mutated = new Set<string>();
-	let appendCount = 0;
-	let touchCount = 0;
-	const mutateOne = (file: string, iter: number): void => {
-		mutated.add(file);
-		if (rng() < APPEND_PROBABILITY) {
-			appendPureLogLine(file, iter, randInt(MUTATION_TAG_RANGE));
-			appendCount++;
-		} else {
-			touchFile(file);
-			touchCount++;
-		}
-	};
 	for (let i = 0; i < Math.min(PRE_MUTATIONS, jsonlFiles.length); i++) {
-		mutateOne(jsonlFiles[randInt(jsonlFiles.length)]!, 0);
+		mutateOne(jsonlFiles[randIntWith(rng, jsonlFiles.length)]!, 0, rng, stats);
 	}
 
 	// ── 并发阶段：N 实例 × M 轮，轮间随机变异，yield 让在途写与下一轮扫描交错 ──
@@ -340,9 +389,9 @@ async function main(): Promise<number> {
 				}
 				await sleep(1); // 给在途 fire-and-forget 写让出事件循环（制造读写交错窗口）
 			}
-			const mutationCount = 1 + randInt(MAX_EXTRA_MUTATIONS);
+			const mutationCount = 1 + randIntWith(rng, MAX_EXTRA_MUTATIONS);
 			for (let m = 0; m < mutationCount; m++) {
-				mutateOne(jsonlFiles[randInt(jsonlFiles.length)]!, iter);
+				mutateOne(jsonlFiles[randIntWith(rng, jsonlFiles.length)]!, iter, rng, stats);
 			}
 			await sleep(MUTATION_SETTLE_MS);
 			// 观测写放大（P-throttle 探针，mtime 口径）：每 iter 末观测一次索引 mtime，
@@ -356,12 +405,11 @@ async function main(): Promise<number> {
 	} finally {
 		for (const s of stores) s.dispose();
 	}
-	const elapsed = performance.now() - t0;
+	return { mismatches, stats, indexRewrites, elapsed: performance.now() - t0 };
+}
 
-	// 等全部在途写收敛后再做终态判定
-	await waitIndexSettle(encDir, SETTLE_TIMEOUT_MS);
-
-	// ── 四判定 ──
+/** 四判定 D1-D4（失败项各自写 stderr，返回汇总 failed；单项失败不短路，D2/D3/D4 继续报告）。 */
+function verifyVerdicts(indexPath: string, encDir: string, mismatches: readonly string[]): boolean {
 	let failed = false;
 
 	if (runtimeErrors.length > 0) {
@@ -403,12 +451,57 @@ async function main(): Promise<number> {
 		failed = true;
 	}
 
+	return failed;
+}
+
+async function main(): Promise<number> {
+	const parsedArgv = parseArgs(process.argv.slice(ARGV_ARGS_OFFSET));
+	if (!parsedArgv.ok) {
+		process.stderr.write(`${parsedArgv.error}\n`);
+		return 1;
+	}
+	const { sessionsDir, workers, iters, limit, seed } = parsedArgv.value;
+	const resolvedSessionsDir = path.resolve(sessionsDir);
+	const encDir = path.dirname(resolvedSessionsDir);
+	const indexPath = path.join(encDir, INDEX_FILENAME);
+
+	const dirCheck = checkSessionsDir(sessionsDir, resolvedSessionsDir);
+	if (!dirCheck.ok) {
+		process.stderr.write(dirCheck.error);
+		return 1;
+	}
+	const rng = mulberry32(seed);
+
+	// ── ground truth：单进程无索引全量探测 ──
+	const gtResult = buildGroundTruth({ sessionsDir, encDir, limit, resolvedSessionsDir });
+	if (!gtResult.ok) return 1;
+	await waitIndexSettle(encDir, SETTLE_TIMEOUT_MS);
+	process.stdout.write(
+		`[concurrent-scan bench] 目录=${sessionsDir}\n  ground truth: 单进程全量探测 ${gtResult.recordCount} 条（jsonl=${dirCheck.jsonlFiles.length}）\n`,
+	);
+
+	const phase = await runConcurrentPhase({
+		sessionsDir,
+		indexPath,
+		workers,
+		iters,
+		limit,
+		jsonlFiles: dirCheck.jsonlFiles,
+		rng,
+		gt: gtResult.gt,
+	});
+
+	// 等全部在途写收敛后再做终态判定
+	await waitIndexSettle(encDir, SETTLE_TIMEOUT_MS);
+
+	const failed = verifyVerdicts(indexPath, encDir, phase.mismatches);
+
 	// 报告（P-throttle 观测：写次数应远小于扫描轮数——60s 节流 + 纯命中轮不写）
 	const indexBytes = fs.existsSync(indexPath) ? fs.statSync(indexPath).size : 0;
 	process.stdout.write(
-		`  并发: ${workers} 实例 × ${iters} 轮（总 ${workers * iters} 次扫描）耗时 ${fmtMs(elapsed)}\n` +
-			`  变异: append=${appendCount} touch=${touchCount}（覆盖 ${mutated.size} 个不同文件，seed=${seed}）\n` +
-			`  索引观测: 观测到 ${indexRewrites} 次索引变化（mtime 口径，每 iter 末观测一次），终态 ${indexBytes} bytes（节流下写次数 << 扫描轮数）\n`,
+		`  并发: ${workers} 实例 × ${iters} 轮（总 ${workers * iters} 次扫描）耗时 ${fmtMs(phase.elapsed)}\n` +
+			`  变异: append=${phase.stats.appendCount} touch=${phase.stats.touchCount}（覆盖 ${phase.stats.mutated.size} 个不同文件，seed=${seed}）\n` +
+			`  索引观测: 观测到 ${phase.indexRewrites} 次索引变化（mtime 口径，每 iter 末观测一次），终态 ${indexBytes} bytes（节流下写次数 << 扫描轮数）\n`,
 	);
 	if (failed) {
 		process.stderr.write("四判定存在失败项（见上）；修复后重跑本命令验证\n");

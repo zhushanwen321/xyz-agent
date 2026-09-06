@@ -269,78 +269,120 @@ export function formatEventLine(entry: AgentEventLogEntry, theme: ThemeLike): st
   }
 }
 
+// ── formatToolCall 表驱动分发（形态 2）────────────────────────
+// 每个 toolName 的 case 体提为独立格式化函数，主函数留查表 + 落空语义
+// （落空 = 原 default 分支逐字节一致；查表用 Map 避免原型链键误命中，
+// 如 toolName === "constructor" 时普通对象下标会取到 Object.prototype）。
+
+/** formatToolCall 单工具格式化器签名（同步——保持原 switch case 同步语义）。 */
+type ToolCallFormatter = (args: Record<string, unknown>, theme: ThemeLike) => string;
+
+/** 显示层路径缩写：~ 替换 home 前缀（仅显示层，不读取 pi 目录，TC9 合法命中）。 */
+function shortenHomePath(p: string): string {
+  const home = os.homedir();
+  return p.startsWith(home) ? `~${p.slice(home.length)}` : p;
+}
+
+/** read/write/edit 共用的路径参数解析（file_path 优先，path 兜底，最终 "..." 兜底）。 */
+function toolPathArg(args: Record<string, unknown>): string {
+  return (args.file_path || args.path || "...") as string;
+}
+
+/** bash → `$ <command 预览>`。 */
+function formatBashToolCall(args: Record<string, unknown>, theme: ThemeLike): string {
+  const command = (args.command as string) || "...";
+  const preview = command.length > BASH_PREVIEW_MAX_CHARS ? `${command.slice(0, BASH_PREVIEW_MAX_CHARS)}...` : command;
+  return theme.fg("muted", "$ ") + theme.fg("toolOutput", preview);
+}
+
+/** read 的 `:start-end` 行号后缀文本（offset/limit 均缺省时返回空串——外层据此跳过着色）。 */
+function readLineRangeText(args: Record<string, unknown>): string {
+  const offset = args.offset as number | undefined;
+  const limit = args.limit as number | undefined;
+  if (offset === undefined && limit === undefined) return "";
+  const startLine = offset ?? 1;
+  const endLine = limit !== undefined ? startLine + limit - 1 : "";
+  return `:${startLine}${endLine ? `-${endLine}` : ""}`;
+}
+
+/** read → `read <~路径:offset-limit>`。 */
+function formatReadToolCall(args: Record<string, unknown>, theme: ThemeLike): string {
+  let text = theme.fg("accent", shortenHomePath(toolPathArg(args)));
+  const range = readLineRangeText(args);
+  if (range) text += theme.fg("warning", range);
+  return theme.fg("muted", "read ") + text;
+}
+
+/** write → `write <~路径> (N lines)`。 */
+function formatWriteToolCall(args: Record<string, unknown>, theme: ThemeLike): string {
+  const content = (args.content || "") as string;
+  const lines = content.split("\n").length;
+  let text = theme.fg("muted", "write ") + theme.fg("accent", shortenHomePath(toolPathArg(args)));
+  if (lines > 1) text += theme.fg("dim", ` (${lines} lines)`);
+  return text;
+}
+
+/** edit → `edit <~路径>`。 */
+function formatEditToolCall(args: Record<string, unknown>, theme: ThemeLike): string {
+  return theme.fg("muted", "edit ") + theme.fg("accent", shortenHomePath(toolPathArg(args)));
+}
+
+/** ls → `ls <~路径>`。 */
+function formatLsToolCall(args: Record<string, unknown>, theme: ThemeLike): string {
+  const rawPath = (args.path || ".") as string;
+  return theme.fg("muted", "ls ") + theme.fg("accent", shortenHomePath(rawPath));
+}
+
+/** find → `find <pattern> in <~路径>`。 */
+function formatFindToolCall(args: Record<string, unknown>, theme: ThemeLike): string {
+  const pattern = (args.pattern || "*") as string;
+  const rawPath = (args.path || ".") as string;
+  return theme.fg("muted", "find ") + theme.fg("accent", pattern) + theme.fg("dim", ` in ${shortenHomePath(rawPath)}`);
+}
+
+/** grep → `grep /<pattern>/ in <~路径>`。 */
+function formatGrepToolCall(args: Record<string, unknown>, theme: ThemeLike): string {
+  const pattern = (args.pattern || "") as string;
+  const rawPath = (args.path || ".") as string;
+  return theme.fg("muted", "grep ") + theme.fg("accent", `/${pattern}/`) + theme.fg("dim", ` in ${shortenHomePath(rawPath)}`);
+}
+
+/** default 落空语义：`<toolName> <argsJSON 预览>`（与原 switch default 逐字节一致）。 */
+function formatUnknownToolCall(toolName: string, args: Record<string, unknown>, theme: ThemeLike): string {
+  const argsStr = JSON.stringify(args);
+  const preview = argsStr.length > ARGS_PREVIEW_MAX_CHARS ? `${argsStr.slice(0, ARGS_PREVIEW_MAX_CHARS)}...` : argsStr;
+  return theme.fg("accent", toolName) + theme.fg("dim", ` ${preview}`);
+}
+
+/** toolName → 格式化函数查找表（Map：杜绝 Object 原型链键误命中）。 */
+const TOOL_CALL_FORMATTERS: ReadonlyMap<string, ToolCallFormatter> = new Map([
+  ["bash", formatBashToolCall],
+  ["read", formatReadToolCall],
+  ["write", formatWriteToolCall],
+  ["edit", formatEditToolCall],
+  ["ls", formatLsToolCall],
+  ["find", formatFindToolCall],
+  ["grep", formatGrepToolCall],
+]);
+
 /**
  * [STEP3] 格式化单个 toolCall 为展示行（对齐 nicobailon formatToolCall）。
  *
- * 返回不含前缀（`→ ` 由调用方加）。根据 toolName 提取关键参数格式化：
+ * 返回不含前缀（`→ ` 由调用方加）。根据 toolName 查表提取关键参数格式化：
  *   bash → `$ <command 预览>`
  *   read → `read <~路径:offset-limit>`
  *   edit/write → `<op> <~路径>`
  *   grep/find/ls → 对应格式
- *   default → `<toolName> <argsJSON 预览>`
+ *   未命中（含 default）→ `<toolName> <argsJSON 预览>`
  */
 export function formatToolCall(
   toolName: string,
   args: Record<string, unknown>,
   theme: ThemeLike,
 ): string {
-  const shortenPath = (p: string): string => {
-    // 仅用于显示层路径缩写（~ 替换 home 前缀），不读取 pi 目录（TC9 合法命中）
-    const home = os.homedir();
-    return p.startsWith(home) ? `~${p.slice(home.length)}` : p;
-  };
-
-  switch (toolName) {
-    case "bash": {
-      const command = (args.command as string) || "...";
-      const preview = command.length > BASH_PREVIEW_MAX_CHARS ? `${command.slice(0, BASH_PREVIEW_MAX_CHARS)}...` : command;
-      return theme.fg("muted", "$ ") + theme.fg("toolOutput", preview);
-    }
-    case "read": {
-      const rawPath = (args.file_path || args.path || "...") as string;
-      const filePath = shortenPath(rawPath);
-      const offset = args.offset as number | undefined;
-      const limit = args.limit as number | undefined;
-      let text = theme.fg("accent", filePath);
-      if (offset !== undefined || limit !== undefined) {
-        const startLine = offset ?? 1;
-        const endLine = limit !== undefined ? startLine + limit - 1 : "";
-        text += theme.fg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
-      }
-      return theme.fg("muted", "read ") + text;
-    }
-    case "write": {
-      const rawPath = (args.file_path || args.path || "...") as string;
-      const content = (args.content || "") as string;
-      const lines = content.split("\n").length;
-      let text = theme.fg("muted", "write ") + theme.fg("accent", shortenPath(rawPath));
-      if (lines > 1) text += theme.fg("dim", ` (${lines} lines)`);
-      return text;
-    }
-    case "edit": {
-      const rawPath = (args.file_path || args.path || "...") as string;
-      return theme.fg("muted", "edit ") + theme.fg("accent", shortenPath(rawPath));
-    }
-    case "ls": {
-      const rawPath = (args.path || ".") as string;
-      return theme.fg("muted", "ls ") + theme.fg("accent", shortenPath(rawPath));
-    }
-    case "find": {
-      const pattern = (args.pattern || "*") as string;
-      const rawPath = (args.path || ".") as string;
-      return theme.fg("muted", "find ") + theme.fg("accent", pattern) + theme.fg("dim", ` in ${shortenPath(rawPath)}`);
-    }
-    case "grep": {
-      const pattern = (args.pattern || "") as string;
-      const rawPath = (args.path || ".") as string;
-      return theme.fg("muted", "grep ") + theme.fg("accent", `/${pattern}/`) + theme.fg("dim", ` in ${shortenPath(rawPath)}`);
-    }
-    default: {
-      const argsStr = JSON.stringify(args);
-      const preview = argsStr.length > ARGS_PREVIEW_MAX_CHARS ? `${argsStr.slice(0, ARGS_PREVIEW_MAX_CHARS)}...` : argsStr;
-      return theme.fg("accent", toolName) + theme.fg("dim", ` ${preview}`);
-    }
-  }
+  const formatter = TOOL_CALL_FORMATTERS.get(toolName);
+  if (formatter) return formatter(args, theme);
+  return formatUnknownToolCall(toolName, args, theme);
 }
 
 /**

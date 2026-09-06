@@ -87,6 +87,20 @@ const USAGE = `用法: npx tsx bench/cold-scan.bench.ts <sessionsDir> [--rounds 
   --limit N      collectRecords limit（默认 ${DEFAULT_LIMIT}）
   --baseline     无索引基线模式：每轮 rm 索引后计时；轮 1 输出写为 ground truth`;
 
+/** 解析 --rounds/--limit 的正整数值（i 为 flag 下标，值位于其后；失败文案含收到的原值）。 */
+function parsePositiveIntFlag(
+	argv: readonly string[],
+	i: number,
+	flag: string,
+): { ok: true; value: number } | { ok: false; error: string } {
+	const raw = i + 1 < argv.length ? argv[i + 1] : undefined;
+	const n = raw !== undefined ? Number(raw) : NaN;
+	if (!Number.isInteger(n) || n <= 0) {
+		return { ok: false, error: `${flag} 需要正整数参数（收到 "${raw ?? ""}"）\n${USAGE}` };
+	}
+	return { ok: true, value: n };
+}
+
 function parseArgs(argv: readonly string[]): { ok: true; value: ParsedArgs } | { ok: false; error: string } {
 	let sessionsDir: string | undefined;
 	let rounds = DEFAULT_ROUNDS;
@@ -97,13 +111,10 @@ function parseArgs(argv: readonly string[]): { ok: true; value: ParsedArgs } | {
 		if (a === "--baseline") {
 			baseline = true;
 		} else if (a === "--rounds" || a === "--limit") {
-			const raw = i + 1 < argv.length ? argv[i + 1] : undefined;
-			const n = raw !== undefined ? Number(raw) : NaN;
-			if (!Number.isInteger(n) || n <= 0) {
-				return { ok: false, error: `${a} 需要正整数参数（收到 "${raw ?? ""}"）\n${USAGE}` };
-			}
-			if (a === "--rounds") rounds = n;
-			else limit = n;
+			const parsed = parsePositiveIntFlag(argv, i, a);
+			if (!parsed.ok) return parsed;
+			if (a === "--rounds") rounds = parsed.value;
+			else limit = parsed.value;
 			i++;
 		} else if (a === "--help" || a === "-h") {
 			return { ok: false, error: USAGE };
@@ -294,6 +305,212 @@ process.on("unhandledRejection", (reason: unknown) => {
 	runtimeErrors.push(`unhandledRejection: ${String(reason)}`);
 });
 
+/** bench 运行上下文（argv 解析与目录校验的派生结果，helper 间显式传递）。 */
+interface BenchContext {
+	sessionsDir: string;
+	resolvedSessionsDir: string;
+	encDir: string;
+	indexPath: string;
+	rounds: number;
+	limit: number;
+	jsonlCount: number;
+}
+
+/** 真实 pi subagents 数据目录（原目录防护与文案恢复动作共用；从 homedir 动态推导）。 */
+function realSubagentsDirPath(): string {
+	return path.join(os.homedir(), ".pi", "agent", "subagents");
+}
+
+/** 目录校验三连（fail fast，错误可操作）。返回错误文案；通过时附带 *.jsonl 数。 */
+function checkSessionsDir(
+	sessionsDir: string,
+	resolvedSessionsDir: string,
+): { ok: true; jsonlCount: number } | { ok: false; error: string } {
+	if (!fs.existsSync(sessionsDir) || !fs.statSync(sessionsDir).isDirectory()) {
+		return {
+			ok: false,
+			error: `sessionsDir 不是目录: ${sessionsDir}\n先复制真实 <enc> 段副本：cp -R ~/.pi/agent/subagents/<enc> /tmp/bench-enc/\n`,
+		};
+	}
+	// 原目录防护：真实 pi subagents 数据目录禁止跑 bench（本 bench 会 chmod 000 jsonl、
+	// rm/重写索引，都会触碰真实 session 数据），必须先复制副本。路径从 homedir 动态推导
+	const realSubagentsDir = realSubagentsDirPath();
+	if (resolvedSessionsDir === realSubagentsDir || resolvedSessionsDir.startsWith(`${realSubagentsDir}${path.sep}`)) {
+		return {
+			ok: false,
+			error:
+				`拒绝在真实数据目录运行 bench: ${resolvedSessionsDir}\n` +
+				`bench 会 chmod jsonl / rm 索引，污染真实 session 数据；请先复制副本：cp -R ${realSubagentsDir}/<enc> /tmp/bench-enc/\n`,
+		};
+	}
+	const jsonlCount = fs.readdirSync(sessionsDir).filter((f) => f.endsWith(".jsonl")).length;
+	if (jsonlCount === 0) {
+		return { ok: false, error: `sessionsDir 内没有 *.jsonl: ${sessionsDir}（应指向 <enc>/sessions）\n` };
+	}
+	return { ok: true, jsonlCount };
+}
+
+/** 基线模式：每轮 rm 索引后计时，轮 1 输出 = ground truth。返回 false 表示断言失败（已写 stderr）。 */
+async function runBaselineMode(ctx: BenchContext): Promise<boolean> {
+	const { sessionsDir, resolvedSessionsDir, encDir, rounds, limit } = ctx;
+	const times: number[] = [];
+	let gt: string[] | undefined;
+	for (let i = 0; i < rounds; i++) {
+		rmIndexArtifacts(encDir); // 上一轮 settle 后的写在此清除，保证本轮真冷启动
+		const result = runColdScan(sessionsDir, limit);
+		times.push(result.ms);
+		if (i === 0) {
+			gt = result.fiveTuple;
+			// 判 0 恒真防护：空 ground truth 会让 A1 的 sameRows 与 A4 的 id 集对比都
+			// 退化为「空集对空集」恒真，断言失去防护意义——直接拒绝
+			if (gt.length === 0) {
+				process.stderr.write(
+					`ground truth 为空（0 条记录）：${resolvedSessionsDir} 的 jsonl 均无 subagent 记录，` +
+					`A1/A4 判 0 恒真失去防护。请换一个含 jsonl 记录的段复制：cp -R ${realSubagentsDirPath()}/<enc> /tmp/bench-enc/\n`,
+				);
+				return false;
+			}
+			writeGtFile(gtFilePath(sessionsDir), resolvedSessionsDir, gt);
+		} else if (!sameRows(result.fiveTuple, gt!)) {
+			process.stderr.write(`A1 失败（基线轮 ${i + 1} 与轮 1 输出不一致）：${firstDiff(result.fiveTuple, gt!)}\n`);
+			return false;
+		}
+		await waitIndexSettle(encDir, SETTLE_TIMEOUT_MS); // 等写完成再进下一轮（rm 才不会与在途写竞争）
+		process.stdout.write(`  baseline 轮 ${i + 1}/${rounds}: ${fmtMs(result.ms)}（${result.fiveTuple.length} 条记录）\n`);
+	}
+	const med = medianOf(times);
+	process.stdout.write(`[cold-scan bench] 模式=baseline 目录=${sessionsDir}\n`);
+	process.stdout.write(`  jsonl=${ctx.jsonlCount} 轮数=${rounds} 中位数=${fmtMs(med)}（无阈值，仅报告）\n`);
+	process.stdout.write(`  ground truth 已写入: ${gtFilePath(sessionsDir)}（${gt!.length} 条五元组）\n`);
+	return true;
+}
+
+/** 冷启动模式：索引命中 + 中位数断言 <=300ms（A2）。返回 false 表示断言失败（已写 stderr）。 */
+async function runIndexHitMode(ctx: BenchContext): Promise<boolean> {
+	const { sessionsDir, resolvedSessionsDir, encDir, indexPath, rounds, limit } = ctx;
+	const times: number[] = [];
+	let gt: string[] | undefined;
+	const gtLoaded = readGtFile(gtFilePath(sessionsDir), resolvedSessionsDir);
+	if (gtLoaded !== undefined) {
+		gt = gtLoaded.fiveTuple;
+	} else {
+		// 无 gt 文件（未先跑 --baseline）：本进程内做一次无索引全量探测生成——
+		// 同样是「真全量探测的输出」，满足 A1 的对比基准要求
+		rmIndexArtifacts(encDir);
+		const gen = runColdScan(sessionsDir, limit);
+		gt = gen.fiveTuple;
+		writeGtFile(gtFilePath(sessionsDir), resolvedSessionsDir, gt);
+		await waitIndexSettle(encDir, SETTLE_TIMEOUT_MS); // 全探扫描 dirty → 落盘索引（即下面计时轮的命中源）
+		process.stdout.write(`  ground truth 由本次无索引全量探测生成（${fmtMs(gen.ms)}）并写入 ${gtFilePath(sessionsDir)}\n`);
+	}
+	// 判 0 恒真防护（与 baseline 分支同款）：空 gt 让 A1/A4 恒真——直接拒绝
+	if (gt.length === 0) {
+		process.stderr.write(
+			`ground truth 为空（0 条记录）：${resolvedSessionsDir} 的 jsonl 均无 subagent 记录，` +
+			`A1/A4 判 0 恒真失去防护。请换一个含 jsonl 记录的段复制后重跑 --baseline\n`,
+		);
+		return false;
+	}
+	if (!fs.existsSync(indexPath)) {
+		// gt 来自早前 --baseline（其末轮写仍在磁盘上则不会进这里；被清过则热身一次）
+		runColdScan(sessionsDir, limit);
+		await waitIndexSettle(encDir, SETTLE_TIMEOUT_MS);
+	}
+	for (let i = 0; i < rounds; i++) {
+		const result = runColdScan(sessionsDir, limit);
+		times.push(result.ms);
+		if (!sameRows(result.fiveTuple, gt)) {
+			process.stderr.write(`A1 失败（冷启动轮 ${i + 1} 与 ground truth 不一致）：${firstDiff(result.fiveTuple, gt)}\n`);
+			return false;
+		}
+		process.stdout.write(`  cold 轮 ${i + 1}/${rounds}: ${fmtMs(result.ms)}（${result.fiveTuple.length} 条记录）\n`);
+	}
+	const med = medianOf(times);
+	if (med > COLD_SCAN_BUDGET_MS) {
+		process.stderr.write(
+			`A2 失败：冷启动中位数 ${fmtMs(med)} 超预算 ${COLD_SCAN_BUDGET_MS}ms。` +
+				`排查：索引是否命中（${indexPath} 存在且可读）、文件数是否暴涨；用 --baseline 对照基线\n`,
+		);
+		return false;
+	}
+	const probeCompleted = runChmodProbeRound(ctx, gt);
+	process.stdout.write(`[cold-scan bench] 模式=index-hit 目录=${sessionsDir}\n`);
+	process.stdout.write(`  jsonl=${ctx.jsonlCount} 轮数=${rounds} 中位数=${fmtMs(medianOf(times))}（预算 <=${COLD_SCAN_BUDGET_MS}ms）\n`);
+	return probeCompleted;
+}
+
+/** A4：chmod 000 零读取轮（单独成轮，不参与 A1 等价对比）。返回 false 表示断言失败。 */
+function runChmodProbeRound(ctx: BenchContext, gt: readonly string[]): boolean {
+	const { sessionsDir, limit } = ctx;
+	const chmodProbeEffective = process.platform !== "win32" && process.getuid?.() !== 0;
+	if (chmodProbeEffective) {
+		const jsonlFiles = fs.readdirSync(sessionsDir).filter((f) => f.endsWith(".jsonl"));
+		const savedModes: { file: string; mode: number }[] = [];
+		for (const f of jsonlFiles) {
+			const p = path.join(sessionsDir, f);
+			savedModes.push({ file: p, mode: fs.statSync(p).mode & PERM_MODE_MASK });
+			fs.chmodSync(p, 0o000);
+		}
+		try {
+			const probe = runColdScan(sessionsDir, limit);
+			const gotIds = [...probe.ids].sort();
+			const gtIds = [...gt].map((row) => row.split("\u0001")[0]!).sort();
+			if (!sameRows(gotIds, gtIds)) {
+				const gotCount = probe.ids.length;
+				process.stderr.write(
+					`A4 失败：chmod 000 后记录不完整（${gotCount}/${gt.length}）——索引命中路径退化为读文件内容。` +
+						`查 record-store.ts scanFile 的索引命中分支\n`,
+				);
+				return false;
+			}
+			process.stdout.write(`  chmod000 零读取轮: PASS（${probe.ids.length} 条记录全部经索引返回）\n`);
+		} finally {
+			for (const { file, mode } of savedModes) {
+				fs.chmodSync(file, mode); // 精确还原权限，副本不留下 bench 痕迹
+			}
+		}
+	} else {
+		process.stdout.write("  chmod000 零读取轮: SKIP（win32/root 下 chmod 000 探测退化为恒真）\n");
+	}
+	return true;
+}
+
+/** 终态判定：A3（索引兄弟位置 + 合法 JSON + version 字段 + sessionsDir 无新增）+ 运行期异常汇总 + PASS 行。 */
+function verifyFinalState(ctx: BenchContext, sessionsSnapshot: readonly string[], baseline: boolean): boolean {
+	const { sessionsDir, indexPath } = ctx;
+	if (!fs.existsSync(indexPath)) {
+		process.stderr.write(`A3 失败：索引未落在兄弟位置 ${indexPath}\n`);
+		return false;
+	}
+	let idxParsed: unknown;
+	try {
+		idxParsed = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+	} catch (err) {
+		// 损坏/不可读索引必须命中声明的 A3 文案（不 catch 会让异常冒泡到顶层 catch，声明的判定文案不可达）
+		process.stderr.write(
+			`A3 失败：索引不是合法 JSON 或不可读: ${indexPath}（${toErrorMessage(err)}）\n` +
+			`建议动作：rm "${indexPath}" 后重跑（索引为派生缓存，首次扫描会自动重建）\n`,
+		);
+		return false;
+	}
+	if (!hasNumberVersion(idxParsed) || typeof idxParsed.version !== "number") {
+		process.stderr.write(`A3 失败：索引缺 version 字段: ${indexPath}\n建议动作：rm "${indexPath}" 后重跑（索引为派生缓存，首次扫描会自动重建）\n`);
+		return false;
+	}
+	const sessionsAfter = fs.readdirSync(sessionsDir).sort();
+	if (sessionsAfter.join("\n") !== sessionsSnapshot.join("\n")) {
+		const added = sessionsAfter.filter((f) => !sessionsSnapshot.includes(f));
+		process.stderr.write(`A3 失败：sessionsDir 出现新增文件: ${added.join(", ")}\n`);
+		return false;
+	}
+	if (runtimeErrors.length > 0) {
+		process.stderr.write(`运行期异常 ${runtimeErrors.length} 条：\n${runtimeErrors.join("\n")}\n`);
+		return false;
+	}
+	process.stdout.write(baseline ? "  断言 A1/A3: PASS\n" : "  断言 A1/A2/A3/A4: PASS\n");
+	return true;
+}
+
 async function main(): Promise<number> {
 	const parsedArgv = parseArgs(process.argv.slice(ARGV_ARGS_OFFSET));
 	if (!parsedArgv.ok) {
@@ -305,176 +522,25 @@ async function main(): Promise<number> {
 	const encDir = path.dirname(resolvedSessionsDir);
 	const indexPath = path.join(encDir, INDEX_FILENAME);
 
-	// 目录校验（fail fast，错误可操作）
-	if (!fs.existsSync(sessionsDir) || !fs.statSync(sessionsDir).isDirectory()) {
-		process.stderr.write(`sessionsDir 不是目录: ${sessionsDir}\n先复制真实 <enc> 段副本：cp -R ~/.pi/agent/subagents/<enc> /tmp/bench-enc/\n`);
+	const dirCheck = checkSessionsDir(sessionsDir, resolvedSessionsDir);
+	if (!dirCheck.ok) {
+		process.stderr.write(dirCheck.error);
 		return 1;
 	}
-	// 原目录防护：真实 pi subagents 数据目录禁止跑 bench（本 bench 会 chmod 000 jsonl、
-	// rm/重写索引，都会触碰真实 session 数据），必须先复制副本。路径从 homedir 动态推导
-	const realSubagentsDir = path.join(os.homedir(), ".pi", "agent", "subagents");
-	if (resolvedSessionsDir === realSubagentsDir || resolvedSessionsDir.startsWith(`${realSubagentsDir}${path.sep}`)) {
-		process.stderr.write(
-			`拒绝在真实数据目录运行 bench: ${resolvedSessionsDir}\n` +
-			`bench 会 chmod jsonl / rm 索引，污染真实 session 数据；请先复制副本：cp -R ${realSubagentsDir}/<enc> /tmp/bench-enc/\n`,
-		);
-		return 1;
-	}
-	const jsonlCount = fs.readdirSync(sessionsDir).filter((f) => f.endsWith(".jsonl")).length;
-	if (jsonlCount === 0) {
-		process.stderr.write(`sessionsDir 内没有 *.jsonl: ${sessionsDir}（应指向 <enc>/sessions）\n`);
-		return 1;
-	}
-
 	// A3 前半：sessionsDir 文件集快照（结束时对比无新增）
 	const sessionsSnapshot = fs.readdirSync(sessionsDir).sort();
-
-	const times: number[] = [];
-	let gt: string[] | undefined;
-
-	if (baseline) {
-		// ── 基线模式：每轮 rm 索引后计时，轮 1 输出 = ground truth ──
-		for (let i = 0; i < rounds; i++) {
-			rmIndexArtifacts(encDir); // 上一轮 settle 后的写在此清除，保证本轮真冷启动
-			const result = runColdScan(sessionsDir, limit);
-			times.push(result.ms);
-			if (i === 0) {
-				gt = result.fiveTuple;
-				// 判 0 恒真防护：空 ground truth 会让 A1 的 sameRows 与 A4 的 id 集对比都
-				// 退化为「空集对空集」恒真，断言失去防护意义——直接拒绝
-				if (gt.length === 0) {
-					process.stderr.write(
-						`ground truth 为空（0 条记录）：${resolvedSessionsDir} 的 jsonl 均无 subagent 记录，` +
-						`A1/A4 判 0 恒真失去防护。请换一个含 jsonl 记录的段复制：cp -R ${realSubagentsDir}/<enc> /tmp/bench-enc/\n`,
-					);
-					return 1;
-				}
-				writeGtFile(gtFilePath(sessionsDir), resolvedSessionsDir, gt);
-			} else if (!sameRows(result.fiveTuple, gt!)) {
-				process.stderr.write(`A1 失败（基线轮 ${i + 1} 与轮 1 输出不一致）：${firstDiff(result.fiveTuple, gt!)}\n`);
-				return 1;
-			}
-			await waitIndexSettle(encDir, SETTLE_TIMEOUT_MS); // 等写完成再进下一轮（rm 才不会与在途写竞争）
-			process.stdout.write(`  baseline 轮 ${i + 1}/${rounds}: ${fmtMs(result.ms)}（${result.fiveTuple.length} 条记录）\n`);
-		}
-		const med = medianOf(times);
-		process.stdout.write(`[cold-scan bench] 模式=baseline 目录=${sessionsDir}\n`);
-		process.stdout.write(`  jsonl=${jsonlCount} 轮数=${rounds} 中位数=${fmtMs(med)}（无阈值，仅报告）\n`);
-		process.stdout.write(`  ground truth 已写入: ${gtFilePath(sessionsDir)}（${gt!.length} 条五元组）\n`);
-	} else {
-		// ── 冷启动模式：索引命中，中位数断言 <=300ms ──
-		const gtLoaded = readGtFile(gtFilePath(sessionsDir), resolvedSessionsDir);
-		if (gtLoaded !== undefined) {
-			gt = gtLoaded.fiveTuple;
-		} else {
-			// 无 gt 文件（未先跑 --baseline）：本进程内做一次无索引全量探测生成——
-			// 同样是「真全量探测的输出」，满足 A1 的对比基准要求
-			rmIndexArtifacts(encDir);
-			const gen = runColdScan(sessionsDir, limit);
-			gt = gen.fiveTuple;
-			writeGtFile(gtFilePath(sessionsDir), resolvedSessionsDir, gt);
-			await waitIndexSettle(encDir, SETTLE_TIMEOUT_MS); // 全探扫描 dirty → 落盘索引（即下面计时轮的命中源）
-			process.stdout.write(`  ground truth 由本次无索引全量探测生成（${fmtMs(gen.ms)}）并写入 ${gtFilePath(sessionsDir)}\n`);
-		}
-		// 判 0 恒真防护（与 baseline 分支同款）：空 gt 让 A1/A4 恒真——直接拒绝
-		if (gt.length === 0) {
-			process.stderr.write(
-				`ground truth 为空（0 条记录）：${resolvedSessionsDir} 的 jsonl 均无 subagent 记录，` +
-				`A1/A4 判 0 恒真失去防护。请换一个含 jsonl 记录的段复制后重跑 --baseline\n`,
-			);
-			return 1;
-		}
-		if (!fs.existsSync(indexPath)) {
-			// gt 来自早前 --baseline（其末轮写仍在磁盘上则不会进这里；被清过则热身一次）
-			runColdScan(sessionsDir, limit);
-			await waitIndexSettle(encDir, SETTLE_TIMEOUT_MS);
-		}
-
-		for (let i = 0; i < rounds; i++) {
-			const result = runColdScan(sessionsDir, limit);
-			times.push(result.ms);
-			if (!sameRows(result.fiveTuple, gt)) {
-				process.stderr.write(`A1 失败（冷启动轮 ${i + 1} 与 ground truth 不一致）：${firstDiff(result.fiveTuple, gt)}\n`);
-				return 1;
-			}
-			process.stdout.write(`  cold 轮 ${i + 1}/${rounds}: ${fmtMs(result.ms)}（${result.fiveTuple.length} 条记录）\n`);
-		}
-		const med = medianOf(times);
-		if (med > COLD_SCAN_BUDGET_MS) {
-			process.stderr.write(
-				`A2 失败：冷启动中位数 ${fmtMs(med)} 超预算 ${COLD_SCAN_BUDGET_MS}ms。` +
-					`排查：索引是否命中（${indexPath} 存在且可读）、文件数是否暴涨；用 --baseline 对照基线\n`,
-			);
-			return 1;
-		}
-
-		// A4：chmod 000 零读取轮（单独成轮，不参与 A1 等价对比）
-		const chmodProbeEffective = process.platform !== "win32" && process.getuid?.() !== 0;
-		if (chmodProbeEffective) {
-			const jsonlFiles = fs.readdirSync(sessionsDir).filter((f) => f.endsWith(".jsonl"));
-			const savedModes: { file: string; mode: number }[] = [];
-			for (const f of jsonlFiles) {
-				const p = path.join(sessionsDir, f);
-				savedModes.push({ file: p, mode: fs.statSync(p).mode & PERM_MODE_MASK });
-				fs.chmodSync(p, 0o000);
-			}
-			try {
-				const probe = runColdScan(sessionsDir, limit);
-				const gotIds = [...probe.ids].sort();
-				const gtIds = [...gt].map((row) => row.split("\u0001")[0]!).sort();
-				if (!sameRows(gotIds, gtIds)) {
-					const gotCount = probe.ids.length;
-					process.stderr.write(
-						`A4 失败：chmod 000 后记录不完整（${gotCount}/${gt.length}）——索引命中路径退化为读文件内容。` +
-							`查 record-store.ts scanFile 的索引命中分支\n`,
-					);
-					return 1;
-				}
-				process.stdout.write(`  chmod000 零读取轮: PASS（${probe.ids.length} 条记录全部经索引返回）\n`);
-			} finally {
-				for (const { file, mode } of savedModes) {
-					fs.chmodSync(file, mode); // 精确还原权限，副本不留下 bench 痕迹
-				}
-			}
-		} else {
-			process.stdout.write("  chmod000 零读取轮: SKIP（win32/root 下 chmod 000 探测退化为恒真）\n");
-		}
-		process.stdout.write(`[cold-scan bench] 模式=index-hit 目录=${sessionsDir}\n`);
-		process.stdout.write(`  jsonl=${jsonlCount} 轮数=${rounds} 中位数=${fmtMs(medianOf(times))}（预算 <=${COLD_SCAN_BUDGET_MS}ms）\n`);
-	}
-
-	// A3：索引在兄弟位置 + sessionsDir 无新增文件
-	if (!fs.existsSync(indexPath)) {
-		process.stderr.write(`A3 失败：索引未落在兄弟位置 ${indexPath}\n`);
-		return 1;
-	}
-	let idxParsed: unknown;
-	try {
-		idxParsed = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
-	} catch (err) {
-		// 损坏/不可读索引必须命中声明的 A3 文案（不 catch 会让异常冒泡到顶层 catch，声明的判定文案不可达）
-		process.stderr.write(
-			`A3 失败：索引不是合法 JSON 或不可读: ${indexPath}（${toErrorMessage(err)}）\n` +
-			`建议动作：rm "${indexPath}" 后重跑（索引为派生缓存，首次扫描会自动重建）\n`,
-		);
-		return 1;
-	}
-	if (!hasNumberVersion(idxParsed) || typeof idxParsed.version !== "number") {
-		process.stderr.write(`A3 失败：索引缺 version 字段: ${indexPath}\n建议动作：rm "${indexPath}" 后重跑（索引为派生缓存，首次扫描会自动重建）\n`);
-		return 1;
-	}
-	const sessionsAfter = fs.readdirSync(sessionsDir).sort();
-	if (sessionsAfter.join("\n") !== sessionsSnapshot.join("\n")) {
-		const added = sessionsAfter.filter((f) => !sessionsSnapshot.includes(f));
-		process.stderr.write(`A3 失败：sessionsDir 出现新增文件: ${added.join(", ")}\n`);
-		return 1;
-	}
-	if (runtimeErrors.length > 0) {
-		process.stderr.write(`运行期异常 ${runtimeErrors.length} 条：\n${runtimeErrors.join("\n")}\n`);
-		return 1;
-	}
-	process.stdout.write(baseline ? "  断言 A1/A3: PASS\n" : "  断言 A1/A2/A3/A4: PASS\n");
-	return 0;
+	const ctx: BenchContext = {
+		sessionsDir,
+		resolvedSessionsDir,
+		encDir,
+		indexPath,
+		rounds,
+		limit,
+		jsonlCount: dirCheck.jsonlCount,
+	};
+	const modeCompleted = baseline ? await runBaselineMode(ctx) : await runIndexHitMode(ctx);
+	if (!modeCompleted) return 1;
+	return verifyFinalState(ctx, sessionsSnapshot, baseline) ? 0 : 1;
 }
 
 main().then(

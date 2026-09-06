@@ -12,6 +12,7 @@ import type { Component } from "@earendil-works/pi-tui";
 import { visibleWidth } from "@earendil-works/pi-tui";
 
 import { computeElapsedSeconds } from "@zhushanwen/subagent-core";
+import type { DisplayItem } from "@zhushanwen/subagent-core";
 import type { SubagentService } from "@zhushanwen/subagent-core";
 import type { SubagentRecord } from "@zhushanwen/subagent-core";
 import { displayAgentName } from "@zhushanwen/subagent-core";
@@ -302,6 +303,73 @@ export class SubagentsListComponent implements Component {
   }
 
   // ── 分支 3：分屏满屏框（detailMode 控制右侧预览 vs 完整翻屏）──
+  // 主函数只留「顶框 → filter 行 → 分区线 → body → 底分区线 → footer → 底框」编排，
+  // 各段文案/内容构建拆至 splitBox* 私有方法。
+
+  /** filter 行文案：阶段 2 锚定提示 / filter 输入态（光标 _）/ 空态。 */
+  private splitBoxFilterLine(selected: SubagentRecord | null, inDetail: boolean): string {
+    const t = this.theme;
+    return inDetail
+      ? t.fg("dim", `Pinned: ${selected?.agent ? displayAgentName(selected.agent) : ""} · Esc to return to list`)
+      : (this.state.filterText
+        ? `${t.fg("dim", "filter: ")}${t.bold(this.state.filterText)}${t.fg("accent", "_")}`
+        : `${t.fg("dim", "filter: ")}${t.fg("accent", "_")}`);
+  }
+
+  /** 分区线右标题：阶段 2 带滚动位置指示（detailScrollInfo），否则固定 " Detail "。 */
+  private splitBoxRightTitle(
+    inDetail: boolean,
+    selectedFull: SubagentRecord | null,
+    bodyH: number,
+    detailContent: string[] | null,
+  ): string {
+    const t = this.theme;
+    return inDetail
+      ? t.fg("accent", t.bold(` ${TITLE_RIGHT}${this.detailScrollInfo(selectedFull, bodyH, detailContent?.length)} `))
+      : t.fg("accent", t.bold(` ${TITLE_RIGHT} `));
+  }
+
+  /** body 左右列内容：filter 无匹配时双提示占位（保留分屏布局）；
+   *  否则左列视口窗口（选中行居中，到列表顶/底贴边）+ 右列预览 or 完整翻屏。 */
+  private splitBoxBodyLines(
+    records: SubagentRecord[],
+    selectedFull: SubagentRecord | null,
+    inDetail: boolean,
+    leftWidth: number,
+    rightWidth: number,
+    bodyH: number,
+    detailContent: string[] | null,
+  ): { leftLines: string[]; rightLines: string[] } {
+    const t = this.theme;
+    if (records.length === 0) {
+      // filter 无匹配：保留分屏布局，左右都显示提示
+      return {
+        leftLines: [t.fg("dim", `(no match for "${this.state.filterText}")`)],
+        rightLines: [t.fg("dim", "(no record selected)")],
+      };
+    }
+    // 左列视口窗口：选中行尽量居中，到列表顶/底贴边。
+    // 保证 leftLines.length <= bodyH → bodyRows = bodyH 恒定，帧行不溢出终端（无残影）。
+    const maxLeftStart = Math.max(0, records.length - bodyH);
+    const leftStart = Math.max(0, Math.min(
+      Math.floor(this.state.selectedIdx - bodyH / VERT_CENTER_DIVISOR),
+      maxLeftStart,
+    ));
+    return {
+      leftLines: this.renderLeftColumn(records, leftWidth, leftStart, bodyH),
+      rightLines: inDetail
+        ? this.renderRightDetail(selectedFull, rightWidth, bodyH, detailContent)
+        : this.renderRightPreview(selectedFull, rightWidth, bodyH),
+    };
+  }
+
+  /** footer 双文案：阶段 2 滚动提示（running 时附取消提示）/ 阶段 1 导航提示。 */
+  private splitBoxFooter(inDetail: boolean, selected: SubagentRecord | null): string {
+    const t = this.theme;
+    return inDetail
+      ? t.fg("dim", "Esc back to list · Up/Dn/PgUp/PgDn/Home/End scroll detail" + this.cancelHint(selected))
+      : t.fg("dim", "Up/Dn navigate · Enter detail · type to filter · Esc exit");
+  }
 
   private renderSplitBox(records: SubagentRecord[], width: number, rows: number): string[] {
     const t = this.theme;
@@ -330,43 +398,18 @@ export class SubagentsListComponent implements Component {
     lines.push(titleBorder(t, "╭", t.fg("accent", t.bold(` ${TITLE_SPLIT} `)), "╮", contentWidth));
 
     // filter 行（阶段 2 时隐藏 filter 提示，显示锚定提示）
-    const filterLine = inDetail
-      ? t.fg("dim", `Pinned: ${selected?.agent ? displayAgentName(selected.agent) : ""} · Esc to return to list`)
-      : (this.state.filterText
-        ? `${t.fg("dim", "filter: ")}${t.bold(this.state.filterText)}${t.fg("accent", "_")}`
-        : `${t.fg("dim", "filter: ")}${t.fg("accent", "_")}`);
-    lines.push(walled(t, padToVisible(truncLine(filterLine, contentWidth), contentWidth), contentWidth));
+    lines.push(walled(t, padToVisible(truncLine(this.splitBoxFilterLine(selected, inDetail), contentWidth), contentWidth), contentWidth));
 
     // 分区线（嵌入左/右标题，分段着色）
     const leftTitleStyled = t.fg("accent", t.bold(` ${TITLE_LEFT} `));
-    const rightTitleStyled = inDetail
-      ? t.fg("accent", t.bold(` ${TITLE_RIGHT}${this.detailScrollInfo(selectedFull, bodyH, detailContent?.length)} `))
-      : t.fg("accent", t.bold(` ${TITLE_RIGHT} `));
+    const rightTitleStyled = this.splitBoxRightTitle(inDetail, selectedFull, bodyH, detailContent);
     lines.push(
       b(t, "├") + segFillColored(leftTitleStyled, dash(t), leftWidth)
         + b(t, "┬") + segFillColored(rightTitleStyled, dash(t), rightWidth) + b(t, "┤"),
     );
 
     // body：左列 record 列表 + 右列（预览 or 完整翻屏）
-    let leftLines: string[];
-    let rightLines: string[];
-    if (records.length === 0) {
-      // filter 无匹配：保留分屏布局，左右都显示提示
-      leftLines = [t.fg("dim", `(no match for "${this.state.filterText}")`)];
-      rightLines = [t.fg("dim", "(no record selected)")];
-    } else {
-      // 左列视口窗口：选中行尽量居中，到列表顶/底贴边。
-      // 保证 leftLines.length <= bodyH → bodyRows = bodyH 恒定，帧行不溢出终端（无残影）。
-      const maxLeftStart = Math.max(0, records.length - bodyH);
-      const leftStart = Math.max(0, Math.min(
-        Math.floor(this.state.selectedIdx - bodyH / VERT_CENTER_DIVISOR),
-        maxLeftStart,
-      ));
-      leftLines = this.renderLeftColumn(records, leftWidth, leftStart, bodyH);
-      rightLines = inDetail
-        ? this.renderRightDetail(selectedFull, rightWidth, bodyH, detailContent)
-        : this.renderRightPreview(selectedFull, rightWidth, bodyH);
-    }
+    const { leftLines, rightLines } = this.splitBoxBodyLines(records, selectedFull, inDetail, leftWidth, rightWidth, bodyH, detailContent);
     const bodyRows = Math.max(leftLines.length, rightLines.length, bodyH);
     for (let i = 0; i < bodyRows; i++) {
       const l = leftLines[i] ?? "";
@@ -379,10 +422,7 @@ export class SubagentsListComponent implements Component {
     lines.push(b(t, "├") + dashes(t, leftWidth) + b(t, "┴") + dashes(t, rightWidth) + b(t, "┤"));
 
     // footer（双文案）
-    const footer = inDetail
-      ? t.fg("dim", "Esc back to list · Up/Dn/PgUp/PgDn/Home/End scroll detail" + this.cancelHint(selected))
-      : t.fg("dim", "Up/Dn navigate · Enter detail · type to filter · Esc exit");
-    lines.push(walled(t, padToVisible(truncLine(footer, contentWidth), contentWidth), contentWidth));
+    lines.push(walled(t, padToVisible(truncLine(this.splitBoxFooter(inDetail, selected), contentWidth), contentWidth), contentWidth));
 
     // 底框
     lines.push(plainBorder(t, "╰", "╯", contentWidth));
@@ -528,14 +568,24 @@ export class SubagentsListComponent implements Component {
     return visible;
   }
 
-  /** 详情内容行（单一数据源：renderRightDetail 渲染 + detailScrollInfo 算长度都走这里）。 */
+  /** 详情内容行（单一数据源：renderRightDetail 渲染 + detailScrollInfo 算长度都走这里）。
+   *  只做分段编排；各段构建见 push*Section 家族（顺序 = 原 buildDetailContent 单函数内行序）。 */
   private buildDetailContent(record: SubagentRecord, width: number): string[] {
-    const t = this.theme;
     const content: string[] = [];
+    this.pushTaskSection(content, record, width);
+    this.pushMetaSection(content, record, width);
+    this.pushActivitySection(content, record, width);
+    this.pushOutputSection(content, record, width);
+    this.pushTailSections(content, record, width);
+    return content;
+  }
 
-    // 任务提示词（最重要信息，置顶）。streaming 时 result 未产出，这是「它在干嘛」的唯一线索。
-    // detail 模式完整换行展示（word-wrap），不截断——task 是判断 subagent 行为的核心依据，
-    // 截断成省略号会丢信息。首行带 `task: ` 前缀，续行缩进对齐（缩进宽度 = 前缀可见宽度）。
+  /**
+   * task 段：完整 word-wrap 置顶（streaming 时这是「它在干嘛」的唯一线索，不截断）。
+   * 首行带 `task: ` 前缀，续行缩进对齐（缩进宽度 = 前缀可见宽度）。
+   */
+  private pushTaskSection(content: string[], record: SubagentRecord, width: number): void {
+    const t = this.theme;
     const taskPrefix = "task: ";
     const taskWrapWidth = Math.max(1, width - visibleWidth(taskPrefix));
     const taskLines = wrapText(record.task, taskWrapWidth);
@@ -550,7 +600,11 @@ export class SubagentsListComponent implements Component {
     if (taskLines.length === 0) {
       content.push(truncLine(t.fg("accent", `${taskPrefix}(empty)`), width));
     }
+  }
 
+  /** 元数据段：id/mode/status/turns/tokens 行 + model/thinking 行 + parent/children 层级行。 */
+  private pushMetaSection(content: string[], record: SubagentRecord, width: number): void {
+    const t = this.theme;
     // 元数据：第 1 行 id + 状态 + turns + tokens
     content.push(truncLine(
       t.fg("dim", `${record.id} · ${record.mode} · ${record.status} · ${record.turns} turns · ${formatTokens(record.totalTokens)}`),
@@ -575,14 +629,21 @@ export class SubagentsListComponent implements Component {
       t.fg("dim", `children: ${childIds.length > 0 ? childIds.join(", ") : "(none)"}`),
       width,
     ));
+  }
 
-    // 当前活动（仅内存 running 源；磁盘重建为 undefined）。streaming 可观测性。
+  /** 当前活动行（仅内存 running 源；磁盘重建为 undefined）。streaming 可观测性。 */
+  private pushActivitySection(content: string[], record: SubagentRecord, width: number): void {
     if (record.currentActivity) {
-      content.push(truncLine(t.fg("accent", `▸ ${record.currentActivity.label}`), width));
+      content.push(truncLine(this.theme.fg("accent", `▸ ${record.currentActivity.label}`), width));
     }
+  }
 
-
-
+  /**
+   * Output 段：标题 + displayItems（text 完整 word-wrap / toolCall 单行）。
+   * displayItems 为空但 eventLog 有数据时回退 eventLog（旧数据兼容）。
+   */
+  private pushOutputSection(content: string[], record: SubagentRecord, width: number): void {
+    const t = this.theme;
     content.push("");
     content.push(truncLine(t.fg("accent", t.bold("── Output ──")), width));
 
@@ -599,21 +660,31 @@ export class SubagentsListComponent implements Component {
       content.push(truncLine(t.fg("dim", "(no output)"), width));
     } else {
       for (const item of record.displayItems) {
-        if (item.type === "text") {
-          // detail 模式：text 完整换行展示（word-wrap），不截断。subagent 的正文输出
-          // 可能很长（报告/分析），截断成省略号会丢信息——detail 有翻屏，完整性优先。
-          // wrapText 输入纯文本，每行单独着色 toolOutput。
-          const textLines = wrapText(item.text ?? "", width);
-          for (const tl of textLines) {
-            content.push(truncLine(t.fg("toolOutput", tl), width));
-          }
-        } else {
-          // toolCall：单行足够（name + args 摘要 + ✓/✗），truncLine 截断。
-          content.push(truncLine(formatDisplayItem(item, t), width));
-        }
+        this.pushDisplayItemLines(content, item, width);
       }
     }
+  }
 
+  /** 单个 displayItem 行：text 完整 word-wrap（每行单独着色），toolCall 单行（name + args 摘要 + ✓/✗）。 */
+  private pushDisplayItemLines(content: string[], item: DisplayItem, width: number): void {
+    const t = this.theme;
+    if (item.type === "text") {
+      // detail 模式：text 完整换行展示（word-wrap），不截断。subagent 的正文输出
+      // 可能很长（报告/分析），截断成省略号会丢信息——detail 有翻屏，完整性优先。
+      // wrapText 输入纯文本，每行单独着色 toolOutput。
+      const textLines = wrapText(item.text ?? "", width);
+      for (const tl of textLines) {
+        content.push(truncLine(t.fg("toolOutput", tl), width));
+      }
+    } else {
+      // toolCall：单行足够（name + args 摘要 + ✓/✗），truncLine 截断。
+      content.push(truncLine(formatDisplayItem(item, t), width));
+    }
+  }
+
+  /** 尾段：result（word-wrap 完整展示）/ error（首行）/ session 文件路径，各自前置空行。 */
+  private pushTailSections(content: string[], record: SubagentRecord, width: number): void {
+    const t = this.theme;
     if (record.result) {
       content.push("");
       content.push(truncLine(t.fg("accent", "Result:"), width));
@@ -630,8 +701,6 @@ export class SubagentsListComponent implements Component {
       content.push("");
       content.push(truncLine(t.fg("dim", `session: ${record.sessionFile}`), width));
     }
-
-    return content;
   }
 
   /** 详情内容总行数（供 detailScrollInfo 算 max，不重复生成）。 */
