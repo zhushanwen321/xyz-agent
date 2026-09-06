@@ -13,7 +13,13 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { IDENTITY_CUSTOM_TYPE, reconstructFromFile } from "../session-reconstructor.ts";
+import {
+  IDENTITY_CUSTOM_TYPE,
+  readIdentityAnywhere,
+  readIdentityHeader,
+  readIdentityTail,
+  reconstructFromFile,
+} from "../session-reconstructor.ts";
 
 /** 写一行到文件（JSON.stringify + 换行）。 */
 function writeLine(file: number, obj: unknown): void {
@@ -568,5 +574,157 @@ describe("reconstructFromFile", () => {
       expect(rec!.worktree).toBe(true);
       expect(rec!.forkDepth).toBe(2);
     });
+  });
+});
+
+// ============================================================
+// 轻量 identity 扫描（readIdentityHeader / readIdentityTail / readIdentityAnywhere）
+// ============================================================
+// 直测三入口（parseIdentityFromText 的宿主）：头/尾窗口命中、预筛、从后往前、
+// 归一化 fallback、损坏行跳过。
+describe("轻量 identity 扫描（readIdentityHeader / readIdentityTail / readIdentityAnywhere）", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "sr-identity-scan-"));
+    filePath = path.join(tmpDir, "scan.jsonl");
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+  });
+
+  /** 写原始文本行（不经 JSON.stringify——填充行/截断行构造用）。 */
+  function writeRaw(lines: string[]): void {
+    fs.writeFileSync(filePath, lines.map((l) => `${l}\n`).join(""), "utf-8");
+  }
+
+  /** >64KB 的无特征填充行（预筛跳过，永不被 JSON.parse）。 */
+  const fillerLine = "F".repeat(70 * 1024);
+
+  it("identity 在头部 → 读出身份 + identity 之前途经的 model/thinkingLevel", () => {
+    writeRaw([
+      JSON.stringify(headerLine()),
+      JSON.stringify({ type: "model_change", provider: "p1", modelId: "m1", timestamp: new Date(500).toISOString() }),
+      JSON.stringify({ type: "thinking_level_change", thinkingLevel: "high", timestamp: new Date(600).toISOString() }),
+      JSON.stringify(identityEntry({
+        id: "bg-9", agent: "worker", mode: "sync", task: "scan", startedAt: 42,
+        slug: "s9", rootSessionId: "sess-R", depth: 1, forkDepth: 0,
+      })),
+    ]);
+    expect(readIdentityHeader(filePath)).toEqual({
+      id: "bg-9",
+      agent: "worker",
+      mode: "sync",
+      task: "scan",
+      slug: "s9",
+      startedAt: 42,
+      rootSessionId: "sess-R",
+      parentRecordId: undefined,
+      depth: 1,
+      forkDepth: 0,
+      chatMode: undefined,
+      worktree: undefined,
+      model: "p1/m1",
+      thinkingLevel: "high",
+      sessionFile: filePath,
+    });
+  });
+
+  it("identity 之后的 model_change 不捕获（找到即停）", () => {
+    writeRaw([
+      JSON.stringify(headerLine()),
+      JSON.stringify(identityEntry({ id: "bg-8", agent: "w", mode: "background", task: "t", startedAt: 1 })),
+      JSON.stringify({ type: "model_change", provider: "late", modelId: "m", timestamp: new Date(900).toISOString() }),
+    ]);
+    expect(readIdentityHeader(filePath)?.model).toBe("");
+  });
+
+  it("头部无 identity → readIdentityHeader undefined", () => {
+    writeRaw([JSON.stringify(headerLine()), JSON.stringify({ type: "model_change", provider: "p", modelId: "m" })]);
+    expect(readIdentityHeader(filePath)).toBeUndefined();
+  });
+
+  it("文件缺失 → 三入口均 undefined（不抛）", () => {
+    const missing = path.join(tmpDir, "nope.jsonl");
+    expect(readIdentityHeader(missing)).toBeUndefined();
+    expect(readIdentityTail(missing)).toBeUndefined();
+    expect(readIdentityAnywhere(missing)).toBeUndefined();
+  });
+
+  it("identity 仅在尾部（>64KB 填充）→ header miss / tail 命中 / anywhere 命中", () => {
+    writeRaw([
+      JSON.stringify(headerLine()),
+      fillerLine,
+      JSON.stringify(identityEntry({ id: "bg-tail", agent: "w", mode: "background", task: "t", startedAt: 7 })),
+    ]);
+    expect(readIdentityHeader(filePath)).toBeUndefined();
+    const tail = readIdentityTail(filePath);
+    expect(tail?.id).toBe("bg-tail");
+    // model/thinkingLevel 在尾部窗口外 → best-effort 空/undefined
+    expect(tail?.model).toBe("");
+    expect(tail?.thinkingLevel).toBeUndefined();
+    expect(readIdentityAnywhere(filePath)?.id).toBe("bg-tail");
+  });
+
+  it("尾部多轮 identity → tail/anywhere 从后往前取最后一条（最新鲜）", () => {
+    writeRaw([
+      JSON.stringify(headerLine()),
+      fillerLine,
+      JSON.stringify(identityEntry({ id: "bg-old", agent: "w", mode: "background", task: "t", startedAt: 1 })),
+      JSON.stringify(identityEntry({ id: "bg-new", agent: "w", mode: "background", task: "t2", startedAt: 2 })),
+    ]);
+    expect(readIdentityTail(filePath)?.id).toBe("bg-new");
+    expect(readIdentityAnywhere(filePath)?.id).toBe("bg-new");
+  });
+
+  it("尾部块首行残缺（含特征串的截断 JSON）→ 跳过该行，后续行仍命中", () => {
+    writeRaw([
+      JSON.stringify(headerLine()),
+      fillerLine,
+      '{"type":"custom","customType":"subagent-identity","data":{"id":"trunc"', // 截断行
+      JSON.stringify(identityEntry({ id: "bg-after-trunc", agent: "w", mode: "background", task: "t", startedAt: 3 })),
+    ]);
+    expect(readIdentityTail(filePath)?.id).toBe("bg-after-trunc");
+  });
+
+  it("旧 identity（parentSessionId、无 slug/depth）→ rootSessionId fallback + slug 兜底空串 + depth 0", () => {
+    writeRaw([
+      JSON.stringify(headerLine()),
+      JSON.stringify(identityEntry({ id: "bg-old", agent: "w", mode: "background", task: "t", startedAt: 1, parentSessionId: "sess-legacy" })),
+    ]);
+    expect(readIdentityHeader(filePath)).toMatchObject({
+      id: "bg-old",
+      slug: "",
+      rootSessionId: "sess-legacy",
+      depth: 0,
+      forkDepth: undefined,
+    });
+  });
+
+  it("identity 的 chatMode/worktree 透传到轻量 recon", () => {
+    writeRaw([
+      JSON.stringify(headerLine()),
+      JSON.stringify(identityEntry({ id: "bg-chat", agent: "w", mode: "background", task: "t", startedAt: 1, chatMode: true, worktree: true })),
+    ]);
+    expect(readIdentityHeader(filePath)).toMatchObject({ chatMode: true, worktree: true });
+  });
+
+  it("identity data 非法（缺 task）→ 各入口 undefined", () => {
+    writeRaw([
+      JSON.stringify(headerLine()),
+      JSON.stringify(identityEntry({ id: "bg-bad", agent: "w", mode: "background", startedAt: 1 })), // 缺 task
+    ]);
+    expect(readIdentityHeader(filePath)).toBeUndefined();
+    expect(readIdentityTail(filePath)).toBeUndefined();
+    expect(readIdentityAnywhere(filePath)).toBeUndefined();
+  });
+
+  it("损坏行（无特征串）预筛跳过，identity 行仍命中", () => {
+    writeRaw([
+      "THIS IS NOT JSON",
+      JSON.stringify(identityEntry({ id: "bg-prefilter", agent: "w", mode: "background", task: "t", startedAt: 5 })),
+    ]);
+    expect(readIdentityHeader(filePath)?.id).toBe("bg-prefilter");
   });
 });

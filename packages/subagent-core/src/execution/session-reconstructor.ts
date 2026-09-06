@@ -693,48 +693,62 @@ export function readIdentityTail(sessionFile: string): IdentityHeaderRecon | und
   return undefined;
 }
 
-/** 从文本片段解析 identity（头部/全文两入口共享）。解析到 identity 即停（返回）；
- *  找不到返回 undefined。model/thinking_level 仅在 identity 之前的途经 entry 中
- *  best-effort 提取，详情场景由全量重建补齐。 */
-function parseIdentityFromText(text: string, sessionFile: string): IdentityHeaderRecon | undefined {
-  let identity: SubagentIdentityData | undefined;
-  let model = "";
-  let thinkingLevel: string | undefined;
-  for (const line of text.split("\n")) {
-    const s = line.trim();
-    if (!s) continue;
-    // 预筛（[S-4] 同款值匹配）：只有含三种目标 entry 值串的行才值得 JSON.parse——
-    // head 64KB 内大 toolResult 行（数十 KB/行）占多数，全量 parse 是冷扫描 CPU 大头。
-    // 值字符串在任意序列化格式下连续出现，不耦合 pi 的空格习惯。
-    if (
-      !s.includes(IDENTITY_CUSTOM_TYPE) &&
-      !s.includes('"model_change"') &&
-      !s.includes('"thinking_level_change"')
-    ) {
-      continue;
-    }
-    let entry: JsonlEntry;
-    try {
-      entry = JSON.parse(s) as JsonlEntry;
-    } catch {
-      continue; // 损坏行/截断行（头部读取边界）跳过
-    }
-    if (entry.type === "custom" && entry.customType === IDENTITY_CUSTOM_TYPE) {
-      if (isIdentityData(entry.data)) {
-        identity = entry.data;
-        break; // 找到即停（后续行不再解析）
-      }
-    } else if (entry.type === "model_change") {
-      if (typeof entry.provider === "string" && typeof entry.modelId === "string") {
-        model = `${entry.provider}/${entry.modelId}`;
-      }
-    } else if (entry.type === "thinking_level_change") {
-      if (typeof entry.thinkingLevel === "string") thinkingLevel = entry.thinkingLevel;
-    }
-  }
-  if (!identity) return undefined;
+// ============================================================
+// 轻量 identity 扫描内部 helper（parseIdentityFromText 按阶段分发）
+// ============================================================
 
-  // 归一化与全量 recon 同源：rootSessionId fallback 旧字段、slug 兜底空串。
+/**
+ * 预筛（[S-4] 同款值匹配）：只有含三种目标 entry 值串的行才值得 JSON.parse——
+ * head 64KB 内大 toolResult 行（数十 KB/行）占多数，全量 parse 是冷扫描 CPU 大头。
+ * 值字符串在任意序列化格式下连续出现，不耦合 pi 的空格习惯。
+ */
+function lineMayCarryScannableEntry(s: string): boolean {
+  return (
+    s.includes(IDENTITY_CUSTOM_TYPE) ||
+    s.includes('"model_change"') ||
+    s.includes('"thinking_level_change"')
+  );
+}
+
+/** 轻量扫描的可变累积态（identity + 途经 model/thinkingLevel）。 */
+interface LightIdentityScan {
+  identity: SubagentIdentityData | undefined;
+  model: string;
+  thinkingLevel: string | undefined;
+}
+
+/**
+ * 单条 entry 并入扫描态。identity 命中（custom + customType 匹配 + data 合法）返回
+ * true 供调用方 break（找到即停，后续行不再解析）；其余恒 false。三个目标 type 互斥，
+ * 与原 if/else-if 链语义一致；custom 但 data 非法 → 不并入、不中断扫描。
+ */
+function absorbScannedEntry(state: LightIdentityScan, entry: JsonlEntry): boolean {
+  if (entry.type === "custom" && entry.customType === IDENTITY_CUSTOM_TYPE) {
+    if (isIdentityData(entry.data)) {
+      state.identity = entry.data;
+      return true;
+    }
+    return false;
+  }
+  if (entry.type === "model_change") {
+    // model_change: {provider, modelId} → "provider/modelId"（与 record.model 同形）。
+    if (typeof entry.provider === "string" && typeof entry.modelId === "string") {
+      state.model = `${entry.provider}/${entry.modelId}`;
+    }
+    return false;
+  }
+  if (entry.type === "thinking_level_change") {
+    if (typeof entry.thinkingLevel === "string") state.thinkingLevel = entry.thinkingLevel;
+  }
+  return false;
+}
+
+/** 扫描态 → IdentityHeaderRecon（归一化与全量 recon 同源：rootSessionId fallback 旧字段、slug 兜底空串）。 */
+function toIdentityRecon(
+  state: LightIdentityScan,
+  identity: SubagentIdentityData,
+  sessionFile: string,
+): IdentityHeaderRecon {
   const rootSessionId = identity.rootSessionId ?? identity.parentSessionId;
   return {
     id: identity.id,
@@ -749,8 +763,29 @@ function parseIdentityFromText(text: string, sessionFile: string): IdentityHeade
     forkDepth: identity.forkDepth,
     chatMode: identity.chatMode,
     worktree: identity.worktree,
-    model,
-    thinkingLevel,
+    model: state.model,
+    thinkingLevel: state.thinkingLevel,
     sessionFile,
   };
+}
+
+/** 从文本片段解析 identity（头部/全文两入口共享）。解析到 identity 即停（返回）；
+ *  找不到返回 undefined。model/thinking_level 仅在 identity 之前的途经 entry 中
+ *  best-effort 提取，详情场景由全量重建补齐。 */
+function parseIdentityFromText(text: string, sessionFile: string): IdentityHeaderRecon | undefined {
+  const state: LightIdentityScan = { identity: undefined, model: "", thinkingLevel: undefined };
+  for (const line of text.split("\n")) {
+    const s = line.trim();
+    if (!s) continue;
+    if (!lineMayCarryScannableEntry(s)) continue;
+    let entry: JsonlEntry;
+    try {
+      entry = JSON.parse(s) as JsonlEntry;
+    } catch {
+      continue; // 损坏行/截断行（头部读取边界）跳过
+    }
+    if (absorbScannedEntry(state, entry)) break; // 找到即停（后续行不再解析）
+  }
+  if (!state.identity) return undefined;
+  return toIdentityRecon(state, state.identity, sessionFile);
 }

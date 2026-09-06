@@ -12,6 +12,7 @@ import {
   getFullText,
   getFullTextFrom,
   getTotalUsage,
+  jsonlToAgentEvent,
   markReconstructedStatus,
   resurrectClosed,
   nextRoundBaseTurnIndex,
@@ -1338,6 +1339,156 @@ describe("createRecord 引擎留痕字段（P4）", () => {
     expect(entry.engineFallback).toEqual({ from: "zcode", reason: "engine_probe_failed" });
     // 存量 record（无字段）投影后同样缺省——消费方按 pi 投影，零迁移
     expect(toSubagentRecordEntry(base).engine).toBeUndefined();
+  });
+});
+
+// ============================================================
+// jsonlToAgentEvent — subprocess JSONL → AgentEvent 翻译
+// ============================================================
+describe("jsonlToAgentEvent（JSONL → AgentEvent 翻译）", () => {
+  it("不映射类型（session/message_start/turn_start/tool_execution_update）→ 空数组", () => {
+    expect(jsonlToAgentEvent({ type: "session" })).toEqual([]);
+    expect(jsonlToAgentEvent({ type: "message_start" })).toEqual([]);
+    expect(jsonlToAgentEvent({ type: "turn_start" })).toEqual([]);
+    expect(jsonlToAgentEvent({ type: "tool_execution_update" })).toEqual([]);
+  });
+
+  it("未知类型 → 空数组（落空语义）", () => {
+    expect(jsonlToAgentEvent({ type: "something_new" })).toEqual([]);
+  });
+
+  it("tool_execution_start → tool_start（toolName/args 透传）", () => {
+    expect(jsonlToAgentEvent({ type: "tool_execution_start", toolName: "read", args: { path: "/x.ts" } })).toEqual([
+      { type: "tool_start", toolName: "read", args: { path: "/x.ts" } },
+    ]);
+  });
+
+  it("tool_execution_start：toolName 非字符串归一空串", () => {
+    expect(jsonlToAgentEvent({ type: "tool_execution_start", toolName: 42 })).toEqual([
+      { type: "tool_start", toolName: "", args: undefined },
+    ]);
+  });
+
+  it("tool_execution_end → tool_end（isError === true 才成立，result 透传）", () => {
+    const result = { content: [{ type: "text", text: "out" }] };
+    expect(
+      jsonlToAgentEvent({ type: "tool_execution_end", toolName: "bash", args: { command: "ls" }, result, isError: true }),
+    ).toEqual([
+      { type: "tool_end", toolName: "bash", args: { command: "ls" }, result, isError: true },
+    ]);
+    // isError 非 true（字符串 "yes" / 缺失）→ false
+    expect(
+      jsonlToAgentEvent({ type: "tool_execution_end", toolName: "bash", isError: "yes" })[0],
+    ).toMatchObject({ isError: false });
+    expect(
+      jsonlToAgentEvent({ type: "tool_execution_end", toolName: "bash" })[0],
+    ).toMatchObject({ isError: false });
+  });
+
+  it("message_update：thinking_delta（delta 字符串透传 / 非字符串归一空串）", () => {
+    expect(
+      jsonlToAgentEvent({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: "hmm" } }),
+    ).toEqual([{ type: "thinking_delta", delta: "hmm" }]);
+    expect(
+      jsonlToAgentEvent({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: 42 } }),
+    ).toEqual([{ type: "thinking_delta", delta: "" }]);
+  });
+
+  it("message_update：text_delta（delta 非字符串 String() 归一）", () => {
+    expect(
+      jsonlToAgentEvent({ type: "message_update", assistantMessageEvent: { delta: "txt" } }),
+    ).toEqual([{ type: "text_delta", delta: "txt" }]);
+    expect(
+      jsonlToAgentEvent({ type: "message_update", assistantMessageEvent: { delta: 42 } }),
+    ).toEqual([{ type: "text_delta", delta: "42" }]);
+  });
+
+  it("message_update：ame 缺失 / delta 缺失 → 不产出", () => {
+    expect(jsonlToAgentEvent({ type: "message_update" })).toEqual([]);
+    expect(jsonlToAgentEvent({ type: "message_update", assistantMessageEvent: undefined })).toEqual([]);
+    expect(jsonlToAgentEvent({ type: "message_update", assistantMessageEvent: { type: "other" } })).toEqual([]);
+  });
+
+  it("turn_end → [{type:'turn_end'}]", () => {
+    expect(jsonlToAgentEvent({ type: "turn_end" })).toEqual([{ type: "turn_end" }]);
+  });
+
+  it("message_end：usage 拍平 + cost.total 提取 + stopReason=error 额外产 error 事件（双事件）", () => {
+    const events = jsonlToAgentEvent({
+      type: "message_end",
+      message: {
+        usage: { input: 10, output: 20, cacheRead: 5, cacheWrite: 3, cost: { total: 0.5 } },
+        stopReason: "error",
+        errorMessage: "boom",
+      },
+    });
+    expect(events).toEqual([
+      { type: "message_end", usage: { input: 10, output: 20, cacheRead: 5, cacheWrite: 3, cost: 0.5 } },
+      { type: "error", message: "boom" },
+    ]);
+  });
+
+  it("message_end：stopReason=aborted 无 errorMessage → raw.reason fallback，再兜底 String(stopReason)", () => {
+    expect(
+      jsonlToAgentEvent({ type: "message_end", message: { stopReason: "aborted" }, reason: "user aborted" }),
+    ).toEqual([
+      { type: "error", message: "user aborted" },
+    ]);
+    expect(
+      jsonlToAgentEvent({ type: "message_end", message: { stopReason: "aborted" } }),
+    ).toEqual([
+      { type: "error", message: "aborted" },
+    ]);
+  });
+
+  it("message_end：usage 缺 cost → cost undefined；stopReason=stop 不产 error 事件", () => {
+    const events = jsonlToAgentEvent({
+      type: "message_end",
+      message: { usage: { input: 1, output: 1 }, stopReason: "stop" },
+    });
+    expect(events).toEqual([
+      { type: "message_end", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: undefined } },
+    ]);
+  });
+
+  it("message_end：message 缺失 / stopReason 正常 → 空数组或仅 usage", () => {
+    expect(jsonlToAgentEvent({ type: "message_end" })).toEqual([]);
+    expect(jsonlToAgentEvent({ type: "message_end", message: {} })).toEqual([]);
+  });
+
+  it("compaction_start → [{type:'compaction'}]", () => {
+    expect(jsonlToAgentEvent({ type: "compaction_start" })).toEqual([{ type: "compaction" }]);
+  });
+
+  it("翻译产物喂 updateFromEvent 与 live 事件同构（text/tool/turn 收口进 turns[]）", () => {
+    const r = makeRecord();
+    for (const event of [
+      ...jsonlToAgentEvent({ type: "tool_execution_start", toolName: "read", args: { path: "/a.ts" } }),
+      ...jsonlToAgentEvent({ type: "message_update", assistantMessageEvent: { delta: "answer" } }),
+      ...jsonlToAgentEvent({ type: "tool_execution_end", toolName: "read", args: { path: "/a.ts" }, result: { content: [] }, isError: false }),
+      ...jsonlToAgentEvent({ type: "message_end", message: { usage: { input: 7, output: 3, cacheRead: 0, cacheWrite: 0, cost: { total: 0.1 } } } }),
+      ...jsonlToAgentEvent({ type: "turn_end" }),
+    ]) {
+      updateFromEvent(r, event);
+    }
+    expect(r.turns[0]?.text).toBe("answer");
+    expect(r.turns[0]?.toolCalls[0]).toMatchObject({ toolName: "read", _status: "done" });
+    expect(r.turns[0]?.usageDelta).toEqual({ input: 7, output: 3, cacheRead: 0, cacheWrite: 0, cost: 0.1 });
+    expect(r.totalTokens).toBe(10);
+    expect(r.turnCount).toBe(1);
+  });
+});
+
+// ============================================================
+// addUsage 分支语义（经 message_end 累积路径锁定）
+// ============================================================
+describe("addUsage 分支语义（message_end 累积路径）", () => {
+  it("首条 usage 缺 cost → cost 保留 undefined；累加分支缺 cost → 归 0（number）", () => {
+    const r = makeRecord();
+    updateFromEvent(r, { type: "message_end", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } });
+    expect(r.turns[0]!.usageDelta?.cost).toBeUndefined();
+    updateFromEvent(r, { type: "message_end", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } });
+    expect(r.turns[0]!.usageDelta?.cost).toBe(0);
   });
 });
 
