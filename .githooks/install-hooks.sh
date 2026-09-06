@@ -893,6 +893,43 @@ else
 fi
 
 # ============================================================================
+# 流写逃逸护栏（2026-09-04 runtime 整机崩溃事故护栏，与 ci.yml invariant 同源直调）
+#   packages/runtime/src 有变更时触发：scripts/check-unsafe-stream-writes.mjs
+#   （R1 裸流写 / R2 socket error 挂载 / R4 readline 转发吞咽）。豁免唯一登记
+#   入口 = scripts/check-unsafe-stream-writes.allowlist.txt（随 git 跟踪，无参
+#   调用自动读取；CLI 传参不生效——pre-commit/CI 均无参调用）。
+#   [HISTORICAL] 本段曾只写入 .bare/hooks 运行时副本而漏掉本安装源：任何
+#   worktree 的 pnpm install（prepare → 本脚本）都会用无护栏段的源覆盖运行时
+#   hook，护栏静默失效（2026-09-04 S2 验收实测拦截失效后定位）。SSOT = 本文件。
+#   注：不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
+# ============================================================================
+
+UNSAFE_STREAM_CHECKER="scripts/check-unsafe-stream-writes.mjs"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    if echo "$STAGED_FILES" | grep -q "^$RUNTIME_SRC/"; then
+        print_section "[流写逃逸护栏]"
+        echo -e "${BLUE}[INFO] runtime 源码有变更，扫描流写逃逸风险...${NC}"
+
+        if [ ! -f "$UNSAFE_STREAM_CHECKER" ]; then
+            echo -e "${RED}[ERROR] 找不到 $UNSAFE_STREAM_CHECKER${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+
+        node "$UNSAFE_STREAM_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}[OK] runtime 源码无变更，跳过流写逃逸护栏${NC}"
+    fi
+fi
+
+# ============================================================================
 # AC7 extension-host 边界检查（packages/core 源码有变更时触发）
 # ============================================================================
 
@@ -1213,6 +1250,43 @@ else
 fi
 
 # ============================================================================
+# 测试 flake 卫生检查（F5 no-bail + F3 递归删除重试）
+#   [HISTORICAL] 一族「测试自身引入的满载 flake」中两类静态可检模式：
+#     F5 - 根 package.json scripts.test 缺 --no-bail：pnpm 递归 first-fail 即中止
+#         尾部包执行，一次 flake 只暴露首个失败包，掩盖失败全貌（commit b7ec0298a）。
+#     F3 - 测试内 recursive 删除缺 maxRetries：teardown 递归删除与在途异步写竞争，
+#         满载下 ENOTEMPTY 满载 flake（commit d9ad39cb8）。
+#   F5 每次提交都跑（读一个 json，成本 ~0）；F3 仅 staged 命中测试文件 pattern
+#   （/test/、/__tests__/、.test.ts、.test.mjs、.spec.ts，排除 node_modules）时扫描，
+#   checker 内部按同一 pattern 过滤，无命中零成本。不设独立 SKIP_* 开关
+#   （R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
+# ============================================================================
+
+FLAKE_HYGIENE_CHECKER=".githooks/check_test_flake_hygiene.py"
+TEST_FILE_STAGED=$(echo "$STAGED_FILES" | grep -E "(/test/|/__tests__/|\.test\.(ts|mjs)|\.spec\.ts$)" | grep -v "node_modules" || true)
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    print_section "[测试 flake 卫生检查]"
+    if [ ! -f "$FLAKE_HYGIENE_CHECKER" ]; then
+        echo -e "${RED}[ERROR] 找不到检查脚本 $FLAKE_HYGIENE_CHECKER${NC}"
+        exit 1
+    fi
+    if [ -n "$TEST_FILE_STAGED" ]; then
+        echo -e "${BLUE}[INFO] staged 含测试文件，同时扫描 recursive 删除 maxRetries 规则...${NC}"
+    fi
+    # if ! 形态跑 checker：set -e 下非零退出会先于 EXIT_CODE=$? 捕获终止本 hook
+    if ! python3 "$FLAKE_HYGIENE_CHECKER"; then
+        echo ""
+        echo -e "${RED}[ERROR] 测试 flake 卫生检查失败${NC}"
+        echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}[OK] 测试 flake 卫生检查通过${NC}"
+else
+    echo -e "${YELLOW}[SKIP] 测试 flake 卫生检查已跳过${NC}"
+fi
+
+# ============================================================================
 # 全部通过
 # ============================================================================
 
@@ -1227,6 +1301,17 @@ exit 0
 HOOK_EOF
 
 chmod +x "$GIT_HOOKS_DIR/pre-commit"
+
+# 安装后自检：生成的 pre-commit 必须含流写逃逸护栏段。
+# 防「源缺段/heredoc 生成失败」——本脚本源若缺护栏段或 heredoc 损坏，此处 exit 1 拦下。
+# 边界：防不了「旧版源覆盖」（旧源无此自检，静默装旧版），该残留风险登记在
+# docs/design/runtime-stream-fault-isolation.impl-plan.md §7 变更历史 2026-09-04 条目。
+# 匹配护栏段功能行（变量赋值），不匹配任意出现——仅残留注释/引用的坏源同样拦下。
+if ! grep -q 'UNSAFE_STREAM_CHECKER=' "$GIT_HOOKS_DIR/pre-commit"; then
+    echo -e "${RED}[ERROR] 安装后自检失败：生成的 pre-commit 缺少流写逃逸护栏段（check-unsafe-stream-writes）${NC}"
+    echo -e "${YELLOW}[FIX] 安装源已过期或 heredoc 损坏：对照 docs/design/runtime-stream-fault-isolation.md §5 核对本 worktree 的 .githooks/install-hooks.sh 是否含护栏段，更新到最新分支后重跑 bash .githooks/install-hooks.sh${NC}"
+    exit 1
+fi
 
 echo -e "${GREEN}[OK] pre-commit hook 安装完成${NC}"
 echo ""
@@ -1258,6 +1343,7 @@ echo -e "  ${GREEN}[+]${NC} ws-client send 直调检查（D3 统一门面）"
 echo -e "  ${GREEN}[+]${NC} runtime services 循环依赖检查（D6c 防护）"
 echo -e "  ${GREEN}[+]${NC} CSP 能力一致性检查（源码 eval/WebAssembly vs index.html CSP 指令）"
 echo -e "  ${GREEN}[+]${NC} Runtime Bundle 验证（依赖打包 + CJS 兼容 + 健康检查）"
+echo -e "  ${GREEN}[+]${NC} 流写逃逸护栏（runtime 变更时触发：R1 裸流写 / R2 socket error / R4 readline 转发）"
 echo -e "  ${GREEN}[+]${NC} AC7 extension-host 边界检查（core 变更时触发，禁 domain/stores import）"
 echo -e "  ${GREEN}[+]${NC} 打包配置预检查（asarUnpack/files 一致性 + symlink 检查）"
 echo -e "  ${GREEN}[+]${NC} i18n CJK 残留检测（.vue 模板不得含硬编码中文）"
@@ -1265,6 +1351,7 @@ echo -e "  ${GREEN}[+]${NC} i18n locale 双侧 key 对齐检查（zh-CN === en-U
 echo -e "  ${GREEN}[+]${NC} pi 边界可靠性护栏（G1 语义登记守卫 / G3 档位差分探针 / G4 subagent 通道禁则）"
 echo -e "  ${GREEN}[+]${NC} subagent-core 依赖闭包守卫（D9-① 闭包 + 检查点 5 worker 零宿主服务）"
 echo -e "  ${GREEN}[+]${NC} 文档-代码符号漂移守卫（C-proc-10：设计文档引用已删除/改名符号即拦截）"
+echo -e "  ${GREEN}[+]${NC} 测试 flake 卫生检查（F5 scripts.test --no-bail + F3 recursive 删除 maxRetries）"
 echo ""
 echo -e "${CYAN}Hook 脚本位置:${NC} .githooks/"
 echo ""
