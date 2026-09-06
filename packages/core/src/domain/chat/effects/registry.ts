@@ -103,6 +103,77 @@ function countDrained(prev: string[], next: string[]): string[] {
   return drained
 }
 
+/** W06-B：帧数组 → 快照 state（空数组视为无内容，不设维度字段）。 */
+function queueStateOf(steering: string[] | undefined, followUp: string[] | undefined): QueueState {
+  const state: QueueState = {}
+  if (steering?.length) state.steering = steering
+  if (followUp?.length) state.followUp = followUp
+  return state
+}
+
+/**
+ * [steer-bubble u2 / D2 维护点 1] pending→complete 驱动的腿 1 消费：计数差集找出「被 drain
+ * 投递的」条数（prev 比 new 多出的元素）。
+ * [B1] 不能用 includes（子串语义）——重复文本 'A' 入队两条、drain 一条后 new=['A']，
+ * includes('A')===true 会漏判，第二条 pending 永久卡住。计数差集按出现次数精确匹配。
+ * [W14] 差集数组的 length = N，drainN 计数 FIFO 取前 N 条（不按文本匹配——pi 入队存
+ * skill 展开后文本 ≠ 提交原文，文本相等匹配在该场景必丢消息，D1 表末行 + D6）。
+ * steer / follow-up 各自差集各自计数（sendMode 隔离，防跨类型同文本误取——W5 语义保留）。
+ * 调用时序与原内联逐字一致：steer drain → steer appendUser 循环 → followUp drain →
+ * followUp appendUser 循环 → 两维度 inflight 各按实取数累加。
+ *
+ * 腿 1 消费点 inflight += 实取数（m = drainN 实际返回数组长度，两维度各算各的）：
+ * drain 帧是投递证据，这些气泡「已显示待 message_end 确认」。按实取数 m 计而非差集
+ * N——m < N 的差额 = 扩展注入等 buffer 无货条目，未显示即不确认，其 message_end
+ * 到达时走腿 2 includes 兜底。m = 0 时 incrementInflight no-op（不产生零值条目）。
+ *
+ * [steer-bubble Gate B AC-4 / dev 验证开关] globalThis.__XYZ_STEER_SKIP_LEG1__ = true 时
+ * 跳过腿 1 消费（模拟 drain 帧丢失——真实链路其余部分不动，快照照常写入），用于 AC-4
+ * 确定性触发验证腿 2 独立承担显示（devtools console 设置；产线无人设置恒 false）。
+ */
+function drainDeliveredByDiff(
+  ctx: MessageEffectContext,
+  sid: string,
+  prev: QueueState | undefined,
+  steering: string[] | undefined,
+  followUp: string[] | undefined,
+): void {
+  const skipLeg1 =
+    (globalThis as { __XYZ_STEER_SKIP_LEG1__?: boolean }).__XYZ_STEER_SKIP_LEG1__ === true
+  if (!prev || skipLeg1) return
+  const steerN = countDrained(prev.steering ?? [], steering ?? []).length
+  const steerDrained = ctx.drainN(sid, 'steer', steerN)
+  for (const segs of steerDrained) ctx.appendUser(sid, segs)
+  const followN = countDrained(prev.followUp ?? [], followUp ?? []).length
+  const followDrained = ctx.drainN(sid, 'follow-up', followN)
+  for (const segs of followDrained) ctx.appendUser(sid, segs)
+  ctx.incrementInflight(sid, steerDrained.length)
+  ctx.incrementInflight(sid, followDrained.length)
+}
+
+/**
+ * [steer-bubble u2 / D4] 快照写入/删条目：帧数组（steering/followUp）驱动 QueueBubble 快照。
+ * 投递侧 reconcilePending 裁剪已移除（见 queue_update handler 注释）；帧内
+ * pendingMessageCount 字段投递侧裁剪移除后前端已无消费方（仅 event-adapter 翻译附带，
+ * 与帧数组等值——W14 D6 的同源公式）。
+ */
+function commitQueueSnapshot(
+  queueStates: MessageEffectContext['queueStates'],
+  sid: string,
+  state: QueueState,
+): void {
+  const hasContent = !!state.steering?.length || !!state.followUp?.length
+  if (!hasContent) {
+    if (queueStates.value.has(sid)) {
+      const nextMap = new Map(queueStates.value)
+      nextMap.delete(sid)
+      queueStates.value = nextMap
+    }
+  } else {
+    queueStates.value = new Map(queueStates.value).set(sid, state)
+  }
+}
+
 /**
  * [steer-bubble u1 / docs/design/steer-followup-user-bubble-display.md D2 第 3 点]
  * 提取 message_end(user) 帧的投递文本——腿 2 includes 兜底判据的比对源。
@@ -787,62 +858,22 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   },
 
   'message.queue_update': (ctx, sid, payload) => {
-    const { queueStates, drainN, appendUser, incrementInflight } = ctx
     // W06-B：消息队列更新。payload（event-adapter）：{ steering?, followUp? }。
     // pi 发空数组 []（_emitQueueUpdate 总展开为数组），空数组视为无内容（length 判断）。
-    const state: QueueState = {}
+    // 分三阶段 helper（读取 / 腿 1 消费 / 快照落盘），编排顺序与原内联一致。
     const steering = readStringArray(payload, 'steering')
-    if (steering?.length) state.steering = steering
     const followUp = readStringArray(payload, 'followUp')
-    if (followUp?.length) state.followUp = followUp
-
-    // pending→complete 驱动：计数差集找出「被 drain 投递的」条数（prev 比 new 多出的元素）。
-    // [B1] 不能用 includes（子串语义）——重复文本 'A' 入队两条、drain 一条后 new=['A']，
-    // includes('A')===true 会漏判，第二条 pending 永久卡住。计数差集按出现次数精确匹配。
-    // [W14] 差集数组的 length = N，drainN 计数 FIFO 取前 N 条（不按文本匹配——pi 入队存
-    // skill 展开后文本 ≠ 提交原文，文本相等匹配在该场景必丢消息，D1 表末行 + D6）。
-    // steer / follow-up 各自差集各自计数（sendMode 隔离，防跨类型同文本误取——W5 语义保留）。
-    const prev = queueStates.value.get(sid)
-    // [steer-bubble Gate B AC-4 / dev 验证开关] globalThis.__XYZ_STEER_SKIP_LEG1__ = true 时
-    // 跳过腿 1 消费（模拟 drain 帧丢失——真实链路其余部分不动，快照照常写入），用于 AC-4
-    // 确定性触发验证腿 2 独立承担显示（devtools console 设置；产线无人设置恒 false）。
-    const skipLeg1 =
-      (globalThis as { __XYZ_STEER_SKIP_LEG1__?: boolean }).__XYZ_STEER_SKIP_LEG1__ === true
-    if (prev && !skipLeg1) {
-      const steerN = countDrained(prev.steering ?? [], steering ?? []).length
-      const steerDrained = drainN(sid, 'steer', steerN)
-      for (const segs of steerDrained) appendUser(sid, segs)
-      const followN = countDrained(prev.followUp ?? [], followUp ?? []).length
-      const followDrained = drainN(sid, 'follow-up', followN)
-      for (const segs of followDrained) appendUser(sid, segs)
-      // [steer-bubble u2 / docs/design/steer-followup-user-bubble-display.md D2 维护点 1]
-      // 腿 1 消费点 inflight += 实取数（m = drainN 实际返回数组长度，两维度各算各的）：
-      // drain 帧是投递证据，这些气泡「已显示待 message_end 确认」。按实取数 m 计而非差集
-      // N——m < N 的差额 = 扩展注入等 buffer 无货条目，未显示即不确认，其 message_end
-      // 到达时走腿 2 includes 兜底。m = 0 时 incrementInflight no-op（不产生零值条目）。
-      incrementInflight(sid, steerDrained.length)
-      incrementInflight(sid, followDrained.length)
-    }
+    const state = queueStateOf(steering, followUp)
+    const prev = ctx.queueStates.value.get(sid)
+    drainDeliveredByDiff(ctx, sid, prev, steering, followUp)
 
     // [steer-bubble u2 / D4] 投递侧 reconcilePending 裁剪已移除：drain 后立即裁到深度会
     // 吃掉腿 2（message_end(user)）还没回填的 segments——pi 时序保证 drain 帧先于
     // message_end（P1 探针），立即裁剪会让腿 2 的 segments 回填在正常路径下永远失效；
     // 且断连等场景 prev 缺失时以本帧深度裁空 buffer 是丢消息的不可逆放大器（F3）。
     // buffer 存活到 message_end 是 D2 双腿的工作前提；僵尸改由 G-023 时点
-    // （message_start(assistant)）条件清理（见该 handler）。帧数组（steering/followUp）
-    // 仍驱动 QueueBubble 快照写入；帧内 pendingMessageCount 字段投递侧裁剪移除后
-    // 前端已无消费方（仅 event-adapter 翻译附带，与帧数组等值——W14 D6 的同源公式）。
-
-    const hasContent = !!state.steering?.length || !!state.followUp?.length
-    if (!hasContent) {
-      if (queueStates.value.has(sid)) {
-        const nextMap = new Map(queueStates.value)
-        nextMap.delete(sid)
-        queueStates.value = nextMap
-      }
-    } else {
-      queueStates.value = new Map(queueStates.value).set(sid, state)
-    }
+    // （message_start(assistant)）条件清理（见该 handler）。
+    commitQueueSnapshot(ctx.queueStates, sid, state)
   },
 
   // ── FileChanges 通道（W10，ADR-0024 D5 baseline diff）──

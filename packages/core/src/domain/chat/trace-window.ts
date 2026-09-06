@@ -106,6 +106,79 @@ function isFailedProcessBlock(block: OrderedBlock): boolean {
  *   自然不计入 failedCount，无需特判。）
  * 空 blocks → { visible: [], compactedCount: 0, failedCount: 0 }。纯函数无副作用。
  */
+/** ① 全 turn 末位 text（flatIndex 最大的 text 块，单个）——不按 assistant 分组。
+ *  [2026-08-14 修正] 原「按 assistantId 分组各保留末位 text」针对多 assistant turn（ask-user/compact
+ *  续写），但 pi tool 循环协议下每 message_start 新 assistant Message，单 agent 一个 turn 跑几十次
+ *  循环产生几十个 assistant，按 assistant 分组会每 assistant 末位 text 都保留致 visible 爆炸（实测
+ *  61 assistant → ①=12 text）。改为全 turn 最后 text：流式正文始终可见，历史 text 进③候选池可被窗口收编。
+ *  多 assistant 续写场景的非末位回复经 takeover「展开全部」或历史 turn 查看。 */
+function findLastText(blocks: FlatBlock[]): FlatBlock | undefined {
+  let lastText: FlatBlock | undefined
+  for (const fb of blocks) {
+    if (fb.block.kind === 'text' && (!lastText || fb.flatIndex > lastText.flatIndex)) {
+      lastText = fb
+    }
+  }
+  return lastText
+}
+
+/** ② 进行中块：只保留全 turn 最后一个 streaming 块（flatIndex 最大的 streaming 非 text，单个）。
+ *  [2026-08-14 修正] 原按 streaming assistant 分组每 assistant 各一个，但 pi tool 循环历史 assistant
+ *  未正确 complete（上游 bug）致多 streaming assistant，②爆炸（实测 61 streaming → ②=61）。
+ *  改为单个最后 streaming 块：只展示「当前正在进行的最新动作」。 */
+function findLastInProgress(blocks: FlatBlock[]): FlatBlock | undefined {
+  let lastInProgress: FlatBlock | undefined
+  for (const fb of blocks) {
+    if (
+      fb.assistantStatus === 'streaming' &&
+      fb.block.kind !== 'text' &&
+      (!lastInProgress || fb.flatIndex > lastInProgress.flatIndex)
+    ) {
+      lastInProgress = fb
+    }
+  }
+  return lastInProgress
+}
+
+/** ③ 已完成过程块（压缩候选）：kind!=='text' 且不在②内 且（thinking 或 tool/agentgraph 非 error）。 */
+function collectCompletedProcessPool(blocks: FlatBlock[], inProgressSet: Set<number>): FlatBlock[] {
+  const completedProcessPool: FlatBlock[] = []
+  for (const fb of blocks) {
+    if (fb.block.kind === 'text') continue
+    if (inProgressSet.has(fb.flatIndex)) continue
+    if (fb.block.kind === 'thinking' || !isFailedProcessBlock(fb.block)) {
+      completedProcessPool.push(fb)
+    }
+  }
+  return completedProcessPool
+}
+
+/** 合并①②③三类（按 flatIndex 去重），按 flatIndex 升序输出；mergedIds = 去重后的
+ *  flatIndex 全集（compactedCount 的「属于 visible」判定用，与原 merged Map.has 同语义）。 */
+function mergeVisibleBlocks(
+  lastText: FlatBlock | undefined,
+  lastInProgress: FlatBlock | undefined,
+  windowed: FlatBlock[],
+): { visible: FlatBlock[]; mergedIds: Set<number> } {
+  const merged = new Map<number, FlatBlock>()
+  if (lastText) merged.set(lastText.flatIndex, lastText)
+  if (lastInProgress) merged.set(lastInProgress.flatIndex, lastInProgress)
+  for (const fb of windowed) merged.set(fb.flatIndex, fb)
+  const visible = [...merged.values()].sort((a, b) => a.flatIndex - b.flatIndex)
+  return { visible, mergedIds: new Set(merged.keys()) }
+}
+
+/** failedCount = 所有 error tool/agentgraph 块中不在 visible 内的数量。 */
+function countFailedOutsideVisible(blocks: FlatBlock[], visibleSet: Set<number>): number {
+  let failedCount = 0
+  for (const fb of blocks) {
+    if (isFailedProcessBlock(fb.block) && !visibleSet.has(fb.flatIndex)) {
+      failedCount += 1
+    }
+  }
+  return failedCount
+}
+
 export function computeTraceWindow(
   blocks: FlatBlock[],
   opts: { windowSize: number; takeover: boolean },
@@ -119,68 +192,23 @@ export function computeTraceWindow(
     return { visible: [...blocks], compactedCount: 0, failedCount: 0 }
   }
 
-  // ① 全 turn 末位 text（flatIndex 最大的 text 块，单个）——不按 assistant 分组。
-  // [2026-08-14 修正] 原「按 assistantId 分组各保留末位 text」针对多 assistant turn（ask-user/compact
-  // 续写），但 pi tool 循环协议下每 message_start 新 assistant Message，单 agent 一个 turn 跑几十次
-  // 循环产生几十个 assistant，按 assistant 分组会每 assistant 末位 text 都保留致 visible 爆炸（实测
-  // 61 assistant → ①=12 text）。改为全 turn 最后 text：流式正文始终可见，历史 text 进③候选池可被窗口收编。
-  // 多 assistant 续写场景的非末位回复经 takeover「展开全部」或历史 turn 查看。
-  let lastText: FlatBlock | undefined
-  for (const fb of blocks) {
-    if (fb.block.kind === 'text' && (!lastText || fb.flatIndex > lastText.flatIndex)) {
-      lastText = fb
-    }
-  }
-
-  // ② 进行中块：只保留全 turn 最后一个 streaming 块（flatIndex 最大的 streaming 非 text，单个）。
-  // [2026-08-14 修正] 原按 streaming assistant 分组每 assistant 各一个，但 pi tool 循环历史 assistant
-  // 未正确 complete（上游 bug）致多 streaming assistant，②爆炸（实测 61 streaming → ②=61）。
-  // 改为单个最后 streaming 块：只展示「当前正在进行的最新动作」。
-  let lastInProgress: FlatBlock | undefined
-  for (const fb of blocks) {
-    if (
-      fb.assistantStatus === 'streaming' &&
-      fb.block.kind !== 'text' &&
-      (!lastInProgress || fb.flatIndex > lastInProgress.flatIndex)
-    ) {
-      lastInProgress = fb
-    }
-  }
+  const lastText = findLastText(blocks)
+  const lastInProgress = findLastInProgress(blocks)
   const inProgressSet = new Set<number>(lastInProgress ? [lastInProgress.flatIndex] : [])
+  const completedProcessPool = collectCompletedProcessPool(blocks, inProgressSet)
 
-  // ③ 已完成过程块（压缩候选）：kind!=='text' 且不在②内 且（thinking 或 tool/agentgraph 非 error）。
-  const completedProcessPool: FlatBlock[] = []
-  for (const fb of blocks) {
-    if (fb.block.kind === 'text') continue
-    if (inProgressSet.has(fb.flatIndex)) continue
-    if (fb.block.kind === 'thinking' || !isFailedProcessBlock(fb.block)) {
-      completedProcessPool.push(fb)
-    }
-  }
   // 按 flatIndex 降序取前 windowSize 个作为 visible 的③部分。
   const windowed = [...completedProcessPool]
     .sort((a, b) => b.flatIndex - a.flatIndex)
     .slice(0, opts.windowSize)
 
-  // 合并三类（按 flatIndex 去重），按 flatIndex 升序输出。
-  const merged = new Map<number, FlatBlock>()
-  if (lastText) merged.set(lastText.flatIndex, lastText)
-  if (lastInProgress) merged.set(lastInProgress.flatIndex, lastInProgress)
-  for (const fb of windowed) merged.set(fb.flatIndex, fb)
-  const visible = [...merged.values()].sort((a, b) => a.flatIndex - b.flatIndex)
+  const { visible, mergedIds } = mergeVisibleBlocks(lastText, lastInProgress, windowed)
 
   // compactedCount = ③候选池总数 − visible 内属于③的数量。
-  const visibleInWindowed = windowed.filter((fb) => merged.has(fb.flatIndex)).length
+  const visibleInWindowed = windowed.filter((fb) => mergedIds.has(fb.flatIndex)).length
   const compactedCount = completedProcessPool.length - visibleInWindowed
 
-  // failedCount = 所有 error tool/agentgraph 块中不在 visible 内的数量。
-  const visibleSet = new Set(visible.map((fb) => fb.flatIndex))
-  let failedCount = 0
-  for (const fb of blocks) {
-    if (isFailedProcessBlock(fb.block) && !visibleSet.has(fb.flatIndex)) {
-      failedCount += 1
-    }
-  }
+  const failedCount = countFailedOutsideVisible(blocks, new Set(visible.map((fb) => fb.flatIndex)))
 
   return { visible, compactedCount, failedCount }
 }

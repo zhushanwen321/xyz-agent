@@ -697,6 +697,38 @@ function isAgentgraphToolName(toolName: string): boolean {
   return SUBAGENT_TOOL_NAMES.has(toolName) || WORKFLOW_TOOL_NAMES.has(toolName)
 }
 
+/** toolCall 块构造：agentgraph 工具名归 agentgraph kind（主路径/降级路径共用）。 */
+function toolBlockOf(tc: ToolCall): OrderedBlock {
+  return { kind: isAgentgraphToolName(tc.toolName) ? 'agentgraph' : 'tool', ref: tc }
+}
+
+/** 主路径：contentBlocks 非空时按其真实时序解出（text/thinking/toolCall 的 refId 回查）。 */
+function expandFromContentBlocks(blocks: NonNullable<Message['contentBlocks']>, msg: Message): OrderedBlock[] {
+  const result: OrderedBlock[] = []
+  for (const b of blocks) {
+    if (b.type === 'text') {
+      if (msg.content) result.push({ kind: 'text', ref: normalizeContent(msg.content) })
+    } else if (b.type === 'thinking') {
+      const th = msg.thinking?.find((t) => t.id === b.refId)
+      if (th) result.push({ kind: 'thinking', ref: th })
+    } else if (b.type === 'toolCall') {
+      const tc = msg.toolCalls?.find((t) => t.id === b.refId)
+      if (tc) result.push(toolBlockOf(tc))
+    }
+  }
+  return result
+}
+
+/** 降级路径：contentBlocks 缺失/为空时按 content 文本 + thinking + toolCalls 顺序解出。 */
+function expandFallback(msg: Message): OrderedBlock[] {
+  const fallback: OrderedBlock[] = []
+  const text = normalizeContent(msg.content)
+  if (text.trim()) fallback.push({ kind: 'text', ref: text })
+  for (const th of msg.thinking ?? []) fallback.push({ kind: 'thinking', ref: th })
+  for (const tc of msg.toolCalls ?? []) fallback.push(toolBlockOf(tc))
+  return fallback
+}
+
 /**
  * 把单条 assistant Message 的内部块按 contentBlocks 真实时序解成有序列表。
  * 纯函数：相同输入相同输出，无副作用。
@@ -704,30 +736,7 @@ function isAgentgraphToolName(toolName: string): boolean {
 export function expandAssistantBlocks(msg: Message): OrderedBlock[] {
   const blocks = msg.contentBlocks
   if (blocks && blocks.length > 0) {
-    const result: OrderedBlock[] = []
-    for (const b of blocks) {
-      if (b.type === 'text') {
-        if (msg.content) result.push({ kind: 'text', ref: normalizeContent(msg.content) })
-      } else if (b.type === 'thinking') {
-        const th = msg.thinking?.find((t) => t.id === b.refId)
-        if (th) result.push({ kind: 'thinking', ref: th })
-      } else if (b.type === 'toolCall') {
-        const tc = msg.toolCalls?.find((t) => t.id === b.refId)
-        if (tc) {
-          const kind = isAgentgraphToolName(tc.toolName) ? 'agentgraph' : 'tool'
-          result.push({ kind, ref: tc })
-        }
-      }
-    }
-    return result
+    return expandFromContentBlocks(blocks, msg)
   }
-  const fallback: OrderedBlock[] = []
-  const text = normalizeContent(msg.content)
-  if (text.trim()) fallback.push({ kind: 'text', ref: text })
-  for (const th of msg.thinking ?? []) fallback.push({ kind: 'thinking', ref: th })
-  for (const tc of msg.toolCalls ?? []) {
-    const kind = isAgentgraphToolName(tc.toolName) ? 'agentgraph' : 'tool'
-    fallback.push({ kind, ref: tc })
-  }
-  return fallback
+  return expandFallback(msg)
 }

@@ -89,28 +89,38 @@ export function parseStatusBarUpdate(msg: IncomingPluginMessage): InternalEvent 
   if (!Array.isArray(rawItems)) return null
   const items: StatusBarEntry[] = []
   for (const raw of rawItems) {
-    const item = asRecord(raw)
-    if (!item) continue
-    const id = asString(item.id)
-    const pluginId = asString(item.pluginId)
-    const text = asString(item.text)
-    const priority = typeof item.priority === 'number' ? item.priority : undefined
-    if (id === null || pluginId === null || text === null || priority === undefined) continue
-    const alignment = item.alignment === 'left' || item.alignment === 'right' ? item.alignment : 'left'
-    items.push({
-      id,
-      pluginId,
-      text,
-      tooltip: asOptionalString(item.tooltip),
-      alignment,
-      priority,
-      commandId: asOptionalString(item.commandId),
-      scope: item.scope === 'per-session' || item.scope === 'global' ? item.scope : undefined,
-      sessionId: asOptionalString(item.sessionId),
-    })
+    const item = parseStatusBarItem(raw)
+    if (item) items.push(item)
   }
   if (items.length === 0 && rawItems.length > 0) return null
   return { kind: 'plugin-status-bar-update', sessionId: resolveSessionId(msg, payload), items }
+}
+
+/**
+ * 单条 statusbar item 窄化（parseStatusBarUpdate 的逐条 helper，CT-D5）。
+ * 非 object、必填字段（id/pluginId/text）缺失或 priority 非 number → null（调用方跳过该条）；
+ * alignment 缺省/非法回退 'left'，scope 非法置 undefined，tooltip/commandId/sessionId 可选透传。
+ */
+function parseStatusBarItem(raw: unknown): StatusBarEntry | null {
+  const item = asRecord(raw)
+  if (!item) return null
+  const id = asString(item.id)
+  const pluginId = asString(item.pluginId)
+  const text = asString(item.text)
+  const priority = typeof item.priority === 'number' ? item.priority : undefined
+  if (id === null || pluginId === null || text === null || priority === undefined) return null
+  const alignment = item.alignment === 'left' || item.alignment === 'right' ? item.alignment : 'left'
+  return {
+    id,
+    pluginId,
+    text,
+    tooltip: asOptionalString(item.tooltip),
+    alignment,
+    priority,
+    commandId: asOptionalString(item.commandId),
+    scope: item.scope === 'per-session' || item.scope === 'global' ? item.scope : undefined,
+    sessionId: asOptionalString(item.sessionId),
+  }
 }
 
 function parseStatusSetUpdate(msg: IncomingPluginMessage): InternalEvent | null {

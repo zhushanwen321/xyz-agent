@@ -172,6 +172,14 @@ describe('useComposerSend.onSend', () => {
     expect(spies.clearInput).toHaveBeenCalledTimes(1)
   })
 
+  it('⑤b isCompacting + sessionId 为空（S6 守卫落空兜底）→ return，不入队不清输入不 toast', async () => {
+    const { deps, spies } = setup({ isCompacting: true, sessionId: null })
+    await useComposerSend(deps).onSend()
+    expect(spies.enqueueCompact).not.toHaveBeenCalled()
+    expect(spies.clearInput).not.toHaveBeenCalled()
+    expect(spies.toastError).not.toHaveBeenCalled()
+  })
+
   it('⑥ landing + bash empty → return，不提交', async () => {
     const { deps, spies } = setup({ variant: 'landing', bashExtract: { type: 'empty' } })
     await useComposerSend(deps).onSend()

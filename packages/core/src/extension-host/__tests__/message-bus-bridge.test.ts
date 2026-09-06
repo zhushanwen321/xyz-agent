@@ -436,6 +436,16 @@ describe('MessageBusBridge', () => {
       expect(emitted.some((x) => x.kind === 'error')).toBe(false)
     })
 
+    it('CT-D5 非 object 条目（string/null/number）同样跳过该条，保留其余条目', () => {
+      // 覆盖逐条窄化的 asRecord 落空分支（坏条目不只是字段缺失，还可能是非 object 值）
+      const result = parseStatusBarUpdate({
+        type: 'plugin:statusBarUpdate',
+        payload: { items: ['nope', null, 42, goodItem('good1', 'ok1')] },
+      })
+      expect(result).not.toBeNull()
+      expect(((result ?? {}) as { items?: Array<{ id: string }> }).items?.map((i) => i.id)).toEqual(['good1'])
+    })
+
     it('CT-D5 全部条目均坏（items 非空零存活）→ 仍整包 error（毒化上报），与合法清空区分', () => {
       const { source, bus } = makeBridge()
       const { emitted } = spyEmit(bus)

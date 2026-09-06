@@ -133,6 +133,26 @@ describe('ContributionRegistry.loadExternal（IF4/ERR5）', () => {
     expect(all.find((c) => c.type === 'configuration')?.placement).toBe('settings')
   })
 
+  it('TC-5h: 跨 type 输出顺序固定（view→menu→command→statusBarItem→slashCommand→configuration）', () => {
+    // contributes 字段按逆序声明，验证解析顺序由 parseContributes 的段 concat 顺序决定，
+    // 与 descriptor 字段声明顺序无关（注册顺序契约：同 placement 下先注册先排位）
+    const { registry } = setup()
+    registry.loadExternal([{
+      pluginId: 'ord1',
+      contributes: {
+        configuration: { properties: { a: { type: 'string' } } },
+        slashCommands: [{ name: 's1', description: '' }],
+        statusBarItems: [{ id: 'sb1', text: '', priority: 0 }],
+        commands: [{ command: 'c1', title: '' }],
+        menus: { 'composer.toolbar': [{ command: 'm1' }] },
+        views: [{ id: 'v1', title: '', placement: 'sidebar.tab' }],
+      },
+    }])
+    expect(registry.getContributions({ pluginId: 'ord1' }).map((c) => c.type)).toEqual([
+      'view', 'menu', 'command', 'statusBarItem', 'slashCommand', 'configuration',
+    ])
+  })
+
   it('TC-5d: 重复注入同一 pluginId 覆盖不翻倍（幂等）', () => {
     const { registry } = setup()
     const d: PluginDescriptorLike = {
