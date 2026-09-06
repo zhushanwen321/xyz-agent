@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { mkdtemp, mkdir, writeFile, rm, cp } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -297,6 +297,46 @@ describe('PluginRegistry', () => {
 
     expect(descriptors.find(d => d.pluginId === 'local-builtin')).toBeTruthy()
     expect(descriptors.find(d => d.pluginId === 'up-level-builtin')).toBe(undefined)
+  })
+
+  // TC-1-12: package.json 非法 JSON → 落 warning 并跳过（U09 重构前覆盖缺口补测）
+  it('TC-1-12: scan() skips plugin with unparseable package.json and warns', async () => {
+    const badJson = join(tmpDir, '.xyz-agent', 'plugins', 'bad-json')
+    await mkdir(badJson, { recursive: true })
+    await writeFile(join(badJson, 'package.json'), '{ not valid json', 'utf-8')
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const registry = new PluginRegistry(tmpDir, tmpDir, join(tmpDir, 'builtin-none'))
+      const descriptors = await registry.scan()
+      expect(descriptors.find(d => d.pluginId === 'bad-json')).toBe(undefined)
+      expect(
+        warnSpy.mock.calls.some(args => args[0] === `[plugin-registry] invalid JSON in ${join(badJson, 'package.json')}, skipping`),
+      ).toBe(true)
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  // TC-1-13: xyzAgent.manifestVersion !== 1 → 落 warning 并跳过（U09 重构前覆盖缺口补测）
+  it('TC-1-13: scan() skips plugin with unsupported manifestVersion and warns', async () => {
+    await createPluginDir('bad-manifest-version', {
+      name: 'bad-manifest-version',
+      version: '1.0.0',
+      xyzAgent: { manifestVersion: 2 },
+    })
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const registry = new PluginRegistry(tmpDir, tmpDir, join(tmpDir, 'builtin-none'))
+      const descriptors = await registry.scan()
+      expect(descriptors.find(d => d.pluginId === 'bad-manifest-version')).toBe(undefined)
+      expect(
+        warnSpy.mock.calls.some(args => args[0] === '[plugin-registry] bad-manifest-version: missing or invalid xyzAgent manifest, skipping'),
+      ).toBe(true)
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 })
 
