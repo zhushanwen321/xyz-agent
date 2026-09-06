@@ -336,6 +336,20 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
   // cleanup 删除；仅 patch.written=true（diff 非空且写盘成功）才回填 record.patchFile，
   // 避免悬空路径让 `git apply` 打不存在的文件。
   describe("collectPatchIfWorktree wiring（worktreeHandle 置位 + patch.written 回填）", () => {
+    // agentDir 是真实写目标：finalize-record Step 0 对 sessionsDir 做 mkdirSync(recursive)，
+    // 会在 agentDir 下创建整棵 subagents/<enc>/sessions 树。必须 mkdtemp 自建 + afterEach
+    // 清理（测试红线），禁止硬编码真实 /tmp 路径。mainCwd / handle.path 仅作编码键与
+    // startsWith 断言，源码不落盘，保持字面量即可。
+    let agentDir: string;
+
+    beforeEach(() => {
+      agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "collect-patch-agent-"));
+    });
+
+    afterEach(() => {
+      fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+    });
+
     const mainCwd = "/tmp/collect-patch-main-repo";
     const branch = "subagent-b1";
     const handle: WorktreeHandle = {
@@ -348,7 +362,6 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
     function makeWorktreeDeps(
       collectPatch: ReturnType<typeof vi.fn>,
     ): ReturnType<typeof makeDeps> & { agentDir: string } {
-      const agentDir = "/tmp/collect-patch-agent-dir";
       // 覆写 worktreeManager / modelService 为 stub（与外层 makeDeps 同款 unknown 断言——
       // FinalizeDeps 的 ModelConfigService/WorktreeManager 是宽接口，stub 只需覆盖本次路径）
       return {
