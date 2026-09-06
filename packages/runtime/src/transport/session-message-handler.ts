@@ -7,6 +7,9 @@ import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent
 import type { ISessionService } from '../interfaces.js'
 import type { HandoffService } from '../services/handoff-service.js'
 import type { ImportService } from '../services/session/import-service.js'
+// BackgroundTaskService（background-task-sidebar D3，u-runtime-rpc）：仅类型 import——
+// 实例由 SessionService 构造器组装（session-service 领地），handler 经 ctx 结构读取消费面。
+import type { BackgroundTaskService } from '../services/background-task/background-task-service.js'
 import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED, SESSION_NOT_FOUND, RESTORE_FAILED } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 // MessageBus（wave:runtime-wiring）：session.subscribe/unsubscribe RPC handler 用它注册订阅。
@@ -16,9 +19,26 @@ import type { IMessageBus } from '../services/message-bus/message-bus.js'
 // ws 库的 WebSocket 天然满足，但类型不完全一致，用 as unknown as BusClient 显式标记边界（R2）。
 import type { BusClient } from '../services/message-bus/types.js'
 
+/**
+ * backgroundTask 域 WS 消费端口（background-task-sidebar D3，u-runtime-rpc）：
+ * BackgroundTaskService 的 handler 消费面窄视图（Pick 收窄——kill 五分支矩阵 / mtime 轮询
+ * 等内部编排不对传输层暴露）。
+ */
+export type BackgroundTaskRpcPort = Pick<
+  BackgroundTaskService,
+  'listTasks' | 'getOutputTail' | 'killTask' | 'markWatched'
+>
+
 /** Interface for server methods needed by this handler */
 export interface SessionHandlerContext extends MessageHandlerContext {
-  sessionService: ISessionService
+  /**
+   * session 服务门面。交叉可选成员 backgroundTasks（background-task-sidebar D3）：
+   * BackgroundTaskService 由 SessionService 构造器组装并以此公有成员暴露。可选属性使
+   * 组合根（server.ts setServices 的 ctx 对象字面量，静态类型 ISessionService）经结构
+   * 兼容零改动通过类型检查——运行时实例恒有该成员；缺省仅出现在测试最小 mock 中，
+   * case 内判空走 background_task_unsupported 防御分支（对齐 handoffService 惯例）。
+   */
+  sessionService: ISessionService & { readonly backgroundTasks?: BackgroundTaskRpcPort }
   /** fast-handoff 编排层（session.handoff 路由用）。可选：未注入时该 case 报 unsupported。 */
   handoffService?: HandoffService
   /**
@@ -63,6 +83,9 @@ export class SessionMessageHandler {
     'session.writeImage', 'session.migrateImage', 'session.writeSegments',
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
     'message.bash', 'message.abortBash',
+    // backgroundTask 域（background-task-sidebar D3，u-runtime-rpc）：后台命令拉取/详情/终止 3 RPC。
+    // 变更广播不经此处（SessionService 组装的 onTasksChanged → bus.publish 单向推送）。
+    'backgroundTask.list', 'backgroundTask.output', 'backgroundTask.kill',
   ]
 
   // eslint-disable-next-line max-lines-per-function -- session.* 路由 switch，case 数随业务增长天然偏长，拆分收益低于可读性损失
@@ -590,6 +613,56 @@ export class SessionMessageHandler {
         const abortBashSid = msg.payload.sessionId
         await this.ctx.sessionService.abortBash(abortBashSid)
         return this.ctx.reply(ws, msg.id, 'message.status', { sessionId: abortBashSid, status: 'aborted' })
+      }
+      // ── backgroundTask 域（background-task-sidebar §3.3 D3/D7/D8，u-runtime-rpc）──
+      case 'backgroundTask.list': {
+        // renderer 切 session / 打开「后台命令」tab 主动拉取（C6 时序竞争：广播只做增量，
+        // 拉取是唯一真相）。副作用 = 把 session 加入 watched 集合（D8③，订阅语义由 list
+        // 隐含，D3 被否 subscribe/unsubscribe 专设消息）。顺序：先读后 mark——markWatched
+        // 以当前 mtime 为基线（「调用方刚拉取过全量」语义），之后的变更才触发广播，不重播。
+        const port = this.ctx.sessionService.backgroundTasks
+        const listSid = msg.payload.sessionId
+        if (!port) {
+          return this.ctx.sendError(ws, 'background_task_unsupported', 'background task service not available', msg.id, { sessionId: listSid })
+        }
+        const { entries } = port.listTasks(listSid)
+        port.markWatched(listSid)
+        return this.ctx.reply(ws, msg.id, 'backgroundTask.tasks', { sessionId: listSid, tasks: entries })
+      }
+      case 'backgroundTask.output': {
+        // 输出尾部按需读（D7）。tail undefined = 条目不存在 / 输出文件不可读（§3.1 失败
+        // 路径「输出不可用（文件已清理）」）→ lost 语义降级：text 空串 + truncated false，
+        // reply 正常回执（不走 error envelope——文件清理是预期态，非请求失败）。
+        const port = this.ctx.sessionService.backgroundTasks
+        const { sessionId: outSid, taskId, maxBytes } = msg.payload
+        if (!port) {
+          return this.ctx.sendError(ws, 'background_task_unsupported', 'background task service not available', msg.id, { sessionId: outSid })
+        }
+        const tail = port.getOutputTail(outSid, taskId, maxBytes)
+        return this.ctx.reply(ws, msg.id, 'backgroundTask.outputResult', {
+          sessionId: outSid,
+          taskId,
+          text: tail?.text ?? '',
+          truncated: tail?.truncated ?? false,
+          lost: tail === undefined,
+        })
+      }
+      case 'backgroundTask.kill': {
+        // 终止任务（D6 五分支矩阵全在 service，handler 只透传回执）。reason 枚举
+        // （killed/already-exited/identity-unverifiable/registry-write-failed）驱动 renderer
+        // 分支 toast 文案；成功路径的列表翻转不依赖 reply——killing 自写自检广播即时推送。
+        const port = this.ctx.sessionService.backgroundTasks
+        const killSid = msg.payload.sessionId
+        if (!port) {
+          return this.ctx.sendError(ws, 'background_task_unsupported', 'background task service not available', msg.id, { sessionId: killSid })
+        }
+        const result = await port.killTask(killSid, msg.payload.taskId)
+        return this.ctx.reply(ws, msg.id, 'backgroundTask.killResult', {
+          sessionId: killSid,
+          taskId: msg.payload.taskId,
+          killed: result.killed,
+          reason: result.reason,
+        })
       }
     }
   }

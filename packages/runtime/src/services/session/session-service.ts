@@ -39,6 +39,10 @@ import { resolveSkillPaths, resolveExtensionPaths, resolveReplaceSystemPrompt, r
 // main（file-lock-unification reaper 下沉，D2 触发面 A）：removeSessionEntry 汇聚点收殓
 // 孤儿后台任务——重构仅迁域，触发面挂点语义不变，import 随调用点留 Facade。
 import { reapSessionBackgroundTasks } from './background-task-reaper.js'
+// 后台任务数据域（background-task-sidebar D1/D2/D3/D8，u-runtime-rpc 组装）：
+// registry 读 + mtime 轮询 + kill 矩阵实现在 services/background-task/（u-runtime-svc），
+// 本 Facade 只做组装接线（组装点注释见构造器 backgroundTasks 赋值处）。
+import { BackgroundTaskService } from '../background-task/background-task-service.js'
 import { getPiAgentDir } from '../../infra/pi/pi-paths.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore, SessionOutcome } from '../ports/session.js'
@@ -177,6 +181,21 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    */
   private messageBus: IMessageBus | null = null
   /**
+   * 后台任务数据域（background-task-sidebar，u-runtime-rpc 组装；实现在 u-runtime-svc）。
+   *
+   * 公有成员（非 ISessionService 接口面）：SessionMessageHandler 经 ctx 的结构化可选属性
+   * （SessionHandlerContext.sessionService 交叉类型）读取 3 RPC 消费端口——组合根 server.ts
+   * 的 ctx 字面量静态类型是 ISessionService，可选属性结构兼容使其零改动通过类型检查。
+   *
+   * 接线三件事（构造器组装 + removeSessionEntry 退订）：
+   * ① onTasksChanged → publishBackgroundTasksUpdate：组装 backgroundTask:updated payload
+   *    经 messageBus session 级 publish（单 payload 对象、sessionId 必带，规则 1/7）；
+   * ② start()：2s mtime 轮询（D2 触发面①；事件钩子触发面②的组合根接线在 index.ts
+   *    adapterFactory——EventAdapter 第三参，非本文件领地）；
+   * ③ removeSessionEntry 汇聚点 unwatch（D8③，与 reaper 触发面 A 同挂点）。
+   */
+  readonly backgroundTasks: BackgroundTaskService
+  /**
    * history 读编排域（S6 迁出至 history-rebuild-cache.ts）：getHistory 三分支重建
    * （缓存增量/RPC 全量/尾读降级）+ getFullHistory 文件直读 + inflight 合并。销毁经
    * onSessionDisposed 由 removeSessionEntry 第 ⑤ 步直调（与 traceSync/projection/records
@@ -278,6 +297,15 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     })
     this.dispatcher = new MessageDispatcher(this, this.pm, this.workspaceService, messageBus)
     this.scanner = new SessionScanner(this, this.sessionStore, this.gitInfoReader)
+
+    // 后台任务域组装（u-runtime-rpc①②）：广播回调经 this.messageBus 动态读（getter 语义，
+    // 与 registerDeps/traceSync 的晚期注入同款——setMessageBus 后置注入前触发时 publish
+    // no-op；组合根在 setServices 前注入 bus，晚于首个 2s 轮询拍）。piAgentDir 用默认
+    // getPiAgentDir() 动态推导（生产正确；测试经 vi.mock pi-paths 指向 tmp）。
+    this.backgroundTasks = new BackgroundTaskService({
+      onTasksChanged: (sessionId) => this.publishBackgroundTasksUpdate(sessionId),
+    })
+    this.backgroundTasks.start()
 
     // 进程崩溃清理:协调 adapter detach / Map 删 / 列表刷新 / session.exited 广播
     this.pm.onSessionExit((sessionId, code, stderr) => {
@@ -846,6 +874,10 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     void reapSessionBackgroundTasks(getPiAgentDir(), sessionId).catch((e: unknown) => {
       console.warn(`[session-service] background task reap failed (sessionId=${sessionId}):`, e)
     })
+    // background-task-sidebar D8③（u-runtime-rpc③）：watched 集合退订——session 销毁后
+    // 该 sid 的 registry 不再参与 mtime 轮询/变更检测。与 reapSessionBackgroundTasks 同挂
+    // 本汇聚点（主动删 / 进程退出 / forceQuit / restore 清场全覆盖，D8④ runtime 侧腿）。
+    this.backgroundTasks.unwatch(sessionId)
     // wave:perf-w20（D6-1）：session 删除 / pi 进程退出时清历史重建缓存 + lastLeafId。
     // pi 进程退出后缓存基线（lastLeafId）不再与新进程的 entry 集合对应，保留只会
     // 走 "Entry not found" fallback（防御兜底存在，但清理是正路径）。S6 起清理随域迁入
@@ -907,6 +939,23 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   }
 
   // ── 私有协作者 ────────────────────────────────────────────────
+
+  /**
+   * backgroundTask:updated 广播组装（background-task-sidebar D3，u-runtime-rpc①）：
+   * onTasksChanged（mtime 轮询 / 自写自检触发）时重读该 session registry 全量 → messageBus
+   * session 级 publish（Server→Client 冒号 camelCase，对齐 plugin:statusBarUpdate 命名规则；
+   * stream 类入 ring，晚订阅 renderer 由 snapshot 重放兜底）。bus 未注入时 no-op（nullable
+   * 注入语义与域内其余 publish 点一致）。entry 形状为 extension-protocol 契约，shared 侧
+   * 逐字段镜像（u-proto D9，结构兼容直赋）。
+   */
+  private publishBackgroundTasksUpdate(sessionId: string): void {
+    const { entries } = this.backgroundTasks.listTasks(sessionId)
+    const msg: ServerMessage = {
+      type: 'backgroundTask:updated',
+      payload: { sessionId, tasks: entries },
+    }
+    this.messageBus?.publish(sessionId, msg)
+  }
 
   /**
    * 归属 project sidecar 延迟写入兑底（D14 语义修正，2026-08-04）。
