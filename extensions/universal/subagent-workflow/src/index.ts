@@ -68,6 +68,7 @@ import {
   type SessionLifecycleDeps,
   type SessionLifecycleResult,
 } from "./session-lifecycle.ts";
+import { toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 // ── pi.__workflowRun 类型扩展（D-8 签名） ─────────────────
 
@@ -105,7 +106,7 @@ function reapSpawnedChildrenOnShutdown(): void {
     // 不静默吞错，对齐「错误必须可操作」。
     logger.debug(
       "[subagents] process shutdown reap best-effort failed (killAllSpawnedChildren SIGTERM)",
-      { reason: err instanceof Error ? err.message : String(err) },
+      { reason: toErrorMessage(err) },
     );
   }
 }
@@ -303,7 +304,7 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       }
     } catch (err) {
       logger.warn("[subagents] notify ledger compactionCheck failed", {
-        reason: err instanceof Error ? err.message : String(err),
+        reason: toErrorMessage(err),
       });
     }
   });
@@ -429,7 +430,7 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       await state.store.dispose().catch((err: unknown) => {
         logger.debug(
           `[subagent-workflow] session_shutdown store.dispose failed (sessionId=${sessionId}, sessionDir=${state.sessionDir})`,
-          { reason: err instanceof Error ? err.message : String(err) },
+          { reason: toErrorMessage(err) },
         );
       });
       sessionState.delete(sessionId);

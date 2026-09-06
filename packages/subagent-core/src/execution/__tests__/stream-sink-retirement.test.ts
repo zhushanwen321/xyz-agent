@@ -156,7 +156,7 @@ const ctxModel: ModelInfo = { id: "m", name: "M", provider: "p", reasoning: fals
 
 function setupService(mode: ExtensionMode | undefined, sessionId = "retire-it"): SubagentService {
   const agentDir = "/tmp/stream-retire-it";
-  const modelService = new ModelConfigService({ agentDir });
+  const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
   modelService.initModel({
     modelRegistry: makeEmptyRegistry(),
     sessionId,
@@ -187,7 +187,7 @@ async function waitForSpawnCall(): Promise<void> {
 }
 
 async function executeBackground(service: SubagentService): Promise<void> {
-  await service.execute({ task: "retire test", ctxModel });
+  await service.execute({ task: "retire test", slug: "test", ctxModel });
   await waitForSpawnCall();
   // 推进 detached runSpawn 收尾（FakeChild close），防句柄悬挂干扰后续用例
   lastSpawnedChild().emit("close", 0);

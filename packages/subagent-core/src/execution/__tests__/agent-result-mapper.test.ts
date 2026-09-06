@@ -90,7 +90,7 @@ describe("mapToWorkflowAgentResult (D-A10)", () => {
     const result = mapToWorkflowAgentResult(r);
     expect(result.error).toBeDefined();
     expect(typeof result.error).toBe("string");
-    expect(result.error.length).toBeGreaterThan(0);
+    expect(result.error!.length).toBeGreaterThan(0);
   });
 
   it("映射成功: success=true 且 error 存在 → error=undefined（不误填）", () => {
@@ -159,7 +159,7 @@ describe("mapToWorkflowAgentResult (D-A10)", () => {
   });
 
   it("映射 toolCalls: 无 toolCalls → undefined", () => {
-    const r: SubagentsAgentResult = { ...minimalResult, toolCalls: undefined };
+    const r = { ...minimalResult, toolCalls: undefined } as unknown as SubagentsAgentResult;
     const result = mapToWorkflowAgentResult(r);
     expect(result.toolCalls).toBeUndefined();
   });

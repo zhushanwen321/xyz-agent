@@ -422,12 +422,12 @@ describe("ModelConfigService: ctx.model plumb-through (EA-4)", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "subagents-resolver-test-"));
   });
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   /** 构造已 initModel 的 ModelConfigService，ctxModel 注入缓存。 */
   function makeService(ctxModel: ModelInfo | undefined, registry: ModelRegistryLike = makeRegistry([])): ModelConfigService {
-    const svc = new ModelConfigService({ agentDir: tmpDir });
+    const svc = new ModelConfigService({ agentDir: tmpDir, cwd: tmpDir });
     svc.initModel({
       modelRegistry: registry,
       sessionId: "test-session",

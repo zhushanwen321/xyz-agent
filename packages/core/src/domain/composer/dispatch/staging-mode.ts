@@ -28,6 +28,7 @@ import type {
   StagingConfig,
   StagingType,
 } from '../types'
+import { toErrorMessage } from '../../../utils/error-message'
 
 /**
  * staging source 的最小公共形状（泛型 S 的约束）：跨组件 signal 与模式内部 source ref
@@ -218,7 +219,7 @@ export function createStagingMode<S extends StagingModeSource>(
       await config.sendAction(current, text, staging)
     } catch (e) {
       deps.restoreInput(text)
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       deps.toastError(deps.t(config.sendFailedKey, { error: msg }))
     } finally {
       deps.setSending(false)

@@ -25,6 +25,7 @@ import { describe, expect, it } from "vitest";
 import { getSubagentService } from "../../../subagent-service.ts";
 import { ZcodeEngine } from "../../engines/zcode/zcode-engine.ts";
 import { createPiEngine } from "../../engines/pi/registration.ts";
+import type { PiEngineService } from "../../engines/pi/pi-engine.ts";
 import type { RunContext } from "../../port.ts";
 import type { AgentEvent } from "../../../types.ts";
 import type { AgentCallOpts } from "../../../../orchestration/models/types.ts";
@@ -51,7 +52,7 @@ describe.skipIf(!LIVE)("conformance run 层（真实 spawn，手动门）", () =
       testCtx.skip("SubagentService 未装配（需在真实会话进程内运行）");
       return;
     }
-    const engine = createPiEngine(() => service);
+    const engine = createPiEngine(() => service as unknown as PiEngineService);
     const task: AgentCallOpts = { prompt: "Reply with the single word: ok", description: "live-c2" };
     const ctx: RunContext = { taskId: "sa-live-pi-c2", poolKey: "shared" };
     const { outcome } = await engine.run(task, ctx);
@@ -82,7 +83,7 @@ describe.skipIf(!LIVE)("conformance run 层（真实 spawn，手动门）", () =
     });
     const events: AgentEvent[] = [];
     const { outcome } = await engine.run(
-      { task: "Reply with the single word: ok", slug: "live-appserver-c2", model, cwd: "/tmp" },
+      { prompt: "Reply with the single word: ok", description: "live-appserver-c2", model, cwd: "/tmp" },
       { taskId: "sa-live-zcode-appserver", poolKey: "", onEvent: (e) => events.push(e) },
     );
     expect(outcome.error).toBeUndefined();
@@ -199,7 +200,7 @@ describe.skipIf(!LIVE)("conformance relay 变体（经代理 spawn 全链，手�
     }
 
     try {
-      const engine = createPiEngine(() => service);
+      const engine = createPiEngine(() => service as unknown as PiEngineService);
       const events: AgentEvent[] = [];
       const task: AgentCallOpts = { prompt: "Reply with the single word: ok", description: "live-relay-c2" };
       const ctx: RunContext = {
@@ -220,7 +221,7 @@ describe.skipIf(!LIVE)("conformance relay 变体（经代理 spawn 全链，手�
         else process.env[key] = savedEnv[key];
       }
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 });

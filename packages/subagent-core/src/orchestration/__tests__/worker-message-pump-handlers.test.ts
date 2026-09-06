@@ -27,7 +27,7 @@ import {
 import { Budget } from "../models/budget.ts";
 import { RunRuntime } from "../models/run-runtime.ts";
 import { Trace } from "../models/trace.ts";
-import type { AgentResult } from "../models/types.ts";
+import type { AgentResult, DoneReason, RunStatus } from "../models/types.ts";
 import { WorkflowRun } from "../models/workflow-run.ts";
 import type { LifecycleDeps, WorkerHandlers } from "../models/ports.ts";
 import type { WorkerHandle } from "../worker-handle.ts";
@@ -71,26 +71,34 @@ function makeRunningRun(opts: {
       receivedTerminalMessage: opts.receivedTerminalMessage,
     },
     // transition 副作用——run.state.status 由调用方通过 mock 控制后再次断言
-    transition(target: string, reason?: string): void {
+    transition(this: WorkflowRun, target: RunStatus, reason?: DoneReason): void {
       this.state.status = target;
       if (target === "done") this.state.reason = reason;
     },
-    replaceRuntime(rt: unknown): void {
+    replaceRuntime(this: WorkflowRun, rt: NonNullable<WorkflowRun["runtime"]>): void {
       this.runtime = rt;
     },
   } as unknown as WorkflowRun;
 }
 
-/** LifecycleDeps mock：store/workerHost/runner/eventBus/scheduleTimeBudget 可观察。 */
+/** LifecycleDeps mock：store/workerHost/runner/eventBus/scheduleTimeBudget 可观察。
+ *  mock 成员 = 真实签名 & vi.fn 能力（交叉纯 Mock 会丢真实签名，传回被测函数即报错）。 */
+type MockLifecycleDeps = Omit<
+  LifecycleDeps,
+  "store" | "workerHost" | "runner" | "eventBus" | "onRunDone" | "log"
+> & {
+  // 真实类型整体保留（RunStore/WorkerHost 等接口成员完整），仅 mock 方法交叉 vi.fn 能力
+  store: LifecycleDeps["store"] & { save: LifecycleDeps["store"]["save"] & ReturnType<typeof vi.fn> };
+  workerHost: LifecycleDeps["workerHost"] & { start: LifecycleDeps["workerHost"]["start"] & ReturnType<typeof vi.fn> };
+  runner: LifecycleDeps["runner"] & { run: LifecycleDeps["runner"]["run"] & ReturnType<typeof vi.fn> };
+  eventBus: NonNullable<LifecycleDeps["eventBus"]> & { emit: NonNullable<LifecycleDeps["eventBus"]>["emit"] & ReturnType<typeof vi.fn> };
+  onRunDone: LifecycleDeps["onRunDone"] & ReturnType<typeof vi.fn>;
+  log: LifecycleDeps["log"] & ReturnType<typeof vi.fn>;
+};
+
 function makeDeps(opts: {
   scheduleTimeBudget?: LifecycleDeps["scheduleTimeBudget"];
-} = {}): LifecycleDeps & {
-  store: { save: ReturnType<typeof vi.fn> };
-  workerHost: { start: ReturnType<typeof vi.fn> };
-  eventBus: { emit: ReturnType<typeof vi.fn> };
-  onRunDone: ReturnType<typeof vi.fn>;
-  log: ReturnType<typeof vi.fn>;
-} {
+} = {}): MockLifecycleDeps {
   return {
     store: { save: vi.fn(async () => {}) },
     workerHost: { start: vi.fn(() => ({ postMessage: vi.fn() })) },
@@ -344,7 +352,7 @@ describe("rebuildRuntime", () => {
 
   it("带 budgetTimeMs 时重排 scheduleTimeBudget 计时器", () => {
     const run = makeRunningRun({ budgetTimeMs: 5000 });
-    const scheduleTimeBudget = vi.fn(() => undefined);
+    const scheduleTimeBudget = vi.fn((_runId: string, _budgetTimeMs: number) => undefined);
     const deps = makeDeps({ scheduleTimeBudget });
 
     rebuildRuntime(run, deps, makeHandlers());
@@ -413,7 +421,7 @@ describe("race-F3: rebuild 时间预算折算", () => {
     const run = makeRunningRun({ budgetTimeMs: 5000 });
     // 已耗 70%（3500ms）→ 剩余 1500ms；fake Date 冻结，elapsed 精确
     run.meta.startedAt = new Date(Date.now() - 3500).toISOString();
-    const scheduleTimeBudget = vi.fn(() => undefined);
+    const scheduleTimeBudget = vi.fn((_runId: string, _budgetTimeMs: number) => undefined);
     const deps = makeDeps({ scheduleTimeBudget });
 
     rebuildRuntime(run, deps, makeHandlers());
@@ -429,7 +437,7 @@ describe("race-F3: rebuild 时间预算折算", () => {
     const run = makeRunningRun({ budgetTimeMs: 5000 });
     // 已耗 6000ms > 预算 5000ms（退避 advance 1000ms 后已耗 7000ms，仍耗尽）
     run.meta.startedAt = new Date(Date.now() - 6000).toISOString();
-    const scheduleTimeBudget = vi.fn(() => undefined);
+    const scheduleTimeBudget = vi.fn((_runId: string, _budgetTimeMs: number) => undefined);
     const deps = makeDeps({ scheduleTimeBudget });
 
     const p = handleScriptError(run, "boom", [], deps, makeHandlers());
@@ -452,7 +460,7 @@ describe("race-F3: rebuild 时间预算折算", () => {
 
   it("预算未耗尽（fresh run）→ 照常 rebuild，不误转 time_limited（防误伤回归）", async () => {
     const run = makeRunningRun({ budgetTimeMs: 5000 }); // startedAt ≈ now，remaining 满
-    const scheduleTimeBudget = vi.fn(() => undefined);
+    const scheduleTimeBudget = vi.fn((_runId: string, _budgetTimeMs: number) => undefined);
     const deps = makeDeps({ scheduleTimeBudget });
 
     const p = handleScriptError(run, "boom", [], deps, makeHandlers());
@@ -745,7 +753,7 @@ describe("rebuildRuntime 可观察性（OB3 日志点）", () => {
 
   it("U7: 带 budgetTimeMs + scheduleTimeBudget 注入时含 L2（在 L1 之后、L3 之前，payload 含 budgetTimeMs）", () => {
     const run = makeRealRun("wf-rebuild-log-2", { budgetTimeMs: 5000 });
-    const scheduleTimeBudget = vi.fn(() => undefined);
+    const scheduleTimeBudget = vi.fn((_runId: string, _budgetTimeMs: number) => undefined);
     const deps = makeDeps({ scheduleTimeBudget });
 
     rebuildRuntime(run, deps, makeHandlers());

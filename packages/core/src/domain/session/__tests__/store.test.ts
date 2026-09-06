@@ -8,7 +8,7 @@
  * node 环境实测 vue reactivity（ref/computed），零 mock。
  */
 import { describe, expect, it } from 'vitest'
-import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
+import type { SessionViewSnapshot,  SessionSummary, SessionGroup } from '@xyz-agent/shared'
 import { createSessionStore } from '../store'
 
 function makeSession(overrides: Partial<SessionSummary> & { id: string }): SessionSummary {
@@ -235,7 +235,8 @@ describe('createSessionStore', () => {
 
     // 调用方传 undefined 快照（如广播 payload 字段缺失的防御路径）：不抛、不产生任何
     // 字段变化——五个托管字段（label/status/modelId/thinkingLevel/tokenCount）原样保留
-    store.applySnapshot('s1', undefined)
+    // 防御路径：广播 payload 缺失时快照可为 undefined——经视图注入保持断言语义
+    ;(store.applySnapshot as (id: string, snapshot?: SessionViewSnapshot) => void)('s1', undefined)
     const after = store.list.value[0]
     expect(after.label).toBe('old')
     expect(after.status).toBe('active')

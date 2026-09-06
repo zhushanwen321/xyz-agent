@@ -100,6 +100,7 @@ import {
   type SessionCreateParams,
   type SessionTurnResult,
 } from "./session-channel.ts";
+import { toErrorMessage } from "../../../../core/error-message.ts";
 
 const logger = getLogger("subagents");
 
@@ -904,7 +905,7 @@ export class ZcodeEngine implements EnginePort {
           logger.warn("[zcode-engine] native session read failed, degrade to journal replay", {
             dbPath,
             sessionId,
-            reason: err instanceof Error ? err.message : String(err),
+            reason: toErrorMessage(err),
           });
         }
       }
@@ -1056,7 +1057,7 @@ function explicitTurnBudgetMs(): number | undefined {
  * 「ajv 可消费的 schema 对象」；具体关键字（type/properties/required…）由
  * schema-emulation 层解释，此处只约束对象形态）。
  */
-export type JsonSchemaObject = Readonly<Record<string, unknown>>
+type JsonSchemaObject = Readonly<Record<string, unknown>>
 
 /** Record 形状 guard（task.schema 的运行时窄化——JsonSchemaObject 不满足 ajv 的 object 入参）。 */
 function isPlainObject(v: unknown): v is JsonSchemaObject {
@@ -1065,7 +1066,7 @@ function isPlainObject(v: unknown): v is JsonSchemaObject {
 
 /** 错误/日志出声用的 message 提取（非 Error 值不抛二次异常）。 */
 function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  return toErrorMessage(err);
 }
 
 /** ms 后 resolve 指定值（abort 链 grace 窗口的 race 材料；unref 不阻塞进程退出）。 */
@@ -1422,7 +1423,7 @@ async function defaultProbeVersion(cliPath: string): Promise<string | undefined>
   } catch (err) {
     logger.debug(
       `[zcode-engine] probe version check failed (best-effort continue): ${
-        err instanceof Error ? err.message : String(err)
+        toErrorMessage(err)
       }`,
     );
     return undefined;

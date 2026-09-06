@@ -90,7 +90,7 @@ beforeEach(() => {
 afterEach(() => {
   resetNotifyDomainForTests();
   clearPendingCursors();
-  fs.rmSync(sessionDir, { recursive: true, force: true });
+  fs.rmSync(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 function makeTmpSessionFile(lines: string[]): string {
@@ -126,8 +126,8 @@ function registerData(id: string, sessionId: string): Record<string, unknown> {
 }
 
 /** 注入直数端口：返回收到的 entry 数（观察 count 口径的消费面）。 */
-function stubCountingPort(): (entries: unknown[]) => number {
-  const counter = vi.fn((entries: unknown[]) => entries.length);
+function stubCountingPort(): ReturnType<typeof vi.fn<(entries: unknown[]) => number>> {
+  const counter = vi.fn((entries: unknown[]) => entries.length) as ReturnType<typeof vi.fn<(entries: unknown[]) => number>>;
   configureNotifyDomain({ countActiveFromEntries: counter });
   return counter;
 }
@@ -138,7 +138,7 @@ describe("readActivePendingFromSessionFile", () => {
   afterEach(() => {
     for (const f of tmpFiles.splice(0)) {
       try {
-        fs.rmSync(path.dirname(f), { recursive: true, force: true });
+        fs.rmSync(path.dirname(f), { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
       } catch {
         // 清理失败不影响断言
       }
@@ -255,7 +255,7 @@ describe("readActivePendingFromSessionFile — 增量游标 [perf]", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("首次全量 + append 后增量：unregister 只抵消对应 id（与全量读一致）", () => {

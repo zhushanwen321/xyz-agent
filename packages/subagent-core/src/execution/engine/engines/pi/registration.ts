@@ -13,7 +13,7 @@ import { registerEngine } from "../../registry.ts";
 import { PI_ENGINE_ID, PiEngine } from "./pi-engine.ts";
 import type { PiEngineService } from "./pi-engine.ts";
 
-export { PI_ADAPTER_VERSION, PI_ENGINE_ID, PI_POOL_KEY, PiEngine } from "./pi-engine.ts";
+export { PI_ADAPTER_VERSION, PI_ENGINE_ID, PiEngine } from "./pi-engine.ts";
 export type { PiEngineDeps, PiEngineService } from "./pi-engine.ts";
 
 /**

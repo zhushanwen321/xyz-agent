@@ -10,108 +10,25 @@
  * - 轮询超时（命令未产出 entry）→ throw code=fetch_current_prompt_timeout
  * - WS handler：reply session.currentSystemPrompt（含 sessionId，规则 7）/ 错误 sendError code
  *
+ * SessionService 装配（makeSessionStore / makeSessionServiceEnv）收敛
+ * __tests__/helpers/session-service-test-env.ts。
+ *
  * 运行：cd packages/runtime && npx vitest run fetch-current-prompt
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { SessionService } from '../session-service.js'
-import { MessageBus } from '../../message-bus/message-bus.js'
 import { SessionMessageHandler } from '../../../transport/session-message-handler.js'
-import type { IMessageBroker } from '../../../interfaces.js'
-import type { IPiEngine, IProcessManager } from '../../ports/pi-engine.js'
-import type { ISessionStore } from '../../ports/session.js'
 import type { ServerMessage } from '@xyz-agent/shared'
+
+import { makeSessionServiceEnv } from './helpers/session-service-test-env.js'
 
 const SID = 'sid-fetch-prompt'
 
-/** 现取命令产出的 custom entry（常驻扩展 handler 写入形态）。 */
-function currentPromptEntry(fullText: string): { type: string; id: string; customType: string; data: Record<string, unknown> } {
-  return {
-    type: 'custom',
-    id: 'csp1',
-    customType: 'xyz:current-system-prompt',
-    data: { fullText, charCount: fullText.length, fetchedAt: '2026-08-20T10:00:00.000Z' },
-  }
-}
-
-function makeSessionStore(): ISessionStore {
-  return {
-    scanSessions: () => [],
-    invalidateScanCache: () => {},
-    refreshAll: () => {},
-    persistSessionEnd: () => {},
-    persistPresetBinding: () => {},
-    persistProjectBinding: () => {},
-    persistAgentBinding: () => {},
-    extractSessionOutcome: () => null,
-    invalidateMetaCache: () => {},
-    convertHistory: () => [],
-    rebuildHistoryFromEntries: () => ({ messages: [], clientUuidMap: new Map(), orphanToolResults: [] }),
-    parseSessionHeader: () => null,
-    readSessionHeaderLine: () => null,
-    readSessionJsonlText: () => null,
-    readSessionEndMeta: () => null,
-    persistHandoffSidecar: () => {},
-    trash: () => Promise.resolve(),
-  }
-}
-
-/**
- * 构造测试环境。getEntriesImpl 控制 get_entries(since) 的返回序列；
- * promptImpl 可选控制 /__xyz_get_system_prompt__ 命令行为（默认记录调用）。
- */
-function makeEnv(opts: { active?: boolean; busy?: boolean } = {}) {
-  const broadcasts: ServerMessage[] = []
-  const broker = { broadcast: vi.fn((m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBroker
-  let sinceBaseline: string | undefined
-  const promptCalls: string[] = []
-  const client = {
-    getCommands: vi.fn(async () => []),
-    getState: vi.fn(async () => ({ thinkingLevel: 'low' })),
-    getSessionStats: vi.fn(async () => ({})),
-    getEntries: vi.fn(async (since?: string) => {
-      if (since === undefined) {
-        // 全量（建基线）：一个旧 entry，leafId=leaf0
-        return { data: { entries: [{ type: 'message', id: 'e0', message: { role: 'user', content: 'q' } }], leafId: 'leaf0' } }
-      }
-      sinceBaseline = since
-      // 增量（since=leaf0）：命中现取 entry，新 leafId=leaf1
-      return { data: { entries: [currentPromptEntry('PROMPT-BODY')], leafId: 'leaf1' } }
-    }),
-    prompt: vi.fn(async (content: string) => {
-      promptCalls.push(content)
-      return {}
-    }),
-  }
-  const pm = {
-    onSessionExit: vi.fn(),
-    getClient: vi.fn(() => (opts.active === false ? undefined : (client as unknown as IPiEngine))),
-  } as unknown as IProcessManager
-  const bus = new MessageBus()
-  const publishSpy = vi.spyOn(bus, 'publish')
-  const svc = new SessionService(
-    pm,
-    broker,
-    () => ({ attach: vi.fn(), detach: vi.fn() }),
-    '/test/project-root',
-    {} as never,
-    { getDefaultModel: () => ({ provider: 'test-provider', modelId: 'test-model' }) } as never,
-    makeSessionStore(),
-    { pruneStaleCache: vi.fn(), readGitInfo: vi.fn(() => undefined) } as never,
-    {} as never,
-    bus,
-  )
-  svc.setMessageBus(bus)
-  let busyReady: Promise<void> | undefined
-  if (opts.busy) {
-    // S3 写点归位：sessions Map 所有权迁 lifecycle（svc.sessions 直戳不再可用）——经
-    // initializeManagedSession 委托真注册（构造订阅接线会真跑 registerReplicatedStates
-    // 播种，mock client 已覆盖 getState/getCommands/getSessionStats），注册后置 busy 标记
-    // （isGenerating=true → busy 预检拒绝）。busy 用例须 await busyReady 后再断言。
-    busyReady = svc.initializeManagedSession(SID, client as unknown as IPiEngine, '/tmp', 't').then((session) => {
-      session.isGenerating = true
-    })
-  }
-  return { svc, bus, publishSpy, broadcasts, client, pm, promptCalls, sinceBaselineRef: () => sinceBaseline, busyReady }
+/** 轮询超时用例：get_entries 全量/增量恒空（命令未产出 entry）。 */
+function mockGetEntriesAlwaysEmpty(client: ReturnType<typeof makeSessionServiceEnv>['client']): void {
+  client.getEntries.mockImplementation(async (since?: string) =>
+    since === undefined
+      ? { data: { entries: [], leafId: 'leaf0' } }
+      : { data: { entries: [], leafId: 'leaf0' } })
 }
 
 beforeEach(() => {
@@ -124,18 +41,18 @@ afterEach(() => {
 
 describe('fetchCurrentSystemPrompt（常驻扩展现取通道）', () => {
   it('非活跃 session（无 pi 进程）→ throw code=session_not_active', async () => {
-    const { svc } = makeEnv({ active: false })
+    const { svc } = makeSessionServiceEnv({ active: false, sid: SID })
     await expect(svc.fetchCurrentSystemPrompt(SID)).rejects.toMatchObject({ code: 'session_not_active' })
   })
 
   it('busy 预检：isGenerating → throw code=session_busy（命令会排队，预检拒绝更诚实）', async () => {
-    const { svc, busyReady } = makeEnv({ busy: true })
+    const { svc, busyReady } = makeSessionServiceEnv({ busy: true, sid: SID })
     await busyReady
     await expect(svc.fetchCurrentSystemPrompt(SID)).rejects.toMatchObject({ code: 'session_busy' })
   })
 
   it('成功路径：发命令 → 轮询 since 命中 custom entry → 返回值 + 基线滚动 + 台账增量广播', async () => {
-    const { svc, client, publishSpy, promptCalls, sinceBaselineRef } = makeEnv({ active: true })
+    const { svc, client, publishSpy, promptCalls, sinceBaselineRef } = makeSessionServiceEnv({ active: true, sid: SID })
     const result = await svc.fetchCurrentSystemPrompt(SID)
     // 命令发出（双下划线内部命令，不经 LLM）
     expect(promptCalls).toEqual(['/__xyz_get_system_prompt__'])
@@ -161,12 +78,9 @@ describe('fetchCurrentSystemPrompt（常驻扩展现取通道）', () => {
 
   it('轮询超时（命令未产出 entry）→ throw code=fetch_current_prompt_timeout', async () => {
     vi.useFakeTimers()
-    const { svc, client } = makeEnv({ active: true })
+    const { svc, client } = makeSessionServiceEnv({ active: true, sid: SID })
     // 增量恒空（命令未产出）
-    client.getEntries.mockImplementation(async (since?: string) =>
-      since === undefined
-        ? { data: { entries: [], leafId: 'leaf0' } }
-        : { data: { entries: [], leafId: 'leaf0' } })
+    mockGetEntriesAlwaysEmpty(client)
     const pending = svc.fetchCurrentSystemPrompt(SID)
     // 先 attach rejection 断言再推进 timer（否则 rejection 发生时无 handler，报 unhandled）
     const expectation = expect(pending).rejects.toMatchObject({ code: 'fetch_current_prompt_timeout' })
@@ -177,7 +91,7 @@ describe('fetchCurrentSystemPrompt（常驻扩展现取通道）', () => {
 
 describe('session.fetchCurrentSystemPrompt WS handler', () => {
   it('reply session.currentSystemPrompt（含 sessionId）；非活跃 → sendError code=session_not_active', async () => {
-    const { svc } = makeEnv({ active: true })
+    const { svc } = makeSessionServiceEnv({ active: true, sid: SID })
     const replies: { type: string; payload: Record<string, unknown> }[] = []
     const errors: { code: string }[] = []
     const handler = new SessionMessageHandler({
@@ -197,7 +111,7 @@ describe('session.fetchCurrentSystemPrompt WS handler', () => {
     expect(replies[0]?.payload.sessionId).toBe(SID)
     expect(replies[0]?.payload.fullText).toBe('PROMPT-BODY')
 
-    const { svc: deadSvc } = makeEnv({ active: false })
+    const { svc: deadSvc } = makeSessionServiceEnv({ active: false, sid: SID })
     const handler2 = new SessionMessageHandler({
       send: vi.fn(),
       reply: vi.fn(),

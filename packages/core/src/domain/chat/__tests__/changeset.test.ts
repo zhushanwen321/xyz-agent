@@ -13,6 +13,7 @@
  * 与 markChangeSetsSuperseded 的 resolved 豁免。
  */
 import { describe, it, expect } from 'vitest'
+import type { ShallowRef } from 'vue'
 import { shallowRef } from 'vue'
 import type { FileChange, Message } from '@xyz-agent/shared'
 import { mergeFileChanges, createChangeSetController } from '../changeset'

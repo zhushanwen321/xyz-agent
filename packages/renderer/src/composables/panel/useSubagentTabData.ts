@@ -29,8 +29,9 @@ import {
 import { getAgentCallHistory } from '@xyz-agent/core/transport/api/domains/session'
 import type { Message, SubagentRecord } from '@xyz-agent/shared'
 import { DEFAULT_ENGINE_ID } from '@/constants/engine-icons'
+import { toErrorMessage } from '../../lib/error-message'
 
-interface SubagentTabDataDeps {
+export interface SubagentTabDataDeps {
   /** 当前选中 subagent 的 record（组件 computed；三段式虚拟 id 才有，agentcall 两段式为 null） */
   currentRecord: ComputedRef<SubagentRecord | null>
   /** 兜底投影的「无结果」文案（i18n key 由组件注入，composable 不绑 useI18n） */
@@ -126,7 +127,7 @@ export function useSubagentTabData(deps: SubagentTabDataDeps) {
         workflowStore.registerAgentCall(mainSessionId, vid)
       }
     } catch (e) {
-      loadError.value = e instanceof Error ? e.message : String(e)
+      loadError.value = toErrorMessage(e)
     }
   }
 

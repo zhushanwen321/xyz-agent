@@ -838,6 +838,8 @@ export interface SubagentRecord {
   status: ExecutionStatus;
   /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。SP-1 新增。 */
   closedReason?: ClosedReason;
+  /** 终态三态对外语义（U3 C-outcome）。磁盘重建源一等直读；无字段的存量兜底走 projectOutcome。 */
+  outcome?: ExecutionOutcome;
   mode: ExecutionMode;
   startedAt: number;
   /** 根 Pi session ID（session 隔离过滤用）。递归链上所有层 record 同值。 */

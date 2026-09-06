@@ -69,12 +69,14 @@ function makeDeps(opts: {
   emitThrows?: boolean;
   /** onRunDone 同步抛错（模拟 evictDoneRunsBeyondCap 等收尾异常）。 */
   onRunDoneThrows?: boolean;
-} = {}): LifecycleDeps & {
-  store: { save: ReturnType<typeof vi.fn> };
-  workerHost: { start: ReturnType<typeof vi.fn> };
-  eventBus: { emit: ReturnType<typeof vi.fn> };
-  onRunDone: ReturnType<typeof vi.fn>;
-  log: ReturnType<typeof vi.fn>;
+} = {}): Omit<LifecycleDeps, "store" | "workerHost" | "runner" | "eventBus" | "onRunDone" | "log"> & {
+  // 真实类型整体保留（接口成员完整），仅 mock 方法交叉 vi.fn 能力
+  store: LifecycleDeps["store"] & { save: LifecycleDeps["store"]["save"] & ReturnType<typeof vi.fn> };
+  workerHost: LifecycleDeps["workerHost"] & { start: LifecycleDeps["workerHost"]["start"] & ReturnType<typeof vi.fn> };
+  runner: LifecycleDeps["runner"] & { run: LifecycleDeps["runner"]["run"] & ReturnType<typeof vi.fn> };
+  eventBus: NonNullable<LifecycleDeps["eventBus"]> & { emit: NonNullable<LifecycleDeps["eventBus"]>["emit"] & ReturnType<typeof vi.fn> };
+  onRunDone: LifecycleDeps["onRunDone"] & ReturnType<typeof vi.fn>;
+  log: LifecycleDeps["log"] & ReturnType<typeof vi.fn>;
 } {
   return {
     store: { save: vi.fn(async () => {}) },

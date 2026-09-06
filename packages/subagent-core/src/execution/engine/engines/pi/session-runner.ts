@@ -81,6 +81,7 @@ import type {
 } from "../../../types.ts";
 import { createTurnLimiter, WRAP_UP_HINT } from "./turn-limiter.ts";
 import { createUiRequestQueue } from "../../../ui-request-queue.ts";
+import { toErrorMessage } from "../../../../core/error-message.ts";
 
 const logger = getLogger("subagents");
 
@@ -380,7 +381,7 @@ const STDERR_MAX_CHARS = 65_536;
  * 抽叶子的目的：跨包契约测试从 session-runner import 会拖入整条 spawn/pi SDK 依赖树，
  * 叶子模块提供稳定 import 点（导出名与值不变）。
  */
-export { SCHEMA_ENV_MAX_BYTES, SCHEMA_ENV_VAR };
+export { SCHEMA_ENV_MAX_BYTES };
 
 // ============================================================
 // W4: ask_user RPC 系统提示词
@@ -422,7 +423,7 @@ The \`ask_user\` tool is available in this session. When you call \`ask_user\`, 
  * 此提示在 worktree 模式下注入，明确告知子 agent：cwd 是含完整项目代码的 git worktree，
  * 直接在此工作即可，不要 cd 别处找"真正的项目"。
  */
-export const WORKTREE_GUIDANCE_PROMPT = `
+const WORKTREE_GUIDANCE_PROMPT = `
 ## Working Directory Is a Git Worktree
 
 Your working directory (the "Working directory" in the environment block above) is a **dedicated git worktree** — an isolated checkout of the repository at HEAD, NOT a temporary sandbox. It contains the **complete project source code**.
@@ -514,7 +515,7 @@ export function killAllSpawnedChildren(signal: NodeJS.Signals = "SIGTERM"): numb
       // debug 级留诊断线索即可，不刷 info/warn
       logger.debug(
         `[session-runner] killAllSpawnedChildren: kill failed (best-effort continue): ${
-          err instanceof Error ? err.message : String(err)
+          toErrorMessage(err)
         }`,
       );
     }
@@ -634,7 +635,7 @@ function killPidWithEscalation(pid: number, label: string): void {
     // SIGTERM 发送即失败（进程恰死 / 权限）：无需升级，诊断留痕
     logger.debug(
       `[session-runner] ${label}: SIGTERM to pid ${pid} failed (best-effort continue): ${
-        err instanceof Error ? err.message : String(err)
+        toErrorMessage(err)
       }`,
     );
     return;
@@ -1046,7 +1047,7 @@ export async function buildEnvBlock(
       // 非 git 目录 / git 不在 PATH 是高频正常路径，debug 级留诊断线索即可，不刷 info/warn
       logger.debug(
         `[session-runner] buildEnvBlock: git branch lookup failed for ${cwd}, fallback to empty: ${
-          err instanceof Error ? err.message : String(err)
+          toErrorMessage(err)
         }`,
       );
       branch = "";
@@ -1206,7 +1207,7 @@ function writeAliveMarkerBestEffort(sessionFile: string, pid: number, id: string
     // best-effort：alive marker 失败不影响执行；debug 级留诊断线索即可，不刷 info/warn
     logger.debug(
       `[session-runner] alive marker write failed (best-effort continue): ${
-        err instanceof Error ? err.message : String(err)
+        toErrorMessage(err)
       }`,
     );
   }
@@ -2423,7 +2424,7 @@ function setupFreshChild(
       logger.warn("[worktree] worktree pid registration failed (defensive)", {
         branch: opts.worktree.branch,
         pid: child.pid,
-        err: err instanceof Error ? err.message : String(err),
+        err: toErrorMessage(err),
       });
     }
   }
@@ -2565,7 +2566,7 @@ function startGetStateHandshake(
     // 超时兜底（r 为空对象）也经此分支 settle，但 record.sessionFile 不回填。
     if (pump.isHandshakePending()) pump.finishHandshake(r);
   }).catch((err: unknown) => {
-    const m = err instanceof Error ? err.message : String(err);
+    const m = toErrorMessage(err);
     logger.error(`[session-runner] get_state handshake failed: ${m}`);
     pump.abandonHandshake();
   });

@@ -44,24 +44,29 @@ interface HandoffSourceShape {
   srcSessionId: string
 }
 
-interface DepsSpies extends StagingModeDeps {
+// 各 spy = 真实签名 & vi.fn 能力（裸 Mock<Procedure> 无法赋给 StagingModeDeps 具体签名）
+type Spy<T> = T & ReturnType<typeof vi.fn>
+
+interface DepsSpies extends Omit<StagingModeDeps,
+  'inputRef' | 'setSending' | 'clearInput' | 'restoreInput' | 'enterStagingMode' | 'exitStagingMode' | 'getStagingConfig' | 't' | 'toastError'
+> {
+  toastError: Spy<StagingModeDeps['toastError']>
   /** 副作用序列日志（每 spy 记录一次标签；序列等价的核心断言对象） */
   log: string[]
-  inputRef: Ref<{ focus?: () => void } | null>
-  setSending: ReturnType<typeof vi.fn>
-  clearInput: ReturnType<typeof vi.fn>
-  restoreInput: ReturnType<typeof vi.fn>
-  enterStagingMode: ReturnType<typeof vi.fn>
-  exitStagingMode: ReturnType<typeof vi.fn>
-  getStagingConfig: ReturnType<typeof vi.fn>
-  t: ReturnType<typeof vi.fn>
-  toastError: ReturnType<typeof vi.fn>
+  inputRef: StagingModeDeps['inputRef']
+  setSending: Spy<StagingModeDeps['setSending']>
+  clearInput: Spy<StagingModeDeps['clearInput']>
+  restoreInput: Spy<StagingModeDeps['restoreInput']>
+  enterStagingMode: Spy<StagingModeDeps['enterStagingMode']>
+  exitStagingMode: Spy<StagingModeDeps['exitStagingMode']>
+  getStagingConfig: Spy<StagingModeDeps['getStagingConfig']>
+  t: Spy<StagingModeDeps['t']>
 }
 
 /** 全 spy deps：每个副作用 push 标签到 log（与骨架/守卫触达的副作用一一对应） */
 function makeDeps(): DepsSpies {
   const log: string[] = []
-  const inputRef = ref<{ focus?: () => void } | null>(null)
+  const inputRef: StagingModeDeps['inputRef'] = ref(null)
   return {
     log,
     inputRef,
@@ -102,9 +107,9 @@ function setup<S extends StagingModeSource>(
 
 function makeForkConfig(
   sessionId: Ref<string | null>,
-  deps: DepsSpies,
+  deps: StagingModeDeps,
   extras: {
-    forkSessionAsk: ReturnType<typeof vi.fn>
+    forkSessionAsk: Spy<(srcSessionId: string, fromMessageId: string, text: string, staging: StagingConfig) => Promise<void>>
     signal: Ref<ForkSourceShape | null>
   },
 ): StagingModeConfig<ForkSourceShape> {
@@ -129,14 +134,14 @@ function makeForkConfig(
 
 function makeHandoffConfig(
   sessionId: Ref<string | null>,
-  deps: DepsSpies,
+  deps: StagingModeDeps,
   extras: {
     signal: Ref<HandoffSourceShape | null>
-    exitForkMode: ReturnType<typeof vi.fn>
-    handoff: ReturnType<typeof vi.fn>
-    abortHandoff: ReturnType<typeof vi.fn>
-    isHandingOff: ReturnType<typeof vi.fn>
-    isSessionActive: ReturnType<typeof vi.fn>
+    exitForkMode: Spy<() => void>
+    handoff: Spy<(srcSessionId: string, reply: string | undefined, staging: StagingConfig) => Promise<void>>
+    abortHandoff: Spy<(srcSessionId: string) => Promise<void>>
+    isHandingOff: Spy<(srcSessionId: string) => boolean>
+    isSessionActive: Spy<(srcSessionId: string) => boolean>
   },
 ): StagingModeConfig<HandoffSourceShape> {
   return {

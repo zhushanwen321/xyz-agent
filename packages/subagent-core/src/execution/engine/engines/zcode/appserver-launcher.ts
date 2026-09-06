@@ -25,6 +25,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { toErrorMessage } from "../../../../core/error-message.ts";
 
 /** wrapper 落盘文件名（engineDataDir/engines/zcode/ 下）。 */
 export const ZCODE_APPSERVER_LAUNCHER_NAME = "appserver-launcher.cjs";
@@ -156,7 +157,7 @@ export function ensureAppServerLauncher(engineDataDir: string): string {
     fs.renameSync(tmp, file);
   } catch (err) {
     // 裸 errno（EACCES/ENOSPC）不含恢复动作——与 probe 失败的错误姿态对齐
-    const reason = err instanceof Error ? err.message : String(err);
+    const reason = toErrorMessage(err);
     throw new Error(
       `zcode app-server launcher 落盘失败: ${file}（${reason}）。恢复：检查引擎数据目录` +
         ` 写权限与磁盘空间（engineDataDir 由宿主传入，路径见上）后重试。`,

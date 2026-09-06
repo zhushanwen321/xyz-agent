@@ -28,6 +28,7 @@ import { join } from "node:path";
 import { getLogger } from "../../../core/logger.ts";
 
 import { resolveEnginesRoot, resolveJournalPath, resolvePoolDir, sanitizeSeg } from "../paths.ts";
+import { toErrorMessage } from "../../../core/error-message.ts";
 
 const logger = getLogger("subagents");
 
@@ -46,13 +47,13 @@ const JOURNAL_PREFIX = "journal-";
 const JOURNAL_SUFFIX = ".jsonl";
 
 /** refs.json 单条引用登记（§3.3.9 v1 形态）。 */
-export interface PoolRefEntry {
+interface PoolRefEntry {
   taskId: string;
   ts: number;
 }
 
 /** refs.json v1 文件形态。 */
-export interface PoolRefsFile {
+interface PoolRefsFile {
   v: 1;
   refs: Record<string, PoolRefEntry>;
 }
@@ -97,7 +98,7 @@ function readPoolRefs(poolDir: string, fs: Pick<PoolFsDeps, "existsSync" | "read
   } catch (err) {
     logger.warn(
       `[pool-manager] refs.json unparsable for ${poolDir}, starting from empty refs: ` +
-        `${err instanceof Error ? err.message : String(err)}`,
+        `${toErrorMessage(err)}`,
     );
     return emptyRefs();
   }
@@ -132,7 +133,7 @@ function writePoolRefs(
   } catch (err) {
     markCleanupFailed(
       poolDir,
-      [`(${REFS_JSON_FILENAME} write): ${err instanceof Error ? err.message : String(err)}`],
+      [`(${REFS_JSON_FILENAME} write): ${toErrorMessage(err)}`],
       fs,
     );
     return false;
@@ -209,7 +210,7 @@ function removeJournalFile(
   } catch (err) {
     markCleanupFailed(
       resolvePoolDir(dataDir, engineId, poolKey),
-      [`(journal ${taskId}): ${err instanceof Error ? err.message : String(err)}`],
+      [`(journal ${taskId}): ${toErrorMessage(err)}`],
       fs,
     );
   }
@@ -338,7 +339,7 @@ function removeOrphanJournals(
       // stat 失败（并发删除等）跳过该条——TTL 扫描周期性重跑，最终一致
       logger.debug(
         `[pool-manager] ttl cleanup stat failed for ${journalPath}: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
+          `${toErrorMessage(err)}`,
       );
     }
   }
@@ -356,7 +357,7 @@ function unlinkBestEffort(path: string, fs: Pick<PoolFsDeps, "rmSync">): void {
   try {
     fs.rmSync(path, { force: true, recursive: true });
   } catch (err) {
-    logger.debug(`[pool-manager] ttl cleanup failed for ${path}: ${err instanceof Error ? err.message : String(err)}`);
+    logger.debug(`[pool-manager] ttl cleanup failed for ${path}: ${toErrorMessage(err)}`);
   }
 }
 
@@ -384,7 +385,7 @@ function deletePoolNativeState(poolDir: string, fs: PoolFsDeps): void {
     try {
       fs.rmSync(join(poolDir, entry.name), { recursive: true, force: true });
     } catch (err) {
-      failures.push(`${entry.name}: ${err instanceof Error ? err.message : String(err)}`);
+      failures.push(`${entry.name}: ${toErrorMessage(err)}`);
     }
   }
   if (failures.length > 0) {
@@ -399,7 +400,7 @@ function deletePoolNativeState(poolDir: string, fs: PoolFsDeps): void {
   } catch (err) {
     markCleanupFailed(
       poolDir,
-      [`(rmdir): ${err instanceof Error ? err.message : String(err)}`],
+      [`(rmdir): ${toErrorMessage(err)}`],
       fs,
     );
   }
@@ -423,7 +424,7 @@ function markCleanupFailed(
     // 标记本身也写不进（目录只读/磁盘满）——error 级留痕是最后防线，不再上抛
     logger.warn(
       `[pool-manager] failed to write cleanup-failed marker ${marker}: ` +
-        `${err instanceof Error ? err.message : String(err)}`,
+        `${toErrorMessage(err)}`,
     );
   }
 }
@@ -458,7 +459,7 @@ export function cleanupSpawnedFiles(
     } catch (err) {
       logger.warn(
         `[pool-manager] spawned file cleanup failed for ${p}: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
+          `${toErrorMessage(err)}`,
       );
     }
   }

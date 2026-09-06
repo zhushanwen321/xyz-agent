@@ -52,8 +52,9 @@ function makeRecord(over: Partial<ExecutionRecord> = {}): ExecutionRecord {
   const base = createRecord("r1", {
     agent: "worker",
     model: "m",
-    mode: "sync",
+    mode: "background",
     task: "t",
+    slug: "test",
     startedAt: 1000,
     rootSessionId: "sess-current",
     // 对齐生产 register 路径（subagent-service createRecord：one-shot 显式 false）
@@ -68,7 +69,7 @@ function makeRecord(over: Partial<ExecutionRecord> = {}): ExecutionRecord {
  */
 function writeSessionJsonl(
   filePath: string,
-  identity: { id: string; agent: string; mode: "sync" | "background"; task: string; startedAt: number; rootSessionId?: string; parentRecordId?: string; depth?: number; lastTs?: number; chatMode?: boolean },
+  identity: { id: string; agent: string; mode: "background"; task: string; startedAt: number; rootSessionId?: string; parentRecordId?: string; depth?: number; lastTs?: number; chatMode?: boolean },
   assistantText = "result text",
 ): void {
   const lastTs = identity.lastTs ?? identity.startedAt + 1000;
@@ -138,7 +139,7 @@ describe("RecordStore", () => {
   describe("archive 立即移除", () => {
     it("archive 后 record 立即从内存移除（不再 linger）", () => {
       const store = new RecordStore(tmpDir);
-      const r = makeRecord({ id: "sync-1", mode: "sync", status: "closed" });
+      const r = makeRecord({ id: "sync-1", mode: "background", status: "closed" });
       store.register(r);
       expect(store.getMutable("sync-1")).toBeDefined();
       store.archive(r);
@@ -1012,7 +1013,7 @@ describe("RecordStore", () => {
       // chatMode 必须显式在场（one-shot=false）——renderer isDone 判据依赖它。
       expect(Object.keys(data).sort()).toEqual([
         "agent", "chatMode", "depth", "displayItems", "eventLog",
-        "id", "mode", "model", "rootSessionId", "round", "startedAt",
+        "id", "mode", "model", "rootSessionId", "round", "slug", "startedAt",
         "status", "task", "totalTokens", "turns", "v", "worktree",
       ]);
       expect(data).toMatchObject({
@@ -1021,7 +1022,7 @@ describe("RecordStore", () => {
         agent: "worker",
         task: "t",
         status: "running",
-        mode: "sync",
+        mode: "background",
         startedAt: 1000,
         rootSessionId: "sess-current",
         chatMode: false,
@@ -1091,13 +1092,13 @@ describe("RecordStore", () => {
       writeSessionJsonl(path.join(tmpDir, "sa-ps14.jsonl"), {
         id: "ps14",
         agent: "worker",
-        mode: "sync",
+        mode: "background",
         task: "t",
         startedAt: 1000,
       });
 
       const store = new RecordStore(tmpDir);
-      const records = store.collectRecords();
+      const records = store.collectRecords(100);
       expect(records).toHaveLength(1); // 扫描本身不受索引写失败影响
 
       // fire-and-forget saveIndex：等 .catch 执行
@@ -1122,13 +1123,13 @@ describe("RecordStore", () => {
       writeSessionJsonl(path.join(tmpDir, "sa-ps14-ok.jsonl"), {
         id: "ps14ok",
         agent: "worker",
-        mode: "sync",
+        mode: "background",
         task: "t",
         startedAt: 1000,
       });
 
       const store = new RecordStore(tmpDir);
-      store.collectRecords();
+      store.collectRecords(100);
       await vi.waitFor(() => expect(saveIndexMock).toHaveBeenCalled());
 
       const warnIndexMsgs = loggerMock.warn.mock.calls.filter((c) =>

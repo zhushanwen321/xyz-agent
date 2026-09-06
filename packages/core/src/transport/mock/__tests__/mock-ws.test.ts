@@ -73,7 +73,7 @@ describe('createMockPlatform', () => {
     ws.onclose = () => {
       closed = true
     }
-    ws.onmessage = (ev: { data: string }) => received.push(ev.data)
+    ws.onmessage = (ev: { data: unknown }): void => { received.push(String(ev.data)) }
     vi.advanceTimersByTime(200)
     expect(opened).toBe(true)
     expect(ws.readyState).toBe(WS_READY_STATE.OPEN)

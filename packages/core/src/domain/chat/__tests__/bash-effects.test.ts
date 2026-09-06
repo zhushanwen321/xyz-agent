@@ -12,6 +12,7 @@
  * 等价性断言（entry 序 vs 手工重放）归 W6，此处只锁 entry 形态与 reducer 喂入。
  */
 import { describe, it, expect } from 'vitest'
+import type { ShallowRef } from 'vue'
 import { shallowRef } from 'vue'
 import type { Message, PiEntry } from '@xyz-agent/shared'
 import {
@@ -27,7 +28,7 @@ import type { MessageEffectContext, MessageEffectHandler } from '../effect-types
 
 /** 测试用 ctx：messages ref（渲染 overlay）+ applyEntryFrame（真实 reducer 喂入，镜像 store 实现）。 */
 function createTestCtx() {
-  const messages: MessagesRef = shallowRef(new Map<string, shallowRef<Message[]>>())
+  const messages: MessagesRef = shallowRef(new Map<string, ShallowRef<Message[]>>())
   const entryStates = new Map<string, ReturnType<typeof createInitialChatViewState>>()
   const applyEntryFrame = (sid: string, entry: PiEntry): void => {
     entryStates.set(sid, applyEntry(entryStates.get(sid) ?? createInitialChatViewState(), entry))

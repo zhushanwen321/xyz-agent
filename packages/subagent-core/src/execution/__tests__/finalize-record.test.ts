@@ -36,7 +36,6 @@ function makeMinimalRecord(overrides: Partial<ExecutionRecord> = {}): ExecutionR
     thinkingLevel: undefined,
     mode: "background",
     task: "test",
-    slug: "test",
     startedAt: 1000,
     rootSessionId: "session-main",
     parentRecordId: undefined,
@@ -77,19 +76,19 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   /** 构造最小 FinalizeDeps：record 无 sessionFile/worktreeHandle,跳过 Step 0/3 文件操作。 */
-  function makeDeps() {
+  function makeDeps(): Parameters<typeof doFinalizeRecord>[0] {
     return {
       manifestStore,
-      worktreeManager: {} as never,
-      store: { archive: vi.fn(), reportRecordTransition: vi.fn() } as never,
-      modelService: {} as never,
+      worktreeManager: {},
+      store: { archive: vi.fn(), reportRecordTransition: vi.fn() },
+      modelService: {},
       pi: { appendEntry: vi.fn() },
       emitUnregister: vi.fn(),
-    };
+    } as unknown as Parameters<typeof doFinalizeRecord>[0];
   }
 
   it("status=closed + cancelled reason → manifest 写 closed（v4 B-1：cancelled 折入 closed）", async () => {
@@ -165,7 +164,7 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
     expect(errMsg).toContain("disk full");
 
     // ── 核心 claim 6：pi.appendEntry 记录 "subagent:manifest-write-failed" 事件 ──
-    expect(deps.pi.appendEntry).toHaveBeenCalledWith(
+    expect(deps.pi!.appendEntry).toHaveBeenCalledWith(
       "subagent:manifest-write-failed",
       expect.objectContaining({ id: "rec-cleanup-first", error: "disk full" }),
     );
@@ -198,7 +197,7 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
     });
 
     afterEach(() => {
-      fs.rmSync(sessionDir, { recursive: true, force: true });
+      fs.rmSync(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     });
 
     /** 在 sessionDir 写入带 identity 的 session 文件（1 行 identity entry，位于头部）。 */
@@ -287,19 +286,19 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   /** 构造 FinalizeDeps：worktreeManager.cleanup / store.archive 为 vi.fn 以断言「不调」。 */
-  function makeDeps() {
+  function makeDeps(): Parameters<typeof doFinalizeRoundToIdle>[0] {
     return {
       manifestStore,
-      worktreeManager: { cleanup: vi.fn(), collectPatch: vi.fn() } as never,
-      store: { archive: vi.fn(), reportRecordTransition: vi.fn() } as never,
-      modelService: {} as never,
-      pi: { appendEntry: vi.fn() } as never,
+      worktreeManager: { cleanup: vi.fn(), collectPatch: vi.fn() },
+      store: { archive: vi.fn(), reportRecordTransition: vi.fn() },
+      modelService: {},
+      pi: { appendEntry: vi.fn() },
       emitUnregister: vi.fn(),
-    };
+    } as unknown as Parameters<typeof doFinalizeRoundToIdle>[0];
   }
 
   it("record 带 sessionFile → 删 .alive + record.status=running + round 0→1", async () => {

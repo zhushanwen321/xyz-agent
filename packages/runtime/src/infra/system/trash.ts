@@ -3,6 +3,7 @@ import { execSync } from 'node:child_process'
 import { platform } from 'node:os'
 import { buildOutboundChildEnv } from '../spawn-env.js'
 import { logger } from '../logger.js'
+import { toErrorMessage } from '../../utils/errors.js'
 
 /**
  * Move file to system trash (macOS) or permanently delete (non-mac).
@@ -30,7 +31,7 @@ export async function trash(filePath: string): Promise<void> {
       // 快失败（trash CLI 缺失直接走 osascript 也失败）与超时同语义：保留文件 + 报错。
       logger.error('[trash] failed to move file to trash, file kept in place', {
         filePath,
-        error: e instanceof Error ? e.message : String(e),
+        error: toErrorMessage(e),
       })
       throw new Error(
         `移入废纸篓失败（Finder 未在 5s 内响应或命令失败）。文件已保留在原位置，未做任何删除：${filePath}。👉 稍后重试删除；或手动在访达中将该文件拖入废纸篓。`,

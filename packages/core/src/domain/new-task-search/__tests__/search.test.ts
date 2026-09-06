@@ -276,7 +276,7 @@ describe('DTO 映射', () => {
     const deps = makeDeps()
     const groups: SessionGroup[] = [
       {
-        group: 'g',
+        cwd: '/tmp/x',
         sessions: [
           { id: 's1', cwd: '/tmp/x', label: '测试会话' } as never,
         ],

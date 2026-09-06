@@ -9,6 +9,8 @@
  * watch 类用例用 effectScope 包裹 + flushPromises 驱动（node 环境无组件渲染）。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import type { Ref } from 'vue';
+import type { ProviderId } from '@xyz-agent/shared'
 import { ref, effectScope, nextTick } from 'vue'
 import { providePlatform, __resetPlatformForTesting } from '../../../platform/port'
 import {
@@ -32,6 +34,7 @@ function makeFakeTransport(): SettingsTransport {
   return {
     listProviders: vi.fn(async () => ({ providers: [] })),
     listModels: vi.fn(async () => []),
+    setScopedModels: vi.fn(async (_models: string[]): Promise<string[]> => []),
     setProvider: vi.fn(async () => {}),
     discoverModels: vi.fn(async () => ({ success: true, models: [] })),
     setSkillDirs: vi.fn(async () => {}),
@@ -55,7 +58,7 @@ beforeEach(() => {
   __resetSettingsStoreForTesting()
   __resetSettingsTransportForTesting()
   __resetPlatformForTesting()
-  providePlatform({ kind: 'mock', storage: new InMemoryStorage(), webSocket: { create: () => ({}) as never }, ipc: null })
+  providePlatform({ kind: 'mock', storage: new InMemoryStorage(), webSocket: { create: () => ({}) as never } })
   currentTransport = makeFakeTransport()
   provideSettingsTransport(currentTransport)
   tStub.mockClear()
@@ -76,14 +79,15 @@ afterEach(() => {
   scope = null
 })
 
-function mount(providerRef: ReturnType<typeof ref<ProviderInfo | null>>) {
+function mount(providerRef: Ref<ProviderInfo | null>) {
   scope = effectScope()
-  return scope!.run(() => useProviderEdit(providerRef, { t: tStub }))
+  // effectScope.run 类型签名 T | undefined——活动 scope 内同步返回值恒非空
+  return scope!.run(() => useProviderEdit(providerRef, { t: tStub }))!
 }
 
 function makeProvider(overrides: Partial<ProviderInfo> = {}): ProviderInfo {
   return {
-    id: 'p1',
+    id: 'p1' as ProviderId,
     name: 'P1',
     api: 'anthropic-messages',
     baseUrl: 'https://api.example.com',

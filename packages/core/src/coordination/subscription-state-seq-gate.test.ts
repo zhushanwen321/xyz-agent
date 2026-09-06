@@ -104,9 +104,9 @@ describe('seqGate — MF-3 接口级钉住（判定 + 簿记 + 基线配对）',
     // reconcile 成功：缺失段（11、12）+ 触发消息（13）都在回放 snapshot 内
     subscribe.mockResolvedValueOnce({
       snapshot: [
-        { type: 'session.ping', seq: 11, payload: { sessionId: 's1' } },
-        { type: 'session.ping', seq: 12, payload: { sessionId: 's1' } },
-        { type: 'session.ping', seq: 13, payload: { sessionId: 's1' } },
+        { type: 'session.compacted', seq: 11, payload: { sessionId: 's1' } },
+        { type: 'session.compacted', seq: 12, payload: { sessionId: 's1' } },
+        { type: 'session.compacted', seq: 13, payload: { sessionId: 's1' } },
       ],
       stateSnapshot: [],
       lastSeq: 13,

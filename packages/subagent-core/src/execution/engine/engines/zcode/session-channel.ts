@@ -63,6 +63,7 @@ import {
   ZCODE_TURN_MAX_TIMEOUT_MS,
   parseZcodeTurnTimeoutEnv,
 } from "./constants.ts";
+import { toErrorMessage } from "../../../../core/error-message.ts";
 
 const logger = getLogger("subagents");
 
@@ -83,7 +84,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  return toErrorMessage(err);
 }
 
 // ============================================================

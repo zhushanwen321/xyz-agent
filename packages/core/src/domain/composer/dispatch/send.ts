@@ -21,6 +21,7 @@
 import type { ComputedRef, Ref } from 'vue'
 import type { Segment } from '@xyz-agent/shared'
 import type { BashCommandExtract, StagingAction, StagingConfig } from '../types'
+import { toErrorMessage } from '../../../utils/error-message'
 
 /**
  * 本模块视角的最小契约：发送前快照只需 getSegments。
@@ -180,7 +181,7 @@ export function useComposerSend(deps: ComposerSendDeps): { onSend: () => Promise
         await deps.flow.submitFirstMessage(segments, deps.localThinkingLevel.value, bashCommand)
       } catch (e) {
         deps.restoreSegments(segments)
-        deps.toastError(deps.t('panel.panel.taskFailed', { error: e instanceof Error ? e.message : String(e) }))
+        deps.toastError(deps.t('panel.panel.taskFailed', { error: toErrorMessage(e) }))
       } finally {
         deps.isSending.value = false
       }
@@ -203,7 +204,7 @@ export function useComposerSend(deps: ComposerSendDeps): { onSend: () => Promise
       await deps.send(deps.sessionIdRef.value!, segments)
     } catch (e) {
       deps.restoreSegments(segments)
-      deps.toastError(deps.t('panel.panel.sendFailed', { error: e instanceof Error ? e.message : String(e) }))
+      deps.toastError(deps.t('panel.panel.sendFailed', { error: toErrorMessage(e) }))
     } finally {
       deps.isSending.value = false
     }

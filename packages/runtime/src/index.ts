@@ -78,6 +78,7 @@ import { XyzProviderStore } from './services/provider-extras-store.js'
 // tee 翻译层。纯新增模块，经 messageBus.publish 广播 tee 帧；env 注入在
 // process-manager（getRelaySpawnEnv，与 server 激活状态联动）。
 import { initRelayServer, deinitRelayServer } from './infra/relay/relay-server.js'
+import { toErrorMessage } from './utils/errors.js'
 
 function parseArgs(): { port: number; projectRoot?: string; builtinPluginsDir?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
@@ -745,7 +746,7 @@ async function main(): Promise<void> {
     const code = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined
     if (code === 'EADDRINUSE') {
       console.error(`[runtime] fatal: 端口 ${port} 被占用（EADDRINUSE）——可能已有另一个 xyz-agent 实例在运行。`)
-      console.error(`  排查: lsof -i :${port} 查看占用进程；关闭其他实例后重启。原始错误: ${err instanceof Error ? err.message : String(err)}`)
+      console.error(`  排查: lsof -i :${port} 查看占用进程；关闭其他实例后重启。原始错误: ${toErrorMessage(err)}`)
     } else {
       console.error('[runtime] fatal: WS listen failed:', err)
     }

@@ -6,6 +6,7 @@
  * 读并 setSystem 持久化；refreshProviders 成功/失败分支；dispose 清订阅 + 守卫复位；
  * transport 未注入 fail-fast。
  */
+import type { ProviderId } from '@xyz-agent/shared'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { providePlatform, __resetPlatformForTesting } from '../../../platform/port'
 import {
@@ -35,7 +36,7 @@ function makeRecordingTransport() {
     return unsub
   })
   const transport: SettingsTransport = {
-    listProviders: vi.fn(async () => []),
+    listProviders: vi.fn(async () => ({ providers: [] })),
     listModels: vi.fn(async () => []),
     setProvider: vi.fn(async () => {}),
     setScopedModels: vi.fn(async () => [] as string[]),
@@ -60,7 +61,7 @@ function makeRecordingTransport() {
 
 function provideBase() {
   const storage = new InMemoryStorage()
-  providePlatform({ kind: 'mock', storage, webSocket: { create: () => ({}) as never }, ipc: null })
+  providePlatform({ kind: 'mock', storage, webSocket: { create: () => ({}) as never } })
   return storage
 }
 
@@ -113,7 +114,7 @@ describe('11 条订阅注册 + handler 写 store', () => {
     await init()
     const store = getSettingsStore()
 
-    const p: ProviderInfo = { id: 'p1', name: 'P1', apiKeySet: false, status: 'connected', models: [] }
+    const p: ProviderInfo = { id: 'p1' as ProviderId, name: 'P1', apiKeySet: false, status: 'connected', models: [] }
     handlers.providers([p], ['openai/gpt-4o', 'deepseek/v3'])
     expect(store.providers.value).toEqual([p])
     expect(store.scopedModels.value).toEqual(['openai/gpt-4o', 'deepseek/v3'])
@@ -121,11 +122,11 @@ describe('11 条订阅注册 + handler 写 store', () => {
     handlers.models([{ id: 'm1', name: 'M1', providerId: 'p1', providerName: 'P1' }])
     expect(store.models.value).toHaveLength(1)
 
-    const s: SkillInfo = { id: 's1', name: 'S1', version: '1.0.0' } as SkillInfo
+    const s: SkillInfo = { id: 's1', name: 'S1', version: '1.0.0' } as unknown as SkillInfo
     handlers.skills([s])
     expect(store.skills.value).toEqual([s])
 
-    const a: AgentInfo = { id: 'a1', name: 'A1', version: '1.0.0' } as AgentInfo
+    const a: AgentInfo = { id: 'a1', name: 'A1', version: '1.0.0' } as unknown as AgentInfo
     handlers.agents([a])
     expect(store.agents.value).toEqual([a])
 
@@ -187,7 +188,7 @@ describe('refreshProviders 分支', () => {
     provideBase()
     const { transport } = makeRecordingTransport()
     ;(transport.listProviders as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      providers: [{ id: 'p1', name: 'P1', apiKeySet: false, status: 'connected', models: [] }],
+      providers: [{ id: 'p1' as ProviderId, name: 'P1', apiKeySet: false, status: 'connected', models: [] }],
     })
     provideSettingsTransport(transport)
     const { refreshProviders } = useSettings()
@@ -303,7 +304,7 @@ describe('A4: onProviders 推送 scopedModels 时 store 更新', () => {
     expect(store.scopedModels.value).toEqual([])
 
     // 触发 onProviders handler 带 scopedModels → store 更新
-    const p: ProviderInfo = { id: 'openai', name: 'OpenAI', apiKeySet: true, status: 'connected', models: [] }
+    const p: ProviderInfo = { id: 'openai' as ProviderId, name: 'OpenAI', apiKeySet: true, status: 'connected', models: [] }
     handlers.providers([p], ['openai/gpt-4o', 'openai/gpt-4o-mini'])
     expect(store.scopedModels.value).toEqual(['openai/gpt-4o', 'openai/gpt-4o-mini'])
 

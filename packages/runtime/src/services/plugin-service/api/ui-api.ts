@@ -42,7 +42,7 @@ import {
   asString,
   asStringArray,
 } from '../validation.js'
-import { errorWithCode } from '../../../utils/errors.js'
+import { errorWithCode, toErrorMessage } from '../../../utils/errors.js'
 import { randomSuffix } from '../../../utils/ids.js'
 import { guardNotifyParams, NotifyRateLimiter } from './notify-api.js'
 
@@ -250,7 +250,7 @@ export function registerUiRpcHandlers(
       const code = (e as { code?: unknown }).code
       if (typeof code === 'string' && code.startsWith('INVALID_')) {
         console.warn(
-          `[ui-api] statusbar item rejected: ${e instanceof Error ? e.message : String(e)} (plugin=${String(params.pluginId)} id=${String(params.id)})`,
+          `[ui-api] statusbar item rejected: ${toErrorMessage(e)} (plugin=${String(params.pluginId)} id=${String(params.id)})`,
         )
       }
       throw e

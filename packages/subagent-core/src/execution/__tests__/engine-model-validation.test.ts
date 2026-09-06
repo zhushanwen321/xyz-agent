@@ -65,7 +65,6 @@ import { ZcodeEngine } from "../engine/engines/zcode/zcode-engine.ts";
 import { ZcodePrepareError } from "../engine/engines/zcode/preparer.ts";
 import { clearEngines, registerEngine } from "../engine/registry.ts";
 import type {
-  AgentTaskSpec,
   EngineCapabilities,
   EngineHandle,
   ProbeReport,
@@ -102,6 +101,7 @@ const ZCODE_LIKE_CAPS: EngineCapabilities = {
   resume: "cold",
   interrupt: "kill-only",
   permissionMode: "native",
+  maxTurns: false,
 };
 
 interface ValidatingEngineOpts {
@@ -116,7 +116,7 @@ interface ValidatingEngineOpts {
 class ValidatingFakeEngine implements EnginePort {
   readonly id: string;
   readonly models: string[];
-  readonly runs: Array<{ task: AgentTaskSpec; ctx: RunContext }> = [];
+  readonly runs: Array<{ task: AgentCallOpts; ctx: RunContext }> = [];
   private readonly validateModelError: Error | undefined;
   private readonly withValidateModel: boolean;
 
@@ -133,17 +133,17 @@ class ValidatingFakeEngine implements EnginePort {
   async probe(): Promise<ProbeReport> {
     return { ok: true, engineVersion: "fake", checks: [{ name: "bin", ok: true }] };
   }
-  async run(task: AgentTaskSpec, ctx: RunContext): Promise<{ handle: EngineHandle; outcome: { engineId: string; content: string } }> {
+  async run(task: AgentCallOpts, ctx: RunContext): Promise<{ handle: EngineHandle; outcome: { engineId: string; content: string } }> {
     this.runs.push({ task, ctx });
     return {
       handle: { data: { v: 1, engineId: this.id, sessionRef: {}, poolKey: "shared", adapterVersion: "test" } },
       outcome: { engineId: this.id, content: "ok" },
     };
   }
-  async interact(): Promise<{ ok: false; code: string; message: string }> {
+  async interact(_handle: EngineHandle, _action: unknown): Promise<{ ok: false; code: string; message: string }> {
     return { ok: false, code: "engine_capability_unsupported", message: "fake" };
   }
-  async read(): Promise<{ engineId: string; turns: never[]; source: "outcome-only" }> {
+  async read(_handle: EngineHandle): Promise<{ engineId: string; turns: never[]; source: "outcome-only" }> {
     return { engineId: this.id, turns: [], source: "outcome-only" };
   }
 
@@ -188,7 +188,7 @@ interface ChatSetup {
 function setupChat(agentDir: string, opts?: { defaultEngine?: string; extraEngine?: ValidatingFakeEngine }): ChatSetup {
   const zcode = new ValidatingFakeEngine({ id: "zcode", models: [ZCODE_DEFAULT, ZCODE_FLASH] });
   registerEngine("zcode", () => zcode);
-  if (opts?.extraEngine !== undefined) registerEngine(opts.extraEngine.id, () => opts.extraEngine);
+  if (opts?.extraEngine !== undefined) registerEngine(opts.extraEngine.id, () => opts.extraEngine!);
   const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
   modelService.initModel({
     modelRegistry: fakePiRegistry(),
@@ -265,7 +265,7 @@ describe("chat 路径：路由先行 + 按目标引擎校验 model（u-h2 V2-1/V
     const handle = await service.execute(baseOpts(agentDir, { model: ZCODE_FLASH }));
     // record 身份字段产生于 execute 同步段——resolve 后立即快照：fake run 立即 resolve，
     // 轮询窗口内 finalize/archive 会把 record 移出 running（waitFor 后再读是负载敏感竞态）
-    const rec = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
+    const rec = service["collectRecords"](10, "running").find((r) => r.id === handle.subagentId);
     expect(rec?.engine).toBe("zcode");
     expect(rec?.model).toBe(ZCODE_FLASH);
     // 引擎派发事实单独确定性等待（runs 数组只增不删）
@@ -279,7 +279,7 @@ describe("chat 路径：路由先行 + 按目标引擎校验 model（u-h2 V2-1/V
     const { service, zcode, pi } = setupChat(agentDir);
     const handle = await service.execute(baseOpts(agentDir, { engine: "zcode", model: ZCODE_FLASH }));
     // 同步段快照（竞态依据同 V2-1a）
-    const rec = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
+    const rec = service["collectRecords"](10, "running").find((r) => r.id === handle.subagentId);
     expect(rec?.engine).toBe("zcode");
     await vi.waitFor(() => expect(zcode.runs.length).toBe(1));
     expect(zcode.runs[0]!.task.model).toBe(ZCODE_FLASH);
@@ -318,7 +318,7 @@ describe("chat 路径：路由先行 + 按目标引擎校验 model（u-h2 V2-1/V
     // 同步期拒绝：零执行副作用
     expect(zcode.runs.length).toBe(0);
     expect(mockSpawn).not.toHaveBeenCalled();
-    expect(service.collectRecords(10, "all")).toHaveLength(0);
+    expect(service["collectRecords"](10, "all")).toHaveLength(0);
   });
 
   // ── D2-1 逐层语义：frontmatter model / ctxModel / thinkingLevel ──
@@ -349,7 +349,7 @@ describe("chat 路径：路由先行 + 按目标引擎校验 model（u-h2 V2-1/V
 
     const handle = await service.execute(baseOpts(agentDir));
     // 同步段快照 record 身份（竞态依据同 V2-1a）
-    const rec = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
+    const rec = service["collectRecords"](10, "running").find((r) => r.id === handle.subagentId);
     expect(rec?.model).toBe(ZCODE_DEFAULT);
     await vi.waitFor(() => expect(zcode.runs.length).toBe(1));
 
@@ -374,7 +374,7 @@ describe("chat 路径：路由先行 + 按目标引擎校验 model（u-h2 V2-1/V
       interact: () => Promise.resolve({ ok: false, code: "engine_capability_unsupported", message: "bare" }),
       read: () => Promise.resolve({ engineId: "bare", turns: [], source: "outcome-only" }),
     };
-    const bareRunTasks: AgentTaskSpec[] = [];
+    const bareRunTasks: AgentCallOpts[] = [];
     registerEngine("bare", () => bare);
 
     const { service, pi } = setupChat(agentDir);
@@ -393,7 +393,7 @@ describe("chat 路径：路由先行 + 按目标引擎校验 model（u-h2 V2-1/V
 
     // record 身份字段产生于 execute 同步段——resolve 后立即快照（竞态依据同 V2-1a）。
     // pi 路径的 kickOffBackground → runSpawn 是 detached 链，不作为断言前置条件。
-    const rec = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
+    const rec = service["collectRecords"](10, "running").find((r) => r.id === handle.subagentId);
     expect(rec?.engine).toBeUndefined(); // pi 缺省不盖章（D5 零变化）
     expect(rec?.model).toBe(PI_ID);
 
@@ -467,17 +467,17 @@ describe("pi registry 未命中的跨引擎候选（u-h2 D2-4）", () => {
 // C. workflow 路径 SAR：非 pi 校验调用点（V2-4②/④）
 // ============================================================
 
-function makeSarFakeZcode(opts?: { withValidateModel?: boolean }): { engine: EnginePort; runs: Array<{ task: AgentTaskSpec }> } {
+function makeSarFakeZcode(opts?: { withValidateModel?: boolean }): { engine: EnginePort; runs: Array<{ task: AgentCallOpts }> } {
   const engine = new ValidatingFakeEngine({ id: "zcode", models: [ZCODE_DEFAULT, ZCODE_FLASH], ...(opts ?? {}) });
   if (opts?.withValidateModel === false) {
     // 原型方法不可 deleteProperty——以同形状 plain object 替换（成员裁剪后的形态）
     const bare: EnginePort = {
       id: "zcode",
-      capabilities: () => engine.capabilities(),
-      probe: () => engine.probe(),
-      run: (task, ctx) => engine.run(task, ctx),
-      interact: (handle, action) => engine.interact(handle, action),
-      read: (handle) => engine.read(handle),
+      capabilities: () => engine!.capabilities(),
+      probe: () => engine!.probe(),
+      run: (task, ctx) => engine!.run(task, ctx),
+      interact: (handle, action) => engine!.interact(handle, action),
+      read: (handle) => engine!.read(handle),
     };
     return { engine: bare, runs: engine.runs };
   }
@@ -636,7 +636,7 @@ describe("P2-1 路由先行 reorder 的时序回归锁定", () => {
     expect(eventLog).not.toContain("entry:subagent-record");
     expect(eventLog).not.toContain("emit:pending:register");
     expect(zcode.runs.length).toBe(0);
-    expect(service.collectRecords(10, "all")).toHaveLength(0);
+    expect(service["collectRecords"](10, "all")).toHaveLength(0);
   });
 
   it("[非 pi 成功] record entry → pending:register 顺序与 pi 路径一致", async () => {

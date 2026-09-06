@@ -89,7 +89,7 @@ export function makeAppserverHarness(opts: AppserverHarnessOptions = {}): Appser
     dataDir,
     dispose: () =>
       engine.dispose().finally(() => {
-        fs.rmSync(tmpRoot, { recursive: true, force: true });
+        fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
       }),
   };
 }
@@ -111,8 +111,8 @@ export function readFakeState(file: string): Array<Record<string, unknown>> {
 /** fake 收到的客户端帧方法名序列（abort 链「stop 先于杀链」断言面）。 */
 export function sentMethodNames(stateFile: string): string[] {
   return readFakeState(stateFile)
-    .map((e) => e["frame"])
-    .filter((f): f is Record<string, unknown> => typeof f === "object" && f !== null && typeof f["method"] === "string")
+    .map((e) => (e as Record<string, unknown>)["frame"])
+    .filter((f): f is Record<string, unknown> => typeof f === "object" && f !== null && typeof (f as Record<string, unknown>)["method"] === "string")
     .map((f) => f["method"] as string);
 }
 

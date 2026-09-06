@@ -15,6 +15,7 @@
 // 必须时钟可控才可判定。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { MockInstance } from "vitest";
 
 import { getLogger } from "../../../../../core/logger.ts";
 import type { AppServerConnection } from "../connection.ts";
@@ -144,7 +145,7 @@ async function flushSetup(): Promise<void> {
 }
 
 const warnLogger = getLogger("subagents");
-let warnSpy: ReturnType<typeof vi.spyOn>;
+let warnSpy: MockInstance<(msg: string, data?: unknown) => void>;
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });

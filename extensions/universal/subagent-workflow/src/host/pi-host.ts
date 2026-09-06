@@ -38,6 +38,7 @@ import { createDelivery } from "@xyz-agent/session-delivery";
 import type { DiscoveryRoot, HostServices } from "@zhushanwen/subagent-core";
 import type { LogLevel } from "@zhushanwen/subagent-core";
 import type { NotifyDomainPorts } from "@zhushanwen/subagent-core";
+import { toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 /**
  * core 包（@zhushanwen/subagent-core）agents/ 资产进 pi 发现面的注入根（C5⑥，
@@ -71,7 +72,7 @@ function corePackageNpmRoot(): string | undefined {
     // module-level mock 可能返回 undefined，模块级持有会在 import 期踩 undefined）
     getLogger("pi-host").warn(
       "[pi-host] core 包 agents/ 注入根解析失败——10 内置角色可能不可发现",
-      { reason: err instanceof Error ? err.message : String(err) },
+      { reason: toErrorMessage(err) },
     );
     return undefined;
   }

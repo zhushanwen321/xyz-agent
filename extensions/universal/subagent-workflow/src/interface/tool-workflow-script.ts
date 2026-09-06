@@ -44,6 +44,7 @@ import {
 import type { WorkflowScriptRegistry } from "@zhushanwen/subagent-core";
 import { toGuiCtx } from "./gui-mappers.ts";
 import { renderTextFallback } from "./format.ts";
+import { toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 // ── Parameter schema ─────────────────────────────────────────
 
@@ -351,7 +352,7 @@ async function actionSave(params: ScriptParams): Promise<TextContent> {
   } catch (err: unknown) {
     // throw（W4）：pi 只对 execute throw 置 isError:true（返回值里的 isError 被
     // agent-loop 丢弃，agent-loop.js:453-483）——文案原样进 toolResult。
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = toErrorMessage(err);
     throw new Error(`Save failed: ${msg}`);
   }
 }
@@ -378,7 +379,7 @@ function actionDelete(
     };
   } catch (err: unknown) {
     // throw（W4）：同 save——pi 契约只有 throw 才置 isError:true。
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = toErrorMessage(err);
     throw new Error(`Delete failed: ${msg}`);
   }
 }
@@ -401,7 +402,7 @@ async function actionList(registry: WorkflowScriptRegistry): Promise<TextContent
     };
   } catch (err: unknown) {
     // throw（W4b）：list 失败改 throw（原 return isError 被 pi 丢弃），文案保持
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = toErrorMessage(err);
     throw new Error(`List failed: ${msg}`);
   }
 }

@@ -13,6 +13,7 @@ import { engineTimeoutDetail } from "./errors.ts";
 import type { AgentCallOpts } from "../../../orchestration/models/types.ts";
 import type { AgentOutcome } from "../types.ts";
 import { DEFAULT_ENGINE_ID } from "../registry.ts";
+import { toErrorMessage } from "../../../core/error-message.ts";
 
 const logger = getLogger("subagents");
 
@@ -113,7 +114,7 @@ function safeKill(child: KillableChild, signal: NodeJS.Signals): void {
     child.kill(signal);
   } catch (err) {
     logger.debug(
-      `[kill-chain] ${signal} on exited process: ${err instanceof Error ? err.message : String(err)}`,
+      `[kill-chain] ${signal} on exited process: ${toErrorMessage(err)}`,
     );
   }
 }
@@ -191,7 +192,7 @@ export function abortWithFallback(
             // debug 级留诊断线索：这不是错误终态，只是该引擎优雅中断不可用
             logger.debug(
               `[kill-chain] native interrupt failed, falling back to kill chain: ${
-                err instanceof Error ? err.message : String(err)
+                toErrorMessage(err)
               }`,
             );
           }

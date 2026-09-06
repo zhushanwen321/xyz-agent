@@ -29,6 +29,7 @@ import {
   handleWorkerError,
 } from "../worker-message-pump.ts";
 import type { LifecycleDeps, WorkerHandlers } from "../models/ports.ts";
+import type { DoneReason, RunStatus } from "../models/types.ts";
 import type { WorkflowRun } from "../models/workflow-run.ts";
 import type { WorkerHandle } from "../worker-handle.ts";
 
@@ -70,11 +71,11 @@ function makeRunningRun(opts: RunMockOpts = {}): WorkflowRun {
       worker: { postMessage: vi.fn() },
       receivedTerminalMessage: opts.receivedTerminalMessage,
     },
-    transition(target: string, reason?: string): void {
+    transition(this: WorkflowRun, target: RunStatus, reason?: DoneReason): void {
       this.state.status = target;
       if (target === "done") this.state.reason = reason;
     },
-    replaceRuntime(rt: unknown): void {
+    replaceRuntime(this: WorkflowRun, rt: NonNullable<WorkflowRun["runtime"]>): void {
       this.runtime = rt;
     },
   } as unknown as WorkflowRun;

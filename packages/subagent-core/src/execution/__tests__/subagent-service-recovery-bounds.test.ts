@@ -111,7 +111,7 @@ type MockPi = ReturnType<typeof makePi>;
 
 function setup(): { agentDir: string; service: SubagentService; store: RecordStore; pi: MockPi } {
   const agentDir = makeTmpAgentDir();
-  const modelService = new ModelConfigService({ agentDir });
+  const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
   const service = new SubagentService({ cwd: agentDir, modelService });
   const pi = makePi();
   service.initSession({ pi, sessionId: "root-session" });
@@ -179,7 +179,7 @@ describe("T2④ service-side kill convergence", () => {
     spawnedMap.set(record.id, new FakeChild());
     armIdleTimer(record.id, () => {}); // Path A：idle timer armed（进程保活）
     armSettledWatchdog(record.id, () => {});
-    await service.closeSubagent(record, false);
+    await service["closeSubagent"](record, false);
     expect(killChildSpy).toHaveBeenCalledWith(record.id, "closeChatIdle");
     expect(hasIdleTimer(record.id)).toBe(false);
     expect(hasSettledWatchdog(record.id)).toBe(false);
@@ -328,7 +328,7 @@ describe("T2⑧ non-EPIPE hot-path failure re-arms idle timer", () => {
     const record = makeRecord({ id: "sa-nonpipe-bad" });
     // 直接注入非法值模拟「入口校验前已存在的 record」/ 回归形态：re-arm 首选值非法 →
     // 降级挂 DEFAULT（防御性兜底可见，不静默不挂）
-    record.idleTimeoutMs = 3_000_000_000;
+    (record as { idleTimeoutMs: number }).idleTimeoutMs = 3_000_000_000;
     store.register(record);
     spawnedMap.set(record.id, new FakeChild());
     sendPromptCommandMock.mockImplementation(() => {

@@ -391,7 +391,7 @@ const MS_PER_SEC = 1000;
  *
  * 收窄自 string → 显式联合，编译器会在新增 status 时强制 switch 补齐分支。
  */
-type StatusText =
+export type StatusText =
   | RunStatus
   | DoneReason
   | "pending";

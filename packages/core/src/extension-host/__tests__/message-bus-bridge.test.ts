@@ -415,7 +415,7 @@ describe('MessageBusBridge', () => {
       // 旧行为（整包 null 丢弃）已改造：单条坏值不再连坐其余条目
       expect(result).not.toBeNull()
       expect(result?.kind).toBe('plugin-status-bar-update')
-      expect(result?.items.map((i) => i.id)).toEqual(['good1', 'good2'])
+      expect(((result ?? {}) as { items?: Array<{ id: string }> }).items?.map((i) => i.id)).toEqual(['good1', 'good2'])
     })
 
     it('CT-D5 经 bridge 完整链路：坏条目跳过、好条目正常上屏、不 emit error', () => {

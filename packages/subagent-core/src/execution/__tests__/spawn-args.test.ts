@@ -12,14 +12,15 @@ import { buildEnvBlock, buildSpawnArgs } from "../engine/engines/pi/session-runn
 
 describe("buildSpawnArgs", () => {
   // [U1 D2] modelRef 为必填（spawn 前置守卫：未经裁决的裸字符串类型层面不可达）。
-  const baseParams = {
+  // 类型直接锚定 buildSpawnArgs 入参（thinkingLevel 是 ThinkingLevel 枚举，非裸 string）
+  const baseParams: Parameters<typeof buildSpawnArgs>[0] = {
     modelRef: { provider: "openai", id: "gpt-4o" },
-    thinkingLevel: undefined as string | undefined,
-    agentTools: undefined as string[] | undefined,
-    appendSystemPromptPath: undefined as string | undefined,
+    thinkingLevel: undefined,
+    agentTools: undefined,
+    appendSystemPromptPath: undefined,
     sessionDir: "/sessions/dir",
-    forkSource: undefined as string | undefined,
-    skillPaths: undefined as string[] | undefined,
+    forkSource: undefined,
+    skillPaths: undefined,
   };
 
   it("基础参数：--mode rpc --session-dir + --model provider/id，不含 -p 也不含 task（task 经 stdin 传）", () => {
@@ -372,7 +373,7 @@ describe("buildEnvBlock", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpGitRepo, { recursive: true, force: true });
+    fs.rmSync(tmpGitRepo, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("注入 cwd（Working directory 行）", async () => {
@@ -429,7 +430,7 @@ describe("buildEnvBlock", () => {
       // 但仍含 working directory（环境块始终输出）
       expect(block).toContain(`Working directory: ${nonGitDir}`);
     } finally {
-      fs.rmSync(nonGitDir, { recursive: true, force: true });
+      fs.rmSync(nonGitDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 

@@ -30,6 +30,7 @@ import type { BatchDeleteResult, Message, SessionGroup, SessionSummary } from '@
 import { triggerSessionCleanups } from '../../foundation/use-session-scoped-state'
 import type { SessionApiPort, PanelOrchestrationPort, SessionEntryPort } from './api-port'
 import type { createSessionStore } from './store'
+import { toErrorMessage } from '../../utils/error-message'
 
 /**
  * 导航端口（壳注入 useNavigationStore().push 适配）。
@@ -495,7 +496,7 @@ export function createUseSession(deps: UseSessionDeps) {
       store.applySnapshot({ groups })
       store.setListLoadError(null)
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       store.setListLoadError(msg)
     }
   }

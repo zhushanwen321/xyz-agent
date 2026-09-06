@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { handleScriptError, handleWorkerMessage } from "../orchestration/worker-message-pump.ts";
 import type { LifecycleDeps, WorkerHandlers } from "../orchestration/models/ports.ts";
+import type { DoneReason, RunStatus } from "../orchestration/models/types.ts";
 import type { WorkflowRun } from "../orchestration/models/workflow-run.ts";
 
 // ── helpers ──────────────────────────────────────────────────
@@ -52,15 +53,15 @@ function makeRunningRun(): WorkflowRun & { resetRunning(): void } {
     runtime: {
       worker: { postMessage: vi.fn() },
     },
-    transition(target: string, reason?: string): void {
+    transition(this: WorkflowRun, target: RunStatus, reason?: DoneReason): void {
       this.state.status = target;
       if (target === "done") this.state.reason = reason;
     },
-    replaceRuntime(rt: unknown): void {
+    replaceRuntime(this: WorkflowRun, rt: NonNullable<WorkflowRun["runtime"]>): void {
       this.runtime = rt;
     },
     // 多次触发 handleReturn 时把状态从 done 重置回 running
-    resetRunning(): void {
+    resetRunning(this: WorkflowRun): void {
       this.state.status = "running";
       this.state.reason = undefined;
     },

@@ -34,6 +34,7 @@ import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 
 import { getLogger } from "../core/logger.ts";
+import { toErrorMessage } from "../core/error-message.ts";
 
 const logger = getLogger("subagents");
 
@@ -113,7 +114,7 @@ function removeTmpBestEffortSync(tmpPath: string): void {
   } catch (cleanupErr) {
     // tmp 可能已被 rename 消费或从未创建；原错误由调用方上抛
     logger.debug("[subagent-core] atomic-write cleanup tmp failed", {
-      detail: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+      detail: toErrorMessage(cleanupErr),
       tmpPath,
     });
   }
@@ -190,7 +191,7 @@ export async function writeAtomicFile(
         }
       } catch (dirSyncErr) {
         logger.debug("[subagent-core] atomic-write fsync dir failed", {
-          detail: dirSyncErr instanceof Error ? dirSyncErr.message : String(dirSyncErr),
+          detail: toErrorMessage(dirSyncErr),
           dirPath,
         });
       }
@@ -202,7 +203,7 @@ export async function writeAtomicFile(
         await fsPromises.unlink(tmpPath);
       } catch (cleanupErr) {
         logger.debug("[subagent-core] atomic-write cleanup tmp failed", {
-          detail: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          detail: toErrorMessage(cleanupErr),
           tmpPath,
         });
       }
@@ -295,7 +296,7 @@ export function cleanupStaleTmpFiles(
           continue;
         }
         logger.debug("[subagent-core] cleanupStaleTmpFiles stat failed", {
-          detail: statErr instanceof Error ? statErr.message : String(statErr),
+          detail: toErrorMessage(statErr),
           tmpPath: ref.tmpPath,
         });
         result.failed.push(ref.tmpPath);
@@ -311,7 +312,7 @@ export function cleanupStaleTmpFiles(
         result.removed.push(ref.tmpPath);
       } else {
         logger.debug("[subagent-core] cleanupStaleTmpFiles unlink failed", {
-          detail: unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr),
+          detail: toErrorMessage(unlinkErr),
           tmpPath: ref.tmpPath,
         });
         result.failed.push(ref.tmpPath);

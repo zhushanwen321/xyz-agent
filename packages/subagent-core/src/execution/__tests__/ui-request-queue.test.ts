@@ -55,7 +55,7 @@ describe("UI 请求队列", () => {
   it("多个 extension_ui_request 按 FIFO 顺序处理", async () => {
     const callOrder: string[] = [];
     // 每个请求返回独立的可控 Promise
-    const resolvers: Array<(v: unknown) => void> = [];
+    const resolvers: Array<(v: UiResponse) => void> = [];
 
     const handler: UiRequestHandler = vi.fn((req: UiRequest) => {
       callOrder.push(req.title ?? "");
@@ -94,7 +94,7 @@ describe("UI 请求队列", () => {
 
   it("第一个请求未 resolve 时第二个不调用 uiRequestHandler", async () => {
     const callOrder: string[] = [];
-    let firstResolve: (v: unknown) => void;
+    let firstResolve: (v: UiResponse) => void;
 
     const handler: UiRequestHandler = vi.fn((req: UiRequest) => {
       callOrder.push(req.title ?? "");

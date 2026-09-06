@@ -16,6 +16,7 @@
 import { stripThinkingSuffix } from "../../shared/model-ref.ts";
 import type { EnginePort } from "./port.ts";
 import { DEFAULT_ENGINE_ID } from "./registry.ts";
+import { toErrorMessage } from "../../core/error-message.ts";
 
 /** 错误消息中列出的目标引擎可用清单上限（防超长错误信息；与 shared/model-ref 同量级口径）。 */
 const ENGINE_MODEL_LIST_LIMIT = 20;
@@ -28,7 +29,7 @@ const ENGINE_MODEL_LIST_LIMIT = 20;
  * 「引擎与模型不配套」错误（设计 §3.2.1 场景 2）。code 沿用 §3.3.3 错误规格表的
  * model_not_available（与 ZcodePrepareError 同码——同一失败域的早抛形态）。
  */
-export class EngineModelMismatchError extends Error {
+class EngineModelMismatchError extends Error {
   readonly code = "model_not_available";
   /** 恢复指引（错误 → 权威源 → 重试闭环；EngineError.recovery 同构字段）。 */
   readonly recovery: string;
@@ -92,7 +93,7 @@ function buildMismatchError(engine: EnginePort, modelRef: string | undefined, ca
       `.`,
   );
   // 引擎侧原始裁决失败原因（provider 未配凭据 / 模型未启用等）——诊断行，避免包装层吞掉细节。
-  lines.push(`Engine said: ${cause instanceof Error ? cause.message : String(cause)}`);
+  lines.push(`Engine said: ${toErrorMessage(cause)}`);
   const recovery =
     `Retry with an exact model id from the '${engine.id}' list above, or omit the \`model\` param to use the '${engine.id}' engine default` +
     (engineDefault !== undefined ? ` (${engineDefault})` : "") +

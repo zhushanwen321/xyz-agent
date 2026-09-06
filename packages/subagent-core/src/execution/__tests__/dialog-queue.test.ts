@@ -343,7 +343,7 @@ describe("DialogGlobalQueue — dialog 超时上界（LC-3/T2⑦）", () => {
 
     // 完整错误消息承载在父进程日志：含已等待时长 + 「重新发起提问」恢复指引
     expect(loggerMock.warn).toHaveBeenCalledTimes(1);
-    const msg = loggerMock.warn.mock.calls[0][0] as string;
+    const msg = loggerMock.warn.mock.calls[0]![0] as string;
     expect(msg).toContain("1000ms");
     expect(msg).toContain("重新发起提问");
     // 队列状态已释放
@@ -364,7 +364,7 @@ describe("DialogGlobalQueue — dialog 超时上界（LC-3/T2⑦）", () => {
     await vi.advanceTimersByTimeAsync(1);
     await expect(p).resolves.toEqual({ cancelled: true });
     expect(loggerMock.warn).toHaveBeenCalledTimes(1);
-    const msg = loggerMock.warn.mock.calls[0][0] as string;
+    const msg = loggerMock.warn.mock.calls[0]![0] as string;
     expect(msg).toContain(`${DEFAULT_DIALOG_TIMEOUT_MS}ms`);
     expect(msg).toContain("重新发起提问");
   });

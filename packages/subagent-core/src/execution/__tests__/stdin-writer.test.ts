@@ -362,8 +362,10 @@ describe("sendGetStateCommand", () => {
 describe("writeStdinLine 背压 — write 返回 false 时 warn 不 throw", () => {
   it("child.stdin.write 返回 false → warn 一次，函数正常返回（不 throw）", () => {
     // 构造 write 永远返回 false 的假 stream（模拟内核缓冲满/HWM 到达）
+    // 保留 vi.fn 引用（经 PassThrough 视图后 write 的 mock 面不可达）
+    const fakeWrite = vi.fn((_chunk: unknown) => false);
     const fakeStdin = {
-      write: vi.fn(() => false),
+      write: fakeWrite,
       destroyed: false,
     } as unknown as PassThrough;
     const child = { stdin: fakeStdin } as unknown as ChildProcess;
@@ -371,8 +373,8 @@ describe("writeStdinLine 背压 — write 返回 false 时 warn 不 throw", () =
     expect(() => respond(child, "req-backpressure", { value: "x" })).not.toThrow();
 
     // write 被调一次（写入 command 行）
-    expect(fakeStdin.write).toHaveBeenCalledTimes(1);
-    const writtenArg = fakeStdin.write.mock.calls[0]?.[0] as string;
+    expect(fakeWrite).toHaveBeenCalledTimes(1);
+    const writtenArg = fakeWrite.mock.calls[0]![0] as string;
     expect(writtenArg).toContain("extension_ui_response");
     expect(writtenArg).toContain("req-backpressure");
     expect(writtenArg.endsWith("\n")).toBe(true);

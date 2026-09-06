@@ -7,6 +7,7 @@
 
 import type { QuotaWindow, QuotaWins, NormalizedQuotaRow, ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchFailureReason, QuotaFetchOutcome, QuotaFetcherConfig } from '@xyz-agent/shared'
 import { logger } from '../../infra/logger.js'
+import { toErrorMessage } from '../../utils/errors.js'
 
 /** 无限窗口（未订阅/不支持）。pct=null 前端整行隐藏。 */
 export const INFINITE_WIN: QuotaWindow = { pct: null, resetSec: null }
@@ -57,7 +58,7 @@ export async function fetchQuotaJson<T>(
     return { ok: true, data }
   } catch (err) {
     // fetch 网络异常 / 超时 → network（架构约定 #4 落盘，禁止静默 catch）
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = toErrorMessage(err)
     logger.debug(`[${logTag}] fetch failed`, { error: msg })
     return { ok: false, reason: 'network' }
   }

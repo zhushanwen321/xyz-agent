@@ -33,6 +33,7 @@ import type { ChatApiPort, WriteSegmentsFn } from './api-port'
 import { splitHistoryBeforeAnchor } from './mutations'
 import { createMessageCoalescer } from './delta-coalescer'
 import { getExecutingBash } from './bash-effects'
+import { toErrorMessage } from '../../utils/error-message'
 
 /**
  * SessionStoreLike —— useChat 消费 session store 的最小结构类型。
@@ -457,7 +458,7 @@ export function createUseChat(deps: UseChatDeps) {
       // [steer-bubble u2 / D2] RPC 失败回滚 −1：pi 侧无消息、message_end 永不到来，
       // 不回滚则配额永久悬空、下一次 F1 投递的 message_end 确认被错抵。
       chat.decrementInflight(sid, 1)
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       deps.toast.error(deps.t('composable.sendFailed', { msg }))
     }
   }
@@ -519,7 +520,7 @@ export function createUseChat(deps: UseChatDeps) {
     } catch (e) {
       // RPC 失败（WS 断连 / extension 报「subagent 已结束」等）：toast 明确提示，
       // 消息不静默丢失（S8：留在输入区或明确失败提示——此处为后者，与 send 失败同款）。
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       deps.toast.error(deps.t('composable.subagentDirectiveFailed', { msg }))
     }
   }
@@ -548,7 +549,7 @@ export function createUseChat(deps: UseChatDeps) {
       await deps.chatApi.steer(sid, promptText)
     } catch (e) {
       chat.abortPending(sid, promptText, 'steer')
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       deps.toast.error(deps.t('composable.supplementSendFailed', { msg }))
     }
   }
@@ -581,7 +582,7 @@ export function createUseChat(deps: UseChatDeps) {
       await deps.chatApi.followUp(sid, promptText)
     } catch (e) {
       chat.abortPending(sid, promptText, 'follow-up')
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       deps.toast.error(deps.t('composable.nextTurnSendFailed', { msg }))
     }
   }
@@ -603,7 +604,7 @@ export function createUseChat(deps: UseChatDeps) {
     } catch (e) {
       // abort 失败不重抛——用户已表达「停止」意图，UI 不应因 abort RPC 失败而卡住。
       // pendingSend 已清（乐观），实体收口靠 runtime 广播 message.complete{aborted} 兜底。
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       deps.toast.error(deps.t('composable.stopFailed', { msg }))
     }
   }
@@ -640,7 +641,7 @@ export function createUseChat(deps: UseChatDeps) {
         console.warn(`[useChat] sendBash RPC failed after terminal frame already rendered, toast suppressed, sid=${sid}`, e)
         return
       }
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       deps.toast.error(deps.t('composable.bashFailed', { msg }))
     }
   }
@@ -660,7 +661,7 @@ export function createUseChat(deps: UseChatDeps) {
       // [B2 PR#116 review] abortBash RPC 失败时 bashResult 广播不会到达，bash 消息永久卡在 streaming。
       // 调 store.markStreamingBashError 找到最后 streaming bash 消息标 error 态兼底（store 持有
       // 自己的 messages ref，useChat 不碰 ref——解耦 pinia Store/factory 产物的 messages 类型鸿沟）。
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       chat.markStreamingBashError(sid, msg)
       deps.toast.error(deps.t('composable.stopFailed', { msg }))
     }
@@ -693,7 +694,7 @@ export function createUseChat(deps: UseChatDeps) {
       if (!compactionEnded) {
         // transport/busy 级失败：pi 未发 compaction_end（RPC 未达 pi / busy 预检拒绝），interpreter 不参与，
         // 零用户反馈——toast 兜底（AGENTS.md 规则 #3）。compaction 级失败由 interpreter 进对话流，不在此 toast。
-        const msg = e instanceof Error ? e.message : String(e)
+        const msg = toErrorMessage(e)
         deps.toast.error(deps.t('composable.compactFailed', { msg }))
       }
       console.warn(`[useChat] compact RPC failed (compaction-ended=${compactionEnded}, surfaced via ${compactionEnded ? 'interpreter/dialog flow' : 'toast fallback'})`, e)
@@ -739,7 +740,7 @@ export function createUseChat(deps: UseChatDeps) {
       // [W2] 错误处理策略与 send/steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
       // 消费侧 Turn.vue submitEdit 无 try/catch，不 throw 避免其产生 unhandled rejection（错误已通过 toast 消化）。
       chat.clearPendingSend(sessionId)
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       deps.toast.error(deps.t('composable.sendFailed', { msg }))
     }
   }

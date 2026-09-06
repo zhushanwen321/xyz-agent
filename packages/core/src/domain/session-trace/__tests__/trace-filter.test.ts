@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { filterTraceRows, TRACE_KIND_GROUPS } from '../trace-filter'
 import { mapSessionTraceRows } from '../trace-rows'
 import { parseSessionTraceJsonl } from '../parse-jsonl'
-import type { TraceRowKind } from '../trace-rows'
+import type { TraceRowKind } from '../types'
 
 const FIXTURES = new URL('../__fixtures__/', import.meta.url)
 

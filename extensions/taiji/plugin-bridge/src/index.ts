@@ -32,6 +32,7 @@ import {
 } from "@xyz-agent/extension-protocol";
 import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 import type { TSchema } from "typebox";
+import { toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 // 模块级 logger（factory 首行 setPiHandle 注入后自动走 appendEntry 持久化，
 // 注入前/失败降级文件日志——见 extension-logger 三层通道设计）
@@ -154,7 +155,7 @@ async function callBridge(
 		// select 通道异常（非用户取消/超时——那两类是 resolve undefined）：折叠 null 供
 		// 调用方统一转 isError，但必须留痕（静默吞 = runtime 故障不可排查）
 		logger.error(`[plugin-bridge] select channel threw for ${request.method}`, {
-			reason: err instanceof Error ? err.message : String(err),
+			reason: toErrorMessage(err),
 		});
 		return null;
 	}
@@ -292,7 +293,7 @@ export default function pluginBridgeExtension(pi: ExtensionAPI): void {
 				logger.warn(`[plugin-bridge] sync attempt ${attempt}/${MAX_SYNC_ATTEMPTS} failed: ${result.reason}`);
 			} catch (err) {
 				logger.error(`[plugin-bridge] sync attempt ${attempt}/${MAX_SYNC_ATTEMPTS} threw`, {
-					reason: err instanceof Error ? err.message : String(err),
+					reason: toErrorMessage(err),
 				});
 			}
 			if (attempt < MAX_SYNC_ATTEMPTS) {

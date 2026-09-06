@@ -25,7 +25,6 @@ function makeRecord(overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
     thinkingLevel: undefined,
     mode: "background",
     task: "test",
-    slug: "test",
     startedAt: Date.now(),
     rootSessionId: "root",
     parentRecordId: undefined,

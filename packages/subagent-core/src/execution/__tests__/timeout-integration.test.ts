@@ -160,8 +160,9 @@ function makeRecord() {
   return createRecord("run-1", {
     agent: "general-purpose",
     model: "test-model",
-    mode: "sync",
+    mode: "background",
     task: "do something",
+    slug: "test",
     startedAt: 1_000_000,
     rootSessionId: "root-session",
     parentRecordId: undefined,
@@ -352,7 +353,7 @@ describe("timeoutMs / signal abort → child.kill 端到端路径", () => {
 
       // 子进程响应 SIGTERM 退出：exitCode 143（SIGTERM 终止形态）+ exit + close。
       // exit 事件触发升级 timer clear（公共 kill-chain 的 exit 等待 promise settle → timer clear）。
-      child.exitCode = 143;
+      (child as unknown as { exitCode: number }).exitCode = 143;
       child.emit("exit", 143);
       child.stdout.end();
       child.emit("close", 143);

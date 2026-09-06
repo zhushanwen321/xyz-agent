@@ -45,6 +45,7 @@ import { getManualAssetDir, tryClaimManualAsset } from '../update/manual-claim.j
 import { upgradeFetch, CurlFetchError, isCurlHttpStatusError } from '../update/upgrade-fetch.js'
 import { classifyNetError } from '../update/net-errors.js'
 import { appendUpdateError } from '../update/error-log.js'
+import { toErrorMessage } from '../utils/error-message'
 
 /** 触发重启前留给前端渲染「重启中」状态的延迟（毫秒）。 */
 const RESTART_QUIT_DELAY_MS = 500
@@ -248,7 +249,7 @@ async function preloadUpdateSilently(
         at: new Date().toISOString(),
         source: 'preload',
         stage: 'downloading',
-        rawCause: err instanceof Error ? err.message : String(err),
+        rawCause: toErrorMessage(err),
         proxyUrl,
       })
     }
@@ -349,7 +350,7 @@ function reportUpdateDownloadError(deps: IpcHandlerDeps, err: unknown): never {
   } else {
     errorPayload = {
       stage: 'downloading' as const,
-      message: err instanceof Error ? err.message : String(err),
+      message: toErrorMessage(err),
       errorCode: undefined,
       suggestion: '请重试或联系技术支持',
     }
@@ -357,7 +358,7 @@ function reportUpdateDownloadError(deps: IpcHandlerDeps, err: unknown): never {
       at: new Date().toISOString(),
       source: 'download',
       stage: 'downloading',
-      rawCause: err instanceof Error ? err.message : String(err),
+      rawCause: toErrorMessage(err),
       proxyUrl: resolveProxyUrl(readProxyConfig()),
     })
   }
@@ -558,7 +559,7 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
       } else {
         errorPayload = {
           stage: 'replacing' as const,
-          message: err instanceof Error ? err.message : String(err),
+          message: toErrorMessage(err),
           errorCode: undefined,
           suggestion: '请重试或联系技术支持',
         }
@@ -566,7 +567,7 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
           at: new Date().toISOString(),
           source: 'install',
           stage: 'replacing',
-          rawCause: err instanceof Error ? err.message : String(err),
+          rawCause: toErrorMessage(err),
           proxyUrl: resolveProxyUrl(readProxyConfig()),
         })
       }

@@ -22,7 +22,7 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
-import { oncePerProcess } from "@zhushanwen/pi-ext-guards";
+import { oncePerProcess, toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 // ═══ core 宿主端口消费（随迁块的依赖；production 默认实现住本文件） ═══
 import { getOrCreateChannelRegistry } from "@zhushanwen/subagent-core";
@@ -308,7 +308,7 @@ function appendSubagentIdentityEntry(pi: ExtensionAPI): void {
     pi.appendEntry(IDENTITY_CUSTOM_TYPE, identity);
   } catch (err) {
     logger.warn("[subagents] identity appendEntry failed in session_start", {
-      reason: err instanceof Error ? err.message : String(err),
+      reason: toErrorMessage(err),
     });
   }
 }
@@ -346,7 +346,7 @@ function bindLedgerHostAndRecover(pi: ExtensionAPI, ctx: ExtensionContext): void
     bindNotifyLedgerHost(ledgerHost).recoverFromSession();
   } catch (err) {
     logger.warn("[subagents] notify ledger bind failed", {
-      reason: err instanceof Error ? err.message : String(err),
+      reason: toErrorMessage(err),
     });
   }
 }
@@ -368,7 +368,7 @@ async function runProcessLevelMaintenance(
       maybeCleanupExpiredSessionFiles(agentDir, ctx.cwd));
   } catch (err) {
     logger.warn("[subagents] expired session file cleanup failed", {
-      reason: err instanceof Error ? err.message : String(err),
+      reason: toErrorMessage(err),
     });
   }
 
@@ -383,7 +383,7 @@ async function runProcessLevelMaintenance(
     }
   } catch (err) {
     logger.warn("[subagents] manifest tmp recovery failed", {
-      reason: err instanceof Error ? err.message : String(err),
+      reason: toErrorMessage(err),
     });
   }
 
@@ -397,7 +397,7 @@ async function runProcessLevelMaintenance(
     });
   } catch (err) {
     logger.warn("[subagents] worktree reaper scan failed", {
-      reason: err instanceof Error ? err.message : String(err),
+      reason: toErrorMessage(err),
     });
   }
 }
@@ -461,7 +461,7 @@ async function createSessionRunState(
   } catch (err) {
     // QMF-4 fix: store.loadAll 失败是关键路径错误，workflow 域将未初始化
     logger.error("[subagent-workflow] store.loadAll failed, workflow domain uninitialized", {
-      reason: err instanceof Error ? err.message : String(err),
+      reason: toErrorMessage(err),
     });
     storeHealthy = false;
   }

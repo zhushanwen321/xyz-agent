@@ -80,7 +80,7 @@ describe("[F1] 不可克隆 return → run failed（非悬挂）— e2e", () => 
       // worker 侧 fallback 消息经 handleScriptError 超限路径写入归因
       expect(run.state.error).toContain("structured-clone failed");
       // 终态副作用齐全（对比 SW-DATA-3/F1 前的幽灵悬挂：无 unregister / 无 onRunDone）
-      expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      expect(deps.eventBus!.emit).toHaveBeenCalledWith(
         "pending:unregister",
         expect.objectContaining({ id: runId, reason: "failed" }),
       );

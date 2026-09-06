@@ -41,7 +41,7 @@ describe.skipIf(!LIVE)("ZcodeEngine 端到端真机（app-server 常驻，共享
     await engine.dispose().catch(() => undefined);
     for (const dir of [AS_DATA_ROOT, AS_WORK_CWD]) {
       try {
-        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
       } catch {
         // 尽力清理
       }
@@ -58,8 +58,8 @@ describe.skipIf(!LIVE)("ZcodeEngine 端到端真机（app-server 常驻，共享
     const events: AgentEvent[] = [];
     const { handle, outcome } = await engine.run(
       {
-        task: 'Verify this arithmetic check: 2 + 2 = 4. If it is correct the verdict must be "ok", otherwise "bad".',
-        slug: "e2e-appserver",
+        prompt: 'Verify this arithmetic check: 2 + 2 = 4. If it is correct the verdict must be "ok", otherwise "bad".',
+        description: "e2e-appserver",
         model: E2E_MODEL,
         cwd: AS_WORK_CWD,
         schema: {
@@ -99,9 +99,9 @@ describe.skipIf(!LIVE)("ZcodeEngine 端到端真机（app-server 常驻，共享
     const controller = new AbortController();
     const runPromise = engine.run(
       {
-        task:
+        prompt:
           "Write an extremely detailed 5000-word technical essay about distributed systems consistency models. Do not stop early.",
-        slug: "e2e-appserver-abort",
+        description: "e2e-appserver-abort",
         model: E2E_MODEL,
         cwd: AS_WORK_CWD,
       },
@@ -122,7 +122,7 @@ describe.skipIf(!LIVE)("ZcodeEngine 端到端真机（app-server 常驻，共享
 
     // 崩溃/中止后下一任务自动重建或复用（不变量 4 同路径）——abort 不污染常驻进程
     const second = await engine.run(
-      { task: "Reply with the single word: ok", slug: "e2e-appserver-after-abort", model: E2E_MODEL, cwd: AS_WORK_CWD },
+      { prompt: "Reply with the single word: ok", description: "e2e-appserver-after-abort", model: E2E_MODEL, cwd: AS_WORK_CWD },
       { taskId: "sa-live-appserver-after-abort", poolKey: "" },
     );
     expect(second.outcome.error).toBeUndefined();

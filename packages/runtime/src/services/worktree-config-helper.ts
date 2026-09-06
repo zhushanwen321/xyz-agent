@@ -34,9 +34,10 @@ import { getPiAgentDir } from '../infra/pi/pi-paths.js'
 import { logger } from '../infra/logger.js'
 import { atomicWrite } from '../utils/fs-utils.js'
 import { withFileLockSync, type SyncFileLockOptions } from '../utils/file-lock.js'
+import { toErrorMessage } from '../utils/errors.js'
 
 /** app config.json 的 load/save 能力（ConfigService 注入，避免暴露其私有方法）。 */
-type AppConfigAccessors = {
+export type AppConfigAccessors = {
   /** 读 app config.json（不存在 / 损坏返回 {}）。 */
   load(): Record<string, unknown>
   /** 全量覆写 app config.json。 */
@@ -117,11 +118,11 @@ export function setTimeout(app: AppConfigAccessors, timeout: number): void {
 // 生效值）——表单端拦截为主，runtime clamp 是第二道防线，保证落盘值恒在合法域。
 
 /** 默认对话流式空闲超时（秒）＝ 1800s，对齐 core DEFAULT_STREAMING_IDLE_TIMEOUT_MS。 */
-export const DEFAULT_STREAMING_IDLE_TIMEOUT_S = 1800
+const DEFAULT_STREAMING_IDLE_TIMEOUT_S = 1800
 /** 合法域下界（秒）：1min。 */
-export const STREAMING_IDLE_TIMEOUT_MIN_S = 60
+const STREAMING_IDLE_TIMEOUT_MIN_S = 60
 /** 合法域上界（秒）：60min。 */
-export const STREAMING_IDLE_TIMEOUT_MAX_S = 3600
+const STREAMING_IDLE_TIMEOUT_MAX_S = 3600
 
 function clampStreamingIdleTimeout(seconds: number): number {
   return Math.min(Math.max(seconds, STREAMING_IDLE_TIMEOUT_MIN_S), STREAMING_IDLE_TIMEOUT_MAX_S)
@@ -216,7 +217,7 @@ export function ensureAutoRenameDefault(): void {
     setAutoRenameEnabled(true)
   } catch (e) {
     // 初始化失败不阻塞 boot，但记录原因便于诊断
-    logger.warn(`[worktree-config] ensureAutoRenameDefault failed: ${e instanceof Error ? e.message : String(e)}`)
+    logger.warn(`[worktree-config] ensureAutoRenameDefault failed: ${toErrorMessage(e)}`)
   }
 }
 

@@ -24,6 +24,7 @@ import type { ExtensionUiRequest } from "./engine/engines/pi/spawn-event-adapter
 import { respond } from "./engine/engines/pi/stdin-writer.ts";
 import { parseChannel } from "./ui-channels.ts";
 import { notifyMissingHandlerGlobal } from "./ui-request-observability.ts";
+import { toErrorMessage } from "../core/error-message.ts";
 
 const logger = getLogger("subagents");
 
@@ -62,7 +63,7 @@ export function createUiRequestQueue(
     // .finally 照常释放 processing 推进队列（单个请求失败不阻塞后续 UI 请求）。
     handleUiRequest(child, id, request, ctx, signal)
       .catch((err: unknown) => {
-        const m = err instanceof Error ? err.message : String(err);
+        const m = toErrorMessage(err);
         logger.error(`[subagents] ui request ${id} (${request.method}) failed unexpectedly: ${m}`);
       })
       .finally(() => {
@@ -157,7 +158,7 @@ async function handleUiRequest(
     // [R3] 子进程已退出，跳过写入
     if (signal?.aborted) return;
     logger.error("[subagents] uiRequestHandler threw", {
-      detail: err instanceof Error ? err.message : String(err),
+      detail: toErrorMessage(err),
     });
     respond(child, id, { cancelled: true }, signal);
   }

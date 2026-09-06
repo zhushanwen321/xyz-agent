@@ -1241,10 +1241,11 @@ export type ChatStoreOps = Pick<
 
 // ── 编译期 facet 漂移断言（零运行时产物）：return 面新增字段时漏登记进任一 facet
 //    即在此显形，防止「64 项混装」回归。export 仅为止住 noUnusedLocals（renderer
-//    tsconfig 开启），非公共 API——domain/chat/index.ts 显式列举导出，不转出本域 ──
+//    tsconfig 开启）+ private_type_leaks（导出的 _Facet* 别名签名引用了它），非公共
+//    API——domain/chat/index.ts 显式列举导出，不转出本域 ──
 
 /** readers ∪ ops 必须恰好覆盖 return 面全部键（漏项 → 非 never → 约束报错） */
-type AssertNever<T extends never> = T
+export type AssertNever<T extends never> = T
 export type _FacetCoversAllKeys = AssertNever<
   Exclude<keyof ChatStoreInstance, keyof ChatStoreReaders | keyof ChatStoreOps>
 >

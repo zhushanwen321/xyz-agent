@@ -35,6 +35,7 @@
   },
   "dependencies": {
     "@xyz-agent/extension-protocol": "workspace:*",
+    "@zhushanwen/pi-ext-guards": "workspace:*",
     "@zhushanwen/pi-extension-logger": "workspace:*"
   },
   "scripts": {

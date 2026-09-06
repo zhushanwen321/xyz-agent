@@ -76,7 +76,7 @@ function setup(initOverrides: Partial<{ isIdle: () => boolean }> = {}): {
   pi: MockPi;
 } {
   const agentDir = makeTmpAgentDir();
-  const modelService = new ModelConfigService({ agentDir });
+  const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
   const service = new SubagentService({ cwd: agentDir, modelService });
   const pi = makePi();
   service.initSession({ pi, sessionId: "root-session", isIdle: initOverrides.isIdle });
@@ -101,6 +101,7 @@ describe("T4① notify gate closedReason whitelist", () => {
       agent: "general-purpose",
       model: "test/model",
       mode: "background",
+      slug: "t",
       task: "test",
       startedAt: 1000,
       rootSessionId: "root-session",
@@ -129,7 +130,7 @@ describe("T4① notify gate closedReason whitelist", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(pi.sendMessage).not.toHaveBeenCalled();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("kickOffChatRound.then still notifies for real failure closures (gc)", async () => {
@@ -138,6 +139,7 @@ describe("T4① notify gate closedReason whitelist", () => {
       agent: "general-purpose",
       model: "test/model",
       mode: "background",
+      slug: "t",
       task: "test",
       startedAt: 1000,
       rootSessionId: "root-session",
@@ -150,7 +152,7 @@ describe("T4① notify gate closedReason whitelist", () => {
     )["kickOffChatRound"];
     kickOffChatRound.call(service, record, { task: "t", slug: "gate" }, {}, {}, undefined, 1000, undefined);
     await vi.waitFor(() => expect(pi.sendMessage).toHaveBeenCalled());
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 });
 
@@ -163,30 +165,30 @@ describe("T4② idleTimeoutMs entry fail-fast", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("execute rejects idleTimeoutMs above the setTimeout limit with the valid range in the message", async () => {
-    await expect(service.execute({ task: "x", idleTimeoutMs: MAX_TIMER_DELAY_MS + 1 })).rejects.toThrow(
+    await expect(service.execute({ task: "x", slug: "test", idleTimeoutMs: MAX_TIMER_DELAY_MS + 1 })).rejects.toThrow(
       new RegExp(`${MAX_TIMER_DELAY_MS}`),
     );
-    await expect(service.execute({ task: "x", idleTimeoutMs: 3_000_000_000 })).rejects.toThrow(/2\^31-1/);
+    await expect(service.execute({ task: "x", slug: "test", idleTimeoutMs: 3_000_000_000 })).rejects.toThrow(/2\^31-1/);
   });
 
   it("execute rejects non-finite idleTimeoutMs", async () => {
-    await expect(service.execute({ task: "x", idleTimeoutMs: Number.NaN })).rejects.toThrow(/not a finite number/);
+    await expect(service.execute({ task: "x", slug: "test", idleTimeoutMs: Number.NaN })).rejects.toThrow(/not a finite number/);
   });
 
   it("rejects before any record is created (no side effects)", async () => {
     const internals = service as unknown as ServiceInternals;
-    await expect(service.executeAndAwait({ task: "x", idleTimeoutMs: 3_000_000_000 })).rejects.toThrow();
+    await expect(service.executeAndAwait({ task: "x", slug: "test", idleTimeoutMs: 3_000_000_000 })).rejects.toThrow();
     expect(internals.store.listRunning()).toHaveLength(0);
   });
 
   it("accepts valid values (0 = explicit disable, positive within limit)", async () => {
     // 校验通过后执行链继续（runSpawn 被 mock，返回 undefined result 会在后续流程抛错/
     // 返回——但绝不能是 idleTimeoutMs 校验错误）
-    await expect(service.execute({ task: "x", idleTimeoutMs: 0 })).rejects.not.toThrow(/idleTimeoutMs/);
+    await expect(service.execute({ task: "x", slug: "test", idleTimeoutMs: 0 })).rejects.not.toThrow(/idleTimeoutMs/);
   });
 });
 
@@ -202,7 +204,7 @@ describe("T4④ shutdown flush blocked → pending persisted for replay", () => 
 
   afterEach(() => {
     _resetNotifyLedgerForTest();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("persists undelivered pending notifications as ledger entries on dispose when main agent is busy", () => {
@@ -259,7 +261,7 @@ describe("T4④ shutdown flush blocked → pending persisted for replay", () => 
     // idle service：flush 投出（无门拦），dispose 无复写动作
     const idleService = new SubagentService({
       cwd: agentDir,
-      modelService: new ModelConfigService({ agentDir }),
+      modelService: new ModelConfigService({ agentDir, cwd: agentDir }),
     });
     const piIdle = makePi();
     idleService.initSession({ pi: piIdle, sessionId: "root-session", isIdle: () => true });

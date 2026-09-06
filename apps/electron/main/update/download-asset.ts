@@ -58,6 +58,7 @@ import {
 import type { FetchEngine } from './upgrade-fetch.js'
 import { downloadViaCurl, CurlConnectionError } from './curl-download.js'
 import { appendUpdateError } from './error-log.js'
+import { toErrorMessage } from '../utils/error-message'
 
 /**
  * 断点续传状态接口。
@@ -354,7 +355,7 @@ export async function downloadAsset(
     // 语义错配：完整性没问题，是文件系统把 .downloading 改名到终态时失败（跨卷 / 占用 /
     // 只读等）。改用独立错误码，前端文案才可能对症（见 types.ts UPDATE_ERROR_MESSAGES）。
     throw new UpdateError(
-      `file rename failed: ${renameErr instanceof Error ? renameErr.message : String(renameErr)}`,
+      `file rename failed: ${toErrorMessage(renameErr)}`,
       'replacing',
       'UPDATE_FILE_RENAME_FAILED',
     )
@@ -709,7 +710,7 @@ function finalizeSingleStreamError(
     throw err
   }
   const streamError = new UpdateError(
-    `download stream error: ${err instanceof Error ? err.message : String(err)}`,
+    `download stream error: ${toErrorMessage(err)}`,
     'downloading',
     'UPDATE_NETWORK_FAILED',
     extractRawCause(err),
@@ -832,7 +833,7 @@ function logCurlEngineUnavailable(err: unknown): void {
       source: 'engine-fallback',
       stage: 'downloading',
       errorCode: 'UPDATE_NETWORK_FAILED',
-      rawCause: err instanceof Error ? err.message : String(err),
+      rawCause: toErrorMessage(err),
       engine: 'curl',
     })
   } catch (logErr) {
@@ -849,7 +850,7 @@ function logCurlSideFailure(err: unknown, proxyUrl: string | undefined): void {
       source: 'download',
       stage: 'downloading',
       errorCode: err instanceof UpdateError ? err.errorCode : 'UPDATE_NETWORK_FAILED',
-      rawCause: err instanceof Error ? err.message : String(err),
+      rawCause: toErrorMessage(err),
       proxyUrl: proxyUrl ? stripCredential(proxyUrl).safeUrl : undefined,
       engine: 'curl',
     })
@@ -879,7 +880,7 @@ function finalizeCurlSideFailure(
     return curlErr
   }
   return new UpdateError(
-    `curl download failed: ${curlErr instanceof Error ? curlErr.message : String(curlErr)}`,
+    `curl download failed: ${toErrorMessage(curlErr)}`,
     'downloading',
     'UPDATE_NETWORK_FAILED',
   )

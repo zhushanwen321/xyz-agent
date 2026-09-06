@@ -170,7 +170,7 @@ describe("四帧型分发（NDJSON，无 jsonrpc 字段）", () => {
     const { conn, stateFile } = makeConnection();
     await conn.request("test/echo", { a: 1 });
     const frames = readState(stateFile)
-      .map((e) => e.frame)
+      .map((e) => (e as Record<string, unknown>).frame)
       .filter((f): f is Record<string, unknown> => isRecord(f) && f.method === "test/echo");
     expect(frames).toHaveLength(1);
     expect(Object.keys(frames[0]).sort()).toEqual(["id", "method", "params"]);
@@ -253,7 +253,7 @@ describe("请求-应答 id 关联", () => {
     expect(b).toEqual({ who: "b", delayMs: 30 });
     expect(c).toEqual({ who: "c" });
     const ids = readState(stateFile)
-      .map((e) => e.frame)
+      .map((e) => (e as Record<string, unknown>).frame)
       .filter((f): f is { id: number } => isRecord(f) && typeof f.method === "string" && typeof f.id === "number")
       .map((f) => f.id);
     expect(ids).toHaveLength(3);
@@ -296,10 +296,10 @@ describe("反向请求应答（D9）", () => {
     ]);
     // 反向应答帧出站精确键集 {id, result}（无 jsonrpc、无未知键）
     const answerFrame = readState(stateFile)
-      .map((e) => e.frame)
+      .map((e) => (e as Record<string, unknown>).frame)
       .find((f): f is Record<string, unknown> => isRecord(f) && typeof f.id === "string");
     expect(answerFrame).toBeDefined();
-    expect(Object.keys(answerFrame).sort()).toEqual(["id", "result"]);
+    expect(Object.keys(answerFrame!).sort()).toEqual(["id", "result"]);
   });
 
   it("未知反向请求 → 回 {id, result:{}}（不答会 15s 超时断连，旧实测 -32022）", async () => {

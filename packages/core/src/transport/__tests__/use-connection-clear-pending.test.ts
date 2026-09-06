@@ -66,6 +66,7 @@ function makePorts(): ConnectionPorts {
     ipc: {
       getRuntimePort: vi.fn().mockResolvedValue(undefined),
       getRuntimePortOffset: vi.fn().mockResolvedValue(undefined),
+getRuntimeToken: vi.fn(async () => null),
       onRuntimePort: (cb: (port: number) => void) => {
         portCb = cb
         return () => {

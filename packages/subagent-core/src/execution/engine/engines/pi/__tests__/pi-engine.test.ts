@@ -19,7 +19,7 @@ import type { ExecuteOptions, SubagentRecord } from "../../../../types.ts";
 import { IDENTITY_CUSTOM_TYPE } from "../../../../session-reconstructor.ts";
 import { SubagentStream } from "../../../../stream-sink.ts";
 import type { RunContext } from "../../../port.ts";
-import type { EngineHandle } from "../../../types.ts";
+import type { AgentEvent, EngineHandle } from "../../../types.ts";
 import type { AgentCallOpts } from "../../../../../orchestration/models/types.ts";
 import { spawnedChildren } from "../session-runner.ts";
 import { resetAllEpipeFailures } from "../stdin-writer.ts";
@@ -36,7 +36,7 @@ import {
 interface ServiceCalls {
   executeOpts?: ExecuteOptions;
   signal?: AbortSignal;
-  onEvent?: (event: unknown) => void;
+  onEvent?: (event: AgentEvent) => void;
   stream?: unknown;
   resumeChatRound?: { recordId: string; text: string };
   close?: { recordId: string; force: boolean };
@@ -329,7 +329,7 @@ describe("PiEngine.run", () => {
       takeChatRound: (taskId) => (taskId === "sa-forkfrom" ? chatTicket : undefined),
       runChatRound: async (t) => {
         received = t;
-        return { text: "ok", turns: 1, durationMs: 1, success: true, toolCalls: [] };
+        return { content: "ok", text: "ok", sessionId: "sess-1", turns: 1, durationMs: 1, success: true, toolCalls: [] };
       },
     };
     const engine = new PiEngine({ getService: () => service });
@@ -376,7 +376,8 @@ describe("PiEngine.interact（chatMode 交互面：message 原生协议 + close/
 
   function readStdinLines(stdin: PassThrough): Array<Record<string, unknown>> {
     stdin.pause();
-    const text = stdin.read()?.toString() ?? "";
+    // PassThrough.read() 类型 any——显式标注 string，下游 split/map 参数可推导
+    const text: string = stdin.read()?.toString() ?? "";
     return text
       .split("\n")
       .map((l) => l.trim())
@@ -491,7 +492,7 @@ describe("PiEngine.read（D6 降级链）", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-engine-read-"));
   });
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("无 sessionRef → outcome-only（turns 空）", async () => {

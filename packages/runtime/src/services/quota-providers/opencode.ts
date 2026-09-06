@@ -14,6 +14,7 @@
 import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome, QuotaFetcherConfig } from './types.js'
 import { statusToReason } from './types.js'
 import { logger } from '../../infra/logger.js'
+import { toErrorMessage } from '../../utils/errors.js'
 
 const FETCH_TIMEOUT_MS = 8000
 const HTTP_OK = 200
@@ -104,7 +105,7 @@ export const opencodeFetcher: ProviderQuotaFetcher = {
       }
     } catch (err) {
       // fetch 网络异常 / 超时 → network（架构约定 #4 落盘，禁止静默 catch）
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = toErrorMessage(err)
       logger.debug('[quota:opencode] fetch failed', { error: msg })
       return { ok: false, reason: 'network' }
     }

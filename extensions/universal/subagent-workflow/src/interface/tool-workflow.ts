@@ -53,6 +53,7 @@ import {
   releaseReentryGuard,
 } from "./reentry-guard.ts";
 import { formatElapsed, renderTextFallback } from "./format.ts";
+import { toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 // ── Parameter schema ─────────────────────────────────────────
 
@@ -533,7 +534,7 @@ async function actionLifecycle(
     };
   } catch (err) {
     // throw（W4b）：abortRun 失败改 throw（原 return isError 被 pi 丢弃），"Error: " 前缀保持
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = toErrorMessage(err);
     throw new Error(`Error: ${msg}`);
   }
 }

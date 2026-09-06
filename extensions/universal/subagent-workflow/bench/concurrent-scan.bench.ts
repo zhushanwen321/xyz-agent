@@ -34,6 +34,7 @@ import { performance } from "node:perf_hooks";
 import { RecordStore } from "@zhushanwen/subagent-core";
 import { INDEX_FILENAME } from "@zhushanwen/subagent-core";
 import type { SubagentRecord } from "@zhushanwen/subagent-core";
+import { toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 const DEFAULT_WORKERS = 3;
 const DEFAULT_ITERS = 20;
@@ -379,7 +380,7 @@ async function main(): Promise<number> {
 			// 损坏/不可读索引必须命中声明的 D2 文案（不 catch 会让异常冒泡到顶层 catch，
 			// 声明的判定文案不可达）；沿用 failed 汇总模式让 D3/D4 继续报告
 			process.stderr.write(
-				`D2 失败：索引不是合法 JSON 或不可读: ${indexPath}（${err instanceof Error ? err.message : String(err)}）\n` +
+				`D2 失败：索引不是合法 JSON 或不可读: ${indexPath}（${toErrorMessage(err)}）\n` +
 				`建议动作：rm "${indexPath}" 后重跑（索引为派生缓存，首次扫描会自动重建）\n`,
 			);
 			failed = true;

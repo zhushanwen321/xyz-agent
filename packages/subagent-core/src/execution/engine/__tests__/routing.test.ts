@@ -329,8 +329,8 @@ describe("routeEngineForHost：宿主统一路由（D3-②）", () => {
       ...mkOpts(),
       routing: { callEngine: "ghost" },
     };
-    const err = await routeEngineForHost(ghostOpts).then(
-      (r) => r,
+    const err = await Promise.resolve(routeEngineForHost(ghostOpts)).then(
+      (r: unknown) => r,
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(Error);

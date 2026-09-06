@@ -39,29 +39,29 @@ export const setProvider = configDomain.setProvider
 /** worktree 专用目录配置 reply 类型。 */
 export type WorktreeRootDirReply = ServerMessageMap['config.worktreeRootDir']
 /** worktree 初始化脚本配置 reply 类型。 */
-type SetupScriptReply = ServerMessageMap['config.setupScript']
+export type SetupScriptReply = ServerMessageMap['config.setupScript']
 /** bare-workspace 初始化脚本配置 reply 类型。 */
-type BareSetupScriptReply = ServerMessageMap['config.bareSetupScript']
+export type BareSetupScriptReply = ServerMessageMap['config.bareSetupScript']
 /** worktree 创建超时时间配置 reply 类型。 */
-type WorktreeTimeoutReply = ServerMessageMap['config.worktreeTimeout']
+export type WorktreeTimeoutReply = ServerMessageMap['config.worktreeTimeout']
 /** 对话流式空闲超时阈值配置 reply 类型（clamp 后生效值，秒）。 */
-type StreamingIdleTimeoutReply = ServerMessageMap['config.streamingIdleTimeout']
+export type StreamingIdleTimeoutReply = ServerMessageMap['config.streamingIdleTimeout']
 /** 默认基分支配置 reply 类型。 */
-type DefaultBaseBranchReply = ServerMessageMap['config.defaultBaseBranch']
+export type DefaultBaseBranchReply = ServerMessageMap['config.defaultBaseBranch']
 /** 自动重命名 session 配置 reply 类型。 */
-type AutoRenameEnabledReply = ServerMessageMap['config.autoRenameEnabled']
+export type AutoRenameEnabledReply = ServerMessageMap['config.autoRenameEnabled']
 /** rename 标题生成模型配置 reply 类型。 */
-type RenameModelReply = ServerMessageMap['config.renameModel']
+export type RenameModelReply = ServerMessageMap['config.renameModel']
 /** 智能上下文压缩配置（get 全量）reply 类型。 */
-type SmartContextConfigReply = ServerMessageMap['config.smartContextConfig']
+export type SmartContextConfigReply = ServerMessageMap['config.smartContextConfig']
 /** 智能上下文压缩开关配置 reply 类型。 */
-type SmartContextEnabledReply = ServerMessageMap['config.smartContextEnabled']
+export type SmartContextEnabledReply = ServerMessageMap['config.smartContextEnabled']
 /** 智能上下文压缩模型配置 reply 类型。 */
-type SmartContextCompactModelReply = ServerMessageMap['config.smartContextCompactModel']
+export type SmartContextCompactModelReply = ServerMessageMap['config.smartContextCompactModel']
 /** 智能上下文提醒阈值配置 reply 类型。 */
-type SmartContextThresholdsReply = ServerMessageMap['config.smartContextThresholds']
+export type SmartContextThresholdsReply = ServerMessageMap['config.smartContextThresholds']
 /** 智能上下文排除模型配置 reply 类型。 */
-type SmartContextExcludedModelsReply = ServerMessageMap['config.smartContextExcludedModels']
+export type SmartContextExcludedModelsReply = ServerMessageMap['config.smartContextExcludedModels']
 
 /** 设置 worktree 专用目录（持久化到 settings.json）。 */
 export async function setWorktreeRootDir(dir: string): Promise<WorktreeRootDirReply> {

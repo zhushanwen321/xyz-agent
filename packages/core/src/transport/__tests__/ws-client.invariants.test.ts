@@ -48,7 +48,6 @@ function installTestPlatform(): void {
         return f
       },
     },
-    ipc: null,
   })
 }
 
@@ -212,7 +211,7 @@ describe('ws-client 不变量 ④ seq 回放', () => {
     // spyPorts：pending/events/subscribe 全 vi.fn()，subscribe 返回空 snapshot + lastSeq=10 预置基线
     const subscribeSpy = vi.fn(async () => ({ snapshot: [], stateSnapshot: [], lastSeq: 10 }))
     const spyPorts: TransportPorts = {
-      pending: { resolve: vi.fn(), reject: vi.fn(), rejectAll: vi.fn() },
+      pending: { resolve: vi.fn(), reject: vi.fn(), rejectAll: vi.fn(), has: vi.fn(() => false), resolveEnvelope: vi.fn() },
       events: { dispatchSession: vi.fn(), dispatchGlobal: vi.fn(), dispatchCrossSession: vi.fn() },
       subscribe: subscribeSpy,
     }

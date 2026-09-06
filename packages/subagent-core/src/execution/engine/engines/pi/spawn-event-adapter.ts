@@ -21,6 +21,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import type { SdkEvent } from "../../../types.ts";
+import { toErrorMessage } from "../../../../core/error-message.ts";
 
 /** pi stdout header 行（session 元信息）。type 固定为 "session"。 */
 export interface SpawnSessionHeader {
@@ -313,7 +314,7 @@ export function parseSpawnLine(line: string): ParsedSpawnLine | null {
     return {
       kind: "invalid",
       raw: trimmed,
-      error: err instanceof Error ? err.message : String(err),
+      error: toErrorMessage(err),
     };
   }
 

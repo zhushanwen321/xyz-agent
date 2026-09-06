@@ -123,7 +123,7 @@ function makeChatModeRecord(id = "sa-chat-sw"): ExecutionRecord {
   const record = createRecord(id, {
     agent: "general-purpose",
     model: "test-model",
-    mode: "sync",
+    mode: "background",
     task: "chat task",
     slug: "chat",
     startedAt: 1_000_000,
@@ -132,7 +132,7 @@ function makeChatModeRecord(id = "sa-chat-sw"): ExecutionRecord {
     depth: 0,
     chatMode: true,
   });
-  record.idleTimeoutMs = 3_600_000;
+  (record as { idleTimeoutMs: number }).idleTimeoutMs = 3_600_000;
   return record;
 }
 

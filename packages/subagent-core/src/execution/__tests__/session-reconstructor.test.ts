@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { IDENTITY_CUSTOM_TYPE, reconstructFromFile } from "../session-reconstructor.ts";
 
 /** 写一行到文件（JSON.stringify + 换行）。 */
-function writeLine(file: number | fs.PathOrFileDescriptor, obj: unknown): void {
+function writeLine(file: number, obj: unknown): void {
   fs.writeSync(file, `${JSON.stringify(obj)}\n`);
 }
 
@@ -77,7 +77,7 @@ describe("reconstructFromFile", () => {
     filePath = path.join(tmpDir, "test.jsonl");
   });
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   function writeJsonl(lines: unknown[]): void {
@@ -113,7 +113,7 @@ describe("reconstructFromFile", () => {
     it("thinking block 累积进 turn.thinking", () => {
       writeJsonl([
         headerLine(),
-        identityEntry({ id: "r1", agent: "w", mode: "sync", task: "t", startedAt: 100 }),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
         assistantEntry([
           { type: "thinking", thinking: "let me think" },
           { type: "text", text: "answer" },
@@ -127,7 +127,7 @@ describe("reconstructFromFile", () => {
     it("多 assistant message → 多 turn，result 用空行拼接", () => {
       writeJsonl([
         headerLine(),
-        identityEntry({ id: "r1", agent: "w", mode: "sync", task: "t", startedAt: 100 }),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
         assistantEntry([{ type: "text", text: "first" }], { ts: 1000 }),
         assistantEntry([{ type: "text", text: "second" }], { ts: 2000, parentId: undefined }),
       ]);
@@ -190,7 +190,7 @@ describe("reconstructFromFile", () => {
     it("读出 identity 里的 parentRecordId/depth（递归层级）", () => {
       writeJsonl([
         headerLine(),
-        identityEntry({ id: "run-2", agent: "w", mode: "sync", task: "t", startedAt: 100, rootSessionId: "sess-A", parentRecordId: "run-1", depth: 2 }),
+        identityEntry({ id: "run-2", agent: "w", mode: "background", task: "t", startedAt: 100, rootSessionId: "sess-A", parentRecordId: "run-1", depth: 2 }),
         assistantEntry([{ type: "text", text: "ok" }]),
       ]);
       const rec = reconstructFromFile(filePath);
@@ -228,7 +228,7 @@ describe("reconstructFromFile", () => {
     it("toolCall + toolResult → InternalToolCall done", () => {
       writeJsonl([
         headerLine(),
-        identityEntry({ id: "r1", agent: "w", mode: "sync", task: "t", startedAt: 100 }),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
         assistantEntry([
           { type: "toolCall", id: "call-1", name: "read", arguments: { path: "/x.ts" } },
         ]),
@@ -245,7 +245,7 @@ describe("reconstructFromFile", () => {
     it("toolResult isError → InternalToolCall failed", () => {
       writeJsonl([
         headerLine(),
-        identityEntry({ id: "r1", agent: "w", mode: "sync", task: "t", startedAt: 100 }),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
         assistantEntry([
           { type: "toolCall", id: "call-1", name: "bash", arguments: { command: "false" } },
         ]),
@@ -259,7 +259,7 @@ describe("reconstructFromFile", () => {
     it("孤儿 toolResult（无匹配 toolCall）→ 丢弃，不崩", () => {
       writeJsonl([
         headerLine(),
-        identityEntry({ id: "r1", agent: "w", mode: "sync", task: "t", startedAt: 100 }),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
         assistantEntry([{ type: "text", text: "ok" }]),
         toolResultEntry("nonexistent", "read"),
       ]);
@@ -276,7 +276,7 @@ describe("reconstructFromFile", () => {
     it("stopReason=error → lastError + error 字段", () => {
       writeJsonl([
         headerLine(),
-        identityEntry({ id: "r1", agent: "w", mode: "sync", task: "t", startedAt: 100 }),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
         assistantEntry([{ type: "text", text: "partial" }], {
           stopReason: "error", errorMessage: "API timeout",
         }),
@@ -290,7 +290,7 @@ describe("reconstructFromFile", () => {
     it("stopReason=aborted 无 errorMessage → lastError = 'aborted'", () => {
       writeJsonl([
         headerLine(),
-        identityEntry({ id: "r1", agent: "w", mode: "sync", task: "t", startedAt: 100 }),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
         assistantEntry([{ type: "text", text: "" }], { stopReason: "aborted" }),
       ]);
       const rec = reconstructFromFile(filePath);
@@ -301,7 +301,7 @@ describe("reconstructFromFile", () => {
     it("前序 error 但最后 stop → lastError 清除（镜像 turn_end 语义），status=done", () => {
       writeJsonl([
         headerLine(),
-        identityEntry({ id: "r1", agent: "w", mode: "sync", task: "t", startedAt: 100 }),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
         assistantEntry([{ type: "text", text: "oops" }], {
           stopReason: "error", errorMessage: "transient", ts: 1000,
         }),
@@ -321,7 +321,7 @@ describe("reconstructFromFile", () => {
     it("tool_start + tool_end + turn_end 条目", () => {
       writeJsonl([
         headerLine(),
-        identityEntry({ id: "r1", agent: "w", mode: "sync", task: "t", startedAt: 100 }),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
         assistantEntry([
           { type: "toolCall", id: "c1", name: "read", arguments: { path: "/x.ts" } },
         ]),
@@ -359,7 +359,7 @@ describe("reconstructFromFile", () => {
     it("有 identity 但无 assistant message → undefined", () => {
       writeJsonl([
         headerLine(),
-        identityEntry({ id: "r1", agent: "w", mode: "sync", task: "t", startedAt: 100 }),
+        identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }),
       ]);
       expect(reconstructFromFile(filePath)).toBeUndefined();
     });
@@ -368,7 +368,7 @@ describe("reconstructFromFile", () => {
       const fd = fs.openSync(filePath, "w");
       fs.writeSync(fd, `${JSON.stringify(headerLine())}\n`);
       fs.writeSync(fd, "THIS IS NOT JSON\n");
-      fs.writeSync(fd, `${JSON.stringify(identityEntry({ id: "r1", agent: "w", mode: "sync", task: "t", startedAt: 100 }))}\n`);
+      fs.writeSync(fd, `${JSON.stringify(identityEntry({ id: "r1", agent: "w", mode: "background", task: "t", startedAt: 100 }))}\n`);
       fs.writeSync(fd, `${JSON.stringify(assistantEntry([{ type: "text", text: "survived" }]))}\n`);
       fs.closeSync(fd);
       const rec = reconstructFromFile(filePath);

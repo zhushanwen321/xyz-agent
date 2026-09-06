@@ -54,6 +54,7 @@ function makeFixture(): Fixture {
       send: vi.fn(),
       steer: vi.fn(),
       followUp: vi.fn(),
+      subagentAction: vi.fn(),
       abort: vi.fn(),
       compact: vi.fn(),
       bash: vi.fn(),
@@ -71,7 +72,7 @@ function makeFixture(): Fixture {
       ensureStreamSubscription(
         sid,
         chatStore,
-        { updateLabel: vi.fn(), updateSessionState: vi.fn() },
+        { applySnapshot: vi.fn() },
         deps,
       ),
     streamSubscribe,

@@ -43,6 +43,7 @@ import { performance } from "node:perf_hooks";
 import { RecordStore } from "@zhushanwen/subagent-core";
 import { INDEX_FILENAME } from "@zhushanwen/subagent-core";
 import type { SubagentRecord } from "@zhushanwen/subagent-core";
+import { toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 /** 冷启动预算（设计目标 1：2.7s → ≤300ms）。 */
 const COLD_SCAN_BUDGET_MS = 300;
@@ -453,7 +454,7 @@ async function main(): Promise<number> {
 	} catch (err) {
 		// 损坏/不可读索引必须命中声明的 A3 文案（不 catch 会让异常冒泡到顶层 catch，声明的判定文案不可达）
 		process.stderr.write(
-			`A3 失败：索引不是合法 JSON 或不可读: ${indexPath}（${err instanceof Error ? err.message : String(err)}）\n` +
+			`A3 失败：索引不是合法 JSON 或不可读: ${indexPath}（${toErrorMessage(err)}）\n` +
 			`建议动作：rm "${indexPath}" 后重跑（索引为派生缓存，首次扫描会自动重建）\n`,
 		);
 		return 1;

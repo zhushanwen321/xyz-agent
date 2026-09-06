@@ -52,6 +52,7 @@ import type { WorkerLogEntry } from "./models/types.ts";
 import type { AgentCallOpts, AgentResult, DoneReason, ExecutionTraceNode } from "./models/types.ts";
 import type { WorkflowRun } from "./models/workflow-run.ts";
 import type { WorkerHandle } from "./worker-handle.ts";
+import { toErrorMessage } from "../core/error-message.ts";
 
 const logger = getLogger("subagents");
 
@@ -197,7 +198,7 @@ async function saveRunBestEffort(
   try {
     await deps.store.save(run);
   } catch (err) {
-    const m = err instanceof Error ? err.message : String(err);
+    const m = toErrorMessage(err);
     logger.error(
       `[workflow] store.save failed (${context}, runId=${run.runId}): ${m}. ` +
         "Continuing state-machine finalization (in-memory state already terminal).",
@@ -285,7 +286,7 @@ export async function finalizeRun(
       reason: run.state.reason ?? doneReason,
     });
   } catch (err) {
-    const m = err instanceof Error ? err.message : String(err);
+    const m = toErrorMessage(err);
     logger.error(`[workflow] pending:unregister emit failed (${options.context}): ${m}`);
   }
   // [OR-4][B-4] onRunDone 独立围栏（与 emit 拆分——emit 抛错不得吞掉完成回调）
@@ -293,7 +294,7 @@ export async function finalizeRun(
     try {
       deps.onRunDone?.(run);
     } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
+      const m = toErrorMessage(err);
       logger.error(`[workflow] onRunDone failed (${options.context}): ${m}`);
     }
   }
@@ -758,7 +759,7 @@ function dispatchAgentCall(
     });
     postAgentResult(run, msg.callId, errorResult, false);
     deps.store.save(run).catch((e: unknown) => {
-      logger.error(`[workflow] store.save failed (resolveAgentOpts): ${e instanceof Error ? e.message : String(e)}`);
+      logger.error(`[workflow] store.save failed (resolveAgentOpts): ${toErrorMessage(e)}`);
     });
     return;
   }
@@ -829,7 +830,7 @@ function dispatchAgentCall(
       // 后同步 worker $BUDGET（否则 $BUDGET.spent()/remaining() 恒为 0）
       postBudgetUpdate(run);
       deps.store.save(run).catch((e: unknown) => {
-        const m = e instanceof Error ? e.message : String(e);
+        const m = toErrorMessage(e);
         logger.error(`[workflow] store.save failed (agent call ${msg.callId}): ${m}`);
       });
 
@@ -846,7 +847,7 @@ function dispatchAgentCall(
     .catch((err: unknown) => {
       // pre-abort 检查（原 gate.withSlot 语义）在 dispatchCall 入口 reject AbortError——预期，不记错。
       if (err instanceof Error && err.name === "AbortError") return;
-      const message = err instanceof Error ? err.message : String(err);
+      const message = toErrorMessage(err);
       logger.error(`[workflow] agent call ${msg.callId} failed: ${message}`);
       // 兜底回发：executeAgentCall 抛非 Abort 异常时（如 runner undefined 的 TypeError、
       // dispatchCall 内部 bug）原 catch 仅 console.error，worker 内对 callId 的 pending
@@ -883,7 +884,7 @@ function dispatchAgentCall(
       // S2: 与 .then 对称——catch 路径也同步 worker $BUDGET（幂等）
       postBudgetUpdate(run);
       deps.store.save(run).catch((e: unknown) => {
-        logger.error(`[workflow] store.save failed (catch fallback): ${e instanceof Error ? e.message : String(e)}`);
+        logger.error(`[workflow] store.save failed (catch fallback): ${toErrorMessage(e)}`);
       });
     });
 }
@@ -938,7 +939,7 @@ function dispatchWorkflowCall(
         result,
       });
     } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
+      const errMsg = toErrorMessage(err);
       logger.error(`[workflow] postResult (workflow-call callId=${msg.callId}) failed: ${errMsg}. Sending error fallback.`);
       // 回发纯字符串 fallback result（必可克隆），让 worker pending resolve
       try {
@@ -968,7 +969,7 @@ function dispatchWorkflowCall(
     .catch((err: unknown) => {
       postResult({
         content: "",
-        error: err instanceof Error ? err.message : String(err),
+        error: toErrorMessage(err),
       });
     });
 }
@@ -991,7 +992,7 @@ function postAgentResult(
   try {
     run.runtime?.worker.postMessage({ type: "agent-result", callId, result, cached });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = toErrorMessage(err);
     logger.error(`[workflow] postAgentResult failed (callId=${callId}): ${msg}. Result likely contains non-cloneable value.`);
     // 回发纯字符串 fallback result（必可克隆），让 worker pending resolve（避免永久挂起）
     try {
@@ -1027,7 +1028,7 @@ export function postBudgetUpdate(run: WorkflowRun): void {
       },
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = toErrorMessage(err);
     // budget 是纯 number 不太可能失败，但防御性兜底——budget 同步非关键（worker 仍可
     // 基于 $BUDGET.spent() 自行累计），失败仅记日志，不中断调用方流程。
     logger.error(`[workflow] postBudgetUpdate failed: ${msg}. Budget sync to worker skipped (non-critical).`);
@@ -1273,7 +1274,7 @@ async function handleRebuildStartFailure(
   handlers: WorkerHandlers,
 ): Promise<void> {
   if (isTerminal(run)) return;
-  const message = err instanceof Error ? err.message : String(err);
+  const message = toErrorMessage(err);
   const count = (run.meta.workerErrorCount ?? 0) + 1;
   run.meta.workerErrorCount = count;
   logger.error(

@@ -21,6 +21,7 @@ import { session as sessionApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useToast } from '@/composables/useToast'
 import { triggerEnterHandoffMode } from '@/composables/panel/useHandoffModeChannel'
+import { toErrorMessage } from '../../../lib/error-message'
 
 /**
  * Handoff 操作 composable。
@@ -74,7 +75,7 @@ export function useHandoffActions(focusedSessionId: Ref<string | null>) {
     } catch (e) {
       // RPC 失败 → 恢复 handingOff（handoff turn 仍在跑，稍后 handoffComplete 会跳新 session）
       chat.setHandingOff(sessionId, true)
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       toastError(t('panel.message.handoffAbortFailed', { error: msg }))
       console.warn('[handoff] abortHandoff RPC failed, handoff turn may continue:', e)
     }

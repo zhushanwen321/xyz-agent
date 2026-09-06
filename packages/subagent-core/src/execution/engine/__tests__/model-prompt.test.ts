@@ -16,8 +16,20 @@ import { buildEngineModelsPromptAppend, buildSubagentEngineSection } from "../mo
 function fakeEngine(id: string, models: Array<{ id: string; name?: string }> | null): EnginePort {
   return {
     id,
-    capabilities: () => ({ conversation: "unsupported", steer: "unsupported", sandbox: "none", maxTurns: false }),
-    probe: async () => ({ ok: true, engineVersion: "test" }),
+    capabilities: () => ({
+      schemaEnforcement: "emulated",
+      steer: "unsupported",
+      conversation: "unsupported",
+      personaInjection: "prompt",
+      eventGranularity: "coarse",
+      sandbox: "none",
+      sessionRead: "outcome-only",
+      resume: "unsupported",
+      interrupt: "kill-only",
+      permissionMode: "ignored",
+      maxTurns: false,
+    }),
+    probe: async () => ({ ok: true, engineVersion: "test", checks: [] }),
     run: async () => {
       throw new Error("not used in this test");
     },
@@ -38,7 +50,7 @@ beforeEach(() => {
 
 afterEach(() => {
   clearEngines();
-  fs.rmSync(tmpRoot, { recursive: true, force: true });
+  fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 describe("buildEngineModelsPromptAppend（defaultEngine 开关语义）", () => {

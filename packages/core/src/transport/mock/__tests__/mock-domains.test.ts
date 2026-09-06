@@ -5,6 +5,7 @@
  * chat 流式闭环（send → complete）、queue（steer/followUp drain）、bash 四态分流。
  * 真实 timer（TIMING 量级 ms～s），整个文件串行约 15s。
  */
+import type { ProviderId } from '@xyz-agent/shared'
 import { describe, it, expect, afterEach } from 'vitest'
 import type { ServerMessageUnion } from '@xyz-agent/shared'
 import * as events from '../../api/events'
@@ -215,7 +216,7 @@ describe('mock chat domain', () => {
   })
 
   it('compact：compacting → compacted 生命周期', async () => {
-    const frames: ServerMessageUnion[] = []
+    const frames: string[] = []
     const un = chat.streamSubscribe('s-compact', (m) => frames.push(m.type))
     await chat.compact('s-compact')
     await waitFor(() => frames.includes('session.compacted'))
@@ -299,7 +300,7 @@ describe('mock config domain', () => {
     const defaults: string[] = []
     const un = config.onDefaults((m) => defaults.push(m))
     await waitFor(() => defaults.length > 0)
-    await config.setDefaultModel('prov', 'm1')
+    await config.setDefaultModel('prov' as ProviderId, 'm1')
     await waitFor(() => defaults.includes('prov/m1'))
     const scoped = await config.setScopedModels(['a/1', 'a/1', 'a/2'])
     expect(scoped).toEqual(['a/1', 'a/2'])
@@ -328,12 +329,12 @@ describe('mock config domain', () => {
     expect(await config.getProjectSkills('/cwd')).toEqual([])
     const firstSkill = skills[0]?.[0] as { id: string } | undefined
     if (firstSkill) {
-      await config.setSkill(firstSkill)
+      await config.setSkill(firstSkill as unknown as Parameters<typeof config.setSkill>[0])
       await config.deleteSkill(firstSkill.id)
     }
     const firstAgent = agents[0]?.[0] as { id: string } | undefined
     if (firstAgent) {
-      await config.setAgent(firstAgent)
+      await config.setAgent(firstAgent as unknown as Parameters<typeof config.setAgent>[0])
       await config.deleteAgent(firstAgent.id)
     }
     await config.setSkillDirs([{ path: '.agents/skills', enabled: true, scope: 'project' }])
@@ -346,7 +347,7 @@ describe('mock config domain', () => {
   it('provider 导入预览/应用 + onDefaultsWithSource + systemPrompt/terminal 配置', async () => {
     const defaults: Array<{ defaultModel: string; source?: string }> = []
     const un1 = config.onDefaultsWithSource((p) => defaults.push(p))
-    await config.setDefaultModel('p2', 'm')
+    await config.setDefaultModel('p2' as ProviderId, 'm')
     await waitFor(() => defaults.some((d) => d.defaultModel === 'p2/m'))
     un1()
     const { preview } = await config.previewImportProviders('pi')
@@ -375,7 +376,7 @@ describe('mock model / extension / plugin / composer / search domain', () => {
     const models: unknown[] = []
     const un = model.onModels((m) => models.push(m))
     await waitFor(() => models.length > 0)
-    expect(await model.switchModel('s1', 'prov', 'm1')).toEqual({ sessionId: 's1', provider: 'prov', modelId: 'm1' })
+    expect(await model.switchModel('s1', 'prov' as ProviderId, 'm1')).toEqual({ sessionId: 's1', provider: 'prov', modelId: 'm1' })
     un()
   })
 

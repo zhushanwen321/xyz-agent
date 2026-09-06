@@ -227,7 +227,7 @@ describe("A.2 帧序列逐字断言", () => {
     expect(frames).toHaveLength(1);
     // 帧级键集 {id, method, params}——无 jsonrpc、无未知键
     expect(Object.keys(frames[0]).sort()).toEqual(["id", "method", "params"]);
-    const params = frames[0].params;
+    const params = frames[0].params as Record<string, { workspaceKey?: string; workspacePath?: string; [k: string]: unknown }>;
     expect(Object.keys(params).sort()).toEqual([
       "mode",
       "persistence",
@@ -263,7 +263,7 @@ describe("A.2 帧序列逐字断言", () => {
       },
       "做点什么"
     );
-    const params = sentFrames(stateFile, "session/create")[0].params;
+    const params = sentFrames(stateFile, "session/create")[0].params as Record<string, { workspaceKey?: string; workspacePath?: string; [k: string]: unknown }>;
     expect(Object.keys(params).sort()).toEqual([
       "mode",
       "model",

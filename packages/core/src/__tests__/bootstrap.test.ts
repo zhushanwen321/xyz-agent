@@ -31,7 +31,6 @@ function makeOptions(): BootstrapOptions {
         remove: async () => {},
       },
       webSocket: { create: () => createFakeWebSocket() },
-      ipc: null,
     },
   }
 }

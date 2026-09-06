@@ -24,6 +24,7 @@ import type { XyzProviderStore, ProviderExtras } from './provider-extras-store.j
 import { readExtrasWithFallback } from './migration/provider-extras-migration.js'
 import type { Credential } from './auth/auth-storage.js'
 import type { ConfigProviderConfig } from './ports/config.js'
+import { toErrorMessage } from '../utils/errors.js'
 
 /** 最小查询间隔（毫秒） */
 const THROTTLE_MS = 10_000
@@ -296,7 +297,7 @@ export class QuotaService {
       mkdirSync(this.secretsDir, { recursive: true, mode: SECRET_DIR_MODE })
       return undefined
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = toErrorMessage(err)
       logger.warn('[quota] failed to create secrets dir', { providerId, error: msg })
       return msg
     } finally {
@@ -310,7 +311,7 @@ export class QuotaService {
       this.writeSecretFile(this.getCookiePath(providerId), cookie)
       return undefined
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = toErrorMessage(err)
       logger.warn('[quota] failed to write cookie', { providerId, error: msg })
       return msg
     }
@@ -335,13 +336,13 @@ export class QuotaService {
           unlinkSync(keyPath)
         } catch (cleanupErr) {
           // 清理失败不阻断主流程（下次写入会覆盖）
-          const cleanupMsg = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)
+          const cleanupMsg = toErrorMessage(cleanupErr)
           logger.debug('[quota] failed to remove api key file', { providerId, error: cleanupMsg })
         }
       }
       return { apiKeySet: false }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = toErrorMessage(err)
       logger.warn('[quota] failed to write apiKey', { providerId, error: msg })
       return { error: msg }
     }
@@ -414,7 +415,7 @@ export class QuotaService {
       })
       return true
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = toErrorMessage(err)
       logger.warn('[quota] failed to persist quota config to providers.json', { providerId, error: msg })
       return false
     }
@@ -500,7 +501,7 @@ export class QuotaService {
       return this.fetchFailed(providerId, outcome.reason)
     } catch (err) {
       // 异常防御（fetcher 契约不 throw，此处兜底逃逸异常）：按 network 失败态处理 + log
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = toErrorMessage(err)
       logger.warn('[quota] fetch threw', { providerId, error: msg })
       return this.fetchFailed(providerId, 'network')
     }
@@ -600,7 +601,7 @@ export class QuotaService {
     try {
       return await this.getAuthCredential(providerId)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = toErrorMessage(err)
       logger.debug('[quota] failed to read auth.json credential', { providerId, error: msg })
       return undefined
     }
@@ -614,7 +615,7 @@ export class QuotaService {
       return val || null
     } catch (err) {
       // 读取失败不阻断流程（返回 null fallback），但必须 log（架构约定 #4 落盘，禁止静默 catch）
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = toErrorMessage(err)
       logger.debug('[quota] failed to read secret file', { filePath, error: msg })
       return null
     }

@@ -33,7 +33,7 @@ import {
 // ── fixture（取自既有测试的真实形态：message-converter*.test.ts 家族）──────────
 
 /** 确定性断言：同序列两次（lift + reducer fold）→ 全量 state deep equal。 */
-function expectDeterministic(raw: unknown[], entryIds?: string[]): void {
+function expectDeterministic(raw: unknown[], entryIds?: string[]): ChatViewState {
   const first = replayEntries(liftHistoryToEntries(raw, entryIds))
   const second = replayEntries(liftHistoryToEntries(raw, entryIds))
   // 全量 state（messages + clientUuidMap + orphanToolResults + 配对锚点）非消息级抽样
@@ -211,8 +211,13 @@ describe('live ≡ reload 构造性等价（W6 全类型）', () => {
    * 归一：剥消息 id 与 piEntryId（live 客户端前缀 id / reducer e<N> 派生 vs replay pi
    * uuidv7 entry id——id 空间异源属 W21 已裁决差异类，等价性按内容断言）。
    */
+  // 剥除 id/piEntryId（uuidv7 异源差异）后回填占位 id，保持 ChatViewState 形态
+  // （对比内容不受影响——两侧同规则剥除 + 同占位）
   function normalizeIds(state: ChatViewState): ChatViewState {
-    const messages = state.messages.map(({ id: _id, piEntryId: _piEntryId, ...rest }) => rest)
+    const messages = state.messages.map(({ id: _id, piEntryId: _piEntryId, ...rest }) => ({
+      ...rest,
+      id: 'normalized',
+    })) as Message[]
     return { ...state, messages }
   }
 

@@ -111,12 +111,12 @@ describe("finalizeRun（D5-② 单写点直测）", () => {
     // 四步各恰好一次
     expect(transitionSpy).toHaveBeenCalledTimes(1);
     expect(deps.store.save).toHaveBeenCalledTimes(1);
-    expect(deps.eventBus.emit).toHaveBeenCalledTimes(1);
+    expect(deps.eventBus!.emit).toHaveBeenCalledTimes(1);
     expect(deps.onRunDone).toHaveBeenCalledTimes(1);
     // 顺序：save → unregister → onRunDone（transition 已同步先行）
     expect(deps.order).toEqual(["save", "emit:pending:unregister", "onRunDone"]);
     // unregister reason = transition 后的 state.reason
-    expect(deps.eventBus.emit).toHaveBeenCalledWith("pending:unregister", {
+    expect(deps.eventBus!.emit).toHaveBeenCalledWith("pending:unregister", {
       id: "wf-fin-1",
       reason: "completed",
     });
@@ -133,8 +133,8 @@ describe("finalizeRun（D5-② 单写点直测）", () => {
 
     expect(ok).toBe(true);
     expect(run.state.reason).toBe("failed");
-    expect(deps.eventBus.emit).toHaveBeenCalledTimes(1);
-    expect(deps.eventBus.emit).toHaveBeenCalledWith("pending:unregister", {
+    expect(deps.eventBus!.emit).toHaveBeenCalledTimes(1);
+    expect(deps.eventBus!.emit).toHaveBeenCalledWith("pending:unregister", {
       id: "wf-fin-2",
       reason: "failed",
     });
@@ -153,7 +153,7 @@ describe("finalizeRun（D5-② 单写点直测）", () => {
     expect(ok).toBe(false);
     // 抢先方已兑现 unregister/onRunDone——本路径让位，不重复执行
     expect(deps.store.save).not.toHaveBeenCalled();
-    expect(deps.eventBus.emit).not.toHaveBeenCalled();
+    expect(deps.eventBus!.emit).not.toHaveBeenCalled();
     expect(deps.onRunDone).not.toHaveBeenCalled();
     expect(run.state.reason).toBe("aborted");
   });
@@ -169,7 +169,7 @@ describe("finalizeRun（D5-② 单写点直测）", () => {
 
     expect(ok).toBe(true);
     expect(run.state.status).toBe("done");
-    expect(deps.eventBus.emit).toHaveBeenCalledTimes(1);
+    expect(deps.eventBus!.emit).toHaveBeenCalledTimes(1);
     expect(deps.onRunDone).toHaveBeenCalledTimes(1);
   });
 
@@ -183,7 +183,7 @@ describe("finalizeRun（D5-② 单写点直测）", () => {
     await expect(
       finalizeRun(run, deps, "completed", { context: "test" }),
     ).resolves.toBe(true);
-    expect(deps.eventBus.emit).toHaveBeenCalledTimes(1);
+    expect(deps.eventBus!.emit).toHaveBeenCalledTimes(1);
     expect(run.state.status).toBe("done");
   });
 });
@@ -219,8 +219,8 @@ describe("budget_limited 终态路径（dispatchAgentCall → finalizeRun）", (
     // save 2 次 = call 完成快照（dispatchAgentCall .then 的常规持久化）+ budget
     // 终态快照（finalizeRun 内）——两次语义不同，收敛前后一致
     expect(deps.store.save).toHaveBeenCalledTimes(2);
-    expect(deps.eventBus.emit).toHaveBeenCalledTimes(1);
-    expect(deps.eventBus.emit).toHaveBeenCalledWith("pending:unregister", {
+    expect(deps.eventBus!.emit).toHaveBeenCalledTimes(1);
+    expect(deps.eventBus!.emit).toHaveBeenCalledWith("pending:unregister", {
       id: "wf-budget-1",
       reason: "budget_limited",
     });

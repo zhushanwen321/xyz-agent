@@ -14,6 +14,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ExecutionRecord } from "../../execution/types.ts";
+import type { ExecutionTraceNode } from "../models/types.ts";
 import { AgentCall } from "../models/agent-call.ts";
 import { Budget } from "../models/budget.ts";
 import { Trace } from "../models/trace.ts";
@@ -54,7 +55,7 @@ function makeLiveRecord(id: string): ExecutionRecord {
     agent: "coder",
     model: "test-model",
     thinkingLevel: undefined,
-    mode: "sync",
+    mode: "background",
     task: "do work",
     slug: "do-work",
     startedAt: 0,
@@ -206,12 +207,13 @@ describe("run-snapshot — toRunSnapshot/fromRunSnapshot 往返等值", () => {
 describe("run-snapshot — live-strip 防御内聚", () => {
   it("trace 节点与 calls[].traceNode 带 live → 序列化输出无 live 键", () => {
     const run = makeRun("wf-live-1");
-    const node = {
+    const node: ExecutionTraceNode = {
       stepIndex: 0,
       agent: "coder",
       task: "do work",
       model: "test-model",
-      status: "running" as const,
+      status: "running",
+      live: undefined,
     };
     run.state.trace.append(node);
     const call = new AgentCall(0, { prompt: "do work" }, node);
@@ -229,12 +231,13 @@ describe("run-snapshot — live-strip 防御内聚", () => {
 
   it("strip 产出新对象，不 mutate 内存 run（save 后 run 可继续跑）", () => {
     const run = makeRun("wf-live-2");
-    const node = {
+    const node: ExecutionTraceNode = {
       stepIndex: 0,
       agent: "coder",
       task: "do work",
       model: "test-model",
-      status: "running" as const,
+      status: "running",
+      live: undefined,
     };
     run.state.trace.append(node);
     node.live = makeLiveRecord("run-0");

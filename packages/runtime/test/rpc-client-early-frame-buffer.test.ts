@@ -13,122 +13,52 @@
  *
  * 测试策略与 rpc-client.test.ts / rpc-client-kill-sigcont.test.ts 一致：mock node:child_process
  * 的 spawn + readline，emitPiLine 入口把伪造的 pi stdout JSONL 行投递给 RpcClient 的 line
- * handler。不依赖真实 pi 进程。
+ * handler。不依赖真实 pi 进程。mock 骨架与驱动 helpers 收敛 test/helpers/rpc-client-mock.ts。
  *
  * 运行：npx vitest run test/rpc-client-early-frame-buffer.test.ts
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { RpcClient, RpcTimeoutError, type PiMessage } from '../src/infra/pi/rpc-client.js'
 
-// ── Mocks（骨架复制自 rpc-client-kill-sigcont.test.ts）─────────────────
+// ── Mocks（工厂单源在 helpers/rpc-client-mock.ts，vi.mock 声明留本文件——路径按本文件解析）──
 
-let stdoutLineHandler: ((line: string) => void) | null = null
-let procExitHandlers: Array<(code: number | null) => void> = []
+vi.mock('node:child_process', async () =>
+  (await import('./helpers/rpc-client-mock')).childProcessModule())
+vi.mock('node:readline', async () =>
+  (await import('./helpers/rpc-client-mock')).readlineModule())
+vi.mock('@xyz-agent/shared', async () =>
+  (await import('./helpers/rpc-client-mock')).sharedModule())
+vi.mock('@xyz-agent/shared/paths', async () =>
+  (await import('./helpers/rpc-client-mock')).sharedPathsModule())
+vi.mock('node:os', async () =>
+  (await import('./helpers/rpc-client-mock')).osModule())
+vi.mock('../src/infra/pi/pi-paths.js', async () =>
+  (await import('./helpers/rpc-client-mock')).piPathsModule())
+vi.mock('../src/infra/pi/pi-provider-store.js', async () =>
+  (await import('./helpers/rpc-client-mock')).piProviderStoreModule())
+vi.mock('../src/infra/logger.js', async () =>
+  (await import('./helpers/rpc-client-mock')).loggerModule())
 
-/** 捕获的 stdin 写入行（sendCommand 驱动用）。 */
-const stdinWrites: string[] = []
-
-const fakeProc = {
-  on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
-    if (event === 'exit') procExitHandlers.push(handler as (code: number | null) => void)
-    return fakeProc
-  }),
-  off: vi.fn(),
-  removeListener: vi.fn(),
-  stdout: { on: vi.fn(), resume: vi.fn(), destroy: vi.fn() },
-  stderr: { on: vi.fn() },
-  stdin: {
-    write: vi.fn((chunk: string) => {
-      stdinWrites.push(chunk)
-      return true
-    }),
-    once: vi.fn(),
-  },
-  kill: vi.fn(),
-  pid: 12345,
-}
-
-vi.mock('node:child_process', () => ({
-  spawn: () => fakeProc,
-}))
-
-vi.mock('node:readline', () => ({
-  createInterface: () => ({
-    on: (event: string, handler: (line: string) => void) => {
-      if (event === 'line') stdoutLineHandler = handler
-    },
-    close: vi.fn(),
-  }),
-}))
-
-// importOriginal spread 而非完全替换：rpc-client.start 经 ../spawn-env.js re-export 消费
-// shared 的 buildOutboundChildEnv（纯函数、env 全 DI），完全替换式 mock 会随 shared 新增
-// 导出静默断联（b5d3e6329 事故根因）；此处仅覆盖测试需要隔离的常量。
-vi.mock('@xyz-agent/shared', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@xyz-agent/shared')>()),
-  ENV_WHITELIST_PREFIXES: ['PATH', 'HOME', 'USER', 'LANG', 'TERM'],
-}))
-
-vi.mock('@xyz-agent/shared/paths', () => ({
-  getDataDir: () => '/mock/home/.xyz-agent',
-}))
-
-vi.mock('node:os', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:os')>()
-  return { ...actual, homedir: () => '/mock/home' }
-})
-
-vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
-  return {
-    ...actual,
-    getSessionsDir: () => '/mock/home/.xyz-agent/sessions',
-    getPiAgentDir: () => '/mock/home/.xyz-agent/pi/agent',
-  }
-})
-
-vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/infra/pi/pi-provider-store.js')>()
-  return { ...actual, getDefaultModel: () => null }
-})
-
-vi.mock('../src/infra/logger.js', () => ({
-  createPiSessionLog: () => ({ write: vi.fn(), end: vi.fn() }),
-}))
+import {
+  clearExitHandlers,
+  collector,
+  earlyFrame,
+  earlyFrameBufferOf,
+  emitPiLine,
+  killAndDriveExit,
+  lastWrittenJson,
+  resetRpcClientMock,
+} from './helpers/rpc-client-mock'
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-/** 把伪造的 pi stdout JSONL 行投递给 RpcClient 的 line handler（驱动 handleMessage）。 */
-function emitPiLine(obj: Record<string, unknown>): void {
-  if (!stdoutLineHandler) throw new Error('stdout line handler not registered yet')
-  stdoutLineHandler(JSON.stringify(obj))
-}
-
-/** 从 stdin 写入里解析出最后一条 JSON 对象（取 sendCommand 注册的 pending id 用）。 */
-function lastWrittenJson(): Record<string, unknown> {
-  return JSON.parse(stdinWrites[stdinWrites.length - 1])
-}
-
-/** 收集型 listener：把收到的帧推入数组（记录到达序）。 */
-function collector(received: PiMessage[]): (msg: PiMessage) => void {
-  return (msg) => { received.push(msg) }
-}
-
-/** 反射读早期帧缓冲（仅测试观测用，先例：rpc-client.test.ts pendingSize；private 字段须经 unknown 中转——runtime/test 惯例）。 */
-function earlyFrameBufferOf(client: RpcClient): PiMessage[] {
-  return (client as unknown as { earlyFrameBuffer: PiMessage[] }).earlyFrameBuffer
-}
-
-/**
- * 构造贴近真实形态的非 response 帧：pi 原生事件帧 / 带 id 的 extension_ui_request。
- * 返回 Record（emitPiLine 入参类型）；JSONL 线上形态本就无类型，语义由 handleMessage 端标注。
- */
-function earlyFrame(i: number, withId = false): Record<string, unknown> {
-  const frame: Record<string, unknown> = { type: `evt_${i}`, payload: { sessionId: 's1', seq: i } }
-  // D2：非 pending 的带 id 帧（如 extension_ui_request / bash_execution_update）同属
-  // listener 分支帧集，也应进缓冲——上限压测用带 id 形态顺带覆盖。
-  if (withId) frame.id = `req_${i}`
-  return frame
+/** getState 注册 pending 后以 response 帧回填并 resolve（R1-2 / R1-7b 共用装配；断言留在用例）。 */
+async function getStateAndReply(client: RpcClient, data: Record<string, unknown>): Promise<unknown> {
+  const statePromise = client.getState()
+  await Promise.resolve()
+  const sent = lastWrittenJson()
+  emitPiLine({ type: 'response', id: sent.id, success: true, data })
+  return statePromise
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -139,11 +69,7 @@ describe('RpcClient 早期帧缓冲（early-frame-buffer D1-D6）', () => {
   let errorSpy: ReturnType<typeof vi.spyOn>
 
   beforeEach(async () => {
-    stdinWrites.length = 0
-    stdoutLineHandler = null
-    procExitHandlers = []
-    fakeProc.on.mockClear()
-    fakeProc.stdin.write.mockClear()
+    resetRpcClientMock()
     // 缓冲溢出 warn / 重放隔离 error 走 console——spy 掉避免测试输出噪音，供次数断言
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -151,18 +77,14 @@ describe('RpcClient 早期帧缓冲（early-frame-buffer D1-D6）', () => {
     client = new RpcClient({ cwd: '/project' })
     await client.start()
     // start 的 500ms startup 检查已结束，其注册的 exit handlers 已被 cleanup 移除
-    procExitHandlers = []
+    clearExitHandlers()
   })
 
   afterEach(async () => {
     vi.useRealTimers()
     warnSpy.mockRestore()
     errorSpy.mockRestore()
-    // kill 后手动驱动 exit handlers 让 kill 立即 resolve（先例：kill-sigcont 测试 emitExit）
-    const killPromise = client.kill().catch(() => {})
-    procExitHandlers.forEach((h) => h(0))
-    procExitHandlers = []
-    await killPromise
+    await killAndDriveExit(client)
   })
 
   // ── R1-1 空窗入缓冲 + 首注册同步按序重放（G3 全序）────────────────
@@ -189,12 +111,7 @@ describe('RpcClient 早期帧缓冲（early-frame-buffer D1-D6）', () => {
 
   // ── R1-2 pending 命中的 response 帧不入缓冲（D2）──────────────────
   it('R1-2: pending 命中的 response 帧走 resolve、不进缓冲（后续 listener 不收到它）', async () => {
-    const statePromise = client.getState()
-    await Promise.resolve()
-    const sent = lastWrittenJson()
-
-    emitPiLine({ type: 'response', id: sent.id, success: true, data: { sessionId: 'real-id' } })
-    const state = await statePromise
+    const state = await getStateAndReply(client, { sessionId: 'real-id' })
     expect(state).toEqual({ sessionId: 'real-id' })
 
     // response 帧未入缓冲：首 listener 注册后收到的重放为空
@@ -318,12 +235,7 @@ describe('RpcClient 早期帧缓冲（early-frame-buffer D1-D6）', () => {
     const got1: PiMessage[] = []
     client.onEvent(collector(got1))
 
-    const statePromise = client.getState()
-    await Promise.resolve()
-    const sent = lastWrittenJson()
-    emitPiLine({ type: 'response', id: sent.id, success: true, data: { sessionId: 'real-id' } })
-
-    const state = await statePromise
+    const state = await getStateAndReply(client, { sessionId: 'real-id' })
     expect(state).toEqual({ sessionId: 'real-id' })
     // response 帧未被当作 event 广播（改动前行为）
     expect(got1).toHaveLength(0)

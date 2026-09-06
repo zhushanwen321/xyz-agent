@@ -93,6 +93,7 @@ import { ForkDepthExceededError } from "./types.ts";
 import { DEFAULT_AGENT_NAME } from "./types.ts";
 import { registerGlobalObservability, UiRequestObservability } from "./ui-request-observability.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
+import { toErrorMessage } from "../core/error-message.ts";
 
 const logger = getLogger("subagents");
 
@@ -150,6 +151,9 @@ const disposedUiRequestStub: UiRequestHandler = () => Promise.resolve({ cancelle
  *  session_start 时从 ctx.ui 注入，background 执行期间用于把合并后的 text_delta
  *  通过 setWidget 通道转发到 RPC stdout（不经 sendMessage 的持久化路径）。 */
 export type { StreamSink } from "./stream-sink.ts";
+
+// pi 依赖端口类型 re-export：测试侧 mock PiLike 历来从本模块取（与 StreamSink 同构的门面模式）
+export type { PiLike } from "./notify-host.ts";
 
 /**
  * Service 构造参数（进程级）。
@@ -534,14 +538,14 @@ export class SubagentService {
       this.store.recoverOrphanRecords(this.sessionRootId ?? undefined);
     } catch (err) {
       logger.warn("[subagents] orphan recovery failed", {
-        reason: err instanceof Error ? err.message : String(err),
+        reason: toErrorMessage(err),
       });
     }
     try {
       this.store.recoverEntryOnlyOrphans(this.mainSessionFile, this.sessionRootId ?? undefined);
     } catch (err) {
       logger.warn("[subagents] entry-only orphan recovery failed", {
-        reason: err instanceof Error ? err.message : String(err),
+        reason: toErrorMessage(err),
       });
     }
   }
@@ -1899,7 +1903,7 @@ export class SubagentService {
       // MF-6（决策 6 spec §3.1）：chatMode（含 resume）spawn/创建失败不销毁对话——回退 idle
       //（可恢复），让 agent 可重试 message 或 close。与一次性模式（finalizeFailed 终态销毁）区分。
       if (record.chatMode) {
-        const errMsg = err instanceof Error ? err.message : String(err);
+        const errMsg = toErrorMessage(err);
         const failedResult: AgentResult = {
           text: "",
           turns: record.turnCount,
@@ -2212,7 +2216,7 @@ export class SubagentService {
    *  AgentResult → CAS 抢锁 → finalizeRecord（与正常路径同形）。返回合成 result 供 runAndFinalize
    *  继续返回（不 re-throw，swallow 策略）。 */
   private async finalizeFailed(record: ExecutionRecord, err: unknown): Promise<AgentResult> {
-    const errMsg = err instanceof Error ? err.message : String(err);
+    const errMsg = toErrorMessage(err);
     // durationMs 用真实耗时（startedAt → now），避免失败统计恒为 0 失真。
     const failedResult: AgentResult = { text: "", turns: record.turnCount, durationMs: Date.now() - record.startedAt, success: false, error: errMsg, sessionId: record.id, toolCalls: [] };
     // CAS 抢锁：抢到（status 仍 running）则完整收尾；没抢到（cancel 已先设 cancelled）跳过。

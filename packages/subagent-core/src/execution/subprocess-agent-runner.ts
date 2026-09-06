@@ -42,6 +42,7 @@ import { modelRefFromVerified } from "../shared/model-ref";
 import { registerSpawnedChildForRecord } from "./engine/engines/pi/session-runner.ts";
 import type { SubagentStream } from "./stream-sink.ts";
 import type { SubagentService } from "./subagent-service.ts";
+import { toErrorMessage } from "../core/error-message.ts";
 
 // ── 构造依赖（per-session 注入）──
 
@@ -236,7 +237,7 @@ export class SubprocessAgentRunner implements AgentRunner {
       return outcomeToRunnerResult(outcome);
     } catch (err) {
       // executeAndAwait throw（嵌套超限 ForkDepthExceededError，BC-12）或未预期异常 → 不 reject，入 error。
-      const message = err instanceof Error ? err.message : String(err);
+      const message = toErrorMessage(err);
       return {
         content: "",
         durationMs: Date.now() - startedAt,
@@ -288,7 +289,7 @@ function errorResult(err: unknown, startedAt: number): AgentResult {
   return {
     content: "",
     durationMs: Date.now() - startedAt,
-    error: err instanceof Error ? err.message : String(err),
+    error: toErrorMessage(err),
     toolCalls: [],
   };
 }

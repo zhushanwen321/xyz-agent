@@ -158,7 +158,7 @@ export interface InboundEffects {
  *   message 非法时**仍调** effect 传兜底值，非跳过——布尔门承载不了参数兜底，留在
  *   sessionEffect 的参数构造处，不入 payloadGuard。
  */
-interface RouteTableEntry {
+export interface RouteTableEntry {
   /** 有 sid 分支的 effect 回调（dispatcher 在 dispatchSession/crossSession 与 payloadGuard 之后调用）。 */
   sessionEffect?(sid: string, payload: ServerMessage['payload'], effects: InboundEffects): void
   /**

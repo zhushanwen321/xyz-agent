@@ -13,102 +13,52 @@
 //     语义保留，A1-1：显式 maxTurns<=0 与 fail-fast 降级也不挂）。
 //
 // mock 布局与 run-spawn-edges.test.ts 一致（FakeChild + mock session-pending）。
+// mock 工厂与 loggerMock 单源收敛 helpers/spawn-mock.ts；vi.mocked 取回与
+// spawn/keep-alive 前奏收敛 helpers/session-runner-mocks.ts（分工见后者头注释）。
 
-import { spawn } from "node:child_process";
-import * as fs from "node:fs";
-
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 // [A1-2③] Mock 共享 logger：复核失败的 warn 留痕可被断言（对齐 run-spawn-edges 模式）。
-const { loggerMock } = vi.hoisted(() => ({
-  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
-vi.mock("../../core/logger.ts", () => ({
-  getLogger: () => loggerMock,
-}));
+vi.mock("../../core/logger.ts", async () =>
+  (await import("./helpers/spawn-mock.ts")).coreLoggerModule());
 
-vi.mock("node:child_process", async () => {
-  const { FakeChild } = await import("./helpers/spawn-mock.ts");
-  return {
-    spawn: vi.fn(() => new FakeChild()),
-    execFile: vi.fn(
-      (
-        _cmd: string,
-        _args: readonly string[],
-        _opts: unknown,
-        cb: (err: Error | null, stdout?: string, stderr?: string) => void,
-      ) => cb(new Error("execFile not configured in this test")),
-    ),
-  };
-});
-
-vi.mock("node:fs", async () => {
-  const actual = await import("node:fs");
-  return {
-    default: {
-      ...actual,
-      mkdirSync: vi.fn(),
-      existsSync: vi.fn(() => false),
-      appendFileSync: vi.fn(),
-      writeFileSync: vi.fn(),
-      readdirSync: vi.fn(() => []),
-    },
-    mkdirSync: vi.fn(),
-    existsSync: vi.fn(() => false),
-    appendFileSync: vi.fn(),
-    writeFileSync: vi.fn(),
-    readdirSync: vi.fn(() => []),
-    promises: actual.promises,
-  };
-});
-
-vi.mock("../alive-store.ts", () => ({
-  writeAliveMarker: vi.fn(),
-  // [T5②] keep-alive 心跳刷新读取现有 marker id（缺失兜底 record.id）
-  readAliveMarker: vi.fn(() => undefined),
-  isProcessAlive: vi.fn(() => false),
-}));
+vi.mock("node:child_process", async () =>
+  (await import("./helpers/spawn-mock.ts")).childProcessModule());
+vi.mock("node:fs", async () => (await import("./helpers/spawn-mock.ts")).fsModule());
+vi.mock("../alive-store.ts", async () =>
+  (await import("./helpers/spawn-mock.ts")).aliveStoreModule());
 
 // keep-alive 判定：本文件统一 count>0（有活跃后代 → keep-alive 分支）。
-vi.mock("../session-pending.ts", () => ({
-  readActivePendingFromSessionFile: vi.fn(() => ({ count: 1, recentUnregister: false })),
-  prunePendingCursor: vi.fn(),
-  listActivePendingFromSessionFile: vi.fn(() => ({ items: [] })),
-}));
+vi.mock("../session-pending.ts", async () =>
+  (await import("./helpers/spawn-mock.ts")).sessionPendingModule());
 
-vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
-  writePromptToTempFile: vi.fn(async (agent: string) => {
-    const safeName = agent.replace(/[^\w.-]+/g, "_");
-    return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
-  }),
-  cleanupTempPrompt: vi.fn(async () => {}),
-}));
+vi.mock("../engine/engines/pi/temp-prompt.ts", async () =>
+  (await import("./helpers/spawn-mock.ts")).tempPromptModule());
 
 import {
   KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS,
   maxTurnsToWatchdogMs,
-  runSpawn,
   SPAWN_WATCHDOG_ENV,
 } from "../engine/engines/pi/session-runner.ts";
-import { listActivePendingFromSessionFile, readActivePendingFromSessionFile } from "../session-pending.ts";
-import { isProcessAlive, readAliveMarker, writeAliveMarker } from "../alive-store.ts";
 import {
   emitStdoutLine,
   type FakeChild,
   lastSpawnedChild as lastSpawnedChildOf,
-  makeCtx,
+  loggerMock,
   makeOpts,
-  makeRecord,
   waitForSpawn as waitForSpawnOf,
 } from "./helpers/spawn-mock.ts";
+import { keepAliveTestHooks, spawnAndReachKeepAlive, takeSessionRunnerMocks } from "./helpers/session-runner-mocks.ts";
 
-const mockSpawn = vi.mocked(spawn);
-const mockPending = vi.mocked(readActivePendingFromSessionFile);
-const mockListPending = vi.mocked(listActivePendingFromSessionFile);
-const mockReadAliveMarker = vi.mocked(readAliveMarker);
-const mockWriteAliveMarker = vi.mocked(writeAliveMarker);
-const mockIsProcessAlive = vi.mocked(isProcessAlive);
-const mockReaddirSync = vi.mocked(fs.readdirSync);
+const {
+  mockSpawn,
+  mockPending,
+  mockListPending,
+  mockReadAliveMarker,
+  mockWriteAliveMarker,
+  mockIsProcessAlive,
+  mockReaddirSync,
+} = takeSessionRunnerMocks();
 
 /** A1-2 复核用例的后代 pid（存/死两形态，对齐 descendant-sweep.test.ts 数值风格）。 */
 const LIVE_DESCENDANT_PID = 424_242;
@@ -117,48 +67,22 @@ const DEAD_DESCENDANT_PID = 999_999;
 const lastSpawnedChild = (): FakeChild => lastSpawnedChildOf(mockSpawn);
 const waitForSpawn = (timeoutMs = 1000): Promise<void> => waitForSpawnOf(mockSpawn, timeoutMs);
 
-/** 非 chatMode 层主 + fake timers + agent_end keep-alive 落位的公共前奏。 */
-async function spawnAndReachKeepAlive(opts = makeOpts()): Promise<{
-  child: FakeChild;
-  finish: (code?: number) => Promise<Awaited<ReturnType<typeof runSpawn>>>;
-}> {
-  const record = makeRecord();
-  const promise = runSpawn(record, "Task: keep-alive no-progress", opts, makeCtx());
-  await waitForSpawn();
-  const child = lastSpawnedChild();
-  // fake timers 必须在 emit agent_end 之前启用（keep-alive timer 新建于 agent_end
-  // 处理器内；不 fake setImmediate——stream flush 靠真实事件循环交付，见 MF-3 先例）。
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-  emitStdoutLine(child, sessionHeaderLine());
-  emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
-  await new Promise((r) => setImmediate(r));
-  return {
-    child,
-    finish: (code = 143) => {
-      child.stdout.end();
-      child.stderr.end();
-      child.emit("close", code);
-      return promise as Promise<Awaited<ReturnType<typeof runSpawn>>>;
-    },
-  };
-}
-
-function sessionHeaderLine(): Record<string, unknown> {
-  return { type: "session", id: "sess-ka", timestamp: "2026-09-01T00:00:00.000Z", cwd: "/tmp/test" };
+/** A1-2 复核用例的差集后代装配：pending 项 + session 文件名 + marker + pid 存活形态。 */
+function mockDescendant(sessionId: string, pid: number, alive: boolean): void {
+  mockListPending.mockReturnValue({
+    items: [{ id: "bg-1", sessionId, type: "session" }],
+  });
+  mockReaddirSync.mockReturnValue([`20260901T000000-000_${sessionId}.jsonl`]);
+  mockReadAliveMarker.mockImplementation((f: unknown) =>
+    String(f).endsWith(`_${sessionId}.jsonl`)
+      ? { pid, id: sessionId, startedAt: 0 }
+      : undefined,
+  );
+  mockIsProcessAlive.mockImplementation((p: number) => (p === pid ? alive : false));
 }
 
 describe("[T2-①] keep-alive 裸缺省无进展检测上界（P-T2 降级路径 B）", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.stubEnv(SPAWN_WATCHDOG_ENV, "");
-    mockPending.mockReturnValue({ count: 1, recentUnregister: false });
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllEnvs();
-    vi.useRealTimers();
-  });
+  keepAliveTestHooks(mockPending);
 
   it("裸缺省：agent_end keep-alive 挂无进展 timer，连续静默 30min 触发 SIGTERM 处置", async () => {
     const { child, finish } = await spawnAndReachKeepAlive();
@@ -235,16 +159,7 @@ describe("[T2-①] keep-alive 裸缺省无进展检测上界（P-T2 降级路径
     mockPending
       .mockReturnValueOnce({ count: 1, recentUnregister: false })
       .mockReturnValueOnce({ count: 0, recentUnregister: false });
-    const record = makeRecord();
-    const promise = runSpawn(record, "Task: keep-then-final", makeOpts(), makeCtx());
-    await waitForSpawn();
-    const child = lastSpawnedChild();
-
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    emitStdoutLine(child, sessionHeaderLine());
-    // 第一次 agent_end：keep-alive（挂无进展 timer）
-    emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
-    await new Promise((r) => setImmediate(r));
+    const { child, promise } = await spawnAndReachKeepAlive(undefined, "Task: keep-then-final");
     expect(child.killed).toBe(false);
 
     // 第二次 agent_end：后代已完成 → final kill（keep-alive 结束，无进展 timer 同撤）
@@ -261,7 +176,7 @@ describe("[T2-①] keep-alive 裸缺省无进展检测上界（P-T2 降级路径
     child.stdout.end();
     child.stderr.end();
     child.emit("close", 143);
-    const result = (await promise) as Awaited<ReturnType<typeof runSpawn>>;
+    const result = await promise;
     expect(result.success).toBe(true);
     await vi.advanceTimersByTimeAsync(KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS + 60_000);
     expect(child.killSignal).toBe("SIGTERM"); // 仅 final kill 一次，无二次信号
@@ -301,16 +216,7 @@ describe("[T2-①] keep-alive 裸缺省无进展检测上界（P-T2 降级路径
 
   it("A1-2①: fire 复核有存活活跃后代 → 视为有进展重挂（30min 固定复核节奏），不处置层主", async () => {
     // 后代 pending 差集非空 + pid 存活（与 descendant sweep 同源判据）
-    mockListPending.mockReturnValue({
-      items: [{ id: "bg-1", sessionId: "ka-desc-sess", type: "session" }],
-    });
-    mockReaddirSync.mockReturnValue(["20260901T000000-000_ka-desc-sess.jsonl"]);
-    mockReadAliveMarker.mockImplementation((f: unknown) =>
-      String(f).endsWith("_ka-desc-sess.jsonl")
-        ? { pid: LIVE_DESCENDANT_PID, id: "ka-desc-sess", startedAt: 0 }
-        : undefined,
-    );
-    mockIsProcessAlive.mockImplementation((pid: number) => pid === LIVE_DESCENDANT_PID);
+    mockDescendant("ka-desc-sess", LIVE_DESCENDANT_PID, true);
 
     const { child, finish } = await spawnAndReachKeepAlive();
     expect(child.killed).toBe(false);
@@ -341,16 +247,7 @@ describe("[T2-①] keep-alive 裸缺省无进展检测上界（P-T2 降级路径
   });
 
   it("A1-2②: fire 复核后代差集非空但 pid 全部已死 → 真静默，执行处置", async () => {
-    mockListPending.mockReturnValue({
-      items: [{ id: "bg-1", sessionId: "ka-dead-sess", type: "session" }],
-    });
-    mockReaddirSync.mockReturnValue(["20260901T000000-000_ka-dead-sess.jsonl"]);
-    mockReadAliveMarker.mockImplementation((f: unknown) =>
-      String(f).endsWith("_ka-dead-sess.jsonl")
-        ? { pid: DEAD_DESCENDANT_PID, id: "ka-dead-sess", startedAt: 0 }
-        : undefined,
-    );
-    mockIsProcessAlive.mockReturnValue(false); // 全部已死
+    mockDescendant("ka-dead-sess", DEAD_DESCENDANT_PID, false); // 差集非空但 pid 全部已死
 
     const { child, finish } = await spawnAndReachKeepAlive();
 

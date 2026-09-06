@@ -50,6 +50,7 @@ import type {
   SubagentRecordSnapshot,
 } from "./session-view-types.js";
 import { parseEngineHandle } from "./session-view-types.js";
+import { toErrorMessage } from "../../../core/error-message.ts";
 
 const logger = getLogger("subagents");
 
@@ -178,7 +179,7 @@ async function readZcodeNativeTier(
   } catch (err) {
     logger.debug(
       `[session-view-service] zcode tier1 read failed, degrade to journal tier: ` +
-        `${err instanceof Error ? err.message : String(err)}`,
+        `${toErrorMessage(err)}`,
     );
     return undefined;
   }

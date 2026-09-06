@@ -69,7 +69,8 @@ describe("parseSpawnLine — ask_user 请求解析（Pi 原生格式）", () => 
   it("request.title === ASK_USER_MARKER（NUL 前缀 marker 原样保留，由 parseChannel 提取）", () => {
     const result = parseSpawnLine(askUserLine("ui-req-001"));
     if (result?.kind !== "extension_ui_request") return;
-    expect(result.request.title).toBe(ASK_USER_MARKER);
+    if (result.request.method !== "select") return expect.fail("request.method 应为 select");
+    expect((result.request as { title?: string }).title).toBe(ASK_USER_MARKER);
   });
 
   it("id 被正确提取（用于 response 关联）", () => {

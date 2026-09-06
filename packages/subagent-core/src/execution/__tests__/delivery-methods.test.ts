@@ -59,11 +59,15 @@ function makeTmpAgentDir(): string {
 }
 
 function makePi(): PiLike & {
-  appendEntry: ReturnType<typeof vi.fn>;
-  events: { emit: ReturnType<typeof vi.fn> };
-  sendMessage: ReturnType<typeof vi.fn>;
+  appendEntry: ReturnType<typeof vi.fn<(customType: string, data?: unknown) => void>>;
+  events: { emit: ReturnType<typeof vi.fn<(channel: string, data: unknown) => void>> };
+  sendMessage: ReturnType<typeof vi.fn<(message: Parameters<PiLike["sendMessage"]>[0], options?: Parameters<PiLike["sendMessage"]>[1]) => void>>;
 } {
-  return { appendEntry: vi.fn(), events: { emit: vi.fn() }, sendMessage: vi.fn() };
+  return {
+    appendEntry: vi.fn((customType: string, data?: unknown) => {}),
+    events: { emit: vi.fn((channel: string, data: unknown) => {}) },
+    sendMessage: vi.fn(() => {}),
+  };
 }
 
 function makeResult(success: boolean): AgentResult {
@@ -108,7 +112,7 @@ function makeStreamChild(): ChildProcess {
 function readStdinLines(child: ChildProcess): unknown[] {
   const stream = child.stdin as unknown as PassThrough;
   stream.pause();
-  const text = stream.read()?.toString() ?? "";
+  const text: string = stream.read()?.toString() ?? "";
   return text
     .split("\n")
     .map((l) => l.trim())
@@ -123,7 +127,7 @@ describe("冷路径续轮（M2-B1 idle 投递；D2 后经 deliverChatMessage 无
 
   beforeEach(() => {
     agentDir = makeTmpAgentDir();
-    const modelService = new ModelConfigService({ agentDir });
+    const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
     service = new SubagentService({ cwd: agentDir, modelService });
     service.initSession({ pi: makePi(), sessionId: "root-session" });
     record = makeIdleRecord();
@@ -134,7 +138,7 @@ describe("冷路径续轮（M2-B1 idle 投递；D2 后经 deliverChatMessage 无
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("冷路径续轮(running) → kickOff runSpawn 收到 resume 参数；chatMode+done 回 running/round+1", async () => {
@@ -194,7 +198,7 @@ describe("deliverChatMessage (V2 决策 3 chatMode 统一投递)", () => {
 
   beforeEach(() => {
     agentDir = makeTmpAgentDir();
-    const modelService = new ModelConfigService({ agentDir });
+    const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
     service = new SubagentService({ cwd: agentDir, modelService });
     service.initSession({ pi: makePi(), sessionId: "root-session" });
     record = makeIdleRecord(); // chatMode:true, idle, round=1
@@ -209,7 +213,7 @@ describe("deliverChatMessage (V2 决策 3 chatMode 统一投递)", () => {
     service.dispose();
     spawnedChildren.clear();
     lifecycle._resetLifecycleState();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("热路径 interrupt=false：进程活 → prompt streamingBehavior:followUp + status=running + pid 记录", async () => {
@@ -345,7 +349,7 @@ describe("deliverChatMessage 冷路径并发守卫（review round2 MF1）", () =
 
   beforeEach(() => {
     agentDir = makeTmpAgentDir();
-    const modelService = new ModelConfigService({ agentDir });
+    const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
     service = new SubagentService({ cwd: agentDir, modelService });
     service.initSession({ pi: makePi(), sessionId: "root-session" });
     record = makeIdleRecord();
@@ -359,7 +363,7 @@ describe("deliverChatMessage 冷路径并发守卫（review round2 MF1）", () =
     service.dispose();
     spawnedChildren.clear();
     lifecycle._resetLifecycleState();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("同 record 连续两条 message 冷路径 → 第二条 throw 行动语言，runSpawn 仅 1 次", async () => {

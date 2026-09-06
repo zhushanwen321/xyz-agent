@@ -136,7 +136,7 @@ describe("agentCallToExecuteOptions（D6 一次直出：AgentCallOpts → pi spa
   });
 
   it("D-07 model：显式 override 透传；缺省 undefined（不与 ctxModel 混合）", () => {
-    const ctxModel: ModelInfo = { id: "ctx-model", provider: "test", input: [] } as ModelInfo;
+    const ctxModel: ModelInfo = { id: "ctx-model", name: "Ctx", provider: "test", reasoning: false };
     expect(agentCallToExecuteOptions({ prompt: "t", model: "explicit-model" }, ctxModel).model).toBe("explicit-model");
     expect(agentCallToExecuteOptions({ prompt: "t" }, ctxModel).model).toBeUndefined();
   });
@@ -195,7 +195,7 @@ describe("agentCallToExecuteOptions（D6 一次直出：AgentCallOpts → pi spa
   });
 
   it("D-17 ctxModel 从第 2 参回填（运行期件不入任务声明——D-008 兼底链路）", () => {
-    const ctxModel: ModelInfo = { id: "mimo-v2.5-pro", provider: "router-openai", input: [] } as ModelInfo;
+    const ctxModel: ModelInfo = { id: "mimo-v2.5-pro", name: "MiMo", provider: "router-openai", reasoning: false };
     expect(agentCallToExecuteOptions({ prompt: "t" }, ctxModel).ctxModel).toBe(ctxModel);
     expect(agentCallToExecuteOptions({ prompt: "t" }).ctxModel).toBeUndefined();
   });
@@ -228,7 +228,7 @@ describe("agentCallToExecuteOptions（D6 一次直出：AgentCallOpts → pi spa
   // ── 声明边界（D-23..D-24）──
 
   it("D-23 运行期字段不入直出产物：signal/onComplete/engine/engineFallback 不由本函数产出（engine 由 run 调用方追加）", () => {
-    const result = agentCallToExecuteOptions(makeFullCall()) as Record<string, unknown>;
+    const result = agentCallToExecuteOptions(makeFullCall()) as unknown as Record<string, unknown>;
     expect("signal" in result).toBe(false);
     expect("onComplete" in result).toBe(false);
     expect("engine" in result).toBe(false);
@@ -245,7 +245,7 @@ describe("agentCallToExecuteOptions（D6 一次直出：AgentCallOpts → pi spa
       returnMeta: true,
       denyTools: ["bash"],
       permissionMode: "yolo",
-    }) as Record<string, unknown>;
+    }) as unknown as Record<string, unknown>;
     expect("scene" in result).toBe(false);
     expect("timeoutMs" in result).toBe(false);
     expect("skill" in result).toBe(false);

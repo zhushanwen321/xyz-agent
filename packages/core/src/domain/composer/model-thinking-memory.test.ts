@@ -95,7 +95,6 @@ function provideStubKV(stub: KVStorage): void {
         throw new Error('stub: WebSocketFactory 未在本测试使用')
       },
     },
-    ipc: null,
   }
   providePlatform(port)
 }

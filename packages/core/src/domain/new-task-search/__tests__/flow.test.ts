@@ -32,7 +32,7 @@ function makeDeps(overrides?: Partial<NewTaskFlowDeps>): NewTaskFlowDeps {
         defaultCwd: vi.fn(() => '/default'),
       },
       toast: { error: vi.fn(), warning: vi.fn() },
-      fileTree: { loadTree: vi.fn() },
+      fileTree: { loadTree: vi.fn(), selectFile: vi.fn() },
       t: vi.fn((key: string) => key),
       migrateImage: { migrateImage: vi.fn() },
     },
@@ -73,14 +73,14 @@ const imageSeg = (path: string, needsMigrate = true): Segment => ({
   displayName: 'a.png',
   needsMigrate,
 })
-const mockSession: SessionSummary = {
+const mockSession = {
   id: 's1',
   cwd: '/tmp/x',
   modelId: 'provider/model',
   label: 'hello',
   createdAt: 0,
   updatedAt: 0,
-} as SessionSummary
+} as unknown as SessionSummary
 
 /** 进 landing（startFlow 是主链路前置） */
 async function enterLanding(flow: ReturnType<typeof useNewTaskFlow>): Promise<void> {
@@ -119,7 +119,7 @@ describe('useNewTaskFlow', () => {
     const flow = useNewTaskFlow(deps)
     await enterLanding(flow)
     // 直接置 completed（模拟已提交过）
-    useNewTaskFlowState().state.value = 'completed' as never
+    ;(useNewTaskFlowState().state as { value: string }).value = 'completed'
     await flow.startFlow()
     expect(useNewTaskFlowState().state.value).toBe('landing')
   })

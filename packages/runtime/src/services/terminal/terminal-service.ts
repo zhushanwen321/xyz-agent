@@ -24,6 +24,7 @@ import { execFileSync } from 'node:child_process'
 import { buildOutboundChildEnv } from '../../infra/spawn-env.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { ITerminalService } from '../ports/terminal-service.js'
+import { toErrorMessage } from '../../utils/errors.js'
 
 /** TerminalService 依赖。 */
 export interface TerminalServiceDeps {
@@ -100,7 +101,7 @@ export class TerminalService implements ITerminalService {
         env: this.buildEnv(),
       })
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       console.error(`[terminal] spawn failed: sid=${sid} shell=${shell}`, serializeError(e))
       throw terminalError('spawn_failed', `Failed to spawn terminal: ${msg}`)
     }
