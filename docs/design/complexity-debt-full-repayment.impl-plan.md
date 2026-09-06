@@ -111,13 +111,42 @@ graph TD
 
 | Unit | 偏差 | 裁决 | 状态 |
 |------|------|------|------|
-| （空） | | | |
+| U17 | U18 staged 文件被同批 add 带入 U17 commit（fab5876ac 含两 unit） | 接受：内容均已单独验证，同 extensions 域合批不损回滚粒度 | 已裁决 |
+| U17/U16 | 同文件非目标函数顺手消重（mapCacheEntryToStep、runAndWait lint 段） | 接受：行为零漂移有锚定，消真差异 | 已裁决 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| U01-U27 | pending | 0 | — |
+| U01 | committed | 1 | c65ce3759 |
+| U02 | committed | 1 | 69300aa25 |
+| U03 | committed | 1 | 66b942b0e+50612b2d5 |
+| U04 | committed | 1 | 3f5fda9b3 |
+| U05 | committed | 1 | d44be8434 |
+| U06 | committed | 1 | 3d104f42f |
+| U07 | committed | 1 | c14638edb+cc79cff3b |
+| U08 | committed | 1 | 01ddc2041+12dc75582 |
+| U09 | committed | 1 | 98e3e0450 |
+| U10 | committed | 1 | babd1138a |
+| U11 | committed | 1 | dfcd0b49a |
+| U12 | committed | 1 | d61151d72 |
+| U13 | committed | 1 | 8c822baeb |
+| U14 | committed | 1 | 07d16048b |
+| U15 | committed | 1 | f9b5d6629 |
+| U16 | committed | 1 | 217dc21ac |
+| U17 | committed | 1 | fab5876ac |
+| U18 | committed | 1 | fab5876ac（并入，见偏差登记） |
+| U19 | committed | 1 | deb426f99 |
+| U20 | committed | 1 | dd5314908 |
+| U21 | committed | 1 | 157e7108c |
+| U22 | committed | 1 | c6d96b070 |
+| U23 | committed | 1 | c6d96b070（并入） |
+| U24 | committed | 1 | 8c9e2da43 |
+| U25 | committed | 1 | 8c9e2da43（并入） |
+| U26 | committed | 1 | 0db23f064 |
+| U27 | committed | 1 | c407af332 |
+
+（2026-09-06 终态校准：27/27 committed。轮次说明：U03 含 1 轮时序修复、U08 含 3 轮（PiBashResult 泄漏 + 竞态时序 ×2）、U07 含断言修订补 commit cc79cff3b。U18 并入 fab5876ac、U23 并入 c6d96b070、U25 并入 8c9e2da43——同域 staged 合批，均已单独验证。）
 
 ## 7 残留风险与变更历史
 
@@ -132,3 +161,5 @@ graph TD
 ### 变更历史
 
 - 2026-09-06 创建：27 unit / 93 文件 / 109 函数，脚本校验全覆盖、零交集、≤5 文件/unit。用户本轮消息「进入开发后尽量用高并发度」= 评审确认 + 并发度指令（波内 6-7，超出全局默认 5 以用户指令为准）→ 按预授权进入阶段 2。
+
+- 2026-09-06 状态表校准至终态：27/27 unit committed（以 git log a76440034..HEAD 为准）；A1-A12 验收执行中，A11 design-code-sync 校准记录随轮次追加。
