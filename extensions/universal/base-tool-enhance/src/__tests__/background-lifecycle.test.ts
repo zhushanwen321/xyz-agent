@@ -113,6 +113,9 @@ afterEach(() => {
 	stopPoller();
 	setOnTaskExit(undefined);
 	resetProcessExitGuardForTest();
+	// pi 引用（currentPi）统一在 afterEach 复位——用例体内不清：断言先失败时泄漏的
+	// currentPi 会被同文件后续用例的 emitPendingRegister 消费（发往死引用）
+	resetNotifyForTest();
 });
 
 // 测试红线：临时目录自建自删（模块级 DATA_DIR 全文件共用，最后统一清）
@@ -599,7 +602,6 @@ describe("D6-en: poller finalization reads back registry killing (cross-process 
 			reason: "cancelled",
 		});
 		expect(pi.sendMessage).not.toHaveBeenCalled();
-		resetNotifyForTest();
 	});
 
 	it("memory intent present wins — registry NOT read back (killed kept while registry stays running)", async () => {
