@@ -123,6 +123,20 @@ describe("validateRunArgs — 校验语义", () => {
     }
   });
 
+  it("TC6c: parameters 非 object（数组）→ ArgsValidationError「expected object」", () => {
+    // 锚定 schema 形状守卫分支：数组 parameters 在 null-scan/compile 之前 fail-fast
+    const spec = makeSpec([{ target: "string" }] as unknown as Record<string, unknown>, { a: 1 });
+    try {
+      validateRunArgs(spec);
+      expect.unreachable("should throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ArgsValidationError);
+      expect((err as ArgsValidationError).message).toContain(
+        "invalid parameter schema (expected object)",
+      );
+    }
+  });
+
   it("TC6b: strictSchema:false 容忍自定义关键字与 format（design-review major-3 回归）", () => {
     const spec = makeSpec(
       { type: "object", properties: { target: { type: "string", format: "uri" } }, required: ["target"], "x-custom": true },
