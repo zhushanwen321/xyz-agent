@@ -142,9 +142,13 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
 
 ## 7 残留风险与变更历史
 
-- dev-0.9.15 合入时序（设计 §5 检查点）：u-renderer-list 按设计参数独立实现 FilterBar（凹陷槽参数与 dev-0.9.15 一致）；不等待合入。
-- Windows Get-Process 身份探测延迟：实施期以 ≤1s 超时实现（D6 两档规格），实测延迟记录到单元证据。
-- P2/P3/P4/P5/P7 为实施期门：单测能覆盖的进单元验收，真实进程/时序类（P4/P7）留阶段 5 dev 手测。
+- dev-0.9.15 合入时序（设计 §5 检查点）：u-renderer-list 按设计参数独立实现 FilterBar（凹陷槽参数与 dev-0.9.15 一致）；不等待合入。**Gate B 已验证可用（pass）**。
+- Windows Get-Process 身份探测延迟：实施期以 ≤1s 超时实现（D6 两档规格），实测延迟记录到单元证据。**Gate B blocked（macOS 无法实测 Windows 路径），macOS 等价路径已间接验证（S2/P4 全部走分支①无误判）；设计预留项，留 Windows 环境实测。**
+- **Gate B 残留观察（2026-09-07 双绿后登记）**：
+  1. S6 断连提示条的真实触发路径（长时间断连致 list RPC 失败/从未加载）在 supervisor 秒级自动重启的 dev 环境无法稳定构造——UI 分支有代码路径 + 单测保障，真实环境未命中；属环境限制非实现缺陷。
+  2. S2 的 force-longrun 白名单强制后台路径未独立覆盖（验收环境自身占用 1420 端口改用等效 http.server）；AI 显式 background 参数路径已全覆盖。
+  3. `packages/runtime/src/index.ts:441` D2 触发面②接线闭包无专属单测（wiring 一行，下游 checkForChanges 被 3 个测试文件间接覆盖 + typecheck 守卫签名）；Gate A uncovered 唯一项。
+- P2/P3/P4/P5/P7 为实施期门：单测能覆盖的进单元验收，真实进程/时序类（P4/P7）留阶段 5 dev 手测。**Gate B 全部实测通过（P2 exit 边沿 22.6ms / P3 最坏 3.0s / P4 进程树全灭 / P5 运行期收殓 ~1.5s / P7 AI 零感知 30s 观察窗）。**
 - 变更历史：
   - 2026-09-06 计划创建（设计 R4 收敛版），用户豁免计划评审确认。
   - 2026-09-06 中断恢复校准：发现工作区存在 W1 三单元（u-proto/u-ext/u-runtime-svc）领地内未提交半成品（`git diff --stat` 383 insertions + untracked 2 处，无领地外改动），无 committed 证据 → 状态表按 pending 重算；原 dev 会话不可用，按接替程序补派新 dev（附 diff 证据包，先核验现状再续作）。
@@ -161,3 +165,4 @@ worktree 决策：全部 plain——领地互斥无热点共改，共享契约�
   - 2026-09-06 阶段 3 三分区审查收齐（extensions/runtime/前端，独立上下文）：聚合后 unreasonable 3 条（①corrupted 协议链路断裂 S7 不可实现——runtime 与前端两区共同发现 ②S6 断连提示+重连重拉未实现 ③u-ext 测试 afterEach 清理不对称 low）、doc_errors 6 条（主 agent 修订设计 D3 corrupted 字段/D6 表 ④b 行/边界注②措辞/§1 tail 上界/S1 tailSummary 措辞/本表 u-ext 领地通配）、reasonable 8 条（登记表 #27-#33）。修复批 3 路并行派发（①拆 runtime 侧透传 + renderer 侧消费两路）。
   - 2026-09-06 阶段 4 修复批次完成：①corrupted 端到端链路（protocol 字段 + handler/service 透传 + api domain 全形返回 + store sticky 判定 + ListView 错误条 + locales）②S6 断连提示条 + 连接恢复自动重拉（含 fetchInto 共享快照重构修复既有双实例缺陷）③u-ext afterEach 清理（1d534a37c）。联合态终验：shared 239 / runtime 4417 / renderer 3808 全绿。新增偏差 #34（corrupted sticky 语义 + 损坏拍时序）登记。
   - 2026-09-07 定向复审（只审修复批次影响面）：10 reasonable 确认修复正确（含 runtime 判定零改动、重连无风暴、无领地外行为）、2 unreasonable low（parseListReply 注释漂移 + 坏形状伪成功降级）、0 doc_errors。二轮修复 committed（71a285420，renderer 3809 绿）——**unreasonable 清零，阶段 4 收敛（2 轮 < 3 阈值），转入阶段 5 双级验收**。
+  - 2026-09-07 **阶段 5 双绿达成**：Gate A GREEN（全量命令 exit 0 + 零容忍扫描干净 + 覆盖矩阵 27/28，uncovered 1 项 wiring 弱覆盖入残留风险）；Gate B GREEN（S1-S7 七场景全 pass + P2/P3/P4/P5/P7 全过 + dev-0.9.15 检查点 pass，真实 pnpm dev + AI 会话注入 + CDP 驱动零 mock，28 张截图 /tmp/gateb-shots/，环境已清理）。Windows Get-Process 检查点 blocked（macOS 环境限制，设计预留项）。S4 孤儿收殓触发面差异已回写设计（运行期 ~1.5s 收殓优于设计「启动收殓 5s+」，最终态一致）。**流水线交付完成。**
