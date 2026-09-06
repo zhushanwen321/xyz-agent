@@ -1,7 +1,7 @@
 # 继承复杂度债务全量清零（第二批）设计
 
-> 状态：已通过 design-code-sync 三轮校准（2026-09-06，所有等级当轮修不留尾巴：A-A12-01/A-EVID-02/B2-F1/B2-F2 已清零；B1-01/B2-F3..F6/A-SCOPE-03/A-EVID-04 已修；A12 deferred 至主会话收口见 impl-plan §7）
-> 日期：2026-09-06 | 上游：docs/todo/complexity-debt-inventory.md（SSOT；A12 deferred 待主会话删除）
+> 状态：已完结（2026-09-06，design-code-sync 三轮校准 must-fix=0 + Step 4 聚焦复审 11/11 fixed；A12 终态删除已随收口 commit 落地）
+> 日期：2026-09-06 | 上游：docs/todo/complexity-debt-inventory.md（债务清单 SSOT，已随 A12 终态删除；其日期笔误 2026-09-16 实为 2026-09-04 前后普查，随删除一并消亡）
 > 前序：第一批 21 项已偿还（commit e6c2bb9b9，130→109），范式已对抗式复审实证（零 must-fix）
 
 ## 1 背景/目标
