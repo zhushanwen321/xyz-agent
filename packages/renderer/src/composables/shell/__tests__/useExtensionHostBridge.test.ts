@@ -15,13 +15,17 @@
  * M17w2-TC2 静态声明 view 经 registerContribution 出现在 getViews。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { computed, nextTick } from 'vue'
+import { computed, nextTick, type Component } from 'vue'
+import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { InternalEventBus, MessageBusBridge, providePlatform, type ContributionRegistry } from '@xyz-agent/core'
 import type { InternalEvent } from '@xyz-agent/core'
-import { dispatchCrossSession, dispatchGlobal } from '@/api/events'
-import { createWsPluginMessageSource, EXTENSION_BRIDGE_TYPES, initExtensionHostBridge } from '../useExtensionHostBridge'
+import { dispatchCrossSession, dispatchGlobal, dispatchSession } from '@/api/events'
+import { createWsPluginMessageSource, EXTENSION_BRIDGE_TYPES, initExtensionHostBridge, _resetBadgeSourceForTest } from '../useExtensionHostBridge'
 import {
   DIALOG_REQUEST_SOURCE_KEY,
+  L2_TAB_BADGE_SOURCE_KEY,
+  NATIVE_VIEWS_KEY,
   UI_RESPONSE_TRANSPORT_KEY,
   VIEW_HOST_SOURCE_KEY,
   STATUS_BAR_SOURCE_KEY,
@@ -32,6 +36,15 @@ import {
 } from '@xyz-agent/ui/extension-host'
 import { connect, disconnect } from '@/lib/ws-client'
 import { createMockPlatform } from '@/mock/mock-ws'
+import PluginViewContainer from '@xyz-agent/ui/extension-host/PluginViewContainer.vue'
+import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
+import * as backgroundTaskApi from '@/api/domains/background-task'
+import type { BackgroundTaskEntry } from '@/lib/background-task-bucket'
+
+// mock 边界：badge 常驻实例的拉取腿（list RPC）mock 成 deferred（手动 resolve/保持
+// pending），广播腿走真实 events.dispatchSession 通道（对齐 use-background-tasks.test.ts）。
+const listMock = vi.fn()
+vi.mock('@/api/domains/background-task', () => ({ list: (...args: unknown[]) => listMock(...args) }))
 
 // mock transport：MF-4 断言 mountPoints.sync 发送（真实 transport.send 在单测环境不可观测、
 // 且会裸调 ws-client）。模式对齐 usePermissionRequest.test.ts（顶层 vi.fn + 工厂转发）。
@@ -228,6 +241,8 @@ describe('MF-2 响应式桥（分区后建时序 + global scope）', () => {
     statusBarSource: StatusBarSource
     viewsSource: PluginViewsSource
     contributions: ContributionRegistry
+    nativeViews: Record<string, Component> | undefined
+    badgeSource: ((sessionId: string) => Record<string, boolean>) | undefined
   } {
     const provided: Array<{ key: unknown; value: unknown }> = []
     const app = {
@@ -241,7 +256,13 @@ describe('MF-2 响应式桥（分区后建时序 + global scope）', () => {
     const viewHostSource = provided.find((p) => p.key === VIEW_HOST_SOURCE_KEY)?.value as ViewHostSource
     const statusBarSource = provided.find((p) => p.key === STATUS_BAR_SOURCE_KEY)?.value as StatusBarSource
     const viewsSource = provided.find((p) => p.key === VIEWS_SOURCE_KEY)?.value as PluginViewsSource
-    return { viewHostSource, statusBarSource, viewsSource, contributions: result.contributions }
+    const nativeViews = provided.find((p) => p.key === NATIVE_VIEWS_KEY)?.value as
+      | Record<string, Component>
+      | undefined
+    const badgeSource = provided.find((p) => p.key === L2_TAB_BADGE_SOURCE_KEY)?.value as
+      | ((sessionId: string) => Record<string, boolean>)
+      | undefined
+    return { viewHostSource, statusBarSource, viewsSource, contributions: result.contributions, nativeViews, badgeSource }
   }
 
   it('case B: 分区后建时序——computed 首次求值无分区，首个 viewUpdate 到达后重算命中', async () => {
@@ -312,8 +333,8 @@ describe('MF-2 响应式桥（分区后建时序 + global scope）', () => {
 
   it('M17w2-TC1: getViews 纯静态——extension:widgetGui 推送后不出现动态 view（getViewIds 对照仍含）', async () => {
     const { viewHostSource, viewsSource } = initBridgeSources()
-    // builtin 无 view 声明 → 初始静态清单为空
-    expect(viewsSource.getViews('s1')).toEqual([])
+    // 初始静态清单 = builtin 声明（D4①：base-tool-enhance「后台命令」view），不含任何 widget 动态项
+    expect(viewsSource.getViews('s1').map((v) => v.viewId)).toEqual(['background-tasks'])
 
     // 推帧模式复用 TC7：events crossSession 通道 → source filter → bridge 归一 → ViewHostStore setView
     dispatchCrossSession({
@@ -327,7 +348,7 @@ describe('MF-2 响应式桥（分区后建时序 + global scope）', () => {
     await nextTick()
 
     // sidebar L2 tab 数据源纯静态（D5：M2 动态发现废弃）——widget 推送不进 getViews
-    expect(viewsSource.getViews('s1')).toEqual([])
+    expect(viewsSource.getViews('s1').map((v) => v.viewId)).toEqual(['background-tasks'])
     expect(viewsSource.getViews('s1').map((v) => v.viewId)).not.toContain('goal')
     // 对照断言：ViewHost 枚举（M17 对话流面板 WidgetArea 消费面）不受影响，仍含该 widgetKey
     expect(viewHostSource.getViewIds('s1')).toEqual(['goal'])
@@ -335,7 +356,7 @@ describe('MF-2 响应式桥（分区后建时序 + global scope）', () => {
 
   it('M17w2-TC2: 静态声明 view（sidebar.tab 贡献）照常出现在 getViews', () => {
     const { viewsSource, contributions } = initBridgeSources()
-    expect(viewsSource.getViews('s1')).toEqual([])
+    expect(viewsSource.getViews('s1').map((v) => v.viewId)).toEqual(['background-tasks'])
 
     // 经 bridge 返回的 contributions.registerContribution（contribution-registry public API）
     // 注入一条 sidebar.tab view 静态声明（形状对齐 parseContributes 的 view 分支）
@@ -349,8 +370,8 @@ describe('MF-2 响应式桥（分区后建时序 + global scope）', () => {
     })
 
     // 静态映射路径被真实覆盖（防止移除动态段时改坏 staticViews 映射零报警）
-    expect(viewsSource.getViews('s1').map((v) => v.viewId)).toEqual(['demo-view'])
-    expect(viewsSource.getViews('s1')[0]).toMatchObject({
+    expect(viewsSource.getViews('s1').map((v) => v.viewId)).toEqual(['background-tasks', 'demo-view'])
+    expect(viewsSource.getViews('s1')[1]).toMatchObject({
       viewId: 'demo-view',
       title: 'Demo',
       pluginId: 'demo-plugin',
@@ -366,7 +387,146 @@ describe('MF-2 响应式桥（分区后建时序 + global scope）', () => {
       available: false,
       view: { viewType: 'gui', title: 'Panel', initialVisibility: 'hidden' },
     })
-    expect(viewsSource.getViews('s1').map((v) => v.viewId)).toEqual(['demo-view'])
+    expect(viewsSource.getViews('s1').map((v) => v.viewId)).toEqual(['background-tasks', 'demo-view'])
+  })
+})
+
+// ── L2 badge 源 + NATIVE_VIEWS 生产接线（background-task-sidebar-view D4②④）──
+
+describe('L2 badge 源 + NATIVE_VIEWS 生产接线（D4②④）', () => {
+  const SID = 's-badge'
+  let bridge: MessageBusBridge | null = null
+
+  /** 本地装配：initExtensionHostBridge（mock app 收集 provided），取 badge 相关三源。 */
+  function initBadgeBridge(): {
+    viewsSource: PluginViewsSource
+    nativeViews: Record<string, Component> | undefined
+    badgeSource: (sessionId: string) => Record<string, boolean>
+  } {
+    const provided: Array<{ key: unknown; value: unknown }> = []
+    const app = {
+      provide(key: unknown, value: unknown) {
+        provided.push({ key, value })
+        return app
+      },
+    }
+    const result = initExtensionHostBridge(app as never)
+    bridge = result.bridge
+    const pick = <T>(key: unknown): T => provided.find((p) => p.key === key)?.value as T
+    return {
+      viewsSource: pick<PluginViewsSource>(VIEWS_SOURCE_KEY),
+      nativeViews: pick<Record<string, Component>>(NATIVE_VIEWS_KEY),
+      badgeSource: pick<(sessionId: string) => Record<string, boolean>>(L2_TAB_BADGE_SOURCE_KEY),
+    }
+  }
+
+  /** 排空异步链：setTimeout(0) 前所有已排队微任务 + Vue 调度器 flush（对齐 use-background-tasks.test.ts）。 */
+  async function settle(): Promise<void> {
+    await new Promise((r) => setTimeout(r, 0))
+    await nextTick()
+  }
+
+  function dispatchUpdated(tasks: BackgroundTaskEntry[]): void {
+    dispatchSession(SID, {
+      type: 'backgroundTask:updated',
+      payload: { sessionId: SID, tasks },
+    })
+  }
+
+  function makeEntry(overrides: Partial<BackgroundTaskEntry>): BackgroundTaskEntry {
+    return {
+      taskId: 'bt-badge-1',
+      pid: 100,
+      command: 'pnpm dev',
+      outputFile: '/tmp/xyz/bg/log',
+      startedAt: 1_000,
+      state: 'running',
+      ownerPiPid: 10,
+      sessionId: SID,
+      ...overrides,
+    }
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    // badge 实例拉取腿装配于 badge 源首调（watch immediate → fetchInto）：
+    // list 用永不 settle 的 deferred 占位（初始态不受在途拉取影响；广播腿独立写入分区）
+    listMock.mockImplementation(() => new Promise<BackgroundTaskEntry[]>(() => {}))
+    usePanelStore().loadSession(ROOT_PANEL_ID, SID)
+  })
+
+  afterEach(() => {
+    bridge?.dispose()
+    bridge = null
+    _resetBadgeSourceForTest()
+  })
+
+  it('NATIVE_VIEWS: provide 映射恰含 background-tasks → BackgroundTaskListView（D4②）', () => {
+    const { nativeViews } = initBadgeBridge()
+    expect(nativeViews).toBeDefined()
+    expect(Object.keys(nativeViews!)).toEqual(['background-tasks'])
+    expect(nativeViews!['background-tasks']).toBeTruthy()
+  })
+
+  it('badge 流转：运行中桶 0→1→0 对应 badge false→true→false（DOM 断言，D4④/G1）', async () => {
+    const { viewsSource, badgeSource } = initBadgeBridge()
+
+    const wrapper = mount(PluginViewContainer, {
+      props: { sessionId: SID },
+      global: {
+        provide: {
+          [VIEWS_SOURCE_KEY as symbol]: viewsSource,
+          [L2_TAB_BADGE_SOURCE_KEY as symbol]: badgeSource,
+        },
+      },
+    })
+    await flushPromises()
+
+    // 0 运行中 → 不亮（圆点不存在；badge 源首调完成惰性装配）
+    expect(wrapper.find('[data-testid="l2-tab-badge-background-tasks"]').exists()).toBe(false)
+
+    // 1 运行中（真实 session 通道广播）→ 亮：7px accent 圆点渲染（用户可见 DOM 断言）
+    dispatchUpdated([makeEntry({})])
+    await settle()
+    const badgeDot = wrapper.find('[data-testid="l2-tab-badge-background-tasks"]')
+    expect(badgeDot.exists()).toBe(true)
+    expect(badgeDot.classes()).toContain('bg-accent')
+
+    // 回到 0（任务翻转终态广播）→ 不亮
+    dispatchUpdated([])
+    await settle()
+    expect(wrapper.find('[data-testid="l2-tab-badge-background-tasks"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('badge 同源语义：仅 active 桶计数驱动——ended/orphaned 条目不点亮（D10① 同源派生）', async () => {
+    const { badgeSource } = initBadgeBridge()
+    expect(badgeSource(SID)['background-tasks']).toBe(false)
+
+    // 全终态（exited + orphaned）→ 运行中桶为 0 → 不亮
+    dispatchUpdated([
+      makeEntry({ taskId: 'bt-e', state: 'exited', exitCode: 0, reason: 'natural', endedAt: 2_000 }),
+      makeEntry({ taskId: 'bt-o', state: 'orphaned', endedAt: 3_000 }),
+    ])
+    await settle()
+    expect(badgeSource(SID)['background-tasks']).toBe(false)
+
+    // running 出现 → 亮（与列表「运行中」桶同源：countBackgroundTasks 派生）
+    dispatchUpdated([makeEntry({ taskId: 'bt-r', state: 'running' })])
+    await settle()
+    expect(badgeSource(SID)['background-tasks']).toBe(true)
+  })
+
+  it('badge 串显防护：入参 sid 与焦点 sid 不一致 → 不亮（切换瞬态防旧 session badge 串显）', async () => {
+    const { badgeSource } = initBadgeBridge()
+    // 首调完成惰性装配（建立 SID 订阅；0 运行中 → 不亮）
+    expect(badgeSource(SID)).toEqual({ 'background-tasks': false })
+    dispatchUpdated([makeEntry({})])
+    await settle()
+    // 焦点 session 查询 → 亮
+    expect(badgeSource(SID)).toEqual({ 'background-tasks': true })
+    // 其他 session 查询 → 空 map（ui 层按 viewId 查不到 → 不亮）
+    expect(badgeSource('s-other')).toEqual({})
   })
 })
 

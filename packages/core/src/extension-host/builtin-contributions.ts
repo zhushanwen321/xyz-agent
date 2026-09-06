@@ -8,6 +8,12 @@
  *   statusBarItems 文本为空串——实际内容由 runtime plugin:statusBarUpdate 广播填充
  * - tasks（goal/todo，s5 落地 plugin 实体）：
  *   slashCommands 声明（goal/todo，name 不含前导 /，对齐 s1 schema v2 形状），执行仍由 pi extension 承担（§8 边界）
+ * - base-tool-enhance（后台命令视图，background-task-sidebar-view D4①）：
+ *   第一个真实 sidebar.tab view 贡献——「后台命令」L2 视图（术语裁决见设计 §1：「后台任务」
+ *   已被 subagent i18n 占用）。渲染载体是原生组件（renderer BackgroundTaskListView，经
+ *   PluginViewContainer NATIVE_VIEWS 路由），viewType 沿用 'gui' 不改 schema（D4②）；
+ *   title 是静态贡献声明的数据链路（非 i18n key，与上方 tasks 中文 description 同范式），
+ *   组件内运行时文案仍走 i18n。pluginId 不可关闭（PluginViewContainer BUILTIN_PLUGIN_IDS）。
  *
  * 与 packages/core/src/extension-host/builtin/tasks/manifest.ts（s5 W3 的插件实体级 manifest）
  * 语义层级不同（本文件是 ContributionRegistry 的扁平贡献源），两者允许共存——
@@ -32,6 +38,22 @@ export const builtinContributions: BuiltinContribution[] = [
       slashCommands: [
         { name: 'goal', description: '创建目标' },
         { name: 'todo', description: '创建任务' },
+      ],
+    },
+  },
+  {
+    // 后台命令 L2 视图（background-task-sidebar-view.md D4①/D9）：数据链路 = runtime 直读
+    // registry + WS backgroundTask.* 域；渲染 = renderer 原生 BackgroundTaskListView。
+    // id 与实体命名一致（viewId 'background-tasks'），title 用「后台命令」（§1 术语裁决）。
+    pluginId: 'base-tool-enhance',
+    contributes: {
+      views: [
+        {
+          id: 'background-tasks',
+          title: '后台命令',
+          placement: 'sidebar.tab',
+          viewType: 'gui',
+        },
       ],
     },
   },
