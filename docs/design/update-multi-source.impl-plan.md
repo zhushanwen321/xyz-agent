@@ -118,7 +118,7 @@ graph TD
 | u-source-resolver | committed | 1 | 本文件同 commit；vitest 17/17、eslint 0 warning、领地 2 新文件与 files_changed 一致 |
 | u-diagnostics | committed | 1 | 本文件同 commit；vitest 15/15 + w2-main-integration 40 绿；error-log 纯增量零行为变化 |
 | u-settings-pref | committed | 1 | 本文件同 commit；vitest 44/44（含 download-asset 已 commit 态回归）、eslint 0 errors、rateLimited 判定零改动已偏差登记 |
-| u-probe-multipart | committed | 1 | 本文件同 commit；vitest 30/30（23 存量 + 7 新增四出口表测）、HEAD 残留 0、eslint 0 problems、领地 TS2698 存量错顺手修复 |
+| u-probe-multipart | committed | 2 | 首轮 a3d1aebad（本体）+ 轮次 2 返工（__tests__ 同族 HEAD mock 迁移 3 红全消 + 1 处静默语义漂移修复）；主 agent 复核全量 main vitest 51 文件 854 用例全绿 |
 | u-checker | pending | 0 | — |
 | u-download-failover | pending | 0 | — |
 | u-settings-ui | committed | 1 | 本文件同 commit；vitest 8/8 + 回归 206 绿 + vue-tsc 0 错 + vue_rules_checker / i18n locale sync 过 |

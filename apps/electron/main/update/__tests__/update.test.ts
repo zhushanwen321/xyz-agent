@@ -615,17 +615,17 @@ describe('B4-downloadPart-no-double-wrap', () => {
   })
 
   it('B4 pre-built part UpdateError passes through downloadPart verbatim (not double-wrapped by fallback)', async () => {
-    // 探针实证场景复现：probe HEAD 返回支持 Range，随后各段 Range 请求统一回 HTTP 500。
-    // downloadPart 内先构造 `part N download failed: HTTP 500`，再进自己的 catch——
+    // 探针实证场景复现：probe（GET Range 0-0，多源改造后不再走 HEAD）返回 206 放行
+    // 多段，随后各段 Range 请求统一回 HTTP 500。downloadPart 内先构造
+    // `part N download failed: HTTP 500`，再进自己的 catch——
     // 修复前被 classifyNetError 兑底二次包装成
     // 「download failed: part N download failed: HTTP 500」双重前缀
-    let probeDone = false
-    const fetchMock = vi.fn(async (_url: unknown, init?: { method?: string }) => {
-      if (!probeDone && init?.method === 'HEAD') {
-        probeDone = true
-        return new Response(null, {
-          status: 200,
-          headers: { 'accept-ranges': 'bytes', 'content-length': String(TOTAL_BYTES) },
+    const fetchMock = vi.fn(async (_url: unknown, init?: { headers?: Record<string, string> }) => {
+      // probe 探测请求（GET Range: bytes=0-0）→ 206 + Content-Range total 达标放行多段
+      if (init?.headers?.Range === 'bytes=0-0') {
+        return new Response(new Uint8Array([0]), {
+          status: 206,
+          headers: { 'content-length': '1', 'content-range': `bytes 0-0/${TOTAL_BYTES}` },
         })
       }
       return new Response(null, { status: 500 })

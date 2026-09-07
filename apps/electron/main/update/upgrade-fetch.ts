@@ -35,7 +35,7 @@ export type FetchEngine = 'undici' | 'curl'
 
 /** upgradeFetch 调用选项。 */
 export interface UpgradeFetchOptions {
-  /** HTTP 方法（默认 GET）。HEAD 用于 multipart probe 等。 */
+  /** HTTP 方法（默认 GET）。HEAD 保留用于代理连通性测试等探测场景。 */
   method?: 'GET' | 'HEAD'
   /** 附加请求头（默认自带与下载/检测路径一致的 User-Agent）。 */
   headers?: Record<string, string>
