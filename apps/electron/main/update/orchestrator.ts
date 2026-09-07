@@ -398,7 +398,8 @@ async function tryCrossSourceResumeDownload(
 
 /**
  * 版本解析拒绝后的节流窗口：拒绝后 60s 内同 channel 后续请求直接拒绝、不触发
- * force check——恶意 renderer 高频 invoke 不能定向打光 GitHub API 限额（60 次/小时）。
+ * force check——恶意 renderer 高频 invoke 不能定向打光各源的检查 API 限额
+ * （GitHub 匿名配额 60 次/小时；多源后节流保护面 = 任一被检查的源）。
  * 批次 4 的退避在 renderer 侧，拦不住恶意 invoke，节流必须在 main 侧。
  */
 const RESOLVE_THROTTLE_MS = 60_000
@@ -425,8 +426,8 @@ let lastResolveRejectedAt = 0
  *   ③ 请求版本格式非法（非 string / 非 3-4 段数字）→ 直接拒绝
  *   ④ 拒绝后 60s 节流：同 channel 后续请求直接拒绝，不触发 force check
  *
- * 效果断言：无论 renderer 传什么，能被下载执行的永远是 GitHub 本仓库 latest release
- * 的官方 asset——RC1 的整类攻击面消失。
+ * 效果断言：无论 renderer 传什么，能被下载执行的永远是任一源胜出的本仓库 latest
+ * release 官方 asset——RC1 的整类攻击面消失。
  *
  * [已知语义边界] checkForLatestRelease 的 null 同时覆盖「网络失败」与「latest ≤ 当前
  * 版本」等情形（该接口不在本单元领地）：两者在此一律按失败处理拒绝升级——保守方向
