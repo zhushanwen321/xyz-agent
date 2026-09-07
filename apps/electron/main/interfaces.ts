@@ -154,15 +154,16 @@ export interface WindowOptions {
 /**
  * Release 检测器 Facade（自动升级检测后端）。
  *
- * 对应 slice auto-update-and-install：调 GitHub /releases/latest API 检测新版，
+ * 对应 slice auto-update-and-install：按源顺序逐源调 /releases/latest API 检测新版，
  * 三重 prerelease 过滤后用 compare-versions 比较，按平台分流 asset。
  *
  * [HISTORICAL] 不变量：
  * - 失败一律返回 null（不抛、不缓存失败），调用方降级为「无新版」
  * - 1h 缓存命中时直接返回，不再次 fetch
  * - force=true 绕过缓存强制刷新
- * - sha256 来自 GitHub asset.digest（服务端算好），缺失留 undefined；
- *   不读 manifest.json（w1 的 manifest 有多平台合并 bug 不可信）
+ * - sha256 优先 asset.digest，缺失时经 manifest.json lazy fallback 回填（仅目标 asset
+ *   缺 sha256 时 fetch 一次；AtomGit 源 sha256/size 唯一来源为 manifest，
+ *   见 docs/design/update-multi-source.md §6.2）
  */
 export interface IReleaseChecker {
   /**

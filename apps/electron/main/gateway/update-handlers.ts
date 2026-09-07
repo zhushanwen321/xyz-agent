@@ -53,10 +53,10 @@ const RESTART_QUIT_DELAY_MS = 500
 /**
  * [A-X4] force 检测节流窗口（毫秒）。
  *
- * update:check 的 force=true 会绕 releaseChecker 缓存直打 GitHub latest API；恶意/异常
- * renderer 高频 invoke 可烧穿 API 配额（403 后进入 2h 退避，期间所有用户检测不可用）。
- * 窗口内的重复 force 请求不拒绝而是降级为非 force 语义（走 checker 缓存）——用户体验
- * 无损，API 配额不再被放大。
+ * update:check 的 force=true 会绕 releaseChecker 缓存直打各源 releases/latest API
+ * （多源逐源）；恶意/异常 renderer 高频 invoke 可烧穿 API 配额（403 后进入 2h 退避，
+ * 期间所有用户检测不可用）。窗口内的重复 force 请求不拒绝而是降级为非 force 语义
+ * （走 checker 缓存）——用户体验无损，API 配额不再被放大。
  */
 const FORCE_CHECK_THROTTLE_MS = 10_000
 
@@ -374,7 +374,7 @@ function reportUpdateDownloadError(deps: IpcHandlerDeps, err: unknown): never {
  * [SECURITY · 批次 3 RC1] 契约版本号化：renderer 只传意图（version 字符串），
  * release 数据由 main 权威解析（resolveByVersion：缓存 / force check）——旧契约的
  * 完整 release payload（含 downloadUrl/sha256）不再过边界，能被下载执行的永远
- * 是 GitHub 本仓库 latest release 的官方 asset。格式非法 / STALE / 网络失败在
+ * 是任一源胜出的本仓库 latest release 官方 asset。格式非法 / STALE / 网络失败在
  * resolver 内拒绝，60s 节流防 API 放大。
  */
 async function handleUpdateDownload(

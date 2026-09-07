@@ -155,21 +155,22 @@ describe('W2: update-handlers IPC (W2TC7)', () => {
     expect(result).toEqual({ info: null, rateLimited: true })
   })
 
-  it('W2TC7c2b: 全源退避聚合语义——getRateLimitedUntil 返回各源最大截止时刻：窗口内 true / 窗口过 false', async () => {
-    // 多源改造后 checker.getRateLimitedUntil() = 各源退避截止时刻的最大值（签名不变）。
-    // handler 判定式不感知源数，仅消费该聚合值：最大值 > now 即「全部源均在退避窗口」
-    // 的信号形态（全源退避），透传 rateLimited=true。
+  it('W2TC7c2b: 全源退避聚合语义——getRateLimitedUntil 全部源退避才返回最早解除时刻：窗口内 true / 窗口过 false', async () => {
+    // 多源改造后 checker.getRateLimitedUntil() 仅在全部源均在退避窗口时返回未来时刻
+    //（= 各源截止的最早解除时刻 min；任一源可用返回 0，签名不变）。handler 判定式
+    // 不感知源数，仅消费该聚合值：返回值 > now 即「全部源均在退避窗口」的信号
+    // 形态（全源退避），透传 rateLimited=true。
     const inWindowChecker: IReleaseChecker = {
       checkForLatestRelease: vi.fn(async (): Promise<LatestReleaseInfo | null> => null),
       fetchReleaseByTag: stubFetchReleaseByTag(),
-      // 模拟两源退避截止不同（github +2h、atomgit +1h）→ 聚合最大值 = +2h > now
+      // 模拟两源退避截止不同（github +2h、atomgit +1h）→ 聚合最早解除时刻 = +1h > now
       getRateLimitedUntil: () => Date.now() + 2 * 60 * 60 * 1000,
     }
     registerUpdateHandlers({ releaseChecker: inWindowChecker } as never)
     const inWindow = await handlers.get('update:check')!({}, {})
     expect(inWindow).toEqual({ info: null, rateLimited: true })
 
-    // 窗口已过（各源最大截止 ≤ now，即无任何源在退避）→ rateLimited=false（确认无新版）
+    // 窗口已过（聚合值 ≤ now，即任一源可用或全部退避已解除）→ rateLimited=false（确认无新版）
     const expiredChecker: IReleaseChecker = {
       checkForLatestRelease: vi.fn(async (): Promise<LatestReleaseInfo | null> => null),
       fetchReleaseByTag: stubFetchReleaseByTag(),

@@ -16,7 +16,8 @@
  *   D6TC4 代理+直连双失败 → 该源失败 → 次源（逐源降级语义）
  *   负缓存组（重写）：循环出口语义——全部源确认无新版才写负缓存；
  *         主源无新版不写全局负缓存；混合态不写负缓存
- *   per-source 退避组：403 记该源退避、退避源短路零请求、getRateLimitedUntil 各源最大值
+ *   per-source 退避组：403 记该源退避、退避源短路零请求、getRateLimitedUntil
+ *         全部源退避才返回最早解除时刻（min）/任一源可用返回 0
  *   manifest 组：AtomGit manifest 失败降级次源 / GitHub manifest 失败不阻塞 /
  *         manifest size 扩展填充
  *   诊断组：source-selection / source-failover 登记接线
@@ -393,7 +394,9 @@ describe('W2: ReleaseChecker 自动升级检测（多源编排）', () => {
     // github 403 记退避 → atomgit 照常尝试并胜出（退避 per-source，不阻塞次源）
     expect(result).not.toBeNull()
     expect(result!.source).toBe('atomgit')
-    expect(checker.getRateLimitedUntil()).toBeGreaterThan(Date.now())
+    // atomgit 可用即检查可正常出结论：全源退避语义下仅 github 退避 → 返回 0
+    //（不误报 rateLimited；github 退避的存在性由退避组短路用例的零请求计数证明）
+    expect(checker.getRateLimitedUntil()).toBe(0)
   })
 
   it('W2TC6c: 返回 404（两源均无 release 数据）→ 返回 null', async () => {
@@ -882,7 +885,8 @@ describe('多源负缓存（循环出口语义）', () => {
 
 // ════════════════════════════════════════════════════════════════
 // per-source 限流退避（§6.5）：Map<UpdateSource, until> +
-// getRateLimitedUntil() 各源最大值 / 无退避 0 / 退避源短路零请求
+// getRateLimitedUntil() 全部源均在退避窗口才返回最早解除时刻（min）/
+// 任一源无退避记录或已解除返回 0 / 退避源短路零请求
 // ════════════════════════════════════════════════════════════════
 describe('per-source 限流退避', () => {
   let originalFetch: typeof globalThis.fetch
@@ -918,7 +922,9 @@ describe('per-source 限流退避', () => {
     const r1 = await checker.checkForLatestRelease('0.8.14')
     expect(r1).not.toBeNull()
     expect(r1!.source).toBe('atomgit')
-    expect(checker.getRateLimitedUntil()).toBeGreaterThan(Date.now())
+    // 仅 github 退避 + atomgit 可用 → 全源退避语义返回 0（退避存在性由下方第二轮
+    // force 短路计数证明：github 计数恒 1 = 退避生效零请求）
+    expect(checker.getRateLimitedUntil()).toBe(0)
     expect(spy).toHaveBeenCalledTimes(2)
     const githubCallsAfterRound1 = calledUrls(spy).filter((u) => u === GITHUB_LATEST_URL).length
     expect(githubCallsAfterRound1).toBe(1)
@@ -945,6 +951,63 @@ describe('per-source 限流退避', () => {
     expect(checker.getRateLimitedUntil()).toBe(0)
   })
 
+  it('仅 github 退避（atomgit 无退避记录且正常确认无新版）→ getRateLimitedUntil 返回 0（不误报限流）', async () => {
+    // 失真场景回归（design-code-sync R1）：github 限流退避 2h + atomgit 正常检查确认
+    // 无新版——handler 判定式 `!info && getRateLimitedUntil() > Date.now()` 在旧
+    // max 语义下误报 rateLimited=true（UI 显示「限流约 2 小时暂停检查」，实际刚
+    // 正常确认无新版）；新全源语义下 atomgit 可用即返回 0
+    const spy = installRoutedFetch((url) =>
+      url === GITHUB_LATEST_URL
+        ? new Response('rate limited', { status: 403 })
+        : jsonResponse(makeReleaseJson({ tag_name: 'v0.8.13' })), // atomgit 确认无新版
+    )
+
+    const checker = makeChecker()
+    const r1 = await checker.checkForLatestRelease('0.8.14')
+    // github 退避（入 Map）+ atomgit 确认无新版 → 混合态 null 不写负缓存
+    expect(r1).toBeNull()
+    expect(spy).toHaveBeenCalledTimes(2)
+    // atomgit 可用即检查可正常出结论：仅 github 退避 → 0（handler 不报 rateLimited）
+    expect(checker.getRateLimitedUntil()).toBe(0)
+  })
+
+  // AtomGit 当前链路不可经公共 API 构造退避（适配层 rateLimitAware 仅 github，
+  // §4.1 无限流响应头不识别），双源退避聚合语义用白盒注入构造各源截止值
+  function injectBackoff(
+    checker: ReleaseChecker,
+    entries: Partial<Record<UpdateSource, number>>,
+  ): void {
+    const internals = checker as unknown as { backoffUntil: Map<UpdateSource, number> }
+    for (const [source, until] of Object.entries(entries)) {
+      internals.backoffUntil.set(source as UpdateSource, until as number)
+    }
+  }
+
+  it('双源均在退避窗口 → 返回各源截止的 min（最早解除时刻）且 > now（验收条款）', () => {
+    const checker = makeChecker()
+    const t0 = Date.now()
+    injectBackoff(checker, {
+      github: t0 + 2 * 60 * 60 * 1000,
+      atomgit: t0 + 30 * 60 * 1000,
+    })
+
+    const until = checker.getRateLimitedUntil()
+    expect(until).toBeGreaterThan(t0)
+    // min 而非 max：返回最早解除时刻（atomgit 的 +30min），非 github 的 +2h
+    expect(until).toBe(t0 + 30 * 60 * 1000)
+  })
+
+  it('双源退避但其一已解除 → 返回 0（任一源可用即不报限流）', () => {
+    const checker = makeChecker()
+    const t0 = Date.now()
+    injectBackoff(checker, {
+      github: t0 + 2 * 60 * 60 * 1000, // 仍在窗口
+      atomgit: t0 - 1000, // 已解除
+    })
+
+    expect(checker.getRateLimitedUntil()).toBe(0)
+  })
+
   it('退避按源分派：github latest 403 记退避；atomgit manifest 403 是签名拒绝不记退避；github 退避窗口内短路零请求', async () => {
     // github latest 403（记 github 退避）；atomgit latest 无 digest → manifest 403
     //（auth_key 签名直链的签名/权限拒绝，§4.1——普通失败收口，不记退避）
@@ -965,13 +1028,12 @@ describe('per-source 限流退避', () => {
     })
 
     const checker = makeChecker()
-    const t0 = Date.now()
     const r1 = await checker.checkForLatestRelease('0.8.14')
     expect(r1).toBeNull()
     // 退避仅来自 github（latest 403）；atomgit manifest 403 不污染退避 Map——
-    // getRateLimitedUntil = 各源退避截止的最大值（当前链路 AtomGit 无可识别限流
-    // 信号，Map 成员仅 github 可入，聚合恒为该源截止时刻）
-    expect(checker.getRateLimitedUntil()).toBeGreaterThan(t0)
+    // 全源退避语义下 atomgit 可用即返回 0（github 退避的存在性由下方第二轮 force
+    // 短路计数证明：GITHUB_LATEST_URL 计数恒 1）
+    expect(checker.getRateLimitedUntil()).toBe(0)
 
     // github 退避窗口内 force 查询：github 短路（计数恒 1，零请求）；atomgit 不在
     // 退避 → 照常尝试（latest 1 + manifest 1）

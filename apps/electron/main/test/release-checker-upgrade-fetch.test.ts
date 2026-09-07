@@ -348,7 +348,8 @@ describe('u5: 403/429 限流直通不降级（per-source 退避窗口生效）',
       expect(githubLatestCallCount()).toBe(1)
       expect(callOpts(0).proxyUrl).toBe(PROXY_URL)
       // per-source 退避窗口（2h）已记录
-      expect(checker.getRateLimitedUntil()).toBeGreaterThan(Date.now())
+      // 仅 github 记退避、atomgit 可用 → 全源语义（update-multi-source §6.5）返回 0；退避生效由本用例计数/短路断言证明
+      expect(checker.getRateLimitedUntil()).toBe(0)
       // 窗口内 force 查询：退避源短路（github 计数恒 1，零请求）；非退避次源照常尝试
       const inWindow = await checker.checkForLatestRelease('0.8.14', { force: true })
       expect(inWindow).toBeNull()
@@ -377,7 +378,8 @@ describe('u5 D8: curl 引擎 HTTP 状态交互规则', () => {
       expect(githubLatestCallCount()).toBe(1)
       expect(callOpts(0).proxyUrl).toBe(PROXY_URL)
       // 退避窗口生效：github 记 per-source 退避
-      expect(checker.getRateLimitedUntil()).toBeGreaterThan(Date.now())
+      // 仅 github 记退避、atomgit 可用 → 全源语义（update-multi-source §6.5）返回 0；退避生效由本用例计数/短路断言证明
+      expect(checker.getRateLimitedUntil()).toBe(0)
       // 窗口内 force 查询：退避源短路零请求，github 计数恒 1
       const inWindow = await checker.checkForLatestRelease('0.8.14', { force: true })
       expect(inWindow).toBeNull()
@@ -434,7 +436,8 @@ describe('u5 D8: curl 引擎 HTTP 状态交互规则', () => {
       // manifest 单次调用（无第二步直连）；记该源退避窗口；GitHub 路径 release 组装不被阻塞
       expect(upgradeFetchMock).toHaveBeenCalledTimes(2)
       expect(callUrl(1)).toContain('manifest.json')
-      expect(checker.getRateLimitedUntil()).toBeGreaterThan(Date.now())
+      // 仅 github 记退避、atomgit 可用 → 全源语义（update-multi-source §6.5）返回 0；退避生效由本用例计数/短路断言证明
+      expect(checker.getRateLimitedUntil()).toBe(0)
       expect(result!.assets.macArm64Dmg?.sha256).toBeUndefined()
       expect(result!.assets.macArm64Dmg?.name).toBe('TaiJi-mac-arm64.dmg')
     },
@@ -463,7 +466,8 @@ describe('u5 R2: 直连重试第二步不吞限流信号 + manifest 两引擎对
       expect(upgradeFetchMock).toHaveBeenCalledTimes(3)
       expect(callOpts(1).proxyUrl).toBeUndefined()
       // 关键断言：第二步撞 429 记退避（修复前被裸 catch 吞、rateLimitedUntil 保持 0）
-      expect(checker.getRateLimitedUntil()).toBeGreaterThan(Date.now())
+      // 仅 github 记退避、atomgit 可用 → 全源语义（update-multi-source §6.5）返回 0；退避生效由本用例计数/短路断言证明
+      expect(checker.getRateLimitedUntil()).toBe(0)
       // 窗口内 force 查询：github 退避短路（计数恒 2），atomgit 照常 1 次
       const inWindow = await checker.checkForLatestRelease('0.8.14', { force: true })
       expect(inWindow).toBeNull()
@@ -494,7 +498,8 @@ describe('u5 R2: 直连重试第二步不吞限流信号 + manifest 两引擎对
       expect(callOpts(2).proxyUrl).toBeUndefined()
       expect(result!.assets.macArm64Dmg?.sha256).toBeUndefined()
       // 关键断言：第二步撞 429 就地记退避（修复前被裸 catch 吞）
-      expect(checker.getRateLimitedUntil()).toBeGreaterThan(Date.now())
+      // 仅 github 记退避、atomgit 可用 → 全源语义（update-multi-source §6.5）返回 0；退避生效由本用例计数/短路断言证明
+      expect(checker.getRateLimitedUntil()).toBe(0)
     },
   )
 
@@ -513,7 +518,8 @@ describe('u5 R2: 直连重试第二步不吞限流信号 + manifest 两引擎对
       expect(upgradeFetchMock).toHaveBeenCalledTimes(2)
       expect(callUrl(1)).toContain('manifest.json')
       // 与 curl 引擎对偶：同记 2h 退避（修复前 undici 侧 !ok 一律 null 不退避 = 两引擎漂移）
-      expect(checker.getRateLimitedUntil()).toBeGreaterThan(Date.now())
+      // 仅 github 记退避、atomgit 可用 → 全源语义（update-multi-source §6.5）返回 0；退避生效由本用例计数/短路断言证明
+      expect(checker.getRateLimitedUntil()).toBe(0)
       expect(result!.assets.macArm64Dmg?.sha256).toBeUndefined()
       expect(result!.assets.macArm64Dmg?.name).toBe('TaiJi-mac-arm64.dmg')
     },

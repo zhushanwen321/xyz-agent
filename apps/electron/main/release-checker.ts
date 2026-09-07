@@ -26,8 +26,10 @@
  *      - 所有源均失败 → null 不缓存失败
  *
  * [per-source 限流退避（§6.5）]：单值 rateLimitedUntil 改为 Map<UpdateSource, until>。
- * getRateLimitedUntil() 签名不变（返回 epoch ms），语义 = 各源退避截止时刻的最大值
- * （无任何记录返回 0）——handler 判定式 `> Date.now()` 与既有 mock 形态不变。
+ * getRateLimitedUntil() 签名不变（返回 epoch ms），语义 = 全部已知源均在退避窗口才
+ * 返回未来时刻（= 各源截止时刻的 min，最早解除时刻）；任一源无退避记录或已解除
+ * 返回 0（无任何记录同样 0）——handler 判定式 `> Date.now()` 与既有 mock 形态不变，
+ * §6.5「全部源都在退避窗口才报 rateLimited」由此精确成立。
  * 退避记录点：源 latest fetch 撞 GitHub 403/429（适配层 rate-limited 分类）；
  * manifest fetch 撞 GitHub 403/429（两引擎同形态重建）。AtomGit manifest 的
  * 403/429 是 auth_key 签名直链的签名/权限拒绝（§4.1），按普通失败收口不记退避，
@@ -85,6 +87,15 @@ const FETCH_TIMEOUT_MS = 10_000
 const RATE_LIMIT_BACKOFF_HOURS = 2
 const RATE_LIMIT_BACKOFF_MS =
   RATE_LIMIT_BACKOFF_HOURS * MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND
+
+/**
+ * 全部已知更新源（getRateLimitedUntil 的全源退避判定集合）。
+ * [枚举同步锚点] 成员与 shared 的 UpdateSource 联合类型一一对应
+ * （packages/shared/src/update.ts——shared 只导出类型无运行时值常量；适配层
+ * RELEASE_SOURCE_HOSTS 的键是 host 用途名而非源名，不可作源枚举）。新增源时
+ * 同批更新本常量，防类型面与运行时枚举双轨漂移。
+ */
+const KNOWN_UPDATE_SOURCES: readonly UpdateSource[] = ['github', 'atomgit']
 
 /** HTTP 状态码：GitHub API 限流/配额拒绝（RM2.3 可区分信号） */
 const HTTP_STATUS_FORBIDDEN = 403
@@ -234,16 +245,21 @@ export class ReleaseChecker implements IReleaseChecker {
 
   /**
    * 限流退避截止时刻（IReleaseChecker 可选方法，签名不变）。
-   * 语义 = 各源退避截止时刻的最大值（无任何记录返回 0）；
-   * update:check handler 据此把「限额退避中的 null」与「确认无新版的 null」区分开，
+   * 语义 = 全部已知源（KNOWN_UPDATE_SOURCES）均在退避窗口才返回未来时刻，
+   * 值取各源截止的 min（最早解除时刻）；任一源无退避记录或已解除（<= now）
+   * 返回 0，无任何退避记录返回 0——任一源可用即检查可正常出结论，不报限流（§6.5）。
+   * update:check handler 据此把「全源限额退避中的 null」与「确认无新版的 null」区分开，
    * 经 UpdateCheckResult.rateLimited 透传 renderer（RM2.3 信号透传）。
    */
   getRateLimitedUntil(): number {
-    let max = 0
-    for (const until of this.backoffUntil.values()) {
-      if (until > max) max = until
+    const now = Date.now()
+    let min = Infinity
+    for (const source of KNOWN_UPDATE_SOURCES) {
+      const until = this.backoffUntil.get(source)
+      if (until === undefined || until <= now) return 0
+      if (until < min) min = until
     }
-    return max
+    return min === Infinity ? 0 : min
   }
 
   /**

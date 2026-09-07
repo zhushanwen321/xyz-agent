@@ -104,13 +104,13 @@ graph TD
 | u-diagnostics | appendUpdateError 返回 void → boolean；诊断 stage 新增值 'checking'（仅诊断日志用） | 支撑「写失败不推进降频快照」语义；既有调用方全部忽略返回值行为零变化；检查段事件在 UpdateStage 既有值域无对应值 | 2026-09-07 |
 | u-probe-multipart | 验收条款「存量 HEAD mock 族改写后既有测试全绿」首轮未达成：仅迁移 test/download-asset.test.ts，漏扫 update/__tests__/download-asset-fallback.test.ts（u4-probe-curl、u4-multipart-success 2 红）与 update/__tests__/update.test.ts（B4 1 红）同族 HEAD-era mock | 打回返工（轮次 2），领地扩展上述两文件 | 2026-09-07 |
 | u-checker | DOC_MODULE_MAP 登记（设计 §9 M2 项）从 u-diagnostics 移交至 u-checker | scripts/check-doc-symbol-drift.mjs 在 u-diagnostics 领地外；M2 挂点单元为 checker，随其 commit 落地 | 2026-09-07 |
-| u-release-sources | **防御 b（prerelease/draft 字段拦截）从设计 §4.2 的「checker 循环内」前移到适配层组装收口**；normalizeSourceRelease 导出含 prerelease/draft 的完整产物入口供 checker 复用 | 结构必然：LatestReleaseInfo 不承载 prerelease/draft 字段，防御必须在信息丢失前执行否则失效；防御 c（semver）与版本比较仍留 checker。u-checker task 已按此调整（避免重复防御/漏防御） | 2026-09-07 |
+| u-release-sources | **防御 b（prerelease/draft 字段拦截）从设计 §4.2 的「checker 循环内」前移到适配层组装收口**；normalizeSourceRelease 导出含 prerelease/draft 的完整产物入口供 checker 复用 | 结构必然：LatestReleaseInfo 不承载 prerelease/draft 字段，防御必须在信息丢失前执行否则失效；防御 c（semver）与版本比较仍留 checker。u-checker task 已按此调整（避免重复防御/漏防御）→ 已被第 15 条二次修正取代（fetchSourceRelease 切换后防御 b 回归 checker 循环内） | 2026-09-07 |
 | u-release-sources | 形状坏/网络失败从现状 null 收口改为抛 ReleaseFetchError(kind: network/rate-limited/bad-shape) | 设计 §4.2③「形状坏→记该源失败」要求失败信号可归类；现状 null 与「404 无新版」混叠会使逐源降级无法分类 | 2026-09-07 |
-| u-release-sources | shared ReleaseAsset.size 必填与 AtomGit size undefined 冲突——实现暂以单字段显式断言放宽 + 债务登记 | 类型收敛需 ReleaseAsset.size 可选化（packages/shared 领地），打回 u-foundation 会话补丁；GitHub 路径 size 恒有不回归 | 2026-09-07 |
-| u-release-sources | ASSET_PATTERNS / extractSha256 与 release-checker.ts 私有实现暂并存（文件头注释登记收敛计划） | 领地互斥：release-checker.ts 属 u-checker；u-checker 改造组装时改消费本模块导出并删副本 | 2026-09-07 |
+| u-release-sources | shared ReleaseAsset.size 必填与 AtomGit size undefined 冲突——实现暂以单字段显式断言放宽 + 债务登记 | 类型收敛需 ReleaseAsset.size 可选化（packages/shared 领地），打回 u-foundation 会话补丁；GitHub 路径 size 恒有不回归 → 已消解：363b9b7fe 落地 shared ReleaseAsset.size 可选化 | 2026-09-07 |
+| u-release-sources | ASSET_PATTERNS / extractSha256 与 release-checker.ts 私有实现暂并存（文件头注释登记收敛计划） | 领地互斥：release-checker.ts 属 u-checker；u-checker 改造组装时改消费本模块导出并删副本 → 收敛状态已被下行修正：标注副本并存 + 后续 cleanup 评估 | 2026-09-07 |
 | u-download-failover | **logDownloadSuccess 的 multiPart/engine 为近似值（engine 取进程偏好、multiPart 保守 false）——S1 验收的 multiPart:true 断言将失真** | downloadAsset 返回值仅 {filePath} 不含 probe 判定与实际引擎；download-asset.ts 属已 committed 的 u-probe-multipart 领地。must-fix：已派 u-probe-multipart 会话扩展返回值 {filePath, multiPart, engine}，随后 u-download-failover 会话接线精确回填 | 2026-09-07 |
 | u-download-failover | 默认 failover checker = orchestrator 模块内惰性 new ReleaseChecker()（设计「DI 注入不变」留白的补全），downloadUpdate 增可选 opts.releaseChecker 保留显式注入 | fetchReleaseByTag 无状态透传不消费缓存/退避，双实例无状态重复风险；u-checker 落地后构造兼容已 tsc 验证 | 2026-09-07 |
-| 残留风险 | totalBytes 组合 B（stale 转全量守卫触发后）外层校验对已递归 rename 的 temp 抛 ENOENT，跨源降级链按续传失败吞掉原错误上抛（产物正确、sha256 兜底不变，用户重试从零成功） | download-asset 既有行为非本次引入；阶段 4 一致性审查评估是否修 ENOENT 收尾 | 2026-09-07 |
+| 残留风险 | totalBytes 组合 B（stale 转全量守卫触发后）外层校验对已递归 rename 的 temp 抛 ENOENT，跨源降级链按续传失败吞掉原错误上抛（产物正确、sha256 兜底不变，用户重试从零成功） | download-asset 既有行为非本次引入；阶段 4 一致性审查评估是否修 ENOENT 收尾 → 已裁决：阶段 3 审查 R1-R5 暂不修（见下行显式裁决；orchestrator.test.ts:829-848 锚定） | 2026-09-07 |
 | u-release-sources | 追加暴露面补丁（4c6abe032）：fetchLatestRelease 重构为 fetchSourceRelease + toLatestReleaseInfo 薄出口，返回含原始 assets 的完整 SourceRelease；by-tag 变体评估后不加（无消费方，最小暴露面） | u-checker 实施发现 fetchLatestRelease 的 LatestReleaseInfo 出口丢弃原始 assets，resolveManifestDownloadUrl 生产链路无输入，§4.2⑤ 权威通路断 | 2026-09-07 |
 | u-checker | 防御 b 落点二次修正：切换 fetchSourceRelease（完整产物不拦截）后，prerelease/draft 字段拦截回归 checker 循环内 per-source 生效（取代此前「前移适配层」的中间形态） | 暴露面补丁改变了产物拦截位置；字段拦截 + 防御 c + 版本比较统一收在循环内，与设计 §4.2③④ 原意一致 | 2026-09-07 |
 | u-checker | ASSET_PATTERNS / extractSha256 / pickPlatformAsset 同构副本落在 checker 组装段（文件内标注声明）——轮次 1「删副本」的收敛状态修正为「标注副本」 | fetchSourceRelease JSDoc 预设 checker 自行组装 LatestReleaseInfo，适配层组装辅助均为私有；待适配层导出组装辅助后切换单一来源（阶段 4 评估或后续 cleanup） | 2026-09-07 |
@@ -119,6 +119,7 @@ graph TD
 | 显式裁决 | R3-U3 UpdateSource 枚举运行时值双轨（renderer 与 main 各持一份 UPDATE_SOURCE_PREFS）：**暂不收敛** | 当前两源下守卫工作正常无缺陷；收敛需动 shared 值导出 + 三端接线，属第三源接入时的自然触发点（届时 renderer 守卫静默拒绝新值会成为接入清单必检项），现在做属推测性抽象 | 2026-09-07 |
 | 显式裁决 | R1-R5 组合B ENOENT 收尾（stale 转全量后外层校验已 rename temp）：**暂不修** | 既有行为非本次引入；产物正确、sha256 兜底不变、重试从零成功；orchestrator.test.ts:829-848 已锚定该行为，未来修复时该用例会红提示同步 | 2026-09-07 |
 | 阶段3修复 | unreasonable 6 条全部闭环：R1-U1 S2 探测观测面（resolver getLastProbeOutcome 导出 3dc4372e7 + checker 接线透传真实 results/via，decidedAt 因 error-log 无承载字段丢弃——非验收断言维度，登记接受）/ R1-U2 manifest 403/429 退避仅 github 源记录（AtomGit 签名直链 403 非限流）/ R1-U3 探测 URL 收敛 RELEASE_SOURCE_HOSTS / R1-U4 RC1 注释多源化（0f3b37ba9，顺带修节流注释同源失真）/ R2-U2 prerelease 负缓存判别断言补齐 / R3 四条（i18n 第4处 + testid 范围 7de8d7734、枚举双轨显式裁决暂不收敛、update.ts:8 注释 0368602cd）；doc_errors 3 条由主编排亲改设计文档；修复后全量 main vitest 910/910、tsc 0 错 | 审查-修复单轮收敛，未触发 ≥3 轮阈值 | 2026-09-07 |
+| design-code-sync R1 | getRateLimitedUntil 语义修正：§7.2「各源截止最大值」机制描述存在数学错误（max>now ⟺ 任一源退避非全部），与 §6.5/§7.4 四处一致的「全部源都在退避窗口才报 rateLimited」意图矛盾；实现按错误机制落地致「atomgit 正常确认无新版 + github 退避」误报限流 | 修正实现为全部源均在退避才返回最早解除时刻（min），任一源可用返回 0；§7.2/:348 机制描述同步修正 | 2026-09-07 |
 
 ## 6 状态表
 
@@ -139,7 +140,7 @@ graph TD
 - §11.3：AtomGit API 匿名访问稳定性无官方承诺——运行期经 source-selection 日志观测（M2 后），频繁 4xx/429 再议保守请求间隔。Gate B 后初判：6 轮真实检查零 4xx/429，读路径单客户端余量充足，暂不需要保守请求间隔；下次真实发版（检查流量放大）后复核。
 - §11.4：跨源续传三组合由 u-download-failover 单测覆盖（totalBytes 一致/不一致/state 缺失）。
 - §11.5：Windows NSIS 路径未在本设计期实测，S1 的 Windows 复验留待发布前（Out-of-scope of 本流水线，登记不阻塞）。
-- S1-S6 真实场景验收：检查段子集（S1-检查/S2/S5-检查）已由 Gate B 实测 pass（§8）；下载安装段（S1-下载/S3/S5-完整/S6）受「远端无新版 + hosts 需 sudo + sha256 需 mitmproxy」阻塞，补验窗口 = v0.9.15 真实发版推送两源后（本机存量 0.9.14 天然构成版本差场景），差距清单与补验步骤见 §8 blocked_gaps。
+- S1-S6 真实场景验收：检查段子集（S1-检查/S2/S5-检查）已由 Gate B 实测 pass（§8；S2-① 证据 = GB1、S2-② 证据 = GB3 附带项）；下载安装段（S1-下载/S3/S5-完整/S6）受「远端无新版 + hosts 需 sudo + sha256 需 mitmproxy」阻塞，补验窗口 = v0.9.15 真实发版推送两源后（本机存量 0.9.14 天然构成版本差场景），差距清单与补验步骤见 §8 blocked_gaps。
 - 变更历史：
   - 2026-09-07：初版。9 单元拆分自设计 §10 + §9；M0 探针已由主 agent 执行完毕（见 §0.1），白名单精确值 `gitcode.com` 已定，探针 P2/P3 为发布脚本既有实测。
   - 2026-09-07：阶段 3 一致性审查单轮收敛（unreasonable 6 + doc_errors 3 全闭环，commit 3d9a9c101）；阶段 5 Gate A 全绿（main 910 / shared 323 / renderer 4067，commit 6a485b6c9）。
@@ -153,10 +154,10 @@ graph TD
 |------|---------|------|
 | GB1（S2-① auto 无代理探测） | pass | 冷启动 30s 自动检查后 update-error.log 首条 source-selection：order=[github,atomgit]（两域可达 tie-break github）、winner=null、probe executed=true 两域 basis=probe、tags 双源 v0.9.14，全部断言命中 |
 | GB2（S1 检查段子集：updateSource 三态） | pass | 三轮：atomgit→order=[atomgit,github] probe 短路 explicit-preference；github→order=[github,atomgit] 同；非法 gitee→读取侧逐字段校验回退 auto + 恢复真实探测。UI Select 三态显示正确 |
-| GB3（S4 双源皆败） | blocked | 双败在本机不可构造（归因见下）；附带 3 项 pass：代理短路观测形态（basis=proxy-short-circuit 仅 github 键不捏造）/ UI 稳态不崩溃无悬空 loading / 恢复 disabled+重启自愈 |
+| GB3（S4 双源皆败） | blocked | 双败在本机不可构造（归因见下）；附带 3 项 pass：代理短路观测形态（basis=proxy-short-circuit 仅 github 键不捏造，即 S2-② 场景证据）/ UI 稳态不崩溃无悬空 loading / 恢复 disabled+重启自愈 |
 | GB4（S1 下载安装段/S3/S5/S6） | blocked | 版本差前提不成立（远端 latest = 本机版本，下载链路永不触发，改 package.json 被禁止）；S3/S4 需 sudo hosts；S6 需 mitmproxy。S5 检查段子集已由 GB2-2 覆盖 |
 
-**GB3 归因修正（主 agent 行级复核）**：验收 agent 报告称「检查段 latest API fetch 不消费升级代理」**有误**。实况：`fetchSourceReleaseViaChannel`（release-sources.ts:397-415）消费代理，但 network 失败**自动降级直连重试一次**（对齐设计 D6/D10 通道编排），故不可达代理后 tags 照常取到；且非 2xx（除 403/429 限流）一律归 null=「无新版」语义而非失败。结论不变：检查段「双源皆败」的无特权构造手段不存在，hosts 屏蔽（需 sudo）是唯一域名级手段。探测层 proxy-short-circuit（reachable=true 假定可达）与 fetch 层降直连的组合是设计内行为——探测是决策观测面，降级是通道韧性。
+**GB3 归因修正（主 agent 行级复核）**：验收 agent 报告称「检查段 latest API fetch 不消费升级代理」**有误**。实况：`fetchSourceReleaseViaChannel`（release-sources.ts:397-415）消费代理，但 network 失败**自动降级直连重试一次**（对齐 update-network-resilience.md D6/D10 的代理优先+降直连通道编排），故不可达代理后 tags 照常取到；且非 2xx 一律归 null 收口（github 源 403/429 除外→限流错误；atomgit 不识别限流），null 在 checker 归『未确认』桶、不写负缓存。结论不变：检查段「双源皆败」的无特权构造手段不存在，hosts 屏蔽（需 sudo）是唯一域名级手段。探测层 proxy-short-circuit（reachable=true 假定可达）与 fetch 层降直连的组合是设计内行为——探测是决策观测面，降级是通道韧性。
 
 **blocked_gaps 补验清单**：
 

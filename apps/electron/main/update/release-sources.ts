@@ -26,13 +26,12 @@
  *   by-tag 无此 tag = 发布时间窗/部分同步失败窗口，null 交由调用方判定对侧不可用）。
  * - 网络/形状坏抛错而非吞 null：适配层是「该源失败」信号的产出点，checker 逐源降级依赖它。
  *
- * [领地债务登记]（收敛计划，勿在两处独立演进）：
- * - ASSET_PATTERNS / extractSha256 与 release-checker.ts 现行私有实现暂并存
- *   （release-checker.ts 属 u-checker 领地，本单元不可动）；u-checker 改造组装逻辑时
- *   改为消费本模块导出并删除其副本。
- * - ReleaseAsset.size 现为必填 number，AtomGit 无 API size（§6.2 规格：undefined，
- *   由 checker manifest fallback 填充）——toLatestReleaseInfo 对 size 单字段断言放行
- *   运行时 undefined；类型收敛待 shared 的 ReleaseAsset.size 可选化（impl-plan 偏差登记）。
+ * [同构副本并存声明]（impl-plan §5 终态）：
+ * - ASSET_PATTERNS / extractSha256 与 release-checker.ts 组装段为标注并存的同构副本
+ *   （对方已标 [同构副本声明]），非领地阻塞；收敛前提 = 本模块导出组装辅助（当前私有），
+ *   切换单一来源的评估留待后续 cleanup。
+ * - ReleaseAsset.size 已于 shared 落地可选化（size?: number，commit 363b9b7fe），
+ *   AtomGit 无 API size（§6.2 规格：undefined，由 checker manifest fallback 填充）。
  *
  * 依赖方向：release-sources → @xyz-agent/shared + ./proxy-config + ./upgrade-fetch。
  * 不 import release-checker（u-checker 将反向消费本模块，避免循环依赖）。
@@ -388,8 +387,8 @@ async function doFetchSourceRelease(
 }
 
 /**
- * 通道维度编排（对齐 fetchGitHubLatestRelease D6/D10）：代理优先，网络失败降直连
- * 重试一次；限流/形状坏不重试（服务器已响应 / 响应体已坏，换通道无意义）。
+ * 通道维度编排（对齐 fetchGitHubLatestRelease，update-network-resilience D6/D10）：
+ * 代理优先，网络失败降直连重试一次；限流/形状坏不重试（服务器已响应 / 响应体已坏，换通道无意义）。
  *
  * 与现状的差异（设计意图）：现状 checker 外层把最终失败吞成 null；适配层是
  * 「该源失败」信号产出点，网络失败显式上抛（ReleaseFetchError），由 checker 逐源降级。
@@ -416,7 +415,7 @@ async function fetchSourceReleaseViaChannel(
 
 // ── 组装（SourceRelease → LatestReleaseInfo）─────────────────────────
 
-// [领地债务登记] 与 release-checker.ts 现行私有实现暂并存，收敛计划见文件头注释。
+// 与 release-checker.ts 组装段标注并存的同构副本（非领地阻塞，详见文件头声明）。
 const ASSET_PATTERNS = {
   macArm64Dmg: (name: string): boolean => name.endsWith('-mac-arm64.dmg'),
   winX64Exe: (name: string): boolean => name.endsWith('-setup-x64.exe'),
@@ -434,7 +433,7 @@ function extractSha256(digest?: string): string | undefined {
   return /^[0-9a-f]{64}$/i.test(digest) ? digest : undefined
 }
 
-/** LatestReleaseInfo 的 size 放宽视图（AtomGit 无 API size，运行时 undefined，规格见 §6.2） */
+/** 与 ReleaseAsset 同构（size 已可选化），简化候选（后续 cleanup）；AtomGit 无 API size，规格见 §6.2 */
 type ReleaseAssetLoose = Omit<ReleaseAsset, 'size'> & { size?: number }
 
 /** 按 pattern 从 asset 列表挑选单平台资产；sha256 取 asset.digest（manifest fallback 由 checker 做） */

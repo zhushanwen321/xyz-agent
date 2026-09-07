@@ -1,5 +1,5 @@
 /**
- * 升级错误/诊断日志落盘（D7 + 多源改造诊断面）。
+ * 升级错误/诊断日志落盘（update-network-resilience D8 + 多源改造诊断面）。
  *
  * JSONL 格式，512KB 轮转 x2。失败登记七个 source 覆盖：
  * test-proxy / download / install / perform / preload /
@@ -76,7 +76,7 @@ export interface SourceFailoverLogInput {
 export interface DownloadSuccessLogInput {
   /** 多段下载是否生效（probe 判定结果）——S1 多段生效断言的观测面 */
   multiPart: boolean
-  /** 实际使用的下载引擎（S1 注记：curl 引擎按 D7 语义放弃多段，multiPart=false 非回归） */
+  /** 实际使用的下载引擎（S1 注记：curl 引擎按 update-network-resilience D7 语义放弃多段，multiPart=false 非回归） */
   engine: 'undici' | 'curl'
   /** 下载成功所在源（可选；release.source undefined 的旧落盘文件场景缺省） */
   releaseSource?: UpdateSource
@@ -242,8 +242,8 @@ export function logSourceFailover(input: SourceFailoverLogInput): void {
  * 登记下载成功（download-success，成功路径登记）。
  *
  * 每次下载成功落一条（量级可忽略）。multiPart = probe 判定结果，是 S1
- * 多段生效断言的观测面（防 probe 改造回归静默退化单段——curl 引擎按 D7
- * 语义放弃多段，multiPart=false 非回归，断言失败先核对 engine 字段）。
+ * 多段生效断言的观测面（防 probe 改造回归静默退化单段——curl 引擎按
+ * update-network-resilience D7 语义放弃多段，multiPart=false 非回归，断言失败先核对 engine 字段）。
  */
 export function logDownloadSuccess(input: DownloadSuccessLogInput): void {
   appendUpdateError({

@@ -38,8 +38,8 @@ const SHA256_RE = /^[0-9a-f]{64}$/i
 /**
  * 校验 renderer 传来的 LatestReleaseInfo payload。
  *
- * 防 SSRF（downloadUrl 必须是 GitHub 域名的 https）、路径遍历（name 无 / 或 ..）、
- * shell 注入（name / version / sha256 严格白名单字符集）。
+ * 防 SSRF（downloadUrl 必须是白名单域（两源下载域，见 ALLOWED_DOWNLOAD_HOSTS）的 https）、
+ * 路径遍历（name 无 / 或 ..）、shell 注入（name / version / sha256 严格白名单字符集）。
  *
  * @param release renderer 经 IPC 传来的 release payload
  * @throws UpdateError('downloading') 校验失败

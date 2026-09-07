@@ -26,7 +26,7 @@ export interface LatestReleaseInfo {
   version: string
   /** 原始 tag（如 'v0.9.0'） */
   tagName: string
-  /** GitHub Release body 原文 markdown */
+  /** Release body 原文 markdown */
   releaseNotes: string
   /** 发布时间 ISO 8601 */
   publishedAt: string
@@ -49,7 +49,8 @@ export interface LatestReleaseInfo {
 
 /**
  * 单个 Release 资产。
- * sha256 来自 GitHub asset.digest strip 'sha256:' 前缀；缺失时为 undefined。
+ * sha256 来自 GitHub asset.digest strip 'sha256:' 前缀，或 manifest fallback
+ * （AtomGit 源唯一来源）；缺失时为 undefined。
  */
 export interface ReleaseAsset {
   /** 文件名（如 'TaiJi-mac-arm64.dmg'） */
@@ -203,7 +204,7 @@ export interface LaunchResult {
 
 /**
  * 版本解析错误码（批次 3 信任锚 RC1）：update:download 请求的版本落后于权威 latest
- * （GitHub /releases/latest 实测值 ≠ 请求值）。renderer 收到此码后自动重新检查更新，
+ * （任一源胜出的 /releases/latest 实测值 ≠ 请求值）。renderer 收到此码后自动重新检查更新，
  * 拿到更新的 latest 再展示，而非重试旧版本（useAppUpdate.onUpdateError 处理）。
  *
  * 已并入 main 侧 types.ts 的 UpdateErrorCode 闭联合与 UPDATE_ERROR_MESSAGES 文案表。
