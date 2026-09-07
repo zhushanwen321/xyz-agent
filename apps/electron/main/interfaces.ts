@@ -14,7 +14,7 @@
  * @see docs/architecture/design.md §4.2 M1–M5
  */
 import type { BrowserWindow } from 'electron'
-import type { WindowState, LatestReleaseInfo, LaunchResult } from '@xyz-agent/shared'
+import type { WindowState, LatestReleaseInfo, LaunchResult, UpdateSource } from '@xyz-agent/shared'
 import type { BrowserViewManager } from './browser/browser-view-manager.js'
 import type { IUpdateOrchestrator } from './update/orchestrator.js'
 
@@ -176,6 +176,19 @@ export interface IReleaseChecker {
     currentVersion: string,
     opts?: { force?: boolean },
   ): Promise<LatestReleaseInfo | null>
+
+  /**
+   * 按 tag 从指定源精确查询 release（多源改造新增）。
+   *
+   * 透传式语义：源由调用方显式指定（对侧源推导在 orchestrator——从
+   * release.source 取补集），checker 保持无状态透传，不记忆「当前源」，
+   * 与 D1 门面定位一致。返回 normalize 后的 release 结构（含 assets）。
+   *
+   * @param source 查询的来源渠道
+   * @param tag 原始 tag（如 'v0.9.14'）
+   * @returns 命中返回 release 结构；该源无此 tag 返回 null
+   */
+  fetchReleaseByTag(source: UpdateSource, tag: string): Promise<LatestReleaseInfo | null>
 
   /**
    * 限流退避截止时刻（epoch ms，0 = 未限流）。可选：checker 不支持限额语义时不实现。

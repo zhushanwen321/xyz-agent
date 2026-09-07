@@ -1,6 +1,6 @@
 # 自动升级多源（AtomGit + GitHub）实施计划
 
-基线: （commit 后回填） | 来源设计: docs/design/update-multi-source.md | 日期: 2026-09-07
+基线: 6d3f76cdb | 来源设计: docs/design/update-multi-source.md | 日期: 2026-09-07
 
 审查证据：`.review/` 九份报告——r1 主审 4MF/5S + 影响面 6MF/4S → r2 0MF/2S + 1MF/4S → r3 0MF/3S + 1MF/1S → r4 双审 0MF（3S 全修入 v5）；第 5 轮独立四维度深度审查 0 P0（7 P1 / 7 P2 全修入 v6，commit 389883039）。当前 must-fix == 0。
 
@@ -38,7 +38,7 @@
 
 | Unit | 职责 | 领地（精确文件路径，均相对仓库根） | 依赖 | 隔离 | 验收条款 |
 |------|------|-----------------------------------|------|------|----------|
-| u-foundation | shared 类型扩展（UpdateSource/UpdateSourcePref/LatestReleaseInfo.source?/UpdateSettings.updateSource? + :69 注释中性化）+ `IReleaseChecker` 补 `fetchReleaseByTag(source, tag): Promise<LatestReleaseInfo \| null>`（§7.1/§7.2 interfaces 行） | `packages/shared/src/update.ts`；`apps/electron/main/interfaces.ts` | — | plain | `cd packages/shared && pnpm typecheck` 过；`cd apps/electron/main && npx vitest run` 既有测试全绿（类型扩展不破坏编译面） |
+| u-foundation | shared 类型扩展（UpdateSource/UpdateSourcePref/LatestReleaseInfo.source?/UpdateSettings.updateSource? + :69 注释中性化）+ `IReleaseChecker` 补 `fetchReleaseByTag(source, tag): Promise<LatestReleaseInfo \| null>`（§7.1/§7.2 interfaces 行）+ shared 包入口导出接线 | `packages/shared/src/update.ts`；`packages/shared/src/index.ts`（:151 显式命名导出列表追加两新类型名——该文件为显式列表非 `export *`，属共享接线点）；`apps/electron/main/interfaces.ts` | — | plain | `cd packages/shared && pnpm typecheck` 过；`cd apps/electron/main && npx vitest run` 既有测试全绿（类型扩展不破坏编译面） |
 | u-release-sources | 源适配层（D1/D2）：`fetchLatestRelease(source)` / `fetchReleaseByTag(source, tag)` + 两源 normalize（prerelease `=== true` 收窄、draft→undefined、publishedAt→''、htmlUrl 拼 gitcode.com 页面链接、asset 字段别名容错、形状守卫）+ manifest 从 assets 取直链 + 域常量单一来源导出（两源 API/下载域 + ALLOWED_HOSTS 集合） | `apps/electron/main/update/release-sources.ts`（新）；`apps/electron/main/update/__tests__/release-sources.test.ts`（新） | u-foundation | plain | normalize 表测全绿，断言至少含：prerelease 字符串 `"false"` 不误判 / draft null→undefined / assets 无 size / 形状坏抛可归类错误 / **两源全部产物 downloadUrl hostname ⊆ ALLOWED_HOSTS 防漂移** / by-tag 透传（§8 单测分工） |
 | u-source-resolver | auto 模式源顺序（D4）：settings 映射 / 代理短路 / 域名并行探测（GET Range 0-0 + 任何响应即可达 + `disableFlagPersistence: true` + 3s 超时）/ 进程内 TTL 1h 缓存 + 导出 `SourceOrder` 类型 | `apps/electron/main/update/source-resolver.ts`（新）；`apps/electron/main/test/source-resolver.test.ts`（新） | u-foundation | plain | 决策表测全绿：三偏好映射 / 代理短路不探测 / 双探测可达排序（undici resolve 与 curl httpStatusCode 两引擎等价判定）/ 双败回退 [github, atomgit] / tie-break github / TTL 命中不重复探测 / disableFlagPersistence 传参断言 |
 | u-diagnostics | error-log 诊断面（S1-S3 观测面）：`appendUpdateError` 增 `releaseSource` 字段 + 三类成功登记 source-selection（含源顺序/胜出源/探测结果/各源 latest tag）/ source-failover（from/to/manifest 来源）/ download-success（multiPart + engine），复用 512KB×2 轮转 | `apps/electron/main/update/error-log.ts`；`apps/electron/main/test/error-log.test.ts`（新） | u-foundation | plain | vitest：三类登记各落一条 JSONL 且字段齐 / releaseSource 字段透传 / 轮转通道不回退（既有轮转测试语义保持）/ 写入失败不抛（对齐既有容错） |
@@ -98,13 +98,14 @@ graph TD
 
 | Unit | 偏差 | 理由 | 登记日期 |
 |------|------|------|----------|
-| （空） | | | |
+| u-foundation | fetchReleaseByTag 做成 IReleaseChecker 必需方法（设计未明说可选性）；接口实现侧出现计划内中间态编译红（release-checker.ts / dev mock / handler 测试 mock 共 10 处 TS2420/TS2741 连锁），由 u-checker（实现方法）与存量测试迁移（补 mock）消解，vitest 全程绿（esbuild 剥类型） | 必需方法语义更准确：多源降级必经路径不存在「不支持」的 checker（同接口 getRateLimitedUntil 的可选先例注释明确是「不支持限额语义时不实现」，场景不同） | 2026-09-07 |
+| u-foundation | 设计 §7.1 称 update.ts 有「两处 GitHub API 限额注释」（:63/:70），实测仅 :69 一处 | 设计行号笔误；全文件核对无第二处，其余 GitHub 字样为字段来源的事实性描述非限流表述 | 2026-09-07 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u-foundation | pending | 0 | — |
+| u-foundation | committed | 1 | 本文件同 commit；shared typecheck exit 0 + main vitest 48 文件 761 用例全绿（两轮复核）+ main tsc TS2305 归零（计划内中间态红 10 处由 u-checker 消解） |
 | u-release-sources | pending | 0 | — |
 | u-source-resolver | pending | 0 | — |
 | u-diagnostics | pending | 0 | — |

@@ -4,6 +4,20 @@
  */
 
 /**
+ * 更新来源（发布渠道）。
+ * - 'github'：GitHub Releases（现状唯一源）
+ * - 'atomgit'：AtomGit Releases（发布流程自 GitHub 单向同步，内容一致）
+ */
+export type UpdateSource = 'github' | 'atomgit'
+
+/**
+ * 更新来源偏好（UpdateSettings.updateSource 的值域）。
+ * 'auto' = 自动决定源顺序（默认）；显式 'github' / 'atomgit' = 该源优先
+ * （优先级语义而非独占，任一环节失败仍自动经另一源完成升级）。
+ */
+export type UpdateSourcePref = 'auto' | UpdateSource
+
+/**
  * 最新 Release 信息（已解析、按平台分流后的结构）。
  * 由 main 进程 ReleaseChecker.checkForLatestRelease 返回，preload 透传给 renderer。
  */
@@ -24,6 +38,13 @@ export interface LatestReleaseInfo {
     winX64Exe?: ReleaseAsset
     linuxX64AppImage?: ReleaseAsset
   }
+  /**
+   * 该 release 的来源渠道（多源改造 D7）。
+   * 随 pending/preloaded 落盘 JSON 自然携带；undefined = 旧版落盘文件（向后兼容，
+   * 恢复后维持单源行为，不触发跨源降级）。消费点仅下载降级（确定对侧源），
+   * install 链路与前端状态机不读。
+   */
+  source?: UpdateSource
 }
 
 /**
@@ -66,7 +87,7 @@ export type UpdateState =
 export interface UpdateCheckResult {
   /** 检测到的新版信息；无新版/失败/被限额时为 null */
   info: LatestReleaseInfo | null
-  /** true = 本次 null 是因为 GitHub API 限额退避中（非「无新版」） */
+  /** true = 本次 null 是因为更新检查服务限流退避中（非「无新版」） */
   rateLimited: boolean
 }
 
@@ -121,12 +142,19 @@ export interface IProxyConfig {
  * - autoUpdate：启动时自动检查更新并提示下载（v6 demo 语义）。默认 true
  *   （2026-08-28 拍板，设计 §3.6 RM1；存量用户现状即自动检查，见 update-settings.ts）。
  *   可选字段：调用方可以只传部分字段做局部更新（setUpdateSettings 内部与现有值合并）。
+ * - updateSource：更新来源偏好（'auto' / 'github' / 'atomgit'）。默认/缺省 'auto'。
  */
 export interface UpdateSettings {
   /** 检测到新版时自动后台预下载 */
   preDownload: boolean
   /** 启动时自动检查更新并提示下载 */
   autoUpdate?: boolean
+  /**
+   * 更新来源偏好：'auto'（自动决定源顺序，默认）/ 'github' / 'atomgit'。
+   * 语义为「优先级」而非「独占」——显式选择某源 = 该源优先，失败仍自动降级另一源。
+   * 可选 + 缺省/非法值回退 'auto'：旧 settings 文件无此字段 = 'auto'（向后兼容）。
+   */
+  updateSource?: UpdateSourcePref
 }
 
 /**

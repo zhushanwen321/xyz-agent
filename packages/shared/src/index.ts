@@ -148,7 +148,7 @@ export {
   PI_THINKING_LEVELS,
   isPiLaunchPreset,
 } from './pi-preset'
-export type { LatestReleaseInfo, ReleaseAsset, UpdateStage, UpdateState, IProxyConfig, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResultStatus, LaunchResult, UpdateCheckResult, UpdateInstallResult } from './update'
+export type { UpdateSource, UpdateSourcePref, LatestReleaseInfo, ReleaseAsset, UpdateStage, UpdateState, IProxyConfig, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResultStatus, LaunchResult, UpdateCheckResult, UpdateInstallResult } from './update'
 export { LAUNCH_RESULT_STATUSES, UPDATE_STALE_RELEASE } from './update'
 // 用量统计类型（W1 数据层）
 export type { UsageMetrics, UsageRow, UsageStatsResult } from './usage-stats'
