@@ -91,6 +91,96 @@ async function editViaTui(
 
 // ──────────────────────── RPC 分支（G16） ────────────────────────
 
+/** RPC 循环内的 select/input 句柄（deps mock 优先，缺省回落 ctx.ui）。 */
+interface RpcIo {
+	select: (title: string, options: string[]) => Promise<string | undefined>;
+	input: (title: string, placeholder?: string) => Promise<string | undefined>;
+}
+
+/**
+ * 解析 RPC 循环的 input 句柄：
+ * ctx.ui.input 可用 → 用真实文本输入（custom 模板需要自由文本）；
+ * 不可用 → fallback 把 input 降级为单选项 select（占位符文本，仅保底）。
+ */
+function resolveRpcInput(ctx: RuleEditorContext, rpcDeps?: RuleEditorRpcDeps): RpcIo["input"] {
+	return rpcDeps?.input
+		?? (typeof ctx.ui.input === "function"
+			? (title: string, ph?: string) => ctx.ui.input!(title, ph)
+			: (title: string, ph?: string) => ctx.ui.select(title, [ph ?? ""]).then((v) => v === undefined ? undefined : v));
+}
+
+/** 单轮 RPC list 画面：当前规则集（applyOps 反映前序操作）+ 标签 + 选项。 */
+function buildRpcListState(
+	initialRules: readonly Rule[],
+	ops: RuleOp[],
+): { currentRules: Rule[]; ruleLabels: string[]; listOptions: string[] } {
+	const currentRules = applyOps([...initialRules], ops);
+	const ruleLabels = currentRules.map((r) => `[${r.action}] ${r.pattern}`);
+	const listOptions = [...ruleLabels, "[+ Add rule]", "[Done]"];
+	return { currentRules, ruleLabels, listOptions };
+}
+
+/**
+ * 选择了一条现有规则 → edit 模式（rpcEditFlow；ops 原地追加产生的 op）。
+ */
+async function handleRpcRuleSelection(
+	io: RpcIo,
+	listChoice: string,
+	ruleLabels: readonly string[],
+	currentRules: readonly Rule[],
+	ops: RuleOp[],
+): Promise<void> {
+	const ruleIdx = ruleLabels.indexOf(listChoice);
+	if (ruleIdx >= 0 && ruleIdx < currentRules.length) {
+		const existingRule = currentRules[ruleIdx];
+		if (existingRule !== undefined) {
+			const editOp = await rpcEditFlow(io.select, io.input, existingRule);
+			if (editOp !== undefined) {
+				ops.push(editOp);
+			}
+		}
+	}
+}
+
+/**
+ * RPC 循环主体：list → action select → fill input → ... 直到 Done / cancel。
+ *
+ * G16：每次 op 后 listOptions 更新（反映前序操作）。
+ */
+async function runRpcLoop(
+	io: RpcIo,
+	initialRules: readonly Rule[],
+	sessionIdCounter: () => string,
+): Promise<RuleEditorResult> {
+	const ops: RuleOp[] = [];
+
+	for (;;) {
+		// 构建 listOptions（G16：用 applyOps 反映前序操作）
+		const { currentRules, ruleLabels, listOptions } = buildRpcListState(initialRules, ops);
+
+		const listChoice = await io.select("[pi-permission] Permission Rules", listOptions);
+		if (listChoice === undefined) {
+			// cancel
+			return undefined;
+		}
+
+		if (listChoice === "[Done]") {
+			return ops.length > 0 ? ops : undefined;
+		}
+
+		if (listChoice === "[+ Add rule]") {
+			const op = await rpcAddFlow(io.select, io.input, sessionIdCounter);
+			if (op !== undefined) {
+				ops.push(op);
+			}
+			continue;
+		}
+
+		// 选择了一条现有规则 → edit 模式
+		await handleRpcRuleSelection(io, listChoice, ruleLabels, currentRules, ops);
+	}
+}
+
 /**
  * RPC 循环编辑：list → action select → fill input → ... 直到 Done / cancel。
  *
@@ -103,52 +193,11 @@ export async function editViaRpc(
 	sessionIdCounter: () => string,
 	rpcDeps?: RuleEditorRpcDeps,
 ): Promise<RuleEditorResult> {
-	const select = rpcDeps?.select ?? ctx.ui.select;
-	// ctx.ui.input 可用 → 用真实文本输入（custom 模板需要自由文本）；
-	// 不可用 → fallback 把 input 降级为单选项 select（占位符文本，仅保底）。
-	const input = rpcDeps?.input
-		?? (typeof ctx.ui.input === "function"
-			? (title: string, ph?: string) => ctx.ui.input!(title, ph)
-			: (title: string, ph?: string) => ctx.ui.select(title, [ph ?? ""]).then((v) => v === undefined ? undefined : v));
-
-	const ops: RuleOp[] = [];
-
-	for (;;) {
-		// 构建 listOptions（G16：用 applyOps 反映前序操作）
-		const currentRules = applyOps([...initialRules], ops);
-		const ruleLabels = currentRules.map((r) => `[${r.action}] ${r.pattern}`);
-		const listOptions = [...ruleLabels, "[+ Add rule]", "[Done]"];
-
-		const listChoice = await select("[pi-permission] Permission Rules", listOptions);
-		if (listChoice === undefined) {
-			// cancel
-			return undefined;
-		}
-
-		if (listChoice === "[Done]") {
-			return ops.length > 0 ? ops : undefined;
-		}
-
-		if (listChoice === "[+ Add rule]") {
-			const op = await rpcAddFlow(select, input, sessionIdCounter);
-			if (op !== undefined) {
-				ops.push(op);
-			}
-			continue;
-		}
-
-		// 选择了一条现有规则 → edit 模式
-		const ruleIdx = ruleLabels.indexOf(listChoice);
-		if (ruleIdx >= 0 && ruleIdx < currentRules.length) {
-			const existingRule = currentRules[ruleIdx];
-			if (existingRule !== undefined) {
-				const editOp = await rpcEditFlow(select, input, existingRule);
-				if (editOp !== undefined) {
-					ops.push(editOp);
-				}
-			}
-		}
-	}
+	const io: RpcIo = {
+		select: rpcDeps?.select ?? ctx.ui.select,
+		input: resolveRpcInput(ctx, rpcDeps),
+	};
+	return await runRpcLoop(io, initialRules, sessionIdCounter);
 }
 
 /** RPC add flow：选模板 → fill。 */

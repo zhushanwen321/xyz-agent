@@ -107,3 +107,56 @@ describe('M5-04: step1 hasOverride 判定含 models/quota（catalog 条目保留
     expect(readAuthRaw().openai).toEqual({ type: 'api_key', key: 'sk-test' })
   })
 })
+
+describe('step1 分支覆盖补充：OAuth 冲突 / auth 读失败 / 写失败', () => {
+  it('OAuth 冲突：auth.json 已有 oauth 凭据 → skipped，models.json 条目不动，auth.json 不被覆盖', async () => {
+    writeModels({ openai: { apiKey: 'sk-test' } })
+    const authPath = join(agentDir, 'auth.json')
+    writeFileSync(authPath, JSON.stringify({ openai: { type: 'oauth', access: 'at', refresh: 'rt', expires: 123 } }))
+    const authStorage = new AuthStorage(authPath)
+
+    const report = await migrateLegacyProviderConfig(new PiConfigStore(), authStorage, makeCredentialWriter(authStorage))
+
+    expect(report.skipped).toContain('openai')
+    expect(report.migrated).not.toContain('openai')
+    // models.json 条目原样（apiKey 保留，等用户处理 OAuth 冲突）
+    expect((readModelsRaw().providers as Record<string, unknown>).openai).toEqual({ apiKey: 'sk-test' })
+    // auth.json 的 oauth 凭据未被 api_key 覆盖
+    expect(readAuthRaw().openai).toMatchObject({ type: 'oauth' })
+  })
+
+  it('auth.json 读失败不阻断：get 抛错时继续迁移（warn + migrated）', async () => {
+    writeModels({ openai: { apiKey: 'sk-test' } })
+    const authStorage = new AuthStorage(join(agentDir, 'auth.json'))
+    const failingAuthStorage = {
+      get: async () => {
+        throw new Error('disk error')
+      },
+    } as unknown as AuthStorage
+
+    const report = await migrateLegacyProviderConfig(new PiConfigStore(), failingAuthStorage, makeCredentialWriter(authStorage))
+
+    // OAuth 冲突检查跳过（warn），迁移照常执行
+    expect(report.skipped).toEqual([])
+    expect(report.migrated).toContain('openai')
+    expect(readAuthRaw().openai).toEqual({ type: 'api_key', key: 'sk-test' })
+  })
+
+  it('凭据写入失败 → failed + errors（reason 透传错误消息），models.json 条目不动', async () => {
+    writeModels({ openai: { apiKey: 'sk-test' } })
+    const authStorage = new AuthStorage(join(agentDir, 'auth.json'))
+    const throwingWriter: CredentialWriter = {
+      saveCredential: async () => {
+        throw new Error('boom')
+      },
+    }
+
+    const report = await migrateLegacyProviderConfig(new PiConfigStore(), authStorage, throwingWriter)
+
+    expect(report.failed).toContain('openai')
+    expect(report.errors).toContain('openai: boom')
+    expect(report.migrated).not.toContain('openai')
+    // models.json 条目保留（apiKey 未迁出，原样）
+    expect((readModelsRaw().providers as Record<string, unknown>).openai).toEqual({ apiKey: 'sk-test' })
+  })
+})

@@ -68,7 +68,7 @@ const appendUpdateErrorMock = vi.mocked(appendUpdateError)
 
 // ─── fixture ─────────────────────────────────────────────────────
 
-const ASSET_NAME = 'TaiJi-9.9.9-mac-arm64.zip'
+const ASSET_NAME = 'TaiJi-9.9.9-mac-arm64.dmg'
 const ASSET_CONTENT = 'manual asset payload for claim test'
 
 /** 独立于 hash.ts 流式实现的 sha256 计算（node:crypto 一次性 update） */
@@ -87,7 +87,7 @@ function makeRelease(assetOverride?: {
     publishedAt: '2026-08-30T00:00:00Z',
     htmlUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/v9.9.9',
     assets: {
-      macArm64Zip: {
+      macArm64Dmg: {
         name: ASSET_NAME,
         downloadUrl: `https://example.invalid/${ASSET_NAME}`,
         size: assetOverride?.size ?? Buffer.byteLength(ASSET_CONTENT),
@@ -199,7 +199,7 @@ describe('u3-claim triple-check', () => {
   it('sha256 missing in release asset: rejects (宁拒不猜), logs manual-claim', async () => {
     const candidatePath = placeCandidate(ASSET_NAME, ASSET_CONTENT)
     const release = makeRelease()
-    delete release.assets.macArm64Zip?.sha256
+    delete release.assets.macArm64Dmg?.sha256
 
     const result = await tryClaimManualAsset(release)
 
@@ -239,7 +239,7 @@ describe('u3-claim noise control (no log on common misses)', () => {
 
   it('no platform asset in release: returns null without logging', async () => {
     const release = makeRelease()
-    delete release.assets.macArm64Zip
+    delete release.assets.macArm64Dmg
 
     const result = await tryClaimManualAsset(release)
 

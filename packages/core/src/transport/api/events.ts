@@ -17,7 +17,8 @@
  */
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 
-type MessageHandler = (msg: ServerMessage) => void
+/** ServerMessage 订阅 handler 签名（on/off/onGlobal/onCrossSession 的公开参数类型）。 */
+export type MessageHandler = (msg: ServerMessage) => void
 
 /**
  * 安全遍历 handler 集合（M4：单 handler 抛错不中断同通道剩余订阅者）。

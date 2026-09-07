@@ -74,9 +74,9 @@ const MAC_RELEASE: LatestReleaseInfo = {
   publishedAt: '',
   htmlUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/tag/v0.9.0',
   assets: {
-    macArm64Zip: {
-      name: 'mac.zip',
-      downloadUrl: 'https://example.invalid/mac.zip',
+    macArm64Dmg: {
+      name: 'mac.dmg',
+      downloadUrl: 'https://example.invalid/mac.dmg',
       size: TEST_CONTENT.length,
       sha256: TEST_SHA256,
     },
@@ -95,7 +95,7 @@ const WIN_RELEASE: LatestReleaseInfo = {
   },
 }
 
-const MAC_ASSET: ReleaseAsset = MAC_RELEASE.assets.macArm64Zip!
+const MAC_ASSET: ReleaseAsset = MAC_RELEASE.assets.macArm64Dmg!
 
 function makeContentResponse(content: Buffer): Response {
   return new Response(new Uint8Array(content), {

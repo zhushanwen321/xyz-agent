@@ -22,48 +22,74 @@ const ERROR_PREVIEW_CHARS = 20;
  * - 多问题（questions.length > 1）时每个 question 必须有非空 header
  *
  * 错误消息面向 LLM：除描述违规外，附带一句修复指引（如何改），对结构误用附 Correct 正例。
+ *
+ * 主函数只留编排：逐 question 依序跑「文本 → 唯一性 → option labels」，再跑
+ * 多问题 header 校验与 header 长度校验。各阶段提取为独立 helper（?? 链按序短路求值，
+ * 与原 early-return 顺序一致）。校验顺序即错误优先级，不可调换。
  */
 export function validateInput(questions: InputQuestion[]): string | null {
 	const seenQuestions = new Set<string>();
 
 	for (const q of questions) {
 		const qt = q.question;
-
-		// 1a. question 文本长度上限（key 有界）
-		if (qt.length > QUESTION_MAX_CHARS) {
-			return `Question text exceeds ${QUESTION_MAX_CHARS} chars: "${qt.slice(0, ERROR_PREVIEW_CHARS)}...". Shorten it to a single concise decision; move extra context into the context field.`;
-		}
-		// 1b. question 文本无控制字符（key 可预测，不影响下游渲染/解析）
-		if (CONTROL_CHAR_RE.test(qt)) {
-			return `Question text must not contain control characters (incl. newlines): "${qt.slice(0, ERROR_PREVIEW_CHARS)}...". Use plain single-line text; split multi-part questions into separate entries.`;
-		}
-
-		// 1c. question 文本唯一
-		if (seenQuestions.has(qt)) {
-			return `Duplicate question: "${qt}". Each question text must be unique; merge duplicates or rephrase one to differ.`;
-		}
-		seenQuestions.add(qt);
-
-		// 2. option 元素必须是 {label, description} 对象，不能是 string。
-		//    弱模型最高频误用："options":["A","B"]。schema 层已放宽让 string 进来，这里友好拦截
-		//    （InputQuestion.options 是 (Option | string)[]，typeof 收窄后 opt 为 Option）。
-		const seenLabels = new Set<string>();
-		for (const opt of q.options) {
-			if (typeof opt === "string") {
-				return `Options for question "${qt}" must be an array of {label, description} objects, not strings. Correct: "options":[{"label":"A","description":"..."},{"label":"B","description":"..."}]`;
-			}
-			// opt 已收窄为 Option
-			if (opt.label.trim() === "") {
-				return `Option label must not be empty in question "${qt}". Give every option a distinct, descriptive label.`;
-			}
-			if (seenLabels.has(opt.label)) {
-				return `Duplicate option label "${opt.label}" in question "${qt}". Options must be mutually exclusive — reword one so each label maps to a distinct choice.`;
-			}
-			seenLabels.add(opt.label);
-		}
+		const perQuestionError =
+			checkQuestionText(qt) ??
+			checkDuplicateQuestion(qt, seenQuestions) ??
+			checkOptionLabels(qt, q.options);
+		if (perQuestionError) return perQuestionError;
 	}
 
-	// 3. 多问题时 header 必填且非空
+	return checkMultiQuestionHeaders(questions) ?? checkHeaderLengths(questions);
+}
+
+/** 1a. question 文本长度上限（key 有界）；1b. 无控制字符（key 可预测，不影响下游渲染/解析）。 */
+function checkQuestionText(qt: string): string | null {
+	if (qt.length > QUESTION_MAX_CHARS) {
+		return `Question text exceeds ${QUESTION_MAX_CHARS} chars: "${qt.slice(0, ERROR_PREVIEW_CHARS)}...". Shorten it to a single concise decision; move extra context into the context field.`;
+	}
+	if (CONTROL_CHAR_RE.test(qt)) {
+		return `Question text must not contain control characters (incl. newlines): "${qt.slice(0, ERROR_PREVIEW_CHARS)}...". Use plain single-line text; split multi-part questions into separate entries.`;
+	}
+	return null;
+}
+
+/** 1c. question 文本唯一。未重复时登记到 seenQuestions（调用方依赖此副作用）。 */
+function checkDuplicateQuestion(qt: string, seenQuestions: Set<string>): string | null {
+	if (seenQuestions.has(qt)) {
+		return `Duplicate question: "${qt}". Each question text must be unique; merge duplicates or rephrase one to differ.`;
+	}
+	seenQuestions.add(qt);
+	return null;
+}
+
+/**
+ * 2. option 元素必须是 {label, description} 对象，不能是 string。
+ *    弱模型最高频误用："options":["A","B"]。schema 层已放宽让 string 进来，这里友好拦截
+ *    （InputQuestion.options 是 (Option | string)[]，typeof 收窄后 opt 为 Option）。
+ */
+function checkOptionLabels(qt: string, options: InputQuestion["options"]): string | null {
+	const seenLabels = new Set<string>();
+	for (const opt of options) {
+		if (typeof opt === "string") {
+			return `Options for question "${qt}" must be an array of {label, description} objects, not strings. Correct: "options":[{"label":"A","description":"..."},{"label":"B","description":"..."}]`;
+		}
+		// opt 已收窄为 Option
+		if (opt.label.trim() === "") {
+			return `Option label must not be empty in question "${qt}". Give every option a distinct, descriptive label.`;
+		}
+		if (seenLabels.has(opt.label)) {
+			return `Duplicate option label "${opt.label}" in question "${qt}". Options must be mutually exclusive — reword one so each label maps to a distinct choice.`;
+		}
+		seenLabels.add(opt.label);
+	}
+	return null;
+}
+
+/**
+ * 3. 多问题时 header 必填且非空；S3: header 唯一——重复 header 会导致 askUserKey 碰撞，
+ * 后一个 question 的 __other 覆盖前一个（协议 helper 用 header 作 answers 读取 key）。
+ */
+function checkMultiQuestionHeaders(questions: InputQuestion[]): string | null {
 	if (questions.length > 1) {
 		for (const q of questions) {
 			if (!q.header || q.header.trim() === "") {
@@ -71,8 +97,6 @@ export function validateInput(questions: InputQuestion[]): string | null {
 			}
 		}
 
-		// S3: 多问题时 header 唯一——重复 header 会导致 askUserKey 碰撞，
-		// 后一个 question 的 __other 覆盖前一个（协议 helper 用 header 作 answers 读取 key）。
 		const seenHeaders = new Set<string>();
 		for (const q of questions) {
 			const h = q.header!.trim();
@@ -82,14 +106,18 @@ export function validateInput(questions: InputQuestion[]): string | null {
 			seenHeaders.add(h);
 		}
 	}
+	return null;
+}
 
-	// 4. header 长度上限（若提供）。单/多问题均校验：超出会在 tab 栏被静默截断，
-	//    这里提前拒绝，让 LLM 拿到可修复错误而非残缺 UI（兑现 schema description 的 ≤12 契约）。
+/**
+ * 4. header 长度上限（若提供）。单/多问题均校验：超出会在 tab 栏被静默截断，
+ * 这里提前拒绝，让 LLM 拿到可修复错误而非残缺 UI（兑现 schema description 的 ≤12 契约）。
+ */
+function checkHeaderLengths(questions: InputQuestion[]): string | null {
 	for (const q of questions) {
 		if (q.header !== undefined && q.header.length > HEADER_MAX_CHARS) {
 			return `Header exceeds ${HEADER_MAX_CHARS} chars: "${q.header.slice(0, ERROR_PREVIEW_CHARS)}..." in question "${q.question}". Shorten it; longer headers are truncated in the tab bar.`;
 		}
 	}
-
 	return null;
 }

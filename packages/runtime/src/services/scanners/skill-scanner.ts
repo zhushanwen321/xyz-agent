@@ -16,38 +16,52 @@ const BYTES_1MB = BYTES_1KB * BYTES_1KB
 export function parseSkillMd(content: string): { description: string; triggers: string[]; argumentHint?: string } {
   const { frontmatter, bodyStartLine } = extractFrontmatter(content)
   const lines = content.split('\n')
-  let description = ''
-  const triggers: string[] = []
 
   // 从 frontmatter 中提取 description 字段（支持 "..." / '...' / 裸值）
-  const fmDescMatch = frontmatter
-    .match(/^description:\s*(?:"([^"]+)"|'([^']+)'|(.+?))\s*$/m)
-  const fmDesc = fmDescMatch?.[1] ?? fmDescMatch?.[2] ?? fmDescMatch?.[3]?.trim()
+  const fmDesc = extractQuotedOrPlainField(frontmatter, /^description:\s*(?:"([^"]+)"|'([^']+)'|(.+?))\s*$/m)
 
   // 正文 description：frontmatter 后第一个非标题、非空行
+  const description = extractBodyDescription(lines, bodyStartLine)
+
+  // 从 frontmatter 中提取 argument-hint 字段（支持 "..." / '...' / 裸值）
+  const argumentHint = extractQuotedOrPlainField(frontmatter, /^argument-hint:\s*(?:"([^"]+)"|'([^']+)'|(.+?))\s*$/m)
+
+  // 优先用 frontmatter description 提取 triggers（含触发词模式）
+  const triggers = extractTriggers(fmDesc ?? description)
+
+  return { description, triggers, argumentHint }
+}
+
+/**
+ * 从 frontmatter 提取单行字符串字段（"..." / '...' / 裸值三选一捕获组）。
+ * 引号值剥引号，裸值 trim；字段缺失/空值返回 undefined。
+ */
+function extractQuotedOrPlainField(frontmatter: string, fieldPattern: RegExp): string | undefined {
+  const m = frontmatter.match(fieldPattern)
+  return m?.[1] ?? m?.[2] ?? m?.[3]?.trim()
+}
+
+/** 正文 description：frontmatter 后第一个非空、非标题行（截断到 DESCRIPTION_MAX_LENGTH），无则空串。 */
+function extractBodyDescription(lines: string[], bodyStartLine: number): string {
   for (let i = bodyStartLine; i < lines.length; i++) {
     const line = lines[i].trim()
     if (!line) continue
     if (line.startsWith('#')) continue
-    description = line.slice(0, DESCRIPTION_MAX_LENGTH)
-    break
+    return line.slice(0, DESCRIPTION_MAX_LENGTH)
   }
+  return ''
+}
 
-  // 从 frontmatter 中提取 argument-hint 字段（支持 "..." / '...' / 裸值）
-  const hintRaw = frontmatter
-    .match(/^argument-hint:\s*(?:"([^"]+)"|'([^']+)'|(.+?))\s*$/m)
-  const argumentHint = hintRaw?.[1] ?? hintRaw?.[2] ?? hintRaw?.[3]?.trim()
-
-  // 优先用 frontmatter description 提取 triggers（含触发词模式）
-  const triggerSource = fmDesc ?? description
+/** 从 description 源文本提取触发词（"..." / “...” 引号包裹，长度在 [TRIGGER_MIN_LENGTH, TRIGGER_MAX_LENGTH]）。 */
+function extractTriggers(triggerSource: string): string[] {
+  const triggers: string[] = []
   const triggerPattern = /["\u201c]([^"\u201d\u2018\u2019]+?)["\u201d]/g
   let match: RegExpExecArray | null
   while ((match = triggerPattern.exec(triggerSource)) !== null) {
     const t = match[1].trim()
     if (t.length >= TRIGGER_MIN_LENGTH && t.length <= TRIGGER_MAX_LENGTH) triggers.push(t)
   }
-
-  return { description, triggers, argumentHint }
+  return triggers
 }
 
 function formatFileSize(bytes: number): string {

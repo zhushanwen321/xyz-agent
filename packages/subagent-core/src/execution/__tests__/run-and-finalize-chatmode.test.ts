@@ -63,11 +63,15 @@ function makeTmpAgentDir(): string {
 }
 
 function makePi(): PiLike & {
-  appendEntry: ReturnType<typeof vi.fn>;
-  events: { emit: ReturnType<typeof vi.fn> };
-  sendMessage: ReturnType<typeof vi.fn>;
+  appendEntry: ReturnType<typeof vi.fn<(customType: string, data?: unknown) => void>>;
+  events: { emit: ReturnType<typeof vi.fn<(channel: string, data: unknown) => void>> };
+  sendMessage: ReturnType<typeof vi.fn<(message: Parameters<PiLike["sendMessage"]>[0], options?: Parameters<PiLike["sendMessage"]>[1]) => void>>;
 } {
-  return { appendEntry: vi.fn(), events: { emit: vi.fn() }, sendMessage: vi.fn() };
+  return {
+    appendEntry: vi.fn((customType: string, data?: unknown) => {}),
+    events: { emit: vi.fn((channel: string, data: unknown) => {}) },
+    sendMessage: vi.fn(() => {}),
+  };
 }
 
 function makeResult(success: boolean): AgentResult {
@@ -120,7 +124,7 @@ describe("runAndFinalize chatMode idle 分流 (M2-A)", () => {
 
   beforeEach(() => {
     agentDir = makeTmpAgentDir();
-    modelService = new ModelConfigService({ agentDir });
+    modelService = new ModelConfigService({ agentDir, cwd: agentDir });
     service = new SubagentService({ cwd: agentDir, modelService });
     service.initSession({ pi: makePi(), sessionId: "root-session" });
     internals = service as unknown as ServiceInternals;
@@ -141,6 +145,8 @@ describe("runAndFinalize chatMode idle 分流 (M2-A)", () => {
       agentDir,
       skillDirs: [],
       mainCwd: agentDir,
+      sessionRootId: "s-root",
+      rootCwd: agentDir,
     };
     const identity = {
       agent: "general-purpose",

@@ -68,6 +68,7 @@ export function mkCtx(
     ui: mkUi(),
     // pi 在 xyz-agent 下以 rpc 子进程模式运行；rpc 模式 hasUI 为 true（SDK 契约注释）
     mode: "rpc",
+    scopedModels: [],
     hasUI: true,
     cwd: "/tmp",
     sessionManager: {
@@ -168,6 +169,7 @@ export function mkPi(
     registerTool: vi.fn(),
     registerCommand: vi.fn(),
     registerShortcut: vi.fn(),
+    registerMarkdownTransformer: vi.fn(),
     registerFlag: vi.fn(),
     getFlag: vi.fn(() => undefined),
     registerMessageRenderer: vi.fn(),

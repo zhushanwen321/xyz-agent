@@ -30,6 +30,12 @@ export interface QuotaPreset {
   helpUrl?: string
   /** 帮助说明文案。 */
   helpText?: string
+  /**
+   * 资源维度 fetcher 标记（D1-1，timeout-audit-hygiene-batch）：true = 查询需要
+   * workspace 配置（Settings 显示 Workspace 地址输入框；未配置时查询报 not_configured）。
+   * 账号维度 fetcher（凭证即决定账号）省略/false。
+   */
+  requiresWorkspace?: boolean
 }
 
 /** 内置 5 个 provider 预设（SSOT）。 */
@@ -88,6 +94,8 @@ export const QUOTA_PRESETS: QuotaPreset[] = [
     match: {
       namePattern: '\\bopencode\\b',
     },
+    // 资源维度：额度挂在具体 workspace 下（同一 cookie 可有多个 workspace），必须用户配置
+    requiresWorkspace: true,
     helpUrl: 'https://opencode.ai/',
     helpText: '登录 opencode.ai 后，从浏览器 DevTools → Application → Cookies 复制完整 cookie 字符串',
   },

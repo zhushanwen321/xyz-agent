@@ -170,9 +170,7 @@ export function truncLine(text: string, maxWidth: number): string {
   if (visibleWidth(flat) <= maxWidth) return flat;
 
   const targetWidth = Math.max(0, maxWidth - 1);
-  let result = "";
-  let currentWidth = 0;
-  let activeStyles: string[] = [];
+  const state: TruncState = { result: "", currentWidth: 0, activeStyles: [] };
   let i = 0;
 
   while (i < flat.length) {
@@ -180,57 +178,86 @@ export function truncLine(text: string, maxWidth: number): string {
     SGR_STICKY_RE.lastIndex = i;
     const ansiMatch = SGR_STICKY_RE.exec(flat);
     if (ansiMatch) {
-      const code = ansiMatch[0];
-      result += code;
-
-      if (code === "\x1b[0m" || code === "\x1b[m") {
-        activeStyles = []; // reset → 清空栈
-      } else {
-        activeStyles.push(code);
-      }
-      i += code.length;
+      applySgr(state, ansiMatch[0]);
+      i += ansiMatch[0].length;
       continue;
     }
 
-    // 找到下一段纯文本(非 ANSI)的边界：下一处 SGR 序列起点（或串尾）。
-    // indexOf 跳到 ESC 候选位，仅对 ESC 位置做一次 sticky 判定；非 SGR ESC
-    // （OSC/\x1b[K/裸 \x1b）不构成边界、并入文本段（end 推进到该 ESC 之后继续找），
-    // 与旧逐字符 while 的停点集合逐字节一致。
-    let end = flat.length;
-    for (
-      let escPos = flat.indexOf("\x1b", i);
-      escPos !== -1;
-      escPos = flat.indexOf("\x1b", escPos + 1)
-    ) {
-      if (isSgrStart(flat, escPos)) {
-        end = escPos;
-        break;
-      }
-    }
-
-    // 按 grapheme 迭代这段文本,累加到 targetWidth
-    const textPortion = flat.slice(i, end);
-    for (const seg of segmenter.segment(textPortion)) {
-      const grapheme = seg.segment;
-      const graphemeWidth = visibleWidth(grapheme);
-
-      if (currentWidth + graphemeWidth > targetWidth) {
-        // 截断:重应用 active 样式 + 省略号 + reset。
-        // reset 不可省——否则行尾颜色渗透到 padToVisible 的填充空格、乃至下一帧行，
-        // 视觉上表现为颜色重影（被截断的着色延伸到行尾之外）。
-        // 但纯文本输入（activeStyles 为空）不发 reset——\x1b[0m 是全局重置，
-        // 会清除 theme.bg 施加的外层背景色（背景框内省略号后失去背景的根因）。
-        return result + activeStyles.join("") + "…" + (activeStyles.length ? "\x1b[0m" : "");
-      }
-
-      result += grapheme;
-      currentWidth += graphemeWidth;
+    const end = findNextSgrStart(flat, i);
+    if (consumeGraphemes(state, flat.slice(i, end), targetWidth)) {
+      return truncTail(state);
     }
     i = end;
   }
 
   // 理论上 visibleWidth 检查已提前返回,此行兜底
-  return result + activeStyles.join("") + "…" + (activeStyles.length ? "\x1b[0m" : "");
+  return truncTail(state);
+}
+
+/** truncLine 遍历累积态：已产出文本 / 已占可见宽度 / active SGR 栈。 */
+interface TruncState {
+  result: string;
+  currentWidth: number;
+  activeStyles: string[];
+}
+
+/** 消费一个 SGR 序列：写入 result 并维护 activeStyles 栈（reset 清空 / 其他 push）。 */
+function applySgr(state: TruncState, code: string): void {
+  state.result += code;
+  if (code === "\x1b[0m" || code === "\x1b[m") {
+    state.activeStyles = []; // reset → 清空栈
+  } else {
+    state.activeStyles.push(code);
+  }
+}
+
+/**
+ * 找 flat 自 from 起下一段纯文本的终点：下一处 SGR 序列起点（或串尾）。
+ *
+ * indexOf 跳到 ESC 候选位，仅对 ESC 位置做一次 sticky 判定；非 SGR ESC
+ * （OSC/\x1b[K/裸 \x1b）不构成边界、并入文本段（返回值推进到该 ESC 之后继续找），
+ * 与旧逐字符 while 的停点集合逐字节一致。
+ */
+function findNextSgrStart(s: string, from: number): number {
+  for (
+    let escPos = s.indexOf("\x1b", from);
+    escPos !== -1;
+    escPos = s.indexOf("\x1b", escPos + 1)
+  ) {
+    if (isSgrStart(s, escPos)) {
+      return escPos;
+    }
+  }
+  return s.length;
+}
+
+/**
+ * 按 grapheme 迭代 textPortion 累加到 targetWidth；超宽时停笔并返回 true
+ * （截断点已到达，由调用方收尾）。
+ */
+function consumeGraphemes(state: TruncState, textPortion: string, targetWidth: number): boolean {
+  for (const seg of segmenter.segment(textPortion)) {
+    const grapheme = seg.segment;
+    const graphemeWidth = visibleWidth(grapheme);
+    if (state.currentWidth + graphemeWidth > targetWidth) {
+      return true;
+    }
+    state.result += grapheme;
+    state.currentWidth += graphemeWidth;
+  }
+  return false;
+}
+
+/**
+ * 截断尾部：重应用 active 样式 + 省略号 + reset。
+ *
+ * reset 不可省——否则行尾颜色渗透到 padToVisible 的填充空格、乃至下一帧行，
+ * 视觉上表现为颜色重影（被截断的着色延伸到行尾之外）。
+ * 但纯文本输入（activeStyles 为空）不发 reset——\x1b[0m 是全局重置，
+ * 会清除 theme.bg 施加的外层背景色（背景框内省略号后失去背景的根因）。
+ */
+function truncTail(state: TruncState): string {
+  return state.result + state.activeStyles.join("") + "…" + (state.activeStyles.length ? "\x1b[0m" : "");
 }
 
 /**

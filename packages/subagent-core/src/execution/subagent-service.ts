@@ -42,7 +42,8 @@ import { PiEngine } from "./engine/engines/pi/pi-engine.ts";
 import { PI_POOL_KEY } from "./engine/engines/pi/pi-engine.ts";
 import type { ChatRoundTicket, PiEngineService } from "./engine/engines/pi/pi-engine.ts";
 import type { EnginePort, RunContext } from "./engine/port.ts";
-import { DEFAULT_ENGINE_ID, getEngine } from "./engine/registry.ts";
+import { DEFAULT_ENGINE_ID, getEngine, listEngines } from "./engine/registry.ts";
+import { validateModelForEngine, withCrossEngineHint } from "./engine/model-validation.ts";
 import { type EngineRouteResult, routeEngineForHost } from "./engine/routing.ts";
 import type { AgentOutcome } from "./engine/types.ts";
 import { ManifestStore } from "./manifest-store.ts";
@@ -58,7 +59,6 @@ import type { StatusFilter } from "./record-store.ts";
 import { RecordStore } from "./record-store.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import {
-  getChildByRecord,
   killAllSpawnedChildren,
   killRecordChildWithEscalation,
   registerSpawnedChildForRecord,
@@ -70,9 +70,9 @@ import {
 // 双挂载点之一在编排层热路径（deliverChatMessage，prompt 发出后），disarm 站点散布
 // cancel/close/终态化路径（原语幂等，见 settled-watchdog.ts 头注释）。
 import {
-  armSettledWatchdog,
+  armMidRoundNoProgress,
   disarmSettledWatchdog,
-  SETTLED_WATCHDOG_TIMEOUT_MS,
+  type SettledWatchdogFireInfo,
 } from "./settled-watchdog.ts";
 import { isIdle, isResumable } from "./lifecycle-predicates.ts";
 import { startIdleGc } from "./idle-gc.ts";
@@ -96,6 +96,7 @@ import { ForkDepthExceededError } from "./types.ts";
 import { DEFAULT_AGENT_NAME } from "./types.ts";
 import { registerGlobalObservability, UiRequestObservability } from "./ui-request-observability.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
+import { toErrorMessage } from "../core/error-message.ts";
 
 const logger = getLogger("subagents");
 
@@ -153,6 +154,9 @@ const disposedUiRequestStub: UiRequestHandler = () => Promise.resolve({ cancelle
  *  session_start 时从 ctx.ui 注入，background 执行期间用于把合并后的 text_delta
  *  通过 setWidget 通道转发到 RPC stdout（不经 sendMessage 的持久化路径）。 */
 export type { StreamSink } from "./stream-sink.ts";
+
+// pi 依赖端口类型 re-export：测试侧 mock PiLike 历来从本模块取（与 StreamSink 同构的门面模式）
+export type { PiLike } from "./notify-host.ts";
 
 /**
  * Service 构造参数（进程级）。
@@ -631,14 +635,14 @@ export class SubagentService {
       this.store.recoverOrphanRecords(this.sessionRootId ?? undefined, this.mainSessionFile);
     } catch (err) {
       logger.warn("[subagents] orphan recovery failed", {
-        reason: err instanceof Error ? err.message : String(err),
+        reason: toErrorMessage(err),
       });
     }
     try {
       this.store.recoverEntryOnlyOrphans(this.mainSessionFile, this.sessionRootId ?? undefined);
     } catch (err) {
       logger.warn("[subagents] entry-only orphan recovery failed", {
-        reason: err instanceof Error ? err.message : String(err),
+        reason: toErrorMessage(err),
       });
     }
   }
@@ -1141,8 +1145,14 @@ export class SubagentService {
     // mode 固定 background（sync 模式已删除）
     const mode: ExecutionMode = "background";
 
-    // ── 1. IDENTITY 解析（确认 → agentConfig → resolveModel）──
-    const identity = await this.resolveIdentity(opts);
+    // ── 1. IDENTITY 前置解析：agentConfig（agent .md 加载）保持在最前 ──
+    // [u-h2 D2-1] 路由先行：model 解析从「路由之前」移到「路由之后、按目标引擎分支」
+    // （修 F2-A/B 时序根因——曾 :850 先解析 model 再 :867 路由）。agentConfig 是路由
+    // 第二层输入（frontmatter engine）必须先解析；显式 agent ref 校验语义不变。
+    const agent = opts.agent ?? DEFAULT_AGENT_NAME;
+    const agentConfig = opts.agent
+      ? this.modelService.getRequiredAgentConfig(opts.agent)
+      : undefined;
 
     // ── 1.5 引擎路由（D2 单轨 + D3-② 路由单点：统一经 routeEngineForHost）──
     // 唯一实现在 engine/routing.ts（pi 同步短路 + registry 注入 + 兜底回本地 pi 实例
@@ -1150,9 +1160,12 @@ export class SubagentService {
     // 创建前完成——兜底时 record 按 pi 语义创建 + engineFallback 留痕（D5 字节级守护
     // 只约束「无 fallback 的纯缺省路径」）；守卫命中/strict 时在此 throw，不产生孤儿
     // record。pi 请求路径同步短路（routed 非 Promise，零微任务——缺省路径时序不变）。
+    // [u-h2 D2-1] 路由先行于 pi 链 model 解析：agentConfig 是路由第二层输入（frontmatter
+    // engine）已前置解析；pi 的 resolveModel 移到路由之后、按目标引擎分支执行——非 pi
+    // 请求不被 pi registry 解析错误拦截（F2-A/B 时序根因），model 校验归目标引擎（D2-2）。
     const routingInput = {
       callEngine: opts.engine,
-      agentEngine: identity.agentConfig?.engine,
+      agentEngine: agentConfig?.engine,
       globalDefaultEngine: this.modelService.getGlobalConfig().defaultEngine,
     };
     const routed = routeEngineForHost({
@@ -1165,7 +1178,7 @@ export class SubagentService {
       piEngine: this.chatPiEngine,
     });
     const route: EngineRouteResult = routed instanceof Promise ? await routed : routed;
-    return this.executeViaEngine(opts, identity, route, mode);
+    return this.executeViaEngine(opts, { agent, agentConfig }, route, mode);
   }
 
   /**
@@ -1249,14 +1262,19 @@ export class SubagentService {
     if (!result.ok) {
       throw new Error(result.message);
     }
-    // [T2③ / LC-1] 热路径轮 settled 等待固定硬上限（双挂载原语之热路径调用点，首轮
+    // [T2③ / D9 两段式] 热路径轮 settled 等待守护（双挂载原语之热路径调用点，首轮
     // 调用点在 session-runner runSpawn）。原挂载位在 deliverMessage prompt 写入成功后
     // 的同步段——D2 协议知识下沉 PiEngine.deliverPrompt 后编排层在 interact 返回点
     // arm（deliverPrompt 热路径段无 await，返回点距 prompt 发出仅差微任务链；窗口口径
     // 「整轮含 turn 执行与收尾」不受影响）。冷路径（EPIPE 兜底/resume）下 runSpawn 的
-    // 首轮 arm 与此处重复挂载由原语幂等（先清旧 timer）吸收 = 窗口重置，无害。settled
-    // 到达 / 进程 close / cancel/close 终态化处置后即清（disarm 站点散布上述路径，幂等）。
-    armSettledWatchdog(record.id, () => this.onHotPathSettledWatchdogTimeout(record));
+    // 首轮 arm 与此处重复挂载由原语幂等（先清旧 timer）吸收 = 窗口重置，无害。
+    // prompt 发出后挂**中段**无进展检测（有效协议事件行刷新，连续静默判 wedged）+
+    // agent_end 交棒收尾段固定上界；settled 到达（PiEngine.handleSdkEvent 的 disarm）/
+    // 进程 close / cancel/close 终态化处置后即清（disarm 站点散布上述路径，幂等）。
+    armMidRoundNoProgress(record.id, {
+      onMidTimeout: (fire) => this.onHotPathSettledWatchdogTimeout(record, fire),
+      onSettleTimeout: (fire) => this.onHotPathSettledWatchdogTimeout(record, fire),
+    });
   }
 
   /**
@@ -1388,6 +1406,9 @@ export class SubagentService {
    * [T2③] 热路径轮 settled watchdog 到期处置（对齐 u-t2a 首轮形态：kill + 该轮失败
    * 终态化 + 失败通知，error 含 'settled watchdog' 标记与恢复指引）。
    *
+   * [D9 两段式] 两段（mid-round 无进展 / settled 收尾段上界）共用本处置，fire 信息
+   *（段 + 窗长）由原语注入，失败文案按段分叉窗长语义。
+   *
    * 与首轮的差异：runSpawn 已返回（无收尾链路承接 settledWatchdogFired 标记），失败
    * 终态化在本回调内完成。chatMode 按 MF-6 语义回退 running-resumable（与首轮 watchdog
    * 经 runAndFinalize 失败分支的最终形态一致——对话可冷路径复活）；非 chatMode 终态
@@ -1396,10 +1417,14 @@ export class SubagentService {
    * 回调在 timer 触发的同步上下文执行：同步段只做 kill + CAS（不抛），异步收尾
    * fire-and-forget 且 catch 归 bestEffort——错误逃出回调 = uncaughtException 崩宿主。
    */
-  private onHotPathSettledWatchdogTimeout(record: ExecutionRecord): void {
+  private onHotPathSettledWatchdogTimeout(record: ExecutionRecord, fire: SettledWatchdogFireInfo): void {
+    const windowDesc =
+      fire.phase === "mid-round"
+        ? `no valid protocol event for ${fire.waitedMs / MS_PER_SECOND / SECONDS_PER_MINUTE} min after prompt (mid-round no-progress)`
+        : `no agent_settled within ${fire.waitedMs / MS_PER_SECOND}s after agent_end (settled phase)`;
     logger.warn(
-      `[subagents] settled watchdog fired for ${record.id}: no agent_settled within ` +
-        `${SETTLED_WATCHDOG_TIMEOUT_MS / MS_PER_SECOND / SECONDS_PER_MINUTE} min of hot-path prompt, terminating (LC-1 wedge recovery)`,
+      `[subagents] settled watchdog (${fire.phase}) fired for ${record.id}: ${windowDesc}, ` +
+        `terminating (LC-1 wedge recovery)`,
     );
     killRecordChildWithEscalation(record.id, "settled watchdog (hot path)");
     const failedResult: AgentResult = {
@@ -1408,7 +1433,7 @@ export class SubagentService {
       durationMs: Date.now() - record.startedAt,
       success: false,
       error:
-        `subagent did not reach agent_settled within ${SETTLED_WATCHDOG_TIMEOUT_MS / MS_PER_SECOND / SECONDS_PER_MINUTE} min (settled watchdog); ` +
+        `subagent did not reach agent_settled (${windowDesc}; settled watchdog); ` +
         `the process was terminated to bound the wait. ` +
         `Recovery: check state with subagents action:'list', then re-send your message to continue.`,
       sessionId: record.id,
@@ -1796,30 +1821,94 @@ export class SubagentService {
 
   // ── 执行内部：身份解析 + record 创建 ──────────
 
-  /** 步骤 1：身份解析。agentConfig → resolveModel（三层：override → agentConfig → 主 agent model）。 */
-  private async resolveIdentity(opts: ExecuteOptions): Promise<ResolvedIdentity> {
+  /** 步骤 1：身份解析。agentConfig → resolveModel（三层：override → agentConfig → 主 agent model）。
+   *
+   * [u-h2] pi 未命中跨引擎候选（D2-4）：resolveModel 抛 notFoundError（pi registry
+   * 全等裁决未命中）时反查其他已注册引擎清单，唯一命中则追加「该 id 属于引擎 X」
+   * 候选段（场景 3）；其余裁决失败（孪生歧义/auth）与命中路径原样返回（零回归）。
+   * execute() 与 executeAndAwait() 两个派发路径共享本方法，故 chat 与 workflow 域的
+   * pi 校验同享场景 3 文案。
+   */
+  private async resolveIdentity(
+    opts: ExecuteOptions,
+    pre?: { agent: string; agentConfig: AgentConfig | undefined },
+  ): Promise<ResolvedIdentity> {
     // agentRef 语义（S2）：agent 参数 = .md 绝对路径；不传 = 不加载 agentConfig，
     // 直接用 override → 主 agent model。DEFAULT_AGENT_NAME 仅作 record 显示名
     // （TUI 层 extractAgentName 共用，保证显示一致）。
-    const agent = opts.agent ?? DEFAULT_AGENT_NAME;
+    const agent = pre?.agent ?? opts.agent ?? DEFAULT_AGENT_NAME;
     // 显式 agent ref（用户点名）失败必须报错，不静默降级：无 require 的 loadByPath
     // 对相对路径/裸名/文件缺失都返回 undefined → agentConfig undefined → resolveModel
     // 静默回落 override→主 agent model，用户拿到的 subagent 无 systemPrompt/工具白名单
     // 且零反馈。require:true 让失败抛出带 <available_subagents> 指引的错误（对齐
     // workflow name not found 反馈风格）；不传 agent = 默认 general-purpose 语义，
     // agentConfig 保持 undefined（合法缺省，走 override → ctxModel 兑底）。
-    const agentConfig = opts.agent
-      ? this.modelService.getRequiredAgentConfig(opts.agent)
-      : undefined;
+    // [u-h2 D2-1] execute() 已在路由前解析 agentConfig（pre 通道），此处复用不二次加载。
+    const agentConfig = pre
+      ? pre.agentConfig
+      : opts.agent
+        ? this.modelService.getRequiredAgentConfig(opts.agent)
+        : undefined;
 
-    const resolved = this.modelService.resolveModel(
-      opts.agent ?? "",
-      { model: opts.model, thinkingLevel: opts.thinkingLevel },
-      opts.ctxModel,
-      agentConfig,
-    );
+    let resolved: ResolvedModel;
+    try {
+      resolved = this.modelService.resolveModel(
+        opts.agent ?? "",
+        { model: opts.model, thinkingLevel: opts.thinkingLevel },
+        opts.ctxModel,
+        agentConfig,
+      );
+    } catch (err) {
+      throw withCrossEngineHint(err, listEngines(), (id) => {
+        try {
+          return getEngine(id);
+        } catch {
+          return undefined; // 清单快照与注册表并发变化的防御：取不到引擎按未注册处理
+        }
+      });
+    }
 
     return { agent, agentConfig, resolved };
+  }
+
+  /**
+   * [u-h2 D2-1③] 非 pi 引擎的 identity 解析：跳过 pi registry 三层解析（ctxModel 主
+   * agent model 不透传——主 agent 的 pi id 对目标引擎大概率无效，缺省语义归引擎）。
+   *
+   * 逐层语义（设计 D2-1 归趋表）：
+   *   - model 源 = engineModel（调用参数 opts.model > agentConfig.model frontmatter，
+   *     agent 作者声明不忽略——配错在 validateModel 同步报错，不落引擎缺省静默续跑）；
+   *   - 无显式 model → 校验/留痕走引擎缺省（validateModel(undefined) 的 canonicalRef）；
+   *   - thinkingLevel 直接透传（引擎中立参数，不涉 registry）。
+   *
+   * 引擎未实现 validateModel 时 modelRef 原样透传（其 prepare 期校验兜底，现状语义）。
+   */
+  private resolveIdentityForEngine(
+    engine: EnginePort,
+    engineModel: string | undefined,
+    agent: string,
+    agentConfig: AgentConfig | undefined,
+    opts: ExecuteOptions,
+  ): ResolvedIdentity {
+    const canonical = validateModelForEngine(engine, engineModel);
+    // record.model 留痕：canonical（引擎裁决全名，含短名→缺省 provider 归一化）；
+    // 引擎未实现校验面且无显式 model 时为空串（记录形态退化，生产不可达——注册表
+    // 内非 pi 引擎均实现 validateModel；防御性拼接避免 throw 打断兜底语义）。
+    const modelStr = canonical ?? engineModel ?? "";
+    const slashIdx = modelStr.indexOf("/");
+    return {
+      agent,
+      agentConfig,
+      resolved: {
+        model: {
+          id: slashIdx > 0 ? modelStr.slice(slashIdx + 1) : "",
+          name: modelStr,
+          provider: slashIdx > 0 ? modelStr.slice(0, slashIdx) : modelStr,
+          reasoning: false,
+        },
+        thinkingLevel: opts.thinkingLevel ?? agentConfig?.thinkingLevel,
+      },
+    };
   }
 
   /** 步骤 2：按 mode 生成 id + controller，创建 record 并注册。
@@ -1882,12 +1971,13 @@ export class SubagentService {
   /**
    * chat 域统一执行入口（D2 单轨：全引擎——含 pi——经此进入 EnginePort）。路由
    *（routeEngineForHost：三层 + pi 同步短路 + probe/守卫）已由 execute 完成——这里
-   * 只剩 unsupported 预检 → record 创建+盖章 → worktree → detached 引擎 run。
+   * 只剩 unsupported 预检 → identity（pi 链解析 / 非 pi 按目标引擎校验，
+   * [u-h2 D2-1/D2-2]）→ record 创建+盖章 → worktree → detached 引擎 run。
    * 全部同步拒绝发生在 record 创建前（不产生孤儿 record）。
    */
   private async executeViaEngine(
     opts: ExecuteOptions,
-    identity: ResolvedIdentity,
+    preIdentity: { agent: string; agentConfig: AgentConfig | undefined },
     route: EngineRouteResult,
     mode: ExecutionMode,
   ): Promise<ExecutionHandle> {
@@ -1898,24 +1988,40 @@ export class SubagentService {
     // 创建前、不产生孤儿 record」不变量（其后的 kickOffEngineRun 是 fire-and-forget，
     // 检查若只落在 engine.run 内则拒绝异步化为「派发成功 + 静默失败 record」）。
     assertTaskShapeSupported(engine.id, engine.capabilities(), opts);
+
+    // identity 按路由结果分支构造（[u-h2 D2-1] 路由先行）：
+    //   - pi：pi 链三层解析在路由后执行（现状三层解析链行为零变化；含 resolveModel
+    //     失败的跨引擎候选提示，D2-4）；
+    //   - 非 pi：跳过 pi registry，model 按目标引擎校验（同步期 throw，record 创建前
+    //     ——场景 2 错误；ctxModel 不透传，缺省语义归引擎，D2-1③）。
+    const isPiRoute = route.engineId === DEFAULT_ENGINE_ID;
+    // [u-h2 D2-1③] 非 pi 的 model 源 = 调用参数 > agent .md frontmatter（作者声明不
+    // 忽略）——frontmatter 声明须真正透传给引擎（taskSpec.model 消费 opts.model），
+    // 不能只进 record 留痕；无显式 model 时引擎落自身缺省（validateModel(undefined) 裁决）。
+    const engineModel = isPiRoute ? undefined : (opts.model ?? preIdentity.agentConfig?.model);
+    const identity = isPiRoute
+      ? await this.resolveIdentity(opts, preIdentity)
+      : this.resolveIdentityForEngine(engine, engineModel, preIdentity.agent, preIdentity.agentConfig, opts);
+
     // record 盖章路由结果（D5 字节级守护的执行侧落点）：
     //   - pi 纯缺省/显式 pi：不盖 engine 键（pi record entry 序列化产物不得新增 engine
     //     键，undefined 经 JSON 省略）——与旧 pi 主路径 piOpts 剥离语义逐字节一致；
     //   - pi 兜底：engine='pi' + engineFallback 留痕（engine = 实际执行引擎，from=请求
     //     引擎留痕）；
-    //   - 非 pi：engine=route.engineId 显式留痕（+engineFallback 如有）。
-    const recordOpts: ExecuteOptions =
-      route.engineId === DEFAULT_ENGINE_ID
-        ? route.engineFallback !== undefined
-          ? { ...opts, engine: DEFAULT_ENGINE_ID, engineFallback: route.engineFallback }
-          : opts.engine === undefined
-            ? opts
-            : { ...opts, engine: undefined }
-        : {
-          ...opts,
-          engine: route.engineId,
-          ...(route.engineFallback !== undefined ? { engineFallback: route.engineFallback } : {}),
-        };
+    //   - 非 pi：engine=route.engineId 显式留痕（+engineFallback 如有）+ model 覆写
+    //     （frontmatter 声明透传，u-h2 D2-1③）。
+    const recordOpts: ExecuteOptions = isPiRoute
+      ? route.engineFallback !== undefined
+        ? { ...opts, engine: DEFAULT_ENGINE_ID, engineFallback: route.engineFallback }
+        : opts.engine === undefined
+          ? opts
+          : { ...opts, engine: undefined }
+      : {
+        ...opts,
+        ...(engineModel !== undefined ? { model: engineModel } : {}),
+        engine: route.engineId,
+        ...(route.engineFallback !== undefined ? { engineFallback: route.engineFallback } : {}),
+      };
     const record = this.createRecordForMode(identity, recordOpts, mode);
     this.notifyHost.emitPendingRegister(record.id, record.agent);
 
@@ -1950,7 +2056,7 @@ export class SubagentService {
       }
     }
 
-    if (route.engineId === DEFAULT_ENGINE_ID) {
+    if (isPiRoute) {
       // pi：record 耦合执行（runSpawn 直驱 record 记账）——预备轮次经 EnginePort 交接
       //（kickOffChatRound），编排收尾（notify/终态迁移）与旧 pi 主路径语义一致。
       this.kickOffChatRound(
@@ -1963,7 +2069,7 @@ export class SubagentService {
       );
     } else {
       // 非 pi 引擎：engine.run 自足执行（handle+outcome），编排侧 journal 接线 + 终态迁移
-      this.kickOffEngineRun(record, opts, engine);
+      this.kickOffEngineRun(record, recordOpts, engine);
     }
     return { mode: "background", subagentId: record.id, sessionFile: record.sessionFile, details: project(record) };
   }
@@ -2122,17 +2228,14 @@ export class SubagentService {
     /** resume 选项（M2-B1）：透传 runSpawn，重开已 idle 的 session 续聊。undefined = 新 session。 */
     resume?: SpawnResumeOpts,
   ): Promise<AgentResult> {
+    // [U04 阶段化提取] 主函数只留编排，按「装配（池槽/worktree/深度）→ 执行（ALS 包装
+    // spawn）→ 回收（finally）→ 错误收口 → 终态收口」分段；行为逐字节不变。
     const pooled = record.mode === "background";
     let acquired = false;
     if (pooled) {
-      try {
-        await this.pool.acquire(priority, this.effectiveMaxConcurrentFor(record), signal);
-        acquired = true;
-      } catch {
-        // S1: 排队中被 abort（signal.aborted）走 cancelled，与已运行被 abort 一致。
-        if (signal?.aborted) return this.finalizeAborted(record);
-        return this.finalizeFailed(record, new Error("aborted"));
-      }
+      const acquireFailure = await this.acquirePoolOrFinalize(record, signal, priority);
+      if (acquireFailure !== undefined) return acquireFailure;
+      acquired = true;
     }
     // onEvent 直通（原此处曾有 onUpdate(project(record)) 节流回流包装——生产死路径，
     // 三调用点恒 onUpdate: undefined、仅测试触达，已按 swf-perf-impl ledger #22 删除
@@ -2140,78 +2243,24 @@ export class SubagentService {
     // ExecuteOptions.onUpdate 字段一并删除，未来误用将编译期失败而非静默无效。
     const onEvent = rawOnEvent;
 
-    // 解析 worktree 参数：boolean → WorktreeHandle | undefined（true/undefined 由 run 内部处理）
-    let worktreeHandle: WorktreeHandle | undefined;
-    if (typeof opts.worktree === "object") {
-      worktreeHandle = opts.worktree;
-    }
-    // [MF#4][MF#2] fork 深度护栏：ALS 传递深度（主 session 链无 store→0，fork 推进 +1）。
-    const parentDepth = this.forkDepthAls.getStore() ?? this.forkDepthBaseline;
-    const effectiveDepth = opts.fork ? parentDepth + 1 : parentDepth;
+    const worktreeHandle = this.resolveWorktreeHandle(opts);
+    const { parentDepth, effectiveDepth } = this.resolveForkDepths(opts);
 
     let result: AgentResult;
     try {
-      // 嵌套上下文包在 forkDepthAls 内层：B run() 期间挂 {recordId:B.id,depth:B.depth}，
-      // B 内创建 C 时 createRecordForMode 读到 B → C 挂到 B 名下。两层 ALS 独立但同生命周期。
-      result = await this.forkDepthAls.run(effectiveDepth, () =>
-        this.execNesting.run(
-          { recordId: record.id, depth: record.depth },
-          () => runSpawn(record, opts.task, {
-            resolved: identity.resolved,
-            agentConfig: identity.agentConfig,
-            appendSystemPrompt: opts.appendSystemPrompt,
-            skillPath: opts.skillPath,
-            schema: opts.schema,
-            schemaEnv: opts.schemaEnv, // D-A6 bridge: workflow 编排层透传 schema 到 childEnv
-            maxTurns: opts.maxTurns,
-            graceTurns: opts.graceTurns,
-            signal,
-            onEvent,
-            stream, // text_delta streaming（background 路径有值，workflow 路径 undefined）
-            fork: opts.fork,
-            // [v8.5 B] fork-from 显式源（ExecuteOptions.forkFromSessionFile）优先于
-            // opts.fork 推导的 mainSessionFile；undefined = 旧语义不变。
-            forkSource: opts.forkFromSessionFile,
-            worktree: worktreeHandle,
-            parentForkDepth: parentDepth, // [MF#4] 父链深度，不从 opts 读
-          }, ctx, resume),
-        ),
+      result = await this.runSpawnNested(
+        record, opts, ctx, identity, signal, onEvent, stream, resume,
+        worktreeHandle, parentDepth, effectiveDepth,
       );
     } catch (err) {
       // run() 正常路径不抛错，但创建期异常（createAndConfigureSession 失败）
       // 会逃逸出 run() —— 合成 failed result + 收尾。
       // swallow（不 re-throw）：sync 调用方拿到合成 failed result，background 的
       // .then 正常跑 notify。避免异常逃逸到 tool 层 + record 卡 running。
-      //
-      // MF-6（决策 6 spec §3.1）：chatMode（含 resume）spawn/创建失败不销毁对话——回退 idle
-      //（可恢复），让 agent 可重试 message 或 close。与一次性模式（finalizeFailed 终态销毁）区分。
-      if (record.chatMode) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        const failedResult: AgentResult = {
-          text: "",
-          turns: record.turnCount,
-          durationMs: Date.now() - record.startedAt,
-          success: false,
-          error: errMsg,
-          sessionId: record.id,
-          toolCalls: [],
-        };
-        if (tryTransition(record, "closed", "gc")) {
-          // 回退 idle（record.result 由 finalizeRoundToIdle 设为 error 兜底文本，notify 可读）。
-          await this.finalizeRoundToIdle(record, failedResult);
-        }
-        return failedResult;
-      }
-      result = await this.finalizeFailed(record, err);
-      return result;
+      if (record.chatMode) return this.finalizeChatSpawnFailure(record, err);
+      return this.finalizeFailed(record, err);
     } finally {
-      if (pooled && acquired) this.pool.release();
-      // 清除 streaming widget（subagent 终态，幂等）
-      stream?.dispose();
-      // [review MF1] 清除在途 resume 守卫（幂等）：本轮收尾——无论轮次完成（early return）、
-      // MF-6 失败回退 resumable、abort 还是终态化，record 都可再次接受冷路径 message。
-      // execute() 新建 record 不在集合，delete 是 no-op。
-      this.resumesInFlight.delete(record.id);
+      this.releaseRoundResources(record, pooled && acquired, stream);
     }
 
     // [V2 决策 2/3] chatMode 首轮闭环：runSpawn 因 agent_settled 提前 resolve（onRoundSettled
@@ -2226,48 +2275,203 @@ export class SubagentService {
 
     // v4 B-1: status 恒为 closed。cancelled 折入 closed（closedReason='cancelled'）。
     const aborted = signal?.aborted === true;
-    // closedReason 派生：aborted → cancelled；否则 success → user-close，!success → gc。
-    const closedReason: ClosedReason = aborted ? "cancelled" : result.success ? "user-close" : "gc";
+    await this.settleFinalOutcome(record, result, aborted, this.deriveClosedReason(aborted, result.success));
+    return result;
+  }
 
-    // CAS 抢锁：抢到则完整收尾；没抢到（cancel 已先设 closed+cancelled）则跳过
-    if (tryTransition(record, "closed", closedReason)) {
-      if (record.chatMode && !aborted && result.success) {
-        if (record.closeAfterRound) {
-          // close 优雅关闭（force:false）：当前轮完成后终态化为 closed。
-          record.closeAfterRound = undefined;
-          await this.finalizeRecord(record, result, "closed", "user-close");
-        } else {
-          // 对话模式轮次成功完成 → 保持 running（旧 idle 折入 running，finalizeRoundToIdle 设回 running）。
-          await this.finalizeRoundToIdle(record, result);
-        }
-      } else if (record.chatMode && (!result.success || aborted)) {
-        // MF-6：chatMode 轮次失败/取消不销毁对话——回退 running-resumable（旧 idle，可恢复）。
-        if (record.closeAfterRound) {
-          // [M5] 优雅关闭挂起的失败/取消轮：轮已完成即兑现 close 意图终态化（含本轮 result），
-          // 不再回退 resumable——否则标志残留到下一轮，record 已被 tool 谎报 closed。
-          record.closeAfterRound = undefined;
-          await this.finalizeRecord(record, result, "closed", closedReason);
-        } else {
-          await this.finalizeRoundToIdle(record, result);
-        }
-      } else if (!record.chatMode && !aborted && result.success) {
-        if (record.closeAfterRound) {
-          // [M5] 非 chatMode（one-shot）busy 时 close(force:false) 置的标志在本轮完成时消费
-          // 终态化（对齐 close schema 文案 "release its resources"）。旧代码走
-          // finalizeRoundToIdle 不消费——tool 返回 {closed:true} 谎报，record 永久
-          // running-resumable、5min idle timer 杀进程、期间还能继续收 message。
-          record.closeAfterRound = undefined;
-          await this.finalizeRecord(record, result, "closed", "user-close");
-        } else {
-          // [SP-5] one-shot 成功完成 → 保持 running（旧 idle），等待 message 触发 upgrade。
-          await this.finalizeRoundToIdle(record, result);
-        }
+  /** [U04 提取·装配] 池槽获取：pooled（background）record 排队 acquire。成功返回 undefined
+   *  继续执行；失败返回终态 result 供调用方 early-return（该路径在 try/finally 之前，
+   *  不触发轮次资源回收——与原控制流逐字节一致）。 */
+  private async acquirePoolOrFinalize(
+    record: ExecutionRecord,
+    signal: AbortSignal | undefined,
+    priority: number,
+  ): Promise<AgentResult | undefined> {
+    try {
+      await this.pool.acquire(priority, this.effectiveMaxConcurrentFor(record), signal);
+    } catch {
+      // S1: 排队中被 abort（signal.aborted）走 cancelled，与已运行被 abort 一致。
+      if (signal?.aborted) return this.finalizeAborted(record);
+      return this.finalizeFailed(record, new Error("aborted"));
+    }
+    return undefined;
+  }
+
+  /** [U04 提取·装配] 解析 worktree 参数：boolean → WorktreeHandle | undefined（true/undefined 由 run 内部处理）。 */
+  private resolveWorktreeHandle(opts: ExecuteOptions): WorktreeHandle | undefined {
+    return typeof opts.worktree === "object" ? opts.worktree : undefined;
+  }
+
+  /** [U04 提取·装配] [MF#4][MF#2] fork 深度护栏：ALS 传递深度（主 session 链无 store→0，fork 推进 +1）。 */
+  private resolveForkDepths(opts: ExecuteOptions): { parentDepth: number; effectiveDepth: number } {
+    const parentDepth = this.forkDepthAls.getStore() ?? this.forkDepthBaseline;
+    const effectiveDepth = opts.fork ? parentDepth + 1 : parentDepth;
+    return { parentDepth, effectiveDepth };
+  }
+
+  /** [U04 提取·执行] runSpawn 的两层 ALS 包装（forkDepthAls 外层 + execNesting 内层）。 */
+  private runSpawnNested(
+    record: ExecutionRecord,
+    opts: ExecuteOptions,
+    ctx: SessionRunnerContext,
+    identity: ResolvedIdentity,
+    signal: AbortSignal | undefined,
+    onEvent: ((event: AgentEvent) => void) | undefined,
+    stream: SubagentStream | undefined,
+    resume: SpawnResumeOpts | undefined,
+    worktreeHandle: WorktreeHandle | undefined,
+    parentDepth: number,
+    effectiveDepth: number,
+  ): Promise<AgentResult> {
+    // 嵌套上下文包在 forkDepthAls 内层：B run() 期间挂 {recordId:B.id,depth:B.depth}，
+    // B 内创建 C 时 createRecordForMode 读到 B → C 挂到 B 名下。两层 ALS 独立但同生命周期。
+    return this.forkDepthAls.run(effectiveDepth, () =>
+      this.execNesting.run(
+        { recordId: record.id, depth: record.depth },
+        () => runSpawn(record, opts.task, {
+          resolved: identity.resolved,
+          agentConfig: identity.agentConfig,
+          appendSystemPrompt: opts.appendSystemPrompt,
+          skillPath: opts.skillPath,
+          schema: opts.schema,
+          schemaEnv: opts.schemaEnv, // D-A6 bridge: workflow 编排层透传 schema 到 childEnv
+          maxTurns: opts.maxTurns,
+          graceTurns: opts.graceTurns,
+          signal,
+          onEvent,
+          stream, // text_delta streaming（background 路径有值，workflow 路径 undefined）
+          fork: opts.fork,
+          // [v8.5 B] fork-from 显式源（ExecuteOptions.forkFromSessionFile）优先于
+          // opts.fork 推导的 mainSessionFile；undefined = 旧语义不变。
+          forkSource: opts.forkFromSessionFile,
+          worktree: worktreeHandle,
+          parentForkDepth: parentDepth, // [MF#4] 父链深度，不从 opts 读
+        }, ctx, resume),
+      ),
+    );
+  }
+
+  /** [U04 提取·回收] 轮次资源回收（finally 语义，幂等）：池槽归还（仅 pooled 且 acquire
+   *  成功）、streaming widget 清除、在途 resume 守卫清除。 */
+  private releaseRoundResources(
+    record: ExecutionRecord,
+    holdSlot: boolean,
+    stream: SubagentStream | undefined,
+  ): void {
+    if (holdSlot) this.pool.release();
+    // 清除 streaming widget（subagent 终态，幂等）
+    stream?.dispose();
+    // [review MF1] 清除在途 resume 守卫（幂等）：本轮收尾——无论轮次完成（early return）、
+    // MF-6 失败回退 resumable、abort 还是终态化，record 都可再次接受冷路径 message。
+    // execute() 新建 record 不在集合，delete 是 no-op。
+    this.resumesInFlight.delete(record.id);
+  }
+
+  /** [U04 提取·错误收口] MF-6（决策 6 spec §3.1）：chatMode（含 resume）spawn/创建失败
+   *  不销毁对话——回退 idle（可恢复），让 agent 可重试 message 或 close。与一次性模式
+   *  （finalizeFailed 终态销毁）区分。返回合成 failed result（swallow，不 re-throw）。 */
+  private async finalizeChatSpawnFailure(record: ExecutionRecord, err: unknown): Promise<AgentResult> {
+    const errMsg = toErrorMessage(err);
+    const failedResult: AgentResult = {
+      text: "",
+      turns: record.turnCount,
+      durationMs: Date.now() - record.startedAt,
+      success: false,
+      error: errMsg,
+      sessionId: record.id,
+      toolCalls: [],
+    };
+    if (tryTransition(record, "closed", "gc")) {
+      // 回退 idle（record.result 由 finalizeRoundToIdle 设为 error 兜底文本，notify 可读）。
+      await this.finalizeRoundToIdle(record, failedResult);
+    }
+    return failedResult;
+  }
+
+  /** [U04 提取·收口派生] closedReason 派生：aborted → cancelled；否则 success → user-close，!success → gc。 */
+  private deriveClosedReason(aborted: boolean, success: boolean): ClosedReason {
+    return aborted ? "cancelled" : success ? "user-close" : "gc";
+  }
+
+  /** [U04 提取·终态收口] CAS 抢锁：抢到则按 chatMode 分流完整收尾；没抢到（cancel 已先设
+   *  closed+cancelled）则跳过。 */
+  private async settleFinalOutcome(
+    record: ExecutionRecord,
+    result: AgentResult,
+    aborted: boolean,
+    closedReason: ClosedReason,
+  ): Promise<void> {
+    if (!tryTransition(record, "closed", closedReason)) return;
+    if (record.chatMode) {
+      await this.settleChatRoundOutcome(record, result, aborted, closedReason);
+    } else {
+      await this.settleOneShotOutcome(record, result, aborted, closedReason);
+    }
+  }
+
+  /** [U04 提取·终态收口] chatMode 轮次分流（原 A/B 分支，De Morgan 等价拆分）：
+   *  成功轮（!aborted && success）与失败/取消轮（其补集 !success || aborted）各自处理
+   *  closeAfterRound 挂起语义。 */
+  private async settleChatRoundOutcome(
+    record: ExecutionRecord,
+    result: AgentResult,
+    aborted: boolean,
+    closedReason: ClosedReason,
+  ): Promise<void> {
+    if (!aborted && result.success) {
+      if (record.closeAfterRound) {
+        // close 优雅关闭（force:false）：当前轮完成后终态化为 closed。
+        await this.consumeCloseAfterRound(record, result, "user-close");
       } else {
-        // 非 chatMode 失败/取消 或其他终态：一次性销毁（archive + worktree cleanup）。
-        await this.finalizeRecord(record, result, "closed", closedReason);
+        // 对话模式轮次成功完成 → 保持 running（旧 idle 折入 running，finalizeRoundToIdle 设回 running）。
+        await this.finalizeRoundToIdle(record, result);
+      }
+    } else {
+      // MF-6：chatMode 轮次失败/取消不销毁对话——回退 running-resumable（旧 idle，可恢复）。
+      if (record.closeAfterRound) {
+        // [M5] 优雅关闭挂起的失败/取消轮：轮已完成即兑现 close 意图终态化（含本轮 result），
+        // 不再回退 resumable——否则标志残留到下一轮，record 已被 tool 谎报 closed。
+        await this.consumeCloseAfterRound(record, result, closedReason);
+      } else {
+        await this.finalizeRoundToIdle(record, result);
       }
     }
-    return result;
+  }
+
+  /** [U04 提取·终态收口] one-shot（非 chatMode）分流（原 C/D 分支）：成功轮消费
+   *  closeAfterRound 挂起标志；失败/取消一次性销毁。 */
+  private async settleOneShotOutcome(
+    record: ExecutionRecord,
+    result: AgentResult,
+    aborted: boolean,
+    closedReason: ClosedReason,
+  ): Promise<void> {
+    if (!aborted && result.success) {
+      if (record.closeAfterRound) {
+        // [M5] 非 chatMode（one-shot）busy 时 close(force:false) 置的标志在本轮完成时消费
+        // 终态化（对齐 close schema 文案 "release its resources"）。旧代码走
+        // finalizeRoundToIdle 不消费——tool 返回 {closed:true} 谎报，record 永久
+        // running-resumable、5min idle timer 杀进程、期间还能继续收 message。
+        await this.consumeCloseAfterRound(record, result, "user-close");
+      } else {
+        // [SP-5] one-shot 成功完成 → 保持 running（旧 idle），等待 message 触发 upgrade。
+        await this.finalizeRoundToIdle(record, result);
+      }
+    } else {
+      // 非 chatMode 失败/取消 或其他终态：一次性销毁（archive + worktree cleanup）。
+      await this.finalizeRecord(record, result, "closed", closedReason);
+    }
+  }
+
+  /** [U04 提取·终态收口] closeAfterRound 挂起标志消费（原三处分支的公共收尾序列）：
+   *  清标志 + 终态化 closed。reason：成功轮恒 user-close；失败/取消轮用派生值。 */
+  private async consumeCloseAfterRound(
+    record: ExecutionRecord,
+    result: AgentResult,
+    reason: ClosedReason,
+  ): Promise<void> {
+    record.closeAfterRound = undefined;
+    await this.finalizeRecord(record, result, "closed", reason);
   }
 
   /**
@@ -2499,7 +2703,7 @@ export class SubagentService {
    *  AgentResult → CAS 抢锁 → finalizeRecord（与正常路径同形）。返回合成 result 供 runAndFinalize
    *  继续返回（不 re-throw，swallow 策略）。 */
   private async finalizeFailed(record: ExecutionRecord, err: unknown): Promise<AgentResult> {
-    const errMsg = err instanceof Error ? err.message : String(err);
+    const errMsg = toErrorMessage(err);
     // durationMs 用真实耗时（startedAt → now），避免失败统计恒为 0 失真。
     const failedResult: AgentResult = { text: "", turns: record.turnCount, durationMs: Date.now() - record.startedAt, success: false, error: errMsg, sessionId: record.id, toolCalls: [] };
     // CAS 抢锁：抢到（status 仍 running）则完整收尾；没抢到（cancel 已先设 cancelled）跳过。

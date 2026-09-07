@@ -289,13 +289,18 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     expect(engineDir).toEqual(["appserver-launcher.cjs"]);
   }, 15_000);
 
-  // [D3-④ 适配] 旧用例「maxTurns → engine.run 内 engine_capability_unsupported 拒绝」
-  // 已随 capability 拒绝上提宿主预检而失效（zcode-engine.ts :29-32/:250 注释：引擎内
-  // 不再做 shape 拒绝；gate 单点 = common/capability-gate.ts assertTaskShapeSupported，
-  // 宿主调用点 = subprocess-agent-runner.ts:157（workflow 域）+ subagent-service.ts:1900
-  // （chat 域 record 创建前））。该守护由 capability-gate.test.ts 承接（ZCODE_CAPS
-  // .maxTurns=false 声明位 + maxTurns 拦截矩阵 + engine_capability_unsupported 错误族
-  // /恢复指引），此处不再重复——直接 engine.run 传 maxTurns 现按引擎真实语义执行。
+  it("maxTurns（pi 专属）→ 引擎内不再拒绝（[D3-④] 能力拒绝上提宿主 capability-gate，防双轨拦截复活）", async () => {
+    // [D3-④ 合并注] capability 拒绝唯一实现 = common/capability-gate（两调用点 = chat 域
+    // executeViaEngine 同步段 + SAR run 前，拒绝语义 engine_capability_unsupported 由
+    // capability-gate.test.ts 承载）。引擎域 run() 不做 shape 检查——本用例反转回归面：
+    // maxTurns 直传引擎不得再被拒（曾因引擎内残留拦截与 gate 形成双轨）。
+    const { engine, stateFile, workspace } = makeEngine();
+    const r = await engine.run(makeTask({ cwd: workspace, maxTurns: 10 }), makeCtx());
+    expect(r.outcome.error).toBeUndefined();
+    expect(r.outcome.content).toBe(GOLDEN_FULL_TEXT);
+    // 正常走 app-server 流程（create×1——maxTurns 对 zcode 无通道，静默不透传）
+    expect(sentFrames(stateFile, "session/create")).toHaveLength(1);
+  }, 10_000);
 
   it("per-session model：create 帧 model={providerId,modelId}（task.model 拆分）+ toolDenylist 透传", async () => {
     const { engine, stateFile, workspace } = makeEngine();

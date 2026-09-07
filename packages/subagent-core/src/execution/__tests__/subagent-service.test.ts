@@ -36,18 +36,18 @@ function makeTmpAgentDir(): string {
 }
 
 function makeModelService(agentDir: string): ModelConfigService {
-  return new ModelConfigService({ agentDir });
+  return new ModelConfigService({ agentDir, cwd: agentDir });
 }
 
 function makePi(): PiLike & {
-  appendEntry: ReturnType<typeof vi.fn>;
-  events: { emit: ReturnType<typeof vi.fn> };
-  sendMessage: ReturnType<typeof vi.fn>;
+  appendEntry: ReturnType<typeof vi.fn<(customType: string, data?: unknown) => void>>;
+  events: { emit: ReturnType<typeof vi.fn<(channel: string, data: unknown) => void>> };
+  sendMessage: ReturnType<typeof vi.fn<(message: Parameters<PiLike["sendMessage"]>[0], options?: Parameters<PiLike["sendMessage"]>[1]) => void>>;
 } {
   return {
-    appendEntry: vi.fn(),
-    events: { emit: vi.fn() },
-    sendMessage: vi.fn(),
+    appendEntry: vi.fn((customType: string, data?: unknown) => {}),
+    events: { emit: vi.fn((channel: string, data: unknown) => {}) },
+    sendMessage: vi.fn(() => {}),
   };
 }
 
@@ -215,6 +215,7 @@ describe("SubagentService", () => {
         agent: "general-purpose",
         model: "test/model",
         mode: "background",
+        slug: "t",
         task: "long task",
         startedAt: 1_000_000,
         rootSessionId: "s1",
@@ -230,8 +231,9 @@ describe("SubagentService", () => {
       const record = createRecord(id, {
         agent: "general-purpose",
         model: "test/model",
-        mode: "sync",
+        mode: "background",
         task: "sync task",
+        slug: "test",
         startedAt: 1_000_000,
         rootSessionId: "s1",
         // sync 不传 controller → controller === undefined
@@ -247,13 +249,14 @@ describe("SubagentService", () => {
         agent: "general-purpose",
         model: "test/model",
         mode: "background",
+        slug: "t",
         task: "done task",
         startedAt: 1_000_000,
         rootSessionId: "s1",
         controller,
       });
       // 直接改 status 模拟终态（不走 CAS——测试不关心状态机，只关心 dispose 的 abort 过滤）
-      record.status = "done";
+      record.status = "closed";
       getStore(service).register(record);
       return record;
     }
@@ -425,6 +428,7 @@ describe("SubagentService", () => {
       try {
         await service.execute({
           task: "worktree without fork (decoupled)",
+          slug: "test",
           worktree: true,
           fork: false,
           ctxModel: { id: "ctx-model", name: "Ctx", provider: "p", reasoning: false },
@@ -441,6 +445,7 @@ describe("SubagentService", () => {
       try {
         await service.execute({
           task: "worktree with fork",
+          slug: "test",
           worktree: true,
           fork: true,
           ctxModel: { id: "ctx-model", name: "Ctx", provider: "p", reasoning: false },
@@ -458,6 +463,7 @@ describe("SubagentService", () => {
       try {
         await service.execute({
           task: "default path",
+          slug: "test",
           worktree: false,
           fork: false,
           ctxModel: { id: "ctx-model", name: "Ctx", provider: "p", reasoning: false },
@@ -485,12 +491,13 @@ describe("SubagentService", () => {
       }) as Parameters<WorktreeManager["cleanup"]>[0];
       let resolveCreate!: (h: unknown) => void;
       vi.spyOn(wtm, "create").mockImplementation(
-        () => new Promise((r) => { resolveCreate = r; }) as ReturnType<WorktreeManager["create"]>,
+        () => new Promise<unknown>((r) => { resolveCreate = r; }) as ReturnType<WorktreeManager["create"]>,
       );
       const cleanupSpy = vi.spyOn(wtm, "cleanup").mockResolvedValue(undefined);
 
       const execP = service.execute({
         task: "guard test",
+        slug: "test",
         worktree: true,
         fork: false,
         ctxModel: { id: "ctx-model", name: "Ctx", provider: "p", reasoning: false },
@@ -527,7 +534,7 @@ describe("SubagentService", () => {
   //
   // [未覆盖路径] 需 mock spawn 才能跑完 runSpawn 的路径，本文件约定不 mock spawn
   // （见文件头——execute 集成测试在 execute-nesting.test.ts / run-spawn-integration.test.ts）：
-  //   - finalizeRecord status="done"（sync/background 正常完成 → unregister(done)）
+  //   - finalizeRecord status="closed"（background 正常完成 → unregister(closed)）
   //   - finalizeRecord status="cancelled" 经 runAndFinalize 路径（cancel 抢先 CAS 时
   //     runAndFinalize 侧 tryTransition 失败跳过 finalizeRecord，由 cancelBackground 侧 emit——
   //     本块 cancel 用例覆盖的即此后端 emit）
@@ -570,6 +577,7 @@ describe("SubagentService", () => {
         agent: "general-purpose",
         model: "test/model",
         mode: "background",
+        slug: "t",
         task: "cancel target",
         startedAt: 1_000_000,
         rootSessionId: "s1",
@@ -586,6 +594,7 @@ describe("SubagentService", () => {
 
       const handle = await service.execute({
         task: "wt fail bg",
+        slug: "test",
         worktree: true,
         fork: true,
         ctxModel,
@@ -668,7 +677,7 @@ describe("SubagentService", () => {
       injectRunningBackground(service, "bg-running-1");
       injectRunningBackground(service, "bg-running-2");
       const terminal = injectRunningBackground(service, "bg-done");
-      terminal.status = "done"; // 模拟终态，dispose 不应为其 emit
+      terminal.status = "closed"; // 模拟终态，dispose 不应为其 emit
 
       service.dispose();
 

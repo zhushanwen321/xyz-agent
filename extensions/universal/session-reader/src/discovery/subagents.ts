@@ -4,7 +4,7 @@ import { join, basename } from 'node:path'
 import type { Entry } from '../core/parser.js'
 import type { Family, SessionRef, SubagentRef } from '../core/family.js'
 import { buildFamilyIndex, resolveFamily } from '../core/family.js'
-import { listMainSessions, listSubagentSessions } from './roots.js'
+import { listMainSessions, listSubagentSessions, type SessionFileMeta } from './roots.js'
 import { resolveWorkflows } from './workflows.js'
 
 /**
@@ -34,26 +34,77 @@ export async function buildFamilyFromFs(sessionId: string, agentDir: string): Pr
   // manifest 主路径：alive 文件的 meta.path 命中索引 → 透 task/slug/model/status/sessionFile 全字段。
   // 索引未命中（场景 A：嵌套 subagent 的 manifest 不在当前 agentDir，11.5%）走 P-fallback 回退 identity。
   const manifests = await listRecordManifests(agentDir)
+  const manifestBySessionFile = indexManifestsBySessionFile(manifests)
+
+  // ---- 1-3. 逐阶段扫描（main → subagent → 孤儿 manifest），累积器显式传递 ----
+  const scan: FamilyFsScan = {
+    headers: [],
+    identities: [],
+    fileStats: new Map(),
+    sessionIdToPath: new Map(),
+    pathToRef: new Map(),
+    aliveSubPaths: new Set(),
+  }
+  await collectMainSessions(agentDir, scan)
+  await collectSubagentIdentities(agentDir, manifestBySessionFile, scan)
+  appendOrphanIdentities(manifests, scan)
+
+  // ---- 4-5. build index + resolve（sessionId 不在 byId → resolveFamily 抛 Error）----
+  if (!scan.sessionIdToPath.has(sessionId)) {
+    throw new Error(
+      `session "${sessionId}" not found under ${agentDir}/sessions — ` +
+        `no main session file whose first-line header id matches. ` +
+        `Verify the sessionId or agentDir; for partial uuid, use findSessions first.`,
+    )
+  }
+  const index = buildFamilyIndex(scan.headers, scan.identities, scan.fileStats)
+  const family = resolveFamily(sessionId, index)
+
+  // ---- 6. 补 M1 占位字段（fileName / subagent cwd）+ workflows ----
+  enrichRefs(family, scan.pathToRef)
+  family.workflows = await resolveWorkflows(sessionId, scan.sessionIdToPath, scan.pathToRef)
+
+  return family
+}
+
+// ============================================================
+// buildFamilyFromFs 扫描阶段 helpers（各阶段显式传入累积器，插入顺序 = 原实现顺序）
+// ============================================================
+
+/** buildFamilyFromFs 各扫描阶段的共享累积器（主函数创建，各阶段 helper 显式传入并写入） */
+interface FamilyFsScan {
+  /** main session headers（buildFamilyIndex byId/childrenOf 素材） */
+  headers: Entry[]
+  /** subagent identity entries（步骤 2 富化 + 步骤 3 孤儿） */
+  identities: Entry[]
+  /** sessionId → { mtime, size }（buildFamilyIndex 存活判定素材） */
+  fileStats: Map<string, { mtime: number; size: number }>
+  /** sessionId → 真实文件路径，供 workflows 找目标文件 + enrich 补 fileName */
+  sessionIdToPath: Map<string, string>
+  /** path → 完整 SessionRef（含真实 cwd/fileName/mtime/size），供 enrich + workflow calls 反查 */
+  pathToRef: Map<string, SessionRef>
+  /** 已扫描到的 subagent 文件路径集合，供 manifest 孤儿判定（alive 则跳过 manifest） */
+  aliveSubPaths: Set<string>
+}
+
+/** manifest 按 sessionFile 建索引（alive 文件的 meta.path 命中 → 走 manifest 主路径） */
+function indexManifestsBySessionFile(manifests: RecordManifest[]): Map<string, RecordManifest> {
   const manifestBySessionFile = new Map<string, RecordManifest>()
   for (const m of manifests) manifestBySessionFile.set(m.sessionFile, m)
+  return manifestBySessionFile
+}
 
-  // ---- 1. main sessions：首行 header → byId/childrenOf 素材 + fileStats + 路径反查 ----
+/** 步骤 1：main sessions —— 首行 header → headers + fileStats + 路径反查 */
+async function collectMainSessions(agentDir: string, scan: FamilyFsScan): Promise<void> {
   const mainMetas = await listMainSessions(agentDir)
-  const headers: Entry[] = []
-  const fileStats = new Map<string, { mtime: number; size: number }>()
-  /** sessionId → 真实文件路径，供 workflows 找目标文件 + enrich 补 fileName */
-  const sessionIdToPath = new Map<string, string>()
-  /** path → 完整 SessionRef（含真实 cwd/fileName/mtime/size），供 enrich + workflow calls 反查 */
-  const pathToRef = new Map<string, SessionRef>()
-
   for (const meta of mainMetas) {
     const h = parseHeaderLine(await readFirstLine(meta.path))
     if (!h) continue // 非 session/坏 header → 跳过（不入 byId）
     const entry: Entry = { type: 'session', id: h.id, parentId: null, cwd: h.cwd ?? '' }
     if (h.parentSession) entry.parentSession = h.parentSession
-    headers.push(entry)
-    fileStats.set(h.id, { mtime: meta.mtime, size: meta.size })
-    sessionIdToPath.set(h.id, meta.path)
+    scan.headers.push(entry)
+    scan.fileStats.set(h.id, { mtime: meta.mtime, size: meta.size })
+    scan.sessionIdToPath.set(h.id, meta.path)
     const ref: SessionRef = {
       sessionId: h.id,
       fileName: meta.path,
@@ -62,17 +113,47 @@ export async function buildFamilyFromFs(sessionId: string, agentDir: string): Pr
       cwd: h.cwd ?? '',
     }
     if (h.parentSession) ref.parentSession = h.parentSession
-    pathToRef.set(meta.path, ref)
+    scan.pathToRef.set(meta.path, ref)
   }
+}
 
-  // ---- 2. subagent sessions：首行 header（真实 id）+ manifest 主/identity 回退 → 富字段 identity ----
+/** identity data 组装（manifest 主，TC-u4-manifest-enrich）：透 task/slug/model/status/sessionFile 全字段 */
+function manifestIdentityData(manifest: RecordManifest): Record<string, unknown> {
+  return {
+    rootSessionId: manifest.rootSessionId,
+    slug: manifest.slug ?? '', // slug 兼容旧 manifest（缺→空串兜底，m0 契约）
+    task: manifest.task,
+    agent: manifest.agentName, // 同语义异名：manifest.agentName ↔ identity.data.agent
+    model: manifest.model,
+    status: manifest.status,
+    sessionFile: manifest.sessionFile,
+  }
+}
+
+/** identity data 组装（P-fallback，ES-p-fallback-no-manifest）：identity 回退取 task/slug/agent */
+function fallbackIdentityData(
+  meta: SessionFileMeta,
+  ident: TailIdentity,
+): Record<string, unknown> {
+  return {
+    rootSessionId: ident.rootSessionId,
+    slug: ident.slug,
+    task: ident.task,
+    agent: ident.agent,
+    // model/status 不可回退（identity 无，探针 15/15），留 undefined
+    sessionFile: meta.path,
+  }
+}
+
+/** 步骤 2：subagent sessions —— 首行 header（真实 id）+ manifest 主/identity 回退 → 富字段 identity */
+async function collectSubagentIdentities(
+  agentDir: string,
+  manifestBySessionFile: Map<string, RecordManifest>,
+  scan: FamilyFsScan,
+): Promise<void> {
   // U4 数据流：manifest 命中透全字段；未命中 P-fallback 读尾行 identity 取 task/slug/agent
   //（model/status 不可回退，留 undefined）；无 manifest 无 identity（运行中/异常）跳过。
   const subMetas = await listSubagentSessions(agentDir)
-  const identities: Entry[] = []
-  /** 已扫描到的 subagent 文件路径集合，供 manifest 孤儿判定（alive 则跳过 manifest） */
-  const aliveSubPaths = new Set<string>()
-
   for (const meta of subMetas) {
     const h = parseHeaderLine(await readFirstLine(meta.path))
     if (!h) continue // 非 session/坏 header → 无真实 session id，无法 id 修正，跳过
@@ -80,46 +161,30 @@ export async function buildFamilyFromFs(sessionId: string, agentDir: string): Pr
     // header 可解析即视为 alive（MF-3）：identity 在文件尾行、完成时才写入，运行中的 subagent
     // 无 identity。若此处跳过，步骤 3 会把活文件（含其 manifest）当孤儿收编 → cleanedUp=true，
     // family 把活着的 subagent 显示成 [已清理]，真实 sessionId 永远无法关联。
-    aliveSubPaths.add(meta.path)
+    scan.aliveSubPaths.add(meta.path)
 
     // identity data 组装：manifest 主路径或 P-fallback identity 回退，二选一
     const manifest = manifestBySessionFile.get(meta.path)
     let data: Record<string, unknown>
     if (manifest) {
-      // manifest 主（TC-u4-manifest-enrich）：透 task/slug/model/status/sessionFile 全字段
-      data = {
-        rootSessionId: manifest.rootSessionId,
-        slug: manifest.slug ?? '', // slug 兼容旧 manifest（缺→空串兜底，m0 契约）
-        task: manifest.task,
-        agent: manifest.agentName, // 同语义异名：manifest.agentName ↔ identity.data.agent
-        model: manifest.model,
-        status: manifest.status,
-        sessionFile: manifest.sessionFile,
-      }
+      data = manifestIdentityData(manifest)
     } else {
       // P-fallback（ES-p-fallback-no-manifest）：读尾行 identity 回退取 task/slug/agent
       const ident = await readTailIdentity(meta.path, meta.size)
       if (!ident) continue // 无 identity（ES-p-fallback-no-identity，运行中/异常）→ 跳过
-      data = {
-        rootSessionId: ident.rootSessionId,
-        slug: ident.slug,
-        task: ident.task,
-        agent: ident.agent,
-        // model/status 不可回退（identity 无，探针 15/15），留 undefined
-        sessionFile: meta.path,
-      }
+      data = fallbackIdentityData(meta, ident)
     }
     // id 修正：entry.id 用真实 header.id 替换 sa-xxx 占位
-    identities.push({
+    scan.identities.push({
       type: 'custom',
       id: realId,
       parentId: null,
       customType: 'subagent-identity',
       data,
     })
-    fileStats.set(realId, { mtime: meta.mtime, size: meta.size })
-    sessionIdToPath.set(realId, meta.path)
-    pathToRef.set(meta.path, {
+    scan.fileStats.set(realId, { mtime: meta.mtime, size: meta.size })
+    scan.sessionIdToPath.set(realId, meta.path)
+    scan.pathToRef.set(meta.path, {
       sessionId: realId,
       fileName: meta.path,
       mtime: meta.mtime,
@@ -127,16 +192,20 @@ export async function buildFamilyFromFs(sessionId: string, agentDir: string): Pr
       cwd: h.cwd ?? '',
     })
   }
+}
 
-  // ---- 3. records manifest → 孤儿（cleanedUp，ES-orphan-manifest）----
-  // manifest 由终态 finalize / sync 批落标出口写入（创建时不写），.jsonl 被 GC 后仍
-  // 残留。alive 的（sessionFile 已在步骤 2
-  // 扫到）跳过；未扫到的 = 文件已 GC → 孤儿。用 manifest 完整富字段填 SubagentRef，
-  // sessionFile 保留 manifest 的 GC 路径（不置空，供 LLM 知晓原位置），cleanedUp 由
-  // buildFamilyIndex 的 !fileStats.has(ident.id) 判 true（ident.id=manifest.id 不在 fileStats）。
+/**
+ * 步骤 3：records manifest → 孤儿（cleanedUp，ES-orphan-manifest）。
+ * manifest 由终态 finalize / sync 批落标出口写入（创建时不写），.jsonl 被 GC 后仍
+ * 残留。alive 的（sessionFile 已在步骤 2
+ * 扫到）跳过；未扫到的 = 文件已 GC → 孤儿。用 manifest 完整富字段填 SubagentRef，
+ * sessionFile 保留 manifest 的 GC 路径（不置空，供 LLM 知晓原位置），cleanedUp 由
+ * buildFamilyIndex 的 !fileStats.has(ident.id) 判 true（ident.id=manifest.id 不在 fileStats）。
+ */
+function appendOrphanIdentities(manifests: RecordManifest[], scan: FamilyFsScan): void {
   for (const m of manifests) {
-    if (aliveSubPaths.has(m.sessionFile)) continue
-    identities.push({
+    if (scan.aliveSubPaths.has(m.sessionFile)) continue
+    scan.identities.push({
       type: 'custom',
       id: m.id,
       parentId: null,
@@ -153,23 +222,6 @@ export async function buildFamilyFromFs(sessionId: string, agentDir: string): Pr
       },
     })
   }
-
-  // ---- 4-5. build index + resolve（sessionId 不在 byId → resolveFamily 抛 Error）----
-  if (!sessionIdToPath.has(sessionId)) {
-    throw new Error(
-      `session "${sessionId}" not found under ${agentDir}/sessions — ` +
-        `no main session file whose first-line header id matches. ` +
-        `Verify the sessionId or agentDir; for partial uuid, use findSessions first.`,
-    )
-  }
-  const index = buildFamilyIndex(headers, identities, fileStats)
-  const family = resolveFamily(sessionId, index)
-
-  // ---- 6. 补 M1 占位字段（fileName / subagent cwd）+ workflows ----
-  enrichRefs(family, pathToRef)
-  family.workflows = await resolveWorkflows(sessionId, sessionIdToPath, pathToRef)
-
-  return family
 }
 
 // ============================================================
@@ -223,6 +275,15 @@ function parseHeaderLine(line: string | undefined): SessionHeader | null {
   return h
 }
 
+/** readTailIdentity 的成功返回形状（rootSessionId 必有，其余存在才带） */
+type TailIdentity = {
+  rootSessionId: string
+  slug: string
+  task?: string
+  agent?: string
+  parentRecordId?: string
+}
+
 /**
  * 读 subagent 文件尾部（最后 64KB）找 subagent-identity entry，返回 rootSessionId + slug + task + agent。
  *
@@ -240,58 +301,79 @@ function parseHeaderLine(line: string | undefined): SessionHeader | null {
 export async function readTailIdentity(
   path: string,
   size?: number,
-): Promise<
-  | { rootSessionId: string; slug: string; task?: string; agent?: string; parentRecordId?: string }
-  | undefined
-> {
-  // size 未传时内部 stat 获取（execution-tree.ts 复用时无 size）
-  let resolvedSize = size
-  if (resolvedSize === undefined) {
-    try {
-      resolvedSize = (await stat(path)).size
-    } catch {
-      return undefined // 文件不存在/读失败 → undefined
-    }
-  }
+): Promise<TailIdentity | undefined> {
+  const resolvedSize = await resolveTailSize(path, size)
+  if (resolvedSize === undefined) return undefined // 文件不存在/读失败 → undefined
   if (resolvedSize === 0) return undefined
+  const text = await readTailText(path, resolvedSize)
+  if (text === undefined) return undefined
+  const line = extractTailIdentityLine(text, resolvedSize)
+  if (line === undefined) return undefined
+  return parseTailIdentityLine(line)
+}
+
+/** 尾读 size 解析：size 未传时内部 stat 获取（execution-tree.ts 复用时无 size）；stat 失败 → undefined */
+async function resolveTailSize(path: string, size?: number): Promise<number | undefined> {
+  if (size !== undefined) return size
+  try {
+    return (await stat(path)).size
+  } catch {
+    return undefined // 文件不存在/读失败 → undefined
+  }
+}
+
+/** 读文件尾部 min(64KB, size) 字节为文本；打开/读取失败 → undefined */
+async function readTailText(path: string, resolvedSize: number): Promise<string | undefined> {
   let fh: FileHandle | undefined
   try {
     fh = await open(path, 'r')
     const len = Math.min(TAIL_READ_BYTES, resolvedSize)
     const buf = Buffer.alloc(len)
     await fh.read(buf, 0, len, Math.max(0, resolvedSize - len))
-    const text = buf.toString('utf8')
-    const idx = text.lastIndexOf('subagent-identity')
-    if (idx < 0) return undefined
-    // 行首若在读窗口外（identity 行 > 64KB，整行塞不下）→ 无法可靠解析，跳过
-    const lineStartSearch = text.lastIndexOf('\n', idx)
-    if (lineStartSearch < 0 && resolvedSize > len) return undefined
-    const start = lineStartSearch < 0 ? 0 : lineStartSearch + 1
-    let end = text.indexOf('\n', idx)
-    if (end < 0) end = text.length
-    const line = text.slice(start, end)
-    let raw: unknown
-    try {
-      raw = JSON.parse(line)
-    } catch {
-      return undefined
-    }
-    const data = (raw as Record<string, unknown> | undefined)?.data as
-      | Record<string, unknown>
-      | undefined
-    if (!data || typeof data.rootSessionId !== 'string') return undefined
-    return {
-      rootSessionId: data.rootSessionId,
-      slug: typeof data.slug === 'string' ? data.slug : '',
-      task: typeof data.task === 'string' ? data.task : undefined,
-      agent: typeof data.agent === 'string' ? data.agent : undefined,
-      parentRecordId:
-        typeof data.parentRecordId === 'string' ? data.parentRecordId : undefined,
-    }
+    return buf.toString('utf8')
   } catch {
     return undefined
   } finally {
     await fh?.close().catch(() => {})
+  }
+}
+
+/**
+ * 从尾窗文本定位最后一个 subagent-identity 标记所在行（多次重写时取最新）。
+ * 无标记 / 行首在读窗口外（identity 行 > 64KB，整行塞不下）→ undefined。
+ */
+function extractTailIdentityLine(text: string, resolvedSize: number): string | undefined {
+  const idx = text.lastIndexOf('subagent-identity')
+  if (idx < 0) return undefined
+  const len = Math.min(TAIL_READ_BYTES, resolvedSize)
+  // 行首若在读窗口外（identity 行 > 64KB，整行塞不下）→ 无法可靠解析，跳过
+  const lineStartSearch = text.lastIndexOf('\n', idx)
+  if (lineStartSearch < 0 && resolvedSize > len) return undefined
+  const start = lineStartSearch < 0 ? 0 : lineStartSearch + 1
+  let end = text.indexOf('\n', idx)
+  if (end < 0) end = text.length
+  return text.slice(start, end)
+}
+
+/** identity 行 → 富字段结果；JSON 损坏 / 缺 rootSessionId → undefined */
+function parseTailIdentityLine(line: string): TailIdentity | undefined {
+  let raw: unknown
+  try {
+    raw = JSON.parse(line)
+  } catch {
+    return undefined
+  }
+  const data = (raw as Record<string, unknown> | undefined)?.data as
+    | Record<string, unknown>
+    | undefined
+  if (!data || typeof data.rootSessionId !== 'string') return undefined
+  return {
+    rootSessionId: data.rootSessionId,
+    slug: typeof data.slug === 'string' ? data.slug : '',
+    task: typeof data.task === 'string' ? data.task : undefined,
+    agent: typeof data.agent === 'string' ? data.agent : undefined,
+    parentRecordId:
+      typeof data.parentRecordId === 'string' ? data.parentRecordId : undefined,
   }
 }
 

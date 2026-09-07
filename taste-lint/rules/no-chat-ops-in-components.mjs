@@ -57,6 +57,33 @@ const FACTORY_NAMES = new Set(['useChatStore', 'createChatStore'])
 const STORE_SOURCE_RE =
   /(^|\/)stores\/chat(\.ts)?$|^@xyz-agent\/core$|\/domain\/chat(\/(store|index))?(\.ts)?$/
 
+/** 函数节点类型（ReturnStatement 向上找最近包含函数的终止条件） */
+const FUNCTION_TYPES = ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression']
+
+/** 规则域 gate：仅组件目录下的 .vue 受限（composables/stores/effects/tests 文件不受限）；
+ *  组件目录内嵌的测试壳（__tests__ / *.spec.vue / *.test.vue）属测试基建，一并放行 */
+function shouldSkipFile(filename) {
+  if (!filename.endsWith('.vue')) return true
+  if (!/\/src\/components\//.test(filename)) return true
+  return filename.includes('.test.') || filename.includes('.spec.') || filename.includes('__tests__')
+}
+
+/** 从 return 语句向上找最近包含函数并解析其绑定名（函数声明名 / const 赋值名 / 对象方法名），
+ *  无名形态返回 null */
+function resolveEnclosingFnName(node) {
+  let fn = node.parent
+  while (fn && !FUNCTION_TYPES.includes(fn.type)) {
+    fn = fn.parent
+  }
+  if (!fn) return null
+  if (fn.type === 'FunctionDeclaration' && fn.id) return fn.id.name
+  if (fn.parent?.type === 'VariableDeclarator' && fn.parent.id.type === 'Identifier') {
+    return fn.parent.id.name
+  }
+  if (fn.parent?.type === 'Property' && fn.parent.key.type === 'Identifier') return fn.parent.key.name
+  return null
+}
+
 export default {
   meta: {
     type: 'problem',
@@ -77,13 +104,7 @@ export default {
 
   create(context) {
     const filename = context.filename ?? context.getFilename?.() ?? ''
-    // 规则域：仅组件目录下的 .vue（composables/stores/effects/tests 文件不受限）；
-    // 组件目录内嵌的测试壳（__tests__ / *.spec.vue）属测试基建，一并放行
-    if (!filename.endsWith('.vue')) return {}
-    if (!/\/src\/components\//.test(filename)) return {}
-    if (filename.includes('.test.') || filename.includes('.spec.') || filename.includes('__tests__')) {
-      return {}
-    }
+    if (shouldSkipFile(filename)) return {}
     const sourceCode = context.sourceCode ?? context.getSourceCode?.()
 
     // import 边收集的工厂绑定名
@@ -181,15 +202,7 @@ export default {
       ReturnStatement(node) {
         if (!node.argument || !isStoreExpr(node.argument)) return
         // 最近包含命名函数即工厂包装主体
-        let fn = node.parent
-        while (fn && !['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(fn.type)) {
-          fn = fn.parent
-        }
-        if (!fn) return
-        let name = null
-        if (fn.type === 'FunctionDeclaration' && fn.id) name = fn.id.name
-        else if (fn.parent?.type === 'VariableDeclarator' && fn.parent.id.type === 'Identifier') name = fn.parent.id.name
-        else if (fn.parent?.type === 'Property' && fn.parent.key.type === 'Identifier') name = fn.parent.key.name
+        const name = resolveEnclosingFnName(node)
         if (name) storeReturningFns.add(name)
       },
 
@@ -206,19 +219,17 @@ export default {
     // 时序契约：template body 遍历晚于 script Program 遍历（探针实证 + vue 官方规则
     // 同款依赖），template 访问器运行时 script 侧绑定集已终态——即时裁决；绑定解析
     // 与候选消费均幂等，重复调用无双报。
+    const templateVisitors = {
+      MemberExpression(node) {
+        collectMemberExpression(node)
+        resolveBindings()
+        flushCandidates()
+      },
+    }
     const services = sourceCode?.parserServices
     if (typeof services?.defineTemplateBodyVisitor === 'function') {
       // 注意参数序：defineTemplateBodyVisitor(templateBodyVisitor, scriptVisitor)
-      return services.defineTemplateBodyVisitor(
-        {
-          MemberExpression(node) {
-            collectMemberExpression(node)
-            resolveBindings()
-            flushCandidates()
-          },
-        },
-        scriptVisitors,
-      )
+      return services.defineTemplateBodyVisitor(templateVisitors, scriptVisitors)
     }
     return scriptVisitors
   },

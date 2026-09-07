@@ -60,6 +60,7 @@ import {
   recordEpipeFailure,
   sendPromptCommand,
 } from "./stdin-writer.ts";
+import { toErrorMessage } from "../../../../core/error-message.ts";
 
 const logger = getLogger("subagents");
 
@@ -333,7 +334,7 @@ export class PiEngine implements EnginePort {
       return {
         ok: false,
         code: "engine_interact_failed",
-        message: err instanceof Error ? err.message : String(err),
+        message: toErrorMessage(err),
       };
     }
   }
@@ -354,7 +355,7 @@ export class PiEngine implements EnginePort {
       return {
         ok: false,
         code: "engine_interact_failed",
-        message: err instanceof Error ? err.message : String(err),
+        message: toErrorMessage(err),
       };
     }
   }
@@ -498,7 +499,7 @@ export class PiEngine implements EnginePort {
    * 同款升级杀链）。
    */
   private rearmIdleTimerAfterHotPathFailure(record: ExecutionRecord, cause: unknown): void {
-    const detail = cause instanceof Error ? cause.message : String(cause);
+    const detail = toErrorMessage(cause);
     const onTimeout = (): void => {
       killRecordChildWithEscalation(record.id, "idle timer (hot-path failure fallback)");
     };
@@ -725,7 +726,7 @@ async function defaultProbeVersion(invocation: PiInvocation): Promise<string | u
     // debug 级留诊断线索即可，不刷 info/warn
     logger.debug(
       `[pi-engine] probe version check failed (best-effort continue): ${
-        err instanceof Error ? err.message : String(err)
+        toErrorMessage(err)
       }`,
     );
     return undefined;
@@ -747,7 +748,7 @@ function isInvocationResolvable(invocation: PiInvocation): boolean {
       // 单目录探测失败（权限等）继续扫下一个——debug 级留线索即可
       logger.debug(
         `[pi-engine] PATH dir probe failed (continue scanning): ${dir}: ${
-          err instanceof Error ? err.message : String(err)
+          toErrorMessage(err)
         }`,
       );
     }

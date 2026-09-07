@@ -54,7 +54,9 @@ function stripSensitiveEnv(): void {
 
 interface LedgerHostMock {
   host: NotifyLedgerHost;
-  entries: { type: string; customType: string; data?: Record<string, unknown> }[];
+  // appendLedgerEntry（type/customType/data）与 sendDelivery（customType/content/display/details）
+  // 两种 entry 形态共用一个收集数组，宽化为字段并集
+  entries: { type: string; customType: string; data?: Record<string, unknown>; content?: string; display?: boolean; details?: unknown }[];
   sentMessages: { customType: string; content: string; display: boolean; details?: unknown }[];
   settledHandlers: Array<() => void>;
   setIdle(idle: boolean): void;

@@ -28,7 +28,7 @@
 import { computed, onScopeDispose, reactive, watch, type ComputedRef, type Ref } from 'vue'
 import { registerSessionCleanup, useSessionScopedState } from '@/composables/useSessionScopedState'
 import { useSessionEvents } from '@/composables/features/chat/useSessionEvents'
-import { command } from '@xyz-agent/core/transport/api'
+import { command, RPC_BACKSTOP_TIMEOUT_MS } from '@xyz-agent/core/transport/api'
 import type { GenStatsFrame } from '@xyz-agent/shared'
 
 /** 分区容器（useSessionScopedState 响应式契约要求 reactive 容器：mutate 才触发下游失效） */
@@ -152,7 +152,7 @@ export function useGenStats(
 
     let entry = inflightGenStatsFetch.get(sid)
     if (!entry) {
-      entry = { promise: command('session.getGenStats', { sessionId: sid }), seqAtIssue: liveFrameSeqs.get(sid) ?? 0 }
+      entry = { promise: command('session.getGenStats', { sessionId: sid }, RPC_BACKSTOP_TIMEOUT_MS), seqAtIssue: liveFrameSeqs.get(sid) ?? 0 }
       inflightGenStatsFetch.set(sid, entry)
       // settle（resolve/reject）即清条目：下次切入重拉（无条件恢复腿）。比对条目引用防
       // 误删后来者。不用 .finally：finally 返回的新 promise 会镜像 rejection，void 丢弃

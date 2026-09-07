@@ -566,7 +566,7 @@ describe("runSpawn", () => {
     it("MF-4: agent_end（count>0）→ 等待超时 = maxTurnsToWatchdogMs(maxTurns)（动态，非固定 2h）", async () => {
       const maxTurns = 20;
       const expected = maxTurnsToWatchdogMs(maxTurns);
-      mockPending.mockReturnValue({ count: 2 });
+      mockPending.mockReturnValue({ count: 2, recentUnregister: false });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: slow-desc", makeOpts({ maxTurns }), makeCtx());
 
@@ -610,7 +610,7 @@ describe("runSpawn", () => {
       // hermetic：确保兑底 env 未设（若外层 shell 误设会让「裸缺省」断言失效）
       const prevWatchdogEnv = process.env[SPAWN_WATCHDOG_ENV];
       delete process.env[SPAWN_WATCHDOG_ENV];
-      mockPending.mockReturnValue({ count: 2 });
+      mockPending.mockReturnValue({ count: 2, recentUnregister: false });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: slow-desc-no-turns", makeOpts(), makeCtx());
 
@@ -670,7 +670,7 @@ describe("runSpawn", () => {
     it("S-9: agent_end（count=0 + error）→ 保守不 kill + watchdog re-arm 到动态超时", async () => {
       const maxTurns = 20;
       const expected = maxTurnsToWatchdogMs(maxTurns);
-      mockPending.mockReturnValue({ count: 0, error: "session file unreadable: EACCES" });
+      mockPending.mockReturnValue({ count: 0, recentUnregister: false, error: "session file unreadable: EACCES" });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: unreadable", makeOpts({ maxTurns }), makeCtx());
 
@@ -706,7 +706,7 @@ describe("runSpawn", () => {
     });
 
     it("agent_end（willRetry=false，无活跃后代）→ child.kill(SIGTERM) 被调用，close 后 success=true", async () => {
-      mockPending.mockReturnValue({ count: 0 });
+      mockPending.mockReturnValue({ count: 0, recentUnregister: false });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: done", makeOpts(), makeCtx());
 
@@ -731,9 +731,9 @@ describe("runSpawn", () => {
 
     it("agent_end（willRetry=false，有活跃后代）→ 不 kill，进程保持 idle 等 steer 唤醒；后代完成后 kill", async () => {
       // 第一次 agent_end：有活跃后代（count=1）→ 不 kill
-      mockPending.mockReturnValueOnce({ count: 1 });
+      mockPending.mockReturnValueOnce({ count: 1, recentUnregister: false });
       // 第二次 agent_end：后代已 unregister（count=0）→ kill
-      mockPending.mockReturnValueOnce({ count: 0 });
+      mockPending.mockReturnValueOnce({ count: 0, recentUnregister: false });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: orchestrate", makeOpts(), makeCtx());
 
@@ -760,7 +760,7 @@ describe("runSpawn", () => {
     });
 
     it("agent_end（willRetry=true）→ child.kill 不被调用（agent 会重试，等下一个 agent_end）", async () => {
-      mockPending.mockReturnValue({ count: 0 });
+      mockPending.mockReturnValue({ count: 0, recentUnregister: false });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: retry", makeOpts(), makeCtx());
 
@@ -789,7 +789,7 @@ describe("runSpawn", () => {
     });
 
     it("agent_end 后的后续 event 仍被 handleSdkEvent 处理（kill 不阻塞 event pump）", async () => {
-      mockPending.mockReturnValue({ count: 0 });
+      mockPending.mockReturnValue({ count: 0, recentUnregister: false });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: flush", makeOpts(), makeCtx());
 
@@ -829,7 +829,9 @@ describe("runSpawn", () => {
   describe("[T1] agent_end 惰性回补 + LC-4 收尾反查", () => {
     const mockPending = vi.mocked(readActivePendingFromSessionFile);
     const mockWriteAliveMarker = vi.mocked(writeAliveMarker);
-    const mockReaddirSync = vi.mocked(fs.readdirSync);
+    // 被测链路（finalize-record 兜底反查）调用无 options 的 string[] 重载；
+    // vi.mocked 直接包 fs.readdirSync 会推导到 withFileTypes 重载（Dirent[]），显式绑定
+    const mockReaddirSync = vi.mocked(fs.readdirSync as (path: fs.PathLike) => string[]);
 
     /** 统计 stdin 收到的 get_state 请求数（握手 1 次 + agent_end 惰性回补 1 次）。 */
     function countGetStateRequests(child: FakeChild): { seen: number } {
@@ -892,7 +894,7 @@ describe("runSpawn", () => {
     // ① 握手失败（sessionFile 空）→ agent_end 惰性 get_state 回填 → 正常三分支（final kill）
     it("① 握手失败 sessionFile 缺失 → agent_end 惰性 get_state 回填 → 无后代走 final kill（非保守不杀）", async () => {
       // 回补成功后判定：无活跃后代 → final kill 分支（若仍走保守分支则不会 kill，断言失败）
-      mockPending.mockReturnValue({ count: 0 });
+      mockPending.mockReturnValue({ count: 0, recentUnregister: false });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: lazy-backfill", makeOpts(), makeCtx());
 
@@ -935,7 +937,7 @@ describe("runSpawn", () => {
     // ② 回补超时/失败 → 仍走保守分支（行为不劣化）
     it("② 回补无响应超时 → record.sessionFile 仍缺失 → 保守不杀（不劣化为 final kill）", async () => {
       // mock 判定：sessionFile 缺失形态返回 error（真实现语义，见 session-pending.ts:85）
-      mockPending.mockReturnValue({ count: 0, error: "no sessionFile (handshake not settled)" });
+      mockPending.mockReturnValue({ count: 0, recentUnregister: false, error: "no sessionFile (handshake not settled)" });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: lazy-timeout", makeOpts(), makeCtx());
 
@@ -982,7 +984,7 @@ describe("runSpawn", () => {
     // 且顺带覆盖惰性回补的 sessionId 补入 handshakeResult 分支（close 收尾 lookupId 源）。
     it("③ LC-4: 惰性回补只回 sessionId（sessionFile 仍无）→ close 收尾 sessionDir 反查修正 record.sessionFile", async () => {
       // sessionFile 缺失 → 决策点惰性回补；回补判定保守（error → 不杀）
-      mockPending.mockReturnValue({ count: 0, error: "no sessionFile (handshake not settled)" });
+      mockPending.mockReturnValue({ count: 0, recentUnregister: false, error: "no sessionFile (handshake not settled)" });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: lc4-lookup", makeOpts(), makeCtx());
 
@@ -1031,7 +1033,7 @@ describe("runSpawn", () => {
     it("④ A1-3: 回补等待窗口内 kill → close → continuation 不触达三分支（不 touch marker / 不挂 timer）", async () => {
       // 若守卫缺失（回归），continuation 会以 count=1 走 keep-alive 分支：
       // touchAliveMarkerForHeartbeat 写 marker + 裸缺省 arm 无进展 timer（30min 后 kill）
-      mockPending.mockReturnValue({ count: 1 });
+      mockPending.mockReturnValue({ count: 1, recentUnregister: false });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: lazy-race-close", makeOpts(), makeCtx());
 

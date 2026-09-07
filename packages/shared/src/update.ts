@@ -20,10 +20,9 @@ export interface LatestReleaseInfo {
   htmlUrl: string
   /** 按平台分流的产物资产（缺失平台为 undefined） */
   assets: {
-    macArm64Zip?: ReleaseAsset
+    macArm64Dmg?: ReleaseAsset
     winX64Exe?: ReleaseAsset
     linuxX64AppImage?: ReleaseAsset
-    linuxX64Deb?: ReleaseAsset
   }
 }
 
@@ -32,7 +31,7 @@ export interface LatestReleaseInfo {
  * sha256 来自 GitHub asset.digest strip 'sha256:' 前缀；缺失时为 undefined。
  */
 export interface ReleaseAsset {
-  /** 文件名（如 'TaiJi-mac-arm64.zip'） */
+  /** 文件名（如 'TaiJi-mac-arm64.dmg'） */
   name: string
   /** 下载直链（browser_download_url） */
   downloadUrl: string

@@ -87,7 +87,7 @@ function makeRunningRealRun(
   const terminate = vi.fn(async () => {});
   const controller = new AbortController();
   const abort = vi.spyOn(controller, "abort");
-  const worker = { terminate, postMessage: vi.fn() } as unknown as Parameters<typeof RunRuntime.prototype.constructor>[0];
+  const worker = { terminate, postMessage: vi.fn() } as unknown as ConstructorParameters<typeof RunRuntime>[0];
   const runtime = new RunRuntime(
     worker as never,
     controller,
@@ -217,7 +217,7 @@ describe("runWorkflow", () => {
     const deps = makeDeps();
     // worker.start 被调时探测 runs 注册状态——证明 runs.set 在 assignRuntime 之后
     let runsSizeAtWorkerStart = -1;
-    deps.workerHost.start = vi.fn(() => {
+    vi.spyOn(deps.workerHost, "start").mockImplementation(() => {
       runsSizeAtWorkerStart = deps.runs.size;
       return { postMessage: vi.fn(), terminate: vi.fn(async () => {}) };
     });

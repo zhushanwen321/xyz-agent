@@ -24,7 +24,7 @@ describe("facade 顶层缓存惯例 + configureCore 前后透明切换（时序�
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     topLevelLogger.warn("before-configure", { stage: 1 });
     expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0][0]).toBe("[top-level-comp] before-configure");
+    expect(warnSpy.mock.calls[0]![0]).toBe("[top-level-comp] before-configure");
     expect(warnSpy.mock.calls[0][1]).toEqual({ stage: 1 });
 
     // 2) configureCore：宿主 log 接线（模拟宿主壳初始化时点，晚于本模块加载）。

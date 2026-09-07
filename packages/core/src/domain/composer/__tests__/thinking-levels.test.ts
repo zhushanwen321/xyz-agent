@@ -51,7 +51,7 @@ describe('normalizeSupportedLevels — 下发档位集归一', () => {
   it('U5: THINKING_LEVELS 枚举含 minimal，强度序介于 off 与 low 之间', () => {
     const levels = THINKING_LEVELS.map((o) => o.level)
     expect(levels).toContain('minimal')
-    const idx = (l: string) => levels.indexOf(l)
+    const idx = (l: (typeof levels)[number]) => levels.indexOf(l)
     expect(idx('off')).toBeLessThan(idx('minimal'))
     expect(idx('minimal')).toBeLessThan(idx('low'))
   })

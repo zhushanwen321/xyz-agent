@@ -523,6 +523,143 @@ describe('search 灾难性正则降级 + abort（fixture，MF-5 回归）', () =
   })
 })
 
+describe('extract commits 双路径（fixture：git-cmd 主路径 + commit-context 次路径 + 去重）', () => {
+  let dir: string
+  const SID = '019e6c96-bbbb-cccc-dddd-00000000000c'
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'tool-handler-commits-'))
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  /** 写单个 session JSONL（commits 用例行内联传入）。 */
+  async function writeCommitsSession(id: string, lines: string[]): Promise<void> {
+    await mkdir(join(dir, 'sessions', '--demo-cwd--'), { recursive: true })
+    await writeFile(
+      join(dir, 'sessions', '--demo-cwd--', `${id}.jsonl`),
+      lines.join('\n') + '\n',
+    )
+  }
+
+  it('commit-context 次路径：非 git bash 的 toolResult，hash 邻近含关键词才收（D6）', async () => {
+    await writeCommitsSession(SID, [
+      JSON.stringify({ type: 'session', id: SID, cwd: '/demo' }),
+      JSON.stringify({
+        type: 'message',
+        id: `${SID}-m1`,
+        parentId: SID,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'toolCall', id: 'tc-read-1', name: 'read', arguments: { path: '/tmp/log.txt' } },
+          ],
+        },
+      }),
+      // read 结果：hash 邻近 30 字符窗口含 'feat:' → commit-context 次路径纳入
+      JSON.stringify({
+        type: 'message',
+        id: `${SID}-m2`,
+        parentId: `${SID}-m1`,
+        message: {
+          role: 'toolResult',
+          toolName: 'read',
+          toolCallId: 'tc-read-1',
+          content: [{ type: 'text', text: 'deploy abc1234f done\nfeat: add login' }],
+        },
+      }),
+      // read 结果：hash 无关键词邻近 → 两路径都不收（过滤分支）
+      JSON.stringify({
+        type: 'message',
+        id: `${SID}-m3`,
+        parentId: `${SID}-m2`,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'toolCall', id: 'tc-read-2', name: 'read', arguments: { path: '/tmp/out.txt' } },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: 'message',
+        id: `${SID}-m4`,
+        parentId: `${SID}-m3`,
+        message: {
+          role: 'toolResult',
+          toolName: 'read',
+          toolCallId: 'tc-read-2',
+          content: [{ type: 'text', text: 'output 9998887 plain text' }],
+        },
+      }),
+    ])
+    const r = await handleSessionRead({ action: 'extract', session: SID, what: 'commits' }, dir)
+    const d = r.details as { count: number; items: Array<{ hash: string; source: string }> }
+    const hashes = d.items.map((it) => it.hash)
+    expect(hashes).toContain('abc1234f')
+    expect(hashes).not.toContain('9998887')
+    expect(d.items.find((it) => it.hash === 'abc1234f')?.source).toBe('commit-context')
+  })
+
+  it('去重高置信优先：同 hash 同时命中 git-cmd 与 commit-context → 保留 git-cmd 一条', async () => {
+    await writeCommitsSession(SID, [
+      JSON.stringify({ type: 'session', id: SID, cwd: '/demo' }),
+      JSON.stringify({
+        type: 'message',
+        id: `${SID}-m1`,
+        parentId: SID,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'toolCall', id: 'tc-bash-1', name: 'bash', arguments: { command: 'git log --oneline -3' } },
+          ],
+        },
+      }),
+      // bash + git log → git-cmd 高置信（含 def5678a）
+      JSON.stringify({
+        type: 'message',
+        id: `${SID}-m2`,
+        parentId: `${SID}-m1`,
+        message: {
+          role: 'toolResult',
+          toolName: 'bash',
+          toolCallId: 'tc-bash-1',
+          content: [{ type: 'text', text: 'def5678a feat: fix crash' }],
+        },
+      }),
+      JSON.stringify({
+        type: 'message',
+        id: `${SID}-m3`,
+        parentId: `${SID}-m2`,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'toolCall', id: 'tc-read-1', name: 'read', arguments: { path: '/tmp/deploy.txt' } },
+          ],
+        },
+      }),
+      // read 结果同 hash def5678a + 关键词 merged → low 候选，去重后丢弃
+      JSON.stringify({
+        type: 'message',
+        id: `${SID}-m4`,
+        parentId: `${SID}-m3`,
+        message: {
+          role: 'toolResult',
+          toolName: 'read',
+          toolCallId: 'tc-read-1',
+          content: [{ type: 'text', text: 'deploy def5678a merged' }],
+        },
+      }),
+    ])
+    const r = await handleSessionRead({ action: 'extract', session: SID, what: 'commits' }, dir)
+    const d = r.details as { count: number; items: Array<{ hash: string; source: string }> }
+    const dupes = d.items.filter((it) => it.hash === 'def5678a')
+    expect(dupes).toHaveLength(1)
+    expect(dupes[0].source).toBe('git-cmd')
+    expect(d.count).toBe(1)
+  })
+})
+
 describe('renderExtractItems F9 截断（S3 首项超大 + S4 文案）', () => {
   it('S3: 首项超大内部截断 → body 不超预算，shown<count + truncated=true', () => {
     // 首项 10000 字符 >> EXTRACT_BUDGET_BYTES(8000)；旧逻辑放行首项致 body≈10KB

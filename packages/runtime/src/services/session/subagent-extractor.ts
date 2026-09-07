@@ -654,6 +654,23 @@ const TIMESTAMP_WINDOW_MS = 60_000
  * @param startedAt bg-notify 的 startedAt 时间戳（ms）。缺失时返回最近的文件。
  */
 function findSubagentSessionFile(mainCwd: string, startedAt: number | undefined): string | null {
+  const listing = listSubagentJsonlFiles(mainCwd)
+  if (!listing) return null
+
+  // 无 startedAt → 返回最近修改的文件
+  if (startedAt === undefined) {
+    return findLatestSubagentFile(listing.dir, listing.files)
+  }
+
+  // 有 startedAt → 匹配文件名 ISO 时间戳最近的文件
+  return findTimestampMatchedSubagentFile(listing.dir, listing.files, startedAt)
+}
+
+/**
+ * 列出 subagent session 目录下的候选 JSONL 文件（目录解析 + 存在性 + 列目录三步，任一失败
+ * 返回 null）。fs 调用时序保持原样：getSubagentSessionDir → existsSync → readdirSync → filter。
+ */
+function listSubagentJsonlFiles(mainCwd: string): { dir: string; files: string[] } | null {
   let dir: string
   try {
     dir = getSubagentSessionDir(mainCwd)
@@ -670,20 +687,24 @@ function findSubagentSessionFile(mainCwd: string, startedAt: number | undefined)
   }
   if (files.length === 0) return null
 
-  // 无 startedAt → 返回最近修改的文件
-  if (startedAt === undefined) {
-    let latest: { file: string; mtime: number } | null = null
-    for (const f of files) {
-      try {
-        const mtime = statSync(join(dir, f)).mtimeMs
-        if (!latest || mtime > latest.mtime) latest = { file: f, mtime }
-      // eslint-disable-next-line taste/no-silent-catch -- stat 失败（文件被并发删除等），跳过该文件
-      } catch { /* skip unreadable file */ }
-    }
-    return latest ? join(dir, latest.file) : null
-  }
+  return { dir, files }
+}
 
-  // 有 startedAt → 匹配文件名 ISO 时间戳最近的文件
+/** 无 startedAt 兜底：返回最近修改（mtime 最大）的文件；全部 stat 失败返回 null。 */
+function findLatestSubagentFile(dir: string, files: string[]): string | null {
+  let latest: { file: string; mtime: number } | null = null
+  for (const f of files) {
+    try {
+      const mtime = statSync(join(dir, f)).mtimeMs
+      if (!latest || mtime > latest.mtime) latest = { file: f, mtime }
+    // eslint-disable-next-line taste/no-silent-catch -- stat 失败（文件被并发删除等），跳过该文件
+    } catch { /* skip unreadable file */ }
+  }
+  return latest ? join(dir, latest.file) : null
+}
+
+/** 有 startedAt：匹配文件名 ISO 时间戳最近且在 TIMESTAMP_WINDOW_MS 窗口内的文件。 */
+function findTimestampMatchedSubagentFile(dir: string, files: string[], startedAt: number): string | null {
   const targetTime = startedAt
   let best: { file: string; diff: number } | null = null
   for (const f of files) {

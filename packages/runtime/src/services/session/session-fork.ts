@@ -77,15 +77,11 @@ export interface ForkedFile {
  * @returns 新文件路径 + 新 session id + sourceFilePath（供上层 fallback 判断）
  * @throws 源文件不存在 / forkEntryId 在树中找不到 / 源文件无 session header
  */
-export async function createForkedSessionFile(
-  sourceFilePath: string,
-  forkEntryId: string,
-  includeFrom: boolean,
-  targetDir: string,
-  forkEntryIdField?: string,
-  fallbackParentId?: string,
-): Promise<ForkedFile> {
-  // 1. 读源文件
+/**
+ * 读源 session JSONL 并解析为 entry 列表（阶段 1）。
+ * ENOENT 语义逐字节保持：文件不存在 → 带路径错误；其他读错误（EACCES 等）原样上抛。
+ */
+async function readSourceEntries(sourceFilePath: string): Promise<PiEntry[]> {
   let raw: string
   try {
     raw = await readFile(sourceFilePath, 'utf-8')
@@ -95,30 +91,47 @@ export async function createForkedSessionFile(
     }
     throw e
   }
+  return parseJsonl(raw) as PiEntry[]
+}
 
-  const allEntries = parseJsonl(raw) as PiEntry[]
-
-  // 2. 找 session header（root），提取 cwd
-  const header = allEntries.find((e): e is SessionHeaderEntry =>
+/** 找 session header（root），提取 cwd；无有效 header → 带路径错误（阶段 2）。 */
+function requireSessionHeader(entries: PiEntry[], sourceFilePath: string): SessionHeaderEntry {
+  const header = entries.find((e): e is SessionHeaderEntry =>
     e.type === 'session' && typeof e.id === 'string' && typeof e.cwd === 'string',
   )
   if (!header) {
     throw new Error(`fork: source session has no valid session header: ${sourceFilePath}`)
   }
+  return header
+}
 
-  // 3. 建 id → entry 索引（只索引有 id 的 entry）
+/** 建 id → entry 索引（只索引有 id 的 entry）（阶段 3）。 */
+function buildEntryIndex(entries: PiEntry[]): Map<string, PiEntry> {
   const entryById = new Map<string, PiEntry>()
-  for (const e of allEntries) {
+  for (const e of entries) {
     if (typeof e.id === 'string') entryById.set(e.id, e)
   }
+  return entryById
+}
 
-  // 4. 从 forkEntryId 沿 parentId 回溯到 root，收集路径上的 entryId 集合
+/**
+ * 从 forkEntryId 沿 parentId 回溯到 root，收集路径上的 entryId 集合（阶段 4）。
+ * header（type session）到达即停、不加入集合（header 单独重建）；
+ * parentId 指向不存在的 entry（跨文件 parent 或数据损坏）即停；
+ * 空集 → forkEntryId 在树中找不到，带路径错误。
+ */
+function collectKeptEntryIds(
+  entryById: Map<string, PiEntry>,
+  forkEntryId: string,
+  sourceFilePath: string,
+  entryCount: number,
+): Set<string> {
   const keepIds = new Set<string>()
   let currentId: string | undefined = forkEntryId
   let visited = 0
   // 安全阀：正常树深度 ≤ allEntries.length，+SAFETY_MARGIN 防循环引用死循环
   const SAFETY_MARGIN = 10
-  const maxDepth = allEntries.length + SAFETY_MARGIN
+  const maxDepth = entryCount + SAFETY_MARGIN
   while (currentId && visited < maxDepth) {
     const entry = entryById.get(currentId)
     if (!entry) break // parentId 指向不存在的 entry（跨文件 parent 或数据损坏）
@@ -134,38 +147,53 @@ export async function createForkedSessionFile(
   if (keepIds.size === 0) {
     throw new Error(`fork: forkEntryId "${forkEntryId}" not found in session tree: ${sourceFilePath}`)
   }
+  return keepIds
+}
 
-  // includeFrom=false：剔除 forkEntry 自身
-  if (!includeFrom) {
-    keepIds.delete(forkEntryId)
-  }
-
-  // 5. 生成新 session id + 文件名（pi 格式：<ISO_timestamp>_<uuid>.jsonl）
+/** 生成新 session id + 文件路径（pi 格式：<ISO_timestamp>_<uuid>.jsonl）（阶段 5）。now 同时供 header timestamp 用，单次取值。 */
+function buildForkTarget(targetDir: string): { newSessionId: string; now: Date; newFilePath: string } {
   const newSessionId = randomUUID()
   const now = new Date()
   // pi 用 ISO 时间把 : 和 . 替换为 -，如 2026-07-07T03-23-49-092Z
   const isoTs = now.toISOString().replace(/[:.]/g, '-')
   const fileName = `${isoTs}_${newSessionId}.jsonl`
   const newFilePath = join(targetDir, fileName)
+  return { newSessionId, now, newFilePath }
+}
 
-  // 6. 构建新文件内容
-  const lines: string[] = []
+/**
+ * 解析新 header 的 parentSession 血缘键（阶段 6a）。
+ *
+ * parentSession 指向直接父级（源 session），不透传源的 parentSession（那是祖父）。
+ * 多级 fork（A→B→C）：C 读 B 的文件，B.header.parentSession 是 A 的路径——但 C 的直接父级
+ * 是 B，不能透传 A。故 parentSession 始终用源 session 的文件路径（sourceFilePath），
+ * 它指向直接父级文件，与 forkEntryId（指向 B 内 entry）坐标系一致。
+ * 源 session 可能尚未落盘（pi 延迟写入，上层 sessionFilePath=undefined），此时
+ * sourceFilePath 是上层临时拷贝/不可靠路径，改用 fallbackParentId（源 sessionId）作血缘键，
+ * 保证父子链可追溯（FR-20）。
+ */
+function resolveParentSession(sourceFilePath: string, fallbackParentId?: string): string {
+  return fallbackParentId ?? sourceFilePath
+}
 
-  // parentSession 指向直接父级（源 session），不透传源的 parentSession（那是祖父）。
-  // 多级 fork（A→B→C）：C 读 B 的文件，B.header.parentSession 是 A 的路径——但 C 的直接父级
-  // 是 B，不能透传 A。故 parentSession 始终用源 session 的文件路径（sourceFilePath），
-  // 它指向直接父级文件，与 forkEntryId（指向 B 内 entry）坐标系一致。
-  // 源 session 可能尚未落盘（pi 延迟写入，上层 sessionFilePath=undefined），此时
-  // sourceFilePath 是上层临时拷贝/不可靠路径，改用 fallbackParentId（源 sessionId）作血缘键，
-  // 保证父子链可追溯（FR-20）。
-  const resolvedParentSession = fallbackParentId ?? sourceFilePath
-
-  // 新 session header（parentSession 指回源文件/源 sessionId，形成父子链）
-  // W1（restore-fork-attach-fix F1/MF2）：cwd 做存活兜底——newHeader 原样 spread 会继承
-  // 源文件的死路径 cwd（如 worktree 清理后的源会话），fork 产物直附着时 pi 必 throw
-  // MissingSessionCwdError（pi-mono session-cwd.ts；RPC switch_session 无 cwdOverride
-  // 字段）。fork 文件是创建型新文件（登记表 §4 ⑥），生成 header 时兜底 = 写自己的产物，
-  // 无合规问题，且是最早、最便宜的拦截点。
+/**
+ * 构建新 session header（阶段 6b，存在性判断时序保持：existsSync(cwd) 发生在 writeFile 之前
+ * 的内容构建期，且是唯一的存在性判断——不新增对产物文件的任何 fs 探测）。
+ *
+ * 新 session header（parentSession 指回源文件/源 sessionId，形成父子链）
+ * W1（restore-fork-attach-fix F1/MF2）：cwd 做存活兜底——newHeader 原样 spread 会继承
+ * 源文件的死路径 cwd（如 worktree 清理后的源会话），fork 产物直附着时 pi 必 throw
+ * MissingSessionCwdError（pi-mono session-cwd.ts；RPC switch_session 无 cwdOverride
+ * 字段）。fork 文件是创建型新文件（登记表 §4 ⑥），生成 header 时兜底 = 写自己的产物，
+ * 无合规问题，且是最早、最便宜的拦截点。
+ */
+function buildForkedHeader(
+  header: SessionHeaderEntry,
+  newSessionId: string,
+  now: Date,
+  resolvedParentSession: string,
+  forkEntryIdField?: string,
+): SessionHeaderEntry {
   const headerCwd = existsSync(header.cwd) ? header.cwd : homedir()
   const newHeader: SessionHeaderEntry = {
     ...header,
@@ -175,15 +203,54 @@ export async function createForkedSessionFile(
     parentSession: resolvedParentSession,
     ...(forkEntryIdField !== undefined ? { forkEntryId: forkEntryIdField } : {}),
   }
+  return newHeader
+}
+
+/** 序列化产物内容（阶段 7）：header 先行，随后按原始顺序写入保留的 entry（保持 entry 到达顺序，pi 重建树依赖顺序）。 */
+function renderForkedLines(newHeader: SessionHeaderEntry, allEntries: PiEntry[], keepIds: Set<string>): string[] {
+  const lines: string[] = []
   // 保留源 header 的额外字段（如 label），但强制覆盖 id/timestamp/parentSession/forkEntryId
   lines.push(JSON.stringify(newHeader))
-
-  // 按原始顺序写入保留的 entry（保持 entry 到达顺序，pi 重建树依赖顺序）
   for (const e of allEntries) {
     if (typeof e.id === 'string' && keepIds.has(e.id)) {
       lines.push(JSON.stringify(e))
     }
   }
+  return lines
+}
+
+export async function createForkedSessionFile(
+  sourceFilePath: string,
+  forkEntryId: string,
+  includeFrom: boolean,
+  targetDir: string,
+  forkEntryIdField?: string,
+  fallbackParentId?: string,
+): Promise<ForkedFile> {
+  // 1. 读源文件（ENOENT → 带路径错误）
+  const allEntries = await readSourceEntries(sourceFilePath)
+
+  // 2. 找 session header（root），提取 cwd
+  const header = requireSessionHeader(allEntries, sourceFilePath)
+
+  // 3. 建 id → entry 索引（只索引有 id 的 entry）
+  const entryById = buildEntryIndex(allEntries)
+
+  // 4. 从 forkEntryId 沿 parentId 回溯到 root，收集路径上的 entryId 集合
+  const keepIds = collectKeptEntryIds(entryById, forkEntryId, sourceFilePath, allEntries.length)
+
+  // includeFrom=false：剔除 forkEntry 自身
+  if (!includeFrom) {
+    keepIds.delete(forkEntryId)
+  }
+
+  // 5. 生成新 session id + 文件名
+  const { newSessionId, now, newFilePath } = buildForkTarget(targetDir)
+
+  // 6. 构建新文件内容（header 血缘 + cwd 存活兜底）
+  const resolvedParentSession = resolveParentSession(sourceFilePath, fallbackParentId)
+  const newHeader = buildForkedHeader(header, newSessionId, now, resolvedParentSession, forkEntryIdField)
+  const lines = renderForkedLines(newHeader, allEntries, keepIds)
 
   await writeFile(newFilePath, lines.join('\n') + '\n', 'utf-8')
 

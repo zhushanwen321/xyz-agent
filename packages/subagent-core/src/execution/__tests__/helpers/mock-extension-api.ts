@@ -21,7 +21,7 @@ export function mockExtensionApi(
   const noop = (): void => { /* test mock: method not invoked by this test */ };
   // Proxy<T> 泛型参数决定返回类型——直接声明为 ExtensionAPI，
   // TS 接受（Proxy handler 对 target 的类型不约束 T）。
-  return new Proxy<ExtensionAPI>(overrides as ExtensionAPI, {
+  return new Proxy<ExtensionAPI>(overrides as unknown as ExtensionAPI, {
     get(target, prop: string | symbol): unknown {
       if (prop in target) return target[prop as keyof ExtensionAPI];
       return noop;

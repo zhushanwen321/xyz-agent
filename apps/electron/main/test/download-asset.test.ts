@@ -17,6 +17,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { UpdateError } from '../update/types.js'
 
 // ── 批次 5（u5a）原子写序列断言基建 ──────────────────────────────
 // 包装 writeFileSync/renameSync 透传真实现并记录调用参数，供「resume-state
@@ -26,11 +27,18 @@ import path from 'node:path'
 const fsSpy = vi.hoisted(() => ({
   writeCalls: [] as Array<{ path: string; data: string }>,
   renameCalls: [] as Array<{ from: string; to: string }>,
+  /** >0 时 createWriteStream 的 open 延迟 N ms（模拟 CI threadpool 拥塞），默认 0 完全透传 */
+  writeStreamOpenDelayMs: 0,
 }))
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
   const realWriteFileSync = actual.writeFileSync
   const realRenameSync = actual.renameSync
+  const realCreateWriteStream = actual.createWriteStream
+  // createWriteStream 的 open 是异步 threadpool 操作，CI 高负载下其完成可能晚于
+  // 下载失败链路的 unlinkSync。经文档化 options.fs 钩子延迟 open，确定性复现该时序
+  // （open/write/writev/close 全部取真实现，仅 open 时机被推迟，语义不变）。
+  const realStreamFs = { open: actual.open, write: actual.write, writev: actual.writev, close: actual.close }
   return {
     ...actual,
     writeFileSync: vi.fn((...a: Parameters<typeof actual.writeFileSync>) => {
@@ -41,6 +49,23 @@ vi.mock('node:fs', async (importOriginal) => {
       fsSpy.renameCalls.push({ from: String(a[0]), to: String(a[1]) })
       return realRenameSync(...a)
     }),
+    createWriteStream: (...a: Parameters<typeof actual.createWriteStream>) => {
+      const delay = fsSpy.writeStreamOpenDelayMs
+      if (delay <= 0) return realCreateWriteStream(...a)
+      const [file, options] = a
+      const delayedOpen = (...openArgs: unknown[]) => {
+        setTimeout(() => (realStreamFs.open as (...oa: unknown[]) => void)(...openArgs), delay)
+      }
+      return realCreateWriteStream(file, {
+        ...options,
+        fs: {
+          open: delayedOpen,
+          write: realStreamFs.write,
+          writev: realStreamFs.writev,
+          close: realStreamFs.close,
+        },
+      })
+    },
   }
 })
 
@@ -760,24 +785,13 @@ describe('RM3-4: 段失败 → 共享 signal 中断其余段', () => {
   let originalFetch: typeof globalThis.fetch
   let downloadAsset: typeof import('../update/download-asset.js')['downloadAsset']
 
-  beforeEach(async () => {
-    originalFetch = globalThis.fetch
-    const mod = await loadModule()
-    downloadAsset = mod.downloadAsset
-  })
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch
-    vi.restoreAllMocks()
-    const updateDir = path.join(TMP_DATA_DIR, 'update')
-    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
-  })
-
-  it('part-0 返回 500 → 其余三段挂起流收到 abort 被中断（非跑完），整批 rejects', { timeout: 30_000 }, async () => {
-    const expectedSha = sha256Hex(MULTI_PART_CONTENT)
-    // 每个健康段的可观察状态：aborted = 该段 fetch 的 signal 收到 abort
-    const partAborted = new Map<number, { aborted: boolean }>()
-    globalThis.fetch = vi.fn(async (_url, init) => {
+  /**
+   * RM3 共享 abort 场景的 fetch mock：part-0 返回 HTTP 500；健康段（part-1..3）
+   * 返回 206 流——发出 64 字节后挂起（永不自然结束），直到所属 fetch signal 收到
+   * abort 才 error。每个健康段的可观察状态记入 partAborted（aborted = signal 收到 abort）。
+   */
+  function makeSharedAbortFetchMock(partAborted: Map<number, { aborted: boolean }>) {
+    return vi.fn(async (_url, init) => {
       const method = (init?.method as string | undefined) ?? 'GET'
       if (method === 'HEAD') {
         return makeHeadResponse(MULTI_PART_CONTENT.length)
@@ -792,8 +806,6 @@ describe('RM3-4: 段失败 → 共享 signal 中断其余段', () => {
       if (start === 0) {
         return new Response('Internal Server Error', { status: 500 })
       }
-      // 健康段：发出一小块后挂起（永不自然结束），直到 signal abort 才 error——
-      // 若共享 abort 失效，该段 promise 永不 settle，下面的 waitFor 先给出明确失败
       const signal = init?.signal as AbortSignal | undefined
       const obs = { aborted: false }
       partAborted.set(start, obs)
@@ -816,6 +828,27 @@ describe('RM3-4: 段失败 → 共享 signal 中断其余段', () => {
         },
       })
     }) as unknown as typeof globalThis.fetch
+  }
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch
+    const mod = await loadModule()
+    downloadAsset = mod.downloadAsset
+  })
+
+  afterEach(() => {
+    fsSpy.writeStreamOpenDelayMs = 0
+    globalThis.fetch = originalFetch
+    vi.restoreAllMocks()
+    const updateDir = path.join(TMP_DATA_DIR, 'update')
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('part-0 返回 500 → 其余三段挂起流收到 abort 被中断（非跑完），整批 rejects', { timeout: 30_000 }, async () => {
+    const expectedSha = sha256Hex(MULTI_PART_CONTENT)
+    // 每个健康段的可观察状态：aborted = 该段 fetch 的 signal 收到 abort
+    const partAborted = new Map<number, { aborted: boolean }>()
+    globalThis.fetch = makeSharedAbortFetchMock(partAborted)
 
     const pending = downloadAsset({
       name: 'rm3-shared-abort.zip',
@@ -845,5 +878,209 @@ describe('RM3-4: 段失败 → 共享 signal 中断其余段', () => {
       const leftovers = readdirSync(updateDir).filter((f) => /\.part-\d+$/.test(f))
       expect(leftovers).toEqual([])
     }
+  })
+
+  // [RM3-CI 回归] 失败清理与 createWriteStream 异步 open 的竞争。
+  // open 是 threadpool 异步操作：CI mac 高负载下（同文件 suite 84s、threadpool 拥塞）
+  // 部分段失败链路（共享 abort → 流 error → reject → catch → unlinkSync）会跑在
+  // open 完成之前——unlink 扑空（ENOENT）后 open 完成把 .part 文件「复活」成永久
+  // 残留。本地快路径 open 先完成，该缺陷从不暴露（CI run 34037936933 确定性红 vs
+  // 本地全绿）。注入 50ms open 延迟确定性复现该时序：实现必须等 writeStream 'close'
+  // （fd 生命周期终态）落定后再清理，清理才能确定作用于已存在（或从未创建）的文件。
+  it('open 完成晚于失败清理（CI threadpool 拥塞形态）→ 段失败清理仍无 .part 残留', { timeout: 30_000 }, async () => {
+    fsSpy.writeStreamOpenDelayMs = 50
+    const expectedSha = sha256Hex(MULTI_PART_CONTENT)
+    const partAborted = new Map<number, { aborted: boolean }>()
+    globalThis.fetch = makeSharedAbortFetchMock(partAborted)
+
+    const pending = downloadAsset({
+      name: 'rm3-open-race.zip',
+      downloadUrl: 'https://example.com/rm3-open-race.zip',
+      size: MULTI_PART_CONTENT.length,
+      sha256: expectedSha,
+    })
+    pending.catch(() => {})
+
+    await vi.waitFor(() => {
+      expect(partAborted.size).toBe(3)
+      for (const obs of partAborted.values()) {
+        expect(obs.aborted).toBe(true)
+      }
+    }, { timeout: 5_000, interval: 50 })
+
+    await expect(pending).rejects.toThrow(/HTTP 500/)
+
+    // 给被延迟的 open 留出完成窗口（50ms）：残留若会「复活」，此刻已在盘上
+    await new Promise<void>((resolve) => setTimeout(resolve, 100))
+
+    const updateDir = path.join(TMP_DATA_DIR, 'update')
+    const leftovers = readdirSync(updateDir).filter((f) => /\.part-\d+$/.test(f))
+    expect(leftovers).toEqual([])
+  })
+})
+
+// ════════════════════════════════════════════════════════════════
+// D1 idle 停滞检测语义（timeout-slow-flow-wallclock 设计 §8 P2 / §9 场景 1/2 单测映射）。
+// 总墙钟删除后单段路径的唯一超时形态是 idle watchdog（fetch 前挂载）：
+//   ① 慢速但持续传输（<30s 必有字节）跨旧总钟边界（>3600s）不被杀
+//   ② 流中停滞 30s 无数据 → 中断 + UPDATE_NETWORK_TIMEOUT + temp 保留可续传
+//   ③ 等响应头阶段停滞 30s → idle 前移后照样中断（防 header 阶段无限挂）
+// ════════════════════════════════════════════════════════════════
+describe('D1: idle 停滞检测（总墙钟已删）', () => {
+  let originalFetch: typeof globalThis.fetch
+  let downloadAsset: typeof import('../update/download-asset.js')['downloadAsset']
+
+  /** 单块字节数（400 块 × 1KB = 400KB < 1MB 保存阈值，避免中途写 resume-state 干扰） */
+  const CHUNK_BYTES = 1024
+
+  /** 受控流式下载源：测试手动 enqueue/close 驱动 data 事件；signal abort 时 error 掉流（镜像真实 undici abort 传播行为）。 */
+  function makeControlledSource(totalBytes: number, signal?: AbortSignal): {
+    response: Response
+    enqueue: (buf: Uint8Array) => void
+    close: () => void
+  } {
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        streamController = c
+        signal?.addEventListener('abort', () => {
+          try { c.error(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' })) } catch { /* 已关闭 */ }
+        }, { once: true })
+      },
+    })
+    return {
+      response: new Response(stream, {
+        status: 200,
+        headers: { 'Content-Length': String(totalBytes) },
+      }),
+      enqueue: (buf) => streamController?.enqueue(buf),
+      close: () => streamController?.close(),
+    }
+  }
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch
+    const mod = await loadModule()
+    downloadAsset = mod.downloadAsset
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+    const updateDir = path.join(TMP_DATA_DIR, 'update')
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  // ① 场景 1（单测缩样）：慢速但持续传输不被杀——每 10s 一块共 400 块 = 4000s，
+  //    跨越旧总墙钟 3600s 边界；删除总钟后应完整下载成功。
+  it('慢速但持续传输跨旧总钟边界（4000s > 3600s）不被杀，最终下载成功', async () => {
+    vi.useFakeTimers()
+    const totalChunks = 400
+    const content = Buffer.alloc(totalChunks * CHUNK_BYTES, 0x5a)
+    const expectedSha = sha256Hex(content)
+    let source: ReturnType<typeof makeControlledSource> | undefined
+    globalThis.fetch = vi.fn(async () => {
+      source = makeControlledSource(content.length)
+      return source.response
+    }) as unknown as typeof globalThis.fetch
+
+    const pending = downloadAsset({
+      name: 'd1-slow-sustained.zip',
+      downloadUrl: 'https://example.com/d1-slow-sustained.zip',
+      size: content.length,
+      sha256: expectedSha,
+    })
+    const probe = pending.then(() => 'resolved' as const, () => 'rejected' as const)
+
+    // 每块间隔 10s（< 30s idle 边界）：data 到达即重置 idle，跨旧总钟边界持续推进
+    for (let i = 0; i < totalChunks; i++) {
+      source!.enqueue(new Uint8Array(content.subarray(i * CHUNK_BYTES, (i + 1) * CHUNK_BYTES)))
+      await vi.advanceTimersByTimeAsync(10_000)
+    }
+    source!.close()
+
+    expect(await probe).toBe('resolved')
+    const finalPath = path.join(TMP_DATA_DIR, 'update', 'd1-slow-sustained.zip')
+    expect(readFileSync(finalPath).compare(content)).toBe(0)
+  }, 30_000)
+
+  // ② 场景 2（单测缩样）：流中停滞 30 秒无数据 → idle 中断，错误可续传（temp 保留）。
+  it('流中停滞 30 秒 → idle abort，报 UPDATE_NETWORK_TIMEOUT（停滞文案）且 temp + resume-state 保留可续传', async () => {
+    vi.useFakeTimers()
+    const totalBytes = 100 * 1024 // < 10MB 多段阈值：直接单段路径，无 probe 干扰
+    let source: ReturnType<typeof makeControlledSource> | undefined
+    globalThis.fetch = vi.fn(async (_url: unknown, init?: { signal?: AbortSignal }) => {
+      source = makeControlledSource(totalBytes, init?.signal)
+      return source.response
+    }) as unknown as typeof globalThis.fetch
+
+    const pending = downloadAsset({
+      name: 'd1-stall-midstream.zip',
+      downloadUrl: 'https://example.com/d1-stall.zip',
+      size: totalBytes,
+    })
+    const probe = pending.then(() => 'resolved' as const, (e: unknown) => e)
+
+    source!.enqueue(new Uint8Array(CHUNK_BYTES)) // 首块到达（重置 idle）
+    await vi.advanceTimersByTimeAsync(1_000) // flush data 回调
+    await vi.advanceTimersByTimeAsync(30_000) // 停滞满 30s → idle abort
+
+    const err = await probe
+    expect(err).toBeInstanceOf(UpdateError)
+    const updateErr = err as UpdateError
+    expect(updateErr.errorCode).toBe('UPDATE_NETWORK_TIMEOUT')
+    expect(updateErr.message).toContain('stalled')
+    expect(updateErr.message).toContain('30s')
+    // 可续传：temp 与 resume-state 均保留（重试从断点续传）
+    expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'd1-stall-midstream.zip.downloading'))).toBe(true)
+    expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'resume-state.json'))).toBe(true)
+  }, 30_000)
+
+  // ③ P2 守护（单测缩样）：等响应头阶段停滞——idle 前移到 fetch 之前后，header 阶段
+  //    同样受 30s 保护；删除总钟后此阶段不再无限挂（P2 探针实证正常 CDN header 时延
+  //    p50≈0.4s / max≈0.9s，30s 边界余量 >30x）。
+  it('等响应头阶段停滞 30 秒 → idle 前移后照样中断（UPDATE_NETWORK_TIMEOUT），不再无限挂', async () => {
+    vi.useFakeTimers()
+    globalThis.fetch = vi.fn((_url: unknown, init?: { signal?: AbortSignal }) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }))
+        })
+      })) as unknown as typeof globalThis.fetch
+
+    const pending = downloadAsset({
+      name: 'd1-stall-header.zip',
+      downloadUrl: 'https://example.com/d1-stall-header.zip',
+      size: 4096,
+    })
+    const probe = pending.then(() => 'resolved' as const, (e: unknown) => e)
+    await vi.advanceTimersByTimeAsync(30_000)
+
+    const err = await probe
+    expect(err).toBeInstanceOf(UpdateError)
+    expect((err as UpdateError).errorCode).toBe('UPDATE_NETWORK_TIMEOUT')
+    // header 停滞的诊断串为停滞语义（F1 成因分流的判别依据），非泛化 'timeout (aborted)'
+    expect((err as UpdateError).message).toContain('stalled')
+    // header 阶段失败：temp 文件从未创建，无半下载残留
+    expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'd1-stall-header.zip.downloading'))).toBe(false)
+  }, 30_000)
+
+  // ④ 用户可见文案闭环（G1 失败路径）：main 推送 update:error 前经 toUserFriendly()
+  //    映射（reportUpdateDownloadError 组 UpdateErrorPayload），toast/设置页展示的是
+  //    停滞语义中文文案 + 断点续传指引（设计 §5.2 样例 5）；英文技术 message 只走
+  //    落盘诊断通道，不直达用户。
+  it('UPDATE_NETWORK_TIMEOUT 用户可见文案为停滞语义 + 续传指引（toUserFriendly 映射闭环）', () => {
+    const err = new UpdateError(
+      'download stalled (no data for 30s), aborted; temp kept — retry resumes from break point',
+      'downloading',
+      'UPDATE_NETWORK_TIMEOUT',
+    )
+    const friendly = err.toUserFriendly()
+    expect(friendly.message).toBe('下载停滞（连续 30 秒无数据）已中断')
+    expect(friendly.suggestion).toContain('断点续传')
+    expect(friendly.suggestion).toContain('重试')
+    // 英文技术 message 无「(大写码)」形态，不触发 (CODE) 后缀拼接污染中文文案
+    expect(friendly.message).not.toContain('stalled')
   })
 })

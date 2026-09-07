@@ -106,7 +106,7 @@ function makeChatModeRecord(id = "sa-f2-idle"): ExecutionRecord {
   return createRecord(id, {
     agent: "general-purpose",
     model: "test-model",
-    mode: "sync",
+    mode: "background",
     task: "chat task",
     slug: "chat",
     startedAt: 1_000_000,

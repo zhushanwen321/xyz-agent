@@ -89,6 +89,7 @@ import {
   toRunSnapshot,
   type RunSnapshot,
 } from "@zhushanwen/subagent-core";
+import { toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 // ── Workflow-record self-describing entry (W17, D4) ─────────
 
@@ -161,7 +162,7 @@ function collectRecordRun(entry: CustomEntry, entryIndex: number, recordRuns: Ma
     }
     // D-5: 版本不匹配 = old snapshot format / future version — skip silently
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
+    const reason = toErrorMessage(err);
     logger.warn(
       `[subagent-workflow] workflow-record entry #${entryIndex} corrupted, skipped run rebuild: ${reason}`,
     );
@@ -235,7 +236,7 @@ async function pruneStateFilesBeyondCap(stateDir: string, maxRuns: number): Prom
     names = await fs.promises.readdir(stateDir);
   } catch (err) {
     if (!isEnoentError(err)) {
-      const reason = err instanceof Error ? err.message : String(err);
+      const reason = toErrorMessage(err);
       logger.warn(`[subagent-workflow] state retention: readdir ${stateDir} failed: ${reason}`);
     }
     return;
@@ -261,7 +262,7 @@ async function pruneStateFilesBeyondCap(stateDir: string, maxRuns: number): Prom
       logger.debug(`[subagent-workflow] state retention: pruned ${victim.full}`);
     } catch (err) {
       if (isEnoentError(err)) continue; // 并发删除已达成目标
-      const reason = err instanceof Error ? err.message : String(err);
+      const reason = toErrorMessage(err);
       logger.warn(`[subagent-workflow] state retention: failed to delete ${victim.full}: ${reason}`);
     }
   }

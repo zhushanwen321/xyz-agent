@@ -39,6 +39,234 @@ export const CHIP_SPACER_ZWSP = '\u200B'
 const BLOCK_LINE_TAGS = new Set(['DIV', 'P'])
 
 /**
+ * getSegmentsFromEl 遍历可变状态（visitNode 家族 helper 的显式传参载体）。
+ * visitNode 从 getSegmentsFromEl 闭包提升为模块级函数后，共享可变量全部收进此对象
+ * 按参数显式传递，不引入隐式闭包共享；字段只由各 helper 按原语义改写。
+ */
+interface SegmentParseState {
+  segments: Segment[]
+  pendingText: string | null
+  /**
+   * ── 块级分行还原状态 ──
+   * 块级元素进入/离开都幂等置位（`</div><div>` 相邻边界合并成一个），
+   * 下一个实际内容（text/br/chip）出现时才消费补 \n（懒补）——文档尾的块级收尾换行
+   * 自然丢弃（粘贴 'a\nb' 产出 `a<div>b</div>`，还原 'a\nb' 无多余尾换行）。
+   */
+  pendingBlockBreak: boolean
+  rejectChips: Set<Element>
+}
+
+function flushText(state: SegmentParseState): void {
+  if (state.pendingText !== null && state.pendingText !== '') {
+    state.segments.push({ type: 'text', text: state.pendingText })
+  }
+  state.pendingText = null
+}
+
+/** 消费挂起的块级分界：已有文本且未以换行结尾时补 \n（首块前/空行 br 后不重复补） */
+function consumeBlockBreak(state: SegmentParseState): void {
+  if (!state.pendingBlockBreak) return
+  state.pendingBlockBreak = false
+  if (state.pendingText && !state.pendingText.endsWith('\n')) {
+    state.pendingText += '\n'
+  }
+}
+
+// ── visitNode 的节点判定 helper（判定顺序保持原样：chip-x → rejectChips → 五类 chip）──
+
+/** node 是否落在 .chip-x（× 删除按钮）子树：文本节点查父链（?. 防父为 document），元素节点查自身+祖先 */
+function isInChipXSubtree(node: Node): boolean {
+  return Boolean(node.parentElement?.closest('.chip-x') || (node as Element).closest?.('.chip-x'))
+}
+
+/** node 是否落在已消费 chip 的拒绝子树内（chip 子树内容不混入 segments 的防御闸） */
+function isInsideRejectedChip(node: Node, rejectChips: Set<Element>): boolean {
+  for (const chip of rejectChips) {
+    if (chip.contains(node)) return true
+  }
+  return false
+}
+
+function isSlashChipNode(node: Node): boolean {
+  return (
+    node.nodeType === Node.ELEMENT_NODE &&
+    (node as Element).classList?.contains('slash-chip') === true
+  )
+}
+
+function isImageChipNode(node: Node): boolean {
+  return (
+    node.nodeType === Node.ELEMENT_NODE &&
+    ((node as Element).classList?.contains('image-chip') === true ||
+      (node as HTMLElement).dataset?.chipType === 'image')
+  )
+}
+
+function isMentionFileChipNode(node: Node): boolean {
+  return (
+    node.nodeType === Node.ELEMENT_NODE &&
+    (node as Element).classList?.contains('mention-file') === true
+  )
+}
+
+// session/subagent chip 用 dataset.chipType 判定而非 class：mention-at 是新旧共用 class
+// （insertMentionChip 产的旧 @ chip 无 dataset，须继续走文本拍平保持历史兼容，设计 F3）
+function isSessionChipNode(node: Node): boolean {
+  return node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).dataset?.chipType === 'session'
+}
+
+function isSubagentChipNode(node: Node): boolean {
+  return (
+    node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).dataset?.chipType === 'subagent'
+  )
+}
+
+// ── visitNode 的 chip 处理 helper（每类保持原 consumeBlockBreak → flush/拼装 → rejectChips.add 时序）──
+
+/** slash-chip：skill 读 dataset 产 skill segment，其余把 .chip-label 文本并入 pendingText */
+function visitSlashChip(node: Node, state: SegmentParseState): void {
+  consumeBlockBreak(state)
+  const chip = node as HTMLElement
+  const chipType = chip.dataset.chipType
+  if (chipType === 'skill') {
+    flushText(state)
+    const name = chip.dataset.chipName ?? ''
+    const location = chip.dataset.chipLocation
+    state.segments.push(location ? { type: 'skill', name, location } : { type: 'skill', name })
+  } else {
+    const labelText = chip.querySelector('.chip-label')?.textContent ?? ''
+    state.pendingText = (state.pendingText ?? '') + labelText
+  }
+  state.rejectChips.add(chip)
+}
+
+/** image-chip：粘贴/拖入 pending 占位只拒绝不进 segments（发送时静默丢弃），正式 chip 产 image segment */
+function visitImageChip(node: Node, state: SegmentParseState): void {
+  consumeBlockBreak(state)
+  const chip = node as HTMLElement
+  const chipPath = chip.dataset.chipPath ?? ''
+  // 占位符（粘贴/拖入 pending）path 无效，留在 DOM 但不进 segments（发送时静默丢弃）
+  if (/^__(?:paste|drag)_pending_[0-9a-f-]+__$/.test(chipPath)) {
+    state.rejectChips.add(chip)
+    return
+  }
+  flushText(state)
+  state.segments.push({
+    type: 'image',
+    id: chip.dataset.chipId ?? '',
+    path: chip.dataset.chipPath ?? '',
+    fileName: chip.dataset.chipFileName ?? '',
+    displayName: chip.dataset.chipDisplayName ?? '',
+    needsMigrate: chip.dataset.chipNeedsMigrate === 'true',
+  })
+  state.rejectChips.add(chip)
+}
+
+/** mention-file chip：dataset 带 lineRange 产带 lineRange 的 file segment，否则只有 path */
+function visitMentionFileChip(node: Node, state: SegmentParseState): void {
+  consumeBlockBreak(state)
+  const chip = node as HTMLElement
+  flushText(state)
+  const path = chip.dataset.chipPath ?? ''
+  const ls = chip.dataset.chipLineStart
+  const le = chip.dataset.chipLineEnd
+  if (ls !== undefined && le !== undefined) {
+    state.segments.push({ type: 'file', path, lineRange: [Number(ls), Number(le)] })
+  } else {
+    state.segments.push({ type: 'file', path })
+  }
+  state.rejectChips.add(chip)
+}
+
+function visitSessionChip(node: Node, state: SegmentParseState): void {
+  consumeBlockBreak(state)
+  const chip = node as HTMLElement
+  flushText(state)
+  state.segments.push({
+    type: 'session',
+    sessionId: chip.dataset.chipSessionId ?? '',
+    label: chip.dataset.chipLabel ?? '',
+  })
+  state.rejectChips.add(chip)
+}
+
+function visitSubagentChip(node: Node, state: SegmentParseState): void {
+  consumeBlockBreak(state)
+  const chip = node as HTMLElement
+  flushText(state)
+  state.segments.push({
+    type: 'subagent',
+    subagentId: chip.dataset.chipSubagentId ?? '',
+    slug: chip.dataset.chipSlug ?? '',
+  })
+  state.rejectChips.add(chip)
+}
+
+/** 依次尝试五类 chip 分支；命中任一即处理并返回 true（调用方终止本节点的后续分支） */
+function tryVisitChipNode(node: Node, state: SegmentParseState): boolean {
+  if (isSlashChipNode(node)) {
+    visitSlashChip(node, state)
+    return true
+  }
+  if (isImageChipNode(node)) {
+    visitImageChip(node, state)
+    return true
+  }
+  if (isMentionFileChipNode(node)) {
+    visitMentionFileChip(node, state)
+    return true
+  }
+  if (isSessionChipNode(node)) {
+    visitSessionChip(node, state)
+    return true
+  }
+  if (isSubagentChipNode(node)) {
+    visitSubagentChip(node, state)
+    return true
+  }
+  return false
+}
+
+function visitTextNode(node: Node, state: SegmentParseState): void {
+  consumeBlockBreak(state)
+  const raw = node.textContent ?? ''
+  const filtered = raw.replace(/\u00A0/g, ' ').replace(/\u200B/g, '')
+  state.pendingText = (state.pendingText ?? '') + filtered
+}
+
+function visitBrNode(state: SegmentParseState): void {
+  consumeBlockBreak(state)
+  state.pendingText = (state.pendingText ?? '') + '\n'
+}
+
+/** 非芯片元素节点下钻：块级元素进入/离开幂等挂起分界，其余仅递归子节点 */
+function visitElementNode(node: Node, state: SegmentParseState): void {
+  if (BLOCK_LINE_TAGS.has(node.nodeName)) {
+    state.pendingBlockBreak = true
+    for (const child of Array.from(node.childNodes)) visitNode(child, state)
+    state.pendingBlockBreak = true
+  } else {
+    for (const child of Array.from(node.childNodes)) visitNode(child, state)
+  }
+}
+
+/** DOM 遍历主干：判定/处理分派到各 helper，自身只留分支路由 */
+function visitNode(node: Node, state: SegmentParseState): void {
+  if (isInChipXSubtree(node)) return
+  if (isInsideRejectedChip(node, state.rejectChips)) return
+  if (tryVisitChipNode(node, state)) return
+  if (node.nodeType === Node.TEXT_NODE) {
+    visitTextNode(node, state)
+    return
+  }
+  if (node.nodeName === 'BR') {
+    visitBrNode(state)
+    return
+  }
+  if (node.nodeType === Node.ELEMENT_NODE) visitElementNode(node, state)
+}
+
+/**
  * 把 contenteditable DOM 解析为 Segment[]（W2）。
  *
  * 递归遍历逻辑与原 getTextFromEl 的 TreeWalker 一致（TEXT_NODE + BR + 跳过 .chip-x），
@@ -55,153 +283,15 @@ const BLOCK_LINE_TAGS = new Set(['DIV', 'P'])
  */
 export function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
   if (!el) return []
-  const segments: Segment[] = []
-  let pendingText: string | null = null
-  const rejectChips = new Set<Element>()
-
-  // ── 块级分行还原状态 ──
-  // pendingBlockBreak：块级元素进入/离开都幂等置位（`</div><div>` 相邻边界合并成一个），
-  // 下一个实际内容（text/br/chip）出现时才消费补 \n（懒补）——文档尾的块级收尾换行
-  // 自然丢弃（粘贴 'a\nb' 产出 `a<div>b</div>`，还原 'a\nb' 无多余尾换行）。
-  let pendingBlockBreak = false
-
-  const flushText = (): void => {
-    if (pendingText !== null && pendingText !== '') {
-      segments.push({ type: 'text', text: pendingText })
-    }
-    pendingText = null
+  const state: SegmentParseState = {
+    segments: [],
+    pendingText: null,
+    pendingBlockBreak: false,
+    rejectChips: new Set<Element>(),
   }
-
-  /** 消费挂起的块级分界：已有文本且未以换行结尾时补 \n（首块前/空行 br 后不重复补） */
-  const consumeBlockBreak = (): void => {
-    if (!pendingBlockBreak) return
-    pendingBlockBreak = false
-    if (pendingText && !pendingText.endsWith('\n')) {
-      pendingText += '\n'
-    }
-  }
-
-  const visitNode = (node: Node): void => {
-    if (node.parentElement?.closest('.chip-x') || (node as Element).closest?.('.chip-x')) {
-      return
-    }
-    for (const chip of rejectChips) {
-      if (chip.contains(node)) return
-    }
-
-    if (node.nodeType === Node.ELEMENT_NODE && (node as Element).classList?.contains('slash-chip')) {
-      consumeBlockBreak()
-      const chip = node as HTMLElement
-      const chipType = chip.dataset.chipType
-      if (chipType === 'skill') {
-        flushText()
-        const name = chip.dataset.chipName ?? ''
-        const location = chip.dataset.chipLocation
-        segments.push(location ? { type: 'skill', name, location } : { type: 'skill', name })
-      } else {
-        const labelText = chip.querySelector('.chip-label')?.textContent ?? ''
-        pendingText = (pendingText ?? '') + labelText
-      }
-      rejectChips.add(chip)
-      return
-    }
-
-    if (
-      node.nodeType === Node.ELEMENT_NODE &&
-      ((node as Element).classList?.contains('image-chip') ||
-        (node as HTMLElement).dataset?.chipType === 'image')
-    ) {
-      consumeBlockBreak()
-      const chip = node as HTMLElement
-      const chipPath = chip.dataset.chipPath ?? ''
-      // 占位符（粘贴/拖入 pending）path 无效，留在 DOM 但不进 segments（发送时静默丢弃）
-      if (/^__(?:paste|drag)_pending_[0-9a-f-]+__$/.test(chipPath)) {
-        rejectChips.add(chip)
-        return
-      }
-      flushText()
-      segments.push({
-        type: 'image',
-        id: chip.dataset.chipId ?? '',
-        path: chip.dataset.chipPath ?? '',
-        fileName: chip.dataset.chipFileName ?? '',
-        displayName: chip.dataset.chipDisplayName ?? '',
-        needsMigrate: chip.dataset.chipNeedsMigrate === 'true',
-      })
-      rejectChips.add(chip)
-      return
-    }
-
-    if (node.nodeType === Node.ELEMENT_NODE && (node as Element).classList?.contains('mention-file')) {
-      consumeBlockBreak()
-      const chip = node as HTMLElement
-      flushText()
-      const path = chip.dataset.chipPath ?? ''
-      const ls = chip.dataset.chipLineStart
-      const le = chip.dataset.chipLineEnd
-      if (ls !== undefined && le !== undefined) {
-        segments.push({ type: 'file', path, lineRange: [Number(ls), Number(le)] })
-      } else {
-        segments.push({ type: 'file', path })
-      }
-      rejectChips.add(chip)
-      return
-    }
-
-    // session/subagent chip 用 dataset.chipType 判定而非 class：mention-at 是新旧共用 class
-    // （insertMentionChip 产的旧 @ chip 无 dataset，须继续走文本拍平保持历史兼容，设计 F3）
-    if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).dataset?.chipType === 'session') {
-      consumeBlockBreak()
-      const chip = node as HTMLElement
-      flushText()
-      segments.push({
-        type: 'session',
-        sessionId: chip.dataset.chipSessionId ?? '',
-        label: chip.dataset.chipLabel ?? '',
-      })
-      rejectChips.add(chip)
-      return
-    }
-
-    if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).dataset?.chipType === 'subagent') {
-      consumeBlockBreak()
-      const chip = node as HTMLElement
-      flushText()
-      segments.push({
-        type: 'subagent',
-        subagentId: chip.dataset.chipSubagentId ?? '',
-        slug: chip.dataset.chipSlug ?? '',
-      })
-      rejectChips.add(chip)
-      return
-    }
-
-    if (node.nodeType === Node.TEXT_NODE) {
-      consumeBlockBreak()
-      const raw = node.textContent ?? ''
-      const filtered = raw.replace(/\u00A0/g, ' ').replace(/\u200B/g, '')
-      pendingText = (pendingText ?? '') + filtered
-      return
-    }
-    if (node.nodeName === 'BR') {
-      consumeBlockBreak()
-      pendingText = (pendingText ?? '') + '\n'
-      return
-    }
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      if (BLOCK_LINE_TAGS.has(node.nodeName)) {
-        pendingBlockBreak = true
-        for (const child of Array.from(node.childNodes)) visitNode(child)
-        pendingBlockBreak = true
-      } else {
-        for (const child of Array.from(node.childNodes)) visitNode(child)
-      }
-    }
-  }
-
-  for (const child of Array.from(el.childNodes)) visitNode(child)
-  flushText()
-  return segments
+  for (const child of Array.from(el.childNodes)) visitNode(child, state)
+  flushText(state)
+  return state.segments
 }
 
 /** 提取纯文本：getSegmentsFromEl + segmentsToText 的便捷封装 */
@@ -326,6 +416,177 @@ export function getCaretLineRect(range: Range): DOMRect | null {
   }
 }
 
+// ── moveCaretVerticalOf 的编排 helper（按光标移动流程阶段拆分，主函数只留守卫与分派）──
+
+/**
+ * 零 rect caret 解析结果：
+ * - 'rect'：getBoundingClientRect 命中或 ZWSP 探测成功，rect 可用于行定位；
+ * - 'modify'：零 rect 且探测失败——已就地执行 sel.modify 行移动（副作用），outcome 即
+ *   最终返回值，调用方不得继续行定位流程。
+ */
+type CaretRectResolution =
+  | { kind: 'rect'; rect: DOMRect }
+  | { kind: 'modify'; outcome: VerticalMoveResult }
+
+/**
+ * 目标落点解析上下文（moveCaretToLinePoint 家族 helper 的显式传参载体，避免超长参数表）。
+ * 全部为构建时的不可变快照，helper 不得改写。
+ */
+interface CaretTargetContext {
+  readonly sel: Selection
+  readonly el: HTMLElement
+  /** 移动前的选区首 Range（同位判定/容器校验基准） */
+  readonly before: Range
+  readonly lineRects: DOMRect[]
+  readonly currentLine: number
+  readonly targetLine: number
+  /** preferredX ?? caretRect.left（主函数已解析，moved 返回值用） */
+  readonly activePreferredX: number
+  /** 原始 preferredX（at-edge noop 返回值回传调用方原值，区别于 activePreferredX） */
+  readonly preferredX: number | null
+}
+
+/** 取选区首 Range；无选区（sel 缺失/rangeCount 0）或光标不在 el 内返回 null（调用方统一 noop）。
+ *  命中时回传已窄化的 sel——window.getSelection() 的 null 性靠此处收口，调用方不再重复判空。 */
+function getInitialSelection(
+  sel: Selection | null,
+  el: HTMLElement,
+): { sel: Selection; before: Range } | null {
+  if (!sel || sel.rangeCount === 0) return null
+  const before = sel.getRangeAt(0)
+  if (!el.contains(before.startContainer)) return null
+  return { sel, before }
+}
+
+/** 全 el 视觉行 rects（createRange + selectNodeContents + 零宽过滤；首测与滚动后重测共用） */
+function getVisualLineRectsOfEl(el: HTMLElement): DOMRect[] {
+  const fullRange = document.createRange()
+  fullRange.selectNodeContents(el)
+  return getVisualLineRects(fullRange)
+}
+
+/** caret 可视 rect 解析：正常 rect 直取；零 rect 走 ZWSP 探测，探测失败就地 sel.modify 行移动兜底 */
+function resolveCaretRect(
+  before: Range,
+  sel: Selection,
+  dir: 'up' | 'down',
+  preferredX: number | null,
+): CaretRectResolution {
+  const caretRect = before.getBoundingClientRect()
+  if (caretRect.top === 0 && caretRect.bottom === 0) {
+    const probed = getCaretLineRect(before)
+    if (probed) {
+      return { kind: 'rect', rect: probed }
+    }
+    const bc = before.startContainer, bo = before.startOffset
+    sel.modify('move', dir, 'line')
+    const after = sel.getRangeAt(0)
+    return {
+      kind: 'modify',
+      outcome: {
+        result: (after.startContainer === bc && after.startOffset === bo) ? 'at-edge' : 'moved',
+        preferredX,
+      },
+    }
+  }
+  return { kind: 'rect', rect: caretRect }
+}
+
+/** 定位 caretRect 所属视觉行：先按 top±1 命中，未命中退化取行中心点最近行 */
+function resolveCurrentLineIndex(lineRects: DOMRect[], caretRect: DOMRect): number {
+  for (let i = 0; i < lineRects.length; i++) {
+    if (Math.abs(caretRect.top - lineRects[i].top) <= 1) return i
+  }
+  let closest = -1
+  let minDist = Infinity
+  for (let i = 0; i < lineRects.length; i++) {
+    const MIDPOINT_DIVISOR = 2
+    const center = (lineRects[i].top + lineRects[i].bottom) / MIDPOINT_DIVISOR
+    const dist = Math.abs(caretRect.top - center)
+    if (dist < minDist) { minDist = dist; closest = i }
+  }
+  return closest
+}
+
+/**
+ * 首行再向上：把光标移到第一个文本节点起点。
+ * 返回 null 表示不满足移动前置（无文本节点/已在文本起点），调用方返回 at-edge noop。
+ */
+function moveCaretToFirstTextStart(
+  sel: Selection,
+  before: Range,
+  el: HTMLElement,
+  activePreferredX: number,
+): VerticalMoveResult | null {
+  const firstText = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode()
+  // 无文本节点（空输入框 <br><br> 等）无行可移：与「无文本内容无行可移」语义一致直接 noop，
+  // 避免 setStart(null, 0) 抛 TypeError（空输入框首行再按 ↑ 可达：两 <br> 产生两个零宽行 rect）
+  if (firstText == null) return null
+  const isAtTextStart = before.startContainer === firstText && before.startOffset === 0
+  if (isAtTextStart) return null
+  const range = document.createRange()
+  range.setStart(firstText, 0)
+  range.collapse(true)
+  sel.removeAllRanges()
+  sel.addRange(range)
+  return { result: 'moved', preferredX: activePreferredX }
+}
+
+/**
+ * 目标行越出 el 可视区（上下 5px margin）时滚动 el 并按滚动后几何重取目标行 top；
+ * 未滚动或重测后行数不足时维持原 top。elRect/cs 由调用方一次读取传入（与原时序一致）。
+ */
+function scrollTargetLineIntoView(
+  el: HTMLElement,
+  targetLine: number,
+  targetLineTop: number,
+  elRect: DOMRect,
+  cs: CSSStyleDeclaration,
+): number {
+  const NEEDS_SCROLL_MARGIN = 5
+  if (targetLineTop < elRect.top + NEEDS_SCROLL_MARGIN || targetLineTop > elRect.bottom - NEEDS_SCROLL_MARGIN) {
+    el.scrollTop += targetLineTop - elRect.top - parseFloat(cs.paddingTop) - NEEDS_SCROLL_MARGIN
+    const freshRects = getVisualLineRectsOfEl(el)
+    if (targetLine < freshRects.length) return freshRects[targetLine].top
+  }
+  return targetLineTop
+}
+
+/** caretRangeFromPoint 落点校验（容器内/非同位/行归属）+ 应用选区；任一校验失败回 at-edge noop */
+function validateAndApplyCaretTarget(ctx: CaretTargetContext, targetX: number, targetY: number): VerticalMoveResult {
+  const { sel, el, before, lineRects, currentLine, targetLine, activePreferredX, preferredX } = ctx
+  const target = document.caretRangeFromPoint(targetX, targetY)
+  if (!target || !el.contains(target.startContainer)) return { result: 'at-edge', preferredX }
+
+  if (target.startContainer === before.startContainer && target.startOffset === before.startOffset) {
+    return { result: 'at-edge', preferredX }
+  }
+
+  const targetRect = target.getBoundingClientRect()
+  if (targetRect.top !== 0 || targetRect.bottom !== 0) {
+    const onTargetLine = Math.abs(targetRect.top - lineRects[targetLine].top) <= 1
+    const onCurrentLine = Math.abs(targetRect.top - lineRects[currentLine].top) <= 1
+    if (!onTargetLine && onCurrentLine) return { result: 'at-edge', preferredX }
+  }
+
+  sel.removeAllRanges()
+  sel.addRange(target)
+  return { result: 'moved', preferredX: activePreferredX }
+}
+
+/** 目标行落点解析：滚动校正 → targetY/targetX 合成 → caretRangeFromPoint 校验应用 */
+function moveCaretToLinePoint(ctx: CaretTargetContext): VerticalMoveResult {
+  const { el, lineRects, targetLine, activePreferredX } = ctx
+  const elRect = el.getBoundingClientRect()
+  const cs = getComputedStyle(el)
+  const LINE_INTERIOR_OFFSET = 3
+  const targetLineTop = scrollTargetLineIntoView(el, targetLine, lineRects[targetLine].top, elRect, cs)
+  const targetY = targetLineTop + LINE_INTERIOR_OFFSET
+  const BOUNDARY_QUIRK_OFFSET = 20
+  const targetX = activePreferredX ?? (elRect.left + parseFloat(cs.paddingLeft) + BOUNDARY_QUIRK_OFFSET)
+  return validateAndApplyCaretTarget(ctx, targetX, targetY)
+}
+
 /**
  * 视觉行上/下移动（模块级纯函数，preferred X 由调用方传入/写回）。
  *
@@ -340,96 +601,40 @@ export function moveCaretVerticalOf(
   preferredX: number | null,
 ): VerticalMoveResult {
   const noop: VerticalMoveResult = { result: 'at-edge', preferredX }
-  const sel = window.getSelection()
-  if (!sel || sel.rangeCount === 0) return noop
-  const before = sel.getRangeAt(0)
-  if (!el.contains(before.startContainer)) return noop
+  const initial = getInitialSelection(window.getSelection(), el)
+  if (initial === null) return noop
+  const { sel, before } = initial
 
-  const fullRange = document.createRange()
-  fullRange.selectNodeContents(el)
-  const lineRects = getVisualLineRects(fullRange)
+  const lineRects = getVisualLineRectsOfEl(el)
   if (lineRects.length <= 1) return noop
 
-  let caretRect = before.getBoundingClientRect()
-  if (caretRect.top === 0 && caretRect.bottom === 0) {
-    const probed = getCaretLineRect(before)
-    if (probed) {
-      caretRect = probed
-    } else {
-      const bc = before.startContainer, bo = before.startOffset
-      sel.modify('move', dir, 'line')
-      const after = sel.getRangeAt(0)
-      return { result: (after.startContainer === bc && after.startOffset === bo) ? 'at-edge' : 'moved', preferredX }
-    }
-  }
+  const caret = resolveCaretRect(before, sel, dir, preferredX)
+  if (caret.kind === 'modify') return caret.outcome
+  const caretRect = caret.rect
 
   const activePreferredX = preferredX ?? caretRect.left
 
-  let currentLine = -1
-  for (let i = 0; i < lineRects.length; i++) {
-    if (Math.abs(caretRect.top - lineRects[i].top) <= 1) { currentLine = i; break }
-  }
-  if (currentLine === -1) {
-    let minDist = Infinity
-    for (let i = 0; i < lineRects.length; i++) {
-      const MIDPOINT_DIVISOR = 2
-      const center = (lineRects[i].top + lineRects[i].bottom) / MIDPOINT_DIVISOR
-      const dist = Math.abs(caretRect.top - center)
-      if (dist < minDist) { minDist = dist; currentLine = i }
-    }
-  }
+  const currentLine = resolveCurrentLineIndex(lineRects, caretRect)
   if (currentLine === -1) return noop
 
   const targetLine = dir === 'up' ? currentLine - 1 : currentLine + 1
   if (targetLine >= lineRects.length) return noop
   if (targetLine < 0) {
-    const firstText = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode()
-    // 无文本节点（空输入框 <br><br> 等）无行可移：与「无文本内容无行可移」语义一致直接 noop，
-    // 避免 setStart(null, 0) 抛 TypeError（空输入框首行再按 ↑ 可达：两 <br> 产生两个零宽行 rect）
-    if (firstText == null) return noop
-    const isAtTextStart = before.startContainer === firstText && before.startOffset === 0
-    if (isAtTextStart) return noop
-    const range = document.createRange()
-    range.setStart(firstText, 0)
-    range.collapse(true)
-    sel.removeAllRanges()
-    sel.addRange(range)
-    return { result: 'moved', preferredX: activePreferredX }
+    const movedToStart = moveCaretToFirstTextStart(sel, before, el, activePreferredX)
+    if (movedToStart === null) return noop
+    return movedToStart
   }
 
-  const elRect = el.getBoundingClientRect()
-  const cs = getComputedStyle(el)
-  const LINE_INTERIOR_OFFSET = 3
-  let targetLineTop = lineRects[targetLine].top
-  const NEEDS_SCROLL_MARGIN = 5
-  if (targetLineTop < elRect.top + NEEDS_SCROLL_MARGIN || targetLineTop > elRect.bottom - NEEDS_SCROLL_MARGIN) {
-    el.scrollTop += targetLineTop - elRect.top - parseFloat(cs.paddingTop) - NEEDS_SCROLL_MARGIN
-    const freshRange = document.createRange()
-    freshRange.selectNodeContents(el)
-    const freshRects = getVisualLineRects(freshRange)
-    if (targetLine < freshRects.length) targetLineTop = freshRects[targetLine].top
-  }
-  const targetY = targetLineTop + LINE_INTERIOR_OFFSET
-  const BOUNDARY_QUIRK_OFFSET = 20
-  const targetX = activePreferredX ?? (elRect.left + parseFloat(cs.paddingLeft) + BOUNDARY_QUIRK_OFFSET)
-
-  const target = document.caretRangeFromPoint(targetX, targetY)
-  if (!target || !el.contains(target.startContainer)) return noop
-
-  if (target.startContainer === before.startContainer && target.startOffset === before.startOffset) {
-    return noop
-  }
-
-  const targetRect = target.getBoundingClientRect()
-  if (targetRect.top !== 0 || targetRect.bottom !== 0) {
-    const onTargetLine = Math.abs(targetRect.top - lineRects[targetLine].top) <= 1
-    const onCurrentLine = Math.abs(targetRect.top - lineRects[currentLine].top) <= 1
-    if (!onTargetLine && onCurrentLine) return noop
-  }
-
-  sel.removeAllRanges()
-  sel.addRange(target)
-  return { result: 'moved', preferredX: activePreferredX }
+  return moveCaretToLinePoint({
+    sel,
+    el,
+    before,
+    lineRects,
+    currentLine,
+    targetLine,
+    activePreferredX,
+    preferredX,
+  })
 }
 
 // ── 来自 useContenteditableInput：粘贴 ──

@@ -124,6 +124,7 @@ const EDITOR_HINT = " ←/→ Home/End move · Backspace deletes · Enter submit
 /**
  * 构建选项列表行（不含分屏预览）。hideDescriptions 用于分屏模式左列。
  *  freeform 模式下，Other 行**原地**变 [ ] <input> 反色光标（多选）/ <input> 反色光标（单选）。
+ * 主函数只留逐行编排：Other / 多选 / 单选三类行各自提取为独立 append helper。
  */
 function buildOptionLines(
 	ctx: RenderContext,
@@ -141,66 +142,106 @@ function buildOptionLines(
 		// 编辑器模式下用 savedOptionsCursorIndex 判断选项高亮，cursorIndex 此时是文本光标
 		const activeOptionCursor = state.mode === "freeform" ? state.savedOptionsCursorIndex : state.cursorIndex;
 		const isSelected = i === activeOptionCursor;
-		const isOther = opt.isOther === true;
 		const prefix = isSelected ? t.fg("accent", ">") : " ";
 
-		if (isOther) {
-			// 标记位宽度必须与普通选项一致，否则编号列错位：
-			//   单选 check = 1 列，多选 box = 3 列。
-			//   此前单选 freeform 占位用 "  "(2列)、多选非 freeform 用 check(1列)，
-			//   两种情况下 Other 编号都与普通选项错位。
-			if (state.mode === "freeform") {
-				const marker = q.multiSelect ? t.fg("dim", "[ ]") : " ";
-				const num = i + 1;
-				const lead = `${prefix} ${marker} `;
-				const avail = Math.max(1, width - visibleWidth(lead));
-				// 编号 + 文本，光标用反色高亮当前字符（surrogate pair 安全，不占额外位置）
-				const cursorText = renderCursorText(state.draftText, state.cursorIndex);
-				const styled = `${t.fg("muted", `${num}. `)}${t.fg("text", cursorText)}`;
-				addWrappedInput(add, lead, styled, avail, MAX_EDITOR_LINES);
-			} else {
-				const hasFreeText = state.freeTextValue !== null;
-				const marker = q.multiSelect
-					? (hasFreeText ? t.fg("success", "[✓]") : t.fg("dim", "[ ]"))
-					: (hasFreeText ? t.fg("success", "✓") : " ");
-				const labelColor = isSelected ? "accent" : "text";
-				const num = i + 1;
-				add(`${prefix} ${marker} ${t.fg(labelColor, `${num}. ${opt.label}`)}`);
-				if (hasFreeText) {
-					// 预览缩进对齐到 label 起始列：prefix + sp + marker + sp + "N." + sp。
-					// 随 num 位数与单/多选 marker 宽度动态变化，硬编码会错位。
-					const numStr = `${num}.`;
-					const lead = " ".repeat(
-						visibleWidth(prefix) + 1 + visibleWidth(marker) + 1 + numStr.length + 1,
-					);
-					const avail = Math.max(1, width - visibleWidth(lead));
-					const styled = t.fg("dim", `"${state.freeTextValue ?? ""}"`);
-					addWrappedInput(add, lead, styled, avail, MAX_EDITOR_LINES);
-				}
-			}
+		if (opt.isOther === true) {
+			appendOtherRow(ctx, opt, i, isSelected, prefix, add);
 		} else if (q.multiSelect) {
-			const checked = state.selectedIndices.has(i);
-			const box = checked ? t.fg("accent", "[✓]") : t.fg("dim", "[ ]");
-			const labelColor = isSelected ? "accent" : "text";
-			const num = i + 1;
-			add(`${prefix} ${box} ${t.fg(labelColor, `${num}. ${opt.label}`)}`);
-			if (opt.description && !hideDescriptions) {
-				const wrapped = wrapTextWithAnsi(t.fg("muted", opt.description), width - DESCRIPTION_INDENT_MULTI);
-				for (const line of wrapped) add(`          ${line}`);
-			}
+			appendMultiSelectRow(ctx, opt, i, isSelected, prefix, hideDescriptions, add);
 		} else {
-			const isConfirmed = state.selectedIndex === i;
-			const check = isConfirmed ? t.fg("success", "✓") : " ";
-			const labelColor = isSelected ? "accent" : "text";
-			const num = i + 1;
-			add(`${prefix} ${check} ${t.fg(labelColor, `${num}. ${opt.label}`)}`);
-			if (opt.description && !hideDescriptions) {
-				const wrapped = wrapTextWithAnsi(t.fg("muted", opt.description), width - DESCRIPTION_INDENT_SINGLE);
-				for (const line of wrapped) add(`        ${line}`);
-			}
+			appendSingleSelectRow(ctx, opt, i, isSelected, prefix, hideDescriptions, add);
 		}
 	}
 	return lines;
+}
+
+/** Other 行：freeform 原地编辑器（反色光标）/ 非 freeform 的 ✓ 标记 + 已保存文本预览。 */
+function appendOtherRow(
+	ctx: RenderContext,
+	opt: DisplayOption,
+	index: number,
+	isSelected: boolean,
+	prefix: string,
+	add: (s: string) => void,
+): void {
+	const { question: q, state, theme: t, width } = ctx;
+	const num = index + 1;
+
+	if (state.mode === "freeform") {
+		// 标记位宽度必须与普通选项一致，否则编号列错位：
+		//   单选 check = 1 列，多选 box = 3 列。
+		//   此前单选 freeform 占位用 "  "(2列)、多选非 freeform 用 check(1列)，
+		//   两种情况下 Other 编号都与普通选项错位。
+		const marker = q.multiSelect ? t.fg("dim", "[ ]") : " ";
+		const lead = `${prefix} ${marker} `;
+		const avail = Math.max(1, width - visibleWidth(lead));
+		// 编号 + 文本，光标用反色高亮当前字符（surrogate pair 安全，不占额外位置）
+		const cursorText = renderCursorText(state.draftText, state.cursorIndex);
+		const styled = `${t.fg("muted", `${num}. `)}${t.fg("text", cursorText)}`;
+		addWrappedInput(add, lead, styled, avail, MAX_EDITOR_LINES);
+	} else {
+		const hasFreeText = state.freeTextValue !== null;
+		const marker = q.multiSelect
+			? (hasFreeText ? t.fg("success", "[✓]") : t.fg("dim", "[ ]"))
+			: (hasFreeText ? t.fg("success", "✓") : " ");
+		const labelColor = isSelected ? "accent" : "text";
+		add(`${prefix} ${marker} ${t.fg(labelColor, `${num}. ${opt.label}`)}`);
+		if (hasFreeText) {
+			// 预览缩进对齐到 label 起始列：prefix + sp + marker + sp + "N." + sp。
+			// 随 num 位数与单/多选 marker 宽度动态变化，硬编码会错位。
+			const numStr = `${num}.`;
+			const lead = " ".repeat(
+				visibleWidth(prefix) + 1 + visibleWidth(marker) + 1 + numStr.length + 1,
+			);
+			const avail = Math.max(1, width - visibleWidth(lead));
+			const styled = t.fg("dim", `"${state.freeTextValue ?? ""}"`);
+			addWrappedInput(add, lead, styled, avail, MAX_EDITOR_LINES);
+		}
+	}
+}
+
+/** 多选普通选项行：勾选框 + 编号 label + 缩进描述（hideDescriptions 时省略描述）。 */
+function appendMultiSelectRow(
+	ctx: RenderContext,
+	opt: DisplayOption,
+	index: number,
+	isSelected: boolean,
+	prefix: string,
+	hideDescriptions: boolean,
+	add: (s: string) => void,
+): void {
+	const { state, theme: t, width } = ctx;
+	const checked = state.selectedIndices.has(index);
+	const box = checked ? t.fg("accent", "[✓]") : t.fg("dim", "[ ]");
+	const labelColor = isSelected ? "accent" : "text";
+	const num = index + 1;
+	add(`${prefix} ${box} ${t.fg(labelColor, `${num}. ${opt.label}`)}`);
+	if (opt.description && !hideDescriptions) {
+		const wrapped = wrapTextWithAnsi(t.fg("muted", opt.description), width - DESCRIPTION_INDENT_MULTI);
+		for (const line of wrapped) add(`          ${line}`);
+	}
+}
+
+/** 单选普通选项行：✓ 确认标记 + 编号 label + 缩进描述（hideDescriptions 时省略描述）。 */
+function appendSingleSelectRow(
+	ctx: RenderContext,
+	opt: DisplayOption,
+	index: number,
+	isSelected: boolean,
+	prefix: string,
+	hideDescriptions: boolean,
+	add: (s: string) => void,
+): void {
+	const { state, theme: t, width } = ctx;
+	const isConfirmed = state.selectedIndex === index;
+	const check = isConfirmed ? t.fg("success", "✓") : " ";
+	const labelColor = isSelected ? "accent" : "text";
+	const num = index + 1;
+	add(`${prefix} ${check} ${t.fg(labelColor, `${num}. ${opt.label}`)}`);
+	if (opt.description && !hideDescriptions) {
+		const wrapped = wrapTextWithAnsi(t.fg("muted", opt.description), width - DESCRIPTION_INDENT_SINGLE);
+		for (const line of wrapped) add(`        ${line}`);
+	}
 }
 
 /** 构建分屏右侧 Markdown 详情预览。 */

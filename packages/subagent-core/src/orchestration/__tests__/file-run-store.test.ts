@@ -24,13 +24,13 @@ import { WorkflowRun } from "../models/workflow-run.ts";
 import { FileRunStore } from "../file-run-store.ts";
 
 let dataRoot: string;
-let logSpy: ReturnType<typeof vi.fn>;
+let logSpy: ReturnType<typeof vi.fn<(level: import("../../core/logger.ts").LogLevel, component: string, message: string, data?: unknown) => void>>;
 let store: FileRunStore;
 
 beforeEach(() => {
   resetCoreForTests();
   dataRoot = mkdtempSync(join(tmpdir(), "file-run-store-"));
-  logSpy = vi.fn();
+  logSpy = vi.fn((_level: import("../../core/logger.ts").LogLevel, _component: string, _message: string, _data?: unknown) => {});
   const host: HostServices = {
     dataRoot: () => dataRoot,
     log: logSpy,
@@ -328,12 +328,13 @@ describe("FileRunStore — 版本衔接与 live-strip（U8 / ⛔5，D4 裁决）
 
   it("⛔5 live 字段 strip 后落盘（落盘行无 live 键，内存 run 不受影响）", async () => {
     const run = makeRun("wf-livestrip-1");
-    const node = {
+    const node: import("../models/types.ts").ExecutionTraceNode = {
       stepIndex: 0,
       agent: "coder",
       task: "do work",
       model: "test-model",
-      status: "running" as const,
+      status: "running",
+      live: undefined,
     };
     run.state.trace.append(node);
     const AgentCallMod = await import("../models/agent-call.ts");

@@ -2,9 +2,11 @@
  * chat 域 bash/abortBash API 单测（composer-bash-execute W2）。
  *
  * 验证：
- * - T1: bash('s1','ls',false) → command('message.bash', {sessionId, command, excludeFromContext})
+ * - T1: bash('s1','ls',false) → command('message.bash', {sessionId, command, excludeFromContext},
+ *   BASH_RPC_TIMEOUT_MS + RENDERER_RPC_MARGIN_MS（3660s 语义化取值，timeout-slow-flow-wallclock D5——
+ *   校准链 renderer = runtime bash 第一刀 + 60s 余量，场景 3「>65s 长命令不被 renderer 误杀」的 API 层断言）
  * - T2: bash('s1','pwd') 省略 excludeFromContext → payload 不含 excludeFromContext 键（与 send images 归一对称）
- * - T3: abortBash('s1') → command('message.abortBash', {sessionId})
+ * - T3: abortBash('s1') → command('message.abortBash', {sessionId}, RPC_BACKSTOP_TIMEOUT_MS)
  *
  * 策略：mock core request 模块的 command 函数，断言 type + payload 形态（domains 已迁 core，
  * 桥不转发 mock——说明符直指 core 模块文件，跨包相对路径）。
@@ -21,6 +23,8 @@ vi.mock('../../../../core/src/transport/api/request', () => ({
 }))
 
 import { bash, abortBash } from '@xyz-agent/core/transport/api/domains/chat'
+import { BASH_RPC_TIMEOUT_MS, RENDERER_RPC_MARGIN_MS } from '@xyz-agent/shared'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '../../../../core/src/transport/api/pending'
 
 beforeEach(() => {
   commandMock.mockClear()
@@ -31,7 +35,11 @@ describe('chat.bash / chat.abortBash API', () => {
     await bash('s1', 'ls', false)
 
     expect(commandMock).toHaveBeenCalledOnce()
-    expect(commandMock).toHaveBeenCalledWith('message.bash', { sessionId: 's1', command: 'ls', excludeFromContext: false })
+    expect(commandMock).toHaveBeenCalledWith(
+      'message.bash',
+      { sessionId: 's1', command: 'ls', excludeFromContext: false },
+      BASH_RPC_TIMEOUT_MS + RENDERER_RPC_MARGIN_MS,
+    )
   })
 
   it('T2: bash(s1, pwd) 省略 excludeFromContext → payload 只含 {sessionId, command}（无 excludeFromContext 键）', async () => {
@@ -49,6 +57,6 @@ describe('chat.bash / chat.abortBash API', () => {
     await abortBash('s1')
 
     expect(commandMock).toHaveBeenCalledOnce()
-    expect(commandMock).toHaveBeenCalledWith('message.abortBash', { sessionId: 's1' })
+    expect(commandMock).toHaveBeenCalledWith('message.abortBash', { sessionId: 's1' }, RPC_BACKSTOP_TIMEOUT_MS)
   })
 })

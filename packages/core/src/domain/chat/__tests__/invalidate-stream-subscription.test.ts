@@ -49,29 +49,25 @@ function makeFixture(): Fixture {
   const subscribeRpc = vi.fn().mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 })
   setSubscriptionPorts({ subscribe: subscribeRpc, replay: vi.fn() })
   const deps: EnsureStreamSubDeps = {
-    // 只用到 streamSubscribe；其余方法本测试不触达，占位满足 ChatApiPort 形状
-    chatApi: {
-      send: vi.fn(),
-      steer: vi.fn(),
-      followUp: vi.fn(),
-      abort: vi.fn(),
-      compact: vi.fn(),
-      bash: vi.fn(),
-      abortBash: vi.fn(),
-      getHistory: vi.fn(),
-      getFullHistory: vi.fn(),
-      streamSubscribe,
-    },
+    // [u4b 收窄] EnsureStreamSubDeps.chatApi = Pick<ChatApiPort, 'streamSubscribe'>，
+    // 只注入消费面（excess property check 不放行多余键）
+    chatApi: { streamSubscribe },
     toast: { error: vi.fn() },
     t: (k: string) => k,
-    getCompactQueue: () => ({ flush: vi.fn().mockResolvedValue(true) }),
+    getCompactQueue: () => ({
+      flush: vi.fn().mockResolvedValue(true),
+      enqueue: vi.fn(),
+      peek: vi.fn(() => []),
+      hasPending: vi.fn(() => false),
+      confirmDelivery: vi.fn(),
+    }),
   }
   return {
     ensure: (sid) =>
       ensureStreamSubscription(
         sid,
         chatStore,
-        { updateLabel: vi.fn(), updateSessionState: vi.fn() },
+        { applySnapshot: vi.fn() },
         deps,
       ),
     streamSubscribe,

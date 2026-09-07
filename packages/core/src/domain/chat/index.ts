@@ -24,7 +24,7 @@ export { dispatchMessageEvent } from './effects/registry'
 // [session-occupancy u4a] message_end(user) 三分支 ① 机制（defer 队列 provider 注入点）
 export { setCompactQueueProviderForEffects, resetCompactQueueProviderForEffectsForTest } from './effects/user-delivery'
 export type { CompactQueueLike, CompactQueueEntrySnapshot } from './useChat'
-export { createChatStore, DEFAULT_STREAMING_TIMEOUT_MS } from './store'
+export { createChatStore, DEFAULT_STREAMING_IDLE_TIMEOUT_MS, STREAMING_IDLE_TIMEOUT_MIN_MS, STREAMING_IDLE_TIMEOUT_MAX_MS } from './store'
 // [session-occupancy u5b] occupancy 投影类型（sessionPhase 数据源，P4 ActivityStrip/发送位消费）
 export type { SessionOccupancyState } from './store'
 export * from './derive-status'

@@ -36,6 +36,7 @@ import type {
 import { getProviderNames, upsertProvider, ensureProviderInWhitelist, type PiProviderConfig } from '../../infra/pi/pi-provider-store.js'
 import { createPreview, consumePreview, deletePreview } from './preview-cache.js'
 import { parseProviders } from './provider-parser.js'
+import type { ParseResult, ParsedProvider, ParsedOrphanCredential } from './provider-parser.js'
 // sa3 F1：内置 provider 模板（B4 铁律——只取 name/api/baseUrl 补全定义，**不复制 models**，
 // 内置 model 由 pi catalog 无条件加载，复制会与内置升级漂移）。
 import builtinData from '../../generated/builtin-providers.json'
@@ -109,7 +110,22 @@ export function previewImport(
   const existingIds = new Set(getProviderNames())
 
   // 构造脱敏 preview（关键：不含 apiKey 值，只留 apiKeyExtracted 布尔 + credentialType 六态）
-  const items: ProviderPreviewItem[] = parsed.providers.map((p) => ({
+  const items = buildPreviewItems(parsed.providers, existingIds)
+
+  // ══ sa3 F1：孤儿凭据 → 组 2（B.3）══（匹配/未匹配分流见 collectOrphanPreviewItems）
+  const { orphanItems, extraWarnings } = collectOrphanPreviewItems(parsed.orphanCredentials ?? [])
+
+  // 日志只记 id/source/count（不记 apiKey，DM1）
+  console.log(`[provider-importer] preview source=${source} importId=${importId} providerCount=${items.length} orphanCount=${orphanItems.length}`)
+
+  return { importId, preview: buildPreviewPayload(source, parsed, items, orphanItems, extraWarnings) }
+}
+
+/**
+ * 组 1 脱敏项构造：ParsedProvider → ProviderPreviewItem（不含 apiKey 值，DM1）。
+ */
+function buildPreviewItems(providers: ParsedProvider[], existingIds: Set<string>): ProviderPreviewItem[] {
+  return providers.map((p) => ({
     id: p._sourceName,
     name: p._sourceName,
     protocol: p.api ?? 'unknown',
@@ -122,14 +138,21 @@ export function previewImport(
     conflict: existingIds.has(p._sourceName) ? 'duplicate-id' : 'none',
     warnings: p._warnings,
   }))
+}
 
-  // ══ sa3 F1：孤儿凭据 → 组 2（B.3）══
-  // auth.json 有、models.json 无定义的 providerId（pi 内置 provider 的凭据）：
-  // - 匹配到内置模板 → 组 2 可勾选项（凭据 + 模板补全定义）
-  // - 匹配不到 → 顶层 warning「未识别的凭据，无法匹配内置模板，跳过」（B.6）
+/**
+ * 组 2 构造（sa3 F1，B.3）：孤儿凭据逐条匹配内置模板。
+ *
+ * auth.json 有、models.json 无定义的 providerId（pi 内置 provider 的凭据）：
+ * - 匹配到内置模板 → 组 2 可勾选项（凭据 + 模板补全定义）
+ * - 匹配不到 → 顶层 warning「未识别的凭据，无法匹配内置模板，跳过」（B.6）
+ */
+function collectOrphanPreviewItems(
+  orphanCredentials: ParsedOrphanCredential[],
+): { orphanItems: ProviderPreviewOrphanItem[]; extraWarnings: string[] } {
   const orphanItems: ProviderPreviewOrphanItem[] = []
   const extraWarnings: string[] = []
-  for (const oc of parsed.orphanCredentials ?? []) {
+  for (const oc of orphanCredentials) {
     const tpl = matchBuiltinTemplate(oc.providerId)
     if (!tpl) {
       extraWarnings.push(`credential ${oc.providerId}: no built-in template match, skipped`)
@@ -147,21 +170,192 @@ export function previewImport(
       warnings: oc.warnings,
     })
   }
+  return { orphanItems, extraWarnings }
+}
 
-  // 日志只记 id/source/count（不记 apiKey，DM1）
-  console.log(`[provider-importer] preview source=${source} importId=${importId} providerCount=${items.length} orphanCount=${orphanItems.length}`)
-
+/**
+ * preview 顶层 payload 组装：组 1 / parseError / 合并 warnings / 组 2（有项才出字段，shared SSOT 可选字段）。
+ */
+function buildPreviewPayload(
+  source: ProviderSource,
+  parsed: ParseResult,
+  items: ProviderPreviewItem[],
+  orphanItems: ProviderPreviewOrphanItem[],
+  extraWarnings: string[],
+): ProviderImportPreview {
   return {
-    importId,
-    preview: {
-      source,
-      providers: items,
-      ...(orphanItems.length > 0 ? { orphanCredentials: orphanItems } : {}),
-      // B2：透出 parseError 和顶层 warnings（即使 providers 非空，parseError 也可能存在——
-      // 部分损坏场景）。ProviderImportPreview 的 parseError/warnings 是可选字段（shared SSOT）。
-      ...(parsed.parseError ? { parseError: parsed.parseError } : {}),
-      ...(parsed.warnings?.length || extraWarnings.length ? { warnings: [...(parsed.warnings ?? []), ...extraWarnings] } : {}),
-    },
+    source,
+    providers: items,
+    ...(orphanItems.length > 0 ? { orphanCredentials: orphanItems } : {}),
+    // B2：透出 parseError 和顶层 warnings（即使 providers 非空，parseError 也可能存在——
+    // 部分损坏场景）。ProviderImportPreview 的 parseError/warnings 是可选字段（shared SSOT）。
+    ...(parsed.parseError ? { parseError: parsed.parseError } : {}),
+    ...(parsed.warnings?.length || extraWarnings.length ? { warnings: [...(parsed.warnings ?? []), ...extraWarnings] } : {}),
+  }
+}
+
+/**
+ * W1 输入校验（防 WS 异常 payload 导致 crash）。非法返回 ImportError，合法返回 null。
+ */
+function validateApplyRequest(importId: unknown, selectedIds: unknown): ImportError | null {
+  if (typeof importId !== 'string' || !importId.trim()) {
+    return { error: { code: 'INVALID_REQUEST', message: 'importId is required' } }
+  }
+  if (!Array.isArray(selectedIds) || !selectedIds.every((id) => typeof id === 'string')) {
+    return { error: { code: 'INVALID_REQUEST', message: 'selectedIds must be a string array' } }
+  }
+  return null
+}
+
+/**
+ * 组 1 单条处理：models.json 已定义的 provider（分体系处理）。
+ *
+ * 返回 null = 未勾选（不产生条目）；否则返回 imported/skipped/failed 三态条目之一。
+ */
+async function applyProviderEntry(
+  provider: ParsedProvider,
+  selectedIds: string[],
+  existingIds: Set<string>,
+  credentialWriter: CredentialWriter | undefined,
+): Promise<ProviderImportedItem | null> {
+  // 只处理用户勾选的 provider
+  if (!selectedIds.includes(provider._sourceName)) return null
+
+  // 冲突跳过（不覆写已存在的同名 provider）
+  if (existingIds.has(provider._sourceName)) {
+    return { id: provider._sourceName, name: provider._sourceName, status: 'skipped', reason: 'duplicate' }
+  }
+
+  // catalog 分路：pi 内置 provider 定义的秘钥归 auth.json，不建 models.json 条目
+  if (isCatalogProvider(provider._sourceName) && credentialWriter) {
+    try {
+      if (provider.apiKey && provider.apiKey !== '') {
+        await credentialWriter.saveCredential(provider._sourceName, { type: 'api_key', key: provider.apiKey })
+      }
+      // catalog 提供定义——即使无 apiKey 也标记 imported（catalog 定义即可用）
+      return { id: provider._sourceName, name: provider._sourceName, status: 'imported' }
+    } catch (e) {
+      return {
+        id: provider._sourceName,
+        name: provider._sourceName,
+        status: 'failed',
+        reason: e instanceof Error ? e.message : String(e),
+      }
+    }
+  }
+
+  // 自定义 provider 或 credentialWriter 未注入：写 models.json 全配置（现有行为）
+  try {
+    // 剥离 _ 前缀元数据（对象解构，剩余即干净的 PiProviderConfig）
+    const { _sourceName, _apiKeyExtracted, _credentialType, _envVarName, _warnings, ...piConfig } = provider
+    upsertProvider(_sourceName, piConfig)
+    return { id: _sourceName, name: _sourceName, status: 'imported' }
+  } catch (e) {
+    return {
+      id: provider._sourceName,
+      name: provider._sourceName,
+      status: 'failed',
+      reason: e instanceof Error ? e.message : String(e),
+    }
+  }
+}
+
+/**
+ * 组 2 单条处理：孤儿凭据（sa3 F1）——冲突检查 + 内置模板匹配，落盘见 applyOrphanWithTemplate。
+ *
+ * 返回 null = 未勾选（不产生条目）。
+ */
+async function applyOrphanCredential(
+  oc: ParsedOrphanCredential,
+  selectedIds: string[],
+  existingIds: Set<string>,
+  credentialWriter: CredentialWriter | undefined,
+): Promise<ProviderImportedItem | null> {
+  if (!selectedIds.includes(oc.providerId)) return null
+
+  // 冲突跳过（preview 后 models.json 可能已有该 id）
+  if (existingIds.has(oc.providerId)) {
+    return { id: oc.providerId, name: oc.providerId, status: 'skipped', reason: 'duplicate' }
+  }
+
+  const tpl = matchBuiltinTemplate(oc.providerId)
+  if (!tpl) {
+    return { id: oc.providerId, name: oc.providerId, status: 'failed', reason: 'no built-in template match' }
+  }
+
+  return applyOrphanWithTemplate(oc, tpl, credentialWriter)
+}
+
+/**
+ * 孤儿凭据按内置模板落盘（分体系处理：catalog → auth.json，否则 → models.json 模板）。
+ */
+async function applyOrphanWithTemplate(
+  oc: ParsedOrphanCredential,
+  tpl: BuiltinProviderTemplate,
+  credentialWriter: CredentialWriter | undefined,
+): Promise<ProviderImportedItem> {
+  // catalog 分路：孤儿凭据本质是 pi catalog provider 的 auth.json 凭据
+  if (isCatalogProvider(oc.providerId) && credentialWriter) {
+    try {
+      if (oc.apiKey !== undefined && oc.apiKey !== '') {
+        await credentialWriter.saveCredential(oc.providerId, { type: 'api_key', key: oc.apiKey })
+      }
+      return { id: oc.providerId, name: oc.providerId, status: 'imported' }
+    } catch (e) {
+      return {
+        id: oc.providerId,
+        name: oc.providerId,
+        status: 'failed',
+        reason: e instanceof Error ? e.message : String(e),
+      }
+    }
+  }
+
+  // credentialWriter 未注入时 fallback：写 models.json 模板（现有行为）
+  try {
+    const config: PiProviderConfig = {
+      name: tpl.name,
+      api: tpl.api,
+      baseUrl: tpl.baseUrl,
+    }
+    if (oc.apiKey !== undefined) config.apiKey = oc.apiKey
+    upsertProvider(oc.providerId, config)
+    return { id: oc.providerId, name: oc.providerId, status: 'imported' }
+  } catch (e) {
+    return {
+      id: oc.providerId,
+      name: oc.providerId,
+      status: 'failed',
+      reason: e instanceof Error ? e.message : String(e),
+    }
+  }
+}
+
+/**
+ * S6：selectedIds 中不在 imported 条目里的 id（既没 imported 也没 skipped/failed，
+ * 即不在 preview 里的）补一条 failed 条目，让用户有反馈。
+ */
+function collectMissingIdsAsFailed(selectedIds: string[], imported: ProviderImportedItem[]): void {
+  const handledIds = new Set(imported.map((i) => i.id))
+  for (const id of selectedIds) {
+    if (!handledIds.has(id)) {
+      imported.push({ id, name: id, status: 'failed', reason: 'not found in preview' })
+    }
+  }
+}
+
+/**
+ * 边界1（wave3 TC5 / C2）：为本次导入的新 provider 加 enabledModels 白名单守卫。
+ *
+ * 若 enabledModels 非空（用户已显式启用某些 provider），新 provider 默认不启用——补 <id>/*
+ * 让其可用。ensureProviderInWhitelist 内部判空（全可用时 no-op）+ 幂等。catalog（auth.json）
+ * 与 custom（models.json）两类导入统一处理（listProviders 双源聚合都会派生 enabled）。
+ */
+function ensureWhitelistForImported(imported: ProviderImportedItem[]): void {
+  for (const item of imported) {
+    if (item.status === 'imported') {
+      ensureProviderInWhitelist(item.id)
+    }
   }
 }
 
@@ -189,12 +383,8 @@ export async function applyImport(
   credentialWriter?: CredentialWriter,
 ): Promise<ApplyImportSuccess | ImportError> {
   // W1：输入校验（防 WS 异常 payload 导致 crash）
-  if (typeof importId !== 'string' || !importId.trim()) {
-    return { error: { code: 'INVALID_REQUEST', message: 'importId is required' } }
-  }
-  if (!Array.isArray(selectedIds) || !selectedIds.every((id) => typeof id === 'string')) {
-    return { error: { code: 'INVALID_REQUEST', message: 'selectedIds must be a string array' } }
-  }
+  const validationError = validateApplyRequest(importId, selectedIds)
+  if (validationError) return validationError
 
   const entry = consumePreview(importId)
   if (!entry) {
@@ -204,140 +394,31 @@ export async function applyImport(
   // apply 时再次查冲突（preview 后 models.json 可能被改）
   const existingIds = new Set(getProviderNames())
   const imported: ProviderImportedItem[] = []
-  let failedCount = 0
 
   // ══ 组 1：models.json 已定义的 provider（分体系处理）══
   for (const provider of entry.providers) {
-    // 只处理用户勾选的 provider
-    if (!selectedIds.includes(provider._sourceName)) continue
-
-    // 冲突跳过（不覆写已存在的同名 provider）
-    if (existingIds.has(provider._sourceName)) {
-      imported.push({ id: provider._sourceName, name: provider._sourceName, status: 'skipped', reason: 'duplicate' })
-      continue
-    }
-
-    // catalog 分路：pi 内置 provider 定义的秘钥归 auth.json，不建 models.json 条目
-    if (isCatalogProvider(provider._sourceName) && credentialWriter) {
-      try {
-        if (provider.apiKey && provider.apiKey !== '') {
-          await credentialWriter.saveCredential(provider._sourceName, { type: 'api_key', key: provider.apiKey })
-        }
-        // catalog 提供定义——即使无 apiKey 也标记 imported（catalog 定义即可用）
-        imported.push({ id: provider._sourceName, name: provider._sourceName, status: 'imported' })
-        continue
-      } catch (e) {
-        imported.push({
-          id: provider._sourceName,
-          name: provider._sourceName,
-          status: 'failed',
-          reason: e instanceof Error ? e.message : String(e),
-        })
-        failedCount++
-        continue
-      }
-    }
-
-    // 自定义 provider 或 credentialWriter 未注入：写 models.json 全配置（现有行为）
-    try {
-      // 剥离 _ 前缀元数据（对象解构，剩余即干净的 PiProviderConfig）
-      const { _sourceName, _apiKeyExtracted, _credentialType, _envVarName, _warnings, ...piConfig } = provider
-      upsertProvider(_sourceName, piConfig)
-      imported.push({ id: _sourceName, name: _sourceName, status: 'imported' })
-    } catch (e) {
-      imported.push({
-        id: provider._sourceName,
-        name: provider._sourceName,
-        status: 'failed',
-        reason: e instanceof Error ? e.message : String(e),
-      })
-      failedCount++
-    }
+    const item = await applyProviderEntry(provider, selectedIds, existingIds, credentialWriter)
+    if (item) imported.push(item)
   }
 
   // ══ 组 2：孤儿凭据（sa3 F1，分体系处理：catalog → auth.json，否则 → models.json 模板）══
   for (const oc of entry.orphanCredentials) {
-    if (!selectedIds.includes(oc.providerId)) continue
-
-    // 冲突跳过（preview 后 models.json 可能已有该 id）
-    if (existingIds.has(oc.providerId)) {
-      imported.push({ id: oc.providerId, name: oc.providerId, status: 'skipped', reason: 'duplicate' })
-      continue
-    }
-
-    const tpl = matchBuiltinTemplate(oc.providerId)
-    if (!tpl) {
-      imported.push({ id: oc.providerId, name: oc.providerId, status: 'failed', reason: 'no built-in template match' })
-      failedCount++
-      continue
-    }
-
-    // catalog 分路：孤儿凭据本质是 pi catalog provider 的 auth.json 凭据
-    if (isCatalogProvider(oc.providerId) && credentialWriter) {
-      try {
-        if (oc.apiKey !== undefined && oc.apiKey !== '') {
-          await credentialWriter.saveCredential(oc.providerId, { type: 'api_key', key: oc.apiKey })
-        }
-        imported.push({ id: oc.providerId, name: oc.providerId, status: 'imported' })
-        continue
-      } catch (e) {
-        imported.push({
-          id: oc.providerId,
-          name: oc.providerId,
-          status: 'failed',
-          reason: e instanceof Error ? e.message : String(e),
-        })
-        failedCount++
-        continue
-      }
-    }
-
-    // credentialWriter 未注入时 fallback：写 models.json 模板（现有行为）
-    try {
-      const config: PiProviderConfig = {
-        name: tpl.name,
-        api: tpl.api,
-        baseUrl: tpl.baseUrl,
-      }
-      if (oc.apiKey !== undefined) config.apiKey = oc.apiKey
-      upsertProvider(oc.providerId, config)
-      imported.push({ id: oc.providerId, name: oc.providerId, status: 'imported' })
-    } catch (e) {
-      imported.push({
-        id: oc.providerId,
-        name: oc.providerId,
-        status: 'failed',
-        reason: e instanceof Error ? e.message : String(e),
-      })
-      failedCount++
-    }
+    const item = await applyOrphanCredential(oc, selectedIds, existingIds, credentialWriter)
+    if (item) imported.push(item)
   }
 
-  // S6：selectedIds 中不在 imported 条目里的 id（既没 imported 也没 skipped/failed，
-  // 即不在 preview 里的）补一条 failed 条目，让用户有反馈
-  const handledIds = new Set(imported.map((i) => i.id))
-  for (const id of selectedIds) {
-    if (!handledIds.has(id)) {
-      imported.push({ id, name: id, status: 'failed', reason: 'not found in preview' })
-      failedCount++
-    }
-  }
+  // S6：selectedIds 中不在 imported 条目里的 id 补 failed 条目（不在 preview 里的给用户反馈）
+  collectMissingIdsAsFailed(selectedIds, imported)
 
   // W4/W5：全成功才删缓存（一次性）；部分失败保留缓存供用户重试
   // （重试时 conflict 检测会让已导入的 skipped，未导入的可继续尝试）
+  const failedCount = imported.filter((i) => i.status === 'failed').length
   if (failedCount === 0) {
     deletePreview(importId)
   }
 
-  // 边界1（wave3 TC5 / C2）：为本次导入的新 provider 加 enabledModels 白名单守卫。
-  // 若 enabledModels 非空（用户已显式启用某些 provider），新 provider 默认不启用——补 <id>/*
-  // 让其可用。ensureProviderInWhitelist 内部判空（全可用时 no-op）+ 幂等。catalog（auth.json）
-  // 与 custom（models.json）两类导入统一处理（listProviders 双源聚合都会派生 enabled）。
-  for (const item of imported) {
-    if (item.status === 'imported') {
-      ensureProviderInWhitelist(item.id)
-    }
-  }
+  // 边界1（wave3 TC5 / C2）：白名单守卫
+  ensureWhitelistForImported(imported)
 
   // 日志只记 id/source/status/count（不记 apiKey，DM1）
   const importedCount = imported.filter((i) => i.status === 'imported').length

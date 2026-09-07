@@ -249,7 +249,8 @@ function getItemCount(id: string): number {
   }
 }
 
-/** 键盘：Tab 循环（焦点陷阱）+ nav 内 ↑↓/Home/End 移动切换 + Esc 关闭 */
+/** 键盘：Tab 循环（焦点陷阱）+ nav 内 ↑↓/Home/End 移动切换 + Esc 关闭。
+ *  三路编排（complexity-debt U02 拆分）：Escape / Tab / nav 导航各归独立 helper，落空放行。 */
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') {
     e.preventDefault()
@@ -257,20 +258,32 @@ function onKeydown(e: KeyboardEvent): void {
     return
   }
   if (e.key === 'Tab') {
-    const list = getFocusables()
-    if (list.length === 0) return
-    const first = list[0]
-    const last = list[list.length - 1]
-    const active = document.activeElement
-    if (active === last && !e.shiftKey) {
-      e.preventDefault()
-      first.focus()
-    } else if (active === first && e.shiftKey) {
-      e.preventDefault()
-      last.focus()
-    }
+    handleTabCycle(e)
     return
   }
+  handleNavItemNavigation(e)
+}
+
+/** Tab 焦点陷阱：焦点在末个且非 shift → 回首个；在首个且 shift → 跳末个；
+ *  其余 Tab（中间元素间移动）不拦截，交给浏览器原生顺序。 */
+function handleTabCycle(e: KeyboardEvent): void {
+  const list = getFocusables()
+  if (list.length === 0) return
+  const first = list[0]
+  const last = list[list.length - 1]
+  const active = document.activeElement
+  if (active === last && !e.shiftKey) {
+    e.preventDefault()
+    first.focus()
+  } else if (active === first && e.shiftKey) {
+    e.preventDefault()
+    last.focus()
+  }
+}
+
+/** nav 内 ↑↓/Home/End 移动切换：焦点须在 .nav-item 上，否则放行；
+ *  越界目标（首条 ↑ / 末条 ↓）与非导航键放行。命中则 preventDefault + 聚焦并切页。 */
+function handleNavItemNavigation(e: KeyboardEvent): void {
   const target = e.target
   if (!(target instanceof HTMLElement) || !target.classList.contains('nav-item')) return
   const items = Array.from(navRootEl.value?.querySelectorAll<HTMLElement>('.nav-item') ?? [])

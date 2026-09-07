@@ -166,6 +166,22 @@
       "dependsOn": []
     },
     {
+      "name": "@zhushanwen/pi-plugin-bridge",
+      "directory": "extensions/taiji/plugin-bridge",
+      "dependsOn": [
+        {
+          "package": "@xyz-agent/extension-protocol",
+          "type": "package",
+          "reason": "代码层静态 import BRIDGE_MARKER 与 Bridge* 协议类型（src/index.ts），缺失时模块加载即失败"
+        },
+        {
+          "package": "@zhushanwen/pi-extension-logger",
+          "type": "package",
+          "reason": "代码层静态 import getLogger/setPiHandle（src/index.ts）"
+        }
+      ]
+    },
+    {
       "name": "@zhushanwen/pi-system-prompt",
       "directory": "extensions/taiji/system-prompt",
       "dependsOn": []

@@ -8,6 +8,7 @@
  *
  * 依赖方向：api/request（command）+ shared（协议类型 ClientMessageMap）。
  */
+import { RPC_BACKSTOP_TIMEOUT_MS } from '../pending'
 import { command } from '../request'
 import type { ClientMessageMap } from '@xyz-agent/shared'
 
@@ -27,18 +28,18 @@ export type TerminalSpawnParams = ClientMessageMap['terminal.spawn']
  */
 export const terminalApi = {
   spawn(params: TerminalSpawnParams) {
-    return command('terminal.spawn', params)
+    return command('terminal.spawn', params, RPC_BACKSTOP_TIMEOUT_MS)
   },
   write(sessionId: string, data: string) {
-    return command('terminal.write', { sessionId, data })
+    return command('terminal.write', { sessionId, data }, RPC_BACKSTOP_TIMEOUT_MS)
   },
   resize(sessionId: string, cols: number, rows: number) {
-    return command('terminal.resize', { sessionId, cols, rows })
+    return command('terminal.resize', { sessionId, cols, rows }, RPC_BACKSTOP_TIMEOUT_MS)
   },
   kill(sessionId: string) {
-    return command('terminal.kill', { sessionId })
+    return command('terminal.kill', { sessionId }, RPC_BACKSTOP_TIMEOUT_MS)
   },
   attach(sessionId: string) {
-    return command('terminal.attach', { sessionId })
+    return command('terminal.attach', { sessionId }, RPC_BACKSTOP_TIMEOUT_MS)
   },
 }

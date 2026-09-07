@@ -52,6 +52,31 @@ function isMessageRole(v: unknown): v is 'user' | 'assistant' | 'toolResult' {
 }
 
 /**
+ * 归一化 message 字段（阶段 helper：role 经值守卫收窄，缺/非法 role 时
+ * 返回 undefined，调用方丢弃 message 字段——接口 role 必填）。
+ */
+function parseEntryMessage(raw: unknown): Entry['message'] | undefined {
+  if (raw === null || typeof raw !== 'object') return undefined
+  const m = raw as Record<string, unknown>
+  if (!isMessageRole(m.role)) return undefined
+  const message: NonNullable<Entry['message']> = { role: m.role, content: m.content }
+  if (Array.isArray(m.toolCalls)) message.toolCalls = m.toolCalls
+  // toolResult 自带的工具关联字段（O2/O3 用，additive，实测 515/515 存在）
+  if (typeof m.toolName === 'string') message.toolName = m.toolName
+  if (typeof m.toolCallId === 'string') message.toolCallId = m.toolCallId
+  return message
+}
+
+/** 归一化剩余可选字段（阶段 helper：customType/data/parentSession/cwd/summary）。 */
+function assignOptionalFields(obj: Record<string, unknown>, entry: Entry): void {
+  if (typeof obj.customType === 'string') entry.customType = obj.customType
+  if (obj.data !== undefined) entry.data = obj.data
+  if (typeof obj.parentSession === 'string') entry.parentSession = obj.parentSession
+  if (typeof obj.cwd === 'string') entry.cwd = obj.cwd
+  if (obj.summary !== undefined) entry.summary = obj.summary
+}
+
+/**
  * 把单个已 JSON.parse 成功的原始对象归一化为 Entry。
  * 缺必填结构字段（type/id）返回 undefined，调用方计为坏行（skippedLines++）。
  */
@@ -74,24 +99,10 @@ function toEntry(raw: unknown): Entry | undefined {
   }
   if (typeof obj.timestamp === 'string') entry.timestamp = obj.timestamp
 
-  // message：role 经值守卫收窄，缺/非法 role 时丢弃 message 字段（接口 role 必填）
-  if (obj.message !== null && typeof obj.message === 'object') {
-    const m = obj.message as Record<string, unknown>
-    if (isMessageRole(m.role)) {
-      const message: NonNullable<Entry['message']> = { role: m.role, content: m.content }
-      if (Array.isArray(m.toolCalls)) message.toolCalls = m.toolCalls
-      // toolResult 自带的工具关联字段（O2/O3 用，additive，实测 515/515 存在）
-      if (typeof m.toolName === 'string') message.toolName = m.toolName
-      if (typeof m.toolCallId === 'string') message.toolCallId = m.toolCallId
-      entry.message = message
-    }
-  }
+  const message = parseEntryMessage(obj.message)
+  if (message !== undefined) entry.message = message
 
-  if (typeof obj.customType === 'string') entry.customType = obj.customType
-  if (obj.data !== undefined) entry.data = obj.data
-  if (typeof obj.parentSession === 'string') entry.parentSession = obj.parentSession
-  if (typeof obj.cwd === 'string') entry.cwd = obj.cwd
-  if (obj.summary !== undefined) entry.summary = obj.summary
+  assignOptionalFields(obj, entry)
 
   return entry
 }

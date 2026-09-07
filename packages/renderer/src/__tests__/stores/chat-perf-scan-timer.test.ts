@@ -3,7 +3,8 @@
  *
  * T8.1: 1000 messages，高频 text_delta → 单次 scan << 50ms + scan 限定 get(sid)
  * T8.2: streaming + fake timer < 阈值 → finalizeSession 未被 timer 触发
- *   （W6 调整：streaming 超时阈值从 24h 降到 10min，见 chat.ts DEFAULT_STREAMING_TIMEOUT_MS）
+ *   （[idle-refresh] 语义：streaming timer 改纯活动刷新 idle 无进展检测，默认阈值
+ *   1800s，见 chat.ts DEFAULT_STREAMING_IDLE_TIMEOUT_MS）
  *
  * 运行：npx vitest run src/__tests__/stores/chat-perf-scan-timer.test.ts
  */
@@ -77,7 +78,7 @@ describe('T8.2 streaming timer 不在阈值前误触发', () => {
   })
   afterEach(() => vi.useRealTimers())
 
-  it('streaming + timer < 阈值(10min) → finalizeSession 不被 timer 触发', () => {
+  it('streaming + 零帧 < 阈值(30min idle) → finalizeSession 不被 timer 触发', () => {
     const store = useChatStore()
     const sid = 's-timer'
     store.applyMessageEvent(sid, {
@@ -85,8 +86,8 @@ describe('T8.2 streaming timer 不在阈值前误触发', () => {
       payload: { sessionId: sid, messageId: 'a1' },
     })
     expect(store.isGenerating(sid)).toBe(true)
-    // 推进 9 分钟（< 10min 阈值 DEFAULT_STREAMING_TIMEOUT_MS）
-    vi.advanceTimersByTime(9 * 60 * 1000)
+    // 推进 29 分钟（< 30min idle 阈值 DEFAULT_STREAMING_IDLE_TIMEOUT_MS，贴近边界）
+    vi.advanceTimersByTime(29 * 60 * 1000)
     // 仍 streaming（timer 未触发 finalizeSession）
     expect(store.isGenerating(sid)).toBe(true)
   })

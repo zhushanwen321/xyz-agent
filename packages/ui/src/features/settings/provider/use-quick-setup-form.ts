@@ -31,6 +31,47 @@ export interface UseQuickSetupForm {
 }
 
 /**
+ * 已存认证方式恢复规则表（顺序敏感：find 取首个 existing 匹配 + 模板适用项，与原 if 链
+ * 逐条对应——oauth → env_var → api_key → ambient）。
+ */
+const EXISTING_AUTH_RESUME_RULES: ReadonlyArray<{
+  existing: ExistingAuthMethod
+  method: AuthMethod
+  /** 该已存方式在当前模板下可恢复的条件（原 if 链各分支谓词，逐条迁移） */
+  applicable: (mode: BuiltinProviderTemplate['authMode'], tpl: BuiltinProviderTemplate) => boolean
+}> = [
+  { existing: 'oauth', method: 'oauth', applicable: (mode) => mode === 'oauth' || mode === 'both' },
+  {
+    existing: 'env_var',
+    method: 'env',
+    applicable: (mode, tpl) => (mode === 'api_key' || mode === 'both') && tpl.envVars.length > 0,
+  },
+  { existing: 'api_key', method: 'plaintext', applicable: (mode) => mode === 'api_key' || mode === 'both' },
+  { existing: 'ambient', method: 'ambient', applicable: (mode) => mode === 'ambient' },
+]
+
+/** 已存方式恢复：existing 在当前模板下适用的认证方式，不适用时 undefined */
+function resolveExistingAuthMethod(
+  existing: ExistingAuthMethod,
+  mode: BuiltinProviderTemplate['authMode'],
+  tpl: BuiltinProviderTemplate,
+): AuthMethod | undefined {
+  const rule = EXISTING_AUTH_RESUME_RULES.find((r) => r.existing === existing && r.applicable(mode, tpl))
+  return rule?.method
+}
+
+/** 无已存方式（或已存方式不适用）时的默认回退：推荐 env（有 env var 可选时），否则按 mode 兜底 */
+function resolveDefaultAuthMethod(
+  mode: BuiltinProviderTemplate['authMode'],
+  tpl: BuiltinProviderTemplate,
+): AuthMethod {
+  if ((mode === 'api_key' || mode === 'both') && tpl.envVars.length > 0) return 'env'
+  if (mode === 'oauth') return 'oauth'
+  if (mode === 'ambient') return 'ambient'
+  return 'plaintext'
+}
+
+/**
  * 初始化表单状态。t 是 i18n 翻译函数（key 拼接在组件层做，这里只产 key）。
  * @param template template ref（props.template）
  * @param envCheck env 检测结果（props.envCheck）
@@ -89,18 +130,16 @@ export function useQuickSetupForm(
     authMethod.value = resolveInitialAuthMethod(tpl)
   }, { immediate: true })
 
-  /** 初始认证方式：existingAuthMethod 优先（恢复上次选择），不适用时回退默认 */
+  /**
+   * 初始认证方式（编排）：existingAuthMethod 优先（恢复上次选择，表驱动查
+   * EXISTING_AUTH_RESUME_RULES），不适用时回退默认（resolveDefaultAuthMethod）。
+   */
   function resolveInitialAuthMethod(tpl: BuiltinProviderTemplate): AuthMethod {
     const existing = existingAuthMethod?.value
-    const mode = tpl.authMode
-    if (existing === 'oauth' && (mode === 'oauth' || mode === 'both')) return 'oauth'
-    if (existing === 'env_var' && (mode === 'api_key' || mode === 'both') && tpl.envVars.length > 0) return 'env'
-    if (existing === 'api_key' && (mode === 'api_key' || mode === 'both')) return 'plaintext'
-    if (existing === 'ambient' && mode === 'ambient') return 'ambient'
-    if ((mode === 'api_key' || mode === 'both') && tpl.envVars.length > 0) return 'env'
-    if (mode === 'oauth') return 'oauth'
-    if (mode === 'ambient') return 'ambient'
-    return 'plaintext'
+    return (
+      (existing && resolveExistingAuthMethod(existing, tpl.authMode, tpl)) ??
+      resolveDefaultAuthMethod(tpl.authMode, tpl)
+    )
   }
 
   /** 保存禁用：明文模式空 key 禁用；env 模式空变量名禁用（MF-1：空自定义变量不产生无意义 env_var 配置）；OAuth 模式未授权时禁用 */

@@ -22,7 +22,7 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
-import { oncePerProcess } from "@zhushanwen/pi-ext-guards";
+import { oncePerProcess, toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 // ═══ core 宿主端口消费（随迁块的依赖；production 默认实现住本文件） ═══
 import { getOrCreateChannelRegistry } from "@zhushanwen/subagent-core";
@@ -80,6 +80,13 @@ function getCachedMainSessionFile(): string | undefined {
  * 读错文件会整段漏判。此处按 id 从 sessions 目录解析为准；新 session 文件未 flush
  * 时（AGENTS.md 规则 6：首条 assistant 消息前可能不存在）返回 undefined，调用方
  * （fork 解析 / 孤儿恢复）对该场景本就无 entry 可读。
+ *
+ * [pi 锚点 ADR-0063 I4] getSessionFile attach 语义：返回 `this.sessionFile` 字段
+ * （pi-mono coding-agent/src/core/session-manager.ts :1011-1013），该字段仅在
+ * _setSessionFile（:884/:895-896，constructor 显式路径或 setSessionFile）与
+ * newSession（:953 生成 `<ts>_<sessionId>.jsonl`）时写入——session_start 事件时点
+ * extension ctx 持有的 sessionManager 若尚未重绑到 root session，getSessionFile
+ * 仍回旧值（与 E2E 实测一致）。clone v0.84.2 核对，实装 0.84.4。
  */
 function resolveMainSessionFileById(sessionId: string): string | undefined {
   const sessionsDir = path.join(getAgentDir(), "..", "sessions");
@@ -256,6 +263,228 @@ function createOrReuseServices(pi: ExtensionAPI, ctx: ExtensionContext): Service
   return { service, modelService, reused };
 }
 
+// ── 装配分组 helper（复杂度消减提取；调用序 = 原内联序，行为不变） ────────────────
+
+/**
+ * [M4] identity 子进程写入（V2 决策 5）。
+ *
+ * 子进程经 env（PI_SUBAGENT_*）接收自己的 identity，在 session_start 用 pi.appendEntry
+ * 写 subagent-identity custom entry。pi 自动生成 id/parentId → message tree 连续。
+ * 旧实现父进程 fs.appendFileSync 补写的 custom entry 缺 id/parentId → 污染 _buildIndex
+ * leafId 指针 → message tree 断成两棵 → 多轮对话丢上下文（bug 根因）。
+ * 主/子进程判定：PI_SUBAGENT_SELF_RECORD_ID 仅 session-runner spawn 子进程时注入，
+ * 主进程无此 env → 跳过（identity 只在子进程写一次）。失败记日志不阻断（设计 §3.4）。
+ */
+function appendSubagentIdentityEntry(pi: ExtensionAPI): void {
+  const selfRecordId = process.env.PI_SUBAGENT_SELF_RECORD_ID;
+  if (!selfRecordId) return;
+  try {
+    const modeEnv = process.env.PI_SUBAGENT_MODE;
+    // ExecutionMode 联合窄化：父进程经 env 注入（record.mode 恒为 "background"），
+    // 运行时校验合法值，非法兜底 background（避免裸 cast，符合 taste/no-unsafe-cast）。
+    const mode: ExecutionMode = modeEnv === "background" ? modeEnv : "background";
+    const identity: SubagentIdentityData = {
+      id: selfRecordId,
+      agent: process.env.PI_SUBAGENT_AGENT ?? "",
+      mode,
+      task: process.env.PI_SUBAGENT_TASK ?? "",
+      slug: process.env.PI_SUBAGENT_SLUG,
+      startedAt: Number(process.env.PI_SUBAGENT_STARTED_AT ?? Date.now()),
+      rootSessionId: process.env.PI_SUBAGENT_ROOT_SESSION_ID,
+      parentRecordId: process.env.PI_SUBAGENT_PARENT_RECORD_ID,
+      depth:
+        process.env.PI_SUBAGENT_DEPTH !== undefined
+          ? Number(process.env.PI_SUBAGENT_DEPTH)
+          : undefined,
+      forkDepth:
+        process.env.PI_SUBAGENT_FORK_DEPTH !== undefined
+          ? Number(process.env.PI_SUBAGENT_FORK_DEPTH)
+          : undefined,
+      chatMode: process.env.PI_SUBAGENT_CHAT_MODE === "true",
+      // [review round2] worktree 隔离标志（session-runner 注入）：跨重启重建路径据此
+      // 拒绝续聊（handle 不可序列化，reattach 不可行）。
+      worktree: process.env.PI_SUBAGENT_WORKTREE === "true",
+    };
+    pi.appendEntry(IDENTITY_CUSTOM_TYPE, identity);
+  } catch (err) {
+    logger.warn("[subagents] identity appendEntry failed in session_start", {
+      reason: toErrorMessage(err),
+    });
+  }
+}
+
+/**
+ * [U2] 通知账本装配 + 重启恢复（设计 D4：存在性 / 可达性分离）。
+ *
+ * bind 先于 service.initSession（notifier.revive 在其内——notify() 经
+ * getBoundNotifyLedger 消费账本）。recoverFromSession 扫 ledger/ack 两列 entry
+ * 差集：未销账号重放投递（已销账零重发，notifyId 幂等）；fork 继承未销账
+ * pending 属可接受语义（D4 归属规则——扫描域 = 单 session 文件，幂等键作用域
+ * 随文件域隔离）。compaction 存活情况归 session_compact handler 的条件降级（P-B4
+ * 探针阶段 5 实测，见 notify-ledger.ts compactionCheck）。装配失败不阻断
+ * session_start（通知退回 notifier 的内核路径）。
+ */
+function bindLedgerHostAndRecover(pi: ExtensionAPI, ctx: ExtensionContext): void {
+  try {
+    const ledgerHost: NotifyLedgerHost = {
+      appendLedgerEntry: (customType, data) => {
+        pi.appendEntry(customType, data);
+      },
+      readSessionEntries: () => ctx.sessionManager.getEntries(),
+      isIdle: () => ctx.isIdle(),
+      onAgentSettled: (handler) => {
+        pi.on("agent_settled", handler);
+      },
+      sendDelivery: (message) => {
+        // D5 单通道：唯一发送形态 = sendCustomMessage({triggerTurn:true})，
+        // courier 已在发送前二次复查 isIdle，多通道投递选项已删（D5）。
+        pi.sendMessage(message, { triggerTurn: true });
+      },
+    };
+    // U4：重放观测已内聚到 ledger 分桶日志（recoveryReplays 桶经 extensionLogger
+    // 通道落盘），此处不再重复打日志。
+    bindNotifyLedgerHost(ledgerHost).recoverFromSession();
+  } catch (err) {
+    logger.warn("[subagents] notify ledger bind failed", {
+      reason: toErrorMessage(err),
+    });
+  }
+}
+
+/**
+ * 随迁块 4 的进程级维护三连（各 try-catch「失败记日志不阻断」，设计 §3.4）：
+ * 过期 session 文件清理 / ADR-035 manifest tmp 恢复 / ADR-035 worktree reaper 扫描。
+ * 另含 [E1] sync 批崩溃恢复（per-session 域，不用 oncePerProcess——见块内注释）。
+ */
+async function runProcessLevelMaintenance(
+  agentDir: string,
+  ctx: ExtensionContext,
+  service: SubagentService,
+  deps: SessionLifecycleDeps,
+): Promise<void> {
+  // [E1] sync 批崩溃恢复（subagent-sync-collect 设计 §3.1.5 E1，U5 接线）：扫描主
+  // session 末条 entry 重建批缓冲；全员终态未投递 → notifyBatch 补发 + 统一补
+  // batchFinalized 标记（账本同 hash 幂等拒绝也算已投递）。须晚于 initSession（孤儿
+  // 终态恢复先行收敛 running 成员，createOrReuseServices 内部同步完成）与 ledger
+  // bind（补发走 notifyBatch 写账链，见上方 bindNotifyLedgerHost）。per-session 域
+  // （主 session 文件），不用 oncePerProcess；best-effort 不阻断 session_start。
+  // 时序约束在调用点 setupSessionLifecycle 已满足（bindLedgerHostAndRecover 与
+  // createOrReuseServices 均先于本 helper 调用）。
+  try {
+    service.recoverSyncCollectBatch();
+  } catch (err) {
+    logger.warn("[subagents] sync collect batch recovery failed", {
+      reason: toErrorMessage(err),
+    });
+  }
+
+  try {
+    // 递归扫描 <agentDir>/subagents + unlink 超 TTL 跨 session 文件属进程级维护
+    // ——oncePerProcess 守卫防双跑（u-audit-fix）。
+    oncePerProcess("subagent-workflow:cleanup-expired-session-files", () =>
+      maybeCleanupExpiredSessionFiles(agentDir, ctx.cwd));
+  } catch (err) {
+    logger.warn("[subagents] expired session file cleanup failed", {
+      reason: toErrorMessage(err),
+    });
+  }
+
+  // ADR-035 启动恢复：扫描 manifest tmp 残留（崩溃打断的 writeManifest 留下，promote/unlink）。
+  // 扫描属进程级维护——oncePerProcess 守卫防双跑（u-audit-fix）；第二派发重放首次
+  // Promise（结果缓存语义），recovered 计数日志可能重打，无文件副作用。
+  try {
+    const recovered = await oncePerProcess("subagent-workflow:recover-manifest-tmp-files", () =>
+      service.recoverManifestTmpFiles());
+    if (recovered.recovered > 0 || recovered.deleted > 0) {
+      logger.warn(`[subagents] manifest tmp recovery: ${recovered.recovered} promoted, ${recovered.deleted} deleted`);
+    }
+  } catch (err) {
+    logger.warn("[subagents] manifest tmp recovery failed", {
+      reason: toErrorMessage(err),
+    });
+  }
+
+  try {
+    // ADR-035：worktree reaper 扫描（git/rm 进程操作 + 注册表/目录扫描）属进程级
+    // 维护——oncePerProcess 守卫防双跑（u-audit-fix）。默认每次扫描新建
+    // WorktreeManager（现状语义）；deps.worktreeManager 供测试注入 fake（scanCalls 计数）。
+    await oncePerProcess("subagent-workflow:worktree-scan", async () => {
+      const wtm = deps.worktreeManager ?? new WorktreeManager(agentDir);
+      await wtm.scan();
+    });
+  } catch (err) {
+    logger.warn("[subagents] worktree reaper scan failed", {
+      reason: toErrorMessage(err),
+    });
+  }
+}
+
+/** createSessionRunState 返回值（随迁块 5 的装配产物）。 */
+interface SessionRunState {
+  store: JsonlRunStore;
+  runs: Map<string, WorkflowRun>;
+  /** MF-1: loadAll 失败则 false，workflow 域启动时 fail-fast */
+  storeHealthy: boolean;
+}
+
+/**
+ * 随迁块 5：per-session run store + runs + kill-9 崩溃恢复循环 + storeHealthy 跟踪。
+ *
+ * MF-1: store 健康度跟踪。loadAll 失败 → storeHealthy=false，workflow 域启动时 fail-fast。
+ * 崩溃恢复四步（loadAll → failed → save → evict）收口到 core recoverCrashedRuns（D8：
+ * 宿主各写一遍正是 failure-mode-B）；pending:unregister 经 hooks 外置发射（位置在
+ * transition 后、save 前，对齐原内联实现）；save 走 store 冷路径（done 绕过去抖）——
+ * 冷路径语义在 JsonlRunStore.save 内，不随循环归属转移。loadAll 失败的 fail-fast
+ * （storeHealthy=false 停初始化）是宿主职责，core 原样上抛、这里 catch 兜住。
+ */
+async function createSessionRunState(
+  sessionDir: string,
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  deps: SessionLifecycleDeps,
+): Promise<SessionRunState> {
+  const store = deps.createRunStore
+    ? deps.createRunStore(sessionDir, pi, ctx)
+    : new JsonlRunStore({
+        sessionDir,
+        pi,
+        ctx,
+      });
+  const runs = new Map<string, WorkflowRun>();
+
+  // F-4/D-003: agent 发现走 shared/resource-discovery（ADR-031），modelService
+  // 自持 AgentRegistry（subagents/workflow 两域共用同一发现结果）。
+  // M2 修正：workflow 域 resolveAgentOpts 不再消费 agentRegistry（agent ref 交
+  // resolveIdentity），无需经 state 透传——modelService 是唯一 registry 源。
+  let storeHealthy = true;
+  try {
+    // 崩溃恢复 loadAll 扫 cwd 共享 sessionDir（同 cwd 跨 session 共享）并把 running run
+    // 转 failed 落盘——写非本 session 的 run state 文件属跨 session 副作用，oncePerProcess
+    // 守卫防双跑（u-audit-fix）。第二派发重放首次 Promise：不再落盘、不再 emit。
+    await oncePerProcess(
+      "subagent-workflow:recover-crashed-runs",
+      () =>
+        recoverCrashedRuns(
+          store,
+          runs,
+          "Process killed (kill-9 or crash recovery)",
+          {
+            onRunRecovered: (payload) => {
+              pi.events.emit("pending:unregister", payload);
+            },
+          },
+        ),
+    );
+  } catch (err) {
+    // QMF-4 fix: store.loadAll 失败是关键路径错误，workflow 域将未初始化
+    logger.error("[subagent-workflow] store.loadAll failed, workflow domain uninitialized", {
+      reason: toErrorMessage(err),
+    });
+    storeHealthy = false;
+  }
+  return { store, runs, storeHealthy };
+}
+
 // ── 单一装配入口 ─────────────────────────────────────────────────────────────────
 
 /**
@@ -284,190 +513,23 @@ export async function setupSessionLifecycle(
   // 包的候选目录）。session 内复用收益不变（IF8/DM3 消重发生在同 session 的重复调用）。
   clearSkillPathCache();
 
-  // ── [M4] identity 子进程写入（V2 决策 5）──
-  // 子进程经 env（PI_SUBAGENT_*）接收自己的 identity，在 session_start 用 pi.appendEntry
-  // 写 subagent-identity custom entry。pi 自动生成 id/parentId → message tree 连续。
-  // 旧实现父进程 fs.appendFileSync 补写的 custom entry 缺 id/parentId → 污染 _buildIndex
-  // leafId 指针 → message tree 断成两棵 → 多轮对话丢上下文（bug 根因）。
-  // 主/子进程判定：PI_SUBAGENT_SELF_RECORD_ID 仅 session-runner spawn 子进程时注入，
-  // 主进程无此 env → 跳过（identity 只在子进程写一次）。
-  const selfRecordId = process.env.PI_SUBAGENT_SELF_RECORD_ID;
-  if (selfRecordId) {
-    try {
-      const modeEnv = process.env.PI_SUBAGENT_MODE;
-      // ExecutionMode 联合窄化：父进程经 env 注入（record.mode 恒为 "background"），
-      // 运行时校验合法值，非法兜底 background（避免裸 cast，符合 taste/no-unsafe-cast）。
-      const mode: ExecutionMode = modeEnv === "background" ? modeEnv : "background";
-      const identity: SubagentIdentityData = {
-        id: selfRecordId,
-        agent: process.env.PI_SUBAGENT_AGENT ?? "",
-        mode,
-        task: process.env.PI_SUBAGENT_TASK ?? "",
-        slug: process.env.PI_SUBAGENT_SLUG,
-        startedAt: Number(process.env.PI_SUBAGENT_STARTED_AT ?? Date.now()),
-        rootSessionId: process.env.PI_SUBAGENT_ROOT_SESSION_ID,
-        parentRecordId: process.env.PI_SUBAGENT_PARENT_RECORD_ID,
-        depth:
-          process.env.PI_SUBAGENT_DEPTH !== undefined
-            ? Number(process.env.PI_SUBAGENT_DEPTH)
-            : undefined,
-        forkDepth:
-          process.env.PI_SUBAGENT_FORK_DEPTH !== undefined
-            ? Number(process.env.PI_SUBAGENT_FORK_DEPTH)
-            : undefined,
-        chatMode: process.env.PI_SUBAGENT_CHAT_MODE === "true",
-        // [review round2] worktree 隔离标志（session-runner 注入）：跨重启重建路径据此
-        // 拒绝续聊（handle 不可序列化，reattach 不可行）。
-        worktree: process.env.PI_SUBAGENT_WORKTREE === "true",
-      };
-      pi.appendEntry(IDENTITY_CUSTOM_TYPE, identity);
-    } catch (err) {
-      logger.warn("[subagents] identity appendEntry failed in session_start", {
-        reason: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
+  // ── [M4] identity 子进程写入（随迁块 1）──
+  appendSubagentIdentityEntry(pi);
 
-  // ── [U2] 通知账本装配 + 重启恢复（设计 D4：存在性 / 可达性分离）──
-  // bind 先于 service.initSession（notifier.revive 在其内——notify() 经
-  // getBoundNotifyLedger 消费账本）。recoverFromSession 扫 ledger/ack 两列 entry
-  // 差集：未销账号重放投递（已销账零重发，notifyId 幂等）；fork 继承未销账
-  // pending 属可接受语义（D4 归属规则——扫描域 = 单 session 文件，幂等键作用域
-  // 随文件域隔离）。compaction 存活情况归 session_compact handler 的条件降级（P-B4
-  // 探针阶段 5 实测，见 notify-ledger.ts compactionCheck）。
-  try {
-    const ledgerHost: NotifyLedgerHost = {
-      appendLedgerEntry: (customType, data) => {
-        pi.appendEntry(customType, data);
-      },
-      readSessionEntries: () => ctx.sessionManager.getEntries(),
-      isIdle: () => ctx.isIdle(),
-      onAgentSettled: (handler) => {
-        pi.on("agent_settled", handler);
-      },
-      sendDelivery: (message) => {
-        // D5 单通道：唯一发送形态 = sendCustomMessage({triggerTurn:true})，
-        // courier 已在发送前二次复查 isIdle，多通道投递选项已删（D5）。
-        pi.sendMessage(message, { triggerTurn: true });
-      },
-    };
-    // U4：重放观测已内聚到 ledger 分桶日志（recoveryReplays 桶经 extensionLogger
-    // 通道落盘），此处不再重复打日志。
-    bindNotifyLedgerHost(ledgerHost).recoverFromSession();
-  } catch (err) {
-    // 账本装配失败不阻断 session_start（通知退回 notifier 的内核路径）
-    logger.warn("[subagents] notify ledger bind failed", {
-      reason: err instanceof Error ? err.message : String(err),
-    });
-  }
+  // ── [U2] 通知账本装配 + 重启恢复（随迁块 2）──
+  bindLedgerHostAndRecover(pi, ctx);
 
   // ── subagents 域：双 Service 装配（随迁块 3，经 deps 可注入）──
   const { service, modelService } = deps.createServices
     ? deps.createServices(pi, ctx)
     : createOrReuseServices(pi, ctx);
 
-  // [E1] sync 批崩溃恢复（subagent-sync-collect 设计 §3.1.5 E1，U5 接线）：扫描主
-  // session 末条 entry 重建批缓冲；全员终态未投递 → notifyBatch 补发 + 统一补
-  // batchFinalized 标记（账本同 hash 幂等拒绝也算已投递）。须晚于 initSession（孤儿
-  // 终态恢复先行收敛 running 成员，createOrReuseServices 内部同步完成）与 ledger
-  // bind（补发走 notifyBatch 写账链，见上方 bindNotifyLedgerHost）。per-session 域
-  // （主 session 文件），不用 oncePerProcess；best-effort 不阻断 session_start。
-  try {
-    service.recoverSyncCollectBatch();
-  } catch (err) {
-    logger.warn("[subagents] sync collect batch recovery failed", {
-      reason: err instanceof Error ? err.message : String(err),
-    });
-  }
+  // ── GC / manifest tmp / worktree 恢复（随迁块 4）──
+  await runProcessLevelMaintenance(agentDir, ctx, service, deps);
 
-  try {
-    // 递归扫描 <agentDir>/subagents + unlink 超 TTL 跨 session 文件属进程级维护
-    // ——oncePerProcess 守卫防双跑（u-audit-fix）。
-    oncePerProcess("subagent-workflow:cleanup-expired-session-files", () =>
-      maybeCleanupExpiredSessionFiles(agentDir, ctx.cwd));
-  } catch (err) {
-    logger.warn("[subagents] expired session file cleanup failed", {
-      reason: err instanceof Error ? err.message : String(err),
-    });
-  }
-
-  // ADR-035 启动恢复：扫描 manifest tmp 残留（崩溃打断的 writeManifest 留下，promote/unlink）。
-  // 扫描属进程级维护——oncePerProcess 守卫防双跑（u-audit-fix）；第二派发重放首次
-  // Promise（结果缓存语义），recovered 计数日志可能重打，无文件副作用。
-  try {
-    const recovered = await oncePerProcess("subagent-workflow:recover-manifest-tmp-files", () =>
-      service.recoverManifestTmpFiles());
-    if (recovered.recovered > 0 || recovered.deleted > 0) {
-      logger.warn(`[subagents] manifest tmp recovery: ${recovered.recovered} promoted, ${recovered.deleted} deleted`);
-    }
-  } catch (err) {
-    logger.warn("[subagents] manifest tmp recovery failed", {
-      reason: err instanceof Error ? err.message : String(err),
-    });
-  }
-
-  try {
-    // ADR-035：worktree reaper 扫描（git/rm 进程操作 + 注册表/目录扫描）属进程级
-    // 维护——oncePerProcess 守卫防双跑（u-audit-fix）。默认每次扫描新建
-    // WorktreeManager（现状语义）；deps.worktreeManager 供测试注入 fake（scanCalls 计数）。
-    await oncePerProcess("subagent-workflow:worktree-scan", async () => {
-      const wtm = deps.worktreeManager ?? new WorktreeManager(agentDir);
-      await wtm.scan();
-    });
-  } catch (err) {
-    logger.warn("[subagents] worktree reaper scan failed", {
-      reason: err instanceof Error ? err.message : String(err),
-    });
-  }
-
-  // ── workflow 域：per-session store + runs ──
+  // ── workflow 域：per-session store + runs + kill-9 恢复（随迁块 5）──
   const sessionDir = resolveSessionDir();
-  const store = deps.createRunStore
-    ? deps.createRunStore(sessionDir, pi, ctx)
-    : new JsonlRunStore({
-        sessionDir,
-        pi,
-        ctx,
-      });
-  const runs = new Map<string, WorkflowRun>();
-
-  // F-4/D-003: agent 发现走 shared/resource-discovery（ADR-031），modelService
-  // 自持 AgentRegistry（subagents/workflow 两域共用同一发现结果）。
-  // M2 修正：workflow 域 resolveAgentOpts 不再消费 agentRegistry（agent ref 交
-  // resolveIdentity），无需经 state 透传——modelService 是唯一 registry 源。
-
-  // MF-1: store 健康度跟踪。loadAll 失败 → storeHealthy=false，workflow 域启动时 fail-fast。
-  // 崩溃恢复四步（loadAll → failed → save → evict）收口到 core recoverCrashedRuns（D8：
-  // 宿主各写一遍正是 failure-mode-B）；pending:unregister 经 hooks 外置发射（位置在
-  // transition 后、save 前，对齐原内联实现）；save 走 store 冷路径（done 绕过去抖）——
-  // 冷路径语义在 JsonlRunStore.save 内，不随循环归属转移。loadAll 失败的 fail-fast
-  // （storeHealthy=false 停初始化）是宿主职责，core 原样上抛、这里 catch 兜住。
-  let storeHealthy = true;
-  try {
-    // 崩溃恢复 loadAll 扫 cwd 共享 sessionDir（同 cwd 跨 session 共享）并把 running run
-    // 转 failed 落盘——写非本 session 的 run state 文件属跨 session 副作用，oncePerProcess
-    // 守卫防双跑（u-audit-fix）。第二派发重放首次 Promise：不再落盘、不再 emit。
-    await oncePerProcess(
-      "subagent-workflow:recover-crashed-runs",
-      () =>
-        recoverCrashedRuns(
-          store,
-          runs,
-          "Process killed (kill-9 or crash recovery)",
-          {
-            onRunRecovered: (payload) => {
-              pi.events.emit("pending:unregister", payload);
-            },
-          },
-        ),
-    );
-  } catch (err) {
-    // QMF-4 fix: store.loadAll 失败是关键路径错误，workflow 域将未初始化
-    logger.error("[subagent-workflow] store.loadAll failed, workflow domain uninitialized", {
-      reason: err instanceof Error ? err.message : String(err),
-    });
-    storeHealthy = false;
-  }
+  const { store, runs, storeHealthy } = await createSessionRunState(sessionDir, pi, ctx, deps);
 
   // D-008: per-session SAR（需要 ctxModel 填底 + subagentService 委托目标）。
   // old: const runner = new SubprocessAgentRunner()（module-level singleton，无 deps）

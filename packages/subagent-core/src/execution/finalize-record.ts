@@ -86,117 +86,106 @@ function findSessionFileByRecordIdentity(
 }
 
 /**
- * 时序收尾（D-017）。步骤 0→4 全部 best-effort 互不阻断（除 manifest 外都幂等）。
+ * [T1/PS-9] Step 序言：sessionFile 缺失时按 record 身份在 sessionDir 反查回填。
  *
- * [Critical #1] Step 3 cleanup 全部在 Step 4 manifest 之前——manifest 写失败仅 console.error +
- * appendEntry，不 throw 不跳过 cleanup。task/slug/model 从 ExecutionRecord 抓取（配合 ManifestRecord
- * 补字段），manifestToSubagent 投影真实值而非硬编码空串。
+ * 放在一切步骤前，让 archive 投影 / Step 3 marker / Step 4 manifest 统一受益。
+ * RC-1（握手失败）+ LC-4（收尾反查未命中）的残余形态下，磁盘上 session 文件仍可能
+ * 真实存在（identity 携带 record.id）——反查命中则 tombstone/finalized sidecar 与
+ * removeAliveMarker 有了依据，终态原因不再丢失、alive marker 不再残留；未命中则
+ * 保持旧行为（best-effort 跳过）。
  */
-export async function doFinalizeRecord(
-  deps: FinalizeDeps,
-  record: ExecutionRecord,
-  result: AgentResult,
-  status: "closed",
-  closedReason?: ClosedReason,
-): Promise<void> {
-  // [T1/PS-9] sessionFile 缺失时 sessionDir 反查（放在一切步骤前，让 archive 投影 /
-  // Step 3 marker / Step 4 manifest 统一受益）。RC-1（握手失败）+ LC-4（收尾反查未命中）
-  // 的残余形态下，磁盘上 session 文件仍可能真实存在（identity 携带 record.id）——
-  // 反查命中则 tombstone/finalized sidecar 与 removeAliveMarker 有了依据，终态原因
-  // 不再丢失、alive marker 不再残留；未命中则保持旧行为（best-effort 跳过）。
-  if (!record.sessionFile && deps.sessionDir) {
-    const resolved = findSessionFileByRecordIdentity(deps.sessionDir, record.id);
-    if (resolved) {
-      record.sessionFile = resolved;
-      logger.warn(
-        `[subagent] finalizeRecord: sessionFile was missing, resolved via sessionDir identity lookup: ${resolved}`,
-      );
-    }
+function resolveMissingSessionFile(deps: FinalizeDeps, record: ExecutionRecord): void {
+  if (record.sessionFile || !deps.sessionDir) return;
+  const resolved = findSessionFileByRecordIdentity(deps.sessionDir, record.id);
+  if (resolved) {
+    record.sessionFile = resolved;
+    logger.warn(
+      `[subagent] finalizeRecord: sessionFile was missing, resolved via sessionDir identity lookup: ${resolved}`,
+    );
   }
+}
 
-  // ── Step 0: collectPatch（best-effort）──
-  // [MF#3] patchFile 写到 worktree 之外（sessionsDir/<branch>.patch），避免被 cleanup 删除；
-  //        路径回填 record.patchFile，供调用方（tool result / /subagents list）应用。
-  if (record.worktreeHandle) {
-    try {
-      const sessionsDir = getSubagentSessionDir(
-        deps.modelService.getAgentDir(),
-        record.worktreeHandle.mainCwd,
-      );
-      fs.mkdirSync(sessionsDir, { recursive: true });
-      const patchFile = path.join(sessionsDir, `${record.worktreeHandle.branch}.patch`);
-      const patch = await deps.worktreeManager.collectPatch(record.worktreeHandle, patchFile);
-      if (patch.written) record.patchFile = patchFile;
-    } catch (pe: unknown) {
-      bestEffort(pe, "collectPatch (finalizeRecord Step0)");
-    }
-  }
-
-  // ── Step 1: completeRecord（B9: 抛错→后续仍执行）──
+/**
+ * Step 0: collectPatch（best-effort，仅 worktree 绑定时执行）。
+ * [MF#3] patchFile 写到 worktree 之外（sessionsDir/<branch>.patch），避免被 cleanup 删除；
+ * 路径回填 record.patchFile，供调用方（tool result / /subagents list）应用。
+ */
+async function collectPatchIfWorktree(deps: FinalizeDeps, record: ExecutionRecord): Promise<void> {
+  if (!record.worktreeHandle) return;
   try {
-    completeRecord(record, result, status, closedReason);
-  } catch (err) {
-    bestEffort(err, "completeRecord (finalizeRecord B9)", "error");
+    const sessionsDir = getSubagentSessionDir(
+      deps.modelService.getAgentDir(),
+      record.worktreeHandle.mainCwd,
+    );
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    const patchFile = path.join(sessionsDir, `${record.worktreeHandle.branch}.patch`);
+    const patch = await deps.worktreeManager.collectPatch(record.worktreeHandle, patchFile);
+    if (patch.written) record.patchFile = patchFile;
+  } catch (pe: unknown) {
+    bestEffort(pe, "collectPatch (finalizeRecord Step0)");
   }
+}
 
-  // ── Step 2: archive（B9: 抛错→后续仍执行）──
+/**
+ * Step 3a: finalized/tombstone sidecar（best-effort 幂等，仅 sessionFile 存在时执行）。
+ * MF-1 fix / v4 B-1: cancelled（closedReason='cancelled'）写 tombstone 而非 finalized，
+ * 防重建丢失 cancelled；其余 reason 写 finalized sidecar（真实 reason 进 sidecar 内容，
+ * 磁盘重建用它还原 closedReason，不再一律硬编码 gc）。
+ */
+function writeFinalizedOrTombstone(record: ExecutionRecord, closedReason: ClosedReason | undefined): void {
+  if (!record.sessionFile) return;
   try {
-    deps.store.archive(record);
+    if (closedReason === "cancelled") {
+      writeCancelledTombstone(record.sessionFile, {
+        id: record.id,
+        status: "cancelled",
+        agent: record.agent,
+        startedAt: record.startedAt,
+        endedAt: record.endedAt ?? Date.now(),
+      });
+    } else {
+      writeFinalized(record.sessionFile, closedReason);
+    }
   } catch (err) {
-    bestEffort(err, "store.archive (finalizeRecord B9)", "error");
+    bestEffort(err, "writeFinalized/tombstone (finalizeRecord Step3)");
   }
+}
 
-  // ── Step 3: finalized + cleanup + aliveMarker + pending注销（全部先执行，幂等）──
-  // [Critical] 清理必须在 manifest 写入之前：worktree cleanup / finalized marker / aliveMarker
-  //   都是幂等且不可跳过的副作用。绝不能因 manifest 写失败而跳过 worktree cleanup
-  //   （否则 worktree 泄漏）。各件独立 try/catch，互不阻断。
-  if (record.sessionFile) {
-    try {
-      // MF-1 fix / v4 B-1: cancelled（closedReason='cancelled'）写 tombstone 而非 finalized，防重建丢失 cancelled
-      if (closedReason === "cancelled") {
-        writeCancelledTombstone(record.sessionFile, {
-          id: record.id,
-          status: "cancelled",
-          agent: record.agent,
-          startedAt: record.startedAt,
-          endedAt: record.endedAt ?? Date.now(),
-        });
-      } else {
-        // [v8.5 A2] 真实 reason 写入 sidecar 内容（旧格式是空文件）：磁盘重建时用它
-        // 还原 closedReason，不再一律硬编码 gc。cancelled 之外的全部原因（gc /
-        // user-close / parent-*）都经此路径持久化。
-        writeFinalized(record.sessionFile, closedReason);
-      }
-    } catch (err) {
-      bestEffort(err, "writeFinalized/tombstone (finalizeRecord Step3)");
-    }
+/**
+ * Step 3b: worktree cleanup（best-effort 幂等，仅 worktree 绑定时执行）。
+ * [Critical] 绝不能因 manifest 写失败而跳过（否则 worktree 泄漏）。
+ */
+async function cleanupWorktreeIfBound(deps: FinalizeDeps, record: ExecutionRecord): Promise<void> {
+  if (!record.worktreeHandle) return;
+  try {
+    await deps.worktreeManager.cleanup(record.worktreeHandle);
+  } catch (err) {
+    bestEffort(err, "worktree cleanup (finalizeRecord Step3)");
   }
-  if (record.worktreeHandle) {
-    try {
-      await deps.worktreeManager.cleanup(record.worktreeHandle);
-    } catch (err) {
-      bestEffort(err, "worktree cleanup (finalizeRecord Step3)");
-    }
-  }
-  if (record.sessionFile) {
-    try {
-      removeAliveMarker(record.sessionFile);
-    } catch (err) {
-      bestEffort(err, "removeAliveMarker (finalizeRecord Step3)");
-    }
-  }
+}
 
-  // pending-notifications：终态注销（只记 registry 状态，通知由 BgNotifier 发）
-  deps.emitUnregister(record.id, status);
+/** Step 3c: 删 .alive marker（best-effort 幂等，仅 sessionFile 存在时执行）。 */
+function removeAliveMarkerIfPresent(record: ExecutionRecord): void {
+  if (!record.sessionFile) return;
+  try {
+    removeAliveMarker(record.sessionFile);
+  } catch (err) {
+    bestEffort(err, "removeAliveMarker (finalizeRecord Step3)");
+  }
+}
 
-  // ── Step 4 (last): manifest 持久化（best-effort，不阻断、不 throw）──
-  // [Critical #1] manifest 是 sa- id 反查索引（最新已知快照），不是正确性依赖。本步骤
-  //   写终态快照；sync 批成功成员不经此处——落标出口（subagent-service
-  //   appendBatchFinalizedEntry）已先行补写，message upgrade 到终态时被本步骤原子
-  //   覆盖。写失败时仅记录（console.error + appendEntry），绝不让 manifest 写失败
-  //   跳过上面的 worktree cleanup 或抛出打断 finalize 链。旧实现 Step 2.5 throw 会
-  //   跳过 Step 3 cleanup。task/slug/model 从 ExecutionRecord 抓取（配合
-  //   ManifestRecord 补字段），manifestToSubagent 投影时用真实值而非硬编码空串。
+/**
+ * Step 4 (last): manifest 持久化（best-effort，不阻断、不 throw）。
+ *
+ * [Critical #1] manifest 是 sa- id 反查索引（最新已知快照），不是正确性依赖。本步骤
+ * 写终态快照；sync 批成功成员不经此处——落标出口（subagent-service
+ * appendBatchFinalizedEntry）已先行补写，message upgrade 到终态时被本步骤原子
+ * 覆盖。写失败时仅记录（console.error + appendEntry），绝不让 manifest 写失败
+ * 跳过 Step 3 cleanup 或抛出打断 finalize 链。旧实现 Step 2.5 throw 会
+ * 跳过 Step 3 cleanup。task/slug/model 从 ExecutionRecord 抓取（配合
+ * ManifestRecord 补字段），manifestToSubagent 投影时用真实值而非硬编码空串。
+ */
+async function writeManifestBestEffort(deps: FinalizeDeps, record: ExecutionRecord): Promise<void> {
   try {
     await deps.manifestStore.writeManifest({
       id: record.id,
@@ -220,6 +209,55 @@ export async function doFinalizeRecord(
       error: msg,
     });
   }
+}
+
+/**
+ * 时序收尾（D-017）。步骤 0→4 全部 best-effort 互不阻断（除 manifest 外都幂等）。
+ *
+ * [Critical #1] Step 3 cleanup 全部在 Step 4 manifest 之前——manifest 写失败仅 console.error +
+ * appendEntry，不 throw 不跳过 cleanup。task/slug/model 从 ExecutionRecord 抓取（配合 ManifestRecord
+ * 补字段），manifestToSubagent 投影真实值而非硬编码空串。
+ */
+export async function doFinalizeRecord(
+  deps: FinalizeDeps,
+  record: ExecutionRecord,
+  result: AgentResult,
+  status: "closed",
+  closedReason?: ClosedReason,
+): Promise<void> {
+  // [T1/PS-9] sessionFile 缺失时 sessionDir 反查（序言，先于一切步骤）。
+  resolveMissingSessionFile(deps, record);
+
+  // ── Step 0: collectPatch（best-effort）──
+  await collectPatchIfWorktree(deps, record);
+
+  // ── Step 1: completeRecord（B9: 抛错→后续仍执行）──
+  try {
+    completeRecord(record, result, status, closedReason);
+  } catch (err) {
+    bestEffort(err, "completeRecord (finalizeRecord B9)", "error");
+  }
+
+  // ── Step 2: archive（B9: 抛错→后续仍执行）──
+  try {
+    deps.store.archive(record);
+  } catch (err) {
+    bestEffort(err, "store.archive (finalizeRecord B9)", "error");
+  }
+
+  // ── Step 3: finalized + cleanup + aliveMarker（全部先执行，幂等）──
+  // [Critical] 清理必须在 manifest 写入之前：worktree cleanup / finalized marker / aliveMarker
+  //   都是幂等且不可跳过的副作用。绝不能因 manifest 写失败而跳过 worktree cleanup
+  //   （否则 worktree 泄漏）。各件独立 try/catch，互不阻断。
+  writeFinalizedOrTombstone(record, closedReason);
+  await cleanupWorktreeIfBound(deps, record);
+  removeAliveMarkerIfPresent(record);
+
+  // pending-notifications：终态注销（只记 registry 状态，通知由 BgNotifier 发）
+  deps.emitUnregister(record.id, status);
+
+  // ── Step 4 (last): manifest 持久化（best-effort，不阻断、不 throw）──
+  await writeManifestBestEffort(deps, record);
 }
 
 /**

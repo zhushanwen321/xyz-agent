@@ -168,7 +168,7 @@ function makeAskUserCtx(
     },
     modelRegistry: undefined,
     model: undefined,
-  } as SessionRunnerContext;
+  } as unknown as SessionRunnerContext;
   const handler = createUiRequestHandlerForMode(ctx as never, registry, dialogQueue);
   return makeCtxBase({
     ...overrides,
@@ -315,11 +315,11 @@ describe("ask_user 跨进程 transit e2e (#34)", () => {
     // 验证：连续 emit 两个 ask_user，channel handler 按顺序被调，response 按顺序写回。
     const registry = createUiChannelRegistry();
     const callOrder: string[] = [];
-    const channelHandler: ChannelHandler = vi.fn(async (req: { id: string }) => {
-      callOrder.push(req.id);
+    const channelHandler: ChannelHandler = vi.fn(async (req: unknown) => {
+      callOrder.push((req as { id: string }).id);
       // 加延迟让两个请求有机会并发（若队列没串行）
       await new Promise((r) => setTimeout(r, 15));
-      return { value: `ans-${req.id}` };
+      return { value: `ans-${(req as { id: string }).id}` };
     });
     registry.register("ask_user", channelHandler);
 

@@ -2,16 +2,16 @@
  * Session model binding sidecar（`<sessionFile>.model.json`）家族。
  *
  * 从 session-file-utils.ts 提取（行数合规）：三函数与字段声明随迁，函数体逐字节不变。
- * persistBindingSidecar / readBindingSidecar 公共骨架仍留在 session-file-utils.ts
- * （preset/project/agent/model 四家族共用；为此在原文件最小导出，本文件 import 复用，
- * 形成 session-file-utils ⇄ 本模块的函数级循环引用——两侧均为 function 声明，ESM
- * 实例化期完成绑定，运行时调用无 TDZ 风险）。
+ * persistBindingSidecar / readBindingSidecar 公共骨架已下沉 './session-binding-sidecar-io.ts'
+ * 叶子模块（preset/project/agent/model 四家族共用；原「本文件从 session-file-utils import
+ * 骨架」构成两模块函数级循环引用，被 PR fallow audit 拦截后下沉消除）——本模块单向依赖
+ * 叶子，与 session-file-utils 的方向为 file-utils → 本模块，循环不再存在。
  *
  * 与 preset/project/agent sidecar 家族并列独立：switchModel / setThinkingLevel /
  * create / fork / restore 各写点写生效值，scanner scanSessionMeta 第七读提取进
  * ScannedSessionMeta（设计 docs/design/composer-model-session-isolation.md D1）。
  */
-import { persistBindingSidecar, readBindingSidecar } from './session-file-utils.js'
+import { persistBindingSidecar, readBindingSidecar } from './session-binding-sidecar-io.js'
 
 /**
  * model binding 的扫描字段声明（ScannedSessionMeta extends 收编）。

@@ -12,7 +12,9 @@ import {
   getFullText,
   getFullTextFrom,
   getTotalUsage,
+  jsonlToAgentEvent,
   markReconstructedStatus,
+  resurrectClosed,
   nextRoundBaseTurnIndex,
   deriveOutcome,
   projectOutcome,
@@ -38,8 +40,12 @@ function makeRecord(over: Partial<ExecutionRecord> = {}): ExecutionRecord {
     id: "test-1",
     agent: "worker",
     model: "test-model",
+    slug: "t",
+    rootSessionId: undefined,
+    parentRecordId: undefined,
+    depth: 0,
     thinkingLevel: undefined,
-    mode: "sync",
+    mode: "background",
     task: "test task",
     startedAt: 1000,
     status: "running",
@@ -75,6 +81,7 @@ describe("createRecord", () => {
       model: "m1",
       thinkingLevel: "high",
       mode: "background",
+      slug: "t",
       task: "review PR",
       startedAt: 2000,
     });
@@ -102,21 +109,21 @@ describe("createRecord", () => {
   it("stores controller when provided (background)", () => {
     const controller = new AbortController();
     const r = createRecord("r1", {
-      agent: "w", model: "m", mode: "background", task: "t", startedAt: 0, controller,
+      agent: "w", model: "m", mode: "background", slug: "t", task: "t", startedAt: 0, controller,
     });
     expect(r.controller).toBe(controller);
   });
 
   it("stores rootSessionId when provided", () => {
     const r = createRecord("r1", {
-      agent: "w", model: "m", mode: "sync", task: "t", startedAt: 0, rootSessionId: "sess-A",
+      agent: "w", model: "m", mode: "background", slug: "t", task: "t", startedAt: 0, rootSessionId: "sess-A",
     });
     expect(r.rootSessionId).toBe("sess-A");
   });
 
   it("defaults rootSessionId to undefined when omitted", () => {
     const r = createRecord("r1", {
-      agent: "w", model: "m", mode: "sync", task: "t", startedAt: 0,
+      agent: "w", model: "m", mode: "background", slug: "t", task: "t", startedAt: 0,
     });
     expect(r.rootSessionId).toBeUndefined();
   });
@@ -478,7 +485,7 @@ describe("getEventLog", () => {
 // ============================================================
 describe("getCurrentActivity", () => {
   it("returns undefined when status is not running", () => {
-    const r = makeRecord({ status: "done" });
+    const r = makeRecord({ status: "closed" });
     expect(getCurrentActivity(r)).toBeUndefined();
   });
 
@@ -673,7 +680,7 @@ describe("nextRoundBaseTurnIndex", () => {
       agent: "worker",
       model: "test-model",
       thinkingLevel: undefined,
-      mode: "sync",
+      mode: "background",
       task: "t",
       slug: "t",
       startedAt: 1000,
@@ -753,8 +760,8 @@ describe("getAllToolCalls", () => {
     // 导出形状只有 4 个语义字段
     expect(Object.keys(tc!).sort()).toEqual(["args", "isError", "result", "toolName"]);
     // 内部字段不存在
-    expect((tc as Record<string, unknown>)._status).toBeUndefined();
-    expect((tc as Record<string, unknown>).startedTs).toBeUndefined();
+    expect((tc as unknown as Record<string, unknown>)._status).toBeUndefined();
+    expect((tc as unknown as Record<string, unknown>).startedTs).toBeUndefined();
   });
 });
 
@@ -797,70 +804,70 @@ describe("getTotalUsage", () => {
 describe("tryTransition", () => {
   it("returns true and sets status when transitioning from running", () => {
     const r = makeRecord({ status: "running" });
-    expect(tryTransition(r, "done")).toBe(true);
-    expect(r.status).toBe("done");
+    expect(tryTransition(r, "closed")).toBe(true);
+    expect(r.status).toBe("closed");
   });
 
-  it("returns false when already terminal (done)", () => {
-    const r = makeRecord({ status: "done" });
-    expect(tryTransition(r, "failed")).toBe(false);
-    expect(r.status).toBe("done");
+  it("returns false when already terminal (closed)", () => {
+    const r = makeRecord({ status: "closed" });
+    expect(tryTransition(r, "closed")).toBe(false);
+    expect(r.status).toBe("closed");
   });
 
-  it("returns false when already terminal (cancelled)", () => {
-    const r = makeRecord({ status: "cancelled" });
-    expect(tryTransition(r, "done")).toBe(false);
+  it("returns false when already terminal (closed, cancelled reason)", () => {
+    const r = makeRecord({ status: "closed", closedReason: "cancelled" });
+    expect(tryTransition(r, "closed")).toBe(false);
   });
 
-  it("returns false when already terminal (failed)", () => {
-    const r = makeRecord({ status: "failed" });
-    expect(tryTransition(r, "done")).toBe(false);
+  it("returns false when already terminal (closed, gc reason)", () => {
+    const r = makeRecord({ status: "closed", closedReason: "gc" });
+    expect(tryTransition(r, "closed")).toBe(false);
   });
 
-  it("first transition wins in concurrent race (running → done beats running → cancelled)", () => {
+  it("first transition wins in concurrent race (running → closed is one-way)", () => {
     const r = makeRecord({ status: "running" });
-    expect(tryTransition(r, "done")).toBe(true);
-    expect(tryTransition(r, "cancelled")).toBe(false);
-    expect(r.status).toBe("done");
+    expect(tryTransition(r, "closed")).toBe(true);
+    expect(tryTransition(r, "closed")).toBe(false);
+    expect(r.status).toBe("closed");
   });
 
-  it("returns false when trying to transition from crashed to done", () => {
-    const r = makeRecord({ status: "crashed" });
-    expect(tryTransition(r, "done")).toBe(false);
-    expect(r.status).toBe("crashed");
+  it("running 入态时 resurrectClosed 防御性 no-op（终态回边仅限 closed）", () => {
+    const r = makeRecord({ status: "running" });
+    expect(resurrectClosed(r)).toBe(false);
+    expect(r.status).toBe("running");
   });
 });
 
 describe("markReconstructedStatus", () => {
   it("directly sets status without CAS check", () => {
     const r = makeRecord({ status: "running" });
-    markReconstructedStatus(r, "crashed");
-    expect(r.status).toBe("crashed");
+    markReconstructedStatus(r, "closed");
+    expect(r.status).toBe("closed");
   });
 
   it("can overwrite terminal status (bypass CAS)", () => {
     // 重建场景：旧 record 可能已有终态，重建时需要直接覆盖
-    const r = makeRecord({ status: "done" });
-    markReconstructedStatus(r, "crashed");
-    expect(r.status).toBe("crashed");
+    const r = makeRecord({ status: "closed" });
+    markReconstructedStatus(r, "closed");
+    expect(r.status).toBe("closed");
   });
 
   it("can overwrite running status", () => {
     const r = makeRecord({ status: "running" });
-    markReconstructedStatus(r, "failed");
-    expect(r.status).toBe("failed");
+    markReconstructedStatus(r, "closed");
+    expect(r.status).toBe("closed");
   });
 
-  it("can set crashed on running record", () => {
+  it("can set closed on running record", () => {
     const r = makeRecord({ status: "running" });
-    markReconstructedStatus(r, "crashed");
-    expect(r.status).toBe("crashed");
+    markReconstructedStatus(r, "closed");
+    expect(r.status).toBe("closed");
   });
 
-  it("can set crashed on done record (reconstruction override)", () => {
-    const r = makeRecord({ status: "done" });
-    markReconstructedStatus(r, "crashed");
-    expect(r.status).toBe("crashed");
+  it("can re-set closed on closed record (reconstruction override)", () => {
+    const r = makeRecord({ status: "closed" });
+    markReconstructedStatus(r, "closed");
+    expect(r.status).toBe("closed");
   });
 });
 
@@ -870,9 +877,9 @@ describe("markReconstructedStatus", () => {
 describe("completeRecord", () => {
   it("writes outcome fields without resetting turnCount/totalTokens", () => {
     const r = makeRecord({ turnCount: 5, totalTokens: 42 });
-    r.status = "done";
-    completeRecord(r, SAMPLE_RESULT, "done");
-    expect(r.status).toBe("done");
+    r.status = "closed";
+    completeRecord(r, SAMPLE_RESULT, "closed");
+    expect(r.status).toBe("closed");
     expect(r.endedAt).toBeTypeOf("number");
     expect(r.agentResult).toBe(SAMPLE_RESULT);
     expect(r.result).toBe("done");
@@ -883,9 +890,9 @@ describe("completeRecord", () => {
 
   it("stores error from result", () => {
     const r = makeRecord();
-    r.status = "failed";
+    r.status = "closed";
     const failedResult: AgentResult = { ...SAMPLE_RESULT, success: false, error: "oops" };
-    completeRecord(r, failedResult, "failed");
+    completeRecord(r, failedResult, "closed");
     expect(r.error).toBe("oops");
   });
 
@@ -1018,7 +1025,7 @@ describe("projections", () => {
     });
 
     it("currentActivity is undefined when status is not running", () => {
-      const r = makeRecord({ status: "done" });
+      const r = makeRecord({ status: "closed" });
       expect(project(r).currentActivity).toBeUndefined();
     });
 
@@ -1073,13 +1080,13 @@ describe("projections", () => {
 
   describe("snapshot", () => {
     it("returns a readonly snapshot with identity + status fields", () => {
-      const r = makeRecord({ turnCount: 2, status: "done", endedAt: 5000, result: "ok" });
+      const r = makeRecord({ turnCount: 2, status: "closed", endedAt: 5000, result: "ok" });
       const s = snapshot(r);
       expect(s.id).toBe("test-1");
       expect(s.agent).toBe("worker");
-      expect(s.mode).toBe("sync");
+      expect(s.mode).toBe("background");
       expect(s.task).toBe("test task");
-      expect(s.status).toBe("done");
+      expect(s.status).toBe("closed");
       expect(s.turns).toBe(2);
       expect(s.endedAt).toBe(5000);
       expect(s.result).toBe("ok");
@@ -1184,7 +1191,7 @@ describe("computeElapsedSeconds", () => {
 describe("projectLiveProgress (T3.21)", () => {
   it("projects live progress snapshot from running record", () => {
     const record = makeRecord({
-      mode: "sync",
+      mode: "background",
       task: "test task",
       startedAt: 1000,
       status: "running",
@@ -1209,7 +1216,7 @@ describe("projectLiveProgress (T3.21)", () => {
 
   it("projectLiveProgress returns lastError when set", () => {
     const record = makeRecord({
-      mode: "sync", task: "failing", startedAt: 0, status: "running",
+      mode: "background", task: "failing", startedAt: 0, status: "running",
       lastError: "something went wrong",
     });
     const result = projectLiveProgress(record);
@@ -1227,7 +1234,7 @@ describe("tool_end running index [perf]", () => {
     updateFromEvent(record, { type: "tool_start", toolName: name, args });
 
   const end = (record: ExecutionRecord, name: string, result: string) =>
-    updateFromEvent(record, { type: "tool_end", toolName: name, result, isError: false });
+    updateFromEvent(record, { type: "tool_end", toolName: name, result: { content: [result] }, isError: false });
 
   it("同名并发两个 toolCall：tool_end LIFO 配对，结果写回各自槽位", () => {
     const record = makeRecord();
@@ -1239,12 +1246,12 @@ describe("tool_end running index [perf]", () => {
     const calls = record.turns[0]!.toolCalls;
     expect(calls).toHaveLength(2);
     expect(calls[0]).toMatchObject({ args: { cmd: "first" }, _status: "running" });
-    expect(calls[1]).toMatchObject({ result: "result-for-second", _status: "done" });
+    expect(calls[1]).toMatchObject({ result: { content: ["result-for-second"] }, _status: "done" });
 
     // 第二个 end 配对剩下的 first
     end(record, "bash", "result-for-first");
-    expect(calls[0]).toMatchObject({ result: "result-for-first", _status: "done" });
-    expect(calls[1]).toMatchObject({ result: "result-for-second", _status: "done" });
+    expect(calls[0]).toMatchObject({ result: { content: ["result-for-first"] }, _status: "done" });
+    expect(calls[1]).toMatchObject({ result: { content: ["result-for-second"] }, _status: "done" });
   });
 
   it("索引 miss（无 tool_start 的外部注入 tool_end）→ fallback 全扫后 push 幽灵条目", () => {
@@ -1252,7 +1259,7 @@ describe("tool_end running index [perf]", () => {
     end(record, "external_tool", "injected");
     const calls = record.turns[0]!.toolCalls;
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({ toolName: "external_tool", result: "injected", _status: "done" });
+    expect(calls[0]).toMatchObject({ toolName: "external_tool", result: { content: ["injected"] }, _status: "done" });
   });
 
   it("跨 turn 滞后 tool_end：索引跨 turn 命中（与旧全扫语义一致）", () => {
@@ -1263,8 +1270,8 @@ describe("tool_end running index [perf]", () => {
     end(record, "write", "w-done");   // 正常配对 turn 1
     end(record, "read", "r-done");    // 滞后 end 配对 turn 0（跨 turn 兜底）
 
-    expect(record.turns[0]!.toolCalls[0]).toMatchObject({ toolName: "read", result: "r-done", _status: "done" });
-    expect(record.turns[1]!.toolCalls[0]).toMatchObject({ toolName: "write", result: "w-done", _status: "done" });
+    expect(record.turns[0]!.toolCalls[0]).toMatchObject({ toolName: "read", result: { content: ["r-done"] }, _status: "done" });
+    expect(record.turns[1]!.toolCalls[0]).toMatchObject({ toolName: "write", result: { content: ["w-done"] }, _status: "done" });
   });
 });
 
@@ -1332,6 +1339,156 @@ describe("createRecord 引擎留痕字段（P4）", () => {
     expect(entry.engineFallback).toEqual({ from: "zcode", reason: "engine_probe_failed" });
     // 存量 record（无字段）投影后同样缺省——消费方按 pi 投影，零迁移
     expect(toSubagentRecordEntry(base).engine).toBeUndefined();
+  });
+});
+
+// ============================================================
+// jsonlToAgentEvent — subprocess JSONL → AgentEvent 翻译
+// ============================================================
+describe("jsonlToAgentEvent（JSONL → AgentEvent 翻译）", () => {
+  it("不映射类型（session/message_start/turn_start/tool_execution_update）→ 空数组", () => {
+    expect(jsonlToAgentEvent({ type: "session" })).toEqual([]);
+    expect(jsonlToAgentEvent({ type: "message_start" })).toEqual([]);
+    expect(jsonlToAgentEvent({ type: "turn_start" })).toEqual([]);
+    expect(jsonlToAgentEvent({ type: "tool_execution_update" })).toEqual([]);
+  });
+
+  it("未知类型 → 空数组（落空语义）", () => {
+    expect(jsonlToAgentEvent({ type: "something_new" })).toEqual([]);
+  });
+
+  it("tool_execution_start → tool_start（toolName/args 透传）", () => {
+    expect(jsonlToAgentEvent({ type: "tool_execution_start", toolName: "read", args: { path: "/x.ts" } })).toEqual([
+      { type: "tool_start", toolName: "read", args: { path: "/x.ts" } },
+    ]);
+  });
+
+  it("tool_execution_start：toolName 非字符串归一空串", () => {
+    expect(jsonlToAgentEvent({ type: "tool_execution_start", toolName: 42 })).toEqual([
+      { type: "tool_start", toolName: "", args: undefined },
+    ]);
+  });
+
+  it("tool_execution_end → tool_end（isError === true 才成立，result 透传）", () => {
+    const result = { content: [{ type: "text", text: "out" }] };
+    expect(
+      jsonlToAgentEvent({ type: "tool_execution_end", toolName: "bash", args: { command: "ls" }, result, isError: true }),
+    ).toEqual([
+      { type: "tool_end", toolName: "bash", args: { command: "ls" }, result, isError: true },
+    ]);
+    // isError 非 true（字符串 "yes" / 缺失）→ false
+    expect(
+      jsonlToAgentEvent({ type: "tool_execution_end", toolName: "bash", isError: "yes" })[0],
+    ).toMatchObject({ isError: false });
+    expect(
+      jsonlToAgentEvent({ type: "tool_execution_end", toolName: "bash" })[0],
+    ).toMatchObject({ isError: false });
+  });
+
+  it("message_update：thinking_delta（delta 字符串透传 / 非字符串归一空串）", () => {
+    expect(
+      jsonlToAgentEvent({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: "hmm" } }),
+    ).toEqual([{ type: "thinking_delta", delta: "hmm" }]);
+    expect(
+      jsonlToAgentEvent({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: 42 } }),
+    ).toEqual([{ type: "thinking_delta", delta: "" }]);
+  });
+
+  it("message_update：text_delta（delta 非字符串 String() 归一）", () => {
+    expect(
+      jsonlToAgentEvent({ type: "message_update", assistantMessageEvent: { delta: "txt" } }),
+    ).toEqual([{ type: "text_delta", delta: "txt" }]);
+    expect(
+      jsonlToAgentEvent({ type: "message_update", assistantMessageEvent: { delta: 42 } }),
+    ).toEqual([{ type: "text_delta", delta: "42" }]);
+  });
+
+  it("message_update：ame 缺失 / delta 缺失 → 不产出", () => {
+    expect(jsonlToAgentEvent({ type: "message_update" })).toEqual([]);
+    expect(jsonlToAgentEvent({ type: "message_update", assistantMessageEvent: undefined })).toEqual([]);
+    expect(jsonlToAgentEvent({ type: "message_update", assistantMessageEvent: { type: "other" } })).toEqual([]);
+  });
+
+  it("turn_end → [{type:'turn_end'}]", () => {
+    expect(jsonlToAgentEvent({ type: "turn_end" })).toEqual([{ type: "turn_end" }]);
+  });
+
+  it("message_end：usage 拍平 + cost.total 提取 + stopReason=error 额外产 error 事件（双事件）", () => {
+    const events = jsonlToAgentEvent({
+      type: "message_end",
+      message: {
+        usage: { input: 10, output: 20, cacheRead: 5, cacheWrite: 3, cost: { total: 0.5 } },
+        stopReason: "error",
+        errorMessage: "boom",
+      },
+    });
+    expect(events).toEqual([
+      { type: "message_end", usage: { input: 10, output: 20, cacheRead: 5, cacheWrite: 3, cost: 0.5 } },
+      { type: "error", message: "boom" },
+    ]);
+  });
+
+  it("message_end：stopReason=aborted 无 errorMessage → raw.reason fallback，再兜底 String(stopReason)", () => {
+    expect(
+      jsonlToAgentEvent({ type: "message_end", message: { stopReason: "aborted" }, reason: "user aborted" }),
+    ).toEqual([
+      { type: "error", message: "user aborted" },
+    ]);
+    expect(
+      jsonlToAgentEvent({ type: "message_end", message: { stopReason: "aborted" } }),
+    ).toEqual([
+      { type: "error", message: "aborted" },
+    ]);
+  });
+
+  it("message_end：usage 缺 cost → cost undefined；stopReason=stop 不产 error 事件", () => {
+    const events = jsonlToAgentEvent({
+      type: "message_end",
+      message: { usage: { input: 1, output: 1 }, stopReason: "stop" },
+    });
+    expect(events).toEqual([
+      { type: "message_end", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: undefined } },
+    ]);
+  });
+
+  it("message_end：message 缺失 / stopReason 正常 → 空数组或仅 usage", () => {
+    expect(jsonlToAgentEvent({ type: "message_end" })).toEqual([]);
+    expect(jsonlToAgentEvent({ type: "message_end", message: {} })).toEqual([]);
+  });
+
+  it("compaction_start → [{type:'compaction'}]", () => {
+    expect(jsonlToAgentEvent({ type: "compaction_start" })).toEqual([{ type: "compaction" }]);
+  });
+
+  it("翻译产物喂 updateFromEvent 与 live 事件同构（text/tool/turn 收口进 turns[]）", () => {
+    const r = makeRecord();
+    for (const event of [
+      ...jsonlToAgentEvent({ type: "tool_execution_start", toolName: "read", args: { path: "/a.ts" } }),
+      ...jsonlToAgentEvent({ type: "message_update", assistantMessageEvent: { delta: "answer" } }),
+      ...jsonlToAgentEvent({ type: "tool_execution_end", toolName: "read", args: { path: "/a.ts" }, result: { content: [] }, isError: false }),
+      ...jsonlToAgentEvent({ type: "message_end", message: { usage: { input: 7, output: 3, cacheRead: 0, cacheWrite: 0, cost: { total: 0.1 } } } }),
+      ...jsonlToAgentEvent({ type: "turn_end" }),
+    ]) {
+      updateFromEvent(r, event);
+    }
+    expect(r.turns[0]?.text).toBe("answer");
+    expect(r.turns[0]?.toolCalls[0]).toMatchObject({ toolName: "read", _status: "done" });
+    expect(r.turns[0]?.usageDelta).toEqual({ input: 7, output: 3, cacheRead: 0, cacheWrite: 0, cost: 0.1 });
+    expect(r.totalTokens).toBe(10);
+    expect(r.turnCount).toBe(1);
+  });
+});
+
+// ============================================================
+// addUsage 分支语义（经 message_end 累积路径锁定）
+// ============================================================
+describe("addUsage 分支语义（message_end 累积路径）", () => {
+  it("首条 usage 缺 cost → cost 保留 undefined；累加分支缺 cost → 归 0（number）", () => {
+    const r = makeRecord();
+    updateFromEvent(r, { type: "message_end", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } });
+    expect(r.turns[0]!.usageDelta?.cost).toBeUndefined();
+    updateFromEvent(r, { type: "message_end", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } });
+    expect(r.turns[0]!.usageDelta?.cost).toBe(0);
   });
 });
 

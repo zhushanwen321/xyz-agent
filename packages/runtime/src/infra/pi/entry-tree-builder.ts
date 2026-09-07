@@ -1,5 +1,5 @@
 import type { Message, Segment, SegmentsMetadataFile } from '@xyz-agent/shared'
-import type { PiSessionEntry, PiHistoryToolResult } from './pi-protocol.js'
+import type { PiSessionEntry, PiHistoryToolResult, PiSessionCustomEntry } from './pi-protocol.js'
 import { convertPiHistory } from './message-converter.js'
 import { mapSessionEntries } from './session-entry-mapper.js'
 
@@ -60,54 +60,14 @@ export interface RebuiltHistory {
 const CLIENT_MSG_ID_TYPE = 'xyz.client-msg-id'
 
 /**
- * 从 pi get_entries 返回的 entry 树重建 xyz-agent Message[]。
- *
- * 三步（两遍扫 entry + 一遍回填）：
- *
- * 1. mapSessionEntries 统一映射 entry 树（共享单点，与文件路径共用）：
- *    message/compaction/custom_message/branch_summary → messages 伪消息（供 convertPiHistory 消费），
- *    custom → customDataEntries（下方建 clientUuidMap 用），label/session_info 跳过。
- *    同时产出与 messages 平行对齐的 entryIds（替代旧 __entryId 注入）。
- *
- * 2. clientUuidMap 从 customDataEntries 建：扫 xyz.client-msg-id custom entry，
- *    data = { clientUuid, userEntryId } → map[userEntryId] = clientUuid。
- *    data 形状不匹配（缺字段/类型错）→ 跳过该 entry（降级，不崩溃）；冲突 warn 防御保留。
- *
- * 3. 整个 message 列表走 convertPiHistory（复用 toolResult 合并 + compactionSummary /
- *    custom / branchSummary 系统消息处理），产出 Message[]。entryIds 平行传入，使产出的
- *    user/assistant Message 带 piEntryId（从 entryIds[i] 取）。
- *    ⚠️ M2 前 RPC 路径手写两遍扫只提取 message entry，丢弃 compaction/branch/custom_message，
- *    导致活跃 session 重开时这三类记录消失（违反 AGENTS.md 关键规则 9「可重开恢复」）；
- *    改用共享 mapper 后两路径覆盖 by construction 一致。
- *
- * 4. 回填 segments：对 user message 按 piEntryId 查 clientUuidMap → 查 segmentsMetadata
- *    → 命中且非空：msg.content = segments（完整结构化 Segment[]，含 image badge）
- *    → 未命中：保持 convertPiHistory 默认产出（textToSegments / parseSkillBlock）
- *
- * 降级原则：映射缺失 / segmentsMetadata 缺失 / segments 为空 → 不阻断，保持默认产出。
- * 这保证即使 extension 未写入 custom entry 或 sidecar 丢失，历史仍可读（纯文本降级）。
- *
- * @param entries pi get_entries 返回的 entries 数组（全量或 since 增量）
- * @param segmentsMetadata segments.json sidecar（null 表示无 sidecar，全降级）
+ * 从 customDataEntries 构建 userEntryId → clientUuid 映射（扫 xyz.client-msg-id custom entry）。
+ * data = { clientUuid, userEntryId } → map[userEntryId] = clientUuid。
+ * data 形状不匹配（缺字段/类型错）→ 跳过该 entry（降级，不崩溃）。
+ * 冲突 warn 防御保留（extension 重试/重发场景，同一 userEntryId 多条 custom entry，
+ * 后写覆盖前写；概率低但冲突时 warn 让问题可见，不阻断——错配只会导致 badge 回填到错误
+ * user message，非崩溃）。
  */
-export function rebuildHistoryFromEntries(
-  entries: PiSessionEntry[],
-  segmentsMetadata: SegmentsMetadataFile | null,
-): RebuiltHistory {
-  // 1. mapSessionEntries 统一映射（共享单点，M2 接入）。
-  //    四类 entry（message/compaction/custom_message/branch_summary）→ messages 伪消息，
-  //    供 convertPiHistory 单点消费（AGENTS.md 关键规则 9：RPC/文件两路径覆盖一致）；
-  //    custom → customDataEntries（下方建 clientUuidMap 用）；label/session_info 等跳过。
-  //    替代旧手写两遍扫（旧实现只提取 message entry，丢弃 compaction/branch/custom_message，
-  //    导致活跃 session 重开时这三类记录消失——违反关键规则 9「可重开恢复」）。
-  const { messages, entryIds, customDataEntries } = mapSessionEntries(entries)
-
-  // 2. clientUuidMap 从 customDataEntries 建（扫 xyz.client-msg-id custom entry）。
-  //    data = { clientUuid, userEntryId } → map[userEntryId] = clientUuid。
-  //    data 形状不匹配（缺字段/类型错）→ 跳过该 entry（降级，不崩溃）。
-  //    冲突 warn 防御保留（extension 重试/重发场景，同一 userEntryId 多条 custom entry，
-  //    后写覆盖前写；概率低但冲突时 warn 让问题可见，不阻断——错配只会导致 badge 回填到错误
-  //    user message，非崩溃）。
+function buildClientUuidMap(customDataEntries: PiSessionCustomEntry[]): Map<string, string> {
   const clientUuidMap = new Map<string, string>()
   for (const entry of customDataEntries) {
     if (entry.customType !== CLIENT_MSG_ID_TYPE) continue
@@ -123,16 +83,20 @@ export function rebuildHistoryFromEntries(
       clientUuidMap.set(data.userEntryId, data.clientUuid)
     }
   }
+  return clientUuidMap
+}
 
-  // 3. 整个数组走 convertPiHistory（复用 toolResult 合并 + 系统消息完整处理，C1 修复核心）。
-  //    entryIds 与 messages 一一对应平行传入，使产出的 user/assistant Message 带 piEntryId
-  //    （从 entryIds[i] 取，供下方第 4 步回查 clientUuidMap + segmentsMetadata 回填 badge）。
-  //    孤儿 toolResult 收集（W20 review Fix-1）：增量窗口以 toolResult 开头时窗口局部
-  //    配对失败，收集后由增量合并阶段回填到缓存中的 assistant toolCall。
-  const orphanToolResults: PiHistoryToolResult[] = []
-  const converted = convertPiHistory(messages, entryIds, orphanToolResults)
-
-  // 4. 回填 segments：对 user message 按 piEntryId 查 clientUuidMap → segmentsMetadata
+/**
+ * 回填 segments：对 user message 按 piEntryId 查 clientUuidMap → segmentsMetadata
+ * （先建 clientUuid → segments 索引，再逐条覆盖）。
+ * segments 非空才覆盖（空 segments 不覆盖默认产出，避免把有效 textToSegments 结果清空）；
+ * 映射缺失 / sidecar 缺失 → 保持 convertPiHistory 默认产出（纯文本降级，不阻断）。
+ */
+function backfillSegments(
+  converted: Message[],
+  clientUuidMap: Map<string, string>,
+  segmentsMetadata: SegmentsMetadataFile | null,
+): void {
   const segmentsByClientUuid = new Map<string, Segment[]>()
   if (segmentsMetadata) {
     for (const e of segmentsMetadata.entries) {
@@ -144,13 +108,65 @@ export function rebuildHistoryFromEntries(
       const clientUuid = clientUuidMap.get(msg.piEntryId)
       if (clientUuid) {
         const segments = segmentsByClientUuid.get(clientUuid)
-        // segments 非空才覆盖（空 segments 不覆盖默认产出，避免把有效 textToSegments 结果清空）
         if (segments && segments.length > 0) {
           msg.content = segments
         }
       }
     }
   }
+}
+
+/**
+ * 从 pi get_entries 返回的 entry 树重建 xyz-agent Message[]。
+ *
+ * 三步（两遍扫 entry + 一遍回填），主函数只留编排：
+ *
+ * 1. mapSessionEntries 统一映射 entry 树（共享单点，与文件路径共用）：
+ *    message/compaction/custom_message/branch_summary → messages 伪消息（供 convertPiHistory 消费），
+ *    custom → customDataEntries（下方建 clientUuidMap 用），label/session_info 跳过。
+ *    同时产出与 messages 平行对齐的 entryIds（替代旧 __entryId 注入）。
+ *    替代旧手写两遍扫（旧实现只提取 message entry，丢弃 compaction/branch/custom_message，
+ *    导致活跃 session 重开时这三类记录消失——违反 AGENTS.md 关键规则 9「可重开恢复」）。
+ *
+ * 2. buildClientUuidMap 从 customDataEntries 建 userEntryId → clientUuid 映射。
+ *
+ * 3. 整个 message 列表走 convertPiHistory（复用 toolResult 合并 + compactionSummary /
+ *    custom / branchSummary 系统消息处理），产出 Message[]。entryIds 平行传入，使产出的
+ *    user/assistant Message 带 piEntryId（从 entryIds[i] 取）。
+ *    ⚠️ M2 前 RPC 路径手写两遍扫只提取 message entry，丢弃 compaction/branch/custom_message，
+ *    导致活跃 session 重开时这三类记录消失（违反 AGENTS.md 关键规则 9「可重开恢复」）；
+ *    改用共享 mapper 后两路径覆盖 by construction 一致。
+ *    孤儿 toolResult 收集（W20 review Fix-1）：增量窗口以 toolResult 开头时窗口局部
+ *    配对失败，收集后由增量合并阶段回填到缓存中的 assistant toolCall。
+ *
+ * 4. backfillSegments：对 user message 按 piEntryId 查 clientUuidMap → 查 segmentsMetadata
+ *    → 命中且非空：msg.content = segments（完整结构化 Segment[]，含 image badge）
+ *    → 未命中：保持 convertPiHistory 默认产出（textToSegments / parseSkillBlock）
+ *
+ * 降级原则：映射缺失 / segmentsMetadata 缺失 / segments 为空 → 不阻断，保持默认产出。
+ * 这保证即使 extension 未写入 custom entry 或 sidecar 丢失，历史仍可读（纯文本降级）。
+ *
+ * @param entries pi get_entries 返回的 entries 数组（全量或 since 增量）
+ * @param segmentsMetadata segments.json sidecar（null 表示无 sidecar，全降级）
+ */
+export function rebuildHistoryFromEntries(
+  entries: PiSessionEntry[],
+  segmentsMetadata: SegmentsMetadataFile | null,
+): RebuiltHistory {
+  // 1. mapSessionEntries 统一映射（共享单点，M2 接入）：四类 entry → messages 伪消息，
+  //    custom → customDataEntries；entryIds 与 messages 平行对齐（AGENTS.md 关键规则 9）。
+  const { messages, entryIds, customDataEntries } = mapSessionEntries(entries)
+
+  // 2. clientUuidMap 从 customDataEntries 建（扫 xyz.client-msg-id custom entry）。
+  const clientUuidMap = buildClientUuidMap(customDataEntries)
+
+  // 3. 整个数组走 convertPiHistory（复用 toolResult 合并 + 系统消息完整处理，C1 修复核心）。
+  //    entryIds 平行传入使产出 Message 带 piEntryId，供第 4 步回填 badge。
+  const orphanToolResults: PiHistoryToolResult[] = []
+  const converted = convertPiHistory(messages, entryIds, orphanToolResults)
+
+  // 4. 回填 segments：对 user message 按 piEntryId 查 clientUuidMap → segmentsMetadata
+  backfillSegments(converted, clientUuidMap, segmentsMetadata)
 
   return { messages: converted, clientUuidMap, orphanToolResults }
 }

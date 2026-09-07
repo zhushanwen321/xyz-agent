@@ -4,6 +4,7 @@
  * 设计文档：docs/todo/usage-stats-design.md §3.4 W2
  */
 import type { UsageStatsResult } from '@xyz-agent/shared'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '../pending'
 import { command } from '../request'
 
 /**
@@ -11,5 +12,5 @@ import { command } from '../request'
  * 返回 UsageStatsResult（rows / scannedAt / sessionCount / skippedLines）。
  */
 export function getUsageStats(): Promise<UsageStatsResult> {
-  return command('usage.getStats', {})
+  return command('usage.getStats', {}, RPC_BACKSTOP_TIMEOUT_MS)
 }

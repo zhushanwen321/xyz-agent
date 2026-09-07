@@ -2,7 +2,7 @@
  * pick-platform-asset 单元测试（I#7 test-coverage）。
  *
  * 覆盖 pickPlatformAsset / pickPlatformAssetName 全部导出：
- *   1. darwin → macArm64Zip
+ *   1. darwin → macArm64Dmg
  *   2. win32 → winX64Exe
  *   3. linux → linuxX64AppImage
  *   4. unknown（如 freebsd/aix）→ undefined
@@ -38,9 +38,9 @@ function makeFullRelease(): LatestReleaseInfo {
     publishedAt: '2026-07-01T00:00:00Z',
     htmlUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/tag/v0.9.0',
     assets: {
-      macArm64Zip: {
-        name: 'xyz-agent-mac-arm64.zip',
-        downloadUrl: 'https://example.com/mac.zip',
+      macArm64Dmg: {
+        name: 'xyz-agent-mac-arm64.dmg',
+        downloadUrl: 'https://example.com/mac.dmg',
         size: 1000,
         sha256: 'a'.repeat(64),
       },
@@ -70,10 +70,10 @@ afterEach(() => {
 })
 
 describe('pickPlatformAsset', () => {
-  it('darwin → 返回 macArm64Zip asset', () => {
+  it('darwin → 返回 macArm64Dmg asset', () => {
     setPlatform('darwin')
     const asset = pickPlatformAsset(makeFullRelease())
-    expect(asset?.name).toBe('xyz-agent-mac-arm64.zip')
+    expect(asset?.name).toBe('xyz-agent-mac-arm64.dmg')
     expect(asset?.size).toBe(1000)
   })
 
@@ -101,16 +101,16 @@ describe('pickPlatformAsset', () => {
     setPlatform('darwin')
     const release = makeFullRelease()
     // 删掉 mac 产物，模拟 release 未提供 mac 包
-    delete release.assets.macArm64Zip
+    delete release.assets.macArm64Dmg
     const asset = pickPlatformAsset(release)
     expect(asset).toBeUndefined()
   })
 })
 
 describe('pickPlatformAssetName', () => {
-  it('darwin → 返回 macArm64Zip.name', () => {
+  it('darwin → 返回 macArm64Dmg.name', () => {
     setPlatform('darwin')
-    expect(pickPlatformAssetName(makeFullRelease())).toBe('xyz-agent-mac-arm64.zip')
+    expect(pickPlatformAssetName(makeFullRelease())).toBe('xyz-agent-mac-arm64.dmg')
   })
 
   it('win32 → 返回 winX64Exe.name', () => {

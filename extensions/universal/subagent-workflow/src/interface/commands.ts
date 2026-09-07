@@ -24,8 +24,9 @@ import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@earendil-wor
 import type { LauncherDeps } from "@zhushanwen/subagent-core";
 import { abortRun } from "@zhushanwen/subagent-core";
 import type { WorkflowRun } from "@zhushanwen/subagent-core";
-import { parseWorkflowRpcCommand } from "./command-actions.ts";
+import { parseWorkflowRpcCommand, type WorkflowRpcAction } from "./command-actions.ts";
 import { createWorkflowsView, type ViewActions } from "./views/WorkflowsView.ts";
+import { toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 /** runId 截断长度（显示用）。 */
 const RUNID_SHORT = 8;
@@ -97,40 +98,8 @@ export function registerWorkflowsCommand(
       // ── RPC 模式（xyz-agent GUI）：解析 lifecycle action 直接执行，不打开 TUI ──
       // hasUI 在 TUI 和 RPC 都为 true，不能用于区分；用 ctx.mode === "rpc" 判定 GUI 通道。
       if (ctx.mode === "rpc") {
-        const parsed = parseWorkflowRpcCommand(args);
-        switch (parsed.action) {
-          case "abort": {
-            try {
-              await abortRun(parsed.runId, deps);
-              // abort 单态后 pastTense 固定（原三态拼接随 pause/resume 删除）
-              ctx.ui.notify(`Workflow ${parsed.runId}: aborted`, "info");
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              ctx.ui.notify(`Failed to abort workflow ${parsed.runId}: ${msg}`, "warning");
-            }
-            return;
-          }
-          case "lifecycle-removed":
-            // 已移除的 lifecycle verb（pause/resume）：run 一次性生命周期后不可挂起，
-            // 给定制指引而非 Usage（F3 定稿——提示语义优先于 missing-id）
-            ctx.ui.notify(
-              `Workflow ${parsed.verb} has been removed — runs are one-shot. To stop a run early: /workflows abort <runId>`,
-              "warning",
-            );
-            return;
-          case "lifecycle-missing-id":
-            ctx.ui.notify(`Usage: /workflows ${parsed.verb} <runId>`, "warning");
-            return;
-          case "noop":
-            // 无 action 或未知 action：GUI 端已屏蔽此 command 入口，此处兜底
-            ctx.ui.notify("View workflows in the sidebar Flows tab", "info");
-            return;
-          default: {
-            // exhaustiveness 断言：未来新增 action verb 忘加 case 时 tsc 报错
-            const _exhaustive: never = parsed;
-            throw new Error(`Unhandled workflow RPC action: ${String(_exhaustive)}`);
-          }
-        }
+        await handleRpcMode(parseWorkflowRpcCommand(args), ctx, deps);
+        return;
       }
 
       // ── print/json 模式（headless）：不可交互 ──
@@ -139,53 +108,124 @@ export function registerWorkflowsCommand(
         return;
       }
 
- // 直接按 runId / 前缀匹配打开
+      // 直接按 runId / 前缀匹配打开
       const directRunId = args.trim();
       if (directRunId) {
-        const all = sortedRuns(getRuns());
- // 精确匹配优先
-        const exact = all.find((r) => r.runId === directRunId);
-        if (exact) {
-          await openView(exact, ctx.ui.theme, ctx, deps);
-          return;
-        }
- // 前缀匹配
-        const matched = all.filter((r) => r.runId.startsWith(directRunId));
-        if (matched.length === 1) {
-          await openView(matched[0], ctx.ui.theme, ctx, deps);
-          return;
-        }
-        ctx.ui.notify(`Workflow '${directRunId}' not found`, "error");
+        await openByRunId(directRunId, getRuns, ctx, deps);
         return;
       }
 
- // 无参——列表选择
-      const all = sortedRuns(getRuns());
-      if (all.length === 0) {
-        ctx.ui.notify("No workflows in current session.", "info");
-        return;
-      }
-
- // 单 run 直开
-      if (all.length === 1) {
-        await openView(all[0], ctx.ui.theme, ctx, deps);
-        return;
-      }
-
- // 多 run——select 选择
-      const entries = all.map(
-        (r) => `${r.spec.scriptName} [${r.state.status}] (${r.runId.slice(0, RUNID_SHORT)})`,
-      );
-      const selected = await ctx.ui.select("Select workflow:", entries);
-      if (!selected) return;
-      const idx = entries.indexOf(selected);
-      if (idx === -1) return;
-      await openView(all[idx], ctx.ui.theme, ctx, deps);
+      // 无参——列表选择
+      await openFromList(getRuns, ctx, deps);
     },
   });
 }
 
 // ── Helpers ──────────────────────────────────────────────────
+
+/**
+ * RPC 模式分支（xyz-agent GUI）：解析后的 lifecycle action 直接执行，不打开 TUI。
+ *
+ * 各 action 语义：
+ * - abort → 调 lifecycle abortRun，成功/失败均 notify（不向上抛）
+ * - lifecycle-removed → 已移除的 verb（pause/resume），给定制指引而非 Usage
+ *   （F3 定稿——提示语义优先于 missing-id：run 一次性生命周期后不可挂起）
+ * - lifecycle-missing-id → Usage 提示
+ * - noop → 无 action 或未知 action：GUI 端已屏蔽此 command 入口，此处兜底
+ */
+async function handleRpcMode(
+  parsed: WorkflowRpcAction,
+  ctx: ExtensionCommandContext,
+  deps: LauncherDeps,
+): Promise<void> {
+  switch (parsed.action) {
+    case "abort": {
+      try {
+        await abortRun(parsed.runId, deps);
+        // abort 单态后 pastTense 固定（原三态拼接随 pause/resume 删除）
+        ctx.ui.notify(`Workflow ${parsed.runId}: aborted`, "info");
+      } catch (err) {
+        const msg = toErrorMessage(err);
+        ctx.ui.notify(`Failed to abort workflow ${parsed.runId}: ${msg}`, "warning");
+      }
+      return;
+    }
+    case "lifecycle-removed":
+      ctx.ui.notify(
+        `Workflow ${parsed.verb} has been removed — runs are one-shot. To stop a run early: /workflows abort <runId>`,
+        "warning",
+      );
+      return;
+    case "lifecycle-missing-id":
+      ctx.ui.notify(`Usage: /workflows ${parsed.verb} <runId>`, "warning");
+      return;
+    case "noop":
+      ctx.ui.notify("View workflows in the sidebar Flows tab", "info");
+      return;
+    default: {
+      // exhaustiveness 断言：未来新增 action verb 忘加 case 时 tsc 报错
+      const _exhaustive: never = parsed;
+      throw new Error(`Unhandled workflow RPC action: ${String(_exhaustive)}`);
+    }
+  }
+}
+
+/**
+ * TUI 模式：按 runId 直接打开对应 run 的 view（精确匹配优先，前缀唯一匹配次之）。
+ * 均未命中 → error notify。
+ */
+async function openByRunId(
+  directRunId: string,
+  getRuns: () => Map<string, WorkflowRun>,
+  ctx: ExtensionCommandContext,
+  deps: LauncherDeps,
+): Promise<void> {
+  const all = sortedRuns(getRuns());
+  // 精确匹配优先
+  const exact = all.find((r) => r.runId === directRunId);
+  if (exact) {
+    await openView(exact, ctx.ui.theme, ctx, deps);
+    return;
+  }
+  // 前缀匹配
+  const matched = all.filter((r) => r.runId.startsWith(directRunId));
+  if (matched.length === 1) {
+    await openView(matched[0], ctx.ui.theme, ctx, deps);
+    return;
+  }
+  ctx.ui.notify(`Workflow '${directRunId}' not found`, "error");
+}
+
+/**
+ * TUI 模式无参分支：0 runs → notify；单 run 直开；多 run → select 选择后打开。
+ */
+async function openFromList(
+  getRuns: () => Map<string, WorkflowRun>,
+  ctx: ExtensionCommandContext,
+  deps: LauncherDeps,
+): Promise<void> {
+  const all = sortedRuns(getRuns());
+  if (all.length === 0) {
+    ctx.ui.notify("No workflows in current session.", "info");
+    return;
+  }
+
+  // 单 run 直开
+  if (all.length === 1) {
+    await openView(all[0], ctx.ui.theme, ctx, deps);
+    return;
+  }
+
+  // 多 run——select 选择
+  const entries = all.map(
+    (r) => `${r.spec.scriptName} [${r.state.status}] (${r.runId.slice(0, RUNID_SHORT)})`,
+  );
+  const selected = await ctx.ui.select("Select workflow:", entries);
+  if (!selected) return;
+  const idx = entries.indexOf(selected);
+  if (idx === -1) return;
+  await openView(all[idx], ctx.ui.theme, ctx, deps);
+}
 
 /**
  * 取 runs 按 status（running 优先）+ startedAt 倒序排序。

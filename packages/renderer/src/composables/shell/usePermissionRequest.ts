@@ -9,17 +9,25 @@
  * bus 'plugin-permission-request' → 本 composable 写 reactive state →
  * App.vue <PermissionRequestDialog :pending> 弹窗。
  *
+ * 超时撤窗（timeout-plugin-service D3）：runtime 广播 plugin:permissionRequestExpired
+ * （审批等待超时，取消非判拒——payload { pluginId }，无 sessionId → global 通道）。
+ * 该帧不经 MessageBusBridge（bridge 无此归一项），本 composable 直接订阅 WS global
+ * 通道消费（同 extension-host-dialog.ts onUiTimeout 的「保留 WS 路径不经 bus」先例）。
+ * 按 pluginId 匹配撤回：命中才置 pending=false；不匹配（陈旧广播 vs 新插件的弹窗）noop，
+ * 无挂起弹窗时 noop 幂等（迟到批准对已删 pending noop 语义的前端对称面）。
+ *
  * 回传流：用户批准/拒绝 → Dialog 经 inject(PERMISSION_TRANSPORT_KEY) 调
  * transport.approve/revoke → 本 composable 调 api/domains/plugin 的
  * approvePermissions/revokePermissions（command('plugin.approvePermissions' /
  * 'plugin.revokePermissions')）→ runtime plugin-service → reply config.plugins。
  *
  * 全局弹窗（session 无关）：permissionRequest 一次一个，新请求到来覆盖旧 state
- * （不做队列；队列化后续完善，见下方 TODO 标注）。
+ * （不做队列）。
  */
 import { reactive, type App } from 'vue'
 import type { InternalEventBus } from '@xyz-agent/core'
 import { PERMISSION_TRANSPORT_KEY, type PermissionTransport } from '@xyz-agent/ui/extension-host'
+import { onGlobal } from '@xyz-agent/core/transport/api'
 import * as pluginApi from '@xyz-agent/core/transport/api/domains/plugin'
 
 /** 弹窗可见状态（供 App.vue 绑定 Dialog props）。 */
@@ -44,13 +52,15 @@ const state = reactive<PermissionRequestState>({
   pending: false,
 })
 
-/** bus 订阅退订句柄（HMR/重复初始化幂等：先退订旧 handler）。 */
+/** bus / WS 订阅退订句柄（HMR/重复初始化幂等：先退订旧 handler）。 */
 let unsubscribe: (() => void) | null = null
+let unsubscribeExpired: (() => void) | null = null
 
 /**
  * 装配 permissionRequest 闭环（main.ts 挂载前调用一次）。
  *
  * - bus.on('plugin-permission-request') 写 state 弹窗
+ * - onGlobal 订阅 plugin:permissionRequestExpired 超时撤窗（D3，取消非判拒）
  * - app.provide(PERMISSION_TRANSPORT_KEY, transport) 注入真实 RPC 回传
  *
  * @param app Vue 应用实例（provide 全局注入，须在 mount 前）
@@ -59,12 +69,26 @@ let unsubscribe: (() => void) | null = null
 export function initPermissionRequest(app: App, bus: InternalEventBus): void {
   // 幂等：重复初始化先退订（HMR/测试场景防 listener 翻倍，项目规则#2）
   unsubscribe?.()
+  unsubscribeExpired?.()
   unsubscribe = bus.on('plugin-permission-request', (e) => {
     // bridge 已保留整个 permissions 数组（见 core message-bus-bridge.ts parsePermissionRequest），
     // 直接透传给 PermissionRequestDialog（props.permissions: string[]）消费。
     state.pluginId = e.request.pluginId
     state.permissions = e.request.permissions
     state.pending = true
+  })
+
+  // 超时撤窗（timeout-plugin-service D3）：审批等待到期，runtime 取消本次激活并广播。
+  // payload 无 sessionId（审批弹窗全局单例、session 无关）→ 走 global 通道。
+  unsubscribeExpired = onGlobal((msg) => {
+    if (msg.type !== 'plugin:permissionRequestExpired') return
+    const payload = msg.payload as { pluginId?: unknown }
+    if (typeof payload.pluginId !== 'string') return
+    // 按 pluginId 匹配：陈旧 expired 广播不得误撤后到插件的新审批弹窗（全局单例被
+    // 新请求覆盖后，旧插件的迟到广播只应 noop）；无挂起弹窗时 noop 幂等。
+    if (state.pending && state.pluginId === payload.pluginId) {
+      state.pending = false
+    }
   })
 
   // 真实 transport：转发 WS 命令（plugin.approvePermissions / plugin.revokePermissions）。

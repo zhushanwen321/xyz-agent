@@ -126,8 +126,8 @@ function registerData(id: string, sessionId: string): Record<string, unknown> {
 }
 
 /** 注入直数端口：返回收到的 entry 数（观察 count 口径的消费面）。 */
-function stubCountingPort(): (entries: unknown[]) => number {
-  const counter = vi.fn((entries: unknown[]) => entries.length);
+function stubCountingPort(): ReturnType<typeof vi.fn<(entries: unknown[]) => number>> {
+  const counter = vi.fn((entries: unknown[]) => entries.length) as ReturnType<typeof vi.fn<(entries: unknown[]) => number>>;
   configureNotifyDomain({ countActiveFromEntries: counter });
   return counter;
 }

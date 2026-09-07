@@ -53,6 +53,27 @@ describe('segmentsToText', () => {
     expect(segmentsToText(segs)).toBe('<xyz-skill name="cw-cli" location="/path/SKILL.md"/>')
   })
 
+  it('mention segment 序列化为 @name', () => {
+    expect(segmentsToText([{ type: 'mention', name: 'alice' }])).toBe('@alice')
+  })
+
+  it('mention + text 之间补空格（chip→text 边界）', () => {
+    const segs: Segment[] = [
+      { type: 'mention', name: 'alice' },
+      { type: 'text', text: '你好' },
+    ]
+    expect(segmentsToText(segs)).toBe('@alice 你好')
+  })
+
+  it('text 为空串且前导是 chip 时不补空格（空 text 不产出悬空空格）', () => {
+    const segs: Segment[] = [
+      { type: 'skill', name: 'cw-cli' },
+      { type: 'text', text: '' },
+      { type: 'skill', name: 'review' },
+    ]
+    expect(segmentsToText(segs)).toBe('<xyz-skill name="cw-cli"/><xyz-skill name="review"/>')
+  })
+
   it('file 无行范围序列化为 path', () => {
     expect(segmentsToText([{ type: 'file', path: 'src/foo.ts' }])).toBe('src/foo.ts')
   })

@@ -13,6 +13,7 @@ import * as crypto from "node:crypto";
 import { getLogger } from "../../../../core/logger.ts";
 
 import type { UiResponse } from "../../../dialog-queue.ts";
+import { toErrorMessage } from "../../../../core/error-message.ts";
 
 const logger = getLogger("subagents");
 
@@ -79,7 +80,7 @@ export function respond(child: ChildProcess, id: string, out: UiResponse, signal
   } catch (err) {
     // [R2] out.value 含循环引用/BigInt 等不可序列化结构——降级 cancelled，避免父进程崩溃。
     logger.warn(`[subagents] JSON.stringify failed for ui response ${id}, degrading to cancelled`, {
-      detail: err instanceof Error ? err.message : String(err),
+      detail: toErrorMessage(err),
     });
     line = JSON.stringify({ type: "extension_ui_response", id, cancelled: true });
   }
@@ -192,7 +193,7 @@ function writeStdinLine(child: ChildProcess, line: string, warnTag: string): voi
     }
     // 非 EPIPE 错误（不应发生，但兜底降级为 warn 不崩溃）
     logger.warn(`[subagents] unexpected stdin write error on ${warnTag}`, {
-      detail: err instanceof Error ? err.message : String(err),
+      detail: toErrorMessage(err),
     });
   }
 }

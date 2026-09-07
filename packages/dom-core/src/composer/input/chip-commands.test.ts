@@ -441,6 +441,34 @@ describe('useComposerChipCommands handleBackspaceOnChip', () => {
     cleanup = c.cleanup
   })
 
+  it('非折叠选区 (isCollapsed=false)：返回 false 不删', () => {
+    const c = setup('<span class="slash-chip">chip</span>hello')
+    const textNode = c.el.lastChild as Text
+    const sel = window.getSelection()
+    sel?.removeAllRanges()
+    const range = document.createRange()
+    range.setStart(textNode, 0)
+    range.setEnd(textNode, 2) // 折叠选区外的拖选
+    sel?.addRange(range)
+    expect(c.handleBackspaceOnChip()).toBe(false)
+    expect(c.callbacks.onChanged).not.toHaveBeenCalled()
+    cleanup = c.cleanup
+  })
+
+  it('选区锚点在编辑器外 (el.contains(anchorNode)=false)：返回 false 不删', () => {
+    const c = setup('<span class="slash-chip">chip</span>hello')
+    const external = document.createElement('div')
+    external.textContent = 'outside'
+    document.body.appendChild(external)
+    setCursor(external.firstChild as Text, 0)
+    const chip = c.el.querySelector('.slash-chip') as HTMLElement
+    expect(c.handleBackspaceOnChip()).toBe(false)
+    expect(c.el.contains(chip)).toBe(true)
+    expect(c.callbacks.onChanged).not.toHaveBeenCalled()
+    external.remove()
+    cleanup = c.cleanup
+  })
+
   it('el 为 null：返回 false', () => {
     const callbacks = makeCallbacks()
     const api = useComposerChipCommands(ref<HTMLDivElement | null>(null), callbacks)

@@ -88,7 +88,7 @@ describe("execution 运行时面（U10① D6）", () => {
 
       // 构造产物可用（实例方法存在）且未被登记进全局单例槽位——
       // session_start 单例流程行为零改动，宿主自持实例。
-      expect(typeof service.lookupRecordAnyState).toBe("function");
+      expect(typeof service["lookupRecordAnyState"]).toBe("function");
       expect(getSubagentService()).toBeNull();
     });
 
@@ -99,7 +99,7 @@ describe("execution 运行时面（U10① D6）", () => {
       });
 
       // lookupRecordAnyState 契约：未初始化/disposed 时 assertReady 抛错 → 按「不存在」处理返回 undefined
-      expect(service.lookupRecordAnyState("no-such-record")).toBeUndefined();
+      expect(service["lookupRecordAnyState"]("no-such-record")).toBeUndefined();
     });
 
     it("initSession（宿主注入最小 pi mock）后查询面同型可用", () => {
@@ -109,7 +109,7 @@ describe("execution 运行时面（U10① D6）", () => {
       });
       service.initSession({ pi: makePi(), sessionId: "s1" });
 
-      expect(service.lookupRecordAnyState("no-such-record")).toBeUndefined();
+      expect(service["lookupRecordAnyState"]("no-such-record")).toBeUndefined();
       service.dispose();
     });
   });
@@ -265,7 +265,7 @@ describe("execution 运行时面（U10① D6）", () => {
       const service = subagentCore.createSubagentService({ cwd: agentDir, modelService });
 
       // 构造产物可用（实例方法存在），且不写进程单例槽位（第三宿主自持实例）
-      expect(typeof service.lookupRecordAnyState).toBe("function");
+      expect(typeof service["lookupRecordAnyState"]).toBe("function");
       expect(subagentCore.getModelConfigService()).toBeNull();
     });
   });

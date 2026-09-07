@@ -45,9 +45,24 @@ function parseBranchHeader(header: string): string | undefined {
   return branch || undefined
 }
 
+/** 冲突判定：任一列为 U，或双方都 D（both deleted）/ 都 A（both added）。 */
+function isUnmergedPair(x: string, y: string): boolean {
+  return x === 'U' || y === 'U' || (x === 'D' && y === 'D') || (x === 'A' && y === 'A')
+}
+
+/** 未跟踪判定：XY 双列均为 '?'。 */
+function isUntrackedPair(x: string, y: string): boolean {
+  return x === '?' && y === '?'
+}
+
+/** 指定列（X 或 Y 任一）携带给定 porcelain 码。 */
+function eitherColumnIs(x: string, y: string, code: string): boolean {
+  return x === code || y === code
+}
+
 /**
  * XY 双列码 → GitFileStatus['status']（比 file-change-reconciler.xyToStatus 更细）。
- * X=staged，Y=working tree。
+ * X=staged，Y=working tree。判定按序短路，顺序与返回值语义固定：
  *
  * - U* / DD / AA → unmerged（冲突）
  * - ?? → untracked
@@ -59,16 +74,13 @@ function parseBranchHeader(header: string): string | undefined {
 export function xyToGitStatus(xy: string): GitFileStatus['status'] {
   const x = xy[0] ?? ' '
   const y = xy[1] ?? ' '
-  // 冲突：任一列为 U，或双方都 D（both deleted）/ 都 A（both added）
-  if (x === 'U' || y === 'U' || (x === 'D' && y === 'D') || (x === 'A' && y === 'A')) {
-    return 'unmerged'
-  }
-  if (x === '?' && y === '?') return 'untracked'
+  if (isUnmergedPair(x, y)) return 'unmerged'
+  if (isUntrackedPair(x, y)) return 'untracked'
   if (x === 'A') return 'added'
-  if (x === 'D' || y === 'D') return 'deleted'
+  if (eitherColumnIs(x, y, 'D')) return 'deleted'
   if (x === 'R' || x === 'C') return 'renamed'
   // T 类型变更（file type changed，如 regular file → symlink）
-  if (x === 'T' || y === 'T') return 'modified'
+  if (eitherColumnIs(x, y, 'T')) return 'modified'
   return 'modified'
 }
 

@@ -23,7 +23,9 @@ describe('uncaught-policy：uncaughtException 连接级噪声分级', () => {
   })
 
   it('真实事故形态：EPIPE + "This socket has been ended by the other party" 文案', () => {
-    // 2026-09-04 事故堆栈原始形态（writeAfterFIN 包装出的 genericNodeError）
+    // 2026-09-04 事故堆栈原始形态（writeAfterFIN 包装出的 genericNodeError）。
+    // 事故形态锚定用例：被测函数不读 message，断言与上一用例的 EPIPE 分支判然等价，
+    // 无独立判别力——保留价值是锚定真实报文形态，防未来改判定时误删事故场景。
     const err = codedError('EPIPE', 'This socket has been ended by the other party')
     expect(isContainedStreamError(err)).toBe(true)
   })

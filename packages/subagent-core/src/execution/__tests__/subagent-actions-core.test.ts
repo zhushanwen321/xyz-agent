@@ -42,9 +42,9 @@ import type {
   ExecutionHandle,
   ExecutionRecord,
   SubagentRecord,
-  SubagentService,
   SubagentToolDetails,
 } from "../types.ts";
+import type { SubagentService } from "../subagent-service.ts";
 
 // ── 时钟固定（duration 快照确定性，见文件头）──
 const FROZEN_NOW = 1788189209000;
@@ -314,7 +314,7 @@ describe("⛔4 startHandler（校验 + 启动，快照 = pi-sw 实测）", () =>
   });
 
   it("正常启动 → 领域对象全字段 + execute 参数（task/slug trim、拍平透传、ctxModel/signal）", async () => {
-    const execute = vi.fn(async (): Promise<ExecutionHandle> => ({
+    const execute = vi.fn(async (_opts: { task: string; slug?: string; agent?: string }): Promise<ExecutionHandle> => ({
       mode: "background",
       subagentId: "bg-9-abc",
       sessionFile: "sess-9.jsonl",
@@ -358,7 +358,7 @@ describe("⛔4 startHandler（校验 + 启动，快照 = pi-sw 实测）", () =>
       },
     });
     expect(execute).toHaveBeenCalledTimes(1);
-    expect(execute.mock.calls[0][0]).toEqual({
+    expect(execute.mock.calls[0]![0]).toEqual({
       task: "long task", // trim 生效
       slug: "long-running",
       agent: "/x/agent.md",
@@ -513,6 +513,8 @@ describe("⛔4 cancelHandler（守卫 + 归属判定 + CAS 失败映射，快照
     expect(
       await errOf(() =>
         cancelHandler(
+          // "sync" 是历史已裁撤值（ExecutionMode 现仅 "background"）——经 as never
+          // 注入非法值专测守卫分支，运行时守卫按 !== "background" 拦截
           makeService({ findRecord: vi.fn(() => makeRec({ id: "bg-1", mode: "sync" as never })) }),
           { subagentId: "bg-1" },
         ),
@@ -798,7 +800,7 @@ describe("⛔4 closeHandler（force 语义透传，快照 = pi-sw 实测）", ()
 // forkFromHandler（守卫链 1–6）
 // ============================================================
 describe("⛔4 forkFromHandler（守卫链 + slug 派生 + prompt 包装，快照 = pi-sw 实测）", () => {
-  function makeForkService(source: SubagentRecord | undefined, execute = vi.fn(async (): Promise<ExecutionHandle> => ({
+  function makeForkService(source: SubagentRecord | undefined, execute = vi.fn(async (_opts: { task: string; slug?: string; agent?: string }): Promise<ExecutionHandle> => ({
     mode: "background",
     subagentId: "bg-new-1",
     sessionFile: "sess-new.jsonl",
@@ -923,7 +925,7 @@ describe("⛔4 forkFromHandler（守卫链 + slug 派生 + prompt 包装，快�
   });
 
   it("正常：显式 prompt → wrapForkFromPrompt 包装 + slug 派生 'src-slug-resumed' + execute 参数", async () => {
-    const execute = vi.fn(async (): Promise<ExecutionHandle> => ({
+    const execute = vi.fn(async (_opts: { task: string; slug?: string; agent?: string }): Promise<ExecutionHandle> => ({
       mode: "background",
       subagentId: "bg-new-1",
       sessionFile: "sess-new.jsonl",
@@ -952,7 +954,7 @@ describe("⛔4 forkFromHandler（守卫链 + slug 派生 + prompt 包装，快�
   });
 
   it("无 prompt → FORK_FROM_DEFAULT_PROMPT 逐字", async () => {
-    const execute = vi.fn(async (): Promise<ExecutionHandle> => ({
+    const execute = vi.fn(async (_opts: { task: string; slug?: string; agent?: string }): Promise<ExecutionHandle> => ({
       mode: "background",
       subagentId: "bg-new-2",
       sessionFile: "sess-new-2.jsonl",
@@ -979,7 +981,7 @@ describe("⛔4 forkFromHandler（守卫链 + slug 派生 + prompt 包装，快�
   });
 
   it("slug 派生：34 字符源 slug 截 27 + '-resumed'；fallback 链 slug||agent||'resumed'", async () => {
-    const execute34 = vi.fn(async (): Promise<ExecutionHandle> => ({
+    const execute34 = vi.fn(async (_opts: { task: string; slug?: string; agent?: string }): Promise<ExecutionHandle> => ({
       mode: "background",
       subagentId: "bg-new-3",
       sessionFile: undefined,
@@ -989,9 +991,9 @@ describe("⛔4 forkFromHandler（守卫链 + slug 派生 + prompt 包装，快�
       makeForkService(makeRec({ id: "bg-1", slug: "s".repeat(34), sessionFile: "sess-1.jsonl" }), execute34),
       { sourceSubagentId: "bg-1", prompt: "p" },
     );
-    expect(execute34.mock.calls[0][0].slug).toBe(`${"s".repeat(27)}-resumed`);
+    expect(execute34.mock.calls[0]![0].slug).toBe(`${"s".repeat(27)}-resumed`);
 
-    const executeAgent = vi.fn(async (): Promise<ExecutionHandle> => ({
+    const executeAgent = vi.fn(async (_opts: { task: string; slug?: string; agent?: string }): Promise<ExecutionHandle> => ({
       mode: "background",
       subagentId: "bg-new-4",
       sessionFile: undefined,
@@ -1004,9 +1006,9 @@ describe("⛔4 forkFromHandler（守卫链 + slug 派生 + prompt 包装，快�
       ),
       { sourceSubagentId: "bg-1", prompt: "p" },
     );
-    expect(executeAgent.mock.calls[0][0].slug).toBe("/home/u/agents/helper.md-resumed");
+    expect(executeAgent.mock.calls[0]![0].slug).toBe("/home/u/agents/helper.md-resumed");
 
-    const executeResumed = vi.fn(async (): Promise<ExecutionHandle> => ({
+    const executeResumed = vi.fn(async (_opts: { task: string; slug?: string; agent?: string }): Promise<ExecutionHandle> => ({
       mode: "background",
       subagentId: "bg-new-5",
       sessionFile: undefined,
@@ -1016,6 +1018,6 @@ describe("⛔4 forkFromHandler（守卫链 + slug 派生 + prompt 包装，快�
       makeForkService(makeRec({ id: "bg-1", slug: "", agent: "", sessionFile: "sess-1.jsonl" }), executeResumed),
       { sourceSubagentId: "bg-1", prompt: "p" },
     );
-    expect(executeResumed.mock.calls[0][0].slug).toBe("resumed-resumed");
+    expect(executeResumed.mock.calls[0]![0].slug).toBe("resumed-resumed");
   });
 });

@@ -10,7 +10,7 @@
  * 运行：npx vitest run src/__tests__/stores/chat-integration-send.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ServerMessage } from '@xyz-agent/shared'
@@ -244,11 +244,13 @@ describe('T1.4/T1.5 send 全链 Composer DOM 断言（用户可见行为）', ()
     wrapper.findComponent(ComposerInputMock).vm.$emit('input', '第一条消息')
     await wrapper.vm.$nextTick()
     wrapper.findComponent(ComposerInputMock).vm.$emit('keydown', new KeyboardEvent('keydown', { key: 'Enter' }))
-    await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick() // flush async send
+    // flushPromises 排空全部 microtask（send 链路 + Vue render job），不依赖固定 nextTick 计数
+    // ——U24/U25 onSend phase extraction（commit 8c9e2da43）的 async helper 包装使 render flush
+    // 晚一个 microtask hop（详见 chat-send-rejected.test.ts 同注释）。
+    await flushPromises()
     // message_start 到达 → isGenerating=true → isActive=true
     emit({ type: 'message.message_start', payload: { sessionId: 's-dom-start', messageId: 'a1' } })
-    await wrapper.vm.$nextTick()
+    await flushPromises()
     // DOM 断言：停止按钮可见（用户可中断当前回合）
     expect(wrapper.find('.stop-btn').exists()).toBe(true)
   })
@@ -264,12 +266,12 @@ describe('T1.4/T1.5 send 全链 Composer DOM 断言（用户可见行为）', ()
     wrapper.findComponent(ComposerInputMock).vm.$emit('input', '要发的消息')
     await wrapper.vm.$nextTick()
     wrapper.findComponent(ComposerInputMock).vm.$emit('keydown', new KeyboardEvent('keydown', { key: 'Enter' }))
-    await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick() // flush async send（submitSegments await chatApi.send；含 reject + catch）
+    // flushPromises 排空全部 microtask（含 submitSegments await chatApi.send 的 reject + catch
+    // + clearPendingSend 后的 render flush），不依赖固定 nextTick 计数（同上注释）。
+    await flushPromises()
     // store 侧：pendingSend 已清，无 streaming → isActive=false（用户可重试）
     expect(chat.isActive('s-dom-fail')).toBe(false)
-    await wrapper.vm.$nextTick()
+    await flushPromises()
     // DOM 断言 1：composer-box 仍渲染（输入区未消失）
     expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(true)
     // DOM 断言 2：无停止按钮（非活跃态，用户可重新发送）

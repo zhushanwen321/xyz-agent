@@ -257,37 +257,57 @@ export function useComposerChipCommands(
     onChanged()
   }
 
+  /**
+   * Backspace 判定的删除目标：折叠选区下，TEXT_NODE 走 offset 0 / spacer 末尾两路，
+   * element 容器取 childNodes[offset - 1]。选区锚点不在编辑器内返回 null（不处理）。
+   */
+  function findBackspaceTarget(el: HTMLDivElement, sel: Selection): Node | null {
+    if (!el.contains(sel.anchorNode)) return null
+    const range = sel.getRangeAt(0)
+    const container = range.startContainer
+    const offset = range.startOffset
+    if (container.nodeType === Node.TEXT_NODE) {
+      return prevNodeFromTextNode(container, offset)
+    }
+    return container.childNodes[offset - 1] ?? null
+  }
+
+  /**
+   * TEXT_NODE 的前邻节点：offset 0（chip 后紧跟文本的开头）或 spacer 末尾
+   * （ZWSP 光标锚点，insertChipAtSelection 落位产物）；其余位置无删除目标。
+   */
+  function prevNodeFromTextNode(container: Node, offset: number): Node | null {
+    const text = container.textContent ?? ''
+    if (offset === 0) {
+      return container.previousSibling
+    }
+    if (isSpacerNode(container) && offset === text.length) {
+      return container.previousSibling
+    }
+    return null
+  }
+
+  /** 前邻节点是否为可整删的 chip 元素（slash / mention / image 三类 class 命中其一）。 */
+  function isDeletableChipNode(node: Node | null): node is HTMLElement {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return false
+    const ep = node as HTMLElement
+    return (
+      ep.classList.contains('slash-chip') ||
+      ep.classList.contains('mention-chip') ||
+      ep.classList.contains('image-chip')
+    )
+  }
+
   /** Backspace 紧跟 chip 时整体删 chip（§2e：backspace 一次删整块）。返回 true 表示已处理。 */
   function handleBackspaceOnChip(): boolean {
     const el = getEl()
     if (!el) return false
     const sel = window.getSelection()
     if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return false
-    if (!el.contains(sel.anchorNode)) return false
-    const range = sel.getRangeAt(0)
-    const container = range.startContainer
-    const offset = range.startOffset
-    let prev: Node | null = null
-    if (container.nodeType === Node.TEXT_NODE) {
-      const text = container.textContent ?? ''
-      if (offset === 0) {
-        prev = container.previousSibling
-      } else if (isSpacerNode(container) && offset === text.length) {
-        prev = container.previousSibling
-      } else {
-        return false
-      }
-    } else {
-      prev = container.childNodes[offset - 1] ?? null
-    }
-    if (prev && prev.nodeType === Node.ELEMENT_NODE) {
-      const ep = prev as HTMLElement
-      if (ep.classList.contains('slash-chip') || ep.classList.contains('mention-chip') || ep.classList.contains('image-chip')) {
-        removeChipNode(ep, onChanged)
-        return true
-      }
-    }
-    return false
+    const target = findBackspaceTarget(el, sel)
+    if (!isDeletableChipNode(target)) return false
+    removeChipNode(target, onChanged)
+    return true
   }
 
   return {

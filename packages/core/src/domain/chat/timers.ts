@@ -1,19 +1,17 @@
 /**
- * Per-session 超时 timer 管理（streaming + bash）。
+ * Per-session streaming 超时 timer 管理（idle 无进展检测）。
  *
  * 从 chat.ts 提取以控制文件行数（max-lines 500 上限）。
- * 通过 initTimers() 闭包注入 finalizeSession / finalizeBashOnly 依赖，避免循环 import。
+ * 通过 initTimers() 闭包注入 finalizeSession 依赖，避免循环 import。
  *
- * [W1 timer-decouple] bash timer 与 streaming timer 收口域解耦（C2 回归防护）：
- * - streaming timer 到期 → finalizeSession（收口整个 session 的 streaming 实体 + timer，正确语义）
- * - bash timer 到期 → finalizeBashOnly（只收口 streaming bash 消息，不跨域误杀正在
- *   streaming 的 assistant turn）。L1 放宽 bash↔streaming 并发后，共存期间 bash timer
- *   到期若调 finalizeSession 会把正在生成的 assistant turn 一并收口（C2 回归）。
+ * [timeout-streaming-ui-idle u-s3] dormant bash timer 契约整链删除（设计 §5.4 D4，
+ * 符号清单见该节）：W1 fix-chat-flow-order 起 zero 调用方（bashStart 改写 ephemeral
+ * executingBash，不再有 streaming bash 消息可被 timer 收口），dormant + 公开暴露 =
+ * 「复活即 5min 墙钟误杀正常 bash」的陷阱。bash 生命周期由 bashResultEffect /
+ * markBashError 收口链独立管理，与本文件无关。
  */
 // 相对路径直达定义处（store-types.ts）：经 '@xyz-agent/core' barrel 回引会成环，ESM 序隐患
 import type { FinalizeReason } from './store-types'
-
-const BASH_TIMEOUT_MS = 300_000
 
 /** 清除 per-session timer（export：store.ts 复用，消除本地双份副本——两版语义等价，clearTimeout(undefined) 是 no-op） */
 export function clearSessionTimer(timers: Map<string, ReturnType<typeof setTimeout>>, sessionId: string): void {
@@ -26,17 +24,20 @@ export function clearSessionTimer(timers: Map<string, ReturnType<typeof setTimeo
 
 /**
  * 初始化 timer 模块。在 chat.ts setup 阶段调用一次，返回 timer 操作函数。
- * 闭包捕获 finalizeSession / finalizeBashOnly 函数，不暴露到模块外部。
+ * 闭包捕获 finalizeSession 函数，不暴露到模块外部。
+ *
+ * [idle-refresh] streaming 阈值改为 getter 注入（docs/design/timeout-streaming-ui-idle.md §6）：
+ * 每次挂载时读当前配置值（store 侧可变配置源，setStreamingIdleTimeoutMs 更新后新 arm/refresh
+ * 生效），而非 factory 构造期定格的常量——配置链（u-s4）接入后无需重建 store。
  */
 export function initTimers(
   finalizeSession: (sessionId: string, reason: FinalizeReason, errorText?: string) => void,
-  finalizeBashOnly: (sessionId: string) => void,
-  streamingTimeoutMs: number,
+  getStreamingTimeoutMs: () => number,
 ) {
   /**
-   * [ADR-0049 例外] 以下两个 Map 不套 useSessionScopedState。判据：initTimers() factory 由
+   * [ADR-0049 例外] 以下 Map 不套 useSessionScopedState。判据：initTimers() factory 由
    * createChatStore（renderer defineStore('chat') 包装，Pinia 按 id 缓存——见 renderer
-   * stores/chat.ts）在 setup 内调用一次（store.ts），factory body 全应用只执行一次，两 Map
+   * stores/chat.ts）在 setup 内调用一次（store.ts），factory body 全应用只执行一次，Map
    * 实质单例。factory 体内非 Vue setup 上下文、无 sidRef: Ref<string|null>；Map 存的是 timer
    * handle（ReturnType<typeof setTimeout>，非 reactive 业务状态）。useSessionScopedState 是
    * setup-scoped 工厂（要求 sidRef + reactive 容器契约），factory 体内不适用——强套需把 factory
@@ -48,17 +49,29 @@ export function initTimers(
    * （测试直接调 initTimers() 构造新实例）。
    */
   const streamingTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  const bashTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-  // ── streaming timer ──
+  // ── streaming timer（idle 无进展检测，[idle-refresh] docs/design/timeout-streaming-ui-idle.md D1）──
 
-  /** message_start 挂载超时兜底（防 message.complete 永不到）。 */
+  /**
+   * 挂载 streaming idle timer（防 message.complete 永不到的挂死流）。
+   * 阈值挂载时读当前配置值（getter 注入，见 initTimers 注释）。
+   */
   function armStreamingTimer(sessionId: string): void {
     clearSessionTimer(streamingTimers, sessionId)
     streamingTimers.set(sessionId, setTimeout(() => {
       finalizeSession(sessionId, 'timeout')
       streamingTimers.delete(sessionId)
-    }, streamingTimeoutMs))
+    }, getStreamingTimeoutMs()))
+  }
+
+  /**
+   * 纯活动刷新 idle 计时（D1）：**当前有 timer 才**清 + 重挂（读当前阈值）；
+   * 无 timer 则 no-op——finalize 后迟到的活动帧（text_delta 等）不复活 timer
+   * （P-H 构造性语义：计时 Map 已无该 sid，刷新即返回）。
+   */
+  function refreshStreamingTimer(sessionId: string): void {
+    if (!streamingTimers.has(sessionId)) return
+    armStreamingTimer(sessionId)
   }
 
   /** 取消 streaming 超时 timer */
@@ -66,45 +79,11 @@ export function initTimers(
     clearSessionTimer(streamingTimers, sessionId)
   }
 
-  // ── bash timer ──
-
-  /**
-   * bash 专用超时 timer 挂载（W1 fix-chat-flow-order 后保留契约，当前无调用方）。
-   *
-   * [W1 fix-chat-flow-order] bashStartEffect 改写 ephemeral executingBash（不再建 streaming
-   * bash 消息）后正常流转无 streaming bash 消息可被 timer 收口——本函数自 W1 起无 effect
-   * 调用方（ctx/store 契约保留，手动注入 streaming bash 消息的种子场景仍有防御意义，
-   * 配套 finalizeBashOnly / markBashError 收口链不变）。
-   *
-   * [W8 PR#116 review] bash timer 是 per-session（非 per-message）：armBashTimer 先
-   * clearSessionTimer(bashTimers, sessionId) 再 set，每个 session 只保留一个 timer。
-   * 这依赖 runtime 层 isBashRunning 互斥的硬保证——sendBash 预检会拒绝 isBashRunning===true
-   * 的请求（runtime message-dispatcher / bash service 保证同时只有一个 streaming bash）。
-   * 在此互斥约束下，store 层 per-session timer 是安全的：不会有第二个 streaming bash 与之共存。
-   * 若将来 runtime 放开 bash 并发，此处需改为 per-message timer（以 bash 消息 id 为 key）。
-   */
-  function armBashTimer(sessionId: string): void {
-    clearSessionTimer(bashTimers, sessionId)
-    bashTimers.set(sessionId, setTimeout(() => {
-      // [W1] 不调 finalizeSession：bash timer 到期只收口 bash 消息，不跨域误杀共存
-      // 中的 assistant turn streaming（C2 回归防护）。
-      finalizeBashOnly(sessionId)
-      bashTimers.delete(sessionId)
-    }, BASH_TIMEOUT_MS))
-  }
-
-  /** 取消 bash 超时 timer */
-  function clearBashTimer(sessionId: string): void {
-    clearSessionTimer(bashTimers, sessionId)
-  }
-
   /** HMR / dispose / 测试 teardown 时清理所有 timer */
   function disposeAllTimers(): void {
-    for (const timers of [streamingTimers, bashTimers]) {
-      for (const t of timers.values()) clearTimeout(t)
-      timers.clear()
-    }
+    for (const t of streamingTimers.values()) clearTimeout(t)
+    streamingTimers.clear()
   }
 
-  return { armStreamingTimer, clearStreamingTimer, armBashTimer, clearBashTimer, disposeAllTimers }
+  return { armStreamingTimer, refreshStreamingTimer, clearStreamingTimer, disposeAllTimers }
 }

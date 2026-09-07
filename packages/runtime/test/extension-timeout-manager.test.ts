@@ -2,12 +2,17 @@
  * ExtensionTimeoutManager 单测 —— 纯逻辑状态机。
  *
  * 覆盖：
- * - registerTimeout 三分支（notify 早退 / bridge: 仅登记 / 交互式 method 仅 session 跟踪不建 timer）
+ * - registerTimeout 两分支（notify 早退 / 交互式 method 仅 session 跟踪不建 timer）
+ * - addBridgeRequest：marker 通道（select+BRIDGE_MARKER）bridge 请求的唯一登记入口
  * - clearTimeout 单条清理
  * - clearForSession（含 bridgeRequestIds 清理 + 跨 session 隔离）
  * - [2026-07-16] 交互式 method（select/confirm/input/editor/ask-user）不再触发 onTimeout
  * - 重复 register 不再产生定时器
  * - isBridgeRequest / removeBridgeRequest
+ *
+ * [HISTORICAL] registerTimeout 的 bridge: 前缀登记分支已随旧通道清理删除（设计
+ * bridge-rewrite-pi-0.84 §3.3-D6）——bridge 登记单落在 addBridgeRequest（BridgeHandler
+ * 入口调用），registerTimeout 只服务 extension-ui kind。
  *
  * 用 vi.useFakeTimers() 控制 setTimeout（manager 内部用真实 setTimeout + 300s 超时）。
  *
@@ -29,13 +34,22 @@ describe('ExtensionTimeoutManager', () => {
     expect(onTimeout).not.toHaveBeenCalled()
   })
 
-  it('registerTimeout(method="bridge:*") 仅登记 bridgeRequestIds + session，不建 timer', () => {
+  it('addBridgeRequest 登记 bridgeRequestIds + session，不建 timer（marker 通道唯一登记入口）', () => {
+    const mgr = new ExtensionTimeoutManager()
+    mgr.addBridgeRequest('s1', 'r1')
+    expect(mgr.isBridgeRequest('r1')).toBe(true)
+    // bridge 请求靠跨进程序列驱动，不建本地 timer
+    vi.advanceTimersByTime(mgr.TIMEOUT_MS + 1)
+    expect(() => mgr.isBridgeRequest('r1')).not.toThrow()
+  })
+
+  it('registerTimeout(method="bridge:*") 不再登记 bridge 请求（旧前缀分支已删，防回归）', () => {
     const mgr = new ExtensionTimeoutManager()
     const onTimeout = vi.fn()
     mgr.registerTimeout('s1', 'r1', 'bridge:something', onTimeout)
-    expect(mgr.isBridgeRequest('r1')).toBe(true)
+    // 登记责任单落在 addBridgeRequest——误传 bridge: method 不得进 bridgeRequestIds
+    expect(mgr.isBridgeRequest('r1')).toBe(false)
     vi.advanceTimersByTime(mgr.TIMEOUT_MS + 1)
-    // bridge 请求靠跨进程序列驱动，不建本地 timer
     expect(onTimeout).not.toHaveBeenCalled()
   })
 
@@ -62,7 +76,7 @@ describe('ExtensionTimeoutManager', () => {
     const onTimeout1 = vi.fn()
     const onTimeout2 = vi.fn()
     mgr.registerTimeout('s1', 'r1', 'select', onTimeout1)
-    mgr.registerTimeout('s1', 'r2', 'bridge:cmd', vi.fn())
+    mgr.addBridgeRequest('s1', 'r2')
     mgr.registerTimeout('s2', 'r3', 'select', onTimeout2)
 
     mgr.clearForSession('s1')
@@ -92,7 +106,7 @@ describe('ExtensionTimeoutManager', () => {
 
   it('removeBridgeRequest 从 bridge 跟踪表移除', () => {
     const mgr = new ExtensionTimeoutManager()
-    mgr.registerTimeout('s1', 'r1', 'bridge:cmd', vi.fn())
+    mgr.addBridgeRequest('s1', 'r1')
     expect(mgr.isBridgeRequest('r1')).toBe(true)
     mgr.removeBridgeRequest('r1')
     expect(mgr.isBridgeRequest('r1')).toBe(false)

@@ -48,7 +48,7 @@
           <!-- eslint-disable-next-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
           <span class="inline-flex size-3 items-center justify-center animate-loader-spin" v-html="RUNNING_LOADER_SVG" />
         </span>
-        <!-- W5：error==='timeout'（finalizeBashOnly 置位）优先于 cancelled，显示「超时」与「已取消」区分。
+        <!-- W5：error==='timeout'（超时收口形态）优先于 cancelled，显示「超时」与「已取消」区分。
              灰阶化：timeout/cancelled 改 neutral-dim（§13.2-D，非终端语义色） -->
         <span
           v-else-if="isTimeout"
@@ -130,7 +130,7 @@ const { abortBash } = useChatViewDeps()
 
 const bash = computed(() => props.message.bashExecution)
 const isStreaming = computed(() => props.message.status === 'streaming')
-// W5：error==='timeout'（finalizeBashOnly 超时收口置位）优先于 cancelled——超时与主动取消视觉需区分。
+// W5：error==='timeout'（超时收口形态值）优先于 cancelled——超时与主动取消视觉需区分。
 // 模板优先级：isTimeout > isCancelled > 正常 exit 标签。
 const isTimeout = computed(() => props.message.error === 'timeout')
 const isCancelled = computed(() => bash.value?.cancelled === true)

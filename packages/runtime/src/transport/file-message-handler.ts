@@ -48,102 +48,129 @@ export class FileMessageHandler {
     'file.write.delete',
   ]
 
+  /**
+   * 路由分发（复杂度债清偿 U07）：switch 保留提供编译期类型收窄，每个 case 体提为
+   * 私有方法（msg 以 Extract 收窄后传入，语义与原 switch 内联收窄一致）。
+   */
   async handleFileMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     switch (msg.type) {
-      case 'file.tree': {
-        const { sessionId } = msg.payload
-        try {
-          const tree = await this.ctx.fileService.listTree(sessionId)
-          return this.ctx.reply(ws, msg.id, 'file.tree:result', { sessionId, tree })
-        } catch (e) {
-          return this.sendFileError(ws, msg.id, sessionId, e)
-        }
+      case 'file.tree':
+        return this.handleTree(msg as Extract<ClientMessage, { type: 'file.tree' }>, ws)
+      case 'file.tree.expand':
+        return this.handleTreeExpand(msg as Extract<ClientMessage, { type: 'file.tree.expand' }>, ws)
+      case 'file.search':
+        return this.handleSearch(msg as Extract<ClientMessage, { type: 'file.search' }>, ws)
+      case 'file.search.cwd':
+        return this.handleSearchCwd(msg as Extract<ClientMessage, { type: 'file.search.cwd' }>, ws)
+      case 'file.read':
+        return this.handleRead(msg as Extract<ClientMessage, { type: 'file.read' }>, ws)
+      case 'file.write.create':
+        return this.handleWriteCreate(msg as Extract<ClientMessage, { type: 'file.write.create' }>, ws)
+      case 'file.write.rename':
+        return this.handleWriteRename(msg as Extract<ClientMessage, { type: 'file.write.rename' }>, ws)
+      case 'file.write.delete':
+        return this.handleWriteDelete(msg as Extract<ClientMessage, { type: 'file.write.delete' }>, ws)
+    }
+  }
+
+  private async handleTree(msg: Extract<ClientMessage, { type: 'file.tree' }>, ws: WsType): Promise<void> {
+    const { sessionId } = msg.payload
+    try {
+      const tree = await this.ctx.fileService.listTree(sessionId)
+      return this.ctx.reply(ws, msg.id, 'file.tree:result', { sessionId, tree })
+    } catch (e) {
+      return this.sendFileError(ws, msg.id, sessionId, e)
+    }
+  }
+
+  private async handleTreeExpand(msg: Extract<ClientMessage, { type: 'file.tree.expand' }>, ws: WsType): Promise<void> {
+    const { sessionId, path } = msg.payload
+    try {
+      const children = await this.ctx.fileService.expandDir(sessionId, path)
+      return this.ctx.reply(ws, msg.id, 'file.tree.expand:result', { sessionId, children })
+    } catch (e) {
+      return this.sendFileError(ws, msg.id, sessionId, e)
+    }
+  }
+
+  private async handleSearch(msg: Extract<ClientMessage, { type: 'file.search' }>, ws: WsType): Promise<void> {
+    // composer # 文件候选：全量递归当前 cwd（受 ignore + 深度上限 + 结果数上限）。
+    // searchFiles 内部 per-dir 容错（单子目录错误跳过不中断），仅 session_not_found 抛出。
+    const { sessionId, showIgnored } = msg.payload
+    try {
+      const files = await this.ctx.fileService.searchFiles(sessionId, showIgnored)
+      return this.ctx.reply(ws, msg.id, 'file.search:result', { sessionId, files })
+    } catch (e) {
+      return this.sendFileError(ws, msg.id, sessionId, e)
+    }
+  }
+
+  private async handleSearchCwd(msg: Extract<ClientMessage, { type: 'file.search.cwd' }>, ws: WsType): Promise<void> {
+    // landing 态 composer $ 文件候选：按 cwd 全量递归（扫描约束与 file.search 同源——
+    // 共用 searchFilesInCwd 核心）。reply 契约无 sessionId 字段（协议定义如此）；
+    // cwd 无效 → FileError('not_found') → error envelope（D6 准入边界）。
+    const { cwd } = msg.payload
+    try {
+      const files = await this.ctx.fileService.searchFilesInCwd(cwd)
+      return this.ctx.reply(ws, msg.id, 'file.search.cwd:result', { files })
+    } catch (e) {
+      // cwd 路无 sessionId 上下文，传空串 → sendFileError 省略 details
+      return this.sendFileError(ws, msg.id, '', e)
+    }
+  }
+
+  private async handleRead(msg: Extract<ClientMessage, { type: 'file.read' }>, ws: WsType): Promise<void> {
+    // file.read 分流（#7 BC-3 扩展）：有 sessionId → readFile(sessionId, path) cwd 守门（文件树预览）；
+    // 无 sessionId → readFileFromWhitelist（BC-3 三目录白名单：skill 文件预览，向后兼容）。
+    const { path, sessionId } = msg.payload
+    try {
+      const result = sessionId
+        ? await this.ctx.fileService.readFile(sessionId, path)
+        : await this.ctx.fileService.readFileFromWhitelist(path)
+      return this.ctx.reply(ws, msg.id, 'file.read:result', { content: result.content, truncated: result.truncated, path })
+    } catch (e) {
+      return this.sendFileError(ws, msg.id, sessionId ?? '', e)
+    }
+  }
+
+  private async handleWriteCreate(msg: Extract<ClientMessage, { type: 'file.write.create' }>, ws: WsType): Promise<void> {
+    const { sessionId, path, content } = msg.payload
+    try {
+      await this.ctx.fileService.createFile(sessionId, path, content)
+      // createFile 抛 not_implemented，正常不会走到这里（骨架永不 resolve）
+      return this.ctx.reply(ws, msg.id, 'file.write.create:result', { sessionId, path, implemented: false })
+    } catch (e) {
+      // AC-14.4：file.write 骨架的 not_implemented 转结构化 result（非 error envelope）
+      if (e instanceof FileError && e.code === 'not_implemented') {
+        return this.ctx.reply(ws, msg.id, 'file.write.create:result', { sessionId, path, implemented: false })
       }
-      case 'file.tree.expand': {
-        const { sessionId, path } = msg.payload
-        try {
-          const children = await this.ctx.fileService.expandDir(sessionId, path)
-          return this.ctx.reply(ws, msg.id, 'file.tree.expand:result', { sessionId, children })
-        } catch (e) {
-          return this.sendFileError(ws, msg.id, sessionId, e)
-        }
+      return this.sendFileError(ws, msg.id, sessionId, e)
+    }
+  }
+
+  private async handleWriteRename(msg: Extract<ClientMessage, { type: 'file.write.rename' }>, ws: WsType): Promise<void> {
+    const { sessionId, oldPath, newPath } = msg.payload
+    try {
+      await this.ctx.fileService.renameFile(sessionId, oldPath, newPath)
+      return this.ctx.reply(ws, msg.id, 'file.write.rename:result', { sessionId, newPath, implemented: false })
+    } catch (e) {
+      if (e instanceof FileError && e.code === 'not_implemented') {
+        return this.ctx.reply(ws, msg.id, 'file.write.rename:result', { sessionId, newPath, implemented: false })
       }
-      case 'file.search': {
-        // composer $ 文件候选：全量递归当前 cwd（受 ignore + 深度上限 + 结果数上限）。
-        // 准入错误抛出（session_not_found / cwd 目录已删 not_found / permission_denied / timeout），
-        // 递归期 per-dir 容错跳过（单子目录错误不中断整体）。
-        const { sessionId, showIgnored } = msg.payload
-        try {
-          const files = await this.ctx.fileService.searchFiles(sessionId, showIgnored)
-          return this.ctx.reply(ws, msg.id, 'file.search:result', { sessionId, files })
-        } catch (e) {
-          return this.sendFileError(ws, msg.id, sessionId, e)
-        }
+      return this.sendFileError(ws, msg.id, sessionId, e)
+    }
+  }
+
+  private async handleWriteDelete(msg: Extract<ClientMessage, { type: 'file.write.delete' }>, ws: WsType): Promise<void> {
+    const { sessionId, path } = msg.payload
+    try {
+      await this.ctx.fileService.deleteFile(sessionId, path)
+      return this.ctx.reply(ws, msg.id, 'file.write.delete:result', { sessionId, path, implemented: false })
+    } catch (e) {
+      if (e instanceof FileError && e.code === 'not_implemented') {
+        return this.ctx.reply(ws, msg.id, 'file.write.delete:result', { sessionId, path, implemented: false })
       }
-      case 'file.search.cwd': {
-        // landing 态 composer $ 文件候选：按 cwd 全量递归（扫描约束与 file.search 同源——
-        // 共用 searchFilesInCwd 核心）。reply 契约无 sessionId 字段（协议定义如此）；
-        // cwd 无效 → FileError('not_found') → error envelope（D6 准入边界）。
-        const { cwd } = msg.payload
-        try {
-          const files = await this.ctx.fileService.searchFilesInCwd(cwd)
-          return this.ctx.reply(ws, msg.id, 'file.search.cwd:result', { files })
-        } catch (e) {
-          // cwd 路无 sessionId 上下文，传空串 → sendFileError 省略 details
-          return this.sendFileError(ws, msg.id, '', e)
-        }
-      }
-      case 'file.read': {
-        // file.read 分流（#7 BC-3 扩展）：有 sessionId → readFile(sessionId, path) cwd 守门（文件树预览）；
-        // 无 sessionId → readFileFromWhitelist（BC-3 三目录白名单：skill 文件预览，向后兼容）。
-        const { path, sessionId } = msg.payload
-        try {
-          const result = sessionId
-            ? await this.ctx.fileService.readFile(sessionId, path)
-            : await this.ctx.fileService.readFileFromWhitelist(path)
-          return this.ctx.reply(ws, msg.id, 'file.read:result', { content: result.content, truncated: result.truncated, path })
-        } catch (e) {
-          return this.sendFileError(ws, msg.id, sessionId ?? '', e)
-        }
-      }
-      case 'file.write.create': {
-        const { sessionId, path, content } = msg.payload
-        try {
-          await this.ctx.fileService.createFile(sessionId, path, content)
-          // createFile 抛 not_implemented，正常不会走到这里（骨架永不 resolve）
-          return this.ctx.reply(ws, msg.id, 'file.write.create:result', { sessionId, path, implemented: false })
-        } catch (e) {
-          // AC-14.4：file.write 骨架的 not_implemented 转结构化 result（非 error envelope）
-          if (e instanceof FileError && e.code === 'not_implemented') {
-            return this.ctx.reply(ws, msg.id, 'file.write.create:result', { sessionId, path, implemented: false })
-          }
-          return this.sendFileError(ws, msg.id, sessionId, e)
-        }
-      }
-      case 'file.write.rename': {
-        const { sessionId, oldPath, newPath } = msg.payload
-        try {
-          await this.ctx.fileService.renameFile(sessionId, oldPath, newPath)
-          return this.ctx.reply(ws, msg.id, 'file.write.rename:result', { sessionId, newPath, implemented: false })
-        } catch (e) {
-          if (e instanceof FileError && e.code === 'not_implemented') {
-            return this.ctx.reply(ws, msg.id, 'file.write.rename:result', { sessionId, newPath, implemented: false })
-          }
-          return this.sendFileError(ws, msg.id, sessionId, e)
-        }
-      }
-      case 'file.write.delete': {
-        const { sessionId, path } = msg.payload
-        try {
-          await this.ctx.fileService.deleteFile(sessionId, path)
-          return this.ctx.reply(ws, msg.id, 'file.write.delete:result', { sessionId, path, implemented: false })
-        } catch (e) {
-          if (e instanceof FileError && e.code === 'not_implemented') {
-            return this.ctx.reply(ws, msg.id, 'file.write.delete:result', { sessionId, path, implemented: false })
-          }
-          return this.sendFileError(ws, msg.id, sessionId, e)
-        }
-      }
+      return this.sendFileError(ws, msg.id, sessionId, e)
     }
   }
 

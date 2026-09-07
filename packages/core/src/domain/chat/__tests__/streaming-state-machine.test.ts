@@ -7,8 +7,10 @@
  * store.test.ts 保留为 createChatStore 委托后的集成回归（行为等价锁定）。
  */
 import { describe, it, expect, vi } from 'vitest'
+import type { ShallowRef } from 'vue'
 import { ref, shallowRef } from 'vue'
 import type { Message } from '@xyz-agent/shared'
+import type { SessionOccupancyState } from '../store'
 import { createStreamingStateMachine } from '../streaming-state-machine'
 
 /** 构造 streaming assistant 消息（可选 overrides） */
@@ -29,7 +31,7 @@ function runningToolCall(id: string) {
 function makeMachine() {
   // W10 D-1 容器范式：外层 Map 恒等稳定，每 sid 分区是独立 ShallowRef
   const messages = shallowRef<Map<string, ShallowRef<Message[]>>>(new Map())
-  const occupancies = ref<Map<string, { compacting: boolean }>>(new Map())
+  const occupancies = ref<Map<string, SessionOccupancyState>>(new Map())
   const handingOffSessions = ref<Set<string>>(new Set())
   const retryStates = ref<Map<string, unknown>>(new Map())
   const queueStates = ref<Map<string, unknown>>(new Map())
@@ -225,7 +227,7 @@ describe('collectFinalizeCandidates', () => {
   it('TC6 并集：messages ∪ compacting ∪ handingOff ∪ retry ∪ queue ∪ pendingSend', () => {
     // 6 源各贡献一个独有 sid，验证并集不漏
     const messages = shallowRef<Map<string, ShallowRef<Message[]>>>(new Map([['a', shallowRef([streamingAssistant('a1')])]]))
-    const occupancies = ref<Map<string, { compacting: boolean }>>(new Map([['b', { compacting: true }]]))
+    const occupancies = ref<Map<string, SessionOccupancyState>>(new Map([['b', { turn: 'idle', compacting: true, bash: false }]]))
     const handingOff = ref<Set<string>>(new Set(['c']))
     const retryStates = ref<Map<string, unknown>>(new Map([['d', {}]]))
     const queueStates = ref<Map<string, unknown>>(new Map([['e', {}]]))

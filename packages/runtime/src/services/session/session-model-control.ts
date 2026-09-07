@@ -9,7 +9,7 @@
  * 无 onSessionDisposed）。Facade 保留两方法一行委托（ISessionService 契约不变）。
  */
 import type { ProviderId } from '@xyz-agent/shared'
-import type { IProcessManager } from '../ports/pi-engine.js'
+import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import type { IManagedSessionView } from './types.js'
 import type { SessionReplicatedStates } from './session-state-projection.js'
 import { toErrorMessage } from '../../utils/errors.js'
@@ -71,23 +71,9 @@ export class SessionModelControl {
     // 请求值 ≠ 生效值——set 后 get_state 读回实际生效模型，双写缓存与返回值都用生效值
     //（与 setThinkingLevel 的 set→get_state→effective 同款模式，PS-03/PS-01）。
     // get_state 失败 fallback 请求值（旧行为），不反噬切模型主链路。
-    let effectiveModelId = newModelId
-    let effectiveThinkingLevel = session.thinkingLevel ?? ''
-    try {
-      const state = await client.getState()
-      const model = state?.model
-      const m = typeof model === 'object' && model !== null ? model as Record<string, unknown> : undefined
-      if (m && typeof m.id === 'string' && m.id !== '' && typeof m.provider === 'string' && m.provider !== '') {
-        effectiveModelId = `${m.provider}/${m.id}`
-      }
-      // 同次 get_state 读回 thinkingLevel（pi 生效思考等级），用于 sidecar 持久化
-      if (typeof state?.thinkingLevel === 'string') {
-        effectiveThinkingLevel = state.thinkingLevel
-      }
-    } catch (e) {
-      // 读回失败保持请求值（下游 markDirty 防抖重拉 get_state 仍会收敛到权威值）
-      console.warn(`[session-service] switchModel get_state read-back failed for ${sessionId}, keeping requested model: ${toErrorMessage(e)}`)
-    }
+    const effective = await this.readEffectiveModelState(sessionId, client, newModelId, session.thinkingLevel ?? '')
+    const effectiveModelId = effective.modelId
+    const effectiveThinkingLevel = effective.thinkingLevel
     // W7：switchModel RPC 成功响应 = modelId 实例的失效源（RPC 响应驱动，「事件只做失效」的
     // 补充合法形态，D7）。markDirty 防抖重拉 get_state，实例快照与 pi 权威值收敛（行为级
     // 验收：模型名 1s 内更新）。失败路径（上方 throw）不失效——pi 侧未生效，实例保持旧快照。
@@ -121,6 +107,40 @@ export class SessionModelControl {
     // plugin agent.setModel 经此拿生效值回执；WS 侧 settings-message-handler 的
     // model.switch case 拆解该复合串回填 reply（对齐 C-pi-13 改状态 RPC 一律回生效值）。
     return effectiveModelId
+  }
+
+  /**
+   * switchModel 的 get_state 回执普查读回（U6）：一次 get_state 同时读回生效模型与
+   * thinkingLevel。字段缺失/非法/get_state 抛错一律保持请求值 fallback（旧行为），
+   * 不反噬切模型主链路（thinkingLevel 供 sidecar 持久化使用）。
+   */
+  private async readEffectiveModelState(
+    sessionId: string,
+    client: IPiEngine,
+    fallbackModelId: string,
+    fallbackThinkingLevel: string,
+  ): Promise<{ modelId: string; thinkingLevel: string }> {
+    try {
+      const state = await client.getState()
+      const modelId = SessionModelControl.parseStateModelRef(state) ?? fallbackModelId
+      // 同次 get_state 读回 thinkingLevel（pi 生效思考等级），用于 sidecar 持久化
+      const thinkingLevel = typeof state?.thinkingLevel === 'string' ? state.thinkingLevel : fallbackThinkingLevel
+      return { modelId, thinkingLevel }
+    } catch (e) {
+      // 读回失败保持请求值（下游 markDirty 防抖重拉 get_state 仍会收敛到权威值）
+      console.warn(`[session-service] switchModel get_state read-back failed for ${sessionId}, keeping requested model: ${toErrorMessage(e)}`)
+      return { modelId: fallbackModelId, thinkingLevel: fallbackThinkingLevel }
+    }
+  }
+
+  /** get_state.model 字段防卫解析：provider/id 均为非空 string 时返回 `${provider}/${id}` 复合串，否则 undefined（调用方 fallback 请求值）。 */
+  private static parseStateModelRef(state: Record<string, unknown> | undefined): string | undefined {
+    const model = state?.model
+    const m = typeof model === 'object' && model !== null ? model as Record<string, unknown> : undefined
+    if (!m || typeof m.id !== 'string' || m.id === '' || typeof m.provider !== 'string' || m.provider === '') {
+      return undefined
+    }
+    return `${m.provider}/${m.id}`
   }
 
   /**

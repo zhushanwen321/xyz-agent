@@ -27,9 +27,10 @@ import { configureCore, resetCoreForTests } from "../../core/host-services.ts";
 
 import type { AgentCallOpts, AgentResult } from "../../orchestration/models/types.ts";
 import { ModelConfigService, setModelConfigService } from "../model-config-service.ts";
-import type { ModelRegistryLike } from "../model-resolver.ts";
+import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
 import { replayJournal } from "../engine/common/event-journal.ts";
 import type { SubprocessAgentRunnerDeps } from "../subprocess-agent-runner.ts";
+import type { SubagentService } from "../subagent-service.ts";
 import { SubprocessAgentRunner } from "../subprocess-agent-runner.ts";
 
 // ── 测试辅助 ──
@@ -50,18 +51,13 @@ function makeMockResult(overrides: Partial<AgentResult> = {}): AgentResult {
 /** 创建 mock SubagentService（只实现 executeAndAwait）。
  *  [D4 聚合连带] SAR 构造器经 asEngineService 显式视图取 PiEngineService——fake 的
  *  face 即自身，getter 直接返回 self。 */
-function createMockService(impl?: typeof vi.fn) {
+function createMockService(impl?: typeof vi.fn): SubagentService {
   const executeAndAwait = impl ?? vi.fn().mockResolvedValue(makeMockResult());
-  const service = { executeAndAwait } as unknown as {
-    executeAndAwait: (
-      opts: Record<string, unknown>,
-      signal?: AbortSignal,
-      onEvent?: (e: Record<string, unknown>) => void,
-      stream?: unknown,
-    ) => Promise<AgentResult>;
-    asEngineService: unknown;
-  };
-  service.asEngineService = service;
+  // partial mock（仅 executeAndAwait + asEngineService self-引用）——SAR 测试路径
+  // 不触达其余成员，经 unknown 双跳收敛到 SubagentService 视图
+  const partial: { executeAndAwait: typeof executeAndAwait; asEngineService?: unknown } = { executeAndAwait };
+  const service = partial as unknown as SubagentService;
+  partial.asEngineService = service;
   return service;
 }
 
@@ -177,7 +173,7 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
           return Promise.resolve(makeMockResult());
         }),
       );
-      const ctxModel = { id: "ctx-model", provider: "test", input: [] };
+      const ctxModel: ModelInfo = { id: "ctx-model", name: "Ctx Model", provider: "test", reasoning: false };
       const deps: SubprocessAgentRunnerDeps = { subagentService: mockService, ctxModel };
       const sar = new SubprocessAgentRunner(deps);
 
@@ -195,7 +191,7 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
           return Promise.resolve(makeMockResult());
         }),
       );
-      const ctxModel = { id: "ctx-model", provider: "test", input: [] };
+      const ctxModel: ModelInfo = { id: "ctx-model", name: "Ctx Model", provider: "test", reasoning: false };
       const deps: SubprocessAgentRunnerDeps = { subagentService: mockService, ctxModel };
       const sar = new SubprocessAgentRunner(deps);
 
@@ -311,8 +307,8 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
           return Promise.resolve(makeMockResult());
         }),
       );
-      const oldModel = { id: "old-model", provider: "test", input: [] };
-      const newModel = { id: "new-model", provider: "test", input: [] };
+      const oldModel: ModelInfo = { id: "old-model", name: "Old Model", provider: "test", reasoning: false };
+      const newModel: ModelInfo = { id: "new-model", name: "New Model", provider: "test", reasoning: false };
       const deps: SubprocessAgentRunnerDeps = { subagentService: mockService, ctxModel: oldModel };
       const sar = new SubprocessAgentRunner(deps);
 

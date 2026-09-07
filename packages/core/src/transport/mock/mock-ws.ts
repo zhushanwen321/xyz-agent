@@ -26,7 +26,7 @@ import { WS_READY_STATE } from '../../platform/port'
 
 // ── 旧导出（过渡兼容，shim 化后无生产消费方，保留待 P6 cleanup）──────────
 
-type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
+export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
 
 let stateCallback: ((state: ConnectionState) => void) | null = null
 let messageCallback: ((msg: ServerMessage) => void) | null = null

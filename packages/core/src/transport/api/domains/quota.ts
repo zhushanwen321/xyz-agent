@@ -9,6 +9,7 @@
  * HANDOFF：.xyz-harness/coding-plan-quota/HANDOFF.md
  */
 import type { NormalizedQuotaRow, QuotaFetchFailureReason } from '@xyz-agent/shared'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '../pending'
 import { command } from '../request'
 
 /** getCached / fetch 的统一返回结构。 */
@@ -22,13 +23,18 @@ export interface QuotaResult {
   reason?: QuotaFetchFailureReason
 }
 
+/** reply → QuotaResult 纯投影（三个查询 RPC 的统一返回形状）。 */
+function toQuotaResult(reply: { data: NormalizedQuotaRow | null, lastFetchAt: number | null, reason?: QuotaFetchFailureReason }): QuotaResult {
+  return { data: reply.data, lastFetchAt: reply.lastFetchAt, reason: reply.reason }
+}
+
 /**
  * 读缓存不发起请求。浮层首屏即时填充（避免空白）。
  * 无缓存返回 `{ data: null, lastFetchAt: null }`。
  */
 export async function getCached(providerId: string): Promise<QuotaResult> {
-  const reply = await command('quota.getCached', { providerId })
-  return { data: reply.data, lastFetchAt: reply.lastFetchAt, reason: reply.reason }
+  const reply = await command('quota.getCached', { providerId }, RPC_BACKSTOP_TIMEOUT_MS)
+  return toQuotaResult(reply)
 }
 
 /**
@@ -38,8 +44,8 @@ export async function getCached(providerId: string): Promise<QuotaResult> {
  * 注意：带 10s throttle，10s 内重复 fetch 直接返回缓存。测试查询请用 refreshQuota。
  */
 export async function fetchQuota(providerId: string): Promise<QuotaResult> {
-  const reply = await command('quota.fetch', { providerId })
-  return { data: reply.data, lastFetchAt: reply.lastFetchAt, reason: reply.reason }
+  const reply = await command('quota.fetch', { providerId }, RPC_BACKSTOP_TIMEOUT_MS)
+  return toQuotaResult(reply)
 }
 
 /**
@@ -48,13 +54,14 @@ export async function fetchQuota(providerId: string): Promise<QuotaResult> {
  * 失败时 runtime 返回失败态（ok=true + data=null + reason），不抛错。
  */
 export async function refreshQuota(providerId: string): Promise<QuotaResult> {
-  const reply = await command('quota.refresh', { providerId })
-  return { data: reply.data, lastFetchAt: reply.lastFetchAt, reason: reply.reason }
+  const reply = await command('quota.refresh', { providerId }, RPC_BACKSTOP_TIMEOUT_MS)
+  return toQuotaResult(reply)
 }
 
 /**
- * Settings 配置。启用/禁用 + 写 cookie（cookie 类）+ 持久化 fetcher + 专属 apiKey（api-key 类）。
- * enabled=false 不删缓存。apiKey 空字符串 = 清除专属 key，undefined = 不变。
+ * Settings 配置。启用/禁用 + 写 cookie（cookie 类）+ 持久化 fetcher + 专属 apiKey（api-key 类）
+ * + workspace 地址（资源维度 fetcher 如 opencode，完整 URL 或裸 wrk_ id，runtime 归一化）。
+ * enabled=false 不删缓存。apiKey/workspace 空字符串 = 清除，undefined = 不变。
  */
 export async function configure(
   providerId: string,
@@ -62,7 +69,8 @@ export async function configure(
   cookie?: string,
   fetcher?: string,
   apiKey?: string,
+  workspace?: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const reply = await command('quota.configure', { providerId, enabled, cookie, fetcher, apiKey })
+  const reply = await command('quota.configure', { providerId, enabled, cookie, fetcher, apiKey, workspace }, RPC_BACKSTOP_TIMEOUT_MS)
   return { ok: reply.ok, error: reply.error }
 }

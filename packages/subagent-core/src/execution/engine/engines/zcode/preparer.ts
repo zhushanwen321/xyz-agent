@@ -54,16 +54,16 @@ interface SourceConfig {
 }
 
 /** unknown 的 Record 窄化 guard（替代 as 全可选断言——taste/no-unsafe-cast）。 */
-export function isRecord(v: unknown): v is Record<string, unknown> {
+function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 /** provider 条目一律按 ZcodeProviderEntry 消费（索引签名形态，无需逐键校验）。 */
-export function isProviderEntry(v: unknown): v is ZcodeProviderEntry {
+function isProviderEntry(v: unknown): v is ZcodeProviderEntry {
   return isRecord(v);
 }
 
-export function readSourceConfig(absPath: string): SourceConfig {
+function readSourceConfig(absPath: string): SourceConfig {
   const empty: SourceConfig = { providers: new Map() };
   let raw: string;
   try {

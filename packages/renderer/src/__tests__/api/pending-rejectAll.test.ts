@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import * as pending from '@xyz-agent/core/transport/api'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '../../../../core/src/transport/api/pending'
 
 describe('pending.rejectAll', () => {
   beforeEach(() => {
@@ -17,9 +18,9 @@ describe('pending.rejectAll', () => {
   })
 
   it('reject 所有已注册的 pending 请求（多条同时清理）', async () => {
-    const p1 = pending.register<string>(pending.createCommandId())
-    const p2 = pending.register<number>(pending.createCommandId())
-    const p3 = pending.register<boolean>(pending.createCommandId())
+    const p1 = pending.register<string>(pending.createCommandId(), RPC_BACKSTOP_TIMEOUT_MS)
+    const p2 = pending.register<number>(pending.createCommandId(), RPC_BACKSTOP_TIMEOUT_MS)
+    const p3 = pending.register<boolean>(pending.createCommandId(), RPC_BACKSTOP_TIMEOUT_MS)
 
     pending.rejectAll(new Error('WS 断连'))
 
@@ -30,7 +31,7 @@ describe('pending.rejectAll', () => {
 
   it('rejectAll 后 pendingMap 被清空（后续 resolve/reject 为 no-op）', async () => {
     const id = pending.createCommandId()
-    const p = pending.register<string>(id)
+    const p = pending.register<string>(id, RPC_BACKSTOP_TIMEOUT_MS)
 
     pending.rejectAll(new Error('清空'))
 
@@ -49,7 +50,7 @@ describe('pending.rejectAll', () => {
     pending.rejectAll(new Error('first batch'))
 
     const id = pending.createCommandId()
-    const p = pending.register<string>(id)
+    const p = pending.register<string>(id, RPC_BACKSTOP_TIMEOUT_MS)
     pending.resolve(id, 'new value')
 
     await expect(p).resolves.toBe('new value')
@@ -57,7 +58,7 @@ describe('pending.rejectAll', () => {
 
   it('rejectAll 透传 error 对象（含 code 等附加属性的场景）', async () => {
     const id = pending.createCommandId()
-    const p = pending.register<string>(id)
+    const p = pending.register<string>(id, RPC_BACKSTOP_TIMEOUT_MS)
 
     const customError = Object.assign(new Error('runtime crashed'), { code: 'E_RUNTIME' })
     pending.rejectAll(customError)

@@ -69,6 +69,43 @@ export class HarnessError extends Error {
 	}
 }
 
+/** HarnessError kind 归并（rpc 归并规则：pi 进程已死 = 协议层无法继续 → crash，否则按场景断言级）。 */
+function classifyHarnessError(err) {
+	if (err.kind === "rpc") {
+		// RPC success:false：pi 进程已死归 crash（协议层无法继续），否则按场景断言级问题处理
+		return err.detail?.piAlive === false ? "pi-crash" : "assertion";
+	}
+	return err.kind;
+}
+
+/** 超时族特征：错误类型名 / abort / ETIMEDOUT / message 含 timeout 字样。 */
+function isTimeoutFailure(err, name, msg) {
+	return name === "TimeoutError" || name === "AbortError" || err?.code === "ETIMEDOUT" || /timeout|timed out/i.test(msg);
+}
+
+/** LLM API 层失败特征（连接错误 / HTTP 4xx5xx / key 无效）。 */
+function isApiFailure(msg) {
+	if (
+		/connection error|econnrefused|fetch failed|enotfound|econnreset|socket hang up|api key|unauthorized|forbidden|rate limit|\b(401|403|429|5\d\d)\b/i.test(
+			msg,
+		)
+	) {
+		return true;
+	}
+	return false;
+}
+
+/** 非 HarnessError 的裸错误按特征归四分类（无法识别的兜底 assertion，避免吞掉不可归类的失败）。 */
+function classifyBareError(err) {
+	const name = err?.name ?? "";
+	const msg = String(err?.message ?? "");
+	if (name === "AssertionError" || name === "HarnessAssertionError") return "assertion";
+	if (isTimeoutFailure(err, name, msg)) return "timeout";
+	if (isApiFailure(msg)) return "api-error";
+	// 无法识别的裸错误按断言级处理（场景逻辑问题），避免吞掉不可归类的失败
+	return "assertion";
+}
+
 /**
  * 失败四分类（runner 汇总输出用）：
  * - assertion：断言失败 / 场景逻辑错误（默认兜底——场景脚本裸 throw 的 AssertionError 等）
@@ -77,28 +114,8 @@ export class HarnessError extends Error {
  * - api-error：LLM API 层失败（连接错误 / HTTP 4xx5xx / key 无效）
  */
 export function classifyFailure(err) {
-	if (err instanceof HarnessError) {
-		if (err.kind === "rpc") {
-			// RPC success:false：pi 进程已死归 crash（协议层无法继续），否则按场景断言级问题处理
-			return err.detail?.piAlive === false ? "pi-crash" : "assertion";
-		}
-		return err.kind;
-	}
-	const name = err?.name ?? "";
-	const msg = String(err?.message ?? "");
-	if (name === "AssertionError" || name === "HarnessAssertionError") return "assertion";
-	if (name === "TimeoutError" || name === "AbortError" || err?.code === "ETIMEDOUT" || /timeout|timed out/i.test(msg)) {
-		return "timeout";
-	}
-	if (
-		/connection error|econnrefused|fetch failed|enotfound|econnreset|socket hang up|api key|unauthorized|forbidden|rate limit|\b(401|403|429|5\d\d)\b/i.test(
-			msg,
-		)
-	) {
-		return "api-error";
-	}
-	// 无法识别的裸错误按断言级处理（场景逻辑问题），避免吞掉不可归类的失败
-	return "assertion";
+	if (err instanceof HarnessError) return classifyHarnessError(err);
+	return classifyBareError(err);
 }
 
 // ──────────────────────── 断言纯函数 ────────────────────────

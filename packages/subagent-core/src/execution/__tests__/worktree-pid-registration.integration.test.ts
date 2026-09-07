@@ -213,7 +213,8 @@ describe("worktree pid 注册链路（真实 spawn 集成）", { timeout: 30_000
       makeOpts({ worktree: handle }),
       ctx,
     );
-    expect(result.status).not.toBe("error"); // 进程正常退出（exit 0），非 spawn 失败
+    // 历史「status !== error」弱断言：AgentResult 无 status 字段，经视图访问保持断言语义不变
+    expect((result as { status?: string }).status).not.toBe("error"); // 进程正常退出（exit 0），非 spawn 失败
 
     // 3. pid 已补全（短命进程退出后 pid 仍有效，registerPid 同步执行不受退出影响）
     const entry = readEntry(handle.branch);

@@ -19,7 +19,7 @@ import {
   computeTraceContextBoundary,
   convertsToContextMessages,
 } from '../context-boundary'
-import { parseSessionTraceJsonl } from '../parse-jsonl'
+import { parseSessionTraceJsonl, type ParsedSessionTraceLine } from '../parse-jsonl'
 import type { TraceSessionEntry } from '../types'
 
 const FIXTURES = new URL('../__fixtures__/', import.meta.url)
@@ -31,7 +31,7 @@ function loadFixture(name: string): string {
 /** 从 JSONL 文本取「pi getEntries 语义」的 entry 数组（解析成功、排除 header）。 */
 function traceEntriesFromText(text: string): TraceSessionEntry[] {
   return parseSessionTraceJsonl(text)
-    .filter((l) => l.ok && l.entry.type !== 'session')
+    .filter((l): l is Extract<ParsedSessionTraceLine, { ok: true }> => l.ok && l.entry.type !== 'session')
     .map((l) => l.entry as TraceSessionEntry)
 }
 

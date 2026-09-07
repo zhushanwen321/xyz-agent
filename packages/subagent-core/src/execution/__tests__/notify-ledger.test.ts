@@ -358,8 +358,11 @@ function abandonedEntries(mock: LedgerHostMock): { data?: Record<string, unknown
 }
 
 /** 从日志 sink 中取放弃 warn（区别于分桶 warn「notify delivery bucket [...]」）。 */
-function abandonedWarns(logs: Array<{ level: string; message: string; data?: unknown }>): Array<{
+function abandonedWarns(
+  logs: Array<{ level: string; component?: string; message: string; data?: unknown }>,
+): Array<{
   level: string;
+  component?: string;
   message: string;
   data?: unknown;
 }> {

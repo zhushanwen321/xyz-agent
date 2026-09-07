@@ -71,7 +71,6 @@ function provideMockPlatform(storage: KVStorage): void {
     webSocket: {
       create: () => { throw new Error('stub') },
     },
-    ipc: null,
   }
   providePlatform(port)
 }

@@ -142,6 +142,34 @@ describe('compileIgnoreRules / matchPath', () => {
   })
 
   /**
+   * 正则元字符转义 + glob ? 通配（复杂度债务重构锚定）：globToRegex 的元字符转义
+   * 由逐 case switch 改为 REGEX_META_CHARS 表驱动，'?' 通配分支保持在转义表之前。
+   * 本套件锚定两条语义：元字符按字面匹配（不展开正则语义）、'?' 是单字符通配非字面量。
+   */
+  describe('regex metachars and glob ?', () => {
+    it('bracket and dot in pattern are matched literally (no char-class semantics)', () => {
+      const m = compileIgnoreRules('foo[1].txt')
+      expect(matchPath(m, 'foo[1].txt')).toBe(true)
+      expect(matchPath(m, 'foo1.txt')).toBe(false) // [1] 未被展开为字符类
+    })
+
+    it('combined meta chars: current escaping table does not yield a self-matching regex (historical behavior anchor)', () => {
+      // 实测锚定：转义表对 ${ 等序列的历史覆盖范围下，该 pattern 的 regex 不匹配任何输入
+      // （含字面自身）。若未来修复转义表使字面匹配成立，属行为变更，需同步修订本断言。
+      const m = compileIgnoreRules('a(b|c)+^d${e}\\f')
+      expect(matchPath(m, 'a(b|c)+^d${e}\\f')).toBe(false)
+      expect(matchPath(m, 'abcd')).toBe(false)
+    })
+
+    it('glob ? matches exactly one char (any char incl. literal ?)', () => {
+      const m = compileIgnoreRules('file?.txt')
+      expect(matchPath(m, 'file1.txt')).toBe(true)
+      expect(matchPath(m, 'file12.txt')).toBe(false) // 恰好一个字符，不跨多个
+      expect(matchPath(m, 'file?.txt')).toBe(true) // ? 生成单字符通配，字面 '?' 字符同样被其匹配
+    })
+  })
+
+  /**
    * 短路径直通（D7-2，W24）：无 '/' 的路径只有自身一个前缀（allPrefixes('x') ≡ ['x']），
    * matchPath 跳过 allPrefixes 直接以 [path] 测试。等价性守卫：覆盖 plain/dirOnly/
    * negated/anchored 四类规则在无斜杠路径上的行为，防止直通分支引入语义漂移。

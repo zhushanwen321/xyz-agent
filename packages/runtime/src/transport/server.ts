@@ -4,7 +4,8 @@
  * C2 拆分后只保留传输编排职责：
  * - 组合 ConnectionManager（连接生命周期 + 心跳 + 连接池）与 ServerMessageBroker（发送/广播/initial state）。
  * - D1 中央分发表：handler 的 handles 清单 + Map spread → O(N→M) 路由映射（亮点，勿动）。
- * - setServices：装配 8 个 message handler + 注入各 handler 的 context（messaging + 领域依赖）。
+ * - setServices：四阶段编排（assignServices → createBroker → assembleHandlers → buildRoutes），
+ *   装配全部 message handler 并注入各 handler 的 context（messaging + 领域依赖）。
  * - extension timeout / bridge 请求的对外委托入口（event-adapter 经 index.ts 调用）。
  *
  * 业务逻辑在 services，经 handler 调用；本类不含领域计算，只做路由与编排。
@@ -170,8 +171,23 @@ export class RuntimeServer implements IMessageBroker {
     this.messageBus = bus
   }
 
+  /**
+   * setServices 主编排（复杂度债清偿 U07）：按「装配服务字段 → 构造 broker → 组装
+   * handlers → 建分发表」四阶段提私有 helper，本函数只留阶段顺序。各阶段内部与原
+   * 实现逐行等价——赋值顺序、条件守卫、context 字面量、事件注册时序均未动。
+   */
   setServices(session: ISessionService, config: IConfigService, model: IModelService, optional: RuntimeServerOptionalServices = {}): void {
-    const { extension, plugin, git, file, workspace, appInfo, skillRegistry, worktree, terminal, quota, handoff, preset, auth, project, delivery, importService, genStats } = optional
+    this.assignServices(session, config, model, optional)
+    this.createBroker(optional.appInfo)
+    this.assembleHandlers(optional)
+    this.routes = this.buildRoutes()
+  }
+
+  /** 阶段 1：核心 service 字段装配（含 D6a onSessionDestroyed 汇聚清理注册）。 */
+  private assignServices(session: ISessionService, config: IConfigService, model: IModelService, optional: RuntimeServerOptionalServices): void {
+    // genStats（composer-gen-stats D4）：恢复腿 RPC 路由依赖（sessionHandler ctx 读
+    // this.genStatsService）；其余可选服务由 assembleOptionalHandlers 按域自行解构。
+    const { extension, plugin, git, file, skillRegistry, handoff, importService, genStats } = optional
     this.gitService = git
     this.fileService = file
     this.handoffService = handoff
@@ -198,8 +214,10 @@ export class RuntimeServer implements IMessageBroker {
     // 与 sessionService.setMessageBus 并列）——services 间依赖注入不经 transport 层中转。
     // server 保留的 bus 消费只剩自身 transport 职责：sessionHandler ctx（subscribe RPC）、
     // extensionHandler ctx（ui_timeout publish）、onDisconnect 清理、changeSetInvalidated 定向发布。
+  }
 
-    // broker 在此构造：依赖 services（broadcast helper / sendInitialState 取数据）+ 连接池（conn.clients）。
+  /** 阶段 2：broker 构造（依赖 services + 连接池，appInfo 缺省 unknown 占位）。 */
+  private createBroker(appInfo: RuntimeServerOptionalServices['appInfo']): void {
     this.broker = new ServerMessageBroker(this.conn, {
       sessionService: this.sessionService,
       configService: this.configService,
@@ -209,21 +227,40 @@ export class RuntimeServer implements IMessageBroker {
       projectRoot: this.projectRoot,
       appInfo: appInfo ?? { appVersion: 'unknown', piVersion: 'unknown' },
     })
+  }
 
+  /** 阶段 3：handler 组装——messaging 共享实现 + 核心/可选/SessionManager 三批，构造顺序不变。 */
+  private assembleHandlers(optional: RuntimeServerOptionalServices): void {
     // ── Assemble handlers with explicit context objects ──────────────
     // Each object literal is structurally checked against its HandlerContext
     // interface at the call site — no `as unknown as`, no relying on private
     // members being visible across class boundaries.
-    //
-    // `messaging` 是 MessageHandlerContext 的共享实现（D7：send/sendError/reply 三方法
-    // 逐字相同，此前在 4 个 context 对象里复制了 4 份）。每个 handler 的 context 由
-    // `...messaging` 铺底 + 各自的领域依赖组成。
-    this.bridgeHandler = new BridgeHandler(this.pluginService ?? null)
-    const messaging: MessageHandlerContext = {
+    const messaging = this.createMessaging()
+    this.assembleCoreHandlers(messaging, optional)
+    this.assembleOptionalHandlers(messaging, optional)
+    this.assembleSessionManagerHandler(optional)
+  }
+
+  /**
+   * `messaging` 是 MessageHandlerContext 的共享实现（D7：send/sendError/reply 三方法
+   * 逐字相同，此前在 4 个 context 对象里复制了 4 份）。每个 handler 的 context 由
+   * `...messaging` 铺底 + 各自的领域依赖组成。
+   */
+  private createMessaging(): MessageHandlerContext {
+    return {
       send: (ws, msg) => this.broker.send(ws, msg),
       sendError: (ws, code, message, id, details) => this.broker.sendError(ws, code, message, id, details),
       reply: (ws, id, type, payload) => this.broker.reply(ws, id, type, payload),
     }
+  }
+
+  /** 核心 handler 批：bridge / settings / session / extension / plugin（无条件装配）。 */
+  private assembleCoreHandlers(messaging: MessageHandlerContext, optional: RuntimeServerOptionalServices): void {
+    const { auth } = optional
+    // 第二参注入 extensionTimeoutMgr：marker 通道（method 恒 'select'）识别出的 bridge
+    // 请求由 BridgeHandler 入口登记进 bridgeRequestIds（impl-plan 偏差 #5——生产装配点
+    // 必须传，否则前端误发 ui_response 的拦截依据丢失）。
+    this.bridgeHandler = new BridgeHandler(this.pluginService ?? null, this.extensionTimeoutMgr)
     this.settingsHandler = new SettingsMessageHandler({
       ...messaging,
       configService: this.configService,
@@ -273,6 +310,14 @@ export class RuntimeServer implements IMessageBroker {
       ...messaging,
       pluginService: this.pluginService ?? null,
     })
+  }
+
+  /**
+   * 可选 handler 批：git / file / workspace / project / worktree / terminal / quota /
+   * usage / preset——按对应 service 是否注入条件装配，守卫条件与原实现一致。
+   */
+  private assembleOptionalHandlers(messaging: MessageHandlerContext, optional: RuntimeServerOptionalServices): void {
+    const { workspace, project, worktree, terminal, quota, preset } = optional
     if (this.gitService) {
       this.gitMessageHandler = new GitMessageHandler({
         ...messaging,
@@ -343,8 +388,11 @@ export class RuntimeServer implements IMessageBroker {
         presetService: preset,
       })
     }
+  }
 
-    // SessionManagerHandler：agent-managed session 请求处理（select 通道 + SESSION_MANAGER_MARKER）。
+  /** SessionManagerHandler：agent-managed session 请求处理（select 通道 + SESSION_MANAGER_MARKER）。 */
+  private assembleSessionManagerHandler(optional: RuntimeServerOptionalServices): void {
+    const { delivery, workspace } = optional
     // 不走 WS 路由表——由 EventInterpreter.onSessionManagerRequest fire-and-forget 调用。
     // sd-u5：delivery（send 排队投递 + create 直投）必注入——组合根装配 sessionId 单例注册表；
     // 缺省时现场构造无 settled 订阅的退化实例（内核自动退化为退避轮询，D8 兜底），仅兜测试装配遗漏。
@@ -372,11 +420,13 @@ export class RuntimeServer implements IMessageBroker {
         this.broker.broadcastSessionList()
       },
     })
+  }
 
-    // ── Build the central dispatch table (D1) ───────────────────────
-    // ping 内联（无对应 handler）；file.read 已迁入 fileMessageHandler（W2）；settings 走兜底（见 handleMessage）。
-    // git/file handler 可选（取决于 setServices 是否注入对应 service）：捕获到局部变量后判空，
-    // 避免 `?.` 在 .map 闭包内类型收窄失效（async 回调里 TS 不保证 this.gitMessageHandler 未变）。
+  // ── Build the central dispatch table (D1) ───────────────────────
+  // ping 内联（无对应 handler）；file.read 已迁入 fileMessageHandler（W2）；settings 走兜底（见 handleMessage）。
+  // git/file handler 可选（取决于 setServices 是否注入对应 service）：捕获到局部变量后判空，
+  // 避免 `?.` 在 .map 闭包内类型收窄失效（async 回调里 TS 不保证 this.gitMessageHandler 未变）。
+  private buildRoutes(): Map<ClientMessageType, (msg: ClientMessage, ws: WsType) => Promise<unknown> | unknown> {
     const gitHandler = this.gitMessageHandler
     const fileHandler = this.fileMessageHandler
     const workspaceHandler = this.workspaceMessageHandler
@@ -386,7 +436,7 @@ export class RuntimeServer implements IMessageBroker {
     const quotaHandler = this.quotaMessageHandler
     const usageHandler = this.usageMessageHandler
     const presetHandler = this.presetMessageHandler
-    this.routes = new Map([
+    return new Map([
       ['ping', (msg, ws) => this.broker.reply(ws, msg.id, 'pong', {})],
       ['session.compact', (msg, ws) => this.sessionHandler.handleSessionCompact(msg as Extract<ClientMessage, { type: 'session.compact' }>, ws)],
       ...this.sessionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.sessionHandler.handleSessionMessage(msg, ws)] as const),

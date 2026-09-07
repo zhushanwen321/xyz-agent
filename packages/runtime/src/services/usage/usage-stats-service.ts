@@ -33,6 +33,11 @@ interface FileShard {
  */
 type ScanRowResult = UsageRow | 'skip' | null
 
+/** 空分片降级（scanFile 读流失败时返回）：mtime/size 键保留，文件未变更期间不重读。 */
+function emptyShard(fileStat: { mtimeMs: number; size: number }): FileShard {
+  return { mtimeMs: fileStat.mtimeMs, size: fileStat.size, rows: [], skippedLines: 0, cwd: null }
+}
+
 // ── 服务主体 ─────────────────────────────────────────────────
 
 export class UsageStatsService {
@@ -179,15 +184,13 @@ export class UsageStatsService {
         // 其余行 continue
       }
     } catch {
-      // 单文件读失败（流错误/中断）→ 空分片降级，不打断整个聚合（与上方 readdir
-      // 失败返回空结果的容错语义一致）；mtime/size 键保留，下次变更时重读
-      return {
-        mtimeMs: fileStat.mtimeMs,
-        size: fileStat.size,
-        rows: [],
-        skippedLines: 0,
-        cwd: null,
-      }
+      // 单文件读失败 → 空分片降级，不打断整个聚合（与上方 readdir 失败返回空结果的
+      // 容错语义一致）；mtime/size 键保留，下次变更时重读。
+      // 范围声明：本 catch 同时兜住循环体内 rowFrom* 的逻辑异常（非仅流错误）——有意
+      // 取舍，聚合容错优先于显式失败；代价是该文件数据点静默缺失至文件变更。排查
+      // 入口 = 空分片 + skippedLines 归零（收紧为仅流错误须 rethrow 逻辑异常，属行为
+      // 变更另走设计）。
+      return emptyShard(fileStat)
     }
 
     return {

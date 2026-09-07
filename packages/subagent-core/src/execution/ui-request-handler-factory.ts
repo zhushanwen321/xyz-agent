@@ -184,83 +184,111 @@ function sdkTimeoutArg(req: UiRequest): [] | [{ timeout: number }] {
   return isValidDialogTimeout(req.timeout) ? [{ timeout: req.timeout }] : [];
 }
 
+/** 各 method 的默认转发器（表驱动分发；dialog 类 await SDK，fire-and-forget 类同步调用后回 ack）。
+ *  落空（未知 method）语义留在 defaultDialogForward，与原 default 分支逐字节一致。 */
+type DialogMethodForwarder = (req: UiRequest, ui: HostUIChannel) => Promise<UiResponse>;
+
+async function forwardSelect(req: UiRequest, ui: HostUIChannel): Promise<UiResponse> {
+  const selected = await ui.select(req.title ?? "", req.options ?? [], ...sdkTimeoutArg(req));
+  return selected === undefined ? { cancelled: true } : { value: selected };
+}
+
+async function forwardConfirm(req: UiRequest, ui: HostUIChannel): Promise<UiResponse> {
+  // SDK confirm 必传 message（req.message 缺失时降级空串，不报错阻塞）
+  const confirmed = await ui.confirm(req.title ?? "", req.message ?? "", ...sdkTimeoutArg(req));
+  return { confirmed };
+}
+
+async function forwardInput(req: UiRequest, ui: HostUIChannel): Promise<UiResponse> {
+  const text = await ui.input(req.title ?? "", req.placeholder, ...sdkTimeoutArg(req));
+  return text === undefined ? { cancelled: true } : { value: text };
+}
+
+async function forwardEditor(req: UiRequest, ui: HostUIChannel): Promise<UiResponse> {
+  // SDK editor 必填，但部分 host 运行时未实现——try/catch 降级 cancelled + warn（不卡队列）。
+  // 不用 typeof 守卫：editor 在类型上必填，typeof 检查会被 TS2367 拒（条件永假）。
+  try {
+    const text = await ui.editor(req.title ?? "", req.prefill);
+    return text === undefined ? { cancelled: true } : { value: text };
+  } catch (err) {
+    logger.warn(
+      "[subagents] ctx.ui.editor unavailable/threw, returning cancelled",
+      { detail: { id: req.id, error: err instanceof Error ? err.message : String(err) } },
+    );
+    return { cancelled: true };
+  }
+}
+
+// ── fire-and-forget 类（§3.2 映射表：GUI 模式下由 createUiRequestHandlerForMode 直接转发）
+// 子进程 rpc-mode 发出的 fire-and-forget method，channel miss 后落到此处。
+// 全部回 {ack:true}（fire-and-forget 语义：子进程不等响应）。
+
+async function forwardNotify(req: UiRequest, ui: HostUIChannel): Promise<UiResponse> {
+  // notifyType 运行时收窄：UiRequest.notifyType 是宽 string，ctx.ui.notify 要字面量联合。
+  // 非法值 fallback "info"（pi 侧也会静默降级 info，此处显式 fallback 避免类型不安全）。
+  const rawType = req.notifyType;
+  const notifyType = rawType === "info" || rawType === "warning" || rawType === "error"
+    ? rawType
+    : "info";
+  ui.notify(req.message ?? "", notifyType);
+  return { ack: true };
+}
+
+async function forwardSetStatus(req: UiRequest, ui: HostUIChannel): Promise<UiResponse> {
+  ui.setStatus(req.statusKey ?? "", req.statusText);
+  return { ack: true };
+}
+
+async function forwardSetWidget(req: UiRequest, ui: HostUIChannel): Promise<UiResponse> {
+  // setWidget channel-miss 语义（§3.2 D1）：
+  //   req.channel === "gui_widget"（带 marker 但 channel 未注册）→ 不转发（marker 行无渲染意义）
+  //   req.channel === undefined（普通 widget）→ 转发文本行到主 agent
+  // channel 命中 registry 时由 createRealHandler 优先走 channel handler，不进这里。
+  if (req.channel === "gui_widget") {
+    return { ack: true };
+  }
+  ui.setWidget(req.widgetKey ?? "", req.widgetLines, { placement: req.widgetPlacement });
+  return { ack: true };
+}
+
+async function forwardSetTitle(req: UiRequest, ui: HostUIChannel): Promise<UiResponse> {
+  ui.setTitle(req.title ?? "");
+  return { ack: true };
+}
+
+async function forwardSetEditorText(req: UiRequest, ui: HostUIChannel): Promise<UiResponse> {
+  ui.setEditorText(req.text ?? "");
+  return { ack: true };
+}
+
+/** method → 转发器路由表（key 与原 switch case 标签一一对应；值可选表达落空语义）。 */
+const DIALOG_METHOD_FORWARDERS: Readonly<
+  Record<string, DialogMethodForwarder | undefined>
+> = {
+  select: forwardSelect,
+  confirm: forwardConfirm,
+  input: forwardInput,
+  editor: forwardEditor,
+  notify: forwardNotify,
+  setStatus: forwardSetStatus,
+  setWidget: forwardSetWidget,
+  setTitle: forwardSetTitle,
+  set_editor_text: forwardSetEditorText,
+};
+
 async function defaultDialogForward(
   req: UiRequest,
   ctx: HostUIContext,
 ): Promise<UiResponse> {
-  const ui = ctx.ui;
-  switch (req.method) {
-    case "select": {
-      const selected = await ui.select(req.title ?? "", req.options ?? [], ...sdkTimeoutArg(req));
-      return selected === undefined ? { cancelled: true } : { value: selected };
-    }
-    case "confirm": {
-      // SDK confirm 必传 message（req.message 缺失时降级空串，不报错阻塞）
-      const confirmed = await ui.confirm(req.title ?? "", req.message ?? "", ...sdkTimeoutArg(req));
-      return { confirmed };
-    }
-    case "input": {
-      const text = await ui.input(req.title ?? "", req.placeholder, ...sdkTimeoutArg(req));
-      return text === undefined ? { cancelled: true } : { value: text };
-    }
-    case "editor": {
-      // SDK editor 必填，但部分 host 运行时未实现——try/catch 降级 cancelled + warn（不卡队列）。
-      // 不用 typeof 守卫：editor 在类型上必填，typeof 检查会被 TS2367 拒（条件永假）。
-      try {
-        const text = await ui.editor(req.title ?? "", req.prefill);
-        return text === undefined ? { cancelled: true } : { value: text };
-      } catch (err) {
-        logger.warn(
-          "[subagents] ctx.ui.editor unavailable/threw, returning cancelled",
-          { detail: { id: req.id, error: err instanceof Error ? err.message : String(err) } },
-        );
-        return { cancelled: true };
-      }
-    }
-    // ── fire-and-forget 类（§3.2 映射表：GUI 模式下由 createUiRequestHandlerForMode 直接转发）
-    // 子进程 rpc-mode 发出的 fire-and-forget method，channel miss 后落到此处。
-    // 全部回 {ack:true}（fire-and-forget 语义：子进程不等响应）。
-    case "notify": {
-      // notifyType 运行时收窄：UiRequest.notifyType 是宽 string，ctx.ui.notify 要字面量联合。
-      // 非法值 fallback "info"（pi 侧也会静默降级 info，此处显式 fallback 避免类型不安全）。
-      const rawType = req.notifyType;
-      const notifyType = rawType === "info" || rawType === "warning" || rawType === "error"
-        ? rawType
-        : "info";
-      ui.notify(req.message ?? "", notifyType);
-      return { ack: true };
-    }
-    case "setStatus": {
-      ui.setStatus(req.statusKey ?? "", req.statusText);
-      return { ack: true };
-    }
-    case "setWidget": {
-      // setWidget channel-miss 语义（§3.2 D1）：
-      //   req.channel === "gui_widget"（带 marker 但 channel 未注册）→ 不转发（marker 行无渲染意义）
-      //   req.channel === undefined（普通 widget）→ 转发文本行到主 agent
-      // channel 命中 registry 时由 createRealHandler 优先走 channel handler，不进这里。
-      if (req.channel === "gui_widget") {
-        return { ack: true };
-      }
-      ui.setWidget(req.widgetKey ?? "", req.widgetLines, { placement: req.widgetPlacement });
-      return { ack: true };
-    }
-    case "setTitle": {
-      ui.setTitle(req.title ?? "");
-      return { ack: true };
-    }
-    case "set_editor_text": {
-      ui.setEditorText(req.text ?? "");
-      return { ack: true };
-    }
-    default: {
-      // 未知 method（非 dialog 非 fire-and-forget）——保留 warn（协议演进信号，P3 限流兜底），
-      // 回 ack（落到 default 的一定不是 dialog，fire-and-forget 正确应答是 ack，与 TUI 分支先例一致）。
-      logger.warn(
-        "[subagents] defaultDialogForward: unknown method",
-        { detail: { method: req.method, id: req.id } },
-      );
-      return { ack: true };
-    }
+  const forwarder = DIALOG_METHOD_FORWARDERS[req.method];
+  if (!forwarder) {
+    // 未知 method（非 dialog 非 fire-and-forget）——保留 warn（协议演进信号，P3 限流兜底），
+    // 回 ack（落到 default 的一定不是 dialog，fire-and-forget 正确应答是 ack，与 TUI 分支先例一致）。
+    logger.warn(
+      "[subagents] defaultDialogForward: unknown method",
+      { detail: { method: req.method, id: req.id } },
+    );
+    return { ack: true };
   }
+  return forwarder(req, ctx.ui);
 }

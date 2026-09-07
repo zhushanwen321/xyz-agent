@@ -65,6 +65,9 @@ const NOOP_FACTORY: UseQuotaConfigureFactory = () => ({
   cookieInput: ref(''),
   apiKeyInput: ref(''),
   apiKeyConfigured: ref(false),
+  workspaceInput: ref(''),
+  workspaceConfigured: ref(false),
+  needsWorkspace: ref(false),
   testStatus: ref<QuotaTestStatus>('idle'),
   testError: ref(''),
   quotaData: ref<NormalizedQuotaRow | null>(null),
@@ -80,6 +83,7 @@ const NOOP_FACTORY: UseQuotaConfigureFactory = () => ({
   selectFetcher: noopAsync,
   saveCookie: noopAsync,
   saveApiKey: noopAsync,
+  saveWorkspace: noopAsync,
   testQuery: noopAsync,
   reset: () => {},
 })

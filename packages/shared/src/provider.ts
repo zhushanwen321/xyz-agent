@@ -180,6 +180,11 @@ export interface ProviderInfo {
      * 未设置/false = 复用 ProviderInfo.apiKey（provider 的 API Key）。
      */
     apiKeySet?: boolean
+    /**
+     * 资源维度 fetcher（opencode）的 workspace 归一化地址（规范 URL，非凭证可明文回显）。
+     * 未配置 = 查询返回 not_configured（D1-3，timeout-audit-hygiene-batch）。
+     */
+    workspace?: string
   }
 }
 

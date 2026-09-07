@@ -73,7 +73,7 @@ describe("A4 rebuild 后 _runId 稳定（tier-1 §7.1）", () => {
     const runId = await runWorkflow(spec, deps);
     expect(deps.startCalls.length).toBe(1);
 
-    const run = deps.runs.get(runId);
+    const run = deps.runs.get(runId)!;
     expect(run).toBeTruthy();
     expect(run.state.status).toBe("running");
 

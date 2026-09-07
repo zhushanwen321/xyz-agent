@@ -32,6 +32,7 @@ import type { ComputedRef, Ref } from 'vue'
 import type { Segment } from '@xyz-agent/shared'
 import type { BashCommandExtract, StagingAction, StagingConfig } from '../types'
 import type { SendRoute } from './send-route'
+import { toErrorMessage } from '../../../utils/error-message'
 
 /**
  * 本模块视角的最小契约：发送前快照只需 getSegments。
@@ -140,6 +141,126 @@ export interface ComposerSendDeps {
   t: (key: string, params?: Record<string, unknown>) => string
 }
 
+// ── 分流 helper（按优先级阶段提取，deps 显式传参，分支体与原内联实现逐字节一致）──
+
+/**
+ * staging 门 + 路由（priority 1-2）。
+ * 返回：'blocked' = 守卫拦截（结束发送）；'handled' = staging.send 已消费（结束发送）；
+ * 'pass' = 走后续普通链路。
+ */
+async function routeStaging(deps: ComposerSendDeps, text: string): Promise<'blocked' | 'handled' | 'pass'> {
+  // staging 活跃时由 StagingAction 自管 allowsEmptySend（handoff 允许空，fork 不允许）；
+  // 双发锁只看 isSending（staging 发送自身会置位），不拦 isActive——fork-ask 发给新建
+  // session 对源 session 只读，streaming 中合法（handoff 的 streaming 拦截在
+  // handleHandoffSend 的 isSessionActive 兑底，非此处）。非 staging 走原 canSend 守卫。
+  const activeStaging = deps.staging.activeStaging.value
+  const canStagingSend = !!activeStaging && (activeStaging.allowsEmptySend || deps.canSend.value) && !deps.isSending.value
+  if (!deps.canSend.value && !canStagingSend) return 'blocked'
+  // staging 路由：经 useComposerStaging.send → activeStaging.send。仅在有活跃 staging 时取 staging config
+  // 透传（fork/handoff 内部 handleXxxSend 也自取 deps.getStagingConfig，传参与自取等价故实际被忽略）。
+  // 守卫 hasActiveStaging：非 staging 态不调 getStagingConfig（避免测试 mock 未提供该方法时炸 + 语义清晰）。
+  if (deps.staging.hasActiveStaging.value && (await deps.staging.send(text, deps.getStagingConfig()))) return 'handled'
+  return 'pass'
+}
+
+/**
+ * [D6] steer 路由（priority 2，行 2/3）：追加当前回合，不打断。
+ * 判定条件 = route==='steer' ∧ 非 staging ∧ 本地 busy（canSend=false）——真实时序下 turn 活跃必然
+ * 伴随本地视图 busy（streaming 实体 / 乐观 pendingSend），steer 内部 isActive 守卫必过；
+ * 仅毫秒级投影失配窗口（retry/followUp 续跑的 turn-start 先于 message_start 到达，本地
+ * 已收口而投影已 flip generating）会出现 route==='steer' ∧ 本地 idle——此时不进本分支，
+ * 落入下方 direct 流程：useChat.send 的 B 策略内部再裁决（busy→steer）/ idle 直发被拒时
+ * send.rejected 兜底静默入队自愈——不丢输入不丢消息。isSending 期拦（防双发锁失效）。
+ * 命令分流（bash/ /compact）不适用——turn 活跃时命令文本按 steer 消息投递（现状 Enter
+ * isActive→onSteer 同语义，pi 侧 skill 展开处理）。
+ * 返回 true = 已消费（结束发送）。判定先于 canSend 守卫——steer 恰在 canSend 的 isBusy 集内，
+ * 守卫在前会把它拦死。
+ */
+async function routeSteer(deps: ComposerSendDeps, route: SendRoute): Promise<boolean> {
+  if (deps.staging.activeStaging.value || route !== 'steer' || deps.canSend.value) return false
+  if (!deps.hasInput.value || deps.isSending.value) return true
+  const sid = deps.sessionIdRef.value
+  if (!sid) return true
+  // clearInput 会清空 DOM，必须先快照 segments（onSend/submit 同范式）
+  const segments = deps.inputRef.value?.getSegments() ?? []
+  deps.clearInput()
+  await deps.steer(sid, segments)
+  return true
+}
+
+/**
+ * defer 分支（priority 4，行 4/5/6）：占用期（settling / compacting / bash）发送动作改为
+ * 入队待重放（flush 在 occupancy 全 idle 时由 useChat occupancy handler 统一触发——触发源
+ * 不再绑定 session.compacted）。`/` 前缀是命令——占用结束后才能执行，此处拒绝 + toast，
+ * draft 保留不清空。入队语义是重放纯文本（用 draft 而非 segments——segments 含 chip/图片段，
+ * 重放时无 chip 上下文）。
+ */
+function enqueueDuringDefer(deps: ComposerSendDeps, text: string): void {
+  // sessionIdRef 非空性与 defer 路由同源（无 session 的 landing 无 occupancy 记录恒 direct，
+  // 不会进本分支；守卫是防御层）。把不变量局部化，消除 enqueue 处的 `!` 断言。
+  if (!deps.sessionIdRef.value) return
+  // `/` 与 `!`/`!!` 前缀都是命令（slash 命令 / bash 命令）——占用结束后才能执行，
+  // 此处拒绝 + toast，draft 保留不清空。`!` 对称于 `/`：避免 bash 命令被静默降级
+  // 为纯文本入队（重放走普通 send 不会按 bash 执行，用户语义被悄悄改变）。
+  if (text.trim().startsWith('/') || text.trim().startsWith('!')) {
+    deps.toastError(deps.t('panel.composer.commandQueuedRejected'))
+    return
+  }
+  // 先 enqueue 再 clearInput：text 在 onSend 开头已捕获（= draft 当前值），
+  // clearInput 会把 draft 置空，顺序颠倒会入队空字符串。
+  deps.enqueueCompact(deps.sessionIdRef.value, text)
+  deps.clearInput()
+}
+
+/**
+ * landing 首发分支（priority 4）：bash 提取分流（empty=空命令不提交）→ 清输入 →
+ * submitFirstMessage，失败 restoreSegments 回滚。
+ */
+async function sendLandingFirstMessage(deps: ComposerSendDeps, segments: Segment[], text: string): Promise<void> {
+  // landing bash 分流：提取 !/!! 前缀（empty=空命令不提交；not-bash=走普通首发）
+  const bashExtract = deps.composerBash.extractBashCommand(text)
+  if (bashExtract.type === 'empty') return
+  deps.clearInput()
+  deps.isSending.value = true
+  try {
+    // B6：preset 透传走 flow.pendingPreset，不在此读 store 第二真源
+    const bashCommand = bashExtract.type === 'command' ? bashExtract : undefined
+    await deps.flow.submitFirstMessage(segments, deps.localThinkingLevel.value, bashCommand)
+  } catch (e) {
+    deps.restoreSegments(segments)
+    deps.toastError(deps.t('panel.panel.taskFailed', { error: toErrorMessage(e) }))
+  } finally {
+    deps.isSending.value = false
+  }
+}
+
+/**
+ * active 态分支（priority 5-7）：bash 分流（!/!! 前缀，必须在 /compact 前）→ /compact →
+ * 普通发送，失败 restoreSegments 回滚。
+ */
+async function sendActiveMessage(deps: ComposerSendDeps, segments: Segment[], text: string): Promise<void> {
+  if (await deps.composerBash.trySendBash(text)) return
+  const trimmed = text.trim()
+  if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
+    const customInstructions = trimmed.startsWith('/compact ')
+      ? trimmed.slice('/compact '.length).trim() || undefined
+      : undefined
+    deps.clearInput()
+    await deps.compact(deps.sessionIdRef.value!, customInstructions)
+    return
+  }
+  deps.clearInput()
+  deps.isSending.value = true
+  try {
+    await deps.send(deps.sessionIdRef.value!, segments)
+  } catch (e) {
+    deps.restoreSegments(segments)
+    deps.toastError(deps.t('panel.panel.sendFailed', { error: toErrorMessage(e) }))
+  } finally {
+    deps.isSending.value = false
+  }
+}
+
 /**
  * @param deps staging / getStagingConfig / canSend / getSendRoute / draft / inputRef /
  *   sessionIdRef / variantRef / composerBash / clearInput / restoreSegments /
@@ -152,102 +273,33 @@ export function useComposerSend(deps: ComposerSendDeps): { onSend: () => Promise
    * staging > [steer 路由] > canSend 守卫 > staging.send > [defer 路由] > landing（含 bash
    * 检测）> bash(!/!!) > /compact > send。
    * 失败均 restoreSegments 回滚草稿（W8）。
+   *
+   * 各优先级分支提取为模块级 helper（routeSteer / routeStaging / enqueueDuringDefer /
+   * sendLandingFirstMessage / sendActiveMessage），此处只留编排；text 在门检查前捕获
+   * （computed 读纯函数，时序等价）。
    */
   async function onSend(): Promise<void> {
     // [D6] 路由判定先于一切分流（staging 除外——staging 是模式提交，与 occupancy 路由正交，
     // 用户决策 streaming 中 fork 提交合法）。
     const route = deps.getSendRoute()
-    // staging 活跃时由 StagingAction 自管 allowsEmptySend（handoff 允许空，fork 不允许）；
-    // 双发锁只看 isSending（staging 发送自身会置位），不拦 isActive——fork-ask 发给新建
-    // session 对源 session 只读，streaming 中合法（handoff 的 streaming 拦截在
-    // handleHandoffSend 的 isSessionActive 兑底，非此处）。非 staging 走路由 + canSend 守卫。
-    const activeStaging = deps.staging.activeStaging.value
-    const canStagingSend = !!activeStaging && (activeStaging.allowsEmptySend || deps.canSend.value) && !deps.isSending.value
-    // [D6] steer 路由（turn 活跃 = dispatching/generating，行 2/3）：追加当前回合，不打断。
-    // 判定条件 = route==='steer' ∧ 本地 busy（canSend=false）——真实时序下 turn 活跃必然
-    // 伴随本地视图 busy（streaming 实体 / 乐观 pendingSend），steer 内部 isActive 守卫必过；
-    // 仅毫秒级投影失配窗口（retry/followUp 续跑的 turn-start 先于 message_start 到达，本地
-    // 已收口而投影已 flip generating）会出现 route==='steer' ∧ 本地 idle——此时不进本分支，
-    // 落入下方 direct 流程：useChat.send 的 B 策略内部再裁决（busy→steer）/ idle 直发被拒时
-    // send.rejected 兜底静默入队自愈——不丢输入不丢消息。isSending 期拦（防双发锁失效）。
-    // 命令分流（bash/ /compact）不适用——turn 活跃时命令文本按 steer 消息投递（现状 Enter
-    // isActive→onSteer 同语义，pi 侧 skill 展开处理）。
-    if (!activeStaging && route === 'steer' && !deps.canSend.value) {
-      if (!deps.hasInput.value || deps.isSending.value) return
-      const sid = deps.sessionIdRef.value
-      if (!sid) return
-      // clearInput 会清空 DOM，必须先快照 segments（onSend/submit 同范式）
-      const segments = deps.inputRef.value?.getSegments() ?? []
-      deps.clearInput()
-      await deps.steer(sid, segments)
-      return
-    }
-    if (!deps.canSend.value && !canStagingSend) return
+    // [D6] steer 路由（turn 活跃）：追加当前回合——判定先于 canSend 守卫（守卫会拦死 steer）。
+    if (await routeSteer(deps, route)) return
     const text = deps.draft.value
-    // staging 路由：经 useComposerStaging.send → activeStaging.send。仅在有活跃 staging 时取 staging config
-    // 透传（fork/handoff 内部 handleXxxSend 也自取 deps.getStagingConfig，传参与自取等价故实际被忽略）。
-    // 守卫 hasActiveStaging：非 staging 态不调 getStagingConfig（避免测试 mock 未提供该方法时炸 + 语义清晰）。
-    if (deps.staging.hasActiveStaging.value && await deps.staging.send(text, deps.getStagingConfig())) return
+    // staging 门 + canSend 守卫 + staging 路由：'blocked'/'handled' 均结束本次发送
+    if ((await routeStaging(deps, text)) !== 'pass') return
     // [D6] defer 路由（settling / compacting / bash，行 4/5/6）：占用期发送动作改为入队待重放
     // （flush 在 occupancy 全 idle 时由 useChat occupancy handler 统一触发——触发源不再绑定
-    // session.compacted）。`/` 前缀是命令——占用结束后才能执行，此处拒绝 + toast，draft 保留
-    // 不清空。`!` 对称于 `/`：避免 bash 命令被静默降级为纯文本入队（重放走普通 send 不会按
-    // bash 执行，用户语义被悄悄改变）。入队语义是重放纯文本（用 draft 而非 segments——segments
-    // 含 chip/图片段，重放时无 chip 上下文）。
+    // session.compacted）。
     if (route === 'defer') {
-      // sessionIdRef 非空性与 defer 路由同源（无 session 的 landing 无 occupancy 记录恒 direct，
-      // 不会进本分支；守卫是防御层）。把不变量局部化，消除 enqueue 处的 `!` 断言。
-      if (!deps.sessionIdRef.value) return
-      if (text.trim().startsWith('/') || text.trim().startsWith('!')) {
-        deps.toastError(deps.t('panel.composer.commandQueuedRejected'))
-        return
-      }
-      // 先 enqueue 再 clearInput：text 在函数开头已捕获（= draft 当前值），
-      // clearInput 会把 draft 置空，顺序颠倒会入队空字符串。
-      deps.enqueueCompact(deps.sessionIdRef.value, text)
-      deps.clearInput()
+      enqueueDuringDefer(deps, text)
       return
     }
     const segments = deps.inputRef.value?.getSegments() ?? [] // 先快照（clearInput 会清空 DOM）
     if (deps.variantRef.value === 'landing') {
-      // landing bash 分流：提取 !/!! 前缀（empty=空命令不提交；not-bash=走普通首发）
-      const bashExtract = deps.composerBash.extractBashCommand(text)
-      if (bashExtract.type === 'empty') return
-      deps.clearInput()
-      deps.isSending.value = true
-      try {
-        // B6：preset 透传走 flow.pendingPreset，不在此读 store 第二真源
-        const bashCommand = bashExtract.type === 'command' ? bashExtract : undefined
-        await deps.flow.submitFirstMessage(segments, deps.localThinkingLevel.value, bashCommand)
-      } catch (e) {
-        deps.restoreSegments(segments)
-        deps.toastError(deps.t('panel.panel.taskFailed', { error: e instanceof Error ? e.message : String(e) }))
-      } finally {
-        deps.isSending.value = false
-      }
+      await sendLandingFirstMessage(deps, segments, text)
       return
     }
-    // active 态：bash 分流（!/!! 前缀，必须在 /compact 前）+ /compact + 普通发送
-    if (await deps.composerBash.trySendBash(text)) return
-    const trimmed = text.trim()
-    if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
-      const customInstructions = trimmed.startsWith('/compact ')
-        ? trimmed.slice('/compact '.length).trim() || undefined
-        : undefined
-      deps.clearInput()
-      await deps.compact(deps.sessionIdRef.value!, customInstructions)
-      return
-    }
-    deps.clearInput()
-    deps.isSending.value = true
-    try {
-      await deps.send(deps.sessionIdRef.value!, segments)
-    } catch (e) {
-      deps.restoreSegments(segments)
-      deps.toastError(deps.t('panel.panel.sendFailed', { error: e instanceof Error ? e.message : String(e) }))
-    } finally {
-      deps.isSending.value = false
-    }
+    await sendActiveMessage(deps, segments, text)
   }
 
   return { onSend }

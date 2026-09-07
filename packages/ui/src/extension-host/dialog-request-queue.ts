@@ -64,6 +64,13 @@ export interface DialogRequestSource {
    * 返回退订函数。超时出队**不发回传**（继承旧语义：回传会发送过期 ui_response）。
    */
   onUiTimeout(handler: (e: UiTimeoutEvent) => void): () => void
+  /**
+   * 订阅 plugin dialog 超时撤窗事件（timeout-plugin-service D2：runtime 广播
+   * plugin:uiRequestExpired，插件收到 UI_TIMEOUT reject，无替答）。返回退订函数。
+   * 与 onUiTimeout 同为「按 requestId 出队、不发回传」；requestId 无匹配 pending
+   * 时静默忽略（ERR1 幂等——广播无条件发出，未展示/已关闭弹窗的撤窗 miss 走这里）。
+   */
+  onUiRequestExpired(handler: (e: UiTimeoutEvent) => void): () => void
 }
 
 // ── DM2: UiResponseTransport（响应回传注入接口，壳提供实现，单测传 mock） ──
@@ -149,11 +156,16 @@ export function createDialogRequestQueue(
   // ── 订阅（M1 竞态修复：handler 捕获事件 sid，updateFor 写入事件所属分区） ──
   const unsubUiRequest = source.onUiRequest(enqueue)
   const unsubUiTimeout = source.onUiTimeout((e) => dequeueByRequestId(e.sessionId, e.requestId))
+  // D2 超时撤窗：plugin:uiRequestExpired 到达 → 按 (sessionId, requestId) 出队，
+  // 不发回传（插件侧已收 UI_TIMEOUT reject；回传会命中已删 pending 或伪装成用户应答）。
+  // 无匹配 pending 时 dequeueByRequestId 内建静默忽略（ERR1，miss noop 幂等）。
+  const unsubUiRequestExpired = source.onUiRequestExpired((e) => dequeueByRequestId(e.sessionId, e.requestId))
 
   // scope dispose 退订（防 listener 翻倍，项目规则 #2）
   onScopeDispose(() => {
     unsubUiRequest()
     unsubUiTimeout()
+    unsubUiRequestExpired()
   })
 
   /** 当前待响应的请求（队首；null sid 时为 undefined） */

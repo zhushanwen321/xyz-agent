@@ -450,7 +450,7 @@ describe("reconcileIssues", () => {
     const r = reconcileIssues(prev, { seenIds: new Set(), escalateIds: new Set(), round: 2, stuckThreshold: 3 });
     expect(r.issues["MF-1"].status).toBe("fixed");
     expect(r.issues["MF-2"].status).toBe("fixed");
-    expect(r.issues["MF-2"].history.at(-1).status).toBe("fixed");
+    expect(r.issues["MF-2"].history!.at(-1)!.status).toBe("fixed");
     expect(r.stuck).toBe(false);
     expect(r.knownRemaining).toEqual([]);
   });
@@ -495,7 +495,7 @@ describe("reconcileIssues", () => {
     expect(r.issues["MF-1"].status).toBe("regressed");
     expect(r.issues["MF-1"].fixAttempts).toBe(2);
     expect(r.issues["MF-1"].openStreak).toBe(1);
-    expect(r.issues["MF-1"].history.at(-1).status).toBe("regressed");
+    expect(r.issues["MF-1"].history!.at(-1)!.status).toBe("regressed");
     expect(r.stuck).toBe(false);
   });
   it("fixed 未再被报告（未 seen）→ 保持 fixed，不误转 regressed（MF-2）", () => {
@@ -616,7 +616,7 @@ describe("reconcileIssues escalate + fixAttempts 起点", () => {
       { seenIds: [], escalateIds: ["S-1"], round: 3, stuckThreshold: 3 },
     );
     expect(rec.issues["S-1"].status).toBe("open");
-    expect(rec.issues["S-1"].history.at(-1).status).toBe("escalated");
+    expect(rec.issues["S-1"].history!.at(-1)!.status).toBe("escalated");
     expect(rec.knownRemaining).toEqual([]);
   });
   it("deferred 无 escalate → 留 known-remaining", () => {
@@ -1194,8 +1194,8 @@ describe("T-2 端到端：normIssueId/findIssueKey 在 validateFixResult 的真�
 
 // ── T-3：reconcile 新 ID severity:"unknown" 守卫分支 ──────────────────────
 // validateFixResult 的 tracked severity 交叉核对：trackedIssues 中某 ID 的 severity
-// 为 "unknown"（reconcileIssues 给新发现 ID 的默认值，review-fix-loop-utils.cjs:596
-// `severity: "unknown"`）时不覆盖 fix agent 自报 severity——守卫在 cjs:294-299（仅认
+// 为 "unknown"（reconcileIssues 给新发现 ID 的默认值，review-fix-loop-utils.cjs:935
+// `severity: "unknown"`）时不覆盖 fix agent 自报 severity——守卫在 cjs:347-355（仅认
 // critical/major/minor/trivial 为真实等级）。现有 MF-4 测试覆盖了 major/critical/minor
 // tracked + 无此 ID，缺 "unknown" 分支。守卫目的：新发现 ID 的 severity 尚未由 reviewer
 // 结构化确认（reconcile 默认 unknown），不应凭默认值把合法 minor deferral 误升级为违规。
@@ -1791,7 +1791,7 @@ describe("filterDormantFromRecon + applyCleanRoundBackfill 的 dormant 分区", 
     const out = applyCleanRoundBackfill(state, { reconSeen: new Set(["MF-D1"]), reconEscalate: new Set(), round: 2, stuckThreshold: 3 });
     // 过滤生效：MF-D1 不经对账通道建 issue（复活唯一入口 = 聚合活跃重报）
     expect(out.state.issues["MF-D1"]).toBeUndefined();
-    expect(out.state.dormant[0].revived).toBe(false);
+    expect(out.state.dormant![0].revived).toBe(false);
   });
 });
 

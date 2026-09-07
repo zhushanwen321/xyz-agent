@@ -48,9 +48,9 @@ function makeRelease(version = '0.9.0'): LatestReleaseInfo {
     publishedAt: '2025-12-01T00:00:00Z',
     htmlUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/tag/v0.9.0',
     assets: {
-      macArm64Zip: {
-        name: 'xyz-agent-mac-arm64.zip',
-        downloadUrl: 'https://example.com/mac.zip',
+      macArm64Dmg: {
+        name: 'xyz-agent-mac-arm64.dmg',
+        downloadUrl: 'https://example.com/mac.dmg',
         size: 1000,
         sha256: 'a'.repeat(64),
       },
@@ -88,7 +88,7 @@ describe('pending-update (升级提醒持久化标志 SSOT)', () => {
     expect(result!.tagName).toBe('v0.9.0')
     expect(result!.htmlUrl).toBe(release.htmlUrl)
     // assets 字段也完整保留
-    expect(result!.assets.macArm64Zip?.name).toBe('xyz-agent-mac-arm64.zip')
+    expect(result!.assets.macArm64Dmg?.name).toBe('xyz-agent-mac-arm64.dmg')
     // 文件仍存在（读取有效不清除）
     expect(existsSync(PENDING_UPDATE_FILE)).toBe(true)
   })

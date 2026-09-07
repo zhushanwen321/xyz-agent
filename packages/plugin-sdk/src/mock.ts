@@ -84,10 +84,10 @@ export function createMockAgentAPI(): Phase2AgentAPI {
       updateStatusBarItem: noopVoid,
     },
     agent: {
-      setModel: noopVoid,
+      setModel: () => Promise.resolve('mock-model'),
       getModel: () => Promise.resolve('mock-model'),
       getThinkingLevel: () => Promise.resolve('high'),
-      setThinkingLevel: noopVoid,
+      setThinkingLevel: () => Promise.resolve('high'),
       getActiveTools: () => Promise.resolve([]),
     },
     workspace: {

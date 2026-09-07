@@ -64,69 +64,104 @@ export async function migrateLegacyProviderConfig(
     const providers = models.providers ?? {}
 
     for (const [providerId, config] of Object.entries(providers)) {
-      // 只处理 catalog provider
-      if (!isCatalogProvider(providerId)) {
-        report.kept.push(providerId)
-        continue
-      }
-
-      // 只处理有 apiKey 的条目（无 apiKey 的是 override-only 条目，不动）
-      if (!config.apiKey || config.apiKey === '') {
-        report.kept.push(providerId)
-        continue
-      }
-
-      // OAuth 冲突检查
-      try {
-        const existing = await authStorage.get(providerId)
-        if (existing?.type === 'oauth') {
-          report.skipped.push(providerId)
-          continue
-        }
-      } catch (e) {
-        // auth.json 读失败不阻断，继续迁移（秘钥会覆盖写入）：OAuth 冲突检查跳过，
-        // 记 warn 保留可观测性（启动期一次性，无刷屏风险）
-        console.warn('[runtime] legacy migration: read auth.json for OAuth conflict check failed, continuing:', e)
-      }
-
-      try {
-        // 写 apiKey 到 auth.json（A1-4 收口：经 credentialWriter，不再直接持有 authStorage.set）
-        await credentialWriter.saveCredential(providerId, { type: 'api_key', key: config.apiKey as string })
-
-        // 删 models.json 条目（重建不含 apiKey 的配置）
-        const { apiKey: _apiKey, ...rest } = config as Record<string, unknown>
-        // 如果只剩下默认字段（name/api/baseUrl 来自 builtin template），直接删条目
-        // 如果有额外 override 字段 → 保留 override-only 条目
-        // M5-04：hasOverride 判定必须覆盖 models/quota——catalog 条目含 model 级配置
-        //（如 model.enabled 编辑）或 Coding Plan quota 时整条删除会丢用户配置，与 step2
-        //「model 级 enabled 保留不动」承诺冲突。含 models/quota 的条目保留 override-only
-        // 形态（仅删 apiKey），models 级 enabled 由 pi 原生消费。
-        const hasOverride = Object.keys(rest).length > 0 && (
-          rest.baseUrl !== undefined || rest.compat !== undefined || rest.headers !== undefined
-          || rest.models !== undefined || rest.quota !== undefined
-        )
-        if (hasOverride) {
-          configStore.upsertProvider(providerId, rest as ConfigProviderConfig)
-        } else {
-          // 无 override → 删除整个条目，catalog provider 回退 builtin template。
-          // A7：用 removeProvider（功能完整：删条目 + 同步清理 default）替代「写最小条目」变通
-          // （写 {name,api,baseUrl} 会丢失 models/quota 等字段且语义不准）。
-          // removeProvider 若删的是 default 承载 provider 会重选 newDefault 并写回 settings.json，
-          // 运行时 findValidDefaultModel 兜底（catalog provider 仍可用，凭据已正位 auth.json）。
-          configStore.removeProvider(providerId)
-        }
-
-        report.migrated.push(providerId)
-      } catch (e) {
-        report.failed.push(providerId)
-        report.errors.push(`${providerId}: ${e instanceof Error ? e.message : String(e)}`)
-      }
+      await migrateSingleProviderEntry(configStore, authStorage, credentialWriter, report, providerId, config)
     }
   } catch (e) {
     report.errors.push(`migration failed: ${e instanceof Error ? e.message : String(e)}`)
   }
 
   return report
+}
+
+/**
+ * 单条目处理（kept/skipped/migrated/failed 四态分流，原主循环体原样提取）：
+ * catalog + 有 apiKey 才迁移；OAuth 冲突跳过；写凭据/删条目失败进 failed + errors。
+ */
+async function migrateSingleProviderEntry(
+  configStore: IConfigStore,
+  authStorage: Pick<AuthStorage, 'get'>,
+  credentialWriter: CredentialWriter,
+  report: MigrationReport,
+  providerId: string,
+  config: ConfigProviderConfig,
+): Promise<void> {
+  // 只处理 catalog provider
+  if (!isCatalogProvider(providerId)) {
+    report.kept.push(providerId)
+    return
+  }
+
+  // 只处理有 apiKey 的条目（无 apiKey 的是 override-only 条目，不动）
+  if (!config.apiKey || config.apiKey === '') {
+    report.kept.push(providerId)
+    return
+  }
+
+  // OAuth 冲突检查
+  try {
+    const existing = await authStorage.get(providerId)
+    if (existing?.type === 'oauth') {
+      report.skipped.push(providerId)
+      return
+    }
+  } catch (e) {
+    // auth.json 读失败不阻断，继续迁移（秘钥会覆盖写入）：OAuth 冲突检查跳过，
+    // 记 warn 保留可观测性（启动期一次性，无刷屏风险）
+    console.warn('[runtime] legacy migration: read auth.json for OAuth conflict check failed, continuing:', e)
+  }
+
+  try {
+    await migrateCatalogApiKey(configStore, credentialWriter, providerId, config)
+
+    report.migrated.push(providerId)
+  } catch (e) {
+    report.failed.push(providerId)
+    report.errors.push(`${providerId}: ${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
+/**
+ * catalog 条目的 apiKey 迁移落盘：写 auth.json + 按 override 有无删条目/保留 override-only 条目。
+ * 抛错由调用方 catch（failed + errors）。
+ */
+async function migrateCatalogApiKey(
+  configStore: IConfigStore,
+  credentialWriter: CredentialWriter,
+  providerId: string,
+  config: ConfigProviderConfig,
+): Promise<void> {
+  // 写 apiKey 到 auth.json（A1-4 收口：经 credentialWriter，不再直接持有 authStorage.set）
+  await credentialWriter.saveCredential(providerId, { type: 'api_key', key: config.apiKey as string })
+
+  // 删 models.json 条目（重建不含 apiKey 的配置）
+  const { apiKey: _apiKey, ...rest } = config as Record<string, unknown>
+  if (hasNonDefaultOverride(rest)) {
+    configStore.upsertProvider(providerId, rest as ConfigProviderConfig)
+  } else {
+    // 无 override → 删除整个条目，catalog provider 回退 builtin template。
+    // A7：用 removeProvider（功能完整：删条目 + 同步清理 default）替代「写最小条目」变通
+    // （写 {name,api,baseUrl} 会丢失 models/quota 等字段且语义不准）。
+    // removeProvider 若删的是 default 承载 provider 会重选 newDefault 并写回 settings.json，
+    // 运行时 findValidDefaultModel 兜底（catalog provider 仍可用，凭据已正位 auth.json）。
+    configStore.removeProvider(providerId)
+  }
+}
+
+/**
+ * 非 builtin template 默认字段（name/api/baseUrl）的 override 判定。
+ *
+ * 如果只剩下默认字段（name/api/baseUrl 来自 builtin template），直接删条目；
+ * 如果有额外 override 字段 → 保留 override-only 条目。
+ * M5-04：hasOverride 判定必须覆盖 models/quota——catalog 条目含 model 级配置
+ *（如 model.enabled 编辑）或 Coding Plan quota 时整条删除会丢用户配置，与 step2
+ *「model 级 enabled 保留不动」承诺冲突。含 models/quota 的条目保留 override-only
+ * 形态（仅删 apiKey），models 级 enabled 由 pi 原生消费。
+ */
+function hasNonDefaultOverride(rest: Record<string, unknown>): boolean {
+  return Object.keys(rest).length > 0 && (
+    rest.baseUrl !== undefined || rest.compat !== undefined || rest.headers !== undefined
+    || rest.models !== undefined || rest.quota !== undefined
+  )
 }
 
 /**

@@ -22,7 +22,7 @@ import type { SessionEntryPort } from '../api-port'
 
 /** 构造 SessionSummary 最小形状（类型收窄后字段由测试按需给全） */
 function summary(id: string, cwd = '/a'): SessionSummary {
-  return { id, label: `label-${id}`, cwd, status: 'idle', lastActiveAt: 1, modelId: '' }
+  return { id, label: `label-${id}`, cwd, status: 'idle', lastActiveAt: 1, modelId: '', tokenCount: 0 }
 }
 
 function makeHooks(log: string[]): SessionCleanupHooks & Record<string, ReturnType<typeof vi.fn>> {
@@ -63,6 +63,7 @@ interface Fixture {
     getHistory: ReturnType<typeof vi.fn>
     isHydrated: ReturnType<typeof vi.fn>
     hydrate: ReturnType<typeof vi.fn>
+    reconcileHistory: ReturnType<typeof vi.fn>
     setHistoryTruncated: ReturnType<typeof vi.fn>
     clearHistoryError: ReturnType<typeof vi.fn>
     markHistoryFailed: ReturnType<typeof vi.fn>
@@ -647,7 +648,7 @@ describe('bindSessionListBroadcast refCount', () => {
     expect(apiA.onConfigSessions).toHaveBeenCalledTimes(1)
 
     // handler 主动 emit 分组 → 实例 A 的 store 更新
-    capturedHandler?.([{ cwd: '/a', sessions: [summary('s1')] }])
+    capturedHandler!([{ cwd: '/a', sessions: [summary('s1')] }])
     expect(storeA.groups.value).toHaveLength(1)
 
     // A 销毁（count 2→1 不退订）

@@ -102,16 +102,86 @@ function parseRawString(node: Node): string | null {
 }
 
 /**
- * 从一个 command 节点提取 argv（对应 Rust parse_plain_command_from_node）。
+ * command_name 分支：其第一个 named child 必须是 word，取文本；否则 null。
+ */
+function parseCommandName(child: Node): string | null {
+	const wordNode = child.namedChild(0);
+	if (!wordNode || wordNode.type !== "word") {
+		return null;
+	}
+	return wordNode.text;
+}
+
+/**
+ * concatenation 分支（如 -g"*.py" 或 '/usr'"/"'local'/bin）：
+ * 递归拼接各 part（word/number/string/raw_string），空拼接结果 → null。
+ */
+function parseConcatenation(child: Node): string | null {
+	let concatenated = "";
+	for (const part of child.namedChildren) {
+		switch (part.type) {
+			case "word":
+			case "number":
+				concatenated += part.text;
+				break;
+			case "string": {
+				const parsed = parseDoubleQuotedString(part);
+				if (parsed === null) return null;
+				concatenated += parsed;
+				break;
+			}
+			case "raw_string": {
+				const parsed = parseRawString(part);
+				if (parsed === null) return null;
+				concatenated += parsed;
+				break;
+			}
+			default:
+				return null;
+		}
+	}
+	if (concatenated.length === 0) {
+		return null;
+	}
+	return concatenated;
+}
+
+/**
+ * 解析 command 的单个 named child 为一个 argv token（分发表）。
  *
- * 5 分支处理 named children：
- *  1. command_name → 其第一个 named child 必须是 word，取文本
+ * 5 分支：
+ *  1. command_name → parseCommandName（第一个 named child 必须是 word）
  *  2. word | number → 直接取文本
  *  3. string → parseDoubleQuotedString（含 expansion 则 null）
  *  4. raw_string → parseRawString
- *  5. concatenation（如 -g"*.py"）→ 递归拼接各 part（word/number/string/raw_string）
+ *  5. concatenation → parseConcatenation
  *
- * 任一分支失败 → 返回 null（该 command 被跳过，但 clean 已在 DFS 阶段被置 false）。
+ * 未知 named child（不应发生 —— DFS 阶段已拒，但保险起见 fail-closed）→ null。
+ * 失败 → 调用方让整个 command 返回 null（该 command 被跳过，但 clean 已在 DFS 阶段被置 false）。
+ */
+function parseChildToken(child: Node): string | null {
+	switch (child.type) {
+		case "command_name":
+			return parseCommandName(child);
+		case "word":
+		case "number":
+			return child.text;
+		case "string":
+			return parseDoubleQuotedString(child);
+		case "raw_string":
+			return parseRawString(child);
+		case "concatenation":
+			return parseConcatenation(child);
+		default:
+			return null;
+	}
+}
+
+/**
+ * 从一个 command 节点提取 argv（对应 Rust parse_plain_command_from_node）。
+ *
+ * 主函数编排：类型守卫 → 逐 named child 分发（parseChildToken）→ 组装 words。
+ * 任一 child 解析失败 → 返回 null。
  */
 function parsePlainCommand(cmd: Node): string[] | null {
 	if (cmd.type !== "command") {
@@ -120,71 +190,11 @@ function parsePlainCommand(cmd: Node): string[] | null {
 
 	const words: string[] = [];
 	for (const child of cmd.namedChildren) {
-		switch (child.type) {
-			case "command_name": {
-				const wordNode = child.namedChild(0);
-				if (!wordNode || wordNode.type !== "word") {
-					return null;
-				}
-				words.push(wordNode.text);
-				break;
-			}
-			case "word":
-			case "number": {
-				words.push(child.text);
-				break;
-			}
-			case "string": {
-				const parsed = parseDoubleQuotedString(child);
-				if (parsed === null) {
-					return null;
-				}
-				words.push(parsed);
-				break;
-			}
-			case "raw_string": {
-				const parsed = parseRawString(child);
-				if (parsed === null) {
-					return null;
-				}
-				words.push(parsed);
-				break;
-			}
-			case "concatenation": {
-				// 拼接如 -g"*.py" 或 '/usr'"/"'local'/bin
-				let concatenated = "";
-				for (const part of child.namedChildren) {
-					switch (part.type) {
-						case "word":
-						case "number":
-							concatenated += part.text;
-							break;
-						case "string": {
-							const parsed = parseDoubleQuotedString(part);
-							if (parsed === null) return null;
-							concatenated += parsed;
-							break;
-						}
-						case "raw_string": {
-							const parsed = parseRawString(part);
-							if (parsed === null) return null;
-							concatenated += parsed;
-							break;
-						}
-						default:
-							return null;
-					}
-				}
-				if (concatenated.length === 0) {
-					return null;
-				}
-				words.push(concatenated);
-				break;
-			}
-			default:
-				// 未知 named child（不应发生 —— DFS 阶段已拒，但保险起见 fail-closed）
-				return null;
+		const token = parseChildToken(child);
+		if (token === null) {
+			return null;
 		}
+		words.push(token);
 	}
 	return words;
 }

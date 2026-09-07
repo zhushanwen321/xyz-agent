@@ -3,7 +3,11 @@
  *
  * 覆盖面：组件 script / template 表达式的 ops 访问拦截（message 指向 facet SSOT）、
  * readers 字段放行、非组件文件放行（composable .ts / 组件目录外 .vue）、工厂直调、
- * 工厂包装（含声明晚于使用点的词法序陷阱）、无 import 边同名变量放行。
+ * 工厂包装（含声明晚于使用点的词法序陷阱）、无 import 边同名变量放行；三个 visitor
+ * 的正反用例——create 文件域 gate（.spec/.test.vue 测试壳）、ImportDeclaration
+ * （createChatStore/core 深路径激活、import type 与非 store source 放行）、
+ * ReturnStatement / 表达式体箭头（FunctionExpression / 对象方法 / 箭头工厂命中、
+ * return 非 store 放行）。
  * vitest + eslint Linter 直挂规则（no-instance-level-session-state.test.mjs 同款跑法），
  * parser 与 taste-lint/vue.mjs 同构：vue-eslint-parser 外层 + typescript-eslint 内层。
  * 运行：npx vitest run taste-lint（仓库根）
@@ -163,4 +167,122 @@ test('组件 __tests__ 下的 .vue 测试壳放行', () => {
     'packages/renderer/src/components/panel/__tests__/probe.vue',
   );
   expect(messages).toHaveLength(0);
+});
+
+test('组件目录下 .spec.vue / .test.vue 命名文件放行', () => {
+  for (const filename of [
+    'packages/renderer/src/components/panel/probe.spec.vue',
+    'packages/renderer/src/components/panel/probe.test.vue',
+  ]) {
+    const messages = lintVue(
+      sfc([
+        "import { useChatStore } from '@/stores/chat'",
+        'const chat = useChatStore()',
+        'chat.evictIfNeeded()',
+      ].join('\n')),
+      filename,
+    );
+    expect(messages, filename).toHaveLength(0);
+  }
+});
+
+// —— ImportDeclaration visitor 正反用例 ——
+
+test('ImportDeclaration：core 包出口 import createChatStore 激活工厂', () => {
+  const messages = lintVue(
+    sfc([
+      "import { createChatStore } from '@xyz-agent/core'",
+      'const chat = createChatStore()',
+      'chat.disposeSession("s1")',
+    ].join('\n')),
+  );
+  expect(messages).toHaveLength(1);
+  expect(messages[0].message).toContain('disposeSession');
+});
+
+test('ImportDeclaration：core 深路径 import 同样激活工厂', () => {
+  const messages = lintVue(
+    sfc([
+      "import { useChatStore } from '@xyz-agent/core/domain/chat/store'",
+      'useChatStore().abortPending("s1")',
+    ].join('\n')),
+  );
+  expect(messages).toHaveLength(1);
+  expect(messages[0].message).toContain('abortPending');
+});
+
+test('ImportDeclaration：import type 形态不激活工厂', () => {
+  const messages = lintVue(
+    sfc([
+      "import type { useChatStore } from '@/stores/chat'",
+      'const chat = useChatStore()',
+      'chat.evictIfNeeded()',
+    ].join('\n')),
+  );
+  expect(messages).toHaveLength(0);
+});
+
+test('ImportDeclaration：非 store source 的同名 import 不激活工厂', () => {
+  const messages = lintVue(
+    sfc([
+      "import { useChatStore } from '@/lib/somewhere-else'",
+      'const chat = useChatStore()',
+      'chat.evictIfNeeded()',
+    ].join('\n')),
+  );
+  expect(messages).toHaveLength(0);
+});
+
+// —— ReturnStatement / ArrowFunctionExpression visitor 正反用例 ——
+
+test('ReturnStatement：const FunctionExpression 工厂包装命中', () => {
+  const messages = lintVue(
+    sfc([
+      "import { useChatStore } from '@/stores/chat'",
+      'const grab = function () { return useChatStore() }',
+      'const chat = grab()',
+      'chat.clearPendingSend("s1")',
+    ].join('\n')),
+  );
+  expect(messages).toHaveLength(1);
+  expect(messages[0].message).toContain('clearPendingSend');
+});
+
+test('ReturnStatement：对象方法工厂经解构调用命中', () => {
+  const messages = lintVue(
+    sfc([
+      "import { useChatStore } from '@/stores/chat'",
+      'const holders = { grab() { return useChatStore() } }',
+      'const { grab } = holders',
+      'const chat = grab()',
+      'chat.setHandingOff("s1", true)',
+    ].join('\n')),
+  );
+  expect(messages).toHaveLength(1);
+  expect(messages[0].message).toContain('setHandingOff');
+});
+
+test('ReturnStatement：return 非 store 表达式的包装函数放行', () => {
+  const messages = lintVue(
+    sfc([
+      "import { useChatStore } from '@/stores/chat'",
+      'function grab() { return { evictIfNeeded: () => 1 } }',
+      'const chat = grab()',
+      'chat.evictIfNeeded()',
+    ].join('\n')),
+  );
+  expect(messages).toHaveLength(0);
+});
+
+test('表达式体箭头工厂（声明晚于使用点）命中——Program:exit 词法序消解', () => {
+  const messages = lintVue(
+    sfc([
+      "import { useChatStore } from '@/stores/chat'",
+      'const chat = grab()',
+      'chat.markSessionError("s1", new Error("x"))',
+      'const grab = () => useChatStore()',
+    ].join('\n')),
+  );
+  expect(messages).toHaveLength(1);
+  expect(messages[0].message).toContain('markSessionError');
 });

@@ -60,7 +60,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 const { loggerMock, runSpawnMock } = vi.hoisted(() => ({
   loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
@@ -125,7 +125,12 @@ interface SettledDriver {
   emitAgentSettled(): Promise<void>;
 }
 
-function settledCapture(): { driver: SettledDriver; on: ReturnType<typeof vi.fn> } {
+// on/sendMessage 给显式 Mock 签名：vi.fn() 默认 Mock<Procedure | Constructable>
+// 不可赋给 PiLike 的具名方法签名（PiLike 结构兼容要求参数可逆变）
+function settledCapture(): {
+  driver: SettledDriver;
+  on: Mock<(event: string, handler: () => void | Promise<void>) => void>;
+} {
   const handlers: Array<() => void | Promise<void>> = [];
   return {
     driver: {
@@ -158,7 +163,7 @@ function makeWritingPi(mainFile: string) {
       );
     }),
     events: { emit: vi.fn() },
-    sendMessage: vi.fn(),
+    sendMessage: vi.fn((_m: unknown, _o?: unknown) => {}),
     on,
     emitAgentSettled: driver.emitAgentSettled,
   };
@@ -170,7 +175,7 @@ function makeAssertPi() {
   return {
     appendEntry: vi.fn(),
     events: { emit: vi.fn() },
-    sendMessage: vi.fn(),
+    sendMessage: vi.fn((_m: unknown, _o?: unknown) => {}),
     on,
     emitAgentSettled: driver.emitAgentSettled,
   };
@@ -180,8 +185,9 @@ type AssertPi = ReturnType<typeof makeAssertPi>;
 type WritingPi = ReturnType<typeof makeWritingPi>;
 
 interface NotifierSpy {
-  notify: ReturnType<typeof vi.fn>;
-  notifyBatch: ReturnType<typeof vi.fn>;
+  // Mock<T> 而非纯函数签名：测试断言消费 .mock.calls，需保留 mock 元数据
+  notify: Mock<(record: unknown) => void>;
+  notifyBatch: Mock<(records: unknown, budget?: unknown) => boolean>;
 }
 
 function spyNotifier(service: SubagentService): NotifierSpy {

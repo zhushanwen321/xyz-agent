@@ -10,8 +10,9 @@
  *         （markImportedFresh；数秒后淡出移除——设计 §3.1 / demo doImport 时序）
  *
  * mock 策略对齐 sidebar-assign-project-wiring.test.ts 范式（Sidebar.vue 整体 mount 依赖
- * 10+ store/composable，shallowMount + store/composable mock）。差异点：Button 用显式
- * slot stub（默认 shallow stub 不渲染 slot 文本，无法断言 nav 内按钮顺序/文案）；ImportSessionDialog
+ * 10+ store/composable，shallowMount + store/composable mock），mock 段收敛
+ * __tests__/helpers/sidebar-mount.ts 两文件共享单源。差异点：Button 用显式 slot stub
+ * （默认 shallow stub 不渲染 slot 文本，无法断言 nav 内按钮顺序/文案）；ImportSessionDialog
  * 保持默认 stub（不执行其内部 RPC 链路，只断言 props 接线）。
  *
  * 监听器泄漏防护：useGlobalShortcuts 的 window keydown 监听挂 effect scope（unmount 才解绑），
@@ -25,114 +26,43 @@ import { createPinia, setActivePinia } from 'pinia'
 import { shallowMount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
-// ── mock useToast（Sidebar setup 期读取 error）──
-vi.mock('@/composables/useToast', () => ({
-  useToast: () => ({ error: vi.fn(), info: vi.fn(), warning: vi.fn() }),
-}))
+import {
+  chatComposableModule,
+  commandStoreModule,
+  fileTreeStoreModule,
+  navigationStoreModule,
+  panelStoreModule,
+  platformShortcutModule,
+  sessionDerivationsModule,
+  sessionStoreModule,
+  sidebarStoreModule,
+  sidebarSubagentActionsModule,
+  subagentListSyncModule,
+  subagentStoreModule,
+  toastModule,
+  useSidebarModule,
+  workflowListSyncModule,
+  workflowStoreModule,
+} from '../helpers/sidebar-mount'
 
-// ── mock useSidebar（focusedSessionId/focusedSession 必须真实 Vue ref，
-//    否则模板传对象给 String|Null 子组件触发 Invalid prop 警告，同既有范式注释）──
-const sidebarMocks = vi.hoisted(() => ({
-  selectSession: vi.fn(),
-  deleteSession: vi.fn(),
-  deleteFolder: vi.fn(),
-  renameSession: vi.fn(),
-  newSession: vi.fn(),
-  goOverview: vi.fn(),
-  loadSessions: vi.fn(() => Promise.resolve()),
-  syncSessionToPanel: vi.fn(),
-  assignSessionToProject: vi.fn(),
-  restoreSession: vi.fn(),
-  forkFromLastAssistant: vi.fn(),
-  enterForkModeFromLastAssistant: vi.fn(),
-  handoffFromLastAssistant: vi.fn(),
-}))
-vi.mock('@/composables/features/sidebar/useSidebar', async () => {
-  const { ref } = await import('vue')
-  return {
-    useSidebar: () => ({
-      ...sidebarMocks,
-      focusedSessionId: ref<string | null>(null),
-      focusedSession: ref(null),
-    }),
-  }
-})
-
-// ── mock stores（Sidebar setup 期读取）──
-vi.mock('@/stores/sidebar', () => ({
-  useSidebarStore: () => ({ collapsed: false, activeTab: 'sessions', toggleCollapsed: vi.fn() }),
-}))
-vi.mock('@/stores/session', () => ({
-  useSessionStore: () => ({ groups: [], list: [], activeId: null, applySnapshot: vi.fn(), listLoadError: null, setListLoadError: vi.fn() }),
-}))
-vi.mock('@/stores/fileTree', () => ({
-  useFileTreeStore: () => ({ fileCount: 0, getTree: () => null }),
-}))
-vi.mock('@/stores/panel', async () => {
-  const { ref } = await import('vue')
-  return {
-    usePanelStore: () => ({
-      currentLeaf: { type: 'panel', id: 'panel-root', sessionId: null },
-      activePanelId: 'panel-root',
-      focusedSessionId: ref<string | null>(null),
-      findPanelBySession: () => null,
-      loadSession: vi.fn(),
-    }),
-  }
-})
-vi.mock('@/stores/subagent', () => ({
-  useSubagentStore: () => ({
-    recordsOf: () => ({ value: [] }),
-    getRecordsBySession: () => [],
-    isLoading: false,
-    loadError: null,
-  }),
-}))
-vi.mock('@/stores/workflow', () => ({
-  useWorkflowStore: () => ({
-    recordsOf: () => ({ value: [] }),
-    getRecordsBySession: () => [],
-    isLoading: false,
-    loadError: null,
-    workflowCount: () => 0,
-    getCurrentWorkflow: () => null,
-    selectWorkflow: vi.fn(),
-    backToWorkflowList: vi.fn(),
-    loadWorkflows: vi.fn(() => Promise.resolve()),
-    selectAgentCall: vi.fn(() => Promise.resolve()),
-    backFromAgentCall: vi.fn(),
-  }),
-}))
-vi.mock('@/stores/navigation', () => ({
-  useNavigationStore: () => ({ push: vi.fn(), current: { value: { view: 'chat' } }, stack: [] }),
-}))
-vi.mock('@/composables/features/command/useCommandStore', () => ({
-  useCommandStore: () => ({
-    appCommands: { value: [] },
-    shortcutOverrides: { value: {} },
-    pendingSlash: { value: null },
-    clearPendingSlash: vi.fn(),
-  }),
-}))
-
-// ── mock composables ──
-vi.mock('@/composables/features/chat/useChat', () => ({ useChat: () => ({ abort: vi.fn() }) }))
-vi.mock('@/composables/features/chat/useSessionDerivations', () => ({
-  useSessionDerivations: () => ({ derivedStatus: () => ({ value: 'done' }) }),
-}))
-vi.mock('@/composables/features/chat/useSubagentListSync', () => ({ useSubagentListSync: vi.fn() }))
-vi.mock('@/composables/features/chat/useWorkflowListSync', () => ({ useWorkflowListSync: vi.fn() }))
-vi.mock('@/composables/features/sidebar/useSidebarSubagentActions', () => ({
-  useSidebarSubagentActions: () => ({ onSelectSubagent: vi.fn(), onCancelSubagent: vi.fn(), onRetrySubagents: vi.fn() }),
-}))
-vi.mock('@/composables/usePlatformShortcut', () => ({ usePlatformShortcut: () => ({ formatKbd: () => '⌘K' }) }))
-
-// ── mock api/events（onMounted 的 loadSessions / app.info 订阅）──
-vi.mock('@/api/events', () => ({
-  onGlobalType: vi.fn(() => () => {}),
-  dispatchSession: vi.fn(),
-  dispatchGlobal: vi.fn(),
-}))
+vi.mock('@/composables/useToast', () => toastModule())
+vi.mock('@/composables/features/sidebar/useSidebar', () => useSidebarModule())
+vi.mock('@/stores/sidebar', () => sidebarStoreModule())
+vi.mock('@/stores/session', () => sessionStoreModule({ includeSetListLoadError: true }))
+vi.mock('@/stores/fileTree', () => fileTreeStoreModule())
+vi.mock('@/stores/panel', () => panelStoreModule())
+vi.mock('@/stores/subagent', () => subagentStoreModule())
+vi.mock('@/stores/workflow', () => workflowStoreModule())
+vi.mock('@/stores/navigation', () => navigationStoreModule())
+vi.mock('@/composables/features/command/useCommandStore', () => commandStoreModule())
+vi.mock('@/composables/features/chat/useChat', () => chatComposableModule())
+vi.mock('@/composables/features/chat/useSessionDerivations', () => sessionDerivationsModule())
+vi.mock('@/composables/features/chat/useSubagentListSync', () => subagentListSyncModule())
+vi.mock('@/composables/features/chat/useWorkflowListSync', () => workflowListSyncModule())
+vi.mock('@/composables/features/sidebar/useSidebarSubagentActions', () => sidebarSubagentActionsModule())
+vi.mock('@/composables/usePlatformShortcut', () => platformShortcutModule())
+// 注：原版此处另有 vi.mock('@/api/events', ...)——'@/api/events' 模块不存在（Sidebar 实际
+// import '@xyz-agent/core/transport/api'，见 Sidebar.vue:248），该 mock 从未命中，已删除。
 
 import Sidebar from '@/components/sidebar/Sidebar.vue'
 import ImportSessionDialog from '@/components/sidebar/ImportSessionDialog.vue'

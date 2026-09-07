@@ -139,7 +139,8 @@ function resurrectColdRecord(
   // 执行流完整保留）；准入唯一依据 = A 档 sidecar 真实死因 ∈ 可重连集。死亡语义位由
   // resurrectClosed 清除；register 后立刻上报 transition entry，live/reload 视图同步
   // 翻回 running（等价性由 applyEntry reducer 保证，对齐 SP-2 重建即报告先例）。
-  if (found.status !== "running") {
+  const wasClosed = found.status !== "running";
+  if (wasClosed) {
     // [review MF-8] 磁盘终态位同步翻转：record-store buildRecord 分支 2（.finalized
     // 存在 → closed）优先级高于 .alive 活态分支 3，重生若不删 sidecar，任何磁盘扫描
     // （异进程 / reload / session-reader）都会把本进程内存里 running 的 record 报成
@@ -156,7 +157,7 @@ function resurrectColdRecord(
     resurrectClosed(record);
   }
   deps.register(record);
-  if (found.status !== "running") {
+  if (wasClosed) {
     deps.reportRecordTransition(record);
   }
   return record;

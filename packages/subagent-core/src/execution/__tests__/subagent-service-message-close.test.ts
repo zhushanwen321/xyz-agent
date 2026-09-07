@@ -96,7 +96,7 @@ function setup(): {
   pi: MockPi;
 } {
   const agentDir = makeTmpAgentDir();
-  const modelService = new ModelConfigService({ agentDir });
+  const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
   const service = new SubagentService({ cwd: agentDir, modelService });
   // [C2] pi 提为外层引用（对照 real-chain :139-140 形态）——close 现状语义断言需读
   // pi.sendMessage.mock.calls（末条通知 content 指针行），内联构造不保留引用。

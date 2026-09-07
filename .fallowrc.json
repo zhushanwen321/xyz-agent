@@ -6,8 +6,54 @@
   "ignoreExports": [
     {
       "file": "extensions/shared/file-lock/src/file-lock.ts",
-      "exports": ["DEFAULT_RETRY_BUDGET_MS", "DEFAULT_RETRY_DELAY_MS", "DEFAULT_STALE_MS", "SyncFileLockOptions", "withFileLockSync"]
+      "exports": [
+        "DEFAULT_RETRY_BUDGET_MS",
+        "DEFAULT_RETRY_DELAY_MS",
+        "DEFAULT_STALE_MS",
+        "SyncFileLockOptions",
+        "withFileLockSync"
+      ]
+    },
+    {
+      "file": "extensions/universal/subagent-workflow/src/interface/subagent-actions.ts",
+      "exports": [
+        "*"
+      ]
+    },
+    {
+      "file": "packages/core/src/domain/chat/store.ts",
+      "exports": [
+        "_FacetCoversAllKeys",
+        "_FacetsDisjoint"
+      ]
+    },
+    {
+      "file": "packages/renderer/src/stores/chat.ts",
+      "exports": [
+        "DEFAULT_STREAMING_IDLE_TIMEOUT_MS"
+      ]
+    },
+    {
+      "file": "packages/runtime/src/infra/pi/session-file-utils.ts",
+      "exports": [
+        "persistBindingSidecar",
+        "readBindingSidecar"
+      ]
+    },
+    {
+      "file": "packages/runtime/src/services/plugin-service/plugin-types.ts",
+      "exports": [
+        "*"
+      ]
     }
+  ],
+  "ignoreDependencies": [
+    "node-pty",
+    "@xyz-agent/frontend",
+    "@xyz-agent/runtime"
+  ],
+  "usedClassMembers": [
+    "getStreamSink"
   ],
   "health": {
     "maxCyclomatic": 15,
@@ -44,5 +90,8 @@
   },
   "audit": {
     "gate": "new-only"
-  }
+  },
+  "ignoreUnresolvedImports": [
+    "./helpers/rpc-client-mock"
+  ]
 }

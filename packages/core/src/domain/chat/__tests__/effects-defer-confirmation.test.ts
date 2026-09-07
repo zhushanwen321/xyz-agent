@@ -45,9 +45,9 @@ function makeCtx(): MessageEffectContext & { inflightOf: () => number } {
     finalizeSession: vi.fn(),
     clearPendingSend: vi.fn(),
     armStreamingTimer: vi.fn(),
-    armBashTimer: vi.fn(),
-    clearBashTimer: vi.fn(),
-    drainN: vi.fn(() => [] as Segment[]),
+    takePrematureTimeoutIds: vi.fn((_sid: string) => new Set<string>() as ReadonlySet<string>),
+    clearPrematureTimeoutIds: vi.fn(),
+    drainN: vi.fn(() => [] as Segment[][]),
     reconcilePending: vi.fn(),
     appendUser: vi.fn(),
     applyEntryFrame: vi.fn(),
@@ -84,6 +84,7 @@ function makeQueue(initial: CompactQueueEntrySnapshot[] = []): CompactQueueLike 
       return e
     }),
     peek: vi.fn((_sid: string) => entries.map((m) => ({ ...m }))),
+    hasPending: vi.fn((_sid: string) => entries.length > 0),
     confirmDelivery: vi.fn((sid: string, id: string) => {
       if (failConfirmIds.has(id)) return false
       const idx = entries.findIndex((m) => m.id === id)

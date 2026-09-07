@@ -105,7 +105,7 @@ function runWorker(userScript: string, opts: RunOptions = {}): Promise<RunResult
     worker.on("message", (raw: unknown) => {
       if (isAgentCall(raw)) {
         result.agentCallCount += 1;
-        opts.onAgentCall?.(raw as { callId: number; opts: Record<string, unknown> }, worker);
+        opts.onAgentCall?.(raw as unknown as { callId: number; opts: Record<string, unknown> }, worker);
         return;
       }
       if (isReturn(raw)) {

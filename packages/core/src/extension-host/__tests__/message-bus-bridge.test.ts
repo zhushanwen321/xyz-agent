@@ -415,7 +415,7 @@ describe('MessageBusBridge', () => {
       // 旧行为（整包 null 丢弃）已改造：单条坏值不再连坐其余条目
       expect(result).not.toBeNull()
       expect(result?.kind).toBe('plugin-status-bar-update')
-      expect(result?.items.map((i) => i.id)).toEqual(['good1', 'good2'])
+      expect(((result ?? {}) as { items?: Array<{ id: string }> }).items?.map((i) => i.id)).toEqual(['good1', 'good2'])
     })
 
     it('CT-D5 经 bridge 完整链路：坏条目跳过、好条目正常上屏、不 emit error', () => {
@@ -434,6 +434,16 @@ describe('MessageBusBridge', () => {
       expect(e).toBeDefined()
       expect((e as { items: Array<{ id: string }> }).items.map((i) => i.id)).toEqual(['good1'])
       expect(emitted.some((x) => x.kind === 'error')).toBe(false)
+    })
+
+    it('CT-D5 非 object 条目（string/null/number）同样跳过该条，保留其余条目', () => {
+      // 覆盖逐条窄化的 asRecord 落空分支（坏条目不只是字段缺失，还可能是非 object 值）
+      const result = parseStatusBarUpdate({
+        type: 'plugin:statusBarUpdate',
+        payload: { items: ['nope', null, 42, goodItem('good1', 'ok1')] },
+      })
+      expect(result).not.toBeNull()
+      expect(((result ?? {}) as { items?: Array<{ id: string }> }).items?.map((i) => i.id)).toEqual(['good1'])
     })
 
     it('CT-D5 全部条目均坏（items 非空零存活）→ 仍整包 error（毒化上报），与合法清空区分', () => {

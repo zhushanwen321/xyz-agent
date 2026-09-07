@@ -442,8 +442,101 @@ export async function runLayer3WithRacing(
 
 // ──────────────────────── checkPermission（纯函数主入口） ────────────────────────
 
+/** ctxBase 形态（checkPermission 第四参之后注入的上下文基线）。 */
+interface ContextBase {
+	cwd: string;
+	agentName?: string;
+	signal?: AbortSignal;
+}
+
+/** 从 input 装配 ToolInvocationContext（command 用 AST/规则，path 其余字段透传给 UI）。 */
+function buildInvocationContext(
+	toolName: string,
+	command: string | undefined,
+	input: Record<string, unknown>,
+	ctxBase: ContextBase,
+): ToolInvocationContext {
+	return {
+		toolName,
+		...(command !== undefined ? { command } : {}),
+		path: typeof input.path === "string" ? input.path : undefined,
+		cwd: ctxBase.cwd,
+		...(ctxBase.agentName !== undefined ? { agentName: ctxBase.agentName } : {}),
+	};
+}
+
+/** 层 2 allow/deny 结果 → PermissionDecision 装配（ask 返回 null 交下游）。 */
+function ruleDecision(layer2: RuleMatchResult): PermissionDecision | null {
+	if (layer2.action === "allow") {
+		return {
+			action: "allow",
+			reason: layer2.matchedRule
+				? `allowed by rule ${layer2.matchedRule.id}`
+				: "allowed by rules (no deny matched)",
+			source: "rule",
+			...(layer2.matchedRule ? { matchedRule: layer2.matchedRule } : {}),
+		};
+	}
+	if (layer2.action === "deny") {
+		return {
+			action: "deny",
+			reason: layer2.matchedRule
+				? `denied by rule ${layer2.matchedRule.id}`
+				: "denied by rules",
+			source: "rule",
+			...(layer2.matchedRule ? { matchedRule: layer2.matchedRule } : {}),
+		};
+	}
+	return null;
+}
+
+/** 层 1 AST 输出：层 2 需要的 argvList + 提前决策（null = 无提前决策，继续层 2）。 */
+interface AstLayerOutcome {
+	argvList: string[][];
+	earlyDecision: PermissionDecision | null;
+}
+
 /**
- * 权限检查主入口（纯函数，deps 注入）。
+ * 层 1 AST（仅 bash 且有 command 时执行）：clean → 透传 argvList 继续；
+ * 非 clean / 异常 → 按模式提前决策（approve 人工 / auto 进层 3 Racing）。
+ */
+async function runAstLayer(
+	toolName: string,
+	command: string | undefined,
+	mode: PermissionMode,
+	config: ClassifierConfig,
+	ctx: ToolInvocationContext,
+	deps: CheckPermissionDeps,
+	ctxBase: ContextBase,
+): Promise<AstLayerOutcome> {
+	let argvList: string[][] = [];
+	if (toolName === "bash" && command !== undefined) {
+		try {
+			const analysis = await deps.analyzeBashStructure(command);
+			argvList = analysis.commands;
+			// AST 检测到危险结构（非 clean）→ 直接 ask（auto→AI，approve→人工）
+			if (!analysis.clean) {
+				const trigger = `AST detected dangerous structure: ${analysis.dangerousStructures.join(", ") || "unknown"}`;
+				if (mode === "approve") {
+					return { argvList, earlyDecision: await askUser(deps, ctx, trigger, ctxBase.signal) };
+				}
+				// auto：进层 3（AI 评估危险命令）。m2：透传 AST 检测的具体危险原因。
+				return { argvList, earlyDecision: await runLayer3WithRacing(deps, ctx, config, ctxBase.signal, trigger) };
+			}
+		} catch {
+			// AST 异常 → fail-closed ask（auto→AI，approve→人工）
+			if (mode === "approve") {
+				return { argvList, earlyDecision: await askUser(deps, ctx, "AST analysis failed (fail-closed)", ctxBase.signal) };
+			}
+			return { argvList, earlyDecision: await runLayer3WithRacing(deps, ctx, config, ctxBase.signal) };
+		}
+	}
+	return { argvList, earlyDecision: null };
+}
+
+/**
+ * 权限检查主入口（纯函数，deps 注入）。主函数只留编排：
+ * yolo/strict 快速路径 → 层 1 AST（runAstLayer）→ 层 2 规则（ruleDecision）→ 下游。
  *
  * 四档模式分支：
  *  - yolo：完全放行（return allow，source='mode'）。不跑任何层。
@@ -471,7 +564,7 @@ export async function checkPermission(
 	config: ClassifierConfig,
 	userRules: Rule[],
 	deps: CheckPermissionDeps,
-	ctxBase: { cwd: string; agentName?: string; signal?: AbortSignal },
+	ctxBase: ContextBase,
 ): Promise<PermissionDecision> {
 	// yolo / disabled → 完全放行
 	if (mode === "yolo") {
@@ -479,13 +572,7 @@ export async function checkPermission(
 	}
 
 	const command = extractCommand(toolName, input);
-	const ctx: ToolInvocationContext = {
-		toolName,
-		...(command !== undefined ? { command } : {}),
-		path: typeof input.path === "string" ? input.path : undefined,
-		cwd: ctxBase.cwd,
-		...(ctxBase.agentName !== undefined ? { agentName: ctxBase.agentName } : {}),
-	};
+	const ctx = buildInvocationContext(toolName, command, input, ctxBase);
 
 	// strict → 全部人工审批（不跑 AST/规则/AI）
 	if (mode === "strict") {
@@ -493,54 +580,20 @@ export async function checkPermission(
 	}
 
 	// auto / approve：层 1 AST + 层 2 规则
-	let argvList: string[][] = [];
-	if (toolName === "bash" && command !== undefined) {
-		try {
-			const analysis = await deps.analyzeBashStructure(command);
-			argvList = analysis.commands;
-			// AST 检测到危险结构（非 clean）→ 直接 ask（auto→AI，approve→人工）
-			if (!analysis.clean) {
-				const trigger = `AST detected dangerous structure: ${analysis.dangerousStructures.join(", ") || "unknown"}`;
-				if (mode === "approve") {
-					return await askUser(deps, ctx, trigger, ctxBase.signal);
-				}
-				// auto：进层 3（AI 评估危险命令）。m2：透传 AST 检测的具体危险原因。
-				return await runLayer3WithRacing(deps, ctx, config, ctxBase.signal, trigger);
-			}
-		} catch {
-			// AST 异常 → fail-closed ask（auto→AI，approve→人工）
-			if (mode === "approve") {
-				return await askUser(deps, ctx, "AST analysis failed (fail-closed)", ctxBase.signal);
-			}
-			return await runLayer3WithRacing(deps, ctx, config, ctxBase.signal);
-		}
+	const ast = await runAstLayer(toolName, command, mode, config, ctx, deps, ctxBase);
+	if (ast.earlyDecision !== null) {
+		return ast.earlyDecision;
 	}
 
 	// 层 2 规则（auto + approve 共用）
 	const rules = [...deps.getDefaultRules(), ...userRules];
 	// C1：传入完整 command（bash 跨 argv 管道 deny 补充检查）；
 	// M5：传入 path（非 bash 工具规则对 path 匹配）。
-	const layer2 = runLayer2ForArgvList(toolName, argvList, rules, deps, command, ctx.path);
+	const layer2 = runLayer2ForArgvList(toolName, ast.argvList, rules, deps, command, ctx.path);
 
-	if (layer2.action === "allow") {
-		return {
-			action: "allow",
-			reason: layer2.matchedRule
-				? `allowed by rule ${layer2.matchedRule.id}`
-				: "allowed by rules (no deny matched)",
-			source: "rule",
-			...(layer2.matchedRule ? { matchedRule: layer2.matchedRule } : {}),
-		};
-	}
-	if (layer2.action === "deny") {
-		return {
-			action: "deny",
-			reason: layer2.matchedRule
-				? `denied by rule ${layer2.matchedRule.id}`
-				: "denied by rules",
-			source: "rule",
-			...(layer2.matchedRule ? { matchedRule: layer2.matchedRule } : {}),
-		};
+	const decided = ruleDecision(layer2);
+	if (decided !== null) {
+		return decided;
 	}
 
 	// layer2.action === 'ask' → 下游

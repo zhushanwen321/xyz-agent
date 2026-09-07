@@ -60,7 +60,7 @@ function curlHttpStatusError(status: number): CurlFetchError {
   })
 }
 
-/** 构造完整 GitHubRelease JSON（4 平台 asset 全带合法 digest，不触发 manifest） */
+/** 构造完整 GitHubRelease JSON（3 平台 asset 全带合法 digest，不触发 manifest） */
 function makeReleaseJson(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     tag_name: 'v0.9.0',
@@ -71,8 +71,8 @@ function makeReleaseJson(overrides: Record<string, unknown> = {}): Record<string
     html_url: 'https://github.com/zhushanwen321/xyz-agent/releases/tag/v0.9.0',
     assets: [
       {
-        name: 'TaiJi-mac-arm64.zip',
-        browser_download_url: 'https://example.com/mac-arm64.zip',
+        name: 'TaiJi-mac-arm64.dmg',
+        browser_download_url: 'https://example.com/mac-arm64.dmg',
         size: 1000,
         digest: `sha256:${'a'.repeat(64)}`,
       },
@@ -88,12 +88,6 @@ function makeReleaseJson(overrides: Record<string, unknown> = {}): Record<string
         size: 3000,
         digest: `sha256:${'c'.repeat(64)}`,
       },
-      {
-        name: 'TaiJi-amd64.deb',
-        browser_download_url: 'https://example.com/amd64.deb',
-        size: 4000,
-        digest: `sha256:${'d'.repeat(64)}`,
-      },
     ],
     ...overrides,
   }
@@ -104,8 +98,8 @@ function makeDigestMissingReleaseJson(): Record<string, unknown> {
   return makeReleaseJson({
     assets: [
       {
-        name: 'TaiJi-mac-arm64.zip',
-        browser_download_url: 'https://example.com/mac-arm64.zip',
+        name: 'TaiJi-mac-arm64.dmg',
+        browser_download_url: 'https://example.com/mac-arm64.dmg',
         size: 1000,
         // 无 digest → doFetchManifestSha256 被触发
       },
@@ -118,7 +112,7 @@ function makeManifestBody(): string {
   return JSON.stringify({
     version: '0.9.0',
     releasedAt: '2025-12-01T00:00:00Z',
-    assets: { 'TaiJi-mac-arm64.zip': { sha256: MANIFEST_SHA, size: 1000 } },
+    assets: { 'TaiJi-mac-arm64.dmg': { sha256: MANIFEST_SHA, size: 1000 } },
   })
 }
 
@@ -361,7 +355,7 @@ describe('u5 D8: curl 引擎 HTTP 状态交互规则', () => {
     expect(result).not.toBeNull()
     expect(upgradeFetchMock).toHaveBeenCalledTimes(2)
     expect(callUrl(1)).toContain('manifest.json')
-    expect(result!.assets.macArm64Zip?.sha256).toBeUndefined()
+    expect(result!.assets.macArm64Dmg?.sha256).toBeUndefined()
     expect(checker.getRateLimitedUntil()).toBe(0)
   })
 
@@ -380,8 +374,8 @@ describe('u5 D8: curl 引擎 HTTP 状态交互规则', () => {
       expect(upgradeFetchMock).toHaveBeenCalledTimes(2)
       expect(callUrl(1)).toContain('manifest.json')
       expect(checker.getRateLimitedUntil()).toBeGreaterThan(Date.now())
-      expect(result!.assets.macArm64Zip?.sha256).toBeUndefined()
-      expect(result!.assets.macArm64Zip?.name).toBe('TaiJi-mac-arm64.zip')
+      expect(result!.assets.macArm64Dmg?.sha256).toBeUndefined()
+      expect(result!.assets.macArm64Dmg?.name).toBe('TaiJi-mac-arm64.dmg')
     },
   )
 })
@@ -436,7 +430,7 @@ describe('u5 R2: 直连重试第二步不吞 ReleaseRateLimitedError + manifest 
       expect(upgradeFetchMock).toHaveBeenCalledTimes(3)
       expect(callUrl(2)).toContain('manifest.json')
       expect(callOpts(2).proxyUrl).toBeUndefined()
-      expect(result!.assets.macArm64Zip?.sha256).toBeUndefined()
+      expect(result!.assets.macArm64Dmg?.sha256).toBeUndefined()
       // 关键断言：第二步撞 429 就地记退避（修复前被裸 catch 吞）
       expect(checker.getRateLimitedUntil()).toBeGreaterThan(Date.now())
     },
@@ -458,8 +452,8 @@ describe('u5 R2: 直连重试第二步不吞 ReleaseRateLimitedError + manifest 
       expect(callUrl(1)).toContain('manifest.json')
       // 与 curl 引擎对偶：同记 2h 退避（修复前 undici 侧 !ok 一律 null 不退避 = 两引擎漂移）
       expect(checker.getRateLimitedUntil()).toBeGreaterThan(Date.now())
-      expect(result!.assets.macArm64Zip?.sha256).toBeUndefined()
-      expect(result!.assets.macArm64Zip?.name).toBe('TaiJi-mac-arm64.zip')
+      expect(result!.assets.macArm64Dmg?.sha256).toBeUndefined()
+      expect(result!.assets.macArm64Dmg?.name).toBe('TaiJi-mac-arm64.dmg')
     },
   )
 })
@@ -486,7 +480,7 @@ describe('u5: manifest fallback 同源经 upgradeFetch', () => {
     expect(callOpts(1).proxyUrl).toBe(PROXY_URL)
     expect(callOpts(1).timeoutMs).toBe(10_000)
     // sha256 fallback 生效：digest 缺失 → manifest 提供
-    expect(result!.assets.macArm64Zip?.sha256).toBe(MANIFEST_SHA)
+    expect(result!.assets.macArm64Dmg?.sha256).toBe(MANIFEST_SHA)
   })
 
   it('manifest 代理网络失败 → 直连重试成功（拥有同款通道维度编排）', async () => {
@@ -507,7 +501,7 @@ describe('u5: manifest fallback 同源经 upgradeFetch', () => {
     expect(callOpts(1).proxyUrl).toBe(PROXY_URL)
     expect(callUrl(2)).toContain('manifest.json')
     expect(callOpts(2).proxyUrl).toBeUndefined()
-    expect(result!.assets.macArm64Zip?.sha256).toBe(MANIFEST_SHA)
+    expect(result!.assets.macArm64Dmg?.sha256).toBe(MANIFEST_SHA)
   })
 
   it('manifest 双通道均失败 → sha256 留 undefined（不阻塞 release 组装）', async () => {
@@ -521,8 +515,8 @@ describe('u5: manifest fallback 同源经 upgradeFetch', () => {
     expect(result).not.toBeNull()
     // 无代理 → manifest 单次直连失败即止
     expect(upgradeFetchMock).toHaveBeenCalledTimes(2)
-    expect(result!.assets.macArm64Zip?.sha256).toBeUndefined()
-    expect(result!.assets.macArm64Zip?.name).toBe('TaiJi-mac-arm64.zip')
+    expect(result!.assets.macArm64Dmg?.sha256).toBeUndefined()
+    expect(result!.assets.macArm64Dmg?.name).toBe('TaiJi-mac-arm64.dmg')
   })
 
   it('manifest HTTP 404 → null 不降级（服务器已响应，重试无意义）', async () => {
@@ -535,6 +529,6 @@ describe('u5: manifest fallback 同源经 upgradeFetch', () => {
 
     expect(result).not.toBeNull()
     expect(upgradeFetchMock).toHaveBeenCalledTimes(2)
-    expect(result!.assets.macArm64Zip?.sha256).toBeUndefined()
+    expect(result!.assets.macArm64Dmg?.sha256).toBeUndefined()
   })
 })

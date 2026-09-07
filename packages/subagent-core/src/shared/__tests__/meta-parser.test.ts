@@ -302,3 +302,154 @@ describe("parseResourceMetaDetailed (generate, linePos)", () => {
     }
   });
 });
+
+// ── typecheckMeta 分支覆盖补充（特征锚定，经 IF1/IF2 公共入口驱动）──
+// 此前未覆盖的校验分支逐条锚定返回值与（IF2 的）错误文案，守护行为保持重构。
+
+describe("typecheckMeta 分支覆盖补充（特征锚定）", () => {
+  // ── 公共必填 ──────────────────────────────────────────────
+
+  it("公共: name 空串 → null（name 非空字符串）", () => {
+    const meta = parseResourceMeta('---\nname: ""\ndescription: d\n---\nbody', "agent");
+    expect(meta).toBeNull();
+  });
+
+  it("公共: description 非字符串（数字）→ null", () => {
+    const meta = parseResourceMeta("---\nname: x\ndescription: 123\n---\nbody", "agent");
+    expect(meta).toBeNull();
+  });
+
+  it("公共: YAML 顶层标量（非对象）→ null", () => {
+    const meta = parseResourceMeta("---\njust a scalar\n---\nbody", "agent");
+    expect(meta).toBeNull();
+  });
+
+  it("公共: when 非字符串 → 宽容降级为缺席（meta 仍合法，无 when 键）", () => {
+    const meta = parseResourceMeta("---\nname: x\ndescription: d\nwhen: 123\n---\nbody", "agent");
+    expect(meta).not.toBeNull();
+    const a = meta as AgentMeta;
+    expect("when" in a).toBe(false);
+  });
+
+  it("公共: notFor 非字符串 → 宽容降级为缺席（meta 仍合法，无 notFor 键）", () => {
+    const meta = parseResourceMeta(
+      "/* @pi-meta\nname: x\ndescription: d\nphases: [A]\nnotFor:\n  - a: 1\n*/",
+      "workflow",
+    );
+    expect(meta).not.toBeNull();
+    const wf = meta as WorkflowMeta;
+    expect("notFor" in wf).toBe(false);
+  });
+
+  // ── workflow 分支 ─────────────────────────────────────────
+
+  it("workflow: phase 对象形态 {title, detail} 合法投影（与字符串元素混排）", () => {
+    const meta = parseResourceMeta(
+      "/* @pi-meta\nname: x\ndescription: d\nphases:\n  - title: A\n    detail: do a\n  - B\n*/",
+      "workflow",
+    );
+    expect(meta).not.toBeNull();
+    const wf = meta as WorkflowMeta;
+    expect(wf.phases).toEqual([{ title: "A", detail: "do a" }, "B"]);
+  });
+
+  it("workflow: phase 对象缺 title → null（title 非空字符串必填）", () => {
+    const meta = parseResourceMeta(
+      "/* @pi-meta\nname: x\ndescription: d\nphases:\n  - detail: no title\n*/",
+      "workflow",
+    );
+    expect(meta).toBeNull();
+  });
+
+  it("workflow: 串类链非首成员（tools/model/engine）→ reject [minor-2]", () => {
+    const meta = parseResourceMeta(
+      "/* @pi-meta\nname: x\ndescription: d\nphases: [A]\ntools: [read]\nmodel: m\nengine: e\n*/",
+      "workflow",
+    );
+    expect(meta).toBeNull();
+  });
+
+  it("workflow: usage 缺席 → 无 usage 键（零回归）", () => {
+    const meta = parseResourceMeta("/* @pi-meta\nname: x\ndescription: d\nphases: [A]\n*/", "workflow");
+    expect(meta).not.toBeNull();
+    const wf = meta as WorkflowMeta;
+    expect("usage" in wf).toBe(false);
+  });
+
+  // ── agent 分支 ────────────────────────────────────────────
+
+  it("agent: usage（workflow 专属）出现在 agent → 串类 reject [minor-2]", () => {
+    const meta = parseResourceMeta("---\nname: x\ndescription: d\nusage: |\n  notes\n---\nbody", "agent");
+    expect(meta).toBeNull();
+  });
+
+  it("agent: tools 逗号分隔字符串 → 数组投影（trim + 空段过滤）", () => {
+    const meta = parseResourceMeta(
+      "---\nname: x\ndescription: d\ntools: read, bash ,, grep\n---\nbody",
+      "agent",
+    );
+    expect(meta).not.toBeNull();
+    const a = meta as AgentMeta;
+    expect(a.tools).toEqual(["read", "bash", "grep"]);
+  });
+
+  it("agent: tools 逗号串全空段（\",\") → 缺席（不进 meta）", () => {
+    const meta = parseResourceMeta('---\nname: x\ndescription: d\ntools: ","\n---\nbody', "agent");
+    expect(meta).not.toBeNull();
+    const a = meta as AgentMeta;
+    expect("tools" in a).toBe(false);
+  });
+
+  it("agent: tools 非法形态（数字）→ null", () => {
+    const meta = parseResourceMeta("---\nname: x\ndescription: d\ntools: 42\n---\nbody", "agent");
+    expect(meta).toBeNull();
+  });
+
+  it("agent: examples 非数组（字符串）→ null", () => {
+    const meta = parseResourceMeta(
+      "---\nname: x\ndescription: d\nexamples: not-a-list\n---\nbody",
+      "agent",
+    );
+    expect(meta).toBeNull();
+  });
+
+  it("agent: example 元素缺 positive → null（结构不完整不静默丢字段）", () => {
+    const meta = parseResourceMeta(
+      "---\nname: x\ndescription: d\nexamples:\n  - match: m\n    action: a\n---\nbody",
+      "agent",
+    );
+    expect(meta).toBeNull();
+  });
+
+  it("agent: engine 字符串投影", () => {
+    const meta = parseResourceMeta("---\nname: x\ndescription: d\nengine: zsw\n---\nbody", "agent");
+    expect(meta).not.toBeNull();
+    const a = meta as AgentMeta;
+    expect(a.engine).toBe("zsw");
+  });
+
+  it("agent: maxTurns 非有限数字（.nan）→ null", () => {
+    const meta = parseResourceMeta("---\nname: x\ndescription: d\nmaxTurns: .nan\n---\nbody", "agent");
+    expect(meta).toBeNull();
+  });
+
+  // ── IF2 错误文案逐字节锚定（typecheckMeta 校验失败 / 缺块）──
+
+  it("IF2: 缺块错误文案逐字节锚定", () => {
+    const r = parseResourceMetaDetailed("no block here", "workflow");
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toBe("未找到 meta 块（缺少 /* @pi-meta */ 或 frontmatter，或闭合 */ 不在行首）");
+      expect(r.linePos).toBeUndefined();
+    }
+  });
+
+  it("IF2: 类型校验失败错误文案逐字节锚定", () => {
+    const r = parseResourceMetaDetailed("---\nname: x\n---\nbody", "agent");
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toBe("meta 类型校验失败（缺 name/description、phases 非法、kind 字段串类或可选字段类型错）");
+      expect(r.linePos).toBeUndefined();
+    }
+  });
+});

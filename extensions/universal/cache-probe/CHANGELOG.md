@@ -1,5 +1,11 @@
 # @zhushanwen/pi-cache-probe
 
+## 0.1.3
+
+### Patch Changes
+
+- 730fa1779: Maintenance release: keep the published package in sync with repository source (refactors and fixes shipped in v0.9.14); no public API contract changes.
+
 ## 0.1.2
 
 ### Patch Changes

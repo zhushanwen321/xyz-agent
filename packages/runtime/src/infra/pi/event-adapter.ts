@@ -24,8 +24,8 @@
  */
 import type { ServerMessage, ServerMessageType, ExtensionInteractMethod, PiMessageEntry, PiToolCallEntryForm } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE, SUBAGENT_DIRECTIVE_CUSTOM_TYPE, parseSubagentDirective } from '@xyz-agent/shared'
-import { GUI_WIDGET_MARKER, ASK_USER_MARKER, SESSION_MANAGER_MARKER, SESSION_MANAGER_ACTIONS, isGuiComponent, isGuiRenderResult } from '@xyz-agent/extension-protocol'
-import type { SessionManagerAction } from '@xyz-agent/extension-protocol'
+import { GUI_WIDGET_MARKER, ASK_USER_MARKER, SESSION_MANAGER_MARKER, SESSION_MANAGER_ACTIONS, BRIDGE_MARKER, BRIDGE_METHODS, isGuiComponent, isGuiRenderResult } from '@xyz-agent/extension-protocol'
+import type { SessionManagerAction, BridgeRequest } from '@xyz-agent/extension-protocol'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
 import type { PiTranslatedEvent } from '../../services/session/types.js'
 import { randomUUID } from 'node:crypto'
@@ -290,52 +290,101 @@ function handleToolExecutionEnd(event: PiToolExecutionEndEvent, _sid: string): P
   }]
 }
 
-/** agent_end — extract stop reason, usage, responseModel, diagnostics, errorMessage, content */
-function handleAgentEnd(event: PiAgentEndEvent, sid: string): PiTranslatedEvent[] {
-  // W1：messages 为空数组 / undefined 时降级为 turn-end{stopReason:'error'}，不抛 TypeError。
-  // 异常会从 translate() 抛出 → 经 EventAdapter.attach 的整批 try-catch 被吞 →
-  // agent_end 整批事件丢失 → isGenerating 永不复位 + message.complete 不送达。
-  // messages 可能在 pi 内部异常 / 会话尚未产出任何 assistant 消息时为空。
-  const messages = event.messages
-  if (!messages || messages.length === 0) {
-    console.warn(`[EventAdapter] agent_end with empty messages (degraded to turn-end{error}) sid=${sid}`)
-    return [{
-      kind: 'turn-end',
-      message: { type: 'message.complete', payload: { sessionId: sid, stopReason: 'error' } },
-      stopReason: 'error',
-    }]
-  }
-  // pi 事件是强类型契约（ADR-0037）。agent_end.messages 的 usage/stopReason 由 PiAgentEndMessage
-  // 覆盖（PiUsage 已镜像 pi 字段名 input/output/cacheRead/cacheWrite）。但 pi 在此还附带
-  // responseModel / diagnostics / errorMessage 等运行时字段（超出 PiAgentEndMessage 声明范围，
-  // pi AgentMessage 实际形态比声明的 union 更宽）——这些用 as 提取。
-  const lastMsg = messages[messages.length - 1]
+/**
+ * pi agent_end lastMsg 的运行时扩展字段（超出 PiAgentEndMessage 声明范围——pi 在此还附带
+ * responseModel / diagnostics / errorMessage / content 等运行时字段，pi AgentMessage
+ * 实际形态比声明的 union 更宽——用 as 提取）。
+ */
+interface AgentEndRuntimeExtras {
+  responseModel?: string
+  diagnostics?: Record<string, unknown>
+  errorMessage?: string
+  content?: unknown
+}
+
+/**
+ * agent_end 空 messages 降级（W1）：messages 为空数组 / undefined 时降级为
+ * turn-end{stopReason:'error'}，不抛 TypeError。
+ * 异常会从 translate() 抛出 → 经 EventAdapter.attach 的整批 try-catch 被吞 →
+ * agent_end 整批事件丢失 → isGenerating 永不复位 + message.complete 不送达。
+ * messages 可能在 pi 内部异常 / 会话尚未产出任何 assistant 消息时为空。
+ */
+function emptyMessagesDegradedTurnEnd(sid: string): PiTranslatedEvent[] {
+  console.warn(`[EventAdapter] agent_end with empty messages (degraded to turn-end{error}) sid=${sid}`)
+  return [{
+    kind: 'turn-end',
+    message: { type: 'message.complete', payload: { sessionId: sid, stopReason: 'error' } },
+    stopReason: 'error',
+  }]
+}
+
+/**
+ * 从 lastMsg 提取 stopReason / usage / responseModel / diagnostics / errorMessage。
+ * errorMessage 仅在 error / tool_use 两种 stopReason 下透出（pi 契约，其余为 undefined）。
+ */
+function extractAgentEndFields(
+  lastMsg: PiAgentEndEvent['messages'][number],
+  extras: AgentEndRuntimeExtras,
+): {
+  rawReason: string
+  usage: PiAgentEndEvent['messages'][number]['usage']
+  responseModel: string | undefined
+  diagnostics: Record<string, unknown> | undefined
+  errorMessage: string | undefined
+} {
   const rawReason = lastMsg.stopReason ?? 'stop'
   const usage = lastMsg.usage
-  const lastMsgExtra = lastMsg as unknown as {
-    responseModel?: string
-    diagnostics?: Record<string, unknown>
-    errorMessage?: string
-    content?: unknown
+  return {
+    rawReason,
+    usage,
+    responseModel: extras.responseModel,
+    diagnostics: extras.diagnostics,
+    errorMessage: (rawReason === 'error' || rawReason === 'tool_use') ? extras.errorMessage : undefined,
   }
-  const responseModel = lastMsgExtra.responseModel
-  const diagnostics = lastMsgExtra.diagnostics
-  const errorMessage = (rawReason === 'error' || rawReason === 'tool_use') ? lastMsgExtra.errorMessage : undefined
-  // 提取完整文本 content：pi agent_end 携带最终 AssistantMessage，content[] 含 streaming 全部文本。
-  // 透出给前端用权威源覆盖客户端累积值，消除末尾 delta 的 async 渲染竞态（如 ** 未闭合不渲染加粗）。abort 路径为空不覆盖。
-  // content 在 PiAgentEndMessage 中是 unknown，此处按 pi 运行时形态（content block 数组）提取。
-  const finalContent = (Array.isArray(lastMsgExtra.content) ? lastMsgExtra.content : [] as unknown[])
+}
+
+/**
+ * 提取完整文本 content：pi agent_end 携带最终 AssistantMessage，content[] 含 streaming 全部文本。
+ * 透出给前端用权威源覆盖客户端累积值，消除末尾 delta 的 async 渲染竞态（如 ** 未闭合不渲染加粗）。abort 路径为空不覆盖。
+ * content 在 PiAgentEndMessage 中是 unknown，此处按 pi 运行时形态（content block 数组）提取。
+ */
+function extractFinalContent(extras: AgentEndRuntimeExtras): string {
+  return (Array.isArray(extras.content) ? extras.content : [] as unknown[])
     .filter((c): c is { type: string; text?: string } => typeof c === 'object' && c !== null && (c as { type?: unknown }).type === 'text')
     .map((c) => c.text ?? '')
     .join('')
+}
+
+/** pi usage → WS payload usage（xyz-agent 字段名翻译：input/output/totalTokens → inputTokens/outputTokens/totalTokens，缺省 0）。 */
+function toUsageTokens(usage: PiAgentEndEvent['messages'][number]['usage']): {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+} | undefined {
+  return usage
+    ? { inputTokens: usage.input ?? 0, outputTokens: usage.output ?? 0, totalTokens: usage.totalTokens ?? 0 }
+    : undefined
+}
+
+/** agent_end — extract stop reason, usage, responseModel, diagnostics, errorMessage, content */
+function handleAgentEnd(event: PiAgentEndEvent, sid: string): PiTranslatedEvent[] {
+  if (!event.messages || event.messages.length === 0) {
+    return emptyMessagesDegradedTurnEnd(sid)
+  }
+  // pi 事件是强类型契约（ADR-0037）。agent_end.messages 的 usage/stopReason 由 PiAgentEndMessage
+  // 覆盖（PiUsage 已镜像 pi 字段名 input/output/cacheRead/cacheWrite）。运行时扩展字段经
+  // AgentEndRuntimeExtras（as）提取。
+  const lastMsg = event.messages[event.messages.length - 1]
+  const extras = lastMsg as unknown as AgentEndRuntimeExtras
+  const { rawReason, usage, responseModel, diagnostics, errorMessage } = extractAgentEndFields(lastMsg, extras)
+  const finalContent = extractFinalContent(extras)
+  const stopReason = STOP_REASON_MAP[rawReason] ?? rawReason
   const message: ServerMessage = {
     type: 'message.complete',
     payload: {
       sessionId: sid,
-      stopReason: STOP_REASON_MAP[rawReason] ?? rawReason,
-      usage: usage
-        ? { inputTokens: usage.input ?? 0, outputTokens: usage.output ?? 0, totalTokens: usage.totalTokens ?? 0 }
-        : undefined,
+      stopReason,
+      usage: toUsageTokens(usage),
       responseModel,
       diagnostics,
       errorMessage,
@@ -350,7 +399,7 @@ function handleAgentEnd(event: PiAgentEndEvent, sid: string): PiTranslatedEvent[
     // 不能用 usage.input——那是单 turn 增量 input（不含 cacheRead 的 context 大头），值很小。
     inputTokens: usage?.totalTokens,
     totalTokens: usage?.totalTokens ?? 0,
-    stopReason: STOP_REASON_MAP[rawReason] ?? rawReason,
+    stopReason,
     usage,
   }]
 }
@@ -413,217 +462,317 @@ function extensionUiRequestBroadcast(payload: Record<string, unknown>): PiTransl
   }
 }
 
-/** extension_ui_request — route by method (setStatus, setWidget, editor, etc.) */
-function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string): PiTranslatedEvent[] {
-  const method = event.method as string
-
-  // setStatus → status-set（interpreter 路由 server）+ status-broadcast（WS 帧）
-  // 审计项 B（协议 spec §8.1）：保留 text（stripAnsi 后纯文本，向后兼容）+ textRaw（原始 ANSI 文本），
-  // 前端可选 textRaw 做 ANSI 着色渲染，text 作纯文本兜底。
-  if (method === 'setStatus') {
-    const key = String(event.statusKey ?? '')
-    const raw = String(event.statusText ?? '')
-    const text = stripAnsi(raw)
-    return [
-      { kind: 'status-set', sessionId: sid, key, text, textRaw: raw },
-      {
-        kind: 'status-broadcast',
-        message: {
-          type: EXTENSION_EVENTS.STATUS as ServerMessageType,
-          payload: { sessionId: sid, statusKey: key, text, textRaw: raw },
-        },
+/**
+ * extension_ui_request{method:'setStatus'} → status-set（interpreter 路由 server）+
+ * status-broadcast（WS 帧）。审计项 B（协议 spec §8.1）：保留 text（stripAnsi 后纯文本，
+ * 向后兼容）+ textRaw（原始 ANSI 文本），前端可选 textRaw 做 ANSI 着色渲染，text 作纯文本兜底。
+ */
+function translateStatusRequest(event: PiExtensionUiRequestEvent, sid: string): PiTranslatedEvent[] {
+  const key = String(event.statusKey ?? '')
+  const raw = String(event.statusText ?? '')
+  const text = stripAnsi(raw)
+  return [
+    { kind: 'status-set', sessionId: sid, key, text, textRaw: raw },
+    {
+      kind: 'status-broadcast',
+      message: {
+        type: EXTENSION_EVENTS.STATUS as ServerMessageType,
+        payload: { sessionId: sid, statusKey: key, text, textRaw: raw },
       },
-    ]
+    },
+  ]
+}
+
+/**
+ * setWidget 的 GUI 协议 marker 检测：单行以 NUL marker 开头 → 结构化 widget。
+ * 命中且解码/校验成功返回 WS 事件数组；marker 未命中、形状校验失败或 JSON 解析失败
+ * 返回 undefined（调用方降级纯文本 widget 路径），warn 输出与原实现逐字一致。
+ */
+function tryDecodeWidgetGui(sid: string, widgetKey: string, rawLines: unknown[]): PiTranslatedEvent[] | undefined {
+  if (!(rawLines.length === 1 && typeof rawLines[0] === 'string' && (rawLines[0] as string).startsWith(GUI_WIDGET_MARKER))) {
+    return undefined
   }
-
-  // setWidget → WS event（检测 subagent streaming / GUI 协议 marker / 清除语义）
-  if (method === 'setWidget') {
-    const widgetKey = String(event.widgetKey ?? '')
-    const rawLines = Array.isArray(event.widgetLines) ? event.widgetLines as unknown[] : []
-
-    // subagent streaming（路径 A-1）：widgetKey 匹配 subagent-stream-<recordId> 前缀。
-    // pi 扩展层合并 text_delta 后用此 key 转发累积全文。短路——不走后续 widget 逻辑。
-    const streamMatch = widgetKey.match(/^subagent-stream-(.+)$/)
-    if (streamMatch) {
-      const recordId = streamMatch[1]
-      const lines = rawLines.length > 0 ? rawLines.map((l) => String(l)) : undefined
-      return [{ kind: 'subagent-stream', sessionId: sid, recordId, lines }]
-    }
-
-    // 清除语义：widgetLines 缺失或空数组 → extension 清除此 widget（guiSetWidget(key, undefined)）。
-    // 发 extension:widgetGui 带 gui:null，前端据此删 guiWidgetsByTab 条目 + 清 lines。
-    // 不能只发 extension:widget（lines:[]）——前端 widget handler 不触碰 guiWidgetsByTab，
-    // 会导致结构化 widget 永驻。
-    if (rawLines.length === 0) {
+  try {
+    const json = (rawLines[0] as string).slice(GUI_WIDGET_MARKER.length)
+    const decoded: unknown = JSON.parse(json)
+    // v1.1 wire：GuiRenderResult 信封 {v, component, meta?} → 解包 component + meta
+    // （meta = widget 宿主元数据，前端 WidgetArea 渲染统一 head）
+    if (isGuiRenderResult(decoded)) {
       return [{
         kind: 'message',
         message: {
           type: EXTENSION_EVENTS.WIDGET_GUI as ServerMessageType,
-          payload: { sessionId: sid, widgetKey, gui: null },
+          payload: {
+            sessionId: sid,
+            widgetKey,
+            gui: decoded.component,
+            ...(decoded.meta !== undefined ? { meta: decoded.meta } : {}),
+          },
         },
       }]
     }
-
-    // 检测 GUI 协议 marker：单行以 NUL marker 开头 → 结构化 widget
-    if (rawLines.length === 1 && typeof rawLines[0] === 'string' && (rawLines[0] as string).startsWith(GUI_WIDGET_MARKER)) {
-      try {
-        const json = (rawLines[0] as string).slice(GUI_WIDGET_MARKER.length)
-        const decoded: unknown = JSON.parse(json)
-        // v1.1 wire：GuiRenderResult 信封 {v, component, meta?} → 解包 component + meta
-        // （meta = widget 宿主元数据，前端 WidgetArea 渲染统一 head）
-        if (isGuiRenderResult(decoded)) {
-          return [{
-            kind: 'message',
-            message: {
-              type: EXTENSION_EVENTS.WIDGET_GUI as ServerMessageType,
-              payload: {
-                sessionId: sid,
-                widgetKey,
-                gui: decoded.component,
-                ...(decoded.meta !== undefined ? { meta: decoded.meta } : {}),
-              },
-            },
-          }]
-        }
-        // v1 wire（兼容窗口）：裸 GuiComponent（旧版 extension 发出的格式）
-        if (isGuiComponent(decoded)) {
-          return [{
-            kind: 'message',
-            message: {
-              type: EXTENSION_EVENTS.WIDGET_GUI as ServerMessageType,
-              payload: { sessionId: sid, widgetKey, gui: decoded },
-            },
-          }]
-        }
-        console.warn('[EventAdapter] widgetGui marker decoded but not a valid GuiComponent, falling back to text widget', decoded)
-       
-      } catch (e) {
-        // marker 检测命中但 JSON 解析失败 → 降级为纯文本 widget
-        console.warn('[EventAdapter] widgetGui marker JSON parse failed, falling back to text widget', e)
-      }
+    // v1 wire（兼容窗口）：裸 GuiComponent（旧版 extension 发出的格式）
+    if (isGuiComponent(decoded)) {
+      return [{
+        kind: 'message',
+        message: {
+          type: EXTENSION_EVENTS.WIDGET_GUI as ServerMessageType,
+          payload: { sessionId: sid, widgetKey, gui: decoded },
+        },
+      }]
     }
-
-    // 原有行为：stripAnsi + string[]
-    // marker 命中但校验/解析失败的行包含 NUL + marker 前缀（\x00XYZ_GUI_WIDGET:...），
-    // 直接展示会给用户看乱码——剥离 marker 前缀后显示剩余 JSON 文本（或空行）。
-    const widgetPayload = {
-      sessionId: sid,
-      widgetKey,
-      lines: rawLines.map(l => {
-        const s = String(l)
-        const stripped = s.startsWith(GUI_WIDGET_MARKER) ? s.slice(GUI_WIDGET_MARKER.length) : s
-        return stripAnsi(stripped)
-      }),
-    }
-    return [{ kind: 'message', message: { type: EXTENSION_EVENTS.WIDGET as ServerMessageType, payload: widgetPayload } }]
+    console.warn('[EventAdapter] widgetGui marker decoded but not a valid GuiComponent, falling back to text widget', decoded)
+    return undefined
+  } catch (e) {
+    // marker 检测命中但 JSON 解析失败 → 降级为纯文本 widget
+    console.warn('[EventAdapter] widgetGui marker JSON parse failed, falling back to text widget', e)
+    return undefined
   }
+}
+
+/** setWidget → WS event（检测 subagent streaming / GUI 协议 marker / 清除语义） */
+function translateSetWidgetRequest(event: PiExtensionUiRequestEvent, sid: string): PiTranslatedEvent[] {
+  const widgetKey = String(event.widgetKey ?? '')
+  const rawLines = Array.isArray(event.widgetLines) ? event.widgetLines as unknown[] : []
+
+  // subagent streaming（路径 A-1）：widgetKey 匹配 subagent-stream-<recordId> 前缀。
+  // pi 扩展层合并 text_delta 后用此 key 转发累积全文。短路——不走后续 widget 逻辑。
+  const streamMatch = widgetKey.match(/^subagent-stream-(.+)$/)
+  if (streamMatch) {
+    const recordId = streamMatch[1]
+    const lines = rawLines.length > 0 ? rawLines.map((l) => String(l)) : undefined
+    return [{ kind: 'subagent-stream', sessionId: sid, recordId, lines }]
+  }
+
+  // 清除语义：widgetLines 缺失或空数组 → extension 清除此 widget（guiSetWidget(key, undefined)）。
+  // 发 extension:widgetGui 带 gui:null，前端据此删 guiWidgetsByTab 条目 + 清 lines。
+  // 不能只发 extension:widget（lines:[]）——前端 widget handler 不触碰 guiWidgetsByTab，
+  // 会导致结构化 widget 永驻。
+  if (rawLines.length === 0) {
+    return [{
+      kind: 'message',
+      message: {
+        type: EXTENSION_EVENTS.WIDGET_GUI as ServerMessageType,
+        payload: { sessionId: sid, widgetKey, gui: null },
+      },
+    }]
+  }
+
+  // GUI 协议 marker 检测：命中且解码成功短路返回；未命中/失败 → 降级纯文本 widget。
+  const guiEvents = tryDecodeWidgetGui(sid, widgetKey, rawLines)
+  if (guiEvents) return guiEvents
+
+  // 原有行为：stripAnsi + string[]
+  // marker 命中但校验/解析失败的行包含 NUL + marker 前缀（\x00XYZ_GUI_WIDGET:...），
+  // 直接展示会给用户看乱码——剥离 marker 前缀后显示剩余 JSON 文本（或空行）。
+  const widgetPayload = {
+    sessionId: sid,
+    widgetKey,
+    lines: rawLines.map(l => {
+      const s = String(l)
+      const stripped = s.startsWith(GUI_WIDGET_MARKER) ? s.slice(GUI_WIDGET_MARKER.length) : s
+      return stripAnsi(stripped)
+    }),
+  }
+  return [{ kind: 'message', message: { type: EXTENSION_EVENTS.WIDGET as ServerMessageType, payload: widgetPayload } }]
+}
+
+/**
+ * notify → extension.notify（fire-and-forget，pi 不等回复）。
+ * pi rpc-mode.ts notify 发出 extension_ui_request{method:'notify'} 后不注册 pending、不等 response。
+ * 不走 INTERACTIVE_UI_METHODS（不产 extension-ui kind → 不注册 timeout → 不弹模态对话框）。
+ * 前端用 toast 渲染（非阻塞）。
+ */
+function translateNotifyRequest(event: PiExtensionUiRequestEvent, sid: string): PiTranslatedEvent[] {
+  const rawType = String(event.notifyType ?? 'info')
+  const level: 'info' | 'warn' | 'error' =
+    rawType === 'error' ? 'error' : rawType === 'warning' ? 'warn' : 'info'
+  return [{
+    kind: 'message',
+    message: {
+      type: EXTENSION_EVENTS.NOTIFY as ServerMessageType,
+      payload: {
+        sessionId: sid,
+        message: String(event.message ?? ''),
+        level,
+      },
+    },
+  }]
+}
+
+/**
+ * session-manager 请求检测：select title 为 SESSION_MANAGER_MARKER → options[0] 是 JSON payload
+ * （session-manager extension 序列化的 { action, params }）。
+ * 检测成功后不走前端 UI，由 runtime SessionManagerHandler 直接处理并回写 response。
+ * [HISTORICAL] 不发前端广播：曾照抄 ask-user/普通 select 模板附带 extension.ui_request
+ * 广播，前端 CompanionBand 按 select 渲染出无 options 的空壳对话框且 pending 泄漏
+ * （session-manager 请求由 handler 应答，前端永远无人 respond）——本通道纯 runtime 内部消化。
+ */
+function translateSessionManagerSelect(
+  event: PiExtensionUiRequestEvent,
+  sid: string,
+  requestId: string,
+): PiTranslatedEvent[] {
+  const sessionManagerData = parseSelectOptionsPayload(event) as { action?: unknown; params?: unknown } | undefined
+  // 集合守卫把解析出的 action 收窄为协议联合；非法/缺失值折叠为 '__malformed__'
+  // 哨兵（handler 的 malformed 与 default 分支同走 cancelled 回 null）。
+  const rawAction = sessionManagerData?.action
+  const action = typeof rawAction === 'string' && (SESSION_MANAGER_ACTIONS as readonly string[]).includes(rawAction)
+    ? (rawAction as SessionManagerAction)
+    : '__malformed__'
+  // params 收窄（与 action 侧集合守卫同款防线；handler 侧另有逐 action 类型守卫）
+  const rawParams = sessionManagerData?.params
+  const params = typeof rawParams === 'object' && rawParams !== null
+    ? (rawParams as Record<string, unknown>)
+    : {}
+
+  return [{ kind: 'session-manager-ui', requestId, sessionId: sid, action, params }]
+}
+
+/**
+ * bridge 请求检测（设计 bridge-rewrite-pi-0.84 §3.3-D6）：select title 为 BRIDGE_MARKER →
+ * options[0] 是 JSON 序列化的 BridgeRequest（协议 v2）。识别成功产出既有 bridge-ui kind
+ * 交 interpreter 路由 bridge-handler（method 分派逻辑不动）。
+ * 与 session-manager 分支同构：不产 extension-ui kind（不弹前端、不注册弹窗超时）。
+ * 解析失败（非 JSON / 缺 method / method 不在 BRIDGE_METHODS 集合）折叠为
+ * 'bridge:malformed' 哨兵请求——event-adapter 是纯翻译层无 client 句柄，回包必须经
+ * handler（bridge:malformed case 回 E5 错误，不静默丢弃——失败要出声）。
+ */
+function translateBridgeSelect(
+  event: PiExtensionUiRequestEvent,
+  sid: string,
+  requestId: string,
+): PiTranslatedEvent[] {
+  const rawBridge = parseSelectOptionsPayload(event) as Partial<BridgeRequest> | undefined
+  const rawBridgeMethod = rawBridge?.method
+  // method 集合守卫（与 session-manager action 守卫同款防线）：判别字段合法才走正常分派
+  if (typeof rawBridgeMethod === 'string' && (BRIDGE_METHODS as readonly string[]).includes(rawBridgeMethod)) {
+    // data = BridgeRequest 除 method 外的字段集，照 bridge-handler 的消费形状组装
+    //（tool_execute 读 toolName/toolCallId/params，event/intercept 读 eventName/data）
+    const bridgeData: Record<string, unknown> = {}
+    const bridgeFieldKeys = ['toolName', 'toolCallId', 'params', 'sessionId', 'eventName', 'data'] as const
+    for (const key of bridgeFieldKeys) {
+      if (rawBridge?.[key] !== undefined) bridgeData[key] = rawBridge[key]
+    }
+    return [{ kind: 'bridge-ui', requestId, sessionId: sid, method: rawBridgeMethod, data: bridgeData }]
+  }
+  // malformed 哨兵：raw 带原始 payload 供 handler 日志留痕（非 JSON 时回退原始 options 字符串）
+  const rawOptions = Array.isArray(event.options) && event.options.length > 0 ? String(event.options[0]) : ''
+  return [{
+    kind: 'bridge-ui',
+    requestId,
+    sessionId: sid,
+    method: 'bridge:malformed',
+    data: { raw: rawBridge ?? rawOptions },
+  }]
+}
+
+/**
+ * ask-user 富交互请求检测：select title 为 ASK_USER_MARKER → options[0] 是 JSON payload
+ * （askUserInteract helper 序列化的 { questions, allowCancel }）。
+ * 检测成功后透传 questions 等字段，前端路由到 AskUserOverlay；检测失败（非合法 JSON /
+ * questions 空）返回 undefined，由调用方降级为普通 select。
+ */
+function tryTranslateAskUserSelect(
+  event: PiExtensionUiRequestEvent,
+  sid: string,
+  requestId: string,
+  dialogMethod: ExtensionInteractMethod,
+): PiTranslatedEvent[] | undefined {
+  const askUserData = parseSelectOptionsPayload(event) as { questions?: unknown; allowCancel?: boolean } | undefined
+  if (!(Array.isArray(askUserData?.questions) && askUserData.questions.length > 0)) {
+    return undefined
+  }
+  const requestPayload = {
+    sessionId: sid,
+    requestId,
+    method: 'select',              // 仍是 select（复用回传通道）
+    askUser: true,                 // 标记 ask-user 富交互，前端据此路由到 AskUserOverlay
+    askUserQuestions: askUserData.questions,
+    allowCancel: askUserData.allowCancel ?? true,
+  }
+  return [
+    // ★ extension-ui kind 事件：EventInterpreter 据此暂停 watchdog，并通知 server 跟踪请求 + 缓存 pending 请求。
+    // 2026-07-16 后 extension UI 不超时，block 等待用户响应。
+    { kind: 'extension-ui', requestId, sessionId: sid, method: dialogMethod, payload: requestPayload },
+    extensionUiRequestBroadcast(requestPayload),
+  ]
+}
+
+/**
+ * 普通 select / confirm / input / editor（无 marker 命中，或 ask-user 检测失败降级到此）。
+ * [HISTORICAL] options 透传修复：pi select 严格传 string[]（types.ts select 签名 +
+ * rpc-mode.js 原样透传），旧代码把 rawOptions 断言为 Array<{label,value}> 后 .map(o=>o.label)
+ * 对 string 元素调 .label 产出 undefined[]——普通 select 在前端是坏的。改为 .map(String) 透传。
+ */
+function translatePlainDialogRequest(
+  event: PiExtensionUiRequestEvent,
+  sid: string,
+  requestId: string,
+  dialogMethod: ExtensionInteractMethod,
+): PiTranslatedEvent[] {
+  const method = event.method as string
+  const rawOptions = Array.isArray(event.options) ? event.options : undefined
+  const requestPayload = {
+    sessionId: sid,
+    requestId,
+    method,
+    title: event.title,
+    message: event.message,
+    options: rawOptions ? rawOptions.map(String) : undefined,
+    default: event.default as string | undefined,
+    level: event.level as 'info' | 'warn' | 'error' | undefined,
+    prefill: method === METHOD_EDITOR ? (event.prefill as string | undefined) : undefined,
+  }
+  return [
+    { kind: 'extension-ui', requestId, sessionId: sid, method: dialogMethod, payload: requestPayload },
+    extensionUiRequestBroadcast(requestPayload),
+  ]
+}
+
+/**
+ * Interactive dialog methods: confirm, select, input, editor (notify 已在上方独立分支处理)。
+ * [HISTORICAL] 旧 bridge 通道的 method.startsWith('bridge:') 前缀分支已删除（设计
+ * bridge-rewrite-pi-0.84 §3.3-D6 清理批）：pi 0.84.4 下 ExtensionAPI 无自定义
+ * extension_ui_request method 能力，旧通道永不可达；新通道 method 恒为 'select'，
+ * 经 BRIDGE_MARKER 识别进入 bridge-ui kind。
+ */
+function translateInteractiveRequest(event: PiExtensionUiRequestEvent, sid: string): PiTranslatedEvent[] {
+  const method = event.method as string
+  const dialogMethod = method as ExtensionInteractMethod
+  const requestId = String(event.id ?? '')
+
+  if (method === 'select' && event.title === SESSION_MANAGER_MARKER) {
+    return translateSessionManagerSelect(event, sid, requestId)
+  }
+  if (method === 'select' && event.title === BRIDGE_MARKER) {
+    return translateBridgeSelect(event, sid, requestId)
+  }
+  if (method === 'select' && event.title === ASK_USER_MARKER) {
+    const askEvents = tryTranslateAskUserSelect(event, sid, requestId, dialogMethod)
+    if (askEvents) return askEvents
+    // 检测失败（非合法 JSON / questions 空）→ 降级普通 select（下方分支）
+  }
+  return translatePlainDialogRequest(event, sid, requestId, dialogMethod)
+}
+
+/** extension_ui_request — route by method (setStatus, setWidget, editor, etc.) */
+function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string): PiTranslatedEvent[] {
+  const method = event.method as string
+
+  if (method === 'setStatus') return translateStatusRequest(event, sid)
+
+  if (method === 'setWidget') return translateSetWidgetRequest(event, sid)
 
   // setEditorText → extension:setEditorText
   if (method === 'set_editor_text') {
     return [{ kind: 'message', message: { type: 'extension:setEditorText', payload: { sessionId: sid, text: String(event.text ?? '') } } }]
   }
 
-  // notify → extension.notify（fire-and-forget，pi 不等回复）
-  // pi rpc-mode.ts notify 发出 extension_ui_request{method:'notify'} 后不注册 pending、不等 response。
-  // 不走 INTERACTIVE_UI_METHODS（不产 extension-ui kind → 不注册 timeout → 不弹模态对话框）。
-  // 前端用 toast 渲染（非阻塞）。
-  if (method === 'notify') {
-    const rawType = String(event.notifyType ?? 'info')
-    const level: 'info' | 'warn' | 'error' =
-      rawType === 'error' ? 'error' : rawType === 'warning' ? 'warn' : 'info'
-    return [{
-      kind: 'message',
-      message: {
-        type: EXTENSION_EVENTS.NOTIFY as ServerMessageType,
-        payload: {
-          sessionId: sid,
-          message: String(event.message ?? ''),
-          level,
-        },
-      },
-    }]
-  }
+  if (method === 'notify') return translateNotifyRequest(event, sid)
 
-  // bridge:* → bridge-ui（interpreter 路由 server）
-  if (method?.startsWith('bridge:')) {
-    const requestId = String(event.id ?? '')
-    const data = event.data as Record<string, unknown> ?? {}
-    return [{ kind: 'bridge-ui', requestId, sessionId: sid, method, data }]
-  }
-
-  // Interactive dialog methods: confirm, select, input, editor (notify 已在上方独立分支处理)
   if (method && INTERACTIVE_UI_METHODS.has(method as ExtensionInteractMethod)) {
-    const dialogMethod = method as ExtensionInteractMethod
-    const requestId = String(event.id ?? '')
-
-    // session-manager 请求检测：select title 为 SESSION_MANAGER_MARKER → options[0] 是 JSON payload
-    // （session-manager extension 序列化的 { action, params }）。
-    // 检测成功后不走前端 UI，由 runtime SessionManagerHandler 直接处理并回写 response。
-    // [HISTORICAL] 不发前端广播：曾照抄 ask-user/普通 select 模板附带 extension.ui_request
-    // 广播，前端 CompanionBand 按 select 渲染出无 options 的空壳对话框且 pending 泄漏
-    // （session-manager 请求由 handler 应答，前端永远无人 respond）——本通道纯 runtime 内部消化。
-    if (method === 'select' && event.title === SESSION_MANAGER_MARKER) {
-      const sessionManagerData = parseSelectOptionsPayload(event) as { action?: unknown; params?: unknown } | undefined
-      // 集合守卫把解析出的 action 收窄为协议联合；非法/缺失值折叠为 '__malformed__'
-      // 哨兵（handler 的 malformed 与 default 分支同走 cancelled 回 null）。
-      const rawAction = sessionManagerData?.action
-      const action = typeof rawAction === 'string' && (SESSION_MANAGER_ACTIONS as readonly string[]).includes(rawAction)
-        ? (rawAction as SessionManagerAction)
-        : '__malformed__'
-      // params 收窄（与 action 侧集合守卫同款防线；handler 侧另有逐 action 类型守卫）
-      const rawParams = sessionManagerData?.params
-      const params = typeof rawParams === 'object' && rawParams !== null
-        ? (rawParams as Record<string, unknown>)
-        : {}
-
-      return [{ kind: 'session-manager-ui', requestId, sessionId: sid, action, params }]
-    }
-
-    // ask-user 富交互请求检测：select title 为 ASK_USER_MARKER → options[0] 是 JSON payload
-    // （askUserInteract helper 序列化的 { questions, allowCancel }）。
-    // 检测成功后透传 questions 等字段，前端路由到 AskUserOverlay；检测失败（非合法 JSON）
-    // 降级为普通 select（下方分支）。
-    if (method === 'select' && event.title === ASK_USER_MARKER) {
-      const askUserData = parseSelectOptionsPayload(event) as { questions?: unknown; allowCancel?: boolean } | undefined
-
-      if (Array.isArray(askUserData?.questions) && askUserData.questions.length > 0) {
-        const requestPayload = {
-          sessionId: sid,
-          requestId,
-          method: 'select',              // 仍是 select（复用回传通道）
-          askUser: true,                 // 标记 ask-user 富交互，前端据此路由到 AskUserOverlay
-          askUserQuestions: askUserData.questions,
-          allowCancel: askUserData.allowCancel ?? true,
-        }
-        return [
-          // ★ extension-ui kind 事件：EventInterpreter 据此暂停 watchdog，并通知 server 跟踪请求 + 缓存 pending 请求。
-          // 2026-07-16 后 extension UI 不超时，block 等待用户响应。
-          { kind: 'extension-ui', requestId, sessionId: sid, method: dialogMethod, payload: requestPayload },
-          extensionUiRequestBroadcast(requestPayload),
-        ]
-      }
-    }
-
-    // 普通 select / confirm / input / editor
-    // [HISTORICAL] options 透传修复：pi select 严格传 string[]（types.ts select 签名 +
-    // rpc-mode.js 原样透传），旧代码把 rawOptions 断言为 Array<{label,value}> 后 .map(o=>o.label)
-    // 对 string 元素调 .label 产出 undefined[]——普通 select 在前端是坏的。改为 .map(String) 透传。
-    const rawOptions = Array.isArray(event.options) ? event.options : undefined
-    const requestPayload = {
-      sessionId: sid,
-      requestId,
-      method,
-      title: event.title,
-      message: event.message,
-      options: rawOptions ? rawOptions.map(String) : undefined,
-      default: event.default as string | undefined,
-      level: event.level as 'info' | 'warn' | 'error' | undefined,
-      prefill: method === METHOD_EDITOR ? (event.prefill as string | undefined) : undefined,
-    }
-    return [
-      { kind: 'extension-ui', requestId, sessionId: sid, method: dialogMethod, payload: requestPayload },
-      extensionUiRequestBroadcast(requestPayload),
-    ]
+    return translateInteractiveRequest(event, sid)
   }
 
   return [{ kind: 'noop' }]

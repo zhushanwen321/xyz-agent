@@ -1,5 +1,11 @@
 # @xyz-agent/extension-protocol
 
+## 0.8.1
+
+### Patch Changes
+
+- 730fa1779: Maintenance release: keep the published package in sync with repository source (refactors and fixes shipped in v0.9.14); no public API contract changes.
+
 ## 0.8.0
 
 ### Minor Changes

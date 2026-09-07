@@ -88,6 +88,9 @@ function compileRule(rawLine: string): IgnoreRule {
   return { pattern: rawLine, negated, dirOnly, anchored, regex }
 }
 
+/** 正则元字符集合（表驱动）：命中则转义输出，未命中原样拼接——与原逐 case 转义逐字节等价。 */
+const REGEX_META_CHARS = new Set(['.', '+', '^', '$', '{', '}', '(', ')', '|', '[', ']', '\\'])
+
 /**
  * 将 gitignore glob pattern 转为 RegExp。
  *
@@ -100,7 +103,7 @@ function compileRule(rawLine: string): IgnoreRule {
  * - 双星号 → .*（跨目录）
  * - 单星号 → [^ 斜杠]*（单层，不跨分隔符）
  * - 问号 → [^ 斜杠]（单字符）
- * - 其余正则元字符转义
+ * - 其余正则元字符转义（REGEX_META_CHARS 表驱动）
  */
 function globToRegex(pattern: string, anchored: boolean): RegExp {
   // glob 多字符 token 的字符长度（用于游标偏移与推进）
@@ -131,23 +134,9 @@ function globToRegex(pattern: string, anchored: boolean): RegExp {
       case '?':
         regexSrc += '[^/]'
         break
-      // 正则元字符转义
-      case '.':
-      case '+':
-      case '^':
-      case '$':
-      case '{':
-      case '}':
-      case '(':
-      case ')':
-      case '|':
-      case '[':
-      case ']':
-      case '\\':
-        regexSrc += '\\' + ch
-        break
       default:
-        regexSrc += ch
+        // 正则元字符转义（'*'/'?' 已在上方分支与 '**' 拦截中处理，不会落入此处）
+        regexSrc += REGEX_META_CHARS.has(ch) ? '\\' + ch : ch
     }
     i += 1
   }

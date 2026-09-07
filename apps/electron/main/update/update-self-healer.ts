@@ -180,99 +180,128 @@ export async function maybeRollbackInterruptedUpdate(): Promise<boolean> {
   try {
     data = JSON.parse(raw) as UpdateResultData
   } catch (e) {
-    // JSON 解析失败：可能是写入中断导致半截 JSON。
-    // 保守策略：若原始内容含 'replacing' 子串（说明 status 字段写了一半），
-    // 且 .old 备份存在，仍尝试回滚（宁可误回滚也不留破损 app）。
-    if (typeof raw === 'string' && raw.includes('replacing')) {
-      const oldPath = getOldBackupPath()
-      if (oldPath && existsSync(oldPath)) {
-        console.warn(
-          '[update-self-healer] corrupt result.json but .old exists, attempting rollback',
-        )
-        try {
-          if (process.platform === 'darwin') rollbackMacBundle()
-          else if (process.platform === 'linux') rollbackLinuxAppImage()
-          // 标记已回滚（下次启动 no-op）；写失败也不影响（已回滚到位）
-          // m18（批次 5）：半截 raw 里 best-effort 提取 version（正则，提取不到则
-          // rolled-back 标记无 version 字段 → renderer 无 toast，维持现状下限）
-          const corruptVersion =
-            typeof raw === 'string'
-              ? raw.match(/"version":"(\d+\.\d+\.\d+(?:\.\d+)?)"/)?.[1]
-              : undefined
-          try {
-            writeResultFileAtomic(
-              JSON.stringify({
-                status: 'rolled-back',
-                ...(corruptVersion ? { version: corruptVersion } : {}),
-                at: new Date().toISOString(),
-                reason: 'rolled back after corrupt result.json',
-              }),
-            )
-          // eslint-disable-next-line taste/no-silent-catch -- best-effort：标记写入失败不影响已完成的回滚
-          } catch (writeErr) {
-            console.warn('[update-self-healer] write rolled-back marker failed:', writeErr)
-          }
-          console.log('[update-self-healer] rolled back after corrupt result.json')
-          return true
-        // eslint-disable-next-line taste/no-silent-catch -- best-effort：回滚失败不阻塞启动
-        } catch (rollbackErr) {
-          console.error(
-            '[update-self-healer] rollback after corrupt json failed:',
-            rollbackErr,
-          )
-        }
-      }
-    }
+    // JSON 解析失败：可能是写入中断导致半截 JSON（保守回滚判定见 helper）。
+    if (tryRollbackAfterCorruptResult(raw)) return true
     console.error('[update-self-healer] failed to parse result:', e)
     return false
   }
 
   try {
-    if (data.status !== 'replacing') return false // done/failed/rolled-back 都是终态
-
-    const oldPath = getOldBackupPath()
-    // .old 不存在：无需回滚 → 写 no-op 避免下次启动重复检测；返回 false 表示"没有回滚动作"。
-    // m15（批次 5）：win 走 NSIS 无 .old 备份机制，no-op 仅发生在 wrapper 早死场景，
-    // reason 与 mac/linux 区分（wrapper 化后原「无 .old 备份」描述对 win 不准确）。
-    if (!oldPath || !existsSync(oldPath)) {
-      const noOpReason =
-        process.platform === 'win32'
-          ? 'installer wrapper exited before completion'
-          : 'no .old backup: interrupted before replace phase'
-      writeResultFileAtomic(
-        JSON.stringify({
-          status: 'no-op',
-          version: typeof data.version === 'string' ? data.version : undefined,
-          at: new Date().toISOString(),
-          reason: noOpReason,
-        }),
-      )
-      console.log('[update-self-healer] interrupted update had no .old backup; no-op')
-      return false
-    }
-
-    // .old 存在：替换阶段被中断，半截态残留 → 真正回滚
-    if (process.platform === 'darwin') {
-      rollbackMacBundle()
-    } else if (process.platform === 'linux') {
-      rollbackLinuxAppImage()
-    }
-
-    // 标记已回滚（下次启动 no-op）
-    writeResultFileAtomic(
-      JSON.stringify({
-        status: 'rolled-back',
-        version: typeof data.version === 'string' ? data.version : undefined,
-        at: new Date().toISOString(),
-      }),
-    )
-    console.log('[update-self-healer] rolled back interrupted update')
-    return true
+    return rollbackParsedResult(data)
   } catch (e) {
     // 自愈失败不阻塞启动：仅记录，靠下次启动重试或用户手动恢复
     console.error('[update-self-healer] failed:', e)
     return false
   }
+}
+
+/**
+ * JSON 解析失败后的保守回滚判定（maybeRollbackInterruptedUpdate corrupt-json 分支）。
+ *
+ * 半截 JSON 若含 'replacing' 子串（status 字段写了一半）且 .old 备份存在，仍尝试回滚
+ * （宁可误回滚也不留破损 app）。返回 true = 已回滚；false = 不满足回滚条件或回滚失败
+ * （调用方继续走「failed to parse result」路径）。
+ */
+function tryRollbackAfterCorruptResult(raw: string): boolean {
+  if (typeof raw === 'string' && raw.includes('replacing')) {
+    const oldPath = getOldBackupPath()
+    if (oldPath && existsSync(oldPath)) {
+      console.warn(
+        '[update-self-healer] corrupt result.json but .old exists, attempting rollback',
+      )
+      try {
+        rollbackCurrentPlatform()
+        // m18（批次 5）：半截 raw 里 best-effort 提取 version（正则，提取不到则
+        // rolled-back 标记无 version 字段 → renderer 无 toast，维持现状下限）
+        const corruptVersion =
+          typeof raw === 'string'
+            ? raw.match(/"version":"(\d+\.\d+\.\d+(?:\.\d+)?)"/)?.[1]
+            : undefined
+        try {
+          writeRolledBackMarker(corruptVersion, 'rolled back after corrupt result.json')
+        // eslint-disable-next-line taste/no-silent-catch -- best-effort：标记写入失败不影响已完成的回滚
+        } catch (writeErr) {
+          console.warn('[update-self-healer] write rolled-back marker failed:', writeErr)
+        }
+        console.log('[update-self-healer] rolled back after corrupt result.json')
+        return true
+      // eslint-disable-next-line taste/no-silent-catch -- best-effort：回滚失败不阻塞启动
+      } catch (rollbackErr) {
+        console.error(
+          '[update-self-healer] rollback after corrupt json failed:',
+          rollbackErr,
+        )
+      }
+    }
+  }
+  return false
+}
+
+/**
+ * 写 status='rolled-back' 标记（原子写，下次启动 no-op）。
+ *
+ * version 缺失时省略字段（renderer 无 toast，维持下限）；reason 仅 corrupt-json
+ * 回滚场景携带（区分标记成因）。
+ */
+function writeRolledBackMarker(version: string | undefined, reason?: string): void {
+  writeResultFileAtomic(
+    JSON.stringify({
+      status: 'rolled-back',
+      ...(typeof version === 'string' ? { version } : {}),
+      at: new Date().toISOString(),
+      ...(reason ? { reason } : {}),
+    }),
+  )
+}
+
+/**
+ * 平台分流执行回滚（maybeRollbackInterruptedUpdate 两处共用：corrupt-json 分支 +
+ * 常规 replacing 分支；win 无 .old 备份机制，无可回滚形态）。
+ */
+function rollbackCurrentPlatform(): void {
+  if (process.platform === 'darwin') rollbackMacBundle()
+  else if (process.platform === 'linux') rollbackLinuxAppImage()
+}
+
+/**
+ * 对解析成功的 result 执行回滚决策（maybeRollbackInterruptedUpdate 主体分支）。
+ *
+ * - 非 'replacing'（done/failed/rolled-back 都是终态）→ false
+ * - .old 不存在：无需回滚 → 写 no-op 避免下次启动重复检测；返回 false 表示"没有回滚动作"。
+ *   m15（批次 5）：win 走 NSIS 无 .old 备份机制，no-op 仅发生在 wrapper 早死场景，
+ *   reason 与 mac/linux 区分（wrapper 化后原「无 .old 备份」描述对 win 不准确）。
+ * - .old 存在：替换阶段被中断，半截态残留 → 真正回滚 + 写 rolled-back 标记 → true。
+ *
+ * @throws 回滚/标记写失败原样上抛（调用方外层 catch 记录后返回 false，不阻塞启动）
+ */
+function rollbackParsedResult(data: UpdateResultData): boolean {
+  if (data.status !== 'replacing') return false // done/failed/rolled-back 都是终态
+
+  const oldPath = getOldBackupPath()
+  if (!oldPath || !existsSync(oldPath)) {
+    const noOpReason =
+      process.platform === 'win32'
+        ? 'installer wrapper exited before completion'
+        : 'no .old backup: interrupted before replace phase'
+    writeResultFileAtomic(
+      JSON.stringify({
+        status: 'no-op',
+        version: typeof data.version === 'string' ? data.version : undefined,
+        at: new Date().toISOString(),
+        reason: noOpReason,
+      }),
+    )
+    console.log('[update-self-healer] interrupted update had no .old backup; no-op')
+    return false
+  }
+
+  // .old 存在：替换阶段被中断，半截态残留 → 真正回滚
+  rollbackCurrentPlatform()
+
+  // 标记已回滚（下次启动 no-op）
+  writeRolledBackMarker(typeof data.version === 'string' ? data.version : undefined)
+  console.log('[update-self-healer] rolled back interrupted update')
+  return true
 }
 
 /** cleanupCompletedUpdate 需处理的终态集合（replacing 由 maybeRollbackInterruptedUpdate 处理） */
@@ -417,112 +446,18 @@ export async function cleanupCompletedUpdate(): Promise<LaunchResult | null> {
 
     if (!existsSync(getUpdateResultFile())) return null
 
-    let data: UpdateResultData
-    try {
-      data = JSON.parse(readFileSync(getUpdateResultFile(), 'utf-8')) as UpdateResultData
-    } catch {
-      // 文件读失败（existsSync 与 read 间竞态/权限）/ JSON 解析失败（半截写入）：均视为无可清理，no-op
-      return null
-    }
-
-    const status = typeof data.status === 'string' ? (data.status as UpdateResultStatus) : undefined
-    if (!status || !TERMINAL_CLEANUP_STATUSES.includes(status)) {
-      return null // replacing / 未知状态：不归本函数
-    }
-
-    // done 需版本校验：仅当 app 确已升级到目标版本才清理（version <= current）。
-    // 非 semver 版本号无法判定真假 done → 保守不清（与 readPendingUpdate 的 catch+keep 对称）。
-    if (status === 'done') {
-      let realDone = false
-      try {
-        realDone = compare(
-          app.getVersion(),
-          typeof data.version === 'string' ? data.version : '',
-          '>=',
-        )
-      } catch (e) {
-        console.warn('[update-self-healer] done status version compare failed, skip cleanup:', e)
-        return null
-      }
-      if (!realDone) return null // 假 done：app 仍旧版，result 可能未生效，不清
-    }
+    const terminal = readTerminalUpdateResult()
+    if (!terminal) return null
+    if (shouldSkipFakeDone(terminal.status, terminal.data)) return null
 
     // ── 捕获终态上下文（在清理 result 自身之前）────────────────
-    const version = typeof data.version === 'string' ? data.version : ''
-    // A-D1：failed 原因码透传（renderer 映射具体失败文案+恢复指引，G3）；
-    // 仅 failed 态有意义，done/rolled-back 保持既有形状不带 error
-    const error = typeof data.error === 'string' ? data.error : undefined
-    const launchResult: LaunchResult | null =
-      (status === 'done' || status === 'failed' || status === 'rolled-back') && version
-        ? { status, version, ...(status === 'failed' && error ? { error } : {}) }
-        : null
+    const launchResult = buildLaunchResult(terminal.status, terminal.data)
 
-    // ── 清理产物 ────────────────────────────────────────────────
-    // 1. preloaded-update.json：先读其 filePath（指向下载 zip），再删 json + zip
-    if (existsSync(getPreloadedUpdateFile())) {
-      let preloadedFilePath: string | null = null
-      try {
-        const pre = JSON.parse(readFileSync(getPreloadedUpdateFile(), 'utf-8')) as unknown
-        if (
-          pre &&
-          typeof pre === 'object' &&
-          typeof (pre as Record<string, unknown>).filePath === 'string'
-        ) {
-          preloadedFilePath = (pre as Record<string, unknown>).filePath as string
-        }
-      } catch (e) {
-        // preloaded 损坏：无法取得可信 filePath，仅删 json 本身（zip 留待下次或手动清理）
-        console.warn('[update-self-healer] preloaded parse failed, skip zip deletion:', e)
-      }
-      // 删下载 zip（路径注入防护：必须在升级工作目录 getUpdateDir() 内）
-      if (preloadedFilePath) {
-        const resolved = path.resolve(preloadedFilePath)
-        const updateDirPrefix = path.resolve(getUpdateDir()) + path.sep
-        if (resolved.startsWith(updateDirPrefix)) {
-          ignoreENOENT(resolved)
-        } else {
-          console.warn(`[update-self-healer] skip download zip outside UPDATE_DIR: ${resolved}`)
-        }
-      }
-      ignoreENOENT(getPreloadedUpdateFile())
-    }
-
-    // 2. 其余产物（固定路径，无注入风险）。三平台脚本同清：mac updater.sh /
-    //    linux updater-linux.sh / win updater.cmd（批次 2 产物，同入清理矩阵）
-    ignoreENOENT(getPendingUpdateFile())
-    ignoreENOENT(getUpdaterScriptPath())
-    ignoreENOENT(getLinuxUpdaterScriptPath())
-    ignoreENOENT(getWinUpdaterScriptPath())
-
-    // 2.5 m13：升级残留矩阵（.old/.broken/.new/staging）——终态时全是垃圾，
-    // .old 不再跨启动存活（消除陈旧 .old 回滚风险）。可能是目录（.broken/.staging），
-    // 用 rmSync recursive+force（吞 ENOENT）而非 ignoreENOENT/unlink。
-    for (const stale of getStaleArtifactPaths()) {
-      rmSync(stale, { recursive: true, force: true })
-    }
-
-    // 2.6 m14：日志保留策略（三平台同口径）——仅 done 删日志；failed/rolled-back
-    // 归档保留；no-op 保留原样（无实质事件）。归档旧档（>7 天）在此一并清理。
-    if (status === 'done') {
-      ignoreENOENT(getUpdaterLogPath())
-      ignoreENOENT(getLinuxUpdaterLogPath())
-      ignoreENOENT(getWinUpdaterLogPath())
-    } else if (status === 'failed' || status === 'rolled-back') {
-      archiveUpdaterLogs(new Date().toISOString().slice(0, ISO_DATE_LENGTH))
-    }
-    cleanupExpiredLogArchives()
-
-    // 3. 下载中断残留（.downloading 临时文件）+ 原子写孤儿 tmp（[A-G2]：
-    //    update-result.json.tmp / resume-state.json.tmp 写崩残留后无任何读方消费，
-    //    终态清理一并扫掉；跨平台产物，与 .downloading 同属升级工作目录
-    //    （getUpdateDir()）扫描，不入 getStaleArtifactPaths——那是 mac/linux 平台残留推导且 gated on .old 存在）
-    if (existsSync(getUpdateDir())) {
-      for (const f of readdirSync(getUpdateDir())) {
-        if (f.endsWith('.downloading') || f.endsWith('.tmp')) {
-          ignoreENOENT(path.join(getUpdateDir(), f))
-        }
-      }
-    }
+    // ── 清理产物（顺序保持：preloaded → 固定产物 → 残留矩阵 → 日志 → updateDir 残留 → result）──
+    cleanupPreloadedUpdateArtifacts()
+    cleanupFixedUpdateArtifacts()
+    cleanupUpdaterLogs(terminal.status)
+    cleanupUpdateDirResidues()
 
     // 4. result 自身最后删（标记本次清理完成；下次启动无 result → no-op）
     ignoreENOENT(getUpdateResultFile())
@@ -532,6 +467,159 @@ export async function cleanupCompletedUpdate(): Promise<LaunchResult | null> {
     // 永不阻塞启动：仅 warn
     console.warn('[update-self-healer] cleanupCompletedUpdate failed:', e)
     return null
+  }
+}
+
+/** 终态 result 解析产物（status 已收敛为合法终态枚举）。 */
+interface ITerminalUpdateResult {
+  status: UpdateResultStatus
+  data: UpdateResultData
+}
+
+/**
+ * 读 update-result.json 并收敛到可清理终态（cleanupCompletedUpdate 步骤 2+3）。
+ *
+ * 文件读失败（existsSync 与 read 间竞态/权限）/ JSON 解析失败（半截写入）/
+ * 非 terminal 状态（replacing / 未知状态：不归本函数）→ 返回 null（无可清理）。
+ */
+function readTerminalUpdateResult(): ITerminalUpdateResult | null {
+  try {
+    const data = JSON.parse(readFileSync(getUpdateResultFile(), 'utf-8')) as UpdateResultData
+    const status = typeof data.status === 'string' ? (data.status as UpdateResultStatus) : undefined
+    if (!status || !TERMINAL_CLEANUP_STATUSES.includes(status)) {
+      return null // replacing / 未知状态：不归本函数
+    }
+    return { status, data }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * done 终态的真假校验（cleanupCompletedUpdate 步骤 4）：仅当 app 确已升级到目标版本
+ * （version <= current）才清理。非 semver 版本号无法判定真假 done → 保守不清
+ * （与 readPendingUpdate 的 catch+keep 对称）。返回 true = 假 done / 校验失败，跳过清理。
+ */
+function shouldSkipFakeDone(status: UpdateResultStatus, data: UpdateResultData): boolean {
+  if (status !== 'done') return false
+  let realDone = false
+  try {
+    realDone = compare(
+      app.getVersion(),
+      typeof data.version === 'string' ? data.version : '',
+      '>=',
+    )
+  } catch (e) {
+    console.warn('[update-self-healer] done status version compare failed, skip cleanup:', e)
+    return true
+  }
+  return !realDone // 假 done：app 仍旧版，result 可能未生效，不清
+}
+
+/**
+ * 捕获终态上下文供 renderer 通知（cleanupCompletedUpdate 步骤 5，在清理前构造）。
+ *
+ * A-D1：failed 原因码透传（renderer 映射具体失败文案+恢复指引，G3）；
+ * 仅 failed 态有意义，done/rolled-back 保持既有形状不带 error。
+ * no-op / version 缺失 → null（不通知）。
+ */
+function buildLaunchResult(status: UpdateResultStatus, data: UpdateResultData): LaunchResult | null {
+  const version = typeof data.version === 'string' ? data.version : ''
+  const error = typeof data.error === 'string' ? data.error : undefined
+  return (status === 'done' || status === 'failed' || status === 'rolled-back') && version
+    ? { status, version, ...(status === 'failed' && error ? { error } : {}) }
+    : null
+}
+
+/**
+ * 清理 preloaded-update.json 及其记录的下载 zip（cleanupCompletedUpdate 步骤 1）。
+ *
+ * 路径注入防护：删除 zip 前校验其 path.resolve 结果在升级工作目录（getUpdateDir()）
+ * 之内，不在则 warn 跳过（防 preloaded 文件被篡改指向任意路径导致误删用户文件）。
+ * preloaded 损坏时无法取得可信 filePath，仅删 json 本身（zip 留待下次或手动清理）。
+ */
+function cleanupPreloadedUpdateArtifacts(): void {
+  if (!existsSync(getPreloadedUpdateFile())) return
+  const preloadedFilePath = readPreloadedFilePath()
+  if (preloadedFilePath) {
+    const resolved = path.resolve(preloadedFilePath)
+    const updateDirPrefix = path.resolve(getUpdateDir()) + path.sep
+    if (resolved.startsWith(updateDirPrefix)) {
+      ignoreENOENT(resolved)
+    } else {
+      console.warn(`[update-self-healer] skip download zip outside UPDATE_DIR: ${resolved}`)
+    }
+  }
+  ignoreENOENT(getPreloadedUpdateFile())
+}
+
+/** 读 preloaded-update.json 的 filePath 字段（缺失/损坏返回 null，不抛）。 */
+function readPreloadedFilePath(): string | null {
+  try {
+    const pre = JSON.parse(readFileSync(getPreloadedUpdateFile(), 'utf-8')) as unknown
+    if (
+      pre &&
+      typeof pre === 'object' &&
+      typeof (pre as Record<string, unknown>).filePath === 'string'
+    ) {
+      return (pre as Record<string, unknown>).filePath as string
+    }
+  } catch (e) {
+    // preloaded 损坏：无法取得可信 filePath，仅删 json 本身（zip 留待下次或手动清理）
+    console.warn('[update-self-healer] preloaded parse failed, skip zip deletion:', e)
+  }
+  return null
+}
+
+/**
+ * 清理固定路径产物 + 平台升级残留矩阵（cleanupCompletedUpdate 步骤 2 + 2.5）。
+ *
+ * 2. 其余产物（固定路径，无注入风险）。三平台脚本同清：mac updater.sh /
+ *    linux updater-linux.sh / win updater.cmd（批次 2 产物，同入清理矩阵）
+ * 2.5 m13：升级残留矩阵（.old/.broken/.new/staging）——终态时全是垃圾，
+ *    .old 不再跨启动存活（消除陈旧 .old 回滚风险）。可能是目录（.broken/.staging），
+ *    用 rmSync recursive+force（吞 ENOENT）而非 ignoreENOENT/unlink。
+ */
+function cleanupFixedUpdateArtifacts(): void {
+  ignoreENOENT(getPendingUpdateFile())
+  ignoreENOENT(getUpdaterScriptPath())
+  ignoreENOENT(getLinuxUpdaterScriptPath())
+  ignoreENOENT(getWinUpdaterScriptPath())
+
+  for (const stale of getStaleArtifactPaths()) {
+    rmSync(stale, { recursive: true, force: true })
+  }
+}
+
+/**
+ * 日志保留策略（cleanupCompletedUpdate 步骤 2.6，m14 三平台同口径）——
+ * 仅 done 删日志；failed/rolled-back 归档保留；no-op 保留原样（无实质事件）。
+ * 归档旧档（>7 天）在此一并清理。
+ */
+function cleanupUpdaterLogs(status: UpdateResultStatus): void {
+  if (status === 'done') {
+    ignoreENOENT(getUpdaterLogPath())
+    ignoreENOENT(getLinuxUpdaterLogPath())
+    ignoreENOENT(getWinUpdaterLogPath())
+  } else if (status === 'failed' || status === 'rolled-back') {
+    archiveUpdaterLogs(new Date().toISOString().slice(0, ISO_DATE_LENGTH))
+  }
+  cleanupExpiredLogArchives()
+}
+
+/**
+ * 清理升级工作目录内的下载中断残留（.downloading 临时文件）+ 原子写孤儿 tmp
+ * （cleanupCompletedUpdate 步骤 3，[A-G2]：update-result.json.tmp / resume-state.json.tmp
+ * 写崩残留后无任何读方消费，终态清理一并扫掉；跨平台产物，与 .downloading 同属
+ * 升级工作目录（getUpdateDir()）扫描，不入 getStaleArtifactPaths——那是 mac/linux
+ * 平台残留推导且 gated on .old 存在）。
+ */
+function cleanupUpdateDirResidues(): void {
+  if (!existsSync(getUpdateDir())) return
+  for (const f of readdirSync(getUpdateDir())) {
+    if (f.endsWith('.downloading') || f.endsWith('.tmp')) {
+      ignoreENOENT(path.join(getUpdateDir(), f))
+    }
   }
 }
 

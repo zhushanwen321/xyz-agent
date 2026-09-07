@@ -52,7 +52,7 @@ const store: ISessionStore = {
   },
   readSessionEndMeta: (p: string) => readSessionEndMeta(p),
   persistHandoffSidecar: () => {},
-  trash: () => {},
+  trash: () => Promise.resolve(),
 }
 
 /** 逐条 diff 结果：完全一致返回空数组，否则返回差异描述（index + 双方摘要）。 */

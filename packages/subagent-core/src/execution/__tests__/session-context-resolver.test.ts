@@ -23,7 +23,6 @@ describe("resolveSessionContext", () => {
   it("fork=false, worktree=false → shouldFork=false, effectiveCwd=mainCwd", () => {
     const result = resolveSessionContext({
       fork: false,
-      worktree: false,
       mainCwd: MAIN_CWD,
       agentDir: AGENT_DIR,
     });
@@ -37,7 +36,6 @@ describe("resolveSessionContext", () => {
   it("fork=true, worktree=false → shouldFork=true, forkSource=mainSessionFile", () => {
     const result = resolveSessionContext({
       fork: true,
-      worktree: false,
       mainCwd: MAIN_CWD,
       mainSessionFile: SESSION_FILE,
       agentDir: AGENT_DIR,

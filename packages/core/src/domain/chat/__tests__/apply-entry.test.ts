@@ -585,7 +585,7 @@ describe('applyEntry —— entry 类型逐类型覆盖', () => {
   // ── compaction entry（专用形态）──────────────────────────────────
   it('compaction entry：→ system 消息 + compactionSummary 字段（可重开恢复，关键规则 9）', () => {
     const state = replayEntries([
-      { type: 'compaction', id: 'cp-1', parentId: null, timestamp: ISO(777), summary: '压缩了', firstKeptEntryId: 'e-1', tokensBefore: 5000 },
+      { type: 'compaction', id: 'cp-1', parentId: null, timestamp: ISO(777), summary: '压缩了', tokensBefore: 5000 },
     ])
     expect(state.messages).toHaveLength(1)
     const m = state.messages[0]
@@ -667,7 +667,7 @@ describe('applyEntry —— 确定性（D5 纯函数断言）', () => {
       }, { parentId: 'e-1', timestamp: ISO(200) }),
       msgEntry('e-3', { role: 'toolResult', toolCallId: 'tc-1', toolName: 'write', content: [{ type: 'text', text: 'ok' }], timestamp: 300 }, { parentId: 'e-2', timestamp: ISO(300) }),
       msgEntry('e-4', { role: 'bashExecution', command: 'ls', output: 'a', exitCode: 0, cancelled: false, truncated: false, timestamp: 400 }, { parentId: 'e-3', timestamp: ISO(400) }),
-      { type: 'compaction', id: 'e-5', parentId: 'e-4', timestamp: ISO(500), summary: 's', firstKeptEntryId: 'e-1', tokensBefore: 1 },
+      { type: 'compaction', id: 'e-5', parentId: 'e-4', timestamp: ISO(500), summary: 's', tokensBefore: 1 },
     ]
   }
 

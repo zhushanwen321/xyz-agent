@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { lintAgentMeta, lintScript } from "../script-lint.ts";
+import type { LintFinding } from "../script-lint.ts";
 import { parseResourceMeta } from "../../shared/meta-parser.ts";
 
 const WORKFLOWS_DIR = join(__dirname, "../../../workflows");
@@ -490,6 +491,22 @@ describe("MF-4 回归：非字面量实参 agent(callVar) / agent(expr()) 跳过
     const descWarnings = warnings(result.findings).filter((w) => /description.*unnamed/i.test(w.message));
     expect(descWarnings).toHaveLength(1);
     expect(descWarnings[0].line).toBe(2);
+  });
+
+  it("`agent(` 换行 `{` 的多行字面量调用保留追踪（argTail 为空分支）", () => {
+    // agent( 与 { 分离两行：argTail 为空不跳过，范围跨三行闭合——缺 description
+    // 报 1 条且行号落在调用起点（锚定 matchAgentCallHead 的空 argTail 保留路径）
+    const src = [
+      `await agent(`,
+      `  { prompt: "x" }`,
+      `);`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    const descWarnings = warnings(result.findings).filter((w) => /description.*unnamed/i.test(w.message));
+    expect(descWarnings).toHaveLength(1);
+    expect(descWarnings[0].line).toBe(1);
   });
 });
 

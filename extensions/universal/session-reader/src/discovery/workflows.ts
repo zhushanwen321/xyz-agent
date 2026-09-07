@@ -34,40 +34,55 @@ export function extractCallSessionFiles(snap: unknown): string[] {
   const out: string[] = []
   if (typeof snap !== 'object' || snap === null) return out
   const s = snap as Record<string, unknown>
-  const isNew = s.v === 'wf-run-v1' || s.v === 'wf-run-v2'
-  let callsRaw: unknown
-  if (isNew) {
-    const state = s.state
-    callsRaw =
-      typeof state === 'object' && state !== null
-        ? (state as Record<string, unknown>).calls
-        : undefined
-  } else {
-    callsRaw = s.callCache
-  }
+  const isNew = isNewSnapshotFormat(s)
+  const callsRaw = extractCallsRaw(s, isNew)
   if (!Array.isArray(callsRaw)) return out
   for (const c of callsRaw) {
     if (typeof c !== 'object' || c === null) continue
-    const co = c as Record<string, unknown>
-    // NEW: call 本身；OLD: {key, value}，取 value
-    const item: Record<string, unknown> = isNew
-      ? co
-      : typeof co.value === 'object' && co.value !== null
-        ? (co.value as Record<string, unknown>)
-        : co
-    const sf = item.sessionFile
-    if (typeof sf === 'string') {
-      out.push(sf)
-      continue
-    }
-    const result = item.result
-    const sf2 =
-      typeof result === 'object' && result !== null
-        ? (result as Record<string, unknown>).sessionFile
-        : undefined
-    if (typeof sf2 === 'string') out.push(sf2)
+    const item = resolveCallItem(c as Record<string, unknown>, isNew)
+    const sf = extractSessionFileFromItem(item)
+    if (sf !== undefined) out.push(sf)
   }
   return out
+}
+
+/** 快照是否为 NEW 格式（v="wf-run-v1"/"wf-run-v2"，读取面形状一致） */
+function isNewSnapshotFormat(s: Record<string, unknown>): boolean {
+  return s.v === 'wf-run-v1' || s.v === 'wf-run-v2'
+}
+
+/** 按格式取 calls 原始集合：NEW 读 state.calls（state 守卫后取），OLD 读顶层 callCache */
+function extractCallsRaw(s: Record<string, unknown>, isNew: boolean): unknown {
+  if (isNew) {
+    const state = s.state
+    return typeof state === 'object' && state !== null
+      ? (state as Record<string, unknown>).calls
+      : undefined
+  }
+  return s.callCache
+}
+
+/**
+ * 单条 call 归一为可取 sessionFile 的对象：
+ * NEW: call 本身；OLD: {key, value}，取 value（value 非对象时回退 call 本身，容错脏数据）
+ */
+function resolveCallItem(co: Record<string, unknown>, isNew: boolean): Record<string, unknown> {
+  if (isNew) return co
+  const value = co.value
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : co
+}
+
+/** 从归一后的 call 对象提 sessionFile：顶层优先，回退 result.sessionFile；均缺 → undefined */
+function extractSessionFileFromItem(item: Record<string, unknown>): string | undefined {
+  const sf = item.sessionFile
+  if (typeof sf === 'string') return sf
+  const result = item.result
+  const sf2 =
+    typeof result === 'object' && result !== null
+      ? (result as Record<string, unknown>).sessionFile
+      : undefined
+  if (typeof sf2 === 'string') return sf2
+  return undefined
 }
 
 /**

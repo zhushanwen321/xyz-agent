@@ -60,43 +60,64 @@ function validateAuthorityPath(ref) {
   if (!existsSync(abs)) fail(`authority 文件不存在: ${ref}`);
 }
 
+function validateId(c, seenIds, at) {
+  const idRe = /^C-(pi|data|comm|state|ext|build|proc|sw)-\d{2}$/;
+  if (!c.id || !idRe.test(c.id)) fail(`id 格式非法: ${at}`);
+  if (seenIds.has(c.id)) fail(`id 重复: ${c.id}`);
+  seenIds.add(c.id);
+}
+
+function validateScope(c, at) {
+  if (!Array.isArray(c.scope) || c.scope.length === 0) {
+    fail(`${at}: scope 为空`);
+    return;
+  }
+  for (const s of c.scope) {
+    if (s === "global") continue;
+    if (!/^[\w./-]+(\/\*\*)?$/.test(s)) fail(`${at}: scope 非法 glob "${s}"（只支持 <prefix>/** 或精确路径）`);
+  }
+}
+
+function validateAuthority(c, at) {
+  if (!Array.isArray(c.authority) || c.authority.length === 0) {
+    fail(`${at}: authority 为空`);
+    return;
+  }
+  for (const a of c.authority) validateAuthorityPath(a);
+}
+
+function validateEnforcementItem(e, at) {
+  if (e.type === "machine") {
+    if (!e.hook) fail(`${at}: machine enforcement 缺 hook`);
+    else if (!validateHookExists(e.hook)) fail(`${at}: hook 不存在于 .githooks/ / scripts/ / 根: ${e.hook}`);
+  } else if (e.type === "review") {
+    if (!e.agent) fail(`${at}: review enforcement 缺 agent`);
+    else if (!existsSync(join(REPO_ROOT, ".agents/skills/pr-cr-fix/agents", `${e.agent}.md`)))
+      fail(`${at}: review agent 不存在: ${e.agent}`);
+  } else if (e.type !== "none") {
+    fail(`${at}: enforcement.type 非法: ${e.type}`);
+  }
+}
+
+function validateEnforcement(c, at) {
+  if (!Array.isArray(c.enforcement) || c.enforcement.length === 0) {
+    fail(`${at}: enforcement 为空`);
+    return;
+  }
+  for (const e of c.enforcement) validateEnforcementItem(e, at);
+}
+
 function validate(data) {
   const constraints = data.constraints;
   if (!Array.isArray(constraints) || constraints.length === 0) fail("constraints 为空数组");
 
   const seenIds = new Set();
-  const idRe = /^C-(pi|data|comm|state|ext|build|proc|sw)-\d{2}$/;
   for (const c of constraints) {
     const at = c.id || "(missing id)";
-    if (!c.id || !idRe.test(c.id)) fail(`id 格式非法: ${at}`);
-    if (seenIds.has(c.id)) fail(`id 重复: ${c.id}`);
-    seenIds.add(c.id);
-
-    if (!Array.isArray(c.scope) || c.scope.length === 0) fail(`${at}: scope 为空`);
-    else
-      for (const s of c.scope) {
-        if (s === "global") continue;
-        if (!/^[\w./-]+(\/\*\*)?$/.test(s)) fail(`${at}: scope 非法 glob "${s}"（只支持 <prefix>/** 或精确路径）`);
-      }
-
-    if (!Array.isArray(c.authority) || c.authority.length === 0) fail(`${at}: authority 为空`);
-    else for (const a of c.authority) validateAuthorityPath(a);
-
-    if (!Array.isArray(c.enforcement) || c.enforcement.length === 0) fail(`${at}: enforcement 为空`);
-    else
-      for (const e of c.enforcement) {
-        if (e.type === "machine") {
-          if (!e.hook) fail(`${at}: machine enforcement 缺 hook`);
-          else if (!validateHookExists(e.hook)) fail(`${at}: hook 不存在于 .githooks/ / scripts/ / 根: ${e.hook}`);
-        } else if (e.type === "review") {
-          if (!e.agent) fail(`${at}: review enforcement 缺 agent`);
-          else if (!existsSync(join(REPO_ROOT, ".agents/skills/pr-cr-fix/agents", `${e.agent}.md`)))
-            fail(`${at}: review agent 不存在: ${e.agent}`);
-        } else if (e.type !== "none") {
-          fail(`${at}: enforcement.type 非法: ${e.type}`);
-        }
-      }
-
+    validateId(c, seenIds, at);
+    validateScope(c, at);
+    validateAuthority(c, at);
+    validateEnforcement(c, at);
     if (c.dimensions !== undefined && !Array.isArray(c.dimensions)) fail(`${at}: dimensions 须为数组`);
   }
 }

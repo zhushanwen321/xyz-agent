@@ -52,6 +52,35 @@ const ERROR_STATUS = 'error'
 const STREAMING_STATUS = 'streaming'
 const TOOL_RUNNING = 'running'
 
+/** 等待工具执行/审批判定（最优先：工具阻塞时即使后面有流式也不应显示 streaming）：
+ *  最后一条 assistant 的末位 toolCall 处于 running。 */
+function isWaitingOnToolCall(last: Message | undefined): boolean {
+  if (last?.role !== 'assistant') return false
+  const tools = last.toolCalls ?? []
+  return tools.length > 0 && tools[tools.length - 1].status === TOOL_RUNNING
+}
+
+/** 文本流式生成判定：isGenerating（streaming 实体存在）或最后一条消息 streaming。 */
+function isTextStreaming(chat: DeriveStatusChat, sessionId: string, last: Message | undefined): boolean {
+  return chat.isGenerating(sessionId) || last?.status === STREAMING_STATUS
+}
+
+/** W6：未 hydrate（messages 为空）→ 用元数据终态兜底，无则 done。
+ *  瞬态（streaming/compacting/waiting/retrying/pending）已在主函数上方分支处理，
+ *  此处仅处理无消息历史的终态显示。 */
+function terminalStatusWithoutMessages(metaStatus?: SessionStatus): DerivedStatus {
+  if (metaStatus === 'error') return 'error'
+  if (metaStatus === 'stopped') return 'stopped'
+  return 'done'
+}
+
+/** 有消息历史时的终态判定：error > stopped（assistant 被中断）> done。 */
+function terminalStatusOfLastMessage(last: Message): DerivedStatus {
+  if (last.status === ERROR_STATUS) return 'error'
+  if (last.role === 'assistant' && last.isInterrupted) return 'stopped'
+  return 'done'
+}
+
 /**
  * 派生 session 9 态。
  *
@@ -86,12 +115,7 @@ export function deriveStatus(
   const last = msgs[msgs.length - 1]
 
   // 等待工具执行/审批（最优先：工具阻塞时即使后面有流式也不应显示 streaming）
-  if (last?.role === 'assistant') {
-    const tools = last.toolCalls ?? []
-    if (tools.length > 0 && tools[tools.length - 1].status === TOOL_RUNNING) {
-      return 'waiting'
-    }
-  }
+  if (isWaitingOnToolCall(last)) return 'waiting'
 
   // ask-user pending → waiting（与 toolCall waiting 并列最高优先级）。
   // ask-user 走 extension.ui_request 通道不产生 toolCall running，需独立判定：
@@ -99,15 +123,13 @@ export function deriveStatus(
   if (hasAskUserPending) return 'waiting'
 
   // 自动重试中
-  if (chat.getRetryState?.(sessionId)) {
-    return 'retrying'
-  }
+  if (chat.getRetryState?.(sessionId)) return 'retrying'
 
   // 上下文压缩中
   if (isCompacting) return 'compacting'
 
   // 文本流式生成中
-  if (chat.isGenerating(sessionId) || last?.status === STREAMING_STATUS) return 'streaming'
+  if (isTextStreaming(chat, sessionId, last)) return 'streaming'
 
   // 主 turn 结束但有 background subagent/workflow 仍在 running/paused
   if (hasBackgroundWork) return 'working'
@@ -115,15 +137,6 @@ export function deriveStatus(
   // 已提交、等待 pi 确认（pendingSend 空窗期）
   if (isActive) return 'pending'
 
-  // W6：未 hydrate（messages 为空）→ 用元数据终态兜底，无则 done。
-  // 瞬态（streaming/compacting/waiting/retrying/pending）已在上方分支处理，
-  // 此处仅处理无消息历史的终态显示。
-  if (!last) {
-    if (metaStatus === 'error') return 'error'
-    if (metaStatus === 'stopped') return 'stopped'
-    return 'done'
-  }
-  if (last.status === ERROR_STATUS) return 'error'
-  if (last.role === 'assistant' && last.isInterrupted) return 'stopped'
-  return 'done'
+  if (!last) return terminalStatusWithoutMessages(metaStatus)
+  return terminalStatusOfLastMessage(last)
 }

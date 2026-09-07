@@ -67,7 +67,7 @@ function makeSessionStore(): ISessionStore {
     extractSessionOutcome: () => null,
     invalidateMetaCache: () => undefined,
     convertHistory: () => [],
-    trash: () => undefined,
+    trash: () => Promise.resolve(),
   } as unknown as ISessionStore
 }
 

@@ -20,7 +20,7 @@
  * abort：调 api.chat.abort（方法存在，中断流转 DEFERRED G-025）。
  */
 import { ref } from 'vue'
-import type { Segment, SessionViewSnapshot } from '@xyz-agent/shared'
+import type { Segment, ServerMessage, SessionViewSnapshot } from '@xyz-agent/shared'
 import { segmentsToPrompt } from '@xyz-agent/shared'
 import {
   subscribeSession,
@@ -32,6 +32,8 @@ import type { ChatStoreInstance } from './store'
 import type { ChatApiPort, WriteSegmentsFn } from './api-port'
 import { splitHistoryBeforeAnchor } from './mutations'
 import { createMessageCoalescer } from './delta-coalescer'
+import { getExecutingBash } from './bash-effects'
+import { toErrorMessage } from '../../utils/error-message'
 
 /**
  * CompactQueueLike —— useChat 消费 compactQueue 的最小结构类型（renderer useCompactQueue
@@ -274,6 +276,191 @@ export function resetChatModuleStateForTest(): void {
  * renderer composables/features/useChat.ts 导出同名包装（coreEnsureStreamSubscription 别名
  * import + 注入 renderer deps），4 复用点零改动。
  */
+/**
+ * streamSubscribe 回调各分支的独立处理体（按处理阶段提取，主回调只留分发编排）。
+ * 各 helper 接收窄化后的具体 ServerMessage（case 守卫窄化随值传递），行为与原内联分支逐字一致。
+ */
+
+/** [send.rejected] 兜底通道（D-006 独立类型，不进对话流）——session-occupancy D2 改造：
+ * 乐观气泡回滚 + inflight 回滚对全部 reason 立即生效（修复 §2.2 窗口 2 的「气泡残留 +
+ * 计数悬空」）；u5b 起 P3 全 reason 静默入队（flush 触发源切 session.occupancy 全 idle——
+ * busy/processing 的拒绝入队等 occupancy 回 idle 即投递，不再有「等不到触发源」的滞留，
+ * 设计 D2 被否 ③ 的前置条件已解除）；clientUuid 命中队列已有条目 = flush 重放来源，
+ * 跳过重入队（flush 的 S1 窗口订阅已处理失败保留，重入队会双条目双投递）。 */
+function handleSendRejected(
+  sid: string,
+  chat: ChatStoreInstance,
+  deps: EnsureStreamSubDeps,
+  msg: ServerMessage<'send.rejected'>,
+): void {
+  // reason（busy/compacting/processing）P3 起不再参与分型判定（全 reason 统一静默入队），
+  // 仅作为 runtime 转译语义保留在 wire 契约。
+  const { clientUuid: rejectedUuid, message: rejectMessage } = msg.payload
+  const pending = pendingDirectSends.get(sid)
+  // flush 重放来源消歧：rejected 回带的 clientUuid 命中 compactQueue 已有条目（u4b 起
+  // flush 提交携带条目 id）→ 该次发送来自 flush，只回滚不入队。
+  const uuidQueued =
+    rejectedUuid != null && deps.getCompactQueue().peek(sid).some((m) => m.id === rejectedUuid)
+  if (pending && (rejectedUuid == null || rejectedUuid === pending.clientUuid)) {
+    // 本编排器的未决直发被拒（payload 回带命中 / 现状 runtime 未回带两种形态）：
+    // 回滚乐观副作用（与入队正交，全 reason）。
+    chat.truncateFrom(sid, pending.clientUuid, true) // 移除未确认的乐观气泡（appendUser 尾插，其后无消息）
+    // 消除计数悬空（后续 steer 确认被错抵的根因）——仅回收 send 通道挂的占位；
+    // editAndResend 不挂配额（steer-bubble u2 契约，A2 起 holdsInflight 区分）。
+    if (pending.holdsInflight) chat.decrementInflight(sid, 1)
+    chat.clearPendingSend(sid)
+    pendingDirectSends.delete(sid)
+    // P3 全 reason 静默入队（D2 接管表）：toast 退役（三种拒绝统一 defer 语义——
+    // occupancy 回 idle 自动投递 + pending 气泡可见），原文（未加标记）入队。
+    if (!uuidQueued) {
+      deps.getCompactQueue().enqueue(sid, pending.text)
+    }
+    return
+  }
+  // 无未决直发记录（flush 重放 / 迟到帧）：[A1] flush 来源帧（clientUuid 命中队列条目）
+  // 静默 return——D2 接管表声明 toast「Agent 正在处理」删除，busy 类拒绝留队后由下一次
+  // occupancy idle 帧自动重投（自愈路径），与 flush 侧的 queueFlushFailed 双 toast 一并
+  // 消除；非队列来源的无记录迟到帧（真正孤儿帧）保持既有 toast 反馈。
+  // editAndResend 自 A2 起写未决记录走上方 pending 分支，不再落入此处。
+  chat.clearPendingSend(sid)
+  if (uuidQueued) return
+  deps.toast.error(rejectMessage ?? deps.t('composable.agentProcessing'))
+}
+
+/** subagent.directive：`@` 定向消息的可见气泡信号（composer-symbol-system §3.3.3a
+ * live 链路）。runtime event-adapter 在 extension 留痕 custom_message entry 落盘后
+ * 广播（message_end 锚定）；同 entry 的 message.customStart 前置帧走 generic 通路
+ * （display:false 不可见，U2c 契约），可见气泡由本分支插入——与 reload 侧
+ * mapSessionEntries 覆写 display:true 后投影的 Message 逐字段同形态（store.
+ * appendSubagentDirective 注释），live ≡ reload（关键规则 9）。
+ * [ADR-0049] per-session 隔离：校验 payload.sessionId === 订阅 sid，不匹配丢弃
+ * （架构约定 7——消息带 sessionId，非本 session 忽略；per-sid 通道路由下恒等，
+ * 显式校验是防御层）。 */
+function handleSubagentDirective(
+  sid: string,
+  chat: ChatStoreInstance,
+  msg: ServerMessage<'subagent.directive'>,
+): void {
+  if (msg.payload.sessionId === sid) {
+    chat.appendSubagentDirective(sid, {
+      subagentId: msg.payload.subagentId,
+      slug: msg.payload.slug,
+      direction: msg.payload.direction,
+      text: msg.payload.text,
+    })
+  }
+}
+
+/** #6 + M4：compact 生命周期开始（interpreter 从 compaction_start 事件唯一驱动，走 session 通道）。
+ * [u5b / D1] membership 已切 occupancy 派生（session.occupancy 帧，见 handleSessionOccupancy）
+ * ——本 handler 只保留 reason 文案源维护（手动/自动浮层文案，useMessageStreamNotices 消费）。
+ * 帧序：interpreter 同一挂点先发 session.compacting 再发 occupancy（event-interpreter
+ * handleCompactionStart），reason 就位先于浮层显隐条件成立。 */
+function handleSessionCompacting(
+  sid: string,
+  chat: ChatStoreInstance,
+  msg: ServerMessage<'session.compacting'>,
+): void {
+  chat.setCompactingReason(sid, msg.payload.reason)
+}
+
+/** #6：compact 生命周期结束（成功/失败/取消均广播）。清除 reason 文案源（occupancy 的
+ * compacting=false 由本事件之后的 session.occupancy 帧驱动）。
+ * MF-1：compaction_end 到达标记（供 compact() catch 区分失败类型）。仅 manual compact
+ * in-flight 时标记——auto-compaction 的 compaction_end handler 见 key 不在则跳过（不污染）。
+ * 成功/失败/aborted 均置 true：只要 compaction_end 到达，说明 pi 已处理 compact，结果（含错误）
+ * 由 interpreter 进对话流，catch 不再 toast（避免双提示 / 对 aborted 误提示失败）。
+ * [u5b / D6] flush 触发源切换：session.compacted 不再直接 flush——统一由 session.occupancy
+ * handler 的「全 idle 且队列非空」判定触发（sendRoute 解除语义）。
+ * 行为变化（设计 §3.5 错误规格表已声明）：压缩失败（compacted{error}）后 occupancy
+ * 三路复位 compacting=false → 同样满足 idle 条件 → 队列照常投递（消息不丢优先）。 */
+function handleSessionCompacted(sid: string, chat: ChatStoreInstance): void {
+  chat.setCompactingReason(sid, undefined)
+  // MF-1：仅 manual compact in-flight 时标记——auto-compaction 的 compaction_end handler
+  // 见 key 不在则跳过（不污染）。
+  if (manualCompactionState.has(sid)) manualCompactionState.set(sid, true)
+}
+
+/** [u5b / D1+D3] occupancy 投影消费（state topic：live 广播 + subscribeSession 的
+ * stateSnapshot 回放同路径到达——WS 重连 resubscribeAll / 切回 session 时快照恢复，
+ * G4）。写入 chat store 投影分区（sessionPhase 单一数据源）。
+ * [u5b / D6] defer 队列 flush 触发（sendRoute 解除语义 = 路由表行 1 的三维形态）：
+ * turn=idle 且 compacting=false 且 bash=false 且队列非空 → 投递。bash 参与条件
+ * （行 6 bash=true 时路由 defer，投递时机上 bash 结束解除）；renderer 的 bash flag
+ * 从 occupancy 帧取得（runtime #7 挂点写入）。
+ * 覆盖场景：压缩完成（原 session.compacted 触发语义）/ settling 收口 / bash 结束 /
+ * 断连重连快照恢复 idle（V6a：恢复后自动重放）。幂等：occupancy 帧变化才广播
+ * （runtime 去重）+ flush per-session in-flight 守卫 + 空队列 no-op。 */
+function handleSessionOccupancy(
+  sid: string,
+  chat: ChatStoreInstance,
+  deps: EnsureStreamSubDeps,
+  msg: ServerMessage<'session.occupancy'>,
+): void {
+  chat.setOccupancy(sid, { turn: msg.payload.turn, compacting: msg.payload.compacting, bash: msg.payload.bash })
+  if (
+    msg.payload.turn === 'idle'
+    && !msg.payload.compacting
+    && !msg.payload.bash
+    && deps.getCompactQueue().hasPending(sid)
+  ) {
+    void deps
+      .getCompactQueue()
+      .flush(sid)
+      .catch((e) => {
+        // [A1 / §3.5] RPC reject（传输级真错误，如 WS 断连）：toast「发送失败: {原因}」，
+        // 气泡保持 pending、队列保留，恢复后 occupancy 快照 idle 自动重放。S1 busy 类
+        // 拒绝（flush resolve false）静默自愈：条目留队等下一次 idle 帧重投，不再 toast
+        //（queueFlushFailed 退役——与 rejected 帧路径的「Agent 正在处理」双 toast 一并消除）。
+        const msg = e instanceof Error ? e.message : String(e)
+        deps.toast.error(deps.t('composable.sendFailed', { msg }))
+      })
+  }
+}
+
+/** pi 改写 session 名（session_info_changed → session.renamed，见 event-adapter.ts）。
+ * guard：payload.name 为空时跳过 —— 防 pi 推空名/旧名覆盖用户手动 rename 的值。
+ * 用闭包 sid（对称 compacting/compacted handler）：session.* 走 session 级通道
+ * (events.on(sid, ...))，payload.sessionId 恒等于订阅 sid，不信任 payload 可能的篡改。 */
+function handleSessionRenamed(
+  sid: string,
+  sessionStore: SessionStoreLike,
+  msg: ServerMessage<'session.renamed'>,
+): void {
+  if (msg.payload.name) {
+    sessionStore.applySnapshot(sid, { label: msg.payload.name })
+  }
+}
+
+/** 模型切换后 runtime 推送（model-service switchModel 末尾广播，含新 modelId/thinkingLevel；
+ * usage 已随 D1 协议收敛移出本帧，只经 context.update 一条帧贯穿）。applySnapshot 单 session 快照按 D1b 合并
+ * （undefined 字段 = 快照未涉及，不覆盖），不触发整表替换。
+ * thinkingLevel optional：未设置时（undefined）不更新，保留旧值。 */
+function handleSessionStateChanged(
+  sessionStore: SessionStoreLike,
+  msg: ServerMessage<'session.state_changed'>,
+): void {
+  if (msg.payload.sessionId) {
+    sessionStore.applySnapshot(msg.payload.sessionId, {
+      ...(msg.payload.modelId !== undefined && { modelId: msg.payload.modelId }),
+      ...(msg.payload.thinkingLevel !== undefined && { thinkingLevel: msg.payload.thinkingLevel }),
+    })
+  }
+}
+
+/** pi 切模型 / 用户手切档位后推 thinking_level_changed（runtime event-adapter 转为此类型）。
+ * 补 state_changed 的时序缺口：switchModel 的 broadcastSessionState 在 set_model RPC resolve 后
+ * 立即广播，而 thinking_level_changed 事件可能晚到（异步），此时 state_changed 的 thinkingLevel 为空。
+ * 本 handler 独立更新 thinkingLevel，不依赖两条消息的先后顺序。 */
+function handleSessionThinkingLevelSet(
+  sessionStore: SessionStoreLike,
+  msg: ServerMessage<'session.thinkingLevelSet'>,
+): void {
+  if (msg.payload.sessionId && msg.payload.level) {
+    sessionStore.applySnapshot(msg.payload.sessionId, { thinkingLevel: msg.payload.level })
+  }
+}
+
 export function ensureStreamSubscription(
   sid: string,
   chat: ChatStoreInstance,
@@ -293,65 +480,12 @@ export function ensureStreamSubscription(
     console.warn(`[useChat] subscribeSession failed for session ${sid}:`, e),
   )
   const unsub = deps.chatApi.streamSubscribe(sid, (msg) => {
-    // [send.rejected] 兜底通道（D-006 独立类型，不进对话流）——session-occupancy D2 改造：
-    // 乐观气泡回滚 + inflight 回滚对全部 reason 立即生效（修复 §2.2 窗口 2 的「气泡残留 +
-    // 计数悬空」）；u5b 起 P3 全 reason 静默入队（flush 触发源切 session.occupancy 全 idle——
-    // busy/processing 的拒绝入队等 occupancy 回 idle 即投递，不再有「等不到触发源」的滞留，
-    // 设计 D2 被否 ③ 的前置条件已解除）；clientUuid 命中队列已有条目 = flush 重放来源，
-    // 跳过重入队（flush 的 S1 窗口订阅已处理失败保留，重入队会双条目双投递）。
     if (msg.type === 'send.rejected') {
-      // reason（busy/compacting/processing）P3 起不再参与分型判定（全 reason 统一静默入队），
-      // 仅作为 runtime 转译语义保留在 wire 契约。
-      const { clientUuid: rejectedUuid, message: rejectMessage } = msg.payload
-      const pending = pendingDirectSends.get(sid)
-      // flush 重放来源消歧：rejected 回带的 clientUuid 命中 compactQueue 已有条目（u4b 起
-      // flush 提交携带条目 id）→ 该次发送来自 flush，只回滚不入队。
-      const uuidQueued =
-        rejectedUuid != null && deps.getCompactQueue().peek(sid).some((m) => m.id === rejectedUuid)
-      if (pending && (rejectedUuid == null || rejectedUuid === pending.clientUuid)) {
-        // 本编排器的未决直发被拒（payload 回带命中 / 现状 runtime 未回带两种形态）：
-        // 回滚乐观副作用（与入队正交，全 reason）。
-        chat.truncateFrom(sid, pending.clientUuid, true) // 移除未确认的乐观气泡（appendUser 尾插，其后无消息）
-        // 消除计数悬空（后续 steer 确认被错抵的根因）——仅回收 send 通道挂的占位；
-        // editAndResend 不挂配额（steer-bubble u2 契约，A2 起 holdsInflight 区分）。
-        if (pending.holdsInflight) chat.decrementInflight(sid, 1)
-        chat.clearPendingSend(sid)
-        pendingDirectSends.delete(sid)
-        // P3 全 reason 静默入队（D2 接管表）：toast 退役（三种拒绝统一 defer 语义——
-        // occupancy 回 idle 自动投递 + pending 气泡可见），原文（未加标记）入队。
-        if (!uuidQueued) {
-          deps.getCompactQueue().enqueue(sid, pending.text)
-        }
-        return
-      }
-      // 无未决直发记录（flush 重放 / 迟到帧）：[A1] flush 来源帧（clientUuid 命中队列条目）
-      // 静默 return——D2 接管表声明 toast「Agent 正在处理」删除，busy 类拒绝留队后由下一次
-      // occupancy idle 帧自动重投（自愈路径），与 flush 侧的 queueFlushFailed 双 toast 一并
-      // 消除；非队列来源的无记录迟到帧（真正孤儿帧）保持既有 toast 反馈。
-      // editAndResend 自 A2 起写未决记录走上方 pending 分支，不再落入此处。
-      chat.clearPendingSend(sid)
-      if (uuidQueued) return
-      deps.toast.error(rejectMessage ?? deps.t('composable.agentProcessing'))
+      handleSendRejected(sid, chat, deps, msg)
       return
     }
-    // subagent.directive：`@` 定向消息的可见气泡信号（composer-symbol-system §3.3.3a
-    // live 链路）。runtime event-adapter 在 extension 留痕 custom_message entry 落盘后
-    // 广播（message_end 锚定）；同 entry 的 message.customStart 前置帧走 generic 通路
-    // （display:false 不可见，U2c 契约），可见气泡由本分支插入——与 reload 侧
-    // mapSessionEntries 覆写 display:true 后投影的 Message 逐字段同形态（store.
-    // appendSubagentDirective 注释），live ≡ reload（关键规则 9）。
-    // [ADR-0049] per-session 隔离：校验 payload.sessionId === 订阅 sid，不匹配丢弃
-    // （架构约定 7——消息带 sessionId，非本 session 忽略；per-sid 通道路由下恒等，
-    // 显式校验是防御层）。
     if (msg.type === 'subagent.directive') {
-      if (msg.payload.sessionId === sid) {
-        chat.appendSubagentDirective(sid, {
-          subagentId: msg.payload.subagentId,
-          slug: msg.payload.slug,
-          direction: msg.payload.direction,
-          text: msg.payload.text,
-        })
-      }
+      handleSubagentDirective(sid, chat, msg)
       return
     }
     // message.* → 单一入口（F2 重构：消除 double-dispatch）。
@@ -366,97 +500,32 @@ export function ensureStreamSubscription(
       return
     }
     // session.* → 跨 store 协调（sessionStore.applySnapshot / occupancy 投影），
-    // 保留在 useChat（stores 间禁止互相 import）。
+    // 保留在 useChat（stores 间禁止互相 import）。case 体提取为上方同名 handle* helper。
     switch (msg.type) {
       // [fix-handoff-with-message] session.handoffStarted 不再处理：前端已删除「正在交接…」
       // system notice（改由 composer stop 按钮提供取消入口）。runtime 仍广播此消息，前端忽略即可。
       case 'session.compacting': {
-        // #6 + M4：compact 生命周期开始（interpreter 从 compaction_start 事件唯一驱动，走 session 通道）。
-        // [u5b / D1] membership 已切 occupancy 派生（session.occupancy 帧，见下方 case）——本
-        // handler 只保留 reason 文案源维护（手动/自动浮层文案，useMessageStreamNotices 消费）。
-        // 帧序：interpreter 同一挂点先发 session.compacting 再发 occupancy（event-interpreter
-        // handleCompactionStart），reason 就位先于浮层显隐条件成立。
-        chat.setCompactingReason(sid, msg.payload.reason)
+        handleSessionCompacting(sid, chat, msg)
         break
       }
       case 'session.compacted': {
-        // #6：compact 生命周期结束（成功/失败/取消均广播）。清除 reason 文案源（occupancy 的
-        // compacting=false 由本事件之后的 session.occupancy 帧驱动）。
-        chat.setCompactingReason(sid, undefined)
-        // MF-1：compaction_end 到达标记（供 compact() catch 区分失败类型）。仅 manual compact
-        // in-flight 时标记——auto-compaction 的 compaction_end handler 见 key 不在则跳过（不污染）。
-        // 成功/失败/aborted 坉 true：只要 compaction_end 到达，说明 pi 已处理 compact，结果（含错误）
-        // 由 interpreter 进对话流，catch 不再 toast（避免双提示 / 对 aborted 误提示失败）。
-        if (manualCompactionState.has(sid)) manualCompactionState.set(sid, true)
-        // [u5b / D6] flush 触发源切换：session.compacted 不再直接 flush——统一由下方
-        // session.occupancy handler 的「全 idle 且队列非空」判定触发（sendRoute 解除语义）。
-        // 行为变化（设计 §3.5 错误规格表已声明）：压缩失败（compacted{error}）后 occupancy
-        // 三路复位 compacting=false → 同样满足 idle 条件 → 队列照常投递（消息不丢优先）。
+        handleSessionCompacted(sid, chat)
         break
       }
       case 'session.occupancy': {
-        // [u5b / D1+D3] occupancy 投影消费（state topic：live 广播 + subscribeSession 的
-        // stateSnapshot 回放同路径到达——WS 重连 resubscribeAll / 切回 session 时快照恢复，
-        // G4）。写入 chat store 投影分区（sessionPhase 单一数据源）。
-        chat.setOccupancy(sid, { turn: msg.payload.turn, compacting: msg.payload.compacting, bash: msg.payload.bash })
-        // [u5b / D6] defer 队列 flush 触发（sendRoute 解除语义 = 路由表行 1 的三维形态）：
-        // turn=idle 且 compacting=false 且 bash=false 且队列非空 → 投递。bash 参与条件
-        // （行 6 bash=true 时路由 defer，投递时机上 bash 结束解除）；renderer 的 bash flag
-        // 从 occupancy 帧取得（runtime #7 挂点写入）。
-        // 覆盖场景：压缩完成（原 session.compacted 触发语义）/ settling 收口 / bash 结束 /
-        // 断连重连快照恢复 idle（V6a：恢复后自动重放）。幂等：occupancy 帧变化才广播
-        // （runtime 去重）+ flush per-session in-flight 守卫 + 空队列 no-op。
-        if (
-          msg.payload.turn === 'idle'
-          && !msg.payload.compacting
-          && !msg.payload.bash
-          && deps.getCompactQueue().hasPending(sid)
-        ) {
-          void deps
-            .getCompactQueue()
-            .flush(sid)
-            .catch((e) => {
-              // [A1 / §3.5] RPC reject（传输级真错误，如 WS 断连）：toast「发送失败: {原因}」，
-              // 气泡保持 pending、队列保留，恢复后 occupancy 快照 idle 自动重放。S1 busy 类
-              // 拒绝（flush resolve false）静默自愈：条目留队等下一次 idle 帧重投，不再 toast
-              //（queueFlushFailed 退役——与 rejected 帧路径的「Agent 正在处理」双 toast 一并消除）。
-              const msg = e instanceof Error ? e.message : String(e)
-              deps.toast.error(deps.t('composable.sendFailed', { msg }))
-            })
-        }
+        handleSessionOccupancy(sid, chat, deps, msg)
         break
       }
       case 'session.renamed': {
-        // pi 改写 session 名（session_info_changed → session.renamed，见 event-adapter.ts）。
-        // guard：payload.name 为空时跳过 —— 防 pi 推空名/旧名覆盖用户手动 rename 的值。
-        // 用闭包 sid（对称 compacting/compacted handler）：session.* 走 session 级通道
-        // (events.on(sid, ...))，payload.sessionId 恒等于订阅 sid，不信任 payload 可能的篡改。
-        if (msg.payload.name) {
-          sessionStore.applySnapshot(sid, { label: msg.payload.name })
-        }
+        handleSessionRenamed(sid, sessionStore, msg)
         break
       }
       case 'session.state_changed': {
-        // 模型切换后 runtime 推送（model-service switchModel 末尾广播，含新 modelId/thinkingLevel；
-        // usage 已随 D1 协议收敛移出本帧，只经 context.update 一条帧贯穿）。applySnapshot 单 session 快照按 D1b 合并
-        // （undefined 字段 = 快照未涉及，不覆盖），不触发整表替换。
-        // thinkingLevel optional：未设置时（undefined）不更新，保留旧值。
-        if (msg.payload.sessionId) {
-          sessionStore.applySnapshot(msg.payload.sessionId, {
-            ...(msg.payload.modelId !== undefined && { modelId: msg.payload.modelId }),
-            ...(msg.payload.thinkingLevel !== undefined && { thinkingLevel: msg.payload.thinkingLevel }),
-          })
-        }
+        handleSessionStateChanged(sessionStore, msg)
         break
       }
       case 'session.thinkingLevelSet': {
-        // pi 切模型 / 用户手切档位后推 thinking_level_changed（runtime event-adapter 转为此类型）。
-        // 补 state_changed 的时序缺口：switchModel 的 broadcastSessionState 在 set_model RPC resolve 后
-        // 立即广播，而 thinking_level_changed 事件可能晚到（异步），此时 state_changed 的 thinkingLevel 为空。
-        // 本 handler 独立更新 thinkingLevel，不依赖两条消息的先后顺序。
-        if (msg.payload.sessionId && msg.payload.level) {
-          sessionStore.applySnapshot(msg.payload.sessionId, { thinkingLevel: msg.payload.level })
-        }
+        handleSessionThinkingLevelSet(sessionStore, msg)
         break
       }
       default:
@@ -662,7 +731,7 @@ export function createUseChat(deps: UseChatDeps) {
       // [steer-bubble u2 / D2] RPC 失败回滚 −1：pi 侧无消息、message_end 永不到来，
       // 不回滚则配额永久悬空、下一次 F1 投递的 message_end 确认被错抵。
       chat.decrementInflight(sid, 1)
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       deps.toast.error(deps.t('composable.sendFailed', { msg }))
     } finally {
       // [session-occupancy D2] 未决记录收口：RPC ack/reject 时 send.rejected 帧必然已处理
@@ -728,7 +797,7 @@ export function createUseChat(deps: UseChatDeps) {
     } catch (e) {
       // RPC 失败（WS 断连 / extension 报「subagent 已结束」等）：toast 明确提示，
       // 消息不静默丢失（S8：留在输入区或明确失败提示——此处为后者，与 send 失败同款）。
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       deps.toast.error(deps.t('composable.subagentDirectiveFailed', { msg }))
     }
   }
@@ -757,7 +826,7 @@ export function createUseChat(deps: UseChatDeps) {
       await deps.chatApi.steer(sid, promptText)
     } catch (e) {
       chat.abortPending(sid, promptText, 'steer')
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       deps.toast.error(deps.t('composable.supplementSendFailed', { msg }))
     }
   }
@@ -790,7 +859,7 @@ export function createUseChat(deps: UseChatDeps) {
       await deps.chatApi.followUp(sid, promptText)
     } catch (e) {
       chat.abortPending(sid, promptText, 'follow-up')
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       deps.toast.error(deps.t('composable.nextTurnSendFailed', { msg }))
     }
   }
@@ -812,7 +881,7 @@ export function createUseChat(deps: UseChatDeps) {
     } catch (e) {
       // abort 失败不重抛——用户已表达「停止」意图，UI 不应因 abort RPC 失败而卡住。
       // pendingSend 已清（乐观），实体收口靠 runtime 广播 message.complete{aborted} 兜底。
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       deps.toast.error(deps.t('composable.stopFailed', { msg }))
     }
   }
@@ -836,7 +905,20 @@ export function createUseChat(deps: UseChatDeps) {
     try {
       await deps.chatApi.bash(sid, command, excludeFromContext)
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+      // [①b timeout-slow-flow-wallclock D2/r4 极性修正] RPC 错误 reject（error envelope /
+      // backstop 超时）与 bashResult 合成终态帧的到达时序：runtime 先广播终态帧再回 error
+      // envelope，本 catch 执行时终态帧已被 bashResultEffect 消费。executingBash 是「命令
+      // 执行中」瞬时态（bashStart 置 / bashResult·markBashError 清），「已收合成终态」=
+      // 查询为空（取反）——为空 → 气泡已呈现终态（超时三步指引或错误输出），它是权威
+      // 呈现面，再弹「失败」措辞 toast 冗余且误导（如超时后命令仍在跑，toast 却说 failed），
+      // 抑制；非空（命令仍在执行 = env 逃生门下 renderer backstop 先到的形态）→ toast 是
+      // 唯一提示，不抑制。与 compact 先例极性相反：manualCompactionState 是正向标志（终态
+      // 到达置 true），此处是反向标志（终态到达清空）——「查到非空」绝不抑制。
+      if (!getExecutingBash(sid)) {
+        console.warn(`[useChat] sendBash RPC failed after terminal frame already rendered, toast suppressed, sid=${sid}`, e)
+        return
+      }
+      const msg = toErrorMessage(e)
       deps.toast.error(deps.t('composable.bashFailed', { msg }))
     }
   }
@@ -856,7 +938,7 @@ export function createUseChat(deps: UseChatDeps) {
       // [B2 PR#116 review] abortBash RPC 失败时 bashResult 广播不会到达，bash 消息永久卡在 streaming。
       // 调 store.markStreamingBashError 找到最后 streaming bash 消息标 error 态兼底（store 持有
       // 自己的 messages ref，useChat 不碰 ref——解耦 pinia Store/factory 产物的 messages 类型鸿沟）。
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       chat.markStreamingBashError(sid, msg)
       deps.toast.error(deps.t('composable.stopFailed', { msg }))
     }
@@ -889,7 +971,7 @@ export function createUseChat(deps: UseChatDeps) {
       if (!compactionEnded) {
         // transport/busy 级失败：pi 未发 compaction_end（RPC 未达 pi / busy 预检拒绝），interpreter 不参与，
         // 零用户反馈——toast 兜底（AGENTS.md 规则 #3）。compaction 级失败由 interpreter 进对话流，不在此 toast。
-        const msg = e instanceof Error ? e.message : String(e)
+        const msg = toErrorMessage(e)
         deps.toast.error(deps.t('composable.compactFailed', { msg }))
       }
       console.warn(`[useChat] compact RPC failed (compaction-ended=${compactionEnded}, surfaced via ${compactionEnded ? 'interpreter/dialog flow' : 'toast fallback'})`, e)
@@ -941,7 +1023,7 @@ export function createUseChat(deps: UseChatDeps) {
       // [W2] 错误处理策略与 send/steer/followUp/abort 对齐：清 pendingSend + toast，不 throw。
       // 消费侧 Turn.vue submitEdit 无 try/catch，不 throw 避免其产生 unhandled rejection（错误已通过 toast 消化）。
       chat.clearPendingSend(sessionId)
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       deps.toast.error(deps.t('composable.sendFailed', { msg }))
     } finally {
       // [A2] 未决记录收口（与 send finally 同款）：WS FIFO 保证 rejected 帧先于 RPC reply

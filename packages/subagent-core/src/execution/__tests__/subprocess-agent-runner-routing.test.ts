@@ -15,9 +15,9 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentCallOpts, AgentResult } from "../../orchestration/models/types.ts";
-import type { RunContext } from "../engine/port.ts";
+import type { RunContext, EnginePort } from "../engine/port.ts";
 import { clearEngines, registerEngine } from "../engine/registry.ts";
-import type { EnginePort, ProbeReport } from "../engine/types.ts";
+import type { ProbeReport } from "../engine/types.ts";
 import { ModelConfigService, setModelConfigService } from "../model-config-service.ts";
 import { getChildByRecord } from "../engine/engines/pi/session-runner.ts";
 import { SubprocessAgentRunner } from "../subprocess-agent-runner.ts";

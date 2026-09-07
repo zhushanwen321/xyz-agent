@@ -19,7 +19,7 @@ describe('findLastAssistantIndex', () => {
   })
 
   it('无 assistant 返回 -1', () => {
-    const list = [msg('user'), msg('system'), msg('toolResult')]
+    const list = [msg('user'), msg('system'), msg('user')]
     expect(findLastAssistantIndex(list)).toBe(-1)
   })
 
@@ -37,9 +37,9 @@ describe('findLastAssistantIndex', () => {
 describe('findToolCallOwner', () => {
   it('ID 锚定：命中含该 toolCallId 的 assistant', () => {
     const list: Message[] = [
-      msg('assistant', { toolCalls: [{ id: 'tc-1', type: 'function', function: { name: 'fn', arguments: '{}' } }] }),
+      msg('assistant', { toolCalls: [{ id: 'tc-1', toolName: 'fn', input: {}, status: 'completed' as const, startTime: 0 }] }),
       msg('user'),
-      msg('assistant', { toolCalls: [{ id: 'tc-2', type: 'function', function: { name: 'fn', arguments: '{}' } }] }),
+      msg('assistant', { toolCalls: [{ id: 'tc-2', toolName: 'fn', input: {}, status: 'completed' as const, startTime: 0 }] }),
     ]
     expect(findToolCallOwner(list, 'tc-1')).toBe(0)
     expect(findToolCallOwner(list, 'tc-2')).toBe(2)
@@ -47,7 +47,7 @@ describe('findToolCallOwner', () => {
 
   it('ID 不存在返回 -1', () => {
     const list: Message[] = [
-      msg('assistant', { toolCalls: [{ id: 'tc-1', type: 'function', function: { name: 'fn', arguments: '{}' } }] }),
+      msg('assistant', { toolCalls: [{ id: 'tc-1', toolName: 'fn', input: {}, status: 'completed' as const, startTime: 0 }] }),
     ]
     expect(findToolCallOwner(list, 'nope')).toBe(-1)
   })
@@ -60,7 +60,7 @@ describe('findToolCallOwner', () => {
   it('多 assistant 含同一 ID 时从后往前命中最新（乱序无害化）', () => {
     // 模拟事件乱序：理论上同一 toolCallId 不应跨 message，但 findToolCallOwner 从后扫
     // 保证即便数据异常也命中最新（最新的 turn 覆盖旧定义）
-    const shared = { id: 'tc-x', type: 'function', function: { name: 'fn', arguments: '{}' } }
+    const shared = { id: 'tc-x', toolName: 'fn', input: {}, status: 'completed' as const, startTime: 0 }
     const list: Message[] = [
       msg('assistant', { toolCalls: [shared] }),
       msg('assistant', { toolCalls: [shared] }),
@@ -71,7 +71,7 @@ describe('findToolCallOwner', () => {
   it('toolCalls 为 undefined 的 assistant 被跳过（可选链安全）', () => {
     const list: Message[] = [
       msg('assistant'), // 无 toolCalls
-      msg('assistant', { toolCalls: [{ id: 'tc-1', type: 'function', function: { name: 'fn', arguments: '{}' } }] }),
+      msg('assistant', { toolCalls: [{ id: 'tc-1', toolName: 'fn', input: {}, status: 'completed' as const, startTime: 0 }] }),
     ]
     expect(findToolCallOwner(list, 'tc-1')).toBe(1)
   })

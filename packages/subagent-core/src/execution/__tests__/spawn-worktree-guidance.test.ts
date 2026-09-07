@@ -117,8 +117,9 @@ function makeRecord() {
   return createRecord("wt-guidance-1", {
     agent: "general-purpose",
     model: "test/model",
-    mode: "sync",
+    mode: "background",
     task: "test task",
+    slug: "test",
     startedAt: Date.now(),
     rootSessionId: "s1",
     parentRecordId: undefined,
@@ -128,7 +129,7 @@ function makeRecord() {
 
 function makeRunOpts(overrides: Partial<RunOptions> = {}): RunOptions {
   return {
-    resolved: { model: { provider: "test", id: "model" }, thinkingLevel: undefined },
+    resolved: { model: { provider: "test", id: "model", name: "Model", reasoning: false }, thinkingLevel: undefined },
     agentConfig: undefined,
     appendSystemPrompt: undefined,
     skillPath: undefined,

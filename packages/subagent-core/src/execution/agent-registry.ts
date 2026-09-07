@@ -56,41 +56,64 @@ export function parseAgentWithMeta(
   content: string,
 ): { config: AgentConfig; meta: AgentMeta | null } {
   const name = path.basename(filePath, ".md");
+  // 结构切分三态（与 parseAgentProfile 共用 splitAgentFrontmatter，切分逻辑逐字节一致）
+  const fm = splitAgentFrontmatter(content);
 
   // 无 frontmatter → 整个内容作为 systemPrompt
-  if (!content.startsWith(FM_DELIM)) {
+  if (fm.kind === "none") {
     return { config: { name, systemPrompt: content.trim() }, meta: null };
   }
 
-  const closeIdx = content.indexOf(FM_DELIM, FM_DELIM.length);
-  if (closeIdx === -1) {
-    // 未闭合 frontmatter：提取 name，其余作为 systemPrompt
-    const yamlBlock = content.slice(FM_DELIM.length);
+  // 未闭合 frontmatter：提取 name，其余作为 systemPrompt
+  if (fm.kind === "unclosed") {
     return {
       config: {
-        name: extractYamlField(yamlBlock, "name") ?? name,
+        name: extractYamlField(fm.yamlBlock, "name") ?? name,
         systemPrompt: content.trim(),
       },
       meta: null,
     };
   }
 
-  const yamlBlock = content.slice(FM_DELIM.length, closeIdx);
-  const body = content.slice(closeIdx + FM_DELIM.length).trim();
+  return parseClosedFrontmatterAgent(filePath, name, content, fm.yamlBlock, fm.body);
+}
 
+/** closed frontmatter 的主路径：IF1 严格层 + legacy fallback 字段解析 + config 投影。
+ *  字段解析/warn/throw 时序与提取前一致（parseResourceMeta → fallback+warn → engine+校验 → 投影）。 */
+function parseClosedFrontmatterAgent(
+  filePath: string,
+  name: string,
+  content: string,
+  yamlBlock: string,
+  body: string,
+): { config: AgentConfig; meta: AgentMeta | null } {
   // m2：结构化路由字段（name/model/tools）经 IF1 parseResourceMeta（统一 parser），
   // 消灭本地 frontmatter parser 与 subagent-list-injector 的重复。thinkingLevel/defaultBackground
   // 是执行配置（非 AgentMeta 路由字段），仍用 extractYamlField 取。
   const meta = parseResourceMeta(content, "agent");
   const agentMeta = meta?.kind === "agent" ? meta : null;
+  const legacyFallbacks = resolveLegacyRoutingFallbacks(agentMeta, yamlBlock, filePath);
+  // engine 字段（D9）：结构化优先（IF1），legacy fallback 与 model/tools 同判——
+  // agentMeta 未通过 IF1 时配置不丢
+  const engine = resolveAgentEngine(agentMeta, yamlBlock, filePath);
+
+  return {
+    config: projectAgentConfig(name, body, agentMeta, legacyFallbacks, engine, yamlBlock),
+    meta: agentMeta,
+  };
+}
+
+/** legacy fallback 路由字段（model/tools）：IF1 未通过时不静默丢失（MF-3），并按需 warn。 */
+function resolveLegacyRoutingFallbacks(
+  agentMeta: AgentMeta | null,
+  yamlBlock: string,
+  filePath: string,
+): { modelFallback: string | undefined; toolsFallback: string[] | undefined } {
   // MF-3 regression fix：agentMeta=null（IF1 要求 name/description 必填，缺则 parseResourceMeta
   // 返 null）时，model/tools 不能静默丢失——fallback 用 extractYamlField 取（保留重构前行为）。
   // 注入路由可见性由 discovery/injector 按 available 标志决定，与本处（direct-path loadByPath）无关。
   const modelFallback = extractYamlField(yamlBlock, "model");
-  const toolsFallbackRaw = extractYamlField(yamlBlock, "tools");
-  const toolsFallback = toolsFallbackRaw
-    ? toolsFallbackRaw.split(",").map((s) => s.trim()).filter(Boolean)
-    : undefined;
+  const toolsFallback = parseCommaListFallback(extractYamlField(yamlBlock, "tools"));
   if (!agentMeta && /^model:|^tools:/m.test(yamlBlock)) {
     // m2 exec-review MINOR-2 + MF-3：IF1 未通过（缺 name/description）→ model/tools 经 legacy
     // fallback 取（direct-path loadByPath 不丢配置，与重构前一致）；但结构化路由注入不可见，
@@ -100,30 +123,51 @@ export function parseAgentWithMeta(
         "model/tools 经 legacy fallback 生效（直接路径不丢配置），但结构化路由不可见——请补充 description",
     );
   }
-  const defaultBackgroundRaw = extractYamlField(yamlBlock, "defaultBackground");
-  // engine 字段（D9）：结构化优先（IF1），legacy fallback 与 model/tools 同判——
-  // agentMeta 未通过 IF1 时配置不丢
+  return { modelFallback, toolsFallback };
+}
+
+/** engine 字段解析 + 解析期注册校验（D9：未注册 id 前置暴露，不留到运行时神秘失败）。
+ *  为什么在解析期而非路由期：配置错误的根源在 .md 文件，越早报错定位越准（错误含文件路径 + 注册清单）。 */
+function resolveAgentEngine(
+  agentMeta: AgentMeta | null,
+  yamlBlock: string,
+  filePath: string,
+): string | undefined {
   const engine = agentMeta?.engine ?? extractYamlField(yamlBlock, "engine");
-  // 解析期校验（D9：未注册 id 前置暴露，不留到运行时神秘失败）。为什么在解析期而非
-  // 路由期：配置错误的根源在 .md 文件，越早报错定位越准（错误含文件路径 + 注册清单）
   if (engine !== undefined && !hasEngine(engine)) {
     throw new EngineNotFoundError(engine, listEngines(), filePath);
   }
+  return engine;
+}
 
+/** closed frontmatter 的 AgentConfig 投影（IF1 严格层优先，逐字段 legacy fallback）。 */
+function projectAgentConfig(
+  name: string,
+  body: string,
+  agentMeta: AgentMeta | null,
+  fallbacks: { modelFallback: string | undefined; toolsFallback: string[] | undefined },
+  engine: string | undefined,
+  yamlBlock: string,
+): AgentConfig {
   return {
-    config: {
-      name: agentMeta?.name ?? name,
-      systemPrompt: body,
-      model: agentMeta?.model ?? modelFallback ?? undefined,
-      thinkingLevel: extractYamlField(yamlBlock, "thinkingLevel") ?? undefined,
-      ...(engine !== undefined ? { engine } : {}),
-      tools: agentMeta?.tools && agentMeta.tools.length > 0
-        ? agentMeta.tools
-        : (toolsFallback && toolsFallback.length > 0 ? toolsFallback : undefined),
-      defaultBackground: defaultBackgroundRaw === "true" ? true : undefined,
-    },
-    meta: agentMeta,
+    name: agentMeta?.name ?? name,
+    systemPrompt: body,
+    model: agentMeta?.model ?? fallbacks.modelFallback ?? undefined,
+    thinkingLevel: extractYamlField(yamlBlock, "thinkingLevel") ?? undefined,
+    ...(engine !== undefined ? { engine } : {}),
+    tools: resolveAgentTools(agentMeta, fallbacks.toolsFallback),
+    defaultBackground: extractYamlField(yamlBlock, "defaultBackground") === "true" ? true : undefined,
   };
+}
+
+/** tools 投影：IF1 严格层非空清单优先，否则 legacy fallback 非空清单，均缺省 undefined。 */
+function resolveAgentTools(
+  agentMeta: AgentMeta | null,
+  toolsFallback: string[] | undefined,
+): string[] | undefined {
+  return agentMeta?.tools && agentMeta.tools.length > 0
+    ? agentMeta.tools
+    : (toolsFallback && toolsFallback.length > 0 ? toolsFallback : undefined);
 }
 
 /** 提取简单 `key: value` 字段，剥离引号。 */
@@ -255,7 +299,7 @@ type AgentFrontmatterSlice =
   | { kind: "unclosed"; yamlBlock: string }
   | { kind: "closed"; yamlBlock: string; body: string };
 
-/** frontmatter 结构切分（与 parseAgentWithMeta 同款定位逻辑，产出三态供分派）。 */
+/** frontmatter 结构切分（产出三态供分派；parseAgentWithMeta 与 parseAgentProfile 共用单点）。 */
 function splitAgentFrontmatter(text: string): AgentFrontmatterSlice {
   if (!text.startsWith(FM_DELIM)) return { kind: "none" };
   const closeIdx = text.indexOf(FM_DELIM, FM_DELIM.length);

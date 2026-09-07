@@ -1,22 +1,21 @@
 /**
- * !! 此文件由 packages/plugin-sdk/scripts/sync-types.sh 自动生成 !!
- * !! 请勿手动编辑 —— 修改 runtime 的 plugin-types 后重跑 sync-types.sh  !!
+ * 插件系统契约类型 —— single source of truth（D28 方向反转，2026-09-05）。
  *
- * 来源（single source of truth）:
- *   packages/runtime/src/services/plugin-service/plugin-types.ts
- *   packages/runtime/src/services/plugin-service/plugin-types/{descriptor-types,rpc-protocol,hook-types}.ts
- *   packages/extension-protocol/src/core/types.ts（GuiComponent 渲染协议类型）
+ * 本文件是 xyz-agent 插件契约的权威定义：面向插件作者对外发布，刻意保持
+ * 零依赖自包含（第三方插件作者无需装整个 monorepo）。
  *
- * 生成规则：
- *   - 拍平 runtime 主文件的 re-export shim + 3 个子域文件 + extension-protocol 协议类型 → 单个自包含文件
- *   - 剥离所有 import（SDK 保持零依赖，第三方插件作者无需装整个 monorepo）
- *   - runtime 内部 service 接口（ISessionService / IConfigService /
- *     IModelService / IPluginInstaller）替换为 `unknown`
- *   - 剥离不应进 SDK 的内部类型：IPluginServiceDeps（PluginService 构造参数）、
- *     BridgeSyncPayload（plugin-service 内部塑形对象）
+ * 消费方（runtime 侧薄壳，保持其既有导入面不变）：
+ *   packages/runtime/src/services/plugin-service/plugin-types.ts          （主域 + Bridge/AgentAPI/Tool 等）
+ *   packages/runtime/src/services/plugin-service/plugin-types/hook-types.ts（Hook 域）
+ *   descriptor / rpc 子域仍由 runtime 本地文件定义，与本文件同构（过渡形态）。
  *
- * D28: 本文件刻意与 runtime 的 plugin-types 镜像而非 re-export，这是有意的跨包
- * 契约重复——sync 脚本是它的「真相源」，避免 SDK 引入对 @xyz-agent/runtime 的依赖。
+ * 修改契约：直接编辑本文件（对外类型名/结构零变化承诺——published API 兼容）。
+ *
+ * 历史：2026-09-05 前本文件由 packages/plugin-sdk/scripts/sync-types.sh 从
+ * runtime 的 plugin-types 自动生成（runtime 为真相源的镜像方向）；D28 审计
+ * 记录了当时的刻意重复理由。方向反转为「SDK 为 SSOT、runtime re-export」后
+ * sync-types.sh 已删除（生成方向不再存在），依赖方向 = runtime → SDK 单向，
+ * SDK 仍零依赖。
  */
 
 /**
@@ -413,12 +412,32 @@ export type ObserverHookType = 'onPiEvent'
 export type HookType = InterceptorHookType | ObserverHookType
 
 /**
- * @proposed — 拦截器返回结果：允许/阻止/修改数据。
+ * @proposed — 拦截器返回结果：允许/阻止/修改数据/注入消息。
+ *
+ * 三个语义域互不混淆（plugin-intercept-injection 设计 §3.3-D1）：
+ * - 阻止：proceed:false — runtime 侧终止后续插件 hook 链并留痕；当前 pi 集成不阻止
+ *   agent turn（pi before_agent_start 无 block 槽位，turn 照常进行）
+ * - 改写：modifiedData — 改写当前 hook 事件的 data（如 onAfterToolResult 改写工具输出），
+ *   管线按「链上最后一个」覆盖语义透传（HookResult.transformedData）
+ * - 注入：injectedMessages — 新增 LLM 上下文消息，跨插件累积拼接（非改写、非阻止）
  */
 export interface InterceptorResult {
+  /**
+   * false = 终止后续插件 hook 链 + 留痕。诚实边界：pi 链路无 block 槽位，
+   * blocked 回包不阻止 agent turn（turn 照常进行）。
+   */
   proceed: boolean
+  /** proceed:false 时的原因描述（留痕 / blocked 回包用） */
   reason?: string
+  /** 改写语义：改写当前 hook 事件的 data（链上最后一个生效，非累积）。勿用于注入 */
   modifiedData?: unknown
+  /**
+   * 注入语义：向 LLM 上下文新增的消息文本。契约边界（D1）：仅 onBeforeAgentStart
+   * （bridge intercept 链路）被消费；其他 intercept hookType 返回非空值类型合法但
+   * 无运行时效果（管线 warn 留痕，作者应移除误用）。observe hook（onPiEvent）的
+   * 响应在 Worker 侧丢弃，此处误用注入无任何运行时信号，仅靠本注释约束。
+   */
+  injectedMessages?: string[]
 }
 
 /**
@@ -452,12 +471,19 @@ export type HookObserver = (context: HookContext) => Promise<InterceptorResult |
  */
 export type PiEventCallback = (eventName: string, data: unknown) => Promise<void>
 
-/** @internal — runtime 内部：Hook 通用返回结果（主线程塑形） */
+/**
+ * @internal — runtime 内部：Hook 通用返回结果（主线程塑形）。
+ * injectedMessages 与 transformedData 语义分叉（plugin-intercept-injection 设计 §3.3-D2/D3）：
+ * 前者为管线层逐插件形状校验后的合法条目跨插件累积拼接（priority 执行序），后者保持
+ * 「链上最后一个」覆盖语义；消费方为 handleBridgeIntercept 的注入映射。
+ */
 export interface HookResult {
   blocked: boolean
   blockedBy?: string
   reason?: string
   transformedData?: unknown
+  /** 注入语义（仅 onBeforeAgentStart 链路消费）：管线已校验的合法条目，跨插件累积 */
+  injectedMessages?: string[]
 }
 
 /** @internal — runtime 内部：Hook 被阻止时的详细结果 */
@@ -745,6 +771,14 @@ export interface ToolRegistration {
   name: string
   description: string
   parameters: Record<string, unknown>
+  /**
+   * 工具执行超时声明（毫秒，D1 声明通道）：
+   * - >0 — 该工具单次执行的时间上界；
+   * - <=0 或 Infinity — 显式 opt-out（不限时）；
+   * - 非法值（非 number / NaN）— 注册入口 fail-fast（INVALID_TIMEOUT_MS）；
+   * - 缺省 — 回落 DEFAULT_TOOL_EXECUTE_TIMEOUT_MS（bridge-interop 默认兜底）。
+   */
+  timeoutMs?: number
   /** Worker 侧本地执行 handler，在 createToolApi 注册时存储 */
   execute?: ToolExecuteHandler
 }
@@ -767,6 +801,23 @@ export interface StatusBarItemOptions {
   priority?: number
   scope?: 'per-session' | 'global'
   sessionId?: string
+}
+
+/**
+ * @proposed — UI dialog 超时选项（ctx.ui.showConfirm/showSelect/showInput 末位 opts，
+ * timeout-plugin-service D2）。
+ *
+ * `timeout` 语义 = 从调用到拿到结果的最长全程等待（毫秒），**含串行排队时间**——
+ * 排队也是插件在等，从请求方视角计时。缺省/非法值回落默认 30min（等人工裁决值）；
+ * 无 opt-out（「等人工」不允许无界等待——串行队列 head-of-line 阻塞）。
+ *
+ * 到期行为 = 取消非替答：弹窗在前端撤回（plugin:uiRequestExpired 广播），本调用
+ * reject `Error`（`code: 'UI_TIMEOUT'`），插件可 catch 后自行决策（重发提问 / 放弃
+ * 操作）；超时不是用户的否定回答。
+ */
+export interface UiDialogOptions {
+  /** 全程等待上界（毫秒，含排队）。>0 合法；缺省/非法回落默认 30min。 */
+  timeout?: number
 }
 
 /** @internal — runtime 内部：Hook 注册表条目（主线程侧） */
@@ -809,9 +860,14 @@ export interface Phase2AgentAPI extends Phase1AgentAPI {
     keys(sessionId: string): Promise<string[]>
   }
   readonly ui: {
-    showSelect(title: string, options: string[]): Promise<string | undefined>
-    showConfirm(title: string, message: string): Promise<boolean>
-    showInput(title: string, defaultValue?: string): Promise<string | undefined>
+    /**
+     * 弹窗类三方法（dialog）带末位 `opts`（UiDialogOptions.timeout，全程含排队，
+     * 缺省 30min）；到期取消非替答：reject `UI_TIMEOUT` + 前端撤窗，可重发。
+     * notify/updateStatusBarItem 纯展示类无等待语义，不设 opts。
+     */
+    showSelect(title: string, options: string[], opts?: UiDialogOptions): Promise<string | undefined>
+    showConfirm(title: string, message: string, opts?: UiDialogOptions): Promise<boolean>
+    showInput(title: string, defaultValue?: string, opts?: UiDialogOptions): Promise<string | undefined>
     notify(level: 'info' | 'warn' | 'error', message: string): Promise<void>
     updateStatusBarItem(id: string, text: string, options?: StatusBarItemOptions): Promise<void>
   }

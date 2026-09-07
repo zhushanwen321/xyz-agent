@@ -20,6 +20,7 @@
     "@xyz-agent/shared": "workspace:*",
     "@zhushanwen/pi-file-lock": "workspace:*",
     "@zhushanwen/subagent-core": "workspace:*",
+    "xyz-agent-plugin-sdk": "workspace:*",
     "chokidar": "^4.0.1",
     "fast-glob": "^3.3.3",
     "node-pty": "^1.0.0",

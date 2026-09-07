@@ -36,7 +36,7 @@ function writeManifest(recordsDir: string, id: string): string {
     id,
     rootSessionId: "sess-1",
     agentName: "worker",
-    status: "completed",
+    status: "closed",
     createdAt: Date.now(),
   };
   const filePath = path.join(recordsDir, `${id}.json`);

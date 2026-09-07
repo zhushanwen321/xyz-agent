@@ -202,35 +202,15 @@ export class PluginRpcServer {
     // 权限检查（通道身份，非消息体自报）
     const identity = this.identities.get(workerId)
     const claimedPluginId = typeof message.params?.pluginId === 'string' ? message.params.pluginId : undefined
-    if (this.permissionCheck) {
-      let deniedReason: string | null = null
-      if (!identity) {
-        // fail-closed：装有权限检查时，来源无法解析身份的消息一律拒绝
-        deniedReason = `cannot resolve worker identity for '${workerId}' (fail-closed)`
-      } else if (!this.permissionCheck(identity, message.method)) {
-        deniedReason = this.describeDenial(identity, claimedPluginId, message.method)
-      }
-
-      if (deniedReason !== null) {
-        // notification 被拒：无回包通道（JSON-RPC 语义），拒绝必须落日志——
-        // 否则插件通知静默消失，排查时无迹可循（Fix-4）
-        if (isNotification) {
-          console.warn(`[plugin-rpc-server] notification denied (PERMISSION_DENIED): worker=${workerId} identity=${identity ? this.identityLabel(identity) : 'unresolved'}${claimedPluginId ? ` claimed=${claimedPluginId}` : ''} method=${message.method}`)
-          return
-        }
-        worker.postMessage({ type: 'rpc', response: this.makeErrorResponse(message.id, PluginRpcErrorCodes.PERMISSION_DENIED, `PERMISSION_DENIED: ${deniedReason}`) })
-        return
-      }
+    const deniedReason = this.evaluatePermission(workerId, message.method, identity, claimedPluginId)
+    if (deniedReason !== null) {
+      this.handleDenied(worker, workerId, message, identity, claimedPluginId, deniedReason, isNotification)
+      return
     }
 
     // 身份覆写（在 api 入口校验之前）：sandbox 通道唯一归属插件强制覆写，
     // 消息体自报 pluginId 从鉴权/分区/事件归属整条信任链移除
-    if (identity?.trustLevel === 'sandbox' && identity.pluginId) {
-      if (!message.params || typeof message.params !== 'object') {
-        message.params = {}
-      }
-      message.params.pluginId = identity.pluginId
-    }
+    this.overwriteSandboxPluginId(identity, message)
 
     try {
       const result = await handler(message.params, { workerId, identity })
@@ -238,15 +218,73 @@ export class PluginRpcServer {
         worker.postMessage({ type: 'rpc', response: this.makeSuccessResponse(message.id, result) })
       }
     } catch (e: unknown) {
-      const errorMessage = toErrorMessage(e)
-      if (isNotification) {
-        // notification 无回包通道，错误只能落日志
-        console.error(`[plugin-rpc-server] notification handler error (${message.method}):`, errorMessage)
-        return
-      }
-      const code = (e as { code?: number })?.code ?? PluginRpcErrorCodes.INTERNAL_ERROR
-      worker.postMessage({ type: 'rpc', response: this.makeErrorResponse(message.id, code, errorMessage) })
+      this.replyHandlerError(worker, message, isNotification, e)
     }
+  }
+
+  /**
+   * 权限门判定：未装 permissionCheck → null（放行）；来源无法解析身份 →
+   * fail-closed 拒绝文案；权限检查不过 → describeDenial 文案。
+   * 返回 null = 放行，非 null = 拒绝原因。
+   */
+  private evaluatePermission(
+    workerId: string,
+    method: string,
+    identity: RpcIdentity | undefined,
+    claimedPluginId: string | undefined,
+  ): string | null {
+    if (!this.permissionCheck) return null
+    if (!identity) {
+      // fail-closed：装有权限检查时，来源无法解析身份的消息一律拒绝
+      return `cannot resolve worker identity for '${workerId}' (fail-closed)`
+    }
+    if (!this.permissionCheck(identity, method)) {
+      return this.describeDenial(identity, claimedPluginId, method)
+    }
+    return null
+  }
+
+  /**
+   * 拒绝处置：notification 被拒无回包通道（JSON-RPC 语义），拒绝必须落日志——
+   * 否则插件通知静默消失，排查时无迹可循（Fix-4）；request 被拒回
+   * PERMISSION_DENIED 错误响应。
+   */
+  private handleDenied(
+    worker: WorkerPort,
+    workerId: string,
+    message: RpcRequest,
+    identity: RpcIdentity | undefined,
+    claimedPluginId: string | undefined,
+    deniedReason: string,
+    isNotification: boolean,
+  ): void {
+    if (isNotification) {
+      console.warn(`[plugin-rpc-server] notification denied (PERMISSION_DENIED): worker=${workerId} identity=${identity ? this.identityLabel(identity) : 'unresolved'}${claimedPluginId ? ` claimed=${claimedPluginId}` : ''} method=${message.method}`)
+      return
+    }
+    worker.postMessage({ type: 'rpc', response: this.makeErrorResponse(message.id, PluginRpcErrorCodes.PERMISSION_DENIED, `PERMISSION_DENIED: ${deniedReason}`) })
+  }
+
+  /** sandbox 通道唯一归属插件强制覆写 params.pluginId（trusted 多插件共享不覆写） */
+  private overwriteSandboxPluginId(identity: RpcIdentity | undefined, message: RpcRequest): void {
+    if (identity?.trustLevel === 'sandbox' && identity.pluginId) {
+      if (!message.params || typeof message.params !== 'object') {
+        message.params = {}
+      }
+      message.params.pluginId = identity.pluginId
+    }
+  }
+
+  /** handler 执行异常的回包：notification 无回包通道只能落日志，request 回错误响应 */
+  private replyHandlerError(worker: WorkerPort, message: RpcRequest, isNotification: boolean, e: unknown): void {
+    const errorMessage = toErrorMessage(e)
+    if (isNotification) {
+      // notification 无回包通道，错误只能落日志
+      console.error(`[plugin-rpc-server] notification handler error (${message.method}):`, errorMessage)
+      return
+    }
+    const code = (e as { code?: number })?.code ?? PluginRpcErrorCodes.INTERNAL_ERROR
+    worker.postMessage({ type: 'rpc', response: this.makeErrorResponse(message.id, code, errorMessage) })
   }
 
   dispose(): void {

@@ -159,6 +159,21 @@ interface NegativeFileEntry {
 /** fileCache 值类型：正常条目或负缓存条目。 */
 type FileCacheValue = FileCacheEntry | NegativeFileEntry;
 
+/** scanFile 单文件本轮 stat 戳集合（jsonl + 3 sidecar）。 */
+interface FileStamps {
+  jsonl: Stamp;
+  cancelled: Stamp | null;
+  finalized: Stamp | null;
+  alive: Stamp | null;
+}
+
+/** sidecar payload 读取结果（索引命中与探测重建两分支共享的读点）。 */
+interface SidecarPayloads {
+  tomb: CancelledTombstone | undefined;
+  aliveData: AliveMarker | undefined;
+  finalReason: string | undefined;
+}
+
 /** 孤儿判定的末行读取初始窗口（常规 entry 远小于此，避免全文件读）。 */
 // eslint-disable-next-line no-magic-numbers -- 64KB = 64 * 1024 bytes 字节换算常数
 const LAST_LINE_WINDOW_BYTES = 64 * 1024;
@@ -352,6 +367,41 @@ function isValidClosedReason(value: string | undefined): value is ClosedReason {
 function sameNullableStamp(a: Stamp | null, b: Stamp | null): boolean {
   if (a === null || b === null) return a === b;
   return sameStamp(a, b);
+}
+
+/** 缓存条目与本轮 stat 戳全同（jsonl + 3 sidecar，null 语义对齐）→ 零读取复用。 */
+function isFreshCache(cached: FileCacheValue, stamps: FileStamps): boolean {
+  return (
+    sameStamp(cached.jsonl, stamps.jsonl) &&
+    sameNullableStamp(cached.cancelled, stamps.cancelled) &&
+    sameNullableStamp(cached.finalized, stamps.finalized) &&
+    sameNullableStamp(cached.alive, stamps.alive)
+  );
+}
+
+/**
+ * identity 三级定位——头部 64KB（首轮会话，~34%）→ 尾部 64KB（续聊场景最后一轮
+ * session_start 追加，~65%）→ 全文 fallback（~0.2%）。均不解析 message entries。
+ * size ≤ 头部读取上限时 head 读到的即全文，tail/anywhere 只会重复读同一份内容——
+ * 直接判负（head miss = 全文无 identity），省去同内容两连读。
+ */
+function detectIdentity(file: string, size: number): IdentityHeaderRecon | undefined {
+  return size <= IDENTITY_HEAD_BYTES
+    ? readIdentityHeader(file)
+    : readIdentityHeader(file) ?? readIdentityTail(file) ?? readIdentityAnywhere(file);
+}
+
+/**
+ * sidecar payload 读取（读顺序：tombstone → alive marker → finalized reason）。
+ * tombstone/alive 是活态数据，调用方沿用每轮重读语义；finalized reason 静态数据
+ * 仅在 sidecar 存在时读一次（文件小，成本可忽略）。
+ */
+function readSidecarPayloads(file: string, stamps: FileStamps): SidecarPayloads {
+  return {
+    tomb: stamps.cancelled !== null ? readCancelledTombstone(file) : undefined,
+    aliveData: stamps.alive !== null ? readAliveMarker(file) : undefined,
+    finalReason: stamps.finalized !== null ? readFinalizedReason(file) : undefined,
+  };
 }
 
 /** Pi ExtensionAPI 的最小子集（仅 collectRecords 跳过损坏 manifest 时上报用）。
@@ -947,18 +997,15 @@ export class RecordStore {
       this.fileCache.delete(file);
       return null;
     }
-    const cancelled = statStamp(`${file}.cancelled`);
-    const finalized = statStamp(`${file}.finalized`);
-    const alive = statStamp(`${file}.alive`);
+    const stamps: FileStamps = {
+      jsonl,
+      cancelled: statStamp(`${file}.cancelled`),
+      finalized: statStamp(`${file}.finalized`),
+      alive: statStamp(`${file}.alive`),
+    };
 
     const cached = this.fileCache.get(file);
-    if (
-      cached !== undefined &&
-      sameStamp(cached.jsonl, jsonl) &&
-      sameNullableStamp(cached.cancelled, cancelled) &&
-      sameNullableStamp(cached.finalized, finalized) &&
-      sameNullableStamp(cached.alive, alive)
-    ) {
+    if (cached !== undefined && isFreshCache(cached, stamps)) {
       if (cached.negative) return null; // 负缓存命中：确认无 identity，零读取跳过
       // pid 探活结果不落盘（进程死亡无 IO）——分支 3 的 running 项每扫重查，
       // 保留原语义（旧实现每次 collectRecords 都重新 isProcessAlive）。
@@ -967,80 +1014,51 @@ export class RecordStore {
     }
 
     // [perf L-1] 磁盘索引查询（首扫惰性装载，miss/空索引时 get 恒 undefined = 无索引）。
-    // 条目戳匹配 jsonl 当前 stat → 零内容读取构造缓存条目。sidecar payload（tombstone/
-    // alive）是活态数据，沿用探测分支的每轮重读语义；finalized reason 静态数据仅在
-    // sidecar 存在时读一次（文件小，成本可忽略）。
-    if (this.indexEntries !== null) {
-      const hit = this.indexEntries.get(path.basename(file));
-      if (hit !== undefined && hit.mtimeMs === jsonl.mtimeMs && hit.size === jsonl.size) {
-        if (hit.negative === true) {
-          // 负条目命中：「确认无 identity」跨实例持久，零探测跳过（与下方负缓存同款形态）。
-          this.fileCache.set(file, { negative: true, jsonl, cancelled, finalized, alive });
-          return null;
-        }
-        const tomb = cancelled !== null ? readCancelledTombstone(file) : undefined;
-        const aliveData = alive !== null ? readAliveMarker(file) : undefined;
-        const finalReason = finalized !== null ? readFinalizedReason(file) : undefined;
-        const entry: FileCacheEntry = {
-          light: RecordStore.buildRecord(
-            { ...hit, forkDepth: undefined, sessionFile: file },
-            { tomb, finalized: finalized !== null, finalizedReason: finalReason, alive: aliveData, jsonlMtimeMs: jsonl.mtimeMs, now },
-          ),
-          full: undefined,
-          jsonl,
-          cancelled,
-          finalized,
-          alive,
-          tomb,
-          aliveData,
-          finalReason,
-        };
-        this.fileCache.set(file, entry);
-        this.idToFile.set(hit.id, file);
-        return entry;
-      }
-    }
+    // 条目戳匹配 jsonl 当前 stat → 零内容读取构造缓存条目。undefined = 未命中
+    // （落到下方探测），null = 负条目命中（零探测跳过）。
+    const fromIndex = this.buildEntryFromIndex(file, stamps, now);
+    if (fromIndex !== undefined) return fromIndex;
 
     // [perf L-1] 索引 miss/戳不匹配落到原三级探测：本轮探测结果必须进索引（含负探测）。
     // 覆盖两种形态：首扫（映像已装载但 miss/不匹配）与后续轮次（映像已释放，凡进重建分支必是戳变化）。
     this.indexDirty = true;
 
-    // 重建：identity 三级定位——头部 64KB（首轮会话，~34%）→ 尾部 64KB（续聊场景
-    // 最后一轮 session_start 追加，~65%）→ 全文 fallback（~0.2%）。均不解析 message entries。
-    // size ≤ 头部读取上限时 head 读到的即全文，tail/anywhere 只会重复读同一份内容——
-    // 直接判负（head miss = 全文无 identity），省去同内容两连读。
-    const header =
-      jsonl.size <= IDENTITY_HEAD_BYTES
-        ? readIdentityHeader(file)
-        : readIdentityHeader(file) ?? readIdentityTail(file) ?? readIdentityAnywhere(file);
+    const header = detectIdentity(file, jsonl.size);
     if (!header) {
       // 负缓存：确认无 identity。后续扫描 stat 命中直接跳过；戳变化（文件补写）自动重试。
-      this.fileCache.set(file, { negative: true, jsonl, cancelled, finalized, alive });
+      this.fileCache.set(file, { negative: true, ...stamps });
       return null;
     }
-    const tomb = cancelled !== null ? readCancelledTombstone(file) : undefined;
-    const aliveData = alive !== null ? readAliveMarker(file) : undefined;
-    const finalReason = finalized !== null ? readFinalizedReason(file) : undefined;
-    const entry: FileCacheEntry = {
-      light: RecordStore.buildRecord(header, {
-        tomb,
-        finalized: finalized !== null,
-        finalizedReason: finalReason,
-        alive: aliveData,
-        jsonlMtimeMs: jsonl.mtimeMs,
-        now,
-      }),
-      full: undefined,
-      jsonl,
-      cancelled,
-      finalized,
-      alive,
-      tomb,
-      aliveData,
-      finalReason,
-    };
+    const payloads = readSidecarPayloads(file, stamps);
+    const entry = RecordStore.buildFileCacheEntry(header, file, stamps, payloads, now);
     this.fileCache.set(file, entry);
     this.idToFile.set(header.id, file);
+    return entry;
+  }
+
+  /**
+   * [perf L-1] 磁盘索引查询（首扫惰性装载，miss/空索引时 get 恒 undefined = 无索引）。
+   * 条目戳匹配 jsonl 当前 stat → 零内容读取构造缓存条目。sidecar payload（tombstone/
+   * alive）是活态数据，沿用探测分支的每轮重读语义；finalized reason 静态数据仅在
+   * sidecar 存在时读一次（文件小，成本可忽略）。
+   *
+   * 返回 undefined = 索引未命中/戳不匹配（调用方落到原三级探测）；null = 负条目命中
+   * （「确认无 identity」跨实例持久，零探测跳过，与内存负缓存同款形态）。
+   */
+  private buildEntryFromIndex(file: string, stamps: FileStamps, now: number): FileCacheEntry | null | undefined {
+    if (this.indexEntries === null) return undefined;
+    const hit = this.indexEntries.get(path.basename(file));
+    if (hit === undefined || hit.mtimeMs !== stamps.jsonl.mtimeMs || hit.size !== stamps.jsonl.size) {
+      return undefined;
+    }
+    if (hit.negative === true) {
+      this.fileCache.set(file, { negative: true, ...stamps });
+      return null;
+    }
+    const payloads = readSidecarPayloads(file, stamps);
+    const entry = RecordStore.buildFileCacheEntry({ ...hit, forkDepth: undefined, sessionFile: file }, file, stamps, payloads, now);
+    this.fileCache.set(file, entry);
+    this.idToFile.set(hit.id, file);
     return entry;
   }
 
@@ -1169,6 +1187,34 @@ export class RecordStore {
     if (!marker) return;
     const live = isProcessAlive(marker.pid) && now - marker.startedAt < ALIVE_SOFT_TIMEOUT_MS;
     entry.light.externalInstance = live ? marker : undefined;
+  }
+
+  /** identity 基底 + sidecar 状态矩阵 → 缓存条目（索引命中与探测重建两分支的公共装配点）。 */
+  private static buildFileCacheEntry(
+    base: IdentityHeaderRecon,
+    file: string,
+    stamps: FileStamps,
+    payloads: SidecarPayloads,
+    now: number,
+  ): FileCacheEntry {
+    return {
+      light: RecordStore.buildRecord(base, {
+        tomb: payloads.tomb,
+        finalized: stamps.finalized !== null,
+        finalizedReason: payloads.finalReason,
+        alive: payloads.aliveData,
+        jsonlMtimeMs: stamps.jsonl.mtimeMs,
+        now,
+      }),
+      full: undefined,
+      jsonl: stamps.jsonl,
+      cancelled: stamps.cancelled,
+      finalized: stamps.finalized,
+      alive: stamps.alive,
+      tomb: payloads.tomb,
+      aliveData: payloads.aliveData,
+      finalReason: payloads.finalReason,
+    };
   }
 
   /** identity 基底（头部 light 或全量 recon）+ 四分支 sidecar 状态矩阵 → SubagentRecord。 */

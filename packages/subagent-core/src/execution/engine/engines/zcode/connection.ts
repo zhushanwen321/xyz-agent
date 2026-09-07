@@ -47,6 +47,7 @@ import {
   ZCODE_APPSERVER_STDERR_TAIL_CHARS,
   ZCODE_KILL_GRACE_MS,
 } from "./constants.ts";
+import { toErrorMessage } from "../../../../core/error-message.ts";
 
 const logger = getLogger("subagents");
 
@@ -108,7 +109,7 @@ function frameIdOf(frame: Record<string, unknown>): string | number | undefined 
 
 /** 错误/日志出声用的 message 提取（非 Error 值不抛二次异常）。 */
 function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  return toErrorMessage(err);
 }
 
 // ============================================================

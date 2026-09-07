@@ -1,6 +1,6 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
-import type { XyzAgentPackageJson, PluginDescriptor, PluginState, PluginContributes, PluginSource } from './plugin-types.js'
+import type { XyzAgentPackageJson, PluginDescriptor, PluginState, PluginContributes, PluginSource, XyzAgentManifest } from './plugin-types.js'
 import { checkPluginCompatibility } from './plugin-version-checker.js'
 
 /**
@@ -141,11 +141,57 @@ export class PluginRegistry {
 
   private async parsePlugin(dirName: string, fullPath: string, source: PluginSource): Promise<PluginDescriptor | null> {
     const pkgPath = join(fullPath, 'package.json')
-    let raw: string
-    try {
-      raw = await readFile(pkgPath, 'utf-8')
-    } catch { return null }
+    const raw = await this.readPkgRaw(pkgPath)
+    if (raw === null) return null
 
+    const pkg = this.parseManifest(raw, pkgPath, dirName)
+    if (pkg === null) return null
+
+    const manifest = pkg.xyzAgent
+    const activationEvents = this.inferActivationEvents(manifest.activationEvents ?? [], manifest.contributes)
+
+    // 注意：descriptor.engines 存原始 engineRange（非 string 时原样落盘 ?? '*' 兜底），
+    // 而 compat 校验只接受 string 形态（非 string 回落 '*'）——两值语义不同，不可合并。
+    const engineRange = pkg.engines?.['xyz-agent'] ?? '*'
+    const compat = checkPluginCompatibility(typeof engineRange === 'string' ? engineRange : '*')
+
+    const entry = this.resolveEntry(fullPath, manifest.main, dirName)
+    if (entry === null) return null
+
+    const trustLevel = this.resolveTrustLevel(source, manifest, dirName)
+
+    const descriptor = this.buildDescriptor({
+      dirName,
+      pkg,
+      manifest,
+      main: entry.main,
+      activationEvents,
+      trustLevel,
+      engineRange,
+      entryPath: entry.entryPath,
+      source,
+      compatCompatible: compat.compatible,
+      compatibilityReason: compat.reason,
+    })
+
+    if (!compat.compatible) {
+      console.warn(`[plugin-registry] ${dirName}: ${compat.reason}`)
+    }
+
+    return descriptor
+  }
+
+  /** 读取插件 package.json 原文；不可读（缺失/权限）→ null（静默跳过，既有语义） */
+  private async readPkgRaw(pkgPath: string): Promise<string | null> {
+    try {
+      return await readFile(pkgPath, 'utf-8')
+    } catch {
+      return null
+    }
+  }
+
+  /** JSON 解析 + manifest 有效性校验；任一失败落 warning 并返回 null（跳过该插件） */
+  private parseManifest(raw: string, pkgPath: string, dirName: string): XyzAgentPackageJson | null {
     let pkg: XyzAgentPackageJson
     try {
       pkg = JSON.parse(raw)
@@ -159,42 +205,66 @@ export class PluginRegistry {
       return null
     }
 
-    const manifest = pkg.xyzAgent
-    const activationEvents = this.inferActivationEvents(manifest.activationEvents ?? [], manifest.contributes)
+    return pkg
+  }
 
-    const engineRange = pkg.engines?.['xyz-agent'] ?? '*'
-    const compat = checkPluginCompatibility(typeof engineRange === 'string' ? engineRange : '*')
-
-    // 入口文件路径：manifest.main 缺省 index.js（向后兼容）。
-    // pluginPath 必须指向具体入口文件而非插件目录——plugin-bootstrap 的 load 分支
-    // 直接 `import(pluginPath)`，ESM 禁止目录导入（ERR_UNSUPPORTED_DIR_IMPORT），
-    // 存目录会导致所有插件激活必炸（built-in statusline 曾因目录路径从未激活成功）。
-    const main = manifest.main ?? 'index.js'
+  /**
+   * 入口文件路径解析：manifest.main 缺省 index.js（向后兼容）。
+   * pluginPath 必须指向具体入口文件而非插件目录——plugin-bootstrap 的 load 分支
+   * 直接 `import(pluginPath)`，ESM 禁止目录导入（ERR_UNSUPPORTED_DIR_IMPORT），
+   * 存目录会导致所有插件激活必炸（built-in statusline 曾因目录路径从未激活成功）。
+   *
+   * 入口守卫：main 必须解析到插件目录内（拒绝 ../ 逃逸与绝对路径），
+   * 防止插件声明越权入口 import 插件目录外的任意文件。越权 → warning + null。
+   */
+  private resolveEntry(
+    fullPath: string,
+    manifestMain: string | undefined,
+    dirName: string,
+  ): { main: string; entryPath: string } | null {
+    const main = manifestMain ?? 'index.js'
     const entryPath = resolve(fullPath, main)
-    // 入口守卫：main 必须解析到插件目录内（拒绝 ../ 逃逸与绝对路径），
-    // 防止插件声明越权入口 import 插件目录外的任意文件
     if (entryPath !== fullPath && !entryPath.startsWith(fullPath + sep)) {
       console.warn(`[plugin-registry] ${dirName}: main "${main}" escapes plugin directory, skipping`)
       return null
     }
+    return { main, entryPath }
+  }
 
-    // S1-W4（D3）：信任级判定权归宿主，manifest 声明不参与判定——
-    //   external（用户安装）一律 sandbox（进程沙箱隔离 + 权限审批照走）；
-    //   built-in（随应用分发）一律 trusted。
-    // external 声明非 sandbox 的 trustLevel 被忽略时落 warning（fail-visible，
-    // 含插件 id 与被忽略的声明值）；声明值与强制值一致（sandbox/缺省）时无需提示。
-    let trustLevel: 'trusted' | 'sandbox'
+  /**
+   * S1-W4（D3）：信任级判定权归宿主，manifest 声明不参与判定——
+   *   external（用户安装）一律 sandbox（进程沙箱隔离 + 权限审批照走）；
+   *   built-in（随应用分发）一律 trusted。
+   * external 声明非 sandbox 的 trustLevel 被忽略时落 warning（fail-visible，
+   * 含插件 id 与被忽略的声明值）；声明值与强制值一致（sandbox/缺省）时无需提示。
+   */
+  private resolveTrustLevel(source: PluginSource, manifest: XyzAgentManifest, dirName: string): 'trusted' | 'sandbox' {
     if (source === 'built-in') {
-      trustLevel = 'trusted'
-    } else {
-      trustLevel = 'sandbox'
-      if (manifest.trustLevel && manifest.trustLevel !== 'sandbox') {
-        console.warn(
-          `[plugin-registry] ${dirName}: external plugin manifest declares trustLevel "${manifest.trustLevel}" — ignored and forced to 'sandbox' (trust level is host-decided by plugin source)`,
-        )
-      }
+      return 'trusted'
     }
+    if (manifest.trustLevel && manifest.trustLevel !== 'sandbox') {
+      console.warn(
+        `[plugin-registry] ${dirName}: external plugin manifest declares trustLevel "${manifest.trustLevel}" — ignored and forced to 'sandbox' (trust level is host-decided by plugin source)`,
+      )
+    }
+    return 'sandbox'
+  }
 
+  /** descriptor 装配（纯组装，无 I/O）：缺省字段兜底与兼容性状态在此落定 */
+  private buildDescriptor(args: {
+    dirName: string
+    pkg: XyzAgentPackageJson
+    manifest: XyzAgentManifest
+    main: string
+    activationEvents: string[]
+    trustLevel: 'trusted' | 'sandbox'
+    engineRange: string | undefined
+    entryPath: string
+    source: PluginSource
+    compatCompatible: boolean
+    compatibilityReason: string | undefined
+  }): PluginDescriptor {
+    const { dirName, pkg, manifest, main, activationEvents, trustLevel, engineRange, entryPath, source, compatCompatible, compatibilityReason } = args
     const descriptor: PluginDescriptor = {
       pluginId: dirName,
       version: pkg.version ?? '0.0.0',
@@ -203,20 +273,15 @@ export class PluginRegistry {
       main,
       activationEvents,
       trustLevel,
-      status: compat.compatible ? ('UNLOADED' as PluginState) : ('DEPS_MISSING' as PluginState),
+      status: compatCompatible ? ('UNLOADED' as PluginState) : ('DEPS_MISSING' as PluginState),
       contributes: manifest.contributes ?? {} as PluginContributes,
       permissions: manifest.permissions ?? [],
       engines: { 'xyz-agent': engineRange ?? '*' },
       pluginPath: entryPath,
       source,
       extensionDependencies: manifest.extensionDependencies ?? [],
-      ...(compat.compatible ? {} : { compatibilityError: compat.reason }),
+      ...(compatCompatible ? {} : { compatibilityError: compatibilityReason }),
     }
-
-    if (!compat.compatible) {
-      console.warn(`[plugin-registry] ${dirName}: ${compat.reason}`)
-    }
-
     return descriptor
   }
 

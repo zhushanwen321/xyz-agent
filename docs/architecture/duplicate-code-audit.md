@@ -444,6 +444,8 @@ plugin-rpc-server.ts:162 for (const pending of this.pendingInvokes.values()) { c
 
 ### D28. `Disposable` 仅 runtime 内部定义，未与任何上层共享 → 刻意保留（2026-06-19）
 
+**方向反转（2026-09-16，PR #198 SSOT 收敛）**：上述「runtime 为真相源 + sync-types.sh 传播」形态已整体反转——经逐字节 diff 确认两份完全一致后，**plugin-sdk/types.ts 升为唯一权威源**，runtime 的 plugin-types.ts（911→121 行）与 hook-types.ts（115→17 行）改为薄壳 re-export（消费方零改动），runtime 新增 `xyz-agent-plugin-sdk: workspace:*` 依赖（依赖方向 runtime → SDK 单向，SDK 仍零依赖，第三方独立性不受影响）。`sync-types.sh`/`check-sync`/`prepack` 与 ci.yml 的 sdk-sync job 一并删除（生成方向已不存在，prepack 残留会静默摧毁 SSOT）。D28 关切「re-export 引入依赖破坏 SDK 独立性」在新方向下不成立。
+
 `plugin-types.ts:200` 定义 `Disposable { dispose(): void }`，被 plugin-service 大量使用（hooks/sessions/events 的返回类型）。grep shared 包无此定义。
 
 **判定**：⚪ 非重复（只有一份）。但属于「该共享却没共享」——这是 VSCode LSP 风格的通用契约，若未来 renderer 也要用会重复定义。仅作记录，无需现在动。

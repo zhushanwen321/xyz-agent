@@ -205,7 +205,7 @@ describe("ManifestStore", () => {
   describe("listAllSync (A3)", () => {
     it("正常读：返回目录下所有合法 manifest", async () => {
       await store.writeManifest({ id: "a-1", rootSessionId: "s", agentName: "w", status: "running" as const, createdAt: 1 });
-      await store.writeManifest({ id: "a-2", rootSessionId: "s", agentName: "w", status: "completed" as const, createdAt: 2 });
+      await store.writeManifest({ id: "a-2", rootSessionId: "s", agentName: "w", status: "closed" as const, createdAt: 2 });
       const all = store.listAllSync();
       expect(all.length).toBe(2);
       expect(all.map((r) => r.id).sort()).toEqual(["a-1", "a-2"]);
@@ -240,8 +240,9 @@ describe("ManifestStore", () => {
     });
   });
 
-  // ── M3: 4 态 status 枚举（running/completed/failed/cancelled；crashed 不进 manifest）──
-  describe("4 态 status 枚举 (M3)", () => {
+  // ── M3: status 枚举（SP-1 后 running/closed/cancelled 三态；crashed 不进 manifest，
+  //    历史 completed/failed 由读侧 mapManifestStatus 映射为 closed）──
+  describe("status 枚举 (M3)", () => {
     it("cancelled 能写入 + 读回（不再归并 failed）", async () => {
       const record = {
         id: "test-cancelled-4state",
@@ -257,14 +258,14 @@ describe("ManifestStore", () => {
       expect(result?.status).toBe("cancelled");
     });
 
-    it("listAllSync 接受 4 态（含 cancelled）", async () => {
+    it("listAllSync 接受全部合法态（含 cancelled）", async () => {
       await store.writeManifest({ id: "s-running", rootSessionId: "s", agentName: "w", status: "running" as const, createdAt: 1 });
-      await store.writeManifest({ id: "s-completed", rootSessionId: "s", agentName: "w", status: "completed" as const, createdAt: 2 });
-      await store.writeManifest({ id: "s-failed", rootSessionId: "s", agentName: "w", status: "failed" as const, createdAt: 3 });
+      await store.writeManifest({ id: "s-completed", rootSessionId: "s", agentName: "w", status: "closed" as const, createdAt: 2 });
+      await store.writeManifest({ id: "s-failed", rootSessionId: "s", agentName: "w", status: "closed" as const, createdAt: 3 });
       await store.writeManifest({ id: "s-cancelled", rootSessionId: "s", agentName: "w", status: "cancelled" as const, createdAt: 4 });
       const all = store.listAllSync();
       expect(all.length).toBe(4);
-      expect(all.map((r) => r.status).sort()).toEqual(["cancelled", "completed", "failed", "running"]);
+      expect(all.map((r) => r.status).sort()).toEqual(["cancelled", "closed", "closed", "running"]);
     });
 
     it("isValidManifest 拒绝 crashed（crashed 不进 manifest）", async () => {

@@ -37,8 +37,8 @@ function makeFakeChild(): {
     child,
     signals,
     emitExit(code, signal) {
-      child.exitCode = code;
-      child.signalCode = signal;
+      (child as { exitCode: number | null }).exitCode = code;
+      (child as { signalCode: string | null }).signalCode = signal;
       for (const l of listeners.splice(0)) l(code, signal);
     },
   };
@@ -121,7 +121,7 @@ describe("synthesizeTimeoutOutcome", () => {
       { prompt: "review files", description: "review-files" },
       "last stdout lines...",
     );
-    expect(outcome.error).toContain("engine_timeout");
+    expect(outcome.error!).toContain("engine_timeout");
     expect(outcome.error).toContain("review-files");
     expect(outcome.error).toContain("last stdout lines...");
     expect(outcome.error).toMatch(/`engine: pi`/);
@@ -137,8 +137,8 @@ describe("synthesizeTimeoutOutcome", () => {
       "zcode",
     );
     expect(outcome.engineId).toBe("zcode");
-    expect(outcome.error).toContain("...");
-    expect(outcome.error.length).toBeLessThan(3_000);
+    expect(outcome.error!).toContain("...");
+    expect(outcome.error!.length).toBeLessThan(3_000);
   });
 });
 

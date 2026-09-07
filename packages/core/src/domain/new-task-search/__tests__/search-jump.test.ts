@@ -165,7 +165,7 @@ describe('TC-10: session 分支（AC-6.6）', () => {
   it('session 反查命中 → selectSession(id) + {ok:true}', async () => {
     const deps = makeDeps()
     const groups: SessionGroup[] = [
-      { group: 'g', sessions: [{ id: 's1', cwd: '/tmp/x', label: '测试会话' } as never] },
+      { cwd: '/tmp/x', sessions: [{ id: 's1', cwd: '/tmp/x', label: '测试会话' } as never] },
     ]
     ;(deps.ports.sessionList as ReturnType<typeof vi.fn>).mockResolvedValue(groups)
     const { confirm } = useSearchJump(deps)
@@ -191,7 +191,7 @@ describe('TC-10: session 分支（AC-6.6）', () => {
   it('selectSession reject → {ok:false}（AC-6.6）', async () => {
     const deps = makeDeps()
     const groups: SessionGroup[] = [
-      { group: 'g', sessions: [{ id: 's1', cwd: '/tmp/x', label: '测试会话' } as never] },
+      { cwd: '/tmp/x', sessions: [{ id: 's1', cwd: '/tmp/x', label: '测试会话' } as never] },
     ]
     ;(deps.ports.sessionList as ReturnType<typeof vi.fn>).mockResolvedValue(groups)
     ;(deps.ports.selectSession as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('switch failed'))

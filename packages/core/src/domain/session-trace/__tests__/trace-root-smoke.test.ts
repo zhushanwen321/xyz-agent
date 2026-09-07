@@ -24,12 +24,13 @@ describe('R0 session-trace root smoke', () => {
     expect(entries.length).toBeGreaterThan(50)
     const rows = mapSessionTraceRows({ lines })
     expect(rows.length).toBeGreaterThan(0)
-    const boundary = computeTraceContextBoundary(entries)
+    const boundary = computeTraceContextBoundary(entries as unknown as Parameters<typeof computeTraceContextBoundary>[0])
     expect(boundary.contextEntryIds.size + boundary.shadowedEntryIds.size).toBeGreaterThan(0)
     const visible = filterTraceRows(rows, { contextOnly: true })
     expect(visible.length).toBeGreaterThan(0)
     for (const r of visible) {
-      const id = r.entry.id
+      // TraceRow.entry 联合含 session_end meta（无 id）——收窄后取 id
+      const id = r.entry && 'id' in r.entry ? r.entry.id : undefined
       if (id) expect(boundary.shadowedEntryIds.has(id)).toBe(false)
     }
   })

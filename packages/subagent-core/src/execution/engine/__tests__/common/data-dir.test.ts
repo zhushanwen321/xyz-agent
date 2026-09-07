@@ -49,7 +49,7 @@ describe("getEngineDataDir", () => {
 
   it("缺 env → 回退宿主数据根（HostServices.dataRoot()，假宿主值）并 warn 一次", () => {
     const warnings: string[] = [];
-    const warn = (m: string): void => warnings.push(m);
+    const warn = (m: string): void => { warnings.push(m); };
     const dir1 = getEngineDataDir({}, warn);
     expect(dir1).toBe(FAKE_DATA_ROOT);
     expect(warnings.length).toBe(1);

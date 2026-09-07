@@ -225,4 +225,108 @@ describe('parseZcodeProviders', () => {
     const model = result!.providers[0].models![0]
     expect(model.input).toEqual(['text', 'image'])
   })
+
+  // ── W4 补充：分支覆盖缺口锚定 ──
+
+  // 锚定 `entry.kind && entry.kind.startsWith('openai')` 的纯 'openai' 前缀分支：
+  // kind=openai（非 compatible）同样映射 openai-completions，且不产 mapped warning。
+  it('W4-a: kind=openai → openai-completions，_warnings 含 mapped 提示（纯 openai 与 compatible 同样提示）', () => {
+    const config = {
+      provider: {
+        plainopenai: {
+          name: 'PlainOpenAI',
+          kind: 'openai',
+          options: { apiKey: 'sk-fake', baseURL: 'https://api.openai.com/v1' },
+          models: { m: { name: 'M' } },
+        },
+      },
+    }
+    writeZcodeConfig(JSON.stringify(config))
+
+    const result = parseZcodeProviders(home)
+
+    expect(result).not.toBeNull()
+    expect(result!.providers).toHaveLength(1)
+    const provider = result!.providers[0]
+    expect(provider.api).toBe('openai-completions')
+    expect(provider._warnings.some((w) => w.includes('mapped to openai-completions'))).toBe(true)
+    // 顶层也无 warnings（无丢弃条目）
+    expect(result!.warnings).toBeUndefined()
+  })
+
+  // 锚定 `entry.models ?? {}` 的另一侧：provider 无 models 字段 → models=[]（不崩）。
+  it('W4-b: provider 无 models 字段 → models=[]，其余字段正常解析', () => {
+    const config = {
+      provider: {
+        nomodels: {
+          name: 'NoModels',
+          kind: 'anthropic',
+          options: { apiKey: 'sk-fake', baseURL: 'https://a.com' },
+        },
+      },
+    }
+    writeZcodeConfig(JSON.stringify(config))
+
+    const result = parseZcodeProviders(home)
+
+    expect(result).not.toBeNull()
+    expect(result!.providers).toHaveLength(1)
+    const provider = result!.providers[0]
+    expect(provider.models).toHaveLength(0)
+    expect(provider.api).toBe('anthropic-messages')
+    expect(provider.apiKey).toBe('sk-fake')
+    expect(provider._credentialType).toBe('plaintext')
+  })
+
+  // 锚定 model 条目 null 的 `?? {}` 兜底：name 回退 modelId，其他字段 undefined，不崩。
+  it('W4-c: model 条目为 null → 不崩，name 回退 modelId', () => {
+    const config = {
+      provider: {
+        bigmodel: {
+          name: 'BigModel',
+          kind: 'anthropic',
+          options: { apiKey: 'sk-fake' },
+          models: { 'glm-null': null, 'glm-ok': { name: 'GLM OK' } },
+        },
+      },
+    }
+    writeZcodeConfig(JSON.stringify(config))
+
+    const result = parseZcodeProviders(home)
+
+    expect(result).not.toBeNull()
+    expect(result!.providers).toHaveLength(1)
+    const models = result!.providers[0].models!
+    expect(models).toHaveLength(2)
+    const nullModel = models.find((m) => m.id === 'glm-null')!
+    expect(nullModel.name).toBe('glm-null')
+    expect(nullModel.contextWindow).toBeUndefined()
+    expect(nullModel.thinkingLevelMap).toBeUndefined()
+    const okModel = models.find((m) => m.id === 'glm-ok')!
+    expect(okModel.name).toBe('GLM OK')
+  })
+
+  // 锚定 inferThinkingLevelMap 的另一侧：reasoning 有 enabled 无 variants → thinkingLevelMap undefined。
+  it('W4-d: model reasoning 无 variants → thinkingLevelMap undefined，reasoning 布尔仍透传', () => {
+    const config = {
+      provider: {
+        bigmodel: {
+          name: 'BigModel',
+          kind: 'anthropic',
+          options: { apiKey: 'sk-fake' },
+          models: {
+            'glm-novariants': { name: 'GLM NoVariants', reasoning: { enabled: true } },
+          },
+        },
+      },
+    }
+    writeZcodeConfig(JSON.stringify(config))
+
+    const result = parseZcodeProviders(home)
+
+    expect(result).not.toBeNull()
+    const model = result!.providers[0].models![0]
+    expect(model.reasoning).toBe(true)
+    expect(model.thinkingLevelMap).toBeUndefined()
+  })
 })

@@ -103,7 +103,7 @@ const STRICT_VERSION_RE = /^\d+\.\d+\.\d+(?:\.\d+)?$/
 // ── GitHub API 响应类型（仅取关心的字段）─────────────────────────────
 
 interface GitHubAsset {
-  /** 文件名（如 'xyz-agent-mac-arm64.zip'） */
+  /** 文件名（如 'xyz-agent-mac-arm64.dmg'） */
   name: string
   /** 下载直链 */
   browser_download_url: string
@@ -137,13 +137,12 @@ interface GitHubRelease {
 // ── asset 文件名 pattern（按平台后缀匹配）──────────────────────────
 // release asset 文件名格式：xyz-agent-<version>-<platform-suffix>.<ext>
 // 用后缀匹配而非精确文件名，解耦文件名版本号格式与 asset 定位逻辑——
-// 兼容带版本号（xyz-agent-0.8.44-mac-arm64.zip）与不带（xyz-agent-mac-arm64.zip）。
+// 兼容带版本号（xyz-agent-0.8.44-mac-arm64.dmg）与不带（xyz-agent-mac-arm64.dmg）。
 
 const ASSET_PATTERNS = {
-  macArm64Zip: (name: string): boolean => name.endsWith('-mac-arm64.zip'),
+  macArm64Dmg: (name: string): boolean => name.endsWith('-mac-arm64.dmg'),
   winX64Exe: (name: string): boolean => name.endsWith('-setup-x64.exe'),
   linuxX64AppImage: (name: string): boolean => name.endsWith('-x86_64.AppImage'),
-  linuxX64Deb: (name: string): boolean => name.endsWith('-amd64.deb'),
 } as const
 
 // ── 缓存条目类型 ──────────────────────────────────────────────────
@@ -430,7 +429,7 @@ export class ReleaseChecker implements IReleaseChecker {
   ): Promise<LatestReleaseInfo | null> {
     const assets = release.assets ?? []
 
-    // 判断是否需要 manifest fallback：仅检查我们关心的 4 个目标 asset 的 digest
+    // 判断是否需要 manifest fallback：仅检查我们关心的 3 个目标 asset 的 digest
     // （忽略 blockmap 等干扰资产——它们的 digest 即便非法也不影响升级 sha256）。
     // 任一目标 asset 缺 sha256（digest 缺失或非法）则 fetch manifest 一次（lazy）。
     const isTargetAsset = (name: string): boolean =>
@@ -443,10 +442,9 @@ export class ReleaseChecker implements IReleaseChecker {
       manifestMap = await this.fetchManifestSha256()
     }
 
-    const macArm64Zip = pickAsset(assets, ASSET_PATTERNS.macArm64Zip, manifestMap)
+    const macArm64Dmg = pickAsset(assets, ASSET_PATTERNS.macArm64Dmg, manifestMap)
     const winX64Exe = pickAsset(assets, ASSET_PATTERNS.winX64Exe, manifestMap)
     const linuxX64AppImage = pickAsset(assets, ASSET_PATTERNS.linuxX64AppImage, manifestMap)
-    const linuxX64Deb = pickAsset(assets, ASSET_PATTERNS.linuxX64Deb, manifestMap)
 
     return {
       version,
@@ -455,10 +453,9 @@ export class ReleaseChecker implements IReleaseChecker {
       publishedAt: release.published_at ?? '',
       htmlUrl: release.html_url ?? '',
       assets: {
-        macArm64Zip,
+        macArm64Dmg,
         winX64Exe,
         linuxX64AppImage,
-        linuxX64Deb,
       },
     }
   }

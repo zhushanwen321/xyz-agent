@@ -65,10 +65,10 @@ import { spawn } from "node:child_process";
 import type { EnginePort, RunContext } from "../engine/port.ts";
 import { resolveJournalPath } from "../engine/paths.ts";
 import { clearEngines, registerEngine } from "../engine/registry.ts";
+import type { AgentCallOpts } from "../../orchestration/models/types.ts";
 import type {
   AgentEvent,
   AgentOutcome,
-  AgentCallOpts,
   EngineCapabilities,
   EngineHandle,
   ProbeReport,
@@ -590,7 +590,7 @@ describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
     const handle = await service.execute(baseOpts(agentDir, { engine: "zcode" }));
     await vi.waitFor(() => expect(service.queries.findRecord(handle.subagentId)).toBeUndefined());
 
-    const h = lastRecordEntry(pi)?.engineHandle;
+    const h = lastRecordEntry(pi)?.engineHandle as Record<string, unknown> | undefined;
     expect(h?.sessionRef).toEqual({ dbPath: "sessions.db" });
     expect(h?.poolKey).toBe(POOL);
     expect(h?.journalPath).toBe(resolveJournalPath(agentDir, "zcode", POOL, handle.subagentId));
@@ -628,7 +628,7 @@ describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
       );
       expect(withHandle.length).toBeGreaterThan(0);
     });
-    const running = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
+    const running = service["collectRecords"](10, "running").find((r) => r.id === handle.subagentId);
     expect(running?.engineHandle).toEqual({
       sessionRef: { dbPath: ".zcode/cli/db/db.sqlite", sessionId: "sess-live-1" },
       poolKey: POOL,
@@ -639,7 +639,7 @@ describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
 
     // 终态收口（防 dangling）
     releaseRun({ handle: fakeHandle(), outcome: doneOutcome("ok") });
-    await vi.waitFor(() => expect(service.findRecord(handle.subagentId)).toBeUndefined());
+    await vi.waitFor(() => expect(service["findRecord"](handle.subagentId)).toBeUndefined());
   }, 10_000);
 
   it("[onHandleReady] 引擎不回调（spawn 形态）时零回填——终态回填仍兜底（行为不变）", async () => {
@@ -656,7 +656,7 @@ describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
       });
     };
     const handle = await service.execute(baseOpts(agentDir, { engine: "zcode" }));
-    await vi.waitFor(() => expect(service.findRecord(handle.subagentId)).toBeUndefined());
+    await vi.waitFor(() => expect(service["findRecord"](handle.subagentId)).toBeUndefined());
     const entries = pi.appendEntry.mock.calls.filter((c) => c[0] === "subagent-record");
     // 运行中回填 entry 不存在（register 写点无 engineHandle；archive 终态侧才有）
     const runningEntries = entries.slice(0, -1);

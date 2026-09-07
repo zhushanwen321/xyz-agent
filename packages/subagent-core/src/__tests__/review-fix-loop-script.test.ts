@@ -286,7 +286,9 @@ describe("review-fix-loop.js 模块形态约束", () => {
     // 本 import 语句同时是静态依赖边：让依赖分析把该 workflow 文件纳入测试可达域
     // （CRAP 覆盖估算）。顶层 return / require 决定了 import 必然 reject——这是
     // workflow 脚本的固有形态，抽取测试法（本文件）因此是唯一可行的直测途径。
-    await expect(import("../../workflows/review-fix-loop.js")).rejects.toThrow();
+    // `as string` 使 import() 参数脱离字面量模块解析（该文件顶层 return，非合法模块，
+// 本就无类型可锚）；esbuild 转译剥除断言后运行时与字面量形态完全一致
+    await expect(import("../../workflows/review-fix-loop.js" as string)).rejects.toThrow();
   });
 });
 

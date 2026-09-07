@@ -2,7 +2,8 @@
  * u1a 单元测试：updater-script（bash 脚本生成器，纯函数）。
  *
  * 覆盖目标（设计 .tmp/update-reliability.tech-design.md §3.3.2 命令级守卫，验收条款①）：
- *   - mac 脚本 staging 状态机全守卫 grep 级断言：unzip 退出码检查、主二进制存在检查、
+ *   - mac 脚本 staging 状态机全守卫 grep 级断言：dmg 解包链退出码检查（hdiutil
+ *     attach / ditto，批次 3 设计 §3.3.3-B）、主二进制存在检查、
  *     备份 mv 失败 abort、换装失败回滚、60s 超时 abort（PID 制 kill -0）、
  *     /Volumes 只读拒装、tmp+rename result 原子写、open 无 -n
  *   - linux 脚本：PID 等待 + 超时 abort + 只读检测 + 原子 result（无 staging，
@@ -10,6 +11,8 @@
  *   - parentPid 契约（u1a 模板侧 / u1b 注入侧）：缺失即 throw，禁止静默跳过等待
  *   - shell 注入防御：路径/版本号含危险字符时转义不破坏脚本与 JSON 结构
  *   - 占位符全替换（无 {{ 残留）
+ *   - 批次 3 S8：dmg 解包原语断言（mountpoint 选址 / detach 失败不阻断 /
+ *     S2-S5 换装回滚段未被解包改造波及）
  *
  * 「字符串断言」的边界说明：本文件只验证脚本内容含守卫片段（生成器视角）；
  * 脚本真实执行行为（bash 能跑通、分支真的触发）由 updater-script-integration.test.ts 覆盖。
@@ -25,7 +28,7 @@ import {
 /** 标准变量 fixture（parentPid 用不存在的 PID——9999999 超过 macOS/linux pid_max） */
 const MAC_VARS = {
   appBundle: '/Applications/xyz-agent.app',
-  zipPath: '/Users/test/.xyz-agent/update/TaiJi-mac-arm64.zip',
+  dmgPath: '/Users/test/.xyz-agent/update/TaiJi-mac-arm64.dmg',
   sha256: 'a'.repeat(64),
   logPath: '/Users/test/.xyz-agent/update/updater.log',
   resultPath: '/Users/test/.xyz-agent/update/update-result.json',
@@ -50,9 +53,13 @@ describe('u1a: mac 脚本模板（staging 状态机 + §3.3.2 全守卫）', () 
 
     // ── 验收条款①逐项守卫（grep 级断言，验收对照）─────────────────
     const guards: Array<[string, string]> = [
-      // unzip 退出码显式检查（RI1：不再用 [ -d .app ] 误判成功）
-      ['unzip 退出码检查', 'if ! unzip -q -o'],
-      ['解压失败错误码', 'fail "extract failed"'],
+      // dmg 解包链退出码显式检查（批次 3 §3.3.3-B：hdiutil attach + ditto）
+      ['attach 退出码检查', 'if ! hdiutil attach -nobrowse -readonly "{{DMG_PATH}}"'],
+      ['挂载失败错误码', 'fail "dmg mount failed'],
+      ['ditto 退出码检查', 'if ! ditto "$SRC_APP" "$STAGED_APP"'],
+      ['ditto 失败错误码', 'fail "ditto copy failed"'],
+      // 主二进制缺失错误码（RI1 守卫，S8：解包后主二进制存在检查保留）
+      ['主二进制缺失错误码', 'fail "extract failed"'],
       // 备份 mv 失败 abort（RM7：不吞错）
       ['备份 mv 失败检查', 'if ! mv "$APP" "$APP_OLD"'],
       ['备份失败错误码', 'fail "backup failed"'],
@@ -73,7 +80,9 @@ describe('u1a: mac 脚本模板（staging 状态机 + §3.3.2 全守卫）', () 
       ['sha 错误码', 'fail "sha mismatch"'],
     ]
     for (const [name, frag] of guards) {
-      expect(script, `应包含守卫: ${name} (${frag})`).toContain(frag)
+      // guards 里的 {{DMG_PATH}} 片段是模板源形态，比对前替换为实际注入值
+      const expected = frag.replaceAll('{{DMG_PATH}}', MAC_VARS.dmgPath)
+      expect(script, `应包含守卫: ${name} (${expected})`).toContain(expected)
     }
 
     // ── tmp + rename 原子写 result（m12）───────────────────────────
@@ -85,12 +94,11 @@ describe('u1a: mac 脚本模板（staging 状态机 + §3.3.2 全守卫）', () 
     for (const stage of ['S1 extract begin', 'S2 promote begin', 'S3 backup begin', 'S4 swap begin', 'S5 finalize begin']) {
       expect(script, `应包含 stage 标记: ${stage}`).toContain(`[stage] ${stage}`)
     }
-    // 两步中转：先解压到 STAGING_DIR、成功后 mv 为 .app.new（zip 顶层是 太极.app/，
-    // 不可直接 unzip 到 .app.new——会多一层目录）
+    // 两步中转：先 ditto 拷贝到 STAGING_DIR、成功后 mv 为 .app.new
+    // （dmg 内 .app 经 ditto 拷到 staging，再同卷 mv 为 .app.new）
     expect(script).toContain('STAGING_DIR=')
-    expect(script).toContain('-d "$STAGING_DIR"')
     expect(script).toContain('mv "$STAGED_APP" "$APP_NEW"')
-    // S1/S2 残留清理（状态机恢复方：上次中断残留本次解压前清除）
+    // S1/S2 残留清理（状态机恢复方：上次中断残留本次解包前清除）
     expect(script).toContain('rm -rf "$STAGING_DIR" "$APP_NEW"')
     // 主二进制存在检查（可运行 app，Contents/MacOS/<appName>）
     expect(script).toContain('[ ! -x "$MAIN_BINARY" ]')
@@ -138,6 +146,67 @@ describe('u1a: mac 脚本模板（staging 状态机 + §3.3.2 全守卫）', () 
     expect(script).toContain('evil\\"\\$(rm -rf ~).app')
     // 注入点均落在双引号内，原始未转义序列不得出现
     expect(script).not.toContain('evil"$(rm')
+  })
+})
+
+describe('批次 3 S8: mac S1 段 dmg 解包原语（设计 §3.3.3-B）', () => {
+  it('mountpoint 在 $TMPDIR 下 mktemp，且独立于 STAGING_DIR / 不放 /Volumes', () => {
+    const script = buildUpdaterScript(MAC_VARS)
+    const lines = script.split('\n')
+    const mktempLine = lines.find((l) => l.includes('MOUNT_DIR=$(mktemp -d'))
+    expect(mktempLine, '应有 MOUNT_DIR mktemp 赋值行').toBeDefined()
+    // 用户可写目录：$TMPDIR 下 mktemp（/Volumes 是 root:wheel 755，普通用户必败——r1 探针实证）
+    expect(mktempLine!).toContain('"${TMPDIR:-/tmp}/taiji-dmg.')
+    expect(mktempLine!).toContain('XXXXXX')
+    expect(mktempLine!, 'mountpoint 不得放 /Volumes').not.toContain('/Volumes')
+    // 独立于 STAGING_DIR：detach 失败滞留挂载时 staging 清理不得波及活跃挂载卷
+    expect(mktempLine!, 'mountpoint 推导不得引用 STAGING_DIR').not.toContain('STAGING_DIR')
+  })
+
+  it('解包命令序列 = hdiutil attach(-mountpoint) → ditto → detach(eject 降级)', () => {
+    const script = buildUpdaterScript(MAC_VARS)
+    // attach 显式挂载点（dmg 路径注入值）
+    expect(script).toContain(
+      `hdiutil attach -nobrowse -readonly "${MAC_VARS.dmgPath}" -mountpoint "$MOUNT_DIR"`,
+    )
+    // dmg 内 .app 定位（ls -d 通配 + head 取首个）
+    expect(script).toContain('SRC_APP=$(ls -d "$MOUNT_DIR"/*.app')
+    // ditto 拷贝到 staging（保签名/xattr，不用 cp -R）
+    expect(script).toContain('ditto "$SRC_APP" "$STAGED_APP"')
+    // 最终 detach 带 eject 降级，且该行无 fail 调用（detach 失败不阻断，S2-S4 换装继续）
+    const finalDetachLine = script
+      .split('\n')
+      .find((l) => l.replace(/^hdiutil detach /, '').startsWith('"$MOUNT_DIR"') && l.includes('hdiutil eject'))
+    expect(finalDetachLine, '最终 detach 行应为 detach || eject 降级').toBeDefined()
+    expect(finalDetachLine!, 'detach 失败不得阻断（无 fail 调用）').not.toContain('fail')
+  })
+
+  it('attach 失败 → fail 分支且错误信息带恢复动作（重启/手动 detach 后重试）', () => {
+    const script = buildUpdaterScript(MAC_VARS)
+    expect(script, 'attach 应显式判退出码').toContain('if ! hdiutil attach')
+    expect(script, '挂载失败错误码 + 恢复指引').toContain(
+      'fail "dmg mount failed (reboot the system or run hdiutil detach manually, then retry)"',
+    )
+  })
+
+  it('unzip 解包原语已被整体替换（不再出现）', () => {
+    const script = buildUpdaterScript(MAC_VARS)
+    expect(script, '批次 3 后 mac 脚本不得再使用 unzip').not.toContain('unzip')
+  })
+
+  it('S2-S5 换装/回滚/finalize 段未被解包改造波及', () => {
+    const script = buildUpdaterScript(MAC_VARS)
+    // stage 标记齐全（S1 改造只动解包原语，状态机骨架不变）
+    for (const stage of ['S1 extract begin', 'S2 promote begin', 'S3 backup begin', 'S4 swap begin', 'S5 finalize begin']) {
+      expect(script, `应包含 stage 标记: ${stage}`).toContain(`[stage] ${stage}`)
+    }
+    // S2 两步中转 / S3 备份不吞错 / S4 原子换装 + 回滚 / S5 xattr + done
+    expect(script).toContain('mv "$STAGED_APP" "$APP_NEW"')
+    expect(script).toContain('if ! mv "$APP" "$APP_OLD"')
+    expect(script).toContain('if ! mv "$APP_NEW" "$APP"')
+    expect(script).toContain('mv "$APP_OLD" "$APP"')
+    expect(script).toContain('xattr -cr "$APP"')
+    expect(script).toContain('write_result "done"')
   })
 })
 

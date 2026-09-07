@@ -4,8 +4,10 @@
  * 覆盖：getSegmentsFromEl（segment 状态机）/ getTextFromEl（br→\n）/ detectHashTriggerFromEl
  * （# 触发检测）/ findImageChipEl（dataset 遍历，CSS 特殊字符安全）。
  *
- * jsdom 支持 TreeWalker/Range/Selection；caretRangeFromPoint 未实现（moveCaretVertical
- * 多行分支不测，见 design review boundaryConditionNote）。
+ * jsdom 支持 TreeWalker/Range/Selection；caretRangeFromPoint 与 Selection.modify 未实现
+ * （moveCaretVerticalOf 经 stub Range rect/Selection.modify 覆盖 jsdom 可达分支，
+ * caretRangeFromPoint 多行中间行通路仍由 renderer 行为测试兜底，见 design review
+ * boundaryConditionNote）。
  *
  * 运行：cd packages/dom-core && npx vitest run src/composer/input/input-dom.test.ts
  */
@@ -20,6 +22,7 @@ import {
   findImageChipEl,
   findImageChipElById,
   isSpacerNode,
+  moveCaretVerticalOf,
   applyImagePersistResult,
   CHIP_SPACER_ZWSP,
 } from './input-dom'
@@ -582,5 +585,219 @@ describe('applyImagePersistResult', () => {
     expect(parent.contains(other)).toBe(true)
     expect(execSpy).toHaveBeenCalledWith('insertText', false, 't')
     expect(insertImageBadge).not.toHaveBeenCalled()
+  })
+})
+
+describe('getSegmentsFromEl 分支补充（W6 特征锚定）', () => {
+  it('chip-x 过滤独立生效：旧 mention-at（无 dataset）走元素递归，× 按钮文本不入 segment', () => {
+    // slash-chip 用例里 × 被芯片分支整体短路，此形态才真正走到 chip-x 元素的 self-closest 过滤
+    const el = setupEl('<span class="mention-chip mention-at">@alice<span class="chip-x">×</span></span>')
+    expect(getSegmentsFromEl(el)).toEqual([{ type: 'text', text: '@alice' }])
+  })
+
+  it('根 el 自带 chip-x class：直接子节点按 chip-x 子树过滤（parentElement closest 命中）', () => {
+    const el = setupEl('hello')
+    el.classList.add('chip-x')
+    expect(getSegmentsFromEl(el)).toEqual([])
+  })
+
+  it('嵌套块级 div：进入/离开幂等挂起，相邻块级边界不重复补 \\n', () => {
+    const el = setupEl('<div>a<div>b</div>c</div>')
+    expect(getSegmentsFromEl(el)).toEqual([{ type: 'text', text: 'a\nb\nc' }])
+  })
+
+  it('image chip 仅凭 dataset.chipType=image（无 image-chip class）也产出 image segment', () => {
+    const el = setupEl(
+      '<span data-chip-type="image" data-chip-id="i9" data-chip-path="/p9.png" data-chip-file-name="p9.png" data-chip-display-name="p9.png" data-chip-needs-migrate="false"></span>',
+    )
+    expect(getSegmentsFromEl(el)).toEqual([
+      {
+        type: 'image',
+        id: 'i9',
+        path: '/p9.png',
+        fileName: 'p9.png',
+        displayName: 'p9.png',
+        needsMigrate: false,
+      },
+    ])
+  })
+
+  it('image-chip 占位符 __drag_pending___ 与 paste 形态同样跳过', () => {
+    const el = setupEl(
+      '<span class="image-chip" data-chip-type="image" data-chip-path="__drag_pending_550e8400-e29b-41d4-a716-446655440000__"><span class="chip-label">拖入中...</span></span>',
+    )
+    expect(getSegmentsFromEl(el)).toEqual([])
+  })
+
+  it('空文本节点不产出空 text segment（flushText 跳过空串）', () => {
+    const el = setupEl('')
+    el.appendChild(document.createTextNode(''))
+    expect(getSegmentsFromEl(el)).toEqual([])
+  })
+})
+
+describe('moveCaretVerticalOf（jsdom 可达分支，W6 特征锚定）', () => {
+  /**
+   * jsdom 无布局引擎：Range rect API 缺失/全零，caretRangeFromPoint 未实现，
+   * Selection.modify 未实现。注入假几何（stub Range rect 方法）驱动各分支；
+   * caretRangeFromPoint 通路（多行中间行移动）不在 jsdom 覆盖面，由 renderer 行为测试兜底。
+   */
+  interface FakeRect {
+    top: number
+    bottom: number
+    left: number
+    right: number
+    width: number
+    height: number
+  }
+
+  function fakeRect(top: number, bottom: number, left = 0, right = 100): FakeRect {
+    return { top, bottom, left, right, width: right - left, height: bottom - top }
+  }
+
+  const selProto = Object.getPrototypeOf(window.getSelection()) as object
+  const originalGetClientRects = Object.getOwnPropertyDescriptor(Range.prototype, 'getClientRects')
+  const originalGetBoundingClientRect = Object.getOwnPropertyDescriptor(Range.prototype, 'getBoundingClientRect')
+  const originalModify = Object.getOwnPropertyDescriptor(selProto, 'modify')
+
+  let rectsImpl: () => FakeRect[]
+  let boundingRectImpl: () => FakeRect
+  let el: HTMLDivElement
+
+  function installRangeStubs(): void {
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      writable: true,
+      value: () => rectsImpl() as unknown as DOMRectList,
+    })
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      writable: true,
+      value: () => boundingRectImpl() as unknown as DOMRect,
+    })
+  }
+
+  function restoreDescriptor(target: object, key: string, desc: PropertyDescriptor | undefined): void {
+    if (desc) Object.defineProperty(target, key, desc)
+    else Reflect.deleteProperty(target, key)
+  }
+
+  function setModify(impl: (...args: unknown[]) => void): void {
+    Object.defineProperty(selProto, 'modify', { configurable: true, writable: true, value: impl })
+  }
+
+  /** 挂到 body（jsdom Selection 仅对文档树内元素生效）+ 光标设到文本节点 offset 处 */
+  function setupCaret(html: string, offset: number): Text {
+    el = setupElInBody(html)
+    const textNode = el.firstChild as Text
+    setCursor(textNode, offset)
+    return textNode
+  }
+
+  beforeEach(() => {
+    window.getSelection()?.removeAllRanges()
+    rectsImpl = () => []
+    boundingRectImpl = () => fakeRect(0, 0)
+    installRangeStubs()
+  })
+
+  afterEach(() => {
+    restoreDescriptor(Range.prototype, 'getClientRects', originalGetClientRects)
+    restoreDescriptor(Range.prototype, 'getBoundingClientRect', originalGetBoundingClientRect)
+    restoreDescriptor(selProto, 'modify', originalModify)
+    window.getSelection()?.removeAllRanges()
+    if (el && document.body.contains(el)) document.body.removeChild(el)
+  })
+
+  it('无选区（rangeCount 0）→ at-edge 且回传原 preferredX', () => {
+    el = setupElInBody('hello')
+    expect(moveCaretVerticalOf(el, 'up', 7)).toEqual({ result: 'at-edge', preferredX: 7 })
+  })
+
+  it('光标不在 el 内 → at-edge', () => {
+    el = setupElInBody('hello')
+    const other = document.createElement('div')
+    other.textContent = 'other'
+    document.body.appendChild(other)
+    setCursor(other.firstChild as Text, 1)
+    expect(moveCaretVerticalOf(el, 'up', null)).toEqual({ result: 'at-edge', preferredX: null })
+    document.body.removeChild(other)
+  })
+
+  it('视觉行 ≤1（rects 空）→ at-edge', () => {
+    setupCaret('hello', 2)
+    expect(moveCaretVerticalOf(el, 'down', null)).toEqual({ result: 'at-edge', preferredX: null })
+  })
+
+  it('首行再按 ↑（targetLine<0）：移到首个文本节点起点，preferredX 记录 caretRect.left', () => {
+    const textNode = setupCaret('hello', 3)
+    rectsImpl = () => [fakeRect(5, 15), fakeRect(15, 25)]
+    boundingRectImpl = () => fakeRect(5, 15, 42, 50)
+    expect(moveCaretVerticalOf(el, 'up', null)).toEqual({ result: 'moved', preferredX: 42 })
+    const sel = window.getSelection()
+    expect(sel?.rangeCount).toBe(1)
+    expect(sel?.getRangeAt(0).startContainer).toBe(textNode)
+    expect(sel?.getRangeAt(0).startOffset).toBe(0)
+  })
+
+  it('同分支但 preferredX 已有值：保持不变（?? 左侧命中）', () => {
+    setupCaret('hello', 3)
+    rectsImpl = () => [fakeRect(5, 15), fakeRect(15, 25)]
+    boundingRectImpl = () => fakeRect(5, 15, 42, 50)
+    expect(moveCaretVerticalOf(el, 'up', 100)).toEqual({ result: 'moved', preferredX: 100 })
+  })
+
+  it('已在文本起点再按 ↑ → at-edge（noop 回传参数 preferredX 而非 caretRect.left）', () => {
+    setupCaret('hello', 0)
+    rectsImpl = () => [fakeRect(5, 15), fakeRect(15, 25)]
+    boundingRectImpl = () => fakeRect(5, 15, 42, 50)
+    expect(moveCaretVerticalOf(el, 'up', null)).toEqual({ result: 'at-edge', preferredX: null })
+  })
+
+  it('末行再按 ↓（targetLine 越界）→ at-edge', () => {
+    setupCaret('hello', 2)
+    rectsImpl = () => [fakeRect(5, 15), fakeRect(15, 25)]
+    boundingRectImpl = () => fakeRect(15, 25, 42, 50)
+    expect(moveCaretVerticalOf(el, 'down', null)).toEqual({ result: 'at-edge', preferredX: null })
+  })
+
+  it('caret top 不命中任何行 ±1 → 退化取行中心最近行（midpoint fallback）', () => {
+    setupCaret('hello', 3)
+    rectsImpl = () => [fakeRect(5, 15), fakeRect(15, 25)]
+    // top=12：top±1 无命中；中心 10/20 距离 2/8 → currentLine=0 → ↑ 回首行文本起点
+    boundingRectImpl = () => fakeRect(12, 13, 30, 40)
+    expect(moveCaretVerticalOf(el, 'up', null)).toEqual({ result: 'moved', preferredX: 30 })
+  })
+
+  describe('零 rect 探测失败 → sel.modify 行移动兜底（stub Selection.modify）', () => {
+    it('modify 后位置未变 → at-edge', () => {
+      setupCaret('hello', 1)
+      rectsImpl = () => [fakeRect(0, 10), fakeRect(10, 20)]
+      boundingRectImpl = () => fakeRect(0, 0)
+      const modify = vi.fn()
+      setModify(modify)
+      expect(moveCaretVerticalOf(el, 'up', null)).toEqual({ result: 'at-edge', preferredX: null })
+      expect(modify).toHaveBeenCalledTimes(1)
+      expect(modify).toHaveBeenCalledWith('move', 'up', 'line')
+      // ZWSP 探针已自清理（insert → remove → normalize），DOM 无残留
+      expect(el.textContent).toBe('hello')
+    })
+
+    it('modify 后位置变化 → moved（回传参数 preferredX）', () => {
+      setupCaret('hello', 1)
+      rectsImpl = () => [fakeRect(0, 10), fakeRect(10, 20)]
+      boundingRectImpl = () => fakeRect(0, 0)
+      setModify(() => {
+        const s = window.getSelection()
+        const t = el.firstChild as Text
+        s?.removeAllRanges()
+        const r = document.createRange()
+        r.setStart(t, 0)
+        r.collapse(true)
+        s?.addRange(r)
+      })
+      expect(moveCaretVerticalOf(el, 'up', 7)).toEqual({ result: 'moved', preferredX: 7 })
+      expect(el.textContent).toBe('hello')
+    })
   })
 })

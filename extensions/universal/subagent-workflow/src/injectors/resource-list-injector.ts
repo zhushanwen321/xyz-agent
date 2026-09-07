@@ -47,6 +47,7 @@ import {
 	getCachedParsed,
 	sortByCodepoint,
 } from "@zhushanwen/subagent-core";
+import { toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 const logger = getLogger("injector");
 
@@ -151,7 +152,7 @@ export function createResourceListInjector<TEntry extends ResourceListEntry>(
 				// 单个文件读失败不阻断整条清单注入
 				logger.error(
 					`${config.logTag} skip unreadable ${singularKind(config.kind)} file ${resource.path}`,
-					{ reason: err instanceof Error ? err.message : String(err) },
+					{ reason: toErrorMessage(err) },
 				);
 			}
 		}
@@ -167,7 +168,7 @@ export function createResourceListInjector<TEntry extends ResourceListEntry>(
 				} catch (err) {
 					// fail-safe：发现异常不阻断 session，缓存保持 null（before_agent_start 会 fallback）
 					logger.error(`${config.logTag} session_start discover failed`, {
-						reason: err instanceof Error ? err.message : String(err),
+						reason: toErrorMessage(err),
 					});
 				}
 			},
@@ -190,7 +191,7 @@ export function createResourceListInjector<TEntry extends ResourceListEntry>(
 					return { systemPrompt: event.systemPrompt + injection };
 				} catch (err) {
 					logger.error(`${config.logTag} before_agent_start failed`, {
-						reason: err instanceof Error ? err.message : String(err),
+						reason: toErrorMessage(err),
 					});
 				}
 			},

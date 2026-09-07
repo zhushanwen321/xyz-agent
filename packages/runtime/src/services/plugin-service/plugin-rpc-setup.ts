@@ -18,6 +18,7 @@ import { registerStorageRpcHandlers, storageHandlersFrom } from './api/storage-a
 import { registerNotifyRpcHandler, notifyHandlersFrom, broadcastPluginNotification, NotifyRateLimiter } from './api/notify-api.js'
 import { registerSessionDataRpcHandlers } from './api/session-data-api.js'
 import { registerUiRpcHandlers } from './api/ui-api.js'
+import type { UiRequestMeta } from './api/ui-api.js'
 import { registerAgentRpcHandlers } from './api/agent-api.js'
 import { registerWorkspaceRpcHandlers } from './api/workspace-api.js'
 import { registerCommandRpcHandlers } from './api/commands-api.js'
@@ -54,6 +55,12 @@ export interface RpcSetupContext {
   deps: IPluginServiceDeps
   broadcastStatusBarItems: () => void
   handleUiRequest: (method: string, params: Record<string, unknown>, pluginId: string) => Promise<unknown>
+  /**
+   * UI 请求到期取消（timeout-plugin-service D2）：Worker 侧语义 timer 到期后经
+   * plugin.ui.uiRequestExpired notification 到达，委托 UiRequestQueue.cancelRequest
+   * （删 pending/排队项 + 撤窗广播 + 放行串行队列）。
+   */
+  cancelUiRequest: (requestId: string) => void
   syncToolsToBridge: () => Promise<void>
   getDescriptor: (pluginId: string) => import('./plugin-types.js').PluginDescriptor | undefined
   sessionDataStore: SessionDataStore
@@ -166,12 +173,16 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
   registerUiRpcHandlers(rpcServer, {
     // S3-W4：与 plugin.notify 共享同一令牌桶（limiter 上注入，见 registerAllRpcMethods 顶部）
     limiter: notifyLimiter,
-    showSelect: (title: string, options: string[], pluginId: string) =>
-      ctx.handleUiRequest('select', { title, options }, pluginId) as Promise<string | undefined>,
-    showConfirm: (title: string, message: string, pluginId: string) =>
-      ctx.handleUiRequest('confirm', { title, message }, pluginId) as Promise<boolean>,
-    showInput: (title: string, _defaultValue: string | undefined, pluginId: string) =>
-      ctx.handleUiRequest('input', { title }, pluginId) as Promise<string | undefined>,
+    // meta（D2）：Worker 侧生成的 requestId + effective 超时随 params 透传 UiRequestQueue
+    //（queue 尊重来方 requestId，cancel 通知按它匹配；timeoutMs 供防泄漏兜底取值）
+    showSelect: (title: string, options: string[], pluginId: string, meta?: UiRequestMeta) =>
+      ctx.handleUiRequest('select', { title, options, ...(meta ?? {}) }, pluginId) as Promise<string | undefined>,
+    showConfirm: (title: string, message: string, pluginId: string, meta?: UiRequestMeta) =>
+      ctx.handleUiRequest('confirm', { title, message, ...(meta ?? {}) }, pluginId) as Promise<boolean>,
+    showInput: (title: string, _defaultValue: string | undefined, pluginId: string, meta?: UiRequestMeta) =>
+      ctx.handleUiRequest('input', { title, ...(meta ?? {}) }, pluginId) as Promise<string | undefined>,
+    // D2 到期取消：Worker 侧 UI_TIMEOUT reject 同刻的 cancel notification → queue 删项/撤窗/放行
+    onUiRequestExpired: (requestId: string) => ctx.cancelUiRequest(requestId),
     notify: async (pluginId: string, level: string, message: string) => {
       // Notify via broadcastFn —— 委托 notify-api 的单一广播真相源（P1 去重）
       // 文案与重构前逐字一致（commit 8dd3034f 父版本）

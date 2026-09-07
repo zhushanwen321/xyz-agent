@@ -19,7 +19,6 @@ describe("M2 append-content probe (design.json TC1)", () => {
       schema: { type: "object", properties: { ok: { type: "boolean" } } },
       agent: "/fake/agents/worker.md",
       description: "m2-probe",
-      slug: "m2-probe",
     };
 
     const result = resolveAgentOpts(opts);

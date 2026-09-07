@@ -199,8 +199,9 @@ describe("T4② armIdleTimer fail-fast falls back to DEFAULT + warn", () => {
     );
 
     const record = makeRecord("sa-settled-fallback");
-    record.chatMode = true;
-    record.idleTimeoutMs = 600_000;
+    const mutable = record as { chatMode: boolean; idleTimeoutMs: number };
+    mutable.chatMode = true;
+    mutable.idleTimeoutMs = 600_000;
     const promise = runSpawn(record, "Task: settled fallback", makeOpts(), makeCtx());
     await waitForSpawn();
     const child = lastSpawnedChild();

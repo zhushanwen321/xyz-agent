@@ -2,6 +2,8 @@
 
 # 太极 TaiJi
 
+[简体中文](README.md) ｜ [English](README_EN.md)
+
 AI Agent 桌面工作台（macOS / Windows / Linux），基于 Electron + Vue 3 + Node.js Runtime 架构。
 
 通过 [pi](https://github.com/badlogic/pi-mono)（npm 包名 `@earendil-works/pi-coding-agent`）的子进程 RPC 协议与各类 AI Agent 通信，提供多 session 管理、双 Panel split view、subagent/workflow 编排、目标驱动自治循环、定时调度等能力，面向长时间、多任务的 Agent 协作场景。13 个 Agent 扩展随应用打包内置，开箱即用。
@@ -10,45 +12,86 @@ AI Agent 桌面工作台（macOS / Windows / Linux），基于 Electron + Vue 3 
 
 ## 安装
 
-从 [Releases](https://github.com/zhushanwen321/xyz-agent/releases) 获取最新版本（产物文件名含版本号，下例以 v0.9.0 为例）。安装后 app 内会自动检测新版本，提示一键升级。
+当前最新版本：**v0.9.13**（[查看全部版本](https://github.com/zhushanwen321/xyz-agent/releases)）。安装后 app 内会自动检测新版本，提示一键升级。
 
-### macOS（Apple Silicon）
+<!-- INSTALL:BEGIN -->
+<!-- 本区块内的版本号由 .agents/skills/merge/scripts/update-readme-install.mjs 在每次正式发布后自动替换；区块外的版本号不会被打扰。 -->
+
+### 国内下载（GitCode 镜像，国内直连实测约 15 MB/s）
+
+镜像仓库：[gitcode.com/qq_18433817/xyz-agent](https://gitcode.com/qq_18433817/xyz-agent)
+
+#### macOS（Apple Silicon）
 
 ```bash
-curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJi-0.9.0-mac-arm64.zip -o /tmp/TaiJi.zip \
-  && unzip /tmp/TaiJi.zip -d /Applications \
-  && open /Applications/太极.app
+curl -L https://gitcode.com/qq_18433817/xyz-agent/releases/download/v0.9.14/TaiJi-0.9.14-mac-arm64.dmg -o /tmp/TaiJi.dmg \
+  && open /tmp/TaiJi.dmg
 ```
 
-若启动时提示「已损坏」或「无法验证开发者」，执行（curl 下载通常不需要，浏览器下载需要）：
+也可直接到 [GitCode Releases](https://gitcode.com/qq_18433817/xyz-agent/releases) 用浏览器下载 dmg 双击安装。
+
+#### Linux
 
 ```bash
-xattr -cr /Applications/太极.app
-```
-
-### Linux
-
-```bash
-curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJi-0.9.0-x86_64.AppImage -o ~/TaiJi.AppImage \
+curl -L https://gitcode.com/qq_18433817/xyz-agent/releases/download/v0.9.14/TaiJi-0.9.14-x86_64.AppImage -o ~/TaiJi.AppImage \
   && chmod +x ~/TaiJi.AppImage \
   && ~/TaiJi.AppImage
 ```
 
-`.deb` 包（`TaiJi-<版本>-amd64.deb`）同步发布于 Release 页。
-
-### Windows
+#### Windows
 
 PowerShell（用 Invoke-WebRequest，避免 curl 在 PowerShell 是别名导致的参数冲突）：
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJi-0.9.0-setup-x64.exe" -OutFile "$env:TEMP\TaiJi-setup.exe" -UseBasicParsing; & "$env:TEMP\TaiJi-setup.exe"
+Invoke-WebRequest -Uri "https://gitcode.com/qq_18433817/xyz-agent/releases/download/v0.9.14/TaiJi-0.9.14-setup-x64.exe" -OutFile "$env:TEMP\TaiJi-setup.exe" -UseBasicParsing; & "$env:TEMP\TaiJi-setup.exe"
 ```
 
 命令提示符（cmd.exe，需系统自带 curl.exe，Win10 1803+ 默认含）：
 
 ```cmd
-curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJi-0.9.0-setup-x64.exe -o "%TEMP%\TaiJi-setup.exe" && "%TEMP%\TaiJi-setup.exe"
+curl -L https://gitcode.com/qq_18433817/xyz-agent/releases/download/v0.9.14/TaiJi-0.9.14-setup-x64.exe -o "%TEMP%\TaiJi-setup.exe" && "%TEMP%\TaiJi-setup.exe"
 ```
+
+### 国外下载（GitHub）
+
+仓库：[github.com/zhushanwen321/xyz-agent](https://github.com/zhushanwen321/xyz-agent)
+
+#### macOS（Apple Silicon）
+
+```bash
+curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.14/TaiJi-0.9.14-mac-arm64.dmg -o /tmp/TaiJi.dmg \
+  && open /tmp/TaiJi.dmg
+```
+
+#### Linux
+
+```bash
+curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.14/TaiJi-0.9.14-x86_64.AppImage -o ~/TaiJi.AppImage \
+  && chmod +x ~/TaiJi.AppImage \
+  && ~/TaiJi.AppImage
+```
+
+#### Windows
+
+PowerShell：
+
+```powershell
+Invoke-WebRequest -Uri "https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.14/TaiJi-0.9.14-setup-x64.exe" -OutFile "$env:TEMP\TaiJi-setup.exe" -UseBasicParsing; & "$env:TEMP\TaiJi-setup.exe"
+```
+
+命令提示符（cmd.exe）：
+
+```cmd
+curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.14/TaiJi-0.9.14-setup-x64.exe -o "%TEMP%\TaiJi-setup.exe" && "%TEMP%\TaiJi-setup.exe"
+```
+
+> macOS 若启动时提示「已损坏」或「无法验证开发者」，执行（curl 下载通常不需要，浏览器下载需要）：
+>
+> ```bash
+> xattr -cr /Applications/太极.app
+> ```
+
+<!-- INSTALL:END -->
 
 ---
 
@@ -167,7 +210,7 @@ pnpm install
 # 开发模式（Vite HMR + Electron 主进程）
 pnpm dev
 
-# 生产构建（electron-builder，产出 DMG/ZIP/AppImage/deb/EXE）
+# 生产构建（electron-builder，产出 DMG/EXE/AppImage/manifest）
 pnpm build
 
 # 类型检查
@@ -241,7 +284,7 @@ pnpm build:e2e && pnpm test:e2e
 
 | 管线 | 产物 | 触发 tag | Workflow |
 |------|------|----------|----------|
-| Electron 打包 | DMG / ZIP / AppImage / deb / EXE | `v*` | `release.yml` |
+| Electron 打包 | DMG / EXE / AppImage / manifest | `v*` | `release.yml` |
 | npm 包发布 | `@zhushanwen/pi-*` + `@xyz-agent/extension-protocol` | `npm-*` | `release-npm.yml` |
 
 ## 文档索引

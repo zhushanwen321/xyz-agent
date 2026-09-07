@@ -78,12 +78,12 @@ function makeRecord(
     model: "test/model",
     mode: "background",
     task: "test",
-    slug: "test",
     startedAt: 1000,
     rootSessionId: sessionRootId,
     chatMode: true,
     controller: new AbortController(),
     ...overrides,
+    slug: overrides.slug ?? "test",
   });
 }
 
@@ -96,7 +96,7 @@ describe("[v4 A-5 / P7] getRecordForAction 直接父校验", () => {
 
   beforeEach(() => {
     agentDir = makeTmpAgentDir();
-    const modelService = new ModelConfigService({ agentDir });
+    const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
     service = new SubagentService({ cwd: agentDir, modelService });
     // initSession 建立 sessionRootId=sessionId（本 session 树的根）。execCtxBaseline 的
     // 真实值由 initSession 从 env 读取（见 recursive-visibility-baseline.test.ts），但本测试
@@ -115,7 +115,7 @@ describe("[v4 A-5 / P7] getRecordForAction 直接父校验", () => {
   // ---------- 身份 sa-A：直接父，放行孙级 B ----------
 
   it("身份=sa-A（直接父）→ 放行操作孙级 record B（parentRecordId=sa-A）", () => {
-    const recordB = makeRecord("sa-B", sessionRootId, { parentRecordId: "sa-A", depth: 2, status: "idle" });
+    const recordB = makeRecord("sa-B", sessionRootId, { parentRecordId: "sa-A", depth: 2, status: "running" });
     store.register(recordB);
     internals.execNesting.setBaseline(PARENT_A);
 
@@ -125,7 +125,7 @@ describe("[v4 A-5 / P7] getRecordForAction 直接父校验", () => {
   // ---------- 身份 undefined（主进程）：拒绝孙级，放行根层 ----------
 
   it("身份=undefined（主进程）拒绝孙级 record B，错误含 'direct parent' + 'parent=sa-A'", () => {
-    const recordB = makeRecord("sa-B", sessionRootId, { parentRecordId: "sa-A", depth: 2, status: "idle" });
+    const recordB = makeRecord("sa-B", sessionRootId, { parentRecordId: "sa-A", depth: 2, status: "running" });
     store.register(recordB);
     internals.execNesting.setBaseline(MAIN_PROCESS);
 
@@ -134,7 +134,7 @@ describe("[v4 A-5 / P7] getRecordForAction 直接父校验", () => {
   });
 
   it("身份=undefined（主进程）放行顶层 record（parentRecordId=undefined 视为根层）", () => {
-    const topRecord = makeRecord("sa-top", sessionRootId, { parentRecordId: undefined, depth: 0, status: "idle" });
+    const topRecord = makeRecord("sa-top", sessionRootId, { parentRecordId: undefined, depth: 0, status: "running" });
     store.register(topRecord);
     internals.execNesting.setBaseline(MAIN_PROCESS);
 
@@ -144,7 +144,7 @@ describe("[v4 A-5 / P7] getRecordForAction 直接父校验", () => {
   // ---------- 身份 sa-B（兄弟进程）：拒绝孙级 ----------
 
   it("身份=sa-B（兄弟进程）拒绝孙级 record B（parentRecordId=sa-A ≠ baseline sa-B）", () => {
-    const recordB = makeRecord("sa-B", sessionRootId, { parentRecordId: "sa-A", depth: 2, status: "idle" });
+    const recordB = makeRecord("sa-B", sessionRootId, { parentRecordId: "sa-A", depth: 2, status: "running" });
     store.register(recordB);
     internals.execNesting.setBaseline(SIBLING_B);
 
@@ -155,7 +155,7 @@ describe("[v4 A-5 / P7] getRecordForAction 直接父校验", () => {
   // ---------- 身份缺省语义 + 更深递归 ----------
 
   it("子进程（baseline=sa-A）拒绝顶层 record（身份缺省视为根层，仅主进程可操作）", () => {
-    const topRecord = makeRecord("sa-top", sessionRootId, { parentRecordId: undefined, depth: 0, status: "idle" });
+    const topRecord = makeRecord("sa-top", sessionRootId, { parentRecordId: undefined, depth: 0, status: "running" });
     store.register(topRecord);
     internals.execNesting.setBaseline(PARENT_A);
 
@@ -163,7 +163,7 @@ describe("[v4 A-5 / P7] getRecordForAction 直接父校验", () => {
   });
 
   it("P7 场景：主进程拒绝曾孙 record C（parentRecordId=sa-B），错误含 baseline=root + parent=sa-B", () => {
-    const recordC = makeRecord("sa-C", sessionRootId, { parentRecordId: "sa-B", depth: 3, status: "idle" });
+    const recordC = makeRecord("sa-C", sessionRootId, { parentRecordId: "sa-B", depth: 3, status: "running" });
     store.register(recordC);
     internals.execNesting.setBaseline(MAIN_PROCESS);
 
@@ -175,7 +175,7 @@ describe("[v4 A-5 / P7] getRecordForAction 直接父校验", () => {
 
   it("rootSessionId 不匹配仍优先拒绝（直接父校验在 rootSessionId 校验之后，不绕过归属守卫）", () => {
     // 跨 session 树的 record：rootSessionId 不匹配 → 走首个 throw（not found or not owned）
-    const foreignRecord = makeRecord("sa-foreign", "other-session", { parentRecordId: "sa-A", depth: 2, status: "idle" });
+    const foreignRecord = makeRecord("sa-foreign", "other-session", { parentRecordId: "sa-A", depth: 2, status: "running" });
     store.register(foreignRecord);
     internals.execNesting.setBaseline(PARENT_A);
 

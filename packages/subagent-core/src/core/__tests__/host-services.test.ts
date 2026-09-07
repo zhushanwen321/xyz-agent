@@ -62,13 +62,13 @@ describe("getHostServices（未配置 → NULL_HOST）", () => {
 
     host.log("warn", "comp-a", "w-message", { k: 1 });
     expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0][0]).toBe("[comp-a] w-message");
+    expect(warnSpy.mock.calls[0]![0]).toBe("[comp-a] w-message");
     expect(warnSpy.mock.calls[0][1]).toEqual({ k: 1 });
     expect(errorSpy).not.toHaveBeenCalled();
 
     host.log("error", "comp-a", "e-message");
     expect(errorSpy).toHaveBeenCalledTimes(1);
-    expect(errorSpy.mock.calls[0][0]).toBe("[comp-a] e-message");
+    expect(errorSpy.mock.calls[0]![0]).toBe("[comp-a] e-message");
   });
 
   it("data 缺省时省略第二参数（node console 会把显式 undefined 打成尾巴）", () => {

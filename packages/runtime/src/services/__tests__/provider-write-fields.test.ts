@@ -42,6 +42,9 @@ interface WrittenModel {
   maxTokens?: number
   cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; tiers?: unknown }
   headers?: Record<string, string>
+  /** W2 补充用例断言用（模型合并分支：input 过滤 / thinkingLevelMap 删除） */
+  input?: unknown[]
+  thinkingLevelMap?: Record<string, unknown>
 }
 
 interface WrittenProvider {
@@ -247,5 +250,67 @@ describe('B-4b：模型写入白名单 reasoning/maxTokens/cost/headers', () => 
     })).rejects.toThrow(/Invalid headers for model "m1"/)
 
     expect(modelsJsonRaw()).toBe(before)
+  })
+})
+
+// ── W2 重构特征锚定补充（模型合并提取 helper 后的分支缺口）──
+
+describe('模型合并分支缺口（input 过滤 / thinkingLevelMap 删除 / compat 删除与清洗）', () => {
+  it('input 非法值剔除（只保留 text/image），合法值保留', async () => {
+    await svc.setProvider('my-proxy', {
+      models: [{ id: 'm1', input: ['text', 'voice', 'image', 42] as unknown as Array<'text' | 'image'> }],
+    })
+    const model = readModel('my-proxy')
+    expect(model.input).toEqual(['text', 'image'])
+  })
+
+  it('thinkingLevelMap 显式 undefined + 盘上有旧值 → 删除该字段', async () => {
+    await svc.setProvider('my-proxy', {
+      models: [{ id: 'm1', thinkingLevelMap: { reasoning: 'high' } }],
+    })
+    expect(readModel('my-proxy').thinkingLevelMap).toEqual({ reasoning: 'high' })
+
+    // 前端 buildMap 全 passthrough 回 undefined → 删除（不再继承盘上旧值）
+    await svc.setProvider('my-proxy', {
+      models: [{ id: 'm1' }],
+    })
+    const model = readModelsJson().providers['my-proxy']?.models?.[0] as Record<string, unknown> | undefined
+    expect(model).toBeDefined()
+    expect('thinkingLevelMap' in (model as Record<string, unknown>)).toBe(false)
+  })
+
+  it('compat 显式 undefined + 盘上有旧值 → 删除该字段（clearAll 语义）', async () => {
+    await svc.setProvider('my-proxy', {
+      models: [{ id: 'm1', compat: { keep: 'v1' } }],
+    })
+    expect((readModel('my-proxy') as Record<string, unknown>).compat).toEqual({ keep: 'v1' })
+
+    await svc.setProvider('my-proxy', {
+      models: [{ id: 'm1' }],
+    })
+    const model = readModelsJson().providers['my-proxy']?.models?.[0] as Record<string, unknown> | undefined
+    expect(model).toBeDefined()
+    expect('compat' in (model as Record<string, unknown>)).toBe(false)
+  })
+
+  it('compat 清洗：__proto__/prototype/constructor key 与 undefined value 剔除', async () => {
+    const malicious = JSON.parse('{"__proto__":{"bad":"x"},"constructor":{"y":1},"keep":"v"}') as Record<string, unknown>
+    // JSON.parse 不产 undefined value，显式补一个 undefined value 键
+    malicious.drop = undefined
+    await svc.setProvider('my-proxy', {
+      models: [{ id: 'm1', compat: malicious }],
+    })
+    const model = readModel('my-proxy') as Record<string, unknown>
+    expect(model.compat).toEqual({ keep: 'v' })
+    expect(({} as Record<string, unknown>).bad).toBeUndefined()
+  })
+
+  it('id 缺省 → String(m.id ?? "") 空串锚定（不抛错，条目保留）', async () => {
+    await svc.setProvider('my-proxy', {
+      models: [{ name: 'No Id Model' } as unknown as { id: string }],
+    })
+    const models = readModelsJson().providers['my-proxy']?.models ?? []
+    expect(models).toHaveLength(1)
+    expect((models[0] as Record<string, unknown>).id).toBe('')
   })
 })

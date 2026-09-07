@@ -19,7 +19,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 const { loggerMock, runSpawnMock } = vi.hoisted(() => ({
   loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
@@ -74,9 +74,10 @@ function makePi() {
 }
 
 interface NotifierSpy {
-  notify: ReturnType<typeof vi.fn>;
+  // Mock<T> 而非纯函数签名：测试断言消费 .mock.calls，需保留 mock 元数据
+  notify: Mock<(record: unknown) => void>;
   /** U3：sync 批投递 spy。mock 返回 true（flushBatch 接线的落标 accepted 分支可达）。 */
-  notifyBatch: ReturnType<typeof vi.fn>;
+  notifyBatch: Mock<(records: unknown, budget?: unknown) => boolean>;
 }
 
 /** 替换 service 私有 notifier 为仅覆盖 notify/notifyBatch 的 spy（保留其余方法；

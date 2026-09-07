@@ -251,6 +251,11 @@ export class PluginHost implements PluginHostContract {
   /** sandbox 插件子进程宿主（fork 版，惰性创建；无 sandbox 插件时不创建） */
   private processHost: PluginHostProcess | null = null
   private readonly processHostOptions?: PluginPoolOptions
+  /**
+   * loadPlugin 超时（D5，对齐 fork 版 PluginHostProcess 同名字段与 PluginPoolOptions
+   * 先例；测试注入短超时用，默认 LOAD_PLUGIN_TIMEOUT_MS 10s 不变）。
+   */
+  private readonly loadTimeoutMs: number
   /** trusted Worker bootstrap mock 注入口（测试专用，由 PluginPoolOptions.workerBootstrapOverride 传入；详见该接口注释） */
   private readonly workerBootstrapOverride?: string
 
@@ -278,6 +283,8 @@ export class PluginHost implements PluginHostContract {
     this.rpcServer = rpcServer
     this.processHostOptions = processHostOptions
     this.workerBootstrapOverride = processHostOptions?.workerBootstrapOverride
+    // 对齐 fork 版（plugin-host-process.ts 构造器 loadTimeoutMs 覆盖先例）
+    this.loadTimeoutMs = processHostOptions?.loadTimeoutMs ?? LOAD_PLUGIN_TIMEOUT_MS
   }
 
   /** 设置 crash callback（含 Worker 重建后的重新加载） */
@@ -373,7 +380,9 @@ export class PluginHost implements PluginHostContract {
   /**
    * 向指定 Worker 发送 load 指令，等待 loaded/error 响应。
    * pluginId 显式传入（loadedModules 分区键，见 PluginHostContract.loadPlugin 注释）。
-   * 超时 10 秒后 reject。
+   * 超时（loadTimeoutMs，默认 10s）后 reject，并走 handleWorkerCrash 回收链（D5：
+   * terminate + unregisterWorker + 索引清理 + trusted 冷却后 rebuild，对齐 fork 版
+   * plugin-host-process.loadPlugin 超时 terminateProcess 的宿主回收语义）。
    */
   async loadPlugin(workerId: string, pluginId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void> {
     if (workerId.startsWith('sandbox-')) {
@@ -385,8 +394,22 @@ export class PluginHost implements PluginHostContract {
 
     return new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new Error(`loadPlugin timeout for worker ${workerId}`))
-      }, LOAD_PLUGIN_TIMEOUT_MS)
+        const message = `loadPlugin timeout for worker ${workerId} after ${this.loadTimeoutMs}ms`
+        // D5（设计 §6.5）：超时 ≈ 插件模块顶层死循环 ≈ Worker event loop 卡死 ≈ 同宿主
+        // 一切 RPC 不可响应——只 reject 不 terminate 会泄漏线程。走既有 crash 链：
+        // terminate + rpcServer.unregisterWorker + removeIndexEntries + trusted 记录
+        // crashedTrustedWorkers + crash 计数 + 冷却后 rebuild（连坐同宿主插件重载是
+        // 恢复语义，与 crash 路径一致）。超时入口 handle.status='active'（createWorker
+        // 刚创建，未涉 crash/terminate），满足 handleWorkerCrash 幂等守卫前置（P-10
+        // 实测见 test/plugin-host.test.ts）；本 terminate 触发的 exit(code=1) 被同守卫
+        // 拦截，不会二次 crash。
+        console.warn(
+          `${message}; worker terminated & rebuild scheduled ` +
+          `(pass loadTimeoutMs option to extend)`,
+        )
+        reject(new Error(message))
+        this.handleWorkerCrash(workerId, message)
+      }, this.loadTimeoutMs)
 
       const onMessage = (msg: unknown) => {
         // D6 入口防御 + loadPlugin 过滤：trusted Worker 多插件共享（≤10），同宿主并发

@@ -51,11 +51,15 @@ function makeTmpAgentDir(): string {
 }
 
 function makePi(): PiLike & {
-  appendEntry: ReturnType<typeof vi.fn>;
-  events: { emit: ReturnType<typeof vi.fn> };
-  sendMessage: ReturnType<typeof vi.fn>;
+  appendEntry: ReturnType<typeof vi.fn<(customType: string, data?: unknown) => void>>;
+  events: { emit: ReturnType<typeof vi.fn<(channel: string, data: unknown) => void>> };
+  sendMessage: ReturnType<typeof vi.fn<(message: Parameters<PiLike["sendMessage"]>[0], options?: Parameters<PiLike["sendMessage"]>[1]) => void>>;
 } {
-  return { appendEntry: vi.fn(), events: { emit: vi.fn() }, sendMessage: vi.fn() };
+  return {
+    appendEntry: vi.fn((customType: string, data?: unknown) => {}),
+    events: { emit: vi.fn((channel: string, data: unknown) => {}) },
+    sendMessage: vi.fn(() => {}),
+  };
 }
 
 function makeResult(success: boolean): AgentResult {
@@ -121,7 +125,7 @@ describe("deliverChatMessage EPIPE 兜底（热路径 stdin EPIPE → 冷路径�
 
   beforeEach(() => {
     agentDir = makeTmpAgentDir();
-    const modelService = new ModelConfigService({ agentDir });
+    const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
     service = new SubagentService({ cwd: agentDir, modelService });
     service.initSession({ pi: makePi(), sessionId: "root-session" });
     record = makeIdleRecord();

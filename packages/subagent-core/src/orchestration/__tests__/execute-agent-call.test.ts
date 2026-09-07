@@ -400,7 +400,7 @@ describe("MF-1: 确定性 schema 失败不重试", () => {
         makeMockResult({
           error: attribution,
           failureKind: "schema_deterministic",
-          usage: { input: 100, output: 50, cost: 0.01 },
+          usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: 0.01, contextTokens: 0, turns: 0 },
         }),
       ),
     );

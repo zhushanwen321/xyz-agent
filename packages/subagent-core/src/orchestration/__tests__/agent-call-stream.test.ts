@@ -122,7 +122,7 @@ describe("U5: widgetKey 格式", () => {
       expect(setWidget.mock.calls.length).toBeGreaterThanOrEqual(1);
     });
 
-    const widgetKey = setWidget.mock.calls[0][0] as string;
+    const widgetKey = setWidget.mock.calls[0]![0] as string;
     expect(widgetKey).toBe("subagent-stream-wf-test-123-2");
   });
 });

@@ -41,7 +41,7 @@ function setup(opts: {
   variant?: 'panel' | 'landing'
   activeSessionId?: string | null
   cwd?: string
-  startFlowImpl?: Spy
+  startFlowImpl?: ((cwd?: string) => Promise<void>) & ReturnType<typeof vi.fn>
 } = {}): SetupCtx {
   const input: MockInput = {
     focus: vi.fn(),
@@ -52,12 +52,12 @@ function setup(opts: {
   const sessionId = ref<string | null>(opts.sessionId ?? 's1')
   const variant = ref<'panel' | 'landing'>(opts.variant ?? 'panel')
   const store = createComposerInjectionStore()
-  const startFlow = opts.startFlowImpl ?? vi.fn().mockResolvedValue(undefined)
-  const getSessionCwd = vi.fn(() => opts.cwd ?? '/test')
+  const startFlow = opts.startFlowImpl ?? vi.fn((_cwd?: string) => Promise.resolve(undefined))
+  const getSessionCwd = vi.fn((_cwd?: string) => opts.cwd ?? '/test')
   const getActiveSessionId = vi.fn(() => opts.activeSessionId ?? null)
   const deps: InjectionDeps = { injectionStore: store, startFlow, getSessionCwd, getActiveSessionId }
   const scope = effectScope()
-  scope.run(() => useComposerInjection(ref(input), sessionId, variant, deps))
+  scope.run(() => useComposerInjection(ref(input) as unknown as Parameters<typeof useComposerInjection>[0], sessionId, variant, deps))
   return { input, sessionId, variant, store, startFlow, getSessionCwd, getActiveSessionId, scope }
 }
 

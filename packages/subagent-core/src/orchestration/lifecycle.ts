@@ -55,6 +55,7 @@ import { Trace } from "./models/trace.ts";
 import type { DoneReason } from "./models/types.ts";
 import { WorkflowRun } from "./models/workflow-run.ts";
 import type { WorkerHandle } from "./worker-handle.ts";
+import { toErrorMessage } from "../core/error-message.ts";
 
 const logger = getLogger("subagents");
 
@@ -117,7 +118,7 @@ function broadcastAbortToWorker(run: WorkflowRun, reason: string): void {
   try {
     run.runtime?.worker.postMessage({ type: "abort", reason });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = toErrorMessage(err);
     logger.debug(
       `[workflow] abort broadcast to worker failed (runId=${run.runId}, worker likely already exited): ${msg}`,
     );
@@ -197,7 +198,7 @@ export function scheduleTimeBudget(
   const timer = setTimeout(() => {
     void abortRun(runId, deps, "Time budget exceeded", "time_limited").catch(
       (err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = toErrorMessage(err);
         logger.error(`[workflow] time budget abort failed: ${msg}`);
       },
     );
@@ -306,7 +307,7 @@ function registerSignalAbortListener(
   const onAbort = (): void => {
     disposeSignalAbortListener(run);
     void abortRun(runId, deps, "External signal aborted").catch((err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = toErrorMessage(err);
       logger.error(`[workflow] abortRun on signal failed: ${msg}`);
     });
   };
@@ -491,7 +492,7 @@ export async function terminateRunningRuns(
       });
       deps.log?.("debug", "workflow:lifecycle", "run terminated", { runId: run.runId, reason: run.state.reason });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = toErrorMessage(err);
       logger.error(
         `[workflow] terminateRunningRuns failed for run ${run.runId}: ${msg} (reason: ${reason})`,
       );
@@ -641,7 +642,7 @@ export async function recoverCrashedRuns(
       try {
         hooks?.onRunRecovered?.({ id: run.runId, reason: "failed" });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = toErrorMessage(err);
         logger.warn(
           `[workflow] recoverCrashedRuns onRunRecovered hook failed for run ${run.runId} (recovery continues): ${msg}`,
         );
@@ -650,7 +651,7 @@ export async function recoverCrashedRuns(
       try {
         await store.save(run);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = toErrorMessage(err);
         logger.error(
           `[workflow] recoverCrashedRuns store.save failed for run ${run.runId}: ${msg} (reason: ${reason})`,
         );

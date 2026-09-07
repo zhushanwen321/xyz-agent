@@ -42,8 +42,6 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     finalizeSession: vi.fn(),
     clearPendingSend: vi.fn(),
     armStreamingTimer: vi.fn(),
-    armBashTimer: vi.fn(),
-    clearBashTimer: vi.fn(),
     // m2→W14：queue_update drain 接线 drainN（计数 FIFO）+ appendUser + 深度对账 reconcilePending
     drainN: vi.fn(() => []),
     reconcilePending: vi.fn(),
@@ -55,6 +53,9 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     incrementInflight: vi.fn(),
     decrementInflight: vi.fn(),
     clearInflight: vi.fn(),
+    // [premature-timeout §5.2 D2] timeout 打标快照消费/清除（默认无打标 → take 返回空集）
+    takePrematureTimeoutIds: vi.fn(() => new Set<string>()),
+    clearPrematureTimeoutIds: vi.fn(),
   }
 }
 
@@ -155,6 +156,21 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
     expect(a.toolCalls).toHaveLength(1)
     expect(a.toolCalls![0].status).toBe('completed')
     expect(a.toolCalls![0].output).toBe('data')
+  })
+
+  it('tool_call_update：ID 锚定更新 detail；缺 toolCallId 静默丢弃（W05-A）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'bash', arguments: { command: 'npm test' } }) }))
+
+    // 进度更新：detail 写到 ID 锚定的 toolCall 上
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_update', { toolCallId: 'tc1', detail: 'running 3/10' }))
+    expect(lastAssistant(ctx).toolCalls![0].detail).toBe('running 3/10')
+
+    // 缺 toolCallId 的坏帧：不抛错、不改既有 toolCalls
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_update', { detail: 'orphan' }))
+    expect(lastAssistant(ctx).toolCalls).toHaveLength(1)
+    expect(lastAssistant(ctx).toolCalls![0].detail).toBe('running 3/10')
   })
 
   it('sealed guard：finalizeSession 收口后 text_delta 幂等丢弃（D-010）', () => {

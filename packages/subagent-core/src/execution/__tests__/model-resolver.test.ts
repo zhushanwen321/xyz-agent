@@ -427,7 +427,7 @@ describe("ModelConfigService: ctx.model plumb-through (EA-4)", () => {
 
   /** 构造已 initModel 的 ModelConfigService，ctxModel 注入缓存。 */
   function makeService(ctxModel: ModelInfo | undefined, registry: ModelRegistryLike = makeRegistry([])): ModelConfigService {
-    const svc = new ModelConfigService({ agentDir: tmpDir });
+    const svc = new ModelConfigService({ agentDir: tmpDir, cwd: tmpDir });
     svc.initModel({
       modelRegistry: registry,
       sessionId: "test-session",

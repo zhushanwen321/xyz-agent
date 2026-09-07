@@ -17,6 +17,7 @@ import { parseSubagentRpcCommand } from "./command-actions.ts";
 import type { SubagentRpcAction } from "./command-actions.ts";
 import { LIST_LIMIT } from "./list-shared.ts";
 import { createSubagentsView } from "./list-view.ts";
+import { toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 /**
  * subagent-directive custom_message 的 customType。
@@ -84,7 +85,7 @@ async function rpcCancel(
     );
   } catch (err) {
     // service.cancel 内部 assertReady 在 session_shutdown 并发 dispose 时会抛
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = toErrorMessage(err);
     ctx.ui.notify(`Failed to cancel subagent ${recordId}: ${msg}`, "warning");
   }
 }
@@ -115,7 +116,7 @@ async function rpcMessage(
     );
     ctx.ui.notify(`Message delivered to subagent ${result.slug} (${result.subagentId})`, "info");
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = toErrorMessage(err);
     ctx.ui.notify(`Failed to message subagent ${recordId}: ${msg}`, "warning");
   }
 }
@@ -149,7 +150,7 @@ async function rpcStart(
     );
     ctx.ui.notify(`Started subagent ${result.slug} (${result.subagentId})`, "info");
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = toErrorMessage(err);
     ctx.ui.notify(`Failed to start subagent ${slug}: ${msg}`, "warning");
   }
 }

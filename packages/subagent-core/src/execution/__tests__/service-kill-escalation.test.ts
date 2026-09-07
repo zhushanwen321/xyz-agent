@@ -10,6 +10,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { ChildProcess } from "node:child_process";
+
 import { FakeChild } from "./helpers/spawn-mock.ts";
 import {
   _resetServiceKillStateForTest,
@@ -41,7 +43,7 @@ describe("T2④ killRecordChildWithEscalation", () => {
     const child = new FakeChild();
     child.killed = true;
     const killSpy = vi.spyOn(child, "kill");
-    spawnedChildren.set("sa-killed", child);
+    spawnedChildren.set("sa-killed", child as unknown as ChildProcess);
     killRecordChildWithEscalation("sa-killed", "test");
     expect(killSpy).not.toHaveBeenCalled();
   });
@@ -49,7 +51,7 @@ describe("T2④ killRecordChildWithEscalation", () => {
   it("sends SIGTERM and escalates to SIGKILL after 30s without exit", async () => {
     const child = new FakeChild();
     const killSpy = vi.spyOn(child, "kill");
-    spawnedChildren.set("sa-escalate", child);
+    spawnedChildren.set("sa-escalate", child as unknown as ChildProcess);
 
     killRecordChildWithEscalation("sa-escalate", "closeChatIdle");
     expect(killSpy).toHaveBeenNthCalledWith(1, "SIGTERM");
@@ -64,7 +66,7 @@ describe("T2④ killRecordChildWithEscalation", () => {
   it("clears the escalation timer when the child exits in time", async () => {
     const child = new FakeChild();
     const killSpy = vi.spyOn(child, "kill");
-    spawnedChildren.set("sa-exit", child);
+    spawnedChildren.set("sa-exit", child as unknown as ChildProcess);
 
     killRecordChildWithEscalation("sa-exit", "cancelBackground");
     child.emit("exit", 0, null);
@@ -75,7 +77,7 @@ describe("T2④ killRecordChildWithEscalation", () => {
   it("repeated calls clear the previous escalation timer (no stacking)", async () => {
     const child = new FakeChild();
     const killSpy = vi.spyOn(child, "kill");
-    spawnedChildren.set("sa-repeat", child);
+    spawnedChildren.set("sa-repeat", child as unknown as ChildProcess);
 
     killRecordChildWithEscalation("sa-repeat", "first");
     await vi.advanceTimersByTimeAsync(10_000);

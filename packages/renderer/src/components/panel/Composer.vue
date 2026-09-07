@@ -205,6 +205,7 @@ import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverTrigger'
 import { useComposerFocusRing } from '@/composables/panel/composer-focus-ring'
 import { useComposerShell, createComposerDrafts, type ShellInputInstance } from '@/composables/panel/composer-shell'
+import { useComposerKeydown } from '@/composables/panel/composer-keydown'
 import type { DraftStore } from '@xyz-agent/dom-core/composer/input'
 import { handleImagePaste } from '@/composables/panel/useImageAttachment'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
@@ -386,48 +387,22 @@ function onInputChange(text: string): void {
   resetBrowsing()
 }
 
-/** 键盘：staging 优先 ⏎ 提交（fork/handoff，含 streaming 中）；⏎ / Alt+⏎ 全部汇入统一发送分发器
- *  （D6，u5b——Enter 按 sessionPhase 路由 direct/steer/defer；Alt+⏎ 保留 followUp 语义：turn 活跃
- *  （steer 路由行）走 followUp 下一轮，其余（defer/direct）同 Enter 经分发器）；⇧⏎ 换行，↑/↓ 翻历史。
+/** 键盘分发（composer-keydown.ts，U02 拆出）：staging 优先 ⏎ 提交（fork/handoff，含 streaming 中）；
+ *  ⏎ / Alt+⏎ 全部汇入统一发送分发器（D6，u5b——Enter 按 sessionPhase 路由 direct/steer/defer；
+ *  Alt+⏎ 保留 followUp 语义：steer 路由行走 followUp 下一轮，其余经分发器）；⇧⏎ 换行，↑/↓ 翻历史。
  *  命令浮层 open 时优先路由到浮层。[HISTORICAL] isActive→onSteer 与 isCompacting→onSend 两套
  *  分散判定（优先级倒挂根因）已退役，路由判定收口在 useComposerSend（core dispatch/send）。 */
-function onKeydown(e: KeyboardEvent): void {
-  if (cmdOpen.value && commandPopoverRef.value?.handleKeydown(e)) return
-  if (e.isComposing) return // IME 组合中不拦截（与 useContenteditableInput 守卫一致）
-  // Staging Esc 路由：经 staging.handleEsc → activeStaging.handleEsc（fork/handoff 互斥下不会同时活跃）
-  if (staging.handleEsc(e)) return
-  // shift/ctrl/alt/meta + 方向键是选区扩展/按词移动/段首段尾跳转，放行原生行为（不拦截）
-  const bareArrow = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey
-  if (bareArrow && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-    e.preventDefault()
-    const dir = e.key === 'ArrowUp' ? 'up' : 'down'
-    if (inputRef.value?.moveCaretVertical(dir) === 'moved') return
-    if (dir === 'up') handleArrowUp()
-    else handleArrowDown()
-    return
-  }
-  if (e.key !== 'Enter' || e.shiftKey) return
-  e.preventDefault()
-  // staging（fork/handoff）优先于发送路由：模式 chip 在时 Enter/Alt+Enter 均提交 staging，
-  // 不注入当前对话（streaming 中 fork-ask 合法——对源 session 只读；handoff 的 streaming
-  // 拦截在 enterHandoffMode 入口 + handleHandoffSend 兑底，此处无需区分）。
-  if (staging.activeStaging.value) {
-    onSend()
-    return
-  }
-  if (e.altKey) {
-    // Alt+⏎ followUp 语义经分发器：turn 活跃（steer 路由行 2/3）→ followUp（下一轮投递，
-    // 现状 isActive→onFollowUp 等价）；defer（settling/compacting/bash）→ 分发器入队；
-    // direct → 分发器直发（followUp 非活跃退化路径的语义收口）。[u5b] 原 isCompacting→onSend
-    // 特判由 defer 路由自然覆盖。
-    if (sendRoute.value === 'steer') onFollowUp()
-    else onSend()
-  } else {
-    // ⏎：统一分发器（steer 路由并入当前回合 / defer 入队 / direct 直发——优先级倒挂消除：
-    // turn 活跃 + compacting（行 3）按 D6 表走 steer 而非误排队）
-    onSend()
-  }
-}
+const onKeydown = useComposerKeydown({
+  cmdOpen,
+  commandPopoverRef,
+  inputRef: shellInputRef,
+  staging,
+  sendRoute,
+  handleArrowUp,
+  handleArrowDown,
+  onFollowUp,
+  onSend,
+})
 
 /**
  * stop 按钮点击：先尝试取消进行中的 staging 操作（handoff inflight），否则普通 LLM turn abort。

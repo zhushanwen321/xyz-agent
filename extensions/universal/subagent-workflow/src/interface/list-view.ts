@@ -218,27 +218,28 @@ export async function createSubagentsView(
 }
 
 // ============================================================
-// 按键处理（纯函数，可单测）
+// 按键处理（纯函数，可单测）——阶段化提取（形态 1）
 // ============================================================
 
 /**
- * 按键处理。两阶段焦点（detailMode 控制）：
+ * 按键处理入口。两阶段焦点（detailMode 控制），主函数只留阶段编排：
  *
  *   ╔══════════════════════════════════════════════════════════════════╗
-//   ║  阶段 1（list 焦点，detailMode=false）：                            ║
-//   ║    Esc 退出（有 filter 先清）/ ↑↓ 导航左列 / Enter 进阶段 2         ║
-//   ║    Backspace 删 filter / 可打印字符直接 filter                     ║
-//   ║                                                                    ║
-//   ║  阶段 2（detail 焦点，detailMode=true）：左侧锚定，滚右侧详情       ║
-//   ║    Esc 返回阶段 1 / ↑↓ PgUp/PgDn Home End 滚右侧 eventLog          ║
-//   ║    x 停止：background → service.cancel(id)（真正 abort）         ║
-//   ╚══════════════════════════════════════════════════════════════════╝
+ *   ║  阶段 1（list 焦点，detailMode=false）：                            ║
+ *   ║    Esc 退出（有 filter 先清）/ ↑↓ 导航左列 / Enter 进阶段 2         ║
+ *   ║    Backspace 删 filter / 可打印字符直接 filter                     ║
+ *   ║                                                                    ║
+ *   ║  阶段 2（detail 焦点，detailMode=true）：左侧锚定，滚右侧详情       ║
+ *   ║    Esc 返回阶段 1 / ↑↓ PgUp/PgDn Home End 滚右侧 eventLog          ║
+ *   ║    x 停止：background → service.cancel(id)（真正 abort）         ║
+ *   ╚══════════════════════════════════════════════════════════════════╝
  *
  * 返回 KeyResult：changed 表示状态变更需重绘；exit 表示调用方应关闭 overlay。
  * 二者正交——Esc 在阶段 1 无 filter 时 changed=false + exit=true。
  *
  * 注：KeyResult/KeyHandler 类型定义在 list-shared.ts（list-component 也用 KeyHandler 做构造
  * 参数类型，避免组件 import list-view）。本函数由 list-view factory 注入组件（依赖注入）。
+ * 各阶段子函数按原 if 链顺序匹配，命中短路返回（与原单函数版时序逐一对齐）。
  */
 export const processKey: KeyHandler = (
   data,
@@ -249,50 +250,118 @@ export const processKey: KeyHandler = (
   detailCtx,
   notify,
 ): KeyResult => {
-  // ── 阶段 2（detail 焦点，detailMode=true）：左侧锚定，滚右侧详情 ──
   if (state.detailMode) {
-    if (matchesKey(data, "escape")) {
-      state.detailMode = false;
-      state.scrollOffset = 0;
+    return processDetailModeKey(data, state, selected, service, detailCtx, notify);
+  }
+  return processListModeKey(data, records, state, selected);
+};
+
+// ============================================================
+// 阶段 2（detail 焦点，detailMode=true）：左侧锚定，滚右侧详情
+// ============================================================
+
+/** 阶段 2 滚动/返回键（Esc/↑/↓/PgUp/PgDn/Home/End，匹配顺序同原 if 链）。未命中返回 undefined。 */
+function detailScrollKey(
+  data: string,
+  state: ViewState,
+  detailCtx: DetailKeyContext | undefined,
+): KeyResult | undefined {
+  if (matchesKey(data, "escape")) {
+    state.detailMode = false;
+    state.scrollOffset = 0;
+    return { changed: true, exit: false };
+  }
+  if (matchesKey(data, "up")) {
+    state.scrollOffset = Math.max(0, state.scrollOffset - DETAIL_SCROLL_STEP);
+    return { changed: true, exit: false };
+  }
+  if (matchesKey(data, "down")) {
+    const max = detailScrollMax(detailCtx);
+    state.scrollOffset = Math.min(max, state.scrollOffset + DETAIL_SCROLL_STEP);
+    return { changed: true, exit: false };
+  }
+  if (matchesKey(data, "pageUp")) {
+    const step = detailCtx?.viewportHeight ?? PAGE_SCROLL_DEFAULT;
+    state.scrollOffset = Math.max(0, state.scrollOffset - step);
+    return { changed: true, exit: false };
+  }
+  if (matchesKey(data, "pageDown")) {
+    const step = detailCtx?.viewportHeight ?? PAGE_SCROLL_DEFAULT;
+    const max = detailScrollMax(detailCtx);
+    state.scrollOffset = Math.min(max, state.scrollOffset + step);
+    return { changed: true, exit: false };
+  }
+  if (matchesKey(data, "home")) {
+    state.scrollOffset = 0;
+    return { changed: true, exit: false };
+  }
+  if (matchesKey(data, "end")) {
+    state.scrollOffset = detailScrollMax(detailCtx);
+    return { changed: true, exit: false };
+  }
+  return undefined;
+}
+
+/** 阶段 2 停止键（x）：background → service.cancel(id) 真正 abort。未命中返回 undefined。 */
+function detailStopKey(
+  data: string,
+  selected: SubagentRecord | null,
+  service: SubagentService | null,
+  notify: NotifyFn | undefined,
+): KeyResult | undefined {
+  if (data === "x" && selected) {
+    const changed = handleCancel(selected, service, notify);
+    return { changed, exit: false };
+  }
+  return undefined;
+}
+
+/** 阶段 2 编排：滚动/返回 → 停止 → 落空（与原阶段 2 if 链 + 兜底 return 逐一对齐）。 */
+function processDetailModeKey(
+  data: string,
+  state: ViewState,
+  selected: SubagentRecord | null,
+  service: SubagentService | null,
+  detailCtx: DetailKeyContext | undefined,
+  notify: NotifyFn | undefined,
+): KeyResult {
+  const scroll = detailScrollKey(data, state, detailCtx);
+  if (scroll) return scroll;
+  const stop = detailStopKey(data, selected, service, notify);
+  if (stop) return stop;
+  return { changed: false, exit: false };
+}
+
+// ============================================================
+// 阶段 1（list 焦点，detailMode=false）：↑↓ 导航左列 + filter 编辑
+// ============================================================
+
+/** 阶段 1 filter 编辑键（backspace 删末字符 / 可打印 ASCII 字符追加）。未命中返回 undefined。 */
+function listFilterKey(data: string, state: ViewState): KeyResult | undefined {
+  if (matchesKey(data, "backspace")) {
+    if (state.filterText.length > 0) {
+      state.filterText = state.filterText.slice(0, -1);
+      state.selectedIdx = 0;
       return { changed: true, exit: false };
-    }
-    if (matchesKey(data, "up")) {
-      state.scrollOffset = Math.max(0, state.scrollOffset - DETAIL_SCROLL_STEP);
-      return { changed: true, exit: false };
-    }
-    if (matchesKey(data, "down")) {
-      const max = detailScrollMax(detailCtx);
-      state.scrollOffset = Math.min(max, state.scrollOffset + DETAIL_SCROLL_STEP);
-      return { changed: true, exit: false };
-    }
-    if (matchesKey(data, "pageUp")) {
-      const step = detailCtx?.viewportHeight ?? PAGE_SCROLL_DEFAULT;
-      state.scrollOffset = Math.max(0, state.scrollOffset - step);
-      return { changed: true, exit: false };
-    }
-    if (matchesKey(data, "pageDown")) {
-      const step = detailCtx?.viewportHeight ?? PAGE_SCROLL_DEFAULT;
-      const max = detailScrollMax(detailCtx);
-      state.scrollOffset = Math.min(max, state.scrollOffset + step);
-      return { changed: true, exit: false };
-    }
-    if (matchesKey(data, "home")) {
-      state.scrollOffset = 0;
-      return { changed: true, exit: false };
-    }
-    if (matchesKey(data, "end")) {
-      state.scrollOffset = detailScrollMax(detailCtx);
-      return { changed: true, exit: false };
-    }
-    // x：停止当前 record
-    if (data === "x" && selected) {
-      const changed = handleCancel(selected, service, notify);
-      return { changed, exit: false };
     }
     return { changed: false, exit: false };
   }
+  // 可打印字符 → filter（单字符 ASCII 可见区）
+  if (data.length === 1 && data >= " " && data <= "~") {
+    state.filterText += data;
+    state.selectedIdx = 0;
+    return { changed: true, exit: false };
+  }
+  return undefined;
+}
 
-  // ── 阶段 1（list 焦点，detailMode=false）：↑↓ 导航左列 ──
+/** 阶段 1 编排：Esc 清 filter/退出 → 导航 → 进详情 → filter 编辑 → 落空（匹配顺序同原 if 链）。 */
+function processListModeKey(
+  data: string,
+  records: SubagentRecord[],
+  state: ViewState,
+  selected: SubagentRecord | null,
+): KeyResult {
   if (matchesKey(data, "escape")) {
     // 有 filter 先清（changed）；无 filter → 退出 overlay（exit）
     if (state.filterText.length > 0) {
@@ -322,20 +391,8 @@ export const processKey: KeyHandler = (
     }
     return { changed: false, exit: false };
   }
-  if (matchesKey(data, "backspace")) {
-    if (state.filterText.length > 0) {
-      state.filterText = state.filterText.slice(0, -1);
-      state.selectedIdx = 0;
-      return { changed: true, exit: false };
-    }
-    return { changed: false, exit: false };
-  }
-  // 可打印字符 → filter（单字符 ASCII 可见区）
-  if (data.length === 1 && data >= " " && data <= "~") {
-    state.filterText += data;
-    state.selectedIdx = 0;
-    return { changed: true, exit: false };
-  }
+  const filter = listFilterKey(data, state);
+  if (filter) return filter;
   return { changed: false, exit: false };
 }
 

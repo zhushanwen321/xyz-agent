@@ -9,6 +9,7 @@
  * - makeLruEvictDeps 的 deleteMessageKey 走不可变写 + has 检查
  */
 import { describe, it, expect, beforeEach } from 'vitest'
+import type { ShallowRef } from 'vue'
 import { shallowRef } from 'vue'
 import {
   touchLru,
@@ -48,8 +49,8 @@ describe('evictIfNeeded', () => {
   function makeDeps(
     sids: string[],
     opts: { exempt?: Set<string> } = {},
-  ): { deps: LruEvictDeps; messages: ReturnType<typeof shallowRef<Map<string, unknown>>> } {
-    const messages = shallowRef(new Map(sids.map((s) => [s, {}])))
+  ): { deps: LruEvictDeps; messages: ShallowRef<Map<string, unknown>> } {
+    const messages = shallowRef(new Map(sids.map((s) => [s, {}] as [string, unknown])))
     const hydrated = shallowRef(new Set<string>())
     const isExempt = (sid: string) => (opts.exempt?.has(sid) ?? false)
     const deps = makeLruEvictDeps(messages, hydrated, isExempt, () => {}, () => {})
@@ -168,7 +169,7 @@ describe('disposeLruEntry', () => {
     disposeLruEntry('s1')
     // disposeLruEntry 只清 sessionLastAccessed，不动 messages（messages 由 store 管）
     // 验证方式：s1 清掉后，后续 evictIfNeeded 不再把它当候选
-    const messages = shallowRef(new Map([['s1', {}], ...Array.from({ length: LRU_MAX_SESSIONS }, (_, i) => [`f${i}`, {}])]))
+    const messages: ShallowRef<Map<string, unknown>> = shallowRef(new Map<string, unknown>([['s1', {}], ...Array.from({ length: LRU_MAX_SESSIONS }, (_, i) => [`f${i}`, {}] as [string, unknown])]))
     const hydrated = shallowRef(new Set<string>())
     // 其他 session 都 touch，s1 已 dispose 无记录
     for (let i = 0; i < LRU_MAX_SESSIONS; i++) touchLru(`f${i}`)
@@ -242,7 +243,7 @@ describe('makeLruEvictDeps.deleteMessageKey', () => {
     for (let i = 0; i < LRU_MAX_SESSIONS; i++) sids.push(`fill${i}`)
     sids.forEach((s) => touchLru(s))
     sids.filter((s) => s !== main && s !== virtual).forEach((s) => touchLru(s)) // main 最旧
-    const messages = shallowRef(new Map(sids.map((s) => [s, {}])))
+    const messages = shallowRef<Map<string, unknown>>(new Map(sids.map((s) => [s, {} as unknown])))
     const hydrated = shallowRef(new Set<string>())
     const cleared: string[] = []
     const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {}, (sid) => cleared.push(sid))

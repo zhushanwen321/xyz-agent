@@ -78,7 +78,7 @@ describe('NotificationHostController', () => {
 
     bus.emit({ kind: 'plugin-config-changed', pluginId: 'p', config: {} })
     bus.emit({ kind: 'plugin-message-decoration', sessionId: 's', decoration: { messageId: 'm', decoration: {} } })
-    bus.emit({ kind: 'plugin-status-change', pluginId: 'p', status: 'running' })
+    bus.emit({ kind: 'plugin-status-change', pluginId: 'p', status: 'active' })
     bus.emit({ kind: 'error', source: 'bridge', message: 'bad frame' })
 
     expect(showToast).not.toHaveBeenCalled()

@@ -18,6 +18,7 @@
  * 规避其对断言的干扰。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import type { ProviderId } from '@xyz-agent/shared'
 import { computed, effectScope, nextTick, ref, type Ref } from 'vue'
 import { useComposerModelThinking, type ModelThinkingDeps } from './model-thinking'
 import {
@@ -115,7 +116,7 @@ class GatedKV extends MemKV {
   constructor(initialTable?: Record<string, string>) {
     super()
     this.raw = initialTable ? JSON.stringify(initialTable) : null
-    if (initialTable) void this.set(MODEL_THINKING_MEMORY_KEY, this.raw)
+    if (initialTable) void this.set(MODEL_THINKING_MEMORY_KEY, this.raw!)
   }
   closeGate(): void {
     this.gate = new Promise((resolve) => {
@@ -142,7 +143,6 @@ function provideMockPlatform(storage: KVStorage): void {
         throw new Error('stub: WebSocketFactory 未在本测试使用')
       },
     },
-    ipc: null,
   }
   providePlatform(port)
 }
@@ -379,7 +379,7 @@ describe('useComposerModelThinking · onModelSelect 三分支', () => {
       sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
     })
     result.enterStagingMode()
-    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' })
+    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' as ProviderId })
     expect(result.currentModelId.value).toBe('provider-C/model-C')
     expect(spies.switchModel).not.toHaveBeenCalled()
     expect(spies.setPendingModel).not.toHaveBeenCalled()
@@ -388,7 +388,7 @@ describe('useComposerModelThinking · onModelSelect 三分支', () => {
 
   it('landing 态（sessionId=null）→ 记 pendingModel', async () => {
     const { result, spies, scope } = mount(null)
-    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' })
+    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' as ProviderId })
     expect(spies.setPendingModel).toHaveBeenCalledWith('provider-C/model-C')
     expect(spies.switchModel).not.toHaveBeenCalled()
     scope.stop()
@@ -398,7 +398,7 @@ describe('useComposerModelThinking · onModelSelect 三分支', () => {
     const { result, spies, scope } = mount('s2', {
       sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
     })
-    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' })
+    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' as ProviderId })
     expect(spies.switchModel).toHaveBeenCalledWith('s2', 'provider-C', 'model-C')
     scope.stop()
   })
@@ -448,7 +448,7 @@ describe('useComposerModelThinking · Staging Mode（ADR-0056）', () => {
     expect(result.currentModelId.value).toBe('provider-A/model-A')
     expect(result.currentThinkingLevel.value).toBe('high')
     // staging 活跃：onModelSelect 写快照，不调 RPC
-    await result.onModelSelect({ modelId: 'model-B', provider: 'provider-B' })
+    await result.onModelSelect({ modelId: 'model-B', provider: 'provider-B' as ProviderId })
     expect(result.currentModelId.value).toBe('provider-B/model-B')
     expect(spies.switchModel).not.toHaveBeenCalled()
     // staging 活跃：onThinkingSelect 写快照，不调 RPC
@@ -477,7 +477,7 @@ describe('useComposerModelThinking · Staging Mode（ADR-0056）', () => {
       sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
     })
     result.enterStagingMode()
-    await result.onModelSelect({ modelId: 'model-B', provider: 'provider-B' })
+    await result.onModelSelect({ modelId: 'model-B', provider: 'provider-B' as ProviderId })
     result.exitStagingMode()
     // 退出暂存 → currentModelId/currentThinkingLevel 恢复读常规态（源 session 真值）
     expect(result.currentModelId.value).toBe('provider-A/model-A')
@@ -493,7 +493,7 @@ describe('useComposerModelThinking · Staging Mode（ADR-0056）', () => {
     expect(result.getStagingConfig()).toEqual({})
     // 进入暂存 + 改快照
     result.enterStagingMode()
-    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' })
+    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' as ProviderId })
     await result.onThinkingSelect('xhigh')
     expect(result.getStagingConfig()).toEqual({
       modelOverride: 'provider-C/model-C',
@@ -525,7 +525,7 @@ describe('useComposerModelThinking · armed 序列族（D3 六防线）', () => 
   it('S1/(a) RPC 失败 → 规则 4 清自己 token；换绑到同模型 session 不误恢复', async () => {
     const h = mountArmedBaseline()
     record('p/Y', 'low') // 恢复值 'l'——若失败 token 残留，换绑后会以 'l' 伪恢复
-    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
+    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' as ProviderId })
     h.pending[0].reject(new Error('rpc fail'))
     await expect(p).rejects.toThrow('rpc fail')
     // 换绑到 s2（模型恰为 armed 目标 Y，档位 'm'）——armed 已被规则 4 清除，不得恢复
@@ -540,8 +540,8 @@ describe('useComposerModelThinking · armed 序列族（D3 六防线）', () => 
     const h = mountArmedBaseline()
     record('p/Y', 'low') // Y 的恢复值 'l'
     record('p/Z', 'medium') // Z 的恢复值 'm'——两值区分「哪个 token 消费了」
-    const p1 = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
-    const p2 = h.result.onModelSelect({ modelId: 'Z', provider: 'p' }) // armed 覆盖为 Z（所有权转移）
+    const p1 = h.result.onModelSelect({ modelId: 'Y', provider: 'p' as ProviderId })
+    const p2 = h.result.onModelSelect({ modelId: 'Z', provider: 'p' as ProviderId }) // armed 覆盖为 Z（所有权转移）
     // 第一调用回包（生效 Y）：armed={Z} 不匹配 → 规则 3 保留；规则 5 只清 id1 → 不误清 Z
     h.pending[0].applyAndResolve('p/Y')
     await p1
@@ -557,7 +557,7 @@ describe('useComposerModelThinking · armed 序列族（D3 六防线）', () => 
   it("S3/(b') providers 刷新触发无关回调 → 规则 3 保留 token，恢复不丢失", async () => {
     const h = mountArmedBaseline()
     record('p/Y', 'low')
-    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' }) // RPC 在途，armed={Y}
+    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' as ProviderId }) // RPC 在途，armed={Y}
     // runtime 推 config.providers 广播：数组引用变化触发 watch，但模型尚未到达目标
     refreshProviderIdentity(h.providersRef, 'p/X')
     await nextTick()
@@ -591,7 +591,7 @@ describe('useComposerModelThinking · armed 序列族（D3 六防线）', () => 
       supported: { 'p/X': fourLevels, 'p/Y': fourLevels, 'p/Z': ['off', 'low'] },
     })
     record('p/Y', 'low')
-    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
+    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' as ProviderId })
     h.pending[0].applyAndResolve('p/Z') // pi 静默换模：请求 Y 生效 Z
     await p
     // armed={Y} vs current p/Z 不匹配（规则 3 保留）→ 既有跨体系对齐重置 Z 档位
@@ -612,7 +612,7 @@ describe('useComposerModelThinking · armed 序列族（D3 六防线）', () => 
       const h = mountArmedBaseline()
       record('p/Y', 'low')
       const t0 = Date.now()
-      const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' }) // armed.at = t0
+      const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' as ProviderId }) // armed.at = t0
       vi.setSystemTime(t0 + 6000) // 回包时刻已超 5s 保险丝
       h.pending[0].applyAndResolve('p/Y')
       await p
@@ -627,7 +627,7 @@ describe('useComposerModelThinking · armed 序列族（D3 六防线）', () => 
   it('S7/re-select 同模型：watch 不触发 → token 未消费，规则 5 成功清，无残留伪恢复', async () => {
     const h = mountArmedBaseline()
     record('p/X', 'low') // 同模型也有记忆——若 token 残留，后续触发会以 'l' 伪恢复
-    const p = h.result.onModelSelect({ modelId: 'X', provider: 'p' }) // re-select 同模型
+    const p = h.result.onModelSelect({ modelId: 'X', provider: 'p' as ProviderId }) // re-select 同模型
     h.pending[0].applyAndResolve('p/X') // modelId 不变 → 观察源不变 → watch 不触发
     await p
     expect(h.setThinkingLevel).not.toHaveBeenCalled()
@@ -641,7 +641,7 @@ describe('useComposerModelThinking · armed 序列族（D3 六防线）', () => 
   it('S8/规则 6 换绑清：RPC 在途时换绑 → armed 先清后消费检查，目标模型 session 不被改写', async () => {
     const h = mountArmedBaseline()
     record('p/Y', 'low')
-    void h.result.onModelSelect({ modelId: 'Y', provider: 'p' }) // RPC 永不回包（在途）
+    void h.result.onModelSelect({ modelId: 'Y', provider: 'p' as ProviderId }) // RPC 永不回包（在途）
     // 换绑到 s2（模型恰为 armed 目标 Y，档位 'm'）——换绑即作废全部未消费意图
     h.sessionId.value = 's2'
     h.sessionRef.value = { modelId: 'p/Y', thinkingLevel: 'm' }
@@ -654,7 +654,7 @@ describe('useComposerModelThinking · armed 序列族（D3 六防线）', () => 
   it('S9/基础序列：设立 → 匹配消费 → 恢复记忆档位经 onReset 通路（G1 happy path）', async () => {
     const h = mountArmedBaseline()
     record('p/Y', 'low')
-    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
+    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' as ProviderId })
     h.pending[0].applyAndResolve('p/Y')
     await p
     // 规则 2：match + 命中 + 'l' ≠ 'h' → setThinkingLevel(s1, 'l')；既有分支被 return 跳过
@@ -774,7 +774,7 @@ describe('useComposerModelThinking · 记录 watch 门禁（D2 双条件）', ()
     // mount 即记录载入的既有状态（条件 b：session 加载既有状态）
     expect(lookup('p/X')).toBe('high')
     h.result.enterStagingMode()
-    await h.result.onModelSelect({ modelId: 'Y', provider: 'p' }) // 只写暂存快照
+    await h.result.onModelSelect({ modelId: 'Y', provider: 'p' as ProviderId }) // 只写暂存快照
     await h.result.onThinkingSelect('o') // 暂存档位
     expect(lookup('p/Y')).toBeUndefined() // staging 快照不入表
     expect(lookup('p/X')).toBe('high') // 源 session 记忆不变
@@ -850,7 +850,7 @@ describe('useComposerModelThinking · 跨写污染回归（Gate B：错配对不
   it('W1/切走已记忆模型：「(新模型, 旧档位)」错配 flush 不入表，mem[Y] 不被旧档位临时改写', async () => {
     const h = mountCrossWrite()
     // 切走 X → Y：回包 applySnapshot({modelId:'p/Y'})，level 仍 'l'（X 纪元遗留）
-    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
+    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' as ProviderId })
     h.pending[0].applyAndResolve('p/Y')
     await nextTick()
     // consume 命中 mem[Y]='max' → 恢复 onReset('x') → setThinkingLevel('x') 发出
@@ -871,7 +871,7 @@ describe('useComposerModelThinking · 跨写污染回归（Gate B：错配对不
   it('W2/切回旧模型：「(旧模型, 新纪元档位)」错配 flush 不入表——mem[X] 不被 Y 的 max 污染（主回归点）', async () => {
     const h = mountCrossWrite()
     // 前半：切走 X → Y（同 W1），到达 store=(p/Y,'x')、mem[X]='low'、mem[Y]='max' 的稳态
-    const p1 = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
+    const p1 = h.result.onModelSelect({ modelId: 'Y', provider: 'p' as ProviderId })
     h.pending[0].applyAndResolve('p/Y')
     await nextTick()
     h.setLevelCalls[0].resolveReply()
@@ -879,7 +879,7 @@ describe('useComposerModelThinking · 跨写污染回归（Gate B：错配对不
     await p1
 
     // 切回 Y → X：回包 applySnapshot({modelId:'p/X'})，level 仍 'x'（glm-5.3 纪元的 max value）
-    const p2 = h.result.onModelSelect({ modelId: 'X', provider: 'p' })
+    const p2 = h.result.onModelSelect({ modelId: 'X', provider: 'p' as ProviderId })
     h.pending[1].applyAndResolve('p/X')
     await nextTick()
     // consume 仍按未污染记忆命中 low → 恢复 onReset('l')（consume 判定先于错配写入）
@@ -921,7 +921,7 @@ describe('useComposerModelThinking · 跨写污染回归（Gate B：错配对不
   it('W5/第三形态·档位先变：「(旧模型, 新档位)」经 pi 归一事件先落不入表——armed 在途守卫（主回归点）', async () => {
     const h = mountCrossWrite()
     // 切 X → Y：armed={p/Y} 设立，switchModel RPC 在途（不 resolve——模型回包未到）
-    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
+    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' as ProviderId })
     // pi setModel 内部归一档位 emit thinking_level_changed → 独立帧 session.thinkingLevelSet
     // 先于模型回包落库：applySnapshot 只写 thinkingLevel → store=(p/X,'x')（旧模型×新档位）
     h.sessionRef.value = { modelId: 'p/X', thinkingLevel: 'x' }
@@ -978,7 +978,7 @@ describe('useComposerModelThinking · 探针表补漏（u5 收口）', () => {
       supported: { 'p/X': fourLevels, 'p/Y': [...fourLevels, 'max'] },
     })
     record('p/Y', 'max')
-    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
+    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' as ProviderId })
     h.pending[0].applyAndResolve('p/Y')
     await p
     // 恢复发出的是记忆 max 的 value 'x'（钳制发生在 pi 端，前端只发档位 value）
@@ -1023,7 +1023,7 @@ describe('useComposerModelThinking · 一致性审查修复（U-fix-1/2）', () 
     expect(h.result.currentThinkingLevel.value).toBe('l') // 跟随先落记忆值
     await h.result.onThinkingSelect('h') // 用户显式选档 → authored
     // re-select 同模型：无反应性变化，watch 必不触发——armed 源头跳过（U-fix-1）
-    await h.result.onModelSelect({ modelId: 'M', provider: 'p' })
+    await h.result.onModelSelect({ modelId: 'M', provider: 'p' as ProviderId })
     expect(h.setPendingModel).toHaveBeenCalledWith('p/M') // pendingModel 照常记
     // 人为触发一次无关 providers 变化：若 armed 悬留，规则 2 匹配分支会经 onReset
     // 写回记忆值 'l'（恢复通路不检查 localAuthored）= chip 突跳伪恢复（D3 规则 5 要消灭的形态）
@@ -1043,7 +1043,7 @@ describe('useComposerModelThinking · 一致性审查修复（U-fix-1/2）', () 
     })
     record('p/X', 'low')
     h.result.enterStagingMode() // currentModelId 切读快照 'p/X'
-    await h.result.onModelSelect({ modelId: 'X', provider: 'p' }) // re-select 同模型 → 不设 armed
+    await h.result.onModelSelect({ modelId: 'X', provider: 'p' as ProviderId }) // re-select 同模型 → 不设 armed
     // 无关刷新：若 armed 悬留，规则 2 会 onReset('l') 写入 stagingThinking（伪恢复）
     refreshProviderIdentity(h.providersRef, 'p/X')
     await nextTick()
@@ -1069,7 +1069,7 @@ describe('useComposerModelThinking · 一致性审查修复（U-fix-1/2）', () 
     const h = mountLanding({ defaultModel: 'p/M' })
     expect(h.result.currentThinkingLevel.value).toBe('h') // M 无记忆 → 跟随落最高档
     await h.result.onThinkingSelect('h') // 用户 authored（置位 localAuthored）
-    await h.result.onModelSelect({ modelId: 'N', provider: 'p' }) // 真实切换（非 re-select）
+    await h.result.onModelSelect({ modelId: 'N', provider: 'p' as ProviderId }) // 真实切换（非 re-select）
     await nextTick() // 等 sync watch flush 消费 armed
     // armed 已设立且被规则 2 消费：记忆 N='low' → onReset('l') → landing 分支写 local
     //（恢复通路不检查 localAuthored——显式切模型即恢复，authored 只冻结「跟随」）
@@ -1160,14 +1160,14 @@ describe('useComposerModelThinking · D4 lastUsedModel 写入', () => {
     const { result, scope } = mount('s1', {
       sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
     })
-    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' })
+    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' as ProviderId })
     expect(lookupLastUsed()).toBe('provider-C/model-C')
     scope.stop()
   })
 
   it('landing 态 onModelSelect → 写入 lastUsedModel', async () => {
     const { result, scope } = mount(null)
-    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' })
+    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' as ProviderId })
     expect(lookupLastUsed()).toBe('provider-C/model-C')
     scope.stop()
   })
@@ -1177,7 +1177,7 @@ describe('useComposerModelThinking · D4 lastUsedModel 写入', () => {
       sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
     })
     result.enterStagingMode()
-    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' })
+    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' as ProviderId })
     // staging 试选不写 KV
     expect(lookupLastUsed()).toBeUndefined()
     scope.stop()
@@ -1187,9 +1187,9 @@ describe('useComposerModelThinking · D4 lastUsedModel 写入', () => {
     const { result, scope } = mount('s1', {
       sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
     })
-    await result.onModelSelect({ modelId: 'model-B', provider: 'provider-B' })
+    await result.onModelSelect({ modelId: 'model-B', provider: 'provider-B' as ProviderId })
     expect(lookupLastUsed()).toBe('provider-B/model-B')
-    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' })
+    await result.onModelSelect({ modelId: 'model-C', provider: 'provider-C' as ProviderId })
     expect(lookupLastUsed()).toBe('provider-C/model-C')
     scope.stop()
   })

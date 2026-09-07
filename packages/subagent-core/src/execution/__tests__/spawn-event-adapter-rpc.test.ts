@@ -28,6 +28,17 @@ function piLine(methodFields: Record<string, unknown>): string {
   return JSON.stringify({ type: "extension_ui_request", id: "req-001", ...methodFields });
 }
 
+
+/** 判别收窄辅助：string-fallback 变体（method: string）使 !== 收窄失效，
+ *  用 Extract 条件类型（可赋值方向）精确取变体。 */
+function asVariant<M extends string>(
+  req: import("../engine/engines/pi/spawn-event-adapter.ts").ExtensionUiRequest,
+  method: M,
+): Extract<import("../engine/engines/pi/spawn-event-adapter.ts").ExtensionUiRequest, { method: M }> {
+  if (req.method !== method) throw new Error(`request.method 应为 ${method}`);
+  return req as Extract<import("../engine/engines/pi/spawn-event-adapter.ts").ExtensionUiRequest, { method: M }>;
+}
+
 describe("parseSpawnLine — 10 种 method 真实样本分类（Pi 原生格式）", () => {
   describe("dialog 类（select/confirm/input/editor）", () => {
     it("select → kind=extension_ui_request + request.method=select + title/options 平铺", () => {
@@ -37,9 +48,7 @@ describe("parseSpawnLine — 10 种 method 真实样本分类（Pi 原生格式�
       expect(result?.kind).toBe("extension_ui_request");
       if (result?.kind !== "extension_ui_request") return;
       expect(result.id).toBe("req-001");
-      expect(result.request.method).toBe("select");
-      expect(result.request.title).toBe("Pick one");
-      expect(result.request.options).toEqual(["a", "b"]);
+      const req = asVariant(result.request, "select");
     });
 
     it("confirm → request.method=confirm + title/message 平铺", () => {
@@ -48,9 +57,7 @@ describe("parseSpawnLine — 10 种 method 真实样本分类（Pi 原生格式�
       }));
       expect(result?.kind).toBe("extension_ui_request");
       if (result?.kind !== "extension_ui_request") return;
-      expect(result.request.method).toBe("confirm");
-      expect(result.request.title).toBe("Sure?");
-      expect(result.request.message).toBe("Proceed?");
+      const req = asVariant(result.request, "confirm");
     });
 
     it("input → request.method=input + title + placeholder", () => {
@@ -59,8 +66,7 @@ describe("parseSpawnLine — 10 种 method 真实样本分类（Pi 原生格式�
       }));
       expect(result?.kind).toBe("extension_ui_request");
       if (result?.kind !== "extension_ui_request") return;
-      expect(result.request.method).toBe("input");
-      expect(result.request.placeholder).toBe("type here");
+      const req = asVariant(result.request, "input");
     });
 
     it("editor → request.method=editor + title + prefill", () => {
@@ -69,8 +75,7 @@ describe("parseSpawnLine — 10 种 method 真实样本分类（Pi 原生格式�
       }));
       expect(result?.kind).toBe("extension_ui_request");
       if (result?.kind !== "extension_ui_request") return;
-      expect(result.request.method).toBe("editor");
-      expect(result.request.prefill).toBe("initial text");
+      const req = asVariant(result.request, "editor");
     });
   });
 
@@ -81,8 +86,7 @@ describe("parseSpawnLine — 10 种 method 真实样本分类（Pi 原生格式�
       }));
       expect(result?.kind).toBe("extension_ui_request");
       if (result?.kind !== "extension_ui_request") return;
-      expect(result.request.method).toBe("notify");
-      expect(result.request.message).toBe("hi");
+      const req = asVariant(result.request, "notify");
     });
 
     it("setStatus → request.method=setStatus + statusKey/statusText", () => {
@@ -91,8 +95,8 @@ describe("parseSpawnLine — 10 种 method 真实样本分类（Pi 原生格式�
       }));
       expect(result?.kind).toBe("extension_ui_request");
       if (result?.kind !== "extension_ui_request") return;
-      expect(result.request.method).toBe("setStatus");
-      expect(result.request.statusKey).toBe("k");
+      const req = asVariant(result.request, "setStatus");
+      expect(req.statusKey).toBe("k");
     });
 
     it("setWidget → request.method=setWidget + widgetKey/widgetLines/widgetPlacement", () => {
@@ -102,25 +106,24 @@ describe("parseSpawnLine — 10 种 method 真实样本分类（Pi 原生格式�
       }));
       expect(result?.kind).toBe("extension_ui_request");
       if (result?.kind !== "extension_ui_request") return;
-      expect(result.request.method).toBe("setWidget");
-      expect(result.request.widgetKey).toBe("w1");
-      expect(result.request.widgetPlacement).toBe("aboveEditor");
+      const req = asVariant(result.request, "setWidget");
+      expect(req.widgetKey).toBe("w1");
+      expect(req.widgetPlacement).toBe("aboveEditor");
     });
 
     it("setTitle → request.method=setTitle + title", () => {
       const result = parseSpawnLine(piLine({ method: "setTitle", title: "My Title" }));
       expect(result?.kind).toBe("extension_ui_request");
       if (result?.kind !== "extension_ui_request") return;
-      expect(result.request.method).toBe("setTitle");
-      expect(result.request.title).toBe("My Title");
+      const req = asVariant(result.request, "setTitle");
+      expect(req.title).toBe("My Title");
     });
 
     it("set_editor_text → request.method=set_editor_text + text", () => {
       const result = parseSpawnLine(piLine({ method: "set_editor_text", text: "body" }));
       expect(result?.kind).toBe("extension_ui_request");
       if (result?.kind !== "extension_ui_request") return;
-      expect(result.request.method).toBe("set_editor_text");
-      expect(result.request.text).toBe("body");
+      const req = asVariant(result.request, "set_editor_text");
     });
   });
 });

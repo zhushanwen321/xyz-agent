@@ -820,3 +820,35 @@ describe("AskUserComponent — new behavior (post-refactor)", () => {
 		expect(lines.some((l: string) => l.includes("B"))).toBe(true);
 	});
 });
+
+// ── options 输入路由 no-op 落空语义（←/→ 与 Space 的守卫分支）──
+describe("AskUserComponent — options input no-op edges", () => {
+	it("C-NAV-1: single question ignores LEFT/RIGHT in options mode (no tab nav, no cancel overlay)", () => {
+		const { c, result } = make([singleQ]);
+		// 单问题无 tab：←/→ 应为 no-op（isSingle 短路），既不切 tab 也不进入确认取消覆盖层
+		c.handleInput(LEFT);
+		c.handleInput(RIGHT);
+		expect(result.val).toBeUndefined();
+		// 未进入 Esc 确认取消覆盖层（覆盖层特征文案不出现）
+		expect(c.render(60).some((l) => l.includes("Cancel all"))).toBe(false);
+		// 光标仍在第一项，表单完好
+		const lines = c.render(60);
+		expect(lines.some((l) => l.includes(">") && l.includes("Postgres"))).toBe(true);
+	});
+
+	it("C-NAV-2: multi-select Space on Other row is a no-op (does not toggle, does not enter editor)", () => {
+		const { c, result } = make([singleQMulti]);
+		// 下移到 Other 行（Auth, Search, Other → 光标 index 2）
+		c.handleInput(DOWN);
+		c.handleInput(DOWN);
+		// Other 行上 Space：multiSelect && !onOther 为 false → 落空
+		c.handleInput(" ");
+		// 未确认、未提交
+		expect(result.val).toBeUndefined();
+		const lines = c.render(60);
+		// Other 行未被 toggle（无任何 [✓] 勾选框出现）
+		expect(lines.some((l) => l.includes("[✓]"))).toBe(false);
+		// 仍在 options 模式（未进 freeform 编辑器——反色光标不出现）
+		expect(lines.some((l) => l.includes("\x1b[7m"))).toBe(false);
+	});
+});
