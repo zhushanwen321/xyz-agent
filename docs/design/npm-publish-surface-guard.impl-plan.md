@@ -27,8 +27,8 @@
 
 | Unit | 职责 | 领地（精确文件路径） | 依赖 | 隔离 | 验收条款 |
 |------|------|----------------------|------|------|----------|
-| u5 约束登记 | constraints.json 新增 C-proc-11（发布面一致性：files 白名单 ↔ 构建产出双向对齐，发布门强制；新增产物档须同批挂构建步骤、files 条目与守卫覆盖；自包含档命名约定 `dist.bundle`、非发布构建目录不得用 `dist` 前缀；非 workspace 包不经 changeset 发布线、防手滑 publish 用 private:true）→ 跑 render-constraints 重生成 md | `docs/constraints.json`、`docs/constraints.md`（生成产物，随同提交） | — | plain | ① constraints.json 含 C-proc-11 且 id/scope/权威源/执行方式字段与既有条目同构；② `node scripts/render-constraints.mjs` exit 0，md 再生成含 C-proc-11；③ `node scripts/check-doc-symbol-drift.mjs` exit 0 |
-| u1 守卫脚本 | check-publish-surface.mjs：动态发现 dist 发布包（packages/ 下非 private 且 files 含 `dist*` 目录条目）→ 检查项 1 幽灵条目（磁盘 stat 判定形态：目录须非空 / 文件须存在 / glob 须命中 ≥1）+ 检查项 2 自包含探针（三步判定顺序：isBuiltin 先行 → 相对路径 → 裸名红 / 子路径须命中豁免；豁免 `ajv/dist/runtime/*` 含预期计数 4 + `.default` 形态锚点，超出红、少于预期 notice）+ 检查项 3 产物目录反向覆盖（顶层 `dist*` 目录须被 files 覆盖）+ 体积估算 warning（files 条目求和 > 5MB 提示 D7 重审，不红）；配套单测（vitest + tmpdir fixture，按 check-core-dist-gate.test.mjs 惯例） | `scripts/check-publish-surface.mjs`（新）、`scripts/__tests__/check-publish-surface.test.mjs`（新） | u5 | plain | ① 单测绿（用例覆盖设计 u1 行清单：幽灵三形态 / 无尾斜杠目录条目非空断言 / 探针三步顺序含 `fs/promises` `node:fs/promises` 内建子路径 PASS / 裸名红 / 豁免命中绿 / 子路径未命中红 / 豁免命中数超预期红 / 命中少于预期 notice 不红 / 反向覆盖命中 / 漏声明红 / glob 零命中边界）；② 三包四档本地构建后 `node scripts/check-publish-surface.mjs` 基线绿（S3 前置断言）；③ S1 实测：临时加 files 条目不构建 → 红含恢复指引；④ S1b 实测：mkdir dist.worker + 占位 .cjs 不加 files → 红；补条目 → 绿 |
+| u1 守卫脚本 | check-publish-surface.mjs：动态发现 dist 发布包（packages/ 下非 private 且 files 含 `dist*` 目录条目）→ 检查项 1 幽灵条目（磁盘 stat 判定形态：目录须非空 / 文件须存在 / glob 须命中 ≥1）+ 检查项 2 自包含探针（三步判定顺序：isBuiltin 先行 → 相对路径 → 裸名红 / 子路径须命中豁免；豁免 `ajv/dist/runtime/*` 含预期计数 4 + `.default` 形态锚点，超出红、少于预期 notice）+ 检查项 3 产物目录反向覆盖（顶层 `dist*` 目录须被 files 覆盖）+ 体积估算 warning（files 条目求和 > 5MB 提示 D7 重审，不红）；配套单测（vitest + tmpdir fixture，按 check-core-dist-gate.test.mjs 惯例） | `scripts/check-publish-surface.mjs`（新）、`scripts/__tests__/check-publish-surface.test.mjs`（新） | — | plain | ① 单测绿（用例覆盖设计 u1 行清单：幽灵三形态 / 无尾斜杠目录条目非空断言 / 探针三步顺序含 `fs/promises` `node:fs/promises` 内建子路径 PASS / 裸名红 / 豁免命中绿 / 子路径未命中红 / 豁免命中数超预期红 / 命中少于预期 notice 不红 / 反向覆盖命中 / 漏声明红 / glob 零命中边界）；② 三包四档本地构建后 `node scripts/check-publish-surface.mjs` 基线绿（S3 前置断言）；③ S1 实测：临时加 files 条目不构建 → 红含恢复指引；④ S1b 实测：mkdir dist.worker + 占位 .cjs 不加 files → 红；补条目 → 绿 |
+| u5 约束登记 | constraints.json 新增 C-proc-11（发布面一致性：files 白名单 ↔ 构建产出双向对齐，发布门强制；新增产物档须同批挂构建步骤、files 条目与守卫覆盖；自包含档命名约定 `dist.bundle`、非发布构建目录不得用 `dist` 前缀；非 workspace 包不经 changeset 发布线、防手滑 publish 用 private:true）→ 跑 render-constraints 重生成 md | `docs/constraints.json`、`docs/constraints.md`（生成产物，随同提交） | u1 | plain | ① constraints.json 含 C-proc-11 且 id/scope/权威源/执行方式字段与既有条目同构，authority 含 `../scripts/check-publish-surface.mjs`、enforcement machine hook 指向该脚本（u1 已产出，引用真实）；② `node scripts/render-constraints.mjs` exit 0，md 再生成含 C-proc-11；③ `node scripts/check-doc-symbol-drift.mjs` exit 0 |
 | u4 尾部风险清偿 | statusline 加 `"private": true`；pi-unified-hooks 加入 changeset ignore | `resources/plugins/statusline/package.json`、`.changeset/config.json` | u5 | plain | S6b：① `node -p "require('./resources/plugins/statusline/package.json').private"` 输出 true；② `.changeset/config.json` ignore 数组含 `@zhushanwen/pi-unified-hooks`；③ 两文件 JSON 可解析 |
 | u2 发布 workflow 接线 | release-npm.yml：subagent-core 两档显式构建 step + 守卫 step（publish 前）+ Summary step gates 文字补 publish surface guard；release-npm-dev.yml：session-delivery build + core 两档 + 守卫 step **全部挂 `should_publish == 'true'` 条件**，既有 `Build extension-protocol` 保持无条件不动 | `.github/workflows/release-npm.yml`、`.github/workflows/release-npm-dev.yml` | u1 | plain | ① diff 审查逐项符合 D2/D4（正式线新 step 无条件；dev 线新 step 同条件挂载 + 既有 step 零改动）；② 两 YAML 解析有效（node yaml parse exit 0）；③ 本地等价命令实证：四条 build 命令产出非空 + 守卫绿；④ 守卫 step 的调用命令与 ci.yml（u3）同源直调 |
 | u3 CI PR 接线 | ci.yml invariants 段：3 包构建 + 守卫 step（同源直调，注释标注 D7 通则，参照 G4/D9-① 既有模式）；**同批**将新测试文件追加进「Test - scripts guards」step 显式文件清单（逐名列举非 glob，漏追加 = 永不运行） | `.github/workflows/ci.yml` | u1 | plain | ① invariants 段新增 step 位置正确（pnpm install 之后）且命令可直接本地复跑；② Test - scripts guards 清单含 `scripts/__tests__/check-publish-surface.test.mjs`；③ YAML 解析有效；④ 本地复跑 invariants 新增命令序列 exit 0 |
@@ -38,23 +38,23 @@
 ```mermaid
 graph TD
   subgraph W1[Wave1]
-    U5["u5 约束登记 C-proc-11<br/>领地: docs/constraints.json + constraints.md"]
+    U1["u1 守卫脚本 + 单测<br/>领地: scripts/check-publish-surface.mjs + scripts/__tests__/check-publish-surface.test.mjs"]
   end
   subgraph W2[Wave2]
-    U1["u1 守卫脚本 + 单测<br/>领地: scripts/check-publish-surface.mjs + scripts/__tests__/check-publish-surface.test.mjs"]
-    U4["u4 尾部风险清偿<br/>领地: resources/plugins/statusline/package.json + .changeset/config.json"]
-  end
-  subgraph W3[Wave3]
+    U5["u5 约束登记 C-proc-11<br/>领地: docs/constraints.json + constraints.md"]
     U2["u2 发布 workflow 接线<br/>领地: .github/workflows/release-npm.yml + release-npm-dev.yml"]
     U3["u3 CI PR 接线<br/>领地: .github/workflows/ci.yml"]
   end
-  U5 -->|"仓库纪律：新增约束先登记再写代码（C-proc-11 条款先行）"| U1
-  U5 -->|"u4 实施 C-proc-11 的 private:true 条款，登记先行"| U4
+  subgraph W3[Wave3]
+    U4["u4 尾部风险清偿<br/>领地: resources/plugins/statusline/package.json + .changeset/config.json"]
+  end
+  U1 -->|"render-constraints 实装校验 authority/hook 文件存在性（validateAuthorityPath/validateHookExists），C-proc-11 引用守卫脚本 → 脚本须先落地"| U5
   U1 -->|"u2 守卫 step 引用 u1 脚本（文件须已存在）"| U2
   U1 -->|"u3 invariants 守卫命令 + 测试清单引用 u1 产出"| U3
+  U5 -->|"u4 实施 C-proc-11 的 private:true 条款，登记先行"| U4
 ```
 
-说明：u2 与 u3 领地互斥（不同 workflow 文件）且都只依赖 u1，W3 并行；设计 §5 实施顺序 u5→u1→u3紧随→u2→u4 中 u4 排最后仅为叙述顺序，无技术依赖，DAG 化后提前进 W2 与 u1 并行（u4 是两个单行改动）。
+说明（v2 修订）：初版按设计 §5「u5 登记先行」画 u5→u1 纪律边，u5 执行者实测证伪——render-constraints.mjs 实装（行 47-61）对 authority 路径与 machine hook 做 existsSync 校验、渲染模式同样先校验后 exit 2，「登记先行引用未来脚本」机器不可通过；且设计 u5 行 justification 原文「u1 落地时同步」本就与「u5 先行」自相矛盾。裁决为 u1→u5 反转（设计文档 §5 已同批修订，见其变更历史 v5）。「先登记再写代码」纪律由「同批交付绑定」满足：u5 排 u1 后、u4 前，流水线中断时状态表可见 u5 pending。u2 与 u3 领地互斥且都只依赖 u1，与 u5 同 Wave 并行。
 
 ## 4 测试策略
 
@@ -78,7 +78,7 @@ graph TD
 
 | 日期 | 单元 | 偏差内容 | 处置 |
 |------|------|----------|------|
-| — | — | — | — |
+| 2026-09-07 | u5 | 计划初版按设计 §5「u5 登立先行」画 u5→u1 边；u5 执行者实测 render-constraints.mjs 实装校验 authority/hook 文件存在性（validateAuthorityPath 行 56-61 / validateHookExists 行 47-54，渲染模式同样先校验 exit 2），登记引用 u1 未来产出的守卫脚本必然 exit 2——顺序在机器门前不可通过（执行者以 /tmp 探针实证，未动仓库） | doc_errors：主 agent 反转 DAG 边为 u1→u5（§2/§3 已改）；设计文档 §5 实施顺序与 u5 行 justification 同批修订（变更历史 v5）。「先登记再写代码」纪律以「同批交付绑定」形态满足 |
 
 ## 6 状态表
 
@@ -104,3 +104,4 @@ graph TD
 | 日期 | 变更 |
 |------|------|
 | 2026-09-07 | 初版：按设计 §5 拆分 u1–u5 固化为 DAG（u4 从叙述末位提前进 W2 并行，理由见 §3 说明） |
+| 2026-09-07 | v2：u5→u1 依赖边反转为 u1→u5（u5 执行者实证 render-constraints 实装校验 authority/hook 存在性，登记先行引用未来脚本机器不可通过）；Wave 重排 W1={u1} / W2={u5,u2,u3} / W3={u4}；u5 验收条款补「authority/enforcement 引用真实」；详见 §5 偏差登记表 |

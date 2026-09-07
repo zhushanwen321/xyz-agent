@@ -251,7 +251,7 @@ S7 是外部消费方（zsw）真实回归，作为发布后场景登记——�
 | u2 发布 workflow 接线 | release-npm.yml：subagent-core 两档显式构建 step + 守卫 step（publish 前）+ Summary step 的 gates 清单文字补 publish surface guard；release-npm-dev.yml：session-delivery build + subagent-core 两档构建 + 守卫 step，**全部挂 `should_publish == 'true'` 条件**（D2 声明的 dev 线不对称结构） | `.github/workflows/release-npm.yml`、`.github/workflows/release-npm-dev.yml` | G2/G3；两条线分别接线，dev 线条件语义单独成项便于 diff 审查（S2/S6） |
 | u3 CI PR 接线 | ci.yml invariants 段：3 包构建 + 守卫 step（同源直调，注释标注 D7 通则）；**同批**将 `scripts/__tests__/check-publish-surface.test.mjs` 追加进「Test - scripts guards」step 的显式文件清单（该清单逐名列举非 glob，漏追加 = 护栏测试永不运行） | `.github/workflows/ci.yml` | G1（PR 段软拦截）+ 护栏测试接线；与 u1 同批或紧随（u3 的清单项依赖 u1 产出） |
 | u4 发布面尾部风险清偿 | statusline 加 `"private": true`（非 workspace 包的唯一机制层拦截，见 D6）；`pi-unified-hooks` 加入 changeset ignore | `resources/plugins/statusline/package.json`、`.changeset/config.json` | G3；两个单行改动独立成单元（低风险快验） |
-| u5 约束登记 | constraints.json 新增 C-proc-11（发布面一致性：files 白名单条目 ↔ 构建产出双向对齐，发布门强制；新增产物档须同批挂构建步骤、files 条目与守卫覆盖；自包含档命名约定 `dist.bundle`、非发布构建目录不得用 `dist` 前缀；非 workspace 包不经 changeset 发布线、防手滑 publish 用 private:true）→ 跑 `node scripts/render-constraints.mjs` 重生成 md | `docs/constraints.json`、`docs/constraints.md`（生成） | G4；按仓库「先登记再写代码」纪律，u1 落地时同步 |
+| u5 约束登记 | constraints.json 新增 C-proc-11（发布面一致性：files 白名单条目 ↔ 构建产出双向对齐，发布门强制；新增产物档须同批挂构建步骤、files 条目与守卫覆盖；自包含档命名约定 `dist.bundle`、非发布构建目录不得用 `dist` 前缀；非 workspace 包不经 changeset 发布线、防手滑 publish 用 private:true）→ 跑 `node scripts/render-constraints.mjs` 重生成 md | `docs/constraints.json`、`docs/constraints.md`（生成） | G4；与 u1 同批绑定（u1 先落地守卫脚本、u5 紧随登记——render-constraints 实装校验 authority/hook 文件存在性，登记引用的脚本须先存在；「先登记再写代码」纪律由同批交付绑定满足，见变更历史 v5） |
 
 **文件改动地图汇总**：新增 2（守卫 + 测试），修改 5（两条 release workflow、ci.yml、constraints.json/md、statusline package.json + changeset config）。
 
@@ -260,7 +260,7 @@ S7 是外部消费方（zsw）真实回归，作为发布后场景登记——�
 1. D3 豁免清单的新形态判定——当前清单仅 `ajv/dist/runtime/*`（4 处实测登记）；实施期若探针命中新的子路径形态，按 D3 处置口径分析（真实残留修 noExternal / codegen 字面量进清单注明成因），不预设第三种形态。
 2. S5 的 CI run 依赖真实分支推送，实施期安排；invariants job 实际时长增量回填 D2。
 
-**实施顺序**：u5（登记先行）→ u1 → u3（紧随 u1，护栏测试接线同批）→ u2 → u4；u1 完成即可跑 S1–S3，u2/u3 完成跑 S2/S5/S6，S4 全链路在 u1–u3 齐后执行，S7 随下次发布编排。
+**实施顺序**：u1 → u5（登记紧随）→ u3（紧随 u1，护栏测试接线同批）→ u2 → u4；u1 完成即可跑 S1–S3，u2/u3 完成跑 S2/S5/S6，S4 全链路在 u1–u3 齐后执行，S7 随下次发布编排。初版写「u5（登记先行）→ u1」已被实施期实证否决——render-constraints.mjs 实装校验 authority 路径与 machine hook 的文件存在性（validateAuthorityPath / validateHookExists，渲染模式同样先校验后 exit 2），登记先行引用 u1 未来产出的守卫脚本必然 exit 2，机器不可通过；「先登记再写代码」纪律由「u1 与 u5 同批交付绑定」形态满足（见变更历史 v5）。
 
 ## 6. 变更历史
 
@@ -270,3 +270,4 @@ S7 是外部消费方（zsw）真实回归，作为发布后场景登记——�
 | 2026-09-07 | v2 | 第 1 轮审查修复（主审 2 must-fix + 4 suggestion / 影响面审 4 must-fix + 4 suggestion，全修）：探针判定重设计为裸名判定 + `ajv/dist/runtime/*` 豁免清单（原「零外部说明符基线绿」与产物实测 4 处 ajv codegen 字面量矛盾）；D5 新增检查项 3 产物目录反向覆盖（机器化 packages/ 漏声明方向）；D6 重写（statusline 不在 workspace、changeset ignore 无效 → private:true + unified-hooks ignore）；D2 补两级拦截等级声明 + dev 线条件挂载；D7 四要素补齐（恢复路径 + 重审触发）+ 体积修正 1.36MB；D5 判定信号改磁盘 stat（无尾斜杠目录条目）；u2 补 Summary 文字同步；u3 补护栏测试进「Test - scripts guards」显式清单；S3 补基线绿前置断言、S6 补条件语义场景、S7 补常规消费者升级断言；发布面计数修正 24→30 |
 | 2026-09-07 | v3 | 第 2 轮审查修复（主审 1 must-fix + 3 suggestion / 影响面审 0 must-fix + 3 suggestion + 2 INFO，全修）：检查项 3 链路五处同步（G1 扩双向语义 / §1.1 A / §3.2 B / §3.4 图 / §3.1 失败路径 1b）+ 新增 S1b 反向覆盖验收场景 + S5 补反向覆盖分支；D3 判定顺序钉死三步（isBuiltin 含子路径先行，防 fs/promises 误入豁免）+ 豁免条目登记预期计数 4 与形态锚点（堵前缀过宽漏报面）；§3.2 B 列措辞同步（statusline private + unified-hooks ignore）；D2 补既有 Build extension-protocol 保持无条件声明；D7 重审触发加守卫体积 warning 机器回显（采纳）；S6b 新增（u4 两项清偿的简化验收） |
 | 2026-09-07 | v4 | 第 3 轮审查修复（主审 0 must-fix + 2 suggestion，全修；影响面审第 2 轮已达标）：「24 包」残留两处（§1.1 S / §3.2 C）同步为 30 包口径；豁免命中数少于预期时补不红的 notice 复核提示。审查循环收敛：主审 2+1+0 / 影响面 4+0 must-fix，双报告 0 must-fix + suggestion 全修 |
+| 2026-09-07 | v5 | 实施期 doc_errors 修订（非审查轮）：§5 实施顺序「u5 登记先行 → u1」反转为「u1 → u5 紧随」，u5 行 justification 同步——u5 执行者实测 render-constraints.mjs 实装对 authority 路径与 machine hook 做 existsSync 校验（validateAuthorityPath 行 56-61 / validateHookExists 行 47-54，渲染模式同样先校验后 exit 2），登记引用 u1 未来产出的守卫脚本必然 exit 2，「登记先行」在机器门前不可通过；「先登记再写代码」纪律改由「u1 与 u5 同批交付绑定」满足（流水线状态表兜底：u1 committed 而 u5 pending 时中断即显式可见） |
