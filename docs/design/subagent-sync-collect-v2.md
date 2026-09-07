@@ -169,7 +169,7 @@ Subagent "big-report" (sa-9f2c…) completed. Result:
 
 （批头口径：gc 成员经 deriveOutcome 按子文件末行完整性二选一——末行完整 → 计入 finished（正文含崩溃前 result）；末行截断 → 计入 failed（正文为截断 error 文案）。closedReason="gc" 是 record 层描述，不进通知文案断言。）
 
-**失败与逃生**：补发内容缺 sessionFile 投影（极端：entry 损坏）→ manifest 该成员 sessionFile 缺省 → session-reader 反查仍报错但错误文案已指引绝对路径形态（既有兜底，不新增）；settled 重扫达上限仍有 running → debug 日志留痕，下次 session_start 再收敛（与 v1「下次重扫收敛」语义一致，但不再依赖它作为唯一路径）。
+**失败与逃生**：补发内容缺 sessionFile 投影（极端：entry 损坏）→ manifest 该成员 sessionFile 缺省 → session-reader 反查仍报错，但错误文案已指引恢复动作——改用 `session_read { action:"family" }` 查该 subagent 的活跃/已完成后代、片段输入换完整 sa- id、或 `action:"find"` 重试（`formatSaIdNotFound`，tool-handler.ts；既有兜底，不新增——不指引绝对路径形态，与 v1 A4 探针期的「手工换绝对路径」人工绕过不是同一路径）；settled 重扫达上限仍有 running → debug 日志留痕，下次 session_start 再收敛（与 v1「下次重扫收敛」语义一致，但不再依赖它作为唯一路径）。
 
 ### 3.2 多方案对比
 

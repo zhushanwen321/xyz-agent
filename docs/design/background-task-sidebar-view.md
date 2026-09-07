@@ -121,7 +121,7 @@ pi 进程（每 session 一个）                     runtime（Node sidecar） 
 - 点「终止任务」时任务恰好已自然退出 → toast「任务已结束」（killResult `already-exited`），列表 ~2s 内自然翻转终态；无副作用。
 - 点「终止任务」时进程身份无法验证（平台限制，D6 分支 ④）→ toast「无法验证进程身份，已拒绝终止（宁不杀勿误杀）」；用户可重试（start-time 探测恢复后可过）或用系统工具手杀。
 - registry 写入失败（kill 的 intent 预写或终态写失败，D6 分支 ⑤）→ toast「操作未生效（数据写入失败），请重试」；条目停留原状态，下次 app 启动的 reaper 扫描是最终兜底。
-- registry.json 解析失败（损坏）→ 列表该拍显示空态 + 错误条「任务数据损坏，已忽略（.corrupt 保留现场）」。恢复语义（与实装一致，诚实声明）：extension 侧只在**自身读写路径**触发自愈（rename `.corrupt` + **空表重建**，`registry.ts:112-135`）——该 session 无 AI 活动则错误条常驻；AI 下次操作后台任务时自愈、错误条消失。**被损坏隔离的终态历史不自动恢复**（`.corrupt` 文件保留现场，可人工恢复），列表从空表重新累积。
+- registry.json 解析失败（损坏）→ 列表该拍显示空态 + 错误条「任务数据损坏，已忽略（.corrupt 保留现场）」。恢复语义（与实装一致，诚实声明）：自愈触发面有**两侧**——extension 侧在**自身读写路径**（rename `.corrupt` + **空表重建**，`registry.ts:112-135`）；**runtime 读侧** `readRegistryEntriesWithStatus`（提炼于 `background-task-reaper.ts:279-288`，BackgroundTaskService 的 list/变更检测均经它读 registry）解析失败时同样 rename `.corrupt` 隔离 + 空表 + `corrupted:true`——**UI 打开后台命令 tab 即隔离现场，非仅 extension 写路径**（2026-09-07 回写，BG-3 对齐实装）；隔离后下一拍 registry 已不存在，按空表 + corrupted:false 处理（错误条随下一检测拍消失）。「空表重建」由后续写入自然完成（两侧一致，均不立即写空文件）。extension 侧该 session 无 AI 活动时 UI 错误条不再常驻（读侧隔离已收敛现场）。**被损坏隔离的终态历史不自动恢复**（`.corrupt` 文件保留现场，可人工恢复），列表从空表重新累积。
 - runtime 重启后 list 拉取失败（WS 断开）→ 列表显示「连接断开，重连后自动刷新」条；WS 重连后自动重拉。
 
 ### 3.2 多方案对比
@@ -154,6 +154,7 @@ pi 进程（每 session 一个）                     runtime（Node sidecar） 
 - **被否**：① 纯 fs.watch——registry 是 tmp+rename 原子写，watch 文件本体会在 rename 时断链，须 watch 目录；Linux recursive watch 支持不稳，还得自配轮询兜底，复杂度不匹配收益；② extension 主动通知（= 方案 C，双源问题）。
 - **证据**：exit 通知链路已经过 runtime（`message.customStart`）；任务状态秒级变化的本源（poller 2s tick，`poller.ts:23`）决定了 2s 轮询不劣化感知；spawn/exit 均**先写 registry 后发通知/返回**（`spawn-background.ts:216-220`、`poller.ts:79-86`），事件到达时 registry 已是最新——即时检查读到的是终值，无双读竞态。
 - **效果**：常见路径（exit）零延迟翻转；其余迁移（killing）≤2s；单广播源，无双发。
+- **粒度边界（2026-09-07 登记，adversarial-review-fixes BG-8 维持）**：轮询判定源是 `statSync().mtimeMs`（`background-task-service.ts` last-seen mtime 比较）——同一 session 的两次 registry 写恰好落在同一 mtime 毫秒粒度内时轮询判定「无变化」漏检一拍。量级：registry 写频 = 状态迁移（spawn/exit/kill），同毫秒双迁移概率极低；且三触发面中仅轮询受此粒度限制——exit 边沿（钩子①）/ spawn（钩子②）/ kill 自写（service 自写自检）不依赖 mtime，高频路径均有事件面覆盖；漏检后果 = 广播延迟到下一次实际变化（状态最终一致，非永久丢失）。维持不改（事件面已兜，换 content hash 判定徒增全量读开销）。
 
 **D3：WS 协议 = 3 个拉取/操作 RPC + 1 个 session 级广播（选定）**
 - **采用**：仿 `session.getCommands` 范式（`session-message-handler.ts:466` 的 handler 注册 + `protocol.ts` 类型登记）：

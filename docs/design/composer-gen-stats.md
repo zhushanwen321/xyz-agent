@@ -222,6 +222,8 @@ turn_end                ──RPC──→  handleTurnEndPi      turn-usage case
 - **证据**：protocol.ts:1100-1105（context.update 契约 + 无值编码纪律）；useContextUsage.ts:130-137（0 帧哨兵 = 同一纪律的前端防线）；session-message-handler.ts:450（RPC case 范式）；session-state-projection.ts:293-298（replicated states 持有 per-session modelId）。
 - **效果**：G3 成立——stats_update 广播 + getGenStats 恢复腿双通路，live ≡ reload，重启后 current（文件末条）与 day 聚合均可恢复。
 
+**current 无时间窗口过滤语义（2026-09-07 登记，GS-6）**：`speed.current` / `cacheRatio.current` = 落盘文件末条样本，**无时间窗口过滤**——「最近一次」可能来自较早的记录（该模型长时间无新 turn 时，current 停留在旧样本）。这是既有语义（D4 模型视角的推论），不改；前端「本次」文案已注明「来自最近一次请求的记录」（C4 文案批，adversarial-review-fixes u5 落地）消除歧义。
+
 **D5：renderer = `useGenStats` composable（照 useContextUsage 骨架）+ 双触发器组件（选定）**
 - **采用**：`useGenStats(sessionIdRef, modelIdRef?)` 返回 `{ current }`——分区结构**直接存 `GenStatsFrame | null`**（R3 已删 status 字段，勿引用旧三态结构）；订 `session.stats_update`（handler 用第二参数 sid 写分区，ADR-0049）+ 切入视图拉 `session.getGenStats` 恢复腿 + `registerSessionCleanup` 编排。UI 组件 `GenStatsTriggers.vue`（内含速度/缓存两个触发器，各自 HoverCard 浮层），挂 Composer.vue composer-bar 的 ContextCapacityPopover 之前。i18n key 挂 `panel.context.*` 现有段（zh-CN/panel.ts:135 起；现有 `cacheHit` key 语义是 ContextCapacityPopover 浮层行标签，与本触发器浮层是否同义**实施期确认**——若复用造成两处文案耦合则新增独立 key）。
 - **被否**：数据并入 ContextCapacityPopover（demo 方案 D 的 idle 收纳）——用户已选方案 A；并成单触发器（demo 方案 B）——同上，用户已选 A（双触发器独立 hover）。
@@ -346,7 +348,7 @@ useGenStats(sessionIdRef): { current: ComputedRef<GenStatsFrame | null> }
 **场景 5：负面行为（G4 健壮性）**
 5a 纯工具 turn：发一条触发多工具调用的消息，确认每轮 turn 之间指标只在新 LLM 响应完成后更新，中途工具执行不产生速度骤降到 0 的假样本。
 5b 文件损坏自愈：手动把 `speed/<safe-model>.json` 写成 `"{corrupted"` → 再对话一轮 → 文件被重建为合法 JSON，触发器显示新样本值，runtime 日志有一条 warn。
-5c 无 cache 上报模型（若可用）：命中率触发器显「—」而非 0%，速度正常。
+5c 无 cache 上报模型（若可用）：命中率触发器显 **0%** 而非「—」，速度正常。（2026-09-07 回写，adversarial-review-fixes GS-1 裁决对齐实装：pi-ai 实装下 Usage.cacheRead 必填，各 provider api 层对无 cache 能力模型一律归一 cacheRead=0 → promptTotal=input>0，仍采集 [0, total] 样本——**恒 0% 是「全 miss 真实测量值」的正确行为非异常**；「—」仅出现于无样本或 promptTotal≤0。与 §3.1 失败路径表 / §3.5 错误规格行的 0% 口径一致。）
 
 **场景 6：测试红线合规（G4，实施期机器验证）**
 通过标准：`packages/runtime` 新增测试全部在 vitest 下运行，写入目标为 `mkdtempSync(join(tmpdir(),'xyz-gen-stats-'))` + env 注入；`pnpm extensions:typecheck` / `pnpm run lint` / 相关包测试绿。

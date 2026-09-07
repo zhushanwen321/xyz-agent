@@ -229,6 +229,11 @@ ComposerInput.getSegments()  ← chip DOM → segment（insertSessionChip/insert
 - 被否：「只列当前 cwd 的 session」——landing 的 pendingCwd 是**即将创建** session 的目录，用它过滤历史 session 会漏掉跨项目引用场景（G2 明确「跨 cwd 全量」是目标）；且 TUI 行为即全量。
 - 证据：`buildSessionCandidates` 现有过滤逻辑（hidden 排除 + label/id 子串匹配 + lastActiveAt 降序）在 panel 态已验证，原样复用。
 
+**D8 大 session 引用成本：与 panel 同链路同风险共担，不新增预算层（2026-09-07 补，LD-3）**
+- 场景：landing 首条消息引用一个超长被引 session（数百 turn / 大量文件内容）时，LLM 消费 `#<sid>` 的成本 = 调 `session_read` 工具读取被引 session 的注入量与往返时延。**该链路与 panel 态 `#` 引用完全同一条**（§2.6 锚点 2：`#<sessionId>` 自包含，pi 侧不可区分 landing 首发与 panel 发送），注入量/时延风险与 panel 同款共担——landing 不引入新形态，panel 侧无既有事故面。
+- 分页控制权在模型：session_read 的读取粒度（outline 结构概览 → detail 按 turn/limit 读取）由模型按需分次选择，单次读取有 limit 截断（默认 8000 字符/条，超限截断 + 指引读原文件），不存在「一次引用 = 全量注入」的结构性放大；模型贪读（多次 detail 拉大注入）属提示词引导域的既有问题面，非本设计新增。
+- 被否：为 landing 引入引用预算层（如被引 session 体积预估 + 超限 toast）——xyz 不持有被引 session 的 token 计量权威（被引 session 可来自任意 pi 实例），预估只能按 JSONL 字节数近似，误判率高；且 panel 同场景无此层，双轨语义（landing 有预算、panel 无）制造不一致。重审条件：真实使用中出现「landing 引用大 session 导致首发 turn 超窗/超时」的可观察案例时，随 panel 一并评估（两态同链路，修复也应同链路）。
+
 ---
 
 ## 4. 验收
@@ -282,6 +287,7 @@ ComposerInput.getSegments()  ← chip DOM → segment（insertSessionChip/insert
 | file chip 存绝对路径（landing 特殊化） | 双语义并存全链路双分支；绝对路径换工作区失效，相对路径随 session.cwd 始终可解析 | D4 |
 | `file.search.cwd` 加 workspace 白名单 | pendingCwd 本就来自任意路径选择，白名单形同虚设或误伤；与 session 路双标 | D6 |
 | `#` 候选按 pendingCwd 过滤 | 漏掉跨项目引用（G2 明确全量）；TUI 即全量 | D7 |
+| 为 landing 引用引入预算层（体积预估 + 超限提示） | xyz 不持被引 session 的 token 计量权威，JSONL 字节近似误判高；panel 同场景无此层，双轨语义不一致 | D8（2026-09-07 补） |
 | 验收场景「清空 workspace 记录不选目录」单场景验证 `$` 不弹 + `#` 正常弹（R1 原稿 S4） | 启动预填（`initApp` `presetCwd`）使命题不可构造：有历史 session 时预填生效 `$` 会弹；真造出 pendingCwd=null 则 sessions 必为空、`#` 也无数据——两通过标准互斥。拆为 S4a（预填常态）+ S4b（隔离数据目录构造 null 态，两符号一致不弹） | §4 S4（R1 审查 P0-13） |
 
 ---
@@ -292,3 +298,4 @@ ComposerInput.getSegments()  ← chip DOM → segment（insertSessionChip/insert
 |---|---|---|
 | R1 | 对抗式审查（`.review/design-review-landing-symbols-r1.md`，1 must-fix + 3 suggestions） | ①P0-13：S4 拆为 S4a/S4b（反例：initApp 预填使命题不可构造，两通过标准互斥）；②symbol-system.md 三处引用编号修正（Out 清单实为第 5 条、无 §4.4 小节、空态条目实为 §5 待验证清单第 4 条）；③S7 措辞修正（A5 保留不翻，与 U6/S3 对齐）；④U1/§2.7/§3.2 补 reply 消息名 `:result` 后缀（照 `file.search:result` 惯例） |
 | R2 | 聚焦复审（新 agent 因原复审进程僵死换防，0 must-fix + 0 suggestion + 2 INFO，报告同文件追加第 2 轮节） | ①S4a 行号收紧 358-370→358-366；②S4a 步骤列补显式前提「最近 session 目录仍存在」。审查确认：S4b env 链无 dev 绕过（paths.ts:41 纯读 env / main.ts dev 兑底 `env ?? ~/.xyz-agent-dev` / process-control.ts:271 显式透传），交叉引用五处全对齐，**设计达到 DoR** |
+| R3 | 对抗式审查修复文档批（adversarial-review-fixes u7，LD-3 回写⑤） | 补 D8「大 session 引用成本」讨论段：landing 首发引用大 session 的 session_read 注入量/时延与 panel 同链路同风险共担，分页由模型控制（outline/detail/limit），不新增预算层（被否理由与重审条件见 D8 + 被否谱系） |

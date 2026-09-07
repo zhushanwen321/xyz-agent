@@ -95,6 +95,7 @@ graph TD
 ## 7 残留风险与变更历史
 
 - 残留风险（承接设计 out of scope，非本轮缺陷）：worker detach / zcode 存活接回 / 嵌套 sync 批恢复 / E9 跨键残余窗——见设计 §1.2 Out of scope 与被否谱系。
+- **探针手工复跑 SOP（2026-09-07 登记，adversarial-review-fixes B4 裁决：登记不搬 CI——探针需真实模型凭证，结构性不可进 CI）**：升级 pi 版本或改动 manifest 写点 / 屏障逻辑（flushBatch 时序、`appendBatchFinalizedEntry`、`finalizeOrphanRecord` merge、E1 判定口径、settled 重扫）后，必须在本地 pi CLI 复跑 v2/v3 探针（`scripts/probes/subagent-sync-collect/` V2 含成功成员崩溃批 / V3 kill -9 全灭，实跑记录回写 RESULTS.md）——真实 fs 时序回归目前只有这条手工防线（CI 回归防线 = subagent-core 真实文件通路集成测试）；SOP 同步登记 TEST-STRATEGY.md 回归基线表。
 - lint 存量红（W1 核验时确认，均非本轮引入）：①subagent-service.ts max-lines warning（HEAD 既有 1512>1450，W1 净增 11 行中 10 行为注释，skipComments 计数不变；修复需拆文件且 W2/W3 继续共改——后续重构议题）；②~~scripts/probes a2/a6 的 no-unused-vars error（v1 探针遗留，W4 领地处置）~~ 已于 W4 commit 878675154 闭环（a2 弃用未用 ns 参数 + a6 删死函数）。
 - 探针 P-settled 若发现 pi 事件分发为单 handler 覆盖语义，W2 降级并入 ledger host 分发链（设计 D4 降级路径），记合理偏差。
 - 变更历史：

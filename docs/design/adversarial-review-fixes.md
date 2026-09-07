@@ -323,3 +323,39 @@ Windows powershell 探测维持 fail-closed 登记，待 Windows 实机；golden
 依赖：u1/u2/u3 同改 `useChat.ts`/`send.ts` 有文件合并冲突面——按 u2 → u1 → u3 串行实施（A 组优先），u4/u5/u6 可与前三者并行（不同文件域），u7 收尾。
 
 **待验证检查点（实施期确认，不预写结论）**：① 裸/u- 标记与 sidecar key 空间互斥的专项用例（现有 msg-id-mapper 测试无裸 uuid 形态用例，需新增）+ backfill 裸 id 直查分支对非 defer 裸 uuid 文本的误命中防御（DEFER 标记正则与条目 id 全等匹配）；② submitQueuedEntry 签名变更对 core 现有 5 个测试文件的影响面（影响面审实测恰 5 个）；③ C3 指针行附 limit 后 a4 探针 fixture 同步；④ pi CLI 单命令长度上限（D-A2-4 encode 膨胀最坏 ~100KB 是否可承受，超限走降级块先行）；⑤ landing 首发 segments 序列化是否确实把 skill 标记带进 create prompt（MF-C 链路终验——reviewer 已核 `session-manager-handler.ts:235` sendDirect 无注入，序列化侧实施时确认）。
+
+---
+
+## 6. 实施记录（2026-09-07，u7 收尾登记）
+
+### 6.1 单元 commit
+
+| 单元 | 内容 | commit |
+|------|------|--------|
+| u2 | 双旁路注入 + 出站点守卫（A2，§3.2） | `efd7207ed` |
+| u1 | defer 队列 segments 化（A1，§3.1） | `ed09450b5` |
+| u3 | defer/steer 行为批（D1/D2/D3，§3.4） | `d47ad3af4` |
+| u4 | 守卫批（B1/B2/B3，§3.3） | `d6d5d09e3` |
+| u5 | 文案批（C1-C7 + D6 #15/#16/#17） | `3420d5502` |
+| u6 | 行为杂项批（D4/D5/D7 + D6 #1-14） | pending（编排方补） |
+| u7 | 文档批（回写 5 + 登记 16 + 本节） | pending（编排方补） |
+
+### 6.2 §2.6 台账 51 处置单元 → commit 映射
+
+| 源 | ID → 单元（commit） |
+|----|--------------------|
+| occupancy | OCC-1 → u1（`ed09450b5`）；OCC-2/OCC-3/OCC-4 → u3（`d47ad3af4`）；OCC-6 → u6（pending）；OCC-5/OCC-7 → u7 登记（pending） |
+| background-task | BG-2 → u5（`3420d5502`）；BG-1/BG-4/BG-6/BG-7 → u6（pending）；BG-3 → u7 回写③（pending）；BG-5/BG-8 → u7 登记（pending） |
+| sync-collect | SC-3/SC-4/SC-6 → u5（`3420d5502`）；SC-1/SC-2/SC-8/SC-11 → u6（pending）；SC-5/SC-7 → u7 回写②④（pending）；SC-9/SC-10 → u7 登记（pending） |
+| multi-skill | MS-1 → u2（`efd7207ed`）；MS-2/MS-3 → u4（`d6d5d09e3`）；MS-4/5/6 → u5（`3420d5502`）；MS-7/MS-8/MS-9 → u7 登记（pending） |
+| gen-stats | GS-3/4 → u5（`3420d5502`）；GS-2/GS-7/GS-8 → u6（pending）；GS-1 → u7 回写①（pending）；GS-6 → u5 文案 + u7 登记（`3420d5502` / pending）；GS-5/GS-9 → u7 登记（pending） |
+| landing | LD-1/LD-2/LD-4/LD-5 → u6（pending）；LD-3 → u7 回写⑤（pending） |
+| sidebar-filter | SF-2 → u4（`d6d5d09e3`）；SF-4 → u5（`3420d5502`）；SF-1/SF-3 → u6（pending）；SF-5 → u7 登记（pending） |
+
+行数对账：u1 1 + u2 1 + u3 3 + u4 3 + u5 7 + u6 18 + u7 18 = 51（GS-6 双落按主归属 u5 计数、u7 侧登记行为另计不重复）。复审新增登记项（D-A2-4 预算近似与 encode 膨胀、D-A1-R2 排队期失效窗口、A1 队列内存态语义——无独立台账 ID）随 u7 落 multi-skill 设计 §3.5-⑦ 与 occupancy impl-plan 遗留栏（指针回本文档）。
+
+### 6.3 u7 落地清单
+
+**回写 5**：① `composer-gen-stats.md` 场景 5c 改「显 0%」+ 非 cache 模型恒 0% 语义说明（对齐 §3.1 失败路径表 / §3.5 错误规格既有口径）；② `subagent-sync-collect-v2.md` §3.1 失败与逃生——ES2 文案指引对齐实装（family / 完整 sa- id / find，`tool-handler.ts` formatSaIdNotFound；删「指引绝对路径形态」宣称）；③ `background-task-sidebar-view.md` §3.1 损坏自愈补 runtime 读侧 `readRegistryEntriesWithStatus` rename `.corrupt`（UI 打开即隔离现场）；④ `subagent-sync-collect.md` §3.1.3 幂等窗口补 flush 落标循环非原子窄窗（异 hash 小批补发 → 未落标成员 at-least-once 重复投递）；⑤ `landing-composer-session-file-symbols.md` 补 D8 大 session 引用成本段（+被否谱系/修订历史 R3）。
+
+**登记 16**：新落 12——A2 预算近似 + encode 膨胀（multi-skill 设计 §3.5-⑦，指针 D-A2-4，检查点④结论未回填如实标注）；B4 探针 SOP（v2 impl-plan §7 + TEST-STRATEGY 回归基线表）；批缓冲上限维持（v1 设计 D2 代价③）；mtimeMs 粒度（bg-task 设计 D2 粒度边界）；SKILL.md 自含标记逃逸（multi-skill 设计 §3.5-⑥）；bash 双数据源（ActivityStrip.vue 头注）；乐观并集长期方向（occupancy impl-plan 遗留栏）；RPC 传输延迟口径（gen-stats-service.ts D2 口径注）；current 无窗口过滤（gen-stats 设计 D4 登记段）；FAST_TIMEOUT 10s（gen-stats impl-plan §7）；A1 排队期失效窗口 + 队列内存态（occupancy impl-plan 遗留栏指针）。核对已有登记跳过 4——steer 重复注入（multi-skill §3.5-② 跨消息不去重 + 重审条件，覆盖 steer 子形态）、skillNotice reconcile 锚点失配（multi-skill impl-plan §7 u5 偏差①②：无 clientUuid 降级 toast + reconcile 签名幂等）、Windows 实机（bg-task impl-plan §7 留 Windows 实测）、waiting 残留（sidebar-filter 设计 D4 R2-S1 + impl-plan §7）。

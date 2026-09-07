@@ -166,6 +166,11 @@ cd packages/renderer && pnpm vitest run <相关>
 - V4b① 文案偏差：smart-context 工具触发压缩时活动条显示「压缩中」而非「正在自动压缩上下文」——根因 pi `compact()` 固定 emit reason:"manual"（工具触发与用户手动在 pi 侧同源，红线不可改），xyz 侧无区分信号；接受现状，用户感知无损（压缩指示本身正确）。
 - V6a① flush 断连 toast 端到端未复现：本机 RTT≈0，RPC 完成快于 setOffline 生效（+28/+83/+152ms 三档均未命中窗口）——环境构造限制非功能反证；toast 机制由单测 TC11 覆盖（带原因断言）；V6a②③（气泡保持/队列保留/恢复自动重放）端到端 pass。
 
+**dev-0.9.15 对抗式审查登记（2026-09-07，adversarial-review-fixes u7；裁决 SSOT 见该文档）**：
+- **乐观并集长期方向（OCC-5）**：长期——乐观置位应由发送链路写 occupancy 投影（发送时刻 runtime 先广播/回写 turn=dispatching），消除 renderer `effectivePhase`（`composer-shell.ts:288`）的「occupancy 投影 ∪ 本地乐观视图」并集第三副本——投影成为唯一权威，RTT 窗口判定不需要双源。本轮只登记不改（并集是 RTT 窗口的正确防御，双源一致性风险已被「失配落 direct 由拒绝兜底入队自愈」闭合）。
+- **A1 排队期文件失效窗口扩大（D-A1-R2，指针）**：defer 队列 segments 化（adversarial-review-fixes §3.1 A1）后 image/file 段的路径引用在小时级排队窗口内文件被删 → 投递成功但 LLM read 失败——与直发同款语义、窗口从秒级扩到小时级；失败可见可恢复，裁决登记不改。论证 SSOT = adversarial-review-fixes.md D-A1-R2。
+- **A1 队列内存态语义（指针）**：defer 队列仍为内存态、应用重启丢队——occupancy 终态既有语义（设计 §1 out-of-scope「defer 队列保持内存态」）不变，A1 segments 化未改变持久化边界；裁决与终态声明见 adversarial-review-fixes.md §3.1 A1 终态段。
+
 **变更历史**：
 - 2026-09-05：计划创建。用户评审说明：单元切分为设计文档 §5 P1-P4 的机械细化（粒度/验收条款直接来自用户已审的 §4/§5），用户已显式指令「开始开发」——评审门以此记录通过，破土。
 - 2026-09-05：全部 9 单元 committed（62d8bb1a7..a52237ec0，79 文件 +5382/-702）。u4b 存在 subagent 违反零 git 约束自行 commit（cdbe3ef60），内容经编排者核验合格保留。

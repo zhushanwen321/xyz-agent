@@ -5,6 +5,16 @@
 
   收编三处分散的「进行中」指示（原 compacting 浮层 / TurnMeta dispatching 思考占位 /
   executing bash 行），按优先级纵向堆叠（compacting > bash > thinking / settling）：
+
+  bash 双数据源语义分工（occupancy OCC-7 登记，2026-09-07）：「bash 占用」在系统内有两
+  条帧路、语义不同不合并——① session.occupancy 帧（state topic 三维快照的 bash 布尔，
+  runtime dispatcher sendBash 置位 / bashResult 复位）是**占用判定权威**，发送分流器
+  （composer-shell effectivePhase → D6 路由表 bash 行）与发送位四态消费它；②
+  message.bashStart / message.bashResult 事件帧 → core bash-effects ephemeral 分区
+  （executingBash，本组件 bash 行展示源）是**瞬时展示态**（「正在执行 + 命令」，终态即清）。
+  两路帧同源同生命周期（dispatcher 同批广播），但消费域不同：本组件不读 occupancy bash
+  维（展示靠 executingBash 拿命令文本），发送位不读 bashStart 帧（判定靠 occupancy 权威
+  快照，避免事件帧丢失即误判可发）——语义分工维持，非重复实现。
   - compacting：手动 →「压缩中」；threshold/overflow（reason 文案源 = setCompactingReason
     通路，u5b 保留）→「正在自动压缩上下文」
   - bash：「正在执行」+ mono 命令

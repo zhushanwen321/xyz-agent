@@ -264,6 +264,10 @@ runtime 用 node `readline` 解析 pi stdout JSONL（`packages/runtime/src/infra
 
 ⑤ **`normalizeContent` 纯文本投影面（P0-12 登记）**。`segmentsToText` 注释标明其双用途（「归一化展示用 + pi prompt 序列化唯一实现」，`segments.ts:54`），skill 分支改产标记后，展示类消费方看到 `<xyz-skill .../>` 而非 `/skill:name`：复制消息（`UserBubble.vue:101`）——非自然语言形态变化，可接受；**编辑重发草稿回填**（`UserBubble.vue:221` `draftText = normalizeContent(content)`）——旧消息重发时 composer 显示标记文本而非 chip（视觉退化，重发后 runtime 再展开仍生效）——优化项（从原消息 Segment[] 重建 chip 而非文本回填）经评估延期未实施：编辑重发为低频路径，文本回填后 runtime 再展开仍生效，仅视觉退化；重审条件=用户反馈编辑重发体验；会话摘要/标题（`summarize-turn.ts:21`）、系统通知（`notify-toast.ts:56`）——短标记进摘要 prompt/通知文案，可接受；滚动量计算（`useMessageStreamScroll.ts:61`）——无影响。**判定**：①③④可接受，②优化项经评估延期未实施（不阻塞主链路，处置见上）。
 
+⑥ **SKILL.md 自含标记逃逸（2026-09-07 登记，adversarial-review-fixes MS-8 维持）**。SKILL.md 正文自身含字面标记形态（`<skill>` / `<xyz-skill` / `<xyz-skills>` 字样，如写注入格式文档的 skill）经全文注入后进入消息文本，可能形成嵌套块/伪块形态。**量级**：现产线解析器按「嵌套块不在生产形态中」假设处理（`skill-marker.ts` 降级块正则非贪婪取首个闭合标签；`<skill>` 展开块按 pi 原生形态解析）——自含标记只出现在块内正文时被当普通文本保留，不误剥离/误还原；仅在自含形态恰好构成完整可解析块且位于反解析扫描路径（sidecar 丢失的兜底反解析 / message-converter parse）时才可能被误识别为额外 chip。**恢复路径**：偏差仅限显示层（badge 多还原/少还原），pi 已落盘的实际内容不变。**重审条件**：出现 SKILL.md 实际含标记字样的 skill（作者在正文写注入格式示例）且反解析误命中时，评估展开时对 SKILL.md 正文内的标记形态做转义或剥离。**判定**：可接受（联合概率极低，与 ③ 手打字样同族）。
+
+⑦ **subagent/landing 出站注入的预算近似与 encode 膨胀（2026-09-07 登记，指针——裁决与论证 SSOT 在 [adversarial-review-fixes.md](adversarial-review-fixes.md) D-A2-4）**。①注入预算 80% 阈值按主 session contextWindow 计算，subagent / 新 session 实际窗口可能更小——阈值偏松，pi 侧既有上下文裁剪兜底（v1 已知近似，维持）；②注入产物（≤50KB 全文）经 `encodeDirectiveText`（反斜杠翻倍 + 换行转义）后命令长度膨胀，代码密集 SKILL.md 最坏接近翻倍（~100KB 命令串）——pi CLI 单命令长度上限的探针确认（adversarial-review-fixes §5 检查点④）截至 u2 落地尚未回填结论；超限兜底 = 降级块先行（降级块 <1KB 无膨胀问题），出现单命令超长报错即按该检查点处置。
+
 ---
 
 ## 4. 验收
