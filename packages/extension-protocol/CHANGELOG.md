@@ -1,5 +1,11 @@
 # @xyz-agent/extension-protocol
 
+## 0.8.2
+
+### Patch Changes
+
+- bbd8e5e8a: README fixes: example fidelity and structure alignment; session-manager nested {action,params} fix guidance split by entry form (ghost-entry guidance).
+
 ## 0.8.1
 
 ### Patch Changes

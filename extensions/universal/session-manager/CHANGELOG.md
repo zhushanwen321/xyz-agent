@@ -1,5 +1,11 @@
 # @zhushanwen/pi-session-manager
 
+## 0.1.6
+
+### Patch Changes
+
+- bbd8e5e8a: chore: refresh dependency range (triggered by @xyz-agent/extension-protocol@0.8.1 → @xyz-agent/extension-protocol@0.8.2)
+
 ## 0.1.5
 
 ### Patch Changes

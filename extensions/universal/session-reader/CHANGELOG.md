@@ -1,5 +1,11 @@
 # @zhushanwen/pi-session-reader
 
+## 0.4.0
+
+### Minor Changes
+
+- bbd8e5e8a: session_read gains a result action to retrieve collected subagent results directly from a session.
+
 ## 0.3.1
 
 ### Patch Changes

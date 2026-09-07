@@ -1,5 +1,11 @@
 # @zhushanwen/pi-subagent-workflow
 
+## 8.9.0
+
+### Minor Changes
+
+- bbd8e5e8a: Sync batch collection v2: batch-member manifests are written at finalized exit, settled-state rescans are bounded, and batch markers survive orphan overwrites, making collect recoverable across crash windows. Also fixes the published npm package missing session-lifecycle.ts (8.8.1 regression).
+
 ## 8.8.1
 
 ### Patch Changes

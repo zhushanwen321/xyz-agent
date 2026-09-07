@@ -1,5 +1,11 @@
 # @zhushanwen/pi-base-tool-enhance
 
+## 0.5.0
+
+### Minor Changes
+
+- bbd8e5e8a: Background tasks: killing intent is now read back when the poller exits, so kill requests that race with task completion are confirmed instead of silently dropped. Background spawn and task-store lifecycle bookkeeping hardened accordingly.
+
 ## 0.4.1
 
 ### Patch Changes

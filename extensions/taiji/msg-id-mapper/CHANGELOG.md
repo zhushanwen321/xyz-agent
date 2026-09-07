@@ -1,5 +1,11 @@
 # @zhushanwen/pi-msg-id-mapper
 
+## 1.0.7
+
+### Patch Changes
+
+- bbd8e5e8a: Document the msg-id marker format SSOT (regexes shared by shape with the xyz-agent send side; both sides must change together) and harden tag-strip tests.
+
 ## 1.0.6
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @zhushanwen/subagent-core
 
+## 0.6.0
+
+### Minor Changes
+
+- bbd8e5e8a: Sync batch collection v2: collectCoordinator routing, batch buffer with notifyBatch, two-stage budget with truncation pointer, crash-recovery hook and dispose conversion, batch-member manifests written at finalized exit, bounded agent_settled rescans, and batch markers preserved across orphan overwrites — making collect recoverable across crash windows.
+
 ## 0.5.1
 
 ### Patch Changes
