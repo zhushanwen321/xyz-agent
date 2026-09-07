@@ -141,17 +141,19 @@ describe('convertPiHistory - skill block parsing', () => {
     expect(content.filter((s) => s.type === 'text').map((s) => s.text)).toEqual(['tail'])
   })
 
-  it('keeps whitespace-only trailing text as-is after block (no trim, preserve-content policy)', () => {
+  it('drops whitespace-only trailing text after block (marker-strip trimEnd, delivery-baseline policy)', () => {
     const messages = convertPiHistory(skillUser(
       '<skill name="x">body</skill>   \n  ',
     ))
     const content = messages[0].content as any[]
     expect(content.find((s) => s.type === 'skill')?.name).toBe('x')
-    // [语义变更登记 2026-09-06] 升级前 match[3].trim() 剥尾部空白 → 空串不产 text segment；
-    // 升级后区间切片正文原样保留（deviation：正文保留优先，与设计 §3.5-③ / 场景 4③
-    // 断言语义一致）——尾部纯空白非空串 → 保留空白 text segment（badge/渲染无视觉影响；
-    // 标准形态 block+"\n\n"+args 的 \n\n 分隔符被吞入 block 区间，args 仍不带前导换行）。
-    expect(content.find((s) => s.type === 'text')?.text).toBe('   \n  ')
+    // [语义变更登记 2026-09-07] D7 升级时本形态曾锁定「尾部纯空白保留为 text segment」
+    // （preserve-content policy）；簇 A2（decf7d289，defer 队列标记确认通道）在 user 投影
+    // 剥 defer marker 后统一 trimEnd（core convertMessageBody 单点）——剥后基线文本 =
+    // confirmDelivery overlay 文本，mergeBaselineWithLive 文本去重命中不双计。本形态
+    // trimEnd 后无剩余正文 → 不产 text segment，仅 skill（与 core e-user-pi2 形态一致）。
+    // 正文保留语义对非空白内容不变（见上方 multi-block 用例）。
+    expect(content.find((s) => s.type === 'text')).toBeUndefined()
   })
 })
 
