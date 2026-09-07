@@ -337,20 +337,20 @@ Windows powershell 探测维持 fail-closed 登记，待 Windows 实机；golden
 | u3 | defer/steer 行为批（D1/D2/D3，§3.4） | `d47ad3af4` |
 | u4 | 守卫批（B1/B2/B3，§3.3） | `d6d5d09e3` |
 | u5 | 文案批（C1-C7 + D6 #15/#16/#17） | `3420d5502` |
-| u6 | 行为杂项批（D4/D5/D7 + D6 #1-14） | pending（编排方补） |
-| u7 | 文档批（回写 5 + 登记 16 + 本节） | pending（编排方补） |
+| u6 | 行为杂项批（D4/D5/D7 + D6 #1-14） | `b83245487` |
+| u7 | 文档批（回写 5 + 登记 16 + 本节） | `79cb5e86c` |
 
 ### 6.2 §2.6 台账 51 处置单元 → commit 映射
 
 | 源 | ID → 单元（commit） |
 |----|--------------------|
-| occupancy | OCC-1 → u1（`ed09450b5`）；OCC-2/OCC-3/OCC-4 → u3（`d47ad3af4`）；OCC-6 → u6（pending）；OCC-5/OCC-7 → u7 登记（pending） |
-| background-task | BG-2 → u5（`3420d5502`）；BG-1/BG-4/BG-6/BG-7 → u6（pending）；BG-3 → u7 回写③（pending）；BG-5/BG-8 → u7 登记（pending） |
-| sync-collect | SC-3/SC-4/SC-6 → u5（`3420d5502`）；SC-1/SC-2/SC-8/SC-11 → u6（pending）；SC-5/SC-7 → u7 回写②④（pending）；SC-9/SC-10 → u7 登记（pending） |
-| multi-skill | MS-1 → u2（`efd7207ed`）；MS-2/MS-3 → u4（`d6d5d09e3`）；MS-4/5/6 → u5（`3420d5502`）；MS-7/MS-8/MS-9 → u7 登记（pending） |
-| gen-stats | GS-3/4 → u5（`3420d5502`）；GS-2/GS-7/GS-8 → u6（pending）；GS-1 → u7 回写①（pending）；GS-6 → u5 文案 + u7 登记（`3420d5502` / pending）；GS-5/GS-9 → u7 登记（pending） |
-| landing | LD-1/LD-2/LD-4/LD-5 → u6（pending）；LD-3 → u7 回写⑤（pending） |
-| sidebar-filter | SF-2 → u4（`d6d5d09e3`）；SF-4 → u5（`3420d5502`）；SF-1/SF-3 → u6（pending）；SF-5 → u7 登记（pending） |
+| occupancy | OCC-1 → u1（`ed09450b5`）；OCC-2/OCC-3/OCC-4 → u3（`d47ad3af4`）；OCC-6 → u6（`b83245487`）；OCC-5/OCC-7 → u7 登记（`79cb5e86c`） |
+| background-task | BG-2 → u5（`3420d5502`）；BG-1/BG-4/BG-6/BG-7 → u6（`b83245487`）；BG-3 → u7 回写③（`79cb5e86c`）；BG-5/BG-8 → u7 登记（`79cb5e86c`） |
+| sync-collect | SC-3/SC-4/SC-6 → u5（`3420d5502`）；SC-1/SC-2/SC-8/SC-11 → u6（`b83245487`）；SC-5/SC-7 → u7 回写②④（`79cb5e86c`）；SC-9/SC-10 → u7 登记（`79cb5e86c`） |
+| multi-skill | MS-1 → u2（`efd7207ed`）；MS-2/MS-3 → u4（`d6d5d09e3`）；MS-4/5/6 → u5（`3420d5502`）；MS-7/MS-8/MS-9 → u7 登记（`79cb5e86c`） |
+| gen-stats | GS-3/4 → u5（`3420d5502`）；GS-2/GS-7/GS-8 → u6（`b83245487`）；GS-1 → u7 回写①（`79cb5e86c`）；GS-6 → u5 文案 + u7 登记（`3420d5502` / `79cb5e86c`）；GS-5/GS-9 → u7 登记（`79cb5e86c`） |
+| landing | LD-1/LD-2/LD-4/LD-5 → u6（`b83245487`）；LD-3 → u7 回写⑤（`79cb5e86c`） |
+| sidebar-filter | SF-2 → u4（`d6d5d09e3`）；SF-4 → u5（`3420d5502`）；SF-1/SF-3 → u6（`b83245487`）；SF-5 → u7 登记（`79cb5e86c`） |
 
 行数对账：u1 1 + u2 1 + u3 3 + u4 3 + u5 7 + u6 18 + u7 18 = 51（GS-6 双落按主归属 u5 计数、u7 侧登记行为另计不重复）。复审新增登记项（D-A2-4 预算近似与 encode 膨胀、D-A1-R2 排队期失效窗口、A1 队列内存态语义——无独立台账 ID）随 u7 落 multi-skill 设计 §3.5-⑦ 与 occupancy impl-plan 遗留栏（指针回本文档）。
 
