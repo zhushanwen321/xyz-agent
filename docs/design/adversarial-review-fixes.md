@@ -47,7 +47,7 @@ xyz-agent 的消息发送链路：用户在 Composer（输入框）输入文本 
 | **@ 定向** | segments 含 subagent 段 | 序列化进 text → `subagentAction` → runtime `session-records.ts:501` 直接 `client.prompt('/subagents ...')`，**不经 SkillInjector** | **MF-B：skill 标记字面透传** |
 | **landing 首发直投** | 新建任务首条消息 | 序列化进 create prompt → `session-manager-handler.ts:235` `sendDirect` → `session-delivery-registry.ts:67` `client.prompt(content)`，**不经 SkillInjector**（设计复审新发现） | **MF-C：landing 首发带 skill chip 字面透传** |
 
-runtime 侧 `client.prompt` 调用点全量清单（grep 实测，含内部命令）：
+runtime 侧 `client.prompt` 调用点全量清单（grep 实测，含内部命令；**handoff-service 两处为守卫实施期实测抓回的清单补遗**——设计期 grep 用 `client.prompt(` 字面量，该文件变量名 `srcClient`/`newClient` 不同被漏，守卫按「任意接收者」扫描后抓回，登记豁免见 D-A2-3）：
 
 | 调用点 | 内容性质 | 注入器 |
 |---|---|---|
@@ -58,6 +58,7 @@ runtime 侧 `client.prompt` 调用点全量清单（grep 实测，含内部命�
 | `session-records.ts:494`（subagents cancel） | 内部命令（id） | 不需要 |
 | `session-records.ts:468`（workflows action） | 内部命令 | 不需要 |
 | `trace-sync.ts:389`、`session-service.ts:672` | 内部命令（`/__xyz_*__`） | 不需要 |
+| `handoff-service.ts:245` `srcClient.prompt(buildHandoffPrompt())` / `:292` `newClient.prompt(finalPrompt)` | 固定模板 / LLM 产出 + sanitizeReply 清洗后附言（非 composer skill chip 出口） | 豁免（守卫白名单登记） |
 
 物理数据流（defer 路径，标注丢失点）：
 
@@ -167,7 +168,7 @@ Composer DOM（文本 + chips + 图片）
 | | SF-4 | 用词分叉 | §3.4 C7（裁决登记） |
 | | SF-5 | waiting 残留 | §3.6 登记（维持） |
 
-计数口径：54 条原始 → MS-4/5/6 合一（−2）、GS-3/4 合一（−1）→ **51 个处置单元**（台账表行数 51，全文单一口径）；分类：架构级 2（A1/A2，A2 含 MF-B/MF-C 两缺口）+ 守卫 4（B1/B2/B3/B4 裁决）+ 文案/prompt 6（C1-C7，C5/C4 各含同批项）+ 行为 6（D1-D5/D7）+ 小 bug 17（§3.5，#7 拆 7a/7b 同文件同批）+ 文档回写 5 + 登记确认 16（含复审新增 2 项）。原始审查报告未落盘为独立文件（各 impl-plan 登记栏为出处），本台账即对账 SSOT。
+计数口径：54 条原始 → MS-4/5/6 合一（−2）、GS-3/4 合一（−1）→ **51 个处置单元**（台账表行数 51，全文单一口径）；分类：架构级 2（A1/A2，A2 含 MF-B/MF-C 两缺口）+ 守卫 4（B1/B2/B3/B4 裁决）+ 文案/prompt 6（C1-C7，C5/C4 各含同批项）+ 行为 6（D1-D5/D7）+ 小 bug 17（§3.5，#7 拆 7a/7b 同文件同批）+ 文档回写 5 + 登记确认 16（含复审新增无 ID 登记 3 项：D-A2-4 预算近似与 encode 膨胀、D-A1-R2 排队期失效窗口、A1 队列内存态语义）。原始审查报告未落盘为独立文件（各 impl-plan 登记栏为出处），本台账即对账 SSOT。
 
 **小 bug vs 架构问题的分界判据**：修复是否存在方案分叉（≥2 个合理候选需要权衡长期架构）且影响数据流不变量。A1/A2/B1/B2/D1/D2/D7 满足；其余修法唯一或分叉可由既有约定直接裁决，归小 bug。
 
@@ -195,8 +196,8 @@ bash 后台任务运行中（小时级），用户输入「帮我看下这个报
 #### 关键决策
 
 - **D-A1-1 队列条目形态**：`QueuedMessage = { id, text, segments: Segment[], mode?, submitText? }`——`text` 为展示文本（draft，气泡/快照渲染统一用它），`segments` 为提交载荷，`submitText` 在**提交时**写入（= `segmentsToPrompt(segments)`，供 ①b 文本 FIFO 兜底匹配——审查确认 ①b 现比较源是条目 text 字段，富内容条目 draft ≠ 序列化文本会失配，故匹配源改 submitText）。send.rejected 静默重入队路径（useChat 内以已序列化 promptText 重入队）包成 `[{type:'text',text}]` 单段并同步写 submitText（原文本即提交文本）。
-- **D-A1-2 统一裸标记 + backfill 直查 sidecar（两轮设计复审后的终版裁决）**：defer 富内容提交**不能照搬** `submitSegments` 的 u- 标记编排，也不能双标记并存——send 与 steer 通道行为不对称：send 走 `client.prompt()` 触发 pi input hook（剥 u- 标记、建 clientUuid↔userEntryId 映射），**steer 走 `client.steer()`，pi 实装（0.84.4 `agent-session.js`）steer 路径不发 input hook**——任何依赖 u- 标记映射的回填方案对 steer 条目（flush 的第 2+ 条）结构性失效。终版裁决：**统一裸标记自包含回填**——①提交文本尾部只追加裸标记 `<!--xyz:msg:<entryId>-->`（既有形态，服务 ①a 确认）；②`submitQueuedEntry` 写 segments sidecar，**schema 形态（第 3 轮复审裁决）**：`SegmentsMetadataEntry` 新增可选字段 `deferEntryId`（裸 uuid），不复用 `clientUuid` 字段——msg-id-mapper 已约定 clientUuid = `u-<uuid>` 形态（`msg-id-mapper/src/index.ts:38`），复用会让同一字段两套写入方语义漂移；attachment-store 去重逻辑扩展按 `deferEntryId` 同款去重；③回填链插入点（第 3 轮复审修正）：reload 重放同经 `apply-entry-convert.ts:345` 的标记剥离（live 帧与 reload 同点），`backfillSegments` 拿到的 converted 文本已无裸标记——**裸 id 提取前移到 `rebuildHistoryFromEntries` 编排层**（convert 之前，从原始 entries/伪消息提取裸 id 与 entryIds 平行传入），`backfillSegments` 扩展签名接收；**判定顺序契约**：clientUuid 链（msg-id-mapper 映射）先、deferEntryId 直查兜底——defer 条目结构上无 clientUuid 映射（TAG_MATCH 只认 u- 前缀，裸 uuid 不命中 → hook no-op 不写 custom entry），两链数据不相交，顺序仅为契约防御（先走直查分支会改变非 defer 条目路径）。裸标记在 live 显示与 reload 重放两条链路均被既有 marker-strip 剥离（PS-26 锚定）；LLM 上下文中裸标记存活是既有 defer 单条文本语义（HTML 注释形态，影响可忽略）。被否谱系：「u- 单标记（照搬 submitSegments）—— ①a 确认失效击穿」「仅裸标记不写 sidecar —— live≡reload 击穿」「双标记并存 —— steer 通道不发 input hook，映射半边对 steer 条目结构性失效击穿」「投递后补写映射 —— steer 已入 pi 内存队列，无补写时机」「复用 clientUuid 字段存裸 id —— 字段语义两套写入方漂移」。互斥性护栏：裸/u- 标记与 sidecar key 空间互斥由正则结构与字符集保证但**无既有单测锁定，需新增专项用例**（检查点①）。
-- **D-A1-6 confirmDelivery 转态气泡段源（第 2 轮复审补）**：现状 `useCompactQueue.ts:214` 确认命中时 `appendUser(sid, [{type:'text', text: deliveredText}])`（draft 文本单段）——富内容条目照搬则转态气泡丢 chip badge。裁决：confirmDelivery 改为 `appendUser(sid, entry.segments)`（`deliveredText` 同步改用 submitText 派生）；appendUser 不写 sidecar（`store.ts:637`，影响面审核实），与 submitQueuedEntry 的 sidecar 写入路径互斥无双写。
+- **D-A1-2 统一裸标记 + backfill 直查 sidecar（两轮设计复审后的终版裁决）**：defer 富内容提交**不能照搬** `submitSegments` 的 u- 标记编排，也不能双标记并存——send 与 steer 通道行为不对称：send 走 `client.prompt()` 触发 pi input hook（剥 u- 标记、建 clientUuid↔userEntryId 映射），**steer 走 `client.steer()`，pi 实装（0.84.4 `agent-session.js`）steer 路径不发 input hook**——任何依赖 u- 标记映射的回填方案对 steer 条目（flush 的第 2+ 条）结构性失效。终版裁决：**统一裸标记自包含回填**——①提交文本尾部只追加裸标记 `<!--xyz:msg:<entryId>-->`（既有形态，服务 ①a 确认）；②`submitQueuedEntry` 写 segments sidecar，**schema 形态（第 3 轮复审裁决）**：`SegmentsMetadataEntry` 新增可选字段 `deferEntryId`（裸 uuid），不复用 `clientUuid` 字段——msg-id-mapper 已约定 clientUuid = `u-<uuid>` 形态（`msg-id-mapper/src/index.ts:38`），复用会让同一字段两套写入方语义漂移；attachment-store 去重逻辑扩展按 `deferEntryId` 同款去重；③回填链插入点（第 3 轮复审修正）：reload 重放同经 `apply-entry-convert.ts:345` 的标记剥离（live 帧与 reload 同点），`backfillSegments` 拿到的 converted 文本已无裸标记——**裸 id 提取前移到 `rebuildHistoryFromEntries` 编排层**（convert 之前，从原始 entries/伪消息提取），`backfillSegments` 扩展签名接收（**实施形态登记**：传参为 `Map<piEntryId, deferId>`（`buildDeferEntryIdMap`）而非平行数组——converted 与伪消息非 1:1（toolResult 合并/非 user-assistant 丢弃），以 piEntryId 为 key 关联比下标对齐更稳健）；**判定顺序契约**：clientUuid 链（msg-id-mapper 映射）先、deferEntryId 直查兜底——defer 条目结构上无 clientUuid 映射（TAG_MATCH 只认 u- 前缀，裸 uuid 不命中 → hook no-op 不写 custom entry），两链数据不相交，顺序仅为契约防御（先走直查分支会改变非 defer 条目路径）。裸标记在 live 显示与 reload 重放两条链路均被既有 marker-strip 剥离（PS-26 锚定）；LLM 上下文中裸标记存活是既有 defer 单条文本语义（HTML 注释形态，影响可忽略）。被否谱系：「u- 单标记（照搬 submitSegments）—— ①a 确认失效击穿」「仅裸标记不写 sidecar —— live≡reload 击穿」「双标记并存 —— steer 通道不发 input hook，映射半边对 steer 条目结构性失效击穿」「投递后补写映射 —— steer 已入 pi 内存队列，无补写时机」「复用 clientUuid 字段存裸 id —— 字段语义两套写入方漂移」。互斥性护栏：裸/u- 标记与 sidecar key 空间互斥由正则结构与字符集保证但**无既有单测锁定，需新增专项用例**（检查点①）。
+- **D-A1-6 confirmDelivery 转态气泡段源（第 2 轮复审补）**：现状 `useCompactQueue.ts:214` 确认命中时 `appendUser(sid, [{type:'text', text: deliveredText}])`（draft 文本单段）——富内容条目照搬则转态气泡丢 chip badge。裁决：confirmDelivery 改为 `appendUser(sid, entry.segments)`（**实施形态登记**：deliveredText 中间变量整体删除——appendUser 改收 segments 后无文本消费点，submitText 的实际消费在 ①b 匹配源，不再进转态路径）；appendUser 不写 sidecar（`store.ts:637`，影响面审核实），与 submitQueuedEntry 的 sidecar 写入路径互斥无双写。
 - **D-A1-3 提交管道**：flush 的 send/steer 通道经 `submitQueuedEntry(sid, entry)`（定义于 `useChat.ts:533`）传 segments，函数内部做序列化 + 双标记 + sidecar + api.send。被否：flush 直接调 useChat.send——会 appendUser（双气泡）+ B 策略分流（与 flush 的 send/steer 分派冲突）。steer 通道提交 segments 无障碍（runtime steerMessage 已挂注入器，主审核实）。
 - **D-A1-4 确认匹配**：①a 走裸标记 id 匹配（不变）；①b 文本兜底比较源改 `entry.submitText`——**覆盖面显式判定（第 3 轮复审补）**：submitText 与 pi 落盘文本「同源」仅对无改写段（text/image/file——序列化原文即落盘原文）成立；**含 skill 段条目 pi 落盘 = 注入展开后全文 ≠ submitText，①b 对其失配**——既有分层语义即「①b 只管标记被剥但文本未被改写」（`user-delivery.ts:129-131`），skill 展开属文本改写、由 ①a 独扛（PS-26 锚定标记两通路存活），①a+标记双失效时帧落 ②③ 现状链（不新增处理）。撤销边界（mode === undefined 可撤）与段无关，不变。
 - **D-A1-5 图片路径模式**：与直发一致（裸路径 + LLM read），不引入 base64。
@@ -246,7 +247,7 @@ bash 后台任务运行中（小时级），用户输入「帮我看下这个报
 - **C7 用词分叉（裁决：保留真差异 + 登记理由）**：后台命令「运行中」指进程 running 状态（进程域）；子代理「进行中」含 settling/waiting 流转（任务域）——概念域不同属真差异，i18n 注释登记理由。
 - **D1 defer 重投（推荐：占用短路）**：`armDeferFlushRetry` fire 回调加占用投影检查——仍忙则直接 return（不重排 timer），等 occupancy idle 帧触发现有 handler（帧驱动优先，timer 只兜「idle 帧丢失」）。被否：指数退避（把事件驱动复杂化为双驱动竞争，且不解决根因——timer 不知道 occupancy 已忙）。pending 气泡 hover 文案补当前占用类型（「等待命令执行结束/上下文压缩完成后发送」）。
 - **D2 routeSteer 失败恢复（推荐：steer 返回成败 + 双调用方同批消费）**：useChat.steer 错误策略从「内部 catch + toast」改为「catch + toast + return false」（成功 true）；消费方两处同批：① `send.ts` routeSteer 据 false 调 `restoreSegments`；② `submit.ts:81` onSteer 分支（经 useComposerSubmit / composer-shell 导出链）同款消费 boolean、失败恢复完整草稿（restoreSegments——S4 验收「文本 + chips 同款恢复」口径；submit.ts 现有 dep 仅 restoreInput 纯文本，不足以恢复 chips，D2 落地时给 ComposerSubmitDeps 增补 restoreSegments 注入）——steer 不抛后其既有 `catch → restoreInput → rethrow` 对 steer 成为 dead path，不处置则失败恢复悬空。mock 测试中 `await chat.steer` 不消费返回值，不受影响（实施时验证）。被否：routeSteer 不 clearInput 成功后清（steer 成功时序分散无单点）；throw 改造（破坏全部调用方错误约定）。
-- **D3 submitEdit 双发锁（推荐：复用 isSending）**：Turn.vue submitEdit 入口加与 send 同款 isSending 互斥。被否：pendingDirectSends 改多值容器（消费方按 sid 单条语义使用，改动面大收益同）。
+- **D3 submitEdit 双发锁（推荐：store 投影互斥；实施形态登记）**：实施为 UserBubble.vue submitEdit 入口互斥，锁信号用 chat store 的 `pendingSend` 投影（`isPendingSend` 注入）而非组件本地 isSending——本地 isSending 只防同组件双击，防不住「Composer send × UserBubble submitEdit」跨入口并发；pendingSend 是 send/editAndResend 提交前置位、message_start 清的最窄「正在提交」信号，且 UserBubble 对 Composer 的本地 ref 结构上不可达。未 provide isPendingSend 的旧壳层降级不互斥（兼容）。被否：pendingDirectSends 改多值容器（消费方按 sid 单条语义使用，改动面大收益同）。
 - **D4 切模型映射（推荐：条件回写）**：`recordSample` 写 1 前比较 `modelBySid.get(sid)`——已登记为其他模型时只落盘不回写（样本记到自带模型名下仍正确；漏帧窗口交既有恢复腿）。被否：时间戳仲裁（双时序源复杂度不成比例）。
 - **D5 截断 UI**：DetailPanel 消费 `truncated`——输出区顶部「输出超过 32KB，仅显示尾部」；元信息区补 outputFile 路径 + 复制。
 - **D7 landing 截断/空态（推荐：协议补 truncated + 两因空态区分）**：`file.search.cwd:result` 增 `truncated: boolean`（5000 截止触发），popover file 浮层底部条件提示「结果超过 5000 项已截断」；空态两因区分——加载失败显示「加载失败，点击重试」（浮层内重试入口），无结果显示「当前目录无匹配文件」。**与 D6 #10 的失败路径合流（第 2 轮复审补）**：#10 现设计「失败降级空候选 []」与 D7「失败显示错误态」语义反转，统一为 D7 口径——失败回写错误态标志（非空数组），浮层显示错误态 + 重试入口；#10 的快照守卫逻辑（成功路径）不变。被否：四因全区分（无 cwd/mock 两因本就不弹浮层）；仅文案不补协议（截断事实必须来自 runtime）。
@@ -256,8 +257,8 @@ bash 后台任务运行中（小时级），用户输入「帮我看下这个报
 | # | 位置 | 修法 |
 |---|---|---|
 | 1 | `session-message-handler.ts:421` | backgroundTask.output 的 maxBytes clamp 至 1MB |
-| 2 | `useBackgroundTasks.ts:133` | suppressedSids 挂 registerSessionCleanup 随 session 销毁清理 |
-| 3 | `gen-stats-store.ts` 原子写 | 写入时顺带清理同目录同名 `.tmp` 孤儿 |
+| 2 | `useBackgroundTasks.ts:133` | suppressedSids 有界化（实施形态偏离登记：设计原案「挂 registerSessionCleanup 销毁时清理」会让退订前迟到广播重新插入分区——销毁时同步清空使抑制使命未完成；实终态为**源枯竭有界释放**：物理订阅退订 + 在途 RPC settle 双枯竭后 delete，registerSessionCleanup 仅保留销毁时 add 抑制） |
+| 3 | `gen-stats-store.ts` 原子写 | 写入时清扫同目录**全部** `*.tmp` 孤儿（实施形态偏离登记：设计原案「同名 .tmp」在正常路径下与 atomicWrite 覆写语义重复、换模型后旧文件永不重写留死角——扩大为全清扫，前提：gen-stats 目录仅本 store 写入无旁观者） |
 | 4 | `protocol.ts:1163` | state topic 注释 4→6 个 |
 | 5 | `useSidebarCounts.ts:35` | badge 判据改 `subagentBucket(r) === 'active'` 一行 |
 | 6 | `SubagentList.vue:42` | `countSubagents` 包 computed |
@@ -333,7 +334,7 @@ Windows powershell 探测维持 fail-closed 登记，待 Windows 实机；golden
 | 单元 | 内容 | commit |
 |------|------|--------|
 | u2 | 双旁路注入 + 出站点守卫（A2，§3.2） | `efd7207ed` |
-| u1 | defer 队列 segments 化（A1，§3.1） | `ed09450b5` |
+| u1 | defer 队列 segments 化（A1，§3.1） | `ed09450b5`（**实际提交顺序登记**：u1 先于 u2 约 4 分钟落库——§5 计划的「u2 → u1 → u3 串行」为避免 useChat.ts/send.ts 冲突面的约束，实施时两单元文件域实际无交集故未按声明顺序执行，未起冲突） |
 | u3 | defer/steer 行为批（D1/D2/D3，§3.4） | `d47ad3af4` |
 | u4 | 守卫批（B1/B2/B3，§3.3） | `d6d5d09e3` |
 | u5 | 文案批（C1-C7 + D6 #15/#16/#17） | `3420d5502` |
@@ -352,10 +353,15 @@ Windows powershell 探测维持 fail-closed 登记，待 Windows 实机；golden
 | landing | LD-1/LD-2/LD-4/LD-5 → u6（`b83245487`）；LD-3 → u7 回写⑤（`79cb5e86c`） |
 | sidebar-filter | SF-2 → u4（`d6d5d09e3`）；SF-4 → u5（`3420d5502`）；SF-1/SF-3 → u6（`b83245487`）；SF-5 → u7 登记（`79cb5e86c`） |
 
-行数对账：u1 1 + u2 1 + u3 3 + u4 3 + u5 7 + u6 18 + u7 18 = 51（GS-6 双落按主归属 u5 计数、u7 侧登记行为另计不重复）。复审新增登记项（D-A2-4 预算近似与 encode 膨胀、D-A1-R2 排队期失效窗口、A1 队列内存态语义——无独立台账 ID）随 u7 落 multi-skill 设计 §3.5-⑦ 与 occupancy impl-plan 遗留栏（指针回本文档）。
+行数对账：u1 1 + u2 1 + u3 3 + u4 3 + u5 8 + u6 18 + u7 17 = 51（GS-6 双落按主归属 u5 计数、u7 侧登记行为另计不重复）。复审新增登记项（D-A2-4 预算近似与 encode 膨胀、D-A1-R2 排队期失效窗口、A1 队列内存态语义——无独立台账 ID）随 u7 落 multi-skill 设计 §3.5-⑦ 与 occupancy impl-plan 遗留栏（指针回本文档）。
 
 ### 6.3 u7 落地清单
 
 **回写 5**：① `composer-gen-stats.md` 场景 5c 改「显 0%」+ 非 cache 模型恒 0% 语义说明（对齐 §3.1 失败路径表 / §3.5 错误规格既有口径）；② `subagent-sync-collect-v2.md` §3.1 失败与逃生——ES2 文案指引对齐实装（family / 完整 sa- id / find，`tool-handler.ts` formatSaIdNotFound；删「指引绝对路径形态」宣称）；③ `background-task-sidebar-view.md` §3.1 损坏自愈补 runtime 读侧 `readRegistryEntriesWithStatus` rename `.corrupt`（UI 打开即隔离现场）；④ `subagent-sync-collect.md` §3.1.3 幂等窗口补 flush 落标循环非原子窄窗（异 hash 小批补发 → 未落标成员 at-least-once 重复投递）；⑤ `landing-composer-session-file-symbols.md` 补 D8 大 session 引用成本段（+被否谱系/修订历史 R3）。
 
 **登记 16**：新落 12——A2 预算近似 + encode 膨胀（multi-skill 设计 §3.5-⑦，指针 D-A2-4，检查点④结论未回填如实标注）；B4 探针 SOP（v2 impl-plan §7 + TEST-STRATEGY 回归基线表）；批缓冲上限维持（v1 设计 D2 代价③）；mtimeMs 粒度（bg-task 设计 D2 粒度边界）；SKILL.md 自含标记逃逸（multi-skill 设计 §3.5-⑥）；bash 双数据源（ActivityStrip.vue 头注）；乐观并集长期方向（occupancy impl-plan 遗留栏）；RPC 传输延迟口径（gen-stats-service.ts D2 口径注）；current 无窗口过滤（gen-stats 设计 D4 登记段）；FAST_TIMEOUT 10s（gen-stats impl-plan §7）；A1 排队期失效窗口 + 队列内存态（occupancy impl-plan 遗留栏指针）。核对已有登记跳过 4——steer 重复注入（multi-skill §3.5-② 跨消息不去重 + 重审条件，覆盖 steer 子形态）、skillNotice reconcile 锚点失配（multi-skill impl-plan §7 u5 偏差①②：无 clientUuid 降级 toast + reconcile 签名幂等）、Windows 实机（bg-task impl-plan §7 留 Windows 实测）、waiting 残留（sidebar-filter 设计 D4 R2-S1 + impl-plan §7）。
+
+### 6.4 悬空项披露与锚点口径
+
+- **B2 校准基线为字符比推算**（非 tokenizer 实测）：`skill-marker.test.ts` 的三类校准样本基线为 `CJK 0.8/char + 非CJK 3.5 chars/token` 推算（TODO 已标注），当前「偏差 ≤30% 断言」防的是公式与基线相对漂移，**不能**防公式与真实 token 数漂移——实测回填依赖 REAL_PI 环境（与检查点④同属真机 SOP），回填前 B2 防护强度低于设计 §3.3 原始声明。
+- **file:line 锚点口径**：本文档 §2/§3/§5 中的 file:line 为**设计撰写基线时点**的位置（§2 现状描述锚定缺陷时点、§3/§5 锚定设计时点）；实施后部分行号已漂移（函数/符号名可唯一定位，如 `armDeferFlushRetry` :234→:243、`submitQueuedEntry` :533→:556、`publishSkillNotices` 提取至 `skill-notice-publisher.ts`），终态位置以代码为准。

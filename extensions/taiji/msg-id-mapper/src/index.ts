@@ -44,7 +44,8 @@ const logger = getLogger('xyz-client-msg-id-mapper')
 // 场景多个标记拼接在同一 prompt 末尾时只剥掉第一个）。两正则分离避免 g 标志的 lastIndex
 // 状态污染（String.match 与全局 exec 混用易踩坑）。
 // [双侧同构字面量] 标记格式 SSOT = 本文件（marker 由 xyz-agent 发送侧注入、本扩展剥离）：
-// runtime message-dispatcher.publishSkillNotices 的 clientUuid 提取正则与本文件同构字面量，
+// runtime 侧 clientUuid 提取正则（原 message-dispatcher.publishSkillNotices，A2 后随
+// 编排提取迁至 skill-notice-publisher.ts 的 MSG_ID_TAG_RE）与本文件同构字面量，
 // 两侧禁单侧修改（收敛 shared 不可行——extension 独立发布体系不依赖 @xyz-agent/shared）。
 const TAG_MATCH = /<!--xyz:msg:(u-[0-9a-fA-F-]{36})-->/
 const TAG_STRIP = /<!--xyz:msg:u-[0-9a-fA-F-]{36}-->/g
