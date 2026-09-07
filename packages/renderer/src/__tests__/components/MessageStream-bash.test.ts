@@ -273,10 +273,14 @@ describe('MessageStream 共存钉扎（W5T1，streaming turn + bash 消息双挂
 })
 
 /**
- * W4 executing bash 瞬时行（turn-attribution D2 ephemeral 通道，完整形态）。
+ * W4 executing bash 瞬时行（turn-attribution D2 ephemeral 通道）。
+ *
+ * [u6a / D7 展示统一] 行渲染点已从 MessageStream 模板迁入 ActivityStrip 组件
+ * （data-testid 从 executing-bash-notice 变为 activity-strip-row-bash），生命周期与数据源
+ * （bash-effects 模块级 per-session Map）不变。
  *
  * 覆盖（出现/消失生命周期 + 内容）：
- * - bashStart 帧置位 → executing-bash-notice 行出现，含 i18n 前缀（zh locale「正在执行」）+ mono 命令
+ * - bashStart 帧置位 → ActivityStrip bash 行出现，含 i18n 前缀（zh locale「正在执行」）+ mono 命令
  * - bashResult 到达（abort 哨兵帧 command:''+cancelled:true 只清执行态不产 entry）→ 行消失
  * - 行位于 Virtualizer 之外（文档流），空消息 session 也可见——不依赖 virtua 窗口（与 skip 的
  *   T10/gap3 相反，本用例不受 happy-dom viewportSize=0 限制）
@@ -284,7 +288,7 @@ describe('MessageStream 共存钉扎（W5T1，streaming turn + bash 消息双挂
  * 状态说明：executingBash 是 core 模块级 per-session Map（不进 messages）；bashStartEffect /
  * bashResultEffect 哨兵分支均不解构使用 ctx，传最小 fake ctx 即可驱动真实 effect 代码路径。
  */
-describe('MessageStream executing bash 瞬时行（W4 完整形态）', () => {
+describe('MessageStream executing bash 瞬时行（[u6a] ActivityStrip bash 行）', () => {
   /** 最小 fake ctx：两个帧 handler 的目标分支都不触碰 ctx 字段（哨兵分支在解构后短路） */
   const fakeCtx = { messages: undefined, applyEntryFrame: undefined } as unknown as MessageEffectContext
 
@@ -303,27 +307,29 @@ describe('MessageStream executing bash 瞬时行（W4 完整形态）', () => {
     clearExecutingBash('sess-exec-bash')
   })
 
-  it('W4-E1: bashStart 置位 → 瞬时行出现（前缀文案 + 命令文本）；bashResult 到达 → 行消失', async () => {
+  it('W4-E1: bashStart 置位 → bash 行出现（前缀文案 + 命令文本）；bashResult 到达 → 行消失', async () => {
     const sid = 'sess-exec-bash'
     clearExecutingBash(sid)
     const wrapper = mountStream(sid)
 
-    // 初始：无执行态 → 瞬时行不渲染
-    expect(wrapper.find('[data-testid="executing-bash-notice"]').exists()).toBe(false)
+    // 初始：无执行态 → 活动条不渲染
+    expect(wrapper.find('[data-testid="activity-strip"]').exists()).toBe(false)
 
-    // bashStart 帧置位 → 瞬时行出现（live 中途出现的真实时序）
+    // bashStart 帧置位 → bash 行出现（live 中途出现的真实时序）
     bashEffects['message.bashStart']?.(fakeCtx, sid, { command: 'npm test', timestamp: 1 })
     await nextTick()
-    const row = wrapper.find('[data-testid="executing-bash-notice"]')
+    const row = wrapper.find('[data-testid="activity-strip-row-bash"]')
     expect(row.exists()).toBe(true)
     // W4 完整形态：i18n 前缀（renderer 测试 t() 从 zh-CN locale 真实取值）+ mono 命令文本
     expect(row.text()).toContain('正在执行')
     expect(row.text()).toContain('npm test')
+    // 旧渲染点清理：原 executing-bash-notice testid 不应再出现
+    expect(wrapper.find('[data-testid="executing-bash-notice"]').exists()).toBe(false)
 
-    // bashResult 到达（abort 哨兵帧：只清执行态不产 entry）→ 瞬时行消失，无残留 spinner
+    // bashResult 到达（abort 哨兵帧：只清执行态不产 entry）→ 行消失，无残留 spinner
     bashEffects['message.bashResult']?.(fakeCtx, sid, { command: '', cancelled: true })
     await nextTick()
-    expect(wrapper.find('[data-testid="executing-bash-notice"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="activity-strip"]').exists()).toBe(false)
 
     wrapper.unmount()
   })

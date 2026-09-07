@@ -72,7 +72,7 @@ describe('createSessionCommand - getArgumentCompletions', () => {
     await mkdir(cwdSessionDir, { recursive: true })
   })
   afterEach(async () => {
-    await rm(agentDir, { recursive: true, force: true })
+    await rm(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('空参数 → recent 列表（value=完整 uuid 剥 #，label 含预览）', async () => {
@@ -129,7 +129,7 @@ describe('createSessionCommand - handler select 流程', () => {
     await mkdir(cwdSessionDir, { recursive: true })
   })
   afterEach(async () => {
-    await rm(agentDir, { recursive: true, force: true })
+    await rm(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('选中 label → setEditorText(#完整 uuid + 尾随空格)（value 语义保持完整 uuid）', async () => {

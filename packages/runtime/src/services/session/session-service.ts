@@ -22,13 +22,13 @@
  * onSessionExit 回调留构造函数:协调 lifecycle/scanner/broker 多方,不归属任一子模块。
  */
 import { existsSync } from 'node:fs'
-import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, ServerMessageMap, SubagentRecord, WorkflowRunRecord, BatchDeleteResult, SegmentsMetadataEntry, ProviderId } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, Message, ServerMessage, ServerMessageMap, SubagentRecord, WorkflowRunRecord, BatchDeleteResult, SegmentsMetadataEntry, ProviderId } from '@xyz-agent/shared'
 import type { SubagentEngineConfigView } from '@xyz-agent/extension-protocol'
 import type {
   ISessionService, IMessageBroker, SessionCreateOptions,
   IEventAdapter, IExtensionService, IConfigService,
 } from '../../interfaces.js'
-import type { ILifecycleSessionOps, IDispatcherSessionOps, IScannerSessionOps, ISessionRegisterDeps, IManagedSessionRecord } from './session-internal.js'
+import type { ILifecycleSessionOps, IDispatcherSessionOps, IScannerSessionOps, ISessionRegisterDeps } from './session-internal.js'
 import type { IProcessManager, IPiEngine, PiCommandInfo } from '../ports/pi-engine.js'
 import { TraceSync } from './trace-sync.js'
 import type { SessionTraceSnapshot } from './trace-sync.js'
@@ -36,10 +36,18 @@ import { SessionRecords } from './session-records.js'
 import { SessionModelControl } from './session-model-control.js'
 import { SessionHistoryReader } from './history-rebuild-cache.js'
 import { resolveSkillPaths, resolveExtensionPaths, resolveReplaceSystemPrompt, resolveLaunchPresetOptions } from './launch-params.js'
+// 行为保持抽取的实现体外移（max-lines 门禁）：summary 投影 / projection bus 视图构建，
+// Facade 保留一行委托，语义注释见各新模块。
+import { buildSessionSummary } from './session-summary.js'
+import { createProjectionBusView } from './projection-bus-view.js'
 import { persistModelBinding, readModelBinding } from '../../infra/pi/session-file-utils.js'
 // main（file-lock-unification reaper 下沉，D2 触发面 A）：removeSessionEntry 汇聚点收殓
 // 孤儿后台任务——重构仅迁域，触发面挂点语义不变，import 随调用点留 Facade。
 import { reapSessionBackgroundTasks } from './background-task-reaper.js'
+// 后台任务数据域（background-task-sidebar D1/D2/D3/D8，u-runtime-rpc 组装）：
+// registry 读 + mtime 轮询 + kill 矩阵实现在 services/background-task/（u-runtime-svc），
+// 本 Facade 只做组装接线（组装点注释见构造器 backgroundTasks 赋值处）。
+import { BackgroundTaskService } from '../background-task/background-task-service.js'
 import { getPiAgentDir } from '../../infra/pi/pi-paths.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore, SessionOutcome } from '../ports/session.js'
@@ -48,51 +56,15 @@ import type { IManagedSessionView, ScannedSession, SendMessageHook } from './typ
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { SessionLifecycle } from './session-lifecycle.js'
 import { MessageDispatcher } from './message-dispatcher.js'
+import { updateSessionOccupancy } from './event-interpreter.js'
 import { SessionScanner } from './session-scanner.js'
 import { AttachmentStore } from './attachment-store.js'
 import { SessionStateProjection, type SessionReplicatedStates } from './session-state-projection.js'
-import { detectBareWorkspaceCached } from '../worktree/workspace-detector.js'
 import { PresetService, type PresetResolution } from '../preset-service.js'
 // MessageBus（wave:runtime-wiring）：per-session 消息广播核心。setter 注入（同 setConfigService 模式），
 // 未注入时所有 bus 调用 no-op（this.messageBus?.publish）。type-only import 避免运行时环
 //（MessageBus 不反向依赖 SessionService）。
 import type { IMessageBus } from '../message-bus/message-bus.js'
-
-/** Facade 内部完整 session:Registry 记录(adapter 句柄)+ binding 扩展字段(hydrateBindingMeta 动态 patch)。 */
-interface ManagedSession extends IManagedSessionRecord {
-  adapter: IEventAdapter
-  /**
-   * launch preset id 的内存态持有（W-RT-4，设计文档 §4.2）。
-   *
-   * session 活跃期间 .preset.json sidecar 可能因 pi 延迟写入未 flush 而无法写入
-   *（persistPresetBinding 的 existsSync 守卫跳过），此时内存态兜底持有 presetId，
-   * 供 forkSession 在 active 期读源 session preset（W-RT-5）。
-   *
-   * 不放 IManagedSessionView（types.ts 非 slice 范围）也不入 IManagedSessionRecord
-   * （binding 扩展字段归 Facade 域）：session-lifecycle 经 Registry get(id) 拿到
-   * 记录后，as 转换读写此字段（patch 模式，见 lifecycle W-RT-4/5 实现注释）。
-   * toSummary 一并透传到 SessionSummary.launchPresetId。
-   */
-  launchPresetId?: string
-  /**
-   * 归属 project id 的内存态持有（D14 语义修正，2026-08-04）。
-   *
-   * 与 launchPresetId 同模式：.project.json sidecar 可能因 pi 延迟写入未 flush 而无法写入
-   *（persistProjectBinding 的 existsSync 守卫跳过），内存态兑底持有 projectId，
-   * 供 forkSession 继承 / toSummary 透传 / setProject 同步。
-   */
-  projectId?: string
-  /**
-   * agent-managed session 标记的内存态持有（B-2）。
-   *
-   * 与 launchPresetId/projectId 同模式：.agent.json sidecar 可能因 pi 延迟写入未 flush
-   * 而无法写入（persistAgentBinding 的 existsSync 守卫跳过），内存态兑底持有，
-   * 供 session-manager list 按 spawnSource 过滤 / toSummary 透传（前端 AI badge）。
-   */
-  spawnSource?: 'user' | 'agent'
-  /** agent-managed session 的父 session id（内存态持有，语义同上 spawnSource） */
-  parentAgentSessionId?: string
-}
 
 export class SessionService implements ISessionService, ILifecycleSessionOps, IDispatcherSessionOps, IScannerSessionOps {
   private readonly restoringSessions = new Set<string>()
@@ -178,6 +150,33 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    */
   private messageBus: IMessageBus | null = null
   /**
+   * 写 2 挂钩的投影专用 bus 视图缓存：getter 每次 publish 都会读，按底层 bus 身份
+   * memoize（setMessageBus 晚期注入/替换后自动重建）。
+   */
+  private projectionBusView: { bus: IMessageBus; wrapped: IMessageBus } | null = null
+  /**
+   * composer-gen-stats（u3 写 2）：state_changed 发布后置 tap（重登记 sid→modelKey 映射
+   * + 推新模型快照帧）。经 setter 注入（组合根绑 GenStatsService.onModelSwitched，
+   * 同 setConfigService 模式——GenStatsService 依赖 sessionService，构造注入会成环）。
+   * 未注入时挂钩 no-op（既有行为不变）。
+   */
+  private genStatsModelSwitchTap: ((sessionId: string, modelId: string) => void) | null = null
+  /**
+   * 后台任务数据域（background-task-sidebar，u-runtime-rpc 组装；实现在 u-runtime-svc）。
+   *
+   * 公有成员（非 ISessionService 接口面）：SessionMessageHandler 经 ctx 的结构化可选属性
+   * （SessionHandlerContext.sessionService 交叉类型）读取 3 RPC 消费端口——组合根 server.ts
+   * 的 ctx 字面量静态类型是 ISessionService，可选属性结构兼容使其零改动通过类型检查。
+   *
+   * 接线三件事（构造器组装 + removeSessionEntry 退订）：
+   * ① onTasksChanged → publishBackgroundTasksUpdate：组装 backgroundTask:updated payload
+   *    经 messageBus session 级 publish（单 payload 对象、sessionId 必带，规则 1/7）；
+   * ② start()：2s mtime 轮询（D2 触发面①；事件钩子触发面②的组合根接线在 index.ts
+   *    adapterFactory——EventAdapter 第三参，非本文件领地）；
+   * ③ removeSessionEntry 汇聚点 unwatch（D8③，与 reaper 触发面 A 同挂点）。
+   */
+  readonly backgroundTasks: BackgroundTaskService
+  /**
    * history 读编排域（S6 迁出至 history-rebuild-cache.ts）：getHistory 三分支重建
    * （缓存增量/RPC 全量/尾读降级）+ getFullHistory 文件直读 + inflight 合并。销毁经
    * onSessionDisposed 由 removeSessionEntry 第 ⑤ 步直调（与 traceSync/projection/records
@@ -247,7 +246,9 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
       pm: this.pm,
       getSession: (sessionId) => this.lifecycle.get(sessionId),
       hasSession: (sessionId) => this.lifecycle.has(sessionId),
-      getMessageBus: () => this.messageBus,
+      // composer-gen-stats（u3 写 2）：投影用带 state_changed 后置 tap 的 bus 视图（其余
+      // 消费方 registerDeps/traceSync/records 保持裸 bus——tap 只需挂在真汇聚点上）
+      getMessageBus: () => this.getProjectionBusWithGenStatsTap(),
       fetchContext: (sessionId) => this.fetchContext(sessionId),
       persistSessionOutcome: (sessionId, outcome, reason) => this.persistSessionOutcome(sessionId, outcome, reason),
       tryPersistProjectBinding: (session) => this.tryPersistProjectBinding(session),
@@ -281,6 +282,15 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     this.dispatcher = new MessageDispatcher(this, this.pm, this.workspaceService, messageBus)
     this.scanner = new SessionScanner(this, this.sessionStore, this.gitInfoReader)
 
+    // 后台任务域组装（u-runtime-rpc①②）：广播回调经 this.messageBus 动态读（getter 语义，
+    // 与 registerDeps/traceSync 的晚期注入同款——setMessageBus 后置注入前触发时 publish
+    // no-op；组合根在 setServices 前注入 bus，晚于首个 2s 轮询拍）。piAgentDir 用默认
+    // getPiAgentDir() 动态推导（生产正确；测试经 vi.mock pi-paths 指向 tmp）。
+    this.backgroundTasks = new BackgroundTaskService({
+      onTasksChanged: (sessionId) => this.publishBackgroundTasksUpdate(sessionId),
+    })
+    this.backgroundTasks.start()
+
     // 进程崩溃清理:协调 adapter detach / Map 删 / 列表刷新 / session.exited 广播
     this.pm.onSessionExit((sessionId, code, stderr) => {
       const session = this.lifecycle.get(sessionId)
@@ -299,6 +309,12 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
       //（renderer 全量订阅覆盖 list 内全部 session，见 useSessionStreamSync）。
       const exitedMsg: ServerMessage = { type: 'session.exited', payload: { sessionId, code, reason } }
       this.messageBus?.publish(sessionId, exitedMsg)
+
+      // occupancy #10（session-occupancy-send-closure D3 失败路径，进程异常退出腿）：占用中
+      // pi 死亡时 agent_settled / compaction_end 永不会发出（二者只从 pi run/compact finally
+      // 触发），turn/compacting/bash 三维在此全复位兜底——否则重连 renderer 经 stateSnapshot
+      // 回放恢复的是永久的占用投影。须在 removeSessionEntry（内部 bus.clearSession）之前。
+      updateSessionOccupancy(session, this.messageBus, { turn: 'idle', compacting: false, bash: false })
 
       // 注意：此处 session 是 delete 前缓存的引用，removeSessionEntry 后 Map 条目已删除
       // 统一经 removeSessionEntry（触发 onSessionDelete 清 pendingReload 等残留）
@@ -400,6 +416,41 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     this.dispatcher.setMessageBus(bus)
   }
 
+  /**
+   * composer-gen-stats（u3 写 2，MF9 固定帧序）：注入「state_changed 发布后置 tap」。
+   * 投影每次 publish session.state_changed 后同步调 tap(sid, modelId)——tap 内重登记
+   * GenStatsService 的 sid→modelKey 映射并推新模型快照帧。帧序构造性成立：bus.publish
+   * 同步完成 WS 送达后才进 tap（单 WS 连接有序送达：先 state_changed → 后 stats_update），
+   * 插件路径 renderer 的 modelId 先由 state_changed 帧更新，快照帧不会被前端校验误丢。
+   */
+  setGenStatsModelSwitchTap(tap: (sessionId: string, modelId: string) => void): void {
+    this.genStatsModelSwitchTap = tap
+  }
+
+  /**
+   * 投影专用 bus 视图：透传全部 IMessageBus 方法，仅在 publish session.state_changed
+   * 后同步触发写 2 tap（重登记+推快照帧）。全 runtime 唯一 state_changed 生产点 =
+   * 投影的 publishStateChangedFromSnapshot（publish 前有同值 diff 抑制），故「bus 边界
+   * 拦截该 type」≡「在 state_changed 广播处挂接」——不触碰 session-state-projection.ts
+   * 即可拿到真汇聚点（composer-gen-stats 设计 D4 写 2 挂接点的实装核实结论）。
+   */
+  private getProjectionBusWithGenStatsTap(): IMessageBus | null {
+    if (!this.messageBus) return null
+    if (this.projectionBusView?.bus !== this.messageBus) {
+      const bus = this.messageBus
+      // wrapped 构建迁 projection-bus-view.ts（createProjectionBusView，行为保持抽取）；
+      // tap 闭包保留动态读 this.genStatsModelSwitchTap（晚期注入语义与原内联逐字等价）。
+      this.projectionBusView = {
+        bus,
+        wrapped: createProjectionBusView(
+          bus,
+          (sessionId, modelId) => this.genStatsModelSwitchTap?.(sessionId, modelId),
+        ),
+      }
+    }
+    return this.projectionBusView.wrapped
+  }
+
   // ── ISessionService:纯委托(lifecycle / dispatcher / scanner)─────
 
   async create(cwd?: string, label?: string, options?: SessionCreateOptions): Promise<SessionSummary> { return this.lifecycle.create(cwd, label, options) }
@@ -426,7 +477,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     return this.lifecycle.forkSession(srcSessionId, fromPiEntryId, includeFrom, label, opts)
   }
 
-  async sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }> { return this.dispatcher.sendMessage(sessionId, content, images) }
+  async sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>, clientUuid?: string): Promise<{ blocked: boolean; rejected?: boolean }> { return this.dispatcher.sendMessage(sessionId, content, images, clientUuid) }
   // [HISTORICAL] sendSubagentMessage（marker 半成品通道）已删除（composer 四符号设计 D2）：
   // base64 隐藏注释前缀在 extension 侧零消费方，且经主 agent 转发违背
   // 「直达 subagent」目标——定向消息改走 subagentAction(message/start)。
@@ -743,36 +794,9 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   }
 
   toSummary(s: IManagedSessionView): SessionSummary {
-    const git = this.gitInfoReader.readGitInfo(s.cwd)
-    return {
-      id: s.id, label: s.label, cwd: s.cwd,
-      gitBranch: git?.branch, gitIsWorktree: git?.isWorktree,
-      // R1：复用 WorkspaceDetector 检测 .bare workspace（带缓存），填 isBareWorkspace
-      // 供前端 Landing.vue 派生「新建 worktree」动作项显隐。
-      isBareWorkspace: detectBareWorkspaceCached(s.cwd),
-      status: s.isGenerating ? ('active' as SessionStatus) : ('idle' as SessionStatus),
-      lastActiveAt: s.lastActiveAt, modelId: s.modelId,
-      thinkingLevel: s.thinkingLevel,
-      // W10：tokenCount 派生自 usage 实例快照（context 占用口径——事件链路三条路径的
-      // totalTokens 与 inputTokens 同值直出，快照 inputTokens 保持同语义）。旧
-      // session.tokenCount 直写（applyContextUpdate）已删，字段退化为恒 0 派生基线
-      // （types 必填）；磁盘 session（非 active）无实例，fallback 字段值。
-      tokenCount: this.projection.getReplicatedStates(s.id)?.usage.get()?.inputTokens ?? s.tokenCount,
-      hidden: s.hidden,
-      parentSession: s.parentSession,
-      forkEntryId: s.forkEntryId,
-      handedOffTo: s.handedOffTo,
-      sessionFile: s.sessionFilePath,
-      // W-RT-4/§4.2：active session 的 launchPresetId 透传到 summary（内存态与 sidecar 并列）。
-      // ManagedSession 实例携带此字段；普通 IManagedSessionView 无此字段时为 undefined（安全）。
-      launchPresetId: (s as ManagedSession).launchPresetId,
-      // D14 语义修正：归属 project 透传到 summary（内存态兑底，sidecar 扫描路径在 scanner）。
-      projectId: (s as ManagedSession).projectId,
-      // B-2：agent-managed 标记透传——list 按 spawnSource/parentAgentSessionId 过滤时
-      // active session 走本路径（scanned 路径被 activeFilePaths 排除），漏透传 = 过滤失效。
-      spawnSource: (s as ManagedSession).spawnSource,
-      parentAgentSessionId: (s as ManagedSession).parentAgentSessionId,
-    }
+    // 实现迁 session-summary.ts（buildSessionSummary，行为保持抽取）：纯投影不依赖
+    // Facade 其余状态，gitInfoReader / replicated states 读点参数化后模块级化。
+    return buildSessionSummary(s, this.gitInfoReader, (id) => this.projection.getReplicatedStates(id))
   }
 
   getSession(sessionId: string): IManagedSessionView | undefined { return this.lifecycle.get(sessionId) }
@@ -848,6 +872,10 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     void reapSessionBackgroundTasks(getPiAgentDir(), sessionId).catch((e: unknown) => {
       console.warn(`[session-service] background task reap failed (sessionId=${sessionId}):`, e)
     })
+    // background-task-sidebar D8③（u-runtime-rpc③）：watched 集合退订——session 销毁后
+    // 该 sid 的 registry 不再参与 mtime 轮询/变更检测。与 reapSessionBackgroundTasks 同挂
+    // 本汇聚点（主动删 / 进程退出 / forceQuit / restore 清场全覆盖，D8④ runtime 侧腿）。
+    this.backgroundTasks.unwatch(sessionId)
     // wave:perf-w20（D6-1）：session 删除 / pi 进程退出时清历史重建缓存 + lastLeafId。
     // pi 进程退出后缓存基线（lastLeafId）不再与新进程的 entry 集合对应，保留只会
     // 走 "Entry not found" fallback（防御兜底存在，但清理是正路径）。S6 起清理随域迁入
@@ -909,6 +937,23 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   }
 
   // ── 私有协作者 ────────────────────────────────────────────────
+
+  /**
+   * backgroundTask:updated 广播组装（background-task-sidebar D3，u-runtime-rpc①）：
+   * onTasksChanged（mtime 轮询 / 自写自检触发）时重读该 session registry 全量 → messageBus
+   * session 级 publish（Server→Client 冒号 camelCase，对齐 plugin:statusBarUpdate 命名规则；
+   * stream 类入 ring，晚订阅 renderer 由 snapshot 重放兜底）。bus 未注入时 no-op（nullable
+   * 注入语义与域内其余 publish 点一致）。entry 形状为 extension-protocol 契约，shared 侧
+   * 逐字段镜像（u-proto D9，结构兼容直赋）。
+   */
+  private publishBackgroundTasksUpdate(sessionId: string): void {
+    const { entries, corrupted } = this.backgroundTasks.listTasks(sessionId)
+    const msg: ServerMessage = {
+      type: 'backgroundTask:updated',
+      payload: { sessionId, tasks: entries, corrupted },
+    }
+    this.messageBus?.publish(sessionId, msg)
+  }
 
   /**
    * 归属 project sidecar 延迟写入兑底（D14 语义修正，2026-08-04）。

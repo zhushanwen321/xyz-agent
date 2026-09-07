@@ -79,6 +79,12 @@ const emit = defineEmits<{
    * 「空格/行首 + @ + 非空白」序列；null 表示应关闭触发浮层。
    */
   'subagent-trigger': [payload: { query: string } | null]
+  /**
+   * skill 触发检测（多 skill 注入设计 D1）：{query} 表示光标前有「非换行空白 + / + query」
+   * 序列且 query 合法（[a-z0-9-]{0,64}）；null 表示应关闭浮层。与 slash-trigger（行首命令域）
+   * 触发域互斥，同一次输入至多一路非 null。
+   */
+  'skill-trigger': [payload: { query: string } | null]
   /** 聚焦/失焦：驱动父 Composer 的 .composer-box 聚焦态（v6 §6.1 .focused 3px ring） */
   focus: []
   blur: []
@@ -115,6 +121,7 @@ const {
   clearHashQueryText,
   clearDollarFileQueryText,
   clearSubagentQueryText,
+  clearSkillQueryText,
   clear,
   setText,
   insertTextAtCursor,
@@ -128,6 +135,7 @@ const {
   onFileTrigger: (payload) => emit('session-trigger', payload),
   onDollarFileTrigger: (payload) => emit('file-trigger', payload),
   onSubagentTrigger: (payload) => emit('subagent-trigger', payload),
+  onSkillTrigger: (payload) => emit('skill-trigger', payload),
   // bash 豁免短路（D6）：bash 态短路全部符号触发检测（判定源 = Composer isBashMode）
   shouldSuppressTriggers: () => props.suppressTriggers === true,
   onEnterKeydown: (e) => emit('keydown', e),
@@ -149,6 +157,7 @@ const chipCommands = useComposerChipCommands(elRef, {
   t: deps.t,
 })
 const insertSlashChip = chipCommands.insertSlashChip
+const insertSkillChip = chipCommands.insertSkillChip
 const insertMentionChip = chipCommands.insertMentionChip
 const insertFileChip = chipCommands.insertFileChip
 const insertImageBadge = chipCommands.insertImageBadge
@@ -206,6 +215,7 @@ defineExpose({
   setText,
   insertTextAtCursor,
   insertSlashChip,
+  insertSkillChip,
   insertMentionChip,
   insertFileChip,
   insertSessionChip,
@@ -218,6 +228,7 @@ defineExpose({
   clearSessionQueryText: clearHashQueryText,
   clearDollarFileQueryText,
   clearSubagentQueryText,
+  clearSkillQueryText,
   saveSelection,
   restoreSelection,
   moveCaretVertical,

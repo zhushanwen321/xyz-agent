@@ -379,7 +379,7 @@ test('A1: ask_user 调用 → ui_request 广播含 askUserQuestions，问题无 
     console.log(`[A1] 协议透传验证通过：question="${q.question}"，options=${(q.options ?? []).length}，无 allowComment，回写后恢复 turn via ${resume?.type}`)
   } finally {
     await cleanup()
-    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(dataDir, { recursive: true, force: true })
+    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 })
 
@@ -435,7 +435,7 @@ test('A2: ask-user overlay 真实渲染 — overlay/Other 保留，页面无 com
     console.log(`[A2] overlay 渲染验证通过：question="${q.question}"，Other 保留，overlay 无 comment`)
   } finally {
     await cleanup()
-    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(dataDir, { recursive: true, force: true })
+    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 })
 
@@ -506,6 +506,6 @@ test('A3: 选 Other 填自由文本提交 → overlay 关闭 + pi 恢复 turn（
     console.log(`[A3] UI 交互闭环验证通过：qKey="${qKey}"，Other 文本="${OTHER_TEXT}"，overlay 关闭，pi 恢复 turn via ${resume?.type}`)
   } finally {
     await cleanup()
-    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(dataDir, { recursive: true, force: true })
+    if (!process.env.PLAYWRIGHT_DEBUG_KEEP_DATA) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 })

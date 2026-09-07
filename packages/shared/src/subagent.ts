@@ -26,6 +26,43 @@
 export type SubagentStatus = 'running' | 'done' | 'failed' | 'cancelled' | 'crashed' | 'closed'
 
 /**
+ * SubagentStatus 值全集（adversarial-review-fixes §3.3 B3）。
+ *
+ * 用途：消费方测试的全集覆盖矩阵数据源——此前 renderer subagent-bucket 测试本地硬拷贝
+ * 六值，shared 扩枚举时新「进行中类」值会静默落 renderer 分桶判据 `status !== 'running'`
+ * 的「已结束」桶且测试不翻红。消费 shared 常量后，扩枚举同步本元组即测试矩阵自动扩。
+ *
+ * 扩枚举守卫（两处同步，缺一即编译/测试红）：
+ * - 上方 SubagentStatus 联合与本元组须同步改——正向（元组含非联合值）由下方 satisfies
+ *   编译期拦截；反向（联合扩值漏改元组）由 _subagentStatusCoversAll 编译锁拦截；
+ * - 消费方（renderer subagent-bucket 的全集覆盖矩阵）须同步评估新值的桶归属——
+ * 「进行中类」值落 status !== 'running' 反向白名单即静默归「已结束」，属行为回归。
+ */
+export const SUBAGENT_STATUS_ALL = [
+  'running',
+  'done',
+  'failed',
+  'cancelled',
+  'crashed',
+  'closed',
+] as const satisfies readonly SubagentStatus[]
+
+/**
+ * B3 反向完备编译锁：SubagentStatus 联合 ⊆ SUBAGENT_STATUS_ALL 值域。
+ * 联合扩值漏改元组时该类型退化为错误信息元组，下行赋值 tsc 编译错（CI typecheck
+ * job 拦截）。
+ */
+type _SubagentStatusCoversAll = [SubagentStatus] extends [(typeof SUBAGENT_STATUS_ALL)[number]]
+  ? true
+  : ['SubagentStatus 扩值须同步 SUBAGENT_STATUS_ALL 元组（adversarial-review-fixes §3.3 B3）']
+
+/**
+ * 编译锁消费点（导出以通过 noUnusedLocals；不经 barrel 导出，对外不可达）：
+ * 值恒 true 无运行期语义——类型才承重，联合漏扩元组时本赋值 tsc 红。
+ */
+export const SUBAGENT_STATUS_COVERAGE_LOCK: _SubagentStatusCoversAll = true
+
+/**
  * 单条 subagent 记录（列表项数据）。
  *
  * 字段来源对应关系：

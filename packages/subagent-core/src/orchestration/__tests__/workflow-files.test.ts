@@ -43,7 +43,7 @@ describe("saveWorkflow 目录注入（非 .pi 布局）", () => {
       expect(existsSync(join(tmpDir, "alpha.js"))).toBe(false);
       expect(readFileSync(join(savedDir, "alpha.js"), "utf-8")).toBe("// alpha body");
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -56,7 +56,7 @@ describe("saveWorkflow 目录注入（非 .pi 布局）", () => {
       expect(existsSync(join(savedDir, "alpha.js"))).toBe(false);
       expect(existsSync(join(savedDir, "beta.js"))).toBe(true);
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -72,7 +72,7 @@ describe("saveWorkflow 目录注入（非 .pi 布局）", () => {
       // 原文件不动
       expect(existsSync(join(tmpDir, "alpha.js"))).toBe(true);
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -83,7 +83,7 @@ describe("saveWorkflow 目录注入（非 .pi 布局）", () => {
         "Temporary workflow 'ghost' not found",
       );
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 });
@@ -104,7 +104,7 @@ describe("deleteWorkflow 目录注入（非 .pi 布局）", () => {
       expect(existsSync(join(tmpDir, "dup.js"))).toBe(false);
       expect(existsSync(join(savedDir, "dup.js"))).toBe(true);
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -117,7 +117,7 @@ describe("deleteWorkflow 目录注入（非 .pi 布局）", () => {
       expect(msg).toBe(`Deleted workflow 'gamma' (${join(savedDir, "gamma.js")})`);
       expect(existsSync(join(savedDir, "gamma.js"))).toBe(false);
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -130,7 +130,7 @@ describe("deleteWorkflow 目录注入（非 .pi 布局）", () => {
       ).toThrow("Cannot delete 'busy': workflow is currently running. Abort it first.");
       expect(existsSync(join(tmpDir, "busy.js"))).toBe(true);
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -141,7 +141,7 @@ describe("deleteWorkflow 目录注入（非 .pi 布局）", () => {
         "Workflow file 'void' not found",
       );
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 });
@@ -164,7 +164,7 @@ describe("缺省目录 = pi 布局（向后兼容回归）", () => {
       expect(existsSync(join(fakeCwd, ".pi", "workflows", "pi-wf.js"))).toBe(true);
     } finally {
       cwdSpy.mockRestore();
-      rmSync(fakeCwd, { recursive: true, force: true });
+      rmSync(fakeCwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 
@@ -180,7 +180,7 @@ describe("缺省目录 = pi 布局（向后兼容回归）", () => {
       expect(existsSync(join(savedDir, "saved-only.js"))).toBe(false);
     } finally {
       cwdSpy.mockRestore();
-      rmSync(fakeCwd, { recursive: true, force: true });
+      rmSync(fakeCwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }
   });
 });

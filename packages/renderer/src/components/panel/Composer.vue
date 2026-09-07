@@ -1,11 +1,12 @@
 <template>
   <!--
     容器组件 · composer（panel/spec.md zone ④，draft-composer-states）。
-    v1 主路径 4 态：
-      S1 空 → S2 输入中 → S5 发送中（spinner）→ S6 流式中（stop + steer/followUp）
-    DEFERRED：
-      S3/S4（@/#// 附件浮层 G2-002）、S7-S9 双队列视图/失败回退/已排队多条。
-    steer/followUp：活跃态（isGenerating/派发空窗期）时 ⏎ 追加 steer，Alt+⏎ 追加 followUp，都不打断当前回合。
+    发送位四态（u6b / D6 表）：send（↑ idle 直发）/ stop（■ turn 活跃 / settling 单独）/
+    queue（↑ 时钟角标：compacting/bash/settling+compacting，点击入 defer 队列）/
+    spinner（isSending）。staging 模式优先（fork/handoff）。
+    steer/followUp/defer 路由：⏎/Alt+⏎ 全部汇入统一发送分发器（D6，composer-shell
+    sendRoute——turn 活跃→steer、占用→defer、idle→direct），Alt+⏎ 在 steer 路由行保留
+    followUp 语义。
     staging 优先（fork/handoff，与视觉层 boxClass/placeholder 优先级对齐）：staging 活跃时 ⏎/Alt+⏎
       均提交 staging（发送位也替换为 staging 发送按钮，streaming 中同样生效）；handoff 的
       streaming 拦截在 enterHandoffMode/handleHandoffSend（isSessionActive 守卫）。
@@ -18,17 +19,22 @@
     <!-- retry/queue 指示位（spec C10，#13，composer 上方独立行）：
          auto_retry_end / message_start 到达时 store 自动清 → state=undefined → 组件 v-if 消失 -->
     <RetryIndicator :state="retryState" />
-    <CompactQueueBadge :session-id="sessionId" />
     <!-- 命令浮层（§2d @/#//）：anchor = composer-box（slot），reka-ui Popover portal body。
-         composer-box 内 focus 算 inside 不触发 dismiss，键盘路由见 onKeydown -->
+         composer-box 内 focus 算 inside 不触发 dismiss，键盘路由见 onKeydown。
+         cwd：landing 态 $ 候选的 cwd 通道（landing-composer-session-file-symbols D2；
+         panel 有 sid 不消费。flow.currentCwd 是普通对象内嵌套 ComputedRef，模板不自动
+         解包，须显式 .value；可选链 + ?? null 兑容无 currentCwd 字段的旧 mock/flow 形态，
+         缺失即无 cwd 不弹，与 S4b 空态语义一致） -->
     <CommandPopover
       ref="commandPopoverRef"
       v-model:open="cmdOpen"
       :type="cmdType"
       :session-id="sessionId ?? undefined"
+      :cwd="flow.currentCwd?.value ?? null"
       :variant="variant"
       :project-skills="landingProjectSkills"
       :global-skills="landingGlobalSkills"
+      :selected-skill-names="selectedSkillNames"
       :query="popoverQuery"
       @select="onCmdSelect"
     >
@@ -78,6 +84,7 @@
           @input="onInputChange"
           @keydown="onKeydown"
           @slash-trigger="onSlashTrigger"
+          @skill-trigger="onSkillTrigger"
           @file-trigger="onFileTrigger"
           @session-trigger="onSessionTrigger"
           @subagent-trigger="onSubagentTrigger"
@@ -100,6 +107,8 @@
           empty="hidden"
         />
         <span class="flex-1" />
+        <!-- 生成指标双触发器（composer-gen-stats §3.1：速度 t/s + 缓存命中率 %，位于上下文容量左侧） -->
+        <GenStatsTriggers :session-id="sessionId ?? undefined" :model-id="currentModelId" />
         <!-- 上下文容量（spec §2a：hover 出容量 popover；session 通道订阅 context.update） -->
         <ContextCapacityPopover :session-id="sessionId ?? undefined" :model-id="currentModelId" />
         <!-- 模型（spec §2b：click 出模型切换 popover） -->
@@ -107,8 +116,11 @@
         <!-- 思考等级（spec §2c：click 出档位 popover；level 从 session 透传；reasoning 决定可用档集——non-reasoning 只 off） -->
         <ThinkingLevelPopover :level="currentThinkingLevel" :level-map="currentThinkingLevelMap" :supported-levels="currentSupportedLevels" @select="onThinkingSelect" />
 
-        <!-- 发送位：staging（fork/handoff，含 streaming 中）→staging send / S6 streaming/dispatching→stop /
-             S5 sending→spinner / compact→queue-send（可点，入队待重放）/ S1·S2 idle→send。
+        <!-- 发送位四态（u6b / D6 表「发送位」列）：staging（fork/handoff，含 streaming 中）→
+             staging send / stop（turn 活跃 dispatching|generating；settling 单独）→ ■ stop /
+             queue（compacting/bash/settling+compacting）→ ↑ 带时钟角标（可点入队，flush 于占用
+             解除后自动投递）/ S5 sending→spinner / 全 idle→send。
+             派生源 = shell sendButtonState（与分发器 sendRoute 同源 effectivePhase，不漂移）。
              staging 优先于 stop（用户决策）：streaming 中提交 fork 合法（对源只读）；需停止时
              先 Esc 退出 staging 再点 stop。staging 发送中（isSending）仍走 spinner。 -->
         <Button
@@ -124,7 +136,7 @@
           <ArrowUp class="size-[15px]" />
         </Button>
         <Button
-          v-else-if="isActive"
+          v-else-if="sendButtonState === 'stop'"
           variant="ghost"
           size="icon"
           class="stop-btn ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-surface-hover text-neutral-mid hover:bg-danger-soft hover:text-danger"
@@ -134,15 +146,17 @@
           <Square class="size-[13px]" />
         </Button>
         <Button
-          v-else-if="isCompacting"
+          v-else-if="sendButtonState === 'queue'"
           variant="default"
           size="icon"
-          class="ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-accent text-accent-fg transition-colors enabled:hover:bg-accent-hover disabled:bg-transparent disabled:text-[var(--neutral-dim)]"
+          class="queue-send-btn relative ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-accent text-accent-fg transition-colors enabled:hover:bg-accent-hover disabled:bg-transparent disabled:text-[var(--neutral-dim)]"
           :disabled="!canSubmit"
-          :title="canSubmit ? t('panel.composer.queueSend') : t('panel.composer.sendHint')"
+          :title="canSubmit ? `${t('panel.composer.queueSend')} · ⏎` : t('panel.composer.sendHint')"
           @click="onSend"
         >
           <ArrowUp class="size-[15px]" />
+          <!-- 时钟角标（D6 场景 1）：排队语义视觉锚点，右上角 1/4 尺寸 -->
+          <Clock class="absolute right-[2px] top-[2px] size-2" aria-hidden="true" />
         </Button>
         <div
           v-else-if="isSending"
@@ -170,31 +184,31 @@
 </template>
 
 <script setup lang="ts">
-import { computed, createVNode, onBeforeUnmount, onMounted, provide, reactive, ref, render, watch, type Ref } from 'vue'
+import { computed, createVNode, onBeforeUnmount, onMounted, provide, ref, render, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowUp, Loader2, Square, X } from '@lucide/vue'
+import { ArrowUp, Clock, Loader2, Square, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { ComposerInput, ComposerInputDepsKey, type ComposerInputDeps } from '@xyz-agent/ui/features/composer'
 import { ViewHost } from '@xyz-agent/ui/extension-host'
 import AddMenuPopover from './AddMenuPopover.vue'
 import CommandPopover from './CommandPopover.vue'
 import ContextCapacityPopover from './ContextCapacityPopover.vue'
+import GenStatsTriggers from './GenStatsTriggers.vue'
 import ModelSelectPopover from './ModelSelectPopover.vue'
 import ThinkingLevelPopover from './ThinkingLevelPopover.vue'
 import ContextChipsBar from './ContextChipsBar.vue'
 import RetryIndicator from './RetryIndicator.vue'
 import QueueBubble from './QueueBubble.vue'
-import CompactQueueBadge from './CompactQueueBadge.vue'
 import { useChatStore } from '@/stores/chat'
 import { useProjectSkills, useGlobalSkills } from '@/composables/features/settings/useProjectSkills'
 import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverTrigger'
-import { useComposerShell, type ShellInputInstance } from '@/composables/panel/composer-shell'
+import { useComposerFocusRing } from '@/composables/panel/composer-focus-ring'
+import { useComposerShell, createComposerDrafts, type ShellInputInstance } from '@/composables/panel/composer-shell'
 import { useComposerKeydown } from '@/composables/panel/composer-keydown'
 import type { DraftStore } from '@xyz-agent/dom-core/composer/input'
 import { handleImagePaste } from '@/composables/panel/useImageAttachment'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
-import { useSessionScopedState } from '@/composables/useSessionScopedState'
 
 const props = withDefaults(
   defineProps<{
@@ -234,53 +248,35 @@ const {
   fileQuery,
   sessionQuery,
   subagentQuery,
+  skillQuery,
   commandPopoverRef,
   onSlashTrigger,
   onFileTrigger,
   onSessionTrigger,
   onSubagentTrigger,
+  onSkillTrigger,
   onAddSelect,
   onCmdSelect,
 } = useCommandPopoverTrigger(inputRef, sessionIdRef)
 
-/** 命令浮层过滤 query 四路映射（四符号体系：$ file / # session / @ subagent / / slash） */
+/** 命令浮层过滤 query 五路映射（四符号体系 + skill：$ file / # session / @ subagent / 行首 / slash / 空格后 / skill） */
 const popoverQuery = computed(() => {
   if (cmdType.value === 'file') return fileQuery.value
   if (cmdType.value === 'session') return sessionQuery.value
   if (cmdType.value === 'subagent') return subagentQuery.value
+  if (cmdType.value === 'skill') return skillQuery.value
   return slashQuery.value
 })
 
+/**
+ * 已插入 skill 名集合（多 skill 注入 D2 已选禁选数据面）：从 composer 当前 segments 取，
+ * 透传 CommandPopover.selectedSkillNames。显式刷新（非 computed）——getSegments 读 DOM
+ * 非响应式，随 onInputChange 同步刷新（chip 插入/删除走 onChanged → emit input，
+ * 与 refreshAttachedItems 同一模式）。
+ */
+const selectedSkillNames = ref<string[]>([])
+
 const isSending = ref(false)
-/** composer-box 聚焦态（v6 §6.1 .focused：border-accent + 3px accent 外环 --accent-ring）。
- *  boxClass（composer-shell）三级链 staging>bash>steer>hasInput 无 focus 分支，故在壳层补：
- *  focus 优先级低于 staging/steer（二者有独立视觉：staging bg-accent-soft / steer 呼吸），
- *  用 ! 前缀压过 hasInput 的 2px 微环 Tailwind 内联工具类。 */
-const isFocused = ref(false)
-/** focus ring class：staging/bash/steer 活跃时不叠加（它们已含 accent border + ring），
- *  否则聚焦时输出 3px accent 外环（覆盖 hasInput 的 2px 微环）。
- *  排除条件用 steer/bash 共享视觉特征 `border-[var(--accent)]`（Plan 04 删
- *  animate-steer-breathe 后原字符串条件变死代码，F3 修复）。 */
-const focusRingClass = computed<Array<string>>(() => {
-  if (!isFocused.value) return ['']
-  const exclusive = String(boxClass.value[0] ?? '')
-  if (
-    exclusive.includes('border-[var(--accent)]')
-    || staging.activeStaging.value
-  ) {
-    return ['']
-  }
-  // 3px accent-ring 外环（v6 §6.1 .focused 真值；与 staging/bash 分支的 shadow-[0_0_0_3px_var(--accent-ring)] 同视觉语言）
-  return ['!border-[var(--accent)] ![box-shadow:0_0_0_3px_var(--accent-ring)]']
-})
-/** composer-box focusin/focusout：子元素（ComposerInput）聚焦算 box 聚焦（v6 .focused 态）。
- *  focusout 时 relatedTarget 仍在 box 内则保持（composer-box 内子元素切换不退出聚焦）。 */
-function onBoxFocusIn(): void {
-  isFocused.value = true
-}
-function onBoxFocusOut(): void {
-  isFocused.value = false
-}
 // focusin/focusout 用原生 listener 注册（非 template @focusin）：composer-box 经
 // CommandPopover 的 PopoverAnchor as-child 包裹，Vue template 事件绑定在 clone element 时丢失。
 // ref 指向真实 DOM，addEventListener 稳定生效。
@@ -294,29 +290,13 @@ onBeforeUnmount(() => {
 })
 /** composer-box 聚焦态：由 ComposerInput @focus/@blur 驱动（composer-box 经 CommandPopover
  *  PopoverAnchor as-child 包裹，ref 透传丢失，改由子组件 ComposerInput emit focus/blur）。 */
-/** 当前 panel 的 session 是否正在压缩上下文（#6，per-session） */
-const isCompacting = computed(() => (props.sessionId ? chatStore.isCompacting(props.sessionId) : false))
+// [u6b] 本地 isCompacting computed 已退役：压缩维度的唯一读口收敛到 shell sendButtonState
+// （occupancy 投影派生，与分发器 sendRoute 同源——双轨收口完成）。
 
 // composer-box 容器 ref（拖拽落位 + 视觉）——先声明，再喂给 shell
 const composerBoxRef = ref<HTMLElement | null>(null)
-// FR4: per-session 草稿存储（内存不持久化）；session 切换时保存旧/恢复新草稿
-// ADR-0049：裸 Map 迁到 useSessionScopedState 分区——结构化消除 session 泄漏
-const draftsState = useSessionScopedState(sessionIdRef, () => reactive({ text: '' }))
-/** DraftStore 窄接口：消费方（restore.ts）只关心 get/save/delete，不持有 Map 引用 */
-const drafts: DraftStore = {
-  getDraft: (sid: string) => {
-    let text = ''
-    draftsState.updateFor(sid, (s) => { text = s.text })
-    return text
-  },
-  saveDraft: (sid: string, text: string) => {
-    draftsState.updateFor(sid, (s) => { s.text = text })
-  },
-  deleteDraft: (sid: string) => {
-    // cleanup 移除分区（triggerSessionCleanups 也会调，此处是发送成功后即时清理）
-    draftsState.cleanup(sid)
-  },
-}
+// FR4: per-session 草稿存储（ADR-0049 分区，工厂在 composer-shell）
+const drafts: DraftStore = createComposerDrafts(sessionIdRef)
 
 // ── W4 壳改写：core 模块 deps 组装 + 视觉派生集中在 composer-shell.ts（替代 14 个 useComposer* shim）──
 const shell = useComposerShell({
@@ -328,7 +308,6 @@ const shell = useComposerShell({
   isSending,
   drafts,
   isActive,
-  isCompacting,
 })
 const {
   currentModelId,
@@ -350,10 +329,12 @@ const {
   fork,
   handoff,
   staging,
-  onSteer,
+  // [u5b] onSteer 解构退役：Enter 路由收口在分发器（onSend 内部 steer 分支），组件内无直调消费方
   onFollowUp,
   onAbort,
   onSend,
+  sendRoute,
+  sendButtonState,
   canSubmit,
   boxClass,
   placeholder,
@@ -361,6 +342,13 @@ const {
   // 传 ComposerInput suppressTriggers——bash 模式下 $/#/@/ 全部不触发浮层（设计 D6 豁免）
   isBashMode,
 } = shell
+
+// composer-box 聚焦态 + 聚焦环视觉（v6 §6.1 .focused）：从本组件拆出（script 行数约束，
+// 见 composer-focus-ring.ts）；依赖 shell 的 boxClass/staging，故在解构后调用
+const { focusRingClass, onBoxFocusIn, onBoxFocusOut } = useComposerFocusRing(
+  boxClass,
+  () => !!staging.activeStaging.value,
+)
 
 watch(
   () => props.sessionId,
@@ -386,26 +374,32 @@ watch(
   },
 )
 
-/** ComposerInput input 事件 → 维护 draft（纯文本，用于发送判断）+ 刷新 image chips */
+/** ComposerInput input 事件 → 维护 draft（纯文本，用于发送判断）+ 刷新 image chips + 已选 skill 集合 */
 function onInputChange(text: string): void {
   draft.value = text
   refreshAttachedItems()
+  // 已选禁选数据面（多 skill 注入 D2）：skill segment 有 name，其余类型跳过
+  // （TS 5.5 推断 type predicate：filter 后 s 收窄为 skill segment）
+  selectedSkillNames.value = (inputRef.value?.getSegments() ?? [])
+    .filter((s) => s.type === 'skill')
+    .map((s) => s.name)
   // 用户修改了内容，重置浏览历史状态（下次按上重新从最后一条开始）
   resetBrowsing()
 }
 
 /** 键盘分发（composer-keydown.ts，U02 拆出）：staging 优先 ⏎ 提交（fork/handoff，含 streaming 中）；
- *  无 staging 时 ⏎ 发送/steer，Alt+⏎ follow-up，⇧⏎ 换行，↑/↓ 翻历史。命令浮层 open 时优先路由到浮层。 */
+ *  ⏎ / Alt+⏎ 全部汇入统一发送分发器（D6，u5b——Enter 按 sessionPhase 路由 direct/steer/defer；
+ *  Alt+⏎ 保留 followUp 语义：steer 路由行走 followUp 下一轮，其余经分发器）；⇧⏎ 换行，↑/↓ 翻历史。
+ *  命令浮层 open 时优先路由到浮层。[HISTORICAL] isActive→onSteer 与 isCompacting→onSend 两套
+ *  分散判定（优先级倒挂根因）已退役，路由判定收口在 useComposerSend（core dispatch/send）。 */
 const onKeydown = useComposerKeydown({
   cmdOpen,
   commandPopoverRef,
   inputRef: shellInputRef,
   staging,
-  isActive,
-  isCompacting,
+  sendRoute,
   handleArrowUp,
   handleArrowDown,
-  onSteer,
   onFollowUp,
   onSend,
 })

@@ -7,12 +7,12 @@
  *
  * 运行：cd packages/ui && npx vitest run src/features/chat/__tests__/UserBubble.test.ts
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { UserBubble } from '@xyz-agent/ui'
+import { UserBubble, ChatViewDepsKey } from '@xyz-agent/ui'
 import type { MessageTurn } from '@xyz-agent/core/domain/chat'
 import type { Message, Segment } from '@xyz-agent/shared'
-import { mockChatProvide } from './helpers'
+import { createMockDeps, mockChatProvide } from './helpers'
 
 const NOW = Date.now()
 
@@ -207,5 +207,69 @@ describe('W4TC3: UserBubble 编辑态', () => {
     // test-utils 的 wrapper.unmount() 会先 removeEventHistory 清掉卸载前的 emit 记录，
     // 故数组里只剩卸载流程中钩子补发的那一条——恰好证明它来自卸载清理而非先前操作
     expect(wrapper.emitted('edit-state-change')).toEqual([[{ editing: false, turnKey: 'u1' }]])
+  })
+})
+
+// ── [D3] submitEdit 双发锁（isPendingSend 互斥，adversarial-review-fixes u3）──
+// 防 send 与 editAndResend 并发覆盖 useChat 的 pendingDirectSends（per-sid 单条 Map）：
+// 提交在途（pendingSend 瞬时态）时 submitEdit 直接 return——编辑态保持、草稿不丢。
+
+describe('[D3] submitEdit 双发锁', () => {
+  /** 进入编辑态并输入草稿；返回 wrapper + editAndResend spy */
+  async function enterEditAndType(provideOverrides: Parameters<typeof mockChatProvide>[0], draft: string) {
+    const editAndResend = vi.fn()
+    const wrapper = mount(UserBubble, {
+      props: { turn: makeTurn(), sessionId: 's1', canEdit: true, isSessionEditable: false },
+      global: {
+        provide: mockChatProvide({ editAndResend, ...provideOverrides }),
+        stubs: { MarkdownRenderer: true, ImageThumb: true },
+      },
+    })
+    const actions = wrapper.find('.group\\/user .opacity-0')
+    await actions.findAll('button')[1]!.trigger('click')
+    await wrapper.find('textarea').setValue(draft)
+    return { wrapper, editAndResend }
+  }
+
+  /** 编辑态里的发送按钮（文本 = t key panel.composer.send） */
+  function findSendButton(wrapper: ReturnType<typeof mount>) {
+    const btn = wrapper.findAll('button').find(b => b.text().includes('panel.composer.send'))
+    expect(btn).toBeDefined()
+    return btn!
+  }
+
+  it('isPendingSend=true（提交在途）→ submitEdit 早退：不提交 + 编辑态保持 + 草稿不丢', async () => {
+    const { wrapper, editAndResend } = await enterEditAndType({ isPendingSend: () => true }, '编辑后的内容')
+    await findSendButton(wrapper).trigger('click')
+    expect(editAndResend).not.toHaveBeenCalled()
+    // 早退置于 editingUserId=null 之前：编辑态保持、draftText 保留（提交收口后可重试）
+    expect(wrapper.find('textarea').exists()).toBe(true)
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('编辑后的内容')
+  })
+
+  it('isPendingSend=false → 正常提交（segments 重建 + editAndResend）+ 编辑态收口', async () => {
+    const { wrapper, editAndResend } = await enterEditAndType({ isPendingSend: () => false }, '编辑后的内容')
+    await findSendButton(wrapper).trigger('click')
+    expect(editAndResend).toHaveBeenCalledTimes(1)
+    expect(editAndResend).toHaveBeenCalledWith('s1', 'u1', [{ type: 'text', text: '编辑后的内容' }])
+    expect(wrapper.find('textarea').exists()).toBe(false)
+  })
+
+  it('未 provide isPendingSend（旧壳层兼容降级）→ 不互斥照常提交', async () => {
+    const editAndResend = vi.fn()
+    const deps = createMockDeps({ editAndResend })
+    delete (deps as { isPendingSend?: unknown }).isPendingSend
+    const wrapper = mount(UserBubble, {
+      props: { turn: makeTurn(), sessionId: 's1', canEdit: true, isSessionEditable: false },
+      global: {
+        provide: { [ChatViewDepsKey as symbol]: deps },
+        stubs: { MarkdownRenderer: true, ImageThumb: true },
+      },
+    })
+    const actions = wrapper.find('.group\\/user .opacity-0')
+    await actions.findAll('button')[1]!.trigger('click')
+    await wrapper.find('textarea').setValue('降级提交')
+    await findSendButton(wrapper).trigger('click')
+    expect(editAndResend).toHaveBeenCalledTimes(1)
   })
 })

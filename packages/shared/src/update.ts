@@ -4,6 +4,20 @@
  */
 
 /**
+ * 更新来源（发布渠道）。
+ * - 'github'：GitHub Releases（原唯一源）
+ * - 'atomgit'：AtomGit Releases（发布流程自 GitHub 单向同步，内容一致）
+ */
+export type UpdateSource = 'github' | 'atomgit'
+
+/**
+ * 更新来源偏好（UpdateSettings.updateSource 的值域）。
+ * 'auto' = 自动决定源顺序（默认）；显式 'github' / 'atomgit' = 该源优先
+ * （优先级语义而非独占，任一环节失败仍自动经另一源完成升级）。
+ */
+export type UpdateSourcePref = 'auto' | UpdateSource
+
+/**
  * 最新 Release 信息（已解析、按平台分流后的结构）。
  * 由 main 进程 ReleaseChecker.checkForLatestRelease 返回，preload 透传给 renderer。
  */
@@ -12,7 +26,7 @@ export interface LatestReleaseInfo {
   version: string
   /** 原始 tag（如 'v0.9.0'） */
   tagName: string
-  /** GitHub Release body 原文 markdown */
+  /** Release body 原文 markdown */
   releaseNotes: string
   /** 发布时间 ISO 8601 */
   publishedAt: string
@@ -24,19 +38,30 @@ export interface LatestReleaseInfo {
     winX64Exe?: ReleaseAsset
     linuxX64AppImage?: ReleaseAsset
   }
+  /**
+   * 该 release 的来源渠道（多源改造 D7）。
+   * 随 pending/preloaded 落盘 JSON 自然携带；undefined = 旧版落盘文件（向后兼容，
+   * 恢复后维持单源行为，不触发跨源降级）。消费点仅下载降级（确定对侧源），
+   * install 链路与前端状态机不读。
+   */
+  source?: UpdateSource
 }
 
 /**
  * 单个 Release 资产。
- * sha256 来自 GitHub asset.digest strip 'sha256:' 前缀；缺失时为 undefined。
+ * sha256 来自 GitHub asset.digest strip 'sha256:' 前缀，或 manifest fallback
+ * （AtomGit 源唯一来源）；缺失时为 undefined。
  */
 export interface ReleaseAsset {
   /** 文件名（如 'TaiJi-mac-arm64.dmg'） */
   name: string
   /** 下载直链（browser_download_url） */
   downloadUrl: string
-  /** 文件大小（字节） */
-  size: number
+  /**
+   * 文件大小（字节）。AtomGit API 不返回 size（实测响应无此字段），
+   * 由 manifest fallback 填充（GitHub API size 恒有）；缺失为 undefined。
+   */
+  size?: number
   /** sha256 hex（缺失为 undefined） */
   sha256?: string
 }
@@ -66,7 +91,7 @@ export type UpdateState =
 export interface UpdateCheckResult {
   /** 检测到的新版信息；无新版/失败/被限额时为 null */
   info: LatestReleaseInfo | null
-  /** true = 本次 null 是因为 GitHub API 限额退避中（非「无新版」） */
+  /** true = 本次 null 是因为更新检查服务限流退避中（非「无新版」） */
   rateLimited: boolean
 }
 
@@ -121,12 +146,19 @@ export interface IProxyConfig {
  * - autoUpdate：启动时自动检查更新并提示下载（v6 demo 语义）。默认 true
  *   （2026-08-28 拍板，设计 §3.6 RM1；存量用户现状即自动检查，见 update-settings.ts）。
  *   可选字段：调用方可以只传部分字段做局部更新（setUpdateSettings 内部与现有值合并）。
+ * - updateSource：更新来源偏好（'auto' / 'github' / 'atomgit'）。默认/缺省 'auto'。
  */
 export interface UpdateSettings {
   /** 检测到新版时自动后台预下载 */
   preDownload: boolean
   /** 启动时自动检查更新并提示下载 */
   autoUpdate?: boolean
+  /**
+   * 更新来源偏好：'auto'（自动决定源顺序，默认）/ 'github' / 'atomgit'。
+   * 语义为「优先级」而非「独占」——显式选择某源 = 该源优先，失败仍自动降级另一源。
+   * 可选 + 缺省/非法值回退 'auto'：旧 settings 文件无此字段 = 'auto'（向后兼容）。
+   */
+  updateSource?: UpdateSourcePref
 }
 
 /**
@@ -172,7 +204,7 @@ export interface LaunchResult {
 
 /**
  * 版本解析错误码（批次 3 信任锚 RC1）：update:download 请求的版本落后于权威 latest
- * （GitHub /releases/latest 实测值 ≠ 请求值）。renderer 收到此码后自动重新检查更新，
+ * （任一源胜出的 /releases/latest 实测值 ≠ 请求值）。renderer 收到此码后自动重新检查更新，
  * 拿到更新的 latest 再展示，而非重试旧版本（useAppUpdate.onUpdateError 处理）。
  *
  * 已并入 main 侧 types.ts 的 UpdateErrorCode 闭联合与 UPDATE_ERROR_MESSAGES 文案表。

@@ -28,7 +28,7 @@ describe('W2 extractSessionName 尾读 + fallback', () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'extract-name-'))
   })
   afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true })
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   function makeFile(lines: string[]): string {
@@ -97,7 +97,7 @@ describe('W2 extractSessionOutcome 尾读 + fallback', () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'extract-outcome-'))
   })
   afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true })
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   function makeFile(lines: string[]): string {

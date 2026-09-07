@@ -51,7 +51,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  await rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+  await rm(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }).catch(() => {})
   vi.restoreAllMocks()
 })
 

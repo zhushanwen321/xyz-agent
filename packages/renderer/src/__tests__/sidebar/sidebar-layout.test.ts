@@ -28,10 +28,12 @@ describe('D2: SubagentList slug 首行展示', () => {
       subagentId: 'sub-abc123def456',
       agent: 'code-reviewer',
       slug: 'cr-abc123',
-      status: 'done',
+      // [D6 适配 subagent-sidebar-filter] 原 status:'done' 落「已结束」桶，默认 active 桶下卡片不渲染；
+      // 布局断言与 status 无关，改 running（真在跑）即可见
+      status: 'running',
       task: 'Review the auth module',
     } as SubagentRecord]
-    const wrapper = mount(SubagentList, { props: { subagents: records } })
+    const wrapper = mount(SubagentList, { props: { subagents: records, sessionId: 'sess-1' } })
     const slugSpan = wrapper.find('[data-testid=subagent-card-slug]')
     expect(slugSpan.exists()).toBe(true)
     expect(slugSpan.text()).toBe('cr-abc123')
@@ -48,7 +50,7 @@ describe('D2: SubagentList slug 首行展示', () => {
       status: 'running',
       task: 'Write API docs',
     } as SubagentRecord]
-    const wrapper = mount(SubagentList, { props: { subagents: records } })
+    const wrapper = mount(SubagentList, { props: { subagents: records, sessionId: 'sess-1' } })
     expect(wrapper.text()).toContain('documentation-writer')
   })
 })

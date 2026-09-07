@@ -41,6 +41,8 @@ const PROJECT_ROOT = path.resolve(new URL('.', import.meta.url).pathname, '..')
 const DOC_MODULE_MAP = {
   'docs/design/update-network-resilience.md': ['apps/electron/main/update', 'apps/electron/main/gateway/update-handlers.ts'],
   'docs/design/update-network-resilience.impl-plan.md': ['apps/electron/main/update', 'apps/electron/main/gateway/update-handlers.ts'],
+  'docs/design/update-multi-source.md': ['apps/electron/main/update', 'apps/electron/main/gateway/update-handlers.ts', 'apps/electron/main/release-checker.ts', 'apps/electron/main/interfaces.ts'],
+  'docs/design/update-multi-source.impl-plan.md': ['apps/electron/main/update', 'apps/electron/main/gateway/update-handlers.ts', 'apps/electron/main/release-checker.ts', 'apps/electron/main/interfaces.ts'],
   'docs/design/chat-stream-perf-architecture.md': ['packages/core/src/domain/chat', 'packages/core/src/domain/session', 'packages/renderer/src/composables/features/sidebar', 'packages/renderer/src/composables/features/trace'],
   'docs/design/chat-stream-perf-architecture.impl-plan.md': ['packages/core/src/domain/chat', 'packages/core/src/domain/session', 'packages/renderer/src/composables/features/sidebar', 'packages/renderer/src/composables/features/trace'],
 }
@@ -107,6 +109,15 @@ function extractExportedSymbols(sourceFile) {
       const fn = ts[`is${kind}`]
       if (fn && fn(node) && node.name && node.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword)) {
         symbols.add(node.name.text)
+        // interface/class 成员名同样合法（文档引用接口方法签名属常态，如 IReleaseChecker.getRateLimitedUntil）
+        if (ts.isInterfaceDeclaration(node) || ts.isClassDeclaration(node)) {
+          for (const member of node.members) {
+            const memberName = member.name
+            if (memberName && (ts.isIdentifier(memberName) || ts.isStringLiteral(memberName))) {
+              symbols.add(memberName.text)
+            }
+          }
+        }
       }
     }
   }

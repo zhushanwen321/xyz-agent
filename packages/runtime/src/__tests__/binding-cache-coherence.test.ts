@@ -65,7 +65,7 @@ function setupFixture(prefix: string): {
       } else {
         process.env.XYZ_AGENT_DATA_DIR = origDataDir
       }
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     },
   }
 }

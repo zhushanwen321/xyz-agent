@@ -188,7 +188,7 @@ describe('buildExecutionTree - fixture', () => {
     dir = await makeAgentDir()
   })
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('TC-m3b-nested-tree：main→subagent A→{workflow-call B, subagent C} 相互嵌套（parentRecordId 精确链）', async () => {

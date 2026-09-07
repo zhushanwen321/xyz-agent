@@ -48,8 +48,8 @@ export default {
     upgradeFailedSwap: '替换应用失败，请检查磁盘空间后重试',
     upgradeFailedAppRunning: '升级因应用未退出而中断，请重启应用后重试',
     upgradeFailedInstaller: '安装程序执行失败，请重新下载更新',
-    // RM2.3：GitHub API 限额退避中的非侵入提示（非错误，不进 error 态）
-    rateLimited: '检查更新接口已被 GitHub 限额，约 2 小时内暂停自动检查',
+    // RM2.3：限流退避中的非侵入提示（非错误，不进 error 态；多源后信号泛化为全源限流）
+    rateLimited: '更新检查服务限流，约 2 小时内暂停自动检查',
     staleRelease: '检测到更新的版本，已为你刷新更新信息',
     // update-network-resilience D9：网络/代理类错误的 suggestion 末尾追加手动下载逃生通道指引
     manualDownloadHint: '也可从 release 页手动下载安装包，放入手动升级目录后重试（目录路径见 设置 → 更新 → 手动升级通道）',
@@ -140,6 +140,19 @@ export default {
     turnsUnit: 'turns',
     tokUnit: 'tok',
   },
+  // Agents tab 二级状态筛选（设计 docs/design/subagent-sidebar-filter.md §3.4；D2 文案「已结束」）
+  // [C7 用词登记] 本处「进行中」与 backgroundTaskList.filter.active 的「运行中」刻意不统一：
+  // 前者任务域——含 settling/waiting 流转中的子代理任务；后者进程域——仅进程 running 状态的
+  // 后台命令。概念域不同属真差异，勿合并措辞（adversarial-review-fixes §3.4 C7 裁决）。
+  subagentFilter: {
+    active: '进行中',
+    ended: '已结束',
+    all: '全部',
+    emptyActive: '没有进行中的后台任务',
+    emptyActiveHint: '当前会话没有正在运行的任务',
+    viewAll: '查看全部（{count}）',
+    emptyEnded: '没有已结束的任务',
+  },
   workflowDetail: {
     backToList: '返回工作流列表',
     pause: '暂停',
@@ -164,5 +177,36 @@ export default {
     empty: '暂无工作流',
     emptyHint: '工作流是多步骤自动化脚本，在对话中发起后会显示运行进度',
     agentsLabel: '{done}/{total}',
+  },
+  // 「后台命令」L2 视图（background-task-sidebar-view D10）。术语裁决（设计 §1）：
+  // 与 subagent 的「后台任务」区分，本视图一律用「后台命令」
+  // [C7 用词登记] 本处「运行中」与 subagentFilter.active 的「进行中」刻意不统一：
+  // 前者进程域——仅进程 running 状态；后者任务域——含 settling/waiting 流转。真差异保留。
+  backgroundTaskList: {
+    filter: {
+      active: '运行中',
+      ended: '已结束',
+      all: '全部',
+    },
+    emptyAllTitle: '暂无后台命令',
+    emptyAllHint: '在对话中让 AI 以后台方式运行命令，任务会显示在这里',
+    emptyActive: '没有运行中的后台命令',
+    emptyEnded: '暂无已结束的后台命令',
+    viewAll: '查看全部 ({count})',
+    kill: '终止',
+    killConfirm: '确认终止',
+    pidLabel: 'pid',
+    exitLabel: 'exit',
+    status: {
+      running: '运行中',
+      killing: '终止中',
+      orphaned: '孤儿任务',
+      killed: '已终止',
+      succeeded: '已成功',
+      failed: '已失败',
+    },
+    // S7 损坏错误条 / S6 断连提示条（一致性审查修复批次）
+    corruptBanner: '任务数据损坏，已忽略（.corrupt 保留现场）',
+    disconnectBanner: '连接断开，重连后自动刷新',
   },
 }

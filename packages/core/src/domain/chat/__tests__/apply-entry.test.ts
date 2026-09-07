@@ -82,6 +82,186 @@ describe('applyEntry —— entry 类型逐类型覆盖', () => {
     ])
   })
 
+  it('message/user：[簇 A2] defer flush 确认标记剥除——投影片段不含实现标记（live 帧 / reload 重放同点）', () => {
+    // flush 提交文本尾附加 `<!--xyz:msg:<entry.id>-->`（user-delivery ①a 身份通道），pi 落盘
+    // entry 带标记 → 投影层单点剥除：live reducer 喂入与重开 replay 同经 convertMessageBody
+    // → 对话流不暴露标记，且剥后文本 = confirmDelivery overlay 文本（文本去重命中不双计）。
+    const state = replayEntries([
+      msgEntry('e-user-dm1', {
+        role: 'user',
+        content: [{ type: 'text', text: '排队消息正文\n<!--xyz:msg:3f2504e0-4f89-41d3-9a0c-0305e82c3301-->' }],
+        timestamp: 1000,
+      }),
+    ])
+    expect(state.messages[0].content).toEqual([{ type: 'text', text: '排队消息正文' }])
+  })
+
+  it('message/user：[簇 A2] skill 展开文本 + 尾部确认标记——标记剥除不破坏 skill block 剖离', () => {
+    // 改写场景（skill-injector 展开拼接把标记推到文本尾）：剥标记与 skill 反解析的叠加
+    const state = replayEntries([
+      msgEntry('e-user-dm2', {
+        role: 'user',
+        content: [{ type: 'text', text: '<skill name="review" location="/abs/SKILL.md">body</skill>\n\n帮我审查\n<!--xyz:msg:3f2504e0-4f89-41d3-9a0c-0305e82c3301-->' }],
+        timestamp: 1000,
+      }),
+    ])
+    expect(state.messages[0].content).toEqual([
+      { type: 'skill', name: 'review', location: '/abs/SKILL.md' },
+      { type: 'text', text: '帮我审查' },
+    ])
+  })
+
+  // ── 两形态反解析（D7 兜底通道，composer 多 skill 注入 u3）──────────────────────
+  // 反解析 SSOT = apply-entry-convert parseSkillBlock（live 帧 / 历史重建 / 文件重放
+  // 三链路共用）。形态① xyz 私有标记（本设计序列化产物）、形态② pi 原生 block（存量）。
+  it('message/user：xyz 私有标记混排中文正文——标记前后正文全保留为交错 segments（专防前置正文丢失回归）', () => {
+    const state = replayEntries([
+      msgEntry('e-user-mk1', {
+        role: 'user',
+        content: [{ type: 'text', text: '帮我<xyz-skill name="code-review" location="/abs/SKILL.md"/>审查这段代码' }],
+        timestamp: 1000,
+      }),
+    ])
+    expect(state.messages[0].content).toEqual([
+      { type: 'text', text: '帮我' },
+      { type: 'skill', name: 'code-review', location: '/abs/SKILL.md' },
+      { type: 'text', text: '审查这段代码' },
+    ])
+  })
+
+  it('message/user：xyz 多标记 + 首尾正文——全部还原且正文无丢失', () => {
+    const state = replayEntries([
+      msgEntry('e-user-mk2', {
+        role: 'user',
+        content: [{ type: 'text', text: '前置<xyz-skill name="a"/><xyz-skill name="b" location="/b/SKILL.md"/>后置' }],
+        timestamp: 1000,
+      }),
+    ])
+    expect(state.messages[0].content).toEqual([
+      { type: 'text', text: '前置' },
+      { type: 'skill', name: 'a' },
+      { type: 'skill', name: 'b', location: '/b/SKILL.md' },
+      { type: 'text', text: '后置' },
+    ])
+  })
+
+  it('message/user：xyz 降级块夹正文——块整体还原为各 skill segment，块前后正文保留、指引行不作正文残留', () => {
+    // 块形态 = buildSkillsFallbackBlock 产物（SSOT 构建 + 手写锚定格式双保险；指引行
+    // C5 改英文）：
+    // <xyz-skills>\n<标记行…/>\n</xyz-skills>\nUse the read tool to load the skill files above before continuing the task
+    const state = replayEntries([
+      msgEntry('e-user-mk3', {
+        role: 'user',
+        content: [{
+          type: 'text',
+          text: '正文开始\n<xyz-skills>\n<xyz-skill name="a" location="/a/SKILL.md"/>\n<xyz-skill name="b"/>\n</xyz-skills>\nUse the read tool to load the skill files above before continuing the task\n正文结束',
+        }],
+        timestamp: 1000,
+      }),
+    ])
+    expect(state.messages[0].content).toEqual([
+      { type: 'text', text: '正文开始\n' },
+      { type: 'skill', name: 'a', location: '/a/SKILL.md' },
+      { type: 'skill', name: 'b' },
+      { type: 'text', text: '\n正文结束' },
+    ])
+  })
+
+  it('message/user：空正文纯标记消息——产出纯 skill segment 无 text（u3 断言④）', () => {
+    const state = replayEntries([
+      msgEntry('e-user-mk4', {
+        role: 'user',
+        content: [{ type: 'text', text: '<xyz-skill name="solo" location="/s/SKILL.md"/>' }],
+        timestamp: 1000,
+      }),
+    ])
+    expect(state.messages[0].content).toEqual([{ type: 'skill', name: 'solo', location: '/s/SKILL.md' }])
+  })
+
+  it('message/user：存量 pi 原生格式回归等价（场景 4⑤）——block 前置 + \\n\\nargs 在后 → [skill, args-text]', () => {
+    const state = replayEntries([
+      msgEntry('e-user-pi1', {
+        role: 'user',
+        content: [{ type: 'text', text: '<skill name="code-review" location="/abs/SKILL.md">skill body</skill>\n\ndo the thing with args' }],
+        timestamp: 1000,
+      }),
+    ])
+    expect(state.messages[0].content).toEqual([
+      { type: 'skill', name: 'code-review', location: '/abs/SKILL.md' },
+      { type: 'text', text: 'do the thing with args' },
+    ])
+    // 无 args 纯 block：单 skill segment（升级前 match[3].trim() 空串不产 text 的等价形态）
+    const solo = replayEntries([
+      msgEntry('e-user-pi2', {
+        role: 'user',
+        content: [{ type: 'text', text: '<skill name="x">body</skill>' }],
+        timestamp: 1000,
+      }),
+    ])
+    expect(solo.messages[0].content).toEqual([{ type: 'skill', name: 'x' }])
+  })
+
+  it('message/user：pi block 前正文保留（升级前该场景正文直接丢，缺陷修复）', () => {
+    const state = replayEntries([
+      msgEntry('e-user-pi3', {
+        role: 'user',
+        content: [{ type: 'text', text: '看看这个<skill name="x">body</skill>\n\nargs 部分' }],
+        timestamp: 1000,
+      }),
+    ])
+    expect(state.messages[0].content).toEqual([
+      { type: 'text', text: '看看这个' },
+      { type: 'skill', name: 'x' },
+      { type: 'text', text: 'args 部分' },
+    ])
+  })
+
+  it('message/user：两形态同文优先级——xyz 标记与 pi block 共存时按位置交错全还原（顺序锁定）', () => {
+    const state = replayEntries([
+      msgEntry('e-user-mix', {
+        role: 'user',
+        content: [{ type: 'text', text: '前<xyz-skill name="a"/><skill name="b">body</skill>\n\nargs' }],
+        timestamp: 1000,
+      }),
+    ])
+    expect(state.messages[0].content).toEqual([
+      { type: 'text', text: '前' },
+      { type: 'skill', name: 'a' },
+      { type: 'skill', name: 'b' },
+      { type: 'text', text: 'args' },
+    ])
+    // 降级块优先级：块内嵌套标记由块整体消费，不二次命中（无重复 segment、无标记文本残留）
+    const nested = replayEntries([
+      msgEntry('e-user-mix2', {
+        role: 'user',
+        content: [{ type: 'text', text: '<xyz-skills>\n<xyz-skill name="a" location="/a/SKILL.md"/>\n</xyz-skills>\nUse the read tool to load the skill files above before continuing the task' }],
+        timestamp: 1000,
+      }),
+    ])
+    expect(nested.messages[0].content).toEqual([{ type: 'skill', name: 'a', location: '/a/SKILL.md' }])
+  })
+
+  it('message/user：手打残缺/错序标记不还原（D8 透传语义——反解析不宽松）', () => {
+    const state = replayEntries([
+      msgEntry('e-user-broken', {
+        role: 'user',
+        content: [{ type: 'text', text: '正文 <xyz-skill name="a" 讨论标记语法' }],
+        timestamp: 1000,
+      }),
+    ])
+    // 无命中 → 整条消息纯 text（textToSegments 回退，与升级前行为一致）
+    expect(state.messages[0].content).toEqual([{ type: 'text', text: '正文 <xyz-skill name="a" 讨论标记语法' }])
+    // 属性顺序错乱（location 在前）不识别——u1 解析器固定 name → location 顺序
+    const wrongOrder = replayEntries([
+      msgEntry('e-user-broken2', {
+        role: 'user',
+        content: [{ type: 'text', text: '<xyz-skill location="/x" name="a"/>' }],
+        timestamp: 1000,
+      }),
+    ])
+    expect(wrongOrder.messages[0].content).toEqual([{ type: 'text', text: '<xyz-skill location="/x" name="a"/>' }])
+  })
+
   it('message/user：content 含 image part → images 保字段不丢（W5，pi UserMessage content 可含 ImageContent）', () => {
     const state = replayEntries([
       msgEntry('e-user-img', {

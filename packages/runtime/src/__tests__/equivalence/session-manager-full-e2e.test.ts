@@ -87,7 +87,7 @@ async function runFullChain(): Promise<{ result: FullChainResult; fx: PiFixture;
 
   const cleanup = (): void => {
     process.env.XYZ_AGENT_DATA_DIR = savedDataDir
-    rmSync(dataRoot, { recursive: true, force: true })
+    rmSync(dataRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 
   try {

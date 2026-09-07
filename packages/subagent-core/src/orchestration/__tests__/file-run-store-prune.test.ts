@@ -41,7 +41,7 @@ beforeEach(() => {
 
 afterEach(() => {
   resetCoreForTests();
-  rmSync(dataRoot, { recursive: true, force: true });
+  rmSync(dataRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   delete process.env[ENV_NAME];
 });
 

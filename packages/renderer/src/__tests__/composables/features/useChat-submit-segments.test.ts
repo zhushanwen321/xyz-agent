@@ -72,7 +72,7 @@ beforeEach(() => {
 // ── SS1: send(含 image) → submitSegments → chatApi.send 路径模式 ──
 
 describe('submitSegments 统一通路：send', () => {
-  it('SS1: send(含 image) → chatApi.send 仅两参（sessionId, promptText），promptText 含裸路径 + clientUuid 标记', async () => {
+  it('SS1: send(含 image) → chatApi.send(sessionId, promptText, options)，promptText 含裸路径 + clientUuid 标记', async () => {
     const { send } = useChat()
     await send('ss-send', [
       { type: 'text', text: 'look' },
@@ -89,8 +89,13 @@ describe('submitSegments 统一通路：send', () => {
     // promptText 末尾含 clientUuid 标记（pi extension input hook 剥离 + 写 custom entry）
     // 标记格式严格：<!--xyz:msg:u-<uuid>-->，clientUuid 是 appendUser 生成的 message id
     expect(call[1]).toMatch(/\n<!--xyz:msg:u-[0-9a-fA-F-]{36}-->$/)
-    // 不再传 images 第三参数（路径模式，路径在 promptText 里）
+    // images 位保持不传（路径模式，路径在 promptText 里）；第 4 参为 options.clientUuid
+    // （session-occupancy D2：经 ChatApiPort 适配 → 域函数 4 参形态，与标记同源）
     expect(call[2]).toBeUndefined()
+    expect(call[3]).toEqual({ clientUuid: expect.stringMatching(/^u-[0-9a-fA-F-]{36}$/) })
+    // options.clientUuid 与 prompt 标记里的 uuid 一致（同一 user message 的双通路标识）
+    const ss1MarkerUuid = (call[1] as string).match(/<!--xyz:msg:(u-[0-9a-fA-F-]{36})-->/)![1]
+    expect((call[3] as { clientUuid?: string }).clientUuid).toBe(ss1MarkerUuid)
 
     // writeSegmentsMetadata 被调（写 segments.json sidecar，clientUuid 关联回填用）
     expect(sessionDomainMock.writeSegments).toHaveBeenCalledTimes(1)
@@ -141,8 +146,9 @@ describe('submitSegments 统一通路：editAndResend', () => {
     // promptText 含编辑后文本 + 裸路径
     expect(call[1]).toContain('edited text')
     expect(call[1]).toContain('/tmp/edit.png')
-    // 关键断言：不再传 images 第三参数（路径模式，路径在 promptText 里）
+    // images 位不传（路径模式）；第 4 参为 options.clientUuid（D2 透传）
     expect(call[2]).toBeUndefined()
+    expect(call[3]).toEqual({ clientUuid: expect.stringMatching(/^u-[0-9a-fA-F-]{36}$/) })
   })
 
   it('SS3: editAndResend(text-only) → chatApi.send 第二参数 promptText（与 send 对齐）', async () => {
@@ -161,8 +167,9 @@ describe('submitSegments 统一通路：editAndResend', () => {
     expect(call[1]).not.toMatch(/<!--xyz:msg:/)
     // 纯文本轮不写 sidecar（不变式：sidecar 条目存在 ⟺ 映射 custom entry 存在）
     expect(sessionDomainMock.writeSegments).not.toHaveBeenCalled()
-    // 无图 → 第三参数 undefined（行为不变）
+    // 无图 → images 位不传；第 4 参为 options.clientUuid（D2 透传，与 send 同通路）
     expect(call[2]).toBeUndefined()
+    expect(call[3]).toEqual({ clientUuid: expect.stringMatching(/^u-[0-9a-fA-F-]{36}$/) })
   })
 })
 

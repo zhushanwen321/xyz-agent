@@ -13,7 +13,7 @@
  * （vite 不做条件编译），但 main.ts 用 `isDev && DEV_MOCK_UPDATE_ENABLED`
  * 双重保护，prod 构建即使环境变量被误设也永不实例化此类。
  */
-import type { LatestReleaseInfo } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateSource } from '@xyz-agent/shared'
 import type { IReleaseChecker } from '../interfaces.js'
 
 /** SHA-256 摘要的十六进制字符长度（mock 占位用 'a' 填充，长度必须合法否则下游校验报错）。 */
@@ -61,11 +61,21 @@ const MOCK_RELEASE: LatestReleaseInfo = {
  *
  * checkForLatestRelease 直接返回 MOCK_RELEASE，不做任何网络请求。
  * 忽略 currentVersion / force 参数（mock 永远返回「有新版」）。
+ * fetchReleaseByTag（多源改造 IReleaseChecker 必需方法）同样返回 MOCK_RELEASE：
+ * P2 只验证「检测 → UI 显示」，下载段跨源降级在 dev 模式会被 MacUpdater 拒绝，
+ * 永不消费此方法——返回固定 mock 保持「永远有新版」的 mock 语义一致。
  */
 export class MockReleaseChecker implements IReleaseChecker {
   async checkForLatestRelease(
     _currentVersion: string,
     _opts?: { force?: boolean },
+  ): Promise<LatestReleaseInfo | null> {
+    return MOCK_RELEASE
+  }
+
+  async fetchReleaseByTag(
+    _source: UpdateSource,
+    _tag: string,
   ): Promise<LatestReleaseInfo | null> {
     return MOCK_RELEASE
   }

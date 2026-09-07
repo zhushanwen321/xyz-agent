@@ -21,7 +21,14 @@ export * from './bash-effects'
 export * from './effect-types'
 export * from './truncate-tool-output'
 export { dispatchMessageEvent } from './effects/registry'
+// [session-occupancy u4a] message_end(user) 三分支 ① 机制（defer 队列 provider 注入点）
+export { setCompactQueueProviderForEffects, resetCompactQueueProviderForEffectsForTest } from './effects/user-delivery'
+// [簇 A2] defer flush 投递确认标记正则（SSOT = apply-entry-convert，显示层剥标记 import 用）
+export { DEFER_FLUSH_MARKER_RE } from './apply-entry-convert'
+export type { CompactQueueLike, CompactQueueEntrySnapshot } from './useChat'
 export { createChatStore, DEFAULT_STREAMING_IDLE_TIMEOUT_MS, STREAMING_IDLE_TIMEOUT_MIN_MS, STREAMING_IDLE_TIMEOUT_MAX_MS } from './store'
+// [session-occupancy u5b] occupancy 投影类型（sessionPhase 数据源，P4 ActivityStrip/发送位消费）
+export type { SessionOccupancyState } from './store'
 export * from './derive-status'
 export { createStreamingStateMachine, type StreamingStateMachineDeps } from './streaming-state-machine'
 export type { ChatStoreInstance, ChatStoreReaders, ChatStoreOps } from './store'
@@ -32,7 +39,9 @@ export * from './summarize-turn'
 export * from './trace-window'
 
 export { createUseChat, ensureStreamSubscription, invalidateStreamSubscription, resetChatModuleStateForTest } from './useChat'
-export type { UseChatDeps, EnsureStreamSubDeps, SessionStoreLike } from './useChat'
+// [session-occupancy u4b] defer 队列 flush 逐条提交入口（D5.1 send/steer 等价编排）
+export { submitQueuedEntry } from './useChat'
+export type { UseChatDeps, EnsureStreamSubDeps, SubmitQueuedEntryDeps, SessionStoreLike } from './useChat'
 export type { ChatApiPort, WriteSegmentsFn } from './api-port'
 // w20 apply-entry：chat 视图态 reducer（D5 单一 reducer 双路喂入——重放侧）。
 // 自包含纯函数模块（只依赖 @xyz-agent/shared），供 runtime wire 层与 core store（W21）共用。

@@ -17,6 +17,7 @@ import { RuntimeServer } from '../src/transport/server.js'
 import { SessionService } from '../src/services/session/session-service.js'
 import { MessageBus } from '../src/services/message-bus/message-bus.js'
 import { ExtensionTimeoutManager } from '../src/services/extension-timeout-manager.js'
+import { updateSessionOccupancy } from '../src/services/session/event-interpreter.js'
 import { createMockSessionServiceClass } from './helpers/service-mocks.js'
 import type { ISessionService } from '../src/interfaces.js'
 import type { IMessageBroker } from '../src/interfaces.js'
@@ -105,6 +106,7 @@ function makeRealServiceEnv() {
   svc.setMessageBus(bus)
   return {
     svc,
+    bus,
     triggerExit: (sid: string, code: number | null, stderr: string) => {
       if (!exitHandler) throw new Error('onSessionExit handler not registered')
       exitHandler(sid, code, stderr)
@@ -122,15 +124,42 @@ function registerHandlers(svc: SessionService): { plugin: ReturnType<typeof vi.f
 }
 
 describe('D6a: 真实 SessionService 两条销毁路径触发 onSessionDestroyed 回调列表', () => {
-  it('进程意外退出（onSessionExit → removeSessionEntry）触发全部回调', async () => {
-    const { svc, triggerExit } = makeRealServiceEnv()
+  it('进程意外退出（onSessionExit → removeSessionEntry）触发全部回调 + occupancy 全复位帧先于 clearSession（A3）', async () => {
+    const { svc, bus, triggerExit } = makeRealServiceEnv()
     const { plugin, cleanup } = registerHandlers(svc)
-    await svc.initializeManagedSession('s-exit', {} as unknown as IPiEngine, '/tmp', 'test')
+    const session = await svc.initializeManagedSession('s-exit', {} as unknown as IPiEngine, '/tmp', 'test')
+
+    // 构造「占用中 pi 死亡」场景（D3 转移 #10 的主防线语义）：占用中 agent_settled /
+    // compaction_end 永不到达，onSessionExit 全复位是唯一兜底——否则重连 renderer 经
+    // stateSnapshot 回放恢复的是永久占用投影。先置占用投影（订阅前，received 只收
+    // triggerExit 后的帧），再订阅并触发退出。
+    updateSessionOccupancy(session, bus, { turn: 'generating', compacting: true })
+
+    // 订阅 bus（BusClient 最小契约 readyState + send）捕获 publish 帧；spy 记录
+    // clearSession（removeSessionEntry 内部清订阅者集合）相对顺序
+    const received: ServerMessage[] = []
+    const ws = { readyState: 1, send: (data: string) => { received.push(JSON.parse(data) as ServerMessage) } }
+    bus.subscribe('s-exit', ws as never)
+    const clearSessionSpy = vi.spyOn(bus, 'clearSession')
+    const publishSpy = vi.spyOn(bus, 'publish')
 
     triggerExit('s-exit', 1, 'boom')
 
     expect(plugin).toHaveBeenCalledWith('s-exit')
     expect(cleanup).toHaveBeenCalledWith('s-exit')
+
+    // occupancy 全复位帧：{turn:'idle', compacting:false, bash:false}（D3 转移 #10）
+    const occFrames = received.filter((m) => m.type === 'session.occupancy')
+    expect(occFrames).toHaveLength(1)
+    expect(occFrames[0]!.payload).toMatchObject({ sessionId: 's-exit', turn: 'idle', compacting: false, bash: false })
+    // session.exited 同样经 bus publish 到达订阅者（broadcast 腿已删，publish 唯一通道）
+    expect(received.some((m) => m.type === 'session.exited')).toBe(true)
+
+    // 帧序约束：occupancy 复位 publish 先于 clearSession 清空——clearSession 之后订阅者
+    // 集合为空，届时才 publish 等于送空集合，订阅 renderer 一条也收不到（占用卡死）。
+    const occCallIdx = publishSpy.mock.calls.findIndex((c) => (c[1] as ServerMessage).type === 'session.occupancy')
+    expect(occCallIdx).toBeGreaterThanOrEqual(0)
+    expect(publishSpy.mock.invocationCallOrder[occCallIdx]!).toBeLessThan(clearSessionSpy.mock.invocationCallOrder[0]!)
   })
 
   it('主动删除（lifecycle.delete → removeSessionEntry）触发全部回调', async () => {

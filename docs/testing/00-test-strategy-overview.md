@@ -257,7 +257,7 @@ mock 用 `sleep(TIMING.xxx)` 模拟异步。常见延迟（`mock/index.ts` TIMIN
 | `fileChangesGap` | 120ms | file_changes 帧 |
 | `switchCmd` | 30ms | session 激活后推 commands |
 
-**对策**：永远用 `expect(...).toBeVisible({ timeout: N })` 等待终态，**禁止 `page.waitForTimeout(固定值)`**。一轮 mock 流式约 3-4 秒，timeout 给 10s 余量。
+**对策**：永远用 `expect(...).toBeVisible({ timeout: N })` 等待终态，**禁止 `page.waitForTimeout(固定值)`**。一轮 mock 流式约 3-4 秒，timeout 给 10s 余量。涉及真实子进程/文件系统/跨进程等待的更完整规则（等待机制只读化 / 轮询 + deadline / teardown maxRetries）见 [TEST-STRATEGY.md「测试自身引入的 flake 防规范」](../../TEST-STRATEGY.md)。
 
 ### 6.2 contenteditable 输入
 

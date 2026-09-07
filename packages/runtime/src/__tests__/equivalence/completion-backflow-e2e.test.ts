@@ -127,6 +127,7 @@ describe.skipIf(!REAL_PI_READY)(`completion backflow e2e real pi${REAL_PI_READY 
           return () => {}
         },
         recordWorkspace: () => {},
+        getMessageBus: () => null,
       })
 
       // backflow：真实实现；getSessionOutcome 用真实 PiSessionStore 读子 session_end
@@ -189,7 +190,7 @@ describe.skipIf(!REAL_PI_READY)(`completion backflow e2e real pi${REAL_PI_READY 
     } finally {
       await parentFx?.dispose().catch(() => {})
       await childFx?.dispose().catch(() => {})
-      rmSync(dataRoot, { recursive: true, force: true })
+      rmSync(dataRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })

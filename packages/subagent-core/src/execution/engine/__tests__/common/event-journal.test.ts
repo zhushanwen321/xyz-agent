@@ -25,7 +25,7 @@ function tmpPath(name: string): string {
 
 afterEach(() => {
   if (tmpRoot !== undefined) {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     tmpRoot = undefined;
   }
 });

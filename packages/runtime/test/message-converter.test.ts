@@ -127,22 +127,32 @@ describe('convertPiHistory - skill block parsing', () => {
     expect(content.find((s) => s.type === 'text')?.text).toBe(raw)
   })
 
-  it('takes only the first skill block (non-greedy), rest stays in user text', () => {
+  it('restores every skill block (multi-block), keeps text between/after blocks', () => {
+    // [行为变更登记 2026-09-06] 升级前正则捕获组锚定 $，此形态「只取首个」、第二个 block
+    // 沦为字面文本（capture 副产物非契约）；D7 升级（composer-multi-skill-injection u3，
+    // core parseSkillBlock SSOT 同步）为两形态全局反解析——多 block 全部还原为 skill
+    // segment，block 间与尾部正文保留（G2 多 skill 生效的恢复路径前提）。
     const messages = convertPiHistory(skillUser(
       '<skill name="first">A</skill><skill name="second">B</skill>tail',
     ))
     const content = messages[0].content as any[]
-    expect(content.find((s) => s.type === 'skill')?.name).toBe('first')
-    expect(content.find((s) => s.type === 'text')?.text).toBe('<skill name="second">B</skill>tail')
+    expect(content.filter((s) => s.type === 'skill').map((s) => s.name)).toEqual(['first', 'second'])
+    // 两 block 紧邻无夹间正文 → 仅尾部 tail 一个 text segment
+    expect(content.filter((s) => s.type === 'text').map((s) => s.text)).toEqual(['tail'])
   })
 
-  it('trims trailing user text (whitespace only after close)', () => {
+  it('drops whitespace-only trailing text after block (marker-strip trimEnd, delivery-baseline policy)', () => {
     const messages = convertPiHistory(skillUser(
       '<skill name="x">body</skill>   \n  ',
     ))
     const content = messages[0].content as any[]
     expect(content.find((s) => s.type === 'skill')?.name).toBe('x')
-    // trim 后无剩余用户文本 → 不追加 text segment
+    // [语义变更登记 2026-09-07] D7 升级时本形态曾锁定「尾部纯空白保留为 text segment」
+    // （preserve-content policy）；簇 A2（decf7d289，defer 队列标记确认通道）在 user 投影
+    // 剥 defer marker 后统一 trimEnd（core convertMessageBody 单点）——剥后基线文本 =
+    // confirmDelivery overlay 文本，mergeBaselineWithLive 文本去重命中不双计。本形态
+    // trimEnd 后无剩余正文 → 不产 text segment，仅 skill（与 core e-user-pi2 形态一致）。
+    // 正文保留语义对非空白内容不变（见上方 multi-block 用例）。
     expect(content.find((s) => s.type === 'text')).toBeUndefined()
   })
 })

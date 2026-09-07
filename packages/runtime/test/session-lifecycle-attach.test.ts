@@ -154,7 +154,7 @@ describe('W1 restore/fork 直附着正式文件（F1/F2/F3）', () => {
 
   afterEach(() => {
     setMigrationGate(Promise.resolve())
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 目录内 .tmp-migrate- 残留清单（C3/C6：应恒为空）。 */
@@ -353,7 +353,7 @@ describe('S6 归一化残留清理（差距复审 suggestion 6）', () => {
 
   afterEach(() => {
     setMigrationGate(Promise.resolve())
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   function tmpMigrateLeftovers(): string[] {

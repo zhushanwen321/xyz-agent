@@ -66,7 +66,7 @@ describe("WorktreeManager.scan 物理面对账（D5b）", { timeout: 30_000 }, (
 
 	afterEach(() => {
 		process.env.TMPDIR = ORIG_TMPDIR;
-		fs.rmSync(outerDir, { recursive: true, force: true });
+		fs.rmSync(outerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 	});
 
 	/** 建一个物理 worktree（按 create() 的真实路径布局，绕过 WorktreeManager.create 的脏树校验）。 */

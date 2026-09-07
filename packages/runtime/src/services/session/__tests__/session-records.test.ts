@@ -20,6 +20,7 @@ import type { ISessionStore } from '../../ports/session.js'
 import type { SessionRecordsDeps } from '../session-records.js'
 import { SessionRecords, encodeDirectiveText } from '../session-records.js'
 import { SCALAR_STATE_DEBOUNCE_MS } from '../replicated-states.config.js'
+import type { SkillInjector, SkillInjectionResult } from '../skill-injector.js'
 
 /** 引擎配置组的 getPiAgentDir 重定向目标（hoisted：vi.mock 工厂内引用）。 */
 const piAgentDirRef = vi.hoisted(() => ({ dir: '' }))
@@ -76,7 +77,7 @@ function workflowRecordEntry(runId: string, status: 'running' | 'done', entryId:
 }
 
 /** 最小装置：deps 全 mock（publish spy 收集 bus 发布；client 可编程）。 */
-function makeRecords(depsOverrides: Partial<SessionRecordsDeps> = {}) {
+function makeRecords(depsOverrides: Partial<SessionRecordsDeps> = {}, injector?: SkillInjector) {
   const publish = vi.fn()
   const client = {
     getEntries: vi.fn(async (_since?: string) => ({ data: { entries: [], leafId: null } }) as GetEntriesResult),
@@ -90,7 +91,7 @@ function makeRecords(depsOverrides: Partial<SessionRecordsDeps> = {}) {
     getExtensionPaths: vi.fn(async () => [] as string[]),
     ...depsOverrides,
   }
-  const records = new SessionRecords(deps)
+  const records = new SessionRecords(deps, injector)
   return { records, publish, client, deps }
 }
 
@@ -480,5 +481,97 @@ describe('引擎配置（getPiAgentDir 重定向临时目录，锁与原子写�
     const written = JSON.parse(readFileSync(join(piAgentDirRef.dir, 'subagents', 'config.json'), 'utf8')) as Record<string, unknown>
     expect(written.defaultEngine).toBe('codex')
     expect(written.other).toBe('kept')
+  })
+})
+
+// ─── A2（adversarial-review-fixes MF-B）：subagentAction 定向文本挂注入 ───
+//
+// 锁定三件事：① message/start 分支在 encodeDirectiveText 之前经 injector.inject
+// （标记在原始文本上匹配）；② notice 在 client.prompt 成功之后发布（时机契约
+// 与 dispatcher 同款）；③ cancel / workflows 内部命令不经注入器。
+
+describe('subagentAction：skill 注入挂载（A2 MF-B）', () => {
+  /** spy 注入器：记录调用文本，返回可辨识的改写产物 + 可编程 notices。 */
+  function makeSpyInjector(result?: Partial<SkillInjectionResult>): {
+    injector: SkillInjector
+    inject: ReturnType<typeof vi.fn>
+  } {
+    const inject = vi.fn(async (_client: unknown, text: string): Promise<SkillInjectionResult> => ({
+      text: `<<injected:${text}>>`,
+      notices: [],
+      ...result,
+    }))
+    return { injector: { inject } as unknown as SkillInjector, inject }
+  }
+
+  it('message：encode 之前注入原始 text，prompt 收到 encode(注入产物)，notice 在 prompt 之后', async () => {
+    const notices = [{ reason: 'skill_missing' as const, skills: ['ghost'] }]
+    const { injector, inject } = makeSpyInjector({ notices })
+    const { records, publish, client } = makeRecords({}, injector)
+    const calls: string[] = []
+    ;(client.prompt as ReturnType<typeof vi.fn>).mockImplementation(async (text: string) => {
+      calls.push(`prompt:${text}`)
+    })
+    publish.mockImplementation((sid: string, msg: { type: string }) => {
+      calls.push(`publish:${msg.type}`)
+    })
+
+    await records.subagentAction('s1', 'message', { subagentId: 'sa-1', text: '原始文本' })
+
+    // ① 注入收到原始 text（encode 之前）
+    expect(inject).toHaveBeenCalledTimes(1)
+    expect(inject.mock.calls[0][1]).toBe('原始文本')
+    // ② prompt 收到 encode(注入产物)
+    expect(client.prompt).toHaveBeenCalledWith(`/subagents message sa-1 ${encodeDirectiveText('<<injected:原始文本>>')}`)
+    // ③ 顺序：prompt 先于 notice（发送成功后才发布）
+    expect(calls).toEqual([
+      `prompt:/subagents message sa-1 ${encodeDirectiveText('<<injected:原始文本>>')}`,
+      'publish:session.skillNotice',
+    ])
+    const noticeMsg = publish.mock.calls.find(([, msg]) => (msg as { type: string }).type === 'session.skillNotice')
+    expect(noticeMsg).toBeDefined()
+    expect(noticeMsg![0]).toBe('s1')
+    expect((noticeMsg![1] as { payload: { reason: string; skills: string[] } }).payload)
+      .toEqual({ sessionId: 's1', reason: 'skill_missing', skills: ['ghost'] })
+  })
+
+  it('start：task 同款注入（encode 之前）+ notice', async () => {
+    const { injector, inject } = makeSpyInjector()
+    const { records, client } = makeRecords({}, injector)
+    await records.subagentAction('s1', 'start', { slug: 'worker', task: '干点活' })
+    expect(inject).toHaveBeenCalledTimes(1)
+    expect(inject.mock.calls[0][1]).toBe('干点活')
+    expect(client.prompt).toHaveBeenCalledWith(`/subagents start worker ${encodeDirectiveText('<<injected:干点活>>')}`)
+  })
+
+  it('prompt 失败：notice 不发布（发送成功后时机契约的否定面）', async () => {
+    const { injector } = makeSpyInjector({ notices: [{ reason: 'skill_missing', skills: ['ghost'] }] })
+    const { records, publish, client } = makeRecords({}, injector)
+    ;(client.prompt as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('pi reject'))
+    await expect(records.subagentAction('s1', 'message', { subagentId: 'sa-1', text: 't' })).rejects.toThrow('pi reject')
+    expect(publish).not.toHaveBeenCalled()
+  })
+
+  it('notices 为空：不发布任何 bus 消息（no-op 零噪音）', async () => {
+    const { injector } = makeSpyInjector()
+    const { records, publish } = makeRecords({}, injector)
+    await records.subagentAction('s1', 'message', { subagentId: 'sa-1', text: 't' })
+    expect(publish).not.toHaveBeenCalled()
+  })
+
+  it('cancel 与 workflows：不经注入器（内部命令显式跳过）', async () => {
+    const { injector, inject } = makeSpyInjector()
+    const { records } = makeRecords({}, injector)
+    await records.subagentAction('s1', 'cancel', { subagentId: 'sa-1' })
+    await records.workflowAction('s1', 'pause', 'run-1')
+    expect(inject).not.toHaveBeenCalled()
+  })
+
+  it('真注入器 + 纯文本：no-op 原文通过（mock client 无 getCommands 也不发起 RPC）', async () => {
+    // 无标记文本在 parseSkillMarkers 短路返回前不触碰任何 client 方法——
+    // mock client 只有 getEntries/prompt 两方法，注入若发起 RPC 即 TypeError 翻红
+    const { records, client } = makeRecords()
+    await records.subagentAction('s1', 'message', { subagentId: 'sa-1', text: '纯文本' })
+    expect(client.prompt).toHaveBeenCalledWith('/subagents message sa-1 纯文本')
   })
 })

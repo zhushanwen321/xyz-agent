@@ -155,7 +155,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const { editAndResend, openDrawer, onFileClick } = useChatViewDeps()
+const { editAndResend, openDrawer, onFileClick, isPendingSend } = useChatViewDeps()
 
 /** 点击 skill badge → 打开 drawer Doc tab */
 function openCommandDoc(commandName: string): void {
@@ -230,6 +230,12 @@ async function submitEdit(): Promise<void> {
   if (!user) return
   const text = draftText.value.trim()
   if (!text) return
+  // [D3] 双发锁：提交在途（send 或上一次 editAndResend 的 pendingSend 瞬时态）时直接
+  // return 忽略——与 Composer isSending 语义对齐，防 editAndResend 与 send 并发覆盖
+  // useChat 的 pendingDirectSends（per-sid 单条 Map，后写覆盖前写致 rejected 帧误回滚）。
+  // 早退置于 editingUserId=null 之前：编辑态保持、草稿不丢，用户可在提交收口后重试。
+  // （isPendingSend 经 ChatViewDeps 注入，旧壳层未 provide 时不互斥，兼容降级）
+  if (isPendingSend?.(props.sessionId)) return
   editingUserId.value = null
   const segments = rebuildSegmentsWithEditedText(user.content, text)
   await editAndResend(props.sessionId, user.id, segments)

@@ -37,10 +37,6 @@ vi.mock('node:child_process', () => ({
   },
 }))
 
-vi.mock('node:readline', () => ({
-  createInterface: () => ({ on: vi.fn(), close: vi.fn() }),
-}))
-
 vi.mock('@xyz-agent/shared', async (importOriginal) => {
   // 保留真实导出（rpc-client 经 infra/spawn-env 门面消费构建器本体），仅收窄白名单前缀
   const actual = await importOriginal<typeof import('@xyz-agent/shared')>()

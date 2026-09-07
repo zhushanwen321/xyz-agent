@@ -193,6 +193,35 @@ describe('AttachmentStore · writeSegmentsMetadata', () => {
     )
   })
 
+  // ── [defer segments 化 / D-A1-2] deferEntryId 去重（裸 uuid key 与 clientUuid 空间互斥）──
+
+  function makeDeferEntry(deferEntryId: string, timestamp = 1000): SegmentsMetadataEntry {
+    return { deferEntryId, segments: [{ type: 'text', text: 'hi' }, { type: 'image', id: 'i', path: '/tmp/a.png', fileName: 'a.png', displayName: 'a.png' }], timestamp }
+  }
+
+  it('defer 条目：同 deferEntryId 覆盖（去重语义，flush 重试重提交同条目）+ 与 clientUuid 条目互不干扰', async () => {
+    const sid = 'att-store-defer-1'
+    writtenPaths.push(join(getAttachmentsDir(sid), 'segments.json'))
+    await store.writeSegmentsMetadata(sid, makeDeferEntry('3f2504e0-4f89-41d3-9a0c-0305e82c3301', 1000))
+    await store.writeSegmentsMetadata(sid, makeEntry('u-1', 2000))
+    let file = readSidecar(sid)
+    // 两类 key 并存（写入方各按各的 key）
+    expect(file.entries.map((e) => e.deferEntryId ?? null)).toEqual(['3f2504e0-4f89-41d3-9a0c-0305e82c3301', null])
+    expect(file.entries.map((e) => e.clientUuid ?? null)).toEqual([null, 'u-1'])
+
+    // 同 deferEntryId 重写 → 覆盖不追加；clientUuid 条目不受影响（互不交叉匹配）
+    await store.writeSegmentsMetadata(sid, makeDeferEntry('3f2504e0-4f89-41d3-9a0c-0305e82c3301', 9999))
+    file = readSidecar(sid)
+    expect(file.entries).toHaveLength(2)
+    expect(file.entries[0]?.timestamp).toBe(9999)
+    expect(file.entries[1]?.clientUuid).toBe('u-1')
+
+    // 新 deferEntryId → 追加
+    await store.writeSegmentsMetadata(sid, makeDeferEntry('3f2504e0-4f89-41d3-9a0c-0305e82c3302', 3000))
+    file = readSidecar(sid)
+    expect(file.entries).toHaveLength(3)
+  })
+
   it('损坏 segments.json → 隔离 .corrupt 副本后降级为空，写入不阻断', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const dir = getAttachmentsDir('att-store-corrupt-1')

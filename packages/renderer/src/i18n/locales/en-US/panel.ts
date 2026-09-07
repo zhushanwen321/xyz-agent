@@ -19,7 +19,7 @@ export default {
     thinkingLevel: 'Thinking level',
     compacting: 'Compacting…',
     queueSend: 'Queue to send',
-    commandQueuedRejected: 'Compaction in progress, commands are disabled until it finishes',
+    commandQueuedRejected: 'Session busy, commands are disabled until it is free',
     sending: 'Sending…',
     sendHint: 'Type and send',
     steerHint: 'Add to current task with ⏎ · Queue for next turn with Alt+⏎…',
@@ -42,7 +42,6 @@ export default {
   message: {
     copy: 'Copy',
     edit: 'Edit',
-    thinking: 'Thinking',
     working: 'Working…',
     worked: 'Worked',
     steer: 'STEER',
@@ -164,6 +163,20 @@ export default {
     resetRemainingMinutes: '{m}m left',
     resetRemainingSoon: '<1m',
     resetEmpty: '--',
+    // composer-gen-stats dual triggers (docs/design/composer-gen-stats.md §3.1 / §3.3 D5)
+    genStatsSpeedTitle: 'Token speed',
+    genStatsCacheTitle: 'Cache hit rate',
+    genStatsCurrent: 'Last turn',
+    // hover note for the "Last turn" label (C4): current has no window filter — the sample may come from an older record
+    genStatsCurrentNote: 'From the most recent request',
+    genStatsCurrentReq: 'Last request',
+    genStatsDay: 'Today avg (this model)',
+    genStatsD7: 'Last 7 days',
+    genStatsD30: 'Last 30 days',
+    genStatsDayShort: 'Today weighted',
+    genStatsSpeedNote: 'output tokens ÷ generation time, aggregated per model (weighted avg); based on single LLM request duration, excluding tool execution time',
+    genStatsCacheNote: 'cacheRead ÷ (input + cacheRead + cacheWrite); shows 0% when the model does not support caching',
+    genStatsNoData: 'No data yet',
   },
   sideDrawer: {
     title: 'Side drawer',
@@ -205,6 +218,36 @@ export default {
     workflowRunning: 'Running',
     workflowPending: 'Pending',
     unreadMessages: '{count} new messages while drawer was open',
+    // Background commands tab (background-task-sidebar-view D5: drawer bashTask detail).
+    // Term ruling (design §1): user-visible naming is "background commands", distinct from
+    // subagent "background tasks"
+    tabBashTask: 'Background commands',
+    noBashTask: 'No background command selected',
+    bashTaskHint: 'Click a task in the sidebar "Background commands" list to view details',
+    bashTaskStartedAt: 'Started {time}',
+    bashTaskRunningFor: 'Running for {duration}',
+    bashTaskDuration: 'Duration {duration}',
+    bashTaskExitCode: 'exit {code}',
+    // reason five states (D6-en: killed = stopped from UI via intent read-back; process-exit =
+    // owner pi process exited)
+    bashTaskReasonNatural: 'Exited naturally',
+    bashTaskReasonTimeout: 'Timed out',
+    bashTaskReasonKilled: 'Terminated manually',
+    bashTaskReasonProcessExit: 'Process exited',
+    bashTaskReasonOrphaned: 'Orphan reclaimed',
+    bashTaskOutputUnavailable: 'Output unavailable (file was cleaned up)',
+    bashTaskOutputEmpty: 'No output yet',
+    // D5: truncated reply consumed — output exceeds the byte window (default 32KB)
+    bashTaskOutputTruncated: 'Output exceeds 32KB, only the tail is shown',
+    bashTaskCopyCommand: 'Copy command',
+    bashTaskCopyOutputFile: 'Copy output file path',
+    bashTaskCopied: 'Copied',
+    bashTaskKill: 'Terminate task',
+    bashTaskKillConfirm: 'Confirm terminate',
+    // kill result branch ④⑤ toasts (design §3.1 failure paths)
+    bashTaskAlreadyExited: 'Task already finished',
+    bashTaskIdentityUnverifiable: 'Cannot verify process identity — termination refused (safety first)',
+    bashTaskWriteFailed: 'Operation did not take effect (failed to write data); please retry',
   },
   browserPane: {
     back: 'Back',
@@ -287,6 +330,12 @@ export default {
     // Four-symbol system (@ subagent popover)
     newSubagent: '＋ New subagent',
     newSubagentPlaceholder: 'New task',
+    // Skill popover selected marker (multi-skill injection D2)
+    skillSelected: 'Selected',
+    // $ file popover landing cwd path (D7): truncated / failed / empty states
+    fileLoadFailed: 'Load failed — click to retry',
+    fileTruncated: 'Over 5,000 results — list truncated',
+    fileNoResults: 'No matching files in this directory',
   },
   queue: {
     title: 'Queue',
@@ -302,10 +351,16 @@ export default {
     followupLabel: 'FOLLOWUP new turn',
     itemCount: '{count} items',
   },
-  compactQueue: {
-    pending: 'Send after compaction',
-    itemCount: '{count} items',
-    cancel: 'Cancel queue',
+  deferQueue: {
+    pendingHint: 'Will be sent when the session is free',
+    // [D1] occupancy-typed hover hints (long bash occupation makes "what ends" actionable)
+    pendingHintCompacting: 'Will be sent after context compaction completes',
+    pendingHintBash: 'Will be sent after the command finishes',
+    pendingHintSettling: 'Will be sent after the current turn ends',
+    cancelQueued: 'Cancel queued message',
+    submittedAwaitingDelivery: 'Submitted, awaiting delivery',
+    chipBadge: '+{count}',
+    chipBadgeHint: 'Contains {count} attachment/reference chip(s), sent along with the message',
   },
   contextChips: {
     directory: 'Directory',
@@ -340,6 +395,15 @@ export default {
     view: 'View',
     viewBranch: 'View branch',
     dismiss: 'Dismiss',
+  },
+  skillNotice: {
+    // C5 recovery hint for budget-exceeded degradation
+    degradeBudget: 'Injected as markers (budget exceeded); the model can read the skill files itself. Reduce the number of skills or switch to a model with a larger context window to restore full-text injection',
+    degradeWindow: 'Context window info unavailable; injected as markers',
+    missing: 'skill {names} not found; passed through as-is',
+    readFailed: 'failed to read skill {names}; passed through as-is',
+    malformed: 'malformed skill marker; passed through as-is',
+    mappingUnavailable: 'skill mapping unavailable; passed through as-is',
   },
   retryIndicator: {
     retrying: 'Retrying',

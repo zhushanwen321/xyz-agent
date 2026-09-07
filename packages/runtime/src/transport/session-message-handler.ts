@@ -7,18 +7,49 @@ import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent
 import type { ISessionService } from '../interfaces.js'
 import type { HandoffService } from '../services/handoff-service.js'
 import type { ImportService } from '../services/session/import-service.js'
+// BackgroundTaskService（background-task-sidebar D3，u-runtime-rpc）：仅类型 import——
+// 实例由 SessionService 构造器组装（session-service 领地），handler 经 ctx 结构读取消费面。
+import type { BackgroundTaskService } from '../services/background-task/background-task-service.js'
 import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED, SESSION_NOT_FOUND, RESTORE_FAILED } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 // MessageBus（wave:runtime-wiring）：session.subscribe/unsubscribe RPC handler 用它注册订阅。
 // type-only import（handler 不持有 bus 实例的创建，只调它的方法）。
 import type { IMessageBus } from '../services/message-bus/message-bus.js'
+// GenStatsService（composer-gen-stats u3）：session.getGenStats 恢复腿 RPC 的降级链解析
+// + 快照构造（写 3 回填在 getSnapshotForSession 内部完成）。可选注入：未注入时该 case 报
+// unsupported（组合根保证注入；importService 同款模式）。
+import type { GenStatsService } from '../services/session/gen-stats-service.js'
 // BusClient（wave:bus-core）：ws 适配为 bus 订阅者的最小契约 { readyState, send }。
 // ws 库的 WebSocket 天然满足，但类型不完全一致，用 as unknown as BusClient 显式标记边界（R2）。
 import type { BusClient } from '../services/message-bus/types.js'
 
+/**
+ * backgroundTask 域 WS 消费端口（background-task-sidebar D3，u-runtime-rpc）：
+ * BackgroundTaskService 的 handler 消费面窄视图（Pick 收窄——kill 五分支矩阵 / mtime 轮询
+ * 等内部编排不对传输层暴露）。
+ */
+export type BackgroundTaskRpcPort = Pick<
+  BackgroundTaskService,
+  'listTasks' | 'getOutputTail' | 'killTask' | 'markWatched'
+>
+
+/**
+ * backgroundTask.output 的 maxBytes 请求上界（D6 #1，BG-4）：客户端声明的字节窗口超此值
+ * 钳制到 1MB（readOutputTail 按窗口 Buffer.alloc，无上界可被单请求打到内存失控）。
+ * 与 MAX_FILE_SIZE（file.read 1MB 截断）同量级；导出供测试断言 clamp 行为。
+ */
+export const OUTPUT_TAIL_MAX_REQUEST_BYTES = 1_048_576
+
 /** Interface for server methods needed by this handler */
 export interface SessionHandlerContext extends MessageHandlerContext {
-  sessionService: ISessionService
+  /**
+   * session 服务门面。交叉可选成员 backgroundTasks（background-task-sidebar D3）：
+   * BackgroundTaskService 由 SessionService 构造器组装并以此公有成员暴露。可选属性使
+   * 组合根（server.ts setServices 的 ctx 对象字面量，静态类型 ISessionService）经结构
+   * 兼容零改动通过类型检查——运行时实例恒有该成员；缺省仅出现在测试最小 mock 中，
+   * case 内判空走 background_task_unsupported 防御分支（对齐 handoffService 惯例）。
+   */
+  sessionService: ISessionService & { readonly backgroundTasks?: BackgroundTaskRpcPort }
   /** fast-handoff 编排层（session.handoff 路由用）。可选：未注入时该 case 报 unsupported。 */
   handoffService?: HandoffService
   /**
@@ -31,6 +62,11 @@ export interface SessionHandlerContext extends MessageHandlerContext {
    * 可选：未注入时 subscribe/unsubscribe case 报 unsupported（组合根保证注入）。
    */
   messageBus?: IMessageBus
+  /**
+   * 生成指标服务（composer-gen-stats u3）：session.getGenStats 恢复腿 RPC 用。
+   * 可选：未注入时该 case 报 unsupported（组合根保证注入）。
+   */
+  genStatsService?: GenStatsService
   nextPushId(): string
   broadcastSessionList(): void
   /** 广播一条 ServerMessage 给所有连接（FR-12：fork 后广播 session.forkNotice）。 */
@@ -71,8 +107,13 @@ export class SessionMessageHandler {
     'session.fetchCurrentSystemPrompt',
     // wave:runtime-patch ipc-converge-a3 W2：业务持久化写 WS（session 数据单一出口归 runtime）
     'session.writeImage', 'session.migrateImage', 'session.writeSegments',
+    // composer-gen-stats（D4）：生成指标恢复腿（切 session 视图主动拉，架构约定 #7 时序竞争）。
+    'session.getGenStats',
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
     'message.bash', 'message.abortBash',
+    // backgroundTask 域（background-task-sidebar D3，u-runtime-rpc）：后台命令拉取/详情/终止 3 RPC。
+    // 变更广播不经此处（SessionService 组装的 onTasksChanged → bus.publish 单向推送）。
+    'backgroundTask.list', 'backgroundTask.output', 'backgroundTask.kill',
   ]
 
   /**
@@ -110,6 +151,7 @@ export class SessionMessageHandler {
     'session.fetchCurrentSystemPrompt': (msg, ws) => this.handleSessionFetchCurrentSystemPrompt(msg, ws),
     'session.getCommands': (msg, ws) => this.handleSessionGetCommands(msg, ws),
     'session.getContext': (msg, ws) => this.handleSessionGetContext(msg, ws),
+    'session.getGenStats': (msg, ws) => this.handleSessionGetGenStats(msg, ws),
     'session.rename': (msg, ws) => this.handleSessionRename(msg, ws),
     'session.setProject': (msg, ws) => this.handleSessionSetProject(msg, ws),
     'session.importCandidates': (msg, ws) => this.handleSessionImportCandidates(msg, ws),
@@ -120,6 +162,11 @@ export class SessionMessageHandler {
     'message.abort': (msg, ws) => this.handleMessageAbort(msg, ws),
     'message.bash': (msg, ws) => this.handleMessageBash(msg, ws),
     'message.abortBash': (msg, ws) => this.handleMessageAbortBash(msg, ws),
+    // backgroundTask 域（background-task-sidebar D3，u-runtime-rpc）：后台命令拉取/详情/终止 3 RPC。
+    // 变更广播不经此处（SessionService 组装的 onTasksChanged → bus.publish 单向推送）。
+    'backgroundTask.list': (msg, ws) => this.handleBackgroundTaskList(msg, ws),
+    'backgroundTask.output': (msg, ws) => this.handleBackgroundTaskOutput(msg, ws),
+    'backgroundTask.kill': (msg, ws) => this.handleBackgroundTaskKill(msg, ws),
   }
 
   async handleSessionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
@@ -337,6 +384,76 @@ export class SessionMessageHandler {
         this.ctx.sendError(ws, isENOENT ? 'file_not_found' : 'not_found', userMsg, msg.id, { sessionId: switchId })
       }
     }
+  }
+
+  private async handleSessionGetGenStats(msg: Extract<ClientMessage, { type: 'session.getGenStats' }>, ws: WsType): Promise<void> {
+    // composer-gen-stats（D4）：生成指标恢复腿。reply = session.stats_update payload 同形
+    // （GenStatsFrame）；modelId 解析降级链（get_state → 内存映射 → replicated states →
+    // 全 null）+ 写 3 回填全部在 service.getSnapshotForSession 内部完成，handler 只透传。
+    const genStats = this.ctx.genStatsService
+    if (!genStats) {
+      return this.ctx.sendError(ws, 'gen_stats_unsupported', 'gen stats service not available', msg.id)
+    }
+    const { sessionId } = msg.payload
+    const frame = await genStats.getSnapshotForSession(sessionId)
+    return this.ctx.reply(ws, msg.id, 'session.stats_update', frame)
+  }
+
+  // ── backgroundTask 域（background-task-sidebar §3.3 D3/D7/D8，u-runtime-rpc）──
+
+  private async handleBackgroundTaskList(msg: Extract<ClientMessage, { type: 'backgroundTask.list' }>, ws: WsType): Promise<void> {
+    // renderer 切 session / 打开「后台命令」tab 主动拉取（C6 时序竞争：广播只做增量，
+    // 拉取是唯一真相）。副作用 = 把 session 加入 watched 集合（D8③，订阅语义由 list
+    // 隐含，D3 被否 subscribe/unsubscribe 专设消息）。顺序：先读后 mark——markWatched
+    // 以当前 mtime 为基线（「调用方刚拉取过全量」语义），之后的变更才触发广播，不重播。
+    const port = this.ctx.sessionService.backgroundTasks
+    const listSid = msg.payload.sessionId
+    if (!port) {
+      return this.ctx.sendError(ws, 'background_task_unsupported', 'background task service not available', msg.id, { sessionId: listSid })
+    }
+    const { entries, corrupted } = port.listTasks(listSid)
+    port.markWatched(listSid)
+    return this.ctx.reply(ws, msg.id, 'backgroundTask.tasks', { sessionId: listSid, tasks: entries, corrupted })
+  }
+
+  private async handleBackgroundTaskOutput(msg: Extract<ClientMessage, { type: 'backgroundTask.output' }>, ws: WsType): Promise<void> {
+    // 输出尾部按需读（D7）。tail undefined = 条目不存在 / 输出文件不可读（§3.1 失败
+    // 路径「输出不可用（文件已清理）」）→ lost 语义降级：text 空串 + truncated false，
+    // reply 正常回执（不走 error envelope——文件清理是预期态，非请求失败）。
+    // maxBytes clamp 1MB（D6 #1，BG-4）：客户端传超大窗口时钳制——协议字段无上界约束，
+    // 不钳制则单请求 Buffer.alloc(maxBytes) 可被恶意/失控客户端打到内存失控。
+    const port = this.ctx.sessionService.backgroundTasks
+    const { sessionId: outSid, taskId, maxBytes } = msg.payload
+    if (!port) {
+      return this.ctx.sendError(ws, 'background_task_unsupported', 'background task service not available', msg.id, { sessionId: outSid })
+    }
+    const clampedMaxBytes = maxBytes === undefined ? undefined : Math.min(maxBytes, OUTPUT_TAIL_MAX_REQUEST_BYTES)
+    const tail = port.getOutputTail(outSid, taskId, clampedMaxBytes)
+    return this.ctx.reply(ws, msg.id, 'backgroundTask.outputResult', {
+      sessionId: outSid,
+      taskId,
+      text: tail?.text ?? '',
+      truncated: tail?.truncated ?? false,
+      lost: tail === undefined,
+    })
+  }
+
+  private async handleBackgroundTaskKill(msg: Extract<ClientMessage, { type: 'backgroundTask.kill' }>, ws: WsType): Promise<void> {
+    // 终止任务（D6 五分支矩阵全在 service，handler 只透传回执）。reason 枚举
+    // （killed/already-exited/identity-unverifiable/registry-write-failed）驱动 renderer
+    // 分支 toast 文案；成功路径的列表翻转不依赖 reply——killing 自写自检广播即时推送。
+    const port = this.ctx.sessionService.backgroundTasks
+    const killSid = msg.payload.sessionId
+    if (!port) {
+      return this.ctx.sendError(ws, 'background_task_unsupported', 'background task service not available', msg.id, { sessionId: killSid })
+    }
+    const result = await port.killTask(killSid, msg.payload.taskId)
+    return this.ctx.reply(ws, msg.id, 'backgroundTask.killResult', {
+      sessionId: killSid,
+      taskId: msg.payload.taskId,
+      killed: result.killed,
+      reason: result.reason,
+    })
   }
 
   private async handleSessionHistory(msg: Extract<ClientMessage, { type: 'session.history' }>, ws: WsType): Promise<void> {
@@ -622,8 +739,10 @@ export class SessionMessageHandler {
     // 隐藏注释前缀）已废弃（composer 四符号设计 D2）——定向消息改走
     // session.subagentAction(message/start) 直达 subagent。旧 renderer 残留的 subagent
     // 键被解构忽略，不 resurrect marker 行为。
-    const { sessionId, content, images } = msg.payload
-    const result = await this.ctx.sessionService.sendMessage(sessionId, content, images)
+    // clientUuid（session-occupancy-send-closure D2）：客户端幂等 id 经 dispatcher 透传，
+    // 拒绝广播（预检与 pi 转译两路）原样带回——renderer 消歧发送来源（flush 重放不重入队）。
+    const { sessionId, content, images, clientUuid } = msg.payload
+    const result = await this.ctx.sessionService.sendMessage(sessionId, content, images, clientUuid)
     // D(round7-must-fix-3): hook 拦截时 dispatcher 已广播 message.error（错误气泡），
     // 此处必须走 error envelope（带 msg.id）让 renderer pending.reject，不得 reply success。
     // 否则 renderer 见 msg.id 且非 error → pending.resolve → composer 清空，与错误气泡矛盾。

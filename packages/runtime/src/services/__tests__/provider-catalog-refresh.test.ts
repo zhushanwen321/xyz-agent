@@ -26,7 +26,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
-  rmSync(dataDir, { recursive: true, force: true })
+  rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 /** 每用例动态 import：resetModules 隔离模块级 overlaySnapshot 内存缓存。 */

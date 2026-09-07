@@ -77,7 +77,7 @@ afterEach(() => {
   } else {
     process.env.XYZ_GLOBAL_AGENTS_DIR = originalGlobalAgentsDir
   }
-  rmSync(tmpDir, { recursive: true, force: true })
+  rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 async function loadPlugin(): Promise<(pi: unknown) => void> {

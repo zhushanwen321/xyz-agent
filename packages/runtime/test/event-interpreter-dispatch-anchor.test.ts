@@ -168,7 +168,8 @@ describe('EventInterpreter · handle 三段分发锚定（W3 复杂度债务偿�
 
     interpreter.interpret([
       { kind: 'status-set', sessionId: 'x', key: 'k', text: 't' },
-      { kind: 'turn-usage', sessionId: 'x', inputTokens: 1, totalTokens: 1 },
+      // gen-stats D1/D2：turn-usage 携带样本六字段（composer-gen-stats 事件契约扩展）
+      { kind: 'turn-usage', sessionId: 'x', inputTokens: 1, totalTokens: 1, outputTokens: null, cacheRead: null, cacheWrite: null, input: null, model: null, provider: null },
       { kind: 'message', message: msgFrame },
     ])
 

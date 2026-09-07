@@ -93,7 +93,7 @@ describe("subagent tool 路径守卫（skillPath/cwd：绝对路径 + 禁 .. 穿
     vi.clearAllMocks();
     mockServiceExecute.mockResolvedValue(stubHandle());
     // 经真实单例访问器注入 fake service（executeSubagent 内 getSubagentService 读同槽）
-    setSubagentService({ execute: mockServiceExecute } as never);
+    setSubagentService({ execute: mockServiceExecute, getCollectSyncDefault: () => "async" } as never);
     execute = captureExecute();
   });
 

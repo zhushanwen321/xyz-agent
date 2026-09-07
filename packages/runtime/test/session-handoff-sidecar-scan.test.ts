@@ -53,7 +53,7 @@ describe('handoff sidecar × 扫描链（W11）', () => {
   })
 
   afterEach(() => {
-    rmSync(sessionDir, { recursive: true, force: true })
+    rmSync(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('persistHandoffSidecar 后扫描提取 handedOffTo（scanSessionMeta 消费不变 + 写后缓存失效）', () => {

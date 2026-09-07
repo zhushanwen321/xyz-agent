@@ -97,6 +97,9 @@ export function useChatViewDeps(sessionId: Ref<string>): ChatViewDeps {
     getChangeSetStatus: (sid: string, messageId: string) => chat.getChangeSetStatus(sid, messageId),
     isExpanded: (turnKey: string): boolean => turnExpansion.isExpanded(turnKey),
     isTakeover: (turnKey: string): boolean => turnExpansion.isTakeover(turnKey),
+    // [D3] pendingSend 投影桥接：UserBubble submitEdit 双发锁（「正在提交」最贴近的既有信号
+    // ——send/editAndResend 提交前置位、message_start 清；语义窄于 isActive）
+    isPendingSend: (sid: string): boolean => chat.isPendingSend(sid),
 
     // ── 操作回调 ──
     toggleExpand: (turnKey: string): void => turnExpansion.toggle(turnKey),

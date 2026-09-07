@@ -164,7 +164,9 @@ describe('u4-connect-failure-fallback', () => {
   })
 
   it('u4-multipart-connect-failure: 多段 part EHOSTUNREACH → 置 flag → curl 接管（多段变体）', async () => {
-    // ≥ 10MB 多段阈值：probe（undici）支持后进入多段，part fetch 连接建立失败
+    // ≥ 10MB 多段阈值：probe（undici）支持后进入多段，part fetch 连接建立失败。
+    // [多源改造] probe 已迁移为 GET Range 0-0 判定：mock 须回 206 + Content-Range
+    // total 达标（新判定不看 accept-ranges/content-length），多段才会真正启动。
     const total = 12 * 1024 * 1024
     const content = Buffer.alloc(total, 7)
     const asset: ReleaseAsset = {
@@ -175,8 +177,8 @@ describe('u4-connect-failure-fallback', () => {
     }
     upgradeFetchMock.mockResolvedValue({
       ok: true,
-      status: 200,
-      headers: { 'accept-ranges': 'bytes', 'content-length': String(total) },
+      status: 206,
+      headers: { 'content-range': `bytes 0-0/${total}`, 'content-length': '1' },
       usedEngine: 'undici',
     })
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(fetchFailedWith('EHOSTUNREACH')))
@@ -277,10 +279,12 @@ describe('u4-probe-curl-skips-multipart', () => {
       size: total,
       sha256: sha256(content),
     }
+    // [多源改造] probe 请求已迁移为 GET Range 0-0：mock 回 206 + Content-Range 形态
+    //（usedEngine='curl' 编排在判定前分流，此形态即 curl 引擎探测成功的真实响应）
     upgradeFetchMock.mockResolvedValue({
       ok: true,
-      status: 200,
-      headers: { 'accept-ranges': 'bytes', 'content-length': String(total) },
+      status: 206,
+      headers: { 'content-range': `bytes 0-0/${total}`, 'content-length': '1' },
       usedEngine: 'curl',
     })
     const fetchMustNotRun = vi.fn(() => {
@@ -295,7 +299,11 @@ describe('u4-probe-curl-skips-multipart', () => {
     expect(fetchMustNotRun).not.toHaveBeenCalled() // 跳过多段与单段（全部 undici 形态）
     expect(upgradeFetchMock).toHaveBeenCalledTimes(1)
     expect(upgradeFetchMock.mock.calls[0]?.[0]).toBe(asset.downloadUrl)
-    expect(upgradeFetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'HEAD', proxyUrl: PUBLIC_PROXY })
+    expect(upgradeFetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'GET',
+      headers: { Range: 'bytes=0-0' },
+      proxyUrl: PUBLIC_PROXY,
+    })
     expect(downloadViaCurlMock).toHaveBeenCalledTimes(1)
     expect(downloadViaCurlMock.mock.calls[0]?.[1]?.proxyUrl).toBe(PUBLIC_PROXY)
   })
@@ -328,10 +336,12 @@ describe('u4-regression', () => {
       size: total,
       sha256: sha256(content),
     }
+    // [多源改造] probe mock 迁移为 206 + Content-Range total 达标（新判定不看
+    // accept-ranges/content-length；content-length: 1 即 206 形态的恒 1 陷阱实锤）
     upgradeFetchMock.mockResolvedValue({
       ok: true,
-      status: 200,
-      headers: { 'accept-ranges': 'bytes', 'content-length': String(total) },
+      status: 206,
+      headers: { 'content-range': `bytes 0-0/${total}`, 'content-length': '1' },
       usedEngine: 'undici',
     })
     // part fetch：按 Range 头切片返回 206

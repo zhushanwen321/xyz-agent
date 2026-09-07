@@ -55,7 +55,7 @@ beforeEach(() => {
 afterEach(() => {
   if (PREV_DATA_DIR === undefined) delete process.env['XYZ_AGENT_DATA_DIR']
   else process.env['XYZ_AGENT_DATA_DIR'] = PREV_DATA_DIR
-  fs.rmSync(tmpDataRoot, { recursive: true, force: true })
+  fs.rmSync(tmpDataRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 describe('getSubagentEngineConfig', () => {

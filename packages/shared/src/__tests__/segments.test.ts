@@ -13,6 +13,7 @@ import {
   normalizeContent,
   type Segment,
 } from '../segments'
+import { parseSkillMarkers } from '../skill-marker'
 
 describe('segmentsToText', () => {
   it('空数组返回空字符串', () => {
@@ -23,8 +24,8 @@ describe('segmentsToText', () => {
     expect(segmentsToText([{ type: 'text', text: 'hello' }])).toBe('hello')
   })
 
-  it('skill segment 序列化为 /skill:name', () => {
-    expect(segmentsToText([{ type: 'skill', name: 'cw-cli' }])).toBe('/skill:cw-cli')
+  it('skill segment 序列化为 <xyz-skill/> 私有标记（D3，精确标记串）', () => {
+    expect(segmentsToText([{ type: 'skill', name: 'cw-cli' }])).toBe('<xyz-skill name="cw-cli"/>')
   })
 
   it('skill + text 之间补空格', () => {
@@ -32,7 +33,7 @@ describe('segmentsToText', () => {
       { type: 'skill', name: 'cw-cli' },
       { type: 'text', text: '想要都修复' },
     ]
-    expect(segmentsToText(segs)).toBe('/skill:cw-cli 想要都修复')
+    expect(segmentsToText(segs)).toBe('<xyz-skill name="cw-cli"/> 想要都修复')
   })
 
   it('skill + text（text 已含前导空格）不重复补空格', () => {
@@ -40,16 +41,16 @@ describe('segmentsToText', () => {
       { type: 'skill', name: 'cw-cli' },
       { type: 'text', text: ' 想要都修复' },
     ]
-    expect(segmentsToText(segs)).toBe('/skill:cw-cli 想要都修复')
+    expect(segmentsToText(segs)).toBe('<xyz-skill name="cw-cli"/> 想要都修复')
   })
 
   it('不 trim 末尾换行（保留 <br> 产生的 \\n）', () => {
     expect(segmentsToText([{ type: 'text', text: 'line\n' }])).toBe('line\n')
   })
 
-  it('skill 带 location 不影响文本序列化', () => {
+  it('skill 带 location 序列化进标记（降级模式与反解析的自描述数据）', () => {
     const segs: Segment[] = [{ type: 'skill', name: 'cw-cli', location: '/path/SKILL.md' }]
-    expect(segmentsToText(segs)).toBe('/skill:cw-cli')
+    expect(segmentsToText(segs)).toBe('<xyz-skill name="cw-cli" location="/path/SKILL.md"/>')
   })
 
   it('mention segment 序列化为 @name', () => {
@@ -70,7 +71,7 @@ describe('segmentsToText', () => {
       { type: 'text', text: '' },
       { type: 'skill', name: 'review' },
     ]
-    expect(segmentsToText(segs)).toBe('/skill:cw-cli/skill:review')
+    expect(segmentsToText(segs)).toBe('<xyz-skill name="cw-cli"/><xyz-skill name="review"/>')
   })
 
   it('file 无行范围序列化为 path', () => {
@@ -134,8 +135,8 @@ describe('segmentsToText', () => {
       { type: 'skill', name: 'review' },
       { type: 'text', text: '这段代码' },
     ]
-    // skill 无 \n 自分隔，text 紧跟 skill 时仍需补空格，否则产出 `/skill:review这段代码` 粘连
-    expect(segmentsToText(segs)).toBe('/skill:review 这段代码')
+    // skill 无 \n 自分隔，text 紧跟 skill 时仍需补空格，否则产出 `/>这段代码` 标记正文粘连
+    expect(segmentsToText(segs)).toBe('<xyz-skill name="review"/> 这段代码')
   })
 
   it('连续多个 image segment：每个路径独占一行（无编号递增）', () => {
@@ -156,7 +157,7 @@ describe('segmentsToText', () => {
       { type: 'image', id: 'img-x', path: '/tmp/x.png', fileName: 'x.png', displayName: 'x.png' },
       { type: 'skill', name: 'review' },
     ]
-    expect(segmentsToText(segs)).toBe('看这张\n/tmp/x.png\n/skill:review')
+    expect(segmentsToText(segs)).toBe('看这张\n/tmp/x.png\n<xyz-skill name="review"/>')
   })
 })
 
@@ -167,7 +168,7 @@ describe('segmentsToPrompt', () => {
       { type: 'text', text: '想要都修复\n' },
     ]
     // skill chip 与 text 间补一个空格；text 尾换行保留——pi 不 trim（P2 探针），落盘同文
-    expect(segmentsToPrompt(segs)).toBe('/skill:cw-cli 想要都修复\n')
+    expect(segmentsToPrompt(segs)).toBe('<xyz-skill name="cw-cli"/> 想要都修复\n')
   })
 
   it('空数组返回空字符串', () => {
@@ -195,7 +196,7 @@ describe('normalizeContent', () => {
       { type: 'skill', name: 'cw-cli' },
       { type: 'text', text: '想要都修复' },
     ]
-    expect(normalizeContent(segs)).toBe('/skill:cw-cli 想要都修复')
+    expect(normalizeContent(segs)).toBe('<xyz-skill name="cw-cli"/> 想要都修复')
   })
 
   it('空 Segment[] 返回空字符串', () => {
@@ -240,8 +241,8 @@ describe('handoff segment', () => {
       { type: 'handoff', sourceLabel: 'old-session' },
       { type: 'skill', name: 'review' },
     ]
-    // handoff 结尾是 ]，skill 开头是 /，非 text→非 text 边界补空格
-    expect(segmentsToText(segs)).toBe('[handoff from old-session] /skill:review')
+    // handoff 结尾是 ]，skill 产出 < 开头的标记，非 text→非 text 边界补空格
+    expect(segmentsToText(segs)).toBe('[handoff from old-session] <xyz-skill name="review"/>')
   })
 })
 
@@ -286,5 +287,46 @@ describe('session / subagent segment（composer 四符号 U1）', () => {
     ]
     // text→chip 方向不补空格（与 file/skill 一致——用户文本以空格结尾时自行分隔）
     expect(segmentsToText(segs)).toBe(`看看#${SESSION_ID} 的讨论`)
+  })
+})
+
+describe('skill 标记序列化（D3，composer 多 skill 注入 u3）', () => {
+  // ① 序列化产物 = 精确标记串：segmentsToText 复用 buildSkillMarker，转义/属性顺序与
+  //    解析端（parseSkillMarkers）同源——此处锁定传导正确性与端到端形态。
+  it('name/location 含引号反斜杠时按 skill-marker SSOT 转义，产物可被 parseSkillMarkers 无损还原', () => {
+    const segs: Segment[] = [{ type: 'skill', name: 'a"b\\c', location: '/x/y "z"/SKILL.md' }]
+    const text = segmentsToText(segs)
+    expect(text).toBe('<xyz-skill name="a\\"b\\\\c" location="/x/y \\"z\\"/SKILL.md"/>')
+    // 往返还原：name/location 与原 segment 一致（转义对称性——runtime 解析与 core 反解析共用此保证）
+    const [parsed] = parseSkillMarkers(text)
+    expect(parsed).toMatchObject({ name: 'a"b\\c', location: '/x/y "z"/SKILL.md' })
+  })
+
+  it('location 缺省与空串产出一致（均无 location 属性，往返归一为缺省）', () => {
+    expect(segmentsToText([{ type: 'skill', name: 'a' }])).toBe('<xyz-skill name="a"/>')
+    expect(segmentsToText([{ type: 'skill', name: 'a', location: '' }])).toBe('<xyz-skill name="a"/>')
+  })
+
+  it('混排往返：text + skill + text 序列化产物经 parseSkillMarkers 位置切片可还原全部标记与正文区间', () => {
+    const segs: Segment[] = [
+      { type: 'text', text: '帮我 review' },
+      { type: 'skill', name: 'code-review-graph', location: '/abs/SKILL.md' },
+      { type: 'text', text: ' 这段代码' },
+    ]
+    const text = segmentsToText(segs)
+    const markers = parseSkillMarkers(text)
+    expect(markers).toHaveLength(1)
+    expect(markers[0]).toMatchObject({ name: 'code-review-graph', location: '/abs/SKILL.md' })
+    // 标记区间外的正文完整保留（反解析正文不断言语义在 core，此处锁序列化不吞正文）
+    expect(text.slice(0, markers[0]!.index)).toBe('帮我 review')
+    expect(text.slice(markers[0]!.index + markers[0]!.length)).toBe(' 这段代码')
+  })
+
+  // ④ 空正文纯标记消息：纯 skill 无 text 产出单个精确标记（runtime 注入/反解析的最小形态）
+  it('空正文纯标记消息：单个 skill segment 序列化为单个标记，无多余分隔', () => {
+    expect(segmentsToText([{ type: 'skill', name: 'solo' }])).toBe('<xyz-skill name="solo"/>')
+    expect(segmentsToPrompt([{ type: 'skill', name: 'solo', location: '/s/SKILL.md' }])).toBe(
+      '<xyz-skill name="solo" location="/s/SKILL.md"/>',
+    )
   })
 })

@@ -36,13 +36,6 @@ vi.mock('node:child_process', () => ({
   }),
 }))
 
-vi.mock('node:readline', () => ({
-  createInterface: () => ({
-    on: vi.fn(),
-    close: vi.fn(),
-  }),
-}))
-
 // importOriginal spread 而非完全替换：rpc-client.start 经 ../spawn-env.js re-export 消费
 // shared 的 buildOutboundChildEnv（纯函数、env 全 DI），完全替换式 mock 会随 shared 新增
 // 导出静默断联（b5d3e6329 事故根因）；此处仅覆盖测试需要隔离的常量。

@@ -4,12 +4,14 @@
  * 验证 fork notice 基线解析（透传给 useNoticeStack）：
  * - vlistBottom=1200 + topOffset=44 → forkNoticeBaseTop=1244
  *
- * [方案 D] dispatching 占位迁入对话流文档流（末尾空 turn 的 TurnMeta），不再是独立 absolute 浮层：
- * - useMessageStreamNotices 不再返回 dispatchingTop（无消费者）
- * - forkNoticeBaseTop 不再叠加 dispatching 占位（dispatching 高度已计入 vlistBottom）
- * - isDispatching/hasWorkingTurn 仍返回（useForkNoticeStream 兜底用）
+ * [u6a / D7 展示统一] compacting/bash/dispatching 三处指示行已收编 ActivityStrip 组件
+ * （文档流 block，Virtualizer 之后），fork notice 生产定位 = 文档序自然堆叠（不消费本基线）：
+ * - compactingText 已退役（文案逻辑迁 ActivityStrip，按 reason 区分手动/自动）
+ * - 本基线（forkNoticeBaseTop）仅供 useForkNoticeStream 兜底通路（生产 injectedBaseTop 短路
+ *   且 forkNoticeTop 不被模板消费，双重不触发）；公式锚点测试保留防漂移
+ * - isDispatching/hasWorkingTurn 仍返回（useForkNoticeStream 兜底 deps，签名不变）
  *
- * 公式（useMessageStreamNotices.ts，COMPACTING_NOTICE_HEIGHT=24）：
+ * 公式（useNoticeStack.ts，COMPACTING_NOTICE_HEIGHT=24）：
  *   forkNoticeBaseTop = vlistBottom + topOffset + (isCompacting ? 24 : 0)
  *
  * 注：断言用 import 的 COMPACTING_NOTICE_HEIGHT 常量计算，避免常量变更再次漂移。

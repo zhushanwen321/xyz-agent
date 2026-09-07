@@ -154,6 +154,7 @@ function makeE2ePipeline(sessionService: ISessionService): E2ePipeline {
     ensureActive: (sid) => sessionService.ensureActive(sid),
     subscribeAgentSettled: () => () => {},
     recordWorkspace: vi.fn(),
+    getMessageBus: () => null,
   })
   const handler = new SessionManagerHandler({
     sessionService,

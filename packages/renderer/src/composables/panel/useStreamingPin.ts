@@ -27,10 +27,14 @@
  */
 import { computed, type ComputedRef, type Ref } from 'vue'
 import { renderKey, type RenderItem } from '@/composables/logic/messageTurns'
+import type { SkillNoticeStreamItem } from '@/composables/panel/useSkillNoticeStream'
 
 export interface UseStreamingPinOptions {
-  /** 渲染项列表 getter（turn + system 穿插），用于定位最后一个 turn 的数组下标 */
-  items: ComputedRef<RenderItem[]>
+  /** 渲染项列表 getter（turn + system 穿插），用于定位最后一个 turn 的数组下标。
+   *  [u5] 类型为 MessageStream 的 streamItems 基准（core RenderItem + skillNotice 拼接项）——
+   *  pinnedIndexes 是 virtua :keep-mounted 的下标空间，必须与 :data 同一数组基准；
+   *  本模块只消费 turn 项（kind==='turn' 窄化）与 items.length，notice 项天然兼容。 */
+  items: ComputedRef<ReadonlyArray<RenderItem | SkillNoticeStreamItem>>
   /** 当前 session id getter（捕获跨 session 切换，streaming→streaming 时强制重钉，M3） */
   sessionId: () => string
   /** 编辑中的 turn 身份（turnStableId，null 表示无编辑），用于 virtua 多项钉扎。

@@ -36,8 +36,9 @@ vi.mock( "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.t
 }));
 
 import { runSpawn, getChildByRecord } from "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts";
-import type { SessionRunnerContext } from "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts";
+import { isIdle, isResumable } from "@zhushanwen/subagent-core/execution/lifecycle-predicates.ts";
 import { armIdleTimer, disarmIdleTimer } from "@zhushanwen/subagent-core/execution/lifecycle-manager.ts";
+import type { SessionRunnerContext } from "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts";
 import { createRecord, updateFromEvent } from "@zhushanwen/subagent-core/execution/execution-record.ts";
 import { ModelConfigService } from "@zhushanwen/subagent-core";
 import type { ModelInfo, ModelRegistryLike } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
@@ -118,7 +119,13 @@ function makeRecord(chatMode: boolean, id = "sa-test"): ExecutionRecord {
 interface ServiceInternals {
   store: RecordStore;
   buildSessionRunnerContext(): SessionRunnerContext;
-  notifyHost: { notifyComplete(record: ExecutionRecord): void };
+  notifyHost: {
+    notifyComplete(record: ExecutionRecord): void;
+    /** [merge 适配] notifyComplete 已被 collectCoordinator.route 路由取代（U2）：
+     *  async/running record 直通 notifyHost.notify——入参为 toNotifyRecord 映射后的
+     *  BgNotifyRecord（非 ExecutionRecord）。 */
+    notify(record: { id: string; status: string; round?: number }): void;
+  };
   runAndFinalize: (
     record: ExecutionRecord,
     opts: ExecuteOptions,
@@ -150,7 +157,8 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：onRoundSettled 注入 + early 
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    disarmIdleTimer("sa-test");
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   // ── 改动 2：onRoundSettled 回调注入 ──────────────────────────────────
@@ -160,16 +168,23 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：onRoundSettled 注入 + early 
     expect(typeof ctx.onRoundSettled).toBe("function");
 
     const record = makeRecord(true); // chatMode, status=running, round=undefined
-    const spy = vi.spyOn(internals.notifyHost, "notifyComplete");
-
+    // [merge 适配] notifyComplete 调用点已改 collectCoordinator.route（U2 语义：全部
+    // 完成通知统一路由，async/running record 直通）——spy 改盯 notifyHost.notify 出口。
+    const spy = vi.spyOn(internals.notifyHost, "notify");
+    // [merge 适配] 生产时序中 session-runner 先 armIdleTimer 再调 onRoundSettled
+    //（round-settlement.ts 头注释：isIdle=true 让 notify 守卫放行）。本用例直调回调
+    // 不经 session-runner，须补齐该前提——否则 toNotifyRecord 守卫（isIdle/isResumable
+    // 均假：模块 mock 的 getChildByRecord 默认活句柄）拒绝投递。
+    armIdleTimer(record.id, () => {});
     ctx.onRoundSettled!(record);
 
     // [改动 2] 轻量 idle 化（v4 B-1：idle 折入 running）：status=running（notify 守卫放行）+ round 0→1（dedup key 递增）
     expect(record.status).toBe("running");
     expect(record.round).toBe(1);
-    // notifyComplete 被调 1 次，入参是当前 record（此时 running+isIdle，toNotifyRecord 守卫放行）
+    // 通知投递 1 次，入参为 toNotifyRecord 映射后的 BgNotifyRecord（chatMode running →
+    // status="running"，round 透传供 dedup key 递增）
     expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy).toHaveBeenCalledWith(record);
+    expect(spy.mock.calls[0]?.[0]).toMatchObject({ id: record.id, status: "running", round: 1 });
   });
 
   it("onRoundSettled 连续两轮：round 累加（1→2，dedup key 区分每轮）", () => {
@@ -323,7 +338,7 @@ describe("[N1] one-shot 成功完成通知：SP-5 回退 resumable 后仍送达"
 
   afterEach(() => {
     service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     // 还原默认活进程句柄实现（其他用例的 busy 判定依赖）
     mockGetChildByRecord.mockImplementation(() => ({ killed: false, kill: () => true }));
   });

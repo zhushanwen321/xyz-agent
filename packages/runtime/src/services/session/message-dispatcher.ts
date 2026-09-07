@@ -5,6 +5,9 @@
  * sendMessageHook 注册。
  *
  * sendMessage 经 sendPrompt 骨架(hook 拦截 → ensureActive → 标记活跃 → prompt)。
+ * [occupancy D2 拒绝转译] pi busy 类确定性拒绝(manual 压缩 / auto 压缩+post-run)经
+ * classifyPromptRejection 识别转译为 send.rejected{reason:'compacting'|'processing'},
+ * 不进 message.error 错误气泡;busy 预检按命中维度分型(isCompacting → 'compacting')。
  * [HISTORICAL] sendSubagentMessage(marker 拼装分支)已删除(composer 四符号设计 D2)——
  * 定向消息改走 session-service.subagentAction 直发 client.prompt,不经本骨架。
  *
@@ -16,10 +19,13 @@
  */
 import type { IDispatcherSessionOps } from './session-internal.js'
 import type { IPiEngine, IProcessManager } from '../ports/pi-engine.js'
-import type { SendMessageHook, PendingBashResultData, IManagedSessionView } from './types.js'
+import type { SendMessageHook, PendingBashResultData, IManagedSessionView, SessionOccupancy } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import type { IMessageBus } from '../message-bus/message-bus.js'
 import { toErrorMessage, RpcTimeoutError } from '../../utils/errors.js'
+import { updateSessionOccupancy } from './event-interpreter.js'
+import { SkillInjector, type SkillNotice } from './skill-injector.js'
+import { publishSkillNotices as publishSkillNoticesShared } from './skill-notice-publisher.js'
 
 /** 生成代次 token 用的进制（base-36：数字 + 小写字母，紧凑且无符号字符）。 */
 const RANDOM_TOKEN_RADIX = 36
@@ -83,6 +89,36 @@ function randomTokenSuffix(): string {
   return Math.random().toString(RANDOM_TOKEN_RADIX).slice(RANDOM_TOKEN_SLICE_START)
 }
 
+/**
+ * pi prompt() 确定性拒绝的错误原文（session-occupancy-send-closure D2 转译识别依据）。
+ * 字符串受 pi-semantics PS-22 / PS-23 探针锁守卫（pi 版本 bump 时探针红 = 文案漂移，须同步此处）。
+ */
+const PI_REJECTION_COMPACTING = 'Cannot submit a prompt while compaction is in progress'
+const PI_REJECTION_PROCESSING = 'Agent is already processing'
+
+/** send.rejected 拒绝提示文案（人类可读中文，renderer toast 用；P1 阶段 'compacting' 会入队）。 */
+const REJECT_MESSAGE_COMPACTING = '压缩进行中，消息将自动排队'
+const REJECT_MESSAGE_BUSY = 'Agent 正在处理'
+
+export type PromptRejectionReason = 'compacting' | 'processing'
+
+/**
+ * 识别 pi prompt() 的 busy 类确定性拒绝（按错误消息原文），输出转译 reason；非 busy 类返回 null。
+ *
+ * 两个拒绝分支（pi 0.84.4 agent-session.js prompt()）：
+ * - manual 压缩中：`_compactionAbortController` 置位窗口 throw "Cannot submit a prompt while
+ *   compaction is in progress..." → 'compacting'
+ * - auto 压缩 / post-run settling 窗口：isStreaming getter（含 post-run）为 true 且无
+ *   streamingBehavior 时 throw "Agent is already processing..." → 'processing'
+ *
+ * 独立小函数（非内联）：单测直测映射表 + 未来探针/调用方复用。
+ */
+export function classifyPromptRejection(errorMessage: string): PromptRejectionReason | null {
+  if (errorMessage.includes(PI_REJECTION_COMPACTING)) return 'compacting'
+  if (errorMessage.includes(PI_REJECTION_PROCESSING)) return 'processing'
+  return null
+}
+
 export class MessageDispatcher {
   private sendMessageHook: SendMessageHook | null = null
 
@@ -91,7 +127,20 @@ export class MessageDispatcher {
     private readonly pm: IProcessManager,
     private readonly workspaceService: WorkspaceService,
     private messageBus?: IMessageBus,
+    // [composer-multi-skill-injection D9] skill 注入器：三入口统一调用（hook 之后、
+    // client 发送之前）；构造注入便于测试替换 spy（每入口恰好单次调用的结构化幂等）。
+    private readonly injector: SkillInjector = new SkillInjector(),
   ) {}
+
+  /**
+   * occupancy 幂等写 + 变化才广播（session-occupancy-send-closure D3）——dispatcher 侧挂点
+   *（#1 dispatching / #7 bash / #8 catch idle / #9 abort idle / #11 bash=false / forceQuit
+   * 全复位 / compact finally compacting=false）的统一入口。合并、比较与广播在
+   * updateSessionOccupancy（event-interpreter 导出的写原语）内。
+   */
+  private touchOccupancy(session: IManagedSessionView, patch: Partial<SessionOccupancy>): void {
+    updateSessionOccupancy(session, this.messageBus, patch)
+  }
 
   /**
    * 后置注入 / 回填 MessageBus（SessionService.setMessageBus 同步回填调用）。
@@ -114,8 +163,8 @@ export class MessageDispatcher {
    * 调用方（session-message-handler）必须据此走 error envelope（带请求 id）让 renderer
    * pending.reject，不得 reply success（round7 must-fix #3：避免「composer 清空 + 错误气泡」矛盾态）。
    */
-  async sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }> {
-    return this.sendPrompt(sessionId, content, images)
+  async sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>, clientUuid?: string): Promise<{ blocked: boolean; rejected?: boolean }> {
+    return this.sendPrompt(sessionId, content, images, clientUuid)
   }
 
   /**
@@ -124,11 +173,15 @@ export class MessageDispatcher {
    * @param hookContent  hook 审核的文本(用户原文)
    * @param images       shared 形状图片附件（{data;mimeType}），透传给 client.prompt。
    *                     undefined 时不传 images，走原路径。
+   * @param clientUuid   客户端幂等 id（message.send RPC 透传，session-occupancy-send-closure D2）。
+   *                     拒绝广播（预检与 catch 转译两路）原样带回，renderer 据此消歧发送来源
+   *                     （flush 重放的拒绝不重入队）；正常路径不消费。
    */
   private async sendPrompt(
     sessionId: string,
     hookContent: string,
     images?: Array<{ data: string; mimeType: string }>,
+    clientUuid?: string,
   ): Promise<{ blocked: boolean; rejected?: boolean }> {
     // ── BeforeSend hook ──
     // blocked: 已广播 message.error（错误气泡），此处返回 {blocked:true} 让 handler 改发 error envelope。
@@ -139,62 +192,160 @@ export class MessageDispatcher {
     }
 
     // ── ensureActive(必要时 restore)──
-    let client: IPiEngine
+    const client = await this.ensureActiveOrBroadcast(sessionId)
+
+    // ── 标记活跃 + 生成中（busy 预检拒绝时中止）──
+    const activeSession = this.svc.getSessionByClient(client)
+    if (activeSession) {
+      if (this.rejectBusyPrecheck(sessionId, activeSession, clientUuid)) {
+        return { blocked: true, rejected: true }
+      }
+      this.markSessionActive(activeSession, sessionId)
+    }
+    // ── 发送 prompt + 错误广播 ──
+    const promptText = hookOutcome.modifiedContent ?? hookContent
+    // [composer-multi-skill-injection D9] 注入器：BeforeSend hook 之后、client.prompt 之前
+    // 统一处理（展开 / 预检降级 / 失效透传）。hook 审核的是用户原文，注入器处理改写后文本；
+    // hook 若破坏标记完整性，注入器内部走残缺透传 + notice（D8）。每入口恰好单次调用。
+    const injection = await this.injector.inject(client, promptText)
     try {
-      client = await this.svc.ensureActive(sessionId)
+      await client.prompt(injection.text, images)
+    } catch (e) {
+      return this.handlePromptFailure(sessionId, activeSession, clientUuid, e)
+    }
+    // [D6/D8] 发送成功后才发布 skillNotice：消息已真正入队，提示描述的注入形态才成立；
+    // prompt 失败路径不发（handlePromptFailure 的 message.error 已覆盖用户可见错误）。
+    this.publishSkillNotices(sessionId, promptText, injection.notices)
+    return { blocked: false }
+  }
+
+  /**
+   * ensureActive(必要时 restore)骨架：失败时补广播 message.error 后原样 rethrow。
+   *
+   * 补广播 message.error：让已订阅 session 通道的前端能在聊天流看到错误气泡。
+   * 之前只靠 server.ts 外层 handler_error envelope（走 pending.reject，不进聊天流），
+   * 导致 ensureActive 失败（如 pi 进程已死、restore 再 spawn 再 exit）时用户在对话流看不到错误。
+   */
+  private async ensureActiveOrBroadcast(sessionId: string): Promise<IPiEngine> {
+    try {
+      return await this.svc.ensureActive(sessionId)
     } catch (e) {
       const errMsg = `Failed to restore session: ${toErrorMessage(e)}`
       console.error(`[message-dispatcher] ${errMsg}`)
-      // 补广播 message.error：让已订阅 session 通道的前端能在聊天流看到错误气泡。
-      // 之前只靠 server.ts 外层 handler_error envelope（走 pending.reject，不进聊天流），
-      // 导致 ensureActive 失败（如 pi 进程已死、restore 再 spawn 再 exit）时用户在对话流看不到错误。
       const msg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
       this.messageBus?.publish(sessionId, msg)
       throw e
     }
+  }
 
-    // ── 标记活跃 + 生成中 ──
-    const activeSession = this.svc.getSessionByClient(client)
-    if (activeSession) {
-      // [D-009 预检] busy 时拒绝（send.rejected 广播，不调 pi.prompt）
-      // [W3, U6] 加 isCompacting：compact 进行中时 prompt 会与压缩竞态，同样必须拒。
-      // [composer-bash-execute W1] 加 isBashRunning：bash 执行中 prompt 会与 bash 竞态，双向互斥。
-      if (activeSession.isGenerating || activeSession.isCompacting || activeSession.isBashRunning) {
-        console.warn(`[message-dispatcher] preemptive reject (busy), sid=${sessionId}`)
-        const msg = { type: 'send.rejected' as const, payload: { sessionId, reason: 'busy' as const, message: 'Agent 正在处理' } }
-        this.messageBus?.publish(sessionId, msg)
-        return { blocked: true, rejected: true }
-      }
-      activeSession.lastActiveAt = Date.now()
-      activeSession.isGenerating = true
-      // [W6] record 是非用户阻塞的副作用（记最近工作区），不应阻断发消息主流程。
-      // 当前 record 同步链路（WorkspaceService.record → store.record → cache.set/trim）几乎不抛，
-      // 但作为防御：未来 store 实现变更（如引入 sync flush）或 lazy partition 加载异常都不该让
-      // session 卡在「生成中」。包 try/catch：失败仅 warn，isGenerating 已置 true 不回退，pi.prompt 照常执行。
-      try {
-        this.workspaceService.record(activeSession.cwd)
-      } catch (e) {
-        // best-effort 降级：record 是非用户阻塞的副作用，失败仅 warn 不传播——
-        // isGenerating 已置 true 不回退，pi.prompt 照常执行（见上方 W6 说明）。
-        console.warn('[message-dispatcher] workspace.record failed (non-blocking), sid=',
-          sessionId, e instanceof Error ? e.message : e)
-      }
+  /**
+   * [D-009 预检] busy 预检拒绝（send.rejected 已广播，返回 true 调用方中止发送，不调 pi.prompt）。
+   *
+   * [W3, U6] 加 isCompacting：compact 进行中时 prompt 会与压缩竞态，同样必须拒。
+   * [composer-bash-execute W1] 加 isBashRunning：bash 执行中 prompt 会与 bash 竞态，双向互斥。
+   * [occupancy D2 预检分型] 按命中维度分型：isCompacting → 'compacting'（renderer 兜底入队
+   * 的触发源，与 pi 转译路径同语义）；isGenerating / isBashRunning → 'busy'（存量）。
+   */
+  private rejectBusyPrecheck(
+    sessionId: string,
+    activeSession: IManagedSessionView,
+    clientUuid: string | undefined,
+  ): boolean {
+    if (activeSession.isGenerating || activeSession.isCompacting || activeSession.isBashRunning) {
+      const reason = activeSession.isCompacting ? ('compacting' as const) : ('busy' as const)
+      console.warn(`[message-dispatcher] preemptive reject (${reason}), sid=${sessionId}`)
+      this.publishSendRejected(sessionId, reason, clientUuid)
+      return true
     }
-    // ── 发送 prompt + 错误广播 ──
-    const promptText = hookOutcome.modifiedContent ?? hookContent
+    return false
+  }
+
+  /**
+   * 预检通过后的活跃标记：isGenerating 置位 + occupancy #1 dispatching + workspace record
+   * best-effort 副作用。
+   *
+   * occupancy #1（D3）：sendPrompt 预检通过 → dispatching（prompt 已发、message_start 未到）。
+   * 本挂点先于 client.prompt——pi busy 类拒绝（catch 转译）发生时 turn 已处于 dispatching，
+   * 由 #8 统一复位 idle（转译/非转译两路都复位，见 handlePromptFailure 注释）。
+   */
+  private markSessionActive(activeSession: IManagedSessionView, sessionId: string): void {
+    activeSession.lastActiveAt = Date.now()
+    activeSession.isGenerating = true
+    this.touchOccupancy(activeSession, { turn: 'dispatching' })
+    // [W6] record 是非用户阻塞的副作用（记最近工作区），不应阻断发消息主流程。
+    // 当前 record 同步链路（WorkspaceService.record → store.record → cache.set/trim）几乎不抛，
+    // 但作为防御：未来 store 实现变更（如引入 sync flush）或 lazy partition 加载异常都不该让
+    // session 卡在「生成中」。包 try/catch：失败仅 warn，isGenerating 已置 true 不回退，pi.prompt 照常执行。
     try {
-      await client.prompt(promptText, images)
+      this.workspaceService.record(activeSession.cwd)
     } catch (e) {
-      const errMsg = toErrorMessage(e)
-      console.error(`[message-dispatcher] prompt failed: sessionId=${sessionId}`, errMsg)
-      if (activeSession) activeSession.isGenerating = false
-      const errMsgMsg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
-      this.messageBus?.publish(sessionId, errMsgMsg)
-      // 与 hook 拦截同等对待：已广播 message.error 气泡，返回 blocked 让 handler 走 error envelope（sendError），
-      // renderer pending.reject 触发 Composer 恢复草稿。否则 handler reply success → pending.resolve 误判发送成功。
-      return { blocked: true }
+      // best-effort 降级：record 是非用户阻塞的副作用，失败仅 warn 不传播——
+      // isGenerating 已置 true 不回退，pi.prompt 照常执行（见上方 W6 说明）。
+      console.warn('[message-dispatcher] workspace.record failed (non-blocking), sid=',
+        sessionId, e instanceof Error ? e.message : e)
     }
-    return { blocked: false }
+  }
+
+  /**
+   * prompt 失败收口（catch 体整体，恒 blocked）：复位 isGenerating + occupancy idle →
+   * pi busy 类确定性拒绝转译 send.rejected 分型广播；其余错误广播 message.error。
+   */
+  private handlePromptFailure(
+    sessionId: string,
+    activeSession: IManagedSessionView | undefined,
+    clientUuid: string | undefined,
+    e: unknown,
+  ): { blocked: true; rejected?: boolean } {
+    const errMsg = toErrorMessage(e)
+    console.error(`[message-dispatcher] prompt failed: sessionId=${sessionId}`, errMsg)
+    // 复位对转译/非转译两路同样生效（occupancy D2：转译的拒绝也意味着 turn 没跑起来，
+    // 与预检拒绝同构——单次复位，两分支不重复不遗漏）。
+    if (activeSession) {
+      activeSession.isGenerating = false
+      // occupancy #8（D3）：prompt 抛错 → turn 复位 idle。转译拒绝两路同样复位——核实：
+      // #1 已先于 client.prompt 置 dispatching；processing 拒绝（窗口 3）pi 随后的
+      // agent_settled（#4）幂等覆盖回 idle，compacting 拒绝（窗口 1）后续仅 compaction_start/end
+      //（#5/#6 只写 compacting 维度），不复位则 turn 永卡 dispatching、occupancy 永不全 idle
+      //（P3 起 renderer flush 触发条件，G2 投递必达被破坏）。
+      this.touchOccupancy(activeSession, { turn: 'idle' })
+    }
+    // [occupancy D2 拒绝转译] pi busy 类确定性拒绝 → send.rejected 分型广播，不走
+    // message.error 错误气泡链路（busy 类不进对话流；非 busy 的 pi 错误保留现状）。
+    // 返回 rejected:true 与预检拒绝同构：handler 回 message.status{rejected} 让 renderer
+    // pending 干净 resolve（send.rejected 兜底已接管用户反馈；error envelope 会让 pending.reject
+    // 恢复草稿，与入队/回滚流程冲突）。
+    const rejectionReason = classifyPromptRejection(errMsg)
+    if (rejectionReason) {
+      this.publishSendRejected(sessionId, rejectionReason, clientUuid)
+      return { blocked: true, rejected: true }
+    }
+    const errMsgMsg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
+    this.messageBus?.publish(sessionId, errMsgMsg)
+    // 与 hook 拦截同等对待：已广播 message.error 气泡，返回 blocked 让 handler 走 error envelope（sendError），
+    // renderer pending.reject 触发 Composer 恢复草稿。否则 handler reply success → pending.resolve 误判发送成功。
+    return { blocked: true }
+  }
+
+  /**
+   * send.rejected 拒绝广播（busy 预检与 pi 拒绝转译两路共用的发布原语）。
+   * 文案按 isCompacting 分型映射；clientUuid 原样带回（undefined 时缺省），renderer
+   * 据此消歧发送来源（flush 重放的拒绝不重入队）。
+   */
+  private publishSendRejected(
+    sessionId: string,
+    reason: PromptRejectionReason | 'busy',
+    clientUuid: string | undefined,
+  ): void {
+    const msg = {
+      type: 'send.rejected' as const,
+      payload: {
+        sessionId,
+        reason,
+        message: reason === 'compacting' ? REJECT_MESSAGE_COMPACTING : REJECT_MESSAGE_BUSY,
+        ...(clientUuid !== undefined && { clientUuid }),
+      },
+    }
+    this.messageBus?.publish(sessionId, msg)
   }
 
   /**
@@ -238,7 +389,12 @@ export class MessageDispatcher {
       // 先取 active 再 destroy——destroySession 会删 processes/clientToId 条目，
       // 之后再经 getSessionByClient 反查会拿 undefined。
       const active = this.svc.getSessionByClient(client)
-      if (active) active.isGenerating = false
+      if (active) {
+        active.isGenerating = false
+        // occupancy #9（D3）：abort RPC 失败兜底 → idle（pi 卡死时 agent_settled 永不到达，
+        // turn 不能停留在 dispatching/generating/settling）。
+        this.touchOccupancy(active, { turn: 'idle' })
+      }
 
       if (e instanceof RpcTimeoutError) {
         // D3a（integrity-hardening，修 M5）：abort RPC 超时 = pi 事件循环卡死（ping 3 连败
@@ -271,7 +427,11 @@ export class MessageDispatcher {
     // 逻辑（chat-message-effects 只认 'message.complete' type），isStreaming 仍为 true。
     // 广播流式 message.complete 让前端正常收口（与 sendPrompt 错误路径广播 message.error 对称）。
     const active = this.svc.getSessionByClient(client)
-    if (active) active.isGenerating = false
+    if (active) {
+      active.isGenerating = false
+      // occupancy #9（D3）：abort 成功 → idle（与上方的 message.complete{aborted} 收口对称）。
+      this.touchOccupancy(active, { turn: 'idle' })
+    }
     // W4：用户主动 abort 写 stopped 终态
     this.svc.persistSessionOutcome(sessionId, 'stopped', 'User aborted')
     const completeMsg = { type: 'message.complete' as const, payload: { sessionId, stopReason: 'aborted' as const } }
@@ -315,6 +475,11 @@ export class MessageDispatcher {
     // stopped 终态须在 removeSessionEntry 前写（persistSessionOutcome 内部按 id 查
     // sessions Map，条目删除后静默跳过）。
     this.svc.persistSessionOutcome(sessionId, 'stopped', outcomeReason)
+    // occupancy #10（D3，forceQuit/abort 超时收敛腿）：进程被强杀后 agent_settled /
+    // compaction_end 永不到达，占用三维全复位——session.exited 广播前发，且必须在
+    // removeSessionEntry（内部 bus.clearSession）之前，否则帧送空集合。
+    const exiting = this.svc.getSession(sessionId)
+    if (exiting) updateSessionOccupancy(exiting, this.messageBus, { turn: 'idle', compacting: false, bash: false })
     // session.exited 须在 removeSessionEntry 前发（其后 messageBus.clearSession 清空
     // 订阅者集合，再发等于空投，前端一条也收不到）。code=null：强杀场景退出码未知，
     // 与 shared 协议「被信号杀死无退出码」语义一致。前端 handleSessionExited 会把
@@ -438,6 +603,8 @@ export class MessageDispatcher {
         return null
       }
       activeSession.isBashRunning = true
+      // occupancy #7（D3）：sendBash 置位 → bash=true（与 turn 维度正交，streaming 中可并存）。
+      this.touchOccupancy(activeSession, { bash: true })
       // [W1] 生成本次 sendBash 的代次令牌：abortBash 在广播 cancelled 终态前会旋转此 token
       // （清 undefined）。await 返回后比对 token，可判定是否被 abortBash 抢先收口。
       activeSession.bashRunToken = `bash_${Date.now()}_${randomTokenSuffix()}`
@@ -575,6 +742,8 @@ export class MessageDispatcher {
   private releaseBashReservation(activeSession: IManagedSessionView | undefined, myToken: string | undefined): void {
     if (activeSession) {
       activeSession.isBashRunning = false
+      // occupancy #7（D3）：sendBash finally（成功/失败/abort-skip 全路径）→ bash=false。
+      this.touchOccupancy(activeSession, { bash: false })
       // [W1] 复位 token：仅当 token 仍是本次 sendBash 的（未被 abortBash 旋转、
       // 也未被下一次 sendBash 覆盖）时才清，避免误清 abortBash 或后续 sendBash 的标记。
       if (myToken !== undefined && activeSession.bashRunToken === myToken) {
@@ -649,6 +818,9 @@ export class MessageDispatcher {
     } finally {
       if (activeSession) {
         activeSession.isBashRunning = false
+        // occupancy #11（D3）：abortBash（成败皆兜底）→ bash=false，与下方 cancelled 哨兵帧
+        // 广播同源同点（pi 卡死时 abort_bash 无响应，靠 finally 保证维度复位）。
+        this.touchOccupancy(activeSession, { bash: false })
         // [W1] 旋转 token：通知 sendBash「已被 abort 抢先收口」。sendBash 在 await 返回后
         // 检测到 activeSession.bashRunToken !== myToken 即静默跳过终态广播，避免双终态。
         // 用新 token 而非清 undefined：若 sendBash 尚未读 myToken（仍在 await），清 undefined
@@ -675,14 +847,35 @@ export class MessageDispatcher {
     return { sent }
   }
 
+  /**
+   * [composer-multi-skill-injection D6/D8] 发布 skill 注入提示广播（session.skillNotice，
+   * payload 契约见 protocol.ts）。三入口共用：注入器产出的 notices 逐条定向发布。
+   *
+   * [A2 D-A2-2] 广播编排提取为共享函数（skill-notice-publisher.ts）——subagentAction
+   * （session-records.ts）与 deliverText（session-delivery-registry.ts）两个新挂载点
+   * 同款复用；本方法保留薄委托（调用点不变，messageBus 的 undefined 语义照旧）。
+   * clientUuid 提取与 payload 形态见共享函数注释。
+   */
+  private publishSkillNotices(sessionId: string, sentText: string, notices: SkillNotice[]): void {
+    publishSkillNoticesShared(this.messageBus, sessionId, sentText, notices)
+  }
+
   async steerMessage(sessionId: string, content: string): Promise<void> {
     const client = this.getClientOrThrow(sessionId, 'steer')
-    await client.steer(content)
+    // [composer-multi-skill-injection D9] 注入器：入队前统一处理（与 sendPrompt 同构）。
+    // steer 路径现状无 BeforeSend hook 调用点（hook 仅注册在 sendMessage 骨架），
+    // 「hook 之后」约束在此自然成立。
+    const injection = await this.injector.inject(client, content)
+    await client.steer(injection.text)
+    this.publishSkillNotices(sessionId, content, injection.notices)
   }
 
   async followUpMessage(sessionId: string, content: string): Promise<void> {
     const client = this.getClientOrThrow(sessionId, 'followUp')
-    await client.followUp(content)
+    // [composer-multi-skill-injection D9] 同 steerMessage：入队前统一处理，恰一次调用。
+    const injection = await this.injector.inject(client, content)
+    await client.followUp(injection.text)
+    this.publishSkillNotices(sessionId, content, injection.notices)
   }
 
   /**
@@ -748,7 +941,12 @@ export class MessageDispatcher {
       // 兜底复位：interpreter 的 compaction_end 是复位主力（三路对称），此处防 transport 级失败时
       // interpreter 未触发 compaction_end 导致 session 卡死。置位归 interpreter（compaction_start），
       // dispatcher 不置 true，故此处只写 false（对 false 无害，幂等）。
-      if (active) active.isCompacting = false
+      if (active) {
+        active.isCompacting = false
+        // occupancy #6 兜底（D3 同源同点）：transport 级失败时 compaction_end（#6）不到达，
+        // compacting 维度在此镜像复位（对未置位场景幂等无害）。
+        this.touchOccupancy(active, { compacting: false })
+      }
     }
   }
 }

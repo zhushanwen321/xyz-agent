@@ -8,7 +8,7 @@ import { displayAgentName } from "../shared/agent-ref.ts";
 import { snapshot } from "./execution-record.ts";
 import { hasIdleTimer } from "./lifecycle-manager.ts";
 import { hasLiveProcessHandle, isIdle, isResumable } from "./lifecycle-predicates.ts";
-import type { BgNotifier, NotifierHost } from "./notifier.ts";
+import type { BgNotifier, BatchBudgetParams, NotifierHost } from "./notifier.ts";
 import { createNotifier } from "./notifier.ts";
 import type { BgNotifyRecord } from "./notifier.ts";
 import type { ExecutionRecord, RecordSnapshot } from "./types.ts";
@@ -50,6 +50,14 @@ export interface NotifyHost {
   emitPendingRegister(id: string, name?: string): void;
   /** pending-notifications 注销（原模块函数 emitPendingUnregister）。 */
   emitPendingUnregister(id: string, reason: string): void;
+  /** [sync-collect U2 合并] record → BgNotifyRecord 映射——collectCoordinator 的
+   *  toNotifyRecord/notifyAsync 依赖注入消费（守卫放行逻辑单一权威在本文件）。 */
+  toNotifyRecord(record: ExecutionRecord): BgNotifyRecord | undefined;
+  /** [sync-collect 合并] 单条直发——collectCoordinator notifyAsync 与 E9 dispose
+   *  转换路径消费（已越过 toNotifyRecord 守卫的成品通知）。 */
+  notify(record: BgNotifyRecord): void;
+  /** [sync-collect 合并] sync 批投递——collectCoordinator flushBatch 与 E1 补发消费。 */
+  notifyBatch(records: readonly BgNotifyRecord[], budget?: BatchBudgetParams): boolean;
   /** dispose 的逆操作（initSession 复活，原 notifier.revive 委托）。 */
   revive(): void;
   /** dispose 前冲刷待发通知（原 notifier.flushPendingNotifications 委托）。 */
@@ -195,6 +203,18 @@ export function createNotifyHost(deps: NotifyHostDeps): NotifyHost {
 
     emitPendingUnregister(id: string, reason: string): void {
       emitPendingUnregister(deps.getPi(), id, reason);
+    },
+
+    toNotifyRecord(record: ExecutionRecord): BgNotifyRecord | undefined {
+      return toNotifyRecord(record);
+    },
+
+    notify(record: BgNotifyRecord): void {
+      notifier.notify(record);
+    },
+
+    notifyBatch(records: readonly BgNotifyRecord[], budget?: BatchBudgetParams): boolean {
+      return notifier.notifyBatch(records, budget);
     },
 
     revive(): void {

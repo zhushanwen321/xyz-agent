@@ -33,7 +33,7 @@ describe('findFiles (FR-6)', () => {
   })
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true })
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('用 **/*.json 能返回匹配文件', async () => {

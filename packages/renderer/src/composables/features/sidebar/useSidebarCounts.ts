@@ -13,6 +13,7 @@ import { useFileTreeStore } from '@/stores/fileTree'
 import { usePanelStore } from '@/stores/panel'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
+import { subagentBucket } from '@/lib/subagent-bucket'
 
 export function useSidebarCounts(focusedSessionId: Ref<string | null>) {
   const fileTreeStore = useFileTreeStore()
@@ -26,11 +27,14 @@ export function useSidebarCounts(focusedSessionId: Ref<string | null>) {
     if (!sid) return 0
     return fileTreeStore.getTree(sid)?.length ?? 0
   })
-  const subagentCount = computed(() => subagentStore.recordsOf(focusedSessionId.value ?? '').value.length)
-  const subagentRunningCount = computed(
-    () => subagentStore.recordsOf(focusedSessionId.value ?? '').value.filter((r) => r.status === 'running').length,
-  )
   const subagentList = computed(() => subagentStore.recordsOf(focusedSessionId.value ?? '').value)
+  const subagentCount = computed(() => subagentList.value.length)
+  // D8 口径收窄：badge 判据 =「进行中」桶 SSOT（subagentBucket === 'active'，D6 #5）——
+  // 与 SubagentList/FilterBar 的 active 计数恒同源（含 done 投影排除 + waiting 计入语义），
+  // 消除 badge 与列表计数口径漂移
+  const subagentRunningCount = computed(
+    () => subagentList.value.filter((r) => subagentBucket(r) === 'active').length,
+  )
   const workflowCount = computed(() => workflowStore.recordsOf(focusedSessionId.value ?? '').value.length)
   const workflowRunningCount = computed(
     () =>

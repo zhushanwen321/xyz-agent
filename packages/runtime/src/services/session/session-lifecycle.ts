@@ -272,12 +272,34 @@ export class SessionLifecycle implements ISessionRegistry {
       // usage 实例快照持有，读点（getInputTokens / toSummary.tokenCount）从实例派生，
       // 任何路径不再直写这两个字段（旧外部 setter / applyContextUpdate 直写已删）。
       tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, isBashRunning: false, bashRunToken: undefined,
+      // occupancy 初值 = 全 idle（session-occupancy-send-closure D3 转移 #10 respawn 衔接）：
+      // create/fork/restore（respawn）三入口共用本注册汇聚点，pi 重 spawn 后无活跃 run，
+      // idle 起步成立（与上方三 flag 全 false 同语义）。idle 的 renderer 可观测性由下方
+      // 显式宣告帧保证（写 state 快照 + 重订阅回放），不依赖「无帧 = idle 缺省」假设。
+      occupancy: { turn: 'idle', compacting: false, bash: false },
       adapter, sessionFilePath,
       hidden,
       parentSession,
       forkEntryId,
     }
     this.sessions.set(id, session)
+    // occupancy idle 宣告帧（session-occupancy-send-closure D3 转移 #10 respawn 衔接，
+    // Gate B V6b 反例修复）：直接 publish 而非 updateSessionOccupancy——对象初值即 idle，
+    // 全等去重会短路广播，而本帧职责恰恰是「宣告」而非「转移」：
+    // 1. 写 bus state 快照：restore（respawn）后 renderer 重订阅时 stateSnapshot 回放必含
+    //    idle 帧。旧假设「重订阅无帧 = idle 缺省」被帧丢失击穿——占用中 pi 死亡时 renderer
+    //    的 session.exited 兜底 handler 同步失效本地订阅（invalidateStreamSubscription），
+    //    随后到达的转移 #10 idle 帧被丢弃，occupancy 分区残留 stale compacting=true；dead
+    //    占位吞掉消息流使其暂不可见，重新打开（restore）后 stale 显形且永无帧修正，flush
+    //   （触发条件 = 收到全 idle 帧）永不触发，defer 队列滞留至 runtime 重启。
+    // 2. 广播腿：create/fork 场景此刻订阅集合为空（renderer 收到 summary 后才订阅），
+    //    restore 场景旧订阅集合已随 onSessionExit 的 bus.clearSession 清除——两腿实际都只
+    //    落快照，由重订阅回放消费，时序上 subscribe 必然晚于本 publish（postLoadSession 在
+    //    restore RPC resolve 之后），无竞态。
+    this.registerDeps.getMessageBus()?.publish(id, {
+      type: 'session.occupancy',
+      payload: { sessionId: id, turn: 'idle', compacting: false, bash: false },
+    })
     // 注册事件同步直发（sessions.set 之后——订阅者可经 Registry 读到条目）：S3 期订阅者
     // = Facade（组装根接线），按迁移前体内顺序执行 registerReplicatedStates →
     // ensureRecordEntriesCache → reconciler 对账（fire-and-forget）。

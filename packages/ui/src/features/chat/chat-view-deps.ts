@@ -47,6 +47,11 @@ export interface ChatViewDeps {
    *  optional：takeover 是窗口增强能力，仅 Turn 单消费者；未 provide 时 Turn 兜底 false（折叠态）。
    *  renderer useChatViewDeps 运行时总 provide 真实实现，测试 mock 可省略） */
   isTakeover?: (turnKey: string) => boolean
+  /** session 是否有「正在提交直发」的 pendingSend 瞬时态（chat store 投影，UserBubble
+   *  submitEdit 双发锁消费——D3：防 send 与 editAndResend 并发覆盖 pendingDirectSends）。
+   *  optional，同 isTakeover：未 provide 时 submitEdit 不做互斥（旧壳层兼容），renderer
+   *  useChatViewDeps 运行时总 provide 真实实现，测试 mock 可省略 */
+  isPendingSend?: (sessionId: string) => boolean
 
   // ── 操作回调（触发 RPC / store action）──
   /** 切换 turn 展开/折叠（useTurnExpansion store action。key=turnStableId(turn)） */

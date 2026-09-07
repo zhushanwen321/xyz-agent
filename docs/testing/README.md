@@ -21,6 +21,7 @@
 | [10-settings-system-prompt.md](./10-settings-system-prompt.md) | 系统提示词配置（替换 pi 核心 / 追加注入 / 快照预览） | ✅ | ✅ | — |
 | [11-real-e2e-specs.md](./11-real-e2e-specs.md) | real 轨 E2E 自动化 spec（真 Electron + runtime + pi + LLM，零 mock） | — | ✅ | ✅ **已落地** |
 | [12-extension-runtime-testing.md](./12-extension-runtime-testing.md) | extension 层运行时测试体系（worker harness L1 → real LLM L3，价值层级 + 决策树） | — | ✅ | ✅ worker-runtime **已落地** |
+| [14-background-task-sidebar.md](./14-background-task-sidebar.md) | 后台命令侧边栏视图 + drawer 详情（三桶筛选 + 行内终止 + 输出跟随） | ✅（vitest 组件测试） | ⚠️ real-track 手工 | — |
 
 > 图例：✅ = 可测且稳定 / ⚠️ = 有约束或待补 / ❌ = 不可测（需手工）。
 > **已落地** = spec 文件存在于 `e2e/` 且能跑通；**范例** = 文档内有完整可跑代码但尚未落地为 spec 文件。
@@ -41,3 +42,4 @@
 - 看 [TEST-STRATEGY.md §2 运行命令](../../TEST-STRATEGY.md) 确认 cwd（renderer 测试必须从 `packages/renderer` 跑）
 - 看 [troubleshooting.md](../troubleshooting.md) 排查 runtime/WS/路径问题
 - E2E 看 [00-test-strategy-overview.md §6 常见坑](./00-test-strategy-overview.md)
+- 单测满载下间歇 flake（等待/删除/跨进程时序）→ [TEST-STRATEGY.md「测试自身引入的 flake 防规范」](../../TEST-STRATEGY.md)

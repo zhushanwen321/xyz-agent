@@ -6,15 +6,16 @@
  * 直接注入 fake deps 单测返回的 handler。断言到依赖调用层面（哪个 dep 被调/未被调 +
  * preventDefault 次数），非「不抛错」式弱断言。
  *
- * 覆盖矩阵（与源文件头部分发语义逐条对应）：
+ * 覆盖矩阵（与源文件头部分发语义逐条对应，u5b D6 改造后）：
  *   bare-arrow：裸 ↑/↓ → preventDefault + moveCaretVertical；moved 不翻历史；
  *   at-edge ↑/↓ 翻历史；修饰键 + ↑/↓ 放行原生。
- *   Enter：staging 优先（⏎/Alt+⏎ 均提交 staging）；Alt+⏎ compacting → onSend 入队；
- *   Alt+⏎ 非 compacting → onFollowUp；裸 ⏎ active → steer / idle → send；⇧⏎ 放行换行。
+ *   Enter：staging 优先（⏎/Alt+⏎ 均提交 staging）；Alt+⏎ steer 路由行 → onFollowUp；
+ *   Alt+⏎ defer/direct 行 → onSend（经统一分发器）；裸 ⏎ 恒 onSend（路由判定收口在
+ *   core dispatch/send，keydown 层不分流）；⇧⏎ 放行换行。
  */
 import { describe, it, expect, vi } from 'vitest'
 import { computed, ref } from 'vue'
-import type { StagingAction } from '@xyz-agent/core/domain/composer'
+import type { SendRoute, StagingAction } from '@xyz-agent/core/domain/composer'
 import { useComposerKeydown, type ComposerKeydownDeps } from './composer-keydown'
 import type { ShellInputInstance } from './composer-shell'
 
@@ -39,14 +40,13 @@ function makeKeyEvent(key: string, mods: KeyMods = {}) {
 function makeDeps(overrides: {
   /** moveCaretVertical 返回值（默认 at-edge → 触发翻历史路径） */
   caret?: 'moved' | 'at-edge'
-  active?: boolean
-  compacting?: boolean
+  /** D6 发送路由（默认 direct） */
+  route?: SendRoute
   stagingActive?: boolean
 } = {}) {
   const moveCaretVertical = vi.fn(() => overrides.caret ?? 'at-edge')
   const handleArrowUp = vi.fn()
   const handleArrowDown = vi.fn()
-  const onSteer = vi.fn()
   const onFollowUp = vi.fn()
   const onSend = vi.fn()
   const staging = {
@@ -62,15 +62,13 @@ function makeDeps(overrides: {
     commandPopoverRef: ref(null),
     inputRef: ref({ moveCaretVertical } as unknown as ShellInputInstance),
     staging,
-    isActive: computed(() => overrides.active ?? false),
-    isCompacting: computed(() => overrides.compacting ?? false),
+    sendRoute: computed(() => overrides.route ?? 'direct'),
     handleArrowUp,
     handleArrowDown,
-    onSteer,
     onFollowUp,
     onSend,
   }
-  return { deps, moveCaretVertical, handleArrowUp, handleArrowDown, onSteer, onFollowUp, onSend }
+  return { deps, moveCaretVertical, handleArrowUp, handleArrowDown, onFollowUp, onSend }
 }
 
 describe('useComposerKeydown', () => {
@@ -149,9 +147,9 @@ describe('useComposerKeydown', () => {
     })
   })
 
-  describe('Enter 分发矩阵', () => {
-    it('staging 活跃：裸 Enter → onSend（staging 提交优先），不走 steer', () => {
-      const { deps, onSteer, onFollowUp, onSend } = makeDeps({ stagingActive: true, active: true })
+  describe('Enter 分发矩阵（u5b D6：路由判定收口在 core dispatch/send）', () => {
+    it('staging 活跃：裸 Enter → onSend（staging 提交优先）', () => {
+      const { deps, onFollowUp, onSend } = makeDeps({ stagingActive: true, route: 'steer' })
       const onKeydown = useComposerKeydown(deps)
       const { e, preventDefault } = makeKeyEvent('Enter')
 
@@ -159,12 +157,11 @@ describe('useComposerKeydown', () => {
 
       expect(preventDefault).toHaveBeenCalledTimes(1)
       expect(onSend).toHaveBeenCalledTimes(1)
-      expect(onSteer).not.toHaveBeenCalled()
       expect(onFollowUp).not.toHaveBeenCalled()
     })
 
     it('staging 活跃：Alt+Enter → onSend（staging 优先于 followUp）', () => {
-      const { deps, onSteer, onFollowUp, onSend } = makeDeps({ stagingActive: true })
+      const { deps, onFollowUp, onSend } = makeDeps({ stagingActive: true })
       const onKeydown = useComposerKeydown(deps)
       const { e, preventDefault } = makeKeyEvent('Enter', { alt: true })
 
@@ -173,24 +170,10 @@ describe('useComposerKeydown', () => {
       expect(preventDefault).toHaveBeenCalledTimes(1)
       expect(onSend).toHaveBeenCalledTimes(1)
       expect(onFollowUp).not.toHaveBeenCalled()
-      expect(onSteer).not.toHaveBeenCalled()
     })
 
-    it('Alt+Enter + compacting → onSend（入队待重放），不走 onFollowUp（无 isActive 守卫直通会留陈旧 followUp 队列）', () => {
-      const { deps, onSteer, onFollowUp, onSend } = makeDeps({ compacting: true })
-      const onKeydown = useComposerKeydown(deps)
-      const { e, preventDefault } = makeKeyEvent('Enter', { alt: true })
-
-      onKeydown(e)
-
-      expect(preventDefault).toHaveBeenCalledTimes(1)
-      expect(onSend).toHaveBeenCalledTimes(1)
-      expect(onFollowUp).not.toHaveBeenCalled()
-      expect(onSteer).not.toHaveBeenCalled()
-    })
-
-    it('Alt+Enter + 非 compacting → onFollowUp（followUp RPC 队列语义），不走 onSend/onSteer', () => {
-      const { deps, onSteer, onFollowUp, onSend } = makeDeps()
+    it('Alt+Enter + steer 路由行 → onFollowUp（turn 活跃保留下一轮投递语义），不走 onSend', () => {
+      const { deps, onFollowUp, onSend } = makeDeps({ route: 'steer' })
       const onKeydown = useComposerKeydown(deps)
       const { e, preventDefault } = makeKeyEvent('Enter', { alt: true })
 
@@ -199,23 +182,34 @@ describe('useComposerKeydown', () => {
       expect(preventDefault).toHaveBeenCalledTimes(1)
       expect(onFollowUp).toHaveBeenCalledTimes(1)
       expect(onSend).not.toHaveBeenCalled()
-      expect(onSteer).not.toHaveBeenCalled()
     })
 
-    it('裸 Enter + active → onSteer（追加 steer 不打断当前回合），不走 onSend', () => {
-      const { deps, onSteer, onSend } = makeDeps({ active: true })
+    it('Alt+Enter + defer 路由行 → onSend（占用期经统一分发器入队待重放）', () => {
+      const { deps, onFollowUp, onSend } = makeDeps({ route: 'defer' })
       const onKeydown = useComposerKeydown(deps)
-      const { e, preventDefault } = makeKeyEvent('Enter')
+      const { e, preventDefault } = makeKeyEvent('Enter', { alt: true })
 
       onKeydown(e)
 
       expect(preventDefault).toHaveBeenCalledTimes(1)
-      expect(onSteer).toHaveBeenCalledTimes(1)
-      expect(onSend).not.toHaveBeenCalled()
+      expect(onSend).toHaveBeenCalledTimes(1)
+      expect(onFollowUp).not.toHaveBeenCalled()
     })
 
-    it('裸 Enter + idle → onSend', () => {
-      const { deps, onSteer, onFollowUp, onSend } = makeDeps({ active: false })
+    it('Alt+Enter + direct → onSend（followUp 非活跃退化路径的语义收口）', () => {
+      const { deps, onFollowUp, onSend } = makeDeps({ route: 'direct' })
+      const onKeydown = useComposerKeydown(deps)
+      const { e, preventDefault } = makeKeyEvent('Enter', { alt: true })
+
+      onKeydown(e)
+
+      expect(preventDefault).toHaveBeenCalledTimes(1)
+      expect(onSend).toHaveBeenCalledTimes(1)
+      expect(onFollowUp).not.toHaveBeenCalled()
+    })
+
+    it('裸 Enter + steer 路由行 → onSend（统一分发器：steer 路由并入当前回合，[HISTORICAL] isActive→onSteer 直调退役）', () => {
+      const { deps, onFollowUp, onSend } = makeDeps({ route: 'steer' })
       const onKeydown = useComposerKeydown(deps)
       const { e, preventDefault } = makeKeyEvent('Enter')
 
@@ -223,12 +217,23 @@ describe('useComposerKeydown', () => {
 
       expect(preventDefault).toHaveBeenCalledTimes(1)
       expect(onSend).toHaveBeenCalledTimes(1)
-      expect(onSteer).not.toHaveBeenCalled()
+      expect(onFollowUp).not.toHaveBeenCalled()
+    })
+
+    it('裸 Enter + idle（direct）→ onSend', () => {
+      const { deps, onFollowUp, onSend } = makeDeps({ route: 'direct' })
+      const onKeydown = useComposerKeydown(deps)
+      const { e, preventDefault } = makeKeyEvent('Enter')
+
+      onKeydown(e)
+
+      expect(preventDefault).toHaveBeenCalledTimes(1)
+      expect(onSend).toHaveBeenCalledTimes(1)
       expect(onFollowUp).not.toHaveBeenCalled()
     })
 
     it('⇧⏎ 放行原生换行：不 preventDefault、不分派任何动作', () => {
-      const { deps, onSteer, onFollowUp, onSend } = makeDeps()
+      const { deps, onFollowUp, onSend } = makeDeps()
       const onKeydown = useComposerKeydown(deps)
       const { e, preventDefault } = makeKeyEvent('Enter', { shift: true })
 
@@ -236,7 +241,6 @@ describe('useComposerKeydown', () => {
 
       expect(preventDefault).not.toHaveBeenCalled()
       expect(onSend).not.toHaveBeenCalled()
-      expect(onSteer).not.toHaveBeenCalled()
       expect(onFollowUp).not.toHaveBeenCalled()
     })
   })

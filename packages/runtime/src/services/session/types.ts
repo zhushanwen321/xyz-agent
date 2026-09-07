@@ -31,6 +31,24 @@ export type SendMessageHook = (
 export type ScannedSession = ScannedSessionMeta
 
 /**
+ * 会话占用状态（session-occupancy-send-closure D3/P3）——三维结构而非单枚举：
+ * - turn 三阶段：dispatching（prompt 已发、message_start 未到）→ generating（turn-start..turn-end）
+ *   → settling（turn-end..agent-settled，pi post-run 收尾期）；idle 为空档。
+ * - compacting / bash 独立布尔（与 turn 各阶段可并存：settling+compacting 是 overflow 收尾常态，
+ *   threshold 模式 turn 内自动压缩则 generating+compacting）。
+ *
+ * wire 形状见 shared protocol.ts 的 'session.occupancy' payload（本形状是其 runtime 侧镜像，
+ * 广播帧由 updateSessionOccupancy 按字段展开构造，两处字段名/值域必须保持一致）。
+ */
+export type SessionTurnPhase = 'idle' | 'dispatching' | 'generating' | 'settling'
+
+export interface SessionOccupancy {
+  turn: SessionTurnPhase
+  compacting: boolean
+  bash: boolean
+}
+
+/**
  * ManagedSession 的子模块可见视图(不含运行时句柄)。
  * 子模块经此引用更新 lastActiveAt / isGenerating 等可变字段。
  */
@@ -99,6 +117,18 @@ export interface IManagedSessionView {
    * 无孤儿残留；flush 信号按 sessionId 定向，跨 session 不误清。
    */
   pendingBashResults?: PendingBashResultData[]
+  /**
+   * 会话占用状态投影（session-occupancy-send-closure D3/P3）——turn 三阶段 + compacting/bash
+   * 三维的权威聚合，唯一写方 = updateSessionOccupancy（幂等写 + 变化才广播 session.occupancy
+   * state 帧）。与上方 isGenerating/isCompacting/isBashRunning 同源同点写入（11 挂点见设计
+   * D3 转移表），但维度划分不同：isGenerating 覆盖 dispatching+generating 两段，turn 把
+   * settling（turn-end..agent-settled 的 pi post-run 窗口）从「空闲」中显式分离。
+   *
+   * 可选（undefined = idle）：registerSession 显式初始化为 idle；测试 mock 与历史构造点
+   * 缺省时由 updateSessionOccupancy 按 idle 兜底合并，不强制所有构造点同步改。
+   * 运行时内部状态，不进 toSummary（对外投影只经 session.occupancy state 帧）。
+   */
+  occupancy?: SessionOccupancy
   thinkingLevel?: string
   sessionFilePath?: string
   /**
@@ -226,8 +256,38 @@ export type PiTranslatedEvent =
    * 与 turn-end（agent_end）的区别：pi 0.80.3 一个 agent 循环含 N 个 turn，每个 turn_end 带 usage；
    * 若每 turn 都走 turn-end 路径会触发 message.complete → 前端 setStreaming(false) 闪烁。
    * 故 turn_end 走本 kind，仅刷新用量数字；message.complete 仍由 agent_end（turn-end）独占。
+   *
+   * composer-gen-stats（D1）：扩展字段全来自 turn_end.message 的 AssistantMessage 自带结构
+   * （output/cacheRead/cacheWrite/input/model/provider），event-adapter 缺省补 null（禁 ?? 0，
+   * 无值编码纪律 D4）——interpreter 组装 GenStatsSample 调 onGenStats 采样。
+   * 结构与通路已锚定 PS-25（docs/pi-semantics.json，探针 pi-semantics-turn-usage-model）：
+   * turn_end.message 恒为完整 AssistantMessage（正常 = streamAssistantResponse 产物，失败 =
+   * handleRunFailure 合成 failureMessage + EMPTY_USAGE，后者被下方 totalTokens gate 丢弃），
+   * RPC 原样下发不裁剪 model/provider/usage。
    */
-  | { kind: 'turn-usage'; sessionId: string; inputTokens: number; totalTokens: number }
+  | {
+      kind: 'turn-usage'
+      sessionId: string
+      inputTokens: number
+      totalTokens: number
+      /** gen-stats：本 turn 真实 output（usage.output，缺省 null） */
+      outputTokens: number | null
+      /** gen-stats：prompt 缓存读（usage.cacheRead，缺省 null） */
+      cacheRead: number | null
+      /** gen-stats：prompt 缓存写（usage.cacheWrite，缺省 null） */
+      cacheWrite: number | null
+      /** gen-stats：本 turn 增量 input（usage.input，缺省 null） */
+      input: number | null
+      /**
+       * gen-stats：样本模型 id（PS-25：AssistantMessage.model = 请求侧 model.id，即用户选择/
+       * 会话当前模型，必填恒有；非 responseModel——那是 provider 实际报告的响应模型，仅
+       * openai-completions 在路由结果 ≠ 请求 id 时才有，多数 provider 恒缺，不采）。缺省 null
+       * 仅防御异常通路（类型层必填）。
+       */
+      model: string | null
+      /** gen-stats：样本 provider（AssistantMessage.provider = 请求侧 model.provider，PS-25 锚定，缺省 null 同上） */
+      provider: string | null
+    }
   /** extension setStatus —— interpreter 路由到 server.handleStatusSetUpdate + 转发 WS。 */
   | { kind: 'status-set'; sessionId: string; key: string; text: string; textRaw?: string }
   /** extension setStatus 对应的 WS 帧（interpreter 转发）。 */
@@ -294,3 +354,25 @@ export type PiTranslatedEvent =
    */
   | { kind: 'trace-trigger'; trigger: 'message_end' | 'agent_settled' | 'entry_appended' }
 
+
+/**
+ * composer-gen-stats（D1/D2）turn-usage 携带的生成指标样本（interpreter 组装 → onGenStats →
+ * GenStatsService.recordSample）。字段缺省一律 null（无值编码纪律 D4，禁 ?? 0——null 由
+ * service 侧逐字段判定丢弃语义，0 只允许作为真实测量值出现）。
+ */
+export interface GenStatsSample {
+  /** 本 turn 真实 output（usage.output，缺省 null） */
+  outputTokens: number | null
+  /** turn-start → turn-usage 本地时钟差（D2；无配对 turn-start → null，速度样本跳过） */
+  durationMs: number | null
+  /** 样本模型 id（AssistantMessage.model 运行时字段，缺省 null；D2 探针待验证真实性） */
+  model: string | null
+  /** 样本 provider（AssistantMessage.provider 运行时字段，缺省 null） */
+  provider: string | null
+  /** 本 turn 增量 input（usage.input，缺省 null） */
+  input: number | null
+  /** prompt 缓存读（usage.cacheRead，缺省 null；D7③ service 侧按 0 计入 promptTotal） */
+  cacheRead: number | null
+  /** prompt 缓存写（usage.cacheWrite，缺省 null） */
+  cacheWrite: number | null
+}

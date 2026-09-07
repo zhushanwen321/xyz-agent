@@ -310,7 +310,7 @@ describe("W1TC11: jsonl save/load round-trip——落盘裁剪形态 + 重水合
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   function makeSpec(): RunSpec {

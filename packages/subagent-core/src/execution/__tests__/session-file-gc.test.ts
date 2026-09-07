@@ -34,7 +34,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(tmpAgentDir, { recursive: true, force: true });
+  fs.rmSync(tmpAgentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   vi.restoreAllMocks();
 });
 

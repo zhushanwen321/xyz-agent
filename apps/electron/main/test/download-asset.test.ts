@@ -18,6 +18,18 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, mkdirSync, 
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { UpdateError } from '../update/types.js'
+import { resetEnginePreferenceForTest, markEnginePreferenceFromUndiciFailure } from '../update/upgrade-fetch.js'
+import { downloadViaCurl } from '../update/curl-download.js'
+
+// curl-download 部分 mock：downloadViaCurl 可控（curl 接管场景写 temp），其余透传。
+// constants 路径已延迟求值（getDataDir 运行时读 env），静态 import 无路径副作用。
+const downloadViaCurlMock = vi.mocked(downloadViaCurl)
+
+/** 构造 undici fetch 抛错形态（外层 'fetch failed'，errno 挂 cause），供真实置位链路使用。 */
+function fetchFailedWith(code: string, msg = 'connect failed'): TypeError {
+  const cause = Object.assign(new Error(msg), { code })
+  return new TypeError('fetch failed', { cause })
+}
 
 // ── 批次 5（u5a）原子写序列断言基建 ──────────────────────────────
 // 包装 writeFileSync/renameSync 透传真实现并记录调用参数，供「resume-state
@@ -53,11 +65,14 @@ vi.mock('node:fs', async (importOriginal) => {
       const delay = fsSpy.writeStreamOpenDelayMs
       if (delay <= 0) return realCreateWriteStream(...a)
       const [file, options] = a
+      // options 联合含 BufferEncoding（string）/ null：仅对象形态可 spread（TS2698），
+      // 生产调用（download-asset）恒传对象形态 { flags }，其余形态落空对象。
+      const streamOptions = typeof options === 'object' && options !== null ? options : {}
       const delayedOpen = (...openArgs: unknown[]) => {
         setTimeout(() => (realStreamFs.open as (...oa: unknown[]) => void)(...openArgs), delay)
       }
       return realCreateWriteStream(file, {
-        ...options,
+        ...streamOptions,
         fs: {
           open: delayedOpen,
           write: realStreamFs.write,
@@ -67,6 +82,14 @@ vi.mock('node:fs', async (importOriginal) => {
       })
     },
   }
+})
+
+// curl-download 部分 mock：downloadViaCurl 可控（curl 接管场景编排写 temp / 断言），
+// 其余透传真实现。仅「返回值观测面」describe 的 curl 接管用例编排它，其余用例
+// 不触 curl 路径（若编排回归意外触发，vi.fn 默认 resolve undefined 快速暴露）。
+vi.mock('../update/curl-download.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../update/curl-download.js')>()
+  return { ...actual, downloadViaCurl: vi.fn() }
 })
 
 // ── env 先于一切路径求值把升级工作目录重定向到 tmp ──────────────────
@@ -105,13 +128,18 @@ for (let i = 0; i < MULTI_PART_SIZE; i++) {
   MULTI_PART_CONTENT[i] = i % 256
 }
 
-/** 构造 HEAD 探测响应（accept-ranges + content-length） */
-function makeHeadResponse(total: number): Response {
-  return new Response(null, {
-    status: 200,
+/**
+ * 构造多段探测响应（GET `Range: bytes=0-0` 的 206 形态）。
+ * [多源改造] probe 已从 HEAD + accept-ranges 迁移为 GET Range 0-0 + Content-Range 判定：
+ * 206 响应体仅 1 字节（content-length 恒 1，P7 实测陷阱），total 只能从 Content-Range 取。
+ */
+function makeProbeResponse(total: number): Response {
+  return new Response(new Uint8Array([0]), {
+    status: 206,
     headers: {
       'Content-Type': 'application/octet-stream',
-      'Content-Length': String(total),
+      'Content-Length': '1',
+      'Content-Range': `bytes 0-0/${total}`,
       'Accept-Ranges': 'bytes',
     },
   })
@@ -173,6 +201,9 @@ describe('W3: download-asset (W3TC1-3)', () => {
     expect(readFileSync(result.filePath)).toEqual(TEST_CONTENT)
     // .downloading 临时文件已清理
     expect(existsSync(`${result.filePath}.downloading`)).toBe(false)
+    // 返回值观测面（download-success 数据源，设计 §8.2 S1）：小文件纯单段成功形态
+    expect(result.multiPart).toBe(false)
+    expect(result.engine).toBe('undici')
   })
 
   // ── W3TC2：sha256 不匹配 → 抛 UpdateIntegrityError ──────────────
@@ -237,15 +268,15 @@ describe('W3: download-asset (W3TC1-3)', () => {
     expect(existsSync(finalPath)).toBe(false)
   })
 
-  // ── W3TC4：多段并行下载（大文件 + accept-ranges）──────────────────
-  it('W3TC4: 大文件且支持 accept-ranges → 多段并发下载 → 文件完整 + sha256 通过', { timeout: 60_000 }, async () => {
+  // ── W3TC4：多段并行下载（大文件 + probe 206 放行）──────────────────
+  it('W3TC4: 大文件且探测 206 放行 → 多段并发下载 → 文件完整 + sha256 通过', { timeout: 60_000 }, async () => {
     const expectedSha = sha256Hex(MULTI_PART_CONTENT)
     globalThis.fetch = vi.fn(async (url, init) => {
-      const method = (init?.method as string | undefined) ?? 'GET'
-      if (method === 'HEAD') {
-        return makeHeadResponse(MULTI_PART_CONTENT.length)
-      }
       const rangeHeader = (init?.headers as Record<string, string> | undefined)?.Range ?? ''
+      // probe 探测请求（GET Range: bytes=0-0）→ 206 + Content-Range total 达标，放行多段
+      if (rangeHeader === 'bytes=0-0') {
+        return makeProbeResponse(MULTI_PART_CONTENT.length)
+      }
       const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader)
       if (!match) {
         return makeContentResponse(MULTI_PART_CONTENT)
@@ -278,7 +309,7 @@ describe('W3: download-asset (W3TC1-3)', () => {
   })
 
   // ── W3TC4b：单段大文件下载速度基准（用于对比多段）────────────────
-  it('W3TC4b: 大文件但不支持 accept-ranges → 单段下载 → 文件完整', { timeout: 60_000 }, async () => {
+  it('W3TC4b: 大文件但探测回 200 全量（不支持 Range）→ 单段下载 → 文件完整', { timeout: 60_000 }, async () => {
     const expectedSha = sha256Hex(MULTI_PART_CONTENT)
     globalThis.fetch = vi.fn(async () => makeContentResponse(MULTI_PART_CONTENT)) as unknown as typeof globalThis.fetch
 
@@ -342,13 +373,13 @@ describe('W3 multipart error path (S#10)', () => {
   // ── W3TC5：某段 Range 返回 500 → downloadAsset rejects + 全部临时文件清理 ──
   it('W3TC5: 某段 Range 请求返回 500 → downloadAsset rejects UpdateError，.part-* 与 .downloading 全部清理', { timeout: 60_000 }, async () => {
     const expectedSha = sha256Hex(MULTI_PART_CONTENT)
-    // 让 part-0 的 Range 请求返回 500，其余段正常；HEAD 探测正常放行多段。
+    // 让 part-0 的 Range 请求返回 500，其余段正常；probe 探测 206 放行多段。
     globalThis.fetch = vi.fn(async (url, init) => {
-      const method = (init?.method as string | undefined) ?? 'GET'
-      if (method === 'HEAD') {
-        return makeHeadResponse(MULTI_PART_CONTENT.length)
-      }
       const rangeHeader = (init?.headers as Record<string, string> | undefined)?.Range ?? ''
+      // probe 探测请求（GET Range: bytes=0-0）→ 206 + Content-Range 放行多段
+      if (rangeHeader === 'bytes=0-0') {
+        return makeProbeResponse(MULTI_PART_CONTENT.length)
+      }
       const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader)
       if (!match) {
         return makeContentResponse(MULTI_PART_CONTENT)
@@ -430,7 +461,7 @@ describe('RM3: multipart Range violation → fallback to single-stream', () => {
     expect(downloaded.compare(MULTI_PART_CONTENT)).toBe(0)
   }
 
-  // RM3-1: HEAD 声称支持 Range，但 GET 带 Range 一律回 200 全量（真实世界最典型：
+  // RM3-1: probe 探测 206 放行后，段 GET 带 Range 一律回 200 全量（真实世界最典型：
   // 某些代理/CDN 静默剥离 Range 头）。修复前：4 段各收 12MB 全量合并成 48MB 损坏
   // 文件 → sha 失败重试死循环。修复后：整批放弃多段，降级单段完整下载。
   it('服务器忽略 Range 回 200 → 整批放弃多段，降级单段完整下载且产物正确', { timeout: 60_000 }, async () => {
@@ -438,11 +469,12 @@ describe('RM3: multipart Range violation → fallback to single-stream', () => {
     // 记录每个 GET 请求是否带 Range 头，用于断言「最终走了单段全新下载」
     const getRangeHeaders: Array<string | undefined> = []
     globalThis.fetch = vi.fn(async (url, init) => {
-      const method = (init?.method as string | undefined) ?? 'GET'
-      if (method === 'HEAD') {
-        return makeHeadResponse(MULTI_PART_CONTENT.length)
+      const rangeHeader = (init?.headers as Record<string, string> | undefined)?.Range
+      // probe 探测请求（GET Range: bytes=0-0）→ 206 放行多段（探测之后代理才开始剥 Range）
+      if (rangeHeader === 'bytes=0-0') {
+        return makeProbeResponse(MULTI_PART_CONTENT.length)
       }
-      getRangeHeaders.push((init?.headers as Record<string, string> | undefined)?.Range)
+      getRangeHeaders.push(rangeHeader)
       // 无论是否带 Range，一律回 200 + 全量内容（模拟忽略 Range 的服务器）
       return makeContentResponse(MULTI_PART_CONTENT)
     }) as unknown as typeof globalThis.fetch
@@ -467,11 +499,11 @@ describe('RM3: multipart Range violation → fallback to single-stream', () => {
   it('段响应 206 但段长与请求不符 → 降级单段完整下载', { timeout: 60_000 }, async () => {
     const expectedSha = sha256Hex(MULTI_PART_CONTENT)
     globalThis.fetch = vi.fn(async (url, init) => {
-      const method = (init?.method as string | undefined) ?? 'GET'
-      if (method === 'HEAD') {
-        return makeHeadResponse(MULTI_PART_CONTENT.length)
-      }
       const rangeHeader = (init?.headers as Record<string, string> | undefined)?.Range ?? ''
+      // probe 探测请求（GET Range: bytes=0-0）→ 206 + Content-Range 放行多段
+      if (rangeHeader === 'bytes=0-0') {
+        return makeProbeResponse(MULTI_PART_CONTENT.length)
+      }
       const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader)
       // 无 Range 头 = 降级后的单段完整下载，回全量
       if (!match) {
@@ -506,11 +538,11 @@ describe('RM3: multipart Range violation → fallback to single-stream', () => {
   it('段响应 206 且 content-length 声称相符但 body 实际截短 → 流结束校验降级单段', { timeout: 60_000 }, async () => {
     const expectedSha = sha256Hex(MULTI_PART_CONTENT)
     globalThis.fetch = vi.fn(async (url, init) => {
-      const method = (init?.method as string | undefined) ?? 'GET'
-      if (method === 'HEAD') {
-        return makeHeadResponse(MULTI_PART_CONTENT.length)
-      }
       const rangeHeader = (init?.headers as Record<string, string> | undefined)?.Range ?? ''
+      // probe 探测请求（GET Range: bytes=0-0）→ 206 + Content-Range 放行多段
+      if (rangeHeader === 'bytes=0-0') {
+        return makeProbeResponse(MULTI_PART_CONTENT.length)
+      }
       const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader)
       if (!match) {
         return makeContentResponse(MULTI_PART_CONTENT)
@@ -566,14 +598,12 @@ describe('批次 5: resume-state 原子写序列（§3.7.2）', () => {
   it('多段下载过程中 saveResumeState → 先写 resume-state.json.tmp 再 renameSync 到终态（验收③）', { timeout: 60_000 }, async () => {
     const expectedSha = sha256Hex(MULTI_PART_CONTENT)
     // 单段大文件下载（服务器不支持 Range）→ data 流式回调触发 saveResumeState
-    // （多段成功路径不写 resume-state，分段写入只发生在单段流式下载）
+    // （多段成功路径不写 resume-state，分段写入只发生在单段流式下载）。
+    // probe 探测请求（GET Range: bytes=0-0）同样回 200 全量 → 出口④ 非 206 → 单段。
     globalThis.fetch = vi.fn(async (_url, init) => {
-      const method = (init?.method as string | undefined) ?? 'GET'
-      if (method === 'HEAD') {
-        return new Response(null, {
-          status: 200,
-          headers: { 'Content-Length': String(MULTI_PART_CONTENT.length), 'Accept-Ranges': 'none' },
-        })
+      const rangeHeader = (init?.headers as Record<string, string> | undefined)?.Range ?? ''
+      if (rangeHeader === 'bytes=0-0') {
+        return makeContentResponse(MULTI_PART_CONTENT)
       }
       return makeContentResponse(MULTI_PART_CONTENT)
     }) as unknown as typeof globalThis.fetch
@@ -792,11 +822,12 @@ describe('RM3-4: 段失败 → 共享 signal 中断其余段', () => {
    */
   function makeSharedAbortFetchMock(partAborted: Map<number, { aborted: boolean }>) {
     return vi.fn(async (_url, init) => {
-      const method = (init?.method as string | undefined) ?? 'GET'
-      if (method === 'HEAD') {
-        return makeHeadResponse(MULTI_PART_CONTENT.length)
-      }
       const rangeHeader = (init?.headers as Record<string, string> | undefined)?.Range ?? ''
+      // probe 探测请求（GET Range: bytes=0-0）→ 206 + Content-Range 放行多段
+      // （必须先于 start===0 的 500 分支截获，否则探测即 500，多段根本不会启动）
+      if (rangeHeader === 'bytes=0-0') {
+        return makeProbeResponse(MULTI_PART_CONTENT.length)
+      }
       const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader)
       if (!match) {
         return makeContentResponse(MULTI_PART_CONTENT)
@@ -916,6 +947,202 @@ describe('RM3-4: 段失败 → 共享 signal 中断其余段', () => {
     const updateDir = path.join(TMP_DATA_DIR, 'update')
     const leftovers = readdirSync(updateDir).filter((f) => /\.part-\d+$/.test(f))
     expect(leftovers).toEqual([])
+  })
+})
+
+// ════════════════════════════════════════════════════════════════
+// probe 四出口归类表测（多源改造：HEAD → GET Range 0-0 + Content-Range 判定）。
+//
+// 判定规格（设计 §7.2 download-asset 行，逐字对齐）：
+//   ① 206 + `Content-Range: bytes 0-0/{total}` 且 total ≥ 10MB → supported
+//     （totalBytes 取自 Content-Range——206 形态 content-length 恒 1，照搬即两源多段全灭）
+//   ② 206 + total 数字低于阈值 → not supported
+//   ③ 206 但 Content-Range 缺失 / total `*` / 单位非 bytes / 不可解析 → 一律 not supported
+//   ④ 非 206（200 全量退化 / 405 等）→ not supported（单段，合法出口）
+//
+// 黑盒观察信号：probe（请求 Range: bytes=0-0）supported=true 时后续发出段请求
+//（Range 形态 bytes=N-M），partSize = floor(totalBytes/4)——首段 Range 直接编码了
+// totalBytes 的取值来源；not supported 时无段请求、直接单段全新下载（无 Range 头）。
+// ════════════════════════════════════════════════════════════════
+describe('probe 四出口归类（GET Range 0-0 + Content-Range 判定）', () => {
+  let originalFetch: typeof globalThis.fetch
+  let downloadAsset: typeof import('../update/download-asset.js')['downloadAsset']
+
+  // 12MB / 4 段切分的首段参数（totalBytes=12582912 时 partSize=floor(total/4)=3145728）。
+  // 若 totalBytes 错取恒 1 的 content-length：maxParts=max(1,min(4,0))=1、partSize=1，
+  // 首段 Range 会是 bytes=0-0——「出现 bytes=0-3145727 的段请求」唯一地证明
+  // totalBytes 来自 Content-Range 而非 content-length。
+  const PART0_RANGE = 'bytes=0-3145727'
+  const PROBE_RANGE = 'bytes=0-0'
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch
+    const mod = await loadModule()
+    downloadAsset = mod.downloadAsset
+  })
+
+  afterEach(() => {
+    // curl 接管用例经真实置位链路写过进程级 flag，必须复位防泄漏到同文件后续 describe
+    resetEnginePreferenceForTest()
+    globalThis.fetch = originalFetch
+    vi.restoreAllMocks()
+    const updateDir = path.join(TMP_DATA_DIR, 'update')
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  /** 表测共用骨架：mock 探测响应形态 + 段/单段响应，记录全部请求 Range 序列 */
+  function makeRangeRecordingFetch(
+    probeRespond: () => Response,
+    opts: { serveRangeParts?: boolean } = {},
+  ): { rangeLog: Array<string | undefined> } {
+    const rangeLog: Array<string | undefined> = []
+    globalThis.fetch = vi.fn(async (_url, init) => {
+      const rangeHeader = (init?.headers as Record<string, string> | undefined)?.Range ?? ''
+      if (rangeHeader === PROBE_RANGE) {
+        return probeRespond()
+      }
+      rangeLog.push(rangeHeader || undefined)
+      const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader)
+      if (opts.serveRangeParts && match) {
+        const start = Number(match[1])
+        const end = Number(match[2])
+        return makeRangeResponse(MULTI_PART_CONTENT, start, end)
+      }
+      return makeContentResponse(MULTI_PART_CONTENT)
+    }) as unknown as typeof globalThis.fetch
+    return { rangeLog }
+  }
+
+  // 出口①：206 + Content-Range total 达标 → supported；totalBytes 来自 Content-Range。
+  it('① 206 + Content-Range total 达标 → 多段启动，首段 Range 证明 totalBytes 取自 Content-Range 而非恒 1 的 content-length', { timeout: 60_000 }, async () => {
+    const expectedSha = sha256Hex(MULTI_PART_CONTENT)
+    // P7 实测两源形态：206 + Content-Range total 正确 + Content-Length 恒 1
+    const { rangeLog } = makeRangeRecordingFetch(
+      () => makeProbeResponse(MULTI_PART_CONTENT.length),
+      { serveRangeParts: true },
+    )
+
+    const result = await downloadAsset({
+      name: 'probe-exit1.zip',
+      downloadUrl: 'https://example.com/probe-exit1.zip',
+      size: MULTI_PART_CONTENT.length,
+      sha256: expectedSha,
+    })
+
+    // supported 的可观察信号：段请求已发出，且首段 Range 编码了 Content-Range 的 total
+    expect(rangeLog).toContain(PART0_RANGE)
+    // 4 段全部下发（multiPart 判定 + 段切分均基于 totalBytes=12582912）
+    expect(rangeLog.filter((r) => r !== undefined && r !== PROBE_RANGE)).toHaveLength(4)
+    // 产物完整正确（多段合并 + sha 通过）
+    expect(readFileSync(result.filePath).compare(MULTI_PART_CONTENT)).toBe(0)
+    // 返回值观测面：probe supported 且多段真实完成（S1 断言「multiPart: true」防
+    // probe 改造回归静默退化单段）
+    expect(result.multiPart).toBe(true)
+    expect(result.engine).toBe('undici')
+  })
+
+  // 出口②：206 + total 数字低于阈值 → not supported（文件不够大，单段）。
+  it('② 206 但 Content-Range total 低于 10MB 阈值 → not supported，单段完成不抛错', { timeout: 60_000 }, async () => {
+    const expectedSha = sha256Hex(MULTI_PART_CONTENT)
+    const { rangeLog } = makeRangeRecordingFetch(
+      () => new Response(new Uint8Array([0]), {
+        status: 206,
+        headers: { 'Content-Length': '1', 'Content-Range': 'bytes 0-0/1024' },
+      }),
+    )
+
+    const result = await downloadAsset({
+      name: 'probe-exit2.zip',
+      downloadUrl: 'https://example.com/probe-exit2.zip',
+      size: MULTI_PART_CONTENT.length,
+      sha256: expectedSha,
+    })
+
+    // 无段请求：探测之后唯一一次请求是单段全新下载（无 Range 头）
+    expect(rangeLog).toEqual([undefined])
+    expect(readFileSync(result.filePath).compare(MULTI_PART_CONTENT)).toBe(0)
+    // 返回值观测面：total 低于阈值未走多段
+    expect(result.multiPart).toBe(false)
+    expect(result.engine).toBe('undici')
+  })
+
+  // 出口③：206 但 Content-Range 不可用（缺失 / total `*` / 单位非 bytes）→ 一律 not supported。
+  // 无 total 即无法切分多段；解析失败不抛错，只落单段出口。
+  it.each([
+    ['Content-Range 缺失', {}],
+    ['total 为 *', { 'Content-Range': 'bytes 0-0/*' }],
+    ['单位非 bytes', { 'Content-Range': 'items 0-0/12582912' }],
+    ['形态不可解析', { 'Content-Range': 'garbage' }],
+  ])('③ 206 但 %s → not supported，单段完成不抛错', { timeout: 60_000 }, async (_label, extraHeaders) => {
+    const expectedSha = sha256Hex(MULTI_PART_CONTENT)
+    const { rangeLog } = makeRangeRecordingFetch(
+      () => new Response(new Uint8Array([0]), {
+        status: 206,
+        headers: { 'Content-Length': '1', ...extraHeaders },
+      }),
+    )
+
+    const result = await downloadAsset({
+      name: 'probe-exit3.zip',
+      downloadUrl: 'https://example.com/probe-exit3.zip',
+      size: MULTI_PART_CONTENT.length,
+      sha256: expectedSha,
+    })
+
+    expect(rangeLog).toEqual([undefined])
+    expect(readFileSync(result.filePath).compare(MULTI_PART_CONTENT)).toBe(0)
+    // 返回值观测面：Content-Range 不可用一律单段
+    expect(result.multiPart).toBe(false)
+    expect(result.engine).toBe('undici')
+  })
+
+  // 出口④：非 206（P5 实测 gitcode.com 主域形态：GET Range 0-0 回 200 全量）→
+  // not supported，单段合法出口，正确性无风险。
+  it('④ 探测回 200 全量退化 → not supported，单段完成不抛错', { timeout: 60_000 }, async () => {
+    const expectedSha = sha256Hex(MULTI_PART_CONTENT)
+    const { rangeLog } = makeRangeRecordingFetch(
+      () => makeContentResponse(MULTI_PART_CONTENT),
+    )
+
+    const result = await downloadAsset({
+      name: 'probe-exit4.zip',
+      downloadUrl: 'https://example.com/probe-exit4.zip',
+      size: MULTI_PART_CONTENT.length,
+      sha256: expectedSha,
+    })
+
+    expect(rangeLog).toEqual([undefined])
+    expect(readFileSync(result.filePath).compare(MULTI_PART_CONTENT)).toBe(0)
+    // 返回值观测面：200 全量退化（服务器/代理剥 Range）单段合法出口
+    expect(result.multiPart).toBe(false)
+    expect(result.engine).toBe('undici')
+  })
+
+  // curl 接管成功形态（engine 观测面）：flag=curl 入口分流 → 全程 undici 零调用，
+  // curl 引擎完成下载。engine=curl 断言锁「实际成功者」语义（降级后成功以 curl 为准）。
+  it('flag=curl 入口接管成功 → engine=curl 且 multiPart=false', async () => {
+    // 真实置位链路构造 flag（仅连接建立失败档置位）
+    expect(markEnginePreferenceFromUndiciFailure(fetchFailedWith('EHOSTUNREACH'))).toBe(true)
+    downloadViaCurlMock.mockImplementation(async (_asset, opts) => {
+      writeFileSync(opts.tempPath, TEST_CONTENT)
+      return { tempPath: opts.tempPath }
+    })
+    // flag=curl 应跳过全部 undici 形态（probe 与单/多段 fetch 均不发生）
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('undici must be skipped when engine preference is curl')
+    }) as unknown as typeof globalThis.fetch
+
+    const result = await downloadAsset({
+      name: 'engine-curl.zip',
+      downloadUrl: 'https://example.com/engine-curl.zip',
+      size: TEST_CONTENT.length,
+      sha256: TEST_SHA256,
+    })
+
+    expect(result.engine).toBe('curl')
+    expect(result.multiPart).toBe(false)
+    expect(readFileSync(result.filePath)).toEqual(TEST_CONTENT)
+    expect(existsSync(`${result.filePath}.downloading`)).toBe(false)
   })
 })
 

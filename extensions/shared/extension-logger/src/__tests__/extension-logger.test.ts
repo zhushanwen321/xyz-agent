@@ -155,7 +155,7 @@ describe("extension-logger", () => {
 		afterEach(() => {
 			vi.useRealTimers();
 			if (tmpAgentDir) {
-				rmSync(tmpAgentDir, { recursive: true, force: true });
+				rmSync(tmpAgentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 			}
 		});
 
@@ -226,7 +226,7 @@ describe("extension-logger", () => {
 
 			// 清理：先恢复写权限才能删除
 			chmodSync(logDir, RESTORE_MODE);
-			rmSync(readonlyAgentDir, { recursive: true, force: true });
+			rmSync(readonlyAgentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		});
 	});
 
@@ -269,7 +269,7 @@ describe("extension-logger", () => {
 			expect(content).not.toContain('"count"');
 
 			vi.useRealTimers();
-			rmSync(tmpAgentDir, { recursive: true, force: true });
+			rmSync(tmpAgentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		});
 	});
 
@@ -291,7 +291,7 @@ describe("extension-logger", () => {
 		afterEach(() => {
 			vi.useRealTimers();
 			resetExtLogCleanupForTest();
-			rmSync(tmpAgentDir, { recursive: true, force: true });
+			rmSync(tmpAgentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		});
 
 		it("均未注入时 no-op：debug/warn/error 调用后 logs 目录都不创建（裸 pi 用户零磁盘影响）", () => {
@@ -531,7 +531,7 @@ describe("extension-logger", () => {
 			const lines = content.split("\n").filter(Boolean);
 			expect(lines).toHaveLength(100);
 
-			rmSync(tmpAgentDir, { recursive: true, force: true });
+			rmSync(tmpAgentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		});
 
 		it("appendEntry 抛错时降级不 throw（限流计数正常）", () => {

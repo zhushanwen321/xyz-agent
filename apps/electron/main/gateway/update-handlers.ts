@@ -37,7 +37,7 @@ import type { UpdateErrorInfo } from '../update/types.js'
 import { readProxyConfig, writeProxyConfig, resolveProxyUrl } from '../update/proxy-config.js'
 import { validateRelease } from '../update/validate-release.js'
 import { writePendingUpdate, readPendingUpdate } from '../update/pending-update.js'
-import { getUpdateSettings, setUpdateSettings } from '../update/update-settings.js'
+import { getUpdateSettings, setUpdateSettings, isUpdateSourcePref } from '../update/update-settings.js'
 import type { IUpdateOrchestrator, UpdateProgressCallback } from '../update/orchestrator.js'
 import { isAutoUpdateSupportedForCurrentInstall } from '../update/orchestrator.js'
 import { writePreloadedUpdate, readPreloadedUpdate, readPreloadedUpdateRaw, clearPreloadedUpdate } from '../update/preloaded-update.js'
@@ -53,10 +53,10 @@ const RESTART_QUIT_DELAY_MS = 500
 /**
  * [A-X4] force 检测节流窗口（毫秒）。
  *
- * update:check 的 force=true 会绕 releaseChecker 缓存直打 GitHub latest API；恶意/异常
- * renderer 高频 invoke 可烧穿 API 配额（403 后进入 2h 退避，期间所有用户检测不可用）。
- * 窗口内的重复 force 请求不拒绝而是降级为非 force 语义（走 checker 缓存）——用户体验
- * 无损，API 配额不再被放大。
+ * update:check 的 force=true 会绕 releaseChecker 缓存直打各源 releases/latest API
+ * （多源逐源）；恶意/异常 renderer 高频 invoke 可烧穿 API 配额（403 后进入 2h 退避，
+ * 期间所有用户检测不可用）。窗口内的重复 force 请求不拒绝而是降级为非 force 语义
+ * （走 checker 缓存）——用户体验无损，API 配额不再被放大。
  */
 const FORCE_CHECK_THROTTLE_MS = 10_000
 
@@ -152,7 +152,7 @@ async function testProxyConnection(config: IProxyConfig): Promise<ProxyTestResul
     // 超时话术——无下载语境，停滞文案的「断点续传」指引在本场景是误导
     let info = resolveTimeoutUserCopy(classified.toUserFriendly(), classified.message)
     // D2（v3 修订）testProxy 统一准绳：公网 EHOSTUNREACH 也给代理语境话术。
-    // 用户此刻在测代理，「网络连接失败 + 检查防火墙可访问 GitHub」语境错位；
+    // 用户此刻在测代理，通用网络失败话术（非代理语境）会误导排查方向；
     // 不加映射表变体是因为该话术仅 testProxy 场景有意义，入枚举会污染
     // download/install 共用的错误码空间，handler 内覆写侵入最小。
     // suggestion 不提本地网络权限（A4 反向验证）；落盘 code 维持原分类，
@@ -374,7 +374,7 @@ function reportUpdateDownloadError(deps: IpcHandlerDeps, err: unknown): never {
  * [SECURITY · 批次 3 RC1] 契约版本号化：renderer 只传意图（version 字符串），
  * release 数据由 main 权威解析（resolveByVersion：缓存 / force check）——旧契约的
  * 完整 release payload（含 downloadUrl/sha256）不再过边界，能被下载执行的永远
- * 是 GitHub 本仓库 latest release 的官方 asset。格式非法 / STALE / 网络失败在
+ * 是任一源胜出的本仓库 latest release 官方 asset。格式非法 / STALE / 网络失败在
  * resolver 内拒绝，60s 节流防 API 放大。
  */
 async function handleUpdateDownload(
@@ -659,6 +659,12 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
     }
     if (settings.autoUpdate !== undefined && typeof settings.autoUpdate !== 'boolean') {
       throw new Error('Invalid settings: autoUpdate must be boolean')
+    }
+    // updateSource 枚举校验（多源 D3）：传了（非 undefined）必须是三值之一，否则抛错
+    // ——handler 边界 fail-fast（对齐上方 boolean 校验先例），存储读取侧另有
+    // isUpdateSourcePref 逐字段兜底（非法值回退默认 'auto'），两处共用同一守卫
+    if (settings.updateSource !== undefined && !isUpdateSourcePref(settings.updateSource)) {
+      throw new Error('Invalid settings: updateSource must be "auto", "github" or "atomgit"')
     }
     setUpdateSettings(settings)
     return { success: true }

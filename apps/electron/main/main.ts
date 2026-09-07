@@ -67,6 +67,7 @@ import { createWindow } from './window/window-factory.js'
 import { ShortcutRegistry } from './shortcuts/shortcut-registry.js'
 import { BrowserViewManager } from './browser/browser-view-manager.js'
 import { ReleaseChecker } from './release-checker.js'
+import { resolveSourceOrder } from './update/source-resolver.js'
 import { MockReleaseChecker, DEV_MOCK_UPDATE_ENABLED } from './dev/mock-release-checker.js'
 import { updateOrchestrator } from './update/orchestrator.js'
 import { maybeRollbackInterruptedUpdate, cleanupCompletedUpdate } from './update/update-self-healer.js'
@@ -170,13 +171,13 @@ const createWindowFn = (options?: { windowId?: string; sessionId?: string }) =>
     .then(({ win }) => win)
 
 // ── 注册 IPC ─────────────────────────────────────────────────────
-// Release 检测器（自动升级检测后端）：1h 缓存 GitHub /releases/latest
+// Release 检测器（自动升级检测后端）：多源逐源检查（update-multi-source §4.2①-⑥）
 // dev mock 注入（XYZ_DEV_MOCK_UPDATE=1）：P2 半 E2E 验证用。
 // 返回伪造 LatestReleaseInfo，让前端 UpdateButton 显示「可升级」态供 Playwright 截图。
-// isDev && 双重保护：prod 构建即使环境变量被误设也不会用 mock（MockReleaseChecker 永不实例化）。
+// isDev && 双重保护：prod 构建即使环境变量被误设也永不实例化 mock（MockReleaseChecker 永不实例化）。
 const releaseChecker = isDev && DEV_MOCK_UPDATE_ENABLED
   ? new MockReleaseChecker()
-  : new ReleaseChecker()
+  : new ReleaseChecker({ resolveSourceOrder })
 registerIpcHandlers({
   getMainWindow: () => ctx.mainWindow,
   runtime: ctx.runtime,

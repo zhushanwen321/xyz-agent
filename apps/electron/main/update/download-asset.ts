@@ -183,14 +183,18 @@ const PROGRESS_THROTTLE_MS = 200
  * @param asset 待下载的 release 资产（含 downloadUrl / sha256 / size）
  * @param onProgress 下载进度回调（0-100 百分比）
  * @param proxyConfig 代理配置（可选，不传则禁用代理）
- * @returns 下载完成后最终文件路径（已通过校验）
+ * @returns 下载完成后最终文件路径（已通过校验）；multiPart = 本次是否实际走了
+ *   多段路径（probe supported 且多段真实完成——降级单段/curl 接管均为 false）；
+ *   engine = 本次成功完成下载的实际引擎（curl 接管与 undici 两态，降级后成功的
+ *   以实际成功者为准）。两字段是 download-success 观测面的数据源（设计 §7.2
+ *   error-log 行 / §8.2 S1：multiPart=true 断言防 probe 改造回归静默退化单段）。
  * @throws UpdateIntegrityError sha256/size 校验失败
  */
 export async function downloadAsset(
   asset: ReleaseAsset,
   onProgress?: (percent: number) => void,
   proxyConfig?: IProxyConfig,
-): Promise<{ filePath: string }> {
+): Promise<{ filePath: string; multiPart: boolean; engine: FetchEngine }> {
   // 1. 准备目录 + 临时文件路径
   const updateDir = getUpdateDir()
   mkdirSync(updateDir, { recursive: true })
@@ -220,7 +224,10 @@ export async function downloadAsset(
   const orchestrationCtx: IEngineOrchestrationContext = {
     tempPath, finalPath, downloadedBytes, resumeState, onProgress, proxyConfig, proxyUrl,
   }
+  // useMultiPart 提升到函数级：成功返回时作为 multiPart 观测值（download-success
+  // 观测面消费，见 @returns）。多段成功路径才置 true——降级单段 / curl 接管均保持 false。
   let handledByCurl = false
+  let useMultiPart = false
   if (getEnginePreference() === 'curl') {
     await runCurlDownloadChain(asset, {
       tempPath: orchestrationCtx.tempPath,
@@ -233,10 +240,9 @@ export async function downloadAsset(
   }
 
   if (!handledByCurl) {
-    let useMultiPart = false
     // [S#1 / business-logic] 多段启用阈值用 release 声明的 asset.size，而非 probe 返回的
     // 真实 totalBytes：此判定在 probe 之前，目的是先过滤掉小文件，避免对每个小文件都发一次
-    // HEAD probe（额外 RTT）。即使 release 声明 size 被误填偏小，导致大文件误走单段下载，
+    // probe 请求（额外 RTT）。即使 release 声明 size 被误填偏小，导致大文件误走单段下载，
     // probe 仍会兜底判 supported=false；多段只是加速优化，单段下载本身完全正确，无正确性风险。
     if (!resumeState && asset.size && asset.size >= MIN_MULTI_PART_SIZE) {
       const probed = await probeMultiPartSupport(asset, proxyUrl)
@@ -271,7 +277,8 @@ export async function downloadAsset(
 
   // 7. rename .downloading → 最终文件名（权限/失败错误分类见 renameToFinalPath）
   renameToFinalPath(tempPath, finalPath)
-  return { filePath: finalPath }
+  // 到达此点 = 下载已成功：engine 取实际成功者（curl 接管 / undici），失败路径不会抵达
+  return { filePath: finalPath, multiPart: useMultiPart, engine: handledByCurl ? 'curl' : 'undici' }
 }
 
 /**
@@ -1038,15 +1045,28 @@ function buildFetchOptions(
 }
 
 /**
- * 探测目标是否支持多段并行下载（HEAD 请求检查 accept-ranges + content-length）。
+ * 探测目标是否支持多段并行下载（GET `Range: bytes=0-0` 检查 206 + Content-Range total）。
  *
- * u4：probe 改经 upgradeFetch（双引擎，D7）——undici 连接类失败时封装内部按 D4
+ * [多源改造] 原 HEAD + accept-ranges 判定废弃：GitCode（AtomGit 下载域）实测禁 HEAD，
+ * HEAD 探测会让 AtomGit 源多段静默退化为单段；且 RFC 7233 对 206 仅强制 Content-Range，
+ * accept-ranges 在该形态不可依赖。改为 GET `Range: bytes=0-0`（走 upgradeFetch 双引擎
+ * 与超时语义不变），四出口归类（全形态显式，判定解析失败不抛错只落 not supported）：
+ *   ① 206 + `Content-Range: bytes 0-0/{total}` 且 total ≥ MIN_MULTI_PART_SIZE → supported；
+ *     totalBytes 取自 Content-Range——206 响应体仅 1 字节（content-length 恒 1），
+ *     照搬 content-length 会连 GitHub 在内两源多段一起静默全灭。
+ *   ② 206 但 total 数字低于阈值 → 不支持（文件不够大，拆分无收益）。
+ *   ③ 206 但 Content-Range 缺失 / total 为 `*` / 单位非 bytes / 形态不可解析 → 一律
+ *     不支持（无 total 即无法切分多段）。
+ *   ④ 非 206（200/405 等，含服务器/代理剥 Range 的全量退化）→ 不支持，单段下载
+ *     （合法出口，正确性无风险）。
+ *
+ * u4：probe 经 upgradeFetch（双引擎，D7）——undici 连接类失败时封装内部按 D4
  * 判定降级 curl（连接建立失败同时置 flag）并在降级点落盘 engine-fallback；
  * usedEngine 供编排层分流（curl → 本次放弃多段直接整文件 curl 下载）。
  *
- * @returns supported=true 表示支持 Range 且 totalBytes 已知；usedEngine 为 probe
- *   实际引擎。probe 失败（双引擎均失败 / undici 不可降级错误）非致命：返回
- *   supported=false 落单段路径（现有语义），引擎编排由单段失败分类接管。
+ * @returns supported=true 表示支持 Range 且 totalBytes 已知（来自 Content-Range）；
+ *   usedEngine 为 probe 实际引擎。probe 失败（双引擎均失败 / undici 不可降级错误）
+ *   非致命：返回 supported=false 落单段路径（现有语义），引擎编排由单段失败分类接管。
  */
 async function probeMultiPartSupport(
   asset: ReleaseAsset,
@@ -1054,17 +1074,22 @@ async function probeMultiPartSupport(
 ): Promise<{ supported: boolean; totalBytes: number; usedEngine: FetchEngine }> {
   try {
     const result = await upgradeFetch(asset.downloadUrl, {
-      method: 'HEAD',
+      method: 'GET',
+      headers: { Range: 'bytes=0-0' },
       proxyUrl,
       stage: 'downloading',
     })
-    const acceptRanges = result.headers['accept-ranges'] ?? ''
-    const contentLength = Number(result.headers['content-length'] ?? 0)
-    const supported = result.ok &&
-      acceptRanges.includes('bytes') &&
-      contentLength > 0 &&
-      contentLength >= MIN_MULTI_PART_SIZE
-    return { supported, totalBytes: contentLength, usedEngine: result.usedEngine }
+    // 出口④：非 206（200 全量退化 / 405 等）→ 单段，合法出口。
+    if (result.status !== HTTP_PARTIAL_CONTENT) {
+      return { supported: false, totalBytes: 0, usedEngine: result.usedEngine }
+    }
+    // 出口①②③：206 形态必须解析出 `bytes 0-0/{total}`。正则不匹配即覆盖缺失 /
+    // total `*` / 单位非 bytes 等全部不可解析形态，统一落 not supported，不抛错。
+    const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(result.headers['content-range'] ?? '')
+    const total = match ? Number(match[3]) : Number.NaN
+    const supported =
+      match !== null && Number(match[1]) === 0 && Number(match[2]) === 0 && total >= MIN_MULTI_PART_SIZE
+    return { supported, totalBytes: supported ? total : 0, usedEngine: result.usedEngine }
   } catch (err) {
     console.warn('[download] multipart probe failed:', err)
     return { supported: false, totalBytes: 0, usedEngine: 'undici' }

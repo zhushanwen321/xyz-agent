@@ -36,6 +36,7 @@ import type {
   PiToolCallEntryForm,
   Segment,
   ServerMessage,
+  ServerMessageMap,
   SteerFollowUpMode,
   SubagentDirectiveData,
   ToolCall,
@@ -49,7 +50,7 @@ import { isDevMode } from '../../platform/dev-mode'
  *
  * text 仅供 abortPending 文本匹配（RPC 失败回滚有准确原文——renderer 自己的提交，
  * 未经 pi skill 展开）。[W14] 投递定位不再按 text 匹配：pi 入队存展开后文本 ≠ 提交
- * 原文（D6），文本匹配在此场景必挂，改计数 FIFO（drainN 按条数取）。
+ * 原文（D6），文本匹配在该场景必挂，改计数 FIFO（drainN 按条数取）。
  * segments 是原始 Segment[]，drain 时取出交 appendUser 进对话流（m2 接线，m1 不接）。
  * sendMode 区分 steer / follow-up，驱动气泡配色。
  */
@@ -58,6 +59,15 @@ interface PendingItem {
   segments: Segment[]
   sendMode: SteerFollowUpMode
 }
+
+/**
+ * [session-occupancy u5b / D1+D3] occupancy 的 renderer 投影三维（wire 契约提取，shared
+ * protocol 是唯一权威）。runtime occupancy 状态机（D3 十一挂点幂等写）经 session.occupancy
+ * state topic 广播，useChat ensureStreamSubscription handler 消费（live 帧 + subscribeSession
+ * 的 stateSnapshot 回放同路径——重连/切回自动恢复，G4）写入本投影。
+ * sessionPhase（P4 ActivityStrip / 发送位四态的单一数据源）从这里派生。
+ */
+export type SessionOccupancyState = Omit<ServerMessageMap['session.occupancy'], 'sessionId'>
 
 /**
  * streaming idle 无进展检测默认阈值：30min（1_800_000ms）。
@@ -259,12 +269,21 @@ export function createChatStore() {
    * 与 isGenerating 正交：add 在 send 前，delete 在 message_start（正常）/ finalizeSession（异常）。
    */
   const pendingSend = ref<Set<string>>(new Set())
-  /** 正在压缩的 session 集合（#6：session.compacting/compacted 驱动，按 session 隔离）。
-   *  membership 查询（isCompacting）用此 Set；streaming-state-machine 遍历 finalize 候选也用此 Set。 */
-  const compactingSessions = ref<Set<string>>(new Set())
-  /** compacting reason 平行表（M4：session.compacting{reason} 驱动，与 compactingSessions 同步维护）。
+  /**
+   * [session-occupancy u5b / D1] occupancy 投影分区（session.occupancy state topic 驱动，
+   * per-session 三维 {turn, compacting, bash}）。occupancy 权威在 runtime（D3 状态机），本
+   * Map 是表现投影：isCompacting 由 compacting 维度派生（单一来源，[HISTORICAL] compactingSessions
+   * Set 双轨退役——u3 前 renderer 从 session.compacting/compacted 事件拼装，P3 双轨收口）。
+   * 无记录 = 全 idle（getOccupancy 返回缺省值，路由 direct）。
+   * 断连收口（clearIndependentTransient）删分区——重连后 resubscribeAll 的 stateSnapshot
+   * 回放恢复真实值（G4）。
+   */
+  const occupancies = ref<Map<string, SessionOccupancyState>>(new Map())
+  /** compacting reason 平行表（M4：session.compacting{reason} 驱动，浮层文案源保留）。
    *  区分手动（'manual'）/自动（'threshold'|'overflow'），驱动 MessageStream compacting 浮层文案。
-   *  与 compactingSessions 同生共死：setCompacting 单点写入保证一致性。 */
+   *  [u5b] membership 已切 occupancy 派生，本 Map 只承载文案源：session.compacting 写入 /
+   *  session.compacted 清除 / 断连收口随 occupancy 分区一并清（reason 只在 isCompacting 时被读，
+   *  孤立残留无害）。 */
   const compactingReasons = ref<Map<string, string>>(new Map())
   /** handingOff 瞬时态子域控制器（对称 compactingSessions），委托 chat-handoff.ts。设计见 ./README.md + chat-handoff.ts。 */
   const handoff = createHandoffController()
@@ -286,7 +305,8 @@ export function createChatStore() {
    * flush/取消的编排（调 chatApi.send/steer）留在 renderer shell（useCompactQueue.ts），
    * core 只经 deps.getCompactQueue() 注入调用——core 域文件不 import renderer api。
    * 组件消费点唯一：QueueBubble 经 Composer → chatStore.getQueueState 读 queueStates；
-   * CompactQueueBadge 经 useCompactQueue() 单例读 compact 暂存。pendingBuffer 属 drain
+   * compact 暂存经 useCompactQueue() 单例读（[u6b] 原 badge 展示组件已移除，PendingBubble 承接）。
+   * pendingBuffer 属 drain
    * 恢复机制留在 store（SSOT 检查点 2 裁决：不强行并入统一视图）。
    */
   const pendingBuffer = ref<Map<string, PendingItem[]>>(new Map())
@@ -394,12 +414,12 @@ export function createChatStore() {
   // ── streaming 状态机深模块（B6：3 个原模块级状态机编排函数 + 2 个新提取的瞬态清理 helper 内聚为 factory，本 store 仅委托）──
   const streamingStateMachine = createStreamingStateMachine({
     messages,
-    compactingSessions,
+    occupancies,
     handingOffSessions,
     retryStates,
     queueStates,
     pendingSend,
-    setCompacting,
+    clearOccupancy,
     setHandingOff,
   })
 
@@ -910,6 +930,10 @@ export function createChatStore() {
     finalizeSession(sessionId, reason)
     // 再清 session 级独立瞬态（断连兜底：这些态在断连后无事件驱动清理）
     streamingStateMachine.clearIndependentTransient(sessionId)
+    // [u5b] compacting reason 文案源随断连收口清理（原 setCompacting(false) 单点写的语义拆分：
+    // occupancy 分区由 clearOccupancy 删，reason 由本点清——重连快照恢复 occupancy 后浮层
+    // 文案从 session.compacting 事件重新取得，不残留旧 reason）
+    setCompactingReason(sessionId, undefined)
   }
 
   // ── pendingSend 生命周期（useChat/effects 经 ctx/port 调）──
@@ -932,6 +956,14 @@ export function createChatStore() {
       pendingSend.value = next
     }
     clearPendingSendTimer(sessionId)
+  }
+
+  /** [D3] pendingSend 投影查询（「正在提交直发」瞬时态——send/editAndResend 置、message_start
+   *  清）。语义窄于 isActive（= isGenerating ∨ pendingSend）：UserBubble submitEdit 双发锁
+   *  消费（与 Composer isSending 对齐的「正在提交」信号），不含「生成中」（编辑入口本身
+   *  仅非活跃态可见，锁的目的是防提交在途并发覆盖 pendingDirectSends）。 */
+  function isPendingSend(sessionId: string): boolean {
+    return pendingSend.value.has(sessionId)
   }
 
   function clearPendingSendTimer(sessionId: string): void {
@@ -971,25 +1003,55 @@ export function createChatStore() {
   })
 
   /**
-   * 指定 session 是否正在压缩上下文（#6） */
+   * 指定 session 是否正在压缩上下文（#6）。
+   * [u5b / D1] occupancy 派生（compacting 维度）——单一来源（session.occupancy 帧驱动，
+   * [HISTORICAL] setCompacting 双轨通路退役：u3 前 session.compacting/compacted 事件直写
+   * membership Set，P3 双轨收口后由 occupancy state topic 承担 membership + session.compacting
+   * 事件只承载浮层 reason 文案源）。
+   */
   function isCompacting(sessionId: string): boolean {
-    return compactingSessions.value.has(sessionId)
+    return occupancies.value.get(sessionId)?.compacting === true
   }
 
-  /** 设置压缩态（session.compacting{reason}→true / session.compacted→false）。
-   *  不可变写保证响应性。reason 在 value=true 时挂入 compactingReasons（驱动文案），
-   *  value=false 时随 membership 一起清。Set 与 Map 同生共死，单点写入保证一致性。 */
-  function setCompacting(sessionId: string, value: boolean, reason?: string): void {
-    const nextSet = new Set(compactingSessions.value)
+  /**
+   * [u5b / D1] 写入 occupancy 投影（session.occupancy 帧驱动；useChat ensureStreamSubscription
+   * handler 消费 live 广播与 stateSnapshot 回放同一入口——重连/切回自动恢复，G4）。
+   * 整体替换该 sid 分区（帧是全量三维快照，非 patch）。
+   */
+  function setOccupancy(sessionId: string, occupancy: SessionOccupancyState): void {
+    occupancies.value = new Map(occupancies.value).set(sessionId, occupancy)
+  }
+
+  /** [u5b / D1] 删除 occupancy 分区（断连收口 clearIndependentTransient / disposeSession）。
+   *  删除后派生回落全 idle；重连后 stateSnapshot 回放恢复真实值。 */
+  function clearOccupancy(sessionId: string): void {
+    if (!occupancies.value.has(sessionId)) return
+    const next = new Map(occupancies.value)
+    next.delete(sessionId)
+    occupancies.value = next
+  }
+
+  /** [u5b / D1] 读 occupancy 投影。无记录（未收到任何帧 / 已断连收口）= 全 idle 缺省。 */
+  function getOccupancy(sessionId: string): SessionOccupancyState {
+    return occupancies.value.get(sessionId) ?? { turn: 'idle', compacting: false, bash: false }
+  }
+
+  /**
+   * [u5b / D1] sessionPhase —— occupancy 投影的等价读口（P4 ActivityStrip / 发送位四态 /
+   * 发送分发器 getSendRoute 的单一数据源）。与 getOccupancy 同值（语义命名面向消费方：
+   * P4 从「phase」取展示态，分发器从「occupancy」算路由）。
+   */
+  function sessionPhase(sessionId: string): SessionOccupancyState {
+    return getOccupancy(sessionId)
+  }
+
+  /** 设置/清除 compacting reason 文案源（session.compacting{reason} 写 / session.compacted 清）。
+   *  [u5b] setCompacting 退役后 reason 的独立入口——浮层文案（getCompactingReason 消费方
+   *  useMessageStreamNotices）不受 membership 通路切换影响。 */
+  function setCompactingReason(sessionId: string, reason: string | undefined): void {
     const nextMap = new Map(compactingReasons.value)
-    if (value) {
-      nextSet.add(sessionId)
-      nextMap.set(sessionId, reason ?? '')
-    } else {
-      nextSet.delete(sessionId)
-      nextMap.delete(sessionId)
-    }
-    compactingSessions.value = nextSet
+    if (reason === undefined) nextMap.delete(sessionId)
+    else nextMap.set(sessionId, reason)
     compactingReasons.value = nextMap
   }
 
@@ -1061,8 +1123,8 @@ export function createChatStore() {
     // 避免 TS 将不同 Map 元素推断为具体联合类型导致 new Map(ref.value) 不兼容。
     // inflightCounts（[steer-bubble D4]）：disposeSession 同步清 inflight——确认基线随分区
     // 销毁作废（与 LRU 驱逐的刻意豁免不同，见 lruEvictDeps 处声明注释）。
-    const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates, pendingBuffer, inflightCounts, compactingReasons]
-    const setRefs: { value: Set<string> }[] = [hydrated, pendingSend, compactingSessions, handingOffSessions, failedHistory]
+    const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates, pendingBuffer, inflightCounts, compactingReasons, occupancies]
+    const setRefs: { value: Set<string> }[] = [hydrated, pendingSend, handingOffSessions, failedHistory]
     for (const ref of mapRefs) {
       if (ref.value.has(sessionId)) {
         const next = new Map(ref.value)
@@ -1099,7 +1161,7 @@ export function createChatStore() {
   return {
     messages,
     pendingSend,
-    compactingSessions,
+    occupancies,
     handingOffSessions,
     retryStates,
     queueStates,
@@ -1146,9 +1208,14 @@ export function createChatStore() {
     resetTransientStates,
     addPendingSend,
     clearPendingSend,
+    isPendingSend,
     markSessionError,
     isCompacting,
-    setCompacting,
+    setOccupancy,
+    clearOccupancy,
+    getOccupancy,
+    sessionPhase,
+    setCompactingReason,
     getCompactingReason,
     isHandingOff,
     setHandingOff,
@@ -1207,12 +1274,14 @@ export type ChatStoreInstance = ReturnType<typeof createChatStore>
  */
 export type ChatStoreReaders = Pick<
   ChatStoreInstance,
-  | 'messages' | 'pendingSend' | 'compactingSessions' | 'handingOffSessions'
+  | 'messages' | 'pendingSend' | 'handingOffSessions'
   | 'retryStates' | 'queueStates' | 'pendingBuffer' | 'changeSetStatuses'
   | 'failedHistory' | 'hydrated' | 'inflightCounts'
+  | 'occupancies'
   | 'getMessages' | 'getRetryState' | 'getQueueState' | 'getChangeSetStatus'
   | 'isHydrated' | 'getHydrateAnchor' | 'isGenerating' | 'isActive'
   | 'isCompacting' | 'getCompactingReason' | 'isHandingOff'
+  | 'getOccupancy' | 'sessionPhase' | 'isPendingSend'
   | 'getInflight'
 >
 
@@ -1230,7 +1299,8 @@ export type ChatStoreOps = Pick<
   | 'applySubagentEntries' | 'appendUser' | 'pushPending' | 'drainN'
   | 'reconcilePending' | 'abortPending' | 'applyMessageEvent' | 'finalizeSession'
   | 'finalizeAllStreaming' | 'resetTransientStates' | 'addPendingSend'
-  | 'clearPendingSend' | 'markSessionError' | 'setCompacting' | 'setHandingOff'
+  | 'clearPendingSend' | 'markSessionError' | 'setHandingOff'
+  | 'setOccupancy' | 'clearOccupancy' | 'setCompactingReason'
   | 'appendSystemNotice' | 'appendSubagentDirective' | 'truncateFrom'
   | 'applyFileChanges' | 'disposeSession' | 'markStreamingBashError'
   | 'refreshStreamingTimer' | 'setStreamingIdleTimeoutMs'

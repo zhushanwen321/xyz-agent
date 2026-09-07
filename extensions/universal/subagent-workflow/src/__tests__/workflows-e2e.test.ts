@@ -257,7 +257,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const dir of [sessionDir]) {
     try {
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     } catch (e) {
       // 临时目录清理失败（CI 偶发 EBUSY）不影响测试结论
       void e;
@@ -468,7 +468,7 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
         expect(outcome.t).toBe("boolean");
         expect(outcome.v).toBe(false);
       } finally {
-        rmSync(fixtureDir, { recursive: true, force: true });
+        rmSync(fixtureDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
       }
     },
     RUN_TIMEOUT_MS,

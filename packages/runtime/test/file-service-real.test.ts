@@ -27,7 +27,7 @@ describe('FileService.readFile real fs', () => {
   })
 
   afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true })
+    rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('E1: cwd 内文件正常读取', async () => {
@@ -49,7 +49,7 @@ describe('FileService.readFile real fs', () => {
         code: 'out_of_cwd',
       })
     } finally {
-      rmSync(outsideDir, { recursive: true, force: true })
+      rmSync(outsideDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -61,7 +61,7 @@ describe('FileService.readFile real fs', () => {
     try {
       await expect(service.readFile('s1', outsideFile)).rejects.toBeInstanceOf(FileError)
     } finally {
-      rmSync(outsideDir, { recursive: true, force: true })
+      rmSync(outsideDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })

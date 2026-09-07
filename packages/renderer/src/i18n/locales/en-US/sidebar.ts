@@ -49,8 +49,8 @@ export default {
     upgradeFailedSwap: 'Failed to replace the app. Check disk space and retry',
     upgradeFailedAppRunning: 'Update interrupted because the app did not quit. Restart and retry',
     upgradeFailedInstaller: 'The installer failed. Please download the update again',
-    // RM2.3: non-intrusive hint while GitHub API rate-limit backoff is active (not an error state)
-    rateLimited: 'Update check is rate limited by GitHub; auto-check paused for about 2 hours',
+    // RM2.3: non-intrusive hint while rate-limit backoff is active (not an error state; generalized to all-source rate limiting with multi-source)
+    rateLimited: 'Update check service is rate limited; auto-check paused for about 2 hours',
     staleRelease: 'A newer version was detected; update info refreshed',
     // update-network-resilience D9: manual-download escape hint appended to network/proxy error suggestions
     manualDownloadHint: 'You can also download the installer from the releases page, put it into the manual update folder, then retry (folder path: Settings → Update → Manual update channel)',
@@ -141,6 +141,20 @@ export default {
     turnsUnit: 'turns',
     tokUnit: 'tok',
   },
+  // Agents tab secondary status filter (design docs/design/subagent-sidebar-filter.md §3.4; D2 label "Ended")
+  // [C7 word-choice note] "Active" here vs backgroundTaskList.filter.active "Running" is a deliberate
+  // distinction: this one is task-scoped (includes settling/waiting subagent tasks); that one is
+  // process-scoped (background commands whose process state is running). A true conceptual
+  // difference — do not unify the wording (adversarial-review-fixes §3.4 C7 ruling).
+  subagentFilter: {
+    active: 'Active',
+    ended: 'Ended',
+    all: 'All',
+    emptyActive: 'No active background tasks',
+    emptyActiveHint: 'Nothing is running in this session',
+    viewAll: 'View all ({count})',
+    emptyEnded: 'No ended background tasks',
+  },
   workflowDetail: {
     backToList: 'Back to workflow list',
     pause: 'Pause',
@@ -165,5 +179,36 @@ export default {
     empty: 'No workflows',
     emptyHint: 'Workflows are multi-step automation scripts. Start one in chat and its progress appears here',
     agentsLabel: '{done}/{total}',
+  },
+  // "Background commands" L2 view (background-task-sidebar-view D10). Term ruling (design §1):
+  // distinct from subagent "background tasks"
+  // [C7 word-choice note] "Running" here vs subagentFilter.active "Active" is a deliberate
+  // distinction: process-scoped (process state running) vs task-scoped (settling/waiting included).
+  backgroundTaskList: {
+    filter: {
+      active: 'Running',
+      ended: 'Ended',
+      all: 'All',
+    },
+    emptyAllTitle: 'No background commands',
+    emptyAllHint: 'Ask AI to run a command in the background during a conversation and it will appear here',
+    emptyActive: 'No running background commands',
+    emptyEnded: 'No finished background commands',
+    viewAll: 'View all ({count})',
+    kill: 'Terminate',
+    killConfirm: 'Confirm terminate',
+    pidLabel: 'pid',
+    exitLabel: 'exit',
+    status: {
+      running: 'Running',
+      killing: 'Terminating',
+      orphaned: 'Orphaned',
+      killed: 'Terminated',
+      succeeded: 'Succeeded',
+      failed: 'Failed',
+    },
+    // S7 corrupted banner / S6 disconnect banner (consistency review fix batch)
+    corruptBanner: 'Task data corrupted and ignored (.corrupt preserved for inspection)',
+    disconnectBanner: 'Connection lost — will refresh automatically after reconnect',
   },
 }

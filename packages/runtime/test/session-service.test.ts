@@ -695,7 +695,7 @@ describe('SessionService · lifecycle', () => {
         await setup.service.delete('scan-del')
         expect(mocks.trashMock).toHaveBeenCalledWith(filePath)
       } finally {
-        rmSync(dir, { recursive: true, force: true })
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       }
     })
 
@@ -759,7 +759,7 @@ describe('SessionService · lifecycle', () => {
         // $TMPDIR tmpFile 后切 tmp——pi switch_session 永久重绑读写目标）
         expect(client.switchSession).toHaveBeenCalledWith(filePath)
       } finally {
-        rmSync(dir, { recursive: true, force: true })
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       }
     })
 
@@ -794,7 +794,7 @@ describe('SessionService · lifecycle', () => {
         await expect(setup.service.restoreSession('persist-3')).rejects.toThrow('switch failed')
         expect(setup.pm.destroySession).toHaveBeenCalledWith('persist-3')
       } finally {
-        rmSync(dir, { recursive: true, force: true })
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       }
     })
   })
@@ -1818,7 +1818,7 @@ describe('SessionService · 业务持久化写安全守卫（W2 ipc-converge-a3 
     const writtenDirs: string[] = []
     afterEach(() => {
       for (const d of writtenDirs.splice(0)) {
-        try { rmSync(d, { recursive: true, force: true }) } catch { /* 忽略清理失败 */ }
+        try { rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }) } catch { /* 忽略清理失败 */ }
       }
     })
 

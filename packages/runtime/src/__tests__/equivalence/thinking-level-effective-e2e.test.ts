@@ -51,7 +51,7 @@ interface AvailableModel {
 /** 尽力删除（清理路径专用）：macOS 下 pi 进程残余写入可致 ENOTEMPTY 竞态，失败不应掩蔽/阻断主流程（tmp 目录由 OS 周期清理）。 */
 function rmBestEffort(dir: string): void {
   try {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   } catch {
     // 尽力而为：遗留 tmp 目录不影响断言与后续用例
   }

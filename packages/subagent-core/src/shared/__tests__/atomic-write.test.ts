@@ -40,7 +40,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 /** 目录内约定形态 tmp 残留计数（断言「无残留」用）。 */

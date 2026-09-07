@@ -67,7 +67,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(sandboxDir, { recursive: true, force: true });
+  rmSync(sandboxDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 /** cwd 植入件：若任一脚本回退 process.cwd() 加载依赖，本文件被 require 即抛标记错误。 */

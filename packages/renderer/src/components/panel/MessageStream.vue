@@ -32,14 +32,15 @@
            [pin-identity D1] editing 项由 useStreamingPin 按 turnKey 反查当前 items 得出）
          - :startMargin load-more 占位高度（virta getItemOffset 已含 startMargin，design §4.11）
          - :key=session 强制重建 Virtualizer，跨 session 测量缓存隔离（design §4.5）
-         slot 内 item.kind 分支与原 visibleItems 循环一致（kind 全集三态：turn/systemNotice/bashExecution）。 -->
+         slot 内 item.kind 分支与 streamItems 对应（kind 全集四态：core 三态 turn/systemNotice/
+         bashExecution + u5 渲染层拼接的 skillNotice，:data 已从 renderItems 升为 streamItems）。 -->
     <Virtualizer
       ref="vlistRef"
-      :data="renderItems"
+      :data="streamItems"
       :item-size="ESTIMATED_TURN_HEIGHT"
       :shift="isPrepend"
       :keep-mounted="pinnedIndexes"
-      :start-margin="showLoadMore && renderItems.length > 0 ? LOAD_MORE_RESERVED_HEIGHT : 0"
+      :start-margin="showLoadMore && streamItems.length > 0 ? LOAD_MORE_RESERVED_HEIGHT : 0"
       :key="props.sessionId"
       @scroll="onVirtuaScroll"
       @scroll-end="onVirtuaScrollEnd"
@@ -47,8 +48,8 @@
       <!-- slot 内容注意：禁止在 <template #default> 内放任何注释/文本节点！
            virtua 的 item key 提取要求 slot 返回恰好 1 个 vnode（P(): e.length===1 才取 e[0].key），
            注释节点会让长度变 2 → fallback `_${index}` 索引 key（M5 stable-key 失效）。
-           三分支共用 :key="renderKey(item)"（稳定 id 非索引）：turn 用首条消息 id（turnStableId），
-           system 类用 message.id。 -->
+           各分支共用稳定 :key（非索引）：core 三态 turn/systemNotice/bashExecution 用 renderKey
+          （turn=首条消息 id，system=message.id）；u5 渲染层拼接的 skillNotice 用 notice 稳定 id。 -->
       <template #default="{ item, index }">
         <Turn
           v-if="item.kind === 'turn'"
@@ -65,6 +66,13 @@
           :key="renderKey(item)"
           :message="item.message"
           :session-id="sessionId"
+        />
+        <!-- skill 注入提示行（u5）：紧跟锚点 turn 之后（interleaveSkillNoticeItems 拼接），
+             key 用 notice 稳定 id（n- 空间，与 t-/s- renderKey 空间区分）。 -->
+        <SkillNoticeInline
+          v-else-if="item.kind === 'skillNotice'"
+          :key="item.entry.id"
+          :entry="item.entry"
         />
         <SystemNotice v-else :key="renderKey(item)" :message="item.message" />
       </template>
@@ -84,47 +92,26 @@
       </Button>
     </div>
 
-    <!-- 压缩中提示（瞬时态：isCompacting=true 时显示，完成后由 message.compactionSummary 持久化记录取代）。
-         文档流 block（Virtualizer 之后），样式对齐 SystemNotice 横线分隔行；content-col 与对话流内容列对齐。
-         ref 供 dev-only 断言：实测高度 vs COMPACTING_NOTICE_HEIGHT 常量漂移检测。 -->
-    <div
-      v-if="isCompacting"
-      ref="compactingNoticeEl"
-      class="system-notice content-col flex min-w-0 items-center gap-2 py-1"
-    >
-      <span class="h-px flex-1 bg-border" />
-      <Loader2 class="size-3 shrink-0 animate-spin text-neutral-mid" />
-      <span class="min-w-0 truncate text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ compactingText }}</span>
-      <span class="h-px flex-1 bg-border" />
+    <!-- defer 队列 pending 气泡（session-occupancy u4b / D4 入队即显）：Virtualizer 之后的
+         文档流 block，视觉位于对话流末尾（所有已落盘消息之后）。条目按入队序排列；投递确认
+         （message_end(user) → core ① → confirmDelivery）后逐条出队转正常态（appendUser 入流，
+         条目从本区消失）。与 compacting 提示的堆叠：气泡属对话流内容，先于系统态行。 -->
+    <div v-if="pendingEntries.length > 0" class="py-1" data-testid="pending-bubble-list">
+      <PendingBubble
+        v-for="entry in pendingEntries"
+        :key="entry.id"
+        :entry="entry"
+        :session-id="sessionId"
+        @remove="onRemovePending"
+      />
     </div>
 
-    <!-- bash 执行中反馈行（W1 fix-chat-flow-order D2 ephemeral 通道，W4 完整形态）：`!` 命令执行
-         期间的瞬时反馈（前缀文案 + mono 命令 + 转圈，样式对齐 compacting 行；v3 tokens 无硬编码）。
-         不进 messages 不持久化：bashStart 置 / bashResult·错误路径清；run 级联结束后由
-         bashExecution entry 入流承担持久语义（live≡reload 双通路分工）。
-         堆叠协调（W4 核实）：① 与 isCompacting 互斥——useComposerSend 优先级链 compact 分支
-         在 bash 分流之前（compacting 中 `!` 输入转排队待重放，不会执行），两者不同时出现；
-         ② 与 ForkNotice 均为 Virtualizer 之后的文档流 block（forkNoticeBaseTop absolute 基线
-         生产路径已不消费），按文档序自然堆叠，无需纳入 useNoticeStack 基线。 -->
-    <div
-      v-if="executingBash"
-      ref="executingBashEl"
-      class="system-notice flex min-w-0 items-center gap-2 py-1"
-      data-testid="executing-bash-notice"
-    >
-      <span class="h-px flex-1 bg-border" />
-      <Loader2 class="size-3 shrink-0 animate-spin text-neutral-mid" />
-      <span class="flex min-w-0 items-center gap-1">
-        <span class="shrink-0 text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ t('panel.message.executingBash') }}</span>
-        <span class="min-w-0 truncate font-mono text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ executingBash.command }}</span>
-      </span>
-      <span class="h-px flex-1 bg-border" />
-    </div>
-
-    <!-- [方案 D] dispatching 空窗期占位已移除：原 absolute 浮层改为末尾空 turn 的 TurnMeta 占位。
-         message_start 前末尾空 turn（user 已发、assistants=[]）经 TurnMeta 的 isPendingPlaceholder
-         渲染「思考中」+ spinner，message_start 后 assistant 填入同一 turn，原地变为 working 态。
-         dispatching 占位现在是对话流文档流的一部分（已计入 vlistBottom），不再是独立浮层。 -->
+    <!-- ActivityStrip 活动条（session-occupancy u6a / D7 展示统一）：对话流尾部单一的
+         「进行中」指示位，收编原 compacting 浮层 / executing bash 行 / TurnMeta dispatching
+         思考占位三处分散指示（优先级 compacting > bash > thinking，数据源 sessionPhase
+         occupancy 投影）。文档流 block（Virtualizer 之后），fork notice 等后续内容自然堆叠。
+         dev 断言（COMPACTING/EXECUTING_BASH 高度常量漂移检测）随行迁入组件内部。 -->
+    <ActivityStrip :session-id="sessionId" :executing-bash="executingBash" />
 
     <!-- ForkNotice 反馈行（transient，RV1）。文档流 block（Virtualizer 之后），多条通知垂直堆叠；
          宽度约束在 ForkNotice 根（content-col），与对话流内容列对齐。 -->
@@ -191,16 +178,27 @@ import { isSubagentVirtualId, extractSubagentId, extractMainSessionId, useSubage
 import { Turn, SystemNotice, BashOutputBlock, TurnRail, ChatViewDepsKey } from '@xyz-agent/ui'
 import { useChatViewDeps } from '@/composables/panel/useChatViewDeps'
 import ForkNotice from './ForkNotice.vue'
+import PendingBubble from './message-stream/PendingBubble.vue'
+// 活动条（u6a / D7 展示统一）：compacting/bash/thinking 行的单一渲染位（原三处分散指示收编）。
+import ActivityStrip from './message-stream/ActivityStrip.vue'
+// defer 队列（u4b / D4）：pending 气泡数据源组装封装（useSessionPendingEntries）。
+import { useSessionPendingEntries } from '@/composables/panel/useCompactQueue'
+import SkillNoticeInline from './SkillNoticeInline.vue'
+import { useSkillNoticeStreamItems } from '@/composables/panel/useSkillNoticeStream'
 import { useForkNoticeStream } from '@/composables/panel/useForkNoticeStream'
 import { useLoadMoreHistory } from '@/composables/panel/useLoadMoreHistory'
 import { useSessionActive } from '@/composables/panel/useSessionActive'
 import { useMessageStreamScroll } from '@/composables/panel/useMessageStreamScroll'
 import { useMessageStreamRail } from '@/composables/panel/useMessageStreamRail'
 import { useStreamingPin } from '@/composables/panel/useStreamingPin'
+// [u6a] COMPACTING/EXECUTING_BASH_NOTICE_HEIGHT 的消费点（ActivityStrip 行渲染 + dev 断言）
+// 已随指示行迁入 ActivityStrip；此处仅剩 COMPACTING_NOTICE_HEIGHT（fork 基线参数）。
+// ESTIMATED_TURN_HEIGHT / LOAD_MORE_RESERVED_HEIGHT 同源（virta 布局常量族，随本文件拆出）。
 import {
   useMessageStreamNotices,
   COMPACTING_NOTICE_HEIGHT,
-  EXECUTING_BASH_NOTICE_HEIGHT,
+  ESTIMATED_TURN_HEIGHT,
+  LOAD_MORE_RESERVED_HEIGHT,
 } from '@/composables/panel/useMessageStreamNotices'
 
 const props = defineProps<{
@@ -221,6 +219,10 @@ const currentMessages = computed(() => chat.getMessages(props.sessionId))
 
 /** session id（template 内多处引用：Turn :session-id / rail 等）。 */
 const sessionId = computed(() => props.sessionId)
+
+/** defer 队列 pending 条目 + × 撤销（u4b / D4 入队即显）：组装封装见 useCompactQueue.ts
+ *  （useSessionPendingEntries，自本文件拆出——≤300 行规范；撤销仅对未提交条目开放）。 */
+const { pendingEntries, onRemovePending } = useSessionPendingEntries(sessionId)
 
 /** 执行中 bash 瞬时态（W1 fix-chat-flow-order D2）：bashStart 置 / bashResult·错误路径清，
  *  不进 messages（执行中反馈 ephemeral 通道；run 结束后 bashExecution entry 入流承担持久语义）。 */
@@ -263,6 +265,12 @@ const renderItems = computed(() =>
   ),
 )
 
+/** skill 注入提示 + streamItems 拼接（u5）：订阅/per-session 分区/toast 副作用与 interleave
+ *  组装都在 useSkillNoticeStream.ts（useSkillNoticeStreamItems）。
+ *  [索引一致性硬约束] streamItems 必须是 :data / lastUserTurnIdx / useStreamingPin / rail
+ *  四处消费的同一数组基准——混用 renderItems 与 streamItems 两基准会错钉/错跳。 */
+const { streamItems } = useSkillNoticeStreamItems(sessionId, renderItems)
+
 /** 渲染项里最后一个 turn（streaming 滚动判定 + hasWorkingTurn 派生用）。 */
 const lastRenderTurn = computed(() => {
   for (let i = renderItems.value.length - 1; i >= 0; i -= 1) {
@@ -279,13 +287,6 @@ const vlistRef = shallowRef<VirtualizerHandle | null>(null)
 /** [cw wave w3] 滚动容器 el（virta Virtualizer 的 parentElement，自定义 ::-webkit-scrollbar + pt-5 留白）。
  *  useMessageStreamRail 读它做 closest('section') 算 panelRightEdge（virta handle vlistRef 接管 jump/active 定位）。 */
 const scrollEl = ref<HTMLElement | null>(null)
-
-/** 像素常量（design §4.1 附录 A）：itemSize 是 virta 的初始估算 hint（非强制，virta 自动从实测项重估）。
- *  与原手写虚拟滚动的 ESTIMATED_TURN_HEIGHT 一致，平滑迁移期减少首屏估算误差。 */
-const ESTIMATED_TURN_HEIGHT = 200
-/** load-more 按钮预留高度（B2 强绑 DOM：Button h-8 + py-2 ≈ 48px，取 44 为历史值，避免定位回归）。
- *  [cw wave w3] 通过 <Virtualizer :startMargin> 喂入 virta（design §4.11）：virta getItemOffset 已含 startMargin。 */
-const LOAD_MORE_RESERVED_HEIGHT = 44
 
 /** [cw wave w3 / W3C2 R2] topOffset 恒为 0：virta startMargin 已接管 load-more 占位偏移，
  *  瞬时块 / 旧手写虚拟滚动的 topOffset 通路合并进 virta 内部，不再重复 + 44px。 */
@@ -308,19 +309,19 @@ const vlistBottom = computed(() => {
   return v.getItemOffset(last) + v.getItemSize(last)
 })
 
-/** B2 dev-only 常量漂移检测：ResizeObserver 实测 vs 像素常量，不匹配 console.warn。生产裁剪零开销。 */
-const [loadMoreEl, compactingNoticeEl, executingBashEl] = useConstantHeightAssert([
+/** B2 dev-only 常量漂移检测：ResizeObserver 实测 vs 像素常量，不匹配 console.warn。生产裁剪零开销。
+ *  [u6a] COMPACTING/EXECUTING_BASH 两常量的断言 ref 随指示行迁入 ActivityStrip 内部，此处仅剩 load-more。 */
+const [loadMoreEl] = useConstantHeightAssert([
   { name: 'LOAD_MORE_RESERVED_HEIGHT', expected: LOAD_MORE_RESERVED_HEIGHT },
-  { name: 'COMPACTING_NOTICE_HEIGHT', expected: COMPACTING_NOTICE_HEIGHT },
-  { name: 'EXECUTING_BASH_NOTICE_HEIGHT', expected: EXECUTING_BASH_NOTICE_HEIGHT },
 ]).els
 
-/** 末尾瞬时块（compacting/dispatching）状态 + 垂直堆叠定位 + 取消 handler（M2）。
+/** 末尾瞬时块状态 + 垂直堆叠定位（M2）。[u6a] compacting/bash 指示行渲染已收编 ActivityStrip
+ *  （compactingText 退役），isCompacting/isDispatching/hasWorkingTurn 保留——isCompacting 驱动
+ *  滚动跟随与 fork 基线，isDispatching/hasWorkingTurn 供 useForkNoticeStream 兜底 deps。
  *  [cw wave w3] 切到 virta 路径：totalHeight 不传（virta scrollSize 经 vlistBottom 注入），
  *  topOffset 恒 0（W3C2 R2）。 */
 const {
   isCompacting,
-  compactingText,
   isDispatching,
   hasWorkingTurn,
   forkNoticeBaseTop,
@@ -344,10 +345,12 @@ const { forkNotices, onView: onForkNoticeView, onDismiss: onForkNoticeDismiss } 
     injectedBaseTop: forkNoticeBaseTop,
   })
 
-/** 最后一个含 user 的 turn 的数组下标（只有它的 user 可编辑，避免编辑中间 user 丢失其后对话） */
+/** 最后一个含 user 的 turn 的数组下标（只有它的 user 可编辑，避免编辑中间 user 丢失其后对话）。
+ *  [u5] 基准 = streamItems（与 Virtualizer slot 的 index 同源——:data 换 streamItems 后
+ *  slot 下标含 notice 项，用 renderItems 基准会错位 canEdit 判定）。 */
 const lastUserTurnIdx = computed(() => {
-  for (let i = renderItems.value.length - 1; i >= 0; i -= 1) {
-    const item = renderItems.value[i]
+  for (let i = streamItems.value.length - 1; i >= 0; i -= 1) {
+    const item = streamItems.value[i]
     if (item.kind === 'turn' && item.turn.user) return i
   }
   return -1
@@ -375,7 +378,8 @@ function onEditStateChange(payload: { editing: boolean; turnKey: string }): void
  *  virta 对 keepMounted 的项恒挂 RO，从根上消除 streaming turn 滚出视口致 RO 断开、高度不更新的隐患。
  *  [cw wave w3] 不传 pinStreaming（W3T1 已改可选，watch 内 guard no-op）。 */
 const { pinnedIndexes } = useStreamingPin({
-  items: renderItems,
+  // [u5] streamItems 基准（keepMounted 下标空间 = :data，索引一致性硬约束见 streamItems 注释）
+  items: streamItems,
   sessionId: () => props.sessionId,
   editingTurnKey,
 })
@@ -399,7 +403,8 @@ const {
    （scrollToIndex/findItemIndex）；virta startMargin 已接管 load-more 占位，offsetOf/topOffset 旧通路删除。 */
 const rail = useMessageStreamRail({
   sessionId,
-  renderItems,
+  // [u5] streamItems 基准（rail jump/active 的 virtua 下标空间 = :data，见 streamItems 注释）
+  renderItems: streamItems,
   scrollEl,
   vlistRef,
 })

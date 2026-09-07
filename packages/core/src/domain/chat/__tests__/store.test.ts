@@ -512,7 +512,7 @@ describe('createChatStore factory', () => {
       // 引用断言：drainN 从深响应式 pendingBuffer 取出的 segments 是 reactive Proxy，
       // toRaw 解回原引用（与 pending-drain-fifo.test.ts 同判据——FIFO 取最早的精确判据）
       expect(toRaw(msgs[0].content)).toBe(segs)
-      expect(segmentsToText(msgs[0].content as Segment[])).toBe('/skill:deploy --prod')
+      expect(segmentsToText(msgs[0].content as Segment[])).toBe('<xyz-skill name="deploy"/> --prod')
     })
   })
 
@@ -896,7 +896,7 @@ describe('createChatStore factory', () => {
       // s2：无消息实体、仅 retry/queue 瞬态（瞬态 Map 来源的候选——只遍历 messages 会漏）
       sut.store.applyMessageEvent(s2, msg(s2, 'message.auto_retry_start', { attempt: 1 }))
       sut.store.applyMessageEvent(s2, msg(s2, 'message.queue_update', { steering: ['q1'] }))
-      sut.store.setCompacting(s2, true)
+      sut.store.setOccupancy(s2, { turn: 'idle', compacting: true, bash: false })
       expect(sut.store.isGenerating(s1)).toBe(true)
       expect(sut.store.getRetryState(s2)).toBeDefined()
       expect(sut.store.getQueueState(s2)).toBeDefined()
@@ -933,11 +933,11 @@ describe('createChatStore factory', () => {
   })
 
   describe('disposeSession（清理全部 per-session ref）', () => {
-    it('清 messages / hydrated / pendingSend / compactingSessions', () => {
+    it('清 messages / hydrated / pendingSend / occupancy 分区', () => {
       const sid = 's1'
       sut.store.hydrate(sid, [userMsg('m1')])
       sut.store.addPendingSend(sid)
-      sut.store.setCompacting(sid, true)
+      sut.store.setOccupancy(sid, { turn: 'idle', compacting: true, bash: false })
       expect(sut.store.getMessages(sid)).toHaveLength(1)
       expect(sut.store.isActive(sid)).toBe(true)
       expect(sut.store.isCompacting(sid)).toBe(true)

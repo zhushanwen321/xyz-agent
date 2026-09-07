@@ -365,7 +365,7 @@ describe('边界3 持久化（CL2）：clearEnabledModels 后 settings.json 物�
 
   afterEach(() => {
     delete process.env.XYZ_AGENT_DATA_DIR
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it("setEnabledModels(['openai/*']) 后 clearEnabledModels → settings.json 无 enabledModels key", () => {

@@ -98,7 +98,7 @@ describe("workflow-state 保留清理（OR-5 ⑥b 默认开 XYZ_SUBAGENT_STATE_M
 
   afterEach(() => {
     delete process.env[STATE_MAX_RUNS_ENV];
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("上限 3 写 5 个 → 剩最新 3（mtime 最旧的 2 个被删）", async () => {

@@ -6,7 +6,7 @@
  *   边界到点以 RpcTimeoutError{commandType:"compact", timeoutMs:30min} reject（D3a 字段化）。
  * - 与 bash 常量（BASH_RPC_TIMEOUT_MS）无跨粒级共用：compact 收口早于 bash 第一刀。
  *
- * 策略：沿用 rpc-client-bash-timeout.test.ts 的 mock 骨架（node:child_process + readline
+ * 策略：沿用 rpc-client-bash-timeout.test.ts 的 mock 骨架（node:child_process
  * + fake streams），fake timers 驱动超时墙钟（STARTUP_DELAY_MS / RPC timer 均走同一时钟）。
  *
  * 运行：cd packages/runtime && npx vitest run src/infra/pi/__tests__/rpc-client-compact-timeout.test.ts
@@ -48,13 +48,6 @@ const fakeProc = {
 
 vi.mock('node:child_process', () => ({
   spawn: vi.fn(() => fakeProc),
-}))
-
-vi.mock('node:readline', () => ({
-  createInterface: () => ({
-    on: vi.fn(),
-    close: vi.fn(),
-  }),
 }))
 
 vi.mock('@xyz-agent/shared', async (importOriginal) => {

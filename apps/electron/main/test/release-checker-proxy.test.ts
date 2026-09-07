@@ -7,6 +7,12 @@
  *   A9: ProxyAgent 构造容错
  *   A10: 降级逻辑即时性（无额外延迟）
  *
+ * 多源改造联动维护（update-multi-source §7.2 存量测试迁移）：
+ * - resolveSourceOrder 经构造注入固定为 [github, atomgit]（消除 auto 探测请求混入）
+ * - 逐源降级语义：主源失败继续试次源——A6c/A9 的调用次数断言按新语义更新
+ *   （通道维度「404 不降级直连」语义不变，仅新增次源尝试）
+ * - error-log 模块 mock（checker 每轮检查结束登记 source-selection，不落盘）
+ *
  * Mock 策略：mock readProxyConfig/resolveProxyUrl + 替换 globalThis.fetch。
  *
  * 运行：cd apps/electron/main && npx vitest run test/release-checker-proxy.test.ts
@@ -14,6 +20,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ReleaseChecker } from '../release-checker.js'
 import * as proxyConfig from '../update/proxy-config.js'
+import type { UpdateSource } from '@xyz-agent/shared'
+
+// error-log mock（模块级）：隔离 source-selection 降频快照 + 测试不落盘
+const errorLogMocks = vi.hoisted(() => ({
+  logSourceSelection: vi.fn(),
+  logSourceFailover: vi.fn(),
+}))
+vi.mock('../update/error-log.js', () => ({
+  logSourceSelection: errorLogMocks.logSourceSelection,
+  logSourceFailover: errorLogMocks.logSourceFailover,
+  logDownloadSuccess: vi.fn(),
+  appendUpdateError: vi.fn(() => true),
+}))
+
+/** 构造注入固定源顺序的 checker（消除 auto 探测请求混入） */
+function makeChecker(order: UpdateSource[] = ['github', 'atomgit']): ReleaseChecker {
+  return new ReleaseChecker({ resolveSourceOrder: async () => order })
+}
 
 /** 构造一个完整的 GitHubRelease JSON */
 function makeReleaseJson(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -71,7 +95,7 @@ describe('W5: release-checker 代理优先 + 失败降级直连', () => {
         return jsonResponse(makeReleaseJson())
       }) as typeof globalThis.fetch
 
-      const checker = new ReleaseChecker()
+      const checker = makeChecker()
       const result = await checker.checkForLatestRelease('0.8.14')
 
       expect(result).not.toBeNull()
@@ -106,7 +130,7 @@ describe('W5: release-checker 代理优先 + 失败降级直连', () => {
         return jsonResponse(makeReleaseJson())
       }) as typeof globalThis.fetch
 
-      const checker = new ReleaseChecker()
+      const checker = makeChecker()
       const result = await checker.checkForLatestRelease('0.8.14')
 
       expect(result).not.toBeNull()
@@ -120,7 +144,7 @@ describe('W5: release-checker 代理优先 + 失败降级直连', () => {
       expect((fetchCalls[1] as Record<string, unknown>).dispatcher).toBeUndefined()
     })
 
-    it('A6c: 代理 + 直连都失败 → 返回 null', async () => {
+    it('A6c: 代理 + 直连都失败 → 该源失败 → 次源同形态失败 → 返回 null', async () => {
       vi.spyOn(proxyConfig, 'readProxyConfig').mockReturnValue({
         mode: 'manual',
         httpsProxy: 'http://192.168.1.202:7890',
@@ -133,12 +157,12 @@ describe('W5: release-checker 代理优先 + 失败降级直连', () => {
         throw new Error('EHOSTUNREACH')
       }) as typeof globalThis.fetch
 
-      const checker = new ReleaseChecker()
+      const checker = makeChecker()
       const result = await checker.checkForLatestRelease('0.8.14')
 
       expect(result).toBeNull()
-      // 两次都失败：代理 + 直连降级
-      expect(callCount).toBe(2)
+      // 逐源降级语义（多源联动维护）：每源两试（代理 + 直连降级）× 两源 = 4 次
+      expect(callCount).toBe(4)
     })
   })
 
@@ -154,7 +178,7 @@ describe('W5: release-checker 代理优先 + 失败降级直连', () => {
         return jsonResponse(makeReleaseJson())
       }) as typeof globalThis.fetch
 
-      const checker = new ReleaseChecker()
+      const checker = makeChecker()
       const result = await checker.checkForLatestRelease('0.8.14')
 
       expect(result).not.toBeNull()
@@ -170,7 +194,7 @@ describe('W5: release-checker 代理优先 + 失败降级直连', () => {
 
   // ── A9-proxy-agent-construction-vitest: ProxyAgent 构造容错 ──────────────
   describe('A9-proxy-agent-construction-vitest: ProxyAgent 构造容错', () => {
-    it('A9: HTTP 错误（404）→ 不降级（只网络错误才降级）', async () => {
+    it('A9: HTTP 错误（404）→ 不降级（只网络错误才降级）+ 逐源降级试次源', async () => {
       vi.spyOn(proxyConfig, 'readProxyConfig').mockReturnValue({
         mode: 'manual',
         httpsProxy: 'http://192.168.1.202:7890',
@@ -185,15 +209,17 @@ describe('W5: release-checker 代理优先 + 失败降级直连', () => {
         return new Response('not found', { status: 404 })
       }) as typeof globalThis.fetch
 
-      const checker = new ReleaseChecker()
+      const checker = makeChecker()
       const result = await checker.checkForLatestRelease('0.8.14')
 
       expect(result).toBeNull()
-      // 只调用一次（HTTP 404 是服务器响应，不触发降级重试）
-      expect(callCount).toBe(1)
-      // 关键断言：即使 HTTP 失败，第一次调用仍带 dispatcher
+      // 通道语义不变：404 是服务器响应，github 恰 1 次（不触发直连重试）；
+      // 逐源降级语义（多源联动维护）：随后试 atomgit 1 次
+      expect(callCount).toBe(2)
+      // 关键断言：即使 HTTP 失败，两源首次调用仍带 dispatcher（代理）
       expect((fetchCalls[0] as Record<string, unknown>).dispatcher).toBeDefined()
       expect((fetchCalls[0] as Record<string, unknown>).dispatcher?.constructor.name).toBe('ProxyAgent')
+      expect((fetchCalls[1] as Record<string, unknown>).dispatcher).toBeDefined()
     })
   })
 
@@ -219,7 +245,7 @@ describe('W5: release-checker 代理优先 + 失败降级直连', () => {
         return jsonResponse(makeReleaseJson())
       }) as typeof globalThis.fetch
 
-      const checker = new ReleaseChecker()
+      const checker = makeChecker()
       const result = await checker.checkForLatestRelease('0.8.14')
 
       expect(result).not.toBeNull()

@@ -90,7 +90,7 @@ beforeEach(() => {
 afterEach(() => {
 	delete process.env.PI_CODING_AGENT_DIR;
 	Reflect.deleteProperty(globalThis, FOOTER_HANDSHAKE_KEY);
-	if (existsSync(TMP_ROOT)) rmSync(TMP_ROOT, { recursive: true, force: true });
+	if (existsSync(TMP_ROOT)) rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 describe("session_start 双派发幂等守卫（oncePerProcess，u-audit-fix）", () => {

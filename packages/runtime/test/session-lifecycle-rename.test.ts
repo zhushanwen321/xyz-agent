@@ -182,7 +182,7 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
   afterEach(() => {
     consoleErrorSpy.mockRestore()
     setMigrationGate(Promise.resolve())
-    rmSync(tmpDir, { recursive: true, force: true })
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ── 断言组 1：活跃 rename 走 RPC ─────────────────────────────────

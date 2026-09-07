@@ -123,7 +123,8 @@ export type { QuotaPreset } from './quota-presets'
 export { QUOTA_PRESETS, matchQuotaPreset } from './quota-presets'
 // normalizeSubagentStatus 已下沉至 runtime（packages/runtime/src/services/session/subagent-status.ts，
 // 单消费者归位）；shared 仅保留 renderer 消费的 deriveClosedDisplay 展示派生。
-export { deriveClosedDisplay } from './subagent'
+// SUBAGENT_STATUS_ALL：枚举值全集（B3 护栏，renderer bucket 测试的全集覆盖矩阵数据源）。
+export { deriveClosedDisplay, SUBAGENT_STATUS_ALL } from './subagent'
 export type {
   WorkflowRunStatus,
   WorkflowDoneReason,
@@ -148,10 +149,13 @@ export {
   PI_THINKING_LEVELS,
   isPiLaunchPreset,
 } from './pi-preset'
-export type { LatestReleaseInfo, ReleaseAsset, UpdateStage, UpdateState, IProxyConfig, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResultStatus, LaunchResult, UpdateCheckResult, UpdateInstallResult } from './update'
+export type { UpdateSource, UpdateSourcePref, LatestReleaseInfo, ReleaseAsset, UpdateStage, UpdateState, IProxyConfig, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResultStatus, LaunchResult, UpdateCheckResult, UpdateInstallResult } from './update'
 export { LAUNCH_RESULT_STATUSES, UPDATE_STALE_RELEASE } from './update'
 // 用量统计类型（W1 数据层）
 export type { UsageMetrics, UsageRow, UsageStatsResult } from './usage-stats'
+// Composer 生成指标类型 SSOT（docs/design/composer-gen-stats.md §3.4；帧 session.stats_update /
+// RPC session.getGenStats 的 type→payload 登记在 protocol.ts，形状经 GenStatsFrame 引用防漂移）
+export type { GenStatsSpeed, GenStatsCacheRatio, GenStatsFrame } from './gen-stats'
 // 迁移功能（从其他 agent 迁移配置）类型
 export type {
   ProviderSource,
@@ -166,3 +170,24 @@ export type {
 // 系统提示音默认映射 SSOT（main + renderer 共享，纯数据/类型无 node 依赖）
 export type { SoundPlatform, SoundKind } from './sound-defaults'
 export { DEFAULT_SUCCESS_PLATFORM, DEFAULT_ERROR_PLATFORM, getDefaultSound } from './sound-defaults'
+// composer 多 skill 注入的标记语法与预算估算 SSOT（设计 docs/design/composer-multi-skill-injection.md
+// §3.3 D3/D6/D7；runtime 注入器、序列化/反解析、scripts 探针三方同源消费，纯文本语法层无 node 依赖）
+export type { ParsedSkillMarker, ParsedSkillsBlock } from './skill-marker'
+export {
+  SKILL_MARKER_TAG,
+  SKILLS_BLOCK_TAG,
+  SKILL_FALLBACK_GUIDANCE,
+  CONTEXT_WINDOW_RATIO,
+  CJK_TOKENS_PER_CHAR,
+  NON_CJK_CHARS_PER_TOKEN,
+  CODE_DENSE_NON_CJK_RATIO,
+  CODE_DENSE_NON_CJK_CHARS_PER_TOKEN,
+  CJK_CHAR_RE,
+  escapeSkillAttr,
+  unescapeSkillAttr,
+  buildSkillMarker,
+  parseSkillMarkers,
+  buildSkillsFallbackBlock,
+  parseSkillsFallbackBlocks,
+  estimateTokens,
+} from './skill-marker'

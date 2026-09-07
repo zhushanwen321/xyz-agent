@@ -64,7 +64,7 @@ function useConfig(config: Record<string, unknown>): void {
 
 afterEach(() => {
 	for (const dir of configTempDirs.splice(0)) {
-		rmSync(dir, { recursive: true, force: true });
+		rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 	}
 	agentDirRef.dir = "/tmp/bte-fake-agent-dir";
 	clearConfigCache();

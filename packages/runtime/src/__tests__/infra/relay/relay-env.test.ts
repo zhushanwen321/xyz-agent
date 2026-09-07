@@ -65,7 +65,7 @@ describe('getRelaySpawnEnv', () => {
 
   afterEach(async () => {
     await deinitRelayServer().catch(() => {})
-    await rm(dataDir, { recursive: true, force: true }).catch(() => {})
+    await rm(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }).catch(() => {})
     vi.restoreAllMocks()
   })
 

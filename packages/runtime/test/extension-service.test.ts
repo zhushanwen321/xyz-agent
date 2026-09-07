@@ -86,7 +86,7 @@ describe('ExtensionService', () => {
   afterEach(() => {
     // Cleanup test dir
     try {
-      rmSync(testSettingsDir, { recursive: true, force: true })
+      rmSync(testSettingsDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     } catch { /* ignore */ }
   })
 
@@ -115,7 +115,7 @@ describe('ExtensionService', () => {
 
     it('returns empty array when no extensions found', async () => {
       writeFileSync(join(testSettingsDir, 'settings.json'), JSON.stringify({}), 'utf-8')
-      rmSync(join(testSettingsDir, 'npm'), { recursive: true, force: true })
+      rmSync(join(testSettingsDir, 'npm'), { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 
       const extensions = await service.scanExtensions()
       expect(Array.isArray(extensions)).toBe(true)
@@ -250,7 +250,7 @@ describe('ExtensionService', () => {
 
     afterEach(() => {
       delete process.env.XYZ_EXTENSION_PATHS
-      try { rmSync(userExtDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      try { rmSync(userExtDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }) } catch { /* ignore */ }
     })
 
     it('scanExtensions 能扫到 XYZ_EXTENSION_PATHS 指向的 extension', async () => {
@@ -286,7 +286,7 @@ describe('ExtensionService', () => {
         expect(extensions.find(e => e.path === userExtDir)).toBeDefined()
         expect(extensions.find(e => e.path === userExtDir2)).toBeDefined()
       } finally {
-        rmSync(userExtDir2, { recursive: true, force: true })
+        rmSync(userExtDir2, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       }
     })
   })
@@ -508,7 +508,7 @@ describe('ExtensionService', () => {
         expect(result.candidates[0].name).toBe('pi-my-ext')
         expect(result.candidates[0].version).toBe('1.0.0')
       } finally {
-        try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+        try { rmSync(result.tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }) } catch { /* ignore */ }
       }
     })
 
@@ -528,7 +528,7 @@ describe('ExtensionService', () => {
         expect(result.candidates).toHaveLength(1)
         expect(result.candidates[0].name).toBe('pi-direct-ext')
       } finally {
-        try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+        try { rmSync(result.tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }) } catch { /* ignore */ }
       }
     })
 
@@ -558,7 +558,7 @@ describe('ExtensionService', () => {
         const extensionsDir = join(testSettingsDir, 'extensions')
         expect(existsSync(join(extensionsDir, 'ask-user', 'package.json'))).toBe(true)
       } finally {
-        try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+        try { rmSync(result.tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }) } catch { /* ignore */ }
       }
     })
 
@@ -571,7 +571,7 @@ describe('ExtensionService', () => {
       try {
         expect(result.candidates).toHaveLength(0)
       } finally {
-        try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+        try { rmSync(result.tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }) } catch { /* ignore */ }
       }
     })
   })
@@ -614,7 +614,7 @@ describe('ExtensionService', () => {
       expect(result.candidates.some(c => c.name === 'pi-cloned-ext')).toBe(true)
 
       // Cleanup
-      try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      try { rmSync(result.tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }) } catch { /* ignore */ }
     })
 
     it('clone 到 tempDir/<repoName>/ 子目录，dirName 是仓库名非 tempDir basename', async () => {
@@ -651,7 +651,7 @@ describe('ExtensionService', () => {
         const extensionsDir = join(testSettingsDir, 'extensions')
         expect(existsSync(join(extensionsDir, 'pi-single-repo', 'package.json'))).toBe(true)
       } finally {
-        try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+        try { rmSync(result.tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }) } catch { /* ignore */ }
       }
     })
   })
@@ -787,7 +787,7 @@ describe('ExtensionService', () => {
     })
 
     afterEach(() => {
-      try { rmSync(discoverySettingsDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      try { rmSync(discoverySettingsDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }) } catch { /* ignore */ }
     })
 
     /**
@@ -905,7 +905,7 @@ describe('ExtensionService', () => {
           .rejects.toThrow('not a directory')
       } finally {
         process.env.HOME = realHome
-        rmSync(fakeHome, { recursive: true, force: true })
+        rmSync(fakeHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
       }
     })
   })

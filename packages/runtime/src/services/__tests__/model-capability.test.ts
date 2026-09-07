@@ -134,7 +134,7 @@ describe('缓存键（D2 三维度）', () => {
 
     afterEach(() => {
       delete process.env.XYZ_AGENT_DATA_DIR
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     })
 
     it('同键重复 attach 命中缓存（compute 只算一次）；pi 版本变化整表作废重算', () => {

@@ -11,7 +11,7 @@
  * 供测试主动 emit 消息（模拟 WS 事件流）。beforeEach resetChatModuleStateForTest() 清
  * 模块级 streamSubscriptions + historyTruncatedSessions + subscriptionStates（测试隔离）。
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { effectScope, nextTick } from 'vue'
 import { textToSegments } from '@xyz-agent/shared'
 import type { ServerMessage } from '@xyz-agent/shared'
@@ -43,6 +43,13 @@ interface Fixture {
   chatStore: ReturnType<typeof createChatStore>
   sessionStore: { applySnapshot: ReturnType<typeof vi.fn> }
   toast: { error: ReturnType<typeof vi.fn> }
+  compactQueue: {
+    flush: ReturnType<typeof vi.fn>
+    enqueue: ReturnType<typeof vi.fn>
+    peek: ReturnType<typeof vi.fn>
+    hasPending: ReturnType<typeof vi.fn>
+    confirmDelivery: ReturnType<typeof vi.fn>
+  }
   /** 主动向 sid 的 streamSubscribe handler 注入一条 ServerMessage（模拟 WS 事件） */
   emit: (sid: string, m: ServerMessage) => void
   dispose: () => void
@@ -72,7 +79,16 @@ function makeFixture(): Fixture {
   }
   const sessionStore = { applySnapshot: vi.fn() }
   const toast = { error: vi.fn() }
-  const compactQueue = { flush: vi.fn().mockResolvedValue(true) }
+  // CompactQueueLike mock（session-occupancy D2：rejected 兜底入队 + flush 来源消歧）
+  const compactQueue = {
+    flush: vi.fn().mockResolvedValue(true),
+    enqueue: vi.fn((sid: string, text: string) => ({ id: `q-${sid}-${Date.now()}`, text })),
+    peek: vi.fn((_sid: string) => [] as Array<{ id: string; text: string }>),
+    // [u5b] CompactQueueLike 全接口 mock（occupancy handler flush 条件的 hasPending +
+    // u4a ① 确认出队）——core 用例不发 occupancy 帧，补齐面保接口完整
+    hasPending: vi.fn((_sid: string) => false),
+    confirmDelivery: vi.fn((_sid: string, _id: string) => false),
+  }
   const deps: UseChatDeps = {
     chatApi,
     writeSegments: vi.fn().mockResolvedValue(undefined),
@@ -89,6 +105,7 @@ function makeFixture(): Fixture {
     chatStore,
     sessionStore,
     toast,
+    compactQueue,
     emit: (sid, m) => {
       streamHandlers.get(sid)?.(m)
     },
@@ -136,6 +153,9 @@ describe('createUseChat factory 行为', () => {
   })
 
   it('send.rejected handler：clearPendingSend + toast.error', async () => {
+    // [session-occupancy D2] send await 完成后未决记录已收口（WS FIFO 下 rejected 帧必然先于
+    // reply 处理，await 后到达属迟到帧/非直发来源）→ fallback 分支：保持既有反馈（清占位 +
+    // toast），不回滚不入队。直发时序的完整行为见下方「send.rejected 兜底与回滚」describe。
     const f = makeFixture()
     await f.useChat.send('s4', textToSegments('hi'))
     f.emit('s4', msg('s4', 'send.rejected', { reason: 'busy', message: '被拒' }))
@@ -188,6 +208,20 @@ describe('createUseChat factory 行为', () => {
     await f.useChat.send('s8', textToSegments('more'))
     await nextTick()
     expect(f.toast.error).toHaveBeenCalled()
+    f.dispose()
+  })
+
+  it('[D2] steer 返回值契约：失败 return false，成功 return true，早退 return true', async () => {
+    const f = makeFixture()
+    await f.useChat.send('s8d2', textToSegments('hi'))
+    f.emit('s8d2', msg('s8d2', 'message.message_start', { messageId: 'a1' }))
+    // 失败：RPC reject → false
+    f.chatApi.steer.mockRejectedValueOnce(new Error('WS断'))
+    await expect(f.useChat.steer('s8d2', textToSegments('补充'))).resolves.toBe(false)
+    // 成功：RPC resolve → true
+    await expect(f.useChat.steer('s8d2', textToSegments('再补'))).resolves.toBe(true)
+    // 早退：空 segments → true（无投递动作非失败）
+    await expect(f.useChat.steer('s8d2', [])).resolves.toBe(true)
     f.dispose()
   })
 
@@ -571,6 +605,325 @@ describe('send inflight 挂钩（steer-bubble u2 / D2 维护点 2）', () => {
   })
 })
 
+// ── [session-occupancy-send-closure D2 / u3-p1-renderer + u5b P3 全 reason] send.rejected 兜底与回滚 ──
+// 乐观气泡回滚 + inflight 回滚全 reason 生效；u5b 起三种 reason 统一静默入队（flush 触发源
+// 切 session.occupancy 全 idle，busy/processing 的拒绝入队等 idle 即投递，无「等不到触发源」
+// 滞留——D2 被否 ③ 的前置条件已解除）；clientUuid 命中队列条目（flush 来源）只回滚不入队。
+// 时序模拟：WS FIFO 保证 rejected 广播先于 RPC reply——send 的 promise 同步段完成后
+// （记录已写、订阅已建）即 emit，再 await send 收口。
+
+describe('send.rejected 兜底与回滚（session-occupancy D2 P1）', () => {
+  beforeEach(() => {
+    resetChatModuleStateForTest()
+  })
+
+  /** 直发 + 注入 rejected（真实时序：广播先于 reply，emit 在 send await 收口前） */
+  async function sendThenReject(
+    f: Fixture,
+    sid: string,
+    text: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const p = f.useChat.send(sid, textToSegments(text))
+    f.emit(sid, msg(sid, 'send.rejected', payload))
+    await p
+  }
+
+  it('验收① compacting 拒绝：乐观气泡回滚 + inflight 回滚 + 入队恰一次，无 toast', async () => {
+    const f = makeFixture()
+    await sendThenReject(f, 'r1', '继续重构 auth 模块', { reason: 'compacting', message: 'Agent 正在处理' })
+
+    // 气泡回滚：appendUser 的乐观 user 气泡被移除（对话流无错误气泡也无残留气泡）
+    expect(f.chatStore.getMessages('r1').length).toBe(0)
+    // inflight 回滚：send 乐观 +1 被 rejected 回滚 −1，无悬空
+    expect(f.chatStore.getInflight('r1')).toBe(0)
+    // 入队恰一次：兜底 enqueue 调用一次，原文入队（flush 重放直发原文）
+    expect(f.compactQueue.enqueue).toHaveBeenCalledTimes(1)
+    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('r1', '继续重构 auth 模块', [{ type: 'text', text: '继续重构 auth 模块' }], '继续重构 auth 模块')
+    // 静默入队取代 toast（D2 接管表）
+    expect(f.toast.error).not.toHaveBeenCalled()
+    f.dispose()
+  })
+
+  it('验收② busy 拒绝：回滚生效 + 静默入队（P3 全 reason，无 toast 无对话流气泡）', async () => {
+    const f = makeFixture()
+    await sendThenReject(f, 'r2', 'hi', { reason: 'busy', message: 'Agent 正在处理' })
+
+    expect(f.chatStore.getMessages('r2').length).toBe(0)
+    expect(f.chatStore.getInflight('r2')).toBe(0)
+    // P3 全 reason：busy（bash 忙等）拒绝同样静默入队——occupancy 回 idle（bash 结束）时
+    // useChat occupancy handler 触发 flush 投递，不再有「等不到触发源」的滞留。
+    expect(f.compactQueue.enqueue).toHaveBeenCalledTimes(1)
+    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('r2', 'hi', [{ type: 'text', text: 'hi' }], 'hi')
+    // toast-only 分支退役（静默入队取代）
+    expect(f.toast.error).not.toHaveBeenCalled()
+    f.dispose()
+  })
+
+  it('验收② processing 拒绝（settling 窗口）：回滚生效 + 静默入队（P3 全 reason）', async () => {
+    const f = makeFixture()
+    await sendThenReject(f, 'r2b', 'hi', { reason: 'processing', message: 'Agent 正在处理' })
+
+    expect(f.chatStore.getMessages('r2b').length).toBe(0)
+    expect(f.chatStore.getInflight('r2b')).toBe(0)
+    expect(f.compactQueue.enqueue).toHaveBeenCalledTimes(1)
+    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('r2b', 'hi', [{ type: 'text', text: 'hi' }], 'hi')
+    expect(f.toast.error).not.toHaveBeenCalled()
+    f.dispose()
+  })
+
+  it('验收③ clientUuid 命中队列已有条目（flush 来源）：只做回滚不做入队', async () => {
+    const f = makeFixture()
+    const p = f.useChat.send('r3', textToSegments('hi'))
+    // appendUser 的气泡 id = clientUuid（u-<uuid>）；构造该 uuid 已在队列条目中的形态
+    //（u4b 起 flush 提交携带条目 id，rejected 回带命中）——即使与未决直发记录同 uuid，
+    // 也只回滚不入队（重入队会双条目双投递）。
+    const userMsgId = f.chatStore.getMessages('r3').find((m) => m.role === 'user')!.id
+    f.compactQueue.peek.mockReturnValue([{ id: userMsgId, text: 'hi' }])
+    f.emit('r3', msg('r3', 'send.rejected', { reason: 'compacting', message: 'Agent 正在处理', clientUuid: userMsgId }))
+    await p
+
+    // 回滚生效（气泡移除 + inflight 归零）……
+    expect(f.chatStore.getMessages('r3').length).toBe(0)
+    expect(f.chatStore.getInflight('r3')).toBe(0)
+    // ……但不重入队（条目已在队列，flush 的 S1 订阅已处理失败保留）
+    expect(f.compactQueue.enqueue).not.toHaveBeenCalled()
+    f.dispose()
+  })
+
+  it('验收③b flush 重放来源（clientUuid 命中队列条目）：不重入队且静默（A1，D2 接管表 toast 删除）', async () => {
+    const f = makeFixture()
+    // 先完成一次 send（ack 后未决记录收口），再注入 flush 形态的 rejected
+    await f.useChat.send('r3b', textToSegments('old'))
+    f.compactQueue.peek.mockReturnValue([{ id: 'q-flush-entry', text: 'queued text' }])
+    f.emit('r3b', msg('r3b', 'send.rejected', { reason: 'compacting', message: 'Agent 正在处理', clientUuid: 'q-flush-entry' }))
+
+    // 队列条目不翻倍（重入队 = 双条目双投递）
+    expect(f.compactQueue.enqueue).not.toHaveBeenCalled()
+    // [A1] flush 来源静默：busy 类拒绝留队后由下一次 occupancy idle 帧自动重投（自愈路径），
+    // 不 toast——原「保持既有 toast 反馈」违背 D2 接管表（toast「Agent 正在处理」删除），
+    // 且与 flush 侧 queueFlushFailed 构成双 toast，一并消除。
+    expect(f.toast.error).not.toHaveBeenCalled()
+    f.dispose()
+  })
+
+  it('验收④ 正常发送路径：clientUuid 经 RPC options 透传且等于乐观气泡 id', async () => {
+    const f = makeFixture()
+    await f.useChat.send('r4', textToSegments('hello'))
+
+    expect(f.chatApi.send).toHaveBeenCalledTimes(1)
+    const [calledSid, calledText, options] = f.chatApi.send.mock.calls[0] as unknown as [
+      string, string, { clientUuid?: string },
+    ]
+    expect(calledSid).toBe('r4')
+    expect(calledText).toBe('hello') // 纯文本消息无标记，promptText 原样
+    const userMsgId = f.chatStore.getMessages('r4').find((m) => m.role === 'user')!.id
+    expect(options.clientUuid).toBe(userMsgId) // 透传值 = appendUser 生成的气泡 id（u-<uuid>）
+    expect(userMsgId).toMatch(/^u-[0-9a-fA-F-]{36}$/)
+    f.dispose()
+  })
+
+  it('非纯文本消息：clientUuid 透传 RPC options，prompt 内标记并存（两通路正交）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('r5', [
+      { type: 'file', path: '/tmp/a.ts' },
+      { type: 'text', text: '看看' },
+    ])
+
+    const [calledSid, calledText, options] = f.chatApi.send.mock.calls[0] as unknown as [
+      string, string, { clientUuid?: string },
+    ]
+    expect(calledSid).toBe('r5')
+    expect(calledText).toMatch(/<!--xyz:msg:u-[0-9a-fA-F-]{36}-->$/) // prompt 标记通路不变
+    expect(options.clientUuid).toMatch(/^u-[0-9a-fA-F-]{36}$/) // RPC 参数通路新增
+    f.dispose()
+  })
+
+  it('RPC ack 后迟到 rejected：记录已收口，不重复回滚不入队（防御）；非队列来源保持 toast 反馈', async () => {
+    const f = makeFixture()
+    await f.useChat.send('r6', textToSegments('hi'))
+    // ack 后乐观气泡属正常在途（message_end(user) 确认）——迟到 rejected 帧不得误删
+    const msgsBefore = f.chatStore.getMessages('r6').length
+    f.emit('r6', msg('r6', 'send.rejected', { reason: 'compacting', message: 'Agent 正在处理' }))
+
+    expect(f.chatStore.getMessages('r6').length).toBe(msgsBefore)
+    expect(f.chatStore.getInflight('r6')).toBe(1)
+    expect(f.compactQueue.enqueue).not.toHaveBeenCalled()
+    // [A1] 非队列来源的无记录迟到帧（真正孤儿帧）toast 保留——静默收窄只覆盖 flush
+    // 来源（clientUuid 命中队列条目）与本编排器直发（未决记录命中）两类。
+    expect(f.toast.error).toHaveBeenCalledWith('Agent 正在处理')
+    f.dispose()
+  })
+
+  it('验收⑤ editAndResend 被拒（竞态窗口）：乐观气泡回滚 + 不动 inflight + 入队自愈（A2）', async () => {
+    const f = makeFixture()
+    // 预置一条已完成的 user 消息作为编辑目标
+    await f.useChat.send('r7', textToSegments('original'))
+    f.emit('r7', msg('r7', 'message.message_start', { messageId: 'a1' }))
+    f.emit('r7', msg('r7', 'message.complete', { stopReason: 'end_turn' }))
+    const targetId = f.chatStore.getMessages('r7').find((m) => m.role === 'user')!.id
+    const inflightBefore = f.chatStore.getInflight('r7')
+
+    // 编辑重发（idle 态）——rejected 帧在 await 收口前注入（WS FIFO 时序）
+    const p = f.useChat.editAndResend('r7', targetId, textToSegments('edited'))
+    const editedId = f.chatStore.getMessages('r7').find((m) => m.role === 'user')!.id
+    f.emit('r7', msg('r7', 'send.rejected', { reason: 'compacting', message: 'Agent 正在处理', clientUuid: editedId }))
+    await p
+
+    // 气泡回滚：原消息已被截断（编辑语义）、编辑重发的乐观气泡被移除不残留
+    //（修复前残留 → 重开 session 消失，live ≠ reload）
+    expect(f.chatStore.getMessages('r7').filter((m) => m.role === 'user')).toHaveLength(0)
+    // inflight 不动：editAndResend 不挂配额（holdsInflight=false），handler 不 decrement
+    //（多扣会错抵后续 send/flush 占位——计数漂移）
+    expect(f.chatStore.getInflight('r7')).toBe(inflightBefore)
+    // 入队自愈（与 send 对齐）：编辑后原文入队等 occupancy idle 重投，内容不丢
+    expect(f.compactQueue.enqueue).toHaveBeenCalledTimes(1)
+    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('r7', 'edited', [{ type: 'text', text: 'edited' }], 'edited')
+    // 静默（D2 接管表：toast「Agent 正在处理」删除）
+    expect(f.toast.error).not.toHaveBeenCalled()
+    f.dispose()
+  })
+})
+
+// ── [簇 A1] 帧序修复：入队晚于 idle 帧的 flush 触发 + 拒绝循环 timer 重投 ─────────────
+// runtime handlePromptFailure 先广播 occupancy idle（复位帧）后广播 send.rejected（WS FIFO）
+// → idle 帧处理时队列尚空不 flush；其后 agent_settled 同值 idle 被幂等写去重不再来帧。
+// 修复 = rejected 入队后读当前投影已全 idle 立即 flush；flush 再拒（resolve false）由
+// per-session timer 以 1s 有界节奏重投（唯一保证可达的重投脉冲）。
+
+describe('簇 A1：busy 拒绝入队后的 flush 触发与拒绝循环重投', () => {
+  beforeEach(() => {
+    resetChatModuleStateForTest()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('A1-MF: settling idle 帧先到（队列空不 flush）→ rejected 入队后已全 idle → 立即 flush（帧序修复锚点）', async () => {
+    const f = makeFixture()
+    const p = f.useChat.send('a1m', textToSegments('<xyz-skill name="review"/>帮我审查'))
+    // runtime 帧序复现（订阅已建立）：handlePromptFailure 先发复位 idle 帧——此刻队列尚空
+    //（hasPending false），occupancy handler 的 flush 条件不满足（改造前消息自此滞留）
+    f.compactQueue.hasPending.mockReturnValue(false)
+    f.emit('a1m', msg('a1m', 'session.occupancy', { turn: 'idle', compacting: false, bash: false }))
+    expect(f.compactQueue.flush).not.toHaveBeenCalled()
+
+    // skill-marker 消息 busy（settling 窗口 processing）拒绝 → 兜底入队
+    f.compactQueue.hasPending.mockReturnValue(true) // enqueue 后队列非空
+    f.emit('a1m', msg('a1m', 'send.rejected', { reason: 'processing', message: 'Agent 正在处理' }))
+    await p
+
+    expect(f.compactQueue.enqueue).toHaveBeenCalledWith(
+      'a1m',
+      '<xyz-skill name="review"/>帮我审查',
+      [{ type: 'text', text: '<xyz-skill name="review"/>帮我审查' }],
+      '<xyz-skill name="review"/>帮我审查',
+    )
+    // [A1] 入队晚于 idle 帧：投影已全 idle → 立即 flush 补投（改造前此处 flush 恒 0 次，
+    // 消息滞留到下一个无关 occupancy 转移）
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
+    f.dispose()
+  })
+
+  it('A1-BUSY: 入队时投影仍忙（bash 维度）→ 不立即 flush，等后续 idle 帧照常触发', async () => {
+    const f = makeFixture()
+    const p = f.useChat.send('a1b', textToSegments('hi'))
+    // 订阅建立后 bash 开始（occupancy bash=true 投影写入）
+    f.emit('a1b', msg('a1b', 'session.occupancy', { turn: 'idle', compacting: false, bash: true }))
+    f.compactQueue.hasPending.mockReturnValue(true)
+    f.emit('a1b', msg('a1b', 'send.rejected', { reason: 'busy', message: 'Agent 正在处理' }))
+    await p
+
+    // bash 忙：入队侧不触发（bash 结束的 idle 帧是投递时机）——防 busy 态 RPC 空打
+    expect(f.compactQueue.flush).not.toHaveBeenCalled()
+    f.dispose()
+  })
+
+  it('A1-RETRY: 立即 flush 再遭 S1 拒绝（resolve false）→ 1s timer 重投直到成功（拒绝循环不死循环）', async () => {
+    vi.useFakeTimers()
+    const f = makeFixture()
+    f.compactQueue.hasPending.mockReturnValue(true)
+    // 第 1 次 flush（rejected 入队后立即触发）：pi 仍 settling → S1 再拒（条目留队 resolve
+    // false）；第 2 次（timer 重投）：pi 已 idle → 提交成功
+    f.compactQueue.flush
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+
+    const p = f.useChat.send('a1r', textToSegments('hi'))
+    f.emit('a1r', msg('a1r', 'send.rejected', { reason: 'processing', message: 'Agent 正在处理' }))
+    await p
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
+
+    // timer 重投脉冲：1s 有界节奏（不产生 RPC 热循环），成功后不再 re-arm
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(2) // 成功即止，无循环
+    f.dispose()
+  })
+
+  it('A1-IDEMPOTENT: 连续两次失败 flush 只有一个 pending timer（幂等）；fire 时队列已清空则不重投', async () => {
+    vi.useFakeTimers()
+    const f = makeFixture()
+    f.compactQueue.hasPending.mockReturnValue(true)
+    f.compactQueue.flush.mockResolvedValue(false) // 持续拒绝
+
+    const p = f.useChat.send('a1i', textToSegments('hi'))
+    f.emit('a1i', msg('a1i', 'send.rejected', { reason: 'processing', message: 'Agent 正在处理' }))
+    await p
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1) // 入队后立即 flush（失败，arm timer）
+
+    // 第二触发源（bash 结束 idle 帧）flush 再失败 → 已有 pending timer，不重复排
+    f.emit('a1i', msg('a1i', 'session.occupancy', { turn: 'idle', compacting: false, bash: false }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(2)
+
+    // timer fire 时用户已撤销（队列空）→ hasPending false 早退，不空转 flush
+    f.compactQueue.hasPending.mockReturnValue(false)
+    const callsBefore = f.compactQueue.flush.mock.calls.length
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(f.compactQueue.flush.mock.calls.length).toBe(callsBefore)
+    f.dispose()
+  })
+
+  it('A1-DISPOSE: disposeSession 清重投 timer——session 销毁后 timer 不再开火', async () => {
+    vi.useFakeTimers()
+    const f = makeFixture()
+    f.compactQueue.hasPending.mockReturnValue(true)
+    f.compactQueue.flush.mockResolvedValue(false)
+
+    const p = f.useChat.send('a1d', textToSegments('hi'))
+    f.emit('a1d', msg('a1d', 'send.rejected', { reason: 'processing', message: 'Agent 正在处理' }))
+    await p
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
+
+    f.useChat.disposeSession('a1d')
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1) // timer 已清，无幽灵重投
+    f.dispose()
+  })
+
+  it('A1-TRANSPORT: flush RPC reject（传输级真错误）→ toast 上抛路径保留，不 arm timer', async () => {
+    vi.useFakeTimers()
+    const f = makeFixture()
+    f.compactQueue.hasPending.mockReturnValue(true)
+    f.compactQueue.flush.mockRejectedValueOnce(new Error('WS disconnected'))
+      .mockResolvedValue(true)
+
+    const p = f.useChat.send('a1t', textToSegments('hi'))
+    f.emit('a1t', msg('a1t', 'send.rejected', { reason: 'processing', message: 'Agent 正在处理' }))
+    await p
+
+    // 传输级错误 toast「发送失败: {原因}」（§3.5 错误规格表语义），气泡保持 pending 队列保留；
+    // 恢复后由重连快照回放 idle 帧触发，不走 timer（断连期间 timer 重投只会再撞墙）
+    expect(f.toast.error).toHaveBeenCalledWith('composable.sendFailed:{"msg":"WS disconnected"}')
+    const callsBefore = f.compactQueue.flush.mock.calls.length
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(f.compactQueue.flush.mock.calls.length).toBe(callsBefore)
+    f.dispose()
+  })
+})
+
 // ── subagent.directive live 广播消费（U2b，§3.3.3a live 链路）──────────────────────
 
 describe('subagent.directive 广播消费', () => {
@@ -683,6 +1036,90 @@ describe('sendBash ①b toast 抑制（D2 极性：空→抑制 / 非空→不�
     f.chatApi.bash.mockRejectedValue(new Error('transport unavailable (ws not open)'))
     await f.useChat.sendBash('b3', 'echo hi', false)
     expect(f.toast.error).not.toHaveBeenCalled()
+    f.dispose()
+  })
+})
+
+// ── [D1] defer flush 重投 timer 占用短路（adversarial-review-fixes u3）────────────
+//
+// 原缺陷：armDeferFlushRetry 的 1s timer fire 时不查占用投影——turn 合法长跑（小时级
+// bash）期每秒空转发一次注定被拒的 send RPC。修复后 fire 回调读 occupancy 投影：仍忙
+// → 不重排不 flush（帧驱动优先——occupancy 回 idle 帧触发现有 handler）；投影缺失
+//（getOccupancy 无记录回落全 idle 缺省）→ 保守走原重试路径防死锁。
+//
+// 驱动链：emit send.rejected（busy，无 clientUuid）→ 兜底入队 → 入队时投影全 idle
+//（缺省）→ flushDeferQueueAfterIdle → flush resolve false → arm 1s timer。
+describe('defer flush 重投 timer 占用短路（D1）', () => {
+  beforeEach(() => {
+    resetChatModuleStateForTest()
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** 驱动一次「直发被拒 → 入队 → flush 失败 → 1s timer 已排」的前置链。
+   *  时序对齐 sendThenReject 范式（WS FIFO：rejected 广播先于 RPC reply）——send 同步段
+   *  建立 pendingDirectSends 记录后 emit，rejected handler 据此入队 + 缺省 idle 即 flush。 */
+  async function armRetryTimer(f: ReturnType<typeof makeFixture>, sid: string): Promise<void> {
+    f.compactQueue.hasPending.mockReturnValue(true)
+    f.compactQueue.flush.mockResolvedValue(false)
+    const p = f.useChat.send(sid, textToSegments('排队消息'))
+    f.emit(sid, msg(sid, 'send.rejected', { reason: 'busy', message: 'Agent is busy' }))
+    await p
+    // 入队后投影缺省全 idle → 立即 flush（resolve false）→ then 内 arm timer（microtask）
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
+    // rejecte handler 已 clearPendingSend（连带清 pendingSendTimer）→ 仅剩重投 timer 1 个
+    expect(vi.getTimerCount()).toBe(1)
+  }
+
+  it('占用态 fire：不调 flush、不重排 timer（小时级 bash 期无每秒空转 RPC）', async () => {
+    const f = makeFixture()
+    await armRetryTimer(f, 'd1a')
+    // 置忙（bash 占用）：timer fire 时投影非全 idle
+    f.chatStore.setOccupancy('d1a', { turn: 'idle', compacting: false, bash: true })
+    await vi.advanceTimersByTimeAsync(60_000)
+    // 1 分钟过去：flush 仍只被调 1 次（arm 前那次）、timer 已自删不重排
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
+    f.dispose()
+  })
+
+  it('短路后 occupancy 回 idle 帧 → 帧驱动触发 flush（timer 只兜 idle 帧丢失）', async () => {
+    const f = makeFixture()
+    await armRetryTimer(f, 'd1b')
+    f.chatStore.setOccupancy('d1b', { turn: 'idle', compacting: false, bash: true })
+    await vi.advanceTimersByTimeAsync(1000) // fire → 占用短路（无重排）
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
+    // occupancy 回 idle 帧到达（bash 结束）：handleSessionOccupancy 判定全 idle + hasPending → flush
+    f.emit('d1b', msg('d1b', 'session.occupancy', { turn: 'idle', compacting: false, bash: false }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(2)
+    f.dispose()
+  })
+
+  it('投影缺失（无 occupancy 记录）：fire 保守走原重试路径（flush + 失败再 re-arm）', async () => {
+    const f = makeFixture()
+    await armRetryTimer(f, 'd1c')
+    // 不写任何 occupancy（快照缺失 = getOccupancy 缺省全 idle）→ fire 走 flush，false 后再 re-arm
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(2)
+    expect(vi.getTimerCount()).toBe(1) // re-arm（1s 有界重试，消息不丢优先）
+    f.dispose()
+  })
+
+  it('turn 维度占用（settling）同样短路；队列为空时 fire no-op', async () => {
+    const f = makeFixture()
+    await armRetryTimer(f, 'd1d')
+    f.chatStore.setOccupancy('d1d', { turn: 'settling', compacting: false, bash: false })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
+    // 队列清空后（hasPending=false）：即便投影 idle，fire 早退不 flush
+    f.compactQueue.hasPending.mockReturnValue(false)
+    f.emit('d1d', msg('d1d', 'session.occupancy', { turn: 'idle', compacting: false, bash: false }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
     f.dispose()
   })
 })

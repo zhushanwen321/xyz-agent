@@ -44,13 +44,6 @@ vi.mock('node:child_process', () => ({
   }),
 }))
 
-vi.mock('node:readline', () => ({
-  createInterface: () => ({
-    on: vi.fn(),
-    close: vi.fn(),
-  }),
-}))
-
 // W-TR-2：importOriginal spread 保留 actual 符号；仅覆盖 ENV_WHITELIST_PREFIXES 防 spawn
 // env 断言被真实环境变量污染（与 rpc-client-preset-args.test.ts 同款）。
 vi.mock('@xyz-agent/shared', async (importOriginal) => {

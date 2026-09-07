@@ -16,6 +16,7 @@ import type { ContentBlock, Message, ToolCall } from '@xyz-agent/shared'
 import { commitMessages, type MessagesRef } from './mutations'
 import { findLastAssistantIndex } from './chunk-processor'
 import type { FinalizeReason } from './store-types'
+import type { SessionOccupancyState } from './store'
 
 /**
  * finalizeMessages 的 per-message 终态映射助手（模块作用域纯函数，不依赖工厂闭包；
@@ -108,15 +109,17 @@ function finalizeStreamingMessage(
   }
 }
 
-/** 工厂依赖注入接口：全部 refs + setter + helpers 由 store 装配，本模块不直连外部状态。 */
+/** 工厂依赖注入接口：全部 refs + setter + helpers 由 store 装配，本模块不直连外部状态。
+ *  [u5b] compactingSessions Set / setCompacting 退役——occupancy 投影（session.occupancy
+ *  帧驱动）是 compacting membership 唯一来源，clearOccupancy 承接断连收口。 */
 export interface StreamingStateMachineDeps {
   messages: MessagesRef
-  compactingSessions: { value: Set<string> }
+  occupancies: { value: Map<string, SessionOccupancyState> }
   handingOffSessions: { value: Set<string> }
   retryStates: { value: Map<string, unknown> }
   queueStates: { value: Map<string, unknown> }
   pendingSend: { value: Set<string> }
-  setCompacting: (sessionId: string, value: boolean) => void
+  clearOccupancy: (sessionId: string) => void
   setHandingOff: (sessionId: string, value: boolean) => void
 }
 
@@ -125,7 +128,7 @@ export interface StreamingStateMachineDeps {
  * 由闭包持有），行为由 streaming-state-machine.test.ts + store.test.ts 双锁。
  */
 export function createStreamingStateMachine(deps: StreamingStateMachineDeps) {
-  const { messages, compactingSessions, handingOffSessions, retryStates, queueStates, pendingSend, setCompacting, setHandingOff } = deps
+  const { messages, occupancies, handingOffSessions, retryStates, queueStates, pendingSend, clearOccupancy, setHandingOff } = deps
 
   /**
    * [premature-timeout §5.2 D2] per-session timeout 打标 id 快照（finalizeMessages 现场记录）。
@@ -194,16 +197,22 @@ export function createStreamingStateMachine(deps: StreamingStateMachineDeps) {
   /**
    * finalizeAllStreaming 的候选 session 集合构造（W3 / W-S3，模块作用域）。
    *
-   * 遍历所有可能持有瞬态态的 session 的 key 并集：messages.keys() ∪ compactingSessions ∪
-   * retryStates ∪ queueStates ∪ pendingSend。不能只遍历 messages.keys()——compacting /
-   * retry / queue / pendingSend 可能独立于消息存在，仅遍历 messages 会漏掉这些 session。
+   * 遍历所有可能持有瞬态态的 session 的 key 并集：messages.keys() ∪ occupancy 分区中
+   * compacting 的 sid ∪ handingOffSessions ∪ retryStates ∪ queueStates ∪ pendingSend。
+   * 不能只遍历 messages.keys()——compacting / retry / queue / pendingSend 可能独立于消息
+   * 存在，仅遍历 messages 会漏掉这些 session。
+   *
+   * [u5b] compacting 候选来源从 compactingSessions Set 改为 occupancy 投影过滤（membership
+   * 单一来源）。
    *
    * [W3 / W-S3] pendingSend 并入：纯 pendingSend 态（用户已发起、message_start 空窗、无消息实体）
    * 不在 messages.keys() 内，断连时不会立即收口，UI 卡「发送中」。
    */
   function collectFinalizeCandidates(): Set<string> {
     const candidateSids = new Set<string>(messages.value.keys())
-    for (const sid of compactingSessions.value) candidateSids.add(sid)
+    for (const [sid, occ] of occupancies.value) {
+      if (occ.compacting) candidateSids.add(sid)
+    }
     for (const sid of handingOffSessions.value) candidateSids.add(sid)
     for (const sid of retryStates.value.keys()) candidateSids.add(sid)
     for (const sid of queueStates.value.keys()) candidateSids.add(sid)
@@ -213,7 +222,10 @@ export function createStreamingStateMachine(deps: StreamingStateMachineDeps) {
 
   /**
    * resetTransientStates 的 session 级独立瞬态清理（W3，模块作用域）。
-   * 清 compacting / handingOff / retry / queue（断连兜底：这些态在断连后无事件驱动清理）。
+   * 清 occupancy 分区 / handingOff / retry / queue（断连兜底：这些态在断连后无事件驱动清理）。
+   *
+   * [u5b] occupancy 分区删除（替代原 setCompacting(false)）：派生回落全 idle，重连后
+   * resubscribeAll 的 stateSnapshot 回放恢复真实值（G4）。
    *
    * [steer-bubble D4 豁免声明] 本断连收口点刻意**不**清 pendingBuffer 与 inflight 计数
    * （docs/design/steer-followup-user-bubble-display.md D4「刻意保留」）——与「清理信号
@@ -224,7 +236,7 @@ export function createStreamingStateMachine(deps: StreamingStateMachineDeps) {
    * 注释。后续维护勿顺手在本方法补清这两项。
    */
   function clearIndependentTransient(sessionId: string): void {
-    setCompacting(sessionId, false)
+    clearOccupancy(sessionId)
     setHandingOff(sessionId, false)
     if (retryStates.value.has(sessionId)) {
       const next = new Map(retryStates.value)

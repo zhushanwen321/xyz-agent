@@ -97,6 +97,18 @@ export interface SubagentRecordEntryData {
    * 透传不枚举内部键（zcode = { sessionId, dbPath }）；缺省 = pi（存量 entry 零迁移）。
    */
   engineHandle?: { sessionRef: Record<string, string>; journalPath?: string; poolKey: string };
+  /**
+   * 同步收集模式标记（subagent-sync-collect 设计 §3.1.3，U1 foundation）。
+   * undefined = async（缺省语义，旧 entry 零迁移——undefined 经 JSON.stringify 自然缺省）。
+   * 消费方：U5 rebuildEntryRecord 投影扩展 + E1 重建扫描。
+   */
+  collectMode?: "sync";
+  /**
+   * 离开批终局标记（subagent-sync-collect 设计 §3.1.3，U1 foundation）。两出口统一
+   * 落标（批闭合 flush / E9 dispose 转换，均 appendEntry 持久化）。undefined =
+   * 未离开批 / 旧 entry 零迁移。消费方：U5 E1 重建扫描只收无标记成员（防双重通知）。
+   */
+  batchFinalized?: boolean;
 }
 
 /** SubagentRecord → 自描述 entry data（快照投影，不 mutate 源）。
@@ -134,5 +146,9 @@ export function toSubagentRecordEntry(record: SubagentRecord): SubagentRecordEnt
     engine: record.engine,
     engineFallback: record.engineFallback,
     engineHandle: record.engineHandle,
+    // 同步收集两字段（U1 foundation）：undefined 经 JSON.stringify 自然缺省，
+    // 旧记录/旧 entry 序列化产物字节不变（零迁移）。
+    collectMode: record.collectMode,
+    batchFinalized: record.batchFinalized,
   };
 }

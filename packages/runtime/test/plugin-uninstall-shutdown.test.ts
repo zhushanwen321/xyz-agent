@@ -217,7 +217,7 @@ describe('PluginService.shutdown flush 时序（F5）', () => {
   })
 
   afterEach(async () => {
-    await rm(tmpConfigDir, { recursive: true, force: true })
+    await rm(tmpConfigDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('F5-①: flushAll 在 dispose 之前完成（清 debounce 定时器前冲刷 dirty 数据）', async () => {

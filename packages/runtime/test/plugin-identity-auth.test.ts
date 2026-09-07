@@ -42,7 +42,7 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  await rm(tmpDir, { recursive: true, force: true })
+  await rm(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 /** 记录 postMessage 收到的消息（mock worker 通道） */

@@ -24,7 +24,7 @@ describe('W1 jsonl readTailEntries', () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'jsonl-tail-'))
   })
   afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true })
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 造一个 JSONL 文件，entries 为对象数组，逐行 JSON.stringify + \n 连接 */

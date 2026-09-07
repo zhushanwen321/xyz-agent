@@ -6,7 +6,8 @@
  * - isIdle 读 runtime 状态标志（isGenerating / isCompacting / isBashRunning 三者互斥判定）
  * - hasPendingMessages 一期保守 false（端口同步签名拿不到异步 RPC 结果，design.md §5 待验证 1）
  * - subscribeSettled 经组合根 onAgentSettled 多播（index.ts agentSettledListeners）
- * - port.send：ensureActive → prompt(streamingBehavior) → 成功后置位 + record（D7 保留副作用）
+ * - port.send：ensureActive → skill 注入（A2 MF-C）→ prompt(streamingBehavior) →
+ *   成功后 skillNotice 广播 + 置位 + record（D7 保留副作用）
  *
  * 单例约束（§3.4）：同 sessionId 必须复用同一 handle——多 handle 并发投递竞态无保护。
  * sd-u6（完成回流）将复用本注册表，禁止自行 createDelivery。
@@ -15,6 +16,9 @@ import { createDelivery } from '@xyz-agent/session-delivery'
 import type { DeliveryHandle } from '@xyz-agent/session-delivery'
 import type { IPiEngine } from '../ports/pi-engine.js'
 import type { IManagedSessionView } from './types.js'
+import { SkillInjector } from './skill-injector.js'
+import { publishSkillNotices } from './skill-notice-publisher.js'
+import type { IMessageBus } from '../message-bus/message-bus.js'
 
 /** 组合根注入的装配材料（全部窄签名，测试可 mock） */
 export interface SessionDeliveryDeps {
@@ -26,6 +30,11 @@ export interface SessionDeliveryDeps {
   subscribeAgentSettled(cb: (sessionId: string) => void): () => void
   /** 最近工作区记账（D7 保留：best-effort，调用方不感知失败） */
   recordWorkspace(cwd: string): void
+  /**
+   * MessageBus 当前值（[A2 D-A2-2] skillNotice 广播用；与 SessionRecordsDeps 同款
+   * getter 晚期注入语义，返回 null → notice 发布 no-op，注入文本处理照常）。
+   */
+  getMessageBus(): IMessageBus | null
 }
 
 /** 注册表对外接口（SessionManagerHandler 经此消费 delivery 能力） */
@@ -48,15 +57,26 @@ function toStreamingBehavior(intent: 'interrupt-at-turn-boundary' | 'after-run')
   return intent === 'interrupt-at-turn-boundary' ? 'steer' : 'followUp'
 }
 
-export function createSessionDeliveryRegistry(deps: SessionDeliveryDeps): SessionDeliveryRegistry {
+export function createSessionDeliveryRegistry(
+  deps: SessionDeliveryDeps,
+  // [A2 D-A2-1] skill 注入器：deliverText 出站前统一处理（与 MessageDispatcher 同款
+  // 「默认实例化 + 可替换」形态，测试注入 spy）。
+  injector: SkillInjector = new SkillInjector(),
+): SessionDeliveryRegistry {
   // @data-owner #15（docs/architecture/data-source-registry.md）：sessionId → handle 注册表，
   // handle 内的投递队列 = delivery outbox（内存、非持久，session 删除时 dispose 清空）
   const handles = new Map<string, DeliveryHandle>()
 
   /**
-   * port 层投递原语：ensureActive → prompt → D7 置位副作用。
+   * port 层投递原语：ensureActive → inject → prompt → notice → D7 置位副作用。
    * 置位晚于 prompt 受理（成功才显示 working，与 dispatcher「先置位后 prompt」的差异是
    * 内核 gate 语义的要求：置位晚于 gate 判定不构成矛盾——gate 只在投递前判）。
+   *
+   * [A2 MF-C] skill 注入（D-A2-1）：client.prompt 之前。三个消费方（landing 首发直投
+   * sendDirect / session_manager send 工具的 agent 构造 prompt / completion-backflow
+   * 回流通知）统一行为——字面 `<xyz-skill/>` 标记即展开、无标记 no-op 零 RPC 原文
+   * 通过（设计裁决：首发用户内容是注入目标；代理构造/回流模板文本被模仿输出标记时
+   * 展开与主链语义一致化，接受）。
    */
   const deliverText = async (
     sessionId: string,
@@ -64,7 +84,11 @@ export function createSessionDeliveryRegistry(deps: SessionDeliveryDeps): Sessio
     streamingBehavior?: 'steer' | 'followUp',
   ): Promise<void> => {
     const client = await deps.ensureActive(sessionId)
-    await client.prompt(content, undefined, streamingBehavior)
+    const injection = await injector.inject(client, content)
+    await client.prompt(injection.text, undefined, streamingBehavior)
+    // [A2 D-A2-2] notice 在发送成功后发布（与 dispatcher 时机契约同款）；prompt 失败
+    // throw 不发（调用方错误通路覆盖）。
+    publishSkillNotices(deps.getMessageBus(), sessionId, content, injection.notices)
     // D7 保留副作用：prompt 受理成功后一并置位（侧栏 working 显示 + lastActiveAt 排序新鲜度）。
     // isGenerating/lastActiveAt 双写形态登记（登记表 #11 修订，2026-08-24）：写方全集 =
     // message-dispatcher（先置位后 prompt）+ 本 deliverText（受理后置位）；失效源 =

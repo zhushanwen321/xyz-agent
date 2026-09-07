@@ -794,7 +794,7 @@ export default {
   // ── Update proxy page (UpdatePage) ──
   update: {
     sectionTitle: 'Proxy Configuration',
-    sectionDesc: 'Configure network proxy for GitHub access',
+    sectionDesc: 'Configure a network proxy to improve reachability of update checks and downloads',
     proxyMode: 'Proxy Mode',
     proxyModeSystem: 'System Proxy (auto-detect)',
     proxyModeManual: 'Manual Configuration',
@@ -821,6 +821,11 @@ export default {
     autoUpdateTitle: 'Automatic Updates',
     autoUpdateDesc: 'Automatically check for updates on startup and prompt to download when a new version is found',
     autoUpdateLabel: 'Check for updates on startup',
+    // Update source tri-select (update-multi-source D3: selection = priority, not exclusive; failover to the other source stays available)
+    updateSourceLabel: 'Update Source',
+    updateSourceAuto: 'Auto (recommended)',
+    updateSourceGithub: 'GitHub',
+    updateSourceAtomgit: 'AtomGit',
     currentVersionLabel: 'Current Version',
     channelHint: 'stable channel · restart the app for the update to take effect',
   },

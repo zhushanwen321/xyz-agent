@@ -70,7 +70,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  rmSync(tmpDir, { recursive: true, force: true })
+  rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 /** 把 entries 序列化成 JSONL 文件，返回文件路径。 */

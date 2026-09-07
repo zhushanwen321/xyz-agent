@@ -120,6 +120,19 @@ describe("T5③ cold-lookup running candidate foreign-instance guard", () => {
   let store: RecordStore;
 
   beforeEach(() => {
+    // 身份 env 剥离：initSession 会把 PI_SUBAGENT_ROOT_SESSION_ID 读作 sessionRootId 基线
+    //（env 优先于入参 sessionId）——宿主进程（xyz-agent 子 agent 环境）泄漏的身份 env
+    // 会让「root-session」桩记录归属校验恒不匹配 → 冷查用例误红（与 collect-coordinator-
+    // service.test.ts 同款剥离纪律）。
+    for (const k of [
+      "PI_SUBAGENT_ROOT_SESSION_ID",
+      "PI_SUBAGENT_SELF_RECORD_ID",
+      "PI_SUBAGENT_DEPTH",
+      "PI_SUBAGENT_ROOT_CWD",
+      "PI_SUBAGENT_FORK_DEPTH",
+    ] as const) {
+      delete process.env[k];
+    }
     foreignLiveSpy.mockReset();
     foreignLiveSpy.mockReturnValue(undefined);
     ({ agentDir, service, store } = setup());

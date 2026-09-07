@@ -79,7 +79,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.XYZ_AGENT_DATA_DIR
-  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 describe('TC1: step2 部分禁用 → enabledModels = enabled providers 的 <id>/*', () => {

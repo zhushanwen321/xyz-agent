@@ -10,7 +10,7 @@ describe("migrateLegacyConfig", () => {
 		dir = mkdtempSync(join(tmpdir(), "pi-migrate-test-"));
 	});
 	afterEach(() => {
-		rmSync(dir, { recursive: true, force: true });
+		rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 	});
 
 	it("旧路径不存在 → noop（migrated: false，不动文件系统）", () => {

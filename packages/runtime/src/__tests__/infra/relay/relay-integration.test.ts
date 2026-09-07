@@ -84,7 +84,7 @@ async function setup(): Promise<{ dataDir: string; fakePiPath: string }> {
 describe('E-1 × E-2 real-process integration', () => {
   afterEach(async () => {
     await deinitRelayServer()
-    await Promise.all(tmpDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
+    await Promise.all(tmpDirs.splice(0).map((d) => rm(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })))
   })
 
   it(

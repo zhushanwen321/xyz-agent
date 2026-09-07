@@ -794,7 +794,7 @@ export default {
   // ── 更新代理页（UpdatePage）──
   update: {
     sectionTitle: '代理配置',
-    sectionDesc: '配置网络代理以访问 GitHub 服务',
+    sectionDesc: '配置网络代理以改善更新检查与下载可达性',
     proxyMode: '代理模式',
     proxyModeSystem: '系统代理（自动检测）',
     proxyModeManual: '手动配置',
@@ -821,6 +821,11 @@ export default {
     autoUpdateTitle: '自动更新',
     autoUpdateDesc: '启动时自动检查更新，发现新版本后提示下载安装',
     autoUpdateLabel: '启动时自动检查更新',
+    // 更新来源三选（update-multi-source D3：选择即优先级非独占，失败仍自动降级另一源）
+    updateSourceLabel: '更新来源',
+    updateSourceAuto: '自动（推荐）',
+    updateSourceGithub: 'GitHub',
+    updateSourceAtomgit: 'AtomGit',
     currentVersionLabel: '当前版本',
     channelHint: 'stable 渠道 · 更新完成后需重启应用生效',
   },

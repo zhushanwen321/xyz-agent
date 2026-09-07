@@ -20,8 +20,8 @@ import { RpcTimeoutError } from '../src/infra/pi/rpc-client.js'
 /** 捕获的 stdin 写入行（每条 JSON 字符串）。 */
 const stdinWrites: string[] = []
 
-/** stdout line handler——start() 内 rl.on('line') 注册，这里桥接进来。 */
-let stdoutLineHandler: ((line: string) => void) | null = null
+/** stdout data handler——start() 内 attachLfOnlyLineReader 注册（D10 后不再有 readline）。 */
+let stdoutDataHandler: ((chunk: Buffer | string) => void) | null = null
 
 /** proc.exit handler，start() startup check 用。 */
 let procExitHandlers: Array<(code: number | null) => void> = []
@@ -34,7 +34,12 @@ const fakeProc = {
   off: vi.fn(),
   removeListener: vi.fn(),
   stdout: {
-    on: vi.fn(),
+    on: vi.fn((event: string, handler: (chunk: Buffer | string) => void) => {
+      if (event === 'data') stdoutDataHandler = handler
+      return fakeProc.stdout
+    }),
+    off: vi.fn(),
+    removeListener: vi.fn(),
     resume: vi.fn(),
     destroy: vi.fn(),
   },
@@ -54,16 +59,9 @@ vi.mock('node:child_process', () => ({
   spawn: () => fakeProc,
 }))
 
-// mock node:readline——createInterface 在真实 stream 上调 resume()，测试用 fake proc 的
-// stdout 不是 stream，故桥接 rl.on('line', handler) 把 line handler 抓出来供 emitPiLine 驱动。
-vi.mock('node:readline', () => ({
-  createInterface: () => ({
-    on: (event: string, handler: (line: string) => void) => {
-      if (event === 'line') stdoutLineHandler = handler
-    },
-    close: vi.fn(),
-  }),
-}))
+// D10 后 stdout 分帧走 rpc-client 自实现的 LF-only 读取器（同模块直调，无法从模块边界 mock）。
+// 测试改为在 fake stdout 上桥接 'data' handler，emitPiLine 直投「整行 + \n」由读取器分帧——
+// 投递时序与旧 readline 桥接一致（同步直调）；LF-only 分帧行为由 rpc-client-lf-framing.test.ts 专项覆盖。
 
 // importOriginal spread 而非完全替换：rpc-client.start 经 ../spawn-env.js re-export 消费
 // shared 的 buildOutboundChildEnv（纯函数、env 全 DI），完全替换式 mock 会随 shared 新增
@@ -105,10 +103,10 @@ vi.mock('../src/infra/logger.js', () => ({
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-/** 把伪造的 pi 响应行投递给 RpcClient 的 stdout line handler。 */
+/** 把伪造的 pi 响应行投递给 RpcClient 的 stdout（LF-only 读取器的 data 入口，同步直调）。 */
 function emitPiLine(obj: Record<string, unknown>): void {
-  if (!stdoutLineHandler) throw new Error('stdout line handler not registered yet')
-  stdoutLineHandler(JSON.stringify(obj))
+  if (!stdoutDataHandler) throw new Error('stdout data handler not registered yet')
+  stdoutDataHandler(JSON.stringify(obj) + '\n')
 }
 
 /** 从 stdin 写入里解析出最后一条 JSON 对象。 */
@@ -125,7 +123,7 @@ describe('RpcClient W3 S6 (timedOutIds)', () => {
 
   beforeEach(async () => {
     stdinWrites.length = 0
-    stdoutLineHandler = null
+    stdoutDataHandler = null
     procExitHandlers = []
     fakeProc.on.mockClear()
     fakeProc.stdout.on.mockClear()

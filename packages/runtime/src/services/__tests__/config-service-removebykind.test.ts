@@ -303,7 +303,7 @@ describe('边界3(a): cleanEnabledModelsResidue 重算空 → clearEnabledModels
 
   afterEach(() => {
     delete process.env.XYZ_AGENT_DATA_DIR
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('多 pattern 移除后非空 → setEnabledModels(remaining)；再清至空 → delete enabledModels 字段', async () => {

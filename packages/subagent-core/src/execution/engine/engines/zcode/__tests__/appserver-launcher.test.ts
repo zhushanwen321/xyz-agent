@@ -123,7 +123,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(tmpRoot, { recursive: true, force: true });
+  fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 describe("wrapper 合并语义（v2 注入优先）", () => {

@@ -1,5 +1,6 @@
 import { RuntimeServer } from './transport/server.js'
 import { SessionService } from './services/session/session-service.js'
+import { GenStatsService } from './services/session/gen-stats-service.js'
 import { createSessionDeliveryRegistry } from './services/session/session-delivery-registry.js'
 import { createCompletionBackflow } from './services/session/completion-backflow.js'
 import { fanOutSettled } from './services/session/agent-settled-fanout.js'
@@ -28,7 +29,7 @@ import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
 import { PiRetrySettings } from './infra/pi/pi-retry-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
 import { FileChangeDiffAdapter } from './infra/pi/file-change-diff-adapter.js'
-import { EventInterpreter } from './services/session/event-interpreter.js'
+import { EventInterpreter, updateSessionOccupancy } from './services/session/event-interpreter.js'
 import { join, resolve, isAbsolute } from 'node:path'
 import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
@@ -362,6 +363,11 @@ async function main(): Promise<void> {
       // W3：turn_end 单 turn 副作用（原 attachUsageListener turn_end 分支迁移至此，经中间事件链路触发；
       // W1 后 label 持久化移交 pi set_session_name RPC，此处承载 project sidecar 兜底）。
       onTurnUsage: (sid) => sessionService.handleTurnUsageSideEffects(sid),
+      // composer-gen-stats（D1/D2）：turn-usage 组装 GenStatsSample 后采样（recordSample 内部
+      // 完成落盘 + 映射写 1 + 扩展广播；同步 fire-and-forget 不阻塞事件流）。genStatsService
+      // 声明在下方（先于 sessionService 构造后）——createAdapter 仅在 session 创建后调用，
+      // 引用恒就绪（与上方 sessionService 自引用闭包同模式）。
+      onGenStats: (sid, sample) => genStatsService.recordSample(sid, sample),
       // W3：agent_end 副作用——isGenerating 复位（W1 后 label 直写兜底已随机制删除）。
       // 原 attachUsageListener agent_end 分支迁移至此。不迁移则 session 永远 busy（下条消息被拒）。
       // W4：转发 stopReason 用于 session_end 终态判定（'error'→error，其余→done）。
@@ -398,6 +404,14 @@ async function main(): Promise<void> {
         const s = sessionService.getSession(sid)
         if (s) s.isCompacting = v
       },
+      // occupancy 挂点接线（session-occupancy-send-closure D3 #2-#6）：interpreter 侧成功路径
+      // 挂点经本回调写 session 记录 occupancy 并广播 session.occupancy state 帧——与上方
+      // onCompactingStateChange 同构（interpreter 不持有全量 occupancy，合并/去重在
+      // updateSessionOccupancy 内，经 session 记录权威聚合）。
+      onOccupancyTransition: (patch) => {
+        const s = sessionService.getSession(sessionId)
+        if (s) updateSessionOccupancy(s, messageBus, patch)
+      },
       // session-trace（A33）：增量腿触发回调——interpreter 的四类触发事件到达后做
       // 追赶式 since 补拉（syncTraceEntries 内部自查 leaf 基线，无基线 no-op；串行链
       // 吸 burst）。自引用闭包与上方 onContextUpdate 同模式（sessionService 构造前仅存引用）。
@@ -431,7 +445,17 @@ async function main(): Promise<void> {
       },
     })
     // EventAdapter：纯翻译器，把翻译结果喂给 interpreter 编排。
-    return new EventAdapter(sessionId, (events) => interpreter.interpret(events))
+    // 第三参（background-task-sidebar D2 触发面②，u-runtime-rpc）：后台任务事件旁路——
+    // customType background-bash（exit 边沿）与 bash 工具结束（spawn 路径）到达时对
+    // watched 集合跑一次变更检测（与 2s 轮询/自写自检共享同一 last-seen，单广播源非第二源）。
+    // sessionService 为闭包引用（createAdapter 先于其构造声明，工厂体仅在 session 建立时执行，
+    // 引用恒就绪——同下方 onRecordEntriesInvalidated 延迟解析模式）；backgroundTasks 端口由
+    // SessionService 构造器恒创建，`?.` 为端口缺省（防御）形态的静默 no-op。
+    return new EventAdapter(
+      sessionId,
+      (events) => interpreter.interpret(events),
+      (_sid) => sessionService.backgroundTasks?.checkForChanges(),
+    )
   }
 
   const sessionService = new SessionService(
@@ -461,6 +485,9 @@ async function main(): Promise<void> {
     ensureActive: (sid) => sessionService.ensureActive(sid),
     subscribeAgentSettled: subscribeAgentSettledIn(agentSettledListeners),
     recordWorkspace: (cwd) => workspaceService.record(cwd),
+    // [A2 D-A2-2] skillNotice 广播通道（deliverText 注入的 notice 发布用）；组合根
+    // messageBus 恒就绪，getter 形态与 SessionRecordsDeps 装配同款。
+    getMessageBus: () => messageBus,
   })
   // session 销毁（主动删 / 进程退出 / restore 清场全部路径）→ 丢弃该 session 的 delivery
   // 队列与订阅（setOnSessionDestroyed 追加式注册，与 server 的 extension timeout 清理腿并存）。
@@ -556,6 +583,21 @@ async function main(): Promise<void> {
   // 传导给 dispatcher；setter 内部同步回填 dispatcher（仅走 setter 路径时保证 dispatcher
   // 不持 undefined bus，见 session-service.setMessageBus）。
   sessionService.setMessageBus(messageBus)
+
+  // ── composer-gen-stats（u3）：GenStatsService 装配（依赖 bus publish 通道 + pm + sessionService；
+  // 存储算法 SSOT 在 gen-stats-store.ts，本处只接线）。三件事：
+  // ① 映射「清」腿：销毁回调挂 onSessionDestroyedHandlers（removeSessionEntry 汇聚点）；
+  // ② 映射「写 2」腿：state_changed 发布后置 tap（session-service 投影专用 bus 视图触发，
+  //    固定帧序 MF9：state_changed 同步送达后才重登记+推快照帧）；
+  // ③「写 1 + 降级链 + 扩展广播」经 interpreter onGenStats 与 session.getGenStats RPC case
+  //    触达（后者经 server.setServices 注入，见下方 optional 对象）。
+  const genStatsService = new GenStatsService({
+    publish: (sid, msg) => messageBus.publish(sid, msg),
+    pm,
+    sessionService,
+  })
+  genStatsService.registerSessionCleanup()
+  sessionService.setGenStatsModelSwitchTap((sid, modelKey) => genStatsService.onModelSwitched(sid, modelKey))
 
   // ── SkillRegistry（W1）：全局 + 项目级 skill 缓存 + chokidar 文件监听 ──
   // 构造在 sessionService 之后（依赖其 getActiveSessionIds/getSessionCwd 窄接口）。
@@ -668,6 +710,8 @@ async function main(): Promise<void> {
     delivery: sessionDelivery,
     // 导入 pi 会话（import-session D5/U2）：session.importCandidates / session.import 路由。
     importService,
+    // composer-gen-stats（D4）：session.getGenStats 恢复腿 RPC（降级链 + 写 3 回填在 service 内部）。
+    genStats: genStatsService,
   })
 
   // Graceful shutdown on signals

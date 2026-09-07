@@ -162,7 +162,7 @@ describe("[N2] chatMode 轮次通知正文：真实 session-runner 链路", () =
     service.dispose();
     _resetLifecycleState();
     vi.restoreAllMocks();
-    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("真实 execute(conversation:true) + FakeChild 驱动 text_delta/agent_settled → 通知正文含本轮真实回复（非 (empty)）", async () => {

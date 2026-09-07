@@ -6,21 +6,25 @@
  * vue_rules_checker.py MAX_SCRIPT_LINES=300 硬拦，同文件提取无机械余量。目录归属对齐
  * composer-shell.ts（同目录、文件名不带 use 前缀、导出函数带 use 前缀的既有约定）。
  *
- * ADR-0049 判定：不持有 per-session 状态（无按 sessionId 分区的 ref/Map/Set；isActive/
- * isCompacting 等「当前 session 的 X」由调用方以 computed 只读注入，本文件只消费不存储），
+ * ADR-0049 判定：不持有 per-session 状态（无按 sessionId 分区的 ref/Map/Set；sendRoute
+ * 等「当前 session 的 X」由调用方以 computed 只读注入，本文件只消费不存储），
  * 纯事件分派 → 普通 composable，无需 useSessionScopedState 工厂。
  *
- * 分发语义（键位 → 行为，与拆分前逐字节一致）：
+ * 分发语义（键位 → 行为，u5b D6 改造——路由判定收口在 core dispatch/send，本层只按
+ * sendRoute 决定 Alt+⏎ 的 followUp 保留语义）：
  *   浮层 open → 浮层内部路由（handleKeydown 真值短路 return）
  *   IME 组合中 → 放行不拦截
  *   Esc → staging.handleEsc（fork/handoff 互斥路由，内部自管 preventDefault）
  *   裸 ↑/↓ → preventDefault → moveCaretVertical 垂直移光标；at-edge 时 ↑ 历史 / ↓ 历史
  *   修饰键 + ↑/↓ → 放行原生（选区扩展/按词移动/段首段尾跳转）
  *   ⇧⏎ → 放行原生换行
- *   ⏎（preventDefault 后）：staging 活跃 → onSend；Alt+⏎ → 压缩中 onSend（入队待重放）/
- *   非压缩 onFollowUp；非 Alt → isActive ? onSteer : onSend
+ *   ⏎（preventDefault 后）：staging 活跃 → onSend；Alt+⏎ → steer 路由行 onFollowUp /
+ *   其余（defer/direct）onSend；裸 ⏎ → onSend（统一分发器：steer 路由并入当前回合 /
+ *   defer 入队 / direct 直发——[HISTORICAL] isActive→onSteer 与 isCompacting→onSend
+ *   两套分散判定（优先级倒挂根因）已退役）
  */
 import type { ComputedRef, Ref } from 'vue'
+import type { SendRoute } from '@xyz-agent/core/domain/composer'
 import type { ComposerShellReturn, ShellInputInstance } from './composer-shell'
 
 /** CommandPopover expose 的键盘路由窄契约（结构兼容 InstanceType<typeof CommandPopover>） */
@@ -38,19 +42,15 @@ export interface ComposerKeydownDeps {
   inputRef: Readonly<Ref<ShellInputInstance | null>>
   /** staging 聚合路由（core dispatch/staging，ADR-0057）：Esc 路由 + activeStaging 守卫 */
   staging: Pick<ComposerShellReturn['staging'], 'handleEsc' | 'activeStaging'>
-  /** session 是否活跃（⏎ steer/send 分流守卫） */
-  isActive: ComputedRef<boolean>
-  /** session 是否正在压缩上下文（Alt+⏎ 压缩期重路由守卫） */
-  isCompacting: ComputedRef<boolean>
+  /** 当前 session 的发送路由（D6 表 direct/steer/defer；Alt+⏎ steer 行保留 followUp 语义） */
+  sendRoute: ComputedRef<SendRoute>
   /** ↑ 到顶 → 历史上一条（core input/history） */
   handleArrowUp: () => void
   /** ↓ 到底 → 历史下一条（core input/history） */
   handleArrowDown: () => void
-  /** ⏎ 活跃态：追加 steer（不打断当前回合） */
-  onSteer: () => void
-  /** Alt+⏎：追加 follow-up（不打断当前回合） */
+  /** Alt+⏎：追加 follow-up（不打断当前回合；steer 路由行语义） */
   onFollowUp: () => void
-  /** 发送 / staging 提交 / 压缩期入队（core dispatch/send 统一入口） */
+  /** 发送 / staging 提交 / steer 路由并入 / defer 入队（core dispatch/send 统一入口） */
   onSend: () => void
 }
 
@@ -77,17 +77,17 @@ function createBareArrowNav(
 }
 
 /**
- * ⏎ 落地分派（已 preventDefault）：staging（fork/handoff）优先于 steer/followUp——模式 chip
+ * ⏎ 落地分派（已 preventDefault）：staging（fork/handoff）优先于发送路由——模式 chip
  * 在时 Enter/Alt+Enter 均提交 staging，不注入当前对话（streaming 中 fork-ask 合法——对源
  * session 只读；handoff 的 streaming 拦截在 enterHandoffMode 入口 + handleHandoffSend 兑底，
- * 此处无需区分）。Alt+⏎ 压缩期间重路由到 onSend（入队待重放）——onFollowUp 无 isActive
- * 守卫，直通会走 pi followUp RPC 留陈旧队列；非压缩态保持 followUp。
+ * 此处无需区分）。Alt+⏎ 按 D6 路由行分流：steer 行（turn 活跃）保留 followUp 下一轮语义
+ * （现状 isActive→onFollowUp 等价）；defer/direct 行经分发器（[u5b] 原 isCompacting→onSend
+ * 特判由 defer 路由自然覆盖）。裸 ⏎ 统一 onSend（steer 路由并入当前回合 / defer 入队 /
+ * direct 直发——优先级倒挂消除：turn 活跃 + compacting（行 3）按 D6 表走 steer 而非误排队）。
  */
 function createEnterDispatcher(
   staging: Pick<ComposerShellReturn['staging'], 'activeStaging'>,
-  isCompacting: ComputedRef<boolean>,
-  isActive: ComputedRef<boolean>,
-  onSteer: () => void,
+  sendRoute: ComputedRef<SendRoute>,
   onFollowUp: () => void,
   onSend: () => void,
 ): (e: KeyboardEvent) => void {
@@ -97,10 +97,8 @@ function createEnterDispatcher(
       return
     }
     if (e.altKey) {
-      if (isCompacting.value) onSend()
-      else onFollowUp()
-    } else if (isActive.value) {
-      onSteer()
+      if (sendRoute.value === 'steer') onFollowUp()
+      else onSend()
     } else {
       onSend()
     }
@@ -117,16 +115,14 @@ export function useComposerKeydown(deps: ComposerKeydownDeps): (e: KeyboardEvent
     commandPopoverRef,
     inputRef,
     staging,
-    isActive,
-    isCompacting,
+    sendRoute,
     handleArrowUp,
     handleArrowDown,
-    onSteer,
     onFollowUp,
     onSend,
   } = deps
   const handleBareArrowNav = createBareArrowNav(inputRef, handleArrowUp, handleArrowDown)
-  const dispatchEnter = createEnterDispatcher(staging, isCompacting, isActive, onSteer, onFollowUp, onSend)
+  const dispatchEnter = createEnterDispatcher(staging, sendRoute, onFollowUp, onSend)
   return function onKeydown(e: KeyboardEvent): void {
     if (cmdOpen.value && commandPopoverRef.value?.handleKeydown(e)) return
     if (e.isComposing) return // IME 组合中不拦截（与 useContenteditableInput 守卫一致）

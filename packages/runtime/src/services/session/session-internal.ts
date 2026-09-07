@@ -47,6 +47,45 @@ export interface IManagedSessionRecord extends IManagedSessionView {
   adapter: IEventAdapter
 }
 
+// 自 session-service.ts 原样迁移（max-lines 行为保持抽取）：类型随消费者归位内部协议
+// 文件（toSummary 实现体迁 session-summary.ts 后经本文件共享），仅加 export 供跨文件
+// 引用，字段与语义零改动。
+/** Facade 内部完整 session:Registry 记录(adapter 句柄)+ binding 扩展字段(hydrateBindingMeta 动态 patch)。 */
+export interface ManagedSession extends IManagedSessionRecord {
+  adapter: IEventAdapter
+  /**
+   * launch preset id 的内存态持有（W-RT-4，设计文档 §4.2）。
+   *
+   * session 活跃期间 .preset.json sidecar 可能因 pi 延迟写入未 flush 而无法写入
+   *（persistPresetBinding 的 existsSync 守卫跳过），此时内存态兜底持有 presetId，
+   * 供 forkSession 在 active 期读源 session preset（W-RT-5）。
+   *
+   * 不放 IManagedSessionView（types.ts 非 slice 范围）也不入 IManagedSessionRecord
+   * （binding 扩展字段归 Facade 域）：session-lifecycle 经 Registry get(id) 拿到
+   * 记录后，as 转换读写此字段（patch 模式，见 lifecycle W-RT-4/5 实现注释）。
+   * toSummary 一并透传到 SessionSummary.launchPresetId。
+   */
+  launchPresetId?: string
+  /**
+   * 归属 project id 的内存态持有（D14 语义修正，2026-08-04）。
+   *
+   * 与 launchPresetId 同模式：.project.json sidecar 可能因 pi 延迟写入未 flush 而无法写入
+   *（persistProjectBinding 的 existsSync 守卫跳过），内存态兑底持有 projectId，
+   * 供 forkSession 继承 / toSummary 透传 / setProject 同步。
+   */
+  projectId?: string
+  /**
+   * agent-managed session 标记的内存态持有（B-2）。
+   *
+   * 与 launchPresetId/projectId 同模式：.agent.json sidecar 可能因 pi 延迟写入未 flush
+   * 而无法写入（persistAgentBinding 的 existsSync 守卫跳过），内存态兑底持有，
+   * 供 session-manager list 按 spawnSource 过滤 / toSummary 透传（前端 AI badge）。
+   */
+  spawnSource?: 'user' | 'agent'
+  /** agent-managed session 的父 session id（内存态持有，语义同上 spawnSource） */
+  parentAgentSessionId?: string
+}
+
 /**
  * sessions Map 只读查询面（设计 D2②：Map 所有权迁 SessionLifecycle 后，Facade 残余域
  * ~30 处读点的统一通道）。**Map 结构只读**——无 set/delete/clear（写点 3 处全在

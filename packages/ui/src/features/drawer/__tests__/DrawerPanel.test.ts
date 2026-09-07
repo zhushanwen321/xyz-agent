@@ -117,3 +117,36 @@ describe('DrawerPanel (header-extra slot，W4 壳层挂载点)', () => {
     expect(wrapper.find('[data-testid="drawer-unread-badge"]').exists()).toBe(false)
   })
 })
+
+// bashTask tab（2026-09 background-task-sidebar-view D5②）：tabs 加第 8 个 TabMeta。
+// 内容面板由壳层（PanelContainer）slot 注入，本组件只负责 tab 元信息与空态 fallback。
+describe('DrawerPanel (bashTask tab，background-task-sidebar-view D5②)', () => {
+  it('bashTask tab 按钮 DOM 存在（8 tab 常驻）', () => {
+    const wrapper = mount(DrawerPanel, { props: baseProps() })
+    expect(wrapper.find('[data-testid="drawer-tab-bashTask"]').exists()).toBe(true)
+    // 既有 7 tab 不回退（终端/浏览器/Git/文档/详情/子代理/工作流 + 后台命令）
+    for (const key of ['terminal', 'browser', 'git', 'doc', 'detail', 'subagent', 'workflow']) {
+      expect(wrapper.find(`[data-testid="drawer-tab-${key}"]`).exists()).toBe(true)
+    }
+  })
+
+  it('bashTask tab 点击 emit set-tab bashTask', async () => {
+    const wrapper = mount(DrawerPanel, { props: baseProps() })
+    await wrapper.find('[data-testid="drawer-tab-bashTask"]').trigger('click')
+    expect(wrapper.emitted('set-tab')).toEqual([['bashTask']])
+  })
+
+  it('activeTab=bashTask：应用选中样式（bg-surface-hover）', () => {
+    const wrapper = mount(DrawerPanel, { props: baseProps({ activeTab: 'bashTask' }) })
+    expect(wrapper.find('[data-testid="drawer-tab-bashTask"]').classes()).toContain('bg-surface-hover')
+  })
+
+  it('bashTask 无内容面板 slot：空态 fallback 渲染 i18n key（t mock 返回 key，断言 key 引用）', () => {
+    const wrapper = mount(DrawerPanel, { props: baseProps({ activeTab: 'bashTask' }) })
+    const empty = wrapper.find('[data-testid="drawer-widget-empty"]')
+    expect(empty.exists()).toBe(true)
+    // emptyText/emptyHint 引用 panel.sideDrawer.noBashTask / bashTaskHint（文案由 u-i18n-docs 落地）
+    expect(empty.text()).toContain('panel.sideDrawer.noBashTask')
+    expect(empty.text()).toContain('panel.sideDrawer.bashTaskHint')
+  })
+})

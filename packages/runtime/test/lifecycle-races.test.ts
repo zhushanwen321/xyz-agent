@@ -532,8 +532,8 @@ describe('生命周期竞态（lifecycle races）', () => {
       expect(service.activator.getState('p-disabled')).toBe('UNLOADED')
     } finally {
       await service.shutdown()
-      await rm(tmpRoot, { recursive: true, force: true })
-      await rm(tmpConfig, { recursive: true, force: true })
+      await rm(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+      await rm(tmpConfig, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -588,7 +588,7 @@ describe('生命周期竞态（lifecycle races）', () => {
     afterEach(async () => {
       await Promise.allSettled(procs.map(h => h.shutdown()))
       procs.length = 0
-      await rm(tmpDir, { recursive: true, force: true })
+      await rm(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     })
 
     it('LC-U1-ENTRY: 真实 IPC 上的 null 与超大字符串消息不炸 fork 宿主（warning 丢弃 + 截断），宿主继续工作', async () => {

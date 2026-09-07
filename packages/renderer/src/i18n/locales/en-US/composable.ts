@@ -5,7 +5,6 @@ export default {
   nextTurnSendFailed: 'Failed to send next turn: {msg}',
   stopFailed: 'Failed to stop: {msg}',
   compactFailed: 'Failed to compact: {msg}',
-  queueFlushFailed: 'Failed to resend queued messages, messages kept',
   bashFailed: 'Failed to run bash: {msg}',
   // `@` directive messages (U2b): empty-text guard + RPC failure (readable error, S8)
   subagentDirectiveEmpty: 'Directive message is empty, please type content for the subagent',
@@ -26,6 +25,8 @@ export default {
   branched: 'Branched',
   copyLabel: 'Copy',
   removeLabel: 'Remove',
+  // skill chip tooltip (C5): injection behavior + size cap (50KB = injection budget cap)
+  skillChipTitle: 'Injects the full skill text when sent (max 50KB)',
   yesterday: 'Yesterday',
   daysAgo: '{days} days ago',
   dateFormat: '{month}/{day}',

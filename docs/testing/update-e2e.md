@@ -44,3 +44,16 @@
   （即使点了 UpdateButton 也会落入 error 态——这是有意为之，P2 只验证「检测 → UI 显示」）。
 - L3 需等下次正式 release（v0.8.15+），在旧版本上手动跑全链路（下载 → 替换 → 重启）。
 - mock 的 `version: 999.999.999` 是「恒大于任何真实版本」的哨兵值，避免 compare-versions 误判。
+
+## data-testid 清单（UpdatePage.vue）
+
+| testid | 组件 | 所在文件 |
+|---|---|---|
+| switch-auto-update | 自动更新开关 | packages/renderer/src/components/settings/update/UpdatePage.vue |
+| select-update-source | 更新来源三选 Select（自动（推荐）/GitHub/AtomGit，切换即持久化） | packages/renderer/src/components/settings/update/UpdatePage.vue |
+| current-version-pill | 当前版本 pill | packages/renderer/src/components/settings/update/UpdatePage.vue |
+| switch-pre-download | 预下载开关 | packages/renderer/src/components/settings/update/UpdatePage.vue |
+| input-http-proxy / input-https-proxy | 代理输入（手动模式） | packages/renderer/src/components/settings/update/UpdatePage.vue |
+| btn-test-proxy / test-proxy-result / btn-save-proxy | 代理测试与保存操作栏 | packages/renderer/src/components/settings/update/UpdatePage.vue |
+
+> 内嵌的 UpdateCheckCard.vue（settings-update-check 等 13 个 testid）不在本表范围，登记属其他任务。

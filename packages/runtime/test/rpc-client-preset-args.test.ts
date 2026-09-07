@@ -38,13 +38,6 @@ vi.mock('node:child_process', () => ({
   }),
 }))
 
-vi.mock('node:readline', () => ({
-  createInterface: () => ({
-    on: vi.fn(),
-    close: vi.fn(),
-  }),
-}))
-
 // W-TR-2：用 importOriginal spread 保留 actual 符号（DEFAULT_PRESETS/BUILTIN_PRESET_IDS/
 // ThinkingLevel 等只读常量类型用 actual；仅覆盖 ENV_WHITELIST_PREFIXES 这一个可变环境白名单，
 // 避免 spawn 时把真实环境的几十个变量扫进 pi args 污染断言）。与同文件 pi-paths mock 模式对齐。

@@ -1,6 +1,7 @@
 <!--
-  Settings · 更新代理配置页。
-  代理模式选择 + 手动模式下 HTTP/HTTPS 代理输入 + 测试代理连接。
+  Settings · 更新设置页。
+  自动更新开关 + 更新来源三选（自动/GitHub/AtomGit）+ 当前版本 + 检查更新状态机
+  + 预下载开关 + 代理模式选择 + 手动模式下 HTTP/HTTPS 代理输入 + 测试代理连接。
 -->
 <template>
   <div class="flex max-w-[860px] flex-col gap-3">
@@ -20,6 +21,27 @@
             :disabled="autoUpdateSaving"
             @update:model-value="onToggleAutoUpdate"
           />
+        </div>
+        <!-- 更新来源行（三选：自动（推荐）/GitHub/AtomGit；选择即优先级，切换即持久化） -->
+        <div class="flex items-center justify-between border-t border-border px-4 py-3">
+          <Label class="text-[12px] text-fg">{{ t('settings.update.updateSourceLabel') }}</Label>
+          <Select
+            :model-value="updateSource"
+            :disabled="updateSourceSaving"
+            @update:model-value="(v) => onSourceChange(String(v))"
+          >
+            <SelectTrigger
+              class="h-8 w-[200px] px-2 text-[12px]"
+              data-testid="select-update-source"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">{{ t('settings.update.updateSourceAuto') }}</SelectItem>
+              <SelectItem value="github">{{ t('settings.update.updateSourceGithub') }}</SelectItem>
+              <SelectItem value="atomgit">{{ t('settings.update.updateSourceAtomgit') }}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         <!-- 当前版本行 -->
         <div class="flex items-center justify-between border-t border-border px-4 py-3">
@@ -169,7 +191,7 @@
 import { onMounted, ref, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Zap, Save, Loader2 } from '@lucide/vue'
-import type { IProxyConfig } from '@xyz-agent/shared'
+import type { IProxyConfig, UpdateSourcePref } from '@xyz-agent/shared'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
@@ -209,6 +231,19 @@ const autoUpdate = ref(false)
 /** 自动更新开关持久化中（切换时短暂 disable 控件） */
 const autoUpdateSaving = ref(false)
 
+/** 更新来源偏好枚举（与 SelectItem value 一一对应）。 */
+const UPDATE_SOURCE_PREFS = ['auto', 'github', 'atomgit'] as const
+
+/** 更新来源偏好（选择即优先级非独占：任一源失败仍自动降级另一源；切换即持久化） */
+const updateSource = ref<UpdateSourcePref>('auto')
+/** 更新来源持久化中（切换时短暂 disable 控件） */
+const updateSourceSaving = ref(false)
+
+/** 运行时守卫：把 Select 的字符串 value 收敛为 UpdateSourcePref 字面量联合（无需 as 断言）。 */
+function isUpdateSourcePref(value: string): value is UpdateSourcePref {
+  return (UPDATE_SOURCE_PREFS as readonly string[]).includes(value)
+}
+
 /** 当前应用版本（vite define 注入，全局声明见 env.d.ts） */
 const appVersion = __APP_VERSION__
 
@@ -235,6 +270,8 @@ async function loadConfig() {
   if (results[1].status === 'fulfilled') {
     preDownload.value = results[1].value.preDownload
     autoUpdate.value = results[1].value.autoUpdate ?? false
+    // 旧 settings 文件无 updateSource 字段 → 缺省回退 auto（D3 向后兼容）
+    updateSource.value = results[1].value.updateSource ?? 'auto'
   } else {
     console.error('[UpdatePage] load update settings failed:', results[1].reason)
   }
@@ -269,6 +306,25 @@ async function onTogglePreDownload(value: boolean | string): Promise<void> {
     toastError(err instanceof Error ? err.message : String(err))
   } finally {
     preDownloadSaving.value = false
+  }
+}
+
+/**
+ * 切换更新来源（立即持久化到 main 进程）。
+ * 仅写偏好，不触发 force 检查——偏好实际生效以检查缓存 TTL 为界
+ * （update-multi-source D3：手动「检查更新」才是 force 语义）。
+ */
+async function onSourceChange(value: string): Promise<void> {
+  if (!isUpdateSourcePref(value)) return
+  updateSourceSaving.value = true
+  try {
+    await setUpdateSettings({ updateSource: value })
+    updateSource.value = value
+  } catch (err) {
+    // 持久化失败：恢复控件到原值，toast 提示
+    toastError(err instanceof Error ? err.message : String(err))
+  } finally {
+    updateSourceSaving.value = false
   }
 }
 

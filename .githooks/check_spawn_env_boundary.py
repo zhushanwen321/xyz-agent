@@ -22,6 +22,10 @@ composeChildEnvBase）组装子进程 env；未经构建器的文件按调用点
    .spawn()、node:worker_threads 的 new Worker()、electron 的 utilityProcess.fork），
    外加显式 port 注入形态 deps.spawn()/deps.execFile()——规避 `ctx.xxx.spawn(...)`
    这类业务方法调用的误报；
+   promisify 产物名追踪：`const execFileAsync = promisify(execFile)` 的产物调用
+   写作 execFileAsync(，不命中裸 API 名正则（形态逃逸，process-probe.ts 实例）。
+   对非注释行上的 promisify 绑定提取「产物名 → 被包裹 API」，被包裹 API 确已
+   import 时把产物名注册为等价调用点模式（label 沿用被包裹 API 名）；
 3. 命中调用点后查 EXEMPT_CALLSITES（file 后缀 + 行内稳定子串指纹）：命中则放行并计入
    豁免统计。用行内容子串而非行号做指纹，代码平移不会让豁免静默漂移到新位置；
    豁免失效时宁可重新报警人工复核，不允许静默放行。
@@ -103,6 +107,10 @@ DEPS_PATTERNS = [
     ("deps.spawn", re.compile(r"deps\.spawn\s*\(")),
     ("deps.execFile", re.compile(r"deps\.execFile\s*\(")),
 ]
+# promisify 绑定形态：捕获（产物名, 被包裹符号）。仅追踪赋值绑定形态
+# （`const execFileAsync = promisify(execFile)`），内联 `promisify(execFile)(...)`
+# 本身即含裸 API 名、天然命中既有模式，无需追踪。
+PROMISIFY_BIND_RE = re.compile(r"(\w+)\s*=\s*promisify\s*\(\s*(\w+)\s*\)")
 PTY_SPAWN_TMPL = r"\b{ns}\.spawn\s*\("
 WORKER_RE = re.compile(r"\bnew\s+Worker\s*\(")
 UTILITY_FORK_RE = re.compile(r"\butilityProcess\.fork\s*\(")
@@ -128,6 +136,16 @@ EXEMPT_CALLSITES = [
         "execFile(",
         "孤儿 pi 进程回收前的 ps 只读探测：数组参数不经 shell、显式 timeout，"
         "仅读系统进程表，不向下游传递任何数据（设计文档 §3.6 R5 点名）",
+    ),
+    (
+        "services/background-task/process-probe.ts",
+        "execFileAsync(",
+        "D6 进程 start time 按需现测（promisify(execFile) 产物 execFileAsync，"
+        "powershell Get-Process / ps -o lstart 两调用点）：pid 复用防御，数组参数"
+        "不经 shell、显式 1s timeout，仅读系统进程表回读 stdout，无 env 传播意图"
+        "（与 reap-orphan-pi.ts / background-task-reaper.ts ps 探测先例同构，"
+        "设计文档 §3.6 R5 同源场景）；powershell 分支调用参数跨行，snippet 只能"
+        "锚定产物名本身，该产物在本文件的全部调用均属本条裁决范围",
     ),
     (
         "services/session/background-task-reaper.ts",
@@ -263,11 +281,23 @@ def active_call_patterns(source):
     只有真 import 了对应符号才激活对应模式，天然排除注释提及与方法式误报
     （ctx.terminalService.spawn 等）；deps.* 兕底模式无条件启用。"""
     patterns = []
+    imported_apis = set()
     for m in IMPORT_CHILD_PROCESS_RE.finditer(source):
-        names = _extract_brace_names(m.group(1))
-        for api in CHILD_PROCESS_APIS:
-            if api in names:
-                patterns.append((api, CALL_PATTERNS[api]))
+        imported_apis |= _extract_brace_names(m.group(1))
+    for api in CHILD_PROCESS_APIS:
+        if api in imported_apis:
+            patterns.append((api, CALL_PATTERNS[api]))
+    # promisify 产物名追踪：绑定提取跳过注释行（防注释示例激活），且仅当被包裹
+    # API 确已 import 才注册——与阶段 A「真 import 才激活」同哲学。
+    for line in source.splitlines():
+        if COMMENT_LINE_RE.match(line):
+            continue
+        for m in PROMISIFY_BIND_RE.finditer(line):
+            alias, wrapped = m.group(1), m.group(2)
+            if wrapped in imported_apis:
+                patterns.append(
+                    (wrapped, re.compile(r"(?<![\w.$])%s\s*\(" % re.escape(alias)))
+                )
     patterns.extend(DEPS_PATTERNS)
     m = IMPORT_NODE_PTY_RE.search(source)
     if m:

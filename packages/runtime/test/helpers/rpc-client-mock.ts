@@ -2,9 +2,14 @@
  * RpcClient 单元测试共享 mock 骨架（rpc-client*.test.ts 族）。
  *
  * 从 rpc-client-early-frame-buffer.test.ts 的 mock 段收敛为单源：mock node:child_process
- * 的 spawn + readline，捕获 pi stdout line handler / stdin 写入 / exit handlers，供
- * emitPiLine 驱动 RpcClient 的 handleMessage 与 lastWrittenJson 断言 sendCommand。
+ * 的 spawn，捕获 pi stdout data handler / stdin 写入 / exit handlers，供 emitPiLine 驱动
+ * RpcClient 的 handleMessage 与 lastWrittenJson 断言 sendCommand。
  * 不依赖真实 pi 进程。
+ *
+ * [HISTORICAL] D10（LF-only stdout framing）后 RpcClient 不再消费 node:readline，改为
+ * attachLfOnlyLineReader 在 proc.stdout 上挂 data handler。emitPiLine 桥接该 data handler，
+ * 直投「整行 + \n」由生产读取器分帧——与 rpc-client.test.ts 内联 mock 同款（先例注释：
+ * 「测试改为在 fake stdout 上桥接 'data' handler，emitPiLine 直投整行由读取器分帧」）。
  *
  * 使用模式（vi.mock 声明留测试文件——模块路径相对测试文件解析；工厂内 await import
  * 本文件转发，免疫 vitest hoist 时序；先例：subagent-core spawn-mock.ts）：
@@ -22,7 +27,7 @@ import type { PiMessage, RpcClient } from '../../src/infra/pi/rpc-client.js'
 
 // ── 捕获状态（每测试经 resetRpcClientMock 重置）──────────────────────
 
-let stdoutLineHandler: ((line: string) => void) | null = null
+let stdoutDataHandler: ((chunk: string | Buffer) => void) | null = null
 let procExitHandlers: Array<(code: number | null) => void> = []
 
 /** 捕获的 stdin 写入行（sendCommand 驱动用）。 */
@@ -35,7 +40,14 @@ const fakeProc = {
   }),
   off: vi.fn(),
   removeListener: vi.fn(),
-  stdout: { on: vi.fn(), resume: vi.fn(), destroy: vi.fn() },
+  stdout: {
+    on: vi.fn((event: string, handler: (chunk: string | Buffer) => void) => {
+      if (event === 'data') stdoutDataHandler = handler
+    }),
+    off: vi.fn(),
+    resume: vi.fn(),
+    destroy: vi.fn(),
+  },
   stderr: { on: vi.fn() },
   stdin: {
     write: vi.fn((chunk: string) => {
@@ -53,18 +65,6 @@ const fakeProc = {
 /** 'node:child_process' mock 工厂（spawn 返回 fakeProc）。 */
 export function childProcessModule() {
   return { spawn: () => fakeProc }
-}
-
-/** 'node:readline' mock 工厂（createInterface 捕获 stdout line handler）。 */
-export function readlineModule() {
-  return {
-    createInterface: () => ({
-      on: (event: string, handler: (line: string) => void) => {
-        if (event === 'line') stdoutLineHandler = handler
-      },
-      close: vi.fn(),
-    }),
-  }
 }
 
 /** '@xyz-agent/shared' mock 工厂（importActual spread，仅覆盖 ENV_WHITELIST_PREFIXES）。 */
@@ -110,7 +110,7 @@ export function loggerModule() {
 /** 每测试前重置捕获状态与 fakeProc mock 记录（beforeEach 调用）。 */
 export function resetRpcClientMock(): void {
   stdinWrites.length = 0
-  stdoutLineHandler = null
+  stdoutDataHandler = null
   procExitHandlers = []
   fakeProc.on.mockClear()
   fakeProc.stdin.write.mockClear()
@@ -129,10 +129,10 @@ export async function killAndDriveExit(client: RpcClient): Promise<void> {
   await killPromise
 }
 
-/** 把伪造的 pi stdout JSONL 行投递给 RpcClient 的 line handler（驱动 handleMessage）。 */
+/** 把伪造的 pi stdout JSONL 行投递给 RpcClient 的 stdout data handler（LF-only 读取器分帧后驱动 handleMessage）。 */
 export function emitPiLine(obj: Record<string, unknown>): void {
-  if (!stdoutLineHandler) throw new Error('stdout line handler not registered yet')
-  stdoutLineHandler(JSON.stringify(obj))
+  if (!stdoutDataHandler) throw new Error('stdout data handler not registered yet')
+  stdoutDataHandler(JSON.stringify(obj) + '\n')
 }
 
 /** 从 stdin 写入里解析出最后一条 JSON 对象（取 sendCommand 注册的 pending id 用）。 */

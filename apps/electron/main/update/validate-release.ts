@@ -8,25 +8,23 @@
  * 做防御纵深校验（m11）——preloaded 是磁盘写入面，可能被绕过 download 路径篡改。
  *
  * [HISTORICAL] 设计要点：
- * - downloadUrl 白名单：只允许 GitHub release assets CDN（github.com +
- *   objects.githubusercontent.com）的 https URL（防 SSRF + file:// + 内网探测）
+ * - downloadUrl 白名单：只允许两源 release 下载域（GitHub：github.com +
+ *   objects.githubusercontent.com；AtomGit：gitcode.com——多源改造 D6）的 https URL
+ *   （防 SSRF + file:// + 内网探测）。域集合消费 release-sources 的
+ *   ALLOWED_DOWNLOAD_HOSTS 单一来源（D1 防漂移：白名单与适配器产物落域同源，
+ *   本模块不再各自维护副本）
  * - asset.name 白名单字符集 [\w.\-]：防路径遍历（../）+ shell 元字符注入
  *   （name 会被拼进 spawn 脚本路径，含 `;`/`$`/空格 会触发命令注入）
  * - version 严格数字格式：version 也会出现在脚本上下文，必须无特殊字符
  * - sha256 若存在必须是 64 位 hex：防注入到 bash 脚本
  * - 缺失的 asset（undefined）跳过，不强制每平台都存在（按平台分流，单平台 release 合法）
  *
- * 依赖方向：validate-release → @xyz-agent/shared + ./types
+ * 依赖方向：validate-release → @xyz-agent/shared + ./types + ./release-sources（域常量）
  */
 import { URL } from 'node:url'
 import type { LatestReleaseInfo, ReleaseAsset } from '@xyz-agent/shared'
 import { UpdateError } from './types.js'
-
-/** 允许的下载域名（GitHub release assets CDN） */
-const ALLOWED_HOSTS = new Set([
-  'github.com',
-  'objects.githubusercontent.com',
-])
+import { ALLOWED_DOWNLOAD_HOSTS } from './release-sources.js'
 
 /** asset name 只允许字母/数字/下划线/点/横线（防路径遍历 + shell 注入） */
 const ASSET_NAME_RE = /^[\w.\-]+$/
@@ -40,8 +38,8 @@ const SHA256_RE = /^[0-9a-f]{64}$/i
 /**
  * 校验 renderer 传来的 LatestReleaseInfo payload。
  *
- * 防 SSRF（downloadUrl 必须是 GitHub 域名的 https）、路径遍历（name 无 / 或 ..）、
- * shell 注入（name / version / sha256 严格白名单字符集）。
+ * 防 SSRF（downloadUrl 必须是白名单域（两源下载域，见 ALLOWED_DOWNLOAD_HOSTS）的 https）、
+ * 路径遍历（name 无 / 或 ..）、shell 注入（name / version / sha256 严格白名单字符集）。
  *
  * @param release renderer 经 IPC 传来的 release payload
  * @throws UpdateError('downloading') 校验失败
@@ -76,7 +74,7 @@ function validateAsset(asset: ReleaseAsset): void {
   if (url.protocol !== 'https:') {
     throw new UpdateError(`download url must be https: ${asset.downloadUrl}`, 'downloading')
   }
-  if (!ALLOWED_HOSTS.has(url.hostname)) {
+  if (!ALLOWED_DOWNLOAD_HOSTS.has(url.hostname)) {
     throw new UpdateError(`download url host not allowed: ${url.hostname}`, 'downloading')
   }
   // sha256 若存在必须是 64 位 hex（防注入到 bash 脚本）

@@ -9,7 +9,7 @@
  *   kill('SIGKILL')（非 this.kill()——后者置 _killing=true 会让 exit 通知被跳过）；
  *   stream error 本身不触发通知，死亡通知唯一出口是 proc 'exit' 事件，恰好一次（防双通知）。
  *
- * 策略：沿用 rpc-client-bash.test.ts 的 mock node:child_process + readline 模式。
+ * 策略：沿用 rpc-client-bash.test.ts 的 mock node:child_process 模式。
  * 差异：stdout/stderr 是可 emit 'error' 的 fake stream（捕获 handler）；proc.kill 只记录
  * 调用不自动 emit exit——exit 由测试手动 emit，才能断言「kill 已调但通知未发」的中间态
  * （mock 层验证调用，不依赖 OS 时序）。
@@ -66,13 +66,6 @@ const fakeProc = {
 }
 
 vi.mock('node:child_process', () => ({ spawn: () => fakeProc }))
-
-vi.mock('node:readline', () => ({
-  createInterface: () => ({
-    on: vi.fn(),
-    close: vi.fn(),
-  }),
-}))
 
 vi.mock('@xyz-agent/shared', async (importOriginal) => {
   // U3 起 rpc-client 经 infra/spawn-env 门面消费 shared 的 buildOutboundChildEnv；

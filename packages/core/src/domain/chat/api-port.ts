@@ -10,15 +10,22 @@
  * getHistory 返回类型用内联结构（{ messages; historyTruncated }），不依赖 renderer 的
  * HistoryResult（保持 core 平台无关）。
  */
-import type { Message, Segment, ServerMessageUnion } from '@xyz-agent/shared'
+import type { Message, SegmentsMetadataEntry, ServerMessageUnion } from '@xyz-agent/shared'
 
 /**
  * chat 域后端操作端口。
  * 壳侧实现：renderer 现 api/domains/chat（函数集组装成对象注入）。
  */
 export interface ChatApiPort {
-  /** 发送消息（message.send RPC）*/
-  send(sessionId: string, promptText: string): Promise<void>
+  /**
+   * 发送消息（message.send RPC）。
+   *
+   * options.clientUuid（session-occupancy-send-closure D2）：调用方乐观插入的 user message
+   * id（`u-<uuid>`），经 RPC 参数透传，runtime 拒绝时在 send.rejected 广播原样带回——
+   * renderer 兜底 handler 据此消歧发送来源（flush 重放的拒绝不重入队）。可选参数，
+   * 不传时 RPC payload 不带 clientUuid 键（向后兼容）。
+   */
+  send(sessionId: string, promptText: string, options?: { clientUuid?: string }): Promise<void>
   /**
    * subagent 定向消息 / 生命周期操作（session.subagentAction RPC，composer 四符号 `@` 发送分流）。
    * 契约对齐 renderer api/domains/session.subagentAction（U5 扩签名）：action='message' 带
@@ -60,8 +67,10 @@ export interface ChatApiPort {
  * 独立于 ChatApiPort：writeSegments 语义属 session 域（session.writeSegments RPC），
  * useChat 只是消费者。独立类型避免塞进 ChatApiPort 造成域语义混淆。壳侧实现：
  * renderer api/domains/session.writeSegments。
+ * [defer segments 化] entry 类型改用 shared SegmentsMetadataEntry（原内联结构）——
+ * defer flush 链条目写 deferEntryId（无 clientUuid），直发链仍写 clientUuid。
  */
 export type WriteSegmentsFn = (payload: {
   sessionId: string
-  entry: { clientUuid: string; segments: Segment[]; timestamp: number }
+  entry: SegmentsMetadataEntry
 }) => Promise<void>

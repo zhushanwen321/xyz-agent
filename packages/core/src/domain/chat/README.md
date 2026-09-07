@@ -126,8 +126,8 @@ markBashError 承载，不应被 assistant 收口误清（原 finalizeBashOnly �
 `finalizeAllStreaming`（F1 修正 + W3 瞬态全收口）：遍历所有可能持有瞬态态的 session，对每个有
 瞬态态的调 `resetTransientStates`。useConnection runtime 重启/失败/断连时调此 helper，确保后台
 session 的全部瞬态指示位收口，避免 UI 在断连后永久卡「生成中 / 压缩中 / 重试中 / 队列中」。
-遍历范围是 `messages.keys() ∪ compactingSessions ∪ retryStates ∪ queueStates` 的并集——不能只
-遍历 `messages.keys()`（compacting / retry / queue 可能独立于消息存在，如 setCompacting 直接置位、
+遍历范围是 `messages.keys() ∪ occupancy 投影中 compacting 的 sid ∪ retryStates ∪ queueStates` 的并集——不能只
+遍历 `messages.keys()`（compacting / retry / queue 可能独立于消息存在，如 session.occupancy 帧直接写 occupancy 投影、
 auto_retry_start 只写 retryStates 不写 messages），仅遍历 messages 会漏掉这些 session。
 
 `resetTransientStates`（W3）：一次性清理指定 session 的全部瞬态指示位。背景：断连 / runtime 重启

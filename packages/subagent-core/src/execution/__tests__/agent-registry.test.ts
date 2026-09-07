@@ -145,7 +145,7 @@ model: x/y`);
 describe("AgentRegistry.loadByPath", () => {
   let ws: string;
   beforeEach(() => { ws = tmpWorkspace(); });
-  afterEach(() => { fs.rmSync(ws, { recursive: true, force: true }); });
+  afterEach(() => { fs.rmSync(ws, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }); });
 
   it("按绝对路径加载 agent：frontmatter + body → AgentConfig", () => {
     const file = writeAgent(path.join(ws, ".pi", "agents"), "worker", `---

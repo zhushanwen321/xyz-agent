@@ -66,7 +66,7 @@ describe('persistAgentBinding', () => {
       const sidecarFiles = readdirSync(dir).filter((f: string) => f.includes('.agent.json'))
       expect(sidecarFiles.length).toBe(0)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -99,7 +99,7 @@ describe('persistAgentBinding', () => {
       expect(result!.spawnSource).toBe('agent')
       expect(result!.parentAgentSessionId).toBe('parent-123')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })
@@ -143,7 +143,7 @@ describe('A3b: 缓存失效集成', () => {
         delete process.env.XYZ_AGENT_DATA_DIR
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })
@@ -159,7 +159,7 @@ describe('readAgentBinding', () => {
       const result = readAgentBinding(fp)
       expect(result).toBeUndefined()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -176,7 +176,7 @@ describe('readAgentBinding', () => {
       const result = readAgentBinding(fp)
       expect(result).toBeUndefined()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -193,7 +193,7 @@ describe('readAgentBinding', () => {
       const result = readAgentBinding(fp)
       expect(result).toBeUndefined()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -211,7 +211,7 @@ describe('readAgentBinding', () => {
       expect(result?.spawnSource).toBe('agent')
       expect(result?.parentAgentSessionId).toBeUndefined()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })
@@ -250,7 +250,7 @@ describe('persistModelBinding', () => {
       persistModelBinding(nonExistentFile, 'provider/model1', 'high')
       expect(existsSync(sidecarPath)).toBe(false)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -276,7 +276,7 @@ describe('persistModelBinding', () => {
       expect(result!.modelId).toBe('xiaomi/mimo-v2.5-pro')
       expect(result!.thinkingLevel).toBe('high')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -289,7 +289,7 @@ describe('persistModelBinding', () => {
       persistModelBinding(fp, '', 'high')
       expect(existsSync(sidecarPath)).toBe(false)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -323,7 +323,7 @@ describe('persistModelBinding', () => {
         delete process.env.XYZ_AGENT_DATA_DIR
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })
@@ -337,7 +337,7 @@ describe('readModelBinding', () => {
       const result = readModelBinding(fp)
       expect(result).toBeUndefined()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -350,7 +350,7 @@ describe('readModelBinding', () => {
       const result = readModelBinding(fp)
       expect(result).toBeUndefined()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -363,7 +363,7 @@ describe('readModelBinding', () => {
       const result = readModelBinding(fp)
       expect(result).toBeUndefined()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
@@ -377,7 +377,7 @@ describe('readModelBinding', () => {
       expect(result?.modelId).toBe('p/m')
       expect(result?.thinkingLevel).toBe('')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })
@@ -425,7 +425,7 @@ describe('M4: purge 清单含 .model.json', () => {
         expect(existsSync(fp + suffix)).toBe(false)
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })

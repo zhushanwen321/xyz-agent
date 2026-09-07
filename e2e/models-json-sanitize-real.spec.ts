@@ -114,6 +114,6 @@ test('M1 (e2e real): 空壳 provider 致 bundled pi 拒绝加载 models.json，s
     expect(afterOutput).not.toContain('Failed to load models.json')
     expect(afterOutput, '合法 provider 的模型应被列出').toMatch(/legal\s+gpt-4o/)
   } finally {
-    fs.rmSync(dataDir, { recursive: true, force: true })
+    fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 })

@@ -16,7 +16,8 @@ export function useCommandPopoverFileCandidates(sessionId: Ref<string | undefine
 
   // 异步加载文件候选（store 缓存命中则不重拉；无 session 时不加载）
   async function loadCandidates(): Promise<void> {
-    if (!sessionId.value) return // landing 态无 cwd，不加载文件候选
+    // panel 路以 session 为键（store 缓存）；landing cwd 路走 open-fetch 边沿拉（见 command-popover-open-fetch.ts）
+    if (!sessionId.value) return
     const nodes = await loadFileCandidates(sessionId.value)
     fileCandidates.value = toFileCandidates(nodes)
   }

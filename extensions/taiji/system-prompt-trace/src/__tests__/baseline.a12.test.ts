@@ -54,7 +54,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	rmSync(rootDir, { recursive: true, force: true });
+	rmSync(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 function makeHarness(initialPrompt: string): FsHarness {

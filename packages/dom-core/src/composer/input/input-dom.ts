@@ -353,6 +353,30 @@ export function detectSlashTriggerFromEl(el: HTMLDivElement | null): { query: st
   return matchTriggerBeforeCursor(el, /(?:^|\n)\/(\S*)$/)
 }
 
+/**
+ * skill 名合法 pattern（多 skill 注入设计 D1 误弹缓解）：小写字母/数字/连字符，0-64 字符
+ * （0 = 刚敲完 `/` 无 query，合法——浮层列出全部 skill；64 对齐 pi MAX_NAME_LENGTH）。
+ */
+const SKILL_QUERY_PATTERN = /^[a-z0-9-]{0,64}$/
+
+/**
+ * skill 触发检测（多 skill 注入设计 D1）：行中空白（非换行）后 `/` 触发 skill-only 浮层。
+ *
+ * 正则 /[^\S\n]\/(\S*)$/：`[^\S\n]` = 空白但非换行（半角空格/tab/全角空格 U+3000/NBSP
+ * 全覆盖，对齐 `#`/`$`/`@` 的 \s 空白语义仅排除 \n）——行首与换行后行首完整让位现有
+ * 命令浮层（detectSlashTriggerFromEl），两正则触发域互斥无重叠（D1 仲裁：行首归命令，
+ * 行中空白后归 skill），同一次输入至多一路命中。
+ *
+ * query 合法性过滤（D5 翻案后的误弹缓解）：query 一旦含 `/`、大写、下划线等 skill 名
+ * 非法字符立即返回 null（关闭浮层）——「帮我看看 /usr」输到第二个 `/` 即关闭（场景 6①）。
+ * 返回 null 的两种含义（无光标 / 不命中或 query 非法）由调用方语境区分（同四符号前置约定）。
+ */
+export function detectSkillTriggerFromEl(el: HTMLDivElement | null): { query: string } | null {
+  const hit = matchTriggerBeforeCursor(el, /[^\S\n]\/(\S*)$/)
+  if (!hit) return null
+  return SKILL_QUERY_PATTERN.test(hit.query) ? hit : null
+}
+
 // ── 来自 useContenteditableInput：光标 / 视觉行 ──
 
 /**

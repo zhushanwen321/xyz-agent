@@ -84,7 +84,7 @@ describe("worktree-git-ops", { timeout: 30_000 }, () => {
 
   afterEach(() => {
     resetCoreForTests();
-    fs.rmSync(outerDir, { recursive: true, force: true });
+    fs.rmSync(outerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   /**

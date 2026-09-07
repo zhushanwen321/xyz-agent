@@ -19,7 +19,7 @@ export default {
     thinkingLevel: '思考级别',
     compacting: '压缩中…',
     queueSend: '排队发送',
-    commandQueuedRejected: '压缩进行中，命令请等待完成后使用',
+    commandQueuedRejected: '会话占用中，命令请等待完成后使用',
     sending: '发送中…',
     sendHint: '输入内容后发送',
     steerHint: '想补充什么？⏎ 加入当前任务 · Alt+⏎ 排到下一轮…',
@@ -42,7 +42,6 @@ export default {
   message: {
     copy: '复制',
     edit: '编辑',
-    thinking: '思考中',
     working: '工作中',
     worked: '已工作',
     steer: 'STEER',
@@ -164,6 +163,20 @@ export default {
     resetRemainingMinutes: '剩{m}m',
     resetRemainingSoon: '<1m',
     resetEmpty: '--',
+    // composer-gen-stats 双触发器（docs/design/composer-gen-stats.md §3.1 / §3.3 D5）
+    genStatsSpeedTitle: 'TOKEN 速度',
+    genStatsCacheTitle: '缓存命中率',
+    genStatsCurrent: '本次',
+    // 「本次」label 的 hover 补句（C4）：current 无窗口过滤，样本可能来自较早的记录
+    genStatsCurrentNote: '来自最近一次请求的记录',
+    genStatsCurrentReq: '本次请求',
+    genStatsDay: '今日均值（此模型）',
+    genStatsD7: '近 7 天',
+    genStatsD30: '近 30 天',
+    genStatsDayShort: '今日加权',
+    genStatsSpeedNote: 'output tokens ÷ 生成耗时，按模型分文件累计（加权平均）；按单次 LLM 请求耗时计算，不含工具执行时间',
+    genStatsCacheNote: 'cacheRead ÷ (input + cacheRead + cacheWrite)；模型不支持缓存时恒为 0%',
+    genStatsNoData: '暂无数据',
   },
   sideDrawer: {
     title: '侧边抽屉',
@@ -205,6 +218,34 @@ export default {
     workflowRunning: '运行中',
     workflowPending: '等待中',
     unreadMessages: '抽屉打开期间有 {count} 条新消息',
+    // 后台命令 tab（background-task-sidebar-view D5：drawer bashTask 详情）。
+    // 术语裁决（设计 §1）：用户可见命名一律「后台命令」，与 subagent 的「后台任务」区分
+    tabBashTask: '后台命令',
+    noBashTask: '未选中后台命令',
+    bashTaskHint: '在侧边栏「后台命令」列表中点击任务查看详情',
+    bashTaskStartedAt: '开始 {time}',
+    bashTaskRunningFor: '已运行 {duration}',
+    bashTaskDuration: '耗时 {duration}',
+    bashTaskExitCode: 'exit {code}',
+    // reason 五态（D6-en：killed = UI 代杀经 intent 读回；process-exit = 属主 pi 进程退出）
+    bashTaskReasonNatural: '自然退出',
+    bashTaskReasonTimeout: '超时终止',
+    bashTaskReasonKilled: '手动终止',
+    bashTaskReasonProcessExit: '进程退出',
+    bashTaskReasonOrphaned: '孤儿回收',
+    bashTaskOutputUnavailable: '输出不可用（文件已清理）',
+    bashTaskOutputEmpty: '暂无输出',
+    // D5：truncated 回执消费——输出超字节窗口（默认 32KB）提示仅显示尾部
+    bashTaskOutputTruncated: '输出超过 32KB，仅显示尾部',
+    bashTaskCopyCommand: '复制命令',
+    bashTaskCopyOutputFile: '复制输出文件路径',
+    bashTaskCopied: '已复制',
+    bashTaskKill: '终止任务',
+    bashTaskKillConfirm: '确认终止',
+    // kill 回执分支④⑤ toast（设计 §3.1 失败路径原文）
+    bashTaskAlreadyExited: '任务已结束',
+    bashTaskIdentityUnverifiable: '无法验证进程身份，已拒绝终止（宁不杀勿误杀）',
+    bashTaskWriteFailed: '操作未生效（数据写入失败），请重试',
   },
   browserPane: {
     back: '后退',
@@ -287,6 +328,12 @@ export default {
     // 四符号体系（@ subagent 浮层）
     newSubagent: '＋ 新建 subagent',
     newSubagentPlaceholder: '新任务',
+    // skill 浮层已选项标记（多 skill 注入 D2）
+    skillSelected: '已选',
+    // $ file 浮层 landing cwd 路（D7）：截断 / 失败 / 无结果三态提示
+    fileLoadFailed: '加载失败，点击重试',
+    fileTruncated: '结果超过 5000 项已截断',
+    fileNoResults: '当前目录无匹配文件',
   },
   queue: {
     title: '队列',
@@ -302,10 +349,16 @@ export default {
     followupLabel: 'FOLLOWUP 新轮',
     itemCount: '{count} 条',
   },
-  compactQueue: {
-    pending: '压缩后发送',
-    itemCount: '{count} 条',
-    cancel: '取消排队',
+  deferQueue: {
+    pendingHint: '占用结束后发送',
+    // [D1] 按占用类型分档的 hover 文案（小时级 bash 等长占用下「等什么结束」可操作）
+    pendingHintCompacting: '等待上下文压缩完成后发送',
+    pendingHintBash: '等待命令执行结束后发送',
+    pendingHintSettling: '等待当前回合结束后发送',
+    cancelQueued: '撤销排队',
+    submittedAwaitingDelivery: '已提交，等待投递',
+    chipBadge: '+{count}',
+    chipBadgeHint: '含 {count} 个附件/引用，将随消息一并发送',
   },
   contextChips: {
     directory: '目录',
@@ -340,6 +393,15 @@ export default {
     view: '查看',
     viewBranch: '查看分支',
     dismiss: '关闭',
+  },
+  skillNotice: {
+    // C5 补恢复动作：预算超限降级的可操作提示（减少 skill / 换大窗口模型）
+    degradeBudget: '已按标记模式注入（预算超限），模型可自行读取 skill 文件；减少 skill 数量或切换更大窗口模型可恢复全文注入',
+    degradeWindow: '窗口信息获取失败，已按标记模式注入',
+    missing: 'skill {names} 不存在，已按原文透传',
+    readFailed: 'skill {names} 读取失败，已按原文透传',
+    malformed: 'skill 标记已损坏，已按原文透传',
+    mappingUnavailable: 'skill 映射服务不可用，已按原文透传',
   },
   retryIndicator: {
     retrying: '重试中',

@@ -196,7 +196,7 @@ describe('buildFamilyFromFs - fixture', () => {
     dir = await makeAgentDir()
   })
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('基础 family：root + fork + 隔代 subagent，SubagentRef.sessionId 是真实 id（非 sa-xxx）', async () => {
@@ -514,7 +514,7 @@ describe('listRecordManifests 导出（w2 TC1）', () => {
     dir = await makeAgentDir()
   })
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('导出生效：import + 调用返回 RecordManifest[]，字段完整', async () => {
@@ -545,7 +545,7 @@ describe('U4 buildFamilyFromFs 富化（manifest 主 / P-fallback）', () => {
     dir = await makeAgentDir()
   })
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('TC-u4-manifest-enrich: alive + manifest 全字段 → SubagentRef 富字段全透传', async () => {

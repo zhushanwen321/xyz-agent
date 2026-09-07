@@ -40,7 +40,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	delete process.env.PI_CODING_AGENT_DIR;
-	rmSync(tempDir, { recursive: true, force: true });
+	rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 	clearConfigCache();
 });
 

@@ -11,11 +11,20 @@ const noopGitInfoReader: IGitInfoReader = { readGitInfo: () => undefined, pruneS
 
 // Mock child_process.spawn to capture spawn args
 const spawnArgsCapture: { args: string[]; cwd: string | undefined }[] = []
-vi.mock('node:child_process', () => ({
-  spawn: (_cmd: string, args: string[], options: { cwd?: string }) => {
+// [u-runtime-rpc 领地扩展授权] importOriginal spread 补 mock 缺口：本测试模块图经
+// session-service → background-task-service → process-probe 引入 execFile 消费者
+// （process-probe 顶层 promisify(execFile)），纯字面量工厂缺该导出会在模块加载期炸掉
+// 全部用例。spawn 保持既有 mock 语义不变（capture + nextTick exit），其余导出走真实模块。
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return {
+    ...actual,
+    spawn: (_cmd: string, args: string[], options: { cwd?: string }) => {
     spawnArgsCapture.push({ args: [...args], cwd: options?.cwd })
     const fakeProc = {
       on: vi.fn(),
+      off: vi.fn(),
+      removeListener: vi.fn(),
       stdout: { on: vi.fn() },
       stderr: { on: vi.fn() },
       stdin: { write: vi.fn() },
@@ -30,7 +39,8 @@ vi.mock('node:child_process', () => ({
     })
     return fakeProc
   },
-}))
+  }
+})
 
 // Mock pi-config-bridge — the central config module
 const mockSkillPaths: string[] = []

@@ -46,7 +46,7 @@ describe('ConfigService terminal config (Phase 6)', () => {
   })
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ── getTerminalConfig ────────────────────────────────────────────

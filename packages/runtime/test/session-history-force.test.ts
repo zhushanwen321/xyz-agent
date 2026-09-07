@@ -60,7 +60,7 @@ describe('路径解析消费方 force 旁路 TTL（W26 M-3）', () => {
   })
 
   afterEach(() => {
-    rmSync(sessionDir, { recursive: true, force: true })
+    rmSync(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     invalidateScanDirCache()
   })
 

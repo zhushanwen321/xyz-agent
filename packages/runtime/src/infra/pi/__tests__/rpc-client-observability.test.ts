@@ -10,8 +10,8 @@
  *   _killing 主动 kill 不写；code=null（信号死亡）属异常退出照写；超 1MB 字节上限丢
  *   最旧并标注 truncated；exitCallback 的 stderr 载荷仍为尾部（展示路径不变）。
  *
- * 策略：沿用 rpc-client-exit-multicast.test.ts 的 mock 骨架（node:child_process +
- * readline），差异：stderr fake stream 捕获 'data' handler 可注入行；logger 模块 mock
+ * 策略：沿用 rpc-client-exit-multicast.test.ts 的 mock 骨架（node:child_process），
+ * 差异：stderr fake stream 捕获 'data' handler 可注入行；logger 模块 mock
  * 提供 writePiCrashLog spy 记录调用（生产 rpc-client 对该符号 optional-call，此处提供
  * spy 验证真实接线）。
  *
@@ -79,10 +79,6 @@ vi.mock('node:child_process', () => ({
     capturedEnv = opts?.env ?? null
     return fakeProc
   },
-}))
-
-vi.mock('node:readline', () => ({
-  createInterface: () => ({ on: vi.fn(), close: vi.fn() }),
 }))
 
 vi.mock('@xyz-agent/shared', async (importOriginal) => {

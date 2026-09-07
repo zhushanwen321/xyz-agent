@@ -65,7 +65,7 @@ beforeAll(() => {
 })
 
 afterAll(() => {
-  if (tmpDir && existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true })
+  if (tmpDir && existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 describe.skipIf(!HAS_DEV_PROVIDERS)('E1-E3 real 层持久化验证', () => {

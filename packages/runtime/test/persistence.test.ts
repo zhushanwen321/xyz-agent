@@ -22,7 +22,7 @@ describe('Persistence · F8/F9 失败路径', () => {
   })
 
   afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true })
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   // ── F8: 持久化文件损坏降级 ─────────────────────────────────────

@@ -301,13 +301,20 @@ else
     echo -e "  ${GREEN}✓ ${AVAILABLE_GB}GB 可用${NC}"
 fi
 
-# ── 10. extension-dependencies.json 一致性 ─────────────────────────
-# S-7 守卫：文件与磁盘包清单双向对应（防 R1 MF-6 类残留/漂移再次静默进入）。
-# 脚本：scripts/check-extension-dependencies.mjs（零依赖，node 直接跑）。
+# ── 10. extension 发布一致性 ────────────────────────────────────────
+# S-7 守卫：extension-dependencies.json 与磁盘包清单双向对应（防 R1 MF-6 类残留/漂移
+# 再次静默进入）。脚本：scripts/check-extension-dependencies.mjs（零依赖）。
+# files 白名单守卫：npm 发布闭包校验（import 闭包 ⊆ files，防 pi-subagent-workflow@8.8.1
+# 类缺文件包）。脚本：scripts/check-extension-files.mjs（零依赖）。
 echo ""
-echo -e "${BLUE}[10/10] extension-dependencies.json consistency...${NC}"
+echo -e "${BLUE}[10/10] extension consistency (dependencies + publish files)...${NC}"
 if node "$PROJECT_ROOT/scripts/check-extension-dependencies.mjs"; then
     echo -e "  ${GREEN}✓ extension-dependencies 一致${NC}"
+else
+    FAILED=1
+fi
+if node "$PROJECT_ROOT/scripts/check-extension-files.mjs"; then
+    echo -e "  ${GREEN}✓ extension files 白名单一致${NC}"
 else
     FAILED=1
 fi

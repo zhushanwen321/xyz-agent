@@ -33,6 +33,7 @@ import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
 import {
   bindDrawerSessionId,
   openDrawerTab,
+  getDrawerControlState,
   _resetDrawerForTest,
 } from '@xyz-agent/core/domain/drawer'
 
@@ -98,6 +99,8 @@ async function mountContainer() {
         DetailPane: DesktopStub('DetailPane', 'detail-panel'),
         BrowserPane: DesktopStub('BrowserPane', 'browser-pane'),
         TerminalView: DesktopStub('TerminalView', 'terminal-panel'),
+        // bashTask tab 内容面板（background-task-sidebar-view D5③）同样 stub（接线断言面）
+        BackgroundTaskDetailPanel: DesktopStub('BackgroundTaskDetailPanel', 'bash-task-detail-panel'),
       },
     },
   })
@@ -195,6 +198,37 @@ describe('PanelContainer 内容区 fallback（browser 无 URL）', () => {
     // C2 contract：browser 无 url 时不注入 BrowserPane，DrawerPanel 空态 fallback
     expect(wrapper.find('[data-testid="browser-pane"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="drawer-widget-empty"]').exists()).toBe(true)
+  }, 60_000)
+})
+
+// bashTask tab 接线（background-task-sidebar-view D5③：v-if chain 加分支 + 未选中空态 fallback）
+describe('PanelContainer bashTask tab 接线（D5③）', () => {
+  it('bashTask + 已选中任务 → 注入 BackgroundTaskDetailPanel（stub 面板渲染）', async () => {
+    const panel = usePanelStore()
+    panel.loadSession(ROOT_PANEL_ID, 's-bash-selected')
+    // 模拟列表 item 点击写入（D5④ 写入面：core 分区 selectedBackgroundTaskId）
+    getDrawerControlState().selectedBackgroundTaskId = 'bt-20260906-a1b2c3'
+    openDrawerTab('bashTask')
+
+    const wrapper = await mountContainer()
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="bash-task-detail-panel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="drawer-widget-empty"]').exists()).toBe(false)
+  }, 60_000)
+
+  it('bashTask + 未选中任务（selectedBackgroundTaskId undefined）→ 不注入 → DrawerPanel 空态 fallback', async () => {
+    const panel = usePanelStore()
+    panel.loadSession(ROOT_PANEL_ID, 's-bash-empty')
+    openDrawerTab('bashTask')
+
+    const wrapper = await mountContainer()
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="bash-task-detail-panel"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="drawer-widget-empty"]').exists()).toBe(true)
+    // bashTask tab 按钮随 SideDrawerTab 扩展常驻（DrawerPanel D5②）
+    expect(wrapper.find('[data-testid="drawer-tab-bashTask"]').exists()).toBe(true)
   }, 60_000)
 })
 

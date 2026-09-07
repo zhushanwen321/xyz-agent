@@ -60,10 +60,38 @@ describe('applyEntry reducer 确定性 —— 同序列两次喂入 state 全等
     ])
   })
 
-  it('skill block 剖离：带 location / 多 skill 只取首个（L93/L130 fixture）', () => {
-    expectDeterministic([
-      { role: 'user', content: [{ type: 'text', text: '<skill name="code-review" location="/abs/SKILL.md">skill body</skill>do the thing' }], timestamp: 1000 },
+  it('skill 反解析：pi 原生 block 存量等价 + 多 block 全还原（「只取首个」是升级前捕获组锚定 $ 的副产物，非契约）', () => {
+    // 场景 4⑤ 存量回归形态：block 前置 + \n\nargs 在后 → [skill, args-text] 与升级前一致
+    // 混排形态：多 block 全部还原，block 间与尾部正文保留（升级前第二个 block 沦为字面文本）
+    const state = expectDeterministic([
+      { role: 'user', content: [{ type: 'text', text: '<skill name="code-review" location="/abs/SKILL.md">skill body</skill>\n\ndo the thing' }], timestamp: 1000 },
       { role: 'user', content: [{ type: 'text', text: '<skill name="first">A</skill><skill name="second">B</skill>tail' }], timestamp: 2000 },
+    ])
+    expect((state.messages[0]!.content as Segment[])).toEqual([
+      { type: 'skill', name: 'code-review', location: '/abs/SKILL.md' },
+      { type: 'text', text: 'do the thing' },
+    ])
+    expect((state.messages[1]!.content as Segment[])).toEqual([
+      { type: 'skill', name: 'first' },
+      { type: 'skill', name: 'second' },
+      { type: 'text', text: 'tail' },
+    ])
+  })
+
+  it('skill 反解析：xyz 标记两形态（单标记混排 + 降级块）——标记前后正文全保留（D7 缺陷修复锁定）', () => {
+    const state = expectDeterministic([
+      { role: 'user', content: [{ type: 'text', text: '帮我 review<xyz-skill name="a" location="/a/SKILL.md"/> 这段代码' }], timestamp: 1000 },
+      { role: 'user', content: [{ type: 'text', text: '正文\n<xyz-skills>\n<xyz-skill name="x" location="/x/SKILL.md"/>\n</xyz-skills>\nUse the read tool to load the skill files above before continuing the task\n收尾' }], timestamp: 2000 },
+    ])
+    expect((state.messages[0]!.content as Segment[])).toEqual([
+      { type: 'text', text: '帮我 review' },
+      { type: 'skill', name: 'a', location: '/a/SKILL.md' },
+      { type: 'text', text: ' 这段代码' },
+    ])
+    expect((state.messages[1]!.content as Segment[])).toEqual([
+      { type: 'text', text: '正文\n' },
+      { type: 'skill', name: 'x', location: '/x/SKILL.md' },
+      { type: 'text', text: '\n收尾' },
     ])
   })
 
@@ -597,6 +625,42 @@ describe('live ≡ reload 构造性等价（W6 全类型）', () => {
     expect(liveState).toEqual(replayState)
     expect(liveState.messages[0]).toMatchObject({ role: 'system', content: '', branchSummary: { summary: '', fromId: 'n-2' } })
     expect(replayState.messages[0]).toMatchObject({ role: 'system', content: '' })
+  })
+
+  it('E7: 标记消息两链路等价（D7 序列化变更）——xyz 标记/降级块文本 live 帧喂 reducer ≡ reload 文件重放', () => {
+    // 含 skill 标记的 user 消息（两形态各一）：单标记混排（segmentsToText 产出形态：
+    // 标记 + 补空格正文）与降级块 + 指引行。两侧消息体独立手写（本文件惯例），
+    // JSONL 落盘文本同源——反解析（core parseSkillBlock SSOT）产出交错 segments，
+    // live 与 reload 经同一 reducer 终态必须一致（架构关键规则 9 的标记消息扩展）。
+    const mixedText = '帮我 review 这段代码<xyz-skill name="code-review-graph" location="/abs/SKILL.md"/> 继续任务'
+    const fallbackText = '超大任务\n<xyz-skills>\n<xyz-skill name="big-one" location="/b/SKILL.md"/>\n</xyz-skills>\nUse the read tool to load the skill files above before continuing the task\n收尾正文'
+
+    // live 侧：message_end(user) 帧构造形态（客户端 u- 前缀 id，同 E1 liveEntries）
+    const liveState = normalizeIds(replayEntries([
+      { type: 'message', id: 'u-00000011-0000-4000-8000-000000000011', parentId: null, timestamp: ts(1000), message: { role: 'user', content: [{ type: 'text', text: mixedText }], timestamp: 1000 } },
+      { type: 'message', id: 'u-00000012-0000-4000-8000-000000000012', parentId: null, timestamp: ts(2000), message: { role: 'user', content: [{ type: 'text', text: fallbackText }], timestamp: 2000 } },
+    ]))
+    // replay 侧：同内容 pi uuidv7 entry（文件重放形态）
+    const replayState = normalizeIds(replayEntries([
+      { type: 'message', id: piId(11), parentId: null, timestamp: ts(1000), message: { role: 'user', content: [{ type: 'text', text: mixedText }], timestamp: 1000 } },
+      { type: 'message', id: piId(12), parentId: null, timestamp: ts(2000), message: { role: 'user', content: [{ type: 'text', text: fallbackText }], timestamp: 2000 } },
+    ]))
+    // 全量 state 归一 deep-equal（标记消息与非标记消息走同一断言口径）
+    expect(liveState).toEqual(replayState)
+
+    // 用户可见行为显式断言：两形态均还原为交错 segments（非 badge 退化纯文本），
+    // 且标记前后正文全保留（场景 4③ 断言语义）
+    const [first, second] = liveState.messages
+    expect(first!.content).toEqual([
+      { type: 'text', text: '帮我 review 这段代码' },
+      { type: 'skill', name: 'code-review-graph', location: '/abs/SKILL.md' },
+      { type: 'text', text: ' 继续任务' },
+    ])
+    expect(second!.content).toEqual([
+      { type: 'text', text: '超大任务\n' },
+      { type: 'skill', name: 'big-one', location: '/b/SKILL.md' },
+      { type: 'text', text: '\n收尾正文' },
+    ])
   })
 })
 

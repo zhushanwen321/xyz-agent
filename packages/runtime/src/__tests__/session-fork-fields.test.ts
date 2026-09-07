@@ -43,7 +43,7 @@ describe('W1 fork 字段透传', () => {
   let dir: string
 
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'w1-fork-')) })
-  afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
+  afterEach(() => { rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }) })
 
   // ── U1：SessionSummary 含 4 个新可选字段 ─────────────────────────
 

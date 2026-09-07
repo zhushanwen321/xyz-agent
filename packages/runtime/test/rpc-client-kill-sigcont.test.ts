@@ -10,8 +10,8 @@
  * - 进程 2s 内未退 → SIGKILL 兜底（KILL_TIMEOUT_MS）
  * - 进程按 SIGTERM 退出后不再发 SIGKILL
  *
- * 测试策略与 rpc-client-timeout.test.ts 一致：mock node:child_process 的 spawn +
- * readline，fakeTimer 驱动 KILL_TIMEOUT_MS，手动驱动 exit handlers。
+ * 测试策略与 rpc-client-timeout.test.ts 一致：mock node:child_process 的 spawn，
+ * fakeTimer 驱动 KILL_TIMEOUT_MS，手动驱动 exit handlers。
  *
  * 运行：npx vitest run test/rpc-client-kill-sigcont.test.ts
  */
@@ -20,7 +20,6 @@ import type { RpcClient } from '../src/infra/pi/rpc-client.js'
 
 // ── Mocks（骨架复制自 rpc-client-timeout.test.ts）─────────────────
 
-let stdoutLineHandler: ((line: string) => void) | null = null
 let procExitHandlers: Array<(code: number | null) => void> = []
 let RpcClientCtor: typeof import('../src/infra/pi/rpc-client.js').RpcClient
 
@@ -41,15 +40,6 @@ const fakeProc = {
 
 vi.mock('node:child_process', () => ({
   spawn: () => fakeProc,
-}))
-
-vi.mock('node:readline', () => ({
-  createInterface: () => ({
-    on: (event: string, handler: (line: string) => void) => {
-      if (event === 'line') stdoutLineHandler = handler
-    },
-    close: vi.fn(),
-  }),
 }))
 
 // importOriginal spread 而非完全替换：rpc-client.start 经 ../spawn-env.js re-export 消费
@@ -104,7 +94,6 @@ describe('RpcClient kill 链信号顺序（D3a：SIGCONT 先于 SIGTERM）', () 
   let client: RpcClient
 
   beforeEach(async () => {
-    stdoutLineHandler = null
     procExitHandlers = []
     fakeProc.kill.mockClear()
     RpcClientCtor = (await import('../src/infra/pi/rpc-client.js')).RpcClient

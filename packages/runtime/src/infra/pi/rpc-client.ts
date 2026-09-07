@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { createInterface } from 'node:readline'
+import { StringDecoder } from 'node:string_decoder'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
 import { RpcTimeoutError } from '../../utils/errors.js'
@@ -27,6 +27,50 @@ export interface PiMessage {
 }
 
 export type PiEventListener = (event: PiMessage) => void
+
+/**
+ * LF-only 行读取器（D10 分帧防御；pi dist/modes/rpc/jsonl.js attachJsonlLineReader 同款思路）。
+ *
+ * 为什么不用 node readline：readline 除 \n/\r 外还把 U+2028（LINE SEPARATOR）/U+2029
+ * （PARAGRAPH SEPARATOR）当行分隔符——这两个字符在 JSON 字符串内合法（JSON.stringify
+ * 不转义，pi 侧 serializeJsonLine 的帧协议是 LF-only）。pi 回显含这两个字符的单行 JSON
+ * 会被 readline 拆成多帧 → JSON.parse 失败 → 消息静默丢失；skill 全文注入后大文本回显
+ * 流量上升，敞口变大，故随 composer 多 skill 注入一并修（设计 §2.3 失败模式 D）。
+ *
+ * 分帧只在「字节流解码后的字符串」上找 '\n'；StringDecoder 处理多字节 UTF-8 字符跨
+ * chunk 截断的半帧残留；流 end 时 flush decoder 尾巴与无换行结尾的最后一行（与 readline
+ * 的 close 交付语义一致）；行尾 '\r' 剥离（对齐 pi 实装）。返回解绑函数（测试用；
+ * 生产路径随进程生命周期终结，无需解绑）。
+ */
+export function attachLfOnlyLineReader(stream: NodeJS.ReadableStream, onLine: (line: string) => void): () => void {
+  const decoder = new StringDecoder('utf8')
+  let buffer = ''
+  const emitLine = (line: string): void => {
+    onLine(line.endsWith('\r') ? line.slice(0, -1) : line)
+  }
+  const onData = (chunk: Buffer | string): void => {
+    buffer += typeof chunk === 'string' ? chunk : decoder.write(chunk)
+    let newlineIndex = buffer.indexOf('\n')
+    while (newlineIndex !== -1) {
+      emitLine(buffer.slice(0, newlineIndex))
+      buffer = buffer.slice(newlineIndex + 1)
+      newlineIndex = buffer.indexOf('\n')
+    }
+  }
+  const onEnd = (): void => {
+    buffer += decoder.end()
+    if (buffer.length > 0) {
+      emitLine(buffer)
+      buffer = ''
+    }
+  }
+  stream.on('data', onData)
+  stream.on('end', onEnd)
+  return () => {
+    stream.off('data', onData)
+    stream.off('end', onEnd)
+  }
+}
 
 /**
  * pi get_available_models 返回的模型元素（pi-ai Model 翻译为内部消费形状的子集：
@@ -420,14 +464,13 @@ export class RpcClient implements IPiEngine {
       }
     })
 
-    // Parse stdout JSONL
-    // rl error 吞转发（2026-09-04 事故审计）：pi 崩溃/被杀时 stdout 管道流错误被
-    // readline 转发到 interface 实例 re-emit——无 listener 直接 throw 成
-    // uncaughtException → 整机 shutdown（stderr 已有同款防护，见下方 stderr 段注释）；
-    // pi 退出处置归 exit/kill 链路，此处只堵转发逃逸。
-    const rl = createInterface({ input: proc.stdout! })
-    rl.on('error', () => {})
-    rl.on('line', (line) => {
+    // Parse stdout JSONL（D10：LF-only 读取器，U+2028/U+2029 不拆帧——pi rpc/jsonl.js 帧协议的对端）
+    // stdout error 吞转发（2026-09-04 事故审计，原 readline 防护语义在 LF-only 读取器上保留）：
+    // pi 崩溃/被杀时 stdout 管道流错误无 listener 直接 throw 成 uncaughtException →
+    // 整机 shutdown（stderr 已有同款防护，见下方 stderr 段注释）；attachLfOnlyLineReader
+    // 只挂 data/end，error 防护在此补齐；pi 退出处置归 exit/kill 链路，此处只堵转发逃逸。
+    proc.stdout!.on('error', () => {})
+    attachLfOnlyLineReader(proc.stdout!, (line) => {
       if (!line.trim()) return
       // tee 原始 JSONL 到 pi session 日志（架构约定 #4，卡死诊断证据）
       this.piSessionLog?.write(line)

@@ -51,7 +51,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals()
   delete process.env.XYZ_AGENT_DATA_DIR
-  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 /** 写 fixture auth.json（AuthService.get 经 AuthStorage 读同一文件格式）。 */

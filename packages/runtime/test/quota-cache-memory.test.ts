@@ -60,7 +60,7 @@ describe('QuotaCache 内存层（W26 微项 11）', () => {
   })
 
   afterEach(() => {
-    rmSync(dataDir, { recursive: true, force: true })
+    rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('重复查询同一 provider 命中内存层：仅首次读磁盘，二次起零磁盘读', async () => {

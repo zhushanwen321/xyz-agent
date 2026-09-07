@@ -84,6 +84,11 @@ export default [
     files: [
       'packages/runtime/src/infra/pi/event-adapter.ts',
       'packages/runtime/src/services/extension-service.ts',
+      // [HISTORICAL] core chat 域编排聚合点（createUseChat factory + 全部 stream 回调
+      // 分支 helper——message.* 处理序的唯一编排面，2026-09-07 簇 A1 defer flush 重投
+      // 机制入列时统计行越过 500）。职责内聚，拆分 = stream 回调按帧族重组，属独立
+      // 重构任务。短期 max-lines override 避免阻塞，长期应拆分。
+      'packages/core/src/domain/chat/useChat.ts',
     ],
     rules: {
       'max-lines': 'off',
@@ -113,6 +118,17 @@ export default [
   // 属独立重构任务。短期 max-lines override 避免阻塞，长期应拆分。
   {
     files: ['packages/renderer/src/composables/logic/markdown.ts'],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
+  // [HISTORICAL] i18n locale 文件是翻译数据表（纯 key→文案映射，无逻辑），按功能 key
+  // 线性增长——行数随功能面扩大是常态而非坏味道，500 行上限针对的是逻辑文件的可读性，
+  // 对数据表不适用（2026-09-06 background-task-sidebar 的 panel 文案并入触发超行）。
+  // 拆分反而破坏 per-locale 单文件契约（check_i18n_locale_sync 按 zh-CN/en-US 同名文件
+  // 配对校验）。与上方 override 同性质——数据聚合文件，行数守卫豁免。
+  {
+    files: ['packages/renderer/src/i18n/locales/**/*.ts'],
     rules: {
       'max-lines': 'off',
     },

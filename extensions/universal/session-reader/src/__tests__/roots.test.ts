@@ -12,7 +12,7 @@ describe('listMainSessions', () => {
     dir = await mkdtemp(join(tmpdir(), 'roots-test-'))
   })
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('扫描 sessions/<slug>/*.jsonl，排除 *.jsonl.finalized', async () => {
@@ -90,7 +90,7 @@ describe('listSubagentSessions', () => {
     dir = await mkdtemp(join(tmpdir(), 'roots-sub-test-'))
   })
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   it('扫描 subagents/<slug>/sessions/*.jsonl，排除 .finalized', async () => {

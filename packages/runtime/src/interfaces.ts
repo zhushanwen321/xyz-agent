@@ -139,8 +139,11 @@ export interface ISessionService {
    * images 透传给 pi prompt（message.send 的 images 字段，shared 形状 {data;base64;mimeType}）。
    * 类型组装（补 pi 私有 type:'image'）在 infra 层 RpcClient 内完成，本接口只暴露 shared 形状。
    * undefined 时不传 images，走原路径。
+   *
+   * clientUuid（session-occupancy-send-closure D2）：客户端幂等 id 透传给 dispatcher，
+   * 拒绝广播（预检与 pi 转译两路）原样带回；正常路径不消费。
    */
-  sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }>
+  sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>, clientUuid?: string): Promise<{ blocked: boolean; rejected?: boolean }>
   // [HISTORICAL] sendSubagentMessage 已删除（composer 四符号设计 D2，marker 半成品通道废弃）：
   // 定向消息改走 subagentAction(message/start) 直达 subagent。
   abort(sessionId: string): Promise<void>
@@ -692,6 +695,9 @@ export interface IFileService {
   listTree(sessionId: string): Promise<FileNode[]>
   expandDir(sessionId: string, path: string): Promise<FileNode[]>
   searchFiles(sessionId: string, showIgnored?: boolean): Promise<FileNode[]>
+  /** landing cwd 路核心（file.search.cwd）：全量递归给定 cwd；session 路经 searchFiles 薄包装复用。
+   *  truncated = DoS 上限 5000 截止（D7，file.search.cwd:result 携带；file.search:result 不带）。 */
+  searchFilesInCwd(cwd: string, showIgnored?: boolean): Promise<{ files: FileNode[]; truncated: boolean }>
   readFile(sessionId: string, path: string): Promise<{ content: string; truncated: boolean }>
   readFileFromWhitelist(path: string): Promise<{ content: string; truncated: boolean }>
   createFile(sessionId: string, path: string, content: string): Promise<never>
