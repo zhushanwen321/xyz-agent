@@ -4,16 +4,20 @@ import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { handleSessionRead } from '../tool-handler.js'
-import { SubagentService } from '../../../../../packages/subagent-core/src/execution/subagent-service.ts'
-import { RecordStore } from '../../../../../packages/subagent-core/src/execution/record-store.ts'
-import { ManifestStore } from '../../../../../packages/subagent-core/src/execution/manifest-store.ts'
-import { ModelConfigService } from '../../../../../packages/subagent-core/src/execution/model-config-service.ts'
-import type { ModelRegistryLike } from '../../../../../packages/subagent-core/src/execution/model-resolver.ts'
+// barrel 符号走包根；ManifestStore / ModelRegistryLike / path-encoding 函数未进 barrel
+// （D3 判定不进），按 subagent-workflow 测试同款包名 .ts 深路径消费，vitest alias 解析。
+import {
+  ModelConfigService,
+  RecordStore,
+  SubagentService,
+  type SubagentRecord,
+} from '@zhushanwen/subagent-core'
+import { ManifestStore } from '@zhushanwen/subagent-core/execution/manifest-store.ts'
+import type { ModelRegistryLike } from '@zhushanwen/subagent-core/execution/model-resolver.ts'
 import {
   getSubagentRecordsDir,
   getSubagentSessionDir,
-} from '../../../../../packages/subagent-core/src/execution/path-encoding.ts'
-import type { SubagentRecord } from '../../../../../packages/subagent-core/src/execution/types.ts'
+} from '@zhushanwen/subagent-core/execution/path-encoding.ts'
 
 /**
  * W4 跨包集成测试（subagent-sync-collect v2 impl-plan W4 验收条款①，设计 §5 W4：

@@ -28,7 +28,7 @@ export { SLUG_MAX_LENGTH };
 
 // Params schema（跨包契约测试的真实 typebox 校验入口）。
 //
-// action:"start" 的 14 字段（task/slug/agent/model/...）拍平在顶层，不再用 startParam
+// action:"start" 的 17 字段（task/slug/agent/model/...）拍平在顶层，不再用 startParam
 // 嵌套容器包。原因：弱模型（GLM/DeepSeek）信任 schema 结构信号 > 文本信号，经常省略
 // startParam 嵌套层把 task/slug 直接平铺到顶层导致调用失败。拍平后 schema 结构与模型
 // 的自然倾向一致，消除这层误用。task/slug 必填性由 startHandler runtime 校验（flat

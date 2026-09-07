@@ -926,8 +926,9 @@ export interface SkillCacheInvalidatedPayload {
 // shared 不依赖 @xyz-agent/extension-protocol（SubagentEngineConfigView / SessionTraceHeaderPayload
 // 同先例：契约 SSOT 在彼处，shared 侧放结构镜像，结构兼容即协议兼容）。任务条目逐字段镜像
 // extension-protocol background-task.ts 的 BackgroundTaskRegistryEntry（D9 数据契约零新造——
-// 字段名/枚举/可选性禁止单侧改名）；镜像 ⇔ 契约的双向可赋值由 renderer api domain
-//（packages/renderer/src/api/domains/background-task.ts）的回执返回类型编译期守卫，漂移即 tsc 红。
+// 字段名/枚举/可选性禁止单侧改名）；镜像 ⇔ 契约的逐字段全等由 core transport api domain
+//（packages/core/src/transport/api/domains/background-task.ts）的 BackgroundTaskMirrorEqualsContract
+// 编译期守卫，漂移即 tsc 红。
 
 /** 任务状态机（镜像 extension-protocol BackgroundTaskState）：running → killing（intent 瞬态）→
  *  exited；orphaned 由 runtime 收殓侧写入。 */
@@ -1660,7 +1661,8 @@ export interface ServerMessageMapBase {
   // ── backgroundTask 域（docs/design/background-task-sidebar-view.md §3.3 D3，u-proto）──
   // 后台命令侧边栏：3 个 RPC 回执 + 1 个 session 级变更广播；全部必带 sessionId（架构规则 7）。
   // tasks 元素是 shared 协议镜像 BackgroundTaskRegistryEntry（逐字段同构 extension-protocol 同名
-  // 契约，D9；等价性由 renderer api domain 编译期守卫）。
+  // 契约，D9；等价性由 core transport api domain（packages/core/src/transport/api/domains/
+  // background-task.ts）的 BackgroundTaskMirrorEqualsContract 编译期守卫）。
   // backgroundTask.list 的 reply（registry 全量投影；目录/文件不存在 → 空数组）。
   // corrupted=true = registry 解析失败被 .corrupt 隔离的「损坏空表」（S7 错误条依据，
   // 区分于真空表；缺省/false = 正常拍，仿 config.systemPrompt 同名字段先例）。

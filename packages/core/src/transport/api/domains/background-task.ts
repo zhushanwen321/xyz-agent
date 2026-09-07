@@ -28,6 +28,9 @@ import { command } from '../request'
 // 会话分区字段（sessionId/corrupted）不在契约镜像范围。
 type Equal<X, Y> = (<T>() => T extends X ? true : false) extends (<T>() => T extends Y ? true : false) ? true : false
 type Expect<T extends true> = T
+// 保持 export：去 export 会在 renderer vue-tsc 的 noUnusedLocals 口径下报 TS6133
+// （本地类型零引用；core 自身 tsconfig 未开该旗标故测不出）——「文件内自断言不进
+// API 面」的收益抵不过双口径编译红，private_type_leaks 属 warn 级工具噪音。
 export type BackgroundTaskMirrorEqualsContract = Expect<Equal<
   ServerMessageMap['backgroundTask.tasks']['tasks'][number],
   BackgroundTaskRegistryEntry
