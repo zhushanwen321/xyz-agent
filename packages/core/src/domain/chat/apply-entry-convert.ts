@@ -35,8 +35,10 @@ import { isLooseRecord, isPlainRecord, normalizePiToolResult } from './apply-ent
  * 裸 uuid v4 形态（entry.id = crypto.randomUUID()，无 u- 前缀）——与 u- 前缀的 clientUuid
  * 标记（submitSegments / msg-id-mapper TAG_MATCH 族，`u-[0-9a-fA-F-]{36}`）id 空间互斥：
  * uuid 字符集不含字母 u，本正则结构上不可能命中 u- 标记（反之 TAG_MATCH 也不命中裸标记
- * ——msg-id-mapper input hook 不剥裸标记，标记经 pi prompt / steer 通路全程存活，回流
- * 文本携带 → user-delivery ①a 按 id 确认出队）。全文搜索（标记在 skill 展开块拼接 /
+ * ——msg-id-mapper input hook 不剥裸标记，标记经 pi prompt / steer 通路全程存活、落盘与
+ * 回流文本携带标记——已锚定 PS-26 + 探针 pi-semantics-defer-marker-survival：prompt()
+ * input hook 是 pi 唯一文本 transform 面且 steer 通路零 hook，回流文本携带 →
+ * user-delivery ①a 按 id 确认出队）。全文搜索（标记在 skill 展开块拼接 /
  * BeforeSend hook 改写后可能不在文本尾）。
  *
  * 消费方：① convertMessageBody user 投影剥标记（下方，live 帧 / reload 重放同点——显示

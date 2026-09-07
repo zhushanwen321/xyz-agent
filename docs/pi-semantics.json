@@ -519,5 +519,40 @@
    "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-turn-usage-model.test.ts"
   },
   "verifiedWith": "0.84.4"
+ },
+ {
+  "id": "PS-26",
+  "claim": "消息文本 transform 面唯一性：pi 对 user 消息文本的改写只发生在 prompt() 通路的 extension input hook（hasHandlers(\"input\")/emitInput 全文仅此一处，hook 返回 transform 才替换 currentText）；steer()/followUp()/_queueSteer/_queueFollowUp 全程无 input hook，消息对象从 _queueSteer 原文本构造 → agent.steer 入队（steeringQueue.enqueue）→ drain（getSteeringMessages 原样返回）→ 直接 emit message_start/message_end 并 push 进 LLM 上下文，零改写；user 消息落盘与事件同源（_handleAgentEvent 对 message_end 的 event.message 原样 sessionManager.appendMessage，runAgentLoop 对初始 prompt 同款 emit）。推论（core defer 投递确认协议承重，data-governance round2 MF-1）：不匹配 msg-id-mapper TAG_STRIP（仅 u- 前缀形态，uuid hex 字符集不含 u，与裸 uuid 结构互斥）的裸标记 <!--xyz:msg:<uuid>-->（DEFER_FLUSH_MARKER_RE，SSOT apply-entry-convert.ts）在 send 通路（input hook 不命中即 transform 不发生）与 steer 通路（无 hook）均全程存活——pi 落盘文本与 message_end(user) 回流文本都携带标记，core user-delivery ①a 按标记 id 确认出队的可达性锚点；裸标记随消息文本进入 LLM 上下文（prompt 尾部一行 HTML 注释，已知权衡登记 registry #6 修订注记）",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "prompt(text, options) 的 input hook 拦截段",
+    "note": ":842-850 —— hasHandlers(\"input\") :842 / emitInput :843（全文唯一）/ if (inputResult.action === \"transform\") :848 才 currentText = inputResult.text；msg-id-mapper 对裸标记返回 continue（TAG_MATCH 仅 u- 前缀）→ transform 不发生"
+   },
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "steer / _queueSteer / _handleAgentEvent 落盘",
+    "note": "steer :1016-1025 与 _queueSteer :1046-1060（:1049 原文本构造 content，:1053 this.agent.steer——函数体内零 emitInput）；_handleAgentEvent message_end → :398 this.sessionManager.appendMessage(event.message) 原样落盘（事件与持久化同一对象）"
+   },
+   {
+    "pkg": "pi-agent-core",
+    "distPath": "dist/agent.js",
+    "symbol": "steeringQueue enqueue / createLoopConfig.getSteeringMessages",
+    "note": ":174 steer(message) → steeringQueue.enqueue(message) 原样入队；:316-321 getSteeringMessages = return this.steeringQueue.drain()——队列到注入点间无变换"
+   },
+   {
+    "pkg": "pi-agent-core",
+    "distPath": "dist/agent-loop.js",
+    "symbol": "runAgentLoop 初始 emit / runLoop steering 注入块",
+    "note": ":51-54 初始 prompt 逐条 emit message_start/message_end（send 通路 user 消息事件来源）；:112-117 steering 消息 emit message_start/message_end + currentContext.messages.push + newMessages.push——事件、上下文、newMessages（落盘源）三处同一对象"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-defer-marker-survival.test.ts"
+  },
+  "verifiedWith": "0.84.4"
  }
 ]

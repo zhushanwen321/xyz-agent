@@ -137,7 +137,7 @@ const pendingDirectSends = new Map<string, { clientUuid: string; text: string; h
  *（重连后 occupancy state topic 快照回放 idle 帧照常触发，§3.5 错误规格表）。
  */
 const DEFER_FLUSH_RETRY_DELAY_MS = 1000
-// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：flush 失败重投 timer
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，已落定登记表 §4 ⑧ 补登 2026-09-07）：flush 失败重投 timer
 //（流程状态句柄，非 GUI 数据——与下方 pendingDirectSends 同类豁免）
 const deferFlushRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -542,8 +542,14 @@ export async function submitQueuedEntry(
   // prompt() input hook（不匹配即 transform 不发生）、steer 通道 pi steer() 根本不发
   // input hook，pi 落盘文本与 message_end(user) 回流文本都携带标记 → core ① 优先按
   // 标记 id 确认出队（文本被 skill-injector 三入口 / BeforeSend hook 改写后仍可达，
-  // 对齐 C-data-08「禁文本匹配」）。QueueBubble 显示侧对快照文本剥标记（steer 通道
-  // 文本会镜像进 queue_update 快照）。
+  // 对齐 C-data-08「禁文本匹配」）。该断言已锚定 PS-26（docs/pi-semantics.json；探针
+  // pi-semantics-defer-marker-survival：transform 面唯一性 + 两通路存活 + 标记互斥）。
+  // 已知权衡（registry #6 修订注记同步登记）：裸标记不被 TAG_STRIP 剥离 → 随消息文本
+  // 进入 LLM 上下文（prompt 尾部一行 ~40 字符 HTML 注释，每条 flush 消息至多一条，
+  // 量级有界）；与 u- 协议「strip 后 LLM 不可见」的形态差异显式接受，演进方向 = 协议
+  // 身份帧（sendMessage custom 帧替代文本尾标记，标记不再进文本，届时须同步 ①a 提取
+  // 通路）。QueueBubble 显示侧对快照文本剥标记（steer 通道文本会镜像进 queue_update
+  // 快照）。
   const markedText = `${entry.text}\n<!--xyz:msg:${entry.id}-->`
   if (channel === 'steer') {
     await deps.chatApi.steer(sid, markedText)
