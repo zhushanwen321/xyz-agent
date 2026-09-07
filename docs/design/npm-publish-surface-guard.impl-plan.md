@@ -79,13 +79,16 @@ graph TD
 | 日期 | 单元 | 偏差内容 | 处置 |
 |------|------|----------|------|
 | 2026-09-07 | u5 | 计划初版按设计 §5「u5 登立先行」画 u5→u1 边；u5 执行者实测 render-constraints.mjs 实装校验 authority/hook 文件存在性（validateAuthorityPath 行 56-61 / validateHookExists 行 47-54，渲染模式同样先校验 exit 2），登记引用 u1 未来产出的守卫脚本必然 exit 2——顺序在机器门前不可通过（执行者以 /tmp 探针实证，未动仓库） | doc_errors：主 agent 反转 DAG 边为 u1→u5（§2/§3 已改）；设计文档 §5 实施顺序与 u5 行 justification 同批修订（变更历史 v5）。「先登记再写代码」纪律以「同批交付绑定」形态满足 |
+| 2026-09-07 | u1 | ① blocker 处置：守卫首次跑真实仓库即抓到存量真实幽灵——@xyz-agent/extension-protocol 的 files 条目 "README.md" 磁盘从未存在（git 历史核实，0.8.x tarball 一直静默缺 README）；主 agent 创建 packages/extension-protocol/README.md（照 session-delivery README 形态，内容基于包实际导出）——领地外单文件，属 blocker 裁决处置非 subagent 越权 | 已处置：README 创建后基线绿（3 包全绿）。该发现本身是守卫价值的即时实证 |
+| 2026-09-07 | u1 | ② D7 重审信号实测触发：subagent-core files 求和 8.98MB > 5MB 阈值，守卫 warning 如实回显（设计 D7 预期的机器信号） | 重审裁决（编排者，向用户汇报可推翻）：维持双档形态——8.98MB 中 dist.bundle 仅 1.36MB（15%），大头是常规 dist/ 双格式产物（npm 常规消费必需不可拆）；唯一 vendoring 消费者 zsw 依赖现有 dist.bundle 路径约定；warning 机器回显每次发布可见，形态再膨胀有信号 |
+| 2026-09-07 | u1 | ③ 实现偏差（执行者登记）：globToRegExp 弃用 check-extension-files.mjs 链式 replace（其 `**/*.js` 无前缀 globstar 形态有二次替换退化 bug），改为分段转换实现同一 minimatch 语义，已注释注明 | 合理偏差：按声称语义正确实现，守卫内自洽；check-extension-files 原实现的 bug 属 extensions 方向（本设计 out-of-scope），不顺手修 |
 
 ## 6 状态表
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|--------------------------------------------|------|----------|
-| u5 | pending | 0 | — |
-| u1 | pending | 0 | — |
+| u1 | committed | 1 | 单测 29/29（`pnpm exec vitest run scripts/__tests__/check-publish-surface.test.mjs`）；真实仓库基线绿（README 处置后 3 包全绿，探针 0 裸名红 + ajv 豁免恰 4 = S3 前置成立）；S1/S1b 实测红绿全路径（主 agent 核验，见偏差登记表）；D7 warning 8.98MB 如实回显 |
+| u5 | pending | 0（首轮 blocked：render 校验 hook 存在性，已裁决顺序反转，见偏差登记表与 §3 v2） | — |
 | u4 | pending | 0 | — |
 | u2 | pending | 0 | — |
 | u3 | pending | 0 | — |
