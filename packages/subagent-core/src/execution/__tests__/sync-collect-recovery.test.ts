@@ -966,4 +966,119 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     const withoutManifest = freshStore().collectRecords(100, "all", ROOT_SESSION);
     expect(withoutManifest).toEqual(withManifest);
   });
+
+  // ============================================================
+  // E1 恢复批语义修复（review round1 簇 B）：one-shot 成功成员崩溃时末条 entry 恒为
+  // running+resumable（SP-5 轮终形态）——syncRebuildToNotifyMember 直通 status 的旧
+  // 形态使补发记录仍是 running：批头只统计 closed 成员 → 全员成功的恢复批显示
+  // 「0 finished」，条目文案落「finished a round」（对话轮次语义），且 rebuildEntryRecord
+  // 不投影 patchFile → worktree 改动的 git-apply 回收指针丢失。修复 = 对齐
+  // notify-host toNotifyRecord 映射（closed + outcome 物化 + patchFile 透传）+
+  // rebuildEntryRecord 补 patchFile 投影。
+  // ============================================================
+
+  it("E1 恢复批语义：one-shot 成功成员（running+resumable 末条）补发记录为 closed 形态——批头计数正确 + patchFile 提示在场", async () => {
+    const patchPath = path.join(agentDir, "patches", "sa-ntf.patch");
+    // 崩溃前主文件末条序列：register → 轮终 running+resumable + result 全文 + patchFile
+    //（worktree one-shot 成功成员 kill -9 后的真实末条形态，SP-5 轮终写点）。
+    const store = makeSeedStore();
+    store.reportSubagentRecord(memberRecord({ id: "sa-ntf", collectMode: "sync", patchFile: patchPath }));
+    store.reportSubagentRecord(
+      memberRecord({
+        id: "sa-ntf",
+        collectMode: "sync",
+        resumable: true,
+        result: "resumable full result body",
+        endedAt: 2000,
+        patchFile: patchPath,
+      }),
+    );
+
+    const pi = makeAssertPi();
+    const recovery = makeRecoveryService(pi);
+
+    // 投影层断言：rebuildEntryRecord 补 patchFile 投影后，E1 扫描快照可见
+    //（修复前投影丢弃 → 补发记录无从携带 git-apply 指针）。
+    const scanned = (recovery as unknown as { store: RecordStore }).store.scanLastRecordEntries(mainFile);
+    expect(scanned.find((r) => r.id === "sa-ntf")!.patchFile).toBe(patchPath);
+
+    // 真实 notifier 通路（不 spy——测试进程无 ledger/投递域装配 → 内核直发降级，
+    // pi.sendMessage 同步可捕获）：断言主 agent 实际消费的批通知内容。
+    await recovery.recoverSyncCollectBatch();
+    expect(pi.sendMessage).toHaveBeenCalledTimes(1);
+    const sent = pi.sendMessage.mock.calls[0]![0] as {
+      content: string;
+      details?: { items?: Array<Record<string, unknown>> };
+    };
+    // 批头计数：closed+completed 成员计入 finished（修复前 running 直通 → 0 finished）
+    expect(sent.content).toContain("Subagent batch completed: 1 finished, 0 failed, 0 cancelled.");
+    // 条目文案：completed 终态而非「finished a round」（对话轮次语义）
+    expect(sent.content).toContain("completed. Result:");
+    expect(sent.content).toContain("resumable full result body");
+    expect(sent.content).not.toContain("finished a round");
+    // patchFile 的 git-apply 回收指针在场（修复前投影缺失 → 提示整行丢失）
+    expect(sent.content).toContain(`git apply ${patchPath}`);
+    // 补发记录一等断言（details items = ledger/GUI 同源消费形态）：closed + outcome 物化
+    expect(sent.details?.items?.[0]).toMatchObject({
+      id: "sa-ntf",
+      status: "closed",
+      outcome: "completed",
+      patchFile: patchPath,
+    });
+
+    // 落标不受影响：批补发后统一补 batchFinalized
+    const marks = pi.appendEntry.mock.calls
+      .filter((c) => c[0] === SUBAGENT_RECORD_CUSTOM_TYPE)
+      .map((c) => c[1] as Record<string, unknown>)
+      .filter((d) => d.batchFinalized === true);
+    expect(marks.map((m) => m.id)).toEqual(["sa-ntf"]);
+  });
+
+  it("S11：flushBatch 中 getFullRecord miss 成员用缓冲快照兜底落标（防重启后 E1 异 hash 双投递）", async () => {
+    // 成员 1：失败终态（archive 出内存）且不写子文件 → getFullRecord 双 miss
+    //（内存已出 + 子文件缺失——子文件被 GC/删除的窗口形态）；
+    // 成员 2：SP-5 成功回退（留内存）→ getFullRecord 内存命中（正常落标对照）。
+    let resolve1!: (v: { text: string; turns: number; durationMs: number; success: boolean; sessionId: string; toolCalls: [] }) => void;
+    let resolve2!: (v: { text: string; turns: number; durationMs: number; success: boolean; sessionId: string; toolCalls: [] }) => void;
+    runSpawnMock.mockImplementationOnce(() => new Promise((res) => { resolve1 = res; }));
+    runSpawnMock.mockImplementationOnce(() => new Promise((res) => { resolve2 = res; }));
+    // 写文件 pi：标记 entry 真实落盘主文件，E1 扫描通路（rebuildEntryRecord）可重解析
+    const pi = makeWritingPi(mainFile);
+    const service = makeRecoveryService(pi);
+    const spy = spyNotifier(service);
+    const h1 = await service.execute({ task: "miss one", slug: "one", collect: "sync" });
+    const h2 = await service.execute({ task: "full two", slug: "two", collect: "sync" });
+    await until(() => runSpawnMock.mock.calls.length >= 2);
+
+    // 成员 1 子文件故意缺失（getFullRecord miss 前提）；成员 2 内存命中不依赖子文件。
+    // 注：两成员的 settle 链竞态可能拆两批（[U8] 合批窗口形态）——S11 断言与批切分
+    // 无关，只锁「批成员并集覆盖」与「miss 成员兜底落标」。
+    resolve1({ text: "boom-miss", turns: 1, durationMs: 10, success: false, sessionId: "spawned", toolCalls: [] });
+    resolve2({ text: "ok-full", turns: 1, durationMs: 10, success: true, sessionId: "spawned", toolCalls: [] });
+    await until(() => spy.notifyBatch.mock.calls.length > 0);
+    await new Promise((resolve) => setTimeout(resolve, 50)); // flushBatch 落标同步链排空
+
+    // 批成员并集覆盖两成员（miss 成员随批写账，成员集 hash 口径不变）
+    const batchIds = spy.notifyBatch.mock.calls
+      .flatMap((c) => (c[0] as Array<{ id: string }>).map((m) => m.id))
+      .sort();
+    expect(batchIds).toEqual([h1.subagentId, h2.subagentId].sort());
+
+    // 落标全员覆盖：miss 成员 h1 缓冲快照兜底 + full 成员 h2 正常落标
+    //（修复前 h1 被跳过 → 无标记 → 重启后 E1 重新收集该成员，以异成员集 hash
+    // 重新补发 → 同成员双投递）
+    const marks = pi.appendEntry.mock.calls
+      .filter((c) => c[0] === SUBAGENT_RECORD_CUSTOM_TYPE)
+      .map((c) => c[1] as Record<string, unknown>)
+      .filter((d) => d.batchFinalized === true);
+    expect(marks.map((m) => m.id).sort()).toEqual([h1.subagentId, h2.subagentId].sort());
+
+    // 兜底标记 entry 经 E1 扫描通路可重解析且带标记（重启后候选排除判据就位）
+    const scanned = (service as unknown as { store: RecordStore }).store.scanLastRecordEntries(mainFile);
+    const h1Last = scanned.find((r) => r.id === h1.subagentId);
+    expect(h1Last).toBeDefined();
+    expect(h1Last!.batchFinalized).toBe(true);
+    expect(h1Last!.collectMode).toBe("sync");
+    expect(h1Last!.status).toBe("closed");
+  });
 });

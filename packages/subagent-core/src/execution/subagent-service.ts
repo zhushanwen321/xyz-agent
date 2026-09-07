@@ -57,6 +57,9 @@ import { getSubagentRecordsDir, getSubagentSessionDir } from "./path-encoding.ts
 import { createRoundSettler } from "./round-settlement.ts";
 import type { StatusFilter } from "./record-store.ts";
 import { RecordStore } from "./record-store.ts";
+// [E1 恢复批语义修复 / S11] 恢复批补发映射 + getFullRecord miss 成员兜底落标数据源
+//（变化轴拆分，实现与语义注释见 sync-rebuild.ts）
+import { bufferedMemberFallbackRecord, syncRebuildToNotifyMember } from "./sync-rebuild.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import {
   killAllSpawnedChildren,
@@ -476,13 +479,20 @@ export class SubagentService {
         // 成员全量快照：getFullRecord 冷路径重建（成员在 notifyComplete 前已 archive，
         // 内存无；闭合判定 hasRunningSync 的 listRecords 扫描已建 idToFile 索引，此处
         // 命中）。快照在屏障前一次取定，屏障写与落标共用同一份（manifest 与落标 entry
-        // 字段同源）。getFullRecord 不可达（子 session 文件缺失/已 GC 的窗口）→ 跳过：
-        // 该窗口下 E1 本也收不到该成员（同样缺文件通路）；若误收，账本
-        // sync-batch:<hash> 幂等拒绝重发，行为收敛（设计 §3.1.3 幂等窗口段落明示）。
+        // 字段同源）。
+        // [S11] getFullRecord 不可达（子 session 文件缺失/已 GC 的窗口）的成员改用
+        // 缓冲快照兜底落标，不再跳过——该成员仍随 live 进批写账（成员集 hash 含它），
+        // 跳过落标的旧行为会在重启后让 E1 重新收集它（无标记候选），以异成员集 hash
+        // 重新补发 → 同成员双投递（异 hash 不触发账本 sync-batch 幂等；旧注释「该
+        // 窗口下 E1 本也收不到该成员」不成立：E1 走主 session 文件末条 entry 扫描，
+        // 与 getFullRecord 的 manifest/子文件通路相互独立，manifest 屏障 best-effort
+        // 写失败同样制造此窗口）。
         const fulls: SubagentRecord[] = [];
+        const fullMissed: BgNotifyRecord[] = [];
         for (const m of live) {
           const full = this.store.getFullRecord(m.id);
           if (full) fulls.push(full);
+          else fullMissed.push(m);
         }
         // [时序屏障] 成员 manifest 写先于写账并 await 全部落盘——「通知可达 ⇒ 索引
         // 就位」的构造性保证（by construction）：批通知的指针行消费依赖
@@ -501,6 +511,11 @@ export class SubagentService {
         // 语义）；manifest 已在屏障提前写，幂等窗口内崩溃时索引更早已就位。
         for (const full of fulls) {
           this.appendBatchFinalizedEntry(full);
+        }
+        // [S11] miss 成员兜底落标（缓冲快照 → 最小标记 entry，映射见 sync-rebuild.ts），
+        // 与 fulls 同出口①语义（写账成功后统一补标）。
+        for (const m of fullMissed) {
+          this.appendBatchFinalizedEntry(bufferedMemberFallbackRecord(m, this.sessionRootId ?? undefined));
         }
       },
     });
@@ -951,7 +966,7 @@ export class SubagentService {
     await this.writeSyncBatchManifestBarrier(candidates);
     // 全员终态：单条批补发（budget 热读与 flushBatch 同源）；账本同 hash 幂等拒绝也算
     // 已投递（批已在账/已销账，重放由账本承接）——两种结局统一补标。
-    const members = candidates.map((r) => this.syncRebuildToNotifyMember(r));
+    const members = candidates.map((r) => syncRebuildToNotifyMember(r));
     const accepted = this.notifyHost.notifyBatch(members, this.getCollectSyncBudget());
     for (const rec of candidates) {
       this.appendBatchFinalizedEntry(rec);
@@ -995,21 +1010,11 @@ export class SubagentService {
     });
   }
 
-  /** E1 末条 entry 终态快照 → BgNotifyRecord（补发成员；sync 仅 one-shot，round/
-   *  sessionFile/patchFile 不透传——与 route() 缓冲快照的 one-shot 形态对齐）。 */
-  private syncRebuildToNotifyMember(rec: SubagentRecord): BgNotifyRecord {
-    return {
-      id: rec.id,
-      status: rec.status,
-      closedReason: rec.closedReason,
-      agent: rec.agent,
-      model: rec.model,
-      result: rec.result,
-      error: rec.error,
-      startedAt: rec.startedAt,
-      endedAt: rec.endedAt,
-    };
-  }
+  // [E1 语义对齐 toNotifyRecord] 补发成员映射 syncRebuildToNotifyMember 拆至
+  // sync-rebuild.ts（变化轴：恢复批通知语义）：one-shot 成功成员末条恒
+  // running+resumable（SP-5），直通 status 会让恢复批批头「0 finished」且丢
+  // patchFile 的 git-apply 指针——对齐后补发记录为 closed + outcome 物化 +
+  // patchFile 透传。调用点：runSyncCollectRecoveryScan。
 
   dispose(): void {
     if (this._disposed) return;

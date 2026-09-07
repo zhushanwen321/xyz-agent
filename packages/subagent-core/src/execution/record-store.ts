@@ -317,6 +317,12 @@ function readEntryEngineFields(
  *  E1 落标路径重建快照丢失反查索引锚（断链 1 前置依赖）。recoverEntryOnlyOrphans
  *  的候选判定（isEntryOrphanCandidate）只认 status==="running"，两新字段不参与
  *  判定（P-rebuild 探针守卫面）。
+ *  [E1 恢复批语义修复] 再补 patchFile 投影：entry data 携带该字段
+ *  （toSubagentRecordEntry 落盘含 patchFile）但原投影丢弃 → E1 补发记录丢失
+ *  worktree patch 的 git-apply 回收指针（正常 flush 路径经 toNotifyRecord 特意
+ *  携带，notify-host.ts patchFile 透传）。undefined 经 JSON.stringify 自然缺省，
+ *  无 patchFile 的存量 entry 序列化字节不变（落标出口经 toSubagentRecordEntry
+ *  按名重投影，重建对象字段顺序不影响序列化字节形态）。
  *  字段顺序 = 对象字面量原序（终态/批收集/engine 域以 spread 在原位置展开），
  *  entry 序列化字节形态不变。 */
 function rebuildEntryRecord(id: string, d: Record<string, unknown>): SubagentRecord | null {
@@ -345,6 +351,7 @@ function rebuildEntryRecord(id: string, d: Record<string, unknown>): SubagentRec
     result: entryStr(d, "result"),
     error: entryStr(d, "error"),
     sessionFile: entryStr(d, "sessionFile"),
+    patchFile: entryStr(d, "patchFile"),
     chatMode: d.chatMode === true,
     round: entryNum(d, "round"),
     ...readEntryEngineFields(d),
