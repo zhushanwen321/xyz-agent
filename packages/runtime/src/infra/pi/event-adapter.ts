@@ -413,11 +413,15 @@ function handleAgentEnd(event: PiAgentEndEvent, sid: string): PiTranslatedEvent[
  * totalTokens 缺失时返回空（纯工具结果 turn 可能无 usage）。
  *
  * composer-gen-stats（D1）：同时透传 gen-stats 扩展字段（output/cacheRead/cacheWrite/input/model/
- * provider，全来自 turn_end.message 的 AssistantMessage 自带结构）。model/provider 是运行时字段
+ * provider，全来自 turn_end.message 的 AssistantMessage 自带结构——结构与通路已锚定 PS-25，
+ * 探针 pi-semantics-turn-usage-model）。model/provider 是运行时字段
  * （超出 PiTurnEndMessage 声明范围，同 handleAgentEnd 的 responseModel 提取模式——pi AgentMessage
  * 实际形态比声明的 union 更宽），用 as 提取。字段缺省 → null（无值编码纪律 D4，禁 ?? 0——
  * 0 只允许作为真实测量值出现，null 由 interpreter/service 逐字段判定丢弃语义）。
- * D2 探针待验证：turn_end.message.model 的真实性（responseModel vs model 字段）。
+ * PS-25 已验证（pi 0.84.4 实装）：message.model = 请求侧 model.id（必填恒有；gen-stats 分桶
+ * 裁定采它，不采 responseModel——后者仅 openai-completions 在路由结果 ≠ 请求 id 时才有，
+ * 多数 provider 恒缺）；失败 turn 的 failureMessage.usage 为 EMPTY_USAGE（totalTokens=0），
+ * 被下方 totalTokens gate 丢弃，不产样本。
  */
 function handleTurnEndPi(event: PiTurnEndEvent, sid: string): PiTranslatedEvent[] {
   // pi turn_end 事件把 message 放在顶层 message 字段（ADR-0037 契约，pi 从不发 payload）。

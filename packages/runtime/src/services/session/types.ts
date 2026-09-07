@@ -260,6 +260,10 @@ export type PiTranslatedEvent =
    * composer-gen-stats（D1）：扩展字段全来自 turn_end.message 的 AssistantMessage 自带结构
    * （output/cacheRead/cacheWrite/input/model/provider），event-adapter 缺省补 null（禁 ?? 0，
    * 无值编码纪律 D4）——interpreter 组装 GenStatsSample 调 onGenStats 采样。
+   * 结构与通路已锚定 PS-25（docs/pi-semantics.json，探针 pi-semantics-turn-usage-model）：
+   * turn_end.message 恒为完整 AssistantMessage（正常 = streamAssistantResponse 产物，失败 =
+   * handleRunFailure 合成 failureMessage + EMPTY_USAGE，后者被下方 totalTokens gate 丢弃），
+   * RPC 原样下发不裁剪 model/provider/usage。
    */
   | {
       kind: 'turn-usage'
@@ -274,9 +278,14 @@ export type PiTranslatedEvent =
       cacheWrite: number | null
       /** gen-stats：本 turn 增量 input（usage.input，缺省 null） */
       input: number | null
-      /** gen-stats：样本模型 id（AssistantMessage.model 运行时字段，缺省 null；D2 探针待验证） */
+      /**
+       * gen-stats：样本模型 id（PS-25：AssistantMessage.model = 请求侧 model.id，即用户选择/
+       * 会话当前模型，必填恒有；非 responseModel——那是 provider 实际报告的响应模型，仅
+       * openai-completions 在路由结果 ≠ 请求 id 时才有，多数 provider 恒缺，不采）。缺省 null
+       * 仅防御异常通路（类型层必填）。
+       */
       model: string | null
-      /** gen-stats：样本 provider（AssistantMessage.provider 运行时字段，缺省 null） */
+      /** gen-stats：样本 provider（AssistantMessage.provider = 请求侧 model.provider，PS-25 锚定，缺省 null 同上） */
       provider: string | null
     }
   /** extension setStatus —— interpreter 路由到 server.handleStatusSetUpdate + 转发 WS。 */

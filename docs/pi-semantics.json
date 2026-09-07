@@ -466,5 +466,58 @@
    "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-prompt-rejection.test.ts"
   },
   "verifiedWith": "0.84.4"
+ },
+ {
+  "id": "PS-25",
+  "claim": "turn_end.message 恒为完整 AssistantMessage：正常路径 = streamAssistantResponse 返回的 pi-ai 构造产物，失败路径 = handleRunFailure 合成 failureMessage（同形态，model/provider 取请求侧 state.model、usage = EMPTY_USAGE 全 0——被 xyz runtime 的 usage.totalTokens gate 丢弃，不产 gen-stats 样本）；事件经 agent-session 原样 _emit（仅 agent_end 附加 willRetry）+ RPC toJsonEvent 非 message_update 原样 return 下发，model/provider/usage 无裁剪。字段语义裁定：`model` = 请求侧 model.id（用户选择/会话当前模型，pi-ai 全 provider 构造点统一 model: model.id，必填恒有）；`responseModel?` = 实际响应模型（仅 openai-completions 在 chunk.model !== model.id 时设置——OpenRouter auto 路由场景），optional 多数 provider 恒缺。gen-stats 分桶 key（speedFilePath/cacheRatioFilePath）与 renderer 匹配（genStatsModelMatches）采 model 不采 responseModel：恒有值 + 与 modelBySid/state_changed modelId 的「当前所选模型」语义同域 + 用户可复现；已知限制：路由型 provider（OpenRouter auto）下 model 桶内混合实际路由结果，速度统计是路由策略的经验均值而非单一真实模型速度",
+  "piAnchor": [
+   {
+    "pkg": "pi-ai",
+    "distPath": "dist/types.d.ts",
+    "symbol": "interface AssistantMessage / interface Usage",
+    "note": "AssistantMessage :307-327（provider :311 / model :312 / responseModel? :313 / usage :316 必填三件套）；Usage :265-286（input/output/cacheRead/cacheWrite/totalTokens 全必填 number）"
+   },
+   {
+    "pkg": "pi-ai",
+    "distPath": "dist/api/openai-completions.js",
+    "symbol": "流式 output 构造 + responseModel 赋值点",
+    "note": "构造 :171-176（provider: model.provider :175 / model: model.id :176）；responseModel 唯一赋值点 :374-376（条件 chunk.model !== model.id 才 output.responseModel ||= chunk.model——responseModel = provider 实际报告模型且与请求 id 不同时才存在）"
+   },
+   {
+    "pkg": "pi-agent-core",
+    "distPath": "dist/agent-loop.js",
+    "symbol": "streamAssistantResponse 调用 + turn_end 两发射点",
+    "note": ":122 const message = await streamAssistantResponse(...)；:125（error/aborted 分支）与 :147（正常分支）emit({ type: \"turn_end\", message, ... })——message 恒为 AssistantMessage"
+   },
+   {
+    "pkg": "pi-agent-core",
+    "distPath": "dist/agent.js",
+    "symbol": "EMPTY_USAGE / handleRunFailure.failureMessage",
+    "note": "EMPTY_USAGE :6-13（totalTokens: 0）；failureMessage :349-360（model: this._state.model.id :355 / provider :354 / usage: EMPTY_USAGE :356）+ turn_end 发射 :363——失败 turn 同形态且被 xyz totalTokens gate 丢弃"
+   },
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "_handleAgentEvent listener 透传 / _emitExtensionEvent turn_end",
+    "note": ":393 this._emit(event.type === \"agent_end\" ? { ...event, willRetry } : event)——turn_end 原样；:484-491 扩展事件 message: event.message 原样引用（无字段重写/裁剪）"
+   },
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/modes/json-event.js",
+    "symbol": "toJsonEvent",
+    "note": ":16-24 非 message_update 一律 return event 原样——turn_end 的 AssistantMessage 附加字段（model/provider/usage）在 RPC 下发时零裁剪"
+   },
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/modes/rpc/rpc-mode.js",
+    "symbol": "session.subscribe 事件下发",
+    "note": ":265-266 session.subscribe((event) => { output(toJsonEvent(event)); ... })——xyz runtime 收到的 turn_end JSON = pi-agent-core 发射的原始事件"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-turn-usage-model.test.ts"
+  },
+  "verifiedWith": "0.84.4"
  }
 ]
