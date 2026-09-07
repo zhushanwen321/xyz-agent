@@ -303,9 +303,10 @@ function resolveGitcodeRemote() {
 /** tags 镜像源：把 refSource 远端的 tags 强制 fetch 到独立命名空间
  * refs/remotes/<src>-tags/*（--prune 清理命名空间内已删条目）。
  * [HISTORICAL] 禁止直接推本地 refs/tags/*：本仓还会 fetch pi-mono upstream，
- * 两边同为 v* semver tag 空间，上游 tag 混入本地且会遮蔽同名本仓 tag
- * （2026-09-07 实测本地 478 vs GitHub 193，v0.3.15 已被上游 commit 遮蔽）——
- * 推本地 tags 会把上游提交注入 GitCode 镜像造成 drift。 */
+ * 两边同为 v* semver tag 空间，上游 tag 会混入本地（2026-09-07 实测本地 478
+ * vs GitHub 191，285 个为 pi 上游 tag）；且普通 fetch 永不更新已有 tag，
+ * 本地 tag 可能是远端重打前的过期旧位置（同日 v0.3.15 实测）——推本地 tags
+ * 会把上游提交/过期位置注入 GitCode 镜像造成 drift。 */
 function syncTagNamespace(refSource) {
   execSync(`git fetch ${refSource} --prune "+refs/tags/*:refs/remotes/${refSource}-tags/*"`,
     { stdio: 'pipe', timeout: 600000 });
@@ -345,6 +346,35 @@ function pushRepoMirror(refSource = 'origin') {
     execSync('git remote remove gitcode-sync 2>/dev/null || true', { stdio: 'pipe', shell: '/bin/bash' });
   }
   console.log(`[push-repo] 仓库镜像完成：${refSource} 分支 + tags 已对齐到 GitCode`);
+  return url;
+}
+
+/** 推后验证：GitCode 的分支+tags 引用集与 refSource 逐条比对（hash+refname 全等），
+ * 把「镜像完成」变成 exit 0 的可验证语义。无此验证时 GitCode 平台侧行为（如
+ * release API 自动打 tag 到旧 commit，2026-09-07 v0.9.14 实测）会造成静默漂移。 */
+async function verifyMirrorAlignment(refSource, gitcodeUrl) {
+  const listRefs = async (target) => {
+    try {
+      const { stdout } = await execP(
+        `git ls-remote ${shellQuote(target)} "refs/heads/*" "refs/tags/*"`,
+        { encoding: 'utf8', timeout: 120000, shell: '/bin/bash', maxBuffer: 10 * 1024 * 1024 });
+      return new Set(stdout.trim().split('\n').filter(Boolean));
+    } catch (e) {
+      die(`镜像验证失败：ls-remote ${target} 不可达：${String(e.message || e).slice(0, 200)}。`
+        + '恢复：检查网络后重跑 push-repo。');
+    }
+  };
+  const src = await listRefs(refSource);
+  const dst = await listRefs(gitcodeUrl);
+  const missing = [...src].filter((l) => !dst.has(l));
+  const extra = [...dst].filter((l) => !src.has(l));
+  if (missing.length > 0 || extra.length > 0) {
+    die(`镜像验证失败：GitCode 与 ${refSource} 引用集不一致——`
+      + `缺失 ${missing.length} 条：${missing.slice(0, 3).join(' ; ')}${missing.length > 3 ? ' …' : ''}；`
+      + `多余 ${extra.length} 条：${extra.slice(0, 3).join(' ; ')}${extra.length > 3 ? ' …' : ''}。`
+      + `恢复：重跑 push-repo --ref-source ${refSource}（幂等对齐）；持续不一致按缺失 ref 核对 GitCode 平台侧是否被改动。`);
+  }
+  console.log(`[push-repo] 镜像验证通过：分支+tags 共 ${src.size} 条引用与 ${refSource} 完全一致`);
 }
 
 /* ── 模式一：探针 ─────────────────────────────────────────── */
@@ -624,7 +654,8 @@ const COMMANDS = {
       die('用法：node scripts/gitcode-release-sync.mjs push-repo [--ref-source <remote>]（本地环境传 --ref-source github）');
     }
     try {
-      pushRepoMirror(refSource);
+      const url = pushRepoMirror(refSource);
+      await verifyMirrorAlignment(refSource, url);
     } catch (e) {
       die(String(e.message || e));
     }

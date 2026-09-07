@@ -309,6 +309,17 @@ bare repo + worktree 结构下，`.bare/hooks/pre-commit` 是全部 worktree 共
 - 恢复：在含最新护栏段的分支（≥ 4ecea728f）worktree 里跑 `bash .githooks/install-hooks.sh` 重装共享副本
 - 根治：旧 worktree 的分支更新到含护栏段与自检的基线后自然消除；在合并前，任何 worktree 的 `pnpm install` 后建议复跑上面的检测命令。CI invariant（ci.yml 独立跑护栏脚本）在本地失效窗口期兜底拦新增裸写点
 
+### 本地 tag 污染与 GitCode 镜像全量拒收（2026-09-07 v0.9.14 发布事故）
+
+两层问题叠加在 merge 阶段 6.5.3（GitCode 仓库镜像）爆发：
+
+1. **镜像 push 全量拒收**：本地 `refs/remotes/github/HEAD` 跟踪 symref 被 refspec `refs/remotes/github/*` 展开成创建 `refs/heads/HEAD`，GitCode 判 HEAD 为保留关键字拒收，git pre-receive hook 一票否决整个 push——所有引用（含 main、全部 tag）一起报 `pre-receive hook declined`，报错不指向真凶。CI 时代无此问题（actions/checkout 无 `origin/HEAD` 引用），本地化后才踩中。
+2. **本地 tag 空间污染**：`git fetch upstream`（pi-mono，只读参照用）的 tag auto-follow 把 285 个上游 `v*` tag 拉进本地；普通 fetch 永不更新已有 tag，GitHub 侧重打过的 tag（v0.3.15）本地还会残留过期旧位置。老脚本 `+refs/tags/*` 推本地 tags，一旦拒收解除就会把污染注入镜像。
+
+- 防线（已落地）：镜像脚本 tags 从 `refs/remotes/github-tags/*` 命名空间推（本地再脏也推不出去）+ push 前删 `<src>/HEAD` symref + 推后逐条比对引用集（不一致即 exit 非 0，见 `scripts/gitcode-release-sync.mjs`）；上游 auto-follow 已断（`.bare` 配置 `remote.upstream.tagOpt=--no-tags`，新 workspace 需重设）
+- 本地 tag 自愈命令（怀疑漂移时跑）：`git fetch github --force --prune --prune-tags`
+- 排障提示：GitCode 报 `pre-receive hook declined` 且无 `remote:` 详情时，先二分 refspec 找被拒的具体引用（单引用逐个推），不要当瞬时故障重试
+
 ## 周期轮询/兜底定时器的合法性判定（2026-08-28）
 
 新增任何周期定时器（setInterval / 递归 setTimeout 循环 / 轮询兜底）前，必须按下表归类并回答该类的问题；处置台账与外部对照证据见 [design/pi-boundary-reliability.md 附录 C](design/pi-boundary-reliability.md#附录-c轮询定时器处置全清单2026-08-28d9-执行台账)。**判定原则：变化时对方会主动 push 的信息，禁止用周期 pull 兜底**——兜底轮询会掩盖主链路 bug（事故 B 的 30s 轮询就让「回执丢失」隐性存在了很久）。

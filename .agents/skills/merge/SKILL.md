@@ -413,7 +413,7 @@ cd $WS_ROOT/main && source ~/.zshrc >/dev/null 2>&1; git fetch github --prune \
 
 ⚠️ **`--ref-source github` 本地必传**：本地 bare-repo workspace 的 `origin` 指向本地 `.bare`，不传会把本地分支状态（含已删/落后分支）推上 GitCode 造成 drift。`git fetch github --prune` 先刷新远端跟踪引用，保证 GitCode 与 GitHub 分支集严格一致（--force --prune 对齐）。首次全量约 2 分钟（pack ≈ 490MB），后续发布秒级增量。
 
-⚠️ **tags 与 HEAD 由脚本内部处理（勿手动换 refspec）**：tags 不推本地 `refs/tags/*`——本仓还会 fetch pi-mono upstream，同名 `v*` tag 空间互相污染（2026-09-07 实测本地 478 vs GitHub 193，v0.3.15 已被上游 tag 遮蔽），脚本会先 fetch 到 `refs/remotes/github-tags/*` 独立命名空间再从该处推送；分支 refspec 展开前脚本会先删 `github/HEAD` symref——否则会尝试在 GitCode 创建 `refs/heads/HEAD`（保留关键字），pre-receive hook 一票否决整个 push。
+⚠️ **tags 与 HEAD 由脚本内部处理（勿手动换 refspec）**：tags 不推本地 `refs/tags/*`——本仓还会 fetch pi-mono upstream，同名 `v*` tag 空间互相污染（2026-09-07 实测本地 478 vs GitHub 191：285 个 pi 上游 tag 混入，另有 v0.3.15 这类 GitHub 侧重打后本地残留的过期旧位置 tag——普通 fetch 永不更新已有 tag），脚本会先 fetch 到 `refs/remotes/github-tags/*` 独立命名空间再从该处推送；分支 refspec 展开前脚本会先删 `github/HEAD` symref——否则会尝试在 GitCode 创建 `refs/heads/HEAD`（保留关键字），pre-receive hook 一票否决整个 push。推送完成后脚本自动逐条比对 GitCode 与 GitHub 的引用集，不一致即 exit 非 0，无需手动 ls-remote 复核。
 
 #### 6.5.4 验证（GitCode 匿名直链可达）
 
