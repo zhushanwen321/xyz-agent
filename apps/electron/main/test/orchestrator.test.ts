@@ -137,7 +137,7 @@ describe('W3: orchestrator (W3TC8-9)', () => {
         winX64Exe: { name: 'setup.exe', downloadUrl: 'https://x/setup.exe', size: 2000, sha256: 'c'.repeat(64) },
       },
     }
-    downloadMocks.downloadAsset.mockResolvedValue({ filePath: 'C:/tmp/setup.exe' })
+    downloadMocks.downloadAsset.mockResolvedValue({ filePath: 'C:/tmp/setup.exe', multiPart: false, engine: 'undici' })
     // 三平台统一 detached-script：win 的 updater.cmd 已在 prepareUpdate 内 spawn（u2a）
     const detachedRef: UpdateScriptRef = {
       kind: 'detached-script',
@@ -203,7 +203,7 @@ describe('W3: orchestrator (W3TC8-9)', () => {
   // 与 performUpdate 的下载阶段共享 downloading 锁，独立 onProgress（仅下载百分比）。
   it('W3TC10: downloadUpdate → downloadAsset mock 返回 {filePath}，透传给调用方', async () => {
     setPlatform('darwin')
-    downloadMocks.downloadAsset.mockResolvedValue({ filePath: '/tmp/x.zip' })
+    downloadMocks.downloadAsset.mockResolvedValue({ filePath: '/tmp/x.zip', multiPart: false, engine: 'undici' })
 
     const { downloadUpdate } = await loadModule()
     const result = await downloadUpdate(MAC_RELEASE)
@@ -246,7 +246,7 @@ describe('W3: orchestrator (W3TC8-9)', () => {
     const gate = new Promise<void>((resolve) => { releaseGate = resolve })
     downloadMocks.downloadAsset.mockImplementation(async () => {
       await gate // 阻塞直到 releaseGate
-      return { filePath: '/tmp/x.zip' }
+      return { filePath: '/tmp/x.zip', multiPart: false, engine: 'undici' }
     })
 
     const { downloadUpdate } = await loadModule()
@@ -405,13 +405,13 @@ describe('u-download-failover: 下载段跨源降级（mock 双引擎失败注�
     Object.defineProperty(process, 'platform', { value: platform, configurable: true })
   }
 
-  /** 装配一次「主源失败 → 对侧续传成功」的 mock 序列，返回断言句柄 */
+  /** 装配一次「主源失败 → 对侧续传成功」的 mock 序列，返回断言句柄（side 返回值含扩展观测字段） */
   function arrangePrimaryFailSideSucceed(errorCode: UpdateErrorCode, sideRelease: LatestReleaseInfo | null) {
     const { checker, fetchReleaseByTag } = makeSideChecker()
     fetchReleaseByTag.mockResolvedValue(sideRelease)
     downloadMocks.downloadAsset
       .mockImplementationOnce(async () => { throw makeNetError(errorCode) })
-      .mockResolvedValueOnce({ filePath: '/tmp/side-resumed.bin' })
+      .mockResolvedValueOnce({ filePath: '/tmp/side-resumed.bin', multiPart: true, engine: 'undici' })
     return { checker, fetchReleaseByTag }
   }
 
@@ -458,7 +458,7 @@ describe('u-download-failover: 下载段跨源降级（mock 双引擎失败注�
     fetchReleaseByTag.mockResolvedValue({ ...SIDE_RELEASE_ATOMGIT, source: 'github' })
     downloadMocks.downloadAsset
       .mockImplementationOnce(async () => { throw makeNetError('UPDATE_NETWORK_FAILED') })
-      .mockResolvedValueOnce({ filePath: '/tmp/side-resumed.bin' })
+      .mockResolvedValueOnce({ filePath: '/tmp/side-resumed.bin', multiPart: true, engine: 'undici' })
 
     await downloadUpdate(releaseFromAtomgit, undefined, { releaseChecker: checker })
 
@@ -634,7 +634,7 @@ describe('u-download-failover: 下载段跨源降级（mock 双引擎失败注�
   })
 
   // ── 诊断落盘 ───────────────────────────────────────────────────
-  it('降级成功：logSourceFailover(segment=download) 落盘 + logDownloadSuccess 落盘（releaseSource=成功源）', async () => {
+  it('降级成功：logSourceFailover(segment=download) 落盘 + logDownloadSuccess 落盘（multiPart/engine 为对侧续传真实值）', async () => {
     setPlatform('darwin')
     const { downloadUpdate } = await loadModule()
     const { checker, fetchReleaseByTag } = arrangePrimaryFailSideSucceed(
@@ -655,19 +655,41 @@ describe('u-download-failover: 下载段跨源降级（mock 双引擎失败注�
     })
     const success = entries.find((e) => e['source'] === 'download-success')
     expect(success).toBeDefined()
-    expect(success).toMatchObject({ releaseSource: 'github' })
+    // downloadAsset 返回值扩展后透传真实观测值（此处 mock 为对侧续传成功形态）
+    expect(success).toMatchObject({ releaseSource: 'github', multiPart: true, engine: 'undici' })
   })
 
-  it('正常（未降级）下载成功：logDownloadSuccess 落盘一条、无 source-failover', async () => {
+  it('正常（未降级）下载成功：logDownloadSuccess 落盘一条、multiPart/engine 透传 downloadAsset 返回值', async () => {
     setPlatform('darwin')
     const { downloadUpdate } = await loadModule()
-    downloadMocks.downloadAsset.mockResolvedValue({ filePath: '/tmp/x.zip' })
+    downloadMocks.downloadAsset.mockResolvedValue({
+      filePath: '/tmp/x.zip',
+      multiPart: true,
+      engine: 'undici',
+    })
 
     await downloadUpdate(RELEASE_FROM_GITHUB)
 
     const entries = readUpdateErrorLog()
     expect(entries.filter((e) => e['source'] === 'download-success')).toHaveLength(1)
     expect(entries.filter((e) => e['source'] === 'source-failover')).toHaveLength(0)
+    const success = entries.find((e) => e['source'] === 'download-success')
+    expect(success).toMatchObject({ multiPart: true, engine: 'undici', releaseSource: 'github' })
+  })
+
+  it('curl 引擎接管成功：download-success 透传 engine=curl（S1 断言失败先核对 engine 字段的观测前提）', async () => {
+    setPlatform('darwin')
+    const { downloadUpdate } = await loadModule()
+    downloadMocks.downloadAsset.mockResolvedValue({
+      filePath: '/tmp/x.zip',
+      multiPart: false,
+      engine: 'curl',
+    })
+
+    await downloadUpdate(RELEASE_FROM_GITHUB)
+
+    const success = readUpdateErrorLog().find((e) => e['source'] === 'download-success')
+    expect(success).toMatchObject({ multiPart: false, engine: 'curl' })
   })
 })
 
@@ -793,6 +815,9 @@ describe('u-download-failover: totalBytes 三组合（真实 download-asset + st
     expect(readFileSync(finalPath)).toEqual(FULL_BYTES)
     expect(existsSync(statePath)).toBe(false)
     expect(result).toEqual({ filePath: finalPath })
+    // 真实单段链路的 download-success 观测值：multiPart=false（size < 多段阈值）+ engine=undici
+    const success = readUpdateErrorLog().find((e) => e['source'] === 'download-success')
+    expect(success).toMatchObject({ multiPart: false, engine: 'undici', releaseSource: 'github' })
   })
 
   it('组合 B：对侧 totalBytes 与 state 不一致（超容差）→ 既有守卫触发转全量（206→无 Range 200），全量产物正确落位', async () => {

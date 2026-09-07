@@ -25,8 +25,8 @@
  *   延迟魔数常量与 win 安装器 ref 分支已整体删除）
  *
  * 依赖方向：orchestrator → download-asset + platform-updater + proxy-config + constants + types
- *   + error-log + upgrade-fetch（engine 偏好读取）+ ../release-checker（降级 by-tag 查询的
- *   默认实现，经 IReleaseChecker 接口消费）+ @xyz-agent/shared
+ *   + error-log + ../release-checker（降级 by-tag 查询的默认实现，经 IReleaseChecker
+ *   接口消费）+ @xyz-agent/shared
  */
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { URL } from 'node:url'
@@ -40,7 +40,6 @@ import { readProxyConfig } from './proxy-config.js'
 import { UpdateError, UpdateIntegrityError, UpdateUnsupportedError } from './types.js'
 import type { UpdateScriptRef } from './types.js'
 import { logSourceFailover, logDownloadSuccess } from './error-log.js'
-import { getEnginePreference } from './upgrade-fetch.js'
 import { ALLOWED_DOWNLOAD_HOSTS } from './release-sources.js'
 import { ReleaseChecker } from '../release-checker.js'
 import type { IReleaseChecker } from '../interfaces.js'
@@ -211,10 +210,9 @@ export async function downloadUpdate(
     //    （downloadAsset 内部据此构造 undici ProxyAgent dispatcher）。
     //    proxyConfig 读取失败（文件损坏等）不阻断升级：降级为默认 mode='system'（直连/环境变量）。
     const proxyConfig = readProxyConfig()
-    let filePath: string
+    let outcome: Awaited<ReturnType<typeof downloadAsset>>
     try {
-      const result = await downloadAsset(asset, onProgress, proxyConfig)
-      filePath = result.filePath
+      outcome = await downloadAsset(asset, onProgress, proxyConfig)
     } catch (err) {
       // 下载段跨源降级（update-multi-source §6.5 D5）：网络类失败 → 对侧源 by-tag
       // 确认后复用 temp + resume-state 续传。降级不成立（触发集合外 / source 缺失 /
@@ -224,19 +222,17 @@ export async function downloadUpdate(
         releaseChecker: opts?.releaseChecker,
       })
       if (!failedOver) throw err
-      filePath = failedOver.filePath
+      outcome = failedOver
     }
-    // 下载成功登记（download-success，S1 多段生效断言观测面）。
-    // multiPart/engine 取值近似说明：downloadAsset 返回值不含 probe 判定与实际引擎
-    // （其改造属 u-probe-multipart 已 committed 领地，本单元不可扩返回值），此处
-    // engine 取进程级引擎偏好 flag（连接建立失败置位 curl 后为 curl，否则 undici）、
-    // multiPart 保守 false——精确观测面回填待 download-asset 返回值扩展（偏差已登记）。
+    // 下载成功登记（download-success，S1 多段生效断言观测面）：multiPart = 本次
+    // 实际执行路径、engine = 实际完成下载的引擎，均取自 downloadAsset 返回值
+    // （降级续传成功时为对侧续传那次调用的真实观测值）。
     logDownloadSuccess({
-      multiPart: false,
-      engine: getEnginePreference() === 'curl' ? 'curl' : 'undici',
+      multiPart: outcome.multiPart,
+      engine: outcome.engine,
       releaseSource: release.source,
     })
-    return { filePath }
+    return { filePath: outcome.filePath }
   } finally {
     downloading = false
   }
@@ -345,12 +341,13 @@ interface ICrossSourceResumeInput {
  * by-tag null（404 发布时间窗）与 200 但目标 asset 缺失（部分同步失败窗口）同语义：
  * 不降级、保留本源 temp+state、原错误上抛（不误报、不触发无意义续传）。
  *
- * @returns 降级续传成功返回 { filePath }；降级不成立返回 null（调用方原错误上抛）
+ * @returns 降级续传成功返回 downloadAsset 完整结果（含 multiPart/engine 观测值，
+ *          为对侧续传那次调用的真实值）；降级不成立返回 null（调用方原错误上抛）
  * @throws UpdateIntegrityError 降级续传产物完整性不符（D8：原样上抛，绝不吞成网络错误）
  */
 async function tryCrossSourceResumeDownload(
   input: ICrossSourceResumeInput,
-): Promise<{ filePath: string } | null> {
+): Promise<Awaited<ReturnType<typeof downloadAsset>> | null> {
   const { asset, release, err, onProgress, proxyConfig, releaseChecker } = input
   // ① 触发集合 + 完整性安全边界
   if (!(err instanceof UpdateError)) return null
