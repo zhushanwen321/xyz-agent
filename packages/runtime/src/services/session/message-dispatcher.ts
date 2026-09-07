@@ -851,7 +851,11 @@ export class MessageDispatcher {
    * payload 契约见 protocol.ts）。三入口共用：注入器产出的 notices 逐条定向发布。
    *
    * clientUuid 从发送文本提取（`<!--xyz:msg:<uuid>-->`，与 pi 侧 msg-id-mapper TAG_MATCH
-   * 同款全文正则——全文匹配使降级拼接把块放到标记之后也不影响提取）；纯文本消息与
+   * 同款全文正则——全文匹配使降级拼接把块放到标记之后也不影响提取）。[双侧同构字面量]
+   * 标记格式 SSOT = extensions/taiji/msg-id-mapper/src/index.ts（TAG_MATCH :46，写入/剥离
+   * 两端协议），本正则是消费侧同构镜像，禁单侧修改——不收敛 shared：extension 独立发布
+   * 体系不依赖 @xyz-agent/shared（S4 裁决，注释互指替代）。
+   * 纯文本消息与
    * steer/followUp 路径无此标记 → payload 缺省该字段（类型可空，u5 按可空消费）。
    */
   private publishSkillNotices(sessionId: string, sentText: string, notices: SkillNotice[]): void {

@@ -59,11 +59,11 @@ function createPartition(): BackgroundTasksPartition {
 type BroadcastListener = (sid: string, tasks: BackgroundTaskEntry[], corrupted: boolean) => void
 
 /** 各实例注册的分区写入 listener（物理 handler 分发时遍历；各实例写各自的分区 Map，幂等）。 */
-// @data-owner #24
+// @data-owner #25
 const broadcastListeners = new Set<BroadcastListener>()
 
 /** per-sid 物理订阅表：sid → { count: 实例引用数, unsub: 退订函数 }。 */
-// @data-owner #24
+// @data-owner #25
 const sidSubscriptions = new Map<string, { count: number; unsub: () => void }>()
 
 function acquireBroadcastSubscription(sid: string): void {
@@ -102,7 +102,7 @@ function releaseBroadcastSubscription(sid: string): void {
 
 // ── 模块级拉取 in-flight 去重（同 sid 并发 refresh/恢复腿复用同一 Promise）──
 
-// @data-owner #24
+// @data-owner #25
 const inflightFetches = new Map<string, Promise<ListReplySnapshot | null>>()
 
 /** 单次 list RPC 的解析结果快照（RPC 结果与分区写入解耦：in-flight 去重共享同一 RPC，
@@ -129,7 +129,7 @@ function parseListReply(raw: unknown): ListReplySnapshot | null {
 
 // ── 已销毁 session 抑制表（迟到写入不得僵尸式重建分区，参照 useContextUsage）──
 
-// @data-owner #24
+// @data-owner #25
 const suppressedSids = new Set<string>()
 
 /** 测试隔离钩子：清空全部模块级簿记（用例间残留防污染）。生产代码禁止调用。 */

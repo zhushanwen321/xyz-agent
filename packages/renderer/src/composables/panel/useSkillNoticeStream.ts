@@ -64,6 +64,8 @@ export function isDegradeReason(reason: SkillNoticeReason): boolean {
 export type SkillNoticeStreamItem = RenderItem | { kind: 'skillNotice'; entry: DeepReadonly<SkillNoticeEntry> }
 
 /** per-session 分区状态：seen 做幂等去重，entries 是呈现数据（渲染只消费 entries）。 */
+// @data-owner #27 —— #27 skill 注入提示的 renderer 消费分区（live-only 瞬态，会话内存态
+// 不落盘；权威广播写入口/live-only 语义见登记表主表 #27 行，非第二写方）
 interface SkillNoticePartition {
   seen: Set<string>
   entries: SkillNoticeEntry[]

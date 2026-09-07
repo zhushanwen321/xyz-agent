@@ -32,6 +32,8 @@ import { command, RPC_BACKSTOP_TIMEOUT_MS } from '@xyz-agent/core/transport/api'
 import type { GenStatsFrame } from '@xyz-agent/shared'
 
 /** 分区容器（useSessionScopedState 响应式契约要求 reactive 容器：mutate 才触发下游失效） */
+// @data-owner #26 —— #26 生成指标的 renderer 消费分区（live 帧 + 恢复腿 reply 双路喂入；
+// 权威源/唯一写入口/null 空值语义见登记表主表 #26 行，非第二写方）
 interface GenStatsPartition {
   frame: GenStatsFrame | null
 }
@@ -49,7 +51,7 @@ interface InflightEntry {
   seqAtIssue: number
 }
 
-// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，data-source-registry 例外同 useContextUsage）：getGenStats RPC 的 in-flight 去重簿记（Promise 句柄，非指标数据；指标数据本体在 per-session 分区，经 useSessionScopedState 持有）
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，已落定登记表 §4 ⑧ 补登 2026-09-07）：getGenStats RPC 的 in-flight 去重簿记（Promise 句柄，非指标数据；指标数据本体在 per-session 分区 @data-owner #26，经 useSessionScopedState 持有）
 /**
  * 模块级 in-flight 去重表：sid → 在途 getGenStats。
  * 条目持 Promise 本体（非发起实例回调）：多实例快速切入同一 sid 复用同一次 RPC。
@@ -65,9 +67,16 @@ export function __clearInFlightGenStatsForTest(): void {
 /**
  * 帧内 model 与该 session 当前 modelId 的匹配判定（D4 前端兜底的比对规则）。
  *
- * 帧 model 格式是设计待验证检查点（turn_end.message.model 的 responseModel vs model
- * 未实测）：可能是复合 id（"provider/model"）也可能是裸 model id。两形态都算匹配——
- * ① 精确相等；② 复合 id 取最后一段 '/' 后缀相等。其余（真正他模型帧）才丢弃。
+ * 帧 model 语义已锚定 PS-25（docs/pi-semantics.json）：AssistantMessage.model = 请求侧
+ * Model.id（pi 模型注册表的模型 id；非 responseModel——那是 provider 实际报告的响应模型，
+ * 仅 openai-completions 在路由结果 ≠ 请求 id 时才有，不采）。本函数是 modelKey 语义的
+ * 第二个消费端实现（runtime splitModelKey/broadcastModel 为第一个）：runtime 帧 modelKey
+ * 与 currentModelId 同为复合 id "provider/<Model.id>"（gen-stats-service splitModelKey 同构），
+ * 帧 model 是 Model.id 本体 → 双形态兼容：① 精确相等（防御性，帧已含复合 id 时直接同域）；
+ * ② 复合 id 取最后一段 '/' 后缀相等（主路径：currentModelId 剥 provider 段后与 Model.id 比）。
+ * 其余（真正他模型帧）才丢弃。已知局限（归 S18）：Model.id 自身含 '/'（openrouter 系
+ * "vendor/model"）时尾段失配 → 合法帧被无害丢弃，修复须把归属判定上移 runtime（帧内带
+ * 结构化归属标记，view-ready），renderer 退化为纯显示——在此之前本函数是兜底权威。
  */
 export function genStatsModelMatches(frameModel: string, currentModelId: string): boolean {
   if (frameModel === currentModelId) return true

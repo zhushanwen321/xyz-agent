@@ -31,6 +31,7 @@
 import { computed, inject, ref } from 'vue'
 import type { Component } from 'vue'
 import { LayoutGrid } from '@lucide/vue'
+import { builtinContributions } from '@xyz-agent/core/extension-host'
 import { VIEWS_SOURCE_KEY, type PluginViewSummary } from './views-source'
 import L2TabBar from './L2TabBar.vue'
 import { L2_TAB_BADGE_SOURCE_KEY, NATIVE_VIEWS_KEY, type L2TabItem } from './l2-tab-item'
@@ -47,8 +48,10 @@ const nativeViews = inject(NATIVE_VIEWS_KEY, null)
 /** badge 数据源（壳 provide；null = 未接线 → 全部 tab 不亮） */
 const badgeSource = inject(L2_TAB_BADGE_SOURCE_KEY, null)
 
-/** builtin plugin（core builtin-contributions.ts 声明）——不可关闭 */
-const BUILTIN_PLUGIN_IDS = new Set(['tasks', 'base-tool-enhance'])
+/** builtin plugin（core builtin-contributions 声明单源派生，消双处字面量）——不可关闭。
+ *  派生全集含 statusline（其无 sidebar.tab view 贡献，views 查询永不命中该 id），
+ *  判定行为与原字面量 { tasks, base-tool-enhance } 等价。 */
+const BUILTIN_PLUGIN_IDS = new Set(builtinContributions.map((c) => c.pluginId))
 
 /** 通用 default icon（静态声明 view 未配 icon 时使用，统一 LayoutGrid） */
 const DEFAULT_ICON: Component = LayoutGrid

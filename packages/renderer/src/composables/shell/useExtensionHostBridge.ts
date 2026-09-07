@@ -252,9 +252,9 @@ export function toContributionInfos(
 // 未激活也要亮）；effectScope（非裸调用）使内部 onScopeDispose 有归属、无 Vue warn。
 // refCount 语义：badge 实例与列表视图实例共用 useBackgroundTasks 的 per-sid 订阅表，
 // 同 sid 时 refCount=2 仍单条物理 events.on（AGENTS 规则 2 不破坏）。
-// @data-owner #24
+// @data-owner #25
 let badgeScope: EffectScope | null = null
-// @data-owner #24
+// @data-owner #25
 let badgeTasks: UseBackgroundTasksReturn | null = null
 
 function ensureBadgeTasks(): UseBackgroundTasksReturn {
