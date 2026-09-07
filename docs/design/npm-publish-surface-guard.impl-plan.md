@@ -109,3 +109,4 @@ graph TD
 | 2026-09-07 | 初版：按设计 §5 拆分 u1–u5 固化为 DAG（u4 从叙述末位提前进 W2 并行，理由见 §3 说明） |
 | 2026-09-07 | v2：u5→u1 依赖边反转为 u1→u5（u5 执行者实证 render-constraints 实装校验 authority/hook 存在性，登记先行引用未来脚本机器不可通过）；Wave 重排 W1={u1} / W2={u5,u2,u3} / W3={u4}；u5 验收条款补「authority/enforcement 引用真实」；详见 §5 偏差登记表 |
 | 2026-09-07 | v3：阶段 3 一致性审查（三区并行 reviewer，0 unreasonable / 7 doc_errors）台账同步：§5 偏差表首行错别字「登立」改「登记」；设计文档同批 v6（指引分流说明 / D2 行号改锚 step 名称 / u3「紧随」改「依赖」）；README 三缺陷 + 守卫文案分流走阶段 4 修复批次 |
+| 2026-09-07 | v4：阶段 3+4 清零——修复批次（7a9b177f8：README 示例 stats-line 类型正确三层验证 + 包结构四子域 + extractGui 语义 + 守卫 fixFor 分流，判定逻辑零改动）+ 设计 v6（6d6116ca7）；定向复审（区 A 审查者续用）4 条 doc_errors 全 closed、0 new_issues、单测 29/29 与守卫基线复跑绿 |
