@@ -183,14 +183,18 @@ const PROGRESS_THROTTLE_MS = 200
  * @param asset 待下载的 release 资产（含 downloadUrl / sha256 / size）
  * @param onProgress 下载进度回调（0-100 百分比）
  * @param proxyConfig 代理配置（可选，不传则禁用代理）
- * @returns 下载完成后最终文件路径（已通过校验）
+ * @returns 下载完成后最终文件路径（已通过校验）；multiPart = 本次是否实际走了
+ *   多段路径（probe supported 且多段真实完成——降级单段/curl 接管均为 false）；
+ *   engine = 本次成功完成下载的实际引擎（curl 接管与 undici 两态，降级后成功的
+ *   以实际成功者为准）。两字段是 download-success 观测面的数据源（设计 §7.2
+ *   error-log 行 / §8.2 S1：multiPart=true 断言防 probe 改造回归静默退化单段）。
  * @throws UpdateIntegrityError sha256/size 校验失败
  */
 export async function downloadAsset(
   asset: ReleaseAsset,
   onProgress?: (percent: number) => void,
   proxyConfig?: IProxyConfig,
-): Promise<{ filePath: string }> {
+): Promise<{ filePath: string; multiPart: boolean; engine: FetchEngine }> {
   // 1. 准备目录 + 临时文件路径
   const updateDir = getUpdateDir()
   mkdirSync(updateDir, { recursive: true })
@@ -220,7 +224,10 @@ export async function downloadAsset(
   const orchestrationCtx: IEngineOrchestrationContext = {
     tempPath, finalPath, downloadedBytes, resumeState, onProgress, proxyConfig, proxyUrl,
   }
+  // useMultiPart 提升到函数级：成功返回时作为 multiPart 观测值（download-success
+  // 观测面消费，见 @returns）。多段成功路径才置 true——降级单段 / curl 接管均保持 false。
   let handledByCurl = false
+  let useMultiPart = false
   if (getEnginePreference() === 'curl') {
     await runCurlDownloadChain(asset, {
       tempPath: orchestrationCtx.tempPath,
@@ -233,7 +240,6 @@ export async function downloadAsset(
   }
 
   if (!handledByCurl) {
-    let useMultiPart = false
     // [S#1 / business-logic] 多段启用阈值用 release 声明的 asset.size，而非 probe 返回的
     // 真实 totalBytes：此判定在 probe 之前，目的是先过滤掉小文件，避免对每个小文件都发一次
     // probe 请求（额外 RTT）。即使 release 声明 size 被误填偏小，导致大文件误走单段下载，
@@ -271,7 +277,8 @@ export async function downloadAsset(
 
   // 7. rename .downloading → 最终文件名（权限/失败错误分类见 renameToFinalPath）
   renameToFinalPath(tempPath, finalPath)
-  return { filePath: finalPath }
+  // 到达此点 = 下载已成功：engine 取实际成功者（curl 接管 / undici），失败路径不会抵达
+  return { filePath: finalPath, multiPart: useMultiPart, engine: handledByCurl ? 'curl' : 'undici' }
 }
 
 /**

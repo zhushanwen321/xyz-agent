@@ -18,6 +18,18 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, mkdirSync, 
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { UpdateError } from '../update/types.js'
+import { resetEnginePreferenceForTest, markEnginePreferenceFromUndiciFailure } from '../update/upgrade-fetch.js'
+import { downloadViaCurl } from '../update/curl-download.js'
+
+// curl-download 部分 mock：downloadViaCurl 可控（curl 接管场景写 temp），其余透传。
+// constants 路径已延迟求值（getDataDir 运行时读 env），静态 import 无路径副作用。
+const downloadViaCurlMock = vi.mocked(downloadViaCurl)
+
+/** 构造 undici fetch 抛错形态（外层 'fetch failed'，errno 挂 cause），供真实置位链路使用。 */
+function fetchFailedWith(code: string, msg = 'connect failed'): TypeError {
+  const cause = Object.assign(new Error(msg), { code })
+  return new TypeError('fetch failed', { cause })
+}
 
 // ── 批次 5（u5a）原子写序列断言基建 ──────────────────────────────
 // 包装 writeFileSync/renameSync 透传真实现并记录调用参数，供「resume-state
@@ -70,6 +82,14 @@ vi.mock('node:fs', async (importOriginal) => {
       })
     },
   }
+})
+
+// curl-download 部分 mock：downloadViaCurl 可控（curl 接管场景编排写 temp / 断言），
+// 其余透传真实现。仅「返回值观测面」describe 的 curl 接管用例编排它，其余用例
+// 不触 curl 路径（若编排回归意外触发，vi.fn 默认 resolve undefined 快速暴露）。
+vi.mock('../update/curl-download.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../update/curl-download.js')>()
+  return { ...actual, downloadViaCurl: vi.fn() }
 })
 
 // ── env 先于一切路径求值把升级工作目录重定向到 tmp ──────────────────
@@ -181,6 +201,9 @@ describe('W3: download-asset (W3TC1-3)', () => {
     expect(readFileSync(result.filePath)).toEqual(TEST_CONTENT)
     // .downloading 临时文件已清理
     expect(existsSync(`${result.filePath}.downloading`)).toBe(false)
+    // 返回值观测面（download-success 数据源，设计 §8.2 S1）：小文件纯单段成功形态
+    expect(result.multiPart).toBe(false)
+    expect(result.engine).toBe('undici')
   })
 
   // ── W3TC2：sha256 不匹配 → 抛 UpdateIntegrityError ──────────────
@@ -959,6 +982,8 @@ describe('probe 四出口归类（GET Range 0-0 + Content-Range 判定）', () =
   })
 
   afterEach(() => {
+    // curl 接管用例经真实置位链路写过进程级 flag，必须复位防泄漏到同文件后续 describe
+    resetEnginePreferenceForTest()
     globalThis.fetch = originalFetch
     vi.restoreAllMocks()
     const updateDir = path.join(TMP_DATA_DIR, 'update')
@@ -1010,6 +1035,10 @@ describe('probe 四出口归类（GET Range 0-0 + Content-Range 判定）', () =
     expect(rangeLog.filter((r) => r !== undefined && r !== PROBE_RANGE)).toHaveLength(4)
     // 产物完整正确（多段合并 + sha 通过）
     expect(readFileSync(result.filePath).compare(MULTI_PART_CONTENT)).toBe(0)
+    // 返回值观测面：probe supported 且多段真实完成（S1 断言「multiPart: true」防
+    // probe 改造回归静默退化单段）
+    expect(result.multiPart).toBe(true)
+    expect(result.engine).toBe('undici')
   })
 
   // 出口②：206 + total 数字低于阈值 → not supported（文件不够大，单段）。
@@ -1032,6 +1061,9 @@ describe('probe 四出口归类（GET Range 0-0 + Content-Range 判定）', () =
     // 无段请求：探测之后唯一一次请求是单段全新下载（无 Range 头）
     expect(rangeLog).toEqual([undefined])
     expect(readFileSync(result.filePath).compare(MULTI_PART_CONTENT)).toBe(0)
+    // 返回值观测面：total 低于阈值未走多段
+    expect(result.multiPart).toBe(false)
+    expect(result.engine).toBe('undici')
   })
 
   // 出口③：206 但 Content-Range 不可用（缺失 / total `*` / 单位非 bytes）→ 一律 not supported。
@@ -1059,6 +1091,9 @@ describe('probe 四出口归类（GET Range 0-0 + Content-Range 判定）', () =
 
     expect(rangeLog).toEqual([undefined])
     expect(readFileSync(result.filePath).compare(MULTI_PART_CONTENT)).toBe(0)
+    // 返回值观测面：Content-Range 不可用一律单段
+    expect(result.multiPart).toBe(false)
+    expect(result.engine).toBe('undici')
   })
 
   // 出口④：非 206（P5 实测 gitcode.com 主域形态：GET Range 0-0 回 200 全量）→
@@ -1078,6 +1113,36 @@ describe('probe 四出口归类（GET Range 0-0 + Content-Range 判定）', () =
 
     expect(rangeLog).toEqual([undefined])
     expect(readFileSync(result.filePath).compare(MULTI_PART_CONTENT)).toBe(0)
+    // 返回值观测面：200 全量退化（服务器/代理剥 Range）单段合法出口
+    expect(result.multiPart).toBe(false)
+    expect(result.engine).toBe('undici')
+  })
+
+  // curl 接管成功形态（engine 观测面）：flag=curl 入口分流 → 全程 undici 零调用，
+  // curl 引擎完成下载。engine=curl 断言锁「实际成功者」语义（降级后成功以 curl 为准）。
+  it('flag=curl 入口接管成功 → engine=curl 且 multiPart=false', async () => {
+    // 真实置位链路构造 flag（仅连接建立失败档置位）
+    expect(markEnginePreferenceFromUndiciFailure(fetchFailedWith('EHOSTUNREACH'))).toBe(true)
+    downloadViaCurlMock.mockImplementation(async (_asset, opts) => {
+      writeFileSync(opts.tempPath, TEST_CONTENT)
+      return { tempPath: opts.tempPath }
+    })
+    // flag=curl 应跳过全部 undici 形态（probe 与单/多段 fetch 均不发生）
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('undici must be skipped when engine preference is curl')
+    }) as unknown as typeof globalThis.fetch
+
+    const result = await downloadAsset({
+      name: 'engine-curl.zip',
+      downloadUrl: 'https://example.com/engine-curl.zip',
+      size: TEST_CONTENT.length,
+      sha256: TEST_SHA256,
+    })
+
+    expect(result.engine).toBe('curl')
+    expect(result.multiPart).toBe(false)
+    expect(readFileSync(result.filePath)).toEqual(TEST_CONTENT)
+    expect(existsSync(`${result.filePath}.downloading`)).toBe(false)
   })
 })
 
