@@ -115,6 +115,8 @@ session-delivery 缺口尚未炸的原因只是它从未走过 dev 线（npm 版
   （pnpm --filter @zhushanwen/subagent-core run <script>）后重推 tag
 ```
 
+指引按条目形态分流：非 dist 前缀的纯文件条目（README.md / LICENSE 等，非构建产物）幽灵按「补文件或从 files 删条目」处置——守卫报错文案同此分流（实施期 extension-protocol README 幽灵即该形态，统一「补构建命令」文案对它失准）。
+
 **失败路径 1b——产物目录反向覆盖**（构建了新产物档、忘了加 files，漏声明方向）：
 
 ```text
@@ -163,7 +165,7 @@ session-delivery 缺口尚未炸的原因只是它从未走过 dev 线（npm 版
 - 刻意不挂 pre-commit：dist 产物目录被 .gitignore（`dist/` pattern），干净 checkout 上守卫必红——**这是与 extensions 方向（源文件 git 内有，可挂 pre-commit）的刻意不对称**，由产物形态决定，不是疏漏。
 - **拦截等级两级，如实登记**：发布门 = 硬拦截（release workflow job 失败则 `changeset publish` 不执行，机器强制）；CI PR 段 = 软拦截（main 分支当前无 branch protection、invariants 非 required check，红灯技术上不阻塞 merge，拦截力来自 merge 流程纪律）。若要 PR 段硬化，另立 branch protection 配置单元，不在本设计 scope。
 - **dev 线挂载条件（与正式线不对称，刻意声明）**：release-npm-dev.yml 是条件化结构——`check_pre` 检查 `.changeset/pre.json` 存在性，Smoke / Publish 挂 `should_publish == 'true'` 条件，workflow 注释明文维护「未准备 pre.json 的分支不发布也不跑 smoke（job 整体绿跳过）」语义。本设计在 dev 线新增的三个 build step 与守卫 step **全部与 Smoke / Publish 同条件挂载**：skip 分支不发布，发布面校验无对象，空跑构建反而破坏「skip 整体绿」既有语义（且 npm-prerelease.sh 阶段 4 轮询 CI conclusion，会把误红当发布失败）。**既有 `Build extension-protocol` step 保持无条件不动**——历史挂载，skip 分支白跑成本秒级可忽略；刻意不为它加条件，避免本次改动触碰既有 step（统一与否不在本设计改动面）。
-- 成本：PR 段新增 3 包构建（tsup 秒级 × 3，旁证：npm-prerelease.sh 注释实测 smoke 全程含 build+require+golden 约 5s）+ 守卫毫秒级，invariants job 增量预估 < 1 分钟——S5 实施时实测回填此数字。前提已核实（原待验证检查点关闭）：ci.yml invariants job 已有 `pnpm install --frozen-lockfile`（行 310-313），三包 tsup 均在 devDeps。
+- 成本：PR 段新增 3 包构建（tsup 秒级 × 3，旁证：npm-prerelease.sh 注释实测 smoke 全程含 build+require+golden 约 5s）+ 守卫毫秒级，invariants job 增量预估 < 1 分钟——S5 实施时实测回填此数字。前提已核实（原待验证检查点关闭）：ci.yml invariants job 已有 `pnpm install --frozen-lockfile`（Install dependencies step），三包 tsup 均在 devDeps。
 
 **D3 自包含探针 = 产物文件静态扫描 require 说明符（裸名判定 + 子路径豁免清单）**
 
@@ -260,7 +262,7 @@ S7 是外部消费方（zsw）真实回归，作为发布后场景登记——�
 1. D3 豁免清单的新形态判定——当前清单仅 `ajv/dist/runtime/*`（4 处实测登记）；实施期若探针命中新的子路径形态，按 D3 处置口径分析（真实残留修 noExternal / codegen 字面量进清单注明成因），不预设第三种形态。
 2. S5 的 CI run 依赖真实分支推送，实施期安排；invariants job 实际时长增量回填 D2。
 
-**实施顺序**：u1 → u5（登记紧随）→ u3（紧随 u1，护栏测试接线同批）→ u2 → u4；u1 完成即可跑 S1–S3，u2/u3 完成跑 S2/S5/S6，S4 全链路在 u1–u3 齐后执行，S7 随下次发布编排。初版写「u5（登记先行）→ u1」已被实施期实证否决——render-constraints.mjs 实装校验 authority 路径与 machine hook 的文件存在性（validateAuthorityPath / validateHookExists，渲染模式同样先校验后 exit 2），登记先行引用 u1 未来产出的守卫脚本必然 exit 2，机器不可通过；「先登记再写代码」纪律由「u1 与 u5 同批交付绑定」形态满足（见变更历史 v5）。
+**实施顺序**：u1 → u5（登记紧随）→ u3（依赖 u1，护栏测试接线同批）→ u2 → u4；u1 完成即可跑 S1–S3，u2/u3 完成跑 S2/S5/S6，S4 全链路在 u1–u3 齐后执行，S7 随下次发布编排。初版写「u5（登记先行）→ u1」已被实施期实证否决——render-constraints.mjs 实装校验 authority 路径与 machine hook 的文件存在性（validateAuthorityPath / validateHookExists，渲染模式同样先校验后 exit 2），登记先行引用 u1 未来产出的守卫脚本必然 exit 2，机器不可通过；「先登记再写代码」纪律由「u1 与 u5 同批交付绑定」形态满足（见变更历史 v5）。
 
 ## 6. 变更历史
 
@@ -271,3 +273,4 @@ S7 是外部消费方（zsw）真实回归，作为发布后场景登记——�
 | 2026-09-07 | v3 | 第 2 轮审查修复（主审 1 must-fix + 3 suggestion / 影响面审 0 must-fix + 3 suggestion + 2 INFO，全修）：检查项 3 链路五处同步（G1 扩双向语义 / §1.1 A / §3.2 B / §3.4 图 / §3.1 失败路径 1b）+ 新增 S1b 反向覆盖验收场景 + S5 补反向覆盖分支；D3 判定顺序钉死三步（isBuiltin 含子路径先行，防 fs/promises 误入豁免）+ 豁免条目登记预期计数 4 与形态锚点（堵前缀过宽漏报面）；§3.2 B 列措辞同步（statusline private + unified-hooks ignore）；D2 补既有 Build extension-protocol 保持无条件声明；D7 重审触发加守卫体积 warning 机器回显（采纳）；S6b 新增（u4 两项清偿的简化验收） |
 | 2026-09-07 | v4 | 第 3 轮审查修复（主审 0 must-fix + 2 suggestion，全修；影响面审第 2 轮已达标）：「24 包」残留两处（§1.1 S / §3.2 C）同步为 30 包口径；豁免命中数少于预期时补不红的 notice 复核提示。审查循环收敛：主审 2+1+0 / 影响面 4+0 must-fix，双报告 0 must-fix + suggestion 全修 |
 | 2026-09-07 | v5 | 实施期 doc_errors 修订（非审查轮）：§5 实施顺序「u5 登记先行 → u1」反转为「u1 → u5 紧随」，u5 行 justification 同步——u5 执行者实测 render-constraints.mjs 实装对 authority 路径与 machine hook 做 existsSync 校验（validateAuthorityPath 行 56-61 / validateHookExists 行 47-54，渲染模式同样先校验后 exit 2），登记引用 u1 未来产出的守卫脚本必然 exit 2，「登记先行」在机器门前不可通过；「先登记再写代码」纪律改由「u1 与 u5 同批交付绑定」满足（流水线状态表兜底：u1 committed 而 u5 pending 时中断即显式可见） |
+| 2026-09-07 | v6 | 阶段 3 一致性审查（三区并行，0 unreasonable）doc_errors 修正：§3.1 失败路径 1 补指引分流说明（非 dist 前缀纯文件条目按补文件/删条目处置，守卫文案同步分流）；D2 行号引用改锚 step 名称（ci.yml 插入致行号漂移）；§5「u3（紧随 u1）」改「u3（依赖 u1）」（v5 修订残留）。README 三处内容缺陷（示例类型错误/包结构漏列/extractGui 参数语义）与守卫文案分流实现走阶段 4 修复批次 |
