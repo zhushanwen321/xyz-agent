@@ -5,7 +5,7 @@
 
 /**
  * 更新来源（发布渠道）。
- * - 'github'：GitHub Releases（现状唯一源）
+ * - 'github'：GitHub Releases（原唯一源）
  * - 'atomgit'：AtomGit Releases（发布流程自 GitHub 单向同步，内容一致）
  */
 export type UpdateSource = 'github' | 'atomgit'
