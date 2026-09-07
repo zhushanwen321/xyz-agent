@@ -37,7 +37,7 @@ import type { UpdateErrorInfo } from '../update/types.js'
 import { readProxyConfig, writeProxyConfig, resolveProxyUrl } from '../update/proxy-config.js'
 import { validateRelease } from '../update/validate-release.js'
 import { writePendingUpdate, readPendingUpdate } from '../update/pending-update.js'
-import { getUpdateSettings, setUpdateSettings } from '../update/update-settings.js'
+import { getUpdateSettings, setUpdateSettings, isUpdateSourcePref } from '../update/update-settings.js'
 import type { IUpdateOrchestrator, UpdateProgressCallback } from '../update/orchestrator.js'
 import { isAutoUpdateSupportedForCurrentInstall } from '../update/orchestrator.js'
 import { writePreloadedUpdate, readPreloadedUpdate, readPreloadedUpdateRaw, clearPreloadedUpdate } from '../update/preloaded-update.js'
@@ -152,7 +152,7 @@ async function testProxyConnection(config: IProxyConfig): Promise<ProxyTestResul
     // 超时话术——无下载语境，停滞文案的「断点续传」指引在本场景是误导
     let info = resolveTimeoutUserCopy(classified.toUserFriendly(), classified.message)
     // D2（v3 修订）testProxy 统一准绳：公网 EHOSTUNREACH 也给代理语境话术。
-    // 用户此刻在测代理，「网络连接失败 + 检查防火墙可访问 GitHub」语境错位；
+    // 用户此刻在测代理，通用网络失败话术（非代理语境）会误导排查方向；
     // 不加映射表变体是因为该话术仅 testProxy 场景有意义，入枚举会污染
     // download/install 共用的错误码空间，handler 内覆写侵入最小。
     // suggestion 不提本地网络权限（A4 反向验证）；落盘 code 维持原分类，
@@ -659,6 +659,12 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
     }
     if (settings.autoUpdate !== undefined && typeof settings.autoUpdate !== 'boolean') {
       throw new Error('Invalid settings: autoUpdate must be boolean')
+    }
+    // updateSource 枚举校验（多源 D3）：传了（非 undefined）必须是三值之一，否则抛错
+    // ——handler 边界 fail-fast（对齐上方 boolean 校验先例），存储读取侧另有
+    // isUpdateSourcePref 逐字段兜底（非法值回退默认 'auto'），两处共用同一守卫
+    if (settings.updateSource !== undefined && !isUpdateSourcePref(settings.updateSource)) {
+      throw new Error('Invalid settings: updateSource must be "auto", "github" or "atomgit"')
     }
     setUpdateSettings(settings)
     return { success: true }

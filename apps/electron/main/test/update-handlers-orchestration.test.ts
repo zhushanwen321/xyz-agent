@@ -11,7 +11,10 @@
  *   S#9  update:getPending / update:getSettings / update:setSettings：
  *        - getSettings 返回默认值、setSettings 写入后 getSettings 读回
  *        - setSettings 传非 boolean preDownload 抛 'Invalid settings'
+ *        - setSettings 传非法 updateSource（非三值）抛 'Invalid settings'（多源 D3）
  *        - getPending 透传 readPendingUpdate
+ *   D3s  UPDATE_ERROR_MESSAGES.UPDATE_NETWORK_FAILED suggestion 文案中性化断言
+ *        （多源 §7.3：去 GitHub 专名，双源时代用户可能恒走 AtomGit）
  *   S#11 handler 全部经 deps.updateOrchestrator.* 调用（DI 契约含 downloadUpdate/installUpdate），
  *        测试用 mock DI 接口替换快路径/预下载能力——本文件即验证此可测性。
  *
@@ -26,7 +29,7 @@
  * 运行：cd apps/electron/main && npx vitest run test/update-handlers-orchestration.test.ts
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import type { LatestReleaseInfo, UpdateSettings } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateSettings, UpdateSourcePref } from '@xyz-agent/shared'
 
 // ── 捕获注册的 handler（key=channel, value=handler fn）──────────────
 const handlers = new Map<string, (...args: unknown[]) => unknown>()
@@ -49,11 +52,18 @@ const settingsMocks = vi.hoisted(() => ({
   getUpdateSettings: vi.fn<() => UpdateSettings>(),
   setUpdateSettings: vi.fn<(settings: Partial<UpdateSettings>) => void>(),
 }))
-vi.mock('../update/update-settings.js', () => ({
-  getUpdateSettings: settingsMocks.getUpdateSettings,
-  setUpdateSettings: settingsMocks.setUpdateSettings,
-  DEFAULT_UPDATE_SETTINGS: { preDownload: false } satisfies UpdateSettings,
-}))
+// [多源 D3] 部分真实：isUpdateSourcePref / UPDATE_SOURCE_PREFS / DEFAULT_UPDATE_SETTINGS
+// 取真实导出（handler 的 updateSource 枚举校验消费真实守卫，杜绝 mock 复刻三值列表漂移）。
+// constants.ts 已全路径延迟求值（module-eager-binding 修复），importOriginal 无 fs 副作用；
+// get/set 两个 fs 函数仍走 mock（本文件不读真实 fs）。
+vi.mock('../update/update-settings.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../update/update-settings.js')>()
+  return {
+    ...actual,
+    getUpdateSettings: settingsMocks.getUpdateSettings,
+    setUpdateSettings: settingsMocks.setUpdateSettings,
+  }
+})
 
 const pendingMocks = vi.hoisted(() => ({
   writePendingUpdate: vi.fn<(release: LatestReleaseInfo) => void>(),
@@ -230,6 +240,43 @@ describe('S#9 update-handlers: settings & pending IPC', () => {
     expect(settingsMocks.setUpdateSettings).not.toHaveBeenCalled()
   })
 
+  it('update:setSettings updateSource 非法值（gitee）→ 抛 Invalid settings 且不落盘（多源 D3）', async () => {
+    const handler = handlers.get('update:setSettings')!
+    await expect(
+      handler({}, { updateSource: 'gitee' as unknown as UpdateSourcePref }),
+    ).rejects.toThrow(/Invalid settings/)
+    // 非法值不落盘
+    expect(settingsMocks.setUpdateSettings).not.toHaveBeenCalled()
+  })
+
+  it('update:setSettings updateSource null/数字（非 undefined）→ 抛 Invalid settings', async () => {
+    const handler = handlers.get('update:setSettings')!
+    // null !== undefined 且非三值 → 与先例同构（preDownload null 同样抛）
+    await expect(
+      handler({}, { updateSource: null as unknown as UpdateSourcePref }),
+    ).rejects.toThrow(/Invalid settings/)
+    await expect(
+      handler({}, { updateSource: 42 as unknown as UpdateSourcePref }),
+    ).rejects.toThrow(/Invalid settings/)
+    expect(settingsMocks.setUpdateSettings).not.toHaveBeenCalled()
+  })
+
+  it('update:setSettings 合法 updateSource（atomgit）→ 透传 setUpdateSettings（多源 D3）', async () => {
+    const handler = handlers.get('update:setSettings')!
+    const result = await handler({}, { updateSource: 'atomgit' })
+
+    expect(settingsMocks.setUpdateSettings).toHaveBeenCalledTimes(1)
+    expect(settingsMocks.setUpdateSettings).toHaveBeenCalledWith({ updateSource: 'atomgit' })
+    expect(result).toEqual({ success: true })
+  })
+
+  it('update:setSettings 不传 updateSource（缺失）→ 不触发枚举校验，正常落盘（局部更新兼容）', async () => {
+    const handler = handlers.get('update:setSettings')!
+    await handler({}, { preDownload: true })
+
+    expect(settingsMocks.setUpdateSettings).toHaveBeenCalledWith({ preDownload: true })
+  })
+
   it('update:getPending → 透传 readPendingUpdate(currentVersion)', async () => {
     pendingMocks.readPendingUpdate.mockReturnValue(FIXTURE)
     const handler = handlers.get('update:getPending')!
@@ -260,7 +307,12 @@ describe('S#7 update-handlers: preload orchestration in update:check', () => {
    */
   function register(orch: MockOrchestrator): void {
     const checkForLatestRelease = vi.fn(async (): Promise<LatestReleaseInfo | null> => FIXTURE)
-    const mockChecker: IReleaseChecker = { checkForLatestRelease }
+    // fetchReleaseByTag 为 u-foundation 补的接口必需方法：handler 编排（本文件覆盖面）不
+    // 消费它（消费方是 orchestrator 下载降级，u-download-failover），桩空实现满足接口形状
+    const mockChecker: IReleaseChecker = {
+      checkForLatestRelease,
+      fetchReleaseByTag: vi.fn(async () => null),
+    }
     registerUpdateHandlers({
       releaseChecker: mockChecker,
       updateOrchestrator: orch,
@@ -681,5 +733,19 @@ describe('T4 update-handlers: update:download / update:install / update:getPrelo
     const handler = handlers.get('update:getPreloaded')!
     const result = await handler({}, {})
     expect(result).toBeNull()
+  })
+})
+
+// ── D3s：UPDATE_ERROR_MESSAGES suggestion 文案中性化（多源 update-multi-source §7.3）──
+describe('D3s update types: UPDATE_NETWORK_FAILED suggestion 文案', () => {
+  it('suggestion 无 GitHub 专名（双源时代用户可能恒走 AtomGit），且保留网络/防火墙排查指引', async () => {
+    const { UPDATE_ERROR_MESSAGES } = await import('../update/types.js')
+    const suggestion = UPDATE_ERROR_MESSAGES.UPDATE_NETWORK_FAILED.suggestion
+    // 去 GitHub 专名（大小写两种形态都断言，防「github.com」式回潮）
+    expect(suggestion).not.toContain('GitHub')
+    expect(suggestion).not.toContain('github')
+    // 保留可操作性：仍指向网络/防火墙排查动作
+    expect(suggestion).toContain('网络')
+    expect(suggestion).toContain('防火墙')
   })
 })

@@ -82,7 +82,9 @@ export const UPDATE_ERROR_MESSAGES: Record<UpdateErrorCode, Omit<UpdateErrorInfo
   UPDATE_NETWORK_FAILED: {
     message: '网络连接失败',
     stage: 'downloading',
-    suggestion: '请检查网络连接和防火墙设置，确保可以访问 GitHub',
+    // 多源（update-multi-source §7.3）：不提「GitHub」专名——双源时代下载可能恒走
+    // AtomGit，「访问不了 GitHub」与其故障无关；保留网络/防火墙排查指引的可操作性
+    suggestion: '请检查网络连接和防火墙设置',
   },
   UPDATE_SHA256_MISMATCH: {
     message: '安装包校验失败',
