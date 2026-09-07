@@ -8,8 +8,11 @@
  * - 覆盖：env=0 → 不限时（不挂墙钟 timer，advance 10h 不 reject，迟到响应照常 resolve）。
  * - 默认路径：bash() 超时以 RpcTimeoutError reject 且 timeoutMs 等于生效值（D3a 字段化）。
  *
- * 策略：沿用 rpc-client-observability.test.ts 的 mock 骨架（node:child_process + readline
- * + fake streams），fake timers 驱动超时墙钟（STARTUP_DELAY_MS / RPC timer 均走同一时钟）。
+ * 策略：沿用 rpc-client-observability.test.ts 的 mock 骨架（node:child_process + fake
+ * streams），fake timers 驱动超时墙钟（STARTUP_DELAY_MS / RPC timer 均走同一时钟）。
+ * pi 帧注入走 data 分帧桥接（D10：RpcClient 不消费 node:readline，attachLfOnlyLineReader
+ * 在 stdout 上挂 data handler 自行 LF 分帧——emitData 直投「整行 + \n」由生产读取器分帧，
+ * 先例：test/helpers/rpc-client-mock.ts emitPiLine）。
  *
  * 运行：cd packages/runtime && npx vitest run src/infra/pi/__tests__/rpc-client-bash-timeout.test.ts
  */
@@ -30,6 +33,10 @@ function makeFakeStream() {
     }),
     resume: vi.fn(),
     destroy: vi.fn(),
+    /** 丢弃旧 client 注册的 handler（stream 是模块级单例，跨用例复用须显式清） */
+    reset(): void {
+      dataHandlers.length = 0
+    },
     emitData(text: string): void {
       for (const h of [...dataHandlers]) h(Buffer.from(text, 'utf8'))
     },
@@ -52,20 +59,8 @@ const fakeProc = {
   pid: 12345,
 }
 
-/** readline 'line' handler 捕获（0=不限时用例注入迟到 response 帧用） */
-let lineHandler: ((line: string) => void) | null = null
-
 vi.mock('node:child_process', () => ({
   spawn: vi.fn(() => fakeProc),
-}))
-
-vi.mock('node:readline', () => ({
-  createInterface: () => ({
-    on: vi.fn((event: string, handler: (line: string) => void) => {
-      if (event === 'line') lineHandler = handler
-    }),
-    close: vi.fn(),
-  }),
 }))
 
 vi.mock('@xyz-agent/shared', async (importOriginal) => {
@@ -102,7 +97,7 @@ vi.mock('../../logger.js', () => ({
 const ENV_KEY = 'XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS'
 
 async function startClient(): Promise<RpcClient> {
-  lineHandler = null
+  stdoutStream.reset()
   const client = new RpcClient()
   const startP = client.start()
   // STARTUP_DELAY_MS（500ms）：fake timers 下推进启动确认窗口让 start() settle
@@ -211,14 +206,14 @@ describe('bash() 超时行为 —— 默认 / env 覆盖 / 0=不限时', () => {
     await vi.advanceTimersByTimeAsync(10 * 3_600_000)
     expect(settled).toBe('pending')
     // 命令真实完成：response 帧到达（id 与请求配对）→ resolve 真实结果。
-    // mock readline 不做 Buffer 拆行，直接调 line handler 注入一行 JSONL（= pi stdout 输出）。
+    // data 分帧桥接：直投「整行 JSONL + \n」（= pi stdout 输出）由生产 attachLfOnlyLineReader 分帧。
     const call = fakeProc.stdin.write.mock.calls.find((c) => String(c[0]).includes('"type":"bash"'))
     expect(call).toBeDefined()
     const { id } = JSON.parse(String(call![0])) as { id: string }
-    lineHandler!(JSON.stringify({
+    stdoutStream.emitData(JSON.stringify({
       type: 'response', id, success: true,
       data: { output: 'done', exitCode: 0, cancelled: false, truncated: false },
-    }))
+    }) + '\n')
     await p
     expect(settled).toBe('resolved')
   })

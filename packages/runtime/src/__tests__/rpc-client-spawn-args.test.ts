@@ -21,7 +21,6 @@ import type { RpcClient } from '../infra/pi/rpc-client.js'
 
 let capturedSpawnArgs: string[] = []
 const stdinWrites: string[] = []
-let stdoutLineHandler: ((line: string) => void) | null = null
 let procExitHandlers: Array<(code: number | null) => void> = []
 
 const fakeProc = {
@@ -49,15 +48,6 @@ vi.mock('node:child_process', () => ({
     capturedSpawnArgs = args
     return fakeProc
   },
-}))
-
-vi.mock('node:readline', () => ({
-  createInterface: () => ({
-    on: (event: string, handler: (line: string) => void) => {
-      if (event === 'line') stdoutLineHandler = handler
-    },
-    close: vi.fn(),
-  }),
 }))
 
 vi.mock('@xyz-agent/shared', async (importOriginal) => {
@@ -116,7 +106,6 @@ describe('RpcClient spawn args --model 拼接（P1 inheritSessionModel）', () =
   beforeEach(() => {
     capturedSpawnArgs = []
     stdinWrites.length = 0
-    stdoutLineHandler = null
     procExitHandlers = []
     defaultModelMock = { provider: 'prov', modelId: 'global-default' }
   })

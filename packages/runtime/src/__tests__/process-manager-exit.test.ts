@@ -7,7 +7,7 @@
  *   tempId）——create 路径「僵尸 session」根因的回归测试。
  * - intentional destroy：destroySession 先删 Map 再 kill，后续 exit 事件不触发 onSessionExit。
  *
- * 策略：沿用 rpc-client-bash.test.ts 的 mock node:child_process + readline 模式——
+ * 策略：沿用 rpc-client-bash.test.ts 的 mock node:child_process 模式——
  * fakeProc 捕获 'exit' handler，测试手动 emit 模拟 kill -9（code null，信号致死形态）。
  * node:fs 的 existsSync/readdirSync mock 为 false/[]，让 findPiExecutable 确定性走 'pi'
  * fallback（不执行真实 which/nvm 扫描，保证 hermetic）。
@@ -61,13 +61,6 @@ vi.mock('node:fs', async (importOriginal) => {
   // findPiExecutable 所有探测点（dev resources / nvm / common locations）均未命中 → 走 'pi' fallback
   return { ...actual, existsSync: () => false, readdirSync: () => [] }
 })
-
-vi.mock('node:readline', () => ({
-  createInterface: () => ({
-    on: vi.fn(),
-    close: vi.fn(),
-  }),
-}))
 
 vi.mock('@xyz-agent/shared', async (importOriginal) => {
   // U3 起 rpc-client/process-manager 链路经 infra/spawn-env 门面消费 shared 的
