@@ -136,9 +136,30 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-- §11.3：AtomGit API 匿名访问稳定性无官方承诺——运行期经 source-selection 日志观测（M2 后），频繁 4xx/429 再议保守请求间隔。
+- §11.3：AtomGit API 匿名访问稳定性无官方承诺——运行期经 source-selection 日志观测（M2 后），频繁 4xx/429 再议保守请求间隔。Gate B 后初判：6 轮真实检查零 4xx/429，读路径单客户端余量充足，暂不需要保守请求间隔；下次真实发版（检查流量放大）后复核。
 - §11.4：跨源续传三组合由 u-download-failover 单测覆盖（totalBytes 一致/不一致/state 缺失）。
 - §11.5：Windows NSIS 路径未在本设计期实测，S1 的 Windows 复验留待发布前（Out-of-scope of 本流水线，登记不阻塞）。
-- S1-S6 真实场景验收（打包 app + hosts 故障注入）属阶段 5 Gate B，本机 macOS 可执行 S1-S5；S6 需本地代理注入产物，实施时评估等效手段。
+- S1-S6 真实场景验收：检查段子集（S1-检查/S2/S5-检查）已由 Gate B 实测 pass（§8）；下载安装段（S1-下载/S3/S5-完整/S6）受「远端无新版 + hosts 需 sudo + sha256 需 mitmproxy」阻塞，补验窗口 = v0.9.15 真实发版推送两源后（本机存量 0.9.14 天然构成版本差场景），差距清单与补验步骤见 §8 blocked_gaps。
 - 变更历史：
   - 2026-09-07：初版。9 单元拆分自设计 §10 + §9；M0 探针已由主 agent 执行完毕（见 §0.1），白名单精确值 `gitcode.com` 已定，探针 P2/P3 为发布脚本既有实测。
+  - 2026-09-07：阶段 3 一致性审查单轮收敛（unreasonable 6 + doc_errors 3 全闭环，commit 3d9a9c101）；阶段 5 Gate A 全绿（main 910 / shared 323 / renderer 4067，commit 6a485b6c9）。
+  - 2026-09-07：阶段 5 Gate B 执行完毕（§8）：GB1/GB2 pass，GB3/GB4 blocked（前提不可构造），下载安装段补验留待 v0.9.15 发版窗口。
+
+## 8 Gate B 端到端验收记录（2026-09-07）
+
+环境：打包 app `apps/electron/dist/builder-output/mac-arm64/TaiJi.app`，版本 **0.9.14 = 远端两源 latest v0.9.14**（dev-0.9.15 是集成分支名非版本号）→ winner 恒 null（「各源无新版」语义）。启动隔离踩坑：`XYZ_AGENT_DATA_DIR` 隔离不足，打包 app `requestSingleInstanceLock` 按 Electron 原生 userData 区分，与生产实例撞锁后静默 exit 0——必须另加 `--user-data-dir=<隔离路径>`。
+
+| 场景 | verdict | 摘要 |
+|------|---------|------|
+| GB1（S2-① auto 无代理探测） | pass | 冷启动 30s 自动检查后 update-error.log 首条 source-selection：order=[github,atomgit]（两域可达 tie-break github）、winner=null、probe executed=true 两域 basis=probe、tags 双源 v0.9.14，全部断言命中 |
+| GB2（S1 检查段子集：updateSource 三态） | pass | 三轮：atomgit→order=[atomgit,github] probe 短路 explicit-preference；github→order=[github,atomgit] 同；非法 gitee→读取侧逐字段校验回退 auto + 恢复真实探测。UI Select 三态显示正确 |
+| GB3（S4 双源皆败） | blocked | 双败在本机不可构造（归因见下）；附带 3 项 pass：代理短路观测形态（basis=proxy-short-circuit 仅 github 键不捏造）/ UI 稳态不崩溃无悬空 loading / 恢复 disabled+重启自愈 |
+| GB4（S1 下载安装段/S3/S5/S6） | blocked | 版本差前提不成立（远端 latest = 本机版本，下载链路永不触发，改 package.json 被禁止）；S3/S4 需 sudo hosts；S6 需 mitmproxy。S5 检查段子集已由 GB2-2 覆盖 |
+
+**GB3 归因修正（主 agent 行级复核）**：验收 agent 报告称「检查段 latest API fetch 不消费升级代理」**有误**。实况：`fetchSourceReleaseViaChannel`（release-sources.ts:397-415）消费代理，但 network 失败**自动降级直连重试一次**（对齐设计 D6/D10 通道编排），故不可达代理后 tags 照常取到；且非 2xx（除 403/429 限流）一律归 null=「无新版」语义而非失败。结论不变：检查段「双源皆败」的无特权构造手段不存在，hosts 屏蔽（需 sudo）是唯一域名级手段。探测层 proxy-short-circuit（reachable=true 假定可达）与 fetch 层降直连的组合是设计内行为——探测是决策观测面，降级是通道韧性。
+
+**blocked_gaps 补验清单**：
+
+1. S1 完整链路 + S5 完整回归：v0.9.15 发布推送两源后，updateSource=atomgit 走完整链路断言 order/无 source-failover/download-success.multiPart（先核 engine=undici）/升级 toast/无回滚；S5 同批 updateSource=github 复验 winner 恒 github + 下载域名恒 github.com。
+2. S3 hosts 降级 + S4 双败：可 sudo 环境屏蔽 api.github.com（及两源全域）→ force 检查断言 source-failover github→atomgit / UI 错误态；移除后自愈回 github。
+3. S6 sha256 注入：v0.9.15 发布后 mitmproxy 注入同 size 异内容，断言「安装包校验失败」+ 不跨源重下 + temp 清理。
