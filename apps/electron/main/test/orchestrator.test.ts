@@ -15,11 +15,14 @@
  * 运行：cd apps/electron/main && npx vitest run test/orchestrator.test.ts
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
-import type { UpdateScriptRef } from '../update/types.js'
+import { UpdateError, UpdateIntegrityError } from '../update/types.js'
+import type { UpdateScriptRef, UpdateErrorCode } from '../update/types.js'
+import type { IReleaseChecker } from '../interfaces.js'
 
 // ── 必须在 import constants（间接被 orchestrator import）前设 ──────
 const TMP_DATA_DIR = mkdtempSync(path.join(tmpdir(), 'w3-orch-'))
@@ -307,5 +310,529 @@ describe('W3: orchestrator (W3TC8-9)', () => {
     expect(exe).toBe('/tmp/updater.sh')
     expect(args).toEqual(['arg1'])
     expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════
+// 下载段跨源降级（update-multi-source u-download-failover：§6.5 D5 / §6.7 D7 / §6.8 D8）
+//
+// 覆盖：
+//   - 触发集合四值 errorCode 各触发降级（by-tag 确认 → 仅替换 downloadUrl 续传）
+//   - UpdateIntegrityError / source undefined / 触发集合外 errorCode 均不降级（反向断言）
+//   - 对侧 by-tag null（404 发布时间窗）与 200 但目标 asset 缺失（部分同步失败窗口）
+//     两形态同语义：保留断点、原错误上抛
+//   - 对侧 by-tag 网络失败 / 降级续传也失败 → 原错误上抛；续传产物 sha 不符 → 原样上抛（D8）
+//   - logSourceFailover(segment=download) / logDownloadSuccess 落盘断言
+//   - totalBytes 三组合（一致续传 / 不一致转全量 / state 缺失从零）走真实 download-asset
+//     链路（importActual 转发 + stub 全局 fetch + 真实临时目录），锚定「复用 temp+state、
+//     仅替换 downloadUrl」的输入契约由 download-asset 既有守卫承接
+// ════════════════════════════════════════════════════════════════════
+
+/** 本源（GitHub）胜出 asset（temp 键控 name + 完整性基准的锚定形态） */
+const SOURCE_ASSET = {
+  name: 'mac.dmg',
+  downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/mac.dmg',
+  size: 1000,
+  sha256: 'a'.repeat(64),
+}
+
+/** 本源 release（source=github） */
+const RELEASE_FROM_GITHUB: LatestReleaseInfo = {
+  ...MAC_RELEASE,
+  source: 'github',
+  assets: { macArm64Dmg: { ...SOURCE_ASSET } },
+}
+
+/** 对侧（AtomGit）by-tag 返回：tagName 一致 + 同名 asset（downloadUrl 落 gitcode.com） */
+const SIDE_RELEASE_ATOMGIT: LatestReleaseInfo = {
+  ...MAC_RELEASE,
+  source: 'atomgit',
+  assets: {
+    macArm64Dmg: {
+      name: 'mac.dmg',
+      downloadUrl: 'https://gitcode.com/qq_18433817/xyz-agent/releases/download/v0.9.0/mac.dmg',
+      size: 1000,
+      // 对侧 normalize 无 manifest 填充时 sha256 可能与源侧不同/缺失——降级续传必须
+      // 保持本源完整性基准（断言第二次 downloadAsset 收到 sha256 = 本源值）
+      sha256: 'b'.repeat(64),
+    },
+  },
+}
+
+/** 构造降级触发用网络类错误（message 内嵌 errorCode 供上抛断言） */
+function makeNetError(errorCode: UpdateErrorCode): UpdateError {
+  return new UpdateError(`download network failure (${errorCode})`, 'downloading', errorCode)
+}
+
+/** 构造仅含 fetchReleaseByTag 的 mock IReleaseChecker（orchestrator 降级链唯一消费面） */
+function makeSideChecker(): { checker: IReleaseChecker; fetchReleaseByTag: ReturnType<typeof vi.fn> } {
+  const fetchReleaseByTag = vi.fn()
+  return { checker: { fetchReleaseByTag } as unknown as IReleaseChecker, fetchReleaseByTag }
+}
+
+/** 读 update-error.log（TMP 隔离目录）为 JSON 行数组 */
+function readUpdateErrorLog(): Array<Record<string, unknown>> {
+  const logPath = path.join(TMP_DATA_DIR, 'update', 'update-error.log')
+  if (!existsSync(logPath)) return []
+  return readFileSync(logPath, 'utf-8')
+    .split('\n')
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+}
+
+describe('u-download-failover: 下载段跨源降级（mock 双引擎失败注入）', () => {
+  let originalPlatform: PropertyDescriptor | undefined
+  let originalArch: PropertyDescriptor | undefined
+
+  beforeEach(async () => {
+    originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+    originalArch = Object.getOwnPropertyDescriptor(process, 'arch')
+    Object.defineProperty(process, 'arch', { value: 'arm64', configurable: true })
+    vi.clearAllMocks()
+    childProcessMocks.spawn.mockReturnValue({ unref: vi.fn() })
+    await loadModule()
+  })
+
+  afterEach(() => {
+    if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
+    if (originalArch) Object.defineProperty(process, 'arch', originalArch)
+    vi.restoreAllMocks()
+    const updateDir = path.join(TMP_DATA_DIR, 'update')
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  function setPlatform(platform: string): void {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+  }
+
+  /** 装配一次「主源失败 → 对侧续传成功」的 mock 序列，返回断言句柄 */
+  function arrangePrimaryFailSideSucceed(errorCode: UpdateErrorCode, sideRelease: LatestReleaseInfo | null) {
+    const { checker, fetchReleaseByTag } = makeSideChecker()
+    fetchReleaseByTag.mockResolvedValue(sideRelease)
+    downloadMocks.downloadAsset
+      .mockImplementationOnce(async () => { throw makeNetError(errorCode) })
+      .mockResolvedValueOnce({ filePath: '/tmp/side-resumed.bin' })
+    return { checker, fetchReleaseByTag }
+  }
+
+  // ── 触发集合四值白名单 ─────────────────────────────────────────
+  it('四值网络 errorCode 各触发降级：by-tag(对侧, tag) 确认后仅替换 downloadUrl 续传（sha256/size 保持本源基准）', async () => {
+    setPlatform('darwin')
+    const { downloadUpdate } = await loadModule()
+    const triggerCodes = [
+      'UPDATE_NETWORK_FAILED',
+      'UPDATE_NETWORK_TIMEOUT',
+      'UPDATE_PROXY_ERROR',
+      'UPDATE_PROXY_UNREACHABLE',
+    ] as const
+    for (const code of triggerCodes) {
+      vi.clearAllMocks()
+      const { checker, fetchReleaseByTag } = arrangePrimaryFailSideSucceed(code, SIDE_RELEASE_ATOMGIT)
+
+      const result = await downloadUpdate(RELEASE_FROM_GITHUB, undefined, { releaseChecker: checker })
+
+      // 降级发生：对侧源 by-tag 精确查询（经 IReleaseChecker 接口）
+      expect(fetchReleaseByTag).toHaveBeenCalledTimes(1)
+      expect(fetchReleaseByTag).toHaveBeenCalledWith('atomgit', 'v0.9.0')
+      // 第二次 downloadAsset = 对侧 downloadUrl + 本源完整性基准（仅替换 downloadUrl）
+      expect(downloadMocks.downloadAsset).toHaveBeenCalledTimes(2)
+      const sideAssetArg = downloadMocks.downloadAsset.mock.calls[1][0]
+      expect(sideAssetArg.downloadUrl).toBe(SIDE_RELEASE_ATOMGIT.assets.macArm64Dmg!.downloadUrl)
+      expect(sideAssetArg.name).toBe(SOURCE_ASSET.name)
+      expect(sideAssetArg.sha256).toBe(SOURCE_ASSET.sha256)
+      expect(sideAssetArg.size).toBe(SOURCE_ASSET.size)
+      // 返回对侧续传产物路径
+      expect(result).toEqual({ filePath: '/tmp/side-resumed.bin' })
+    }
+  })
+
+  it('source=atomgit → 对侧为 github（补集双向覆盖）', async () => {
+    setPlatform('darwin')
+    const { downloadUpdate } = await loadModule()
+    const releaseFromAtomgit: LatestReleaseInfo = {
+      ...RELEASE_FROM_GITHUB,
+      source: 'atomgit',
+      assets: { macArm64Dmg: { ...SOURCE_ASSET, downloadUrl: 'https://gitcode.com/qq_18433817/xyz-agent/releases/download/v0.9.0/mac.dmg' } },
+    }
+    const { checker, fetchReleaseByTag } = makeSideChecker()
+    fetchReleaseByTag.mockResolvedValue({ ...SIDE_RELEASE_ATOMGIT, source: 'github' })
+    downloadMocks.downloadAsset
+      .mockImplementationOnce(async () => { throw makeNetError('UPDATE_NETWORK_FAILED') })
+      .mockResolvedValueOnce({ filePath: '/tmp/side-resumed.bin' })
+
+    await downloadUpdate(releaseFromAtomgit, undefined, { releaseChecker: checker })
+
+    expect(fetchReleaseByTag).toHaveBeenCalledWith('github', 'v0.9.0')
+  })
+
+  // ── 反向断言：不触发降级的形态 ─────────────────────────────────
+  it('UpdateIntegrityError 不触发降级（D8 安全边界）：零 by-tag、零二次下载、原错误上抛', async () => {
+    setPlatform('darwin')
+    const { downloadUpdate } = await loadModule()
+    const { checker, fetchReleaseByTag } = makeSideChecker()
+    downloadMocks.downloadAsset.mockRejectedValue(
+      new UpdateIntegrityError('sha256 mismatch: expected a..a', 'UPDATE_SHA256_MISMATCH'),
+    )
+
+    await expect(
+      downloadUpdate(RELEASE_FROM_GITHUB, undefined, { releaseChecker: checker }),
+    ).rejects.toThrow(/sha256 mismatch/)
+
+    expect(fetchReleaseByTag).not.toHaveBeenCalled()
+    expect(downloadMocks.downloadAsset).toHaveBeenCalledTimes(1)
+  })
+
+  it('release.source undefined（旧落盘 pending/preloaded 文件）不降级：原错误上抛、零 by-tag', async () => {
+    setPlatform('darwin')
+    const { downloadUpdate } = await loadModule()
+    const legacyRelease: LatestReleaseInfo = { ...MAC_RELEASE, source: undefined }
+    const { checker, fetchReleaseByTag } = makeSideChecker()
+    downloadMocks.downloadAsset.mockRejectedValue(makeNetError('UPDATE_NETWORK_FAILED'))
+
+    await expect(
+      downloadUpdate(legacyRelease, undefined, { releaseChecker: checker }),
+    ).rejects.toThrow(/download network failure/)
+
+    expect(fetchReleaseByTag).not.toHaveBeenCalled()
+    expect(downloadMocks.downloadAsset).toHaveBeenCalledTimes(1)
+  })
+
+  it('触发集合外 errorCode 不降级（DISK_SPACE / FILE_RENAME_FAILED / PERMISSION_DENIED）', async () => {
+    setPlatform('darwin')
+    const { downloadUpdate } = await loadModule()
+    const excludedCodes = [
+      'UPDATE_DISK_SPACE',
+      'UPDATE_FILE_RENAME_FAILED',
+      'UPDATE_PERMISSION_DENIED',
+    ] as const
+    for (const code of excludedCodes) {
+      vi.clearAllMocks()
+      const { checker, fetchReleaseByTag } = makeSideChecker()
+      downloadMocks.downloadAsset.mockRejectedValue(makeNetError(code))
+
+      await expect(
+        downloadUpdate(RELEASE_FROM_GITHUB, undefined, { releaseChecker: checker }),
+      ).rejects.toThrow(code)
+
+      expect(fetchReleaseByTag).not.toHaveBeenCalled()
+      expect(downloadMocks.downloadAsset).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  // ── 对侧不可用两形态 + tagName 防御 ────────────────────────────
+  it('对侧 by-tag null（404 发布时间窗）→ 不降级：保留断点（零二次下载）、原错误上抛', async () => {
+    setPlatform('darwin')
+    const { downloadUpdate } = await loadModule()
+    const { checker, fetchReleaseByTag } = makeSideChecker()
+    fetchReleaseByTag.mockResolvedValue(null)
+    downloadMocks.downloadAsset.mockRejectedValue(makeNetError('UPDATE_NETWORK_FAILED'))
+
+    await expect(
+      downloadUpdate(RELEASE_FROM_GITHUB, undefined, { releaseChecker: checker }),
+    ).rejects.toThrow(/download network failure/)
+
+    expect(fetchReleaseByTag).toHaveBeenCalledTimes(1)
+    expect(downloadMocks.downloadAsset).toHaveBeenCalledTimes(1)
+    // 对侧不可用 = 未发生降级：无 source-failover 登记
+    expect(readUpdateErrorLog().filter((e) => e['source'] === 'source-failover')).toHaveLength(0)
+  })
+
+  it('by-tag 200 但目标 asset 缺失（部分同步失败窗口）→ 同语义不降级、原错误上抛', async () => {
+    setPlatform('darwin')
+    const { downloadUpdate } = await loadModule()
+    // 两形态：assets 全空 / 同键位 asset name 不一致（同名上传不变量破坏）
+    const partialForms: Array<LatestReleaseInfo> = [
+      { ...SIDE_RELEASE_ATOMGIT, assets: {} },
+      {
+        ...SIDE_RELEASE_ATOMGIT,
+        assets: { macArm64Dmg: { ...SIDE_RELEASE_ATOMGIT.assets.macArm64Dmg!, name: 'renamed.dmg' } },
+      },
+    ]
+    for (const sideRelease of partialForms) {
+      vi.clearAllMocks()
+      const { checker, fetchReleaseByTag } = makeSideChecker()
+      fetchReleaseByTag.mockResolvedValue(sideRelease)
+      downloadMocks.downloadAsset.mockRejectedValue(makeNetError('UPDATE_NETWORK_FAILED'))
+
+      await expect(
+        downloadUpdate(RELEASE_FROM_GITHUB, undefined, { releaseChecker: checker }),
+      ).rejects.toThrow(/download network failure/)
+
+      expect(fetchReleaseByTag).toHaveBeenCalledTimes(1)
+      expect(downloadMocks.downloadAsset).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  it('by-tag 返回 tagName 与请求不一致（防御）→ 不降级、原错误上抛', async () => {
+    setPlatform('darwin')
+    const { downloadUpdate } = await loadModule()
+    const { checker, fetchReleaseByTag } = makeSideChecker()
+    fetchReleaseByTag.mockResolvedValue({ ...SIDE_RELEASE_ATOMGIT, tagName: 'v0.9.1' })
+    downloadMocks.downloadAsset.mockRejectedValue(makeNetError('UPDATE_NETWORK_FAILED'))
+
+    await expect(
+      downloadUpdate(RELEASE_FROM_GITHUB, undefined, { releaseChecker: checker }),
+    ).rejects.toThrow(/download network failure/)
+
+    expect(downloadMocks.downloadAsset).toHaveBeenCalledTimes(1)
+  })
+
+  // ── 降级链失败语义 ─────────────────────────────────────────────
+  it('对侧 by-tag 网络失败 → 原错误上抛（对侧错误不外泄、不误报）', async () => {
+    setPlatform('darwin')
+    const { downloadUpdate } = await loadModule()
+    const { checker, fetchReleaseByTag } = makeSideChecker()
+    fetchReleaseByTag.mockRejectedValue(new Error('side source network down'))
+    downloadMocks.downloadAsset.mockRejectedValue(makeNetError('UPDATE_NETWORK_FAILED'))
+
+    const thrown = await downloadUpdate(RELEASE_FROM_GITHUB, undefined, { releaseChecker: checker }).then(
+      () => { throw new Error('expected downloadUpdate to reject') },
+      (e: unknown) => e as UpdateError,
+    )
+    // 上抛的是原错误而非对侧错误（§7.4：降级链失败不改变用户可见错误形态）
+    expect(thrown.message).toMatch(/download network failure/)
+    expect(thrown.errorCode).toBe('UPDATE_NETWORK_FAILED')
+    expect(thrown.message).not.toContain('side source network down')
+  })
+
+  it('降级续传也网络失败 → 原错误上抛（§7.4 下载-双源行），failover 已登记', async () => {
+    setPlatform('darwin')
+    const { downloadUpdate } = await loadModule()
+    const { checker, fetchReleaseByTag } = makeSideChecker()
+    fetchReleaseByTag.mockResolvedValue(SIDE_RELEASE_ATOMGIT)
+    downloadMocks.downloadAsset
+      .mockImplementationOnce(async () => { throw makeNetError('UPDATE_NETWORK_FAILED') })
+      .mockImplementationOnce(async () => { throw makeNetError('UPDATE_NETWORK_TIMEOUT') })
+
+    await expect(
+      downloadUpdate(RELEASE_FROM_GITHUB, undefined, { releaseChecker: checker }),
+    ).rejects.toMatchObject({
+      message: /download network failure \(UPDATE_NETWORK_FAILED\)/,
+      errorCode: 'UPDATE_NETWORK_FAILED',
+    })
+
+    expect(fetchReleaseByTag).toHaveBeenCalledTimes(1)
+    expect(downloadMocks.downloadAsset).toHaveBeenCalledTimes(2)
+    // 降级确实发生（转向对侧）：source-failover 已落盘；但终态错误 = 原错误
+    const failovers = readUpdateErrorLog().filter((e) => e['source'] === 'source-failover')
+    expect(failovers).toHaveLength(1)
+    expect(failovers[0]).toMatchObject({ from: 'github', to: 'atomgit', errorCode: 'UPDATE_NETWORK_FAILED' })
+  })
+
+  it('降级续传产物 sha 不符（UpdateIntegrityError）→ 原样上抛不被吞（D8：完整性错误不降格为网络错误）', async () => {
+    setPlatform('darwin')
+    const { downloadUpdate } = await loadModule()
+    const { checker, fetchReleaseByTag } = makeSideChecker()
+    fetchReleaseByTag.mockResolvedValue(SIDE_RELEASE_ATOMGIT)
+    downloadMocks.downloadAsset
+      .mockImplementationOnce(async () => { throw makeNetError('UPDATE_NETWORK_FAILED') })
+      .mockRejectedValueOnce(new UpdateIntegrityError('side sha256 mismatch'))
+
+    await expect(
+      downloadUpdate(RELEASE_FROM_GITHUB, undefined, { releaseChecker: checker }),
+    ).rejects.toThrow(/side sha256 mismatch/)
+  })
+
+  // ── 诊断落盘 ───────────────────────────────────────────────────
+  it('降级成功：logSourceFailover(segment=download) 落盘 + logDownloadSuccess 落盘（releaseSource=成功源）', async () => {
+    setPlatform('darwin')
+    const { downloadUpdate } = await loadModule()
+    const { checker, fetchReleaseByTag } = arrangePrimaryFailSideSucceed(
+      'UPDATE_PROXY_UNREACHABLE',
+      SIDE_RELEASE_ATOMGIT,
+    )
+
+    await downloadUpdate(RELEASE_FROM_GITHUB, undefined, { releaseChecker: checker })
+
+    const entries = readUpdateErrorLog()
+    const failover = entries.find((e) => e['source'] === 'source-failover')
+    expect(failover).toBeDefined()
+    expect(failover).toMatchObject({
+      from: 'github',
+      to: 'atomgit',
+      errorCode: 'UPDATE_PROXY_UNREACHABLE',
+      stage: 'downloading',
+    })
+    const success = entries.find((e) => e['source'] === 'download-success')
+    expect(success).toBeDefined()
+    expect(success).toMatchObject({ releaseSource: 'github' })
+  })
+
+  it('正常（未降级）下载成功：logDownloadSuccess 落盘一条、无 source-failover', async () => {
+    setPlatform('darwin')
+    const { downloadUpdate } = await loadModule()
+    downloadMocks.downloadAsset.mockResolvedValue({ filePath: '/tmp/x.zip' })
+
+    await downloadUpdate(RELEASE_FROM_GITHUB)
+
+    const entries = readUpdateErrorLog()
+    expect(entries.filter((e) => e['source'] === 'download-success')).toHaveLength(1)
+    expect(entries.filter((e) => e['source'] === 'source-failover')).toHaveLength(0)
+  })
+})
+
+// ── 跨源续传 totalBytes 三组合（§11.4：真实 download-asset 链路 + stub 全局 fetch）──
+
+describe('u-download-failover: totalBytes 三组合（真实 download-asset + stub fetch）', () => {
+  const FULL_SIZE = 100
+  /** 100 字节确定性内容（值域 0-250 合法字节） */
+  const FULL_BYTES = Buffer.from(Array.from({ length: FULL_SIZE }, (_, i) => i % 251))
+  const FULL_SHA256 = createHash('sha256').update(FULL_BYTES).digest('hex')
+
+  const RESUME_ASSET = {
+    name: 'side-resume.dmg',
+    downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/side-resume.dmg',
+    size: FULL_SIZE,
+    sha256: FULL_SHA256,
+  }
+  const SIDE_RESUME_URL = 'https://gitcode.com/qq_18433817/xyz-agent/releases/download/v0.9.0/side-resume.dmg'
+  const RESUME_RELEASE: LatestReleaseInfo = {
+    ...MAC_RELEASE,
+    source: 'github',
+    assets: { macArm64Dmg: { ...RESUME_ASSET } },
+  }
+
+  const updateDir = path.join(TMP_DATA_DIR, 'update')
+  const tempPath = path.join(updateDir, `${RESUME_ASSET.name}.downloading`)
+  const finalPath = path.join(updateDir, RESUME_ASSET.name)
+  const statePath = path.join(updateDir, 'resume-state.json')
+
+  let originalPlatform: PropertyDescriptor | undefined
+  let originalArch: PropertyDescriptor | undefined
+
+  beforeEach(async () => {
+    originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+    originalArch = Object.getOwnPropertyDescriptor(process, 'arch')
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    Object.defineProperty(process, 'arch', { value: 'arm64', configurable: true })
+    vi.clearAllMocks()
+    await loadModule()
+  })
+
+  afterEach(() => {
+    if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
+    if (originalArch) Object.defineProperty(process, 'arch', originalArch)
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  /**
+   * 装配降级 + 真实 download-asset 链路：第一次（主源）由 mock 抛网络错误（避免卷入
+   * curl 引擎降级链），第二次（对侧）转发到真实 downloadAsset，fetch 按 Range 头分流
+   * 206/200。asset.size=100 < MIN_MULTI_PART_SIZE → 真实链路必走单段（不触发 probe）。
+   */
+  async function arrangeRealSideDownload(
+    sideTotalBytes = FULL_SIZE,
+  ): Promise<{ fetchMock: ReturnType<typeof vi.fn>; checker: IReleaseChecker }> {
+    const actual = await vi.importActual<typeof import('../update/download-asset.js')>('../update/download-asset.js')
+    const { checker, fetchReleaseByTag } = makeSideChecker()
+    fetchReleaseByTag.mockResolvedValue({
+      ...SIDE_RELEASE_ATOMGIT,
+      assets: { macArm64Dmg: { name: RESUME_ASSET.name, downloadUrl: SIDE_RESUME_URL, size: FULL_SIZE, sha256: FULL_SHA256 } },
+    })
+    downloadMocks.downloadAsset
+      .mockImplementationOnce(async () => { throw makeNetError('UPDATE_NETWORK_FAILED') })
+      .mockImplementationOnce(actual.downloadAsset)
+
+    const fetchMock = vi.fn(async (url: string | URL | globalThis.Request, init?: RequestInit) => {
+      expect(String(url)).toBe(SIDE_RESUME_URL)
+      const range = (init?.headers as Record<string, string> | undefined)?.Range
+      if (range) {
+        const start = Number(/bytes=(\d+)-/.exec(range)![1])
+        const body = FULL_BYTES.subarray(start)
+        return new Response(body, {
+          status: 206,
+          headers: {
+            'content-length': String(body.length),
+            'content-range': `bytes ${start}-${sideTotalBytes - 1}/${sideTotalBytes}`,
+          },
+        })
+      }
+      return new Response(FULL_BYTES, {
+        status: 200,
+        headers: { 'content-length': String(FULL_BYTES.length) },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return { fetchMock, checker }
+  }
+
+  /** 预置断点现场：temp 前 40 字节 + resume-state */
+  function seedBreakpoint(totalBytes: number): void {
+    mkdirSync(updateDir, { recursive: true })
+    writeFileSync(tempPath, FULL_BYTES.subarray(0, 40))
+    writeFileSync(statePath, JSON.stringify({
+      downloadedBytes: 40,
+      totalBytes,
+      tempPath,
+      finalPath,
+    }))
+  }
+
+  it('组合 A：对侧 totalBytes 与 state 一致 → 从断点 206 续传，产物 = 断点前缀 + 对侧剩余字节', async () => {
+    seedBreakpoint(FULL_SIZE)
+    const { fetchMock, checker } = await arrangeRealSideDownload(FULL_SIZE)
+    const { downloadUpdate } = await loadModule()
+
+    // 主源网络失败 → 降级对侧：以断点 40 字节为 Range 起点续传，sha256（本源基准）校验过
+    const result = await downloadUpdate(RESUME_RELEASE, undefined, { releaseChecker: checker })
+
+    // 降级输入契约：第二次 downloadAsset = 对侧 URL + 本源完整性基准
+    expect(downloadMocks.downloadAsset).toHaveBeenCalledTimes(2)
+    expect(downloadMocks.downloadAsset.mock.calls[1][0]).toMatchObject({
+      name: RESUME_ASSET.name,
+      downloadUrl: SIDE_RESUME_URL,
+      sha256: FULL_SHA256,
+    })
+    // 续传发生：仅一次真实请求且带 Range: bytes=40-（复用本源断点，非全量）
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    expect((init.headers as Record<string, string>).Range).toBe('bytes=40-')
+    // 产物 = 断点前缀 + 对侧剩余字节（拼接正确），断点 state 已被校验链清理
+    expect(readFileSync(finalPath)).toEqual(FULL_BYTES)
+    expect(existsSync(statePath)).toBe(false)
+    expect(result).toEqual({ filePath: finalPath })
+  })
+
+  it('组合 B：对侧 totalBytes 与 state 不一致（超容差）→ 既有守卫触发转全量（206→无 Range 200），全量产物正确落位', async () => {
+    // state 错记 total=5000，对侧真实 total=100 → 差值超 TOTAL_BYTES_TOLERANCE(1024)
+    seedBreakpoint(5000)
+    const { fetchMock, checker } = await arrangeRealSideDownload(FULL_SIZE)
+    const { downloadUpdate } = await loadModule()
+
+    // [实施期发现，download-asset 既有行为] 既有 m5 守卫触发 stale 转全量：递归重下
+    // 成功、产物正确落位 finalPath，但递归 rename 后外层校验对已不存在的 temp 抛
+    // ENOENT——该非完整性错误被跨源降级链按「续传失败」吞掉，终态 = 原错误上抛
+    // （用户下次重试时无断点现场，从零全量成功，sha256 兜底不变）。本用例锚定该
+    // 组合行为：守卫确实转全量 + 产物正确，失败面收敛于既有 ENOENT 而非内容损坏。
+    await expect(
+      downloadUpdate(RESUME_RELEASE, undefined, { releaseChecker: checker }),
+    ).rejects.toMatchObject({ errorCode: 'UPDATE_NETWORK_FAILED' })
+
+    // 两次请求：第一次带 Range（206 触发 stale 判定），作废重下第二次不带 Range（200 全量）
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const firstInit = fetchMock.mock.calls[0][1] as RequestInit
+    const secondInit = fetchMock.mock.calls[1][1] as RequestInit
+    expect((firstInit.headers as Record<string, string>).Range).toBe('bytes=40-')
+    expect((secondInit.headers as Record<string, string> | undefined)?.Range).toBeUndefined()
+    // 转全量产物 = 完整内容（sha256 兜底通过），过期断点 state 与 temp 均已清理
+    expect(readFileSync(finalPath)).toEqual(FULL_BYTES)
+    expect(existsSync(statePath)).toBe(false)
+    expect(existsSync(tempPath)).toBe(false)
+  })
+
+  it('组合 C：state 缺失（无断点现场）→ 对侧从零全量下载，产物正确', async () => {
+    // 无 temp 无 state：downloadedBytes=0，请求不带 Range
+    const { fetchMock, checker } = await arrangeRealSideDownload(FULL_SIZE)
+    const { downloadUpdate } = await loadModule()
+
+    const result = await downloadUpdate(RESUME_RELEASE, undefined, { releaseChecker: checker })
+
+    expect(result).toEqual({ filePath: finalPath })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    expect((init.headers as Record<string, string> | undefined)?.Range).toBeUndefined()
+    expect(readFileSync(finalPath)).toEqual(FULL_BYTES)
   })
 })

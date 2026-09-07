@@ -8,6 +8,7 @@
  * 职责链：
  *   1. pickAsset：按 platform 选 asset（deb 用户选 AppImage 但 APPIMAGE undefined → unsupported）
  *   2. downloadAsset：下载 + sha256 校验（onProgress 推 downloading 进度）
+ *      2.5 网络类失败 → 跨源降级续传（update-multi-source D5，见 tryCrossSourceResumeDownload）
  *   3. 写 update-result.json status='replacing'（installUpdate 阶段，self-healer 启动时检测中断）
  *   4. createPlatformUpdater().prepareUpdate：生成脚本 + 触发替换
  *   5. 据 ref.kind 决定返回值（detached-script → triggerRestart / unsupported → 抛错）
@@ -23,18 +24,25 @@
  *   prepareUpdate 内 spawn，orchestrator 不再延迟 spawn NSIS 安装器（原 1.5s
  *   延迟魔数常量与 win 安装器 ref 分支已整体删除）
  *
- * 依赖方向：orchestrator → download-asset + platform-updater + proxy-config + constants + types + @xyz-agent/shared
+ * 依赖方向：orchestrator → download-asset + platform-updater + proxy-config + constants + types
+ *   + error-log + upgrade-fetch（engine 偏好读取）+ ../release-checker（降级 by-tag 查询的
+ *   默认实现，经 IReleaseChecker 接口消费）+ @xyz-agent/shared
  */
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
-import type { LatestReleaseInfo, UpdateStage } from '@xyz-agent/shared'
+import { URL } from 'node:url'
+import type { LatestReleaseInfo, ReleaseAsset, UpdateSource, UpdateStage } from '@xyz-agent/shared'
 import { UPDATE_STALE_RELEASE } from '@xyz-agent/shared'
 import { downloadAsset } from './download-asset.js'
 import { createPlatformUpdater } from './platform-updater.js'
 import { pickPlatformAsset } from './pick-platform-asset.js'
 import { getUpdateDir, getUpdateResultFile } from './constants.js'
 import { readProxyConfig } from './proxy-config.js'
-import { UpdateError, UpdateUnsupportedError } from './types.js'
+import { UpdateError, UpdateIntegrityError, UpdateUnsupportedError } from './types.js'
 import type { UpdateScriptRef } from './types.js'
+import { logSourceFailover, logDownloadSuccess } from './error-log.js'
+import { getEnginePreference } from './upgrade-fetch.js'
+import { ALLOWED_DOWNLOAD_HOSTS } from './release-sources.js'
+import { ReleaseChecker } from '../release-checker.js'
 import type { IReleaseChecker } from '../interfaces.js'
 
 /** 进度完成百分比 */
@@ -56,18 +64,23 @@ interface DownloadedFile {
  */
 export interface IUpdateOrchestrator {
   /**
-   * 下载阶段：选 asset + 下载 + sha256 校验。
+   * 下载阶段：选 asset + 下载 + sha256 校验 + 网络类失败的跨源降级续传（D5）。
    *
    * 供预下载（后台静默下载）复用。下载完成后返回已校验的文件路径，不触发替换。
    *
    * @param release release-checker 返回的最新版本信息
    * @param onProgress 下载进度回调（0-100 百分比，仅 downloading 阶段）。可为 undefined（预下载静默）
+   * @param opts.releaseChecker 跨源降级 by-tag 查询用的 checker（可注入以便测试替换）；
+   *   缺省时用模块内惰性构造的 ReleaseChecker 默认实例（fetchReleaseByTag 为无状态透传，
+   *   不消费缓存/退避/源顺序状态）——preloadUpdateSilently 经同一入口零改动获得降级能力
    * @returns 已下载并校验的文件路径
-   * @throws UpdateError 下载/校验失败（含 downloading 锁重入拒绝）
+   * @throws UpdateError 下载/校验失败（含 downloading 锁重入拒绝）；跨源降级链任何
+   *   失败均回退为原错误上抛（UpdateIntegrityError 除外，见 tryCrossSourceResumeDownload）
    */
   downloadUpdate(
     release: LatestReleaseInfo,
     onProgress?: (percent: number) => void,
+    opts?: { releaseChecker?: IReleaseChecker },
   ): Promise<DownloadedFile>
 
   /**
@@ -146,12 +159,14 @@ export function isAutoUpdateSupportedForCurrentInstall(): boolean {
  *
  * @param release release-checker 返回的最新版本信息
  * @param onProgress 下载进度回调（0-100 百分比，仅 downloading 阶段）。可为 undefined（预下载）
+ * @param opts.releaseChecker 跨源降级 by-tag 查询用 checker（测试注入点）；缺省用默认实例
  * @returns 已下载并校验的文件路径
- * @throws UpdateError 下载/校验失败
+ * @throws UpdateError 下载/校验失败；跨源降级链失败回退为原错误上抛（见接口注释）
  */
 export async function downloadUpdate(
   release: LatestReleaseInfo,
   onProgress?: (percent: number) => void,
+  opts?: { releaseChecker?: IReleaseChecker },
 ): Promise<{ filePath: string }> {
   // 0. 并发保护：重入直接拒绝（避免重复下载 / 写文件竞争）
   if (downloading) {
@@ -196,10 +211,191 @@ export async function downloadUpdate(
     //    （downloadAsset 内部据此构造 undici ProxyAgent dispatcher）。
     //    proxyConfig 读取失败（文件损坏等）不阻断升级：降级为默认 mode='system'（直连/环境变量）。
     const proxyConfig = readProxyConfig()
-    const { filePath } = await downloadAsset(asset, onProgress, proxyConfig)
+    let filePath: string
+    try {
+      const result = await downloadAsset(asset, onProgress, proxyConfig)
+      filePath = result.filePath
+    } catch (err) {
+      // 下载段跨源降级（update-multi-source §6.5 D5）：网络类失败 → 对侧源 by-tag
+      // 确认后复用 temp + resume-state 续传。降级不成立（触发集合外 / source 缺失 /
+      // 对侧不可用）时原样上抛原错误。
+      const failedOver = await tryCrossSourceResumeDownload({
+        asset, release, err, onProgress, proxyConfig,
+        releaseChecker: opts?.releaseChecker,
+      })
+      if (!failedOver) throw err
+      filePath = failedOver.filePath
+    }
+    // 下载成功登记（download-success，S1 多段生效断言观测面）。
+    // multiPart/engine 取值近似说明：downloadAsset 返回值不含 probe 判定与实际引擎
+    // （其改造属 u-probe-multipart 已 committed 领地，本单元不可扩返回值），此处
+    // engine 取进程级引擎偏好 flag（连接建立失败置位 curl 后为 curl，否则 undici）、
+    // multiPart 保守 false——精确观测面回填待 download-asset 返回值扩展（偏差已登记）。
+    logDownloadSuccess({
+      multiPart: false,
+      engine: getEnginePreference() === 'curl' ? 'curl' : 'undici',
+      releaseSource: release.source,
+    })
     return { filePath }
   } finally {
     downloading = false
+  }
+}
+
+// ── 下载段跨源降级（update-multi-source §6.5 D5 / §6.7 D7 / §6.8 D8）────────
+
+/**
+ * 降级触发集合（errorCode 白名单）：仅网络类失败换源有意义（含「代理对当前源域
+ * 不可用但对对侧可用」场景）。磁盘 / 重命名 / 权限类失败换源无意义，显式排除；
+ * UpdateIntegrityError 属 D8 安全边界，单独 instanceof 拦截（sha256/size 不符时
+ * 对侧产物同样不可信，fail-fast 不装坏文件）。
+ */
+const FAILOVER_TRIGGER_ERROR_CODES: ReadonlySet<string> = new Set([
+  'UPDATE_NETWORK_FAILED',
+  'UPDATE_NETWORK_TIMEOUT',
+  'UPDATE_PROXY_ERROR',
+  'UPDATE_PROXY_UNREACHABLE',
+])
+
+/** UpdateSource 两值枚举的补集（github ↔ atomgit）。 */
+function oppositeSource(source: UpdateSource): UpdateSource {
+  return source === 'github' ? 'atomgit' : 'github'
+}
+
+/**
+ * 降级 by-tag 查询用 checker 解析：显式注入（测试 / 未来 DI）优先；缺省用模块内
+ * 惰性构造的 ReleaseChecker 默认实例。fetchReleaseByTag 是无状态透传方法（D1 门面），
+ * 不消费缓存 / 退避 / 源顺序状态，独立实例无状态副作用。
+ *
+ * 惰性构造的理由：避免模块加载期副作用；且 u-checker（fetchReleaseByTag 实现）落地前
+ * release.source 恒为 undefined（检查链尚未多源化），降级链在 source 守卫处即被拦截，
+ * 默认实例不会被真正调用——中间态安全。
+ */
+let defaultFailoverChecker: IReleaseChecker | undefined
+function resolveFailoverChecker(injected?: IReleaseChecker): IReleaseChecker {
+  if (injected) return injected
+  if (!defaultFailoverChecker) defaultFailoverChecker = new ReleaseChecker()
+  return defaultFailoverChecker
+}
+
+/** 平台 asset 键（LatestReleaseInfo.assets 的全部键位）。 */
+const PLATFORM_ASSET_KEYS = ['macArm64Dmg', 'winX64Exe', 'linuxX64AppImage'] as const
+
+/**
+ * 在对侧 release 的平台 asset 中按 name 精确匹配目标资产（§4.2③：目标平台 asset
+ * 按 name 匹配存在）。两源同名上传（D5 不变量），name 不一致 = 对侧产物形态异常，
+ * 视为对侧不可用。
+ */
+function findSideAssetByName(
+  release: LatestReleaseInfo,
+  name: string,
+): ReleaseAsset | undefined {
+  for (const key of PLATFORM_ASSET_KEYS) {
+    const candidate = release.assets[key]
+    if (candidate && candidate.name === name) return candidate
+  }
+  return undefined
+}
+
+/**
+ * 对侧 downloadUrl 域校验（防御纵深）：降级 URL 来自 by-tag API 响应，直接进
+ * download-asset 的 fetch（不经过 install 前的 validateRelease），此处按与白名单
+ * 同源的 ALLOWED_DOWNLOAD_HOSTS 做 https + 域校验；不合法视为对侧不可用（不降级），
+ * 与 D6「非白名单域依旧 fail-fast」方向一致。
+ */
+function isAllowedDownloadUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'https:' && ALLOWED_DOWNLOAD_HOSTS.has(parsed.hostname)
+  } catch {
+    return false
+  }
+}
+
+/** 跨源降级入参（downloadUpdate 内聚装配，收口成对象避免参数列膨胀）。 */
+interface ICrossSourceResumeInput {
+  /** 本源胜出 asset（完整性基准 sha256/size 与 temp 键控 name 的来源） */
+  asset: ReleaseAsset
+  /** 本次下载的 release（source / tagName 降级依据） */
+  release: LatestReleaseInfo
+  /** 主源下载抛出的原始错误（触发判定 + 最终上抛对象） */
+  err: unknown
+  /** 进度回调（透传降级续传） */
+  onProgress?: (percent: number) => void
+  /** 代理配置（透传降级续传） */
+  proxyConfig: ReturnType<typeof readProxyConfig>
+  /** 显式注入的 checker（可缺省） */
+  releaseChecker?: IReleaseChecker
+}
+
+/**
+ * 下载段跨源降级续传（update-multi-source §6.5 D5）。
+ *
+ * 降级成立（返回 { filePath }）的全部条件：
+ *   ① 原错误是网络类（errorCode ∈ 触发集合）且非 UpdateIntegrityError（D8 安全边界）
+ *   ② release.source 存在（undefined = 旧落盘 pending/preloaded 文件，不降级，D7）
+ *   ③ 对侧 by-tag 命中该 tag（tagName 一致）且目标平台 asset（按 name 匹配）存在，
+ *      且其 downloadUrl 落白名单域
+ * 降级续传仅替换 downloadUrl，完整性基准（sha256/size）保持原胜出源 asset——tag 重发
+ * 发散窗口下对侧内容将因 sha256 不符 fail-fast（与 D8 语义一致）。temp 按 asset.name
+ * 键控 + resume-state 按 temp 路径匹配（download-asset 既有机制），跨源续传天然命中
+ * 同一断点；totalBytes 不符由既有守卫自动转全量（§11.4 三组合）。
+ *
+ * 降级发生点（对侧确认可用、实际转向续传前）登记 logSourceFailover(segment='download')；
+ * by-tag null（404 发布时间窗）与 200 但目标 asset 缺失（部分同步失败窗口）同语义：
+ * 不降级、保留本源 temp+state、原错误上抛（不误报、不触发无意义续传）。
+ *
+ * @returns 降级续传成功返回 { filePath }；降级不成立返回 null（调用方原错误上抛）
+ * @throws UpdateIntegrityError 降级续传产物完整性不符（D8：原样上抛，绝不吞成网络错误）
+ */
+async function tryCrossSourceResumeDownload(
+  input: ICrossSourceResumeInput,
+): Promise<{ filePath: string } | null> {
+  const { asset, release, err, onProgress, proxyConfig, releaseChecker } = input
+  // ① 触发集合 + 完整性安全边界
+  if (!(err instanceof UpdateError)) return null
+  if (err instanceof UpdateIntegrityError) return null
+  if (!err.errorCode || !FAILOVER_TRIGGER_ERROR_CODES.has(err.errorCode)) return null
+  // ② source 缺失（旧落盘文件）不降级，维持单源行为
+  if (!release.source) return null
+
+  const from = release.source
+  const to = oppositeSource(from)
+  const checker = resolveFailoverChecker(releaseChecker)
+
+  try {
+    // ③ 对侧 by-tag 精确确认（IReleaseChecker 透传；null = 该源无此 tag）
+    const sideRelease = await checker.fetchReleaseByTag(to, release.tagName)
+    if (!sideRelease || sideRelease.tagName !== release.tagName) {
+      console.log(`[download] cross-source failover skipped: tag ${release.tagName} not found on ${to}`)
+      return null
+    }
+    const sideAsset = findSideAssetByName(sideRelease, asset.name)
+    if (!sideAsset) {
+      console.log(`[download] cross-source failover skipped: asset ${asset.name} missing on ${to}`)
+      return null
+    }
+    if (!isAllowedDownloadUrl(sideAsset.downloadUrl)) {
+      console.log(`[download] cross-source failover skipped: side url host not allowed`)
+      return null
+    }
+
+    // 降级发生点登记（对侧确认可用、实际转向续传前；S6 断言依赖本登记的存在性判定）
+    logSourceFailover({ segment: 'download', from, to, errorCode: err.errorCode })
+
+    // 复用既有 temp + resume-state：仅替换 downloadUrl，sha256/size 保持原胜出源基准
+    return await downloadAsset({ ...asset, downloadUrl: sideAsset.downloadUrl }, onProgress, proxyConfig)
+  } catch (failoverErr) {
+    // 对侧产物完整性不符 = 产物与发布清单发散（D8 安全边界）：原样上抛，绝不吞成
+    // 网络错误回退原错误（否则「校验失败」被降格为「网络不佳」，安全语义破坏）
+    if (failoverErr instanceof UpdateIntegrityError) throw failoverErr
+    // 降级链其他失败（对侧 by-tag 网络失败 / 续传网络失败）→ 原错误上抛（§7.4 下载-双源行：
+    // 用户可见错误与现状同形，降级是 best-effort 而非新的失败形态）
+    console.warn(
+      `[download] cross-source failover to ${to} failed, rethrowing original error:`,
+      failoverErr,
+    )
+    return null
   }
 }
 

@@ -19,6 +19,7 @@ import { describe, it, expect } from 'vitest'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
 import { validateRelease } from '../update/validate-release.js'
 import { UpdateError } from '../update/types.js'
+import { ALLOWED_DOWNLOAD_HOSTS, RELEASE_SOURCE_HOSTS } from '../update/release-sources.js'
 
 /** 合法的 mac asset（GitHub 域名 + https + 64 位 hex sha256） */
 const VALID_MAC = {
@@ -248,6 +249,55 @@ describe('validate-release', () => {
     } catch (err) {
       expect(err).toBeInstanceOf(UpdateError)
       expect((err as UpdateError).stage).toBe('downloading')
+    }
+  })
+})
+
+// ── 多源白名单（update-multi-source D6：域集合消费 release-sources 单一来源）────
+
+describe('validate-release 多源白名单', () => {
+  it('gitcode.com 域（AtomGit 下载直链，P1 探针落域）→ 放行', () => {
+    const release = makeRelease()
+    release.assets.macArm64Dmg!.downloadUrl =
+      'https://gitcode.com/qq_18433817/xyz-agent/releases/download/v0.9.15/TaiJi-mac-arm64.dmg'
+    expect(() => validateRelease(release)).not.toThrow()
+  })
+
+  it('api.gitcode.com（API 域，非下载白名单成员）→ 仍拒绝（严格 hostname 匹配，无后缀放行）', () => {
+    const release = makeRelease()
+    release.assets.macArm64Dmg!.downloadUrl =
+      'https://api.gitcode.com/api/v5/repos/qq_18433817/xyz-agent/attach_files/x.dmg'
+    expect(() => validateRelease(release)).toThrow(/host not allowed/)
+  })
+
+  it('域集合与 release-sources 导出同源：白名单 = 两源下载域精确集合（防漂移断言）', () => {
+    // 单一来源 SSOT 内容锁定：GitHub 现行 2 域 + AtomGit 下载域
+    expect([...ALLOWED_DOWNLOAD_HOSTS].sort()).toEqual([
+      RELEASE_SOURCE_HOSTS.atomgitDownload,
+      RELEASE_SOURCE_HOSTS.githubDownload,
+      RELEASE_SOURCE_HOSTS.githubAssetsCdn,
+    ])
+  })
+
+  it('ALLOWED_DOWNLOAD_HOSTS 内每个域都能通过校验（遍历放行断言，集合扩域不漏测）', () => {
+    for (const host of ALLOWED_DOWNLOAD_HOSTS) {
+      const release = makeRelease()
+      release.assets.macArm64Dmg!.downloadUrl = `https://${host}/releases/download/v0.9.0/asset.bin`
+      expect(() => validateRelease(release), `host ${host} should be allowed`).not.toThrow()
+    }
+  })
+
+  it('白名单扩域不放松既有防线：file:// / 内网 IP / 任意域 / 非 https 依旧拒绝', () => {
+    const rejectUrls = [
+      'file:///etc/passwd',
+      'http://gitcode.com/asset.dmg',
+      'https://169.254.169.254/latest/meta-data/',
+      'https://evil.example.com/asset.dmg',
+    ]
+    for (const url of rejectUrls) {
+      const release = makeRelease()
+      release.assets.macArm64Dmg!.downloadUrl = url
+      expect(() => validateRelease(release), `url ${url} should be rejected`).toThrow(UpdateError)
     }
   })
 })

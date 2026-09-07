@@ -108,6 +108,9 @@ graph TD
 | u-release-sources | 形状坏/网络失败从现状 null 收口改为抛 ReleaseFetchError(kind: network/rate-limited/bad-shape) | 设计 §4.2③「形状坏→记该源失败」要求失败信号可归类；现状 null 与「404 无新版」混叠会使逐源降级无法分类 | 2026-09-07 |
 | u-release-sources | shared ReleaseAsset.size 必填与 AtomGit size undefined 冲突——实现暂以单字段显式断言放宽 + 债务登记 | 类型收敛需 ReleaseAsset.size 可选化（packages/shared 领地），打回 u-foundation 会话补丁；GitHub 路径 size 恒有不回归 | 2026-09-07 |
 | u-release-sources | ASSET_PATTERNS / extractSha256 与 release-checker.ts 私有实现暂并存（文件头注释登记收敛计划） | 领地互斥：release-checker.ts 属 u-checker；u-checker 改造组装时改消费本模块导出并删副本 | 2026-09-07 |
+| u-download-failover | **logDownloadSuccess 的 multiPart/engine 为近似值（engine 取进程偏好、multiPart 保守 false）——S1 验收的 multiPart:true 断言将失真** | downloadAsset 返回值仅 {filePath} 不含 probe 判定与实际引擎；download-asset.ts 属已 committed 的 u-probe-multipart 领地。must-fix：已派 u-probe-multipart 会话扩展返回值 {filePath, multiPart, engine}，随后 u-download-failover 会话接线精确回填 | 2026-09-07 |
+| u-download-failover | 默认 failover checker = orchestrator 模块内惰性 new ReleaseChecker()（设计「DI 注入不变」留白的补全），downloadUpdate 增可选 opts.releaseChecker 保留显式注入 | fetchReleaseByTag 无状态透传不消费缓存/退避，双实例无状态重复风险；u-checker 落地后构造兼容已 tsc 验证 | 2026-09-07 |
+| 残留风险 | totalBytes 组合 B（stale 转全量守卫触发后）外层校验对已递归 rename 的 temp 抛 ENOENT，跨源降级链按续传失败吞掉原错误上抛（产物正确、sha256 兜底不变，用户重试从零成功） | download-asset 既有行为非本次引入；阶段 4 一致性审查评估是否修 ENOENT 收尾 | 2026-09-07 |
 
 ## 6 状态表
 
@@ -119,8 +122,8 @@ graph TD
 | u-diagnostics | committed | 1 | 本文件同 commit；vitest 15/15 + w2-main-integration 40 绿；error-log 纯增量零行为变化 |
 | u-settings-pref | committed | 1 | 本文件同 commit；vitest 44/44（含 download-asset 已 commit 态回归）、eslint 0 errors、rateLimited 判定零改动已偏差登记 |
 | u-probe-multipart | committed | 2 | 首轮 a3d1aebad（本体）+ 轮次 2 返工（__tests__ 同族 HEAD mock 迁移 3 红全消 + 1 处静默语义漂移修复）；主 agent 复核全量 main vitest 51 文件 854 用例全绿 |
-| u-checker | pending | 0 | — |
-| u-download-failover | pending | 0 | — |
+| u-checker | in-progress | 1 | agent 已派发（领地扩展：+main.ts 构造注入 / dev mock / update-handlers.test.ts 存量迁移 / DOC_MODULE_MAP 登记） |
+| u-download-failover | committed | 1 | 本文件同 commit；vitest 59/59（21 新用例含 totalBytes 三组合真实链路）、eslint/tsc 领地 0 错；全量 24 红经归因全部位于 u-checker 并行中间态（领地零 import 关联） |
 | u-settings-ui | committed | 1 | 本文件同 commit；vitest 8/8 + 回归 206 绿 + vue-tsc 0 错 + vue_rules_checker / i18n locale sync 过 |
 
 ## 7 残留风险与变更历史
