@@ -100,6 +100,10 @@ graph TD
 |------|------|------|----------|
 | u-foundation | fetchReleaseByTag 做成 IReleaseChecker 必需方法（设计未明说可选性）；接口实现侧出现计划内中间态编译红（release-checker.ts / dev mock / handler 测试 mock 共 10 处 TS2420/TS2741 连锁），由 u-checker（实现方法）与存量测试迁移（补 mock）消解，vitest 全程绿（esbuild 剥类型） | 必需方法语义更准确：多源降级必经路径不存在「不支持」的 checker（同接口 getRateLimitedUntil 的可选先例注释明确是「不支持限额语义时不实现」，场景不同） | 2026-09-07 |
 | u-foundation | 设计 §7.1 称 update.ts 有「两处 GitHub API 限额注释」（:63/:70），实测仅 :69 一处 | 设计行号笔误；全文件核对无第二处，其余 GitHub 字样为字段来源的事实性描述非限流表述 | 2026-09-07 |
+| u-diagnostics | source-selection 降频变化检测在设计的「排序/胜出源/探测结果」三维外增加第四维 tags（各源 latest tag） | 不纳入则稳态下 tag 冻结在首条，F5 同步缺失形态的唯一客户端观测面失效；tag 变化受版本发布节流，写放仍远低于每轮必写上界 | 2026-09-07 |
+| u-diagnostics | appendUpdateError 返回 void → boolean；诊断 stage 新增值 'checking'（仅诊断日志用） | 支撑「写失败不推进降频快照」语义；既有调用方全部忽略返回值行为零变化；检查段事件在 UpdateStage 既有值域无对应值 | 2026-09-07 |
+| u-probe-multipart | 验收条款「存量 HEAD mock 族改写后既有测试全绿」首轮未达成：仅迁移 test/download-asset.test.ts，漏扫 update/__tests__/download-asset-fallback.test.ts（u4-probe-curl、u4-multipart-success 2 红）与 update/__tests__/update.test.ts（B4 1 红）同族 HEAD-era mock | 打回返工（轮次 2），领地扩展上述两文件 | 2026-09-07 |
+| u-checker | DOC_MODULE_MAP 登记（设计 §9 M2 项）从 u-diagnostics 移交至 u-checker | scripts/check-doc-symbol-drift.mjs 在 u-diagnostics 领地外；M2 挂点单元为 checker，随其 commit 落地 | 2026-09-07 |
 
 ## 6 状态表
 
@@ -108,7 +112,7 @@ graph TD
 | u-foundation | committed | 1 | 本文件同 commit；shared typecheck exit 0 + main vitest 48 文件 761 用例全绿（两轮复核）+ main tsc TS2305 归零（计划内中间态红 10 处由 u-checker 消解） |
 | u-release-sources | in-progress | 1 | agent 已派发（Wave2） |
 | u-source-resolver | committed | 1 | 本文件同 commit；vitest 17/17、eslint 0 warning、领地 2 新文件与 files_changed 一致 |
-| u-diagnostics | in-progress | 1 | agent 已派发（Wave2） |
+| u-diagnostics | committed | 1 | 本文件同 commit；vitest 15/15 + w2-main-integration 40 绿；error-log 纯增量零行为变化 |
 | u-settings-pref | committed | 1 | 本文件同 commit；vitest 44/44（含 download-asset 已 commit 态回归）、eslint 0 errors、rateLimited 判定零改动已偏差登记 |
 | u-probe-multipart | committed | 1 | 本文件同 commit；vitest 30/30（23 存量 + 7 新增四出口表测）、HEAD 残留 0、eslint 0 problems、领地 TS2698 存量错顺手修复 |
 | u-checker | pending | 0 | — |
