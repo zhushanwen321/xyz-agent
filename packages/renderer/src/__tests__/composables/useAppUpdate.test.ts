@@ -190,7 +190,7 @@ describe('useAppUpdate', () => {
     expect(result.state.state).toBe('available')
     // 非侵入提示一次（不进 error 态，info toast）
     expect(toastFns.info).toHaveBeenCalledTimes(1)
-    expect(toastFns.info).toHaveBeenCalledWith('检查更新接口已被 GitHub 限额，约 2 小时内暂停自动检查')
+    expect(toastFns.info).toHaveBeenCalledWith('更新检查服务限流，约 2 小时内暂停自动检查')
 
     // 同窗口内再查不重复提示
     await result.checkForUpdate(true)
