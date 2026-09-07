@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { defineComponent, h, ref, nextTick } from 'vue'
 import { mount, type VueWrapper } from '@vue/test-utils'
-import * as events from '@xyz-agent/core/transport/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import { RPC_BACKSTOP_TIMEOUT_MS } from '@xyz-agent/core/transport/api'
 import {
   triggerSessionCleanups,
@@ -33,7 +33,8 @@ import type { GenStatsFrame } from '@xyz-agent/shared'
 // ── mock 边界：getGenStats RPC mock 掉（u3 未接线，恢复腿用受控 deferred 驱动）──
 // mock 目标 = 实现 import 的权威路径（u5 re-anchor 删除 @/api/request bridge 后）；
 // spread actual 只换 command/超时常量：useSessionEvents 经主模块 events.on 订阅，须保留
-// 真实 events 通道（与测试侧 dispatchSession 的子路径模块共享同一注册表），否则帧链路断
+// 真实 events 通道（测试侧 dispatchSession 与实现侧订阅经同一真实 events 模块实例，注册表
+// 共享），否则帧链路断
 const commandMock = vi.hoisted(() => vi.fn())
 vi.mock('@xyz-agent/core/transport/api', async (importActual) => {
   const actual = await importActual<typeof import('@xyz-agent/core/transport/api')>()

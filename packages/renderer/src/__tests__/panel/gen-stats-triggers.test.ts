@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import * as events from '@xyz-agent/core/transport/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import { __clearSessionCleanupRegistryForTest } from '@/composables/useSessionScopedState'
 import { __clearInFlightGenStatsForTest } from '@/composables/features/model/useGenStats'
 import type { GenStatsFrame, ServerMessage } from '@xyz-agent/shared'
@@ -24,8 +24,8 @@ import GenStatsTriggers from '@/components/panel/GenStatsTriggers.vue'
 // ── mock 边界：getGenStats RPC mock 为受控 pending（恢复腿不落地）──
 // mock 目标 = 实现 import 的权威路径（u5 re-anchor 删除 @/api/request bridge 后，
 // mock 指旧路径 = 拦截失效，恢复腿会真实打 transport）；spread actual 只换 command/
-// 超时常量：useSessionEvents 经主模块 events.on 订阅，须保留真实 events 通道（与测试侧
-// dispatchSession 的子路径模块共享同一注册表），否则帧链路断
+// 超时常量：useSessionEvents 经主模块 events.on 订阅，须保留真实 events 通道（测试侧
+// dispatchSession 与实现侧订阅经同一真实 events 模块实例，注册表共享），否则帧链路断
 const commandMock = vi.hoisted(() => vi.fn())
 vi.mock('@xyz-agent/core/transport/api', async (importActual) => {
   const actual = await importActual<typeof import('@xyz-agent/core/transport/api')>()

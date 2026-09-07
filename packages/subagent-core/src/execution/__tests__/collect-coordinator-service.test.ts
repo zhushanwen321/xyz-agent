@@ -34,7 +34,7 @@ const { loggerMock, runSpawnMock } = vi.hoisted(() => ({
     toolCalls: [],
   })),
 }));
-vi.mock("../core/logger.ts", () => ({ getLogger: () => loggerMock }));
+vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner：execute 链经 kickOffBackground → runAndFinalize → runSpawn。
 // runSpawn 返回最小成功 AgentResult，后台收尾链完整走完（finalize + archive + notify）。

@@ -38,7 +38,7 @@ const { loggerMock, runSpawnMock } = vi.hoisted(() => ({
     toolCalls: [],
   })),
 }));
-vi.mock("../core/logger.ts", () => ({ getLogger: () => loggerMock }));
+vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 // mock 路径自检（impl-plan 偏差 #6 教训）：从 __tests__ 解析必须命中生产 import 的
 // 真实模块——merge 后 session-runner 落位 src/execution/engine/engines/pi/session-runner.ts

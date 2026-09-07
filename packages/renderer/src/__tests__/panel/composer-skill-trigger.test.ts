@@ -19,7 +19,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick, defineComponent, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
-import * as events from '@xyz-agent/core/transport/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { SkillInfo } from '@xyz-agent/shared'
 
