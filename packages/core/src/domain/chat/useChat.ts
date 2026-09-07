@@ -122,6 +122,26 @@ const manualCompactionState = new Map<string, boolean>()
 const pendingDirectSends = new Map<string, { clientUuid: string; text: string; holdsInflight: boolean }>()
 
 /**
+ * [簇 A1] defer 队列 flush 失败重投 timer（per-session）。
+ *
+ * 为什么需要：S1 busy 拒绝后条目留队，原设计「等下一次 occupancy idle 帧重投」在拒绝转译
+ * 路径不可达——runtime handlePromptFailure 的复位 idle 帧正是触发本次 flush 的那一帧
+ *（先于 flush 发出），flush 失败后的 agent_settled 同值 idle 被幂等写去重（无变化不广播）；
+ * 失败 attempt 自产的 dispatching→idle 帧又因 WS FIFO 先于 RPC reply 到达、被 S2 in-flight
+ * 守卫并集进当次 promise——其后不再有任何 idle 帧。timer 是失败后唯一保证可达的重投脉冲。
+ *
+ * 终止性（拒绝循环行为论证）：每次重投 = 真实投递尝试，pi settling 有界（V8 探针门
+ * P95 ≤ 2s）→ 界内某次成功（flush resolve true 不再 re-arm）或条目被确认/撤销清空
+ *（hasPending false 早退）；pi 活跃但持续拒绝时以 1s 有界节奏重试（消息不丢优先，
+ * 对齐 ADR-0047「静默 ≠ 卡死」不判死语义），不产生 RPC 热循环。传输级 reject 不 arm
+ *（重连后 occupancy state topic 快照回放 idle 帧照常触发，§3.5 错误规格表）。
+ */
+const DEFER_FLUSH_RETRY_DELAY_MS = 1000
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：flush 失败重投 timer
+//（流程状态句柄，非 GUI 数据——与下方 pendingDirectSends 同类豁免）
+const deferFlushRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+/**
  * 重置 useChat 模块级状态（仅供测试隔离）。
  *
  * 清 streamSubscriptions（逐个调 unsub 解除 WS 订阅 + 清 Map）+ historyTruncatedSessions
@@ -154,6 +174,10 @@ export function resetChatModuleStateForTest(): void {
   // D2：清未决直发记录（测试间不 reset 会把上一用例的 send 记录泄漏进下一用例的
   // rejected handler，误触发回滚/入队分支）
   pendingDirectSends.clear()
+  // [簇 A1] 清 flush 重投 timer（测试间不 reset 会让上一用例的 1s timer 在下一用例
+  // 中途开火，flush mock 的跨用例残留调用造成非确定性断言）
+  for (const timer of deferFlushRetryTimers.values()) clearTimeout(timer)
+  deferFlushRetryTimers.clear()
   // wave:renderer-subscribe：重置 MessageBus 订阅状态（subscriptionStates 模块级 Map）。
   // 与 streamSubscriptions/historyTruncatedSessions 同理——测试间不 reset 会泄漏到下一用例
   //（subscriptionStates 残留 → routeInbound gap 检测误判）。
@@ -177,6 +201,54 @@ export function resetChatModuleStateForTest(): void {
  * streamSubscribe 回调各分支的独立处理体（按处理阶段提取，主回调只留分发编排）。
  * 各 helper 接收窄化后的具体 ServerMessage（case 守卫窄化随值传递），行为与原内联分支逐字一致。
  */
+
+/**
+ * occupancy 投影是否全 idle（flush 触发条件的三维半边，与 handleSessionOccupancy 的
+ * 帧判定同构；无记录 = getOccupancy 缺省全 idle，与「未收到帧 = 未占用」语义一致）。
+ */
+function isOccupancyFullyIdle(occupancy: { turn: string; compacting: boolean; bash: boolean }): boolean {
+  return occupancy.turn === 'idle' && !occupancy.compacting && !occupancy.bash
+}
+
+/**
+ * [簇 A1] defer 队列 flush 的统一消费入口（occupancy idle 帧 / 入队时已 idle 两触发源共用）。
+ *
+ * resolve false（S1 busy 类拒绝，条目留队）→ 自排 timer 重投（注释见 deferFlushRetryTimers）；
+ * reject（传输级真错误，如 WS 断连）→ toast「发送失败: {原因}」，气泡保持 pending、队列保留，
+ * 恢复后 occupancy 快照回放 idle 自动重放（§3.5 错误规格表）。
+ */
+function flushDeferQueueAfterIdle(sid: string, deps: EnsureStreamSubDeps): void {
+  void deps
+    .getCompactQueue()
+    .flush(sid)
+    .then((submitted) => {
+      if (!submitted) armDeferFlushRetry(sid, deps)
+    })
+    .catch((e) => {
+      const msg = e instanceof Error ? e.message : String(e)
+      deps.toast.error(deps.t('composable.sendFailed', { msg }))
+    })
+}
+
+/** [簇 A1] 排一次延迟重投（幂等：已有 pending timer 不重复排；fire 后自删再按需 re-arm）。 */
+function armDeferFlushRetry(sid: string, deps: EnsureStreamSubDeps): void {
+  if (deferFlushRetryTimers.has(sid)) return
+  const timer = setTimeout(() => {
+    deferFlushRetryTimers.delete(sid)
+    if (!deps.getCompactQueue().hasPending(sid)) return
+    flushDeferQueueAfterIdle(sid, deps)
+  }, DEFER_FLUSH_RETRY_DELAY_MS)
+  deferFlushRetryTimers.set(sid, timer)
+}
+
+/** [簇 A1] 清指定 session 的重投 timer（disposeSession 编排 + 测试隔离共用）。 */
+function clearDeferFlushRetryTimer(sid: string): void {
+  const timer = deferFlushRetryTimers.get(sid)
+  if (timer !== undefined) {
+    clearTimeout(timer)
+    deferFlushRetryTimers.delete(sid)
+  }
+}
 
 /** [send.rejected] 兜底通道（D-006 独立类型，不进对话流）——session-occupancy D2 改造：
  * 乐观气泡回滚 + inflight 回滚对全部 reason 立即生效（修复 §2.2 窗口 2 的「气泡残留 +
@@ -211,6 +283,14 @@ function handleSendRejected(
     // occupancy 回 idle 自动投递 + pending 气泡可见），原文（未加标记）入队。
     if (!uuidQueued) {
       deps.getCompactQueue().enqueue(sid, pending.text)
+      // [簇 A1] 入队晚于 idle 帧（runtime handlePromptFailure 先广播 occupancy idle 再广播
+      // send.rejected，WS FIFO）——idle 帧处理时队列尚空未 flush；其后 agent_settled 的同值
+      // idle 被幂等写去重不再来帧。入队后读当前投影：已全 idle → 立即 flush（否则消息滞留到
+      // 下一个无关 occupancy 转移）；仍忙（bash/compacting 等预检拒绝形态）→ 由后续 idle 帧
+      // 照常触发。flush false（S1 再拒）由 flushDeferQueueAfterIdle 自排 timer 重投。
+      if (isOccupancyFullyIdle(chat.getOccupancy(sid))) {
+        flushDeferQueueAfterIdle(sid, deps)
+      }
     }
     return
   }
@@ -301,17 +381,11 @@ function handleSessionOccupancy(
     && !msg.payload.bash
     && deps.getCompactQueue().hasPending(sid)
   ) {
-    void deps
-      .getCompactQueue()
-      .flush(sid)
-      .catch((e) => {
-        // [A1 / §3.5] RPC reject（传输级真错误，如 WS 断连）：toast「发送失败: {原因}」，
-        // 气泡保持 pending、队列保留，恢复后 occupancy 快照 idle 自动重放。S1 busy 类
-        // 拒绝（flush resolve false）静默自愈：条目留队等下一次 idle 帧重投，不再 toast
-        //（queueFlushFailed 退役——与 rejected 帧路径的「Agent 正在处理」双 toast 一并消除）。
-        const msg = e instanceof Error ? e.message : String(e)
-        deps.toast.error(deps.t('composable.sendFailed', { msg }))
-      })
+    // [簇 A1] flush 消费统一走共享入口：S1 拒绝（resolve false）自排 timer 重投——
+    // 拒绝循环下本帧（失败 attempt 自产的 dispatching→idle）先于 RPC reply 到达被 S2
+    // 守卫并集，其后无帧可达，timer 是唯一保证重投脉冲（详见 deferFlushRetryTimers 注释）。
+    // RPC reject（传输级真错误）toast「发送失败: {原因}」的既有语义在入口内保持不变。
+    flushDeferQueueAfterIdle(sid, deps)
   }
 }
 
@@ -462,8 +536,17 @@ export async function submitQueuedEntry(
   channel: 'send' | 'steer',
   deps: SubmitQueuedEntryDeps,
 ): Promise<void> {
+  // [簇 A2] 提交文本尾附加投递确认标记（裸 uuid 形态，与 submitSegments 的 u- 前缀
+  // clientUuid 标记同构但 id 空间互斥）：entry.id = crypto.randomUUID()（无 u- 前缀），
+  // msg-id-mapper 的 TAG_MATCH 只剥 u- 前缀标记 → 裸标记全程存活——send 通道经 pi
+  // prompt() input hook（不匹配即 transform 不发生）、steer 通道 pi steer() 根本不发
+  // input hook，pi 落盘文本与 message_end(user) 回流文本都携带标记 → core ① 优先按
+  // 标记 id 确认出队（文本被 skill-injector 三入口 / BeforeSend hook 改写后仍可达，
+  // 对齐 C-data-08「禁文本匹配」）。QueueBubble 显示侧对快照文本剥标记（steer 通道
+  // 文本会镜像进 queue_update 快照）。
+  const markedText = `${entry.text}\n<!--xyz:msg:${entry.id}-->`
   if (channel === 'steer') {
-    await deps.chatApi.steer(sid, entry.text)
+    await deps.chatApi.steer(sid, markedText)
     return
   }
   // 挂占位先于 RPC（乐观语义，对齐 send 的 incrementInflight 挂点）：确认帧到达时
@@ -475,7 +558,7 @@ export async function submitQueuedEntry(
     t: deps.t,
     getCompactQueue: deps.getCompactQueue,
   })
-  await deps.chatApi.send(sid, entry.text, { clientUuid: entry.id })
+  await deps.chatApi.send(sid, markedText, { clientUuid: entry.id })
 }
 
 /**
@@ -1032,6 +1115,7 @@ export function createUseChat(deps: UseChatDeps) {
     clearHistoryTruncated(sessionId) // SUGGESTION：已删 session 的截断标记不再有意义
     manualCompactionState.delete(sessionId) // MF-1：清 manual compact 标记
     pendingDirectSends.delete(sessionId) // D2：清未决直发记录（session 已销毁，rejected 不再有意义）
+    clearDeferFlushRetryTimer(sessionId) // [簇 A1] 清 flush 重投 timer（session 已销毁，重投无意义）
     // wave:renderer-subscribe：清除 MessageBus 订阅状态（SubscriptionState）。
     // 与 streamSubscriptions.delete 配对——session 删除后若不清，routeInbound 的 gap 检测
     // 仍会读残留 state（lastSeenSeq 基线 stale），且 Map 永久增长。

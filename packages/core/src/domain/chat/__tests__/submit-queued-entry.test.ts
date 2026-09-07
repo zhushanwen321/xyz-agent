@@ -37,7 +37,7 @@ function makeDeps(over: Partial<{ send: ReturnType<typeof vi.fn>; steer: ReturnT
 }
 
 describe('submitQueuedEntry（u4b / D5.1）', () => {
-  it('send 通道：挂 inflight 占位 + 建会话订阅 + chatApi.send 携 clientUuid=条目 id', async () => {
+  it('send 通道：挂 inflight 占位 + 建会话订阅 + chatApi.send 携 clientUuid=条目 id + 文本尾投递确认标记（簇 A2）', async () => {
     const { deps, chat } = makeDeps()
     await submitQueuedEntry('s1', { id: 'entry-1', text: 'm1' }, 'send', deps)
 
@@ -45,17 +45,19 @@ describe('submitQueuedEntry（u4b / D5.1）', () => {
     expect(chat.getInflight('s1')).toBe(1)
     expect(deps.chatApi.streamSubscribe).toHaveBeenCalledWith('s1', expect.any(Function))
     expect(deps.chatApi.send).toHaveBeenCalledTimes(1)
-    expect(deps.chatApi.send).toHaveBeenCalledWith('s1', 'm1', { clientUuid: 'entry-1' })
+    // [簇 A2] 文本尾附加裸 uuid 形态确认标记（bare id 不被 msg-id-mapper 剥除，
+    // message_end(user) 回流文本携带 → core ① 按 id 确认出队）
+    expect(deps.chatApi.send).toHaveBeenCalledWith('s1', 'm1\n<!--xyz:msg:entry-1-->', { clientUuid: 'entry-1' })
   })
 
-  it('steer 通道：仅 chatApi.steer——不挂占位、不建订阅', async () => {
+  it('steer 通道：仅 chatApi.steer——不挂占位、不建订阅，文本尾同样附加确认标记（簇 A2）', async () => {
     const { deps, chat } = makeDeps()
     await submitQueuedEntry('s1', { id: 'entry-2', text: 'm2' }, 'steer', deps)
 
     expect(chat.getInflight('s1')).toBe(0)
     expect(deps.chatApi.streamSubscribe).not.toHaveBeenCalled()
     expect(deps.chatApi.send).not.toHaveBeenCalled()
-    expect(deps.chatApi.steer).toHaveBeenCalledWith('s1', 'm2')
+    expect(deps.chatApi.steer).toHaveBeenCalledWith('s1', 'm2\n<!--xyz:msg:entry-2-->')
   })
 
   it('steer 通道不 pushPending（defer 条目不进暂存——确认走 ① 分区匹配非腿 1 drainN）', async () => {

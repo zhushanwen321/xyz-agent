@@ -82,6 +82,35 @@ describe('applyEntry —— entry 类型逐类型覆盖', () => {
     ])
   })
 
+  it('message/user：[簇 A2] defer flush 确认标记剥除——投影片段不含实现标记（live 帧 / reload 重放同点）', () => {
+    // flush 提交文本尾附加 `<!--xyz:msg:<entry.id>-->`（user-delivery ①a 身份通道），pi 落盘
+    // entry 带标记 → 投影层单点剥除：live reducer 喂入与重开 replay 同经 convertMessageBody
+    // → 对话流不暴露标记，且剥后文本 = confirmDelivery overlay 文本（文本去重命中不双计）。
+    const state = replayEntries([
+      msgEntry('e-user-dm1', {
+        role: 'user',
+        content: [{ type: 'text', text: '排队消息正文\n<!--xyz:msg:3f2504e0-4f89-41d3-9a0c-0305e82c3301-->' }],
+        timestamp: 1000,
+      }),
+    ])
+    expect(state.messages[0].content).toEqual([{ type: 'text', text: '排队消息正文' }])
+  })
+
+  it('message/user：[簇 A2] skill 展开文本 + 尾部确认标记——标记剥除不破坏 skill block 剖离', () => {
+    // 改写场景（skill-injector 展开拼接把标记推到文本尾）：剥标记与 skill 反解析的叠加
+    const state = replayEntries([
+      msgEntry('e-user-dm2', {
+        role: 'user',
+        content: [{ type: 'text', text: '<skill name="review" location="/abs/SKILL.md">body</skill>\n\n帮我审查\n<!--xyz:msg:3f2504e0-4f89-41d3-9a0c-0305e82c3301-->' }],
+        timestamp: 1000,
+      }),
+    ])
+    expect(state.messages[0].content).toEqual([
+      { type: 'skill', name: 'review', location: '/abs/SKILL.md' },
+      { type: 'text', text: '帮我审查' },
+    ])
+  })
+
   // ── 两形态反解析（D7 兜底通道，composer 多 skill 注入 u3）──────────────────────
   // 反解析 SSOT = apply-entry-convert parseSkillBlock（live 帧 / 历史重建 / 文件重放
   // 三链路共用）。形态① xyz 私有标记（本设计序列化产物）、形态② pi 原生 block（存量）。

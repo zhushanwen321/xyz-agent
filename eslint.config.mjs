@@ -84,6 +84,11 @@ export default [
     files: [
       'packages/runtime/src/infra/pi/event-adapter.ts',
       'packages/runtime/src/services/extension-service.ts',
+      // [HISTORICAL] core chat 域编排聚合点（createUseChat factory + 全部 stream 回调
+      // 分支 helper——message.* 处理序的唯一编排面，2026-09-07 簇 A1 defer flush 重投
+      // 机制入列时统计行越过 500）。职责内聚，拆分 = stream 回调按帧族重组，属独立
+      // 重构任务。短期 max-lines override 避免阻塞，长期应拆分。
+      'packages/core/src/domain/chat/useChat.ts',
     ],
     rules: {
       'max-lines': 'off',

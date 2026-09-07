@@ -100,6 +100,9 @@ function emit(msg: ServerMessage): void {
 }
 
 describe('useChat occupancy 全 idle → flush 触发（session-occupancy u5b）', () => {
+  /** [簇 A2] flush 提交文本 = 原文 + 尾部投递确认标记（submitQueuedEntry 附加，身份通道） */
+  const marked = (text: string, id: string): string => `${text}\n<!--xyz:msg:${id}-->`
+
   it('TC9: 压缩结束（compacted + occupancy idle）→ flush 逐条提交（clientUuid 透传）+ 条目保持待确认 + isCompacting 复位', async () => {
     const chat = useChatStore()
     const { compact } = useChat()
@@ -110,7 +113,7 @@ describe('useChat occupancy 全 idle → flush 触发（session-occupancy u5b）
     expect(chat.isCompacting('c-f')).toBe(true)
 
     // 压缩期间用户消息入队
-    useCompactQueue().enqueue('c-f', 'queued msg')
+    const entry = useCompactQueue().enqueue('c-f', 'queued msg')
 
     // 压缩成功广播（无 error）+ occupancy 全 idle（compacting=false 三路复位）→ flush 触发。
     // [u5b] compacted 帧本身不再触发 flush（触发源切换），idle 条件由 occupancy 帧判定。
@@ -118,7 +121,7 @@ describe('useChat occupancy 全 idle → flush 触发（session-occupancy u5b）
     emit({ type: 'session.occupancy', payload: { sessionId: 'c-f', turn: 'idle', compacting: false, bash: false } })
     await vi.waitFor(() => {
       // [u4b / D5.1] send 等价编排：clientUuid = 条目 id 透传（S1 归属 + core ① 匹配资格）
-      expect(apiMock.send).toHaveBeenCalledWith('c-f', 'queued msg', undefined, { clientUuid: expect.any(String) })
+      expect(apiMock.send).toHaveBeenCalledWith('c-f', marked('queued msg', entry.id), undefined, { clientUuid: entry.id })
     })
 
     // [u4b] 提交 ≠ 出队（E2「成功即清队」退役）：条目保持 mode 已写等确认帧逐条出队 +
@@ -186,7 +189,7 @@ describe('useChat occupancy 全 idle → flush 触发（session-occupancy u5b）
     const { compact } = useChat()
     await compact('c-e')
     emit({ type: 'session.occupancy', payload: { sessionId: 'c-e', turn: 'idle', compacting: true, bash: false } })
-    useCompactQueue().enqueue('c-e', 'q')
+    const entryE = useCompactQueue().enqueue('c-e', 'q')
 
     emit({
       type: 'session.compacted',
@@ -194,7 +197,7 @@ describe('useChat occupancy 全 idle → flush 触发（session-occupancy u5b）
     })
     emit({ type: 'session.occupancy', payload: { sessionId: 'c-e', turn: 'idle', compacting: false, bash: false } })
     await vi.waitFor(() => {
-      expect(apiMock.send).toHaveBeenCalledWith('c-e', 'q', undefined, { clientUuid: expect.any(String) })
+      expect(apiMock.send).toHaveBeenCalledWith('c-e', marked('q', entryE.id), undefined, { clientUuid: entryE.id })
     })
 
     // 消息已投递（条目保持待确认出队）+ 压缩失败不阻塞投递 + handler 不额外 toast
@@ -217,14 +220,14 @@ describe('useChat occupancy 全 idle → flush 触发（session-occupancy u5b）
   it('TC10c: bash 忙（turn=idle + bash=true）→ 不触发 flush（D6 行 6 defer，bash 结束解除）', async () => {
     const { compact } = useChat()
     await compact('c-i') // 建立会话订阅（emit 依赖 streamSubscribe handler）
-    useCompactQueue().enqueue('c-i', 'q')
+    const entryI = useCompactQueue().enqueue('c-i', 'q')
     emit({ type: 'session.occupancy', payload: { sessionId: 'c-i', turn: 'idle', compacting: false, bash: true } })
     await Promise.resolve()
     expect(apiMock.send).not.toHaveBeenCalled()
     // bash 结束（bash=false 广播）→ flush 触发
     emit({ type: 'session.occupancy', payload: { sessionId: 'c-i', turn: 'idle', compacting: false, bash: false } })
     await vi.waitFor(() => {
-      expect(apiMock.send).toHaveBeenCalledWith('c-i', 'q', undefined, { clientUuid: expect.any(String) })
+      expect(apiMock.send).toHaveBeenCalledWith('c-i', marked('q', entryI.id), undefined, { clientUuid: entryI.id })
     })
   })
 })

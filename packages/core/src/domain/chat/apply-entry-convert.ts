@@ -29,6 +29,23 @@ import {
 
 import { isLooseRecord, isPlainRecord, normalizePiToolResult } from './apply-entry-utils'
 
+/**
+ * [簇 A2] defer 队列 flush 投递确认标记正则（SSOT，submitQueuedEntry 附加的形态）。
+ *
+ * 裸 uuid v4 形态（entry.id = crypto.randomUUID()，无 u- 前缀）——与 u- 前缀的 clientUuid
+ * 标记（submitSegments / msg-id-mapper TAG_MATCH 族，`u-[0-9a-fA-F-]{36}`）id 空间互斥：
+ * uuid 字符集不含字母 u，本正则结构上不可能命中 u- 标记（反之 TAG_MATCH 也不命中裸标记
+ * ——msg-id-mapper input hook 不剥裸标记，标记经 pi prompt / steer 通路全程存活，回流
+ * 文本携带 → user-delivery ①a 按 id 确认出队）。全文搜索（标记在 skill 展开块拼接 /
+ * BeforeSend hook 改写后可能不在文本尾）。
+ *
+ * 消费方：① convertMessageBody user 投影剥标记（下方，live 帧 / reload 重放同点——显示
+ * 层不暴露实现标记，且剥后基线文本 = confirmDelivery overlay 文本，mergeBaselineWithLive
+ * 文本去重命中不双计）；② effects/user-delivery ①a 提取 id；③ renderer QueueBubble
+ * 快照文本剥标记。三处同 import 本常量，禁复制字面量。
+ */
+export const DEFER_FLUSH_MARKER_RE = /<!--xyz:msg:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-->/i
+
 // ── user 消息 skill 标记反解析（D7 兜底通道，三链路共用 SSOT）──────────────────────
 
 /**
@@ -318,7 +335,13 @@ export function convertMessageBody(
   // content 统一为 Segment[]：命中 xyz 私有标记 / pi 原生 block 时产出交错的
   // text + skill + text + …（标记前后正文全保留），无命中时 textToSegments 纯 text。
   if (body.role === 'user' && acc.textContent) {
-    msg.content = parseSkillBlock(acc.textContent) ?? textToSegments(acc.textContent)
+    // [簇 A2] 先剥 defer flush 确认标记再反解析：标记只服务 user-delivery ①a 身份确认
+    //（直接读 pi 原始 entry，不经本投影），显示层不暴露。live 帧与 reload 重放同经本点
+    // → live ≡ reload 构造性保持；剥后基线文本 = 条目原文 = confirmDelivery 的 appendUser
+    // overlay 文本 → mergeBaselineWithLive 文本去重命中（不剥则带标记基线 vs 无标记 overlay
+    // 失配，同一条消息双条显示）。skill 块解析在剥后进行——标记在文本尾附加，不影响块区间。
+    const deliveryText = acc.textContent.replace(DEFER_FLUSH_MARKER_RE, '').trimEnd()
+    msg.content = parseSkillBlock(deliveryText) ?? textToSegments(deliveryText)
   }
   return msg
 }

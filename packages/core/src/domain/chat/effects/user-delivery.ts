@@ -111,17 +111,34 @@ export function resetCompactQueueProviderForEffectsForTest(): void {
 }
 
 /**
+ * [簇 A2] flush 提交确认标记的提取正则——SSOT 在 apply-entry-convert.ts（剥标记消费点，
+ * 显示投影与 ①a 提取同源），本文件 re-export 供 renderer QueueBubble 等显示侧 import。
+ * 形态与互斥论证见定义处注释。
+ */
+export { DEFER_FLUSH_MARKER_RE } from '../apply-entry-convert'
+import { DEFER_FLUSH_MARKER_RE } from '../apply-entry-convert'
+
+/**
  * [u4a / D5.3 ①] defer 分区 FIFO 文本匹配——message_end(user) 三分支的最高优先级分支。
  *
- * 帧 content 文本与 compactQueue（defer 队列）条目按入队序 FIFO 匹配（最早同文本条目
- * 优先）→ 命中：确认回调出队（confirmDelivery，转态动作在队列实现侧，u4b 消费条目 id）
- * + removeQueuedTextFromSnapshot 剔一个同文本实例（若快照含，维持 queueStates 与 pi
- * 队列对账）+ 仅 send 条目 decrementInflight 回收占位 + 返回 true（帧消费终止，调用方
- * 不再走 ②③）。未命中返回 false（逐级下落现有链）。
+ * [簇 A2] 出队信号去文本化（对齐 C-data-08「消费按计数 FIFO 禁文本匹配」）——两级匹配：
+ * - ①a 标记 id 匹配（最高优先）：帧文本提取 flush 提交标记（submitQueuedEntry 附加
+ *   `<!--xyz:msg:<entry.id>-->`，裸 uuid 标记经 pi input hook / steer 通路全程存活）
+ *   → 按条目 id 精确确认。文本被 skill-injector 三入口（message-dispatcher sendPrompt /
+ *   steerMessage / followUpMessage）或 BeforeSend hook 改写后仍可达——id 是身份不是内容。
+ * - ①b 文本等值降级兜底（既有判据）：标记缺失/被 hook 剥除但文本未被改写的形态仍可
+ *   确认（FIFO 最早同文本条目优先，语义与改造前一致）。
  *
- * 同文本碰撞守恒声明（D5.3 第 3 点）：① 的 FIFO 匹配可能把别人的帧配给 defer 条目
- * （归属互换）——但帧数 = 落盘实体数，每帧恰被 ①/②/③ 之一消费一次，暂存侧按「① 命中
- * 即剔一个快照实例」保持数量守恒，同文本视觉不可区分，无用户可见差异。
+ * 帧 content 文本与 compactQueue（defer 队列）已提交条目匹配 → 命中：确认回调出队
+ * （confirmDelivery，转态动作在队列实现侧，u4b 消费条目 id）+ removeQueuedTextFromSnapshot
+ * 剔一个同文本实例（若快照含，维持 queueStates 与 pi 队列对账）+ 仅 send 条目
+ * decrementInflight 回收占位 + 返回 true（帧消费终止，调用方不再走 ②③）。
+ * 未命中返回 false（逐级下落现有链）。
+ *
+ * 同文本碰撞守恒声明（D5.3 第 3 点）：① 的匹配可能把别人的帧配给 defer 条目（归属互换）
+ * ——但帧数 = 落盘实体数，每帧恰被 ①/②/③ 之一消费一次，暂存侧按「① 命中即剔一个快照
+ * 实例」保持数量守恒，同文本视觉不可区分，无用户可见差异。①a 标记 id 命中因标记的
+ * 唯一性（条目 id 全局唯一）无归属互换面。
  *
  * 匹配资格 = 已提交条目（mode 已由 flush 提交时写入）：未提交条目的投递确认帧不可能
  * 存在，被同文本他帧误配出队会让永不被投递的消息被标记已投递（G2 必达破坏）——mode
@@ -140,8 +157,14 @@ export function confirmDeferQueueEntry(
   // 独立提取帧文本（③ 内另有一次提取——纯函数无副作用，保守起见 ③ 代码行零改动）
   const deferText = extractUserContentText(entry)
   if (!deferText) return false
-  // FIFO：peek 快照按入队序，最早同文本条目优先（且仅已提交条目，见函数头注释）
-  const hit = queue.peek(sid).find((m) => m.text === deferText && m.mode !== undefined)
+  const snapshots = queue.peek(sid)
+  // ①a 标记 id 匹配（簇 A2）：身份级确认，不受文本改写影响
+  const markerId = deferText.match(DEFER_FLUSH_MARKER_RE)?.[1]
+  const hit = (markerId !== undefined
+    ? snapshots.find((m) => m.id === markerId && m.mode !== undefined)
+    : undefined)
+    // ①b 文本等值降级兜底（既有判据）：FIFO 最早同文本条目优先（且仅已提交条目）
+    ?? snapshots.find((m) => m.text === deferText && m.mode !== undefined)
   if (!hit) return false
   if (!queue.confirmDelivery(sid, hit.id)) {
     // confirmDelivery false（peek→确认间条目消失，同步单线程下防御性不可达）→ 匹配

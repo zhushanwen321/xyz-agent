@@ -273,6 +273,92 @@ describe('message_end(user) 三分支 ①：defer 分区 FIFO 命中（session-o
   })
 })
 
+describe('message_end(user) 三分支 ①a：标记 id 身份匹配（簇 A2 / C-data-08 去文本化）', () => {
+  // 条目 id 与 pi 落盘一致用 uuid v4 形态（enqueue 侧 crypto.randomUUID() 的真实形态，
+  // DEFER_FLUSH_MARKER_RE 只锚定 uuid 形态标记）
+  const ENTRY_ID = '3f2504e0-4f89-41d3-9a0c-0305e82c3301'
+
+  it('A2-MF: skill-injector 改写后（落盘文本 ≠ 队列原文）标记 id 仍命中出队——旧文本匹配在此永不命中（红态锚点）', () => {
+    // must-fix 场景重现：条目原文含 <xyz-skill>，flush 提交文本尾附加确认标记，runtime
+    // skill-injector 展开改写 → pi 落盘/message_end 帧 = 「展开后文本 + 标记」≠ 队列原文。
+    // 改造前唯一判据「帧文本 === 条目原文」在此恒 false → 条目永不出队气泡永久卡死；
+    // ①a 按标记 id（身份非内容）命中。
+    const queuedText = '<xyz-skill name="review"/> 帮我审查'
+    const injectedText = `<skill name="review" location="/skills/review">...展开内容...</skill>\n\n帮我审查\n<!--xyz:msg:${ENTRY_ID}-->`
+    const queue = makeQueue([{ id: ENTRY_ID, text: queuedText, mode: 'send' }])
+    setCompactQueueProviderForEffects(() => queue)
+    const ctx = makeCtx()
+    ctx.incrementInflight(SID, 1)
+
+    dispatchMessageEvent(ctx, SID, msg(injectedText))
+
+    // ①a 身份命中：出队 + 占位回收 + 帧终止（改写文本不再是出队障碍）
+    expect(queue.confirmDelivery).toHaveBeenCalledWith(SID, ENTRY_ID)
+    expect(queue.entries()).toEqual([])
+    expect(ctx.inflightOf()).toBe(0)
+    expect(ctx.appendUser).not.toHaveBeenCalled()
+  })
+
+  it('A2-PRIO: 帧文本 = 原文 + 标记（无改写）→ ①a 优先命中；文本等值（①b）不再必要', () => {
+    // ①b 全文等值对「原文+标记」形态恒 false（标记改变文本），命中只能来自 ①a——
+    // 锁定标记通道独立成立，不依赖兜底
+    const queue = makeQueue([{ id: ENTRY_ID, text: 'm1', mode: 'send' }])
+    setCompactQueueProviderForEffects(() => queue)
+    const ctx = makeCtx()
+    ctx.incrementInflight(SID, 1)
+
+    dispatchMessageEvent(ctx, SID, msg(`m1\n<!--xyz:msg:${ENTRY_ID}-->`))
+
+    expect(queue.confirmed()).toEqual([ENTRY_ID])
+    expect(ctx.inflightOf()).toBe(0)
+  })
+
+  it('A2-STEER: steer 条目带标记改写场景 → ①a 命中出队且不动计数（与 send 同一身份通道）', () => {
+    const queue = makeQueue([{ id: ENTRY_ID, text: 'S原文', mode: 'steer' }])
+    setCompactQueueProviderForEffects(() => queue)
+    const ctx = makeCtx()
+    ctx.incrementInflight(SID, 2) // 他条目占位——steer 命中不得错抵
+    ctx.queueStates.value = new Map([[SID, { steering: ['S改写后\n<!--xyz:msg:' + ENTRY_ID + '-->'] }]])
+
+    dispatchMessageEvent(ctx, SID, msg(`S改写后\n<!--xyz:msg:${ENTRY_ID}-->`))
+
+    expect(queue.confirmed()).toEqual([ENTRY_ID])
+    expect(ctx.inflightOf()).toBe(2)
+    // 快照剔一个带标记实例（steering 维度镜像含标记形态）→ 剔空删条目
+    expect(ctx.queueStates.value.has(SID)).toBe(false)
+  })
+
+  it('A2-IDMUTEX: u- 前缀标记（msg-id-mapper 族）不命中裸 uuid 正则——id 空间互斥的回归锁定', () => {
+    // 正常 submitSegments 消息带 u-<uuid> 标记（input hook 剥除后正常消息不可能带，
+    // 此用例锁正则互斥性：u- 形态帧不被误配进 defer ①a）
+    const queue = makeQueue([{ id: '3f2504e0-4f89-41d3-9a0c-0305e82c3302', text: 'T', mode: 'send' }])
+    setCompactQueueProviderForEffects(() => queue)
+    const ctx = makeCtx()
+    ctx.incrementInflight(SID, 1)
+
+    dispatchMessageEvent(ctx, SID, msg('T\n<!--xyz:msg:u-3f2504e0-4f89-41d3-9a0c-0305e82c3302-->'))
+
+    // ①a 不命中（u- 形态非裸 uuid）；①b 全文比对也不命中（帧文本带标记 ≠ 原文）
+    // → 落 ② 计数消费，条目留队
+    expect(queue.confirmDelivery).not.toHaveBeenCalled()
+    expect(ctx.inflightOf()).toBe(0)
+    expect(queue.entries()).toHaveLength(1)
+  })
+
+  it('A2-FALLBACK: 帧文本无标记且等于条目原文 → ①b 文本等值兜底仍命中（既有判据保留）', () => {
+    // 标记被 BeforeSend hook 剥除但文本未改写的形态：降级兜底保持改造前语义
+    const queue = makeQueue([{ id: ENTRY_ID, text: 'm1', mode: 'send' }])
+    setCompactQueueProviderForEffects(() => queue)
+    const ctx = makeCtx()
+    ctx.incrementInflight(SID, 1)
+
+    dispatchMessageEvent(ctx, SID, msg('m1'))
+
+    expect(queue.confirmed()).toEqual([ENTRY_ID])
+    expect(ctx.inflightOf()).toBe(0)
+  })
+})
+
 describe('provider 未注册 = defer 分区缺席（现状逐字节一致的机理证明）', () => {
   it('AC5a: 无 provider → inflight>0 帧走 ② decrement（与改造前一致）', () => {
     const ctx = makeCtx()

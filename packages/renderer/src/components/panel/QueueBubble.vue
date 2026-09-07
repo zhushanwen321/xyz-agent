@@ -40,6 +40,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Clock, Zap } from '@lucide/vue'
+import { DEFER_FLUSH_MARKER_RE } from '@xyz-agent/core'
 import type { QueueState } from '@/stores/chat'
 
 const props = defineProps<{
@@ -56,10 +57,22 @@ const flatItems = computed<FlatItem[]>(() => {
   const s = props.state
   if (!s) return []
   const list: FlatItem[] = []
-  if (s.steering?.length) list.push(...s.steering.map((text) => ({ type: 'steering' as const, text })))
-  if (s.followUp?.length) list.push(...s.followUp.map((text) => ({ type: 'followUp' as const, text })))
+  if (s.steering?.length) list.push(...s.steering.map((text) => ({ type: 'steering' as const, text: stripDeferMarker(text) })))
+  if (s.followUp?.length) list.push(...s.followUp.map((text) => ({ type: 'followUp' as const, text: stripDeferMarker(text) })))
   return list
 })
+
+/**
+ * [簇 A2] 显示层剥 flush 提交确认标记：core submitQueuedEntry 在提交文本尾附加
+ * `<!--xyz:msg:<entry.id>-->`（裸 uuid 形态，message_end(user) 回流确认的 identity 通道），
+ * steer 通道文本会镜像进 pi queue_update 快照（本组件数据源），原始展示会暴露实现标记。
+ * 正则 SSOT = core apply-entry-convert.ts DEFER_FLUSH_MARKER_RE（经 user-delivery
+ * re-export import，禁复制字面量——形态漂移由 effects-defer-confirmation.test.ts
+ * 标记族用例 + convert 投影剥标记用例双侧守卫）。
+ */
+function stripDeferMarker(text: string): string {
+  return text.replace(DEFER_FLUSH_MARKER_RE, '').trimEnd()
+}
 
 const hasAny = computed(() => flatItems.value.length > 0)
 

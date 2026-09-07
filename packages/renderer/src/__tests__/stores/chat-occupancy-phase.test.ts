@@ -185,10 +185,11 @@ describe('occupancy idle × defer 队列非空 → flush 触发（D6 sendRoute �
     await Promise.resolve()
     expect(sendMock).not.toHaveBeenCalled()
 
-    // 全 idle（行 1）：投递（send 携 clientUuid=条目 id）
+    // 全 idle（行 1）：投递（send 携 clientUuid=条目 id；[簇 A2] 提交文本尾附加确认标记）
+    const entry = queue.peek('f1')[0]!
     streamCbHolder.current!(occupancyMsg('f1', 'idle', false, false))
     await vi.waitFor(() => {
-      expect(sendMock).toHaveBeenCalledWith('f1', '待投递', undefined, { clientUuid: expect.any(String) })
+      expect(sendMock).toHaveBeenCalledWith('f1', `待投递\n<!--xyz:msg:${entry.id}-->`, undefined, { clientUuid: entry.id })
     })
     void chat
   })

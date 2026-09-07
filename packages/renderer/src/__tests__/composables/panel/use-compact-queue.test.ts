@@ -158,11 +158,14 @@ describe('useCompactQueue flush（TC3-TC6，u4b 投递确认驱动语义）', ()
 
     expect(apiMock.send).toHaveBeenCalledTimes(1)
     // [u4b / D5.1] clientUuid = 条目 id：runtime 拒绝广播原样回带，S1 per-entry 归属判据。
-    // renderer send 适配层第三参 images（undefined 占位）+ 第四参 options
-    expect(apiMock.send).toHaveBeenCalledWith('s1', 'm1', undefined, { clientUuid: m1.id })
+    // renderer send 适配层第三参 images（undefined 占位）+ 第四参 options。
+    // [簇 A2] 提交文本尾附加投递确认标记（原文 + 标记，身份通道）
+    expect(apiMock.send).toHaveBeenCalledWith('s1', marked('m1', m1.id), undefined, { clientUuid: m1.id })
     expect(apiMock.steer).toHaveBeenCalledTimes(2)
-    expect(apiMock.steer).toHaveBeenCalledWith('s1', 'm2')
-    expect(apiMock.steer).toHaveBeenCalledWith('s1', 'm3')
+    const m2 = queue.peek('s1').find((m) => m.text === 'm2')!
+    const m3 = queue.peek('s1').find((m) => m.text === 'm3')!
+    expect(apiMock.steer).toHaveBeenCalledWith('s1', marked('m2', m2.id))
+    expect(apiMock.steer).toHaveBeenCalledWith('s1', marked('m3', m3.id))
     // 调用顺序：send 先于所有 steer
     expect(apiMock.send.mock.invocationCallOrder[0]).toBeLessThan(apiMock.steer.mock.invocationCallOrder[0])
     expect(apiMock.steer.mock.invocationCallOrder[0]).toBeLessThan(apiMock.steer.mock.invocationCallOrder[1])
@@ -371,6 +374,10 @@ describe('useCompactQueue 投递确认与提交通道标记（u4a / D5.3）', ()
 
 // ── [session-occupancy u4b / D5] flush 投递确认驱动 + per-entry 记账——E2 整队保留重发
 //    语义退役的正面锁定（部分失败只重发未投递条目、确认驱动出队、占位三态闭环）。──
+
+/** [簇 A2] flush 提交文本 = 原文 + 尾部投递确认标记（submitQueuedEntry 附加，身份通道） */
+const marked = (text: string, id: string): string => `${text}\n<!--xyz:msg:${id}-->`
+
 describe('useCompactQueue flush 逐条提交与确认驱动（u4b / D5）', () => {
   it('F1: 第 2 条 steer RPC 失败 → 第 1 条已提交不重发、第 2/3 保留；确认后重试只重发未投递条目', async () => {
     const chat = useChatStore()
@@ -396,8 +403,8 @@ describe('useCompactQueue flush 逐条提交与确认驱动（u4b / D5）', () =
     // 回复流（isActive=false）→ 走 send 启动新 run（turn 活跃时由 isActive 判据并入
     // steer，见 doFlush 通道路由注释），m3 并入 steer
     await expect(queue.flush('s1')).resolves.toBe(true)
-    expect(apiMock.send.mock.calls.map((c) => c[1])).toEqual(['m1', 'm2']) // m1 未重发
-    expect(apiMock.steer.mock.calls.map((c) => c[1])).toEqual(['m2', 'm3']) // 首轮失败 m2 + 重试 m3
+    expect(apiMock.send.mock.calls.map((c) => c[1])).toEqual([marked('m1', m1.id), marked('m2', m2.id)]) // m1 未重发
+    expect(apiMock.steer.mock.calls.map((c) => c[1])).toEqual([marked('m2', m2.id), marked('m3', m3.id)]) // 首轮失败 m2 + 重试 m3
     // m2 已提交（mode send，占位在途）、m3 steer
     expect(queue.peek('s1').map((m) => [m.text, m.mode])).toEqual([['m2', 'send'], ['m3', 'steer']])
     expect(chat.getInflight('s1')).toBe(1)
@@ -427,7 +434,7 @@ describe('useCompactQueue flush 逐条提交与确认驱动（u4b / D5）', () =
     // 重试 flush：m1 重挂占位重新提交（占位三态闭环：挂→回滚→重挂），成功后占位在途
     await expect(queue.flush('s1')).resolves.toBe(true)
     expect(apiMock.send).toHaveBeenCalledTimes(2)
-    expect(apiMock.send).toHaveBeenLastCalledWith('s1', 'm1', undefined, { clientUuid: m1.id })
+    expect(apiMock.send).toHaveBeenLastCalledWith('s1', marked('m1', m1.id), undefined, { clientUuid: m1.id })
     expect(chat.getInflight('s1')).toBe(1)
     expect(queue.peek('s1').map((m) => m.mode)).toEqual(['send', 'steer'])
     void m2
@@ -445,7 +452,7 @@ describe('useCompactQueue flush 逐条提交与确认驱动（u4b / D5）', () =
     // m1 已提交跳过（不重发）；m2 走 steer（turn 已被 m1 的 send 启动，防双 run 双投递）
     expect(apiMock.send).toHaveBeenCalledTimes(1)
     expect(apiMock.steer).toHaveBeenCalledTimes(1)
-    expect(apiMock.steer).toHaveBeenCalledWith('s1', 'm2')
+    expect(apiMock.steer).toHaveBeenCalledWith('s1', marked('m2', m2.id))
     expect(queue.peek('s1').map((m) => [m.text, m.mode])).toEqual([['m1', 'send'], ['m2', 'steer']])
     void m1
     void m2

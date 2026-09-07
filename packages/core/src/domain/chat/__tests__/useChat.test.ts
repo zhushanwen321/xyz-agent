@@ -11,7 +11,7 @@
  * 供测试主动 emit 消息（模拟 WS 事件流）。beforeEach resetChatModuleStateForTest() 清
  * 模块级 streamSubscriptions + historyTruncatedSessions + subscriptionStates（测试隔离）。
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { effectScope, nextTick } from 'vue'
 import { textToSegments } from '@xyz-agent/shared'
 import type { ServerMessage } from '@xyz-agent/shared'
@@ -767,6 +767,140 @@ describe('send.rejected 兜底与回滚（session-occupancy D2 P1）', () => {
     expect(f.compactQueue.enqueue).toHaveBeenCalledWith('r7', 'edited')
     // 静默（D2 接管表：toast「Agent 正在处理」删除）
     expect(f.toast.error).not.toHaveBeenCalled()
+    f.dispose()
+  })
+})
+
+// ── [簇 A1] 帧序修复：入队晚于 idle 帧的 flush 触发 + 拒绝循环 timer 重投 ─────────────
+// runtime handlePromptFailure 先广播 occupancy idle（复位帧）后广播 send.rejected（WS FIFO）
+// → idle 帧处理时队列尚空不 flush；其后 agent_settled 同值 idle 被幂等写去重不再来帧。
+// 修复 = rejected 入队后读当前投影已全 idle 立即 flush；flush 再拒（resolve false）由
+// per-session timer 以 1s 有界节奏重投（唯一保证可达的重投脉冲）。
+
+describe('簇 A1：busy 拒绝入队后的 flush 触发与拒绝循环重投', () => {
+  beforeEach(() => {
+    resetChatModuleStateForTest()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('A1-MF: settling idle 帧先到（队列空不 flush）→ rejected 入队后已全 idle → 立即 flush（帧序修复锚点）', async () => {
+    const f = makeFixture()
+    const p = f.useChat.send('a1m', textToSegments('<xyz-skill name="review"/>帮我审查'))
+    // runtime 帧序复现（订阅已建立）：handlePromptFailure 先发复位 idle 帧——此刻队列尚空
+    //（hasPending false），occupancy handler 的 flush 条件不满足（改造前消息自此滞留）
+    f.compactQueue.hasPending.mockReturnValue(false)
+    f.emit('a1m', msg('a1m', 'session.occupancy', { turn: 'idle', compacting: false, bash: false }))
+    expect(f.compactQueue.flush).not.toHaveBeenCalled()
+
+    // skill-marker 消息 busy（settling 窗口 processing）拒绝 → 兜底入队
+    f.compactQueue.hasPending.mockReturnValue(true) // enqueue 后队列非空
+    f.emit('a1m', msg('a1m', 'send.rejected', { reason: 'processing', message: 'Agent 正在处理' }))
+    await p
+
+    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('a1m', '<xyz-skill name="review"/>帮我审查')
+    // [A1] 入队晚于 idle 帧：投影已全 idle → 立即 flush 补投（改造前此处 flush 恒 0 次，
+    // 消息滞留到下一个无关 occupancy 转移）
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
+    f.dispose()
+  })
+
+  it('A1-BUSY: 入队时投影仍忙（bash 维度）→ 不立即 flush，等后续 idle 帧照常触发', async () => {
+    const f = makeFixture()
+    const p = f.useChat.send('a1b', textToSegments('hi'))
+    // 订阅建立后 bash 开始（occupancy bash=true 投影写入）
+    f.emit('a1b', msg('a1b', 'session.occupancy', { turn: 'idle', compacting: false, bash: true }))
+    f.compactQueue.hasPending.mockReturnValue(true)
+    f.emit('a1b', msg('a1b', 'send.rejected', { reason: 'busy', message: 'Agent 正在处理' }))
+    await p
+
+    // bash 忙：入队侧不触发（bash 结束的 idle 帧是投递时机）——防 busy 态 RPC 空打
+    expect(f.compactQueue.flush).not.toHaveBeenCalled()
+    f.dispose()
+  })
+
+  it('A1-RETRY: 立即 flush 再遭 S1 拒绝（resolve false）→ 1s timer 重投直到成功（拒绝循环不死循环）', async () => {
+    vi.useFakeTimers()
+    const f = makeFixture()
+    f.compactQueue.hasPending.mockReturnValue(true)
+    // 第 1 次 flush（rejected 入队后立即触发）：pi 仍 settling → S1 再拒（条目留队 resolve
+    // false）；第 2 次（timer 重投）：pi 已 idle → 提交成功
+    f.compactQueue.flush
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+
+    const p = f.useChat.send('a1r', textToSegments('hi'))
+    f.emit('a1r', msg('a1r', 'send.rejected', { reason: 'processing', message: 'Agent 正在处理' }))
+    await p
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
+
+    // timer 重投脉冲：1s 有界节奏（不产生 RPC 热循环），成功后不再 re-arm
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(2) // 成功即止，无循环
+    f.dispose()
+  })
+
+  it('A1-IDEMPOTENT: 连续两次失败 flush 只有一个 pending timer（幂等）；fire 时队列已清空则不重投', async () => {
+    vi.useFakeTimers()
+    const f = makeFixture()
+    f.compactQueue.hasPending.mockReturnValue(true)
+    f.compactQueue.flush.mockResolvedValue(false) // 持续拒绝
+
+    const p = f.useChat.send('a1i', textToSegments('hi'))
+    f.emit('a1i', msg('a1i', 'send.rejected', { reason: 'processing', message: 'Agent 正在处理' }))
+    await p
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1) // 入队后立即 flush（失败，arm timer）
+
+    // 第二触发源（bash 结束 idle 帧）flush 再失败 → 已有 pending timer，不重复排
+    f.emit('a1i', msg('a1i', 'session.occupancy', { turn: 'idle', compacting: false, bash: false }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(2)
+
+    // timer fire 时用户已撤销（队列空）→ hasPending false 早退，不空转 flush
+    f.compactQueue.hasPending.mockReturnValue(false)
+    const callsBefore = f.compactQueue.flush.mock.calls.length
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(f.compactQueue.flush.mock.calls.length).toBe(callsBefore)
+    f.dispose()
+  })
+
+  it('A1-DISPOSE: disposeSession 清重投 timer——session 销毁后 timer 不再开火', async () => {
+    vi.useFakeTimers()
+    const f = makeFixture()
+    f.compactQueue.hasPending.mockReturnValue(true)
+    f.compactQueue.flush.mockResolvedValue(false)
+
+    const p = f.useChat.send('a1d', textToSegments('hi'))
+    f.emit('a1d', msg('a1d', 'send.rejected', { reason: 'processing', message: 'Agent 正在处理' }))
+    await p
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
+
+    f.useChat.disposeSession('a1d')
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1) // timer 已清，无幽灵重投
+    f.dispose()
+  })
+
+  it('A1-TRANSPORT: flush RPC reject（传输级真错误）→ toast 上抛路径保留，不 arm timer', async () => {
+    vi.useFakeTimers()
+    const f = makeFixture()
+    f.compactQueue.hasPending.mockReturnValue(true)
+    f.compactQueue.flush.mockRejectedValueOnce(new Error('WS disconnected'))
+      .mockResolvedValue(true)
+
+    const p = f.useChat.send('a1t', textToSegments('hi'))
+    f.emit('a1t', msg('a1t', 'send.rejected', { reason: 'processing', message: 'Agent 正在处理' }))
+    await p
+
+    // 传输级错误 toast「发送失败: {原因}」（§3.5 错误规格表语义），气泡保持 pending 队列保留；
+    // 恢复后由重连快照回放 idle 帧触发，不走 timer（断连期间 timer 重投只会再撞墙）
+    expect(f.toast.error).toHaveBeenCalledWith('composable.sendFailed:{"msg":"WS disconnected"}')
+    const callsBefore = f.compactQueue.flush.mock.calls.length
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(f.compactQueue.flush.mock.calls.length).toBe(callsBefore)
     f.dispose()
   })
 })
