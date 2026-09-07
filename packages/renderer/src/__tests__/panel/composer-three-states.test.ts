@@ -16,7 +16,7 @@
  * 运行：npx vitest run src/__tests__/panel/composer-three-states.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { textToSegments } from '@xyz-agent/shared'
@@ -185,6 +185,10 @@ describe('T2.3 B 策略：idle 时 Enter → send', () => {
     wrapper.findComponent(ComposerInputMock).vm.$emit('keydown', new KeyboardEvent('keydown', { key: 'Enter' }))
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
+    // u5b D6 分发器（core dispatch/send）onSend 是多层 async 链（routeSteer → routeStaging →
+    // sendActiveMessage → trySendBash，约 4 个 microtask 拍才到 deps.send）——两拍 nextTick
+    // 不够 flush，必须 flushPromises 清空整条 microtask 链后再断言
+    await flushPromises()
 
     expect(chatApiMock.send).toHaveBeenCalledWith('s-send-enter', textToSegments('第一条消息'))
     expect(chatApiMock.steer).not.toHaveBeenCalled()
@@ -227,6 +231,8 @@ describe('T2.x IME composition 中 Enter 不触发 send/steer', () => {
       new KeyboardEvent('keydown', { key: 'Enter', isComposing: false }))
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
+    // 同上：D6 分发器 async 链需 flushPromises 清空后才到 deps.send
+    await flushPromises()
 
     expect(chatApiMock.send).toHaveBeenCalledWith('s-ime-idle-end', textToSegments('你好世界'))
   })
