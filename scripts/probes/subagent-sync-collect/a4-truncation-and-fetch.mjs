@@ -89,6 +89,100 @@ function makeWs(label, collectSync) {
 
 // ── 子场景 ①：perItemChars=100 → 截断 100 + 指针 + 取回一致 ──
 
+/** 批到达 + 批形状断言（恰 1 条 / 批头文案 / 批头+1 条目）→ 条目正文；无批返回 null。 */
+function assertBatchArrival(checks, entries) {
+  const batches = C.syncBatchNotifyEntries(entries);
+  checks.check("[①] 恰 1 条批通知", batches.length === 1, `batches=${batches.length}`);
+  if (!batches[0]) return null;
+  const header = batches[0].content.split("\n")[0];
+  checks.check(
+    "[①] 批头 `1 finished, 0 failed, 0 cancelled`",
+    header === "Subagent batch completed: 1 finished, 0 failed, 0 cancelled.",
+    header,
+  );
+
+  const segs = C.batchSegments(batches[0].content);
+  checks.check("[①] 批头 + 1 条目", segs.length === 2, `segments=${segs.length}`);
+  return segs[1];
+}
+
+/** 条目截断形态断言（正文 ≤101 保留口径 / 指针行存在 / 指针行含 session id）。 */
+function assertTruncationShape(checks, item) {
+  const body = C.itemResultBody(item);
+  // 保留口径：slice(0, perItemChars) + 尾部省略号 1 字符 = 预算+1（A4 真跑实证 101/100）
+  checks.check(
+    "[①] 条目正文截断至 ≤100 字符（perItemChars=100 确定性触发，含省略号 +1）",
+    body.length > 0 && body.length <= 101,
+    `body=${body.length} limit=100(+1)`,
+  );
+  checks.note("[①] 实际保留长度（100 + 省略号 1 字符 = 101 口径）", `${body.length}`);
+
+  const pLine = pointerLineOf(item);
+  checks.check("[①] 指针行存在（[truncated ... session_read ...]）", !!pLine, pLine || "(无)");
+  const sid = pointerSessionId(item);
+  checks.check("[①] 指针行含取回路径 session id", !!sid, sid || "(未解析到)");
+  return body;
+}
+
+/** 截断前全文（磁盘同源，子 session 唯一）+ 派发证据 → { subFile, fullText }；子 session
+ *  非唯一返回 null（后续取回路径依赖唯一性）。 */
+function assertFullTextAndDispatch(checks, ws, item, entries) {
+  // 截断前全文（磁盘同源）：子 session 唯一（realpath + env 消毒后扫描已对齐）
+  const subFiles = C.subagentSessionFiles(ws);
+  checks.check("[①] 子 session 文件唯一", subFiles.length === 1, `files=${subFiles.length}`);
+  if (subFiles.length !== 1) return null;
+  const fullText = C.finalAssistantText(subFiles[0]);
+  checks.check(
+    "[①] 截断前全文 >100 字符（截断确实发生）",
+    fullText.length > 100,
+    `full=${fullText.length}`,
+  );
+
+  const starts = C.dispatchedStarts(entries);
+  const syncStarts = starts.filter((s) => s.collect === "sync");
+  checks.check("[①] 派发 1 个 collect:sync start", syncStarts.length === 1, `starts=${starts.length}`);
+  if (syncStarts.length === 1) {
+    checks.check("[①] 批条目 == 派发成员", item.includes(syncStarts[0].saId), `expect ${syncStarts[0].saId}`);
+  }
+  return { subFile: subFiles[0], fullText };
+}
+
+/** session_read（绝对路径形态）取回 + 逐字节比对 + 结果记录。toolResult 缺失返回 null。
+ *  指针行的 sa- id 在真实 CLI 流下不可解析（manifest 惰性不落盘，真跑实证 session_read
+ *  返回「无匹配 record」错误文案——产线缺口已上报）；取回完整性改用可解析的绝对路径
+ *  形态断言（result action 对同一文件走同一提取器）。 */
+async function fetchAndCompare(checks, session, subFile, fullText, body) {
+  const fetchPrompt =
+    `Use the session_read tool with exactly these arguments: {"action":"result","session":${JSON.stringify(subFile)}}. ` +
+    "Do not pass any other arguments. After the tool result returns, reply with only: fetched";
+  const fetchTurn = await promptWithRetry(session, fetchPrompt);
+  checks.check("[①] session_read 取回轮 turn_end", !!fetchTurn.ok, `stopReason=${fetchTurn.stopReason || "n/a"}`);
+
+  const entries2 = C.readJsonlEntries(session.sessionFile);
+  const results = C.toolResultTexts(entries2, "session_read");
+  const fetched = results.length > 0 ? results[results.length - 1] : null;
+  checks.check("[①] session_read toolResult 存在", !!fetched, `results=${results.length}`);
+  if (!fetched) return null;
+  const identical = fetched === fullText;
+  checks.check(
+    "[①] 取回与截断前全文逐字节一致",
+    identical,
+    identical
+      ? `len=${fetched.length}`
+      : `fetched=${fetched.length} full=${fullText.length} 首差异@${firstDiffIndex(fetched, fullText)}`,
+  );
+  if (!identical && fetched.includes(fullText)) {
+    checks.note("[①] 取回为全文 + 额外包装（完整性成立，逐字节门未过）", `wrapper=${fetched.length - fullText.length} chars`);
+  }
+
+  C.appendResultRecord(SCENARIO, [
+    `- [①] 模型: ${C.resolveModel()}（config perItemChars=100）`,
+    `- [①] 全文长度: ${fullText.length}（截断前）／保留: ${body.length}`,
+    `- [①] 取回一致: ${identical ? "yes（逐字节）" : "no"}`,
+  ]);
+  return fetched;
+}
+
 async function runSingle(checks) {
   const ws = makeWs("a4-single", { perItemChars: 100, totalChars: 24000 });
   const session = C.spawnSession({
@@ -117,84 +211,13 @@ async function runSingle(checks) {
     checks.check("[①] 派发轮 turn_end", !!turn.ok, `stopReason=${turn.stopReason || "n/a"}`);
 
     const entries = await C.waitForNotify(session.sessionFile, 240000, (ns) => ns.length > 0, "批 notify entry");
-    const batches = C.syncBatchNotifyEntries(entries);
-    checks.check("[①] 恰 1 条批通知", batches.length === 1, `batches=${batches.length}`);
-    if (!batches[0]) return;
-    const header = batches[0].content.split("\n")[0];
-    checks.check(
-      "[①] 批头 `1 finished, 0 failed, 0 cancelled`",
-      header === "Subagent batch completed: 1 finished, 0 failed, 0 cancelled.",
-      header,
-    );
-
-    const segs = C.batchSegments(batches[0].content);
-    checks.check("[①] 批头 + 1 条目", segs.length === 2, `segments=${segs.length}`);
-    const item = segs[1];
+    const item = assertBatchArrival(checks, entries);
     if (!item) return;
-
-    const body = C.itemResultBody(item);
-    // 保留口径：slice(0, perItemChars) + 尾部省略号 1 字符 = 预算+1（A4 真跑实证 101/100）
-    checks.check(
-      "[①] 条目正文截断至 ≤100 字符（perItemChars=100 确定性触发，含省略号 +1）",
-      body.length > 0 && body.length <= 101,
-      `body=${body.length} limit=100(+1)`,
-    );
-    checks.note("[①] 实际保留长度（100 + 省略号 1 字符 = 101 口径）", `${body.length}`);
-
-    const pLine = pointerLineOf(item);
-    checks.check("[①] 指针行存在（[truncated ... session_read ...]）", !!pLine, pLine || "(无)");
-    const sid = pointerSessionId(item);
-    checks.check("[①] 指针行含取回路径 session id", !!sid, sid || "(未解析到)");
-
-    // 截断前全文（磁盘同源）：子 session 唯一（realpath + env 消毒后扫描已对齐）
-    const subFiles = C.subagentSessionFiles(ws);
-    checks.check("[①] 子 session 文件唯一", subFiles.length === 1, `files=${subFiles.length}`);
-    if (subFiles.length !== 1) return;
-    const fullText = C.finalAssistantText(subFiles[0]);
-    checks.check(
-      "[①] 截断前全文 >100 字符（截断确实发生）",
-      fullText.length > 100,
-      `full=${fullText.length}`,
-    );
-
-    const starts = C.dispatchedStarts(entries);
-    const syncStarts = starts.filter((s) => s.collect === "sync");
-    checks.check("[①] 派发 1 个 collect:sync start", syncStarts.length === 1, `starts=${starts.length}`);
-    if (syncStarts.length === 1) {
-      checks.check("[①] 批条目 == 派发成员", item.includes(syncStarts[0].saId), `expect ${syncStarts[0].saId}`);
-    }
-
-    // session_read 取回。指针行的 sa- id 在真实 CLI 流下不可解析（manifest 惰性不落盘，
-    // 真跑实证 session_read 返回「无匹配 record」错误文案——产线缺口已上报）；取回
-    // 完整性改用可解析的绝对路径形态断言（result action 对同一文件走同一提取器）。
-    const fetchPrompt =
-      `Use the session_read tool with exactly these arguments: {"action":"result","session":${JSON.stringify(subFiles[0])}}. ` +
-      "Do not pass any other arguments. After the tool result returns, reply with only: fetched";
-    const fetchTurn = await promptWithRetry(session, fetchPrompt);
-    checks.check("[①] session_read 取回轮 turn_end", !!fetchTurn.ok, `stopReason=${fetchTurn.stopReason || "n/a"}`);
-
-    const entries2 = C.readJsonlEntries(session.sessionFile);
-    const results = C.toolResultTexts(entries2, "session_read");
-    const fetched = results.length > 0 ? results[results.length - 1] : null;
-    checks.check("[①] session_read toolResult 存在", !!fetched, `results=${results.length}`);
+    const body = assertTruncationShape(checks, item);
+    const fetchCtx = assertFullTextAndDispatch(checks, ws, item, entries);
+    if (!fetchCtx) return;
+    const fetched = await fetchAndCompare(checks, session, fetchCtx.subFile, fetchCtx.fullText, body);
     if (!fetched) return;
-    const identical = fetched === fullText;
-    checks.check(
-      "[①] 取回与截断前全文逐字节一致",
-      identical,
-      identical
-        ? `len=${fetched.length}`
-        : `fetched=${fetched.length} full=${fullText.length} 首差异@${firstDiffIndex(fetched, fullText)}`,
-    );
-    if (!identical && fetched.includes(fullText)) {
-      checks.note("[①] 取回为全文 + 额外包装（完整性成立，逐字节门未过）", `wrapper=${fetched.length - fullText.length} chars`);
-    }
-
-    C.appendResultRecord(SCENARIO, [
-      `- [①] 模型: ${C.resolveModel()}（config perItemChars=100）`,
-      `- [①] 全文长度: ${fullText.length}（截断前）／保留: ${body.length}`,
-      `- [①] 取回一致: ${identical ? "yes（逐字节）" : "no"}`,
-    ]);
   } finally {
     session.kill();
     await session.waitExit();

@@ -209,35 +209,52 @@ export function spawnSession(opts) {
   let turnEndResolver = null;
   let sessionFileCache = null;
 
+  // 逐行分发原语（闭包内）：captured / pending / sessionFileCache / turnEndResolver
+  // 是 spawnSession 的连接级状态，三个 settle_* 各管一类帧副作用。
+  function handleRpcLine(line) {
+    if (!line.trim()) return;
+    let msg;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      return; // 非 JSON banner
+    }
+    captured.push(msg);
+    captureSessionFile(msg);
+    settlePendingRpc(msg);
+    settleTurnEnd(msg);
+  }
+
+  function captureSessionFile(msg) {
+    if (msg && msg.type === "response" && msg.data && typeof msg.data.sessionFile === "string") {
+      sessionFileCache = msg.data.sessionFile;
+    }
+  }
+
+  function settlePendingRpc(msg) {
+    if (msg && msg.type === "response" && msg.id && pending.has(msg.id)) {
+      pending.get(msg.id).resolve(msg);
+      pending.delete(msg.id);
+    }
+  }
+
+  /** turn_end 且 stopReason !== toolUse 才结算等待方（toolUse = 工具轮中间态）。 */
+  function settleTurnEnd(msg) {
+    if (!msg || msg.type !== "turn_end") return;
+    const stopReason = (msg.message && msg.message.stopReason) || msg.stopReason || "";
+    if (stopReason === "toolUse" || !turnEndResolver) return;
+    const r = turnEndResolver;
+    turnEndResolver = null;
+    r.resolve({ ok: true, stopReason });
+  }
+
   child.stdout.on("data", (d) => {
     stdoutBuf += d.toString("utf-8");
     let nl;
     while ((nl = stdoutBuf.indexOf("\n")) >= 0) {
       const line = stdoutBuf.slice(0, nl);
       stdoutBuf = stdoutBuf.slice(nl + 1);
-      if (!line.trim()) continue;
-      let msg;
-      try {
-        msg = JSON.parse(line);
-      } catch {
-        continue; // 非 JSON banner
-      }
-      captured.push(msg);
-      if (msg && msg.type === "response" && msg.data && typeof msg.data.sessionFile === "string") {
-        sessionFileCache = msg.data.sessionFile;
-      }
-      if (msg && msg.type === "response" && msg.id && pending.has(msg.id)) {
-        pending.get(msg.id).resolve(msg);
-        pending.delete(msg.id);
-      }
-      if (msg && msg.type === "turn_end") {
-        const stopReason = (msg.message && msg.message.stopReason) || msg.stopReason || "";
-        if (stopReason !== "toolUse" && turnEndResolver) {
-          const r = turnEndResolver;
-          turnEndResolver = null;
-          r.resolve({ ok: true, stopReason });
-        }
-      }
+      handleRpcLine(line);
     }
   });
   child.stderr.on("data", (d) => {
@@ -411,28 +428,39 @@ export function readRecordManifests(ws) {
  * 「最后一条 user message 之后」的 assistant 文本块，message 内无分隔拼接、跨
  * message join("\n\n")，thinking/toolCall 块排除。one-shot（单 user prompt）与
  * record.getFullText 逐字节一致。 */
+/** message entry 且 role 匹配（user / assistant / toolResult 判定共用原语）。 */
+function isMessageOfRole(e, role) {
+  return e && e.type === "message" && e.message && e.message.role === role;
+}
+
+/** 最后一个匹配 role 的 message entry 下标（无则 -1）。 */
+function lastIndexOfRole(entries, role) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    if (isMessageOfRole(entries[i], role)) return i;
+  }
+  return -1;
+}
+
+/** 单条 assistant message 的文本块拼接（string 直取；数组只拼 type:"text" 块）。 */
+function assistantTextOf(e) {
+  const content = e.message.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  let text = "";
+  for (const c of content) {
+    if (c && c.type === "text" && typeof c.text === "string") text += c.text;
+  }
+  return text;
+}
+
 export function finalAssistantText(sessionFile) {
   const entries = readJsonlEntries(sessionFile);
-  let lastUserIdx = -1;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const e = entries[i];
-    if (e && e.type === "message" && e.message && e.message.role === "user") {
-      lastUserIdx = i;
-      break;
-    }
-  }
+  const start = lastIndexOfRole(entries, "user") + 1;
   const texts = [];
-  for (let i = lastUserIdx + 1; i < entries.length; i += 1) {
+  for (let i = start; i < entries.length; i += 1) {
     const e = entries[i];
-    if (!e || e.type !== "message" || !e.message || e.message.role !== "assistant") continue;
-    const content = e.message.content;
-    let text = "";
-    if (typeof content === "string") text = content;
-    else if (Array.isArray(content)) {
-      for (const c of content) {
-        if (c && c.type === "text" && typeof c.text === "string") text += c.text;
-      }
-    }
+    if (!isMessageOfRole(e, "assistant")) continue;
+    const text = assistantTextOf(e);
     if (text.length > 0) texts.push(text);
   }
   return texts.join("\n\n");
@@ -568,6 +596,60 @@ export function saIdOf(text) {
     ?? text.match(/sa-[0-9a-f]{6,}/i)?.[0];
 }
 
+/** message content 的正文文本（string 直取；数组拼 type:"text" 块；其他形态空串）。 */
+function messageContentText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.filter((c) => c && c.type === "text").map((c) => c.text || "").join("\n");
+}
+
+/** 单个 toolCall 块的 start 调用配对 [callId, args]；非 subagent start 调用返回 null。
+ *  arguments 为对象（兼容字符串形态 JSON.parse）。 */
+function startCallPairOf(c) {
+  if (!c || c.type !== "toolCall") return null;
+  if ((c.name ?? c.toolName) !== "subagent") return null;
+  const callId = typeof c?.id === "string" ? c.id : c?.toolCallId;
+  if (typeof callId !== "string") return null;
+  let args = c.arguments;
+  if (typeof args === "string") {
+    try {
+      args = JSON.parse(args);
+    } catch {
+      args = {};
+    }
+  }
+  if (!args || args.action !== "start") return null;
+  return [callId, args];
+}
+
+/** 阶段一：扫描 assistant toolCall 块，收集 action:"start" 调用（toolCallId -> args）。 */
+function collectStartToolCalls(entries) {
+  const calls = new Map(); // toolCallId -> args
+  for (const e of entries) {
+    if (!isMessageOfRole(e, "assistant") || !Array.isArray(e.message.content)) continue;
+    for (const c of e.message.content) {
+      const pair = startCallPairOf(c);
+      if (pair) calls.set(pair[0], pair[1]);
+    }
+  }
+  return calls;
+}
+
+/** 阶段二：toolResult 正文按 toolCallId 配回 start 调用，产出 { saId, collect, engine, task }。 */
+function matchStartToolResults(entries, calls) {
+  const out = [];
+  for (const e of entries) {
+    if (!isMessageOfRole(e, "toolResult")) continue;
+    const tcid = typeof e.message.toolCallId === "string" ? e.message.toolCallId : null;
+    if (!tcid || !calls.has(tcid)) continue;
+    const saId = saIdOf(messageContentText(e.message.content));
+    if (!saId) continue;
+    const args = calls.get(tcid);
+    out.push({ saId, collect: args.collect || "async", engine: args.engine || null, task: args.task || "" });
+  }
+  return out;
+}
+
 /** 扫描主 session entries，提取派发轮 subagent start 调用映射。
  *
  * 真实形态（A1 真跑 dump 实证，2026-09）：assistant content 的 toolCall 块字段为
@@ -576,44 +658,7 @@ export function saIdOf(text) {
  * arguments 为对象（兼容字符串形态 JSON.parse）× toolResult 正文首块
  * {"action":"start","subagentId":"sa-…"} 配对 → { saId, collect, engine, task } 列表。 */
 export function dispatchedStarts(entries) {
-  const calls = new Map(); // toolCallId -> args
-  for (const e of entries) {
-    if (!e || e.type !== "message" || !e.message || e.message.role !== "assistant") continue;
-    const content = e.message.content;
-    if (!Array.isArray(content)) continue;
-    for (const c of content) {
-      const callId = typeof c?.id === "string" ? c.id : c?.toolCallId;
-      const toolName = c?.name ?? c?.toolName;
-      if (c && c.type === "toolCall" && toolName === "subagent" && typeof callId === "string") {
-        let args = c.arguments;
-        if (typeof args === "string") {
-          try {
-            args = JSON.parse(args);
-          } catch {
-            args = {};
-          }
-        }
-        if (args && args.action === "start") calls.set(callId, args);
-      }
-    }
-  }
-  const out = [];
-  for (const e of entries) {
-    if (!e || e.type !== "message" || !e.message || e.message.role !== "toolResult") continue;
-    const tcid = typeof e.message.toolCallId === "string" ? e.message.toolCallId : null;
-    if (!tcid || !calls.has(tcid)) continue;
-    const content = e.message.content;
-    const text = typeof content === "string"
-      ? content
-      : Array.isArray(content)
-        ? content.filter((c) => c && c.type === "text").map((c) => c.text || "").join("\n")
-        : "";
-    const saId = saIdOf(text);
-    if (!saId) continue;
-    const args = calls.get(tcid);
-    out.push({ saId, collect: args.collect || "async", engine: args.engine || null, task: args.task || "" });
-  }
-  return out;
+  return matchStartToolResults(entries, collectStartToolCalls(entries));
 }
 
 /** 轮询主 session 文件直到出现满足 pred 的 subagent-bg-notify entry。
@@ -672,15 +717,9 @@ export function assistantCountBefore(entries, entryIndex) {
 export function toolResultTexts(entries, toolName) {
   const out = [];
   for (const e of entries) {
-    if (!e || e.type !== "message" || !e.message || e.message.role !== "toolResult") continue;
+    if (!isMessageOfRole(e, "toolResult")) continue;
     if (toolName && e.message.toolName !== toolName) continue;
-    const content = e.message.content;
-    const text = typeof content === "string"
-      ? content
-      : Array.isArray(content)
-        ? content.filter((c) => c && c.type === "text").map((c) => c.text || "").join("\n")
-        : "";
-    out.push(text);
+    out.push(messageContentText(e.message.content));
   }
   return out;
 }

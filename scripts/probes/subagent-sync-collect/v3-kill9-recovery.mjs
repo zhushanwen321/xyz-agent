@@ -80,6 +80,153 @@ function memberBodyNote(bodies) {
   return `（成员正文实测${state}——首段摘录: ${JSON.stringify(nonEmpty[0].slice(0, 80))}）`;
 }
 
+/** kill 窗口构造（v3 形态：无 SIGTERM 兜底）：静置 8s → 核对零 notify → SIGKILL。
+ *  批已先行闭合时置 degraded（探针继续，验证幂等面）；kill 未生效返回 false（调用方
+ *  终止探针）。返回 { degraded, proceed }。 */
+async function constructKillWindow(checks, s1, F) {
+  // 静置 8s：让两个子进程越过启动段进入 sleep（kill 窗口稳定）
+  await C.sleep(8000);
+  const preNotify = F ? C.bgNotifyEntries(C.readJsonlEntries(F)).length : -1;
+  const state = { degraded: null, proceed: true };
+  if (preNotify > 0) {
+    state.degraded = { reason: `批在 kill 前已闭合（preNotify=${preNotify}）——kill -9 时序不可构造` };
+    checks.note("kill -9 时序不可构造", state.degraded.reason);
+  } else {
+    s1.kill("SIGKILL");
+    const dead = await waitDead(s1, 8000);
+    checks.check("kill -9 于批等待中生效", dead, dead ? "SIGKILL" : "8s 未死");
+    if (!dead) state.proceed = false;
+  }
+  return state;
+}
+
+/** 重启 #1 主路径（kill -9 生效）：等补发批 → 恰 1 条 + 批头合法性 + 条目 id 集一致
+ *  + 成员正文形态 note。返回补发批头 | null。memberBodies 由本函数 push 填充。 */
+async function assertCrashRedeliver(checks, F, deliveredBefore, dispatched, memberBodies) {
+  const entries = await C.waitForNotify(
+    F,
+    240000,
+    (ns) => ns.some((n) => C.BATCH_HEADER_RE.test(n.content.split("\n")[0] || "")),
+    "补发批通知（kill -9 恢复）",
+  );
+  const batches = C.syncBatchNotifyEntries(entries);
+  const total = C.bgNotifyEntries(entries).length;
+  checks.check("重启 #1 补发恰好 1 条批通知", batches.length === 1 && total - deliveredBefore === 1, `batches=${batches.length} total=${total}`);
+  if (!batches[0]) return null;
+
+  const head = parseBatchHeader(batches[0].content);
+  checks.check(
+    "批头合法性（finished+failed=2 且 cancelled=0；gc 二选一：0-2 finished / 0-2 failed）",
+    head !== null && head.finished + head.failed === 2 && head.cancelled === 0,
+    head ? `${head.finished} finished, ${head.failed} failed, ${head.cancelled} cancelled` : batches[0].content.split("\n")[0],
+  );
+  const segs = C.batchSegments(batches[0].content);
+  checks.check("批头 + 2 条目", segs.length === 3, `segments=${segs.length}`);
+  const startIds = new Set(dispatched.map((s) => s.saId));
+  const itemIds = new Set(segs.slice(1).map((s) => C.saIdOf(s)).filter(Boolean));
+  checks.check(
+    "补发条目 id 集 == 派发 sync 成员 id 集",
+    startIds.size === 2 && itemIds.size === 2 && [...itemIds].every((id) => startIds.has(id)),
+    `items=${itemIds.size} starts=${startIds.size}`,
+  );
+  // 成员正文形态（result 或截断 error 文案——kill -9 概率形态，非门仅留痕）
+  for (const seg of segs.slice(1)) {
+    const segBody = C.itemResultBody(seg);
+    memberBodies.push(segBody);
+    checks.note("成员条目正文形态（gc：崩溃前 result / 截断 error 二选一）", segBody.slice(0, 80));
+  }
+  return head;
+}
+
+/** 重启 #1 降级路径（批已先行闭合）：已投递态下重启应零重复（仍验证幂等面）。 */
+async function assertNoDuplicateOnDelivered(checks, F, deliveredBefore) {
+  await C.sleep(30000);
+  const after = C.bgNotifyEntries(C.readJsonlEntries(F)).length;
+  checks.check("[降级] 已投递态重启零重复", after === deliveredBefore, `before=${deliveredBefore} after=${after}`);
+}
+
+/** 二次重启：SIGKILL + 同 session 重建 → 30s 观察窗零重发。返回观察前后 notify 数。 */
+async function assertSecondRestartNoRedeliver(checks, ws, F, s2, sessions) {
+  await C.sleep(6000); // 落标清态窗口
+  const before2 = F ? C.bgNotifyEntries(C.readJsonlEntries(F)).length : 0;
+  s2.kill("SIGKILL");
+  await waitDead(s2, 8000);
+  const s3 = spawnRestart(ws, F, `${SCENARIO}-restart2`);
+  sessions.push(s3);
+  const ready3 = await s3.waitReady();
+  checks.check("重启 #2 RPC 就绪", !!ready3, ready3 ? "" : s3.stderrTail());
+  await C.sleep(30000); // session_start 恢复钩子触发观察窗
+  const after2 = F ? C.bgNotifyEntries(C.readJsonlEntries(F)).length : -1;
+  checks.check("二次重启零重发（30s 观察窗）", after2 === before2, `before=${before2} after=${after2}`);
+  return { before2, after2 };
+}
+
+/** RESULTS.md 留痕（模式 / 补发批头按实况插值 / 二次重启 notify 前后）。 */
+function recordV3Outcome(checks, degraded, redeliverHead, memberBodies, before2, after2) {
+  const summary = checks.summary();
+  C.appendResultRecord(SCENARIO, [
+    `- 世代: v2 探针（subagent-sync-collect-v2 §4 V3；v1 A6 FAIL 转 PASS）——${summary.passed} PASS / ${summary.failed} FAIL`,
+    `- 模式: ${degraded ? `降级（${degraded.reason}）` : "primary（kill -9 于批等待中）"}`,
+    `- 模型: ${C.resolveModel()}`,
+    `- 补发批头: ${redeliverHead ? `${redeliverHead.finished} finished, ${redeliverHead.failed} failed, ${redeliverHead.cancelled} cancelled` : degraded ? "n/a（时序不可构造）" : "(未解析)"}${memberBodyNote(memberBodies)}`,
+    `- 二次重启 notify: before=${before2} after=${after2}`,
+  ]);
+}
+
+async function runProbe(checks, ws, sessions) {
+  const s1 = C.spawnSession({
+    piBin: C.resolvePiBin(),
+    cwd: ws.cwd,
+    sessionDir: ws.sessionDir,
+    model: C.resolveModel(),
+    label: `${SCENARIO}-main`,
+  });
+  sessions.push(s1);
+
+  const ready = await s1.waitReady();
+  checks.check("pi RPC 就绪", !!ready, ready ? "" : s1.stderrTail());
+
+  const prompt = C.dispatchPrompt({
+    starts: [60, 61].map((n) => ({
+      task:
+        `You MUST actually run this exact bash command first: sleep 60 && echo marker-v3-${n}. ` +
+        `After it finishes, reply with exactly: v3-${n}-done`,
+      slug: `v3-slow-${n}`,
+      collect: "sync",
+    })),
+  });
+  const turn = await s1.prompt(prompt, 120000);
+  checks.check("派发轮 turn_end", !!turn.ok, `stopReason=${turn.stopReason || "n/a"}`);
+
+  const F = resolveSessionFile(s1, ws);
+  checks.check("主 session 文件可定位", !!F, F || "n/a");
+  const dispatched = C.dispatchedStarts(C.readJsonlEntries(F)).filter((s) => s.collect === "sync");
+  checks.check("派发 2 个 collect:sync start", dispatched.length === 2, `starts=${dispatched.length}`);
+  if (dispatched.length !== 2) return;
+
+  const { degraded, proceed } = await constructKillWindow(checks, s1, F);
+  if (!proceed) return;
+
+  // ── 重启 #1：E1 补发（v1 A6 在此 240s 零到达；v2 修复后应可达）──
+  const deliveredBefore = F ? C.bgNotifyEntries(C.readJsonlEntries(F)).length : 0;
+  const s2 = spawnRestart(ws, F, `${SCENARIO}-restart1`);
+  sessions.push(s2);
+  const ready2 = await s2.waitReady();
+  checks.check("重启 #1 RPC 就绪", !!ready2, ready2 ? "" : s2.stderrTail());
+
+  const memberBodies = []; // 补发批各成员条目正文（记录行按实况插值，禁硬编码形态）
+  let redeliverHead = null; // 补发批头（RESULTS.md 留痕用）
+  if (degraded) {
+    await assertNoDuplicateOnDelivered(checks, F, deliveredBefore);
+  } else {
+    redeliverHead = await assertCrashRedeliver(checks, F, deliveredBefore, dispatched, memberBodies);
+  }
+
+  // ── 二次重启：零重发（batchFinalized 落标 + 账本幂等）──
+  const { before2, after2 } = await assertSecondRestartNoRedeliver(checks, ws, F, s2, sessions);
+  recordV3Outcome(checks, degraded, redeliverHead, memberBodies, before2, after2);
+}
+
 async function main() {
   if (C.isDryRun(process.argv)) {
     process.exit(
@@ -103,123 +250,9 @@ async function main() {
   const checks = C.makeChecks();
   const ws = C.makeWorkspace("v3-kill9");
   const sessions = [];
-  let degraded = null; // { reason } — kill -9 时序不可构造时置位（批先行闭合）
-  let redeliverHead = null; // 补发批头（RESULTS.md 留痕用）
-  const memberBodies = []; // 补发批各成员条目正文（记录行按实况插值，禁硬编码形态）
 
   try {
-    const s1 = C.spawnSession({
-      piBin: C.resolvePiBin(),
-      cwd: ws.cwd,
-      sessionDir: ws.sessionDir,
-      model: C.resolveModel(),
-      label: `${SCENARIO}-main`,
-    });
-    sessions.push(s1);
-
-    const ready = await s1.waitReady();
-    checks.check("pi RPC 就绪", !!ready, ready ? "" : s1.stderrTail());
-
-    const prompt = C.dispatchPrompt({
-      starts: [60, 61].map((n) => ({
-        task:
-          `You MUST actually run this exact bash command first: sleep 60 && echo marker-v3-${n}. ` +
-          `After it finishes, reply with exactly: v3-${n}-done`,
-        slug: `v3-slow-${n}`,
-        collect: "sync",
-      })),
-    });
-    const turn = await s1.prompt(prompt, 120000);
-    checks.check("派发轮 turn_end", !!turn.ok, `stopReason=${turn.stopReason || "n/a"}`);
-
-    const F = resolveSessionFile(s1, ws);
-    checks.check("主 session 文件可定位", !!F, F || "n/a");
-    const dispatched = C.dispatchedStarts(C.readJsonlEntries(F)).filter((s) => s.collect === "sync");
-    checks.check("派发 2 个 collect:sync start", dispatched.length === 2, `starts=${dispatched.length}`);
-    if (dispatched.length !== 2) return;
-
-    // 静置 8s：让两个子进程越过启动段进入 sleep（kill 窗口稳定）
-    await C.sleep(8000);
-    const preNotify = F ? C.bgNotifyEntries(C.readJsonlEntries(F)).length : -1;
-    if (preNotify > 0) {
-      degraded = { reason: `批在 kill 前已闭合（preNotify=${preNotify}）——kill -9 时序不可构造` };
-      checks.note("kill -9 时序不可构造", degraded.reason);
-    } else {
-      s1.kill("SIGKILL");
-      const dead = await waitDead(s1, 8000);
-      checks.check("kill -9 于批等待中生效", dead, dead ? "SIGKILL" : "8s 未死");
-      if (!dead) return;
-    }
-
-    // ── 重启 #1：E1 补发（v1 A6 在此 240s 零到达；v2 修复后应可达）──
-    const deliveredBefore = F ? C.bgNotifyEntries(C.readJsonlEntries(F)).length : 0;
-    const s2 = spawnRestart(ws, F, `${SCENARIO}-restart1`);
-    sessions.push(s2);
-    const ready2 = await s2.waitReady();
-    checks.check("重启 #1 RPC 就绪", !!ready2, ready2 ? "" : s2.stderrTail());
-
-    if (degraded) {
-      // 时序不可构造降级：已投递态下重启应零重复（仍验证幂等面）
-      await C.sleep(30000);
-      const after = C.bgNotifyEntries(C.readJsonlEntries(F)).length;
-      checks.check("[降级] 已投递态重启零重复", after === deliveredBefore, `before=${deliveredBefore} after=${after}`);
-    } else {
-      const entries = await C.waitForNotify(
-        F,
-        240000,
-        (ns) => ns.some((n) => C.BATCH_HEADER_RE.test(n.content.split("\n")[0] || "")),
-        "补发批通知（kill -9 恢复）",
-      );
-      const batches = C.syncBatchNotifyEntries(entries);
-      const total = C.bgNotifyEntries(entries).length;
-      checks.check("重启 #1 补发恰好 1 条批通知", batches.length === 1 && total - deliveredBefore === 1, `batches=${batches.length} total=${total}`);
-      if (batches[0]) {
-        const head = parseBatchHeader(batches[0].content);
-        redeliverHead = head;
-        checks.check(
-          "批头合法性（finished+failed=2 且 cancelled=0；gc 二选一：0-2 finished / 0-2 failed）",
-          head !== null && head.finished + head.failed === 2 && head.cancelled === 0,
-          head ? `${head.finished} finished, ${head.failed} failed, ${head.cancelled} cancelled` : batches[0].content.split("\n")[0],
-        );
-        const segs = C.batchSegments(batches[0].content);
-        checks.check("批头 + 2 条目", segs.length === 3, `segments=${segs.length}`);
-        const startIds = new Set(dispatched.map((s) => s.saId));
-        const itemIds = new Set(segs.slice(1).map((s) => C.saIdOf(s)).filter(Boolean));
-        checks.check(
-          "补发条目 id 集 == 派发 sync 成员 id 集",
-          startIds.size === 2 && itemIds.size === 2 && [...itemIds].every((id) => startIds.has(id)),
-          `items=${itemIds.size} starts=${startIds.size}`,
-        );
-        // 成员正文形态（result 或截断 error 文案——kill -9 概率形态，非门仅留痕）
-        for (const seg of segs.slice(1)) {
-          const segBody = C.itemResultBody(seg);
-          memberBodies.push(segBody);
-          checks.note("成员条目正文形态（gc：崩溃前 result / 截断 error 二选一）", segBody.slice(0, 80));
-        }
-      }
-    }
-
-    // ── 二次重启：零重发（batchFinalized 落标 + 账本幂等）──
-    await C.sleep(6000); // 落标清态窗口
-    const before2 = F ? C.bgNotifyEntries(C.readJsonlEntries(F)).length : 0;
-    s2.kill("SIGKILL");
-    await waitDead(s2, 8000);
-    const s3 = spawnRestart(ws, F, `${SCENARIO}-restart2`);
-    sessions.push(s3);
-    const ready3 = await s3.waitReady();
-    checks.check("重启 #2 RPC 就绪", !!ready3, ready3 ? "" : s3.stderrTail());
-    await C.sleep(30000); // session_start 恢复钩子触发观察窗
-    const after2 = F ? C.bgNotifyEntries(C.readJsonlEntries(F)).length : -1;
-    checks.check("二次重启零重发（30s 观察窗）", after2 === before2, `before=${before2} after=${after2}`);
-
-    const summary = checks.summary();
-    C.appendResultRecord(SCENARIO, [
-      `- 世代: v2 探针（subagent-sync-collect-v2 §4 V3；v1 A6 FAIL 转 PASS）——${summary.passed} PASS / ${summary.failed} FAIL`,
-      `- 模式: ${degraded ? `降级（${degraded.reason}）` : "primary（kill -9 于批等待中）"}`,
-      `- 模型: ${C.resolveModel()}`,
-      `- 补发批头: ${redeliverHead ? `${redeliverHead.finished} finished, ${redeliverHead.failed} failed, ${redeliverHead.cancelled} cancelled` : degraded ? "n/a（时序不可构造）" : "(未解析)"}${memberBodyNote(memberBodies)}`,
-      `- 二次重启 notify: before=${before2} after=${after2}`,
-    ]);
+    await runProbe(checks, ws, sessions);
   } finally {
     for (const s of sessions) s.kill("SIGKILL");
     for (const s of sessions) await waitDead(s, 3000);
