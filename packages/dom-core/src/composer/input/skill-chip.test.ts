@@ -88,6 +88,8 @@ describe('useComposerChipCommands insertSkillChip（D2：光标处、多个共�
     expect(chip.contentEditable).toBe('false')
     expect(chip.querySelector('.chip-label')?.textContent).toBe('code-review')
     expect(chip.querySelector('.chip-icon')).not.toBeNull()
+    // C5 tooltip：经 callbacks.t 注入（key 直传形态，壳层换 vue-i18n t 后出真文案）
+    expect(chip.title).toBe('composable.skillChipTitle')
     cleanup = c.cleanup
   })
 

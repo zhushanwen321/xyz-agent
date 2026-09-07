@@ -167,13 +167,15 @@ export default {
     genStatsSpeedTitle: 'TOKEN 速度',
     genStatsCacheTitle: '缓存命中率',
     genStatsCurrent: '本次',
+    // 「本次」label 的 hover 补句（C4）：current 无窗口过滤，样本可能来自较早的记录
+    genStatsCurrentNote: '来自最近一次请求的记录',
     genStatsCurrentReq: '本次请求',
     genStatsDay: '今日均值（此模型）',
     genStatsD7: '近 7 天',
     genStatsD30: '近 30 天',
     genStatsDayShort: '今日加权',
-    genStatsSpeedNote: 'output tokens ÷ 生成耗时，按模型分文件累计（加权平均）',
-    genStatsCacheNote: 'cacheRead ÷ (input + cacheRead + cacheWrite)',
+    genStatsSpeedNote: 'output tokens ÷ 生成耗时，按模型分文件累计（加权平均）；按单次 LLM 请求耗时计算，不含工具执行时间',
+    genStatsCacheNote: 'cacheRead ÷ (input + cacheRead + cacheWrite)；模型不支持缓存时恒为 0%',
     genStatsNoData: '暂无数据',
   },
   sideDrawer: {
@@ -344,6 +346,8 @@ export default {
     pendingHint: '占用结束后发送',
     cancelQueued: '撤销排队',
     submittedAwaitingDelivery: '已提交，等待投递',
+    chipBadge: '+{count}',
+    chipBadgeHint: '含 {count} 个附件/引用，将随消息一并发送',
   },
   contextChips: {
     directory: '目录',
@@ -380,7 +384,8 @@ export default {
     dismiss: '关闭',
   },
   skillNotice: {
-    degradeBudget: '已按标记模式注入（预算超限），模型可自行读取 skill 文件',
+    // C5 补恢复动作：预算超限降级的可操作提示（减少 skill / 换大窗口模型）
+    degradeBudget: '已按标记模式注入（预算超限），模型可自行读取 skill 文件；减少 skill 数量或切换更大窗口模型可恢复全文注入',
     degradeWindow: '窗口信息获取失败，已按标记模式注入',
     missing: 'skill {names} 不存在，已按原文透传',
     readFailed: 'skill {names} 读取失败，已按原文透传',

@@ -193,6 +193,7 @@ Completion auto-notifies you (steer wakes the next turn):
 
 - collect:"sync" — >=2 independent one-shot subagents whose results you will combine: completions are held until every pending sync member finishes, then ONE batch notification delivers all results inline (one wake-up). Later sync starts join the same batch; each sync start response reports {"collect":{"mode":"sync","pendingSyncCount":N}}.
 - collect:"async" (default, omit) — immediate per-subagent completion; for conversational work or when each result is needed early.
+- Subagents in one sync batch must not depend on each other's output — dependent tasks must be chained across messages (see Calling patterns), never batched.
 Items over budget are truncated with a pointer: session_read {"action":"result","session":"<id>"} fetches the full text.
 
 ## Anti-patterns

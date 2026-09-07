@@ -25,6 +25,8 @@ export default {
   branched: '已分支',
   copyLabel: '复制',
   removeLabel: '移除',
+  // skill chip tooltip（C5）：告知发送时注入行为与体量上限（50KB = 注入预算上限）
+  skillChipTitle: '发送时注入该 skill 全文（最大 50KB）',
   yesterday: '昨天',
   daysAgo: '{days} 天前',
   dateFormat: '{month} 月 {day} 日',

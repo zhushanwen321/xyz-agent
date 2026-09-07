@@ -141,6 +141,9 @@ export default {
     tokUnit: 'tok',
   },
   // Agents tab 二级状态筛选（设计 docs/design/subagent-sidebar-filter.md §3.4；D2 文案「已结束」）
+  // [C7 用词登记] 本处「进行中」与 backgroundTaskList.filter.active 的「运行中」刻意不统一：
+  // 前者任务域——含 settling/waiting 流转中的子代理任务；后者进程域——仅进程 running 状态的
+  // 后台命令。概念域不同属真差异，勿合并措辞（adversarial-review-fixes §3.4 C7 裁决）。
   subagentFilter: {
     active: '进行中',
     ended: '已结束',
@@ -177,6 +180,8 @@ export default {
   },
   // 「后台命令」L2 视图（background-task-sidebar-view D10）。术语裁决（设计 §1）：
   // 与 subagent 的「后台任务」区分，本视图一律用「后台命令」
+  // [C7 用词登记] 本处「运行中」与 subagentFilter.active 的「进行中」刻意不统一：
+  // 前者进程域——仅进程 running 状态；后者任务域——含 settling/waiting 流转。真差异保留。
   backgroundTaskList: {
     filter: {
       active: '运行中',

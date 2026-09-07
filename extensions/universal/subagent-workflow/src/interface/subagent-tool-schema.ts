@@ -117,6 +117,8 @@ export const SubagentParams = Type.Object({
       "their completions are held until ALL pending sync subagents finish, then delivered as ONE batch " +
       "notification (single wake-up, results inline). You may keep dispatching more sync subagents in " +
       "later turns — they join the same pending batch. " +
+      "Independent means no member's prompt or work depends on another member's output — dependent " +
+      "tasks must be chained across messages (one start after the prior completes), never batched. " +
       "Use 'async' (or omit) for immediate per-subagent completion notifications. " +
       "Incompatible with conversation:true — that combination is rejected immediately before start; " +
       "remove either conversation or collect.",

@@ -25,6 +25,8 @@ export default {
   branched: 'Branched',
   copyLabel: 'Copy',
   removeLabel: 'Remove',
+  // skill chip tooltip (C5): injection behavior + size cap (50KB = injection budget cap)
+  skillChipTitle: 'Injects the full skill text when sent (max 50KB)',
   yesterday: 'Yesterday',
   daysAgo: '{days} days ago',
   dateFormat: '{month}/{day}',

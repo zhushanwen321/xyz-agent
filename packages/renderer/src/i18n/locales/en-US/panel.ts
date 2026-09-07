@@ -167,13 +167,15 @@ export default {
     genStatsSpeedTitle: 'Token speed',
     genStatsCacheTitle: 'Cache hit rate',
     genStatsCurrent: 'Last turn',
+    // hover note for the "Last turn" label (C4): current has no window filter — the sample may come from an older record
+    genStatsCurrentNote: 'From the most recent request',
     genStatsCurrentReq: 'Last request',
     genStatsDay: 'Today avg (this model)',
     genStatsD7: 'Last 7 days',
     genStatsD30: 'Last 30 days',
     genStatsDayShort: 'Today weighted',
-    genStatsSpeedNote: 'output tokens ÷ generation time, aggregated per model (weighted avg)',
-    genStatsCacheNote: 'cacheRead ÷ (input + cacheRead + cacheWrite)',
+    genStatsSpeedNote: 'output tokens ÷ generation time, aggregated per model (weighted avg); based on single LLM request duration, excluding tool execution time',
+    genStatsCacheNote: 'cacheRead ÷ (input + cacheRead + cacheWrite); shows 0% when the model does not support caching',
     genStatsNoData: 'No data yet',
   },
   sideDrawer: {
@@ -346,6 +348,8 @@ export default {
     pendingHint: 'Will be sent when the session is free',
     cancelQueued: 'Cancel queued message',
     submittedAwaitingDelivery: 'Submitted, awaiting delivery',
+    chipBadge: '+{count}',
+    chipBadgeHint: 'Contains {count} attachment/reference chip(s), sent along with the message',
   },
   contextChips: {
     directory: 'Directory',
@@ -382,7 +386,8 @@ export default {
     dismiss: 'Dismiss',
   },
   skillNotice: {
-    degradeBudget: 'Injected as markers (budget exceeded); the model can read the skill files itself',
+    // C5 recovery hint for budget-exceeded degradation
+    degradeBudget: 'Injected as markers (budget exceeded); the model can read the skill files itself. Reduce the number of skills or switch to a model with a larger context window to restore full-text injection',
     degradeWindow: 'Context window info unavailable; injected as markers',
     missing: 'skill {names} not found; passed through as-is',
     readFailed: 'failed to read skill {names}; passed through as-is',

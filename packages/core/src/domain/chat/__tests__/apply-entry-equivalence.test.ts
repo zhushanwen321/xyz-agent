@@ -81,7 +81,7 @@ describe('applyEntry reducer 确定性 —— 同序列两次喂入 state 全等
   it('skill 反解析：xyz 标记两形态（单标记混排 + 降级块）——标记前后正文全保留（D7 缺陷修复锁定）', () => {
     const state = expectDeterministic([
       { role: 'user', content: [{ type: 'text', text: '帮我 review<xyz-skill name="a" location="/a/SKILL.md"/> 这段代码' }], timestamp: 1000 },
-      { role: 'user', content: [{ type: 'text', text: '正文\n<xyz-skills>\n<xyz-skill name="x" location="/x/SKILL.md"/>\n</xyz-skills>\n请使用 read 工具加载上述 skill 文件后再继续任务\n收尾' }], timestamp: 2000 },
+      { role: 'user', content: [{ type: 'text', text: '正文\n<xyz-skills>\n<xyz-skill name="x" location="/x/SKILL.md"/>\n</xyz-skills>\nUse the read tool to load the skill files above before continuing the task\n收尾' }], timestamp: 2000 },
     ])
     expect((state.messages[0]!.content as Segment[])).toEqual([
       { type: 'text', text: '帮我 review' },
@@ -633,7 +633,7 @@ describe('live ≡ reload 构造性等价（W6 全类型）', () => {
     // JSONL 落盘文本同源——反解析（core parseSkillBlock SSOT）产出交错 segments，
     // live 与 reload 经同一 reducer 终态必须一致（架构关键规则 9 的标记消息扩展）。
     const mixedText = '帮我 review 这段代码<xyz-skill name="code-review-graph" location="/abs/SKILL.md"/> 继续任务'
-    const fallbackText = '超大任务\n<xyz-skills>\n<xyz-skill name="big-one" location="/b/SKILL.md"/>\n</xyz-skills>\n请使用 read 工具加载上述 skill 文件后再继续任务\n收尾正文'
+    const fallbackText = '超大任务\n<xyz-skills>\n<xyz-skill name="big-one" location="/b/SKILL.md"/>\n</xyz-skills>\nUse the read tool to load the skill files above before continuing the task\n收尾正文'
 
     // live 侧：message_end(user) 帧构造形态（客户端 u- 前缀 id，同 E1 liveEntries）
     const liveState = normalizeIds(replayEntries([

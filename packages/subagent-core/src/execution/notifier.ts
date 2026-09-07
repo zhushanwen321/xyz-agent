@@ -183,12 +183,25 @@ function formatChars(n: number): string {
   return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
+/**
+ * session_read result action 的默认单条字符上限（adversarial-review-fixes §3.4 C3）。
+ * 对齐 extensions/universal/session-reader/src/result-action.ts 的 RESULT_DEFAULT_LIMIT
+ * （8000）——extension 与 runtime 包无共享常量处、反向 import 会建立 subagent-core 对
+ * extension 的依赖，故本地常量 + 注释锚定；两侧改动须同步。
+ */
+const SESSION_READ_DEFAULT_LIMIT = 8000;
+
 /** 截断指针行（设计 §3.1.2 样例）：主 agent 据此按需 session_read 取回全文。
  *  [S8 code-simplify 口径注] 本函数的 X（total - kept）= **丢弃**字符数；而
  *  session-reader result-action.ts formatResultTruncation 同模板的 X = **保留**
- *  字符数（limit）——同模板异语义，统一字符串 = 行为变更，勿顺手改口径。 */
-function buildTruncationPointer(id: string, kept: number, total: number): string {
-  return `[truncated ${formatChars(total - kept)} of ${formatChars(total)} chars — full result: session_read {"action":"result","session":"${id}"}]`;
+ *  字符数（limit）——同模板异语义，统一字符串 = 行为变更，勿顺手改口径。
+ *  [C3 limit 随附] perItemLimit = 该成员实际截断预算（effectivePerItem）：预算超过
+ *  session_read 默认 limit(8000) 时附 "limit":N——模型照抄指针行 JSON 调用才能取到
+ *  ≥ 默认值的有效正文（否则默认 8000 反而少于通知里已见的 kept，触发第二层截断）；
+ *  ≤8000 不附（默认已覆盖，避免噪音）。 */
+function buildTruncationPointer(id: string, kept: number, total: number, perItemLimit: number): string {
+  const limitPart = perItemLimit > SESSION_READ_DEFAULT_LIMIT ? `,"limit":${perItemLimit}` : "";
+  return `[truncated ${formatChars(total - kept)} of ${formatChars(total)} chars — full result: session_read {"action":"result","session":"${id}"${limitPart}}]`;
 }
 
 /** closed 成员 outcome 兑底物化（与下方 notify() 投影边界同款）；running 原样透传。 */
@@ -252,7 +265,7 @@ export function buildBatchLlmContent(
     // 纯清单时 result 置空会在 buildLlmContent 内残留头行尾换行（"Result:\n" + ""），
     // 收掉该空行让条目严格为「头行 + 指针行」两行形态（设计 §3.1.2 纯清单退化）。
     const stripped = plan.listOnly ? truncated.replace(/\n$/, "") : truncated;
-    return `${stripped}\n${buildTruncationPointer(record.id, kept.length, body.length)}`;
+    return `${stripped}\n${buildTruncationPointer(record.id, kept.length, body.length, plan.effectivePerItem)}`;
   });
   const header = `Subagent batch completed: ${finished} finished, ${failed} failed, ${cancelled} cancelled.`;
   return [header, ...items].join("\n\n---\n\n");

@@ -131,7 +131,7 @@ describe('buildSkillsFallbackBlock（D7 降级块）', () => {
         '<xyz-skills>',
         '<xyz-skill name="cw-cli" location="/c/SKILL.md"/>',
         '</xyz-skills>',
-        '请使用 read 工具加载上述 skill 文件后再继续任务',
+        'Use the read tool to load the skill files above before continuing the task',
       ].join('\n'),
     )
   })
@@ -152,8 +152,24 @@ describe('buildSkillsFallbackBlock（D7 降级块）', () => {
     )
   })
 
-  it('指引行文案常量精确匹配设计 D7 定稿', () => {
-    expect(SKILL_FALLBACK_GUIDANCE).toBe('请使用 read 工具加载上述 skill 文件后再继续任务')
+  it('指引行文案常量精确匹配（C5 英文定稿，对齐 pi available_skills 措辞风格）', () => {
+    expect(SKILL_FALLBACK_GUIDANCE).toBe(
+      'Use the read tool to load the skill files above before continuing the task',
+    )
+  })
+
+  it('历史中文指引行（C5 前形态）：块本身仍可解析，中文指引行残留为正文（登记性锁定）', () => {
+    // C5 改英文后 SKILLS_BLOCK_RE 的可选指引行组只匹配英文——已落盘历史 session 的
+    // 中文指引行不再被吞进块区间，残留为孤立正文（可接受：块还原能力不受影响）。
+    const legacy = '<xyz-skills>\n<xyz-skill name="a" location="/a/SKILL.md"/>\n</xyz-skills>\n请使用 read 工具加载上述 skill 文件后再继续任务'
+    const blocks = parseSkillsFallbackBlocks(legacy)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].skills).toHaveLength(1)
+    expect(blocks[0].skills[0]).toMatchObject({ name: 'a', location: '/a/SKILL.md' })
+    // 残留含块尾与指引行之间的分隔换行（块区间止于 </xyz-skills>，可选指引行组不匹配中文）
+    expect(legacy.slice(blocks[0].index + blocks[0].length)).toBe(
+      '\n请使用 read 工具加载上述 skill 文件后再继续任务',
+    )
   })
 })
 

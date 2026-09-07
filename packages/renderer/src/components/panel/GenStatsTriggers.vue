@@ -38,7 +38,11 @@
           <!-- 四行聚合（2×2 grid）：本次 / 今日均值 / 近 7 天 / 近 30 天 -->
           <div class="grid grid-cols-2 gap-x-3.5 gap-y-2 px-2.5 py-2.5">
             <div v-for="row in speedRows" :key="row.label" class="flex flex-col gap-0.5">
-              <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-neutral-dim">{{ row.label }}</span>
+              <!-- 「本次」label 带 hover 补句（C4）：current 无窗口过滤，澄清样本来自最近一次请求 -->
+              <span
+                class="font-mono text-[10px] uppercase tracking-[0.05em] text-neutral-dim"
+                :title="row.note ?? undefined"
+              >{{ row.label }}</span>
               <span class="font-sans text-[14px] font-semibold tabular-nums" :class="row.value == null ? 'text-neutral-dim' : 'text-neutral-fg'">
                 {{ row.value == null ? '—' : `${row.value} t/s` }}
               </span>
@@ -146,11 +150,12 @@ const speedDisplay = computed(() => {
   return v == null ? '—' : `${v} t/s`
 })
 
-/** 速度浮层四行（label + 聚合值；null → 浮层行显「—」） */
+/** 速度浮层四行（label + 聚合值；null → 浮层行显「—」）。note = label 的原生
+ *  title 补句（仅「本次」有——C4 current 无窗口过滤语义澄清）。 */
 const speedRows = computed(() => {
   const s = frame.value?.speed
   return [
-    { label: t('panel.context.genStatsCurrent'), value: s?.current ?? null },
+    { label: t('panel.context.genStatsCurrent'), note: t('panel.context.genStatsCurrentNote'), value: s?.current ?? null },
     { label: t('panel.context.genStatsDay'), value: s?.day ?? null },
     { label: t('panel.context.genStatsD7'), value: s?.d7 ?? null },
     { label: t('panel.context.genStatsD30'), value: s?.d30 ?? null },

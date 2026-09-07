@@ -149,6 +149,7 @@ subagent 工具 (interface/subagent-tool.ts)
   [truncated 11,234 of 15,234 chars — full result: session_read {"action":"result","session":"bg-aaa"}]
   ```
   主 agent 在被唤醒的同一 turn 里按需 `session_read` 取回个别全文，其余不取。
+  **指针行 limit 随附（C3——adversarial-review-fixes §3.4）**：当该成员实际预算（effectivePerItem）> session_read result 默认 limit（8000）时，指针行 JSON 附 `"limit":<N>`（N = effectivePerItem）——模型照抄即取回 ≥ 默认值的有效正文（无 limit 时默认 8000 反而少于通知里已见的保留量）；≤8000 不附（默认已覆盖）。
   **总量超限演算例**（默认配置）：7 个成员各 6000 字符结果 → per-item 截断后 7×4000=28000 > 24000 → `effectivePerItem = floor(24000/7) = 3428` → 每条截至 3428 字符 + 指针行，总量回到预算内，仍是单条通知单次唤醒（全员结果在场、只是更紧凑）。**totalChars 口径**：仅计各条目结果正文（截断后）之和；批头/头行/指针行/分隔符等包装开销为有界常量不入预算（量级 ≈ n×170 字符，n=7 时 ~1.2K——演算例实际注入 ≈25.2K）。**分配策略权衡**：刻意放弃按剩余预算的瀑布分配（先足额短条目、余量给长条目——非确定、依赖条目顺序），统一收紧换确定性可单测（U4 锁定）。**纯清单退化阈值**：n > totalChars/200（默认 120）时 effectivePerItem 触 200 下限进入纯清单形态；触发后全量取回需 ceil(n/10) 次 `session_read`（批量上限 10/次）——该规模远超并发池 6 + 常规排队，属极端边界的可接受退化。
 - **崩溃/重启**：批等待中主进程崩溃 → 重启后恢复逻辑补发（见 3.1.5）。
 

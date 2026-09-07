@@ -138,8 +138,9 @@ runtime 用 node `readline` 解析 pi stdout JSONL（`packages/runtime/src/infra
 > <xyz-skill name="code-review-graph" location="/Users/x/.agents/skills/code-review-graph/SKILL.md"/>
 > <xyz-skill name="code-simplify" location="/Users/x/.agents/skills/code-simplify/SKILL.md"/>
 > </xyz-skills>
-> 请使用 read 工具加载上述 skill 文件后再继续任务。
+> Use the read tool to load the skill files above before continuing the task
 > ```
+> （指引行 C5 改英文——adversarial-review-fixes §3.4：块进 LLM 上下文，与 pi available_skills 英文措辞对齐；三要素 read 工具名/路径/时机不变。）
 > 模型自主 read 这几个 SKILL.md 并应用。**前端该消息仍显示为 skill chip badge（不是标记原文）**，消息流内联提示行（锚点 turn 之后）显示「已按标记模式注入（预算超限）」（实施形态：badge 位于 ui 包 UserBubble 内，提示以消息内联行呈现，降级/失效双 variant——实施落点见合理偏差登记）。
 >
 > 恢复指引：换大窗口模型 / 减少本次插入的 skill 数量，即可恢复全文注入模式。
@@ -213,7 +214,7 @@ runtime 用 node `readline` 解析 pi stdout JSONL（`packages/runtime/src/infra
 - **效果**：G3 成立（§3.1 场景 2）。
 
 **D7：降级标记形态与 resume 反渲染（选定）**
-- **采用**：降级时 prompt 里的形态（见 §3.1 场景 2）：所有 chip 标记归拢为一个 `<xyz-skills>` 包裹块（每项 `<xyz-skill name location/>` 自闭合）+ 一行指引文本「请使用 read 工具加载上述 skill 文件后再继续任务」。归拢成块（而非散在原位）理由：降级形态只需模型理解一次，块状 + 单指引行的指令遵循率高于散点。
+- **采用**：降级时 prompt 里的形态（见 §3.1 场景 2）：所有 chip 标记归拢为一个 `<xyz-skills>` 包裹块（每项 `<xyz-skill name location/>` 自闭合）+ 一行指引文本「Use the read tool to load the skill files above before continuing the task」（定稿时为中文「请使用 read 工具加载上述 skill 文件后再继续任务」，C5——adversarial-review-fixes §3.4——改英文对齐 pi available_skills 措辞）。归拢成块（而非散在原位）理由：降级形态只需模型理解一次，块状 + 单指引行的指令遵循率高于散点。
 - **resume 反渲染双通道**：
   - **主通道（已有，零新增）**：`segments.json` sidecar + `<!--xyz:msg:<uuid>-->` 标记机制按 clientUuid 恢复 Segment[]（`history-rebuild-cache.ts:233`），chip badge 显示不受 JSONL 文本形态影响。展开态/降级态都走这条。
   - **兜底通道（新增，实现位置 = core 转换 SSOT）**：sidecar 丢失/旧版本会话时，**`packages/core/src/domain/chat/apply-entry-convert.ts` 的 `parseSkillBlock` 升级为两形态反解析**——全局匹配 `<xyz-skill name="..." location="..."/>`（降级态）与 `<skill name="..." location="...">…</skill>`（展开态），还原为 skill segment。该函数是三条链路共用的转换 SSOT（① live `message_end(user)` 帧喂 reducer，② runtime 历史重建 `convertPiHistory`，③ 文件重放），在此一处升级即全覆盖。**升级必须同时修复现状正则的前置正文丢失缺陷**：现正则捕获组从第一个 `<skill` 开始，block 之前的正文不在任何捕获组、直接丢弃（`apply-entry-convert.ts:35-47`）——pi 原生格式（block 前置 + args 在后）下无损，但本设计的原位混排格式会系统性触发正文丢失；升级后产出交错的 `text + skill + text + …` segments，保留 block 前后全部正文。

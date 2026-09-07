@@ -14,9 +14,11 @@
     :data-variant="variant"
   >
     <component :is="icon" class="size-3 shrink-0" :class="iconClass" />
+    <!-- truncate 截断后全文经原生 title 可达（C5 降级文案补恢复动作后变长） -->
     <span
       class="min-w-0 truncate text-[length:var(--text-xs)] leading-snug"
       :class="variant === 'invalid' ? 'text-warn' : 'text-neutral-mid'"
+      :title="text"
     >
       {{ text }}
     </span>

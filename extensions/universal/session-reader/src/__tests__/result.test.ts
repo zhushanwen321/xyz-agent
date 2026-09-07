@@ -252,9 +252,9 @@ describe('result action（U6）', () => {
       dir,
     )
     expect(cut.content[0]?.text).toBe(
-      'abcde\n\n[truncated 5 of 10 chars — 👉 完整正文: read ' +
+      'abcde\n\n[truncated 5 of 10 chars — full text: read ' +
         `${join(dir, 'subagents', SLUG, 'sessions', `${realId}.jsonl`)}` +
-        '，或 session_read { action:"detail", session:"sa-lim" }]',
+        ', or session_read { action:"detail", session:"sa-lim" }]',
     )
     const exact = await handleSessionRead(
       { action: 'result', session: 'sa-lim', limit: 10 },

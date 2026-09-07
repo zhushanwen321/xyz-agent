@@ -15,7 +15,8 @@
 //      不依赖模型产量）。
 // 预期输出：
 //   ① 恰 1 条批通知（批头 `1 finished, 0 failed, 0 cancelled`）；条目正文 ≤100 字符；
-//      指针行 `[truncated ... full result: session_read {"action":"result","session":"<id>"}]`；
+//      指针行 `[truncated ... full result: session_read {"action":"result","session":"<id>"}]`
+//      （C3：成员预算 >8000 时该 JSON 另附 "limit":N——本探针 per-item 100/200 均不触发）；
 //      session_read 取回 toolResult == 子 session 磁盘全文（逐字节）。
 //   ② 恰 1 条批通知（批头 `7 finished, 0 failed, 0 cancelled`）；每条目正文 ≤200；
 //      批条目 id 集 == 派发 7 成员 id 集（截断指针数为 NOTE——短答本可不截断）。

@@ -146,14 +146,15 @@ describe('applyEntry —— entry 类型逐类型覆盖', () => {
   })
 
   it('message/user：xyz 降级块夹正文——块整体还原为各 skill segment，块前后正文保留、指引行不作正文残留', () => {
-    // 块形态 = buildSkillsFallbackBlock 产物（SSOT 构建 + 手写锚定格式双保险）：
-    // <xyz-skills>\n<标记行…/>\n</xyz-skills>\n请使用 read 工具加载上述 skill 文件后再继续任务
+    // 块形态 = buildSkillsFallbackBlock 产物（SSOT 构建 + 手写锚定格式双保险；指引行
+    // C5 改英文）：
+    // <xyz-skills>\n<标记行…/>\n</xyz-skills>\nUse the read tool to load the skill files above before continuing the task
     const state = replayEntries([
       msgEntry('e-user-mk3', {
         role: 'user',
         content: [{
           type: 'text',
-          text: '正文开始\n<xyz-skills>\n<xyz-skill name="a" location="/a/SKILL.md"/>\n<xyz-skill name="b"/>\n</xyz-skills>\n请使用 read 工具加载上述 skill 文件后再继续任务\n正文结束',
+          text: '正文开始\n<xyz-skills>\n<xyz-skill name="a" location="/a/SKILL.md"/>\n<xyz-skill name="b"/>\n</xyz-skills>\nUse the read tool to load the skill files above before continuing the task\n正文结束',
         }],
         timestamp: 1000,
       }),
@@ -233,7 +234,7 @@ describe('applyEntry —— entry 类型逐类型覆盖', () => {
     const nested = replayEntries([
       msgEntry('e-user-mix2', {
         role: 'user',
-        content: [{ type: 'text', text: '<xyz-skills>\n<xyz-skill name="a" location="/a/SKILL.md"/>\n</xyz-skills>\n请使用 read 工具加载上述 skill 文件后再继续任务' }],
+        content: [{ type: 'text', text: '<xyz-skills>\n<xyz-skill name="a" location="/a/SKILL.md"/>\n</xyz-skills>\nUse the read tool to load the skill files above before continuing the task' }],
         timestamp: 1000,
       }),
     ])

@@ -142,6 +142,10 @@ export default {
     tokUnit: 'tok',
   },
   // Agents tab secondary status filter (design docs/design/subagent-sidebar-filter.md §3.4; D2 label "Ended")
+  // [C7 word-choice note] "Active" here vs backgroundTaskList.filter.active "Running" is a deliberate
+  // distinction: this one is task-scoped (includes settling/waiting subagent tasks); that one is
+  // process-scoped (background commands whose process state is running). A true conceptual
+  // difference — do not unify the wording (adversarial-review-fixes §3.4 C7 ruling).
   subagentFilter: {
     active: 'Active',
     ended: 'Ended',
@@ -178,6 +182,8 @@ export default {
   },
   // "Background commands" L2 view (background-task-sidebar-view D10). Term ruling (design §1):
   // distinct from subagent "background tasks"
+  // [C7 word-choice note] "Running" here vs subagentFilter.active "Active" is a deliberate
+  // distinction: process-scoped (process state running) vs task-scoped (settling/waiting included).
   backgroundTaskList: {
     filter: {
       active: 'Running',

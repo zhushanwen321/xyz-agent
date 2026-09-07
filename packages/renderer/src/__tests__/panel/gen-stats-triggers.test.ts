@@ -179,6 +179,10 @@ describe('浮层内容（观察者形态）', () => {
     expect(text).toContain('近 30 天')
     expect(text).toContain('19 t/s')
     expect(text).toContain('output tokens ÷ 生成耗时，按模型分文件累计（加权平均）')
+    // C4 口径补句：速度 = 单次 LLM 请求耗时口径（不含工具执行）
+    expect(text).toContain('按单次 LLM 请求耗时计算，不含工具执行时间')
+    // C4「本次」label 的 title 补句（current 无窗口过滤语义澄清）以属性断言锁定
+    expect(wrapper.find('[title="来自最近一次请求的记录"]').exists()).toBe(true)
   })
 
   it('缓存浮层：两行（本次请求 / 今日加权）+ bar（宽度 = 命中率）+ 口径说明', async () => {
@@ -197,6 +201,8 @@ describe('浮层内容（观察者形态）', () => {
     expect(text).toContain('今日加权')
     expect(text).toContain('87%')
     expect(text).toContain('cacheRead ÷ (input + cacheRead + cacheWrite)')
+    // C4 口径补句：模型不支持缓存时恒为 0%
+    expect(text).toContain('模型不支持缓存时恒为 0%')
 
     const bar = wrapper.find('[data-testid="genstats-cache-bar"]')
     expect(bar.exists()).toBe(true)

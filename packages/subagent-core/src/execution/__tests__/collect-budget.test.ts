@@ -10,6 +10,8 @@
 //
 //   指针行：[truncated {omitted} of {total} chars — full result: session_read
 //   {"action":"result","session":"{id}"}]（omitted = total − kept；千位分隔）。
+//   [C3 limit 随附] 该成员预算（effectivePerItem）> session_read 默认 8000 时 JSON 附
+//   "limit":N（N = effectivePerItem）；≤8000 不附（默认已覆盖）。
 //
 //   totalChars 口径：仅计条目正文（截断后）之和；批头/头行/指针行/分隔符等
 //   包装开销有界常量不入预算。
@@ -44,10 +46,11 @@ function filled(id: string, bodyLen: number, ch = "A"): BgNotifyRecord {
 const PER_ITEM = 4000;
 const TOTAL = 24000;
 
-/** 期望指针行（千位分隔与设计样例 11,234 对齐）。 */
-function pointer(id: string, kept: number, total: number): string {
+/** 期望指针行（千位分隔与设计样例 11,234 对齐）。perItemLimit > 8000 时附 "limit":N（C3）。 */
+function pointer(id: string, kept: number, total: number, perItemLimit: number): string {
   const fmt = (n: number) => n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return `[truncated ${fmt(total - kept)} of ${fmt(total)} chars — full result: session_read {"action":"result","session":"${id}"}]`;
+  const limitPart = perItemLimit > 8000 ? `,"limit":${perItemLimit}` : "";
+  return `[truncated ${fmt(total - kept)} of ${fmt(total)} chars — full result: session_read {"action":"result","session":"${id}"${limitPart}}]`;
 }
 
 /** 期望条目：Result: 头行 + kept 正文 + （截断时）… + 指针行。 */
@@ -55,10 +58,11 @@ function expectedEntry(
   rec: { id: string; agent: string },
   fullBody: string,
   kept: number,
+  perItemLimit: number,
 ): string {
   const head = `Subagent "${rec.agent}" (${rec.id}) completed. Result:\n`;
   if (fullBody.length <= kept) return head + fullBody;
-  return `${head}${fullBody.slice(0, kept)}…\n${pointer(rec.id, kept, fullBody.length)}`;
+  return `${head}${fullBody.slice(0, kept)}…\n${pointer(rec.id, kept, fullBody.length, perItemLimit)}`;
 }
 
 // ─── computeBatchBudget 纯函数公式 ──
@@ -109,9 +113,9 @@ describe("buildBatchLlmContent 预算截断组装（设计 §3.1.2）", () => {
     expect(parts[0]).toBe("Subagent batch completed: 7 finished, 0 failed, 0 cancelled.");
     expect(parts).toHaveLength(8);
     for (let i = 0; i < 7; i++) {
-      expect(parts[i + 1]).toBe(expectedEntry(records[i], "A".repeat(6000), 3428));
+      expect(parts[i + 1]).toBe(expectedEntry(records[i], "A".repeat(6000), 3428, 3428));
       expect(parts[i + 1]).toContain(
-        pointer(`bg-${i}`, 3428, 6000), // omitted = 6000 − 3428 = 2,572
+        pointer(`bg-${i}`, 3428, 6000, 3428), // omitted = 6000 − 3428 = 2,572
       );
     }
   });
@@ -124,7 +128,7 @@ describe("buildBatchLlmContent 预算截断组装（设计 §3.1.2）", () => {
     expect(parts[0]).toBe("Subagent batch completed: 6 finished, 0 failed, 0 cancelled.");
     expect(content).not.toContain("[truncated");
     for (let i = 0; i < 6; i++) {
-      expect(parts[i + 1]).toBe(expectedEntry(records[i], "A".repeat(3000), 3000));
+      expect(parts[i + 1]).toBe(expectedEntry(records[i], "A".repeat(3000), 3000, PER_ITEM));
     }
   });
 
@@ -138,7 +142,7 @@ describe("buildBatchLlmContent 预算截断组装（设计 §3.1.2）", () => {
     for (let i = 0; i < 125; i++) {
       // 头行 + 指针行紧邻（kept=0 → 无正文、无省略号）
       expect(parts[i + 1]).toBe(
-        `Subagent "worker-bg-${i}" (bg-${i}) completed. Result:\n${pointer(`bg-${i}`, 0, 1000)}`,
+        `Subagent "worker-bg-${i}" (bg-${i}) completed. Result:\n${pointer(`bg-${i}`, 0, 1000, 0)}`,
       );
     }
     // 正文零残留（kept=0）
@@ -151,9 +155,9 @@ describe("buildBatchLlmContent 预算截断组装（设计 §3.1.2）", () => {
     const records = [filled("bg-aaa", 5000), filled("bg-bbb", 5000)];
     const parts = buildBatchLlmContent(records).split("\n\n---\n\n");
     for (const rec of records) {
-      expect(parts).toContain(expectedEntry(rec, "A".repeat(5000), PER_ITEM));
+      expect(parts).toContain(expectedEntry(rec, "A".repeat(5000), PER_ITEM, PER_ITEM));
     }
-    expect(parts[1]).toContain(pointer("bg-aaa", 4000, 5000)); // 1,000 of 5,000
+    expect(parts[1]).toContain(pointer("bg-aaa", 4000, 5000, PER_ITEM)); // 1,000 of 5,000
   });
 
   it("长短参差（1 短 500 + 6 长 6000）：统一收紧 3428，短条目足额保留——非瀑布分配", () => {
@@ -166,11 +170,11 @@ describe("buildBatchLlmContent 预算截断组装（设计 §3.1.2）", () => {
 
     expect(parts[0]).toBe("Subagent batch completed: 7 finished, 0 failed, 0 cancelled.");
     // 短条目：500 < 3428 足额全文，无截断
-    expect(parts[1]).toBe(expectedEntry(shortOne, "S".repeat(500), 500));
+    expect(parts[1]).toBe(expectedEntry(shortOne, "S".repeat(500), 500, 3428));
     expect(parts[1]).not.toContain("[truncated");
     // 长条目：统一收紧到同一 effectivePerItem = 3428
     for (let i = 0; i < 6; i++) {
-      expect(parts[i + 2]).toBe(expectedEntry(longs[i], "A".repeat(6000), 3428));
+      expect(parts[i + 2]).toBe(expectedEntry(longs[i], "A".repeat(6000), 3428, 3428));
     }
   });
 
@@ -215,7 +219,7 @@ describe("buildBatchLlmContent 预算截断组装（设计 §3.1.2）", () => {
     expect(content).not.toContain("[truncated");
     const parts = content.split("\n\n---\n\n");
     for (let i = 0; i < 6; i++) {
-      expect(parts[i + 1]).toBe(expectedEntry(records[i], "A".repeat(4000), 4000));
+      expect(parts[i + 1]).toBe(expectedEntry(records[i], "A".repeat(4000), 4000, PER_ITEM));
     }
   });
 
@@ -234,8 +238,8 @@ describe("buildBatchLlmContent 预算截断组装（设计 §3.1.2）", () => {
     expect(failedPart).not.toContain("[truncated");
     // 成功条目：仅第一段 per-item 截断（kept=4000），未被第二段收紧
     for (let i = 0; i < 6; i++) {
-      expect(parts).toContain(expectedEntry(longs[i], "A".repeat(6000), 4000));
-      expect(content).toContain(pointer(`bg-${i}`, 4000, 6000)); // 2,000 of 6,000
+      expect(parts).toContain(expectedEntry(longs[i], "A".repeat(6000), 4000, PER_ITEM));
+      expect(content).toContain(pointer(`bg-${i}`, 4000, 6000, PER_ITEM)); // 2,000 of 6,000
     }
     expect(content).not.toContain("2,572 of 6,000"); // 3428 收紧形态未出现
   });
@@ -250,5 +254,35 @@ describe("buildBatchLlmContent 预算截断组装（设计 §3.1.2）", () => {
         'Subagent "worker-sa-2" (sa-2) completed. Result:\nresult of sa-2',
       ].join("\n\n---\n\n"),
     );
+  });
+});
+
+// ─── C3 指针行 limit 随附（adversarial-review-fixes §3.4 C3）───
+
+describe("buildBatchLlmContent 指针行 limit 随附（C3：预算 > session_read 默认 8000 时附，≤ 不附）", () => {
+  it("perItemChars=12000（>8000）：指针行 JSON 附 \"limit\":12000——模型照抄即取回 ≥ 默认值的有效正文", () => {
+    // 2 成员各 15000：Σ=24000 ≤ totalChars=48000 不收紧 → effectivePerItem = 12000
+    const records = [filled("bg-big", 15000), filled("bg-big2", 15000)];
+    const content = buildBatchLlmContent(records, { perItemChars: 12000, totalChars: 48000 });
+    expect(content).toContain(
+      `[truncated 3,000 of 15,000 chars — full result: session_read {"action":"result","session":"bg-big","limit":12000}]`,
+    );
+    expect(content).toContain(`"session":"bg-big2","limit":12000`);
+  });
+
+  it("perItemChars=4000（默认，≤8000）：指针行无 limit 字段（默认已覆盖，避免噪音）", () => {
+    const records = [filled("bg-a", 5000)];
+    const content = buildBatchLlmContent(records);
+    expect(content).toContain(
+      `[truncated 1,000 of 5,000 chars — full result: session_read {"action":"result","session":"bg-a"}]`,
+    );
+    expect(content).not.toContain(`"limit"`);
+  });
+
+  it("收紧后 effectivePerItem=3428（≤8000）：同样不附 limit——判定看收紧后的实际预算", () => {
+    const records = Array.from({ length: 7 }, (_, i) => filled(`bg-${i}`, 6000));
+    const content = buildBatchLlmContent(records);
+    expect(content).toContain(`"session":"bg-0"}`);
+    expect(content).not.toContain(`"limit"`);
   });
 });

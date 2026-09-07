@@ -126,6 +126,8 @@ export function useComposerChipCommands(
     chip.dataset.chipType = 'skill'
     chip.dataset.chipName = name
     if (location) chip.dataset.chipLocation = location
+    // C5 tooltip：告知发送时注入行为与体量上限（经 callbacks.t 注入，同 removeLabel 机制）
+    chip.title = t('composable.skillChipTitle')
     renderIconInto(chip, icon)
     const label = document.createElement('span')
     label.className = 'chip-label'

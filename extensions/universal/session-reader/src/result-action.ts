@@ -126,7 +126,8 @@ interface ResultItem {
  * [S8 code-simplify 口径注] 本函数的 X = **保留**字符数（limit）；而 subagent-core
  * notifier.ts buildTruncationPointer 同模板的 X = **丢弃**字符数（total - kept）。
  * 两处措辞同构但口径相反（主 agent 会先后消费两种通知），统一字符串 = 行为变更，
- * 勿顺手改口径——读本行时先确认在消费哪一侧。 */
+ * 勿顺手改口径——读本行时先确认在消费哪一侧。
+ * [C6] 英文去 emoji（对齐 notifier 指针行的纯英文形态，adversarial-review-fixes §3.4）。 */
 function formatResultTruncation(
   raw: string,
   sessionFile: string,
@@ -135,7 +136,7 @@ function formatResultTruncation(
 ): string {
   return (
     `\n\n[truncated ${limit} of ${totalChars} chars — ` +
-    `👉 完整正文: read ${sessionFile}，或 session_read { action:"detail", session:"${raw}" }]`
+    `full text: read ${sessionFile}, or session_read { action:"detail", session:"${raw}" }]`
   )
 }
 

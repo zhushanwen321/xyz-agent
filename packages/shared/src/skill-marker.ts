@@ -19,11 +19,14 @@ export const SKILL_MARKER_TAG = 'xyz-skill'
 export const SKILLS_BLOCK_TAG = 'xyz-skills'
 
 /**
- * 降级块指引行文案（D7 正文定稿，SSOT）。
+ * 降级块指引行文案（D7 正文定稿，SSOT；adversarial-review-fixes §3.4 C5 改英文——
+ * 该块进 LLM 上下文，与 pi available_skills 的英文措辞风格对齐）。
+ * 三要素保持：read 工具名 + 路径（"files above" 指块内标记的 name/location）+ 时机
+ * （before continuing the task）。
  * 不带句号：D7 正文引号内无句号（§3.1 场景 2 示意图中的句号属示意排版）；
  * 本模块只保证块与指引行的相对形态（指引行紧跟块后一行），是否补标点由调用方/呈现层决定。
  */
-export const SKILL_FALLBACK_GUIDANCE = '请使用 read 工具加载上述 skill 文件后再继续任务'
+export const SKILL_FALLBACK_GUIDANCE = 'Use the read tool to load the skill files above before continuing the task'
 
 /**
  * 注入量预检阈值：预估 token > 0.8 × contextWindow 时整条消息降级为标记模式（D6）。
