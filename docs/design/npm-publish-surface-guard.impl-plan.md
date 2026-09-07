@@ -89,9 +89,9 @@ graph TD
 |------|--------------------------------------------|------|----------|
 | u1 | committed | 1 | 单测 29/29（`pnpm exec vitest run scripts/__tests__/check-publish-surface.test.mjs`）；真实仓库基线绿（README 处置后 3 包全绿，探针 0 裸名红 + ajv 豁免恰 4 = S3 前置成立）；S1/S1b 实测红绿全路径（主 agent 核验，见偏差登记表）；D7 warning 8.98MB 如实回显 |
 | u5 | committed | 2（首轮 blocked 顺序反转，二轮落地） | render exit 0（91 条，C-proc-11 authority/hook 存在性校验通过）；md 增量 2+/1-（无重排）；check-doc-symbol-drift exit 0；五点条款 summary 逐点覆盖 |
-| u4 | pending | 0 | — |
-| u2 | pending | 0 | — |
-| u3 | pending | 0 | — |
+| u4 | committed | 1 | S6b 两断言 true（主 agent 复跑）；diff 最小（statusline +1 行 private 第 4 行惯例位 / ignore 数组 +1 项数组外零改动） |
+| u2 | committed | 1 | 正式线步骤序 = §3.4（Build subagent-core 无条件 + guard 在 Closure/Publish 间 + Summary gates 文字同步）；dev 线三新 step 全挂 should_publish 条件、既有 Build extension-protocol 无 hunk（YAML 解析逐 step 复核）；本地守卫 exit 0 |
+| u3 | committed | 1 | ci.yml 两处：invariants 新增 Build dist packages + Publish surface guard (C-proc-11)（install 后，注释含 D7 通则/两级拦截）；Test - scripts guards 清单含新测试；YAML 解析 OK；本地复跑命令序列 exit 0 + 单测 29/29 |
 
 ## 7 残留风险与变更历史
 

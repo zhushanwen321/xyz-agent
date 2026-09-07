@@ -231,8 +231,10 @@ jobs:
       # R1-R3 新增 scripts 层护栏测试（check-unsafe-stream-writes / check-core-dist-gate /
       # gitcode-release-sync，纯函数 + mock fetch，不依赖 staged 产物）接入 CI——护栏测试
       # 自身也需要回归保护。
+      # npm-publish-surface-guard u3 同批追加 check-publish-surface（发布面守卫本体单测，
+      # vitest + tmpdir fixture 同上惯例）。
       - name: Test - scripts guards
-        run: pnpm exec vitest run scripts/__tests__/check-unsafe-stream-writes.test.mjs scripts/__tests__/check-core-dist-gate.test.mjs scripts/__tests__/gitcode-release-sync.test.mjs
+        run: pnpm exec vitest run scripts/__tests__/check-unsafe-stream-writes.test.mjs scripts/__tests__/check-core-dist-gate.test.mjs scripts/__tests__/gitcode-release-sync.test.mjs scripts/__tests__/check-publish-surface.test.mjs
 
   # E2E 视觉回归（mock 轨 visual-chromium）：只跑像素 diff baseline（S2 W3 交付的
   # visual-chromium project，testMatch **/visual/** + chromium.launch + spawn vite @ VITE_MOCK=true）。
@@ -311,6 +313,22 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: pnpm install --frozen-lockfile
+
+      # C-proc-11 发布面一致性守卫（docs/design/npm-publish-surface-guard.md §3.3 D2）：
+      # dist 发布包 files 白名单 ↔ 构建产出双向对齐（幽灵条目 / 产物目录反向覆盖 /
+      # 自包含探针）。dist 产物被 .gitignore、干净 checkout 上必红，刻意不挂 pre-commit
+      # （与 extensions 方向的刻意不对称，设计 D2）——pre-commit 之外的 CI 面同源拦截
+      # （D7 通则，同 D9-① 挂载理由）：先构建 3 包 4 档再同源直调守卫，漂移在 PR
+      # 软拦截而非发布现场硬拦截（两级拦截等级声明见设计 D2）。
+      - name: Build dist packages (publish surface guard)
+        run: |
+          pnpm --filter @xyz-agent/extension-protocol run build
+          pnpm --filter @xyz-agent/session-delivery run build
+          pnpm --filter @zhushanwen/subagent-core run build
+          pnpm --filter @zhushanwen/subagent-core run build:bundle
+
+      - name: Publish surface guard (C-proc-11)
+        run: node scripts/check-publish-surface.mjs
 
       # ENV_WHITELIST_PREFIXES SSOT 单一性（与 pre-commit SKIP_ENV_WHITELIST_CHECK 同源）
       - name: ENV whitelist SSOT check
