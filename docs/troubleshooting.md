@@ -316,9 +316,11 @@ bare repo + worktree 结构下，`.bare/hooks/pre-commit` 是全部 worktree 共
 1. **镜像 push 全量拒收**：本地 `refs/remotes/github/HEAD` 跟踪 symref 被 refspec `refs/remotes/github/*` 展开成创建 `refs/heads/HEAD`，GitCode 判 HEAD 为保留关键字拒收，git pre-receive hook 一票否决整个 push——所有引用（含 main、全部 tag）一起报 `pre-receive hook declined`，报错不指向真凶。CI 时代无此问题（actions/checkout 无 `origin/HEAD` 引用），本地化后才踩中。
 2. **本地 tag 空间污染**：`git fetch upstream`（pi-mono，只读参照用）的 tag auto-follow 把 285 个上游 `v*` tag 拉进本地；普通 fetch 永不更新已有 tag，GitHub 侧重打过的 tag（v0.3.15）本地还会残留过期旧位置。老脚本 `+refs/tags/*` 推本地 tags，一旦拒收解除就会把污染注入镜像。
 
-- 防线（已落地）：镜像脚本 tags 从 `refs/remotes/github-tags/*` 命名空间推（本地再脏也推不出去）+ push 前删 `<src>/HEAD` symref + 推后逐条比对引用集（不一致即 exit 非 0，见 `scripts/gitcode-release-sync.mjs`）；上游 auto-follow 已断（`.bare` 配置 `remote.upstream.tagOpt=--no-tags`，新 workspace 需重设）
+- 防线（已落地）：镜像脚本 tags 从 `refs/remotes/github-tags/*` 命名空间推（本地再脏也推不出去）+ push 前删 `<src>/HEAD` symref + push 前刷新分支跟踪视图（fetch --prune，防 GitHub 旁路变更后推旧位置）+ 推后逐条比对引用集（不一致即 exit 非 0，见 `scripts/gitcode-release-sync.mjs`）；上游 auto-follow 已断（`.bare` 配置 `remote.upstream.tagOpt=--no-tags`，新 workspace 需重设）
+- 附件镜像同标准收口（同日补齐）：`sync`/`sync-from-github` 上传完成后自动做 name 集合比对（缺失即 fail；多余只 WARN，补齐语义不删人工补件）+ 逐件 Range 探测远端大小与本地比对（抓截断/同名旧件残留），失败 exit 非 0
 - 本地 tag 自愈命令（怀疑漂移时跑）：`git fetch github --force --prune --prune-tags`
 - 排障提示：GitCode 报 `pre-receive hook declined` 且无 `remote:` 详情时，先二分 refspec 找被拒的具体引用（单引用逐个推），不要当瞬时故障重试
+- 平台行为依赖（未契约化，链路断时先查这里）：GitCode 的 release API 创建 release 时会自动打 tag 指向默认分支当前位置（非该版本 commit，v0.9.14 实测打到了旧提交），当前链路靠 push-repo 的 force-push 纠正该 tag——若 GitCode 未来对已存在 tag 拒绝强推，6.5.3 会在 verifyMirrorAlignment 处响亮失败（缺失/改动清单），按清单核对平台侧行为是否变更，勿先怀疑脚本
 
 ## 周期轮询/兜底定时器的合法性判定（2026-08-28）
 

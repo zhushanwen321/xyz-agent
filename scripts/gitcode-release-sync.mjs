@@ -54,7 +54,10 @@ function die(msg) {
 
 // 纯逻辑导出面（scripts/__tests__/gitcode-release-sync.test.mjs 单测——MF-3：发布同步
 // 关键分支不再只靠人工真发布验证）。token/repo 在模块加载时读 env（测试先设 env 再动态 import）。
-export { apiCall, assetList, buildExistingAssetMap, checkEnv, createRelease, fetchUploadTarget }
+export {
+  apiCall, assetList, buildExistingAssetMap, checkEnv, createRelease,
+  diffNameSets, fetchUploadTarget, verifyUploadedAssets,
+}
 
 // env 校验收进 main()：vitest import 纯函数导出时不再因缺 token die（CLI 行为不变）
 function checkEnv() {
@@ -326,27 +329,40 @@ function syncTagNamespace(refSource) {
  * 不支持 push，故用删除 symref 方案。 */
 function pushRepoMirror(refSource = 'origin') {
   const url = resolveGitcodeRemote();
-  execSync('git remote remove gitcode-sync 2>/dev/null || true', { stdio: 'pipe', shell: '/bin/bash' });
-  execSync(`git remote add gitcode-sync "${url}"`, { stdio: 'pipe' });
-  try {
-    const isShallow = execSync('git rev-parse --is-shallow-repository', { encoding: 'utf8' }).trim() === 'true';
-    if (isShallow) {
-      console.log(`[push-repo] 当前仓库为 shallow，先 fetch ${refSource} 全量历史（约 1-3 分钟）…`);
-      execSync(`git fetch --unshallow ${refSource} "+refs/heads/*:refs/remotes/${refSource}/*"`,
-        { stdio: 'inherit', timeout: 600000 });
-    }
-    execSync(`git symbolic-ref --delete refs/remotes/${refSource}/HEAD 2>/dev/null || true`,
-      { stdio: 'pipe', shell: '/bin/bash' });
-    syncTagNamespace(refSource);
-    execSync(
-      `git push gitcode-sync --progress --force --prune "+refs/remotes/${refSource}/*:refs/heads/*" "+refs/remotes/${refSource}-tags/*:refs/tags/*" 2>&1`,
-      { stdio: 'inherit', timeout: 1800000 },
-    );
-  } finally {
-    execSync('git remote remove gitcode-sync 2>/dev/null || true', { stdio: 'pipe', shell: '/bin/bash' });
+  const isShallow = execSync('git rev-parse --is-shallow-repository', { encoding: 'utf8' }).trim() === 'true';
+  if (isShallow) {
+    console.log(`[push-repo] 当前仓库为 shallow，先 fetch ${refSource} 全量历史（约 1-3 分钟）…`);
+    execSync(`git fetch --unshallow ${refSource} "+refs/heads/*:refs/remotes/${refSource}/*"`,
+      { stdio: 'inherit', timeout: 600000 });
   }
+  // 推送前刷新分支跟踪视图：GitHub 旁路变更（web 端合并 / 他人 push / force-push）不经过
+  // 本地 fetch 时，refs/remotes/<src>/* 停在旧位置——push 会把旧位置推上 GitCode，再被
+  // verifyMirrorAlignment 打回缺失/改动（响而不错，但白跑一轮 30 分钟级 push）。
+  console.log(`[push-repo] 刷新 ${refSource} 分支视图（fetch --prune）…`);
+  execSync(`git fetch ${refSource} --prune "+refs/heads/*:refs/remotes/${refSource}/*"`,
+    { stdio: 'pipe', timeout: 600000 });
+  execSync(`git symbolic-ref --delete refs/remotes/${refSource}/HEAD 2>/dev/null || true`,
+    { stdio: 'pipe', shell: '/bin/bash' });
+  syncTagNamespace(refSource);
+  // URL 直推不经 git remote add：带 token 的 URL 不落 .git/config（旧方案靠 finally 里
+  // remote remove 清理，进程被 SIGKILL 时 token 持久残留）。
+  execSync(
+    `git push ${shellQuote(url)} --progress --force --prune "+refs/remotes/${refSource}/*:refs/heads/*" "+refs/remotes/${refSource}-tags/*:refs/tags/*" 2>&1`,
+    { stdio: 'inherit', timeout: 1800000, shell: '/bin/bash' },
+  );
   console.log(`[push-repo] 仓库镜像完成：${refSource} 分支 + tags 已对齐到 GitCode`);
   return url;
+}
+
+/** 集合互差（expected/actual 均为字符串数组）：missing = 期望有实际无，extra = 实际有期望无。
+ * refs 镜像比对（行 = hash + refname）与附件镜像比对（行 = 文件名）共用同一 diff 语义。 */
+function diffNameSets(expected, actual) {
+  const actualSet = new Set(actual);
+  const expectedSet = new Set(expected);
+  return {
+    missing: expected.filter((n) => !actualSet.has(n)),
+    extra: actual.filter((n) => !expectedSet.has(n)),
+  };
 }
 
 /** 推后验证：GitCode 的分支+tags 引用集与 refSource 逐条比对（hash+refname 全等），
@@ -358,23 +374,59 @@ async function verifyMirrorAlignment(refSource, gitcodeUrl) {
       const { stdout } = await execP(
         `git ls-remote ${shellQuote(target)} "refs/heads/*" "refs/tags/*"`,
         { encoding: 'utf8', timeout: 120000, shell: '/bin/bash', maxBuffer: 10 * 1024 * 1024 });
-      return new Set(stdout.trim().split('\n').filter(Boolean));
+      return stdout.trim().split('\n').filter(Boolean);
     } catch (e) {
       die(`镜像验证失败：ls-remote ${target} 不可达：${String(e.message || e).slice(0, 200)}。`
         + '恢复：检查网络后重跑 push-repo。');
     }
   };
-  const src = await listRefs(refSource);
-  const dst = await listRefs(gitcodeUrl);
-  const missing = [...src].filter((l) => !dst.has(l));
-  const extra = [...dst].filter((l) => !src.has(l));
+  const { missing, extra } = diffNameSets(await listRefs(refSource), await listRefs(gitcodeUrl));
   if (missing.length > 0 || extra.length > 0) {
     die(`镜像验证失败：GitCode 与 ${refSource} 引用集不一致——`
       + `缺失 ${missing.length} 条：${missing.slice(0, 3).join(' ; ')}${missing.length > 3 ? ' …' : ''}；`
       + `多余 ${extra.length} 条：${extra.slice(0, 3).join(' ; ')}${extra.length > 3 ? ' …' : ''}。`
       + `恢复：重跑 push-repo --ref-source ${refSource}（幂等对齐）；持续不一致按缺失 ref 核对 GitCode 平台侧是否被改动。`);
   }
-  console.log(`[push-repo] 镜像验证通过：分支+tags 共 ${src.size} 条引用与 ${refSource} 完全一致`);
+  console.log(`[push-repo] 镜像验证通过：分支+tags 引用集与 ${refSource} 完全一致`);
+}
+
+/** 附件推后验证：把「附件镜像完成」也变成 exit 0 语义（与 verifyMirrorAlignment 同构）。
+ * [HISTORICAL] 2026-09-07 复盘遗留：refs 镜像有推后集合比对，assets 链路此前只验 PUT 2xx，
+ * 而 GitCode asset 条目无 size 字段 → 幂等跳过按「同名即跳过」判定，同名旧附件残留 /
+ * 上传截断都静默通过。两级校验补齐：
+ * ① name 集合比对——缺失 = 用户拿不到文件，fail；多余只 WARN（sync 是幂等补齐语义而非
+ *   强对齐，人工补件不自动删，与 refs 的 --prune 强对齐刻意不同）；
+ * ② 逐件 Range 探测远端总大小与本地比对（抓截断/旧件；走匿名直链 = 终端用户同一链路）。
+ * @param {string} tag release tag
+ * @param {{name: string, size: number}[]} expectedFiles 本地待同步文件清单（rel 名 + 大小） */
+async function verifyUploadedAssets(tag, expectedFiles) {
+  const release = await findReleaseByTag(tag);
+  if (!release) {
+    die(`附件镜像验证失败：release ${tag} 回查不到（刚才上传成功过，状态异常）。`
+      + `恢复：重跑本命令（幂等）；持续失败人工核对 ${WEB_BASE}/${repo}/releases/tag/${tag}`);
+  }
+  const { missing, extra } = diffNameSets(expectedFiles.map((f) => f.name), assetList(release).map((a) => a.name));
+  for (const name of extra) {
+    console.log(`[WARN] GitCode 侧多出附件（人工补件？保留不删）：${name}`);
+  }
+  const sizeProblems = [];
+  const missingSet = new Set(missing);
+  for (const f of expectedFiles) {
+    if (missingSet.has(f.name)) continue; // 缺失件已在清单里，直链必 404，不再重复探测
+    let p = await probeRemoteSize(tag, f.name);
+    if (!p.ok) {
+      await sleep(5000); // 上传刚完成时 CDN 可能未生效，等一次再探
+      p = await probeRemoteSize(tag, f.name);
+    }
+    if (!p.ok) sizeProblems.push(`${f.name} —— ${p.detail}`);
+    else if (p.total !== f.size) sizeProblems.push(`${f.name} —— 远端 ${p.total} != 本地 ${f.size} bytes（截断或同名旧件残留）`);
+  }
+  if (missing.length > 0 || sizeProblems.length > 0) {
+    die(`附件镜像验证失败：缺失 ${missing.length} 件${missing.length ? `：${missing.join(' ; ')}` : ''}；`
+      + `大小异常 ${sizeProblems.length} 件：\n  - ${sizeProblems.join('\n  - ')}\n`
+      + `恢复：重跑本命令（幂等，已成功件按名跳过只补缺失）；持续失败人工核对 ${WEB_BASE}/${repo}/releases/tag/${tag}`);
+  }
+  console.log(`[sync] 附件验证通过：${expectedFiles.length} 件全部存在且远端大小与本地一致`);
 }
 
 /* ── 模式一：探针 ─────────────────────────────────────────── */
@@ -508,9 +560,11 @@ async function runSync({ tag, name, notesFile, artifactsDir, prerelease = false 
 
   let skipped = 0;
   const pending = [];
+  const expectedFiles = [];
   for (const f of files) {
     const rel = f.slice(artifactsDir.length + 1);
     const size = statSync(f).size;
+    expectedFiles.push({ name: rel, size });
     const knownSize = existing.get(rel);
     // GitCode 条目无 size 字段（null）：同名即跳过——同一 release 的同名附件语义上不可变，
     // 且 PUT 幂等覆盖，误跳过的代价为零
@@ -545,6 +599,7 @@ async function runSync({ tag, name, notesFile, artifactsDir, prerelease = false 
     die(`上传失败 ${failures.length}/${pending.length} 个附件：\n  - ${failures.join('\n  - ')}\n`
       + '恢复：直接重跑——脚本幂等，已成功上传的附件按名跳过，只补剩余的。');
   }
+  await verifyUploadedAssets(tag, expectedFiles);
   console.log(`[sync] 完成：${files.length} 个文件（新传 ${pending.length}，跳过 ${skipped}，并发 ${Math.min(UPLOAD_CONCURRENCY, pending.length)} 路）。`);
   console.log(`[sync] 下载直链格式：${WEB_BASE}/${repo}/releases/download/${tag}/<文件名>`);
 }

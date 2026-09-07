@@ -316,6 +316,174 @@ describe('checkEnv（CLI 第一道闸：env 校验）', () => {
   })
 })
 
+/** Range 探测响应 mock：probeRemoteSize 读 status + headers.content-range 的 total */
+function rangeResponse(status, total) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (k) => (/content-range/i.test(k) && total !== undefined ? `bytes 0-1023/${total}` : null) },
+    text: async () => '',
+  }
+}
+
+describe('diffNameSets（refs/附件镜像共用的集合互差）', () => {
+  it('missing = 期望有实际无；extra = 实际有期望无；两侧全等时双空', async () => {
+    const { diffNameSets } = await loadModule()
+    expect(diffNameSets(['a', 'b'], ['b', 'c'])).toEqual({ missing: ['a'], extra: ['c'] })
+    expect(diffNameSets(['a'], ['a'])).toEqual({ missing: [], extra: [] })
+    expect(diffNameSets([], ['x'])).toEqual({ missing: [], extra: ['x'] })
+    expect(diffNameSets(['x'], [])).toEqual({ missing: ['x'], extra: [] })
+  })
+  it('行含 hash 前缀（refs 场景）时按完整行全等比对，不做部分匹配', async () => {
+    const { diffNameSets } = await loadModule()
+    const src = ['abc123 refs/heads/main', 'def456 refs/tags/v1.0.0']
+    const dst = ['abc123 refs/heads/main', 'fff000 refs/tags/v1.0.0']
+    expect(diffNameSets(src, dst)).toEqual({
+      missing: ['def456 refs/tags/v1.0.0'],
+      extra: ['fff000 refs/tags/v1.0.0'],
+    })
+  })
+})
+
+describe('verifyUploadedAssets（附件推后验证：name 集合 + 逐件远端大小）', () => {
+  const FILES = [
+    { name: 'a.dmg', size: 100 },
+    { name: 'b.zip', size: 200 },
+  ]
+
+  it('全部通过：assets 齐且远端大小逐一相符，不 exit，打印通过行', async () => {
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => jsonResponse({ id: 1, assets: [{ name: 'a.dmg' }, { name: 'b.zip' }] }))
+      .mockImplementationOnce(async () => rangeResponse(206, 100))
+      .mockImplementationOnce(async () => rangeResponse(206, 200))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.useFakeTimers()
+    const d = spyDieTargets()
+    try {
+      const { verifyUploadedAssets } = await loadModule()
+      const p = verifyUploadedAssets('v1.0.0', FILES)
+      await flushApiPauses(3)
+      await p
+      expect(d.exitSpy).not.toHaveBeenCalled()
+      expect(d.logs.join('\n')).toContain('附件验证通过：2 件全部存在且远端大小与本地一致')
+      // 第二件直链探测确实走了匿名下载 URL（302 由 fetch mock 层面消化）
+      expect(fetchMock.mock.calls[1][0]).toContain('/releases/download/v1.0.0/a.dmg')
+    } finally {
+      d.restore()
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('缺失附件：die 并列出缺失清单与重跑恢复指引', async () => {
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => jsonResponse({ id: 1, assets: [{ name: 'a.dmg' }] }))
+      .mockImplementationOnce(async () => rangeResponse(206, 100))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.useFakeTimers()
+    const d = spyDieTargets()
+    try {
+      const { verifyUploadedAssets } = await loadModule()
+      const assertion = expect(verifyUploadedAssets('v1.0.0', FILES)).rejects.toThrow('EXIT_1')
+      await flushApiPauses(3)
+      await assertion
+      expect(d.errors.join('\n')).toContain('附件镜像验证失败：缺失 1 件：b.zip')
+      expect(d.errors.join('\n')).toContain('恢复：重跑本命令（幂等，已成功件按名跳过只补缺失）')
+    } finally {
+      d.restore()
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('远端大小不符（截断/同名旧件残留）：die 列出两侧大小', async () => {
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => jsonResponse({ id: 1, assets: [{ name: 'a.dmg' }, { name: 'b.zip' }] }))
+      .mockImplementationOnce(async () => rangeResponse(206, 999))
+      .mockImplementationOnce(async () => rangeResponse(206, 200))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.useFakeTimers()
+    const d = spyDieTargets()
+    try {
+      const { verifyUploadedAssets } = await loadModule()
+      const assertion = expect(verifyUploadedAssets('v1.0.0', FILES)).rejects.toThrow('EXIT_1')
+      await flushApiPauses(3)
+      await assertion
+      expect(d.errors.join('\n')).toContain('a.dmg —— 远端 999 != 本地 100 bytes（截断或同名旧件残留）')
+    } finally {
+      d.restore()
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('GitCode 多出附件（人工补件）：WARN 保留不删，不判失败', async () => {
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => jsonResponse({ id: 1, assets: [{ name: 'a.dmg' }, { name: 'b.zip' }, { name: 'manual.bin' }] }))
+      .mockImplementationOnce(async () => rangeResponse(206, 100))
+      .mockImplementationOnce(async () => rangeResponse(206, 200))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.useFakeTimers()
+    const d = spyDieTargets()
+    try {
+      const { verifyUploadedAssets } = await loadModule()
+      const p = verifyUploadedAssets('v1.0.0', FILES)
+      await flushApiPauses(3)
+      await p
+      expect(d.exitSpy).not.toHaveBeenCalled()
+      expect(d.logs.join('\n')).toContain('[WARN] GitCode 侧多出附件（人工补件？保留不删）：manual.bin')
+    } finally {
+      d.restore()
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('直链首次探测失败（CDN 未生效）：等 5s 重试一次成功则不判失败', async () => {
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => jsonResponse({ id: 1, assets: [{ name: 'a.dmg' }] }))
+      .mockImplementationOnce(async () => rangeResponse(404))
+      .mockImplementationOnce(async () => rangeResponse(206, 100))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.useFakeTimers()
+    const d = spyDieTargets()
+    try {
+      const { verifyUploadedAssets } = await loadModule()
+      const p = verifyUploadedAssets('v1.0.0', [FILES[0]])
+      const assertion = vi.advanceTimersByTimeAsync(5000)
+      await flushApiPauses(3)
+      await assertion
+      await p
+      expect(d.exitSpy).not.toHaveBeenCalled()
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+      expect(d.logs.join('\n')).toContain('附件验证通过：1 件全部存在且远端大小与本地一致')
+    } finally {
+      d.restore()
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('release 回查不到（状态异常）：die 指引重跑', async () => {
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => jsonResponse({ message: 'not found' }, 404))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.useFakeTimers()
+    const d = spyDieTargets()
+    try {
+      const { verifyUploadedAssets } = await loadModule()
+      const assertion = expect(verifyUploadedAssets('v1.0.0', FILES)).rejects.toThrow('EXIT_1')
+      await flushApiPauses(3)
+      await assertion
+      expect(d.errors.join('\n')).toContain('附件镜像验证失败：release v1.0.0 回查不到')
+    } finally {
+      d.restore()
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
 describe('createRelease（json→form→query 编码降载）', () => {
   const payloadJson = (body) => JSON.stringify({
     tag_name: 'v1.2.3', name: 'release 1.2.3', body, prerelease: 'false',

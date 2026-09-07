@@ -385,7 +385,7 @@ cd $WS_ROOT/main && source ~/.zshrc >/dev/null 2>&1; GITCODE_REPO=qq_18433817/xy
   node scripts/gitcode-release-sync.mjs sync-from-github "v$(node -p "require('./package.json').version")"
 ```
 
-脚本输出「完成：N 个文件（新传 X，跳过 Y）」即成功；失败重跑只补缺失件。预期 405MB 级耗时约 1-3 分钟（3 路并发，单路 1.4-2.5MB/s）。
+脚本输出「完成：N 个文件（新传 X，跳过 Y）」即成功；失败重跑只补缺失件。预期 405MB 级耗时约 1-3 分钟（3 路并发，单路 1.4-2.5MB/s）。上传完成后脚本自动做附件推后验证（2026-09-07 复盘补齐，与 6.5.3 的引用集验证同标准）：name 集合比对（缺失即 exit 非 0；GitCode 多出附件只 WARN——补齐语义不删人工补件）+ 逐件 Range 探测远端大小与本地比对（抓截断/同名旧件残留，走匿名直链 = 终端用户同一链路）。「附件镜像完成」同样是 exit 0 语义，无需手动逐件复核。
 
 #### 6.5.2 README 安装版本更新（中英双页 + 国内/国外双通道）
 
@@ -407,15 +407,17 @@ git push github HEAD:main
 #### 6.5.3 仓库镜像（代码 + README 一起对齐 GitCode）
 
 ```bash
-cd $WS_ROOT/main && source ~/.zshrc >/dev/null 2>&1; git fetch github --prune \
-  && GITCODE_REPO=qq_18433817/xyz-agent node scripts/gitcode-release-sync.mjs push-repo --ref-source github
+cd $WS_ROOT/main && source ~/.zshrc >/dev/null 2>&1; \
+  GITCODE_REPO=qq_18433817/xyz-agent node scripts/gitcode-release-sync.mjs push-repo --ref-source github
 ```
 
-⚠️ **`--ref-source github` 本地必传**：本地 bare-repo workspace 的 `origin` 指向本地 `.bare`，不传会把本地分支状态（含已删/落后分支）推上 GitCode 造成 drift。`git fetch github --prune` 先刷新远端跟踪引用，保证 GitCode 与 GitHub 分支集严格一致（--force --prune 对齐）。首次全量约 2 分钟（pack ≈ 490MB），后续发布秒级增量。
+⚠️ **`--ref-source github` 本地必传**：本地 bare-repo workspace 的 `origin` 指向本地 `.bare`，不传会把本地分支状态（含已删/落后分支）推上 GitCode 造成 drift。脚本 push 前自动 `fetch <src> --prune` 刷新分支跟踪视图（防 GitHub 旁路变更——web 端合并/他人 push 后本地视图过期，推旧位置再被推后验证打回），保证 GitCode 与 GitHub 分支集严格一致（--force --prune 对齐）。首次全量约 2 分钟（pack ≈ 490MB），后续发布秒级增量。
 
 ⚠️ **tags 与 HEAD 由脚本内部处理（勿手动换 refspec）**：tags 不推本地 `refs/tags/*`——本仓还会 fetch pi-mono upstream，同名 `v*` tag 空间互相污染（2026-09-07 实测本地 478 vs GitHub 191：285 个 pi 上游 tag 混入，另有 v0.3.15 这类 GitHub 侧重打后本地残留的过期旧位置 tag——普通 fetch 永不更新已有 tag），脚本会先 fetch 到 `refs/remotes/github-tags/*` 独立命名空间再从该处推送；分支 refspec 展开前脚本会先删 `github/HEAD` symref——否则会尝试在 GitCode 创建 `refs/heads/HEAD`（保留关键字），pre-receive hook 一票否决整个 push。推送完成后脚本自动逐条比对 GitCode 与 GitHub 的引用集，不一致即 exit 非 0，无需手动 ls-remote 复核。
 
 #### 6.5.4 验证（GitCode 匿名直链可达）
+
+数据正确性已由 6.5.1（附件 name 集合 + 逐件大小）与 6.5.3（分支+tags 引用集）的推后验证机器保证，本步只做一次终端用户视角的匿名下载链路烟测（302→CDN 链路可达性）：
 
 ```bash
 curl -sL -o /dev/null -w '%{http_code}\n' -r 0-1048575 --max-time 60 \
