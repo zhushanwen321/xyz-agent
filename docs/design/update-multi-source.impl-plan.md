@@ -104,13 +104,17 @@ graph TD
 | u-diagnostics | appendUpdateError 返回 void → boolean；诊断 stage 新增值 'checking'（仅诊断日志用） | 支撑「写失败不推进降频快照」语义；既有调用方全部忽略返回值行为零变化；检查段事件在 UpdateStage 既有值域无对应值 | 2026-09-07 |
 | u-probe-multipart | 验收条款「存量 HEAD mock 族改写后既有测试全绿」首轮未达成：仅迁移 test/download-asset.test.ts，漏扫 update/__tests__/download-asset-fallback.test.ts（u4-probe-curl、u4-multipart-success 2 红）与 update/__tests__/update.test.ts（B4 1 红）同族 HEAD-era mock | 打回返工（轮次 2），领地扩展上述两文件 | 2026-09-07 |
 | u-checker | DOC_MODULE_MAP 登记（设计 §9 M2 项）从 u-diagnostics 移交至 u-checker | scripts/check-doc-symbol-drift.mjs 在 u-diagnostics 领地外；M2 挂点单元为 checker，随其 commit 落地 | 2026-09-07 |
+| u-release-sources | **防御 b（prerelease/draft 字段拦截）从设计 §4.2 的「checker 循环内」前移到适配层组装收口**；normalizeSourceRelease 导出含 prerelease/draft 的完整产物入口供 checker 复用 | 结构必然：LatestReleaseInfo 不承载 prerelease/draft 字段，防御必须在信息丢失前执行否则失效；防御 c（semver）与版本比较仍留 checker。u-checker task 已按此调整（避免重复防御/漏防御） | 2026-09-07 |
+| u-release-sources | 形状坏/网络失败从现状 null 收口改为抛 ReleaseFetchError(kind: network/rate-limited/bad-shape) | 设计 §4.2③「形状坏→记该源失败」要求失败信号可归类；现状 null 与「404 无新版」混叠会使逐源降级无法分类 | 2026-09-07 |
+| u-release-sources | shared ReleaseAsset.size 必填与 AtomGit size undefined 冲突——实现暂以单字段显式断言放宽 + 债务登记 | 类型收敛需 ReleaseAsset.size 可选化（packages/shared 领地），打回 u-foundation 会话补丁；GitHub 路径 size 恒有不回归 | 2026-09-07 |
+| u-release-sources | ASSET_PATTERNS / extractSha256 与 release-checker.ts 私有实现暂并存（文件头注释登记收敛计划） | 领地互斥：release-checker.ts 属 u-checker；u-checker 改造组装时改消费本模块导出并删副本 | 2026-09-07 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
 | u-foundation | committed | 1 | 本文件同 commit；shared typecheck exit 0 + main vitest 48 文件 761 用例全绿（两轮复核）+ main tsc TS2305 归零（计划内中间态红 10 处由 u-checker 消解） |
-| u-release-sources | in-progress | 1 | agent 已派发（Wave2） |
+| u-release-sources | committed | 1 | 本文件同 commit；vitest 43/43、tsc 新文件 0 错、eslint 0 problems |
 | u-source-resolver | committed | 1 | 本文件同 commit；vitest 17/17、eslint 0 warning、领地 2 新文件与 files_changed 一致 |
 | u-diagnostics | committed | 1 | 本文件同 commit；vitest 15/15 + w2-main-integration 40 绿；error-log 纯增量零行为变化 |
 | u-settings-pref | committed | 1 | 本文件同 commit；vitest 44/44（含 download-asset 已 commit 态回归）、eslint 0 errors、rateLimited 判定零改动已偏差登记 |
