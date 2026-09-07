@@ -59,6 +59,14 @@ import type { IUpdateOrchestrator } from '../update/orchestrator.js'
 import { UpdateError, UpdateUnsupportedError } from '../update/types.js'
 
 /**
+ * mock checker 的 fetchReleaseByTag 桩（多源改造后 IReleaseChecker 必需方法）。
+ * handler 层不消费该方法（下载降级在 orchestrator），桩返回 null 即可满足接口形状。
+ */
+function stubFetchReleaseByTag() {
+  return vi.fn(async (): Promise<LatestReleaseInfo | null> => null)
+}
+
+/**
  * LatestReleaseInfo 测试 fixture。
  *
  * [SECURITY] 必须通过 validateRelease 校验（update:perform handler 在 performUpdate
@@ -94,7 +102,7 @@ describe('W2: update-handlers IPC (W2TC7)', () => {
       _currentVersion: string,
       _opts?: { force?: boolean },
     ): Promise<LatestReleaseInfo | null> => FIXTURE)
-    const mockChecker: IReleaseChecker = { checkForLatestRelease }
+    const mockChecker: IReleaseChecker = { checkForLatestRelease, fetchReleaseByTag: stubFetchReleaseByTag() }
 
     registerUpdateHandlers({ releaseChecker: mockChecker } as never)
 
@@ -110,7 +118,7 @@ describe('W2: update-handlers IPC (W2TC7)', () => {
 
   it('W2TC7b: 不传 payload → force 默认 undefined', async () => {
     const checkForLatestRelease = vi.fn(async (): Promise<LatestReleaseInfo | null> => FIXTURE)
-    const mockChecker: IReleaseChecker = { checkForLatestRelease }
+    const mockChecker: IReleaseChecker = { checkForLatestRelease, fetchReleaseByTag: stubFetchReleaseByTag() }
 
     registerUpdateHandlers({ releaseChecker: mockChecker } as never)
 
@@ -123,7 +131,7 @@ describe('W2: update-handlers IPC (W2TC7)', () => {
 
   it('W2TC7c: checkForLatestRelease 返回 null → info=null 且非限额（确认无新版）', async () => {
     const checkForLatestRelease = vi.fn(async (): Promise<LatestReleaseInfo | null> => null)
-    const mockChecker: IReleaseChecker = { checkForLatestRelease }
+    const mockChecker: IReleaseChecker = { checkForLatestRelease, fetchReleaseByTag: stubFetchReleaseByTag() }
 
     registerUpdateHandlers({ releaseChecker: mockChecker } as never)
 
@@ -136,6 +144,7 @@ describe('W2: update-handlers IPC (W2TC7)', () => {
     const checkForLatestRelease = vi.fn(async (): Promise<LatestReleaseInfo | null> => null)
     const mockChecker: IReleaseChecker = {
       checkForLatestRelease,
+      fetchReleaseByTag: stubFetchReleaseByTag(),
       getRateLimitedUntil: () => Date.now() + 2 * 60 * 60 * 1000,
     }
 
@@ -146,10 +155,36 @@ describe('W2: update-handlers IPC (W2TC7)', () => {
     expect(result).toEqual({ info: null, rateLimited: true })
   })
 
+  it('W2TC7c2b: 全源退避聚合语义——getRateLimitedUntil 返回各源最大截止时刻：窗口内 true / 窗口过 false', async () => {
+    // 多源改造后 checker.getRateLimitedUntil() = 各源退避截止时刻的最大值（签名不变）。
+    // handler 判定式不感知源数，仅消费该聚合值：最大值 > now 即「全部源均在退避窗口」
+    // 的信号形态（全源退避），透传 rateLimited=true。
+    const inWindowChecker: IReleaseChecker = {
+      checkForLatestRelease: vi.fn(async (): Promise<LatestReleaseInfo | null> => null),
+      fetchReleaseByTag: stubFetchReleaseByTag(),
+      // 模拟两源退避截止不同（github +2h、atomgit +1h）→ 聚合最大值 = +2h > now
+      getRateLimitedUntil: () => Date.now() + 2 * 60 * 60 * 1000,
+    }
+    registerUpdateHandlers({ releaseChecker: inWindowChecker } as never)
+    const inWindow = await handlers.get('update:check')!({}, {})
+    expect(inWindow).toEqual({ info: null, rateLimited: true })
+
+    // 窗口已过（各源最大截止 ≤ now，即无任何源在退避）→ rateLimited=false（确认无新版）
+    const expiredChecker: IReleaseChecker = {
+      checkForLatestRelease: vi.fn(async (): Promise<LatestReleaseInfo | null> => null),
+      fetchReleaseByTag: stubFetchReleaseByTag(),
+      getRateLimitedUntil: () => Date.now() - 1000,
+    }
+    registerUpdateHandlers({ releaseChecker: expiredChecker } as never)
+    const expired = await handlers.get('update:check')!({}, {})
+    expect(expired).toEqual({ info: null, rateLimited: false })
+  })
+
   it('W2TC7c3: 有新版时不报 rateLimited（getRateLimitedUntil 不影响正结果）', async () => {
     const checkForLatestRelease = vi.fn(async (): Promise<LatestReleaseInfo | null> => FIXTURE)
     const mockChecker: IReleaseChecker = {
       checkForLatestRelease,
+      fetchReleaseByTag: stubFetchReleaseByTag(),
       // 窗口未过但 info 非 null（理论上不发生：退避窗口内短路返回 null；防御断言）
       getRateLimitedUntil: () => Date.now() + 60_000,
     }
@@ -173,7 +208,7 @@ describe('W2: update-handlers IPC (W2TC7)', () => {
     const checkForLatestRelease = vi.fn(async (): Promise<LatestReleaseInfo | null> => {
       throw new Error('checker crash')
     })
-    const mockChecker: IReleaseChecker = { checkForLatestRelease }
+    const mockChecker: IReleaseChecker = { checkForLatestRelease, fetchReleaseByTag: stubFetchReleaseByTag() }
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     registerUpdateHandlers({ releaseChecker: mockChecker } as never)
