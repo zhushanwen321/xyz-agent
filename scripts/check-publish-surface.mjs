@@ -140,36 +140,46 @@ function discoverGuardedPackages(packagesDir) {
  * files 每个条目磁盘存在且非空。判定信号以磁盘 stat 为准而非字符串尾斜杠：
  * 磁盘是目录 → 递归须至少含 1 文件（npm pack 对空目录同样静默跳过）；是文件 →
  * 须存在且非零字节；含 glob 字符 → 须至少命中 1 文件。
+ * 恢复指引按条目形态分流（fixFor）：dist 前缀产物档 → 补构建命令；纯文件条目
+ * → 补文件或删条目二选一（非构建产物进不了 workflow 构建段）。
  * 返回 problem 消息数组（多行：定性 + 恢复指引，行首 ✗ 包名前缀由 runGuard 拼）。
  */
 function checkGhostEntries(pkgDir, files, pkgName) {
   const problems = []
-  const fix = `  修复：在 .github/workflows/release-npm.yml 构建段为该档补构建命令\n  （pnpm --filter ${pkgName} run <script>）后重推 tag`
+  // 首段判 dist 前缀与 discoverGuardedPackages 同规则（含 / 取第一段，glob 条目
+  // 如 "dist/**/*.cjs" 首段同为 "dist"）；README.md / LICENSE 等纯文件条目指到
+  // workflow 构建段会失准——它们不是构建产物。
+  const fixFor = (entry) => {
+    const first = entry.includes('/') ? entry.split('/')[0] : entry
+    return first.startsWith('dist')
+      ? `  修复：在 .github/workflows/release-npm.yml 构建段为该档补构建命令\n  （pnpm --filter ${pkgName} run <script>）后重推 tag`
+      : `  修复：该条目非构建产物——补文件（如 README.md）或从 files 删条目，二选一`
+  }
   for (const entry of files) {
     if (entry.includes('*')) {
       const re = globToRegExp(entry)
       const hit = listDirFiles(pkgDir).some((abs) => re.test(relative(pkgDir, abs)))
       if (!hit) {
-        problems.push(`files 白名单 glob 条目 "${entry}" 未命中任何文件（幽灵条目）\n${fix}`)
+        problems.push(`files 白名单 glob 条目 "${entry}" 未命中任何文件（幽灵条目）\n${fixFor(entry)}`)
       }
       continue
     }
     const abs = join(pkgDir, entry)
     if (!existsSync(abs)) {
-      problems.push(`files 白名单条目 "${entry}" 在磁盘上不存在（幽灵条目）\n${fix}`)
+      problems.push(`files 白名单条目 "${entry}" 在磁盘上不存在（幽灵条目）\n${fixFor(entry)}`)
       continue
     }
     const st = statSync(abs)
     if (st.isDirectory()) {
       if (listDirFiles(abs).length === 0) {
-        problems.push(`files 白名单条目 "${entry}" 在磁盘上是空目录（幽灵条目——npm pack 对空目录静默跳过）\n${fix}`)
+        problems.push(`files 白名单条目 "${entry}" 在磁盘上是空目录（幽灵条目——npm pack 对空目录静默跳过）\n${fixFor(entry)}`)
       }
     } else if (st.isFile()) {
       if (st.size === 0) {
-        problems.push(`files 白名单条目 "${entry}" 在磁盘上是零字节文件（幽灵条目）\n${fix}`)
+        problems.push(`files 白名单条目 "${entry}" 在磁盘上是零字节文件（幽灵条目）\n${fixFor(entry)}`)
       }
     } else {
-      problems.push(`files 白名单条目 "${entry}" 磁盘形态异常（非文件非目录——无法验证非空）\n${fix}`)
+      problems.push(`files 白名单条目 "${entry}" 磁盘形态异常（非文件非目录——无法验证非空）\n${fixFor(entry)}`)
     }
   }
   return problems
