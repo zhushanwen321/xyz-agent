@@ -106,11 +106,11 @@ graph TD
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
 | u-foundation | committed | 1 | 本文件同 commit；shared typecheck exit 0 + main vitest 48 文件 761 用例全绿（两轮复核）+ main tsc TS2305 归零（计划内中间态红 10 处由 u-checker 消解） |
-| u-release-sources | pending | 0 | — |
-| u-source-resolver | pending | 0 | — |
-| u-diagnostics | pending | 0 | — |
-| u-settings-pref | pending | 0 | — |
-| u-probe-multipart | pending | 0 | — |
+| u-release-sources | in-progress | 1 | agent 已派发（Wave2） |
+| u-source-resolver | in-progress | 1 | agent 已派发（Wave2） |
+| u-diagnostics | in-progress | 1 | agent 已派发（Wave2） |
+| u-settings-pref | in-progress | 1 | agent 已派发（Wave2） |
+| u-probe-multipart | committed | 1 | 本文件同 commit；vitest 30/30（23 存量 + 7 新增四出口表测）、HEAD 残留 0、eslint 0 problems、领地 TS2698 存量错顺手修复 |
 | u-checker | pending | 0 | — |
 | u-download-failover | pending | 0 | — |
 | u-settings-ui | pending | 0 | — |
