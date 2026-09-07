@@ -419,3 +419,4 @@ main 侧内部类型（不进 shared，renderer 无消费）：`type SourceOrder
   - **三处写死 GitHub 的文案/注释入改动地图**（深度 F7，P1）：sidebar.ts rateLimited toast（注意 key 在 sidebar.ts 非 settings.ts）、UPDATE_NETWORK_FAILED suggestion、shared/update.ts 注释，全部中性化；§5.2「文案与现状一致」表述同步修正。
   - **UX 量级与规格补全**（深度 F9/F10/F13，P2）：D3 补偏好切换缓存窗口生效时延；D5 预下载辐射面补滞后收敛重下量级；UpdatePage 控件实施规格（嵌入卡位 / testid `select-update-source` / 切换即持久化 / 不自动重查）+ docs/testing testid 清单联动入 M5。
   - **防复发护栏与流程登记**（深度 F8/F14，P2）：D1「零感知」修正为「行为零改动 + 4 处接入清单」，normalize 表测补 downloadUrl ⊆ ALLOWED_DOWNLOAD_HOSTS 防漂移断言（域常量单一来源导出）；§9 M2 补 DOC_MODULE_MAP 登记（C-proc-10）。
+- v6.1（2026-09-08）：design-code-sync 第 1 轮代码-文档校准（实施后）。修正 v6 曾拍板的 `getRateLimitedUntil()`「返回各源最大截止时刻」机制描述——max > now ⟺ 任一源在退避，与 §6.5「全部源都在退避窗口才报 rateLimited: true」的意图语义矛盾（失真场景：github 限流退避中 + atomgit 正常检查确认无新版 → 误报「限流约 2h 暂停检查」），实现修正为**全部已知源均在退避窗口才返回各源截止的最早解除时刻（min），任一源可用返回 0**（§7.2/§8 机制句同步，commit 7d5898cb8）；另同步一批注释/登记漂移（IReleaseChecker manifest fallback 不变量、跨文档 D 编号限定、行号引用符号化）。

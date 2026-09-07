@@ -445,7 +445,7 @@ describe('fetchLatestRelease（atomgit 分支）', () => {
   })
 })
 
-// ─── 通道编排（代理优先 + 失败降直连，对齐 fetchGitHubLatestRelease D6/D10）──
+// ─── 通道编排（代理优先 + 失败降直连，对齐 fetchGitHubLatestRelease，update-network-resilience D6/D10）──
 
 describe('通道编排', () => {
   it('网络失败（无代理）→ ReleaseFetchError kind network 上抛（适配层失败显式化，checker 记该源失败）', async () => {
@@ -455,7 +455,7 @@ describe('通道编排', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('代理失败 → 直连重试一次成功（D6/D10 通道降级）', async () => {
+  it('代理失败 → 直连重试一次成功（update-network-resilience D6/D10 通道降级）', async () => {
     readProxyConfigMock.mockReturnValue({ mode: 'manual', httpsProxy: 'http://127.0.0.1:7890' })
     resolveProxyUrlMock.mockReturnValue('http://127.0.0.1:7890')
     const fetchMock = stubFetch()

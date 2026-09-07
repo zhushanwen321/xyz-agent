@@ -3,8 +3,8 @@
  *
  * 多源改造（update-multi-source §4.2①-⑥）后的覆盖面：
  *   W2TC1 happy path：主源 /releases/latest 返回 v0.9.0 → 胜出即出循环（次源零请求）
- *   W2TC2 三重 prerelease 过滤：适配层防御 b 拦截（prerelease/draft）→ 该源「未确认」→
- *         次源；防御 c（tag 正则）→「该源无新版」（循环内 per-source）
+ *   W2TC2 三重 prerelease 过滤：防御 b（prerelease/draft）checker 循环内拦截 →
+ *         该源「无新版」→ 次源；防御 c（tag 正则）→「该源无新版」（循环内 per-source）
  *   W2TC3 版本比较：同版本 / 更老版本 → 全源确认无新版 → 负缓存
  *   W2TC4 asset 平台分流：3 平台产物（dmg/exe/AppImage）+ blockmap/存量 zip 干扰
  *   W2TC5 缓存：连续两次非 force 第二次不 fetch；force 强制刷新

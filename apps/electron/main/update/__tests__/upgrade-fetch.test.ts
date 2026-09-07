@@ -203,7 +203,7 @@ describe('U1-D4-matrix', () => {
     // probe 场景专属组合：HEAD 请求遇瞬时类错误 → 本次降级 curl 成功
     expect(result.usedEngine).toBe('curl')
     expect(result.bodyText).toBeUndefined() // HEAD 无 body 语义保持
-    // 瞬时类不置 flag：下次 probe 仍重探 undici 多段（D7 语义的前提）
+    // 瞬时类不置 flag：下次 probe 仍重探 undici 多段（update-network-resilience D7 语义的前提）
     expect(getEnginePreference()).toBe('undici')
     // curl 侧同为 HEAD 形态（-I），probe 降级不改变请求语义
     expect(calls[0].args).toContain('-I')

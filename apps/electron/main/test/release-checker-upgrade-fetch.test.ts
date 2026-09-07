@@ -438,6 +438,9 @@ describe('u5 D8: curl 引擎 HTTP 状态交互规则', () => {
       expect(callUrl(1)).toContain('manifest.json')
       // 仅 github 记退避、atomgit 可用 → 全源语义（update-multi-source §6.5）返回 0；退避生效由本用例计数/短路断言证明
       expect(checker.getRateLimitedUntil()).toBe(0)
+      // 白盒补充：退避确已记录（github 在窗口内）——全源语义下 getRateLimitedUntil 为 0 不丢该证明
+      const internals = checker as unknown as { backoffUntil: Map<string, number> }
+      expect(internals.backoffUntil.get('github')).toBeGreaterThan(Date.now())
       expect(result!.assets.macArm64Dmg?.sha256).toBeUndefined()
       expect(result!.assets.macArm64Dmg?.name).toBe('TaiJi-mac-arm64.dmg')
     },
@@ -500,6 +503,9 @@ describe('u5 R2: 直连重试第二步不吞限流信号 + manifest 两引擎对
       // 关键断言：第二步撞 429 就地记退避（修复前被裸 catch 吞）
       // 仅 github 记退避、atomgit 可用 → 全源语义（update-multi-source §6.5）返回 0；退避生效由本用例计数/短路断言证明
       expect(checker.getRateLimitedUntil()).toBe(0)
+      // 白盒补充：退避确已记录（github 在窗口内）——全源语义下 getRateLimitedUntil 为 0 不丢该证明
+      const internals = checker as unknown as { backoffUntil: Map<string, number> }
+      expect(internals.backoffUntil.get('github')).toBeGreaterThan(Date.now())
     },
   )
 
@@ -520,6 +526,9 @@ describe('u5 R2: 直连重试第二步不吞限流信号 + manifest 两引擎对
       // 与 curl 引擎对偶：同记 2h 退避（修复前 undici 侧 !ok 一律 null 不退避 = 两引擎漂移）
       // 仅 github 记退避、atomgit 可用 → 全源语义（update-multi-source §6.5）返回 0；退避生效由本用例计数/短路断言证明
       expect(checker.getRateLimitedUntil()).toBe(0)
+      // 白盒补充：退避确已记录（github 在窗口内）——全源语义下 getRateLimitedUntil 为 0 不丢该证明
+      const internals = checker as unknown as { backoffUntil: Map<string, number> }
+      expect(internals.backoffUntil.get('github')).toBeGreaterThan(Date.now())
       expect(result!.assets.macArm64Dmg?.sha256).toBeUndefined()
       expect(result!.assets.macArm64Dmg?.name).toBe('TaiJi-mac-arm64.dmg')
     },
