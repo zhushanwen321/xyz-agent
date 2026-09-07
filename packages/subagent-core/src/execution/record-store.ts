@@ -259,6 +259,50 @@ function collectLastRecordEntries(content: string): Map<string, Record<string, u
   return lastById;
 }
 
+/** entry data 字段的安全 string 读取（非 string → undefined）。 */
+function entryStr(d: Record<string, unknown>, k: string): string | undefined {
+  return typeof d[k] === "string" ? (d[k] as string) : undefined;
+}
+
+/** entry data 字段的安全 number 读取（非 number → undefined）。 */
+function entryNum(d: Record<string, unknown>, k: string): number | undefined {
+  return typeof d[k] === "number" ? (d[k] as number) : undefined;
+}
+
+/** 终态域投影：status 只认 "closed" 字面量（其余含缺省 → "running"，旧调用方行为不变）；
+ *  closedReason 经枚举守卫（非法/缺省 → undefined）。 */
+function readEntryTerminalFields(
+  d: Record<string, unknown>,
+): Pick<SubagentRecord, "status" | "closedReason"> {
+  const closedReason = entryStr(d, "closedReason");
+  return {
+    status: d.status === "closed" ? "closed" : "running",
+    closedReason: isValidClosedReason(closedReason) ? closedReason : undefined,
+  };
+}
+
+/** 批收集域投影（U5 E1）：仅显式字面量收敛，缺省 undefined（JSON 序列化自然缺省）。 */
+function readEntryBatchFields(
+  d: Record<string, unknown>,
+): Pick<SubagentRecord, "collectMode" | "batchFinalized" | "resumable"> {
+  return {
+    collectMode: d.collectMode === "sync" ? "sync" : undefined,
+    batchFinalized: d.batchFinalized === true ? true : undefined,
+    resumable: d.resumable === true ? true : undefined,
+  };
+}
+
+/** engine 域投影：engineFallback/engineHandle 经运行时 guard（未知 JSON 不裸收）。 */
+function readEntryEngineFields(
+  d: Record<string, unknown>,
+): Pick<SubagentRecord, "engine" | "engineFallback" | "engineHandle"> {
+  return {
+    engine: entryStr(d, "engine"),
+    engineFallback: isEngineFallbackShape(d.engineFallback) ? d.engineFallback : undefined,
+    engineHandle: isEngineHandleShape(d.engineHandle) ? d.engineHandle : undefined,
+  };
+}
+
 /** entry data 即 SubagentRecord v1 快照——带运行时 guard 重建（taste/no-unsafe-cast）。
  *  损坏 entry（agent/task/startedAt 任一缺失）返回 null，由调用方跳过。
  *  [U5 E1] 投影白名单扩展（设计 §3.1.3「标记读取通路」）：collectMode/batchFinalized
@@ -272,46 +316,39 @@ function collectLastRecordEntries(content: string): Map<string, Record<string, u
  *  hasRunningSync 同构豁免（§2.3 断链 3）；sessionFile 原硬编码 undefined，导致
  *  E1 落标路径重建快照丢失反查索引锚（断链 1 前置依赖）。recoverEntryOnlyOrphans
  *  的候选判定（isEntryOrphanCandidate）只认 status==="running"，两新字段不参与
- *  判定（P-rebuild 探针守卫面）。 */
+ *  判定（P-rebuild 探针守卫面）。
+ *  字段顺序 = 对象字面量原序（终态/批收集/engine 域以 spread 在原位置展开），
+ *  entry 序列化字节形态不变。 */
 function rebuildEntryRecord(id: string, d: Record<string, unknown>): SubagentRecord | null {
-  const str = (k: string): string | undefined => (typeof d[k] === "string" ? (d[k] as string) : undefined);
-  const num = (k: string): number | undefined => (typeof d[k] === "number" ? (d[k] as number) : undefined);
-  const agent = str("agent");
-  const task = str("task");
-  const startedAt = num("startedAt");
+  const agent = entryStr(d, "agent");
+  const task = entryStr(d, "task");
+  const startedAt = entryNum(d, "startedAt");
   if (agent === undefined || task === undefined || startedAt === undefined) return null; // 损坏 entry：跳过
-  const closedReason = str("closedReason");
   return {
     id,
     agent,
     task,
-    slug: str("slug") ?? "",
-    status: d.status === "closed" ? "closed" : "running",
-    closedReason: isValidClosedReason(closedReason) ? closedReason : undefined,
+    slug: entryStr(d, "slug") ?? "",
+    ...readEntryTerminalFields(d),
     mode: "background",
     startedAt,
-    rootSessionId: str("rootSessionId"),
-    parentRecordId: str("parentRecordId"),
-    depth: num("depth") ?? 0,
-    endedAt: num("endedAt"),
-    turns: num("turns") ?? 0,
-    totalTokens: num("totalTokens") ?? 0,
-    model: str("model") ?? "",
-    thinkingLevel: str("thinkingLevel"),
+    rootSessionId: entryStr(d, "rootSessionId"),
+    parentRecordId: entryStr(d, "parentRecordId"),
+    depth: entryNum(d, "depth") ?? 0,
+    endedAt: entryNum(d, "endedAt"),
+    turns: entryNum(d, "turns") ?? 0,
+    totalTokens: entryNum(d, "totalTokens") ?? 0,
+    model: entryStr(d, "model") ?? "",
+    thinkingLevel: entryStr(d, "thinkingLevel"),
     eventLog: [],
     displayItems: [],
-    result: str("result"),
-    error: str("error"),
-    sessionFile: str("sessionFile"),
+    result: entryStr(d, "result"),
+    error: entryStr(d, "error"),
+    sessionFile: entryStr(d, "sessionFile"),
     chatMode: d.chatMode === true,
-    round: num("round"),
-    engine: str("engine"),
-    engineFallback:
-      isEngineFallbackShape(d.engineFallback) ? d.engineFallback : undefined,
-    engineHandle: isEngineHandleShape(d.engineHandle) ? d.engineHandle : undefined,
-    collectMode: d.collectMode === "sync" ? "sync" : undefined,
-    batchFinalized: d.batchFinalized === true ? true : undefined,
-    resumable: d.resumable === true ? true : undefined,
+    round: entryNum(d, "round"),
+    ...readEntryEngineFields(d),
+    ...readEntryBatchFields(d),
   };
 }
 

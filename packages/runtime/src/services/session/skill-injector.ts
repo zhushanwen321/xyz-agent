@@ -232,6 +232,94 @@ function dedupeNames(markers: ReadonlyArray<ParsedSkillMarker>): string[] {
   return [...new Set(markers.map((m) => m.name))]
 }
 
+/**
+ * get_commands → name（剥 `skill:` 前缀的裸 skill 名）→ 命令项 的权威映射（D4）。
+ * 只收 source === 'skill' 项（slash 命令等其他 source 不参与私有标记展开）。
+ */
+function buildSkillsByName(commands: SkillCommandInfo[]): Map<string, SkillCommandInfo> {
+  const skillsByName = new Map<string, SkillCommandInfo>()
+  for (const cmd of commands) {
+    if (cmd.source === 'skill') skillsByName.set(stripPiSkillCommandPrefix(cmd.name), cmd)
+  }
+  return skillsByName
+}
+
+/**
+ * 逐标记求值：映射 → 读 SKILL.md → 构建与 pi 逐字一致的 block（D5 模板）。
+ * 失效（无映射 / 路径缺失 / 读取失败）→ block=null 并记入对应 failGroups（D8 禁止静默）。
+ */
+function resolveSingleMarker(
+  marker: ParsedSkillMarker,
+  skillsByName: Map<string, SkillCommandInfo>,
+  failGroups: Map<SkillNoticeReason, string[]>,
+): MarkerResolution {
+  const cmd = skillsByName.get(marker.name)
+  if (!cmd) {
+    failGroups.get('skill_missing')!.push(marker.name)
+    return { marker, block: null }
+  }
+  const path = cmd.sourceInfo?.path
+  if (typeof path !== 'string' || path === '') {
+    // 映射存在但 pi 未给路径（sourceInfo 缺失）：无法读文件，按读取失败处理
+    failGroups.get('skill_read_failed')!.push(marker.name)
+    return { marker, block: null }
+  }
+  try {
+    const body = stripFrontmatterPi(readFileSync(path, 'utf-8')).trim()
+    // References 行 baseDir 取 SKILL.md 所在目录（dirname(path)）——pi 展开用的 skill.baseDir
+    // 恒为 skillDir = dirname(filePath)（skills.js :236/:260 实装锚点）。不用 sourceInfo.baseDir：
+    // skills.js 的 createSkillSourceInfo 分支（:90-110）虽恒透传 skillDir，但装载链上游可变——
+    // resource-loader.js :514-518 的 extension 覆盖链（findSourceInfoForPath 命中时 createSourceInfo
+    // 直接采用 extension metadata.baseDir）与 :612 兜底（getDefaultSourceInfoForPath 的 `<...>`
+    // 形态返回对象无 baseDir 字段），使 get_commands 的 sourceInfo.baseDir 不保证是 SKILL.md
+    // 所在目录（PS-24 真实 pi 探针实证漂移），golden diff 抓到后弃用。
+    const baseDir = dirname(path)
+    // pi _expandSkillCommand 模板（agent-session.js 0.84.4 :997）逐字：
+    // `<skill name="..." location="...">\nReferences are relative to <baseDir>.\n\n<body>\n</skill>`
+    // name 用裸 skill 名（get_commands 的 name 带 `skill:` 前缀，pi 原生展开无前缀）；
+    // name/baseDir 与 pi 同款直接插值不转义（对齐实装行为）
+    const skillName = stripPiSkillCommandPrefix(cmd.name)
+    const block = `<skill name="${skillName}" location="${path}">\nReferences are relative to ${baseDir}.\n\n${body}\n</skill>`
+    return { marker, block, path }
+  } catch (e) {
+    console.warn(`[skill-injector] failed to read SKILL.md for "${marker.name}" (${path}):`, e instanceof Error ? e.message : String(e))
+    failGroups.get('skill_read_failed')!.push(marker.name)
+    return { marker, block: null }
+  }
+}
+
+/**
+ * get_session_stats 实时取 contextWindow（D6 预检数据源）。fail-safe 降级（D6）：RPC 失败
+ * 或窗口字段非正有限数 → null，调用方走标记模式降级，不放行全文注入——get_session_stats
+ * 失败预示 RPC 异常，放行大消息若真超窗即落持续失败态。设计裁定不重抛（方向安全）。
+ */
+async function readContextWindow(client: IPiEngine): Promise<number | null> {
+  try {
+    const stats = await client.getSessionStats()
+    const w = stats.contextUsage?.contextWindow
+    if (typeof w === 'number' && Number.isFinite(w) && w > 0) return w
+    return null
+  } catch (e) {
+    console.warn('[skill-injector] get_session_stats failed (fail-safe fallback):', e instanceof Error ? e.message : String(e))
+    return null
+  }
+}
+
+/** 降级注入结果构建（D7 标记块形态）：两个降级触发源（窗口不可得 / 预算超限）共用，仅 reason 不同。 */
+function buildFallbackInjection(
+  text: string,
+  resolutions: MarkerResolution[],
+  validSkills: ReadonlyArray<{ name: string; location?: string }>,
+  reason: 'context_window_unavailable' | 'budget_exceeded',
+  invalidAndMalformed: SkillNotice[],
+): SkillInjectionResult {
+  const fallback = buildFallbackText(text, resolutions, validSkills)
+  return {
+    text: fallback,
+    notices: [{ reason, skills: validSkills.map((s) => s.name) }, ...invalidAndMalformed],
+  }
+}
+
 /** 逐 reason 聚合失效 notice（skills 并集去重），供非降级路径产出。 */
 function aggregateNotices(groups: Map<SkillNoticeReason, string[]>): SkillNotice[] {
   const notices: SkillNotice[] = []
@@ -271,51 +359,14 @@ export class SkillInjector {
       return { text, notices: [{ reason: 'mapping_unavailable', skills: dedupeNames(markers) }] }
     }
     // 映射 key 用剥 `skill:` 前缀后的裸 skill 名（与私有标记的 name 同一口径）
-    const skillsByName = new Map<string, SkillCommandInfo>()
-    for (const cmd of commands) {
-      if (cmd.source === 'skill') skillsByName.set(stripPiSkillCommandPrefix(cmd.name), cmd)
-    }
+    const skillsByName = buildSkillsByName(commands)
 
     // ── 逐标记求值：映射 → 读 SKILL.md → 构建与 pi 逐字一致的 block（D5 模板）──
     const failGroups = new Map<SkillNoticeReason, string[]>([
       ['skill_missing', []],
       ['skill_read_failed', []],
     ])
-    const resolutions: MarkerResolution[] = markers.map((marker) => {
-      const cmd = skillsByName.get(marker.name)
-      if (!cmd) {
-        failGroups.get('skill_missing')!.push(marker.name)
-        return { marker, block: null }
-      }
-      const path = cmd.sourceInfo?.path
-      if (typeof path !== 'string' || path === '') {
-        // 映射存在但 pi 未给路径（sourceInfo 缺失）：无法读文件，按读取失败处理
-        failGroups.get('skill_read_failed')!.push(marker.name)
-        return { marker, block: null }
-      }
-      try {
-        const body = stripFrontmatterPi(readFileSync(path, 'utf-8')).trim()
-        // References 行 baseDir 取 SKILL.md 所在目录（dirname(path)）——pi 展开用的 skill.baseDir
-        // 恒为 skillDir = dirname(filePath)（skills.js :236/:260 实装锚点）。不用 sourceInfo.baseDir：
-        // skills.js 的 createSkillSourceInfo 分支（:90-110）虽恒透传 skillDir，但装载链上游可变——
-        // resource-loader.js :514-518 的 extension 覆盖链（findSourceInfoForPath 命中时 createSourceInfo
-        // 直接采用 extension metadata.baseDir）与 :612 兜底（getDefaultSourceInfoForPath 的 `<...>`
-        // 形态返回对象无 baseDir 字段），使 get_commands 的 sourceInfo.baseDir 不保证是 SKILL.md
-        // 所在目录（PS-24 真实 pi 探针实证漂移），golden diff 抓到后弃用。
-        const baseDir = dirname(path)
-        // pi _expandSkillCommand 模板（agent-session.js 0.84.4 :997）逐字：
-        // `<skill name="..." location="...">\nReferences are relative to <baseDir>.\n\n<body>\n</skill>`
-        // name 用裸 skill 名（get_commands 的 name 带 `skill:` 前缀，pi 原生展开无前缀）；
-        // name/baseDir 与 pi 同款直接插值不转义（对齐实装行为）
-        const skillName = stripPiSkillCommandPrefix(cmd.name)
-        const block = `<skill name="${skillName}" location="${path}">\nReferences are relative to ${baseDir}.\n\n${body}\n</skill>`
-        return { marker, block, path }
-      } catch (e) {
-        console.warn(`[skill-injector] failed to read SKILL.md for "${marker.name}" (${path}):`, e instanceof Error ? e.message : String(e))
-        failGroups.get('skill_read_failed')!.push(marker.name)
-        return { marker, block: null }
-      }
-    })
+    const resolutions = markers.map((marker) => resolveSingleMarker(marker, skillsByName, failGroups))
 
     const invalidNotices = aggregateNotices(failGroups)
     const malformed = scanMalformed(text, markers)
@@ -335,31 +386,14 @@ export class SkillInjector {
     // ── 预检（D6）：估算「若全文注入的整条 message」token（展开产物天然含正文 + skill
     //    全文 + 标记/分隔开销），与 0.8 × contextWindow 比较。
     const hypothetical = buildExpandedText(text, resolutions)
-    let contextWindow: number | null = null
-    try {
-      const stats = await client.getSessionStats()
-      const w = stats.contextUsage?.contextWindow
-      if (typeof w === 'number' && Number.isFinite(w) && w > 0) contextWindow = w
-    } catch (e) {
-      // fail-safe 降级（D6）：RPC 失败视同窗口不可得，走标记模式降级——设计裁定不重抛
-      //（方向安全：放行大消息若真超窗即落持续失败态，代价只是功能减弱一轮）。
-      console.warn('[skill-injector] get_session_stats failed (fail-safe fallback):', e instanceof Error ? e.message : String(e))
-    }
+    const contextWindow = await readContextWindow(client)
     if (contextWindow === null) {
       // fail-safe（D6）：窗口信息不可得即降级为标记模式，不放行全文注入——
       // get_session_stats 失败预示 RPC 异常，放行大消息若真超窗即落持续失败态。
-      const fallback = buildFallbackText(text, resolutions, validSkills)
-      return {
-        text: fallback,
-        notices: [{ reason: 'context_window_unavailable', skills: validSkills.map((s) => s.name) }, ...invalidAndMalformed],
-      }
+      return buildFallbackInjection(text, resolutions, validSkills, 'context_window_unavailable', invalidAndMalformed)
     }
     if (estimateTokens(hypothetical) > CONTEXT_WINDOW_RATIO * contextWindow) {
-      const fallback = buildFallbackText(text, resolutions, validSkills)
-      return {
-        text: fallback,
-        notices: [{ reason: 'budget_exceeded', skills: validSkills.map((s) => s.name) }, ...invalidAndMalformed],
-      }
+      return buildFallbackInjection(text, resolutions, validSkills, 'budget_exceeded', invalidAndMalformed)
     }
     return { text: hypothetical, notices: invalidAndMalformed }
   }

@@ -251,19 +251,11 @@ function expandHome(p: string): string {
 }
 
 /**
- * 把 session 参数解析到唯一完整 id（design §6.1 M0 + U2/U3）。
- *
- * 三形态：
- * - ① 绝对路径 / ~ 前缀 → 展开后读首行 header，sessionId=header 真实 id（文件名仅定位）
- * - ② sa-id 前缀 → listRecordManifests 精确反查，sessionId=sessionFile header id
- *   （禁止降级 record.id——sa- 形态不可当 sessionId，CQ3 决策）
- * - ③ 其余 → findSessions 透传 source 沿用 F1/F2
- *
- * 错误契约（U3）：① 文件不存在/非 .jsonl/header 读不出 → F6 风格；
- * ② sessionFile GC → ES1（manifest 元数据 + 👉）；sa-id 0/>1 命中 → ES2（👉 family）。
- *
- * 仅用于 family/outline/expand/detail/search/export/extract/result（find action 自行调
- * findSessions，零匹配时返回空 + 提示，不抛错）。
+ * 把 session 参数解析到唯一完整 id（design §6.1 M0 + U2/U3）。三形态各拆独立解析器：
+ * resolveBySessionPath（① 绝对路径/~）→ resolveByRecordId（② sa- 前缀）→ resolveByFragment（③ 片段）。
+ * 错误契约（U3）：① 文件不存在/非 .jsonl/header 读不出 → F6 风格；② sessionFile GC → ES1（manifest 元数据 + 👉）；
+ * sa-id 0/>1 命中 → ES2（👉 family）。仅用于 family/outline/expand/detail/search/export/extract/result
+ *（find action 自行调 findSessions，零匹配时返回空 + 提示，不抛错）。
  */
 async function resolveSessionId(
   rawSession: string | undefined,
@@ -278,49 +270,68 @@ async function resolveSessionId(
 
   // ① 绝对路径或 ~ 前缀（Windows 盘符由 isAbsolute 处理）
   if (isAbsolute(session) || session === '~' || session.startsWith('~/')) {
-    const expanded = expandHome(session)
-    if (!expanded.endsWith('.jsonl')) {
-      throw err(
-        `读取失败：${session}（非 .jsonl session 文件）。👉 检查文件或换 session。`,
-      )
-    }
-    if (!existsSync(expanded)) {
-      throw err(`读取失败：${session}（文件不存在）。👉 检查文件或换 session。`)
-    }
-    const headerId = readSessionHeaderId(expanded)
-    if (headerId === undefined) {
-      throw err(
-        `读取失败：${session}（首行非合法 session header）。👉 检查文件或换 session。`,
-      )
-    }
-    return { kind: 'ok', sessionId: headerId, fileName: expanded }
+    return resolveBySessionPath(session)
   }
 
-  // ② sa-id 前缀 → record manifest 精确反查（批量调用方传预取列表，S3：避免逐 id 全量重扫）
+  // ② sa-id 前缀 → record manifest 精确反查
   if (session.startsWith('sa-')) {
-    const manifests = prefetchedManifests ?? (await listRecordManifests(agentDir))
-    const hits = manifests.filter((m) => m.id === session)
-    if (hits.length === 0) {
-      throw err(formatSaIdNotFound(session))
-    }
-    if (hits.length > 1) {
-      throw err(formatSaIdAmbiguous(session, hits))
-    }
-    const record = hits[0]
-    if (!existsSync(record.sessionFile)) {
-      throw err(formatSessionGc(record))
-    }
-    const headerId = readSessionHeaderId(record.sessionFile)
-    if (headerId === undefined) {
-      // header 读不出不降级 record.id（sa- 形态不可当 sessionId，CQ3）
-      throw err(
-        `读取失败：${record.sessionFile}（首行非合法 session header）。👉 检查文件或换 session。`,
-      )
-    }
-    return { kind: 'ok', sessionId: headerId, fileName: record.sessionFile }
+    return resolveByRecordId(session, agentDir, prefetchedManifests)
   }
 
   // ③ 其余：findSessions 透传 source 沿用 F1/F2
+  return resolveByFragment(session, agentDir, source)
+}
+
+/** 形态①：绝对路径 / ~ 前缀 → 展开后读首行 header，sessionId=header 真实 id（文件名仅定位）。 */
+function resolveBySessionPath(session: string): ResolveResult {
+  const expanded = expandHome(session)
+  if (!expanded.endsWith('.jsonl')) {
+    throw err(
+      `读取失败：${session}（非 .jsonl session 文件）。👉 检查文件或换 session。`,
+    )
+  }
+  if (!existsSync(expanded)) {
+    throw err(`读取失败：${session}（文件不存在）。👉 检查文件或换 session。`)
+  }
+  const headerId = readSessionHeaderId(expanded)
+  if (headerId === undefined) {
+    throw err(
+      `读取失败：${session}（首行非合法 session header）。👉 检查文件或换 session。`,
+    )
+  }
+  return { kind: 'ok', sessionId: headerId, fileName: expanded }
+}
+
+/**
+ * 形态②：sa-id 前缀 → record manifest 精确反查，sessionId=sessionFile header id
+ *（禁止降级 record.id——sa- 形态不可当 sessionId，CQ3 决策）。批量调用方传预取列表
+ *（S3：避免逐 id 全量重扫）；单 id 调用点现场扫一次。
+ */
+async function resolveByRecordId(session: string, agentDir: string, prefetchedManifests: RecordManifest[] | undefined): Promise<ResolveResult> {
+  const manifests = prefetchedManifests ?? (await listRecordManifests(agentDir))
+  const hits = manifests.filter((m) => m.id === session)
+  if (hits.length === 0) {
+    throw err(formatSaIdNotFound(session))
+  }
+  if (hits.length > 1) {
+    throw err(formatSaIdAmbiguous(session, hits))
+  }
+  const record = hits[0]
+  if (!existsSync(record.sessionFile)) {
+    throw err(formatSessionGc(record))
+  }
+  const headerId = readSessionHeaderId(record.sessionFile)
+  if (headerId === undefined) {
+    // header 读不出不降级 record.id（sa- 形态不可当 sessionId，CQ3）
+    throw err(
+      `读取失败：${record.sessionFile}（首行非合法 session header）。👉 检查文件或换 session。`,
+    )
+  }
+  return { kind: 'ok', sessionId: headerId, fileName: record.sessionFile }
+}
+
+/** 形态③：其余片段 → findSessions 透传 source 沿用 F1（零匹配）/ F2（多匹配消歧）。 */
+async function resolveByFragment(session: string, agentDir: string, source?: 'main' | 'subagent'): Promise<ResolveResult> {
   const opts = { limit: 10, ...(source ? { source } : {}) }
   const { matches } = await findSessions(session, agentDir, opts)
   if (matches.length === 0) {
