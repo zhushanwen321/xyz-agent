@@ -31,16 +31,18 @@ vi.mock('../update/upgrade-fetch.js', async (importOriginal) => {
 import {
   resolveSourceOrder,
   resetSourceOrderCacheForTest,
+  getLastProbeOutcome,
   type SourceOrder,
 } from '../update/source-resolver.js'
 import { upgradeFetch, CurlFetchError } from '../update/upgrade-fetch.js'
 import type { UpgradeFetchResult } from '../update/upgrade-fetch.js'
+import { RELEASE_SOURCE_HOSTS } from '../update/release-sources.js'
 
 const upgradeFetchMock = vi.mocked(upgradeFetch)
 
-/** 与 source-resolver.ts 内常量锁定的规格值（实现漂移时本测试红） */
-const GITHUB_PROBE_URL = 'https://github.com'
-const GITCODE_PROBE_URL = 'https://gitcode.com'
+/** 与 source-resolver.ts 同源派生的探测 URL（域常量单一来源 = release-sources，R1-U3 断言锚点） */
+const GITHUB_PROBE_URL = `https://${RELEASE_SOURCE_HOSTS.githubDownload}`
+const GITCODE_PROBE_URL = `https://${RELEASE_SOURCE_HOSTS.atomgitDownload}`
 const EXPECTED_PROBE_TIMEOUT_MS = 3_000
 
 /** 探测成功返回形态（undici 引擎任何 resolve 即可达，不看 ok/status） */
@@ -291,6 +293,97 @@ describe('source-resolver: auto 模式源顺序决策表（D4）', () => {
 
       const second = await resolveSourceOrder('auto')
       expect(second).toEqual(['github', 'atomgit'])
+    })
+  })
+
+  describe('getLastProbeOutcome: S2 观测面三态（R1-U1a）', () => {
+    it('初始态与显式偏好路径 → null（显式偏好不是探测决策）', async () => {
+      expect(getLastProbeOutcome()).toBeNull()
+
+      await resolveSourceOrder('github')
+      expect(getLastProbeOutcome()).toBeNull()
+
+      await resolveSourceOrder('atomgit')
+      expect(getLastProbeOutcome()).toBeNull()
+    })
+
+    it('代理短路 → via=proxy-short-circuit，results 仅 github（能配代理即 github 可达的推断），decidedAt 为决策时刻', async () => {
+      vi.spyOn(proxyConfig, 'resolveProxyUrl').mockReturnValue('http://192.168.1.202:7890')
+      const now = Date.now()
+
+      await resolveSourceOrder('auto')
+
+      const outcome = getLastProbeOutcome()
+      expect(outcome).not.toBeNull()
+      expect(outcome?.via).toBe('proxy-short-circuit')
+      expect(outcome?.results.github?.reachable).toBe(true)
+      // gitcode 可达性在短路通道下无推断依据，不填不捏造
+      expect(outcome?.results.atomgit).toBeUndefined()
+      expect(outcome?.decidedAt).toBe(now)
+      expect(upgradeFetchMock).not.toHaveBeenCalled()
+    })
+
+    it('真实探测 → via=probe，两域可达性如实记录（仅 gitcode 可达 case）', async () => {
+      setProbeBehavior({ github: new Error('timeout (aborted)'), gitcode: okProbe() })
+
+      await resolveSourceOrder('auto')
+
+      const outcome = getLastProbeOutcome()
+      expect(outcome?.via).toBe('probe')
+      expect(outcome?.results.github?.reachable).toBe(false)
+      expect(outcome?.results.atomgit?.reachable).toBe(true)
+    })
+
+    it('返回值为深拷贝快照（调用方突变不污染内部单值）', async () => {
+      setProbeBehavior({})
+
+      await resolveSourceOrder('auto')
+
+      const outcome = getLastProbeOutcome()
+      outcome!.results.github!.reachable = false
+      outcome!.via = 'proxy-short-circuit'
+
+      const again = getLastProbeOutcome()
+      expect(again?.via).toBe('probe')
+      expect(again?.results.github?.reachable).toBe(true)
+    })
+
+    it('TTL 缓存命中轮次沿用原探测决策详情（decidedAt 不刷新，显式偏好插入后仍可恢复）', async () => {
+      const start = new Date('2026-09-07T10:00:00Z')
+      vi.setSystemTime(start)
+      setProbeBehavior({})
+
+      await resolveSourceOrder('auto')
+      const first = getLastProbeOutcome()
+      expect(first?.via).toBe('probe')
+
+      // 显式偏好重置记录（对应当次调用语义）
+      await resolveSourceOrder('github')
+      expect(getLastProbeOutcome()).toBeNull()
+
+      // +30min 缓存命中：排序仍源自原探测决策 → 详情恢复，decidedAt 为原决策时刻
+      vi.setSystemTime(new Date(start.getTime() + 30 * 60 * 1000))
+      await resolveSourceOrder('auto')
+      const restored = getLastProbeOutcome()
+      expect(restored?.via).toBe('probe')
+      expect(restored?.decidedAt).toBe(first?.decidedAt)
+      expect(restored?.results).toEqual(first?.results)
+      // 未重新探测（记录恢复自缓存，非捏造新探测）
+      expect(upgradeFetchMock).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  describe('探测 URL 与 release-sources 域常量同源（R1-U3）', () => {
+    it('探测 URL 由 RELEASE_SOURCE_HOSTS 主域下载域派生（单一来源防漂移）', async () => {
+      setProbeBehavior({})
+
+      await resolveSourceOrder('auto')
+
+      const urls = upgradeFetchMock.mock.calls.map((call) => call[0])
+      expect(urls).toEqual([
+        `https://${RELEASE_SOURCE_HOSTS.githubDownload}`,
+        `https://${RELEASE_SOURCE_HOSTS.atomgitDownload}`,
+      ])
     })
   })
 })

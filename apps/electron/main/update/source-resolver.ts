@@ -27,11 +27,16 @@
  * 代理短路路径不消费缓存（零网络成本直接映射，偏好/代理状态变化即时生效——偏好
  * 切换的完整生效时延由 checker 层检查缓存决定，§6.3，不在本模块）。
  *
- * 依赖方向：update 层内聚（proxy-config / upgrade-fetch 同层），不依赖 electron。
+ * S2 验收观测面：getLastProbeOutcome() 暴露最近一次排序决策的探测详情（三态：null /
+ * proxy-short-circuit / probe），供 checker 透传登记 source-selection 日志（R1-U1a）。
+ *
+ * 依赖方向：update 层内聚（proxy-config / upgrade-fetch / release-sources 同层），
+ * 不依赖 electron。
  */
 import type { UpdateSource, UpdateSourcePref } from '@xyz-agent/shared'
 import { readProxyConfig, resolveProxyUrl } from './proxy-config.js'
 import { upgradeFetch, isCurlHttpStatusError } from './upgrade-fetch.js'
+import { RELEASE_SOURCE_HOSTS } from './release-sources.js'
 
 /**
  * 源优先级序列（main 侧内部类型，不进 shared——renderer 无消费，设计 §7.1）。
@@ -40,15 +45,11 @@ import { upgradeFetch, isCurlHttpStatusError } from './upgrade-fetch.js'
 export type SourceOrder = UpdateSource[]
 
 /**
- * 两主域探测 URL。
- *
- * [并行开发注记] 权威来源应为 release-sources.ts 的域常量单一来源导出（设计 §6.1
- * 防漂移），但 u-release-sources 与本单元并行开发（Wave2），为避免并行耦合暂在本模块
- * 定义；领地互斥下各自定义可接受的重复仅限这两个主域探测 URL 字符串。u-release-sources
- * 落地后收敛（本模块仅存探测用途，非下载/API 域语义）。
+ * 两主域探测 URL（域值消费 release-sources 单一来源导出，D1 防漂移）。
+ * 取主域下载域而非 API 域：D4 被否谱系 b——探测是域名级链路判定，不打真实 API 端点。
  */
-const GITHUB_PROBE_URL = 'https://github.com'
-const GITCODE_PROBE_URL = 'https://gitcode.com'
+const GITHUB_PROBE_URL = `https://${RELEASE_SOURCE_HOSTS.githubDownload}`
+const GITCODE_PROBE_URL = `https://${RELEASE_SOURCE_HOSTS.atomgitDownload}`
 
 /** 单位换算常量（消 no-magic-numbers，对齐 update-self-healer.ts 命名先例）。 */
 const MS_PER_SECOND = 1_000
@@ -64,14 +65,68 @@ const PROBE_CACHE_TTL_MS = MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND
 /** 探测请求头：1 字节 Range 请求（GET 而非 HEAD 的原因见模块头注释）。 */
 const PROBE_RANGE_HEADER = 'bytes=0-0'
 
-/** 探测结果缓存（模块级进程内，与检查缓存同量级；仅 auto+无代理路径读写）。 */
-let cachedProbeOrder: SourceOrder | null = null
+/** 单域探测结果（S2 验收观测面字段：链路可达性布尔）。 */
+export interface ProbeSourceOutcome {
+  reachable: boolean
+}
+
+/**
+ * 最近一次源排序决策的探测详情（S2 验收观测面，checker 透传登记 source-selection 用）。
+ *
+ * results 域键缺失 = 该域可达性在本次决策通道下无推断依据（代理短路仅能推断 github，
+ * gitcode 不捏造值）；via='probe' 时两域键恒齐。
+ */
+export interface ProbeOutcome {
+  results: Partial<Record<UpdateSource, ProbeSourceOutcome>>
+  via: 'probe' | 'proxy-short-circuit'
+  /** 决策时刻（epoch ms）。TTL 缓存命中沿用原探测决策时刻，不刷新（不捏造新探测）。 */
+  decidedAt: number
+}
+
+/**
+ * 探测缓存（模块级进程内，与检查缓存同量级；仅 auto+无代理路径读写）。
+ * 携带决策详情：缓存窗口内的后续 auto 轮次排序仍源自该次探测，观测面恢复用。
+ */
+interface ProbeCacheEntry {
+  order: SourceOrder
+  outcome: ProbeOutcome
+}
+let cachedProbe: ProbeCacheEntry | null = null
 let cachedProbeAt = 0
+
+/**
+ * 最近一次排序决策的探测详情（R1-U1a，进程内单值）。
+ * 维护口径：每次 resolveSourceOrder 后读取 getLastProbeOutcome() 均对应当次调用的
+ * 排序依据——显式偏好路径重置为 null（显式偏好不是探测决策，checker 对显式偏好
+ * 自有 reason 口径，残留旧详情会被误登记为本次依据）；代理短路写短路记录；
+ * 真实探测写探测记录；TTL 缓存命中恢复缓存中的原决策详情（decidedAt 不刷新）。
+ */
+let lastProbeOutcome: ProbeOutcome | null = null
+
+/** 深拷贝决策详情（调用方 / 缓存 / 单值三者互不共享可突变引用）。 */
+function snapshotOutcome(outcome: ProbeOutcome): ProbeOutcome {
+  const results: Partial<Record<UpdateSource, ProbeSourceOutcome>> = {}
+  for (const [source, entry] of Object.entries(outcome.results)) {
+    results[source as UpdateSource] = { ...entry }
+  }
+  return { via: outcome.via, decidedAt: outcome.decidedAt, results }
+}
+
+/**
+ * 读取最近一次源排序决策的探测详情（供 checker 透传登记，S2 观测面）。
+ *
+ * 返回 null 的情形：本进程尚未做过任何决策、或最近一次调用走显式偏好路径。
+ * 返回值为快照副本，调用方突变不影响内部状态。
+ */
+export function getLastProbeOutcome(): ProbeOutcome | null {
+  return lastProbeOutcome ? snapshotOutcome(lastProbeOutcome) : null
+}
 
 /** 测试隔离入口（对齐 upgrade-fetch resetEnginePreferenceForTest 先例）。 */
 export function resetSourceOrderCacheForTest(): void {
-  cachedProbeOrder = null
+  cachedProbe = null
   cachedProbeAt = 0
+  lastProbeOutcome = null
 }
 
 /**
@@ -104,20 +159,35 @@ async function probeReachable(url: string): Promise<boolean> {
  *   （老 settings 文件无此字段 = auto，§6.3 向后兼容）
  */
 export async function resolveSourceOrder(pref: UpdateSourcePref = 'auto'): Promise<SourceOrder> {
-  // 显式偏好直接映射（未知值经类型收窄后落入 auto 分支 = 非法值回退 auto，§6.3 语义）
-  if (pref === 'github') return ['github', 'atomgit']
-  if (pref === 'atomgit') return ['atomgit', 'github']
+  // 显式偏好直接映射（未知值经类型收窄后落入 auto 分支 = 非法值回退 auto，§6.3 语义）；
+  // 同时重置决策记录——显式偏好不是探测决策（见 lastProbeOutcome 维护口径）
+  if (pref === 'github') {
+    lastProbeOutcome = null
+    return ['github', 'atomgit']
+  }
+  if (pref === 'atomgit') {
+    lastProbeOutcome = null
+    return ['atomgit', 'github']
+  }
 
   // auto：代理短路（readProxyConfig + resolveProxyUrl 现有 SSOT，proxy-config.ts）
   const proxyUrl = resolveProxyUrl(readProxyConfig())
   if (proxyUrl) {
+    lastProbeOutcome = {
+      via: 'proxy-short-circuit',
+      // 推断依据仅 github（能配代理 = github 可达概率高，D4）；gitcode 可达性无推断依据，不填不捏造
+      results: { github: { reachable: true } },
+      decidedAt: Date.now(),
+    }
     return ['github', 'atomgit']
   }
 
-  // auto + 无代理：探测结果 TTL 缓存命中 → 不重复探测
+  // auto + 无代理：探测结果 TTL 缓存命中 → 不重复探测，决策详情恢复自缓存
+  // （排序仍源自该次探测，decidedAt 保持原决策时刻，S2 观测面不因缓存轮次失真）
   const now = Date.now()
-  if (cachedProbeOrder && now - cachedProbeAt < PROBE_CACHE_TTL_MS) {
-    return [...cachedProbeOrder]
+  if (cachedProbe && now - cachedProbeAt < PROBE_CACHE_TTL_MS) {
+    lastProbeOutcome = snapshotOutcome(cachedProbe.outcome)
+    return [...cachedProbe.order]
   }
 
   // 并行探测两主域（无先后依赖，最坏代价 = 单域 3s 超时而非串行 6s）。
@@ -135,7 +205,17 @@ export async function resolveSourceOrder(pref: UpdateSourcePref = 'auto'): Promi
   const order: SourceOrder =
     githubReachable || !gitcodeReachable ? ['github', 'atomgit'] : ['atomgit', 'github']
 
-  cachedProbeOrder = [...order]
+  const outcome: ProbeOutcome = {
+    via: 'probe',
+    results: {
+      github: { reachable: githubReachable },
+      atomgit: { reachable: gitcodeReachable },
+    },
+    decidedAt: now,
+  }
+  lastProbeOutcome = snapshotOutcome(outcome)
+
+  cachedProbe = { order: [...order], outcome: snapshotOutcome(outcome) }
   cachedProbeAt = now
   return order
 }
