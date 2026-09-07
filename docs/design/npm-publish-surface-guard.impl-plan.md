@@ -97,10 +97,11 @@ graph TD
 
 **残留风险**：
 
-1. S5（真实 CI run）需推送测试分支——push 属用户授权事项，执行到 u3 验收时向用户确认推送安排；未获授权则以「本地复跑 invariants 命令序列 + diff 审查」为替代证据并如实登记。
+1. S5（真实 CI run）需推送测试分支——push 属用户授权事项。**阶段 5 已按此边界执行**：Gate B 判 blocked（剧本预期形态），替代证据 = 本地复跑 invariants 命令序列 exit 0 + Test - scripts guards 口径单测 110/110 + S1/S1b 红绿路径独立复跑；CI 真实 run 结论与 invariants job 时长增量（回填设计 D2）两项数字待推送授权后补。待验证检查点 1（豁免新形态）已闭合：Gate B 全程（基线/S1/S1b/S2/S3 漂移态与还原态）守卫实跑未出现新子路径形态。
 2. S6 的 workflow 生效面（真实 dev 预发布 run）延后到下次 dev 预发布，设计 §4 已如实登记此形态。
 3. S7（发布后终验）不在本次实施范围，随 0.5.2 发布编排执行。
-4. 工作区存在认知外改动（`docs/design/update-multi-source.md` 未 staged、`packages/renderer/src/__tests__/panel/command-popover-symbols-format-age.test.ts` 已 staged）——主 agent 全程不碰；commit 一律精确路径 + pathspec（`git commit -- <paths>`），防裹挟 staged 区。
+4. 工作区存在认知外改动（`docs/design/update-multi-source.md` 未 staged、`packages/renderer/src/__tests__/panel/command-popover-symbols-format-age.test.ts` 已 staged）——主 agent 全程不碰；commit 一律精确路径 + pathspec（`git commit -- <paths>`），防裹挟 staged 区。（执行后注：外部并行工作已自行处理这些文件，后续 git status 转干净，本条防线实际未触发。）
+5. **Gate A 全仓 lint 失败（认知外，待用户裁决）**：`pnpm run lint`（eslint . --max-warnings 0）exit 1，失败源 = `apps/electron/main/release-checker.ts` 8 warnings（0 errors，1 条 taste/no-unsafe-object-entries + 7 条 indent），由变更区间内外部并行特性 update-multi-source 的 commit 3dc4372e7 引入——非本计划五单元领地（publish-surface 领地内新脚本 eslint exit 0 干净）。按规则 0 不擅自修复，登记待用户裁决：修 update-multi-source 侧 / 由该特性自己的验收环节处理。
 
 **变更历史**：
 
@@ -110,3 +111,4 @@ graph TD
 | 2026-09-07 | v2：u5→u1 依赖边反转为 u1→u5（u5 执行者实证 render-constraints 实装校验 authority/hook 存在性，登记先行引用未来脚本机器不可通过）；Wave 重排 W1={u1} / W2={u5,u2,u3} / W3={u4}；u5 验收条款补「authority/enforcement 引用真实」；详见 §5 偏差登记表 |
 | 2026-09-07 | v3：阶段 3 一致性审查（三区并行 reviewer，0 unreasonable / 7 doc_errors）台账同步：§5 偏差表首行错别字「登立」改「登记」；设计文档同批 v6（指引分流说明 / D2 行号改锚 step 名称 / u3「紧随」改「依赖」）；README 三缺陷 + 守卫文案分流走阶段 4 修复批次 |
 | 2026-09-07 | v4：阶段 3+4 清零——修复批次（7a9b177f8：README 示例 stats-line 类型正确三层验证 + 包结构四子域 + extractGui 语义 + 守卫 fixFor 分流，判定逻辑零改动）+ 设计 v6（6d6116ca7）；定向复审（区 A 审查者续用）4 条 doc_errors 全 closed、0 new_issues、单测 29/29 与守卫基线复跑绿 |
+| 2026-09-07 | v5：阶段 5 双绿达成——Gate A：publish-surface 五单元领地 9 项全绿（vitest 110/110、render 幂等、doc-drift 零悬空、三 YAML 解析、守卫基线绿、S6b 双 true、零绕过零命中、覆盖矩阵闭合；全仓 lint 唯一失败源为认知外特性 update-multi-source 的 release-checker.ts，登记残留风险 5 待用户裁决）；Gate B：S1/S1b/S2/S3/S4/S6/S6b 七场景 pass（S2 干净 checkout 真实重演 0.5.1 事故剧本被拦截、S3 真实漂移注入被抓、S4 三包 npm pack --dry-run 实证 dist.bundle 入包）、S5/S7 blocked 如剧本预期（授权边界 + 发布后场景）；检查点 1 闭合、检查点 2 随 S5 待回填。临时改动全部还原（git diff 零行）、S2 worktree 已清理 |
