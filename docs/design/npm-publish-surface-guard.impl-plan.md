@@ -88,7 +88,7 @@ graph TD
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|--------------------------------------------|------|----------|
 | u1 | committed | 1 | 单测 29/29（`pnpm exec vitest run scripts/__tests__/check-publish-surface.test.mjs`）；真实仓库基线绿（README 处置后 3 包全绿，探针 0 裸名红 + ajv 豁免恰 4 = S3 前置成立）；S1/S1b 实测红绿全路径（主 agent 核验，见偏差登记表）；D7 warning 8.98MB 如实回显 |
-| u5 | pending | 0（首轮 blocked：render 校验 hook 存在性，已裁决顺序反转，见偏差登记表与 §3 v2） | — |
+| u5 | committed | 2（首轮 blocked 顺序反转，二轮落地） | render exit 0（91 条，C-proc-11 authority/hook 存在性校验通过）；md 增量 2+/1-（无重排）；check-doc-symbol-drift exit 0；五点条款 summary 逐点覆盖 |
 | u4 | pending | 0 | — |
 | u2 | pending | 0 | — |
 | u3 | pending | 0 | — |
