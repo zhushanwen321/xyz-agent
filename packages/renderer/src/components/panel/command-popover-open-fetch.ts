@@ -43,10 +43,13 @@ export function useCommandPopoverOpenFetch(opts: {
       if (!open || prevOpen) return // 仅 false→true 边沿
       const type = opts.type()
       const sid = opts.sessionId()
-      if (!sid) return // landing 态无 session 通道不拉（slash/skill 候选源 per-session；#/@ 候选为空不弹）
       // slash 与 skill（多 skill 注入 D1）同源：数据都在 pi get_commands → commandStore，
       // 打开边沿同一节流窗口拉一次，双浮层共享最新快照
       if (type === 'slash' || type === 'skill') {
+        // sid 门必须在 slash/skill 分支内，不能上移为 watch 顶部无条件门——
+        // file 路 landing cwd 通道（D2/D3）恰是「无 sid 有 cwd」的边沿拉取
+        // （f7da355d5 merge 曾误移为顶门，把 file 分支拦成死代码，G1 行为丢失）
+        if (!sid) return // landing 态无 session 通道不拉（slash/skill 候选源 per-session）
         if (Date.now() - lastSlashFetchAt < FETCH_THROTTLE_MS) return
         lastSlashFetchAt = Date.now()
         void sessionApi

@@ -19,11 +19,18 @@ import { createPinia, setActivePinia } from 'pinia'
 import type { FileNode, SessionSummary, SubagentRecord } from '@xyz-agent/shared'
 import { formatAge } from '@/components/panel/command-popover-symbols'
 
-// open-fetch 直接 import composer domain（landing cwd 通道）——mock 之隔离真实 WS 通路
+// open-fetch 直接 import composer domain（landing cwd 通道）——mock 之隔离真实 WS 通路。
+// u5 re-anchor（e79ba3647/8ca21226f）后实现 import 的是 core 子路径，mock 必须对齐同一
+// specifier（旧 '@/api/domains/composer' bridge 已删，mock 指旧路径 = mock 失效）；
+// importActual 保留其余真实导出（getFileCandidates/getMentionCandidates）防其他消费方断链
 const getFileCandidatesByCwdMock = vi.hoisted(() => vi.fn())
-vi.mock('@/api/domains/composer', () => ({
-  getFileCandidatesByCwd: (...args: unknown[]) => getFileCandidatesByCwdMock(...args),
-}))
+vi.mock('@xyz-agent/core/transport/api/domains/composer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@xyz-agent/core/transport/api/domains/composer')>()
+  return {
+    ...actual,
+    getFileCandidatesByCwd: (...args: unknown[]) => getFileCandidatesByCwdMock(...args),
+  }
+})
 
 import CommandPopover from '@/components/panel/CommandPopover.vue'
 import { buildSessionCandidates, buildSubagentCandidates } from '@/components/panel/command-popover-symbols'
