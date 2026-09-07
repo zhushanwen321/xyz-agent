@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-subagent-workflow",
-  "version": "8.8.0",
+  "version": "8.8.1",
   "type": "module",
   "main": "index.ts",
   "description": "Unified subagent execution and multi-agent workflow orchestration for Pi — spawned-process agent runtime with sync/background modes, stateful workflow management with persistence, state machine, and execution tracing.",
@@ -24,6 +24,7 @@
     "relay/",
     "src/index.ts",
     "src/jsonl-run-store.ts",
+    "src/session-lifecycle.ts",
     "src/host/",
     "src/injectors/",
     "src/interface/"

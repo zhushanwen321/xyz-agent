@@ -412,6 +412,29 @@ if echo "$STAGED_FILES" | grep -qE "^extensions/|^extension-dependencies\.json$|
 fi
 
 # ============================================================================
+# 2e. extension npm 发布 files 白名单守卫（import 闭包 ⊆ files）
+#     scripts/check-extension-files.mjs：从发布入口解析静态 import 闭包 +
+#     pi.skills/agents/workflows 资源路径，逐一对照 package.json 的 files 白名单
+#     （npm 只打包白名单命中文件）。起因 pi-subagent-workflow@8.8.1：逐文件枚举
+#     白名单漏同步新文件 src/session-lifecycle.ts，tarball 缺文件、用户端加载即崩。
+#     零第三方依赖，实测 <1s。复用 SKIP_EXTENSION_LINT 开关（不新增逃生口）。
+# ============================================================================
+
+if echo "$STAGED_FILES" | grep -qE "^extensions/.*/(package\.json|[^/]+\.ts)$|^extensions/.*/src/.*\.ts$|^scripts/check-extension-files\.mjs$"; then
+    print_section "[extension files 白名单守卫]"
+
+    if [ "$SKIP_EXTENSION_LINT" != "1" ]; then
+        if ! node scripts/check-extension-files.mjs; then
+            echo -e "${RED}[ERROR] extension files 白名单守卫未通过——白名单外的文件不会进 npm tarball，按上方 ✗ 明细修复后重试${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${YELLOW}[SKIP] extension files 白名单守卫已跳过${NC}"
+    fi
+fi
+
+# ============================================================================
 # 3. 自定义代码规范检查（原生 HTML 元素、Emoji、自定义 CSS）
 # ============================================================================
 
@@ -1331,6 +1354,7 @@ echo -e "  ${GREEN}[+]${NC} vue-tsc 类型检查（全量，与 CI 等价）"
 echo -e "  ${GREEN}[+]${NC} pi extensions ESLint + tsc 类型检查（extensions/ 目录）"
 echo -e "  ${GREEN}[+]${NC} pi extensions manifest & convention 检查（禁废弃 namespace / 禁 console.log / pi manifest 字段）"
 echo -e "  ${GREEN}[+]${NC} extension 结构一致性检查（分组/role/依赖台账/一层路径残留）"
+echo -e "  ${GREEN}[+]${NC} extension npm 发布 files 白名单守卫（import 闭包 ⊆ files）"
 echo -e "  ${GREEN}[+]${NC} Vue 组件规范检查（禁止原生 HTML、Emoji、自定义 CSS）"
 echo -e "  ${GREEN}[+]${NC} Sidecar session 隔离检查"
 echo -e "  ${GREEN}[+]${NC} CSS tokens 检查"
