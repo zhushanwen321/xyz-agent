@@ -399,7 +399,8 @@ export function useComposerShell(params: ComposerShellParams) {
     send,
     steer,
     compact,
-    enqueueCompact: (sessionId: string, text: string) => compactQueue.enqueue(sessionId, text),
+    enqueueCompact: (sessionId: string, text: string, segments: Segment[]) =>
+      compactQueue.enqueue(sessionId, text, segments),
     toastError,
     t: t as (key: string, params?: Record<string, unknown>) => string,
   })

@@ -10,7 +10,7 @@
  * getHistory 返回类型用内联结构（{ messages; historyTruncated }），不依赖 renderer 的
  * HistoryResult（保持 core 平台无关）。
  */
-import type { Message, Segment, ServerMessageUnion } from '@xyz-agent/shared'
+import type { Message, SegmentsMetadataEntry, ServerMessageUnion } from '@xyz-agent/shared'
 
 /**
  * chat 域后端操作端口。
@@ -67,8 +67,10 @@ export interface ChatApiPort {
  * 独立于 ChatApiPort：writeSegments 语义属 session 域（session.writeSegments RPC），
  * useChat 只是消费者。独立类型避免塞进 ChatApiPort 造成域语义混淆。壳侧实现：
  * renderer api/domains/session.writeSegments。
+ * [defer segments 化] entry 类型改用 shared SegmentsMetadataEntry（原内联结构）——
+ * defer flush 链条目写 deferEntryId（无 clientUuid），直发链仍写 clientUuid。
  */
 export type WriteSegmentsFn = (payload: {
   sessionId: string
-  entry: { clientUuid: string; segments: Segment[]; timestamp: number }
+  entry: SegmentsMetadataEntry
 }) => Promise<void>

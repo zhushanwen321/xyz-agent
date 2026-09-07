@@ -35,10 +35,11 @@
  */
 import { computed, reactive, ref, unref } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
-import type { ServerMessage } from '@xyz-agent/shared'
+import type { Segment, ServerMessage } from '@xyz-agent/shared'
+import { segmentsToPrompt } from '@xyz-agent/shared'
 import { setCompactQueueProviderForEffects, submitQueuedEntry } from '@xyz-agent/core'
 import type { SubmitQueuedEntryDeps } from '@xyz-agent/core'
-import { chat as chatApi } from '@/api'
+import { chat as chatApi, session as sessionApi } from '@/api'
 import * as events from '@xyz-agent/core/transport/api'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
@@ -49,7 +50,24 @@ import { useSessionScopedState } from '@/composables/useSessionScopedState'
 /** 待发消息条目（D1 继承自 slice；u4a 扩展提交通道标记 mode） */
 export interface QueuedMessage {
   id: string
+  /**
+   * 展示文本（draft）：气泡 / queue_update 快照渲染统一用它（[defer segments 化 /
+   * D-A1-1]）。富内容条目的 text ≠ 提交文本（segmentsToPrompt 序列化产物）——提交
+   * 面走 segments/submitText。
+   */
   text: string
+  /**
+   * [defer segments 化 / D-A1-1] 提交载荷：入队时快照的完整 Segment[]（image/skill/
+   * file chip 等）。未传 segments 的 enqueue（重入队/旧调用方）包 `[{type:'text',text}]`
+   * 单段——恒有值。flush 经 submitQueuedEntry 序列化 + 注入展开，与直发同款。
+   */
+  segments: Segment[]
+  /**
+   * [defer segments 化 / D-A1-1] 提交文本（= segmentsToPrompt(segments)），**提交时**
+   * 写入（flush 侧算好后落条目）——core ①b 文本 FIFO 兜底的匹配源。send.rejected
+   * 静默重入队路径入队即写（原文本即提交文本）。
+   */
+  submitText?: string
   /**
    * [session-occupancy u4a / D5.3] 提交通道标记（core CompactQueueEntrySnapshot.mode
    * 对齐）：flush 提交该条目时写入——队首 'send'、其余 'steer'（与提交顺序一致）；
@@ -67,8 +85,13 @@ interface CompactQueuePartition {
 }
 
 export interface CompactQueue {
-  /** 入队一条待发消息，返回含 crypto.randomUUID() id 的条目（updateFor push） */
-  enqueue(sid: string, text: string): QueuedMessage
+  /**
+   * 入队一条待发消息，返回含 crypto.randomUUID() id 的条目（updateFor push）。
+   * [defer segments 化 / D-A1-1] segments = 入队快照的完整段（未传包 text 单段——纯文本
+   * 等价形态）；submitText 仅 send.rejected 静默重入队路径传（原文本即提交文本），
+   * 普通入队由 flush 提交时写入。
+   */
+  enqueue(sid: string, text: string, segments?: Segment[], submitText?: string): QueuedMessage
   /** 按 id 精确取消，未知 id no-op（不抛错）。撤销边界（D4）：仅未提交条目（mode === undefined）
    *  可撤；已提交条目（mode 已写）remove **no-op**——记账不变量下沉到 API 层（一致性审查
    *  R3-U2）：已提交条目已进 pi 队列无法撤回，强行移除会使 send 条目的 inflight 占位悬空、
@@ -144,6 +167,9 @@ function createSubmitEntryDeps(store: ReturnType<typeof useChatStore>, sessionSt
     // chat cast 同 features/chat/useChat.ts getChatStore（pinia Store → ChatStoreInstance，
     // 运行时等价——flush 只调 incrementInflight/decrementInflight/appendUser 方法）。
     chat: store as unknown as SubmitQueuedEntryDeps['chat'],
+    // [defer segments 化 / D-A1-2] 富内容条目写 sidecar（deferEntryId key，reload 回填
+    // badge）——与 features/chat/useChat.ts 的 writeSegments 注入同源（session 域 RPC）。
+    writeSegments: sessionApi.writeSegments,
     sessionStore,
     toast: useToast(),
     t: tFn,
@@ -160,8 +186,15 @@ function createCompactQueue(): CompactQueue {
     () => reactive<CompactQueuePartition>({ messages: [] }),
   )
 
-  function enqueue(sid: string, text: string): QueuedMessage {
-    const entry: QueuedMessage = { id: crypto.randomUUID(), text }
+  function enqueue(sid: string, text: string, segments?: Segment[], submitText?: string): QueuedMessage {
+    // [defer segments 化 / D-A1-1] segments 缺省包 text 单段：QueuedMessage.segments 恒有值
+    //（纯文本条目的等价形态——flush 序列化 / 气泡徽标判定统一消费，无 undefined 分支）。
+    const entry: QueuedMessage = {
+      id: crypto.randomUUID(),
+      text,
+      segments: segments ?? [{ type: 'text', text }],
+      submitText,
+    }
     state.updateFor(sid, (p) => {
       p.messages.push(entry)
     })
@@ -186,6 +219,15 @@ function createCompactQueue(): CompactQueue {
     })
   }
 
+  /** [defer segments 化 / D-A1-1] 写提交文本（= segmentsToPrompt(segments)，flush 提交时
+   *  写入；live 条目存在才写——竞态下条目已出队则 no-op）。core ①b 兜底匹配源。 */
+  function setEntrySubmitText(sid: string, id: string, submitText: string): void {
+    state.updateFor(sid, (p) => {
+      const live = p.messages.find((m) => m.id === id)
+      if (live) live.submitText = submitText
+    })
+  }
+
   /** [u4b] 读 live 条目（flush 循环内实时查——确认/撤销竞态下条目可能已出队） */
   function findLive(sid: string, id: string): QueuedMessage | undefined {
     let live: QueuedMessage | undefined
@@ -198,20 +240,25 @@ function createCompactQueue(): CompactQueue {
   /** [u4a / D5.3 ①] 投递确认出队 + 转态：按 id 精确 splice，命中 true / 未知 id false（no-op） */
   function confirmDelivery(sid: string, id: string): boolean {
     let removed = false
-    let deliveredText: string | null = null
+    // 持有对象：闭包内赋值 + 外部成员访问——直接用 let 局部变量会被 TS 控制流窄化为
+    // never（回调赋值对窄化不可见，原 deliveredText 模式未炸是 text 属性恰好接受 never）。
+    const holder: { delivered: QueuedMessage | null } = { delivered: null }
     state.updateFor(sid, (p) => {
       const idx = p.messages.findIndex((m) => m.id === id)
       if (idx !== -1) {
-        deliveredText = p.messages[idx]!.text
+        holder.delivered = { ...p.messages[idx]! }
         p.messages.splice(idx, 1)
         removed = true
       }
     })
-    if (removed && deliveredText !== null) {
-      // 转态（u4b / D5.3）：core ① 命中后帧消费终止（不 appendUser），正常气泡唯一插入点。
-      // appendUser 是 overlay-only（不喂 reducer），与本帧开头 reducer 的 applyEntryFrame
-      // 喂入互不双计（store.ts W2 后修注释）；重开 session 由 pi entry 重放恢复。
-      useChatStore().appendUser(sid, [{ type: 'text', text: deliveredText }])
+    if (removed && holder.delivered !== null) {
+      // 转态（u4b / D5.3 + defer segments 化 / D-A1-6）：core ① 命中后帧消费终止
+      //（不 appendUser），正常气泡唯一插入点。appendUser 段源改 entry.segments——现状
+      // 单 text 段（draft 文本）会把富内容条目的 chip badge 丢掉；segments 含完整结构化段
+      //（image/skill/file），转态气泡与直发同形态（live ≡ reload：reload 侧 backfillSegments
+      // 按 deferEntryId 回填同一 segments）。appendUser 是 overlay-only（不喂 reducer、
+      // 不写 sidecar——store.ts:637），与 submitQueuedEntry 的 sidecar 写入互斥无双写。
+      useChatStore().appendUser(sid, holder.delivered.segments)
     }
     return removed
   }
@@ -287,12 +334,17 @@ function createCompactQueue(): CompactQueue {
         // → 全部 steer 并入当前 run，再发 send 会双 run 双投递；turn 不活跃 → 队首未提交
         // 条目走 send 启动新 run（对齐 useChat.send 的 B 策略 busy→steer 判据）。
         const channel: 'send' | 'steer' = (sendChannelUsed || store.isActive(sid)) ? 'steer' : 'send'
+        // [defer segments 化 / D-A1-1] 提交时写 submitText（= segmentsToPrompt(segments)，
+        // 幂等——重试重算同值）：core ①b 文本 FIFO 兜底的匹配源，须在确认帧可能到达前
+        // 落条目（与 setEntryMode 同窗口，peek 快照对 ① 可见）。
+        const submitText = live.submitText ?? segmentsToPrompt(live.segments)
+        setEntrySubmitText(sid, entry.id, submitText)
         // 提交标记先于 RPC 写入：core ① 的匹配资格判据要求确认帧到达时 mode 已写；
         // 未投递路径（catch/S1）下方清除（重试重挂重标）。
         setEntryMode(sid, entry.id, channel)
         uuidLessBase = uuidLessRejections
         try {
-          await submitQueuedEntry(sid, { id: entry.id, text: entry.text }, channel, submitDeps)
+          await submitQueuedEntry(sid, { id: entry.id, text: entry.text, segments: live.segments, submitText }, channel, submitDeps)
         } catch (e) {
           // RPC reject：消息未投出——留队 + 回滚占位（send 通道在 submitQueuedEntry 内挂的
           // inflight）+ 清提交标记 + 停止提交后续（后续条目依赖本条 send 注入的 run）。

@@ -51,7 +51,7 @@ interface Spies {
   send: Spy<(sessionId: string, segments: Segment[]) => Promise<void>>
   steer: Spy<(sessionId: string, segments: Segment[]) => Promise<void>>
   compact: Spy<(sessionId: string, customInstructions?: string) => Promise<void>>
-  enqueueCompact: Spy<(sessionId: string, text: string) => void>
+  enqueueCompact: Spy<(sessionId: string, text: string, segments: Segment[]) => void>
   toastError: Spy<(msg: string) => void>
   trySendBash: Spy<(rawText: string) => Promise<boolean>>
   extractBashCommand: Spy<(text: string) => BashCommandExtract>
@@ -85,7 +85,7 @@ function setup(initial?: Partial<DepsControl>): { deps: ComposerSendDeps; spies:
     send: vi.fn(async (_sessionId: string, _segments: Segment[]) => {}),
     steer: vi.fn(async (_sessionId: string, _segments: Segment[]) => {}),
     compact: vi.fn(async (_sessionId: string, _customInstructions?: string) => {}),
-    enqueueCompact: vi.fn((_sessionId: string, _text: string) => {}),
+    enqueueCompact: vi.fn((_sessionId: string, _text: string, _segments: Segment[]) => {}),
     toastError: vi.fn((_msg: string) => {}),
     trySendBash: vi.fn(async (_rawText: string) => ctrl.bashTryReturn),
     extractBashCommand: vi.fn((_text: string) => ctrl.bashExtract),
@@ -233,14 +233,35 @@ describe('useComposerSend.onSend', () => {
     expect(spies.enqueueCompact).not.toHaveBeenCalled()
   })
 
-  it('⑤ defer 路由（settling / bash 忙）+ 普通文本 → enqueueCompact + clearInput', async () => {
+  it('⑤ defer 路由（settling / bash 忙）+ 普通文本 → enqueueCompact（含 segments 快照）+ clearInput', async () => {
     // defer 泛化：settling（行 4）与 bash（行 6）与 compacting（行 5）同走入队——
     // 路由值由 sessionPhase 派生，分发器不区分忙的来源维度。
+    // [defer segments 化] 入队携带完整 segments（getSegments 快照，MF-A 根修）——
+    // 纯文本条目的 segments = text 单段，富内容条目含 image/skill/file chip 段。
     const { deps, spies } = setup({ sendRoute: 'defer', draft: 'queued msg' })
     await useComposerSend(deps).onSend()
-    expect(spies.enqueueCompact).toHaveBeenCalledWith('s1', 'queued msg')
+    expect(spies.getSegments).toHaveBeenCalledTimes(1)
+    expect(spies.enqueueCompact).toHaveBeenCalledWith('s1', 'queued msg', SEGMENTS)
     expect(spies.clearInput).toHaveBeenCalledTimes(1)
     expect(spies.send).not.toHaveBeenCalled()
+  })
+
+  it('⑤c defer 路由 + 富内容（image/skill chip 段）→ segments 完整透传入队不丢段', async () => {
+    // MF-A 场景锁定：bash/compacting 占用期发图 + skill chip，段必须随 enqueue 走
+    //（改造前只传 draft 纯文本，chip 段被 clearInput 清掉静默丢失）。
+    const richSegments: Segment[] = [
+      { type: 'text', text: '帮我看下这个报错' },
+      { type: 'image', id: 'img-1', path: '/tmp/shot.png', fileName: 'shot.png', displayName: '截图.png' },
+      { type: 'skill', name: 'code-review' },
+    ]
+    const { deps, spies } = setup({
+      sendRoute: 'defer',
+      draft: '帮我看下这个报错',
+    })
+    spies.getSegments.mockReturnValue(richSegments)
+    await useComposerSend(deps).onSend()
+    expect(spies.enqueueCompact).toHaveBeenCalledWith('s1', '帮我看下这个报错', richSegments)
+    expect(spies.clearInput).toHaveBeenCalledTimes(1)
   })
 
   it('⑤b defer 路由 + landing（无 session）→ 不入队（sessionIdRef null 防御守卫）', async () => {

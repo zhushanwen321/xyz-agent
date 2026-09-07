@@ -625,7 +625,7 @@ describe('send.rejected 兜底与回滚（session-occupancy D2 P1）', () => {
     expect(f.chatStore.getInflight('r1')).toBe(0)
     // 入队恰一次：兜底 enqueue 调用一次，原文入队（flush 重放直发原文）
     expect(f.compactQueue.enqueue).toHaveBeenCalledTimes(1)
-    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('r1', '继续重构 auth 模块')
+    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('r1', '继续重构 auth 模块', [{ type: 'text', text: '继续重构 auth 模块' }], '继续重构 auth 模块')
     // 静默入队取代 toast（D2 接管表）
     expect(f.toast.error).not.toHaveBeenCalled()
     f.dispose()
@@ -640,7 +640,7 @@ describe('send.rejected 兜底与回滚（session-occupancy D2 P1）', () => {
     // P3 全 reason：busy（bash 忙等）拒绝同样静默入队——occupancy 回 idle（bash 结束）时
     // useChat occupancy handler 触发 flush 投递，不再有「等不到触发源」的滞留。
     expect(f.compactQueue.enqueue).toHaveBeenCalledTimes(1)
-    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('r2', 'hi')
+    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('r2', 'hi', [{ type: 'text', text: 'hi' }], 'hi')
     // toast-only 分支退役（静默入队取代）
     expect(f.toast.error).not.toHaveBeenCalled()
     f.dispose()
@@ -653,7 +653,7 @@ describe('send.rejected 兜底与回滚（session-occupancy D2 P1）', () => {
     expect(f.chatStore.getMessages('r2b').length).toBe(0)
     expect(f.chatStore.getInflight('r2b')).toBe(0)
     expect(f.compactQueue.enqueue).toHaveBeenCalledTimes(1)
-    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('r2b', 'hi')
+    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('r2b', 'hi', [{ type: 'text', text: 'hi' }], 'hi')
     expect(f.toast.error).not.toHaveBeenCalled()
     f.dispose()
   })
@@ -764,7 +764,7 @@ describe('send.rejected 兜底与回滚（session-occupancy D2 P1）', () => {
     expect(f.chatStore.getInflight('r7')).toBe(inflightBefore)
     // 入队自愈（与 send 对齐）：编辑后原文入队等 occupancy idle 重投，内容不丢
     expect(f.compactQueue.enqueue).toHaveBeenCalledTimes(1)
-    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('r7', 'edited')
+    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('r7', 'edited', [{ type: 'text', text: 'edited' }], 'edited')
     // 静默（D2 接管表：toast「Agent 正在处理」删除）
     expect(f.toast.error).not.toHaveBeenCalled()
     f.dispose()
@@ -799,7 +799,12 @@ describe('簇 A1：busy 拒绝入队后的 flush 触发与拒绝循环重投', (
     f.emit('a1m', msg('a1m', 'send.rejected', { reason: 'processing', message: 'Agent 正在处理' }))
     await p
 
-    expect(f.compactQueue.enqueue).toHaveBeenCalledWith('a1m', '<xyz-skill name="review"/>帮我审查')
+    expect(f.compactQueue.enqueue).toHaveBeenCalledWith(
+      'a1m',
+      '<xyz-skill name="review"/>帮我审查',
+      [{ type: 'text', text: '<xyz-skill name="review"/>帮我审查' }],
+      '<xyz-skill name="review"/>帮我审查',
+    )
     // [A1] 入队晚于 idle 帧：投影已全 idle → 立即 flush 补投（改造前此处 flush 恒 0 次，
     // 消息滞留到下一个无关 occupancy 转移）
     expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)

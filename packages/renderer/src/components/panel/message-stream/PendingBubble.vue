@@ -22,6 +22,14 @@
     >
       <Clock class="mt-[3px] size-3.5 shrink-0 text-neutral-mid" aria-hidden="true" />
       <span class="min-w-0 break-words text-[length:var(--text-base)] leading-[1.55] text-neutral-fg">{{ entry.text }}</span>
+      <!-- [defer segments 化] chip 计数徽标：segments 中非 text 段（image/skill/file 等）>0
+           时在文本旁显示 +N——入队富内容的可见性（不丢段的可感知面）。 -->
+      <span
+        v-if="chipCount > 0"
+        class="ml-auto shrink-0 self-center rounded-[var(--radius-sm)] bg-surface-hover px-1 py-px text-[length:var(--text-xs)] leading-[1.4] text-neutral-dim"
+        :title="t('panel.deferQueue.chipBadgeHint', { count: chipCount })"
+        :data-testid="`pending-bubble-chips-${entry.id}`"
+      >{{ t('panel.deferQueue.chipBadge', { count: chipCount }) }}</span>
     </div>
     <span
       class="opacity-0 transition-opacity duration-150 group-focus-within/pending:opacity-100 group-hover/pending:opacity-100"
@@ -43,12 +51,13 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Clock, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { QueuedMessage } from '@/composables/panel/useCompactQueue'
 
-defineProps<{
+const props = defineProps<{
   entry: QueuedMessage
 }>()
 
@@ -57,4 +66,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+/** 非 text 段数（image/skill/file chip 等）——富内容徽标计数（0 = 纯文本不显示） */
+const chipCount = computed(() => props.entry.segments.filter((s) => s.type !== 'text').length)
 </script>

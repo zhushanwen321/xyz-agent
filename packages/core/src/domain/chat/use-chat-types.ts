@@ -6,7 +6,7 @@
  * re-export 全部类型，domain/chat/index.ts 与 __tests__ 的既有 `from './useChat'`
  * 消费零改动。
  */
-import type { SessionViewSnapshot } from '@xyz-agent/shared'
+import type { Segment, SessionViewSnapshot } from '@xyz-agent/shared'
 import type { ChatApiPort, WriteSegmentsFn } from './api-port'
 import type { ChatStoreInstance } from './store'
 
@@ -22,6 +22,19 @@ import type { ChatStoreInstance } from './store'
 export interface CompactQueueEntrySnapshot {
   id: string
   text: string
+  /**
+   * [defer segments 化 / D-A1-1] 提交载荷（富内容段）。入队时写入：enqueue 路径快照的
+   * Segment[]（image/skill/file chip 等）；send.rejected 重入队路径包 `[{type:'text',text}]`
+   * 单段。renderer QueuedMessage.segments 恒有值，此处可选是防御（core mock/旧实现形态）。
+   */
+  segments?: Segment[]
+  /**
+   * [defer segments 化 / D-A1-1] 提交文本（= segmentsToPrompt(segments)），**提交时**写入
+   * （flush 侧算好后落条目）。供 ①b 文本 FIFO 兜底匹配——富内容条目 draft（text）≠
+   * 序列化文本，匹配源必须用提交时的真实落盘文本。undefined = 未提交/旧形态，消费方
+   * 回退 text。
+   */
+  submitText?: string
   /**
    * [u4a / D5.3] 提交通道标记：flush 提交该条目时写入（队首 'send'、其余 'steer'——
    * 与 flush 的首条 send + 后续 steer 提交顺序一致）；undefined = 未提交（还没被任何
@@ -42,8 +55,19 @@ export interface CompactQueueLike {
    *   （设计 §3.5 错误规格表）。
    */
   flush: (sid: string) => Promise<boolean>
-  /** 入队一条待发消息，返回含 id 的条目（id 供 flush 提交时的 clientUuid 消歧，u4b 消费） */
-  enqueue: (sid: string, text: string) => { id: string; text: string }
+  /**
+   * 入队一条待发消息，返回含 id 的条目（id 供 flush 提交时的 clientUuid 消歧，u4b 消费）。
+   * [defer segments 化 / D-A1-1] segments 入队快照（富内容段）；未传时实现方包
+   * `[{type:'text',text}]` 单段（纯文本条目等价形态）。submitText 仅 send.rejected
+   * 静默重入队路径传（已序列化 promptText，原文本即提交文本）；普通入队路径的
+   * submitText 由 flush 提交时写入。
+   */
+  enqueue: (
+    sid: string,
+    text: string,
+    segments?: Segment[],
+    submitText?: string,
+  ) => { id: string; text: string }
   /** 只读快照（副本），兜底 handler 据此判定 rejected.clientUuid 是否命中已有条目；
    *  [u4a] message_end(user) ① 据此做 defer 分区 FIFO 文本匹配（按入队序，最早同文本优先） */
   peek: (sid: string) => ReadonlyArray<CompactQueueEntrySnapshot>
@@ -98,6 +122,12 @@ export interface EnsureStreamSubDeps {
 export interface SubmitQueuedEntryDeps {
   /** send/steer/streamSubscribe：flush 逐条提交的全部 RPC 面（窄化注入，同上方收窄理由） */
   chatApi: Pick<ChatApiPort, 'send' | 'steer' | 'streamSubscribe'>
+  /**
+   * [defer segments 化 / D-A1-2] 写 segments.json sidecar（session.writeSegments RPC）——
+   * 富内容条目（含非 text 段）提交时按 deferEntryId 写，重开 session 回填 badge。
+   * fire-and-forget（失败 console.warn 不阻断，对齐 submitSegments 的 sidecar 写模式）。
+   */
+  writeSegments: WriteSegmentsFn
   /** chat store：send 通道挂 inflight 占位 + 透传 ensureStreamSubscription */
   chat: ChatStoreInstance
   sessionStore: SessionStoreLike

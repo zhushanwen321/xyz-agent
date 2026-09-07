@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { rebuildHistoryFromEntries } from '../../../infra/pi/entry-tree-builder.js'
-import type { SegmentsMetadataFile } from '@xyz-agent/shared'
+import type { Segment, SegmentsMetadataFile } from '@xyz-agent/shared'
 import type {
   PiSessionEntry,
   PiSessionMessageEntry,
@@ -812,5 +812,118 @@ describe('rebuildHistoryFromEntries', () => {
     // 伪消息（compaction/branch system 消息）无 piEntryId（convertPiHistory 只给 user/assistant 填）
     expect(messages[1].piEntryId).toBeUndefined()
     expect(messages[2].piEntryId).toBeUndefined()
+  })
+})
+
+// ── [defer segments 化 / D-A1-2 ③] defer 裸标记 id 直查回填（send/steer 条目同链——
+//    defer 条目结构上无 clientUuid custom entry 映射，回填走 deferEntryId 兜底链）。──
+describe('rebuildHistoryFromEntries deferEntryId 回填（defer segments 化 / D-A1-2）', () => {
+  const DEFER_ID_1 = '3f2504e0-4f89-41d3-9a0c-0305e82c3301'
+  const DEFER_ID_2 = '3f2504e0-4f89-41d3-9a0c-0305e82c3302'
+  const RICH_SEGS: Segment[] = [
+    { type: 'image', id: 'img-1', path: '/tmp/shot.png', fileName: 'shot.png', displayName: '截图.png' },
+    { type: 'text', text: '帮我看下这个报错' },
+  ]
+
+  /** 构造带 defer 裸标记尾的 user message entry（pi 落盘形态：文本 + <!--xyz:msg:...-->） */
+  function makeDeferUserEntry(id: string, deferId: string, text: string): PiSessionEntry {
+    return makeMessageEntry({ id, role: 'user', text: `${text}\n<!--xyz:msg:${deferId}-->` })
+  }
+
+  it('case D1: defer 条目（send/steer 通道落盘同形态）→ 裸标记 id 直查 sidecar 回填完整 segments（标记已被 convert 剥离）', () => {
+    // 两条 defer 条目：队首走 send、第二条走 steer——pi 落盘文本形态一致（尾部裸标记，
+    // send 通道 input hook 只认 u- 前缀不剥裸标记；steer 通道无 hook）
+    const entries: PiSessionEntry[] = [
+      makeDeferUserEntry('msgD0010', DEFER_ID_1, '帮我看下这个报错'),
+      makeDeferUserEntry('msgD0020', DEFER_ID_2, '第二条'),
+    ]
+    const segmentsMeta = makeSegmentsMetadata([
+      { deferEntryId: DEFER_ID_1, segments: RICH_SEGS, timestamp: Date.now() },
+      {
+        deferEntryId: DEFER_ID_2,
+        segments: [
+          { type: 'text', text: '第二条' },
+          { type: 'file', path: '/a/b.ts' },
+        ],
+        timestamp: Date.now(),
+      },
+    ])
+
+    const { messages } = rebuildHistoryFromEntries(entries, segmentsMeta)
+
+    // 回填命中：完整结构化 segments（含 image badge / file chip）
+    expect((messages[0].content as typeof RICH_SEGS)).toEqual(RICH_SEGS)
+    expect(messages[1].content).toEqual([
+      { type: 'text', text: '第二条' },
+      { type: 'file', path: '/a/b.ts' },
+    ])
+    // 无 clientUuid 映射（defer 条目不写 custom entry——buildClientUuidMap 空）
+  })
+
+  it('case D2: u- 前缀标记（直发链）不进 defer 直查链——u- 形态不匹配裸 uuid 正则，deferEntryId 回填不触发', () => {
+    const entries: PiSessionEntry[] = [
+      makeMessageEntry({ id: 'msgD0021', role: 'user', text: 'T\n<!--xyz:msg:u-3f2504e0-4f89-41d3-9a0c-0305e82c3301-->' }),
+    ]
+    const segmentsMeta = makeSegmentsMetadata([
+      { deferEntryId: DEFER_ID_1, segments: RICH_SEGS, timestamp: Date.now() },
+    ])
+
+    const { messages } = rebuildHistoryFromEntries(entries, segmentsMeta)
+
+    // 不回填：保持默认产出（textToSegments 纯文本，含标记原文——id 空间互斥回归锁定）
+    expect(messages[0].content).toEqual([{ type: 'text', text: 'T\n<!--xyz:msg:u-3f2504e0-4f89-41d3-9a0c-0305e82c3301-->' }])
+  })
+
+  it('case D3: 正文裸 uuid 无标记包裹（非 defer 消息恰含 uuid 字符串）→ 不误命中（正则要求完整标记形态）', () => {
+    const entries: PiSessionEntry[] = [
+      makeMessageEntry({ id: 'msgD0022', role: 'user', text: `参考任务 ${DEFER_ID_1} 的输出` }),
+    ]
+    const segmentsMeta = makeSegmentsMetadata([
+      { deferEntryId: DEFER_ID_1, segments: RICH_SEGS, timestamp: Date.now() },
+    ])
+
+    const { messages } = rebuildHistoryFromEntries(entries, segmentsMeta)
+
+    // 不回填：裸 uuid 字符串不构成 <!--xyz:msg:...--> 标记，deferIdByEntryId 为空
+    expect(messages[0].content).toEqual([{ type: 'text', text: `参考任务 ${DEFER_ID_1} 的输出` }])
+  })
+
+  it('case D4: 裸标记 id 与 sidecar deferEntryId 不一致 → 不回填（全等匹配防御）', () => {
+    const entries: PiSessionEntry[] = [
+      makeDeferUserEntry('msgD0023', DEFER_ID_2, '文本'),
+    ]
+    const segmentsMeta = makeSegmentsMetadata([
+      { deferEntryId: DEFER_ID_1, segments: RICH_SEGS, timestamp: Date.now() },
+    ])
+
+    const { messages } = rebuildHistoryFromEntries(entries, segmentsMeta)
+
+    // 标记提取到 DEFER_ID_2 但 sidecar 只有 DEFER_ID_1 → 直查失配，保持默认产出
+    expect(messages[0].content).toEqual([{ type: 'text', text: '文本' }])
+  })
+
+  it('case D5: defer 条目与直发条目混排——clientUuid 链先、deferEntryId 兜底，两链各自命中不串扰', () => {
+    const directUuid = 'u-direct-uuid-005'
+    const entries: PiSessionEntry[] = [
+      makeMessageEntry({ id: 'msgD0030', role: 'user', text: '直发消息' }),
+      makeClientMsgIdEntry({ id: 'cusD0030', clientUuid: directUuid, userEntryId: 'msgD0030' }),
+      makeDeferUserEntry('msgD0031', DEFER_ID_1, 'defer 消息'),
+    ]
+    const segmentsMeta = makeSegmentsMetadata([
+      {
+        clientUuid: directUuid,
+        segments: [{ type: 'text', text: '直发消息' }, { type: 'skill', name: 'review' }],
+        timestamp: Date.now(),
+      },
+      { deferEntryId: DEFER_ID_1, segments: RICH_SEGS, timestamp: Date.now() },
+    ])
+
+    const { messages } = rebuildHistoryFromEntries(entries, segmentsMeta)
+
+    expect(messages[0].content).toEqual([
+      { type: 'text', text: '直发消息' },
+      { type: 'skill', name: 'review' },
+    ])
+    expect(messages[1].content).toEqual(RICH_SEGS)
   })
 })

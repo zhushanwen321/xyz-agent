@@ -163,8 +163,13 @@ export function confirmDeferQueueEntry(
   const hit = (markerId !== undefined
     ? snapshots.find((m) => m.id === markerId && m.mode !== undefined)
     : undefined)
-    // ①b 文本等值降级兜底（既有判据）：FIFO 最早同文本条目优先（且仅已提交条目）
-    ?? snapshots.find((m) => m.text === deferText && m.mode !== undefined)
+    // ①b 文本等值降级兜底（既有判据，[defer segments 化 / D-A1-4] 比较源改 submitText）：
+    // FIFO 最早同文本条目优先（且仅已提交条目）。submitText = 提交时写入的
+    // segmentsToPrompt(segments)——富内容条目 draft（text）≠ 序列化落盘文本，按 text
+    // 比对会失配；undefined（旧形态/未走 flush 提交写入）回退 text。覆盖面显式判定：
+    // 含 skill 段条目 pi 落盘 = 注入展开后全文 ≠ submitText，①b 对其失配——分层语义
+    // 即「①b 只管标记被剥但文本未被改写」，skill 展开属文本改写、由 ①a 独扛。
+    ?? snapshots.find((m) => (m.submitText ?? m.text) === deferText && m.mode !== undefined)
   if (!hit) return false
   if (!queue.confirmDelivery(sid, hit.id)) {
     // confirmDelivery false（peek→确认间条目消失，同步单线程下防御性不可达）→ 匹配

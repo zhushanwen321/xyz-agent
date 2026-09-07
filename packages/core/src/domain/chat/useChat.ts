@@ -281,8 +281,11 @@ function handleSendRejected(
     pendingDirectSends.delete(sid)
     // P3 全 reason 静默入队（D2 接管表）：toast 退役（三种拒绝统一 defer 语义——
     // occupancy 回 idle 自动投递 + pending 气泡可见），原文（未加标记）入队。
+    // [defer segments 化 / D-A1-1] 重入队带段：pending.text 是已序列化 promptText
+    // （直发被拒的提交文本），包 [{type:'text',text}] 单段并同步写 submitText
+    // （原文本即提交文本，①b 兜底匹配源与 flush 提交时写入的语义对齐）。
     if (!uuidQueued) {
-      deps.getCompactQueue().enqueue(sid, pending.text)
+      deps.getCompactQueue().enqueue(sid, pending.text, [{ type: 'text', text: pending.text }], pending.text)
       // [簇 A1] 入队晚于 idle 帧（runtime handlePromptFailure 先广播 occupancy idle 再广播
       // send.rejected，WS FIFO）——idle 帧处理时队列尚空未 flush；其后 agent_settled 的同值
       // idle 被幂等写去重不再来帧。入队后读当前投影：已全 idle → 立即 flush（否则消息滞留到
@@ -522,6 +525,14 @@ export function ensureStreamSubscription(
  * - channel='steer'（后续条目，并入当前 run）：仅 chatApi.steer——不挂占位（steer 条目
  *   无确认配额语义，命中 ① 时不动计数）、不 pushPending（理由见上）。
  *
+ * [defer segments 化 / D-A1-2/D-A1-3] 条目携带 segments（富内容段）：提交文本 =
+ * entry.submitText（flush 侧算好的 segmentsToPrompt 结果，避免双算；缺省回退现场序列化
+ * ——纯文本条目单 text 段等价形态）+ 尾部裸标记；富内容条目（含非 text 段）写 segments
+ * sidecar 按 deferEntryId = 条目 id（裸 uuid key，不复用 clientUuid——msg-id-mapper 对
+ * clientUuid 有 u-<uuid> 形态约定，两套写入方同字段会语义漂移）。sidecar 与 appendUser
+ * 写路径互斥（confirmDelivery 的 appendUser 不写 sidecar），无双写。steer 通道提交
+ * segments 无障碍（runtime steerMessage 已挂注入器，主审核实）。
+ *
  * 占位三态闭环（挂/收/回滚）的「回滚」不在本函数：RPC reject 与 S1 窗口 rejected 两种
  * 未投递判定的知晓方都是 flush 循环（per-entry 记账），回滚集中在 flush 侧执行
  * （useCompactQueue.ts doFlush），本函数只负责「挂」。
@@ -532,7 +543,7 @@ export function ensureStreamSubscription(
  */
 export async function submitQueuedEntry(
   sid: string,
-  entry: { id: string; text: string },
+  entry: { id: string; text: string; segments?: Segment[]; submitText?: string },
   channel: 'send' | 'steer',
   deps: SubmitQueuedEntryDeps,
 ): Promise<void> {
@@ -550,7 +561,25 @@ export async function submitQueuedEntry(
   // 身份帧（sendMessage custom 帧替代文本尾标记，标记不再进文本，届时须同步 ①a 提取
   // 通路）。QueueBubble 显示侧对快照文本剥标记（steer 通道文本会镜像进 queue_update
   // 快照）。
-  const markedText = `${entry.text}\n<!--xyz:msg:${entry.id}-->`
+  // [defer segments 化] 基文本从纯 text 改 segments 序列化产物（submitText 优先——
+  // flush 侧已算好；纯文本条目两路径结果一致）。
+  const segments: Segment[] = entry.segments ?? [{ type: 'text', text: entry.text }]
+  const baseText = entry.submitText ?? segmentsToPrompt(segments)
+  const markedText = `${baseText}\n<!--xyz:msg:${entry.id}-->`
+  // [defer segments 化 / D-A1-2] 富内容条目写 sidecar（与 submitSegments 的 needsBackfill
+  // 谓词同款：全部 text 段跳过——纯文本重开降级渲染等价；未知新类型默认写，失败方向
+  // 安全）。key 用 deferEntryId（裸 uuid），reload 侧 entry-tree-builder 编排层提取裸
+  // 标记 id 直查回填。fire-and-forget：失败 console.warn 不阻断（sidecar 丢失只降级为
+  // 占位文本，非硬错误）。
+  const needsBackfill = segments.some((s) => s.type !== 'text')
+  if (needsBackfill) {
+    deps
+      .writeSegments({
+        sessionId: sid,
+        entry: { deferEntryId: entry.id, segments, timestamp: Date.now() },
+      })
+      .catch((e) => console.warn('[useChat] defer writeSegments failed:', e))
+  }
   if (channel === 'steer') {
     await deps.chatApi.steer(sid, markedText)
     return

@@ -125,7 +125,10 @@ export class AttachmentStore {
   /**
    * 追加/覆盖一条 segments 元数据到 sidecar（segments.json）。
    *
-   * 同 clientUuid 重发（editAndResend）→ 后者覆盖前者（按 clientUuid 去重）。
+   * 去重（[defer segments 化 / D-A1-2] 双 key 扩展）：同 clientUuid 重发（editAndResend）
+   * → 后者覆盖前者（按 clientUuid 去重）；defer 条目按 deferEntryId 同款去重（flush
+   * 重试重提交同条目 → 覆盖）。两条 key 空间互斥（直发链 u-<uuid> / defer 链裸 uuid），
+   * 写入方二选一——按写入方自己的 key 匹配，不交叉。
    * atomic 写（tmp + rename），Windows EPERM/ENOTEMPTY 兜底 unlink+retry（原样搬自 main，TC3 零削弱）。
    */
   async writeSegmentsMetadata(sessionId: string, entry: SegmentsMetadataEntry): Promise<void> {
@@ -148,8 +151,11 @@ export class AttachmentStore {
           quarantineCorruptFile(filePath, { tag: 'session-service', reason: 'segments.json malformed', cause: e })
         }
       }
-      // 按 clientUuid 去重：同 uuid 覆盖，新 uuid 追加
-      const idx = file.entries.findIndex((e) => e.clientUuid === entry.clientUuid)
+      // 去重按写入方自己的 key（两条 key 空间互斥）：defer 条目（deferEntryId 存在）按
+      // deferEntryId 匹配覆盖；直发条目按 clientUuid 匹配覆盖；新 key 追加。
+      const idx = entry.deferEntryId !== undefined
+        ? file.entries.findIndex((e) => e.deferEntryId === entry.deferEntryId)
+        : file.entries.findIndex((e) => e.clientUuid !== undefined && e.clientUuid === entry.clientUuid)
       if (idx >= 0) file.entries[idx] = entry
       else file.entries.push(entry)
       // atomic 写：临时文件 + rename。POSIX 同文件系统 rename 原子；

@@ -132,8 +132,10 @@ export interface ComposerSendDeps {
   compact: (sessionId: string, customInstructions?: string) => Promise<void>
   /** 追加 steer（useChat 提供；isActive 时并入 steering 队列）。D6 steer 路由终端。 */
   steer: (sessionId: string, segments: Segment[]) => Promise<void>
-  /** compact 期间入队待重放消息（useCompactQueue.enqueue 注入，替代直调 useCompactQueue） */
-  enqueueCompact: (sessionId: string, text: string) => void
+  /** compact 期间入队待重放消息（useCompactQueue.enqueue 注入，替代直调 useCompactQueue）。
+   *  [defer segments 化 / D-A1-1] text = 展示文本（draft），segments = 入队快照的完整
+   *  段（image/skill/file chip 等）——占用期发富内容不再丢段。 */
+  enqueueCompact: (sessionId: string, text: string, segments: Segment[]) => void
   // ── 反馈 ──
   /** toast 错误（useToast 提供） */
   toastError: (msg: string) => void
@@ -192,8 +194,10 @@ async function routeSteer(deps: ComposerSendDeps, route: SendRoute): Promise<boo
  * defer 分支（priority 4，行 4/5/6）：占用期（settling / compacting / bash）发送动作改为
  * 入队待重放（flush 在 occupancy 全 idle 时由 useChat occupancy handler 统一触发——触发源
  * 不再绑定 session.compacted）。`/` 前缀是命令——占用结束后才能执行，此处拒绝 + toast，
- * draft 保留不清空。入队语义是重放纯文本（用 draft 而非 segments——segments 含 chip/图片段，
- * 重放时无 chip 上下文）。
+ * draft 保留不清空。[defer segments 化 / MF-A 根修] 入队语义从「重放纯文本（draft）」
+ * 改为「重放完整消息（segments）」：defer 面扩大到小时级 bash 后「占用中发富内容」成为
+ * 常态可达路径，原「重放时无 chip 上下文」的近似失效——text 仍是 draft（气泡/快照展示），
+ * segments 是提交载荷（flush 经 submitQueuedEntry 序列化 + 注入展开，与直发同款）。
  */
 function enqueueDuringDefer(deps: ComposerSendDeps, text: string): void {
   // sessionIdRef 非空性与 defer 路由同源（无 session 的 landing 无 occupancy 记录恒 direct，
@@ -202,13 +206,15 @@ function enqueueDuringDefer(deps: ComposerSendDeps, text: string): void {
   // `/` 与 `!`/`!!` 前缀都是命令（slash 命令 / bash 命令）——占用结束后才能执行，
   // 此处拒绝 + toast，draft 保留不清空。`!` 对称于 `/`：避免 bash 命令被静默降级
   // 为纯文本入队（重放走普通 send 不会按 bash 执行，用户语义被悄悄改变）。
+  // 拒绝判据基于 text 前缀——富内容消息的 draft 文本同样适用（chip 不改变命令判定）。
   if (text.trim().startsWith('/') || text.trim().startsWith('!')) {
     deps.toastError(deps.t('panel.composer.commandQueuedRejected'))
     return
   }
-  // 先 enqueue 再 clearInput：text 在 onSend 开头已捕获（= draft 当前值），
-  // clearInput 会把 draft 置空，顺序颠倒会入队空字符串。
-  deps.enqueueCompact(deps.sessionIdRef.value, text)
+  // 先快照 segments 再 enqueue/clearInput：clearInput 会清空 DOM（chips 随之消失），
+  // 顺序颠倒会入队纯文本条目（丢段）。与 routeSteer/onSend 的快照范式一致。
+  const segments = deps.inputRef.value?.getSegments() ?? []
+  deps.enqueueCompact(deps.sessionIdRef.value, text, segments)
   deps.clearInput()
 }
 

@@ -36,6 +36,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { effectScope } from 'vue'
 import type { EffectScope } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
+import type { Segment } from '@xyz-agent/shared'
 import { useCompactQueue } from '@/composables/panel/useCompactQueue'
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
 import { dispatchSession } from '@xyz-agent/core/transport/api'
@@ -43,11 +44,13 @@ import { useChatStore } from '@/stores/chat'
 import { resetChatModuleStateForTest } from '@xyz-agent/core'
 
 // vi.hoisted 保证 mock 工厂在模块加载前就绪；chatApi.send/steer/streamSubscribe 是
-// flush 编排（submitQueuedEntry）依赖的 RPC/订阅面
+// flush 编排（submitQueuedEntry）依赖的 RPC/订阅面；writeSegments 是富内容条目的
+// sidecar 写入面（defer segments 化 / D-A1-2）
 const apiMock = vi.hoisted(() => ({
   send: vi.fn(() => Promise.resolve()),
   steer: vi.fn(() => Promise.resolve()),
   streamSubscribe: vi.fn(() => () => {}),
+  writeSegments: vi.fn(() => Promise.resolve()),
 }))
 
 vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
@@ -56,7 +59,7 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
     steer: apiMock.steer,
     streamSubscribe: apiMock.streamSubscribe,
   },
-  session: {},
+  session: { writeSegments: apiMock.writeSegments },
 }))
 
 let scope: EffectScope
@@ -473,5 +476,84 @@ describe('useCompactQueue flush 逐条提交与确认驱动（u4b / D5）', () =
     expect(apiMock.send).toHaveBeenCalledTimes(1)
     expect(apiMock.steer).toHaveBeenCalledTimes(1)
     expect(queue.peek('s1').map((m) => [m.text, m.mode])).toEqual([['m1', 'send'], ['m2', 'steer']])
+  })
+})
+
+// ── [defer segments 化 / D-A1] 富内容管道：enqueue 富内容 → flush 序列化提交 + sidecar
+//    + 确认转态带完整段（MF-A 根修的端到端锁定）。──
+
+describe('useCompactQueue 富内容管道（defer segments 化 / D-A1）', () => {
+  /** 富内容段：text + image + skill（序列化产物 ≠ draft 文本） */
+  const RICH_SEGMENTS = [
+    { type: 'text', text: '帮我看下这个报错' },
+    { type: 'image', id: 'img-1', path: '/tmp/shot.png', fileName: 'shot.png', displayName: '截图.png' },
+    { type: 'skill', name: 'code-review' },
+  ] as Segment[]
+
+  it('D1: enqueue 富内容 → flush 队首 send 序列化提交（segmentsToPrompt + 标记）+ steer 同链 + sidecar 按 deferEntryId 写', async () => {
+    const queue = useCompactQueue()
+    const m1 = queue.enqueue('s1', '帮我看下这个报错', RICH_SEGMENTS)
+    const m2 = queue.enqueue('s1', '第二条', [
+      { type: 'text', text: '第二条' },
+      { type: 'file', path: '/a/b.ts' },
+    ])
+
+    await expect(queue.flush('s1')).resolves.toBe(true)
+
+    // send 通道：提交文本 = 序列化产物（image 裸路径 / skill 标记）+ 尾标记——非 draft 纯文本
+    expect(apiMock.send).toHaveBeenCalledTimes(1)
+    const sentText = apiMock.send.mock.calls[0]![1] as string
+    expect(sentText).toContain('/tmp/shot.png')
+    expect(sentText).toContain('<xyz-skill')
+    expect(sentText.endsWith(`\n<!--xyz:msg:${m1.id}-->`)).toBe(true)
+    expect(apiMock.send).toHaveBeenCalledWith('s1', sentText, undefined, { clientUuid: m1.id })
+    // steer 通道（第二条）同链序列化 + 标记
+    const steerText = apiMock.steer.mock.calls[0]![1] as string
+    expect(steerText).toContain('/a/b.ts')
+    expect(steerText.endsWith(`\n<!--xyz:msg:${m2.id}-->`)).toBe(true)
+    // sidecar：两条都按 deferEntryId（条目 id 裸 uuid）写，无 clientUuid key（空间互斥）
+    expect(apiMock.writeSegments).toHaveBeenCalledTimes(2)
+    const writtenIds = apiMock.writeSegments.mock.calls.map((c) => c[0].entry.deferEntryId)
+    expect(writtenIds).toEqual([m1.id, m2.id])
+    for (const call of apiMock.writeSegments.mock.calls) {
+      expect(call[0].entry.clientUuid).toBeUndefined()
+      expect(call[0].entry.deferEntryId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+      expect(call[0].entry.segments.length).toBeGreaterThan(1) // 富内容段（非单 text 段）
+    }
+    expect(apiMock.writeSegments.mock.calls[0]![0].entry.segments).toEqual(RICH_SEGMENTS)
+    // 提交时条目落 submitText（core ①b 匹配源）
+    expect(queue.peek('s1').map((m) => m.submitText)).toEqual([sentText.replace(`\n<!--xyz:msg:${m1.id}-->`, ''), steerText.replace(`\n<!--xyz:msg:${m2.id}-->`, '')])
+  })
+
+  it('D2: 纯文本 enqueue（未传 segments）→ 包 text 单段；flush 不写 sidecar（最小写入）', async () => {
+    const queue = useCompactQueue()
+    queue.enqueue('s1', 'plain')
+    // enqueue 未传 segments：恒有值（text 单段等价形态）
+    expect(queue.peek('s1')[0]!.segments).toEqual([{ type: 'text', text: 'plain' }])
+
+    await expect(queue.flush('s1')).resolves.toBe(true)
+    expect(apiMock.send).toHaveBeenCalledWith('s1', 'plain\n<!--xyz:msg:' + queue.peek('s1')[0]!.id + '-->', undefined, expect.anything())
+    expect(apiMock.writeSegments).not.toHaveBeenCalled()
+  })
+
+  it('D3: 确认帧（core ①）→ confirmDelivery 转态 appendUser 带完整 segments（chip badge 不丢）+ submitText 驱动 ①b 命中', async () => {
+    const chat = useChatStore()
+    const queue = useCompactQueue()
+    const e1 = queue.enqueue('s1', '帮我看下这个报错', RICH_SEGMENTS)
+    await expect(queue.flush('s1')).resolves.toBe(true)
+
+    // ①b 兜底链验证：帧文本 = 序列化文本（无标记形态，模拟标记被剥）——submitText 命中
+    //（draft 文本 '帮我看下这个报错' ≠ 序列化文本，改造前按 text 比对永失配）
+    const submitText = queue.peek('s1')[0]!.submitText!
+    expect(submitText).not.toBe('帮我看下这个报错')
+    chat.applyMessageEvent('s1', { type: 'message.message_end', payload: { sessionId: 's1', entry: makeUserEntry(submitText) } })
+    expect(queue.count('s1')).toBe(0)
+
+    // 转态气泡带完整 segments（image/skill badge 可见——D-A1-6，现状单 text 段会丢 badge）
+    const messages = chat.getMessages('s1')
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toEqual(RICH_SEGMENTS)
+    expect(chat.getInflight('s1')).toBe(0)
+    void e1
   })
 })

@@ -139,6 +139,23 @@ describe('input hook · clientUuid 提取（extractClientUuid）', () => {
     expect(h.appendEntry).not.toHaveBeenCalled()
   })
 
+  it('裸 uuid 标记（无 u- 前缀，defer flush 确认标记）→ TAG_MATCH no-op：不提取不剥离不写映射（id 空间互斥）', () => {
+    // [defer segments 化 / D-A1-2 检查点①] defer flush 提交尾部附加裸 uuid 确认标记
+    //（<!--xyz:msg:<uuid>-->，无 u- 前缀）——msg-id-mapper 对其必须整体 no-op：
+    // 不剥（标记全程存活服务 core ①a 确认 + reload 裸 id 提取）、不写 custom entry
+    //（defer 条目回填走 sidecar deferEntryId 直查，与 clientUuid 映射链不相交）。
+    const h = createHarness()
+    const bare = '3f2504e0-4f89-41d3-9a0c-0305e82c3301'
+    const result = h.input(`task\n<!--xyz:msg:${bare}-->`)
+
+    // continue + 文本原样（含裸标记——TAG_MATCH 只认 u- 前缀形态）
+    expect(result).toEqual({ action: 'continue' })
+
+    h.messageEnd('user')
+    h.flush('message_start')
+    expect(h.appendEntry).not.toHaveBeenCalled()
+  })
+
   it('多标记残留 → 全部剥离（TAG_STRIP 全局替换，非只剥第一个）', () => {
     const h = createHarness()
     const result = h.input(`task ${marker(UUID)}${marker('u-123e4567-e89b-12d3-a456-426614174111')}`)

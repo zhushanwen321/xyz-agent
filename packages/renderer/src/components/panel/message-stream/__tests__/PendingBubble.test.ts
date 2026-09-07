@@ -86,7 +86,8 @@ beforeEach(() => {
 
 describe('PendingBubble 组件两态（P1-P2）', () => {
   it('P1: 未提交态——半透明气泡 + Clock icon + hover 标注 + × 可点（emit remove）', async () => {
-    const entry: QueuedMessage = { id: 'pm-1', text: '排队消息 A' }
+    // [defer segments 化] 纯文本条目 segments = text 单段（enqueue 包的等价形态），无 chip 徽标
+    const entry: QueuedMessage = { id: 'pm-1', text: '排队消息 A', segments: [{ type: 'text', text: '排队消息 A' }] }
     const wrapper = mount(PendingBubble, { props: { entry } })
     await nextTick()
 
@@ -108,7 +109,7 @@ describe('PendingBubble 组件两态（P1-P2）', () => {
   })
 
   it('P2: 已提交态——× 禁用 + tooltip「已提交，等待投递」（撤销边界，D4）', async () => {
-    const entry: QueuedMessage = { id: 'pm-2', text: '已提交消息', mode: 'send' }
+    const entry: QueuedMessage = { id: 'pm-2', text: '已提交消息', segments: [{ type: 'text', text: '已提交消息' }], mode: 'send' }
     const wrapper = mount(PendingBubble, { props: { entry } })
     await nextTick()
 
@@ -117,6 +118,40 @@ describe('PendingBubble 组件两态（P1-P2）', () => {
     expect(cancel.attributes('disabled')).toBeDefined()
     const anchor = wrapper.find('[data-testid="pending-bubble-cancel-anchor"]')
     expect(anchor.attributes('title')).toBe('已提交，等待投递')
+  })
+
+  // ── [defer segments 化] 富内容 chip 计数徽标（MF-A 可见性面：入队富内容不丢段可感知）──
+
+  it('P5: 富内容条目（非 text 段 >0）→ 文本旁显示 +N 徽标；纯文本条目不显示', async () => {
+    const rich: QueuedMessage = {
+      id: 'pm-3',
+      text: '帮我看下这个报错',
+      segments: [
+        { type: 'text', text: '帮我看下这个报错' },
+        { type: 'image', id: 'img-1', path: '/tmp/shot.png', fileName: 'shot.png', displayName: '截图.png' },
+        { type: 'skill', name: 'code-review' },
+      ],
+    }
+    const wrapper = mount(PendingBubble, { props: { entry: rich } })
+    await nextTick()
+
+    // 徽标可见 + 计数 = 非 text 段数（image + skill = 2）+ tooltip 说明
+    const badge = wrapper.find('[data-testid="pending-bubble-chips-pm-3"]')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toBe('+2')
+    expect(badge.attributes('title')).toContain('2')
+    // 气泡文本仍是 draft（展示文本）
+    expect(wrapper.find('[data-testid="pending-bubble-body"]').text()).toContain('帮我看下这个报错')
+
+    // 纯文本条目（仅 text 段）无徽标
+    const plain: QueuedMessage = {
+      id: 'pm-4',
+      text: '纯文本',
+      segments: [{ type: 'text', text: '纯文本' }],
+    }
+    const wrapper2 = mount(PendingBubble, { props: { entry: plain } })
+    await nextTick()
+    expect(wrapper2.find(`[data-testid="pending-bubble-chips-pm-4"]`).exists()).toBe(false)
   })
 })
 

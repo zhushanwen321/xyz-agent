@@ -357,6 +357,50 @@ describe('message_end(user) 三分支 ①a：标记 id 身份匹配（簇 A2 / C
     expect(queue.confirmed()).toEqual([ENTRY_ID])
     expect(ctx.inflightOf()).toBe(0)
   })
+
+  // ── [defer segments 化 / D-A1-4] ①b 匹配源改 submitText——富内容条目 draft ≠ 序列化文本 ──
+
+  it('D1-SUBMITTEXT: 富内容条目（submitText ≠ draft text）——帧文本 = submitText 时 ①b 命中，= draft 时不命中', () => {
+    // 富内容条目：draft（气泡展示文本）≠ submitText（segmentsToPrompt 序列化产物）。
+    // pi 落盘的是序列化文本（image 裸路径等）——①b 比较源必须是 submitText；
+    // 若按改造前的 text 比对，帧与条目永失配（气泡永久 pending）。
+    const draft = '帮我看下这个报错'
+    const submitText = '帮我看下这个报错\n/tmp/shot.png'
+    const queue = makeQueue([{ id: ENTRY_ID, text: draft, submitText, mode: 'send' }])
+    setCompactQueueProviderForEffects(() => queue)
+    const ctx = makeCtx()
+    ctx.incrementInflight(SID, 1)
+
+    // 帧 1：draft 文本（未序列化形态）不命中 ①b——落 ② 计数消费，条目留队
+    dispatchMessageEvent(ctx, SID, msg(draft))
+    expect(queue.confirmDelivery).not.toHaveBeenCalled()
+
+    // 帧 2：序列化文本（= pi 实际落盘形态）命中 ①b → 出队
+    dispatchMessageEvent(ctx, SID, msg(submitText))
+    expect(queue.confirmed()).toEqual([ENTRY_ID])
+  })
+
+  it('D1-SUBMITTEXT-FALLBACK: submitText 未写（旧形态）→ ①b 回退 text 比对（兼容防御）', () => {
+    const queue = makeQueue([{ id: ENTRY_ID, text: 'm1', mode: 'send' }])
+    setCompactQueueProviderForEffects(() => queue)
+    const ctx = makeCtx()
+    ctx.incrementInflight(SID, 1)
+
+    dispatchMessageEvent(ctx, SID, msg('m1'))
+
+    expect(queue.confirmed()).toEqual([ENTRY_ID])
+  })
+
+  it('D1-MODEXCL: submitText 命中也要求 mode 已写（未提交条目不参与 ①b——G2 必达守恒）', () => {
+    const queue = makeQueue([{ id: ENTRY_ID, text: 'draft', submitText: 'serialized' }])
+    setCompactQueueProviderForEffects(() => queue)
+    const ctx = makeCtx()
+
+    dispatchMessageEvent(ctx, SID, msg('serialized'))
+
+    expect(queue.confirmDelivery).not.toHaveBeenCalled()
+    expect(queue.entries()).toHaveLength(1)
+  })
 })
 
 describe('provider 未注册 = defer 分区缺席（现状逐字节一致的机理证明）', () => {
