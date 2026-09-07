@@ -308,7 +308,8 @@ describe('useChat pendingSend 合并态（空窗期）', () => {
     await send('s-rollback', textToSegments('first'))
     apiMock.steer.mockRejectedValueOnce(new Error('ws disconnected'))
     // 不抛（错误已消化：pending 回滚 + toast 提示），避免 unhandled rejection
-    await expect(steer('s-rollback', textToSegments('补充'))).resolves.toBeUndefined()
+    // [D2] steer 返回值契约：RPC 失败 return false（成功 true）
+    await expect(steer('s-rollback', textToSegments('补充'))).resolves.toBe(false)
     const msgs = chat.getMessages('s-rollback')
     // pending 已被回滚移除，无孤儿
     expect(msgs.some((m) => m.status === 'pending')).toBe(false)

@@ -135,6 +135,12 @@ const pendingDirectSends = new Map<string, { clientUuid: string; text: string; h
  *（hasPending false 早退）；pi 活跃但持续拒绝时以 1s 有界节奏重试（消息不丢优先，
  * 对齐 ADR-0047「静默 ≠ 卡死」不判死语义），不产生 RPC 热循环。传输级 reject 不 arm
  *（重连后 occupancy state topic 快照回放 idle 帧照常触发，§3.5 错误规格表）。
+ *
+ * [D1 占用短路] fire 回调查 occupancy 投影：仍忙（bash/compacting/turn 非 idle）→ 直接
+ * return，不重排 timer、不调 flush——帧驱动优先（occupancy 回 idle 帧触发现有 handler），
+ * timer 只兜「idle 帧丢失」场景（上述拒绝转译路径）。小时级 bash 占用下原实现每秒空转发
+ * 一次注定被拒的 send RPC。投影查不到（快照缺失——getOccupancy 无记录回落全 idle 缺省，
+ * store.ts getOccupancy 契约）→ 保守走原重试路径（flush + false 再 re-arm）防死锁。
  */
 const DEFER_FLUSH_RETRY_DELAY_MS = 1000
 // taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，已落定登记表 §4 ⑧ 补登 2026-09-07）：flush 失败重投 timer
@@ -216,13 +222,14 @@ function isOccupancyFullyIdle(occupancy: { turn: string; compacting: boolean; ba
  * resolve false（S1 busy 类拒绝，条目留队）→ 自排 timer 重投（注释见 deferFlushRetryTimers）；
  * reject（传输级真错误，如 WS 断连）→ toast「发送失败: {原因}」，气泡保持 pending、队列保留，
  * 恢复后 occupancy 快照回放 idle 自动重放（§3.5 错误规格表）。
+ * [D1] 接收 chat store：重投 timer fire 的占用短路判定需要读 occupancy 投影。
  */
-function flushDeferQueueAfterIdle(sid: string, deps: EnsureStreamSubDeps): void {
+function flushDeferQueueAfterIdle(sid: string, chat: ChatStoreInstance, deps: EnsureStreamSubDeps): void {
   void deps
     .getCompactQueue()
     .flush(sid)
     .then((submitted) => {
-      if (!submitted) armDeferFlushRetry(sid, deps)
+      if (!submitted) armDeferFlushRetry(sid, chat, deps)
     })
     .catch((e) => {
       const msg = e instanceof Error ? e.message : String(e)
@@ -230,13 +237,18 @@ function flushDeferQueueAfterIdle(sid: string, deps: EnsureStreamSubDeps): void 
     })
 }
 
-/** [簇 A1] 排一次延迟重投（幂等：已有 pending timer 不重复排；fire 后自删再按需 re-arm）。 */
-function armDeferFlushRetry(sid: string, deps: EnsureStreamSubDeps): void {
+/** [簇 A1] 排一次延迟重投（幂等：已有 pending timer 不重复排；fire 后自删再按需 re-arm）。
+ *  [D1] fire 时占用短路：投影仍忙 → 不重排不 flush（等 occupancy idle 帧触发现有 handler）；
+ *  投影缺失（getOccupancy 无记录回落全 idle 缺省）→ 保守走原重试路径防死锁。 */
+function armDeferFlushRetry(sid: string, chat: ChatStoreInstance, deps: EnsureStreamSubDeps): void {
   if (deferFlushRetryTimers.has(sid)) return
   const timer = setTimeout(() => {
     deferFlushRetryTimers.delete(sid)
     if (!deps.getCompactQueue().hasPending(sid)) return
-    flushDeferQueueAfterIdle(sid, deps)
+    // [D1] 占用短路：仍忙 → 直接 return（不 re-arm 不 flush）——帧驱动优先（occupancy
+    // 回 idle 帧照常触发 handleSessionOccupancy 的 flush），timer 只兜 idle 帧丢失场景。
+    if (!isOccupancyFullyIdle(chat.getOccupancy(sid))) return
+    flushDeferQueueAfterIdle(sid, chat, deps)
   }, DEFER_FLUSH_RETRY_DELAY_MS)
   deferFlushRetryTimers.set(sid, timer)
 }
@@ -292,7 +304,7 @@ function handleSendRejected(
       // 下一个无关 occupancy 转移）；仍忙（bash/compacting 等预检拒绝形态）→ 由后续 idle 帧
       // 照常触发。flush false（S1 再拒）由 flushDeferQueueAfterIdle 自排 timer 重投。
       if (isOccupancyFullyIdle(chat.getOccupancy(sid))) {
-        flushDeferQueueAfterIdle(sid, deps)
+        flushDeferQueueAfterIdle(sid, chat, deps)
       }
     }
     return
@@ -388,7 +400,7 @@ function handleSessionOccupancy(
     // 拒绝循环下本帧（失败 attempt 自产的 dispatching→idle）先于 RPC reply 到达被 S2
     // 守卫并集，其后无帧可达，timer 是唯一保证重投脉冲（详见 deferFlushRetryTimers 注释）。
     // RPC reject（传输级真错误）toast「发送失败: {原因}」的既有语义在入口内保持不变。
-    flushDeferQueueAfterIdle(sid, deps)
+    flushDeferQueueAfterIdle(sid, chat, deps)
   }
 }
 
@@ -821,13 +833,18 @@ export function createUseChat(deps: UseChatDeps) {
    * 追加 steer：AI 执行中（isGenerating）时，把补充消息排入 steering 队列，
    * 当前回合工具调用结束后、下次 LLM 调用前投递，不打断当前回合。
    *
+   * [D2] 返回值契约（Promise<boolean>）：true = 提交成功或无事发生（早退路径无投递
+   * 动作、无错误，调用方无需恢复草稿）；false = RPC 失败（内部已 toast + 回滚 pending
+   * 暂存，不 throw）——调用方（send.ts routeSteer / submit.ts onSteer）据 false 恢复
+   * 草稿（restoreSegments），否则 clearInput 已清空的输入静默丢失。
+   *
    * 显式接收 sessionId：与 send 同理，per-panel 隔离，不读全局 activeId。
    */
-  async function steer(sessionId: string, segments: Segment[]): Promise<void> {
+  async function steer(sessionId: string, segments: Segment[]): Promise<boolean> {
     const sid = sessionId
-    if (segments.length === 0) return
+    if (segments.length === 0) return true
     const promptText = segmentsToPrompt(segments)
-    if (!promptText.trim() || !chat.isActive(sid)) return
+    if (!promptText.trim() || !chat.isActive(sid)) return true
 
     // [steer-bubble u2] pending 暂存（**不进对话流**）：steer 提交先写 pendingBuffer 暂存
     // （store.pushPending），投递时经腿 1（queue_update drain 差集）/ 腿 2（message_end(user)
@@ -839,10 +856,12 @@ export function createUseChat(deps: UseChatDeps) {
     chat.pushPending(sid, segments, 'steer')
     try {
       await deps.chatApi.steer(sid, promptText)
+      return true
     } catch (e) {
       chat.abortPending(sid, promptText, 'steer')
       const msg = toErrorMessage(e)
       deps.toast.error(deps.t('composable.supplementSendFailed', { msg }))
+      return false
     }
   }
 

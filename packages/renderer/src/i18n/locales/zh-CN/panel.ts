@@ -344,6 +344,10 @@ export default {
   },
   deferQueue: {
     pendingHint: '占用结束后发送',
+    // [D1] 按占用类型分档的 hover 文案（小时级 bash 等长占用下「等什么结束」可操作）
+    pendingHintCompacting: '等待上下文压缩完成后发送',
+    pendingHintBash: '等待命令执行结束后发送',
+    pendingHintSettling: '等待当前回合结束后发送',
     cancelQueued: '撤销排队',
     submittedAwaitingDelivery: '已提交，等待投递',
     chipBadge: '+{count}',

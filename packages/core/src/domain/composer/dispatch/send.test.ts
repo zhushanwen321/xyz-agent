@@ -49,7 +49,7 @@ interface Spies {
   restoreSegments: Spy<(segments: Segment[]) => void>
   submitFirstMessage: Spy<ComposerSendDeps['flow']['submitFirstMessage']>
   send: Spy<(sessionId: string, segments: Segment[]) => Promise<void>>
-  steer: Spy<(sessionId: string, segments: Segment[]) => Promise<void>>
+  steer: Spy<(sessionId: string, segments: Segment[]) => Promise<boolean>>
   compact: Spy<(sessionId: string, customInstructions?: string) => Promise<void>>
   enqueueCompact: Spy<(sessionId: string, text: string, segments: Segment[]) => void>
   toastError: Spy<(msg: string) => void>
@@ -83,7 +83,7 @@ function setup(initial?: Partial<DepsControl>): { deps: ComposerSendDeps; spies:
     restoreSegments: vi.fn((_segments: Segment[]) => {}),
     submitFirstMessage: vi.fn(async () => {}) as unknown as Spies['submitFirstMessage'],
     send: vi.fn(async (_sessionId: string, _segments: Segment[]) => {}),
-    steer: vi.fn(async (_sessionId: string, _segments: Segment[]) => {}),
+    steer: vi.fn(async (_sessionId: string, _segments: Segment[]) => true),
     compact: vi.fn(async (_sessionId: string, _customInstructions?: string) => {}),
     enqueueCompact: vi.fn((_sessionId: string, _text: string, _segments: Segment[]) => {}),
     toastError: vi.fn((_msg: string) => {}),
@@ -181,6 +181,26 @@ describe('useComposerSend.onSend', () => {
     await useComposerSend(deps).onSend()
     expect(spies.steer).toHaveBeenCalledWith('s1', SEGMENTS)
     expect(spies.enqueueCompact).not.toHaveBeenCalled()
+  })
+
+  // ── [D2] routeSteer 失败恢复：steer 返回 false → restoreSegments 恢复完整草稿 ──
+
+  it('②j [D2] steer 返回 false（WS 断连）→ restoreSegments(SEGMENTS) 恢复草稿（text + chips 不丢）', async () => {
+    const { deps, spies } = setup({ canSend: false, sendRoute: 'steer' })
+    spies.steer.mockResolvedValueOnce(false)
+    await useComposerSend(deps).onSend()
+    expect(spies.steer).toHaveBeenCalledWith('s1', SEGMENTS)
+    expect(spies.clearInput).toHaveBeenCalledTimes(1)
+    // 失败恢复：快照的 segments 完整回滚（clearInput 已清空 DOM，不恢复即静默丢失）
+    expect(spies.restoreSegments).toHaveBeenCalledWith(SEGMENTS)
+  })
+
+  it('②k [D2] steer 返回 true → 不恢复草稿（正常投递，输入已清）', async () => {
+    const { deps, spies } = setup({ canSend: false, sendRoute: 'steer' })
+    spies.steer.mockResolvedValueOnce(true)
+    await useComposerSend(deps).onSend()
+    expect(spies.steer).toHaveBeenCalledTimes(1)
+    expect(spies.restoreSegments).not.toHaveBeenCalled()
   })
 
   it('②f steer 路由（本地 busy）+ 空输入 → 拦截（不调 steer 不清输入）', async () => {

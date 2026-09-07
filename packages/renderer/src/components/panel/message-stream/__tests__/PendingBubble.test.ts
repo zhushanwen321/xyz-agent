@@ -155,6 +155,51 @@ describe('PendingBubble 组件两态（P1-P2）', () => {
   })
 })
 
+// ── [D1] hover 文案按 occupancy 三维分档（小时级 bash 场景「等什么结束」可操作）──
+
+describe('PendingBubble hover 文案占用分档（D1）', () => {
+  const PLAIN: QueuedMessage = { id: 'pm-d1', text: '排队消息', segments: [{ type: 'text', text: '排队消息' }] }
+
+  /** mount + 写 occupancy 投影（真实 chat store sessionPhase 链路） */
+  async function mountWithPhase(sessionId: string | undefined, phase: { turn: string; compacting: boolean; bash: boolean }) {
+    if (sessionId) useChatStore().setOccupancy(sessionId, phase)
+    const wrapper = mount(PendingBubble, { props: { entry: PLAIN, sessionId } })
+    await nextTick()
+    return wrapper
+  }
+
+  it('bash 占用 → 「等待命令执行结束后发送」', async () => {
+    const wrapper = await mountWithPhase('s-d1-bash', { turn: 'idle', compacting: false, bash: true })
+    expect(wrapper.find('[data-testid="pending-bubble-body"]').attributes('title')).toBe('等待命令执行结束后发送')
+  })
+
+  it('compacting 占用 → 「等待上下文压缩完成后发送」（优先级高于 bash）', async () => {
+    const wrapper = await mountWithPhase('s-d1-compact', { turn: 'idle', compacting: true, bash: true })
+    expect(wrapper.find('[data-testid="pending-bubble-body"]').attributes('title')).toBe('等待上下文压缩完成后发送')
+  })
+
+  it('turn=settling（无 compacting/bash）→ 「等待当前回合结束后发送」', async () => {
+    const wrapper = await mountWithPhase('s-d1-settle', { turn: 'settling', compacting: false, bash: false })
+    expect(wrapper.find('[data-testid="pending-bubble-body"]').attributes('title')).toBe('等待当前回合结束后发送')
+  })
+
+  it('全 idle / 投影缺失 / 未传 sessionId → 泛化「占用结束后发送」', async () => {
+    const idle = await mountWithPhase('s-d1-idle', { turn: 'idle', compacting: false, bash: false })
+    expect(idle.find('[data-testid="pending-bubble-body"]').attributes('title')).toBe('占用结束后发送')
+    const noSid = await mountWithPhase(undefined, { turn: 'idle', compacting: false, bash: false })
+    expect(noSid.find('[data-testid="pending-bubble-body"]').attributes('title')).toBe('占用结束后发送')
+  })
+
+  it('occupancy 帧驱动响应式更新：bash 结束（idle）→ 文案回落泛化', async () => {
+    const chat = useChatStore()
+    const wrapper = await mountWithPhase('s-d1-react', { turn: 'idle', compacting: false, bash: true })
+    expect(wrapper.find('[data-testid="pending-bubble-body"]').attributes('title')).toBe('等待命令执行结束后发送')
+    chat.setOccupancy('s-d1-react', { turn: 'idle', compacting: false, bash: false })
+    await nextTick()
+    expect(wrapper.find('[data-testid="pending-bubble-body"]').attributes('title')).toBe('占用结束后发送')
+  })
+})
+
 describe('PendingBubble × MessageStream 集成（P3-P4）', () => {
   /** mount MessageStream（真实 chat store + 真实 useCompactQueue 分区驱动） */
   async function mountStream(sessionId: string) {

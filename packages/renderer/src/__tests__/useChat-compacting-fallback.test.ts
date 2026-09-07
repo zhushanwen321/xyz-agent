@@ -95,7 +95,14 @@ describe('send.rejected compacting 兜底入队（renderer 集成）', () => {
     // 真实 compactQueue：入队恰一次、原文入队（flush 重放直发原文）。
     // [簇 A2] 提交 ≠ 投递（decf7d289）：send.rejected 前该条目已经历一次 flush 提交
     //（提交即写 mode='send'），拒绝后条目留队等 occupancy idle 重投，mode 不回滚。
-    expect(queue.peek('f1')).toEqual([{ id: expect.any(String), text: '压缩结束后再发', mode: 'send' }])
+    // [defer segments 化] rejected 重入队包 text 单段 + 同步写 submitText（u1 契约）。
+    expect(queue.peek('f1')).toEqual([{
+      id: expect.any(String),
+      text: '压缩结束后再发',
+      mode: 'send',
+      segments: [{ type: 'text', text: '压缩结束后再发' }],
+      submitText: '压缩结束后再发',
+    }])
     // 乐观气泡回滚：对话流无残留 user 气泡
     expect(chat.getMessages('f1').length).toBe(0)
     // inflight：乐观发送占位经 rejected 回滚后，flush 重投挂上 send 占位（[簇 A2] 提交 ≠
@@ -116,8 +123,15 @@ describe('send.rejected compacting 兜底入队（renderer 集成）', () => {
     await p
 
     // [u5b / D2 P3] busy 拒绝静默入队（原文入队，occupancy 回 idle 自动投递）；
-    // [簇 A2] mode='send' = 已经历 flush 提交的标记（提交 ≠ 投递，同验收①）
-    expect(queue.peek('f2')).toEqual([{ id: expect.any(String), text: 'hi', mode: 'send' }])
+    // [簇 A2] mode='send' = 已经历 flush 提交的标记（提交 ≠ 投递，同验收①）；
+    // [defer segments 化] segments/submitText 字段同验收①（u1 契约）。
+    expect(queue.peek('f2')).toEqual([{
+      id: expect.any(String),
+      text: 'hi',
+      mode: 'send',
+      segments: [{ type: 'text', text: 'hi' }],
+      submitText: 'hi',
+    }])
     expect(chat.getMessages('f2').length).toBe(0)
     // inflight：同验收①——rejected 回滚乐观占位后，flush 重投挂 send 占位在途（等确认回收）
     expect(chat.getInflight('f2')).toBe(1)

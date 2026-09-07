@@ -77,7 +77,7 @@ describe('A2-MF-C：deliverText 挂 skill 注入', () => {
     expect(h.calls).toEqual(['ensureActive:s1', 'prompt', 'publish:session.skillNotice'])
     const noticeMsg = h.publish.mock.calls.find(([, msg]) => (msg as { type: string }).type === 'session.skillNotice')
     expect(noticeMsg![0]).toBe('s1')
-    expect((noticeMsg![1] as { payload: { reason: string; skills: string[] } }).payload)
+    expect((noticeMsg![1] as unknown as { payload: { reason: string; skills: string[] } }).payload)
       .toEqual({ sessionId: 's1', reason: 'skill_missing', skills: ['ghost'] })
   })
 

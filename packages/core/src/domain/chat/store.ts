@@ -958,6 +958,14 @@ export function createChatStore() {
     clearPendingSendTimer(sessionId)
   }
 
+  /** [D3] pendingSend 投影查询（「正在提交直发」瞬时态——send/editAndResend 置、message_start
+   *  清）。语义窄于 isActive（= isGenerating ∨ pendingSend）：UserBubble submitEdit 双发锁
+   *  消费（与 Composer isSending 对齐的「正在提交」信号），不含「生成中」（编辑入口本身
+   *  仅非活跃态可见，锁的目的是防提交在途并发覆盖 pendingDirectSends）。 */
+  function isPendingSend(sessionId: string): boolean {
+    return pendingSend.value.has(sessionId)
+  }
+
   function clearPendingSendTimer(sessionId: string): void {
     clearSessionTimer(pendingSendTimers, sessionId)
   }
@@ -1200,6 +1208,7 @@ export function createChatStore() {
     resetTransientStates,
     addPendingSend,
     clearPendingSend,
+    isPendingSend,
     markSessionError,
     isCompacting,
     setOccupancy,
@@ -1272,7 +1281,7 @@ export type ChatStoreReaders = Pick<
   | 'getMessages' | 'getRetryState' | 'getQueueState' | 'getChangeSetStatus'
   | 'isHydrated' | 'getHydrateAnchor' | 'isGenerating' | 'isActive'
   | 'isCompacting' | 'getCompactingReason' | 'isHandingOff'
-  | 'getOccupancy' | 'sessionPhase'
+  | 'getOccupancy' | 'sessionPhase' | 'isPendingSend'
   | 'getInflight'
 >
 

@@ -211,6 +211,20 @@ describe('createUseChat factory 行为', () => {
     f.dispose()
   })
 
+  it('[D2] steer 返回值契约：失败 return false，成功 return true，早退 return true', async () => {
+    const f = makeFixture()
+    await f.useChat.send('s8d2', textToSegments('hi'))
+    f.emit('s8d2', msg('s8d2', 'message.message_start', { messageId: 'a1' }))
+    // 失败：RPC reject → false
+    f.chatApi.steer.mockRejectedValueOnce(new Error('WS断'))
+    await expect(f.useChat.steer('s8d2', textToSegments('补充'))).resolves.toBe(false)
+    // 成功：RPC resolve → true
+    await expect(f.useChat.steer('s8d2', textToSegments('再补'))).resolves.toBe(true)
+    // 早退：空 segments → true（无投递动作非失败）
+    await expect(f.useChat.steer('s8d2', [])).resolves.toBe(true)
+    f.dispose()
+  })
+
   it('首尾空白保真：steer 原文（含空白）直达 chatApi.steer（Gate B 观测①回归）', async () => {
     const f = makeFixture()
     await f.useChat.send('s8w', textToSegments('hi'))
@@ -1022,6 +1036,90 @@ describe('sendBash ①b toast 抑制（D2 极性：空→抑制 / 非空→不�
     f.chatApi.bash.mockRejectedValue(new Error('transport unavailable (ws not open)'))
     await f.useChat.sendBash('b3', 'echo hi', false)
     expect(f.toast.error).not.toHaveBeenCalled()
+    f.dispose()
+  })
+})
+
+// ── [D1] defer flush 重投 timer 占用短路（adversarial-review-fixes u3）────────────
+//
+// 原缺陷：armDeferFlushRetry 的 1s timer fire 时不查占用投影——turn 合法长跑（小时级
+// bash）期每秒空转发一次注定被拒的 send RPC。修复后 fire 回调读 occupancy 投影：仍忙
+// → 不重排不 flush（帧驱动优先——occupancy 回 idle 帧触发现有 handler）；投影缺失
+//（getOccupancy 无记录回落全 idle 缺省）→ 保守走原重试路径防死锁。
+//
+// 驱动链：emit send.rejected（busy，无 clientUuid）→ 兜底入队 → 入队时投影全 idle
+//（缺省）→ flushDeferQueueAfterIdle → flush resolve false → arm 1s timer。
+describe('defer flush 重投 timer 占用短路（D1）', () => {
+  beforeEach(() => {
+    resetChatModuleStateForTest()
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** 驱动一次「直发被拒 → 入队 → flush 失败 → 1s timer 已排」的前置链。
+   *  时序对齐 sendThenReject 范式（WS FIFO：rejected 广播先于 RPC reply）——send 同步段
+   *  建立 pendingDirectSends 记录后 emit，rejected handler 据此入队 + 缺省 idle 即 flush。 */
+  async function armRetryTimer(f: ReturnType<typeof makeFixture>, sid: string): Promise<void> {
+    f.compactQueue.hasPending.mockReturnValue(true)
+    f.compactQueue.flush.mockResolvedValue(false)
+    const p = f.useChat.send(sid, textToSegments('排队消息'))
+    f.emit(sid, msg(sid, 'send.rejected', { reason: 'busy', message: 'Agent is busy' }))
+    await p
+    // 入队后投影缺省全 idle → 立即 flush（resolve false）→ then 内 arm timer（microtask）
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
+    // rejecte handler 已 clearPendingSend（连带清 pendingSendTimer）→ 仅剩重投 timer 1 个
+    expect(vi.getTimerCount()).toBe(1)
+  }
+
+  it('占用态 fire：不调 flush、不重排 timer（小时级 bash 期无每秒空转 RPC）', async () => {
+    const f = makeFixture()
+    await armRetryTimer(f, 'd1a')
+    // 置忙（bash 占用）：timer fire 时投影非全 idle
+    f.chatStore.setOccupancy('d1a', { turn: 'idle', compacting: false, bash: true })
+    await vi.advanceTimersByTimeAsync(60_000)
+    // 1 分钟过去：flush 仍只被调 1 次（arm 前那次）、timer 已自删不重排
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
+    f.dispose()
+  })
+
+  it('短路后 occupancy 回 idle 帧 → 帧驱动触发 flush（timer 只兜 idle 帧丢失）', async () => {
+    const f = makeFixture()
+    await armRetryTimer(f, 'd1b')
+    f.chatStore.setOccupancy('d1b', { turn: 'idle', compacting: false, bash: true })
+    await vi.advanceTimersByTimeAsync(1000) // fire → 占用短路（无重排）
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
+    // occupancy 回 idle 帧到达（bash 结束）：handleSessionOccupancy 判定全 idle + hasPending → flush
+    f.emit('d1b', msg('d1b', 'session.occupancy', { turn: 'idle', compacting: false, bash: false }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(2)
+    f.dispose()
+  })
+
+  it('投影缺失（无 occupancy 记录）：fire 保守走原重试路径（flush + 失败再 re-arm）', async () => {
+    const f = makeFixture()
+    await armRetryTimer(f, 'd1c')
+    // 不写任何 occupancy（快照缺失 = getOccupancy 缺省全 idle）→ fire 走 flush，false 后再 re-arm
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(2)
+    expect(vi.getTimerCount()).toBe(1) // re-arm（1s 有界重试，消息不丢优先）
+    f.dispose()
+  })
+
+  it('turn 维度占用（settling）同样短路；队列为空时 fire no-op', async () => {
+    const f = makeFixture()
+    await armRetryTimer(f, 'd1d')
+    f.chatStore.setOccupancy('d1d', { turn: 'settling', compacting: false, bash: false })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
+    // 队列清空后（hasPending=false）：即便投影 idle，fire 早退不 flush
+    f.compactQueue.hasPending.mockReturnValue(false)
+    f.emit('d1d', msg('d1d', 'session.occupancy', { turn: 'idle', compacting: false, bash: false }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
     f.dispose()
   })
 })

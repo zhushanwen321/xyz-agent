@@ -130,8 +130,9 @@ export interface ComposerSendDeps {
   send: (sessionId: string, segments: Segment[]) => Promise<void>
   /** 压缩上下文（useChat 提供） */
   compact: (sessionId: string, customInstructions?: string) => Promise<void>
-  /** 追加 steer（useChat 提供；isActive 时并入 steering 队列）。D6 steer 路由终端。 */
-  steer: (sessionId: string, segments: Segment[]) => Promise<void>
+  /** 追加 steer（useChat 提供；isActive 时并入 steering 队列）。D6 steer 路由终端。
+   *  [D2] 返回 false = RPC 失败（内部已 toast）——routeSteer 据此 restoreSegments 恢复草稿。 */
+  steer: (sessionId: string, segments: Segment[]) => Promise<boolean>
   /** compact 期间入队待重放消息（useCompactQueue.enqueue 注入，替代直调 useCompactQueue）。
    *  [defer segments 化 / D-A1-1] text = 展示文本（draft），segments = 入队快照的完整
    *  段（image/skill/file chip 等）——占用期发富内容不再丢段。 */
@@ -186,7 +187,9 @@ async function routeSteer(deps: ComposerSendDeps, route: SendRoute): Promise<boo
   // clearInput 会清空 DOM，必须先快照 segments（onSend/submit 同范式）
   const segments = deps.inputRef.value?.getSegments() ?? []
   deps.clearInput()
-  await deps.steer(sid, segments)
+  // [D2] steer 内部 catch 不抛（toast + return false）——失败时输入已被 clearInput 清空，
+  // 据 false 恢复完整草稿（text + chips），否则用户输入静默丢失。
+  if (!(await deps.steer(sid, segments))) deps.restoreSegments(segments)
   return true
 }
 

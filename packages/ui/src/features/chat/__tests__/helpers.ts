@@ -22,6 +22,8 @@ export function createMockDeps(overrides: Partial<ChatViewDeps> = {}): ChatViewD
     getChangeSetStatus: () => undefined,
     isExpanded: () => false,
     isTakeover: () => false,
+    // [D3] submitEdit 双发锁默认放行（不互斥）；互斥用例经 overrides 注入
+    isPendingSend: () => false,
     toggleExpand: vi.fn(),
     collapse: vi.fn(),
     setTakeover: vi.fn(),

@@ -332,6 +332,8 @@ export function useComposerShell(params: ComposerShellParams) {
     sessionIdRef,
     clearInput,
     restoreInput,
+    // [D2] onSteer 失败恢复完整草稿（text + chips，与 send.ts routeSteer 同款）
+    restoreSegments,
     steer,
     followUp,
     abort,

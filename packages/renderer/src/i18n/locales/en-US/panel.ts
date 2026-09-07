@@ -346,6 +346,10 @@ export default {
   },
   deferQueue: {
     pendingHint: 'Will be sent when the session is free',
+    // [D1] occupancy-typed hover hints (long bash occupation makes "what ends" actionable)
+    pendingHintCompacting: 'Will be sent after context compaction completes',
+    pendingHintBash: 'Will be sent after the command finishes',
+    pendingHintSettling: 'Will be sent after the current turn ends',
     cancelQueued: 'Cancel queued message',
     submittedAwaitingDelivery: 'Submitted, awaiting delivery',
     chipBadge: '+{count}',

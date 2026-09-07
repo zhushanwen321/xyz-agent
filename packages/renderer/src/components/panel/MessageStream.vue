@@ -101,6 +101,7 @@
         v-for="entry in pendingEntries"
         :key="entry.id"
         :entry="entry"
+        :session-id="sessionId"
         @remove="onRemovePending"
       />
     </div>
