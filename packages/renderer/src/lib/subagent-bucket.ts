@@ -28,6 +28,15 @@ export function isDoneProjection(record: SubagentRecord): boolean {
  * 分桶判据（D4）：active = streaming（真在跑，spinner）+ waiting（chat 轮终等续聊 /
  * 孤儿兜底，半透明 accent 点——可复活非终态）；ended = 五种显式终态 + done 投影。
  */
+/**
+ * 分桶判据（D4）：active = streaming（真在跑，spinner）+ waiting（chat 轮终等续聊 /
+ * 孤儿兜底，半透明 accent 点——可复活非终态）；ended = 五种显式终态 + done 投影。
+ *
+ * [B3] 下方 `status !== 'running'` 是反向白名单：shared 扩 SubagentStatus 枚举时，
+ * 新「进行中类」值会静默落本分支的「已结束」桶——扩枚举必须先评估新值桶归属，
+ * 同步 SUBAGENT_STATUS_ALL 与 subagent-bucket.test.ts 的全集覆盖矩阵（断言表
+ * 缺键即测试红；见 adversarial-review-fixes §3.3 B3）。
+ */
 export function subagentBucket(record: SubagentRecord): SubagentBucket {
   if (record.status !== 'running') return 'ended'
   return isDoneProjection(record) ? 'ended' : 'active'

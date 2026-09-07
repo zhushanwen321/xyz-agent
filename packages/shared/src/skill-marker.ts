@@ -43,6 +43,20 @@ export const CJK_TOKENS_PER_CHAR = 1.0
 export const NON_CJK_CHARS_PER_TOKEN = 4
 
 /**
+ * B2 代码密集收紧（adversarial-review-fixes §3.3 B2）：非 CJK 字符占比超过该阈值的文本，
+ * 非 CJK 分母从 ÷4（NON_CJK_CHARS_PER_TOKEN）收紧为 ÷3（CODE_DENSE_NON_CJK_CHARS_PER_TOKEN）。
+ *
+ * 依据：代码密集 SKILL.md（代码块 / 驼峰标识符 / 符号密集）的真实 token 密度约
+ * 2.5~3.5 chars/token，÷4 低估 1-2 倍——低估放行全文注入 → pi 超窗 → 持续失败态
+ * （pi overflow 链救不了「单条 ≥ keepRecentTokens」的落点）。收紧方向 = 高估 =
+ * 更早降级：降级是可用性降级非功能失效（模型可自主 read，恢复动作有 toast 提示），
+ * 反向风险（超窗卡死）不可接受，显式接受「宁可多降级」（受影响面 = 代码密集型
+ * SKILL.md 的降级触发频率升高）。普通中英混排（占比 ≤70%）不受影响，保持 ÷4 准确值。
+ */
+export const CODE_DENSE_NON_CJK_RATIO = 0.7
+export const CODE_DENSE_NON_CJK_CHARS_PER_TOKEN = 3
+
+/**
  * CJK 字符类（D6「CJK 统一表意文字及常用全角标点范围」的具体区间，scripts 探针同源引用）：
  * - U+3000–U+303F CJK 符号和标点（全角空格、。、《》等）
  * - U+3400–U+4DBF 表意文字扩展 A
@@ -171,12 +185,15 @@ export function parseSkillsFallbackBlocks(text: string): ParsedSkillsBlock[] {
 }
 
 /**
- * CJK 感知 token 估算（D6）：`CJK 字符数 × 1.0 + 非 CJK 字符数 ÷ 4`，系数见
- * CJK_TOKENS_PER_CHAR / NON_CJK_CHARS_PER_TOKEN。保留小数不取整——阈值比较由调用方
- * 完成，取整口径（向上/向下）属调用方语义，本函数不擅自决定。
+ * CJK 感知 token 估算（D6）：`CJK 字符数 × 1.0 + 非 CJK 字符数 ÷ 分母`，系数见
+ * CJK_TOKENS_PER_CHAR / NON_CJK_CHARS_PER_TOKEN；非 CJK 占比 > CODE_DENSE_NON_CJK_RATIO
+ * 时代码密集文本分母收紧为 ÷ CODE_DENSE_NON_CJK_CHARS_PER_TOKEN（B2，见该常量注释）。
+ * 保留小数不取整——阈值比较由调用方完成，取整口径（向上/向下）属调用方语义，
+ * 本函数不擅自决定。
  *
  * 逐 code point 计数（for-of）：CJK 区间全在 BMP 内不受影响；astral 字符（emoji 等）
- * 按 1 个非 CJK 计，避免 UTF-16 双 code unit 口径混用导致的计数错位。
+ * 按 1 个非 CJK 计，避免 UTF-16 双 code unit 口径混用导致的计数错位。占比分母用
+ * 总 code point 数，空串短路为 0（避免 0/0 除零）。
  */
 export function estimateTokens(text: string): number {
   let cjkCount = 0
@@ -185,5 +202,8 @@ export function estimateTokens(text: string): number {
     totalCount++
     if (CJK_CHAR_RE.test(ch)) cjkCount++
   }
-  return cjkCount * CJK_TOKENS_PER_CHAR + (totalCount - cjkCount) / NON_CJK_CHARS_PER_TOKEN
+  const nonCjkCount = totalCount - cjkCount
+  const isCodeDense = totalCount > 0 && nonCjkCount / totalCount > CODE_DENSE_NON_CJK_RATIO
+  const charsPerToken = isCodeDense ? CODE_DENSE_NON_CJK_CHARS_PER_TOKEN : NON_CJK_CHARS_PER_TOKEN
+  return cjkCount * CJK_TOKENS_PER_CHAR + nonCjkCount / charsPerToken
 }

@@ -3,7 +3,8 @@
  * （设计 subagent-sidebar-filter §3.4 / 实施计划 u-foundation / T1）。
  *
  * 三视角：
- * - 白盒：6 种 SubagentStatus × {done 投影 / waiting / streaming} 形态矩阵的分桶断言
+ * - 白盒：全部 SubagentStatus（shared SUBAGENT_STATUS_ALL，[B3] 不再本地硬拷贝）×
+ *   {done 投影 / waiting / streaming} 形态矩阵的分桶断言
  *   （D4 核心回归：done 投影归「已结束」而非「进行中」）+ isDoneProjection SSOT 直测
  * - 黑盒：filterSubagents 三值行为（'all' 原数组引用直通 / active·ended 过滤正确）、
  *   countSubagents 计数一致性（active + ended === all）、空数组全 0
@@ -12,7 +13,7 @@
  * 运行：cd packages/renderer && pnpm test src/__tests__/lib/subagent-bucket.test.ts
  */
 import { describe, it, expect } from 'vitest'
-import type { SubagentRecord, SubagentStatus } from '@xyz-agent/shared'
+import { SUBAGENT_STATUS_ALL, type SubagentRecord, type SubagentStatus } from '@xyz-agent/shared'
 import {
   DEFAULT_SUBAGENT_FILTER,
   isDoneProjection,
@@ -23,8 +24,12 @@ import {
   type SubagentBucket,
 } from '@/lib/subagent-bucket'
 
-/** 6 种 SubagentStatus 全集（packages/shared/src/subagent.ts SSOT） */
-const ALL_STATUSES: readonly SubagentStatus[] = ['running', 'done', 'failed', 'cancelled', 'crashed', 'closed']
+/**
+ * [B3] 全集数据源 = shared 导出的 SUBAGENT_STATUS_ALL（不再本地硬拷贝）：shared 扩
+ * SubagentStatus 枚举时同步该元组，下方全部形态矩阵即自动覆盖新值；漏同步则由
+ * shared 侧编译锁（_subagentStatusCoversAll）与全集覆盖矩阵断言分别拦截。
+ */
+const ALL_STATUSES: readonly SubagentStatus[] = SUBAGENT_STATUS_ALL
 
 /** 构造最小合法 SubagentRecord（仅必填字段 + 形态字段注入） */
 function makeRecord(status: SubagentStatus, extra: Partial<SubagentRecord> = {}): SubagentRecord {
@@ -212,5 +217,47 @@ describe('导出形态（观察者：SSOT 模块公共面齐全）', () => {
     const bucketValues: SubagentBucket[] = ['active', 'ended']
     expect(filterValues).toContain(DEFAULT_SUBAGENT_FILTER)
     expect(bucketValues).toContain(subagentBucket(makeRecord('running')))
+  })
+})
+
+// ── [B3] 全集覆盖矩阵（adversarial-review-fixes §3.3 B3）──────────────────────
+//
+// 护栏语义：Record<SubagentStatus, SubagentBucket> 断言表是显式的「枚举 → 桶归属」
+// 决策记录——shared 扩枚举后此表缺新键时，循环取值为 undefined 与实际桶值不等，
+// 本矩阵翻红；翻红处置 = 评估新值桶归属（进行中类必须落 active，不得静默落
+// subagentBucket 反向白名单的 ended），补键后再绿。矩阵与 ALL_STATUSES（shared
+// SUBAGENT_STATUS_ALL）双源互证：矩阵多键（枚举已缩）或循环源缺值（元组漏扩）
+// 均可被下方覆盖数断言抓出。
+
+describe('[B3] 全集覆盖矩阵（SUBAGENT_STATUS_ALL 每值都有显式桶归属断言）', () => {
+  /** 枚举 → 桶归属的显式断言表（决策记录：扩枚举须先评估再补键，缺键即红） */
+  const BUCKET_MATRIX: Record<SubagentStatus, SubagentBucket> = {
+    running: 'active', // 唯一非终态（waiting / done 投影细分见上方形态矩阵）
+    done: 'ended',
+    failed: 'ended',
+    cancelled: 'ended',
+    crashed: 'ended',
+    closed: 'ended',
+  }
+
+  it('每个枚举值的 streaming 形态（无附加形态字段）桶归属与断言表一致', () => {
+    for (const status of ALL_STATUSES) {
+      expect(
+        subagentBucket(makeRecord(status)),
+        `status=${status} 的桶归属与 BUCKET_MATRIX 声明不符（扩枚举后未评估桶归属？）`,
+      ).toBe(BUCKET_MATRIX[status])
+    }
+  })
+
+  it('断言表键集 = SUBAGENT_STATUS_ALL 全集（矩阵缺键/多键即覆盖数失配）', () => {
+    // 覆盖数双向：矩阵键数 === 全集长度（多键 = 枚举已缩未清矩阵；循环全集时缺键
+    // 在上一用例以 undefined ≠ 实际桶值暴露）
+    expect(Object.keys(BUCKET_MATRIX).length).toBe(SUBAGENT_STATUS_ALL.length)
+    expect(Object.keys(BUCKET_MATRIX).sort()).toEqual([...SUBAGENT_STATUS_ALL].sort())
+  })
+
+  it('SUBAGENT_STATUS_ALL 无重复值且含 running（分桶判据的反向白名单基准值）', () => {
+    expect(new Set(SUBAGENT_STATUS_ALL).size).toBe(SUBAGENT_STATUS_ALL.length)
+    expect(SUBAGENT_STATUS_ALL).toContain('running')
   })
 })

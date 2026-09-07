@@ -123,7 +123,8 @@ export type { QuotaPreset } from './quota-presets'
 export { QUOTA_PRESETS, matchQuotaPreset } from './quota-presets'
 // normalizeSubagentStatus 已下沉至 runtime（packages/runtime/src/services/session/subagent-status.ts，
 // 单消费者归位）；shared 仅保留 renderer 消费的 deriveClosedDisplay 展示派生。
-export { deriveClosedDisplay } from './subagent'
+// SUBAGENT_STATUS_ALL：枚举值全集（B3 护栏，renderer bucket 测试的全集覆盖矩阵数据源）。
+export { deriveClosedDisplay, SUBAGENT_STATUS_ALL } from './subagent'
 export type {
   WorkflowRunStatus,
   WorkflowDoneReason,
@@ -179,6 +180,8 @@ export {
   CONTEXT_WINDOW_RATIO,
   CJK_TOKENS_PER_CHAR,
   NON_CJK_CHARS_PER_TOKEN,
+  CODE_DENSE_NON_CJK_RATIO,
+  CODE_DENSE_NON_CJK_CHARS_PER_TOKEN,
   CJK_CHAR_RE,
   escapeSkillAttr,
   unescapeSkillAttr,

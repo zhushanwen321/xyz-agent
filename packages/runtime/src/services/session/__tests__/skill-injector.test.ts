@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   buildSkillMarker,
+  CODE_DENSE_NON_CJK_CHARS_PER_TOKEN,
   SKILL_FALLBACK_GUIDANCE,
   SKILLS_BLOCK_TAG,
 } from '@xyz-agent/shared'
@@ -220,18 +221,18 @@ describe('SkillInjector.inject', () => {
   })
 
   it('⑤ 阈值边界：恰好等于阈值 / 略低不降级，略超降级（纯英文字符构造精确估算值）', async () => {
-    // 纯英文按 u1 公式 chars/4：构造内容使估算恰为 0.8 × window。
-    // window=400 → 阈值 320 token；hypothetical = "x" + "\n\n" + block，
-    // blockLen = 前缀 + N + len("\n</skill>")，令 (3 + blockLen) / 4 = 320 → N = 1277 - 前缀。
+    // 纯英文（非 CJK 占比 100% > 70%）按 B2 收紧公式 chars/3：构造内容使估算恰为
+    // 0.8 × window。window=400 → 阈值 320 token；hypothetical = "x" + "\n\n" + block，
+    // blockLen = 前缀 + N + len("\n</skill>")，令 (3 + blockLen) / 3 = 320 → N = 957 - 前缀。
     const window = 400
     const prefix = `<skill name="skill-a" location="${skillAPath}">\nReferences are relative to ${skillADir}.\n\n`
     const suffixLen = '\n</skill>'.length
-    const nExact = 1280 - 3 - (prefix.length + suffixLen)
+    const nExact = 320 * CODE_DENSE_NON_CJK_CHARS_PER_TOKEN - 3 - (prefix.length + suffixLen)
     const bodyOf = (n: number) => 'a'.repeat(n)
     const writeBody = (n: number) => writeFileSync(skillAPath, `---\nname: skill-a\ndescription: t\n---\n${bodyOf(n)}`)
     const marker = buildSkillMarker('skill-a', skillAPath)
 
-    // 略低（估算 318 < 320）：不降级，全文展开
+    // 略低（估算 ≈317.3 < 320）：不降级，全文展开
     writeBody(nExact - 8)
     const low = makeClient({ commands: [skillCmd('skill-a', skillAPath)], stats: { contextUsage: { tokens: 1, contextWindow: window, percent: 1 } } })
     const lowResult = await injector.inject(low.client, `x ${marker}`)
@@ -246,7 +247,7 @@ describe('SkillInjector.inject', () => {
     expect(exactResult.text).not.toContain(`<${SKILLS_BLOCK_TAG}>`)
     expect(exactResult.notices).toEqual([])
 
-    // 略超（321+ > 320）：降级
+    // 略超（估算 ≈321.7 > 320）：降级
     writeBody(nExact + 8)
     const over = makeClient({ commands: [skillCmd('skill-a', skillAPath)], stats: { contextUsage: { tokens: 1, contextWindow: window, percent: 1 } } })
     const overResult = await injector.inject(over.client, `x ${marker}`)

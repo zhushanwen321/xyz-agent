@@ -12,6 +12,9 @@ import {
   SKILL_FALLBACK_GUIDANCE,
   CONTEXT_WINDOW_RATIO,
   CJK_CHAR_RE,
+  CODE_DENSE_NON_CJK_RATIO,
+  CODE_DENSE_NON_CJK_CHARS_PER_TOKEN,
+  NON_CJK_CHARS_PER_TOKEN,
   escapeSkillAttr,
   unescapeSkillAttr,
   buildSkillMarker,
@@ -223,23 +226,31 @@ describe('parseSkillsFallbackBlocks（D7 降级块解析）', () => {
   })
 })
 
-describe('estimateTokens（D6 CJK 感知估算）', () => {
+describe('estimateTokens（D6 CJK 感知估算 + B2 代码密集收紧）', () => {
   it('纯中文：CJK × 1.0', () => {
     expect(estimateTokens('你好世界')).toBe(4)
   })
 
-  it('纯英文：÷4', () => {
-    expect(estimateTokens('abcd')).toBe(1)
+  it('纯英文（非 CJK 占比 100% > 70%）：÷3 收紧（B2）', () => {
+    expect(estimateTokens('abcd')).toBe(4 / 3)
   })
 
-  it('空串为 0', () => {
+  it('空串为 0（占比分母为 0 时短路，无除零）', () => {
     expect(estimateTokens('')).toBe(0)
   })
 
-  it('中英混合：CJK × 1.0 + 非 CJK ÷ 4（空格计入非 CJK）', () => {
+  it('中英混合（非 CJK 占比 ≤ 70%）：CJK × 1.0 + 非 CJK ÷ 4（空格计入非 CJK）', () => {
+    // '你好ab' = 2 CJK + 2 非 CJK，占比 50% 未过收紧阈值
     expect(estimateTokens('你好ab')).toBe(2.5)
-    // '中文 abc 中文' = 4 CJK + 5 非 CJK（空格 a b c 空格）
+    // '中文 abc 中文' = 4 CJK + 5 非 CJK（空格 a b c 空格），占比 5/9 ≈ 56%
     expect(estimateTokens('中文 abc 中文')).toBe(4 + 5 / 4)
+  })
+
+  it('B2 收紧边界：占比恰 70% 不触发（严格大于），略超即 ÷3', () => {
+    // 3 CJK + 7 非 CJK：7/10 = 0.7 恰等于阈值，不触发 → ÷4
+    expect(estimateTokens('一二三abcdefg')).toBe(3 + 7 / NON_CJK_CHARS_PER_TOKEN)
+    // 3 CJK + 8 非 CJK：8/11 ≈ 72.7% > 70% → ÷3
+    expect(estimateTokens('一二三abcdefgh')).toBe(3 + 8 / CODE_DENSE_NON_CJK_CHARS_PER_TOKEN)
   })
 
   it('全角标点计入 CJK（U+FF01！/ U+FF0C，/ U+3002。）', () => {
@@ -247,14 +258,141 @@ describe('estimateTokens（D6 CJK 感知估算）', () => {
     expect(estimateTokens('你好，世界。')).toBe(6)
   })
 
-  it('代码密集样本（base64 长串）：全部按非 CJK ÷ 4', () => {
+  it('代码密集样本（base64 长串，占比 100%）：全部按非 CJK ÷3 收紧（B2）', () => {
     const b64 =
       'QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkhQCMkJSYqKCk='
-    expect(estimateTokens(b64)).toBe(b64.length / 4)
+    expect(estimateTokens(b64)).toBe(b64.length / CODE_DENSE_NON_CJK_CHARS_PER_TOKEN)
   })
 
   it('全角空格（U+3000）计入 CJK', () => {
     expect(estimateTokens('　')).toBe(1)
+  })
+
+  it('B2 收紧常量：阈值 0.7 / 收紧分母 3（单一调参处）', () => {
+    expect(CODE_DENSE_NON_CJK_RATIO).toBe(0.7)
+    expect(CODE_DENSE_NON_CJK_CHARS_PER_TOKEN).toBe(3)
+  })
+})
+
+// ── B2 校准样本（adversarial-review-fixes §3.3 B2）─────────────────────────
+//
+// 防漂锚机制：三类真实形态样本（中文 / 英文 / 代码密集 SKILL.md 正文）对照校准基线
+// 断言偏差 ≤30%——估算公式与真实 token 数的偏差超 30% 时本组翻红，翻红即回头调系数
+// （重审触发条件，见设计原文），不是静默放行。
+//
+// TODO(B2 校准回填)：以下基线为字符比推算值（规则：CJK 0.8 tokens/char——密度区间
+// 0.6~1.0 中位；非 CJK 3.5 chars/token——markdown 技术文档形态，英文散文 4.0 / 代码
+// 2.5~3.5 的折中），非 tokenizer 实测。待 REAL_PI 环境用真实模型 tokenizer 对三样本
+// 实测后回填实测值常量并复核偏差断言。回填时若改样本文本，须同步重算下方计数注释。
+
+/** 校准样本 1：中文 SKILL.md 正文形态（CJK 主导，含标题/列表/编号步骤）。 */
+const CALIBRATION_SAMPLE_ZH = [
+  '代码审查技能使用指南',
+  '',
+  '本技能用于审查 Git 差异并提供结构化反馈。使用前先确认以下前置条件：',
+  '',
+  '- 仓库处于干净状态，无未提交的临时改动',
+  '- 测试套件可以在本地完整运行',
+  '- 审查范围明确限定在当前分支与主分支的差异',
+  '',
+  '执行步骤：',
+  '',
+  '1. 读取差异内容，按文件分组归类',
+  '2. 对每个文件检查命名规范、类型安全与边界条件',
+  '3. 汇总问题清单，按严重程度排序输出',
+  '',
+  '输出格式必须包含问题描述、代码位置与修复建议三个字段，缺一不可。',
+].join('\n')
+
+/** 校准样本 2：英文 SKILL.md 正文形态（markdown 结构，散文主导）。 */
+const CALIBRATION_SAMPLE_EN = [
+  '# Code Review Guide',
+  '',
+  'Use this skill to review Git diffs and produce structured feedback. Before',
+  'starting, verify the following preconditions:',
+  '',
+  '- The working tree is clean with no uncommitted changes',
+  '- The test suite runs to completion locally',
+  '- The review scope is limited to the diff between this branch and main',
+  '',
+  '## Steps',
+  '',
+  '1. Read the diff and group changes by file',
+  '2. For each file, check naming conventions, type safety, and edge cases',
+  '3. Collect findings and sort them by severity before writing the report',
+  '',
+  'The output must include the problem description, the code location, and a',
+  'suggested fix for every finding.',
+].join('\n')
+
+/** 校准样本 3：代码密集 SKILL.md 正文形态（ts 代码块 + 反引号行内代码 + 符号密度高）。 */
+const CALIBRATION_SAMPLE_CODE = [
+  'Usage:',
+  '',
+  '```ts',
+  "import { createClient } from './client'",
+  '',
+  'const client = createClient({',
+  "  baseUrl: 'https://api.example.com/v1',",
+  '  retry: { maxAttempts: 3, backoffMs: 250 },',
+  "  headers: { 'X-Trace-Id': crypto.randomUUID() },",
+  '})',
+  '',
+  'export async function fetchUser(id: string): Promise<User | null> {',
+  '  if (!/^[a-z0-9-]{8,36}$/.test(id)) throw new InvalidIdError(id)',
+  '  const res = await client.get(`/users/${id}?fields=profile,settings`)',
+  '  return res.status === 404 ? null : (await res.json()) as User',
+  '}',
+  '```',
+  '',
+  'Notes:',
+  '- `retry.backoffMs` doubles on each attempt (250 -> 500 -> 1000)',
+  '- All errors extend `BaseError`; catch narrowly, never blanket-catch',
+].join('\n')
+
+/**
+ * 校准基线（字符比推算，待实测回填——见上方 TODO）。表达式即推算规则的自解释形态，
+ * 计数来源（写定样本时的实测计数）：
+ * - ZH：180 CJK + 34 非 CJK（占比 15.9%，不触发收紧）
+ * - EN：0 CJK + 619 非 CJK（占比 100%，触发 ÷3）
+ * - CODE：0 CJK + 641 非 CJK（占比 100%，触发 ÷3）
+ */
+const BASELINE_ZH = 180 * 0.8 + 34 / 3.5
+const BASELINE_EN = 619 / 3.5
+const BASELINE_CODE = 641 / 3.5
+
+/** 统计文本的非 CJK code point 数（与生产 estimateTokens 同源字符类）。 */
+function countNonCjk(text: string): number {
+  let non = 0
+  for (const ch of text) {
+    if (!CJK_CHAR_RE.test(ch)) non++
+  }
+  return non
+}
+
+describe('estimateTokens B2 校准样本（三类真实形态，偏差 ≤30% 防漂锚）', () => {
+  it('中文样本：估算偏差 ≤30% 且方向为高估（CJK 取密度上界）', () => {
+    const est = estimateTokens(CALIBRATION_SAMPLE_ZH)
+    const dev = Math.abs(est - BASELINE_ZH) / BASELINE_ZH
+    expect(dev, `中文样本估算偏差 ${(dev * 100).toFixed(1)}% 超 30%——公式或基线漂移，回头调系数（B2 重审条件）`).toBeLessThanOrEqual(0.3)
+    expect(est, '估算须 ≥ 基线（保守高估方向，宁可多降级）').toBeGreaterThanOrEqual(BASELINE_ZH)
+  })
+
+  it('英文样本：估算偏差 ≤30% 且方向为高估（÷3 收紧 vs 3.5 推算基线）', () => {
+    const est = estimateTokens(CALIBRATION_SAMPLE_EN)
+    const dev = Math.abs(est - BASELINE_EN) / BASELINE_EN
+    expect(dev, `英文样本估算偏差 ${(dev * 100).toFixed(1)}% 超 30%——公式或基线漂移，回头调系数（B2 重审条件）`).toBeLessThanOrEqual(0.3)
+    expect(est, '估算须 ≥ 基线（保守高估方向，宁可多降级）').toBeGreaterThanOrEqual(BASELINE_EN)
+  })
+
+  it('代码密集样本：估算偏差 ≤30%，且收紧（÷3）确实生效', () => {
+    const est = estimateTokens(CALIBRATION_SAMPLE_CODE)
+    const dev = Math.abs(est - BASELINE_CODE) / BASELINE_CODE
+    expect(dev, `代码密集样本估算偏差 ${(dev * 100).toFixed(1)}% 超 30%——公式或基线漂移，回头调系数（B2 重审条件）`).toBeLessThanOrEqual(0.3)
+    // 收紧生效的结构断言：est ≥ 非 CJK 字符数 ÷3（占比判定失效回落 ÷4 时 est < ÷3 值，翻红）
+    const nonCjk = countNonCjk(CALIBRATION_SAMPLE_CODE)
+    expect(est, '代码密集样本估算须 ≥ 收紧后字符比推算值（÷3 生效的证明）').toBeGreaterThanOrEqual(nonCjk / CODE_DENSE_NON_CJK_CHARS_PER_TOKEN)
+    expect(est, '估算须严格大于 ÷4 推算值（未收紧即漂移——B2 收紧失效）').toBeGreaterThan(nonCjk / NON_CJK_CHARS_PER_TOKEN)
   })
 })
 

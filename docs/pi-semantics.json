@@ -554,5 +554,28 @@
    "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-defer-marker-survival.test.ts"
   },
   "verifiedWith": "0.84.4"
+ },
+ {
+  "id": "PS-27",
+  "claim": "skill 展开模板与 frontmatter 剥离行为的静态逐字形态（B1 静态锚，补 PS-24 动态 golden probe 的 CI 缺口——XYZ_SKIP_REAL_PI=1 下 PS-24 恒 skip）：①agent-session.js _expandSkillCommand 的 block 模板源码行 `<skill name=\"${skill.name}\" location=\"${skill.filePath}\">\\nReferences are relative to ${skill.baseDir}.\\n\\n${body}\\n</skill>` 与 args 拼接 `args ? \\`${skillBlock}\\n\\n${args}\\` : skillBlock`；body = stripFrontmatter(content).trim()（双 trim）；未命中 skill 原样透传；②utils/frontmatter.js extractFrontmatter 的剥离行为关键行：normalizeNewlines(stripBom(content)) → startsWith('---') 开界 → indexOf('\\n---', 3) 闭界 → body = slice(endIndex + 4).trim()，无 frontmatter/无闭界原文返回，stripFrontmatter = parseFrontmatter().body 直通；③xyz 镜像（runtime skill-injector.ts）的 block 模板行与 stripFrontmatterPi 关键行与 pi dist 同骨架（变量名差异不影响骨架子串）。任一锚改形 = pi 升级改展开格式/剥离行为，静态锚在 CI 即红（凭证无关），不再依赖本地 REAL_PI 环境才能发现",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "_expandSkillCommand（skill 展开）",
+    "note": ":983-1008——前缀判定 :984 / name·args 解析 :985-987 / getSkills 查找 :989 / readFileSync+stripFrontmatter 双 trim :993-994 / block 模板 :995 / args 拼接 :996；stripFrontmatter 导入自 ../utils/frontmatter.js :20"
+   },
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/utils/frontmatter.js",
+    "symbol": "extractFrontmatter / stripFrontmatter / normalizeNewlines",
+    "note": "normalizeNewlines（CRLF/CR→LF）与 stripBom 组合 :4-5 / startsWith('---') :8 / indexOf('\\n---', 3) :11 / slice(4, endIndex) yaml + slice(endIndex+4).trim() body :16-17 / stripFrontmatter = parseFrontmatter().body :26"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-skill-expansion-static.test.ts"
+  },
+  "verifiedWith": "0.84.4"
  }
 ]
