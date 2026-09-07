@@ -15,12 +15,16 @@
  *        属主死写 orphaned；poller 竞争已终态时不覆盖；锁内判活重查拒绝死而复生
  *     ④ 身份探测不可得 → identity-unverifiable，无信号无写
  *     ⑤ 锁内写失败（①预写/②终态）→ registry-write-failed 中止语义（未发信号不杀）
+ * - D6⑤ 补遗族（锁获取失败 catch ×2 + ③收尾写失败 catch ×2，全 catch 点闭合）：
+ *     ⑤c ①路径锁获取失败（ELOCKED 预算耗尽）⑤d ③路径锁获取失败
+ *     ⑤e ③锁内重查死收尾写失败 ⑤f finalizeDeadEntry 锁内收尾写失败
  * - D6 身份验证两档：pidStartTime 严格比对 / 缺省 startedAt 降级；mismatch = pid 复用 → ③
  * - D7 自写自检：kill 成功路径广播且轮询 tick 不重复
  *
  * Mock 边界：pid 探测/处置原语全依赖注入（对齐 reaper 测试惯例，零真实进程）；
  * registry 落真实 tmp 文件系统（mkdtempSync 自建自删，禁触真实数据目录）；node:fs
- * 部分 mock 仅注入 ⑤ 的 tmp 写失败分支（默认委托真实实现，primitives 惯例）。
+ * 部分 mock 仅注入 ⑤ 的 tmp 写失败分支（默认委托真实实现，primitives 惯例）；
+ * utils/file-lock 同款部分 mock 仅注入 ⑤ 锁获取失败分支（默认委托真实实现）。
  * timer 用 fake timers。
  *
  * 运行：cd packages/runtime && env -u XYZ_AGENT_DATA_DIR npx vitest run src/services/background-task
@@ -49,6 +53,33 @@ vi.mock('node:fs', async (importOriginal) => {
 
 function delegateFsToReal(): void {
   fsMock.writeFileSync.mockImplementation(fsMock.actual.writeFileSync as never)
+}
+
+// ── utils/file-lock 部分 mock：仅注入 ⑤ 锁获取失败分支（默认委托真实实现）──
+const fileLockMock = vi.hoisted(() => ({
+  withFileLockSync: vi.fn(),
+  actual: null as unknown as typeof import('../../utils/file-lock.js'),
+}))
+vi.mock('../../utils/file-lock.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/file-lock.js')>()
+  fileLockMock.actual = actual
+  // 工厂内即设默认委托：被测模块图的锁调用默认走真实实现
+  fileLockMock.withFileLockSync.mockImplementation(actual.withFileLockSync as never)
+  return { ...actual, withFileLockSync: fileLockMock.withFileLockSync }
+})
+
+function delegateFileLockToReal(): void {
+  fileLockMock.withFileLockSync.mockImplementation(fileLockMock.actual.withFileLockSync as never)
+}
+
+/**
+ * 注入模拟 ELOCKED：锁获取即抛（⑤锁获取失败分支——withFileLockSync 预算耗尽 fail-fast
+ * 同形态；afterEach 的 delegateFileLockToReal 自动恢复）。
+ */
+function failFileLock(): void {
+  fileLockMock.withFileLockSync.mockImplementation(() => {
+    throw Object.assign(new Error('[file-lock] simulated: ELOCKED retry budget exhausted'), { code: 'ELOCKED' })
+  })
 }
 
 // ── fixtures ──────────────────────────────────────────────────────
@@ -118,13 +149,19 @@ function failTmpWrites(): void {
 beforeEach(() => {
   agentDir = mkdtempSync(join(tmpdir(), 'bg-task-svc-'))
   delegateFsToReal()
+  delegateFileLockToReal()
 })
 
 afterEach(() => {
   delegateFsToReal()
+  delegateFileLockToReal()
   vi.useRealTimers()
   rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   vi.restoreAllMocks()
+  // vitest 4 的 restoreAllMocks 只恢复 vi.spyOn，模块级 vi.fn() 的调用历史须显式清，
+  // 否则调用次数断言跨用例累计（⑤c 曾因此把累计 10 次误当本次调用）
+  fsMock.writeFileSync.mockClear()
+  fileLockMock.withFileLockSync.mockClear()
 })
 
 // ── P1 探针：并发写×读 1000 次 ───────────────────────────────────
@@ -411,6 +448,72 @@ describe('D6: kill 分支矩阵', () => {
     expect(await service.killTask(SID, 'bt-never-existed')).toEqual({ killed: false, reason: 'already-exited' })
     expect(deps.killProcessTree).not.toHaveBeenCalled()
     expect(deps.probeProcessStartTimeMs).not.toHaveBeenCalled()
+  })
+})
+
+// ── D6⑤ 补遗族：锁获取失败 catch ×2 + ③收尾写失败 catch ×2 ────────
+// 与 ⑤a/⑤b 合计覆盖 D6 全部四个写路径 catch 点（⑤a=①预写、⑤b=②终态、本组=锁×2+③×2）。
+
+describe('D6⑤ 补遗：锁获取失败与 ③ 收尾写失败（registry-write-failed 中止语义）', () => {
+  it('⑤c ①路径锁获取失败（ELOCKED 预算耗尽）：不发信号，条目停留 running', async () => {
+    writeRegistry([makeEntry()])
+    failFileLock()
+    const deps = makeDeps() // pid/owner 均活 + 身份过 → 进入主路径取锁即抛
+    const service = makeService(deps)
+
+    const result = await service.killTask(SID, TASK_ID)
+
+    expect(result).toEqual({ killed: false, reason: 'registry-write-failed' })
+    expect(fileLockMock.withFileLockSync).toHaveBeenCalledTimes(1) // 抛点确在锁获取处
+    expect(deps.killProcessTree).not.toHaveBeenCalled() // 未发信号则不杀
+    expect(readRawEntries()[0].state).toBe('running')
+  })
+
+  it('⑤d ③路径锁获取失败（finalizeDeadEntry 外层 catch）：不发信号，条目停留 running', async () => {
+    writeRegistry([makeEntry()])
+    failFileLock()
+    const deps = makeDeps({ isPidAlive: vi.fn(() => false) }) // 锁外判活即死 → 分支③收尾取锁即抛
+    const service = makeService(deps)
+
+    const result = await service.killTask(SID, TASK_ID)
+
+    expect(result).toEqual({ killed: false, reason: 'registry-write-failed' })
+    expect(deps.probeProcessStartTimeMs).not.toHaveBeenCalled() // 判活先于身份验证
+    expect(deps.killProcessTree).not.toHaveBeenCalled()
+    expect(readRawEntries()[0].state).toBe('running')
+  })
+
+  it('⑤e ③锁内重查死收尾写失败（pid 锁外活/锁内死 + 过渡终态写 EACCES）：不发信号，条目停留 running', async () => {
+    writeRegistry([makeEntry()])
+    failTmpWrites()
+    let taskPidProbe = 0
+    const deps = makeDeps({
+      isPidAlive: vi.fn((pid: number) => {
+        if (pid !== TASK_PID) return true // owner 活 → 锁内走过渡终态写
+        taskPidProbe++
+        return taskPidProbe <= 1 // 锁外初判活、锁内重查死 → 锁内③收尾
+      }),
+    })
+    const service = makeService(deps)
+
+    const result = await service.killTask(SID, TASK_ID)
+
+    expect(result).toEqual({ killed: false, reason: 'registry-write-failed' })
+    expect(deps.killProcessTree).not.toHaveBeenCalled()
+    expect(readRawEntries()[0].state).toBe('running') // 写失败不覆盖原状态
+  })
+
+  it('⑤f finalizeDeadEntry 锁内终态写失败（③a pid 死属主活 + 过渡终态写 EACCES）：条目停留 running', async () => {
+    writeRegistry([makeEntry()])
+    failTmpWrites()
+    const deps = makeDeps({ isPidAlive: vi.fn((pid: number) => pid === OWNER_PID) }) // 任务 pid 死、owner 活
+    const service = makeService(deps)
+
+    const result = await service.killTask(SID, TASK_ID)
+
+    expect(result).toEqual({ killed: false, reason: 'registry-write-failed' })
+    expect(deps.killProcessTree).not.toHaveBeenCalled()
+    expect(readRawEntries()[0].state).toBe('running')
   })
 })
 
