@@ -121,7 +121,7 @@ graph TD
 | u-probe-multipart | committed | 1 | 本文件同 commit；vitest 30/30（23 存量 + 7 新增四出口表测）、HEAD 残留 0、eslint 0 problems、领地 TS2698 存量错顺手修复 |
 | u-checker | pending | 0 | — |
 | u-download-failover | pending | 0 | — |
-| u-settings-ui | pending | 0 | — |
+| u-settings-ui | committed | 1 | 本文件同 commit；vitest 8/8 + 回归 206 绿 + vue-tsc 0 错 + vue_rules_checker / i18n locale sync 过 |
 
 ## 7 残留风险与变更历史
 
