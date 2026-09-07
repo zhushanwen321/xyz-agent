@@ -25,7 +25,7 @@
  *       preflight-check.sh [10/10]（CI: build.yml）。退出码：0 = 通过；1 = 违规。
  */
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -114,7 +114,9 @@ for (const pkgFile of pkgDirs) {
   if (!Array.isArray(pkg.files) || pkg.files.length === 0) continue
   checked++
 
-  const rel = (abs) => relative(pkgDir, abs)
+  // 白名单条目是 package.json 里的 POSIX 形态（src/、src/*.ts），inWhitelist 全按 "/" 匹配；
+  // path.relative 在 Windows 返回 "\" 分隔路径，统一规范化，否则 win 上 26 包全量误报
+  const rel = (abs) => relative(pkgDir, abs).split(sep).join('/')
   const missing = new Set()
 
   // 1. import 闭包：从 main + pi.extensions 出发 BFS
