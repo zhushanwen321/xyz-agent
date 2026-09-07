@@ -29,7 +29,7 @@
       <slot />
     </PopoverAnchor>
     <PopoverContent
-      v-if="open && items.length > 0"
+      v-if="open && (items.length > 0 || fileFallbackVisible)"
       side="top"
       align="start"
       :side-offset="6"
@@ -37,52 +37,80 @@
       class="w-[var(--reka-popper-anchor-width)] max-w-[calc(100vw-16px)] overflow-hidden p-0"
       @open-auto-focus.prevent
     >
-      <!-- list · 行用纯 div（对齐 demo .cmd-row：避免 Button variant=ghost 的 font-medium/ring-offset 噪音）。
-           选中态 bg-surface（实色）是 D8 特例——不复用 popover-styles.ts 的 SELECTED_ITEM_CLASS
-           （该 class 是 bg-accent-soft，供 ModelSelect/ThinkingLevel 用）；CommandPopover 按 D8 用实色。 -->
-      <div class="max-h-[180px] overflow-y-auto py-1">
-        <div
-          v-for="(item, i) in items"
-          :key="item.id"
-          class="cmd-row flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px] leading-[1.4] transition-colors"
-          :class="i === activeIndex ? 'bg-surface text-accent' : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg'"
-          :aria-disabled="item.selected ? 'true' : undefined"
-          @click="onSelect(item)"
-          @mouseenter="activeIndex = i"
-        >
-          <component
-            :is="iconFor(item)"
-            :class="['size-[15px] shrink-0', iconClass(item, i === activeIndex)]"
-          />
-          <!-- file 类型：两行（basename 主 + 父目录路径暗色小字），区分同名文件 + 知道文件位置。
-               file basename 保留 font-mono（路径/文件名等宽对齐是常见范式，与 slash 命令名 sans 区分）。 -->
-          <div v-if="props.type === 'file'" class="min-w-0 flex-1">
-            <div class="truncate font-mono text-[12px]" :class="i === activeIndex ? 'text-accent' : 'text-neutral-fg'">{{ item.name }}</div>
-            <div v-if="item.dirPath" class="truncate font-mono text-[10px] leading-tight text-neutral-dim">{{ item.dirPath }}</div>
-          </div>
-          <!-- session / subagent 类型：两行（主行 + subText 副行）——session 副行 = cwd · 相对时间、
-               subagent 副行 = agent · status、新建项无副行。主行 sans（标题/短标签语义，与 file 的
-               mono 路径区分）。派生逻辑在 command-popover-symbols.ts（纯函数可单测）。 -->
-          <div v-else-if="props.type === 'session' || props.type === 'subagent'" class="min-w-0 flex-1">
-            <div class="truncate text-[12px] font-medium" :class="i === activeIndex ? 'text-accent' : 'text-neutral-fg'">{{ item.name }}</div>
-            <div v-if="item.subText" class="truncate text-[10px] leading-tight text-neutral-dim">{{ item.subText }}</div>
-          </div>
-          <!-- slash 类型：单行（命令名加粗 sans + middot + description/kind 提示词）。
-               skill 只显名字（icon+紫色已传达类型，/skill: 前缀对用户冗余）；
-               普通 slash 保留 / 前缀（命令调用语义）。item.name 是完整路由名（含前缀），
-               item.displayName 是显示名（skill 去前缀）——onSelect 传 name 保证路由正确。
-               middot · 与 demo .cmd-mid 对齐（命令名与描述间的视觉分隔）。 -->
-          <template v-else>
-            <span class="shrink-0 font-semibold" :class="i === activeIndex ? 'text-accent' : 'text-neutral-fg'">{{ item.displayName ?? item.name }}</span>
-            <span v-if="item.description" class="shrink-0 text-neutral-faint">·</span>
-            <span v-if="item.description" class="ml-auto shrink-0 truncate max-w-[520px] text-neutral-dim">{{ item.description }}</span>
-            <!-- skill 已选标记（多 skill 注入 D2）：命中 selectedSkillNames 的项显示「已选」，
-                 onSelect 守卫禁选（防同一 skill 重复注入全文） -->
-            <span v-if="item.selected" class="ml-auto shrink-0 text-[10px] text-neutral-dim">{{ t('panel.command.skillSelected') }}</span>
-            <span v-else-if="!item.description" class="ml-auto shrink-0 text-[10px] text-neutral-dim">{{ item.kind }}</span>
-          </template>
-        </div>
+      <!-- D7：landing cwd 路错误态（加载失败 vs 无结果两因区分）——整行可点重试（重发起拉取） -->
+      <div
+        v-if="fileErrorVisible"
+        class="flex cursor-pointer items-center gap-2 px-2.5 py-2 text-left text-[12px] text-neutral-mid transition-colors hover:bg-surface-hover hover:text-neutral-fg"
+        role="button"
+        data-testid="cmd-file-error"
+        @click="retryCwdFileFetch"
+      >
+        <AlertCircle class="size-[15px] shrink-0 text-danger opacity-70" />
+        <span class="truncate">{{ t('panel.command.fileLoadFailed') }}</span>
       </div>
+      <!-- D7：无结果空态（拉取成功但目录无文件；query 过滤致空不在此列——源非空不弹本态） -->
+      <div
+        v-else-if="fileNoResultsVisible"
+        class="flex items-center gap-2 px-2.5 py-2 text-[12px] text-neutral-dim"
+        data-testid="cmd-file-empty"
+      >
+        <FolderOpen class="size-[15px] shrink-0 opacity-60" />
+        <span class="truncate">{{ t('panel.command.fileNoResults') }}</span>
+      </div>
+      <template v-else>
+        <!-- list · 行用纯 div（对齐 demo .cmd-row：避免 Button variant=ghost 的 font-medium/ring-offset 噪音）。
+             选中态 bg-surface（实色）是 D8 特例——不复用 popover-styles.ts 的 SELECTED_ITEM_CLASS
+             （该 class 是 bg-accent-soft，供 ModelSelect/ThinkingLevel 用）；CommandPopover 按 D8 用实色。 -->
+        <div class="max-h-[180px] overflow-y-auto py-1">
+          <div
+            v-for="(item, i) in items"
+            :key="item.id"
+            class="cmd-row flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px] leading-[1.4] transition-colors"
+            :class="i === activeIndex ? 'bg-surface text-accent' : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg'"
+            :aria-disabled="item.selected ? 'true' : undefined"
+            @click="onSelect(item)"
+            @mouseenter="activeIndex = i"
+          >
+            <component
+              :is="iconFor(item)"
+              :class="['size-[15px] shrink-0', iconClass(item, i === activeIndex)]"
+            />
+            <!-- file 类型：两行（basename 主 + 父目录路径暗色小字），区分同名文件 + 知道文件位置。
+                 file basename 保留 font-mono（路径/文件名等宽对齐是常见范式，与 slash 命令名 sans 区分）。 -->
+            <div v-if="props.type === 'file'" class="min-w-0 flex-1">
+              <div class="truncate font-mono text-[12px]" :class="i === activeIndex ? 'text-accent' : 'text-neutral-fg'">{{ item.name }}</div>
+              <div v-if="item.dirPath" class="truncate font-mono text-[10px] leading-tight text-neutral-dim">{{ item.dirPath }}</div>
+            </div>
+            <!-- session / subagent 类型：两行（主行 + subText 副行）——session 副行 = cwd · 相对时间、
+                 subagent 副行 = agent · status、新建项无副行。主行 sans（标题/短标签语义，与 file 的
+                 mono 路径区分）。派生逻辑在 command-popover-symbols.ts（纯函数可单测）。 -->
+            <div v-else-if="props.type === 'session' || props.type === 'subagent'" class="min-w-0 flex-1">
+              <div class="truncate text-[12px] font-medium" :class="i === activeIndex ? 'text-accent' : 'text-neutral-fg'">{{ item.name }}</div>
+              <div v-if="item.subText" class="truncate text-[10px] leading-tight text-neutral-dim">{{ item.subText }}</div>
+            </div>
+            <!-- slash 类型：单行（命令名加粗 sans + middot + description/kind 提示词）。
+                 skill 只显名字（icon+紫色已传达类型，/skill: 前缀对用户冗余）；
+                 普通 slash 保留 / 前缀（命令调用语义）。item.name 是完整路由名（含前缀），
+                 item.displayName 是显示名（skill 去前缀）——onSelect 传 name 保证路由正确。
+                 middot · 与 demo .cmd-mid 对齐（命令名与描述间的视觉分隔）。 -->
+            <template v-else>
+              <span class="shrink-0 font-semibold" :class="i === activeIndex ? 'text-accent' : 'text-neutral-fg'">{{ item.displayName ?? item.name }}</span>
+              <span v-if="item.description" class="shrink-0 text-neutral-faint">·</span>
+              <span v-if="item.description" class="ml-auto shrink-0 truncate max-w-[520px] text-neutral-dim">{{ item.description }}</span>
+              <!-- skill 已选标记（多 skill 注入 D2）：命中 selectedSkillNames 的项显示「已选」，
+                   onSelect 守卫禁选（防同一 skill 重复注入全文） -->
+              <span v-if="item.selected" class="ml-auto shrink-0 text-[10px] text-neutral-dim">{{ t('panel.command.skillSelected') }}</span>
+              <span v-else-if="!item.description" class="ml-auto shrink-0 text-[10px] text-neutral-dim">{{ item.kind }}</span>
+            </template>
+          </div>
+        </div>
+        <!-- D7：DoS 上限 5000 截断提示（runtime truncated 信号；目标文件可能不在候选的感知入口） -->
+        <div
+          v-if="fileTruncatedVisible"
+          class="border-t border-hairline px-2.5 py-1 text-[10px] text-neutral-dim"
+          data-testid="cmd-file-truncated"
+        >{{ t('panel.command.fileTruncated') }}</div>
+      </template>
     </PopoverContent>
   </Popover>
 </template>
@@ -90,14 +118,15 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { AlertCircle, FolderOpen } from '@lucide/vue'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
-import { iconKeyForCommand, filterAndSortFileCandidates, toFileCandidates } from '@xyz-agent/core'
+import { iconKeyForCommand, filterAndSortFileCandidates } from '@xyz-agent/core'
 import { SLASH_COMMAND_SOURCE_KEY } from './command-popover-source'
 import { buildSessionCandidates, buildSubagentCandidates, buildSlashCandidates, normalizedSlashName } from './command-popover-symbols'
 import { buildSkillCandidates } from './command-popover-skill-candidates'
-import { useCommandPopoverOpenFetch } from './command-popover-open-fetch'
+import { useCommandPopoverCwdFileView } from './command-popover-open-fetch'
 import { useCommandPopoverDelivery } from './command-popover-delivery'
 import { useCommandPopoverFileCandidates } from './command-popover-file-candidates'
 import { isInternalSkillName, isInternalSlashName } from '@/lib/internal-command-filter'
@@ -161,8 +190,24 @@ const { t } = useI18n()
 const commandStore = useCommandStore()
 /** file 候选加载（挂载 / 切 session 拉取，store 缓存幂等——ADR-0049；见 command-popover-file-candidates.ts） */
 const { fileCandidates } = useCommandPopoverFileCandidates(toRef(props, 'sessionId'))
-/** landing cwd 路 $ 候选（无 sid 时 open-fetch 边沿拉取结果，D2；panel 有 sid 走上方 fileCandidates） */
-const cwdFileCandidates = ref<ReturnType<typeof toFileCandidates>>([])
+/**
+ * landing cwd 路 $ 候选 + D7 三态（无 sid 时 open-fetch 边沿拉取，D2；panel 有 sid 走上方
+ * fileCandidates）。错误态/空态两因区分 + 5000 截断提示 + B5/#10 cwd 快照守卫与 open 边沿清 ref，
+ * 视图态封装在 command-popover-open-fetch.ts 的 useCommandPopoverCwdFileView（行数约束下沉）。
+ */
+const {
+  cwdFileCandidates,
+  fileErrorVisible,
+  fileNoResultsVisible,
+  fileFallbackVisible,
+  fileTruncatedVisible,
+  retryCwdFileFetch,
+} = useCommandPopoverCwdFileView({
+  open: () => props.open,
+  type: () => props.type,
+  sessionId: () => props.sessionId,
+  cwd: () => props.cwd,
+})
 // 四符号体系候选源：# sessionStore（sidebar 同款跨 cwd 全量）/ @ subagentStore（per-session 分区）
 const sessionStore = useSessionStore()
 const subagentStore = useSubagentStore()
@@ -354,21 +399,7 @@ watch(
   },
 )
 
-/**
- * [打开主动拉]（U3 renderer 部分 + @ subagent 候源拉取）：浮层 open false→true 边沿按
- * type 分路拉（slash → getCommands 回填 / subagent → loadSubagents / file landing → cwd 通道，
- * D2/D3），1s 节流。实现在 command-popover-open-fetch.ts（行数约束拆分）。
- */
-useCommandPopoverOpenFetch({
-  open: () => props.open,
-  type: () => props.type,
-  sessionId: () => props.sessionId,
-  cwd: () => props.cwd,
-  // landing cwd 路 $ 候选：raw FileNode[] → 候选形状（同 file-candidates hook 映射）→ 本地 ref
-  onCwdFileCandidates: (nodes) => {
-    cwdFileCandidates.value = toFileCandidates(nodes)
-  },
-})
+// ── D7 三态派生与 landing cwd 候选 ref 见 useCommandPopoverCwdFileView（command-popover-open-fetch.ts）──
 
 defineExpose({ handleKeydown })
 </script>

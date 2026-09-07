@@ -22,7 +22,8 @@
  *
  * 生命周期：session 销毁经 registerSessionCleanup 挂进 useSidebar.deleteSession 编排——
  * 清分区 + 抑制在途写入（迟到的 RPC resolve / 广播不得把已销毁 session 的分区僵尸式写回：
- * updateFor 会重建分区，形成泄漏条目）。
+ * updateFor 会重建分区，形成泄漏条目）。抑制条目有界（BG-7 / D6 #2）：迟到写入源
+ * （物理订阅 + 在途 RPC）全部枯竭后自动释放，Set 不随销毁次数只增不减。
  *
  * 切走 session 后旧 sid 订阅释放（refCount--），其分区停更、切回时由拉取腿兜底刷新
  *（C6：广播只做增量刷新，拉取是唯一真相入口）。
@@ -97,6 +98,8 @@ function releaseBroadcastSubscription(sid: string): void {
   if (existing.count <= 0) {
     existing.unsub()
     sidSubscriptions.delete(sid)
+    // 广播迟到源枯竭：若在途 RPC 也已 settle，抑制使命完成（BG-7 有界化）
+    releaseSuppressionIfIdle(sid)
   }
 }
 
@@ -132,6 +135,16 @@ function parseListReply(raw: unknown): ListReplySnapshot | null {
 // @data-owner #25
 const suppressedSids = new Set<string>()
 
+/**
+ * 抑制条目有界化释放（BG-7 / D6 #2）：该 sid 的全部迟到写入源枯竭（物理订阅已退订 +
+ * 在途 RPC 已 settle）后移除抑制登记——防已销毁 session 的 sid 永久滞留（只增不减）。
+ * 移除后该 sid 无任何写入路径可达（订阅退订后广播不再投递、RPC settle 后无 resolve），
+ * 分区不会被僵尸式重建，语义与抑制期间等价。
+ */
+function releaseSuppressionIfIdle(sid: string): void {
+  if (!sidSubscriptions.has(sid) && !inflightFetches.has(sid)) suppressedSids.delete(sid)
+}
+
 /** 测试隔离钩子：清空全部模块级簿记（用例间残留防污染）。生产代码禁止调用。 */
 export function __resetBackgroundTasksForTest(): void {
   for (const { unsub } of sidSubscriptions.values()) unsub()
@@ -139,6 +152,11 @@ export function __resetBackgroundTasksForTest(): void {
   broadcastListeners.clear()
   inflightFetches.clear()
   suppressedSids.clear()
+}
+
+/** 测试观察钩子：抑制表当前成员（BG-7 有界性断言用）。生产代码禁止调用。 */
+export function __suppressedSidsForTest(): readonly string[] {
+  return [...suppressedSids]
 }
 
 export interface UseBackgroundTasksReturn {
@@ -205,6 +223,11 @@ export function useBackgroundTasks(sessionIdRef: Ref<string | null | undefined>)
       .finally(() => {
         // settle 即清条目（下次切入重拉）；比对引用防误删后来者
         if (inflightFetches.get(sid) === shared) inflightFetches.delete(sid)
+        // RPC 迟到源枯竭 → 尝试释放抑制（BG-7 有界化）。必须延迟一个 macrotask：本 finally
+        // 回调先于 fetchInto 挂在 shared 上的消费回调执行（promise 回调按注册序），此处同步
+        // 释放会让「销毁后迟到 resolve」通过消费回调的抑制检查（微任务窗口内 Set 已清）→
+        // 僵尸写回。macrotask 排到本 settle 派生的全部消费微任务之后，语义精确。
+        setTimeout(() => releaseSuppressionIfIdle(sid), 0)
       })
     inflightFetches.set(sid, shared)
     return shared

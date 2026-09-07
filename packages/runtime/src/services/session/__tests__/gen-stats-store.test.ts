@@ -52,7 +52,7 @@ beforeEach(() => {
 afterEach(() => {
   if (prevDataDirEnv === undefined) delete process.env.XYZ_AGENT_DATA_DIR
   else process.env.XYZ_AGENT_DATA_DIR = prevDataDirEnv
-  rmSync(dataDir, { recursive: true, force: true })
+  rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
 /** 从 store 公开 API 取 speed 文件路径（保证测的是真实落盘位置） */
@@ -259,6 +259,21 @@ describe('readDayRecords / writeDayRecords（同步原子写 + 损坏自愈，D3
     expect(readdirSync(getSpeedDir()).filter((f) => f.includes('.tmp'))).toEqual([])
   })
 
+  it('write 顺带清扫同目录 .tmp 孤儿（D6 #3：崩溃落在 write→rename 窗口的残留，含他模型文件名）', () => {
+    // 预置两个孤儿：本文件同名的 tmp + 另一模型文件的 tmp（换模型后永不重写的那类）
+    const p = speedPath('prov', 'mdl')
+    mkdirSync(getSpeedDir(), { recursive: true })
+    writeFileSync(`${p}.tmp`, 'orphan-half-written', 'utf8')
+    writeFileSync(join(getSpeedDir(), `${safeModelFileName('prov', 'gone')}.json.tmp`), 'orphan-other-model', 'utf8')
+
+    writeDayRecords(p, { [localDayKey()]: [[1, 1000]] })
+
+    expect(readdirSync(getSpeedDir()).filter((f) => f.endsWith('.tmp'))).toEqual([])
+    // 正常数据文件不受清扫误伤
+    expect(existsSync(p)).toBe(true)
+    expect(readDayRecords(p)).toEqual({ [localDayKey()]: [[1, 1000]] })
+  })
+
   it('write 时顺带 GC：过期日键不落盘（D3「写入时顺带清理」）', () => {
     const p = speedPath()
     const records: GenStatsDayRecords = { '2000-01-01': [[1, 1]], [localDayKey()]: [[2, 2]] }
@@ -332,7 +347,7 @@ describe('路径派生（getDataDir 动态推导，零硬编码）', () => {
       expect(getGenStatsDir({ XYZ_AGENT_DATA_DIR: injected })).toBe(join(injected, 'gen-stats'))
       expect(getGenStatsDir()).toBe(join(dataDir, 'gen-stats'))
     } finally {
-      rmSync(injected, { recursive: true, force: true })
+      rmSync(injected, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })

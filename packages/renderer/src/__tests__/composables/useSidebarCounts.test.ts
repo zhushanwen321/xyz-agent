@@ -1,10 +1,11 @@
 /**
  * useSidebarCounts badge 口径单测（设计 subagent-sidebar-filter D8 / T3）。
  *
- * subagentRunningCount 从宽口径 `status === 'running'` 收窄为
- * `status === 'running' && !isDoneProjection(r)`：done 投影（one-shot 轮终等 GC，
- * renderer 侧永久态）不计入——badge 语义与「进行中」桶判据恒一致（同源
- * isDoneProjection），消除此类会话 badge 永久虚亮而默认桶空态的分叉。
+ * subagentRunningCount 判据 = 「进行中」桶 SSOT（subagentBucket(r) === 'active'，
+ * D6 #5 收敛——曾为本地重复实现 `status === 'running' && !isDoneProjection(r)`，
+ * 与分桶判据同义但两处维护）：done 投影（one-shot 轮终等 GC，renderer 侧永久态）
+ * 不计入、waiting（可复活非终态）计入——badge 语义与列表 active 桶恒同源，
+ * 消除 badge 永久虚亮 / 口径漂移分叉。
  *
  * 运行：cd packages/renderer && pnpm test src/__tests__/composables/useSidebarCounts.test.ts
  */
@@ -67,7 +68,7 @@ describe('useSidebarCounts D8 badge 口径（subagentRunningCount）', () => {
     expect(counts.subagentRunningCount.value).toBe(0)
   })
 
-  it('与「进行中」桶计数恒一致（同源 isDoneProjection 回归：混合 fixture 下 badge = countSubagents.active）', () => {
+  it('与「进行中」桶计数恒一致（D6 #5：判据直接引用 subagentBucket SSOT，混合 fixture 下 badge = countSubagents.active）', () => {
     const sid = ref<string | null>('sess-mix')
     const store = useSubagentStore()
     const records = [

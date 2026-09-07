@@ -6,9 +6,11 @@
  * - U28 CommandPopover file 候选空 → PopoverContent 不渲染
  * - U29 file 候选含目录项 → 图标 folder（G16 映射验证）
  * - U33 sid A→B 切换无残留（ADR-0049 回归）
- * - LP 组 landing cwd 路（u5，landing-composer-session-file-symbols G1/D2）：
- *   无 sessionId + cwd 有值 → open-fetch 边沿拉取渲染候选；拉取失败降级空候选
- *   （浮层不渲染、无 unhandled rejection）；panel session 路用例全部保持
+ * - LP 组 landing cwd 路（u5，landing-composer-session-file-symbols G1/D2 + adversarial-
+ *   review-fixes §3.4 D7/#10）：无 sessionId + cwd 有值 → open-fetch 边沿拉取渲染候选；
+ *   拉取失败回写**错误态**（浮层渲染「加载失败，点击重试」+ 行内重试重发拉取）；成功空结果
+ *   → 空态「当前目录无匹配文件」（两因区分）；truncated → 底部「已截断」提示；open 边沿
+ *   清陈旧候选 + cwd 快照守卫（迟到回执按发起时 cwd 归属裁决）；panel session 路用例全部保持
  * - U30 AddMenuPopover 有 session → 含「文件」「命令」，不含「引用」
  * - U31 AddMenuPopover 无 session（landing）→ 不含「文件」「引用」，含「命令」
  * - U32 Composer onAddSelect('file') → cmdType='file', cmdOpen=true
@@ -176,9 +178,10 @@ describe('landing cwd 路（LP 组，u5 G1/D2）', () => {
   })
 
   it('LP1 无 sessionId + cwd 有值 → open 边沿按 cwd 拉取，浮层渲染文件候选行', async () => {
-    getFileCandidatesByCwdMock.mockResolvedValueOnce([
-      { path: 'landing-main.ts', name: 'landing-main.ts', type: 'file' },
-    ])
+    getFileCandidatesByCwdMock.mockResolvedValueOnce({
+      files: [{ path: 'landing-main.ts', name: 'landing-main.ts', type: 'file' }],
+      truncated: false,
+    })
     wrapper = mount(CommandPopover, {
       attachTo: document.body,
       props: { open: false, type: 'file', cwd: '/tmp/landing-proj' },
@@ -197,7 +200,7 @@ describe('landing cwd 路（LP 组，u5 G1/D2）', () => {
     expect(btn).toBeDefined()
   })
 
-  it('LP2 拉取失败（mockRejectedValue）→ 降级空候选：浮层不渲染、无 unhandled rejection', async () => {
+  it('LP2 拉取失败（D7）→ 错误态浮层「加载失败，点击重试」；点击行重试绕节流重发拉取，成功后恢复', async () => {
     // 跳出 LP1 拉取留下的 1s 节流窗口（模块级节流，不推进时钟则本用例边沿被节流命中）
     vi.advanceTimersByTime(1001)
     getFileCandidatesByCwdMock.mockRejectedValueOnce(
@@ -211,11 +214,104 @@ describe('landing cwd 路（LP 组，u5 G1/D2）', () => {
     await wrapper.setProps({ open: true })
     await flushPromises()
     expect(getFileCandidatesByCwdMock).toHaveBeenCalledTimes(1)
-    // 失败 → 降级空候选（§3.1 失败路径）：浮层不渲染；rejection 被 open-fetch catch，
-    // 不冒泡为 unhandled rejection（vitest 默认对 unhandled rejection 判失败，用例通过即无）
+    // D7：失败回写错误态（被否的「降级空数组」不再适用）——浮层渲染错误行；
+    // rejection 被 open-fetch catch，不冒泡 unhandled（vitest 对 unhandled 判失败，用例通过即无）
+    const errRow = document.body.querySelector('[data-testid="cmd-file-error"]')
+    expect(errRow).not.toBeNull()
+    expect(document.body.querySelector('[data-testid="cmd-file-empty"]')).toBeNull()
     expect(document.body.querySelectorAll('.cmd-row')).toHaveLength(0)
-    // 本仓 reka-ui 版本 wrapper 属性为 data-reka-*（空选择器 data-radix-* 断言会空洞通过）
-    expect(document.body.querySelector('[data-reka-popper-content-wrapper]')).toBeNull()
+
+    // 点击错误行 → 重试（force 绕过 1s 节流，仍在窗口内即重发）；成功后错误态消失、候选渲染
+    getFileCandidatesByCwdMock.mockResolvedValueOnce({
+      files: [{ path: 'recovered.ts', name: 'recovered.ts', type: 'file' }],
+      truncated: false,
+    })
+    errRow?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    await nextTick()
+    expect(getFileCandidatesByCwdMock).toHaveBeenCalledTimes(2)
+    expect(document.body.querySelector('[data-testid="cmd-file-error"]')).toBeNull()
+    expect(
+      Array.from(document.body.querySelectorAll('.cmd-row')).some((b) => b.textContent?.includes('recovered.ts')),
+    ).toBe(true)
+  })
+
+  it('LP3 成功且 truncated=true（D7）→ 候选列表底部渲染「已截断」提示行', async () => {
+    vi.advanceTimersByTime(1001)
+    getFileCandidatesByCwdMock.mockResolvedValueOnce({
+      files: [{ path: 'big-repo-file.ts', name: 'big-repo-file.ts', type: 'file' }],
+      truncated: true,
+    })
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: false, type: 'file', cwd: '/tmp/huge-monorepo' },
+    })
+    await nextTick()
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+    await nextTick()
+
+    expect(
+      Array.from(document.body.querySelectorAll('.cmd-row')).some((b) => b.textContent?.includes('big-repo-file.ts')),
+    ).toBe(true)
+    expect(document.body.querySelector('[data-testid="cmd-file-truncated"]')).not.toBeNull()
+  })
+
+  it('LP4 成功但空结果（D7）→ 空态浮层「当前目录无匹配文件」（与加载失败错误态两因区分）', async () => {
+    vi.advanceTimersByTime(1001)
+    getFileCandidatesByCwdMock.mockResolvedValueOnce({ files: [], truncated: false })
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: false, type: 'file', cwd: '/tmp/empty-dir' },
+    })
+    await nextTick()
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+    await nextTick()
+
+    expect(document.body.querySelector('[data-testid="cmd-file-empty"]')).not.toBeNull()
+    expect(document.body.querySelector('[data-testid="cmd-file-error"]')).toBeNull()
+  })
+
+  it('LP5 cwd 快照守卫（B5/#10）：open 边沿清上一 cwd 陈旧候选；在途回执按发起时 cwd 归属、失配丢弃', async () => {
+    vi.advanceTimersByTime(1001)
+    // 第一拍：cwd A 拉到候选 a.ts
+    getFileCandidatesByCwdMock.mockResolvedValueOnce({
+      files: [{ path: 'a.ts', name: 'a.ts', type: 'file' }],
+      truncated: false,
+    })
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: false, type: 'file', cwd: '/dir-a' },
+    })
+    await nextTick()
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+    expect(
+      Array.from(document.body.querySelectorAll('.cmd-row')).some((b) => b.textContent?.includes('a.ts')),
+    ).toBe(true)
+
+    // 第二拍：切 cwd B 重开（推进时钟出节流）——B 拉取挂起期间，open 边沿已清 A 的陈旧候选
+    vi.advanceTimersByTime(1001)
+    let resolveB: (v: { files: FileNode[]; truncated: boolean }) => void = () => {}
+    getFileCandidatesByCwdMock.mockImplementationOnce(
+      () => new Promise<{ files: FileNode[]; truncated: boolean }>((res) => { resolveB = res }),
+    )
+    await wrapper.setProps({ open: false })
+    await nextTick()
+    await wrapper.setProps({ cwd: '/dir-b', open: true })
+    await flushPromises()
+    expect(
+      Array.from(document.body.querySelectorAll('.cmd-row')).some((b) => b.textContent?.includes('a.ts')),
+    ).toBe(false) // 陈旧候选已清（FileNode.path 相对旧 cwd，跨目录显示是事实错误）
+
+    // 在途期间再切 cwd → C：B 的回执到达时快照失配（cwd ≠ 发起时 /dir-b）→ 丢弃
+    await wrapper.setProps({ cwd: '/dir-c' })
+    await nextTick()
+    resolveB({ files: [{ path: 'b-only.ts', name: 'b-only.ts', type: 'file' }], truncated: false })
+    await flushPromises()
+    await nextTick()
+    expect(document.body.querySelectorAll('.cmd-row')).toHaveLength(0)
   })
 })
 

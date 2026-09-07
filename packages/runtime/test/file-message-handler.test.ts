@@ -87,20 +87,20 @@ describe('FileMessageHandler — file.search', () => {
 })
 
 describe('FileMessageHandler — file.search.cwd（landing cwd 路）', () => {
-  it('U15 success：searchFilesInCwd 返回 → reply file.search.cwd:result {files}（payload 无 sessionId 字段）', async () => {
+  it('U15 success：searchFilesInCwd 返回 → reply file.search.cwd:result {files, truncated}（payload 无 sessionId 字段）', async () => {
     const files = [{ path: 'src/a.ts', name: 'a.ts', type: 'file' }]
-    const { replies, handler } = makeHandler({ searchFilesInCwd: vi.fn().mockResolvedValue(files) })
+    const { replies, handler } = makeHandler({ searchFilesInCwd: vi.fn().mockResolvedValue({ files, truncated: true }) })
 
     await handler.handleFileMessage(buildMsg('file.search.cwd', { cwd: '/repo' }), WS)
 
     expect(replies).toHaveLength(1)
     expect(replies[0]).toMatchObject({ id: 'm1', type: 'file.search.cwd:result' })
-    expect(replies[0].payload).toEqual({ files })
+    expect(replies[0].payload).toEqual({ files, truncated: true })
     expect(replies[0].payload).not.toHaveProperty('sessionId')
   })
 
   it('U16 cwd 参数透传 searchFilesInCwd（协议 payload 仅 { cwd }，无 showIgnored）', async () => {
-    const searchFilesInCwd = vi.fn().mockResolvedValue([])
+    const searchFilesInCwd = vi.fn().mockResolvedValue({ files: [], truncated: false })
     const { handler } = makeHandler({ searchFilesInCwd })
 
     await handler.handleFileMessage(buildMsg('file.search.cwd', { cwd: '/repo' }, 'm9'), WS)

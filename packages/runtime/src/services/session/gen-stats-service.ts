@@ -127,7 +127,14 @@ export class GenStatsService {
     const modelKey = `${provider}/${model}`
     // 写 1：登记「该 session 当前模型」语义的映射（先于落盘——与写 2/写 3 一致，
     // 映射表达当前归属而非「有样本」，未采样的合法帧可达性由写 2/写 3 补全）。
-    this.modelBySid.set(sid, modelKey)
+    // D4 条件回写（adversarial-review-fixes §3.4 D4）：已登记为**其他**模型 key 时只落盘
+    // 不回写——turn 中切模型后迟到的 usage 事件自带旧模型名，无条件 set 会把映射回写为
+    // 旧模型，该 sid 从新模型的扩展广播集合漏收帧；样本仍落盘到自带 model 名下（归属
+    // 正确），漏帧窗口交既有恢复腿（写 2 / getGenStats 降级链）自愈。未登记或同 key 才回写。
+    const registered = this.modelBySid.get(sid)
+    if (registered === undefined || registered === modelKey) {
+      this.modelBySid.set(sid, modelKey)
+    }
 
     const persisted = this.persistSample(provider, model, sample)
     // 扩展广播（D4）：仅 ≥1 条样本落盘时推——无落盘则快照值不变，推帧无信息量。

@@ -70,10 +70,12 @@ export function __clearInFlightGenStatsForTest(): void {
  * 帧 model 语义已锚定 PS-25（docs/pi-semantics.json）：AssistantMessage.model = 请求侧
  * Model.id（pi 模型注册表的模型 id；非 responseModel——那是 provider 实际报告的响应模型，
  * 仅 openai-completions 在路由结果 ≠ 请求 id 时才有，不采）。本函数是 modelKey 语义的
- * 第二个消费端实现（runtime splitModelKey/broadcastModel 为第一个）：runtime 帧 modelKey
- * 与 currentModelId 同为复合 id "provider/<Model.id>"（gen-stats-service splitModelKey 同构），
- * 帧 model 是 Model.id 本体 → 双形态兼容：① 精确相等（防御性，帧已含复合 id 时直接同域）；
- * ② 复合 id 取最后一段 '/' 后缀相等（主路径：currentModelId 剥 provider 段后与 Model.id 比）。
+ * 第二个消费端实现（runtime splitModelKey/broadcastModel 为第一个）：runtime 推帧的
+ * payload.model 恒为**复合 id** "provider/<Model.id>"（gen-stats-service snapshot 的
+ * model 字段 = modelKey，与 currentModelId 同域同构，D6 #14 注释更正——曾误记为
+ * Model.id 本体）→ 双形态兼容：① 精确相等（主路径：两侧同为复合 id 直接同域比对）；
+ * ② 复合 id 取最后一段 '/' 后缀相等（防御性兜底：currentModelId 或帧缺 provider 段的
+ * 旧形态/裸 Model.id 输入）。
  * 其余（真正他模型帧）才丢弃。已知局限（归 S18）：Model.id 自身含 '/'（openrouter 系
  * "vendor/model"）时尾段失配 → 合法帧被无害丢弃，修复须把归属判定上移 runtime（帧内带
  * 结构化归属标记，view-ready），renderer 退化为纯显示——在此之前本函数是兜底权威。

@@ -235,7 +235,10 @@ export default {
     bashTaskReasonOrphaned: '孤儿回收',
     bashTaskOutputUnavailable: '输出不可用（文件已清理）',
     bashTaskOutputEmpty: '暂无输出',
+    // D5：truncated 回执消费——输出超字节窗口（默认 32KB）提示仅显示尾部
+    bashTaskOutputTruncated: '输出超过 32KB，仅显示尾部',
     bashTaskCopyCommand: '复制命令',
+    bashTaskCopyOutputFile: '复制输出文件路径',
     bashTaskCopied: '已复制',
     bashTaskKill: '终止任务',
     bashTaskKillConfirm: '确认终止',
@@ -327,6 +330,10 @@ export default {
     newSubagentPlaceholder: '新任务',
     // skill 浮层已选项标记（多 skill 注入 D2）
     skillSelected: '已选',
+    // $ file 浮层 landing cwd 路（D7）：截断 / 失败 / 无结果三态提示
+    fileLoadFailed: '加载失败，点击重试',
+    fileTruncated: '结果超过 5000 项已截断',
+    fileNoResults: '当前目录无匹配文件',
   },
   queue: {
     title: '队列',

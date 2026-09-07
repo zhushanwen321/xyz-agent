@@ -204,7 +204,7 @@ describe("buildBatchLlmContent — 批头计数与 join 形态（A3/A8 前置）
     expect(lines[3]).toBe('Subagent "worker-sa-3" (sa-3) completed. Result:\nresult of sa-3');
   });
 
-  it("1 failed + 2 finished：失败条目 error 首行形态（A3）", () => {
+  it("1 failed + 2 finished：失败条目 error 内联全文形态（A3，多行 error 原样保留）", () => {
     const members = [
       makeMember("sa-ok-1"),
       makeMember("sa-bad", { result: undefined, error: "spawn EPIPE\ndetail line" }),

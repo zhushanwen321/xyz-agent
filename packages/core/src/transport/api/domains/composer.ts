@@ -39,11 +39,12 @@ export async function getFileCandidates(sessionId: string): Promise<FileNode[]> 
  * 相对路径语义与 session 路一致：FileNode.path 相对 cwd 无前导斜杠，
  * 首条消息发送建 session（cwd 即该目录）后 chip 相对路径始终可解析。
  * @param cwd 当前选定目录（landing 态 pendingCwd）
- * @returns FileNode[]（扁平，path 相对 cwd 无前导斜杠）
+ * @returns files：FileNode[]（扁平，path 相对 cwd 无前导斜杠）；truncated：DoS 上限
+ *   5000 截止（D7，adversarial-review-fixes §3.4——截断事实来自 runtime，浮层条件提示）
  */
-export async function getFileCandidatesByCwd(cwd: string): Promise<FileNode[]> {
+export async function getFileCandidatesByCwd(cwd: string): Promise<{ files: FileNode[]; truncated: boolean }> {
   const reply = await command('file.search.cwd', { cwd }, RPC_BACKSTOP_TIMEOUT_MS)
-  return reply.files
+  return { files: reply.files, truncated: reply.truncated }
 }
 
 /**

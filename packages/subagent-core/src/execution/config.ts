@@ -175,6 +175,9 @@ function sanitizeMaxConcurrent(value: unknown): number {
  * 默认，好字段透传（部分覆盖合法）。整节缺失返回 undefined（不落键，与 engineRouting
  * 同风格——缺省语义由消费方读 DEFAULT_COLLECT_SYNC）。
  *
+ * [D6 #8] 字段级坏值回默认时 warn 一条（缺省字段不 warn——部分覆盖合法）：config.json
+ * 是用户手编文件，静默回落使「改了配置不生效」无从排查（sanitize 行为不变，只补可观测）。
+ *
  * 消费时机：startHandler 缺省 collect 解析（config.default，新 session 生效）与
  * U3/U4 批通知预算（perItemChars/totalChars，flush 时热读）。
  */
@@ -182,6 +185,24 @@ export function sanitizeCollectSync(value: unknown): CollectSyncConfig | undefin
   if (typeof value !== "object" || value === null) return undefined;
   const v = value as Record<string, unknown>;
   const fallback = DEFAULT_COLLECT_SYNC;
+  // [D6 #8] 坏值字段清单（仅「显式给了坏值」计——缺省是合法部分覆盖，不 warn）。
+  // 值格式化不用 JSON.stringify：Symbol/BigInt 等 stringify 返回 undefined，String() 全类型安全。
+  const fmt = (val: unknown): string => (typeof val === "string" ? JSON.stringify(val) : String(val));
+  const bad: string[] = [];
+  if (v.default !== undefined && v.default !== "sync" && v.default !== "async") {
+    bad.push(`default=${fmt(v.default)}`);
+  }
+  if (v.perItemChars !== undefined && !isPositiveInt(v.perItemChars)) {
+    bad.push(`perItemChars=${fmt(v.perItemChars)}`);
+  }
+  if (v.totalChars !== undefined && !isPositiveInt(v.totalChars)) {
+    bad.push(`totalChars=${fmt(v.totalChars)}`);
+  }
+  if (bad.length > 0) {
+    logger.warn(
+      `[subagents] config collectSync invalid field(s) reverted to defaults: ${bad.join(", ")}`,
+    );
+  }
   return {
     default: v.default === "sync" ? "sync" : v.default === "async" ? "async" : fallback.default,
     perItemChars: sanitizePositiveInt(v.perItemChars, fallback.perItemChars),
@@ -191,7 +212,12 @@ export function sanitizeCollectSync(value: unknown): CollectSyncConfig | undefin
 
 /** 正整数校验（collectSync 预算字段用；与 sanitizeMaxConcurrent 同判）。 */
 function sanitizePositiveInt(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
+  return isPositiveInt(value) ? (value as number) : fallback;
+}
+
+/** 正整数判定（sanitizePositiveInt 的探测面，坏值 warn 清单复用）。 */
+function isPositiveInt(value: unknown): boolean {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 /**

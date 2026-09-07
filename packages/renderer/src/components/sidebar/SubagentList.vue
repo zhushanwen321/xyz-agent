@@ -39,7 +39,7 @@
     <!-- 有数据列表态：二级筛选槽 + 按桶过滤的列表 / 桶空态 -->
     <template v-else>
       <SubagentFilterBar
-        :counts="countSubagents(subagents)"
+        :counts="subagentCounts"
         :model-value="filter"
         @update:model-value="setFilter"
       />
@@ -181,6 +181,9 @@ const { filter, setFilter } = useSubagentBucketFilter(computed(() => props.sessi
 
 /** 当前桶下的可见记录（纯内存派生，subagent-bucket SSOT） */
 const visibleSubagents = computed(() => filterSubagents(props.subagents, filter.value))
+
+/** 三桶计数（computed 缓存，D6 #6——模板直调会在无关重渲染时反复重算全量分桶） */
+const subagentCounts = computed(() => countSubagents(props.subagents))
 
 const emit = defineEmits<{
   select: [subagentId: string]

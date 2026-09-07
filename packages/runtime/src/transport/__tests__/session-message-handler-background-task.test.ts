@@ -25,7 +25,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { SessionMessageHandler, type SessionHandlerContext } from '../session-message-handler.js'
+import { SessionMessageHandler, OUTPUT_TAIL_MAX_REQUEST_BYTES, type SessionHandlerContext } from '../session-message-handler.js'
 import { BackgroundTaskService, type BackgroundTaskServiceDeps } from '../../services/background-task/background-task-service.js'
 import type { ISessionService } from '../../interfaces.js'
 import type { ClientMessage } from '@xyz-agent/shared'
@@ -294,6 +294,38 @@ describe('SessionMessageHandler backgroundTask.output', () => {
       lost: true,
     })
     expect(ctx.sendError).not.toHaveBeenCalled()
+  })
+
+  it('maxBytes 超 1MB → clamp 到 OUTPUT_TAIL_MAX_REQUEST_BYTES（D6 #1/BG-4）；缺省不传透传 undefined（service 默认 32KB）', async () => {
+    const entry = makeEntry()
+    writeRegistry([entry])
+    mkdirSync(join(agentDir, 'base-tool-enhance', SID), { recursive: true })
+    writeFileSync(entry.outputFile, 'x'.repeat(64), 'utf8')
+    const svc = makeService()
+    const tailSpy = vi.spyOn(svc, 'getOutputTail')
+    const ctx = mockContext(fakeSessionService(svc))
+    const handler = new SessionMessageHandler(ctx)
+
+    // 客户端声明 100MB 窗口 → 钳到 1MB（readOutputTail 按窗口 alloc，无上界即内存失控面）
+    await handler.handleSessionMessage(
+      msg('backgroundTask.output', { sessionId: SID, taskId: TASK_ID, maxBytes: 100 * 1024 * 1024 }),
+      mockWs(),
+    )
+    expect(tailSpy).toHaveBeenCalledWith(SID, TASK_ID, OUTPUT_TAIL_MAX_REQUEST_BYTES)
+
+    // 合法小窗口原样透传（clamp 只剪上界，不改写正常请求）
+    await handler.handleSessionMessage(
+      msg('backgroundTask.output', { sessionId: SID, taskId: TASK_ID, maxBytes: 1024 }, 'msg-2'),
+      mockWs(),
+    )
+    expect(tailSpy).toHaveBeenLastCalledWith(SID, TASK_ID, 1024)
+
+    // 缺省不传 → undefined 透传（service 层默认 32KB 生效，不被 clamp 改写为 1MB）
+    await handler.handleSessionMessage(
+      msg('backgroundTask.output', { sessionId: SID, taskId: TASK_ID }, 'msg-3'),
+      mockWs(),
+    )
+    expect(tailSpy).toHaveBeenLastCalledWith(SID, TASK_ID, undefined)
   })
 })
 

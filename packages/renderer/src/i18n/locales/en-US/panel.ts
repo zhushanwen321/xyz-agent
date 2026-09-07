@@ -237,7 +237,10 @@ export default {
     bashTaskReasonOrphaned: 'Orphan reclaimed',
     bashTaskOutputUnavailable: 'Output unavailable (file was cleaned up)',
     bashTaskOutputEmpty: 'No output yet',
+    // D5: truncated reply consumed — output exceeds the byte window (default 32KB)
+    bashTaskOutputTruncated: 'Output exceeds 32KB, only the tail is shown',
     bashTaskCopyCommand: 'Copy command',
+    bashTaskCopyOutputFile: 'Copy output file path',
     bashTaskCopied: 'Copied',
     bashTaskKill: 'Terminate task',
     bashTaskKillConfirm: 'Confirm terminate',
@@ -329,6 +332,10 @@ export default {
     newSubagentPlaceholder: 'New task',
     // Skill popover selected marker (multi-skill injection D2)
     skillSelected: 'Selected',
+    // $ file popover landing cwd path (D7): truncated / failed / empty states
+    fileLoadFailed: 'Load failed — click to retry',
+    fileTruncated: 'Over 5,000 results — list truncated',
+    fileNoResults: 'No matching files in this directory',
   },
   queue: {
     title: 'Queue',

@@ -37,8 +37,8 @@
 //      recoverEntryOnlyOrphans 的「只认 running 末条」候选判定；
 //  11. v2 断链 4（设计 §3.3 D4）延迟闭合：E1 waiting → 注册 settled 有界重扫 →
 //      成员补种终态 entry → settled 边沿重扫补发单批 + 落标 → 后续 settled 零处理；
-//  12. D4 上限：成员恒 running → settled 驱动 8 次重扫达限 → disposed（debug 留痕），
-//      第 9 次（成员此刻已终态）不再扫描；
+//  12. D4 上限：成员恒 running → settled 驱动 8 次重扫达限 → disposed（warn 留痕含滞留 id，
+//      D6 #7b/SC-2），第 9 次（成员此刻已终态）不再扫描；
 //  13. v2 断链 1（设计 §3.3 D1/D2）E1 路径 manifest：写账前屏障 await 补写
 //      records/<sa-id>.json（时序竞态修订：原落标出口 fire-and-forget）——成功成员
 //      status 如实投影 "running"（豁免形态末条）/"closed"（覆写后末条），sessionFile
@@ -473,6 +473,36 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     expect(marks.map((m) => m.id).sort()).toEqual(["sa-a", "sa-b"]);
   });
 
+  it("屏障失败 warn 留痕（D6 #7a/SC-1）：manifest 写失败不阻断补发，warn 含成员 id 与 manifest 路径", async () => {
+    const childFile = writeChildSessionFile("sa-bar-fail", "barrier fail task");
+    seedRoundTerminalEntries("sa-bar-fail", childFile, "barrier result", "prov/bar-m", "sync");
+
+    const recovery = makeRecoveryService(makeAssertPi());
+    const spy = spyNotifier(recovery);
+    loggerMock.warn.mockClear(); // logger 模块级共享，计数从本用例起算
+    // 私有 manifestStore 打桩（TS private 仅编译期可见性）：单成员写失败（EACCES 类），
+    // 屏障 allSettled 语义 = 不阻断写账投递
+    const internal = recovery as unknown as {
+      manifestStore: { writeManifest: (r: { id: string }) => Promise<void> };
+    };
+    vi.spyOn(internal.manifestStore, "writeManifest").mockRejectedValueOnce(
+      Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" }),
+    );
+
+    await recovery.recoverSyncCollectBatch();
+
+    // best-effort 语义：写账照常推进（反查索引缺失只影响指针行反查，不构成写账失败）
+    expect(spy.notifyBatch).toHaveBeenCalledTimes(1);
+    // D6 #7a：原 debug 级排障不可见 → warn，且含成员 id + manifest 路径两个定位线索
+    const manifestFile = path.join(getSubagentRecordsDir(agentDir, agentDir), "sa-bar-fail.json");
+    const barrierWarns = loggerMock.warn.mock.calls.filter((c) =>
+      String(c[0]).startsWith("[subagents] batch-finalized manifest write failed"),
+    );
+    expect(barrierWarns).toHaveLength(1);
+    expect(String(barrierWarns[0]![0])).toContain("record=sa-bar-fail");
+    expect(String(barrierWarns[0]![0])).toContain(manifestFile);
+  });
+
   it("E1 幂等窗口：账本同 hash 拒绝（accepted=false）也统一补标 → 标记落盘后二次恢复零补发", async () => {
     const store = makeSeedStore();
     store.reportSubagentRecord(memberRecord({ id: "sa-a" }));
@@ -825,7 +855,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     expect(spy.notifyBatch).toHaveBeenCalledTimes(1);
   });
 
-  it("D4 上限：成员恒 running → settled 驱动 8 次重扫达限 disposed（debug 留痕）→ 第 9 次（成员已终态）不再扫描", async () => {
+  it("D4 上限：成员恒 running → settled 驱动 8 次重扫达限 disposed（warn 留痕含滞留 id，D6 #7b）→ 第 9 次（成员已终态）不再扫描", async () => {
     const store = makeSeedStore();
     store.reportSubagentRecord(memberRecord({ id: "sa-stuck" }));
 
@@ -841,10 +871,13 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     // waiting 判定过滤用消息前缀精确匹配（达限日志文案同样含 "still running" 词）。
     const e1WaitingLogs = () => loggerMock.debug.mock.calls.map((c) => String(c[0])).filter((m) => m.startsWith("[subagents] E1 sync batch recovery:"));
     for (let i = 0; i < 8; i++) await pi.emitAgentSettled();
-    // 首扫 1 + 重扫 8 = 9 次 waiting 判定留痕；达限 debug 恰一次
+    // 首扫 1 + 重扫 8 = 9 次 waiting 判定留痕；达限 warn 恰一次（D6 #7b/SC-2：debug→warn，含滞留成员 id）
     expect(e1WaitingLogs()).toHaveLength(9);
-    const limitLogs = loggerMock.debug.mock.calls.map((c) => String(c[0])).filter((m) => m.startsWith("[subagents] E1 settled rescan: reached limit"));
-    expect(limitLogs).toHaveLength(1);
+    const limitCalls = loggerMock.warn.mock.calls.filter((c) =>
+      String(c[0]).startsWith("[subagents] E1 settled rescan: reached limit"),
+    );
+    expect(limitCalls).toHaveLength(1);
+    expect(limitCalls[0]![1]).toEqual({ ids: ["sa-stuck"] });
     expect(spy.notifyBatch).not.toHaveBeenCalled();
 
     // 第 9 次驱动时成员已补种终态：disposed 不再扫描（零补发 + waiting 日志不增）

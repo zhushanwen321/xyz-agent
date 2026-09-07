@@ -29,7 +29,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { getDataDir } from '@xyz-agent/shared/paths'
 import { logger } from '../../infra/logger.js'
@@ -79,6 +79,9 @@ const DATE_PAD_WIDTH = 2
 
 /** 样本记录二元组长度（SpeedRecord / CacheRatioRecord 同形，读写校验共用） */
 const RECORD_TUPLE_LENGTH = 2
+
+/** atomicWrite 的 tmp 后缀（utils/fs-utils 同名约定；孤儿清扫匹配用） */
+const TMP_SUFFIX = '.tmp'
 
 // ── 样本有效性（D7 bogus guard，阈值 SSOT）───────────────────────────
 
@@ -258,8 +261,35 @@ export function readDayRecords(filePath: string): GenStatsDayRecords {
  * 写日记录文件（D8 同步临界段终点；设计 D3「写入时顺带清理」）：先 GC 30 天前日键，
  * 再经 atomicWrite（tmp + renameSync 原子覆盖）落盘；父目录不存在则递归创建。
  * 写失败由调用方按 §3.5 容错（内存聚合照常、当前帧照常推），本函数不吞异常。
+ * tmp 孤儿清理（D6 #3）：崩溃（SIGKILL/断电）落在 atomicWrite 的 write→rename 窗口时留下
+ * `*.json.tmp` 孤儿——本次写入对**同路径**的孤儿必然自愈（writeFileSync 覆写后 rename 带走），
+ * 但换模型后旧模型文件永不重写，孤儿永驻；写入时顺带清扫同目录全部 `.tmp` 孤儿兜底
+ * （gen-stats 目录仅本 store 写入，`*.tmp` 只可能是本原子写残留，清扫无旁观者伤害）。
  */
 export function writeDayRecords(filePath: string, records: GenStatsDayRecords): void {
   mkdirSync(dirname(filePath), { recursive: true })
   atomicWrite(filePath, JSON.stringify(pruneExpiredDays(records)))
+  sweepTmpOrphans(dirname(filePath))
+}
+
+/** 原子写 tmp 孤儿清扫（见 writeDayRecords 注释；失败 warn 不抛——清理是顺带兜底非主路径）。 */
+function sweepTmpOrphans(dir: string): void {
+  let names: string[]
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return
+  }
+  for (const name of names) {
+    if (!name.endsWith(TMP_SUFFIX)) continue
+    const orphan = join(dir, name)
+    try {
+      rmSync(orphan, { force: true })
+    } catch (err) {
+      logger.warn('[gen-stats] tmp orphan cleanup failed', {
+        path: orphan,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
 }

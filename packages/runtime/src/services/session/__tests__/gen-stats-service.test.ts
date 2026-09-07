@@ -50,7 +50,7 @@ beforeEach(() => {
 afterEach(() => {
   if (prevDataDirEnv === undefined) delete process.env.XYZ_AGENT_DATA_DIR
   else process.env.XYZ_AGENT_DATA_DIR = prevDataDirEnv
-  rmSync(dataDir, { recursive: true, force: true })
+  rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
@@ -218,6 +218,33 @@ describe('GenStatsService 映射三写一清 + 扩展广播（D4）', () => {
     const { service } = makeOfflineService()
     service.onSnapshotResolved('s9', 'prov/mdl')
     expect(service.sessionsOfModel('prov/mdl')).toEqual(['s9'])
+  })
+
+  it('D4 条件回写：切模型后迟到的旧模型 usage 不回写映射（样本仍落盘自带 model 名下）', () => {
+    const { service } = makeOfflineService()
+    service.recordSample('s1', { ...NORMAL_SAMPLE }) // 旧模型 prov/mdl 采样登记
+    service.onModelSwitched('s1', 'prov/mdl2') // turn 中切模型（写 2 重登记）
+
+    // 切模型后迟到的 usage 事件自带旧模型名（prov/mdl）——只落盘，不回写映射
+    service.recordSample('s1', { ...NORMAL_SAMPLE })
+
+    // 映射保持新模型：s1 不回旧模型广播集合，新模型广播可达该 sid
+    expect(service.sessionsOfModel('prov/mdl')).toEqual([])
+    expect(service.sessionsOfModel('prov/mdl2')).toEqual(['s1'])
+    // 样本归属仍正确：落盘到自带 model（旧模型）名下，速度/命中率各两条
+    expect(readJson(speedFilePath('prov', 'mdl'))).toEqual({ [localDayKey()]: [[100, 2000], [100, 2000]] })
+    expect(readJson(cacheRatioFilePath('prov', 'mdl'))).toEqual({ [localDayKey()]: [[300, 900], [300, 900]] })
+    expect(existsSync(speedFilePath('prov', 'mdl2'))).toBe(false) // 新模型无落盘
+  })
+
+  it('D4 条件回写：未登记（新 sid）与同 key 重复样本均正常回写', () => {
+    const { service } = makeOfflineService()
+    // 新 sid：未登记 → 回写
+    service.recordSample('s-new', { ...NORMAL_SAMPLE })
+    expect(service.sessionsOfModel('prov/mdl')).toEqual(['s-new'])
+    // 同 key 重复采样：回写幂等，映射不漂移
+    service.recordSample('s-new', { ...NORMAL_SAMPLE })
+    expect(service.sessionsOfModel('prov/mdl')).toEqual(['s-new'])
   })
 
   it('清：registerSessionCleanup 挂销毁回调，触发后该 sid 全部条目删除', () => {

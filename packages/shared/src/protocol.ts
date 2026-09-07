@@ -666,7 +666,7 @@ export interface ClientMessageMap {
   // subscribe/unsubscribe 消息（D3 被否项）；watched 退订挂 session 销毁汇聚点（runtime 侧职责）。
   'backgroundTask.list': { sessionId: string }
   // output：读任务输出尾部（字节窗口，从文件末尾读；maxBytes 省略时 runtime 用默认 32KB 上界，
-  // 对齐 bash_output 的 tail 语义，D7）。
+  // 对齐 bash_output 的 tail 语义，D7；超出 1MB 的请求值被 runtime clamp 到 1MB——D6 #1/BG-4）。
   'backgroundTask.output': { sessionId: string; taskId: string; maxBytes?: number }
   // kill：终止任务（D6 分支矩阵；reason 回执语义见 BackgroundTaskKillReason）。
   'backgroundTask.kill': { sessionId: string; taskId: string }
@@ -1160,8 +1160,9 @@ export interface ServerMessageMapBase {
   'session.occupancy': { sessionId: string; turn: 'idle' | 'dispatching' | 'generating' | 'settling'; compacting: boolean; bash: boolean }
   // session.subscribe（wave:runtime-wiring）：session.subscribe RPC 的 reply payload（IF6 契约）。
   // snapshot：订阅时刻 bus ring 内当前事件序列（元素为带 seq 的 ServerMessage），renderer 据此 reconcile。
-  // stateSnapshot：4 个 state topic（commands/context/subagents/workflows）的 last-value 数组拷贝
-  //   （wave:remove-bandaids 新增）。让 renderer subscribe 后一次性把 commands/context/subagents 的
+  // stateSnapshot：6 个 state topic（commands/context/subagents/workflows/state_changed/occupancy）
+  //   的 last-value 数组拷贝（wave:remove-bandaids 新增，后补 state_changed/occupancy 两键）。
+  //   让 renderer subscribe 后一次性把 commands/context/subagents 的
   //   当前状态灌入对应 store（dispatch 到 events 通道 → routeInbound 兜底分支 applyRecords），
   //   替代 selectSession/submitFirstMessage 内的主动拉取 RPC 兜底。stateSnapshot 与 snapshot 独立：
   //   snapshot 受 subscribe RPC 的 fromSeq 增量过滤影响，stateSnapshot 是 last-value 语义不受影响。
@@ -1324,8 +1325,10 @@ export interface ServerMessageMapBase {
   'file.tree.expand:result': { sessionId: string; children: FileNode[] }
   /** file.search:result：composer $ 文件候选 reply，全量递归 FileNode[]（受 ignore + 深度 8 + DoS 上限 5000）*/
   'file.search:result': { sessionId: string; files: FileNode[] }
-  /** file.search.cwd:result：composer $ 文件候选（landing cwd 路）reply，全量递归 FileNode[]（受 ignore + 深度 8 + DoS 上限 5000）*/
-  'file.search.cwd:result': { files: FileNode[] }
+  /** file.search.cwd:result：composer $ 文件候选（landing cwd 路）reply，全量递归 FileNode[]（受 ignore + 深度 8 + DoS 上限 5000）。
+   *  truncated：DoS 上限 5000 截止触发（还有未收集条目时 true）——前端据此提示「结果已截断」
+   *  （adversarial-review-fixes §3.4 D7：截断事实必须来自 runtime）。 */
+  'file.search.cwd:result': { files: FileNode[]; truncated: boolean }
   /** git.diff:result：文件 diff reply（patch + binary 标志） */
   'git.diff:result': { sessionId: string; patch: string; binary: boolean }
   /** file.write.*.result：文件操作骨架 reply（D-018 实现延后，AC-14.4 结构化「待实现」） */
@@ -1945,7 +1948,8 @@ export interface ReplyPayloadMap {
   // payload 消费型——renderer 读 snapshot 做 reconcile（订阅时刻 bus ring 内当前事件序列，
   // 元素为带 seq 的 ServerMessage），记 lastSeq 作为后续 gap 检测基线；gap=true 标记本次
   // snapshot 因 ring 容量溢出存在缺口（renderer 需全量重拉而非增量 backfill）。
-  // stateSnapshot（wave:remove-bandaids）：4 个 state topic 的 last-value 数组拷贝，让 renderer
+  // stateSnapshot（wave:remove-bandaids）：6 个 state topic（commands/context/subagents/
+  // workflows/state_changed/occupancy）的 last-value 数组拷贝，让 renderer
   // subscribe 后一次性把 commands/context/subagents 的当前状态灌入对应 store，替代主动拉取兜底。
   'session.subscribe': { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
   // session.unsubscribe（runtime-message-bus wave:protocol-seq）：取消订阅，ack 型。

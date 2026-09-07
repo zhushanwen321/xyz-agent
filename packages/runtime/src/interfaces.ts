@@ -695,8 +695,9 @@ export interface IFileService {
   listTree(sessionId: string): Promise<FileNode[]>
   expandDir(sessionId: string, path: string): Promise<FileNode[]>
   searchFiles(sessionId: string, showIgnored?: boolean): Promise<FileNode[]>
-  /** landing cwd 路核心（file.search.cwd）：全量递归给定 cwd；session 路经 searchFiles 薄包装复用。 */
-  searchFilesInCwd(cwd: string, showIgnored?: boolean): Promise<FileNode[]>
+  /** landing cwd 路核心（file.search.cwd）：全量递归给定 cwd；session 路经 searchFiles 薄包装复用。
+   *  truncated = DoS 上限 5000 截止（D7，file.search.cwd:result 携带；file.search:result 不带）。 */
+  searchFilesInCwd(cwd: string, showIgnored?: boolean): Promise<{ files: FileNode[]; truncated: boolean }>
   readFile(sessionId: string, path: string): Promise<{ content: string; truncated: boolean }>
   readFileFromWhitelist(path: string): Promise<{ content: string; truncated: boolean }>
   createFile(sessionId: string, path: string, content: string): Promise<never>

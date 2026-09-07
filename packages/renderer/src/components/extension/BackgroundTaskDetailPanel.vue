@@ -10,11 +10,13 @@
     （undefined=未选中 → PanelContainer 不注入本组件，DrawerPanel 空态 fallback 承载）；
   - 任务条目：useBackgroundTasks 分区只读（分区状态根由 u-renderer-store 持有；本组件不拉
     list、不挂广播——广播刷新由 store 编排）；条目从分区消失（registry LRU 淘汰/损坏自愈清表）
-    时用最后已知快照兜底渲染元信息（避免 drawer 内容空白）；输出跟随持续至任务终态/drawer
-    关闭/组件卸载（快照冻结语义，impl-plan 偏差 #19——条目消失非停止条件）；
+    时用最后已知快照兜底渲染元信息（避免 drawer 内容空白）；输出跟随仅以分区条目为据——
+    条目消失即停轮询（D6 #13：快照冻结只兜元信息渲染，对已消失条目继续发 output RPC 属
+    无效空转）；
   - 输出：backgroundTask.output 按需 tail（D7：打开/切任务拉一次；running 且 drawer 打开时
     每 2s 重拉。drawer 关闭 = DrawerPanel aside v-if 收起 = 本组件卸载，与组件卸载同一停止
-    机制；任务终态由 store 分区条目 state 驱动跟随启停）；
+    机制；任务终态由 store 分区条目 state 驱动跟随启停）；truncated=true 时输出区顶部提示
+    「仅显示尾部」（D5 协议字段消费）+ 元信息区展示 outputFile 全量输出文件路径（可复制）；
   - 终止：两段式（第一次点击进入确认态，再点才发 backgroundTask.kill，D10④ drawer 内同款）；
     仅 running 渲染按钮（killing 已发令不重复发；终态无按钮，S6）。回执 already-exited /
     identity-unverifiable（分支④）/ registry-write-failed（分支⑤）→ toast 文案经 i18n key
@@ -66,6 +68,31 @@
       <span v-if="reasonText" class="shrink-0" data-testid="bash-task-meta-reason">{{ reasonText }}</span>
     </div>
 
+    <!-- 全量输出文件路径（D5：截断时的全量输出口；条目契约 outputFile，可复制） -->
+    <div
+      v-if="displayEntry?.outputFile"
+      class="flex shrink-0 items-center gap-1.5 border-b border-hairline px-3 py-1 font-mono text-[length:var(--text-3xs)] text-neutral-dim"
+      data-testid="bash-task-output-file-row"
+    >
+      <FileText class="size-3 shrink-0" />
+      <span
+        class="min-w-0 flex-1 truncate"
+        :title="displayEntry.outputFile"
+        data-testid="bash-task-output-file"
+      >{{ displayEntry.outputFile }}</span>
+      <Button
+        variant="ghost"
+        size="icon"
+        class="size-5 shrink-0 text-neutral-dim hover:text-neutral-fg"
+        :title="copied === 'outputFile' ? t('panel.sideDrawer.bashTaskCopied') : t('panel.sideDrawer.bashTaskCopyOutputFile')"
+        data-testid="bash-task-copy-output-file"
+        @click="copyOutputFile"
+      >
+        <Check v-if="copied === 'outputFile'" class="size-3" />
+        <Copy v-else class="size-3" />
+      </Button>
+    </div>
+
     <!-- 输出尾部（等宽滚动块，running 时 2s 跟随；lost = 输出文件已清理/丢失，§3.1 失败路径） -->
     <div class="min-h-0 flex-1 overflow-auto px-3 py-2">
       <div
@@ -73,16 +100,24 @@
         class="text-[length:var(--text-2xs)] text-neutral-dim"
         data-testid="bash-task-output-unavailable"
       >{{ t('panel.sideDrawer.bashTaskOutputUnavailable') }}</div>
-      <pre
-        v-else-if="outputText"
-        class="whitespace-pre-wrap break-all font-mono text-[length:var(--text-3xs)] leading-4 text-neutral-mid"
-        data-testid="bash-task-output"
-      >{{ outputText }}</pre>
-      <div
-        v-else-if="outputLoaded"
-        class="text-[length:var(--text-2xs)] text-neutral-dim"
-        data-testid="bash-task-output-empty"
-      >{{ t('panel.sideDrawer.bashTaskOutputEmpty') }}</div>
+      <template v-else>
+        <!-- D5：协议 truncated 字段消费——超出字节窗口（默认 32KB）时提示仅显示尾部 -->
+        <div
+          v-if="outputTruncated"
+          class="pb-1 text-[length:var(--text-2xs)] text-neutral-dim"
+          data-testid="bash-task-output-truncated"
+        >{{ t('panel.sideDrawer.bashTaskOutputTruncated') }}</div>
+        <pre
+          v-if="outputText"
+          class="whitespace-pre-wrap break-all font-mono text-[length:var(--text-3xs)] leading-4 text-neutral-mid"
+          data-testid="bash-task-output"
+        >{{ outputText }}</pre>
+        <div
+          v-else-if="outputLoaded"
+          class="text-[length:var(--text-2xs)] text-neutral-dim"
+          data-testid="bash-task-output-empty"
+        >{{ t('panel.sideDrawer.bashTaskOutputEmpty') }}</div>
+      </template>
     </div>
 
     <!-- 两段式终止（仅 running；killing 已发令不重复发，终态无按钮——S6） -->
@@ -111,7 +146,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, Copy, SquareTerminal, X } from '@lucide/vue'
+import { Check, Copy, FileText, SquareTerminal, X } from '@lucide/vue'
 import { Button } from '@xyz-agent/ui'
 import { isActiveBackgroundTaskState } from '@xyz-agent/extension-protocol'
 import { getDrawerControlState } from '@xyz-agent/core/domain/drawer'
@@ -157,6 +192,8 @@ const displayEntry = computed<BackgroundTaskEntry | null>(() => entry.value ?? e
 const outputText = ref('')
 const outputLost = ref(false)
 const outputLoaded = ref(false)
+/** D5：回执 truncated 字段（超出字节窗口，默认 32KB）——输出区顶部条件提示 */
+const outputTruncated = ref(false)
 /** running 计时基准（跟随 interval 节拍顺带刷新，零额外 timer；终态用 durationMs 固定值） */
 const now = ref(Date.now())
 
@@ -174,6 +211,7 @@ async function fetchOutput(): Promise<void> {
     if (seq !== fetchSeq) return
     outputLost.value = reply.lost
     outputText.value = reply.text
+    outputTruncated.value = reply.truncated
     outputLoaded.value = true
   } catch (err) {
     // 拉取失败保留上次内容不降级（断连窗口 C6 由拉取兜底自愈）；debug 级防刷屏
@@ -205,9 +243,11 @@ function stopFollow(): void {
   followTimer = null
 }
 
-/** 跟随条件 = 条目活跃（running/killing，含条目消失后回落 entrySnapshot 的最后已知状态）；终态即停（D7 停止条件；条目消失非停止条件——快照冻结语义，impl-plan 偏差 #19） */
+/** 跟随条件 = 分区条目活跃（running/killing）；终态即停（D7 停止条件）；条目从分区消失
+ * （registry LRU 淘汰 / 损坏自愈清表）同样停——快照冻结只兜元信息渲染，对已消失条目
+ * 继续发 output RPC 属无效空转（D6 #13，BG-6） */
 const following = computed(() => {
-  const value = displayEntry.value
+  const value = entry.value
   return value !== null && isActiveBackgroundTaskState(value.state)
 })
 
@@ -224,6 +264,7 @@ watch(selectedTaskId, () => {
   outputText.value = ''
   outputLost.value = false
   outputLoaded.value = false
+  outputTruncated.value = false
   entrySnapshot.value = null
   killArmed.value = false
   killing.value = false
@@ -305,6 +346,12 @@ function formatDuration(ms: number): string {
 function copyCommand(): void {
   const value = displayEntry.value
   if (value) copy(value.command, 'command')
+}
+
+/** D5：复制全量输出文件路径（截断提示的全量输出口） */
+function copyOutputFile(): void {
+  const value = displayEntry.value
+  if (value?.outputFile) copy(value.outputFile, 'outputFile')
 }
 
 async function onKillClick(): Promise<void> {

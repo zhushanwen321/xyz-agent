@@ -33,6 +33,13 @@ export type BackgroundTaskRpcPort = Pick<
   'listTasks' | 'getOutputTail' | 'killTask' | 'markWatched'
 >
 
+/**
+ * backgroundTask.output 的 maxBytes 请求上界（D6 #1，BG-4）：客户端声明的字节窗口超此值
+ * 钳制到 1MB（readOutputTail 按窗口 Buffer.alloc，无上界可被单请求打到内存失控）。
+ * 与 MAX_FILE_SIZE（file.read 1MB 截断）同量级；导出供测试断言 clamp 行为。
+ */
+export const OUTPUT_TAIL_MAX_REQUEST_BYTES = 1_048_576
+
 /** Interface for server methods needed by this handler */
 export interface SessionHandlerContext extends MessageHandlerContext {
   /**
@@ -413,12 +420,15 @@ export class SessionMessageHandler {
     // 输出尾部按需读（D7）。tail undefined = 条目不存在 / 输出文件不可读（§3.1 失败
     // 路径「输出不可用（文件已清理）」）→ lost 语义降级：text 空串 + truncated false，
     // reply 正常回执（不走 error envelope——文件清理是预期态，非请求失败）。
+    // maxBytes clamp 1MB（D6 #1，BG-4）：客户端传超大窗口时钳制——协议字段无上界约束，
+    // 不钳制则单请求 Buffer.alloc(maxBytes) 可被恶意/失控客户端打到内存失控。
     const port = this.ctx.sessionService.backgroundTasks
     const { sessionId: outSid, taskId, maxBytes } = msg.payload
     if (!port) {
       return this.ctx.sendError(ws, 'background_task_unsupported', 'background task service not available', msg.id, { sessionId: outSid })
     }
-    const tail = port.getOutputTail(outSid, taskId, maxBytes)
+    const clampedMaxBytes = maxBytes === undefined ? undefined : Math.min(maxBytes, OUTPUT_TAIL_MAX_REQUEST_BYTES)
+    const tail = port.getOutputTail(outSid, taskId, clampedMaxBytes)
     return this.ctx.reply(ws, msg.id, 'backgroundTask.outputResult', {
       sessionId: outSid,
       taskId,

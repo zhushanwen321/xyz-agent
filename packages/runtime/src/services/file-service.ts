@@ -190,11 +190,13 @@ export class FileService implements IFileService {
    * composer `$` 文件候选（session 路）：薄包装 = requireCwd + 核心 searchFilesInCwd。
    * session 在此链路只是 cwd 的定位器（设计 §2.4：requireCwd 后全部逻辑以 cwd 为轴），
    * 与 landing cwd 路（file.search.cwd → searchFilesInCwd）共用同一扫描实现，无旁路。
+   * 协议 file.search:result 不携带 truncated（仅 cwd 路 D7 补），此处丢弃截断标志只回 FileNode[]。
    * @throws FileError('session_not_found') —— session 不存在或无 cwd 抛（其余语义同核心方法）
    */
   async searchFiles(sessionId: string, showIgnored?: boolean): Promise<FileNode[]> {
     const cwd = this.requireCwd(sessionId)
-    return this.searchFilesInCwd(cwd, showIgnored)
+    const { files } = await this.searchFilesInCwd(cwd, showIgnored)
+    return files
   }
 
   /**
@@ -226,19 +228,27 @@ export class FileService implements IFileService {
    *   超限仓库（>5000 命中）截断成员随并发调度而异，为已声明的可接受范围。
    *
    * 返回扁平 FileNode[]（非嵌套树，给候选列表用）。排序同 sortNodes（dir 在前 + name 降序）。
+   * truncated（D7，adversarial-review-fixes §3.4）：DoS 上限 MAX_SEARCH_RESULTS 截止时该目录
+   * 层还有未收集条目 → true（硬信号：确实有文件被截掉；恰达上限且无剩余条目为 false）——
+   * file.search.cwd:result 携带，前端提示「结果已截断」。
    * @throws FileError('not_found' | 'permission_denied' | 'timeout') —— cwd 不存在或非目录抛
    *   not_found；准入 stat 经 callFs，EACCES/EPERM → permission_denied、超时 → timeout；
    *   其余 fs 错误（递归期）per-dir 容错不抛
    */
-  async searchFilesInCwd(cwd: string, showIgnored?: boolean): Promise<FileNode[]> {
+  async searchFilesInCwd(cwd: string, showIgnored?: boolean): Promise<{ files: FileNode[]; truncated: boolean }> {
+    // cwd 归一化（D6 #11）：~ 展开 + resolve——landing 传 `~/proj` 或带尾斜杠/./ 段的形态
+    // 直接 stat 会 ENOENT 误判 not_found；归一后与 session 路（requireCwd 给出的规范绝对路径）同域
+    const normalizedCwd = resolvePath(expandHome(cwd))
     // cwd 准入（设计 D6）：stat 校验目录存在性——ENOENT 经 callFs 分类为 not_found；非目录显式 not_found
-    const stat = await this.callFs(() => this.opts.executor.stat(cwd))
+    const stat = await this.callFs(() => this.opts.executor.stat(normalizedCwd))
     if (stat == null || stat.type !== 'dir') {
-      throw new FileError('not_found', `cwd 不存在或不是目录: ${cwd}`)
+      throw new FileError('not_found', `cwd 不存在或不是目录: ${normalizedCwd}`)
     }
-    const matcher = await this.loadMatcher(cwd)
+    const matcher = await this.loadMatcher(normalizedCwd)
     const showIgn = showIgnored ?? false
     const result: FileNode[] = []
+    // 截断信号（D7）：结果数上限截止时当前目录层还有未收集条目（break 而非自然扫完）
+    let truncated = false
 
     /**
      * 有界并发信号量（D7-4）：inFlight = 当前持有 slot 的 walk 数。
@@ -269,7 +279,7 @@ export class FileService implements IFileService {
      * @param depth 当前深度（cwd=0，顶层 entry=1...）
      */
     const walk = async (absPath: string, relParent: string, depth: number): Promise<void> => {
-      // 结果数上限：达上限即停止（横向截断）
+      // 结果数上限：达上限即停止（横向截断；cap 已被其他并发 walk 触发，truncated 由触发方落）
       if (result.length >= MAX_SEARCH_RESULTS) return
 
       await acquire()
@@ -292,8 +302,13 @@ export class FileService implements IFileService {
 
       // 同目录 entries 同步处理完（无 await 间隙，result.push 原子）再发起子目录并发
       const childWalks: Array<Promise<void>> = []
-      for (const e of entries) {
-        if (result.length >= MAX_SEARCH_RESULTS) break
+      for (let i = 0; i < entries.length; i++) {
+        if (result.length >= MAX_SEARCH_RESULTS) {
+          // D7 截断信号：cap 截止且当前目录层还有未收集条目（含未下钻子目录）——硬证据
+          truncated = true
+          break
+        }
+        const e = entries[i]!
         const node = this.entryToNode(e, relParent)
 
         // 关卡 1：内建 ignore 独立短路（node_modules 等，不可被 .gitignore ! 覆盖）
@@ -315,8 +330,8 @@ export class FileService implements IFileService {
       await Promise.allSettled(childWalks)
     }
 
-    await walk(cwd, '', 1)
-    return FileService.sortNodes(result)
+    await walk(normalizedCwd, '', 1)
+    return { files: FileService.sortNodes(result), truncated }
   }
 
   // ── file.write 骨架（#14，AC-14.2/14.4，G4 实现延后）──

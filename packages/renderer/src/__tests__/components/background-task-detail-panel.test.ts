@@ -262,6 +262,66 @@ describe('BackgroundTaskDetailPanel 输出跟随（D7：2s interval + 停止条�
     expect(wrapper.find('[data-testid="bash-task-meta-pid"]').exists()).toBe(true)
     wrapper.unmount()
   })
+
+  it('truncated=true（D5 协议字段消费）：输出区顶部渲染「仅显示尾部」提示；false 不渲染', async () => {
+    partitionState.tasks = [makeEntry()]
+    selectTask(TASK_ID)
+    vi.mocked(backgroundTaskApi.output).mockResolvedValue(outputReply({ text: 'tail…', truncated: true }))
+    const wrapper = mountDetail()
+    await flushPromises()
+
+    const hint = wrapper.find('[data-testid="bash-task-output-truncated"]')
+    expect(hint.exists()).toBe(true)
+    expect(hint.text()).toBe('panel.sideDrawer.bashTaskOutputTruncated')
+    expect(wrapper.find('[data-testid="bash-task-output"]').text()).toBe('tail…')
+
+    // 回执翻回未截断（跟随下一拍）→ 提示消失
+    vi.mocked(backgroundTaskApi.output).mockResolvedValue(outputReply({ text: 'tail', truncated: false }))
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(wrapper.find('[data-testid="bash-task-output-truncated"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('元信息区 outputFile 路径展示 + 复制（D5：截断时的全量输出口）', async () => {
+    partitionState.tasks = [makeEntry()]
+    selectTask(TASK_ID)
+    const wrapper = mountDetail()
+    await flushPromises()
+
+    const pathRow = wrapper.find('[data-testid="bash-task-output-file-row"]')
+    expect(pathRow.exists()).toBe(true)
+    expect(wrapper.find('[data-testid="bash-task-output-file"]').text()).toBe('/tmp/xyz/bg/bt.log')
+
+    await wrapper.find('[data-testid="bash-task-copy-output-file"]').trigger('click')
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('/tmp/xyz/bg/bt.log')
+    wrapper.unmount()
+  })
+
+  it('条目从分区消失（快照冻结态，D6 #13/BG-6）：元信息快照兜底渲染 + output 轮询停止', async () => {
+    partitionState.tasks = [makeEntry()]
+    selectTask(TASK_ID)
+    vi.mocked(backgroundTaskApi.output).mockResolvedValue(outputReply())
+    const wrapper = mountDetail()
+    await flushPromises()
+    expect(backgroundTaskApi.output).toHaveBeenCalledTimes(1)
+
+    // 广播更新一拍（新数组新对象）填充快照基线——生产时序：registry 变更广播驱动
+    // partition.tasks 整体替换，entrySnapshot 在 truthy 边沿记录
+    partitionState.tasks = [makeEntry({ pid: 53242 })]
+    await flushPromises()
+
+    // registry LRU 淘汰 / 损坏自愈清表：条目从分区消失 → 快照兜底渲染元信息（不空白）
+    partitionState.tasks = []
+    await flushPromises()
+    expect(wrapper.find('[data-testid="bash-task-command"]').text()).toBe(makeEntry().command)
+    expect(wrapper.find('[data-testid="bash-task-meta-taskid"]').text()).toBe(TASK_ID)
+
+    // 轮询停止：对已消失条目继续发 output RPC 属无效空转（BG-6）
+    const calls = backgroundTaskApi.output.mock.calls.length
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(backgroundTaskApi.output.mock.calls.length).toBe(calls)
+    wrapper.unmount()
+  })
 })
 
 describe('BackgroundTaskDetailPanel 两段式终止（G3/D10④）+ 分支④⑤ toast', () => {

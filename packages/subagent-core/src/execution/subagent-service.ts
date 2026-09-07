@@ -420,6 +420,12 @@ export class SubagentService {
   private readonly manifestStore: ManifestStore;
 
   /**
+   * [D6 #7a] records 目录（与 manifestStore 同源同一推导）——屏障失败 warn 带 manifest
+   * 文件路径用（ManifestStore.dir 私有，此处不破封装另存同源值；漂移由构造点同语句保证不发生）。
+   */
+  private readonly recordsDir: string;
+
+  /**
    * [T1/PS-9] subagent sessionDir（getSubagentSessionDir 推导，与 store 同源同一 rootCwd）。
    * 传给 doFinalizeRecord 的 FinalizeDeps.sessionDir——record.sessionFile 缺失时 finalize
    * 用它做磁盘 identity 反查（marker/alive 清理的依据）。
@@ -443,6 +449,7 @@ export class SubagentService {
     const sessionsDir = getSubagentSessionDir(this.modelService.getAgentDir(), this.rootCwd);
     const recordsDir = getSubagentRecordsDir(this.modelService.getAgentDir(), this.rootCwd);
     this.sessionsDir = sessionsDir;
+    this.recordsDir = recordsDir;
     this.manifestStore = new ManifestStore(recordsDir);
     this.store = new RecordStore(sessionsDir, this.manifestStore, this.pi ?? undefined);
     // collectCoordinator（subagent-sync-collect U2）：notifyComplete 唯一路由入口——
@@ -847,15 +854,16 @@ export class SubagentService {
 
   /** [时序屏障] 批通知路径（flush/E1）专用：成员 manifest 并行写 + await 全部完成
    *  （allSettled）后才允许写账投递——「通知可达 ⇒ 索引就位」的构造性保证。写失败
-   *  仅 debug 不阻断（best-effort 语义与 doFinalizeRecord Step 4 一致：反查索引缺失
-   *  只影响指针行反查，session-reader 错误文案已指引绝对路径兜底，不构成写账失败）。 */
+   *  不阻断（best-effort 语义与 doFinalizeRecord Step 4 一致：反查索引缺失只影响指针行
+   *  反查，session-reader 错误文案已指引绝对路径兜底，不构成写账失败）；warn 留痕
+   *  （D6 #7a / SC-1：屏障失败意味着该成员指针行反查索引缺失，debug 级在排障时不可见）。 */
   private async writeSyncBatchManifestBarrier(recs: readonly SubagentRecord[]): Promise<void> {
     const results = await Promise.allSettled(recs.map((rec) => this.writeBatchMemberManifest(rec)));
     for (let i = 0; i < results.length; i++) {
       const result = results[i]!;
       if (result.status === "rejected") {
-        logger.debug(
-          `[subagents] batch-finalized manifest write failed (record=${recs[i]!.id})`,
+        logger.warn(
+          `[subagents] batch-finalized manifest write failed (record=${recs[i]!.id}, manifest=${this.recordsDir}/${recs[i]!.id}.json)`,
           { reason: result.reason instanceof Error ? result.reason.message : String(result.reason) },
         );
       }
@@ -920,7 +928,7 @@ export class SubagentService {
    */
   async recoverSyncCollectBatch(): Promise<void> {
     try {
-      const outcome = await this.runSyncCollectRecoveryScan();
+      const { outcome } = await this.runSyncCollectRecoveryScan();
       // [v2 D4] 断链 4：等待分支不再死等——挂 settled 有界重扫（幂等单注册）。
       if (outcome === "waiting") {
         this.armSettledRescan();
@@ -938,9 +946,13 @@ export class SubagentService {
    *  （防两处复制粘贴分岔）。三态返回：idle（无 sync 候选——已全部落标/E9 转换/异根，
    *  无事可等）/ waiting（仍有 running 成员，本次不动）/ dispatched（全员终态，已补发
    *  +统一落标）。async：补发前有 manifest 屏障 await（见函数头 E1 注释）。 */
-  private async runSyncCollectRecoveryScan(): Promise<"idle" | "waiting" | "dispatched"> {
+  /** 返回 outcome + waitingIds（达限 warn 需滞留成员 id，D6 #7b——仅 waiting 态非空）。 */
+  private async runSyncCollectRecoveryScan(): Promise<{
+    outcome: "idle" | "waiting" | "dispatched";
+    waitingIds: string[];
+  }> {
     const lastRecords = this.store.scanLastRecordEntries(this.mainSessionFile);
-    if (lastRecords.length === 0) return "idle";
+    if (lastRecords.length === 0) return { outcome: "idle", waitingIds: [] };
     const rootFilter = this.sessionRootId;
     const candidates = lastRecords.filter(
       (r) =>
@@ -948,7 +960,7 @@ export class SubagentService {
         r.batchFinalized !== true &&
         (rootFilter === undefined || r.rootSessionId === rootFilter),
     );
-    if (candidates.length === 0) return "idle";
+    if (candidates.length === 0) return { outcome: "idle", waitingIds: [] };
     // [v2 D3] 与协调器 hasRunningSync 同构口径（collect-coordinator.ts）：running+
     // resumable 视为已完成、不阻止补发——成功成员崩溃时的末条 entry 恒为轮终
     // running+resumable（SP-5 有意语义），旧口径只看 status !== "closed" 会把主场景
@@ -959,7 +971,7 @@ export class SubagentService {
         `[subagents] E1 sync batch recovery: ${running.length} member(s) still running, wait for natural completion`,
         { ids: running.map((r) => r.id) },
       );
-      return "waiting";
+      return { outcome: "waiting", waitingIds: running.map((r) => r.id) };
     }
     // [时序屏障] manifest 先于写账 await 全部落盘——E1 补发同样是批通知（指针行消费
     // 依赖反查索引），「通知可达 ⇒ 索引就位」的构造性保证与 flushBatch 同款。
@@ -975,15 +987,16 @@ export class SubagentService {
       `[subagents] E1 sync batch recovery: re-notified ${members.length} member(s) (ledger accepted=${accepted})`,
       { ids: members.map((m) => m.id) },
     );
-    return "dispatched";
+    return { outcome: "dispatched", waitingIds: [] };
   }
 
   /** [v2 D4] 注册 agent_settled 有界重扫（幂等：settledRescanState 非 null 不叠加注册
    *  ——E1 现仅 session_start 单调用点，守卫是防第二入口引入时的注册叠加断言面）。
    *  每次 settled 边沿重跑同一 E1 扫描（runSyncCollectRecoveryScan）：dispatched
    *  （补发+落标完成，scan 的 warn 已留痕）或 idle（候选已被其他通路落标）→ disposed；
-   *  累计 SETTLED_RESCAN_LIMIT 次仍在等 → disposed + debug 留痕（后续事件零处理，下次
-   *  session_start 再收敛）。
+   *  累计 SETTLED_RESCAN_LIMIT 次仍在等 → disposed + warn 留痕（D6 #7b / SC-2：达限
+   *  放弃重扫意味着滞留成员的批通知要等下次 session_start 才收敛，含滞留 id 的 warn
+   *  是唯一线索，debug 级排障不可见；后续事件零处理，下次 session_start 再收敛）。
    *  pi.on 无 off（0.84.4 实装）——disposed 标志包装兑现退订（scheduler extension
    *  index.ts subscribeSettled 同款先例）。P-settled 定谳（0.84.4 dist 实装证据）：
    *  pi.on 为 per-extension 列表分发——loader.js `on()` 把 handler push 进
@@ -999,12 +1012,14 @@ export class SubagentService {
       state.scans += 1;
       // await 完整补发序列（manifest 屏障 → 写账 → 落标）：pi emit 对 handler 逐一
       // await（P-settled 定谳，0.84.4 dist runner.js），async 化不改变分发语义。
-      const outcome = await this.runSyncCollectRecoveryScan();
+      const { outcome, waitingIds } = await this.runSyncCollectRecoveryScan();
       if (outcome === "waiting" && state.scans < SETTLED_RESCAN_LIMIT) return;
       state.disposed = true;
       if (outcome === "waiting") {
-        logger.debug(
+        // D6 #7b / SC-2：warn + 滞留成员 id（debug 级排障不可见——达限即批通知挂起至下次 session_start）
+        logger.warn(
           `[subagents] E1 settled rescan: reached limit (${SETTLED_RESCAN_LIMIT}) with member(s) still running, disposed until next session_start`,
+          { ids: waitingIds },
         );
       }
     });

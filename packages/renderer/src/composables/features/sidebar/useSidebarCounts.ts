@@ -13,7 +13,7 @@ import { useFileTreeStore } from '@/stores/fileTree'
 import { usePanelStore } from '@/stores/panel'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
-import { isDoneProjection } from '@/lib/subagent-bucket'
+import { subagentBucket } from '@/lib/subagent-bucket'
 
 export function useSidebarCounts(focusedSessionId: Ref<string | null>) {
   const fileTreeStore = useFileTreeStore()
@@ -29,10 +29,11 @@ export function useSidebarCounts(focusedSessionId: Ref<string | null>) {
   })
   const subagentList = computed(() => subagentStore.recordsOf(focusedSessionId.value ?? '').value)
   const subagentCount = computed(() => subagentList.value.length)
-  // D8 口径收窄：done 投影（one-shot 轮终等 GC，renderer 侧永久态）不计入——badge 语义
-  // 与「进行中」桶判据恒一致（同源 isDoneProjection），消除 badge 永久虚亮
+  // D8 口径收窄：badge 判据 =「进行中」桶 SSOT（subagentBucket === 'active'，D6 #5）——
+  // 与 SubagentList/FilterBar 的 active 计数恒同源（含 done 投影排除 + waiting 计入语义），
+  // 消除 badge 与列表计数口径漂移
   const subagentRunningCount = computed(
-    () => subagentList.value.filter((r) => r.status === 'running' && !isDoneProjection(r)).length,
+    () => subagentList.value.filter((r) => subagentBucket(r) === 'active').length,
   )
   const workflowCount = computed(() => workflowStore.recordsOf(focusedSessionId.value ?? '').value.length)
   const workflowRunningCount = computed(

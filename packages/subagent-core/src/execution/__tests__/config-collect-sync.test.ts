@@ -6,9 +6,17 @@
 //
 // 纯函数测试：无文件 IO、无 timer 依赖——不触真实数据目录（红线）。
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+
+// logger mock（D6 #8 坏值 warn 断言；config.test.ts 同款拦 getLogger）
+const loggerMock = vi.hoisted(() => ({ warn: vi.fn(), debug: vi.fn(), info: vi.fn(), error: vi.fn() }));
+vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 import { DEFAULT_COLLECT_SYNC, DEFAULT_CONFIG, sanitizeCollectSync } from "../config.ts";
+
+beforeEach(() => {
+  loggerMock.warn.mockClear();
+});
 
 // ============================================================
 // 权威默认值
@@ -90,5 +98,23 @@ describe("sanitizeCollectSync (E5)", () => {
     expect(() =>
       sanitizeCollectSync({ default: Symbol("x"), perItemChars: {}, totalChars: NaN }),
     ).not.toThrow();
+  });
+
+  it("D6 #8：显式坏值字段回默认时 warn 一条（含字段名与原值）；缺省字段不 warn", () => {
+    // 全好字段（含合法部分覆盖）→ 零 warn
+    sanitizeCollectSync({ default: "sync", perItemChars: 8000 });
+    expect(loggerMock.warn).not.toHaveBeenCalled();
+
+    // 显式坏值（default 非枚举 + totalChars 负数）→ 一条 warn 列出两个坏字段
+    sanitizeCollectSync({ default: "immediate", perItemChars: 8000, totalChars: -5 });
+    expect(loggerMock.warn).toHaveBeenCalledTimes(1);
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      '[subagents] config collectSync invalid field(s) reverted to defaults: default="immediate", totalChars=-5',
+    );
+
+    // 缺省字段（部分覆盖）不算坏值——warn 计数不增
+    loggerMock.warn.mockClear();
+    sanitizeCollectSync({ perItemChars: 4000 });
+    expect(loggerMock.warn).not.toHaveBeenCalled();
   });
 });
