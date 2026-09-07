@@ -94,6 +94,16 @@ const INTERACTIVE_UI_METHODS = new Set(
 /** Extension method constant for the editor UI */
 const METHOD_EDITOR = 'editor' as const
 
+/**
+ * base-tool-enhance 后台任务的 custom 消息类型（权威源：extensions/universal/
+ * base-tool-enhance/src/background/notify.ts BACKGROUND_BASH_CUSTOM_TYPE；runtime 侧
+ * 不 import extension 源码，字面量 + 注释登记）。exit 边沿 notify（pi.sendMessage
+ * customType background-bash）经 message_start 到达。
+ */
+const BACKGROUND_BASH_CUSTOM_TYPE = 'background-bash'
+/** base-tool-enhance override 的 bash 工具名（spawn 路径的 tool_execution_end 锚点）。 */
+const BASH_TOOL_NAME = 'bash'
+
 // ── Sub-handlers（纯函数：PiEvent → PiTranslatedEvent[]，无副作用）────────
 
 /** message_update.assistantMessageEvent 的 wire 局部形态（pi-protocol.ts PiMessageUpdateEvent 同源） */
@@ -1180,6 +1190,13 @@ export type WsSender = (msg: ServerMessage) => void
  *
  * 纯订阅器：不持有业务态（currentMessageId/writeContents/diffChain 帧序态全部移到 interpreter），
  * 不直接 send —— 把翻译结果交给注入的 interpreter 回调（interpreter 决定副作用：转发/hook/diff/回写）。
+ *
+ * [u-runtime-svc] 第三个可选参数：后台任务变更检测的事件旁路（D2 触发面②）。customType
+ * background-bash 消息（exit 边沿）与 bash 工具调用结束（spawn 路径）到达时，旁路回调
+ * 被触发对 BackgroundTaskService 的 watched 集合跑一次变更检测（u-runtime-rpc 组合根
+ * 接线到 service.checkForChanges）。旁路不进翻译输出（PiTranslatedEvent 零改动、纯旁路
+ * 不改既有翻译），且消费端与 2s 轮询共享同一 last-seen mtime 状态——不是第二广播源，
+ * 同一变化至多广播一次。
  */
 export class EventAdapter {
   private unsub: (() => void) | null = null
@@ -1187,11 +1204,14 @@ export class EventAdapter {
   constructor(
     private sessionId: string,
     private interpret: (events: PiTranslatedEvent[]) => void,
+    private onBackgroundTaskActivity?: (sessionId: string) => void,
   ) {}
 
   /** Start listening to events from an RpcClient. */
   attach(client: { onEvent: (listener: PiEventListener) => (() => void) }): void {
     this.unsub = client.onEvent((event) => {
+      // [u-runtime-svc] 后台任务事件旁路：先于翻译独立判定（不改翻译输出），失败不干扰事件流
+      this.notifyBackgroundTaskActivity(event)
       // PiEventListener 的 event 是 unknown（pi 动态 JSON），断言为 PiEvent 联合翻译。
       const events = translate(event as unknown as PiEvent, this.sessionId)
       if (events.length === 0) return
@@ -1204,6 +1224,26 @@ export class EventAdapter {
         logInterpretFailure(this.sessionId, events.length, err)
       }
     })
+  }
+
+  /**
+   * 后台任务旁路判定（D2 触发面②）：raw pi 事件形态直读（翻译层不动）——
+   * ① customType background-bash 消息（exit 边沿，notify.ts → message_start custom）；
+   * ② bash 工具调用结束（spawn 路径，tool_execution_end.toolName === 'bash'）。
+   * spawn/exit 均先写 registry 后发事件（spawn-background.ts/poller.ts 时序），钩子
+   * 触发的变更检测读到的已是终值，无双读竞态。未注入回调时零开销。
+   */
+  private notifyBackgroundTaskActivity(event: unknown): void {
+    if (!this.onBackgroundTaskActivity) return
+    try {
+      const e = event as { type?: unknown; message?: { customType?: unknown }; toolName?: unknown }
+      const isBashExitNotice = e.type === 'message_start' && e.message?.customType === BACKGROUND_BASH_CUSTOM_TYPE
+      const isBashToolEnd = e.type === 'tool_execution_end' && e.toolName === BASH_TOOL_NAME
+      if (isBashExitNotice || isBashToolEnd) this.onBackgroundTaskActivity(this.sessionId)
+    } catch (err) {
+      // 旁路永不干扰翻译/事件流（畸形事件形态/未知异常仅留诊断）
+      console.debug('[EventAdapter] background-task activity bypass check failed:', err instanceof Error ? err.message : err)
+    }
   }
 
   /** Stop listening. */

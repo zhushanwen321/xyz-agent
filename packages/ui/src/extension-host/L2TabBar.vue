@@ -12,6 +12,12 @@
  * 纯展示 + 事件上抛：activeViewId 经 v-model 双向绑定（update:modelValue），
  * close/pin 只 emit viewId——移除/置顶决策由父层 PluginViewContainer 本地维护
  * （不持久化，design T2 约束）。
+ *
+ * badge（background-task-sidebar-view D4④）：点亮条件由父层经
+ * L2_TAB_BADGE_SOURCE_KEY 注入的数据源派生（= 运行中桶 > 0，分桶 SSOT 同源），
+ * 本组件只做 boolean → 小圆点渲染（视觉范式自 L1 SegmentedTab badge 下沉：
+ * 7px accent 圆点；L2 tab 行高小，圆点内联在 title 右侧，不用 absolute 右上角
+ * 定位——避免与 close/pin 命中区重叠）。
  */
 import { Pin, X } from '@lucide/vue'
 import { Button } from '../primitives/button'
@@ -53,6 +59,12 @@ const emit = defineEmits<{
         <component :is="tab.icon" />
       </span>
       <span class="leading-none">{{ tab.title }}</span>
+      <!-- badge 小圆点（D4④）：SegmentedTab 同款 7px accent 圆点，内联于 title 右侧 -->
+      <span
+        v-if="tab.badge"
+        :data-testid="`l2-tab-badge-${tab.viewId}`"
+        class="size-[7px] shrink-0 rounded-full bg-accent"
+      />
       <!-- close（builtin 不渲染）；pin（pinned 态 accent + 常显）。spec：hover 显现 opacity 0→1 -->
       <span
         v-if="!tab.builtin"

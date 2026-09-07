@@ -212,6 +212,33 @@ export default {
     workflowRunning: 'Running',
     workflowPending: 'Pending',
     unreadMessages: '{count} new messages while drawer was open',
+    // Background commands tab (background-task-sidebar-view D5: drawer bashTask detail).
+    // Term ruling (design §1): user-visible naming is "background commands", distinct from
+    // subagent "background tasks"
+    tabBashTask: 'Background commands',
+    noBashTask: 'No background command selected',
+    bashTaskHint: 'Click a task in the sidebar "Background commands" list to view details',
+    bashTaskStartedAt: 'Started {time}',
+    bashTaskRunningFor: 'Running for {duration}',
+    bashTaskDuration: 'Duration {duration}',
+    bashTaskExitCode: 'exit {code}',
+    // reason five states (D6-en: killed = stopped from UI via intent read-back; process-exit =
+    // owner pi process exited)
+    bashTaskReasonNatural: 'Exited naturally',
+    bashTaskReasonTimeout: 'Timed out',
+    bashTaskReasonKilled: 'Terminated manually',
+    bashTaskReasonProcessExit: 'Process exited',
+    bashTaskReasonOrphaned: 'Orphan reclaimed',
+    bashTaskOutputUnavailable: 'Output unavailable (file was cleaned up)',
+    bashTaskOutputEmpty: 'No output yet',
+    bashTaskCopyCommand: 'Copy command',
+    bashTaskCopied: 'Copied',
+    bashTaskKill: 'Terminate task',
+    bashTaskKillConfirm: 'Confirm terminate',
+    // kill result branch ④⑤ toasts (design §3.1 failure paths)
+    bashTaskAlreadyExited: 'Task already finished',
+    bashTaskIdentityUnverifiable: 'Cannot verify process identity — termination refused (safety first)',
+    bashTaskWriteFailed: 'Operation did not take effect (failed to write data); please retry',
   },
   browserPane: {
     back: 'Back',

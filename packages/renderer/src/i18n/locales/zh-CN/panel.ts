@@ -212,6 +212,31 @@ export default {
     workflowRunning: '运行中',
     workflowPending: '等待中',
     unreadMessages: '抽屉打开期间有 {count} 条新消息',
+    // 后台命令 tab（background-task-sidebar-view D5：drawer bashTask 详情）。
+    // 术语裁决（设计 §1）：用户可见命名一律「后台命令」，与 subagent 的「后台任务」区分
+    tabBashTask: '后台命令',
+    noBashTask: '未选中后台命令',
+    bashTaskHint: '在侧边栏「后台命令」列表中点击任务查看详情',
+    bashTaskStartedAt: '开始 {time}',
+    bashTaskRunningFor: '已运行 {duration}',
+    bashTaskDuration: '耗时 {duration}',
+    bashTaskExitCode: 'exit {code}',
+    // reason 五态（D6-en：killed = UI 代杀经 intent 读回；process-exit = 属主 pi 进程退出）
+    bashTaskReasonNatural: '自然退出',
+    bashTaskReasonTimeout: '超时终止',
+    bashTaskReasonKilled: '手动终止',
+    bashTaskReasonProcessExit: '进程退出',
+    bashTaskReasonOrphaned: '孤儿回收',
+    bashTaskOutputUnavailable: '输出不可用（文件已清理）',
+    bashTaskOutputEmpty: '暂无输出',
+    bashTaskCopyCommand: '复制命令',
+    bashTaskCopied: '已复制',
+    bashTaskKill: '终止任务',
+    bashTaskKillConfirm: '确认终止',
+    // kill 回执分支④⑤ toast（设计 §3.1 失败路径原文）
+    bashTaskAlreadyExited: '任务已结束',
+    bashTaskIdentityUnverifiable: '无法验证进程身份，已拒绝终止（宁不杀勿误杀）',
+    bashTaskWriteFailed: '操作未生效（数据写入失败），请重试',
   },
   browserPane: {
     back: '后退',

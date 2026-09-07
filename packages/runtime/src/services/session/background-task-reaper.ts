@@ -217,8 +217,12 @@ function readPidStartTimeSec(entry: BackgroundTaskRegistryEntry): number | undef
 
 // ──────────────────────── registry 读写（移植 extension background/registry.ts 语义） ────────────────────────
 
-/** registry.json 目录布局（契约 SSOT）：<agentDir>/base-tool-enhance/<sessionId>/registry.json。 */
-function getSessionRegistryPath(agentDir: string, sessionId: string): string {
+/**
+ * registry.json 目录布局（契约 SSOT）：<agentDir>/base-tool-enhance/<sessionId>/registry.json。
+ * [u-runtime-svc 提炼导出] BackgroundTaskService（services/background-task/）与收殓器共用
+ * 同一布局推导，禁止两处各写路径拼接（漂移面）。
+ */
+export function getSessionRegistryPath(agentDir: string, sessionId: string): string {
   return join(agentDir, BASE_TOOL_ENHANCE_DIRNAME, sessionId, BACKGROUND_TASK_REGISTRY_FILENAME)
 }
 
@@ -251,19 +255,25 @@ function corruptPathFor(registryPath: string): string {
 }
 
 /**
- * 读取 registry 全量条目。文件不存在 / 读失败 / 解析失败均返回空表（收殓不因
- * registry 问题崩溃）；解析失败时重命名 .corrupt 保留现场 + warn + 按空表继续
- * （「空表重建」由后续写入自然完成，不立即写空文件）。
+ * 读取 registry 全量条目 + 损坏标记（[u-runtime-svc 提炼导出]：UI 读侧需要区分
+ * 「真的空表」与「损坏被隔离的空表」（D1 corrupt 语义：空表 + 错误标记，不 throw）——
+ * 收殓器不消费该差异，经 readRegistryEntries 薄壳保持原行为不变）。
+ *
+ * 文件不存在 / 读失败 → 空表 + corrupted:false（常态/降级，非损坏）；解析失败 →
+ * 重命名 .corrupt 保留现场 + warn + 空表 + corrupted:true（「空表重建」由后续写入
+ * 自然完成，不立即写空文件）。
  */
-function readRegistryEntries(registryPath: string): BackgroundTaskRegistryEntry[] {
-  if (!existsSync(registryPath)) return []
+export function readRegistryEntriesWithStatus(
+  registryPath: string,
+): { entries: BackgroundTaskRegistryEntry[]; corrupted: boolean } {
+  if (!existsSync(registryPath)) return { entries: [], corrupted: false }
   let raw: string
   try {
     raw = readFileSync(registryPath, 'utf8')
   } catch (err) {
     // best-effort 降级：读失败（权限等）按空表继续——收殓不因 registry 问题崩溃
     console.warn(`${LOG_TAG} registry read failed, treating as empty: ${registryPath}`, err instanceof Error ? err.message : err)
-    return []
+    return { entries: [], corrupted: false }
   }
   const parsed = parseRegistryContent(raw)
   if (parsed === undefined) {
@@ -275,13 +285,25 @@ function readRegistryEntries(registryPath: string): BackgroundTaskRegistryEntry[
       // best-effort 降级：隔离 rename 失败（目录只读等）原文件保留原位，仍按空表继续
       console.warn(`${LOG_TAG} registry corrupted and quarantine rename failed, continuing with empty table in place: ${registryPath}`, err instanceof Error ? err.message : err)
     }
-    return []
+    return { entries: [], corrupted: true }
   }
-  return parsed
+  return { entries: parsed, corrupted: false }
 }
 
-/** 原子写：tmp（pid+随机段唯一化防并发碰撞）+ rename（POSIX/Windows 均原子）；失败清理 tmp。 */
-function atomicWriteRegistry(registryPath: string, content: string): void {
+/**
+ * 读取 registry 全量条目。文件不存在 / 读失败 / 解析失败均返回空表（收殓不因
+ * registry 问题崩溃）；解析失败时重命名 .corrupt 保留现场 + warn + 按空表继续
+ * （「空表重建」由后续写入自然完成，不立即写空文件）。
+ */
+export function readRegistryEntries(registryPath: string): BackgroundTaskRegistryEntry[] {
+  return readRegistryEntriesWithStatus(registryPath).entries
+}
+
+/**
+ * 原子写：tmp（pid+随机段唯一化防并发碰撞）+ rename（POSIX/Windows 均原子）；失败清理 tmp。
+ * [u-runtime-svc 提炼导出] 与 services/background-task/registry-write.ts 共用同一原子写协议。
+ */
+export function atomicWriteRegistry(registryPath: string, content: string): void {
   mkdirSync(dirname(registryPath), { recursive: true })
   const tmpPath = `${registryPath}.tmp_${process.pid}_${Math.random().toString(TMP_RADIX).slice(TMP_SLICE_START, TMP_SLICE_END)}`
   try {
@@ -299,27 +321,34 @@ function atomicWriteRegistry(registryPath: string, content: string): void {
 }
 
 /**
- * 写 orphaned 终态（分支②③共用；统一锁 sync 版内 RMW：读全量 → 同 id 覆盖 →
- * 终态 LRU 裁剪 → 原子写——与 extension 写侧 writeRegistryEntry 语义对齐）。
- * reason 不写：reason 枚举（natural/timeout/killed/process-exit）属 exited 语义，
- * orphaned 的成因（属主强杀遗留）不在枚举内，保持缺省而非造词。
+ * 写 orphaned 终态（锁内版，[u-runtime-svc 提炼导出]）：调用方已持 `<registry.json>.lock`
+ * 时使用（D6 分支③「判活重查置于锁内重读之后」要求「重读 → 判活 → 写」全在同一锁临界
+ * 区，防 stale 条目覆盖 poller 已写的新鲜终态——嵌套取锁必然 ELOCKED，故必须有无锁变体）。
+ * 锁内 RMW：读全量 → 同 id 覆盖 → 终态 LRU 裁剪 → 原子写——与 extension 写侧
+ * writeRegistryEntry 语义对齐。reason 不写：reason 枚举（natural/timeout/killed/process-exit）
+ * 属 exited 语义，orphaned 的成因（属主强杀遗留）不在枚举内，保持缺省而非造词。
+ * fs 错误向上抛（带锁壳 writeOrphanedTerminal 捕获降级，锁内调用方自捕 → 分支⑤语义）。
+ */
+export function writeOrphanedTerminalLocked(registryPath: string, entry: BackgroundTaskRegistryEntry): void {
+  const merged = new Map(readRegistryEntries(registryPath).map((e) => [e.taskId, e] as const))
+  const endedAt = Date.now()
+  merged.set(entry.taskId, { ...entry, state: 'orphaned', endedAt, durationMs: endedAt - entry.startedAt })
+  const all = [...merged.values()]
+  const terminal = all
+    .filter((e) => isTerminalBackgroundTaskState(e.state))
+    .sort((a, b) => (a.endedAt ?? a.startedAt) - (b.endedAt ?? b.startedAt))
+  const excess = terminal.length - MAX_TERMINAL_REGISTRY_ENTRIES
+  for (let i = 0; i < excess; i++) merged.delete(terminal[i].taskId)
+  atomicWriteRegistry(registryPath, `${JSON.stringify({ version: BACKGROUND_TASK_REGISTRY_VERSION, entries: [...merged.values()] }, null, JSON_INDENT)}\n`)
+}
+
+/**
+ * 写 orphaned 终态（分支②③共用；统一锁 sync 版内 RMW，见 writeOrphanedTerminalLocked）。
  * 失败返回 false——条目停留 running，下个收殓事件重试（幂等闭环，无静默丢失）。
  */
-function writeOrphanedTerminal(registryPath: string, entry: BackgroundTaskRegistryEntry): boolean {
-  const writeMerged = (): void => {
-    const merged = new Map(readRegistryEntries(registryPath).map((e) => [e.taskId, e] as const))
-    const endedAt = Date.now()
-    merged.set(entry.taskId, { ...entry, state: 'orphaned', endedAt, durationMs: endedAt - entry.startedAt })
-    const all = [...merged.values()]
-    const terminal = all
-      .filter((e) => isTerminalBackgroundTaskState(e.state))
-      .sort((a, b) => (a.endedAt ?? a.startedAt) - (b.endedAt ?? b.startedAt))
-    const excess = terminal.length - MAX_TERMINAL_REGISTRY_ENTRIES
-    for (let i = 0; i < excess; i++) merged.delete(terminal[i].taskId)
-    atomicWriteRegistry(registryPath, `${JSON.stringify({ version: BACKGROUND_TASK_REGISTRY_VERSION, entries: [...merged.values()] }, null, JSON_INDENT)}\n`)
-  }
+export function writeOrphanedTerminal(registryPath: string, entry: BackgroundTaskRegistryEntry): boolean {
   try {
-    withFileLockSync(registryPath, writeMerged)
+    withFileLockSync(registryPath, () => writeOrphanedTerminalLocked(registryPath, entry))
     return true
   } catch (err) {
     // best-effort 降级：写失败（锁预算耗尽等）条目停留 running，下个收殓事件重试——

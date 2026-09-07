@@ -166,6 +166,10 @@ export type ClientMessageType =
   | 'config.removeProviderByKind'
   // scoped model：配置模型白名单 + 有序列表（reply config.scopedModels）。
   | 'config.setScopedModels'
+  // backgroundTask 域（docs/design/background-task-sidebar-view.md §3.3 D3，u-proto）：后台命令
+  // 侧边栏的拉取/操作 RPC——list 拉全量并隐式把 session 加入 runtime watched 集合（D8③）；
+  // output 按字节窗口 tail 输出尾部；kill 走 D6 分支矩阵。回执/广播登记见 ServerMessageType。
+  | 'backgroundTask.list' | 'backgroundTask.output' | 'backgroundTask.kill'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -644,6 +648,16 @@ export interface ClientMessageMap {
   'config.oauthLogout': { providerId: string }
   // ── scoped model ──
   'config.setScopedModels': { models: string[] }
+  // ── backgroundTask 域（docs/design/background-task-sidebar-view.md §3.3 D3，u-proto）──
+  // list：拉取该 session 后台任务全量（runtime 直读 registry 的投影；目录/文件不存在 → 空数组）。
+  // 首次调用同时把 session 加入 runtime watched 集合（D8③）——订阅语义由 list 隐含，协议面无
+  // subscribe/unsubscribe 消息（D3 被否项）；watched 退订挂 session 销毁汇聚点（runtime 侧职责）。
+  'backgroundTask.list': { sessionId: string }
+  // output：读任务输出尾部（字节窗口，从文件末尾读；maxBytes 省略时 runtime 用默认 32KB 上界，
+  // 对齐 bash_output 的 tail 语义，D7）。
+  'backgroundTask.output': { sessionId: string; taskId: string; maxBytes?: number }
+  // kill：终止任务（D6 分支矩阵；reason 回执语义见 BackgroundTaskKillReason）。
+  'backgroundTask.kill': { sessionId: string; taskId: string }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -827,6 +841,12 @@ export type ServerMessageType =
   | 'config.oauthLogoutReply'
   // 环境变量检测 reply（I3）。
   | 'config.envVarsChecked'
+  // backgroundTask 域（docs/design/background-task-sidebar-view.md §3.3 D3，u-proto）：3 个 RPC 回执
+  // + session 级变更广播。backgroundTask:updated 用冒号 camelCase（Server→Client 推送命名规则，
+  // 对齐 plugin:statusBarUpdate / extension:widgetGui），payload 单对象必带 sessionId（架构规则 7），
+  // 经 IMessageBus.publish(sessionId, msg) session 级定向推。
+  | 'backgroundTask.tasks' | 'backgroundTask.outputResult' | 'backgroundTask.killResult'
+  | 'backgroundTask:updated'
 
 /** skill 缓存失效广播的作用域：global=全局 skill 变动，project=某项目 cwd 的 skill 变动。 */
 export type SkillCacheScope = 'global' | 'project'
@@ -879,6 +899,64 @@ export interface SkillCacheInvalidatedPayload {
   /** scope='project' 时携带变更的项目根；setSkillDirs 全局配置变更场景缺省（影响所有 cwd）。 */
   cwd?: string
 }
+
+// ── backgroundTask 域 payload 辅助类型（docs/design/background-task-sidebar-view.md §3.3 D3/D9，u-proto）──
+// shared 不依赖 @xyz-agent/extension-protocol（SubagentEngineConfigView / SessionTraceHeaderPayload
+// 同先例：契约 SSOT 在彼处，shared 侧放结构镜像，结构兼容即协议兼容）。任务条目逐字段镜像
+// extension-protocol background-task.ts 的 BackgroundTaskRegistryEntry（D9 数据契约零新造——
+// 字段名/枚举/可选性禁止单侧改名）；镜像 ⇔ 契约的双向可赋值由 renderer api domain
+//（packages/renderer/src/api/domains/background-task.ts）的回执返回类型编译期守卫，漂移即 tsc 红。
+
+/** 任务状态机（镜像 extension-protocol BackgroundTaskState）：running → killing（intent 瞬态）→
+ *  exited；orphaned 由 runtime 收殓侧写入。 */
+export type BackgroundTaskState = 'running' | 'killing' | 'exited' | 'orphaned'
+
+/** 终态 reason 枚举（仅 exited 语义；orphaned 保持缺省。镜像 extension-protocol BackgroundTaskEndReason）。 */
+export type BackgroundTaskEndReason = 'natural' | 'timeout' | 'killed' | 'process-exit'
+
+/** registry.json 持久化条目的 WS 协议镜像（逐字段同构 extension-protocol BackgroundTaskRegistryEntry，
+ *  契约 SSOT 在彼处，D9 禁止另造 DTO）。 */
+export interface BackgroundTaskRegistryEntry {
+  /** 任务 id（registry 表内唯一键；`bt-` 前缀）。 */
+  taskId: string
+  /** 任务进程 pid（判活/补杀目标）。 */
+  pid: number
+  /** 原始命令全文。 */
+  command: string
+  /** stdout/stderr 重定向输出文件路径。 */
+  outputFile: string
+  /** 任务登记时刻（epoch 毫秒）。 */
+  startedAt: number
+  /** 状态机（见 BackgroundTaskState）。 */
+  state: BackgroundTaskState
+  /** 属主 pi 进程 pid（孤儿判定依据）。 */
+  ownerPiPid: number
+  /** 发起 session（registry 目录归属）。 */
+  sessionId: string
+  /** 进程退出码（被 signal 终止时为 null；条目未终态时字段缺省）。 */
+  exitCode?: number | null
+  /** 终态成因（仅 exited 语义；orphaned 保持缺省）。 */
+  reason?: BackgroundTaskEndReason
+  /** 终态时刻（epoch 毫秒）。 */
+  endedAt?: number
+  /** 存活时长 = endedAt - startedAt（毫秒）。 */
+  durationMs?: number
+  /** exit 边沿组装的输出尾部摘要。 */
+  tailSummary?: string
+  /** 任务进程 start time（epoch 秒；防 pid 复用误判，缺省走 startedAt 降级校验）。 */
+  pidStartTime?: number
+}
+
+/**
+ * backgroundTask.kill 回执的 reason 枚举（D6 kill 分支矩阵的操作结果语义；注意与
+ * BackgroundTaskEndReason 分工——后者是 registry 条目的持久化终态成因，本枚举是 kill
+ * 操作回执的结果）。
+ */
+export type BackgroundTaskKillReason =
+  | 'killed'                 // 分支①：发令成功（killing 预写 + killProcessTree；终态由 extension poller 边沿写）
+  | 'already-exited'         // 分支③：任务已退出，无副作用
+  | 'identity-unverifiable'  // 分支④：进程身份无法验证，拒绝终止（宁不杀勿误杀，可重试）
+  | 'registry-write-failed'  // 分支⑤：锁内 registry 写失败，操作未生效（可重试）
 
 /**
  * session.skillNotice 的事件种类（composer-multi-skill-injection §3.3 D6/D8，u5 呈现面据此
@@ -1542,6 +1620,26 @@ export interface ServerMessageMapBase {
   // 与 pi 持久化 toolResult entry 同构）；isError/details 透传。前端 registry 喂
   // applyEntry（toolResult 窗口局部配对回填）+ overlay 收口。
   'message.tool_call_end': { sessionId: string; entry: PiMessageEntry }
+
+  // ── backgroundTask 域（docs/design/background-task-sidebar-view.md §3.3 D3，u-proto）──
+  // 后台命令侧边栏：3 个 RPC 回执 + 1 个 session 级变更广播；全部必带 sessionId（架构规则 7）。
+  // tasks 元素是 shared 协议镜像 BackgroundTaskRegistryEntry（逐字段同构 extension-protocol 同名
+  // 契约，D9；等价性由 renderer api domain 编译期守卫）。
+  // backgroundTask.list 的 reply（registry 全量投影；目录/文件不存在 → 空数组）。
+  // corrupted=true = registry 解析失败被 .corrupt 隔离的「损坏空表」（S7 错误条依据，
+  // 区分于真空表；缺省/false = 正常拍，仿 config.systemPrompt 同名字段先例）。
+  'backgroundTask.tasks': { sessionId: string; tasks: BackgroundTaskRegistryEntry[]; corrupted?: boolean }
+  // backgroundTask.output 的 reply。text = 输出尾部窗口内容（lost 时为空串）；truncated = 超出
+  // 窗口上界截断；lost = 输出文件不可用（已清理/丢失，§3.1 失败路径「输出不可用」分支）。
+  'backgroundTask.outputResult': { sessionId: string; taskId: string; text: string; truncated: boolean; lost: boolean }
+  // backgroundTask.kill 的 reply（D6 分支矩阵回执；reason 语义见 BackgroundTaskKillReason）。
+  'backgroundTask.killResult': { sessionId: string; taskId: string; killed: boolean; reason: BackgroundTaskKillReason }
+  // backgroundTask:updated：registry 变更的 session 级广播（Server→Client 冒号 camelCase，
+  // 对齐 plugin:statusBarUpdate 命名规则；经 IMessageBus.publish(sessionId, msg) 定向推）。
+  // 广播只做增量刷新、不做唯一真相——renderer 切换/激活 session 后仍须主动 list 拉取
+  //（架构约定「runtime broadcast 时序竞争」C6：拉取兜底是唯一真相入口）。
+  // corrupted 语义与 backgroundTask.tasks 同源（损坏空表标记，S7）；缺省/false = 正常拍。
+  'backgroundTask:updated': { sessionId: string; tasks: BackgroundTaskRegistryEntry[]; corrupted?: boolean }
 }
 
 /**
@@ -1827,6 +1925,12 @@ export interface ReplyPayloadMap {
   'session.workflowAction': void  // reply session.workflowActionDone
   // ── scoped model 域──
   'config.setScopedModels': { scopedModels: string[] }  // reply config.scopedModels（去重保序后结果）
+  // ── backgroundTask 域（docs/design/background-task-sidebar-view.md §3.3 D3，u-proto）──
+  // 三个 RPC 全部 payload 消费型（renderer 读回执字段）；backgroundTask:updated 是 session 级
+  // 广播（非 RPC reply），不走本映射——消费侧经 events 通道订阅。
+  'backgroundTask.list': ServerMessageMap['backgroundTask.tasks']
+  'backgroundTask.output': ServerMessageMap['backgroundTask.outputResult']
+  'backgroundTask.kill': ServerMessageMap['backgroundTask.killResult']
 
   // terminal.* 都是 ack 型，统一 reply 'terminal.ack'（空 payload，前端 command() 按 id 匹配 resolve）
   'terminal.attach': ServerMessageMap['terminal.ack']

@@ -444,7 +444,17 @@ async function main(): Promise<void> {
       },
     })
     // EventAdapter：纯翻译器，把翻译结果喂给 interpreter 编排。
-    return new EventAdapter(sessionId, (events) => interpreter.interpret(events))
+    // 第三参（background-task-sidebar D2 触发面②，u-runtime-rpc）：后台任务事件旁路——
+    // customType background-bash（exit 边沿）与 bash 工具结束（spawn 路径）到达时对
+    // watched 集合跑一次变更检测（与 2s 轮询/自写自检共享同一 last-seen，单广播源非第二源）。
+    // sessionService 为闭包引用（createAdapter 先于其构造声明，工厂体仅在 session 建立时执行，
+    // 引用恒就绪——同下方 onRecordEntriesInvalidated 延迟解析模式）；backgroundTasks 端口由
+    // SessionService 构造器恒创建，`?.` 为端口缺省（防御）形态的静默 no-op。
+    return new EventAdapter(
+      sessionId,
+      (events) => interpreter.interpret(events),
+      (_sid) => sessionService.backgroundTasks?.checkForChanges(),
+    )
   }
 
   const sessionService = new SessionService(

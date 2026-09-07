@@ -175,4 +175,33 @@ export default {
     emptyHint: '工作流是多步骤自动化脚本，在对话中发起后会显示运行进度',
     agentsLabel: '{done}/{total}',
   },
+  // 「后台命令」L2 视图（background-task-sidebar-view D10）。术语裁决（设计 §1）：
+  // 与 subagent 的「后台任务」区分，本视图一律用「后台命令」
+  backgroundTaskList: {
+    filter: {
+      active: '运行中',
+      ended: '已结束',
+      all: '全部',
+    },
+    emptyAllTitle: '暂无后台命令',
+    emptyAllHint: '在对话中让 AI 以后台方式运行命令，任务会显示在这里',
+    emptyActive: '没有运行中的后台命令',
+    emptyEnded: '暂无已结束的后台命令',
+    viewAll: '查看全部 ({count})',
+    kill: '终止',
+    killConfirm: '确认终止',
+    pidLabel: 'pid',
+    exitLabel: 'exit',
+    status: {
+      running: '运行中',
+      killing: '终止中',
+      orphaned: '孤儿任务',
+      killed: '已终止',
+      succeeded: '已成功',
+      failed: '已失败',
+    },
+    // S7 损坏错误条 / S6 断连提示条（一致性审查修复批次）
+    corruptBanner: '任务数据损坏，已忽略（.corrupt 保留现场）',
+    disconnectBanner: '连接断开，重连后自动刷新',
+  },
 }

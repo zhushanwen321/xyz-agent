@@ -24,7 +24,7 @@
  * 适配（见 extension-host-dialog.ts）经 DIALOG_REQUEST_SOURCE_KEY/UI_RESPONSE_TRANSPORT_KEY 注入。
  */
 import type { App } from 'vue'
-import { reactive, shallowReactive, watch } from 'vue'
+import { computed, effectScope, reactive, shallowReactive, watch, type EffectScope } from 'vue'
 import {
   ContributionRegistry,
   createSessionScopedMap,
@@ -51,6 +51,8 @@ import {
 import { getState as getWsState, send } from '@xyz-agent/core/transport/ws-client'
 import {
   DIALOG_REQUEST_SOURCE_KEY,
+  L2_TAB_BADGE_SOURCE_KEY,
+  NATIVE_VIEWS_KEY,
   PluginSettingsDataSourceKey,
   STATUS_BAR_SOURCE_KEY,
   UI_RESPONSE_TRANSPORT_KEY,
@@ -60,12 +62,17 @@ import {
   type ContributionInfo,
 } from '@xyz-agent/ui/extension-host'
 import { SLASH_COMMAND_SOURCE_KEY } from '@/components/panel/command-popover-source'
+import BackgroundTaskListView from '@/components/extension/BackgroundTaskListView.vue'
 import { createDialogRequestSource, createUiResponseTransport } from './extension-host-dialog'
 import type { ServerMessage } from '@xyz-agent/shared'
 import { onCrossSession, onGlobal } from '@xyz-agent/core/transport/api'
 import { onPlugins } from '@xyz-agent/core/transport/api/domains/plugin'
 import { createNotifyToastHandler } from './notify-toast'
 import type { ContributionRecord } from '@xyz-agent/core'
+import { usePanelStore } from '@/stores/panel'
+import { useBackgroundTasks, __resetBackgroundTasksForTest } from '@/composables/features/sidebar/useBackgroundTasks'
+import type { UseBackgroundTasksReturn } from '@/composables/features/sidebar/useBackgroundTasks'
+import { countBackgroundTasks } from '@/lib/background-task-bucket'
 
 /** 把 renderer 的 WS 消息流（events 通道的 plugin:/extension: 下行）适配成 PluginMessageSource。 */
 
@@ -236,6 +243,38 @@ export function toContributionInfos(
   }))
 }
 
+// ── L2 badge 数据源（background-task-sidebar-view D4④ 生产接线）──
+// 装配惰性化：initExtensionHostBridge 在 main.ts 模块体执行（先于 app.use(pinia)），
+// 不能同步装配 useBackgroundTasks——其 watch immediate 首次求值 focusedSessionId 时
+// lazy usePanelStore() 会因无 active pinia 抛错。badge 源首次调用发生在
+// PluginViewContainer 的 tabs computed（组件渲染期，pinia 已就绪），彼时经独立
+// effectScope 装配并 app 级常驻（badge 需要独立于列表视图挂载的常驻数据源——tab
+// 未激活也要亮）；effectScope（非裸调用）使内部 onScopeDispose 有归属、无 Vue warn。
+// refCount 语义：badge 实例与列表视图实例共用 useBackgroundTasks 的 per-sid 订阅表，
+// 同 sid 时 refCount=2 仍单条物理 events.on（AGENTS 规则 2 不破坏）。
+// @data-owner #24
+let badgeScope: EffectScope | null = null
+// @data-owner #24
+let badgeTasks: UseBackgroundTasksReturn | null = null
+
+function ensureBadgeTasks(): UseBackgroundTasksReturn {
+  if (badgeTasks) return badgeTasks
+  const scope = effectScope()
+  badgeTasks = scope.run(() =>
+    useBackgroundTasks(computed<string | null>(() => usePanelStore().focusedSessionId)),
+  ) as UseBackgroundTasksReturn
+  badgeScope = scope
+  return badgeTasks
+}
+
+/** 释放 badge 常驻实例（测试隔离钩子；生产代码禁止调用）。 */
+export function _resetBadgeSourceForTest(): void {
+  badgeScope?.stop()
+  badgeScope = null
+  badgeTasks = null
+  __resetBackgroundTasksForTest()
+}
+
 /**
  * 装配 ExtensionHost bridge（main.ts 挂载前调用一次，app.provide 全局注入）。
  *
@@ -342,6 +381,25 @@ export function initExtensionHostBridge(app: App): {
         }))
       return staticViews
     },
+  })
+  // L2 原生视图路由表（background-task-sidebar-view D4② 生产接线）：ui 包不反向依赖
+  // renderer（无法静态注册 BackgroundTaskListView），由壳 provide 真实映射；viewId 与
+  // core builtin-contributions 的 base-tool-enhance「后台命令」view 贡献 id 对齐。
+  // 命中 activeView 即渲染原生组件（sessionId 透传），未命中走 ViewHost 原路径。
+  app.provide(NATIVE_VIEWS_KEY, {
+    'background-tasks': BackgroundTaskListView,
+  })
+  // L2 tab badge 数据源（D4④ 生产接线）：亮 = 焦点 session「运行中」桶 > 0，与分桶
+  // SSOT countBackgroundTasks 同源派生（G1：badge 亮 = 默认桶非空）。数据经常驻
+  // useBackgroundTasks 实例（拉取腿每次焦点切换自动重拉 + 广播腿 refCount 单物理订阅）。
+  // 入参与焦点 sid 不一致（切换瞬态）→ 返回不亮，防旧 session badge 串显。
+  app.provide(L2_TAB_BADGE_SOURCE_KEY, (sessionId: string): Record<string, boolean> => {
+    const tasks = ensureBadgeTasks()
+    const focusedSid = usePanelStore().focusedSessionId
+    if (focusedSid === null || sessionId !== focusedSid) return {}
+    return {
+      'background-tasks': countBackgroundTasks(tasks.current.value.tasks).active > 0,
+    }
   })
   app.provide(STATUS_BAR_SOURCE_KEY, {
     // 两 scope 重载（ui 契约）：直接委托 StatusBarController（签名对齐 IF8）。

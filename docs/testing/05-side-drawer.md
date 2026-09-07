@@ -56,9 +56,11 @@ PanelContainer.vue
 | `detail-truncated` | DetailPane.vue:83 | 文件 >1MB 截断 |
 
 > ⚠️ **SideDrawer 本身 + GitPanel + CommandDocPanel + tab 栏按钮无 testid**。E2E 查 tab 靠文本，查 git/doc 内容靠内部元素文本。建议补：
-> - SideDrawer tab 按钮 → `data-testid="drawer-tab-{key}"`
+> - SideDrawer tab 按钮 → `data-testid="drawer-tab-{key}"`（已落地，含 bashTask）
 > - SideDrawer 根 → `data-testid="side-drawer-root"`
 > - GitPanel → `data-testid="git-panel"`
+>
+> bashTask tab（后台命令详情，第 8 tab）的完整 testid 清单见 [14-background-task-sidebar.md](./14-background-task-sidebar.md)。
 
 ## 4. detail tab 数据流（useDetailPane）
 

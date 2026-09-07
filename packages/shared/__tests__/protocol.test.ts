@@ -13,6 +13,10 @@ import type {
   ServerMessageMapBase,
   ReplyPayloadMap,
   WorktreeErrorCode,
+  BackgroundTaskState,
+  BackgroundTaskEndReason,
+  BackgroundTaskKillReason,
+  BackgroundTaskRegistryEntry,
 } from '../src/protocol'
 
 // ── 编译期类型断言辅助 ─────────────────────────────────────────
@@ -190,5 +194,166 @@ describe('WorktreeErrorCode', () => {
       'SETUP_FAILED', 'GIT_FAILED', 'INVALID_BRANCH',
     ]
     expect(codes).toHaveLength(6)
+  })
+})
+
+// ── backgroundTask 域（u-proto，D3/D9）─────────────────────────────
+
+// ClientMessageMap key 存在性（3 RPC）
+type _Assert_Client_bgList = AssertHasKey<ClientMessageMap, 'backgroundTask.list'>
+type _Assert_Client_bgOutput = AssertHasKey<ClientMessageMap, 'backgroundTask.output'>
+type _Assert_Client_bgKill = AssertHasKey<ClientMessageMap, 'backgroundTask.kill'>
+
+// ServerMessageMapBase key 存在性（3 回执 + 1 冒号 camelCase 广播）
+type _Assert_Server_bgTasks = AssertHasKey<ServerMessageMapBase, 'backgroundTask.tasks'>
+type _Assert_Server_bgOutputResult = AssertHasKey<ServerMessageMapBase, 'backgroundTask.outputResult'>
+type _Assert_Server_bgKillResult = AssertHasKey<ServerMessageMapBase, 'backgroundTask.killResult'>
+type _Assert_Server_bgUpdated = AssertHasKey<ServerMessageMapBase, 'backgroundTask:updated'>
+
+// ReplyPayloadMap key 存在性（3 RPC 的 reply 登记）
+type _Assert_Reply_bgList = AssertHasKey<ReplyPayloadMap, 'backgroundTask.list'>
+type _Assert_Reply_bgOutput = AssertHasKey<ReplyPayloadMap, 'backgroundTask.output'>
+type _Assert_Reply_bgKill = AssertHasKey<ReplyPayloadMap, 'backgroundTask.kill'>
+
+/** 运行态条目样例（必填 8 字段；断言共享）。 */
+const runningEntry: BackgroundTaskRegistryEntry = {
+  taskId: 'bt-1',
+  pid: 100,
+  command: 'pnpm test',
+  outputFile: '/tmp/bt-1.log',
+  startedAt: 1000,
+  state: 'running',
+  ownerPiPid: 200,
+  sessionId: 'sess-1',
+}
+
+describe('backgroundTask RPC 请求 payload 形状（D3）', () => {
+  it('list 请求必带 sessionId', () => {
+    const payload: ClientMessageMap['backgroundTask.list'] = { sessionId: 'sess-1' }
+    expect(payload.sessionId).toBe('sess-1')
+  })
+
+  it('output 请求必带 sessionId/taskId，maxBytes 可选（省略 = runtime 默认 32KB 窗口）', () => {
+    const without: ClientMessageMap['backgroundTask.output'] = { sessionId: 'sess-1', taskId: 'bt-1' }
+    const withMax: ClientMessageMap['backgroundTask.output'] = { sessionId: 'sess-1', taskId: 'bt-1', maxBytes: 4096 }
+    expect(without.maxBytes).toBeUndefined()
+    expect(withMax.maxBytes).toBe(4096)
+  })
+
+  it('kill 请求必带 sessionId/taskId', () => {
+    const payload: ClientMessageMap['backgroundTask.kill'] = { sessionId: 'sess-1', taskId: 'bt-1' }
+    expect(payload.taskId).toBe('bt-1')
+  })
+})
+
+describe('backgroundTask 回执/广播 payload 形状（D3）', () => {
+  it('tasks 回执：sessionId + RegistryEntry 全量投影 + corrupted 损坏标记（缺省/false=正常拍）', () => {
+    const reply: ServerMessageMapBase['backgroundTask.tasks'] = {
+      sessionId: 'sess-1',
+      tasks: [runningEntry],
+      corrupted: false,
+    }
+    expect(reply.tasks[0].taskId).toBe('bt-1')
+    expect(reply.tasks[0].state).toBe('running')
+    // S7 错误条依据：损坏空表与真空表可区分（一致性审查修复，仿 config.systemPrompt 同名字段）
+    const corruptReply: ServerMessageMapBase['backgroundTask.tasks'] = {
+      sessionId: 'sess-1',
+      tasks: [],
+      corrupted: true,
+    }
+    expect(corruptReply.corrupted).toBe(true)
+    expect(corruptReply.tasks).toHaveLength(0)
+  })
+
+  it('outputResult 回执：text/truncated/lost 三字段齐备（lost 时 text 空串）', () => {
+    const ok: ServerMessageMapBase['backgroundTask.outputResult'] = {
+      sessionId: 'sess-1', taskId: 'bt-1', text: 'hello', truncated: false, lost: false,
+    }
+    const lost: ServerMessageMapBase['backgroundTask.outputResult'] = {
+      sessionId: 'sess-1', taskId: 'bt-1', text: '', truncated: false, lost: true,
+    }
+    expect(ok.truncated).toBe(false)
+    expect(lost.lost).toBe(true)
+    expect(lost.text).toBe('')
+  })
+
+  it('killResult 回执：killed + reason 四枚举（D6 分支矩阵）', () => {
+    const reply: ServerMessageMapBase['backgroundTask.killResult'] = {
+      sessionId: 'sess-1', taskId: 'bt-1', killed: true, reason: 'killed',
+    }
+    expect(reply.killed).toBe(true)
+    expect(reply.reason).toBe('killed')
+  })
+
+  it('backgroundTask:updated 广播：冒号 camelCase 命名 + sessionId + tasks 全量 + corrupted 标记', () => {
+    const broadcast: ServerMessageMapBase['backgroundTask:updated'] = {
+      sessionId: 'sess-1',
+      tasks: [runningEntry],
+      corrupted: false,
+    }
+    expect(broadcast.tasks).toHaveLength(1)
+    // corrupted 与 list 回执同源语义：损坏拍广播同样携带（renderer 错误条增删依据）
+    const corruptBroadcast: ServerMessageMapBase['backgroundTask:updated'] = {
+      sessionId: 'sess-1',
+      tasks: [],
+      corrupted: true,
+    }
+    expect(corruptBroadcast.corrupted).toBe(true)
+  })
+})
+
+describe('backgroundTask 契约枚举成员', () => {
+  it('BackgroundTaskState 状态机 4 成员（running → killing → exited；orphaned 收殓）', () => {
+    const states: BackgroundTaskState[] = ['running', 'killing', 'exited', 'orphaned']
+    expect(states).toHaveLength(4)
+  })
+
+  it('BackgroundTaskEndReason 终态成因 4 成员（orphaned 不写 reason）', () => {
+    const reasons: BackgroundTaskEndReason[] = ['natural', 'timeout', 'killed', 'process-exit']
+    expect(reasons).toHaveLength(4)
+  })
+
+  it('BackgroundTaskKillReason 操作结果 4 成员（D6 分支 ①③④⑤）', () => {
+    const reasons: BackgroundTaskKillReason[] = [
+      'killed', 'already-exited', 'identity-unverifiable', 'registry-write-failed',
+    ]
+    expect(reasons).toHaveLength(4)
+  })
+})
+
+describe('backgroundTask RegistryEntry 镜像形状（D9）', () => {
+  it('运行态条目必填 8 字段齐备', () => {
+    expect(runningEntry.taskId).toBe('bt-1')
+    expect(runningEntry.pid).toBe(100)
+    expect(runningEntry.ownerPiPid).toBe(200)
+    expect(runningEntry.outputFile).toBe('/tmp/bt-1.log')
+  })
+
+  it('终态条目可选字段（exitCode/reason/endedAt/durationMs/tailSummary/pidStartTime）可赋值', () => {
+    const terminal: BackgroundTaskRegistryEntry = {
+      ...runningEntry,
+      state: 'exited',
+      exitCode: 0,
+      reason: 'natural',
+      endedAt: 4000,
+      durationMs: 3000,
+      tailSummary: 'done',
+      pidStartTime: 100,
+    }
+    expect(terminal.durationMs).toBe(3000)
+    expect(terminal.pidStartTime).toBe(100)
+    expect(terminal.reason).toBe('natural')
+  })
+
+  it('exitCode 允许 null（signal 终止）与缺省（未终态）两态', () => {
+    const signaled: BackgroundTaskRegistryEntry = {
+      ...runningEntry,
+      state: 'exited',
+      exitCode: null,
+      reason: 'killed',
+      endedAt: 2000,
+    }
+    expect(signaled.exitCode).toBeNull()
+    expect('exitCode' in runningEntry).toBe(false)
   })
 })

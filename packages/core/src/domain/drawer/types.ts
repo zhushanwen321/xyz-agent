@@ -15,8 +15,9 @@
 /** SideDrawer 的 tab 枚举：terminal（终端）/ browser（浏览器）/ git（变更集）/ doc（命令文档）/ detail（文件详情）/ subagent（子代理只读对话流）/ workflow（workflow agent call 列表）。
  * [P4 s5 drawer-widget-removal] tasks 成员已随 tasks 域删除移除（PluginViewContainer 承接）。
  * subagent/workflow 一级 tab（2026-08-14 subagent-workflow-drawer-tab）：collapsed only chat 块点击 → openSubagent/openWorkflow 开对应 tab。
- * subagent tab = 嵌套只读 MessageStream（复用主对话流渲染，D3）；workflow tab = agent call 列表（点 call 切 subagent tab）。 */
-export type SideDrawerTab = 'terminal' | 'browser' | 'git' | 'doc' | 'detail' | 'subagent' | 'workflow'
+ * subagent tab = 嵌套只读 MessageStream（复用主对话流渲染，D3）；workflow tab = agent call 列表（点 call 切 subagent tab）。
+ * bashTask tab（2026-09 background-task-sidebar-view D5①）：后台命令详情（命令全文/元信息/输出尾部跟随/终止）。 */
+export type SideDrawerTab = 'terminal' | 'browser' | 'git' | 'doc' | 'detail' | 'subagent' | 'workflow' | 'bashTask'
 
 /** drawer open 的可选参数：打开时指定要展示的 slash 命令名（Doc tab）/ 文件路径（Detail tab）/ URL（Browser tab） */
 export interface OpenDrawerOptions {
@@ -39,6 +40,9 @@ export interface DrawerControlState {
   selectedWorkflowName: string | null
   /** subagent tab 的进入来源：'chat'=从 chat subagent 块进入（无返回按钮）；'workflow'=从 workflow tab 点 agent call 进入（显←返回按钮）；null=未在 subagent tab */
   enteredFrom: 'chat' | 'workflow' | null
+  /** bashTask tab 当前展示的后台任务 id（registry taskId，background-task-sidebar-view D5①）；undefined=未选中（bashTask tab 显空态）。
+   *  可选成员：默认控制态（core control.ts createDefaultControlState）无需初始化即可满足本接口。 */
+  selectedBackgroundTaskId?: string
 }
 
 /** openSubagent 的参数（D3/D4：drawer SubagentTab 复用 MessageStream，virtualId 由调用方算好传入） */
