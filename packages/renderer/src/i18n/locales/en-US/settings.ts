@@ -794,7 +794,7 @@ export default {
   // ── Update proxy page (UpdatePage) ──
   update: {
     sectionTitle: 'Proxy Configuration',
-    sectionDesc: 'Configure network proxy for GitHub access',
+    sectionDesc: 'Configure a network proxy to improve reachability of update checks and downloads',
     proxyMode: 'Proxy Mode',
     proxyModeSystem: 'System Proxy (auto-detect)',
     proxyModeManual: 'Manual Configuration',

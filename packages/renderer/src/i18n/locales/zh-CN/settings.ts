@@ -794,7 +794,7 @@ export default {
   // ── 更新代理页（UpdatePage）──
   update: {
     sectionTitle: '代理配置',
-    sectionDesc: '配置网络代理以访问 GitHub 服务',
+    sectionDesc: '配置网络代理以改善更新检查与下载可达性',
     proxyMode: '代理模式',
     proxyModeSystem: '系统代理（自动检测）',
     proxyModeManual: '手动配置',
