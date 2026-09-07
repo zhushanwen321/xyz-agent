@@ -38,7 +38,13 @@
  *
  * 运行：cd apps/electron/main && npx vitest run test/updater-script-integration.test.ts
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+
+// 文件级超时预算：用例构造真实 dmg 并经 hdiutil/ditto/shasum 全链执行，
+// CI 的 mac runner 上 hdiutil 比本地慢约 3 倍（happy path 本地 ~7s、CI 实测 21-23s），
+// vitest 默认 20s 在 CI 必撞线（2026-09-07 v0.9.15 post-merge CI 两连挂）；
+// 60s = CI 最慢观测的 2.6 倍余量，M6（本地 17s 的固定等待窗口）同受覆盖
+vi.setConfig({ testTimeout: 60_000 })
 import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync, readFileSync, statSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
