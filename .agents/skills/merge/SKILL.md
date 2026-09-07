@@ -429,7 +429,9 @@ curl -sL -o /dev/null -w '%{http_code}\n' -r 0-1048575 --max-time 60 \
 
 调用本 skill 的 remove-worktree.sh 清理 feature worktree 和本地分支（命令全文见下方「自动化执行」代码块，本阶段只此一个命令版本，避免出现不一致的两个副本）。`--force` 跳过已合并检查并强制删除（含未提交/未跟踪内容，删除前会列出将销毁的清单）——分支已删除（远程 delete-branch）时本地 `git branch --merged` 检查会误判，故恒用 `--force`。`--skip-sync` 因为 pr-merge.sh 已 sync 过 main。
 
-门禁：阶段 7 启动前**必须**确认阶段 6（`verify-ci-release.sh`）已 exit 0。
+门禁 [MANDATORY]：阶段 7 启动前**必须**确认**全流程零未决失败**——阶段 0 到 6.5 每一个已执行的阶段/子步骤（含 4N 各子步、6.5.1-6.5.4）都已 exit 0 或已明确闭环。**任一中间环节失败/被拒/未验证完成，绝对禁止执行本阶段清理**：必须停下向用户汇报失败详情（现象、已尝试的处置、候选方案），与用户讨论解决路径——修复后重跑失败阶段，或用户明确表态「带病收尾/放弃该环节」后才可继续。worktree 删除不可逆，带着未决失败清理 = 永久失去修复现场（修复所需上下文、复现环境、未推产物清单全部丢失）。
+
+> [HISTORICAL] 2026-09-07 v0.9.14 发布事故：6.5.3 仓库镜像被 GitCode pre-receive 全量拒收（含 main）且未解决，主 agent 按「仅阶段 6 是硬门禁」的旧语义照常执行了阶段 7 删除 worktree，镜像问题当场失去现场，被用户严厉纠正。本门禁自该事故起从「仅看阶段 6」收紧为「全流程零未决失败」，不允许削弱回旧语义。
 
 ⚠️ **cwd 隔离 [HISTORICAL]**：bash 工具每次调用都是独立 shell，cwd **不跨调用持久**，reset 到 session 启动目录（通常是 feature worktree 内）。`remove-worktree.sh` 内部有 `cd "$WORKSPACE_ROOT"` 自我保护，但那只对脚本当次执行有效——脚本退出后，下次 bash 调用的 cwd 又 reset 回 session 启动目录。
 
@@ -460,7 +462,7 @@ cd $WS_ROOT/main && bash .agents/skills/merge/scripts/remove-worktree.sh <branch
 | 7 | 创建 Release（阶段 5） | |
 | 8 | ⚠️ 确认交付物（阶段 6） | `bash scripts/verify-ci-release.sh ...` |
 | 8.5 | ⚠️ GitCode 镜像 + README 版本（阶段 6.5） | sync-from-github → update-readme-install → commit/push → push-repo --ref-source github → curl 206 验证 |
-| 9 | 清理 worktree（阶段 7，终结步骤） | 删除后直接输出总结，不再调 bash |
+| 9 | 清理 worktree（阶段 7，终结步骤） | 前置：全流程零未决失败（任一环节失败必须先汇报讨论，见阶段 7 门禁）；删除后直接输出总结，不再调 bash |
 
 ### 2. 执行约束
 
@@ -470,7 +472,7 @@ cd $WS_ROOT/main && bash .agents/skills/merge/scripts/remove-worktree.sh <branch
 
 ### 3. 故障恢复
 
-每个阶段独立执行。失败后修复重跑同一阶段即可。
+每个阶段独立执行。失败后修复重跑同一阶段即可；但**任何阶段失败未闭环时禁止进入阶段 7 清理**（见阶段 7 门禁 [MANDATORY]）——必须先向用户汇报失败详情并讨论处置，修复重跑取得 exit 0 后才可清理，或经用户明确授权后带病收尾。
 
 ## [HISTORICAL] 禁止跳过检查
 
