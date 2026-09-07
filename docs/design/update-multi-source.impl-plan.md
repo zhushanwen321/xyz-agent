@@ -107,7 +107,7 @@ graph TD
 |------|------|------|----------|
 | u-foundation | committed | 1 | 本文件同 commit；shared typecheck exit 0 + main vitest 48 文件 761 用例全绿（两轮复核）+ main tsc TS2305 归零（计划内中间态红 10 处由 u-checker 消解） |
 | u-release-sources | in-progress | 1 | agent 已派发（Wave2） |
-| u-source-resolver | in-progress | 1 | agent 已派发（Wave2） |
+| u-source-resolver | committed | 1 | 本文件同 commit；vitest 17/17、eslint 0 warning、领地 2 新文件与 files_changed 一致 |
 | u-diagnostics | in-progress | 1 | agent 已派发（Wave2） |
 | u-settings-pref | in-progress | 1 | agent 已派发（Wave2） |
 | u-probe-multipart | committed | 1 | 本文件同 commit；vitest 30/30（23 存量 + 7 新增四出口表测）、HEAD 残留 0、eslint 0 problems、领地 TS2698 存量错顺手修复 |
