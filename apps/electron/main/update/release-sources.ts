@@ -2,8 +2,9 @@
  * Release 源适配层（多源改造 D1/D2）：GitHub / AtomGit 双源 fetch + normalize 单点。
  *
  * 设计：docs/design/update-multi-source.md
- * - §6.1 D1：源抽象收敛在本模块——fetchLatestRelease / fetchReleaseByTag 按源分派
- *   （github / atomgit 两个适配实现），输出统一 normalize 后的结构；checker 保持编排门面。
+ * - §6.1 D1：源抽象收敛在本模块——fetchSourceRelease / fetchLatestRelease /
+ *   fetchReleaseByTag 按源分派（github / atomgit 两个适配实现），输出统一 normalize
+ *   后的结构；checker 保持编排门面。
  * - §6.2 D2：AtomGit 字段差异在 normalize 层补齐（逐字段规格见 normalizeSourceRelease）。
  * - §7.2：github 分支迁移自 release-checker.ts 的 doFetchGitHubLatestRelease
  *   （URL / headers / 形状守卫 / HTTP status 分流语义）；两源共用 upgradeFetch 双引擎
@@ -393,7 +394,10 @@ async function doFetchSourceRelease(
  * 与现状的差异（设计意图）：现状 checker 外层把最终失败吞成 null；适配层是
  * 「该源失败」信号产出点，网络失败显式上抛（ReleaseFetchError），由 checker 逐源降级。
  */
-async function fetchSourceRelease(source: UpdateSource, url: string): Promise<SourceRelease | null> {
+async function fetchSourceReleaseViaChannel(
+  source: UpdateSource,
+  url: string,
+): Promise<SourceRelease | null> {
   const proxyConfig = readProxyConfig()
   const proxyUrl = resolveProxyUrl(proxyConfig)
   const useProxy = proxyUrl !== undefined
@@ -487,14 +491,34 @@ function toLatestReleaseInfo(source: UpdateSource, release: SourceRelease): Late
 // ── 公开 API ─────────────────────────────────────────────────────────
 
 /**
+ * fetch 指定源的最新 release（releases/latest），返回 normalize 后的完整产物
+ * （GitHubRelease 同形，含原始 assets 数组——manifest.json 等非平台资产保留）。
+ *
+ * checker 消费形态（§4.2⑤ 权威通路）：winner = fetchSourceRelease(source) →
+ * 防御/版本比较用 prerelease/draft/tag_name 字段 → resolveManifestDownloadUrl(winner.assets)
+ * 取 manifest 直链 → 自行组装 LatestReleaseInfo（manifest size 扩展在 checker 组装层）。
+ *
+ * 不做非 stable 拦截（与 fetchLatestRelease 的差异点）：SourceRelease 完整承载
+ * prerelease/draft 字段，防御归 checker 循环（§4.2③④），本函数只负责 fetch+normalize。
+ *
+ * @returns SourceRelease；非 2xx（含 404）返回 null
+ * @throws ReleaseFetchError 网络失败 / GitHub 限流 / 形状坏（可归类，u-checker 记该源失败）
+ */
+export async function fetchSourceRelease(source: UpdateSource): Promise<SourceRelease | null> {
+  return fetchSourceReleaseViaChannel(source, ADAPTERS[source].latestUrl)
+}
+
+/**
  * fetch 指定源的最新 release（releases/latest），normalize + 非 stable 拦截后输出。
+ * 与 fetchSourceRelease 复用同一 fetch+normalize 管线，仅出口形态不同（LatestReleaseInfo
+ * 平台分流视图 vs 完整产物）。
  *
  * @returns LatestReleaseInfo（含 source）；非 2xx（含 404）或非 stable（prerelease/draft）
  *          返回 null
  * @throws ReleaseFetchError 网络失败 / GitHub 限流 / 形状坏（可归类，u-checker 记该源失败）
  */
 export async function fetchLatestRelease(source: UpdateSource): Promise<LatestReleaseInfo | null> {
-  const release = await fetchSourceRelease(source, ADAPTERS[source].latestUrl)
+  const release = await fetchSourceRelease(source)
   return release ? toLatestReleaseInfo(source, release) : null
 }
 
@@ -510,6 +534,6 @@ export async function fetchReleaseByTag(
   source: UpdateSource,
   tag: string,
 ): Promise<LatestReleaseInfo | null> {
-  const release = await fetchSourceRelease(source, ADAPTERS[source].byTagUrl(tag))
+  const release = await fetchSourceReleaseViaChannel(source, ADAPTERS[source].byTagUrl(tag))
   return release ? toLatestReleaseInfo(source, release) : null
 }

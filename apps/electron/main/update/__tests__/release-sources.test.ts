@@ -26,6 +26,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
+  fetchSourceRelease,
   fetchLatestRelease,
   fetchReleaseByTag,
   normalizeSourceRelease,
@@ -494,6 +495,66 @@ describe('通道编排', () => {
 
     await expect(fetchLatestRelease('github')).rejects.toMatchObject({ kind: 'rate-limited' })
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ─── fetchSourceRelease：完整产物出口（checker §4.2⑤ manifest 通路输入源）────
+
+describe('fetchSourceRelease（完整产物，含原始 assets 数组）', () => {
+  it('返回 normalize 后完整产物：原始 assets 含 manifest.json 条目，prerelease/draft 字段保留', async () => {
+    const fetchMock = stubFetch()
+    fetchMock.mockImplementation(async () => jsonResponse(atomgitReleaseJson()))
+
+    const release = await fetchSourceRelease('atomgit')
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      `https://${RELEASE_SOURCE_HOSTS.atomgitApi}/api/v5/repos/qq_18433817/xyz-agent/releases/latest`,
+    )
+    expect(release).not.toBeNull()
+    // 原始 assets 数组：平台资产与 manifest.json 等非平台资产全部保留（平台分流只发生在
+    // fetchLatestRelease 出口）——resolveManifestDownloadUrl 的生产链路输入源
+    expect(release?.assets).toHaveLength(2)
+    expect(release?.assets.map((a) => a.name)).toEqual([
+      'xyz-agent-0.9.15-mac-arm64.dmg',
+      'manifest.json',
+    ])
+    // 防御字段完整保留（不做非 stable 拦截，防御归 checker）
+    expect(release?.prerelease).toBe(false)
+    expect(release?.draft).toBeUndefined()
+    expect(release?.tag_name).toBe('v0.9.15')
+    // manifest 直链可从产物解析（§4.2⑤ 权威通路端到端）
+    expect(resolveManifestDownloadUrl(release!.assets)).toContain('manifest.json')
+  })
+
+  it('与 fetchLatestRelease 复用同一 fetch+normalize 管线：prerelease 产物完整返回而 LatestReleaseInfo 出口拦截为 null（分工仅在出口层）', async () => {
+    const fetchMock = stubFetch()
+    fetchMock.mockImplementation(async () => jsonResponse(atomgitReleaseJson({ prerelease: true })))
+
+    const release = await fetchSourceRelease('atomgit')
+    expect(release?.prerelease).toBe(true)
+
+    const info = await fetchLatestRelease('atomgit')
+    expect(info).toBeNull()
+    // 同一 latest 端点被命中两次（同一管线，非第二套 fetch 实现）
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(new URL(fetchMock.mock.calls[0][0] as string).pathname).toBe(
+      new URL(fetchMock.mock.calls[1][0] as string).pathname,
+    )
+  })
+
+  it('404 → null（非 2xx 收口语义与 fetchLatestRelease 一致）', async () => {
+    const fetchMock = stubFetch()
+    fetchMock.mockImplementation(async () => jsonResponse({ message: 'Not Found' }, 404))
+    await expect(fetchSourceRelease('github')).resolves.toBeNull()
+  })
+
+  it('形状坏 → ReleaseFetchError kind bad-shape', async () => {
+    stubFetch()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ foo: 1 })))
+    await expect(fetchSourceRelease('github')).rejects.toMatchObject({
+      kind: 'bad-shape',
+      source: 'github',
+    })
   })
 })
 
