@@ -29,7 +29,9 @@
  * getRateLimitedUntil() 签名不变（返回 epoch ms），语义 = 各源退避截止时刻的最大值
  * （无任何记录返回 0）——handler 判定式 `> Date.now()` 与既有 mock 形态不变。
  * 退避记录点：源 latest fetch 撞 GitHub 403/429（适配层 rate-limited 分类）；
- * manifest fetch 撞 403/429（两引擎同形态重建，与现状单源语义连续）。
+ * manifest fetch 撞 GitHub 403/429（两引擎同形态重建）。AtomGit manifest 的
+ * 403/429 是 auth_key 签名直链的签名/权限拒绝（§4.1），按普通失败收口不记退避，
+ * 由该源失败降级兜底。
  *
  * [manifest 填充（胜出源，§4.2⑤ 权威通路）]：manifest 是 release 资产之一，
  * 直链 = resolveManifestDownloadUrl(胜出源完整 assets)（适配层 browser_download_url，
@@ -64,7 +66,7 @@ import {
 } from './update/release-sources.js'
 import type { SourceRelease, SourceReleaseAsset } from './update/release-sources.js'
 import type { SourceOrder } from './update/source-resolver.js'
-import { resolveSourceOrder } from './update/source-resolver.js'
+import { getLastProbeOutcome, resolveSourceOrder } from './update/source-resolver.js'
 import { getUpdateSettings } from './update/update-settings.js'
 import type { SourceProbeOutcome } from './update/error-log.js'
 import { logSourceSelection, logSourceFailover } from './update/error-log.js'
@@ -399,10 +401,16 @@ export class ReleaseChecker implements IReleaseChecker {
   /**
    * 登记本轮检查的源选择结果（source-selection 成功登记，S1/S2/F5 观测面）。
    *
-   * probe 观测口径：探测在 source-resolver 内部执行且结果未上抛（返回值仅 SourceOrder），
-   * checker 如实登记「未观测」——显式偏好路径可确定未探测（explicit-preference）；
-   * auto 路径的代理短路/探测细节 resolver 未暴露（resolver-internal，跨单元缺口，
-   * 见交付 deviations）。tags = 各源 fetch 响应的 latest tag（F5 同步缺失观测面），
+   * probe 观测口径（R1-U1a 接线）：
+   * - auto 路径透传 resolver 最近一次排序决策的探测详情（getLastProbeOutcome，
+   *   S2 观测面）：executed=true + results（Partial<Record> → SourceProbeRecord[]
+   *   映射，basis 取决策通道 via 原值——ProbeSourceOutcome 不含探测手段明细，
+   *   决策通道即本次排序依据；缺键源如实缺项不捏造，代理短路下仅 github 键）。
+   *   返回 null 为防御性兜底（理论上 auto 必有决策）→ executed=false +
+   *   reason 'resolver-internal'。
+   * - 显式偏好路径不产生探测决策，维持 executed=false + reason
+   *   'explicit-preference'（resolver 对显式偏好将详情重置为 null，语义一致）。
+   * tags = 各源 fetch 响应的 latest tag（F5 同步缺失观测面），
    * 该源无响应（失败/退避短路）则缺 key。
    */
   private logSourceSelection(
@@ -411,8 +419,22 @@ export class ReleaseChecker implements IReleaseChecker {
     winner: { source: UpdateSource } | null,
     latestTags: Partial<Record<UpdateSource, string>>,
   ): void {
-    const probe: SourceProbeOutcome =
-      pref === 'auto' ? { executed: false, reason: 'resolver-internal' } : { executed: false, reason: 'explicit-preference' }
+    let probe: SourceProbeOutcome
+    if (pref === 'auto') {
+      const outcome = getLastProbeOutcome()
+      probe = outcome
+        ? {
+            executed: true,
+            results: Object.entries(outcome.results).map(([s, o]) => ({
+              source: s as UpdateSource,
+              reachable: o.reachable,
+              basis: outcome.via,
+            })),
+          }
+        : { executed: false, reason: 'resolver-internal' }
+    } else {
+      probe = { executed: false, reason: 'explicit-preference' }
+    }
     logSourceSelection({
       order,
       winner: winner?.source ?? null,
@@ -472,7 +494,9 @@ export class ReleaseChecker implements IReleaseChecker {
    * manifest 由 CI generate-manifest.sh 生成，结构：
    *   { version, releasedAt, assets: { "<filename>": { sha256, size } } }
    * 失败（网络/超时/解析/404）一律返回 null（不阻塞，按源归类由调用方分派）；
-   * 403/429 额外记录该源 2h 限流退避（两引擎同形态）后同样返回 null。
+   * GitHub 路径 403/429 额外记录该源 2h 限流退避（两引擎同形态）后同样返回 null；
+   * AtomGit 路径 403/429 按普通 manifest 失败收口（auth_key 签名直链的 403 = 签名/
+   * 权限拒绝，非限流信号，见 closeManifestHttpError）。
    *
    * 通道编排与 latest 同策略：代理优先 + 失败降级直连（引擎降级内嵌 upgradeFetch）。
    *
@@ -491,10 +515,10 @@ export class ReleaseChecker implements IReleaseChecker {
 
     try {
       // 第一次尝试：代理优先
-      return await this.doFetchManifest(manifestUrl, useProxy ? proxyUrl : undefined)
+      return await this.doFetchManifest(source, manifestUrl, useProxy ? proxyUrl : undefined)
     } catch (err) {
-      // 403/429 重建的限流信号——服务器已响应，不触发通道维度直连重试，
-      // 记该源退避窗口后按 manifest 失败收口（null → 由调用方按源归类）
+      // 403/429 重建的限流信号（仅 GitHub 路径会抛出）——服务器已响应，不触发通道
+      // 维度直连重试，记该源退避窗口后按 manifest 失败收口（null → 由调用方按源归类）
       if (err instanceof ReleaseRateLimitedError) {
         this.recordRateLimitBackoff(source, 'manifest')
         return null
@@ -503,7 +527,7 @@ export class ReleaseChecker implements IReleaseChecker {
       if (useProxy) {
         // 降级直连重试
         try {
-          return await this.doFetchManifest(manifestUrl, undefined)
+          return await this.doFetchManifest(source, manifestUrl, undefined)
         } catch (directErr) {
           // 直连重试撞 403/429：就地记退避后收口 null——此处不能 rethrow（本 catch 位于
           // 外层 catch 块内，rethrow 会直接冒泡出 fetchManifest，破坏「manifest 失败由
@@ -521,24 +545,26 @@ export class ReleaseChecker implements IReleaseChecker {
   /**
    * 执行单次 fetch manifest.json（经 upgradeFetch 双引擎）。
    *
-   * @param url manifest 直链（by-tag 形态）
+   * @param source 所属源（403/429 分派依据：仅 GitHub 记限流信号）
+   * @param manifestUrl manifest 直链（胜出源 assets 的 browser_download_url）
    * @param proxyUrl 代理 URL；undefined 表示直连
    * @returns Map<filename, {sha256, size?}>；
-   *          HTTP 错误返回 null（403/429 除外——undici ok:false 与 curl exit 22
+   *          HTTP 错误返回 null（GitHub 403/429 除外——undici ok:false 与 curl exit 22
    *          携带 httpStatusCode 两形态同抛 ReleaseRateLimitedError，D8 两引擎无漂移）；
    *          网络错误抛出（供降级逻辑捕获）
    */
   private async doFetchManifest(
-    url: string,
+    source: UpdateSource,
+    manifestUrl: string,
     proxyUrl?: string,
   ): Promise<Map<string, ManifestAssetInfo> | null> {
     try {
-      const result = await upgradeFetch(url, {
+      const result = await upgradeFetch(manifestUrl, {
         proxyUrl,
         timeoutMs: FETCH_TIMEOUT_MS,
       })
       if (!result.ok) {
-        return closeManifestHttpError(result.status)
+        return closeManifestHttpError(source, result.status)
       }
       return parseManifestAssets(result.bodyText)
     } catch (err) {
@@ -546,10 +572,10 @@ export class ReleaseChecker implements IReleaseChecker {
       // 'fetch failed' 网络错误吞掉退避语义——与适配层 doFetchSourceRelease 同款首行守卫）
       if (err instanceof ReleaseRateLimitedError) throw err
       // D8 curl 引擎 HTTP 状态交互规则：携带 httpStatusCode 的 CurlFetchError = 服务器
-      // 已响应——403/429 重建限流信号供外层记退避且不触发直连重试；404/5xx 按 manifest
-      // null 语义收口（同样不触发直连重试）
+      // 已响应——GitHub 403/429 重建限流信号供外层记退避且不触发直连重试；404/5xx 与
+      // AtomGit 403/429 按 manifest null 语义收口（同样不触发直连重试）
       if (isCurlHttpStatusError(err)) {
-        return closeManifestHttpError(err.httpStatusCode)
+        return closeManifestHttpError(source, err.httpStatusCode)
       }
       // 网络错误（含不带 httpStatusCode 的 CurlFetchError——双引擎均网络失败）与
       // 非法 JSON 均抛出，供调用方做通道维度降级
@@ -559,12 +585,20 @@ export class ReleaseChecker implements IReleaseChecker {
 }
 
 /**
- * manifest HTTP 错误状态分流（两引擎同款，D8 无漂移）：403/429 重建
- * ReleaseRateLimitedError（外层记 per-source 退避）；其他 HTTP 错误按 manifest
- * null 语义收口（404 语义）。
+ * manifest HTTP 错误状态分流（两引擎同款，D8 无漂移）：GitHub 403/429 重建
+ * ReleaseRateLimitedError（外层记该源退避）；AtomGit 403/429 与其他 HTTP 错误
+ * 按普通 manifest null 语义收口（不记限流退避）。
+ *
+ * 按源分派的依据（§4.1）：「403 = 限流/配额拒绝」前提仅在 GitHub 域成立（60 次/h
+ * 匿名配额 + X-RateLimit-* 头）；AtomGit manifest 直链落 file-cdn.gitcode.com 的
+ * auth_key 签名 URL，403 = 签名/权限拒绝而非限流——误记 2h 退避会使国内主场景
+ * （AtomGit 优先）的后续检查被短路降级。AtomGit 的失败由该源失败降级兜底。
  */
-function closeManifestHttpError(status: number): null {
-  if (status === HTTP_STATUS_FORBIDDEN || status === HTTP_STATUS_TOO_MANY_REQUESTS) {
+function closeManifestHttpError(source: UpdateSource, status: number): null {
+  if (
+    source === 'github' &&
+    (status === HTTP_STATUS_FORBIDDEN || status === HTTP_STATUS_TOO_MANY_REQUESTS)
+  ) {
     throw new ReleaseRateLimitedError()
   }
   return null

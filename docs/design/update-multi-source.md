@@ -22,7 +22,7 @@ xyz-agent 的自动升级是自研实现（未用 electron-updater，调研与�
 
 **发布侧双源现状**：merge skill 阶段 6.5 在每次发版后把 GitHub Release 全部资产（dmg/exe/AppImage/manifest.json）原样上传到 AtomGit 仓库 `qq_18433817/xyz-agent`（同一批文件、同名上传，`scripts/gitcode-release-sync.mjs` 幂等实现）。**两源的 tag 与资产文件名一致，文件内容逐字节一致**（同一份产物复制），这是本设计正确性的物理基础：同一 tag 在任一源下载的文件 hash 相同。
 
-**命名约定（用户拍板）**：平台命名一律用 **AtomGit**（符合官方最新命名——GitCode 与 AtomGit 深度整合后定位为新一代 AtomGit 基础设施）；其 API/下载域名为客观事实保持 `api.gitcode.com` / `gitcode.com` / `file-cdn.gitcode.com` 不变。本设计范围内的客户端新代码（settings 值、模块名、UI 文案、i18n key）全部用 atomgit 命名。既有发布侧资产（`scripts/gitcode-release-sync.mjs`、`GITCODE_TOKEN`/`GITCODE_REPO` 环境变量、merge skill 文档）**不在本设计范围**，重命名牵动 CI secret 与发布流程文档，另行处理——文档中出现 `gitcode` 字样处均为域名或既有发布侧资产名。
+**命名约定（用户拍板）**：平台命名一律用 **AtomGit**（符合官方最新命名——GitCode 与 AtomGit 深度整合后定位为新一代 AtomGit 基础设施）；其 API/下载域名为客观事实保持 `api.gitcode.com` / `gitcode.com` / `file-cdn.gitcode.com` 不变。本设计范围内的客户端新代码（settings 值、模块名、UI 文案、i18n key）全部用 atomgit 命名。既有发布侧资产（`scripts/gitcode-release-sync.mjs`、其发布侧环境变量凭据、merge skill 文档）**不在本设计范围**，重命名牵动 CI secret 与发布流程文档，另行处理——文档中出现 `gitcode` 字样处均为域名或既有发布侧资产名。
 
 **层声明**：当前层 = 技术方案（可实现的接口/数据模型/错误规格）；下一层 = 编码实现。本文不写实现代码。
 
@@ -70,13 +70,13 @@ update:check → ReleaseChecker.checkForLatestRelease()
 
 ### 3.3 根因
 
-不是「GitHub 不可用」（外部依赖故障是常态，架构须容忍），而是**升级子系统对「源」这一概念无抽象**：`GITHUB_LATEST_RELEASE_URL` 与 `MANIFEST_URL` 是模块级常量（release-checker.ts:46-51），`validate-release.ts` 的 `ALLOWED_HOSTS` 白名单只登记 GitHub 域（validate-release.ts:26-29），`LatestReleaseInfo` 无来源字段。三个位置共享同一个隐含假设「源 = GitHub」，打破它必须在同一处引入源抽象，而非在三个位置各打一个补丁。
+不是「GitHub 不可用」（外部依赖故障是常态，架构须容忍），而是**升级子系统对「源」这一概念无抽象**：GitHub latest 端点 URL 与 manifest 下载 URL 是模块级硬编码常量（原 release-checker.ts:46-51，多源实施后已由适配层取代删除），`validate-release.ts` 的 `ALLOWED_DOWNLOAD_HOSTS` 白名单只登记 GitHub 域（原 validate-release.ts:26-29），`LatestReleaseInfo` 无来源字段。三个位置共享同一个隐含假设「源 = GitHub」，打破它必须在同一处引入源抽象，而非在三个位置各打一个补丁。
 
 ## 4. 根因 + 物理数据流
 
 **本章结论：根因 = 源概念未抽象；改造即把「fetch + normalize」收敛为源适配层单点，数据流其余环节（校验/缓存/下载/安装）全部保持。**
 
-> **源适配器（release source adapter）** = 一个函数：输入源标识，输出该源「最新 release」的规范化结构（与现有 `GitHubRelease` 同形）。就是上面 §3.1 例子里 `upgradeFetch(GITHUB_LATEST_RELEASE_URL, ...)` 那一步的可替换化。
+> **源适配器（release source adapter）** = 一个函数：输入源标识，输出该源「最新 release」的规范化结构（与现有 `GitHubRelease` 同形）。就是上面 §3.1 例子里「用硬编码的 GitHub latest 端点常量调 upgradeFetch」那一步的可替换化。
 
 ### 4.1 AtomGit 与 GitHub 的 API 事实基座（对抗式核实 + 发布脚本实测，2026-09）
 
@@ -185,7 +185,7 @@ update:check → ReleaseChecker.checkForLatestRelease()
 - **采用**：新建 `apps/electron/main/update/release-sources.ts`——导出 `fetchLatestRelease(source)` 与 `fetchReleaseByTag(source, tag)`，内部按源分派（github / atomgit 两个私有实现），输出统一 normalize 后的 release 结构；`ReleaseChecker` 持有「按序尝试 + 缓存 + per-source 限流退避」编排，接口 `IReleaseChecker` 对 handler 层完全不变。
 - **被否**：(a) 每源一个完整 Checker 类 + MultiSourceChecker 门面——缓存/负缓存/退避是进程级单例语义，拆到两个类要么状态重复要么整体上提，实际等于把编排逻辑换个地方写，类数量翻倍无收益；(b) provider registry 式彻底重写——两源同构度极高（§4.1），注册表机制的通用性没有第二个消费者，属推测性功能。
 - **证据**：release-checker.ts 现有结构（缓存/退避/防御/组装四段清晰分层，唯 fetch 步是单源常量）；atomgit JSON 与 GitHub 同构（§4.1 实测）。
-- **效果**：目标 1/2/3 成立的代码基础——新增一个源 = 新增一个 normalize 分支 + **4 处登记联动**（normalize 分支、validate-release 白名单域、source-resolver 探测域列表、UI 三选控件 + settings 枚举 + i18n），handler/renderer 的行为逻辑零改动（「零感知」仅指行为编排层；接入清单如前，防下次接入漏登记，normalize 表测顺带断言「全部产物 downloadUrl 的 hostname ⊆ ALLOWED_HOSTS」——域常量由 release-sources 单一来源导出，validate-release 消费同源，防两处漂移）。
+- **效果**：目标 1/2/3 成立的代码基础——新增一个源 = 新增一个 normalize 分支 + **4 处登记联动**（normalize 分支、validate-release 白名单域、source-resolver 探测域列表、UI 三选控件 + settings 枚举 + i18n），handler/renderer 的行为逻辑零改动（「零感知」仅指行为编排层；接入清单如前，防下次接入漏登记，normalize 表测顺带断言「全部产物 downloadUrl 的 hostname ⊆ ALLOWED_DOWNLOAD_HOSTS」——域常量由 release-sources 单一来源导出，validate-release 消费同源，防两处漂移）。
 
 | 方案 | 长期架构合理性 | 短期实现成本 | 风险 | 裁决 |
 |------|--------------|-------------|------|------|
@@ -223,7 +223,7 @@ update:check → ReleaseChecker.checkForLatestRelease()
 
 - **采用（检查段）**：按序逐源执行「fetch + normalize + 三重防御 + 版本比较」完整判定（防御与比较在循环内 per-source 生效，见 §4.2③④）：某源网络失败/404/限流/形状坏 → 该源失败，试下一源；某源返回的 release 被防御拦截或「不比当前新」→ **该源「无新版」，同样试下一源，且不写全局负缓存**——源 A 无新版 ≠ 全局无新版（GitHub 端点排除 prerelease 的语义对 AtomGit 无佐证，sync 脚本会同步 beta tag；AtomGit 侧旧版也不代表 GitHub 侧无新版）。**全部源均确认无新版才写负缓存；混合态（部分失败/退避 + 其余无新版）返回 null 但不写负缓存**（未确认源下周期应重试）；有任一源胜出即正常返回。限流退避从单值 `rateLimitedUntil` 改为 per-source（`Map<UpdateSource, timestamp>`），**全部源都在退避窗口**才对 renderer 报 `rateLimited: true`（信号语义从「GitHub 限流中」泛化为「所有源均限流中」）。
 - **采用（下载段）**：`downloadAsset` 网络类失败且当前 release 来自某源时，`fetchReleaseByTag` 对侧源按 tag 精确查询（同款三重防御 + 版本一致性校验）后**复用既有 temp 文件与 resume-state 以对侧 downloadUrl 续传**，sha256 兜底；对侧 by-tag 404（发布时间窗）不降级，保留本源断点状态原错误上抛；对侧也网络失败同样原错误上抛。
-- **降级的触发集合与完整性基准（实施精确性）**：触发降级的错误集合 = `errorCode ∈ {UPDATE_NETWORK_FAILED, UPDATE_NETWORK_TIMEOUT, UPDATE_PROXY_ERROR, UPDATE_PROXY_UNREACHABLE}`（含「代理对当前源域不可用但对对侧可用」的真实场景）；显式排除 UPDATE_DISK_SPACE / UPDATE_FILE_RENAME_FAILED / UPDATE_PERMISSION_DENIED（换源无意义）与 UpdateIntegrityError（§6.8 安全边界）。**降级仅替换 downloadUrl，完整性基准（sha256/size）保持原胜出源 asset**——tag 重发发散窗口下对侧内容将因 sha256 不符 fail-fast，与 D8「产物与发布清单不符」语义一致。
+- **降级的触发集合与完整性基准（实施精确性）**：触发降级的错误集合 = `errorCode ∈ {UPDATE_NETWORK_FAILED, UPDATE_NETWORK_TIMEOUT, UPDATE_PROXY_ERROR, UPDATE_PROXY_UNREACHABLE}`（含「代理对当前源域不可用但对对侧可用」的真实场景）；显式排除 UPDATE_DISK_SPACE / UPDATE_FILE_RENAME_FAILED / UPDATE_PERMISSION_DENIED（换源无意义）与 UpdateIntegrityError（§6.8 安全边界）。**降级仅替换 downloadUrl，完整性基准（sha256/size）保持原胜出源 asset**——tag 重发发散窗口下对侧内容将因 sha256 不符 fail-fast，与 D8「产物与发布清单不符」语义一致。对侧 by-tag 返回的 downloadUrl 在进入续传前额外经 https+白名单域校验（防御纵深：该 URL 不经过 install 前 validateRelease 的直达路径）。
 - **跨源续传的依赖声明**：temp 按 `asset.name` 键控（download-asset.ts:197 `<name>.downloading`）、网络失败默认保留 temp+state（[B-2]）——两源同名上传（§1）使跨源续传天然命中同一份断点状态。正确性依赖「两源逐字节一致」不变量（Range 偏移语义），三重防护托底：by-tag 确认对侧存在该 tag 且目标 asset 存在 → 既有 resume-state totalBytes 校验（不符自动转全量）→ sha256 最终校验（不符自动清 temp，下次重试从零且 fail-fast 不装坏文件）。**重试语义**：sha256 失败清 temp 后的重试经 `resolveByVersion` 走 main 权威缓存，恒从原胜出源从零开始、不记忆跨源降级历史（与 D7 source 字段落盘语义一致）；跨源续传与多段并行机制互斥（进多段的硬条件是 `!resumeState`，download-asset.ts:241），无「拼接 × 并发」叠加面。**不变量的发布侧保障与破坏通道**：保障 = sync 同名跳过纪律 + 推后验证大小门禁（verifyUploadedAssets 防同名旧件残留，大小不符 die 阻断发版）+「tag 内容不可变」操作纪律；残余破坏通道 = tag 重发且大小恰好相同（推后验证不可检出），客户端唯一信号 = source-failover 后 sha256 失败激增——挂接 D2 重审触发条件。**显式盲区声明**：以上保障全部是「脚本运行时」防护——阶段 6.5 整体被跳过时防护面为零，且客户端不可自动检测（F5 失效形态）；检测面 = source-selection 日志的各源 latest tag 对照 + 发布侧流程纪律。**被否**：跨源降级前清 temp+state（从零重下）——浪费已下载字节（最坏 ~170MB），且「换源」场景多发生在主源慢/断时，对侧高速下载使保进度收益真实存在；被否方案记入谱系供实施者查阅。
 - **混合态请求量入账**：「部分源退避 + 其余无新版」不写负缓存的代价 = 每检查周期对退避源零请求（正确短路）+ 对无新版源 ≤2 次调用——无请求放大，退避语义不被混合态击穿。
 - **后台预下载辐射面（显式判定）**：`preloadUpdateSilently`（update-handlers.ts:217-233）复用 `orchestrator.downloadUpdate`，降级链内嵌后**静默预下载自动获得跨源续传行为**。量级有界：preDownload 默认 false（opt-in）、检查周期 60min 节流、downloading 锁保证串行——每失败周期后台最多 2 次全量下载 + 1 次对侧 by-tag 调用；滞后收敛重下：滞后窗口内预下载的「旧新版」在下周期检查出新版后经 version-mismatch 链自动清除重下（增量 ≤1 次全量/窗口）。两者方向均对用户有利（最终拿到更新版），判定可接受。
@@ -233,7 +233,7 @@ update:check → ReleaseChecker.checkForLatestRelease()
 
 ### 6.6 D6：`validate-release` 白名单加 AtomGit 下载域（采用，安全敏感）
 
-- **采用**：`ALLOWED_HOSTS` 增补 AtomGit 下载域名（`gitcode.com`；实际 `browser_download_url` 落域以实施期探针 P1 实测为准，若为 `raw.gitcode.com` 则一并登记）。字符集/协议/路径校验全部不动。
+- **采用**：`ALLOWED_DOWNLOAD_HOSTS` 增补 AtomGit 下载域名（`gitcode.com`；实际 `browser_download_url` 落域以实施期探针 P1 实测为准，若为 `raw.gitcode.com` 则一并登记）。字符集/协议/路径校验全部不动。
 - **被否**：按 URL 前缀区分源分别校验（github release 走 GitHub 白名单、atomgit 走 atomgit 白名单）——`validateRelease` 是 install 前的统一防线，其输入 release 可能来自任一源，按源拆白名单需要同时传 source 上下文，增加耦合且无安全增益（两个域的信任级别本就相同）。
 - **证据**：validate-release.ts:26-29 现白名单；AtomGit 仓库 `qq_18433817/xyz-agent` 与 GitHub 仓库同属项目方、内容由发布流程单向同步（§1），信任级等价——白名单扩展不放松防 SSRF 性质（file://、内网 IP、任意域仍被拒）。
 - **效果**：AtomGit 下载的 release 能通过 install 前校验；非白名单域（含恶意构造 URL）依旧 fail-fast。
@@ -263,23 +263,24 @@ type UpdateSource = 'github' | 'atomgit'
 type UpdateSourcePref = 'auto' | UpdateSource
 
 interface LatestReleaseInfo { ...现有字段, source?: UpdateSource }
+interface ReleaseAsset      { ...现有字段, size?: number }  // AtomGit API 不返回 size，由 manifest fallback 填充（§6.2）
 interface UpdateSettings    { ...现有字段, updateSource?: UpdateSourcePref }
 ```
 
-main 侧内部类型（不进 shared，renderer 无消费）：`type SourceOrder = UpdateSource[]`（定义于 `update/source-resolver.ts` 并导出，供 release-checker 消费）。shared/update.ts 现有注释中两处「GitHub API 限额」表述随本批类型改动同批更新为中性「更新检查服务限流」（update.ts:63/:70）。
+main 侧内部类型（不进 shared，renderer 无消费）：`type SourceOrder = UpdateSource[]`（定义于 `update/source-resolver.ts` 并导出，供 release-checker 消费）。shared/update.ts 现有注释中一处「GitHub API 限额」表述随本批类型改动同批更新为中性「更新检查服务限流」（update.ts:69，实施核验仅此一处含 GitHub 专名）。
 
 ### 7.2 main 进程（apps/electron/main/）
 
 | 文件 | 改动 |
 |------|------|
-| `update/release-sources.ts`（新） | `fetchLatestRelease(source)` / `fetchReleaseByTag(source, tag)`；github 分支迁移现有 `doFetchGitHubLatestRelease` 的 URL/headers/形状守卫；atomgit 分支（api.gitcode.com + normalize，§6.2，含 prerelease 显式布尔化；**同款形状守卫（tag_name string + assets array）+ asset 字段别名容错（对齐 sync 脚本 assetList 的 file_name/path/filename 族——GitCode 同构性不可靠有先例）+ 匿名 GET 无特殊 headers**）；两源共用 upgradeFetch 双引擎 + 代理通道参数。域常量（两源 API/下载域 + ALLOWED_HOSTS）单一来源导出，validate-release 消费同源 |
+| `update/release-sources.ts`（新） | `fetchLatestRelease(source)` / `fetchReleaseByTag(source, tag)`；github 分支迁移现有 `doFetchGitHubLatestRelease` 的 URL/headers/形状守卫；atomgit 分支（api.gitcode.com + normalize，§6.2，含 prerelease 显式布尔化；**同款形状守卫（tag_name string + assets array）+ asset 字段别名容错（对齐 sync 脚本 assetList 的 file_name/path/filename 族——GitCode 同构性不可靠有先例）+ 匿名 GET 无特殊 headers**）；两源共用 upgradeFetch 双引擎 + 代理通道参数。域常量（两源 API/下载域 + ALLOWED_DOWNLOAD_HOSTS）单一来源导出，validate-release 消费同源 |
 | `release-checker.ts` | fetch+判定段替换为按 `SourceOrder` 逐源完整判定（三重防御/版本比较移入循环 + 退避源短路跳过，§6.5）；「全局负缓存」改为全部源确认无新版才写（混合态不写）；**AtomGit 路径 manifest fetch 失败计为该源失败进入降级（GitHub 路径保持不阻塞，§6.2 归类）**；`rateLimitedUntil` → `Map<UpdateSource, until>`；`getRateLimitedUntil()` **签名不变（仍返回 number epoch ms），语义 = 各源退避截止时刻的最大值（无任何退避记录返回 0）**——handler 判定式 `> Date.now()` 与既有 mock 形态全部不变，仅在多源退避时返回值天然为全源语义；manifest 解析扩展 size；manifest URL 改为从胜出源 release JSON assets 取 `manifest.json` 的 `browser_download_url`（弃用 GitHub 的 `releases/latest/download/` 常量——GitHub 路径同款改法，顺带消除两源的 latest 错位竞态）；**resolver 注入方式：构造注入 `new ReleaseChecker({ resolveSourceOrder })`**（测试可替换，对齐项目 DI 风格） |
 | `update/source-resolver.ts`（新） | `resolveSourceOrder()`（§6.4）：settings 映射 / 代理短路 / 域名并行探测（GET Range 0-0 + 任何响应即可达 + `disableFlagPersistence: true`）/ 进程内 TTL 缓存 |
 | `update/orchestrator.ts` | `downloadUpdate` 失败分类后接跨源续传降级（触发集合 = §6.5「降级的触发集合」：errorCode 四值，显式排除磁盘/重命名/权限/完整性；`release.source` 为 undefined（旧落盘文件）时不降级，§6.7；by-tag 确认含目标 asset 存在 → 复用 temp+state 续传 → sha256 兜底）；预下载（preloadUpdateSilently）经同一入口自动获得降级行为（辐射面声明见 §6.5）；需要 checker 按 tag 查询时经 `IReleaseChecker` 新方法（接口扩展，DI 注入不变） |
 | `update/download-asset.ts` | **多段入口探测 `probeMultiPartSupport` 改造（download-asset.ts:1051-1072）：请求 HEAD → GET `Range: bytes=0-0`，判定条件同步迁移**——原判定 `result.ok && accept-ranges: bytes && content-length ≥ 阈值` 与返回值 `totalBytes = content-length` **不可照搬**：206 响应体仅 1 字节（content-length 恒 1，照搬则两源含 GitHub 多段静默全灭），且 RFC 7233 对 206 仅强制 Content-Range（accept-ranges 在该形态下不可依赖）。新判定：HTTP 206 + `Content-Range: bytes 0-0/{total}` 且 total ≥ `MIN_MULTI_PART_SIZE` → supported；totalBytes 改从 Content-Range 取。**边界出口（全形态归类）**：非 206（200/405 等，含服务器/代理剥 Range 的全量退化）→ 不支持，单段下载（合法出口，正确性无风险）；206 但 Content-Range 缺失、total 为 `*` 或单位非 bytes → 一律视同不支持（无 total 即无法切分多段，单段）。**响应体代价入账**：upgradeFetch 的 GET 语义无条件读全响应体（undici `res.text()` 入内存 / curl `-o` 落盘后整读，upgrade-fetch.ts:518/:430/:481）——正常态 206 响应体仅 1 字节，probe 代价 ≈ 现状 HEAD；200 全量退化态下 probe 自身将消耗一次全量传输（≤170MB）+ 最长 30s（默认超时兜底）才落单段出口——量级有界、出口正确，判定可接受；实施期如需消除，可选 stream 早退或显式缩短 probe timeoutMs |
-| `update/validate-release.ts` | `ALLOWED_HOSTS` 增补 AtomGit 域（§6.6）；域集合改为消费 release-sources 单一来源导出（§6.1 防漂移） |
+| `update/validate-release.ts` | `ALLOWED_DOWNLOAD_HOSTS` 增补 AtomGit 域（§6.6）；域集合改为消费 release-sources 单一来源导出（§6.1 防漂移） |
 | `update/update-settings.ts` | `updateSource` 逐字段枚举校验（§6.3） |
-| `update/error-log.ts` | 诊断面扩展（验收 S1/S2/S3 的观测面依赖）：① `appendUpdateError` 增加 `releaseSource` 字段（对齐既有 engine 字段先例，失败归因到源）；② **新增成功路径登记（现状 error-log 仅有失败登记，成功登记全部为本次新增）**：source=`source-selection`（每轮检查的源顺序与胜出源 + auto 探测结果 + **各源 latest tag**（检查响应顺带携带，零新增请求——F5 同步缺失形态的唯一客户端观测面））、source=`source-failover`（跨源降级发生点 + from/to 源 + manifest 获取来源）、source=`download-success`（第三类：每次下载成功落一条，含 `multiPart` 布尔 = probe 判定结果 + `engine` 字段；写入量级每次下载 1 条，可忽略）——统一写入同一 JSONL（512KB×2 轮转通道复用）。**写放量级入账**：正常态 source-selection ~24 条/天 ≈ 7-10KB/天，1MB 总容量提供约 3 个月失败记录回溯（现状近乎永久，缩窗但排障窗口仍足够）；故障风暴态每次尝试 4-5 条，风暴前历史可被挤掉但风暴期内记录完整（~1500-2000 条容量），排障主窗口不受损——**判定可接受**；降频优化：source-selection 仅在排序/胜出源/探测结果变化时写（常态恒定，变化点才是排障信号）；下载成功登记的 multiPart 字段是 S1 多段生效断言的观测面（防 probe 改造回归静默退化单段） |
+| `update/error-log.ts` | 诊断面扩展（验收 S1/S2/S3 的观测面依赖）：① `appendUpdateError` 增加 `releaseSource` 字段（对齐既有 engine 字段先例，失败归因到源）；② **新增成功路径登记（现状 error-log 仅有失败登记，成功登记全部为本次新增）**：source=`source-selection`（每轮检查的源顺序与胜出源 + auto 探测结果 + **各源 latest tag**（检查响应顺带携带，零新增请求——F5 同步缺失形态的唯一客户端观测面））、source=`source-failover`（跨源降级发生点 + from/to 源 + manifest 获取来源）、source=`download-success`（第三类：每次下载成功落一条，含 `multiPart` 布尔 = probe 判定结果 + `engine` 字段；写入量级每次下载 1 条，可忽略）——统一写入同一 JSONL（512KB×2 轮转通道复用）。**写放量级入账**：正常态 source-selection ~24 条/天 ≈ 7-10KB/天，1MB 总容量提供约 3 个月失败记录回溯（现状近乎永久，缩窗但排障窗口仍足够）；故障风暴态每次尝试 4-5 条，风暴前历史可被挤掉但风暴期内记录完整（~1500-2000 条容量），排障主窗口不受损——**判定可接受**；降频优化：source-selection 仅在排序/胜出源/探测结果/tags 任一变化时写（常态恒定，变化点才是排障信号；tags 纳入变化检测是 F5 同步缺失观测面在稳态下保持新鲜的必要条件）；下载成功登记的 multiPart 字段是 S1 多段生效断言的观测面（防 probe 改造回归静默退化单段） |
 | `gateway/update-handlers.ts` | `update:setSettings` 增补枚举校验；`update:check` 的 `rateLimited` 判定改读 per-source 退避（调用形状不变） |
 | `interfaces.ts` | `IReleaseChecker` 接口补 `fetchReleaseByTag(source: UpdateSource, tag: string): Promise<LatestReleaseInfo | null>`——**精确签名与职责归属**：透传式（方向①），对侧源推导在 orchestrator（从 `release.source` 取补集），checker 保持无状态透传，与 D1 门面定位一致；返回 normalize 后的 release 结构（含 assets），无该 tag 返回 null；mock 与单测的接口形状据此确定 |
 | **存量测试迁移（改动地图组成部分，非新增测试）** | ① `release-checker.test.ts`：负缓存 describe 块（约 4 用例）按「全源确认才写负缓存」新循环出口语义**重写**（非回归修复）；fetch mock 序列（globalThis.fetch 按次序出队模式）须计入 auto 模式下的探测请求与两源顺序——推荐经构造注入 mock `resolveSourceOrder` 消除探测请求混入；② `download-asset.test.ts`：全部 `method === 'HEAD'` mock 分支（9+ 处）改写为 GET Range 0-0 + Content-Range 形态（probe 改造的必然联动，不改动则静默不命中走单段）；③ `update-handlers.test.ts`：getRateLimitedUntil mock 形态不变（方向 A 语义），补「全源退避才 rateLimited=true」用例 |
@@ -289,7 +290,7 @@ main 侧内部类型（不进 shared，renderer 无消费）：`type SourceOrder
 | 文件 | 改动 |
 |------|------|
 | `components/settings/update/UpdatePage.vue` | 「更新来源」三选控件（自动（推荐）/ GitHub / AtomGit），读写走现有 `getUpdateSettings`/`setUpdateSettings` IPC。**实施规格**：嵌入现有偏好卡（与 preDownload/autoUpdate 同卡或紧邻，不新增卡片）；testid 命名 `select-update-source`（对齐现有 switch-auto-update 命名族）；**沿用现有「切换即持久化 + 失败回滚 + toast」交互模式**（与现有两开关一致，无保存按钮）；切换后不自动触发 force 检查（偏好实际生效以缓存 TTL 为界，§6.3 已声明，不做「切换即重查」的额外行为） |
-| `i18n/locales/{zh-CN,en-US}/settings.ts` + `i18n/locales/{zh-CN,en-US}/sidebar.ts` | **三处写死「GitHub」的文案改写（语义泛化后的事实错误修正）+ 来源选择新文案**：① `sidebar.update.rateLimited`（zh-CN:52 / en-US:53，注意该 key 在 sidebar.ts 而非 settings.ts）「检查更新接口已被 GitHub 限额」→ 中性「更新检查服务限流，约 2 小时内暂停自动检查」（信号语义已泛化为全源限流）；② `types.ts` 的 UPDATE_NETWORK_FAILED suggestion「确保可以访问 GitHub」→ 去 GitHub 专名（双源皆败时用户可能恒走 AtomGit，访问不了 GitHub 与其故障无关）；③ shared/update.ts:63/:70 注释「GitHub API 限额」→ 中性表述（随 §7.1 同批）。新增：来源选择控件文案（zh-CN + en-US 双语） |
+| `i18n/locales/{zh-CN,en-US}/settings.ts` + `i18n/locales/{zh-CN,en-US}/sidebar.ts` | **三处写死「GitHub」的文案改写（语义泛化后的事实错误修正）+ 来源选择新文案**：① `sidebar.update.rateLimited`（zh-CN:52 / en-US:53，注意该 key 在 sidebar.ts 而非 settings.ts）「检查更新接口已被 GitHub 限额」→ 中性「更新检查服务限流，约 2 小时内暂停自动检查」（信号语义已泛化为全源限流）；② `types.ts` 的 UPDATE_NETWORK_FAILED suggestion「确保可以访问 GitHub」→ 去 GitHub 专名（双源皆败时用户可能恒走 AtomGit，访问不了 GitHub 与其故障无关）；③ shared/update.ts:69 注释「GitHub API 限额」→ 中性表述（随 §7.1 同批）。新增：来源选择控件文案（zh-CN + en-US 双语） |
 | `docs/testing/` testid 清单 | `select-update-source` 登记联动（M5 随控件落地） |
 | `lib/ipc.ts` / preload | **零改动**——`setUpdateSettings(Partial<UpdateSettings>)` 泛型透传，类型随 shared 更新自动放行新字段 |
 
@@ -315,7 +316,7 @@ main 侧内部类型（不进 shared，renderer 无消费）：`type SourceOrder
 
 | 探针 | 断言 | 状态 |
 |------|------|------|
-| P1 | AtomGit `releases/latest` 返回的 `assets[].browser_download_url` 落域（决定 ALLOWED_HOSTS 精确登记值；含 manifest.json 资产的 URL 落域是否一致） | ⛔ 实施期门——`curl -s --max-time 15 'https://api.gitcode.com/api/v5/repos/qq_18433817/xyz-agent/releases/latest'` 解析 assets 即得；失败则白名单暂登记 `gitcode.com` + `raw.gitcode.com` 双域 |
+| P1 | AtomGit `releases/latest` 返回的 `assets[].browser_download_url` 落域（决定 ALLOWED_DOWNLOAD_HOSTS 精确登记值；含 manifest.json 资产的 URL 落域是否一致） | ⛔ 实施期门——`curl -s --max-time 15 'https://api.gitcode.com/api/v5/repos/qq_18433817/xyz-agent/releases/latest'` 解析 assets 即得；失败则白名单暂登记 `gitcode.com` + `raw.gitcode.com` 双域 |
 | P2 | AtomGit CDN 支持 Range 请求（多段下载 + 探测方法前提） | ✅ 已测——sync 脚本 6.5.4 实测 302 → CDN → Range 206 |
 | P3 | AtomGit by-tag 端点可用（下载降级前提） | ✅ 已测——`GET /repos/{repo}/releases/tags/{tag}` 为 sync 脚本常规路径 |
 | P4 | AtomGit release 含 manifest.json 且其 `browser_download_url` 匿名可下载（sha256/size 填充前提） | ✅ 部分已测——v0.9.14 assets 含 manifest.json（对抗式核实）+ by-tag 直链匿名下载成功（sync 脚本）；⛔ 实施期补一次「从 assets 直链下载 manifest.json」的完整链路确认 |
@@ -344,7 +345,7 @@ main 侧内部类型（不进 shared，renderer 无消费）：`type SourceOrder
 | S5 GitHub 路径回归 | 目标 2、4 | 来源设「GitHub」+ 代理正常环境，完整走检查→下载→安装（可用 dev 版本号差构造升级） | 与现状行为逐项一致：winner 恒 github、下载域名恒 github.com、UI 无新增元素；旧版本升上来后（settings 无 updateSource 字段）表现同 auto 默认 |
 | S6 完整性失败不降级（反向安全验收） | 目标 4 | S3 降级链路中注入 sha256 不符产物（对 AtomGit CDN 响应做本地代理替换为同 size 异内容文件，或等效真实手段），触发下载校验 | 报「安装包校验失败」且 update-error.log **无第二次 `source-failover`**（证明未跨源重下）、temp 已清理；消除注入后重试可正常完成 |
 
-单测分工（不替代上述场景）：release-sources normalize 字段映射表测（含 prerelease 字符串 `"false"` 不误判 case + **两源全部产物 downloadUrl hostname ⊆ ALLOWED_HOSTS 防漂移断言**）、source-resolver 顺序决策表测（含探测「任何响应即可达」判定与 disableFlagPersistence）、downloadUpdate 降级分支测（mock 双引擎失败注入 + **UpdateIntegrityError 不触发降级** + **source undefined（旧落盘文件）不降级** 的反向断言 + 触发集合外 errorCode（DISK_SPACE 等）不降级 + 对侧 by-tag 404 / by-tag 200 但 asset 缺失两种形态均保留断点原错误上抛 + §11.4 的 totalBytes 三组合：一致续传 / 不一致转全量 / state 缺失从零）、probeMultiPartSupport 判定形态表测四出口（206 + Content-Range total 达标 → supported / 206 + total 低于阈值 → not / 206 但 Content-Range 缺失、total `*` 或单位非 bytes → not / 非 206（含 200 全量退化）→ not；断言 totalBytes 取自 Content-Range 而非恒 1 的 content-length）、validate-release 新域放行/非白名单域拒绝测、settings 枚举校验测、checker 循环出口语义测（主源「无新版」不写全局负缓存 + 混合态不写负缓存 + 次源新版可达 + **退避源短路零请求**断言 + **getRateLimitedUntil 返回各源最大截止时刻/无退避返回 0**）——vitest，配置在 apps/electron 既有测试体系。
+单测分工（不替代上述场景）：release-sources normalize 字段映射表测（含 prerelease 字符串 `"false"` 不误判 case + **两源全部产物 downloadUrl hostname ⊆ ALLOWED_DOWNLOAD_HOSTS 防漂移断言**）、source-resolver 顺序决策表测（含探测「任何响应即可达」判定与 disableFlagPersistence）、downloadUpdate 降级分支测（mock 双引擎失败注入 + **UpdateIntegrityError 不触发降级** + **source undefined（旧落盘文件）不降级** 的反向断言 + 触发集合外 errorCode（DISK_SPACE 等）不降级 + 对侧 by-tag 404 / by-tag 200 但 asset 缺失两种形态均保留断点原错误上抛 + §11.4 的 totalBytes 三组合：一致续传 / 不一致转全量 / state 缺失从零）、probeMultiPartSupport 判定形态表测四出口（206 + Content-Range total 达标 → supported / 206 + total 低于阈值 → not / 206 但 Content-Range 缺失、total `*` 或单位非 bytes → not / 非 206（含 200 全量退化）→ not；断言 totalBytes 取自 Content-Range 而非恒 1 的 content-length）、validate-release 新域放行/非白名单域拒绝测、settings 枚举校验测、checker 循环出口语义测（主源「无新版」不写全局负缓存 + 混合态不写负缓存 + 次源新版可达 + **退避源短路零请求**断言 + **getRateLimitedUntil 返回各源最大截止时刻/无退避返回 0**）——vitest，配置在 apps/electron 既有测试体系。
 
 ## 9. 实施
 
@@ -417,4 +418,4 @@ main 侧内部类型（不进 shared，renderer 无消费）：`type SourceOrder
   - **存量测试迁移清单入改动地图**（深度 F6，P1）：release-checker.test.ts 负缓存块重写 + fetch mock 序列含探测请求（resolver 构造注入消除）、download-asset.test.ts HEAD mock 族改写、update-handlers.test.ts 全源退避用例；checker 构造注入 `resolveSourceOrder`。
   - **三处写死 GitHub 的文案/注释入改动地图**（深度 F7，P1）：sidebar.ts rateLimited toast（注意 key 在 sidebar.ts 非 settings.ts）、UPDATE_NETWORK_FAILED suggestion、shared/update.ts 注释，全部中性化；§5.2「文案与现状一致」表述同步修正。
   - **UX 量级与规格补全**（深度 F9/F10/F13，P2）：D3 补偏好切换缓存窗口生效时延；D5 预下载辐射面补滞后收敛重下量级；UpdatePage 控件实施规格（嵌入卡位 / testid `select-update-source` / 切换即持久化 / 不自动重查）+ docs/testing testid 清单联动入 M5。
-  - **防复发护栏与流程登记**（深度 F8/F14，P2）：D1「零感知」修正为「行为零改动 + 4 处接入清单」，normalize 表测补 downloadUrl ⊆ ALLOWED_HOSTS 防漂移断言（域常量单一来源导出）；§9 M2 补 DOC_MODULE_MAP 登记（C-proc-10）。
+  - **防复发护栏与流程登记**（深度 F8/F14，P2）：D1「零感知」修正为「行为零改动 + 4 处接入清单」，normalize 表测补 downloadUrl ⊆ ALLOWED_DOWNLOAD_HOSTS 防漂移断言（域常量单一来源导出）；§9 M2 补 DOC_MODULE_MAP 登记（C-proc-10）。

@@ -57,6 +57,22 @@ vi.mock('../update/update-settings.js', async (importOriginal) => {
   }
 })
 
+// source-resolver mock：getLastProbeOutcome 可控（默认 null = 无探测决策详情，
+// auto 路径走防御性兜底登记）；resolveSourceOrder 不经此 mock（测试用构造注入），
+// 保留真实实现以免其他导出消费点失联
+type MockProbeOutcome = {
+  via: 'probe' | 'proxy-short-circuit'
+  decidedAt: number
+  results: Partial<Record<string, { reachable: boolean }>>
+}
+const resolverMocks = vi.hoisted(() => ({
+  getLastProbeOutcome: vi.fn(() => null as MockProbeOutcome | null),
+}))
+vi.mock('../update/source-resolver.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../update/source-resolver.js')>()
+  return { ...actual, getLastProbeOutcome: resolverMocks.getLastProbeOutcome }
+})
+
 import type { UpdateSource } from '@xyz-agent/shared'
 
 // ── 端点形态常量（与适配层 ADAPTERS / checker buildManifestByTagUrl 对齐）──
@@ -166,6 +182,8 @@ describe('W2: ReleaseChecker 自动升级检测（多源编排）', () => {
     settingsMock.updateSource = 'auto'
     errorLogMocks.logSourceSelection.mockClear()
     errorLogMocks.logSourceFailover.mockClear()
+    resolverMocks.getLastProbeOutcome.mockClear()
+    resolverMocks.getLastProbeOutcome.mockReturnValue(null)
     // 默认 mock 代理配置为 disabled（防止真实 proxy-config.json 干扰原有测试）
     vi.spyOn(proxyConfig, 'readProxyConfig').mockReturnValue({ mode: 'disabled' })
     vi.spyOn(proxyConfig, 'resolveProxyUrl').mockReturnValue(undefined)
@@ -204,14 +222,28 @@ describe('W2: ReleaseChecker 自动升级检测（多源编排）', () => {
 
   // ── W2TC2：三重 prerelease 过滤 ───────────────────────────────
   it('W2TC2a: prerelease=true → 防御 b 拦截（该源无新版）→ 两源均无新版 → 负缓存 + null', async () => {
-    const spy = installRoutedFetch(() => jsonResponse(makeReleaseJson({ prerelease: true })))
+    // fake timers 供末尾负缓存判别断言（TTL 推进，写法对齐负缓存 describe 用例）
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_700_000_000_000)
+      const spy = installRoutedFetch(() => jsonResponse(makeReleaseJson({ prerelease: true })))
 
-    const checker = makeChecker()
-    const result = await checker.checkForLatestRelease('0.8.14')
-    expect(result).toBeNull()
-    // 防御 b 在循环内 per-source 生效（fetchSourceRelease 返回完整产物不做拦截）：
-    // 主源拦截后继续试次源，两源均「确认无新版」→ 全局负缓存成立
-    expect(spy).toHaveBeenCalledTimes(2)
+      const checker = makeChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+      expect(result).toBeNull()
+      // 防御 b 在循环内 per-source 生效（fetchSourceRelease 返回完整产物不做拦截）：
+      // 主源拦截后继续试次源，两源均「确认无新版」→ 全局负缓存成立
+      expect(spy).toHaveBeenCalledTimes(2)
+
+      // 判别力断言（R2-U2，设计 §4.2③④）：prerelease 归 noNewVersionSources（「无新版」桶）
+      // 而非 failedSources——负缓存已写：TTL 内再查命中零 fetch（若归失败桶则会重新逐源）
+      vi.setSystemTime(Date.now() + 30 * 60 * 1000)
+      const r2 = await checker.checkForLatestRelease('0.8.14')
+      expect(r2).toBeNull()
+      expect(spy).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('W2TC2b: draft=true → 防御 b 拦截 → 返回 null', async () => {
@@ -731,6 +763,8 @@ describe('多源负缓存（循环出口语义）', () => {
     settingsMock.updateSource = 'auto'
     errorLogMocks.logSourceSelection.mockClear()
     errorLogMocks.logSourceFailover.mockClear()
+    resolverMocks.getLastProbeOutcome.mockClear()
+    resolverMocks.getLastProbeOutcome.mockReturnValue(null)
     vi.spyOn(proxyConfig, 'readProxyConfig').mockReturnValue({ mode: 'disabled' })
     vi.spyOn(proxyConfig, 'resolveProxyUrl').mockReturnValue(undefined)
     vi.useFakeTimers()
@@ -858,6 +892,8 @@ describe('per-source 限流退避', () => {
     settingsMock.updateSource = 'auto'
     errorLogMocks.logSourceSelection.mockClear()
     errorLogMocks.logSourceFailover.mockClear()
+    resolverMocks.getLastProbeOutcome.mockClear()
+    resolverMocks.getLastProbeOutcome.mockReturnValue(null)
     vi.spyOn(proxyConfig, 'readProxyConfig').mockReturnValue({ mode: 'disabled' })
     vi.spyOn(proxyConfig, 'resolveProxyUrl').mockReturnValue(undefined)
     vi.useFakeTimers()
@@ -909,9 +945,10 @@ describe('per-source 限流退避', () => {
     expect(checker.getRateLimitedUntil()).toBe(0)
   })
 
-  it('getRateLimitedUntil：各源退避截止的最大值（github latest 403 + atomgit manifest 403）+ 全源退避短路零联网', async () => {
-    // github latest 403（记 github 退避）；atomgit latest 无 digest → manifest fetch 403
-    //（记 atomgit 退避）→ atomgit 该源失败 → 全源失败 null
+  it('退避按源分派：github latest 403 记退避；atomgit manifest 403 是签名拒绝不记退避；github 退避窗口内短路零请求', async () => {
+    // github latest 403（记 github 退避）；atomgit latest 无 digest → manifest 403
+    //（auth_key 签名直链的签名/权限拒绝，§4.1——普通失败收口，不记退避）
+    // → atomgit 该源失败 → 全源失败 null
     const spy = installRoutedFetch((url) => {
       if (url === GITHUB_LATEST_URL) return new Response('rate limited', { status: 403 })
       if (url === ATOMGIT_LATEST_URL)
@@ -923,7 +960,7 @@ describe('per-source 限流退避', () => {
             ],
           }),
         )
-      if (url === ATOMGIT_MANIFEST_URL) return new Response('rate limited', { status: 403 })
+      if (url === ATOMGIT_MANIFEST_URL) return new Response('forbidden', { status: 403 })
       return new Response('not found', { status: 404 })
     })
 
@@ -931,15 +968,20 @@ describe('per-source 限流退避', () => {
     const t0 = Date.now()
     const r1 = await checker.checkForLatestRelease('0.8.14')
     expect(r1).toBeNull()
-    // 两源均记录退避（latest 403 / manifest 403 各一），聚合值为各源最大截止时刻
+    // 退避仅来自 github（latest 403）；atomgit manifest 403 不污染退避 Map——
+    // getRateLimitedUntil = 各源退避截止的最大值（当前链路 AtomGit 无可识别限流
+    // 信号，Map 成员仅 github 可入，聚合恒为该源截止时刻）
     expect(checker.getRateLimitedUntil()).toBeGreaterThan(t0)
 
-    // 全源退避：force 检查短路（零请求）
+    // github 退避窗口内 force 查询：github 短路（计数恒 1，零请求）；atomgit 不在
+    // 退避 → 照常尝试（latest 1 + manifest 1）
     vi.setSystemTime(Date.now() + 90 * 60 * 1000)
-    const callsBefore = spy.mock.calls.length
     const r2 = await checker.checkForLatestRelease('0.8.14', { force: true })
     expect(r2).toBeNull()
-    expect(spy.mock.calls.length).toBe(callsBefore)
+    const urls = calledUrls(spy)
+    expect(urls.filter((u) => u === GITHUB_LATEST_URL)).toHaveLength(1)
+    expect(urls.filter((u) => u === ATOMGIT_LATEST_URL)).toHaveLength(2)
+    expect(urls.filter((u) => u === ATOMGIT_MANIFEST_URL)).toHaveLength(2)
   })
 })
 
@@ -955,6 +997,8 @@ describe('manifest 填充与源归类', () => {
     settingsMock.updateSource = 'auto'
     errorLogMocks.logSourceSelection.mockClear()
     errorLogMocks.logSourceFailover.mockClear()
+    resolverMocks.getLastProbeOutcome.mockClear()
+    resolverMocks.getLastProbeOutcome.mockReturnValue(null)
     vi.spyOn(proxyConfig, 'readProxyConfig').mockReturnValue({ mode: 'disabled' })
     vi.spyOn(proxyConfig, 'resolveProxyUrl').mockReturnValue(undefined)
   })
@@ -991,6 +1035,36 @@ describe('manifest 填充与源归类', () => {
     expect(urls.filter((u) => u === ATOMGIT_MANIFEST_URL)).toHaveLength(1)
     expect(urls.filter((u) => u === GITHUB_LATEST_URL)).toHaveLength(1)
   })
+
+  it.each([403, 429])(
+    'AtomGit manifest HTTP %i → 签名/权限拒绝按普通失败收口（不记限流退避）→ 该源失败降级次源',
+    async (status) => {
+      // AtomGit manifest 直链是 auth_key 签名 URL（§4.1），403 = 签名/权限拒绝而非
+      // 限流信号——若误记 2h 退避，国内主场景（AtomGit 优先）后续检查会被短路降级
+      installRoutedFetch((url) => {
+        if (url === ATOMGIT_LATEST_URL)
+          return jsonResponse(
+            makeReleaseJson({
+              assets: [
+                assetWithoutDigest('TaiJi-mac-arm64.dmg', 'https://example.com/mac.dmg'),
+                manifestAsset(ATOMGIT_MANIFEST_URL),
+              ],
+            }),
+          )
+        if (url === ATOMGIT_MANIFEST_URL) return new Response('forbidden', { status })
+        return jsonResponse(makeReleaseJson())
+      })
+
+      const checker = makeChecker(['atomgit', 'github'])
+      const result = await checker.checkForLatestRelease('0.8.14')
+
+      // 该源失败 → 降级次源 github 胜出（既有兜底）
+      expect(result).not.toBeNull()
+      expect(result!.source).toBe('github')
+      // 关键断言：不写限流退避——后续检查不被短路
+      expect(checker.getRateLimitedUntil()).toBe(0)
+    },
+  )
 
   it('AtomGit manifest 网络失败 → 同样计该源失败降级次源', async () => {
     installRoutedFetch((url) => {
@@ -1164,6 +1238,8 @@ describe('诊断登记接线', () => {
     settingsMock.updateSource = 'auto'
     errorLogMocks.logSourceSelection.mockClear()
     errorLogMocks.logSourceFailover.mockClear()
+    resolverMocks.getLastProbeOutcome.mockClear()
+    resolverMocks.getLastProbeOutcome.mockReturnValue(null)
     vi.spyOn(proxyConfig, 'readProxyConfig').mockReturnValue({ mode: 'disabled' })
     vi.spyOn(proxyConfig, 'resolveProxyUrl').mockReturnValue(undefined)
   })
@@ -1226,7 +1302,7 @@ describe('诊断登记接线', () => {
     expect(errorLogMocks.logSourceSelection).toHaveBeenCalledTimes(1)
   })
 
-  it('显式来源偏好 → probe.reason=explicit-preference（pref 透传 resolver）', async () => {
+  it('显式来源偏好 → probe.reason=explicit-preference（pref 透传 resolver，不消费探测详情）', async () => {
     settingsMock.updateSource = 'atomgit'
     const orderSeen: unknown[] = []
     const checker = new ReleaseChecker({
@@ -1241,9 +1317,65 @@ describe('诊断登记接线', () => {
     expect(result!.source).toBe('atomgit')
     // settings.updateSource 透传 resolver（D3 显式偏好 = 优先级）
     expect(orderSeen).toEqual(['atomgit'])
+    // 显式偏好不是探测决策：不消费 getLastProbeOutcome（resolver 对显式偏好重置详情）
+    expect(resolverMocks.getLastProbeOutcome).not.toHaveBeenCalled()
     expect(errorLogMocks.logSourceSelection).toHaveBeenCalledWith(
       expect.objectContaining({ winner: 'atomgit', probe: { executed: false, reason: 'explicit-preference' } }),
     )
+  })
+
+  it('auto 路径透传 resolver 探测详情（S2 观测面）：executed=true + results 对齐 getLastProbeOutcome', async () => {
+    resolverMocks.getLastProbeOutcome.mockReturnValue({
+      via: 'probe',
+      decidedAt: 1_700_000_000_000,
+      results: { github: { reachable: true }, atomgit: { reachable: false } },
+    })
+    // 探测排序形态：gitcode 可达者排前
+    const checker = new ReleaseChecker({ resolveSourceOrder: async () => ['atomgit', 'github'] })
+    installRoutedFetch((url) =>
+      url === ATOMGIT_LATEST_URL ? new Response('not found', { status: 404 }) : jsonResponse(makeReleaseJson()),
+    )
+
+    const result = await checker.checkForLatestRelease('0.8.14')
+    expect(result!.source).toBe('github')
+
+    expect(errorLogMocks.logSourceSelection).toHaveBeenCalledWith({
+      order: ['atomgit', 'github'],
+      winner: 'github',
+      probe: {
+        executed: true,
+        // resolver 的 Partial<Record> → SourceProbeRecord[] 映射；basis 透传决策
+        // 通道 via 原值（ProbeSourceOutcome 无探测手段明细）
+        results: [
+          { source: 'github', reachable: true, basis: 'probe' },
+          { source: 'atomgit', reachable: false, basis: 'probe' },
+        ],
+      },
+      tags: { github: 'v0.9.0' }, // atomgit 404 无响应 → 缺 key
+    })
+  })
+
+  it('auto + 代理短路决策 → executed=true 且 results 仅 github 键（gitcode 无推断依据，缺键不捏造）', async () => {
+    resolverMocks.getLastProbeOutcome.mockReturnValue({
+      via: 'proxy-short-circuit',
+      decidedAt: 1_700_000_000_000,
+      results: { github: { reachable: true } },
+    })
+    installRoutedFetch(() => jsonResponse(makeReleaseJson()))
+
+    const checker = makeChecker()
+    await checker.checkForLatestRelease('0.8.14')
+
+    expect(errorLogMocks.logSourceSelection).toHaveBeenCalledWith({
+      order: ['github', 'atomgit'],
+      winner: 'github',
+      probe: {
+        executed: true,
+        // 代理短路仅能推断 github（能配代理 = github 可达概率高），atomgit 缺键如实缺项
+        results: [{ source: 'github', reachable: true, basis: 'proxy-short-circuit' }],
+      },
+      tags: { github: 'v0.9.0' },
+    })
   })
 })
 
@@ -1258,6 +1390,8 @@ describe('fetchReleaseByTag 透传', () => {
     settingsMock.updateSource = 'auto'
     errorLogMocks.logSourceSelection.mockClear()
     errorLogMocks.logSourceFailover.mockClear()
+    resolverMocks.getLastProbeOutcome.mockClear()
+    resolverMocks.getLastProbeOutcome.mockReturnValue(null)
     vi.spyOn(proxyConfig, 'readProxyConfig').mockReturnValue({ mode: 'disabled' })
     vi.spyOn(proxyConfig, 'resolveProxyUrl').mockReturnValue(undefined)
   })
