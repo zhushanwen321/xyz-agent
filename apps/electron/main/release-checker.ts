@@ -440,13 +440,16 @@ export class ReleaseChecker implements IReleaseChecker {
       const outcome = getLastProbeOutcome()
       probe = outcome
         ? {
-            executed: true,
-            results: Object.entries(outcome.results).map(([s, o]) => ({
+          executed: true,
+          // 白名单过滤：探测结果只登记已知源，未知键丢弃不捏造（防注入，taste 规则要求）
+          results: Object.entries(outcome.results)
+            .filter(([s]) => KNOWN_UPDATE_SOURCES.includes(s as UpdateSource))
+            .map(([s, o]) => ({
               source: s as UpdateSource,
               reachable: o.reachable,
               basis: outcome.via,
             })),
-          }
+        }
         : { executed: false, reason: 'resolver-internal' }
     } else {
       probe = { executed: false, reason: 'explicit-preference' }
