@@ -12,8 +12,9 @@
  *   行为与改动前完全一致
  *
  * 测试策略与 rpc-client.test.ts / rpc-client-kill-sigcont.test.ts 一致：mock node:child_process
- * 的 spawn + readline，emitPiLine 入口把伪造的 pi stdout JSONL 行投递给 RpcClient 的 line
- * handler。不依赖真实 pi 进程。mock 骨架与驱动 helpers 收敛 test/helpers/rpc-client-mock.ts。
+ * 的 spawn，emitPiLine 入口把伪造的 pi stdout JSONL 行投递给 RpcClient 的 stdout data
+ * handler（LF-only 读取器分帧）。不依赖真实 pi 进程。mock 骨架与驱动 helpers 收敛
+ * test/helpers/rpc-client-mock.ts。
  *
  * 运行：npx vitest run test/rpc-client-early-frame-buffer.test.ts
  */
@@ -24,8 +25,6 @@ import { RpcClient, RpcTimeoutError, type PiMessage } from '../src/infra/pi/rpc-
 
 vi.mock('node:child_process', async () =>
   (await import('./helpers/rpc-client-mock')).childProcessModule())
-vi.mock('node:readline', async () =>
-  (await import('./helpers/rpc-client-mock')).readlineModule())
 vi.mock('@xyz-agent/shared', async () =>
   (await import('./helpers/rpc-client-mock')).sharedModule())
 vi.mock('@xyz-agent/shared/paths', async () =>
