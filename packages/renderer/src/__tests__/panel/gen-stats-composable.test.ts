@@ -3,8 +3,9 @@
  * （验收条款：帧写入分区 / model 不匹配丢弃 / model 缺省丢弃 / 恢复腿 in-flight 去重 / cleanup）。
  *
  * 范式照抄 use-context-usage.test.ts（五件套蓝本的层 1 测试形态）：
- * - mock 边界：session.getGenStats RPC 经 '@/api/request' command mock 掉（transport 层不在
- *   本层职责）；事件分发走真实 events.dispatchSession 通道；
+ * - mock 边界：session.getGenStats RPC 经 '@xyz-agent/core/transport/api' command 部分mock
+ *   掉（spread actual 保留 events 真实通道，transport 层不在本层职责）；事件分发走真实
+ *   events.dispatchSession 通道；
  * - 宿主组件：useSessionEvents 的 getCurrentInstance 守卫要求组件 setup 上下文，mount 宿主
  *   expose composable 返回值；
  * - timer：实现内无 timer（恢复腿去重靠 Promise 原语），in-flight 窗口用受控 deferred +
@@ -16,6 +17,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { defineComponent, h, ref, nextTick } from 'vue'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import * as events from '@xyz-agent/core/transport/api/events'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '@xyz-agent/core/transport/api'
 import {
   triggerSessionCleanups,
   __clearSessionCleanupRegistryForTest,
@@ -29,8 +31,14 @@ import {
 import type { GenStatsFrame } from '@xyz-agent/shared'
 
 // ── mock 边界：getGenStats RPC mock 掉（u3 未接线，恢复腿用受控 deferred 驱动）──
+// mock 目标 = 实现 import 的权威路径（u5 re-anchor 删除 @/api/request bridge 后）；
+// spread actual 只换 command/超时常量：useSessionEvents 经主模块 events.on 订阅，须保留
+// 真实 events 通道（与测试侧 dispatchSession 的子路径模块共享同一注册表），否则帧链路断
 const commandMock = vi.hoisted(() => vi.fn())
-vi.mock('@/api/request', () => ({ command: commandMock }))
+vi.mock('@xyz-agent/core/transport/api', async (importActual) => {
+  const actual = await importActual<typeof import('@xyz-agent/core/transport/api')>()
+  return { ...actual, command: commandMock, RPC_BACKSTOP_TIMEOUT_MS: 30_000 }
+})
 
 // ── 共享测试基建 ─────────────────────────────────────────────
 
@@ -207,7 +215,11 @@ describe('恢复腿：getGenStats RPC', () => {
   it('挂载即触发恢复腿，reply（含全 null 帧）写入分区且不经 model 校验', async () => {
     const host = mountHost('A', 'prov-a/m1')
     await settle()
-    expect(commandMock).toHaveBeenCalledWith('session.getGenStats', { sessionId: 'A' })
+    expect(commandMock).toHaveBeenCalledWith(
+      'session.getGenStats',
+      { sessionId: 'A' },
+      RPC_BACKSTOP_TIMEOUT_MS,
+    )
 
     // runtime 降级链④回的全 null + model 缺省帧：RPC 主动拉取语义，不经前端帧校验
     const reply = genFrame('A', {
