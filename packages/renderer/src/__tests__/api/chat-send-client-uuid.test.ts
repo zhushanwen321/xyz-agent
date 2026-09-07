@@ -7,18 +7,20 @@
  * - send 不带 options → payload 不含 clientUuid 键（既有 payload 形态不变，向后兼容）
  * - images 与 clientUuid 并存 → 两键齐全
  *
- * mock 策略：vi.mock('@/api/request') 捕获 command 调用（对齐 chat-send-images.test.ts）。
+ * mock 策略：vi.mock core request 模块捕获 command 调用（对齐 chat-send-images.test.ts；
+ * u5 re-anchor 删除 @/api/* bridge 后，说明符直指 core 模块文件——跨包相对路径）。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/api/chat-send-client-uuid.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 const commandMock = vi.fn()
-vi.mock('@/api/request', () => ({
+vi.mock('../../../../core/src/transport/api/request', () => ({
   command: (...args: unknown[]) => commandMock(...args),
 }))
 
-import { send } from '@/api/domains/chat'
+import { send } from '@xyz-agent/core/transport/api/domains/chat'
+import { RPC_BACKSTOP_TIMEOUT_MS } from '../../../../core/src/transport/api/pending'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -35,7 +37,7 @@ describe('chat.send clientUuid 透传（session-occupancy D2）', () => {
       sessionId: 's1',
       content: 'hi',
       clientUuid: 'u-abc-123',
-    })
+    }, RPC_BACKSTOP_TIMEOUT_MS)
   })
 
   it('不带 options → payload 不含 clientUuid 键（既有流量形态不变）', async () => {
@@ -58,7 +60,7 @@ describe('chat.send clientUuid 透传（session-occupancy D2）', () => {
       content: 'hi',
       images: [{ data: 'BASE64', mimeType: 'image/png' }],
       clientUuid: 'u-abc-123',
-    })
+    }, RPC_BACKSTOP_TIMEOUT_MS)
   })
 
   it('options 空对象（clientUuid undefined）→ payload 不含 clientUuid 键', async () => {
