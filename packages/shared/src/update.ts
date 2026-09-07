@@ -56,8 +56,11 @@ export interface ReleaseAsset {
   name: string
   /** 下载直链（browser_download_url） */
   downloadUrl: string
-  /** 文件大小（字节） */
-  size: number
+  /**
+   * 文件大小（字节）。AtomGit API 不返回 size（实测响应无此字段），
+   * 由 manifest fallback 填充（GitHub API size 恒有）；缺失为 undefined。
+   */
+  size?: number
   /** sha256 hex（缺失为 undefined） */
   sha256?: string
 }
