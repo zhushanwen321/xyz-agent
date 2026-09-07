@@ -40,7 +40,11 @@ function makeRepo(files, emptyDirs = []) {
 
 const pkgJsonOf = (fields) => JSON.stringify({ name: '@fixture/guarded', ...fields })
 
-/** 豁免清单标准形态（4 处，.default 后缀，单/双引号混合——与真实产物实测分布一致） */
+/**
+ * 豁免清单标准形态（4 处，.default 后缀）。单/双引号混合是刻意的测试设计——
+ * 覆盖 REQUIRE_RE 的单/双引号两个分支；真实产物实测 4 处 ajv 字面量全为双引号、
+ * 单引号 0 处（混合分布不是真实产物现状，是 fixture 放宽的引号形态覆盖）。
+ */
 const AJV_EXEMPT_OK = [
   'require("ajv/dist/runtime/validation_error").default;',
   "require('ajv/dist/runtime/uri').default;",
@@ -87,13 +91,16 @@ describe('discoverGuardedPackages（D5 动态发现）', () => {
 
 describe('checkGhostEntries（检查项 1：磁盘 stat 判定形态）', () => {
   const DIR = (root) => join(root, 'packages', 'p')
-  it('目录条目磁盘不存在 → 红（含幽灵定性 + workflow 构建段恢复指引 + --filter 包名）', () => {
+  it('目录条目磁盘不存在 → 红（含幽灵定性 + 三处构建段恢复指引 + --filter 包名）', () => {
     const root = makeRepo({ 'packages/p/package.json': pkgJsonOf({}) })
     try {
       const problems = checkGhostEntries(DIR(root), ['dist/'], '@fixture/p')
       expect(problems.length).toBe(1)
       expect(problems[0]).toContain('"dist/" 在磁盘上不存在（幽灵条目）')
       expect(problems[0]).toContain('release-npm.yml')
+      expect(problems[0]).toContain('release-npm-dev.yml')
+      expect(problems[0]).toContain('ci.yml')
+      expect(problems[0]).toContain('Build dist packages')
       expect(problems[0]).toContain('pnpm --filter @fixture/p run <script>')
     } finally {
       rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })

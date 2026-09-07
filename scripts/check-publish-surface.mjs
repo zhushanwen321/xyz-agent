@@ -152,7 +152,7 @@ function checkGhostEntries(pkgDir, files, pkgName) {
   const fixFor = (entry) => {
     const first = entry.includes('/') ? entry.split('/')[0] : entry
     return first.startsWith('dist')
-      ? `  修复：在 .github/workflows/release-npm.yml 构建段为该档补构建命令\n  （pnpm --filter ${pkgName} run <script>）后重推 tag`
+      ? `  修复：在 .github/workflows/ 的 release-npm.yml / release-npm-dev.yml / ci.yml\n  三处构建段（ci.yml 段名 Build dist packages）为该档补齐构建命令\n  （pnpm --filter ${pkgName} run <script>）后重推 tag`
       : `  修复：该条目非构建产物——补文件（如 README.md）或从 files 删条目，二选一`
   }
   for (const entry of files) {
