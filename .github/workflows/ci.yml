@@ -444,6 +444,13 @@ jobs:
       # destroyed 流，逃逸为 uncaughtException → 整机 shutdown（D7 通则，CI 面同源拦截）。
       - name: Unsafe stream writes guard
         run: node scripts/check-unsafe-stream-writes.mjs
+
+      # A2 用户内容出站点守卫（adversarial-review-fixes D-A2-3，与 pre-commit 同源脚本）：
+      # runtime 的 .prompt( / .steer( / .followUp( 调用点必须登记白名单（文件 + 行内
+      # 指纹 + 内容性质 + 注入状态），未登记新调用点即拦截——防新增用户内容出站通路
+      # 忘挂 SkillInjector（MF-B @ 定向 / MF-C landing 首发同类缺口复发）。
+      - name: Prompt outposts guard (A2, full-repo)
+        run: python3 .githooks/check_prompt_outposts.py
       # vitest alias ↔ tsconfig paths 一致性——subagent-core 深路径 alias（vitest
       # 运行时解析）必须有 tsconfig paths 镜像（静态工具解析），两侧漂移即拦截
       # （PR #198 曾因缺失镜像一次产生 138 条 unresolved-import 假阳性）。

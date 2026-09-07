@@ -25,6 +25,7 @@ import type { IMessageBus } from '../message-bus/message-bus.js'
 import { toErrorMessage, RpcTimeoutError } from '../../utils/errors.js'
 import { updateSessionOccupancy } from './event-interpreter.js'
 import { SkillInjector, type SkillNotice } from './skill-injector.js'
+import { publishSkillNotices as publishSkillNoticesShared } from './skill-notice-publisher.js'
 
 /** 生成代次 token 用的进制（base-36：数字 + 小写字母，紧凑且无符号字符）。 */
 const RANDOM_TOKEN_RADIX = 36
@@ -850,29 +851,13 @@ export class MessageDispatcher {
    * [composer-multi-skill-injection D6/D8] 发布 skill 注入提示广播（session.skillNotice，
    * payload 契约见 protocol.ts）。三入口共用：注入器产出的 notices 逐条定向发布。
    *
-   * clientUuid 从发送文本提取（`<!--xyz:msg:<uuid>-->`，与 pi 侧 msg-id-mapper TAG_MATCH
-   * 同款全文正则——全文匹配使降级拼接把块放到标记之后也不影响提取）。[双侧同构字面量]
-   * 标记格式 SSOT = extensions/taiji/msg-id-mapper/src/index.ts（TAG_MATCH :46，写入/剥离
-   * 两端协议），本正则是消费侧同构镜像，禁单侧修改——不收敛 shared：extension 独立发布
-   * 体系不依赖 @xyz-agent/shared（S4 裁决，注释互指替代）。
-   * 纯文本消息与
-   * steer/followUp 路径无此标记 → payload 缺省该字段（类型可空，u5 按可空消费）。
+   * [A2 D-A2-2] 广播编排提取为共享函数（skill-notice-publisher.ts）——subagentAction
+   * （session-records.ts）与 deliverText（session-delivery-registry.ts）两个新挂载点
+   * 同款复用；本方法保留薄委托（调用点不变，messageBus 的 undefined 语义照旧）。
+   * clientUuid 提取与 payload 形态见共享函数注释。
    */
   private publishSkillNotices(sessionId: string, sentText: string, notices: SkillNotice[]): void {
-    if (notices.length === 0) return
-    const clientUuid = sentText.match(/<!--xyz:msg:(u-[0-9a-fA-F-]{36})-->/)?.[1]
-    for (const notice of notices) {
-      const msg = {
-        type: 'session.skillNotice' as const,
-        payload: {
-          sessionId,
-          ...(clientUuid !== undefined ? { clientUuid } : {}),
-          reason: notice.reason,
-          skills: notice.skills,
-        },
-      }
-      this.messageBus?.publish(sessionId, msg)
-    }
+    publishSkillNoticesShared(this.messageBus, sessionId, sentText, notices)
   }
 
   async steerMessage(sessionId: string, content: string): Promise<void> {

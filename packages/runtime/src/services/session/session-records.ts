@@ -45,6 +45,8 @@ import { withFileLockSync } from '../../utils/file-lock.js'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { isEntryNotFoundError } from './trace-sync.js'
 import { SCALAR_STATE_DEBOUNCE_MS } from './replicated-states.config.js'
+import { SkillInjector } from './skill-injector.js'
+import { publishSkillNotices } from './skill-notice-publisher.js'
 import type { IMessageBus } from '../message-bus/message-bus.js'
 import type { SessionRegisteredSource } from './session-state-projection.js'
 
@@ -128,7 +130,12 @@ export class SessionRecords {
    */
   private readonly recordEntriesCaches = new Map<string, RecordEntriesCache>()
 
-  constructor(private readonly deps: SessionRecordsDeps) {}
+  constructor(
+    private readonly deps: SessionRecordsDeps,
+    // [A2 D-A2-1] skill 注入器：subagentAction message/start 的定向文本出站前统一
+    // 处理（与 MessageDispatcher 同款「默认实例化 + 构造可替换」形态，测试注入 spy）。
+    private readonly injector: SkillInjector = new SkillInjector(),
+  ) {}
 
   /**
    * 组装期订阅接线（D2③「换订阅者」）：向 lifecycle 注册本模块的缓存注册 handler。
@@ -475,7 +482,9 @@ export class SessionRecords {
    * - cancel：<subagentId>（service.cancel → SIGTERM kill 子进程）
    * - message：<subagentId> <text>（subagent 续聊，热路径 stdin 直写 prompt）
    * - start：<slug> <task>（conversation:true 可续聊的新 subagent）
-   * text/task 经 encodeDirectiveText 编码（换行 → 字面 \n，命令保持单行）。
+   * text/task 经 encodeDirectiveText 编码（换行 → 字面 \n，命令保持单行）；
+   * [A2 MF-B] text/task 含 skill 标记时先经 SkillInjector 展开（encode 之前，见分支内
+   * 注释），失效标记透传 + skillNotice 提示（与主链同款，不再静默）。
    *
    * 刻意直接 client.prompt 绕过 dispatcher busy 预检 / BeforeSend hook（对称
    * promptReload 的绕过模式）：定向消息必须「主 agent 生成中也能发」（设计 §3.3.4
@@ -498,13 +507,24 @@ export class SessionRecords {
       if (!params.subagentId || !params.text) {
         throw new Error('[session-service] subagentAction message: subagentId and text are required')
       }
-      await client.prompt(`/subagents message ${params.subagentId} ${encodeDirectiveText(params.text)}`)
+      // [A2 MF-B] skill 注入（D-A2-1）：encodeDirectiveText 之前对原始 text 注入——标记在
+      // 原始文本上匹配（encode 只转义 \ 与换行，先 encode 会破坏标记属性的可读性且无必要）；
+      // 注入产物的真实换行由随后的 encode 编码回单行。无标记 no-op 零 RPC 原文通过；
+      // cancel/workflows 内部命令不挂（设计显式跳过，守卫白名单登记）。
+      const injection = await this.injector.inject(client, params.text)
+      await client.prompt(`/subagents message ${params.subagentId} ${encodeDirectiveText(injection.text)}`)
+      // [D-A2-2] notice 在发送成功后发布（与 dispatcher 时机契约同款）；prompt 失败路径
+      // throw 不发。定向文本无 u- 标记 → skillNotice 的 clientUuid 缺省（类型可空）。
+      publishSkillNotices(this.deps.getMessageBus(), sessionId, params.text, injection.notices)
       return
     }
     if (!params.slug || !params.task) {
       throw new Error('[session-service] subagentAction start: slug and task are required')
     }
-    await client.prompt(`/subagents start ${params.slug} ${encodeDirectiveText(params.task)}`)
+    // [A2 MF-B] 同 message 分支：start 的 task 是用户内容（composer @ 定向首发），encode 前注入。
+    const injection = await this.injector.inject(client, params.task)
+    await client.prompt(`/subagents start ${params.slug} ${encodeDirectiveText(injection.text)}`)
+    publishSkillNotices(this.deps.getMessageBus(), sessionId, params.task, injection.notices)
   }
 
   // ── 销毁清理（Facade removeSessionEntry 第 ⑤ 步直调，与 TraceSync/SessionStateProjection.onSessionDisposed 并列）──

@@ -130,6 +130,7 @@ describe.skipIf(!REAL_PI_READY)(`send queue e2e real pi${REAL_PI_READY ? '' : `�
           return () => {}
         },
         recordWorkspace: () => {},
+        getMessageBus: () => null,
       })
 
       // ── 3. 长任务（dispatcher 同款先置位后 prompt：busy 前提的 runtime 侧标志）──

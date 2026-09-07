@@ -16,6 +16,7 @@ import {
   SKILLS_BLOCK_TAG,
 } from '@xyz-agent/shared'
 import { SkillInjector } from '../skill-injector.js'
+import { encodeDirectiveText } from '../session-records.js'
 import type { IPiEngine, PiCommandInfo } from '../../ports/pi-engine.js'
 
 // ── fixture：tmp 下自建两个 skill 目录 ──
@@ -366,5 +367,46 @@ describe('SkillInjector.inject', () => {
     const { client } = makeClient({ commands: [skillCmd('skill-a', skillAPath)], stats: { contextUsage: { tokens: 1, contextWindow: 100000, percent: 1 } } })
     const result = await injector.inject(client, marker)
     expect(result.text).toBe(expectedBlock('skill-a', skillAPath, skillADir, raw))
+  })
+})
+
+// ─── A2（adversarial-review-fixes MF-B）：@ 定向消息路径文本的注入等价性 ───
+//
+// 定向链路：subagentAction 的 text/task 经 injector.inject 展开后，还要过
+// encodeDirectiveText（换行 → 字面 \n 保持 /subagents 命令单行，extension 侧
+// decodeNewlineEscapes 解回）。此处锁定两件事：①注入产物（block 含真实换行）
+// 经 encode 后不含真实换行——命令单行契约不因注入而破；②定向文本的标记
+// 展开形态与主链（dispatcher sendPrompt）逐字一致——同一 injector 无第二实现。
+
+describe('SkillInjector.inject × encodeDirectiveText（A2 定向链路）', () => {
+  let injector: SkillInjector
+  beforeEach(() => {
+    injector = new SkillInjector()
+  })
+
+  it('含 skill 标记的定向文本：展开 block 后经 encode 保持命令单行（block 换行编码为字面 \\n）', async () => {
+    const marker = buildSkillMarker('skill-a', skillAPath)
+    const text = `帮我 ${marker} 处理这个任务`
+    const { client } = makeClient({ commands: [skillCmd('skill-a', skillAPath)], stats: { contextUsage: { tokens: 1, contextWindow: 100000, percent: 1 } } })
+    const result = await injector.inject(client, text)
+    // 展开形态与主链逐字一致（同一 buildExpandedText，无第二实现面）
+    const block = expectedBlock('skill-a', skillAPath, skillADir, SKILL_A_BODY)
+    expect(result.text).toBe(`帮我\n\n${block}\n\n处理这个任务`)
+    // encode 后单行：注入产物含真实换行（block 模板），命令单行性由 encode 兜底
+    const encoded = encodeDirectiveText(result.text)
+    expect(encoded.includes('\n')).toBe(false)
+    // block 关键内容存活（name/location 原样——encode 只转义反斜杠与换行）
+    expect(encoded).toContain('<skill name="skill-a"')
+    expect(encoded).toContain(`location="${skillAPath}"`)
+  })
+
+  it('无标记定向文本：no-op 原文返回且零 RPC（fake client 无命令映射可用也不发起请求）', async () => {
+    const text = '纯文本定向消息，无任何 skill 标记'
+    const { client, getCommands, getSessionStats } = makeClient()
+    const result = await injector.inject(client, text)
+    expect(result.text).toBe(text)
+    expect(result.notices).toEqual([])
+    expect(getCommands).not.toHaveBeenCalled()
+    expect(getSessionStats).not.toHaveBeenCalled()
   })
 })

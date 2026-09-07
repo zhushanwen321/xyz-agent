@@ -485,6 +485,9 @@ async function main(): Promise<void> {
     ensureActive: (sid) => sessionService.ensureActive(sid),
     subscribeAgentSettled: subscribeAgentSettledIn(agentSettledListeners),
     recordWorkspace: (cwd) => workspaceService.record(cwd),
+    // [A2 D-A2-2] skillNotice 广播通道（deliverText 注入的 notice 发布用）；组合根
+    // messageBus 恒就绪，getter 形态与 SessionRecordsDeps 装配同款。
+    getMessageBus: () => messageBus,
   })
   // session 销毁（主动删 / 进程退出 / restore 清场全部路径）→ 丢弃该 session 的 delivery
   // 队列与订阅（setOnSessionDestroyed 追加式注册，与 server 的 extension timeout 清理腿并存）。

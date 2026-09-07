@@ -77,6 +77,7 @@ function makeHarness(overrides: {
       calls.push(`record:${cwd}`)
       if (overrides.recordWorkspaceError) throw overrides.recordWorkspaceError
     },
+    getMessageBus: () => null,
   })
   const sendExtensionUiResponse = vi.fn()
   const sessionService = {

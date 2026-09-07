@@ -127,6 +127,7 @@ describe.skipIf(!REAL_PI_READY)(`completion backflow e2e real pi${REAL_PI_READY 
           return () => {}
         },
         recordWorkspace: () => {},
+        getMessageBus: () => null,
       })
 
       // backflow：真实实现；getSessionOutcome 用真实 PiSessionStore 读子 session_end

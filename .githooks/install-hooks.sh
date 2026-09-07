@@ -953,6 +953,41 @@ if [ "$SKIP_ALL_CHECKS" != "1" ]; then
 fi
 
 # ============================================================================
+# 用户内容出站点守卫（adversarial-review-fixes A2 D-A2-3）
+#   packages/runtime/src 有变更时触发：.githooks/check_prompt_outposts.py
+#   扫描 .prompt( / .steer( / .followUp( 三方法全部调用点（任意接收者——防
+#   client 变量名改写逃逸），对照白名单（文件 + 行内子串指纹 + 内容性质 +
+#   注入状态 + 理由）；未登记新调用点即拦截——防新增用户内容出站通路忘挂
+#   SkillInjector（MF-B @ 定向 / MF-C landing 首发同类缺口复发）。
+#   注：不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
+# ============================================================================
+
+PROMPT_OUTPOSTS_CHECKER=".githooks/check_prompt_outposts.py"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    if echo "$STAGED_FILES" | grep -q "^$RUNTIME_SRC/"; then
+        print_section "[用户内容出站点守卫]"
+        echo -e "${BLUE}[INFO] runtime 源码有变更，扫描用户内容出站点...${NC}"
+
+        if [ ! -f "$PROMPT_OUTPOSTS_CHECKER" ]; then
+            echo -e "${RED}[ERROR] 找不到 $PROMPT_OUTPOSTS_CHECKER${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+
+        python3 "$PROMPT_OUTPOSTS_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}[OK] runtime 源码无变更，跳过用户内容出站点守卫${NC}"
+    fi
+fi
+
+# ============================================================================
 # AC7 extension-host 边界检查（packages/core 源码有变更时触发）
 # ============================================================================
 
@@ -1368,6 +1403,7 @@ echo -e "  ${GREEN}[+]${NC} runtime services 循环依赖检查（D6c 防护）"
 echo -e "  ${GREEN}[+]${NC} CSP 能力一致性检查（源码 eval/WebAssembly vs index.html CSP 指令）"
 echo -e "  ${GREEN}[+]${NC} Runtime Bundle 验证（依赖打包 + CJS 兼容 + 健康检查）"
 echo -e "  ${GREEN}[+]${NC} 流写逃逸护栏（runtime 变更时触发：R1 裸流写 / R2 socket error / R4 readline 转发）"
+echo -e "  ${GREEN}[+]${NC} 用户内容出站点守卫（runtime 变更时触发：prompt/steer/followUp 调用点白名单，防忘挂 SkillInjector）"
 echo -e "  ${GREEN}[+]${NC} AC7 extension-host 边界检查（core 变更时触发，禁 domain/stores import）"
 echo -e "  ${GREEN}[+]${NC} 打包配置预检查（asarUnpack/files 一致性 + symlink 检查）"
 echo -e "  ${GREEN}[+]${NC} i18n CJK 残留检测（.vue 模板不得含硬编码中文）"

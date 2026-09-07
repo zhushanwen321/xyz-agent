@@ -410,6 +410,9 @@ export class RuntimeServer implements IMessageBroker {
           ensureActive: (sid) => this.sessionService.ensureActive(sid),
           subscribeAgentSettled: () => () => {},
           recordWorkspace: (cwd) => workspace?.record(cwd),
+          // [A2 D-A2-2] 退化实例无 bus——skill 注入文本处理照常、notice 发布 no-op
+          //（与组合根注入的正例形成显式降级，上方 warn 已留痕）。
+          getMessageBus: () => null,
         }),
       sendExtensionUiResponse: (sessionId, requestId, response, method) => {
         // requestId 只在发起方 pi 进程的 pending 表有效——按 sessionId 直发，

@@ -84,6 +84,7 @@ function makeHarness(overrides: {
       return () => {}
     },
     recordWorkspace: () => {},
+    getMessageBus: () => null,
   })
 
   const backflow = createCompletionBackflow({
