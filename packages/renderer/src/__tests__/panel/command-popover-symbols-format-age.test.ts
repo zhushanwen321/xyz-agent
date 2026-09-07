@@ -142,7 +142,7 @@ describe('open-fetch file 路 landing cwd 通道（D2/D3）', () => {
 
   it('无 sid 有 cwd：open false→true 边沿按 cwd 拉取，候选渲染进浮层（G1）', async () => {
     const nodes: FileNode[] = [{ path: 'src/index.ts', name: 'index.ts', type: 'file' }]
-    getFileCandidatesByCwdMock.mockResolvedValueOnce(nodes)
+    getFileCandidatesByCwdMock.mockResolvedValueOnce({ files: nodes, truncated: false })
     wrapper = mount(CommandPopover, {
       attachTo: document.body,
       props: { open: false, type: 'file', cwd: '/repo' },
@@ -199,7 +199,7 @@ describe('open-fetch file 路 landing cwd 通道（D2/D3）', () => {
     expect(getFileCandidatesByCwdMock).toHaveBeenCalledTimes(1)
   })
 
-  it('拉取失败（session cwd 已删，runtime not_found）→ 降级空候选：浮层不渲染、不 throw', async () => {
+  it('拉取失败（session cwd 已删，runtime not_found）→ D7 错误态浮层「加载失败，点击重试」、不 throw', async () => {
     getFileCandidatesByCwdMock.mockRejectedValueOnce(Object.assign(new Error('session cwd not found'), { code: 'not_found' }))
     wrapper = mount(CommandPopover, {
       attachTo: document.body,
@@ -209,8 +209,16 @@ describe('open-fetch file 路 landing cwd 通道（D2/D3）', () => {
     await wrapper.setProps({ open: true })
     await flushPromises()
     expect(getFileCandidatesByCwdMock).toHaveBeenCalledTimes(1)
-    // reply error → 降级空候选（§3.1 失败路径）：无浮层，unhandled rejection 不冒泡为失败
-    expect(bodyRows()).toHaveLength(0)
-    expect(document.body.querySelector('[data-reka-popper-content-wrapper]')).toBeNull()
+    // D7 失败路径（与 #10 合流裁决）：错误态浮层渲染（cmd-file-error）而非静默空候选；
+    // unhandled rejection 不冒泡为失败
+    const errorRow = document.body.querySelector('[data-testid="cmd-file-error"]')
+    expect(errorRow).not.toBeNull()
+    // 行可点重试（force 绕节流重发起拉取），重试成功后错误态消失、候选恢复
+    getFileCandidatesByCwdMock.mockResolvedValueOnce({ files: [{ path: 'a.ts', name: 'a.ts', type: 'file' } as FileNode], truncated: false })
+    ;(errorRow as HTMLElement).click()
+    await flushPromises()
+    expect(getFileCandidatesByCwdMock).toHaveBeenCalledTimes(2)
+    expect(document.body.querySelector('[data-testid="cmd-file-error"]')).toBeNull()
+    expect(bodyRows().some((r) => r.textContent?.includes('a.ts'))).toBe(true)
   })
 })
