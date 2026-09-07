@@ -300,11 +300,29 @@ function resolveGitcodeRemote() {
     + `恢复：确认令牌未过期、对 ${repo} 有写权限、仓库已创建且已解除镜像状态（镜像仓锁写）`);
 }
 
-/** 强推 origin 分支 + tags 到 GitCode（--prune 保证与 GitHub 完全一致，防 drift）。
+/** tags 镜像源：把 refSource 远端的 tags 强制 fetch 到独立命名空间
+ * refs/remotes/<src>-tags/*（--prune 清理命名空间内已删条目）。
+ * [HISTORICAL] 禁止直接推本地 refs/tags/*：本仓还会 fetch pi-mono upstream，
+ * 两边同为 v* semver tag 空间，上游 tag 混入本地且会遮蔽同名本仓 tag
+ * （2026-09-07 实测本地 478 vs GitHub 193，v0.3.15 已被上游 commit 遮蔽）——
+ * 推本地 tags 会把上游提交注入 GitCode 镜像造成 drift。 */
+function syncTagNamespace(refSource) {
+  execSync(`git fetch ${refSource} --prune "+refs/tags/*:refs/remotes/${refSource}-tags/*"`,
+    { stdio: 'pipe', timeout: 600000 });
+}
+
+/** 强推 origin 分支 + tags 到 GitCode（--prune 保证与 refSource 完全一致，防 drift）。
  * 超时 30 分钟：GitHub runner（海外）→ GitCode（国内）实测上行约 0.8MB/s，
  * 首次全量（本仓 pack ≈ 490MB）需 10-20 分钟，仅首次；后续发布只推增量。
  * push 前必须确保非 shallow：GitCode receive 端拒绝 shallow update
- * （探针实测 "remote rejected ... (shallow update not allowed)"）。 */
+ * （探针实测 "remote rejected ... (shallow update not allowed)"）。
+ *
+ * [HISTORICAL] 分支 refspec 前必须删掉 <src>/HEAD 跟踪 symref（symbolic-ref --delete
+ * 只删 symref 本体不伤目标分支）：refspec glob 会把它展开成创建 refs/heads/HEAD，
+ * GitCode 判 HEAD 为保留关键字拒收（"The tag or branch name: HEAD is keyword and
+ * cannot be created"），而 git pre-receive hook 一票否决整个 push → 全部引用（含 main）
+ * 全量拒收。2026-09-07 v0.9.14 发布事故根因；git 负向 refspec（^...）只支持 fetch
+ * 不支持 push，故用删除 symref 方案。 */
 function pushRepoMirror(refSource = 'origin') {
   const url = resolveGitcodeRemote();
   execSync('git remote remove gitcode-sync 2>/dev/null || true', { stdio: 'pipe', shell: '/bin/bash' });
@@ -313,17 +331,20 @@ function pushRepoMirror(refSource = 'origin') {
     const isShallow = execSync('git rev-parse --is-shallow-repository', { encoding: 'utf8' }).trim() === 'true';
     if (isShallow) {
       console.log(`[push-repo] 当前仓库为 shallow，先 fetch ${refSource} 全量历史（约 1-3 分钟）…`);
-      execSync(`git fetch --unshallow ${refSource} "+refs/heads/*:refs/remotes/${refSource}/*" "+refs/tags/*:refs/tags/*"`,
+      execSync(`git fetch --unshallow ${refSource} "+refs/heads/*:refs/remotes/${refSource}/*"`,
         { stdio: 'inherit', timeout: 600000 });
     }
+    execSync(`git symbolic-ref --delete refs/remotes/${refSource}/HEAD 2>/dev/null || true`,
+      { stdio: 'pipe', shell: '/bin/bash' });
+    syncTagNamespace(refSource);
     execSync(
-      `git push gitcode-sync --progress --force --prune "+refs/remotes/${refSource}/*:refs/heads/*" "+refs/tags/*:refs/tags/*" 2>&1`,
+      `git push gitcode-sync --progress --force --prune "+refs/remotes/${refSource}/*:refs/heads/*" "+refs/remotes/${refSource}-tags/*:refs/tags/*" 2>&1`,
       { stdio: 'inherit', timeout: 1800000 },
     );
   } finally {
     execSync('git remote remove gitcode-sync 2>/dev/null || true', { stdio: 'pipe', shell: '/bin/bash' });
   }
-  console.log(`[push-repo] 仓库镜像完成：${refSource} 全部分支 + tags 已对齐到 GitCode`);
+  console.log(`[push-repo] 仓库镜像完成：${refSource} 分支 + tags 已对齐到 GitCode`);
 }
 
 /* ── 模式一：探针 ─────────────────────────────────────────── */

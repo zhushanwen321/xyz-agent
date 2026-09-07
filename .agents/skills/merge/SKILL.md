@@ -413,6 +413,8 @@ cd $WS_ROOT/main && source ~/.zshrc >/dev/null 2>&1; git fetch github --prune \
 
 ⚠️ **`--ref-source github` 本地必传**：本地 bare-repo workspace 的 `origin` 指向本地 `.bare`，不传会把本地分支状态（含已删/落后分支）推上 GitCode 造成 drift。`git fetch github --prune` 先刷新远端跟踪引用，保证 GitCode 与 GitHub 分支集严格一致（--force --prune 对齐）。首次全量约 2 分钟（pack ≈ 490MB），后续发布秒级增量。
 
+⚠️ **tags 与 HEAD 由脚本内部处理（勿手动换 refspec）**：tags 不推本地 `refs/tags/*`——本仓还会 fetch pi-mono upstream，同名 `v*` tag 空间互相污染（2026-09-07 实测本地 478 vs GitHub 193，v0.3.15 已被上游 tag 遮蔽），脚本会先 fetch 到 `refs/remotes/github-tags/*` 独立命名空间再从该处推送；分支 refspec 展开前脚本会先删 `github/HEAD` symref——否则会尝试在 GitCode 创建 `refs/heads/HEAD`（保留关键字），pre-receive hook 一票否决整个 push。
+
 #### 6.5.4 验证（GitCode 匿名直链可达）
 
 ```bash
@@ -431,7 +433,7 @@ curl -sL -o /dev/null -w '%{http_code}\n' -r 0-1048575 --max-time 60 \
 
 门禁 [MANDATORY]：阶段 7 启动前**必须**确认**全流程零未决失败**——阶段 0 到 6.5 每一个已执行的阶段/子步骤（含 4N 各子步、6.5.1-6.5.4）都已 exit 0 或已明确闭环。**任一中间环节失败/被拒/未验证完成，绝对禁止执行本阶段清理**：必须停下向用户汇报失败详情（现象、已尝试的处置、候选方案），与用户讨论解决路径——修复后重跑失败阶段，或用户明确表态「带病收尾/放弃该环节」后才可继续。worktree 删除不可逆，带着未决失败清理 = 永久失去修复现场（修复所需上下文、复现环境、未推产物清单全部丢失）。
 
-> [HISTORICAL] 2026-09-07 v0.9.14 发布事故：6.5.3 仓库镜像被 GitCode pre-receive 全量拒收（含 main）且未解决，主 agent 按「仅阶段 6 是硬门禁」的旧语义照常执行了阶段 7 删除 worktree，镜像问题当场失去现场，被用户严厉纠正。本门禁自该事故起从「仅看阶段 6」收紧为「全流程零未决失败」，不允许削弱回旧语义。
+> [HISTORICAL] 2026-09-07 v0.9.14 发布事故：6.5.3 仓库镜像被 GitCode pre-receive 全量拒收（含 main）且未解决，主 agent 按「仅阶段 6 是硬门禁」的旧语义照常执行了阶段 7 删除 worktree，镜像问题当场失去现场，被用户严厉纠正。本门禁自该事故起从「仅看阶段 6」收紧为「全流程零未决失败」，不允许削弱回旧语义。同日根因定位并修复（见 6.5.3 第二条警告与脚本 [HISTORICAL] 注释）：`github/HEAD` symref 被 refspec 展开成创建保留关键字分支 `HEAD`，pre-receive 一票否决整个 push；修后镜像重跑对齐（分支+tags 与 GitHub 零差异）、6.5.4 匿名下载 206，v0.9.14 的阶段 6.5 正式闭环。
 
 ⚠️ **cwd 隔离 [HISTORICAL]**：bash 工具每次调用都是独立 shell，cwd **不跨调用持久**，reset 到 session 启动目录（通常是 feature worktree 内）。`remove-worktree.sh` 内部有 `cd "$WORKSPACE_ROOT"` 自我保护，但那只对脚本当次执行有效——脚本退出后，下次 bash 调用的 cwd 又 reset 回 session 启动目录。
 
