@@ -1,6 +1,6 @@
 # 状态真值同步架构优化 实施计划
 
-基线: <待填，本文件 commit hash> | 来源设计: docs/design/state-truth-sync-architecture.md（v4） | 日期: 2026-09-08
+基线: 7fd3d100e | 来源设计: docs/design/state-truth-sync-architecture.md（v4） | 日期: 2026-09-08
 
 审查证据（阶段 0.3）：`.review/design-review-state-truth-sync-r4.md`（主审 0 must-fix, 2 suggestions）+ `.review/design-review-state-truth-sync-impact-r4.md`（影响面 0 must-fix, 2 suggestions）——v4 附录声明 R3/R4 suggestions 全部当轮修完。
 
