@@ -24,7 +24,7 @@
 
 ## 4. 收敛方向（架构层，建议一并评估）
 
-「已知 record 的读链**永不返回空数组**」应成为 runtime 协议层不变量：本缺陷修复 + ③级合成推广到 pi `!sessionFile` 窗口（`packages/runtime/src/services/session/session-records.ts:312`）。落地后 renderer 两层客户端兜底（outcome 投影 U4 A8 / drawer-blank task seed）守卫恒假、自然死代码化——见 `docs/design/subagent-drawer-blank.md` §6.7。
+「已知 record 的读链**永不返回空数组**」应成为 runtime 协议层不变量：本缺陷修复 + ③级合成推广到 pi `!sessionFile` 窗口（`packages/runtime/src/services/session/session-records.ts:316`）。落地后 renderer 两层客户端兜底（outcome 投影 U4 A8 / drawer-blank task seed）守卫恒假、自然死代码化——见 `docs/design/subagent-drawer-blank.md` §6.7。
 
 ## 5. 验收标准
 

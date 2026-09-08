@@ -20,7 +20,7 @@
 | 对话流 block | `packages/ui/src/features/chat/BlockSubagent.vue:125-130` | `subagentVirtualId(props.sessionId, JSON.parse(tool.output).subagentId)` |
 | 侧边栏 item | `packages/renderer/src/composables/features/sidebar/useSidebarSubagentActions.ts:30-34` | `subagentVirtualId(panelStore.currentLeaf?.sessionId, record.subagentId)` |
 
-两处 id 同源（record.id = `sa-${uuid}`，`extensions/universal/subagent-workflow/src/execution/subagent-service.ts:1415`，与引擎无关），都汇到 `drawerControl.setSubagentView`（`packages/core/src/domain/drawer/control.ts:106`）→ SubagentTab 的 `watch(selectedSubagentId)`。
+两处 id 同源（record.id = `sa-${uuid}`，`packages/subagent-core/src/execution/subagent-service.ts:1942`（执行层已自 extension 迁 subagent-core，commit 48ae09ba4；原登记路径 `extensions/.../execution/subagent-service.ts:1415` 已悬空），与引擎无关），都汇到 `drawerControl.setSubagentView`（`packages/core/src/domain/drawer/control.ts:106`）→ SubagentTab 的 `watch(selectedSubagentId)`。
 
 ### 2.2 SubagentTab 数据加载是一次性的
 
@@ -40,6 +40,8 @@ watch(
 `loadSubagentData`（同文件 :286-328）= 一次 `fetchAndInject`（RPC 拉历史快照）+ `subscribeStream`（订阅 `subagent.stream_delta`）。**watch 只在 vid 变化时触发；此后没有任何重拉、轮询或终态回填机制。** 唯一手动刷新入口是错误态的 retry 按钮（仅在 `loadError` 非空时渲染）。
 
 ### 2.3 zcode 引擎无实时流（设计内），终态才写 journal
+
+> **⚠️ 叙事过时修正（2026-09-08，drawer-blank sync-review-r2 F2）**：本节写于旧 one-shot CLI spawn 形态。现 zcode 已迁移 **app-server 常驻单一形态**（C-ext-20，执行层在 `packages/subagent-core`，`appserver-launcher.ts`），运行中 text_delta 流水进 journal、①级 native reader mid-run 即可读。核心修正：running 期间三级读链**并非全返回空**——①级返回 `[task 气泡]` 投影（task 非空时恒非空，`session-view-service.ts:362-369`），无 assistant 实质内容；详见 `docs/design/subagent-drawer-blank.md` §5.1 窗口 B。**本 todo 的修复方案（status watch 终态 reload）不受影响仍成立**：无实时腿前提（无 relay-tee 帧）与终态不回填机制均未变，且 drawer-blank seed 修复使陈旧占位问题更显著（见其 §5.1 放大声明）。以下为历史原文：
 
 - zcode 引擎 spawn 形态：`node zcode.cjs --json --cwd <dir> --mode yolo --prompt <完整任务>`（one-shot，`launcher.ts`）。子进程跑完整个任务才退出，stdout 输出**终态单 JSON**；运行期间无事件流可 tee。
 - 事件产出「不变量 5」：只在终态后一次性合成 coarse 事件（`zcode-engine.ts:233,335`），journal 终态才写入。

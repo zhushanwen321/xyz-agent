@@ -7,7 +7,7 @@
 
   两类虚拟 id（D4）：
   - subagent:<mainSid>:<subId> 三段式（chat 块 / sidebar 入口）：
-    fetchAndInject 拉历史注入虚拟分区 + 恒订阅 stream_delta 实时增量（E-4：entry 帧走
+    fetchAndInject 拉历史注入虚拟分区（空历史不写分区，drawer-blank u1）+ 恒订阅 stream_delta 实时增量（E-4：entry 帧走
     routeInbound 兜底链消费，不依赖 drawer 打开；此处只管打字机 delta）
   - agentcall:<acsId> 两段式（workflow tab 点 agent call 入口）：
     快照只读，仅拉历史不接实时流式（D4 裁决：agent call 实时性由 workflow tab 列表 status 体现）

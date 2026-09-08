@@ -1,5 +1,5 @@
 # subagent-drawer-blank 实施计划
-基线: d74bdeabc（本文件由 6d5d75870 首次提交后 amend，实际基线以其为准）| 来源设计: docs/design/subagent-drawer-blank.md (v5) | 日期: 2026-09-08
+基线: d74bdeabc（本文件由 6d5d75870 首次提交后 amend，实际基线以其为准）| 来源设计: docs/design/subagent-drawer-blank.md (v6) | 日期: 2026-09-08
 
 ## 0 章节映射
 | 内容 | 本文实际位置 |
@@ -29,6 +29,7 @@
 | u2-seed | loadSubagentData 消费 fetchAndInject 返回值；空历史判定顺序写死：①outcome 先行（非 pi && 分区空 && result/error 有值，既有代码零改动）②task 种入随后（分区空 && task 非空 → id `task-u-<subagentId>`、role user、status complete、timestamp `record.startedAt ?? Date.now()`） | packages/renderer/src/composables/panel/useSubagentTabData.ts | u1-store | plain | T2 矩阵（设计 §10 v4）：非 pi+outcome 有值 → 仅 outcome 投影无 seed；非 pi+无 outcome 空 history → seed（**可达**：磁盘扫描滞后窗口）；pi+task 非空 → seed（主场景）；分区非空 → 不种不擦；reload 后无兑底残留 |
 | u3-thinking | MessageStream 计算 `subagentThinking = forceWorking && (无 turn \|\| 末位 turn.assistants.length === 0)` 传 ActivityStrip；ActivityStrip 可选 prop，thinking 行条件扩为 `turn==='dispatching' \|\| subagentThinking`；i18n 复用 `panel.message.dispatching` 零新增 | packages/renderer/src/components/panel/MessageStream.vue<br>packages/renderer/src/components/panel/message-stream/ActivityStrip.vue<br>packages/renderer/src/__tests__/components/MessageStream-subagent-force-working.test.ts<br>packages/renderer/src/__tests__/components/ActivityStrip.test.ts（新建） | 无（与 u2 并行） | plain | T3：forceWorking 翻转 × 末位 turn assistant 有/无 × 非 virtual id 恒 false；非 pi 窗口 B（末位仅 task user）→ true / 窗口 A·C（末位有 assistant）→ false。T4：ActivityStrip DOM 断言（testid `activity-strip-row-thinking`） |
 | u4-regression | 适配性修订既有断言 + 全量回归：subagent-tab.test.ts「pi 空历史 → 0 turn」翻转为 1 turn（seed）；「:431 task+outcome 同屏」应保持绿（若红修测试前提不修产品代码）；跑全量相关套件 | packages/renderer/src/__tests__/panel/subagent-tab.test.ts | u1, u2, u3 | plain | T5：预期翻转清单落地 + 相关套件全绿（含 MessageStream-subagent-force-working / subagent.test / streaming 相关） |
+| u5-gateb（增补） | Gate B 真实场景验收 S1-S5（Playwright 连 9225 隔离实例）+ electron main dev 隔离补强（偏差 #4：XYZ_VITE_DEV_URL 覆盖 + userData 从 XYZ_AGENT_DATA_DIR 派生） | apps/electron/main/main.ts<br>apps/electron/main/window/window-factory.ts | u1, u2, u3 | plain | 设计 §8.2 五场景全过（双引擎运行窗口截图）+ 多实例共存验证 |
 
 注：u1/u2 的测试写入各自领地内既有测试文件（subagent.test.ts 归 u1 领地、subagent-tab.test.ts 归 u4 领地——T1/T2 新增用例由 u1/u2 在自己领地内的测试文件追加，u4 只做既有断言适配与全量回归）。为避免两 unit 改同一测试文件：T1 用例落 `__tests__/stores/subagent.test.ts`（u1 领地），T2 用例落新文件 `__tests__/composables/useSubagentTabData.test.ts`（u2 领地，新建）。
 
