@@ -73,7 +73,7 @@ wave 1：u1 ∥ u2 ∥ u3（领地两两不相交）；wave 1.5：u5（u1 落地
 | u3-comment-sync | committed | 1 | commit 673da2b98（typecheck 绿，diff ⊆ 领地） |
 | u4-doc-sync | committed | 1 | 接替重派当轮完成（sa-b6569b50）：13 处替换 65 行 +/-，旧口径字面零残留、新关键词 6 处命中、file:line 引用经主 agent 逐一核对实装；偏差 3 条入 §5 登记表 |
 | u5-fix-stale-tests（新增） | committed | 1 | commit f8c9052b9（51/51 绿，diff ⊆ 领地；一致性审查补登记入 §2/§3） |
-| Gate A（阶段 5） | passed | 1 | 主 agent 预跑 + 一致性审查者复跑双证据：5099/5100 绿，唯一 failure = thinking-level-effective-e2e G5（环境性：get_available_models 清单无 reasoning:false 模型；该测试文件与变更区间零交集，最后改动 f482e73b0 在基线前）——待用户签认转残留风险登记 |
+| Gate A（阶段 5） | passed | 3 次独立运行 | 主 agent 预跑 + R1 审查者复跑 + 测试⑧修复后终跑（210cfcd90 时点，JUnit 逐用例核对）：均 5099+/5100 绿，唯一 failure 恒为 thinking-level-effective-e2e G5（环境性：get_available_models 清单无 reasoning:false 模型；该测试文件与变更区间零交集，最后改动 f482e73b0 在基线前）——待用户签认转 §7 残留风险登记 |
 
 ## 7 残留风险与变更历史
 
