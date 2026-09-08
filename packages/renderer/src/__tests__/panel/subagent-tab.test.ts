@@ -444,13 +444,17 @@ describe('SubagentTab U4：zcode 终态渲染 + 运行中 coarse 提示', () => 
     wrapper.unmount()
   })
 
-  it('RPC 返回空结果 + pi record → 行为不变（不注入兜底投影，不显错误）', async () => {
+  it('RPC 返回空结果 + pi record → seed task 用户气泡（1 turn），不注入兜底投影', async () => {
+    // drawer-blank-fix T5 预期翻转（旧断言：0 turn「行为不变」）：u2 seed 生效后，pi 空历史
+    // 种入 record.task 用户气泡（分区 1 turn），杜绝首开白屏；pi 仍不走 outcome 兜底投影。
     useSubagentStore().applyRecords(MAIN_SID, [makeRecord({ status: 'done', result: 'pi 轮终结果' })])
     vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
     openSubagent({ virtualId: VIRTUAL_ID, enteredFrom: 'chat' })
     const wrapper = mountTab()
     await settle(wrapper)
-    expect(wrapper.findAll('[data-testid="turn-stub"]').length).toBe(0)
+    const turns = wrapper.findAll('[data-testid="turn-stub"]')
+    expect(turns.length).toBe(1)
+    expect(turns[0]?.text()).toContain('do something')
     expect(wrapper.find('[data-testid="subagent-outcome-summary"]').exists()).toBe(false)
     wrapper.unmount()
   })

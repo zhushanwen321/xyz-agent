@@ -66,9 +66,9 @@ graph TD
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
 | u1-store | committed | 1 | commit 3bfe6069a（fetchAndInject 返回 Message[] + 空不擦；T1 用例 35/35 绿） |
-| u2-seed | in-progress | 1 | 派发中（slug u2-seed-task-bubble） |
+| u2-seed | committed | 1 | commit 4000fe668（判定顺序即优先级；T2 矩阵 7/7 绿；:431 outcome 同屏保持绿；偏差 #3：seed 守卫含 history.length===0，被 u1 蕴含且满足 noUnusedLocals） |
 | u3-thinking | committed | 2 | commit 3bfe6069a（轮 1 被打回：script setup 309>300 → 提取 useSubagentThinking composable 后 297 行；T3/T4 9/9 绿 + vue-tsc 干净） |
-| u4-regression | pending | 0 | |
+| u4-regression | committed | 1 | 预期翻转 1 条已适配（:447 0→1 turn + task 文本可见断言）；:431 零改动保持绿；renderer 全包 4082 tests + core chat 641 tests 全绿；vue-tsc 干净（提交随本表更新 commit） |
 
 ## 7 残留风险与变更历史
 
