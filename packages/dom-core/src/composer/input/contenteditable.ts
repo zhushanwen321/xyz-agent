@@ -1,5 +1,5 @@
 /**
- * composer contenteditable 输入组合逻辑 —— core/domain/composer/input/contenteditable.ts（W2）。
+ * composer contenteditable 输入组合逻辑 —— packages/dom-core/src/composer/input/contenteditable.ts（W2）。
  *
  * 定位：迁自 renderer useContenteditableInput.ts（873 行）的 composable 部分。
  * 职责（单一变化轴「contenteditable 输入事件 + 文本/光标操作」）：

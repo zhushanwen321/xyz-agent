@@ -1,5 +1,5 @@
 /**
- * composer chip DOM 操作 —— core/domain/composer/input/chip-commands.ts（W2）。
+ * composer chip DOM 操作 —— packages/dom-core/src/composer/input/chip-commands.ts（W2）。
  *
  * 定位：迁自 renderer useComposerChipCommands.ts（341 行）。slash 命令 chip / @·# mention chip /
  * image badge 的 DOM 创建与删除。
@@ -129,7 +129,7 @@ export function useComposerChipCommands(
 
   /**
    * 插入 skill 标记 chip（多 skill 注入设计 D2）：类比 insertFileChip 走 insertChipAtSelection
-   * 通用机制——插在光标处、多个共存（与 insertSlashChip 的「最前唯一」命令语义区分，
+   * 通用机制——插在光标处、多个共存（与 insertSlashChip 的「唯一/替换语义」命令语义区分，
    * 不清除已存在 chip）、× 删除 / Backspace 整块删除（复用 .slash-chip 的既有删除通路）。
    *
    * DOM 形态复用 .slash-chip class + dataset.chipType='skill'：getSegmentsFromEl 的 skill

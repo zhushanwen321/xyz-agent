@@ -205,7 +205,7 @@ export function useCommandPopoverTrigger(
    *  - slash：clearSlashQueryText → 命令项 insertSlashChip；skill 项（isSkill）按项类型分流
    *    insertSkillChip（设计 D3，与 skill 入口行为合流：光标处、多共存、带 location）
    *  - skill（行中空白后 / 触发）：clearSkillQueryText → insertSkillChip（光标处标记 chip，
-   *    多个共存——与 slash 的「最前唯一」命令 chip 通道区分，多 skill 注入 D2）
+   *    多个共存——与 slash 的「唯一/替换语义」命令 chip 通道区分，多 skill 注入 D2）
    *  - file（$ 触发）：clearDollarFileQueryText → insertFileChip（绿色 file chip，
    *    与原 insertMentionChip('#') 等价——dom-core 内 # 委托 insertFileChip，直接走本名）
    *  - session（# 触发）：clearSessionQueryText → insertSessionChip（显示 label 非 uuid）

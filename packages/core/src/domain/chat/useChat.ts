@@ -579,11 +579,12 @@ export async function submitQueuedEntry(
   const baseText = entry.submitText ?? segmentsToPrompt(segments)
   const markedText = `${baseText}\n<!--xyz:msg:${entry.id}-->`
   // [defer segments 化 / D-A1-2] 富内容条目写 sidecar（与 submitSegments 的 needsBackfill
-  // 谓词同款：全部 text 段跳过——纯文本重开降级渲染等价；未知新类型默认写，失败方向
-  // 安全）。key 用 deferEntryId（裸 uuid），reload 侧 entry-tree-builder 编排层提取裸
-  // 标记 id 直查回填。fire-and-forget：失败 console.warn 不阻断（sidecar 丢失只降级为
-  // 占位文本，非硬错误）。
-  const needsBackfill = segments.some((s) => s.type !== 'text')
+  // 谓词同款：全部 text 段或 slash 段跳过 sidecar 写入；defer 路径 slash 段不可达——
+  // send.ts enqueueDuringDefer 对 segmentsToPrompt 以 / 开头一律拒绝，此处排除 slash
+  // 纯为与 submit 路径谓词单点统一；未知新类型默认写，失败方向安全）。key 用
+  // deferEntryId（裸 uuid），reload 侧 entry-tree-builder 编排层提取裸标记 id 直查回填。
+  // fire-and-forget：失败 console.warn 不阻断（sidecar 丢失只降级为占位文本，非硬错误）。
+  const needsBackfill = segments.some((s) => s.type !== 'text' && s.type !== 'slash')
   if (needsBackfill) {
     deps
       .writeSegments({

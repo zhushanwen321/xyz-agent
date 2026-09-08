@@ -1,5 +1,5 @@
 /**
- * composer 发送后清空 / 失败恢复的输入区状态操作 —— core/domain/composer/input/restore.ts（W2）。
+ * composer 发送后清空 / 失败恢复的输入区状态操作 —— packages/dom-core/src/composer/input/restore.ts（W2）。
  *
  * 定位：迁自 renderer useComposerRestore.ts。职责单一：操作 draft ref + inputRef，完成三类副作用：
  * - clearInput：发送成功后清空（DOM + draft + 持久化草稿）
