@@ -123,8 +123,8 @@ export class UsageStatsService {
   /**
    * 流式扫描单个 JSONL 文件，按四分类计入 usage。
    *
-   * 计入规则（①②③ 对齐 pi getUsageCostBreakdown，锚点：@earendil-works/pi-coding-agent@0.84.1
-   * dist/core/usage-totals.js:22-33，升级 pi 时须重新核对该锚点；④ 为 xyz 自有口径）：
+   * 计入规则（①②③ 对齐 pi getUsageCostBreakdown，锚点：@earendil-works/pi-coding-agent@0.84.4
+   * dist/core/usage-totals.js:23-33，升级 pi 时须重新核对该锚点；④ 为 xyz 自有口径）：
    * ① type==='message' && message.role==='assistant' && message.usage → 主桶
    * ② type==='message' && message.role==='toolResult' && message.usage → compaction 虚拟桶
    * ③ (type==='compaction' || type==='branch_summary') && entry.usage → compaction 虚拟桶
