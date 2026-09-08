@@ -111,7 +111,28 @@ graph TD
 | U5 | committed | 1 | 363879a17（rename-session 167/167 · typecheck/lint exit=0 · P-appendEntry CLI 探针一次通过，证据：subagent 会话 2026-09-08T06-09-36-321Z） |
 | U6 | committed | 1 | 985aadbf7（runtime 45/45 · pi-semantics 守卫 29 条 · tsc 绿 · pre-commit 含 Bundle 验证全绿） |
 | U7 | committed | 1 | ac039f4e7（shared 323/323 · ts 改动纯注释行 · todo 文档纯新增 2 行） |
-| U8 | pending | 0 | — |
+| U8 | committed | 3 | 签收表见 §8（V1-V12 全绿；Gate A 终验见 §7 变更历史；证据：r3 进度日志 + /tmp 截图与 JSONL，验收后已清理） |
+
+## 8 U8 端到端验收签收表（Gate B，2026-09-08）
+
+> 执行者：dev-u8-acceptance-r3（第三棒；第一棒采 V6/V7/V8 初证、第二棒勘查）。证据：进度日志逐场景落账 + /tmp 截图与 session JSONL（验收后已清理）；主 agent 逐场景跟踪核验。
+
+| # | 结果 | 关键证据 |
+|---|------|----------|
+| V1+P-narrow | ✓ | nowrap+overflow-x-auto；窄窗 761>452/372 横滚激活；右侧 toggle 固定；chips 零重叠（截图 u8-b2-v1-*） |
+| V2 | ✓ | zai chip 关闭→置灰 opacity-[0.38] 保留原位；图表剔除；再点恢复；重置清全部（截图 u8-b2-v2-*） |
+| V3 | ✓ | isolate 时 5 个 provider chips 全部恒显；isolate chip 分量渲染；clear 恢复（u8-b2-v3-isolate.png） |
+| V4 | ✓ | 真实压缩：smart-context 同模型压缩 entry 落盘 details.model=xiaomi-token-plan-cn/mimo-v2.5-pro（a2d JSONL）；B1 呈现 compaction 行 7,184 与 JSONL 逐字段对账（4608+528+2048） |
+| V5 | ✓ | 存量 compaction 组诚实显示泛名行 2,526,717 tok / $0.49，零编造（u8-b2-v5-*.png） |
+| V6 | ✓ | custom entry 逐字段符合 §3.3③（model+usage 7 字段）；B1 呈现 rename 行 257/192/6/455 与 JSONL totalTokens 精确对账；标题侧栏可见 |
+| V7 | ✓ | 对话流恰 1 turn/1 user/assistant OK；重开零 rename 残留（live≡reload）；custom entry 不进对话流（u8-b1-p3-v7-*.png） |
+| V8 | ✓ | PI_RENAME_MODEL=invalid（env 路径替代改系统 config，deviation 已登记）：主 turn assistant 成功 + 落账条目 0 + 无标题 + 系统 config hash 恒同；rename-session:log 审计条目佐证「model not available, skipping」正确跳过路径 |
+| V9 | ✓ | 切 cost：明细表组序 deepseek↔compaction 换位 + 项目谱 TOP8 重排（feat-notification-optimize/chat_project 新进前五）（u8-b2-v9*.png） |
+| V10 | ✓ | p1/model-x 与 p2/model-x 双行各归各组（$0.30/$0.60），总量守恒 $0.90（B1-P2 断言） |
+| V11 | ✓ | en-US：用量区 innerText + SVG textContent 双重探针零中文字符（u8-b2-v11*.png）；已恢复中文 |
+| V12 | ✓ | X=zai-coding-cn/glm-5.3-flash（P2 从行灰前缀读出）→ 关 P2 chip → isolate 联动自动清除且非图表全空（empty-state=false）→ 恢复回归（u8-b2-v12-*.png） |
+
+附带发现（已归档）：① V4 已知问题真根因 = 执行环境 PI_SUBAGENT_ROOT_SESSION_ID 泄漏 → smart-context isSubagentProcess 静默惰性，与实现无关；② models-store.json mtime 变化为 pi 目录同步无害触碰（内容级 diff 仅 checkedAt，config hash 恒同）；③ 宿主 subagent env 泄漏家族（PI_SUBAGENT_*/PI_CODING_AGENT_DIR/PI_MODEL/PI_PROVIDER/PI_REASONING_LEVEL）会污染子进程测试，全量测试须剥净（impl-plan §4 已登记）。
 
 ## 7 残留风险与变更历史
 
@@ -126,3 +147,4 @@ graph TD
 
 - 2026-09-08：初稿。预检门通过（R4 双审 0MF+0S，报告 `.review/usage-design-review-r4*.md`）；单元表与 DAG 按设计 §5 固化，U1→U2、U3→U6 同文件串行边补充登记；基线 commit 待用户评审后执行。
 - 2026-09-08：基线 7efeb3a97 确认；U3 committed（a8491bb2c）；U1 committed（788fbebc6）；U4 committed（650118620）。U2 领地修订：补入 UsagePage.filters.test.ts / UsagePage.test.ts（isolate 复合键化波及其 testid/chip 断言；U1 committed 后无写冲突）。登记 U4 附带发现：PI_SUBAGENT_CHAT_MODE 环境泄漏可致 subagent-workflow 测试假红，全量测试用干净 env。
+- 2026-09-08：阶段 3+4 收敛（一轮）：三区审查报告聚合（12+ reasonable 入登记表 / 1 unreasonable 定向修 46f5e68a4 / 4 doc_errors 亲改 20d7e547a + 12fad5c40）；U8 Gate B 签收表 §8 全绿（V1-V12）；Gate A 终验在全量改动后重跑（结论见后续条目）。
