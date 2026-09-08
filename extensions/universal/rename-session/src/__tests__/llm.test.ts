@@ -10,7 +10,7 @@ vi.mock("@zhushanwen/pi-extension-logger", () => ({
 	setPiHandle: vi.fn(),
 }));
 
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, Usage } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -19,6 +19,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@zhushanwen/pi-llm-shared", async (importActual) => {
 	const actual = await importActual<typeof import("@zhushanwen/pi-llm-shared")>();
 	return { ...actual, resolveModel: vi.fn(), callLLM: vi.fn() };
+});
+
+// mock pure.js：只把 cleanTitle 包一层 vi.fn（委托真实实现，行为零变化）——
+// 「回调在 cleanTitle 之前」的时序断言需要 cleanTitle 可观测（invocationCallOrder 比较）。
+vi.mock("../pure.js", async (importActual) => {
+	const actual = await importActual<typeof import("../pure.js")>();
+	return { ...actual, cleanTitle: vi.fn(actual.cleanTitle) };
 });
 
 // 被测模块须在 vi.mock 之后 import
@@ -34,7 +41,7 @@ import {
 	isSubagentSession,
 	truncateForTitle,
 } from "../llm.js";
-import { type RenameSessionConfig } from "../pure.js";
+import { cleanTitle, type RenameSessionConfig } from "../pure.js";
 
 // 每用例收尾统一还原：logger mock 恢复 + stub 的 XYZ_AGENT_DEBUG 还原，
 // 防泄漏到后续用例（debug 开关 live 读 process.env，依赖 stubEnv/unstubAllEnvs 成对）
@@ -546,6 +553,106 @@ describe("callRenameLLM", () => {
 
 		const callOpts = vi.mocked(callLLM).mock.calls[0][1] as { reasoning?: unknown };
 		expect(callOpts.reasoning).toBe("high");
+	});
+});
+
+// ────────────────────────────────────────────────────
+// usage 落账回调（appendUsageEntry 注入，设计 §3.3 ③ / §3.6）
+// ────────────────────────────────────────────────────
+
+/** 合法 Usage 夹具（pi-ai Usage 全必填字段，消除 unsafe-cast 强断言）。 */
+const STUB_USAGE: Usage = {
+	input: 10,
+	output: 5,
+	cacheRead: 2,
+	cacheWrite: 1,
+	totalTokens: 18,
+	cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+};
+
+describe("callRenameLLM usage 落账回调（appendUsageEntry，设计 §3.3 ③）", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("usage 存在 + 注入回调 → 恰被调一次、参数 (provider/id, usage 同一引用)，且在 cleanTitle 之前", async () => {
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
+		vi.mocked(callLLM).mockResolvedValue({
+			ok: true,
+			content: "  修复登录bug  ",
+			usage: STUB_USAGE,
+		});
+		const appendUsageEntry = vi.fn();
+
+		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE, {
+			appendUsageEntry,
+		});
+
+		expect(result).toBe("修复登录bug");
+		expect(appendUsageEntry).toHaveBeenCalledTimes(1);
+		expect(appendUsageEntry).toHaveBeenCalledWith("stub/stub-model", STUB_USAGE);
+		// 时点契约（§3.3 ③）：ok:true && usage 后立即、cleanTitle 之前
+		expect(appendUsageEntry.mock.invocationCallOrder[0]).toBeLessThan(
+			vi.mocked(cleanTitle).mock.invocationCallOrder[0],
+		);
+	});
+
+	it("计量与标题清洗成败解耦：content 清洗后为空（rename 跳过返回 null）→ 回调仍恰被调一次", async () => {
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "   ", usage: STUB_USAGE });
+		const appendUsageEntry = vi.fn();
+
+		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE, {
+			appendUsageEntry,
+		});
+
+		expect(result).toBeNull();
+		expect(appendUsageEntry).toHaveBeenCalledTimes(1);
+		expect(appendUsageEntry).toHaveBeenCalledWith("stub/stub-model", STUB_USAGE);
+	});
+
+	it("usage 缺失（provider 不回）→ 跳过回调不落账（§3.6 存在性守卫），标题照常返回", async () => {
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "修复登录bug" });
+		const appendUsageEntry = vi.fn();
+
+		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE, {
+			appendUsageEntry,
+		});
+
+		expect(result).toBe("修复登录bug");
+		expect(appendUsageEntry).not.toHaveBeenCalled();
+	});
+
+	it("回调内部抛错被回调实现 catch（§3.6 契约，模拟 index.ts 注入的真实回调）→ 不阻断 cleanTitle 流程，标题照常返回", async () => {
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "修复登录bug", usage: STUB_USAGE });
+		const appendUsageEntry = vi.fn((_model: string, _usage: Usage) => {
+			try {
+				throw new Error("session switched"); // 模拟 pi.appendEntry 抛错（session 已切换等）
+			} catch {
+				// 回调体内 catch（§3.6：catch 必须位于回调实现内部）——index.ts 注入实现同款
+			}
+		});
+
+		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE, {
+			appendUsageEntry,
+		});
+
+		expect(result).toBe("修复登录bug");
+		expect(appendUsageEntry).toHaveBeenCalledTimes(1);
+	});
+
+	it("违约回调（实现未自吞错直接抛出）→ callRenameLLM reject（llm.ts 不吞错——§3.6 catch 归属钉死回调实现内部，防双重 catch 漂移；真实接线的兜底由 index.ts 回调体内 catch + 外层 .catch 覆盖）", async () => {
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "修复登录bug", usage: STUB_USAGE });
+		const appendUsageEntry = vi.fn(() => {
+			throw new Error("contract violation");
+		});
+
+		await expect(
+			callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE, { appendUsageEntry }),
+		).rejects.toThrow("contract violation");
 	});
 });
 
