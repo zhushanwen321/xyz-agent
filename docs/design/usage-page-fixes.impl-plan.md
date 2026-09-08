@@ -101,10 +101,10 @@ graph TD
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|----------------------------------------------|------|----------|
-| U1 | pending | 0 | — |
+| U1 | committed | 1 | 788fbebc6（renderer usage 53/53 · vue-tsc 绿；领地内 UsagePage.test.ts 零破坏无需改动，属领地上界非义务） |
 | U2 | pending | 0 | — |
 | U3 | committed | 1 | a8491bb2c（smart-context 49/49 · 探针 3/3 · pi-semantics 守卫 28 条 · typecheck/lint exit=0） |
-| U4 | pending | 0 | — |
+| U4 | committed | 1 | 650118620（llm-shared 52/52 · extensions:typecheck exit=0；附带发现：PI_SUBAGENT_CHAT_MODE 环境泄漏致 subagent-workflow 测试假红，后续全量测试用干净 env） |
 | U5 | pending | 0 | — |
 | U6 | pending | 0 | — |
 | U7 | pending | 0 | — |
