@@ -615,7 +615,7 @@
     "pkg": "pi-coding-agent",
     "distPath": "dist/core/agent-session.js",
     "symbol": "_bindExtensionCore → core 绑定 appendEntry",
-    "note": ":2022-2028 —— appendEntry: (customType, data) 直呼 this.sessionManager.appendCustomEntry(customType, data)（同参数序），取回 entry 后 _emit({type:\"entry_appended\", entry})；扩展侧 appendEntry 的同步返回 id 语义锚（flush-debounce 落盘见 PS-17）"
+    "note": ":2022-2028 —— appendEntry: (customType, data) 直呼 this.sessionManager.appendCustomEntry(customType, data)（同参数序），取回 entry 后 _emit({type:\"entry_appended\", entry})；appendCustomEntry 同步返回 entry.id（session-manager.js:832），而 ExtensionAPI appendEntry 声明为 void（types.d.ts:985，fire-and-forget 语义）（flush-debounce 落盘见 PS-17）"
    }
   ],
   "guard": {

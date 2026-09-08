@@ -341,12 +341,12 @@ interface AggregatedData {
 | ID | 验证的行为 | 探针 | 状态 | 失败时的降级路径 |
 |---|---|---|---|---|
 | P-details | compaction entry 的 details 原样落盘（smart-context 可携带 model） | 本机实测 9 条 entry，details.engine/mode/readFiles 全部原样在 | ✅ 已测 | — |
-| P-appendEntry | `pi.appendEntry` 落盘 `{type:'custom',customType,data,timestamp}` 且可在 fire-and-forget then 链内调用 | 实施期本地 pi CLI：`pi --mode rpc --session-dir <tmp> --extension <rename-session>` 触发首回合 rename，检查 session JSONL | ⛔ U5 后、U6 前 | 失败 → 改为 `setSessionName` 同步前后即刻调用（同一 then 链更早位置），仍失败则该回合放弃计量（rename 主流程不受影响） |
-| P-chat-noop | custom entry 不进对话流（live 与 reload 两路） | 实施期 dev app：触发 rename 后重开 session，断言无新消息 | ⛔ U8 | 失败 → customType 改带 display:false 的 custom_message 形态（照 subagent-directive 先例） |
+| P-appendEntry | `pi.appendEntry` 落盘 `{type:'custom',customType,data,timestamp}` 且可在 fire-and-forget then 链内调用 | 实施期本地 pi CLI：`pi --mode rpc --session-dir <tmp> --extension <rename-session>` 触发首回合 rename，检查 session JSONL | ✅ U5 实测（0.84.4 CLI，落盘形态逐字段一致，无需降级） | 失败 → 改为 `setSessionName` 同步前后即刻调用（同一 then 链更早位置），仍失败则该回合放弃计量（rename 主流程不受影响） |
+| P-chat-noop | custom entry 不进对话流（live 与 reload 两路） | 实施期 dev app：触发 rename 后重开 session，断言无新消息 | ✅ U8 验收（V7：恰 2 条 message + 重开零残留） | 失败 → customType 改带 display:false 的 custom_message 形态（照 subagent-directive 先例） |
 | P-size | `size="icon"` 产 `h-10 w-10`（叠印根因） | 已读 button/index.ts 源码确认 | ✅ 已核 | — |
-| P-narrow | chips 单行滚动在窄窗（settings 弹窗最小宽）不挤压右侧切换、不溢出弹窗 | 实施期 Playwright 连 dev app 缩窗验证 | ⛔ U1 | 失败 → chips 容器加 `max-w-[...]` 上限 + `min-w-0`，极端窄时允许 chips 换行为两行 |
-| P-usage-shape | completeSimple 的 resp.usage（含 usage.cost 形态）对 rename 所用各 provider 均有值 | 实施期 llm-shared 单测 + 本地 CLI 实测 | ⛔ U4 | usage 整体缺失 → 跳过 appendEntry（存在性守卫）；仅 cost 缺失 → 照常落账，费用视角该模型显示 $0、token 照常（诚实降级，§3.6） |
-| P-en-i18n | en locale 已有 heatMonthSuffix/heatWeek* keys（D6 复用前提） | 实施期 grep en/settings.ts | ⛔ U2 | 失败 → 补 en keys（纯文案） |
+| P-narrow | chips 单行滚动在窄窗（settings 弹窗最小宽）不挤压右侧切换、不溢出弹窗 | 实施期 Playwright 连 dev app 缩窗验证 | ✅ U8 验收（V1：761>452 横滚激活 + 右侧切换固定，无需降级） | 失败 → chips 容器加 `max-w-[...]` 上限 + `min-w-0`，极端窄时允许 chips 换行为两行 |
+| P-usage-shape | completeSimple 的 resp.usage（含 usage.cost 形态）对 rename 所用各 provider 均有值 | 实施期 llm-shared 单测 + 本地 CLI 实测 | ✅ U4 单测 + U8 实测（cost.total=0 走诚实降级实例） | usage 整体缺失 → 跳过 appendEntry（存在性守卫）；仅 cost 缺失 → 照常落账，费用视角该模型显示 $0、token 照常（诚实降级，§3.6） |
+| P-en-i18n | en locale 已有 heatMonthSuffix/heatWeek* keys（D6 复用前提） | 实施期 grep en/settings.ts | ✅ U2（keys 双语齐备零改动）+ U8/V11 严格 SVG 探针复核 | 失败 → 补 en keys（纯文案） |
 
 ### 3.6 错误规格
 
@@ -405,7 +405,7 @@ interface AggregatedData {
 | U7 | 类型注释与设计文档回写 | `packages/shared/src/usage-stats.ts`（注释）、`docs/todo/usage-stats-design.md`（D1 增补归属来源与 ④ 分类）、本文档 | C-proc-10 设计文档同步纪律（登记即债务修复即清账） |
 | U8 | 端到端验收 | 按 §4 V1-V12 执行 | 验收独立成单元，防实施完跳过（含 V12 守卫组合场景） |
 
-**待验证检查点**（设计阶段无法确定，诚实标注）：P-appendEntry 的 fire-and-forget 时机（⛔ U5）、P-en-i18n 的 en keys 完备性（⛔ U2）、P-narrow 的窄窗布局（⛔ U1）。
+**待验证检查点**（设计阶段无法确定，诚实标注；实施后全部闭合）：P-appendEntry 的 fire-and-forget 时机（✅ U5 实测）、P-en-i18n 的 en keys 完备性（✅ U2 齐备）、P-narrow 的窄窗布局（✅ U8 横滚激活）。
 
 ---
 
@@ -415,3 +415,4 @@ interface AggregatedData {
 - v2（2026-09-08）：R1 双审修复（主审 1MF+2S / 影响面审 2MF+5S 全修）——V4/V6/V8 补 `XYZ_AGENT_DATA_DIR` 桥接消除验收断链；复合键裸串比较带清单化并撤回「编译期全捕获」声明；U3/U6 增补 pi-semantics 探针登记（details 透传 / custom entry 落盘形态）；④ 守卫与回退字面量对称化；appendEntry 落点收敛 llm.ts + 回调注入 pi 句柄；代价声明修正机制归因（successCount 门控）并补 PS-17 flush 窗口 caveat、图例语义重审触发、cost 缺失 $0 诚实降级语义；时点数据漂移标注。
 - v3（2026-09-08）：R2 双审修复（主审 0MF+5S / 影响面审 1MF+3S 全修）——modelProviderMap 派生源钉死为全量 rows（R2 反例：从过滤后聚合派生则 toggleProvider 先 add 后查确定性丢键、守卫失效、图表净空）并增 V12 组合场景；isolate chip 列为复合键第四消费点；cacheMix TOP-4 声明 token 域例外（G4 措辞同步）；「重置」事实修正为文本按钮（含文本按钮全去 size=icon）；V8 改打 rename-session 自身 model selector（防 provider 级断供空转假绿）；catch 归属钉死回调体内；U1↔⑥ 同步；probe 测试文件补入 U3/U6 交付列；dev 单实例锁前提补入依赖说明。
 - v4（2026-09-08）：R3 双审修复（主审 0MF+4S / 影响面审 1MF+2S 全修）——U8 验收范围同步 V1-V12（V12 入端到端执行单元）；isolate 比较与查表穷举清单化（ModelRank 三处比较用复合键行标识 + modelProviderMap prop 查表随值结构化删除，禁 unknown 兜底）；V12 补前置状态（重置起步 + ≥2 启用 provider + P2 读出处）；V8 补主 turn 成功正向断言 + config 位于系统 pi 目录不受隔离/测试后恢复；⑥ 补 isolate 联动清除条目（V12 的规格锚点）；§3.6 守卫措辞修正（拦截最后一个启用 provider 的关闭，非「最后第二个」）。
+- v5（2026-09-08）：实施完成回写（主 agent，C-proc-10）——§3.5 探针状态列 5 项 ⛔→✅（P-appendEntry/P-chat-noop/P-narrow/P-usage-shape/P-en-i18n，U4/U5/U8 实测闭合）、§5 待验证检查点同步闭合；无规格变更。同批：一致性审查（阶段 3）三区报告聚合——12+ reasonable 入 impl-plan 登记表、1 unreasonable（CacheMix :key 复合键化，定向修中）、4 doc_errors 本批修正（探针状态列 / PS-29 note 同步返回措辞 / todo 锚点标签与 D11 枚举；scanner 头注注释标签由 U6 接替实例同批修正）。
