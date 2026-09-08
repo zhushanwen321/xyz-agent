@@ -222,6 +222,30 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
     expect(tc.output).toBe('final full output')
   })
 
+  // [bash-running-stream-output U2 fix] end 无 ANSI 时清空 running outputRaw
+  it('tool_call_update → tool_call_end：end 无 ANSI 清空 running outputRaw（live ≡ reload）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'bash', arguments: { command: 'npm test' } }) }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_update', { toolCallId: 'tc1', detail: 'running', output: 'partial\n', outputRaw: '\x1b[31mred\x1b[0m\n' }))
+    // end 文本无 ANSI：normalizePiToolResult 不产出 outputRaw，但 end 有 content 须显式清空残留
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', { entry: toolResultEntry({ toolCallId: 'tc1', toolName: 'bash', content: 'Error: command failed', isError: true }) }))
+    const tc = lastAssistant(ctx).toolCalls![0]
+    expect(tc.outputRaw).toBeUndefined()
+    expect(tc.output).toBe('Error: command failed')
+  })
+
+  it('tool_call_update → tool_call_end：end 带 ANSI 时 outputRaw 正常写入', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'bash', arguments: { command: 'npm test' } }) }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_update', { toolCallId: 'tc1', detail: 'running', output: 'partial\n', outputRaw: '\x1b[31mred\x1b[0m\n' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', { entry: toolResultEntry({ toolCallId: 'tc1', toolName: 'bash', content: '\x1b[32mok done\x1b[0m\n', isError: false }) }))
+    const tc = lastAssistant(ctx).toolCalls![0]
+    expect(tc.outputRaw).toBe('\x1b[32mok done\x1b[0m\n')
+    expect(tc.output).toBe('ok done\n')
+  })
+
   it('sealed guard：finalizeSession 收口后 text_delta 幂等丢弃（D-010）', () => {
     const ctx = makeCtx()
     dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))

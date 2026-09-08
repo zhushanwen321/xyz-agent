@@ -58,7 +58,7 @@ graph TD
 
 | Unit | 偏差 | 原因 | 登记时间 |
 |------|------|------|----------|
-| U2 | end 覆盖测试未对 outputRaw 终态值做断言 | end 帧无 ANSI 时 normalizePiToolResult 不产出 outputRaw（条件 spread 不触发），running 期残留 outputRaw 会保留——既有 end 路径语义，不属 U2 领地；已转阶段 3 一致性审查核查（候选边缘：abort/error 路径 end 文本无 ANSI 而 running 期有 ANSI 时 outputRaw 残留致 AnsiText 渲染陈旧文本） | 2026-09-08 U2 验收时 |
+| 一致性审查 r1 reasonable×6 | ①U1 三偏差核实为正确且优于原措辞（设计 v4.2 已同步）②尾窗两分支不变式实现忠实 ③U2 detail 语义锁定 ④useToolMeta running 可见面无变化属实 ⑤copyContent 与声明一致 ⑥截断 JSON 片段回退行为与渲染序声明一致 | 均无需额外文档同步 | 2026-09-08 一致性审查 r1 |
 | U1 | ① ANSI 序列内判定排除紧随 ESC 的 `[` 引导字节 ② 码点回退改为「起点落低代理则后移丢弃孤儿」③ normalizeWithTailCap 内含 4 行文本抽取（原文截断后重包装喂 normalizePiToolResult） | ①② 为设计措辞规格 bug 的正确修正（设计 v4.2 已同步，4 轮审查未发现）；③ outputRaw 仅含 ANSI 时存在、无 ANSI 原文不可恢复，重包装复用零复制符合「尽量复用」 | 2026-09-08 U1 验收时 |
 
 ## 6 状态表
@@ -78,3 +78,4 @@ graph TD
   - v2：U3 committed（ea93e5214，轮次 1 一次通过；基线 hash 同步修正为 amend 后的 21f269b0d）。
   - v3：U2 committed（c520c1726，core 全量 1773 tests 通过；偏差 1 条登记并转阶段 3）。
   - v4：U1 committed（偏差 3 条均合理：①② 设计措辞修正已回写设计 v4.2；③ 复用方式符合要求；runtime 全量中 thinking-level-effective-e2e G5 为环境性失败，与本改动无关）。
+  - v5：阶段 3 一致性审查收敛——unreasonable×1（end 无 ANSI 时 outputRaw 残留）修复 committed（core 全量 1775 tests，含 2 条新 end 清空/保留用例）；doc_errors×2 主 agent 亲修（设计 v4.3）；reasonable×6 入登记表；U2 偏差行（outputRaw 残留候选边缘）经核查升级为真实缺陷并已修复，从登记表移除。

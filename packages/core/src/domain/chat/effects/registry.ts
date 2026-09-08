@@ -626,7 +626,10 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
         ? truncateToolCall({
           ...c,
           ...(output !== undefined && { output }),
-          ...(outputRaw !== undefined && { outputRaw }),
+          // end 有 content 时无条件写入 outputRaw（含 undefined 显式清空）——running 期
+          // tool_call_update 写入的 outputRaw 在 end 文本无 ANSI 时会残留，用户终态看到
+          // 带色陈旧尾窗而非 end 文本（错误信息），且 live ≠ reload。
+          ...(hasContent && { outputRaw }),
           // 与重放路径（reducer：isError → status:'error'）保持一致：实时失败的 tool call
           // 必须带 status:'error'，否则前端 Block.vue 的 isFailed 判定恒为 false（恒显示成功）。
           status: isError ? 'error' : 'completed',

@@ -75,7 +75,7 @@ onUpdate({
 })
 ```
 
-而 event-adapter（`packages/runtime/src/infra/pi/event-adapter.ts:960`）的翻译只保留了 `.details`：
+而 event-adapter（`packages/runtime/src/infra/pi/event-adapter.ts` 的 `handleToolExecutionUpdate`）的翻译只保留了 `.details`：
 
 ```ts
 const detail: string | Record<string, unknown> | undefined =
@@ -159,7 +159,7 @@ Block.vue                                        [改造点 U3]
   展开区渲染序：AnsiText(outputRaw，v-if 有 ANSI)
               → parsedJsonOutput（pre，JSON 归一，running 期 parse 失败回退 null）
               → displayContent span（纯文本兜底）  ← running 态首次可达
-  toolTailLines raw = outputRaw ?? output → 尾行视口滚动
+  toolTailLines raw = outputRaw ?? displayContent → 尾行视口滚动
   v-if 加入 isBashTool               → bash 展开容器恒渲染（含命令块），空输出/无输出不再假展开
 ```
 
@@ -262,7 +262,7 @@ bash 跑一个渐进输出的长命令（用户在聊天框让 agent 执行 `for
 
 **三层各一处改造点，数据流方向不变（pi → adapter → core → renderer）。**
 
-### U1 runtime：`handleToolExecutionUpdate`（`packages/runtime/src/infra/pi/event-adapter.ts:960`）
+### U1 runtime：`handleToolExecutionUpdate`（`packages/runtime/src/infra/pi/event-adapter.ts`，符号锚定）
 
 ```ts
 function handleToolExecutionUpdate(event: PiToolExecutionUpdateEvent, sid: string): PiTranslatedEvent[] {
@@ -323,10 +323,10 @@ c.id === callId
 | GUI 流式组件（`__gui__`） | details 照旧进 payload.detail → registry 无条件写 c.detail（与现状一致）→ `guiComponent` 流式 fallback（Block.vue:431-437，running-only 门控）原样 |
 | useToolMeta（行数/字符数/耗时） | 消费 `tool.output`（`useToolMeta.ts:48-55`）：running 态 output 出现后 `metaItems` 会含「N 行」项，**但** ① bash 的行数项被 `filteredMetaItems` 结构性过滤（`text.endsWith('行')`，bash 恒过滤）② meta 条只渲染在展开容器内且 bash meta 条用 filteredMetaItems ③ 耗时项需 endTime（running 期不存在）→ **running 态展开区 meta 条仍为空，用户可见面无变化**；completed 态行为与现状一致（output 为最终值）。本行为已按 S1 观察点验收 |
 | mock 流 | 只发 string detail → output 字段缺省 → registry 条件写入不触发；`readString` 畸形降级 |
-| end 路径 / applyEntry / 等价性测试 | end 覆盖逻辑、reducer、持久化链路零改动（§4 live ≡ reload）；running 期截断不影响 end 全量快照 |
+| end 路径 / applyEntry / 等价性测试 | end 覆盖逻辑、reducer、持久化链路仅一处对齐性修正（一致性审查 r1：end hasContent 时 outputRaw 改无条件写入，undefined 显式清空 running 期残留——否则 abort/error 路径 end 文本无 ANSI 时 AnsiText 优先渲染陈旧尾窗且 live ≠ reload）；applyEntry 与持久化零改动（§4 live ≡ reload）；running 期截断不影响 end 全量快照 |
 | WS ring / 重连 | update 帧经 U1 尾窗截断后 ring 放大有界（D4 四要素）；gap 全量重拉路径不变 |
 | composer bash（BashOutputBlock） | 独立 bashExecution 通道，不经过 tool_call_update |
-| copyContent（Block.vue:344-349） | running 态 bash 复制内容从「仅命令」变为「命令 + 尾窗输出」（≤8KB）——顺带收益，符合复制语义直觉，不单独验收 |
+| copyContent（Block.vue `copyContent` computed） | running 态 bash 复制内容从「仅命令」变为「命令 + 尾窗输出」（≤8KB）——顺带收益，符合复制语义直觉，不单独验收 |
 
 ## 8. 验收（真实场景，非单测非 mock）
 
@@ -405,4 +405,5 @@ c.id === callId
   - **[MF→D4/U1]** 硬切分支升级三步管线：硬切 → ANSI 残片推进（截断点落 ESC 序列内时起点推至后续首个 `\x1b`，残段丢弃）→ 码点边界回退；无后续 ESC 的残余登记为已接受代价（四条件交集）；单测补 CSI 中段用例；§8 S5 命令 ② 观察项同步。
   - **[S]** grapheme cluster 劈开（ZWJ/组合字符字形异常）登记接受（视觉级、100ms 自愈、不上 Segmenter）；**[S]** UX 代价登记补重审触发条件（用户报告误以为输出丢失）；**[S]** per-session ring 聚合数字显式化（>5 并发 ≈ ≤80MB 入重审条件）；**[S]** 两层截断语义边界登记（8KB 尾窗 vs pi 50KB 快照 + fullOutputPath 恢复通道）；**[INFO]** §9.2 U1 测试描述点名两分支。
 - v4.2：实施期 U1 偏差回写（合理不一致 → 设计措辞同步，C-proc-10）：D4 硬切分支 ② 排除 CSI 引导字节 `[`（0x5B 落在终止区间但语义为引导，按字面则中段检测永不可达——4 轮审查均未发现的规格 bug）；③ 码点回退方向修正（起点落低代理被劈、非高代理）。
+- v4.3：阶段 3 一致性审查处置：unreasonable×1（end 无 ANSI 时 running 期 outputRaw 残留→AnsiText 陈旧渲染 + live ≠ reload）→ 回归面表 end 行改为「hasContent 时 outputRaw 无条件写入（undefined 显式清空）」；doc_errors×2 已修（§4 图尾行取数措辞对齐 D3；行号锚点改符号锚定）；reasonable×6 入登记表（见 impl-plan §5）。
 - v4.1：r4 终审双份 0 must-fix（设计就绪），3 条 INFO 级 suggestion 同批落位：§4 ring 段概括句点名 ANSI 残片推进；ANSI 推进目标改「扫到 CSI 终止字节 +1」（丢弃更少、实现更简）+ 判定仅对 CSI 充分的 OSC/DCS 误判声明入已接受代价 ②。审查收敛轨迹：r1（0+2 MF / 4+4 SG）→ r2（1+2 / 2+2）→ r3（0+3 / 1+2）→ r4（0+1 / 0+2，全 INFO）。
