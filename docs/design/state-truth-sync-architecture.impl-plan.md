@@ -180,7 +180,7 @@ worktree 决策：全部 plain。唯一热点公共文件 session-lifecycle.ts�
 | U6 | committed | 1 | 8f8d70b36（P4 三类源 + E9 回落全过；renderer 零改动；残留风险 #3 探针验证完成——陈旧窗口按代价声明行为） |
 | U7a | committed | 1 | da67e9d4c（factory 15 用例；7 处迁移目标 API 覆盖自评无可表达缺口；exports 子路径授权给 U7b） |
 | U7b | in-progress | 1 | 派发中（4 处迁移 + core package.json exports +1 行——主 agent 已裁决领地扩展） |
-| U7c | pending | 0 | —（等 U7b exports 落地后派发） |
+| U7c | committed | 1 | 40929538b（3 处迁移净删 21 行；Set 标记保留属排除形态豁免已接受；35/35 定向绿） |
 | U8 | committed | 1 | 85bdde0eb（配额中断后半成品经全量核验收口：core 120f/1935t 绿、签名逐字不变、消费方零 diff、净删 86 行） |
 | U9 | committed | 1 | 7dbd88873（FR-15 净删 146 行；惰性清除 +1 回归测试；2 领地扩展：mutation 契约 stale 条目 + ADR 豁免镜像行；反向 grep 生产零命中；处置表四族覆盖确认） |
 
