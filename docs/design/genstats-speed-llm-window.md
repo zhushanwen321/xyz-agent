@@ -29,7 +29,7 @@
 
 ### 2.2 根因：物理数据流中闭合点晚于工具执行
 
-现行采样链路（pi 0.84.4 实装，`npm ls` 核对；✅ 以下全部为本次设计前静态直读 dist 源码核实的探针事实）：
+现行采样链路（pi 0.84.4 实装，`npm ls` 核对；✅ 以下全部为本次设计前静态直读 dist 源码核实的探针事实。**设计期快照声明：以下为设计前基线，实施后闭合点已前移至 assistant message_end（见 §3 方案），行号为设计期锚点、以内容定位为准**）：
 
 ```
 pi 子进程 (agent-loop.js)                        runtime
@@ -56,7 +56,7 @@ turn_end（含 usage，工具跑完才发）
 ```
 
 - **起算点已经正确**：`turn-start` kind 并非来自 pi 的 turn_start 事件（该事件不翻译），而是来自 pi **assistant message_start**（event-adapter.ts:786-797 `!msg` 分支与 :853-858 兜底分支，两处都发 `turn-start` kind + `message.message_start` 帧）。即现行 duration 的起点 = LLM 流式窗口开端。
-- **闭合点错误**：唯一的闭合动作发生在 turn-usage case（`Date.now() - turnStartedAt`，event-interpreter.ts:456-464），而 pi 的 turn_end 在 `executeToolCalls` **之后**才 emit（agent-loop.js:139-147，✅ 实装源码核实）。
+- **闭合点错误**：唯一的闭合动作发生在 turn-usage case（`Date.now() - turnStartedAt`，event-interpreter.ts:456-464，设计期锚点），而 pi 的 turn_end 在 `executeToolCalls` **之后**才 emit（agent-loop.js:139-147，✅ 实装源码核实）。
 - **设计史**：原设计文档（composer-gen-stats.md §2.2）将 turn 窗口误当「单次 LLM 请求窗口」（「每个 turn 恰好一次 LLM 请求」只断言了请求次数，未核实 turn_end 的时序）；GS-5 登记只承认了毫秒级 RPC 抖动，漏了分钟级工具时间。i18n 文案「不含工具执行时间」从第一天起就是错的。
 
 ### 2.3 影响量化（真实落盘数据，2026-09-08 当日）

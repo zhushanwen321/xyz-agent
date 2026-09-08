@@ -199,7 +199,7 @@ turn_end                ──RPC──→  handleTurnEndPi      turn-usage case
 - **被否**：用 pi entry 的 timestamp 差——session JSONL 只有完成时刻，无起算点（§2.2 事实 3）；用 pi extension 传消息级时间戳——同方案 B 否决理由；[HISTORICAL 被否推论]「锚点每轮重置即天然 = 末轮 LLM 请求时长」——turn_end 晚于末轮工具执行，时序上不成立。
 - **证据**：event-interpreter.ts:434（turn-start 起算 + 重锚清除）/ :402 + :813（case 'message' 内 message_end 结算 + role 守卫）/ :464（turn-usage 消费，实装注释即引 genstats-speed-llm-window D1-D3）；pi-statusline 同为 message 级本地时钟（message_start → message_end Date.now() 差）——新口径下两覆盖区间才真正重合（旧口径相差末轮工具时长，并非「毫秒级本地开销」）。
 - **效果**：G1 的速度数值与 pi-statusline 同口径可比；工具重 turn 不再稀释本次/聚合值，UI 口径说明「不含工具执行时间」成为真实陈述（genstats-speed-llm-window G1/G2）。
-- **探针（⛔实施期门 → 2026-09-08 闭合）**：原需验证 ①「1 turn = 恰好一次 assistant message」配对假设（含工具调用会话）、② turn 级 duration vs message 级时长的系统性偏差——② 被真实落盘数据证实（工具稀释 1.7~4x），触发原设降级路径（改挂 message_start/end 对）并落地；① 转由 pi-semantics 静态探针 P4 常驻守卫（pi-semantics-turn-usage-model.test.ts，u2 bb73e1f91）；残余观察项仅 D1 乐观偏差量级（首事件延迟占比，归 genstats-speed-llm-window S1 实测锚定）。
+- **探针（⛔实施期门 → 2026-09-08 闭合）**：原需验证 ①「1 turn = 恰好一次 assistant message」配对假设（含工具调用会话）、② turn 级 duration vs message 级时长的系统性偏差——② 被真实落盘数据证实（工具稀释 1.7~4x），触发原设降级路径（改挂 message_start/end 对）并落地；① 转由 pi-semantics 静态探针 P4 常驻守卫（pi-semantics-turn-usage-model.test.ts，u2 bb73e1f91）；残余观察项 D1 乐观偏差量级（首事件延迟占比）已闭合——genstats-speed-llm-window Gate B S1 实测锚定：显示值与流出感知一致，未触发重审条件（impl-plan §7 Gate B）。
 
 **D3：存储布局 = `<dataDir>/gen-stats/`，per-model 两类文件，算法对齐 pi-statusline（选定）**
 - **采用**：
@@ -408,7 +408,7 @@ useGenStats(sessionIdRef): { current: ComputedRef<GenStatsFrame | null> }
 | renderer | `src/i18n/locales/{zh-CN,en-US}/panel.ts` | 修改（genStats 文案段） |
 
 **待验证检查点（实施期确认，设计不编造）**：
-- D2 探针（2026-09-08 已闭合）：① 配对假设转由 pi-semantics 静态探针 P4 常驻守卫；② 数值对比经真实落盘数据证实——turn 级 duration 含工具时间（稀释 1.7~4x），降级评估触发并落地（改挂 assistant message_start/end 对，见 D2 supersede 与 genstats-speed-llm-window.md）；残余观察项仅 D1 乐观偏差量级（归该设计 S1 实测锚定）。
+- D2 探针（2026-09-08 已闭合）：① 配对假设转由 pi-semantics 静态探针 P4 常驻守卫；② 数值对比经真实落盘数据证实——turn 级 duration 含工具时间（稀释 1.7~4x），降级评估触发并落地（改挂 assistant message_start/end 对，见 D2 supersede 与 genstats-speed-llm-window.md）；残余观察项 D1 乐观偏差量级已闭合——该设计 Gate B S1 实测锚定：显示值与流出感知一致，未触发重审条件（impl-plan §7 Gate B）。
 - turn_end.message.model 在各 provider 的真实性（responseModel vs model 字段，浮层标题取哪个）。
 - get_state 返回的 model 字段格式（复合 id provider/model 还是裸 model id）与样本 modelKey（provider__model）的拼接对齐规则——降级链 ① 依赖此对齐；另确认 get_state 对「从未发消息的 session」返回默认模型还是空。
 - provider 对 usage.cacheRead 的上报覆盖面（zai/kimi/xiaomi-mimo 实测），决定「—」态出现频率。

@@ -116,10 +116,11 @@ export interface EventInterpreterOptions {
   onTurnUsage?: (sessionId: string) => void
   /**
    * composer-gen-stats（D1/D2）：turn-usage 组装 GenStatsSample 后采样回调（组合根注入
-   * GenStatsService.recordSample）。durationMs = Date.now() - turnStartedAt（本地时钟差，
-   * D2 口径）；无配对 turn-start（runtime 中途启动/事件丢失）→ durationMs=null，
-   * service 侧速度样本跳过、命中率样本照常（§3.5）。同步 fire-and-forget（service 内部
-   * 完成落盘与扩展广播，不阻塞事件流）。
+   * GenStatsService.recordSample）。durationMs = llmWindowDurationMs——assistant
+   * message_start → assistant message_end 的 LLM 请求窗口本地时钟差（不含工具执行时间，
+   * genstats-speed-llm-window D1 口径）；真缺闭/缺起（pi 崩溃断连 / runtime 中途启动
+   * 丢 message_start）→ durationMs=null，service 侧速度样本跳过、命中率样本照常（§3.5）。
+   * 同步 fire-and-forget（service 内部完成落盘与扩展广播，不阻塞事件流）。
    */
   onGenStats?: (sessionId: string, sample: GenStatsSample) => void
   /**
@@ -469,14 +470,16 @@ export class EventInterpreter {
         this.opts.onContextUpdate?.(ev.sessionId, { inputTokens: ev.inputTokens, totalTokens: ev.totalTokens })
         this.opts.onTurnUsage?.(ev.sessionId)
         // composer-gen-stats（D1/D2）：组装生成指标样本采样（fire-and-forget 同步，不阻塞事件流）。
-        // durationMs = now - turnStartedAt；无配对 turn-start → null（速度样本由 service 跳过，
-        // 命中率样本照常——promptTotal 与时间无关）。消费后置空锚点（一次性语义）：缺配对
-        // 的后续 turn-usage 不得拿上一 turn 旧锚点算出系统性偏大 duration，须 §3.5 承诺的
-        // durationMs=null。
+        // durationMs 取 llmWindowDurationMs（genstats-speed-llm-window D1：assistant
+        // message_start → message_end 的 LLM 请求窗口，不含工具执行时间）；真缺闭/缺起 → null
+        // （速度样本由 service 跳过，命中率样本照常——promptTotal 与时间无关）。消费后置空
+        // 锚点（一次性语义）：缺配对的后续 turn-usage 不得拿上一 turn 旧锚点算出系统性偏大
+        // duration，须 §3.5 承诺的 durationMs=null。
         if (this.opts.onGenStats) {
           // durationMs 改源 llmWindowDurationMs（genstats-speed-llm-window D1）：assistant
-          // message_end 结算的 LLM 请求窗口（不含工具执行时间）。null = 真缺闭（pi 崩溃/断连，
-          // 闭合帧不到达，设计 §3.1 失败路径）→ 速度样本由 service 侧跳过（命中率照常）。
+          // message_end 结算的 LLM 请求窗口（不含工具执行时间）。null = 真缺闭/缺起（pi
+          // 崩溃/断连致闭合帧不到达，或 runtime 中途启动/丢 message_start 致无起算点，
+          // 设计 §3.1 失败路径 / D3 矩阵）→ 速度样本由 service 侧跳过（命中率照常）。
           // 消费后置 null（一次性语义）。保留 turnStartedAt 清 null（防纵深，D3 零成本）：
           // 缺配对的后续 turn-usage 不得拿旧锚点算出系统性偏大 duration（§3.5 一致性）。
           const windowMs = this.llmWindowDurationMs

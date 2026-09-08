@@ -364,7 +364,8 @@ export interface GenStatsSample {
   /** 本 turn 真实 output（usage.output，缺省 null） */
   outputTokens: number | null
   /** LLM 请求窗口：assistant message_start → assistant message_end 本地时钟差（不含工具执行时间；
-   * 合成事件防御栈见 genstats-speed-llm-window.md §3.3 D2；无配对闭合（真缺闭）→ null，速度样本跳过） */
+   * 合成事件防御栈见 genstats-speed-llm-window.md §3.3 D2；真缺闭/缺起（pi 崩溃断连 / runtime
+   * 中途启动丢 message_start）→ null，速度样本跳过） */
   durationMs: number | null
   /** 样本模型 id（AssistantMessage.model 运行时字段，缺省 null；D2 探针待验证真实性） */
   model: string | null
