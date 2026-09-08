@@ -94,6 +94,39 @@ describe("callLLM", () => {
 		expect(result).toEqual({ ok: true, content: "hello" });
 	});
 
+	it("usage 透传：resp.usage 存在 → ok:true 结果透出该对象（additive，设计 §3.3 ②）", async () => {
+		const ctx = makeCtx({ ok: true, apiKey: "k" });
+		// 形态对齐 pi-ai 0.84.4 Usage（含 cost），贴近真实 provider 响应（P-usage-shape）
+		const usage = {
+			input: 10,
+			output: 5,
+			cacheRead: 2,
+			cacheWrite: 1,
+			totalTokens: 18,
+			cost: { input: 0.01, output: 0.02, cacheRead: 0.001, cacheWrite: 0.002, total: 0.033 },
+		};
+		mockComplete.mockResolvedValue({ stopReason: "stop", content: [{ type: "text", text: "hello" }], usage });
+
+		const result = await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [] });
+
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			// 透传语义：同一引用，非拷贝/重组
+			expect(result.usage).toBe(usage);
+			expect(result.content).toBe("hello");
+		}
+	});
+
+	it("usage 缺失：resp.usage 不存在 → ok:true 结果无 usage 字段（跳过落账语义由调用方处理）", async () => {
+		const ctx = makeCtx({ ok: true, apiKey: "k" });
+		mockComplete.mockResolvedValue({ stopReason: "stop", content: [{ type: "text", text: "hello" }] });
+
+		const result = await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [] });
+
+		expect(result.ok).toBe(true);
+		expect(result).not.toHaveProperty("usage");
+	});
+
 	it("stopReason=error 且 content 无 text → error 回落 'unknown error'", async () => {
 		const ctx = makeCtx({ ok: true, apiKey: "k" });
 		mockComplete.mockResolvedValue({ stopReason: "error", content: [] });
