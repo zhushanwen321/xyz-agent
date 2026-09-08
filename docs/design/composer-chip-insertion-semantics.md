@@ -179,7 +179,7 @@ args 语义的准确表述（r1 修订，F2）：pi 的命令模型是 `/cmd` + 
 
 **D1：插入位置权威源 = `restoreSelection` 本体活选区优先（r1 修订，F1 落点修正）**
 
-v1 把 liveInEditor 检查放进 `insertChipAtSelection` 是**无效落点**：六类 `insertXxxChip` 的调用序都是 `restoreSelection()` → `el.focus()` → … → `insertChipAtSelection()`（`chip-commands.ts:121/146/174/201/219/246`），活选区在检查点之前就已被 `restoreSelection` 用 savedRange 覆盖，检查恒走「活选区」分支但读到的已是 stale 位置。r1 把优先级判定**上移到 `restoreSelection` 本体**（`contenteditable.ts:278`）：
+v1 把 liveInEditor 检查放进 `insertChipAtSelection` 是**无效落点**：六类 `insertXxxChip` 的调用序都是 `restoreSelection()` → `el.focus()` → … → `insertChipAtSelection()`（`chip-commands.ts:121/146/174/201/219/246`），活选区在检查点之前就已被 `restoreSelection` 用 savedRange 覆盖，检查恒走「活选区」分支但读到的已是 stale 位置。r1 把优先级判定**上移到 `restoreSelection` 本体**（`contenteditable.ts:278`；design-code-sync 轮 1 同步：终态本体经偏差 #14 提取至 `packages/dom-core/src/composer/input/selection-restore.ts:36`，contenteditable.ts 经 useSelectionRestore 工厂消费——`contenteditable.ts:278` 为设计时点行号）：
 
 ```ts
 function restoreSelection(): void {
@@ -227,7 +227,7 @@ if (e.key === 'Enter' || e.key === 'Tab') {
   return true
 }
 ```
-（`composingRef`：CommandPopover 模块内监听 `compositionstart/compositionend` 维护的 boolean，与 contenteditable.ts 的 `composing` 同款范式。）
+（`composingRef`：CommandPopover 模块内监听 `compositionstart/compositionend` 维护的 boolean，与 contenteditable.ts 的 `composing` 同款范式。design-code-sync 轮 1 同步：终态经偏差 #5 提取为 `packages/renderer/src/composables/panel/composition-flag.ts` 的 useCompositionFlag，CommandPopover 与 AmbiguousFilePopover 共用。）
 
 - **删除 v1 的 defaultPrevented 防御层**（r1 影响面审 MF-1）：`contenteditable.ts` onKeydown 的 Enter 分支先 `e.preventDefault()` 再 `onEnterKeydown(e)` 转发（:240-249）——composer-keydown 收到的 Enter **恒** `defaultPrevented===true`，「Enter 分支前 `if (e.defaultPrevented) return`」会拦死全部正常发送。双触发的防护完全依赖 stopPropagation 主修 + 单测锁定时序契约（P5：浮层 open 时 Enter 不触发 onSend 的 capture/bubble 全链路用例）。
 - **IME 守卫是现状 bug 顺带修复**：浮层 query 过滤态下 IME 组合中按 Enter 确认候选词，现状会被 capture 劫持为「选中浮层第一项」（`onWindowKeydown` 无 isComposing 检查）——D2 重写该分支时一并修复，与 G2「绝不触发发送」的承诺域一致。
@@ -240,7 +240,7 @@ if (e.key === 'Enter' || e.key === 'Tab') {
 
 - `CommandSelectPayload` 增加 `isSkill?: boolean`（`CommandPopover.onSelect` 已有 `item.isSkill` 派生——`buildSlashCandidates` 产出，零新增计算）。
 - `onCmdSelect`：`type==='slash' && isSkill` → `clearSlashQueryText()` + `insertSkillChip(parsedName, location, icon)`（与 type==='skill' 分支合流；parsedName = name.slice('/skill:'.length)）。
-- **location 透传链补齐**：`SlashCandidateInput` 加 `location?`；`CommandPopover.vue` slashCommands computed 从 `PiCommandInfo.sourceInfo?.path`（skill 项）填充；landing 态 SkillInfo 分支填 `sourcePath`。**对 runtime 注入器零改动**（D4 权威映射兜底本就兼容缺 location，带上后走自描述路径）。
+- **location 透传链补齐**：`SlashCandidateInput` 加 `location?`；`CommandPopover.vue` slashCommands computed 从 `PiCommandInfo.sourceInfo?.path`（skill 项）填充（design-code-sync 轮 1 同步：终态回填逻辑经偏差 #6 位于 command-popover-symbols.ts 的 buildPanelSlashCandidates，非 CommandPopover.vue 内联）；landing 态 SkillInfo 分支填 `sourcePath`。**对 runtime 注入器零改动**（D4 权威映射兜底本就兼容缺 location，带上后走自描述路径）。
 - **被否 B（砍入口）**：破坏 pi TUI 原生习惯。**被否 C（字符串约定）**：脆弱协议。
 - **同修第三处错位**：`restore.ts restoreSegments` 的 skill 分支从 `insertSlashChip('/skill:'+name)` 改为 `insertSkillChip(name, seg.location)`——发送失败回滚不再丢 location、不再误删其他 chip。
 
@@ -306,7 +306,7 @@ if (e.key === 'Enter' || e.key === 'Tab') {
 |---|---|---|
 | shared | `src/__tests__/segments.test.ts` | slash 段类型 + serializer + 归位断言（穷尽守卫新增 key） |
 | dom-core | `composer/input/chip-commands.test.ts` / `input-dom.test.ts` / `contenteditable.test.ts` / `restore.test.ts` / `skill-chip.test.ts` | D1 插入位置、D4-a 命令 chip 就地、visitSlashChip slash 段、restoreSegments（r3 审查修正：原列 skill-trigger.test.ts 实际未被行为变更触及，删；skill-chip.test.ts 才是被改文件） |
-| ui | `features/composer/__tests__/`（file-chip / composer-input-get-text / useComposerChipCommands.image / composer-input-trigger-forward / composer-injection-real-dom / useComposerDragDrop） | 真实选区链路去 mock（restoreSelection mock 盲区——bug 存活根因）；触发转发回归 |
+| ui | `features/composer/__tests__/`（file-chip / composer-input-get-text / useComposerChipCommands.image / composer-input-trigger-forward / composer-injection-real-dom / useComposerDragDrop） | 真实选区链路去 mock（restoreSelection mock 盲区——bug 存活根因；实施收窄见偏差 #15：仅 composer-injection-real-dom 去 mock，位置覆盖由 dom-core chip-commands.test 真实链路区段承接）；触发转发回归 |
 | renderer | `composer-keydown.test.ts`（D2 改动本体，含 capture/bubble 时序锁用例：浮层 open 时 Enter 不触发 onSend）；`composer-slash-injection.test.ts` / `composer-slash-trigger.test.ts`（强制最前断言改写为就地断言）；`composer-hash-trigger / composer-compact-queue / composer-dispatch-route / composer-bash-mode / composer-send-button-states / composer-fork-mode / composer-landing-skill-reload`（D4-c 判定源迁移） |
 | core | `domain/composer/dispatch/send.test.ts` / `submit.test.ts`；`domain/chat/` 的 `mutations.test.ts` / `useChat.test.ts` / `submit-queued-entry.test.ts`（场景 10/11/12 对应：staging/defer 重放/编辑重发） | 判定源迁移 + staging/defer 载荷 |
 | runtime | skill-injector 相关（回归——slash 段不进注入器，预期零变化） | 反向回归锁 |
@@ -317,7 +317,7 @@ if (e.key === 'Enter' || e.key === 'Tab') {
 
 | 单元 | 内容 | 文件改动地图 | justification（为何独立成单元） |
 |---|---|---|---|
-| P1 | D1 restoreSelection 活选区优先 + 应用防御 | `dom-core/composer/input/contenteditable.ts`（restoreSelection 本体重写 + placeCaretAtEnd 辅助）；`chip-commands.ts`（调用点注释更新，无需改逻辑） | 根因 1 单点收口；判定在 restoreSelection 本体使其全部调用方（六类 insertXxxChip + insertTextAtCursor + onAddSelect）一次修复（r1 F1 落点修正）；独立可验收（场景 1-4） |
+| P1 | D1 restoreSelection 活选区优先 + 应用防御 | `dom-core/composer/input/contenteditable.ts`（restoreSelection 本体重写 + placeCaretAtEnd 辅助；design-code-sync 轮 1 同步：终态本体经偏差 #14 提取至 selection-restore.ts，contenteditable.ts 经 useSelectionRestore 工厂消费）；`chip-commands.ts`（调用点注释更新，无需改逻辑） | 根因 1 单点收口；判定在 restoreSelection 本体使其全部调用方（六类 insertXxxChip + insertTextAtCursor + onAddSelect）一次修复（r1 F1 落点修正）；独立可验收（场景 1-4） |
 | P2 | D2 capture 截断 + IME 守卫 + 同款模式修复 | `renderer/components/panel/CommandPopover.vue`（handleKeydown Enter/Tab：isComposing + stopPropagation）；`ui/features/chat/AmbiguousFilePopover.vue`（同款模式顺带修）；两处时序契约注释 | 根因 2；IME 确认劫持与 AmbiguousFilePopover 是同根双入口模式，合并修复防复发（r1 F3/SG-1）；独立可验收（场景 1「无新消息」+ 场景 13） |
 | P3 | D3 skill 项按类型路由 + location 链 | `renderer/composables/panel/useCommandPopoverTrigger.ts`（payload + onCmdSelect 分流）；`command-popover-symbols.ts`（SlashCandidateInput.location + buildPanelSlashCandidates 的 sourceInfo.path 回填——r3 审查同步：回填逻辑经偏差 #6 提取至此，非 CommandPopover.vue 内联）；`CommandPopover.vue`（消费构建函数）；`dom-core/composer/input/restore.ts`（skill 回滚分支） | 根因 3；与 P1/P2 无代码耦合，可并行；独立可验收（场景 5/9） |
 | P4 | D4 命令 chip 就地 + 归位 + 判定迁移 | `dom-core/composer/input/chip-commands.ts`（insertSlashChip 命令分支）；`input-dom.ts`（visitSlashChip slash 段）；`shared/segments.ts`（类型 + serializer + 归位）；`core/domain/composer/dispatch/send.ts`（defer `/` 半边 / /compact / staging.send 判定迁移）；`core/domain/chat/useChat.ts`（纯文本判定扩展）；`dom-core/composer/input/restore.ts`（slash 段回滚） | 根因 4，触及数据模型与发送链——风险面最大，单独成单元便于审查与回滚；判定迁移点以 D4-c 裁决表为准（含 staging，r1 MF-2）；独立可验收（场景 6/7/10/11/12） |
