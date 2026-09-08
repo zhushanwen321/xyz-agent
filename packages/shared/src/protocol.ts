@@ -1014,6 +1014,56 @@ export type SkillNoticeReason =
  *
  * 收紧某条目时，runtime 构造点会同步得契约校验（若 payload 字段对不上，tsc 报错——这是 D5 的预期收益）。
  */
+// ── Mutation reply 具名类型（C-pi-14 / ADR-0065）──────────────────
+//
+// mutation 类 RPC（改状态值且 renderer 有 store 副本）的 reply 统一提取具名
+// `XxxMutationReply` interface，生效值/回显字段**类型必需、不 optional**（编译期强制）。
+// 乐观/回执两分支裁决标准与新 mutation 接入检查单见 docs/adr/0065-mutation-reply-effective-value.md；
+// 清单守卫（新增 mutation 不入 MUTATION_RPC_REGISTRY 即测试红）在
+// packages/runtime/src/__tests__/mutation-reply-contract.test.ts。
+//
+// 分支一（后端可变换请求值——pi 钳制/pattern 换模，reply 生效值是显示态唯一合法来源）：
+
+/** model.switch 的 reply（model.switched）：provider/modelId 是 pi 实际生效模型（runtime
+ *  set→get_state 读回拆解；pattern 引擎静默换模时 ≠ 请求值）。消费侧禁乐观写请求值。 */
+export interface ModelSwitchMutationReply {
+  sessionId: string
+  provider: string
+  modelId: string
+}
+
+/** session.setThinkingLevel 的 reply（session.thinkingLevelSet）：level 是 pi 实际生效档
+ *  （pi 钳制不支持的档位时 ≠ 请求值，如 mimo 族 max→high）。消费侧禁乐观写请求值。 */
+export interface ThinkingLevelMutationReply {
+  sessionId: string
+  level: string
+}
+
+// 分支二（后端原样存储——runtime 自有数据，reply 回显落盘态；允许乐观写 + reply 权威覆盖 + 失败回滚）：
+
+/** preset.create / preset.update 的 reply：回显保存后的预设（原样存储，请求值即生效值；
+ *  内置预设保护字段的规范化差异由消费方 preset.list 重拉兜底——ADR-0065 已知近似）。 */
+export interface PresetMutationReply {
+  preset: PiLaunchPreset
+}
+
+/** session.setSubagentDefaultEngine 的 reply：写 config.json 后的确认回显。 */
+export interface SubagentDefaultEngineMutationReply {
+  engineId: string
+}
+
+/** session.rename 的 reply：回显请求名（原样存储）。本类型同时是广播帧形状（broadcastSessionList）。 */
+export interface SessionRenameMutationReply {
+  sessionId: string
+  name: string
+}
+
+/** session.setProject 的 reply：回显归入的 projectId（原样存储）。同 session.renamed 模式。 */
+export interface SessionSetProjectMutationReply {
+  sessionId: string
+  projectId: string
+}
+
 export interface ServerMessageMapBase {
   // ── sendInitialState 推送 / domain 订阅（精确）──
   'config.providers': { providers: ProviderInfo[]; scopedModels?: string[] }
@@ -1182,8 +1232,9 @@ export interface ServerMessageMapBase {
   'session.subagentHistory': { sessionId: string; subagentId: string; messages: import('./message').Message[] }
   // [U7] getSubagentEngineConfig 的 reply（engines = extension engines.json 动态清单；形状与 extension-protocol 契约一致）
   'session.subagentEngineConfig': { engines: string[]; defaultEngine: string }
-  // [U7] setSubagentDefaultEngine 的 reply（写 config.json 后确认；新 session 生效）
-  'session.subagentDefaultEngineSet': { engineId: string }
+  // [U7] setSubagentDefaultEngine 的 reply（写 config.json 后确认；新 session 生效）。
+  // [C-pi-14/ADR-0065] mutation reply（分支二原样存储）：engineId 回显必需。
+  'session.subagentDefaultEngineSet': SubagentDefaultEngineMutationReply
   // session.subagentEntriesAppended（E 方案，subagent-realtime-channel §4.3/§6）：runtime relay
   // tee 翻译层产出的 subagent entry 增量帧——子进程 stdout 事件经 event-adapter 独立实例
   // 翻译 + entry 化（与主对话流 message.message_end / tool_call_* 帧的 entry 形态同构，
@@ -1297,7 +1348,8 @@ export interface ServerMessageMapBase {
   // 此前 map 未登记条目落 Record<string, unknown> 占位，消费侧被迫 as）。补 state_changed 的
   // 时序缺口：switchModel 的 state_changed 在 set_model RPC resolve 后立即广播，而
   // thinking_level_changed 事件可能晚到，本帧独立更新 thinkingLevel。
-  'session.thinkingLevelSet': { sessionId: string; level: string }
+  // [C-pi-14/ADR-0065] mutation reply（分支一后端可变换）：level = pi 生效档，必需不 optional。
+  'session.thinkingLevelSet': ThinkingLevelMutationReply
   // FileChanges 通道（ADR-0024 D5 重构：git 作为唯一真值源）。baseline diff 机制——
   // message_start 采集 git status 快照，write/edit/bash 结束后 diff vs baseline 推 accumulating，
   // agent_end 推 ready。isFullSet 恒 true（每次 diff 都是全量结果，前端全集替换不增量合并）。
@@ -1419,9 +1471,10 @@ export interface ServerMessageMapBase {
   // runtime getDefaultPresetId() 在未配置时兜底返回 'builtin:full'（设计文档 §5.3）。
   'preset.getDefault': { presetId: string }
   // preset.create：preset.create 的 reply（回显创建后的预设，含 runtime 规范化结果）。
-  'preset.create': { preset: PiLaunchPreset }
-  // preset.update：preset.update 的 reply（回显更新后的预设）。
-  'preset.update': { preset: PiLaunchPreset }
+  // [C-pi-14/ADR-0065] mutation reply（分支二原样存储）：preset 回显必需。
+  'preset.create': PresetMutationReply
+  // preset.update：preset.update 的 reply（回显更新后的预设）。[C-pi-14/ADR-0065] 同上。
+  'preset.update': PresetMutationReply
   // preset.getUsage：preset.getUsage 的 reply（FR-14）。key=presetId, value=PresetUsageEntry。
   'preset.getUsage': { usage: Record<string, PresetUsageEntry> }
   // preset.getCwdDefault：preset.getCwdDefault 的 reply（FR-15）。presetId 始终是 string——
@@ -1448,9 +1501,12 @@ export interface ServerMessageMapBase {
   // project.loaded：project.load reply（project 列表全量，D14 迁 runtime projects.json）。
   'project.loaded': ProjectStoreState
   // session.renamed：session.rename reply（session-message-handler.ts:162 reply { sessionId, name }）。
-  'session.renamed': { sessionId: string; name: string }
+  // [C-pi-14/ADR-0065] mutation reply（分支二原样存储）：wire 回显请求名 + broadcastSessionList
+  // 全量广播兜底；ReplyPayloadMap 登记为 ack 型（豁免理由见 ADR-0065 豁免清单）。
+  'session.renamed': SessionRenameMutationReply
   // session.setProject：session.setProject reply（确认即可；归属更新经 config.sessions 全量广播）。
-  'session.setProject': { sessionId: string; projectId: string }
+  // [C-pi-14/ADR-0065] mutation reply（分支二原样存储）：同 session.renamed 模式。
+  'session.setProject': SessionSetProjectMutationReply
   // session.forkNotice：session.fork 成功后的广播（FR-12 修订 PR2），通知 srcSession 所在 panel
   // 在对话流插一条 ForkNotice 反馈行。广播时机：fork RPC 成功创建 newSession 之后。
   // branchName/preview optional——纯后台 fork 传 branchName，fork-ask 传 preview（提问预览）。
@@ -1513,7 +1569,8 @@ export interface ServerMessageMapBase {
   // session.fullHistory：session.getFullHistory reply（session-message-handler.ts:115 reply { sessionId, messages }，全量无截断）。
   'session.fullHistory': { sessionId: string; messages: Message[] }
   // model.switched：model.switch reply（settings-message-handler.ts:324-339 reply { sessionId, provider, modelId }，U6 后回传 pi 生效值拆解）。
-  'model.switched': { sessionId: string; provider: string; modelId: string }
+  // [C-pi-14/ADR-0065] mutation reply（分支一后端可变换）：provider/modelId = pi 生效值，必需不 optional。
+  'model.switched': ModelSwitchMutationReply
   // message.status：send/abort/steer/follow_up + git stage/unstage/commit/checkout/createBranch 的 ack reply。
   // status 是动作结果字面量（sent/rejected/steered/queued/aborted/staged/unstaged/committed/switched/branch_created），
   // CL10 决策不收窄死字面量，统一 string（ack 型 domain register<void> 不读 status 值）。
@@ -1746,6 +1803,12 @@ export type ServerMessageUnion = {
  *
  * 不含 fire-and-forget 型（extension.ui_response 无成功 reply）、不含订阅/通知型（ping 等）。
  * command<K>()（renderer api/request.ts）用此 map 推导返回类型：`Promise<ReplyPayloadMap[K]>`。
+ *
+ * [C-pi-14/ADR-0065] mutation 类 RPC（改状态值且 renderer 有 store 副本，覆盖域 = session
+ * 配置状态 / model / preset 三域）的映射约定：分支一（后端可变换请求值——pi 钳制/pattern
+ * 换模）必须 payload 消费型引用携带生效值字段的 `XxxMutationReply` 具名类型，禁 void；
+ * 分支二（后端原样存储）reply 携带回显字段，确需 ack 型的须在 ADR-0065 豁免清单登记理由。
+ * 新增 mutation 必须同步登记 runtime 契约测试 MUTATION_RPC_REGISTRY（不入清单即测试红）。
  *
  * 运行时漂移防御（RequestReplyMap 双向校验）在后续 wave，此处仅一级映射。
  */
