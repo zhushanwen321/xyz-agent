@@ -58,15 +58,15 @@ graph TD
 
 | Unit | 偏差 | 原因 | 登记时间 |
 |------|------|------|----------|
-| （空） | | | |
+| U2 | end 覆盖测试未对 outputRaw 终态值做断言 | end 帧无 ANSI 时 normalizePiToolResult 不产出 outputRaw（条件 spread 不触发），running 期残留 outputRaw 会保留——既有 end 路径语义，不属 U2 领地；已转阶段 3 一致性审查核查（候选边缘：abort/error 路径 end 文本无 ANSI 而 running 期有 ANSI 时 outputRaw 残留致 AnsiText 渲染陈旧文本） | 2026-09-08 U2 验收时 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
 | U1 | pending | 0 | — |
-| U2 | pending | 0 | — |
-| U3 | committed | 1 | ea93e5214；58 files / 590 tests passed（Block.test.ts +6 用例） |
+| U2 | committed | 1 | core 全量 116 files / 1773 tests passed（含 3 条新 tool_call_update 用例）；commit 见 git log U2 | 
+| U3 | committed | 1 | ea93e5214→ff39a553f；58 files / 590 tests passed（Block.test.ts +6 用例） |
 | U4 | pending | 0 | — |
 
 ## 7 残留风险与变更历史

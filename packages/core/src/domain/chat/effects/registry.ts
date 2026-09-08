@@ -674,8 +674,14 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // ID 锚定（见 tool_call_end 注释），避免乱序命中错误 message。
     updateStreamingAssistant(ctx, sid, (prev) => findToolCallOwner(prev, callId), (m) => {
       const detail = readDetail(payload, 'detail')
+      // [bash-running-stream-output U2] running 态流式输出复用 ToolCall.output/outputRaw：
+      // 条件写入（字段缺省不触碰既有值）；readString 对非字符串返回 undefined 天然降级。
+      const output = readString(payload, 'output')
+      const outputRaw = readString(payload, 'outputRaw')
       const toolCalls = (m.toolCalls ?? []).map((c) =>
-        c.id === callId ? { ...c, detail } : c,
+        c.id === callId
+          ? { ...c, detail, ...(output !== undefined && { output }), ...(outputRaw !== undefined && { outputRaw }) }
+          : c,
       )
       return { ...m, toolCalls }
     })
