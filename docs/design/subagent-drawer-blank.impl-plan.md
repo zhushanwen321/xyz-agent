@@ -60,6 +60,8 @@ graph TD
 |---|------|------|-----------|
 | 1 | u3 领地增补 ActivityStrip.test.ts（新建测试文件） | T4 的 DOM 断言需独立挂载 ActivityStrip（既有测试无此组件覆盖），计划表初版漏列 | u3 |
 | 2 | u3 领地增补 composables/panel/useSubagentThinking.ts（新建 composable） | 轮 1 pre-commit 打回：script setup 309>300 行上限；提取 composable 正面修复（u3-fix-line-limit） | u3 |
+| 3 | u2 seed 守卫含 history.length === 0（task 规定守卫之外） | renderer noUnusedLocals 要求消费返回值；条件被 u1 蕴含（非空 history ⇒ 分区非空），行为严格等价 | u2 |
+| 4 | electron main 两处 dev 隔离补强：window-factory VITE_DEV_URL 支持 XYZ_VITE_DEV_URL 覆盖 + main.ts userData 从 XYZ_AGENT_DATA_DIR 派生 | Gate B 实测发现：多 worktree 并行 dev 时 ①VITE_DEV_URL/CDP 端口硬编码无法共存 ②userData 硬编码 .xyz-agent-dev/electron 使第二个 dev 实例被单实例锁静默退出（锁痕迹缺失实证）。均为 dev-only 路径，使 Gate B 隔离栈成为可能 | Gate B |
 
 ## 6 状态表
 
