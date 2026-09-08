@@ -173,9 +173,9 @@ worktree 决策：全部 plain。唯一热点公共文件 session-lifecycle.ts�
 | U2a | committed | 1 | 7b5945403（62 用例重写；armed S1-S9 保留；u3 文档回写） |
 | U2b | committed | 1 | 18896b518（core 1824 + renderer 4067 绿；E7 复用 onCwdFallback 通道） |
 | U2c | committed | 1 | 9f79a740d（B6 废除；core barrel +1 行领地扩展已接受） |
-| U2d | pending | 0 | —（计划增补：U2a/U2b 共同报的壳层接线缺口） |
+| U2d | committed | 1 | bf7494449（壳接线 + 死代码清理 + 3 领地扩展：composer barrel KV 别名导出 / 2 mock 契约跟进；突变验证非空转） |
 | U3 | committed | 1 | 63d861ca1（32 用例；P2 等价成立，D3 透传前提通过，不触发 E8——残留风险 #1 已消解） |
-| U4 | pending | 0 | — |
+| U4 | in-progress | 2 | round 1 committed 64bd71a6c（81 例：63 绿 + 18 it.fails 钉住等价破口——chip 侧缺 pendingPreset）；round 2 修复中：补通道 + 18 格翻绿（原 dev 续聊，扩领地 5 文件） |
 | U5 | committed | 1 | 8fce84d1f（ADR-0065 + 18 项清单 + 6 豁免；C-pi-14 authority 补登） |
 | U6 | committed | 1 | 8f8d70b36（P4 三类源 + E9 回落全过；renderer 零改动；残留风险 #3 探针验证完成——陈旧窗口按代价声明行为） |
 | U7a | pending | 0 | — |
