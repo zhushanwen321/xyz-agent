@@ -27,7 +27,6 @@
 // 返回空数组，与被收敛前的 runtime 实现一致。
 
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
 import { isAbsolute, relative, resolve } from "node:path";
 
 // 相对 import 用 .js 形态（本文件是双端复用模块，被 xyz-agent runtime import——对齐
@@ -37,7 +36,8 @@ import { getLogger } from "../../../core/logger.js";
 import { createRecord, updateFromEvent } from "../../execution-record.js";
 import type { Turn } from "../../types.js";
 import { readZcodeSessionView } from "../engines/zcode/reader.js";
-import { ZCODE_ENGINE_ID, ZCODE_HOST_DB_SUFFIX } from "../engines/zcode/constants.js";
+import { ZCODE_ENGINE_ID } from "../engines/zcode/constants.js";
+import { zcodeDbPathAllowlist } from "../engines/zcode/db-path.js";
 import { resolveEnginesRoot, resolvePoolDir } from "../paths.js";
 import type { SessionView } from "../types.js";
 import { replayJournal } from "./event-journal.js";
@@ -138,10 +138,11 @@ export function resetNativeSessionReaders(): void {
 /**
  * zcode ①级 reader：sessionRef 的 dbPath/sessionId 重定位 + 白名单 +
  * readZcodeSessionView（extension/runtime 双端复用的同一份 reader）。
- * 语义复刻被收敛前的 runtime readZcodeNativeTier（含共享宿主 HOME 形态的绝对
- * dbPath 精确白名单）：绝对 dbPath 只认宿主 zcode 会话 db（ZCODE_HOST_DB_SUFFIX
- * SSOT 推导，防任意读）；相对路径锚池目录 resolve，越界路径（../ 逃逸 / 跨池）
- * 拒绝降②级；读取失败（结构化错误）降②级。
+ * 绝对 dbPath 走 zcodeDbPathAllowlist(dataDir) 封闭白名单（record 来自 append-only
+ * JSONL 不可信面，只放行集合内精确绝对路径，防任意读）：第一项 = 隔离会话库
+ * （2026-09 会话库隔离设计，现役写侧），第二项 = 宿主库（仅「共享 HOME 时代」存量
+ * record 兼容）；相对路径锚池目录 resolve（旧池时代 records），越界路径（../ 逃逸 /
+ * 跨池）拒绝降②级；读取失败（结构化错误）降②级。
  */
 async function readZcodeNativeTier(
   handle: EngineHandleView,
@@ -155,12 +156,14 @@ async function readZcodeNativeTier(
   }
   let dbPath: string;
   if (dbPathRaw.startsWith("/")) {
-    // 共享宿主 HOME 形态（2026-09 起，写侧 zcode-engine 恒绝对路径）：唯一合法绝对
-    // 路径 = 宿主 zcode 会话 db（record 来自 JSONL 文本不可信，精确匹配 core SSOT
-    // 后缀拼出的路径，防任意读）
-    if (dbPathRaw !== resolve(homedir(), ...ZCODE_HOST_DB_SUFFIX)) {
+    // 绝对路径封闭白名单（record 来自 JSONL 不可信面，防任意读）：只放行
+    // zcodeDbPathAllowlist(dataDir) 集合内精确路径——隔离库（现役写侧，2026-09
+    // 会话库隔离）+ 宿主库（仅「共享 HOME 时代」存量 record 兼容）；dataDir 用
+    // 本函数打开数据库所依据的同一个 dataDir（调用方传入，权威源与传播前提见
+    // 设计 D2——勿当同源事实）
+    if (!zcodeDbPathAllowlist(dataDir).includes(dbPathRaw)) {
       logger.warn(
-        `[session-view-service] zcode absolute dbPath not host db, reject tier1: ${dbPathRaw}`,
+        `[session-view-service] zcode absolute dbPath not in allowlist, reject tier1: ${dbPathRaw}`,
       );
       return undefined;
     }

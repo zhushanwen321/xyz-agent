@@ -10,14 +10,19 @@
 //     protocol-drift 首败降级）：zcode 无公开契约，协议漂移不再降级保底，直接报
 //     可操作错误（提示核对版本 / 重启 / 改用 engine: pi）。
 //   - **删除 HOME 池化，共享宿主 HOME**：spawn env 不覆写 HOME，app-server 共享
-//     宿主 ~/.zcode/（会话 db 与 GUI 共写同一 SQLite，WAL 并发安全；凭据经
-//     appserver-launcher fs 拦截注入——cli config 读取重定向为「真实文件 + v2
-//     provider」合并，同 id 时 v2 优先，机制与漂移面见该文件头注；已接受代价：
-//     GUI 会话列表可见 headless 会话、登录态轮换后常驻连接需引擎进程重启才用
-//     新凭据）。HOME 依赖副作用（如 pnpm store 路径随 HOME 翻转）随之消失。
+//     宿主 ~/.zcode/（凭据经 appserver-launcher fs 拦截注入——cli config 读取重定向
+//     为「真实文件 + v2 provider」合并，同 id 时 v2 优先，机制与漂移面见该文件头注；
+//     登录态轮换后常驻连接需引擎进程重启才用新凭据）。HOME 依赖副作用（如 pnpm
+//     store 路径随 HOME 翻转）随之消失。
+//   - **会话库隔离（2026-09，设计 zcode-session-db-isolation.md）**：会话不再与 GUI
+//     共写宿主 ~/.zcode/cli/db/db.sqlite——spawn env 覆盖式写入
+//     ZCODE_SESSION_DB_PATH=<engineDataDir>/engines/zcode/session-db/db.sqlite（并
+//     清空别名键 ZCODE_SESSION_DB，见 ensureAppServerRuntime），handle.dbPath 回填
+//     隔离库绝对路径，读侧（本文件 read + session-view-service）按
+//     zcodeDbPathAllowlist 封闭白名单放行（宿主路径仅存量兼容）。原「GUI 会话列表
+//     可见 headless 会话」已接受代价随之撤销。
 //   - journal 分组 key 固定 'shared'（与 pi 引擎 PI_POOL_KEY 同构）：journal 落
-//     engineDataDir/engines/zcode/shared/journal-<taskId>.jsonl；handle.dbPath
-//     为绝对路径（宿主 ~/.zcode/cli/db/db.sqlite）。
+//     engineDataDir/engines/zcode/shared/journal-<taskId>.jsonl。
 //
 // run 错误语义（设计 §3.3.5）：
 //   ① prepare 期错误（credential_missing / model_not_available）在进程创建前
@@ -76,7 +81,7 @@ import {
   ZCODE_TURN_MAX_TIMEOUT_ENV,
   parseZcodeTurnTimeoutEnv,
 } from "./constants.ts";
-import { hostZcodeDbPath, zcodeSessionDbPath } from "./db-path.ts";
+import { hostZcodeDbPath, zcodeDbPathAllowlist, zcodeSessionDbPath } from "./db-path.ts";
 
 // 会话库路径契约的模块级 re-export：既有测试（zcode-engine-timeout/status）与 W2 改造前
 // 的 handle 回填/read 判定消费 hostZcodeDbPath——实现已迁 db-path.ts（断环），此处保来源
@@ -396,14 +401,17 @@ export class ZcodeEngine implements EnginePort {
     return final;
   }
 
-  /** 常驻路径的 handle 合成（poolKey 固定 'shared'；dbPath = 宿主 HOME 绝对路径）。 */
+  /**
+   * 常驻路径的 handle 合成（poolKey 固定 'shared'；dbPath = 隔离会话库绝对路径——
+   * 2026-09 会话库隔离，与 spawn env 同源 zcodeSessionDbPath(engineDataDir)，设计 D1）。
+   */
   private appServerHandle(outcome: AgentOutcome): EngineHandle {
     return {
       data: {
         v: 1,
         engineId: ZCODE_ENGINE_ID,
         sessionRef: {
-          dbPath: hostZcodeDbPath(),
+          dbPath: zcodeSessionDbPath(this.deps.engineDataDir()),
           ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
         },
         poolKey: ZCODE_SHARED_POOL_KEY,
@@ -447,9 +455,10 @@ export class ZcodeEngine implements EnginePort {
         currentSessionId = sessionId;
         rt.activeSessions.add(sessionId);
         signalSessionCreated?.();
-        // §3.4 不变量 3：create 应答后立即回填（早于 subscribe/send/终态/run resolve）
+        // §3.4 不变量 3：create 应答后立即回填（早于 subscribe/send/终态/run resolve）；
+        // dbPath 与终态 handle 同源 zcodeSessionDbPath(engineDataDir)（设计 D1）
         ctx.onHandleReady?.({
-          sessionRef: { dbPath: hostZcodeDbPath(), sessionId },
+          sessionRef: { dbPath: zcodeSessionDbPath(this.deps.engineDataDir()), sessionId },
           poolKey: ZCODE_SHARED_POOL_KEY,
         });
       },
@@ -879,10 +888,10 @@ export class ZcodeEngine implements EnginePort {
    * D6 read 三级降级：①sqlite 原生读取 → ②宿主 event journal 重放（对齐点①接线：
    * replayJournalToSessionView 复用 live reducer，重放等价性见 §3.3.6）→ ③outcome-only。
    * sessionId 缺失（解析失败的 run 无法定位 session）跳过①级；②级依赖
-   * handle.journalPath（宿主 run 后回填）。dbPath：新 handle 恒绝对路径（宿主
-   * ~/.zcode/cli/db/db.sqlite，tier1 精确匹配白名单见方法体）；旧 records（池时代）
-   * 的相对路径仍按 poolKey 锚定解析（read 兼容旧数据，池目录不存在时自然落②级
-   * journal 降级）。
+   * handle.journalPath（宿主 run 后回填）。dbPath：新 handle 恒为隔离库绝对路径
+   * （zcodeSessionDbPath(engineDataDir)，tier1 白名单集合见方法体——宿主路径仅
+   * 「共享 HOME 时代」存量兼容）；旧 records（池时代）的相对路径仍按 poolKey
+   * 锚定解析（read 兼容旧数据，池目录不存在时自然落②级 journal 降级）。
    */
   async read(handle: EngineHandle): Promise<SessionView> {
     if (handle.data.engineId !== ZCODE_ENGINE_ID) {
@@ -891,14 +900,17 @@ export class ZcodeEngine implements EnginePort {
     const sessionId = handle.data.sessionRef["sessionId"];
     const dbPathRaw = handle.data.sessionRef["dbPath"];
     if (typeof sessionId === "string" && typeof dbPathRaw === "string") {
-      // 绝对路径 tier1 白名单（与 runtime subagent-engine-history 同判）：handle/
-      // record 来自 append-only JSONL（不可信面），仅放行宿主真实 db 的精确匹配，
-      // 其余绝对路径拒绝 ①级 sqlite 读取、降 journal 重放——防任意文件读
+      // 绝对路径 tier1 白名单（与 runtime session-view-service 同判）：handle/
+      // record 来自 append-only JSONL（不可信面），仅放行 zcodeDbPathAllowlist
+      // 集合内精确匹配（隔离库现役 + 宿主库存量兼容；dataDir 与写侧 handle 回填
+      // 同源 deps.engineDataDir），其余绝对路径拒绝 ①级 sqlite 读取、降 journal
+      // 重放——防任意文件读
       let dbPath: string | undefined;
       if (path.isAbsolute(dbPathRaw)) {
-        if (dbPathRaw === hostZcodeDbPath()) dbPath = dbPathRaw;
-        else {
-          logger.warn("[zcode-engine] record dbPath 非宿主 db 绝对路径，拒绝 ①级读取降 journal", {
+        if (zcodeDbPathAllowlist(this.deps.engineDataDir()).includes(dbPathRaw)) {
+          dbPath = dbPathRaw;
+        } else {
+          logger.warn("[zcode-engine] record dbPath 非白名单 db 绝对路径，拒绝 ①级读取降 journal", {
             dbPath: dbPathRaw,
           });
         }

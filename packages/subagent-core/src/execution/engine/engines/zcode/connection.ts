@@ -119,9 +119,11 @@ function errMessage(err: unknown): string {
 /**
  * 组装 app-server 子进程 env：嵌套防护经公共 nesting-guard（注入统一
  * XYZ_AGENT_SUBAGENT=1 + 剥离引擎原生嵌套标记），遥测关闭（旧实现实证）。
- * 2026-09 起共享宿主 HOME——不再覆写 HOME：db/plugins/MCP 继承宿主 ~/.zcode/
- * （引擎会话与 GUI 共写同一 SQLite，WAL 并发安全），HOME 依赖副作用（如 pnpm
- * store 路径翻转）随之消失。凭据不在此层注入：CLI 形态 app-server 只从
+ * 2026-09 起共享宿主 HOME——不再覆写 HOME：db/plugins/MCP 继承宿主 ~/.zcode/，
+ * HOME 依赖副作用（如 pnpm store 路径翻转）随之消失。会话库是唯一例外（2026-09
+ * 会话库隔离）：引擎会话落隔离库（调用方 zcode-engine.ensureAppServerRuntime 在本
+ * 函数产物上覆盖式追加 ZCODE_SESSION_DB_PATH），不再与 GUI 共写宿主 SQLite。凭据
+ * 不在此层注入：CLI 形态 app-server 只从
  * ~/.zcode/cli/config.json 读 provider（GUI 登录态在 v2/config.json），由
  * launcherScript 指向的 fs 拦截 wrapper 把该读取重定向为「真实文件 + v2
  * provider 注入」内存合并（同 id 时 v2 整条优先——见 appserver-launcher.ts）。

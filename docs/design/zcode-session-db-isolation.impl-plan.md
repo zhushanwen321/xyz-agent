@@ -270,8 +270,8 @@ W4 在合入前完成；W5a/W5b/W6 独立排期（不阻塞 G1）。
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|----------------------------------------------|------|----------|
 | W1 路径与 env | committed | 1 | commit 见 git log `feat(subagent-core): W1 db-path contract + env injection`；test_evidence = 引擎域 453 passed / 0 failed（`vitest run src/execution/engine`）+ typecheck 零错误；翻转清单含 W1 期补录条（§2.3） |
-| W2 读取链与 handle | pending | 0 | — |
-| W3 测试 | pending | 0 | — |
+| W2 读取链与 handle | committed | 1 | commit 见 git log `feat(subagent-core): W2 read-path allowlist + handle isolation dbPath`；test_evidence = typecheck 零错误 + 探针② 断言通过（临时测试，onHandleReady 与终态 handle dbPath 相等、两站点集合判定一致）+ 翻转清单外全绿 |
+| W3 测试 | committed | 1 | commit 见 git log `test(subagent-core): W3 flip assertions to isolated dbPath + A9 pool-gc guard`；test_evidence = 引擎域 465 passed / 0 failed + typecheck 零错误 + runtime 侧 25 passed（探针④常驻） |
 | W4 文档与约束同步 | pending | 0 | — |
 | W5a 清理工具实现 | pending | 0 | — |
 | W5b zsw 交接物 | pending | 0 | — |
