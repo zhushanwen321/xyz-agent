@@ -207,6 +207,7 @@ export class PresetService {
       try {
         this.savePresetsFile(file)
       } catch (e) {
+        // best-effort 降级：存量数据清洗失败不应阻塞 preset 加载；warn 可观测，下次 load 重试。
         console.warn('[preset-service] failed to purge legacy perCwdDefaults field:', e)
       }
     }
