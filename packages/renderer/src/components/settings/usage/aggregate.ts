@@ -180,6 +180,8 @@ export interface AggregatedData {
   perDay: DayView[]
   perModel: Record<string, AggMetrics>
   perProv: Record<string, AggMetrics>
+  /** 全量 provider 聚合：尊重 range、忽略 offProv/isolate（图例恒显数据源，设计 D1） */
+  perProvFull: Record<string, AggMetrics>
   tot: AggMetrics
   msgs: number
   activeDays: number
@@ -246,6 +248,7 @@ function buildDateRange(
 interface AggAccumulator {
   perModel: Record<string, AggMetrics>
   perProv: Record<string, AggMetrics>
+  perProvFull: Record<string, AggMetrics>
   tot: AggMetrics
   msgs: number
   activeDays: number
@@ -265,13 +268,17 @@ function aggregateDay(
   let has = false
 
   for (const row of dayRows) {
+    const u = rowToMetrics(row)
+
+    // 全量累加器：尊重 range（本函数仅处理窗口内日期）、忽略 offProv/isolate（图例恒显，D1）
+    if (!acc.perProvFull[row.provider]) acc.perProvFull[row.provider] = newMetrics()
+    accumulate(acc.perProvFull[row.provider], u)
+
     if (filter.offProv.has(row.provider)) continue
     if (filter.isolate && row.model !== filter.isolate) continue
 
     has = true
     acc.msgs += row.messages
-
-    const u = rowToMetrics(row)
 
     if (!provs[row.provider]) provs[row.provider] = newMetrics()
     accumulate(provs[row.provider], u)
@@ -318,6 +325,7 @@ export function aggregate(
   const acc: AggAccumulator = {
     perModel: {},
     perProv: {},
+    perProvFull: {},
     tot: newMetrics(),
     msgs: 0,
     activeDays: 0,
@@ -332,6 +340,7 @@ export function aggregate(
     perDay,
     perModel: acc.perModel,
     perProv: acc.perProv,
+    perProvFull: acc.perProvFull,
     tot: acc.tot,
     msgs: acc.msgs,
     activeDays: acc.activeDays,

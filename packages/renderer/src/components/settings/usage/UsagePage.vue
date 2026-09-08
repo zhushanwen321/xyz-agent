@@ -64,15 +64,14 @@
 
       <!-- 工具栏：图例 + 指标/范围切换 -->
       <div class="mt-6 flex flex-wrap items-center gap-2">
-        <!-- 图例 chips -->
-        <div class="flex flex-wrap items-center gap-2">
+        <!-- 图例 chips（数据源 = perProvFull 全量聚合恒显；关闭仅置灰保留原位） -->
+        <div class="flex flex-nowrap items-center gap-2 overflow-x-auto">
           <Button
             v-for="[pid, u] in sortedProviders"
             :key="pid"
             variant="ghost"
-            size="icon"
             :data-testid="`usage-legend-${pid}`"
-            class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] transition-all"
+            class="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2.5 font-mono text-[11px] transition-all"
             :class="filter.offProv.has(pid)
               ? 'border-[var(--border)] text-[var(--neutral-dim)] opacity-[0.38]'
               : 'border-[var(--border)] text-[var(--neutral-mid)] hover:border-[var(--border-strong)] hover:text-[var(--neutral-fg)]'"
@@ -82,13 +81,12 @@
             <span>{{ pid }}</span>
             <span class="text-[var(--neutral-dim)]">{{ fmtProvShare(u) }}</span>
           </Button>
-          <!-- 重置 -->
+          <!-- 重置（文本按钮：不套 size=icon 定宽，尺寸自管） -->
           <Button
             v-if="filter.offProv.size > 0 || filter.isolate"
             variant="ghost"
-            size="icon"
             data-testid="usage-legend-reset"
-            class="px-1.5 py-1 text-[11px] text-[var(--accent)] hover:text-[var(--accent-hover)]"
+            class="h-6 shrink-0 px-1.5 text-[11px] text-[var(--accent)] hover:text-[var(--accent-hover)]"
             @click="resetFilters"
           >
             {{ t('settings.usage.legendReset') }}
@@ -102,7 +100,7 @@
             variant="ghost"
             size="icon"
             data-testid="usage-isolate-clear"
-            class="inline-flex text-[var(--neutral-mid)] hover:text-[var(--neutral-fg)]"
+            class="inline-flex h-6 w-6 text-[var(--neutral-mid)] hover:text-[var(--neutral-fg)]"
             :aria-label="t('settings.usage.isolateClear')"
             @click="filter.isolate = null"
           >
@@ -115,12 +113,11 @@
         <span class="flex-1" />
 
         <!-- 指标切换 -->
-        <div data-testid="usage-metric-toggle" class="seg inline-flex items-center gap-0.5 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-input)] p-0.5">
+        <div data-testid="usage-metric-toggle" class="seg inline-flex shrink-0 items-center gap-0.5 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-input)] p-0.5">
           <Button
             v-for="m in (['tokens', 'cost'] as const)"
             :key="m"
             variant="ghost"
-            size="icon"
             :data-testid="`usage-metric-${m}`"
             class="h-6 rounded px-2.5 text-[11px] whitespace-nowrap transition-colors"
             :class="filter.metric === m
@@ -133,12 +130,11 @@
         </div>
 
         <!-- 范围切换 -->
-        <div data-testid="usage-range-toggle" class="seg inline-flex items-center gap-0.5 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-input)] p-0.5">
+        <div data-testid="usage-range-toggle" class="seg inline-flex shrink-0 items-center gap-0.5 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-input)] p-0.5">
           <Button
             v-for="r in RANGE_OPTIONS"
             :key="r"
             variant="ghost"
-            size="icon"
             class="h-6 rounded px-2.5 text-[11px] whitespace-nowrap transition-colors"
             :class="filter.range === r
               ? 'bg-[var(--bg-elevated)] text-[var(--neutral-fg)]'
@@ -309,8 +305,9 @@ function toggleProvider(pid: string): void {
   if (filter.offProv.has(pid)) {
     filter.offProv.delete(pid)
   } else {
-    // 至少保留一个 provider
-    if (filter.offProv.size >= providerSet.value.size - 1) return
+    // 「至少保留一个」守卫：基数 = perProvFull（range 内全量 provider），拦截最后一个启用 provider 的关闭
+    const enabledCount = fullProviders.value.filter((k) => !filter.offProv.has(k)).length
+    if (enabledCount <= 1) return
     filter.offProv.add(pid)
     // 如果单看的模型属于被关闭的 provider，清除单看
     if (filter.isolate && modelProviderMap.value[filter.isolate] === pid) {
@@ -323,16 +320,6 @@ function resetFilters(): void {
   filter.offProv.clear()
   filter.isolate = null
 }
-
-/* ── provider 集合 ── */
-
-const providerSet = computed(() => {
-  const set = new Set<string>()
-  if (data.value) {
-    for (const row of data.value.rows) set.add(row.provider)
-  }
-  return set
-})
 
 /* ── model -> provider 映射 ── */
 
@@ -353,18 +340,29 @@ const agg = computed(() => {
   return aggregate(data.value.rows, filter)
 })
 
-/* ── 图例排序（按 metricValue 降序） ── */
+/* ── range 内全量 provider 集合（图例恒显 + 守卫基数；忽略 offProv/isolate） ── */
+
+const fullProviders = computed<string[]>(() => {
+  if (!agg.value) return []
+  return Object.keys(agg.value.perProvFull)
+})
+
+/* ── 图例排序（数据源 = perProvFull 全量聚合，按当前 metric 用量降序） ── */
 
 const sortedProviders = computed<[string, AggMetrics][]>(() => {
   if (!agg.value) return []
-  return Object.entries(agg.value.perProv).sort(
+  return Object.entries(agg.value.perProvFull).sort(
     (a, b) => metricValue(b[1], filter.metric) - metricValue(a[1], filter.metric),
   )
 })
 
+/** chip 占比 = 该 provider 全量 / perProvFull 总量（range 内，不随 offProv/isolate 变化，设计 ⑥） */
 function fmtProvShare(u: AggMetrics): string {
   if (!agg.value) return '0%'
-  const total = metricValue(agg.value.tot, filter.metric)
+  const total = Object.values(agg.value.perProvFull).reduce(
+    (sum, m) => sum + metricValue(m, filter.metric),
+    0,
+  )
   return total > 0 ? fmtPct(metricValue(u, filter.metric) / total) : '0%'
 }
 
