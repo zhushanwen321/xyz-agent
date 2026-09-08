@@ -63,10 +63,10 @@ graph TD
 
 | 用途 | 命令 |
 |------|------|
-| 增量单测（单元内单文件） | `pnpm --filter renderer test -- src/__tests__/effects/use-virtua-follow.test.ts`（renderer 包 vitest.config.ts 已配 junit reporter，慢用例可查 test-results/） |
+| 增量单测（单元内单文件） | `cd packages/renderer && npx vitest run src/__tests__/effects/use-virtua-follow.test.ts`（包名 @xyz-agent/frontend；[偏差登记 #1] `pnpm --filter <pkg> test -- <path>` 的 `--` 会致路径被忽略跑全量，vitest 必须经 `npx vitest run <path>` 直传；junit reporter 落盘 test-results/） |
 | 增量单测（挂载级） | `pnpm --filter renderer test -- <对应 test 路径>` |
-| 类型检查 | `pnpm --filter renderer typecheck && pnpm --filter renderer typecheck:test` |
-| 全量收尾（阶段 5 前 + U3/U4 各一次） | `pnpm --filter renderer test` 全绿 + `pnpm run lint`（根，含 taste-lint） |
+| 类型检查 | `pnpm --filter @xyz-agent/frontend typecheck && pnpm --filter @xyz-agent/frontend typecheck:test` |
+| 全量收尾（阶段 5 前 + U3/U4 各一次） | `pnpm --filter @xyz-agent/frontend test` 全绿 + `pnpm run lint`（根，含 taste-lint） |
 | docs 守卫 | `node scripts/check-doc-symbol-drift.mjs`（U4 后必须 0） |
 | 新增守卫 | `node scripts/check-scroll-follow.mjs`（U4 落地后 0；M1 期间尚不存在） |
 | constraints | `node scripts/render-constraints.mjs`（U4，重生成后核对 diff） |
@@ -78,13 +78,14 @@ graph TD
 
 | # | 偏差 | 来源 | 处置 |
 |---|------|------|------|
-| （空，待执行期登记） | | | |
+| 1 | 测试命令：包实名 @xyz-agent/frontend；`pnpm --filter pkg test -- <path>` 的 `--` 致 vitest 忽略路径跑全量 | U1 执行期实跑发现（4070 用例全量 54.7s） | 已修正计划 §4 测试命令表；后续单元用 `cd packages/renderer && npx vitest run <path>` |
+| 2 | U1 过渡缺省设计：itemCount 未注入时 = Number.MAX_SAFE_INTEGER（virtua scrollToIndex 首行 clamp 到 [0, len-1]，实装已核），endOffset 缺省 0——MessageStream 消费面 U1 内不改仍可编译可跑（挂载级测试实证全绿） | r2 实现决策（领地限制下保持 U2 前兼容） | 合理：设计 D1 语义在 U2 接线后完整成立；U3 验收全量绿时一并复核 |
 
 ## 6 状态表
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|---------------------------------------------|------|----------|
-| U1 | pending | 0 | — |
+| U1 | in-progress | 3 | r1/r2 进程中断；r2 实现已落盘（typecheck 绿、旧断言 3 红）；r3 接替收尾测试 |
 | U2 | pending | 0 | — |
 | U3 | pending | 0 | — |
 | U4 | pending | 0 | — |
