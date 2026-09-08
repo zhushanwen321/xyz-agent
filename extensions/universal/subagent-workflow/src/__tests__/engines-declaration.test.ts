@@ -1,36 +1,149 @@
-// engines-declaration.test.ts —— [U7b] 双源一致性守护：package.json 的
-// xyz-agent.subagentEngines 静态声明（runtime 冷启动回退源）必须与代码注册表一致。
-// 新增引擎时改注册点 + 声明两处；漏改声明会被本测试拦截（冷启动 GUI 将少列引擎）。
+// engines-declaration.test.ts —— [W4] 引擎清单投影守护（原 U7b「package.json 静态
+// 声明双源一致」职责随协议化 H5 单源化消亡：引擎清单唯一来源 = 引擎包 manifest
+// 自注册 + 三级发现器，扩展包 package.json 的 xyz-agent.subagentEngines 声明不再被
+// runtime 冷启动回退消费，静态声明面已废弃）。
+//
+// 现守护 = 投影合流契约（设计 §3.4 投影面表 / impl-plan §2.4）：
+//   syncEnginesFile 投影清单 = 组合根注册的引擎（inproc 过渡注册）∪ 三级发现装载的
+//   引擎包（L1 env 根 fixture 注入）；契约 {v:1, engines: string[]} 不变；发现卸载
+//   （包消失）→ 下次扫描自动从清单消失（清理通道）。
+// 新增引擎时无需改本测试（G1 零枚举）。
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-// package.json 与 src/ 的相对位置（本文件在 src/__tests__/ 下，两级上溯）
-const pkgPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../package.json");
+import { resetCoreForTests } from "@zhushanwen/subagent-core/core/host-services.ts";
+import type { EnginePort } from "@zhushanwen/subagent-core/execution/engine/port.ts";
+import {
+  clearEngines,
+  registerEngine,
+} from "@zhushanwen/subagent-core/execution/engine/registry.ts";
+import { getEnginesFilePath, syncEnginesFile } from "@zhushanwen/subagent-core/execution/engine/engine-discovery.ts";
 
-describe("package.json xyz-agent.subagentEngines 静态声明一致性（U7b 冷启动回退源）", () => {
-  it("声明存在、非空、全为字符串", () => {
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as {
-      "xyz-agent"?: { subagentEngines?: unknown };
-    };
-    const declared = pkg["xyz-agent"]?.subagentEngines;
-    expect(Array.isArray(declared)).toBe(true);
-    expect((declared as string[]).length).toBeGreaterThan(0);
-    expect((declared as unknown[]).every((e) => typeof e === "string")).toBe(true);
+const ENGINE_ROOTS_ENV = "XYZ_AGENT_ENGINE_ROOTS";
+const BIN_CONTENT = "#!/bin/sh\nexit 0\n";
+
+// fixture 引擎包（fake「foo-subagent-cli」：只装包 + manifest，A4 最小形态）
+function makeEnginePkg(rootDir: string, id: string): void {
+  const pkgDir = path.join(rootDir, `${id}-subagent-cli`);
+  fs.mkdirSync(pkgDir, { recursive: true });
+  const binRel = "./dist/cli.mjs";
+  fs.writeFileSync(
+    path.join(pkgDir, "package.json"),
+    JSON.stringify({
+      name: `@test/${id}-subagent-cli`,
+      bin: { [`${id}-subagent-cli`]: binRel },
+      "xyz-agent": {
+        subagentEngine: {
+          id,
+          bin: `${id}-subagent-cli`,
+          protocol: 1,
+          capabilities: {
+            schemaEnforcement: "emulated",
+            steer: "unsupported",
+            conversation: "unsupported",
+            personaInjection: "prompt",
+            eventGranularity: "coarse",
+            sandbox: "none",
+            sessionRead: "outcome-only",
+            resume: "unsupported",
+            interrupt: "kill-only",
+            permissionMode: "ignored",
+            maxTurns: false,
+          },
+        },
+      },
+    }),
+  );
+  fs.mkdirSync(path.join(pkgDir, "dist"), { recursive: true });
+  fs.writeFileSync(path.join(pkgDir, binRel), BIN_CONTENT);
+  fs.chmodSync(path.join(pkgDir, binRel), 0o755);
+}
+
+function stubEngine(id: string): EnginePort {
+  return {
+    id,
+    capabilities: () => ({
+      schemaEnforcement: "emulated",
+      steer: "unsupported",
+      conversation: "unsupported",
+      personaInjection: "prompt",
+      eventGranularity: "coarse",
+      sandbox: "none",
+      sessionRead: "outcome-only",
+      resume: "unsupported",
+      interrupt: "kill-only",
+      permissionMode: "ignored",
+      maxTurns: false,
+    }),
+    probe: async () => ({ ok: true, engineVersion: "test", checks: [] }),
+    run: async () => {
+      throw new Error("unused");
+    },
+    interact: async () => {
+      throw new Error("unused");
+    },
+    read: async () => ({ engineId: id, turns: [], source: "outcome-only" }),
+  };
+}
+
+let tmpRoot: string;
+let agentDir: string;
+let prevEnvRoots: string | undefined;
+
+beforeEach(() => {
+  tmpRoot = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "engines-decl-"));
+  agentDir = path.join(tmpRoot, "agent");
+  prevEnvRoots = process.env[ENGINE_ROOTS_ENV];
+  process.env[ENGINE_ROOTS_ENV] = path.join(tmpRoot, "engine-roots");
+  clearEngines();
+});
+
+afterEach(() => {
+  if (prevEnvRoots === undefined) delete process.env[ENGINE_ROOTS_ENV];
+  else process.env[ENGINE_ROOTS_ENV] = prevEnvRoots;
+  resetCoreForTests();
+  clearEngines();
+  fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+});
+
+describe("引擎清单投影合流（W4：发现器装载 ∪ 组合根注册 → engines.json）", () => {
+  it("组合根注册引擎 + 发现的引擎包合流入投影（契约 {v:1, engines} 不变）", async () => {
+    // 组合根注册点（registerPiEngine/registerZcodeEngine 的 inproc 形态；工厂体同款
+    // registerEngine 调用——不 import 引擎内部，用 stub 等价注册面）
+    registerEngine("pi", () => stubEngine("pi"));
+    registerEngine("zcode", () => stubEngine("zcode"));
+    // L1 env 根下的第三方引擎包（A4 最小形态：只装包 + manifest）
+    makeEnginePkg(path.join(tmpRoot, "engine-roots"), "foo");
+
+    syncEnginesFile(agentDir);
+    const file = JSON.parse(fs.readFileSync(getEnginesFilePath(agentDir), "utf8")) as SubagentEnginesFile;
+    expect(file.v).toBe(1);
+    expect(file.engines.sort()).toEqual(["foo", "pi", "zcode"]);
   });
 
-  it("与组合根注册的引擎一致（registerPiEngine/registerZcodeEngine 后 listEngines 等值）", async () => {
-    // 直接 import 组合根注册模块（工厂体同款调用），再对 listEngines——不 import index.ts
-    // 全量工厂（避免拉起 ExtensionAPI 依赖面），注册点即一致性的代码侧事实源。
-    await import( "@zhushanwen/subagent-core/execution/engine/engines/pi/registration.ts").then((m) => m.registerPiEngine());
-    await import( "@zhushanwen/subagent-core/execution/engine/engines/zcode/registration.ts").then((m) => m.registerZcodeEngine());
-    const { listEngines } = await import( "@zhushanwen/subagent-core/execution/engine/registry.ts");
+  it("投影幂等零写；引擎包卸载 → 下次扫描自动从清单消失（清理通道）", async () => {
+    registerEngine("pi", () => stubEngine("pi"));
+    makeEnginePkg(path.join(tmpRoot, "engine-roots"), "gone-later");
 
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as { "xyz-agent"?: { subagentEngines?: string[] } };
-    const declared = pkg["xyz-agent"]?.subagentEngines ?? [];
-    expect([...declared].sort()).toEqual([...listEngines()].sort());
+    syncEnginesFile(agentDir);
+    const filePath = getEnginesFilePath(agentDir);
+    const statAfterFirst = fs.statSync(filePath);
+    syncEnginesFile(agentDir);
+    expect(fs.statSync(filePath).mtimeMs).toBe(statAfterFirst.mtimeMs);
+
+    // 包目录移除（引擎卸载）→ 清单收缩，零改 core
+    fs.rmSync(path.join(tmpRoot, "engine-roots", "gone-later-subagent-cli"), {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 20,
+    });
+    syncEnginesFile(agentDir);
+    const file = JSON.parse(fs.readFileSync(filePath, "utf8")) as SubagentEnginesFile;
+    expect(file.engines).toEqual(["pi"]);
   });
 });

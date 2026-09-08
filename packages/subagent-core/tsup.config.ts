@@ -22,6 +22,9 @@ const mainConfig = defineConfig({
     index: 'src/index.ts',
     'execution/relay-env': 'src/execution/relay-env.ts',
     'execution/engine/paths': 'src/execution/engine/paths.ts',
+    // [W4] 引擎发现器语义子入口（runtime 冷启动回退链深路径消费：
+    // session-records.ts → @zhushanwen/subagent-core/engine/engine-discovery-scan）
+    'execution/engine/engine-discovery-scan': 'src/execution/engine/engine-discovery-scan.ts',
     'execution/engine/engines/zcode/reader': 'src/execution/engine/engines/zcode/reader.ts',
     'execution/engine/engines/zcode/constants': 'src/execution/engine/engines/zcode/constants.ts',
   },

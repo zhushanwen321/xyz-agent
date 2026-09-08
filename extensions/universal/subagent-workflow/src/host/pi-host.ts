@@ -29,6 +29,7 @@
 
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
@@ -117,6 +118,45 @@ function skillRoots(): DiscoveryRoot[] {
   ];
 }
 
+/**
+ * 引擎包发现根（W4 L1 第二通道，设计 §3.4）。打包态主通道 = env
+ * XYZ_AGENT_ENGINE_ROOTS（W9 注入），此处承载 pi 宿主的常规安装路径：
+ *   1. 宿主包自身 node_modules——引擎包（<engine>-subagent-cli）作为本包
+ *      dependencies 安装位（W9「扩展 package.json 声明引擎包为 dependencies」）；
+ *   2. <agentDir>/npm/node_modules——pi npm 安装位（org 分组二层布局由扫描器
+ *      下钻覆盖）；
+ *   3. <agentDir>/extensions——dev symlink 位（agents kind 同款 npm-dev 根）。
+ * 根目录不存在时由扫描器静默跳过（不在此预检）。 */
+function engineRoots(): DiscoveryRoot[] {
+  const agentDir = getAgentDir();
+  const roots: DiscoveryRoot[] = [];
+  const selfNodeModules = hostPackageNodeModulesRoot();
+  if (selfNodeModules !== undefined) {
+    roots.push({ dir: selfNodeModules, source: "npm" });
+  }
+  roots.push({ dir: join(agentDir, "npm", "node_modules"), source: "npm" });
+  roots.push({ dir: join(agentDir, "extensions"), source: "npm-dev" });
+  return roots;
+}
+
+/** 宿主包（本扩展）node_modules 根：src/host/pi-host.ts 上溯三级 = 包根。
+ *  jiti 加载下 import.meta.url 可用（corePackageNpmRoot 同款可靠性先例）；解析失败
+ *  降级为不注入并 warn——绝不因根定位失败阻断发现主链。 */
+function hostPackageNodeModulesRoot(): string | undefined {
+  try {
+    const here = fileURLToPath(import.meta.url);
+    // src/host/pi-host.ts → src/host → src → 包根
+    const packageRoot = dirname(dirname(dirname(here)));
+    return join(packageRoot, "node_modules");
+  } catch (err) {
+    getLogger("pi-host").warn(
+      "[pi-host] 宿主包 node_modules 引擎发现根解析失败——dependencies 安装的引擎包可能不可发现",
+      { reason: toErrorMessage(err) },
+    );
+    return undefined;
+  }
+}
+
 /** pi 宿主 HostServices 实现（扩展初始化最早处经 configureCore 注入）。 */
 export function createPiHostServices(): HostServices {
   return {
@@ -139,11 +179,13 @@ export function createPiHostServices(): HostServices {
       agents?: DiscoveryRoot[];
       skills?: DiscoveryRoot[];
       workflows?: DiscoveryRoot[];
+      engines?: DiscoveryRoot[];
     } {
       return {
         agents: agentDirKindRoots("agents"),
         skills: skillRoots(),
         workflows: agentDirKindRoots("workflows"),
+        engines: engineRoots(),
       };
     },
   };

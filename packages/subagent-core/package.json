@@ -55,6 +55,17 @@
       },
       "default": "./src/execution/engine/paths.ts"
     },
+    "./engine/engine-discovery-scan": {
+      "import": {
+        "types": "./src/execution/engine/engine-discovery-scan.ts",
+        "default": "./src/execution/engine/engine-discovery-scan.ts"
+      },
+      "require": {
+        "types": "./dist/execution/engine/engine-discovery-scan.d.cts",
+        "default": "./dist/execution/engine/engine-discovery-scan.cjs"
+      },
+      "default": "./src/execution/engine/engine-discovery-scan.ts"
+    },
     "./relay-env": {
       "import": {
         "types": "./src/execution/relay-env.ts",
@@ -120,6 +131,17 @@
           "default": "./dist/execution/engine/paths.cjs"
         },
         "default": "./dist/execution/engine/paths.js"
+      },
+      "./engine/engine-discovery-scan": {
+        "import": {
+          "types": "./dist/execution/engine/engine-discovery-scan.d.ts",
+          "default": "./dist/execution/engine/engine-discovery-scan.js"
+        },
+        "require": {
+          "types": "./dist/execution/engine/engine-discovery-scan.d.cts",
+          "default": "./dist/execution/engine/engine-discovery-scan.cjs"
+        },
+        "default": "./dist/execution/engine/engine-discovery-scan.js"
       },
       "./relay-env": {
         "import": {

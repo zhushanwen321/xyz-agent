@@ -32,12 +32,18 @@ export interface HostServices {
   /** 结构化日志：对齐现 getLogger 调用面（level/component/message/data）。缺省 sink 按级分化：
    *  warn/error 走 console、debug no-op（对齐 pi-extension-logger 语义，见 NULL_HOST.log）。 */
   log(level: LogLevel, component: string, message: string, data?: unknown): void;
-  /** agent/skill/workflow 资源发现根（可选端口，缺席 = 调用方降级）。宿主只提供根列表
-   *  （按优先级低→高）；扫描 / 同名遮蔽（last-writer-wins）/ 遮蔽报告语义归 core 统一。 */
+  /** agent/skill/workflow/引擎包 资源发现根（可选端口，缺席 = 调用方降级）。宿主只提供根列表
+   *  （按优先级低→高）；扫描 / 同名遮蔽（last-writer-wins）/ 遮蔽报告语义归 core 统一。
+   *
+   *  engines kind（W4，设计 §3.4 L1 第二通道）：引擎包发现根——dir 下一级（及 org 分组
+   *  二级）子项 = 候选引擎包目录，命中 package.json `xyz-agent.subagentEngine` manifest
+   *  即发现。打包态主通道是 env `XYZ_AGENT_ENGINE_ROOTS`（W9 注入），此端口承载宿主
+   *  自身模块域（如 pi 宿主包 node_modules 的引擎包 dependencies 安装位）。 */
   discoveryRoots?(): {
     agents?: DiscoveryRoot[];
     skills?: DiscoveryRoot[];
     workflows?: DiscoveryRoot[];
+    engines?: DiscoveryRoot[];
   };
 }
 
