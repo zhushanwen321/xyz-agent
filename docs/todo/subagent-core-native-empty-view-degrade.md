@@ -38,3 +38,8 @@
 - 登记来源：`docs/design/subagent-drawer-blank.md` §11 ⛔3；R2 终审 SUGGESTION（`subagent-drawer-blank.review.md` Round 2，反例本体）
 - 症状层修复：fix-subagent-drawer-blank 分支（renderer seed + 思考行，commit 4000fe668 / 3bfe6069a）
 - 相邻缺口：`docs/todo/subagent-nonpi-terminal-reload.md`（非 pi 终态不回填，drawer-blank 设计 §5.1 变体末互链）
+
+## 7. 排期评估（2026-09-08，drawer-blank 交付后总审待办 #2）
+
+- **优先级：中高**。改动面小（编排层一处判空降级 + 单测矩阵三用例），但影响面含摘要卡数据源（无兜底同受影响），且是设计 §6.7「runtime 读链对已知 record 永不返回空」协议层不变量收敛的第一步——落地后 renderer 两层客户端兑底（outcome 投影 / task seed）守卫恒假、自然死代码化。
+- **建议排期**：与 `subagent-nonpi-terminal-reload.md` 同批或紧随（同一 core 读取链主题，验收环境相同）；由 subagent-core 维护方排期，不阻塞 drawer-blank 分支合并。
