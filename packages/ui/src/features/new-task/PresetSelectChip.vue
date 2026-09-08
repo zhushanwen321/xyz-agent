@@ -75,14 +75,31 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const { presets, defaultPresetId, presetOpenRequest, loadPresets, setDefaultPreset } = useNewTaskDeps()
+const { presets, defaultPresetId, presetOpenRequest, loadPresets, setDefaultPreset, flow } = useNewTaskDeps()
 
 /**
  * 显式选择档（resolve 输入，非回显真源）：用户真实点击 popover 项时记录（onSelectPreset），
- * 同步 emit select → 父组件写 flow.pendingPreset（单向链，写点唯一）。startFlow 重置
- * pendingPreset 时 Landing 重挂载、本 ref 随组件实例重建，生命周期与 pendingPreset 同构。
+ * 同步 emit select → 父组件写 flow.pendingPreset（单向链，写点唯一）。外部重置（startFlow
+ * 重入把 pendingPreset 归 null）经下方 watch 同步回本 ref——Landing 在 flow 活跃期间保持
+ * 挂载（isActive 守卫），组件实例不重建，生命周期与 pendingPreset 不同构，须显式跟随。
  */
 const explicitPresetId = ref<string | null>(null)
+
+/**
+ * 重入同步（G1 破口修复）：flow.pendingPreset 是 submit 透传真值（显式档单一真源），
+ * startFlow 每次进入 landing 都无条件重置它（多次 ⌘N / initApp 重试 / cancelled 复活），
+ * 而 Landing 不重挂载 → 本地 explicitPresetId 若不跟随会残留旧选择：chip 显示旧预设、
+ * submit 按默认预设创建（显示与生效发散）。watch 单向跟随：重置 → explicit 档清空，
+ * resolve 回落默认链；用户显式点击仍经 onSelectPreset 写入 + emit（链路不变）。
+ */
+watch(
+  // ?. 防御：部分测试 mock 的 deps.flow 是简化形态（无 pendingPreset 字段，同
+  // composer-shell pendingPreset 通道先例）——缺失时观察源恒 null，不阻断组件解析。
+  () => flow.pendingPreset?.value ?? null,
+  (v) => {
+    explicitPresetId.value = v ?? null
+  },
+)
 
 /**
  * 单一解析层视图（D3）：chip 回显 = resolveLaunchConfig 对 preset 字段的解析输出

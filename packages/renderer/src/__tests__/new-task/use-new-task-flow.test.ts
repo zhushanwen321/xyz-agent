@@ -201,14 +201,27 @@ describe('useNewTaskFlow 状态机', () => {
       expect(toastMock.error).not.toHaveBeenCalled()
     })
 
-    it('未选目录且 defaultCwd=undefined（cwd 为空）→ 不比对、不 toast', async () => {
-      // cwd 守卫：cwd 为 undefined 时不进入比对分支
+    it('两空（未选目录且 defaultCwd=undefined，create(\'\') 落主目录）→ toast E7 专属文案（无 dir 空插值）', async () => {
+      // E7（D10）两空提示：runtime create('') 静默落 homedir → actualCwd ≠ reqCwd('')
+      // → onCwdFallback('', homedir)。壳侧按 reqCwd 空串发专属文案（cwdFallbackToHome），
+      // 不发 dirNotExist（否则用户看到「目录  已不存在…」空插值）。
+      apiMock.create.mockResolvedValueOnce({
+        id: 'home-s', label: 'x', cwd: '/home/user',
+        status: 'idle', lastActiveAt: 1, modelId: 'm', tokenCount: 0,
+      })
       setGroups([])
       workspaceStoreMock.defaultCwd = undefined
       const flow = useNewTaskFlow()
       await flow.startFlow()
       await flow.submitFirstMessage(textToSegments('hello'))
-      expect(toastMock.error).not.toHaveBeenCalled()
+      // create 以空串 cwd 调用（两空形态：pendingCwd=null + defaultCwd=''）
+      expect(apiMock.create).toHaveBeenCalledTimes(1)
+      expect(apiMock.create).toHaveBeenCalledWith('', expect.any(String), undefined, undefined, undefined, 'high')
+      // toast 触发一次，文案是 E7 专属文案（不含 dirNotExist 的「已不存在」空插值形态）
+      expect(toastMock.error).toHaveBeenCalledTimes(1)
+      expect(toastMock.error).toHaveBeenCalledWith(expect.stringContaining('未选择目录'))
+      expect(toastMock.error).toHaveBeenCalledWith(expect.stringContaining('已在主目录创建'))
+      expect(toastMock.error).not.toHaveBeenCalledWith(expect.stringContaining('已不存在'))
     })
   })
 

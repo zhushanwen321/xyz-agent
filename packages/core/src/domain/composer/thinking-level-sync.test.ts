@@ -541,7 +541,7 @@ describe('useThinkingLevelSync · U5 D5 门禁', () => {
       getSupportedLevels: vi.fn(() => supportedA),
     }
     useThinkingLevelSync(currentModelId, computed(() => currentThinkingLevel.value), onReset, deps)
-    // landing 初值由 u3 followRememberedOrDefault 双路径覆盖（D5「双路径冗余」论证）
+    // landing 初值由 resolveLaunchConfig 解析链给出（authored-only，U2a 后无 follow watch）
     expect(onReset).not.toHaveBeenCalled()
   })
 })

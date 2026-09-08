@@ -107,8 +107,14 @@ vi.mock('@/composables/features/sidebar/useSidebar', () => ({
 }))
 
 import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
+import { supportedLevelsOf } from '@/composables/features/new-task/supported-levels'
 import { createSessionFlow, getSettingsStore } from '@xyz-agent/core'
-import { __resetLastUsedModelForTesting, recordLastUsedModel } from '@xyz-agent/core/domain/composer'
+import {
+  __resetLastUsedModelForTesting,
+  recordLastUsedModel,
+  record as recordRememberedLevel,
+  __resetModelThinkingMemoryForTesting,
+} from '@xyz-agent/core/domain/composer'
 import { usePresetStore } from '@/stores/preset'
 import Composer from '@/components/panel/Composer.vue'
 
@@ -328,5 +334,62 @@ describe('composer-shell 注入 launchData（U2d 显示侧接线）', () => {
     // 显示回落 p1/m-default-preset + off，两条断言即红（U4 round 1 等价破口形态）
     expect(wrapper.find('[data-testid="model-probe"]').attributes('data-selected')).toBe('p1/m-user-preset')
     expect(wrapper.find('[data-testid="tlp-probe"]').attributes('data-level')).toBe('low')
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════
+// C. 显示侧 / submit 侧 getSupportedLevels 同源（F5：显示侧曾漏 enabled 检查致档位发散）
+// ════════════════════════════════════════════════════════════════════════
+describe('composer-shell 与 submit 侧 getSupportedLevels 是同一函数（F5 统一）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetNewTaskFlow()
+    __resetLastUsedModelForTesting()
+    __resetModelThinkingMemoryForTesting()
+    getSettingsStore().providers.value = []
+    getSettingsStore().defaultModel.value = ''
+    vi.clearAllMocks()
+    // clearAllMocks 不清 implementation——B 组钉住的 preset RPC fixture 会经 ensureReady
+    // 拉进本组 preset store（preset 档覆盖 defaultModel/memory 链），重置为空保持链路纯净
+    presetApiMock.list.mockResolvedValue([])
+    presetApiMock.getDefault.mockResolvedValue('')
+    vi.mocked(createSessionFlow).mockResolvedValue({
+      session: summary(),
+      migratedSegments: textToSegments('hi'),
+    })
+  })
+
+  it('enabled=false provider：显示侧（chip 解析）与 submit 侧（create 入参）档位一致（统一默认五档）', async () => {
+    // 场景：provider 禁用 + 其模型声明档位 ['off','high']（不含 low）+ 记忆档 low。
+    // 修复前发散形态：显示侧 getSupportedLevels 漏 enabled 检查 → 读到 ['off','high']
+    // → 记忆档 low 不可用 → chip 回落最高档 'high'；submit 侧 supportedLevelsOf 有检查
+    // → undefined → 归一默认五档（含 low）→ 记忆档 low 生效——显示 high ≠ 生效 low。
+    // 修复后：两侧即同一函数（supportedLevelsOf）→ 同归一默认五档 → 显示 ≡ 生效 = low。
+    getSettingsStore().providers.value = [
+      {
+        id: 'p1', name: 'P1', apiKeySet: true, status: 'connected', enabled: false,
+        models: [{ id: 'm-x', supportedLevels: ['off', 'high'] }],
+      },
+    ]
+    getSettingsStore().defaultModel.value = 'p1/m-x'
+    recordRememberedLevel('p1/m-x', 'low') // 用户此前显式选过的记忆档
+
+    // 单元级：唯一实现对 enabled=false 返回 undefined（禁用 provider 不参与档位解析）
+    expect(supportedLevelsOf('p1/m-x', getSettingsStore().providers.value)).toBeUndefined()
+
+    // 显示侧：landing chip 解析输出（tlp-probe = currentThinkingLevel / model-probe = currentModelId）
+    const wrapper = mountLandingComposer()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="model-probe"]').attributes('data-selected')).toBe('p1/m-x')
+    expect(wrapper.find('[data-testid="tlp-probe"]').attributes('data-level')).toBe('low')
+
+    // submit 侧：同输入下 create 入参 = 显示侧同值（「显示 ≡ 生效」在禁用 provider 场景的结构锁）
+    const flow = useNewTaskFlow()
+    await flow.startFlow()
+    await flow.submitFirstMessage(textToSegments('hi'))
+    expect(createSessionFlow).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ pendingModel: 'p1/m-x', pendingThinkingLevel: 'low' }),
+    )
   })
 })

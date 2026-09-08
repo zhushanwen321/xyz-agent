@@ -172,6 +172,18 @@ const MUTATION_RPC_REGISTRY: readonly MutationRegistryEntry[] = [
     contract: 'excluded',
     rationale: '批量导入（生命周期族），reply { count } 是导入计数而非状态回显',
   },
+  {
+    type: 'session.fork',
+    branch: 'non-mutation',
+    contract: 'excluded',
+    rationale: '实体生命周期（分叉创建新 session，与 session.create 同族）：reply session.created 复用实体创建形态 + forkNotice/broadcastSessionList 广播；新 session 生效配置经 D6 继承链（staging override > 源生效值 > …）+ 读回播种承接，非 mutation 回执语义',
+  },
+  {
+    type: 'session.handoff',
+    branch: 'non-mutation',
+    contract: 'excluded',
+    rationale: '实体生命周期（交接创建新 session，与 session.create 同族）：reply message.status ack，完成经 session.handoffComplete 独立广播；新 session 生效配置经 D6 继承链承接，非 mutation 回执语义',
+  },
 ]
 
 // ── protocol.ts 静态扫描（提取三个区段 + 候选 mutation 谓词）────────────────
@@ -201,8 +213,18 @@ const SERVER_MESSAGE_MAP_BASE_BLOCK = extractBlock('export interface ServerMessa
 /** 谓词覆盖域（ADR-0065「四、范围边界」）：session 配置状态 / model / preset 三域 */
 const MUTATION_DOMAINS = ['session', 'model', 'preset'] as const
 
-/** 改值动词形态（宽松 startsWith——宁可误红逼人显式归类，见文件头守卫取向声明） */
-const MUTATION_VERB_PREFIXES = ['set', 'rename', 'switch', 'create', 'update', 'delete', 'remove', 'recordUsage', 'import'] as const
+/**
+ * 改值动词形态（宽松 startsWith——宁可误红逼人显式归类，见文件头守卫取向声明）。
+ *
+ * 表覆盖两批动词：① 现存清单内出现过的改值动词（set 特殊处理见 isMutationCandidate）；
+ * ② 常见改值动词前瞻补齐（clear/reset/toggle/enable/disable/add）——保证「新动词 mutation
+ * 出现即被逼入清单」的守卫声明对常见动词命名成立，而非只对历史动词成立。新增动词前
+ * 先 grep 本表避免漏配；误命中读类/动作类时以 excluded 显式登记排除理由（特性非缺陷）。
+ */
+const MUTATION_VERB_PREFIXES = [
+  'set', 'rename', 'switch', 'create', 'update', 'delete', 'remove', 'recordUsage', 'import',
+  'fork', 'handoff', 'clear', 'reset', 'toggle', 'enable', 'disable', 'add',
+] as const
 
 /** 判断 ClientMessageType 字面量是否为候选 mutation（域内 + 改值动词形态开头） */
 function isMutationCandidate(type: string): boolean {

@@ -25,10 +25,10 @@ import {
 } from '@xyz-agent/shared'
 import { resolveLaunchConfig } from '@xyz-agent/core'
 
-/** 构造 mock NewTaskDeps（flow 用空鸭子对象，PresetSelectChip 不消费 flow） */
+/** 构造 mock NewTaskDeps（flow 只需 pendingPreset 只读视图——重入同步 watch 的观察源） */
 function makeDeps(overrides?: Partial<NewTaskDeps>): NewTaskDeps {
   const base: NewTaskDeps = {
-    flow: {} as NewTaskDeps['flow'],
+    flow: { pendingPreset: ref<string | null>(null) } as NewTaskDeps['flow'],
     recentWorkspaces: ref([]),
     listBranches: vi.fn(async () => ({ local: [], remote: [], defaultBranch: 'main' })),
     createWorktree: vi.fn(async () => ({ cwd: '', branch: '' })),
@@ -186,6 +186,45 @@ describe('PresetSelectChip 回显 = resolve 输出（U2c，D3 默认预设生效
       pendingPreset: 'custom:read-only', presets, defaultPresetId: '',
     })
     expect(displayId).toBe('custom:read-only')
+    expect(wrapper.find('[data-testid="chip-preset"]').text()).toContain('只读模式')
+  })
+})
+
+describe('PresetSelectChip 重入同步（G1 破口修复：explicitPresetId 跟随 flow.pendingPreset）', () => {
+  it('选 custom-1 → flow.pendingPreset 被外部重置（startFlow 重入）→ chip 回落默认链显示', async () => {
+    const presets = samplePresets()
+    // 真实 flow.pendingPreset 是只读 computed<string | null>；ref 读取形态兼容，可写模拟重入
+    const pendingPreset = ref<string | null>(null)
+    const deps = makeDeps({
+      flow: { pendingPreset } as NewTaskDeps['flow'],
+      presets: ref(presets),
+      defaultPresetId: ref(''), // 默认档解析为 builtin:full
+    })
+    const wrapper = mount(PresetSelectChip, {
+      props: { sessionId: null, launchPresetId: undefined, presetOpen: true },
+      global: { provide: { [NewTaskDepsKey]: deps } },
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="chip-preset"]').text()).toContain('全工具模式')
+    // ① 用户显式选择 custom:read-only：emit + Landing 侧 setPendingPreset 回写 pendingPreset
+    document.querySelector<HTMLElement>('[data-testid="preset-option-custom:read-only"]')!.click()
+    pendingPreset.value = 'custom:read-only' // Landing.vue onSelectPreset → flow.setPendingPreset
+    await flushPromises()
+    expect(wrapper.emitted('select')).toEqual([[{ presetId: 'custom:read-only' }]])
+    expect(wrapper.find('[data-testid="chip-preset"]').text()).toContain('只读模式')
+    // ② startFlow 重入（多次 ⌘N / initApp 重试）：Landing 不重挂载（isActive 守卫），
+    //    flow.pendingPreset 无条件重置为 null——修复前 explicitPresetId 残留旧选择，
+    //    chip 显示「只读模式」而 submit 按默认预设创建（显示 ≠ 生效）
+    pendingPreset.value = null
+    await flushPromises()
+    // chip 回落默认链显示（builtin:full），不再残留 explicit 旧值
+    expect(wrapper.find('[data-testid="chip-preset"]').text()).toContain('全工具模式')
+    expect(wrapper.find('[data-testid="chip-preset"]').text()).not.toContain('只读模式')
+    // ③ 重置后用户显式点击仍正常 emit（显式选择链路不受同步 watch 影响）
+    document.querySelector<HTMLElement>('[data-testid="preset-option-custom:read-only"]')!.click()
+    await flushPromises()
+    expect(wrapper.emitted('select')).toHaveLength(2)
+    expect(wrapper.emitted('select')?.[1]).toEqual([{ presetId: 'custom:read-only' }])
     expect(wrapper.find('[data-testid="chip-preset"]').text()).toContain('只读模式')
   })
 })

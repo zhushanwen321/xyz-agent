@@ -30,7 +30,6 @@
  * 与测试 import 路径不变即获得 core 版）。
  */
 import { session as sessionApi, git as gitApi, workspace as workspaceApi } from '@/api'
-import type { ProviderInfo } from '@xyz-agent/shared'
 import * as events from '@xyz-agent/core/transport/api'
 import { createSessionFlow, getSettingsStore, useNewTaskFlow as useCoreNewTaskFlow } from '@xyz-agent/core'
 import type { CreateSessionFlowCtx, LaunchConfigPort, SessionApiPort } from '@xyz-agent/core'
@@ -49,6 +48,9 @@ import { useToast } from '@/composables/useToast'
 import { worktreeApi } from '@xyz-agent/core/transport/api/domains/worktree'
 import { pickDirectory } from '@/lib/ipc'
 import i18n from '@/i18n'
+// supportedLevelsOf：显示侧（composer-shell）与 submit 侧共用的唯一实现（F5，独立模块
+// 防 composer 系列测试对 flow 模块的整体 mock 波及 composer-shell 的 import 链）
+import { supportedLevelsOf } from './supported-levels'
 
 const t = i18n.global.t
 
@@ -84,22 +86,6 @@ let cachedFlow: ReturnType<typeof useCoreNewTaskFlow> | null = null
 /** 仅测试用：重置单例（pinia 重建后旧实例捕获的 store 引用失效，beforeEach 调；对齐 core reset 先例）。 */
 export function __resetNewTaskFlowForTesting(): void {
   cachedFlow = null
-}
-
-/**
- * 按 'provider/modelId' 复合串查 providers 能力表中 model 条目的 supportedLevels
- *（无条目 = undefined，resolve 侧归一默认五档）。与 composer-shell getSupportedLevels /
- * core flow.ts 基座同源解析逻辑（壳层各持一份——core 未导出该内部 helper）。
- */
-function supportedLevelsOf(
-  modelId: string,
-  providers: readonly ProviderInfo[],
-): string[] | undefined {
-  const slash = modelId.indexOf('/')
-  if (slash <= 0) return undefined
-  const provider = providers.find((p) => p.id === modelId.slice(0, slash))
-  if (!provider || provider.enabled === false) return undefined
-  return provider.models.find((m) => m.id === modelId.slice(slash + 1))?.supportedLevels
 }
 
 /**
@@ -162,7 +148,10 @@ export function useNewTaskFlow() {
             api: buildCreateFlowApiPort(),
             defaultCwd: workspaceStore.defaultCwd ?? '',
             // INV-7 cwd 降级比对：runtime create 内部可能降级 homedir，比对不一致 toast 通知。
-            onCwdFallback: (reqCwd) => toastError(t('composable.dirNotExist', { dir: reqCwd })),
+            // E7（D10）两空分支：reqCwd 空串 = landing 未选目录且无 defaultCwd（create('') 落
+            // 主目录，非「目录不存在」），用专属文案；非空 = 既有 INV-7 降级文案（行为不变）。
+            onCwdFallback: (reqCwd) =>
+              toastError(reqCwd ? t('composable.dirNotExist', { dir: reqCwd }) : t('composable.cwdFallbackToHome')),
           }
           // D14 语义修正（2026-08-04）：归属 project 经 input 透传——创建时归属当前
           // activeProject（与 cwd 无关，project 可跨目录）。默认项目不传（undefined = 未归类，

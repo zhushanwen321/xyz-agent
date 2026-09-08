@@ -64,24 +64,26 @@
 | `session.rename` | wire reply 实际回显 `{ sessionId, name }`（session-message-handler handleSessionRename）+ `broadcastSessionList` 全量广播；类型层登记 void（ack 消费）——权威覆盖由广播通道承担，豁免 reply payload 消费 |
 | `session.setProject` | 同 rename：wire 回显 + broadcastSessionList 全量刷新 |
 
-**非配置状态 mutation（excluded，排除理由登记）**：`session.switch`（视图路由非改状态值）、`session.create` / `session.delete` / `session.deleteByCwd` / `session.import` / `preset.import`（实体生命周期，终态语义走 session.created/deleted 等广播通道，无「生效值」概念）。
+**非配置状态 mutation（excluded，排除理由登记）**：`session.switch`（视图路由非改状态值）、`session.create` / `session.delete` / `session.deleteByCwd` / `session.import` / `preset.import`（实体生命周期，终态语义走 session.created/deleted 等广播通道，无「生效值」概念）、`session.fork`（分叉创建新 session，与 session.create 同族：reply session.created 复用实体创建形态 + forkNotice/broadcastSessionList 广播；新 session 生效配置经 D6 继承链（staging override > 源生效值 > …）+ 读回播种承接，非 mutation 回执语义）、`session.handoff`（交接创建新 session，同族：reply message.status ack，完成经 session.handoffComplete 独立广播；承接配置经 D6 继承链）。
 
 ### 四、范围边界
 
 以下**不在本契约覆盖域**（显式声明，非遗漏）：
 
 - `config.*` 设置面板域（setTerminalConfig / setDefaultModel / setScopedModels 等）：reply 形态为「ack + 广播推回」或「read-back 型」，设置面板无乐观写模式，不在 D8 的「显示 ≡ 生效」事故面。若未来某 config mutation 出现乐观写需求，扩域方式 = 扩契约测试的域谓词清单（扩域本身是一次显式决策）。
-- 消息流注入（`message.*`）、动作类（`session.subagentAction` / `workflowAction` / `compact` / `forceQuit`）、文件写（`session.writeImage` 等）、extension/plugin/git/worktree/quota/terminal 域。
+- session 生命周期/承接创建族（`session.fork` / `session.handoff`）：谓词经 fork/handoff 动词命中后以 excluded 显式归类——二者是实体创建（与 session.create 同族）而非改状态值，reply 分别为 session.created 实体创建形态与 message.status ack，完成态走 forkNotice / handoffComplete 广播通道；新 session 的生效配置由 D6 继承链（fork：staging override > 源当前生效值 > 源 preset > 全局默认；handoff：staging override > 源当前生效值 > 全局默认）+ post-create 读回播种承接，不经 mutation 回执。
+- 消息流注入（`message.*`）、动作类（`session.subagentAction` / `workflowAction` / `compact` / `forceQuit` / `session.abortHandoff`）、文件写（`session.writeImage` 等）、extension/plugin/git/worktree/quota/terminal 域。
 
 ### 五、新 mutation 接入检查单
 
 新增（或修改）mutation 类 RPC 时：
 
-1. **判分支**：读/定 runtime 写路径最终写点——经 pi（分支一）或本地存储（分支二）；判不了按分支一。
-2. **分支一**：handler 内 set→读回生效值→reply 生效字段；shared 协议具名 `XxxMutationReply`（生效值字段必需不 optional）；ReplyPayloadMap 登记 payload 消费型（禁 void）；消费侧禁乐观写，reply 是唯一写 store 路径。
-3. **分支二**：reply 携带回显字段（落盘权威态）；若确需 ack 型，必须在豁免清单登记理由（参照上表豁免项）；消费侧乐观写 + reply 权威覆盖 + 失败回滚。
-4. **入清单**：到 `packages/runtime/src/__tests__/mutation-reply-contract.test.ts` 的 `MUTATION_RPC_REGISTRY` 登记条目（type / branch / 契约 / 理由）——漏登记测试即红，这一步是强制的最后一道闸。
-5. **过 C-pi-14 review**（review-type-safety）：检查单 1-4 的执行情况。
+1. **判是否 mutation**：谓词（契约测试动词表）命中后先问「这是不是改状态值」——实体生命周期（create/fork/handoff/import 族，终态走广播通道）或动作类（abort/compact/forceQuit 等）→ 以 excluded 登记排除理由即完成归类；是改状态值 → 进第 2 步。
+2. **判分支**：读/定 runtime 写路径最终写点——经 pi（分支一）或本地存储（分支二）；判不了按分支一。
+3. **分支一**：handler 内 set→读回生效值→reply 生效字段；shared 协议具名 `XxxMutationReply`（生效值字段必需不 optional）；ReplyPayloadMap 登记 payload 消费型（禁 void）；消费侧禁乐观写，reply 是唯一写 store 路径。
+4. **分支二**：reply 携带回显字段（落盘权威态）；若确需 ack 型，必须在豁免清单登记理由（参照上表豁免项）；消费侧乐观写 + reply 权威覆盖 + 失败回滚。
+5. **入清单**：到 `packages/runtime/src/__tests__/mutation-reply-contract.test.ts` 的 `MUTATION_RPC_REGISTRY` 登记条目（type / branch / 契约 / 理由）——漏登记测试即红，这一步是强制的最后一道闸。
+6. **过 C-pi-14 review**（review-type-safety）：检查单 1-5 的执行情况。
 
 ## 后果
 

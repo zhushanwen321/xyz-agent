@@ -260,8 +260,8 @@ export function useThinkingLevelSync(
       const oldSupported = oldPair?.[1]
       const current = currentThinkingLevel.value
       if (!current) {
-        // [U5/D5] 分支 2 门禁：landing 态无 armed 快照时不自动设最高档（初值由 u3 的
-        // followRememberedOrDefault watch 双路径覆盖），避免换绑触发发多余 setThinkingLevel
+        // [U5/D5] 分支 2 门禁：landing 态无 armed 快照时不自动设最高档（landing 初值由
+        // resolveLaunchConfig 解析链给出——authored-only，U2a 后无 follow watch），避免换绑触发发多余 setThinkingLevel
         if (!armedSnapshot) return
         // landing 态初始无思考等级 → 设为新模型最高可用档
         const highest = highestAvailableLevel(supported)

@@ -380,6 +380,8 @@ describe('关闭路径（MF-4，AC-7.1/AC-7.14/MR-7.1）', () => {
     vi.useFakeTimers()
     const deps = makeDeps()
     deps.ports.isMock = true // searchMock 计数 = loadResults 调用计数
+    // searchMock 在 SearchDeps ports 上是 optional（core search-ports）——运行时 guard 收窄
+    if (!deps.ports.searchMock) throw new Error('searchMock port missing')
     const searchMock = vi.mocked(deps.ports.searchMock)
     const wrapper = mount(SearchModal, { props: { open: true, deps } })
     await flushPromises()
