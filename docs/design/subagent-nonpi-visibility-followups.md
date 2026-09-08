@@ -4,6 +4,7 @@
 
 - 层声明：本文档是「可实现技术方案」层，下一层产物 = 可实现的代码任务（单元拆分见 §5）。
 - 来源：`docs/todo/subagent-nonpi-terminal-reload.md`（缺陷 A，2026-08-25）+ `docs/todo/subagent-core-native-empty-view-degrade.md`（缺陷 B，2026-09-08，drawer-blank §11 ⛔3）。两 todo 的修复草案经本文档整合升级，锚点已按 2026-09-09 代码现状重新核实（SubagentTab 数据编排已下沉 `useSubagentTabData` composable，todo 原文行号部分漂移，以本文档为准）。
+- 行号锚点：基于设计基线 6071fa8bf；实现后 core 侧行号整体漂移约 +10（pi 早退 :488 / 降级判定 :505-516 / 占位消费 :460 / 常量 :73），按语义定位。
 
 ## 1 背景与目标
 

@@ -1,6 +1,6 @@
 # TODO: 非 pi 引擎 subagent 终态后 drawer tab 自动回填
 
-> 创建：2026-08-25。状态：**已实现（2026-09-09，用户拍板不等合并提前实施）**——设计 `docs/design/subagent-nonpi-visibility-followups.md`（任务 A，双 reviewer 两轮对抗审查 0 must-fix），实现 commit b329d4149（SubagentTab status watch 四守卫，设计 D2），Gate A 全量测试绿 + Gate B 真机 S1/S4/S5 验证终态自动回填、pi 零变化（S3）、切换不误触发（S4）。原排期段（紧随合并后实施）作废，实际随本分支一并交付。**排期更新（2026-09-08，drawer-blank 交付后总审）：紧随 fix-subagent-drawer-blank 分支合并后实施**——该分支的 seed/占位修复使本缺口紧迫性上升（窗口 A 占位 assistant 终态后陈旧显示，比空白更误导；见 docs/design/subagent-drawer-blank.md §5.1 变体末 v6 互链），修复草案现成且与该分支机制零冲突（seed 守卫分区空，reload 非空替换不冲突）。
+> 创建：2026-08-25。状态：**已实现（2026-09-09，用户拍板不等合并提前实施）**——设计 `docs/design/subagent-nonpi-visibility-followups.md`（任务 A，双 reviewer 两轮对抗审查 0 must-fix），实现 commit b329d4149（SubagentTab status watch 四守卫，设计 D2），Gate A 全量测试绿 + Gate B 真机 S1/S4/S5 验证终态自动回填、pi 零变化（S3）、切换不误触发（S4）。原排期段（紧随合并后实施）作废，实际随本分支一并交付。以下为废弃排期原文（留档，实际随本分支提前交付）：**排期更新（2026-09-08，drawer-blank 交付后总审）：紧随 fix-subagent-drawer-blank 分支合并后实施**——该分支的 seed/占位修复使本缺口紧迫性上升（窗口 A 占位 assistant 终态后陈旧显示，比空白更误导；见 docs/design/subagent-drawer-blank.md §5.1 变体末 v6 互链），修复草案现成且与该分支机制零冲突（seed 守卫分区空，reload 非空替换不冲突）。
 > 优先级：高——这是 U4「zcode drawer render」的落地缺口：设计 D7 场景 1 承诺「完成后 drawer 渲染完整对话」，实现只覆盖了「终态后打开」，漏了「运行中已打开、终态后回填」路径。
 
 ## 1. 问题现象
