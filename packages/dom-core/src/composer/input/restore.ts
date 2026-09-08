@@ -10,7 +10,7 @@
  * 纯逻辑编排，零 DOM 直连，零 renderer import。
  */
 import type { Segment } from '@xyz-agent/shared'
-import type { ComposerInputInstance, ComposerRestoreDeps } from './types'
+import type { ComposerRestoreDeps } from './types'
 
 /**
  * @param deps draft / inputRef / drafts / sessionId 四项依赖（Composer.vue 内定义后注入）
@@ -56,14 +56,9 @@ export function useComposerRestore(deps: ComposerRestoreDeps) {
       } else if (seg.type === 'skill') {
         // skill chip 恢复走 insertSkillChip 通路（设计 D3 同修）：光标处追加 + location 透传，
         // 不再走 insertSlashChip（其会误删其他 slash-chip、强制最前、且丢 location）。
-        // ComposerInputInstance 尚未声明 insertSkillChip（ui 包 ComposerInput 已 expose），
-        // 局部交叉类型收窄后 ?. 调用——同 session/subagent 可选成员的缺省容错语义。
-        const inst = deps.inputRef.value as
-          | (ComposerInputInstance & {
-              insertSkillChip?: (name: string, location?: string) => void
-            })
-          | null
-        inst?.insertSkillChip?.(seg.name, seg.location)
+        // insertSkillChip 已声明为 ComposerInputInstance 可选成员（同 session/subagent 形态），
+        // ?. 调用——低配实现缺省时静默跳过该类 chip。
+        deps.inputRef.value?.insertSkillChip?.(seg.name, seg.location)
       } else if (seg.type === 'file') {
         deps.inputRef.value?.insertFileChip(seg.path, seg.lineRange)
       } else if (seg.type === 'session') {

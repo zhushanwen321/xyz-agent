@@ -190,6 +190,12 @@ export interface ComposerInputInstance {
    * 可选同上：ui ComposerInput 已 expose（U1），消费端（dom-core restore）经 ?. 调用。
    */
   insertSubagentChip?: (subagentId: string, slug: string) => void
+  /**
+   * skill chip 插入（skill 段回滚用：insertSkillChip(name, location)，设计 D3）。
+   * 可选同上：ui ComposerInput 已 expose，低配实现（旧 mock/测试桩）可缺省——
+   * 消费端（dom-core restore）经 ?. 调用，缺省时静默跳过，不崩溃。
+   */
+  insertSkillChip?: (name: string, location?: string) => void
 }
 
 /**
