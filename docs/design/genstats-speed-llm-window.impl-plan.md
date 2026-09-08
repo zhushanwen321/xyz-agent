@@ -1,5 +1,5 @@
 # genstats-speed-llm-window 实施计划
-基线: <待填> | 来源设计: docs/design/genstats-speed-llm-window.md | 日期: 2026-09-08
+基线: cf64d95a3 | 来源设计: docs/design/genstats-speed-llm-window.md | 日期: 2026-09-08
 
 ## 0 章节映射
 | 内容 | 本文实际位置 |
@@ -54,17 +54,22 @@ wave 1：u1 ∥ u2 ∥ u3（领地两两不相交）；wave 2：u4。
 
 | # | 偏差 | 判定 | 证据 |
 |---|------|------|------|
+| 1 | u4：「GS-5 口径注」在领地内无字面命中（GS-5 登记实在 docs/design/adversarial-review-fixes.md，非 u4 领地）——领地内受其影响的旧口径表述为 D2「实装口径澄清」段，已按新口径改写并转 [HISTORICAL] 口径演变 | 合理（前任 subagent 核实 + 主 agent 复核确认）；adversarial-review-fixes.md 非本设计领地，不动 | grep "GS-5" composer-gen-stats.md 零命中；genstats-speed-llm-window.md:60 设计史 |
+| 2 | u4 同域顺带同步 5 处（超 impl-plan 所列四项）：§3.1 终态示例速度公式说明 / §3.2 方案 A 风险列 duration 措辞 / D1 证据行号刷新 / D2 被否谱系补一条 [HISTORICAL 被否推论] / §5 待验证检查点 D2 探针闭合 | 合理（C-proc-10 涟漪面纪律：同类旧口径表述一并修，防残留） | git diff composer-gen-stats.md 各 hunk |
+| 3 | u4 [HISTORICAL] 引文式保留 2 处旧口径字面（D2 口径演变段 / 5a 场景括号注）——保留是为记录口径演变史，非残留 | 合理（[HISTORICAL] 标记不可删纪律的同向适用） | composer-gen-stats.md D2 [HISTORICAL] 段 / §4 5a |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u1-interpreter | pending | 0 | |
-| u2-pi-probe | pending | 0 | |
-| u3-comment-sync | pending | 0 | |
-| u4-doc-sync | pending | 0 | |
+| u1-interpreter | committed | 3 | R1 实现 + R3 测试，commit 427abd30e（19/19 绿；2 条旧语义用例外移 u5） |
+| u2-pi-probe | committed | 2 | commit bb73e1f91（11/11 绿，diff +102 ⊆ 领地） |
+| u3-comment-sync | committed | 1 | commit 673da2b98（typecheck 绿，diff ⊆ 领地） |
+| u4-doc-sync | committed | 1 | 接替重派当轮完成（sa-b6569b50）：13 处替换 65 行 +/-，旧口径字面零残留、新关键词 6 处命中、file:line 引用经主 agent 逐一核对实装；偏差 3 条入 §5 登记表 |
+| u5-fix-stale-tests（新增） | committed | 1 | commit f8c9052b9（51/51 绿，diff ⊆ 领地） |
 
 ## 7 残留风险与变更历史
 
 - 残留风险：①D1 乐观偏差量级待 S1 实测锚定（触发条件已定，见设计 §3.3 D1 / §5 待验证）；②真实场景验收 S1-S5 需真实模型会话，执行方式在阶段 5 落地（本地 pi CLI RPC 实测，Per AGENTS.md extension 实测纪律精神）。
+- 2026-09-09：中断恢复校准——主会话冻结重启后核对：u1/u2/u3/u5 四 commit 均在 git log，u4 前任 subagent（sa-65aa4da2）session 仅完成核实阅读、领地文件零改动（git status 证实），按 pending 重算并接替重派（sa-b6569b50）。前任核实结论随证据包传递：GS-5 登记实在 adversarial-review-fixes.md（非 u4 领地），领地内旧口径集中处已逐条列明。
 - 2026-09-08：计划创建。用户评审步以用户会话内显式授权（「不需要我授权，你全权负责」+ 指定 tech-design→dev-flow→design-code-sync 全流程）代行确认：切分 4 单元、无 worktree（领地小且互斥、单机串行派发）、验收条款 = 设计 §4 五场景无遗漏。基线 commit 连同设计文档与 .review 报告一并入库（traceability，偏离 plan.md「只 add 计划文档」从宽执行并在此登记）。
