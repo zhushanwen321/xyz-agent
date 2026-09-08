@@ -77,6 +77,7 @@ graph TD
 | 11 | u5 | insertSlashChip skill 兼容分支重排为显式 isSkill 分流（skill 分支行为逐行不变：删全部 chip + insertBefore firstChild + spacer） | 结构化非行为偏差 | 2026-09-08 批次 3 核验 |
 | 12 | u6 | enqueueDuringDefer 的 segments 快照从 enqueue 前移到 `/` 判定前——判定源迁 segments 后快照必须先于判定，顺带修复「判定先行但快照在后」的顺序隐患（clearInput 丢段风险） | 实现优于设计（机制层必要配套）；区 C 审查确认 | 2026-09-08 阶段 3 审查 |
 | 13 | u4/u5 | visitSlashChip slash 分支 name 取值 dataset-only（`chipName ?? ''`），丢弃旧 label 文本回退——与同函数 skill 分支既有约定同款 | 一致性优先；insertSlashChip 恒写 dataset，空值仅异构 DOM 出现 | 2026-09-08 阶段 3 审查 |
+| 14 | Gate A 回流 | selection-restore.ts 从 useContenteditableInput 提取（max-lines-per-function 316→~270，lint 拦截正面修复）；ComposerInputInstance 正式声明 insertSkillChip（偏差 #8 根修：restore.ts 局部收窄删除、restore.test 四处 TS2551 源头消解）；AmbiguousFilePopover 补行为级测试 7 用例（Gate A uncovered 缺口） | Gate A failures/uncovered 修复批次（ce76e7836） | 2026-09-08 Gate A 轮 1 |
 
 ## 6 状态表
 
@@ -107,3 +108,4 @@ graph TD
 - 2026-09-08：批次 2 完成（u4 8a269dcea 轮 2 / u6 dcfe230b6 轮 2）；偏差登记 #6-#8；u4 领地补录 landing 测试；vue_rules_checker 全工作区口径导致 u6 commit 被 u4 在途超行连坐——编排顺序改为串行 commit。
 - 2026-09-08：批次 3 完成（u5 1fbc9c3aa 轮 1）；偏差登记 #9-#11；检查点 1 销项（spacer 处 / 不触发行首浮层，与 hasChip 抑制一致，input-dom.test 三用例锁定）；状态表全 committed → 转阶段 3 一致性审查。
 - 2026-09-08：阶段 3 一致性审查轮 1 清零——三区（shared+dom-core / renderer+ui / core）独立审查：unreasonable 全空；doc_errors 2 条主 agent 亲修（① §4 dom-core 测试清单误列 skill-trigger.test.ts → 删，实际被改文件为 skill-chip.test.ts；② §5 P3 行 location 回填位置表述同步偏差 #6 提取后实际——buildPanelSlashCandidates）；reasonable 聚合登记 #12/#13 + 设计 D4-a 补「命令分支同经 restoreSelection（D1）取位」一句 + §7 检查点 2 销项；检查点 3 留 Gate B 选样注意。→ 转阶段 5 双级验收。
+- 2026-09-08：Gate A 轮 1 红 → 修复批次 ce76e7836（偏差 #14）：lint max-lines-per-function（selection-restore 提取）、dom-core tsc TS2551×4（types.ts 根修）、AmbiguousFilePopover 测试缺口。重验：lint 0 / 双口径 tsc 绿 / dom-core 224 + ui 592 + core composer 312 绿。**遗留风险待签认**：runtime thinking-level-effective-e2e.test.ts 1/5088 失败——本机 provider 可用模型清单不满足测试前提的环境依赖型存量失败（runtime 区间零改动，非本次引入；Gate A shell env 泄漏导致的 runtime fail-fast 与 subagent-core 1 失败均已定性为环境问题且清 env 重跑绿）。ui typecheck 存量 4 错（区间外文件）另列清理项。
