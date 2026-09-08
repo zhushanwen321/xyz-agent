@@ -183,6 +183,23 @@ async function dispatchDataPlane(deps: ReverseRouterDeps, method: string, params
     case "host/childSpawned": {
       const p = params as HostChildSpawnedParams;
       deps.mirror.recordSpawned(p.pid, p.recordId);
+      // POSIX 运行时组探测（W10 / A3 前提②）：任务子进程应与引擎同组（收割 =
+      // 引擎进程组级 kill(-enginePid)）。kill(-pid, 0) 成功 ⟺ 该 pid 自成进程组
+      // （setsid/detached 后代）⟺ 不在引擎收割组内 → 告警留痕（不判 fail——
+      // detached 后代是设计 §3.9 已接受代价）。Windows 无外部判据（无 kill(-pid,0)
+      // 等价物），仅 SDK 层 spawnEngineChild 形态保证，真机面挂 A3 手动门。
+      if (process.platform !== "win32" && typeof p.pid === "number") {
+        try {
+          process.kill(-p.pid, 0);
+          logger.warn(
+            `[engine-client:${deps.engineId}] childSpawned pid ${p.pid} leads its own process group `
+              + `(not in the engine harvest group — one-generation children + in-group descendants `
+              + `only; engine-detached descendants are an accepted cost per design §3.9)`,
+          );
+        } catch {
+          // ESRCH = pid 非组长 = 在引擎组内（预期形态），静默。
+        }
+      }
       break;
     }
     case "host/childStateChanged": {

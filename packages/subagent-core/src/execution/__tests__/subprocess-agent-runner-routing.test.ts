@@ -19,7 +19,12 @@ import type { RunContext, EnginePort } from "../engine/port.ts";
 import { clearEngines, registerEngine } from "../engine/registry.ts";
 import type { ProbeReport } from "../engine/types.ts";
 import { ModelConfigService, setModelConfigService } from "../model-config-service.ts";
-import { getChildByRecord } from "../engine/engines/pi/session-runner.ts";
+// W10（§2.10 ②）：子进程句柄断言改读 core 侧状态镜像（host/spawned-children——
+// 协议化后 spawnedChildren 持有方在引擎进程，core 消费镜像面；判据 pid 同构）。
+import {
+  coreSpawnedChildrenMirror,
+  _resetCoreSpawnedChildrenMirrorForTest,
+} from "../engine/host/spawned-children.ts";
 import { SubprocessAgentRunner } from "../subprocess-agent-runner.ts";
 import type { SubagentService } from "../subagent-service.ts";
 import type { ExecuteOptions } from "../types.ts";
@@ -128,6 +133,7 @@ function installModelService(cfg?: Record<string, unknown>): void {
 }
 
 beforeEach(() => {
+  _resetCoreSpawnedChildrenMirrorForTest();
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sar-routing-"));
   agentDir = path.join(tmpRoot, "pi-agent");
   fs.mkdirSync(agentDir, { recursive: true });
@@ -327,10 +333,11 @@ describe("SAR 路由集成（P4 验收 1/2/3）", () => {
     // 引擎回调（真实引擎在 spawn 成功后同步调）→ 按 taskId（'sa-' 记账 key）注册可见
     const child = spawn(process.execPath, ["-e", ""]);
     ctx?.onChildSpawned?.(child);
-    expect(getChildByRecord(ctx.taskId)).toBe(child);
-    // 子进程退出（真实 close 事件）后记账按句移除——不残留死句柄
+    expect(coreSpawnedChildrenMirror().getChildByRecord(ctx.taskId)?.pid).toBe(child.pid);
+    // 按句移除断言（W10 注）：inproc 双模下子进程退出不回灌 host/childStateChanged
+    // （该通道是 cli 协议形态专属）——镜像移除断言由 protocol-blackbox 的
+    // childStateChanged 用例承载；此处等待 close 仅保证进程面收口不悬挂。
     await new Promise<void>((resolve) => child.once("close", () => resolve()));
-    expect(getChildByRecord(ctx.taskId)).toBeUndefined();
   });
 
   // ── [D3-④] SAR 路径预检（capabilities 驱动；唯一有意行为变化 = zcode+worktree）──

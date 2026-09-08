@@ -1,17 +1,19 @@
-// engine-conformance.live.test.ts —— conformance run 层（真实 spawn 简单任务，C2/C4
-// 真机面）。手动门（设计 §3.3.8：run 层需已装引擎 + 有效凭据，不进默认 CI）：
+// engine-conformance.live.test.ts —— conformance run 层真机门（基线三层③，W10
+// 协议化改写）。手动门（设计 §3.3.8 / §4：run 层需已装引擎 + 有效凭据，不进默认 CI）：
 //
-//   cd extensions/universal/subagent-workflow
-//   ENGINE_CONFORMANCE_LIVE=1 pnpm vitest run src/execution/engine/__tests__/conformance/engine-conformance.live.test.ts
+//   cd packages/subagent-core
+//   ENGINE_CONFORMANCE_LIVE=1 [PI_LIVE_MODEL=... ZCODE_E2E_MODEL=...] \
+//     pnpm vitest run src/execution/engine/__tests__/conformance/engine-conformance.live.test.ts
 //
-// pi 部分复用 PiEngine 的服务面注入（真实 executeAndAwait 需要完整 SubagentService 装配，
-// live 场景从进程单例取——未初始化时该用例 skip 并说明）；zcode 部分与 P3 的
-// zcode-engine.live.test.ts 互补（后者已覆盖 schema 全链，此处只跑 conformance 最小面）。
+// W10 改写：断言对象从内建 inproc 引擎（W11 删除）改为**协议客户端 × 引擎包 CLI**
+// （EngineClient spawn pi-subagent-cli 进程入口 + RemoteEngine 适配）——即 A2 真机
+// 形态本身。断言口径 = 不变量与关键终态（C2 outcome / C3 stream 事件不变量），
+// 不做逐字段 diff（设计 §4 基线三层③）。zcode 部分与 zcode-subagent-cli 的
+// zcode-engine.live.test.ts 互补（后者覆盖 schema 全链，此处只跑 conformance 最小面）。
 //
-// relay 变体（E 方案 §2.3）= 同一契约 × 不同 spawn 通道：测试内起伪 runtime（net server，
-// 按 E-2 协议收握手回 accept / down 帧转写真实 pi stdin / pi stdout 回发 up 帧 / exit 帧收尾），
-// 经 PiEngine 真实 run 全链断言 C2+C3。前置 = SubagentService 已装配（真实会话进程内），
-// 且需真实模型凭据（最小任务由 LLM 完成）——纯 CI/无凭据环境必然 skip，属预期。
+// 措辞口径（R9-1）：「子进程零残留」= 一代子进程 + 组内后代；引擎自身 detached
+// 后代不判 fail（设计 §3.9 已接受代价）。POSIX 组探测（childSpawned pid 非组长）
+// 由 reverse-router 运行时告警承载，真机面挂 A3 手动门；Windows 无外部判据显式登记。
 
 import { spawn as childSpawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
@@ -22,14 +24,13 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { getSubagentService } from "../../../subagent-service.ts";
-import { ZcodeEngine } from "../../engines/zcode/zcode-engine.ts";
-import { createPiEngine } from "../../engines/pi/registration.ts";
-import type { PiEngineService } from "../../engines/pi/pi-engine.ts";
+import { ZcodeEngine } from "@zhushanwen/zcode-subagent-cli";
+import { getPiInvocation } from "@zhushanwen/pi-subagent-cli";
+
+import { EngineClient } from "../../client/engine-client.ts";
+import { RemoteEngine } from "../../client/remote-engine.ts";
 import type { RunContext } from "../../port.ts";
-import type { AgentEvent } from "../../../types.ts";
-import type { AgentCallOpts } from "../../../../orchestration/models/types.ts";
-import { getPiInvocation } from "../../engines/pi/pi-invocation.ts";
+import type { AgentEvent, EngineCapabilities } from "../../types.ts";
 import {
   RELAY_ENV_NODE,
   RELAY_ENV_RECORD_ID,
@@ -43,22 +44,62 @@ import { assertAgentEventInvariants } from "./agent-event-invariants.ts";
 
 const LIVE = process.env["ENGINE_CONFORMANCE_LIVE"] === "1";
 
-describe.skipIf(!LIVE)("conformance run 层（真实 spawn，手动门）", () => {
-  it("pi：简单任务全链（C2：outcome 无 error、content 非空、engineId=pi）", async (testCtx) => {
-    const service = getSubagentService();
-    if (service === null) {
-      // 服务装配是 pi live 的前置（完整 SubagentService + modelRegistry 注入）——
-      // live 门内说明跳过原因而非静默 pass（失败要出声）
-      testCtx.skip("SubagentService 未装配（需在真实会话进程内运行）");
+const PI_CLI_ENTRY = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../../../../../pi-subagent-cli/src/main.ts",
+);
+
+/** pi 引擎 capabilities（manifest 同源形态——真机门内 RemoteEngine 同步成员源）。 */
+const PI_LIVE_CAPABILITIES: EngineCapabilities = {
+  schemaEnforcement: "native",
+  steer: "native",
+  conversation: "native",
+  personaInjection: "file",
+  eventGranularity: "stream",
+  sandbox: "none",
+  sessionRead: "full",
+  resume: "cold",
+  interrupt: "kill-only",
+  permissionMode: "ignored",
+  maxTurns: true,
+};
+
+describe.skipIf(!LIVE)("conformance run 层（协议客户端 × 引擎包 CLI，手动门）", () => {
+  it("pi：简单任务全链（C2：outcome 无 error、content 非空、engineId=pi；C3 stream 不变量）", async (testCtx) => {
+    const model = process.env["PI_LIVE_MODEL"];
+    if (model === undefined || model === "") {
+      testCtx.skip("PI_LIVE_MODEL 未设置（需真实 provider/model 凭据）——pi live run 面跳过");
       return;
     }
-    const engine = createPiEngine(() => service as unknown as PiEngineService);
-    const task: AgentCallOpts = { prompt: "Reply with the single word: ok", description: "live-c2" };
-    const ctx: RunContext = { taskId: "sa-live-pi-c2", poolKey: "shared" };
-    const { outcome } = await engine.run(task, ctx);
-    expect(outcome.error).toBeUndefined();
-    expect(outcome.content.trim().length).toBeGreaterThan(0);
-    expect(outcome.engineId).toBe("pi");
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "w10-live-pi-"));
+    const client = new EngineClient({
+      engineId: "pi",
+      command: process.execPath,
+      args: [PI_CLI_ENTRY],
+      hostKind: "test",
+      hostVersion: "w10-live",
+      dataDir,
+      envPrefixes: [],
+    });
+    const engine = new RemoteEngine({
+      engineId: "pi",
+      client,
+      manifest: { capabilities: PI_LIVE_CAPABILITIES },
+      dataDir,
+      hostKind: "test",
+    });
+    try {
+      const events: AgentEvent[] = [];
+      const task = { prompt: "Reply with the single word: ok", description: "live-c2", model, cwd: os.tmpdir() };
+      const ctx: RunContext = { taskId: "sa-live-pi-c2", poolKey: "shared", onEvent: (e) => events.push(e) };
+      const { outcome } = await engine.run(task, ctx);
+      expect(outcome.error).toBeUndefined();
+      expect(outcome.content.trim().length).toBeGreaterThan(0);
+      expect(outcome.engineId).toBe("pi");
+      assertAgentEventInvariants(events, { granularity: "stream", content: outcome.content });
+    } finally {
+      await engine.dispose();
+    }
   }, 120_000);
 
   it("zcode：probe 真机（C1 live 面：三项 check 全过）", async () => {
@@ -68,10 +109,6 @@ describe.skipIf(!LIVE)("conformance run 层（真实 spawn，手动门）", () =
     expect(report.engineVersion).toMatch(/^0\.\d+\.\d+$/);
   }, 60_000);
 
-  // [R6] 常驻通道的 conformance run 层（RA8「C1-C8 适配后全绿」的 live 面）：
-  // 跑最小任务——C2 outcome + C3 stream 不变量（app-server 设计 §3.4 不变量 1）。
-  // 2026-09 起单一 app-server 形态即缺省路径（无模式钉扎 env）；更深断言（schema/
-  // abort/进程锚定）由 engines/zcode/__tests__/zcode-engine.live.test.ts 承载。
   it("zcode：app-server 常驻通道 run 全链（C2 outcome 无 error + C3 stream 事件不变量）", async (testCtx) => {
     const model = process.env["ZCODE_E2E_MODEL"];
     if (model === undefined || model === "") {
@@ -96,12 +133,11 @@ describe.skipIf(!LIVE)("conformance run 层（真实 spawn，手动门）", () =
 
 // ── relay 变体（E 方案 §2.3：同一契约 × 不同 spawn 通道，手动门内的手动门）──
 //
-// 前置：①ENGINE_CONFORMANCE_LIVE=1（套件级门）；②SubagentService 已装配（真实会话
-// 进程内跑——vitest 裸进程恒 null → skip 说明，与上方 pi live 用例同形态）；③真实模型
-// 凭据（最小任务由 LLM 完成）。relay 三 env 由测试自构（socket 指向测试内伪 runtime，
-// 执行器 = 本进程 node，脚本 = 包根 relay/relay.mjs），不依赖外部注入。
+// W10 协议化：relay env 由引擎 CLI 子进程消费（pi 包 spawn-runner 的 relay ctx
+// rewrite）；本变体经 EngineClient baseEnv 注入 relay 三 env + 测试内伪 runtime，
+// 断言 C2/C3 经代理转发的全等。前置：ENGINE_CONFORMANCE_LIVE=1 + PI_LIVE_MODEL。
 
-describe.skipIf(!LIVE)("conformance relay 变体（经代理 spawn 全链，手动门）", () => {
+describe.skipIf(!LIVE)("conformance relay 变体（协议客户端 × relay 代理 spawn，手动门）", () => {
   /** 伪 runtime：按 E-2 协议扮演 runtime 侧——握手 accept + spawn 真实 pi + 双向转发 + exit 传播。 */
   function startFakeRuntime(socketPath: string): Promise<net.Server> {
     return new Promise((resolve, reject) => {
@@ -172,37 +208,46 @@ describe.skipIf(!LIVE)("conformance relay 变体（经代理 spawn 全链，手�
   }
 
   it("pi × relay：伪 runtime 环回全链（C2 outcome 无 error + C3 事件不变量经代理转发全等）", { timeout: 180_000 }, async (testCtx) => {
-    const service = getSubagentService();
-    if (service === null) {
-      testCtx.skip(
-        "SubagentService 未装配（需在真实会话进程内运行，如 pi --extension 挂载本包后触发）" +
-          "——relay 变体与直连 live 用例共享该前置；纯 vitest 进程恒 skip，全链真机另由 " +
-          "packages/runtime relay-integration.test.ts（已存在）+ §9 人工验收承载",
-      );
+    const model = process.env["PI_LIVE_MODEL"];
+    if (model === undefined || model === "") {
+      testCtx.skip("PI_LIVE_MODEL 未设置（relay 变体与直连 live 用例共享凭据前置）");
       return;
     }
 
-    // 测试自构 relay env：socket 指向伪 runtime，执行器 = 本进程 node，脚本 = 包根 relay.mjs
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "relay-conformance-live-"));
     const socketPath = path.join(tmpDir, "relay.sock");
     const server = await startFakeRuntime(socketPath);
-    const savedEnv: Record<string, string | undefined> = {};
-    const restoreKeys = [RELAY_ENV_SOCKET, RELAY_ENV_NODE, RELAY_ENV_SCRIPT];
-    for (const key of restoreKeys) savedEnv[key] = process.env[key];
-    process.env[RELAY_ENV_SOCKET] = socketPath;
-    process.env[RELAY_ENV_NODE] = process.execPath;
-    process.env[RELAY_ENV_SCRIPT] = path.resolve(
-      path.dirname(fileURLToPath(import.meta.url)),
-      "../../../../../relay/relay.mjs",
-    );
-    if (!isRelayActive(process.env)) {
-      throw new Error("relay env 自构后仍不激活——前置断言失败");
-    }
-
     try {
-      const engine = createPiEngine(() => service as unknown as PiEngineService);
+      const client = new EngineClient({
+        engineId: "pi",
+        command: process.execPath,
+        args: [PI_CLI_ENTRY],
+        hostKind: "test",
+        hostVersion: "w10-live-relay",
+        dataDir: tmpDir,
+        envPrefixes: [],
+        baseEnv: {
+          ...process.env,
+          [RELAY_ENV_SOCKET]: socketPath,
+          [RELAY_ENV_NODE]: process.execPath,
+          [RELAY_ENV_SCRIPT]: path.resolve(
+            path.dirname(fileURLToPath(import.meta.url)),
+            "../../../../../relay/relay.mjs",
+          ),
+        },
+      });
+      if (!isRelayActive(process.env)) {
+        throw new Error("relay env 自构后仍不激活——前置断言失败");
+      }
+      const engine = new RemoteEngine({
+        engineId: "pi",
+        client,
+        manifest: { capabilities: PI_LIVE_CAPABILITIES },
+        dataDir: tmpDir,
+        hostKind: "test",
+      });
       const events: AgentEvent[] = [];
-      const task: AgentCallOpts = { prompt: "Reply with the single word: ok", description: "live-relay-c2" };
+      const task = { prompt: "Reply with the single word: ok", description: "live-relay-c2", model, cwd: os.tmpdir() };
       const ctx: RunContext = {
         taskId: "sa-live-pi-relay",
         poolKey: "shared",
@@ -213,13 +258,10 @@ describe.skipIf(!LIVE)("conformance relay 变体（经代理 spawn 全链，手�
       expect(outcome.error).toBeUndefined();
       expect(outcome.content.trim().length).toBeGreaterThan(0);
       expect(outcome.engineId).toBe("pi");
-      // C3：事件不变量五条对「经代理转发的子进程 stdout」逐一成立（同一 parser 消费同一字节流）
+      // C3：事件不变量五条对「经代理转发的子进程 stdout」逐一成立
       assertAgentEventInvariants(events, { granularity: "stream", content: outcome.content });
+      await engine.dispose();
     } finally {
-      for (const key of restoreKeys) {
-        if (savedEnv[key] === undefined) delete process.env[key];
-        else process.env[key] = savedEnv[key];
-      }
       await new Promise<void>((resolve) => server.close(() => resolve()));
       fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     }

@@ -76,7 +76,12 @@ import type {
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
 import { toSubagentRecordEntry } from "../record-entry.ts";
-import { getChildByRecord } from "../engine/engines/pi/session-runner.ts";
+// W10（§2.10 ②）：子进程句柄断言改读 core 侧状态镜像（host/spawned-children——
+// 协议化后 spawnedChildren 持有方在引擎进程，core 消费镜像面；判据 pid 同构）。
+import {
+  coreSpawnedChildrenMirror,
+  _resetCoreSpawnedChildrenMirrorForTest,
+} from "../engine/host/spawned-children.ts";
 import { SubagentService } from "../subagent-service.ts";
 import type { ExecuteOptions } from "../types.ts";
 
@@ -231,6 +236,7 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
   let agentDir: string;
 
   beforeEach(() => {
+  _resetCoreSpawnedChildrenMirrorForTest();
     // u0-data-discovery 注入化：execute 链路的 getEngineDataDir 回退段经
     // HostServices.dataRoot() 端口，未 configureCore 即消费抛 core_host_not_configured
     // （execute fail-safe 吞掉后表现为 mock 计数 0）——端口态显式配置，值不被断言
@@ -479,7 +485,7 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
 
     // 引擎经 RunContext.onChildSpawned 上报子进程 → 宿主记账（kill-chain 数据源）
     zcode.runs[0].ctx.onChildSpawned?.(child);
-    expect(getChildByRecord(handle.subagentId)).toBe(child);
+    expect(coreSpawnedChildrenMirror().getChildByRecord(handle.subagentId)?.pid).toBe(child.pid);
 
     // cancel → controller.abort → engine 收到的 signal aborted（kill-chain 两级的第一级）
     expect(zcode.runs[0].ctx.signal?.aborted).toBe(false);
@@ -487,7 +493,8 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     expect(zcode.runs[0].ctx.signal?.aborted).toBe(true);
     // 子进程退出后记账按句移除
     child.emit("close", 0, null);
-    expect(getChildByRecord(handle.subagentId)).toBeUndefined();
+    // 按句移除断言（W10 注）：inproc 双模不回灌 childStateChanged，镜像移除由
+    // protocol-blackbox 承载（同 subprocess-agent-runner-routing D10 注）。
   });
 });
 

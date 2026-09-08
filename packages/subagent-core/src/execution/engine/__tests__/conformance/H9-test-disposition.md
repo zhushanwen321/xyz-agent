@@ -1,0 +1,84 @@
+# W10 H9 测试面处置表（core 深路径测试三选一）
+
+> 实施计划 §2.10「core 测试逐文件三选一处置清单」的执行记录（W10，2026-09-09）。
+> 处置依据 = 文件 import 实测 + W5/W7 已迁件核对。处置后 core test 全绿
+> （2999 passed | 7 skipped；删除 48 文件 / 改写 5 文件 / 保留待 W11 同批改写 4 文件）。
+
+## ① 已随引擎包迁移 —— 删除 core 重复副本（11 文件）
+
+W5/W7 已把自包含件迁入引擎包（pi-subagent-cli / zcode-subagent-cli `__tests__/`，
+两包 test 全绿），core 侧同名副本属重复实现测试，删除：
+
+| core 副本（已删） | 引擎包权威副本 |
+|---|---|
+| `src/__tests__/fr4-get-state-handshake.test.ts` | pi-subagent-cli `__tests__/get-state-handshake.test.ts` |
+| `execution/__tests__/get-state-handshake.test.ts` | 同上 |
+| `execution/__tests__/output-collector.test.ts` | pi `__tests__/output-collector.test.ts` |
+| `execution/__tests__/pi-invocation.test.ts` | pi `__tests__/pi-invocation.test.ts` |
+| `execution/__tests__/temp-prompt.test.ts` | pi `__tests__/temp-prompt.test.ts` |
+| `execution/__tests__/stdin-writer.test.ts` | pi `__tests__/stdin-writer.test.ts` |
+| `execution/__tests__/spawn-event-adapter.test.ts` | pi `__tests__/spawn-event-adapter.test.ts` |
+| `execution/__tests__/spawn-event-adapter-rpc.test.ts` | pi `__tests__/spawn-event-adapter-rpc.test.ts` |
+| `execution/__tests__/turn-limiter.test.ts` | pi `__tests__/turn-limiter.test.ts` |
+| `execution/__tests__/turn-limiter-semantics.test.ts` | pi `__tests__/turn-limiter-semantics.test.ts` |
+| `execution/__tests__/spawn-args.test.ts` | pi `__tests__/spawn-args.test.ts`（core 副本的 `MAX_FORK_DEPTH` 断言面由 `recursive-visibility-baseline`/`nested-visibility` 族承接） |
+
+## ① 随 SDK 原语迁移（1 文件）
+
+| core（已删） | 迁移落点 |
+|---|---|
+| `execution/engine/__tests__/paths.test.ts` | `subagent-engine-sdk/src/__tests__/paths.test.ts`（import 改 SDK 包内相对路径，5 用例全绿） |
+
+## ② 改写为镜像/协议等价断言 —— 已完成（5 文件）
+
+| 文件 | 改写内容 |
+|---|---|
+| `src/orchestration/__tests__/execute-agent-call.test.ts` | output-collector 深路径 import → `@zhushanwen/pi-subagent-cli` 公共导出面（25 用例绿） |
+| `execution/__tests__/subprocess-agent-runner-routing.test.ts` | `getChildByRecord` 深路径 → core 侧镜像 `host/spawned-children.ts coreSpawnedChildrenMirror().getChildByRecord`（pid 同构判据）；「退出后按句移除」断言移至 protocol-blackbox childStateChanged 用例（inproc 双模不回灌该通道，文件内已注记） |
+| `execution/__tests__/chat-engine-routing.test.ts` | 同上（镜像面改写） |
+| `execution/engine/__tests__/common/capability-gate.test.ts` | PiEngine/ZcodeEngine 内建构造 → 读两引擎包 package.json manifest `xyz-agent.subagentEngine.capabilities`（同步成员唯一源；11 用例绿） |
+| `execution/engine/__tests__/conformance/contract.{probe,abort,read-degradation,agent-events}.test.ts` + `golden-replay.{pi,zcode}.test.ts` + `engine-conformance.live.test.ts` | conformance 契约套件整体协议黑盒化：RemoteEngine × fake 引擎 CLI / golden 语料改引擎包 `__golden__/` + 公共导出面 / live 门改「协议客户端 × 引擎包 CLI」形态（A2 真机形态本身） |
+
+## ② 改写被阻塞 —— 保留 + W10 处置注记，W11 同批改写（4 文件）
+
+`src/__tests__/append-system-prompt-assembly.test.ts`、`execution/__tests__/explicit-agent-ref-guard.test.ts`、`execution/__tests__/delivery-methods.test.ts`、`execution/__tests__/gc-timer.test.ts`。
+
+阻塞原因（同根）：这些文件 `vi.mock("…engines/pi/session-runner.ts")` 拦截的**是 core 生产代码的 inproc 深路径 import**（subagent-service / lifecycle 谓词等消费点在生产侧）——mock 目标改指引擎包或镜像需生产 import 先改线，而 W6 已把改线收敛到 W11 收口（`subagent-service.ts` W7 注 + `lifecycle-predicates.test.ts` 仍深 import spawnedChildren 同证）。W11 删内建当轮必须同批改写这 4 个文件（每文件头部已留 `[W10 处置注记]`）。
+
+## ③ 声明废弃 —— 删除（34 文件 + 1 helper）
+
+统一理由（按文件另有侧重）：**被测行为 = 内建 pi/zcode inproc 编排实现**，协议化终态下该实现归引擎进程（W11 删除 core `engines/pi|zcode`）；行为面承接：
+
+- **引擎内部行为**（spawn 参数/dispatch/LRU/心跳/EPIPE/收敛）→ `@zhushanwen/pi-subagent-cli` / `zcode-subagent-cli` 包内测试（W5/W7 迁移件，两包全绿）；
+- **协议契约面**（run/cancel/read/反向通道/错误帧/结构等价）→ W10 新协议黑盒套件 `conformance/protocol-blackbox.test.ts` + `client/__tests__/*`（W2）；
+- **收割/杀链语义**（R9-1 口径：一代子进程 + 组内后代）→ SDK kill-chain 单测 + A3 真机门；
+- **inproc 双模过渡态**（XYZ_SUBAGENT_ENGINE_MODE）本身 = DoD#5 删除对象，不保留锚定测试。
+
+| 已删文件 | 侧重理由 |
+|---|---|
+| `src/__tests__/session-runner.test.ts` | 引擎内部（pi spawn-runner） |
+| ask-user-transit-e2e / ui-request-handler | ui 请求链引擎内部面（pi 包 ui-channels/ui-request-queue 测试 + W10 反向通道用例） |
+| chatmode-first-round-closure-spawn / run-and-finalize-chatmode / run-spawn-chatmode-settled | chat 轮次收敛编排（pi 包 spawn-runner；chat 域 HostBridge 编排 W7 已登记 stage-3 gap） |
+| descendant-sweep / descendant-sweep-guards / kill-all-escalation / service-kill-escalation / spawned-children | 收割/杀链（SDK kill-chain + A3 真机门；镜像面 = protocol-blackbox） |
+| epipe-fallback / session-runner-epipe | EPIPE 兜底（pi 包 stdin-writer/spawn-runner 测试） |
+| keep-alive-no-progress / settled-watchdog / timeout-integration | 进度/超时判据（ADR-0047 域；pi 包 + A8 真机门） |
+| recursive-visibility-env / start-sync-model-guard / session-runner-schema-env | 引擎内 env 注入面（pi 包 spawn-args/relay-env 测试；W12 env 契约单测） |
+| rpc-mode / run-spawn-rpc-mode / run-spawn-integration / run-spawn-resume / run-spawn-edges / run-and-finalize-anchoring / run-spawn-stdout-callback-throw / spawn-worktree-guidance | run 全链编排（pi 包 spawn-runner/protocol-e2e；协议面 = W10 黑盒套件） |
+| session-runner-branch-cache-lru / session-runner-close-prune / session-runner-dispatch / session-runner-heartbeat-idle-fallback / session-runner-lifecycle-helpers | session-runner 内部机制（pi 包） |
+| max-turns-to-watchdog-ms | turn limiter 换算（pi 包 turn-limiter 测试） |
+| subagent-service-message-close | message-close 编排（chat 域 stage-3 gap 承接） |
+| worktree-pid-registration.integration | pid 注册集成（镜像面承接；worktree 面归 W12 回归） |
+| execution-runtime-face / engine-model-validation / session-view-service-zcode-dbpath | zcode 引擎内部（zcode 包 zcode-engine-* / reader / zcode-session-db-isolation 测试） |
+| `helpers/session-runner-mocks.ts` | 消费者全部随上表删除（spawn-mock.ts 保留——3 个存活壳侧行为测试仍消费） |
+
+## 未入清单的既有深路径引用（W11 处置面，W10 显式登记）
+
+以下文件经 `vi.mock` 字符串路径引用 `engines/pi|zcode`（非值 import，grep 字符串命中），
+不在 §2.10 三选一清单内、本次未动，W11 删内建时同批核处：
+`recursive-visibility-baseline` / `nested-visibility-env-propagation` / `execute-nesting` / `execute-and-await-worktree` / `collect-coordinator-service` / `collect-mixed-dispatch` / `get-record-for-action-restart` / `stream-sink-retirement` / `subagent-agent-runner.test` / `subagent-service-{multiproc-guard,notify-gate,parent-guard,recovery-bounds}` / `sync-collect-recovery` / `helpers/{spawn-mock,subagent-service-mocks}` / `lifecycle-predicates.test`（归 W6/W11）。
+
+
+## 主会话修正（2026-09-09，W10 修复轮）
+
+- `engine/__tests__/common/session-view-service-zcode-dbpath.test.ts` 原列 §2.10 清单①（随 zcode 包迁移/W5），但 W5 未迁（它测的是 core 壳侧 session-view-service 白名单分支，非引擎内部行为）、W10 批次误删——已按原样恢复（8 用例绿）。该文件深路径 import（engines/zcode/{reader,constants,db-path}）在 **W11 H1 改写当轮**随 session-view-service 协议化同批改写为协议等价断言（或由 zcode 包 e2e 接替后删除）；在此之前保留为 A plan（zcode-session-db-isolation）生产链验收证据。
+- ①类清单中「测 core 壳侧模块」的文件（本件与 execution-runtime-face / engine-model-validation）处置归属应为「W11 H1/H2 同批」而非「随引擎包迁移」——后续处置以本节为准。

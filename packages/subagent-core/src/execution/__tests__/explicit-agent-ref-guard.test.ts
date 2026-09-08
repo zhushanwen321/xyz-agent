@@ -1,3 +1,6 @@
+// [W10 处置注记 §2.10 ②] vi.mock(engines/pi/session-runner) 拦截的是 core 生产代码的
+// inproc 深路径 import（buildSpawnArgs 消费点在生产侧）——mock 目标改指
+// @zhushanwen/pi-subagent-cli 需生产改线先行（W11 收口）。W11 删内建当轮同批改写。
 // 显式 agent ref 失败必须报错（非静默降级）——三通道对称审查修复的 agent 通道验收。
 //
 // 修复背景：resolveIdentity 旧实现 getAgentConfig（loadByPath 无 require）对相对

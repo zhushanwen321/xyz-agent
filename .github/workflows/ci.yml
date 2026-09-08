@@ -440,6 +440,7 @@ jobs:
         run: |
           node .githooks/check-engine-sdk-boundary.mjs
           node scripts/check-engine-package-boundary.mjs
+          node packages/subagent-core/scripts/check-engine-spawn-guard.mjs
 
       # pi 构建期派生锚点守卫（pi-evolution-consistency §3.2 方向 1A / D2，与 pre-commit 同源直调）：
       # 声明基准（build.yml env / prepare 脚本默认值 / extensions peerDeps 对根 package.json）

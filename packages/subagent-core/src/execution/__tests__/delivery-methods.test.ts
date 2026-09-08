@@ -1,3 +1,7 @@
+// [W10 处置注记 §2.10 ②] vi.mock(engines/pi/session-runner) 拦截 core 生产深路径
+//（runSpawn/spawnedChildren 消费点在生产侧）——改指引擎包/镜像需生产改线先行
+//（W11 收口）。spawnedChildren 镜像面断言已由 protocol-blackbox + W6 mirror 单测
+// 承载。W11 删内建当轮同批改写本文件。
 // src/execution/__tests__/delivery-methods.test.ts
 //
 // 冷路径续轮 + chatMode 统一投递单元测试（M2-B1 投递基础设施；D2 单轨后口径）。

@@ -1,3 +1,7 @@
+// [W10 处置注记 §2.10 ②] 本测试 vi.mock 的深路径（engines/pi/temp-prompt 等）同时是
+// core 生产代码（subagent-service 等）的 inproc 过渡 import——mock 目标改指引擎包
+// 需生产 import 先改线（W6 已把改线收敛到 W11 收口，见 subagent-service.ts W7 注）。
+// W11 删内建当轮必须同批改写本文件 mock 目标（登记于 W10 deviations 与处置表）。
 /**
  * writeAppendSystemPromptFile 组装矩阵（W2 移交 CRAP 43.1；私有函数，经公共
  * runSpawn 驱动，与 spawn-worktree-guidance.test.ts 同 mock 模式——mock

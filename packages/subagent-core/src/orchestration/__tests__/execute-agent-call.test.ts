@@ -12,7 +12,7 @@ import {
   isDeterministicSchemaFailureMsg,
   isStaleContextErrorMsg,
   STALE_CONTEXT_PATTERNS,
-} from "../../execution/engine/engines/pi/output-collector.ts";
+} from "@zhushanwen/pi-subagent-cli";
 import { executeAgentCall } from "../execute-agent-call.ts";
 import { AgentCall } from "../models/agent-call.ts";
 import { Budget } from "../models/budget.ts";

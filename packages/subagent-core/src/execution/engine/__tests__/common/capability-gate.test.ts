@@ -23,13 +23,26 @@ import {
   type TaskShapeForGate,
 } from "../../common/capability-gate.ts";
 import { EngineError } from "../../common/errors.ts";
-import type { EngineCapabilities } from "../../types.ts";
-import { PiEngine } from "../../engines/pi/pi-engine.ts";
-import { ZcodeEngine } from "../../engines/zcode/zcode-engine.ts";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-/** 真实引擎的 capabilities 面单测直取（D3 声明是判据本体——pi=true/zcode=false 扩位）。 */
-const PI_CAPS = new PiEngine({ getService: () => null }).capabilities();
-const ZCODE_CAPS = new ZcodeEngine({ engineDataDir: () => "/tmp/zcode-gate" }).capabilities();
+import type { EngineCapabilities } from "../../types.ts";
+
+// W10（§2.10 ②）：gate 判据源改读引擎包 manifest（package.json xyz-agent.capabilities
+// ——协议化后同步成员唯一源），不再深路径构造内建引擎实例（W11 删除）。
+function manifestCaps(relPkg: string): EngineCapabilities {
+  const pkg = JSON.parse(
+    readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../../../../../../", relPkg, "package.json"),
+      "utf8",
+    ),
+  ) as { "xyz-agent": { subagentEngine: { capabilities: EngineCapabilities } } };
+  return pkg["xyz-agent"].subagentEngine.capabilities;
+}
+
+const PI_CAPS = manifestCaps("pi-subagent-cli");
+const ZCODE_CAPS = manifestCaps("zcode-subagent-cli");
 
 /** 会话分叉通道族可用的 zcode 形态变体（fork 判据用）。 */
 const ZCODE_CAPS_WITH_CONVERSATION: EngineCapabilities = { ...ZCODE_CAPS, conversation: "native" };

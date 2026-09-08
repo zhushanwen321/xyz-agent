@@ -1,3 +1,7 @@
+// [W10 处置注记 §2.10 ②] vi.mock(engines/pi/session-runner) 拦截 core 生产深路径
+//（getChildByRecord/runSpawn 消费点在 lifecycle 谓词等生产侧）——改指镜像/引擎包需
+// 生产改线先行（W11 收口）。W11 删内建当轮同批改写本文件（镜像 getter 已就位：
+// host/spawned-children.ts getChildByRecord）。
 // src/execution/__tests__/gc-timer.test.ts
 //
 // [M8] idle record GC 定时器测试（subagent-service.ts startGcTimer，L485-507）。
