@@ -221,9 +221,8 @@ const _exportPayload: PresetExportPayload = {
 }
 // version 是 number（非字面量 1，因导出 payload 不锁死字面量，便于未来迁移）
 const _versionOnly: PresetExportPayload = { presets: [], version: 2 }
-// 不应包含 usage/perCwdDefaults 字段（编译时无法直接断言 absence，但赋值会报错——
-// 以下两行若取消注释应编译失败，留作人工校验）：
+// 不应包含 usage 字段（编译时无法直接断言 absence，但赋值会报错——
+// 以下一行若取消注释应编译失败，留作人工校验）：
 //   const _bad: PresetExportPayload = { presets: [], version: 1, usage: {} }
-//   const _bad2: PresetExportPayload = { presets: [], version: 1, perCwdDefaults: {} }
 void _exportPayload
 void _versionOnly

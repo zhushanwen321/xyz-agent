@@ -142,7 +142,6 @@ export type ClientMessageType =
   | 'preset.list' | 'preset.getDefault' | 'preset.setDefault'
   | 'preset.create' | 'preset.update' | 'preset.delete'
   | 'preset.recordUsage' | 'preset.getUsage'
-  | 'preset.getCwdDefault' | 'preset.setCwdDefault' | 'preset.getCwdDefaults'
   | 'preset.export' | 'preset.import'
   // 迁移：检测本机其他 agent（Claude/Codex/Pi/ZCode）的 skill/agent 配置目录。
   // 只读检测，不读文件内容（安全）。reply config.sourcesDetected。
@@ -624,13 +623,9 @@ export interface ClientMessageMap {
   // FR-14：预设使用统计（session 创建时 runtime 调 recordUsage，前端调 getUsage 拉排序数据）
   'preset.recordUsage': { presetId: string }
   'preset.getUsage': Record<string, never>
-  // FR-15：per-cwd 默认预设（前端调 getCwdDefault/setCwdDefault/getCwdDefaults）
-  'preset.getCwdDefault': { cwd: string }
-  'preset.setCwdDefault': { cwd: string; presetId: string }
-  'preset.getCwdDefaults': Record<string, never>
   // FR-13：预设导入/导出（前端传 JSON 字符串，runtime 解析/生成）。
   // json 是 `JSON.stringify(PresetExportPayload)` 的结果——只含 presets/defaultPresetId/version
-  // 三字段，故意排除 usage/perCwdDefaults（runtime 本地状态，不随预设分享）。
+  // 三字段，故意排除 usage（runtime 本地状态，不随预设分享）。
   // 见 pi-preset.ts 的 PresetExportPayload 类型。
   'preset.export': Record<string, never>
   'preset.import': { json: string }
@@ -845,7 +840,6 @@ export type ServerMessageType =
   | 'preset.list' | 'preset.getDefault' | 'preset.setDefault'
   | 'preset.create' | 'preset.update' | 'preset.delete'
   | 'preset.recordUsage' | 'preset.getUsage'
-  | 'preset.getCwdDefault' | 'preset.setCwdDefault' | 'preset.getCwdDefaults'
   | 'preset.export' | 'preset.import'
   | 'config.sourcesDetected'
   // wave 2：listBuiltinProviders reply（内置 provider 模板数组）。
@@ -1463,7 +1457,7 @@ export interface ServerMessageMapBase {
 
   // ── preset 域 reply（设计文档 pi-launch-presets.md，runtime PresetMessageHandler reply）──
   // 仅登记 payload 消费型 reply（domain 读 reply 字段）。
-  // ack 型（setDefault/delete/recordUsage/setCwdDefault）刻意不登记——runtime 回 {} 空对象，
+  // ack 型（setDefault/delete/recordUsage）刻意不登记——runtime 回 {} 空对象，
   // 留作 Record<string, unknown> 占位（与 ServerMessageMapBase 收录原则一致：「未消费/协议待定」走占位）。
   // preset.list：preset.list 的 reply（payload 消费型，domain 读 presets 列表）。
   'preset.list': { presets: PiLaunchPreset[] }
@@ -1477,13 +1471,8 @@ export interface ServerMessageMapBase {
   'preset.update': PresetMutationReply
   // preset.getUsage：preset.getUsage 的 reply（FR-14）。key=presetId, value=PresetUsageEntry。
   'preset.getUsage': { usage: Record<string, PresetUsageEntry> }
-  // preset.getCwdDefault：preset.getCwdDefault 的 reply（FR-15）。presetId 始终是 string——
-  // runtime getCwdDefaultPresetId(cwd) 在未配置时兜底返回 'builtin:full'。
-  'preset.getCwdDefault': { presetId: string }
-  // preset.getCwdDefaults：preset.getCwdDefaults 的 reply（FR-15）。key=cwd 绝对路径, value=presetId。
-  'preset.getCwdDefaults': { defaults: Record<string, string> }
   // preset.export：preset.export 的 reply（FR-13）。json 是 `JSON.stringify(PresetExportPayload)`
-  //   的结果——只含 presets/defaultPresetId/version 三字段，排除 usage/perCwdDefaults。
+  //   的结果——只含 presets/defaultPresetId/version 三字段，排除 usage。
   //   见 pi-preset.ts 的 PresetExportPayload 类型。
   'preset.export': { json: string }
   // preset.import：preset.import 的 reply（FR-13）。count = 成功导入的预设数量。
@@ -1938,10 +1927,10 @@ export interface ReplyPayloadMap {
   'config.setSmartContextExcludedModels': ServerMessageMap['config.smartContextExcludedModels']
   // preset 域（设计文档 pi-launch-presets.md）：runtime PresetMessageHandler reply。
   // 全部引用 ServerMessageMapBase 中登记的精确 payload 形状（W-SH-1 收紧，SSOT）。
-  //  - preset.list / getDefault / getUsage / getCwdDefault / getCwdDefaults / export / import
+  //  - preset.list / getDefault / getUsage / export / import
   //    → payload 消费型（domain 读 reply 字段）
-  //  - preset.setDefault / delete / recordUsage / setCwdDefault
-  //    → ack 型（domain register<void>，默认预设/cwd 默认变更无独立广播通道）
+  //  - preset.setDefault / delete / recordUsage
+  //    → ack 型（domain register<void>，默认预设变更无独立广播通道）
   'preset.list': ServerMessageMap['preset.list']
   'preset.getDefault': ServerMessageMap['preset.getDefault']
   'preset.setDefault': void
@@ -1949,12 +1938,9 @@ export interface ReplyPayloadMap {
   'preset.create': ServerMessageMap['preset.create']
   'preset.update': ServerMessageMap['preset.update']
   'preset.delete': void
-  // FR-14/FR-15/FR-13 reply（payload 消费型 vs ack 型）
+  // FR-14/FR-13 reply（payload 消费型 vs ack 型）
   'preset.recordUsage': void
   'preset.getUsage': ServerMessageMap['preset.getUsage']
-  'preset.getCwdDefault': ServerMessageMap['preset.getCwdDefault']
-  'preset.setCwdDefault': void
-  'preset.getCwdDefaults': ServerMessageMap['preset.getCwdDefaults']
   'preset.export': ServerMessageMap['preset.export']
   'preset.import': ServerMessageMap['preset.import']
 

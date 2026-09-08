@@ -61,7 +61,6 @@
 | `preset.setDefault` | ack 占位 reply；分支二原样存储 + 乐观写 + 失败回滚已闭环，无变换面（消费侧 usePiPresets.setDefault） |
 | `preset.delete` | 删除语义无生效值可回显（成功 ack 即终态：值 = 不存在，幂等） |
 | `preset.recordUsage` | 记账类 fire-and-forget，无显示副本语义 |
-| `preset.setCwdDefault` | 同 setDefault；FR-15 perCwd 全链已裁决随 state-truth-sync U9 删除 |
 | `session.rename` | wire reply 实际回显 `{ sessionId, name }`（session-message-handler handleSessionRename）+ `broadcastSessionList` 全量广播；类型层登记 void（ack 消费）——权威覆盖由广播通道承担，豁免 reply payload 消费 |
 | `session.setProject` | 同 rename：wire 回显 + broadcastSessionList 全量刷新 |
 

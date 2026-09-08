@@ -3,11 +3,12 @@
  *
  * 设计文档：docs/page-design/pi-launch-presets.md（§8.1 API）
  *
- * 处理 preset.* 消息类型（6 CRUD + 7 Phase 2 增强）：
+ * 处理 preset.* 消息类型（6 CRUD + 4 Phase 2 增强）：
  * - preset.list / getDefault / setDefault / create / update / delete（CRUD）
  * - preset.recordUsage / getUsage（FR-14 使用统计）
- * - preset.getCwdDefault / setCwdDefault / getCwdDefaults（FR-15 per-cwd 默认）
  * - preset.export / import（FR-13 导入/导出）
+ * [HISTORICAL] preset.getCwdDefault / setCwdDefault / getCwdDefaults（FR-15 per-cwd 默认）
+ * 已随 state-truth-sync U9 全链删除（renderer/core 零消费的纯死链）。
  *
  * 与 SettingsMessageHandler 对称（独立 handler，非 SettingsMessageHandler 内部 case）。
  * 职责单一：只做消息→PresetService 调用→reply，不含领域计算。
@@ -37,9 +38,6 @@ const PRESET_HANDLES = [
   'preset.delete',
   'preset.recordUsage',
   'preset.getUsage',
-  'preset.getCwdDefault',
-  'preset.setCwdDefault',
-  'preset.getCwdDefaults',
   'preset.export',
   'preset.import',
 ] as const
@@ -93,9 +91,6 @@ export class PresetMessageHandler {
     ['preset.delete', (msg, ws) => this.replyDelete(msg as PresetMsg<'preset.delete'>, ws)],
     ['preset.recordUsage', (msg, ws) => this.replyRecordUsage(msg as PresetMsg<'preset.recordUsage'>, ws)],
     ['preset.getUsage', (msg, ws) => this.replyGetUsage(msg as PresetMsg<'preset.getUsage'>, ws)],
-    ['preset.getCwdDefault', (msg, ws) => this.replyGetCwdDefault(msg as PresetMsg<'preset.getCwdDefault'>, ws)],
-    ['preset.setCwdDefault', (msg, ws) => this.replySetCwdDefault(msg as PresetMsg<'preset.setCwdDefault'>, ws)],
-    ['preset.getCwdDefaults', (msg, ws) => this.replyGetCwdDefaults(msg as PresetMsg<'preset.getCwdDefaults'>, ws)],
     ['preset.export', (msg, ws) => this.replyExport(msg as PresetMsg<'preset.export'>, ws)],
     ['preset.import', (msg, ws) => this.replyImport(msg as PresetMsg<'preset.import'>, ws)],
   ])
@@ -180,30 +175,6 @@ export class PresetMessageHandler {
   private replyGetUsage(msg: PresetMsg<'preset.getUsage'>, ws: WsType): boolean {
     const usage = this.ctx.presetService.getUsage()
     this.ctx.reply(ws, msg.id, 'preset.getUsage', { usage })
-    return true
-  }
-
-  // ── FR-15：per-cwd 默认预设 ──
-
-  private replyGetCwdDefault(msg: PresetMsg<'preset.getCwdDefault'>, ws: WsType): boolean {
-    const { cwd } = msg.payload
-    const presetId = this.ctx.presetService.getCwdDefaultPresetId(cwd)
-    this.ctx.reply(ws, msg.id, 'preset.getCwdDefault', { presetId })
-    return true
-  }
-
-  private replySetCwdDefault(msg: PresetMsg<'preset.setCwdDefault'>, ws: WsType): boolean {
-    const { cwd, presetId } = msg.payload
-    this.ctx.presetService.setCwdDefaultPresetId(cwd, presetId)
-    // S-TR-1：preset.setCwdDefault 在 ReplyPayloadMap 为 void（ack 型），reply() 用 ServerMessageMap[T]
-    // 占位对象（同 setDefault 注释）。
-    this.ctx.reply(ws, msg.id, 'preset.setCwdDefault', {} as Record<string, never>)
-    return true
-  }
-
-  private replyGetCwdDefaults(msg: PresetMsg<'preset.getCwdDefaults'>, ws: WsType): boolean {
-    const defaults = this.ctx.presetService.getCwdDefaults()
-    this.ctx.reply(ws, msg.id, 'preset.getCwdDefaults', { defaults })
     return true
   }
 

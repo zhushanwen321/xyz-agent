@@ -118,12 +118,6 @@ const MUTATION_RPC_REGISTRY: readonly MutationRegistryEntry[] = [
     rationale: '记账类 fire-and-forget，无显示副本语义',
   },
   {
-    type: 'preset.setCwdDefault',
-    branch: 'verbatim',
-    contract: 'ack-exempt',
-    rationale: '同 setDefault；FR-15 perCwd 全链已裁决随 state-truth-sync U9 删除',
-  },
-  {
     type: 'session.rename',
     branch: 'verbatim',
     contract: 'ack-exempt',

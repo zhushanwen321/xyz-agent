@@ -60,9 +60,6 @@ function createMockPresetService() {
     deletePreset: vi.fn(),
     recordUsage: vi.fn(),
     getUsage: vi.fn().mockReturnValue({}),
-    getCwdDefaultPresetId: vi.fn().mockReturnValue('builtin:full'),
-    setCwdDefaultPresetId: vi.fn(),
-    getCwdDefaults: vi.fn().mockReturnValue({}),
     exportPresets: vi.fn().mockReturnValue('{}'),
     importPresets: vi.fn().mockReturnValue(0),
   }
@@ -93,7 +90,7 @@ describe('PresetMessageHandler', () => {
     ws = createMockWs()
   })
 
-  it('handles 消息类型清单包含 13 个 preset.* 类型', () => {
+  it('handles 消息类型清单包含 10 个 preset.* 类型', () => {
     expect(handler.handles).toEqual([
       'preset.list',
       'preset.getDefault',
@@ -103,9 +100,6 @@ describe('PresetMessageHandler', () => {
       'preset.delete',
       'preset.recordUsage',
       'preset.getUsage',
-      'preset.getCwdDefault',
-      'preset.setCwdDefault',
-      'preset.getCwdDefaults',
       'preset.export',
       'preset.import',
     ])
@@ -198,26 +192,6 @@ describe('PresetMessageHandler', () => {
     })
   })
 
-  describe('preset.getCwdDefault (FR-15)', () => {
-    it('调用 getCwdDefaultPresetId 并 reply { presetId }', async () => {
-      ctx.mock.getCwdDefaultPresetId.mockReturnValue('custom:test-uuid')
-      const msg = { type: 'preset.getCwdDefault' as const, id: 'req-9', payload: { cwd: '/some/path' } }
-      const result = await handler.handlePresetMessage(msg, ws)
-      expect(result).toBe(true)
-      expect(ctx.mock.getCwdDefaultPresetId).toHaveBeenCalledWith('/some/path')
-      expect(ctx.reply).toHaveBeenCalledWith(ws, 'req-9', 'preset.getCwdDefault', { presetId: 'custom:test-uuid' })
-    })
-  })
-
-  describe('preset.setCwdDefault (FR-15)', () => {
-    it('调用 setCwdDefaultPresetId 并 reply ack', async () => {
-      const msg = { type: 'preset.setCwdDefault' as const, id: 'req-10', payload: { cwd: '/some/path', presetId: 'custom:test-uuid' } }
-      const result = await handler.handlePresetMessage(msg, ws)
-      expect(result).toBe(true)
-      expect(ctx.mock.setCwdDefaultPresetId).toHaveBeenCalledWith('/some/path', 'custom:test-uuid')
-    })
-  })
-
   describe('preset.export (FR-13)', () => {
     it('调用 exportPresets 并 reply { json }', async () => {
       ctx.mock.exportPresets.mockReturnValue('{"presets":[],"version":1}')
@@ -297,9 +271,6 @@ describe('PresetMessageHandler', () => {
       { type: 'preset.delete', payload: { presetId: 'custom:test-uuid' } },
       { type: 'preset.recordUsage', payload: { presetId: 'builtin:full' } },
       { type: 'preset.getUsage', payload: {} },
-      { type: 'preset.getCwdDefault', payload: { cwd: '/x' } },
-      { type: 'preset.setCwdDefault', payload: { cwd: '/x', presetId: 'builtin:full' } },
-      { type: 'preset.getCwdDefaults', payload: {} },
       { type: 'preset.export', payload: {} },
       { type: 'preset.import', payload: { json: '{}' } },
     ]

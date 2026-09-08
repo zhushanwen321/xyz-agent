@@ -505,7 +505,7 @@ describe('PresetService · PR #117 review fixes', () => {
     expect(presetService.getPreset('imp-bad')).toBeUndefined()
   })
 
-  // ── W-RT-2: deletePreset 清理 defaultPresetId / perCwdDefaults ──
+  // ── W-RT-2: deletePreset 清理 defaultPresetId ──
 
   it('W-RT-2: deletePreset 清理指向被删 preset 的 defaultPresetId', () => {
     writeFile({
@@ -523,26 +523,6 @@ describe('PresetService · PR #117 review fixes', () => {
     expect(presetService.getDefaultPresetId()).toBe(BUILTIN_PRESET_IDS.FULL)
     const onDisk = readFile()
     expect(onDisk!.defaultPresetId).toBeUndefined()
-  })
-
-  it('W-RT-2: deletePreset 清理 perCwdDefaults 中指向被删 preset 的条目', () => {
-    writeFile({
-      version: 1,
-      perCwdDefaults: {
-        '/cwd-a': 'uuid-del',
-        '/cwd-b': 'uuid-keep',
-      },
-      presets: [
-        { id: 'uuid-del', name: 'a', builtin: false, order: 1, toolMode: 'all', extensionMode: 'all' },
-        { id: 'uuid-keep', name: 'b', builtin: false, order: 2, toolMode: 'all', extensionMode: 'all' },
-      ],
-    })
-
-    presetService.deletePreset('uuid-del')
-
-    const onDisk = readFile()
-    // /cwd-a 被清理，/cwd-b 保留
-    expect(onDisk!.perCwdDefaults).toEqual({ '/cwd-b': 'uuid-keep' })
   })
 
   it('W-RT-2: deletePreset 不存在的 preset 是 no-op（不抛错、不写盘）', () => {
@@ -576,31 +556,35 @@ describe('PresetService · PR #117 review fixes', () => {
     expect(presetService.getDefaultPresetId()).toBe(BUILTIN_PRESET_IDS.FULL)
   })
 
-  it('W-RT-3: getCwdDefaultPresetId perCwd 指向僵尸 → 回退 global default → 再回退 builtin:full', () => {
-    writeFile({
-      version: 1,
-      defaultPresetId: 'uuid-also-zombie',
-      perCwdDefaults: {
-        '/cwd-zombie': 'uuid-percwd-zombie',
-      },
-      presets: [],
-    })
-    // perCwd 僵尸 → global default 也是僵尸 → 最终兜底 builtin:full
-    expect(presetService.getCwdDefaultPresetId('/cwd-zombie')).toBe(BUILTIN_PRESET_IDS.FULL)
-  })
+  // ── FR-15 下线：存量 perCwdDefaults 字段惰性清除（state-truth-sync U9）──
 
-  it('W-RT-3: getCwdDefaultPresetId perCwd 合法时优先用 perCwd', () => {
-    writeFile({
-      version: 1,
-      defaultPresetId: BUILTIN_PRESET_IDS.ORCHESTRATOR,
-      perCwdDefaults: {
-        '/cwd-a': BUILTIN_PRESET_IDS.READONLY,
-      },
-      presets: [],
-    })
-    expect(presetService.getCwdDefaultPresetId('/cwd-a')).toBe(BUILTIN_PRESET_IDS.READONLY)
-    // 未覆盖的 cwd 回退 global default（orchestrator 存在于 DEFAULT，合法）
-    expect(presetService.getCwdDefaultPresetId('/cwd-b')).toBe(BUILTIN_PRESET_IDS.ORCHESTRATOR)
+  it('FR-15 下线：存量 perCwdDefaults 字段在 load 时被惰性剥离并重写，其余字段原样保留', () => {
+    // 存量旧数据已不是合法的现行 PiPresetsFile 形状（字段已删），用裸 JSON 直写模拟磁盘遗留
+    writeFileSync(
+      piPresetsPath(),
+      JSON.stringify(
+        {
+          version: 1,
+          defaultPresetId: 'uuid-legacy',
+          usage: { 'uuid-legacy': { count: 2, lastUsed: 7 } },
+          perCwdDefaults: { '/legacy-cwd': 'uuid-legacy' },
+          presets: [
+            { id: 'uuid-legacy', name: 'keep', builtin: false, order: 1, toolMode: 'all', extensionMode: 'all' },
+          ],
+        },
+        null,
+        2,
+      ),
+      'utf-8',
+    )
+    // 任一 load 路径触发剥离重写
+    expect(presetService.getDefaultPresetId()).toBe('uuid-legacy')
+    // 磁盘文件不再含 perCwdDefaults，其余字段原样保留
+    const onDisk = readFile()
+    expect('perCwdDefaults' in onDisk!).toBe(false)
+    expect(onDisk!.defaultPresetId).toBe('uuid-legacy')
+    expect(onDisk!.usage).toEqual({ 'uuid-legacy': { count: 2, lastUsed: 7 } })
+    expect(onDisk!.presets).toHaveLength(1)
   })
 
   // ── S-RT-2: mtime 缓存 ──
@@ -672,13 +656,12 @@ describe('PresetService · parsePresetsFileFromDisk 容错分支覆盖', () => {
     expect(presetService.getAllPresets().map(p => p.id)).toEqual(DEFAULT_PRESETS.map(p => p.id))
   })
 
-  it('presets 字段非数组（对象）→ presets 兜底空，usage/perCwdDefaults/defaultPresetId 仍透传', () => {
+  it('presets 字段非数组（对象）→ presets 兜底空，usage/defaultPresetId 仍透传', () => {
     writeFileSync(
       piPresetsPath(),
       JSON.stringify({
         presets: { id: 'not-an-array' },
         usage: { 'custom-1': { count: 3, lastUsed: 42 } },
-        perCwdDefaults: { '/work': 'custom-1' },
         defaultPresetId: 'custom-1',
       }),
       'utf-8',
@@ -686,22 +669,19 @@ describe('PresetService · parsePresetsFileFromDisk 容错分支覆盖', () => {
     // 无合法 preset → defaultPresetId 指向不存在的 id，getDefaultPresetId 兜底 builtin:full（W-RT-3 语义）
     expect(presetService.getDefaultPresetId()).toBe(BUILTIN_PRESET_IDS.FULL)
     expect(presetService.getUsage()).toEqual({ 'custom-1': { count: 3, lastUsed: 42 } })
-    expect(presetService.getCwdDefaults()).toEqual({ '/work': 'custom-1' })
   })
 
-  it('usage/perCwdDefaults 非 Record 形状（数组/标量）→ 丢弃为 undefined，不抛错', () => {
+  it('usage 非 Record 形状（数组/标量）→ 丢弃为 undefined，不抛错', () => {
     writeFileSync(
       piPresetsPath(),
       JSON.stringify({
         presets: [],
         usage: ['bad'],
-        perCwdDefaults: 'bad',
         defaultPresetId: 123,
       }),
       'utf-8',
     )
     expect(presetService.getUsage()).toEqual({})
-    expect(presetService.getCwdDefaults()).toEqual({})
     // defaultPresetId 非字符串 → undefined → 兜底 builtin:full
     expect(presetService.getDefaultPresetId()).toBe(BUILTIN_PRESET_IDS.FULL)
   })
