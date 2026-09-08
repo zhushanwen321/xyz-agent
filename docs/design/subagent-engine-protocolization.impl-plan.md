@@ -1,6 +1,6 @@
 # 子代理引擎协议化与外移 实施计划
 
-基线: 135c1dbab | 来源设计: docs/design/subagent-engine-protocolization.md（v10，设计层收敛） | 日期: 2026-09-08
+基线: 59f095b25 | 来源设计: docs/design/subagent-engine-protocolization.md（v10，设计层收敛） | 日期: 2026-09-08
 
 > 本计划承接设计文档 §5 的 W1–W12 拆分，把**实现级细节**（env 变量名、pidfile 命名、清理谓词、
 > conformance 断言形式、措辞限定词）从设计层下沉到本文件。设计文档后续瘦身时以本文件为
@@ -326,6 +326,8 @@ graph TD
 | R9-1 | A8①「孙进程零命中」缺限定词 → 与 A3/A11 统一限定为「**一代子进程 + 组内后代**」；pi rpc-mode 在 `session-runner.ts:582/629` 产生 detached 后代，属 §3.9 已接受代价（不在收割覆盖范围） | W10（conformance 断言措辞）+ W2（镜像/收割范围注释） | A3/A8①/A11 验收文案统一带限定词；真机断言仅对一代子进程 + 组内后代做零残留检查，detached 后代不判 fail |
 | R9-2 | 自灭判据与已 ack 的 `host/askUser` 异步等待的边界：ack 后属人机交互异步等待，**不得计入 in-flight 反向请求超时** | W2（`EngineClient` ack 语义）+ SDK 引擎侧自灭实现（W12） | A8④ 负向验收：「被 ack 的 `host/askUser` 异步等待不被判超时」+「静默长任务 >30s 无反向流量不被自灭」 |
 | R9-3 | 三条件清扫对「同 cmdline 的 pid 复用」的保守方向 + **陈旧 pidfile 删除通道/上限**（宿主每次重启会新增一个 pidfile，不清理则无限堆积） | W2（pidfile 清扫实现） | 实现语义：三条件任一不确定 → 保守跳过不杀；判定不成立（pid 死 / cmdline 不符）→ 删除该 pidfile 文件；宿主 pid 复用疑似 → 跳过 + 保留下轮再清。待验证检查点：真机模拟「宿主 kill -9 × N 次重启」后 pidfile 目录无堆积、无双实例 |
+| R9-2b | **长运行 `HostBridge.executeAndAwait` 不得计入 30s in-flight 超时**（R9 影响面 MF#1）：该请求应答 = 任务完成，整个任务时长都是 in-flight → 按字面实现每个 >30s 的 pi 任务都会被引擎自灭（`turnTimeoutMs` 同型事故）。 | W2（`EngineClient` 超时域划分）+ W12（引擎侧自灭） | **长运行 HostBridge 面走 ack 两阶段（同 `askUser` 模式），不参与 30s 计时**；A8④ 补负向用例「>30s 的 pi 任务不被自灭」 |
+| R9-3b | pidfile 内落盘 **`engineStartTime`** 启动时间戳做 pid 复用比对（Windows 取安全方向：不杀只删） | W2（pidfile 原子写） | 同 cmdline 复用场景不误杀；陈旧文件被 unlink（防无界累积） |
 | R9-4 | 补强三项：① 宿主 pid 复用的保守跳过语义（并入 R9-3）；② stdin fd 不得外泄给后代（否则宿主死后代持写端、EOF 不到达、自灭失效）；③ W10 静态断言承接 allowlist（`ps`/`taskkill`/`kill` 探测/收割调用不被「必经 `spawnEngineChild`」断言拦下） | ② W12（`spawnEngineChild` stdio 规约）+ W2；③ W10 | ② `spawnEngineChild` 单测断言子进程 stdin 非引擎 stdin fd + A8④ 真机隐式验证；③ W10 静态断言测试含 allowlist 正反两例 |
 
 ### 7.3 变更历史
