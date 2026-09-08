@@ -41,7 +41,7 @@ const FAKE_CLI = fileURLToPath(
 const GOLDEN_FIXTURE = JSON.parse(
   readFileSync(
     fileURLToPath(
-      new URL("./__fixtures__/zcode-golden-appserver.json", import.meta.url)
+      new URL("../__golden__/zcode-golden-appserver.json", import.meta.url)
     ),
     "utf8"
   )

@@ -6,7 +6,7 @@
 //   app-server NDJSON 帧序列（R3，D8-②）：常驻通道的 golden 帧序列语料，四类样本
 //   （create 应答 / 推送流 / 终态帧 / read 应答，附录 A.2 任务生命周期帧序）。
 //   来源：按 A.2 协议权威 + 旧 zsw 实现真机抓包形态合成（非实录，fixture _meta
-//   如实标注）；真机冒烟后替换。fixture __tests__/__fixtures__/zcode-golden-appserver.json
+//   如实标注）；真机冒烟后替换。fixture __golden__/zcode-golden-appserver.json
 //   是采集 SSOT，此处为运行时副本，更新样本需同步改两处（session-channel 测试
 //   diff 校验）。
 
