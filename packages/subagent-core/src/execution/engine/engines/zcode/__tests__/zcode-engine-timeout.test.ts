@@ -27,10 +27,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineRunResult, RunContext } from "../../../port.ts";
 import type { AgentCallOpts } from "../../../../../orchestration/models/types.ts";
 import { ZCODE_SHARED_POOL_KEY } from "../constants.ts";
+import { zcodeSessionDbPath } from "../db-path.ts";
 import { ZCODE_APPSERVER_GOLDEN } from "../golden-sample.ts";
 import { AppServerConnection } from "../connection.ts";
 import { SessionChannel, TurnTimeoutError } from "../session-channel.ts";
-import { ZcodeEngine, hostZcodeDbPath, type ZcodeEngineDeps } from "../zcode-engine.ts";
+import { ZcodeEngine, type ZcodeEngineDeps } from "../zcode-engine.ts";
 
 const FAKE_CLI = fileURLToPath(new URL("./__fixtures__/fake-appserver.mjs", import.meta.url));
 const PROVIDER = "test-provider";
@@ -303,7 +304,7 @@ describe("超时处置链（P0-1 U2：catch 分流 → stop-outcome 三态裁决
       // 值相同（同一 fake 的 golden create 应答）：不变量 3 每轮 create 都成立
       { sessionId: GOLDEN_SESSION_ID, poolKey: ZCODE_SHARED_POOL_KEY },
     ]);
-    expect(r.handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: hostZcodeDbPath() });
+    expect(r.handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: zcodeSessionDbPath(dataDir) });
     expect(r.handle.data.poolKey).toBe(ZCODE_SHARED_POOL_KEY);
   }, 20_000);
 

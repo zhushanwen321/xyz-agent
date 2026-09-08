@@ -5,8 +5,8 @@
  * 1. record 路由段：engine 缺省 pi（存量 record 零迁移）/ zcode / 畸形值防御
  * 2. zcode record ①→②→③ 三级降级（①真 sqlite 原生读取 ②journal 重放 ③outcome-only）
  * 3. journal 前缀白名单：越界路径（dataDir 外 / ../ 逃逸形态）拒绝且不读文件、降③级
- * 4. dbPath 白名单：绝对路径 === 宿主 zcode 会话 db（共享宿主 HOME 主路径）放行①级；
- *    其他绝对路径（池外）拒绝①级
+ * 4. dbPath 白名单：绝对路径 ∈ 封闭集合（隔离会话库 <dataDir>/engines/zcode/session-db/
+ *    现役 + 宿主库存量兼容）放行①级；其他绝对路径（池外）拒绝①级
  * 5. pi record → 空数组（调用方走现有 JSONL 直读链的契约，A1 守护）
  *
  * engine/engineHandle 字段按并行任务契约防御式构造（shared SubagentRecord 字段由该
@@ -25,8 +25,8 @@ import {
 } from '../src/services/session/subagent-engine-history.js'
 import type { SubagentRecord } from '@xyz-agent/shared'
 
-// Mock node:os — keep all real exports, override homedir（宿主 db 白名单主路径用例的
-// 受控宿主 HOME；缺省占位值不影响其余用例——它们不经绝对 dbPath 分支的宿主比对）
+// Mock node:os — keep all real exports, override homedir（宿主 db（存量兼容）用例的
+// 受控宿主 HOME；缺省占位值不影响其余用例——它们不经绝对 dbPath 分支的白名单比对）
 const osHome = vi.hoisted(() => ({ current: '/mock/home' }))
 vi.mock('node:os', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:os')>()
@@ -77,7 +77,8 @@ function poolDir(): string {
 }
 
 /** 建出与 zcode 0.16.5 同形的三表最小 schema（zcode reader ①级的真实读取面）。
- * dbFile 缺省落池目录；宿主 db 主路径用例显式传入 <home>/.zcode/cli/db/db.sqlite。 */
+ * dbFile 缺省落池目录；宿主 db（存量兼容）用例显式传入 <home>/.zcode/cli/db/db.sqlite，
+ * 隔离库（现役）用例显式传入 <dataDir>/engines/zcode/session-db/db.sqlite。 */
 async function createPoolDb(sessionId: string, dbFile = join(poolDir(), DB_RELATIVE)): Promise<void> {
   mkdirSync(join(dbFile, '..'), { recursive: true })
   const { DatabaseSync } = (await import('node:sqlite')) as { DatabaseSync: new (p: string) => unknown }
@@ -165,9 +166,26 @@ describe('extractRecordEngine（record 路由段）', () => {
 })
 
 describe('readEngineSubagentHistory（zcode 三级降级）', () => {
-  it('tier1: absolute dbPath equal to host db passes whitelist（共享宿主 HOME 主路径，放行①级读取）', async () => {
+  it('tier1: absolute dbPath equal to isolated session db passes whitelist（2026-09 隔离改造后现役写侧，放行①级读取）', async () => {
+    // 隔离库落 <dataDir>/engines/zcode/session-db/db.sqlite（zcodeSessionDbPath 布局的
+    // 消费镜像，独立展开）——与生产 record 的现役绝对 dbPath 同形态
+    const isolatedDb = join(dataDir, 'engines', 'zcode', 'session-db', 'db.sqlite')
+    await createPoolDb(SESSION_ID, isolatedDb)
+    const messages = await readEngineSubagentHistory(
+      zcodeRecord({ sessionRef: { dbPath: isolatedDb, sessionId: SESSION_ID }, poolKey: POOL_KEY }),
+      dataDir,
+    )
+    // ①级原生读取生效（非②③级）：与池内 tier1 用例同投影形状
+    expect(messages).toHaveLength(3)
+    expect(messages[0]?.role).toBe('user')
+    expect(messages[2]?.role).toBe('assistant')
+    expect(messages[2]?.content).toBe('done text')
+  })
+
+  it('tier1: absolute dbPath equal to host db passes whitelist（存量兼容：白名单第二项，放行①级读取）', async () => {
     // homedir mock 指向 tmp 构造的宿主 HOME，db 建在 <home>/.zcode/cli/db/db.sqlite
-    // （ZCODE_HOST_DB_SUFFIX 布局的消费镜像）——与生产 record 的绝对 dbPath 同形态
+    // （ZCODE_HOST_DB_SUFFIX 布局的消费镜像）——共享 HOME 时代（2026-09–隔离改造）
+    // record 落盘的存量绝对 dbPath，白名单第二项放行（不迁移、不删除）
     const hostHome = mkdtempSync(join(tmpdir(), 'sa-host-home-'))
     osHome.current = hostHome
     try {

@@ -5,9 +5,10 @@
 //   ENGINE_CONFORMANCE_LIVE=1 ZCODE_E2E_MODEL='<provider/model>' pnpm vitest run src/execution/engine/engines/zcode/__tests__/zcode-engine.live.test.ts
 //
 // ZCODE_E2E_MODEL 缺省值是采集 golden 样本的本机 provider（v2 config 实测带 apiKey、
-// 公网可达）；换机器跑时用 env 覆盖为本机可用模型。共享宿主 HOME 形态：会话写入
-// 真实 ~/.zcode/cli/db/db.sqlite（与 GUI 共写，WAL 并发安全——已接受的拍板代价）；
-// journal/引擎数据落 /tmp（跑完由本文件 afterAll 清理）。
+// 公网可达）；换机器跑时用 env 覆盖为本机可用模型。共享宿主 HOME + 隔离会话库形态
+// （2026-09 会话库隔离）：HOME 仍为真实宿主值（凭据/插件/MCP 继承不变），会话写入
+// <engineDataDir>/engines/zcode/session-db/db.sqlite（xyz-agent 独占，不进 ZCode GUI
+// 侧边栏）；journal/引擎数据落 /tmp（跑完由本文件 afterAll 清理）。
 
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -54,7 +55,7 @@ describe.skipIf(!LIVE)("ZcodeEngine 端到端真机（app-server 常驻，共享
     expect(report.engineVersion).toMatch(/^0\.\d+\.\d+$/);
   }, 60_000);
 
-  it("run：常驻通道全链（stream 事件流出 + read①级 native + poolKey 锚定 'shared' + 会话落宿主 db）", async () => {
+  it("run：常驻通道全链（stream 事件流出 + read①级 native + poolKey 锚定 'shared' + 会话落隔离会话库）", async () => {
     const events: AgentEvent[] = [];
     const { handle, outcome } = await engine.run(
       {
@@ -83,13 +84,13 @@ describe.skipIf(!LIVE)("ZcodeEngine 端到端真机（app-server 常驻，共享
     expect(events.some((e) => e.type === "text_delta")).toBe(true);
     assertAgentEventInvariants(events, { granularity: "stream", content: outcome.content });
 
-    // handle 锚定：poolKey 恒 'shared'，dbPath = 宿主 HOME 绝对路径（①级读取钥匙）。
-    // 期望值独立展开（不调实现函数——实现改错时断言须红），非 path.join(homedir(), suffix) 同源
+    // handle 锚定：poolKey 恒 'shared'，dbPath = 隔离会话库绝对路径（①级读取钥匙）。
+    // 期望值独立展开（不调实现函数——实现改错时断言须红），非 zcodeSessionDbPath 同源
     const dbPath = handle.data.sessionRef["dbPath"];
-    expect(dbPath).toBe(path.resolve(os.homedir(), ".zcode", "cli", "db", "db.sqlite"));
+    expect(dbPath).toBe(path.resolve(AS_DATA_ROOT, "engines", "zcode", "session-db", "db.sqlite"));
     expect(dbPath.startsWith("/")).toBe(true);
 
-    // read 第①级：SQLite 完整重建（非降级）——读的是宿主 db（共享 HOME 形态）
+    // read 第①级：SQLite 完整重建（非降级）——读的是隔离会话库（xyz-agent 独占）
     const view = await engine.read(handle);
     expect(view.source).toBe("native");
     expect(view.turns.length).toBeGreaterThanOrEqual(1);

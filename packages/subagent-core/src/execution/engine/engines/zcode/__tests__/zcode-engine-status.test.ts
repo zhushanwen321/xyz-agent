@@ -31,8 +31,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { EngineRunResult, RunContext } from "../../../port.ts";
 import type { AgentCallOpts } from "../../../../../orchestration/models/types.ts";
+import { zcodeSessionDbPath } from "../db-path.ts";
 import { ZCODE_APPSERVER_GOLDEN } from "../golden-sample.ts";
-import { ZcodeEngine, hostZcodeDbPath, type ZcodeEngineDeps } from "../zcode-engine.ts";
+import { ZcodeEngine, type ZcodeEngineDeps } from "../zcode-engine.ts";
 
 const FAKE_CLI = fileURLToPath(new URL("./__fixtures__/fake-appserver.mjs", import.meta.url));
 const PROVIDER = "test-provider";
@@ -156,9 +157,9 @@ describe("failed 终态分流（真实协议枚举：parsed 前消费 status →
     expect(r.outcome.exitCode).toBeNull();
     expect(r.outcome.content).toBe("");
     // run 不 reject——正常 handle 返回（record 必须收尾），sessionId 留痕进 sessionRef
-    //（dbPath 形态随共享宿主 HOME 重构为宿主 db 绝对路径——hostZcodeDbPath）
+    //（dbPath 形态随 2026-09 会话库隔离为隔离库绝对路径——zcodeSessionDbPath(engineDataDir)）
     expect(r.outcome.sessionId).toBe(GOLDEN_SESSION_ID);
-    expect(r.handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: hostZcodeDbPath() });
+    expect(r.handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: zcodeSessionDbPath(dataDir) });
   }, 15_000);
 
   it("帧序 B：final-frame 宽松 settle success 先到 + turn.terminal failed 迟到（lastTerminalStatus/lastTerminalError 衔接）→ 仍 run-failed", async () => {

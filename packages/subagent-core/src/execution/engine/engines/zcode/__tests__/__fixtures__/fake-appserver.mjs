@@ -133,13 +133,16 @@ process.on('SIGTERM', () => {
   setTimeout(() => process.exit(0), 100);
 });
 
-// env 快照 + boot 流水（惰性启动 / argv 形态 / env 惯例断言的数据源）
+// env 快照 + boot 流水（惰性启动 / argv 形态 / env 惯例断言的数据源）。sessionDb
+// 两键为 2026-09 会话库隔离的探针④数据源（env 不随 RPC 帧传输，只能在此快照）。
 log('env', {
   pid: process.pid,
   home: process.env.HOME,
   telemetry: process.env.ZCODE_MODEL_TELEMETRY_ENABLED,
   nested: process.env.ZSW_NESTED,
   unifiedNested: process.env.XYZ_AGENT_SUBAGENT,
+  sessionDbPath: process.env.ZCODE_SESSION_DB_PATH,
+  sessionDbAlias: process.env.ZCODE_SESSION_DB,
 });
 log('boot', { pid: process.pid, argv: process.argv.slice(2) });
 if (process.env.FAKE_STDERR === '1') {

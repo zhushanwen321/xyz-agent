@@ -31,10 +31,10 @@ import { ZcodeEngine, type ZcodeEngineDeps } from "../zcode-engine.ts";
 const FAKE_CLI = fileURLToPath(new URL("./__fixtures__/fake-appserver.mjs", import.meta.url));
 const PROVIDER = "test-provider";
 
-/** 宿主 zcode 会话 db 期望值的独立展开（①级读取钥匙）——刻意不 import 实现的
- * hostZcodeDbPath（自指断言：实现改错时断言仍绿），路径知识独立于实现复述。 */
-function expectedHostDbPath(): string {
-  return path.resolve(os.homedir(), ".zcode", "cli", "db", "db.sqlite");
+/** 隔离会话 db 期望值的独立展开（①级读取钥匙）——刻意不 import 实现的
+ * zcodeSessionDbPath（自指断言：实现改错时断言仍绿），路径知识独立于实现复述。 */
+function expectedSessionDbPath(): string {
+  return path.join(dataDir, "engines", "zcode", "session-db", "db.sqlite");
 }
 
 /** 与 zcode-engine.ts 同一 facade 单例引用（spy 它的方法即拦截引擎的 warn 出声）。 */
@@ -242,10 +242,10 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     expect(outcome.usage).toEqual({ input: 12599, output: 17, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 1 });
     expect(outcome.exitCode).toBe(0);
 
-    // handle 锚定：poolKey 恒 'shared'，sessionRef.dbPath = 宿主 HOME 绝对路径
-    // （期望值独立展开，见 expectedHostDbPath 注释——不调实现函数）
+    // handle 锚定：poolKey 恒 'shared'，sessionRef.dbPath = 隔离会话库绝对路径
+    // （期望值独立展开，见 expectedSessionDbPath 注释——不调实现函数）
     expect(handle.data.poolKey).toBe(ZCODE_SHARED_POOL_KEY);
-    expect(handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: expectedHostDbPath() });
+    expect(handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: expectedSessionDbPath() });
     expect(String(handle.data.sessionRef["dbPath"]).startsWith("/")).toBe(true);
   }, 15_000);
 
@@ -475,7 +475,7 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     expect(outcome.error).toContain("-32004");
     expect(outcome.error).toContain(GOLDEN_SESSION_ID);
     expect(outcome.sessionId).toBe(GOLDEN_SESSION_ID);
-    expect(handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: expectedHostDbPath() });
+    expect(handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: expectedSessionDbPath() });
   }, 15_000);
 });
 

@@ -1,9 +1,10 @@
 // session-view-service-zcode-dbpath.test.ts —— zcode ①级 dbPath 白名单的分支守护。
 //
-// 三视角：①构建者——白名单三分支（绝对=宿主 db 精确匹配 / 绝对≠宿主 db 拒绝 /
-// 相对池锚定 + 越界拒绝）逐路径断言；②使用者——共享 HOME 形态 record（写侧
-// zcode-engine 恒绝对 dbPath）tier1 不再被误拒静默降②级；③观察者——reader 调用
-// 参数（白名单通过后传入的 dbPath 精确值）与未调用事实（拒绝路径 reader 零触达）。
+// 三视角：①构建者——白名单三分支（绝对=白名单集合成员精确匹配（隔离会话库现役 +
+// 宿主库存量兼容）/ 绝对∉集合 拒绝 / 相对池锚定 + 越界拒绝）逐路径断言；②使用者——
+// 两种存量 record 形态（共享 HOME 时代宿主绝对路径 + 池时代相对路径）tier1 不被误拒
+// 静默降②级；③观察者——reader 调用参数（白名单通过后传入的 dbPath 精确值）与未调用
+// 事实（拒绝路径 reader 零触达）。
 //
 // readZcodeSessionView 以 vi.mock 替身：本文件测的是白名单分支（不可触达真实
 // ~/.zcode/cli/db/db.sqlite——那是用户真机数据），reader 本体行为由
@@ -21,6 +22,7 @@ vi.mock("../../engines/zcode/reader.ts", () => ({
 
 import { readZcodeSessionView } from "../../engines/zcode/reader.ts";
 import { ZCODE_HOST_DB_SUFFIX } from "../../engines/zcode/constants.ts";
+import { zcodeSessionDbPath } from "../../engines/zcode/db-path.ts";
 import { JournalWriter } from "../../common/event-journal.ts";
 import { readSubagentHistoryMessages } from "../../common/session-view-service.ts";
 import { resetNativeSessionReaders } from "../../common/session-view-service.ts";
@@ -30,7 +32,8 @@ import type { SessionView } from "../../types.ts";
 
 const mockedRead = vi.mocked(readZcodeSessionView);
 
-/** 共享 HOME 形态写侧恒写入的唯一合法绝对 dbPath（与 zcode-engine hostZcodeDbPath 同源推导）。 */
+/** 白名单集合第二项（存量兼容锚点）：共享 HOME 时代（2026-09–隔离改造）record 落盘的
+ * 宿主绝对 dbPath（与 zcode-engine hostZcodeDbPath 同源推导）；现役写侧为隔离会话库。 */
 const HOST_DB = resolve(homedir(), ...ZCODE_HOST_DB_SUFFIX);
 
 let dataDir: string;
@@ -41,7 +44,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(dataDir, { recursive: true, force: true });
+  rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   resetNativeSessionReaders();
 });
 
@@ -92,6 +95,36 @@ describe("zcode ①级 dbPath 白名单（分支守护）", () => {
     expect(mockedRead).toHaveBeenCalledTimes(1);
     expect(mockedRead).toHaveBeenCalledWith(HOST_DB, "sess-1");
     expect(messages[1]).toMatchObject({ role: "assistant", content: "from host db" });
+  });
+
+  it("绝对 dbPath = 隔离会话库（白名单第一项，2026-09 隔离改造后现役写侧）→ 白名单通过，tier1 命中", async () => {
+    const view: SessionView = {
+      engineId: "zcode",
+      sessionId: "sess-1",
+      turns: [{ text: "from isolated db", thinking: "", toolCalls: [], closed: true }],
+      source: "native",
+    };
+    mockedRead.mockResolvedValue(view);
+    const record = makeRecord({
+      engineHandle: {
+        sessionRef: { sessionId: "sess-1", dbPath: zcodeSessionDbPath(dataDir) },
+        poolKey: "shared",
+      },
+    });
+    const messages = await readSubagentHistoryMessages(record, dataDir);
+    expect(mockedRead).toHaveBeenCalledTimes(1);
+    expect(mockedRead).toHaveBeenCalledWith(zcodeSessionDbPath(dataDir), "sess-1");
+    expect(messages[1]).toMatchObject({ role: "assistant", content: "from isolated db" });
+  });
+
+  it("误配形态（D3 表第四行）：写侧 dataDir 漂移（隔离库落在其他 dataDir 下）→ 读侧集合不含该路径，拒绝 tier1 降②级", async () => {
+    // 传播链断（任一 spawn 点剥掉 XYZ_AGENT_DATA_DIR）时写侧落 pi agent dir 下：
+    // 读侧按 runtime dataDir 构造的集合不含该路径 → ①级静默降②级（修 env 后恢复）
+    const driftedDbPath = zcodeSessionDbPath(join(dataDir, "elsewhere"));
+    const record = await journalRecord(driftedDbPath);
+    const messages = await readSubagentHistoryMessages(record, dataDir);
+    expect(mockedRead).not.toHaveBeenCalled();
+    expect(messages[1]).toMatchObject({ role: "assistant", content: "journal says" });
   });
 
   it("绝对 dbPath ≠ 宿主 db → 拒绝 tier1（reader 零触达），降②级 journal", async () => {
