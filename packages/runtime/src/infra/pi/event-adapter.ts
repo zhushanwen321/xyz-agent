@@ -957,6 +957,78 @@ function handleMessageEnd(event: PiMessageEndEvent, sid: string): PiTranslatedEv
   return events
 }
 
+/**
+ * update 帧流式输出尾窗上限（设计 bash-running-stream-output §6.4 D4）：
+ * message.tool_call_update 是 stream 类消息入 WS replay ring（1000 帧），不截断则
+ * 单帧 output/outputRaw 双字段可至 pi 快照 50KB 量级 → ring 满载 ≈100MB 常驻。
+ */
+const STREAM_OUTPUT_CAP_BYTES = 8 * 1024
+
+/** CSI 序列终止字节区间（ANSI ESC 序列以 0x40-0x7E 收尾，仅对 CSI 充分——OSC/DCS 残段按字面渲染为已接受代价）。 */
+function isAnsiTerminator(code: number): boolean {
+  return code >= 0x40 && code <= 0x7e
+}
+
+/**
+ * 尾部保留截断（D4 两分支，不变式「截断后 ≤ cap 无例外」）：
+ * - 换行锚分支：截断点（len - cap）之后存在换行 → 从首个换行起保留尾窗（整行起步，长度 < cap）；
+ * - 硬切回退分支（三步管线）：① 在截断点硬切 → ② ANSI 残片推进（截断点落在 CSI 序列中段——
+ *   向前最近 \x1b 到截断点无终止字节——则起点推进到残缺序列的 CSI 终止字节 +1）→
+ *   ③ 码点边界回退（起点为孤儿低代理——前一码元是高代理 0xD800-0xDBFF——则前移一位，不劈开代理对）。
+ * 步骤 ②③ 只会推进起点（丢弃更多），截断结果恒 ≤ cap。
+ */
+function tailWindow(text: string, cap: number): string {
+  if (text.length <= cap) return text
+  const cut = text.length - cap
+  const newlineIdx = text.indexOf('\n', cut)
+  if (newlineIdx !== -1) return text.slice(newlineIdx + 1)
+  let start = cut
+  // ANSI 残片推进：判定截断点是否落在残缺 CSI 序列内。
+  // 注意：'['（0x5B）虽在终止字节区间，但它是 CSI 引导字节——判定时排除紧随 ESC 的 '['，
+  // 否则任何 CSI 序列都被立即判“已终止”，中段检测永不可达（设计 D4 要求覆盖 CSI 中段用例）。
+  const escIdx = text.lastIndexOf('\x1b', cut - 1)
+  if (escIdx !== -1) {
+    let terminated = false
+    for (let i = escIdx + 1; i < cut; i++) {
+      if (i === escIdx + 1 && text.charCodeAt(i) === 0x5b) continue
+      if (isAnsiTerminator(text.charCodeAt(i))) {
+        terminated = true
+        break
+      }
+    }
+    if (!terminated) {
+      for (let i = start; i < text.length; i++) {
+        if (isAnsiTerminator(text.charCodeAt(i))) {
+          start = i + 1
+          break
+        }
+      }
+    }
+  }
+  // 码点边界回退：起点落在低代理区 = 前一高代理被劈开，前移一位
+  if (start > 0 && start < text.length) {
+    const code = text.charCodeAt(start)
+    if (code >= 0xdc00 && code <= 0xdfff) start += 1
+  }
+  return text.slice(start)
+}
+
+/**
+ * content 数组形态（AgentToolResult 规范形态）partialResult → 流式文本归一 + 尾窗截断。
+ * 截断发生在 stripAnsi 之前的原文上；截断后的原文重新包装走 normalizePiToolResult，
+ * output（stripAnsi）/ outputRaw（含 ANSI 时）由构造同源派生——不变式
+ * 「当 outputRaw 存在时 output === stripAnsi(outputRaw)」成立。images running 态不消费。
+ */
+function normalizeWithTailCap(raw: Record<string, unknown>): { output: string; outputRaw?: string } {
+  const rawText = (raw.content as Array<Record<string, unknown>>)
+    .filter((c) => c.type === 'text')
+    .map((c) => (c.text as string) ?? '')
+    .join('\n')
+  const tail = tailWindow(rawText, STREAM_OUTPUT_CAP_BYTES)
+  const { output, outputRaw } = normalizePiToolResult({ content: [{ type: 'text', text: tail }] })
+  return outputRaw !== undefined ? { output, outputRaw } : { output }
+}
+
 /** tool_execution_update — forward detail (partialResult is unknown: string or object, extract details if present) */
 function handleToolExecutionUpdate(event: PiToolExecutionUpdateEvent, sid: string): PiTranslatedEvent[] {
   // partialResult 是 unknown（pi 声明 any，运行时形态不定）。按 typeof 分流：
@@ -968,11 +1040,24 @@ function handleToolExecutionUpdate(event: PiToolExecutionUpdateEvent, sid: strin
       ? ((partialResult as Record<string, unknown>).details as Record<string, unknown> | undefined)
         ?? (partialResult as Record<string, unknown>)
       : (partialResult as string | undefined)
+  // content 数组形态（pi bash 快照）→ 归一流式文本并尾窗截断；其余形态不产出 output（判别式防非规范形态污染）
+  const normalized =
+    partialResult != null &&
+    typeof partialResult === 'object' &&
+    Array.isArray((partialResult as Record<string, unknown>).content)
+      ? normalizeWithTailCap(partialResult as Record<string, unknown>)
+      : undefined
   return [{
     kind: 'message',
     message: {
       type: 'message.tool_call_update',
-      payload: { sessionId: sid, toolCallId: event.toolCallId, detail },
+      payload: {
+        sessionId: sid,
+        toolCallId: event.toolCallId,
+        detail,
+        ...(normalized?.output !== undefined && { output: normalized.output }),
+        ...(normalized?.outputRaw !== undefined && { outputRaw: normalized.outputRaw }),
+      },
     },
   }]
 }

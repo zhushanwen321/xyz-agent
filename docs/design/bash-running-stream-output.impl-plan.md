@@ -59,12 +59,13 @@ graph TD
 | Unit | 偏差 | 原因 | 登记时间 |
 |------|------|------|----------|
 | U2 | end 覆盖测试未对 outputRaw 终态值做断言 | end 帧无 ANSI 时 normalizePiToolResult 不产出 outputRaw（条件 spread 不触发），running 期残留 outputRaw 会保留——既有 end 路径语义，不属 U2 领地；已转阶段 3 一致性审查核查（候选边缘：abort/error 路径 end 文本无 ANSI 而 running 期有 ANSI 时 outputRaw 残留致 AnsiText 渲染陈旧文本） | 2026-09-08 U2 验收时 |
+| U1 | ① ANSI 序列内判定排除紧随 ESC 的 `[` 引导字节 ② 码点回退改为「起点落低代理则后移丢弃孤儿」③ normalizeWithTailCap 内含 4 行文本抽取（原文截断后重包装喂 normalizePiToolResult） | ①② 为设计措辞规格 bug 的正确修正（设计 v4.2 已同步，4 轮审查未发现）；③ outputRaw 仅含 ANSI 时存在、无 ANSI 原文不可恢复，重包装复用零复制符合「尽量复用」 | 2026-09-08 U1 验收时 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| U1 | pending | 0 | — |
+| U1 | committed | 1 | 增量 13 tests passed（新 9 + delta 回归 4）；全量 450 文件仅 2 失败，其一 CSI 用例已修复转绿，另一 thinking-level-effective-e2e G5 为环境性（本机模型清单无 reasoning:false 模型，与改动零交集，e2e:176 模型查找失败）；commit 见 git log U1 |
 | U2 | committed | 1 | core 全量 116 files / 1773 tests passed（含 3 条新 tool_call_update 用例）；commit 见 git log U2 | 
 | U3 | committed | 1 | ea93e5214→ff39a553f；58 files / 590 tests passed（Block.test.ts +6 用例） |
 | U4 | pending | 0 | — |
@@ -75,3 +76,5 @@ graph TD
 - 变更历史：
   - v1：初版（U1-U4 拆分 + 并行 DAG + 测试策略）。
   - v2：U3 committed（ea93e5214，轮次 1 一次通过；基线 hash 同步修正为 amend 后的 21f269b0d）。
+  - v3：U2 committed（c520c1726，core 全量 1773 tests 通过；偏差 1 条登记并转阶段 3）。
+  - v4：U1 committed（偏差 3 条均合理：①② 设计措辞修正已回写设计 v4.2；③ 复用方式符合要求；runtime 全量中 thinking-level-effective-e2e G5 为环境性失败，与本改动无关）。
