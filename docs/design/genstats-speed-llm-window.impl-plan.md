@@ -78,6 +78,7 @@ wave 1：u1 ∥ u2 ∥ u3（领地两两不相交）；wave 1.5：u5（u1 落地
 ## 7 残留风险与变更历史
 
 - 残留风险：①D1 乐观偏差量级待 S1 实测锚定（触发条件已定，见设计 §3.3 D1 / §5 待验证）；②真实场景验收 S1-S5 需真实模型会话，执行方式在阶段 5 落地（本地 pi CLI RPC 实测，Per AGENTS.md extension 实测纪律精神）。
-- 2026-09-09：阶段 3 一致性审查（审查者 sa-211374d2）：映射有效、6 commit 领地全部吻合、D1-D6 机制层一致、5099/5100 全量绿（唯一 failure 环境性）。产出：reasonable 4 条（§5 #4-#6 登记）+ unreasonable 1 条 low（矩阵测试⑧补 toolResult，定向修复中）+ doc_errors 6 条（主 agent 当轮全修：设计 :431→:430 / D3 措辞与缺起复合行 / U4 位置描述；composer-gen-stats 事实 2 四处 stale 行号；impl-plan u5 补登记 + Gate A 行 + u3 位置描述）。
+- 2026-09-09：阶段 3 一致性审查（审查者 sa-211374d2）：映射有效、6 commit 领地全部吻合、D1-D6 机制层一致、5099/5100 全量绿（唯一 failure 环境性）。产出：reasonable 4 条（§5 #4-#7 登记）+ unreasonable 1 条 low（矩阵测试⑧补 toolResult，已修复）+ doc_errors 6 条（主 agent 当轮全修：设计 :431→:430 / D3 措辞与缺起复合行 / U4 位置描述；composer-gen-stats 事实 2 四处 stale 行号；impl-plan u5 补登记 + Gate A 行 + u3 位置描述）。
+- 2026-09-09：定向复审 R2（sa-89287fd4）：6/7 真修复；处方级预验证 3 条残留（均 low 文档级）：①事实 2「usage 透传」行号仍错（:387 为 toUsageTokens 裁剪行，完整透传实在 :403——R1 处方自身错引被照抄）②§7 reasonable 登记范围 off-by-one（#4-#6 → #4-#7）③「定向修复中」时态。三处当轮修正，机械 grep 复核：:403 引用 / #4-#7 / 「已修复」均落盘，复审者预验证处方达成 → cleared。
 - 2026-09-09：中断恢复校准——主会话冻结重启后核对：u1/u2/u3/u5 四 commit 均在 git log，u4 前任 subagent（sa-65aa4da2）session 仅完成核实阅读、领地文件零改动（git status 证实），按 pending 重算并接替重派（sa-b6569b50）。前任核实结论随证据包传递：GS-5 登记实在 adversarial-review-fixes.md（非 u4 领地），领地内旧口径集中处已逐条列明。
 - 2026-09-08：计划创建。用户评审步以用户会话内显式授权（「不需要我授权，你全权负责」+ 指定 tech-design→dev-flow→design-code-sync 全流程）代行确认：切分 4 单元、无 worktree（领地小且互斥、单机串行派发）、验收条款 = 设计 §4 五场景无遗漏。基线 commit 连同设计文档与 .review 报告一并入库（traceability，偏离 plan.md「只 add 计划文档」从宽执行并在此登记）。
