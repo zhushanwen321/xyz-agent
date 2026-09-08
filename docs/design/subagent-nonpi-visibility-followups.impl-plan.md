@@ -78,4 +78,6 @@ graph TD
 - 2026-09-09 u0 committed（1 轮，deviations 1 条入 §5 登记表，领地补录 index.ts）；基线 hash 回填 6071fa8bf。
 - 2026-09-09 u1+u2 各 1 轮完成，同批 committed（§2 顺序约束满足）；deviations 均空；全部验收条款主 agent 重跑核验通过。待：阶段 3 一致性审查。
 - 2026-09-09 阶段 3 一致性审查一轮清零（single reviewer，区间 6071fa8bf..b329d4149）：4 reasonable（已入 §5 登记表）/ 0 unreasonable / 0 doc_errors。提醒项：D4 重审触发条件挂 §5.3 P1 ⛔门，Gate B S6 实测后回填。待：阶段 5 双级验收。
-- Gate B 真机验收注意（设计 §4 头注）：隔离栈 vite 1421 / runtime 3410 / CDP 9225，独立数据目录，`env -u ELECTRON_RUN_AS_NODE`；S3 计数与 S6 RPC 走 browser-automation 连 CDP。
+- 2026-09-09 Gate A pass：shared tsc / subagent-core 全量 3379 passed / runtime subagent 9 套件 81 passed / renderer 全量 4088 passed / vue-tsc / 根 lint 全绿，覆盖矩阵 8 文件无空缺（既有 skip 与本区间无关）。
+- 2026-09-09 Gate B：5 pass + S6 partial-pass（非空壳标准 7/7 成立；窗口 B 占位形态窄于 UI 反应时延未真机目击，行为由单测矩阵背书）+ S2 blocked（失败路径两条注入路径均被系统韧性吸收：无效模型派发层 fail-fast 无 record 产生、运行中 kill 引擎被池自动重生——需 fail-inject 测试钩子才能真机注入，非产品缺陷证据）。P1 回填：占位形态覆盖 running 期实测 ≈0%，D4 无需重审。隔离栈启动实测：runtime 端口 offset=200（BASE_PORT 3210+200=3410），非默认 100。
+- 残留风险：①S2 失败路径 UI（error 态 + outcome-summary 兜底）未真机触达——代码路径与 S1 同一 watch 跨越判据（终态判据对 failed/done 无区别），error 态 UI 为 drawer-blank 已交付行为且有单测背书；建议后续批次给 runtime 加 fail-inject 测试钩子。②Gate B 验收首次启动误用 offset=100 曾与并行 worktree（fix-chat-pin-bottom）dev 实例发生 supervisor 互杀约 10 轮，移至 3410 后消除，对方自愈，当前端口全部干净。
