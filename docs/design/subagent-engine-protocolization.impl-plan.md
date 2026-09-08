@@ -382,7 +382,7 @@ graph TD
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|------|------|----------|
-| W1 协议定义 + SDK 骨架（u-foundation） | pending | — | — |
+| W1 协议定义 + SDK 骨架（u-foundation） | committed | 1 | commit 见 git log `feat(subagent-engine-sdk)`；test_evidence = SDK 50/50 测试 + typecheck exit 0 + build 63 产物（CJS/ESM）+ 边界守卫 58 文件 0 violations + eslint --max-warnings 0 |
 | W2 协议客户端 | pending | — | — |
 | W3 注册表与路由 | pending | — | — |
 | W4 发现器 | pending | — | — |
