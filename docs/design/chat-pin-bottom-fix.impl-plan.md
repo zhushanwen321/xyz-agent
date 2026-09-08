@@ -115,14 +115,15 @@ graph TD
 
 - 设计 D7 残余风险 ⑤a-⑤d 与抑制窗副作用⑥——V5 实测零误脱离；重审条件见设计 D7⑤/⑥。
 
-后续抽验跟踪（acceptance.md V7/V9 blocked 承接登记）：
+后续抽验跟踪（acceptance.md V7/V9 blocked 承接登记；2026-09-09 抽验后终态）：
 
-- V7 subagent 虚拟 session 端到端：触发条件 = 真实使用中出现运行中的 subagent 标签页；判定方法 = 设计 §5.2 V7（与 V2 同标准）。
-- V9 load-more 前插抑制（真实长历史）：触发条件 = 环境具备 hydrate `historyTruncated` 触发的真实长历史会话（DEFAULT_MAX_TURNS=20 尾读截断，造数会话不触发）；判定方法 = 设计 §5.2 V9。
+- V7 subagent 虚拟 session 端到端：✅ **已抽验通过**（2026-09-09）——drawer 第二消费面（SubagentTab 复用 MessageStream）settled 贴底 gap=0 + 主会话面 streaming 跟随实测；详见 acceptance.md V7 补测节。
+- V9 load-more 前插抑制（真实长历史）：⛔ **前置结构性不可达**（2026-09-09 根因钉死）——handleSessionSwitch `await ensureActive` 使 getHistory 恒走 RPC 全量分支、truncated=false 恒成立，「加载更多」仅 pi RPC 失败 fallback 异常路径亮起；语义面由单测覆盖。「长历史尾读加载」入口可达性登记待产品决策；详见 acceptance.md V9 补测节。
 
 ### 变更历史
 
 - 2026-09-09 v2（终态）：阶段 3 一致性审查（主 agent 执行，偏离声明见偏差 #11）→ unreasonable 1 条（V6 shrink 间歇 113px）打回定向修（2451a2036，双 rAF 预案）+ dev app 3/3 轮复验贴底 → 清零；reasonable 4 条入登记表（#8-#11）；doc_errors 0。阶段 5 双绿：Gate A（全量 4097/4097、双 typecheck、根 lint 0、双守卫 0、零容忍扫描全零、覆盖矩阵无死角）+ Gate B（acceptance.md 逐场景 verdict+evidence，V1-V6/V8 实测、V7/V9 blocked 有缓解）。转 design-code-sync 校准（用户指示）。
 - 2026-09-09 v3（交付后校准）：design-code-sync 重跑（reviewer 后台审查 + 修复轮）——代码本体 0 must-fix（D1-D7 机制面全部落地一致、双守卫实跑绿、注释口径无漂移）；4 条文档回写（F1 双 rAF 终态机制回写设计 D3/P-timing + 变更历史 v8；F3 acceptance 总评与 V6 节矛盾消除 + commit hash 回填；F4 本表残留风险终态化 + V7/V9 抽验承接登记；F5 D5 force 枚举勘误）+ F2 护栏判据补齐（P-no-loop 计数器，偏差 #12）。流程偏离声明：修复轮由主 agent 亲自执行（reviewer 派发链路 lost 后 final-frame 完整返回，前会话 9 次进程异常先例下的接管预案生效）；修复验证：use-pin-bottom-guard 11/11 绿 + 全量 frontend test + 双守卫 + 双 typecheck（见校准 commit）。
 - 2026-09-09 v4（交付后 D6 清理）：Out-of-scope 登记的 fork notice absolute 定位残留链独立清理完成——删 useNoticeStack.ts + useMessageStreamNotices composable（文件保留为纯常量模块）+ useForkNoticeStream 定位职责（收窄为 feed 消费 + 交互）+ MessageStream.vue vlistBottom/topOffset 接线；测试 1 删（use-message-stream-notices.test.ts）1 重写（use-fork-notice-stream.test.ts）+ 注释 4 处改述。生产行为零变化（死路径双重不触发）。验证：相关测试绿 + 全量 frontend test + 双 typecheck + 双守卫 + lint。
+- 2026-09-09 v5（V7/V9 真实环境抽验收口）：本 worktree dev app 真实 pi runtime 补测——V7 ✅ 通过（真实派发 subagent ×2，drawer 第二消费面 settled 贴底 gap=0 + 组件同一性构造性覆盖 + 主会话面 streaming 实测）；V9 ⛔ 升级为「前置结构性不可达」（造数格式修正后仍无按钮 → 根因钉死 = handleSessionSwitch await ensureActive 使 truncated=false 恒成立，读码 + dev 实证双确认），「长历史尾读加载」入口可达性登记待产品决策。acceptance.md V7/V9 补测节 + 汇总表 + 总评同步更新（见该文档）。
 - 2026-09-08 v1：初版计划（预检门三查过：结构四节齐全 / 章节映射建立 / 审查证据 chat-pin-bottom-fix.review-r6.md 0 must-fix + impact-review-r6.md 0/0 双审收敛）。单元切分直接采用设计 §6.1（U1-U5），领地自 §6.2 文件改动地图精确化，补充：MessageStream-bash.test.ts（设计「等」字的实际展开）、.githooks/install-hooks.sh（pre-commit 挂接的项目机制载体）、acceptance.md（U5 验收归档产物）。

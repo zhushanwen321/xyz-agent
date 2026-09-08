@@ -68,6 +68,13 @@
 - 缓解：设计 §1 明示主 session 与 subagent 标签页**共用同一个 MessageStream 组件**（构造性复用），V2/V5 已在同一组件实例上验证全部跟随判据——组件面风险由构造保证 + 主会话证据覆盖。
 - 待补：subagent 端到端场景可在后续真实使用中按 §5.2 V7 抽验。
 
+### V7 真实环境抽验（2026-09-09 补测） — ✅ PASS（settled 面实测 + streaming 面构造性覆盖）
+- 环境：本分支 dev app 真实 pi runtime（GLM-5.3），主会话真实派发 subagent ×2（sa-751a1bcd 四行短诗 / sa-5bbb0d75 约 600 字散文），均真实后台执行完成。
+- 组件同一性（构造性保证）：drawer SubagentTab（`SubagentTab.vue:98`）与主 Panel（`Panel.vue:48`）挂载**同一个 MessageStream 组件**——useVirtuaFollow / useMessageStreamFollowTriggers / usePinBottomGuard 跟随链完全同源。
+- drawer 第二消费面实测：点击对话流 subagent 块 → drawer SubagentTab 挂载 MessageStream 渲染子代理对话流——settled 打开贴底 gap=**0**（dpr=2 判据 ≤4px），末行（「满树桃开映晚霞。」）完整可见。
+- 主会话面实测：子代理后台执行期间主会话流式跟随全程贴底（82 t/s 实测），完成定格后末行（「任务由子代理 sa-5bbb0d75 真实执行完成 ✅」）完整可见于视口底部。
+- 局限：两个子代理均在 1 分钟内完成，drawer 面的 streaming 逐帧采样未赶上实时窗口——该面由组件同一性 + 主会话面 streaming 实测构造性覆盖，登记为采样局限（非缺陷证据）。
+
 ### V8 护栏有效性（故障注入） — ✅ PASS（双侧，U4 执行 + 本次复验）
 - 单测侧（U4 交付）：follow 原语注入 offset-24 → R3 回归 + W1TC5/W1TC8 坐标用例 6 红 → 还原后全绿（git diff 零残留）。
 - dev 断言侧（主 agent 于 U4 核验期执行）：注入后真实窗口 gap=24px 稳定 → `[pin-bottom-guard] 贴底态跟随未收敛：gap=24.5px > 阈值 4px（dpr=2，双采样均超）…👉 复现与判读指引见 docs/design/chat-pin-bottom-fix.md §4.4` 双采样报警（文案含 dpr/gap 上下文与指引）；还原后 gap=0 零报警；正常流程（V1/V2/V5 全程）零误报。
@@ -76,6 +83,13 @@
 ### V9 load-more 前插抑制 — ⛔ BLOCKED（前置数据不可达）
 - 「加载更多」按钮依赖 hydrate 的 `historyTruncated` 标志（runtime 尾读 fallback，DEFAULT_MAX_TURNS=20）；造数的 600-entry 会话打开后全量渲染（h=61238）无截断标志——活跃/离线路径分叉导致造数无法触发按钮，根因排查超出 U5 范围。
 - 缓解：isPrepend 抑制语义已由 U1 单测（抑制窗独立性）+ U2 triggers 的 isPrepend 门控接线 + D3 触发矩阵单测覆盖；V9 真实场景待环境具备（真实长历史会话）后抽验。
+
+### V9 真实环境抽验（2026-09-09 补测） — ⛔ BLOCKED（升级：前置**结构性不可达**，根因钉死）
+- 造数修正后重试：按 pi SessionMessageEntry 真实格式（`type:'message'` + `message.role:'user'` 包裹）造 25-turn 会话（user 数 > DEFAULT_MAX_TURNS=20）——pi 成功 restore、25 turn 全量渲染。**造数格式不再是变量，按钮仍未出现**。
+- 根因（读码 + dev 实证双确认）：`handleSessionSwitch`（session-message-handler.ts:371）对非内存会话 `await ensureActive`（等待 pi spawn/restore 完成才 reply）→ selectSession 12 步链步 9 的 `session.history` RPC 到达时 pi client 恒在场 → `doGetHistory`（history-rebuild-cache.ts）恒走 getEntries RPC 全量分支 → `truncated=false` 恒成立。
+- 结论：「加载更多」按钮（hydrate `historyTruncated=true` 驱动，useLoadMoreHistory.showLoadMore）在现行打开会话时序下**结构性不可达**，仅在 pi RPC 失败 fallback（尾读降级）异常路径亮起。V9 验收场景（load-more 前插抑制）当前产品形态下无真实入口可构造。
+- 语义面既有保障不变：isPrepend 抑制窗独立性（U1 单测）+ triggers isPrepend 门控（U2）+ D3 触发矩阵单测（全量绿）。
+- 登记待产品决策（超出本设计范围）：historyTruncated 尾读入口的实际可达性属产品层事实（与 20-turn 尾读上限策略配套）——若需该场景真实验收，须先恢复「长历史会话尾读加载」的产品语义。
 
 ## 汇总表
 
@@ -87,11 +101,11 @@
 | V4 占用期发送 | G1 | ✅ PASS | defer 气泡可见；gap ≤1px |
 | V5 上滑脱离（两轮） | G2 | ✅ PASS | 两轮均不扯回；浮层点亮；点击恢复 gap=0 |
 | V6 窗口 resize | G1 | ✅ PASS（修复后复验） | 双 rAF 预案实施后三轮 shrink 全贴底；原始 PARTIAL 记录保留作证据链 |
-| V7 subagent 会话 | G1 | ⛔ BLOCKED | 无法诱导 subagent 标签页；组件复用由构造保证 |
+| V7 subagent 会话 | G1 | ✅ PASS（09-09 抽验） | drawer 第二消费面 settled 贴底 gap=0；组件同一性 + 主会话 streaming 实测 |
 | V8 护栏故障注入 | G3 | ✅ PASS | 单测 6 红→还原绿；dev 断言双采样报警→还原静默 |
-| V9 load-more 前插 | G2 | ⛔ BLOCKED | 前置按钮不可达；语义面单测覆盖 |
+| V9 load-more 前插 | G2 | ⛔ BLOCKED（结构性） | 前置入口结构性不可达（09-09 根因钉死）；语义面单测覆盖 |
 
-**总评**：G1/G2/G3 三目标的用户可见终态在可达场景全部达成；V6 shrink 间歇残留已按 P-timing 降级预案定向修复（双 rAF 转正，commit `2451a2036`）并 3/3 轮复验贴底（汇总表以修复后复验为准，上节原始 PARTIAL 记录保留作证据链）；V7/V9 因前置数据不可达记 blocked（均有单测/构造性缓解）。结论：**交付可用，仅 V7/V9 真实环境抽验转后续跟踪**（承接登记见 impl-plan §7 残留风险表）。
+**总评**：G1/G2/G3 三目标的用户可见终态在可达场景全部达成；V6 shrink 间歇残留已按 P-timing 降级预案定向修复（双 rAF 转正，commit `2451a2036`）并 3/3 轮复验贴底（汇总表以修复后复验为准，上节原始 PARTIAL 记录保留作证据链）；V7 已补真实环境抽验通过（2026-09-09，drawer 第二消费面 + 主会话面双实测）；V9 因前置入口结构性不可达保持 blocked（根因已钉死，见 09-09 补测节，语义面由单测覆盖）。结论：**交付可用，V9 对应的「长历史尾读加载」入口可达性登记待产品决策**。
 
 ## 执行方式与偏差登记
 
