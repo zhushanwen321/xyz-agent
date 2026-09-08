@@ -185,6 +185,7 @@ import { Virtualizer, type VirtualizerHandle } from 'virtua/vue'
 import { useChatStore } from '@/stores/chat'
 import { getExecutingBash } from '@xyz-agent/core'
 import { useVirtuaFollow } from '@/composables/panel/useVirtuaFollow'
+import { usePinBottomGuard } from '@/composables/panel/usePinBottomGuard'
 import { useConstantHeightAssert } from '@/composables/panel/useConstantHeightAssert'
 import { toRenderItemsIncremental, createTurnRenderCache, renderKey } from '@/composables/logic/messageTurns'
 import type { TurnRenderCache } from '@/composables/logic/messageTurns'
@@ -398,23 +399,21 @@ const { pinnedIndexes } = useStreamingPin({
 
 /** [cw wave w3] auto-scroll follow 状态机（chat-pin-bottom-fix D1/D2/D7）：onScroll 复合判据
  *  （INVAR-M4-2′）/ onWheel 恒即时脱离 / followIfStuck rAF 重读 guard。virta 单一 scrollTop owner。 */
-const {
-  showJumpButton,
-  onScroll,
-  onWheel,
-  followIfStuck,
-  followToBottom,
-  onSessionRebuild,
-  notifyRoActivity,
-} = useVirtuaFollow({
-  vlistRef,
-  itemCount: () => streamItems.value.length, // [D1] 末项索引直取数据源（= :data 同一 streamItems 基准）
-  // [D2 数学不变量] endOffset = tailEl 实测总高：scrollEl pt-20 + pb-8 = 28px 与 virtua
-  // viewportSize 不含 padding 的 28px 扣除精确抵消 → offset=tailHeight 落点即真实底部（改任一 padding 必复核）。
-  endOffset: () => tailHeight.value,
-})
+// [U4 护栏⑦] dev-only 贴底跟随断言包装（生产透传零开销；spec 详见 usePinBottomGuard.ts 头注释）。
+// [D2 数学不变量] endOffset = tailEl 实测总高：scrollEl pt-20 + pb-8 = 28px 与 virtua
+// viewportSize 不含 padding 的 28px 扣除精确抵消 → offset=tailHeight 落点即真实底部（改任一 padding 必复核）。
+const { showJumpButton, onScroll, onWheel, followIfStuck, followToBottom, onSessionRebuild, notifyRoActivity } =
+  usePinBottomGuard({
+    follow: useVirtuaFollow({
+      vlistRef,
+      itemCount: () => streamItems.value.length, // [D1] 末项索引直取数据源（= :data 同一 streamItems 基准）
+      endOffset: () => tailHeight.value,
+    }),
+    scrollEl,
+    isStreaming: () => lastRenderTurn.value?.isStreaming ?? false,
+  })
 
-// [D3/D5] 跟随触发编排（RO 兲底网 + store watch，useMessageStreamScroll 继任；≤300 行规范拆出）
+// [D3/D5] 跟随触发编排（RO 兜底网 + store watch，useMessageStreamScroll 继任；≤300 行规范拆出）
 const { contentWrapEl, tailEl, tailHeight } = useMessageStreamFollowTriggers({
   messages: currentMessages,
   lastRenderTurn,
