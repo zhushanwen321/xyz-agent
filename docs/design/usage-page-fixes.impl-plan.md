@@ -132,7 +132,7 @@ graph TD
 | V11 | ✓ | en-US：用量区 innerText + SVG textContent 双重探针零中文字符（u8-b2-v11*.png）；已恢复中文 |
 | V12 | ✓ | X=zai-coding-cn/glm-5.3-flash（P2 从行灰前缀读出）→ 关 P2 chip → isolate 联动自动清除且非图表全空（empty-state=false）→ 恢复回归（u8-b2-v12-*.png） |
 
-附带发现（已归档）：① V4 已知问题真根因 = 执行环境 PI_SUBAGENT_ROOT_SESSION_ID 泄漏 → smart-context isSubagentProcess 静默惰性，与实现无关；② models-store.json mtime 变化为 pi 目录同步无害触碰（内容级 diff 仅 checkedAt，config hash 恒同）；③ 宿主 subagent env 泄漏家族（PI_SUBAGENT_*/PI_CODING_AGENT_DIR/PI_MODEL/PI_PROVIDER/PI_REASONING_LEVEL）会污染子进程测试，全量测试须剥净（impl-plan §4 已登记）。
+附带发现（已归档）：① V4 已知问题真根因 = 执行环境 PI_SUBAGENT_ROOT_SESSION_ID 泄漏 → smart-context isSubagentProcess 静默惰性，与实现无关；② models-store.json mtime 变化为 pi 目录同步无害触碰（内容级 diff 仅 checkedAt，config hash 恒同）；③ 宿主 subagent env 泄漏家族（PI_SUBAGENT_*/PI_CODING_AGENT_DIR/PI_MODEL/PI_PROVIDER/PI_REASONING_LEVEL）会污染子进程测试，全量测试须剥净（impl-plan §4 已登记）；④ Gate A 终验补充：泄漏家族再确认 XYZ_SUBAGENT_RELAY_SOCKET/NODE/SCRIPT 三件套（宿主 relay 基建注入，使 subagent-core「relay 未激活」用例在污染环境下确定红；剥净后该包 3375 passed/7 skipped 全绿），测试本体正确。
 
 ## 7 残留风险与变更历史
 
@@ -147,4 +147,5 @@ graph TD
 
 - 2026-09-08：初稿。预检门通过（R4 双审 0MF+0S，报告 `.review/usage-design-review-r4*.md`）；单元表与 DAG 按设计 §5 固化，U1→U2、U3→U6 同文件串行边补充登记；基线 commit 待用户评审后执行。
 - 2026-09-08：基线 7efeb3a97 确认；U3 committed（a8491bb2c）；U1 committed（788fbebc6）；U4 committed（650118620）。U2 领地修订：补入 UsagePage.filters.test.ts / UsagePage.test.ts（isolate 复合键化波及其 testid/chip 断言；U1 committed 后无写冲突）。登记 U4 附带发现：PI_SUBAGENT_CHAT_MODE 环境泄漏可致 subagent-workflow 测试假红，全量测试用干净 env。
-- 2026-09-08：阶段 3+4 收敛（一轮）：三区审查报告聚合（12+ reasonable 入登记表 / 1 unreasonable 定向修 46f5e68a4 / 4 doc_errors 亲改 20d7e547a + 12fad5c40）；U8 Gate B 签收表 §8 全绿（V1-V12）；Gate A 终验在全量改动后重跑（结论见后续条目）。
+- 2026-09-08：阶段 3+4 收敛（一轮）：三区审查报告聚合（12+ reasonable 入登记表 / 1 unreasonable 定向修 46f5e68a4 / 4 doc_errors 亲改 20d7e547a + 12fad5c40）；U8 Gate B 签收表 §8 全绿（V1-V12）；Gate A 终验：全量套件唯一红为宿主 XYZ_SUBAGENT_RELAY_* 泄漏致 subagent-core 一用例误红（非代码问题），剥净重跑 3375 passed/7 skipped 全绿；lint 补跑见后续条目。
+- 2026-09-08：Gate A 终验闭环：全量 pnpm test 唯一红已归因宿主 XYZ_SUBAGENT_RELAY_* 泄漏（剥净重跑 subagent-core 3375 passed/7 skipped 全绿）；pnpm run lint exit=0（补跑，剥泄漏家族 env）。Gate A/Gate B 双绿，进入 design-code-sync 校准（用户指定收尾步骤）。
