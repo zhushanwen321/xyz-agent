@@ -60,6 +60,9 @@ graph TD
 | Unit | 偏差 | 理由 | 处置 |
 |------|------|------|------|
 | u0 | 额外改 `packages/shared/src/index.ts`（+1 行具名再导出 + 注释） | shared barrel 是具名导出非 `export *`，不补则常量对 workspace 不可达，u0 验收条款「常量导出可被 workspace 消费」无法达成；u1/u2 领地均不含 index.ts | 合理偏差成立；u0 领地行已补录该文件；dev 报告 deviations 显式声明（非静默） |
+| u1 | `hasTurnContent` 参数类型从 `Turn` 拓宽为结构类型 `{ text; thinking; toolCalls: unknown[] }`（session-view-service.ts） | ①级 ReplayedTurn 与②级 Turn 语义同构但类型不同，结构化参数使同一判定服务两级——D3「与②级同语义」的对称落地；设计只约束判据语义未约束签名 | 合理（一致性审查 r1 #2），无需文档同步 |
+| u1 | runtime 钉子用例手工建库（复刻 schema DDL）而非复用 createPoolDb helper | createPoolDb 固定插 assistant turns，产不出 defined-empty 形态；手工建库是 fixture 约束的最小路径 | 合理（r1 #3）；createPoolDb 参数化留后续顺手项，非本批义务 |
+| u2 | status watch source 聚合 `{vid, subId, status}` 三元组而非裸 watch record | 切换守卫与跨越守卫在回调内一次判完，避免裸 watch 的中间态误触发——D2 被否项「无守卫裸 watch」的防御形态 | 合理（r1 #4），无需文档同步 |
 
 ## 6 状态表
 
@@ -74,4 +77,5 @@ graph TD
 - 2026-09-09 创建。审查证据与单元表直接来自设计文档 §5.1（已过双 reviewer 两轮对抗审查）。
 - 2026-09-09 u0 committed（1 轮，deviations 1 条入 §5 登记表，领地补录 index.ts）；基线 hash 回填 6071fa8bf。
 - 2026-09-09 u1+u2 各 1 轮完成，同批 committed（§2 顺序约束满足）；deviations 均空；全部验收条款主 agent 重跑核验通过。待：阶段 3 一致性审查。
+- 2026-09-09 阶段 3 一致性审查一轮清零（single reviewer，区间 6071fa8bf..b329d4149）：4 reasonable（已入 §5 登记表）/ 0 unreasonable / 0 doc_errors。提醒项：D4 重审触发条件挂 §5.3 P1 ⛔门，Gate B S6 实测后回填。待：阶段 5 双级验收。
 - Gate B 真机验收注意（设计 §4 头注）：隔离栈 vite 1421 / runtime 3410 / CDP 9225，独立数据目录，`env -u ELECTRON_RUN_AS_NODE`；S3 计数与 S6 RPC 走 browser-automation 连 CDP。
