@@ -10,7 +10,7 @@
 | 终态/机制 | §3 解决方案（3.1 终态 / 3.2 方案对比 / 3.3 终态数据契约 ①-⑥ / 3.4 D1-D6 / 3.5 探针清单 / 3.6 错误规格） |
 | 验收场景表 | §4 验收（V1-V12） |
 | 下一层拆分 | §5 下一层拆分（U1-U8） |
-| 待验证检查点 | §5 末尾（P-appendEntry ⛔U5、P-en-i18n ⛔U2、P-narrow ⛔U1）+ §3.5 探针清单状态列 |
+| 待验证检查点 | §5 末尾（P-appendEntry ✅U5、P-en-i18n ✅U2、P-narrow ✅U1，均已在对应单元落地验证）+ §3.5 探针清单状态列 |
 
 审查证据：`.review/usage-design-review-r4.md` + `.review/usage-design-review-r4-impact.md`（R4 双审 0MF+0S；R1→R4 四轮收敛，R4 明示「设计可进入实施」）。
 
@@ -38,7 +38,7 @@
 | U5 | rename-session appendEntry：落点收敛 `llm.ts` callRenameLLM 内部（`ok:true && usage` 后立即、`cleanTitle` 之前）；`index.ts` 注入 `appendUsageEntry` 回调（闭包捕获 pi，回调体内 catch + logger.error）；P-appendEntry 探针 | `extensions/universal/rename-session/src/llm.ts`、`extensions/universal/rename-session/src/index.ts`、`extensions/universal/rename-session/src/__tests__/llm.test.ts`、`extensions/universal/rename-session/src/__tests__/index.test.ts` | U4（消费 usage 出参） | plain | extensions:typecheck/lint/test 绿；本地 pi CLI 实测 custom entry 落盘（P-appendEntry ✅）；无 usage 时跳过不落账（§3.6） |
 | U6 | scanner：③ 读 `details.model`（非 string/空串回退 `'compaction'`）、④ rename-session 分类（usage 存在性守卫、model 守卫回退 `'rename-session'`、timestamp 非法 skippedLines）；连带：`docs/pi-semantics.json` 新增 probe「appendCustomEntry 落盘形态含 customType/data/timestamp」+ 扩展既有探针测试；服务头注更新（④ 为 xyz 自有口径） | `packages/runtime/src/services/usage/usage-stats-service.ts`、`packages/runtime/src/services/usage/usage-stats-service.test.ts`、`docs/pi-semantics.json`、`packages/runtime/src/infra/pi/__tests__/pi-semantics-session-entries.test.ts` | U3、U5（数据形态）；pi-semantics.json 与 U3 串行 | plain | runtime 增量 vitest 绿（④ 分类 + 守卫 + details.model 回退用例）；探针测试扩展同批；服务头注已更新 |
 | U7 | 类型注释与设计文档回写：`usage-stats.ts` 注释（compaction 虚拟桶 model 归属来源 + rename-session ④ 分类）；`docs/todo/usage-stats-design.md` 回写（D1 增补归属来源与 ④ 分类）。设计文档 `usage-page-fixes.md` 的变更历史条目由主 agent 在阶段 5 收尾时补记（不属 coder 领地） | `packages/shared/src/usage-stats.ts`（仅注释）、`docs/todo/usage-stats-design.md` | U6（描述其落地形态） | plain | 注释与 todo 文档内容与实装一致（人工核对）；不引入任何代码行为变更（diff 仅注释/文档） |
-| U8 | 端到端验收：按设计 §4 V1-V12 执行（V4/V6/V8 走本地 pi CLI + `<tmp-root>` + `XYZ_AGENT_DATA_DIR` 桥接；V10 用 `mkdtempSync` fixture；V8 测后恢复 rename config） | 无 src 领地（只读验证 + 临时目录；V8 临时改 `~/.pi/agent/config/rename-session-ext-config.json` 测后恢复） | U1、U2、U3、U5、U6 | plain | V1-V12 逐场景签收表全绿（含 V12 守卫组合与 V5/V8 负面场景）；收尾全量 `pnpm test` + `pnpm run lint` 绿 |
+| U8 | 端到端验收：按设计 §4 V1-V12 执行（V4/V6/V8 走本地 pi CLI + `<tmp-root>` + `XYZ_AGENT_DATA_DIR` 桥接；V10 用 `mkdtempSync` fixture；V8 用 `PI_RENAME_MODEL` env 路径指向不可解析模型，零系统写入，见 R5） | 无 src 领地（只读验证 + 临时目录） | U1、U2、U3、U5、U6 | plain | V1-V12 逐场景签收表全绿（含 V12 守卫组合与 V5/V8 负面场景）；收尾全量 `pnpm test` + `pnpm run lint` 绿 |
 
 **u-foundation 说明**：本计划无独立共享契约根单元——设计 §3.3 数据契约为文档形态（①-⑥），落地点分布在 U3（details.model）/ U4（CallLLMResult.usage）/ U6（scanner ④），各属单一单元领地；renderer 侧聚合契约（perProvFull / perModel 值结构）同落 aggregate.ts，由 U1→U2 串行边保证无并行写冲突。符合 dag-authoring「确无共享契约文件时允许缺席」。
 
@@ -99,6 +99,7 @@ graph TD
 | R2 | U4 additive 消费方零波及；U5 落点/时点/注入/catch 四契约落地，双向时序与负面测试厚于设计最低要求 | 2026-09-08 阶段3 | 合理增厚，不破坏设计（Zone B） |
 | R3 | UsagePage.test.ts 零改动（stub 冒烟零断言命中，领地修订预期差闭合）；isolateParts 首个 / 切分对含 / 模型 id 稳健（优于设计字面） | 2026-09-08 阶段3 | 实现优于设计且不破坏目标（Zone A） |
 | R4 | Zone C 九项：③④ 守卫逐字一致、头注口径三处互证、§2.5 逐环对应、PS-28/29 锚点对 0.84.4 行级精确、U7 零行为变更、usage 守卫 JS 对象语义（数组可过→全 0 兕底，良性，与①②③同款） | 2026-09-08 阶段3 | 与设计一致或良性边界（Zone C） |
+| R5 | U8-V8 验收程序用 `PI_RENAME_MODEL=invalid-provider/nonexistent-model` env 路径（两段格式 override 生效、selector 指向解析不出的模型）替代设计原案的临时改写系统 config | 2026-09-08 U8 | 零系统写入、消除备份/恢复风险；机制已一手重验（2026-09-08T15:56Z logger `model not available, skipping` + 零 rename-session 落账 + 主 turn 成功） |
 
 ## 6 状态表
 
@@ -108,11 +109,28 @@ graph TD
 | U2 | committed | 1 | e9ce690dc（usage 62/62 · vue-tsc 绿 · 人工核对带①-⑦ grep 实证：modelProviderMap 全量 rows 派生 / unknown 兜底零残留 / isolate 复合键比较×3；i18n keys 双语已齐备零改动；合理偏差 3 条见登记表） |
 | U3 | committed | 1 | a8491bb2c（smart-context 49/49 · 探针 3/3 · pi-semantics 守卫 28 条 · typecheck/lint exit=0） |
 | U4 | committed | 1 | 650118620（llm-shared 52/52 · extensions:typecheck exit=0；附带发现：PI_SUBAGENT_CHAT_MODE 环境泄漏致 subagent-workflow 测试假红，后续全量测试用干净 env） |
-| U5 | committed | 1 | 363879a17（rename-session 167/167 · typecheck/lint exit=0 · P-appendEntry CLI 探针一次通过，证据：subagent 会话 2026-09-08T06-09-36-321Z） |
+| U5 | committed | 1 | 363879a17（rename-session 167/167 · typecheck/lint exit=0 · P-appendEntry CLI 探针一次通过，证据：subagent 会话 2026-09-08T06-09-36-321Z；注：该会话 JSONL 已随宿主清理过期，落地事实以 commit 363879a17 为准） |
 | U6 | committed | 1 | 985aadbf7（runtime 45/45 · pi-semantics 守卫 29 条 · tsc 绿 · pre-commit 含 Bundle 验证全绿） |
 | U7 | committed | 1 | ac039f4e7（shared 323/323 · ts 改动纯注释行 · todo 文档纯新增 2 行） |
 | U8 | committed | 3 | 签收表见 §8（V1-V12 全绿；Gate A 终验见 §7 变更历史；证据：r3 进度日志 + /tmp 截图与 JSONL，验收后已清理） |
 
+
+## 7 残留风险与变更历史
+
+**残留风险**：
+
+1. P-narrow（窄窗布局）/ P-en-i18n（en keys 完备性）/ P-appendEntry（fire-and-forget 时机）为设计期不可定检查点，分别在 U1/U2/U5 落地验证；失败降级路径见设计 §3.5 表。
+2. V8 模型注入：~~临时改写 `~/.pi/agent/config/rename-session-ext-config.json`~~ 已改为 `PI_RENAME_MODEL` env 路径（R5，零系统写入；两段格式才被 getEnvOverrides 接受，无斜杠值静默忽略）。若未来需走 config 改写路径：执行前必须备份、测后必须恢复并通过「下一个新 session 标题正常生成」验证；provider 级凭据不可动（主 turn 同败则场景空转假绿）。
+3. dev app 单实例锁：V4/V6/V8 的 `XYZ_AGENT_DATA_DIR` 桥接前先退出在跑的 dev 实例（userData 硬编码不随 env 变，否则新实例静默 quit）。
+4.存量 compaction 数据无归属（设计已接受代价，generic 行诚实显示）；rename 账 best-effort（pi flush-debounce 窗口崩溃可丢单条，设计 caveat 已登记）。
+
+**变更历史**：
+
+- 2026-09-08：初稿。预检门通过（R4 双审 0MF+0S，报告 `.review/usage-design-review-r4*.md`）；单元表与 DAG 按设计 §5 固化，U1→U2、U3→U6 同文件串行边补充登记；基线 commit 待用户评审后执行。
+- 2026-09-08：基线 7efeb3a97 确认；U3 committed（a8491bb2c）；U1 committed（788fbebc6）；U4 committed（650118620）。U2 领地修订：补入 UsagePage.filters.test.ts / UsagePage.test.ts（isolate 复合键化波及其 testid/chip 断言；U1 committed 后无写冲突）。登记 U4 附带发现：PI_SUBAGENT_CHAT_MODE 环境泄漏可致 subagent-workflow 测试假红，全量测试用干净 env。
+- 2026-09-08：U2 committed（e9ce690dc，复合键+metric 贯穿+i18n）；U5 committed（363879a17，rename appendEntry + P-appendEntry CLI 探针）；U6 committed（985aadbf7，scanner ③④+PS-29）；U7 committed（ac039f4e7，纯注释+todo 回写）。登记 U4 附带发现补充：`PI_CODING_AGENT_DIR`/`PI_MODEL`/`PI_PROVIDER`/`PI_REASONING_LEVEL` 同属泄漏家族。
+- 2026-09-08：阶段 3+4 收敛（一轮）：三区审查报告聚合（12+ reasonable 入登记表 / 1 unreasonable 定向修 46f5e68a4 / 4 doc_errors 亲改 20d7e547a + 12fad5c40）；U8 Gate B 签收表 §8 全绿（V1-V12）；Gate A 终验：全量套件唯一红为宿主 XYZ_SUBAGENT_RELAY_* 泄漏致 subagent-core 一用例误红（非代码问题），剥净重跑 3375 passed/7 skipped 全绿；pnpm run lint exit=0。
+- 2026-09-08：Gate A 终验闭环：全量 pnpm test 唯一红已归因宿主 XYZ_SUBAGENT_RELAY_* 泄漏（剥净重跑 subagent-core 3375 passed/7 skipped 全绿）；pnpm run lint exit=0（补跑，剥泄漏家族 env）。Gate A/Gate B 双绿，进入 design-code-sync 校准（用户指定收尾步骤）。
 ## 8 U8 端到端验收签收表（Gate B，2026-09-08）
 
 > 执行者：dev-u8-acceptance-r3（第三棒；第一棒采 V6/V7/V8 初证、第二棒勘查）。证据：进度日志逐场景落账 + /tmp 截图与 session JSONL（验收后已清理）；主 agent 逐场景跟踪核验。
@@ -126,26 +144,10 @@ graph TD
 | V5 | ✓ | 存量 compaction 组诚实显示泛名行 2,526,717 tok / $0.49，零编造（u8-b2-v5-*.png） |
 | V6 | ✓ | custom entry 逐字段符合 §3.3③（model+usage 7 字段）；B1 呈现 rename 行 257/192/6/455 与 JSONL totalTokens 精确对账；标题侧栏可见 |
 | V7 | ✓ | 对话流恰 1 turn/1 user/assistant OK；重开零 rename 残留（live≡reload）；custom entry 不进对话流（u8-b1-p3-v7-*.png） |
-| V8 | ✓ | PI_RENAME_MODEL=invalid（env 路径替代改系统 config，deviation 已登记）：主 turn assistant 成功 + 落账条目 0 + 无标题 + 系统 config hash 恒同；rename-session:log 审计条目佐证「model not available, skipping」正确跳过路径 |
+| V8 | ✓ | `PI_RENAME_MODEL=invalid-provider/nonexistent-model`（两段格式 override 生效 → selector 指向解析不出的模型；env 路径替代改系统 config，登记 R5）：主 turn assistant 成功 + 落账条目（customType=rename-session）0 + 无标题 + 系统 config hash 恒同；logger warn「model not available, skipping」佐证 §3.6 静默跳过路径（session 内 `rename-session:log` 条目为 extension-logger warn 持久化审计通道，非落账、不进 LLM）。注：签收初稿误记 env 值为 `invalid`（无斜杠会被 getEnvOverrides 静默忽略、无法触发本场景），2026-09-08 design-code-sync 轮 1 一手重验后修正 |
 | V9 | ✓ | 切 cost：明细表组序 deepseek↔compaction 换位 + 项目谱 TOP8 重排（feat-notification-optimize/chat_project 新进前五）（u8-b2-v9*.png） |
 | V10 | ✓ | p1/model-x 与 p2/model-x 双行各归各组（$0.30/$0.60），总量守恒 $0.90（B1-P2 断言） |
 | V11 | ✓ | en-US：用量区 innerText + SVG textContent 双重探针零中文字符（u8-b2-v11*.png）；已恢复中文 |
 | V12 | ✓ | X=zai-coding-cn/glm-5.3-flash（P2 从行灰前缀读出）→ 关 P2 chip → isolate 联动自动清除且非图表全空（empty-state=false）→ 恢复回归（u8-b2-v12-*.png） |
 
-附带发现（已归档）：① V4 已知问题真根因 = 执行环境 PI_SUBAGENT_ROOT_SESSION_ID 泄漏 → smart-context isSubagentProcess 静默惰性，与实现无关；② models-store.json mtime 变化为 pi 目录同步无害触碰（内容级 diff 仅 checkedAt，config hash 恒同）；③ 宿主 subagent env 泄漏家族（PI_SUBAGENT_*/PI_CODING_AGENT_DIR/PI_MODEL/PI_PROVIDER/PI_REASONING_LEVEL）会污染子进程测试，全量测试须剥净（impl-plan §4 已登记）；④ Gate A 终验补充：泄漏家族再确认 XYZ_SUBAGENT_RELAY_SOCKET/NODE/SCRIPT 三件套（宿主 relay 基建注入，使 subagent-core「relay 未激活」用例在污染环境下确定红；剥净后该包 3375 passed/7 skipped 全绿），测试本体正确。
-
-## 7 残留风险与变更历史
-
-**残留风险**：
-
-1. P-narrow（窄窗布局）/ P-en-i18n（en keys 完备性）/ P-appendEntry（fire-and-forget 时机）为设计期不可定检查点，分别在 U1/U2/U5 落地验证；失败降级路径见设计 §3.5 表。
-2. V8 临时改写 `~/.pi/agent/config/rename-session-ext-config.json`（系统 pi 目录，不受 `<tmp-root>` 隔离）——执行前必须备份、测后必须恢复并通过「下一个新 session 标题正常生成」验证；provider 级凭据不可动（主 turn 同败则场景空转假绿）。
-3. dev app 单实例锁：V4/V6/V8 的 `XYZ_AGENT_DATA_DIR` 桥接前先退出在跑的 dev 实例（userData 硬编码不随 env 变，否则新实例静默 quit）。
-4.存量 compaction 数据无归属（设计已接受代价，generic 行诚实显示）；rename 账 best-effort（pi flush-debounce 窗口崩溃可丢单条，设计 caveat 已登记）。
-
-**变更历史**：
-
-- 2026-09-08：初稿。预检门通过（R4 双审 0MF+0S，报告 `.review/usage-design-review-r4*.md`）；单元表与 DAG 按设计 §5 固化，U1→U2、U3→U6 同文件串行边补充登记；基线 commit 待用户评审后执行。
-- 2026-09-08：基线 7efeb3a97 确认；U3 committed（a8491bb2c）；U1 committed（788fbebc6）；U4 committed（650118620）。U2 领地修订：补入 UsagePage.filters.test.ts / UsagePage.test.ts（isolate 复合键化波及其 testid/chip 断言；U1 committed 后无写冲突）。登记 U4 附带发现：PI_SUBAGENT_CHAT_MODE 环境泄漏可致 subagent-workflow 测试假红，全量测试用干净 env。
-- 2026-09-08：阶段 3+4 收敛（一轮）：三区审查报告聚合（12+ reasonable 入登记表 / 1 unreasonable 定向修 46f5e68a4 / 4 doc_errors 亲改 20d7e547a + 12fad5c40）；U8 Gate B 签收表 §8 全绿（V1-V12）；Gate A 终验：全量套件唯一红为宿主 XYZ_SUBAGENT_RELAY_* 泄漏致 subagent-core 一用例误红（非代码问题），剥净重跑 3375 passed/7 skipped 全绿；lint 补跑见后续条目。
-- 2026-09-08：Gate A 终验闭环：全量 pnpm test 唯一红已归因宿主 XYZ_SUBAGENT_RELAY_* 泄漏（剥净重跑 subagent-core 3375 passed/7 skipped 全绿）；pnpm run lint exit=0（补跑，剥泄漏家族 env）。Gate A/Gate B 双绿，进入 design-code-sync 校准（用户指定收尾步骤）。
+附带发现（已归档）：① V4 已知问题真根因 = 执行环境 PI_SUBAGENT_ROOT_SESSION_ID 泄漏 → smart-context isSubagentProcess 静默惰性，与实现无关；② models-store.json mtime 变化为 pi 目录同步无害触碰（内容级 diff 仅 checkedAt，config hash 恒同）；③ 宿主 subagent env 泄漏家族（`PI_SUBAGENT_CHAT_MODE`/`PI_SUBAGENT_SELF_RECORD_ID`/`PI_SUBAGENT_ROOT_SESSION_ID`/`PI_CODING_AGENT_DIR`/`PI_MODEL`/`PI_PROVIDER`/`PI_REASONING_LEVEL`/`PI_OFFLINE`/`XYZ_SUBAGENT_RELAY_SOCKET`/`XYZ_SUBAGENT_RELAY_NODE`/`XYZ_SUBAGENT_RELAY_SCRIPT`/`XYZ_AGENT_DATA_DIR`）会污染子进程测试，全量测试须剥净（登记于本文件 §7 变更历史条目 2 及后续 Gate A 条目，非 §4）；④ Gate A 终验补充：`XYZ_SUBAGENT_RELAY_*` 三件套（宿主 relay 基建注入，使 subagent-core「relay 未激活」用例在污染环境下确定红；剥净后该包 3375 passed/7 skipped 全绿），测试本体正确；⑤ 46f5e68a4（CacheMix :key 复合键化）落地时序晚于 r3 B 系列现场证据——影响面仅 v-for key 唯一性（无渲染行为差异），回归由 renderer usage 62/62 全量覆盖；V10 验收面为明细表分组（DetailTable/aggregate 层），不经 CacheMix 组件，证据有效性不受影响。

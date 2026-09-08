@@ -88,7 +88,7 @@ const sortedProviders = computed<[string, AggMetrics][]>(() => {
 })
 ```
 
-`aggregate()` 的 `aggregateDay` 跳过 `offProv` 的行 → `perProv` 只含启用 provider → **关掉的 provider 不在 `sortedProviders` 里，chip 消失**。模板中 `filter.offProv.has(pid) ? '...opacity-[0.38]' : '...'` 的置灰样式是**死代码**（该分支渲染时 chip 已不存在）。`__tests__/UsagePage.filters.test.ts:103` 反而把「chip 消失」断言成了预期行为。
+`aggregate()` 的 `aggregateDay` 跳过 `offProv` 的行 → `perProv` 只含启用 provider → **关掉的 provider 不在 `sortedProviders` 里，chip 消失**。模板中 `filter.offProv.has(pid) ? '...opacity-[0.38]' : '...'` 的置灰样式是**死代码**（该分支渲染时 chip 已不存在）。`__tests__/UsagePage.filters.test.ts:103` 反而把「chip 消失」断言成了预期行为。（现状快照：三者均已由本设计 §3.1 场景 A 修复——数据源改 `perProvFull`、置灰保留落地、该测试已重写为「置灰保留」断言）
 
 isolate 同构：单看某模型时 `perProv` 只剩该模型所属 provider，其余 chips 全部消失。
 
@@ -129,7 +129,7 @@ rename-session/src/llm.ts callRenameLLM
 - **P1 跨 provider 同名模型合并**：`aggregateDay` 以裸 model id 为 `perModel` key；`modelProviderMap`（UsagePage）first-seen 归属。若两个 provider 服务同名模型（models.json 可自由添加），用量合并成一条且全记到先见 provider 的组。
 - **P2 metric 未贯穿**：`aggregateProjects` TOP8 与 `aggregateDetailGroups` 分组排序都按固定 `totalTokens`——切到「费用」视角，项目谱榜单与明细表组序仍是 Token 口径。
 - **P2 展开态 stale**：`UsageDetailTable` 的 `expandedGroups` 只在挂载时从初始 groups 取前两组；数据刷新（重试/筛选变化）后新组全部收起、集合残留旧 pid。
-- **P3 i18n 硬编码**：`UsageDailyChart` 月份标签 `` `${m+1}月` ``、`aggregate.ts` 的 `fmtWeekday`（'周一'…）硬编码中文；`UsageHeatCalendar` 反而用了 `t()`——不一致，英文界面混中文。
+- **P3 i18n 硬编码**：`UsageDailyChart` 月份标签 `` `${m+1}月` ``、`aggregate.ts` 的 `fmtWeekday`（'周一'…）硬编码中文；`UsageHeatCalendar` 反而用了 `t()`——不一致，英文界面混中文。（现状快照：`fmtWeekday` 已由本设计 D6 移除改为 `t()` 键）
 
 ### 2.5 物理数据流（现状 → 终态对照）
 
@@ -295,7 +295,7 @@ interface AggregatedData {
 ### 3.4 关键决策与权衡（四件套）
 
 **D1：图例恒显数据源 = `perProvFull`（选定）**
-- **采用**：`aggregate()` 内第二累加器，`sliceDates` 内跳过 offProv/isolate 检查只累计 perProv。
+- **采用**：`aggregate()` 内第二累加器，`sliceDates` 内跳过 offProv/isolate 检查只累计 `perProvFull`（`perProv` 原语义保留，见 §3.6）。
 - **被否**：图例直算（口径分裂）；维持消失行为（不可恢复）。
 - **证据**：`aggregate.ts` 已有同范式先例 `buildFullPerProv`（全量行集算色序，注释「过滤变化不重排」）；置灰样式现存于模板（死代码转正）。
 - **效果**：G1 场景 A 的「置灰保留 + 单独恢复 + isolate 恒显」成立。
@@ -303,13 +303,13 @@ interface AggregatedData {
 **D2：compaction 归属 = details.model 权威落盘（选定）**
 - **采用**：smart-context 两处生成点写 `details.model = \`${model.provider}/${model.id}\``；scanner ③ 读它，缺失回退 `'compaction'`。
 - **被否**：回溯推断（编造数据，cross-model 必错标——现行设计 D1 已否决）；并入真实 provider（丢失压缩独立可见性）。
-- **证据**：本机实测 9 条 entry 的 details 原样落盘（engine/mode/readFiles 全在）；smart-context 生成侧持有 model 对象（compact-handler.ts 两个 generate 函数）。
+- **证据**：本机实测 9 条 entry 的 details 原样落盘（engine/mode/readFiles 全在；9 为 D2 采证时点计数，§3.4 代价声明 1 与 §4 V5 的「10 条」为更晚 R1 审查时点——append-only 自然增长，10 条中带 details 比例与 9 条时点一致）；smart-context 生成侧持有 model 对象（compact-handler.ts 两个 generate 函数）。
 - **效果**：G2 场景 B 成立；存量数据诚实降级（代价声明见下）。
 
 **D3：rename 落账 = custom entry + scanner ④（选定）**
 - **采用**：见 §3.3 ②③④。
 - **被否**：sidecar 账本（数据源分裂 + 独立清理负担）；不落盘（重启即丢）。
-- **证据**：pi ExtensionAPI `appendEntry`（types.d.ts:985「Append a custom entry … not sent to LLM」）；`appendCustomEntry` 带 timestamp（dist/core/session-manager.js:822）；renderer `apply-entry.ts:615` 对非 msg-id customType 走 `commitClientMsgIdEntry` no-op；extension-logger 已有 appendEntry 持久化先例。
+- **证据**：pi ExtensionAPI `appendEntry`（types.d.ts:985「Append a custom entry … not sent to LLM」）；`appendCustomEntry` 带 timestamp（dist/core/session-manager.js:822）；renderer `apply-entry.ts:616` 对非 msg-id customType 走 `commitClientMsgIdEntry` no-op；extension-logger 已有 appendEntry 持久化先例。
 - **效果**：G3 场景 C 成立；对话流零污染。
 
 **D4：复合键 + metric 贯穿（选定）**
@@ -340,13 +340,13 @@ interface AggregatedData {
 
 | ID | 验证的行为 | 探针 | 状态 | 失败时的降级路径 |
 |---|---|---|---|---|
-| P-details | compaction entry 的 details 原样落盘（smart-context 可携带 model） | 本机实测 9 条 entry，details.engine/mode/readFiles 全部原样在 | ✅ 已测 | — |
+| P-details | compaction entry 的 details 原样落盘（smart-context 可携带 model） | 本机实测 9 条 entry，details.engine/mode/readFiles 全部原样在（D2 采证时点；与 §3.4 D2/§4 V5 的 10 条为不同时点，append-only 自然增长） | ✅ 已测 | — |
 | P-appendEntry | `pi.appendEntry` 落盘 `{type:'custom',customType,data,timestamp}` 且可在 fire-and-forget then 链内调用 | 实施期本地 pi CLI：`pi --mode rpc --session-dir <tmp> --extension <rename-session>` 触发首回合 rename，检查 session JSONL | ✅ U5 实测（0.84.4 CLI，落盘形态逐字段一致，无需降级） | 失败 → 改为 `setSessionName` 同步前后即刻调用（同一 then 链更早位置），仍失败则该回合放弃计量（rename 主流程不受影响） |
 | P-chat-noop | custom entry 不进对话流（live 与 reload 两路） | 实施期 dev app：触发 rename 后重开 session，断言无新消息 | ✅ U8 验收（V7：恰 2 条 message + 重开零残留） | 失败 → customType 改带 display:false 的 custom_message 形态（照 subagent-directive 先例） |
 | P-size | `size="icon"` 产 `h-10 w-10`（叠印根因） | 已读 button/index.ts 源码确认 | ✅ 已核 | — |
 | P-narrow | chips 单行滚动在窄窗（settings 弹窗最小宽）不挤压右侧切换、不溢出弹窗 | 实施期 Playwright 连 dev app 缩窗验证 | ✅ U8 验收（V1：761>452 横滚激活 + 右侧切换固定，无需降级） | 失败 → chips 容器加 `max-w-[...]` 上限 + `min-w-0`，极端窄时允许 chips 换行为两行 |
 | P-usage-shape | completeSimple 的 resp.usage（含 usage.cost 形态）对 rename 所用各 provider 均有值 | 实施期 llm-shared 单测 + 本地 CLI 实测 | ✅ U4 单测 + U8 实测（cost.total=0 走诚实降级实例） | usage 整体缺失 → 跳过 appendEntry（存在性守卫）；仅 cost 缺失 → 照常落账，费用视角该模型显示 $0、token 照常（诚实降级，§3.6） |
-| P-en-i18n | en locale 已有 heatMonthSuffix/heatWeek* keys（D6 复用前提） | 实施期 grep en/settings.ts | ✅ U2（keys 双语齐备零改动）+ U8/V11 严格 SVG 探针复核 | 失败 → 补 en keys（纯文案） |
+| P-en-i18n | en locale 已有 heatMonthSuffix/heatWeek* keys（D6 复用前提） | 实施期 grep `locales/en-US/settings.ts` | ✅ U2（keys 双语齐备零改动）+ U8/V11 严格 SVG 探针复核 | 失败 → 补 en keys（纯文案） |
 
 ### 3.6 错误规格
 
