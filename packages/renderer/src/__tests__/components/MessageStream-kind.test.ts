@@ -62,6 +62,14 @@ vi.mock('virtua/vue', async () => {
       props: {
         data: { type: Array, default: () => [] },
         keepMounted: { type: Array, default: () => [] },
+        // [U3 适配] MessageStream U2 起传 :scroll-ref（chat-pin-bottom-fix D3 / P-wrap 门）。
+        // 必须声明为 prop 吸收：不声明则落 reactive attrs，dev 下 mock render 经 dev proxy
+        // 读 attrs 会跟踪它触发额外交互。注意：声明后挂载期仍有一次父驱动二次渲染
+        // （:scroll-ref 绑定 undefined→el 解析 → MessageStream 重渲染 → 本 mock props 变更
+        // → slot 再收集）——挂载期一次性 artifact，真实 virtua 同样会多渲染一次 slot；
+        // slotKeyCollector 的断言改按「已收敛渲染窗口」取值（见「slot vnode 带稳定 :key」用例内
+        // [U3 适配] 注释）。
+        scrollRef: { type: Object, default: null },
       },
       setup() {
         // setup 返回对象 → 键暴露在 public instance proxy（模板 ref 指向它），
@@ -362,19 +370,27 @@ describe('MessageStream kind 查表分发（M1）', () => {
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
-    // 3 个渲染项（turn1 + notice + turn2；[W3 v2] bash 归 turn2 内 notices 不出顶层项），每个 slot vnode 都带 key
-    expect(slotKeyCollector.keys).toHaveLength(3)
-    const flatKeys = slotKeyCollector.keys.map((k) => k[0])
+    // 3 个渲染项（turn1 + notice + turn2；[W3 v2] bash 归 turn2 内 notices 不出顶层项），每个 slot vnode 都带 key。
+    // [U3 适配] U2 起 MessageStream 向 <Virtualizer> 传 :scroll-ref（D3/P-wrap 门），挂载期该
+    // 绑定经历 undefined→el 一次解析 → 父组件重渲染 → mock props 变更 → 二次渲染，收集器含
+    // 2 个渲染窗口（每窗口恰 3 条，一 item 一条）。断言语义改为「每个渲染窗口的 key 集合一致
+    // 且稳定」：窗口总数为 3 的整数倍，取最后一个已收敛窗口断言内容，且全部窗口的 key 并集
+    // 不引入新 key（任意窗口 key 漂移都会被抓出）。
+    expect(slotKeyCollector.keys.length).toBeGreaterThanOrEqual(3)
+    expect(slotKeyCollector.keys.length % 3).toBe(0)
+    const flatKeys = slotKeyCollector.keys.slice(-3).map((k) => k[0])
     expect(flatKeys).toEqual(['t-u1', 's-c1', 't-u2'])
+    expect(new Set(slotKeyCollector.keys.flat())).toEqual(new Set(['t-u1', 's-c1', 't-u2']))
     // 全部 key 非空（virtua 不会 fallback `_${index}`）
     expect(flatKeys.every((k) => k != null && k !== '')).toBe(true)
 
-    // 同一数据重新 mount → key 集合一致（不随渲染重建漂移）
+    // 同一数据重新 mount → 已收敛窗口 key 集合一致（不随渲染重建漂移）
     slotKeyCollector.keys.length = 0
     const wrapper2 = mountStream('sess-kind-key')
     await wrapper2.vm.$nextTick()
     await wrapper2.vm.$nextTick()
-    expect(slotKeyCollector.keys.map((k) => k[0])).toEqual(['t-u1', 's-c1', 't-u2'])
+    expect(slotKeyCollector.keys.slice(-3).map((k) => k[0])).toEqual(['t-u1', 's-c1', 't-u2'])
+    expect(new Set(slotKeyCollector.keys.flat())).toEqual(new Set(['t-u1', 's-c1', 't-u2']))
     wrapper2.unmount()
   })
 })

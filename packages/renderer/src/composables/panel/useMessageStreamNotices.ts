@@ -5,7 +5,8 @@
  * 「进行中」指示已收编 ActivityStrip 组件（message-stream/ActivityStrip.vue，数据源
  * sessionPhase occupancy 投影）——本 composable 不再产出渲染文案（compactingText 退役，
  * 文案逻辑迁入 ActivityStrip），仅保留：
- * - 状态：isCompacting（驱动 useMessageStreamScroll 滚动跟随 + fork 基线兜底参数）。
+ * - 状态：isCompacting（fork 基线兜底参数；其滚动跟随随 chat-pin-bottom-fix D5 收编 RO 兜底
+ *   网——compacting 行显隐属 tailEl 高度变化，经 useMessageStreamFollowTriggers 触发矩阵）。
  * - 定位：forkNoticeBaseTop（委托 useNoticeStack 统一计算）。
  * - isDispatching / hasWorkingTurn：仅供 useForkNoticeStream 兜底 deps（生产路径经
  *   forkNoticeBaseTop 短路不触发）。
@@ -75,10 +76,10 @@ export interface MessageStreamNoticesDeps {
 
 /**
  * 末尾瞬时块的状态 + 定位聚合（[u6a] 渲染文案已收编 ActivityStrip，仅剩状态与定位）。
- * 返回值供 useForkNoticeStream deps / useMessageStreamScroll 消费。
+ * 返回值供 useForkNoticeStream deps 消费。
  */
 export function useMessageStreamNotices(deps: MessageStreamNoticesDeps): {
-  /** 是否正在压缩（occupancy compacting 维度派生；驱动滚动跟随 + fork 基线兜底参数） */
+  /** 是否正在压缩（occupancy compacting 维度派生；fork 基线兜底参数——滚动跟随由 tailEl RO 兜底网覆盖） */
   isCompacting: ComputedRef<boolean>
   /** dispatching 空窗期（已发送 prompt 但 message_start 未到）。
    *  [u6a] 思考中指示已迁 ActivityStrip thinking 行；此值仅供 useForkNoticeStream 兜底。 */

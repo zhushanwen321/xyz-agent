@@ -13,6 +13,10 @@
  *   RO 静默 120ms 关窗 / RO 持续活跃下 1500ms 硬上限关窗 / notifyRoActivity 重置静默计时
  * - U1 静默跟随变体（followIfStuck({markUnread:false})：脱离态不标 unread、贴底态正常滚）
  *   与 onSessionRebuild（置 NaN 快照 + 开抑制窗）
+ * - U3 guard 语义迁移（chat-pin-bottom-fix D5 删 useMessageStreamScroll 后）：
+ *   followToBottom() 默认非 force 受 guard（旧 MS6 等价）/ followToBottom(true) 完整重置面
+ *   unread+浮层清零（旧 MS4/force 语义等价）；MS1-MS3/MS5/isStreaming 守卫的去留逐条
+ *   依据见迁移 describe 块注释
  *
  * INVAR-M4-2′（现行语义，取代旧 INVAR-M4-2「wheel-only + onScroll 只单向翻真」）：
  * stickToBottom=false 只由用户输入信号驱动——① onWheel deltaY<0（滚轮上滑，恒即时生效，
@@ -480,6 +484,72 @@ describe('useVirtuaFollow', () => {
       await vi.advanceTimersByTimeAsync(120) // RO 静默关窗
       onScroll(200) // 同型回声 → 脱离（证明 300 事件已消费重建 NaN 建好快照）
       expect(stickToBottom.value).toBe(false)
+    })
+  })
+
+  describe('U3 guard 语义迁移（自 use-message-stream-scroll.test.ts，chat-pin-bottom-fix D5）', () => {
+    /**
+     * D5：useMessageStreamScroll 整文件删除，其测试同步删除；仍有行为价值的 guard 语义
+     * 用例以 U1 新 API 等价表达迁入本文件。旧用例逐条去留（MS1-MS6，旧文件已删）：
+     * - MS4（onMounted → scrollToBottom(true)）：force 原语语义由 W1TC8 + 本组
+     *   「force 完整重置面」覆盖；onMounted 接线本体已内联回 MessageStream.vue（D5②），
+     *   挂载首滚属接线面，挂载级测试不断言首滚（不在本测域）。
+     * - MS5（messages.length → follow）：watch 本体迁 useMessageStreamFollowTriggers（U2），
+     *   follow 原语的 guard 面由 W1TC5/W1TC6/W1TC7 + D7① 拖拽用例覆盖，不重复迁移。
+     * - MS6（完成滚动不带 force、尊重 guard 不扯回）：→ 本组「followToBottom() 默认非 force」
+     *   用例等价迁移（新 API 下非 force 路径 = followIfStuck guard）。
+     * - MS1/MS2/MS3（isSessionActive 完成滚动 watch 三态）：watch 随 D5③ 删除（完成滚动改由
+     *   「trace 折叠 → spacer 变化 → 静默跟随」+ clamp 回声覆盖）——API 等价表达 =
+     *   静默跟随变体（贴底滚底）+ D7① clamp 回声（脱离翻 true），既有用例已覆盖，不重复迁移。
+     * - isStreaming 守卫触发语义：守卫在 U2 triggers 的末条文本长度 watch（useVirtuaFollow API
+     *   无 isStreaming 概念）；其 guard 面即 followIfStuck rAF 内重读（W1TC7），不重复迁移。
+     */
+
+    it('MS6 迁移：followToBottom() 默认非 force → 受 stickToBottom guard（脱离不扯回 + 标 unread）', async () => {
+      const { stickToBottom, unreadBelow, showJumpButton, onWheel, followToBottom } = setupFollow({
+        itemCount: () => 5,
+      })
+
+      // 贴底态默认调用：正常滚底（证明默认路径不是 no-op，与 force 共用同一滚动原语）
+      followToBottom()
+      await vi.advanceTimersByTimeAsync(16)
+      expect(mock.scrollToIndex).toHaveBeenCalledTimes(1)
+      expect(mock.scrollToIndex).toHaveBeenCalledWith(4, { align: 'end', offset: 0 })
+
+      // 脱离态默认调用：rAF 内重读 guard 拦截 → 不把上滑用户扯回，只标 unread（MS6 语义本体：
+      // 非 force 的 follow 尊重 stickToBottom，视口不动、「回到底部」浮层点亮）
+      onWheel({ deltaY: -100 } as WheelEvent)
+      followToBottom()
+      await vi.advanceTimersByTimeAsync(16)
+
+      expect(mock.scrollToIndex).toHaveBeenCalledTimes(1) // 未新增滚动
+      expect(stickToBottom.value).toBe(false)
+      expect(unreadBelow.value).toBe(true)
+      expect(showJumpButton.value).toBe(true)
+    })
+
+    it('MS4/force 语义迁移：followToBottom(true) 是 guard 唯一例外——脱离/未读/浮层全重置并同步滚底', async () => {
+      const { stickToBottom, unreadBelow, showJumpButton, onWheel, followIfStuck, followToBottom } =
+        setupFollow({ itemCount: () => 5 })
+
+      // 用户上滑脱离 + 新内容到达标 unread → 「回到底部」浮层亮（点击前态）
+      onWheel({ deltaY: -100 } as WheelEvent)
+      followIfStuck()
+      expect(stickToBottom.value).toBe(false)
+      expect(showJumpButton.value).toBe(true)
+
+      // 点「回到底部」：force 是唯一例外——同步滚底（不走 rAF）+ 贴底回真 + unread/浮层清零
+      followToBottom(true)
+      expect(stickToBottom.value).toBe(true)
+      expect(unreadBelow.value).toBe(false)
+      expect(showJumpButton.value).toBe(false)
+      expect(mock.scrollToIndex).toHaveBeenCalledWith(4, { align: 'end', offset: 0 })
+
+      // 既有 followIfStuck 的 pending rAF 在 force 后触发也不改变终态（force 不取消 pending，
+      // 但 stick 已回真 → 重复滚底同参数无害）；终态稳定是「回到底部」闭环的不变量
+      await vi.advanceTimersByTimeAsync(16)
+      expect(stickToBottom.value).toBe(true)
+      expect(unreadBelow.value).toBe(false)
     })
   })
 

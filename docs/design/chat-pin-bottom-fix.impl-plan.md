@@ -82,6 +82,9 @@ graph TD
 | 2 | U1 过渡缺省设计：itemCount 未注入时 = Number.MAX_SAFE_INTEGER（virtua scrollToIndex 首行 clamp 到 [0, len-1]，实装已核），endOffset 缺省 0——MessageStream 消费面 U1 内不改仍可编译可跑（挂载级测试实证全绿） | r2 实现决策（领地限制下保持 U2 前兼容） | 合理：设计 D1 语义在 U2 接线后完整成立；U3 验收全量绿时一并复核 |
 | 3 | U2 领地扩授权：新增 useMessageStreamFollowTriggers.ts（script 299/300 贴红线，直改超限 43 行） | r1 blocked 上报 → 主 agent 决策（useMessageStreamScroll 头注释自证的 300 行拆分惯例同构） | 已登记单元列表 |
 | 4 | U2 实现偏差：① triggers 入参用 scrollEl（RO 网实际需要）；② messages.length watch 补 isPrepend 门控（D3 前插抑制 + V9 已声明差异，原任务文本遗漏）；③ scrollRef 传 `?? undefined`（virtua rAF 延迟解析 + 微任务时序已核）；④ 挂载级 1 红为 mock 未声明 scrollRef prop 的适配面，归 U3 | r2 实施报告 | ①②③均与设计意图一致，采纳；④入 U3 验收条款 |
+| 5 | U3 实测修正 U2 预测：仅给 mock 声明 scrollRef prop 红不消失——真实机制是挂载期 `:scroll-ref` 绑定 undefined→el 变更驱动父重渲染（与 attrs 无关）；采用 scrollRef 声明 + key 断言改「已收敛渲染窗口」等价方案 | U3 实验（对照实验隔离机制） | 采纳（实测优先）；U2 偏差④归因修正 |
+| 6 | 被删符号 lineage 注释保留：useMessageStreamFollowTriggers.ts:4/39/125/142 + MessageStream.vue:417 + useMessageStreamNotices.ts 注释清扫——注释性历史提及非活引用，U4 守卫扫描排除注释行 | U3 上报主 agent 裁决 | 裁决：按 C-proc-10 历史性提及惯例接受，不做禁改文件 comment-only touch |
+| 7 | U4 预扩授权：领地增加 MessageStream.vue（仅 usePinBottomGuard dev-only 接线行）——guard 需读 stickToBottom/scrollEl/isStreaming，接线必然触碰该文件 | 主 agent 预判（usePinBottomGuard 挂载点） | 已登记 U4 领地 |
 
 ## 6 状态表
 
@@ -89,8 +92,8 @@ graph TD
 |------|---------------------------------------------|------|----------|
 | U1 | committed | 3 | a647dada2：实现（r2）+ 测试收尾（r3 sa-f4f160bb）；39/39 绿、vue-tsc 0、pre-commit 全套绿 |
 | U2 | committed | 2 | r2 sa-a7fe7ca5 交付；script 299/300·template 175/400；探针门：P-wrap ✓（gap≤0.5px）· P-timing ✓（流式 120 帧恒 0.5px / 静止 90 帧恒 0px 零振荡）· P-no-loop ✓ 降级形态（gap 序列无循环锯齿；完整计数器判据按设计载体推迟 U4/V8） |
-| U3 | pending | 0 | — |
-| U4 | pending | 0 | — |
+| U3 | committed | 1 | sa-9388587e：删2文件+迁移2用例（29→31）+挂载级修红；全量 4081/3 skip、双 typecheck、lint 绿；主 agent 重跑全量一致 |
+| U4 | in-progress | 1 | sa（u4-guards）派发中；V8 dev 断言侧由主 agent 核验阶段执行 |
 | U5 | pending | 0 | — |
 
 ## 7 残留风险与变更历史
