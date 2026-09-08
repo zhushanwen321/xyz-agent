@@ -102,6 +102,8 @@ graph TD
 2. ✅ 已销项（区 A 审查确认）：normalizeContent 经 segmentsToText 委托，归位文本透传，无反解析需求；
 3. pi builtin 命令 RPC 注册完整性——Gate B 选样注意（场景 6 用 /compact，renderer 侧拦截不依赖此项）。
 
+**用户签认豁免（2026-09-08）**：runtime `thinking-level-effective-e2e.test.ts` 钳制用例 1/2 失败——根因实锤为上游 pi 模型目录演化：0.84.4 实装目录 grep `"reasoning":false` 为 0 次，「完全无思考能力」模型已绝迹（MiMo 等可关思考模型标 reasoning:true 且 off 档存在，但不满足测试谓词 `reasoning===false` 的「无思考能力演员」要求），测试前提恒不成立；非本次改动（runtime 区间零改动）。修复方向（另开专项）：spawnIsolatedPi 的 agentDir 写 ModelOverride 自造 reasoning:false 反面演员（真机钳制验证）或无演员时 skip+显式报告。另：ui typecheck 存量 4 错（provider-edit-body/search-modal 测试，区间外）另列清理项。
+
 **变更历史**：
 - 2026-09-08：初版（6 单元 DAG，源自设计 §5 P1-P5 拆分；P5 测试分摊进各单元）。
 - 2026-09-08：批次 1 完成（u1 aab8b4433 / u2 dadb65c39 / u3 16204a7c9 轮 2）；偏差登记 #1-#5；u3 领地补录 landing 测试文件。
