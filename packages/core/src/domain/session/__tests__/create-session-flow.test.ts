@@ -1,7 +1,7 @@
 /**
  * createSessionFlow 单测（IF5，w4）。
  *
- * 覆盖 TC-1..TC-8（label 三分支 / 编排序 / ES4 降级 / 空 model 跳过 / 空 content guard /
+ * 覆盖 TC-1..TC-9（label 三分支 / 编排序 / ES4+E7 降级 / applyModel 步骤已删 / 空 content guard /
  * migrateImages path 更新 / 降级 allSettled / defaultCwd 兜底）。mock 注入点即 ctx 依赖注入点：
  * api.create / api.migrateImage 用 vi.fn；applyModel / onCwdFallback 用 vi.fn；store 用真实
  * createSessionStore（w1 交付，appendSession 终态断言需真实响应式）。
@@ -85,7 +85,7 @@ describe('createSessionFlow', () => {
     expect(ctx.api.create).toHaveBeenCalledWith('/x', '无提示词', undefined, undefined, undefined, undefined)
   })
 
-  it('TC-2 create 成功全编排序：create→appendSession→applyModel（无图片段 migrateImages 跳过）', async () => {
+  it('TC-2 create 成功全编排序：create→appendSession→migrate（applyModel 步骤已随 D5 删除）', async () => {
     const appendSpy = vi.spyOn(ctx.store, 'appendSession')
     const input: CreateSessionFlowInput = {
       cwd: '/x',
@@ -94,13 +94,14 @@ describe('createSessionFlow', () => {
     }
     const result = await createSessionFlow(ctx, input)
 
-    // 编排序断言：create 先于 appendSession 先于 applyModel
+    // 编排序断言：create → appendSession → migrateImages（无图片段跳过）
     expect(ctx.api.create).toHaveBeenCalledTimes(1)
     expect(ctx.api.create).toHaveBeenCalledWith('/x', 'hi', undefined, undefined, 'openai/gpt-x', undefined)
     expect(appendSpy).toHaveBeenCalledTimes(1)
     expect(appendSpy).toHaveBeenCalledWith({ id: 'ns', cwd: '/x', label: 'hi', status: 'idle' })
-    expect(ctx.applyModel).toHaveBeenCalledTimes(1)
-    expect(ctx.applyModel).toHaveBeenCalledWith('ns', 'openai/gpt-x')
+    // [D5] step 7 applyModel 已删：模型经 create modelOverride 快照化一次到位，
+    // 无 post-create 同值二次 RPC（ctx.applyModel 字段已废弃保留，恒不被调用）
+    expect(ctx.applyModel).not.toHaveBeenCalled()
     // 无图片段：migrateImage 未调
     expect(ctx.api.migrateImage).toHaveBeenCalledTimes(0)
     // 返回结构
@@ -130,7 +131,7 @@ describe('createSessionFlow', () => {
     expect(ctx.onCwdFallback).toHaveBeenCalledTimes(0)
   })
 
-  it('TC-4 pendingModel 空 → applyModel 跳过；presetId 透传 create', async () => {
+  it('TC-4 pendingModel 空（无 explicit 模型）→ create 不带 modelOverride（终值由上游 resolve 给出）；presetId 透传 create', async () => {
     await createSessionFlow(ctx, {
       cwd: '/x',
       segments: [textSeg('hi')],
@@ -138,6 +139,7 @@ describe('createSessionFlow', () => {
       pendingModel: null,
     })
     expect(ctx.api.create).toHaveBeenCalledWith('/x', 'hi', 'preset-1', undefined, undefined, undefined)
+    // applyModel 编排步骤已删（D5），无论 pendingModel 有无恒不调
     expect(ctx.applyModel).toHaveBeenCalledTimes(0)
   })
 
@@ -214,5 +216,22 @@ describe('createSessionFlow', () => {
     ctx = makeCtx({ defaultCwd: '/home/user' })
     await createSessionFlow(ctx, { cwd: null, segments: [textSeg('hi')] })
     expect(ctx.api.create).toHaveBeenCalledWith('/home/user', 'hi', undefined, undefined, undefined, undefined)
+  })
+
+  it('TC-9 E7 两空 cwd：reqCwd 空串且 runtime 落 homedir → onCwdFallback("", actualCwd) 触发（不再静默）', async () => {
+    // landing 两空：pendingCwd null 且 ctx.defaultCwd 空 → cwd='' → runtime create('')
+    // 内部落 homedir（resolveCreateCwd existsSync('')=false）。空串守卫曾跳过回调——
+    // 放宽后两空场景也有 toast 提示（D10-E7「已在主目录创建」由壳侧文案承担）
+    ctx = makeCtx({
+      defaultCwd: '',
+      api: {
+        ...makeCtx().api,
+        create: vi.fn(async () => ({ id: 'ns', cwd: '/home/user', label: 'L' }) as SessionSummary),
+      },
+    })
+    await createSessionFlow(ctx, { cwd: null, segments: [textSeg('hi')] })
+    expect(ctx.api.create).toHaveBeenCalledWith('', 'hi', undefined, undefined, undefined, undefined)
+    expect(ctx.onCwdFallback).toHaveBeenCalledTimes(1)
+    expect(ctx.onCwdFallback).toHaveBeenCalledWith('', '/home/user')
   })
 })

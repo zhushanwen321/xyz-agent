@@ -4,16 +4,19 @@
  * [归位] 迁自 renderer composables/features/useNewTaskFlow.ts:235-340 的 session 创建部分
  * （C-SS-2 裁决：useNewTaskFlow.submitFirstMessage 把创建与发送耦合在一个 100+ 行函数内，
  * 违反 D4 单一归位——session 创建属 session 域，发送属 chat 域）。本函数只承接创建编排：
- * guard→cwd 兜底→label 派生→create→INV-7 降级→appendSession→applyModel→migrateImages。
+ * guard→cwd 兜底→label 派生→create→INV-7 降级（含 E7 两空提示）→appendSession→migrateImages。
  *
- * 边界（C-W4-3）：thinkingLevel apply / panel.loadSession / navigation.push / send /
- * transition / fileTree 预加载 留壳层（useNewTaskFlow 在 createSessionFlow 返回后编排）。
+ * 边界（C-W4-3）：panel.loadSession / navigation.push / send / transition / fileTree
+ * 预加载 留壳层（useNewTaskFlow 在 createSessionFlow 返回后编排）。原 thinkingLevel apply
+ * 留壳步已随 D5 契约快照化删除（2026-09，U2b）。
  *
  * 裁决标注：
  * - C-W4-1：SessionApiPort.migrateImage 签名对齐 renderer（{fromPath,sessionId,fileName}→{path}）
  * - C-W4-2：migrateImages 内部实现（不走 IF5 字面的注入回调）——图片归档是 session 域固有副作用；
  *   返回 {session, migratedSegments} | null，调用方用 migratedSegments 做 send
- * - C-W4-3：thinkingLevel apply 留壳；空 content guard 进本函数（null 分支）
+ * - C-W4-3：thinkingLevel apply 留壳（[已废除 2026-09 D5] 壳层 C-W4-3 setThinkingLevel 与本函数
+ *   step 7 applyModel 同批删除——landing 恒传解析终值后二者均为同值二次 RPC，override 经
+ *   create 快照化一次到位）；空 content guard 进本函数（null 分支）
  * - C-W4-4：defaultCwd 由壳注入 ctx，cwd ?? defaultCwd 兜底
  *
  * 依赖方向：SessionApiPort（./api-port）+ createSessionStore 类型（./store）+ Segment/SessionSummary
@@ -82,9 +85,13 @@ export interface CreateSessionFlowCtx {
   api: SessionApiPort
   /** 默认 cwd（壳解析 workspaceStore.defaultCwd 传入；input.cwd 为空时兜底） */
   defaultCwd: string
-  /** INV-7 cwd 降级回调（created.cwd !== 请求 cwd 时触发，壳做 toast 通知） */
+  /** INV-7 cwd 降级回调（created.cwd !== 请求 cwd 时触发（含 E7 两空空串），壳做 toast 通知） */
   onCwdFallback?: (reqCwd: string, actualCwd: string) => void
-  /** apply landing 态选定的模型（壳适配 useModel().switchModel；空 pendingModel 跳过） */
+  /**
+   * [已废弃 2026-09 D5] post-create applyModel 已随契约快照化删除（模型经 create
+   * modelOverride 一次到位）。字段保留仅为壳层（领地外）既有 ctx 构造兼容，恒不被调用；
+   * 壳清理后删除。
+   */
   applyModel?: (sessionId: string, pendingModel: string) => Promise<void>
 }
 
@@ -145,25 +152,21 @@ async function createSessionRecord(
   )
 }
 
-/** step 5：INV-7 降级比对（runtime create 内部可能降级 homedir）。 */
+/**
+ * step 5：cwd 降级比对（runtime create 内部可能降级 homedir）。
+ *
+ * E7（D10）两空提示：landing 未选目录且无 defaultCwd 时 cwd 为空串，runtime create('')
+ * 落 homedir——空串守卫（`reqCwd &&`）曾跳过回调致静默换目录。现放宽为「实际值 ≠ 请求值
+ * 即回调」：两空场景也触发 onCwdFallback('', homedir)，壳侧同一 toast 通道提示用户
+ * 「已切换到主目录」（reqCwd 空串与降级 toast 的区分由壳按 reqCwd 是否为空自行决定文案）。
+ */
 function notifyCwdFallback(ctx: CreateSessionFlowCtx, reqCwd: string, actualCwd: string): void {
-  if (reqCwd && actualCwd !== reqCwd) {
+  if (actualCwd !== reqCwd) {
     ctx.onCwdFallback?.(reqCwd, actualCwd)
   }
 }
 
-/** step 7：applyModel（pendingModel 空跳过；壳适配 useModel().switchModel）。 */
-async function applyPendingModel(
-  ctx: CreateSessionFlowCtx,
-  sessionId: string,
-  pendingModel: string | null | undefined,
-): Promise<void> {
-  if (pendingModel) {
-    await ctx.applyModel?.(sessionId, pendingModel)
-  }
-}
-
-/** step 8：migrateImages（needsMigrate image 段经 api.migrateImage 迁移，更新 path + 重置 needsMigrate）。 */
+/** step 7：migrateImages（needsMigrate image 段经 api.migrateImage 迁移，更新 path + 重置 needsMigrate）。 */
 async function migrateSegments(segments: Segment[], sessionId: string, api: SessionApiPort): Promise<Segment[]> {
   const needsMigrateImages = segments.filter(
     (s): s is Extract<Segment, { type: 'image' }> => s.type === 'image' && s.needsMigrate === true,
@@ -189,11 +192,13 @@ async function migrateSegments(segments: Segment[], sessionId: string, api: Sess
  * 2. cwd 兜底：input.cwd ?? ctx.defaultCwd
  * 3. label 派生：bashCommand ? command : trimmed（codePoint 前 10 + 省略号）
  * 4. create：api.create(cwd, label, presetId, projectId, modelOverride, thinkingOverride)
- * 5. INV-7 降级：cwd && created.cwd !== cwd → onCwdFallback?.(cwd, created.cwd)
+ * 5. INV-7 降级 + E7 两空：created.cwd !== cwd（含 cwd 空串落 homedir）→ onCwdFallback?.(cwd, created.cwd)
  * 6. appendSession：store.appendSession(created)
- * 7. applyModel：pendingModel 非空 → ctx.applyModel?.(created.id, pendingModel)
- * 8. migrateImages：needsMigrate image 段经 api.migrateImage 迁移，更新 path + 重置 needsMigrate
- * 9. 返回 { session: created, migratedSegments }
+ * 7. migrateImages：needsMigrate image 段经 api.migrateImage 迁移，更新 path + 重置 needsMigrate
+ * 8. 返回 { session: created, migratedSegments }
+ *
+ * [D5 已删] 原 step 7 applyModel（pendingModel 非空 → ctx.applyModel）：landing 恒传解析
+ * 终值后是对每个新 session 的同值二次 RPC，模型经 create modelOverride 快照化一次到位。
  *
  * @returns null = 空 content guard 命中（未创建）；否则创建结果
  */
@@ -214,22 +219,20 @@ export async function createSessionFlow(
   const label = deriveSessionLabel(input.bashCommand ? input.bashCommand.command : trimmed)
 
   // 4. create session（label 已派生；presetId 透传；projectId 归属透传：D14 语义修正，创建时归属当前 activeProject）
-  // B3：modelOverride/thinkingOverride 透传——session 创建即带正确模型，消除 config.sessions 广播覆盖竞态。
-  // 优先级：override > preset > 全局默认。applyModel 保留作 fallback（override 未传时仍执行）。
+  // D5 契约快照化：modelOverride/thinkingOverride 透传 landing 解析终值（U2b 起恒非空），
+  // 优先级 override > preset > 全局默认；post-create applyModel 已删（同值二次 RPC）。
   const created = await createSessionRecord(ctx, input, cwd, label)
 
-  // 5. INV-7 cwd 降级比对（runtime create 内部可能降级 homedir）
+  // 5. INV-7 cwd 降级比对 + E7 两空提示（runtime create 内部可能降级 homedir；
+  // reqCwd 空串且实际落 homedir 时也回调，见 notifyCwdFallback 注释）
   notifyCwdFallback(ctx, cwd, created.cwd)
 
   // 6. appendSession（store 真实响应式，非 mock）
   ctx.store.appendSession(created)
 
-  // 7. applyModel（pendingModel 空跳过；壳适配 useModel().switchModel）
-  await applyPendingModel(ctx, created.id, input.pendingModel)
-
-  // 8. migrateImages（needsMigrate image 段经 api.migrateImage 迁移）
+  // 7. migrateImages（needsMigrate image 段经 api.migrateImage 迁移）
   const migratedSegments = await migrateSegments(input.segments, created.id, ctx.api)
 
-  // 9. 返回创建结果
+  // 8. 返回创建结果
   return { session: created, migratedSegments }
 }

@@ -2,17 +2,28 @@
  * useNewTaskFlow 编排器单测（IF5）。
  *
  * 覆盖 plan TC-4..TC-8：startFlow 不变量/幂等/终态重建、submitFirstMessage 主链路
- * /bash 分支/null guard/非 landing 抛错/createInFlight 守卫/send reject 交接定格/retry 迁移、closeOverlay 幂等。
- * 全部端口 mock 注入（vi.fn()）；模块级状态 beforeEach resetNewTaskFlow 隔离。
+ * （D1 单一解析层：ensure 数据就绪 → resolve 终值 → create；P5② 窗口语义）/bash 分支/
+ * null guard/非 landing 抛错/createInFlight 守卫/send reject 交接定格/retry 迁移、closeOverlay 幂等。
+ * 全部端口 mock 注入（vi.fn()）；模块级状态 beforeEach resetNewTaskFlow + KV 单例 reset 隔离。
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import type { Segment, SessionSummary } from '@xyz-agent/shared'
+import type { PiLaunchPreset, ProviderId, ProviderInfo, Segment, SessionSummary } from '@xyz-agent/shared'
 import { resetNewTaskFlow, useNewTaskFlowState } from '../flow-state'
 import { useNewTaskFlow } from '../flow'
+import { resolveLaunchConfig } from '../launch-config'
+import type { LaunchConfigInput } from '../launch-config'
+import { __resetLastUsedModelForTesting } from '../../composer/last-used-model'
+import { __resetModelThinkingMemoryForTesting } from '../../composer/model-thinking-memory'
 import type { NewTaskFlowDeps } from '../ports'
+import type { LaunchConfigPort } from '../flow'
 
-/** 构造 mock 端口集（每个测试独立实例，断言 per-test） */
-function makeDeps(overrides?: Partial<NewTaskFlowDeps>): NewTaskFlowDeps {
+/** makeDeps 的覆盖参数：ports 支持部分覆盖 + U2b 扩展端口 launchConfig。 */
+type FlowDepsOverrides = Partial<Omit<NewTaskFlowDeps, 'ports'>> & {
+  ports?: Partial<NewTaskFlowDeps['ports']> & { launchConfig?: LaunchConfigPort }
+}
+
+/** 构造 mock 端口集（每个测试独立实例，断言 per-test）。launchConfig 端口默认不注入（回落 core 单例基座路径）。 */
+function makeDeps(overrides?: FlowDepsOverrides): NewTaskFlowDeps {
   const deps: NewTaskFlowDeps = {
     ports: {
       createSessionFlow: {
@@ -52,9 +63,9 @@ function makeDeps(overrides?: Partial<NewTaskFlowDeps>): NewTaskFlowDeps {
     },
   }
   if (overrides) {
-    // 浅合并 ports 子对象（测试覆盖个别方法）
+    // 浅合并 ports 子对象（测试覆盖个别方法；launchConfig 为 U2b 扩展端口，运行时随合并带入）
     if (overrides.ports) {
-      deps.ports = { ...deps.ports, ...overrides.ports }
+      deps.ports = { ...deps.ports, ...overrides.ports } as NewTaskFlowDeps['ports']
     }
     if (overrides.gitApi) deps.gitApi = { ...deps.gitApi, ...overrides.gitApi }
     if (overrides.directoryPicker) deps.directoryPicker = { ...deps.directoryPicker, ...overrides.directoryPicker }
@@ -62,6 +73,37 @@ function makeDeps(overrides?: Partial<NewTaskFlowDeps>): NewTaskFlowDeps {
     if (overrides.workspaceState) deps.workspaceState = { ...deps.workspaceState, ...overrides.workspaceState }
   }
   return deps
+}
+
+// ── launch-config fixture（对齐 launch-config.test.ts 同款形态）─────────
+
+function makePreset(p: Partial<PiLaunchPreset> = {}): PiLaunchPreset {
+  return {
+    id: 'custom-1',
+    name: 'Custom',
+    builtin: false,
+    order: 10,
+    toolMode: 'all',
+    extensionMode: 'all',
+    ...p,
+  }
+}
+
+function makeProvider(p: Partial<ProviderInfo> = {}): ProviderInfo {
+  return {
+    id: 'prov-a' as ProviderId,
+    name: 'Provider A',
+    apiKeySet: true,
+    status: 'connected',
+    enabled: true,
+    models: [{ id: 'model-x', supportedLevels: ['off', 'low', 'high'] }],
+    ...p,
+  }
+}
+
+/** 微任务排空（P5② 窗口断言：ensureReady 未完成时 create 不发生） */
+async function flushMicrotasks(times = 8): Promise<void> {
+  for (let i = 0; i < times; i++) await Promise.resolve()
 }
 
 const textSeg = (text: string): Segment => ({ type: 'text', text })
@@ -90,6 +132,10 @@ async function enterLanding(flow: ReturnType<typeof useNewTaskFlow>): Promise<vo
 describe('useNewTaskFlow', () => {
   beforeEach(() => {
     resetNewTaskFlow()
+    // KV 单例隔离：submit 路径 ensureLaunchDataReady 会触发 loadOnce（node 环境
+    // platform 未注入 → E1/E4 收敛到 loaded），reset 防跨用例状态泄漏
+    __resetLastUsedModelForTesting()
+    __resetModelThinkingMemoryForTesting()
   })
 
   it('TC-4: startFlow 不变量——landing 态 activeId 清空 + panel 解绑 + presetCwd 回灌', async () => {
@@ -124,20 +170,93 @@ describe('useNewTaskFlow', () => {
     expect(useNewTaskFlowState().state.value).toBe('landing')
   })
 
-  it('TC-5: submitFirstMessage 主链路——create→setThinkingLevel→载入 panel→send→completed', async () => {
-    const deps = makeDeps()
+  it('TC-5: submit 在数据源就绪后 create 入参 = 加载后 resolve 输出（P5② 窗口语义）+ C-W4-3 已删不补 apply', async () => {
+    // 门闩：ensureReady 完成前 preset store 是占位空表（默认预设不可解析），完成后注入
+    // 终值数据——若 submit 未 await 就 resolve，create 入参会固化加载前占位解析值
+    let openGate!: () => void
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve
+    })
+    let presetsLoaded = false
+    // 占位/终值两态数据：加载后默认预设 p-default 生效（modelOverride 压过 lastUsed 档）
+    const loadedInput = (): LaunchConfigInput => ({
+      presets: presetsLoaded
+        ? [makePreset({ id: 'p-default', name: '默认预设', modelOverride: 'prov-a/model-preset' })]
+        : [],
+      defaultPresetId: 'p-default',
+      lastUsedModel: 'prov-a/model-x',
+      providers: [makeProvider()],
+    })
+    const deps = makeDeps({
+      ports: {
+        launchConfig: {
+          getInput: () => loadedInput(),
+          ensureReady: () => gate.then(() => {
+            presetsLoaded = true
+          }),
+        },
+      },
+    })
     const flow = useNewTaskFlow(deps)
     await enterLanding(flow)
-    // mock createSessionFlow 返回 session + migratedSegments
     const migratedSegments = [textSeg('hello')]
     ;(deps.ports.createSessionFlow.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
       session: mockSession,
       migratedSegments,
     })
 
-    await flow.submitFirstMessage([textSeg('hello')], 'high')
+    const pending = flow.submitFirstMessage([textSeg('hello')], 'high')
+    // P5② 窗口断言：ensureReady 未完成 → create 不发生（加载窗口内的占位值不固化进新 session）
+    await flushMicrotasks()
+    expect(deps.ports.createSessionFlow.createSession).not.toHaveBeenCalled()
+    openGate()
+    await pending
 
-    // createSessionFlow 收 input（cwd/presetId/pendingModel/segments/bashCommand）
+    // 等价断言本体：create 入参 = 加载后 resolve 输出（同一 resolveLaunchConfig 计算期望值）
+    const expected = resolveLaunchConfig({
+      ...loadedInput(),
+      pendingModel: null,
+      pendingPreset: null,
+      pendingCwd: null,
+      pendingThinkingLevel: 'high',
+    })
+    // 加载后数据真正生效（防断言空转：非出厂默认预设透传 = D3，preset 模型压过 lastUsed = D2）
+    expect(expected.presetId).toBe('p-default')
+    expect(expected.model).toBe('prov-a/model-preset')
+    expect(deps.ports.createSessionFlow.createSession).toHaveBeenCalledWith({
+      cwd: null,
+      presetId: expected.presetId ?? null,
+      pendingModel: expected.model || null,
+      segments: [textSeg('hello')],
+      bashCommand: null,
+      pendingThinkingLevel: expected.thinkingLevel,
+    })
+    // [D5] C-W4-3 setThinkingLevel 补 apply 已删：create 快照化后无同值二次 RPC
+    expect(deps.ports.createSessionFlow.setThinkingLevel).not.toHaveBeenCalled()
+    // 主链路不变：载入 panel + activeId + 导航 + 文件树 + send(migratedSegments) + completed
+    expect(deps.ports.navigation.setActiveSession).toHaveBeenCalledWith('s1')
+    expect(deps.ports.navigation.loadPanel).toHaveBeenCalledWith('p1', 's1')
+    expect(deps.ports.navigation.pushChat).toHaveBeenCalledWith('s1')
+    expect(deps.ports.fileTree.loadTree).toHaveBeenCalledWith('s1')
+    expect(deps.ports.chat.send).toHaveBeenCalledWith('s1', migratedSegments)
+    expect(deps.ports.chat.sendBash).not.toHaveBeenCalled()
+    expect(useNewTaskFlowState().state.value).toBe('completed')
+  })
+
+  it('TC-5b: launchConfig 端口未注入 → 回落 core 单例基座（preset 档不可达，explicit 档仍生效）', async () => {
+    const deps = makeDeps()
+    const flow = useNewTaskFlow(deps)
+    await enterLanding(flow)
+    ;(deps.ports.createSessionFlow.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      session: mockSession,
+      migratedSegments: [textSeg('hello')],
+    })
+
+    // 不传 thinkingLevel（无 authored 档）：resolve 落最高可用档兜底
+    await flow.submitFirstMessage([textSeg('hello')])
+
+    // 无壳数据源：无 explicit / 无 preset / KV 空（beforeEach reset）→ model 全链空 '' 不上线
+    // （null → wire undefined → runtime 全局默认），thinking 落最高可用档（无能力表归一默认五档 → high）
     expect(deps.ports.createSessionFlow.createSession).toHaveBeenCalledWith({
       cwd: null,
       presetId: null,
@@ -146,18 +265,28 @@ describe('useNewTaskFlow', () => {
       bashCommand: null,
       pendingThinkingLevel: 'high',
     })
-    // thinkingLevel apply（C-W4-3 留壳步经端口）
-    expect(deps.ports.createSessionFlow.setThinkingLevel).toHaveBeenCalledWith('s1', 'high')
-    // 载入 panel + activeId + 导航 + 文件树（fire-and-forget）
-    expect(deps.ports.navigation.setActiveSession).toHaveBeenCalledWith('s1')
-    expect(deps.ports.navigation.loadPanel).toHaveBeenCalledWith('p1', 's1')
-    expect(deps.ports.navigation.pushChat).toHaveBeenCalledWith('s1')
-    expect(deps.ports.fileTree.loadTree).toHaveBeenCalledWith('s1')
-    // send 用 migratedSegments
-    expect(deps.ports.chat.send).toHaveBeenCalledWith('s1', migratedSegments)
-    expect(deps.ports.chat.sendBash).not.toHaveBeenCalled()
-    // 终态
-    expect(useNewTaskFlowState().state.value).toBe('completed')
+  })
+
+  it('TC-5c: ensureReady reject → E1/E4 收敛不阻塞发送（create 仍执行）', async () => {
+    const deps = makeDeps({
+      ports: {
+        launchConfig: {
+          getInput: () => ({}),
+          ensureReady: () => Promise.reject(new Error('preset rpc down')),
+        },
+      },
+    })
+    const flow = useNewTaskFlow(deps)
+    await enterLanding(flow)
+    ;(deps.ports.createSessionFlow.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      session: mockSession,
+      migratedSegments: [textSeg('hello')],
+    })
+
+    // 加载失败回落默认继续（不 reject 不阻塞发送）
+    await flow.submitFirstMessage([textSeg('hello')])
+    expect(deps.ports.createSessionFlow.createSession).toHaveBeenCalledTimes(1)
+    expect(deps.ports.chat.send).toHaveBeenCalledTimes(1)
   })
 
   it('TC-6a: bash 分支——bashCommand 传入走 sendBash + createSessionFlow 收 bashCommand', async () => {
@@ -172,17 +301,19 @@ describe('useNewTaskFlow', () => {
 
     await flow.submitFirstMessage([textSeg('ls')], undefined, { command: 'ls', excludeFromContext: true })
 
+    // thinkingLevel 未传（无 authored 档）→ D5 恒传 resolve 终值：落最高可用档（无数据源归一
+    // 默认五档 → high），不再透传 null（快照化后 create 即带正确等级）
     expect(deps.ports.createSessionFlow.createSession).toHaveBeenCalledWith({
       cwd: null,
       presetId: null,
       pendingModel: null,
       segments: [textSeg('ls')],
       bashCommand: { command: 'ls', excludeFromContext: true },
-      pendingThinkingLevel: null,
+      pendingThinkingLevel: 'high',
     })
     expect(deps.ports.chat.sendBash).toHaveBeenCalledWith('s1', 'ls', true)
     expect(deps.ports.chat.send).not.toHaveBeenCalled()
-    // thinkingLevel 未传 → setThinkingLevel 不调
+    // [D5] C-W4-3 已删：thinkingLevel apply 只经 create 快照化，端口 apply 恒不调
     expect(deps.ports.createSessionFlow.setThinkingLevel).not.toHaveBeenCalled()
   })
 
@@ -320,7 +451,15 @@ describe('useNewTaskFlow', () => {
   })
 
   it('presetCwd/setPendingModel/setPendingPreset——仅 landing 态生效', async () => {
-    const deps = makeDeps()
+    const deps = makeDeps({
+      ports: {
+        // preset 数据经 launchConfig 端口注入（D1）：显式选定的 preset-1 需在列表内可解析才透传
+        launchConfig: {
+          getInput: () => ({ presets: [makePreset({ id: 'preset-1' })] }),
+          ensureReady: async () => {},
+        },
+      },
+    })
     const flow = useNewTaskFlow(deps)
     // 非 landing（idle）→ noop
     flow.setPendingModel('p/m')
@@ -331,7 +470,8 @@ describe('useNewTaskFlow', () => {
     flow.setPendingModel('p/m')
     expect(useNewTaskFlowState().pendingModel.value).toBe('p/m')
     flow.setPendingPreset('preset-1')
-    // 通过 submitFirstMessage 的 createSessionFlow input 验证 presetId 透传
+    // 通过 submitFirstMessage 的 createSessionFlow input 验证 resolve 终值透传
+    // （pendingModel/pendingPreset 作 explicit 输入 → resolve 输出原样透传）
     ;(deps.ports.createSessionFlow.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
       session: mockSession,
       migratedSegments: [textSeg('hello')],
