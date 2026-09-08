@@ -24,7 +24,7 @@
 
 **In-scope**：MessageStream 滚动跟随链路（useVirtuaFollow / MessageStream.vue 模板结构与接线）、同款误用的同模式清扫（`vlistBottom`）、脱离锚定信号扩展、防复发护栏（dev 断言 + 单测 + 约束登记）。
 
-**Out-of-scope**：virtua 库本身（0.50.0，不改依赖源码、不升级）；TurnRail 跳转逻辑本身（仅其滚动副作用经 D7 获得更合理的脱离语义）；mobile-renderer（App.vue:15 使用 MessageStreamStub，不复用该链路）；fork notice 既有 absolute 定位残留链的整体删除（仅修坐标误用 + 登记待清理，彻底删除属另一项重构）。
+**Out-of-scope**：virtua 库本身（0.50.0，不改依赖源码、不升级）；TurnRail 跳转逻辑本身（仅其滚动副作用经 D7 获得更合理的脱离语义）；mobile-renderer（App.vue:15 使用 MessageStreamStub，不复用该链路）；fork notice 既有 absolute 定位残留链的整体删除（仅修坐标误用 + 登记待清理——已于 2026-09-09 交付后独立任务清理完成，见变更历史 v4）。
 
 ## 2 单元列表
 
@@ -124,4 +124,5 @@ graph TD
 
 - 2026-09-09 v2（终态）：阶段 3 一致性审查（主 agent 执行，偏离声明见偏差 #11）→ unreasonable 1 条（V6 shrink 间歇 113px）打回定向修（2451a2036，双 rAF 预案）+ dev app 3/3 轮复验贴底 → 清零；reasonable 4 条入登记表（#8-#11）；doc_errors 0。阶段 5 双绿：Gate A（全量 4097/4097、双 typecheck、根 lint 0、双守卫 0、零容忍扫描全零、覆盖矩阵无死角）+ Gate B（acceptance.md 逐场景 verdict+evidence，V1-V6/V8 实测、V7/V9 blocked 有缓解）。转 design-code-sync 校准（用户指示）。
 - 2026-09-09 v3（交付后校准）：design-code-sync 重跑（reviewer 后台审查 + 修复轮）——代码本体 0 must-fix（D1-D7 机制面全部落地一致、双守卫实跑绿、注释口径无漂移）；4 条文档回写（F1 双 rAF 终态机制回写设计 D3/P-timing + 变更历史 v8；F3 acceptance 总评与 V6 节矛盾消除 + commit hash 回填；F4 本表残留风险终态化 + V7/V9 抽验承接登记；F5 D5 force 枚举勘误）+ F2 护栏判据补齐（P-no-loop 计数器，偏差 #12）。流程偏离声明：修复轮由主 agent 亲自执行（reviewer 派发链路 lost 后 final-frame 完整返回，前会话 9 次进程异常先例下的接管预案生效）；修复验证：use-pin-bottom-guard 11/11 绿 + 全量 frontend test + 双守卫 + 双 typecheck（见校准 commit）。
+- 2026-09-09 v4（交付后 D6 清理）：Out-of-scope 登记的 fork notice absolute 定位残留链独立清理完成——删 useNoticeStack.ts + useMessageStreamNotices composable（文件保留为纯常量模块）+ useForkNoticeStream 定位职责（收窄为 feed 消费 + 交互）+ MessageStream.vue vlistBottom/topOffset 接线；测试 1 删（use-message-stream-notices.test.ts）1 重写（use-fork-notice-stream.test.ts）+ 注释 4 处改述。生产行为零变化（死路径双重不触发）。验证：相关测试绿 + 全量 frontend test + 双 typecheck + 双守卫 + lint。
 - 2026-09-08 v1：初版计划（预检门三查过：结构四节齐全 / 章节映射建立 / 审查证据 chat-pin-bottom-fix.review-r6.md 0 must-fix + impact-review-r6.md 0/0 双审收敛）。单元切分直接采用设计 §6.1（U1-U5），领地自 §6.2 文件改动地图精确化，补充：MessageStream-bash.test.ts（设计「等」字的实际展开）、.githooks/install-hooks.sh（pre-commit 挂接的项目机制载体）、acceptance.md（U5 验收归档产物）。

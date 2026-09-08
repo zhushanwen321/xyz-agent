@@ -210,11 +210,9 @@ import { useMessageStreamFollowTriggers } from '@/composables/panel/useMessageSt
 import { useMessageStreamRail } from '@/composables/panel/useMessageStreamRail'
 import { useStreamingPin } from '@/composables/panel/useStreamingPin'
 // [u6a] COMPACTING/EXECUTING_BASH_NOTICE_HEIGHT 的消费点（ActivityStrip 行渲染 + dev 断言）
-// 已随指示行迁入 ActivityStrip；此处仅剩 COMPACTING_NOTICE_HEIGHT（fork 基线参数）。
-// ESTIMATED_TURN_HEIGHT / LOAD_MORE_RESERVED_HEIGHT 同源（virta 布局常量族，随本文件拆出）。
+// 已随指示行迁入 ActivityStrip；fork 基线参数随 D6 死路径清理删除（COMPACTING_NOTICE_HEIGHT
+// 不再被本文件消费）。ESTIMATED_TURN_HEIGHT / LOAD_MORE_RESERVED_HEIGHT 同源（virta 布局常量族）。
 import {
-  useMessageStreamNotices,
-  COMPACTING_NOTICE_HEIGHT,
   ESTIMATED_TURN_HEIGHT,
   LOAD_MORE_RESERVED_HEIGHT,
 } from '@/composables/panel/useMessageStreamNotices'
@@ -298,7 +296,7 @@ const lastRenderTurn = computed(() => {
 })
 
 /** [cw wave w3] virtua Virtualizer handle ref（shallowRef：handle 是大对象，无需深度响应式）。
- *  useVirtuaFollow / useMessageStreamRail / vlistBottom 都读它做位置查询 + scrollToIndex。 */
+ *  useVirtuaFollow / useMessageStreamRail 读它做位置查询 + scrollToIndex。 */
 const vlistRef = shallowRef<VirtualizerHandle | null>(null)
 
 /** [cw wave w3] 滚动容器 el（::-webkit-scrollbar 自定义 + pt-5 留白）。消费方：
@@ -306,57 +304,17 @@ const vlistRef = shallowRef<VirtualizerHandle | null>(null)
  *  useMessageStreamRail（closest('section') 算 panelRightEdge）。 */
 const scrollEl = ref<HTMLElement | null>(null)
 
-/** [cw wave w3 / W3C2 R2] topOffset 恒为 0：virta startMargin 已接管 load-more 占位偏移，
- *  瞬时块 / 旧手写虚拟滚动的 topOffset 通路合并进 virta 内部，不再重复 + 44px。 */
-const topOffset = computed(() => 0)
-
-/**
- * [cw wave w3] virta 末项底部绝对 px（design §4.7）。瞬时块 absolute 定位的 top 基线。
- * [chat-pin-bottom-fix D6] findItemIndex(scrollSize) 同模式第二实例 → 末项索引直取
- * （坐标语义解耦）。消费链为已知 absolute 定位死路径（useNoticeStack.ts 自证），残留待独立清理。
- * 边界：vlistRef null（首帧未挂载）/ 空数据 → 0。
- */
-const vlistBottom = computed(() => {
-  const v = vlistRef.value
-  const count = streamItems.value.length
-  if (!v || count === 0) return 0
-  return v.getItemOffset(count - 1) + v.getItemSize(count - 1)
-})
-
 /** B2 dev-only 常量漂移检测：ResizeObserver 实测 vs 像素常量，不匹配 console.warn。生产裁剪零开销。
  *  [u6a] COMPACTING/EXECUTING_BASH 两常量的断言 ref 随指示行迁入 ActivityStrip 内部，此处仅剩 load-more。 */
 const [loadMoreEl] = useConstantHeightAssert([
   { name: 'LOAD_MORE_RESERVED_HEIGHT', expected: LOAD_MORE_RESERVED_HEIGHT },
 ]).els
 
-/** 末尾瞬时块状态 + 垂直堆叠定位（M2）。[u6a] compacting/bash 指示行渲染已收编 ActivityStrip
- *  （compactingText 退役），isDispatching/hasWorkingTurn 供 useForkNoticeStream 兜底 deps，
- *  isCompacting 供 fork 基线（旧「驱动滚动跟随」职责已由 RO 网接管，chat-pin-bottom-fix D5）。
- *  [cw wave w3] 切到 virta 路径：totalHeight 不传（virta scrollSize 经 vlistBottom 注入）。 */
-const {
-  isCompacting,
-  isDispatching,
-  hasWorkingTurn,
-  forkNoticeBaseTop,
-} = useMessageStreamNotices({
-  sessionId,
-  vlistBottom,
-  topOffset,
-  hasWorkingTurn: () => lastRenderTurn.value?.isStreaming ?? false,
-})
-
-/** ForkNotice 反馈行（transient，RV1）：feed 消费 + 定位 + 交互封装在 useForkNoticeStream。
- *  [M2] 注入 forkNoticeBaseTop 消除占位叠加重复计算。 */
+/** ForkNotice 反馈行（transient，RV1）：feed 消费 + 交互封装在 useForkNoticeStream。
+ *  [D6 死路径清理] absolute 定位链（forkNoticeBaseTop 注入 + 占位 deps）已整体删除——
+ *  ForkNotice 为文档流 block（tailEl 容器内），定位由文档序自然堆叠。 */
 const { forkNotices, onView: onForkNoticeView, onDismiss: onForkNoticeDismiss } =
-  useForkNoticeStream(() => props.sessionId, {
-    vlistBottom,
-    topOffset,
-    isCompacting,
-    isDispatching,
-    hasWorkingTurn,
-    compactNoticeHeight: COMPACTING_NOTICE_HEIGHT,
-    injectedBaseTop: forkNoticeBaseTop,
-  })
+  useForkNoticeStream(() => props.sessionId)
 
 /** 最后一个含 user 的 turn 的数组下标（只有它的 user 可编辑，避免编辑中间 user 丢失其后对话）。
  *  [u5] 基准 = streamItems（与 Virtualizer slot 的 index 同源——:data 换 streamItems 后

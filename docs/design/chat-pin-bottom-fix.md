@@ -44,7 +44,7 @@ xyz-agent 是 Electron + Vue 3 的 AI Agent 桌面工作台。聊天窗口的消
 | G3 | 「滚动后又发生高度/内容变化」这一类回归，未来在 dev 环境即时报警 + 单测/pre-commit 拦截，不再依赖用户报障 | §4.4 三层护栏全部落地并登记 |
 
 **In-scope**：MessageStream 滚动跟随链路（useVirtuaFollow / MessageStream.vue 模板结构与接线）、同款误用的同模式清扫（`vlistBottom`）、脱离锚定信号扩展、防复发护栏（dev 断言 + 单测 + 约束登记）。
-**Out-of-scope**：virtua 库本身（0.50.0，不改依赖源码、不升级——对标项目「不改 pi 源码」同级纪律）；TurnRail 跳转逻辑本身（`useMessageStreamRail`，仅其滚动副作用经 D7 获得更合理的脱离语义）；mobile-renderer（`App.vue:15` 使用 `MessageStreamStub`，不复用该链路）；fork notice 既有 absolute 定位残留链的整体删除（已确认为死路径，仅修坐标误用 + 登记待清理，彻底删除属另一项重构）。
+**Out-of-scope**：virtua 库本身（0.50.0，不改依赖源码、不升级——对标项目「不改 pi 源码」同级纪律）；TurnRail 跳转逻辑本身（`useMessageStreamRail`，仅其滚动副作用经 D7 获得更合理的脱离语义）；mobile-renderer（`App.vue:15` 使用 `MessageStreamStub`，不复用该链路）；fork notice 既有 absolute 定位残留链的整体删除（已确认为死路径，设计期仅修坐标误用 + 登记待清理——**已于 2026-09-09 交付后独立任务清理完成，见变更历史 v9**）。
 
 ## 3. 现状与问题分析
 
@@ -204,7 +204,7 @@ virtua 实装语义：`findItemIndex` 入参按**绝对滚动坐标**解释，�
 - **同步清扫（C-proc-10）**：`docs/design/composer-multi-skill-injection.md:265`（normalizeContent 投影面第 ⑤ 项）与其 `.impact-review.md:75` 明文引用 `useMessageStreamScroll.ts:61`，删除文件同批改为新链路表述（跟随/滚动量相关消费已迁入 useVirtuaFollow/MessageStream），并跑 `node scripts/check-doc-symbol-drift.mjs` 验证（列入 §6.2 改动地图）。
 
 **D6：同模式清扫——`vlistBottom` 的同款 findItemIndex 误用（修复纪律：同类缺口扫全文）**
-- **采用**：MessageStream.vue 的 `vlistBottom` 计算（`findItemIndex(v.scrollSize)` 模式第二实例）同步改为索引直取（`itemCount-1` → `getItemOffset` + `getItemSize`）——机器护栏（§4.4 ④）要求 `findItemIndex(scrollSize)` 模式归零，此处不改则守卫落地即红。消费链已核实（第 1 轮审查实读 + 本仓注释自证）：`vlistBottom` → `useMessageStreamNotices.ts:109` → `useNoticeStack.forkNoticeBaseTop` → 注入 `useForkNoticeStream`（`injectedBaseTop` 短路其内部兜底计算）→ `forkNoticeTop`；而 `useNoticeStack.ts:14-17` 注释明确「ForkNotice 无 absolute 定位」「forkNoticeTop 不被模板消费」——**整条 absolute 定位链是已知的死路径**（生产双重不触发）。本次只修坐标误用并在代码注释标注「残留死路径，待独立清理」，不扩大 scope 做删除（out-of-scope 已声明）。
+- **采用**：MessageStream.vue 的 `vlistBottom` 计算（`findItemIndex(v.scrollSize)` 模式第二实例）同步改为索引直取（`itemCount-1` → `getItemOffset` + `getItemSize`）——机器护栏（§4.4 ④）要求 `findItemIndex(scrollSize)` 模式归零，此处不改则守卫落地即红。消费链已核实（第 1 轮审查实读 + 本仓注释自证）：`vlistBottom` → `useMessageStreamNotices.ts:109` → `useNoticeStack.forkNoticeBaseTop` → 注入 `useForkNoticeStream`（`injectedBaseTop` 短路其内部兜底计算）→ `forkNoticeTop`；而 `useNoticeStack.ts:14-17` 注释明确「ForkNotice 无 absolute 定位」「forkNoticeTop 不被模板消费」——**整条 absolute 定位链是已知的死路径**（生产双重不触发）。设计期只修坐标误用并标注待清理（不扩大 scope）；**该残留链已于 2026-09-09 交付后独立任务整体删除**（useNoticeStack.ts、useMessageStreamNotices composable、forkNoticeTop 定位链，useForkNoticeStream 收窄为 feed 消费 + 交互，见变更历史 v9）。
 - **被否**：不修留着——它是 R3 的同模式第二实例，留着就是下一个 F3 的温床，且使守卫的禁用模式 grep 无法归零；修复是一行级。
 - **证据**：MessageStream.vue vlistBottom 实装；useNoticeStack.ts:14-17 死路径自证注释；useForkNoticeStream.ts:81-92 / useMessageStreamNotices.ts:109 消费链。
 - **效果**：「`findItemIndex(scrollSize)` 调用归零」成为可机器守卫的不变量（§4.4 ④ 的 grep 对象）。
@@ -297,7 +297,7 @@ virtua 实装语义：`findItemIndex` 入参按**绝对滚动坐标**解释，�
 
 - `happy-dom` 对 ResizeObserver 的支持度：若单测环境无 RO，则在测试 setup 注入可控 stub（fake timers 纪律同 TEST-STRATEGY），以「手动触发回调」方式驱动——不阻塞设计，U3 实施时定稿。
 - `isPrepend` 的耗尽时机与 RO 回调的先后：load-more 完成后 `isPrepend` 复位是否先于下一次 RO 触发，U2 实施期在 dev 环境实测一次 load-more 确认不误标 unread（若误标：把抑制窗口从「isPrepend 为真」放宽为「load-more 完成后一帧」）；该场景已由 V9 验收覆盖。
-- ~~fork notice absolute 定位链是否死路径~~（第 1 轮审查后**已核实**：`useNoticeStack.ts:14-17` 注释自证「forkNoticeTop 不被模板消费」+ 生产短路——死路径确认，D6 按「修正坐标 + 标注待清理」处理，删除登记为独立后续任务）。
+- ~~fork notice absolute 定位链是否死路径~~（第 1 轮审查后**已核实**：`useNoticeStack.ts:14-17` 注释自证「forkNoticeTop 不被模板消费」+ 生产短路——死路径确认，D6 按「修正坐标 + 标注待清理」处理，删除登记为独立后续任务——**该任务已完成（2026-09-09，变更历史 v9）**）。
 
 ## 附录
 
@@ -317,3 +317,4 @@ virtua 实装语义：`findItemIndex` 入参按**绝对滚动坐标**解释，�
 - v6：第 5 轮复审修订（主审 1 must-fix + 1 suggestion + 1 info，影响面审 0 must-fix + 1 suggestion，当轮全修）：**D7② 120ms 推导按真实节流机制重写**——v5 的「50ms flush 节流」前提系 r4 审查建议引入、未经实装验证（实装为 rAF 逐帧 trailing 节流，全文件无毫秒常量；唯一 ms 常量是 fence 静默 200ms），120ms 数值在帧级周期下依然成立（≈7 帧静默）故阈值不改、论据重写，并消除与 §3.1「rAF 节流」的自相矛盾；case-5 安全性前提「必已脱离」降级为「通常已脱离」（load-more v-if 无 stuck 门控，第一重保险 jump 恒正向独立成立）；命名区分声明的指代由「⑥」修正为「D3 触发矩阵」；附录 useMarkdownStreaming/markdown.ts 引用补全路径与行号。
 - v7：第 6 轮复审修订（主审 0 must-fix + 1 suggestion，影响面审 0 must-fix + 0 suggestion——**双审收敛终止**）：「恒取上限」无条件表述补 token 节奏条件限定（慢 token 间隔 >120ms 时窗口经静默分支提前关闭，安全性由⑤b兜底不变）；影响面审查关闭。
 - v8：交付后一致性校准回写（design-code-sync r1，0 代码漂移——代码本体零 must-fix，4 条文档回写类 + 1 条护栏判据兑现类，当轮全修）：① U5 验收 V6 实证单 rAF 派发在 resize-shrink 方向存在间歇 113px 残留，按 §4.5 P-timing 既有降级预案**转正为无条件双 rAF**（RO 回调 → 外层 rAF → follow 内层 rAF，commit 2451a2036）——D3 实现要点与 P-timing 状态行同步回写终态机制（原「单 rAF 顺序依赖被结构消除」表述作废）；② P-no-loop 完整计数器判据（dev 断言 follow 频率 >60/s warn）U4 漏交付且无登记，本轮校准补齐（usePinBottomGuard 沿触发计数器 + 单测）；③ D5 force 调用点枚举勘误——「跟随态 loadMore 追加」终态由 isPrepend 门控 watch + virtua `:shift` 保位取代（V9 语义）；④ acceptance.md 总评与 V6 节矛盾消除、impl-plan 残留风险表改终态口径 + V7/V9 抽验跟踪承接登记。
+- v9（D6 死路径清理，交付后独立任务，2026-09-09）：fork notice absolute 定位残留链整体删除——删 `useNoticeStack.ts`、`useMessageStreamNotices` composable（文件保留为纯常量模块：COMPACTING/EXECUTING_BASH/ESTIMATED_TURN/LOAD_MORE_RESERVED 四常量消费面不变）、`useForkNoticeStream` 定位职责（forkNoticeTop/forkNoticeBaseTop/injectedBaseTop/六项占位 deps，收窄为单 sessionId 参数的 feed 消费 + 交互）、MessageStream.vue 的 `vlistBottom`/`topOffset` 计算与接线。测试同批：use-message-stream-notices.test.ts 删除、use-fork-notice-stream.test.ts 重写为 feed 过滤 + 交互委托契约、4 处注释引用改述（ActivityStrip.vue/ActivityStrip.test/tool-status-flip.test/MessageStream-kind.test）。生产行为零变化（链路生产双重不触发，删除前由 useNoticeStack 头注释自证）。

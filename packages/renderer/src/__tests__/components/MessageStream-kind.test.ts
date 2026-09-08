@@ -29,7 +29,7 @@ import { turnStableId } from '@xyz-agent/core/domain/chat'
 import type { Message } from '@xyz-agent/shared'
 
 // ── virtua mock：Virtualizer → 全量渲染 scoped slot 的 stub ──────────────────────────
-// 暴露 VirtualizerHandle 兼容字段（MessageStream 的 vlistBottom/rail/useVirtuaFollow
+// 暴露 VirtualizerHandle 兼容字段（MessageStream 的 rail/useVirtuaFollow
 // 在 mount 期读取 scrollSize/findItemIndex/getItemOffset 等；vi.fn 保证不会调崩）。
 // 注意 1：vi.mock factory 会被 hoist 到文件顶部，不能引用顶层变量——vue/vi 全部动态 import。
 // 注意 2：defineExpose 是 <script setup> 编译宏，普通 setup 函数里调用不生效（实测）。
@@ -73,7 +73,7 @@ vi.mock('virtua/vue', async () => {
       },
       setup() {
         // setup 返回对象 → 键暴露在 public instance proxy（模板 ref 指向它），
-        // MessageStream 经 vlistRef.value.scrollSize/findItemIndex 等读取（vlistBottom 等）。
+        // MessageStream 经 vlistRef.value.scrollSize/findItemIndex 等读取。
         return {
           scrollSize: 600,
           scrollOffset: 0,
