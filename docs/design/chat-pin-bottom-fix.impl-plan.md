@@ -1,6 +1,6 @@
 # chat-pin-bottom-fix 实施计划
 
-基线: (见 git log `docs(impl-plan): baseline for chat-pin-bottom-fix`) | 来源设计: [docs/design/chat-pin-bottom-fix.md](./chat-pin-bottom-fix.md)（v7，主审 r6 0 must-fix + 影响面 r6 0 must-fix/0 suggestion 双审收敛） | 日期: 2026-09-08
+基线: (见 git log `docs(impl-plan): baseline for chat-pin-bottom-fix`) | 来源设计: [docs/design/chat-pin-bottom-fix.md](./chat-pin-bottom-fix.md)（v7，主审 r6 0 must-fix + 影响面 r6 0 must-fix/0 suggestion 双审收敛；设计拆分后演进至 v9——v8 交付后校准回写 + v9 D6 死路径清理，见两文档变更历史） | 日期: 2026-09-08
 
 ## 0 章节映射
 
@@ -126,4 +126,5 @@ graph TD
 - 2026-09-09 v3（交付后校准）：design-code-sync 重跑（reviewer 后台审查 + 修复轮）——代码本体 0 must-fix（D1-D7 机制面全部落地一致、双守卫实跑绿、注释口径无漂移）；4 条文档回写（F1 双 rAF 终态机制回写设计 D3/P-timing + 变更历史 v8；F3 acceptance 总评与 V6 节矛盾消除 + commit hash 回填；F4 本表残留风险终态化 + V7/V9 抽验承接登记；F5 D5 force 枚举勘误）+ F2 护栏判据补齐（P-no-loop 计数器，偏差 #12）。流程偏离声明：修复轮由主 agent 亲自执行（reviewer 派发链路 lost 后 final-frame 完整返回，前会话 9 次进程异常先例下的接管预案生效）；修复验证：use-pin-bottom-guard 11/11 绿 + 全量 frontend test + 双守卫 + 双 typecheck（见校准 commit）。
 - 2026-09-09 v4（交付后 D6 清理）：Out-of-scope 登记的 fork notice absolute 定位残留链独立清理完成——删 useNoticeStack.ts + useMessageStreamNotices composable（文件保留为纯常量模块）+ useForkNoticeStream 定位职责（收窄为 feed 消费 + 交互）+ MessageStream.vue vlistBottom/topOffset 接线；测试 1 删（use-message-stream-notices.test.ts）1 重写（use-fork-notice-stream.test.ts）+ 注释 4 处改述。生产行为零变化（死路径双重不触发）。验证：相关测试绿 + 全量 frontend test + 双 typecheck + 双守卫 + lint。
 - 2026-09-09 v5（V7/V9 真实环境抽验收口）：本 worktree dev app 真实 pi runtime 补测——V7 ✅ 通过（真实派发 subagent ×2，drawer 第二消费面 settled 贴底 gap=0 + 组件同一性构造性覆盖 + 主会话面 streaming 实测）；V9 ⛔ 升级为「前置结构性不可达」（造数格式修正后仍无按钮 → 根因钉死 = handleSessionSwitch await ensureActive 使 truncated=false 恒成立，读码 + dev 实证双确认），「长历史尾读加载」入口可达性登记待产品决策。acceptance.md V7/V9 补测节 + 汇总表 + 总评同步更新（见该文档）。
+- 2026-09-09 v6（r3 校准）：design-code-sync 第三轮——代码本体 0 finding（机制面/impl-plan 一致性/注释口径三关系均「未发现」，双守卫实跑绿）；2 条文档项全修：附录「本仓实装」锚点未随 D6 清理同批清扫（指向已删 useNoticeStack.ts / 越出 EOF 行号），拆「现行 / 历史现场」两列并全部行号核对改准 + 正文 3 处内联行号同步（本头部 v9 指针同批补），主设计变更历史 v10。流程偏离声明沿用 v3（修复面 6 处精确行号由主 agent 亲自执行）。
 - 2026-09-08 v1：初版计划（预检门三查过：结构四节齐全 / 章节映射建立 / 审查证据 chat-pin-bottom-fix.review-r6.md 0 must-fix + impact-review-r6.md 0/0 双审收敛）。单元切分直接采用设计 §6.1（U1-U5），领地自 §6.2 文件改动地图精确化，补充：MessageStream-bash.test.ts（设计「等」字的实际展开）、.githooks/install-hooks.sh（pre-commit 挂接的项目机制载体）、acceptance.md（U5 验收归档产物）。
