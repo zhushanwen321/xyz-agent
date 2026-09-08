@@ -36,6 +36,10 @@ export interface CommandSelectPayload {
   name: string
   icon?: string
   description?: string
+  /** slash 路 skill 项标记（设计 D3）：行首命令浮层的 skill 项（name 形如 '/skill:xxx'）
+   *  按项类型分流到 skill 通路，与 type==='skill' 行为合流——不再走 insertSlashChip
+   *  （强制最前 + 误删全部 slash-chip + 丢 location） */
+  isSkill?: boolean
   /** skill 路：SKILL.md 绝对路径（可得时带上，chip dataset 携带供反解析）；缺省时 runtime 经 get_commands 权威映射解析 */
   location?: string
   /** session 路：选中 session 的 id（TUI session_read 协议消费） */
@@ -198,7 +202,8 @@ export function useCommandPopoverTrigger(
   }
 
   /** 命令浮层选中：五路各先清「符号+query」过滤文本再插对应 chip。
-   *  - slash：clearSlashQueryText → insertSlashChip
+   *  - slash：clearSlashQueryText → 命令项 insertSlashChip；skill 项（isSkill）按项类型分流
+   *    insertSkillChip（设计 D3，与 skill 入口行为合流：光标处、多共存、带 location）
    *  - skill（行中空白后 / 触发）：clearSkillQueryText → insertSkillChip（光标处标记 chip，
    *    多个共存——与 slash 的「最前唯一」命令 chip 通道区分，多 skill 注入 D2）
    *  - file（$ 触发）：clearDollarFileQueryText → insertFileChip（绿色 file chip，
@@ -217,7 +222,16 @@ export function useCommandPopoverTrigger(
     inputRef.value?.focus()
     if (payload.type === 'slash') {
       inputRef.value?.clearSlashQueryText()
-      inputRef.value?.insertSlashChip(payload.name, payload.icon)
+      if (payload.isSkill) {
+        // 设计 D3：行首浮层的 skill 项按「项类型」分流——与 type==='skill' 分支合流
+        //（光标处 + 多个共存 + 带 location），不再走 insertSlashChip 老通路
+        const parsedName = payload.name.startsWith('/skill:')
+          ? payload.name.slice('/skill:'.length)
+          : payload.name
+        inputRef.value?.insertSkillChip(parsedName, payload.location, payload.icon)
+      } else {
+        inputRef.value?.insertSlashChip(payload.name, payload.icon)
+      }
     } else if (payload.type === 'skill') {
       inputRef.value?.clearSkillQueryText()
       inputRef.value?.insertSkillChip(payload.name, payload.location, payload.icon)

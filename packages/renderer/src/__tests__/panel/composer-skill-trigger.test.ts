@@ -250,6 +250,61 @@ describe('Composer skill chip 插入与已选回传（D2 已选禁选数据面�
   })
 })
 
+// ─────────────────────── W7/W8 组：行首命令浮层 skill 项按项类型分流（设计 D3） ───────────────────────
+
+describe('行首命令浮层 skill 项分流（D3：isSkill → insertSkillChip 通路）', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+    currentPick = null
+  })
+
+  it('W7 行首浮层选 skill 项 → insertSkillChip 通路：已有 skill chip 不删、新 chip 带 location', async () => {
+    const wrapper = mountComposer()
+    await flushPromises()
+    // 先经 skill-only 入口插一个 skill chip（行中 / 触发），模拟 multi-skill 已有态
+    await typeWithCursor(wrapper, '帮我 /al')
+    currentPick = { type: 'skill', name: 'alpha', icon: 'star', location: '/s/alpha/SKILL.md' }
+    await wrapper.find('[data-testid="cp-pick"]').trigger('click')
+    await nextTick()
+    expect(wrapper.findAll('.slash-chip')).toHaveLength(1)
+    // 行首 / 命令浮层选 skill 项：type='slash' + isSkill → 按项类型分流（D3）
+    await cursorToEnd(wrapper)
+    currentPick = {
+      type: 'slash',
+      name: '/skill:beta',
+      isSkill: true,
+      icon: 'star',
+      location: '/s/beta/SKILL.md',
+    }
+    await wrapper.find('[data-testid="cp-pick"]').trigger('click')
+    await nextTick()
+    const chips = wrapper.findAll('.slash-chip')
+    // 不误删已有 skill chip（失败模式 C 根修）+ 新 chip 是 skill 形态且带 location
+    expect(chips).toHaveLength(2)
+    expect(chips[0].attributes('data-chip-name')).toBe('alpha')
+    expect(chips[1].attributes('data-chip-type')).toBe('skill')
+    expect(chips[1].attributes('data-chip-name')).toBe('beta')
+    expect(chips[1].attributes('data-chip-location')).toBe('/s/beta/SKILL.md')
+    wrapper.unmount()
+  })
+
+  it('W8 回归（G3 红线）：行首浮层命令项（非 isSkill）仍走 insertSlashChip 命令通路', async () => {
+    const wrapper = mountComposer()
+    await flushPromises()
+    await typeWithCursor(wrapper, '/com')
+    currentPick = { type: 'slash', name: '/compact', icon: 'compact' }
+    await wrapper.find('[data-testid="cp-pick"]').trigger('click')
+    await nextTick()
+    const chips = wrapper.findAll('.slash-chip')
+    expect(chips).toHaveLength(1)
+    // 命令 chip 形态：chipType='slash'（非 skill），chipName 剥 / 前缀
+    expect(chips[0].attributes('data-chip-type')).toBe('slash')
+    expect(chips[0].attributes('data-chip-name')).toBe('compact')
+    expect(chips[0].attributes('data-chip-location')).toBeUndefined()
+    wrapper.unmount()
+  })
+})
+
 // ─────────────────────── P 组：CommandPopover skill-only 候选（真实组件） ───────────────────────
 
 /** 推 session.commands 到 sessionId 订阅者（同 slash-trigger 测试机械） */
@@ -345,6 +400,43 @@ describe('CommandPopover skill-only 候选（D1 数据源 + D2 已选禁选）',
       name: 'alpha',
       location: '/s/alpha/SKILL.md',
     })
+  })
+
+  it('P5 slash 浮层（行首命令浮层）skill 项 select payload 携带 isSkill + location（D3 透传链）', async () => {
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: true, type: 'slash', sessionId: 's1', query: '' },
+    })
+    await flushPromises()
+    pushCommands('s1', [
+      { name: 'skill:alpha', source: 'skill', sourceInfo: { path: '/s/alpha/SKILL.md', source: 'skill' } },
+      { name: 'commit', description: 'ext', source: 'extension' },
+    ])
+    await flushPromises()
+    await nextTick()
+    const rows = bodyRows()
+    // skill 项（icon 星标紫）+ 命令项混列
+    const skillRow = rows.find((r) => r.textContent?.includes('alpha'))
+    const cmdRow = rows.find((r) => r.textContent?.includes('commit'))
+    expect(skillRow).toBeTruthy()
+    expect(cmdRow).toBeTruthy()
+    skillRow!.click()
+    await nextTick()
+    expect(wrapper.emitted('select')![0][0]).toMatchObject({
+      type: 'slash',
+      name: '/skill:alpha',
+      isSkill: true,
+      location: '/s/alpha/SKILL.md',
+    })
+    // 命令项：isSkill false、无 location（G3 红线：命令通路零变化）
+    cmdRow!.click()
+    await nextTick()
+    expect(wrapper.emitted('select')![1][0]).toMatchObject({
+      type: 'slash',
+      name: '/commit',
+      isSkill: false,
+    })
+    expect((wrapper.emitted('select')![1][0] as Record<string, unknown>).location).toBeUndefined()
   })
 
   it('P4 landing 态：globalSkills + projectSkills 合并（global 优先、project 补独有、去重）', async () => {

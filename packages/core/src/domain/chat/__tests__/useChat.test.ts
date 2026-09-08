@@ -43,6 +43,7 @@ interface Fixture {
   chatStore: ReturnType<typeof createChatStore>
   sessionStore: { applySnapshot: ReturnType<typeof vi.fn> }
   toast: { error: ReturnType<typeof vi.fn> }
+  writeSegments: ReturnType<typeof vi.fn>
   compactQueue: {
     flush: ReturnType<typeof vi.fn>
     enqueue: ReturnType<typeof vi.fn>
@@ -106,6 +107,7 @@ function makeFixture(): Fixture {
     sessionStore,
     toast,
     compactQueue,
+    writeSegments: deps.writeSegments as unknown as ReturnType<typeof vi.fn>,
     emit: (sid, m) => {
       streamHandlers.get(sid)?.(m)
     },
@@ -736,6 +738,23 @@ describe('send.rejected 兜底与回滚（session-occupancy D2 P1）', () => {
     expect(calledSid).toBe('r5')
     expect(calledText).toMatch(/<!--xyz:msg:u-[0-9a-fA-F-]{36}-->$/) // prompt 标记通路不变
     expect(options.clientUuid).toMatch(/^u-[0-9a-fA-F-]{36}$/) // RPC 参数通路新增
+    f.dispose()
+  })
+
+  it('[D4-d] text+slash 段组合 = 纯文本：不写 sidecar、prompt 无标记（needsBackfill 谓词单点扩展）', async () => {
+    // 命令 chip（slash 段）无 badge 还原需求——chat 流显示归位后纯文本即可，谓词
+    // （useChat needsBackfill）把 slash 计入纯文本，sidecar 写入与 custom entry 标记
+    // 两条通道同时关闭（谓词单点门控，两侧自然同步）。
+    const f = makeFixture()
+    await f.useChat.send('r5b', [
+      { type: 'text', text: '任务描述' },
+      { type: 'slash', name: 'compact' },
+    ])
+
+    expect(f.writeSegments).not.toHaveBeenCalled() // sidecar 通道关闭
+    const [calledSid, calledText] = f.chatApi.send.mock.calls[0] as unknown as [string, string]
+    expect(calledSid).toBe('r5b')
+    expect(calledText).toBe('/compact 任务描述') // 归位产物，无 <!--xyz:msg:--> 标记
     f.dispose()
   })
 

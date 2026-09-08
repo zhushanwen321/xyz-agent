@@ -3,7 +3,7 @@
  *
  * 覆盖：clearInput（draft 置空 + drafts.delete 边界：sid=null 不删 + inputRef.clear）、
  * restoreInput（draft 同步 + setText）、restoreSegments（4 段类型分发：text 过滤 join /
- * image→insertImageBadge 含 needsMigrate ?? false 空值合并 / skill→insertSlashChip `/skill:` 前缀 /
+ * image→insertImageBadge 含 needsMigrate ?? false 空值合并 / skill→insertSkillChip(name, location)（设计 D3）/
  * file→insertFileChip lineRange 透传）。
  *
  * restore.ts 自述「纯逻辑编排，零 DOM 直连」，故本测试零 jsdom DOM 断言，全 mock deps。
@@ -25,6 +25,7 @@ function makeInputInstance(overrides: Partial<ComposerInputInstance> = {}): Comp
     setText: vi.fn(),
     insertImageBadge: vi.fn(),
     insertSlashChip: vi.fn(),
+    insertSkillChip: vi.fn(),
     insertFileChip: vi.fn(),
     insertSessionChip: vi.fn(),
     insertSubagentChip: vi.fn(),
@@ -140,13 +141,25 @@ describe('useComposerRestore restoreSegments', () => {
     expect(c.inputRef.value?.insertImageBadge).toHaveBeenCalledWith('/tmp/b.png', 'b.png', 'b.png', true)
   })
 
-  it('skill 段 → insertSlashChip(`/skill:${name}`) 前缀拼接', () => {
+  it('skill 段 → insertSkillChip(name, location) 通路（设计 D3：不删其他 chip、带 location 回滚）', () => {
     const c = setup('s1')
-    const segments: Segment[] = [{ type: 'skill', name: 'cw-cli' }]
+    const segments: Segment[] = [
+      { type: 'skill', name: 'cw-cli', location: '/skills/cw-cli/SKILL.md' },
+    ]
     c.restoreSegments(segments)
     // 纯 skill 段（无 text）→ restoreInput('') 先调 setText('')
     expect(c.inputRef.value?.setText).toHaveBeenCalledWith('')
-    expect(c.inputRef.value?.insertSlashChip).toHaveBeenCalledWith('/skill:cw-cli')
+    expect(c.inputRef.value?.insertSkillChip).toHaveBeenCalledWith('cw-cli', '/skills/cw-cli/SKILL.md')
+    // 不再走 insertSlashChip 老通路（误删其他 slash-chip + 强制最前 + 丢 location）
+    expect(c.inputRef.value?.insertSlashChip).not.toHaveBeenCalled()
+  })
+
+  it('skill 段无 location → insertSkillChip(name, undefined)', () => {
+    const c = setup('s1')
+    const segments: Segment[] = [{ type: 'skill', name: 'cw-cli' }]
+    c.restoreSegments(segments)
+    expect(c.inputRef.value?.insertSkillChip).toHaveBeenCalledWith('cw-cli', undefined)
+    expect(c.inputRef.value?.insertSlashChip).not.toHaveBeenCalled()
   })
 
   it('file 段带 lineRange → insertFileChip(path, lineRange) 透传', () => {
@@ -168,14 +181,14 @@ describe('useComposerRestore restoreSegments', () => {
     const segments: Segment[] = [
       { type: 'text', text: 'pre ' },
       { type: 'image', id: 'i', path: '/i.png', fileName: 'i.png', displayName: 'i.png', needsMigrate: false },
-      { type: 'skill', name: 's' },
+      { type: 'skill', name: 's', location: '/skills/s/SKILL.md' },
       { type: 'file', path: '/f.ts', lineRange: [1, 2] },
       { type: 'text', text: ' post' },
     ]
     c.restoreSegments(segments)
     expect(c.inputRef.value?.setText).toHaveBeenCalledWith('pre  post')
     expect(c.inputRef.value?.insertImageBadge).toHaveBeenCalledWith('/i.png', 'i.png', 'i.png', false)
-    expect(c.inputRef.value?.insertSlashChip).toHaveBeenCalledWith('/skill:s')
+    expect(c.inputRef.value?.insertSkillChip).toHaveBeenCalledWith('s', '/skills/s/SKILL.md')
     expect(c.inputRef.value?.insertFileChip).toHaveBeenCalledWith('/f.ts', [1, 2])
   })
 

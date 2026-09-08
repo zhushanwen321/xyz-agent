@@ -171,11 +171,19 @@ describe('CommandPopover landing 态用 globalSkills prop（L1-L14，W4）', () 
     const selectEvents = wrapper!.emitted('select')
     expect(selectEvents).toBeTruthy()
     const payload = selectEvents!.at(-1)![0] as { type: string; name: string; icon?: string; description?: string }
+    // isSkill/location 是 D3 项类型路由新增透传字段（skill 项 → onCmdSelect 分流 skill 通路）；
+    // 其余 session/subagent 字段缺省 undefined，一并入全等形状
     expect(payload).toEqual({
       type: 'slash',
       name: '/skill:code-review',
       icon: 'star',
       description: '审查代码变更',
+      isSkill: true,
+      location: undefined,
+      sessionId: undefined,
+      label: undefined,
+      subagentId: undefined,
+      slug: undefined,
     })
   })
 

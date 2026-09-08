@@ -124,13 +124,12 @@ import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
 import { iconKeyForCommand, filterAndSortFileCandidates } from '@xyz-agent/core'
 import { SLASH_COMMAND_SOURCE_KEY } from './command-popover-source'
-import { buildSessionCandidates, buildSubagentCandidates, buildSlashCandidates, normalizedSlashName } from './command-popover-symbols'
+import { buildSessionCandidates, buildSubagentCandidates, buildSlashCandidates, buildPanelSlashCandidates, buildLandingSlashCandidates } from './command-popover-symbols'
 import { buildSkillCandidates } from './command-popover-skill-candidates'
 import { useCommandPopoverCwdFileView } from './command-popover-open-fetch'
 import { useCommandPopoverDelivery } from './command-popover-delivery'
 import { useCommandPopoverFileCandidates } from './command-popover-file-candidates'
 import { useCompositionFlag } from '@/composables/panel/composition-flag'
-import { isInternalSkillName, isInternalSlashName } from '@/lib/internal-command-filter'
 import type { SkillInfo } from '@xyz-agent/shared'
 import { useSessionStore } from '@/stores/session'
 import { useSubagentStore } from '@/stores/subagent'
@@ -168,6 +167,8 @@ const emit = defineEmits<{
     name: string
     icon?: string
     description?: string
+    /** slash 路 skill 项标记（D3）：onCmdSelect 按「项类型」而非入口 type 分流到 skill 通路 */
+    isSkill?: boolean
     /** skill 路：SKILL.md 绝对路径（可得时带上）；缺省时 runtime 经 get_commands 权威映射解析 */
     location?: string
     /** session 路（#）：选中 session 的 id + 显示 label */
@@ -228,32 +229,17 @@ const slashCommands = computed(() => {
   // merged：registry 声明 ∪ pi 真源（resolveSlashCommands 纯函数，壳注入；无注入时退化 pi 真源）
   const merged = slashSource ? slashSource.resolveSlashCommands(piCmds) : piCmds
   if (variant.value === 'landing') {
-    const extCmds = merged
-    const seen = new Set<string>()
-    extCmds.forEach((c) => seen.add(normalizedSlashName(c.name)))
-    // SkillInfo[] → slash 项（/skill:<name> 归一化），跳过 seen 同名 + __ 前缀
-    const mapSkillInfo = (skills: SkillInfo[]) =>
-      skills
-        .filter((s) => !isInternalSkillName(s.name))
-        .filter((s) => !seen.has(`/skill:${s.name}`))
-        .map((s) => {
-          seen.add(`/skill:${s.name}`)
-          return {
-            id: `skill-${s.name}`,
-            name: `/skill:${s.name}`,
-            kind: 'skill',
-            icon: 'star',
-            description: s.description,
-          }
-        })
-    // 优先级：merged 源已在 seen，全局次之（globalSkills），项目最后（projectSkills 补独有项）
-    const globalSkillCmds = mapSkillInfo(props.globalSkills ?? [])
-    const projectSkillCmds = mapSkillInfo(props.projectSkills ?? [])
-    return [...extCmds, ...globalSkillCmds, ...projectSkillCmds]
+    return buildLandingSlashCandidates(merged, props.globalSkills ?? [], props.projectSkills ?? [])
   }
-  // panel 态：compact + merged（pi 真源存在性交叉校验），不并入 globalSkills
-  const compactCmd = { id: 'compact', name: 'compact', kind: 'builtin', icon: 'compact', description: t('panel.command.compactDesc') }
-  return [compactCmd, ...merged.filter((c) => !isInternalSlashName(c.name))]
+  // panel 态：compact + merged（pi 真源存在性交叉校验），不并入 globalSkills；组装（含 D3
+  // location 回填）下沉 command-popover-symbols（≤300 行规范）
+  return buildPanelSlashCandidates(merged, piCmds, {
+    id: 'compact',
+    name: 'compact',
+    kind: 'builtin',
+    icon: 'compact',
+    description: t('panel.command.compactDesc'),
+  })
 })
 
 /** slash 命令投递闭环（挂载/切 session 补拉 + session.commands 订阅；open 边沿拉取归
@@ -344,6 +330,7 @@ function onSelect(item: CmdItem): void {
     name: item.name,
     icon: item.icon,
     description: item.description,
+    isSkill: item.isSkill,
     location: item.location,
     sessionId: item.sessionId,
     label: item.label,

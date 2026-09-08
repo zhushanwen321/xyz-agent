@@ -236,10 +236,35 @@ describe('useComposerSend.onSend', () => {
     expect(spies.steer).not.toHaveBeenCalled()
   })
 
+  it('②i [D4-c] staging 提交载荷 = segmentsToPrompt(segments)——命令 chip 在中部时归位产物以 /cmd 开首', async () => {
+    // u5 视觉就地后 draft（DOM 序）= '任务描述 /compact'，命令 chip 不在行首；
+    // 载荷迁 segmentsToPrompt 后 = '/compact 任务描述'——防止 fork/handoff staged prompt
+    // 中 /cmd 不在行首被 pi 当字面文本（命令静默失效）。
+    const midSlashSegments: Segment[] = [
+      { type: 'text', text: '任务描述' },
+      { type: 'slash', name: 'compact' },
+    ]
+    const { deps, spies } = setup({
+      hasActiveStaging: true,
+      stagingSendReturn: true,
+      draft: '任务描述/compact',
+    })
+    spies.getSegments.mockReturnValue(midSlashSegments)
+    await useComposerSend(deps).onSend()
+    const payload = spies.stagingSend.mock.calls[0]![0]
+    expect(payload.startsWith('/compact')).toBe(true)
+    expect(spies.send).not.toHaveBeenCalled()
+  })
+
   // ── [D6 u5b] defer 路由（行 4/5/6：settling / compacting / bash）──
 
   it('③ defer 路由 + `/` 前缀命令 → toastError 拒绝，不入队（命令无法延迟重放）', async () => {
+    // [D4-c] `/` 半边判定源 = segmentsToPrompt：mock segments 提供行首 slash 段。
     const { deps, spies } = setup({ sendRoute: 'defer', draft: '/compact later' })
+    spies.getSegments.mockReturnValue([
+      { type: 'slash', name: 'compact' },
+      { type: 'text', text: 'later' },
+    ])
     await useComposerSend(deps).onSend()
     expect(spies.toastError).toHaveBeenCalledWith('panel.composer.commandQueuedRejected')
     expect(spies.enqueueCompact).not.toHaveBeenCalled()
@@ -284,6 +309,30 @@ describe('useComposerSend.onSend', () => {
     expect(spies.clearInput).toHaveBeenCalledTimes(1)
   })
 
+  it('⑤d [D4-c] defer 路由 + 命令 chip 在中部（DOM 序不以 / 开头）→ segmentsToPrompt 归位命中拒绝', async () => {
+    // u5 视觉就地后 draft（DOM 序）= '看看 /compact 一下'，命令 chip 不在行首；
+    // `/` 半边判定源迁 segmentsToPrompt（slash 段归位提首）后命中拒绝。
+    // segmentsToPrompt 产出：'/compact' + 边界空格 + '任务描述……'。
+    const midSlashSegments: Segment[] = [
+      { type: 'text', text: '任务描述' },
+      { type: 'slash', name: 'compact' },
+    ]
+    const { deps, spies } = setup({ sendRoute: 'defer', draft: '任务描述/compact' })
+    spies.getSegments.mockReturnValue(midSlashSegments)
+    await useComposerSend(deps).onSend()
+    expect(spies.toastError).toHaveBeenCalledWith('panel.composer.commandQueuedRejected')
+    expect(spies.enqueueCompact).not.toHaveBeenCalled()
+    expect(spies.clearInput).not.toHaveBeenCalled()
+  })
+
+  it('⑤e [D4-c] defer 路由 + `!` 半边仍读 draft.value（! 不产 chip，两源恒一致）', async () => {
+    // 裁决表：`!` 半边不迁——DOM 序 draft '!ls' 直接命中，segments 无 slash 段不影响判定。
+    const { deps, spies } = setup({ sendRoute: 'defer', draft: '!ls' })
+    await useComposerSend(deps).onSend()
+    expect(spies.toastError).toHaveBeenCalledWith('panel.composer.commandQueuedRejected')
+    expect(spies.enqueueCompact).not.toHaveBeenCalled()
+  })
+
   it('⑤b defer 路由 + landing（无 session）→ 不入队（sessionIdRef null 防御守卫）', async () => {
     const { deps, spies } = setup({ sendRoute: 'defer', variant: 'landing', sessionId: null })
     await useComposerSend(deps).onSend()
@@ -326,8 +375,32 @@ describe('useComposerSend.onSend', () => {
     expect(spies.send).not.toHaveBeenCalled()
   })
 
+  it('⑨c [D4-c] 命令 chip 在中部的 /compact → segmentsToPrompt 归位后仍拦截（DOM 序文本不以 /compact 起头）', async () => {
+    // u5 视觉就地：draft（DOM 序）= '整理一下 /compact focus on auth'，chip 在中部；
+    // 归位产物 = '/compact focus on auth 整理一下'——拦截命中，args = 命令后剩余全部文本
+    // （D4-e：维持现状协议语义，args 恒为命令后的剩余全部文本含命令 chip 之前的正文）。
+    const midSlashSegments: Segment[] = [
+      { type: 'text', text: '整理一下' },
+      { type: 'slash', name: 'compact' },
+      { type: 'text', text: 'focus on auth' },
+    ]
+    const { deps, spies } = setup({
+      variant: 'panel',
+      draft: '整理一下/compact focus on auth',
+    })
+    spies.getSegments.mockReturnValue(midSlashSegments)
+    await useComposerSend(deps).onSend()
+    // 归位产物 = '/compact 整理一下focus on auth'（slash→text 补边界空格，text→text 不补），
+    // args（slice 后）= 命令后剩余全部文本。
+    expect(spies.compact).toHaveBeenCalledWith('s1', '整理一下focus on auth')
+    expect(spies.send).not.toHaveBeenCalled()
+  })
+
   it('⑨ `/compact` 命令 → compact(sessionId, undefined)', async () => {
+    // [D4-c] 判定源已迁 segmentsToPrompt：mock segments 提供对应 slash 段保持语义真实
+    //（迁移前 mock 只需 draft 一致；现 draft 与 segments 需同现同一输入）。
     const { deps, spies } = setup({ variant: 'panel', draft: '/compact' })
+    spies.getSegments.mockReturnValue([{ type: 'slash', name: 'compact' }])
     await useComposerSend(deps).onSend()
     expect(spies.compact).toHaveBeenCalledWith('s1', undefined)
     expect(spies.send).not.toHaveBeenCalled()
@@ -335,6 +408,10 @@ describe('useComposerSend.onSend', () => {
 
   it('⑨b `/compact x` 带参数 → compact 传 customInstructions', async () => {
     const { deps, spies } = setup({ variant: 'panel', draft: '/compact focus on auth' })
+    spies.getSegments.mockReturnValue([
+      { type: 'slash', name: 'compact' },
+      { type: 'text', text: 'focus on auth' },
+    ])
     await useComposerSend(deps).onSend()
     expect(spies.compact).toHaveBeenCalledWith('s1', 'focus on auth')
   })

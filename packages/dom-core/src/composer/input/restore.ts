@@ -10,7 +10,7 @@
  * 纯逻辑编排，零 DOM 直连，零 renderer import。
  */
 import type { Segment } from '@xyz-agent/shared'
-import type { ComposerRestoreDeps } from './types'
+import type { ComposerInputInstance, ComposerRestoreDeps } from './types'
 
 /**
  * @param deps draft / inputRef / drafts / sessionId 四项依赖（Composer.vue 内定义后注入）
@@ -35,7 +35,7 @@ export function useComposerRestore(deps: ComposerRestoreDeps) {
    * 发送失败后恢复 text + 各类 chip（W8 修复；U2b 补 session/subagent 两类）。
    *
    * 方案 A（无重复）：先从 segments 中只取 type==='text' 段重建纯文本，restoreInput 恢复文字；
-   * 再调 insertImageBadge/insertSlashChip/insertFileChip/insertSessionChip/insertSubagentChip
+   * 再调 insertImageBadge/insertSkillChip/insertFileChip/insertSessionChip/insertSubagentChip
    * 把非 text 段还原成真 chip。session/subagent 两类经 ?. 调用（ComposerInputInstance 可选
    * 契约——低配壳层缺省时静默跳过该类 chip，文字部分仍恢复，不崩溃）。
    */
@@ -49,7 +49,16 @@ export function useComposerRestore(deps: ComposerRestoreDeps) {
       if (seg.type === 'image') {
         deps.inputRef.value?.insertImageBadge(seg.path, seg.fileName, seg.displayName, seg.needsMigrate ?? false)
       } else if (seg.type === 'skill') {
-        deps.inputRef.value?.insertSlashChip(`/skill:${seg.name}`)
+        // skill chip 恢复走 insertSkillChip 通路（设计 D3 同修）：光标处追加 + location 透传，
+        // 不再走 insertSlashChip（其会误删其他 slash-chip、强制最前、且丢 location）。
+        // ComposerInputInstance 尚未声明 insertSkillChip（ui 包 ComposerInput 已 expose），
+        // 局部交叉类型收窄后 ?. 调用——同 session/subagent 可选成员的缺省容错语义。
+        const inst = deps.inputRef.value as
+          | (ComposerInputInstance & {
+              insertSkillChip?: (name: string, location?: string) => void
+            })
+          | null
+        inst?.insertSkillChip?.(seg.name, seg.location)
       } else if (seg.type === 'file') {
         deps.inputRef.value?.insertFileChip(seg.path, seg.lineRange)
       } else if (seg.type === 'session') {

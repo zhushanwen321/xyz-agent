@@ -9,7 +9,8 @@
  * - session 路：sessionStore（sidebar 同款 groups/list，跨 cwd 全量）
  * - subagent 路：subagentStore per-session 分区（ADR-0049 Map 分区）+ 固定尾部「新建」项
  */
-import type { SessionSummary, SubagentRecord } from '@xyz-agent/shared'
+import type { CommandSourceInfo, SessionSummary, SkillInfo, SubagentRecord } from '@xyz-agent/shared'
+import { isInternalSkillName, isInternalSlashName } from '@/lib/internal-command-filter'
 
 /** 「＋ 新建 subagent」固定项 id（CommandPopover 选中上抛 subagentId/slug 空串） */
 export const NEW_SUBAGENT_ITEM_ID = '__new_subagent__'
@@ -138,6 +139,9 @@ export interface SlashCandidateInput {
   kind: string
   icon?: string
   description?: string
+  /** skill 项：SKILL.md 绝对路径（pi sourceInfo.path / landing sourcePath，可得时带上；
+   *  onCmdSelect 按 isSkill 分流后透传 insertSkillChip 落 chip dataset——设计 D3） */
+  location?: string
 }
 
 /**
@@ -158,6 +162,7 @@ export function buildSlashCandidates(
   icon: string
   isSkill: boolean
   description?: string
+  location?: string
   dirPath: undefined
 }> {
   const q = (query ?? '').trim().toLowerCase()
@@ -172,7 +177,62 @@ export function buildSlashCandidates(
       icon: c.icon ?? iconKeyForCommand(c.name, c.kind),
       isSkill: c.kind === 'skill' || name.startsWith('/skill:'),
       description: c.description,
+      location: c.location,
       dirPath: undefined,
     }
   })
+}
+
+/**
+ * panel 态 slash 候选组装（自 CommandPopover.vue 拆出，≤300 行规范）：
+ * compact 固定头部 + merged 过滤内部命令。D3：merged（resolveSlashCommands 合并）会丢
+ * pi 真源的 sourceInfo——skill 项的 SKILL.md 路径在此从真源按归一化名回填，
+ * 供 onCmdSelect 按 isSkill 分流后透传 insertSkillChip。
+ */
+export function buildPanelSlashCandidates(
+  merged: ReadonlyArray<SlashCandidateInput>,
+  piCmds: Array<{ name: string; sourceInfo?: CommandSourceInfo }>,
+  compactCmd: SlashCandidateInput,
+): Array<SlashCandidateInput & { location?: string }> {
+  const skillLocationByName = new Map<string, string>()
+  for (const c of piCmds) {
+    const path = c.sourceInfo?.path
+    if (path) skillLocationByName.set(normalizedSlashName(c.name), path)
+  }
+  const withLocation = merged
+    .filter((c) => !isInternalSlashName(c.name))
+    .map((c) => ({ ...c, location: skillLocationByName.get(normalizedSlashName(c.name)) }))
+  return [compactCmd, ...withLocation]
+}
+
+/**
+ * landing 态 slash 候选组装（自 CommandPopover.vue 拆出，≤300 行规范）：
+ * merged 声明源 + SkillInfo[] → slash 项（/skill:<name> 归一化），跳过 merged 已有同名
+ * 与 __ 内部 skill。优先级：merged 源已在 seen，全局次之（globalSkills），项目最后
+ * （projectSkills 补独有项）。D3：location 取 SkillInfo.sourcePath（可得时带上）。
+ */
+export function buildLandingSlashCandidates(
+  merged: ReadonlyArray<SlashCandidateInput>,
+  globalSkills: SkillInfo[],
+  projectSkills: SkillInfo[],
+): Array<SlashCandidateInput> {
+  const seen = new Set<string>()
+  merged.forEach((c) => seen.add(normalizedSlashName(c.name)))
+  // SkillInfo[] → slash 项（/skill:<name> 归一化），跳过 seen 同名 + __ 前缀
+  const mapSkillInfo = (skills: SkillInfo[]) =>
+    skills
+      .filter((s) => !isInternalSkillName(s.name))
+      .filter((s) => !seen.has(`/skill:${s.name}`))
+      .map((s) => {
+        seen.add(`/skill:${s.name}`)
+        return {
+          id: `skill-${s.name}`,
+          name: `/skill:${s.name}`,
+          kind: 'skill',
+          icon: 'star',
+          description: s.description,
+          location: s.sourcePath,
+        }
+      })
+  return [...merged, ...mapSkillInfo(globalSkills), ...mapSkillInfo(projectSkills)]
 }
