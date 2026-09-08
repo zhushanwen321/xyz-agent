@@ -1930,6 +1930,79 @@
           "hook": "check-publish-surface.mjs"
         }
       ]
+    },
+    {
+      "id": "C-data-17",
+      "summary": "新 session 生效配置（model/thinkingLevel/presetId/cwd）单一解析点：chip 显示与 submit 创建必须消费同一 resolveLaunchConfig 输出（packages/core/src/domain/new-task-search/launch-config.ts），「显示 ≡ 生效」by construction；禁止新链路自建独立 fallback 链或旁路解析（lastUsedModel 等候选源只进 resolve，不得单挂显示链）；守卫 = L1 等价矩阵测试（packages/core/src/domain/new-task-search/__tests__/launch-config-equivalence.test.ts，全组合断言 chip 显示值 ≡ resolve 输出 ≡ create 入参）",
+      "scope": [
+        "packages/core/src/domain/composer/**",
+        "packages/core/src/domain/new-task-search/**",
+        "packages/ui/src/features/new-task/**",
+        "packages/renderer/src/composables/**"
+      ],
+      "authority": [
+        "design/state-truth-sync-architecture.md#d1-resolvelaunchconfig-单一解析模块c1-核心选定"
+      ],
+      "dimensions": [
+        "data-governance",
+        "test-coverage"
+      ],
+      "enforcement": [
+        {
+          "type": "review",
+          "agent": "review-data-governance"
+        },
+        {
+          "type": "review",
+          "agent": "review-test-coverage"
+        }
+      ]
+    },
+    {
+      "id": "C-pi-14",
+      "summary": "mutation 类 RPC reply 强制含生效值字段（XxxMutationReply 命名约定）：shared 协议类型层编译期必需 + runtime 契约测试（mutation-reply-contract.test.ts）枚举全部 mutation RPC 逐一断言，新增 mutation 不入清单即红。乐观/回执裁决标准：后端可变换请求值的 mutation（pi 钳制/pattern 换模）禁乐观写、回执生效值唯一写 store 路径；后端原样存储的 mutation（preset CRUD 等 runtime 自有数据）允许乐观写 + reply 权威覆盖 + 失败回滚——C-pi-13 人肉纪律的机器化（ADR-0065 待 U5 落地后补登 authority）",
+      "scope": [
+        "packages/shared/src/protocol.ts",
+        "packages/runtime/src/**",
+        "packages/core/**",
+        "packages/renderer/**"
+      ],
+      "authority": [
+        "design/state-truth-sync-architecture.md#d8-改状态回执裁决标准--协议层机器强制c4-选定"
+      ],
+      "dimensions": [
+        "type-safety",
+        "test-coverage"
+      ],
+      "enforcement": [
+        {
+          "type": "review",
+          "agent": "review-type-safety"
+        }
+      ]
+    },
+    {
+      "id": "C-state-11",
+      "summary": "对账机制三分处置框架：renderer 副本 vs runtime/pi 真值的对账机制按「对抗外部异步真值（保留）/ 同构重复 ≥3 处（收编共享原语）/ 根修后失去存在理由（删除）」裁决——in-flight 去重族收编 createInflightDedup()、KV 单键族收编 createKVSlot()（均 core foundation，新增对账禁再手写同构实现），FR-15 perCwd 默认预设特性全链随本设计 U9 删除（零消费死链）；新增/修改对账机制须过三分裁决并在 impl-plan 处置表登记",
+      "scope": [
+        "packages/core/src/foundation/**",
+        "packages/core/src/domain/**",
+        "packages/core/src/coordination/**",
+        "packages/renderer/src/composables/**"
+      ],
+      "authority": [
+        "design/state-truth-sync-architecture.md#d9对账机制三分处置c3选定只保留核心对账的执行框架"
+      ],
+      "dimensions": [
+        "arch-boundary",
+        "data-governance"
+      ],
+      "enforcement": [
+        {
+          "type": "review",
+          "agent": "review-arch-boundary"
+        }
+      ]
     }
   ]
 }
