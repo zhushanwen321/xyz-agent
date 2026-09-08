@@ -178,11 +178,11 @@ worktree 决策：全部 plain。唯一热点公共文件 session-lifecycle.ts�
 | U4 | committed | 2 | round1 64bd71a6c + round2 1b99920dc（等价破口 pendingPreset 通道修复，81/81 全正向绿，突变杀虫实证；core 1906 + renderer 4073） |
 | U5 | committed | 1 | 8fce84d1f（ADR-0065 + 18 项清单 + 6 豁免；C-pi-14 authority 补登） |
 | U6 | committed | 1 | 8f8d70b36（P4 三类源 + E9 回落全过；renderer 零改动；残留风险 #3 探针验证完成——陈旧窗口按代价声明行为） |
-| U7a | pending | 0 | — |
-| U7b | pending | 0 | — |
-| U7c | pending | 0 | — |
-| U8 | pending | 0 | — |
-| U9 | pending | 0 | — |
+| U7a | committed | 1 | da67e9d4c（factory 15 用例；7 处迁移目标 API 覆盖自评无可表达缺口；exports 子路径授权给 U7b） |
+| U7b | in-progress | 1 | 派发中（4 处迁移 + core package.json exports +1 行——主 agent 已裁决领地扩展） |
+| U7c | pending | 0 | —（等 U7b exports 落地后派发） |
+| U8 | committed | 1 | 85bdde0eb（配额中断后半成品经全量核验收口：core 120f/1935t 绿、签名逐字不变、消费方零 diff、净删 86 行） |
+| U9 | in-progress | 1 | 派发中（与 U7b 领地互斥并行） |
 
 ## 7 残留风险与变更历史
 
