@@ -107,7 +107,7 @@ graph TD
 | U4 | committed | 1 | 650118620（llm-shared 52/52 · extensions:typecheck exit=0；附带发现：PI_SUBAGENT_CHAT_MODE 环境泄漏致 subagent-workflow 测试假红，后续全量测试用干净 env） |
 | U5 | committed | 1 | 363879a17（rename-session 167/167 · typecheck/lint exit=0 · P-appendEntry CLI 探针一次通过，证据：subagent 会话 2026-09-08T06-09-36-321Z） |
 | U6 | committed | 1 | 985aadbf7（runtime 45/45 · pi-semantics 守卫 29 条 · tsc 绿 · pre-commit 含 Bundle 验证全绿） |
-| U7 | pending | 0 | — |
+| U7 | committed | 1 | ac039f4e7（shared 323/323 · ts 改动纯注释行 · todo 文档纯新增 2 行） |
 | U8 | pending | 0 | — |
 
 ## 7 残留风险与变更历史
