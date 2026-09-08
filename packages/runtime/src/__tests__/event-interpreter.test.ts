@@ -395,23 +395,24 @@ describe('EventInterpreter composer-gen-stats LLM 窗口 D3 配对矩阵', () =>
     expect(lastSample(onGenStats).durationMs).toBe(2_000)
   })
 
-  it('⑧ △他角色 end 混入：start → user/custom 的 message_end → 真 assistant end → usage → durationMs=完整窗口（role 守卫）', () => {
+  it('⑧ △他角色 end 混入：start → user/toolResult/custom 的 message_end → 真 assistant end → usage → durationMs=完整窗口（role 守卫）', () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)
     const { interp, onGenStats } = makeGenStatsInterpreter()
 
     interp.interpret([{ kind: 'turn-start', messageId: 'm1' }])
     vi.advanceTimersByTime(6_000) // 真窗口：t1 = 7000
-    // MESSAGE_END_ALLOWED_ROLES 全量下发：user / custom 的 end 帧同经 case 'message'，
+    // MESSAGE_END_ALLOWED_ROLES 全量下发：user / toolResult / custom 的 end 帧同经 case 'message'，
     // role 守卫必须放过它们不闭合窗口（否则 duration 被截断、锚点被误清）
     interp.interpret([{ kind: 'message', message: makeMessageEndFrame('user') }])
+    interp.interpret([{ kind: 'message', message: makeMessageEndFrame('toolResult') }])
     interp.interpret([{ kind: 'message', message: makeMessageEndFrame('custom') }])
     interp.interpret([{ kind: 'message', message: makeMessageEndFrame('assistant') }])
     vi.advanceTimersByTime(99_999) // end → usage 间墙钟不计入
     interp.interpret([makeTurnUsage()])
 
     expect(onGenStats).toHaveBeenCalledTimes(1)
-    // 完整窗口 6000：user/custom end 未截断，assistant end 正常闭合
+    // 完整窗口 6000：user/toolResult/custom end 未截断，assistant end 正常闭合
     expect(lastSample(onGenStats).durationMs).toBe(6_000)
   })
 })

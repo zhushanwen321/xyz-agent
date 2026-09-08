@@ -115,7 +115,7 @@ turn_end（含 usage，工具跑完才发）
 
 **D2 闭合信号带 role 守卫 + 合成事件防御栈**：interpreter 仅在 `message.message_end` 帧 payload 的 `entry.message.role === 'assistant'` 时结算窗口。user/toolResult 的 message_end 帧同样流经 interpreter（MESSAGE_END_ALLOWED_ROLES 全量下发，event-adapter.ts:901-935 ✅），custom 的 subagent-directive 亦然——无守卫会被它们错误闭合（截断 duration）。P5 已证 custom flush 在 turn 外，但守卫使「不靠时序靠结构」。
 
-合成 message_end（P3 分支②，handleRunFailure）会被 role 守卫放行并结算出 ≈0ms 窗口，但不构成污染，防御栈三层（结构递进，均 ✅ 核实）：① adapter `handleTurnEndPi` 首行 `if (!usage?.totalTokens) return []`（event-adapter.ts:431）——EMPTY_USAGE 的合成 turn_end 不产 turn-usage 事件，该 turn 无从采样；② 结算残留的 ≈0ms `llmWindowDurationMs` 由下一 turn-start 重锚同步清除（新结构不变量，见 D3），不可泄漏至后续 turn 的 usage 消费；③ 即使前两层之一失效（①为 pi 上游漂移、②为实现回归），bogus guard（output>50 && duration<100ms）兜底拦截大 token 退化样本。**被否（减法裁定）**：结算处再加「本 turn 存在过 message_update 流动」标记守卫——第四层，需穿 message_update 高频帧路径置位，复杂度大于已被三层结构防线封闭的残余风险。
+合成 message_end（P3 分支②，handleRunFailure）会被 role 守卫放行并结算出 ≈0ms 窗口，但不构成污染，防御栈三层（结构递进，均 ✅ 核实）：① adapter `handleTurnEndPi` 首行 `if (!usage?.totalTokens) return []`（event-adapter.ts:430）——EMPTY_USAGE 的合成 turn_end 不产 turn-usage 事件，该 turn 无从采样；② 结算残留的 ≈0ms `llmWindowDurationMs` 由下一 turn-start 重锚同步清除（新结构不变量，见 D3），不可泄漏至后续 turn 的 usage 消费；③ 即使前两层之一失效（①为 pi 上游漂移、②为实现回归），bogus guard（output>50 && duration<100ms）兜底拦截大 token 退化样本。**被否（减法裁定）**：结算处再加「本 turn 存在过 message_update 流动」标记守卫——第四层，需穿 message_update 高频帧路径置位，复杂度大于已被三层结构防线封闭的残余风险。
 
 **D3 异常配对矩阵（全部安全失败，无僵尸态）**：
 
@@ -124,9 +124,10 @@ turn_end（含 usage，工具跑完才发）
 | 正常：start → end(assistant) → usage | t₀ → null（end 结算清） | t₁-t₀ → null（usage 消费清） | t₁-t₀ | 正常采样 |
 | △缺起（runtime 中途启动/丢事件）：end(assistant) 先到 | null | null | null | 速度样本跳过，cache 照常（现行契约） |
 | △真缺闭（pi 崩溃/断连，P3 收窄后唯一缺 end 形态）：start 后无 end | t₀（残留） | null | null | 速度样本跳过，cache 照常；残留 t₀ 下轮 start 覆写 |
-| △usage 缺席（turn_end 丢失）：start → end | null（end 已清） | d（残留） | 不触发 | **重锚清除不变量**：下轮 start 将 turnStartedAt 与 llmWindowDurationMs 同置 null——d 生命周期严格限本 turn |
+| △usage 缺席（turn_end 丢失）：start → end | null（end 已清） | d（残留） | 不触发 | **重锚清除不变量**：下轮 start 将 llmWindowDurationMs 置 null、turnStartedAt 重锚为新时刻（非置 null）——d 生命周期以「下轮 start 到达」为界严格限本 turn；start 亦丢失的复合见下方「△stale-d 缺起复合」行 |
 | △合成对（P3 分支② handleRunFailure）：合成 start → 合成 end(assistant, EMPTY usage) | t₀′ → null | ≈0ms（残留） | 不触发（adapter EMPTY 门槛丢 turn-usage） | 本 turn 无样本；残留 ≈0ms 由下轮 start 重锚清除 → 永不入盘 |
 | △stale-d 复合：上轮 d 残留 × 本轮 end 不到但 usage 到 | null | null（重锚已清上轮 d） | null | 无「旧窗口 × 新 token」垃圾样本——重锚清除不变量封闭该复合 |
+| △stale-d 缺起复合（双事件丢失）：上轮 d 残留 × 本轮 start 丢失 × 本轮 usage 到 | null（上轮 settle 已清） | d（残留；缺 start 无重锚清除） | d（一次性消费 stale 值） | 唯一可泄漏复合（文档级枚举，八行单测覆盖面之外）：需「上轮 usage 丢失 + 本轮 start 丢失」双事件丢失才可达；至多产出一条旧窗口样本（消费后置 null 自愈，后续 turn 恢复 null 纪律）；极端值仍被 bogus guard 兼底——残余风险为有界单样本，接受（修复需引入跨 turn 配对标记，复杂度大于封闭面） |
 | △双 start（pi 异常重入）：start → start | t₀ → t₀′（覆写重锚） | — | t₁-t₀′ | last-writer-wins，取最后窗口 |
 | △他角色 end 混入（custom/user/toolResult） | 不动 | 不动 | — | role 守卫拦截（D2） |
 
@@ -148,7 +149,7 @@ turn_end（含 usage，工具跑完才发）
 | S4 | 中断恢复：流式输出中按 Esc | abort 后看速度触发器与落盘末条 | 无崩溃、无「—」闪烁（帧链路未动）；该 turn 要么产出「部分流窗口」样本（有部分 usage 时，量级 = 已流出 token ÷ 真实流时长），要么不产样本（EMPTY usage）——**不出现 ≈0ms 畸形值或 0 t/s current**；下个正常 turn 恢复刷新 | G3 |
 | S5 | 重启恢复：完全退出重开 app，切回该 session | 切入即看触发器 | 恢复腿 RPC 显示与重启前一致的聚合（新样本口径） | G3 |
 
-单测层（防回归，非验收替代）：interpreter 配对矩阵八行全量（含合成对、stale-d 复合两新增防御行）+ role 守卫 + 双 start 重锚 + 重锚清除不变量；pi-semantics 静态探针守 P1/P3/P4 漂移（见 §5 U2）。
+单测层（防回归，非验收替代）：interpreter 配对矩阵八行全量（含合成对、stale-d 复合两新增防御行；stale-d 缺起复合为 D3 文档级枚举、不设单测——双事件丢失才可达且有界自愈，接受）+ role 守卫 + 双 start 重锚 + 重锚清除不变量；pi-semantics 静态探针守 P1/P3/P4 漂移（见 §5 U2）。
 
 ## 5. 下一层拆分（实施路径）
 
@@ -156,8 +157,8 @@ turn_end（含 usage，工具跑完才发）
 |---|---|---|---|---|
 | U1 | interpreter 状态机 | `turnStartedAt` 语义注释更名（LLM 窗口起算）+ 新增 `llmWindowDurationMs` 状态 + `case 'message'` 内 assistant message_end 结算 + **turn-start 重锚同步清 llmWindowDurationMs（重锚清除不变量）** + turn-usage 消费改源 | `packages/runtime/src/services/session/event-interpreter.ts` | 核心变更，单测可独立闭环 |
 | U2 | pi 语义静态探针 | 守四断言：P1（message_end 先于 turn_end）、P3①（error 分支 emit message_end）、P3②（agent.js handleRunFailure 合成四事件 + failureMessage 形态：EMPTY_USAGE/空 text/assistant role）、P4（agent-loop 每 turn 迭代恰一次 streamAssistantResponse 调用——tokens↔duration 1:1 配对前提，破裂时新口径会产「末窗口 × 全 turn tokens」的静默偏高样本，必须守） | `packages/runtime/src/infra/pi/__tests__/pi-semantics-turn-usage-model.test.ts` | pi 升级防线，独立于行为单测 |
-| U3 | D3 矩阵单测 | 配对矩阵八行全量（含合成对、stale-d 复合）+ role 守卫 + 双 start 重锚 + 重锚清除不变量（fake timers 控时钟） | `packages/runtime/src/__tests__/event-interpreter.test.ts` | 回归防线，依赖 U1 |
-| U4 | 注释/类型语义同步 | `GenStatsSample.durationMs` 语义注释（types.ts）、gen-stats-service.ts 头注释 GS-5 口径注更新 | `packages/runtime/src/services/session/{types,gen-stats-service}.ts` | 纯文档性，随 U1 同 commit |
+| U3 | D3 矩阵单测 | 配对矩阵八行全量（含合成对、stale-d 复合）+ role 守卫（user/toolResult/custom 非闭合）+ 双 start 重锚 + 重锚清除不变量（fake timers 控时钟） | `packages/runtime/src/__tests__/event-interpreter.test.ts` | 回归防线，依赖 U1 |
+| U4 | 注释/类型语义同步 | `GenStatsSample.durationMs` 语义注释（types.ts）、gen-stats-service.ts recordSample 丢弃规则注释（:111-113）GS-5 口径注更新（D2 引用改指 message_end 闭合） | `packages/runtime/src/services/session/{types,gen-stats-service}.ts` | 纯文档性，随 U1 同 commit |
 | U5 | 设计文档回写 | composer-gen-stats.md：§2.2 数据流图闭合点、GS-5 口径注、D2 注释（turn-start= message_start 已对，补闭合点）、§4 场景表速度值描述 | `docs/design/composer-gen-stats.md` | C-proc-10 回写纪律 |
 | U6 | 全量验证 | runtime 相关 vitest（event-interpreter / gen-stats-* / pi-semantics）+ renderer 冒烟（不涉及） | — | 交付门槛 |
 
