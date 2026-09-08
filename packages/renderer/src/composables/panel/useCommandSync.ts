@@ -20,28 +20,30 @@
  */
 import { type Ref, watch } from 'vue'
 import { session as sessionApi } from '@/api'
+import { createInflightDedup } from '@xyz-agent/core/foundation/create-inflight-dedup'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
 
-/** in-flight 去重表条目：存 Promise 本体，多个 composable 实例可各自 attach then。 */
-interface InflightEntry {
-  /** getCommands RPC 的 Promise 本体 */
-  promise: Promise<{ sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }>
+/** getCommands RPC 应答形状（D2 分区写入的消费面）。 */
+type CommandsReply = {
+  sessionId: string
+  commands: Array<{ name: string; description?: string; source: string }>
 }
 
 /**
  * 模块级 in-flight 去重表（per-sid）。
  *
  * 为什么模块级而非实例级：split panel 双实例同时 watch 同 sid 时，
- * 模块级可共享同一 Promise，避免重复 RPC。resolve/reject 即清条目，
- * 下次触发重新拉取（无条件恢复腿，不依赖 store 缓存时效）。
+ * 模块级可共享同一 Promise，避免重复 RPC。「同 key 复用 / settle 即清下次触发重新拉取
+ * （无条件恢复腿，不依赖 store 缓存时效）/ 引用比对防误删」生命周期收编于
+ * createInflightDedup（D9 共享原语，state-truth-sync §3.3）。
  */
-// taste:allow-no-data-owner（非 GUI 数据的技术结构，同 core/coordination/subscription-state.ts:77
-// inFlightSubscribes 豁免先例）：in-flight RPC 去重表，存 Promise handle，resolve/reject 即清条目
-const inflightCommandsFetch = new Map<string, InflightEntry>()
+// taste:allow-no-data-owner（非 GUI 数据的技术结构，同 core/coordination/subscription-state.ts
+// subscribeDedup 豁免先例）：in-flight RPC 去重表，存 Promise handle，settle 即清条目
+const commandsFetchDedup = createInflightDedup<CommandsReply>()
 
 /** 测试隔离钩子：清模块级 in-flight 表（防用例间残留）。生产代码禁止调用。 */
 export function __clearInFlightCommandsFetchForTest(): void {
-  inflightCommandsFetch.clear()
+  commandsFetchDedup.clear()
 }
 
 /**
@@ -61,12 +63,11 @@ export function useCommandSync(
    *
    * 复用 inflight 去重：同 sid 并发触发时复用同一 Promise，避免重复 RPC。
    * 写入 reply.sessionId 分区（非调用方实时 sid），从结构上消除 ADR-0049 M1 竞态。
+   * settle 即清（下次同 sid 触发重新拉取，无条件恢复腿）与引用比对防误删由 factory 内建。
    */
   function pull(sid: string): void {
-    // 去重：同 sid 在途 RPC 存在时复用
-    let entry = inflightCommandsFetch.get(sid)
-    if (!entry) {
-      const promise = sessionApi
+    const { promise } = commandsFetchDedup.run(sid, () =>
+      sessionApi
         .getCommands(sid)
         .then((reply) => {
           // 写 reply.sessionId 分区（消息所属 sid），不污染当前视图 sid 分区
@@ -77,19 +78,11 @@ export function useCommandSync(
           // D3 静默降级：保留 store 旧值，console.warn 供排查
           console.warn('[useCommandSync] fetch commands failed:', err instanceof Error ? err.message : err)
           // 返回一个空 reply 以便 Promise 正常 resolve（不影响下游 attach）
-          return { sessionId: sid, commands: [] as Array<{ name: string; description?: string; source: string }> }
-        })
-        .finally(() => {
-          // 完成即清条目：下次同 sid 触发重新拉取（无条件恢复腿）
-          if (inflightCommandsFetch.get(sid)?.promise === promise) {
-            inflightCommandsFetch.delete(sid)
-          }
-        })
-      entry = { promise }
-      inflightCommandsFetch.set(sid, entry)
-    }
+          return { sessionId: sid, commands: [] as CommandsReply['commands'] }
+        }),
+    )
     // 多实例 attach：不 await，fire-and-forget（pull 是副作用 composable，不暴露状态）
-    void entry.promise
+    void promise
   }
 
   // D1 触发点 1：sid 变化 / 挂载即拉（null/undefined 不拉）
