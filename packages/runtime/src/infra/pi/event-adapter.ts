@@ -962,11 +962,22 @@ function handleMessageEnd(event: PiMessageEndEvent, sid: string): PiTranslatedEv
  * message.tool_call_update 是 stream 类消息入 WS replay ring（1000 帧），不截断则
  * 单帧 output/outputRaw 双字段可至 pi 快照 50KB 量级 → ring 满载 ≈100MB 常驻。
  */
-const STREAM_OUTPUT_CAP_BYTES = 8 * 1024
+const STREAM_OUTPUT_CAP_BYTES = 8192
+
+/** ANSI CSI 序列终止字节区间下界（ESC 序列以 0x40 收尾） */
+const ANSI_TERMINATOR_MIN = 0x40
+/** ANSI CSI 序列终止字节区间上界（ESC 序列以 0x7E 收尾） */
+const ANSI_TERMINATOR_MAX = 0x7e
+/** '[' 的 ASCII 码：CSI 引导字节，虽落在终止区间但判定时须排除（见 tailWindow 注释） */
+const CSI_INTRODUCER = 0x5b
+/** Unicode 低代理区下界（孤儿低代理 = 劈开代理对，起点前移一位） */
+const LOW_SURROGATE_MIN = 0xdc00
+/** Unicode 低代理区上界 */
+const LOW_SURROGATE_MAX = 0xdfff
 
 /** CSI 序列终止字节区间（ANSI ESC 序列以 0x40-0x7E 收尾，仅对 CSI 充分——OSC/DCS 残段按字面渲染为已接受代价）。 */
 function isAnsiTerminator(code: number): boolean {
-  return code >= 0x40 && code <= 0x7e
+  return code >= ANSI_TERMINATOR_MIN && code <= ANSI_TERMINATOR_MAX
 }
 
 /**
@@ -990,7 +1001,7 @@ function tailWindow(text: string, cap: number): string {
   if (escIdx !== -1) {
     let terminated = false
     for (let i = escIdx + 1; i < cut; i++) {
-      if (i === escIdx + 1 && text.charCodeAt(i) === 0x5b) continue
+      if (i === escIdx + 1 && text.charCodeAt(i) === CSI_INTRODUCER) continue
       if (isAnsiTerminator(text.charCodeAt(i))) {
         terminated = true
         break
@@ -1008,7 +1019,7 @@ function tailWindow(text: string, cap: number): string {
   // 码点边界回退：起点落在低代理区 = 前一高代理被劈开，前移一位
   if (start > 0 && start < text.length) {
     const code = text.charCodeAt(start)
-    if (code >= 0xdc00 && code <= 0xdfff) start += 1
+    if (code >= LOW_SURROGATE_MIN && code <= LOW_SURROGATE_MAX) start += 1
   }
   return text.slice(start)
 }

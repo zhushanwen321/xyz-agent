@@ -23,14 +23,19 @@ function toolUpdate(partialResult: unknown): PiEvent {
   return { type: 'tool_execution_update', toolCallId: 'call-1', partialResult } as unknown as PiEvent
 }
 
-/** 从 translate 产出中取出唯一 message。 */
-function soleMessage(events: ReturnType<typeof translate>) {
+/** 从 translate 产出中取出唯一 message（payload 收窄为 Record，运行时 guard）。 */
+function soleMessage(
+  events: ReturnType<typeof translate>,
+): { type: string; payload: Record<string, unknown> } {
   expect(events).toHaveLength(1)
   const [ev] = events
   if (!ev || ev.kind !== 'message') {
     throw new Error(`expected single message event, got: ${JSON.stringify(ev)}`)
   }
-  return ev.message
+  if (typeof ev.message.payload !== 'object' || ev.message.payload === null) {
+    throw new Error(`expected object payload, got: ${JSON.stringify(ev.message.payload)}`)
+  }
+  return ev.message as { type: string; payload: Record<string, unknown> }
 }
 
 describe('handleToolExecutionUpdate 三形态分发（判别式）', () => {
