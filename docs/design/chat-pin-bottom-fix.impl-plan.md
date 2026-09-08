@@ -94,7 +94,7 @@ graph TD
 | U2 | committed | 2 | r2 sa-a7fe7ca5 交付；script 299/300·template 175/400；探针门：P-wrap ✓（gap≤0.5px）· P-timing ✓（流式 120 帧恒 0.5px / 静止 90 帧恒 0px 零振荡）· P-no-loop ✓ 降级形态（gap 序列无循环锯齿；完整计数器判据按设计载体推迟 U4/V8） |
 | U3 | committed | 1 | sa-9388587e：删2文件+迁移2用例（29→31）+挂载级修红；全量 4081/3 skip、双 typecheck、lint 绿；主 agent 重跑全量一致 |
 | U4 | committed | 1 | sa-226a3b2e：guard+9 单测+守卫双向自验+C-state-11+C-proc-10×4+V8 双侧（单测 6 红→还原绿；dev 断言注入 gap=24 双采样报警→还原 0 报警）；scroll-follow 0 / doc-drift 0 / 全量 4090 绿 |
-| U5 | pending | 0 | — |
+| U5 | committed | 5 | 主 agent 亲自执行（4 次 subagent 中断后收归，见偏差 #1）：V1/V2/V3/V4/V5/V8 六场景 PASS；V6 shrink 间歇 113px 残留 PARTIAL（数据+修复建议已归档）；V7/V9 前置不可达 BLOCKED（单测/构造性缓解）；归档 acceptance.md |
 
 ## 7 残留风险与变更历史
 
