@@ -31,7 +31,7 @@
 3. **不倒退**：重开 drawer、切走切回、实时帧先到的场景，已投影内容不被擦除、不出现重复气泡。
 
 **In-scope**：renderer 侧 `useSubagentTabData` / subagent store `fetchAndInject` / `MessageStream`→`ActivityStrip` prop 通路 + 测试。
-**Out-of-scope**：runtime `getSubagentHistory` 协议与读取链（不改）；sessionFile 补全时机（轮终写 entry，属扩展侧 v4 设计，不动）；非 pi 引擎既有 coarse 提示与 outcome 兜底**机制**不变——task 气泡与思考行**同适用于非 pi**（多窗口路径真实参与，见 §5.1 变体）；core ①级空视图降级缺陷的修复（范围外，§11 ⛔3 登记 follow-up）；主会话 ActivityStrip/occupancy 语义（不动）。
+**Out-of-scope**：runtime `getSubagentHistory` 协议与读取链（不改，长期收敛方向见 §6.7）；sessionFile 补全时机（轮终写 entry，属扩展侧 v4 设计，不动）；非 pi 引擎既有 coarse 提示与 outcome 兜底**机制**不变——task 气泡与思考行**同适用于非 pi**（多窗口路径真实参与，见 §5.1 变体）；非 pi 终态不回填缺口（`docs/todo/subagent-nonpi-terminal-reload.md` 2026-08-25 已独立登记，本设计放大其陈旧占位表现，见 §5.1 变体末互链）；core ①级空视图降级缺陷的修复（范围外，§11 ⛔3，follow-up 已落账 `docs/todo/subagent-core-native-empty-view-degrade.md`）；agentcall 两段式空历史无兜底（同症状不同源的既有缺口，§11 ⛔4 登记）；主会话 ActivityStrip/occupancy 语义（不动）。
 
 ## 3. 现状：使用者眼里是什么样的
 
@@ -116,11 +116,14 @@ SubagentRecord（subagentStore 分区，sidebar 与 drawer 共享）
 
 结论：非 pi 运行中 drawer 无空白窗口（task 气泡由 runtime ①③级投影或 renderer seed 三者之一供给；思考行在窗口 B 与磁盘滞后窗口触发，窗口 A 由 TurnMeta「工作中」接管）。修复前非 pi 窗口 B 同样存在「仅 task 一条、无思考行指示」的欠佳初态，本设计思考行对其是**真实改进**而非纯防御。已知遗留（范围外，§11 ⛔3 登记）：①级 defined-empty 视图不降级②③级，使③级「详情页至少有 task/结果」意图在窗口 B 退化为仅 task——缺陷本体在 subagent-core，其他③级消费方同受影响。
 
+**终态不回填（相邻既有缺口，本设计放大其表现，v6 对抗式总审补记）**：非 pi 无实时腿，drawer 对话流仅在打开/重开时拉取——任务终态后**已打开的** drawer 不自动回填结果（缺口本体 2026-08-25 登记于 `docs/todo/subagent-nonpi-terminal-reload.md`，修复草案 = record status 跨越 watch 终态 reload，与本设计机制零冲突）。本设计**放大**了该缺口的表现：窗口 A 的 `(no outcome recorded)` 占位 assistant 在任务完成后仍停留，而此刻 outcome 已存在——陈旧占位比空白更误导，该 todo 的排期紧迫性因此上升。两处追踪物经本节交叉互链，任一侧落地时须同步另一侧状态。
+
 ### 5.2 失败路径（带恢复指引）
 
 - **历史 RPC 失败**：维持现状 loadError 错误态 + 重试按钮（本设计不改错误链路）。👉 用户点「重试」重新拉取。
 - **task 为空的 record**（理论边界：start 必带 task）：无气泡可种，但思考行仍随 forceWorking 显示（分区空 + 真在跑 → 末位 turn 判定空 → 思考行条件成立）——如实呈现「有任务在跑但内容未知」，不造假装数据。👉 无恢复动作需要。
 - **兜底气泡残留疑虑**：不可能残留——基线投影（真实数据整体替换）与 reload 非空历史（setMessages 替换）两条权威路径都确定性清除兜底；子进程崩溃前零产出的极端场景，气泡保留恰好呈现「派发过什么任务」，cancelled/closed 后 forceWorking=false 思考行自动消失。
+- **非 pi 终态后内容陈旧（已知遗留，非本设计引入但本设计放大）**：无实时腿引擎在任务终态后，已打开 drawer 不自动重拉；窗口 A 场景的占位 assistant 会继续显示与实际不符的 `(no outcome recorded)`。👉 切走切回或重开 drawer 即刷新；根修（status watch 终态自动 reload）归 `docs/todo/subagent-nonpi-terminal-reload.md` 排期。
 
 ## 6. 关键决策与权衡
 
@@ -170,6 +173,13 @@ SubagentRecord（subagentStore 分区，sidebar 与 drawer 共享）
 
 - **采用**：思考行消失依赖 record 更新（session.subagents 推送）驱动 forceWorking 翻 false；该帧是 state topic（入 STATE_TYPE_KEY_MAP last-value 快照，重连/切回经 stateSnapshot 回放恢复）——丢失面与侧边栏卡片 spinner 同源同级（同一 record 数据源的同一窄口径判据），既有架构已接受该残余风险，本设计不新增兜底。
 - **证据**：runtime STATE_TYPE_KEY_MAP 含 subagents（影响面审已核）；SubagentList `isStreaming` 与 `isStreamingSubagent` 同判据（running && result undefined && resumable !== true，均无引擎过滤）。
+
+### 6.7 「详情页至少有 task」不变量的归层与收敛方向（v6 对抗式总审增补）
+
+- **现状声明**：「已知 record 的详情页至少有 task 气泡」当前由**四层兜底涌现**——runtime ①级 task 前置投影 / runtime ③级 outcome-only / renderer outcome 投影（U4 A8）/ 本设计 renderer seed。优先级靠「判定顺序写死 + 分区空守卫 + 测试钉死」维持，是约定不是结构性保证；每个新消费方（摘要卡已在 ⛔3 上中招）都须自行重排一遍兜底。
+- **收敛方向（本期不实施，登记 follow-up）**：runtime 读链对已知 record **永不返回空**——③级合成推广到 pi `!sessionFile` 窗口 + ①级空视图判空降级（即 ⛔3 修复）。协议层单点 own 该不变量后，renderer 两层客户端兜底（outcome 投影 / task seed）自然死代码化（守卫恒假、无迁移成本）。
+- **论据更正（总审查出，如实登记）**：§6.1 否决 runtime 合成的「需跨进程传 task 语义」论据站不住——runtime 自 extract record、`record.task` 本就在手，且 ①③级已经在合成带 task 的投影。本期选 renderer 侧是**战术取舍**（改动面小、热修节奏、零协议风险），不是架构上更优；在此更正叙事，防止后续维护者把战术理由误读为架构定论。
+- **效果**：本设计三处机制不变；收敛落地路径与 ⛔3 同一 core 读取链主题，追踪物合一（`docs/todo/subagent-core-native-empty-view-degrade.md`）。
 
 ## 7. 实现机制
 
@@ -224,7 +234,8 @@ SubagentRecord（subagentStore 分区，sidebar 与 drawer 共享）
 
 - ⛔ 实施期验证：真实双 user 场景（兜底气泡 vs 子进程真实首条 user 消息）过渡是否视觉平滑（S1 等待观察）。**降级路径**：对比幅度超预期（明显跳变不适）→ 登记 follow-up 不阻塞交付（兜底气泡短暂展示属可接受初态，跳变限于单气泡位置）。
 - ⛔ 实施期验证：`record.task` 含超长文本时的渲染（气泡无 maxHeight 的话是否需要截断）——超范围则登记 follow-up，不在本设计处理。
-- ⛔3 范围外缺陷登记（R2 终审 SUGGESTION 采纳）：core 读取链①级 defined-empty 视图不降级②③级（session-view-service.ts:496 `native !== undefined` 即返回、无内容检查），使③级「详情页至少有 task/结果」意图在非 pi mid-run 窗口 B 退化为仅 task——缺陷本体在 subagent-core，其他③级消费方（摘要卡数据源）同受影响。证据链：collectTurns 排除 user 消息（engines/zcode/reader.ts:289，user 不进 turns 注释 :293）+ buildView 零 turn 不抛错 + 编排层无判空。实施期向 core 维护方登记 follow-up（修复方向：①级返回前判空降级），独立于本设计排期。
+- ⛔3 范围外缺陷登记（R2 终审 SUGGESTION 采纳）：core 读取链①级 defined-empty 视图不降级②③级（session-view-service.ts:496 `native !== undefined` 即返回、无内容检查），使③级「详情页至少有 task/结果」意图在非 pi mid-run 窗口 B 退化为仅 task——缺陷本体在 subagent-core，其他③级消费方（摘要卡数据源）同受影响。证据链：collectTurns 排除 user 消息（engines/zcode/reader.ts:289，user 不进 turns 注释 :293）+ buildView 零 turn 不抛错 + 编排层无判空。修复方向：①级返回前判空降级②③级。follow-up 已落账 `docs/todo/subagent-core-native-empty-view-degrade.md`（v6 对抗式总审查出原「实施期登记」未产生任何可追踪物，补登落账），独立于本设计排期。
+- ⛔4 相邻表面登记（v6 对抗式总审）：agentcall 两段式（workflow tab agent call 入口）空历史无任何兜底——与本设计同症状（drawer 纯空白）不同源（快照只读、无 record 实时腿、无 renderer seed），影响面审 INFO-1 登记为既有缺口，归 workflow/agentcall 主题独立排期，本设计不处理。
 
 ## 附录：变更历史
 
@@ -233,3 +244,4 @@ SubagentRecord（subagentStore 分区，sidebar 与 drawer 共享）
 - v3：R2 复审期主 agent 源码核实补强——①core `readSubagentHistoryMessages` ③级 outcome-only「永不返回空数组」（session-view-service.ts:431）⇒ 非 pi runtime 历史恒非空，seed/思考行对非 pi 实际不参与：§5.1 非pi变体重写（三重叠加不会发生，runtime ③级即时给出 task+占位）、S5/T2/T3 同步修正、非 pi 组合标防御性；②新增 §6.6 思考行残留风险声明（state topic last-value 快照回放，与侧边栏 spinner 同源同级）。R2 两个攻击点（非 pi 叠加/残留）由事实核实消解。【后被 R2 终审反例击穿，v4 纠正】
 - v4：R2 终审修复（主审 1MF+1S 全修，路线 a 零代码改动）——主审反例击穿 v3 三段论中段：①级 zcode native reader 对零 assistant 内容返回 defined-empty 视图不降级③级（session-view-service.ts:496 无判空），且 engineHandle 运行中回填落盘（subagent-service.ts:2157），mid-run 窗口恰与本设计目标窗口重合；主 agent 复核修正一处细节：`turnsToMessages` 对零 turn 视图先 push record.task（:364）→ runtime 返回 [task 气泡] 而非 []（impact 审判断言正确）——§5.1 重写为三窗口模型（A ③级占位 / B ①级 [task] / C 真实内容 + 磁盘扫描滞后窗口 seed 真实触发）；§2 Out-of-scope 消除自相矛盾；S5 改行为导向判据；T2/T3 非 pi 标注改「可达/多窗口钉死」；§11 新增 ⛔3 core ①级空视图降级缺陷登记（主审 SUGGESTION 采纳）。机制层零改动（守卫式顺序对分支可达性不敏感，主审裁决②放行）。
 - v5：终审补记 SUGGESTION 修复（0 MF 后唯一遗留，一字之改）——S5 判据中间要素从「思考行」放宽为「进行中指示（思考行或 TurnMeta 工作中行）」，消除窗口 A 冷启动假阴性；终审对 v4 的 [task] 修正与三窗口模型、五处改写、无 v3 残留全部确认。**设计就绪（两份终审均 0 must-fix）**。
+- v6：交付后独立对抗式总审修复轮（三问：用户问题是否真解 / 隐藏问题 / 长期架构；裁决：机制层成立、用户问题真解，发现 3 个追踪层缺口 + 1 笔架构债）——①§5.1/§5.2 新增非 pi 终态不回填放大声明（窗口 A 占位 assistant 终态后陈旧显示，比空白更误导），与 `docs/todo/subagent-nonpi-terminal-reload.md`（2026-08-25 已登记、HEAD 仍未实现）交叉互链并声明其排期紧迫性上升；②§11 ⛔3 follow-up 落账 `docs/todo/subagent-core-native-empty-view-degrade.md`（总审查出原「实施期登记」未产生可追踪物）；③§2 Out-of-scope 补 agentcall 空历史无兜底登记 + §11 新增 ⛔4；④新增 §6.7「详情页至少有 task」不变量归层声明与 runtime 收敛方向，并如实更正 §6.1 被否方案的论据（战术取舍非架构定论）。**机制层零改动**（renderer 三处改动与判定顺序不变）。

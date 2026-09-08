@@ -8,7 +8,7 @@
 | 终态/机制 | §5 终态 + §7 实现机制（三处改动：①fetchAndInject 返回值+空不擦 ②loadSubagentData 判定顺序即优先级 ③subagentThinking prop→ActivityStrip） |
 | 验收场景表 | §8.2（S1 首开 / S2 重开不擦除 / S3 轮终后打开 / S4 主会话零回归 / S5 非 pi 变体） |
 | 下一层拆分 | §10 测试矩阵（T1-T5） |
-| 待验证检查点 | §11（⛔1 视觉平滑带降级路径 / ⛔2 超长 task 渲染） |
+| 待验证检查点 | §11（⛔1 视觉平滑带降级路径 / ⛔2 超长 task 渲染 / ⛔3 core 空视图降级→已落账 docs/todo/subagent-core-native-empty-view-degrade.md / ⛔4 agentcall 空历史无兜底登记） |
 
 ## 1 目标快照（逐字摘录设计 §2）
 
@@ -75,7 +75,9 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-- 残留风险：设计 §11 ⛔1（双 user 过渡视觉平滑，降级路径已定：超预期登记 follow-up 不阻塞）；⛔2（超长 task 渲染，超范围登记 follow-up）；⛔3（core ①级空视图降级缺陷，范围外已登记 follow-up，本设计 renderer seed 在症状层兜住）。
+- 残留风险：设计 §11 ⛔1（双 user 过渡视觉平滑，降级路径已定：超预期登记 follow-up 不阻塞）；⛔2（超长 task 渲染，超范围登记 follow-up）；⛔3（core ①级空视图降级缺陷，范围外，本设计 renderer seed 在症状层兜住——follow-up 已落账 `docs/todo/subagent-core-native-empty-view-degrade.md`，2026-09-08 对抗式总审查出原「实施期登记」未产生可追踪物，补登）；⛔4（agentcall 两段式空历史无兜底，既有缺口，归 workflow/agentcall 主题独立排期）。
+- 相邻已登记缺口（2026-09-08 总审交叉互链）：非 pi 终态不回填（`docs/todo/subagent-nonpi-terminal-reload.md`——本设计放大其陈旧占位表现：窗口 A 的 `(no outcome recorded)` 占位 assistant 终态后仍停留，排期紧迫性上升，修复草案 = status watch 终态 reload，与本设计机制零冲突）；「详情页至少有 task」不变量的 runtime 收敛方向（设计 §6.7，与 ⛔3 同一 core 读取链主题，追踪物合一）。
 - 变更历史：
   - v1（2026-09-08）：初版。用户已声明「不需要我授权，你全权负责」——dev-flow 阶段 1 的用户评审步骤由主 agent 以文档化推理代行：切分粒度（4 unit，单 unit 领地 ≤2 src 文件，改动脉络与设计 §7 三处改动一一对应）；worktree 不开（改动面小、同包无合并冲突风险、DAG 浅）；验收条款对照设计 §8.2 五场景全覆盖（S1-S5 → u2/u3/u4 验收条款）。
   - v2（2026-09-08，实施阶段登记）：基线 d74bdeabc → 实现 commit 3bfe6069a（u1+u3，含 u3 轮 1 行数打回 → 提取 useSubagentThinking）/ 4000fe668（u2，含偏差 #3）/ 35df7b5f4（u4 预期翻转适配）/ 39380202d（u5-gateb 偏差 #4 electron main dev 隔离补强）。Gate B 验收 S1-S5 全过（Playwright 隔离实例 9225，pi/zcode 双引擎）。sync-review（subagent-drawer-blank.sync-review.md）0 must-fix / 8 suggestion 全修，本表 M1-M4 即其修复。
+  - v3（2026-09-08，交付后对抗式总审回写）：总审三问（用户问题是否真解 / 隐藏问题 / 长期架构）裁决机制层成立，发现 3 个追踪层缺口 + 1 笔架构债，全部回写登记——①⛔3 follow-up 落账 `docs/todo/subagent-core-native-empty-view-degrade.md`（新建）；②非 pi 终态不回填缺口与 `docs/todo/subagent-nonpi-terminal-reload.md` 交叉互链（本设计放大其陈旧占位表现，排期紧迫性上升）；③agentcall 空历史无兜底登记为设计 §11 ⛔4；④「详情页至少有 task」不变量归层与 runtime 收敛方向写入设计 §6.7。文档侧对应设计 v6；机制/代码/测试零改动，无新增 unit。后续排期建议（不属于本计划）：优先落地 subagent-nonpi-terminal-reload.md；分支尽快开 PR 合并（修复尚未交付用户）。
