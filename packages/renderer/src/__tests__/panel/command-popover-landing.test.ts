@@ -389,11 +389,13 @@ describe('CommandPopover landing 态用 globalSkills prop（L1-L14，W4）', () 
   // ── W4 AC-8：反向断言——slash 命令源不读 settingsStore.skills（FR-5）──
   // 验证：settingsStore.skills 有值，但 globalSkills prop 为空时，landing 不显示任何 skill。
   // 这证明 CommandPopover 已与 settingsStore.skills 解耦（W4 前 landing 读 settingsStore.skills）。
-  it('L18: CommandPopover.handleKeydown 不守卫 isComposing（守卫职责在 Composer 层）', async () => {
-    // 验证守卫责任链路：isComposing 守卫在 Composer.vue onKeydown 第一行，
-    // 不在 CommandPopover.handleKeydown 内。Composer 不调用 handleKeydown →
-    // 命令不执行。本用例确认 handleKeydown 本身不检查 isComposing，
-    // 守卫职责明确在调用方（Composer）。Composer 级集成覆盖见 composer-three-states T2.x。
+  it('L18: CommandPopover.handleKeydown IME 守卫（composingRef + isComposing 双保险，设计 D2）', async () => {
+    // [HISTORICAL] 本用例原断言「handleKeydown 不守卫 isComposing（守卫职责在 Composer 层）」——
+    // composer-chip-insertion-semantics 设计 D2（r1/r2 修订）将 IME 守卫移入浮层 Enter/Tab 分支：
+    // window capture 入口无 Composer 层前置守卫，不守卫会劫持 IME 组合确认 Enter 为「选中浮层
+    // 第一项」。守卫 = composingRef（compositionstart/end 维护）+ e.isComposing 双保险。
+    // Composer 层 isComposing 守卫仍保留（composer-keydown.ts，纵深防御）。时序锁集成用例见
+    // composer-keydown.test.ts「D2 时序锁」。
     await mountLanding('co')
     const btns = bodyItemButtons()
     expect(btns).toHaveLength(1)
@@ -406,11 +408,11 @@ describe('CommandPopover landing 态用 globalSkills prop（L1-L14，W4）', () 
     const imeEvent = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
     Object.defineProperty(imeEvent, 'isComposing', { value: true })
 
-    // handleKeydown 处理了 Enter（返回 true）——它不守卫 isComposing
+    // handleKeydown 不消费（返回 false）——IME 守卫生效，事件放行给 target 做候选词确认
     const result = handleKeydown(imeEvent)
-    expect(result).toBe(true)
-    // select 被 emit（handleKeydown 不管 isComposing，照常选中）
-    expect(wrapper!.emitted('select')).toBeTruthy()
+    expect(result).toBe(false)
+    // select 未被 emit（组合中 Enter 绝不选中浮层候选）
+    expect(wrapper!.emitted('select')).toBeFalsy()
   })
 
   it('L17 AC-8 反向：settingsStore.skills 有值但 globalSkills prop 空 → landing 不显示 skill（FR-5 解耦）', async () => {

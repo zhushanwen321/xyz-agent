@@ -64,15 +64,19 @@ graph TD
 
 | # | 单元 | 偏差描述 | 判定依据 | 登记时间 |
 |---|------|----------|----------|----------|
-| （空） | | | | |
+| 1 | u3 | 领地补录：packages/renderer/src/\_\_tests\_\_/panel/command-popover-landing.test.ts（L18 旧断言「handleKeydown 不守卫 isComposing」与 D2 新契约直接冲突，改写为新契约断言 + [HISTORICAL] 注释） | 设计强制配套测试更新，不配套则包级回归必红；非静默（dev 主动披露） | 2026-09-08 批次 1 核验 |
+| 2 | u3 | IME 守卫裸 return 改 return false（handleKeydown 声明返回 boolean，裸 return 是 TS2322）；composingRef 监听挂 window capture（浮层自身无输入元素，只有 window capture 能在消费前感知组合起止） | 实现细节对齐设计意图，vue-tsc 强制 | 2026-09-08 批次 1 核验 |
+| 3 | u2 | 「savedRange 指向已删节点→caret 落末尾」用例用 Selection 桩覆盖（DOM live range 语义下无法构造悬空 range，jsdom addRange 自动重锚）；「!savedRange→仍回焦」断言改「不抛错且不应用 range」（jsdom 不支持 contenteditable activeElement） | jsdom/DOM 规范限制，注释已登记；真实链路用例（失败模式 A 回归）仍走真实 Selection | 2026-09-08 批次 1 核验 |
+| 4 | u1 | slash→text 边界按 needsBoundarySpace 既有 chip→text 规则补一个空格（如 '/compact 任务描述清理一下'） | 设计 D4-c「needsBoundarySpace 规则沿用」的直接推论 | 2026-09-08 批次 1 核验 |
+| 5 | u3 | 领地补录：packages/renderer/src/composables/panel/composition-flag.ts（新建）——composingRef 双保险逻辑从 CommandPopover.vue 提取为 composable（pre-commit vue_rules_checker：script setup 310 行超 300 上限，hook 建议方向即提取 composable；命名遵循同目录 composer-keydown.ts 惯例：文件名不带 use 前缀、导出函数带） | pre-commit 拦截正面修复；vue_rules_checker 硬限 | 2026-09-08 批次 1 commit 门 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u1-foundation | pending | 0 | |
-| u2-domcore-insertion | pending | 0 | |
-| u3-keyroute | pending | 0 | |
+| u1-foundation | committed | 1 | aab8b4433；shared vitest 331 passed（segments.test 新增 slash 段/serializer/归位断言）；tsc 穷尽守卫 exit 0 |
+| u2-domcore-insertion | committed | 1 | dadb65c39；dom-core vitest 215 passed + ui 585 passed；chip-commands.ts diff 核验纯注释 |
+| u3-keyroute | committed | 2 | commit 待补（打回修 script 超行，轮次 2）；renderer keydown+landing 增量 36 passed 0 fail + ui 585 + renderer 包级 4071 passed（dev 自报，主验增量） |
 | u4-skill-route | pending | 0 | |
 | u5-slash-dom | pending | 0 | |
 | u6-send-migration | pending | 0 | |
@@ -91,3 +95,4 @@ graph TD
 
 **变更历史**：
 - 2026-09-08：初版（6 单元 DAG，源自设计 §5 P1-P5 拆分；P5 测试分摊进各单元）。
+- 2026-09-08：批次 1 完成（u1 aab8b4433 / u2 dadb65c39 / u3 本 commit）；偏差登记 #1-#4；u3 领地补录 landing 测试文件。

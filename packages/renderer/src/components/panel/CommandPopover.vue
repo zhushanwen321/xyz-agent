@@ -129,6 +129,7 @@ import { buildSkillCandidates } from './command-popover-skill-candidates'
 import { useCommandPopoverCwdFileView } from './command-popover-open-fetch'
 import { useCommandPopoverDelivery } from './command-popover-delivery'
 import { useCommandPopoverFileCandidates } from './command-popover-file-candidates'
+import { useCompositionFlag } from '@/composables/panel/composition-flag'
 import { isInternalSkillName, isInternalSlashName } from '@/lib/internal-command-filter'
 import type { SkillInfo } from '@xyz-agent/shared'
 import { useSessionStore } from '@/stores/session'
@@ -186,6 +187,8 @@ const controlledOpen = computed({
 
 const activeIndex = ref(0)
 
+/** IME 组合态双保险的事件侧面（window capture compositionstart/end 维护，详见 composition-flag.ts） */
+const { composing: composingRef } = useCompositionFlag()
 const { t } = useI18n()
 const commandStore = useCommandStore()
 /** file 候选加载（挂载 / 切 session 拉取，store 缓存幂等——ADR-0049；见 command-popover-file-candidates.ts） */
@@ -368,7 +371,16 @@ function handleKeydown(e: KeyboardEvent): boolean {
     return true
   }
   if (e.key === 'Enter' || e.key === 'Tab') {
+    // 时序契约（composer-chip-insertion-semantics 设计 D2）：本分支多经 window capture
+    // （onWindowKeydown）进入，消费 Enter/Tab 后必须 stopPropagation 截断事件向 target 的
+    // 传播——这是「浮层 open 时 Enter 选中候选、绝不触发 composer onSend」的唯一防线
+    // （composer-keydown 无 defaultPrevented 防御层：contenteditable Enter 分支恒先
+    // preventDefault 再转发，防御层会拦死正常发送）。勿删。
+    // 边界：stopPropagation 不拦同节点上已注册的其他 listener——split mode 双浮层同时 open
+    // 时按注册序先到先得（设计 D2 边界声明①，已知限制）。
+    if (composingRef.value || e.isComposing) return false // IME 双保险：组合中 Enter 是确认候选词，放行
     e.preventDefault()
+    e.stopPropagation()
     onSelect(list[activeIndex.value])
     return true
   }
@@ -388,7 +400,9 @@ function onWindowKeydown(e: KeyboardEvent): void {
 
 if (typeof window !== 'undefined') {
   window.addEventListener('keydown', onWindowKeydown, true)
-  onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKeydown, true))
+  onBeforeUnmount(() => {
+    window.removeEventListener('keydown', onWindowKeydown, true)
+  })
 }
 
 // 浮层打开时重置高亮到第一项；type 切换也重置
