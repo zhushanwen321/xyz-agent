@@ -4,16 +4,22 @@
  * 设计文档 §3.3 D4：landing 新任务默认模型 = lastUsedModel（显式，跨重启成立）。
  * 写点 = onModelSelect 非 staging 分支（用户显式选模型时写入）；staging 试选不写。
  *
+ * 持久化生命周期（三态预载 / 加载完成回调 / 加载窗口守卫 / deferred 补写 / 写穿串行链）
+ * 由 foundation createKVSlot 收编（state-truth-sync §3.3 D9 KV 单键族）；本模块保留：
+ * - 内存容器（ref 单值——响应式使下游 computed（model-thinking regularModelId 经 lookup）
+ *   对 KV 预载完成建立依赖，冷启动 KV 值到达时 chip 自动脱离 defaultModel）
+ * - 值域差异钩子：无 validate（任意字符串模型 id 皆可记）；parseSnapshot 只认字符串形状
+ *
  * KV 经 getPlatform().storage（KVStorage 接口，platform/port），core 零 localStorage 直连
  * （W3 迁移约束，同 model-thinking-memory / system-storage）。
  *
  * 错误规格（对齐设计 E4）：
- * - KV 读失败 → undefined（catch 回退，不抛不吞；下游回落 defaultModel）
+ * - KV 读失败 / JSON 损坏 / 非字符串 → undefined（factory catch 回退 + parseSnapshot 形状门，
+ *   不抛不吞；下游回落 defaultModel）
  * - KV 写失败 → console.warn，内存值不回滚（本次运行内仍生效，重启后丢）
- * - JSON 非字符串 → undefined（兼容旧格式或损坏数据）
  */
 import { ref } from 'vue'
-import { getPlatform } from '../../platform/port'
+import { createKVSlot } from '../../foundation/create-kv-slot'
 
 /** localStorage key（对齐 model-thinking-memory 命名空间）。 */
 export const LAST_USED_MODEL_KEY = 'xyz-agent:last-used-model'
@@ -26,52 +32,27 @@ export const LAST_USED_MODEL_KEY = 'xyz-agent:last-used-model'
 // taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态）：lastUsedModel 内存镜像单例
 const cachedValue = ref<string | undefined>(undefined)
 
-type LoadState = 'idle' | 'loading' | 'loaded'
-
-/** 预载状态：loadOnce 幂等。 */
-let loadState: LoadState = 'idle'
-
-/** 加载完成回调队列。 */
-let loadedCallbacks: Array<() => void> = []
-
-/** 加载完成前置起的写标记。 */
-let deferredPersist = false
+/** KV 单键槽位：持久化生命周期收编于 createKVSlot（D9）。本键的 KV 值形态 = 单值 JSON 字符串。 */
+const slot = createKVSlot<string>(LAST_USED_MODEL_KEY, {
+  tag: 'last-used-model',
+  // 形状门：合法 JSON 但非字符串（数组/对象/null）→ 按空启动（undefined）
+  parseSnapshot: (parsed) => (typeof parsed === 'string' ? parsed : undefined),
+  mergeSnapshot: (value) => {
+    // 加载窗口守卫：内存已有值时在途 KV 快照不得覆写——加载窗口内的 record 比快照新，
+    // 覆写后 deferred 补写会把 KV 旧值落盘（双丢）
+    if (cachedValue.value === undefined) {
+      cachedValue.value = value
+    }
+  },
+  serialize: () => JSON.stringify(cachedValue.value),
+})
 
 /**
  * 触发惰性预载（fire-and-forget，幂等）。
  * 由 model-thinking 组装时调用。加载完成前 lookup 返回 undefined。
  */
 export function loadOnce(): void {
-  if (loadState !== 'idle') return
-  loadState = 'loading'
-  void loadFromKV()
-}
-
-/** 读 KV 入内存。任何读失败/损坏都收敛到 undefined（E4）。 */
-async function loadFromKV(): Promise<void> {
-  try {
-    const raw = await getPlatform().storage.get(LAST_USED_MODEL_KEY)
-    if (raw) {
-      const parsed: unknown = JSON.parse(raw)
-      // 加载窗口守卫（镜像 model-thinking-memory）：内存已有值时在途 KV 快照不得覆写
-      // ——加载窗口内的 record 比快照新，覆写后 deferred 补写会把 KV 旧值落盘（双丢）
-      if (typeof parsed === 'string' && cachedValue.value === undefined) {
-        cachedValue.value = parsed
-      }
-    }
-  } catch {
-    // E4：KV 读失败/损坏 → undefined（不抛不吞）。加载窗口内已 record 的内存新值保留，
-    // 由 deferred 补写收敛（同守卫语义，读失败不抹掉更新的内存值）
-    if (!deferredPersist) cachedValue.value = undefined
-  }
-  loadState = 'loaded'
-  const callbacks = loadedCallbacks
-  loadedCallbacks = []
-  for (const cb of callbacks) cb()
-  if (deferredPersist) {
-    deferredPersist = false
-    void persist()
-  }
+  slot.loadOnce()
 }
 
 /**
@@ -86,22 +67,9 @@ export function lookup(): string | undefined {
  * KV 写失败仅 console.warn，内存不回滚（E4）。
  */
 export function record(modelId: string): void {
-  cachedValue.value = modelId
-  if (loadState !== 'loaded') {
-    deferredPersist = true
-    return
-  }
-  void persist()
-}
-
-/** 写穿 KV。失败不回滚内存。 */
-async function persist(): Promise<void> {
-  try {
-    await getPlatform().storage.set(LAST_USED_MODEL_KEY, JSON.stringify(cachedValue.value))
-  } catch (err) {
-    // best-effort：KV 写失败不阻塞——内存值仍有效，重启后丢（E4 容错）
-    console.warn('[last-used-model] KV write-through failed:', err)
-  }
+  slot.record(modelId, () => {
+    cachedValue.value = modelId
+  })
 }
 
 /**
@@ -109,17 +77,11 @@ async function persist(): Promise<void> {
  * 加载已完成则立即同步触发。
  */
 export function onLoaded(cb: () => void): void {
-  if (loadState === 'loaded') {
-    cb()
-    return
-  }
-  loadedCallbacks.push(cb)
+  slot.onLoaded(cb)
 }
 
 /** 仅测试用：重置模块级状态。 */
 export function __resetLastUsedModelForTesting(): void {
   cachedValue.value = undefined
-  loadState = 'idle'
-  loadedCallbacks = []
-  deferredPersist = false
+  slot.__resetForTesting()
 }
