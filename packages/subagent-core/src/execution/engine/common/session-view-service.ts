@@ -62,6 +62,16 @@ const logger = getLogger("subagents");
  */
 const DEFAULT_ENGINE_ID = "pi";
 
+/**
+ * ③级 outcome-only 占位 assistant 文案（subagent-nonpi-visibility-followups 设计
+ * §3.3 D6 三端锚点）。core 生产代码不 import shared（双端复用约束，见上方 import
+ * 注释），故本地同值常量 + 锚定注释：权威值 = packages/shared 的
+ * SUBAGENT_OUTCOME_PLACEHOLDER（'(no outcome recorded)'）；同值漂移由 runtime
+ * test/subagent-extractor-engine.test.ts 契约钉子用例的行为断言守护（③级投影占位
+ * content === shared 常量）——core 改文案即该用例翻红。
+ */
+const OUTCOME_PLACEHOLDER_TEXT = "(no outcome recorded)";
+
 // ============================================================
 // 引擎 id 提取（record 路由段）
 // ============================================================
@@ -291,7 +301,7 @@ function replayEventsToHistory(
   return undefined;
 }
 
-function hasTurnContent(turn: Turn): boolean {
+function hasTurnContent(turn: { text: string; thinking: string; toolCalls: unknown[] }): boolean {
   return turn.text !== "" || turn.thinking !== "" || turn.toolCalls.length > 0;
 }
 
@@ -447,7 +457,7 @@ function outcomeOnlyMessages(record: SubagentRecordSnapshot): HistoryMessage[] {
     id: randomUUID(),
     role: "assistant",
     // result 优先（正常轮终文本）；error 次之（失败终态）；双缺占位（运行中被杀等）
-    content: record.result ?? record.error ?? "(no outcome recorded)",
+    content: record.result ?? record.error ?? OUTCOME_PLACEHOLDER_TEXT,
     status: isErrorOutcome ? "error" : "complete",
     timestamp: record.endedAt ?? base,
     ...(isErrorOutcome && record.error !== undefined ? { error: record.error } : {}),
@@ -493,7 +503,17 @@ export async function readSubagentHistoryMessages(
     return outcomeOnlyMessages(record);
   }
   const native = await reader(handle, dataDir);
-  if (native !== undefined) return sessionViewToMessages(native, record);
+  if (native !== undefined) {
+    // ①级判空降级（设计 D3）：读成功但 turns 无实质内容（text/thinking/toolCalls
+    // 全空，与②级 replayEventsToHistory 的 contentTurns 判定同语义）= 本级不可用，
+    // 降②级——「仅 task」空壳投影（窗口 B）不再从①级放行。
+    if (native.turns.some(hasTurnContent)) return sessionViewToMessages(native, record);
+    logger.debug(
+      `[session-view-service] tier1 native view has no substantive content ` +
+        `(turns=${native.turns.length}), degrade to journal tier ` +
+        `(subagentId=${record.subagentId})`,
+    );
+  }
   const journaled = readJournalTier(record, handle, dataDir);
   if (journaled !== undefined) return journaled;
   return outcomeOnlyMessages(record);

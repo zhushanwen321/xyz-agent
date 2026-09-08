@@ -256,6 +256,32 @@ watch(
   { immediate: true },
 )
 
+/**
+ * 非 pi 终态回填桥（设计 D2，docs/design/subagent-nonpi-visibility-followups.md）：
+ * 非 pi 引擎无实时流通道，运行中打开的 tab 内容停在打开时刻——record 跨越终态
+ * （running → 非 running）时重拉一次，对话流自动收敛到完整内容。四守卫：
+ * cur/prev 任一 null（agentcall / 未选中）跳过；vid 或 subId 变化 = 切换 subagent
+ * 跳过（新 vid 由上方 selectedSubagentId watch 负责）；仅 running → 非 running 跨越
+ * 触发（打开时已终态由首拉覆盖）；pi 引擎跳过（D5 零变化——v4 波动
+ * done→running→done 由跨越守卫天然拦截，非 pi 守卫再兜一层）。
+ */
+watch(
+  () => {
+    const vid = selectedSubagentId.value
+    const record = currentRecord.value
+    if (!vid || !record) return null
+    return { vid, subId: record.subagentId, status: record.status }
+  },
+  (cur, prev) => {
+    if (!cur || !prev) return
+    if (cur.vid !== prev.vid || cur.subId !== prev.subId) return
+    if (prev.status !== 'running' || cur.status === 'running') return
+    const record = currentRecord.value
+    if (!record || recordEngine(record) === DEFAULT_ENGINE_ID) return
+    void loadSubagentData(cur.vid)
+  },
+)
+
 onBeforeUnmount(() => {
   stopSubagentStream()
 })

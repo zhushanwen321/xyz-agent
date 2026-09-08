@@ -13,6 +13,7 @@
  */
 import { computed, type ComputedRef } from 'vue'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
+import { SUBAGENT_OUTCOME_PLACEHOLDER } from '@xyz-agent/shared'
 import { isSubagentVirtualId, extractSubagentId, extractMainSessionId, useSubagentStore } from '@/stores/subagent'
 
 /**
@@ -36,11 +37,20 @@ export function useSubagentThinking(
     return subagentStore.isStreamingSubagent(extractMainSessionId(sessionId.value), extractSubagentId(sessionId.value))
   })
 
-  /** subagent drawer 思考中判定（§6.3/§7.3）：forceWorking 且末位 turn 还没有 assistant 产出。 */
+  /**
+   * subagent drawer 思考中判定（§6.3/§7.3 + 非 pi 可见性 D6）：forceWorking 且末位
+   * turn 无 assistant 实质产出——assistants 为空，或全部为占位 assistant（content ===
+   * SUBAGENT_OUTCOME_PLACEHOLDER，仅 result/error 双缺时由③级投影产出）。非占位
+   * content（真实 result/error 文本）= 有产出 → 思考行熄灭。
+   */
   const subagentThinking = computed(() => {
     if (!forceWorking.value) return false
     const turn = lastRenderTurn.value
-    return turn === null || turn.assistants.length === 0
+    return (
+      turn === null ||
+      turn.assistants.length === 0 ||
+      turn.assistants.every((a) => a.content === SUBAGENT_OUTCOME_PLACEHOLDER)
+    )
   })
 
   return { forceWorking, subagentThinking }

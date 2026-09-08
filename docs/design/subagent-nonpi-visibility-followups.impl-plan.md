@@ -1,6 +1,6 @@
 # 非 pi 引擎 subagent 可见性收尾 实施计划
 
-基线: <commit 后回填> | 来源设计: docs/design/subagent-nonpi-visibility-followups.md | 日期: 2026-09-09
+基线: 6071fa8bf | 来源设计: docs/design/subagent-nonpi-visibility-followups.md | 日期: 2026-09-09
 
 ## 0 章节映射
 
@@ -26,7 +26,7 @@ Out-of-scope（设计 §1.3）：不伪造实时流（D7/D12）；不改 pi 路�
 
 | Unit | 职责 | 领地（精确文件路径） | 依赖 | 隔离 | 验收条款 |
 |------|------|----------------------|------|------|----------|
-| u0-placeholder-const | shared 新增导出常量 `SUBAGENT_OUTCOME_PLACEHOLDER = '(no outcome recorded)'`，带三端锚定注释（core 本地同值 / runtime 测试守护 / renderer 判据消费，设计 D6） | `packages/shared/src/subagent.ts` | 无（DAG 根） | plain | shared 包 typecheck 绿；常量导出可被 workspace 消费 |
+| u0-placeholder-const | shared 新增导出常量 `SUBAGENT_OUTCOME_PLACEHOLDER = '(no outcome recorded)'`，带三端锚定注释（core 本地同值 / runtime 测试守护 / renderer 判据消费，设计 D6） | `packages/shared/src/subagent.ts`、`packages/shared/src/index.ts`（barrel 具名导出，偏差补录见 §5） | 无（DAG 根） | plain | shared 包 typecheck 绿；常量导出可被 workspace 消费 |
 | u1-core-degrade | 编排层①级判空降级（D3：ReplayedTurn 逐 turn 实质内容判定，全空降②级）+ ③级占位字面量换本地常量（锚定注释）+ core 降级矩阵用例 + runtime 契约钉子用例（defined-empty 非空壳 + 占位同值断言，fixture result/error 双缺） | `packages/subagent-core/src/execution/engine/common/session-view-service.ts`、`packages/subagent-core/src/execution/engine/__tests__/common/session-view-service.test.ts`、`packages/runtime/test/subagent-extractor-engine.test.ts` | u0 | plain | §4.1 core 矩阵绿；subagent-core 全量绿；runtime 既有 engine-route/extractor 套件绿 |
 | u2-renderer-refill | SubagentTab status watch（D2 四守卫）+ `useSubagentThinking` 判据排除占位（D6）+ renderer 测试矩阵（回填/零变化/切换守卫/已终态/切回兜底 + 思考行占位反例） | `packages/renderer/src/components/panel/SubagentTab.vue`、`packages/renderer/src/__tests__/panel/subagent-tab.test.ts`、`packages/renderer/src/composables/panel/useSubagentThinking.ts`、`packages/renderer/src/__tests__/components/MessageStream-subagent-force-working.test.ts` | u0 | plain | §4.1 renderer 矩阵绿；renderer 相关套件绿；drawer-blank T3 既有断言保持绿；`<script setup>` ≤300 行 |
 
@@ -57,17 +57,21 @@ graph TD
 
 ## 5 合理偏差登记表
 
-（初始为空）
+| Unit | 偏差 | 理由 | 处置 |
+|------|------|------|------|
+| u0 | 额外改 `packages/shared/src/index.ts`（+1 行具名再导出 + 注释） | shared barrel 是具名导出非 `export *`，不补则常量对 workspace 不可达，u0 验收条款「常量导出可被 workspace 消费」无法达成；u1/u2 领地均不含 index.ts | 合理偏差成立；u0 领地行已补录该文件；dev 报告 deviations 显式声明（非静默） |
 
 ## 6 状态表
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|---------------------------------------------|------|----------|
-| u0-placeholder-const | pending | 0 | — |
-| u1-core-degrade | pending | 0 | — |
-| u2-renderer-refill | pending | 0 | — |
+| u0-placeholder-const | committed | 1 | commit 6f232824c；shared tsc --noEmit 重跑 PASS（主 agent 核验） |
+| u1-core-degrade | committed | 1 | 与 u2 同批 commit；core 套件 29 passed / runtime 钉子 14 passed / engine-route 3 passed / subagent-core 全量 3379 passed（主 agent 重跑核验） |
+| u2-renderer-refill | committed | 1 | 与 u1 同批 commit；renderer 双套件 25 passed（T3 保持绿）/ script setup 189 行 ≤300 / vue-tsc 干净（主 agent 重跑核验） |
 
 ## 7 残留风险与变更历史
 
 - 2026-09-09 创建。审查证据与单元表直接来自设计文档 §5.1（已过双 reviewer 两轮对抗审查）。
+- 2026-09-09 u0 committed（1 轮，deviations 1 条入 §5 登记表，领地补录 index.ts）；基线 hash 回填 6071fa8bf。
+- 2026-09-09 u1+u2 各 1 轮完成，同批 committed（§2 顺序约束满足）；deviations 均空；全部验收条款主 agent 重跑核验通过。待：阶段 3 一致性审查。
 - Gate B 真机验收注意（设计 §4 头注）：隔离栈 vite 1421 / runtime 3410 / CDP 9225，独立数据目录，`env -u ELECTRON_RUN_AS_NODE`；S3 计数与 S6 RPC 走 browser-automation 连 CDP。
