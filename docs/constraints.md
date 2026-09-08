@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 91 条（生成于 2026-09-07）。
+共 92 条（生成于 2026-09-08）。
 
 ## pi 关系（外部依赖边界）
 
@@ -130,6 +130,7 @@
 | C-proc-10 | 文档-代码符号零漂移：设计文档（docs/design/）反引号内引用的代码符号（蛇形常量 / getXxx() 函数调用形态）必须存在于映射源码模块的符号表中（导出名或模块级声明；env 名 XYZ_*/PI_* 与 errno 字符串族豁免）；符号删除/改名必须同批同步文档。映射登记 SSOT = scripts/check-doc-symbol-drift.mjs 的 DOC_MODULE_MAP，新增设计文档时在该表登记映射 | docs/design/**、apps/electron/main/update/**、scripts/check-doc-symbol-drift.mjs | [check-doc-symbol-drift.mjs](../scripts/check-doc-symbol-drift.mjs) | hook: `check-doc-symbol-drift.mjs` |
 | C-proc-08 | pi 语义依赖机器登记 + 探针 + 版本门禁：docs/pi-semantics.json（PS-xx 条目，probe/observe 分型）是唯一机器登记源，scripts/check-pi-semantics.mjs（pre-commit + CI）守 schema/探针存在性/四包版本一致（pi-coding-agent ≡ pi-ai ≡ pi-agent-core ≡ runtime pin）；pi 升级 PR 必查两项——pi-ai exports 是否移除 ./compat、changelog 是否提及 ModelManager 迁移（PS-15 时间炸弹）；探针族红 = 语义漂移，先复核锚点再更新 verifiedWith | docs/pi-semantics.json、packages/runtime/src/infra/pi/**、package.json、packages/runtime/package.json | [pi-boundary-reliability](design/pi-boundary-reliability.md#d6漂移守卫体系pi-语义依赖的机器登记--探针--版本门禁选定) | hook: `check-pi-semantics.mjs` |
 | C-proc-11 | npm 发布面一致性：dist 发布包 files 白名单 ↔ 构建产出双向对齐——files 条目须磁盘存在且非空（幽灵条目拦截，npm pack 对幽灵条目静默跳过）、包内顶层 dist* 产物目录须被 files 覆盖（漏声明方向反向覆盖），由 check-publish-surface.mjs 在发布门（release workflow publish 前）与 CI PR invariants 双点强制（刻意不挂 pre-commit：dist 产物被 gitignore，干净 checkout 必红）；新增产物档须同批挂 workflow 构建步骤 + files 白名单条目 + 守卫覆盖（三者缺一不可）；自包含档命名约定 dist.bundle 且须内联全部运行时依赖（静态 require 探针，裸名外部说明符红）；非发布用途构建目录禁用 dist 前缀（否则反向覆盖检查误红，改名即可）；非 workspace 包机制上不经 changeset 发布线（changesets 按 workspace 发现包），防手滑 npm publish 一律 private:true | packages/**、.github/workflows/release-npm.yml、.github/workflows/release-npm-dev.yml、.github/workflows/ci.yml、scripts/check-publish-surface.mjs、resources/plugins/statusline/package.json | [npm-publish-surface-guard](design/npm-publish-surface-guard.md#33-关键决策与权衡) · [check-publish-surface.mjs](../scripts/check-publish-surface.mjs) | hook: `check-publish-surface.mjs` |
+| C-proc-12 | 引擎协议边界：引擎子进程 env 由 SDK buildEngineChildEnv 三层契约统一构建（L0 基础设施注入 / L1 deny+显式剥除 / L2 manifest 前缀放行，次序写死先过滤后注入；L0∩L1=∅ 由测试断言）、任务子进程 spawn 必经 SDK spawnEngineChild（detached:false 硬编码、子进程 stdin 恒自有 pipe 不继承引擎 fd）、引擎侧自灭以 stdio EOF 为主判据（未 ack 反向请求 30s 计时为辅，已 ack 的 askUser/executeAndAwait 排除）；ENGINE_ENV_PREFIXES/ENGINE_ENV_DENY_LIST 以 shared constants.ts 为 SSOT、SDK env.ts 镜像逐项相等；守卫 SCAN_ROOTS 覆盖 SDK 与两引擎 CLI 包（core/src 条目为 W12 拖尾子项，W11 收口时加入并清零豁免） | packages/subagent-engine-sdk/src/**、packages/zcode-subagent-cli/**、packages/pi-subagent-cli/**、packages/shared/src/constants.ts、.githooks/check_spawn_env_boundary.py、.githooks/check_env_whitelist_sync.py | [subagent-engine-protocolization.impl-plan](../docs/design/subagent-engine-protocolization.impl-plan.md#212-w12-环境与文档规格) · [env-propagation-boundary](../docs/design/env-propagation-boundary.md) | hook: `check_spawn_env_boundary.py` + hook: `check_env_whitelist_sync.py` |
 
 ## subagent-workflow（单写者不变量）
 

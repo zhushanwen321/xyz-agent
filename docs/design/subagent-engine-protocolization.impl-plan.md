@@ -393,7 +393,7 @@ graph TD
 | W9 打包与分发 | pending | — | — |
 | W10 conformance 改造 | pending | — | — |
 | W11 壳侧去引擎化 | pending | — | — |
-| W12 环境与文档 | pending | — | — |
+| W12 环境与文档 | committed | 1 | commit 见 git log `feat(env): W12 buildEngineChildEnv three-layer + spawnEngineChild`；test_evidence = SDK 76/76（新增 env-contract 15 + spawn-self-destruct 10 用例）+ 两守卫违规 0（SDK/引擎包入 SCAN_ROOTS、镜像逐项相等断言 OK）+ R4-S① 真实 git 集成断言（hooks 子进程 env 无 deny 键）+ worktree 单测 75 passed + 集成 8 passed |
 
 ## 7 残留风险与变更历史
 

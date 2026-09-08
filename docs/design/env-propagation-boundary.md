@@ -278,6 +278,21 @@ rg -n 'spawn\(|execFile\(|fork\(|pty\.spawn' packages/runtime/src apps/electron/
 
 ---
 
+### 3.7 引擎子进程 env 契约（`buildEngineChildEnv`，W12 迁移期中间态）
+
+子代理引擎协议化（`docs/design/subagent-engine-protocolization.impl-plan.md` §2.12，约束登记 C-proc-12）引入引擎 CLI 子进程形态后，出站契约新增引擎面分支——与 §3.5 D2/D3 的 runtime/main 面共用治理原则（deny-by-default + 消费证据），但**SSOT 落在 `@zhushanwen/subagent-engine-sdk`**（F9：SDK 消费面 zsw 宿主/引擎 CLI 不可依赖 `@xyz-agent/shared`，SDK 是跨宿主 SSOT）：
+
+- **`buildEngineChildEnv(baseEnv, opts)` 三层**（高者覆盖低者，次序写死 = 先过滤后 L0 显式注入）：
+  - **L0 基础设施键**（core 过滤之后显式注入，不受放行/剥除约束）：`XYZ_AGENT_DATA_DIR` / `XYZ_AGENT_ENGINE_NODE` / `ELECTRON_RUN_AS_NODE`（执行器为 Electron 二进制时）/ `XYZ_AGENT_SUBAGENT=1`（nesting guard）/ relay 三键 `XYZ_SUBAGENT_RELAY_{SOCKET,NODE,SCRIPT}`（必经 L0——L1 拒绝 `XYZ_SUBAGENT_` 前缀、L2 是 manifest 面，两层都到不了）/ 引擎侧身份 env（`PI_SUBAGENT_ROOT_SESSION_ID` 等）；
+  - **L1 deny + 显式剥除**（恒高于 manifest 放行）：`ENGINE_ENV_DENY_LIST` = deny 两键（`XYZ_AGENT_PACKAGED` / `XYZ_RUNTIME_TOKEN`，与 `SPAWN_ENV_OUTBOUND_DENY_LIST` 同成员）+ 凭证键 `XYZ_AGENT_API_KEY` + 父身份键 `XYZ_SUBAGENT_RELAY_{SESSION_ID,RECORD_ID}`（引擎按 `run.params.ctx` 重写，防父身份误归属）+ 防御性剥除三死名 `XYZ_SUBAGENT_RELAY_{STDIN,STDOUT,STDERR}`（全仓零生产写入方，workspace 纪律登记）；
+  - **L2 manifest 放行**：manifest `envPrefixes` 声明前缀的引擎私有 env；保留前缀拒绝表 `XYZ_` / `XYZ_AGENT_` / `XYZ_SUBAGENT_`；形态校验 `^[A-Za-z0-9_]+$`（大小写不敏感）；非法条目丢弃 + warn（包继续可用）。
+- **常量单源**：`ENGINE_ENV_PREFIXES` / `ENGINE_ENV_DENY_LIST` SSOT 在 `packages/shared/src/constants.ts`，SDK `src/env.ts` 内联镜像（构建期生成物），逐项相等由 `check_env_whitelist_sync.py` 断言，两处改动同批提交；守卫断言 L0 键集合 ∩ L1 deny/剥除集合 = ∅（SDK vitest）。
+- **通用出站构建器 SDK 版**：SDK 同时导出 `buildOutboundChildEnv`（deny 剥离终态，供非引擎 spawn 面）。与 shared 版的刻意差异：**缺省不做白名单过滤**（prefixes 省略 = 全量继承父 env + deny 剥除）——SDK 不可 import `ENV_WHITELIST_PREFIXES`，引擎 base 已先经 core 过滤，ambient 面（worktree git 需要 GIT_*/proxy/ssh）必须保留继承面。`packages/subagent-core/src/execution/worktree-{manager,git-ops}.ts` 的两处 git `execFile` 已采纳（R3 MF-C：deny 键不进 git 子进程，git hooks 后代不再可能消费 deny 键）。
+- **守卫扩展**：`check_spawn_env_boundary.py` 的 `SCAN_ROOTS` 已含 SDK（`packages/subagent-engine-sdk/src`）与两个引擎 CLI 包（`packages/zcode-subagent-cli`、`packages/pi-subagent-cli`，创建前 WARN 跳过）；`buildEngineChildEnv` 与 `buildOutboundChildEnv` / `composeChildEnvBase` 并列进 `CONTRACT_BUILDER_SYMBOLS`。
+- **引擎侧自灭**（SDK `armEngineSelfDestruct`）：主判据 stdio EOF；辅助判据未 ack 反向请求计时超时（缺省 30s，env `XYZ_ENGINE_HOST_REQUEST_TIMEOUT_MS`）；排除面 = 已 ack 的 host/askUser 与两阶段 ack 的长运行 `HostBridge.executeAndAwait`。配套 `spawnEngineChild`（任务子进程唯一 spawn 入口）：硬编码 `detached:false` + `windowsHide:true`，子进程 stdin 恒自有 pipe、绝不继承引擎自身 stdin fd（R9-4②，否则 EOF 主判据失效）。
+
+**【迁移期中间态标注，W12 拖尾子项（impl-plan §7.1，四项）】**：以下子项依赖引擎包迁移状态（W5/W7/W9），本时点为中间态——① 本文档 B3 条目终态与 `packages/shared/src/spawn-env-contract.ts` 的 `XYZ_ZCODE_CLI` 条目 `piConsumerAnchors` 回写（现锚 subagent-core `engines/zcode/registration.ts:34`，包迁移后改指引擎包新路径）；② SCAN_ROOTS 对引擎包的扫描实效；③ pi 侧 `buildChildEnv` 补齐 5 键剥离的落点核对；④ `packages/subagent-core/src` 的 SCAN_ROOTS 条目 + core 侧 `EXEMPT_CALLSITES` 豁免清零（W11 收口时点执行）。终态以 W11 DoD#9 门核验。
+
 ## 4. 验收（真实场景，非单测堆砌）
 
 每条 = 场景步骤 + 通过标准 + 回溯目标。全部为可执行命令或可观察断言，不含「应该没问题」类表述。

@@ -1066,6 +1066,9 @@ importers:
       '@xyz-agent/extension-protocol':
         specifier: workspace:*
         version: link:../extension-protocol
+      '@zhushanwen/subagent-engine-sdk':
+        specifier: workspace:*
+        version: link:../subagent-engine-sdk
       ajv:
         specifier: ^8.20.0
         version: 8.20.0

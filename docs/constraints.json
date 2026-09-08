@@ -1930,6 +1930,35 @@
           "hook": "check-publish-surface.mjs"
         }
       ]
+    },
+    {
+      "id": "C-proc-12",
+      "summary": "引擎协议边界：引擎子进程 env 由 SDK buildEngineChildEnv 三层契约统一构建（L0 基础设施注入 / L1 deny+显式剥除 / L2 manifest 前缀放行，次序写死先过滤后注入；L0∩L1=∅ 由测试断言）、任务子进程 spawn 必经 SDK spawnEngineChild（detached:false 硬编码、子进程 stdin 恒自有 pipe 不继承引擎 fd）、引擎侧自灭以 stdio EOF 为主判据（未 ack 反向请求 30s 计时为辅，已 ack 的 askUser/executeAndAwait 排除）；ENGINE_ENV_PREFIXES/ENGINE_ENV_DENY_LIST 以 shared constants.ts 为 SSOT、SDK env.ts 镜像逐项相等；守卫 SCAN_ROOTS 覆盖 SDK 与两引擎 CLI 包（core/src 条目为 W12 拖尾子项，W11 收口时加入并清零豁免）",
+      "scope": [
+        "packages/subagent-engine-sdk/src/**",
+        "packages/zcode-subagent-cli/**",
+        "packages/pi-subagent-cli/**",
+        "packages/shared/src/constants.ts",
+        ".githooks/check_spawn_env_boundary.py",
+        ".githooks/check_env_whitelist_sync.py"
+      ],
+      "authority": [
+        "../docs/design/subagent-engine-protocolization.impl-plan.md#212-w12-环境与文档规格",
+        "../docs/design/env-propagation-boundary.md"
+      ],
+      "dimensions": [
+        "arch-boundary"
+      ],
+      "enforcement": [
+        {
+          "type": "machine",
+          "hook": "check_spawn_env_boundary.py"
+        },
+        {
+          "type": "machine",
+          "hook": "check_env_whitelist_sync.py"
+        }
+      ]
     }
   ]
 }

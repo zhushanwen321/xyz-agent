@@ -46,6 +46,15 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCAN_ROOTS = [
     "packages/runtime/src",
     "apps/electron/main",
+    # W12 主时点扩展（impl-plan §2.12 / §7.1 拖尾清单第 4 项）：SDK 与两个引擎 CLI 包
+    # 出生即经 SDK 原语（buildEngineChildEnv / spawnEngineChild），无存量违规面。
+    # 两个引擎 CLI 包（W5/W7 创建）当前不在盘——iter_ts_files 对缺目录 root 打
+    # [WARN] 后 continue（容错行为，勿改）。packages/subagent-core/src 的条目
+    # 不在本时点加入（core 现存 spawn 点零构建器命中，当轮扩即红）——W11 收口
+    # 时点由 W12 拖尾子项执行（加入条目 + 清零 core 侧 EXEMPT_CALLSITES）。
+    "packages/subagent-engine-sdk/src",
+    "packages/zcode-subagent-cli",
+    "packages/pi-subagent-cli",
 ]
 
 # 目录名成分或文件名后缀排除（测试文件不代表生产进程拓扑）
@@ -55,7 +64,13 @@ EXCLUDED_FILE_SUFFIXES = (".test.ts", ".spec.ts", ".d.ts")
 # 文件级白名单：仅当文件真 import 或真调用了构建器才整文件通过。裸子串匹配
 # （`b in source`）会让仅注释提及构建器的文件静默放行其全部未武装调用点，故必须
 # 用形态化正则：import {...} 花括号内出现符号名，或紧跟 ( 的调用形态。
-CONTRACT_BUILDER_SYMBOLS = ("buildOutboundChildEnv", "composeChildEnvBase")
+CONTRACT_BUILDER_SYMBOLS = (
+    "buildOutboundChildEnv",
+    "composeChildEnvBase",
+    # W12：SDK 引擎 env 三层契约构建器（与 shared 版构建器并列的可接受符号——
+    # F9：SDK 消费面不可依赖 shared，自持同语义构建器）
+    "buildEngineChildEnv",
+)
 CONTRACT_BUILDER_USAGE_RE = re.compile(
     r"(?:import\s+(?:type\s+)?\{[^}]*\b(?:%s)\b[^}]*\}|\b(?:%s)\s*\()"
     % ("|".join(CONTRACT_BUILDER_SYMBOLS), "|".join(CONTRACT_BUILDER_SYMBOLS))

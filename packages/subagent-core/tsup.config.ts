@@ -59,7 +59,10 @@ const bundleConfig = defineConfig({
   // 全部运行时依赖内联：@xyz-agent/* 用前缀正则（未来新增 workspace 运行时
   // 依赖自动跟随，不静默漏网）；ajv/yaml/proper-lockfile 逐名列出。node 内建
   // 模块（node: 前缀）不受 noExternal 影响，仍保持 external。
-  noExternal: [/^@xyz-agent\//, 'ajv', 'yaml', 'proper-lockfile'],
+  // @zhushanwen/subagent-engine-sdk（W12：worktree git 出站卫生经其
+  // buildOutboundChildEnv）是 @zhushanwen 域 workspace 依赖，前缀正则覆盖不到，
+  // 逐名列入。
+  noExternal: [/^@xyz-agent\//, '@zhushanwen/subagent-engine-sdk', 'ajv', 'yaml', 'proper-lockfile'],
 })
 
 export default bundleOnly ? bundleConfig : mainConfig

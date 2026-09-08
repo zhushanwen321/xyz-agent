@@ -21,5 +21,7 @@ export * from "./paths.ts";
 // ── UI 请求契约类型（host/askUser 反向通道载荷；core 反向 re-export 保消费面）──
 export * from "./ui-types.ts";
 
-// W12 领地（src/env.ts / src/spawn.ts）：空骨架占位，无公共符号导出；
-// W12 落地 buildEngineChildEnv / spawnEngineChild 时在此追加 export *。
+// W12 落地（impl-plan §2.12）：env/spawn 原语（三层 env 契约 + 引擎子进程唯一 spawn
+// 入口 + 宿主死亡自灭守卫）。
+export * from "./env.ts";
+export * from "./spawn.ts";
