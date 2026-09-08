@@ -1941,7 +1941,7 @@
         "packages/renderer/src/composables/**"
       ],
       "authority": [
-        "design/state-truth-sync-architecture.md#d1-resolvelaunchconfig-单一解析模块c1-核心选定"
+        "design/state-truth-sync-architecture.md#d1resolvelaunchconfig-单一解析模块c1-核心选定"
       ],
       "dimensions": [
         "data-governance",
@@ -1968,7 +1968,7 @@
         "packages/renderer/**"
       ],
       "authority": [
-        "design/state-truth-sync-architecture.md#d8-改状态回执裁决标准--协议层机器强制c4-选定",
+        "design/state-truth-sync-architecture.md#d8改状态回执裁决标准--协议层机器强制c4选定",
         "adr/0065-mutation-reply-effective-value.md"
       ],
       "dimensions": [

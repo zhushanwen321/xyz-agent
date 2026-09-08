@@ -163,6 +163,9 @@ worktree 决策：全部 plain。唯一热点公共文件 session-lifecycle.ts�
 | 12 | U6 领地扩展：test/handoff-message-bus.test.ts +3 行 mock 契约跟进 | U6 | runHandoff 新调 findScannedSession，该集成测试 mock 缺方法 TypeError；无生产语义改动 | 主 agent 已接受 |
 | 13 | readEffectiveModelFromState 未直接复用：改用 findScannedSession（ScannedSession.modelId/thinkingLevel，与 seedRestoreMetaOverride sidecar 兜底同源数据链）+ 薄适配 | U6 | 前者输入形态 = get_state 回执解析器，与源真值两路径（内存 meta/sidecar）不匹配；走设计边界预留出口「签名不适合 → 薄适配不动 restore-seeding」 | 已裁决 |
 | 14 | nonEmptyStr（空串归一 3 行）在 session-lifecycle.ts 与 handoff-service.ts 各持一份 | U6 | handoff 不得反向依赖 session-lifecycle 内部、launch-params/restore-seeding 禁碰——依赖方向约束下不值得为 3 行工具破界 | 已裁决 |
+| 15 | ensureLaunchDataReady 聚合源缺 providers/defaultModel（设计 D1 五源之一；实现仅聚合 2 个 KV 源 + 壳侧 loadPresets） | 阶段3 审查 A-U2 | settings providers 经 WS initial-state 订阅推送（settings-lifecycle.ts:102），先于任何用户发送交互到达，占位窗口实践不可达；量级与 KV 同为毫秒级。重审触发：收到「冷启动极快发送后模型/档位与 chip 不一致」反馈即补 settings 就绪源（settings 侧暴露 loadOnce/onLoaded 形态作第三源接入） | 已裁决（声明局限） |
+| 16 | 阶段3 三分区一致性审查（基线 7fd3d100e..HEAD）：22 项 reasonable 全部核实成立——core 区 6 项（D1-D4 终态完整落地含 P2b 数组语义无缩水 / U2a authored-only 收窄完整 / U4r2 补口正确 / 两 factory 质量与处置表一致 / u3 文档回写如实 / LaunchConfigPort 内联声明有迁移意图标注）；renderer+ui 区 7 项（B6 废除彻底 / 壳层三端同源 / 6 处 in-flight 迁移行为等价 / useBackgroundTasks 良性幂等差异 / exports 领地扩展已裁决 / 4 个 wire 测试更新正确 / 壳接线测试为 U2d 交付物）；runtime+shared 区 9 项（D5 注释如实链保留 / D6 fork 插档与 handoff 无 preset 档正确 / L2 探针格式触发面全符且日志可 grep / D8 六类型必需字段+17 项清单双向零差 / ADR 锚点实读属实 / constraints 三条登记+C-pi-14 尾巴回收 / FR-15 删净保留项无误删 / 偏差 #10/#12/#13/#14 如实落地） | 阶段3 审查 | 逐项 file:line 证据见三分区审查报告；本表固存结论 | 已核实 |
+| 17 | 阶段3 审查 5 条 unreasonable 修复批（F1 契约谓词动词表扩充 + fork/handoff 按 ADR 裁决归类 / F2 thinking-level-sync 悬空注释指向 resolveLaunchConfig / F3 E7 壳侧空串分支专属文案 / F4 PresetSelectChip explicitPresetId 重入重置同步 / F5 getSupportedLevels 两链统一含 enabled 检查）+ 2 条 doc_error 主 agent 亲修（U7b 状态行、constraints 两条 authority slug） | 阶段4 修复批 | unreasonable 修复归 subagent（定向复审只审影响面）；doc_errors 归主 agent | 修复中 |
 
 ## 6 状态表
 
@@ -179,7 +182,7 @@ worktree 决策：全部 plain。唯一热点公共文件 session-lifecycle.ts�
 | U5 | committed | 1 | 8fce84d1f（ADR-0065 + 18 项清单 + 6 豁免；C-pi-14 authority 补登） |
 | U6 | committed | 1 | 8f8d70b36（P4 三类源 + E9 回落全过；renderer 零改动；残留风险 #3 探针验证完成——陈旧窗口按代价声明行为） |
 | U7a | committed | 1 | da67e9d4c（factory 15 用例；7 处迁移目标 API 覆盖自评无可表达缺口；exports 子路径授权给 U7b） |
-| U7b | in-progress | 1 | 派发中（4 处迁移 + core package.json exports +1 行——主 agent 已裁决领地扩展） |
+| U7b | committed | 1 | 77688f40b（4 处迁移 + core package.json exports +1 行；settle 时序自查无相反依赖；符号改名 4 处均模块私有） |
 | U7c | committed | 1 | 40929538b（3 处迁移净删 21 行；Set 标记保留属排除形态豁免已接受；35/35 定向绿） |
 | U8 | committed | 1 | 85bdde0eb（配额中断后半成品经全量核验收口：core 120f/1935t 绿、签名逐字不变、消费方零 diff、净删 86 行） |
 | U9 | committed | 1 | 7dbd88873（FR-15 净删 146 行；惰性清除 +1 回归测试；2 领地扩展：mutation 契约 stale 条目 + ADR 豁免镜像行；反向 grep 生产零命中；处置表四族覆盖确认） |
