@@ -9,15 +9,28 @@
 > （appserver-launcher.ts 落盘 wrapper 进程：CLI 形态 app-server 只从 `~/.zcode/cli/config.json`
 > 读凭据而 GUI 登录态落在 `~/.zcode/v2/config.json`，wrapper patch fs 把对前者的读取重定向为
 > 「真实文件 + v2 provider 注入」内存合并，同 id 时 v2 整条优先——v2 是权威凭据源）。
-> D7（常驻 HOME）章节随之**作废**。已接受代价：GUI 会话列表可见 headless 会话；登录态
+> D7（常驻 HOME）章节随之**作废**。已接受代价：GUI 会话列表可见 headless 会话（**已由 2026-09
+> 会话库隔离撤销**——写入面改落独立库后不再可见，见下方修订块）；登录态
 > 轮换后常驻连接需引擎进程重启才用新凭据（凭据内容 hash 刷新机制删除）；zcode 升级
 > schema migration 竞争无契约担保。新漂移面：zcode 升级若改变配置读取路径/方式，失败信号
 > 为 missing baseURL / Model config is missing 明确报错（不静默坏）。收益：HOME 依赖副作用
 > （pnpm store 随 HOME 翻转等）根治；锁/pidfile/孤儿回收/派生目录整章复杂度删除。poolKey
 > 固定 `'shared'`（与 pi 引擎
 > PI_POOL_KEY 同构，journal 落 `engines/zcode/shared/`）；handle.sessionRef.dbPath 为
-> 绝对路径（`~/.zcode/cli/db/db.sqlite`，`ZCODE_HOST_DB_SUFFIX` SSOT）。
+> 绝对路径（隔离库 `<engineDataDir>/engines/zcode/session-db/db.sqlite`，`zcodeSessionDbPath()`
+> SSOT；存量 record 的宿主库绝对路径由 `zcodeDbPathAllowlist()` 集合第二项兼容放行——见下方修订块）。
 > 未作废章节（D1 连接/D3 abort/D4 会话自包含/D5 capabilities/D6 停机面）仍然有效。
+
+> **2026-09 会话库隔离修订（承接 [zcode-session-db-isolation.md](zcode-session-db-isolation.md)，2026-09-09）**：
+> spawn env **覆写** `ZCODE_SESSION_DB_PATH`（并清空别名键 `ZCODE_SESSION_DB`），subagent 会话落
+> xyz-agent 引擎数据目录下的独立会话库 `<engineDataDir>/engines/zcode/session-db/db.sqlite`
+> （路径单一来源 `zcodeSessionDbPath()`，选址在池目录之外），不再与 GUI 共写宿主引擎库——
+> subagent 会话不再进 ZCode GUI 侧边栏。上方修订块中三处口径随之撤销/改写：「会话与 GUI 共写
+> 同一 SQLite」「已接受代价：GUI 会话列表可见 headless 会话」「handle.dbPath 锚定宿主库
+> `ZCODE_HOST_DB_SUFFIX`」。**HOME 保持共享**（凭据 / 插件 / MCP / pnpm store 语义零变化）、
+> 凭据 fs 拦截注入、poolKey 恒 `'shared'`、常驻连接 / abort 链 / 会话自包含 / capabilities /
+> 停机面全部不变。两条读取链按 `zcodeDbPathAllowlist(dataDir)` 白名单集合成员判定放行
+> （隔离库 + 宿主库存量兼容锚点）。
 
 > 层声明：当前层 = 技术方案设计；下一层 = 可实施代码单元（W1-W6，见 §5）。
 > 决策依据：zsw 仓 `docs/design/zcode-engine-appserver-decision-record.md`（commit e70ca71，用户 2026-08-30 确认终态）。本设计是该决策记录的落地实施设计，方向/位置/接口不变性均以决策记录为准，不重新讨论。

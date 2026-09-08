@@ -521,7 +521,7 @@ pi 依赖宿主服务面更重——**两者拆分成本都不小**；zcode 仍�
 
 | # | 硬耦合点 | 锚点 | 处置 | 承接单元 |
 |---|---------|------|------|---------|
-| H1 | 公共降级层**直接 import 引擎实现**：`session-view-service.ts` 静态 import zcode `readZcodeSessionView` + `ZCODE_HOST_DB_SUFFIX` | `engine/common/session-view-service.ts:39-40`、白名单 `:161`、注册 `:107/131` | 改为经协议 `read`（**runtime 进程模型见 §3.6**）；core 不再静态依赖任何引擎 | W8/W11 |
+| H1 | 公共降级层**直接 import 引擎实现**：`session-view-service.ts` 静态 import zcode `readZcodeSessionView` + `zcodeDbPathAllowlist`（2026-09 会话库隔离 W2 白名单集合化后的现行锚点；改造前旧锚点 `ZCODE_HOST_DB_SUFFIX` 已不再被该文件 import——见 zcode-session-db-isolation.md D2） | `engine/common/session-view-service.ts:38/40`、白名单 `:164`、注册 `:107/131` | 改为经协议 `read`（**runtime 进程模型见 §3.6**）；core 不再静态依赖任何引擎 | W8/W11 |
 | H2 | core barrel 重导出引擎符号 | `src/index.ts:96-118/322-323` | 引擎符号迁走；**`killAllSpawnedChildren`/`registerZcodeEngine`/`createZcodeEngine` 保留为兼容薄壳**（D8） | W11 |
 | H3 | package.json 暴露引擎子入口 `./engines/zcode/reader`、`./engines/zcode/constants` | `package.json` exports、`tsup.config.ts:25-26` | 随引擎外移删除；runtime 侧真实机制是 `noExternal`（`runtime/tsup.config.ts:54`）+ **bare `import("sqlite")` 守卫**（`:85-95`）——**守卫随 reader 迁往引擎包构建**；**新增**：SDK 必须加入 `noExternal`（否则打包态 `Cannot find module`） | W9/W11 |
 | H4 | 引擎进程生命周期导出在 pi 模块：`killAllSpawnedChildren` | `engines/pi/session-runner.ts`、`src/index.ts:97` | 收割逻辑归 core `EngineClient` | W2/W11 |

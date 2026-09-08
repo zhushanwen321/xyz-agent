@@ -40,7 +40,7 @@
 >   ③**目录红灯输入定义**（`git worktree list --porcelain`；目录已不存在降为报告项；删「已知 zsw 目录」项）；
 >   ④**A11 索引面前置**（先在 GUI 打开目录使 `tasks` 命中 N≥1，再断言 N→0；否则显式标不可证伪）+ 双口径改独立参照 SQL；
 >   ⑤§2.4.2 恢复路径拆 A/B 分支（候选① 若选则成 W 单元 + 宿主库新表写入面分析）+ 重审补绝对缺失量；
->   ⑥§2.4.1 跟踪落点落成 W4 子项 `docs/todo/伴生面治理.md` + 余量基准改写；⑦**派生行（4 条）纳入删除集**；
+>   ⑥§2.4.1 跟踪落点落成 W4 子项 `docs/todo/companion-surface-governance.md` + 余量基准改写；⑦**派生行（4 条）纳入删除集**；
 >   ⑧隔离库非会话状态（`local_setting` 189 行）枚举 + 判定；⑨W5 备份量级/安全网名同步；⑩counts.sql 口径修正 + 补 dbstat 法。
 > - v6（2026-09-08，**减法收敛**——R5 四个 reviewer 因会话压缩被中止、无报告；按 `flow/write.md` §101「轮次问题同级 → 回到方案对比重做」）：
 >   D7 安全网由「四件套」压成**三条硬不变量** + FK 兜底（该版有两处被 r5 实测击穿，见 v7）。
@@ -210,7 +210,7 @@ ZCode GUI 左侧边栏会话列表 ← 用户看到「凭空多出来的会话�
 **重审触发条件（已越原阈值 → 改为有期限的已接受债务）**：
 - 原阈值（任一目录 > 2GB）在成文时**已触发**（`agents` 68G / 会话库 2.8G）→ 该面**无剩余触发点**，改为**新上界**：
   `agents` 累计 > **100G**，或系统盘可用 < **100G**，或 `agents` 周增速 > **10G**（当前可用 436G，约 6 倍余量）；
-- **启动条件落成可验证项**：owner = **合入 PR 作者**；期限 = **G1 止血合入后 30 天内**；跟踪位置 = **W4 的子项：合入 PR 内新增 `docs/todo/伴生面治理.md`**（含 owner/期限/上界/复测命令；逾期未排期即**升为阻塞项**，检查主体 = 下一次触碰该面的设计/PR 评审）；
+- **启动条件落成可验证项**：owner = **合入 PR 作者**；期限 = **G1 止血合入后 30 天内**；跟踪位置 = **W4 的子项：合入 PR 内新增 `docs/todo/companion-surface-governance.md`**（含 owner/期限/上界/复测命令；逾期未排期即**升为阻塞项**，检查主体 = 下一次触碰该面的设计/PR 评审）；
 - **余量基准**：距上界 100G 还有 **336G**（实测 `df -h /` 可用 436G）；按 `agents` 周增速 10G 估约 **33 周**；
 - **判定**：**有期限的已接受债务**（不是无条件可接受）——已越过原阈值，但本设计 out of scope ②（不治理），
   两者并存的前提是上条的 owner/期限/跟踪三者齐全。
@@ -350,7 +350,7 @@ pi 扩展进程（xyz-agent）/ zsw CLI 进程
   `deps.engineDataDir()` 提供。
 - **env**：在 `zcode-engine.ts` 组装 app-server env 处追加 `ZCODE_SESSION_DB_PATH`（覆盖式写入，
   忽略宿主继承值——避免用户 shell 里的同名 env 把我们重定向到别处）；**同时显式清空同层别名键
-  `ZCODE_SESSION_DB`**（实装里 `SESSION_DB_PATH` 与 `SESSION_DB` 都映射到 `storage.sessionDbPath`，
+  `ZCODE_SESSION_DB`**（实装里 `ZCODE_SESSION_DB_PATH` 与 `ZCODE_SESSION_DB` 都映射到 `storage.sessionDbPath`，
   按 env 键序后写胜出；当前写法恰然后写，但那是顺序巧合，必须显式化）。
 - **配置优先级依据**：引擎配置分层 `Cli 50 > Env 40 > Session 30 > Project 20 > User 10 > System 0`，
   故 env 覆盖用户 `~/.zcode/cli/config.json` 里的 `storage.sessionDbPath`——D1 的覆盖语义成立（已核实）。
@@ -499,7 +499,7 @@ pi 扩展进程（xyz-agent）/ zsw CLI 进程
 → 数字均为**快照值**，A11 断言一律用「复测时的实际值」+ 独立参照 SQL（不写死数字）。
 → **直接删除集 = 白名单 ∩ 宿主库（本次 50）**；**派生删除集 = `parent_id ∈ 直接删除集 且 task_type='subagent_child'`（本次 4）**；
 **删除集总数 = 54**。差额 34 逐条归因（池时代相对 dbPath，不进宿主库）。
-**独立参照 SQL（不依赖工具自算）**：只读查宿主库得 50 + 4，工具自算值必须等于该参照；不相等则逐条归因。
+**独立参照 SQL（不依赖工具自算）**：以 `docs/design/probes/zcode-session-db/counts.sql` W5 参照查询的单一文本为准（跨双库：宿主库直接集/派生集 + 索引库四冲突源只读预检，节头注明「本节即权威文本，勿在别处复制」），工具自算值必须等于该参照；不相等则逐条归因。
 
 **边界**：只删白名单命中行（SET NULL 越行修改单独报告）；不删 journal（生命周期跟随 record）；不动真实用户会话。
 

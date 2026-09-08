@@ -16,7 +16,7 @@
 | 终态/机制 | §3 解决方案（§3.1 方案对比 / §3.2 D1–D7 / §3.3 实施不变量 6 条） |
 | 验收场景表 | §4 验收（A1–A12 + 探针挂钩①–⑤） |
 | 下一层拆分 | §5 下一层拆分（W1–W6 + W5b 表 + 版本排序 + 风险回退） |
-| 待验证检查点 | ①§2.4.1 伴生面债务（`docs/todo/伴生面治理.md`，W4⑦）；②§2.4.2 用量页失真 A/B 裁决；③R9 审查残留（R9-1–R9-7 七项实现级 + R9-8/R9-9 impact-S 去向登记，本文件 §7.2，单元规格 §2.4/§2.5 已交叉引用）；④E3「运行期删除」真机形态（§4 探针⑤ 降级路径） |
+| 待验证检查点 | ①§2.4.1 伴生面债务（`docs/todo/companion-surface-governance.md`，W4⑦）；②§2.4.2 用量页失真 A/B 裁决；③R9 审查残留（R9-1–R9-7 七项实现级 + R9-8/R9-9 impact-S 去向登记，本文件 §7.2，单元规格 §2.4/§2.5 已交叉引用）；④E3「运行期删除」真机形态（§4 探针⑤ 降级路径） |
 
 ## 1 目标快照
 
@@ -55,7 +55,7 @@ xyz-agent 引擎数据目录下的**独立会话库**（spawn env `ZCODE_SESSION
 | W1 路径与 env（**u-foundation 共享契约根**——`db-path.ts` 构造函数被 W2/W3/W5a/W5b 消费，DAG 唯一根，串行先行，禁止与后继单元并行共改） | `zcodeSessionDbPath()` / `zcodeDbPathAllowlist()` 两个构造函数 + `hostZcodeDbPath()` 迁入（zcode-engine.ts 保留 re-export）+ env 注入（含清空别名键）+ 父目录确保 | 新建 `packages/subagent-core/src/execution/engine/engines/zcode/db-path.ts`（契约根文件）；既有 `engines/zcode/zcode-engine.ts` 组装段 648–657 + `hostZcodeDbPath()` 迁出面 `:117-120`（函数定义与注释）+ import 块 `:75-93`（`ZCODE_HOST_DB_SUFFIX` import 去留）（与 W2 共改此文件：行区间互斥 + 串行边 W1→W2 保证，见 §3）；必要时 `engines/zcode/connection.ts`（仅 env 组装面，与 W2 的 `:122-123` 注释回写行区间互斥，同上串行保证） | —（DAG 根） | plain | A1；探针①（spawn env 断言）；§2.1 规格 |
 | W2 读取链与 handle | 两站点改集合成员判定 + handle 回填隔离路径 + `hostZcodeDbPath()` 降级为兼容锚点 + 注释回写 | 既有 `packages/subagent-core/src/execution/engine/common/session-view-service.ts`（`:161`）、`engines/zcode/zcode-engine.ts`（`:407`/`:453`/`:889`/`12-20`/`400`/`872-874`/`1111`——`1111` 实施时人工确认：该行为凭据文案注释与库路径无关，无关则从清单移除；与 W1 共改此文件：W1 组装段 648–657 + `:117-120`/`:75-93` 迁出面，行区间互斥 + 串行边 W1→W2 保证）、`engines/zcode/connection.ts`（`:122-123`，与 W1 必要时触碰的 env 组装面行区间互斥）、`engines/zcode/constants.ts`（`:7-9`/`:40-44`/`:141`） | W1 | plain | A3/A4；探针②（handle 一致性断言）；既有 suite 全绿（翻转清单 §2.3）；§2.2 规格 |
 | W3 测试 | 单元 + 集成（fake-server）+ 真机 live 用例；含池 GC 守卫（经公共 API） | `packages/subagent-core/src/execution/engine/engines/zcode/__tests__/*`、`engine/__tests__/common/session-view-service-zcode-dbpath.test.ts`、`engine/__tests__/conformance/*`、`packages/runtime/test/subagent-extractor-engine.test.ts`、`packages/runtime/src/__tests__/subagent-extractor-engine.test.ts` | W1/W2 | plain | A1–A4/A6/A9；探针③④；§2.3 规格 |
-| W4 文档与约束同步 | 约束表 / AGENTS / 池边界注释 / 漂移检查 / 权威源文档 / 第六面 / 伴生面债务落点 / 设计文档 `:502` 口径句修正（R9-3） / drift 守卫 DOC_MODULE_MAP 登记（⑨） | `docs/constraints.json` + `docs/constraints.md`（生成物）、`AGENTS.md`、`packages/subagent-core/src/execution/engine/common/pool-manager.ts`（`:14` 注释）、`docs/design/zcode-engine-appserver-resident.md`、`docs/design/subagent-engine-protocolization.md`（H1/A10）、`docs/design/zcode-session-db-isolation.md`（**仅 A11 双口径段 `:502` 口径句**，见 §2.4⑧）、新建 `docs/todo/伴生面治理.md`、`scripts/check-doc-symbol-drift.mjs`（DOC_MODULE_MAP 登记段，§2.4⑨） | W1/W2 | plain | §2.4 规格（文档同步纪律 C-proc-10）+ `node scripts/check-doc-symbol-drift.mjs` 登记后通过（⑨） |
+| W4 文档与约束同步 | 约束表 / AGENTS / 池边界注释 / 漂移检查 / 权威源文档 / 第六面 / 伴生面债务落点 / 设计文档 `:502` 口径句修正（R9-3） / drift 守卫 DOC_MODULE_MAP 登记（⑨） | `docs/constraints.json` + `docs/constraints.md`（生成物）、`AGENTS.md`、`packages/subagent-core/src/execution/engine/common/pool-manager.ts`（`:14` 注释）、`docs/design/zcode-engine-appserver-resident.md`、`docs/design/subagent-engine-protocolization.md`（H1/A10）、`docs/design/zcode-session-db-isolation.md`（**仅 A11 双口径段 `:502` 口径句**，见 §2.4⑧）、新建 `docs/todo/companion-surface-governance.md`、`scripts/check-doc-symbol-drift.mjs`（DOC_MODULE_MAP 登记段，§2.4⑨） | W1/W2 | plain | §2.4 规格（文档同步纪律 C-proc-10）+ `node scripts/check-doc-symbol-drift.mjs` 登记后通过（⑨） |
 | W5a 清理工具实现 | 按 D7 规格实现（I1/I2/I3/I3b + 执行形态 + 索引预检 + 跨库顺序 + 残留清单）；承接 §7.2 R9-1/R9-2/R9-4/R9-5/R9-6/R9-7 | 新建 `scripts/zcode-session-db-cleanup.mjs`（若拆多文件则 `scripts/cleanup/` 下同族脚本，均归本单元独占）；更新 `docs/design/probes/zcode-session-db/counts.sql`（R9-1/R9-2/R9-7 可跑性修复） | W1 | plain | A11（含 §7.2 R9-4 replay fixture 两条）；§2.5 规格 |
 | W5b zsw 侧交接物 | 导出 `zcodeSessionDbPath`（= db-path.ts 模块级 export，W1 交付物；不新增 package.json subpath exports）+ 仓内规格文件 + owner/投递日期 | 新建 `docs/design/handoff/zsw-session-db-cleanup-spec.md` | W1 | plain | §2.4.3；§2.6 规格 |
 | W6 隔离库 TTL（后续项） | 按 D4 重审触发条件启动（体积/行龄阈值 → 清理策略） | 新增设计或小改 `session-file-gc` 同域 | D4 触发后 | plain | D4 触发后另立；§2.7 规格 |
@@ -137,7 +137,7 @@ W4 在合入前完成；W5a/W5b/W6 独立排期（不阻塞 G1）。
 ④ 跑 `node scripts/check-doc-symbol-drift.mjs`（验收 = ⑨ 登记后脚本通过）；
 ⑤ `docs/design/zcode-engine-appserver-resident.md` 头部补「2026-09 会话库隔离」修订块；**同批**撤销 `:12`「已接受代价：GUI 会话列表可见 headless 会话」句、`:19`「handle.dbPath 锚定 `ZCODE_HOST_DB_SUFFIX`」句改写为隔离库口径（与修订块同批，防同页矛盾）；
 ⑥ 第六面 `docs/design/subagent-engine-protocolization.md` 的 H1/A10 校准；
-⑦ **新增 `docs/todo/伴生面治理.md`**（§2.4.1 跟踪落点，含 owner/期限/上界/复测命令）；
+⑦ **新增 `docs/todo/companion-surface-governance.md`**（§2.4.1 跟踪落点，含 owner/期限/上界/复测命令）；
 ⑧ **含 §7.2 R9-3**：`docs/design/zcode-session-db-isolation.md` A11 双口径段 `:502` 的「独立参照 SQL……只读查宿主库得 50 + 4」
 旧口径句改为指向 `counts.sql` W5 单一文本（跨双库、含索引预检口径）——**仅口径句替换，不动决策内容**；
 counts.sql 路径与节名已存在，本项不依赖 W5a 的可跑性修复先行。
@@ -272,7 +272,7 @@ W4 在合入前完成；W5a/W5b/W6 独立排期（不阻塞 G1）。
 | W1 路径与 env | committed | 1 | commit 见 git log `feat(subagent-core): W1 db-path contract + env injection`；test_evidence = 引擎域 453 passed / 0 failed（`vitest run src/execution/engine`）+ typecheck 零错误；翻转清单含 W1 期补录条（§2.3） |
 | W2 读取链与 handle | committed | 1 | commit 见 git log `feat(subagent-core): W2 read-path allowlist + handle isolation dbPath`；test_evidence = typecheck 零错误 + 探针② 断言通过（临时测试，onHandleReady 与终态 handle dbPath 相等、两站点集合判定一致）+ 翻转清单外全绿 |
 | W3 测试 | committed | 1 | commit 见 git log `test(subagent-core): W3 flip assertions to isolated dbPath + A9 pool-gc guard`；test_evidence = 引擎域 465 passed / 0 failed + typecheck 零错误 + runtime 侧 25 passed（探针④常驻） |
-| W4 文档与约束同步 | pending | 0 | — |
+| W4 文档与约束同步 | committed | 1 | commit 见 git log `docs: W4 constraint/doc sync for session-db isolation`；test_evidence = drift 守卫 8 映射文档零悬空 + render-constraints 92 条 md 同步 + 引擎域 465 passed 零回归 |
 | W5a 清理工具实现 | pending | 0 | — |
 | W5b zsw 交接物 | pending | 0 | — |
 | W6 隔离库 TTL | pending | 0 | — |
@@ -283,7 +283,7 @@ W4 在合入前完成；W5a/W5b/W6 独立排期（不阻塞 G1）。
 
 | 代价 | 设计位置 | 重审触发 |
 |------|----------|----------|
-| 宿主 `~/.zcode/cli/*` 伴生写入面无通道 | §2.4.1 | 上界 100G / 可用 <100G / 周增速 >10G → `docs/todo/伴生面治理.md` |
+| 宿主 `~/.zcode/cli/*` 伴生写入面无通道 | §2.4.1 | 上界 100G / 可用 <100G / 周增速 >10G → `docs/todo/companion-surface-governance.md` |
 | ZCode GUI 用量页今日口径失真 | §2.4.2 | 用户裁决「不可接受」或今日 tokens 连续 3 日 > 100M |
 | zsw 侧需自行清理 | §2.4.3 | W5b 投递后 zsw 侧反馈 |
 | 隔离库无 per-session 删除粒度 | §3.2 D4 | W6 启动 |

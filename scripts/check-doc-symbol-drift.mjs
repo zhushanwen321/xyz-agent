@@ -45,10 +45,12 @@ const DOC_MODULE_MAP = {
   'docs/design/update-multi-source.impl-plan.md': ['apps/electron/main/update', 'apps/electron/main/gateway/update-handlers.ts', 'apps/electron/main/release-checker.ts', 'apps/electron/main/interfaces.ts'],
   'docs/design/chat-stream-perf-architecture.md': ['packages/core/src/domain/chat', 'packages/core/src/domain/session', 'packages/renderer/src/composables/features/sidebar', 'packages/renderer/src/composables/features/trace'],
   'docs/design/chat-stream-perf-architecture.impl-plan.md': ['packages/core/src/domain/chat', 'packages/core/src/domain/session', 'packages/renderer/src/composables/features/sidebar', 'packages/renderer/src/composables/features/trace'],
+  'docs/design/zcode-session-db-isolation.md': ['packages/subagent-core/src/execution/engine', 'packages/shared/src/paths.ts', 'packages/runtime/src/infra/pi/pi-paths.ts'],
+  'docs/design/zcode-session-db-isolation.impl-plan.md': ['packages/subagent-core/src/execution/engine', 'packages/shared/src/paths.ts', 'packages/runtime/src/infra/pi/pi-paths.ts'],
 }
 
-/** 环境变量名白名单（非导出符号，文档合法引用）：项目 env 前缀 */
-const ENV_NAME_ALLOW_RE = /^(XYZ_|PI_|NODE_|ELECTRON_)[A-Z0-9_]+$/
+/** 环境变量名白名单（非导出符号，文档合法引用）：项目（XYZ_/PI_）与运行平台（NODE_/ELECTRON_/ZCODE_）env 前缀 */
+const ENV_NAME_ALLOW_RE = /^(XYZ_|PI_|NODE_|ELECTRON_|ZCODE_)[A-Z0-9_]+$/
 /** undici errno 字符串族（文档描述错误分类的字符串字面量，非本项目符号） */
 const ERRNO_STRING_ALLOW_RE = /^(UND_ERR_|E[A-Z]{3,})/
 /** export 声明的 5 种节点类别（对应 ts.isFunctionDeclaration 等类型守卫） */
