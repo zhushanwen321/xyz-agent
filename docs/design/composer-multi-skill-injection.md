@@ -178,7 +178,7 @@ runtime 用 node `readline` 解析 pi stdout JSONL（`packages/runtime/src/infra
 **D2：skill chip 标记化——光标插入、多个共存、同 skill 去重（选定）**
 - **采用**：新增 `insertSkillChip`（类比 `insertFileChip`，`chip-commands.ts`）：插在光标处、多个共存、`×` 删除、Backspace 整块删除；浮层列表里**已插入的 skill 标记「已选」并禁选**（去重，防同一 skill 注入两份全文浪费上下文）。解除「存在任何 chip 时 slash 不触发」对 **skill 浮层**的限制（对行首**命令**浮层保留该限制——命令仍是行首唯一语义）。
 - **被否**：复用现有 slash chip（最前、唯一）——与 G1/G2 直接冲突。
-- **证据**：`chip-commands.ts:46-58`（insertChipAtSelection 通用机制）、`:76-104`（slash chip 的最前唯一限制）、`getSegmentsFromEl`（`input-dom.ts:92-107`）已支持解析任意位置多个 skill chip——数据模型层零改动。
+- **证据**：`chip-commands.ts:46-58`（insertChipAtSelection 通用机制）、`:76-104`（slash chip 的最前唯一限制；D4-a 就地化改革前状态，现行「唯一/替换 + 视觉就地」语义见 composer-chip-insertion-semantics.md）、`getSegmentsFromEl`（`input-dom.ts:92-107`）已支持解析任意位置多个 skill chip——数据模型层零改动。
 - **效果**：G1/G2 的输入侧成立。
 
 **D3：序列化——skill segment 产出私有标记 `<xyz-skill/>`（选定）**

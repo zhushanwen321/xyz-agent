@@ -227,7 +227,7 @@ if (e.key === 'Enter' || e.key === 'Tab') {
   return true
 }
 ```
-（`composingRef`：CommandPopover 模块内监听 `compositionstart/compositionend` 维护的 boolean，与 contenteditable.ts 的 `composing` 同款范式。design-code-sync 轮 1 同步：终态经偏差 #5 提取为 `packages/renderer/src/composables/panel/composition-flag.ts` 的 useCompositionFlag，CommandPopover 与 AmbiguousFilePopover 共用。）
+（`composingRef`：CommandPopover 模块内监听 `compositionstart/compositionend` 维护的 boolean，与 contenteditable.ts 的 `composing` 同款范式。design-code-sync 轮 1 同步：CommandPopover 侧终态经偏差 #5 提取为 `packages/renderer/src/composables/panel/composition-flag.ts` 的 useCompositionFlag；AmbiguousFilePopover 保留同款范式的自建 composingRef 未迁移——改其 IME 守卫需单独动该文件副本。）
 
 - **删除 v1 的 defaultPrevented 防御层**（r1 影响面审 MF-1）：`contenteditable.ts` onKeydown 的 Enter 分支先 `e.preventDefault()` 再 `onEnterKeydown(e)` 转发（:240-249）——composer-keydown 收到的 Enter **恒** `defaultPrevented===true`，「Enter 分支前 `if (e.defaultPrevented) return`」会拦死全部正常发送。双触发的防护完全依赖 stopPropagation 主修 + 单测锁定时序契约（P5：浮层 open 时 Enter 不触发 onSend 的 capture/bubble 全链路用例）。
 - **IME 守卫是现状 bug 顺带修复**：浮层 query 过滤态下 IME 组合中按 Enter 确认候选词，现状会被 capture 劫持为「选中浮层第一项」（`onWindowKeydown` 无 isComposing 检查）——D2 重写该分支时一并修复，与 G2「绝不触发发送」的承诺域一致。
