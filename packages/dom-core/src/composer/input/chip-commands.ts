@@ -118,6 +118,8 @@ export function useComposerChipCommands(
   function insertSkillChip(name: string, location?: string, icon?: string): void {
     const el = getEl()
     if (!el) return
+    // restoreSelection 内部保证活选区优先（设计 D1）：编辑器内活选区原样使用（键盘路径 chip 落
+    // 呼出位置），仅活选区失效时才应用 savedRange（blur 回退）——调用方无需感知键盘/点击路径
     restoreSelection()
     el.focus()
     const chip = document.createElement('span')
@@ -142,6 +144,8 @@ export function useComposerChipCommands(
   function insertFileChip(path: string, lineRange?: [number, number]): void {
     const el = getEl()
     if (!el) return
+    // restoreSelection 内部保证活选区优先（设计 D1）：编辑器内活选区原样使用（键盘路径 chip 落
+    // 呼出位置），仅活选区失效时才应用 savedRange（blur 回退）——调用方无需感知键盘/点击路径
     restoreSelection()
     el.focus()
     const chip = document.createElement('span')
@@ -169,6 +173,8 @@ export function useComposerChipCommands(
   function insertImageBadge(path: string, fileName: string, displayName: string, needsMigrate: boolean = false): void {
     const el = getEl()
     if (!el) return
+    // restoreSelection 内部保证活选区优先（设计 D1）：编辑器内活选区原样使用（键盘路径 chip 落
+    // 呼出位置），仅活选区失效时才应用 savedRange（blur 回退）——调用方无需感知键盘/点击路径
     restoreSelection()
     el.focus()
     const chip = document.createElement('span')
@@ -197,6 +203,8 @@ export function useComposerChipCommands(
     }
     const el = getEl()
     if (!el) return
+    // restoreSelection 内部保证活选区优先（设计 D1）：编辑器内活选区原样使用（键盘路径 chip 落
+    // 呼出位置），仅活选区失效时才应用 savedRange（blur 回退）——调用方无需感知键盘/点击路径
     restoreSelection()
     el.focus()
     const chip = document.createElement('span')
@@ -216,6 +224,8 @@ export function useComposerChipCommands(
   function insertSessionChip(sessionId: string, label: string): void {
     const el = getEl()
     if (!el) return
+    // restoreSelection 内部保证活选区优先（设计 D1）：编辑器内活选区原样使用（键盘路径 chip 落
+    // 呼出位置），仅活选区失效时才应用 savedRange（blur 回退）——调用方无需感知键盘/点击路径
     restoreSelection()
     el.focus()
     const chip = document.createElement('span')
@@ -242,6 +252,8 @@ export function useComposerChipCommands(
   function insertSubagentChip(subagentId: string, slug: string): void {
     const el = getEl()
     if (!el) return
+    // restoreSelection 内部保证活选区优先（设计 D1）：编辑器内活选区原样使用（键盘路径 chip 落
+    // 呼出位置），仅活选区失效时才应用 savedRange（blur 回退）——调用方无需感知键盘/点击路径
     restoreSelection()
     el.focus()
     const chip = document.createElement('span')

@@ -416,6 +416,113 @@ describe('useContenteditableInput saveSelection / restoreSelection', () => {
   })
 })
 
+// ── 插入位置权威源（设计 D1：活选区优先，savedRange 仅 blur 回退）──
+
+describe('useContenteditableInput restoreSelection 活选区优先（设计 D1）', () => {
+  let cleanup: () => void
+  beforeEach(() => {
+    window.getSelection()?.removeAllRanges()
+  })
+  afterEach(() => {
+    cleanup?.()
+  })
+
+  it('键盘路径活选区命中 → savedRange 不覆盖（光标留在活位置，失败模式 A 根修）', () => {
+    const c = setup('AAA BBB CCC')
+    c.el.contentEditable = 'true'
+    const textNode = c.el.firstChild as Text
+    // savedRange = 头部（点击空框时的旧快照）
+    cursorAt(textNode, 0)
+    c.saveSelection()
+    // 活光标随打字推进到末尾
+    cursorAt(textNode, 11)
+    c.restoreSelection()
+    const after = window.getSelection()
+    expect(after?.anchorNode).toBe(textNode)
+    expect(after?.anchorOffset).toBe(11)
+    cleanup = c.cleanup
+  })
+
+  it('blur 且选区被移出编辑器 → 应用 savedRange（blur 回退路径行为保留）', () => {
+    const c = setup('AAA BBB CCC')
+    c.el.contentEditable = 'true'
+    const textNode = c.el.firstChild as Text
+    cursorAt(textNode, 4)
+    c.saveSelection()
+    // 选区被移出编辑器（点击浮层文本场景）
+    const external = document.createElement('div')
+    external.textContent = 'popover item'
+    document.body.appendChild(external)
+    cursorAt(external.firstChild as Text, 0)
+    c.restoreSelection()
+    const after = window.getSelection()
+    expect(after?.rangeCount).toBeGreaterThan(0)
+    expect(c.el.contains(after?.anchorNode ?? null)).toBe(true)
+    expect(after?.anchorNode).toBe(textNode)
+    expect(after?.anchorOffset).toBe(4)
+    external.remove()
+    cleanup = c.cleanup
+  })
+
+  it('savedRange 应用失败（addRange 静默丢弃）→ caret 落编辑器末尾（placeCaretAtEnd 兜底）', () => {
+    const c = setup('AAA')
+    c.el.contentEditable = 'true'
+    const doomed = document.createTextNode('doomed')
+    c.el.appendChild(doomed)
+    cursorAt(doomed, 6)
+    c.saveSelection()
+    doomed.remove()
+    // 背景：DOM 规范的 live range 更新会把删除节点上的 savedRange 自动重锚到父元素
+    // （锚点=el 的 element 位置），合规 DOM 上无法构造「悬空 range」；真实 Chromium 对
+    // 边界失效 range 的 addRange 是静默丢弃。本用例用 Selection 桩模拟该丢弃语义
+    // （仅桩浏览器 Selection 对象，restoreSelection 本体走真实链路）：
+    // 锚点被重锚到 element 容器的 range 视为无效丢弃，锚点为文本节点才接受
+    const external = document.createElement('div')
+    external.textContent = 'outside'
+    document.body.appendChild(external)
+    const ranges: Range[] = []
+    const externalText = external.firstChild as Text
+    const fakeSel = {
+      get rangeCount() { return ranges.length },
+      get anchorNode() { return ranges[0]?.startContainer ?? null },
+      get anchorOffset() { return ranges[0]?.startOffset ?? 0 },
+      removeAllRanges() { ranges.length = 0 },
+      addRange(r: Range) {
+        if (r.startContainer.nodeType === Node.TEXT_NODE) ranges[0] = r
+      },
+    } as unknown as Selection
+    const r = document.createRange()
+    r.setStart(externalText, 0)
+    r.collapse(true)
+    ranges[0] = r // 活选区在编辑器外（blur 场景）
+    const getSelSpy = vi.spyOn(window, 'getSelection').mockReturnValue(fakeSel)
+    c.restoreSelection()
+    getSelSpy.mockRestore()
+    expect(fakeSel.rangeCount).toBe(1)
+    const lastText = c.el.lastChild as Text
+    expect(fakeSel.anchorNode).toBe(lastText)
+    expect(fakeSel.anchorOffset).toBe(lastText.length)
+    external.remove()
+    cleanup = c.cleanup
+  })
+
+  it('!savedRange 且活选区失效 → 仍回焦不应用任何 range（对齐现状回焦行为）', () => {
+    const c = setup('hello')
+    c.el.contentEditable = 'true'
+    // 无 saveSelection（savedRange=null）+ 活选区移出编辑器
+    const external = document.createElement('div')
+    external.textContent = 'outside'
+    document.body.appendChild(external)
+    cursorAt(external.firstChild as Text, 0)
+    expect(() => c.restoreSelection()).not.toThrow()
+    // 不应用任何 range（活选区仍在编辑器外，未被 savedRange 覆盖）；jsdom 不支持
+    // contenteditable div 的 activeElement 断言，回焦行为由不抛错 + 分支可达保证
+    expect(c.el.contains(window.getSelection()?.anchorNode ?? null)).toBe(false)
+    external.remove()
+    cleanup = c.cleanup
+  })
+})
+
 describe('useContenteditableInput moveCaretVertical（jsdom 单行 at-edge）', () => {
   let cleanup: () => void
   afterEach(() => {
