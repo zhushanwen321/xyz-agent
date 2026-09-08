@@ -79,3 +79,4 @@ graph TD
   - v3：U2 committed（c520c1726，core 全量 1773 tests 通过；偏差 1 条登记并转阶段 3）。
   - v4：U1 committed（偏差 3 条均合理：①② 设计措辞修正已回写设计 v4.2；③ 复用方式符合要求；runtime 全量中 thinking-level-effective-e2e G5 为环境性失败，与本改动无关）。
   - v5：阶段 3 一致性审查收敛——unreasonable×1（end 无 ANSI 时 outputRaw 残留）修复 committed（core 全量 1775 tests，含 2 条新 end 清空/保留用例）；doc_errors×2 主 agent 亲修（设计 v4.3）；reasonable×6 入登记表；U2 偏差行（outputRaw 残留候选边缘）经核查升级为真实缺陷并已修复，从登记表移除。
+  - v6：定向复审 pass（只审本批影响面：end 三分支 + apply-entry 重放收敛 + truncate 守卫 + 全仓 outputRaw 消费点；2 条 info：守卫形式不对称 nit、等价性构造性成立说明）。阶段 3/4 清零 commit = 30c22db9d，转阶段 5 双级验收。
