@@ -4,9 +4,9 @@
 // 闭包——任一侧字段漂移（字段缺失 / 可选性漂移 / 联合分支不齐）在本文件编译期报错。
 // 运行时无逻辑；`const _assert: true = <expr>` 形态让断言结果进入类型检查。
 //
-// UiRequest / UiResponse / UiRequestHandler / UiMethod 的 core 权威源仍是
-// execution/dialog-queue.ts（包外零消费方，re-export 切换归 W6/W7 同文件批次——
-// 本断言以编译期互证代替 re-export 切换，漂移同样当场被抓）。
+// UiRequest / UiResponse / UiRequestHandler / UiMethod 的 core 侧出口 =
+// execution/dialog-queue.ts 的 SDK 再导出（W7 已切换，SSOT = SDK ui-types）——
+// 本断言的 Core* 别名现在与 Sdk* 同源，保留断言形态防未来回退为本地定义后漂移。
 
 import { describe, expect, it } from "vitest";
 

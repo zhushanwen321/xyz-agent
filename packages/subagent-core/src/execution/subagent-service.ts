@@ -71,15 +71,17 @@ import { bufferedMemberFallbackRecord, syncRebuildToNotifyMember } from "./sync-
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 // [W6 宿主面下沉] killAll / killRecord / register 三函数改经 spawnedChildren 状态镜像
 // 公共面（engine/host/spawned-children.ts——镜像 + inproc 过渡委托，不再深路径 import
-// engines/pi）；runSpawn / SessionRunnerContext / SpawnResumeOpts 随 W7 迁 pi 包（core 侧
-// 消费点届时改经 HostBridge/协议面，本 import 为过渡期残余，W11 删）。
+// engines/pi）。
 import {
   killAllSpawnedChildren,
   killRecordChildWithEscalation,
   registerSpawnedChildForRecord,
 } from "./engine/host/spawned-children.ts";
-import { runSpawn } from "./engine/engines/pi/session-runner.ts";
-import type { SessionRunnerContext, SpawnResumeOpts } from "./engine/engines/pi/session-runner.ts";
+// [W7] runSpawn / SessionRunnerContext / SpawnResumeOpts 归属物已迁
+// @zhushanwen/pi-subagent-cli；core inproc 过渡链路的 import 收敛到 host 公共面
+// （pi-host-binding），W11 删。
+import { runSpawn } from "./engine/host/pi-host-binding.ts";
+import type { SessionRunnerContext, SpawnResumeOpts } from "./engine/host/pi-host-binding.ts";
 // [u-t2a T2②/T2③] settled watchdog：chatMode 轮 settled 等待固定硬上限（10min），
 // 双挂载点之一在编排层热路径（deliverChatMessage，prompt 发出后），disarm 站点散布
 // cancel/close/终态化路径（原语幂等，见 settled-watchdog.ts 头注释）。
@@ -90,9 +92,9 @@ import {
 } from "./settled-watchdog.ts";
 import { isIdle, isResumable } from "./lifecycle-predicates.ts";
 import { startIdleGc } from "./idle-gc.ts";
-// [W6] EPIPE 兜底归 pi 包（设计 §3.8 D2 第 3 行）：本 import 为过渡期残余，随 W7 迁
-// pi 包、W11 删 core 侧调用。
-import { resetAllEpipeFailures } from "./engine/engines/pi/stdin-writer.ts";
+// [W7] EPIPE 兜底归 pi 包（设计 §3.8 D2 第 3 行）：归属物已迁
+// @zhushanwen/pi-subagent-cli；core inproc 过渡链路 import 收敛到 host 公共面，W11 删。
+import { resetAllEpipeFailures } from "./engine/host/pi-host-binding.ts";
 import type { StreamSink, SubagentStream } from "./stream-sink.ts";
 import { createBackgroundStream } from "./stream-sink.ts";
 import { writeCancelledTombstone } from "./tombstone-store.ts";

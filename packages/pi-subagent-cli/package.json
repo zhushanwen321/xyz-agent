@@ -1,0 +1,73 @@
+{
+  "name": "@zhushanwen/pi-subagent-cli",
+  "version": "0.1.0",
+  "description": "pi subagent engine as an independent CLI package (W7 of subagent-engine-protocolization): speaks engine-protocol v1 over NDJSON stdio, depends only on @zhushanwen/subagent-engine-sdk (never subagent-core)",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "pi-subagent-cli": "bin/pi-subagent-cli.mjs"
+  },
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./src/index.ts",
+        "default": "./src/index.ts"
+      },
+      "default": "./src/index.ts"
+    }
+  },
+  "xyz-agent": {
+    "subagentEngine": {
+      "id": "pi",
+      "bin": "pi-subagent-cli",
+      "protocol": 1,
+      "envPrefixes": [
+        "PI_"
+      ],
+      "capabilities": {
+        "schemaEnforcement": "native",
+        "steer": "unsupported",
+        "conversation": "native",
+        "personaInjection": "flag",
+        "eventGranularity": "stream",
+        "sandbox": "emulated",
+        "sessionRead": "full",
+        "resume": "native",
+        "interrupt": "kill-only",
+        "permissionMode": "native",
+        "maxTurns": true
+      },
+      "modelCatalog": {
+        "dynamic": true,
+        "models": []
+      },
+      "displayName": "pi",
+      "description": "pi coding-agent engine (spawn pi --mode rpc task subprocesses, protocolized host callbacks)"
+    }
+  },
+  "$comment": "W7 (impl-plan §2.7): 引擎包只依赖 SDK，禁止依赖 @zhushanwen/subagent-core（check-engine-package-boundary 同精神，W9 落守卫）。manifest 按 §2.4 schema：capabilities 与 core engines/pi 的 PiEngine.capabilities() 逐位一致（快照权威）；envPrefixes 按实态 = PI_（PI_WORKFLOW_SCHEMA / PI_CODING_AGENT_DIR 等 pi 域 env；XYZ_* 是保留前缀不可声明，经 SDK env 三层 L0/L1 通道走）。modelCatalog dynamic:true（pi 模型面运行期可变，宿主同步成员读 manifest 快照，运行期真相经协议 listModels 诊断面）。过渡期 core 侧 engines/pi/ 保留不动（XYZ_SUBAGENT_ENGINE_MODE 双模，W11 删）。",
+  "files": [
+    "bin/",
+    "src/",
+    "dist/"
+  ],
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "gen:model-catalog": "node scripts/gen-model-catalog.mjs"
+  },
+  "dependencies": {
+    "@zhushanwen/subagent-engine-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.8"
+  }
+}

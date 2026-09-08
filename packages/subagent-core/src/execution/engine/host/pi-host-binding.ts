@@ -24,6 +24,15 @@ import type { PiEngineService } from "../engines/pi/pi-engine.ts";
 export type { ChatRoundTicket, PiEngine, PiEngineService } from "../engines/pi/pi-engine.ts";
 export { PI_POOL_KEY };
 
+// [W7] runSpawn / SessionRunnerContext / SpawnResumeOpts（impl-plan §2.6「随 W7 迁
+// pi 包」的 core 侧过渡形态）：归属物已迁 @zhushanwen/pi-subagent-cli（spawn-runner
+// 等价物）；core inproc 过渡链路继续消费 engines/pi 原件，消费点（subagent-service）
+// 的 import 收敛到本公共面——engines/pi 深路径 import 只剩本文件与 spawned-children.ts
+// 过渡桥（W11 删）。EPIPE 兜底（resetAllEpipeFailures）同批收敛（§2.6 :82 行）。
+export { runSpawn } from "../engines/pi/session-runner.ts";
+export type { SessionRunnerContext, SpawnResumeOpts } from "../engines/pi/session-runner.ts";
+export { resetAllEpipeFailures } from "../engines/pi/stdin-writer.ts";
+
 /**
  * chat 域 pi 引擎构造（inproc 过渡形态，W11 删）：per-service DI 绑定保持——getService
  * 经适配器绑本 Service 实例（registry 全局 'pi' 单例绑进程级 getSubagentService()，

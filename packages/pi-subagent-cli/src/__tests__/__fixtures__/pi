@@ -1,0 +1,3 @@
+#!/bin/sh
+# e2e fake pi wrapper（PATH 注入形态）：直载同目录 fake-pi.mjs。
+exec node "$(dirname "$0")/fake-pi.mjs" "$@"
