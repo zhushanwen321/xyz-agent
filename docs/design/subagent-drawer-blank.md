@@ -112,7 +112,7 @@ SubagentRecord（subagentStore 分区，sidebar 与 drawer 共享）
 - **窗口 A（register → create 应答）**：record 尚无 engineHandle → runtime ③级 outcome-only 投影 → `[task 气泡, (no outcome recorded) 占位 assistant]`（③级永不返回空，session-view-service.ts:431）→ 分区非空、末位有 assistant → 思考行不触发，TurnMeta「工作中」行接管（forceWorking 驱动）。
 - **窗口 B（create 应答 → 首个 assistant content 持久化）**：engineHandle 运行中回填落盘（subagent-service.ts:2157 + record-store.ts:557）→ ①级 native reader 返回 defined-but-empty 视图（collectTurns 排除 user 消息）→ `turnsToMessages([])` 投影为 **[task 气泡]**（task 非空时恒非空，session-view-service.ts:364 先 push record.task）→ runtime 数据先行 setMessages、seed 不触发，但**末位无 assistant → 思考行触发**。
 - **窗口 C（首个 assistant content 持久化后）**：①级返回真实内容，正常渐现。
-- 另有跨引擎窗口：runtime 磁盘扫描滞后（`!target`/`!record` 返回 []，session-records.ts:295/306）而 renderer record 已由 state topic 供给 → **seed 真实触发**（对任意引擎）。
+- 另有跨引擎窗口：runtime 磁盘扫描滞后（`!target`/`!record` 返回 []，session-records.ts:298/306）而 renderer record 已由 state topic 供给 → **seed 真实触发**（对任意引擎）。
 
 结论：非 pi 运行中 drawer 无空白窗口（task 气泡由 runtime ①③级投影或 renderer seed 三者之一供给；思考行在窗口 B 与磁盘滞后窗口触发，窗口 A 由 TurnMeta「工作中」接管）。修复前非 pi 窗口 B 同样存在「仅 task 一条、无思考行指示」的欠佳初态，本设计思考行对其是**真实改进**而非纯防御。已知遗留（范围外，§11 ⛔3 登记）：①级 defined-empty 视图不降级②③级，使③级「详情页至少有 task/结果」意图在窗口 B 退化为仅 task——缺陷本体在 subagent-core，其他③级消费方同受影响。
 
@@ -215,7 +215,7 @@ SubagentRecord（subagentStore 分区，sidebar 与 drawer 共享）
 | 单元 | 说明 | justification |
 |---|---|---|
 | T1 fetchAndInject 空结果 | 空 → 不调 setMessages、返回 []；非空 → 调用并返回 | 修 C 的根；调用侧判定依赖返回值契约 |
-| T2 loadSubagentData 种入判定矩阵 | 空 history × 分区空/非空 × task 空/非空 × pi/非 pi × outcome 有/无 全组合；**显式钉死**：非 pi + task 非空 + outcome 有值 → 仅 outcome 投影（task 在投影内）无 seed；非 pi + 无 outcome → seed（**可达场景**：runtime 磁盘扫描滞后窗口，见 §5.1 变体）；pi + task 非空 → seed（**主场景**）；分区非空（E-4 先到/runtime 已投影）→ 不种不擦；reload 后无兑底残留 | 兜底是矩阵语义，单点测会漏；outcome × seed 优先级是审查命中的回归点，必须组合钉死；非 pi seed 为可达真实场景（R2 终审裁定） |
+| T2 loadSubagentData 种入判定矩阵 | 空 history × 分区空/非空 × task 空/非空 × pi/非 pi × outcome 有/无 组合矩阵（5 组钉死组合 + 2 补充；未测格的退化行为由分区空守卫蕴含）；**显式钉死**：非 pi + task 非空 + outcome 有值 → 仅 outcome 投影（task 在投影内）无 seed；非 pi + 无 outcome → seed（**可达场景**：runtime 磁盘扫描滞后窗口，见 §5.1 变体）；pi + task 非空 → seed（**主场景**）；分区非空（E-4 先到/runtime 已投影）→ 不种不擦；reload 后无兑底残留 | 兜底是矩阵语义，单点测会漏；outcome × seed 优先级是审查命中的回归点，必须组合钉死；非 pi seed 为可达真实场景（R2 终审裁定） |
 | T3 subagentThinking 判定 | forceWorking 翻转 × 末位 turn assistant 有/无 × 非 virtual id 恒 false；非 pi 窗口 B（末位仅 task user 消息）→ true；非 pi 窗口 A/C（末位有 assistant）→ false | 思考行条件含派生逻辑，防末位 turn 判定回归；非 pi 多窗口行为显式钉死 |
 | T4 ActivityStrip 行渲染 | prop 变化驱动行出现/消失（DOM 断言 testid） | 用户可见行为断言（三视角之黑盒） |
 | T5 现有测试适配性修订 + 全绿 | 预期翻转清单：`subagent-tab.test.ts`「pi 空历史 → 0 turn」翻转为 1 turn（seed 生效）；「非 pi 空结果 + result → outcome 投影 task+result 同屏」**应保持绿**（outcome 分支先行不受影响），若红则修正测试前提而非产品代码。修订后相关套件全绿 | 字面「全绿」不可达成（行为变更必然翻转旧断言），如实登记预期翻转清单防静默改产品代码迁就旧测试 |
@@ -224,7 +224,7 @@ SubagentRecord（subagentStore 分区，sidebar 与 drawer 共享）
 
 - ⛔ 实施期验证：真实双 user 场景（兜底气泡 vs 子进程真实首条 user 消息）过渡是否视觉平滑（S1 等待观察）。**降级路径**：对比幅度超预期（明显跳变不适）→ 登记 follow-up 不阻塞交付（兜底气泡短暂展示属可接受初态，跳变限于单气泡位置）。
 - ⛔ 实施期验证：`record.task` 含超长文本时的渲染（气泡无 maxHeight 的话是否需要截断）——超范围则登记 follow-up，不在本设计处理。
-- ⛔3 范围外缺陷登记（R2 终审 SUGGESTION 采纳）：core 读取链①级 defined-empty 视图不降级②③级（session-view-service.ts:496 `native !== undefined` 即返回、无内容检查），使③级「详情页至少有 task/结果」意图在非 pi mid-run 窗口 B 退化为仅 task——缺陷本体在 subagent-core，其他③级消费方（摘要卡数据源）同受影响。证据链：collectTurns 排除 user 消息（zcode/reader.ts:296）+ buildView 零 turn 不抛错 + 编排层无判空。实施期向 core 维护方登记 follow-up（修复方向：①级返回前判空降级），独立于本设计排期。
+- ⛔3 范围外缺陷登记（R2 终审 SUGGESTION 采纳）：core 读取链①级 defined-empty 视图不降级②③级（session-view-service.ts:496 `native !== undefined` 即返回、无内容检查），使③级「详情页至少有 task/结果」意图在非 pi mid-run 窗口 B 退化为仅 task——缺陷本体在 subagent-core，其他③级消费方（摘要卡数据源）同受影响。证据链：collectTurns 排除 user 消息（engines/zcode/reader.ts:289，user 不进 turns 注释 :293）+ buildView 零 turn 不抛错 + 编排层无判空。实施期向 core 维护方登记 follow-up（修复方向：①级返回前判空降级），独立于本设计排期。
 
 ## 附录：变更历史
 

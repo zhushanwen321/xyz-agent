@@ -129,7 +129,7 @@ if (isDev) {
   // 隔离 Electron userData，防止与 prod 实例共享 Chromium 存储（LevelDB LOCK 竞争）。
   // 从 XYZ_AGENT_DATA_DIR 派生（而非硬编码 .xyz-agent-dev）：多 worktree 并行 dev 时
   // 各实例用独立数据目录，userData 隔离随之成立——否则单实例锁互斥导致第二个 dev
-  // 实例静默退出（subagent-drawer-blank 设计 §验收 Gate B 实测发现）。
+  // 实例静默退出（subagent-drawer-blank 设计 §8.2 验收场景实测发现）。
   app.setPath('userData', path.join(process.env.XYZ_AGENT_DATA_DIR ?? path.join(homedir(), '.xyz-agent-dev'), 'electron'))
 }
 

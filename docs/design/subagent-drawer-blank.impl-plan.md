@@ -61,7 +61,7 @@ graph TD
 | 1 | u3 领地增补 ActivityStrip.test.ts（新建测试文件） | T4 的 DOM 断言需独立挂载 ActivityStrip（既有测试无此组件覆盖），计划表初版漏列 | u3 |
 | 2 | u3 领地增补 composables/panel/useSubagentThinking.ts（新建 composable） | 轮 1 pre-commit 打回：script setup 309>300 行上限；提取 composable 正面修复（u3-fix-line-limit） | u3 |
 | 3 | u2 seed 守卫含 history.length === 0（task 规定守卫之外） | renderer noUnusedLocals 要求消费返回值；条件被 u1 蕴含（非空 history ⇒ 分区非空），行为严格等价 | u2 |
-| 4 | electron main 两处 dev 隔离补强：window-factory VITE_DEV_URL 支持 XYZ_VITE_DEV_URL 覆盖 + main.ts userData 从 XYZ_AGENT_DATA_DIR 派生 | Gate B 实测发现：多 worktree 并行 dev 时 ①VITE_DEV_URL/CDP 端口硬编码无法共存 ②userData 硬编码 .xyz-agent-dev/electron 使第二个 dev 实例被单实例锁静默退出（锁痕迹缺失实证）。均为 dev-only 路径，使 Gate B 隔离栈成为可能 | Gate B |
+| 4 | electron main 两处 dev 隔离补强：window-factory VITE_DEV_URL 支持 XYZ_VITE_DEV_URL 覆盖 + main.ts userData 从 XYZ_AGENT_DATA_DIR 派生 | Gate B 验收（设计 §8.2）实测发现：多 worktree 并行 dev 时 ①VITE_DEV_URL/CDP 端口硬编码无法共存 ②userData 硬编码 .xyz-agent-dev/electron 使第二个 dev 实例被单实例锁静默退出（锁痕迹缺失实证）。commit 39380202d（u5-gateb） | u5-gateb |
 
 ## 6 状态表
 
@@ -70,10 +70,12 @@ graph TD
 | u1-store | committed | 1 | commit 3bfe6069a（fetchAndInject 返回 Message[] + 空不擦；T1 用例 35/35 绿） |
 | u2-seed | committed | 1 | commit 4000fe668（判定顺序即优先级；T2 矩阵 7/7 绿；:431 outcome 同屏保持绿；偏差 #3：seed 守卫含 history.length===0，被 u1 蕴含且满足 noUnusedLocals） |
 | u3-thinking | committed | 2 | commit 3bfe6069a（轮 1 被打回：script setup 309>300 → 提取 useSubagentThinking composable 后 297 行；T3/T4 9/9 绿 + vue-tsc 干净） |
-| u4-regression | committed | 1 | 预期翻转 1 条已适配（:447 0→1 turn + task 文本可见断言）；:431 零改动保持绿；renderer 全包 4082 tests + core chat 641 tests 全绿；vue-tsc 干净（提交随本表更新 commit） |
+| u4-regression | committed | 1 | commit 35df7b5f4：预期翻转 1 条已适配（:447 0→1 turn + task 文本可见断言）；:431 零改动保持绿；renderer 全包 4082 tests + core chat 641 tests 全绿；vue-tsc 干净 |
+| u5-gateb（增补） | committed | 1 | commit 39380202d：Gate B 真实场景验收 S1-S5 全过（Playwright 连 9225 隔离实例，pi/zcode 双引擎运行窗口截图）+ 偏差 #4 两处 electron main dev 隔离补强 |
 
 ## 7 残留风险与变更历史
 
 - 残留风险：设计 §11 ⛔1（双 user 过渡视觉平滑，降级路径已定：超预期登记 follow-up 不阻塞）；⛔2（超长 task 渲染，超范围登记 follow-up）；⛔3（core ①级空视图降级缺陷，范围外已登记 follow-up，本设计 renderer seed 在症状层兜住）。
 - 变更历史：
   - v1（2026-09-08）：初版。用户已声明「不需要我授权，你全权负责」——dev-flow 阶段 1 的用户评审步骤由主 agent 以文档化推理代行：切分粒度（4 unit，单 unit 领地 ≤2 src 文件，改动脉络与设计 §7 三处改动一一对应）；worktree 不开（改动面小、同包无合并冲突风险、DAG 浅）；验收条款对照设计 §8.2 五场景全覆盖（S1-S5 → u2/u3/u4 验收条款）。
+  - v2（2026-09-08，实施阶段登记）：基线 d74bdeabc → 实现 commit 3bfe6069a（u1+u3，含 u3 轮 1 行数打回 → 提取 useSubagentThinking）/ 4000fe668（u2，含偏差 #3）/ 35df7b5f4（u4 预期翻转适配）/ 39380202d（u5-gateb 偏差 #4 electron main dev 隔离补强）。Gate B 验收 S1-S5 全过（Playwright 隔离实例 9225，pi/zcode 双引擎）。sync-review（subagent-drawer-blank.sync-review.md）0 must-fix / 8 suggestion 全修，本表 M1-M4 即其修复。

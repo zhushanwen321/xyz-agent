@@ -6,9 +6,12 @@
  * finalizeSubagentStream）属 chat store ops 面——taste-lint 规则
  * no-chat-ops-in-components 禁止组件直取，编排动作归 composable 层。
  *
- * 职责（原组件 loadSubagentData 全量迁移）：
- * - subagent 三段式虚拟 id：fetchAndInject 拉历史 + 恒订阅 stream_delta（E-4 / R3
- *   消解：不依赖 isRunning 陈旧缓存判定订阅时机）+ 客户端 outcome-only 兜底投影（U4 A8）
+ * 职责（原组件 loadSubagentData 全量迁移 + drawer-blank 修复 u2 增补）：
+ * - subagent 三段式虚拟 id：fetchAndInject 拉历史（空历史不写分区，u1）+
+ *   恒订阅 stream_delta（E-4 / R3 消解：不依赖 isRunning 陈旧缓存判定订阅时机）
+ *   + 客户端 outcome-only 兜底投影（U4 A8，判定先行）
+ *   + 空历史时 task 用户气泡种入（drawer-blank u2：outcome 先行、seed 复用分区空守卫随后，
+ *   判定顺序即优先级，见 docs/design/subagent-drawer-blank.md §7.2）
  * - agentcall 两段式：快照只读，仅拉历史（D4：不接实时流式）+ 登记虚拟 key 到主
  *   session 清理映射（[MUST_FIX 1]，防 deleteSession 泄漏）
  */
