@@ -386,7 +386,7 @@ graph TD
 | W2 协议客户端 | committed | 1 | commit 见 git log `feat(subagent-core): W2 EngineClient protocol client`；test_evidence = client 目录 51 passed（fake-engine fixture：超时域二分/ack 不判死/崩溃重建退避/组杀连带 grandchild/pidfile 三条件矩阵）+ core 全量 3438 passed + typecheck/eslint 零 |
 | W3 注册表与路由 | committed | 2 | commit 见 git log `feat(subagent-core): W3 dual-mode registry, routing and gate contract`；test_evidence = core 全量 3476 passed（+34 用例 +4 接线用例）+ typecheck/eslint 零；轮次 2 = 主体 + 接线修复轮（A6② mismatch run 期闭环，授权扩领地 client/）；R1-S7 engine-awareness 核实零改动 |
 | W4 发现器 | committed | 1 | commit 见 git log `feat(subagent-core): W4 engine discovery three-tier + manifest schema`；test_evidence = core 全量 3500 passed（发现器 24 用例）+ runtime 全量 5089 passed + engines-declaration 守护 2 passed + lint 全绿；领地扩展 4 文件已登记 deviations |
-| W5 zcode 外移 | pending | — | — |
+| W5 zcode 外移 | committed | 1 | commit 见本分支 git log `feat(zcode-subagent-cli): W5 zcode engine extraction`；test_evidence = 新包 194 passed（含 protocol-e2e 真实 spawn 协议往返）+ typecheck/eslint 零 + core 零改动零回归 3500 passed + bin EOF 自灭验证；worktree feat-zcode-subagent-cli 合入批次 |
 | W6 pi 宿主面下沉 | pending | — | — |
 | W7 pi 外移 | pending | — | — |
 | W8 宿主接线 | pending | — | — |
