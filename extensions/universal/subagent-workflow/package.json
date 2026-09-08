@@ -64,6 +64,7 @@
     "@zhushanwen/pi-ext-guards": "workspace:*",
     "@zhushanwen/pi-extension-logger": "workspace:*",
     "@zhushanwen/subagent-core": "workspace:*",
+    "@zhushanwen/pi-subagent-cli": "workspace:*",
     "@zhushanwen/zcode-subagent-cli": "workspace:*"
   },
   "peerDependencies": {

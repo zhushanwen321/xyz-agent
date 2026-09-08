@@ -657,6 +657,45 @@ else
 fi
 
 # ============================================================================
+# 引擎包边界检查（W9，subagent-engine-protocolization）
+#   ① check-engine-sdk-boundary（W1 守卫，随 W9 挂载进链——此前未挂载）：
+#     SDK 源码 + dist 不得 import @zhushanwen/subagent-core（不变量：SDK 不得
+#     import core，否则 core → SDK → core 成环）；
+#   ② check-engine-package-boundary（W9 新守卫）：packages/subagent-engine-* +
+#     pi/zcode-subagent-cli 不得依赖/导入 core 内部路径 + DoD#2（exports 无
+#     ./engines/ 子入口、barrel 无引擎重导出）。
+#   设计依据：docs/design/subagent-engine-protocolization.md §3.7 / impl-plan §2.9。
+#   注：不设独立跳过开关——新增 SKIP_* 逃生口须同步登记 AGENTS.md 的 SKIP_* 清单，
+#   故本段仅受既有 SKIP_ALL_CHECKS 总闸管辖。
+# ============================================================================
+
+ENGINE_SDK_BOUNDARY_CHECKER=".githooks/check-engine-sdk-boundary.mjs"
+ENGINE_PACKAGE_BOUNDARY_CHECKER="scripts/check-engine-package-boundary.mjs"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    print_section "[引擎包边界检查]"
+    echo -e "${BLUE}[INFO] 运行引擎 SDK / 引擎包边界检查...${NC}"
+
+    if [ ! -f "$ENGINE_SDK_BOUNDARY_CHECKER" ] || [ ! -f "$ENGINE_PACKAGE_BOUNDARY_CHECKER" ]; then
+        echo -e "${YELLOW}[WARN] 找不到检查脚本（$ENGINE_SDK_BOUNDARY_CHECKER / $ENGINE_PACKAGE_BOUNDARY_CHECKER）${NC}"
+    else
+        node "$ENGINE_SDK_BOUNDARY_CHECKER" && node "$ENGINE_PACKAGE_BOUNDARY_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] 引擎包边界检查失败${NC}"
+            echo -e "${YELLOW}[INFO] 引擎包只依赖 @zhushanwen/subagent-engine-sdk；共享实现下沉 SDK（core → SDK 是合法方向）；修复指引见上方脚本输出${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}[OK] 引擎包边界检查通过${NC}"
+    fi
+else
+    echo -e "${YELLOW}[SKIP] 引擎包边界检查已跳过${NC}"
+fi
+
+# ============================================================================
 # Pi extension tool schema 顶层 Object 合规检查（OpenAI 兼容性）
 # ============================================================================
 

@@ -234,6 +234,23 @@ export const ENGINE_ENV_DENY_LIST: readonly string[] = [
 ]
 
 /**
+ * 引擎启动 env 名 SSOT（W9 生成块挂载，impl-plan §2.9；与上方 W12 的 ENGINE_ENV_*
+ * 生成块同文件、行区间互斥——串行边 W12→W9 保证）。
+ *
+ * 两个 env 名的写入方/读取方（跨包镜像登记，勿单独改动）：
+ * - ROOTS（L1 引擎发现根，path.delimiter 分隔绝对路径列表）：写入 =
+ *   packages/runtime/src/services/session/engine-roots.ts（本 SSOT import 消费）；
+ *   读取 = core engine-discovery-roots.ts（parseEngineRootsEnv，W4 字面量）。
+ * - NODE（引擎 node 执行器，与 relay 的 XYZ_SUBAGENT_RELAY_NODE 不复用）：写入 =
+ *   runtime engine-roots.ts（打包态注入 pi 子进程）；读取 = SDK
+ *   src/node-executor.ts（字面量镜像——SDK 不得 import shared，F9 同上方 W12 块）。
+ */
+export const ENGINE_LAUNCH_ENV_KEYS = {
+  ROOTS: 'XYZ_AGENT_ENGINE_ROOTS',
+  NODE: 'XYZ_AGENT_ENGINE_NODE',
+} as const
+
+/**
  * 前端 toast 并发上限（D7「限流与防毒化」）。
  *
  * 在列 toast 超过上限时新 toast 丢弃并计数（droppedCount），防止通知风暴刷屏。

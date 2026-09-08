@@ -432,6 +432,15 @@ jobs:
       - name: pi semantics registry guard (G1)
         run: node scripts/check-pi-semantics.mjs
 
+      # 引擎包边界守卫（W9，subagent-engine-protocolization，与 pre-commit 同源直调）：
+      # ① W1 SDK 边界（SDK 不得 import core，.githooks 守卫随 W9 挂载链同步进 CI）；
+      # ② W9 引擎包边界（packages/subagent-engine-* + pi/zcode-subagent-cli 不得
+      # 依赖/导入 core 内部路径 + DoD#2 exports/barrel 断言）。
+      - name: Engine package boundary guards (W9)
+        run: |
+          node .githooks/check-engine-sdk-boundary.mjs
+          node scripts/check-engine-package-boundary.mjs
+
       # pi 构建期派生锚点守卫（pi-evolution-consistency §3.2 方向 1A / D2，与 pre-commit 同源直调）：
       # 声明基准（build.yml env / prepare 脚本默认值 / extensions peerDeps 对根 package.json）
       # + 实装基准（快照 piAiVersion / 快照新鲜度 / KNOWN_PI_API_TYPES / pi-tui 对 node_modules）。

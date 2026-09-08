@@ -139,6 +139,15 @@ COMMENT_LINE_RE = re.compile(r"^\s*(?://|/\*|\*)")
 # ---------------------------------------------------------------------------
 
 EXEMPT_CALLSITES = [
+    # --- packages/subagent-engine-sdk ---
+    (
+        "node-executor.ts",
+        'spawn(execPath, ["--eval", "process.exit(0)"]',
+        "引擎执行器可用性探针（W9，与 runtime relay-env 探针同款语义的 SDK 复刻）："
+        "手工构造的白名单最小 env（仅 PATH/HOME/ELECTRON_RUN_AS_NODE）探测执行器可运行性，"
+        "父 env 全量不继承，deny 键零暴露——语义强于构建器（全量继承 + deny 剥离），"
+        "改用构建器反而放宽 env 面，故按白名单显式构造豁免（db-isolation/protocolization W9 登记 2026-09-09）",
+    ),
     # --- packages/runtime/src ---
     (
         "infra/relay/relay-env.ts",

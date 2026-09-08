@@ -105,6 +105,15 @@ extraResources:
   # pi Skill 通过绝对路径引用此文件
   - from: dist/runtime/cli.cjs
     to: bin/xyz-settings
+  # subagent 引擎 CLI 包（W9，设计 §3.7 Electron 打包态）：bundle-extensions.mjs
+  # 预先 bundle 到 resources/engines/<id>/（数量 = packages/*-subagent-cli 动态发现，
+  # 不在此写死）；runtime 侧 engine-roots.ts 推导 Resources/engines 绝对路径并经 env
+  # XYZ_AGENT_ENGINE_ROOTS 显式注入 pi 子进程（不 cwd 探测）。sourcemap 不进产物。
+  - from: resources/engines
+    to: engines
+    filter:
+      - "**/*"
+      - "!**/*.map"
 
 # NOTE: macos-latest 是 arm64 runner，无法交叉编译 x64。
 # 如需 Intel Mac 支持，追加 macos-13 (Intel) 或配置 universal。

@@ -25,3 +25,7 @@ export * from "./ui-types.ts";
 // 入口 + 宿主死亡自灭守卫）。
 export * from "./env.ts";
 export * from "./spawn.ts";
+
+// W9 落地（impl-plan §2.9）：引擎 CLI 启动解析（宿主 × 平台二维矩阵 + node 执行器探针，
+// 探针复刻 runtime relay-env 先例）。
+export * from "./node-executor.ts";

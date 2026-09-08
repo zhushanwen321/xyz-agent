@@ -36,6 +36,8 @@ import {
   isReverseRequestFrame,
   STDERR_TAIL_CHARS,
   engineProtocolMismatchError,
+  hostKindOf,
+  resolveEngineNodeLaunch,
   type EngineHandleData,
   type InitializeResult,
   type RequestFrame,
@@ -294,18 +296,30 @@ export class EngineClient {
   private async spawnAndInitialize(): Promise<void> {
     this.intentionalKill = false;
     const platformOpts = engineSpawnPlatformOptions();
-    const env = buildEngineChildEnv(this.opts.baseEnv ?? { ...process.env }, {
+    // [W9] 启动解析（宿主 × 平台二维矩阵，impl-plan §2.9）：spawn argv 先经 SDK
+    // resolveEngineNodeLaunch 解析——打包态 pi 宿主必须用注入执行器
+    // XYZ_AGENT_ENGINE_NODE（pi binary 不是 node 执行器）、runtime sidecar 用
+    // process.execPath、standalone 用 PATH node（缺 node / 探针失败 → engine_not_found）。
+    // Windows .cmd 入口在此改写为显式 cmd.exe /c + 参数数组（禁 shell:true）。
+    const baseEnv = this.opts.baseEnv ?? { ...process.env };
+    const launch = await resolveEngineNodeLaunch({
+      entryPath: this.opts.command,
+      args: this.opts.args,
+      hostKind: hostKindOf(this.opts.hostKind, baseEnv),
+      env: baseEnv,
+    });
+    const env = buildEngineChildEnv(baseEnv, {
       dataDir: this.opts.dataDir,
-      engineNode: this.opts.engineNode,
-      electronRunAsNode: this.opts.electronRunAsNode,
+      engineNode: this.opts.engineNode ?? launch.command,
+      electronRunAsNode: this.opts.electronRunAsNode ?? launch.electronRunAsNode,
       relay: this.opts.relay,
       identityEnv: this.opts.identityEnv,
       envPrefixes: this.opts.envPrefixes,
       processEnv: this.opts.processEnv,
     });
 
-    // stdin 恒 'pipe' 且独占（引擎自灭主判据 stdio EOF 的前提；不覆写、不 inherit）。
-    this.child = spawn(this.opts.command, [...this.opts.args], {
+    // stdin 恒 'pipe' 且独占（引擎自灭主判据 stdio EOF 的前提；不覆写、不继承）。
+    this.child = spawn(launch.command, launch.args, {
       cwd: this.opts.cwd,
       env,
       ...platformOpts,

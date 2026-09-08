@@ -27,6 +27,7 @@ export default defineConfig({
     'ui-types': 'src/ui-types.ts',
     env: 'src/env.ts',
     spawn: 'src/spawn.ts',
+    'node-executor': 'src/node-executor.ts',
   },
   format: ['esm', 'cjs'],
   dts: true,

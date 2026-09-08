@@ -391,7 +391,7 @@ graph TD
 | W6 pi 宿主面下沉 | committed | 1 | commit 见 git log `feat(subagent-core): W6 HostBridge sink + spawnedChildren mirror + askUser endpoint`；test_evidence = core 全量 3522 passed（host 域 17 新用例含 MF-A 集成断言）+ typecheck 零；engine-discovery-scan 两处构造点单行注入已追认（deviations） |
 | W7 pi 外移 | committed | 1 | commit 见 git log `feat(pi-subagent-cli): W7 pi engine extraction`；test_evidence = pi 包 209 passed（e2e 含 askUser ack 两阶段/childSpawned/handleReady/EOF 自灭）+ core 3522 保持绿（MF-A 断言）+ eslint 零；ui-request-queue 裁决方案(a) core 保留；chat 域协议化缺口已登记（v1 协议载荷面限制，inproc 双模过渡） |
 | W8 宿主接线 | committed | 2 | commit 见 git log `feat(runtime): W8 protocol-client host wiring`；test_evidence = runtime 三轮全绿（5071-5100 passed，logger flaky 与本单元零交集）+ 协议化 5 用例 + d8-compat 6 用例 + 扩展 912 passed + extension-dependencies 22 包一致；轮次 2 = 前序尝试主体 + 修复轮（d8 inproc 回退 cliPath 透传/lockfile 补链/lint）|
-| W9 打包与分发 | pending | — | — |
+| W9 打包与分发 | committed | 1 | commit 见 git log `feat(build): W9 engine packaging, launch matrix and boundary guard`；test_evidence = package-boundary 守卫 3 包扫描零违规（负样本能红）+ bundle 链 staged 真机冒烟 + validate-runtime-bundle [1b/6] 过 + engine-roots 9 用例 + SDK node-executor 13 用例；发现并承接 W1 sdk 守卫未挂载（S-9） |
 | W10 conformance 改造 | pending | — | — |
 | W11 壳侧去引擎化 | pending | — | — |
 | W12 环境与文档 | committed | 1 | commit 见 git log `feat(env): W12 buildEngineChildEnv three-layer + spawnEngineChild`；test_evidence = SDK 76/76（新增 env-contract 15 + spawn-self-destruct 10 用例）+ 两守卫违规 0（SDK/引擎包入 SCAN_ROOTS、镜像逐项相等断言 OK）+ R4-S① 真实 git 集成断言（hooks 子进程 env 无 deny 键）+ worktree 单测 75 passed + 集成 8 passed |

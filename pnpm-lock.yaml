@@ -643,6 +643,9 @@ importers:
       '@zhushanwen/pi-structured-output':
         specifier: workspace:*
         version: link:../structured-output
+      '@zhushanwen/pi-subagent-cli':
+        specifier: workspace:*
+        version: link:../../../packages/pi-subagent-cli
       '@zhushanwen/subagent-core':
         specifier: workspace:*
         version: link:../../../packages/subagent-core
@@ -1104,6 +1107,12 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^4.1.9
         version: 4.1.9(vitest@4.1.9)
+      '@zhushanwen/pi-subagent-cli':
+        specifier: workspace:*
+        version: link:../pi-subagent-cli
+      '@zhushanwen/zcode-subagent-cli':
+        specifier: workspace:*
+        version: link:../zcode-subagent-cli
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.16)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)

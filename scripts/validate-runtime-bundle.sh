@@ -84,6 +84,39 @@ if [ ! -f "$ESM_LOADER_PATH" ]; then
 fi
 echo -e "${GREEN}[OK] 产物存在: index.cjs + plugin-bootstrap.cjs + plugin-bootstrap-process.cjs + plugin-esm-loader.cjs${NC}"
 
+# ── 1b. staged 引擎 CLI 包（W9，设计 §3.7 Electron 打包态）────────────
+# bundle-extensions.mjs 把 packages/*-subagent-cli bundle 到
+# apps/electron/resources/engines/<id>/；缺失/退化（漏跑 bundle / 引擎包 manifest
+# 坏 / index.js 不可执行）在此拦截——否则 electron-builder extraResources 静默拷空，
+# 打包态引擎发现零命中，延迟到 release 后 GUI 才暴露。
+echo ""
+echo -e "${BLUE}[1b/6] 检查 staged 引擎包...${NC}"
+STAGED_ENGINES="$PROJECT_ROOT/apps/electron/resources/engines"
+if ! node -e '
+const fs = require("fs"), path = require("path");
+const root = process.argv[1];
+const fail = (msg) => { console.error(`[ERROR] ${msg}`); process.exit(1); };
+let entries;
+try { entries = fs.readdirSync(root, { withFileTypes: true }); }
+catch { fail(`engines staged 根缺失: ${root}（先跑 node scripts/bundle-extensions.mjs）`); }
+const dirs = entries.filter((e) => e.isDirectory());
+if (dirs.length === 0) fail(`engines staged 根为空: ${root}（packages/*-subagent-cli 未 staged = 打包回归）`);
+for (const d of dirs) {
+  const dir = path.join(root, d.name);
+  const idx = path.join(dir, "index.js");
+  try { if (!fs.statSync(idx).isFile() || !(fs.statSync(idx).mode & 0o111)) fail(`engine ${d.name}: index.js 缺失或不可执行: ${idx}`); }
+  catch { fail(`engine ${d.name}: index.js 缺失: ${idx}`); }
+  const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  const m = pkg["xyz-agent"]?.subagentEngine;
+  if (m?.id !== d.name || typeof m?.bin !== "string" || m.bin === "" || pkg.bin?.[m.bin] !== "./index.js")
+    fail(`engine ${d.name}: staged package.json manifest/bin 无效`);
+  console.log(`[OK] engine ${d.name}: index.js + manifest 有效`);
+}
+' "$STAGED_ENGINES"; then
+    echo -e "${YELLOW}[FIX] 运行 node scripts/bundle-extensions.mjs 重新 staged，并核对 packages/*-subagent-cli 的 xyz-agent.subagentEngine manifest${NC}"
+    exit 1
+fi
+
 # ── 2. 依赖打包检查 ─────────────────────────────────────────────────
 echo ""
 echo -e "${BLUE}[2/6] 检查依赖是否打包（noExternal）...${NC}"
