@@ -106,7 +106,7 @@ graph TD
 | U3 | committed | 1 | a8491bb2c（smart-context 49/49 · 探针 3/3 · pi-semantics 守卫 28 条 · typecheck/lint exit=0） |
 | U4 | committed | 1 | 650118620（llm-shared 52/52 · extensions:typecheck exit=0；附带发现：PI_SUBAGENT_CHAT_MODE 环境泄漏致 subagent-workflow 测试假红，后续全量测试用干净 env） |
 | U5 | committed | 1 | 363879a17（rename-session 167/167 · typecheck/lint exit=0 · P-appendEntry CLI 探针一次通过，证据：subagent 会话 2026-09-08T06-09-36-321Z） |
-| U6 | pending | 0 | — |
+| U6 | committed | 1 | 985aadbf7（runtime 45/45 · pi-semantics 守卫 29 条 · tsc 绿 · pre-commit 含 Bundle 验证全绿） |
 | U7 | pending | 0 | — |
 | U8 | pending | 0 | — |
 
