@@ -1,6 +1,6 @@
 # zcode 引擎会话库隔离 实施计划
 
-基线: 106f29135 | 来源设计: docs/design/zcode-session-db-isolation.md（v11，分层拆分后设计层 SSOT） | 日期: 2026-09-08
+基线: df0139a39 | 来源设计: docs/design/zcode-session-db-isolation.md（v11，分层拆分后设计层 SSOT） | 日期: 2026-09-08
 
 > 本计划承接设计文档 §5 的 W1–W6 拆分，把**实现级细节**（文件锚点行号、工具 CLI 参数、
 > SQL 语句、断言命令、常量字面量）从设计层下沉到本文件。设计文档后续瘦身时以本文件为实现级 SSOT；

@@ -1,6 +1,6 @@
 # 子代理引擎协议化与外移 实施计划
 
-基线: 9d7f62f68 | 来源设计: docs/design/subagent-engine-protocolization.md（v11，设计层收敛、实现级细节已下沉本文件） | 日期: 2026-09-08
+基线: df0139a39 | 来源设计: docs/design/subagent-engine-protocolization.md（v11，设计层收敛、实现级细节已下沉本文件） | 日期: 2026-09-08
 
 > 本计划承接设计文档 §5 的 W1–W12 拆分，把**实现级细节**（env 变量名、pidfile 命名、清理谓词、
 > conformance 断言形式、措辞限定词）从设计层下沉到本文件。设计文档后续瘦身时以本文件为
