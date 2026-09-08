@@ -28,7 +28,6 @@ function makeDeps(overrides?: FlowDepsOverrides): NewTaskFlowDeps {
     ports: {
       createSessionFlow: {
         createSession: vi.fn(),
-        setThinkingLevel: vi.fn(),
       },
       chat: {
         send: vi.fn(),
@@ -231,8 +230,6 @@ describe('useNewTaskFlow', () => {
       bashCommand: null,
       pendingThinkingLevel: expected.thinkingLevel,
     })
-    // [D5] C-W4-3 setThinkingLevel 补 apply 已删：create 快照化后无同值二次 RPC
-    expect(deps.ports.createSessionFlow.setThinkingLevel).not.toHaveBeenCalled()
     // 主链路不变：载入 panel + activeId + 导航 + 文件树 + send(migratedSegments) + completed
     expect(deps.ports.navigation.setActiveSession).toHaveBeenCalledWith('s1')
     expect(deps.ports.navigation.loadPanel).toHaveBeenCalledWith('p1', 's1')
@@ -313,8 +310,6 @@ describe('useNewTaskFlow', () => {
     })
     expect(deps.ports.chat.sendBash).toHaveBeenCalledWith('s1', 'ls', true)
     expect(deps.ports.chat.send).not.toHaveBeenCalled()
-    // [D5] C-W4-3 已删：thinkingLevel apply 只经 create 快照化，端口 apply 恒不调
-    expect(deps.ports.createSessionFlow.setThinkingLevel).not.toHaveBeenCalled()
   })
 
   it('TC-6b: createSessionFlow 返回 null（空 content guard）→ abort send', async () => {

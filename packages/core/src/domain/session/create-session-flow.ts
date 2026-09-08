@@ -87,12 +87,6 @@ export interface CreateSessionFlowCtx {
   defaultCwd: string
   /** INV-7 cwd 降级回调（created.cwd !== 请求 cwd 时触发（含 E7 两空空串），壳做 toast 通知） */
   onCwdFallback?: (reqCwd: string, actualCwd: string) => void
-  /**
-   * [已废弃 2026-09 D5] post-create applyModel 已随契约快照化删除（模型经 create
-   * modelOverride 一次到位）。字段保留仅为壳层（领地外）既有 ctx 构造兼容，恒不被调用；
-   * 壳清理后删除。
-   */
-  applyModel?: (sessionId: string, pendingModel: string) => Promise<void>
 }
 
 /** createSessionFlow 的输入（landing 态首发提交的创建参数）。 */
@@ -101,7 +95,7 @@ export interface CreateSessionFlowInput {
   cwd: string | null
   /** preset id（landing 态 pendingPreset；空传 undefined 给 create） */
   presetId?: string | null
-  /** landing 态选定的模型（"provider/modelId" 复合串；空跳过 applyModel） */
+  /** landing 态选定的模型（"provider/modelId" 复合串；经 create modelOverride 快照化生效） */
   pendingModel?: string | null
   /** 归属 project id（D14 语义修正 2026-08-04：创建时归属当前 activeProject；空 = 默认项目兑底） */
   projectId?: string | null

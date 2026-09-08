@@ -49,6 +49,7 @@ import {
 } from '@xyz-agent/dom-core/composer/input'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
+import { usePresetStore } from '@/stores/preset'
 import { getSettingsStore } from '@xyz-agent/core'
 import { useChat } from '@/composables/features/chat/useChat'
 import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
@@ -147,6 +148,7 @@ export function useComposerShell(params: ComposerShellParams) {
   const { t } = useI18n()
   const chatStore = useChatStore()
   const sessionStore = useSessionStore()
+  const presetStore = usePresetStore()
   const settingsStore = getSettingsStore()
   const flow = useNewTaskFlow()
   const { error: toastError } = useToast()
@@ -196,6 +198,16 @@ export function useComposerShell(params: ComposerShellParams) {
       const [providerId, modelName] = modelId.split('/')
       const provider = settingsStore.providers?.value?.find((p: { id: string }) => p.id === providerId)
       return provider?.models.find((m: { id: string }) => m.id === modelName)?.supportedLevels
+    },
+    // [U2d] landing 显示链完整解析数据注入（D1 单一解析层）：preset 档可达（preset 档
+    // 此前在 core 无镜像，显示恒跳过）+ D4 lastUsedModel 校验获得 providers 能力表。
+    // getter 闭包内读响应式 store，createLaunchConfigView 据此建立依赖——preset store
+    // 惰性加载完成后 chip 自动重算（P5①）。加载触发不在此（PresetSelectChip onMounted
+    // loadPresets 既有通路覆盖 landing 挂载场景）。
+    launchData: {
+      presets: () => presetStore.presets,
+      defaultPresetId: () => presetStore.defaultPresetId || null,
+      providers: () => settingsStore.providers?.value,
     },
   })
 

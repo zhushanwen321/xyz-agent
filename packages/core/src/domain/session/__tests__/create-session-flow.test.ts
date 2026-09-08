@@ -31,7 +31,6 @@ function makeCtx(overrides: Partial<CreateSessionFlowCtx> = {}): CreateSessionFl
       onConfigSessions: vi.fn(() => () => {}),
     },
     defaultCwd: '/home',
-    applyModel: vi.fn(async () => {}),
     onCwdFallback: vi.fn(),
     ...overrides,
   }
@@ -100,8 +99,7 @@ describe('createSessionFlow', () => {
     expect(appendSpy).toHaveBeenCalledTimes(1)
     expect(appendSpy).toHaveBeenCalledWith({ id: 'ns', cwd: '/x', label: 'hi', status: 'idle' })
     // [D5] step 7 applyModel 已删：模型经 create modelOverride 快照化一次到位，
-    // 无 post-create 同值二次 RPC（ctx.applyModel 字段已废弃保留，恒不被调用）
-    expect(ctx.applyModel).not.toHaveBeenCalled()
+    // 无 post-create 同值二次 RPC（ctx.applyModel 字段已随 U2d 壳清理删除）
     // 无图片段：migrateImage 未调
     expect(ctx.api.migrateImage).toHaveBeenCalledTimes(0)
     // 返回结构
@@ -139,8 +137,7 @@ describe('createSessionFlow', () => {
       pendingModel: null,
     })
     expect(ctx.api.create).toHaveBeenCalledWith('/x', 'hi', 'preset-1', undefined, undefined, undefined)
-    // applyModel 编排步骤已删（D5），无论 pendingModel 有无恒不调
-    expect(ctx.applyModel).toHaveBeenCalledTimes(0)
+    // applyModel 编排步骤已删（D5），无论 pendingModel 有无恒不调（字段已随 U2d 删除）
   })
 
   it('TC-5 空 content guard：无 text 且无非 text 段且无 bashCommand → 返回 null（不创建）', async () => {
