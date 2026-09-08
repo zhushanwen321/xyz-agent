@@ -75,6 +75,8 @@ graph TD
 | 9 | u5 | 领地补录①：dom-core skill-chip.test.ts（旧「命令 chip 走文本拍平」断言与 D4-b 直接冲突，设计 §4 回归清单点名该文件）；领地补录②：ui composer-input-get-text.test.ts（同因旧拍平断言，设计 §4 ui 行点名）；计划 u5 领地清单漏列 | 设计 §4 回归清单明确点名；同偏差 #1/#2 先例 | 2026-09-08 批次 3 核验 |
 | 10 | u5 | composer-slash-injection.test.ts 实测无「强制最前」类断言（整体 mock ComposerInput 为 spy，无 DOM 位置断言）——改写任务落在 slash-trigger U11c 新增就地断言；U11a/U11b 补确定性选区前置（防 happy-dom range.insertNode 插入已卸载 DOM 现象），断言本体未动 | 计划预判与实际测试形态不符；改写目标已达成 | 2026-09-08 批次 3 核验 |
 | 11 | u5 | insertSlashChip skill 兼容分支重排为显式 isSkill 分流（skill 分支行为逐行不变：删全部 chip + insertBefore firstChild + spacer） | 结构化非行为偏差 | 2026-09-08 批次 3 核验 |
+| 12 | u6 | enqueueDuringDefer 的 segments 快照从 enqueue 前移到 `/` 判定前——判定源迁 segments 后快照必须先于判定，顺带修复「判定先行但快照在后」的顺序隐患（clearInput 丢段风险） | 实现优于设计（机制层必要配套）；区 C 审查确认 | 2026-09-08 阶段 3 审查 |
+| 13 | u4/u5 | visitSlashChip slash 分支 name 取值 dataset-only（`chipName ?? ''`），丢弃旧 label 文本回退——与同函数 skill 分支既有约定同款 | 一致性优先；insertSlashChip 恒写 dataset，空值仅异构 DOM 出现 | 2026-09-08 阶段 3 审查 |
 
 ## 6 状态表
 
@@ -94,13 +96,14 @@ graph TD
 - restore.ts：u4（skill 分支）与 u5（slash 分支）→ u5 依赖 u4。
 - chip-commands.ts：u2（仅注释）与 u5（insertSlashChip 逻辑）→ 批次错开（批次 1 vs 批次 3），无并发窗口。
 
-**残留风险**（源自设计 §7 待验证检查点）：
-1. detectSlashTriggerFromEl 行首正则对「chip 后 ZWSP spacer 处光标」的行为——u5 验收时实测确认（影响场景 6 后连续操作）；
-2. normalizeContent 对 slash 段的呈现——预期归位文本透传，u1/u5 用例覆盖；
+**残留风险**（源自设计 §7 待验证检查点；1/2 已销项）：
+1. ✅ 已销项（u5，input-dom.test 三用例锁定）：detectSlashTriggerFromEl 行首正则对「chip 后 ZWSP spacer 处光标」不触发行首浮层——与 hasChip 抑制现状一致，无冲突；
+2. ✅ 已销项（区 A 审查确认）：normalizeContent 经 segmentsToText 委托，归位文本透传，无反解析需求；
 3. pi builtin 命令 RPC 注册完整性——Gate B 选样注意（场景 6 用 /compact，renderer 侧拦截不依赖此项）。
 
 **变更历史**：
 - 2026-09-08：初版（6 单元 DAG，源自设计 §5 P1-P5 拆分；P5 测试分摊进各单元）。
 - 2026-09-08：批次 1 完成（u1 aab8b4433 / u2 dadb65c39 / u3 16204a7c9 轮 2）；偏差登记 #1-#5；u3 领地补录 landing 测试文件。
 - 2026-09-08：批次 2 完成（u4 8a269dcea 轮 2 / u6 dcfe230b6 轮 2）；偏差登记 #6-#8；u4 领地补录 landing 测试；vue_rules_checker 全工作区口径导致 u6 commit 被 u4 在途超行连坐——编排顺序改为串行 commit。
-- 2026-09-08：批次 3 完成（u5 本 commit 轮 1）；偏差登记 #9-#11；检查点 1 销项（spacer 处 / 不触发行首浮层，与 hasChip 抑制一致，input-dom.test 三用例锁定）；状态表全 committed → 转阶段 3 一致性审查。
+- 2026-09-08：批次 3 完成（u5 1fbc9c3aa 轮 1）；偏差登记 #9-#11；检查点 1 销项（spacer 处 / 不触发行首浮层，与 hasChip 抑制一致，input-dom.test 三用例锁定）；状态表全 committed → 转阶段 3 一致性审查。
+- 2026-09-08：阶段 3 一致性审查轮 1 清零——三区（shared+dom-core / renderer+ui / core）独立审查：unreasonable 全空；doc_errors 2 条主 agent 亲修（① §4 dom-core 测试清单误列 skill-trigger.test.ts → 删，实际被改文件为 skill-chip.test.ts；② §5 P3 行 location 回填位置表述同步偏差 #6 提取后实际——buildPanelSlashCandidates）；reasonable 聚合登记 #12/#13 + 设计 D4-a 补「命令分支同经 restoreSelection（D1）取位」一句 + §7 检查点 2 销项；检查点 3 留 Gate B 选样注意。→ 转阶段 5 双级验收。

@@ -246,7 +246,7 @@ if (e.key === 'Enter' || e.key === 'Tab') {
 
 **D4：命令 chip 视觉就地 + 序列化归位（选定，含四个子决策）**
 
-- **D4-a DOM 插入**：`insertSlashChip` 命令分支（非 `/skill:`）从「删光全部 `.slash-chip` + `insertBefore(firstChild)`」改为「仅移除已有**命令** chip（`dataset.chipType==='slash'`，替换语义，维持单命令不变量）+ `insertChipAtSelection`」。
+- **D4-a DOM 插入**：`insertSlashChip` 命令分支（非 `/skill:`）从「删光全部 `.slash-chip` + `insertBefore(firstChild)`」改为「仅移除已有**命令** chip（`dataset.chipType==='slash'`，替换语义，维持单命令不变量）+ `insertChipAtSelection`」；命令分支同样先经 `restoreSelection()`（D1）取活选区落位——与五类 inline chip 同款调用序（r3 一致性审查补记）。
 - **D4-b 数据模型**：`Segment` 联合类型新增 `{ type: 'slash'; name: string }`（name 不含 `/` 前缀）；`visitSlashChip` 非 skill 分支从「label 并入 pendingText」改为 `flushText + push({type:'slash', name: dataset.chipName})`（chipName 已有，insertSlashChip 现存）。`SEGMENT_SERIALIZERS` 加 `slash: (seg) => '/' + seg.name`。
 - **D4-c 归位与判定真源迁移（r1 修订：消费点清单补全，F5/MF-2）**：`segmentsToText` 函数级归位——序列化前把 slash 段提为首段（多个 slash 段防御性全前置按序，正常态至多一个），后接原序其余段；既有 `needsBoundarySpace` 规则沿用（slash 段视同 chip 类段）。**发送判定逐点裁决**（`draft.value` 全部消费方，命令 chip 就地化后 DOM 序文本不再以 `/` 开头）：
 
@@ -305,7 +305,7 @@ if (e.key === 'Enter' || e.key === 'Tab') {
 | 包 | 测试文件 | 变更点 |
 |---|---|---|
 | shared | `src/__tests__/segments.test.ts` | slash 段类型 + serializer + 归位断言（穷尽守卫新增 key） |
-| dom-core | `composer/input/chip-commands.test.ts` / `input-dom.test.ts` / `contenteditable.test.ts` / `restore.test.ts` / `skill-chip.test.ts` / `skill-trigger.test.ts` | D1 插入位置、D4-a 命令 chip 就地、visitSlashChip slash 段、restoreSegments |
+| dom-core | `composer/input/chip-commands.test.ts` / `input-dom.test.ts` / `contenteditable.test.ts` / `restore.test.ts` / `skill-chip.test.ts` | D1 插入位置、D4-a 命令 chip 就地、visitSlashChip slash 段、restoreSegments（r3 审查修正：原列 skill-trigger.test.ts 实际未被行为变更触及，删；skill-chip.test.ts 才是被改文件） |
 | ui | `features/composer/__tests__/`（file-chip / composer-input-get-text / useComposerChipCommands.image / composer-input-trigger-forward / composer-injection-real-dom / useComposerDragDrop） | 真实选区链路去 mock（restoreSelection mock 盲区——bug 存活根因）；触发转发回归 |
 | renderer | `composer-keydown.test.ts`（D2 改动本体，含 capture/bubble 时序锁用例：浮层 open 时 Enter 不触发 onSend）；`composer-slash-injection.test.ts` / `composer-slash-trigger.test.ts`（强制最前断言改写为就地断言）；`composer-hash-trigger / composer-compact-queue / composer-dispatch-route / composer-bash-mode / composer-send-button-states / composer-fork-mode / composer-landing-skill-reload`（D4-c 判定源迁移） |
 | core | `domain/composer/dispatch/send.test.ts` / `submit.test.ts`；`domain/chat/` 的 `mutations.test.ts` / `useChat.test.ts` / `submit-queued-entry.test.ts`（场景 10/11/12 对应：staging/defer 重放/编辑重发） | 判定源迁移 + staging/defer 载荷 |
@@ -319,7 +319,7 @@ if (e.key === 'Enter' || e.key === 'Tab') {
 |---|---|---|---|
 | P1 | D1 restoreSelection 活选区优先 + 应用防御 | `dom-core/composer/input/contenteditable.ts`（restoreSelection 本体重写 + placeCaretAtEnd 辅助）；`chip-commands.ts`（调用点注释更新，无需改逻辑） | 根因 1 单点收口；判定在 restoreSelection 本体使其全部调用方（六类 insertXxxChip + insertTextAtCursor + onAddSelect）一次修复（r1 F1 落点修正）；独立可验收（场景 1-4） |
 | P2 | D2 capture 截断 + IME 守卫 + 同款模式修复 | `renderer/components/panel/CommandPopover.vue`（handleKeydown Enter/Tab：isComposing + stopPropagation）；`ui/features/chat/AmbiguousFilePopover.vue`（同款模式顺带修）；两处时序契约注释 | 根因 2；IME 确认劫持与 AmbiguousFilePopover 是同根双入口模式，合并修复防复发（r1 F3/SG-1）；独立可验收（场景 1「无新消息」+ 场景 13） |
-| P3 | D3 skill 项按类型路由 + location 链 | `renderer/composables/panel/useCommandPopoverTrigger.ts`（payload + onCmdSelect 分流）；`command-popover-symbols.ts`（SlashCandidateInput.location）；`CommandPopover.vue`（sourceInfo.path 填充）；`dom-core/composer/input/restore.ts`（skill 回滚分支） | 根因 3；与 P1/P2 无代码耦合，可并行；独立可验收（场景 5/9） |
+| P3 | D3 skill 项按类型路由 + location 链 | `renderer/composables/panel/useCommandPopoverTrigger.ts`（payload + onCmdSelect 分流）；`command-popover-symbols.ts`（SlashCandidateInput.location + buildPanelSlashCandidates 的 sourceInfo.path 回填——r3 审查同步：回填逻辑经偏差 #6 提取至此，非 CommandPopover.vue 内联）；`CommandPopover.vue`（消费构建函数）；`dom-core/composer/input/restore.ts`（skill 回滚分支） | 根因 3；与 P1/P2 无代码耦合，可并行；独立可验收（场景 5/9） |
 | P4 | D4 命令 chip 就地 + 归位 + 判定迁移 | `dom-core/composer/input/chip-commands.ts`（insertSlashChip 命令分支）；`input-dom.ts`（visitSlashChip slash 段）；`shared/segments.ts`（类型 + serializer + 归位）；`core/domain/composer/dispatch/send.ts`（defer `/` 半边 / /compact / staging.send 判定迁移）；`core/domain/chat/useChat.ts`（纯文本判定扩展）；`dom-core/composer/input/restore.ts`（slash 段回滚） | 根因 4，触及数据模型与发送链——风险面最大，单独成单元便于审查与回滚；判定迁移点以 D4-c 裁决表为准（含 staging，r1 MF-2）；独立可验收（场景 6/7/10/11/12） |
 | P5 | 测试补齐（清单见 §4） | §4 回归测试清单全量 + 键盘路径真实选区用例（去 restoreSelection mock）+ capture/bubble 时序锁用例 | 测试盲区是 bug 存活至今的直接原因；时序锁用例是 D2 删除防御层后的唯一防线（r1 MF-1 对策） |
 
