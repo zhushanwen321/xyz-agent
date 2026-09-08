@@ -95,7 +95,7 @@ pi 进程（token 流 / 工具结果 / compaction entry）
 scrollToIndex 的目标公式（core/index.js:287）：`scrollTop = startMargin + itemOffset(last) + itemSize(last) - viewportSize`，其中 `viewportSize` = 滚动容器的 `contentRect.height`（**不含 padding**，vue/index.js:368，探针 P-viewport ✅ 已核）。scrollEl 的 `pt-20px + pb-8px = 28px`（MessageStream.vue:16 + style.css:120）恰好抵消该扣除，因此**无尾部块时** align-end 像素级正确。但尾部块（ActivityStrip/PendingBubble/ForkNotice）在 Virtualizer 之后，不占 scrollSize——滚动目标比真实底部恒短一个尾部高度（F2 的 24px 正由此来）。更糟的是触发缺口：useMessageStreamScroll 的 4 个 watch 只覆盖消息条数/末条文本/isCompacting/isSessionActive，**executingBash、pendingEntries、forkNotices 的显隐没有任何滚动触发**（F4 正由此来）。
 
 **R3（确定性最强）`findItemIndex(scrollSize)` 与 startMargin 坐标错位，末项较短时钉到倒数第二项。**
-virtua 实装语义：`findItemIndex` 入参按**绝对滚动坐标**解释，内部减 startMargin（core/index.js:78，`$findItemIndex: e => d(R, e - m)`）；而 handle 的 `scrollSize` getter = `max(totalSize, viewportSize)`，**不含** startMargin（vue/index.js:470-471，探针 P-coord ✅ 已核）。useVirtuaFollow.ts:131/166（设计期现场，D1 索引直取后已删除，事故背景注释现存 :26-27）把 `scrollSize` 直接当绝对坐标传入，实际反查偏移 = `totalSize - 44`（load-more 显示时 startMargin=44）。**只要末项实测高度 < 44px（一行 SystemNotice/SkillNoticeInline 恒成立），findItemIndex 返回倒数第二项**，scrollToIndex 把倒数第二项的底部钉到视口底，真正的末项整行沉底。且滚完后距底 = `末项高 - 44 < 0 ≤ 40`（BOTTOM_THRESHOLD），`stickToBottom` 保持 true → 不浮回到底部按钮、后续每次 follow 重复同一错误目标——**自我锁死的错钉**（F3）。同模式误用还有第二处实例：`vlistBottom`（MessageStream.vue，同为 `findItemIndex(v.scrollSize)`，消费链见 §4.3 D6）。
+virtua 实装语义：`findItemIndex` 入参按**绝对滚动坐标**解释，内部减 startMargin（core/index.js:78，`$findItemIndex: e => d(R, e - m)`）；而 handle 的 `scrollSize` getter = `max(totalSize, viewportSize)`，**不含** startMargin（vue/index.js:470-471，探针 P-coord ✅ 已核）。useVirtuaFollow.ts:131/166（设计期现场，D1 索引直取后已删除，事故背景注释现存 :27）把 `scrollSize` 直接当绝对坐标传入，实际反查偏移 = `totalSize - 44`（load-more 显示时 startMargin=44）。**只要末项实测高度 < 44px（一行 SystemNotice/SkillNoticeInline 恒成立），findItemIndex 返回倒数第二项**，scrollToIndex 把倒数第二项的底部钉到视口底，真正的末项整行沉底。且滚完后距底 = `末项高 - 44 < 0 ≤ 40`（BOTTOM_THRESHOLD），`stickToBottom` 保持 true → 不浮回到底部按钮、后续每次 follow 重复同一错误目标——**自我锁死的错钉**（F3）。同模式误用还有第二处实例：`vlistBottom`（MessageStream.vue，同为 `findItemIndex(v.scrollSize)`，消费链见 §4.3 D6）。
 
 **R4（次要）新 item 估算高度 200px 的偏差方向不对称。**
 新插入 item 实测前按 `ESTIMATED_TURN_HEIGHT=200` 参与偏移计算。实际 <200（短消息）时目标过冲，浏览器 clamp + RO 收缩再 clamp 基本自愈；实际 >200（长粘贴、多图）时目标不足、实测长高后无补偿（同 R1 机制），缺口 = 超出部分，持续到下一个触发源。session 切换/首挂载是全量 200 估算 + nextTick 即滚，RO 收敛期内底部位置必然漂移。
@@ -147,7 +147,7 @@ virtua 实装语义：`findItemIndex` 入参按**绝对滚动坐标**解释，�
 **D1：末项定位改索引直取，删除 `findItemIndex(scrollSize)`（修 R3）**
 - **采用**：`useVirtuaFollow` 新增入参 `itemCount: () => number`（由 MessageStream 传 `streamItems.value.length`）；follow 原语内末项索引恒为 `itemCount() - 1`，`scrollToIndex(count - 1, ...)`。不再经过任何 offset→index 反查，与 startMargin/scrollSize 坐标语义彻底解耦。
 - **被否**：`findItemIndex(scrollSize + startMargin)`（修正坐标继续用反查）——依赖对 virtua 内部坐标换算的持续正确理解，virtua 升级即再翻车；且「我要的是最后一项」用索引直取本来就是更直接的表达。
-- **证据**：virtua 0.50.0 实装 core/index.js:78（findItemIndex 减 startMargin）、vue/index.js:470-471（scrollSize 不含 startMargin）；事故现场 useVirtuaFollow.ts:131/166（设计期现场，D1 索引直取后已删除，事故背景注释现存 :26-27）。
+- **证据**：virtua 0.50.0 实装 core/index.js:78（findItemIndex 减 startMargin）、vue/index.js:470-471（scrollSize 不含 startMargin）；事故现场 useVirtuaFollow.ts:131/166（设计期现场，D1 索引直取后已删除，事故背景注释现存 :27）。
 - **效果**：T3 成立——末项定位与末项像素高度无关，短通知末项场景永久消除。
 
 **D2：真实底部 = virtua align-end + `offset` = 实测尾部高度（修 R2 坐标面）**
@@ -305,7 +305,7 @@ virtua 实装语义：`findItemIndex` 入参按**绝对滚动坐标**解释，�
 
 - virtua 实装（0.50.0，`npm ls virtua` 核）：`node_modules/virtua/lib/core/index.js:78`（findItemIndex 减 startMargin）、`:114-140`（case-3 顶锚补偿）、`:287`（scrollToIndex 公式）；`node_modules/virtua/lib/vue/index.js:348`（scrollRef prop 声明）、`:368`（viewport=contentRect）、`:430-431`（scroll 事件同步 emit + store 实时读）、`:446`（scrollRef ?? parentElement 挂载）、`:470-471`（scrollSize 不含 startMargin）
 - 本仓实装（行号核对基准 2026-09-09，D6 清理后；行号漂移时以括号内符号为 grep 主锚）：`useVirtuaFollow.ts:43`（BOTTOM_THRESHOLD=40）、`:162-173`（wheel-only 脱离现场）；`useMessageStreamNotices.ts:23/33/40/46`（24/24/200/44 常量族）；`MessageStream.vue:16`（padding）、`:50`（startMargin 接线）；`style.css:120`（--message-stream-pad-top:20px）；`packages/ui/src/features/chat/composables/useMarkdownStreaming.ts:102-107`（rAF 逐帧 trailing 节流）与 `packages/renderer/src/composables/logic/markdown.ts:974`（fence 静默阈值 200ms）
-- 本仓实装·历史现场（以下锚点指向的代码均已于 v9 D6 死路径清理删除，留痕供追溯，grep 不到属预期）：`useVirtuaFollow.ts:131/166` findItemIndex 误用现场（D1 索引直取取代，事故背景注释现存 :26-27）；`MessageStream.vue:304` vlistBottom 计算块；`useNoticeStack.ts:14-17` fork 定位链死路径自证（自证内容留痕 §6.3）；`useForkNoticeStream.ts:81-92` / `useMessageStreamNotices.ts:109` vlistBottom 消费链
+- 本仓实装·历史现场（以下锚点指向的代码均已于 v9 D6 死路径清理删除，留痕供追溯，grep 不到属预期）：`useVirtuaFollow.ts:131/166` findItemIndex 误用现场（D1 索引直取取代，事故背景注释现存 :27）；`MessageStream.vue:304` vlistBottom 计算块；`useNoticeStack.ts:14-17` fork 定位链死路径自证（自证内容留痕 §6.3）；`useForkNoticeStream.ts:81-92` / `useMessageStreamNotices.ts:109` vlistBottom 消费链
 - 既有约定：INVAR-M4-2 原文（useVirtuaFollow.ts 头部注释，本设计修订为 INVAR-M4-2′）；索引一致性硬约束（MessageStream.vue u5 注释）；「virtua 单一 scrollTop owner」（MessageStream.vue 头部注释）
 
 ### 变更历史
