@@ -283,10 +283,11 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     // D6：app-server 常驻进程是引擎自管资源（dispose 收割），不进宿主终止链——
     // run 全程 onChildSpawned 不被调用（宿主 killAll 不误杀共享进程）
     expect(onChildSpawned).not.toHaveBeenCalled();
-    // 池化时代的产物全部不存在：engines/zcode/ 只含 fs 拦截 launcher，无池
-    // config/lockfile/pidfile/journal 目录
+    // 池化时代的产物全部不存在：engines/zcode/ 只含 fs 拦截 launcher 与 session-db/
+    // 会话库目录（session-db/ 为 2026-09 会话库隔离新增，W1），无池
+    // config/lockfile/pidfile/journal 目录。两侧排序后比较，防 readdir 顺序不稳定
     const engineDir = fs.readdirSync(path.join(dataDir, "engines", "zcode"));
-    expect(engineDir).toEqual(["appserver-launcher.cjs"]);
+    expect([...engineDir].sort()).toEqual(["appserver-launcher.cjs", "session-db"].sort());
   }, 15_000);
 
   it("maxTurns（pi 专属）→ 引擎内不再拒绝（[D3-④] 能力拒绝上提宿主 capability-gate，防双轨拦截复活）", async () => {

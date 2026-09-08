@@ -126,6 +126,7 @@ W4 在合入前完成；W5a/W5b/W6 独立排期（不阻塞 G1）。
   - `zcode-engine.live.test.ts:89` —— 真机门宿主路径改隔离路径；头注 `:9` 旧口径句同步改写；
   - `session-view-service-zcode-dbpath.test.ts:33` —— 「唯一合法绝对 dbPath」注释前提失效，注释随断言同改；
   - import 来源不变：`zcode-engine.ts` 保留 `hostZcodeDbPath` re-export，`zcode-engine-timeout.test.ts:33` / `zcode-engine-status.test.ts:35` 测试 import 不动。
+  - **W1 期补录（2026-09-09 实测遗漏）**：`zcode-engine-appserver.test.ts:288-289` —— 「engines/zcode/ 目录封闭断言」（池时代残留守卫）`toEqual(["appserver-launcher.cjs"])` 因 W1 mkdirSync 合法新建 `session-db/` 而红；期望列表纳入 `"session-db"`（保持封闭断言语义），W1 committed 前翻转完成
 
 ### 2.4 W4 规格（文档与约束同步）
 
@@ -268,7 +269,7 @@ W4 在合入前完成；W5a/W5b/W6 独立排期（不阻塞 G1）。
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|----------------------------------------------|------|----------|
-| W1 路径与 env | pending | 0 | — |
+| W1 路径与 env | committed | 1 | commit 见 git log `feat(subagent-core): W1 db-path contract + env injection`；test_evidence = 引擎域 453 passed / 0 failed（`vitest run src/execution/engine`）+ typecheck 零错误；翻转清单含 W1 期补录条（§2.3） |
 | W2 读取链与 handle | pending | 0 | — |
 | W3 测试 | pending | 0 | — |
 | W4 文档与约束同步 | pending | 0 | — |
@@ -322,6 +323,7 @@ W4 在合入前完成；W5a/W5b/W6 独立排期（不阻塞 G1）。
 | 2026-09-08 | 按 flow/plan.md 模板与 dag-authoring 规范重设计本计划 | §1 改设计文档逐字摘录；§2 表标注 W1 foundation 契约根与 W1/W2 同文件行区间互斥；§2.5 落 R9-5 pgrep 可执行判定并交叉引用 R9 各条；§3 边全部带原因并分层；§4 增量与全量分开列；§5 登记 0.3 门改判（D-1，用户裁决：设计层无决策级 must-fix 即通过）；§7.5 附自检清单结果 |
 | 2026-09-08 | 计划层对抗式审查 R1 全量修复（7 MF + 8 S） | MF-1 设计锚点 `:518`→`:502` ×3；MF-2 hostZcodeDbPath 迁移站点入 W1 领地（`:117-120`/`:75-93` + re-export 处置）；MF-3 §2.3 增既有断言翻转清单 + W2 验收补「既有 suite 全绿」；MF-4 A7/A10/A12 认领落位（§4 + §7.3 C1/C6 + §7.5-4）；MF-5 C1 回退补 W2 handle 回填两站点；MF-6 drift 守卫 DOC_MODULE_MAP 登记（§2.4⑨）；MF-7 D-1 计数纠正（8 MF → 5 MF + 5 S，「窗口写者清单缺项」移出 MF 枚举）；S-1 §7.2 增 R9-8/R9-9 impact-S 去向；S-2 备份口径拆两库实测/隔离库另计；S-3 断环表述改 `db-path → zcode-engine → db-path`；S-4 W5b 导出语义钉死；S-5 W4⑤ appserver-resident 同批撤销/改写两句；S-6 pgrep 画像 `-flE "zsw\|zcode.*app-server"`；S-7 探针④ 改 env 快照断言；S-8 `:1111` 凭据文案注释人工确认加注 |
 | 2026-09-09 | R2 聚焦复审通过（主审 0 MF + 1 S / 影响面 0 MF + 1 S），2 S 当轮修复 | R1 全部 7 MF + 8 S 修复经复核成立（计数账目闭合、关键锚点实核命中、自报攻击点防住）。S-9（主审）C1 回退条款补「§2.3 断言翻转清单连带回翻」句；S-10（影响面）§2.6 补 W5b 消费方式钉死（vendored 深导入唯一受支持、npm 形态不可达） |
+| 2026-09-09 | W1 开发期：翻转清单补录一条（实施期合理偏差登记） | W1 实测发现 `zcode-engine-appserver.test.ts:288-289`「engines/zcode/ 目录封闭断言」不在 §2.3 清单内，因 W1 mkdirSync 合法新建 `session-db/` 而红（因果明确，非行为回归）；§2.3 补录第 7 条，期望列表纳入 `"session-db"`，W1 committed 前由修复轮翻转 |
 
 ### 7.5 dag-authoring 写盘前自检清单（2026-09-08 重设计勾选结果）
 

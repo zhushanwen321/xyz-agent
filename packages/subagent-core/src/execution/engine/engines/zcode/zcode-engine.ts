@@ -37,7 +37,6 @@
 
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 
 import { getLogger } from "../../../../core/logger.ts";
@@ -72,12 +71,17 @@ import {
   ZCODE_CLI_DEFAULT_PATH,
   ZCODE_ENGINE_ID,
   ZCODE_ERROR_TAIL_CHARS,
-  ZCODE_HOST_DB_SUFFIX,
   ZCODE_KILL_GRACE_MS,
   ZCODE_SHARED_POOL_KEY,
   ZCODE_TURN_MAX_TIMEOUT_ENV,
   parseZcodeTurnTimeoutEnv,
 } from "./constants.ts";
+import { hostZcodeDbPath, zcodeSessionDbPath } from "./db-path.ts";
+
+// 会话库路径契约的模块级 re-export：既有测试（zcode-engine-timeout/status）与 W2 改造前
+// 的 handle 回填/read 判定消费 hostZcodeDbPath——实现已迁 db-path.ts（断环），此处保来源
+// 兼容（impl-plan §2.1：测试 import 来源不变）。
+export { hostZcodeDbPath };
 import {
   mapZcodeOutcomeUsage,
   mapZcodeUsage,
@@ -113,11 +117,6 @@ const PROBE_VERSION_TIMEOUT_MS = 15_000;
  * 真实值域，禁止硬编码枚举做拒收或映射；不在此列的档位只触发一行提示（warnThoughtLevelUncommon）。
  */
 const COMMON_THOUGHT_LEVELS: readonly string[] = ["low", "high", "max"];
-
-/** 宿主 HOME 下 zcode 会话 db 的绝对路径（共享 HOME 形态的 read/handle 锚点）。 */
-export function hostZcodeDbPath(): string {
-  return path.join(os.homedir(), ...ZCODE_HOST_DB_SUFFIX);
-}
 
 /** ZcodeEngine 构造依赖（全部可注入——测试不依赖真机 CLI/真凭据）。 */
 export interface ZcodeEngineDeps {
@@ -648,6 +647,17 @@ export class ZcodeEngine implements EnginePort {
     const env = buildAppServerEnv(this.deps.processEnv ?? process.env);
     env.ZCODE_ENG_CLI_PATH = cliPath;
     env.ZCODE_ENG_V2_CONFIG = this.deps.sources?.v2ConfigPath ?? defaultV2ConfigPath();
+    // 会话库隔离（设计 zcode-session-db-isolation.md D1/E4）：覆盖式写入隔离库路径，
+    // 忽略宿主继承值（用户 shell 的同名 env 不得把我们重定向到别处；配置分层
+    // Cli > Env > User 保证 env 压过用户 config 的 storage.sessionDbPath）。同时显式
+    // 清空同层别名键 ZCODE_SESSION_DB——实装里两者都映射 storage.sessionDbPath，按
+    // env 键序后写胜出，当前写法恰然后写但那是顺序巧合，必须显式化。
+    const sessionDbPath = zcodeSessionDbPath(engineDataDir);
+    env.ZCODE_SESSION_DB_PATH = sessionDbPath;
+    delete env.ZCODE_SESSION_DB;
+    // 父目录确保：把权限/磁盘错误提前到可读文案（引擎自身 ensureParentDir 也会建
+    // 父目录，此为提前失败面；失败向上 reject——run 错误语义①，不静默回落宿主库）。
+    fs.mkdirSync(path.dirname(sessionDbPath), { recursive: true });
     const conn = new AppServerConnection({
       cliPath,
       cwd: engineDataDir,
