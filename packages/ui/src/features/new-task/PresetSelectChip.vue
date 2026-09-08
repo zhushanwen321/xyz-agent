@@ -91,6 +91,11 @@ const explicitPresetId = ref<string | null>(null)
  * 而 Landing 不重挂载 → 本地 explicitPresetId 若不跟随会残留旧选择：chip 显示旧预设、
  * submit 按默认预设创建（显示与生效发散）。watch 单向跟随：重置 → explicit 档清空，
  * resolve 回落默认链；用户显式点击仍经 onSelectPreset 写入 + emit（链路不变）。
+ *
+ * immediate:true（挂载时序变体闭合）：chip 实例可能在 flow.pendingPreset 已非 null 时
+ * 新挂载（如 landing 已有显式选择后新增分屏 pane）——新实例 explicitPresetId 初值 null，
+ * 无 immediate 则 chip 显示默认链而 submit 消费显式档（显示 ≠ 生效的挂载变体）。
+ * 挂载即跟随当前真值，与重入同步共用同一条单向链。
  */
 watch(
   // ?. 防御：部分测试 mock 的 deps.flow 是简化形态（无 pendingPreset 字段，同
@@ -99,6 +104,7 @@ watch(
   (v) => {
     explicitPresetId.value = v ?? null
   },
+  { immediate: true },
 )
 
 /**

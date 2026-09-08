@@ -227,4 +227,31 @@ describe('PresetSelectChip 重入同步（G1 破口修复：explicitPresetId 跟
     expect(wrapper.emitted('select')?.[1]).toEqual([{ presetId: 'custom:read-only' }])
     expect(wrapper.find('[data-testid="chip-preset"]').text()).toContain('只读模式')
   })
+
+  it('挂载时 pendingPreset 已有显式值（immediate）：chip 显示显式预设，非默认链回落', async () => {
+    // 挂载时序变体（immediate:true 的靶场景）：chip 实例在 flow.pendingPreset 已非 null 时
+    // 新挂载（如 landing 已有显式选择后新增分屏 pane）。新实例 explicitPresetId 初值 null，
+    // watch 无 immediate 时错过首帧真值 → chip 显示默认链（builtin:full）而 submit 消费
+    // 显式档——显示 ≠ 生效。immediate 使 watch 挂载即跟随当前真值。
+    const presets = samplePresets()
+    const pendingPreset = ref<string | null>('custom:read-only')
+    const deps = makeDeps({
+      flow: { pendingPreset } as NewTaskDeps['flow'],
+      presets: ref(presets),
+      defaultPresetId: ref(''), // 默认档解析为 builtin:full（回落显示锚点）
+    })
+    const wrapper = mount(PresetSelectChip, {
+      props: { sessionId: null, launchPresetId: undefined, presetOpen: false },
+      global: { provide: { [NewTaskDepsKey]: deps } },
+    })
+    await flushPromises()
+    // 挂载首帧即显示显式档（explicit > 默认链）
+    expect(wrapper.find('[data-testid="chip-preset"]').text()).toContain('只读模式')
+    expect(wrapper.find('[data-testid="chip-preset"]').text()).not.toContain('全工具模式')
+    // immediate 不破坏重置回落路径：外部重置 pendingPreset（startFlow 重入）→ 回落默认链
+    pendingPreset.value = null
+    await flushPromises()
+    expect(wrapper.find('[data-testid="chip-preset"]').text()).toContain('全工具模式')
+    expect(wrapper.find('[data-testid="chip-preset"]').text()).not.toContain('只读模式')
+  })
 })
