@@ -59,14 +59,15 @@ graph TD
 | # | 偏差 | 理由 | 登记 unit |
 |---|------|------|-----------|
 | 1 | u3 领地增补 ActivityStrip.test.ts（新建测试文件） | T4 的 DOM 断言需独立挂载 ActivityStrip（既有测试无此组件覆盖），计划表初版漏列 | u3 |
+| 2 | u3 领地增补 composables/panel/useSubagentThinking.ts（新建 composable） | 轮 1 pre-commit 打回：script setup 309>300 行上限；提取 composable 正面修复（u3-fix-line-limit） | u3 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u1-store | pending | 0 | |
-| u2-seed | pending | 0 | |
-| u3-thinking | pending | 0 | |
+| u1-store | committed | 1 | commit 3bfe6069a（fetchAndInject 返回 Message[] + 空不擦；T1 用例 35/35 绿） |
+| u2-seed | in-progress | 1 | 派发中（slug u2-seed-task-bubble） |
+| u3-thinking | committed | 2 | commit 3bfe6069a（轮 1 被打回：script setup 309>300 → 提取 useSubagentThinking composable 后 297 行；T3/T4 9/9 绿 + vue-tsc 干净） |
 | u4-regression | pending | 0 | |
 
 ## 7 残留风险与变更历史
