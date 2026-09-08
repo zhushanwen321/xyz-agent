@@ -54,6 +54,7 @@ import { readExplicitEngines } from "./config.ts";
 import { EngineClient } from "./client/engine-client.ts";
 import { RemoteEngine, type RemoteEngineManifestSnapshot } from "./client/remote-engine.ts";
 import { hasEngine, registerEngineDescriptor, type CliEngineDescriptor } from "./registry.ts";
+import { getHostUiRequestEndpoint } from "./host/host-ui-endpoint.ts";
 import type { EngineCapabilities } from "./types.ts";
 
 const logger = getLogger("subagents");
@@ -227,6 +228,9 @@ export function inspectEnginePackage(
         hostKind,
         dataDir,
         envPrefixes,
+        // [W6 R3 MF-A] host/askUser 应答端：壳侧登记处在 portFactory 惰性执行期取值
+        //（晚于 session_start 注册，未注册 → undefined → 引擎收 {unsupported:true}）。
+        uiRequestHandler: getHostUiRequestEndpoint(),
         manifestDiagnostics: {
           capabilities: caps,
           models: modelCatalog === undefined || modelCatalog === null ? null : modelCatalog.models,
@@ -413,6 +417,8 @@ function buildExplicitDescriptor(
         hostKind: opts.hostKind,
         dataDir,
         envPrefixes: [],
+        // [W6 R3 MF-A] 同上：host/askUser 应答端经壳侧登记处接线。
+        uiRequestHandler: getHostUiRequestEndpoint(),
         ...(entry.config !== undefined ? { engineConfig: entry.config } : {}),
         manifestDiagnostics: { capabilities: caps, models: null },
       });

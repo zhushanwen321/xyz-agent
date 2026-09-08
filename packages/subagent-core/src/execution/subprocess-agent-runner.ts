@@ -30,7 +30,10 @@ import type { AgentEvent } from "../shared/agent-event.ts";
 import { assertTaskShapeSupported } from "./engine/common/capability-gate.ts";
 import { HOST_TIMEOUT_ABORT_REASON } from "./engine/common/kill-chain.ts";
 import { JOURNAL_INITIAL_POOL_KEY, wireEventJournal } from "./engine/common/journal-wiring.ts";
-import { createPiEngine } from "./engine/engines/pi/registration.ts";
+// [W6 R1 MF-5] pi EnginePort 解析改经 host 公共面（engine/host/pi-host-binding.ts）：
+// registry cli 形态经 descriptor 路由（W3 双模 getEngine），inproc/未注册回落 per-session
+// DI 直构（行为与改线前 createPiEngine 逐点一致）。
+import { resolveHostPiEnginePort } from "./engine/host/pi-host-binding.ts";
 import type { EnginePort, RunContext } from "./engine/port.ts";
 import { validateModelForEngine } from "./engine/model-validation.ts";
 import { routeEngineForHost, type EngineRouteResult, type EngineRoutingInput } from "./engine/routing.ts";
@@ -39,7 +42,9 @@ import type { AgentOutcome } from "./engine/types.ts";
 import { getModelConfigService } from "./model-config-service.ts";
 import type { ModelInfo } from "./model-resolver.ts";
 import { modelRefFromVerified } from "../shared/model-ref";
-import { registerSpawnedChildForRecord } from "./engine/engines/pi/session-runner.ts";
+// [W6 R1 MF-5] 子进程注册改经 spawnedChildren 状态镜像公共面（engine/host/
+// spawned-children.ts——镜像 + inproc 过渡委托，不再深路径 import engines/pi）。
+import { registerSpawnedChildForRecord } from "./engine/host/spawned-children.ts";
 import type { SubagentStream } from "./stream-sink.ts";
 import type { SubagentService } from "./subagent-service.ts";
 import { toErrorMessage } from "../core/error-message.ts";
@@ -95,7 +100,8 @@ export class SubprocessAgentRunner implements AgentRunner {
     this.subagentService = deps.subagentService;
     this.ctxModel = deps.ctxModel;
     // [D4 聚合连带] 经 asEngineService 显式视图适配（原结构化直绑依赖查询面 public）。
-    this.piEngine = createPiEngine(() => this.subagentService.asEngineService);
+    // [W6] 解析经 host 公共面（descriptor 路由 / inproc DI，见 pi-host-binding 注释）。
+    this.piEngine = resolveHostPiEnginePort(() => this.subagentService.asEngineService);
   }
 
   /**

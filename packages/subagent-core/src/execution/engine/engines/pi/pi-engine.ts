@@ -30,10 +30,9 @@ import { stringifySchemaCached } from "../../../../shared/schema-jsonify.ts";
 import type { PiInvocation } from "./pi-invocation.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
 import type { AgentConfig, ModelInfo, ResolvedModel } from "../../../model-resolver.ts";
-import type { StatusFilter } from "../../../record-store.ts";
-import type { SubagentStream } from "../../../stream-sink.ts";
-import type { AgentEvent, AgentResult, ExecutionRecord, ExecuteOptions, SubagentRecord } from "../../../types.ts";
+import type { AgentResult, ExecutionRecord, ExecuteOptions } from "../../../types.ts";
 import type { EnginePort, EngineRunResult, RunContext } from "../../port.ts";
+import type { HostBridgeServiceFace, HostChatRoundTicket } from "../../host/host-bridge.ts";
 import { replayJournalToSessionView } from "../../common/journal-replay.ts";
 import type {
   AgentOutcome,
@@ -107,15 +106,14 @@ export interface ChatRoundIdentity {
  * 把任一类塞进 AgentCallOpts 会让 engine 契约反向耦合 execution 内部类型。故 chat
  * 分支 ticket 优先消费（task 形参仅满足 port 签名），workflow 分支消费 task 形参——
  * 这是「编排交接」与「任务声明」的职责分界，不是待消除的中间态。
+ *
+ * [W6] 宿主编排基座五字段（record/opts/signal/priority/stream）上移 HostBridge 契约面
+ * （HostChatRoundTicket，engine/host/host-bridge.ts——设计 §3.8 D2「ChatRoundTicket →
+ * HostBridge」）；本接口保留 pi 专有扩展（identity / SessionRunnerContext / resume）。
  */
-export interface ChatRoundTicket {
-  record: ExecutionRecord;
-  opts: ExecuteOptions;
+export interface ChatRoundTicket extends HostChatRoundTicket {
   identity: ChatRoundIdentity;
   ctx: SessionRunnerContext;
-  signal: AbortSignal | undefined;
-  priority: number;
-  stream?: SubagentStream;
   /** resume 选项（冷路径续轮）：重开已 idle 的 session 续聊。undefined = 新 session。 */
   resume?: SpawnResumeOpts;
 }
@@ -136,27 +134,12 @@ export interface ChatRoundTicket {
  * 是测试可注入仅含 workflow 面的 fake；requireResumeFace / runChatTicket 的 throw
  * 分支在生产绑定（asEngineService 全量提供）下不可达，仅防 fake 绑定漏面时静默
  * 丢消息/丢轮次。
+ *
+ * [W6] 成员面 = HostBridgeServiceFace<ChatRoundTicket>（engine/host/host-bridge.ts，
+ * 设计 §3.8 D2：9 成员归 HostBridge/core）——pi 绑定把 chat 域轮次面泛型参数化为
+ * pi 专有 ticket 形态；签名与拆面前的成员逐一相同（纯类型面搬移，零行为）。
  */
-export interface PiEngineService {
-  executeAndAwait(
-    opts: ExecuteOptions,
-    signal?: AbortSignal,
-    onEvent?: (event: AgentEvent) => void,
-    stream?: SubagentStream,
-  ): Promise<WorkflowAgentResult>;
-  getRecordForAction(id: string): ExecutionRecord;
-  closeSubagent(record: ExecutionRecord, force: boolean): Promise<void>;
-  cancel(id: string): boolean;
-  collectRecords(limit: number, statusFilter?: StatusFilter): SubagentRecord[];
-  /** chat 域轮次交接（run 的 chat 分支入口）：按 taskId 取走预备包（一次性消费）。 */
-  takeChatRound?(taskId: string): ChatRoundTicket | undefined;
-  /** 执行预备的 chat 轮次（编排归 Service：pool 槽 + runSpawn + 终态迁移）。 */
-  runChatRound?(ticket: ChatRoundTicket): Promise<AgentResult>;
-  /** 冷路径续轮（interact message 分支的编排回调：守卫 + record 迁移 + 预备轮次 kick-off）。 */
-  resumeChatRound?(record: ExecutionRecord, text: string): void;
-  /** record 状态迁移上报（热路径投递后让 runtime 派生缓存失效 / GUI 回流）。 */
-  reportRecordTransition?(record: ExecutionRecord): void;
-}
+export interface PiEngineService extends HostBridgeServiceFace<ChatRoundTicket> {}
 
 /** PiEngine 构造依赖。 */
 export interface PiEngineDeps {

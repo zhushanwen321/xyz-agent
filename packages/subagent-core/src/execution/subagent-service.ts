@@ -38,9 +38,12 @@ import { assertTaskShapeSupported } from "./engine/common/capability-gate.ts";
 import { ExecutionNestingContext } from "./engine/common/nesting-guard.ts";
 import { JOURNAL_INITIAL_POOL_KEY, wireEventJournal } from "./engine/common/journal-wiring.ts";
 import { executeOptionsToEngineTaskSpec } from "./engine/host-task-spec.ts";
-import { PiEngine } from "./engine/engines/pi/pi-engine.ts";
-import { PI_POOL_KEY } from "./engine/engines/pi/pi-engine.ts";
-import type { ChatRoundTicket, PiEngineService } from "./engine/engines/pi/pi-engine.ts";
+import { setHostUiRequestEndpoint } from "./engine/host/host-ui-endpoint.ts";
+// [W6 宿主面下沉] pi 构造 / poolKey 常量 / 契约类型改经 host 公共面
+// （engine/host/pi-host-binding.ts），本文件不再深路径 import engines/pi 的构造与
+// 常量；ChatRoundTicket 的 pi 专有形态经该面 re-export（inproc 过渡残余，W11 删）。
+import { createChatPiEngine, PI_POOL_KEY } from "./engine/host/pi-host-binding.ts";
+import type { ChatRoundTicket, PiEngine, PiEngineService } from "./engine/host/pi-host-binding.ts";
 import type { EnginePort, RunContext } from "./engine/port.ts";
 import { DEFAULT_ENGINE_ID, getEngine, listEngines } from "./engine/registry.ts";
 import {
@@ -66,14 +69,17 @@ import { RecordStore } from "./record-store.ts";
 //（变化轴拆分，实现与语义注释见 sync-rebuild.ts）
 import { bufferedMemberFallbackRecord, syncRebuildToNotifyMember } from "./sync-rebuild.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
+// [W6 宿主面下沉] killAll / killRecord / register 三函数改经 spawnedChildren 状态镜像
+// 公共面（engine/host/spawned-children.ts——镜像 + inproc 过渡委托，不再深路径 import
+// engines/pi）；runSpawn / SessionRunnerContext / SpawnResumeOpts 随 W7 迁 pi 包（core 侧
+// 消费点届时改经 HostBridge/协议面，本 import 为过渡期残余，W11 删）。
 import {
   killAllSpawnedChildren,
   killRecordChildWithEscalation,
   registerSpawnedChildForRecord,
-  runSpawn,
-  type SessionRunnerContext,
-  type SpawnResumeOpts,
-} from "./engine/engines/pi/session-runner.ts";
+} from "./engine/host/spawned-children.ts";
+import { runSpawn } from "./engine/engines/pi/session-runner.ts";
+import type { SessionRunnerContext, SpawnResumeOpts } from "./engine/engines/pi/session-runner.ts";
 // [u-t2a T2②/T2③] settled watchdog：chatMode 轮 settled 等待固定硬上限（10min），
 // 双挂载点之一在编排层热路径（deliverChatMessage，prompt 发出后），disarm 站点散布
 // cancel/close/终态化路径（原语幂等，见 settled-watchdog.ts 头注释）。
@@ -84,6 +90,8 @@ import {
 } from "./settled-watchdog.ts";
 import { isIdle, isResumable } from "./lifecycle-predicates.ts";
 import { startIdleGc } from "./idle-gc.ts";
+// [W6] EPIPE 兜底归 pi 包（设计 §3.8 D2 第 3 行）：本 import 为过渡期残余，随 W7 迁
+// pi 包、W11 删 core 侧调用。
 import { resetAllEpipeFailures } from "./engine/engines/pi/stdin-writer.ts";
 import type { StreamSink, SubagentStream } from "./stream-sink.ts";
 import { createBackgroundStream } from "./stream-sink.ts";
@@ -377,9 +385,9 @@ export class SubagentService {
 
   /** chat 域 pi 引擎实例（D2 单轨：chat 域执行/投递统一经 EnginePort）。per-service DI——
    *  getService 经适配器绑本实例；registry 全局 'pi' 单例绑进程级 getSubagentService()，
-   *  直构 Service 的测试场景解析不到本实例。不能 import registration.ts（其 import 本文件
-   *  → 循环依赖），直接构造 PiEngine（pi-engine 不反向依赖本文件）。 */
-  private readonly chatPiEngine: PiEngine = new PiEngine({ getService: () => this.piEngineServiceAdapter() });
+   *  直构 Service 的测试场景解析不到本实例。[W6] 构造改经 host 公共面
+   *  createChatPiEngine（engine/host/pi-host-binding.ts，inproc 过渡形态）。 */
+  private readonly chatPiEngine: PiEngine = createChatPiEngine(() => this.piEngineServiceAdapter());
 
   /** chat 域轮次交接包（executeViaEngine / 冷路径续轮挂载 → PiEngine.run 经 taskId 消费）。 */
   private readonly chatRoundTickets = new Map<string, ChatRoundTicket>();
@@ -442,6 +450,9 @@ export class SubagentService {
     this.modelService = init.modelService;
     this.getMainSessionFile = init.getMainSessionFile;
     this.uiRequestHandler = init.uiRequestHandler;
+    // [W6 R3 MF-A] 壳侧应答端登记：cli 形态引擎经 host/askUser 反向请求消费（discovery
+    // portFactory 构造 EngineClient 时读取该登记）。
+    setHostUiRequestEndpoint(init.uiRequestHandler);
     this.pool = new DefaultConcurrencyPool(this.modelService.getGlobalConfig().maxConcurrent);
     this.worktreeManager = new WorktreeManager(this.modelService.getAgentDir());
     // [MF-3] worktree 隔离下全树落盘目录统一到 ROOT cwd：子进程（spawn cwd = worktree checkout 路径）
@@ -558,6 +569,8 @@ export class SubagentService {
     if (init.uiRequestHandler !== undefined) {
       this.uiRequestHandler = init.uiRequestHandler ?? undefined;
       this.uiObservability.resetMissingHandlerWarnings();
+      // [W6 R3 MF-A] session 级覆盖同步进壳侧应答端登记（三态：null = 显式清空）。
+      setHostUiRequestEndpoint(this.uiRequestHandler);
     }
     // SR-4：注入 L2 dialog 队列（child close 清理路径）。undefined 时 buildSessionRunnerContext
     // 透传 undefined，session-runner onClose 跳过 L2 清理（仅清 L1，保留旧行为）。
@@ -1055,6 +1068,9 @@ export class SubagentService {
     // 此处内联其方法体（赋值 + 缺失告警去重重置）。
     this.uiRequestHandler = disposedUiRequestStub;
     this.uiObservability.resetMissingHandlerWarnings();
+    // [W6 R3 MF-A] dispose 后壳侧应答端同步换 stub（trailing host/askUser 干净降级为
+    // cancelled，与 inproc ui-request-queue 的 trailing 语义同构）。
+    setHostUiRequestEndpoint(disposedUiRequestStub);
     // [R0/C1 孤儿进程修复] 先 abort running controllers + kill spawned children，再 dispose 资源。
     // abortRunningControllers 需要在 disposeAllRecords archive 之前执行（archive 后 store 找不到 record）。
     this.store.abortRunningControllers();
