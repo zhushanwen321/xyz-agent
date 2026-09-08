@@ -162,11 +162,22 @@ import {
   fmtInt,
   fmtISO,
   fmtMMDD,
-  fmtWeekday,
   fmtPct,
 } from './aggregate'
 
 const { t } = useI18n()
+
+/* ── 周几标签（i18n 收口 D6：复用热力日历 heatWeek* keys，与 HeatCalendar 同款静态 key 列表） ── */
+const weekdayLabels = computed(() => [
+  t('settings.usage.heatWeekSun'), t('settings.usage.heatWeekMon'),
+  t('settings.usage.heatWeekTue'), t('settings.usage.heatWeekWed'),
+  t('settings.usage.heatWeekThu'), t('settings.usage.heatWeekFri'),
+  t('settings.usage.heatWeekSat'),
+])
+
+function weekdayLabel(d: Date): string {
+  return weekdayLabels.value[d.getDay()]
+}
 
 const props = defineProps<{
   perDay: DayView[]
@@ -297,7 +308,7 @@ const monthLabels = computed(() => {
       labels.push({
         // eslint-disable-next-line no-magic-numbers -- 月标居中：偏移半个柱宽
         x: colX(i) + barW.value / 2,
-        label: `${m + 1}\u6708`,
+        label: `${m + 1}${t('settings.usage.heatMonthSuffix')}`,
       })
     }
   }
@@ -354,7 +365,7 @@ const tipData = computed<TipData | null>(() => {
   const fmt = props.metric === 'cost' ? fmtUSD : fmtInt
 
   return {
-    dateLabel: `${fmtISO(day.date)} \u00A0${fmtWeekday(day.date)}`,
+    dateLabel: `${fmtISO(day.date)} \u00A0${weekdayLabel(day.date)}`,
     total: fmt(totVal),
     input: fmtCompact(day.dTot.input),
     cacheRead: fmtCompact(day.dTot.cacheRead),

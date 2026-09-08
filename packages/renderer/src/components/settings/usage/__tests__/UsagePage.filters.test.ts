@@ -8,7 +8,8 @@
  * 覆盖工具栏交互链路：
  *   - 图例过滤：点击 chip 关闭 provider（chip 置灰 opacity-[0.38] 保留原位，数据源 = perProvFull 恒显）、
  *     单独恢复、「至少保留一个」保护（基数 = perProvFull）、reset 恢复
- *   - isolate 单看：点击模型行 → chip 出现；clear / 关其 provider 联动清除
+ *   - isolate 单看：点击模型行（行 testid = 复合键 usage-model-<provider>/<model>）→ chip 出现
+ *     （chip 分量渲染 provider/ + model）；clear / 关其 provider 联动清除；关其他 provider 不误清
  *   - 指标切换 tokens↔cost（Y 轴刻度 $ 前缀）
  *   - 范围切换 30 天↔全部（窗口外 6 月数据出现）
  *
@@ -166,24 +167,25 @@ describe('UsagePage isolate 单看交互', () => {
     document.body.innerHTML = ''
   })
 
-  it('点击模型行 → isolate chip 出现；点击 clear → 消失', async () => {
+  it('点击模型行 → isolate chip 出现（分量渲染）；点击 clear → 消失', async () => {
     const wrapper = await mountPage([
       makeRow({ provider: 'p1', model: 'm1' }),
       makeRow({ provider: 'p2', model: 'm2' }),
     ])
 
-    // 点击模型谱第一行（真实 UsageModelRank 渲染，按值降序 m1 在前）
-    await wrapper.find('[data-testid="usage-model-m1"]').trigger('click')
+    // 点击模型谱第一行（真实 UsageModelRank 渲染，按值降序 m1 在前；行 testid = 复合键）
+    await wrapper.find('[data-testid="usage-model-p1/m1"]').trigger('click')
     const chip = wrapper.find('[data-testid="usage-isolate-chip"]')
     expect(chip.exists()).toBe(true)
-    expect(chip.text()).toContain('m1')
+    // chip 展示 provider 灰前缀 + 裸 model 分量（不显示裸复合键串之外的额外内容）
+    expect(chip.text()).toContain('p1/m1')
 
     // 再点同一行 → isolate 取消（emit null）
-    await wrapper.find('[data-testid="usage-model-m1"]').trigger('click')
+    await wrapper.find('[data-testid="usage-model-p1/m1"]').trigger('click')
     expect(wrapper.find('[data-testid="usage-isolate-chip"]').exists()).toBe(false)
 
     // 重新 isolate 后通过 clear 按钮清除
-    await wrapper.find('[data-testid="usage-model-m1"]').trigger('click')
+    await wrapper.find('[data-testid="usage-model-p1/m1"]').trigger('click')
     await wrapper.find('[data-testid="usage-isolate-clear"]').trigger('click')
     expect(wrapper.find('[data-testid="usage-isolate-chip"]').exists()).toBe(false)
   })
@@ -191,7 +193,7 @@ describe('UsagePage isolate 单看交互', () => {
   it('isolate 单看时图例仍显示全部 provider chips（恒显）', async () => {
     const wrapper = await mountPage(threeProviderRows())
 
-    await wrapper.find('[data-testid="usage-model-m1"]').trigger('click')
+    await wrapper.find('[data-testid="usage-model-p1/m1"]').trigger('click')
     expect(wrapper.find('[data-testid="usage-isolate-chip"]').exists()).toBe(true)
 
     // isolate 生效后图例仍显示全部 provider（含非当前模型所属）
@@ -200,16 +202,18 @@ describe('UsagePage isolate 单看交互', () => {
     }
   })
 
-  it('关闭 isolate 模型所属 provider → isolate 联动清除（chip 消失）', async () => {
-    const wrapper = await mountPage([
-      makeRow({ provider: 'p1', model: 'm1' }),
-      makeRow({ provider: 'p2', model: 'm2' }),
-    ])
+  it('关闭 isolate 模型所属 provider → isolate 联动清除（chip 消失）；关其他 provider 不误清', async () => {
+    // 三 provider fixture：关 p2 后 p1 非最后一个启用 provider，不被「至少保留一个」守卫拦截
+    const wrapper = await mountPage(threeProviderRows())
 
-    await wrapper.find('[data-testid="usage-model-m1"]').trigger('click')
+    await wrapper.find('[data-testid="usage-model-p1/m1"]').trigger('click')
     expect(wrapper.find('[data-testid="usage-isolate-chip"]').exists()).toBe(true)
 
-    // m1 属于 p1：关闭 p1 → isolate 同步清空
+    // 负例：关闭非 isolate 所属 provider（p2）→ isolate 保留（复合键查表不误清）
+    await wrapper.find('[data-testid="usage-legend-p2"]').trigger('click')
+    expect(wrapper.find('[data-testid="usage-isolate-chip"]').exists()).toBe(true)
+
+    // m1 属于 p1（全量 rows 派生的复合键表）：关闭 p1 → isolate 同步清空
     await wrapper.find('[data-testid="usage-legend-p1"]').trigger('click')
     expect(wrapper.find('[data-testid="usage-isolate-chip"]').exists()).toBe(false)
   })

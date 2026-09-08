@@ -93,9 +93,9 @@
           </Button>
         </div>
 
-        <!-- 单看 chip -->
+        <!-- 单看 chip（isolate 为复合键，展示拆 provider/model 分量，不显示裸复合键串） -->
         <span v-if="filter.isolate" data-testid="usage-isolate-chip" class="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-2.5 py-1 font-mono text-[11px] text-neutral-fg ring-1 ring-inset ring-accent-ring">
-          <span>{{ filter.isolate }}</span>
+          <span v-if="isolateParts?.provider" class="text-[var(--neutral-dim)]">{{ isolateParts.provider }}/</span><span>{{ isolateParts?.model }}</span>
           <Button
             variant="ghost"
             size="icon"
@@ -172,7 +172,6 @@
               :per-model="agg.perModel"
               :metric="filter.metric"
               :isolate="filter.isolate"
-              :model-provider-map="modelProviderMap"
               @update:isolate="filter.isolate = $event"
             />
           </div>
@@ -309,7 +308,7 @@ function toggleProvider(pid: string): void {
     const enabledCount = fullProviders.value.filter((k) => !filter.offProv.has(k)).length
     if (enabledCount <= 1) return
     filter.offProv.add(pid)
-    // 如果单看的模型属于被关闭的 provider，清除单看
+    // 如果单看的模型（复合键）属于被关闭的 provider，清除单看（查全量 rows 派生的复合键表）
     if (filter.isolate && modelProviderMap.value[filter.isolate] === pid) {
       filter.isolate = null
     }
@@ -321,16 +320,28 @@ function resetFilters(): void {
   filter.isolate = null
 }
 
-/* ── model -> provider 映射 ── */
+/* ── 复合键 -> provider 映射（toggleProvider 联动清 isolate 守卫用） ── */
 
+// 派生源必须 = 全量 data.rows（设计 §3.3 ⑤）：computed 只依赖 data，不随 offProv/isolate 重算——
+// toggleProvider 先 offProv.add 再查表的时序下，从过滤后 perModel/perProvFull 派生会确定性丢键、守卫失效（R2 反例）
 const modelProviderMap = computed(() => {
   const map: Record<string, string> = {}
   if (data.value) {
     for (const row of data.value.rows) {
-      if (!map[row.model]) map[row.model] = row.provider
+      const key = `${row.provider}/${row.model}`
+      if (!map[key]) map[key] = row.provider
     }
   }
   return map
+})
+
+/** isolate 复合键拆分量（chip 展示 provider 灰前缀 + 裸 model，不显示裸复合键串） */
+const isolateParts = computed<{ provider: string; model: string } | null>(() => {
+  const key = filter.isolate
+  if (!key) return null
+  const i = key.indexOf('/')
+  if (i < 0) return { provider: '', model: key }
+  return { provider: key.slice(0, i), model: key.slice(i + 1) }
 })
 
 /* ── 聚合结果 ── */
@@ -398,7 +409,7 @@ const cacheMixData = computed(() => {
 
 const detailGroups = computed(() => {
   if (!agg.value || !data.value) return []
-  return aggregateDetailGroups(agg.value.perProv, agg.value.perModel, data.value.rows)
+  return aggregateDetailGroups(agg.value.perProv, agg.value.perModel, data.value.rows, filter.metric)
 })
 
 /* ── 明细台账 meta 文案 ── */
