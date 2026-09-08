@@ -90,11 +90,19 @@ SELECT (SELECT SUM(length(data)) FROM part  WHERE session_id IN ('<id>' /* … *
 -- W5 参照查询（D7 I1 的「独立参照 SQL」单一文本来源；本节即权威文本，勿在别处复制）
 -- 口径：直接删除集 = record 白名单 ∩ 宿主库 ∩ 索引预检通过集；
 --       删除集总数 = 直接集 + 派生集（parent_id ∈ 直接集 且 task_type='subagent_child'）。
--- 复跑方式：① 用下面第 0 步把白名单与 record 时间戳导入临时库；
---           ② 把 :WHITELIST_DB 换成临时库路径后执行 ①②③。
+-- 复跑方式（5 步）：第 0 步生成白名单临时库 /tmp/w5.db（CSV 装载，R9-1 修复——
+--   `.mode json` + `.import` 实测跑不通，JSONL 整行落一列致 startedAt 恒 NULL、Δ/碰撞假阴）；
+--   ① 宿主库会话内执行（直接集）；② 索引库会话内 ATTACH 白名单库后执行（索引预检，
+--   R9-2 修复——白名单库必须 ATTACH 在**执行会话**上，原注释形态报 no such table: wl.wl）；
+--   ③ 宿主库会话内执行（派生集）；④⑤ 宿主库会话内执行（Δ 分布 / 碰撞面）。
+-- 工具侧同一口径的机器实现 = scripts/zcode-session-db-cleanup.mjs 的
+--   referenceDeletionSetImpl（I1 断言用），两处任一改动须同步另一处。
 -- ============================================================
 
--- 第 0 步：从 record JSONL 导出 (sessionId, startedAt) → /tmp/w5_whitelist.jsonl
+-- 第 0 步：从 record JSONL 导出 (sessionId, startedAt) CSV → /tmp/w5_whitelist.csv
+--   （只解析 type='custom' && customType='subagent-record' 的结构化 entry；
+--    startedAt 缺失的行照常装载为 NULL——④ 的 over_10s/碰撞面统计在 NULL 上为 0，
+--    工具侧 I2 对 NULL 硬中止，口径差异属预期）
 --   node -e '
 --     const fs=require("fs"),os=require("os"),path=require("path");
 --     const dir=path.join(os.homedir(),".xyz-agent/pi/sessions");
@@ -104,35 +112,43 @@ SELECT (SELECT SUM(length(data)) FROM part  WHERE session_id IN ('<id>' /* … *
 --         if(!line.trim())continue;
 --         let e; try{e=JSON.parse(line)}catch{continue}
 --         if(e.type!=="custom"||e.customType!=="subagent-record")continue;
---         const sid=e.data&&e.data.engineHandle&&e.data.engineHandle.sessionRef&&e.data.engineHandle.sessionRef.sessionId;
---         if(sid) out.push(JSON.stringify({sessionId:sid,startedAt:e.data.startedAt}));
+--         const d=e.data||{};
+--         const sid=d.engineHandle&&d.engineHandle.sessionRef&&d.engineHandle.sessionRef.sessionId;
+--         if(sid) out.push(sid+","+(typeof d.startedAt==="number"?d.startedAt:""));
 --       }
 --     }
---     fs.writeFileSync("/tmp/w5_whitelist.jsonl",out.join("\n")+"\n");
---     console.log("rows",out.length);'
+--     fs.writeFileSync("/tmp/w5_whitelist.csv",out.join("\n")+"\n");
+--     console.log("rows",out.length);}'
+--   rm -f /tmp/w5.db
 --   sqlite3 /tmp/w5.db "CREATE TABLE wl(sessionId TEXT PRIMARY KEY, startedAt INTEGER);"
---   sqlite3 /tmp/w5.db ".mode json" ".import /tmp/w5_whitelist.jsonl wl"
+--   sqlite3 /tmp/w5.db ".mode csv" ".import /tmp/w5_whitelist.csv wl"
+--   sqlite3 /tmp/w5.db "SELECT COUNT(*), SUM(startedAt IS NULL) FROM wl;"   -- 装载自检：NULL 计数应为 0
 
--- ① 直接删除集（宿主库；:WHITELIST_DB = /tmp/w5.db）
+-- ① 直接删除集（宿主库 ~/.zcode/cli/db/db.sqlite 会话；:WHITELIST_DB = /tmp/w5.db）
 ATTACH DATABASE ':WHITELIST_DB' AS wl;
 SELECT s.id, s.task_type, s.title_source, s.time_created
 FROM session s JOIN wl.wl w ON w.sessionId = s.id;
 
--- ② 索引预检（索引库 ~/.zcode/v2/tasks-index.sqlite；零 FK，必须显式预检）
---    命中即「两侧同时剔除」（宿主行也不删）
--- sqlite3 ~/.zcode/v2/tasks-index.sqlite "
---   SELECT DISTINCT task_id FROM task_group_members WHERE task_id IN (SELECT sessionId FROM wl.wl)
---   UNION SELECT target_task_id FROM automations WHERE target_task_id IN (SELECT sessionId FROM wl.wl)
---   UNION SELECT session_id FROM off_peak_tasks WHERE session_id IN (SELECT sessionId FROM wl.wl)
---   UNION SELECT task_id FROM tasks WHERE off_peak_task_id IS NOT NULL AND task_id IN (SELECT sessionId FROM wl.wl);"
+-- ② 索引预检（在**索引库** ~/.zcode/v2/tasks-index.sqlite 的会话内执行；零 FK，必须显式预检）
+--    命中即「两侧同时剔除」（宿主行也不删）。R9-2：wl 必须在本会话 ATTACH：
+-- sqlite3 "file:$HOME/.zcode/v2/tasks-index.sqlite?mode=ro" <<'SQL'
+--   ATTACH DATABASE '/tmp/w5.db' AS wl;
+--   SELECT DISTINCT task_id AS id FROM task_group_members WHERE task_id IN (SELECT sessionId FROM wl.wl)
+--   UNION SELECT target_task_id AS id FROM automations WHERE target_task_id IN (SELECT sessionId FROM wl.wl)
+--   UNION SELECT session_id AS id FROM off_peak_tasks WHERE session_id IN (SELECT sessionId FROM wl.wl)
+--   UNION SELECT task_id AS id FROM tasks WHERE off_peak_task_id IS NOT NULL AND task_id IN (SELECT sessionId FROM wl.wl);
+-- SQL
+--    （备选：白名单 id 内联 IN 列表——但失去与 wl 临时库的单一装载来源，非首选）
 
--- ③ 派生删除集（宿主库）
+-- ③ 派生删除集（宿主库会话，wl 已按 ① ATTACH）
 SELECT id FROM session
 WHERE parent_id IN (SELECT s.id FROM session s JOIN wl.wl w ON w.sessionId = s.id)
   AND task_type='subagent_child';
 
 -- ④ D7 I2 容差取值依据（可执行）：Δ = |record.startedAt - session.time_created|
 --    我们行的 Δ 分布（r7 复测 max ≈ 4022ms → 容差取 10s，约 2.5× 余量）
+--    权威常量 = impl-plan §2.5 I2 / scripts/zcode-session-db-cleanup.mjs 的 I2_TOLERANCE_MS，
+--    改容差须同步此处字面量（10000）与 ⑤。
 SELECT COUNT(*) AS rows_,
        MIN(ABS(w.startedAt - s.time_created)) AS delta_min_ms,
        MAX(ABS(w.startedAt - s.time_created)) AS delta_max_ms,
@@ -140,6 +156,7 @@ SELECT COUNT(*) AS rows_,
 FROM session s JOIN wl.wl w ON w.sessionId = s.id;
 
 -- ⑤ 碰撞面：用户 interactive 会话落入我们任一 record ±10s 窗的计数
+--    （10000 = I2 权威常量同款同步要求，见 ④ 注释）
 SELECT COUNT(*) AS collisions_10s FROM session u
 WHERE u.task_type='interactive'
   AND EXISTS (SELECT 1 FROM wl.wl w WHERE ABS(w.startedAt - u.time_created) <= 10000)

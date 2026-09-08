@@ -154,10 +154,14 @@ CHAIN_LOOKBACK_LINES = 10   # 同函数单跳赋值链的最大回溯行数
 STATEMENT_MAX_SPAN = 5      # 多行语句（括号未闭合）向下拼接的最大行数
 
 # ---------------------------------------------------------------------------
-# allowlist：空（W11 清空——三条 legacy 直写链路已全部迁移/删除，见文件 docstring；
-# 后续合法新形态按登记表 §5 第 3 条流程登记，禁止静默绕过）
+# allowlist：登记例外（按登记表 §5 第 3 条流程：data-source-registry.md §4 补条目
+# + 本表登记，禁止静默绕过）。W11 曾清空；2026-09-09 新增 db-isolation W5a 清理
+# 工具两写点（残留清单/操作凭证落盘，registry §4 ⑬）——行号随脚本漂移须同步更新
 # ---------------------------------------------------------------------------
-ALLOWLIST: set[str] = set()
+ALLOWLIST: set[str] = {
+    "scripts/zcode-session-db-cleanup.mjs:410",
+    "scripts/zcode-session-db-cleanup.mjs:429",
+}
 
 
 def strip_comments(text: str) -> str:

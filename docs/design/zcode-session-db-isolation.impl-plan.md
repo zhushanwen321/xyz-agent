@@ -273,7 +273,7 @@ W4 在合入前完成；W5a/W5b/W6 独立排期（不阻塞 G1）。
 | W2 读取链与 handle | committed | 1 | commit 见 git log `feat(subagent-core): W2 read-path allowlist + handle isolation dbPath`；test_evidence = typecheck 零错误 + 探针② 断言通过（临时测试，onHandleReady 与终态 handle dbPath 相等、两站点集合判定一致）+ 翻转清单外全绿 |
 | W3 测试 | committed | 1 | commit 见 git log `test(subagent-core): W3 flip assertions to isolated dbPath + A9 pool-gc guard`；test_evidence = 引擎域 465 passed / 0 failed + typecheck 零错误 + runtime 侧 25 passed（探针④常驻） |
 | W4 文档与约束同步 | committed | 1 | commit 见 git log `docs: W4 constraint/doc sync for session-db isolation`；test_evidence = drift 守卫 8 映射文档零悬空 + render-constraints 92 条 md 同步 + 引擎域 465 passed 零回归 |
-| W5a 清理工具实现 | pending | 0 | — |
+| W5a 清理工具实现 | committed | 1 | commit 见 git log `feat(scripts): W5a zcode session-db cleanup tool`；test_evidence = scripts 测试 17 passed（I1-I3b/非TTY/replay 篡改拒删/R9-4 两条/索引 N→0 全覆盖）+ 引擎域 481 passed 零回归 + counts.sql R9-1/R9-2 sqlite3 实证 |
 | W5b zsw 交接物 | pending | 0 | — |
 | W6 隔离库 TTL | pending | 0 | — |
 
