@@ -98,7 +98,7 @@ graph TD
 | U2 | committed | 2 | r2 sa-a7fe7ca5 交付；script 299/300·template 175/400；探针门：P-wrap ✓（gap≤0.5px）· P-timing ✓（流式 120 帧恒 0.5px / 静止 90 帧恒 0px 零振荡）· P-no-loop ✓ 降级形态（gap 序列无循环锯齿；完整计数器判据按设计载体推迟 U4/V8） |
 | U3 | committed | 1 | sa-9388587e：删2文件+迁移2用例（29→31）+挂载级修红；全量 4081/3 skip、双 typecheck、lint 绿；主 agent 重跑全量一致 |
 | U4 | committed | 1 | sa-226a3b2e：guard+9 单测+守卫双向自验+C-state-11+C-proc-10×4+V8 双侧（单测 6 红→还原绿；dev 断言注入 gap=24 双采样报警→还原 0 报警）；scroll-follow 0 / doc-drift 0 / 全量 4090 绿 |
-| U5 | committed | 5 | 主 agent 亲自执行（4 次 subagent 中断后收归，见偏差 #1）：V1/V2/V3/V4/V5/V8 六场景 PASS；V6 shrink 间歇 113px 残留 PARTIAL（数据+修复建议已归档）；V7/V9 前置不可达 BLOCKED（单测/构造性缓解）；归档 acceptance.md |
+| U5 | committed | 6 | 主 agent 验收（见偏差 #11）+ V6 定向修（sa-0bdddf6e，双 rAF）后 3/3 轮复验贴底；7bf62e49c + 2451a2036；Gate B 证据链 = acceptance.md 逐场景 |
 
 ## 7 残留风险与变更历史
 
@@ -111,4 +111,5 @@ graph TD
 
 ### 变更历史
 
+- 2026-09-09 v2（终态）：阶段 3 一致性审查（主 agent 执行，偏离声明见偏差 #11）→ unreasonable 1 条（V6 shrink 间歇 113px）打回定向修（2451a2036，双 rAF 预案）+ dev app 3/3 轮复验贴底 → 清零；reasonable 4 条入登记表（#8-#11）；doc_errors 0。阶段 5 双绿：Gate A（全量 4097/4097、双 typecheck、根 lint 0、双守卫 0、零容忍扫描全零、覆盖矩阵无死角）+ Gate B（acceptance.md 逐场景 verdict+evidence，V1-V6/V8 实测、V7/V9 blocked 有缓解）。转 design-code-sync 校准（用户指示）。
 - 2026-09-08 v1：初版计划（预检门三查过：结构四节齐全 / 章节映射建立 / 审查证据 chat-pin-bottom-fix.review-r6.md 0 must-fix + impact-review-r6.md 0/0 双审收敛）。单元切分直接采用设计 §6.1（U1-U5），领地自 §6.2 文件改动地图精确化，补充：MessageStream-bash.test.ts（设计「等」字的实际展开）、.githooks/install-hooks.sh（pre-commit 挂接的项目机制载体）、acceptance.md（U5 验收归档产物）。
