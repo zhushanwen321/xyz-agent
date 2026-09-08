@@ -72,16 +72,36 @@ export function useComposerChipCommands(
     }
   }
 
-  /** 插入 slash 命令 chip（§2e：必须在最前，只允许一个，整体可删，× 可点删）。 */
+  /**
+   * 插入 slash 命令 chip（设计 D4-a：视觉就地 + 替换语义，只允许一个，整体可删，× 可点删）。
+   *
+   * 命令分支（非 '/skill:' 前缀）：仅移除已有命令 chip（dataset.chipType==='slash'，维持
+   * 单命令不变量——pi 命令模型 = 消息级单命令）+ insertChipAtSelection 落在光标处，
+   * skill chip（chipType='skill'）不再被误删；「必须在最前」的行首约束由序列化层
+   * segmentsToText 归位承担（shared D4-c），DOM 位置层就地化。
+   *
+   * skill 分支（'/skill:' 前缀）保留旧通路不动：u4 起行首浮层 skill 项已路由到
+   * insertSkillChip，正常不再进入此分支，仅作兼容残留。
+   */
   function insertSlashChip(command: string, icon?: string): void {
     const el = getEl()
     if (!el) return
+    const isSkill = command.startsWith('/skill:')
+    // restoreSelection 活选区优先（设计 D1）：键盘选中路径 chip 落呼出位置，blur 路径落 savedRange
+    restoreSelection()
     el.focus()
-    el.querySelectorAll('.slash-chip').forEach((n) => removeChipNode(n, onChanged))
+    if (!isSkill) {
+      // 替换语义只针对命令 chip；skill chip 复用 .slash-chip class 但不在此删除范围（D4-a）
+      el.querySelectorAll<HTMLElement>('.slash-chip').forEach((n) => {
+        if (n.dataset.chipType === 'slash') removeChipNode(n, onChanged)
+      })
+    } else {
+      el.querySelectorAll('.slash-chip').forEach((n) => removeChipNode(n, onChanged))
+    }
     const chip = document.createElement('span')
     chip.className = 'slash-chip'
     chip.contentEditable = 'false'
-    if (command.startsWith('/skill:')) {
+    if (isSkill) {
       chip.dataset.chipType = 'skill'
       chip.dataset.chipName = command.slice('/skill:'.length)
     } else {
@@ -91,15 +111,19 @@ export function useComposerChipCommands(
     renderIconInto(chip, icon)
     const label = document.createElement('span')
     label.className = 'chip-label'
-    label.textContent = chip.dataset.chipType === 'skill'
+    label.textContent = isSkill
       ? (chip.dataset.chipName ?? '')
       : (command.startsWith('/') ? command : `/${command}`)
     chip.appendChild(label)
     chip.appendChild(makeXButton(chip))
-    el.insertBefore(chip, el.firstChild)
-    const spacer = document.createTextNode('\u200B')
-    chip.after(spacer)
-    placeCursorAfter(spacer)
+    if (isSkill) {
+      el.insertBefore(chip, el.firstChild)
+      const spacer = document.createTextNode('\u200B')
+      chip.after(spacer)
+      placeCursorAfter(spacer)
+    } else {
+      insertChipAtSelection(el, chip)
+    }
     onChanged()
   }
 

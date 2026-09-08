@@ -313,6 +313,9 @@ describe('insertSlashChip / 前缀归一化（U11）', () => {
     wrapper = mount(ComposerInput, { attachTo: document.body, global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
     await flushPromises()
     const vm = wrapper.vm as unknown as { insertSlashChip: (cmd: string, icon?: string) => void }
+    // 确定性选区前置：清掉上一用例残留 selection（指向已卸载 DOM 时 range.insertNode
+    // 会把 chip 插进游离树），rangeCount=0 走 insertChipAtSelection 的 appendChild 通路
+    document.getSelection()?.removeAllRanges()
     vm.insertSlashChip('goal', 'terminal')
     await nextTick()
     const chip = wrapper.find('.slash-chip .chip-label')
@@ -324,9 +327,38 @@ describe('insertSlashChip / 前缀归一化（U11）', () => {
     wrapper = mount(ComposerInput, { attachTo: document.body, global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
     await flushPromises()
     const vm = wrapper.vm as unknown as { insertSlashChip: (cmd: string, icon?: string) => void }
+    // 同 U11a：清残留 selection，走 appendChild 通路
+    document.getSelection()?.removeAllRanges()
     vm.insertSlashChip('/commit', 'terminal')
     await nextTick()
     const chip = wrapper.find('.slash-chip .chip-label')
     expect(chip.text()).toBe('/commit')
+  })
+
+  // U11c（设计 D4-a）：命令 chip 视觉就地——光标在草稿中部时 chip 落光标处，
+  // 不再强制跳到全文最前（旧断言语义「chip 必须是 firstChild」已随 D4-a 失效，改写为就地断言）
+  it('U11c 命令 chip 就地插入：草稿中部光标 → chip 在光标处不强制最前', async () => {
+    wrapper = mount(ComposerInput, { attachTo: document.body, global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
+    await flushPromises()
+    const div = wrapper.find('[role="textbox"]').element as HTMLDivElement
+    div.textContent = '任务描述'
+    const textNode = div.firstChild as Text
+    // 活光标在文本末尾（键盘呼出浮层时的焦点从未离开形态）
+    const sel = document.getSelection()
+    sel?.removeAllRanges()
+    const range = document.createRange()
+    range.setStart(textNode, 4)
+    range.collapse(true)
+    sel?.addRange(range)
+    const vm = wrapper.vm as unknown as { insertSlashChip: (cmd: string, icon?: string) => void }
+    vm.insertSlashChip('/compact', 'terminal')
+    await nextTick()
+    const chip = div.querySelector('.slash-chip') as HTMLElement
+    expect(chip).not.toBeNull()
+    // 就地：文本仍在最前，chip 前邻是原文本节点
+    expect(div.firstChild).toBe(textNode)
+    expect(chip.previousSibling).toBe(textNode)
+    // chip 后跟 ZWSP spacer
+    expect(chip.nextSibling?.textContent).toBe('\u200B')
   })
 })

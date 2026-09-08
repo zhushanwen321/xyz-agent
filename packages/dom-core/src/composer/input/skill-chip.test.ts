@@ -119,9 +119,9 @@ describe('useComposerChipCommands insertSkillChip（D2：光标处、多个共�
     c.insertSkillChip('code-review')
     expect(c.el.querySelectorAll('.slash-chip').length).toBe(2)
     const segments = getSegmentsFromEl(c.el)
-    // 命令 chip（chipType=slash）走文本拍平，skill chip 产 skill segment
+    // D4-b：命令 chip（chipType=slash）产 slash segment，skill chip 产 skill segment
     expect(segments).toEqual([
-      { type: 'text', text: '/commit' },
+      { type: 'slash', name: 'commit' },
       { type: 'skill', name: 'code-review' },
     ])
     cleanup = c.cleanup

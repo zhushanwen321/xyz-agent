@@ -120,6 +120,69 @@ describe('useComposerChipCommands insertSlashChip', () => {
     cleanup = c.cleanup
   })
 
+  it('命令 chip 就地插入（D4-a）：草稿文本中部光标 → chip 落光标处不强制最前（真实 restoreSelection 链路）', () => {
+    const el = document.createElement('div')
+    el.contentEditable = 'true'
+    el.innerHTML = '任务描述<br>清理一下'
+    document.body.appendChild(el)
+    const elRef = ref(el)
+    const inputCallbacks = {
+      onInput: vi.fn(),
+      onSlashTrigger: vi.fn(),
+      onFileTrigger: vi.fn(),
+      onEnterKeydown: vi.fn(),
+      onKeydown: vi.fn(),
+      handleBackspaceOnChip: vi.fn(() => false),
+      insertImageBadge: vi.fn(),
+      getSessionId: vi.fn(() => 's1'),
+      pasteImage: vi.fn(),
+    } as unknown as Parameters<typeof useContenteditableInput>[1]
+    const input = useContenteditableInput(elRef, inputCallbacks)
+    const chipCommands = useComposerChipCommands(elRef, {
+      onChanged: vi.fn(),
+      restoreSelection: input.restoreSelection, // 真实 restoreSelection，非 mock
+      renderIcon: () => false,
+      t: (key: string) => key,
+    })
+    // 键盘路径：焦点从未离开，活光标在第二行文本末尾（呼出位置）
+    const secondLine = el.childNodes[2] as Text
+    setCursor(secondLine, 4)
+    chipCommands.insertSlashChip('/compact')
+    const chip = el.querySelector('.slash-chip') as HTMLElement
+    expect(chip).not.toBeNull()
+    expect(chip.dataset.chipType).toBe('slash')
+    // 不强制跳到全文最前（失败模式 D 的错误产物是 chip 成为 firstChild）
+    expect(el.firstChild?.nodeType).toBe(Node.TEXT_NODE)
+    expect(chip.previousSibling).toBe(secondLine)
+    // chip 后跟 ZWSP spacer（insertChipAtSelection 落位产物）
+    expect(chip.nextSibling?.textContent).toBe('\u200B')
+    document.body.removeChild(el)
+  })
+
+  it('仅替换命令 chip（D4-a）：已有命令 chip + skill chip → 插新命令后旧命令消失、skill chip 原样', () => {
+    const c = setup(
+      '<span class="slash-chip" data-chip-type="slash" data-chip-name="old"><span class="chip-label">/old</span></span>' +
+        '正文' +
+        '<span class="slash-chip" data-chip-type="skill" data-chip-name="cw-cli" data-chip-location="/sk.md"><span class="chip-label">cw-cli</span></span>',
+    )
+    const textNode = c.el.childNodes[1] as Text
+    setCursor(textNode, 2) // 光标在「正文」末尾
+    c.insertSlashChip('/new')
+    const chips = Array.from(c.el.querySelectorAll<HTMLElement>('.slash-chip'))
+    // 单命令不变量：只剩一个命令 chip（新），旧命令 chip 被替换
+    const cmdChips = chips.filter((n) => n.dataset.chipType === 'slash')
+    expect(cmdChips).toHaveLength(1)
+    expect(cmdChips[0].dataset.chipName).toBe('new')
+    // skill chip 不被误删（失败模式 C 的错误产物是 skill chip 一并删光）
+    const skillChip = c.el.querySelector<HTMLElement>('.slash-chip[data-chip-type="skill"]')
+    expect(skillChip).not.toBeNull()
+    expect(skillChip?.dataset.chipName).toBe('cw-cli')
+    expect(skillChip?.dataset.chipLocation).toBe('/sk.md')
+    // 新命令 chip 在光标处（「正文」之后），不在最前
+    expect(cmdChips[0].previousSibling).toBe(textNode)
+    cleanup = c.cleanup
+  })
+
   it('el 为 null：直接返回，不触发 onChanged', () => {
     const callbacks = makeCallbacks()
     const api = useComposerChipCommands(ref<HTMLDivElement | null>(null), callbacks)

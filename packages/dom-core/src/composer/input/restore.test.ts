@@ -162,6 +162,29 @@ describe('useComposerRestore restoreSegments', () => {
     expect(c.inputRef.value?.insertSlashChip).not.toHaveBeenCalled()
   })
 
+  it('slash 段 → insertSlashChip(name) 命令 chip 形态恢复（设计 D4：name 不含 / 前缀，函数内归一化补回）', () => {
+    const c = setup('s1')
+    const segments: Segment[] = [
+      { type: 'slash', name: 'compact' },
+      { type: 'text', text: '清理一下' },
+    ]
+    c.restoreSegments(segments)
+    // text 段照常 setText；slash 段不进 textOnly（name 不混入恢复文本）
+    expect(c.inputRef.value?.setText).toHaveBeenCalledWith('清理一下')
+    expect(c.inputRef.value?.insertSlashChip).toHaveBeenCalledWith('compact')
+  })
+
+  it('slash 段不带 location 概念：与 skill 段互不串扰（slash 走 insertSlashChip、skill 走 insertSkillChip）', () => {
+    const c = setup('s1')
+    const segments: Segment[] = [
+      { type: 'slash', name: 'compact' },
+      { type: 'skill', name: 'cw-cli', location: '/sk.md' },
+    ]
+    c.restoreSegments(segments)
+    expect(c.inputRef.value?.insertSlashChip).toHaveBeenCalledWith('compact')
+    expect(c.inputRef.value?.insertSkillChip).toHaveBeenCalledWith('cw-cli', '/sk.md')
+  })
+
   it('file 段带 lineRange → insertFileChip(path, lineRange) 透传', () => {
     const c = setup('s1')
     const segments: Segment[] = [{ type: 'file', path: '/a.ts', lineRange: [10, 20] }]

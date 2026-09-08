@@ -48,6 +48,11 @@ export function useComposerRestore(deps: ComposerRestoreDeps) {
     for (const seg of segments) {
       if (seg.type === 'image') {
         deps.inputRef.value?.insertImageBadge(seg.path, seg.fileName, seg.displayName, seg.needsMigrate ?? false)
+      } else if (seg.type === 'slash') {
+        // 命令 chip 形态恢复（设计 D4/D6）：insertSlashChip(name) 重建命令 chip（name 不含
+        // '/' 前缀，insertSlashChip 内部归一化补回），内部仅替换已有命令 chip 不误删 skill
+        // chip；回滚位置近似=尾部、不保序（D6 登记边界，与其他 chip 类同）
+        deps.inputRef.value?.insertSlashChip(seg.name)
       } else if (seg.type === 'skill') {
         // skill chip 恢复走 insertSkillChip 通路（设计 D3 同修）：光标处追加 + location 透传，
         // 不再走 insertSlashChip（其会误删其他 slash-chip、强制最前、且丢 location）。

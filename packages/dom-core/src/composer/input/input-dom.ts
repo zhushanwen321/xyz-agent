@@ -123,7 +123,7 @@ function isSubagentChipNode(node: Node): boolean {
 
 // ── visitNode 的 chip 处理 helper（每类保持原 consumeBlockBreak → flush/拼装 → rejectChips.add 时序）──
 
-/** slash-chip：skill 读 dataset 产 skill segment，其余把 .chip-label 文本并入 pendingText */
+/** slash-chip：按 dataset.chipType 分流——skill 产 skill segment，命令产 slash segment（D4-b） */
 function visitSlashChip(node: Node, state: SegmentParseState): void {
   consumeBlockBreak(state)
   const chip = node as HTMLElement
@@ -134,8 +134,10 @@ function visitSlashChip(node: Node, state: SegmentParseState): void {
     const location = chip.dataset.chipLocation
     state.segments.push(location ? { type: 'skill', name, location } : { type: 'skill', name })
   } else {
-    const labelText = chip.querySelector('.chip-label')?.textContent ?? ''
-    state.pendingText = (state.pendingText ?? '') + labelText
+    // 命令 chip 不再拍平进文本：产结构化 slash 段（name 不含 '/' 前缀，insertSlashChip
+    // 已如此存储），序列化层 segmentsToText 归位提为首段满足 pi 行首协议（设计 D4-b/D4-c）
+    flushText(state)
+    state.segments.push({ type: 'slash', name: chip.dataset.chipName ?? '' })
   }
   state.rejectChips.add(chip)
 }
@@ -272,7 +274,8 @@ function visitNode(node: Node, state: SegmentParseState): void {
  * 递归遍历逻辑与原 getTextFromEl 的 TreeWalker 一致（TEXT_NODE + BR + 跳过 .chip-x），
  * 但产出结构化 segment 而非拍平字符串：
  * - .slash-chip 元素 → 读 dataset.chipType：'skill' 产出 skill segment（有 location 则带上），
- *   其余产出 text segment（读 .chip-label 的 textContent）。遇到 chip 元素后跳过其子树
+ *   其余（命令 chip）产出 slash segment（读 dataset.chipName，不含 '/' 前缀，D4-b）。
+ *   遇到 chip 元素后跳过其子树
  *   （icon/label/x 按钮不单独遍历）——用 rejectChipSubtree 集合在 visitNode 里直接拒绝。
  * - 文本节点：累加进当前 text segment（相邻文本节点合并，不每个产一个 segment），
  *   过滤 \u00A0→空格、\u200B→删除（与原 getTextFromEl 一致）。

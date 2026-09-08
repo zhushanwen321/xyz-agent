@@ -72,6 +72,9 @@ graph TD
 | 6 | u4 | 领地内提取：slash 候选构建（panel 态 buildPanelSlashCandidates + landing 态 buildLandingSlashCandidates）从 CommandPopover.vue 搬到 command-popover-symbols.ts（script 315→289；纯搬运零行为变化，unused import 同步清理） | pre-commit vue_rules_checker 300 行硬限；u3 提取后仅余 11 行余量，u4 新增回填逻辑必超 | 2026-09-08 批次 2 commit 门 |
 | 7 | u6 | routeStaging 签名删 text 参数（staging.send 载荷改 segmentsToPrompt 后无消费点），同步唯一调用点；core 包 tsc 口径抓不到，renderer 跨包口径（TS6133）拦出 | 未使用参数清理；deviation #2 同因（cross-scope tsc 口径差异） | 2026-09-08 批次 2 commit 门 |
 | 8 | u4 | restore.ts 调 insertSkillChip 的类型缺口：ComposerInputInstance（core/types.ts，领地外）未声明该方法，局部交叉类型收窄 + ?. 调用（对齐 session/subagent 可选成员缺省容错语义）；建议一致性审查阶段评估正式落进 types.ts | 领地锁约束下的最小实现；功能不受影响 | 2026-09-08 批次 2 核验 |
+| 9 | u5 | 领地补录①：dom-core skill-chip.test.ts（旧「命令 chip 走文本拍平」断言与 D4-b 直接冲突，设计 §4 回归清单点名该文件）；领地补录②：ui composer-input-get-text.test.ts（同因旧拍平断言，设计 §4 ui 行点名）；计划 u5 领地清单漏列 | 设计 §4 回归清单明确点名；同偏差 #1/#2 先例 | 2026-09-08 批次 3 核验 |
+| 10 | u5 | composer-slash-injection.test.ts 实测无「强制最前」类断言（整体 mock ComposerInput 为 spy，无 DOM 位置断言）——改写任务落在 slash-trigger U11c 新增就地断言；U11a/U11b 补确定性选区前置（防 happy-dom range.insertNode 插入已卸载 DOM 现象），断言本体未动 | 计划预判与实际测试形态不符；改写目标已达成 | 2026-09-08 批次 3 核验 |
+| 11 | u5 | insertSlashChip skill 兼容分支重排为显式 isSkill 分流（skill 分支行为逐行不变：删全部 chip + insertBefore firstChild + spacer） | 结构化非行为偏差 | 2026-09-08 批次 3 核验 |
 
 ## 6 状态表
 
@@ -81,7 +84,7 @@ graph TD
 | u2-domcore-insertion | committed | 1 | dadb65c39；dom-core vitest 215 passed + ui 585 passed；chip-commands.ts diff 核验纯注释 |
 | u3-keyroute | committed | 2 | commit 待补（打回修 script 超行，轮次 2）；renderer keydown+landing 增量 36 passed 0 fail + ui 585 + renderer 包级 4071 passed（dev 自报，主验增量） |
 | u4-skill-route | committed | 2 | 8a269dcea；skill-trigger 13 + landing + restore 14 绿，包级 4074；script 315→289（轮 2 提取候选构建到 symbols，偏差 #6） |
-| u5-slash-dom | pending | 0 | |
+| u5-slash-dom | committed | 1 | 见 u5 commit；dom-core 224 + ui 585 + renderer 全量 4075 绿；检查点 1 已实测销项（spacer 处 / 不触发行首浮层，三用例锁定） |
 | u6-send-migration | committed | 2 | 见 u6 commit；core 1781 passed + 双口径 vue-tsc 绿（轮 2 清 routeStaging 未用参数，偏差 #7） |
 
 ## 7 残留风险与变更历史
@@ -99,4 +102,5 @@ graph TD
 **变更历史**：
 - 2026-09-08：初版（6 单元 DAG，源自设计 §5 P1-P5 拆分；P5 测试分摊进各单元）。
 - 2026-09-08：批次 1 完成（u1 aab8b4433 / u2 dadb65c39 / u3 16204a7c9 轮 2）；偏差登记 #1-#5；u3 领地补录 landing 测试文件。
-- 2026-09-08：批次 2 完成（u4 8a269dcea 轮 2 / u6 本 commit 轮 2）；偏差登记 #6-#8；u4 领地补录 landing 测试；vue_rules_checker 全工作区口径导致 u6 commit 被 u4 在途超行连坐——编排顺序改为串行 commit。
+- 2026-09-08：批次 2 完成（u4 8a269dcea 轮 2 / u6 dcfe230b6 轮 2）；偏差登记 #6-#8；u4 领地补录 landing 测试；vue_rules_checker 全工作区口径导致 u6 commit 被 u4 在途超行连坐——编排顺序改为串行 commit。
+- 2026-09-08：批次 3 完成（u5 本 commit 轮 1）；偏差登记 #9-#11；检查点 1 销项（spacer 处 / 不触发行首浮层，与 hasChip 抑制一致，input-dom.test 三用例锁定）；状态表全 committed → 转阶段 3 一致性审查。
