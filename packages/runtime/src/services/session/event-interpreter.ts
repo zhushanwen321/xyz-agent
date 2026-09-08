@@ -255,8 +255,19 @@ export class EventInterpreter {
   private diffChain: Promise<void> = Promise.resolve()
   /** 回合代际守卫：turn-start 自增；链上执行时 gen 不匹配 → 丢弃 accumulating（ready 绕过恒推，见 sendDiffFileChanges） */
   private turnGen = 0
-  /** composer-gen-stats（D2）：本 turn 起始本地时钟（turn-start 记；无配对 turn-usage 消费为 null） */
+  /**
+   * composer-gen-stats（D2/genstats-speed-llm-window D1）：LLM 请求窗口起算本地时钟
+   *（assistant message_start 到达时记——turn-start kind 的物理来源，event-adapter :786-797/:853-858；
+   * assistant message_end 结算后清 null；无配对 turn-usage 消费的残留由下轮 turn-start 重锚覆写）。
+   */
   private turnStartedAt: number | null = null
+  /**
+   * composer-gen-stats（genstats-speed-llm-window D1/D3）：最近结算的 LLM 请求窗口时长
+   *（assistant message_end 到达时结算 Date.now() - turnStartedAt，并同步清 turnStartedAt）。
+   * turn-usage 消费后置 null（一次性语义）；异常路径残留由下轮 turn-start 重锚同步清除
+   *（重锚清除不变量——窗口时长生命周期严格限本 turn，封死「旧窗口 × 新 token」垃圾样本）。
+   */
+  private llmWindowDurationMs: number | null = null
   /** turn-end 压制标记：true 后到达的 accumulating 直接 no-op（同回合迟到 tool-call-end 不产生新帧） */
   private turnFinalizing = false
   /**
@@ -390,6 +401,11 @@ export class EventInterpreter {
         return true
       case 'message':
         this.opts.send(ev.message)
+        // composer-gen-stats（genstats-speed-llm-window D1/D2）：assistant message_end 帧 =
+        // LLM 请求窗口闭合点（先于工具执行到达，pi 语义 P1）→ 结算窗口时长。role 守卫：
+        // user/toolResult/custom 的 message_end 帧同经本 case 全量下发（MESSAGE_END_ALLOWED_ROLES），
+        // 无守卫会被错误闭合截断 duration（D3 第八行）。
+        this.settleLlmWindowOnMessageEnd(ev.message)
         // subagent bg-notify：更新内存态终态 → 广播 session.subagents
         this.handleSubagentBgNotify(ev.message)
         // workflow-result（run 完成）：广播 session.workflows 增量信号
@@ -423,9 +439,14 @@ export class EventInterpreter {
         this.currentMessageId = ev.messageId
         this.turnGen += 1
         this.turnFinalizing = false
-        // composer-gen-stats（D2）：turn 起始本地时钟锚点（pi-statusline 同口径；
+        // composer-gen-stats（D2/genstats-speed-llm-window D1）：LLM 请求窗口起算本地时钟
+        //（本 case 的物理触发 = assistant message_start 到达；pi-statusline 同口径，
         // pi entry 无起算点，只能用 runtime 本地时钟）
         this.turnStartedAt = Date.now()
+        // 重锚清除不变量（genstats-speed-llm-window D3 结构性说明）：同步清上一 turn 可能
+        // 残留的窗口时长——「usage 缺席」「合成对」等异常路径的残留 d 生命周期严格限本 turn，
+        // 结构性封死「旧窗口 × 新 token」垃圾样本（stale-d 复合行），不再依赖「下轮 end 必到」。
+        this.llmWindowDurationMs = null
         // occupancy #2（D3）：turn-start → generating。dispatching（prompt 已发）到本事件的
         // 边界；幂等写直写目标值，retry/followUp 续跑（settling 中再收 turn-start）同样落 generating。
         this.opts.onOccupancyTransition?.({ turn: 'generating' })
@@ -453,11 +474,17 @@ export class EventInterpreter {
         // 的后续 turn-usage 不得拿上一 turn 旧锚点算出系统性偏大 duration，须 §3.5 承诺的
         // durationMs=null。
         if (this.opts.onGenStats) {
-          const startedAt = this.turnStartedAt
+          // durationMs 改源 llmWindowDurationMs（genstats-speed-llm-window D1）：assistant
+          // message_end 结算的 LLM 请求窗口（不含工具执行时间）。null = 真缺闭（pi 崩溃/断连，
+          // 闭合帧不到达，设计 §3.1 失败路径）→ 速度样本由 service 侧跳过（命中率照常）。
+          // 消费后置 null（一次性语义）。保留 turnStartedAt 清 null（防纵深，D3 零成本）：
+          // 缺配对的后续 turn-usage 不得拿旧锚点算出系统性偏大 duration（§3.5 一致性）。
+          const windowMs = this.llmWindowDurationMs
+          this.llmWindowDurationMs = null
           this.turnStartedAt = null
           this.opts.onGenStats(ev.sessionId, {
             outputTokens: ev.outputTokens,
-            durationMs: startedAt === null ? null : Date.now() - startedAt,
+            durationMs: windowMs,
             model: ev.model,
             provider: ev.provider,
             input: ev.input,
@@ -763,6 +790,33 @@ export class EventInterpreter {
     })
     this.diffChain = next
     return next
+  }
+
+  // ── composer-gen-stats：LLM 请求窗口闭合（genstats-speed-llm-window D1/D2）──
+
+  /**
+   * assistant message_end 帧到达 → 结算 LLM 请求窗口（D1：assistant message_start →
+   * assistant message_end 的 runtime 本地时钟差，不含工具执行时间）。
+   *
+   * role 守卫（D2）：仅 entry.message.role === 'assistant' 时结算——user/toolResult 的
+   * message_end 帧同经本 case 全量下发（MESSAGE_END_ALLOWED_ROLES），custom 的
+   * subagent-directive 亦然，无守卫会被错误闭合截断 duration（D3 第八行）。
+   *
+   * 缺起防御（D3 第二行）：turnStartedAt 为 null（runtime 中途启动/丢 message_start）时
+   * 静默跳过，不产窗口——与「无配对 turn-start → durationMs=null」现行契约同语义。
+   *
+   * payload 结构防御性提取：payload/entry/message/role 任何层级畸形（缺字段/role 非字符串）
+   * 一律按「非 assistant end」跳过不抛（计时是旁路观测，畸形帧不产生错误路径；与
+   * handleSubagentBgNotify 的 payload 提取范式一致）。结算后同步清 turnStartedAt（配对
+   * 消费，防同窗口被二次结算）。
+   */
+  private settleLlmWindowOnMessageEnd(msg: ServerMessage): void {
+    if (msg.type !== 'message.message_end') return
+    const payload = msg.payload as { entry?: { message?: { role?: unknown } } } | undefined
+    if (payload?.entry?.message?.role !== 'assistant') return
+    if (this.turnStartedAt === null) return
+    this.llmWindowDurationMs = Date.now() - this.turnStartedAt
+    this.turnStartedAt = null
   }
 
   // ── subagent / workflow record 失效信号（W18：事件直写退役）──

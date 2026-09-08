@@ -16,9 +16,9 @@
  *
  * 运行：npx vitest run src/__tests__/event-interpreter.test.ts
  */
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { EventInterpreter } from '../services/session/event-interpreter.js'
-import type { PiTranslatedEvent } from '../services/session/types.js'
+import type { GenStatsSample, PiTranslatedEvent } from '../services/session/types.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 function makeInterpreter(overrides: {
@@ -209,5 +209,209 @@ describe('EventInterpreter compaction 编排 (M4 事件驱动)', () => {
     // 置位 + 复位各一次，顺序 true → false
     expect(onCompactingStateChange).toHaveBeenNthCalledWith(1, 's1', true)
     expect(onCompactingStateChange).toHaveBeenNthCalledWith(2, 's1', false)
+  })
+})
+
+// ── composer-gen-stats LLM 窗口 D3 矩阵（genstats-speed-llm-window.md §3.3 D3 八行表）──
+//
+// 锁定 U1 状态机回归：turnStartedAt（LLM 窗口起算锚点）+ llmWindowDurationMs（已结算窗口）+
+// turn-usage 消费（durationMs 改源，一次性清 null）+ turn-start 重锚清除不变量 +
+// assistant message_end role 守卫。八行用例与设计 D3 矩阵表逐一对应（U3）。
+describe('EventInterpreter composer-gen-stats LLM 窗口 D3 配对矩阵', () => {
+  /** gen-stats 专用 interpreter 工厂（照抄 makeInterpreter 形态，多注入 onGenStats 采样回调）。 */
+  function makeGenStatsInterpreter() {
+    const sent: ServerMessage[] = []
+    const onGenStats = vi.fn((_sessionId: string, _sample: GenStatsSample) => {})
+    const interp = new EventInterpreter('s1', { send: (m: ServerMessage) => { sent.push(m) }, onGenStats })
+    return { interp, sent, onGenStats }
+  }
+
+  /** message_end 帧（照抄 event-adapter 翻译形态：{sessionId, entry: PiMessageEntry}）。 */
+  function makeMessageEndFrame(role: string): ServerMessage {
+    return {
+      type: 'message.message_end',
+      payload: {
+        sessionId: 's1',
+        entry: { type: 'message', timestamp: new Date().toISOString(), message: { role } },
+      },
+    }
+  }
+
+  /** turn-usage 事件（字段名以 types.ts PiTranslatedEvent 实际定义为准）。 */
+  function makeTurnUsage(): PiTranslatedEvent {
+    return {
+      kind: 'turn-usage',
+      sessionId: 's1',
+      inputTokens: 10,
+      totalTokens: 120,
+      outputTokens: 80,
+      cacheRead: 20,
+      cacheWrite: 0,
+      input: 10,
+      model: 'test-model',
+      provider: 'test-provider',
+    }
+  }
+
+  /** 取最近一次采样样本。 */
+  function lastSample(onGenStats: ReturnType<typeof makeGenStatsInterpreter>['onGenStats']): GenStatsSample {
+    return onGenStats.mock.calls[onGenStats.mock.calls.length - 1][1]
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('① 正常：start → end(assistant) → 推时钟 → usage → durationMs=窗口差（end→usage 间时钟不计入）', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const { interp, onGenStats } = makeGenStatsInterpreter()
+
+    interp.interpret([{ kind: 'turn-start', messageId: 'm1' }])
+    vi.advanceTimersByTime(5_000) // LLM 流式窗口：t1 = 6000
+    interp.interpret([{ kind: 'message', message: makeMessageEndFrame('assistant') }])
+    vi.advanceTimersByTime(30_000) // end → usage 之间的墙钟推进（工具收尾等），不得计入
+    interp.interpret([makeTurnUsage()])
+
+    expect(onGenStats).toHaveBeenCalledTimes(1)
+    const sample = lastSample(onGenStats)
+    // 窗口差（6000-1000=5000），非墙钟差（6000+30000-1000=35000）
+    expect(sample.durationMs).toBe(5_000)
+    // 伴随字段透传
+    expect(sample.outputTokens).toBe(80)
+    expect(sample.model).toBe('test-model')
+    expect(sample.provider).toBe('test-provider')
+    expect(sample.cacheRead).toBe(20)
+  })
+
+  it('② △缺起：无 turn-start，直接 end(assistant) + usage → durationMs=null（速度样本跳过，命中率字段照常）', () => {
+    vi.useFakeTimers()
+    const { interp, onGenStats } = makeGenStatsInterpreter()
+
+    interp.interpret([{ kind: 'message', message: makeMessageEndFrame('assistant') }])
+    interp.interpret([makeTurnUsage()])
+
+    expect(onGenStats).toHaveBeenCalledTimes(1)
+    const sample = lastSample(onGenStats)
+    expect(sample.durationMs).toBeNull()
+    // 命中率样本照常（§3.5：token 字段不受速度配对失败影响）
+    expect(sample.outputTokens).toBe(80)
+    expect(sample.input).toBe(10)
+    expect(sample.cacheRead).toBe(20)
+    expect(sample.cacheWrite).toBe(0)
+  })
+
+  it('③ △真缺闭：start → usage（无 end，pi 崩溃/断连）→ durationMs=null', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const { interp, onGenStats } = makeGenStatsInterpreter()
+
+    interp.interpret([{ kind: 'turn-start', messageId: 'm1' }])
+    vi.advanceTimersByTime(7_000) // 锚点残留期推进——若误用锚点会算出 7000
+    interp.interpret([makeTurnUsage()])
+
+    expect(onGenStats).toHaveBeenCalledTimes(1)
+    expect(lastSample(onGenStats).durationMs).toBeNull()
+  })
+
+  it('④ △usage 缺席：start → end（无 usage）→ 下轮 start 重锚 → 下轮完整流程 → 上轮 d 不泄漏', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const { interp, onGenStats } = makeGenStatsInterpreter()
+
+    // 上轮：窗口结算 d=4000，但 turn-usage 缺席 → d 残留
+    interp.interpret([{ kind: 'turn-start', messageId: 'm1' }])
+    vi.advanceTimersByTime(4_000)
+    interp.interpret([{ kind: 'message', message: makeMessageEndFrame('assistant') }])
+    // 下轮：start 重锚（重锚清除不变量：同步清残留 d）→ 完整流程
+    interp.interpret([{ kind: 'turn-start', messageId: 'm2' }])
+    vi.advanceTimersByTime(2_000)
+    interp.interpret([{ kind: 'message', message: makeMessageEndFrame('assistant') }])
+    vi.advanceTimersByTime(1_000)
+    interp.interpret([makeTurnUsage()])
+
+    expect(onGenStats).toHaveBeenCalledTimes(1)
+    const sample = lastSample(onGenStats)
+    // 本轮窗口 2000——既非上轮残留 4000，也非两轮合计 6000（end→usage 推进不计入）
+    expect(sample.durationMs).toBe(2_000)
+  })
+
+  it('⑤ △合成对：start → end(assistant, ≈0ms, 无 usage) → 下轮 start 重锚 → 完整轮 → 无 ≈0ms 样本', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const { interp, onGenStats } = makeGenStatsInterpreter()
+
+    // 合成对（P3 分支②）：start 与合成 end 几乎同刻到达（≈0ms 窗口），EMPTY usage 被
+    // adapter 门槛丢弃 → 本 turn 无 turn-usage 事件、无采样
+    interp.interpret([{ kind: 'turn-start', messageId: 'm1' }])
+    interp.interpret([{ kind: 'message', message: makeMessageEndFrame('assistant') }])
+    // 下轮正常 turn：重锚清 ≈0ms 残留 → 完整流程
+    interp.interpret([{ kind: 'turn-start', messageId: 'm2' }])
+    vi.advanceTimersByTime(3_000)
+    interp.interpret([{ kind: 'message', message: makeMessageEndFrame('assistant') }])
+    interp.interpret([makeTurnUsage()])
+
+    // 全程仅本轮 1 个样本，且非 ≈0ms
+    expect(onGenStats).toHaveBeenCalledTimes(1)
+    const sample = lastSample(onGenStats)
+    expect(sample.durationMs).toBe(3_000)
+    for (const call of onGenStats.mock.calls) {
+      expect(call[1].durationMs).not.toBeLessThan(100)
+    }
+  })
+
+  it('⑥ △stale-d 复合：上轮 end 结算 d 残留 × 本轮 start 重锚 → 本轮缺 end 有 usage → durationMs=null', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const { interp, onGenStats } = makeGenStatsInterpreter()
+
+    // 上轮：d=4000 结算后残留（usage 缺席）
+    interp.interpret([{ kind: 'turn-start', messageId: 'm1' }])
+    vi.advanceTimersByTime(4_000)
+    interp.interpret([{ kind: 'message', message: makeMessageEndFrame('assistant') }])
+    // 本轮：start 重锚已清残留 → 缺 end 但 usage 到 → 不得产「旧窗口 × 新 token」垃圾样本
+    interp.interpret([{ kind: 'turn-start', messageId: 'm2' }])
+    vi.advanceTimersByTime(2_500)
+    interp.interpret([makeTurnUsage()])
+
+    expect(onGenStats).toHaveBeenCalledTimes(1)
+    expect(lastSample(onGenStats).durationMs).toBeNull()
+  })
+
+  it('⑦ △双 start 重锚：start(t0) → start(t1) → end → usage → durationMs=t2-t1（last-writer-wins）', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const { interp, onGenStats } = makeGenStatsInterpreter()
+
+    interp.interpret([{ kind: 'turn-start', messageId: 'm1' }]) // t0 = 1000
+    vi.advanceTimersByTime(9_000)
+    interp.interpret([{ kind: 'turn-start', messageId: 'm2' }]) // t1 = 10000（覆写重锚）
+    vi.advanceTimersByTime(2_000)
+    interp.interpret([{ kind: 'message', message: makeMessageEndFrame('assistant') }]) // t2 = 12000
+    interp.interpret([makeTurnUsage()])
+
+    expect(onGenStats).toHaveBeenCalledTimes(1)
+    // 取第二窗口（12000-10000=2000），非第一窗口 11000
+    expect(lastSample(onGenStats).durationMs).toBe(2_000)
+  })
+
+  it('⑧ △他角色 end 混入：start → user/custom 的 message_end → 真 assistant end → usage → durationMs=完整窗口（role 守卫）', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const { interp, onGenStats } = makeGenStatsInterpreter()
+
+    interp.interpret([{ kind: 'turn-start', messageId: 'm1' }])
+    vi.advanceTimersByTime(6_000) // 真窗口：t1 = 7000
+    // MESSAGE_END_ALLOWED_ROLES 全量下发：user / custom 的 end 帧同经 case 'message'，
+    // role 守卫必须放过它们不闭合窗口（否则 duration 被截断、锚点被误清）
+    interp.interpret([{ kind: 'message', message: makeMessageEndFrame('user') }])
+    interp.interpret([{ kind: 'message', message: makeMessageEndFrame('custom') }])
+    interp.interpret([{ kind: 'message', message: makeMessageEndFrame('assistant') }])
+    vi.advanceTimersByTime(99_999) // end → usage 间墙钟不计入
+    interp.interpret([makeTurnUsage()])
+
+    expect(onGenStats).toHaveBeenCalledTimes(1)
+    // 完整窗口 6000：user/custom end 未截断，assistant end 正常闭合
+    expect(lastSample(onGenStats).durationMs).toBe(6_000)
   })
 })
