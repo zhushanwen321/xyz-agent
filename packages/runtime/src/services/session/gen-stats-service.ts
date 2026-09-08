@@ -107,10 +107,10 @@ export class GenStatsService {
    *
    * 丢弃规则（§3.5 / D7，丢弃不入聚合）：
    *   - model/provider 缺失 → 样本无法归属模型，整体跳过（防御，pi AssistantMessage 正常态必带）；
-   *   - durationMs=null（无配对 turn-start，D2）→ 速度样本跳过，命中率样本照常；
-   *     （D2 口径注，GS-5 登记：速度分母 durationMs 含 turn-start（assistant message_start）
-   *     与 turn_end 两帧 RPC 传输延迟之差——turn_end 帧载荷大于 message_start，系统性使
-   *     duration 略偏大、速度略偏低，量级毫秒级，不做时钟校正）
+   *   - durationMs=null（无配对闭合（真缺闭），genstats-speed-llm-window.md D2/D3）→ 速度样本跳过，
+   *     命中率样本照常；（D2 口径注，GS-5 精神延续：速度分母 durationMs = assistant message_start
+   *     与 assistant message_end 两帧 RPC 传输延迟之差——单次 LLM 请求窗口，不含工具执行时间；
+   *     毫秒级、方向不定，不做时钟校正）
    *   - outputTokens>50 && durationMs<100（store 谓词 SSOT）→ 速度样本丢弃；
    *   - promptTotal=input+cacheRead+cacheWrite ≤0 → 命中率样本不采集（cache 字段缺省按 0
    *     计入 promptTotal，D7③，有效性由本条兜底）。
