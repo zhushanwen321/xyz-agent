@@ -314,4 +314,108 @@ describe('forkSession 特征锚定（复杂度债务偿还 W3）', () => {
     await env2.lifecycle.forkSession('src', 'entry1', true, 'forked')
     expect(env2.sessionStore.persistProjectBinding).toHaveBeenCalledWith('/fake/sessions/forked.jsonl', 'sidecar-proj')
   })
+
+  // ── D6 源生效值继承档（state-truth-sync C5 / ⛔ 探针 P4）──
+  // 链 = `staging override > 源 session 当前生效值 > 源 preset > 全局默认`。
+  // 源真值读取 = 活跃内存实例 meta > sidecar .model.json 扫描值（resolveForkSourceEffectiveBinding）。
+  describe('D6 源生效值继承档（P4 三类源 + 继承档序）', () => {
+    /** fork 一次并取 pi createSession options（第三参）。 */
+    async function forkOnce(
+      env: ReturnType<typeof makeEnv>,
+      options?: { modelOverride?: string; thinkingOverride?: string },
+    ): Promise<Record<string, unknown>> {
+      await env.lifecycle.forkSession('src', 'entry1', true, 'forked', options)
+      expect(env.pm.createSession).toHaveBeenCalledTimes(1)
+      return (env.pm.createSession as ReturnType<typeof vi.fn>).mock.calls[0]![2] as Record<string, unknown>
+    }
+
+    /** 注册活跃源实例并直写生效值（switchModel/setThinkingLevel 直写内存实例的形态）。 */
+    async function registerActiveSource(
+      env: ReturnType<typeof makeEnv>,
+      meta: { modelId?: string; thinkingLevel?: string },
+    ): Promise<void> {
+      await env.lifecycle.registerSession('src', {} as unknown as IPiEngine, '/repo', 'src')
+      const record = env.lifecycle.get('src') as unknown as { modelId?: string; thinkingLevel?: string }
+      record.modelId = meta.modelId
+      record.thinkingLevel = meta.thinkingLevel
+    }
+
+    it('P4① 活跃源（内存实例有 meta）→ 继承 modelId + thinkingLevel（spawn options + sidecar + hydrate 三面）', async () => {
+      const env = makeEnv()
+      mockSource(env.svc)
+      await registerActiveSource(env, { modelId: 'mem/flash', thinkingLevel: 'high' })
+
+      const opts = await forkOnce(env)
+
+      // pi spawn options（override 档产物）
+      expect(opts.model).toBe('mem/flash')
+      expect(opts.thinkingLevel).toBe('high')
+      // 目标 5 hydrate 持久化：sidecar .model.json 写点（attachForkedFile）+ 新 session meta
+      //（registerSession modelOverride 播种，与 staging override 路径同构）
+      expect(sidecarMock.persistModelBinding).toHaveBeenCalledWith('/fake/sessions/forked.jsonl', 'mem/flash', 'high')
+      expect(env.lifecycle.get('forked-id')?.modelId).toBe('mem/flash')
+      expect((env.lifecycle.get('forked-id') as unknown as { thinkingLevel?: string }).thinkingLevel).toBe('high')
+    })
+
+    it('P4② pi 已退出源（sidecar .model.json 存在且新鲜）→ 继承 sidecar 值', async () => {
+      const env = makeEnv()
+      // 无内存实例（源 pi 已退出/未恢复），source 来自 findScannedSession（含 .model.json 值）
+      mockSource(env.svc, { modelId: 'side/flash', thinkingLevel: 'medium' })
+
+      const opts = await forkOnce(env)
+
+      expect(opts.model).toBe('side/flash')
+      expect(opts.thinkingLevel).toBe('medium')
+      expect(sidecarMock.persistModelBinding).toHaveBeenCalledWith('/fake/sessions/forked.jsonl', 'side/flash', 'medium')
+    })
+
+    it('P4③ 「切模→死→直接 fork」陈旧窗口源（sidecar 是旧值）→ 读到的就是旧值（D6 已接受代价，不修不挡）', async () => {
+      // 场景：源切到 side/flash 后 pi 死亡（未 restore），sidecar 仍停留切模前旧值——
+      // fork 不触发源 restore 自愈，读到旧值即继承旧值（残留风险 P4 声明内行为；
+      // 恢复路径 = fork 后 chip 改选。严格优于现状：现状恒落 preset/默认档）
+      const env = makeEnv()
+      mockSource(env.svc, { modelId: 'stale/model', thinkingLevel: 'low' })
+
+      const opts = await forkOnce(env)
+
+      expect(opts.model).toBe('stale/model')
+      expect(opts.thinkingLevel).toBe('low')
+    })
+
+    it('E9: 源真值不可读（无 sidecar 且实例不在内存）→ 回落源 preset 档（现行为，不劣化）', async () => {
+      const resolution = {
+        extensionPaths: [], skillPaths: [], toolArgs: {}, flags: {},
+        modelOverride: 'preset-model', thinkingLevel: 'low',
+      } as unknown as PresetResolution
+      const env = makeEnv({ resolution })
+      mockSource(env.svc) // 无 modelId/thinkingLevel（老会话无 sidecar）
+
+      const opts = await forkOnce(env)
+
+      expect(opts.model).toBe('preset-model')
+      expect(opts.thinkingLevel).toBe('low')
+    })
+
+    it('档序: staging override > 源生效值——fork-ask 暂存值优先（ADR-0056 行为不变）', async () => {
+      const env = makeEnv()
+      mockSource(env.svc, { modelId: 'side/flash', thinkingLevel: 'high' })
+
+      const opts = await forkOnce(env, { modelOverride: 'staging/m', thinkingOverride: 'low' })
+
+      expect(opts.model).toBe('staging/m')
+      expect(opts.thinkingLevel).toBe('low')
+    })
+
+    it('空串归一: 活跃实例 modelId 空串占位（restore 播种形态）不吞档——字段级回落 sidecar 扫描值', async () => {
+      const env = makeEnv()
+      mockSource(env.svc, { modelId: 'side/flash', thinkingLevel: 'medium' })
+      await registerActiveSource(env, { modelId: '', thinkingLevel: undefined })
+
+      const opts = await forkOnce(env)
+
+      // ''/undefined 不得以 nullish 检查漏网短路吞掉 sidecar 档（nonEmptyStr 归一）
+      expect(opts.model).toBe('side/flash')
+      expect(opts.thinkingLevel).toBe('medium')
+    })
+  })
 })

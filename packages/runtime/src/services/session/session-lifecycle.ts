@@ -141,6 +141,14 @@ function resolveCreateCwd(cwd: string | undefined): string {
 }
 
 /**
+ * 空串/非 string 归一 undefined（D6 源生效值读取用）：restore 播种在源不可知时写 '' 占位，
+ * '' 属 nullish 检查不拦截的 falsy 值——直传 `override ?? preset` 链会以 '' 短路吞掉后续档。
+ */
+function nonEmptyStr(v: string | undefined): string | undefined {
+  return typeof v === 'string' && v !== '' ? v : undefined
+}
+
+/**
  * D1 写点③ 生效值解析（create）：get_state 读回真值优先于请求值（C-pi-13 写点写生效值；
  * pattern 引擎静默换模时读回值才是真值）。hydrate 与 persistModelBinding 两个写点共用。
  */
@@ -961,11 +969,12 @@ export class SessionLifecycle implements ISessionRegistry {
       /** timestamp 匹配的 role 限定（用户/助手侧消息消歧）。 */
       fromMessageRole?: string
       /**
-       * Staging Mode（ADR-0056）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。
-       * undefined 时 fork 仅继承源 preset（旧行为）。
+       * Staging Mode（ADR-0056）：composer 暂存的模型覆盖，优先于源 session 当前生效值与
+       * 源 preset.modelOverride（D6 继承链：staging override > 源生效值 > 源 preset > 全局默认）。
+       * undefined 时 fork 继承源 session 当前生效值（不可读回落源 preset，E9）。
        */
       modelOverride?: string
-      /** Staging Mode（ADR-0056）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
+      /** Staging Mode（ADR-0056）：composer 暂存的思考等级覆盖，继承链同 modelOverride（D6）。 */
       thinkingOverride?: string
     },
   ): Promise<SessionSummary> {
@@ -1020,7 +1029,12 @@ export class SessionLifecycle implements ISessionRegistry {
     // 解析细节见各 resolve helper（求值时序与提取前一致，均在 migrationGate 等待之前）。
     const sessionCwd = this.resolveForkSpawnCwd(source)
     const { forkPresetId, forkProjectId } = this.resolveForkInheritedBindings(srcSessionId, source)
-    const { forkResolution, allExtPaths, presetClientOptions } = await this.resolveForkLaunch(sessionCwd, forkPresetId, options)
+    // D6（state-truth-sync C5）：源 session 当前生效 model+thinkingLevel 作为 fork 继承档
+    //（插在 staging override 与源 preset 之间），读取链见 resolveForkSourceEffectiveBinding。
+    const sourceEffective = this.resolveForkSourceEffectiveBinding(srcSessionId, source)
+    const { forkResolution, allExtPaths, presetClientOptions } = await this.resolveForkLaunch(
+      sessionCwd, forkPresetId, sourceEffective, options,
+    )
     // D8-3（perf W29）：fork 同样 spawn pi——gate 等待（06 审查修正：fork 是第三处 spawn 点）。
     await migrationGate
     const client = await this.pm.createSession(forkedId, sessionCwd, {
@@ -1117,13 +1131,50 @@ export class SessionLifecycle implements ISessionRegistry {
   }
 
   /**
+   * fork 的源 session 当前生效值读取（D6 / state-truth-sync C5）：modelId + thinkingLevel 两字段
+   * （sidecar BINDING_FIELDS `.model.json` 家族同源两字段，字段范围刻意不含 projectId/label 等
+   * ——各有既有继承通道）。
+   *
+   * 读取链与 resolveForkInheritedBindings 同构（W-RT-5 双源模式）：
+   * 1. 活跃源读 runtime 内存实例 meta（switchModel/setThinkingLevel 的 session.modelId/
+   *    thinkingLevel 直写 + ReplicatedState 收敛保证它是当前生效值）；
+   * 2. pi 已退出/未恢复源回落扫描 sidecar `.model.json` 值（source 来自 findScannedSession，
+   *    与 restore-seeding seedRestoreMetaOverride 的 sidecar 兜底同源）。
+   *
+   * 空串归一 undefined（restore 播种在源不可知时写 '' 占位，'' 传入 override 档会以
+   * `'' ?? preset` 短路吞掉 preset 档）。两档皆缺（E9：老会话无 sidecar 且实例不在内存）
+   * → undefined，调用方回落源 preset 档（现行为，不劣化）。
+   *
+   * 已接受代价（设计 D6 / 残留风险 P4）：「切模 → pi 死（未 restore）→ 直接 fork」序列读到
+   * 旧 sidecar 值——fork 不触发源 restore 自愈，陈旧窗口量级限该序列，恢复路径 = fork 后
+   * chip 改选；严格优于现状（现状恒落 preset/默认档）。
+   */
+  private resolveForkSourceEffectiveBinding(
+    srcSessionId: string,
+    source: ScannedSession,
+  ): { modelId?: string; thinkingLevel?: string } {
+    const active = this.get(srcSessionId) as { modelId?: string; thinkingLevel?: string } | undefined
+    return {
+      modelId: nonEmptyStr(active?.modelId) ?? nonEmptyStr(source.modelId),
+      thinkingLevel: nonEmptyStr(active?.thinkingLevel) ?? nonEmptyStr(source.thinkingLevel),
+    }
+  }
+
+  /**
    * fork 的 launch 参数解析（preset 解析 + extension 求值 + presetClientOptions 构建）。
-   * Staging Mode（ADR-0056）：override 优先于源 preset 的 modelOverride/thinkingLevel（见
-   * buildPresetClientOptions 内 C-RL-6 优先级）。undefined 时仅继承源 preset（旧行为），不影响现有 fork。
+   *
+   * 继承链（D6，state-truth-sync C5）：
+   * `staging override > 源 session 当前生效值 > 源 preset > 全局默认`
+   * ——sourceEffective（源生效值档）经 `options?.* ?? sourceEffective.*` 插在 override 与
+   * preset 之间；staging 路径（fork-ask）行为不变（override 优先）。sourceEffective 两字段
+   * undefined（E9 源真值不可读）时整档跳过，回落 buildPresetClientOptions 的
+   * `override > preset > 默认` 既有链（旧行为）。字段级独立走链（与 restore 播种的每字段
+   * 独立兜底同构）：仅传 model override 不传 thinking 时 thinking 仍继承源生效值。
    */
   private async resolveForkLaunch(
     sessionCwd: string,
     forkPresetId: string,
+    sourceEffective: { modelId?: string; thinkingLevel?: string },
     options: ForkOptions | undefined,
   ): Promise<{
     forkResolution: PresetResolution | undefined
@@ -1134,8 +1185,8 @@ export class SessionLifecycle implements ISessionRegistry {
     const allExtPaths = forkResolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
     const presetClientOptions = buildPresetClientOptions(
       forkResolution,
-      options?.modelOverride,
-      options?.thinkingOverride,
+      options?.modelOverride ?? sourceEffective.modelId,
+      options?.thinkingOverride ?? sourceEffective.thinkingLevel,
     )
     return { forkResolution, allExtPaths, presetClientOptions }
   }

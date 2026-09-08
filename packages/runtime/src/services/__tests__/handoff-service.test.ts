@@ -83,6 +83,9 @@ function createMockSessionService(opts: {
       label: 'src',
       sessionFilePath: '/tmp/s.json',
     })) as unknown as SessionService['getSession'],
+    // D6（state-truth-sync C5）：runHandoff create 前读源生效值会调 findScannedSession
+    //（内存实例字段缺值时的 sidecar 兜底）——默认无 sidecar（E9 回落语义用例另行 mock）。
+    findScannedSession: vi.fn(() => undefined) as unknown as SessionService['findScannedSession'],
     create: vi.fn(async () => ({
       id: newSessionId,
       label: 'handoff from src',
@@ -497,6 +500,96 @@ describe('HandoffService', () => {
     // 无历史 → 不应调 ensureActive / prompt / broadcast
     expect(srcClient.prompt).not.toHaveBeenCalled()
     expect(broker.broadcast).not.toHaveBeenCalled()
+  })
+
+  describe('D6 源生效值继承（state-truth-sync C5）——链 = staging override > 源当前生效值 > 全局默认', () => {
+    /** 触发 agent_end 并等 runHandoff 收尾（doc 文本任意非空）。 */
+    async function runWithAgentEnd(options?: { modelOverride?: string; thinkingOverride?: string }): Promise<void> {
+      const runPromise = service.runHandoff('src-1', undefined, options)
+      await new Promise((r) => setTimeout(r, 0))
+      srcClient.emit({
+        type: 'agent_end',
+        messages: [{ role: 'assistant', content: [{ type: 'text', text: 'doc' }], stopReason: 'stop' }],
+        willRetry: false,
+      })
+      await runPromise
+    }
+
+    /** 取 create 第三参（options 对象）。 */
+    function createOptions(): Record<string, unknown> {
+      expect(sessionService.create).toHaveBeenCalledTimes(1)
+      return vi.mocked(sessionService.create).mock.calls[0]![2] as Record<string, unknown>
+    }
+
+    it('TC-D6a: 活跃源（内存实例带生效值）→ create 透传源 modelId + thinkingLevel', async () => {
+      // 源 session 切过模型（switchModel 直写内存实例 modelId/thinkingLevel 的形态）
+      vi.mocked(sessionService.getSession).mockImplementation((() => ({
+        cwd: '/tmp', label: 'src', sessionFilePath: '/tmp/s.json',
+        modelId: 'p/flash', thinkingLevel: 'high',
+      })) as never)
+
+      await runWithAgentEnd()
+
+      const opts = createOptions()
+      expect(opts.modelOverride).toBe('p/flash')
+      expect(opts.thinkingOverride).toBe('high')
+    })
+
+    it('TC-D6b: staging override 优先——传了不覆盖（fork-ask 暂存值 > 源生效值）', async () => {
+      vi.mocked(sessionService.getSession).mockImplementation((() => ({
+        cwd: '/tmp', label: 'src', sessionFilePath: '/tmp/s.json',
+        modelId: 'p/flash', thinkingLevel: 'high',
+      })) as never)
+
+      await runWithAgentEnd({ modelOverride: 'staging/m', thinkingOverride: 'low' })
+
+      const opts = createOptions()
+      expect(opts.modelOverride).toBe('staging/m')
+      expect(opts.thinkingOverride).toBe('low')
+    })
+
+    it('TC-D6c: E9 源真值不可读（内存字段缺值且无 sidecar）→ create 不带 override（回落全局默认，现行为不劣化）', async () => {
+      // 默认 mock：getSession 返回无 modelId/thinkingLevel + findScannedSession → undefined
+      await runWithAgentEnd()
+
+      const opts = createOptions()
+      expect(opts.modelOverride).toBeUndefined()
+      expect(opts.thinkingOverride).toBeUndefined()
+    })
+
+    it('TC-D6d: 字段级独立走链——内存 modelId 命中、thinkingLevel 空串归一后由 sidecar 扫描值兜底', async () => {
+      // restore 播种空串占位形态：内存 thinkingLevel='' 不得吞掉 sidecar 档
+      vi.mocked(sessionService.getSession).mockImplementation((() => ({
+        cwd: '/tmp', label: 'src', sessionFilePath: '/tmp/s.json',
+        modelId: 'mem/m', thinkingLevel: '',
+      })) as never)
+      vi.mocked(sessionService.findScannedSession).mockImplementation((() => ({
+        filePath: '/tmp/s.json', modelId: 'side/m', thinkingLevel: 'medium',
+      })) as never)
+
+      await runWithAgentEnd()
+
+      const opts = createOptions()
+      expect(opts.modelOverride).toBe('mem/m')
+      expect(opts.thinkingOverride).toBe('medium')
+    })
+
+    it('TC-D6e: 刻意不继承 preset——create options 无 presetId 键（承接 session 不带源 preset 的 tools/noSkills 限制，D6 两条链分别声明）', async () => {
+      vi.mocked(sessionService.getSession).mockImplementation((() => ({
+        cwd: '/tmp', label: 'src', sessionFilePath: '/tmp/s.json',
+        modelId: 'p/flash', thinkingLevel: 'high',
+      })) as never)
+
+      await runWithAgentEnd()
+
+      const opts = createOptions()
+      // handoff 现状不传 presetId：不新增 preset 继承档（否则首次继承源 preset 的
+      // tools/noSkills 全套限制——夹带行为变更）。静态守卫见 binding-registry-hydrate Part 2。
+      expect(opts).not.toHaveProperty('presetId')
+      // 防顺手继承漂移（CREATE_DERIVED_CALLERS 承诺）运行时面
+      expect(opts).not.toHaveProperty('spawnSource')
+      expect(opts).not.toHaveProperty('parentAgentSessionId')
+    })
   })
 
   describe('extractFinalTextFromAgentEnd', () => {
