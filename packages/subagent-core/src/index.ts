@@ -88,14 +88,33 @@ export {
   type EngineRoutingInput,
   type EngineRoutingSource,
 } from "./execution/engine/routing.ts";
+// [W8 补扫接线面] setEngineDiscoveryRescanOptions：宿主登记 hasEngineWithRescan 的
+// 补扫发现参数（与 session_start 发现扫描同源）；壳消费 = runtime
+// subagent-engine-history 的 ensureRuntimeEngineWiring。
+export { setEngineDiscoveryRescanOptions } from "./execution/engine/routing.ts";
 
 // ── 引擎注册 / 发现与进程面（execution/engine）────────────────
 // 组合根 index.ts 接线消费（registerXxx 引擎注册、syncEnginesFile engines 文件
 // 同步、killAllSpawnedChildren session 派生进程兜底清理）。
 export { syncEnginesFile } from "./execution/engine/engine-discovery.ts";
 export { registerPiEngine } from "./execution/engine/engines/pi/registration.ts";
+// [W8 D8 薄壳] killAllSpawnedChildren：宿主收割入口（扩展 index.ts:103 / zsw
+// runner-core.js:428 的业务调用点零改动）。语义 = disposeEngines() 触发全部已实例化
+// 引擎 dispose（cli 形态 = RemoteEngine.dispose → EngineClient 3s 帧上界 + 组杀）+
+// 遍历杀进程内 per-record children（inproc 过渡残余）——即 D8「杀 per-record children
+// + 触发引擎 dispose」的目标形态，实现留在 pi session-runner（W11 随 inproc 删除收口）。
 export { killAllSpawnedChildren } from "./execution/engine/engines/pi/session-runner.ts";
-export { registerZcodeEngine } from "./execution/engine/engines/zcode/registration.ts";
+
+// [W8 D8 兼容公共面薄壳]（设计 §3.6 D8 表）：registerZcodeEngine 确保cli descriptor
+// 注册（vendored 相对定位，失败回退 inproc 过渡）+ engineDataDir 记入；createZcodeEngine
+// 返回 RemoteEngine('zcode')（deps → 协议客户端映射，sources 不跨进程）。实现见
+// execution/engine/d8-compat.ts——engines/zcode/registration.ts 的同名符号不再经
+// barrel 导出（inproc 实现保留至 W11，仅内部测试/过渡消费）。
+export {
+  createZcodeEngine,
+  registerZcodeEngine,
+  type D8CompatZcodeEngineDeps,
+} from "./execution/engine/d8-compat.ts";
 
 // pi session-runner 内核件（merge 裁决：dev 侧旧深路径 execution/session-runner.ts
 // 终态已不存在，符号随 u-2a 迁移至 engine/engines/pi/session-runner.ts）：
@@ -107,10 +126,9 @@ export {
   maxTurnsToWatchdogMs,
 } from "./execution/engine/engines/pi/session-runner.ts";
 
-// zcode 引擎注册面：registerZcodeEngine 把 'zcode' 引擎登记进 registry（组合根
-// 职责，幂等，上方已导出）；createZcodeEngine 为 DI 工厂（测试/宿主注入 deps）。
-// ZcodeEngineDeps 经 registration.ts 的 re-export 导出（避免与 zcode-engine.ts 双源）。
-export { createZcodeEngine } from "./execution/engine/engines/zcode/registration.ts";
+// zcode 引擎注册面（[W8 D8 薄壳] createZcodeEngine 已上移 d8-compat——上方导出）。
+// ZcodeEngineDeps 类型保留 re-export（zsw 调用面的 deps 形状契约；W11 删 inproc 时
+// 随 d8-compat 的 D8CompatZcodeEngineDeps 合并收口）。
 export type { ZcodeEngineDeps } from "./execution/engine/engines/zcode/registration.ts";
 
 // ZcodeTaskShapeError：zcode 任务形状错误类（instanceof 分流用）——
@@ -132,6 +150,11 @@ export {
 // 子入口（D9：每条子入口 bundle 多一份 host-services 副本）。
 export { parseEngineHandle } from "./execution/engine/common/session-view-types.ts";
 export { readSubagentHistoryMessages } from "./execution/engine/common/session-view-service.ts";
+// [W8] registerNativeSessionReader：runtime 成为协议客户端的①级接入点——宿主把
+// 「协议 read」注册为引擎原生 reader，core 三级降级链（①协议 read → ②journal →
+// ③outcome）自动编排（含投影），宿主零投影代码。壳消费 = runtime
+// subagent-engine-history 的协议 reader 注册。
+export { registerNativeSessionReader } from "./execution/engine/common/session-view-service.ts";
 
 // ── 执行域（execution/）──────────────────────────────────────
 // types.ts 领域类型族：record / 响应 / 列表项等 subagent 域公共契约（壳消费最高频面，

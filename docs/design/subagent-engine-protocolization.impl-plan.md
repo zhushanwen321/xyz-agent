@@ -377,6 +377,7 @@ graph TD
 | Unit | 偏差内容 | 理由 | 日期 |
 |------|----------|------|------|
 | —（计划准入门 0.3） | flow/plan.md 0.3 门要求设计文档 must_fix==0；实测 R9 最新一轮两份报告合计 **3 MF + 5 S 共 8 项**（主审 `.review/design-review-engine-protocolization-r9.md` = 1 MF + 3 S；影响面 `-r9-impact.md` = 2 MF + 2 S）。3 条 MF（A8① 限定词 / 长运行 executeAndAwait 30s 自灭 / pidfile 陈旧累积）全部为实现级，无决策级 must-fix；5 条 S 中 3 条（保守跳过语义 / stdin fd 不外泄 / W10 allowlist）升格跟踪。8 项全部承接落位：3 MF + 升格 3 S 共六条进 §7.2（R9-1/R9-2/R9-2b/R9-3/R9-3b/R9-4），余 2 S 随对应单元验收条款。经用户 2026-09-08 裁决改判：设计层无决策级 must-fix 即通过 | 证据 = `.review/design-review-engine-protocolization-r9.md`（首行结论 1 MF + 3 S）与 `.review/design-review-engine-protocolization-r9-impact.md`（2 MF + 2 S）；实现级残留已在 §7.2 六条闭环跟踪，并交叉引用进 §2.2/§2.10/§2.12 | 2026-09-08 |
+| W8 | §2.8 relay 透传条「引擎按 run.params.ctx 的 sessionRootId/recordId 重写」中 sessionRootId 在 v1 协议面（SDK contract-types/EngineClient）零实装；W8 交付面 = 宿主侧 relay 三键 L0 原样转发 + 身份键 L1 剥除（正反例断言齐）；引擎侧按 recordId 重写已由 W5/W7 协议 e2e 覆盖 | 措辞与协议实态的偏差登记（W8 deviations 建议）；sessionRootId 若需引入属协议 v1.x 字段演进，非本设计验收面 | 2026-09-09 |
 
 ## 6 状态表
 
@@ -388,8 +389,8 @@ graph TD
 | W4 发现器 | committed | 1 | commit 见 git log `feat(subagent-core): W4 engine discovery three-tier + manifest schema`；test_evidence = core 全量 3500 passed（发现器 24 用例）+ runtime 全量 5089 passed + engines-declaration 守护 2 passed + lint 全绿；领地扩展 4 文件已登记 deviations |
 | W5 zcode 外移 | committed | 1 | commit 见本分支 git log `feat(zcode-subagent-cli): W5 zcode engine extraction`；test_evidence = 新包 194 passed（含 protocol-e2e 真实 spawn 协议往返）+ typecheck/eslint 零 + core 零改动零回归 3500 passed + bin EOF 自灭验证；worktree feat-zcode-subagent-cli 合入批次 |
 | W6 pi 宿主面下沉 | committed | 1 | commit 见 git log `feat(subagent-core): W6 HostBridge sink + spawnedChildren mirror + askUser endpoint`；test_evidence = core 全量 3522 passed（host 域 17 新用例含 MF-A 集成断言）+ typecheck 零；engine-discovery-scan 两处构造点单行注入已追认（deviations） |
-| W7 pi 外移 | pending | — | — |
-| W8 宿主接线 | pending | — | — |
+| W7 pi 外移 | committed | 1 | commit 见 git log `feat(pi-subagent-cli): W7 pi engine extraction`；test_evidence = pi 包 209 passed（e2e 含 askUser ack 两阶段/childSpawned/handleReady/EOF 自灭）+ core 3522 保持绿（MF-A 断言）+ eslint 零；ui-request-queue 裁决方案(a) core 保留；chat 域协议化缺口已登记（v1 协议载荷面限制，inproc 双模过渡） |
+| W8 宿主接线 | committed | 2 | commit 见 git log `feat(runtime): W8 protocol-client host wiring`；test_evidence = runtime 三轮全绿（5071-5100 passed，logger flaky 与本单元零交集）+ 协议化 5 用例 + d8-compat 6 用例 + 扩展 912 passed + extension-dependencies 22 包一致；轮次 2 = 前序尝试主体 + 修复轮（d8 inproc 回退 cliPath 透传/lockfile 补链/lint）|
 | W9 打包与分发 | pending | — | — |
 | W10 conformance 改造 | pending | — | — |
 | W11 壳侧去引擎化 | pending | — | — |

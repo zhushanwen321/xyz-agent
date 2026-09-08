@@ -32,10 +32,59 @@ import {
   listEngines,
   listEnginesByDisplayName,
 } from "./registry.ts";
+import {
+  ensureEngineDiscovered,
+  type DiscoverEnginesOptions,
+} from "./engine-discovery-scan.ts";
 import type { ProbeReport } from "./types.ts";
 
 // core log facade（execution 层统一 "subagents" component，模块顶层缓存惯例）。
 const logger = getLogger("subagents");
+
+// ============================================================
+// [W8] hasEngine 补扫通道（W4 ensureEngineDiscovered 的存在性校验接线）
+// ============================================================
+
+// 补扫发现参数 slot（globalThis[Symbol.for]——防 jiti 双路径加载分裂，对齐 registry
+// slot 惯例）。写入方 = 宿主接线面（runtime 在 W8 subagent-engine-history 的
+// ensureRuntimeEngineWiring 装载；pi 壳接线归后续单元——slot 未设置时本通道与裸
+// hasEngine 等价，零行为变化）。参数与 session_start 发现扫描同源（hostKind/agentDir/
+// dataDir），补扫只读 manifest 不握手（DiscoverEnginesOptions 语义）。
+const RESCAN_OPTS_SLOT_KEY = Symbol.for("@zhushanwen/pi-subagent-workflow.engineDiscoveryRescanOpts");
+
+/** 宿主接线：登记补扫发现参数（与发现扫描同源；重复登记覆盖，幂等）。 */
+export function setEngineDiscoveryRescanOptions(opts: DiscoverEnginesOptions): void {
+  Reflect.set(globalThis, RESCAN_OPTS_SLOT_KEY, { current: opts });
+}
+
+function getEngineDiscoveryRescanOptions(): DiscoverEnginesOptions | undefined {
+  const slot = Reflect.get(globalThis, RESCAN_OPTS_SLOT_KEY) as
+    | { current: DiscoverEnginesOptions }
+    | undefined;
+  return slot?.current;
+}
+
+/**
+ * 存在性校验（快照优先 + 一次补扫）：registry 快照命中零开销返回；未命中且宿主已
+ * 接线补扫参数 → ensureEngineDiscovered 同步补扫（只读 manifest 不 spawn）后复核；
+ * 宿主未接线 → 与裸 hasEngine 等价。补扫异常吞掉返回 false（发现失败 ≠ 配置错误，
+ * 由 routeEngine 的 engine_not_found 恢复指引收口）。
+ */
+export function hasEngineWithRescan(id: string): boolean {
+  if (hasEngine(id)) return true;
+  const opts = getEngineDiscoveryRescanOptions();
+  if (opts === undefined) return false;
+  try {
+    return ensureEngineDiscovered(id, opts);
+  } catch (err) {
+    logger.debug(
+      `[engine-routing] rescan for engine '${id}' failed (treated as not discovered): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return false;
+  }
+}
 
 // ============================================================
 // 三层优先级（D9）
@@ -160,7 +209,10 @@ function resolveDefaultEngineFallback(
  *   - 守卫 c（显式 model + 将换引擎）：EngineError(model_not_available)
  */
 export async function routeEngine(opts: EngineRouteOptions): Promise<EngineRouteResult> {
-  const has = opts.hasEngineFn ?? hasEngine;
+  // [W8 补扫接线] 缺省存在性校验经 hasEngineWithRescan（快照未命中触发一次三级补扫，
+  // W4 ensureEngineDiscovered 通道——「装了包 → 下次解析即可用」）；宿主显式注入
+  // hasEngineFn 时以注入值为准（测试 / 宿主自定义通道不变）。
+  const has = opts.hasEngineFn ?? hasEngineWithRescan;
   const get = opts.getEngineFn ?? getEngine;
   const available = opts.listAvailableEnginesFn ?? listEnginesByDisplayName;
   const routing = resolveEngineRouting(opts.routing);

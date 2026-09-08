@@ -88,7 +88,6 @@ function makeRecords(depsOverrides: Partial<SessionRecordsDeps> = {}, injector?:
     sessionStore: { scanSessions: vi.fn(() => [] as Array<{ id: string; filePath: string }>) } as unknown as ISessionStore,
     hasSession: vi.fn(() => true),
     getMessageBus: () => ({ publish } as unknown as IMessageBus),
-    getExtensionPaths: vi.fn(async () => [] as string[]),
     ...depsOverrides,
   }
   const records = new SessionRecords(deps, injector)

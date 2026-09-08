@@ -20,7 +20,10 @@ import { parseResourceMeta } from "../shared/meta-parser.ts";
 import { lintAgentMeta } from "../orchestration/script-lint.ts";
 import type { AgentMeta, RoutingExample } from "../shared/resource-meta.ts";
 import type { AgentConfig } from "./model-resolver.ts";
-import { hasEngine, listEngines, EngineNotFoundError } from "./engine/registry.ts";
+import { EngineNotFoundError, listEngines } from "./engine/registry.ts";
+// [W8] 存在性校验经补扫通道（快照未命中触发一次三级补扫，W4 ensureEngineDiscovered
+// 语义——宿主未接线补扫参数时与裸 hasEngine 等价）。
+import { hasEngineWithRescan } from "./engine/routing.ts";
 
 const logger = getLogger("subagents");
 
@@ -134,7 +137,8 @@ function resolveAgentEngine(
   filePath: string,
 ): string | undefined {
   const engine = agentMeta?.engine ?? extractYamlField(yamlBlock, "engine");
-  if (engine !== undefined && !hasEngine(engine)) {
+  // [W8] 补扫通道：快照未命中先一次三级补扫再判（装了引擎包 → 下次解析即可用）。
+  if (engine !== undefined && !hasEngineWithRescan(engine)) {
     throw new EngineNotFoundError(engine, listEngines(), filePath);
   }
   return engine;

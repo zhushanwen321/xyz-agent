@@ -1,13 +1,14 @@
 /**
- * P5 分协议历史读取链单测（设计 D6 三级降级）。
+ * P5 分协议历史读取链单测（设计 D6 三级降级；W8 协议化反转后 runtime ①级 = 协议 read）。
  *
  * 覆盖：
- * 1. record 路由段：engine 缺省 pi（存量 record 零迁移）/ zcode / 畸形值防御
- * 2. zcode record ①→②→③ 三级降级（①真 sqlite 原生读取 ②journal 重放 ③outcome-only）
+ * 1. record 路由段：engine 缺省 pi（存量零迁移）/ zcode / 畸形值防御
+ * 2. zcode record ①→②→③ 三级降级（[W8] ①级 = 协议 read，不再直读 sqlite——
+ *    三个原 tier1 sqlite 直读用例改写为反转语义：db fixture 存在也不被读，发现
+ *    被阻断（nodeModuleRoots: [] + 空 env）时确定降②/③级；白名单与 shared reader
+ *    守护随逻辑留 core（session-view-service-zcode-dbpath.test.ts））
  * 3. journal 前缀白名单：越界路径（dataDir 外 / ../ 逃逸形态）拒绝且不读文件、降③级
- * 4. dbPath 白名单：绝对路径 ∈ 封闭集合（隔离会话库 <dataDir>/engines/zcode/session-db/
- *    现役 + 宿主库存量兼容）放行①级；其他绝对路径（池外）拒绝①级
- * 5. pi record → 空数组（调用方走现有 JSONL 直读链的契约，A1 守护）
+ * 4. pi record → 空数组（调用方走现有 JSONL 直读链的契约，A1 守护）
  *
  * engine/engineHandle 字段按并行任务契约防御式构造（shared SubagentRecord 字段由该
  * 任务写入，落地前类型上不存在——测试用交叉类型模拟写侧产物）。
@@ -22,6 +23,7 @@ import {
   DEFAULT_SUBAGENT_ENGINE,
   extractRecordEngine,
   readEngineSubagentHistory,
+  setRuntimeDiscoveryOptionsForTests,
 } from '../src/services/session/subagent-engine-history.js'
 import type { SubagentRecord } from '@xyz-agent/shared'
 
@@ -49,6 +51,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  setRuntimeDiscoveryOptionsForTests(undefined) // 恢复缺省发现推导（防 override 跨用例残留）
   rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
@@ -166,26 +169,39 @@ describe('extractRecordEngine（record 路由段）', () => {
 })
 
 describe('readEngineSubagentHistory（zcode 三级降级）', () => {
-  it('tier1: absolute dbPath equal to isolated session db passes whitelist（2026-09 隔离改造后现役写侧，放行①级读取）', async () => {
-    // 隔离库落 <dataDir>/engines/zcode/session-db/db.sqlite（zcodeSessionDbPath 布局的
-    // 消费镜像，独立展开）——与生产 record 的现役绝对 dbPath 同形态
+  it('W8 反转：runtime ①级走协议 read，隔离库 dbPath 在白名单内也不再直读——降②级 journal', async () => {
+    // [W8 D9 反转] runtime 不再 import 引擎实现直读 sqlite：①级 = 协议 read（spawn
+    // 引擎 CLI）。db fixture 存在且路径在白名单集合内也不被 runtime 消费——本用例
+    // 以「发现确定性为零」（nodeModuleRoots: [] + 空 env）阻断协议 read，断言降②级
+    // journal 投影（db 白名单/shared reader 的守护已随逻辑留在 core，由
+    // session-view-service-zcode-dbpath.test.ts 承担）。
+    setRuntimeDiscoveryOptionsForTests({ nodeModuleRoots: [], env: {} })
     const isolatedDb = join(dataDir, 'engines', 'zcode', 'session-db', 'db.sqlite')
     await createPoolDb(SESSION_ID, isolatedDb)
+    const journalPath = writeJournal([
+      journalLine(0, { type: 'text_delta', delta: 'partial ' }),
+      journalLine(1, { type: 'text_delta', delta: 'answer' }),
+      journalLine(2, { type: 'turn_end' }),
+    ])
     const messages = await readEngineSubagentHistory(
-      zcodeRecord({ sessionRef: { dbPath: isolatedDb, sessionId: SESSION_ID }, poolKey: POOL_KEY }),
+      zcodeRecord({
+        sessionRef: { dbPath: isolatedDb, sessionId: SESSION_ID },
+        journalPath,
+        poolKey: POOL_KEY,
+      }),
       dataDir,
     )
-    // ①级原生读取生效（非②③级）：与池内 tier1 用例同投影形状
-    expect(messages).toHaveLength(3)
+    // ②级 journal 生效（非①级 db 直读）：assistant = journal 重放文本
+    expect(messages).toHaveLength(2)
     expect(messages[0]?.role).toBe('user')
-    expect(messages[2]?.role).toBe('assistant')
-    expect(messages[2]?.content).toBe('done text')
+    expect(messages[1]?.role).toBe('assistant')
+    expect(messages[1]?.content).toBe('partial answer')
   })
 
-  it('tier1: absolute dbPath equal to host db passes whitelist（存量兼容：白名单第二项，放行①级读取）', async () => {
+  it('W8 反转：宿主库存量 dbPath 同样不直读——无 journal 时降③级 outcome-only', async () => {
+    setRuntimeDiscoveryOptionsForTests({ nodeModuleRoots: [], env: {} })
     // homedir mock 指向 tmp 构造的宿主 HOME，db 建在 <home>/.zcode/cli/db/db.sqlite
-    // （ZCODE_HOST_DB_SUFFIX 布局的消费镜像）——共享 HOME 时代（2026-09–隔离改造）
-    // record 落盘的存量绝对 dbPath，白名单第二项放行（不迁移、不删除）
+    // （存量 record 的绝对 dbPath 形态）——db 存在也未被读取：runtime 零 sqlite 通道
     const hostHome = mkdtempSync(join(tmpdir(), 'sa-host-home-'))
     osHome.current = hostHome
     try {
@@ -195,43 +211,28 @@ describe('readEngineSubagentHistory（zcode 三级降级）', () => {
         zcodeRecord({ sessionRef: { dbPath: hostDb, sessionId: SESSION_ID }, poolKey: POOL_KEY }),
         dataDir,
       )
-      // ①级原生读取生效（非②③级）：与池内 tier1 用例同投影形状
-      expect(messages).toHaveLength(3)
-      expect(messages[0]?.role).toBe('user')
-      expect(messages[0]?.content).toBe('review the code')
-      expect(messages[2]?.role).toBe('assistant')
-      expect(messages[2]?.content).toBe('done text')
-      expect(messages[2]?.usage).toEqual({ inputTokens: 11, outputTokens: 6 })
+      // ③级 outcome（db 不被读）
+      expect(messages).toHaveLength(2)
+      expect(messages[1]?.content).toBe('LGTM outcome text')
+      expect(JSON.stringify(messages)).not.toContain('done text')
     } finally {
       osHome.current = '/mock/home'
       rmSync(hostHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 
-  it('tier1: reads native sqlite view via shared zcode reader', async () => {
+  it('W8 反转：池内相对 dbPath 同理不直读——降③级 outcome-only', async () => {
+    setRuntimeDiscoveryOptionsForTests({ nodeModuleRoots: [], env: {} })
     await createPoolDb(SESSION_ID)
     const messages = await readEngineSubagentHistory(
       zcodeRecord({ sessionRef: { dbPath: DB_RELATIVE, sessionId: SESSION_ID }, poolKey: POOL_KEY }),
       dataDir,
     )
 
-    // user(task) + 2 个 assistant turn
-    expect(messages).toHaveLength(3)
-    expect(messages[0]?.role).toBe('user')
-    expect(messages[0]?.content).toBe('review the code')
-
-    const [turn1, turn2] = [messages[1], messages[2]]
-    expect(turn1?.role).toBe('assistant')
-    expect(turn1?.thinking?.[0]?.content).toBe('thinking hard')
-    expect(turn1?.toolCalls).toHaveLength(1)
-    expect(turn1?.toolCalls?.[0]?.toolName).toBe('Bash')
-    expect(turn1?.toolCalls?.[0]?.input).toEqual({ command: 'ls' })
-    expect(turn1?.toolCalls?.[0]?.output).toBe('file-a')
-    expect(turn1?.toolCalls?.[0]?.status).toBe('completed')
-
-    expect(turn2?.content).toBe('done text')
-    // SessionView.usage 聚合挂最后一个 turn：input 11 / output 6
-    expect(turn2?.usage).toEqual({ inputTokens: 11, outputTokens: 6 })
+    // db 存在但 runtime 不直读（①级已外移引擎协议面）→ ③级
+    expect(messages).toHaveLength(2)
+    expect(messages[1]?.content).toBe('LGTM outcome text')
+    expect(JSON.stringify(messages)).not.toContain('thinking hard')
   })
 
   it('tier2: falls back to journal replay when db is missing', async () => {

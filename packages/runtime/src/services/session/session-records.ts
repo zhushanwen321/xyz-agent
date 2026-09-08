@@ -95,21 +95,13 @@ export interface SessionRecordsDeps {
   /** MessageBus 当前值（Facade setter 晚期注入，未注入时 null → 广播 no-op）。 */
   getMessageBus(): IMessageBus | null
   /**
-   * 扩展路径解析（readDeclaredEnginesFallback 定位 subagent-workflow 安装目录）。
-   * 组合根直连 extensionService 注入（session-service.ts 装配点，同迁移前形态）——
-   * 不经 Facade getExtensionPaths 的 resolveExtensionPaths 包装（BUILTIN_EXTENSIONS_MISSING
-   * fail-fast / 其余降级空表），错误直接冒泡。
-   *
-   * [W4 后 deprecated] 冷启动回退源已单源化为 runtime 自身发现结果
-   * （readDiscoveredEnginesFallback），本字段不再有消费方——保留至 W8 宿主接线单元
-   * 收口（构造点在 session-service.ts，非本单元领地），届时随构造点同批删除。
-   */
-  getExtensionPaths(): Promise<string[]>
-  /**
    * [W4] 冷启动引擎发现回退（engines.json 缺失/损坏时）。缺省 = core 发现器三级
    * 扫描（L1 env XYZ_AGENT_ENGINE_ROOTS / 宿主根 / L2 node 解析 / L3 config.json），
    * 与派发同源（设计 §3.4 投影面表「冷启动回退源单源化」）。测试注入 fake 隔离
    * 宿主 node_modules 的真实引擎包（零命中断言需要确定性空环境）。
+   *
+   * [W8] deprecated 死键 getExtensionPaths 已随构造点同批删除（本文件字段 + 
+   * session-service.ts 装配点）——W4 登记的保留期结束。
    */
   discoverEngines?(): string[]
 }

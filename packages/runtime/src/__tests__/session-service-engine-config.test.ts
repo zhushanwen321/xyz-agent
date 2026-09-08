@@ -28,8 +28,7 @@ function makeRecords(extOverride?: { discoverEngines?: () => string[] }): Sessio
     sessionStore: { scanSessions: vi.fn(() => []) } as never,
     hasSession: () => false,
     getMessageBus: () => null,
-    // [W4 后 deprecated] 无消费方（原 readDeclaredEnginesFallback 已删），保留至 W8 收口
-    getExtensionPaths: async () => [],
+    // [W8] getExtensionPaths 死键已随 deps 面删除（W4 登记的保留期结束）
     ...extOverride,
   })
 }

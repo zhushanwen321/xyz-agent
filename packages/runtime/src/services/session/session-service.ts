@@ -256,14 +256,14 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     })
     // subagent/workflow 记录域（S6 迁出至 session-records.ts）：deps 窄注入——session 存在性
     // 经 lifecycle（Map 所有者）只读面，messageBus 经 getter 每次调用动态读（setter 晚期注入
-    // 语义与原 Facade 字段直读逐字等价）；extensionService 路径解析经回调闭包注入
-    // （registerDeps 同款模式，readDeclaredEnginesFallback 的安装目录定位用）。
+    // 语义与原 Facade 字段直读逐字等价）。
+    // [W8] deprecated 死键 getExtensionPaths 已删除（W4 冷启动回退源单源化为
+    // readDiscoveredEnginesFallback 后无消费方，构造点随 W8 宿主接线同批收口）。
     this.records = new SessionRecords({
       pm: this.pm,
       sessionStore: this.sessionStore,
       hasSession: (sessionId) => this.lifecycle.has(sessionId),
       getMessageBus: () => this.messageBus,
-      getExtensionPaths: () => this.extensionService.getExtensionPaths(),
     })
     // 创建侧订阅接线(组装根,S3 seam→S5/S6 换订阅者,设计 D2②):onSessionRegistered 同步直发按
     // 订阅顺序执行——projection 先订阅(W7 播种,registerReplicatedStates)→ records 订阅
