@@ -198,3 +198,71 @@
 - R2 终审 S（⛔3 登记）：**采纳确认**。
 - 新增 SUGGESTION ×1（S5 判据窗口 A 假阴性），不阻塞实施。
 - **Verdict：通过（0 must-fix, 1 suggestion）——设计可进入实施。**
+
+---
+
+# Round 3 v4 终验（独立复核：分歧裁决 + 三窗口模型 + 五处一致性 + S5 判据有效性）
+
+> 审查对象：`docs/design/subagent-drawer-blank.md`（v4）
+> 审查范围：仅验证 R2 终审 1MF（非 pi 事实链）+ 1S（⛔3 登记）是否正确修复、v4 是否引入新问题；R1/R2 已确认项（三层根因/派发链路/断言碰撞 :431:447/守卫顺序机制自洽/§6.6 state topic）不重查。
+> 审查依据：rubric P0-10/P0-11（事实与自证）/ P0-13（验收有效性）。
+> 事实核验方式：全部关键声称逐一 `read` 源码（非重推）——`turnsToMessages` 完整实现、③级投影、①级降级编排、collectTurns/buildView、engineHandle 回填、runtime 空返回分支、computeIsStreaming→TurnMeta 驱动链。
+
+## Summary
+
+0 must-fix, 1 suggestion.
+
+**Verdict：通过——R2 终审 MF 与 SUGGESTION 均已正确修复，v4 未引入新的事实错误；唯一遗留是一处 S5 验收判据的稳健性缺口（SUGGESTION，不阻塞实施）。** 三窗口模型经源码逐点核验准确；对 R2 终审报告「窗口 B runtime 恒返回 []」的细节修正**成立**（本报告独立裁决，结论与 Round 2 补记一致但证据链独立重取）；五处修订与修正后事实全文一致、无 v3 残留；⛔3 证据链三点全部源码确认。
+
+## 裁决① turnsToMessages 零 turn 投影：**[task user 消息] 而非 []——v4 修正成立**
+
+独立重读 `turnsToMessages` 完整实现（session-view-service.ts:356-385）：`if (record.task.length > 0)` 的 user 消息 push 位于 turn 循环**之前**（:362-369，头注明言「①②级共用投影；user task 前置一条」）。窗口 B（①级 defined-empty 视图）投影 = **`[task 气泡]`（task 非空时恒非空）**——R2 终审报告「此窗口内 runtime 恒返回 `[]`」及「seed 真实参与窗口 B」的推演链条就此点而言有误；v4 作者复核与 impact 审判断言正确。UX 结论不变的理由核实：runtime 数据先行 `setMessages([task])` → 分区非空 → seed 守卫失败不触发；但末位 turn 无 assistant → 思考行条件（`forceWorking && (无 turn || 末位 turn.assistants.length === 0)`）成立 → 思考行触发。**两个叙事（[task] vs []）下用户可见终态恰好相同，但机制归属（seed 参与与否、T2 可达路径收窄为磁盘扫描滞后窗口）必须按 v4 修正后的表述**——v4 已正确收窄。
+
+佐证链（本轮全部重核）：③级 `outcomeOnlyMessages`（:433-452）无条件 push assistant 占位（`result ?? error ?? "(no outcome recorded)"`），注释「永不返回空数组」（:431 精确命中）；①级编排 `if (native !== undefined) return sessionViewToMessages(native, record)`（:496 精确命中）——defined-empty 视图不降级、无内容判空，R2 反例本体属实。
+
+## 裁决② 三窗口模型与五处一致性：**通过，无 v3 残留**
+
+逐窗口源码核验（本轮独立重取证据，含前轮未覆盖的 TurnMeta 驱动链下钻）：
+
+| 窗口 | v4 声称 | 源码核验 |
+|---|---|---|
+| A（register → create 应答） | 无 engineHandle → ③级 `[task, 占位 assistant]` → 思考行不触发，TurnMeta「工作中」行接管（forceWorking 驱动） | ✅ handle 缺失 → `outcomeOnlyMessages`（:481 区段）；占位 assistant `status:'complete'` 但 **`computeIsStreaming = forceWorking \|\| last?.status==='streaming'`（message-turns.ts:345，forceWorking 无条件 or）** → 末位 turn.isStreaming=true → TurnMeta `v-if assistants.length>0`（TurnMeta.vue:12）通过 + spinner `v-if="isStreaming"`（:30）+ `isWorkingTurn = sessionActive && isLastTurn`（Turn.vue:212，sessionActive 由 forceWorking 注入，MessageStream.vue:244）→「工作中」文案（:93-94）。**驱动链完整闭环，v4「forceWorking 驱动」表述精确** |
+| B（create 应答 → 首个 assistant content 持久化） | engineHandle 运行中回填落盘 → ①级 defined-empty → `[task]` → seed 不触发、思考行触发 | ✅ backfillEngineHandle（subagent-service.ts:2156，onHandleReady :2177 接线）+ reportRecordTransition 落 entry（record-store.ts:557 精确命中）；collectTurns 排除 user（zcode/reader.ts:294，注释「user 消息（任务 prompt）不进 turns」）；buildView（:307）对零 turn 无条件构造返回视图不抛错；思考行判定对「孤立 user 消息是否成 turn」两分支鲁棒（无 turn / assistants 空 → 均 true），T3 钉死一致 |
+| C（content 持久化后） | ①级真实内容渐现 | ✅ — |
+| 磁盘扫描滞后（跨引擎） | `!target`/`!record` → `[]` → seed 真实触发 | ✅ session-records.ts:298/:306（文档写 :295/:306，:295→:298 偏 3 行，不影响决策） |
+
+结论句「task 气泡由 runtime ①③级投影或 renderer seed 三者之一供给，无空白窗口」「修复前窗口 B 存在仅 task 无思考行的欠佳初态，本设计思考行对其是真实改进而非纯防御」——逐点与源码相符（修复前窗口 B：分区 [task]、turn 无 assistant → TurnMeta 不渲染且无 subagentThinking 机制 → 确无任何进行中指示）。
+
+五处改写一致性：全文 grep「恒非空 / 不参与 / 纯防御」——操作节（§2/§5.1/§8.2/§10/§11）现存命中逐条核查均为**修正后正确语义**（:113「task 非空时恒非空」指投影函数性质；:113/:182「seed 不触发/不参与」分别指窗口 B 与 outcome 命中场景；:117「而非纯防御」为否定式正名）；「恒非空/不参与」的 v3 旧义仅存于变更历史 v3 条目（:233），已带「【后被 R2 终审反例击穿，v4 纠正】」标注。§2 Out-of-scope 自相矛盾已消除（「机制不变 + task 气泡与思考行同适用于非 pi 多窗口真实参与」+ ⛔3 范围外声明自洽）；T2「可达场景（磁盘扫描滞后窗口）」与 T3「窗口 B → true / A/C → false」与窗口模型逐条对齐。
+
+## 裁决③ S5 行为导向判据：**方向有效（P0-13 主体达标），一处窗口 A 假阴性缺口（SUGGESTION）**
+
+判据「无论数据来自 runtime ①③级投影还是 renderer seed，三要素同屏即通过」正确消除了 v3 的路径断言错误（R2 MF 的教训），可观察、真实场景（`pnpm dev` + 真实 zcode 派发）、回溯目标 1+2+3。**缺口**：三要素中「『思考中…』活动行」是窗口 B/滞后窗口特有形态——点击若落在窗口 A（卡片出现即窗口 A 起点；zcode 冷启动首任务时 create 应答可达秒级，「立即点击」完全可能命中 A），屏幕为 task 气泡 + TurnMeta「工作中」行、无思考行——这是 §5.1 明文的设计内正确行为（「窗口 A 由 TurnMeta『工作中』接管」），但按 S5 字面判据判败 → 假阴性、验收 flaky，且测试者无日志不可区分自己落在哪个窗口。
+
+| 优先级 | 位置 | 维度 | 描述 | 修复方向 |
+|--------|------|------|------|----------|
+| SUGGESTION | §8.2 S5 | P0-13（验收确定性） | 三要素中「思考中…活动行」绑定窗口 B 形态；命中窗口 A 时（TurnMeta「工作中」行接管，设计内正确）按字面判据产生假阴性，验收 flaky 且不可现场消歧 | 中间要素改为「进行中指示（**思考行或 TurnMeta『工作中』行**，窗口 A/B 各有其一）」，或补注「观察到 TurnMeta 形态视为该要素通过（§5.1 窗口 A）」——一处措辞即消除 flaky，场景与流程零改动 |
+
+S5 其余子判据（窗口 C 重开显示真实内容 / ③级失效模拟下客户端 outcome 投影不变）维持 R2 终审已接受结论，不重查。
+
+## R2 终审两项修复的关闭确认
+
+| R2 项 | v4 修复 | 判定 |
+|---|---|---|
+| MF（P0-11 非 pi 事实链） | §5.1 重写三窗口模型 + §2 Out-of-scope 消矛盾 + S5 行为导向判据 + T2/T3 改「可达」+ 对终审报告的 turnsToMessages 细节修正 | **关闭**——三窗口模型事实逐点源码核验准确（含裁决①分歧修正）；五处改写一致无残留；细节修正成立 |
+| SUGGESTION（core 缺陷登记） | §11 ⛔3：①级 defined-empty 不降级缺陷 + 证据链三点 + 修复方向 + 独立排期 | **采纳确认**——collectTurns 排除 user（reader.ts:294）/ buildView 零 turn 不抛错（:307）/ 编排层无判空（:496）三点全部源码复核属实；「其他③级消费方（摘要卡数据源）同受影响」表述准确 |
+
+## 本轮新增事实核验清单
+
+| # | 声称 | 核验结果 |
+|---|---|---|
+| 1 | turnsToMessages 对零 turn 视图先 push record.task（`if (record.task.length > 0)` 在 turn 循环前） | ✅ session-view-service.ts:362（函数 :356）——分歧裁决①依据 |
+| 2 | ③级 outcome-only 永不返回空（无条件 push 占位 assistant） | ✅ :433-452，注释 :431 精确命中 |
+| 3 | ①级 `native !== undefined` 即返回，无判空不降级 | ✅ :496 精确命中 |
+| 4 | engineHandle 运行中回填并经 reportRecordTransition 落盘 | ✅ subagent-service.ts:2156/:2177 + record-store.ts:557 精确命中 |
+| 5 | collectTurns 排除 user 消息 / buildView 零 turn 不抛错 | ✅ zcode/reader.ts:294 / :307（文档 :296 偏 2 行，不影响） |
+| 6 | 窗口 A「TurnMeta『工作中』接管（forceWorking 驱动）」驱动链 | ✅ computeIsStreaming（message-turns.ts:345）→ turn.isStreaming → TurnMeta v-if（TurnMeta.vue:12）+ spinner（:30）+ isWorkingTurn（Turn.vue:212）+ sessionActive 注入（MessageStream.vue:244）全链闭环 |
+| 7 | runtime `!target`/`!record` 空返回 | ✅ session-records.ts:298/:306（:295 偏 3 行，不影响） |
+| 8 | 五处修订无 v3 残留（grep「恒非空/不参与/纯防御」） | ✅ 操作节现存命中均为修正后语义；v3 旧义仅存变更历史且带击穿标注 |
+
+INFO（交接影响面审，不立项）：窗口 A→B 过渡存在「占位 assistant 消失 + 思考行出现」的分区整体替换视觉过渡——runtime 三级降级既有行为，非本设计引入；⛔1 的过渡平滑探针只盯双 user 场景，实施期可顺带观察该相邻过渡。
