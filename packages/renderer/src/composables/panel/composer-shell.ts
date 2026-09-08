@@ -180,6 +180,11 @@ export function useComposerShell(params: ComposerShellParams) {
     },
     defaultModel: computed(() => settingsStore.defaultModel.value),
     currentModel: flow.currentModel,
+    // [U4r2] 显式 preset 选择进 chip 侧 resolve 输入（D1 pending 三兄弟补齐）：flow
+    // pendingPreset 只读视图（Landing.onPresetSelect 写入）——chip 显示与 submit 透传
+    // 同源同输入，显式 preset 捆绑字段不再只在 submit 侧生效（显示 ≠ 生效破口修复）。
+    // 视图缺失（部分测试 mock 的 flow 简化形态）= 无显式选择 → null，不阻断 chip 解析
+    pendingPreset: () => flow.pendingPreset?.value ?? null,
     setPendingModel: (model: string) => flow.setPendingModel(model),
     switchModel,
     setThinkingLevel,

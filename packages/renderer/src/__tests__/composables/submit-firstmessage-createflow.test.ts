@@ -6,8 +6,9 @@
  *
  * U2b（D5 契约快照化）：thinkingLevel 经 create 入参 pendingThinkingLevel 一次到位，
  * 壳层 C-W4-3 setThinkingLevel 补 apply 已删（useModel().setThinkingLevel 恒不调）。
- * 壳未注入 ports.launchConfig → core flow 回落 core 单例基座（settings/KV 空 →
- * model 终值 null、presetId null；thinking 落最高可用档 high）。
+ * [U2d 后现状] 壳已注入 ports.launchConfig（preset store + settings 单例基座）——本
+ * 测试 mock 面下 preset 列表空 + settings/KV 空，resolve 输入与空基座等价（model 终值
+ * null、presetId null；thinking 落最高可用档 high），故终值断言不变。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/submit-firstmessage-createflow.test.ts
  */
@@ -106,7 +107,8 @@ describe('submitFirstMessage 改调 createSessionFlow（TC-5 / FU-1）', () => {
     await flow.submitFirstMessage(textToSegments('hi'), 'high')
     expect(createSessionFlow).toHaveBeenCalledTimes(1)
     // [D5] thinkingLevel 经 create 入参一次到位（explicit authored 'high' → resolve 终值 'high'）；
-    // 壳未注入 launchConfig 端口 → 基座空：model 全链空 null、presetId null。
+    // U2d 已接 ports.launchConfig，本测试 mock 面下基座数据全空（preset 列表空 + settings
+    // 空）→ model 全链空 null、presetId null。
     // mock 的是 core createSessionFlow(ctx, input) 原函数——终值断言定位第二参 input
     expect(createSessionFlow).toHaveBeenCalledWith(
       expect.anything(),

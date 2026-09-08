@@ -42,6 +42,9 @@
  *   construction）；landing auto 值机制（follow watch + localAuthored）删除，localThinkingLevel
  *   只存 authored 值（唯一写点 = routeThinkingLevel landing 支；例外 = sync 分支 3 安全网，
  *   D10-E10 声明保留）
+ * - [U4r2] chip 侧 resolve 输入补 pendingPreset 通道（deps 新增可选 getter，壳层从 flow
+ *   pendingPreset 只读视图接线）——D1「pending 三兄弟」在显示侧补齐，显式 preset 选择的
+ *   捆绑字段进入 chip 显示（等价破口修复，守卫见 launch-config-equivalence.test.ts 全矩阵）
  * - 对外 API 不变（u4 壳层解构面零变化）；记忆模块为 core 域内单例，直接 import（非 deps 注入）
  */
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
@@ -67,6 +70,15 @@ export interface ModelThinkingDeps {
   defaultModel: ComputedRef<string>
   /** landing 态 flow 选定模型（壳层从 useNewTaskFlow().currentModel 取） */
   currentModel: ComputedRef<string | null>
+  /**
+   * [U4r2] landing 态 flow 显式选定 preset id（壳层从 useNewTaskFlow().pendingPreset
+   * 只读视图取——与 currentModel 同族的 flow pending 状态读通道，非 launchData store 数据）。
+   * launchConfigView 仅 landing 态消费（已建态/staging 显示不感知）；未注入时 chip 侧
+   * resolve 输入缺 pendingPreset——显式 preset 选择不进显示链，chip 按「默认 preset」
+   * 解析而 submit 按显式 preset 解析（显示 ≠ 生效，U4 round 1 发现的等价破口形态）。
+   * getter 闭包内读响应式源（computed 视图），数据变化显示自动重算。
+   */
+  pendingPreset?: () => string | null | undefined
   /** landing 态记 pendingModel（壳层从 useNewTaskFlow().setPendingModel 取） */
   setPendingModel: (model: string) => void
   /** 已建态切模型 RPC + 乐观更新编排（壳层从 useModel().switchModel 取） */
@@ -123,6 +135,7 @@ export function useComposerModelThinking(
     getSessionState,
     defaultModel,
     currentModel,
+    pendingPreset: getPendingPreset,
     setPendingModel,
     switchModel,
     setThinkingLevel: applyThinkingLevel,
@@ -210,10 +223,13 @@ export function useComposerModelThinking(
    * pendingThinkingLevel = localThinkingLevel（U2a 后唯一写点 = routeThinkingLevel
    * landing 支，只含 authored 值——D1 authored 守卫的结构前提；例外 = sync 分支 3
    * 安全网经同一通路写入，D10-E10 声明保留）。
+   * pendingPreset = deps 显式选定 preset（U4r2 通道，D1 pending 三兄弟至此齐备）——
+   * 仅 landing 态消费（已建态/staging 分支显示不感知，与 pendingThinkingLevel 同款门控）。
    */
   const launchConfigView = createLaunchConfigView(() => ({
     pendingModel: currentModel.value,
     pendingThinkingLevel: sessionId.value === null ? localThinkingLevel.value : null,
+    pendingPreset: sessionId.value === null ? getPendingPreset?.() ?? null : null,
     lastUsedModel: lookupLastUsed(),
     getRememberedThinkingLevel: lookup,
     presets: launchData?.presets?.(),

@@ -25,12 +25,10 @@
  *    PresetSelectChip 同款 createLaunchConfigView 接线，ui 包不在 core 测试领地）；
  *    create 侧 = 真实 useNewTaskFlow.submitFirstMessage 经 mock ports 捕获
  *    （形态参照 flow.test.ts TC-5）。
- *    ⚠️ 其中 18 格（显式 preset 档且显式选择未钉死全部分歧字段）落在「等价破口隔离区」
- *    （it.fails）——U4 实施时发现的已知破口，见隔离区注释与 impl-plan blockers：chip 侧
- *    launchConfigView 无 pendingPreset 输入通道（model-thinking.ts launchConfigView +
- *    ModelThinkingDeps.launchData 均不含），显式选定 preset 且其捆绑字段 ≠ 默认 preset 时
- *    模型/档位 chip 显示 ≠ create 生效值。修复后隔离区翻绿（it.fails 反向红）→ 须把
- *    该区改回正向断言并删除本段 ⚠️ 声明。
+ *    [U4r2 破口已修复] round 1 发现 chip 侧 resolve 输入缺 pendingPreset（显式 preset
+ *    选择不进显示链，18 格 it.fails 隔离）；本轮补 ModelThinkingDeps.pendingPreset 通道
+ *    （壳层从 flow.pendingPreset 只读视图接线）后 D1「pending 三兄弟」两侧齐备，全矩阵
+ *    72 格正向绿。未来任何一侧丢失该输入（通道删除/壳层断线）→ 对应矩阵格红。
  * 2. 锚点用例（防「三段相等但全错」的空转等价）：对设计 §2.2/§2.3 全部发散条件
  *    （① lastUsed≠默认不点 chip 直接发送 = 本次 bug / ③ preset 默认 off 档遮蔽记忆 /
  *    显式恒赢 / D4 lastUsed 失效回落）钉具体值——resolve 语义本身的逐档单测在
@@ -304,8 +302,10 @@ function mountHarness(
     const mtDeps: ModelThinkingDeps = {
       getSessionState: () => null,
       defaultModel: computed(() => db.defaultModel ?? ''),
-      // 生产接线（composer-shell）：currentModel ← flow.currentModel，setPendingModel → flow
+      // 生产接线（composer-shell）：currentModel ← flow.currentModel，pendingPreset ←
+      // flow.pendingPreset 只读视图，setPendingModel → flow
       currentModel: flow.currentModel,
+      pendingPreset: () => flow.pendingPreset.value,
       setPendingModel: (model: string) => flow.setPendingModel(model),
       switchModel: vi.fn(),
       setThinkingLevel: vi.fn(),
@@ -382,7 +382,8 @@ async function runMatrixCell(cell: {
       pendingModel: useNewTaskFlowState().pendingModel.value,
       // submit 的 thinkingLevel 参数 = localThinkingLevel（生产形态 send.ts:237）
       pendingThinkingLevel: h.mt.localThinkingLevel.value ?? null,
-      pendingPreset: h.explicitPresetId.value,
+      // 与 submit 侧同读 flow pendingPreset 只读视图（U4r2 通道）
+      pendingPreset: h.flow.pendingPreset.value,
       pendingCwd: null,
     }
     const B = resolveLaunchConfig(snapshot)
@@ -421,43 +422,27 @@ interface MatrixCell {
   defaultModel: boolean
 }
 
-/**
- * 显式 preset 档下「chip 显示 ≡ create 生效」是否构造性成立：
- * 已知破口（blocker 上报，见文件头 ⚠️）——chip 侧 launchConfigView 无 pendingPreset
- * 输入，显式 preset 的捆绑字段（modelOverride/thinkingLevel）不进模型/档位 chip 显示链，
- * chip 按默认 preset 解析而 create 按显式 preset 解析。仅当「显式选择已把分歧字段全部
- * 钉死」（pendingModel 与 authored 档同时存在 → 两侧 explicit 档均压过各自不同的
- * preset 档）时两层恰巧同值——这是显式恒赢锚点仍可正向断言的原因，非破口不存在的证据。
- */
-function explicitPresetEquivalenceHolds(pickModel: boolean, authored: boolean): boolean {
-  return pickModel && authored
-}
-
-const MATRIX_GREEN: MatrixCell[] = []
-const MATRIX_HOLE: MatrixCell[] = []
+const MATRIX: MatrixCell[] = []
 for (const pickModel of [false, true]) {
   for (const authored of [false, true]) {
     for (const lastUsed of ['none', 'valid', 'invalid'] as const) {
       for (const preset of ['none', 'default', 'explicit'] as const) {
         for (const defaultModel of [true, false]) {
-          const cell: MatrixCell = {
+          MATRIX.push({
             label: `pendingModel=${pickModel ? '显式pick' : '无'} · authored档=${authored ? 'low' : '无'} · lastUsed=${lastUsed} · preset=${preset} · 全局默认=${defaultModel ? '有' : '无'}`,
             pickModel,
             authored,
             lastUsed,
             preset,
             defaultModel,
-          }
-          const inHole =
-            preset === 'explicit' && !explicitPresetEquivalenceHolds(pickModel, authored)
-          ;(inHole ? MATRIX_HOLE : MATRIX_GREEN).push(cell)
+          })
         }
       }
     }
   }
 }
 
-describe('L1 等价矩阵 · chip 显示 ≡ resolve 输出 ≡ create 入参（全组合·等价成立区）', () => {
+describe('L1 等价矩阵 · chip 显示 ≡ resolve 输出 ≡ create 入参（全组合）', () => {
   beforeEach(() => {
     provideMockPlatform(new MemKV())
     resetNewTaskFlow()
@@ -472,41 +457,7 @@ describe('L1 等价矩阵 · chip 显示 ≡ resolve 输出 ≡ create 入参（
     __resetModelThinkingMemoryForTesting()
   })
 
-  it.each(MATRIX_GREEN)('$label', async (cell) => {
-    await runMatrixCell(cell)
-  })
-})
-
-// ── 1b. 等价破口隔离区（it.fails：U4 实施发现的已知破口，blocker 上报主 agent）──
-//
-// 破口事实（实读核实）：model-thinking.ts launchConfigView 输入（:214-224）不含
-// pendingPreset，ModelThinkingDeps.launchData（:93-100）亦无该通道——用户显式选定
-// preset（flow.setPendingPreset，submit 侧 resolve 的 explicit preset 档）后：
-// - 模型/档位 chip 仍按「默认 preset」解析显示（§2.3-② 的模型 chip 层变体）
-// - create 入参按「显式 preset」解析生效
-// 显式 preset 的捆绑字段 ≠ 默认 preset 时（本矩阵 p-default 带 modelOverride+off、
-// p-user 带 low），chip 显示 ≠ create 生效。设计 D1「resolve 输入 = pending 三兄弟」
-// 在 chip 侧缺一兄弟——属等价性实际不成立，U4 禁改生产代码凑绿，隔离在此上报。
-//
-// 修复方向（主 agent 裁决后实施）：给 chip 视图接 pendingPreset（ModelThinkingDeps
-// 增通道 + 壳层从 flow.pendingPreset 接线）。修复后本区 18 格翻绿 → it.fails 反向报
-// 红（unexpected pass），届时把本区并入上方正向矩阵并删除文件头 ⚠️ 与本注释。
-describe('L1 等价矩阵 · 等价破口隔离区（显式 preset 档 chip 显示 ≠ 生效——已知破口，it.fails 钉住）', () => {
-  beforeEach(() => {
-    provideMockPlatform(new MemKV())
-    resetNewTaskFlow()
-    __resetLastUsedModelForTesting()
-    __resetModelThinkingMemoryForTesting()
-  })
-
-  afterEach(() => {
-    __resetPlatformForTesting()
-    resetNewTaskFlow()
-    __resetLastUsedModelForTesting()
-    __resetModelThinkingMemoryForTesting()
-  })
-
-  it.fails.each(MATRIX_HOLE)('[破口] $label', async (cell) => {
+  it.each(MATRIX)('$label', async (cell) => {
     await runMatrixCell(cell)
   })
 })

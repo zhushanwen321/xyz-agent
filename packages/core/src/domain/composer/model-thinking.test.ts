@@ -215,6 +215,8 @@ function mountMem(opts: {
   launchPresets?: readonly PiLaunchPreset[]
   /** [U2a] launchData.defaultPresetId 注入（undefined = 不注入字段） */
   launchDefaultPresetId?: string | null
+  /** [U4r2] deps.pendingPreset 通道注入（flow 显式选定 preset；undefined = 不注入字段） */
+  launchPendingPreset?: string | null
 } = {}) {
   const sessionRef = ref<{ modelId: string; thinkingLevel?: string } | null>(opts.session ?? null)
   const defaultModelRef = ref(opts.defaultModel ?? '')
@@ -301,6 +303,10 @@ function mountMem(opts: {
     getSessionState: () => (sessionRef.value ? { ...sessionRef.value } : null),
     defaultModel: computed(() => defaultModelRef.value),
     currentModel: computed(() => currentModelRef.value),
+    // [U4r2] flow 显式选定 preset 读通道（壳层接线形态：pendingPreset getter）
+    ...(opts.launchPendingPreset !== undefined
+      ? { pendingPreset: () => opts.launchPendingPreset }
+      : {}),
     setPendingModel,
     switchModel,
     setThinkingLevel,
@@ -801,6 +807,45 @@ describe('useComposerModelThinking · landing 显示（resolve 单一解析层�
     await h.result.onThinkingSelect('h')
     expect(h.result.currentThinkingLevel.value).toBe('h')
     expect(h.result.currentModelId.value).toBe('p/N')
+    h.scope.stop()
+  })
+
+  it('F6/显式 preset 选择进 chip 解析（U4r2 pendingPreset 通道）：显示显式 preset 捆绑值，压过默认预设；已建态不消费该通道', async () => {
+    const pDefault: PiLaunchPreset = {
+      ...DEFAULT_PRESETS[0]!,
+      id: 'preset-default',
+      builtin: false,
+      modelOverride: 'p/M',
+      thinkingLevel: 'off',
+    }
+    const pUser: PiLaunchPreset = {
+      ...DEFAULT_PRESETS[0]!,
+      id: 'preset-user',
+      builtin: false,
+      modelOverride: 'p/N',
+      thinkingLevel: 'low',
+    }
+    record('p/M', 'max') // 默认 preset 模型有记忆——显式 preset 档位不被记忆遮蔽
+    const h = mountMem({
+      sid: null,
+      defaultModel: 'p/M',
+      maps: { 'p/M': sameContentMap(), 'p/N': sameContentMap() },
+      supported: { 'p/M': fourLevels, 'p/N': fourLevels },
+      launchPresets: [pDefault, pUser],
+      launchDefaultPresetId: 'preset-default',
+      launchPendingPreset: 'preset-user',
+    })
+    // 通道前（U4 round 1 破口形态）：chip 按默认 preset 解析 → p/M + off；
+    // 通道后：显式 preset 捆绑值进显示链（D2 presetId 序 explicit > default）
+    expect(h.result.currentModelId.value).toBe('p/N')
+    expect(h.result.currentThinkingLevel.value).toBe('low')
+    // 已建态不消费 pendingPreset（launchConfigView 门控 sessionId===null）：换绑后
+    // 显示读 session 真值，显式 preset 选择对已建 session 显示零影响
+    h.sessionId.value = 's1'
+    h.sessionRef.value = { modelId: 'p/M', thinkingLevel: 'h' }
+    await nextTick()
+    expect(h.result.currentModelId.value).toBe('p/M')
+    expect(h.result.currentThinkingLevel.value).toBe('h')
     h.scope.stop()
   })
 })

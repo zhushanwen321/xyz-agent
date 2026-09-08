@@ -558,6 +558,13 @@ export function useNewTaskFlow(deps: NewTaskFlowDepsWithLaunch) {
     presetCwd,
     setPendingModel,
     setPendingPreset,
+    /**
+     * [U4r2] landing 态显式选定 preset id 只读视图（写经 setPendingPreset，读写分离——
+     * 对齐 pendingModel 经 currentModel 的只读暴露先例）。消费方：composer-shell 把它
+     * 接入 model-thinking 的 pendingPreset 通道，使 chip 侧 resolve 输入含显式 preset
+     * 选择（与 submit 侧同源同输入，「显示 ≡ 生效」全矩阵成立）。
+     */
+    pendingPreset: computed(() => pendingPreset.value),
     openDirPopover: dirSelect.openDirPopover,
     openBranchPopover: branch.openBranchPopover,
     openPresetPopover,

@@ -1,7 +1,7 @@
 /**
  * U2d 壳层接线收口测试：launch 配置单一解析层的两端壳注入非空断言。
  *
- * 覆盖两条接线（不接线则显式 preset 透传处于回归态 + landing 显示链退化）：
+ * 覆盖三条接线（不接线则显式 preset 透传处于回归态 + landing 显示链退化）：
  * - submit 侧：useNewTaskFlow 壳注入 ports.launchConfig——preset store 数据基座 +
  *   usePiPresets().loadPresets 就绪源 + settings 单例 getters + core KV 双源。
  *   断言 create 入参端到端到达 resolve 终值（D3 默认预设生效化 / D4 lastUsedModel
@@ -9,6 +9,9 @@
  * - 显示侧：composer-shell 注入 ModelThinkingDeps.launchData——landing 态 chip 显示
  *   读 resolveLaunchConfig 输出，preset 档（此前 core 无镜像恒不可达）经 preset store
  *   真实落到 Composer 树 DOM。
+ * - 显示侧 [U4r2]：composer-shell 注入 ModelThinkingDeps.pendingPreset（flow 显式选定
+ *   preset 只读视图）——显式 preset 捆绑字段进 chip 显示链（拆线 = 显示回落默认预设
+ *   解析，「显示 ≡ 生效」破口复发，突变断言红）。
  *
  * 两 describe 共用真实 useNewTaskFlow（壳单例）——B 不 mock flow（真实壳挂 Composer
  * 在 idle 态渲染输入区已足够，见各用例断言）。
@@ -21,7 +24,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
-import { createPinia, setActivePinia } from 'pinia'
+import { createPinia, getActivePinia, setActivePinia } from 'pinia'
 import { textToSegments } from '@xyz-agent/shared'
 import type { PiLaunchPreset, ProviderInfo, SessionSummary } from '@xyz-agent/shared'
 
@@ -293,5 +296,37 @@ describe('composer-shell 注入 launchData（U2d 显示侧接线）', () => {
     await wrapper.vm.$nextTick()
 
     expect(wrapper.find('[data-testid="model-probe"]').attributes('data-selected')).toBe('p1/m-default')
+  })
+
+  it('显式 preset 选择经 pendingPreset 通道到达 chip 显示（U4r2 接线突变断言：壳拆线则回落默认预设解析而红）', async () => {
+    // 本用例需 flow 处于 landing 态（setPendingPreset 守卫），是 B 组唯一含 await 的用例：
+    // await 会让早前用例挂起的微任务把 active pinia 翻回旧实例（已实测：await startFlow
+    // 后 getActivePinia() ≠ beforeEach 的 pinia，mount 即绑到旧 store 读到别用例数据）——
+    // mount 前钉回本用例 pinia，保证壳层 usePresetStore() 绑定本用例 store
+    const pinia = getActivePinia()
+    const defaultPreset = makePreset({ modelOverride: 'p1/m-default-preset', thinkingLevel: 'off' })
+    const userPreset = makePreset({ id: 'p-user', name: '用户预设', order: 2, modelOverride: 'p1/m-user-preset', thinkingLevel: 'low' })
+    const presetStore = usePresetStore()
+    presetStore.setPresets([defaultPreset, userPreset])
+    presetStore.setDefaultPresetId('p-default')
+    // RPC mock impl 钉到同款 fixture：clearAllMocks 不清 impl，任何迟到的 loadPresets
+    // 写进 store 的也是本用例数据（跨用例 mock impl 遗留防线）
+    presetApiMock.list.mockResolvedValue([defaultPreset, userPreset])
+    presetApiMock.getDefault.mockResolvedValue('p-default')
+
+    // 用户显式选定 p-user（Landing.onPresetSelect → flow.setPendingPreset 同款写入）
+    const flow = useNewTaskFlow()
+    await flow.startFlow()
+    flow.setPendingPreset('p-user')
+
+    setActivePinia(pinia)
+    const wrapper = mountLandingComposer()
+    await wrapper.vm.$nextTick()
+
+    // 接线突变断言：chip 显示 = 显式 preset 捆绑值。若壳层拆掉 pendingPreset 通道
+    //（deps 不注入），chip 侧 resolve 输入缺 explicit preset 档 → 按默认预设解析，
+    // 显示回落 p1/m-default-preset + off，两条断言即红（U4 round 1 等价破口形态）
+    expect(wrapper.find('[data-testid="model-probe"]').attributes('data-selected')).toBe('p1/m-user-preset')
+    expect(wrapper.find('[data-testid="tlp-probe"]').attributes('data-level')).toBe('low')
   })
 })
