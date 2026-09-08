@@ -96,7 +96,7 @@ graph TD
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|---------------------------------------------|------|----------|
 | U1 | committed | 3 | a647dada2：实现（r2）+ 测试收尾（r3 sa-f4f160bb）；39/39 绿、vue-tsc 0、pre-commit 全套绿 |
-| U2 | committed | 2 | r2 sa-a7fe7ca5 交付；script 299/300·template 175/400；探针门：P-wrap ✓（gap≤0.5px）· P-timing ✓（流式 120 帧恒 0.5px / 静止 90 帧恒 0px 零振荡）· P-no-loop ✓ 降级形态（gap 序列无循环锯齿；完整计数器判据按设计载体推迟 U4/V8） |
+| U2 | committed | 2 | r2 sa-a7fe7ca5 交付；script 299/300·template 175/400；探针门：P-wrap ✓（gap≤0.5px）· P-timing ✓（流式 120 帧恒 0.5px / 静止 90 帧恒 0px 零振荡）· P-no-loop ✓ 降级形态（gap 序列无循环锯齿；完整计数器判据按设计载体推迟 U4/V8——计数器已在校准 r1 补齐（ce74c8365），见偏差 #12） |
 | U3 | committed | 1 | sa-9388587e：删2文件+迁移2用例（29→31）+挂载级修红；全量 4081/3 skip、双 typecheck、lint 绿；主 agent 重跑全量一致 |
 | U4 | committed | 1 | sa-226a3b2e：guard+9 单测+守卫双向自验+C-state-11+C-proc-10×4+V8 双侧（单测 6 红→还原绿；dev 断言注入 gap=24 双采样报警→还原 0 报警）；scroll-follow 0 / doc-drift 0 / 全量 4090 绿 |
 | U5 | committed | 6 | 主 agent 验收（见偏差 #11）+ V6 定向修（sa-0bdddf6e，双 rAF）后 3/3 轮复验贴底；7bf62e49c + 2451a2036；Gate B 证据链 = acceptance.md 逐场景 |

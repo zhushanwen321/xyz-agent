@@ -236,7 +236,7 @@ virtua 实装语义：`findItemIndex` 入参按**绝对滚动坐标**解释，�
 | P-comp | virtua jump 补偿只管视口顶锚（含 fully-above 与顶边相交两分支），无 bottom-sticky | 实装核实：core/index.js case 3（:114-140）条件分支 | ✅ 已核 | — |
 | P-wrap | `<Virtualizer>` 外套静态 wrapper 且传 `:scroll-ref="scrollEl"` 后：滚动容器仍为 scrollEl、viewport 测量不变、item 绝对定位锚（虚拟列表根 `position:relative`，vue/index.js:480-490 渲染样式）不变、startMargin 行为不变 | ⛔ 实施 M1 门：dev app（`pnpm dev` + Playwright 连 9222）跑 §5 场景 V1/V2，对比改造前后行为 | ⛔ M1 前必跑 | 失败 → **方案 C 完整形态**：① 去 wrapper，真实底部写改原生 `scrollEl.scrollTop = scrollEl.scrollHeight`（D1 索引直取保留）；② RO 网观察目标收窄为 `tailEl` + `scrollEl`（视口）；③ 内容增长触发从 git 历史恢复 useMessageStreamScroll 的信号 watch（仅降级形态启用）；④ 「双写路径 + R1 触发面退化」登记进 C-state-11 限期回访。**退化范围量化**：R2/R3/R4 修复保持有效；R1 仅「纯异步高度增长帧且无后续 token」（fence finalize/shiki/图片晚到的收尾子集，F1 的子集）失去触发——兑现时由护栏 ⑦ dev 断言在 dev 环境报警发现；D7 复合判据在降级形态仍安全（原生写底 offset 递增，第一合取不成立） |
 | P-timing | rAF 回调先于同帧 RO 投递（兜底网校正恒晚于 virtua 测量更新，不发生「用上一帧缓存再滚一次」的振荡） | ⛔ M1 门：dev app 用 Playwright 在 streaming 中采样 `scrollHeight - scrollTop - clientHeight` 连续帧序列，断言缺口单调收敛到阈值内而非振荡 | ✅ 实跑通过（streaming 帧序列单调收敛）；**U5 验收触发降级转正**：V6 resize-shrink 间歇 113px 残留实证单 rAF 不足 → 双 rAF 已转正为终态机制（2451a2036，见 D3 实现要点） | 失败 → RO 回调内改为双 rAF（再让一帧），仍败 → 按 P-wrap 降级形态处理 |
-| P-no-loop | RO → follow → scrollToIndex 不引发内容高度变化 → 无观察循环 | ⛔ M1 门：dev 断言计数器（1s 内 follow 次数 > 60 即 warn）+ V1-V9 场景全程无该 warn | ⛔ M1 前必跑 | 失败 → 兜底网加 100ms 防抖；仍败 → 收窄观察目标到 tailEl + scrollEl（等同 P-wrap 降级形态） |
+| P-no-loop | RO → follow → scrollToIndex 不引发内容高度变化 → 无观察循环 | ⛔ M1 门：dev 断言计数器（1s 内 follow 次数 > 60 即 warn）+ V1-V9 场景全程无该 warn | ✅ 计数器已落地（校准 r1，ce74c8365——U4 漏交付由偏差登记 #12 补齐）；「V1-V9 全程无该 warn」在计数器落地前无法执行，归入 V7/V9 后续抽验同批补验 | 失败 → 兜底网加 100ms 防抖；仍败 → 收窄观察目标到 tailEl + scrollEl（等同 P-wrap 降级形态） |
 
 ## 5. 验收（真实场景，非单测非 mock）
 
