@@ -190,8 +190,10 @@ export interface EnginePort {
    * 「引擎与模型不配套」错误，见 engine/model-validation.ts）。
    *
    * modelRef undefined = 查询引擎缺省模型（D2-1：主 agent 的 pi id 不透传给非 pi 引擎，
-   * 缺省语义归引擎——zcode 落 ZCODE_FALLBACK_DEFAULT_MODEL）。返回 canonical 全名供
-   * record.model 留痕。
+   * 缺省语义归引擎——zcode 落 ZCODE_FALLBACK_DEFAULT_MODEL）。返回 canonical ref 供
+   * record.model 留痕。[W3 契约变更④] 协议化后 canonicalRef 允许**无斜杠**形态
+   * （引擎原样返回的 ref）——core 侧按 provider=""/id=ref/整串进 name 拆分留痕
+   * （splitEngineModelRef 单一权威），不落 "<ref>/" 畸形。
    *
    * 未实现：model 透传，引擎自身 prepare 期校验兜底（现状语义）；pi 不实现（pi 链走
    * 既有三层解析 + assertCanonicalModelRef 裁决，搬迁是大重构，设计 D2-2 被否②）。

@@ -167,12 +167,11 @@ export function armEngineSelfDestruct(opts: EngineSelfDestructOptions): ReverseR
   // pending = 已发出未 ack（计时面）；settled/acked 请求不在面内。
   const pending = new Map<string, number>();
   let disposed = false;
-  let timer: NodeJS.Timeout | undefined;
 
   const destroy = (reason: string): void => {
     if (disposed) return;
     disposed = true;
-    if (timer !== undefined) clearInterval(timer);
+    clearInterval(timer);
     opts.stdin.removeAllListeners?.("end");
     opts.stdin.removeAllListeners?.("close");
     logger.warn(`engine self-destruct: ${reason}`);
@@ -183,8 +182,9 @@ export function armEngineSelfDestruct(opts: EngineSelfDestructOptions): ReverseR
   opts.stdin.once("end", () => destroy("host stdin EOF (end)"));
   opts.stdin.once("close", () => destroy("host stdin closed"));
 
-  // 辅助判据：未 ack 反向请求计时巡检
-  timer = setInterval(() => {
+  // 辅助判据：未 ack 反向请求计时巡检（timer 声明于 destroy 之后——destroy 仅经
+  // 事件/回调异步触发，调用时已初始化）
+  const timer = setInterval(() => {
     const now = Date.now();
     for (const [id, startedAt] of pending) {
       if (now - startedAt > timeoutMs) {
@@ -208,7 +208,7 @@ export function armEngineSelfDestruct(opts: EngineSelfDestructOptions): ReverseR
     dispose() {
       if (disposed) return;
       disposed = true;
-      if (timer !== undefined) clearInterval(timer);
+      clearInterval(timer);
       opts.stdin.removeAllListeners?.("end");
       opts.stdin.removeAllListeners?.("close");
     },

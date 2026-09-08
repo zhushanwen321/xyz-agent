@@ -339,9 +339,11 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toContain("不支持 conversation");
-    // 恢复指引（EngineError.recovery）含「改用 engine: pi 或不传该参数」
-    expect((err as { recovery?: string }).recovery).toContain("engine: pi");
-    expect((err as { recovery?: string }).recovery).toContain("不传该参数");
+    // 恢复指引（EngineError.recovery）：W3 协议化口径——调参数 / 修 manifest / 升级
+    // 引擎包（引擎包是能力声明载体；「改用 engine: pi」内置兜底指引已随协议化删除）
+    expect((err as { recovery?: string }).recovery).toContain("去掉 conversation 参数");
+    expect((err as { recovery?: string }).recovery).toContain("修 manifest capabilities");
+    expect((err as { recovery?: string }).recovery).toContain("升级引擎包");
     expect(zcode.runs.length).toBe(0);
     expect(service.queries.collectRecords(10, "all")).toHaveLength(0);
   });
@@ -369,7 +371,9 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toContain("engine_capability_unsupported");
     expect((err as Error).message).toContain("maxTurns");
-    expect((err as { recovery?: string }).recovery).toContain("engine: pi");
+    // W3 协议化口径：恢复指引 = 去参数 / 修 manifest / 升级引擎包（不再指向 engine: pi）
+    expect((err as { recovery?: string }).recovery).toContain("去掉 maxTurns 参数");
+    expect((err as { recovery?: string }).recovery).toContain("修 manifest capabilities");
     // 「不产生孤儿 record」断言落点（V4④）：store 无新增条目、引擎未被触达
     expect(zcode.runs.length).toBe(0);
     expect(service.queries.collectRecords(10, "all")).toHaveLength(0);

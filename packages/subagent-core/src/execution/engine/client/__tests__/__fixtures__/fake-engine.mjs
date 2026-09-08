@@ -170,6 +170,13 @@ const CAPABILITIES = {
   maxTurns: false,
 };
 
+// initialize 应答 capabilities 局部覆盖（gate 位多声明测试：模拟「引擎实态与
+// manifest 不符」——如实态 sandbox 降为 none）。仅影响应答，不改变 run 行为。
+const CAPS_OVERRIDE = argOf("--caps-override", process.env.FAKE_CAPS_OVERRIDE ?? "");
+const ANSWERED_CAPABILITIES = CAPS_OVERRIDE
+  ? { ...CAPABILITIES, ...JSON.parse(CAPS_OVERRIDE) }
+  : CAPABILITIES;
+
 const MODELS = [
   { id: "glm-4.6", aliases: ["glm"], canonicalRef: "zai/glm-4.6" },
   { id: "mimo-v2.5-pro", canonicalRef: "xiaomi-token-plan-cn/mimo-v2.5-pro" },
@@ -207,7 +214,7 @@ if (MODE === "hang") {
             engineId: ENGINE_ID,
             engineVersion: "fake-1.0.0",
             adapterVersion: "fake-adapter",
-            capabilities: CAPABILITIES,
+            capabilities: ANSWERED_CAPABILITIES,
             models: MODELS,
           },
         });

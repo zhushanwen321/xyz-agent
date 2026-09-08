@@ -9,6 +9,12 @@
 // 修复定案：校验源 = 目标引擎 registry（EnginePort.validateModel 可选面），时机 =
 // 路由之后的派发同步期（record 创建前，不产生孤儿 record）。
 //
+// [W3 契约变更②放宽（协议化）] 「record 创建前拒绝」不再绝对：manifest `modelCatalog`
+// 声明 `dynamic:true` 时，未命中 ref 放行（运行期以引擎为权威，失败 = engine_model_mismatch
+// + record 标 failed）；仅 `dynamic:false` 的静态目录保持同步拒（engine_model_unknown）。
+// 成员形态映射（cli 形态）：manifest 省略 modelCatalog → validateModel 成员不实现
+// （本入口 :63 `typeof !== "function"` 分支 → 跳过校验恒放行）。
+//
 // 两个调用点共享本入口与错误文案（D2-2 调用点双路径覆盖）：
 //   ① chat 路径 subagent-service.executeViaEngine（非 pi 分支）；
 //   ② workflow 路径 subprocess-agent-runner.run（route.engine.run 之前，非 pi 分支）。
@@ -20,6 +26,51 @@ import { toErrorMessage } from "../../core/error-message.ts";
 
 /** 错误消息中列出的目标引擎可用清单上限（防超长错误信息；与 shared/model-ref 同量级口径）。 */
 const ENGINE_MODEL_LIST_LIMIT = 20;
+
+// ============================================================
+// canonical ref 拆分（契约变更④：无斜杠 ref 的 core 侧处理）
+// ============================================================
+
+/** canonical ref 拆分结果（ModelInfo 构造子集；name = 整串原样）。 */
+export interface SplitModelRef {
+  /** provider 段：有斜杠 = 斜杠前段；无斜杠 = ""（契约④——不落 "<ref>/" 畸形）。 */
+  provider: string;
+  /** id 段：有斜杠 = 斜杠后段；无斜杠 = 整串。 */
+  id: string;
+  /** 整串原样（留痕/显示名）。 */
+  name: string;
+}
+
+/**
+ * canonical ref → {provider, id, name} 拆分（单一权威源）。
+ *
+ * 契约变更④（协议化后）：引擎 validateModel 的 canonicalRef 允许**无斜杠**形态
+ * （引擎原样返回的 ref）——拆分时按 `provider=""`、`id=ref`、整串进 `name` 处理。
+ * 旧实现把无斜杠 ref 整串塞进 provider（id=""），经 record.model "provider/id" 拼接
+ * 落成 `"<ref>/"` 畸形、续聊回读还原出错误 provider——本函数消解该畸形。
+ *
+ * 消费方：resolveIdentityForEngine（chat 域留痕）与续聊回读（record.model → ModelInfo
+ * 重建），两处必须同源拆分，否则写入/回读两侧对同一 ref 给出不同 provider/id。
+ *
+ * 斜杠位置判定用 `> 0`（与既有口径一致）：开头斜杠（"/x"）视为无有效 provider 段，
+ * 走无斜杠分支（防御异常形态，不 crash）。
+ */
+export function splitEngineModelRef(modelStr: string): SplitModelRef {
+  const slashIdx = modelStr.indexOf("/");
+  if (slashIdx > 0) {
+    return { provider: modelStr.slice(0, slashIdx), id: modelStr.slice(slashIdx + 1), name: modelStr };
+  }
+  return { provider: "", id: modelStr, name: modelStr };
+}
+
+/**
+ * record.model 留痕词形（SplitModelRef 的写入侧配对函数）：provider 为空串时只写 id
+ * （不拼斜杠——"/ref" 头斜杠与 "ref/" 尾斜杠同属畸形留痕）。续聊回读侧
+ * splitEngineModelRef 对无斜杠串给出 provider=""/id=ref，往返自洽。
+ */
+export function joinEngineModelRef(ref: SplitModelRef): string {
+  return ref.provider === "" ? ref.id : `${ref.provider}/${ref.id}`;
+}
 
 // ============================================================
 // 场景 2：engine+model 不配套的结构化错误（D2-3）
@@ -45,14 +96,16 @@ class EngineModelMismatchError extends Error {
  * 非 pi 引擎的派发同步期 model 校验（两路径统一入口）。
  *
  * - 引擎实现 validateModel：同步裁决（含 undefined = 查引擎缺省模型），返回 canonical
- *   全名供 record.model 留痕；失败包装为 EngineModelMismatchError（场景 2 文案：
+ *   ref 供 record.model 留痕；失败包装为 EngineModelMismatchError（场景 2 文案：
  *   点破 registry 独立 + 目标引擎可用清单 + 按引擎区分的省略语义修正动作）。
+ *   canonical ref 允许**无斜杠**形态（引擎原样返回的 ref，契约变更④）——留痕拆分
+ *   归 splitEngineModelRef（provider=""/id=ref/整串进 name），不在本入口裁词形。
  * - 引擎未实现 validateModel：返回 modelRef 原样（透传给其 prepare 期校验兜底——
  *   现状语义，未来引擎零强制接入）。
  *
  * @param engine   路由解析出的目标引擎
  * @param modelRef 显式 model（调用参数或 agent .md frontmatter；undefined = 引擎缺省语义）
- * @returns canonical ref（引擎裁决后全名）；未实现校验面时 = modelRef 原样
+ * @returns canonical ref（引擎裁决后）；未实现校验面时 = modelRef 原样
  */
 export function validateModelForEngine(
   engine: EnginePort,

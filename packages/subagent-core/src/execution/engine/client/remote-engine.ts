@@ -26,6 +26,7 @@ import {
 } from "@zhushanwen/subagent-engine-sdk";
 
 import type { AgentCallOpts } from "../../../orchestration/models/types.ts";
+import { assertGateCapabilitiesMatched } from "../common/capability-gate.ts";
 import type {
   EngineCapabilities,
   EngineHandle,
@@ -168,6 +169,19 @@ export class RemoteEngine implements EnginePort {
    */
   async run(task: AgentCallOpts, ctx: RunContext): Promise<EngineRunResult> {
     await this.opts.client.ensureConnected();
+
+    // [W3 契约⑤ run 期接线] gate 位方向判定②：同步面 assertTaskShapeSupported 读
+    // manifest 拦「少声明」；「多声明」（manifest 声明可用、引擎实态不符）gate 同步面
+    // 读不到，由握手应答发现——manifest 快照 vs initialize 应答 capabilities 逐 gate
+    // 位对照（common/capability-gate），命中抛 engine_capability_mismatch：本处位于
+    // run 帧发出前 → prepare 期失败 reject、不产生 handle，上层 executeViaEngine 经
+    // finalizeFailed → Step 3b cleanupWorktreeIfBound 清理 run 前已建的前置副作用。
+    // 每次 run 都对照（纯内存比较，幂等）：崩溃重建重新握手后应答变化也能在下一 run
+    // 发现。非 gate 位不一致不进此判定（诊断面 warnOnManifestDiagnostics 已留痕）。
+    const answeredCaps = this.opts.client.getInitializeDiagnostics()?.capabilities;
+    if (answeredCaps !== undefined) {
+      assertGateCapabilitiesMatched(this.id, this.opts.manifest.capabilities, answeredCaps);
+    }
 
     const runId = ctx.taskId;
     // 协议 ctx 承载（RunContext 字段映射表）：cwd 取任务声明值（缺省进程 cwd）；

@@ -3,19 +3,31 @@
 // registry 专属测试（P1 验收 4）：注册/获取/listEngines/hasEngine/
 // 未注册 id 报 engine_not_found（错误文案含已注册清单——错误规格表第 1 行契约）。
 // [R1 D6] 追加：重注册先 dispose 旧单例（D6②）+ disposeEngines 收割遍历（D6③）。
+// [W3] 追加：EngineDescriptor 双模（inproc 快捷 / cli portFactory 代理透明——
+// cli 形态 EnginePort 实例 = W2 RemoteEngine）+ D4 displayName 稳定序 +
+// 全不可用 engine_not_found 文案（「未发现任何引擎包」+ 安装指引）。
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
+import { describe, expect, it, vi, beforeEach } from "vitest";
+
+import { EngineClient } from "../client/engine-client.ts";
+import { RemoteEngine } from "../client/remote-engine.ts";
 import type { EnginePort, RunContext } from "../port.ts";
 import {
   clearEngines,
   DEFAULT_ENGINE_ID,
   disposeEngines,
   EngineNotFoundError,
+  firstAvailableEngineId,
   getEngine,
   hasEngine,
   listEngines,
+  listEnginesByDisplayName,
   registerEngine,
+  registerEngineDescriptor,
+  type EngineManifestSnapshot,
 } from "../registry.ts";
 import type { SessionView } from "../types.ts";
 import type { AgentCallOpts } from "../../../orchestration/models/types.ts";
@@ -207,5 +219,198 @@ describe("engine registry", () => {
       disposeEngines();
       expect(getEngine("fake")).toBe(engine);
     });
+  });
+});
+
+// ============================================================
+// [W3] EngineDescriptor 双模 + manifest 快照 + D4（impl-plan §2.3）
+// ============================================================
+
+/** cli 形态 manifest 快照样本（与 RemoteEngineManifestSnapshot 结构闭包的运行时互证载体）。 */
+function makeManifestSnapshot(displayName?: string): EngineManifestSnapshot {
+  return {
+    capabilities: {
+      schemaEnforcement: "emulated",
+      steer: "unsupported",
+      conversation: "unsupported",
+      personaInjection: "prompt",
+      eventGranularity: "stream",
+      sandbox: "emulated",
+      sessionRead: "full",
+      resume: "cold",
+      interrupt: "kill-only",
+      permissionMode: "fixed",
+      maxTurns: false,
+    },
+    modelCatalog: { dynamic: true, models: [{ id: "glm-4.6", canonicalRef: "zai/glm-4.6" }] },
+    ...(displayName !== undefined ? { displayName } : {}),
+  };
+}
+
+/** W2 真实 cli 形态 port 装配（构造同步、不 spawn——ensureConnected 才 spawn）。 */
+function makeRemoteEngine(id: string, manifest: EngineManifestSnapshot): RemoteEngine {
+  const client = new EngineClient({
+    engineId: id,
+    command: process.execPath,
+    args: ["-e", ""],
+    hostKind: "test",
+    dataDir: join(tmpdir(), `registry-w3-${id}`),
+    manifestDiagnostics: { capabilities: manifest.capabilities, models: manifest.modelCatalog?.models ?? null },
+  });
+  return new RemoteEngine({
+    engineId: id,
+    client,
+    manifest: { capabilities: manifest.capabilities, modelCatalog: manifest.modelCatalog },
+    dataDir: join(tmpdir(), `registry-w3-${id}`),
+    hostKind: "test",
+  });
+}
+
+describe("EngineDescriptor 双模（W3 D1）", () => {
+  beforeEach(() => {
+    clearEngines();
+  });
+
+  it("registerEngine = inproc 快捷：descriptor kind=inproc，getEngine 透明（既有工厂语义不变）", () => {
+    registerEngine("fake", () => makeFakeEngine("fake"));
+    const engine = getEngine("fake");
+    expect(engine.id).toBe("fake");
+    expect(hasEngine("fake")).toBe(true);
+    expect(listEngines()).toEqual(["fake"]);
+  });
+
+  it("cli descriptor：getEngine 返回 portFactory 产物，两形态透明（cli 形态实例 = W2 RemoteEngine）", () => {
+    const manifest = makeManifestSnapshot();
+    const port = makeRemoteEngine("zcode-cli", manifest);
+    const portFactory = vi.fn(() => port as EnginePort);
+    registerEngineDescriptor("zcode-cli", {
+      kind: "cli",
+      command: process.execPath,
+      args: ["-e", ""],
+      capabilities: manifest.capabilities,
+      portFactory,
+      manifest: { modelCatalog: manifest.modelCatalog, displayName: manifest.displayName },
+    });
+    const engine = getEngine("zcode-cli");
+    // 两形态透明：上层拿到的是同一个 EnginePort 面；cli 实例 = W2 RemoteEngine
+    expect(portFactory).toHaveBeenCalledTimes(1);
+    expect(engine).toBe(port);
+    expect(engine).toBeInstanceOf(RemoteEngine);
+    expect(engine.id).toBe("zcode-cli");
+    // 同步成员直读 manifest 快照（W2 形态映射经 registry descriptor 快照成立）
+    expect(engine.capabilities()).toBe(manifest.capabilities);
+  });
+
+  it("cli descriptor 惰性单例：portFactory 首次取用才执行，重复 getEngine 同实例", () => {
+    const manifest = makeManifestSnapshot();
+    const portFactory = vi.fn(() => makeRemoteEngine("lazy", manifest) as EnginePort);
+    registerEngineDescriptor("lazy", {
+      kind: "cli",
+      command: process.execPath,
+      args: [],
+      capabilities: manifest.capabilities,
+      portFactory,
+    });
+    // 注册本身不触发 portFactory（descriptor 首次使用才解析——§3.5.3 代理形态）
+    expect(portFactory).not.toHaveBeenCalled();
+    expect(hasEngine("lazy")).toBe(true);
+    const a = getEngine("lazy");
+    const b = getEngine("lazy");
+    expect(a).toBe(b);
+    expect(portFactory).toHaveBeenCalledTimes(1);
+  });
+
+  it("cli descriptor 覆盖同 id：旧单例 dispose 触发 + 新 portFactory 重建（与 inproc 覆盖同语义）", () => {
+    const manifest = makeManifestSnapshot();
+    const dispose = vi.fn(() => Promise.resolve());
+    const oldPort = makeRemoteEngine("overwrite", manifest);
+    (oldPort as unknown as { dispose: typeof dispose }).dispose = dispose;
+    registerEngineDescriptor("overwrite", {
+      kind: "cli",
+      command: process.execPath,
+      args: [],
+      capabilities: manifest.capabilities,
+      portFactory: () => oldPort as EnginePort,
+    });
+    getEngine("overwrite");
+    const newPort = makeRemoteEngine("overwrite", manifest);
+    registerEngineDescriptor("overwrite", {
+      kind: "cli",
+      command: process.execPath,
+      args: [],
+      capabilities: manifest.capabilities,
+      portFactory: () => newPort as EnginePort,
+    });
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(getEngine("overwrite")).toBe(newPort);
+  });
+});
+
+describe("D4：displayName 稳定序与首个可用引擎（W3）", () => {
+  beforeEach(() => {
+    clearEngines();
+  });
+
+  it("listEnginesByDisplayName：displayName 排序（码点序），缺省 = id，displayName 相同按 id 决胜", () => {
+    // 注册序故意与 displayName 序不同——排序键是 manifest displayName 而非注册序
+    registerEngineDescriptor("beta", {
+      kind: "cli",
+      command: process.execPath,
+      args: [],
+      capabilities: makeManifestSnapshot("Zulu").capabilities,
+      portFactory: () => makeFakeEngine("beta"),
+      manifest: { displayName: "Zulu" },
+    });
+    registerEngine("alpha", () => makeFakeEngine("alpha")); // inproc 无 manifest → displayName = id
+    registerEngineDescriptor("gamma", {
+      kind: "cli",
+      command: process.execPath,
+      args: [],
+      capabilities: makeManifestSnapshot().capabilities,
+      portFactory: () => makeFakeEngine("gamma"),
+      // 无 displayName → 缺省 = id
+    });
+    registerEngineDescriptor("delta", {
+      kind: "cli",
+      command: process.execPath,
+      args: [],
+      capabilities: makeManifestSnapshot("Zulu").capabilities,
+      portFactory: () => makeFakeEngine("delta"),
+      manifest: { displayName: "Zulu" },
+    });
+    // 码点序：'Z'(0x5A) < 'a'(0x61) —— displayName "Zulu" 组（beta/delta，组内按 id
+    // 决胜 beta < delta）排在 "alpha"/"gamma" 之前
+    expect(listEnginesByDisplayName()).toEqual(["beta", "delta", "alpha", "gamma"]);
+  });
+
+  it("firstAvailableEngineId：清单第一项；空注册表 undefined（调用方转 engine_not_found）", () => {
+    expect(firstAvailableEngineId()).toBeUndefined();
+    registerEngineDescriptor("zcode", {
+      kind: "cli",
+      command: process.execPath,
+      args: [],
+      capabilities: makeManifestSnapshot("ZCode").capabilities,
+      portFactory: () => makeFakeEngine("zcode"),
+      manifest: { displayName: "ZCode" },
+    });
+    registerEngine("pi", () => makeFakeEngine("pi"));
+    // 码点序："ZCode"(Z=0x5A) < "pi"(p=0x70)——displayName 序与 id 序不同向正是本用例点
+    expect(firstAvailableEngineId()).toBe("zcode");
+  });
+});
+
+describe("engine_not_found 空清单文案（W3 D4：未发现任何引擎包）", () => {
+  it("registered 为空：文案含「No engine packages were discovered」+ 安装指引", () => {
+    const err = new EngineNotFoundError("pi", []);
+    expect(err.code).toBe("engine_not_found");
+    expect(err.message).toContain("No engine packages were discovered");
+    expect(err.message).toContain("XYZ_AGENT_ENGINE_ROOTS");
+    expect(err.message).toContain("(none)");
+  });
+
+  it("registered 非空：维持既有恢复指引（frontmatter / 默认引擎设置修 typo）", () => {
+    const err = new EngineNotFoundError("ghost", ["pi", "zcode"]);
+    expect(err.message).toContain("frontmatter");
+    expect(err.message).not.toContain("No engine packages were discovered");
   });
 });

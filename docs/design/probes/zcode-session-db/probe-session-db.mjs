@@ -1,7 +1,7 @@
 // 探针：验证 ZCODE_SESSION_DB_PATH 是否能把 app-server 的会话库隔离到别处
 // （不污染宿主 ~/.zcode/cli/db/db.sqlite）。只做 session/create + close，不发 prompt。
 import { spawn } from "node:child_process";
-import { mkdirSync, existsSync, rmSync } from "node:fs";
+import { mkdirSync, existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";

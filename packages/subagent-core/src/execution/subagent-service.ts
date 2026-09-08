@@ -43,7 +43,12 @@ import { PI_POOL_KEY } from "./engine/engines/pi/pi-engine.ts";
 import type { ChatRoundTicket, PiEngineService } from "./engine/engines/pi/pi-engine.ts";
 import type { EnginePort, RunContext } from "./engine/port.ts";
 import { DEFAULT_ENGINE_ID, getEngine, listEngines } from "./engine/registry.ts";
-import { validateModelForEngine, withCrossEngineHint } from "./engine/model-validation.ts";
+import {
+  joinEngineModelRef,
+  splitEngineModelRef,
+  validateModelForEngine,
+  withCrossEngineHint,
+} from "./engine/model-validation.ts";
 import { type EngineRouteResult, routeEngineForHost } from "./engine/routing.ts";
 import type { AgentOutcome } from "./engine/types.ts";
 import { ManifestStore } from "./manifest-store.ts";
@@ -1179,7 +1184,9 @@ export class SubagentService {
     // 收敛于此）；本调用点只装配三层输入与注入件。时机：路由（含 probe）在 record
     // 创建前完成——兜底时 record 按 pi 语义创建 + engineFallback 留痕（D5 字节级守护
     // 只约束「无 fallback 的纯缺省路径」）；守卫命中/strict 时在此 throw，不产生孤儿
-    // record。pi 请求路径同步短路（routed 非 Promise，零微任务——缺省路径时序不变）。
+    // record。pi 请求路径同步短路（routed 非 Promise，零微任务——首个 await 前完成
+    // 路由决策；执行经进程边界，「run 内首个 await 前已触达 executeAndAwait」的旧
+    // 时序契约由引擎协议化设计 §3.5.3 作废放宽）。
     // [u-h2 D2-1] 路由先行于 pi 链 model 解析：agentConfig 是路由第二层输入（frontmatter
     // engine）已前置解析；pi 的 resolveModel 移到路由之后、按目标引擎分支执行——非 pi
     // 请求不被 pi registry 解析错误拦截（F2-A/B 时序根因），model 校验归目标引擎（D2-2）。
@@ -1394,15 +1401,15 @@ export class SubagentService {
 
     // 重建 resolved：runSpawn 内 resume.model/thinkingLevel 优先（覆盖 resolved），
     // resolved.model.id 仅在 runSpawn 内被读（resume 短路时不报错）。从 record.model
-    // （createRecordForMode 写入的 "provider/id" 格式）解析 provider/id 构造最小 ModelInfo。
-    const slashIdx = record.model.indexOf("/");
-    const provider = slashIdx >= 0 ? record.model.slice(0, slashIdx) : "unknown";
-    const modelId = slashIdx >= 0 ? record.model.slice(slashIdx + 1) : record.model;
+    // （createRecordForMode 写入的 "provider/id" 或无斜杠 ref——契约变更④）拆分构造
+    // 最小 ModelInfo；拆分与写入侧同源（splitEngineModelRef）：无斜杠 ref 的 provider
+    // 为空串（旧行为 "unknown" 会给续轮注入虚构 provider），整串进 name。
+    const model = splitEngineModelRef(record.model);
     const identity: ResolvedIdentity = {
       agent: record.agent,
       agentConfig: undefined,
       resolved: {
-        model: { id: modelId, name: record.model, provider, reasoning: false },
+        model: { id: model.id, name: model.name, provider: model.provider, reasoning: false },
         thinkingLevel: record.thinkingLevel,
       },
     };
@@ -1911,19 +1918,21 @@ export class SubagentService {
     opts: ExecuteOptions,
   ): ResolvedIdentity {
     const canonical = validateModelForEngine(engine, engineModel);
-    // record.model 留痕：canonical（引擎裁决全名，含短名→缺省 provider 归一化）；
-    // 引擎未实现校验面且无显式 model 时为空串（记录形态退化，生产不可达——注册表
-    // 内非 pi 引擎均实现 validateModel；防御性拼接避免 throw 打断兜底语义）。
+    // record.model 留痕：canonical（引擎裁决 ref，允许无斜杠形态——契约变更④，协议化
+    // 后引擎可原样返回 ref）；引擎未实现校验面且无显式 model 时为空串（记录形态退化，
+    // 生产不可达——注册表内非 pi 引擎均实现 validateModel；防御性空串避免 throw 打断
+    // 兜底语义）。拆分单一权威 = splitEngineModelRef（无斜杠 → provider=""/id=ref/
+    // 整串进 name，不再落 "<ref>/" 畸形）。
     const modelStr = canonical ?? engineModel ?? "";
-    const slashIdx = modelStr.indexOf("/");
+    const model = splitEngineModelRef(modelStr);
     return {
       agent,
       agentConfig,
       resolved: {
         model: {
-          id: slashIdx > 0 ? modelStr.slice(slashIdx + 1) : "",
-          name: modelStr,
-          provider: slashIdx > 0 ? modelStr.slice(0, slashIdx) : modelStr,
+          id: model.id,
+          name: model.name,
+          provider: model.provider,
           reasoning: false,
         },
         thinkingLevel: opts.thinkingLevel ?? agentConfig?.thinkingLevel,
@@ -1953,7 +1962,10 @@ export class SubagentService {
 
     const record = createRecord(id, {
       agent: identity.agent,
-      model: `${identity.resolved.model.provider}/${identity.resolved.model.id}`,
+      // model 留痕词形与拆分同源（joinEngineModelRef）：provider 为空串只写 id——
+      // 契约变更④的无斜杠 ref（provider=""/id=ref）不得落成 "/ref" 或 "ref/" 畸形；
+      // 续聊回读侧 splitEngineModelRef 对无斜杠串还原 provider=""/id=ref，往返自洽。
+      model: joinEngineModelRef(identity.resolved.model),
       thinkingLevel: identity.resolved.thinkingLevel,
       mode,
       task: opts.task,
@@ -2007,6 +2019,12 @@ export class SubagentService {
     // 创建前（engine.capabilities() 同步可得）——承接「全部同步拒绝发生在 record
     // 创建前、不产生孤儿 record」不变量（其后的 kickOffEngineRun 是 fire-and-forget，
     // 检查若只落在 engine.run 内则拒绝异步化为「派发成功 + 静默失败 record」）。
+    // [W3 契约变更③补注（协议化能力位方向判定）] 同步拒只覆盖「manifest 少声明」
+    // 方向；**manifest 多声明**（声明支持而引擎实际不支持）由首个 run 的协议握手
+    // `initialize` 发现 → engine_capability_mismatch 该 run 失败 + record 标 failed，
+    // 并**清理 run 前已建的前置副作用**（worktree 经 finalizeFailed → finalizeRecord
+    // Step 3b cleanupWorktreeIfBound 清理）。非 gate 位不一致（无论强弱）一律
+    // warn 留痕不阻断（诊断面归 EngineClient，设计 §3.3 能力位段）。
     assertTaskShapeSupported(engine.id, engine.capabilities(), opts);
 
     // identity 按路由结果分支构造（[u-h2 D2-1] 路由先行）：
@@ -2721,7 +2739,13 @@ export class SubagentService {
 
   /** run() 创建期异常的收尾（H1 修复）：createAndConfigureSession 失败会抛，本方法合成 failed
    *  AgentResult → CAS 抢锁 → finalizeRecord（与正常路径同形）。返回合成 result 供 runAndFinalize
-   *  继续返回（不 re-throw，swallow 策略）。 */
+   *  继续返回（不 re-throw，swallow 策略）。
+   *  [W3 契约变更⑤（run 期失败清理前置副作用）] kickOffEngineRun 前已建的 worktree
+   *  （executeViaEngine 创建点，record.worktreeHandle 已绑定）经本方法 → finalizeRecord
+   *  → doFinalizeRecord Step 3b cleanupWorktreeIfBound 清理（manifest 多声明 run 期
+   *  失败 / engine.run prepare 期 reject 共用本收尾链）；CAS 没抢锁（cancel 抢先终态）
+   *  时由 cancelBackground 的 worktree cleanup 覆盖。唯一前置副作用 = worktree（并发
+   *  池槽 acquire/release 在 kickOffEngineRun finally 内自回收，journal 是宿主数据不清理）。 */
   private async finalizeFailed(record: ExecutionRecord, err: unknown): Promise<AgentResult> {
     const errMsg = toErrorMessage(err);
     // durationMs 用真实耗时（startedAt → now），避免失败统计恒为 0 失真。

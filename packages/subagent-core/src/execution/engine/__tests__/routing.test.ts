@@ -54,6 +54,8 @@ function makeRoute(overrides?: {
   taskModel?: string;
   /** 额外注册第三引擎（probe ok）——fallback 目标为「非 pi 的其他全局默认」用例。 */
   globalEngine?: string;
+  /** D4 可用清单覆盖（缺省 = 注册表插入序 pi 优先；displayName 序由注册方负责）。 */
+  available?: string[];
 }) {
   const engines = new Map<string, EnginePort>();
   engines.set(DEFAULT_ENGINE_ID, makeFakeEngine("pi", true));
@@ -77,6 +79,7 @@ function makeRoute(overrides?: {
     },
     hasEngineFn: (id) => engines.has(id),
     listEnginesFn: () => [...engines.keys()],
+    listAvailableEnginesFn: () => overrides?.available ?? [...engines.keys()],
   };
   return { opts, probeCalls, engines };
 }
@@ -336,5 +339,99 @@ describe("routeEngineForHost：宿主统一路由（D3-②）", () => {
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toContain("engine_not_found");
     expect((err as EngineNotFoundError).registered).toContain("pi");
+  });
+});
+
+// ============================================================
+// [W3] D4 缺省引擎回落链 + fallback 目标「首个可用引擎」（impl-plan §2.3）
+// ============================================================
+
+describe("D4 缺省引擎回落链（default 层宽容 / call/frontmatter 层显式报错）", () => {
+  it("defaultEngine 指向未注册 id（已卸载）：warn + 回落首个可用 + engineFallback 留痕（A12④）", async () => {
+    const { opts } = makeRoute({
+      routing: { globalDefaultEngine: "ghost-engine" },
+      available: ["pi", "zcode"],
+    });
+    const result = await routeEngine(opts);
+    expect(result.engineId).toBe("pi"); // 首个可用（displayName 序第一）
+    expect(result.requestedEngineId).toBe("ghost-engine");
+    expect(result.engineFallback).toEqual({ from: "ghost-engine", reason: "engine_not_found" });
+    expect(result.source).toBe("default");
+  });
+
+  it("default 层回落不探（目标引擎不可用由 run 期显式失败，probe 已失败一次不重复）", async () => {
+    const { opts, probeCalls } = makeRoute({
+      routing: { globalDefaultEngine: "ghost-engine" },
+      available: ["pi", "zcode"],
+    });
+    await routeEngine(opts);
+    expect(probeCalls).toEqual([]);
+  });
+
+  it("全不可用（清单空）：engine_not_found + 「未发现任何引擎包」+ 安装指引（D4）", async () => {
+    const { opts } = makeRoute({
+      routing: { globalDefaultEngine: "ghost-engine" },
+      available: [],
+    });
+    const err = await routeEngine(opts).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(EngineNotFoundError);
+    expect((err as EngineNotFoundError).message).toContain("No engine packages were discovered");
+  });
+
+  it("call 层未知 id：仍 engine_not_found 前置暴露（D4 宽容回落只作用 default 层）", async () => {
+    const { opts } = makeRoute({
+      routing: { callEngine: "ghost-engine" },
+      available: ["pi", "zcode"],
+    });
+    await expect(routeEngine(opts)).rejects.toThrowError(EngineNotFoundError);
+  });
+
+  it("frontmatter 层未知 id：同 call 层前置暴露（配置错误不静默换引擎）", async () => {
+    const { opts } = makeRoute({
+      routing: { agentEngine: "ghost-engine" },
+      available: ["pi", "zcode"],
+    });
+    await expect(routeEngine(opts)).rejects.toThrowError(EngineNotFoundError);
+  });
+});
+
+describe("fallbackTargetId「首个可用引擎」语义（W3：恒 'pi' 作废）", () => {
+  it("probe 失败兜底：全局默认不在可用清单 → 首个可用引擎（排除 from）", async () => {
+    // globalDefaultEngine='ghost'（未注册）→ 既有逻辑会 get('ghost') 炸；D4 后校验
+    // 可用性，落「首个可用引擎」
+    const { opts, engines } = makeRoute({
+      zcodeProbeOk: false,
+      globalEngine: "claude",
+      routing: { agentEngine: "zcode", globalDefaultEngine: "ghost" },
+      available: ["claude", "zcode"],
+    });
+    const result = await routeEngine(opts);
+    expect(result.engine).toBe(engines.get("claude")); // 可用清单内第一 ≠ from
+    expect(result.engineId).toBe("claude");
+  });
+
+  it("可用清单只含刚失败的引擎（from）：不原地重试，直接报 engine_probe_failed（D4 无可用不 fallback）", async () => {
+    const { opts } = makeRoute({
+      zcodeProbeOk: false,
+      routing: { agentEngine: "zcode" },
+      available: ["zcode"],
+    });
+    const err = await routeEngine(opts).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(EngineError);
+    expect((err as EngineError).code).toBe("engine_probe_failed");
+    expect((err as EngineError).message).toContain("无其他可用引擎");
+  });
+
+  it("default 层 probe 失败（defaultEngine 配了坏引擎）：首个可用引擎，不再恒回 'pi'", async () => {
+    const { opts, engines } = makeRoute({
+      zcodeProbeOk: false,
+      globalEngine: "alpha",
+      routing: { globalDefaultEngine: "zcode" },
+      available: ["alpha", "zcode"],
+    });
+    // available 无 pi：D4 语义下不再强行回 'pi'——首个可用（≠from）= alpha
+    const result = await routeEngine(opts);
+    expect(result.engine).toBe(engines.get("alpha"));
+    expect(result.engineFallback).toEqual({ from: "zcode", reason: "engine_probe_failed" });
   });
 });

@@ -16,9 +16,27 @@ import { EngineClient } from "../engine-client.ts";
 import { RemoteEngine, type RemoteEngineManifestSnapshot } from "../remote-engine.ts";
 import { SubagentStream } from "../../../stream-sink.ts";
 import { isProcessAlive } from "../pid-file.ts";
-import type { UiRequest } from "@zhushanwen/subagent-engine-sdk";
+import { getLogger, type UiRequest } from "@zhushanwen/subagent-engine-sdk";
 
 const FAKE_ENGINE = fileURLToPath(new URL("./__fixtures__/fake-engine.mjs", import.meta.url));
+
+/**
+ * 默认 manifest capabilities 基线（与 fake 引擎 initialize 应答逐位一致——gate 位
+ * 多声明判定的「一致放行」基线；多声明用例在此上单点改强）。
+ */
+const FAKE_MATCHED_CAPS = {
+  schemaEnforcement: "emulated",
+  steer: "unsupported",
+  conversation: "unsupported",
+  personaInjection: "prompt",
+  eventGranularity: "stream",
+  sandbox: "emulated",
+  sessionRead: "full",
+  resume: "cold",
+  interrupt: "kill-only",
+  permissionMode: "fixed",
+  maxTurns: false,
+} as const;
 
 /** 轮询等待（真实 timers；引擎启动/信号传播是真实 IO，fake timers 会挂死自写轮询）。 */
 async function waitForTrue(predicate: () => boolean, timeoutMs = 8_000, stepMs = 25): Promise<void> {
@@ -70,19 +88,7 @@ function makeEngine(
     dataDir,
     hostKind: "test",
     manifest: {
-      capabilities: {
-        schemaEnforcement: "emulated",
-        steer: "unsupported",
-        conversation: "unsupported",
-        personaInjection: "prompt",
-        eventGranularity: "stream",
-        sandbox: "emulated",
-        sessionRead: "full",
-        resume: "cold",
-        interrupt: "kill-only",
-        permissionMode: "fixed",
-        maxTurns: false,
-      },
+      capabilities: { ...FAKE_MATCHED_CAPS },
       modelCatalog: {
         dynamic: true,
         models: [
@@ -337,6 +343,54 @@ describe("失败分界（运行中合成 vs prepare 期 reject）", () => {
     });
     await cleanup();
   }, 20_000);
+});
+
+describe("gate 位多声明 run 期判定（W3 契约⑤接线：manifest vs initialize 应答）", () => {
+  it("多声明（manifest maxTurns true vs 引擎应答 false）→ run reject engine_capability_mismatch，run 帧未发出（无事件回显）", async () => {
+    const { engine, cleanup } = makeEngine({
+      capabilities: { ...FAKE_MATCHED_CAPS, maxTurns: true },
+    });
+    const { ctx, events } = makeCtx();
+    await expect(engine.run({ prompt: "p" }, ctx)).rejects.toMatchObject({
+      code: "engine_capability_mismatch",
+    });
+    expect(events).toHaveLength(0); // gate 拒在 run 帧发出前——引擎未收到 run
+    await cleanup();
+  });
+
+  it("多声明（manifest sandbox emulated vs 引擎实态 none）→ 拒，错误消息含方向证据（manifest 声明 vs initialize 应答）", async () => {
+    const { engine, cleanup } = makeEngine(undefined, {
+      args: [FAKE_ENGINE, "--caps-override", JSON.stringify({ sandbox: "none" })],
+    });
+    const { ctx } = makeCtx();
+    await expect(engine.run({ prompt: "p" }, ctx)).rejects.toThrowError(
+      /manifest 声明的能力位 'sandbox（worktree）'（emulated）与引擎 initialize 应答不符（none）/,
+    );
+    await cleanup();
+  });
+
+  it("一致放行：manifest 与应答逐位一致 → run 正常完成（现有 run 帧映射用例同走此路径的显式锚点）", async () => {
+    const { engine, cleanup } = makeEngine();
+    const { ctx } = makeCtx();
+    const result = await engine.run({ prompt: "p" }, ctx);
+    expect(result.outcome.content).toBe("fake-content-run-1");
+    await cleanup();
+  });
+
+  it("非 gate 位不一致（personaInjection manifest 'flag' vs 应答 'prompt'）→ 不阻断：run 完成 + 诊断面仅 warn 留痕", async () => {
+    const manifestCaps = { ...FAKE_MATCHED_CAPS, personaInjection: "flag" as const };
+    const { engine, cleanup } = makeEngine(
+      { capabilities: manifestCaps },
+      { manifestDiagnostics: { capabilities: manifestCaps } },
+    );
+    const warnSpy = vi.spyOn(getLogger("subagents"), "warn");
+    const { ctx } = makeCtx();
+    const result = await engine.run({ prompt: "p" }, ctx);
+    expect(result.outcome.content).toBe("fake-content-run-1"); // 放行
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("differ from manifest"));
+    warnSpy.mockRestore();
+    await cleanup();
+  });
 });
 
 describe("interact / read / probe / dispose 门面", () => {

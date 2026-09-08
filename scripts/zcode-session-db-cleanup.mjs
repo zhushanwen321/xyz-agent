@@ -395,7 +395,7 @@ export function executeDeletion({
       // 索引侧（先宿主后索引；失败 → 残留）
       try {
         deleteIndexRows(indexDbPath, id);
-      } catch (err) {
+      } catch {
         residue.push(id);
       }
     }
@@ -518,7 +518,6 @@ export function replayResidue({ residueFile, hostDbPath, indexDbPath }) {
   }
 
   const deleted = [];
-  const skipped = [...hits];
   for (const id of ids) {
     if (hits.has(id) || stale.includes(id)) continue;
     deleteIndexRows(indexDbPath, id);
@@ -551,7 +550,7 @@ export function parseArgs(argv) {
  * 执行形态裁决：--confirm-count 精确匹配为受控旁路；无确认参数且非 TTY → 拒绝（refuse）；
  * TTY → 交互确认（stdin 输入删除集总数）。返回值供测试注入 isTTY / stdin 断言。
  */
-export function resolveExecutionMode({ confirmCount, replayResidueFile, isTTY }) {
+export function resolveExecutionMode({ confirmCount, isTTY }) {
   const destructive = true;
   if (confirmCount !== undefined) return { mode: "confirm-count", destructive };
   if (!isTTY) return { mode: "refuse", reason: "非 TTY 且无 --confirm-count：拒绝执行删除（受控旁路 = --confirm-count <删除集总数 / 清单条数>）" };
@@ -613,7 +612,7 @@ export async function runCli({ argv = process.argv.slice(2), isTTY = process.std
     return { exitCode: 0, report: buildPlanText({ homeDir, dataDir }) };
   }
 
-  const mode = resolveExecutionMode({ confirmCount: args.confirmCount, replayResidueFile: args.replayResidue, isTTY });
+  const mode = resolveExecutionMode({ confirmCount: args.confirmCount, isTTY });
 
   if (args.replayResidue) {
     // replay：--confirm-count 必须提供且精确等于清单条数（同主路径纪律，防陈旧/篡改清单）
