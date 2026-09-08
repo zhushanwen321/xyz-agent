@@ -69,6 +69,9 @@ graph TD
 | 3 | u2 | 「savedRange 指向已删节点→caret 落末尾」用例用 Selection 桩覆盖（DOM live range 语义下无法构造悬空 range，jsdom addRange 自动重锚）；「!savedRange→仍回焦」断言改「不抛错且不应用 range」（jsdom 不支持 contenteditable activeElement） | jsdom/DOM 规范限制，注释已登记；真实链路用例（失败模式 A 回归）仍走真实 Selection | 2026-09-08 批次 1 核验 |
 | 4 | u1 | slash→text 边界按 needsBoundarySpace 既有 chip→text 规则补一个空格（如 '/compact 任务描述清理一下'） | 设计 D4-c「needsBoundarySpace 规则沿用」的直接推论 | 2026-09-08 批次 1 核验 |
 | 5 | u3 | 领地补录：packages/renderer/src/composables/panel/composition-flag.ts（新建）——composingRef 双保险逻辑从 CommandPopover.vue 提取为 composable（pre-commit vue_rules_checker：script setup 310 行超 300 上限，hook 建议方向即提取 composable；命名遵循同目录 composer-keydown.ts 惯例：文件名不带 use 前缀、导出函数带） | pre-commit 拦截正面修复；vue_rules_checker 硬限 | 2026-09-08 批次 1 commit 门 |
+| 6 | u4 | 领地内提取：slash 候选构建（panel 态 buildPanelSlashCandidates + landing 态 buildLandingSlashCandidates）从 CommandPopover.vue 搬到 command-popover-symbols.ts（script 315→289；纯搬运零行为变化，unused import 同步清理） | pre-commit vue_rules_checker 300 行硬限；u3 提取后仅余 11 行余量，u4 新增回填逻辑必超 | 2026-09-08 批次 2 commit 门 |
+| 7 | u6 | routeStaging 签名删 text 参数（staging.send 载荷改 segmentsToPrompt 后无消费点），同步唯一调用点；core 包 tsc 口径抓不到，renderer 跨包口径（TS6133）拦出 | 未使用参数清理；deviation #2 同因（cross-scope tsc 口径差异） | 2026-09-08 批次 2 commit 门 |
+| 8 | u4 | restore.ts 调 insertSkillChip 的类型缺口：ComposerInputInstance（core/types.ts，领地外）未声明该方法，局部交叉类型收窄 + ?. 调用（对齐 session/subagent 可选成员缺省容错语义）；建议一致性审查阶段评估正式落进 types.ts | 领地锁约束下的最小实现；功能不受影响 | 2026-09-08 批次 2 核验 |
 
 ## 6 状态表
 
@@ -77,9 +80,9 @@ graph TD
 | u1-foundation | committed | 1 | aab8b4433；shared vitest 331 passed（segments.test 新增 slash 段/serializer/归位断言）；tsc 穷尽守卫 exit 0 |
 | u2-domcore-insertion | committed | 1 | dadb65c39；dom-core vitest 215 passed + ui 585 passed；chip-commands.ts diff 核验纯注释 |
 | u3-keyroute | committed | 2 | commit 待补（打回修 script 超行，轮次 2）；renderer keydown+landing 增量 36 passed 0 fail + ui 585 + renderer 包级 4071 passed（dev 自报，主验增量） |
-| u4-skill-route | pending | 0 | |
+| u4-skill-route | committed | 2 | 8a269dcea；skill-trigger 13 + landing + restore 14 绿，包级 4074；script 315→289（轮 2 提取候选构建到 symbols，偏差 #6） |
 | u5-slash-dom | pending | 0 | |
-| u6-send-migration | pending | 0 | |
+| u6-send-migration | committed | 2 | 见 u6 commit；core 1781 passed + 双口径 vue-tsc 绿（轮 2 清 routeStaging 未用参数，偏差 #7） |
 
 ## 7 残留风险与变更历史
 
@@ -95,4 +98,5 @@ graph TD
 
 **变更历史**：
 - 2026-09-08：初版（6 单元 DAG，源自设计 §5 P1-P5 拆分；P5 测试分摊进各单元）。
-- 2026-09-08：批次 1 完成（u1 aab8b4433 / u2 dadb65c39 / u3 本 commit）；偏差登记 #1-#4；u3 领地补录 landing 测试文件。
+- 2026-09-08：批次 1 完成（u1 aab8b4433 / u2 dadb65c39 / u3 16204a7c9 轮 2）；偏差登记 #1-#5；u3 领地补录 landing 测试文件。
+- 2026-09-08：批次 2 完成（u4 8a269dcea 轮 2 / u6 本 commit 轮 2）；偏差登记 #6-#8；u4 领地补录 landing 测试；vue_rules_checker 全工作区口径导致 u6 commit 被 u4 在途超行连坐——编排顺序改为串行 commit。
