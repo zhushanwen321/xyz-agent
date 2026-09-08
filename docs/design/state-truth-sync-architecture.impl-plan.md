@@ -182,7 +182,7 @@ worktree 决策：全部 plain。唯一热点公共文件 session-lifecycle.ts�
 | U7b | in-progress | 1 | 派发中（4 处迁移 + core package.json exports +1 行——主 agent 已裁决领地扩展） |
 | U7c | pending | 0 | —（等 U7b exports 落地后派发） |
 | U8 | committed | 1 | 85bdde0eb（配额中断后半成品经全量核验收口：core 120f/1935t 绿、签名逐字不变、消费方零 diff、净删 86 行） |
-| U9 | in-progress | 1 | 派发中（与 U7b 领地互斥并行） |
+| U9 | committed | 1 | 7dbd88873（FR-15 净删 146 行；惰性清除 +1 回归测试；2 领地扩展：mutation 契约 stale 条目 + ADR 豁免镜像行；反向 grep 生产零命中；处置表四族覆盖确认） |
 
 ## 7 残留风险与变更历史
 
