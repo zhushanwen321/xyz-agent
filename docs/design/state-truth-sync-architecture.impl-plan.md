@@ -149,19 +149,29 @@ worktree 决策：全部 plain。唯一热点公共文件 session-lifecycle.ts�
 | # | 偏差 | 来源单元 | 理由 | 状态 |
 |---|------|---------|------|------|
 | 1 | in-flight 迁移面 = 7 处（core 1 + renderer 6），runtime 5 处不迁移 | 计划期裁决 | 形态偏异 + 设计承诺面 6+；登记后续候选 | 已裁决 |
+| 2 | 约束 id 裁决为 C-data-17 / C-pi-14 / C-state-11（非 C-rl-* 族） | U0 | render-constraints.mjs id 正则仅认八族，C-rl 会被 exit 2 拒绝 | 已裁决 |
+| 3 | 契约测试谓词限定 session 配置状态/model/preset 三域；config 设置面板域 30+ set*/toggle* 显式排除（ADR §四范围边界） | U5 | config 域是 ack+广播推回形态，无乐观写模式，不在 D8「显示≡生效」事故面；扩域 = 扩谓词显式决策 | 已裁决 |
+| 4 | 6 个现存 mutation 归豁免清单（preset.setDefault/delete/recordUsage/setCwdDefault + session.rename/setProject），不补生效值字段 | U5 | U5 边界禁改 runtime 行为；rename/setProject 权威覆盖由 broadcastSessionList 全量广播承担；豁免理由逐条在 ADR §三与测试 rationale | 已裁决 |
+| 5 | preset.create/update reply 回显请求值（W-TR-1 取消二次读的历史决策），非读回生效值 | U5 | ADR 已知近似登记；消费方 preset.list 重拉兜底；升级需改 runtime 行为超出 U5 边界 | 已登记 ADR |
+| 6 | thinkingLevel 输出定为 value 域（memory/最高档经 thinkingLevelMap 转换，explicit/preset 原样） | U1 | 避免 value 转换散回消费方重新引入多解析点（D1 单源原则） | 已裁决 |
+| 7 | cwd 预填档 provenance 标 lastUsed（五值枚举无 recent 标签） | U1 | 预填语义 = 最近使用目录的延续，与 model 链 lastUsed 同义 | 已裁决 |
+| 8 | 额外导出 createLaunchConfigView（响应式机制载体）/ launchFieldEquals（@internal 测试锚定） | U1 | P5① 响应式断言需要机制载体；数组比对语义需要测试锚点 | 已裁决 |
+| 9 | L2 比对抽为 launch-params.ts 导出纯函数 warnLaunchEffectiveMismatch，readBackCreateState 单行消费 | U3 | 设计只规定行为未规定形态；纯函数使单测落领地内，零行为差异 | 已裁决 |
+| 10 | L2 mismatch 判定补默认：读回侧字段 undefined 时不判 mismatch（两侧皆有值且不等才记） | U3 | 读回缺失是 get_state 契约问题，不塞进「请求 vs 生效」warn | 已裁决 |
+| 11 | P3 实测超出二选一：pi 把未知 model id 当 custom model 发上游，turn 级 stopReason=error + errorMessage（非静默换模非 create 报错） | U1 | 实测事实；错误可见可操作 → 不增补 U3 create 前校验（最小化原则）；死 provider 走既有 spawn 失败路径 | 已裁决（残留风险 #2 消解） |
 
 ## 6 状态表
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|------|------|----------|
 | U0 | committed | 1 | bff8d0ef8（94 条，id 裁决 C-data-17/C-pi-14/C-state-11，C-rl 族被 render 脚本正则拒绝） |
-| U1 | pending | 0 | — |
+| U1 | committed | 1 | fce03ec13（49 用例；P3 结论：pi 不静默换模，turn 级报错可见，U3 无需增补校验——残留风险 #2 已消解） |
 | U2a | pending | 0 | — |
 | U2b | pending | 0 | — |
 | U2c | pending | 0 | — |
-| U3 | pending | 0 | — |
+| U3 | committed | 1 | 63d861ca1（32 用例；P2 等价成立，D3 透传前提通过，不触发 E8——残留风险 #1 已消解） |
 | U4 | pending | 0 | — |
-| U5 | pending | 0 | — |
+| U5 | committed | 1 | 8fce84d1f（ADR-0065 + 18 项清单 + 6 豁免；C-pi-14 authority 补登） |
 | U6 | pending | 0 | — |
 | U7a | pending | 0 | — |
 | U7b | pending | 0 | — |
