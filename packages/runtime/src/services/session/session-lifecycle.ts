@@ -28,7 +28,7 @@ import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import type { ILifecycleSessionOps, ISessionRegistry, ISessionRegisterDeps, IManagedSessionRecord } from './session-internal.js'
 import type { IManagedSessionView, ScannedSession } from './types.js'
-import { buildPresetClientOptions } from './launch-params.js'
+import { buildPresetClientOptions, warnLaunchEffectiveMismatch } from './launch-params.js'
 import type { PresetClientOptions } from './launch-params.js'
 import type { PresetResolution } from '../preset-service.js'
 import type { IConfigStore } from '../ports/config.js'
@@ -93,9 +93,13 @@ interface CreateOptions {
   presetId?: string
   /** 归属 project id（D14 语义修正，2026-08-04）：创建时归属当前 activeProject；空 = 默认项目兑底。 */
   projectId?: string
-  /** Landing Model Chip 传入值，覆盖 preset.modelOverride（C-RL-6 优先级）。 */
+  /**
+   * 模型覆盖。D5 契约快照化：landing 新建路径恒传 renderer resolveLaunchConfig 解析
+   * 终值；fork/restore/agent-managed create 入口可缺省（走 `override > preset > 全局默认`
+   * fallback 链，见 resolveCreateLaunch）。覆盖 preset.modelOverride（C-RL-6 优先级）。
+   */
   modelOverride?: string
-  /** Landing Thinking Chip 传入值，覆盖 preset.thinkingLevel（C-RL-6 优先级）。 */
+  /** thinkingLevel 覆盖，语义同 modelOverride（覆盖 preset.thinkingLevel，C-RL-6 优先级）。 */
   thinkingOverride?: string
   /** 发起来源：'user' | 'agent'。agent-managed session 标记。 */
   spawnSource?: 'user' | 'agent'
@@ -387,8 +391,12 @@ export class SessionLifecycle implements ISessionRegistry {
     })
 
     // 从 pi 获取真实 session ID + U2: 顺带读回生效 model+thinkingLevel（D2 设计）。
-    // （getState / piSessionId 空值门禁 / 失败 safeDestroy 清理细节见 readBackCreateState。）
-    const { piSessionId: id, sessionFilePath, createMetaOverride } = await this.readBackCreateState(client, tempId)
+    // （getState / piSessionId 空值门禁 / 失败 safeDestroy 清理细节见 readBackCreateState；
+    // L2 对账探针以 create 入参 override 为 requested 侧，见 readBackCreateState docstring。）
+    const { piSessionId: id, sessionFilePath, createMetaOverride } = await this.readBackCreateState(client, tempId, {
+      model: options?.modelOverride,
+      thinkingLevel: options?.thinkingOverride,
+    })
 
     // 用 pi 的真实 ID 替换临时 ID
     if (id !== tempId) {
@@ -429,6 +437,13 @@ export class SessionLifecycle implements ISessionRegistry {
    * Preset 解析（设计文档 §5/§8.1）：presetId 存在时委托 PresetService.resolve，
    * 返回 PresetResolution 供 options 映射；undefined（presetService 未注入/preset 被删）
    * 时 fallback 现有 svc.getExtensionPaths/getSkillPaths 逻辑。
+   *
+   * D5 契约快照化：options.modelOverride/thinkingOverride 在 landing 新建路径恒为
+   * renderer resolveLaunchConfig 的解析终值（透传即生效，preset 同名字段档不可达）；
+   * 本函数的 `override > preset > 全局默认` fallback 链保留，服务不经 landing 解析层的
+   * 入口（fork/restore/agent-managed create——session-manager-handler.ts 的 create，
+   * override 可缺省）。分层不变：renderer 管用户可见配置选择（model/thinking/presetId），
+   * runtime 管 preset 内部展开（tools/extensions/skills/noSkills）。
    */
   private async resolveCreateLaunch(
     sessionCwd: string,
@@ -451,17 +466,28 @@ export class SessionLifecycle implements ISessionRegistry {
   }
 
   /**
-   * create 的 get_state 读回段：真实 session ID + session 文件路径 + U2 生效值播种。
+   * create 的 get_state 读回段：真实 session ID + session 文件路径 + U2 生效值播种
+   * + L2 对账探针。
    *
    * U2: 从同一 get_state 读回 pi 生效 model + thinkingLevel，通过 metaOverride 播种。
    * create 路径：pattern 引擎可能静默换模，读回值是真值（而非请求值）。
    * 解析与 restore 播种共用 readEffectiveModelFromState（restore-seeding）。
    *
+   * L2 对账探针（D7/E6）：requested = create 入参 override（有传才比，undefined 跳过
+   * 该字段——agent-managed create 不传 override 即无对账面），与读回生效值不一致时
+   * warn 单行（≤1 行/create，readBackCreateState 每 create 恰一次）——landing create 与
+   * agent-managed create 共用本段，比对逻辑统一无入口区分。不设断言不抛错（pi 钳制/
+   * 静默换模是合法行为，漂移只做可观测）。
+   *
    * 两条失败分支都在本段收口（与提取前同序）：getState 抛错 → safeDestroy(tempId) +
    * 「Failed to get session state from pi」；pi 无 session id → safeDestroy(tempId) +
    * 「pi did not return a session ID」。
    */
-  private async readBackCreateState(client: IPiEngine, tempId: string): Promise<{
+  private async readBackCreateState(
+    client: IPiEngine,
+    tempId: string,
+    requested?: { model?: string; thinkingLevel?: string },
+  ): Promise<{
     piSessionId: string
     sessionFilePath: string | undefined
     createMetaOverride: EffectiveMetaOverride | undefined
@@ -474,6 +500,7 @@ export class SessionLifecycle implements ISessionRegistry {
       piSessionId = (stateData?.sessionId as string) ?? ''
       sessionFilePath = stateData?.sessionFile as string | undefined
       const readback = readEffectiveModelFromState(stateData)
+      warnLaunchEffectiveMismatch(requested ?? {}, readback)
       if (readback.modelId || readback.thinkingLevel) {
         createMetaOverride = {
           modelId: readback.modelId,
