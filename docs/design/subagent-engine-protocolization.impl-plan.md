@@ -383,7 +383,7 @@ graph TD
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|------|------|----------|
 | W1 协议定义 + SDK 骨架（u-foundation） | committed | 1 | commit 见 git log `feat(subagent-engine-sdk)`；test_evidence = SDK 50/50 测试 + typecheck exit 0 + build 63 产物（CJS/ESM）+ 边界守卫 58 文件 0 violations + eslint --max-warnings 0 |
-| W2 协议客户端 | pending | — | — |
+| W2 协议客户端 | committed | 1 | commit 见 git log `feat(subagent-core): W2 EngineClient protocol client`；test_evidence = client 目录 51 passed（fake-engine fixture：超时域二分/ack 不判死/崩溃重建退避/组杀连带 grandchild/pidfile 三条件矩阵）+ core 全量 3438 passed + typecheck/eslint 零 |
 | W3 注册表与路由 | pending | — | — |
 | W4 发现器 | pending | — | — |
 | W5 zcode 外移 | pending | — | — |
