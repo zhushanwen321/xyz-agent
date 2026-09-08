@@ -66,7 +66,7 @@ graph TD
 |------|------|------|----------|
 | U1 | pending | 0 | — |
 | U2 | pending | 0 | — |
-| U3 | pending | 0 | — |
+| U3 | committed | 1 | ea93e5214；58 files / 590 tests passed（Block.test.ts +6 用例） |
 | U4 | pending | 0 | — |
 
 ## 7 残留风险与变更历史
@@ -74,3 +74,4 @@ graph TD
 - 残留风险：AnsiText 高频重渲染成本（设计 §9.3，S5 实测；降级路径 = U3 局部节流）。
 - 变更历史：
   - v1：初版（U1-U4 拆分 + 并行 DAG + 测试策略）。
+  - v2：U3 committed（ea93e5214，轮次 1 一次通过；基线 hash 同步修正为 amend 后的 21f269b0d）。
