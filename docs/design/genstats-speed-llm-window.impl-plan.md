@@ -60,7 +60,7 @@ wave 1：u1 ∥ u2 ∥ u3（领地两两不相交）；wave 1.5：u5（u1 落地
 | 2 | u4 同域顺带同步 5 处（超 impl-plan 所列四项）：§3.1 终态示例速度公式说明 / §3.2 方案 A 风险列 duration 措辞 / D1 证据行号刷新 / D2 被否谱系补一条 [HISTORICAL 被否推论] / §5 待验证检查点 D2 探针闭合 | 合理（C-proc-10 涟漪面纪律：同类旧口径表述一并修，防残留） | git diff composer-gen-stats.md 各 hunk |
 | 3 | u4 [HISTORICAL] 引文式保留 2 处旧口径字面（D2 口径演变段 / 5a 场景括号注）——保留是为记录口径演变史，非残留 | 合理（[HISTORICAL] 标记不可删纪律的同向适用） | composer-gen-stats.md D2 [HISTORICAL] 段 / §4 5a |
 | 4 | u5 计划外新增单元：u1 落地后 gen-stats-service.test.ts 两条旧墙钟断言必然冲突，定向修复而非绕过 | 合理（一致性审查 reasonable #1：涟漪必然性 + 定向修复纪律） | commit f8c9052b9 |
-| 5 | u1 settleLlmWindowOnMessageEnd 防御性 payload 提取（entry.message.role 逐层守卫，严于 D6 形态描述但不改行为） | 合理（一致性审查 reasonable #2：防御更深且行为等价） | event-interpreter.ts:813-818 |
+| 5 | u1 settleLlmWindowOnMessageEnd 防御性 payload 提取（entry.message.role 逐层守卫，严于 D6 形态描述但不改行为） | 合理（一致性审查 reasonable #2：防御更深且行为等价） | event-interpreter.ts:816-823（settleLlmWindowOnMessageEnd） |
 | 6 | u3 GS-5 口径注按「精神延续」改写（与设计 D1 逐字对齐，非字面照搬原登记） | 合理（一致性审查 reasonable #4：与新口径逐字对齐） | gen-stats-service.ts:111-113 |
 | 7 | 设计 U4「随 U1 同 commit」实际独立 commit（u3 = 673da2b98）——impl-plan 拆分优先于设计拆分建议 | 合理（impl-plan 为执行权威，独立 commit 粒度更清晰） | git log 673da2b98 |
 
@@ -71,7 +71,7 @@ wave 1：u1 ∥ u2 ∥ u3（领地两两不相交）；wave 1.5：u5（u1 落地
 | u1-interpreter | committed | 3 | R1 实现 + R3 测试，commit 427abd30e（19/19 绿；2 条旧语义用例外移 u5） |
 | u2-pi-probe | committed | 2 | commit bb73e1f91（11/11 绿，diff +102 ⊆ 领地） |
 | u3-comment-sync | committed | 1 | commit 673da2b98（typecheck 绿，diff ⊆ 领地） |
-| u4-doc-sync | committed | 1 | 接替重派当轮完成（sa-b6569b50）：13 处替换 65 行 +/-，旧口径字面零残留、新关键词 6 处命中、file:line 引用经主 agent 逐一核对实装；偏差 3 条入 §5 登记表 |
+| u4-doc-sync | committed | 1 | 接替重派当轮完成（sa-b6569b50）：13 处替换 63 行 +/-（41+/22-，git numstat 实测），旧口径字面零残留、新关键词 6 处命中、file:line 引用经主 agent 逐一核对实装；偏差 3 条入 §5 登记表 |
 | u5-fix-stale-tests（新增） | committed | 1 | commit f8c9052b9（51/51 绿，diff ⊆ 领地；一致性审查补登记入 §2/§3） |
 | Gate A（阶段 5） | passed | 3 次独立运行 | 主 agent 预跑 + R1 审查者复跑 + 测试⑧修复后终跑（210cfcd90 时点，JUnit 逐用例核对）：均 5099+/5100 绿，唯一 failure 恒为 thinking-level-effective-e2e G5（环境性：get_available_models 清单无 reasoning:false 模型；该测试文件与变更区间零交集，最后改动 f482e73b0 在基线前）——G5 环境性 failure 已登记 §7（待用户签认） |
 | Gate B（阶段 5） | passed | S1-S5 全 pass | dev app + 真实模型（xiaomi-token-plan-cn/mimo-v2.5-pro，AGENTS.md 实测模型纪律）+ CDP 驱动，2026-09-09 执行。逐场景证据见 §7 Gate B 条目；S2 核心断言：62s 墙钟工具 turn 落盘两条迭代级 LLM 窗口样本（1204ms/762ms），sleep 60 零进分母 |
@@ -81,6 +81,8 @@ wave 1：u1 ∥ u2 ∥ u3（领地两两不相交）；wave 1.5：u5（u1 落地
 - 残留风险（①②已关闭）：①D1 乐观偏差已 Gate B S1 实测锚定（显示值与流出感知一致，未触发重审条件）；长期重审触发条件保留：用户反馈显示值系统性高于体感时重开口径（见设计 §3.3 D1）；②真实场景验收 S1-S5 已于 Gate B 执行完毕（全 pass，证据见下方 2026-09-09 条目）。
 - 残留风险（新增登记）：thinking-level-effective-e2e G5 环境性 failure（get_available_models 清单无 reasoning:false 模型所致；该测试文件与本次变更区间零交集，最后改动 f482e73b0 在基线 cf64d95a3 之前）。状态：待用户签认。
 - 2026-09-09：Gate B 端到端验收（S1-S5 全 pass，dev app + 真实模型 mimo-v2.5-pro + CDP 驱动，样本落盘 `~/.xyz-agent-dev/gen-stats/speed/`）。逐场景证据：**S1** 纯对话落盘 [70, 2934ms]=23.9 t/s，与 UI 24 t/s 一致，量级 = 该模型已知流式速度区间（G1）；**S2（核心）** `sleep 60` 工具 turn 墙钟 62s，落盘两条迭代级样本 [77, 1204ms]=64.0 t/s + [24, 762ms]=31.5 t/s，UI current 31 t/s=末条——工具分钟数零进分母（G1/G2）；**S3** hover 浮层四值齐全（本次 31/今日 35/7 天 41/30 天 41），口径说明「按单次 LLM 请求耗时计算，不含工具执行时间」成为真实陈述，今日均值较旧口径基线（9 t/s）上修（G2）；**S4** 流式中断经停止按钮（与 Esc 同一 runtime abort RPC 链路，CDP 键盘事件无法送达中断链路，4 次验证后改等价动作——验收操作层限制，非产品缺陷）：日志链 prompt→agent_start→message_end→abort→message_end→turn_end→agent_end 证实中断生效；中断 turn EMPTY usage 不产样本（D2 门槛），无崩溃、无 ≈0ms 畸形值、无 0 t/s current，下个正常 turn 落盘 [42, 1410ms]=29.8 t/s 正常刷新（G3）；**S5** 重启前 UI 四值（30/28/39/39）与落盘 5 条手算聚合（28.11/39.38）一致；重启后切回 session 四值（26/37/37/37）与落盘 6 条手算聚合（26.085/36.625）一致——差异纯由基线抓取后新样本落盘解释，恢复腿零损失（G3）。附加证据：GLM sleep turn（Esc 后 pi 侧继续跑完的观察窗）落盘 [180, 2622ms]——61s 墙钟只记 2.6s LLM 窗口；长流式散文 turn [1558, 56680ms]=27.5 t/s 健康。**确认事实**：pi agent-session.js:484-494 实证 turn_end 每工具迭代发射一次（`_turnIndex++`），带工具 turn 天然产多条样本且 turn-usage tokens 为迭代增量——迭代粒度 tokens↔duration 1:1 配对成立，设计 P4 的「末窗口 × 全 turn tokens」担忧不发生（单测矩阵的「正常行」按迭代序列应用，重锚清除不变量保证迭代间无残留）。D1 乐观偏差 S1 锚定：显示值与流出感知一致（23.9 vs ~24），未触发重审条件。环境意外一次：S4 首轮 Esc 后 dev 树被外部 SIGTERM（exit 143，非 app 崩溃形态，TERM 来源无法归因），重启后恢复继续。
+- 2026-09-09：Gate A ledger（commit 996420bcf）：三次独立全量运行证据落盘，JUnit 逐用例核对，均 5099+/5100 绿，唯一 failure 环境性 G5（thinking-level-effective-e2e）。
+- 2026-09-09：design-code-sync 第 1 轮（commit e56652c08）：双 reviewer 5 findings 全修——onGenStats JSDoc 旧口径、「真缺闭/缺起」扩写、设计 §2.2 快照声明、impl-plan 残留风险①②关闭 + G5 登记、composer-gen-stats 两处前瞻表述闭合；聚焦复审 cleared。
 - 2026-09-09：阶段 3 一致性审查（审查者 sa-211374d2）：映射有效、6 commit 领地全部吻合、D1-D6 机制层一致、5099/5100 全量绿（唯一 failure 环境性）。产出：reasonable 4 条（§5 #4-#7 登记）+ unreasonable 1 条 low（矩阵测试⑧补 toolResult，已修复）+ doc_errors 6 条（主 agent 当轮全修：设计 :431→:430 / D3 措辞与缺起复合行 / U4 位置描述；composer-gen-stats 事实 2 四处 stale 行号；impl-plan u5 补登记 + Gate A 行 + u3 位置描述）。
 - 2026-09-09：定向复审 R2（sa-89287fd4）：6/7 真修复；处方级预验证 3 条残留（均 low 文档级）：①事实 2「usage 透传」行号仍错（:387 为 toUsageTokens 裁剪行，完整透传实在 :403——R1 处方自身错引被照抄）②§7 reasonable 登记范围 off-by-one（#4-#6 → #4-#7）③「定向修复中」时态。三处当轮修正，机械 grep 复核：:403 引用 / #4-#7 / 「已修复」均落盘，复审者预验证处方达成 → cleared。
 - 2026-09-09：中断恢复校准——主会话冻结重启后核对：u1/u2/u3/u5 四 commit 均在 git log，u4 前任 subagent（sa-65aa4da2）session 仅完成核实阅读、领地文件零改动（git status 证实），按 pending 重算并接替重派（sa-b6569b50）。前任核实结论随证据包传递：GS-5 登记实在 adversarial-review-fixes.md（非 u4 领地），领地内旧口径集中处已逐条列明。

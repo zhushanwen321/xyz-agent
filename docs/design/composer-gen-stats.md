@@ -55,7 +55,7 @@ hover「上下文容量」出的浮层里有一行「缓存命中」，但**恒�
 
 ### 2.2 数据链路现状（物理数据流，代码事实）
 
-pi 的 usage 数据在链路上的真实路径（文件:行号均为当前 worktree 实装）：
+pi 的 usage 数据在链路上的真实路径（文件:行号均为当前 worktree 实装；行号为落笔时点快照，后续演进以引用的符号/函数名内容定位为准）：
 
 ```
 pi 子进程 (0.84.4)                runtime                                renderer
@@ -63,19 +63,19 @@ pi 子进程 (0.84.4)                runtime                                rend
 turn_start ✗不翻译（NULL_EVENTS，event-adapter.ts:1198）
 message_start{assistant}          EventAdapter         EventInterpreter
   （流首个事件到达）    ──RPC──→  'turn-start' kind    turn-start case
-                                  (event-adapter.ts:786-797)  (event-interpreter.ts:434)
+                                  (event-adapter.ts:786-797)  (event-interpreter.ts:435)
                                                         turnStartedAt = Date.now()
                                                         + 重锚清除 llmWindowDurationMs
                                                         ←【LLM 窗口起算点】
-message_end{assistant}  ──RPC──→  帧 message.message_end  case 'message'（:402）：
-  （流完成，先于工具执行）         全量下发不拦，        settleLlmWindowOnMessageEnd（:813）
+message_end{assistant}  ──RPC──→  帧 message.message_end  case 'message'（:403）：
+  （流完成，先于工具执行）         全量下发不拦，        settleLlmWindowOnMessageEnd（:816）
                                   (event-adapter.ts:901-935)  role==='assistant' 守卫 →
                                                         llmWindowDurationMs = now - turnStartedAt
                                                         ←【LLM 窗口闭合点（2026-09-08 前移至此；
                                                           原画在 turn-usage 处＝含工具时间，已废）】
 executeToolCalls（bash/编辑/子代理……分钟级，不入速度分母）
 turn_end                ──RPC──→  handleTurnEndPi      turn-usage case
-  message = AssistantMessage      (event-adapter.ts:426) (event-interpreter.ts:464)
+  message = AssistantMessage      (event-adapter.ts:426) (event-interpreter.ts:465)
   .usage {                        ↘【断链】只取 totalTokens， ├→ onContextUpdate → WS 'context.update'
     input, output,                    cacheRead / cacheWrite /  │    → useContextUsage（上下文容量显示）
     cacheRead,     ← 数据在此          output / model 全部丢弃 ↘   │
@@ -184,20 +184,20 @@ turn_end                ──RPC──→  handleTurnEndPi      turn-usage case
 ### 3.3 关键决策与权衡
 
 **D1：采集点 = runtime EventAdapter 扩展 `turn-usage` 事件（选定）**
-- **采用**：`handleTurnEndPi` 扩展产出字段 `outputTokens / cacheRead / cacheWrite / input / model / provider`（全来自 `turn_end.message`，AssistantMessage 自带）；`turn-usage` kind 在 `services/session/types.ts` 同步扩展。GenStatsService 消费位置 = EventInterpreter 的 `turn-usage` case（:325，现只调 onContextUpdate）。
+- **采用**：`handleTurnEndPi` 扩展产出字段 `outputTokens / cacheRead / cacheWrite / input / model / provider`（全来自 `turn_end.message`，AssistantMessage 自带）；`turn-usage` kind 在 `services/session/types.ts` 同步扩展。GenStatsService 消费位置 = EventInterpreter 的 `turn-usage` case（:465，设计时该 case 只调 onContextUpdate，实装后同 case 组装 GenStatsSample 调 onGenStats，见 D2）。
 - **被否**：新开 `gen-stats` 独立 pi 事件——同一 pi 事件（turn_end）不应翻译出两条平行事件流（双消费点会重新引入「同一数据两条通路」的协议债，context-consistency D1 收敛正是为了消灭这种形态）；pi extension 侧采集（方案 B，理由见 3.2）；复用 agent_end 路径的完整 usage（它已透传 cacheRead/cacheWrite，见 §2.2 事实 2）——agent_end 每 agent 循环仅触发一次，多 turn 循环只带末个 turn 的 usage，**非 per-turn 粒度**且无时长锚点，采不到逐 turn 样本。
-- **证据**：pi-ai types.d.ts:265/307（字段实装）；event-adapter.ts:426（现翻译点 handleTurnEndPi）；event-interpreter.ts:464（现消费点）；ADR-0037（pi 事件强类型契约）。
+- **证据**：pi-ai types.d.ts:265/307（字段实装）；event-adapter.ts:426（现翻译点 handleTurnEndPi）；event-interpreter.ts:465（现消费点）；ADR-0037（pi 事件强类型契约）。
 - **效果**：G1/G3 成立——一次 turn 的全部指标一次采集，既有 context.update 链路不受影响。
 
 **D2：duration 口径 = LLM 请求窗口——assistant message_start → assistant message_end 的 runtime 本地时钟差（选定；2026-09-08 supersede）**
 
 > **supersede 注记（2026-09-08）**：本决策原口径为 turn-start 锚点在 turn-usage 处闭合（turn 全程墙钟，含工具执行时间）——工具重 turn 聚合值被稀释 1.7~4x，已由 **[genstats-speed-llm-window.md](genstats-speed-llm-window.md)** 修正并落地，该文档即新口径 SSOT，两文档不得再漂移。下文已按新口径改写，口径演变见 [HISTORICAL] 段。
 
-- **采用（新口径，genstats-speed-llm-window D1/D2/D3）**：EventInterpreter 在 `turn-start` case（event-interpreter.ts:434；物理来源 = assistant `message_start`，pi 原生 turn_start ∈ NULL_EVENTS 不翻译）记 `turnStartedAt = Date.now()`，**仅作窗口起算/重锚**，且重锚同步置 `llmWindowDurationMs = null`（重锚清除不变量——窗口时长残留的生命周期严格限本 turn，结构性封死「旧窗口 × 新 token」垃圾样本）；`case 'message'`（:402）内识别 `message.message_end` 帧、经 `payload.entry.message.role === 'assistant'` 守卫（user/toolResult/custom 的 message_end 帧同经该 case 全量下发，无守卫会被错误闭合截断 duration）结算 `llmWindowDurationMs = Date.now() - turnStartedAt` 并清 turnStartedAt（防同窗口二次结算，settleLlmWindowOnMessageEnd :813）；`turn-usage` case（:464）消费 `llmWindowDurationMs` 作为 `durationMs`，**消费后置 null**（一次性语义；turnStartedAt 清 null 防纵深保留）。窗口未结算——缺起（runtime 中途启动/丢 message_start）或真缺闭（pi 崩溃/断连，assistant message_end 帧不到达）→ durationMs=null，该样本速度不采集（缓存命中率不受影响，promptTotal 与时间无关）。
+- **采用（新口径，genstats-speed-llm-window D1/D2/D3）**：EventInterpreter 在 `turn-start` case（event-interpreter.ts:435；物理来源 = assistant `message_start`，pi 原生 turn_start ∈ NULL_EVENTS 不翻译）记 `turnStartedAt = Date.now()`，**仅作窗口起算/重锚**，且重锚同步置 `llmWindowDurationMs = null`（重锚清除不变量——窗口时长残留的生命周期严格限本 turn，结构性封死「旧窗口 × 新 token」垃圾样本）；`case 'message'`（:403）内识别 `message.message_end` 帧、经 `payload.entry.message.role === 'assistant'` 守卫（user/toolResult/custom 的 message_end 帧同经该 case 全量下发，无守卫会被错误闭合截断 duration）结算 `llmWindowDurationMs = Date.now() - turnStartedAt` 并清 turnStartedAt（防同窗口二次结算，settleLlmWindowOnMessageEnd :816）；`turn-usage` case（:465）消费 `llmWindowDurationMs` 作为 `durationMs`，**消费后置 null**（一次性语义；turnStartedAt 清 null 防纵深保留）。窗口未结算——缺起（runtime 中途启动/丢 message_start）或真缺闭（pi 崩溃/断连，assistant message_end 帧不到达）→ durationMs=null，该样本速度不采集（缓存命中率不受影响，promptTotal 与时间无关）。
 - **多轮 turn 采样语义（新口径下仍成立）**：采样点 turn-usage 每 turn 一次未动，早轮窗口被下轮 turn-start 重锚清除 → 仍只采**末轮**样本（早期轮次 token 不入聚合）；但 duration 现严格 = 末轮 LLM 请求窗口，任何轮次的工具执行时间均不入分母。
 - **口径演变 [HISTORICAL]**：① 初版口径 = turn-start → turn-usage 时钟差，配「一致性审查 R6/D2 静态判定（2026-02-09）」：断言 `'turn-start'` kind 物理来源为 assistant message_start（此点至今成立，event-adapter.ts:786-797/:853-858），推论「含工具多轮 turn 中锚点每轮重置，durationMs 实为末轮 LLM 请求时长」——**该推论被 2026-09-08 落盘数据击穿**：pi 的 turn_end 在 executeToolCalls 之后才 emit，末轮若带工具调用，turn-usage 处闭合的 duration 仍含末轮工具执行时间（mimo-v2.5-pro 当日加权 9 t/s，剔除工具稀释样本后 35 t/s，差 4x）；② 原探针预设的降级路径「改挂 assistant message_start/message_end 事件对」即本节现行口径，当日落地（实装 u1 427abd30e / u3 673da2b98）。
 - **被否**：用 pi entry 的 timestamp 差——session JSONL 只有完成时刻，无起算点（§2.2 事实 3）；用 pi extension 传消息级时间戳——同方案 B 否决理由；[HISTORICAL 被否推论]「锚点每轮重置即天然 = 末轮 LLM 请求时长」——turn_end 晚于末轮工具执行，时序上不成立。
-- **证据**：event-interpreter.ts:434（turn-start 起算 + 重锚清除）/ :402 + :813（case 'message' 内 message_end 结算 + role 守卫）/ :464（turn-usage 消费，实装注释即引 genstats-speed-llm-window D1-D3）；pi-statusline 同为 message 级本地时钟（message_start → message_end Date.now() 差）——新口径下两覆盖区间才真正重合（旧口径相差末轮工具时长，并非「毫秒级本地开销」）。
+- **证据**：event-interpreter.ts:435（turn-start 起算 + 重锚清除）/ :403 + :816（case 'message' 内 message_end 结算 + role 守卫）/ :465（turn-usage 消费，实装注释即引 genstats-speed-llm-window D1-D3）；pi-statusline 同为 message 级本地时钟（message_start → message_end Date.now() 差）——新口径下两覆盖区间才真正重合（旧口径相差末轮工具时长，并非「毫秒级本地开销」）。
 - **效果**：G1 的速度数值与 pi-statusline 同口径可比；工具重 turn 不再稀释本次/聚合值，UI 口径说明「不含工具执行时间」成为真实陈述（genstats-speed-llm-window G1/G2）。
 - **探针（⛔实施期门 → 2026-09-08 闭合）**：原需验证 ①「1 turn = 恰好一次 assistant message」配对假设（含工具调用会话）、② turn 级 duration vs message 级时长的系统性偏差——② 被真实落盘数据证实（工具稀释 1.7~4x），触发原设降级路径（改挂 message_start/end 对）并落地；① 转由 pi-semantics 静态探针 P4 常驻守卫（pi-semantics-turn-usage-model.test.ts，u2 bb73e1f91）；残余观察项 D1 乐观偏差量级（首事件延迟占比）已闭合——genstats-speed-llm-window Gate B S1 实测锚定：显示值与流出感知一致，未触发重审条件（impl-plan §7 Gate B）。
 
@@ -228,26 +228,26 @@ turn_end                ──RPC──→  handleTurnEndPi      turn-usage case
   'session.getGenStats': { sessionId: string }
   // reply = session.stats_update payload 同形（恢复腿；无任何数据时 speed/cacheRatio 全 null + model 缺省）
   ```
-  广播时机：每次 turn-usage 采样后（含聚合刷新），**对该模型全部已知 session 各发一帧**（payload.sessionId=各自 sid）——「全局最近」语义要求同模型任一 session 采样后，所有同模型 session 的显示同步刷新，只发采样 session 会造成 live 显示滞后于语义（被 R2 击穿，见被否谱系）。桌面单 WS 连接，帧数 = 同模型已知 session 数，无害。**no-op 抑制（实装确认）**：仅 ≥1 条样本实际落盘才推帧——bogus 双丢弃的 turn 快照值不变，推帧零信息量（gen-stats-service.ts:127-131）。RPC 恢复腿：renderer 切入 session 视图时拉取（对齐 useContextUsage D3 恢复腿，解决架构约定 #7 时序竞争）。
+  广播时机：每次 turn-usage 采样后（含聚合刷新），**对该模型全部已知 session 各发一帧**（payload.sessionId=各自 sid）——「全局最近」语义要求同模型任一 session 采样后，所有同模型 session 的显示同步刷新，只发采样 session 会造成 live 显示滞后于语义（被 R2 击穿，见被否谱系）。桌面单 WS 连接，帧数 = 同模型已知 session 数，无害。**no-op 抑制（实装确认）**：仅 ≥1 条样本实际落盘才推帧——bogus 双丢弃的 turn 快照值不变，推帧零信息量（gen-stats-service.ts:141-142）。RPC 恢复腿：renderer 切入 session 视图时拉取（对齐 useContextUsage D3 恢复腿，解决架构约定 #7 时序竞争）。
   **反向映射（modelKey→sids）生命周期 = 三写一清 + 前端兜底**（R3 补全；仅 recordSample 单点登记被 R3 击穿为脏映射/漏登记，见被否谱系⑥）：
   - **写 1**：recordSample(sid, modelKey) 采样登记（该 session 当时模型的样本落盘时）；
   - **写 2**：模型切换重登记 + **顺带推新模型快照帧**——runtime broadcast `session.state_changed`（含新 modelId）处同步更新映射（实装挂点：session-service.ts 投影专用 bus 视图后置 tap——session.state_changed 全 src 唯一生产点为 session-state-projection.ts:465，bus 边界拦截 ≡ 汇聚点；副作用为非模型切换的 state_changed 也触发幂等重登记+同值帧，无害），并向该 sid 推一帧 snapshot(M2)（R4 补：仅静默重登记被击穿为 MF7——切模型后 live 分区继续显旧模型指标，live ≠ reload 在「切模型后、新模型首采样前」窗口成立；推帧后切换立即显示新模型快照，无记录则「—」，与恢复腿同值）。**帧序规定（R5/MF9，构造性闭合）**：同一触发点内固定顺序「先广播 state_changed → 再重登记映射 → 最后推快照帧」——插件路径（plugin.agent.setModel）下 renderer 的 modelId 只能由 state_changed 帧更新，快照帧若先发会被前端校验（帧内 model ≠ 尚未更新的 modelId）丢弃，MF7 窗口在插件路径回归；单 WS 连接有序送达，固定顺序即无竞态；
   - **写 3**：恢复腿解析成功回填——getGenStats case 降级链解析出 modelKey 后登记（覆盖「新 session 未采样」缺口：未采样 session 本不在映射，用户切入触发恢复腿即登记，之后 live 帧可达；从未被打开的 session 无人观察，收不到帧无害）。竞态声明（R4/S14）：「snapshot 计算后、登记执行前」存在毫秒级交错窗口，期间该 sid 可能漏收一帧——恢复腿 reply 本身已含最新快照、下一采样自愈，有界无害；
-  - **清**：onSessionDestroyedHandlers 汇聚点（session-service.ts:166/369/832，覆盖主动删 / deleteByCwd / 进程退出）删该 sid 全部条目；
+  - **清**：onSessionDestroyedHandlers 汇聚点（session-service.ts:139/:387/:858，覆盖主动删 / deleteByCwd / 进程退出）删该 sid 全部条目；
   - **前端兜底（纵深防御）**：useGenStats 的帧 handler 校验帧内 `model` 与该 session 当前 modelId（renderer 既有 per-session modelId 状态），不匹配丢弃；model 缺省的 live 帧同样丢弃（防御：所有 live 推帧路径均有 modelKey，缺省即异常）；**renderer 侧 modelId 未知（空/undefined，如扫描期占位）时放行帧**（保守正确：避免误杀合法帧）——后端映射任意空窗产生的脏帧从「覆盖显示」降级为「无害丢弃」。恢复腿 reply 不经此校验（RPC 主动拉取语义，modelId 由 runtime 侧降级链权威解析）。
   **恢复腿的 modelId 解析降级链（消异步就绪窗口）**：session-message-handler 的 getGenStats case 为 async——① 优先实时 `get_state(sid)` 拿当前 modelId（pi 在线时一次性解析，绕开 replicated states 异步播种竞速窗口）；② 失败/超时 → GenStatsService 内存映射 sid→modelKey（该 session 至少采样过一次时命中）；③ 仍无 → replicated states 缓存值；④ 全部未命中（新 session 从未设置模型且未采样）→ 返回全 null 帧。**残余窗口声明（R3）**：重启后映射空 + get_state 失败（pi 真实离线）时全 null 持续到首 turn 自愈——pi 离线期间本就无法产生对话，窗口不可观测，接受不另设机制。
-  **无值编码纪律 [HISTORICAL] 对齐**：全帧无值一律 `null`，禁止 `?? 0` 编码——protocol.ts:1103 明文「无值以字段缺失/null 表达，禁止 ?? 0 编码」，且 0 并非物理不可能（output=3、duration=80s 经 round 合法得出 0 t/s），0 只允许作为真实测量值出现（项目先例：useContextUsage 0 帧哨兵、context.update D1 收敛）。UI 侧 null → 「—」；0 → 显示 0。
+  **无值编码纪律 [HISTORICAL] 对齐**：全帧无值一律 `null`，禁止 `?? 0` 编码——protocol.ts:1271 明文「无值以字段缺失/null 表达，禁止 ?? 0 编码」，且 0 并非物理不可能（output=3、duration=80s 经 round 合法得出 0 t/s），0 只允许作为真实测量值出现（项目先例：useContextUsage 0 帧哨兵、context.update D1 收敛）。UI 侧 null → 「—」；0 → 显示 0。
   **显示语义 = 模型视角（非 session 视角）**：双触发器显示的是「该 session 当前模型」的生成指标——`current` = 该模型全局最近一次 turn 样本的速度/命中率（落盘文件末条，跨 session），`day/d7/d30` = 该模型全局聚合。依据：① 速度/命中率是模型与缓存状态的属性，不由 session 决定，用户心智是「这个模型多快/缓存健康吗」；② current 落在文件末条 ⇒ 重启后 RPC 恢复腿可直接恢复，无需 per-session 快照持久化。`snapshot(sid)` 实现语义：按该 session 当前 modelId（组合根 replicated states 已持有）查该模型快照；**model 回填规则（R5/MF8）**：modelKey 解析成功时 payload.model 恒回填（含该模型无记录的全 null 帧——否则写 2 推的无记录快照被自家前端校验拦截，场景 4⑥「无记录则—」分支不可达，live≡reload 在 null 分支断裂）；仅 modelKey 本身未解析（降级链④）时 model 缺省。浮层「今日均值」文案明示按模型口径（「今日均值（此模型）」）。
 - **被否**：① 往 `context.update` 塞新字段——该帧有协议收敛史（D1：usage 三字段收敛、0 帧哨兵、无值=字段缺失语义），塞异质指标要重走「无值怎么编码」的协议论证；② `speed.current=0` 编码「无数据」（本设计初版，已被击穿）：违反本项目 [HISTORICAL] 协议收敛纪律，且把「无数据」伪装成「测得 0」，与同帧 cacheRatio 的 null 语义不对称；③ **session 视角**（「该 session 最近一次样本」）——存储需增加 session 维度（文件数 × session 数、GC 复杂化、session 删除后快照成孤儿），且「最近一次」只存内存则重启即失，与 G3 恢复要求冲突；多 session 并发同模型时全局末条可能来自其他 session，「session 专属」语义无法自圆；④ **广播只发采样 session**（R2 初版）——被反例击穿：A、B 同模型同时打开，B 完成 turn 后 A 分区不刷新，live 显示滞后于「全局最近」语义，切走再切回（恢复腿）后值跳变，live ≠ reload；⑤ **恢复腿直接读 replicated states 的 modelId**（R2 初版）——被反例击穿：registerReplicatedStates 播种异步竞速（session-state-projection.ts:59 自认）、扫描/dead session 的 modelId 占位 `''`（session-scanner.ts:82-85），恢复腿命中空窗口即全 null 且无重拉触发；⑥ **反向映射仅由 recordSample 单点登记**（R3 初版）——被反例击穿：脏映射（session 采样 M 后切 M2，映射残留 sid→M，扩展广播把 M 帧发给 M2 session，前端不校验则覆盖显示）+ 漏登记（未采样 session 收不到 live 帧，「新 session + 同模型」高频组合下 live≠reload 重现，且场景 4⑤ 脚本双采样恰好绕开）→ 修为三写一清 + 前端兜底；⑦ **写 2 静默重登记**（R3 初版）——被反例击穿：切模型后 live 分区无人发帧继续显旧模型指标，live ≠ reload 于「切模型后、新模型首采样前」窗口成立（与 MF4/MF6 同类），→ 修为写 2 顺带推新模型快照帧；⑧ **推快照帧无帧序规定 + 无记录快照缺 model**（R4 初版）——被反例击穿：插件路径 renderer modelId 依赖 state_changed 更新，快照帧先发被校验丢弃（MF9）；无记录快照 model 缺省被自家校验拦截，场景 4⑥ null 分支不可达（MF8）→ 修为固定帧序「state_changed → 重登记 → 推帧」+ snapshot model 恒回填。
-- **证据**：protocol.ts:1100-1105（context.update 契约 + 无值编码纪律）；useContextUsage.ts:130-137（0 帧哨兵 = 同一纪律的前端防线）；session-message-handler.ts:450（RPC case 范式）；session-state-projection.ts:293-298（replicated states 持有 per-session modelId）。
+- **证据**：protocol.ts:1268-1273（context.update 契约 + 无值编码纪律）；useContextUsage.ts:130-137（0 帧哨兵 = 同一纪律的前端防线）；session-message-handler.ts:111（RPC case 范式）；session-state-projection.ts:293-298（replicated states 持有 per-session modelId）。
 - **效果**：G3 成立——stats_update 广播 + getGenStats 恢复腿双通路，live ≡ reload，重启后 current（文件末条）与 day 聚合均可恢复。
 
 **current 无时间窗口过滤语义（2026-09-07 登记，GS-6）**：`speed.current` / `cacheRatio.current` = 落盘文件末条样本，**无时间窗口过滤**——「最近一次」可能来自较早的记录（该模型长时间无新 turn 时，current 停留在旧样本）。这是既有语义（D4 模型视角的推论），不改；前端「本次」文案已注明「来自最近一次请求的记录」（C4 文案批，adversarial-review-fixes u5 落地）消除歧义。
 
 **D5：renderer = `useGenStats` composable（照 useContextUsage 骨架）+ 双触发器组件（选定）**
-- **采用**：`useGenStats(sessionIdRef, modelIdRef?)` 返回 `{ current }`——分区结构**直接存 `GenStatsFrame | null`**（R3 已删 status 字段，勿引用旧三态结构）；订 `session.stats_update`（handler 用第二参数 sid 写分区，ADR-0049）+ 切入视图拉 `session.getGenStats` 恢复腿 + `registerSessionCleanup` 编排。UI 组件 `GenStatsTriggers.vue`（内含速度/缓存两个触发器，各自 HoverCard 浮层），挂 Composer.vue composer-bar 的 ContextCapacityPopover 之前。i18n key 挂 `panel.context.*` 现有段（zh-CN/panel.ts:135 起；现有 `cacheHit` key 语义是 ContextCapacityPopover 浮层行标签，与本触发器浮层是否同义**实施期确认**——若复用造成两处文案耦合则新增独立 key）。
+- **采用**：`useGenStats(sessionIdRef, modelIdRef?)` 返回 `{ current }`——分区结构**直接存 `GenStatsFrame | null`**（R3 已删 status 字段，勿引用旧三态结构）；订 `session.stats_update`（handler 用第二参数 sid 写分区，ADR-0049）+ 切入视图拉 `session.getGenStats` 恢复腿 + `registerSessionCleanup` 编排。UI 组件 `GenStatsTriggers.vue`（内含速度/缓存两个触发器，各自 HoverCard 浮层），挂 Composer.vue composer-bar 的 ContextCapacityPopover 之前。i18n key 挂 `panel.context.*` 现有段（zh-CN/panel.ts:131 起；现有 `cacheHit` key 语义是 ContextCapacityPopover 浮层行标签，与本触发器浮层是否同义**实施期确认**——若复用造成两处文案耦合则新增独立 key）。
 - **被否**：数据并入 ContextCapacityPopover（demo 方案 D 的 idle 收纳）——用户已选方案 A；并成单触发器（demo 方案 B）——同上，用户已选 A（双触发器独立 hover）。
-- **证据**：useContextUsage.ts 全文（范式蓝本：分区/订阅/恢复腿/in-flight 去重/cleanup 五件套）；Composer.vue:118 composer-bar 结构；i18n zh-CN/panel.ts:129 context 段（`cacheHit` 在 :135）。
+- **证据**：useContextUsage.ts 全文（范式蓝本：分区/订阅/恢复腿/in-flight 去重/cleanup 五件套）；Composer.vue:97 composer-bar 结构；i18n zh-CN/panel.ts:131 context 段（`cacheHit` 在 :137）。
 - **效果**：G1/G2 成立——视觉与既有触发器同构（h-7 ghost button、tabular-nums、HoverCard），行为与既有数据范式同构。
 
 **D6：聚合在 runtime 算好，前端只拿结论（选定）**
