@@ -103,7 +103,7 @@ graph TD
 |------|----------------------------------------------|------|----------|
 | U1 | pending | 0 | — |
 | U2 | pending | 0 | — |
-| U3 | pending | 0 | — |
+| U3 | committed | 1 | a8491bb2c（smart-context 49/49 · 探针 3/3 · pi-semantics 守卫 28 条 · typecheck/lint exit=0） |
 | U4 | pending | 0 | — |
 | U5 | pending | 0 | — |
 | U6 | pending | 0 | — |
