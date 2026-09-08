@@ -72,6 +72,7 @@
 
 - `config.*` 设置面板域（setTerminalConfig / setDefaultModel / setScopedModels 等）：reply 形态为「ack + 广播推回」或「read-back 型」，设置面板无乐观写模式，不在 D8 的「显示 ≡ 生效」事故面。若未来某 config mutation 出现乐观写需求，扩域方式 = 扩契约测试的域谓词清单（扩域本身是一次显式决策）。
 - session 生命周期/承接创建族（`session.fork` / `session.handoff`）：谓词经 fork/handoff 动词命中后以 excluded 显式归类——二者是实体创建（与 session.create 同族）而非改状态值，reply 分别为 session.created 实体创建形态与 message.status ack，完成态走 forkNotice / handoffComplete 广播通道；新 session 的生效配置由 D6 继承链（fork：staging override > 源当前生效值 > 源 preset > 全局默认；handoff：staging override > 源当前生效值 > 全局默认）+ post-create 读回播种承接，不经 mutation 回执。
+- session 视图路由族（`session.restore`）：行为近 `session.switch`（视图路由 + 读回播种），不改配置状态值、无乐观写面——显式声明 excluded，防未来 restore 语义演化时静默绕过谓词。
 - 消息流注入（`message.*`）、动作类（`session.subagentAction` / `workflowAction` / `compact` / `forceQuit` / `session.abortHandoff`）、文件写（`session.writeImage` 等）、extension/plugin/git/worktree/quota/terminal 域。
 
 ### 五、新 mutation 接入检查单
