@@ -1,5 +1,5 @@
 # subagent-drawer-blank 实施计划
-基线: 6d5d75870 | 来源设计: docs/design/subagent-drawer-blank.md (v5) | 日期: 2026-09-08
+基线: d74bdeabc（本文件由 6d5d75870 首次提交后 amend，实际基线以其为准）| 来源设计: docs/design/subagent-drawer-blank.md (v5) | 日期: 2026-09-08
 
 ## 0 章节映射
 | 内容 | 本文实际位置 |
