@@ -17,6 +17,9 @@ import { buildSkillMarker } from './skill-marker'
 /**
  * Segment 判别联合。type 字段是判别器（discriminant），switch(type) 可穷尽检查。
  *
+ * - slash: 命令段（行首 `/` 命令浮层选中的命令项，D4-b），name 不含 `/` 前缀。
+ *   视觉上 chip 就地插在草稿光标处（D4-a），序列化时由 segmentsToText 归位提为首段，
+ *   保证产物以 `/cmd` 开头满足 pi 行首命令协议（设计 §2.5）——pi 协议零改动
  * - text: 纯文本段（用户输入的文字）
  * - skill: skill 命令段，含 name 和可选的 SKILL.md 文件路径
  *   （序列化为 `<xyz-skill/>` 私有标记，见 segmentsToText；D3）
@@ -43,6 +46,7 @@ import { buildSkillMarker } from './skill-marker'
  *   读路径（vision/非 vision 模型都能处理）。不走 base64 message.send.images 通道。
  */
 export type Segment =
+  | { type: 'slash'; name: string }
   | { type: 'text'; text: string }
   | { type: 'skill'; name: string; location?: string }
   | { type: 'file'; path: string; lineRange?: [number, number] }
@@ -61,6 +65,7 @@ export type Segment =
  * `/skill:name`——已登记于设计 §3.5-⑤（composer-multi-skill-injection.md）判定可接受。
  * 手打 `/skill:name` 文本不经此路径也不被 runtime 处理（G5：与 pi 原生行为零偏差）。
  * file → `path`（可选 `:L<s>-L<e>` 行范围），mention → `@name`，
+ * slash → `/name`（归位提为首段，见函数体 D4-c），
  * session → `#sessionId`（TUI session_read 协议），subagent → 空串（路由标记不进 prompt），
  * text → 原文，image → 裸 path 独占一行（对齐 pi TUI，LLM 自己调 read 工具读），
  * handoff → `[handoff from sourceLabel]`（来源标记，文档内容在 text segment 中）。
@@ -110,6 +115,8 @@ function serializeFileSegment(seg: Extract<Segment, { type: 'file' }>): string {
  */
 const SEGMENT_SERIALIZERS: { [K in Segment['type']]: (seg: Extract<Segment, { type: K }>) => string } = {
   text: (seg) => seg.text,
+  // D4-b：`/` 前缀在此补（name 不含前缀），归位提首后产物满足 pi 行首命令协议
+  slash: (seg) => `/${seg.name}`,
   // D3：`<xyz-skill/>` 私有标记（location 可得时带上）。反解析对偶实现在 core parseSkillBlock。
   skill: (seg) => buildSkillMarker(seg.name, seg.location),
   file: serializeFileSegment,
@@ -152,10 +159,18 @@ function serializeSegment(seg: Segment): string {
 
 export function segmentsToText(segments: Segment[]): string {
   if (segments.length === 0) return ''
+  // D4-c 归位：slash 段（命令 chip）提为首段——命令 chip 视觉就地（D4-a）后段序
+  // 不再以 / 开头，归位保证序列化产物以 /cmd 开头（pi 行首协议）。多个 slash 段
+  // 防御性全前置按原序（正常态至多一个）。needsBoundarySpace 在归位后的序上执行，
+  // slash 段视同 chip 类段（default 补空格分支覆盖）。
+  const ordered: Segment[] = [
+    ...segments.filter((s) => s.type === 'slash'),
+    ...segments.filter((s) => s.type !== 'slash'),
+  ]
   const parts: string[] = []
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i]
-    const prev = i > 0 ? segments[i - 1] : null
+  for (let i = 0; i < ordered.length; i++) {
+    const seg = ordered[i]
+    const prev = i > 0 ? ordered[i - 1] : null
     if (needsBoundarySpace(prev, seg)) {
       parts.push(' ')
     }
