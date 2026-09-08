@@ -1,6 +1,6 @@
 # TODO: subagent-core ①级 native reader 空视图判空降级（defined-empty 不降级②③级）
 
-> 创建：2026-09-08。来源：subagent-drawer-blank 设计 §11 ⛔3（R2 终审 SUGGESTION 采纳）——原登记「实施期向 core 维护方登记 follow-up」未产生可追踪物，交付后对抗式总审查出，补登落账。状态：待排期。
+> 创建：2026-09-08。来源：subagent-drawer-blank 设计 §11 ⛔3（R2 终审 SUGGESTION 采纳）——原登记「实施期向 core 维护方登记 follow-up」未产生可追踪物，交付后对抗式总审查出，补登落账。状态：**已实现（2026-09-09，与 subagent-nonpi-terminal-reload 同批提前实施）**——设计 `docs/design/subagent-nonpi-visibility-followups.md`（任务 B，双 reviewer 两轮对抗审查 0 must-fix），实现 commit b329d4149（core 编排层①级判空降级，设计 D3；runtime 契约钉子 + core 降级矩阵测试），Gate A 全量绿 + Gate B S6/S7 真机验证非空壳（7/7 次派发无「仅 task」形态）。**§4 收敛方向剩余半（③级合成推广到 pi `!sessionFile`，session-records.ts:316）仍未做**，保持登记。
 > 优先级：中高——非 pi mid-run 详情页退化为仅 task，**摘要卡等其他③级消费方无兜底同受影响**；drawer 表面的症状已被 renderer seed + 思考行兜住（drawer-blank 修复），但缺陷本体在 core 读取链，按消费方各自兜底不可持续。
 
 ## 1. 问题现象

@@ -201,7 +201,7 @@ WS session.getSubagentHistory 回包 → renderer fetchAndInject → chatStore �
 
 | # | 断言 | 状态 | 验证方式 |
 |---|------|------|----------|
-| P1 | zcode mid-run 早期 journal 无实质内容（②级在窗口 B 返回 undefined）——支撑「①空→②空→③占位」链路推演 | ⛔实施期门 | 真机 S6 场景观察返回内容；若②级在窗口 B 有内容（journal 先行落盘），降级链在②级截住，S6 的「≥2 条」标准仍满足——验收标准对②③级落点不敏感 |
+| P1 | zcode mid-run 早期 journal 无实质内容（②级在窗口 B 返回 undefined）——支撑「①空→②空→③占位」链路推演 | ✅已测（2026-09-09 Gate B） | 真机 7/7 次派发均未观测到「仅 task」或「task+占位」形态（1s 采样，最早在 record 创建后 10-20s 打开 drawer 已读到真实 mid-run 内容）——窗口 B 窄于 UI 反应时延，①②级落点未区分（验收标准对落点不敏感）；**D4 重审触发条件不满足**（占位形态覆盖 running 期 ≈0%，无需重审） |
 | P2 | zcode record 终态一次到位，无 running 回写（与 pi v4 波动相反） | ✅已核 | `subagent-service.ts` assertEngineParamSupport 不支持 conversation（todo A §3.2 核）；单测矩阵再守护 |
 | P3 | `SUBAGENT_STATUS_ALL` 元组与 watch 判据的同步义务 | ✅已核 | `shared/src/subagent.ts:29-63` 扩枚举守卫注释已声明消费方同步义务，u2 测试矩阵按全集元组取值 |
 | P4 | 占位文案三端同值（shared 常量 = core 字面量） | ✅机制已定 | core 生产不 import shared（双端复用约束）→ 同值由 runtime 读取链套件行为断言守护（u1：③级投影占位 content === `SUBAGENT_OUTCOME_PLACEHOLDER`）；core 改文案即 runtime 用例翻红 |
