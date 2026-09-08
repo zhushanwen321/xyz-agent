@@ -15,6 +15,9 @@
  *   不对用户阅读静止态发声（滚动条拖拽场景结构性不误报）；
  * - isStreaming 判读指引：流式中（isStreaming=true）双超阈值按真实跟随失效上报——收敛期
  *   恒在 force 后窗口内，窗口外的流式持续 gap 无合法瞬态解释（设计 v5）；
+ * - follow 频率计数器（§4.5 P-no-loop，校准 r1 补齐）：滑动 1s 窗口内 follow 原语执行
+ *   >60 次 → warn（RO → follow → scrollToIndex → 内容高度变化 → RO 观察循环的唯一机器
+ *   检测层）；沿触发——持续超限只报一次，回落后再超限再报；
  * - import.meta.env.DEV 门控：生产构建原样透传 follow API，零运行时开销（同构先例
  *   useConstantHeightAssert）。
  *
@@ -35,6 +38,10 @@ import type { useVirtuaFollow } from './useVirtuaFollow'
 const CONVERGE_WINDOW_MS = 500
 /** 双采样间隔：窗口末首次采样超阈值后，隔此时长复采一次（两次均超才 warn） */
 const RESAMPLE_DELAY_MS = 200
+/** P-no-loop 频率窗口：滑动窗口时长（§4.5「1s 内 follow 次数 > 60 即 warn」） */
+const FOLLOW_RATE_WINDOW_MS = 1000
+/** P-no-loop 频率上限：rAF 帧率上限 60fps 下每帧至多一次 follow，恒超 60/s 即循环 */
+const FOLLOW_RATE_LIMIT = 60
 
 /** useVirtuaFollow 返回的 follow 原语 API（本守卫返回同构 API，调用面零改动） */
 export type FollowApi = ReturnType<typeof useVirtuaFollow>
@@ -123,6 +130,34 @@ export function usePinBottomGuard(deps: PinBottomGuardDeps): FollowApi {
     windowTimer = setTimeout(sampleAtWindowEnd, CONVERGE_WINDOW_MS)
   }
 
+  /**
+   * P-no-loop 观察循环检测（§4.5 判据载体）：滑动 1s 窗口计数 follow 原语执行次数，
+   * 超 60 次/s（rAF 帧率上限，恒超即「RO → follow → 内容高度变化 → RO」自激）→ warn。
+   * 沿触发：超限态只报一次，窗口滑出回落后再超限再报——持续循环不会被 60 次/s 刷屏淹没。
+   */
+  const followTimestamps: number[] = []
+  let loopActive = false
+  function countFollowExecution(): void {
+    const now = Date.now()
+    followTimestamps.push(now)
+    while (followTimestamps.length > 0) {
+      const oldest = followTimestamps[0]
+      if (oldest === undefined || now - oldest <= FOLLOW_RATE_WINDOW_MS) break
+      followTimestamps.shift()
+    }
+    const looping = followTimestamps.length > FOLLOW_RATE_LIMIT
+    if (looping && !loopActive) {
+      loopActive = true
+      console.warn(
+        `[pin-bottom-guard] follow 频率异常：${FOLLOW_RATE_WINDOW_MS}ms 内 follow 次数=${followTimestamps.length}` +
+          ` > ${FOLLOW_RATE_LIMIT}——疑似 RO 兜底网观察循环（RO → follow → scrollToIndex → 内容高度变化 → RO）。` +
+          '👉 处置见 docs/design/chat-pin-bottom-fix.md §4.5 P-no-loop 降级路径（100ms 防抖 / 收窄观察目标）。',
+      )
+    } else if (!looping) {
+      loopActive = false
+    }
+  }
+
   // 用户脱离取消窗口（§4.4⑦）：wheel / 滚动条拖拽 / 键盘上滑均经 stickToBottom 翻 false 汇聚
   watch(follow.stickToBottom, (stuck) => {
     if (!stuck) clearTimers()
@@ -133,10 +168,12 @@ export function usePinBottomGuard(deps: PinBottomGuardDeps): FollowApi {
     ...follow,
     followIfStuck: (followOpts) => {
       follow.followIfStuck(followOpts)
+      countFollowExecution()
       armWindow()
     },
     followToBottom: (force) => {
       follow.followToBottom(force)
+      countFollowExecution()
       armWindow()
     },
   }

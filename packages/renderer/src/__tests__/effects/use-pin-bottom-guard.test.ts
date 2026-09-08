@@ -189,4 +189,37 @@ describe('usePinBottomGuard（§4.4 护栏⑦ dev 断言）', () => {
     await vi.advanceTimersByTimeAsync(700)
     expect(warnSpy).toHaveBeenCalledTimes(1) // 窗口已开：gap 超阈双采样后照常报警
   })
+
+  it('P-no-loop 频率计数器（§4.5）：1s 内 follow >60 次 → 沿触发 warn 一次；持续超限不重复，滑出回落后再超限再报', async () => {
+    const { api } = setup()
+    const loopWarns = () => warnSpy.mock.calls.filter((c) => String(c[0]).includes('follow 频率异常'))
+
+    for (let i = 0; i < 60; i += 1) api.followToBottom(true)
+    expect(loopWarns()).toHaveLength(0) // 恰 60 次：不超限
+
+    api.followToBottom(true) // 第 61 次 → 超限沿
+    expect(loopWarns()).toHaveLength(1)
+    const msg = String(loopWarns()[0]?.[0])
+    expect(msg).toContain('次数=61')
+    expect(msg).toContain('P-no-loop')
+    expect(msg).toContain('docs/design/chat-pin-bottom-fix.md')
+
+    for (let i = 0; i < 40; i += 1) api.followToBottom(true)
+    expect(loopWarns()).toHaveLength(1) // 持续超限：沿触发不重复
+
+    vi.advanceTimersByTime(1001) // 窗口滑出：计数回落（loopActive 复位于下次调用）
+    for (let i = 0; i < 61; i += 1) api.followToBottom(true)
+    expect(loopWarns()).toHaveLength(2) // 回落后再超限 → 再报
+  })
+
+  it('P-no-loop 与收敛窗独立：低频 follow（≤60/s）下计数器零发声，收敛窗行为不受影响', async () => {
+    const { api } = setup()
+
+    for (let i = 0; i < 60; i += 1) api.followToBottom(true)
+    await vi.advanceTimersByTimeAsync(700)
+    // 频率未超限无频率 warn；但收敛窗双采样照常（gap=20 超阈 → 恰一次收敛 warn）
+    expect(warnSpy.mock.calls.filter((c) => String(c[0]).includes('follow 频率异常'))).toHaveLength(0)
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    expect(String(warnSpy.mock.calls[0]?.[0])).toContain('贴底态跟随未收敛')
+  })
 })

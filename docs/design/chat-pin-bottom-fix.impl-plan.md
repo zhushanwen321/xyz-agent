@@ -89,6 +89,7 @@ graph TD
 | 9 | triggers 以独立 composable 形态落地（设计 D5 原文「迁入 MessageStream 触发编排」） | U2 r1 行数红线 blocked → 偏差 #3 授权 | 已登记；「触发编排」语义不绑定文件，设计无需改 |
 | 10 | guard 包装式接线覆盖全部 follow 入口（设计预期最小接线） | U4 交付 | 优于预期；script 298/300 反而减行 |
 | 11 | 阶段 3 审查由主 agent 亲自执行（3 个 reviewer 会话全部卡死，累计第 7-9 次平台进程异常） | 流程偏离声明 | 自审盲区风险以「三分类格式+行级证据+重点自审 V6 判定如实性」缓解；结论：unreasonable 1 条（V6）打回修，doc_errors 0 |
+| 12 | P-no-loop 完整计数器判据（§4.5：dev 断言 1s 内 follow >60 即 warn）U4 漏交付且无登记——U2 状态表声明「完整计数器判据按设计载体推迟 U4/V8」，但 U4 领地与交付清单均未含该项，静默丢失 | design-code-sync r1 审查 F2 | 校准修复轮补齐：usePinBottomGuard 沿触发频率计数器（滑动 1s 窗口 >60 warn）+ 单测 2 例（沿触发不重复 / 低频独立性与收敛窗互不干扰）；判据归位设计原文 |
 
 ## 6 状态表
 
@@ -102,14 +103,25 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-### 残留风险（承接设计已登记项，实施期盯防）
+### 残留风险（终态口径，校准 r1 更新）
 
-- P-wrap ⛔（U2 门）：失败 → 方案 C 完整形态降级（§4.5），R1 收尾子集失去 RO 触发，护栏⑦ dev 断言兑底——**降级决策必须升级用户**。
-- §6.3-1：happy-dom RO 支持度未知 → U3 注入 stub 定稿。
-- §6.3-2：isPrepend 复位与 RO 回调先后 → U2 实测一次 load-more，误标则抑制窗放宽一帧（V9 兜底）。
-- 设计 D7 残余风险 ⑤a-⑤d 与抑制窗副作用⑥（已四要素登记可接受）——V5/V9 实测观察。
+已关闭（证据指针）：
+
+- P-wrap 探针：✅ 已过（状态表 U2：P-wrap ✓ gap≤0.5px）——方案 C 完整形态降级未触发。
+- §6.3-1 happy-dom RO 支持度：✅ 已定稿（U3 测试 setup 注入可控 RO stub，全量绿）。
+- §6.3-2 isPrepend 复位时机：✅ U2 isPrepend 门控接线 + 触发矩阵单测覆盖（真实环境端到端抽验见下方跟踪项）。
+
+持续观察（设计 D7 已四要素登记可接受，随实机观测重审）：
+
+- 设计 D7 残余风险 ⑤a-⑤d 与抑制窗副作用⑥——V5 实测零误脱离；重审条件见设计 D7⑤/⑥。
+
+后续抽验跟踪（acceptance.md V7/V9 blocked 承接登记）：
+
+- V7 subagent 虚拟 session 端到端：触发条件 = 真实使用中出现运行中的 subagent 标签页；判定方法 = 设计 §5.2 V7（与 V2 同标准）。
+- V9 load-more 前插抑制（真实长历史）：触发条件 = 环境具备 hydrate `historyTruncated` 触发的真实长历史会话（DEFAULT_MAX_TURNS=20 尾读截断，造数会话不触发）；判定方法 = 设计 §5.2 V9。
 
 ### 变更历史
 
 - 2026-09-09 v2（终态）：阶段 3 一致性审查（主 agent 执行，偏离声明见偏差 #11）→ unreasonable 1 条（V6 shrink 间歇 113px）打回定向修（2451a2036，双 rAF 预案）+ dev app 3/3 轮复验贴底 → 清零；reasonable 4 条入登记表（#8-#11）；doc_errors 0。阶段 5 双绿：Gate A（全量 4097/4097、双 typecheck、根 lint 0、双守卫 0、零容忍扫描全零、覆盖矩阵无死角）+ Gate B（acceptance.md 逐场景 verdict+evidence，V1-V6/V8 实测、V7/V9 blocked 有缓解）。转 design-code-sync 校准（用户指示）。
+- 2026-09-09 v3（交付后校准）：design-code-sync 重跑（reviewer 后台审查 + 修复轮）——代码本体 0 must-fix（D1-D7 机制面全部落地一致、双守卫实跑绿、注释口径无漂移）；4 条文档回写（F1 双 rAF 终态机制回写设计 D3/P-timing + 变更历史 v8；F3 acceptance 总评与 V6 节矛盾消除 + commit hash 回填；F4 本表残留风险终态化 + V7/V9 抽验承接登记；F5 D5 force 枚举勘误）+ F2 护栏判据补齐（P-no-loop 计数器，偏差 #12）。流程偏离声明：修复轮由主 agent 亲自执行（reviewer 派发链路 lost 后 final-frame 完整返回，前会话 9 次进程异常先例下的接管预案生效）；修复验证：use-pin-bottom-guard 11/11 绿 + 全量 frontend test + 双守卫 + 双 typecheck（见校准 commit）。
 - 2026-09-08 v1：初版计划（预检门三查过：结构四节齐全 / 章节映射建立 / 审查证据 chat-pin-bottom-fix.review-r6.md 0 must-fix + impact-review-r6.md 0/0 双审收敛）。单元切分直接采用设计 §6.1（U1-U5），领地自 §6.2 文件改动地图精确化，补充：MessageStream-bash.test.ts（设计「等」字的实际展开）、.githooks/install-hooks.sh（pre-commit 挂接的项目机制载体）、acceptance.md（U5 验收归档产物）。
