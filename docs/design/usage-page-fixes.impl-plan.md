@@ -1,6 +1,6 @@
 # 用量统计页四类缺陷修复 实施计划
 
-基线: <待用户评审后 commit 填入> | 来源设计: docs/design/usage-page-fixes.md | 日期: 2026-09-08
+基线: 7efeb3a97 | 来源设计: docs/design/usage-page-fixes.md（14f267243）| 日期: 2026-09-08
 
 ## 0 章节映射
 
