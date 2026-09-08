@@ -14,9 +14,9 @@
  *   （RPC 主动拉取语义，modelId 由 runtime 侧降级链权威解析）。
  * - 恢复腿：切入 sid 视图无条件拉 session.getGenStats（架构约定 #7 时序竞争）；RPC 失败
  *   保留分区缓存不降级；
- * - in-flight 去重：模块级表（条目含 Promise 本体），多实例 await 同一 Promise 后各写
- *   各分区；resolve/reject 即清条目；带 live 帧 recency 守卫（RPC 发起后已有更新帧落地
- *   则跳过写入，防陈旧 reply 回滚）；
+ * - in-flight 去重：模块级 createInflightDedup 表（D9 共享原语收编，meta 携带发起时刻
+ *   帧序号），多实例 await 同一 Promise 后各写各分区；resolve/reject 即清条目；带 live
+ *   帧 recency 守卫（RPC 发起后已有更新帧落地则跳过写入，防陈旧 reply 回滚）；
  * - cleanup：registerSessionCleanup 挂进 useSidebar.deleteSession 清理编排。
  *
  * 显示语义 = 模型视角（D4）：分区值是「session 当前模型」的全局快照——同模型多 session
@@ -28,6 +28,7 @@
 import { computed, onScopeDispose, reactive, watch, type ComputedRef, type Ref } from 'vue'
 import { registerSessionCleanup, useSessionScopedState } from '@/composables/useSessionScopedState'
 import { useSessionEvents } from '@/composables/features/chat/useSessionEvents'
+import { createInflightDedup } from '@xyz-agent/core/foundation/create-inflight-dedup'
 import { command, RPC_BACKSTOP_TIMEOUT_MS } from '@xyz-agent/core/transport/api'
 import type { GenStatsFrame } from '@xyz-agent/shared'
 
@@ -43,21 +44,14 @@ export interface UseGenStatsReturn {
   current: ComputedRef<GenStatsFrame | null>
 }
 
-/** in-flight 去重表条目。 */
-interface InflightEntry {
-  /** RPC Promise 本体：每个实例各自 attach then 写自己的分区（split panel 双实例安全） */
-  promise: Promise<GenStatsFrame>
-  /** 发起时刻该 sid 的 live 帧序号（recency 基准，见 applyReply 的 coveredByNewerFrame） */
-  seqAtIssue: number
-}
-
 // taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，已落定登记表 §4 ⑧ 补登 2026-09-07）：getGenStats RPC 的 in-flight 去重簿记（Promise 句柄，非指标数据；指标数据本体在 per-session 分区 @data-owner #26，经 useSessionScopedState 持有）
 /**
- * 模块级 in-flight 去重表：sid → 在途 getGenStats。
- * 条目持 Promise 本体（非发起实例回调）：多实例快速切入同一 sid 复用同一次 RPC。
- * settle 即清条目：下次切入重拉（无条件恢复腿，不依赖分区缓存时效）。
+ * 模块级 in-flight 去重表：sid → 在途 getGenStats（createInflightDedup 收编，
+ * state-truth-sync §3.3 D9）。entry 持 Promise 本体（非发起实例回调）：多实例快速切入
+ * 同一 sid 复用同一次 RPC；entry.meta 携带发起时刻该 sid 的 live 帧序号（recency 基准，
+ * 见 applyReply）；settle 即清条目：下次切入重拉（无条件恢复腿，不依赖分区缓存时效）。
  */
-const inflightGenStatsFetch = new Map<string, InflightEntry>()
+const inflightGenStatsFetch = createInflightDedup<GenStatsFrame, { seqAtIssue: number }>()
 
 /** 测试隔离钩子：清模块级 in-flight 表（防用例间残留）。生产代码禁止调用。 */
 export function __clearInFlightGenStatsForTest(): void {
@@ -150,33 +144,23 @@ export function useGenStats(
     // 重新进入视图 = 新生命周期：解除该 sid 的清理抑制
     suppressedSids.delete(sid)
 
-    const attach = (entry: InflightEntry): void => {
-      void entry.promise.then(
-        (reply) => applyReply(sid, reply, entry.seqAtIssue),
-        (err: unknown) => {
-          // RPC 失败：保留分区缓存不降级（分区缓存角色 = 失败兜底显示），下次切入重拉自愈。
-          // debug 级而非 warn/error：可重试瞬态 + transport/pending 层已记错误，避免断连期刷屏
-          console.debug('[gen-stats] getGenStats failed, keep cached partition', sid, err)
-        },
-      )
-    }
-
-    let entry = inflightGenStatsFetch.get(sid)
-    if (!entry) {
-      entry = { promise: command('session.getGenStats', { sessionId: sid }, RPC_BACKSTOP_TIMEOUT_MS), seqAtIssue: liveFrameSeqs.get(sid) ?? 0 }
-      inflightGenStatsFetch.set(sid, entry)
-      // settle（resolve/reject）即清条目：下次切入重拉（无条件恢复腿）。比对条目引用防
-      // 误删后来者。不用 .finally：finally 返回的新 promise 会镜像 rejection，void 丢弃
-      // 即产生 unhandled rejection；then 双分支等价且 err 分支接管错误
-      const issued = entry
-      const clearOnSettle = (): void => {
-        if (inflightGenStatsFetch.get(sid)?.promise === issued.promise) {
-          inflightGenStatsFetch.delete(sid)
-        }
-      }
-      void issued.promise.then(clearOnSettle, clearOnSettle)
-    }
-    attach(entry)
+    // meta（seqAtIssue）仅在首次发起时捕获，复用条目的实例共享发起时刻值——按 attach
+    // 时刻捕获会让发起后落地过 live 帧的分区被陈旧 reply 回滚。settle 即清与引用比对
+    // 防误删由 factory 内建（settle 清理先于调用方 then，err 分支接管不产生 unhandled
+    // rejection）。
+    const entry = inflightGenStatsFetch.run(
+      sid,
+      () => command('session.getGenStats', { sessionId: sid }, RPC_BACKSTOP_TIMEOUT_MS),
+      { seqAtIssue: liveFrameSeqs.get(sid) ?? 0 },
+    )
+    void entry.promise.then(
+      (reply) => applyReply(sid, reply, entry.meta.seqAtIssue),
+      (err: unknown) => {
+        // RPC 失败：保留分区缓存不降级（分区缓存角色 = 失败兜底显示），下次切入重拉自愈。
+        // debug 级而非 warn/error：可重试瞬态 + transport/pending 层已记错误，避免断连期刷屏
+        console.debug('[gen-stats] getGenStats failed, keep cached partition', sid, err)
+      },
+    )
   }
 
   // 恢复腿触发源：每次进入某 sid 视图（immediate 覆盖首挂载）。null/undefined 不拉
