@@ -25,7 +25,15 @@
  * 观察目标：contentWrapEl（Virtualizer + tailEl 的静态无样式 wrapper——spacer 与 tail 高度
  * 都投影到它的盒尺寸）+ scrollEl（滚动视口）。wrap RO 回调内先读 tailEl.offsetHeight 与
  * 上次快照比对区分「tail 变化」与「spacer 变化」（两类变化都会触发 wrap RO，先扣掉 tail
- * 分量）。两 RO 回调均调 notifyRoActivity()（喂 useVirtuaFollow 的 D7② 收敛抑制窗静默计时）。
+ * 分量）。两 RO 回调均调 notifyRoActivity()（喂 useVirtuaFollow 的 D7② 收敛抑制窗静默计时，
+ * 时机 = 首次 RO 回调，不因双 rAF 拖延）。
+ *
+ * RO 回调内的跟随一律经 followFromRo() 双 rAF 触发（设计 §4.5 P-timing 降级预案「RO 回调内
+ * 改为双 rAF（再让一帧）」，U5 验收 V6 shrink 方向间歇 113px 残留根修）：外层 rAF +
+ * followIfStuck 内层 rAF → scrollToIndex 恒落在触发帧之后第二个帧的 rAF 阶段，晚于下一帧
+ * 的 RO 投递（同帧次序 rAF → style/layout → RO 投递，设计 §3.1）——virtua 内部 RO（观察
+ * 滚动容器、更新 viewportSize 测量缓存）即使被嵌套 resize 推迟一帧投递，也已先于我们的
+ * 写入完成更新，消除「用旧视口算目标」的缝隙。
  */
 import { onMounted, onScopeDispose, ref, watch } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
@@ -78,6 +86,37 @@ export function useMessageStreamFollowTriggers(deps: MessageStreamFollowTriggerD
     return h
   }
 
+  // ── RO 回调双 rAF 触发（P-timing 降级预案，见文件头）────────────────────────
+  /** 外层 rAF 句柄（null = 无 pending；连续 RO 触发 cancel 合并，同 U1 pendingRafId 模式） */
+  let pendingRoRafId: number | null = null
+  /**
+   * 外层合并的 markUnread sticky 位：同帧多个 RO 回调 cancel-reschedule 时，标记型（tail
+   * 增高）调用不被后到的静默型调用取消丢失（对齐 U1 followIfStuck 的 pendingMarkUnread
+   * 语义：cancel 只收敛滚动，不丢 unread 标记）。
+   */
+  let pendingRoMarkUnread = false
+
+  /**
+   * RO 回调内的统一 follow 入口：套一层外层 rAF 再调 followIfStuck（双 rAF，再让一帧）。
+   * markUnread 语义逐分支透传（tail/spacer 二分与 isPrepend 门控不变），同帧合并由外层
+   * 句柄 cancel + sticky 位完成。
+   */
+  function followFromRo(markUnread: boolean): void {
+    if (typeof requestAnimationFrame === 'undefined') {
+      // 测试 / SSR 兜底：无 rAF 直调（followIfStuck 内部自有无 rAF 的 microtask 兜底）
+      deps.followIfStuck({ markUnread })
+      return
+    }
+    if (markUnread) pendingRoMarkUnread = true
+    if (pendingRoRafId !== null) cancelAnimationFrame(pendingRoRafId)
+    pendingRoRafId = requestAnimationFrame(() => {
+      pendingRoRafId = null
+      const shouldMark = pendingRoMarkUnread
+      pendingRoMarkUnread = false
+      deps.followIfStuck({ markUnread: shouldMark })
+    })
+  }
+
   onMounted(() => {
     // 建基线先于 observe（RO observe 后必投递一次当前尺寸，有基线则该回调落 no-op 分支）；
     // 本 onMounted 注册早于 MessageStream 自己的 onMounted（followToBottom(true)），
@@ -101,23 +140,23 @@ export function useMessageStreamFollowTriggers(deps: MessageStreamFollowTriggerD
       if (tailH === prevTail && wrapHeight === prevWrap) return // 纯宽度变化（高度未变）→ no-op
       if (deps.isPrepend.value) {
         // 前插抑制窗：跟随但不标 unread（用户主动翻历史，下方并无新内容）
-        deps.followIfStuck({ markUnread: false })
+        followFromRo(false)
         return
       }
       if (tailH > prevTail) {
         // tail 增高：活动条/pending 气泡/fork 行出现或长高 = 底部区域新内容 → 标 unread
-        deps.followIfStuck()
+        followFromRo(true)
       } else {
         // spacer 变化（fence finalize / 图片加载 / 估算收敛 / trace 折叠）→ 静默跟随不标
-        deps.followIfStuck({ markUnread: false })
+        followFromRo(false)
       }
     })
     if (contentWrapEl.value) wrapRo.observe(contentWrapEl.value)
 
-    // scrollEl RO：视口 resize → 静默跟随（脱离态不标 unread）
+    // scrollEl RO：视口 resize → 静默跟随（脱离态不标 unread；双 rAF 见文件头 P-timing）
     scrollRo = new ResizeObserver(() => {
       deps.notifyRoActivity()
-      deps.followIfStuck({ markUnread: false })
+      followFromRo(false)
     })
     if (deps.scrollEl.value) scrollRo.observe(deps.scrollEl.value)
   })
@@ -156,6 +195,11 @@ export function useMessageStreamFollowTriggers(deps: MessageStreamFollowTriggerD
   )
 
   onScopeDispose(() => {
+    // 外层 rAF pending 期间 dispose（session 切换/组件卸载）→ 取消，防泄漏与幽灵 follow
+    if (pendingRoRafId !== null) {
+      cancelAnimationFrame(pendingRoRafId)
+      pendingRoRafId = null
+    }
     wrapRo?.disconnect()
     scrollRo?.disconnect()
     wrapRo = null

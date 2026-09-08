@@ -85,6 +85,10 @@ graph TD
 | 5 | U3 实测修正 U2 预测：仅给 mock 声明 scrollRef prop 红不消失——真实机制是挂载期 `:scroll-ref` 绑定 undefined→el 变更驱动父重渲染（与 attrs 无关）；采用 scrollRef 声明 + key 断言改「已收敛渲染窗口」等价方案 | U3 实验（对照实验隔离机制） | 采纳（实测优先）；U2 偏差④归因修正 |
 | 6 | 被删符号 lineage 注释保留：useMessageStreamFollowTriggers.ts:4/39/125/142 + MessageStream.vue:417 + useMessageStreamNotices.ts 注释清扫——注释性历史提及非活引用，U4 守卫扫描排除注释行 | U3 上报主 agent 裁决 | 裁决：按 C-proc-10 历史性提及惯例接受，不做禁改文件 comment-only touch |
 | 7 | U4 预扩授权：领地增加 MessageStream.vue（仅 usePinBottomGuard dev-only 接线行）——guard 需读 stickToBottom/scrollEl/isStreaming，接线必然触碰该文件 | 主 agent 预判（usePinBottomGuard 挂载点） | 已登记 U4 领地 |
+| 8 | kind 测试 key 断言改「已收敛渲染窗口」语义：保留 key 稳定性本质不变量（窗口间集合一致+无新 key），放弃「渲染次数=1」偶然计数 | 阶段 3 区 B 审查（主 agent 执行） | 合理：非断言弱化，原 bug 面（key 漂移）仍被抓；设计未规定挂载级断言形态 |
+| 9 | triggers 以独立 composable 形态落地（设计 D5 原文「迁入 MessageStream 触发编排」） | U2 r1 行数红线 blocked → 偏差 #3 授权 | 已登记；「触发编排」语义不绑定文件，设计无需改 |
+| 10 | guard 包装式接线覆盖全部 follow 入口（设计预期最小接线） | U4 交付 | 优于预期；script 298/300 反而减行 |
+| 11 | 阶段 3 审查由主 agent 亲自执行（3 个 reviewer 会话全部卡死，累计第 7-9 次平台进程异常） | 流程偏离声明 | 自审盲区风险以「三分类格式+行级证据+重点自审 V6 判定如实性」缓解；结论：unreasonable 1 条（V6）打回修，doc_errors 0 |
 
 ## 6 状态表
 

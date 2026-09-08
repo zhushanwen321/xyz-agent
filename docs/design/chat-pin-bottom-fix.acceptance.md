@@ -34,7 +34,13 @@
 - 观察（偏差 #4）：V5a 脱离后浮层点亮有秒级延迟（首次扫描未亮，流式 token 持续触发后亮起）——unread 标记时序偏晚但功能可达，登记观察。
 - 判定：G2 达成（T5）。
 
-### V6 窗口 resize — ⚠️ PARTIAL（grow 过 / shrink 间歇残留，复现数据已归档）
+### V6 窗口 resize — ✅ PASS（定向修复后复验；原始记录保留如下）
+- 修复：阶段 3 审查唯一 unreasonable 项，按设计 §4.5 P-timing 既有降级预案实施（RO 回调 → 外层 rAF → followIfStuck 内层 rAF = 双 rAF，消除 virtua 内部 viewportSize 更新时序缝隙）；commit 待本节同批入库。
+- 复验（修复后同环境同手法）：三轮 shrink（1000→800 ×2 / 1050→760 ×1）全部 gap=-0.5 贴底；900 帧采样 framesOver4=3（过渡帧级）、guard 零报警。对比修复前 2/3 轮永久残留 113px。
+
+--- 以下为修复前原始记录（保留作证据链） ---
+
+### V6（原始）窗口 resize — ⚠️ PARTIAL（grow 过 / shrink 间歇残留，复现数据已归档）
 - 操作：osascript 精准操作 dev Electron 窗口（1200×800 → 1200×1000 → 1200×800；CDP Browser 域被 Electron 禁用）。
 - 数据：
   - 拉高方向：3 轮全部 gap=0 ✓
@@ -80,7 +86,7 @@
 | V3 压缩通知（R3） | G1 | ✅ PASS（等价面） | 16px 通知行整行可见；gap=0 |
 | V4 占用期发送 | G1 | ✅ PASS | defer 气泡可见；gap ≤1px |
 | V5 上滑脱离（两轮） | G2 | ✅ PASS | 两轮均不扯回；浮层点亮；点击恢复 gap=0 |
-| V6 窗口 resize | G1 | ⚠️ PARTIAL | grow 恒过；shrink 间歇 113px 残留（可自愈，数据已归档） |
+| V6 窗口 resize | G1 | ✅ PASS（修复后复验） | 双 rAF 预案实施后三轮 shrink 全贴底；原始 PARTIAL 记录保留作证据链 |
 | V7 subagent 会话 | G1 | ⛔ BLOCKED | 无法诱导 subagent 标签页；组件复用由构造保证 |
 | V8 护栏故障注入 | G3 | ✅ PASS | 单测 6 红→还原绿；dev 断言双采样报警→还原静默 |
 | V9 load-more 前插 | G2 | ⛔ BLOCKED | 前置按钮不可达；语义面单测覆盖 |
