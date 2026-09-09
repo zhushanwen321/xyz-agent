@@ -9,7 +9,7 @@
  * 模式（对齐 w4 store.test.ts）：effectScope + createChatStore（真实 store）+ mockDeps
  * （chatApi/sessionStore/toast/compactQueue vi.fn），streamSubscribe mock 捕获 handler
  * 供测试主动 emit 消息（模拟 WS 事件流）。beforeEach resetChatModuleStateForTest() 清
- * 模块级 streamSubscriptions + historyTruncatedSessions + subscriptionStates（测试隔离）。
+ * 模块级 streamSubscriptions + subscriptionStates（测试隔离）。
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { effectScope, nextTick } from 'vue'
@@ -69,7 +69,8 @@ function makeFixture(): Fixture {
     bash: vi.fn().mockResolvedValue(undefined),
     abortBash: vi.fn().mockResolvedValue(undefined),
     getHistory: vi.fn().mockResolvedValue({ messages: [], historyTruncated: false }),
-    getFullHistory: vi.fn().mockResolvedValue([]),
+    // [u4d] 门面对齐 real 域：getFullHistory 返回 {messages, truncated?}
+    getFullHistory: vi.fn().mockResolvedValue({ messages: [], truncated: false }),
     streamSubscribe: vi.fn((sid: string, h: (m: ServerMessage) => void) => {
       streamHandlers.set(sid, h)
       return () => {
@@ -266,14 +267,27 @@ describe('createUseChat factory 行为', () => {
     f.dispose()
   })
 
-  it('loadMoreHistory：全量加载后清截断标记', async () => {
+  it('loadMoreHistory：全量加载后窗口收敛 truncated=false（[u4d] 窗口状态 SSOT）', async () => {
     const f = makeFixture()
     f.chatApi.getHistory.mockResolvedValueOnce({ messages: [], historyTruncated: true })
     await f.useChat.hydrateHistory('s11')
     expect(f.useChat.hasMoreHistory('s11')).toBe(true)
-    f.chatApi.getFullHistory.mockResolvedValueOnce([])
+    f.chatApi.getFullHistory.mockResolvedValueOnce({ messages: [], truncated: false })
     await f.useChat.loadMoreHistory('s11')
     expect(f.useChat.hasMoreHistory('s11')).toBe(false)
+    f.dispose()
+  })
+
+  it('[u4d] loadMoreHistory：getFullHistory 巨型文件降级窗口（truncated=true）→ 顶部条入口保持', async () => {
+    const f = makeFixture()
+    f.chatApi.getHistory.mockResolvedValueOnce({ messages: [], historyTruncated: true, truncated: true, loadedTurns: 20, totalTurnsEstimate: 42 })
+    await f.useChat.hydrateHistory('s11b')
+    // 窗口契约字段写入 store 窗口状态（u4b 透传，非 legacy 布尔）
+    expect(f.chatStore.getHistoryWindow('s11b')).toEqual({ truncated: true, loadedTurns: 20, totalTurnsEstimate: 42 })
+    // u4b ①档：文件超预检阈值，getFullHistory 返回逆序窗口且仍截断
+    f.chatApi.getFullHistory.mockResolvedValueOnce({ messages: [], truncated: true })
+    await f.useChat.loadMoreHistory('s11b')
+    expect(f.useChat.hasMoreHistory('s11b')).toBe(true)
     f.dispose()
   })
 

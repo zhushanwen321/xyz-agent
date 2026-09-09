@@ -58,7 +58,6 @@ vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: vi.fn(() => ({
     send: sendMock,
     sendBash: sendBashMock,
-    setHistoryTruncated: vi.fn(),
     disposeSession: vi.fn(),
     touchLru: vi.fn(),
     evictIfNeeded: vi.fn(),

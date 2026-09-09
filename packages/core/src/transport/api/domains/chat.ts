@@ -17,29 +17,51 @@ import { RPC_BACKSTOP_TIMEOUT_MS } from '../pending'
 import { command as sendCommand } from '../request'
 import * as events from '../events'
 
-/** getHistory 返回结构（含 historyTruncated 标志，N1 修复） */
+/**
+ * getHistory 返回结构（含 historyTruncated 标志，N1 修复；[u4d] 增补 u4b 双预算窗口契约）。
+ */
 export interface HistoryResult {
   messages: Message[]
   historyTruncated: boolean
+  /** [u4b/u4d] truncated=true 表示预算窗口外仍有历史（与 historyTruncated 同值；u6 分页落地时 legacy 字段退役） */
+  truncated: boolean
+  /** [u4b/u4d] 本次返回的完整 turn 数（顶部条「已加载最近 N 轮」的 N） */
+  loadedTurns: number
+  /** [u4b/u4d] session 的 turn 总数估计（读到头为精确值，窗口截断时为下界） */
+  totalTurnsEstimate: number
+}
+
+/** [u4d] getFullHistory 返回结构：u4b ①档巨型文件降级为逆序窗口时 truncated=true（optional，消费方按 false 处理） */
+export interface FullHistoryResult {
+  messages: Message[]
+  truncated?: boolean
 }
 
 /**
  * 拉取 session 历史（UC-2 切换 session 时回填 message-stream）。
- * runtime reply envelope 是 `{ sessionId, messages, historyTruncated }`，
- * historyTruncated=true 表示文件尾读截断了早期 turn（前端据此显隐「加载更多」）。
+ * runtime reply envelope 是 `{ sessionId, messages, historyTruncated, truncated, loadedTurns, totalTurnsEstimate }`：
+ * historyTruncated/truncated=true 表示历史按双预算（u4b）截断，前端据此显隐「加载更早」顶部条并显示已加载 turn 数。
  */
 export async function getHistory(sessionId: string): Promise<HistoryResult> {
   const reply = await sendCommand('session.history', { sessionId }, RPC_BACKSTOP_TIMEOUT_MS)
-  return { messages: reply.messages, historyTruncated: reply.historyTruncated }
+  return {
+    messages: reply.messages,
+    historyTruncated: reply.historyTruncated,
+    truncated: reply.truncated,
+    loadedTurns: reply.loadedTurns,
+    totalTurnsEstimate: reply.totalTurnsEstimate,
+  }
 }
 
 /**
  * W4 H4：全量拉取 session 历史（加载更多 fallback）。
  * 走 session.getFullHistory → runtime getFullHistory（全量文件读取，非尾读）。
+ * [u4b/u4d] 文件超预检阈值时 runtime 降级为逆序窗口，reply truncated=true——消费方
+ * （loadMoreHistory）据此保持「加载更早」入口可见。
  */
-export async function getFullHistory(sessionId: string): Promise<Message[]> {
+export async function getFullHistory(sessionId: string): Promise<FullHistoryResult> {
   const reply = await sendCommand('session.getFullHistory', { sessionId }, RPC_BACKSTOP_TIMEOUT_MS)
-  return reply.messages
+  return { messages: reply.messages, truncated: reply.truncated }
 }
 
 /**

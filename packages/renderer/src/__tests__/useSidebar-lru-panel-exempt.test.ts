@@ -29,11 +29,9 @@ vi.mock('@/stores/fileTree', () => ({
 }))
 
 const useChatDisposeMock = vi.hoisted(() => vi.fn())
-const setHistoryTruncatedMock = vi.hoisted(() => vi.fn())
 vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({
     disposeSession: useChatDisposeMock,
-    setHistoryTruncated: setHistoryTruncatedMock,
   }),
   ensureStreamSubscription: vi.fn(),
 }))

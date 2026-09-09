@@ -19,7 +19,6 @@
  *
  * abort：调 api.chat.abort（方法存在，中断流转 DEFERRED G-025）。
  */
-import { ref } from 'vue'
 import type { Segment, ServerMessage } from '@xyz-agent/shared'
 import { segmentsToPrompt } from '@xyz-agent/shared'
 import {
@@ -30,6 +29,7 @@ import {
 } from '../../coordination/subscription-state'
 import type { ChatStoreInstance } from './store'
 import { splitHistoryBeforeAnchor } from './mutations'
+import { historyWindowFromReply } from './truncated-window'
 import { createMessageCoalescer } from './delta-coalescer'
 import { getExecutingBash } from './bash-effects'
 import { toErrorMessage } from '../../utils/error-message'
@@ -85,13 +85,10 @@ const streamSubscriptions = new Map<string, () => void>()
  */
 const coalescer = createMessageCoalescer()
 
-/**
- * W4/N1：记录哪些 session 的历史被尾读截断了（有更早的 turn 可加载）。
- * MessageStream 据此显隐「加载更多历史」按钮。hydrate 时设置。
- * 用 ref<Set> 保证响应式（MessageStream 的 computed showLoadMore 能自动更新）。
- */
-// @data-owner #7 —— #7 消息列表 hydrate 派生标记（尾读截断→「加载更多」显隐；权威 = session 文件 entries）
-const historyTruncatedSessions = ref<Set<string>>(new Set())
+// [u4d-truncated-ui] [HISTORICAL] W4/N1 的 historyTruncatedSessions（ref<Set>，尾读截断
+// →「加载更多」显隐）已退役：截断事实的 SSOT 迁为 chat store 截断窗口状态（truncated-window.ts，
+// truncated/loadedTurns/totalTurnsEstimate 三字段随 u4b session.history 响应写入），布尔显隐
+// 由 hasMoreHistory 派生读——同一 truncated 事实不再两处存储。
 
 /**
  * MF-1：manual compact 的 compaction_end 到达标记（per-session）。
@@ -150,8 +147,9 @@ const deferFlushRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /**
  * 重置 useChat 模块级状态（仅供测试隔离）。
  *
- * 清 streamSubscriptions（逐个调 unsub 解除 WS 订阅 + 清 Map）+ historyTruncatedSessions
- * 重置 + resetSubscriptionStates（coordination/subscription-state 模块级 Map）。
+ * 清 streamSubscriptions（逐个调 unsub 解除 WS 订阅 + 清 Map）+ resetSubscriptionStates
+ * （coordination/subscription-state 模块级 Map）。[u4d] 截断标记已迁 chat store 截断窗口
+ * 状态（per-instance，测试各自 createChatStore 无需模块级 reset）。
  *
  * [TD3] handoff「resetChatModuleState 删除（cleanup 取代）」精神兑现：生产路径 session
  * 销毁由 disposeSession（已调 streamSubscriptions.delete + clearSubscription +
@@ -173,8 +171,7 @@ export function resetChatModuleStateForTest(): void {
   // D-2：清 coalescer 待刷缓冲——残留 buffer 会把上一用例 fixture 的 dispatch 闭包
   // （指向已 dispose 的 store）带进下一用例的 microtask flush，跨 fixture 污染。
   coalescer.clear()
-  // 重置 history 截断标记
-  historyTruncatedSessions.value = new Set()
+  // [u4d] 截断窗口状态随 chat store per-instance，无需模块级 reset
   // MF-1：清 manual compact 标记（测试间不 reset 会泄漏到下一用例）
   manualCompactionState.clear()
   // D2：清未决直发记录（测试间不 reset 会把上一用例的 send 记录泄漏进下一用例的
@@ -185,7 +182,7 @@ export function resetChatModuleStateForTest(): void {
   for (const timer of deferFlushRetryTimers.values()) clearTimeout(timer)
   deferFlushRetryTimers.clear()
   // wave:renderer-subscribe：重置 MessageBus 订阅状态（subscriptionStates 模块级 Map）。
-  // 与 streamSubscriptions/historyTruncatedSessions 同理——测试间不 reset 会泄漏到下一用例
+  // 与 streamSubscriptions 同理——测试间不 reset 会泄漏到下一用例
   //（subscriptionStates 残留 → routeInbound gap 检测误判）。
   resetSubscriptionStates()
 }
@@ -616,7 +613,7 @@ export async function submitQueuedEntry(
  *
  * @param deps 依赖注入（chatApi/writeSegments/getChatStore/getSessionStore/toast/t/getCompactQueue）
  * @returns send/steer/followUp/abort/compact/editAndResend/hydrateHistory/loadMoreHistory/
- *          hasMoreHistory/setHistoryTruncated/disposeSession/sendBash/abortBash
+ *          hasMoreHistory/disposeSession/sendBash/abortBash
  */
 export function createUseChat(deps: UseChatDeps) {
   const chat = deps.getChatStore()
@@ -1083,31 +1080,18 @@ export function createUseChat(deps: UseChatDeps) {
    */
   async function hydrateHistory(sessionId: string): Promise<void> {
     if (chat.isHydrated(sessionId)) return
-    const { messages, historyTruncated } = await deps.chatApi.getHistory(sessionId)
-    chat.hydrate(sessionId, messages)
-    setHistoryTruncated(sessionId, historyTruncated)
+    const reply = await deps.chatApi.getHistory(sessionId)
+    // [u4d] 窗口状态随 hydrate 写入 store（SSOT：truncated/loadedTurns/totalTurnsEstimate
+    // 单点存 chat store；N1 historyTruncatedSessions 双轨退役，hasMoreHistory 派生读）。
+    chat.hydrate(sessionId, reply.messages, historyWindowFromReply(reply))
   }
 
-  /** N1: 查询 session 历史是否被截断（有更早的 turn 可加载） */
+  /**
+   * N1: 查询 session 历史是否被截断（有更早的 turn 可加载）。
+   * [u4d] 从 store 截断窗口状态派生（SSOT，无独立布尔表）。
+   */
   function hasMoreHistory(sessionId: string): boolean {
-    return historyTruncatedSessions.value.has(sessionId)
-  }
-
-  /** N1: 设置 session 历史截断标记（selectSession hydrate 时调用） */
-  function setHistoryTruncated(sessionId: string, truncated: boolean): void {
-    const next = new Set(historyTruncatedSessions.value)
-    if (truncated) next.add(sessionId)
-    else next.delete(sessionId)
-    historyTruncatedSessions.value = next
-  }
-
-  /** N1: 加载更多成功后清除截断标记（已全量加载） */
-  function clearHistoryTruncated(sessionId: string): void {
-    if (historyTruncatedSessions.value.has(sessionId)) {
-      const next = new Set(historyTruncatedSessions.value)
-      next.delete(sessionId)
-      historyTruncatedSessions.value = next
-    }
+    return chat.getHistoryWindow(sessionId)?.truncated ?? false
   }
 
   /**
@@ -1124,13 +1108,13 @@ export function createUseChat(deps: UseChatDeps) {
    * 非 exact 即 console.warn（V6 验收：console 出现锚降级 warn = 兜底路径命中，需检查
    * compaction / 外部改写情形）；none 时 prependHistory 的 id 去重兜底仍在（安全网）。
    *
-   * 幂等：切分后空段不写入（FR-4/AC-7）；锚即全量首条 = 没有更早历史，标记清除后
-   * 按钮隐藏（hasMoreHistory → false）。RPC 失败不破坏现有消息（catch 吞错，与
-   * hydrateHistory 的 markHistoryFailed 同策略），用户可重试。
+   * 幂等：切分后空段不写入（FR-4/AC-7）；锚即全量首条 = 没有更早历史，窗口收敛为
+   * truncated=false 后按钮隐藏（hasMoreHistory → false）。RPC 失败不破坏现有消息（catch
+   * 吞错，与 hydrateHistory 的 markHistoryFailed 同策略），用户可重试。
    */
   async function loadMoreHistory(sessionId: string): Promise<void> {
     try {
-      const fullHistory = await deps.chatApi.getFullHistory(sessionId)
+      const { messages: fullHistory, truncated: fullTruncated } = await deps.chatApi.getFullHistory(sessionId)
       // 锚消息 = store 当前最旧消息：live 消息只 append 到尾部，load-more 前最旧的
       // 仍是 hydrate 尾窗首条（fingerprint 降级用其 role/首段文本/timestamp）。
       const anchor = chat.getHydrateAnchor(sessionId)
@@ -1143,7 +1127,16 @@ export function createUseChat(deps: UseChatDeps) {
         )
       }
       chat.prependHistory(sessionId, segment)
-      clearHistoryTruncated(sessionId) // N1: 全量加载后不再有更多历史
+      // [u4d] 窗口状态随全量通路响应收敛（N1 clearHistoryTruncated 退役）：getFullHistory
+      // 返回完整时 truncated=false → 顶部条消失（A6/需求③）；u4b ①档巨型文件降级为逆序
+      // 窗口时 truncated=true → 顶部条保持「加载更早」入口。loadedTurns/totalTurnsEstimate
+      // 沿用最近窗口值（getFullHistory 响应无 turn 统计，最小可用；deviation 已登记）。
+      const prev = chat.getHistoryWindow(sessionId)
+      chat.setHistoryWindow(sessionId, {
+        truncated: fullTruncated ?? false,
+        loadedTurns: prev?.loadedTurns ?? 0,
+        totalTurnsEstimate: prev?.totalTurnsEstimate ?? 0,
+      })
     // eslint-disable-next-line taste/no-silent-catch -- 加载更多是 best-effort：失败不破坏现有消息，用户可重试。与 hydrateHistory markHistoryFailed 同策略。
     } catch (e) {
       console.warn(`[useChat] loadMoreHistory failed for session ${sessionId}:`, e)
@@ -1154,8 +1147,8 @@ export function createUseChat(deps: UseChatDeps) {
    * 清理指定 session 的全部资源（W1 / S3：deleteSession 调用）。
    *
    * 取消 WS 流式订阅（streamSubscriptions 模块级 Map）+ 清理 chat store per-session 状态
-   * + 清 historyTruncatedSessions 标记。session 删除后若不取消订阅，WS 事件仍会推给已删
-   * session 的 handler，且 Map 永久增长；historyTruncated 标记同理残留（SUGGESTION）。
+   * （[u4d] 截断窗口状态分区由 chat.disposeSession 统一清）。session 删除后若不取消订阅，
+   * WS 事件仍会推给已删 session 的 handler，且 Map 永久增长。
    */
   function disposeSession(sessionId: string): void {
     const unsub = streamSubscriptions.get(sessionId)
@@ -1166,7 +1159,7 @@ export function createUseChat(deps: UseChatDeps) {
     // D-2：收口兜底——unsub 后不会再有新消息入缓冲，把该 sid 残留 delta 落地后再删分区。
     // 用 flush(sid) 而非 flushAll：其他 session 的合并窗口不应被本 session 的销毁提前打断。
     coalescer.flush(sessionId)
-    clearHistoryTruncated(sessionId) // SUGGESTION：已删 session 的截断标记不再有意义
+    // [u4d] 截断窗口状态由下方 chat.disposeSession 内统一清理（store 分区），无需单独清
     manualCompactionState.delete(sessionId) // MF-1：清 manual compact 标记
     pendingDirectSends.delete(sessionId) // D2：清未决直发记录（session 已销毁，rejected 不再有意义）
     clearDeferFlushRetryTimer(sessionId) // [簇 A1] 清 flush 重投 timer（session 已销毁，重投无意义）
@@ -1187,7 +1180,6 @@ export function createUseChat(deps: UseChatDeps) {
     hydrateHistory,
     loadMoreHistory,
     hasMoreHistory,
-    setHistoryTruncated,
     disposeSession,
     sendBash,
     abortBash,
@@ -1207,7 +1199,7 @@ export function createUseChat(deps: UseChatDeps) {
  *   UI 卡「进行中…」而回复实际已生成。
  *
  * 与 disposeSession 的区别：session 仍存在（dead 占位 UI 可「重新打开」），只失效订阅，
- * 不清 chat store 分区/historyTruncated/manualCompaction 等业务状态。
+ * 不清 chat store 分区/截断窗口状态/manualCompaction 等业务状态。
  */
 export function invalidateStreamSubscription(sessionId: string): void {
   const unsub = streamSubscriptions.get(sessionId)

@@ -51,10 +51,23 @@ export interface ChatApiPort {
   bash(sessionId: string, command: string, excludeFromContext: boolean): Promise<void>
   /** 取消进行中的 bash（message.abortBash）*/
   abortBash(sessionId: string): Promise<void>
-  /** 拉取 session 历史（session.history，尾读可能截断）*/
-  getHistory(sessionId: string): Promise<{ messages: Message[]; historyTruncated: boolean }>
-  /** 全量拉取 session 历史（session.getFullHistory，加载更多用）*/
-  getFullHistory(sessionId: string): Promise<Message[]>
+  /**
+   * 拉取 session 历史（session.history，u4b 双预算窗口可能截断）。
+   * [u4d] 窗口契约字段（truncated/loadedTurns/totalTurnsEstimate）可选——mock 门面 /
+   * legacy reply 缺省时消费方经 historyWindowFromReply 归一（truncated 回落 historyTruncated）。
+   */
+  getHistory(sessionId: string): Promise<{
+    messages: Message[]
+    historyTruncated: boolean
+    truncated?: boolean
+    loadedTurns?: number
+    totalTurnsEstimate?: number
+  }>
+  /**
+   * 全量拉取 session 历史（session.getFullHistory，加载更多用）。
+   * [u4b/u4d] 文件超预检阈值时 runtime 降级为逆序窗口，truncated=true（optional，按 false 处理）。
+   */
+  getFullHistory(sessionId: string): Promise<{ messages: Message[]; truncated?: boolean }>
   /** 订阅指定 session 的流式消息事件，返回取消函数。
    *  handler 收分发联合形态的 ServerMessageUnion——switch on msg.type 自动收窄 payload，
    *  ServerMessageMap 登记缺口变编译错误（R1 type-safety S4/S5，消费侧不再 as）。*/

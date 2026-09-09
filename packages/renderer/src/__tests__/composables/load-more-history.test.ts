@@ -59,7 +59,7 @@ describe('W4 加载更多历史 fallback', () => {
     ])
 
     // getFullHistory 返回全部 10 条（含已有的 m8/m9/m10）
-    vi.mocked(chat.getFullHistory).mockResolvedValue([
+    vi.mocked(chat.getFullHistory).mockResolvedValue({ messages: [
       makeMessage('m1', 'msg-1'),
       makeMessage('m2', 'msg-2'),
       makeMessage('m3', 'msg-3'),
@@ -70,7 +70,7 @@ describe('W4 加载更多历史 fallback', () => {
       makeMessage('m8', 'msg-8'),
       makeMessage('m9', 'msg-9'),
       makeMessage('m10', 'msg-10'),
-    ])
+    ], truncated: false })
 
     await loadMoreHistory(sid)
 
@@ -91,7 +91,7 @@ describe('W4 加载更多历史 fallback', () => {
     const sid = 's1'
     store.hydrate(sid, [makeMessage('m1', 'msg-1')])
 
-    vi.mocked(chat.getFullHistory).mockResolvedValue([makeMessage('m1', 'msg-1')])
+    vi.mocked(chat.getFullHistory).mockResolvedValue({ messages: [makeMessage('m1', 'msg-1')], truncated: false })
 
     await loadMoreHistory(sid)
 
@@ -104,13 +104,13 @@ describe('W4 加载更多历史 fallback', () => {
 
     store.hydrate(sid, [makeMessage('m5', 'msg-5')])
 
-    vi.mocked(chat.getFullHistory).mockResolvedValue([
+    vi.mocked(chat.getFullHistory).mockResolvedValue({ messages: [
       makeMessage('m1', 'msg-1'),
       makeMessage('m2', 'msg-2'),
       makeMessage('m3', 'msg-3'),
       makeMessage('m4', 'msg-4'),
       makeMessage('m5', 'msg-5'),
-    ])
+    ], truncated: false })
 
     await loadMoreHistory(sid)
     expect(store.getMessages(sid)).toHaveLength(5)

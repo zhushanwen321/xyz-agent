@@ -570,16 +570,16 @@ function resolveBashMockBranch(
 }
 
 export const chat = {
-  /** 拉 session 历史（深拷贝 fixture，避免外部突变污染） */
+  /** 拉 session 历史（深拷贝 fixture，避免外部突变污染；mock 无截断，窗口契约字段按端口可选缺省） */
   async getHistory(sessionId: string): Promise<{ messages: Message[]; historyTruncated: boolean }> {
     await sleep(TIMING.ack)
     return { messages: (fixtureMessages[sessionId] ?? []).map((m) => ({ ...m })), historyTruncated: false }
   },
 
-  /** W4 H4：全量历史（mock 与 getHistory 同行为，mock 无尾读截断） */
-  async getFullHistory(sessionId: string): Promise<Message[]> {
+  /** W4 H4：全量历史（mock 与 getHistory 同行为，mock 无截断降级）。[u4d] 返回结构对齐 real 门面 {messages, truncated?} */
+  async getFullHistory(sessionId: string): Promise<{ messages: Message[]; truncated?: boolean }> {
     await sleep(TIMING.ack)
-    return (fixtureMessages[sessionId] ?? []).map((m) => ({ ...m }))
+    return { messages: (fixtureMessages[sessionId] ?? []).map((m) => ({ ...m })), truncated: false }
   },
 
   // options.clientUuid（session-occupancy D2）：mock 不模拟 send.rejected，参数仅签名对齐

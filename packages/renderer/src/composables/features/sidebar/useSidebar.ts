@@ -129,8 +129,8 @@ export function useSidebar() {
     getHistory: (sid) => chatApi.getHistory(sid),
     isHydrated: (sid) => chat.isHydrated(sid),
     hydrate: (sid, messages) => chat.hydrate(sid, messages),
-    reconcileHistory: (sid, messages) => chat.reconcileHistory(sid, messages),
-    setHistoryTruncated: (sid, truncated) => useChat().setHistoryTruncated(sid, truncated),
+    // [u4d] window 透传 store reconcile——截断窗口状态 SSOT 在 chat store（N1 setHistoryTruncated 退役）
+    reconcileHistory: (sid, messages, window) => chat.reconcileHistory(sid, messages, window),
     clearHistoryError: (sid) => chat.clearHistoryError(sid),
     markHistoryFailed: (sid) => chat.markHistoryFailed(sid),
   }

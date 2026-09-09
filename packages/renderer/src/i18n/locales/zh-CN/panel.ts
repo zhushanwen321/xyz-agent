@@ -77,7 +77,9 @@ export default {
     viewCommandDoc: '查看命令文档',
     compressing: '压缩中',
     autoCompressing: '正在自动压缩上下文',
-    loadMore: '加载更多历史',
+    // [u4d-truncated-ui] 历史预算截断顶部条（loadMore 已被 loadEarlier 取代退役）
+    loadedRecentTurns: '已加载最近 {count} 轮',
+    loadEarlier: '加载更早',
     dispatching: '思考中…',
     railInProgress: '进行中…',
     startConversation: '开始对话，或从左侧选择一个会话',

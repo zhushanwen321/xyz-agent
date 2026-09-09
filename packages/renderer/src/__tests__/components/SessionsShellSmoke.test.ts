@@ -53,7 +53,7 @@ vi.mock('@/api', async (importActual) => {
   return { ...actual, session, chat }
 })
 vi.mock('@/composables/features/chat/useChat', () => ({
-  useChat: vi.fn(() => ({ setHistoryTruncated: vi.fn(), disposeSession: vi.fn() })),
+  useChat: vi.fn(() => ({ disposeSession: vi.fn() })),
   ensureStreamSubscription: mocks.ensureStreamSub,
 }))
 vi.mock('@/composables/features/file-tree/useFileTree', () => ({ useFileTree: vi.fn(() => ({ loadTree: mocks.loadTree })) }))

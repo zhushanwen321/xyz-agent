@@ -8,6 +8,8 @@
  */
 // 顶层薄壳 + 组装
 export { default as ChatView } from './ChatView.vue'
+// [u4d-truncated-ui] 历史预算截断顶部条（MessageStream 据截断窗口状态 v-if 挂载）
+export { default as TruncatedHistoryBar } from './TruncatedHistoryBar.vue'
 // deps inject token（ChatViewDeps）。trace 折叠 stick-guard 通路已随 <Transition> 删除退役
 //（useVirtuaFollow INVAR-M4-2′ 复合判据：程序性写入回声不翻 stickToBottom=false，guarded
 // 回归结构上不可能；现行语义见 docs/design/chat-pin-bottom-fix.md §4.3 D7）。

@@ -42,6 +42,9 @@ export { createUseChat, ensureStreamSubscription, invalidateStreamSubscription, 
 // [session-occupancy u4b] defer 队列 flush 逐条提交入口（D5.1 send/steer 等价编排）
 export { submitQueuedEntry } from './useChat'
 export type { UseChatDeps, EnsureStreamSubDeps, SubmitQueuedEntryDeps, SessionStoreLike } from './useChat'
+// [u4d-truncated-ui] 历史预算截断窗口状态（D4：store SSOT + 响应归一；use-session 切入链消费归一函数）
+export { historyWindowFromReply } from './truncated-window'
+export type { HistoryWindow, HistoryWindowReply } from './truncated-window'
 export type { ChatApiPort, WriteSegmentsFn } from './api-port'
 // w20 apply-entry：chat 视图态 reducer（D5 单一 reducer 双路喂入——重放侧）。
 // 自包含纯函数模块（只依赖 @xyz-agent/shared），供 runtime wire 层与 core store（W21）共用。

@@ -77,7 +77,9 @@ export default {
     viewCommandDoc: 'View command docs',
     compressing: 'Compacting',
     autoCompressing: 'Auto-compacting context…',
-    loadMore: 'Load more history',
+    // [u4d-truncated-ui] History budget truncated top bar (loadMore superseded by loadEarlier)
+    loadedRecentTurns: 'Loaded recent {count} turns',
+    loadEarlier: 'Load earlier',
     dispatching: 'Thinking…',
     railInProgress: 'in progress…',
     startConversation: 'Start a conversation, or select a session from the left',

@@ -97,8 +97,8 @@ describe('FG6 Overview 进入/退出 + sessionDigest', () => {
     expect(useChat().hasMoreHistory('s1')).toBe(false)
 
     historySpy.mockRestore()
-    // 清模块级标记，避免污染后续用例（core useChat 的 Set 跨 pinia 实例共享）
-    useChat().setHistoryTruncated('s1', false)
+    // 清截断窗口状态，避免污染后续用例（[u4d] SSOT 在 chat store 截断窗口状态）
+    useChatStore().clearHistoryWindow('s1')
   }, 10_000)
 
   it('sessionDigest：s1 fixture 末条 assistant 摘要 + 回合计数', async () => {

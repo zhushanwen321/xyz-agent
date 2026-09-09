@@ -734,3 +734,34 @@ describe('applyEntry —— 确定性（D5 纯函数断言）', () => {
     expect(a).toEqual(b)
   })
 })
+
+// ═══════════════════════════════════════════════════════════════
+// [u4d-truncated-ui] D3 push 截断占位文案的 reducer 归一（crash-resilience §3.3 D3/D4）
+// ═══════════════════════════════════════════════════════════════
+describe('applyEntry —— u4a push 截断占位 content 数组归一（需求④：正常渲染无特殊处理）', () => {
+  const PLACEHOLDER = '内容过大（32.0 MB）已在传输层截断，完整内容见 session 文件：/tmp/s.jsonl'
+
+  it('assistant 定稿 content 被截断为 [{type:text,text:占位}] → 归一为占位字符串（text 渲染链路直接可用）', () => {
+    const state = replayEntries([
+      msgEntry(
+        'e-a-1',
+        { role: 'assistant', content: [{ type: 'text', text: PLACEHOLDER }], timestamp: 1000 },
+        { timestamp: ISO(1000) },
+      ),
+    ])
+    expect(state.messages).toHaveLength(1)
+    const m = state.messages[0]
+    expect(m.role).toBe('assistant')
+    // content 数组按既有宽形态归一走 text part 累积 → Message.content = 占位字符串
+    expect(m.content).toBe(PLACEHOLDER)
+  })
+
+  it('user entry content 被截断为 [{type:text,text:占位}] → Segment[] 含占位 text 段（UserBubble 文本分支）', () => {
+    const state = replayEntries([
+      msgEntry('e-u-1', { role: 'user', content: [{ type: 'text', text: PLACEHOLDER }], timestamp: 1000 }, { timestamp: ISO(1000) }),
+    ])
+    const m = state.messages[0]
+    expect(m.role).toBe('user')
+    expect(m.content).toEqual([{ type: 'text', text: PLACEHOLDER }])
+  })
+})

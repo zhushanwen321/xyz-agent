@@ -29,6 +29,7 @@ import { findLastAssistantIndex } from './chunk-processor'
 import { markBashError, clearExecutingBash } from './bash-effects'
 import { createChangeSetController } from './changeset'
 import { createHandoffController } from './handoff'
+import { createTruncatedWindowController, type HistoryWindow } from './truncated-window'
 import type {
   Message,
   PiEntry,
@@ -366,6 +367,17 @@ export function createChatStore() {
   const { changeSetStatuses, getChangeSetStatus, setChangeSetStatus, applyFileChanges, markChangeSetsSuperseded } = changeset
   /** getHistory 加载失败的 session（#2 AC-2.6：landing 重试出口，不永久卡住） */
   const failedHistory = ref<Set<string>>(new Set())
+  /**
+   * [u4d-truncated-ui] per-session 历史预算截断窗口状态（crash-resilience §3.3 D4）。
+   *
+   * // @data-owner #7 —— 权威源 = u4b session.history 响应（truncated/loadedTurns/totalTurnsEstimate，
+   * shared protocol SSOT）。唯一写方 = hydrate / reconcileHistory（随响应整体覆盖）+
+   * setHistoryWindow（loadMoreHistory 全量通路收敛 truncated 位）；唯一读方 = hasMoreHistory
+   * 派生（useChat）与 MessageStream 顶部条（getHistoryWindow）。disposeSession / LRU 驱逐
+   * 同点清理（随 hydrated 标记同生共死——驱逐重进后由重 hydrate 重建）。设计叙事见
+   * ./truncated-window.ts。
+   */
+  const { historyWindows, setHistoryWindow, getHistoryWindow, clearHistoryWindow } = createTruncatedWindowController()
 
   // ── 超时兜底 timer（[idle-refresh] 阈值可变配置源 + D-007 真收口）──
 
@@ -515,6 +527,8 @@ export function createChatStore() {
       entryStates.delete(sid)
       // [W5 D5] 锚随 hydrated 标记同点清理（驱逐重进后重 hydrate 覆盖重建，防陈旧锚）
       hydrateAnchors.delete(sid)
+      // [u4d] 截断窗口状态同点清理（同锚判据：重建型，驱逐重进后重 hydrate 重建）
+      clearHistoryWindow(sid)
     },
   )
   /** W3 H3：LRU 驱逐（阈值触发）/ 显式驱逐（带虚拟 key）/ [M7] 单虚拟 key 删除 */
@@ -557,8 +571,12 @@ export function createChatStore() {
    * 气泡（F2 的首入窗口，G4）。与 reconcileHistory 走同一合并函数（设计 U3：
    * live ≡ reload，两条历史刷新入口语义同源）。分区为空时合并结果 = 基线本身，
    * 与旧的整量替换行为逐字等价。
+   *
+   * [u4d] window（u4b session.history 窗口契约，可选）随注入写入截断窗口状态：
+   * hydrate 路径是窗口状态的唯一写点之一（reconcileHistory 对称），缺省（mock 门面
+   * 未带窗口字段且调用方未归一）不写——消费方按「无截断」处理。
    */
-  function hydrate(sessionId: string, history: Message[]): void {
+  function hydrate(sessionId: string, history: Message[], window?: HistoryWindow): void {
     if (hydrated.value.has(sessionId)) return
     const cur = messages.value.get(sessionId)?.value ?? []
     commitMessages(messages, sessionId, truncateToolOutputBatch(mergeBaselineWithLive(history, cur)))
@@ -570,6 +588,8 @@ export function createChatStore() {
     // 必须锚定在文件侧消息上。
     const anchorMsg = history[0]
     if (anchorMsg) hydrateAnchors.set(sessionId, anchorMsg.piEntryId ?? anchorMsg.id)
+    // [u4d] 窗口状态随 hydrate 写入（每次 hydrate 都是 fresh getHistory 响应，覆盖语义正确）
+    if (window) setHistoryWindow(sessionId, window)
     hydrated.value = new Set(hydrated.value).add(sessionId)
     lruTouch(sessionId) // W3: LRU recency
   }
@@ -589,20 +609,26 @@ export function createChatStore() {
    * 守卫丢弃 → 流永久停滞。合并方向（登记表 #7 切入 reconcile 规则）：
    * **entry 历史为基线，分区尾部 streaming 实体追加其后**（live 真相优先于 entry 快照）。
    *
-   * - 未 hydrate → 等价 hydrate（原语义：合并注入 + 锚 + 标记）
+   * - 未 hydrate → 等价 hydrate（原语义：合并注入 + 锚 + 标记 + [u4d] 窗口状态）
    * - 已 hydrate → 基线替换 + 保留尾部保护段（streaming assistant + 未确认 user，
    *   [steer-bubble u3/D3] 两步合并：尾部保护段收集 + user 正序-尾窗对齐去重，见
    *   mergeBaselineWithLive——快照滞后窗口不丢已投递气泡、不双计；turn 已结束（无
    *   保护段）则纯刷新到最新 entries
+   *
+   * [u4d] window（可选）随切入刷新覆盖窗口状态：getHistory 是预算窗口响应，truncated
+   * 必须与当前分区内容同步（load-more 已收敛为全量后切入，响应仍为窗口 → truncated
+   * 翻回 true，顶部条重显——与 reconcile 整量替换分区截回尾窗的现状行为一致；
+   * 合并语义改造归 u6）。
    */
-  function reconcileHistory(sessionId: string, history: Message[]): void {
+  function reconcileHistory(sessionId: string, history: Message[], window?: HistoryWindow): void {
     if (!hydrated.value.has(sessionId)) {
-      hydrate(sessionId, history)
+      hydrate(sessionId, history, window)
       return
     }
     const cur = messages.value.get(sessionId)?.value ?? []
     const merged = mergeBaselineWithLive(history, cur)
     commitMessages(messages, sessionId, truncateToolOutputBatch(merged))
+    if (window) setHistoryWindow(sessionId, window)
     lruTouch(sessionId) // W3: LRU recency（切入刷新视同活跃访问）
   }
 
@@ -1123,7 +1149,7 @@ export function createChatStore() {
     // 避免 TS 将不同 Map 元素推断为具体联合类型导致 new Map(ref.value) 不兼容。
     // inflightCounts（[steer-bubble D4]）：disposeSession 同步清 inflight——确认基线随分区
     // 销毁作废（与 LRU 驱逐的刻意豁免不同，见 lruEvictDeps 处声明注释）。
-    const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates, pendingBuffer, inflightCounts, compactingReasons, occupancies]
+    const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates, pendingBuffer, inflightCounts, compactingReasons, occupancies, historyWindows]
     const setRefs: { value: Set<string> }[] = [hydrated, pendingSend, handingOffSessions, failedHistory]
     for (const ref of mapRefs) {
       if (ref.value.has(sessionId)) {
@@ -1177,6 +1203,8 @@ export function createChatStore() {
     isHydrated, markHistoryFailed, clearHistoryError,
     hydrate, setMessages, reconcileHistory,
     getHydrateAnchor,
+    // [u4d] 历史预算截断窗口状态（ref + 读/写/清，SSOT 见 truncated-window.ts）
+    historyWindows, getHistoryWindow, setHistoryWindow, clearHistoryWindow,
     prependHistory,
     applySubagentStreamDelta: (virtualId: string, lines: string[]) => streamingStateMachine.applySubagentStreamDelta(virtualId, lines),
     finalizeSubagentStream: (virtualId: string) => streamingStateMachine.finalizeSubagentStream(virtualId),
@@ -1278,11 +1306,13 @@ export type ChatStoreReaders = Pick<
   | 'retryStates' | 'queueStates' | 'pendingBuffer' | 'changeSetStatuses'
   | 'failedHistory' | 'hydrated' | 'inflightCounts'
   | 'occupancies'
+  | 'historyWindows'
   | 'getMessages' | 'getRetryState' | 'getQueueState' | 'getChangeSetStatus'
   | 'isHydrated' | 'getHydrateAnchor' | 'isGenerating' | 'isActive'
   | 'isCompacting' | 'getCompactingReason' | 'isHandingOff'
   | 'getOccupancy' | 'sessionPhase' | 'isPendingSend'
   | 'getInflight'
+  | 'getHistoryWindow'
 >
 
 /**
@@ -1306,6 +1336,7 @@ export type ChatStoreOps = Pick<
   | 'refreshStreamingTimer' | 'setStreamingIdleTimeoutMs'
   | 'touchLru' | 'evictIfNeeded' | 'evictSessionWithVirtual' | 'evictVirtualKey'
   | 'incrementInflight' | 'decrementInflight' | 'clearInflight'
+  | 'setHistoryWindow' | 'clearHistoryWindow'
   | 'testInternals'
 >
 

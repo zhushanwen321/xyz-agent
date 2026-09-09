@@ -57,12 +57,10 @@ vi.mock('@/api', () => ({
 // ensureStreamSubscription 隔离（真实实现 fire-and-forget WS 订阅，测试不需要）
 const useChatMocks = vi.hoisted(() => ({
   disposeSession: vi.fn(),
-  setHistoryTruncated: vi.fn(),
 }))
 vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({
     disposeSession: useChatMocks.disposeSession,
-    setHistoryTruncated: useChatMocks.setHistoryTruncated,
     send: vi.fn(),
     sendBash: vi.fn(),
   }),
