@@ -30,6 +30,7 @@ import type {
   InteractAction,
   InteractResult,
   ProbeReport,
+  ResumeAnchor,
   SessionView,
 } from "@zhushanwen/subagent-engine-sdk";
 
@@ -65,6 +66,12 @@ export interface RunContext {
   onHandleReady?: (partial: Pick<EngineHandleData, "sessionRef" | "poolKey">) => void;
   /** 一次性子进程 pid 上报（host/childSpawned 载荷形态；ChildProcess 句柄不跨协议面）。 */
   onChildSpawned?: (child: { pid: number | undefined; killed: boolean }) => void;
+  /**
+   * [v1.x] chat 会话形态参数（协议 run.params.chat 的进程内还原；缺省 = 一次性任务
+   * 形态）。recordId = chat 轮次关联键与 interact 定位键；resume 锚点存在 = 冷续
+   * （--session 续写原文件），不存在 = 首轮新建。
+   */
+  chat?: { recordId: string; resume?: ResumeAnchor };
 }
 
 export interface EngineHandle {

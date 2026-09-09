@@ -19,11 +19,10 @@
 //     RECORD_ID 从 run ctx 重写（不靠 env 继承——spawn env 的 deny 清单已剥）。
 //
 // 保留在 core 的面（deviations 登记）：chatMode 长驻轮次 / idle timer / 冷续轮
-// resume 的宿主编排（ChatRoundTicket / HostBridge 消费面）——v1 协议 8 反向通道
-// 未含 HostBridge 长运行通道（W6 host-bridge.ts 注释「W7 反向通道载荷再议」），
-// chat 域现走 core inproc（终态口径：无条件直连而非 env 开关——
-// XYZ_SUBAGENT_ENGINE_MODE 已随 DoD#5 删除、读取方零残留，仅 chat 域临时保留面
-// 语境残留，见设计 §1 裁决注记），本执行器承载 workflow 域单次 run。
+// resume 的宿主编排（ChatRoundTicket / HostBridge 消费面）——v1.x（chat-domain 设计
+// §3.2 D1-A）后轮次执行与轮终事件已由本包承载（chatMode 参数 + chat-session 会话
+// 管理器），core 侧保留的是编排面（record 状态回写 / idle+activate lock 定时器 /
+// 交互编排——host-bridge 头注裁定），engines/pi inproc 分支待 W3 删除。
 
 import type { ChildProcess } from "node:child_process";
 
@@ -61,7 +60,7 @@ import {
   parseSpawnLine,
   type SdkEvent,
 } from "./spawn-event-adapter.ts";
-import { performGetStateHandshake } from "./get-state-handshake.ts";
+import { performGetStateHandshake, extractGetStateFields, type GetStateResult } from "./get-state-handshake.ts";
 import { clearEpipeFailure, recordEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
 import { cleanupTempPrompt, writePromptToTempFile } from "./temp-prompt.ts";
 import { createTurnLimiter, WRAP_UP_HINT } from "./turn-limiter.ts";
@@ -110,6 +109,16 @@ export interface SpawnRunCallbacks {
   askUser?: (request: UiRequest) => Promise<UiResponse>;
   /** text_delta 分流出口（→ host/streamDelta）。 */
   onDelta?: (delta: string) => void;
+  /**
+   * [chatMode] agent_end（非 willRetry，队列排空）到达：本轮收敛。不 kill 子进程
+   * （长驻），由调用方（chat-session）上报 roundLifecycle settled 相位。
+   */
+  onChatRoundEnd?: () => void;
+  /**
+   * [chatMode] agent_settled（真空闲边界）到达：run 在此 resolve（exit 0 口径），
+   * 进程保活。调用方（chat-session）据此上报 idle 相位（usage + anchor）。
+   */
+  onChatAgentSettled?: () => void;
 }
 
 /** runSpawnOnce 的入参（协议 RunParams 的引擎侧还原形态）。 */
@@ -150,6 +159,12 @@ export interface SpawnRunParams {
   mirrorFlags?: MirrorFlags;
   /** resume 目标 session 文件（冷续写：--session 续写原文件）。 */
   resumeSessionFile?: string;
+  /**
+   * [v1.x chat 会话形态] 长驻模式：agent_end（非 willRetry）不 kill 子进程（轮收敛
+   * 交 callbacks.onChatRoundEnd 上报），agent_settled（真空闲）resolve run（exit 0
+   * 口径，进程保活——对齐 inproc chatMode「进程长驻」语义）。缺省 = 一次性 run。
+   */
+  chatMode?: boolean;
 }
 
 /** runSpawnOnce 的产物。 */
@@ -172,6 +187,8 @@ function createSdkEventTranslator(
     abort: () => void;
     /** agent_end（非 willRetry）到达：turn 已终态、pi rpc 常驻进程需外部终结。 */
     onAgentEnd?: () => void;
+    /** [chatMode] agent_settled（真空闲）到达：run resolve 点 + idle 相位锚点。 */
+    onAgentSettled?: () => void;
   },
 ): (raw: SdkEvent) => void {
   // a. transient 寄存器（tool_end 缺 args 时回填）
@@ -254,7 +271,22 @@ function createSdkEventTranslator(
         // 旧实现的 pending 后代 keep-alive 分支（session 文件 pending:register 差集
         // 判活 + no-progress timer + notifier steer 唤醒）未随迁移——本执行器口径是
         // workflow 域单次 run（见文件头），后台后代保活编排登记为协议化偏差。
+        // [v1.x chatMode] 长驻形态分支：不 kill（轮收敛交 onChatRoundEnd 上报），
+        // resolve 改挂 agent_settled（真空闲）——对齐 inproc chatMode。
         if (raw.willRetry !== true) opts.onAgentEnd?.();
+        return;
+      }
+      case "agent_settled": {
+        // [v1.x chatMode] 真空闲边界（agent_end 之后、post-run 完成后才 emit——
+        // pi agent-session _runAgentPrompt finally 块）。仅长驻形态消费：run 在此
+        // resolve，turn 计数与 limiter 标志按轮重置（SP-9 对齐：续聊轮独立预算，
+        // maxTurns 不跨轮累计）。一次性 run 不消费（agent_end 已 kill，进程不会
+        // 活到 settled）。
+        if (opts.onAgentSettled !== undefined) {
+          record.turnCount = 0;
+          limiter.reset();
+          opts.onAgentSettled();
+        }
         return;
       }
       case "message_end": {
@@ -407,16 +439,38 @@ export async function runSpawnOnce(
     // agent_end 终结（F1.2）：正常完成后的主动 kill，close 带信号但语义是成功
     // （旧 core waitForChildExit 的 code ?? 0 同义——signal 退出码 143 只属异常路径）。
     let agentEndedCleanly = false;
+    // [chatMode] agent_settled 的 run resolve 句柄（inproc state.resolveRun 同款：
+    // 声明先于 handler 装配，exitPromise executor 内赋值——事件只会在 pump 启动后
+    // 异步到达，无空窗）。
+    let resolveChatRun: ((code: number) => void) | undefined;
+    const chatMode = params.chatMode === true;
     const handleSdkEvent = createSdkEventTranslator(record, {
       maxTurns: params.maxTurns,
       graceTurns: params.graceTurns,
       onEvent: callbacks.onEvent,
       onDelta: callbacks.onDelta,
       abort: () => killChild("turn limiter abort"),
-      onAgentEnd: () => {
-        agentEndedCleanly = true;
-        killChild("agent_end final kill");
-      },
+      onAgentEnd: chatMode
+        ? () => {
+          // [chatMode] 轮收敛（输出完整）：不 kill，交 chat-session 上报 settled 相位；
+          // agentEndedCleanly 置位让「end 与 settled 之间被杀」的 close 也按 0 口径收尾。
+          agentEndedCleanly = true;
+          callbacks.onChatRoundEnd?.();
+        }
+        : () => {
+          agentEndedCleanly = true;
+          killChild("agent_end final kill");
+        },
+      ...(chatMode
+        ? {
+          onAgentSettled: () => {
+            // 相位上报先于 run resolve（idle 帧先于 run 应答帧——协议事件流时序）
+            agentEndedCleanly = true;
+            callbacks.onChatAgentSettled?.();
+            resolveChatRun?.(0);
+          },
+        }
+        : {}),
     });
 
     // 2b. stderr tee 落盘（W11，设计 §3.9 同款契约）：pi 任务子进程 stderr 此前
@@ -446,13 +500,33 @@ export async function runSpawnOnce(
     });
 
     // 5. get_state response 监听表（握手 + 迟到 response 自弃）
+    //    身份回填走响应行的同步路径（不经握手 promise 的 .then 微任务）：同一 stdout
+    //    data 事件内握手应答行之后的轮终事件行（chat 的 agent_settled → idle 相位
+    //    anchor）立即可见 sessionFile——整 chunk 同帧处理时微任务时序不可靠。
     const stateListeners = new Map<string, (data: unknown) => void>();
     const addStateListener = (id: string, resolver: (data: unknown) => void): void => {
-      stateListeners.set(id, resolver);
+      stateListeners.set(id, (data: unknown) => {
+        const picked: GetStateResult = {};
+        extractGetStateFields(data, picked);
+        if (picked.sessionId !== undefined && sessionId === undefined) sessionId = picked.sessionId;
+        if (picked.sessionFile !== undefined && picked.sessionFile !== sessionFile) {
+          sessionFile = picked.sessionFile;
+          callbacks.onHandleReady?.({
+            sessionRef: {
+              ...(sessionId !== undefined ? { sessionId } : {}),
+              sessionFile: picked.sessionFile,
+            },
+            poolKey: "shared",
+          });
+        }
+        resolver(data);
+      });
     };
 
     // 6. stdout pump
     const exitPromise = new Promise<number>((resolveExit) => {
+      // [chatMode] agent_settled resolve 句柄落位（见上方 resolveChatRun 声明处注释）
+      resolveChatRun = resolveExit;
       let buffer = "";
       child.stdout?.setEncoding("utf8");
       child.stdout?.on("data", (chunk: string) => {
@@ -547,13 +621,14 @@ export async function runSpawnOnce(
       });
     });
 
-    // 7. prompt 命令（rpc mode 唯一任务驱动通道）
-    sendPromptCommand(child, params.task);
-
-    // 8. get_state 握手 fire-and-forget（RPC mode 无 header 行，靠握手回填身份）
+    // 7. get_state 握手 fire-and-forget（RPC mode 无 header 行，靠握手回填身份）——
+    //    先于 prompt 发出：chat 会话形态的 idle 相位 anchor 与 run 应答 handle 都需要
+    //    sessionFile，身份先知再驱动轮次（stdout 流序保证握手应答先于轮终事件）。
+    //    身份回填主体在 addStateListener 的同步路径（见第 5 步注释），此处仅兜底
+    //    超时重试轮次拿到的新值（同值去重，不重发 handleReady）。
     void performGetStateHandshake(child, addStateListener).then((r) => {
       if (r.sessionId !== undefined && sessionId === undefined) sessionId = r.sessionId;
-      if (r.sessionFile !== undefined) {
+      if (r.sessionFile !== undefined && r.sessionFile !== sessionFile) {
         sessionFile = r.sessionFile;
         callbacks.onHandleReady?.({
           sessionRef: {
@@ -564,6 +639,9 @@ export async function runSpawnOnce(
         });
       }
     });
+
+    // 8. prompt 命令（rpc mode 唯一任务驱动通道）
+    sendPromptCommand(child, params.task);
 
     // 9. 等待退出
     const exitCode = await exitPromise;

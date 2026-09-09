@@ -33,7 +33,7 @@ export type AddGetStateResponseListener = (
 ) => void | (() => void);
 
 /** 从 get_state response data 提取 sessionFile/sessionId（提取规则单一来源）。 */
-function extractGetStateFields(data: unknown, into: GetStateResult): void {
+export function extractGetStateFields(data: unknown, into: GetStateResult): void {
   if (data && typeof data === "object") {
     const d = data as Record<string, unknown>;
     if (typeof d.sessionFile === "string" && d.sessionFile.length > 0) {

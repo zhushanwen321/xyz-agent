@@ -22,6 +22,7 @@
 import {
   ENGINE_PROTOCOL_VERSION,
   EngineSdkError,
+  assertChatConversationSupported,
   isResponseFrame,
   isReverseRequestFrame,
   type AgentCallOpts,
@@ -43,6 +44,7 @@ import {
 
 import { PI_ADAPTER_VERSION } from "./constants.ts";
 import { PiEngine } from "./pi-engine.ts";
+import type { ChatHostChannels } from "./chat-session.ts";
 import type { EnginePort, EngineStream, EngineCtxModel, RunContext } from "./port-types.ts";
 import { toErrorMessage } from "./error-message.ts";
 
@@ -54,7 +56,11 @@ export interface EngineProtocolServerOptions {
   /** stdout 写入面（每帧一行 JSON）。 */
   write: FrameWriter;
   /** 引擎实例（缺省 createDefaultPiEngine——测试注入 fake/DI 实例）。 */
-  engine?: EnginePort & { bindAskUser?(handler: ((req: UiRequest) => Promise<UiResponse>) | undefined): void };
+  engine?: EnginePort & {
+    bindAskUser?(handler: ((req: UiRequest) => Promise<UiResponse>) | undefined): void;
+    /** [v1.x] chat 会话反向通道发射面绑定（roundLifecycle / recordId 键 streamDelta）。 */
+    bindHostChannels?(channels: ChatHostChannels | undefined): void;
+  };
   /** 反向请求计时面（armEngineSelfDestruct 产物；缺省不计时——测试用）。 */
   reverseClock?: ReverseRequestClock;
   /** 应答等待缺省超时（反向请求两阶段等待上限兜底；默认 REVERSE_TIMEOUT_DEFAULT_MS）。 */
@@ -100,6 +106,18 @@ export class EngineProtocolServer {
     this.engine = opts.engine ?? createDefaultPiEngine();
     this.reverseClock = opts.reverseClock;
     this.reverseTimeoutMs = opts.reverseTimeoutMs ?? REVERSE_TIMEOUT_DEFAULT_MS;
+    // [v1.x] chat 会话反向通道发射面绑定（进程生命周期级——会话跨 run 存活）：
+    // roundLifecycle 三相位 + 续聊轮 recordId 键 streamDelta + 会话级 askUser。
+    this.engine.bindHostChannels?.({
+      streamDelta: (p) => {
+        void this.reverseRequestInternal("host/streamDelta", p);
+      },
+      roundLifecycle: (p) => {
+        void this.reverseRequestInternal("host/roundLifecycle", p);
+      },
+      askUser: (runId, request) =>
+        this.reverseRequestInternal("host/askUser", { runId, request }) as Promise<UiResponse>,
+    });
   }
 
   /** 入站帧消费（请求帧 + 反向请求应答帧；main.ts 的行解析器拆行后喂入）。 */
@@ -201,16 +219,37 @@ export class EngineProtocolServer {
         "The host must complete the initialize handshake before dispatching runs.",
       );
     }
+    // [v1.x] chat 会话形态 gate（A6 方向防御）：conversation 位 unsupported 的引擎对
+    // chat 请求同步拒——判据单源 = SDK assertChatConversationSupported（与 core
+    // capability-gate 同一能力位，防两侧判据漂移）。本引擎 manifest 声明 native，
+    // 此处仅防御 manifest/实装漂移。
+    if (params.chat !== undefined) {
+      if (typeof params.chat.recordId !== "string" || params.chat.recordId === "") {
+        throw new EngineSdkError(
+          "engine_protocol_bad_frame",
+          `run.chat requires a non-empty recordId (got: ${JSON.stringify(params.chat.recordId)})`,
+          "The host must mint a record id before dispatching a chat-form run; it keys interact routing and roundLifecycle association.",
+        );
+      }
+      assertChatConversationSupported(this.engine.id, this.engine.capabilities());
+    }
     const { runId, task, ctx } = params;
     const controller = new AbortController();
     const active: ActiveRun = { controller, seq: 0 };
     this.activeRuns.set(runId, active);
 
     // pi 专有：host/askUser 两阶段等待体绑定进引擎（ui-request-queue 消费；
-    // ack 后等待不计 in-flight 自灭计时——R9-2；run 结束解绑防跨 run 串扰）
-    this.engine.bindAskUser?.((request: UiRequest) =>
-      this.reverseRequestInternal("host/askUser", { runId, request }) as Promise<UiResponse>,
-    );
+    // ack 后等待不计 in-flight 自灭计时——R9-2；run 结束解绑防跨 run 串扰）。
+    // chat 会话形态跳过：会话跨 run 存活，askUser 由 hostChannels 以 spawn 轮 runId
+    // 固定绑定（per-run 绑定会在 run 应答后解绑，把长驻会话的 UI 请求断流）。
+    const isChatRun = params.chat !== undefined;
+    // chat 会话形态的 record 锚定键（闭包捕获——TS 无法经 isChatRun 布尔收窄 params.chat）
+    const chatRecordId: string | undefined = params.chat?.recordId;
+    if (!isChatRun) {
+      this.engine.bindAskUser?.((request: UiRequest) =>
+        this.reverseRequestInternal("host/askUser", { runId, request }) as Promise<UiResponse>,
+      );
+    }
 
     // task 子集 + ctx 还原 = 本地全量 AgentCallOpts（RemoteEngine.toSdkTaskSubset 镜像）
     const fullTask: AgentCallOpts = { ...task, ...(ctx.model !== undefined ? { model: ctx.model } : {}) };
@@ -226,6 +265,7 @@ export class EngineProtocolServer {
       ...(stream !== undefined ? { stream } : {}),
       ...(ctx.schemaEnv !== undefined ? { schemaEnv: ctx.schemaEnv } : {}),
       ...(ctx.engineFallback !== undefined ? { engineFallback: ctx.engineFallback } : {}),
+      ...(isChatRun ? { chat: params.chat } : {}),
       onPoolResolved: (poolKey) => {
         void this.reverseRequestInternal("host/poolResolved", { runId, poolKey });
       },
@@ -234,7 +274,7 @@ export class EngineProtocolServer {
       },
       onChildSpawned: (child) => {
         if (child.pid === undefined) return;
-        void this.reverseRequestInternal("host/childSpawned", { pid: child.pid, recordId: runId });
+        void this.reverseRequestInternal("host/childSpawned", { pid: child.pid, recordId: chatRecordId ?? runId });
       },
     };
 
@@ -243,7 +283,7 @@ export class EngineProtocolServer {
       return { handle: r.handle.data, outcome: r.outcome };
     } finally {
       this.activeRuns.delete(runId);
-      this.engine.bindAskUser?.(undefined);
+      if (!isChatRun) this.engine.bindAskUser?.(undefined);
     }
   }
 

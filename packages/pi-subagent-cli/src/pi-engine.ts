@@ -3,14 +3,13 @@
 // PiEngine 协议化引擎适配器（W7，impl-plan §2.7）——core engines/pi/pi-engine.ts
 // 的引擎进程内形态。
 //
-// 归属对照（设计 §3.8 D2 表）：
+// 归属对照（设计 §3.8 D2 表；v1.x chat-domain 设计 §3.2 D1-A 后形态）：
 //   - spawn 执行链（runSpawn 本体 / sendPromptCommand / EPIPE 兜底 / stdin 驱动）
 //     → 本包 spawn-runner（迁移物）；
-//   - HostBridge 9 成员（executeAndAwait / record 面 / idle 定时器 / ChatRoundTicket）
-//     → core（W6 host/）——v1 协议 8 反向通道未含其载荷面（host-bridge.ts 注释
-//     「W7 反向通道载荷再议」），本引擎的 run 承载 workflow 域单次任务；
-//     chat 域轮次过渡期走 core inproc（终态口径：无条件直连——XYZ_SUBAGENT_ENGINE_MODE
-//     已随 DoD#5 删除、读取方零残留，见设计 §1 裁决注记）；
+//   - chat 域轮次 → [v1.x] 本包承载（chat-session 会话管理器 + run 会话形态分支）：
+//     长驻子进程 / 轮终 roundLifecycle 上报 / 冷续 resume / interact 控制面；
+//   - HostBridge 编排面（executeAndAwait / record 状态回写 / idle+activate lock 定时器）
+//     → core（W3 改线消费本引擎的事件面）；
 //   - read：①级 pi 原生读取依赖 core session-reconstructor（§2.7「保持 core」），
 //     引擎包 read 走 ②级 journal 重放（SDK journal-replay）→ ③级 outcome-only
 //     降级链（deviations 登记：①级留在 core 侧过渡期链路，W10 conformance 定夺）。
@@ -56,6 +55,7 @@ import {
   type SpawnRunResult,
   runSpawnOnce,
 } from "./spawn-runner.ts";
+import { ChatSessionRegistry, type ChatHostChannels } from "./chat-session.ts";
 import { replayJournalToSessionView } from "./read-fallback.ts";
 
 const logger = getLogger("pi-engine");
@@ -97,9 +97,14 @@ export class PiEngine implements EnginePort {
 
   private readonly deps: PiEngineDeps;
   private probeCache: ProbeReport | undefined;
+  /** [v1.x] chat 会话注册表（长驻会话状态面——见 chat-session.ts 文件头）。 */
+  private readonly chatSessions: ChatSessionRegistry;
 
   constructor(deps: PiEngineDeps = {}) {
     this.deps = deps;
+    this.chatSessions = new ChatSessionRegistry(
+      deps.spawnRunner !== undefined ? { spawnRunner: deps.spawnRunner } : {},
+    );
   }
 
   /** pi 链路实际接通的能力（与 core PiEngine.capabilities() 逐位一致——manifest 同源）。 */
@@ -109,8 +114,8 @@ export class PiEngine implements EnginePort {
       schemaEnforcement: "native",
       // pi RPC 有 steer，但 spawn 链路未接通（turn-limiter steer no-op）
       steer: "unsupported",
-      // chatMode idle 复用 + message/close/cancel 交互面已接通（core inproc 形态；
-      // 协议化 chat 轮次 = W10+ 收口，deviations 登记）
+      // chatMode idle 复用 + message/close/cancel 交互面已接通（v1.x 协议路径：
+      // run 会话形态 + chat-session 会话管理器承载轮次）
       conversation: "native",
       // persona 经 --skill / --append-system-prompt flag 通道注入
       personaInjection: "flag",
@@ -183,7 +188,10 @@ export class PiEngine implements EnginePort {
    *
    * run 期间事件经 ctx.onEvent（server 层 → `event` 通知）；session 身份经
    * ctx.onHandleReady（→ host/handleReady）；子进程 pid/状态经镜像回调上报。
-   * 抛错语义（core PiEngine.run ①）：prepare 期失败 reject，不产生 handle。 */
+   * 抛错语义（core PiEngine.run ①）：prepare 期失败 reject，不产生 handle。
+   *
+   * [v1.x] ctx.chat 存在 = chat 会话形态（首轮/冷续）：委托 chat-session 长驻执行
+   * （agent_end 不 kill、agent_settled resolve——本轮收口进程保活，续聊经 interact）。 */
   async run(task: AgentCallOpts, ctx: RunContext): Promise<{ handle: EngineHandle; outcome: AgentOutcome }> {
     const dataDir = resolveDataRoot(this.deps.dataDir);
     if (dataDir === undefined) {
@@ -197,6 +205,9 @@ export class PiEngine implements EnginePort {
     ctx.onPoolResolved?.(PI_POOL_KEY);
 
     const cwd = task.cwd ?? process.cwd();
+    if (ctx.chat !== undefined) {
+      return this.runChatRound(task, ctx, dataDir, cwd);
+    }
     const spawn = this.deps.spawnRunner ?? runSpawnOnce;
     const callbacks: SpawnRunCallbacks = {
       onEvent: (event: AgentEvent) => ctx.onEvent?.(event),
@@ -252,16 +263,88 @@ export class PiEngine implements EnginePort {
   }
 
   /**
-   * D1 交互控制面：message 热路径原生实现（sendPromptCommand + streamingBehavior
-   * + EPIPE 兜底）；close = 杀链；cancel = abort 语义（无 run 上下文时杀子进程）。
+   * [v1.x] run 会话形态主体（首轮/冷续，chat-domain 设计 §3.2 D1-A）：spawn 长驻子进程
+   * + 首轮 prompt，本轮 agent_settled（真空闲）resolve（进程保活）。record 锚定键 =
+   * chat.recordId（区别于一次性 run 的 runId 锚定——interact/roundLifecycle 据此定位）；
+   * resume 锚点存在 = 冷续（--session 续写原文件），不存在 = 首轮新建。
+   */
+  private async runChatRound(
+    task: AgentCallOpts,
+    ctx: RunContext,
+    dataDir: string,
+    cwd: string,
+  ): Promise<{ handle: EngineHandle; outcome: AgentOutcome }> {
+    const chat = ctx.chat!;
+    const resumeFile = refString(chat.resume?.sessionRef ?? {}, "sessionFile");
+    const result = await this.chatSessions.startRound(
+      {
+        recordId: chat.recordId,
+        task: task.prompt,
+        agentName: task.description ?? task.agent ?? "chat-agent",
+        model: ctx.ctxModel !== undefined
+          ? `${(ctx.ctxModel as EngineCtxModel).provider}/${(ctx.ctxModel as EngineCtxModel).id}`
+          : task.model,
+        ...(task.thinkingLevel !== undefined ? { thinkingLevel: task.thinkingLevel } : {}),
+        sessionDir: resolveSessionDir(dataDir, cwd),
+        cwd,
+        ...(task.schemaEnv !== undefined ? { schemaEnv: task.schemaEnv } : {}),
+        ...(task.maxTurns !== undefined ? { maxTurns: task.maxTurns } : {}),
+        ...(task.graceTurns !== undefined ? { graceTurns: task.graceTurns } : {}),
+        ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
+        ...(task.skillPath !== undefined ? { skillPaths: [task.skillPath] } : {}),
+        ...(task.appendSystemPrompt !== undefined ? { appendSystemPrompt: task.appendSystemPrompt } : {}),
+        ...(resumeFile !== undefined ? { resumeSessionFile: resumeFile } : {}),
+      },
+      {
+        runId: ctx.taskId,
+        onEvent: (event: AgentEvent) => ctx.onEvent?.(event),
+        ...(ctx.stream !== undefined ? { stream: ctx.stream } : {}),
+        onHandleReady: (partial) => ctx.onHandleReady?.(partial),
+        onChildSpawned: (pid) => {
+          ctx.onChildSpawned?.({ pid, killed: false });
+        },
+      },
+    );
+
+    return {
+      handle: {
+        data: {
+          v: 1,
+          engineId: PI_ENGINE_ID,
+          sessionRef: {
+            recordId: chat.recordId,
+            ...(result.sessionId !== undefined ? { sessionId: result.sessionId } : {}),
+            ...(result.sessionFile !== undefined ? { sessionFile: result.sessionFile } : {}),
+          },
+          poolKey: PI_POOL_KEY,
+          adapterVersion: PI_ADAPTER_VERSION,
+        },
+      },
+      outcome: toOutcome(result),
+    };
+  }
+
+  /**
+   * D1 交互控制面。[v1.x] chat 会话（chat-session 命中）优先路由：
+   *   - message：热路径 sendPromptCommand + streamingBehavior（interrupt=steer 抢占/
+   *     缺省 followUp 排队——pi 上游语义）+ EPIPE 兜底（耗尽 → roundLifecycle failed）；
+   *     冷路径（进程死）→ engine_session_not_resumable + 冷续指引（宿主发新 run chat+resume）；
+   *   - close：force=杀链立即收割 / 缺省=优雅（轮收口后收割）；
+   *   - cancel：D3 收敛语义（受理 → 等轮终相位 → 超 CANCEL_SETTLE_GRACE_MS 杀链升级）。
    *
-   * 冷路径（进程死）message：v1 协议 8 反向通道未含 HostBridge 续轮编排面
-   * （deviations 登记）——返回结构化失败 + 冷续指引（宿主经新 run + resume 接续）。
+   * 未命中（一次性 run 的活跃子进程 / 冷句柄）走下方既有路径：message 热路径直写、
+   * close = SIGTERM、cancel = SIGTERM（无收敛等待——run 域 cancel 帧另有 AbortController
+   * 通道，收敛由 run 应答承载）。
    */
   async interact(handle: EngineHandle, action: InteractAction): Promise<InteractResult> {
     try {
       const recordId = refString(handle.data.sessionRef, "recordId");
       if (recordId === undefined) return notResumable(handle);
+      if (this.chatSessions.has(recordId)) {
+        if (action.kind === "cancel") return this.chatSessions.cancel(recordId);
+        if (action.kind === "close") return this.chatSessions.close(recordId, action.payload?.force === true);
+        return this.chatSessions.deliverMessage(recordId, action.payload, action.interrupt === true);
+      }
       if (action.kind === "cancel") {
         const child = getActiveChild(recordId);
         if (child === undefined) return { ok: true, delivered: true };
@@ -342,6 +425,15 @@ export class PiEngine implements EnginePort {
   /** server 层注入 host/askUser 两阶段等待体（ui-request-queue 消费）。 */
   bindAskUser(handler: ((req: UiRequest) => Promise<UiResponse>) | undefined): void {
     this.askUserHandler = handler;
+  }
+
+  /**
+   * server 层注入 [v1.x] chat 会话的反向通道发射面（host/roundLifecycle、recordId 键
+   * host/streamDelta、会话级 host/askUser）。会话跨 run 存活，绑定是引擎进程生命周期
+   * 级（区别于一次性 run 的 per-run askUser 绑定）。
+   */
+  bindHostChannels(channels: ChatHostChannels | undefined): void {
+    this.chatSessions.bindHostChannels(channels);
   }
 }
 
