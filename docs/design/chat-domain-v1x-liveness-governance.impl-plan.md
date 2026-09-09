@@ -120,7 +120,7 @@ live conformance（W6 交付 + Gate B）：`ENGINE_CONFORMANCE_LIVE=1 PI_LIVE_MO
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|-------------------------------------------|------|---------|
 | W1 | committed | 1 | SDK typecheck+test 112 例绿（新增 18）；boundary 守卫 3 包 OK；第 9 反向通道 `host/roundLifecycle`（settled/idle/failed 三相位，关联键 runId\|recordId）+ `RunParams.chat{recordId,resume}` + conversation gate 负向；P2 结论 = failed 相位承载，无需 crashed 相位 |
-| W2 | pending | 0 | — |
+| W2 | committed | 1 | pi 包 typecheck+test 237 例绿（新增 18：chat-session 12 + chat-protocol 5 + e2e 1）；SDK 回归 112 绿零缺口；四路径（run chat/interact/冷续/close）+ roundLifecycle 三相位 + cancel SIGTERM→等相位→killChain；manifest conversation 位已是 native；goal 加载形态核对 = 无新增打包面；W3 接线注意 9 条见交付报告（关键：关联键分路 / interact 轮无 AgentEvent 通道 / askUser 带 spawn 轮 runId / idle 帧=armIdleTimer 锚点） |
 | W3 | pending | 0 | — |
 | W4 | pending | 0 | — |
 | W5 | committed | 1 | goal typecheck+test 393 例绿（新增 23：circuit-breaker 6 + liveness 17）；双维度熔断（PI_GOAL_CONTINUATION_CAP=50 正交封顶 + 无进展退避 ×2 至 10min 封顶）+ defer 去重 + /goal resume；计数随 goal state 快照持久化（防重启绕过） |
