@@ -4,7 +4,7 @@
  * NotificationHostController 只透传 message/level/sessionId（core 零 UI 依赖），本模块在壳侧
  * 消费 sessionId 做两件事：
  *
- * 1. 定位行：`{label} · {目录名}`。多 session 并行时右下角 toast 必须能回答「这是哪个会话在说」。
+ * 1. 定位行：`{label} · {目录名}`。多 session 并行时右上角 toast 必须能回答「这是哪个会话在说」。
  *    label 兜底链（对应「rename-session 未触发」窗口）：
  *      显式/rename 后的 label → 首条 user prompt 前 15 字（label 仍为 runtime 派生的
  *      basename(cwd) 时）→ 派生 label 本身。prompt 兜底只在 toast 查询时即时派生，

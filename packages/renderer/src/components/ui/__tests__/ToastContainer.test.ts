@@ -78,7 +78,19 @@ describe('ToastContainer 尺寸与多行排版', () => {
     expect(body.classes()).toContain('break-words')
 
     const card = body.element.closest('div.pointer-events-auto') as HTMLElement
-    expect(card.className).toContain('max-w-[min(360px,calc(100vw-3rem))]')
+    expect(card.className).toContain('max-w-[min(360px,100%)]')
+  })
+
+  it('定位契约：absolute 右上角锚定（非视口 fixed），随挂载点（main-area/main）定位', () => {
+    const wrapper = mount(ToastContainer)
+
+    // 容器即 TransitionGroup tag 元素（测试环境 VTU 将其 stub，class 透传在 stub 元素上）
+    const container = wrapper.find('.absolute')
+    expect(container.exists()).toBe(true)
+    expect(container.classes()).toContain('top-4')
+    expect(container.classes()).toContain('inset-x-4')
+    expect(container.classes()).not.toContain('fixed')
+    expect(container.classes()).not.toContain('bottom-6')
   })
 })
 

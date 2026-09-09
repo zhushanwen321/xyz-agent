@@ -6,9 +6,13 @@
     view 路由：chat → Workspace（FG4），overview → Overview（FG6 ADR-0023 覆盖 main 区）。
     settings/search 浮层为全局 Dialog（FG6 骨架），不走 view 路由（hide 入口，spec §9）。
   -->
-  <main class="main-panel flex flex-1 min-w-0 flex-col overflow-hidden rounded-[10px] border border-border bg-surface" data-testid="app-shell-main">
+  <main class="main-panel relative flex flex-1 min-w-0 flex-col overflow-hidden rounded-[10px] border border-border bg-surface" data-testid="app-shell-main">
     <Workspace v-if="navigation.current.view === 'chat'" />
     <Overview v-else-if="navigation.current.view === 'overview'" />
+    <!-- Toast 兜底挂载（overview/settings view）：chat view 的锚点在 PanelContainer
+         main-area，不在此重复挂载（双实例双渲染）。relative 供 absolute toast 锚定
+         （chat 态 toast 的 nearest positioned ancestor 也是本 main）。 -->
+    <ToastContainer v-if="navigation.current.view !== 'chat'" />
   </main>
 </template>
 
@@ -16,6 +20,7 @@
 import { useNavigationStore } from '@/stores/navigation'
 import Workspace from '@/components/workspace/Workspace.vue'
 import Overview from '@/components/overview/Overview.vue'
+import ToastContainer from '@/components/ui/ToastContainer.vue'
 
 const navigation = useNavigationStore()
 </script>
