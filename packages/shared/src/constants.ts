@@ -281,8 +281,9 @@ export const READ_PRECHECK_MAX_BYTES: number = 32 * 1024 * 1024
  * 逐值同源，预算化后活跃/离线两路径行为不回退。
  */
 export const HISTORY_BUDGET = {
-  /** 最近 turns 数（与 runtime session-history.ts DEFAULT_MAX_TURNS 对齐） */
-  // eslint-disable-next-line no-magic-numbers -- 对齐 runtime DEFAULT_MAX_TURNS=20 的设计预算
+  /** 最近 turns 数（与 runtime session-history.ts DEFAULT_MAX_TURNS 对齐）。
+   * 注：对象字面量属性值不触发 no-magic-numbers（规则默认 ignoreObjectRefs/属性位），
+   * 此处无需 disable 指令——留着会被 reportUnusedDisableDirectives 判 warning。 */
   RECENT_TURNS: 20,
   /** 字节预算（640KB = 20 × 32KB/turn，对齐离线尾读 TAIL_WINDOW 现值） */
   // eslint-disable-next-line no-magic-numbers -- 对齐离线 TAIL_WINDOW=640KB 的设计预算

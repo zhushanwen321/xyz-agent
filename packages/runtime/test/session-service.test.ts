@@ -36,6 +36,7 @@ import type {
 import type { IMessageBus } from '../src/services/message-bus/message-bus.js'
 import type { IProcessManager, IPiEngine, PiEventListener } from '../src/services/ports/pi-engine.js'
 import type { SessionSummary, SessionGroup, Message, ServerMessage, ProviderId, SegmentsMetadataEntry, SegmentsMetadataFile } from '@xyz-agent/shared'
+import { HISTORY_BUDGET } from '@xyz-agent/shared'
 import { getAttachmentsDir } from '@xyz-agent/shared/paths'
 
 // ── vi.hoisted：在 vi.mock 工厂执行前就绪的 mock 句柄 ───────────────
@@ -1288,8 +1289,28 @@ describe('SessionService · Facade', () => {
       client.getEntries.mockRejectedValueOnce(new Error('rpc boom'))
       mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
       await setup.service.getHistory(id)
-      // [u6] 尾读降级带窗口参数（maxTurns 缺省 + query undefined——无游标的 u4b 现状形态）
-      expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith(id, expect.anything(), expect.anything(), undefined)
+      // [D4] 尾读降级带字节预算缺省（与游标分支同源 HISTORY_BUDGET.MAX_BYTES——原样透传
+      // undefined 会退化为仅 turn 数截取，20 大 turn 的 reply 超 32MB 被 payload_too_large 拒绝）
+      expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith(
+        id, expect.anything(), expect.anything(), { maxBytes: HISTORY_BUDGET.MAX_BYTES },
+      )
+    })
+
+    it('D4: 增量路径非 EntryNotFound 错误降级尾读——同样带字节预算缺省', async () => {
+      const client = setup.mountClient('sid-inc-fallback')
+      const e1 = { type: 'message', id: 'e1', parentId: null, message: { role: 'user', content: 'q1' } }
+      const m1 = { id: 'm1', role: 'user', content: 'q1', piEntryId: 'e1' } as unknown as Message
+      client.getEntries.mockResolvedValueOnce({ data: { entries: [e1], leafId: 'e1' } })
+      mocks.rebuildHistoryFromEntriesMock.mockReturnValueOnce({ messages: [m1], clientUuidMap: new Map() })
+      await setup.service.getHistory('sid-inc-fallback') // 写缓存（leafId='e1'）
+
+      // 增量拉取抛非 EntryNotFound 错误 → 降级尾读（缓存不动）
+      client.getEntries.mockRejectedValueOnce(new Error('rpc boom'))
+      mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
+      await setup.service.getHistory('sid-inc-fallback')
+      expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith(
+        'sid-inc-fallback', expect.anything(), expect.anything(), { maxBytes: HISTORY_BUDGET.MAX_BYTES },
+      )
     })
 
     it('终审 minor：全量重建与缓存新鲜路径返回浅拷贝——调用方就地变更不打穿缓存', async () => {
@@ -1344,7 +1365,10 @@ describe('SessionService · Facade', () => {
     it('reads from file directly when no active client', async () => {
       mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
       await setup.service.getHistory('no-client')
-      expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith('no-client', expect.anything(), expect.anything(), undefined)
+      // [D4] 离线尾读带字节预算缺省（与游标分支同源——原样透传 undefined 时仅按 turn 数截取）
+      expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith(
+        'no-client', expect.anything(), expect.anything(), { maxBytes: HISTORY_BUDGET.MAX_BYTES },
+      )
     })
   })
 

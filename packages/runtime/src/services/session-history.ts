@@ -13,8 +13,9 @@
  *   历史恰是巨型 JSONL 高发源）。[u6] getFullHistory（前端「加载更多」）消费方已随
  *   全量通路退役（D4 中期：session.history 游标翻页替代），getHistoryFromFile 包装同点删除。
  * - ②档 tailReadHistory 尾读 fallback：分块扩窗（从尾部按 1MB 块向前扩，凑够
- *   HISTORY_BUDGET.RECENT_TURNS 或读到文件头即停，总读取量上限 32MB）替代
- *   「凑不够 20 turns 就全量读」的现行路径——离线 fallback 不再是无界读。
+ *   HISTORY_BUDGET.RECENT_TURNS 即停并向前确认是否真有更早 turn，总读取量上限 32MB）
+ *   替代「凑不够 20 turns 就全量读」的现行路径——离线 fallback 不再是无界读；maxBytes
+ *   （reader 归一缺省 HISTORY_BUDGET.MAX_BYTES）叠加字节预算，与活跃路径同一预算逻辑。
  *
  * 游标翻页（crash-resilience §3.3 D4 中期，u6-paging-protocol）：collectRecentTurnEntriesFromTail
  * 扩展 cursorId 定位——逆序扫描遇 cursor entry 行时丢弃已收集的更新侧行，从更旧行继续
@@ -62,7 +63,11 @@ export interface HistoryWindowQuery {
   cursor?: string
   /** 窗口 turns 数（缺省 HISTORY_BUDGET.RECENT_TURNS）。 */
   limitTurns?: number
-  /** 字节预算（缺省不启用于既有尾读调用方；游标翻页路径由 reader 归一默认传入）。 */
+  /**
+   * 字节预算（缺省由 reader 归一 HISTORY_BUDGET.MAX_BYTES 默认传入——离线尾读与游标
+   * 翻页同源，D4「活跃 doGetHistory 与离线尾读合并为同一预算逻辑」；仅 turn 数截取的
+   * 缺省形态保留给直接调用方如 getHistoryFromFilePath ①档）。
+   */
   maxBytes?: number
 }
 
@@ -162,15 +167,6 @@ function isTurnBoundary(entry: unknown): boolean {
 }
 
 /**
- * 单行文本的 turn 边界判定（逆序扫描用）：parse 后复用 entry 级 isTurnBoundary。
- * 畸形行 parseJsonl 返回空数组 → 非边界。
- */
-function isTurnBoundaryLine(line: string): boolean {
-  const parsed = parseJsonl(line)
-  return parsed.length > 0 && isTurnBoundary(parsed[0])
-}
-
-/**
  * 历史窗口读取结果（通用形状：①②档文件读与活跃 getHistory 预算窗口共用）。
  * truncated=true 表示窗口外仍有历史（前端据此显隐「加载更多」）。
  * totalTurnsEstimate：turn 总数估计——读到文件头时是精确总量；分块扩窗提前停止时
@@ -190,17 +186,26 @@ export type TailReadResult = HistoryWindowResult
  * 逆序分块收集最近预算窗口的 entries（①档超限路径与②档尾读共用，D5）。
  *
  * 从文件尾按 1MB 块向前扩窗扫描（forEachReversedLineChunk），倒序累计 turn 边界，
- * 凑够 maxTurns 或读到文件头即停；总读取量上限 READ_PRECHECK_MAX_BYTES（32MB），
- * 到上限仍未凑够返回已凑部分 + truncated 标记。**消除「凑不够就全量读」的现行 fallback**。
+ * 凑够 maxTurns 后停止收集（窗口已定），继续向前**确认**是否真有更早 turn（读到文件头
+ * 或发现下一边界即停）；字节预算超界在 turn 边界处停止（超界 turn 不入窗）。总读取量
+ * 上限 READ_PRECHECK_MAX_BYTES（32MB），到上限仍未凑够返回已凑部分 + truncated 标记。
+ * **消除「凑不够就全量读」的现行 fallback**。
  *
  * [u6] 游标定位（cursorId 传入时）：逆序扫描（新→旧）遇 cursor entry 行时，丢弃此前
  * 收集的行（那是 cursor 更新侧），其后收集的即「cursor 之前」区域——凑够 N turns 即停。
  * cursor 行本身不返回（锚所在 turn 已在 renderer 分区中）。cursor 未命中（读到头 /
  * 32MB 上限仍未遇）→ cursorMiss=true（调用方按翻页到头返回空页，不报错——D4 空游标边界）。
  *
- * [u6] 字节预算（maxBytes 传入时启用，游标翻页路径用；与活跃路径 applyHistoryBudgetWindow
- * 同语义——首个 turn 豁免（超限完整放行）、后续 turn 按累计字节判定，turn 原子性不切）。
- * 缺省（既有尾读调用方）= 仅 turn 数预算，u4b 现状不变。
+ * [u6] 字节预算（maxBytes 传入时启用；游标翻页路径与离线尾读路径由 reader 归一默认
+ * 传入 HISTORY_BUDGET.MAX_BYTES）：与活跃路径 applyHistoryBudgetWindow 同语义——首个
+ * turn 豁免（超限完整放行）、后续 turn 超界**不入窗**（回退该 turn 已收集行，含其先于
+ * 边界行收集的尾部行），turn 原子性不切。超界停止处必有更早 turn（触发停止的边界行
+ * 本身）→ truncated=true 如实置位。
+ *
+ * maxTurns 停止语义（A6 修复）：凑够 maxTurns 后窗口已定，但不立即终止扫描——转入
+ * 「更早 turn 边界确认」（只找边界、行不再入列），扫到文件头仍无边界 → truncated=false
+ *（恰好 maxTurns 的文件实无更早历史，不得误报「加载更早」）；发现任一边界 → true；
+ * 32MB 上限截停无法确认 → 保守 true。
  *
  * 窗口起点对齐（entry 原子性）：分块停止时最前一行可能落在某 turn 中间（前半未读）——
  * 非全文件扫描时把起点对齐到已读区域内第一个 turn 边界（残段丢弃，同 turn entry 不拆）；
@@ -217,10 +222,24 @@ function collectRecentTurnEntriesFromTail(
   const cursorId = opts?.cursorId
   const linesDesc: string[] = [] // 倒序（新→旧）累积完整行
   const turnFlagsDesc: boolean[] = [] // 与 linesDesc 平行的 turn 边界标记
+  // turn 边界入列快照（栈顶 = 最近收集的 turn）：idx = 边界行落入的 linesDesc 下标，
+  // accBefore = 边界行入列前的累计字节（= 更新侧完整 turns 字节合计）。字节预算超界
+  // 回退最后一个 turn 时据此截断——扫描序里 turn 的尾部行先于其边界行收集，回退必须
+  // 连同尾部行一并截除（对齐活跃路径 applyHistoryBudgetWindow「超界 turn 不入窗」）。
+  const turnStartStack: Array<{ idx: number; accBefore: number }> = []
   let turnCount = 0
   let accBytes = 0
   // cursor 未定位前置 false：更新侧行不收集（cursor miss 时不得把更新侧误当锚前区域）
   let cursorSeen = cursorId === undefined
+  // 停止原因：'budget' = 字节预算超界停止（触发停止的边界行 = 确凿的更早 turn →
+  // truncated 恒 true）；'maxTurns' = 凑够 turn 数自然停止（真有更早 turn 与否需确认
+  // 扫描定论——A6：恰好 maxTurns 的文件不得误报）；undefined = 读到文件头 / 32MB
+  // 上限截停（由 summary.fullyScanned 区分）。
+  let stopReason: 'budget' | 'maxTurns' | undefined
+  // maxTurns 停止后的确认扫描发现更早 turn 边界（true = 窗口外确有更早历史）
+  let confirmedOlderTurn = false
+  // 凑够 maxTurns 后停止收集（行不再入列，窗口已定）、只做更早边界确认
+  let collecting = true
   const summary = forEachReversedLineChunk(
     filePath,
     // maxTotalBytes 显式注入 shared SSOT（工具自身零 shared 依赖，纯 IO 形态）
@@ -238,22 +257,48 @@ function collectRecentTurnEntriesFromTail(
             cursorSeen = true
             linesDesc.length = 0
             turnFlagsDesc.length = 0
+            turnStartStack.length = 0
             turnCount = 0
             accBytes = 0
+            collecting = true
           }
           continue
         }
         const isTurn = parsed.length > 0 && isTurnBoundary(parsed[0])
-        // 字节预算（turn 边界处判定已收集 turns 的累计；首个 turn 恒放行 = 首 turn 豁免；
-        // 当前超界 turn 完整放行 = entry 原子性）
-        if (isTurn && turnCount > 0 && maxBytes !== undefined && accBytes > maxBytes) return false
+        if (!collecting) {
+          // 确认扫描：发现任一更早 turn 边界即可定论（提前终止，不读更早块）；
+          // 扫到文件头仍无 → truncated=false（A6：无更早历史不给截断提示）
+          if (isTurn) {
+            confirmedOlderTurn = true
+            return false
+          }
+          continue
+        }
+        // 字节预算（D4 双条件，与活跃路径 applyHistoryBudgetWindow 对齐）：turn 边界处
+        // 判定已收集 turns 的累计字节；首个 turn 豁免（超限完整放行）；后续 turn 超界
+        // 不入窗（回退已收集的该 turn 行），turn 原子性不切。
+        if (isTurn && turnCount > 0 && maxBytes !== undefined && accBytes > maxBytes) {
+          if (turnCount > 1) {
+            const popped = turnStartStack.pop()
+            if (popped) {
+              const keepLen = turnStartStack.length > 0 ? turnStartStack[turnStartStack.length - 1].idx + 1 : 0
+              linesDesc.length = keepLen
+              turnFlagsDesc.length = keepLen
+              accBytes = popped.accBefore
+              turnCount--
+            }
+          }
+          stopReason = 'budget'
+          return false
+        }
+        if (isTurn) turnStartStack.push({ idx: linesDesc.length, accBefore: accBytes })
         linesDesc.push(lines[i])
         turnFlagsDesc.push(isTurn)
         accBytes += Buffer.byteLength(lines[i], 'utf-8')
         if (isTurn) turnCount++
-        // 凑够预算 turns：立即停止扩窗（当前块内剩余更早行不交付——窗口恰好在
-        // 第 maxTurns 个 turn 边界上截断，entry 原子性由 stop-at-boundary 保证）
-        if (turnCount >= maxTurns) return false
+        // 凑够预算 turns：窗口已定，停止收集转入确认扫描（当前块内剩余更早行不再入列；
+        // truncated 由确认扫描结论决定——恰好 maxTurns 的文件扫到文件头即 false，A6）
+        if (turnCount >= maxTurns) collecting = false
       }
     },
   )
@@ -278,11 +323,11 @@ function collectRecentTurnEntriesFromTail(
   const loadedTurns = turnFlags.slice(startIdx).filter(Boolean).length
   return {
     entries,
-    // N1 判定（无 cursor）对齐现行语义：全文件扫描时按 turn 数精确判定；只读了部分时保守
-    // true（窗口外 turn 数未知，宁可多显示「加载更早」也别漏）。
-    // [u6] cursor 定位后（锚前区域）：fullyScanned = cursor 之前全部读完 → 更早历史不存在
-    // → truncated=false 精确；提前停止 / 上限截停 → 保守 true（同 N1 取向）。
-    truncated: cursorId !== undefined ? !summary.fullyScanned : (summary.fullyScanned ? turnCount > maxTurns : true),
+    // truncated 判定三来源：①字节预算超界停止（触发停止的边界行 = 确凿更早 turn）
+    // ②确认扫描发现更早 turn 边界 ③未读到文件头（32MB 上限截停——窗口外内容未知，
+    // 保守 true，宁可多显示「加载更早」也别漏）。三者皆否 = 已扫到文件头且无更早
+    // turn → false（恰好 maxTurns 的小文件不再误报，A6）。
+    truncated: stopReason === 'budget' || confirmedOlderTurn || !summary.fullyScanned,
     loadedTurns,
     totalTurnsEstimate: summary.fullyScanned ? turnCount : loadedTurns,
     cursorMiss: false,

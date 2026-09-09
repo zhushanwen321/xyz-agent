@@ -408,12 +408,20 @@ export class SessionHistoryReader {
         return { messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 }
       } catch (e) {
         console.warn(`[session-service] getHistory via getEntries failed: ${toErrorMessage(e)}, falling back to tail read`)
-        return await getHistoryTailFromFile(sessionId, this.deps.sessionStore, query?.limitTurns ?? HISTORY_BUDGET.RECENT_TURNS, query)
+        // 字节预算缺省与游标分支同源（D4 同一预算逻辑）：原样透传 query 时 maxBytes=
+        // undefined → 尾读仅按 turn 数截取，20 个大 turn 的 reply 超 32MB 被
+        // payload_too_large 拒绝且 truncated 未置位（「加载更早」入口不存在）——历史打不开。
+        return await getHistoryTailFromFile(sessionId, this.deps.sessionStore, query?.limitTurns ?? HISTORY_BUDGET.RECENT_TURNS, {
+          maxBytes: query?.maxBytes ?? HISTORY_BUDGET.MAX_BYTES,
+        })
       }
     }
     // 无 RPC client（离线 session）：走尾读（分块扩窗预算窗口，D5②），
-    // 避免大文件全量读（不读不写缓存——文件路径无 leafId 概念）
-    return await getHistoryTailFromFile(sessionId, this.deps.sessionStore, query?.limitTurns ?? HISTORY_BUDGET.RECENT_TURNS, query)
+    // 避免大文件全量读（不读不写缓存——文件路径无 leafId 概念）。
+    // 字节预算缺省与游标分支同源（D4）——仅 turn 数截取挡不住 20 个大 turn 的超限 reply。
+    return await getHistoryTailFromFile(sessionId, this.deps.sessionStore, query?.limitTurns ?? HISTORY_BUDGET.RECENT_TURNS, {
+      maxBytes: query?.maxBytes ?? HISTORY_BUDGET.MAX_BYTES,
+    })
   }
 
   /**
@@ -478,9 +486,12 @@ export class SessionHistoryReader {
         this.historyCache.delete(sessionId)
         return undefined
       }
-      // 其他错误：现有降级链（尾读），缓存不动（下次重试仍走 since）
+      // 其他错误：现有降级链（尾读），缓存不动（下次重试仍走 since）。
+      // 字节预算缺省同源 HISTORY_BUDGET.MAX_BYTES（D4 同一预算逻辑，防 20 大 turn 超限 reply）。
       console.warn(`[session-service] getHistory via getEntries(since) failed: ${toErrorMessage(e)}, falling back to tail read`)
-      return await getHistoryTailFromFile(sessionId, this.deps.sessionStore)
+      return await getHistoryTailFromFile(sessionId, this.deps.sessionStore, windowOpts?.limitTurns ?? HISTORY_BUDGET.RECENT_TURNS, {
+        maxBytes: windowOpts?.maxBytes ?? HISTORY_BUDGET.MAX_BYTES,
+      })
     }
   }
 
