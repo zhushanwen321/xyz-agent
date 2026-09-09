@@ -99,6 +99,9 @@ export default [
   // 职责内聚（每文件均为单一子系统的高复杂度函数原地拆解，cyclo 已全部 ≤12），
   // 按行数再拆属独立重构任务。第一批：rpc-client / session-lifecycle / 两个
   // message-handler / session-reconstructor；第二批：download-asset。
+  // session-runner.ts：pi 引擎执行器单文件（spawn/握手/处置/收尾单一数据流），
+  // 2026-09 完成回收根修（docs/design/subagent-agent-end-recovery.md U1-U3）增量后
+  // 超阈；拆分属独立重构任务，随本批登记。
   {
     files: [
       'packages/runtime/src/infra/pi/rpc-client.ts',
@@ -106,6 +109,7 @@ export default [
       'packages/runtime/src/transport/session-message-handler.ts',
       'packages/runtime/src/transport/settings-message-handler.ts',
       'packages/subagent-core/src/execution/session-reconstructor.ts',
+      'packages/subagent-core/src/execution/engine/engines/pi/session-runner.ts',
     ],
     rules: {
       'max-lines': 'off',

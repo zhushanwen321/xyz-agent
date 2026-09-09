@@ -237,6 +237,33 @@ export const KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS = SPAWN_WATCHDOG_FLOOR_MS;
 const LAZY_GET_STATE_TIMEOUT_MS = 1000;
 
 /**
+ * [U2 D3a] 派生 / 后台记账工具清单（无后代判据的**单点维护处**，[export] 守卫测试锚定内容）。
+ * 白名单含任一 ⇒ descendantCapable=true（三分支 + keep-alive 保留）：
+ *   - `subagents` / `workflow`：pi 侧 spawn 类工具——子进程内可派生后代，差集记账一等面；
+ *   - `bash`：base-tool-enhance 的 bash **后台模式**是一等记账面——spawn-background.ts:107
+ *     emit `pending:register {type:"bash"}`（notify.ts:99-107，pending-notifications index.ts:142
+ *     落盘），host 侧差集计数可见；含 bash 白名单的分析型 agent 跑后台任务现状走合法
+ *     keep-alive（等进程内 poller 唤醒），判 false 会零判定误杀（G2 实质回归，设计 §3.3
+ *     D3a 边界声明）。bash 间接 spawn 的 pi 进程不在 register−unregister 生命周期内，
+ *     但后台 bash 记账已把该面覆盖在 keep-alive 之下，无需单列。
+ *
+ * **同步义务**：新增派生工具 / 任何会 emit `pending:register` 的后台记账面必须同步本
+ * 清单——漏登记会把合法 keep-alive 翻转为零判定误杀；漂移由守卫测试
+ * （agent-end-descendant-fast-path）拦截。
+ */
+export const DESCENDANT_CAPABLE_TOOLS: readonly string[] = ["subagents", "workflow", "bash"];
+
+/**
+ * [U2 D3a] 无后代判据派生（设计 §3.3 D3a，[export] 守卫测试六形态断言本函数）：
+ * undefined / 空数组 → true（pi 默认全工具，物理具备派生能力）；含清单任一 → true；
+ * 白名单非空且三者均不含 → false（零判定快路径唯一入口形态，runAgentEndDisposition 消费）。
+ */
+export function deriveDescendantCapable(tools: readonly string[] | undefined): boolean {
+  // undefined / 空数组短路为 true（pi 默认全工具）；非空白名单看是否含清单任一。
+  return !tools || tools.length === 0 || tools.some((tool) => DESCENDANT_CAPABLE_TOOLS.includes(tool));
+}
+
+/**
  * [M-1] maxTurns → watchdog 毫秒换算（纯函数，可导出复用）。
  *
  * **换算语义（floor 文档化）**：`max(30min, maxTurns × 5min)`——按 maxTurns 线性估算，
@@ -1315,6 +1342,16 @@ export interface SpawnRunState {
    * 历史文件被排除在候选外，见 session-file-locator.ts IO 契约）。
    */
   spawnStartedAtMs: number;
+  /**
+   * [U2 D3a] 无后代判据派生结果（deriveDescendantCapable @ spawn 链 tools 汇合点，
+   * 来源表达式与 buildSpawnInvocation 的 `agentTools: opts.agentConfig?.tools` 同源——
+   * SubagentService.resolveIdentity 注入后的解析值，两派发路径在此汇合）。
+   * === false（白名单非空且不含派生/记账工具）→ runAgentEndDisposition 入口走零判定
+   * 快路径直接 final kill；undefined / true → 既有三分支（保守默认：测试构造的 state
+   * 未派生时不得误触快路径）。tools 在 spawn argv 注入后进程内固定（设计 §3.4 #7，
+   * 无运行时变更通道），spawn 时刻派生一次即全程有效。
+   */
+  descendantCapable?: boolean;
 }
 
 /**
@@ -1911,6 +1948,9 @@ interface StdoutPumpHandles {
 /**
  * [T1/RC-1+RC-2] agent_end 处置决策（非 chatMode、willRetry=false）。异步化以支持惰性回补。
  *
+ * ⓪ [U2 D3a] 快路径：state.descendantCapable === false（tools 白名单非空且不含
+ *    派生/记账工具，物理不可能有进程内后代）→ 零判定零等待直接 final kill，不进
+ *    回补与三分支（分支体见下方快路径块注释）。undefined / true → ①② + 三分支。
  * ① 惰性回补：record.sessionFile 缺失（RC-1 形态：RPC mode 的 get_state 握手 7s 预算
  *    一次性耗尽后永不再试，sessionFile 成为永久缺失）时，现场向 idle 子进程单次
  *    get_state（此刻 turn 已完成，探针 P-T1 实证应答 0.3-0.4ms，预算 1s 量级）。
@@ -1934,6 +1974,24 @@ async function runAgentEndDisposition(
   registerGetStateListener: AddGetStateResponseListener,
 ): Promise<void> {
   const { record } = state;
+
+  // [U2 D3a] 快路径（零判定零等待）：白名单非空且不含派生/记账工具（subagents /
+  // workflow / bash）的 agent 物理不可能有进程内后代——差集记账必然为空且无 keep-alive
+  // 合法性，不需要 sessionFile（回补/扫描无消费方），直接 final kill。必须最先短路
+  // （在惰性回补之前）：回补是 await 面，先回补再 kill 会给无后代 agent 平添秒级延迟
+  // 与无意义 IO。本分支位于函数首个 await 之前的同步段（child 生死在同 tick 内不可变，
+  // 慢路径的 [A1-3] 存活判据此处恒 false，不需要）；keepAliveNoProgressTimer 的首个
+  // 挂载点在 keep-alive 分支（refresh 有未挂载守卫），本 run 内不可能有前轮 keep-alive，
+  // 无需 disarm——收尾统一清理仍兜底（waitForChildExit 收尾段）。kill 触发 close →
+  // 既有收尾链照常可达（含 backfillSessionFileByLookup 的 u1 接入点 2 扫描兜底——
+  // final marker/identity 写入的记账面不因快路径缺失）。
+  if (state.descendantCapable === false) {
+    killChildWithEscalation(state, child, "agent_end final kill (no-descendant fast path)");
+    // debug（非 warn）：descendantCapable=false 的 agent 完成走快路径是设计内正常路径
+    // （分析型 agent 每轮完成必经），warn 会刷屏；对齐 keep-alive 分支 debug 惯例。
+    logger.debug(`[session-runner] agent_end: no-descendant fast path (tools whitelist excludes ${DESCENDANT_CAPABLE_TOOLS.join("/")}): final kill, ${record.id}`);
+    return;
+  }
 
   if (!record.sessionFile && !child.killed) {
     await backfillSessionFileViaGetState(state, child, registerGetStateListener);
@@ -2820,6 +2878,10 @@ export async function runSpawn(
     settledWatchdogFired: undefined,
     // [U1 D2] sessionDir 扫描兜底的 mtime 过滤基准（agent_end 接入点 1 / close 接入点 2 共用）
     spawnStartedAtMs: startTime,
+    // [U2 D3a] 无后代判据：spawn 链 tools 汇合点派生（两条入口——subagents 工具路径
+    // 经 executeAndAwait / workflow 路径经 execute——共享本 runSpawn，opts.agentConfig?.tools
+    // 已由 SubagentService.resolveIdentity 注入，与 buildSpawnInvocation 的 agentTools 同源）。
+    descendantCapable: deriveDescendantCapable(opts.agentConfig?.tools),
   };
 
   // a/b. 事件累积器（pendingTools 寄存器 + turnLimiter + handleSdkEvent/agentEvent 闭包）
