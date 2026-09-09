@@ -1,7 +1,7 @@
 /**
  * createInflightDedup 工厂单测（impl-plan U7a）。
  *
- * 覆盖 C-state-11 收编原语的全部内建不变量：
+ * 覆盖 C-data-18 收编原语的全部内建不变量：
  * - 同 key 并发 run 共享同一 entry（fn 仅发起一次）
  * - 不同 key 并行互不干扰
  * - settle 即清（成功 / 失败两条腿）

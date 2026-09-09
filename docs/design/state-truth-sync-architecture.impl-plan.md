@@ -150,7 +150,7 @@ worktree 决策：全部 plain。唯一热点公共文件 session-lifecycle.ts�
 | # | 偏差 | 来源单元 | 理由 | 状态 |
 |---|------|---------|------|------|
 | 1 | in-flight 迁移面 = 7 处（core 1 + renderer 6），runtime 5 处不迁移 | 计划期裁决 | 形态偏异 + 设计承诺面 6+；登记后续候选 | 已裁决 |
-| 2 | 约束 id 裁决为 C-data-17 / C-pi-14 / C-state-11（非 C-rl-* 族） | U0 | render-constraints.mjs id 正则仅认八族，C-rl 会被 exit 2 拒绝 | 已裁决 |
+| 2 | 约束 id 裁决为 C-data-17 / C-pi-14 / C-state-11（非 C-rl-* 族）→ 第三条集成期因 dev 线 chat-pin-bottom-fix 先占 C-state-11 改名 C-data-18（2026-09-09，见变更历史） | U0 | render-constraints.mjs id 正则仅认八族，C-rl 会被 exit 2 拒绝 | 已裁决 |
 | 3 | 契约测试谓词限定 session 配置状态/model/preset 三域；config 设置面板域 30+ set*/toggle* 显式排除（ADR §四范围边界） | U5 | config 域是 ack+广播推回形态，无乐观写模式，不在 D8「显示≡生效」事故面；扩域 = 扩谓词显式决策 | 已裁决 |
 | 4 | 6 个现存 mutation 归豁免清单（preset.setDefault/delete/recordUsage/setCwdDefault + session.rename/setProject），不补生效值字段 | U5 | U5 边界禁改 runtime 行为；rename/setProject 权威覆盖由 broadcastSessionList 全量广播承担；豁免理由逐条在 ADR §三与测试 rationale | 已裁决 |
 | 5 | preset.create/update reply 回显请求值（W-TR-1 取消二次读的历史决策），非读回生效值 | U5 | ADR 已知近似登记；消费方 preset.list 重拉兜底；升级需改 runtime 行为超出 U5 边界 | 已登记 ADR |
@@ -172,7 +172,7 @@ worktree 决策：全部 plain。唯一热点公共文件 session-lifecycle.ts�
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|------|------|----------|
-| U0 | committed | 1 | bff8d0ef8（94 条，id 裁决 C-data-17/C-pi-14/C-state-11，C-rl 族被 render 脚本正则拒绝） |
+| U0 | committed | 1 | bff8d0ef8（94 条，id 裁决 C-data-17/C-pi-14/C-state-11（→ 集成期改名 C-data-18，见偏差 #2），C-rl 族被 render 脚本正则拒绝） |
 | U1 | committed | 1 | fce03ec13（49 用例；P3 结论：pi 不静默换模，turn 级报错可见，U3 无需增补校验——残留风险 #2 已消解） |
 | U2a | committed | 1 | 7b5945403（62 用例重写；armed S1-S9 保留；u3 文档回写） |
 | U2b | committed | 1 | 18896b518（core 1824 + renderer 4067 绿；E7 复用 onCwdFallback 通道） |
@@ -203,6 +203,7 @@ worktree 决策：全部 plain。唯一热点公共文件 session-lifecycle.ts�
 
 ### 变更历史
 
+- 2026-09-09：dev-merge 集成期约束 id 撞车处理——dev 线 chat-pin-bottom-fix 先占 C-state-11（滚动跟随守卫，机器 hook + 安装脚本引用面），本设计对账三分处置约束避让改名 C-state-11 → C-data-18（C-data 族空闲号，数据治理语义同族），同步更新 constraints.json + create-inflight-dedup 源码/测试注释 + 偏差 #2/U0 行。
 - 2026-09-09：阶段 5 双绿收尾。Gate A 全量验收绿（pnpm test 全仓含 real-pi 10/10 真跑 0 失败；lint 唯一红灯 taste/no-silent-catch 已正面修复 53df7375a；5 包 typecheck + extensions 静态两连 + runtime bundle + drift/constraints 守卫全绿；覆盖矩阵 15 单元领地内无无人认领区；验收期根修 3ba8d96ba 的非领地面（7 文件）见偏差 #18）。Gate B V1-V11 真实场景（真实 Electron + 真实 pi + ~/.xyz-agent-dev）：10 pass / 1 fail / 0 blocked → 唯一 fail V9-④（landing create 路径 .preset.json sidecar 因 pi 延迟写入窗口 + jsonl-exists 守卫结构性永不落盘）根修 3ba8d96ba（守卫动机经 pi 0.84.4 dist 实读确认为规则 #6 误延伸；skipJsonlExistsGuard trusted-create 参数沿 io 骨架透传，fork/restore 语义不变，project/agent 同根修，model 写点不动）→ 定向重验 V9-④ + V3 + D3 出厂对照 + V9③ 全 pass，Gate B 转绿。环境已还原。
 - 2026-09-09：阶段 3 一致性审查（三分区独立 reviewer）22 reasonable 全部核实入登记表 #16；5 unreasonable 修复批 d8c411e76（F1 契约谓词 17 动词 + fork/handoff excluded 归类 / F2 悬空注释 / F3 E7 空串文案分支 / F4 chip 重入残留 G1 破口闭合 / F5 getSupportedLevels 统一 supported-levels.ts）+ 定向复审 7/7 pass；收尾批 49819fc0b（supersession 注记 / ADR restore 边界 / #17 收账）+ 2dac303ef（watch immediate 闭合挂载时序变体）。
 - 2026-09-08：初版。来源设计 v4（R3/R4 双审 0 must-fix）；用户预授权全权负责（豁免计划评审确认步骤）；侦查实测校准 6 处锚点漂移；in-flight 族实测 12 处裁决迁 7 处；U2 拆为 U2a/b/c（≤5 文件约束）、U7 拆为 U7a/b/c。

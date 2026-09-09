@@ -1983,7 +1983,7 @@
       ]
     },
     {
-      "id": "C-state-11",
+      "id": "C-data-18",
       "summary": "对账机制三分处置框架：renderer 副本 vs runtime/pi 真值的对账机制按「对抗外部异步真值（保留）/ 同构重复 ≥3 处（收编共享原语）/ 根修后失去存在理由（删除）」裁决——in-flight 去重族收编 createInflightDedup()、KV 单键族收编 createKVSlot()（均 core foundation，新增对账禁再手写同构实现），FR-15 perCwd 默认预设特性全链随本设计 U9 删除（零消费死链）；新增/修改对账机制须过三分裁决并在 impl-plan 处置表登记",
       "scope": [
         "packages/core/src/foundation/**",
