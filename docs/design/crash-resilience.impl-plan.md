@@ -1,6 +1,6 @@
 # 崩溃韧性中短期方案 实施计划
 
-基线: <待首次 commit 后回填> | 来源设计: docs/design/crash-resilience.md | 日期: 2026-09-09
+基线: b0490bbc8 | 来源设计: docs/design/crash-resilience.md | 日期: 2026-09-09
 
 ## 0 章节映射
 

@@ -1,0 +1,37 @@
+/**
+ * Electron IPC 通道名 SSOT（renderer → main 方向，crash-resilience u-foundation）。
+ *
+ * 现状边界：本文件只登记**新增**通道名。preload.ts / main gateway 既有通道
+ * （'runtime-port' / 'browser:create' / 'update:check' / 'sound:list' 等）仍为
+ * 字符串字面量内联在 ipcRenderer.invoke / ipcMain.handle 两侧，不在本文件收敛
+ * （纯新增原则，不改既有语义；存量迁移属独立清理项，不随崩溃韧性方案夹带）。
+ *
+ * 命名惯例（对齐 preload.ts 既有 electronAPI 两式并存）：
+ * - 单动作扁平 kebab-case：'renderer-log'（同 'runtime-port' / 'open-external' / 'reveal-in-folder'）
+ * - 领域通道族 `domain:action` 冒号式：'image-cache:write'（同 'browser:create' / 'update:check' / 'sound:list'）
+ *
+ * 消费方：u2-renderer-errors（RENDERER_LOG）· u7-memory-governance（IMAGE_CACHE_WRITE）。
+ * preload / main 两侧 handler 注册时必须 import 此处常量，禁止字面量分叉。
+ */
+
+/**
+ * renderer → main 日志上报通道 [crash-resilience §3.3 D2]。
+ *
+ * invoke 通道：renderer 错误三件套（app.config.errorHandler / window.onerror /
+ * unhandledrejection）捕获后经此上报；payload 含错误栈 + performance.memory 快照 +
+ * sessionId/windowId，main 落盘 logs/renderer-error-<date>.log 并按 windowId 限流
+ * （每窗口每分钟 100 条，超限合并汇总行）。选扁平 kebab-case：与 'runtime-port'
+ * 等「单动作上报」通道同型，不属既有冒号领域族。
+ */
+export const RENDERER_LOG = 'renderer-log' as const
+
+/**
+ * toolResult 图片落盘通道 [crash-resilience §3.3 D6-⑨]。
+ *
+ * invoke 通道：renderer 无 fs，toolResult 的 base64 图片经此委托 main 异步写盘
+ * `~/.xyz-agent/cache/images/<sessionId>/<content-hash>.png`，main 回填路径引用
+ * （纯缓存语义：可随时丢弃、可幂等重建）。'image-cache:*' 通道族首成员，后续
+ * 同族新增通道沿用该前缀；清理/删除不设 renderer 入口（session 删除级联、孤儿
+ * 扫描、软上限均为 main 侧内部生命周期）。选冒号式：对齐 'browser:*' 领域族惯例。
+ */
+export const IMAGE_CACHE_WRITE = 'image-cache:write' as const

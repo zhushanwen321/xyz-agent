@@ -57,6 +57,17 @@ export * from './git'
 export * from './plugin'
 export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, AMBIENT_ENV_NAMES, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS, IMAGE_LIMITS, MAX_WS_PAYLOAD_BYTES, PLUGIN_NOTIFY_LIMITS, UI_TOAST_LIMITS } from './constants'
 export type { ProviderApiType } from './constants'
+// 崩溃韧性共享契约 SSOT（docs/design/crash-resilience.md §3.3，实施计划 u-foundation：
+// 出站帧守卫阈值 D3 / 全量读预检阈值 D5 / 历史双预算 D4 / 日志保留期 D6-⑦）。
+// 注意：readLogKeepDays 是 Node-only 函数（函数体访问 process.env）——本 barrel 被
+// renderer（浏览器）整包 import，import 本身安全（constants.ts 模块顶层无 process 访问），
+// 但 renderer 严禁调用（process 未定义 ReferenceError）；main / runtime 专用，
+// 完整警示见 constants.ts 内 JSDoc。
+export { OUTBOUND_FRAME_WARN_BYTES, OUTBOUND_FRAME_TRUNCATE_BYTES, READ_PRECHECK_MAX_BYTES, HISTORY_BUDGET, DEFAULT_LOG_KEEP_DAYS, readLogKeepDays } from './constants'
+// Electron IPC 通道名 SSOT（crash-resilience u-foundation：renderer-log 上报通道 D2 /
+// image-cache 落盘通道族首成员 D6-⑨）；既有通道仍内联于 preload/main 不在此收敛，
+// 存量边界说明见 ipc-channels.ts 头注释。
+export { RENDERER_LOG, IMAGE_CACHE_WRITE } from './ipc-channels'
 // 出站 env 契约 SSOT + 子进程 env 构建器（纯常量/纯函数无 node 依赖，renderer barrel 安全）。
 // main 进程 safe-env 薄封装与 runtime infra/spawn-env.ts 门面均经此消费。
 export type { BuildOutboundChildEnvOptions, SpawnEnvForwardEntry } from './spawn-env-contract'
