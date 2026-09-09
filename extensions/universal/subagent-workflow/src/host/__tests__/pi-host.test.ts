@@ -197,20 +197,31 @@ describe("createPiHostServices.log（桥接 pi-extension-logger）", () => {
 });
 
 describe("createPiNotifyDomainPorts.countActiveFromEntries（适配读 .count）", () => {
-  it("拆 CountActiveResult.count 为 number（core 端口契约），entries 透传", () => {
-    const entries: unknown[] = [{ customType: "pending:register" }];
-    vi.mocked(countActiveFromEntries).mockReturnValue({ count: 3, ids: ["a", "b", "c"], entries: [] });
+	it("拆 CountActiveResult.count 为 number（core 端口契约），entries 透传（缺省过滤基准 undefined = 不过滤）", () => {
+		const entries: unknown[] = [{ customType: "pending:register" }];
+		vi.mocked(countActiveFromEntries).mockReturnValue({ count: 3, ids: ["a", "b", "c"], entries: [] });
 
-    const result = createPiNotifyDomainPorts().countActiveFromEntries?.(entries);
+		const result = createPiNotifyDomainPorts().countActiveFromEntries?.(entries);
 
-    expect(result).toBe(3);
-    expect(vi.mocked(countActiveFromEntries)).toHaveBeenCalledWith(entries);
-  });
+		expect(result).toBe(3);
+		// [W4 读侧过滤②] 端口适配恒透传过滤基准 opts（缺省 undefined = 不过滤，
+		// 既有调用方零改动行为不变）。
+		expect(vi.mocked(countActiveFromEntries)).toHaveBeenCalledWith(entries, { currentSessionId: undefined });
+	});
 
-  it("零活跃返回 0（{count: 0} 形状）", () => {
-    vi.mocked(countActiveFromEntries).mockReturnValue({ count: 0, ids: [], entries: [] });
-    expect(createPiNotifyDomainPorts().countActiveFromEntries?.([])).toBe(0);
-  });
+	it("[W4 读侧过滤②] 构造时传入 currentSessionId → 透传差集过滤基准", () => {
+		const entries: unknown[] = [{ customType: "pending:register" }];
+		vi.mocked(countActiveFromEntries).mockReturnValue({ count: 1, ids: ["a"], entries: [] });
+
+		createPiNotifyDomainPorts({ currentSessionId: "sess-child" }).countActiveFromEntries?.(entries);
+
+		expect(vi.mocked(countActiveFromEntries)).toHaveBeenCalledWith(entries, { currentSessionId: "sess-child" });
+	});
+
+	it("零活跃返回 0（{count: 0} 形状）", () => {
+		vi.mocked(countActiveFromEntries).mockReturnValue({ count: 0, ids: [], entries: [] });
+		expect(createPiNotifyDomainPorts().countActiveFromEntries?.([])).toBe(0);
+	});
 });
 
 describe("createPiNotifyDomainPorts.createDelivery（透传 session-delivery）", () => {

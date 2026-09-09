@@ -744,7 +744,13 @@ export class RecordStore {
     // 的修补对 async/chat 成员同样生效——拉齐 light 重建丢 result/model 与 full 重建的
     // 既有形态不一致（v2 D3 影响面诚实口径），不触碰任何通知文案（golden 不锁 entry 字节）。
     const rec0 = lastEntry === undefined ? rec : RecordStore.mergeOrphanLastEntry(rec, lastEntry);
-    if (rec0.chatMode === true) {
+    // [W4 boot 分区 · 裁决表行 3] 重认领保留分支的判据 = resumable 且**无完成产出**：
+    // 非 chatMode 的 resumable=true 且 result 有值是 SP-5 one-shot 完成态（任务已完成，
+    // 直断 closed/gc 无损）；resumable=true 且 result 缺失是「监督器死亡纳管态」（W4：
+    // 引擎死亡接管后宿主重启）——保留 running 交 round-supervisor boot 重认领继续
+    // 管辖（注册存续 process 档），误判 closed 会制造「指向已终态 record 的残留注册」
+    // 并损失 resume 可能。
+    if (rec0.chatMode === true || (rec0.resumable === true && rec0.result === undefined)) {
       // chat 会话跨重启等续聊：保留 running（可续聊），仅落执行态信号。
       this.reportSubagentRecord({ ...rec0, resumable: true });
       return;
@@ -794,6 +800,10 @@ export class RecordStore {
       // `?? ""`），pickStr 签名宽返回 string|undefined —— `?? ""` 运行时不可达，
       // 仅满足 model 非可选类型，空串回退语义不变（cur 空 → src，src 也空 → ""）。
       model: pickStr(rec.model, last.model) ?? "",
+      // [W4 boot 分区] 轮终执行态信号（resumable）随末条 entry 保留：子文件侧重建
+      // （reconstructAll）不带该信号，boot 分区的「already-resumable-idle 重认领 vs
+      // in-flight 直断」分流（finalizeOrphanRecord）只能从主 session 末条 entry 取证。
+      resumable: rec.resumable ?? last.resumable,
     };
   }
 

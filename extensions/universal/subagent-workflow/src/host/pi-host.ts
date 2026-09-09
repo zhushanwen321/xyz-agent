@@ -191,13 +191,26 @@ export function createPiHostServices(): HostServices {
   };
 }
 
+/** createPiNotifyDomainPorts 的可选参数。 */
+export interface PiNotifyDomainPortsOptions {
+  /**
+   * [W4 读侧过滤②] 当前 session id（跨 session 残留过滤基准）。传入时端口内按
+   * 「register entry 的 sessionId ≠ 当前 session → 跳过」过滤——fork 继承的父级
+   * 注册残留（翻 process 档后 U4 补注销不再中性化，永久留存）不进后代判定差集，
+   * 层主不会被继承残留误判「尚有活跃后代」而保持进程空等唤醒。
+   * 缺省 = 不过滤（向后兼容：既有调用方零改动行为不变）。
+   */
+  currentSessionId?: string;
+}
+
 /** pi 侧通知域窄端口实现（configureNotifyDomain 注入）。zsw 壳不注入本端口
  *  （其完成通知走 HostServices.notify，P2 落地）。 */
-export function createPiNotifyDomainPorts(): NotifyDomainPorts {
+export function createPiNotifyDomainPorts(opts?: PiNotifyDomainPortsOptions): NotifyDomainPorts {
   return {
     // pi 真函数返回 CountActiveResult，core 契约只读 .count——壳侧拆数值。
+    // [W4 读侧过滤②] currentSessionId 透传差集口径（缺省不过滤，见 options 注释）。
     countActiveFromEntries(entries: unknown[]): number {
-      return countActiveFromEntries(entries).count;
+      return countActiveFromEntries(entries, { currentSessionId: opts?.currentSessionId }).count;
     },
 
     // 投递内核工厂直传本体（结构兼容论证见文件头）；不经包装避免多一层间接面。

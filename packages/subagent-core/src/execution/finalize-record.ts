@@ -254,6 +254,13 @@ export async function doFinalizeRecord(
   removeAliveMarkerIfPresent(record);
 
   // pending-notifications：终态注销（只记 registry 状态，通知由 BgNotifier 发）
+  // [W4 发射点枚举归属①] 注销合法发射点枚举（设计 D2）第 ① 处：subagent record
+  // 终态化（finalizeRecord 路径，含监督器放弃）。其余合法发射点：② chatMode 轮末
+  // idle（doFinalizeRoundToIdle，本文件下方）；③ workflow run 终态迁移
+  // （transition("done") 路径）；④ 监督器显式放弃（走本路径，终态化+注销同批）；
+  // ⑤ 注册对账 sweep 补发（round-supervisor/reconcile-sweep.ts）。进程退出本身
+  // 永远不是注销理由（subagent-service disposeAllRecords 的 emit 属①——其同批
+  // completeRecord+archive 终态化）。
   deps.emitUnregister(record.id, status);
 
   // ── Step 4 (last): manifest 持久化（best-effort，不阻断、不 throw）──

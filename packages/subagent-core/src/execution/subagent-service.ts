@@ -92,6 +92,17 @@ import {
 } from "./settled-watchdog.ts";
 import { isIdle, isResumable } from "./lifecycle-predicates.ts";
 import { startIdleGc } from "./idle-gc.ts";
+// [W4] 轮次活性监督器（D2「等待有主」权威层；机制与注释见 round-supervisor/，
+// 装配绑定面在 service-binding.ts——变化轴独立）
+import type { RoundSupervisor } from "./round-supervisor/index.ts";
+import {
+  createRoundSupervisorForService,
+  runPendingReconcileSweepForService,
+} from "./round-supervisor/service-binding.ts";
+// [W4] WorkflowRun store 纳入 idle-gc（startedAt 锚归档，宿主无关实现，见 file-run-store.ts）
+import { FileRunStore } from "../orchestration/file-run-store.ts";
+// [W4] 引擎进程死亡分诊（表 3 行 1 判据：EngineSdkError engine_crashed）
+import { EngineSdkError } from "@zhushanwen/subagent-engine-sdk";
 // [W7] EPIPE 兜底归 pi 包（设计 §3.8 D2 第 3 行）：归属物已迁
 // @zhushanwen/pi-subagent-cli；core inproc 过渡链路 import 收敛到 host 公共面，W11 删。
 import { resetAllEpipeFailures } from "./engine/host/pi-host-binding.ts";
@@ -414,6 +425,21 @@ export class SubagentService {
     getBaselineRecordId: () => this.execNesting.baseline()?.recordId ?? undefined,
   };
 
+  /**
+   * [W4] 轮次活性监督器（D2「等待有主」权威层）：死亡事件纳管（run failed / 引擎
+   * exited → adoptOnProcessDeath）+ boot 分区重认领（initSession）+ 三态判定
+   * （record 级视图）+ 该放弃（终态化 failed + 注销 + 终止通知）。装配绑定面
+   * （deps/giveUp 编排/sweep 挂点）在 round-supervisor/service-binding.ts——变化轴
+   * 独立（通知文案 / 终态化编排 / store 读侧判据只动该文件），本字段只持实例。
+   */
+  private readonly roundSupervisor: RoundSupervisor = createRoundSupervisorForService({
+    getStore: () => this.store,
+    getPi: () => this.pi,
+    getSessionRootId: () => this.sessionRootId,
+    getMainSessionFile: () => this.mainSessionFile,
+    finalizeClosed: (record, result) => this.finalizeRecord(record, result, "closed", "gc"),
+  });
+
   /** [D4 查询面聚合] 读模型消费面（壳 interface/ 视图与 tool 查询经此访问；
    *  纯委托——方法本体保留 private 实现不重写，行为逐字节等价）。 */
   readonly queries: SubagentQueries = {
@@ -601,6 +627,21 @@ export class SubagentService {
     // 孤儿终态恢复（放 initSession 末尾：setPi 已注入（appendEntry 可用）、
     // sessionRootId 已建立（过滤当前根的 record）；单扫描者判据见 recoverOrphansIfRootProcess）
     this.recoverOrphansIfRootProcess();
+    // [W4] boot 分区 + 注册对账 sweep（须在孤儿恢复之后——依赖关系见两方法注释：
+    // 孤儿恢复把「重启前在途」record 直断 closed、把 resumable 形态保留 running 落
+    // entry，监督器重认领消费后者；sweep 再对终态 record 补发注销落盘——表 3 行 2
+    // 「注销经对账 sweep 保证落盘」的编排点）。
+    this.roundSupervisor.bootPartition();
+    runPendingReconcileSweepForService(
+      {
+        getStore: () => this.store,
+        getPi: () => this.pi,
+        getSessionRootId: () => this.sessionRootId,
+        getMainSessionFile: () => this.mainSessionFile,
+        finalizeClosed: (record, result) => this.finalizeRecord(record, result, "closed", "gc"),
+      },
+      (process.env[ENV_SELF_RECORD_ID] ?? "") !== "",
+    );
   }
 
   /**
@@ -780,10 +821,13 @@ export class SubagentService {
   /** SP-4: idle record GC（30 天 TTL，实现抽至 idle-gc.ts）。stop 函数（dispose 调）。 */
   private stopIdleGc: (() => void) | undefined;
 
-  /** 启动 idle record GC 定时器（session_start 调用，幂等）。 */
+  /** 启动 idle record GC 定时器（session_start 调用，幂等）。
+   *  [W4] WorkflowRun store（FileRunStore）同批纳入：running 且 startedAt 超 30 天
+   *  锚窗的 run 终态化归档（只终态化不补注销，见 idle-gc.ts 头注）。宿主未
+   *  configureCore 时 loadAll 抛错由 idle-gc 内部吞掉（单轮跳过）。 */
   startGcTimer(): void {
     if (this.stopIdleGc) return;
-    this.stopIdleGc = startIdleGc(this.store);
+    this.stopIdleGc = startIdleGc(this.store, new FileRunStore());
   }
 
   /** 停止 idle record GC 定时器（dispose 调用）。 */
@@ -1104,6 +1148,9 @@ export class SubagentService {
     // 账面差集重放补投——「不丢」由落盘账本承接而非本次 flush。
     this.persistUndeliveredNotificationsForReplay();
     this.notifyHost.dispose();
+    // [W4] 监督器停机（清 timer + 纳管记账；注册/record 不动——process 档跨 shutdown
+    // 存活，重开 session 由 boot 分区重认领 + sweep 对账收口）。
+    this.roundSupervisor.dispose();
     this.store.dispose();
   }
 
@@ -2140,6 +2187,8 @@ export class SubagentService {
    */
   private kickOffEngineRun(record: ExecutionRecord, opts: ExecuteOptions, engine: EnginePort): void {
     const signal = record.controller?.signal;
+    // [W4] 在途记账（监督器「该等」判据源）：run 发起即记账，finally 收口重评估。
+    this.roundSupervisor.noteRunStarted(record.id);
     void (async () => {
       try {
         await this.pool.acquire(PRIORITY_BACKGROUND, this.effectiveMaxConcurrentFor(record), signal);
@@ -2156,13 +2205,17 @@ export class SubagentService {
       // DefaultConcurrencyPool._active 永不递减——每次引擎任务泄漏一个并发槽，累计
       // maxConcurrent 次后全部 background subagent（pi 与引擎共用同一池）在 acquire 队列永久挂起
       try {
-        await this.runEngineTask(record, opts, engine, signal);
+        // [W4] adopted = 走了表 3 行 1 接管分支（record 保持 resumable 交监督器）——
+        // 跳过 bg 完成回注（合并单条通知由监督器 sendMergedFailureNotice 承担，
+        // route 会再发一条 toNotifyRecord 投影通知 = 双通知，正是 R3 要消除的时序窗口）。
+        const adopted = await this.runEngineTask(record, opts, engine, signal);
         // cancel 抢先（closedReason='cancelled'）时 cancelBackground 自己 notify，跳过
-        if (record.closedReason !== "cancelled") {
+        if (!adopted && record.closedReason !== "cancelled") {
           this.collectCoordinator.route(record);
         }
       } finally {
         this.pool.release();
+        this.roundSupervisor.noteRunEnded(record.id);
       }
     })();
   }
@@ -2178,7 +2231,7 @@ export class SubagentService {
     opts: ExecuteOptions,
     engine: EnginePort,
     signal: AbortSignal | undefined,
-  ): Promise<void> {
+  ): Promise<boolean> {
     // [D3-③ journal 接线合一] writer + retarget + 路径权威收敛 common/journal-wiring
     //（与 SAR 同一实现）。chat 域无下游 onEvent 消费者——journal 是事件唯一出口，
     // 不传 forwardEvents。
@@ -2229,13 +2282,47 @@ export class SubagentService {
         journalPath: journal.path,
       };
       await journal.close();
-      await this.finalizeEngineOutcome(record, outcome);
+      return await this.finalizeEngineOutcome(record, outcome);
     } catch (err) {
       // engine.run prepare 期 reject（进程创建前）→ failed 终态（与 runAndFinalize catch 同语义）；
       // journal 尽力而为收口（②级数据源写失败已由 writer 内部 warn 收敛）
       await journal.close();
+      // [W4 表 3 行 1] 引擎进程死亡（engine_crashed——run 帧已受理后进程死亡/stdin
+      // 写失败）且宿主存活 → record 保持 resumable 交监督器接管（禁 completed 谎报、
+      // 禁直接 closed 终局——resume 锚点在盘，逻辑任务可续）。prepare 期失败
+      // （handshake/protocol/model 拒——进程创建前）维持现状 closed（确定性失败，
+      // 保持 resumable 无意义）。
+      if (
+        err instanceof EngineSdkError &&
+        err.code === "engine_crashed" &&
+        record.chatMode !== true &&
+        record.status === "running"
+      ) {
+        this.adoptResumableAfterEngineDeath(record, toErrorMessage(err));
+        return true;
+      }
       await this.finalizeFailed(record, err);
+      return false;
     }
+  }
+
+  /**
+   * [W4 表 3 行 1] 引擎/子进程死亡、宿主存活的 record 处置：run 终态如实记 failed
+   * 证据（record.error），record **保持 resumable**（session 文件在盘，逻辑任务可续
+   * ——冷路径 resume 可直接续写），交监督器接管（合并单条通知 + 三态判定）。禁止
+   * 两个事故方向：completed 谎报（G3）与 closed 直接终局（resume 可能性丢失，等待
+   * 无主——2026-09-08 事故环 2/3 的 core 侧形态）。
+   *
+   * 判据状态源钉死 record 级：写点只动 record 字段（resumable/result/error），
+   * 不清镜像不查引擎——引擎进程被动重建（ensureConnected 退避重填镜像）不翻转
+   * 本处置（纳管模型：死亡事件纳管、重建不解管）。
+   */
+  private adoptResumableAfterEngineDeath(record: ExecutionRecord, errMsg: string): void {
+    record.error = errMsg;
+    record.result = undefined;
+    record.resumable = true;
+    this.store.reportRecordTransition(record);
+    this.roundSupervisor.adoptOnProcessDeath(record, errMsg);
   }
 
   /**
@@ -2249,10 +2336,26 @@ export class SubagentService {
   /**
    * engine.run resolve 的终态迁移：outcome.error → failed（success=false + error 文案）；
    * 否则 done（result=content）。CAS 抢锁（tryTransition）防与 cancelBackground 双收尾。
+   *
+   * [W4 表 3 行 1] 进程死亡分诊：outcome.error 存在且 **exitCode === null**（引擎侧
+   * 进程被信号终止/崩溃的合成 outcome 形态——RemoteEngine 运行中失败合成分支恒
+   * exitCode:null，引擎如实上报的 turn 失败带数值 exitCode；engine-client 注释同源
+   * 「exitCode null = 被信号杀死，杀链判据」）且宿主存活且非 conversation 形态 →
+   * record 保持 resumable 交监督器接管（如实 failed 证据 + 合并通知 + 三态判定），
+   * 不再 closed 终局。返回 true = 走了接管分支（调用方跳过 bg 完成回注）。
    */
-  private async finalizeEngineOutcome(record: ExecutionRecord, outcome: AgentOutcome): Promise<void> {
+  private async finalizeEngineOutcome(record: ExecutionRecord, outcome: AgentOutcome): Promise<boolean> {
     if (outcome.sessionFile !== undefined) {
       record.sessionFile = outcome.sessionFile;
+    }
+    if (
+      outcome.error !== undefined &&
+      outcome.exitCode === null &&
+      record.chatMode !== true &&
+      record.status === "running"
+    ) {
+      this.adoptResumableAfterEngineDeath(record, outcome.error);
+      return true;
     }
     const result: AgentResult = {
       text: outcome.content,
@@ -2267,6 +2370,7 @@ export class SubagentService {
     if (tryTransition(record, "closed", "gc")) {
       await this.finalizeRecord(record, result, "closed", "gc");
     }
+    return false;
   }
 
   // ── 执行内部：run + finalize（sync/bg 共用）──────────────
@@ -2556,6 +2660,10 @@ export class SubagentService {
     const stream = createBackgroundStream(record.id, this.streamSink, ctx.mode, process.env);
 
     this.chatRoundTickets.set(record.id, { record, opts, identity, ctx, signal, priority, stream, resume });
+    // [W4] 冷路径 resume 轮的在途记账：死亡纳管 record 被主 agent resume = 决策收敛
+    // （清指引标记与看门狗，回归「该等」）。热路径轮（deliverChatMessage）不经此处，
+    // 其「该等」由 hasLiveProcess 判据覆盖（进程活）——conversation 形态本就豁免监督域。
+    this.roundSupervisor.noteRunStarted(record.id);
     void this.chatPiEngine
       .run(
         // task 形参仅满足 port 签名——chat 轮次由 ticket lossless 携带
@@ -2584,6 +2692,10 @@ export class SubagentService {
         if (err instanceof Error) {
           logger.debug(`[subagent] background finalize error (record=${record.id}): ${err.message}`);
         }
+      })
+      .finally(() => {
+        // [W4] 轮收口重评估（死亡纳管 record 的轮终 → 驱动可能又死 → 重新三态判定）。
+        this.roundSupervisor.noteRunEnded(record.id);
       });
   }
 
