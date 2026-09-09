@@ -108,6 +108,13 @@ export default [
       'packages/runtime/src/transport/session-message-handler.ts',
       'packages/runtime/src/transport/settings-message-handler.ts',
       'packages/subagent-core/src/execution/session-reconstructor.ts',
+      // [HISTORICAL] message-dispatcher 是消息派发职责的唯一聚合点（从 session-service
+      // 巨石拆出：sendMessage/abort/steer/followUp/compact + sendBash 家族），2026-09-09
+      // chat-domain-v1x-liveness-governance W7 abort 超时三级阶梯（handleAbortRpcTimeout/
+      // runAbortStallLadder/probeEngineAlive）入列时净代码行越过 500。职责内聚（abort
+      // 超时处置归 abort() 所在文件），阶梯抽独立文件需引入新的模块边界与构造注入面，
+      // 属独立重构任务。短期 max-lines override 避免阻塞，长期应拆分。
+      'packages/runtime/src/services/session/message-dispatcher.ts',
     ],
     rules: {
       'max-lines': 'off',
