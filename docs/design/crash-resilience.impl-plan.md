@@ -129,6 +129,11 @@ graph TD
 | D11 | u7 | 渲染组件落 ui 包（ToolResultImages.vue/Block.vue）；shared/paths.ts 加 getImageCacheDir（跨进程路径 SSOT 惯例）；记账键改内容 hash Map（引用键被 mount 深拷贝击穿）；缓存扩展名按 mimeType 映射而非单一 .png | 同 D10 布局事实；SSOT 惯例对齐 getAttachmentsDir；hash 键与 main sha256 同值语义 | 合理偏差 |
 | D12 | u8 | join 状态所有权从 SessionService 迁入 RespawnOrchestrator（max-lines 门禁下的必要收敛）；两条钉住 throw 语义的旧测试按 D7-③ 更新并带 [HISTORICAL]；core route-inbound/store 消费接线为机械连带 | D7-③ 语义不变；[HISTORICAL] 标注合规 | 合理偏差 |
 | D13 | u4c | ⑤档 normalize 跳过（设计主形态）经 P-restore-skip 交付门裁决**不安全**（pi 0.84.4 实装 _buildIndex 尾部 session_end → leafId=undefined 静默断链），按设计预设降级路径实现「逆序分块最小规范化」；A11⑥ 验收口径随之变化（cwd 死路径被首行修复、附着成功——比主形态更安全） | 设计 §3.5 P-restore-skip 降级路径条款的预期触发；阶段 5 验收按降级形态口径 | 设计内降级，合规 |
+| D14 | u2 | 设计 §3.4「renderer JS 渲染错误」行的「顶栏一次性错误提示」未实现——设计规格表行与 A4 通过标准本身不一致（A4 不含顶栏提示） | 裁决：A4 口径为准（不白屏+错误落盘+功能可用）；设计 §3.4 行已由主 agent 同步修订（v9） | 已闭环（设计侧） |
+| D15 | u7 | 设计 D6-⑨「消息内引用 = 路径」的字面语义（base64 从累积态剥离）未兑现——实现为渲染层引用化，base64 仍在 messages/entryStates 驻留 | 裁决：两步走——本阶段落盘+渲染引用化+幂等重建，base64 剥离挂数据驱动重审（协议级改动）；设计 v9 已补实施口径与已接受代价 | 已闭环（设计侧） |
+| D16 | u8 | respawn 提示条被切入 reconcile 清除、重显依赖 ring 回放时序（未声明行为、无测试锁定） | 修复组 5 修：窗口合并保留未过期 liveOnly 提示条 + 测试锁定 | 修复中 |
+| D17 | u5a | A9② 长寿模拟的清理定时器手动触发入口未落地（runLogRetentionNow 已导出但无 dev/IPC 可达入口） | 第二波修复：main 侧调试 IPC 通道暴露；A9② 真机验收前必须落地 | 待第二波 |
+| D18 | u4a/u4b | runtime 区 3 条 low：占位 array-entry 缺 id；miss 兜底缺告警先行 warn 行；恰好 20 turns truncated 误报 | 修复组 2/3 修（随实质缺陷同批） | 修复中 |
 
 ## 6 状态表
 
@@ -166,4 +171,5 @@ graph TD
 
 - 2026-09-09：初版计划（基线 b0490bbc8）。设计 §5 U1-U8 映射为 13 个执行单元，U4/U5 按文件数上限与进程归属拆分，新增 u-foundation 共享契约根。
 - 2026-09-10：13/13 单元全部 committed（阶段 2 完成）。执行期重要事件：① u4c 的 P-restore-skip 交付门触发设计内降级（D13）；② u4c 经三轮返工（R1 直写豁免失配 → services/infra 分层 port 接线）；③ u6 首次 commit 因整目录 add 混入 u7/u8 文件被回退重提（教训：多单元并行期 git add 禁用目录通配，一律精确文件路径）；④ 一次 --no-verify 违规与补验（见上条）；⑤ u5b 一个测试文件遗漏补提交（bd73322ea）。
+- 2026-09-10：阶段 3 一致性对抗审查（4 区独立 reviewer：extensions/electron-main/runtime/前端）。聚合 11 unreasonable（4 实质：u8 join 单向缝隙、离线尾读缺字节帽、smart-context 代际快照失效、image-cache 生产形态四联缺陷；7 low/收窄类）+ 8 doc_errors + 大量 reasonable。修复按领地分 5 组并行派发（image-cache/join+占位/字节帽+误报/stale 代际/Trace+提示条），第 6 组（A9② 入口）待第二波；doc_errors 由主 agent 修订设计文档（v9，12 处）与本表 D14-D18。
 - 2026-09-10：流程违规登记——commit u1（8ca11d330）时主 agent 使用了 --no-verify（当时 hook 的 ws-client 段被并行单元 u2 在途违规阻塞，主 agent 判断误用了跳过通道，违反仓规 MANDATORY）。补救：对 u1 已提交 diff 补跑被跳过的检查段全部通过（禁用模式 grep 零命中 / flake 卫生零命中 / doc-drift OK / pi-semantics 30 条 OK）；后续所有 commit 恢复全量 hook。教训：并行工作区下 hook 失败应先甄别拦截归属，被他人文件阻塞时等待而非跳过。
