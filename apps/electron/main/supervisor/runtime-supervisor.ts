@@ -43,8 +43,35 @@ import { findAvailablePort, getPortOffset } from './port-discoverer.js'
 import { spawnRuntimeProcess, stopRuntimeProcess } from './process-control.js'
 import { waitForHealth } from './health-checker.js'
 import { writePortFile } from './port-file.js'
-import { RestartPolicy } from './restart-policy.js'
-import { LivenessMonitor } from './liveness-probe.js'
+import { RestartPolicy, MAX_RESTARTS } from './restart-policy.js'
+import { LivenessMonitor, LIVENESS_FAIL_THRESHOLD } from './liveness-probe.js'
+import { mainLogger } from '../logs/main-logger.js'
+
+/**
+ * 重启决策的触发源（杀链决策日志 D6-⑥ 的 trigger 字段）：
+ * - process_exit：runtime 意外退出（onRuntimeExit 崩溃路径）
+ * - liveness_unhealthy：存活探针判死半活进程（forceRestartForLiveness）
+ * - restart_failure：上一次重启尝试未达健康态（handleRestartFailure 递归）
+ */
+type SupervisorRestartTrigger = 'process_exit' | 'liveness_unhealthy' | 'restart_failure'
+
+/** 重启决策日志的上下文字段（target/exitCode 随触发路径可得性不同，缺省省略）。 */
+interface RestartDecisionContext {
+  /** 触发本轮重启的 runtime pid（exit/kill 时刻捕获——onRuntimeExit 已清 child，必须提前取） */
+  pid?: number
+  /** runtime 退出码（process_exit 路径；null=信号杀死） */
+  exitCode?: number | null
+}
+
+/**
+ * 重启决策 reason 句子表（按 trigger 查——决策日志的「为什么」字段，对齐 u5b
+ * kill decision 的 reason 判据句形态：可机械回答归因，不写自由文本）。
+ */
+const RESTART_DECISION_REASONS: Record<SupervisorRestartTrigger, string> = {
+  process_exit: 'runtime exited unexpectedly (exitCode in context); exponential backoff restart per policy (1-16s, MAX_RESTARTS=5)',
+  liveness_unhealthy: 'half-alive process force-killed by liveness probe; backoff restart per policy',
+  restart_failure: 'previous restart attempt failed to reach healthy state; continue backoff sequence',
+}
 
 /**
  * RuntimeSupervisor 实现。
@@ -234,6 +261,17 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
    */
   async forceRestartForLiveness(): Promise<void> {
     console.warn('[runtime] Liveness probe failed threshold — forcing restart of half-alive process')
+    // 杀链决策日志（crash-resilience §3.3 D6-⑥ 第三处「supervisor 重启决策」，u5b 同形态：
+    // action/trigger/target/reason 字段化，经 main-logger 落盘 main-<date>.log）。
+    // mainLogger 未 init（单测）时 no-op。pid 必须在 stop() 清 child 前捕获。
+    const pid = this.child?.pid
+    mainLogger.warn('[supervisor] kill decision', {
+      action: 'supervisor_force_kill_halfalive',
+      trigger: 'liveness_unhealthy',
+      target: { pid },
+      reason: 'process alive (exitCode null) but HTTP liveness probe failed threshold '
+        + `(${LIVENESS_FAIL_THRESHOLD} consecutive times); killing process tree before backoff restart`,
+    })
     // markStopping 防止 stop 触发的 exit 被 onRuntimeExit 当崩溃重复重启
     this.policy.markStopping()
     // kill 半活进程 + 清 child/port（不触发 onRuntimeExit 的重启逻辑）
@@ -241,7 +279,7 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
     // 清 stopping 标志：后续 scheduleRestart 才能放行（shouldRestart 不再短路）
     this.policy.reset()
     // 走与崩溃相同退避/上限/广播编排
-    this.scheduleRestart('crash')
+    this.scheduleRestart('crash', 'liveness_unhealthy')
   }
 
   /** 关闭存活探针（幂等：未启动则无操作） */
@@ -265,6 +303,8 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
    * @param code 子进程退出码（null=被信号杀死）
    */
   private onRuntimeExit(code: number | null): void {
+    // 先捕获 pid 再清状态：杀链决策日志需要「谁死了」（u5b kill decision 的 target 语义）
+    const pid = this.child?.pid
     // 清状态（幂等守卫据此判定无活进程）；token 随进程死亡失效（防旧 token 复用）
     this.child = null
     this._port = null
@@ -284,7 +324,7 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
       return
     }
 
-    this.scheduleRestart('crash')
+    this.scheduleRestart('crash', 'process_exit', { pid, exitCode: code })
   }
 
   /**
@@ -292,7 +332,7 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
    * 递归走重启判定逻辑（计数已在上次 recordCrash 递增）。
    */
   private handleRestartFailure(): void {
-    this.scheduleRestart('after failure')
+    this.scheduleRestart('after failure', 'restart_failure')
   }
 
   /**
@@ -300,15 +340,30 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
    * → setTimeout(attemptRestart)。crash 路径（onRuntimeExit）与 after-failure 路径
    * （handleRestartFailure）共用，仅入口 reason 不同（日志区分）。
    *
+   * 杀链决策日志（D6-⑥）：每个分支一条结构化行（action/trigger/target/reason 字段化，
+   * 对齐 u5b reap-orphan-pi 的 kill decision 形态），经 main-logger 落盘——E2 型事件
+   * 归因时可在 main-<date>.log 回答「谁触发、重启/放弃第几次、为什么」。
+   *
    * 行为不变量（与重构前逐字一致）：
    * - shouldRestart=false → 广播 'runtime-failed'（attempts + 中文 message）后返回
    * - 延迟由 policy.recordCrashAndGetDelay 给出（指数退避，计数递增）
    * - 广播 'runtime-restarting' { attempt }（前端进 restarting 态）
    * - attemptRestart 成功广播 'runtime-port'，失败递归 handleRestartFailure
    */
-  private scheduleRestart(reason: 'crash' | 'after failure'): void {
+  private scheduleRestart(
+    reason: 'crash' | 'after failure',
+    trigger: SupervisorRestartTrigger,
+    context: RestartDecisionContext = {},
+  ): void {
     if (!this.policy.shouldRestart()) {
       console.error(`[runtime] Restart attempts exhausted (${this.policy.count}). Broadcasting runtime-failed.`)
+      mainLogger.warn('[supervisor] restart decision', {
+        action: 'supervisor_restart_abandon',
+        trigger,
+        attempts: this.policy.count,
+        target: { pid: context.pid },
+        reason: `restart attempts exhausted (MAX_RESTARTS=${MAX_RESTARTS}); broadcasting runtime-failed, waiting for manual retry`,
+      })
       this.broadcastToAllWindows('runtime-failed', {
         attempts: this.policy.count,
         message: `runtime 崩溃后已重试 ${this.policy.count} 次仍失败`,
@@ -318,6 +373,15 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
     const delay = this.policy.recordCrashAndGetDelay()
     const attempt = this.policy.count
     console.log(`[runtime] Restart attempt ${attempt} scheduled in ${delay}ms${reason === 'after failure' ? ' (after failure)' : ''}`)
+    mainLogger.info('[supervisor] restart decision', {
+      action: 'supervisor_restart',
+      trigger,
+      attempt,
+      delayMs: delay,
+      target: { pid: context.pid },
+      exitCode: context.exitCode,
+      reason: RESTART_DECISION_REASONS[trigger],
+    })
     this.broadcastToAllWindows('runtime-restarting', { attempt })
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null
