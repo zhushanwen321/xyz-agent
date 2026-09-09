@@ -114,6 +114,8 @@ live conformance（W6 交付 + Gate B）：`ENGINE_CONFORMANCE_LIVE=1 PI_LIVE_MO
 |---|------|------|------|----------|
 | 1 | W1 | `packages/subagent-engine-sdk` 领地外补一行守卫：`packages/subagent-core/src/execution/engine/client/reverse-router.ts` host/streamDelta case 加 recordId 分支（接线前 break 不可达，仅收窄 v1.x 联合类型） | W1 的 `HostStreamDeltaParams` 改 `{runId}\|{recordId}` 互斥联合，core 消费侧 `runRoutes.get(p.runId)` 触发 TS2345；goal 共享 tsconfig 连带编译 core 链，不修则 W5 的 typecheck 验收门也红 | 守卫随 W1 commit；**W3 领地同步补 `client/reverse-router.ts`**（recordId delta 真实消费接线归 W3 chat 改线，接线时替换 no-op 分支） |
 | 2 | W7 | 领地外两处测试改写（`packages/runtime/src/__tests__/message-dispatcher-force-quit.test.ts`、`packages/runtime/test/message-dispatcher-silent-abort-destroy.test.ts`）+ `eslint.config.mjs` max-lines override（message-dispatcher.ts 561 行） | 旧测试断言锁定「abort 超时即杀」旧行为，阶梯化后必然同步（mock 显式化真冻结判据 + reason 对齐）；dispatcher 净行数越 500 触 lint 硬门，按仓内惯例（rpc-client.ts 同列表先例）登记 [HISTORICAL] override，拆分归属已注释 | 随 W7 commit；impl-plan W7 领地行视为含「既有 abort 行为测试的同步改写」隐式面 |
+| 3 | W4 | `eslint.config.mjs` subagent-service.ts 既有 max-lines 块 1500→1550 | W4 监督器接线（死亡分诊+在途记账+boot 分区/sweep 挂点）+30 行；装配面已抽 round-supervisor/service-binding.ts 减负，剩余为编排聚合点固有体量；既有块更新带变更历史注释，非新豁免 | 随 W4 commit |
+| 4 | W4 | 遗留交接：读侧过滤①的 `currentSessionId` 为可选参数，goal 守卫消费点（agent-end.ts 两处）未传基准——fork 残留在 goal 守卫口径未完全收口 | goal 已 committed 且设计红线「goal 扩展零改动」；sweep + rebuild 过滤已覆盖其余面，该口向后兼容缺省不过滤 | W6 fork 用例（A9②）验证时实测决定是否补 goal 侧两行传参；实测依据落 §7 变更历史 |
 
 ## 6 状态表
 
@@ -122,7 +124,7 @@ live conformance（W6 交付 + Gate B）：`ENGINE_CONFORMANCE_LIVE=1 PI_LIVE_MO
 | W1 | committed | 1 | SDK typecheck+test 112 例绿（新增 18）；boundary 守卫 3 包 OK；第 9 反向通道 `host/roundLifecycle`（settled/idle/failed 三相位，关联键 runId\|recordId）+ `RunParams.chat{recordId,resume}` + conversation gate 负向；P2 结论 = failed 相位承载，无需 crashed 相位 |
 | W2 | committed | 1 | pi 包 typecheck+test 237 例绿（新增 18：chat-session 12 + chat-protocol 5 + e2e 1）；SDK 回归 112 绿零缺口；四路径（run chat/interact/冷续/close）+ roundLifecycle 三相位 + cancel SIGTERM→等相位→killChain；manifest conversation 位已是 native；goal 加载形态核对 = 无新增打包面；W3 接线注意 9 条见交付报告（关键：关联键分路 / interact 轮无 AgentEvent 通道 / askUser 带 spawn 轮 runId / idle 帧=armIdleTimer 锚点） |
 | W3 | pending | 0 | — |
-| W4 | pending | 0 | — |
+| W4 | committed | 1 | commit `bcf3f0ff9`（一次原子：翻档+兜底+对账同批）；core typecheck 干净 + 2844 例绿（新增 35）+ pending 49 绿 + workflow 915 绿 + extensions typecheck/lint 0；round-supervisor 6 文件（判据不读引擎镜像=结构性保证重建不解管）；**顺带修正真 bug**：孤儿恢复 merge 丢 resumable 字段（重启误判 closed/gc）；发射点盘点 6 处→枚举 5 语义；watchdog 默认 2h（env `XYZ_SUBAGENT_ROUND_SUPERVISOR_WATCHDOG_MS` 可覆盖）；WorkflowRun 锚 = startedAt；cold-resurrect.ts 未改（重认领落点 = bootPartition 谓词，与设计意图同源） |
 | W5 | committed | 1 | goal typecheck+test 393 例绿（新增 23：circuit-breaker 6 + liveness 17）；双维度熔断（PI_GOAL_CONTINUATION_CAP=50 正交封顶 + 无进展退避 ×2 至 10min 封顶）+ defer 去重 + /goal resume；计数随 goal state 快照持久化（防重启绕过） |
 | W6 | pending | 0 | — |
 | W7 | committed | 1 | runtime typecheck 干净 + test 5121 例全绿（新增 12 + 改写 6）；三级阶梯 + 三信号判据（ABORT_STALL_RETRY_LIMIT=2 / FROZEN_EVENT_SILENCE_MS_DEFAULT=600s 带 P3 登记与 env 逃生门）；**P1 探针真机 PASS**（本地 pi CLI + goal 源码，abort 4ms 落地、后续 0 轮、3 次复跑全过——ESC 守卫在当前源码成立，D3 按防御纵深定位实施） |
