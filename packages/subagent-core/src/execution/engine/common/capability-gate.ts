@@ -40,6 +40,11 @@
 // 「修 manifest / 升级引擎包」（引擎包是能力声明的载体，换引擎不再是缺省指引——
 // 协议化后不存在「内置 pi 恒可用」兜底）。
 
+// [W3 v1.x] conversation gate 判据单源 = SDK 具名构造器（W1 交接防漂移项：core 内联
+// 文案与引擎侧 assertChatConversationSupported 双份文案的漂移面消除——同一构造器
+// 两侧消费，错误码/恢复指引契约单一权威）。
+import { engineConversationUnsupportedError } from "@zhushanwen/subagent-engine-sdk";
+
 import { EngineError } from "./errors.ts";
 import type { EngineCapabilities } from "../types.ts";
 
@@ -77,12 +82,11 @@ export function assertTaskShapeSupported(
   task: TaskShapeForGate,
 ): void {
   if (task.conversation === true && caps.conversation === "unsupported") {
-    throw new EngineError(
-      "engine_capability_unsupported",
-      `engine '${engineId}' 不支持 conversation（capabilities.conversation = 'unsupported'，` +
-        `spawn 单轮模式无同进程 idle 复用，message/close 交互控制面不可用）`,
-      `去掉 conversation 参数（一次性任务默认形态），或 ${MANIFEST_RECOVERY_TAIL}`,
-    );
+    // [W1 交接防漂移项落地] 文案/错误码/恢复指引单源 = SDK engineConversationUnsupportedError
+    // （引擎侧 server.run chat gate 消费同一构造器——A6 双向负向面两侧同文案）。
+    // 错误载体类型 EngineError → EngineSdkError（code/recovery/message 前缀契约不变，
+    // name 变化不影响消费方——无 instanceof EngineError 判据，code 字段分流）。
+    throw engineConversationUnsupportedError(engineId);
   }
   if (task.fork === true || task.forkFromSessionFile !== undefined) {
     if (caps.steer === "unsupported" && caps.conversation === "unsupported") {

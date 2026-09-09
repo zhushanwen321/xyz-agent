@@ -2,7 +2,7 @@
 // + 原因含信号信息（协议黑盒：真 kill 信号路径）。
 //
 // 设计权威源：chat-domain-v1x-liveness-governance.md §3.2 D5（消亡处置顺序约束）+
-// §4 P2 探针 + 验收 A2/G3。D5 顺序约束：本用例必须先于 W3 删 `engines/pi/
+// §4 P2 探针 + 验收 A2/G3。D5 顺序约束：本用例必须先于 W3 删 `inproc pi 引擎目录/
 // session-runner.ts`（旧 143 误分类器：被信号终止一律归 success=true——事故环 3
 // 「死亡误报 completed」的根因载体）存在并保持绿——它把新路径语义钉成契约：
 //
@@ -115,7 +115,7 @@ describe("[W6/D5 前置闸] 引擎进程被 SIGTERM → run 终态 failed（禁 
       process.kill(pid, "SIGTERM");
 
       // 钉死语义：run 终态 failed（engine_crashed）+ 原因含信号信息——
-      // 旧 143 误分类器（engines/pi/session-runner.ts:2667-2677，W3 删）的反命题：
+      // 旧 143 误分类器（inproc session-runner（已删）:2667-2677，W3 删）的反命题：
       // 信号死亡绝不允许投影为 success/completed。
       const err = (await runPromise.catch((e: Error) => e)) as Error & {
         code?: string;

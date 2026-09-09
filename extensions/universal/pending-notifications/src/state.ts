@@ -279,7 +279,9 @@ function scanPendingEntries(entries: unknown[]): PendingEntryScan {
  * 生命周期本就跨 shutdown/fork 存活，跨 session 检测（U4）的职能已移交读侧过滤
  * （countActiveFromEntries 的 currentSessionId 口 + rebuildFromEntries 的
  * currentSessionId 入 registry 过滤），清理职能移交注销发射点枚举 + core 注册对账
- * sweep（判据 = record 终态 ∪ 已归档/不存在）。本函数与 PENDING_TTL_MS 同为
+ * sweep（判据 = record 终态 ∪ 已归档/不存在；覆盖 subagent/workflow——bash 无
+ * record/store 可查，死亡窗口丢失无补发通道，见 normalizePendingType 注的显式
+ * 边界登记）。本函数与 PENDING_TTL_MS 同为
  * session 档机器留存件，待未来 session 档类型，勿误删。
  */
 function isExpiredEntry(entry: PendingEntry, currentSessionId: string, now: number): boolean {
@@ -345,9 +347,11 @@ export function rebuildFromEntries(
  *
  * [W4 偏好显式化] 缺失/未知 type 默认归 workflow = process 档 = 永不 TTL 清理。
  * 该偏好是刻意选择：畸形条目**宁挂账不失明**——误归 session 档会让未知类型被
- * 1h TTL / 跨 session 清理静默抹掉（守卫失明方向）；归 process 档的挂账由 core
- * 注册对账 sweep 收口（判据含「record 不存在 → 视同终态补注销」，对对不上
- * record 的畸形条目同样闭合）。
+ * 1h TTL / 跨 session 清理静默抹掉（守卫失明方向）。挂账的收口通道按类型分流
+ * [F2 如实口径]：workflow / 畸形条目由 core 注册对账 sweep 收口（查 WorkflowRun
+ * store：终态 ∪ state 文件不存在 → 补注销）；bash 无 record/store 可查——bash
+ * 注册随进程退出注销，进程死亡窗口的丢失无补发通道，属显式边界（impl-plan §5
+ * 偏差登记：每孤儿 bash 注册 1 条静态虚报，无空转驱动源，熔断限损）。
  */
 export function normalizePendingType(raw: unknown): PendingType {
 	if (raw === "subagent") return "subagent";

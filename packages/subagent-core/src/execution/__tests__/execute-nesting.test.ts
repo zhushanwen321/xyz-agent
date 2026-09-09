@@ -32,7 +32,6 @@ import {
   finalizedMarkerModule,
   fsSyncModule,
   manifestStoreModule,
-  tempPromptModule,
 } from "./helpers/subagent-service-mocks.ts";
 
 vi.mock("node:child_process", () => childProcessModule());
@@ -40,11 +39,11 @@ vi.mock("node:fs", async (importOriginal) => fsSyncModule(await importOriginal<t
 vi.mock("../alive-store.ts", async (importOriginal) => aliveStoreModule(await importOriginal<typeof import("../alive-store.ts")>()));
 vi.mock("../finalized-marker.ts", () => finalizedMarkerModule());
 vi.mock("../manifest-store.ts", () => manifestStoreModule());
-vi.mock("../engine/engines/pi/temp-prompt.ts", () => tempPromptModule());
 
 import { spawn } from "node:child_process";
 
-import { waitForSpawn, lastSpawnedChild } from "./helpers/spawn-mock.ts";
+import { registerFakePiEngine, type FakePiEnginePort } from "./helpers/fake-engine-port.ts";
+import { clearEngines } from "../engine/registry.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
 import { MAX_FORK_DEPTH } from "../session-context-resolver.ts";
@@ -85,6 +84,15 @@ function setup(): SetupResult {
   return { service };
 }
 
+/** [W3] 协议替身注册 + 受控 settle（原 driveChildToCompletion 的等价驱动面）：
+ *  execute 发起的 engine.run 由测试显式应答（轮终语义对齐 driveChild 的 close(0)）。 */
+function setupWithFakeEngine(): SetupResult & { fake: FakePiEnginePort } {
+  const base = setup();
+  clearEngines();
+  const fake = registerFakePiEngine();
+  return { ...base, fake };
+}
+
 const ctxModel: ModelInfo = { id: "m", name: "M", provider: "p", reasoning: false };
 
 /** [D3-⑤] execNesting（公共层 ExecutionNestingContext）.run 的 duck-type（绕过
@@ -103,15 +111,15 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
   // ============================================================
 
   it("[D-032] background execute 调 pool.acquire（进池限流）", async () => {
-    const { service } = setup();
+    const { service, fake } = setupWithFakeEngine();
 
     const pool = Reflect.get(service, "pool") as { acquire: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn> };
     const acquireSpy = vi.spyOn(pool, "acquire");
 
     const execPromise = service.execute({ task: "bg in pool", slug: "test", ctxModel });
-    // detached runAndFinalize → acquire。等 spawn 拿到 child 再驱动完成。
-    await waitForSpawn(mockSpawn);
-    await driveChildToCompletion(lastSpawnedChild(mockSpawn));
+    // detached kickOffChatRound → acquire。等替身 run 到位再驱动应答。
+    await vi.waitFor(() => expect(fake.runs.length).toBe(1));
+    fake.runs[0]!.settle({ content: "ok" });
 
     // 等 detached promise 链跑完（kickOffChatRound 的 .then notify）
     await new Promise<void>((r) => setTimeout(r, 10));
@@ -120,6 +128,7 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
     // background execute 立即返回 handle（不等完成）
     const handle = await execPromise;
     expect(handle.mode).toBe("background");
+    clearEngines();
   });
 
   // ============================================================
@@ -144,21 +153,19 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
   });
 
   it("[D-033] execCtxAls depth=MAX-1 时 execute 不抛（nestingDepth=MAX 允许）", async () => {
-    const { service } = setup();
+    const { service, fake } = setupWithFakeEngine();
 
     const execNesting = Reflect.get(service, "execNesting") as ExecCtxAls;
 
     const execPromise = execNesting.run({ recordId: "parent", depth: MAX_FORK_DEPTH - 1 }, () =>
       service.execute({ task: "at limit", slug: "test", ctxModel }),
     );
-    await waitForSpawn(mockSpawn);
-    await driveChildToCompletion(lastSpawnedChild(mockSpawn), [
-      { type: "turn_end" },
-      { type: "message_end", message: { usage: { input: 1 } } },
-    ]);
+    await vi.waitFor(() => expect(fake.runs.length).toBe(1));
+    fake.runs[0]!.settle({ content: "ok" });
     const result = await execPromise;
 
     expect(result.mode).toBe("background");
+    clearEngines();
   });
 
   // ============================================================

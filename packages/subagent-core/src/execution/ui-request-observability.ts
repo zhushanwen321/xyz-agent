@@ -9,9 +9,9 @@ import type { ExtensionMode } from "./host-mode.ts";
 
 const logger = getLogger("subagents");
 
-// ── 跨模块桥接（ui-request-queue 无 ctx.service 引用时走这里） ──
+// ── 跨模块桥接（inproc UI 请求队列（已删） 无 ctx.service 引用时走这里） ──
 //
-// ui-request-queue.handleUiRequest 在 ctx.uiRequestHandler 缺失时需要触发去重告警，
+// inproc UI 请求队列 handleUiRequest（已删） 在 ctx.uiRequestHandler 缺失时需要触发去重告警，
 // 但 SessionRunnerContext 不持有 service 引用（改 ctx 签名超出本组 4 文件范围）。
 // 解法：SubagentService 构造后调 registerGlobalObservability(this.uiObservability)
 // 把进程单例挂到 globalThis；queue 走 notifyMissingHandlerGlobal 路径调到同一实例，

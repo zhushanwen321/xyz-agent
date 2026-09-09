@@ -1,6 +1,3 @@
-// [W10 处置注记 §2.10 ②] vi.mock(engines/pi/session-runner) 拦截的是 core 生产代码的
-// inproc 深路径 import（buildSpawnArgs 消费点在生产侧）——mock 目标改指
-// @zhushanwen/pi-subagent-cli 需生产改线先行（W11 收口）。W11 删内建当轮同批改写。
 // 显式 agent ref 失败必须报错（非静默降级）——三通道对称审查修复的 agent 通道验收。
 //
 // 修复背景：resolveIdentity 旧实现 getAgentConfig（loadByPath 无 require）对相对
@@ -10,45 +7,30 @@
 // 错误含 <available_subagents> 恢复指引，对齐 workflow name not found 反馈风格）。
 //
 // 本文件锁住：
-//   1. 裸名/相对路径 agent ref → execute 同步 reject（Invalid agent ref），无 spawn、
-//      无子 session、record 不落盘（buildSpawnArgs/spawn/appendEntry 零触达）
+//   1. 裸名/相对路径 agent ref → execute 同步 reject（Invalid agent ref），无引擎
+//      派发、无子 session、record 不落盘（engine.run/appendEntry 零触达）
 //   2. 绝对路径但文件不存在 → reject（not found or unreadable）
 //   3. 对照：不传 agent（默认 general-purpose）与合法绝对路径 ref 均不误伤
 //
+// [W3 改写] 原 vi.mock(inproc pi 引擎目录/session-runner)（buildSpawnArgs spy）随删件消亡
+// ——「spawn 链路零触达」的结构性证据改经协议替身（engine.run 零调用）+ appendEntry
+// 零触达承载；守卫位于同步裁决期、引擎派发前置的结构不变。
+//
 // harness 复用 start-sync-model-guard.test.ts（真实 SubagentService + tmpdir +
-// mock spawn），保证守卫位于同步裁决期、spawn 前置的结构性证据可断言。
+// 协议替身），保证守卫位于同步裁决期、引擎派发前置的结构性证据可断言。
 
-import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("node:child_process", async () => {
-  const actual = await import("node:child_process");
-  return {
-    ...actual,
-    spawn: vi.fn(() => {
-      throw new Error("spawn must not be called on agent-ref rejection");
-    }),
-  };
-});
-
-// buildSpawnArgs 包装为 spy（保留真实实现）——「显式 ref 拒单不触达 spawn 参数组装」的承重断言。
-vi.mock("../engine/engines/pi/session-runner.ts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../engine/engines/pi/session-runner.ts")>();
-  return { ...actual, buildSpawnArgs: vi.fn(actual.buildSpawnArgs) };
-});
-
+import { registerFakePiEngine, type FakePiEnginePort } from "./helpers/fake-engine-port.ts";
+import { clearEngines } from "../engine/registry.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
-import { buildSpawnArgs } from "../engine/engines/pi/session-runner.ts";
 import type { PiLike } from "../subagent-service.ts";
 import { SubagentService } from "../subagent-service.ts";
-
-const mockSpawn = vi.mocked(spawn);
-const mockBuildSpawnArgs = vi.mocked(buildSpawnArgs);
 
 // ── 工具（start-sync-model-guard 同款）──
 
@@ -82,9 +64,12 @@ describe("显式 agent ref 失败报错（非静默降级 general-purpose）", (
   let tmpDir: string;
   let service: SubagentService;
   let pi: PiLike;
+  let fake: FakePiEnginePort;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    clearEngines();
+    fake = registerFakePiEngine();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "sw-agent-ref-guard-"));
     const modelService = new ModelConfigService({ agentDir: tmpDir, cwd: tmpDir });
     modelService.initModel({
@@ -98,20 +83,20 @@ describe("显式 agent ref 失败报错（非静默降级 general-purpose）", (
 
   afterEach(() => {
     vi.restoreAllMocks();
+    clearEngines();
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
-  // ── 拒绝路径：显式 ref 失败 → 同步 reject + spawn 链路零触达 ──
+  // ── 拒绝路径：显式 ref 失败 → 同步 reject + 引擎派发零触达 ──
 
   it("裸名 agent ref（'worker'）→ execute 同步 reject（Invalid agent ref + 恢复指引）", async () => {
     await expect(
       service.execute({ task: "probe task", slug: "ref-guard", agent: "worker" }),
     ).rejects.toThrow(/Invalid agent ref: worker.*<available_subagents>/s);
 
-    // spawn 链路零触达 + record 未创建——非静默降级的结构性证据：
-    // 旧行为（静默 undefined）会继续走 record 创建（appendEntry 被调）后启动子进程。
-    expect(mockBuildSpawnArgs).not.toHaveBeenCalled();
-    expect(mockSpawn).not.toHaveBeenCalled();
+    // 引擎派发零触达 + record 未创建——非静默降级的结构性证据：
+    // 旧行为（静默 undefined）会继续走 record 创建（appendEntry 被调）后派发引擎。
+    expect(fake.runs.length).toBe(0);
     expect(pi.appendEntry).not.toHaveBeenCalled();
   });
 
@@ -120,7 +105,7 @@ describe("显式 agent ref 失败报错（非静默降级 general-purpose）", (
       service.execute({ task: "probe task", slug: "ref-guard", agent: "./agents/worker.md" }),
     ).rejects.toThrow(/Invalid agent ref/);
 
-    expect(mockBuildSpawnArgs).not.toHaveBeenCalled();
+    expect(fake.runs.length).toBe(0);
     expect(pi.appendEntry).not.toHaveBeenCalled();
   });
 
@@ -130,8 +115,7 @@ describe("显式 agent ref 失败报错（非静默降级 general-purpose）", (
       service.execute({ task: "probe task", slug: "ref-guard", agent: missing }),
     ).rejects.toThrow(/not found or unreadable.*<available_subagents>/s);
 
-    expect(mockBuildSpawnArgs).not.toHaveBeenCalled();
-    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(fake.runs.length).toBe(0);
     expect(pi.appendEntry).not.toHaveBeenCalled();
   });
 
@@ -143,7 +127,7 @@ describe("显式 agent ref 失败报错（非静默降级 general-purpose）", (
       slug: "ref-default-ok",
       ctxModel: makeModel(),
     });
-    // 默认语义下 identity 解析必须放行（execute 可能因 mock 环境子进程收尾而 reject，
+    // 默认语义下 identity 解析必须放行（execute 可能因 mock 环境引擎收尾而 reject，
     // 但错误不能是 agent ref 拒绝）；record 已创建（appendEntry 发生）。
     try {
       await promise;

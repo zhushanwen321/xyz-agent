@@ -12,8 +12,9 @@
 //   5. flush 屏障时序：manifest 写完成先于 notifyBatch 写账（通知可达 ⇒ 索引就位
 //      的构造性保证，时序竞态修复）。
 //
-// mock 手法对齐 ended-message-and-fork-from.test.ts：mock session-runner（不 spawn
-// 真子进程）+ logger；record-store / config 走真实实现（tmpdir 自建自删，红线）。
+// mock 手法对齐 ended-message-and-fork-from.test.ts：[W3 改写] 替身从
+// vi.mock session-runner（不 spawn 真子进程）改为协议 seam（registerFakePiEngine 替身，
+// 测试显式 settle 应答）+ logger；record-store / config 走真实实现（tmpdir 自建自删，红线）。
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -21,35 +22,16 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
-const { loggerMock, runSpawnMock } = vi.hoisted(() => ({
+const { loggerMock } = vi.hoisted(() => ({
   loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
-  /** runSpawn mock 实例提升：测试内直接引用控制 resolve 时序（不依赖 import 路径解析——
-   *  vi.mock 字符串与本文件既有写法保持一致，mock 实例经 hoisted 闭包共享）。 */
-  runSpawnMock: vi.fn(async () => ({
-    text: "ok",
-    turns: 1,
-    durationMs: 10,
-    success: true,
-    sessionId: "spawned",
-    toolCalls: [],
-  })),
 }));
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
-// mock session-runner：execute 链经 kickOffBackground → runAndFinalize → runSpawn。
-// runSpawn 返回最小成功 AgentResult，后台收尾链完整走完（finalize + archive + notify）。
-// 路径必须命中生产 import 的真实模块——merge 后 session-runner 落位
-// src/execution/engine/engines/pi/session-runner.ts（subagent-service.ts 的 import 源），
-// 旧路径 "../session-runner.ts" 模块已不存在，拦截静默失效（真 runSpawn 被执行，
-// runSpawnMock.calls 恒 0 → 受控 promise 用例 until 超时）。
-vi.mock("../engine/engines/pi/session-runner.ts", () => ({
-  runSpawn: runSpawnMock,
-  killAllSpawnedChildren: vi.fn(),
-  killRecordChildWithEscalation: vi.fn(),
-  getChildByRecord: vi.fn(() => undefined),
-  registerSpawnedChildForRecord: vi.fn(),
-  spawnedChildren: new Map(),
-}));
+// [W3] execute 链经 executeViaEngine → kickOffChatRound → engine.run（协议替身）。
+// 替身 run 挂起不自动 settle：测试取 fake.runs.at(-1) 显式 settle（受控时序——
+// 原 runSpawnMock 的 resolve 时序控制等价面）。
+import { clearEngines } from "../engine/registry.ts";
+import { registerFakePiEngine, type FakePiEnginePort } from "./helpers/fake-engine-port.ts";
 
 import { getSubagentSessionDir, getSubagentRecordsDir } from "../path-encoding.ts";
 import { ModelConfigService } from "../model-config-service.ts";
@@ -116,9 +98,12 @@ describe("collectCoordinator service integration (U2)", () => {
   let agentDir: string;
   let service: SubagentService;
   let pi: ReturnType<typeof makePi>;
+  let fake: FakePiEnginePort;
 
   beforeEach(() => {
     for (const k of IDENTITY_ENV_KEYS) delete process.env[k];
+    clearEngines();
+    fake = registerFakePiEngine();
     agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "core-collect-coord-"));
     fs.mkdirSync(getSubagentSessionDir(agentDir, agentDir), { recursive: true });
     pi = makePi();
@@ -127,6 +112,7 @@ describe("collectCoordinator service integration (U2)", () => {
 
   afterEach(() => {
     service.dispose();
+    clearEngines();
     fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
@@ -154,6 +140,8 @@ describe("collectCoordinator service integration (U2)", () => {
     // 批投递（下方用例），async 成员直通。本条记录 execute 链零异常完成。
     const spy = spyNotifier(service);
     const handle = await service.execute({ task: "collect me", slug: "collect-me", collect: "sync" });
+    await until(() => fake.runs.length >= 1);
+    await settleLast();
     await until(() => spy.notifyBatch.mock.calls.length > 0);
     expect(handle.subagentId).toMatch(/^sa-/);
   });
@@ -161,6 +149,8 @@ describe("collectCoordinator service integration (U2)", () => {
   it("routes a finished sync member into a single-member batch (U3 接线：单成员闭合 → notifyBatch)", async () => {
     const spy = spyNotifier(service);
     const handle = await service.execute({ task: "collect me", slug: "collect-me", collect: "sync" });
+    await until(() => fake.runs.length >= 1);
+    await settleLast();
     await until(() => spy.notifyBatch.mock.calls.length > 0);
     // U3 接线后：sync 成员走单条批投递（不再逐条降级 notify）
     expect(spy.notify).not.toHaveBeenCalled();
@@ -173,6 +163,8 @@ describe("collectCoordinator service integration (U2)", () => {
     const spy = spyNotifier(service);
     spy.notifyBatch.mockReturnValue(false); // 模拟同成员集批已在账（E1 重建重发形态）
     const handle = await service.execute({ task: "collect me", slug: "collect-me", collect: "sync" });
+    await until(() => fake.runs.length >= 1);
+    await settleLast();
     await until(() => spy.notifyBatch.mock.calls.length > 0);
     expect(handle.subagentId).toMatch(/^sa-/);
     // 落标出口①绑「写账成功」：accepted=false → 无带 batchFinalized 标记的 subagent-record
@@ -188,6 +180,8 @@ describe("collectCoordinator service integration (U2)", () => {
   it("routes an async member through the same notifyAsync path (现状直通)", async () => {
     const spy = spyNotifier(service);
     const handle = await service.execute({ task: "plain", slug: "plain" });
+    await until(() => fake.runs.length >= 1);
+    await settleLast();
     await until(() => spy.notify.mock.calls.length > 0);
     const notified = spy.notify.mock.calls.map((c) => c[0] as { id: string });
     expect(notified.some((n) => n.id === handle.subagentId)).toBe(true);
@@ -247,28 +241,27 @@ describe("collectCoordinator service integration (U2)", () => {
     fs.writeFileSync(path.join(sessionsDir, `${recordId}.jsonl`), `${header}\n${identity}\n${recordEntry}\n`, "utf-8");
   }
 
-  const spawnOk = () => ({
-    text: "ok", turns: 1, durationMs: 10, success: true, sessionId: "spawned", toolCalls: [],
-  });
+  /** 受控替身 settle：等替身 run 到位（execute 返回后的异步链内发起），按需 settle。
+   *  原 runSpawnMock 受控 promise 的等价面（content "ok" 对齐原 AgentResult.text）。 */
+  const settleLast = async (): Promise<void> => {
+    await until(() => fake.runs.length >= 1);
+    fake.runs[fake.runs.length - 1]!.settle({ content: "ok" });
+  };
 
   it("跨轮续累（D2 service 层）：两轮派 2 sync → 闭合时单批 2 成员", async () => {
-    let resolve1!: (v: ReturnType<typeof spawnOk>) => void;
-    let resolve2!: (v: ReturnType<typeof spawnOk>) => void;
-    runSpawnMock.mockImplementationOnce(() => new Promise((res) => { resolve1 = res; }));
-    runSpawnMock.mockImplementationOnce(() => new Promise((res) => { resolve2 = res; }));
     const spy = spyNotifier(service);
     const h1 = await service.execute({ task: "t1", slug: "one", collect: "sync" });
     const h2 = await service.execute({ task: "t2", slug: "two", collect: "sync" });
-    // runSpawn 在 execute 返回后的异步链内才被调用——等两个受控 promise 都构造完
-    await until(() => runSpawnMock.mock.calls.length >= 2);
+    // engine.run 在 execute 返回后的异步链内才被发起——等两个替身 run 都到位
+    await until(() => fake.runs.length >= 2);
 
     // 第一台终态：第二台仍 running → 缓冲不闭合（零投递）
-    resolve1(spawnOk());
+    fake.runs[0]!.settle({ content: "ok" });
     await new Promise((resolve) => setTimeout(resolve, 50)); // microtask 链排空
     expect(spy.notifyBatch.mock.calls).toHaveLength(0);
 
     // 第二台终态：闭合 → 单批 2 成员（含第一台的快照，跨轮续累不丢）
-    resolve2(spawnOk());
+    fake.runs[1]!.settle({ content: "ok" });
     await until(() => spy.notifyBatch.mock.calls.length > 0);
     expect(spy.notifyBatch.mock.calls).toHaveLength(1);
     const batch = spy.notifyBatch.mock.calls[0]![0] as { id: string }[];
@@ -277,14 +270,12 @@ describe("collectCoordinator service integration (U2)", () => {
   });
 
   it("batchFinalized 落标（真文件通路）：闭合 flush 写账成功后末条 entry 带标记（E1 排除判据）", async () => {
-    let resolveSpawn!: (v: ReturnType<typeof spawnOk>) => void;
-    runSpawnMock.mockImplementationOnce(() => new Promise((res) => { resolveSpawn = res; }));
     const spy = spyNotifier(service);
     const handle = await service.execute({ task: "collect me", slug: "collect-me", collect: "sync" });
-    await until(() => runSpawnMock.mock.calls.length >= 1); // 受控 promise 已构造
-    // 子 session 文件在闭合判定/flush 前就位（真实生产链中 runSpawn 已写好 identity）
+    await until(() => fake.runs.length >= 1); // 替身 run 已到位
+    // 子 session 文件在闭合判定/flush 前就位（真实生产链中引擎轮次已写好 identity）
     writeChildSessionFile(handle.subagentId, "/agents/worker.md", "ok");
-    resolveSpawn(spawnOk());
+    await settleLast();
     await until(() => spy.notifyBatch.mock.calls.length > 0);
 
     // 观察者形态：主 session 落盘的末条 subagent-record entry 带 batchFinalized=true +
@@ -307,11 +298,9 @@ describe("collectCoordinator service integration (U2)", () => {
     // 构造性保证（by construction）。断言打在 notifyBatch（写账入口）被调用的时刻：
     // 磁盘上 records/<sa-id>.json 必已存在（修复前该时刻大概率 false，探针实测 mtime
     // 相对 notify entry ±2/3ms 方向不定）。
-    let resolveSpawn!: (v: ReturnType<typeof spawnOk>) => void;
-    runSpawnMock.mockImplementationOnce(() => new Promise((res) => { resolveSpawn = res; }));
     const spy = spyNotifier(service);
     const handle = await service.execute({ task: "collect me", slug: "collect-me", collect: "sync" });
-    await until(() => runSpawnMock.mock.calls.length >= 1); // 受控 promise 已构造
+    await until(() => fake.runs.length >= 1); // 替身 run 已到位
     writeChildSessionFile(handle.subagentId, "/agents/worker.md", "ok");
     const manifestPath = path.join(getSubagentRecordsDir(agentDir, agentDir), `${handle.subagentId}.json`);
     // 写账时刻钩子：mock 内联捕获 manifest 存在性（此刻即指针行消费可用性）
@@ -320,7 +309,7 @@ describe("collectCoordinator service integration (U2)", () => {
       manifestExistsAtLedgerWrite = fs.existsSync(manifestPath);
       return true;
     });
-    resolveSpawn(spawnOk());
+    await settleLast();
     await until(() => spy.notifyBatch.mock.calls.length > 0);
     expect(manifestExistsAtLedgerWrite).toBe(true);
   });

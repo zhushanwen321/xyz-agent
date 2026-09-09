@@ -238,7 +238,9 @@ export default function pendingNotificationsExtension(pi: ExtensionAPI): void {
 	// ── session_shutdown：所有 active → cancelled + 补 entry（U11） ──
 	// [W4 翻档登记] U11（shutdown 标 cancelled）随翻档对全部现存类型（process 档）
 	// 不再发生——process 档语义本就跨 shutdown 存活，任务收尾归任务自身/reaper/
-	// 监督器，不由 session 退出裁定；清理痕迹由 core 注册对账 sweep 兜底。已按设计
+	// 监督器，不由 session 退出裁定；清理痕迹由 core 注册对账 sweep 兜底（覆盖
+	// subagent/workflow；bash 无 record/store 可查，死亡窗口丢失无补发通道——显式
+	// 边界，impl-plan §5 偏差登记）。已按设计
 	// 接受（设计 D4 连带面 3），非缺陷。本 handler 与 U3/U4 机器同为 session 档
 	// 留存件，待未来 session 档类型。
 	pi.on("session_shutdown", (_event, _ctx: ExtensionContext) => {

@@ -25,11 +25,17 @@
 // initSession 链内调用）。与 session_start 的 registry rebuild 先后时序不作保证，
 // 残余窗口由下次 session_start 收口（设计明示容忍）。
 //
-// 判据保守性：只对 **type=subagent** 的 register entry 做 record 差集对账——
-// workflow 类注册的 id 是 workflow runId，不在 RecordStore（查不到 ≠ 终态），
-// 「查不到即补注销」对活跃 workflow run 会误注销（事故方向），保守跳过（宁挂账
-// 不失明；workflow run 的注册收口归其宿主 transition/kill-9 恢复链）。type 缺失/
-// 未知的畸形条目按 normalizePendingType 归 workflow 的偏好处理（同样跳过）。
+// 判据保守性（[F2] 按类型分流收口）：
+//  - type=subagent → record 差集对账（lookupRecordState）；
+//  - type=workflow 及缺失/未知的畸形条目（normalizePendingType 归 workflow 的偏好）
+//    → workflow run 判据（lookupWorkflowRunState，生产装配查 WorkflowRun store 的
+//    run state 文件）：终态 ∪ 文件不存在 → 补注销；running → 跳过；全部行损坏
+//    （读不出 ≠ 不存在）由判据侧保守按 running 处理（宁挂账不失明——误注销活跃
+//    workflow run 是事故方向）。deps 未注入该判据时维持旧保守跳过（向后兼容）。
+//  - type=bash → 无 record/store 可查（bash 注册随进程退出注销，进程死亡窗口的
+//    丢失无补发通道）→ 保守跳过，显式偏差登记（impl-plan §5 #5）：挂账方向代价 =
+//    每孤儿 bash 注册 1 条静态虚报，无空转驱动源（goal 守卫读侧过滤已使子 session
+//    不受污染，本 session 虚报 defer 由熔断限损）。
 
 import * as fs from "node:fs";
 
@@ -53,6 +59,12 @@ export interface ReconcileSweepDeps {
   sessionFile: string | undefined;
   /** record 状态判据（见 SupervisedRecordState）。 */
   lookupRecordState: (id: string) => SupervisedRecordState;
+  /**
+   * [F2] workflow run 状态判据（type=workflow 及畸形条目的收口依据）。生产装配查
+   * WorkflowRun store（service-binding → FileRunStore.findStateByIdSync）。
+   * 缺省（未注入）= workflow/畸形条目无收口通道，保守跳过（skippedNonSubagent）。
+   */
+  lookupWorkflowRunState?: (runId: string) => SupervisedRecordState;
   /** 权威写（pi.appendEntry）。缺失（dispose 后）= 本轮只判不写。 */
   appendEntry?: (customType: string, data: unknown) => void;
   /** 尽力 emit（pi.events.emit；listener 缺失/抛错无害）。 */
@@ -63,9 +75,10 @@ export interface ReconcileSweepDeps {
 export interface ReconcileSweepResult {
   /** 补发 unregister 的注册 id。 */
   reconciled: string[];
-  /** 差集内但判据为活跃（record running）而保守跳过的注册 id。 */
+  /** 差集内但判据为活跃（record/run running）而保守跳过的注册 id。 */
   skippedActive: string[];
-  /** 差集内 type=subagent 之外（workflow/未知类型）保守跳过的注册 id。 */
+  /** 差集内无收口通道而保守跳过的注册 id（bash；或 deps 未注入 workflow 判据时
+   *  的 workflow/未知类型——显式偏差面，见文件头注 bash 段）。 */
   skippedNonSubagent: string[];
 }
 
@@ -84,13 +97,22 @@ export function runReconcileSweep(deps: ReconcileSweepDeps): ReconcileSweepResul
   const activeRegisters = collectActiveRegisterEntries(deps.sessionFile);
   for (const entry of activeRegisters) {
     const id = entry.id;
-    // 保守性分流：只对 subagent 类型做 record 差集对账（文件头注——workflow/未知
-    // 类型「查不到 record」≠ 终态，跳过宁挂账）。
-    if (entry.type !== "subagent") {
+    // 保守性分流（[F2]）：按注册类型选收口判据——subagent 走 record 差集；workflow/
+    // 畸形（normalizePendingType 归 workflow 偏好）走 workflow run 判据；bash 无
+    // record/store 可查，保守跳过（显式偏差，头注 bash 段）。
+    if (entry.type === "bash") {
       result.skippedNonSubagent.push(id);
       continue;
     }
-    const state = deps.lookupRecordState(id);
+    const state = entry.type === "subagent"
+      ? deps.lookupRecordState(id)
+      : deps.lookupWorkflowRunState?.(id);
+    if (state === undefined) {
+      // deps 未注入 workflow 判据：无收口通道，保守跳过（向后兼容——判据注入面
+      // 缺席 ≠ 条目可注销）。
+      result.skippedNonSubagent.push(id);
+      continue;
+    }
     if (state === "active") {
       result.skippedActive.push(id);
       continue;

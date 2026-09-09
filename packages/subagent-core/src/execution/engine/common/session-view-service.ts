@@ -58,7 +58,7 @@ const logger = getLogger("subagents");
 
 /**
  * 缺省引擎 id（与 registry.ts 的 DEFAULT_ENGINE_ID 同值本地锚定——对齐
- * engines/pi/reader.ts 的 PI_ENGINE_ID 先例：import registry 会连带 port.ts →
+ * inproc reader（已删） 的 PI_ENGINE_ID 先例：import registry 会连带 port.ts →
  * stream-sink.ts 的 .ts 后缀值 import 链进 runtime tsc 编译图，破坏双端复用闭包
  * 约束；锚定漂移由本包 registry.test / 读取链测试双重守护）。
  */

@@ -19,6 +19,7 @@
 // workflow run 快照是宿主编排状态，语义归属宿主数据根本身，宿主 configureCore
 // 注入什么就落什么，不引入第二条 env 覆盖链。
 
+import { readFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -179,6 +180,41 @@ export class FileRunStore implements RunStore {
       if (run) runs.push(run);
     }
     return runs;
+  }
+
+  /**
+   * [W4 sweep 判据，F2] 按 runId 同步查 run 状态（注册对账 sweep 的 workflow 收口
+   * 判据）。同步形态：sweep 在 session_start 同步链内运行（runReconcileSweep 同步
+   * 契约），不能 await loadAll——对单 runId 做同步文件读（对齐 sweep 自身的 sync fs
+   * 读先例），逐行解析复用 parseLine（版本衔接 + 形状校验与 loadLatestValidLine
+   * 单源，同步只读不触碰 lastSavedAt 节流记账）。
+   *
+   * 判定（宁挂账不失明——误注销活跃 run 是事故方向，判据保守侧取「不可判定」）：
+   * - state 文件不存在 → missing（设计判据「已归档/不存在视同终态」——run 从未
+   *   落盘或已被清理，注册是死亡窗口残留）；
+   * - 末条有效快照 status = running → running（活跃，sweep 跳过）；
+   * - 末条有效快照 status ≠ running（done）→ terminal + reason（I2：done ⟹ reason
+   *   有值；reason 作 pending unregister 的 status 语义源）；
+   * - 文件存在但全部行损坏（无有效快照）→ running（读不出 ≠ 不存在，不补注销）。
+   */
+  findStateByIdSync(runId: string): { kind: "running" } | { kind: "terminal"; reason: string | undefined } | { kind: "missing" } {
+    let content: string;
+    try {
+      content = readFileSync(this.stateFilePath(runId), "utf8");
+    } catch {
+      return { kind: "missing" }; // ENOENT（未落盘/已清理）等不可读形态同视——见头注判定
+    }
+    const lines = content.split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (line === "") continue; // 尾部空行（末行 \n 产物）静默跳过
+      const run = this.parseLine(line, `${runId}.jsonl`, i);
+      if (run === undefined) continue; // 损坏行继续向前找——最后一条有效行可能早于文件尾部
+      if (run.state.status === "running") return { kind: "running" };
+      return { kind: "terminal", reason: run.state.reason };
+    }
+    // 全部行损坏：读不出 ≠ 不存在——保守按活跃处理（宁挂账不误注销）
+    return { kind: "running" };
   }
 
   /** 单文件从尾向头取第一条有效快照行；整文件无有效行返回 undefined（warn）。 */

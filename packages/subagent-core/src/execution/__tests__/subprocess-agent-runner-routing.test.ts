@@ -15,10 +15,9 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentCallOpts, AgentResult } from "../../orchestration/models/types.ts";
-import type { RunContext, EnginePort } from "../engine/port.ts";
+import type { EnginePort, RunContext } from "../engine/port.ts";
 import { clearEngines, registerEngine } from "../engine/registry.ts";
-import { PiEngine } from "../engine/engines/pi/pi-engine.ts";
-import type { ProbeReport } from "../engine/types.ts";
+import type { AgentOutcome, EngineCapabilities, ProbeReport } from "../engine/types.ts";
 import { ModelConfigService, setModelConfigService } from "../model-config-service.ts";
 // W10（§2.10 ②）：子进程句柄断言改读 core 侧状态镜像（host/spawned-children——
 // 协议化后 spawnedChildren 持有方在引擎进程，core 消费镜像面；判据 pid 同构）。
@@ -94,11 +93,84 @@ function makeMockPiService() {
     executeOpts.push(opts);
     return { content: "from-pi", durationMs: 1, toolCalls: [] };
   });
-  // [D4 聚合连带] SAR 构造器经 asEngineService 显式视图取 PiEngineService——fake 的
+  // [D4 聚合连带] SAR 构造器经 asEngineService 显式视图取引擎服务面——fake 的
   // face 即自身，getter 直接返回 self。
   const service = { executeAndAwait } as unknown as SubagentService & { asEngineService: unknown };
   (service as { asEngineService: unknown }).asEngineService = service;
+  // [W3] 登记当前 mock 服务——委托式替身 port 的工厂闭包按它路由（getEngine 惰性）。
+  currentPiService = service as unknown as SubagentService;
   return { service, executeOpts, executeAndAwait };
+}
+
+// ── [W3] 委托式替身 pi port（原 inproc PiEngine 的 workflow 分支形态）──
+// run() 还原引擎内 task→ExecuteOptions 映射（含 engine='pi' 留痕与 engineFallback
+// 透传——两断言的契约面）后委托 mock 服务的 executeAndAwait。
+
+let currentPiService: SubagentService | undefined;
+
+function piTaskToExecuteOptions(task: AgentCallOpts, ctx: RunContext): ExecuteOptions {
+  const rawSlug = task.description ?? task.agent ?? "workflow-agent";
+  return {
+    task: task.prompt,
+    slug: rawSlug.length > 35 ? rawSlug.slice(0, 35) : rawSlug,
+    agent: task.agent,
+    model: task.model,
+    thinkingLevel: task.thinkingLevel,
+    skillPath: task.skillPath,
+    appendSystemPrompt: task.appendSystemPrompt,
+    schema: task.schema,
+    schemaEnv: task.schemaEnv,
+    maxTurns: task.maxTurns,
+    graceTurns: task.graceTurns,
+    ctxModel: ctx.ctxModel,
+    fork: task.fork,
+    worktree: task.worktree,
+    cwd: task.cwd,
+    conversation: task.conversation,
+    idleTimeoutMs: task.idleTimeoutMs,
+    // P4 引擎留痕（D9①）：实际执行引擎 id 恒 pi（原 PiEngine.run workflow 分支同款）
+    engine: "pi",
+    ...(ctx.engineFallback !== undefined ? { engineFallback: ctx.engineFallback } : {}),
+  };
+}
+
+function makeDelegatingPiPort(getService: () => SubagentService | undefined): EnginePort {
+  return {
+    id: "pi",
+    capabilities: (): EngineCapabilities => ({
+      schemaEnforcement: "native",
+      steer: "unsupported",
+      conversation: "native",
+      personaInjection: "flag",
+      eventGranularity: "stream",
+      sandbox: "emulated",
+      sessionRead: "full",
+      resume: "native",
+      interrupt: "kill-only",
+      permissionMode: "native",
+      maxTurns: true,
+    }),
+    probe: async (): Promise<ProbeReport> => ({ ok: true, engineVersion: "fake", checks: [] }),
+    run: async (task, ctx) => {
+      const service = getService();
+      if (service === undefined) throw new Error("mock pi service not installed");
+      const result = await (service as unknown as {
+        executeAndAwait: (opts: ExecuteOptions, signal?: AbortSignal) => Promise<AgentResult>;
+      }).executeAndAwait(piTaskToExecuteOptions(task, ctx), ctx.signal);
+      const outcome: AgentOutcome = {
+        content: result.content,
+        durationMs: result.durationMs,
+        error: result.error,
+        engineId: "pi",
+      };
+      return {
+        handle: { data: { v: 1, engineId: "pi", sessionRef: {}, poolKey: "shared", adapterVersion: "fake-sar" } },
+        outcome,
+      };
+    },
+    interact: async () => ({ ok: false, code: "engine_interact_failed", message: "not supported in this test" }),
+    read: async () => ({ engineId: "pi", turns: [], source: "outcome-only" }),
+  };
 }
 
 // ── 环境 ──
@@ -142,10 +214,10 @@ beforeEach(() => {
   prevDataDirEnv = process.env["XYZ_AGENT_DATA_DIR"];
   process.env["XYZ_AGENT_DATA_DIR"] = path.join(tmpRoot, "engine-data");
   clearEngines();
-  // [U-2 一致性修复] resolveHostPiEnginePort 对未注册 'pi' 不再静默直构 inproc——
-  // 测试显式登记 inproc pi（registry 命中 + instanceof PiEngine → SAR per-session
-  // DI 重绑），mock 服务的 DI 语义保持不变。
-  registerEngine("pi", () => new PiEngine({ getService: () => null }));
+  currentPiService = undefined;
+  // [U-2 一致性修复 → W3] resolveHostPiEnginePort 对已注册 port 原样返回——登记
+  // 委托式替身 pi port（registry 命中即路由命中；mock 服务的 DI 语义保持不变）。
+  registerEngine("pi", () => makeDelegatingPiPort(() => currentPiService));
 });
 
 afterEach(() => {

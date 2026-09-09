@@ -263,7 +263,7 @@ export interface ToolCallEntry {
  * 默认重试语义；仅 stale_context 与 schema_deterministic 两态维持不重试特判。
  * 词表归属（产出侧单点识别）：stale_context / schema_deterministic 的识别词表
  * （stale 词表与确定性 schema 失败标记前缀）保留在产出侧
- * execution/engine/engines/pi/output-collector.ts 包内——词表漂移的失效模式是
+ * execution/engine/inproc pi 引擎目录/output-collector.ts 包内——词表漂移的失效模式是
  * failureKind=unknown → 保守重试（安全默认），不再是静默漏诊。
  */
 export type AgentFailureKind = "stale_context" | "schema_deterministic" | "unknown";
@@ -279,7 +279,7 @@ export interface AgentResult {
   content: string;
  /**
  * [D5-③] 失败分诊结构化标签（AgentFailureKind）。产出侧唯一识别点 =
- * execution/engine/engines/pi/output-collector.ts（collectResult 对最终 error
+ * execution/engine/inproc pi 引擎目录/output-collector.ts（collectResult 对最终 error
  * 分类后写入，经 agent-result-mapper / AgentOutcome 透传到本形态）；消费侧
  * execute-agent-call 读本字段分诊，不再扫 error 文案子串。
  *

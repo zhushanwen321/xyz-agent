@@ -209,11 +209,11 @@ describe("createPiNotifyDomainPorts.countActiveFromEntries（适配读 .count）
 		expect(vi.mocked(countActiveFromEntries)).toHaveBeenCalledWith(entries, { currentSessionId: undefined });
 	});
 
-	it("[W4 读侧过滤②] 构造时传入 currentSessionId → 透传差集过滤基准", () => {
+	it("[W4 读侧过滤② / F1] 调用时传 currentSessionId（per-call 基准）→ 透传差集过滤基准", () => {
 		const entries: unknown[] = [{ customType: "pending:register" }];
 		vi.mocked(countActiveFromEntries).mockReturnValue({ count: 1, ids: ["a"], entries: [] });
 
-		createPiNotifyDomainPorts({ currentSessionId: "sess-child" }).countActiveFromEntries?.(entries);
+		createPiNotifyDomainPorts().countActiveFromEntries?.(entries, { currentSessionId: "sess-child" });
 
 		expect(vi.mocked(countActiveFromEntries)).toHaveBeenCalledWith(entries, { currentSessionId: "sess-child" });
 	});

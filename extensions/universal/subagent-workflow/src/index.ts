@@ -133,6 +133,10 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   // 完整；且先于任何可能消费 core 端口的初始化逻辑（引擎登记等）。缺省态若被消费，
   // dataRoot 抛 core_host_not_configured（§3.4），接线后不再可达。
   configureCore(createPiHostServices());
+  // [F1] 通知域端口无 factory 基准参数：跨 session 残留过滤基准（W4 读侧过滤②）
+  // 由 core 读侧 per-call 提供（session-pending 读「被读 entries 所属 session」）——
+  // 本装配在扩展启动时执行一次，session id 逐 session 变化，factory 定型表达不了
+  // per-call 基准（生产装配也从未传参，防御曾实际缺基准）。
   configureNotifyDomain(createPiNotifyDomainPorts());
 
   // [W11/DoD#5] 'pi' 的 inproc 注册（registerPiEngine）已删除——缺省引擎 'pi' 的

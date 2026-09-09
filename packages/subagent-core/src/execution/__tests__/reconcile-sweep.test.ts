@@ -1,8 +1,10 @@
 // src/execution/__tests__/reconcile-sweep.test.ts
 //
 // [W4] 注册对账 sweep 单测：差集判据（record 终态 ∪ 已归档/不存在 → 补发；
-// active → 跳过；type=workflow/未知 → 保守跳过）、写法（appendEntry 权威落盘 +
-// 尽力 emit；appendEntry 抛错不计入且不 emit）。差集输入 session 文件用
+// active → 跳过）、类型分流（[F2]：workflow/畸形走 workflow run 判据——终态 ∪
+// store 查不到 → 补注销，running → 跳过；bash 无收口通道保守跳过——显式偏差；
+// 未注入 workflow 判据时保守跳过）、写法（appendEntry 权威落盘 + 尽力 emit；
+// appendEntry 抛错不计入且不 emit）。差集输入 session 文件用
 // mkdtempSync 自建自删（禁触真实数据目录）。
 
 import * as fs from "node:fs";
@@ -40,16 +42,27 @@ function unreg(id: string): unknown {
 
 function makeDeps(overrides: {
   states?: Map<string, SupervisedRecordState>;
+  workflowStates?: Map<string, SupervisedRecordState>;
+  injectWorkflowLookup?: boolean;
   appendEntry?: (customType: string, data: unknown) => void;
   emit?: (channel: string, data: unknown) => void;
   sessionFile?: string;
 } = {}) {
   const states = overrides.states ?? new Map<string, SupervisedRecordState>();
+  const workflowStates = overrides.workflowStates;
   const appended: Array<{ customType: string; data: unknown }> = [];
   const emitted: Array<{ channel: string; data: unknown }> = [];
   const deps = {
     sessionFile: overrides.sessionFile ?? sessionFile,
     lookupRecordState: (id: string): SupervisedRecordState => states.get(id) ?? "missing",
+    // [F2] workflow 判据：显式注入（injectWorkflowLookup !== false 或给了
+    // workflowStates）时按 Map 查；否则缺席（向后兼容形态）。
+    ...(overrides.injectWorkflowLookup === false && workflowStates === undefined
+      ? {}
+      : {
+          lookupWorkflowRunState: (id: string): SupervisedRecordState =>
+            workflowStates?.get(id) ?? "missing",
+        }),
     appendEntry: overrides.appendEntry ?? ((customType: string, data: unknown) => appended.push({ customType, data })),
     emit: overrides.emit ?? ((channel: string, data: unknown) => emitted.push({ channel, data })),
   };
@@ -87,11 +100,51 @@ describe("runReconcileSweep 差集补发", () => {
     expect(emitted).toHaveLength(0);
   });
 
-  it("type=workflow / 未知类型 → 保守跳过（workflow runId 不在 RecordStore，查不到 ≠ 终态）", () => {
-    writeSessionFile([reg("wf-1", "workflow"), reg("bad-1", "mystery"), reg("bt-1", "bash")]);
-    const { deps, appended } = makeDeps({ states: new Map() });
+  it("[F2] type=workflow × workflow run 终态 → 补注销（reason 取 run state reason）", () => {
+    writeSessionFile([reg("wf-1", "workflow")]);
+    const { deps, appended, emitted } = makeDeps({
+      workflowStates: new Map([["wf-1", { terminal: true, closedReason: "aborted" }]]),
+    });
     const result = runReconcileSweep(deps);
-    expect(result.skippedNonSubagent.sort()).toEqual(["bad-1", "bt-1", "wf-1"]);
+    expect(result.reconciled).toEqual(["wf-1"]);
+    expect(appended).toEqual([
+      { customType: "pending:unregister", data: { id: "wf-1", reason: "aborted", status: "aborted" } },
+    ]);
+    expect(emitted).toHaveLength(1);
+  });
+
+  it("[F2] type=workflow × workflow run running → 保守跳过（宁挂账不误注销活跃 run）", () => {
+    writeSessionFile([reg("wf-live", "workflow")]);
+    const { deps, appended } = makeDeps({
+      workflowStates: new Map([["wf-live", "active"]]),
+    });
+    const result = runReconcileSweep(deps);
+    expect(result.skippedActive).toEqual(["wf-live"]);
+    expect(result.reconciled).toEqual([]);
+    expect(appended).toHaveLength(0);
+  });
+
+  it("[F2] 畸形条目（type 缺失/未知，normalizePendingType 归 workflow）× store 查不到 → 视同终态补注销", () => {
+    writeSessionFile([reg("bad-1", "mystery")]);
+    const { deps, appended } = makeDeps({}); // workflowStates 缺省 = 恒 missing
+    const result = runReconcileSweep(deps);
+    expect(result.reconciled).toEqual(["bad-1"]);
+    expect(appended[0].data).toEqual({ id: "bad-1", reason: "expired", status: "expired" });
+  });
+
+  it("[F2] type=bash → 保守跳过（无 record/store 可查，显式偏差——宁挂账不失明）", () => {
+    writeSessionFile([reg("bt-1", "bash")]);
+    const { deps, appended } = makeDeps({});
+    const result = runReconcileSweep(deps);
+    expect(result.skippedNonSubagent).toEqual(["bt-1"]);
+    expect(appended).toHaveLength(0);
+  });
+
+  it("[F2] deps 未注入 workflow 判据 → workflow/未知类型保守跳过（判据缺席 ≠ 可注销）", () => {
+    writeSessionFile([reg("wf-1", "workflow"), reg("bad-1", "mystery")]);
+    const { deps, appended } = makeDeps({ injectWorkflowLookup: false });
+    const result = runReconcileSweep(deps);
+    expect(result.skippedNonSubagent.sort()).toEqual(["bad-1", "wf-1"]);
     expect(appended).toHaveLength(0);
   });
 

@@ -7,9 +7,8 @@
 //   - createZcodeEngine(deps) → RemoteEngine('zcode')：deps → 协议客户端映射
 //     （engineDataDir → dataDir / cliPath → command / processEnv → baseEnv /
 //     sources 不跨进程——不变量 5「引擎不落盘宿主数据、自行解析凭据」）；
-//   - killAllSpawnedChildren 留在 engines/pi/session-runner（disposeEngines 触发
-//     cli 引擎 dispose + 杀进程内 per-record children，语义即 D8 目标形态），仅
-//     barrel 注释更新。
+//   - killAllSpawnedChildren 收敛在 engine/host/spawned-children 公共面（[W3] 镜像
+//     置死 + disposeEngines 触发 cli 引擎 dispose（进程组收割），语义即 D8 目标形态）。
 //
 // vendored 定位（设计 §3.6 二选一通道①）：core 相对自身定位
 // `<coreDir>/../<engine>-subagent-cli`（与 zsw core-ref.js:15 同款相对解析，零配置）；

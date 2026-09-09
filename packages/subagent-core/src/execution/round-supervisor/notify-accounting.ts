@@ -65,6 +65,13 @@ export function classifyReplacement(
     // 时序窗（高/低置信共同的门）：窗内新建才参与对账——窗外的同名任务与本接管
     // 无时序关联（预先存在的同名任务不是替代者）。
     if (now - candidate.startedAt > windowMs) continue;
+    // [契约锚] sameRoot 在生产装配下恒真——此检查是对供给侧不变量的防御性复认，
+    // 不是独立生效的第四要素。生产候选源 = supervisor.deps.listCandidateRecords
+    // （service-binding.ts supervisorCandidates 已按 getSessionRootId() 预过滤，
+    // 循环内候选恒同 root）。约束力悄悄依赖该供给不变量：若换候选源为未按 root
+    // 预过滤的全量集，sameRoot 从恒真退化为真实约束——跨 root 命中会从
+    // high-confidence 降为 low-confidence（替代收口弱化：原任务改由看门狗到期才
+    // 放弃），行为静默漂移。换候选源必须保「root 预过滤」或显式重审本判定语义。
     const sameRoot =
       candidate.rootSessionId !== undefined &&
       candidate.rootSessionId === subject.rootSessionId;

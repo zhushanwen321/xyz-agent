@@ -1,14 +1,11 @@
-// core 侧 spawnedChildren 状态镜像 + inproc 过渡桥 单测（W6，impl-plan §2.6 首条）。
-// 覆盖：公共 API 双写（镜像 + inproc 委托）、杀链委托、镜像整体置死、
-// hasLiveProcessHandleCore 并读语义（与改线前行为逐点一致）。
+// core 侧 spawnedChildren 状态镜像单测（W6 建立；[W3 改写] 纯镜像形态）。
+// 覆盖：注册记账、终止意图置死位、镜像整体置死、hasLiveProcessHandleCore 读点。
+// inproc 过渡桥（双写/委托杀/并读）随 inproc pi 引擎目录 删除消亡——实际终止在引擎进程内
+// 经协议 interact cancel/close 承载，本模块只做镜像记账。
 
 import { describe, it, expect, beforeEach } from "vitest";
 
 import type { ChildProcess } from "node:child_process";
-import {
-  _resetServiceKillStateForTest,
-  spawnedChildren,
-} from "../../engines/pi/session-runner.ts";
 import {
   _resetCoreSpawnedChildrenMirrorForTest,
   coreSpawnedChildrenMirror,
@@ -18,37 +15,19 @@ import {
   registerSpawnedChildForRecord,
 } from "../spawned-children.ts";
 
-/** 最小 ChildProcess fake（kill 链需要 kill/once；exitCode/signalCode null = 未确认死亡）。 */
-function fakeChild(id: string): ChildProcess & { killCalls: string[] } {
-  const killCalls: string[] = [];
-  return {
-    pid: 10_000 + (id.charCodeAt(0) % 1000),
-    killed: false,
-    exitCode: null,
-    signalCode: null,
-    killCalls,
-    kill(sig?: NodeJS.Signals) {
-      killCalls.push(sig ?? "SIGTERM");
-      (this as { killed: boolean }).killed = true;
-      return true;
-    },
-    once() {
-      return this;
-    },
-  } as unknown as ChildProcess & { killCalls: string[] };
+/** 最小 ChildProcess fake（镜像注册只读 pid/killed）。 */
+function fakeChild(id: string): ChildProcess {
+  return { pid: 10_000 + (id.charCodeAt(0) % 1000), killed: false } as unknown as ChildProcess;
 }
 
-describe("core 侧 spawnedChildren 状态镜像（W6）", () => {
+describe("core 侧 spawnedChildren 状态镜像（W6；W3 纯镜像形态）", () => {
   beforeEach(() => {
-    spawnedChildren.clear();
     _resetCoreSpawnedChildrenMirrorForTest();
-    _resetServiceKillStateForTest();
   });
 
-  it("registerSpawnedChildForRecord 双写：镜像 + inproc 权威 map（收割记账行为保持）", () => {
+  it("registerSpawnedChildForRecord：写镜像（host/childSpawned 上报的同款落点）", () => {
     const child = fakeChild("sa-a");
     registerSpawnedChildForRecord("sa-a", child);
-    expect(spawnedChildren.get("sa-a")).toBe(child);
     expect(coreSpawnedChildrenMirror().getChildByRecord("sa-a")).toMatchObject({
       pid: child.pid,
       killed: false,
@@ -56,51 +35,36 @@ describe("core 侧 spawnedChildren 状态镜像（W6）", () => {
   });
 
   it("hasLiveProcessHandleCore：镜像注册后 true；markKilled 后 false", () => {
-    const child = fakeChild("sa-a");
-    registerSpawnedChildForRecord("sa-a", child);
+    registerSpawnedChildForRecord("sa-a", fakeChild("sa-a"));
     expect(hasLiveProcessHandleCore("sa-a")).toBe(true);
     coreSpawnedChildrenMirror().markKilled("sa-a");
-    // inproc 并读面：child 仍活（kill 未发）→ 过渡期以活端为准
-    expect(hasLiveProcessHandleCore("sa-a")).toBe(true);
-    child.kill("SIGTERM");
-    // inproc 面置死（killed=true）→ 两面皆死
     expect(hasLiveProcessHandleCore("sa-a")).toBe(false);
   });
 
-  it("killRecordChildWithEscalation：镜像置死 + inproc 升级杀链委托（SIGTERM 先发）", () => {
-    const child = fakeChild("sa-a");
-    registerSpawnedChildForRecord("sa-a", child);
+  it("killRecordChildWithEscalation：终止意图记账（镜像置死位；实际终止经协议承载）", () => {
+    registerSpawnedChildForRecord("sa-a", fakeChild("sa-a"));
     killRecordChildWithEscalation("sa-a", "test escalation");
-    expect(child.killCalls).toContain("SIGTERM");
     expect(coreSpawnedChildrenMirror().getChildByRecord("sa-a")?.killed).toBe(true);
     expect(hasLiveProcessHandleCore("sa-a")).toBe(false);
   });
 
-  it("killAllSpawnedChildren：inproc 全量收割 + 镜像整体置死（失效语义 2+3）", () => {
-    const a = fakeChild("sa-a");
-    const b = fakeChild("sa-b");
-    registerSpawnedChildForRecord("sa-a", a);
-    registerSpawnedChildForRecord("sa-b", b);
+  it("killAllSpawnedChildren：镜像整体置死（失效语义 2+3），返回清理条目数", () => {
+    registerSpawnedChildForRecord("sa-a", fakeChild("sa-a"));
+    registerSpawnedChildForRecord("sa-b", fakeChild("sa-b"));
     const killed = killAllSpawnedChildren();
     expect(killed).toBe(2);
-    expect(spawnedChildren.size).toBe(0);
     expect(coreSpawnedChildrenMirror().snapshot()).toEqual([]);
     expect(hasLiveProcessHandleCore("sa-a")).toBe(false);
     expect(hasLiveProcessHandleCore("sa-b")).toBe(false);
   });
 
-  it("并读：runSpawn 内部注册（只落 inproc map，不经公共 API）→ 仍判定活（改线前同判）", () => {
-    const child = fakeChild("sa-c");
-    spawnedChildren.set("sa-c", child);
-    expect(hasLiveProcessHandleCore("sa-c")).toBe(true);
-    child.kill("SIGKILL");
-    expect(hasLiveProcessHandleCore("sa-c")).toBe(false);
+  it("不存在的 record killAll：返回 0（幂等）", () => {
+    expect(killAllSpawnedChildren()).toBe(0);
   });
 
-  it("同 recordId 重 spawn：镜像覆盖旧句柄（与 inproc Map 覆盖语义同构）", () => {
-    const old = fakeChild("sa-a");
-    registerSpawnedChildForRecord("sa-a", old);
-    old.kill("SIGTERM");
+  it("同 recordId 重 spawn：镜像覆盖旧句柄（与引擎侧 Map 覆盖语义同构）", () => {
+    registerSpawnedChildForRecord("sa-a", fakeChild("sa-a"));
+    killRecordChildWithEscalation("sa-a", "old killed");
     const fresh = fakeChild("sa-b");
     registerSpawnedChildForRecord("sa-a", fresh);
     expect(coreSpawnedChildrenMirror().getChildByRecord("sa-a")?.pid).toBe(fresh.pid);

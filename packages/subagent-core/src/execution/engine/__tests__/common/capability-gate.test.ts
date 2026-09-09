@@ -55,12 +55,24 @@ function gate(
   assertTaskShapeSupported(engineId, caps, task);
 }
 
-function gateError(caps: EngineCapabilities, task: TaskShapeForGate, engineId = "zcode"): EngineError {
+/** 断言载体（结构化面）：EngineError（core）与 EngineSdkError（SDK 构造器）共用
+ *  code/message/recovery 契约，测试按结构断言不绑类。 */
+interface GateErrorShape {
+  code: string;
+  message: string;
+  recovery: string;
+}
+
+function gateError(caps: EngineCapabilities, task: TaskShapeForGate, engineId = "zcode"): GateErrorShape {
   try {
     gate(caps, task, engineId);
   } catch (err) {
-    expect(err).toBeInstanceOf(EngineError);
-    return err as EngineError;
+    // [W1 交接防漂移项落地] conversation 分支抛 SDK EngineSdkError
+    //（engineConversationUnsupportedError——core 与引擎侧判据单源，W3 接线）；其余
+    // 分支仍为 core EngineError。code/recovery/message 前缀契约两侧一致。
+    expect(err).toHaveProperty("code");
+    expect(err).toHaveProperty("recovery");
+    return err as unknown as GateErrorShape;
   }
   throw new Error("expected assertTaskShapeSupported to throw");
 }

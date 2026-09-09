@@ -78,6 +78,8 @@ export type EngineClientState =
 /**
  * run 作用域反向通知路由（RemoteEngine.run 注册，终态后注销）。
  * 回调允许返回 Promise（数据面 10s 应答守卫的计时对象；同步回调不受守卫影响）。
+ * [W3 v1.x] onRoundLifecycle：host/roundLifecycle 消费口（首轮 runId 键；续聊轮
+ * recordId 键走 registerRecordRoute，D1-A 关联键分路）。
  */
 export interface RunRoute {
   onEvent?: (event: unknown) => void | Promise<void>;
@@ -86,6 +88,7 @@ export interface RunRoute {
   onHandleReady?: (
     partial: Pick<EngineHandleData, "sessionRef" | "poolKey">,
   ) => void | Promise<void>;
+  onRoundLifecycle?: (phase: unknown) => void | Promise<void>;
 }
 
 /** spawn 引擎 CLI 平台形态（impl-plan §2.2 必写死的两行）。 */
@@ -134,6 +137,9 @@ export class EngineClient {
   private nextRequestId = 1;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly runRoutes = new Map<string, RunRoute>();
+  /** [W3 v1.x] chat 轮次路由（recordId 键，D1-A——续聊轮无 runId）；注册经
+   *  RemoteEngine.registerChatRoundRoute，record 终态注销。 */
+  private readonly recordRoutes = new Map<string, RunRoute>();
   private stderrTail = "";
   private unavailableReason: EngineSdkError | undefined;
   private connectInFlight: Promise<void> | undefined;
@@ -154,6 +160,7 @@ export class EngineClient {
       permissionHandler: opts.permissionHandler,
       log: opts.log,
       runRoutes: this.runRoutes,
+      recordRoutes: this.recordRoutes,
       mirror: this.mirror,
       setPartialHandle: (partial) => {
         this.lastPartialHandle = partial;
@@ -514,6 +521,15 @@ export class EngineClient {
     };
   }
 
+  /** [W3 v1.x] 注册 chat 轮次路由（recordId 键）；分发见 reverse-router.ts
+   *  （与 runRoutes 同构，键空间互斥：runId=run 帧分配 / recordId=宿主铸造）。 */
+  registerRecordRoute(recordId: string, route: RunRoute): () => void {
+    this.recordRoutes.set(recordId, route);
+    return () => {
+      if (this.recordRoutes.get(recordId) === route) this.recordRoutes.delete(recordId);
+    };
+  }
+
   /** 健康检查（ADR-0047：静默 ≠ 卡死，不据此杀任务）。 */
   async ping(): Promise<void> {
     await this.ensureConnected();
@@ -596,6 +612,7 @@ export class EngineClient {
     }
     this.pending.clear();
     this.runRoutes.clear();
+    this.recordRoutes.clear();
     this.lastPartialHandle = undefined;
     if (this.child !== undefined) {
       this.child.removeAllListeners();

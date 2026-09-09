@@ -158,6 +158,21 @@ describe("RoundSupervisor 三态判定", () => {
     expect(deps.givenUp).toHaveLength(0);
   });
 
+  it("[F5] 挂账转完成（SP-5 result 回填）→ 解除看门狗：到期不误 giveUp 已完成挂账 record", async () => {
+    const deps = makeDeps();
+    const supervisor = new RoundSupervisor(deps);
+    deps.views.set("bg-1", { id: "bg-1", status: "running", resumable: true, hasResult: false, chatMode: false, rootSessionId: "r", agent: "worker", slug: "s", startedAt: 1, closedReason: undefined });
+    supervisor.adoptOnProcessDeath(makeRecord(), "x"); // 该唤醒 → 指引 + 看门狗 armed
+    expect(deps.guidances).toHaveLength(1);
+    // upgrade 完成 → result 回填（挂账态），重评估触发（noteRunEnded 携带视图更新）
+    deps.views.set("bg-1", { id: "bg-1", status: "running", resumable: true, hasResult: true, chatMode: false, rootSessionId: "r", agent: "worker", slug: "s", startedAt: 1, closedReason: undefined });
+    supervisor.noteRunEnded("bg-1");
+    // armed 的看门狗必须已解除——2h 到期不得把已完成挂账 record 判死
+    await vi.advanceTimersByTimeAsync(ROUND_SUPERVISOR_WATCHDOG_DEFAULT_MS + 1);
+    expect(deps.givenUp).toHaveLength(0);
+    expect(supervisor.supervisedIds()).toEqual(["bg-1"]); // 挂账态保持纳管（归 idle-gc 收口）
+  });
+
   it("env ≤0 关闭该放弃路径：只指引永不放弃（回收层 opt-out）", async () => {
     vi.stubEnv("XYZ_SUBAGENT_ROUND_SUPERVISOR_WATCHDOG_MS", "0");
     RoundSupervisor._resetEnvCacheForTest();

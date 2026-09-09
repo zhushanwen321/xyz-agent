@@ -21,7 +21,7 @@
 
 import { hasIdleTimer } from "./lifecycle-manager.ts";
 // [W6 拆依赖] 活进程句柄读点改经 core 侧 spawnedChildren 状态镜像公共面
-// （engine/host/spawned-children.ts），不再深路径 import engines/pi 内部——
+// （engine/host/spawned-children.ts），不再深路径 import inproc pi 引擎目录 内部——
 // 行为不变（镜像 ∪ inproc 权威 map 并读，见该文件头注释的过渡桥语义）。
 import { hasLiveProcessHandleCore } from "./engine/host/spawned-children.ts";
 import type { ExecutionRecord } from "./types.ts";

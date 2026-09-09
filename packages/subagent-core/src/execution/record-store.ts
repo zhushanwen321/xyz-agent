@@ -775,12 +775,29 @@ export class RecordStore {
     // 真实 reason 同层——否则无 reason sidecar 在磁盘重建时被兜底为 disconnected，
     // 把正常完成的记录误标成断联。
     writeFinalized(sessionFile, "gc");
+    // [F3 boot 直断语义，设计表 3 行 2] 走到本分支的 record 分两类：
+    //  - resumable=true（上方分流保证此时 result 有值）= SP-5 one-shot 完成态——任务
+    //    真实完成，直断 closed/gc 无 error，投影 completed 不变；
+    //  - 其余 = in-flight（重启前在途、无 resumable 信号）——宿主重启中断了在途任务，
+    //    投影不得是 completed（事故环 3：异常中断被谎报完成，违反 G3）。error 载体经
+    //    deriveOutcome("gc", error) = "failed"（execution-record.ts 唯一权威派生）
+    //    投影 failed，文案供 GUI/主 agent 明确「任务因宿主重启中断」；ClosedReason
+    //    枚举不扩展（sidecar/entry 面最小改动，"gc" 由 error 载体补足失败语义）。
+    const inFlightAbortedError =
+      rec0.resumable === true
+        ? undefined
+        : "orphan recovery: task aborted by host restart (in-flight at shutdown; session context lost" +
+          (parseOk ? "" : "; truncated last line") + ")";
     this.reportSubagentRecord({
       ...rec0,
       status: "closed",
       closedReason: "gc",
       endedAt: Date.now(),
-      ...(parseOk ? {} : { error: "orphan recovery: subagent session ended abnormally (truncated last line)" }),
+      ...(inFlightAbortedError !== undefined
+        ? { error: inFlightAbortedError }
+        : parseOk
+          ? {}
+          : { error: "orphan recovery: subagent session ended abnormally (truncated last line)" }),
     });
   }
 

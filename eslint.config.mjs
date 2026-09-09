@@ -457,16 +457,6 @@ export default [
       'max-lines': ['warn', { max: 1000, skipBlankLines: true, skipComments: true }],
     },
   },
-  // session-runner.ts 单列：迁移后 844 行；无界等待修复（OR-3 收殓 + per-call 超时
-  // 透传 + SIGKILL 升级链）后 1266 行。拆分方向（runner 编排 / 进程收割 / 恢复扫描）
-  // 属独立重构任务，短期 override 至 1400 避免阻塞。
-  // [u-2a] 文件物理迁入 engines/pi/（rename 级搬运），本条目路径同步跟随。
-  {
-    files: ['packages/subagent-core/src/execution/engine/engines/pi/session-runner.ts'],
-    rules: {
-      'max-lines': ['warn', { max: 1400, skipBlankLines: true, skipComments: true }],
-    },
-  },
   // zcode-engine.ts：zcode app-server 常驻引擎的唯一聚合中心（连接池 + 会话生命周期 +
   // 降级链 + 错误归类）。拆分方向（连接层 / 会话层 / 归类层）属独立重构任务，短期
   // override 避免阻塞。U2 超时收口 + U3 终态 status 分流后与 session-runner 同型提额。
@@ -477,18 +467,30 @@ export default [
       'max-lines': ['warn', { max: 1300, skipBlankLines: true, skipComments: true }],
     },
   },
+  // engine-client.ts：协议客户端聚合中心（spawn/握手/帧路由/崩溃重建/收割 + [W3]
+  // chat 轮次 recordId 路由面）。超限 10 行，按仓内惯例（偏差 #2 message-dispatcher
+  // 同款）登记 override，长期拆分方向：正向请求面 / 反向路由面 / 收割面。
+  {
+    files: ['packages/subagent-core/src/execution/engine/client/engine-client.ts'],
+    rules: {
+      'max-lines': ['warn', { max: 520, skipBlankLines: true, skipComments: true }],
+    },
+  },
   // subagent-service.ts 单列：旧位 2141 行即超 extensions 域 1000 上限（基线存量，
   // 迁移前已在告警），抽离后 1245 行；无界等待修复（OR-3 消息层超时 + 收殓下沉）
   // 后 1415 行；u-h2 engine-aware model validation（route first、按目标 engine
   // 校验，2026-09-05）+21 行 → 1471 行；chat-domain-v1x-liveness-governance W4 轮次
   // 活性监督器接线（死亡分诊 + 在途记账 + boot 分区/sweep 挂点，2026-09-09；装配面
-  // 已抽 round-supervisor/service-binding.ts）→ 1548 行。该文件是编排聚合点（与
-  // event-adapter 同型先例），不拆文件；短期 override 至 1550 避免阻塞，长期拆分
-  // （service 门面 / record 子图 / spawn 编排三段）待独立重构。
+  // 已抽 round-supervisor/service-binding.ts）→ 1548 行；chat-domain-v1x-liveness-
+  // governance W3 chat 域协议化（chat 轮次走协议客户端：轮次路由/生命周期相位/冷续
+  // 锚点/settle 分诊的编排承接 inproc PiEngine 消亡后的宿主半边，2026-09-09）→
+  // 1684 行。该文件是编排聚合点（与 event-adapter 同型先例），不拆文件；短期
+  // override 至 1700 避免阻塞，长期拆分（service 门面 / record 子图 / chat 轮次编排
+  // / spawn 编排）待独立重构。
   {
     files: ['packages/subagent-core/src/execution/subagent-service.ts'],
     rules: {
-      'max-lines': ['warn', { max: 1550, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 1700, skipBlankLines: true, skipComments: true }],
     },
   },
   // session-reader tool-handler：聚合工具处理中枢（多工具入口 + 渲染调度），

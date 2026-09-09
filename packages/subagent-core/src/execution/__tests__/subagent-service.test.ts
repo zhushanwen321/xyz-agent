@@ -323,7 +323,7 @@ describe("SubagentService", () => {
   // [背景] Pi 单进程 session 串行接管。session A shutdown 发 SIGTERM 后、子进程彻底
   // close 前（graceful shutdown 窗口几十~几百 ms），子进程的 trailing extension_ui_request
   // 仍会被父进程 pump 解析，调到 A 的 handler 闭包（仍持有 A 的 ctx）。旧实现 dispose 不清
-  // uiRequestHandler，该闭包触发 ui-request-queue.ts catch 分支打 `[subagents] uiRequestHandler
+  // uiRequestHandler，该闭包触发 inproc UI 请求队列（已删） catch 分支打 `[subagents] uiRequestHandler
   // threw` 误导性 console.error。dispose 现注入 stub（始终返回 {cancelled:true}），让 trailing
   // ui_request 干净降级，不再走旧 handler 闭包。
   //
@@ -376,7 +376,7 @@ describe("SubagentService", () => {
 
       // 关键价值断言：无 "[subagents] uiRequestHandler threw" 误导性噪声
       // （旧实现 dispose 不清 handler 时，trailing ui_request 走 staleHandler 抛错 →
-      //   ui-request-queue.ts catch 打该日志。stub 覆盖后该路径不再触发。）
+      //   inproc UI 请求队列（已删） catch 打该日志。stub 覆盖后该路径不再触发。）
       const subagentsErrors = errorSpy.mock.calls.filter(
         (args: unknown[]) => typeof args[0] === "string" && args[0].includes("[subagents]"),
       );

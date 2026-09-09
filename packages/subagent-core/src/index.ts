@@ -97,14 +97,15 @@ export { setEngineDiscoveryRescanOptions } from "./execution/engine/routing.ts";
 // 组合根 index.ts 接线消费（registerXxx 引擎注册、syncEnginesFile engines 文件
 // 同步、killAllSpawnedChildren session 派生进程兜底清理）。
 export { syncEnginesFile } from "./execution/engine/engine-discovery.ts";
-// [W11/DoD#5] registerPiEngine（inproc 'pi' 注册）已删：registry 'pi' 由三级发现装载
-// cli descriptor（syncEnginesFile / hasEngineWithRescan 补扫通道），chat 域 inproc 引擎
-// 是 SubagentService 自持 DI（不经 registry，主 agent 裁决的临时豁免保留面）。
+// [W11/DoD#5] registerPiEngine（inproc 'pi' 注册）已删；[W3 chat 域收口] chat 域 inproc
+// 引擎（inproc pi 引擎目录）与 SubagentService 自持 DI 实例一并删除——registry 'pi' 由三级发现
+// 装载 cli descriptor，chat 轮次与 run 域同路经协议客户端发往 pi-subagent-cli 引擎进程
+// （G1：pi 引擎单一 CLI 形态，core 壳侧零内建引擎）。
 // [W8 D8 薄壳] killAllSpawnedChildren：宿主收割入口（扩展 index.ts / zsw
 // runner-core.js 的业务调用点零改动）。语义 = disposeEngines() 触发全部已实例化
 // 引擎 dispose（cli 形态 = RemoteEngine.dispose → EngineClient 3s 帧上界 + 组杀）+
-// 遍历杀进程内 per-record children（chat 域 inproc 保留面）。实现收敛在
-// engine/host/spawned-children.ts 公共面（W11 随 inproc 目录收口改线）。
+// core 侧 spawnedChildren 镜像整体置死（[W3] 子进程活在引擎进程内，实际终止 =
+// 引擎进程组级收割）。实现收敛在 engine/host/spawned-children.ts 公共面。
 export { killAllSpawnedChildren } from "./execution/engine/host/spawned-children.ts";
 
 // [W8 D8 兼容公共面薄壳]（设计 §3.6 D8 表）：registerZcodeEngine 确保cli descriptor
@@ -118,11 +119,10 @@ export {
   type D8CompatZcodeEngineDeps,
 } from "./execution/engine/d8-compat.ts";
 
-// pi session-runner 内核件（[W11/H2] barrel 不再深路径触达 engines/pi——经 host
-// 公共面 re-export，chat 域 inproc 保留面的最小公共出口）：
 // maxTurnsToWatchdogMs 为 maxTurns→watchdog 毫秒换算（U3/U4 / D7，floor 语义
-// 文档化——两宿主预算一致性 S2 的函数级锚点）；killRecordChildWithEscalation 为
-// 单 record 子进程升级回收（session 派生进程清理的细粒度入口）。
+// 文档化——两宿主预算一致性 S2 的函数级锚点；[W3] 定义收敛在 pi-host-binding，
+// 原 inproc session-runner（已删） 定义随删件消亡）；killRecordChildWithEscalation 为
+// 单 record 子进程终止的镜像记账入口（[W3] 实际终止在引擎进程内经协议承载）。
 export {
   killRecordChildWithEscalation,
 } from "./execution/engine/host/spawned-children.ts";

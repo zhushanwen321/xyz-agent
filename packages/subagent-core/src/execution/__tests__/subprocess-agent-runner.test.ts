@@ -30,7 +30,12 @@ import { ModelConfigService, setModelConfigService } from "../model-config-servi
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
 import { replayJournal } from "../engine/common/event-journal.ts";
 import { clearEngines, registerEngine } from "../engine/registry.ts";
-import { PiEngine } from "../engine/engines/pi/pi-engine.ts";
+import type { EnginePort, RunContext } from "../engine/port.ts";
+import type {
+  AgentOutcome,
+  EngineCapabilities,
+  ProbeReport,
+} from "../engine/types.ts";
 import type { SubprocessAgentRunnerDeps } from "../subprocess-agent-runner.ts";
 import type { SubagentService } from "../subagent-service.ts";
 import { SubprocessAgentRunner } from "../subprocess-agent-runner.ts";
@@ -50,9 +55,41 @@ function makeMockResult(overrides: Partial<AgentResult> = {}): AgentResult {
   };
 }
 
+/** 协议替身的引擎内「任务声明 → 执行选项」映射（原 core PiEngine
+ *  agentCallToExecuteOptions 的最小同构还原——[W3] 该映射本体已随 inproc pi 引擎目录 迁入
+ *  pi-subagent-cli 引擎包，此处仅为保留 executeAndAwait 委托断言面）。 */
+function fakeAgentCallToExecuteOptions(task: AgentCallOpts, ctxModel?: ModelInfo): Record<string, unknown> {
+  const rawSlug = task.description ?? task.agent ?? "workflow-agent";
+  return {
+    task: task.prompt,
+    slug: rawSlug.length > 35 ? rawSlug.slice(0, 35) : rawSlug,
+    agent: task.agent,
+    model: task.model,
+    thinkingLevel: task.thinkingLevel,
+    skillPath: task.skillPath,
+    appendSystemPrompt: task.appendSystemPrompt,
+    schema: task.schema,
+    schemaEnv: task.schemaEnv,
+    maxTurns: task.maxTurns,
+    graceTurns: task.graceTurns,
+    ctxModel,
+    fork: task.fork,
+    worktree: task.worktree,
+    cwd: task.cwd,
+    conversation: task.conversation,
+    idleTimeoutMs: task.idleTimeoutMs,
+  };
+}
+
+/** 引擎 run 捕获面（T3.19 直传保真断言用：SAR → engine.run 的 task 原样性）。 */
+const engineRunSpy = vi.fn();
+
 /** 创建 mock SubagentService（只实现 executeAndAwait）。
- *  [D4 聚合连带] SAR 构造器经 asEngineService 显式视图取 PiEngineService——fake 的
- *  face 即自身，getter 直接返回 self。 */
+ *  [D4 聚合连带] SAR 构造器经 asEngineService 显式视图取引擎服务面——fake 的 face
+ *  即自身，getter 直接返回 self。
+ *  [W3 改写] 同步注册「委托式」替身 pi 引擎：run() 还原引擎内 task→ExecuteOptions
+ *  映射后委托 mock 的 executeAndAwait（原 inproc PiEngine 的 workflow 分支形态）——
+ *  resolveHostPiEnginePort 对已注册 port 原样返回，SAR 路由命中替身。 */
 function createMockService(impl?: typeof vi.fn): SubagentService {
   const executeAndAwait = impl ?? vi.fn().mockResolvedValue(makeMockResult());
   // partial mock（仅 executeAndAwait + asEngineService self-引用）——SAR 测试路径
@@ -60,6 +97,50 @@ function createMockService(impl?: typeof vi.fn): SubagentService {
   const partial: { executeAndAwait: typeof executeAndAwait; asEngineService?: unknown } = { executeAndAwait };
   const service = partial as unknown as SubagentService;
   partial.asEngineService = service;
+
+  const fakePort: EnginePort = {
+    id: "pi",
+    capabilities: (): EngineCapabilities => ({
+      schemaEnforcement: "native",
+      steer: "unsupported",
+      conversation: "native",
+      personaInjection: "flag",
+      eventGranularity: "stream",
+      sandbox: "emulated",
+      sessionRead: "full",
+      resume: "native",
+      interrupt: "kill-only",
+      permissionMode: "native",
+      maxTurns: true,
+    }),
+    probe: async (): Promise<ProbeReport> => ({ ok: true, engineVersion: "fake", checks: [] }),
+    run: async (task: AgentCallOpts, ctx: RunContext) => {
+      engineRunSpy(task, ctx);
+      const wfResult = await executeAndAwait(
+        fakeAgentCallToExecuteOptions(task, ctx.ctxModel),
+        ctx.signal,
+        ctx.onEvent,
+        ctx.stream,
+      ) as { content: string; parsedOutput?: unknown; durationMs?: number; error?: string };
+      const outcome: AgentOutcome = {
+        content: wfResult.content,
+        parsedOutput: wfResult.parsedOutput,
+        durationMs: wfResult.durationMs,
+        error: wfResult.error,
+        engineId: "pi",
+      };
+      return {
+        handle: {
+          data: { v: 1, engineId: "pi", sessionRef: {}, poolKey: "shared", adapterVersion: "fake-sar" },
+        },
+        outcome,
+      };
+    },
+    interact: async () => ({ ok: false, code: "engine_interact_failed", message: "not supported in this test" }),
+    read: async () => ({ engineId: "pi", turns: [], source: "outcome-only" }),
+  };
+  clearEngines();
+  registerEngine("pi", () => fakePort);
   return service;
 }
 
@@ -86,9 +167,8 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
   beforeEach(() => {
     configureCore({ dataRoot: () => "/fake-sar-data-root", log: () => {} });
     // [U-2 一致性修复] pi 未注册时 resolveHostPiEnginePort 返回 engine_not_found stub
-    // ——本文件全部用例走 pi DI 链路，显式登记 inproc pi（SAR 据此 per-session DI 重绑）。
-    clearEngines();
-    registerEngine("pi", () => new PiEngine({ getService: () => null }));
+    // ——替身 pi 引擎在 createMockService 内按测试服务注册（[W3] 委托式协议替身）。
+    engineRunSpy.mockClear();
   });
 
   afterEach(() => {
@@ -447,7 +527,7 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
         const workflowOnEvent = vi.fn();
         await sar.run(makeBaseOpts(), new AbortController().signal, workflowOnEvent);
 
-        // journal 落在 <dataDir>/engines/pi/shared/journal-<taskId>.jsonl
+        // journal 落在 <dataDir>/inproc pi 引擎目录/shared/journal-<taskId>.jsonl
         const journalFile = join(dataDir, "engines", "pi", "shared");
         const files = readdirSync(journalFile).filter((f) => f.startsWith("journal-") && f.endsWith(".jsonl"));
         expect(files.length).toBe(1);
@@ -497,17 +577,14 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
   });
 
   // ────────────────────────────────────────────────
-  // T3.19: AgentCallOpts → ExecuteOptions 映射保真
+  // T3.19: SAR → engine.run 任务声明直传保真
+  //   [W3 改写] 「AgentCallOpts → ExecuteOptions 映射点在 PiEngine 边界」随 inproc pi 引擎目录
+  //   删除迁入 pi-subagent-cli（引擎包 spawn-args 测试守护）；core 侧存留契约 =
+  //   SAR 对 AgentCallOpts 直传零映射（engine.run 的 task 原样性）。
   // ────────────────────────────────────────────────
-  describe("T3.19 直出保真（D6：映射点在 PiEngine.agentCallToExecuteOptions，SAR 直传零映射）", () => {
-    it("prompt → task, agent → agent, schemaEnv 透传（经 pi 边界直出）", async () => {
-      let capturedOpts: Record<string, unknown> | undefined;
-      const mockService = createMockService(
-        vi.fn().mockImplementation((opts: Record<string, unknown>) => {
-          capturedOpts = opts;
-          return Promise.resolve(makeMockResult());
-        }),
-      );
+  describe("T3.19 直传保真（D6：SAR 直传零映射，任务声明原样到达 engine.run）", () => {
+    it("prompt/agent/skillPath/schemaEnv 原样到达 engine.run", async () => {
+      const mockService = createMockService();
       const deps: SubprocessAgentRunnerDeps = { subagentService: mockService };
       const sar = new SubprocessAgentRunner(deps);
 
@@ -520,35 +597,24 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
       };
       await sar.run(opts, new AbortController().signal);
 
-      expect(capturedOpts).toBeDefined();
-      expect(capturedOpts!.task).toBe("do the thing");
-      expect(capturedOpts!.agent).toBe("code-reviewer");
-      expect(capturedOpts!.skillPath).toBe("/skills/code-review.md");
-      // schemaEnv 应通过 ExecuteOptions 透传
-      expect((capturedOpts as Record<string, unknown>).schemaEnv).toBe('{"type":"object"}');
+      expect(engineRunSpy).toHaveBeenCalledTimes(1);
+      const [task] = engineRunSpy.mock.calls[0] as [AgentCallOpts, unknown];
+      expect(task.prompt).toBe("do the thing");
+      expect(task.agent).toBe("code-reviewer");
+      expect(task.skillPath).toBe("/skills/code-review.md");
+      expect(task.schemaEnv).toBe('{"type":"object"}');
     });
 
-    it("schema 透传为原始对象", async () => {
-      let capturedOpts: Record<string, unknown> | undefined;
-      const mockService = createMockService(
-        vi.fn().mockImplementation((opts: Record<string, unknown>) => {
-          capturedOpts = opts;
-          return Promise.resolve(makeMockResult());
-        }),
-      );
+    it("schema 原样透传为原始对象", async () => {
+      const mockService = createMockService();
       const deps: SubprocessAgentRunnerDeps = { subagentService: mockService };
       const sar = new SubprocessAgentRunner(deps);
 
-      const opts = {
-        ...makeBaseOpts(),
-        schema: { type: "object", properties: { name: { type: "string" } } },
-      };
-      await sar.run(opts, new AbortController().signal);
+      const schema = { type: "object", properties: { name: { type: "string" } } };
+      await sar.run({ ...makeBaseOpts(), schema }, new AbortController().signal);
 
-      expect(capturedOpts!.schema).toEqual({
-        type: "object",
-        properties: { name: { type: "string" } },
-      });
+      const [task] = engineRunSpy.mock.calls[0] as [AgentCallOpts, unknown];
+      expect(task.schema).toEqual(schema);
     });
   });
 

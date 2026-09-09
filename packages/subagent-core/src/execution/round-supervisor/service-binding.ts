@@ -15,6 +15,7 @@ import { COLD_LOOKUP_SCAN_LIMIT } from "../cold-resurrect.ts";
 import { tryTransition } from "../execution-record.ts";
 import { writeFinalized } from "../finalized-marker.ts";
 import { hasLiveProcessHandle } from "../lifecycle-predicates.ts";
+import { FileRunStore } from "../../orchestration/file-run-store.ts";
 import type { PiLike } from "../notify-host.ts";
 import type { RecordStore } from "../record-store.ts";
 import type { AgentResult, ExecutionRecord } from "../types.ts";
@@ -100,12 +101,12 @@ function supervisorCandidates(binding: RoundSupervisorBinding): SupervisorCandid
 }
 
 /**
- * 监督器「该放弃 / boot 直断 / superseded」执行（RoundSupervisorDeps.giveUp）。
+ * 监督器「该放弃 / superseded」执行（RoundSupervisorDeps.giveUp）。
  * 形态分流：
  *  - 内存 record：CAS tryTransition → finalizeClosed（终态化 + 注销①发射 + worktree/
  *    manifest 收尾）——watchdog-expired 额外发终止通知（此时可重派）；superseded 的
- *    替代通知已由监督器先行发出；boot-abort 无通知需求（closedReason/error 经 list
- *    投影可见，GUI「任务因重启中断」）。
+ *    替代通知已由监督器先行发出。boot 直断不经本函数（孤儿恢复层直断 + in-flight
+ *    的重启中断 error 语义由 finalizeOrphanRecord 落位，见 supervisor.bootPartition 头注）。
  *  - 磁盘态（内存无 + findLightById 命中，boot 重认领后看门狗到期的形态）：终态
  *    entry 落盘（reportSubagentRecord）+ finalized sidecar（best-effort，对齐孤儿
  *    恢复形态）——不走 finalizeRecord（无内存 record，archive/CAS 不适用），其注销
@@ -122,9 +123,7 @@ async function supervisorGiveUp(
   const errorText =
     kind === "watchdog-expired"
       ? "round supervisor: decision watchdog expired (guidance unanswered, no convergence) — task terminated; safe to re-dispatch"
-      : kind === "boot-abort"
-        ? "round supervisor: host restart aborted the in-flight task (session context lost; resuming is pointless)"
-        : `round supervisor: superseded by replacement task ${detail.replacementId ?? "(unknown)"}`;
+      : `round supervisor: superseded by replacement task ${detail.replacementId ?? "(unknown)"}`;
   if (memory !== undefined) {
     const failedResult: AgentResult = {
       text: "",
@@ -220,8 +219,10 @@ export function createRoundSupervisorForService(binding: RoundSupervisorBinding)
 
 /**
  * [W4] 注册对账 sweep（发射点枚举⑤）：对「本 session register entry × 对应
- * record ∈ 终态集 ∪ 已归档/不存在」差集补发 unregister——appendEntry 权威落盘 +
- * 尽力 emit（写法论证见 reconcile-sweep.ts 头注）。触发点 = initSession（session
+ * record/run ∈ 终态集 ∪ 已归档/不存在」差集补发 unregister——appendEntry 权威落盘 +
+ * 尽力 emit（写法论证见 reconcile-sweep.ts 头注）。[F2] 判据按类型分流：subagent 走
+ * RecordStore，workflow/畸形走 FileRunStore（findStateByIdSync），bash 无收口通道
+ * 保守跳过（显式偏差 impl-plan §5）。触发点 = initSession（session
  * reattach / session_start / 监督器启动三时机的承载点，根进程 only——与孤儿恢复
  * 同一单扫描者判据，isChildProcess 由调用方传）。与 registry rebuild 的先后时序
  * 不作保证，残余窗口由下次 session_start 收口（设计明示容忍）。
@@ -229,6 +230,10 @@ export function createRoundSupervisorForService(binding: RoundSupervisorBinding)
 export function runPendingReconcileSweepForService(binding: RoundSupervisorBinding, isChildProcess: boolean): void {
   if (isChildProcess) return;
   try {
+    // [F2] workflow run 判据供给：FileRunStore 构造轻量（无 IO 副作用，lastSavedAt
+    // 空 Map——findStateByIdSync 同步只读不触碰节流记账），sweep 挂点低频
+    // （initSession），每轮构造一次闭包持有。
+    const workflowStore = new FileRunStore();
     runReconcileSweep({
       sessionFile: binding.getMainSessionFile(),
       lookupRecordState: (id) => {
@@ -243,6 +248,16 @@ export function runPendingReconcileSweepForService(binding: RoundSupervisorBindi
         return disk.status === "closed"
           ? { terminal: true, closedReason: disk.closedReason }
           : "active";
+      },
+      // [F2] type=workflow 及畸形条目的收口判据（设计 D2 sweep 判据补全——
+      // 「终态集 ∪ 已归档/不存在」对 workflow run 同样成立）。running 映射 active
+      // （含全行损坏的保守形态）；done → terminal（reason 即 DoneReason，经
+      // closedReasonToPendingReason 未知值兜底）；文件缺失 → missing。
+      lookupWorkflowRunState: (runId) => {
+        const state = workflowStore.findStateByIdSync(runId);
+        if (state.kind === "missing") return "missing";
+        if (state.kind === "terminal") return { terminal: true, closedReason: state.reason };
+        return "active";
       },
       appendEntry: (customType, data) => binding.getPi()?.appendEntry(customType, data),
       emit: (channel, data) => binding.getPi()?.events.emit(channel, data),

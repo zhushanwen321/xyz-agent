@@ -43,7 +43,7 @@ import { getModelConfigService } from "./model-config-service.ts";
 import type { ModelInfo } from "./model-resolver.ts";
 import { modelRefFromVerified } from "../shared/model-ref";
 // [W6 R1 MF-5] 子进程注册改经 spawnedChildren 状态镜像公共面（engine/host/
-// spawned-children.ts——镜像 + inproc 过渡委托，不再深路径 import engines/pi）。
+// spawned-children.ts——镜像 + inproc 过渡委托，不再深路径 import inproc pi 引擎目录）。
 import { registerSpawnedChildForRecord } from "./engine/host/spawned-children.ts";
 import type { SubagentStream } from "./stream-sink.ts";
 import type { SubagentService } from "./subagent-service.ts";
@@ -235,7 +235,7 @@ export class SubprocessAgentRunner implements AgentRunner {
       const { handle, outcome } = await route.engine.run(
         // [D6 合流] opts 直传——AgentCallOpts 即 EnginePort 任务形状（缺省路径零映射；
         // pi 边界一次直出由 PiEngine.agentCallToExecuteOptions 承担，逐字段等值由
-        // engines/pi/__tests__/spawn-opts-direct.test.ts 对照表锁定）
+        // inproc pi 引擎目录/__tests__/spawn-opts-direct.test.ts 对照表锁定）
         opts,
         runCtx,
       );

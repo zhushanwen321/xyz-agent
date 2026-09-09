@@ -6,7 +6,8 @@
 // （W2 已交付，ack 两阶段 R9-2 语义）→ EngineClientOptions.uiRequestHandler 注入点 →
 // 本登记处的 getter（discovery portFactory 构造 EngineClient 时读取）→ SubagentService
 // init/initSession.uiRequestHandler（[D4-④] 唯一注入入口，应答处理复用
-// ui-request-queue / dialog-queue 应答链路）。
+// ui-request-handler-factory / dialog-queue 应答链路；[W3] inproc inproc UI 请求队列（已删）
+// 随 inproc pi 引擎目录 删除消亡——chat 域 UI 请求同样经本通道，关联键 = spawn 轮 runId）。
 //
 // 为什么是登记处而非直接传参：EngineClient 在 discovery portFactory 内构造（惰性，
 // 首次 getEngine），构造点拿不到 Service 实例——进程级 endpoint 槽位把「handler 何时

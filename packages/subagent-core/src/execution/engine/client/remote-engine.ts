@@ -36,8 +36,8 @@ import type {
   ProbeReport,
   SessionView,
 } from "../types.ts";
-import type { EnginePort, EngineRunResult, RunContext } from "../port.ts";
-import type { EngineClient } from "./engine-client.ts";
+import type { ChatRoundRoute, EnginePort, EngineRunResult, RunContext } from "../port.ts";
+import type { EngineClient, RunRoute } from "./engine-client.ts";
 
 /** manifest 注册期快照（发现器/注册表读取，构造时注入——同步成员唯一源）。 */
 export interface RemoteEngineManifestSnapshot {
@@ -187,6 +187,9 @@ export class RemoteEngine implements EnginePort {
     // 协议 ctx 承载（RunContext 字段映射表）：cwd 取任务声明值（缺省进程 cwd）；
     // ctxModel 投影 canonical 词形（provider/id，ModelInfo 字段裁决）。
     const ctxModelRef = ctx.ctxModel ? `${ctx.ctxModel.provider}/${ctx.ctxModel.id}` : undefined;
+    // [W3 v1.x] chat 会话形态参数直传（RunContext.chat → run.params.chat；结构由
+    // RunContext.chat 注释与 SDK RunChatParams 的 implements 互证承载）。非 chat 轮
+    // ctx.chat === undefined → wire 上不出现该键（协议 additive 语义）。
     const runParams = {
       runId,
       task: toSdkTaskSubset(task),
@@ -199,6 +202,7 @@ export class RemoteEngine implements EnginePort {
         engineFallback: ctx.engineFallback,
         streamMode: ctx.stream !== undefined ? ("stream" as const) : undefined,
       },
+      ...(ctx.chat !== undefined ? { chat: ctx.chat } : {}),
     };
 
     const unregister = this.opts.client.registerRunRoute(runId, {
@@ -206,6 +210,9 @@ export class RemoteEngine implements EnginePort {
       onStreamDelta: (delta) => ctx.stream?.onDelta(delta),
       onPoolResolved: (poolKey) => ctx.onPoolResolved?.(poolKey),
       onHandleReady: (partial) => ctx.onHandleReady?.(partial),
+      // [W3 v1.x] 首轮（run 会话形态）轮次生命周期帧（runId 键）→ 宿主消费口。
+      onRoundLifecycle: (phase) =>
+        ctx.onRoundLifecycle?.(phase as Parameters<NonNullable<RunContext["onRoundLifecycle"]>>[0]),
     });
 
     // abort 分级：cancel 帧 → 等 CANCEL_SETTLE_GRACE_MS 收敛 → 杀链兜底。
@@ -241,6 +248,16 @@ export class RemoteEngine implements EnginePort {
       if (cancelSent) {
         // cancel 后未收敛（杀链已杀）或引擎在 abort 期间报错：合成 abort 终态，不 reject
         // （exitCode null = 被信号杀死，杀链判据）。
+        //
+        // [时序窗登记] 本合成 outcome 携 error + exitCode null——若它先于 cancel 域的
+        // CAS 终态化到达消费方，record 会先以 error 载体落 failed 形态而非 cancelled。
+        // 防护依据 = cancel 链 CAS 先行：cancelBackground 在 controller.abort() 后的
+        // **同一同步执行栈**内完成 tryTransition(cancelled) 抢锁终态化
+        // （subagent-service.ts cancelBackground），而本合成 outcome 的返回必须经异步
+        // 链（cancelRun RPC 往返 / 杀链 grace 后 run 请求 reject），时序上 CAS 恒先行，
+        // 窗极窄（仅存于 CAS 抢锁失败 = detached 已 finalize 的交错形态，该形态下
+        // 对方已终态化，本 outcome 无接管面）。不改本逻辑——改动会碰 run 域 cancel
+        // 语义（超修复范围），窗口登记于此供后续接管判据收敛时统一评估。
         return {
           handle: { data: this.synthesizeHandle(ctx.poolKey) },
           outcome: {
@@ -281,6 +298,15 @@ export class RemoteEngine implements EnginePort {
       action: action as SdkInteractAction,
     })) as SdkInteractResult;
     return result;
+  }
+
+  /**
+   * [W3 v1.x] chat 轮次反向通道路由注册（recordId 键，EnginePort 可选面实现）：
+   * interact 续聊轮的 streamDelta / roundLifecycle 分发目标。薄委托 EngineClient
+   * 的 recordRoutes（键分发见 reverse-router.ts）。
+   */
+  registerChatRoundRoute(recordId: string, route: ChatRoundRoute): () => void {
+    return this.opts.client.registerRecordRoute(recordId, route as RunRoute);
   }
 
   /** 协议 read（dataDir 必填——引擎数据根，构造注入）。 */

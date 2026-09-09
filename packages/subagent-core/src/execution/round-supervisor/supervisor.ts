@@ -127,8 +127,12 @@ export interface SupervisorRecordView {
   closedReason: string | undefined;
 }
 
-/** 该放弃 / boot 直断的执行结果分类（文案与终态编排由 deps 侧分叉）。 */
-export type GiveUpKind = "watchdog-expired" | "boot-abort" | "superseded";
+/** 该放弃的执行结果分类（文案与终态编排由 deps 侧分叉）。
+ *  [F3] 无 "boot-abort" 成员：boot 直断（表 3 行 2 in-flight 直断 failed）已在
+ *  record-store 孤儿恢复层完成（finalizeOrphanRecord 的 error 载体 failed 语义 +
+ *  终态 entry + sidecar），监督器不重复终态化（双收尾防线）——原 "boot-abort"
+ *  GiveUpKind 是头注声称但全链无调用点的死分支，随本轮回清理。 */
+export type GiveUpKind = "watchdog-expired" | "superseded";
 
 /** 对账/扫描候选（listCandidateRecords 的元素——本 root session 的 running record）。 */
 export interface SupervisorCandidateRecord {
@@ -155,9 +159,10 @@ export interface RoundSupervisorDeps {
   /** 高置信替代的终止通知（「原任务已被新任务替代」）。 */
   sendReplacedNotice(record: SupervisorRecordView, replacementId: string): void;
   /**
-   * 该放弃 / boot 直断执行（终态化 failed + 注销发射 + 通知编排归 deps——内存
+   * 该放弃执行（终态化 failed + 注销发射 + 通知编排归 deps——内存
    * record 走 finalizeRecord（注销①），磁盘态 record 走终态 entry 落盘（注销交
-   * sweep ⑤）。CAS 防双收尾由 deps 内部承担。
+   * sweep ⑤）。CAS 防双收尾由 deps 内部承担。boot 直断不经本方法（已在孤儿恢复
+   * 层完成，见 bootPartition 头注）。
    */
   giveUp(recordId: string, kind: GiveUpKind, detail: { replacementId?: string }): void;
 }
@@ -207,14 +212,18 @@ export class RoundSupervisor {
    * boot 分区（裁决表行 2/3——initSession 扫描）：
    *  - already-resumable-idle（非 conversation）→ 重认领接管（注册存续，process 档），
    *    监督器三态继续；
-   *  - 其余 running（in-flight：重启前在途）→ deps.giveUp(boot-abort) 直断 failed；
-   *    注销的落盘保证由紧随的 reconcile sweep 承接（内存终态化的 emit 是 pi.events
-   *    面 listener 缺失时丢；sweep 对「已终态 record」差集补 appendEntry 权威落盘）；
    *  - conversation 形态 → 现状（轮终 idle 机制管辖，不入监督域）。
+   *
+   *  in-flight（重启前在途、无 resumable 信号）不在本方法处置面：直断 failed 已由
+   *  record-store 孤儿恢复（recoverOrphanRecords → finalizeOrphanRecord）在先完成
+   *  （[F3] 表 3 行 2 语义：error 载体 failed 投影 + 终态 entry + sidecar），本方法
+   *  重复终态化会双收尾——isBootReadoptable 谓词把 in-flight 形态挡在本方法之外
+   *  （谓词与孤儿恢复保留分支同源，domain.ts）；已直断 record 的注册残留注销由
+   *  reconcile sweep（发射点⑤）对「已终态 record」差集补 appendEntry 权威落盘。
    *
    * 依赖时序：须在 store 孤儿恢复（recoverOrphanRecords）之后调用——孤儿恢复已把
    * 「重启前在途且无 resumable 信号」的非 chatMode record 直断 closed（boot 直断的
-   * 既有实现锚点），并把 resumable 形态保留 running 落 entry（本方法的重认领源）。
+   * 唯一实现锚点），并把 resumable 形态保留 running 落 entry（本方法的重认领源）。
    */
   bootPartition(): { readopted: string[] } {
     const readopted: string[] = [];
@@ -291,8 +300,17 @@ export class RoundSupervisor {
       { status: view.status, resumable: view.resumable, chatMode: view.chatMode },
       hasInFlight,
       hasLive,
-    ) || view.hasResult) {
-      // conversation 豁免 / 已有完成产出（SP-5 upgrade 等待态挂账归 idle-gc）——不唤醒。
+    )) {
+      // conversation 豁免（纳管入口已滤，防御性到达）——不唤醒。
+      return;
+    }
+    if (view.hasResult) {
+      // 已有完成产出（SP-5 upgrade 等待态挂账归 idle-gc）——不唤醒。
+      // [F5] 挂账态必须解除看门狗：此前的该唤醒评估可能已 armed，转挂账后 timer
+      // 若留存，2h 到期会把已完成挂账 record 误 giveUp(watchdog-expired)。对照上方
+      // 该等分支的清理形态——不再需要放弃计时的形态（有驱动 / 已收敛挂账）统一
+      // 先清 timer 再退出。
+      this.clearWatchdogTimer(entry);
       return;
     }
     // 该唤醒 → 通知对账（送指引前查替代）。

@@ -11,10 +11,9 @@
 //      NDJSON 单连接有序保证回声先于 run 应答帧到达）；core 不误判引擎故障
 //      （run 正常 resolve + 客户端保持 ready，10s 数据面守卫不触发）。
 //   ② recordId 键 streamDelta 分路：续聊轮 delta 经 recordId 关联（D1-A 裁定，
-//      InteractParams/Result 无 runId）。现状 reverse-router 对 recordId 键 break
-//      （W1 偏差 #1 登记的 no-op 分支——真实消费接线归 W3）：本用例钉「宿主确认
-//      收到 + 不误投 runId 路由」的现状契约；W3 接线替换 no-op 分支时同步更新
-//      断言（delta 投影到 chat 轮消费点）。
+//      InteractParams/Result 无 runId）。[W3 接线落地] reverse-router 的 recordId
+//      分支接 EngineClient.recordRoutes 真实消费——本用例钉「宿主确认收到 +
+//      delta 投递到 recordId 注册的 chat 轮消费点 + 不误投 runId 路由」。
 //   ③ conversation gate 负向（A6）：manifest 无 conversation 位的引擎（capabilities
 //      覆写 unsupported）→ assertChatConversationSupported 同步拒——错误码
 //      engine_capability_unsupported + 恢复指引含「升级引擎包」文案契约；同一
@@ -55,6 +54,9 @@ interface Harness {
   client: EngineClient;
   logs: Array<{ level: string; message: string }>;
   streamDeltas: string[];
+  /** [W3] recordId 键 chat 轮路由捕获（续聊轮 delta 消费点）。 */
+  recordDeltas: string[];
+  recordPhases: Array<Record<string, unknown>>;
 }
 
 function makeHarness(extraEnv: Record<string, string> = {}): Harness {
@@ -62,6 +64,8 @@ function makeHarness(extraEnv: Record<string, string> = {}): Harness {
     client: undefined as unknown as EngineClient,
     logs: [],
     streamDeltas: [],
+    recordDeltas: [],
+    recordPhases: [],
   };
   h.client = new EngineClient({
     engineId: "fake",
@@ -84,6 +88,17 @@ function makeHarness(extraEnv: Record<string, string> = {}): Harness {
     },
   });
   void unregister;
+  // [W3] recordId 键 chat 轮路由（registerRecordRoute——RemoteEngine.registerChatRoundRoute
+  // 的底层实现；conformance 层直接驱动 EngineClient 面）。
+  const unregisterRecord = h.client.registerRecordRoute("rec-chat-1", {
+    onStreamDelta: (delta) => {
+      h.recordDeltas.push(delta);
+    },
+    onRoundLifecycle: (phase) => {
+      h.recordPhases.push(phase as Record<string, unknown>);
+    },
+  });
+  void unregisterRecord;
   return h;
 }
 
@@ -117,6 +132,17 @@ describe("[W6] host/roundLifecycle 三相位 × 双关联键（协议黑盒回�
         "ack roundLifecycle rec-chat-1 failed",
       ]);
 
+      // [W3 接线契约] recordId 键相位帧投递到 registerRecordRoute 注册的 chat 轮
+      // 消费点（settled/idle/failed 三相位按序；宿主编排层据此做交棒/挂 idle timer/
+      // 失败分诊——分发层只做键路由）。
+      await expect
+        .poll(() => h.recordPhases.map((p) => `${p.recordId}:${String(p.phase)}`), { timeout: 5_000, interval: 20 })
+        .toEqual([
+          "rec-chat-1:settled",
+          "rec-chat-1:idle",
+          "rec-chat-1:failed",
+        ]);
+
       // 不误判引擎故障：run 正常 resolve + 客户端保持 ready（10s 数据面应答守卫
       // 未触发杀链——roundLifecycle 是数据面回执语义，不是故障信号）。
       expect(h.client.currentState).toBe("ready");
@@ -137,8 +163,8 @@ describe("[W6] host/roundLifecycle 三相位 × 双关联键（协议黑盒回�
   });
 });
 
-describe("[W6] recordId 键 streamDelta 分路（续聊轮关联键，D1-A）", () => {
-  it("recordId 键 delta：宿主确认收到（ack 回声）且不误投 runId 路由（W3 接线前 no-op 现状）", async () => {
+describe("[W6] recordId 键 streamDelta / roundLifecycle 分路（续聊轮关联键，D1-A）", () => {
+  it("recordId 键 delta：宿主确认收到（ack 回声）+ 投递到 recordId 注册的 chat 轮消费点，不误投 runId 路由", async () => {
     const h = makeHarness({ FAKE_RUN_RECORD_DELTA: "1" });
     try {
       await h.client.ensureConnected();
@@ -152,15 +178,17 @@ describe("[W6] recordId 键 streamDelta 分路（续聊轮关联键，D1-A）", 
       await expect
         .poll(() => h.logs.map((l) => l.message), { timeout: 5_000, interval: 20 })
         .toContain("ack streamDelta recordId=rec-chat-1");
-      // 现状契约：recordId 键不投 runId 路由（reverse-router no-op 分支，W1 偏差
-      // #1 登记；W3 chat 改线接线 recordId 消费时本断言同步更新为「投递到 chat
-      // 轮消费点」）。runId 键 fixture delta 不受影响。
+      // [W3 接线契约] recordId 键投递到 recordRoutes 注册的 chat 轮消费点
+      //（W1 偏差 #1 的 no-op 分支已替换为真实分发——reverse-router recordId 分支）。
+      expect(h.recordDeltas).toEqual(["chat-delta-not-routed-to-runId"]);
+      // 关联键分路互斥：recordId 键不误投 runId 路由（runId 键 fixture delta 不受影响）。
       expect(h.streamDeltas).toEqual(["Hello", " world"]);
       expect(h.client.currentState).toBe("ready");
     } finally {
       await h.client.dispose();
     }
   });
+
 });
 
 describe("[W6] conversation gate 负向（A6：无 gate 位引擎 chat 请求同步拒，run 域不受影响）", () => {
