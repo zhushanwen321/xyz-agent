@@ -101,7 +101,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   getProviderColor,
@@ -121,7 +121,18 @@ const props = defineProps<{
 }>()
 
 const DEFAULT_EXPANDED_COUNT = 2
-const expandedGroups = ref(new Set(props.groups.slice(0, DEFAULT_EXPANDED_COUNT).map(g => g.pid)))
+
+/** 默认展开态：前两组展开（挂载初始化与 groups 刷新重置共用同一逻辑，设计 D5） */
+function defaultExpanded(groups: typeof props.groups): Set<string> {
+  return new Set(groups.slice(0, DEFAULT_EXPANDED_COUNT).map((g) => g.pid))
+}
+
+const expandedGroups = ref(defaultExpanded(props.groups))
+
+// groups 随重试/筛选变化刷新（新数组引用）→ 展开态重置为前两组展开，不残留旧组状态
+watch(() => props.groups, (groups) => {
+  expandedGroups.value = defaultExpanded(groups)
+})
 
 const totTokens = computed(() => totalTokens(props.tot))
 

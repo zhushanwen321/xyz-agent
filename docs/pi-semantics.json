@@ -577,5 +577,51 @@
    "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-skill-expansion-static.test.ts"
   },
   "verifiedWith": "0.84.4"
+ },
+ {
+  "id": "PS-28",
+  "claim": "appendCompaction 对 hook 返回的 compaction.details 逐字透传落盘：agent-session 两条压缩路径（manual/threshold auto）在 session_before_compact hook 返回 compaction 时 details = extensionCompaction.details 原样引用，随后原样传入 sessionManager.appendCompaction，后者 entry 字面量直接引用该对象（无克隆/无字段白名单/无裁剪）——extension 在 details 写入的自定义字段（如 smart-context 的 model 归属，usage-page-fixes §3.3 ①）必然随 compaction entry 原样落盘；pi 升级若对 details 做克隆/裁剪/改名，归属字段静默丢失（scanner ③ 回退 generic 行，不报错），由本探针拦截",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/session-manager.js",
+    "symbol": "appendCompaction",
+    "note": ":805-819 —— entry 字面量 :814 details 字段逐字引用入参（summary/firstKeptEntryId/tokensBefore/details/usage/fromHook 全透传），:818 _appendEntry 落盘"
+   },
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "compact() hook 分支 → appendCompaction 调用点 ×2",
+    "note": "manual :1490 hasHandlers → :1519 details = extensionCompaction.details → :1533 调用；auto :1751 hasHandlers → :1793 同款 → :1820 调用——两路径均 appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage)"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-compaction-details.test.ts"
+  },
+  "verifiedWith": "0.84.4"
+ },
+ {
+  "id": "PS-29",
+  "claim": "appendCustomEntry 落盘形态含 customType/data/timestamp：ExtensionAPI 的 core 绑定 appendEntry(customType, data) 直接委托 sessionManager.appendCustomEntry（同参数序、零中间变换），后者 entry 字面量固定 {type:\"custom\", customType, data, id, parentId, timestamp}——data 原样引用入参（无克隆/无字段白名单），经 _appendEntry 落盘并 emit entry_appended。rename-session 计量落账（usage-page-fixes §3.3 ③④）依赖该形态（U5 已本地 CLI 实测 P-appendEntry ✅：落盘行恰为该六字段，见实施计划状态表 U5 证据）；pi 升级若改字段名/裁剪 data/timestamp 改形，scanner ④ 分类静默失效（rename 账整桶消失，不报错），由本探针拦截",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/session-manager.js",
+    "symbol": "appendCustomEntry",
+    "note": ":822-832 —— entry 字面量 :823-830 固定六字段 {type:\"custom\", customType, data, id: generateId(this.byId), parentId: this.leafId, timestamp: new Date().toISOString()}，data 逐字引用入参（无克隆/无裁剪），:831 _appendEntry 落盘，:832 返回 entry.id"
+   },
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "_bindExtensionCore → core 绑定 appendEntry",
+    "note": ":2022-2028 —— appendEntry: (customType, data) 直呼 this.sessionManager.appendCustomEntry(customType, data)（同参数序），取回 entry 后 _emit({type:\"entry_appended\", entry})；appendCustomEntry 同步返回 entry.id（session-manager.js:832），而 ExtensionAPI appendEntry 声明为 void（types.d.ts:985，fire-and-forget 语义）（flush-debounce 落盘见 PS-17）"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-session-entries.test.ts"
+  },
+  "verifiedWith": "0.84.4"
  }
 ]

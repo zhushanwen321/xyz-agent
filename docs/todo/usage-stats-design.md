@@ -56,7 +56,7 @@
 
 三个关键事实（已用真实文件验证，非推断；审查轮 2026-08-25 复核修正）：
 
-1. **非 assistant entry 的 usage 计入规则必须带守卫**：compaction entry 带 usage（**在 entry 顶层，非 `message.` 下**）但**无 provider/model 字段**；branch_summary 实测 12/12 **不带 usage**。pi 官方聚合（`getUsageCostBreakdown`，锚点：@earendil-works/pi-coding-agent@0.84.1 `dist/core/usage-totals.js:22-33`，升级 pi 须重核）的三分类才是权威口径：① assistant message ② `role==='toolResult' && message.usage`（本机 0 条，但 subagent 场景是 pi 明确支持的形态）③ `{compaction, branch_summary} && entry.usage`——后两类归入 `"Tools/summaries"` 虚拟桶，且都带 usage 存在性守卫。另：model key 用 `responseModel ?? model`（实测 65% 消息两者大小写不同，如 `GLM-5.3` vs `glm-5.3`）。
+1. **非 assistant entry 的 usage 计入规则必须带守卫**：compaction entry 带 usage（**在 entry 顶层，非 `message.` 下**）但**无 provider/model 字段**；branch_summary 实测 12/12 **不带 usage**。pi 官方聚合（`getUsageCostBreakdown`，锚点：@earendil-works/pi-coding-agent@0.84.4 `dist/core/usage-totals.js:23-33`（2026-09-08 随 usage-page-fixes U6 头注同步校正，原 0.84.1/:22-33），升级 pi 须重核）的三分类才是权威口径：① assistant message ② `role==='toolResult' && message.usage`（本机 0 条，但 subagent 场景是 pi 明确支持的形态）③ `{compaction, branch_summary} && entry.usage`——后两类归入 `"Tools/summaries"` 虚拟桶，且都带 usage 存在性守卫。另：model key 用 `responseModel ?? model`（实测 65% 消息两者大小写不同，如 `GLM-5.3` vs `glm-5.3`）。
 2. **量级与文件形态**：15 个 `.jsonl` / 16MB，全量逐行解析毫秒级；文件 append-only；但首行不保证是 session entry（3/15 旧文件首行为 `session_info`，session 在第 2 行）；且存在 `.tmp-migrate-*.jsonl` 归一化崩溃残留（内容为合法 session 拷贝，必重复计入，须排除）。
 3. **session 归属项目**：文件内 session entry 带 `cwd`。注意：现有 `scanPiSessions()` 的 `parseSessionHeader` 只读首行，首行非 session 即丢弃文件（3/15 被丢）——**用量统计不可复用它做文件发现**（与 G1 全量矛盾），见 §3.3 D8。
 
@@ -121,6 +121,7 @@ A1 细节：`Map<filePath, mtime>` 缓存；getStats 时枚举文件，mtime 全
 ### 3.3 关键决策与权衡
 
 - **D1 非主模型 usage 归属**：独立虚拟桶 `provider: 'compaction'`，计入条件对齐 pi `getUsageCostBreakdown` 三分类（见 §2.1 事实 1）：assistant 消息 / toolResult-with-usage / {compaction, branch_summary}-with-usage，**均带 usage 存在性守卫**（branch_summary 实测不带 usage，无守卫直接产出 NaN 行）。桶内 `messages` 语义 = 事件数（压缩/摘要次数），明细表分组名「压缩 / 摘要」。被否：跟随 session 主模型（compaction 可能跨模型执行，猜测归属 = 编造数据）。
+  - **D1 增补（2026-09-08 回写，usage-page-fixes U3/U6 已落地）**：compaction 桶的 model 归属已从「无归属」落地为**生成侧权威落盘**——smart-context 压缩时写 `details.model`（`${provider}/${id}`，usage-page-fixes §3.3 ①/D2），scanner ③ 权威读取，缺失（非 string/空串）回退 `'compaction'`。与 D1 原则一致：只记录权威事实（生成侧已知），不回溯猜测；存量无归属数据诚实降级为 generic `'compaction'` 行，不编造。落盘可靠性锚 `docs/pi-semantics.json` PS-28（appendCompaction 对 hook details 逐字透传，pi 升级改形由探针测试拦截）。
 - **D2 cost 透传不重算**：直接累加 pi 落盘的 `cost.total`（当时的费率快照）。被否：按当前 models.json 费率重算历史（ccusage `--mode calculate`）——历史费用本就取决于当时费率，重算反而失真，且引入费率表依赖。
 - **D3 图表手写 SVG，不引图表库**：demo 已验证手写 SVG 可覆盖全部 7 个视图；6 主题机制依赖 CSS 变量（`style="fill:var(--chart-p1)"`），图表库的主题要 JS 层重配且增加打包体积/CSP 面。被否：ECharts/Chart.js。
 - **D4 挂 Settings nav 而非独立视图**：与 Provider/Skill 等平级，符合「统计是配置域信息」的心智；独立视图需动 AppShell 路由，改动面大。demo 即此形态。
@@ -130,6 +131,7 @@ A1 细节：`Map<filePath, mtime>` 缓存；getStats 时枚举文件，mtime 全
 - **D8 扫描器自建文件发现，不复用 scanPiSessions**：`scanPiSessions()` 的 `parseSessionHeader` 只读首行、首行非 session entry 即丢弃文件（实测丢 3/15），且无目录参数（受 XYZ_AGENT_DATA_DIR 控制）、其目录缓存有 1s TTL——与 G1 全量 + S6 测试参数化双双冲突。自建：构造函数接受 `sessionsDir`（缺省 `getSessionsDir()`），readdir + stat 自取 (mtimeMs, size)，文件过滤复刻 `isScannableSessionFile` 规则（排除 `.tmp-migrate-*.jsonl` 残留——内容为合法 session 完整拷贝，不排则重复计入）；cwd 提取为「逐行读至首个 type=session entry（容错 session_info 首行的旧文件）」。
 - **D9 缓存分片与双键**：per-file 分片缓存 `Map<filePath, {mtimeMs, size, rows, skippedLines, cwd}>`，失效比对 `(mtimeMs, size)` 双键（同 ms 内并发 append mtime 不变但 size 变——本仓 `CachedSessionMeta` 的 [HISTORICAL] 教训 INVAR-cache-2，只存 mtime 会命中 stale 行集）；增量重扫 = 丢变化/删除文件的分片、重读拼接；skippedLines 按分片存、getStats 求和（避免全量累计被未变文件旧值污染）。
 - **D10 model 维度取 `responseModel ?? model`**：对齐 pi 口径（实际响应模型优先）。实测 65% 消息 `responseModel` 与 `model` 大小写不同（router 场景），不合并则模型谱出现 `GLM-5.3` / `glm-5.3` 双条目。
+- **D11 增补（2026-09-08 回写，usage-page-fixes U5/U6 已落地）：扫描口径增补 xyz ④ 分类——rename-session custom entry 落账**（usage-page-fixes §3.3 ③④/D3）：rename 成功调用 LLM 后 `pi.appendEntry("rename-session", { model, usage })` 写 custom entry（对话流 no-op），scanner 增第④分类：`type==='custom' && customType==='rename-session' && data.usage` 为非 null 对象 → `rename-session` 虚拟桶；`data.model` 非 string/空串诚实回退 `'rename-session'`（守卫与 ③ 对称），timestamp 非法计入 skippedLines（行级失败既有语义）。**扫描口径由「pi 三分类」变为「pi 三分类 + xyz ④」**——④ 为 xyz 自有口径，非 pi 语义；custom entry 落盘形态锚 `docs/pi-semantics.json` PS-29（appendCustomEntry 固定六字段，pi 升级改形由探针测试拦截）。本文 §2.1 事实 1、§3.3 D1 原行（：123，以 ：124 增补为准）、§3.4 实现要点与物理数据流图中的「pi 三分类」表述均为本条登记前的历史口径（W1 设计期写成，当时仅 pi 三分类），现行口径以本条为准。
 
 ### 3.4 接口规格
 
