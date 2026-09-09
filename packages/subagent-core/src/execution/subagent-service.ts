@@ -1,6 +1,6 @@
 // 执行编排 + 记录领域 Service（D4 按变化轴拆分后的编排核：execute/executeAndAwait 入口、
-// record 生命周期、cancel）。通知簇 → notify-host.ts；轮次结算闭包 → round-settlement.ts；
-// 冷路径复活 → cold-resurrect.ts。
+// record 生命周期、cancel）。通知簇 → notify-host.ts；轮次结算闭包内联于
+// settleChatRoundFromResponse（原 round-settlement.ts 已随 W3 inproc 删除收敛于此）；冷路径复活 → cold-resurrect.ts。
 // 上游：subagent-tool（execute/query/cancel）、TUI（onChange/collectRecords）。
 // session_start 时经 initSession 注入 pi；modelRegistry/entries 归 ModelConfigService.initModel。
 
@@ -2860,7 +2860,7 @@ export class SubagentService {
   /**
    * [W3] 首轮 run 应答到达（= 首轮 agent_settled，W2 契约）的本轮 settle：round+1 /
    * 轮次增量通知 / base 推进 / reportRecordTransition / closeAfterRound 消费——语义
-   * 权威 = round-settlement.ts createRoundSettler（inproc 形态的同一业务闭包），
+   * 权威自持于此（原 round-settlement.ts createRoundSettler 已删，本闭包为其唯一后继），
    * 唯一偏差 = 轮次文本源：协议形态下 live turns 留在引擎进程内，core 以应答
    * outcome.content（W2「outcome = 本轮内容」）为增量权威，record.turns 派生不可用。
    * idle 定时器挂载不在此处——idle 相位帧先于应答帧到达，armChatIdleTimer 已锚定。
@@ -2871,7 +2871,7 @@ export class SubagentService {
     const roundText = outcome.content;
     record.result = roundText ||
       (record.lastError ? `round did not complete: ${record.lastError}` : "(no output this round)");
-    // 先送达本轮增量（notify），再推进 base——时序与幂等语义照搬 round-settlement
+    // 先送达本轮增量（notify），再推进 base
     //（notify 后推进：notify 失败时 base 不推进，增量并入下一轮防丢文本）。
     // [T4①/PS-2] 通知门与 kickOff 回注同款：parent-new/parent-fork 编排性关闭后
     // 迟到的应答 settle 不注入（可能已切换的）新 session；cancelled 由 cancelBackground
@@ -2882,7 +2882,7 @@ export class SubagentService {
     record.roundBaseTurnIndex = record.turnCount;
     this.store.reportRecordTransition(record);
     // [M5] closeAfterRound 消费：chatMode 轮次完成的统一汇聚点（优雅关闭在本轮
-    // 完成时兑现终态化——与 round-settlement 的 closeAfterRoundSettled 同语义）。
+    // 完成时兑现终态化）。
     if (record.closeAfterRound) {
       record.closeAfterRound = undefined;
       void this.closeAfterRoundSettled(record);

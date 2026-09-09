@@ -38,7 +38,7 @@
 >   ③场景三/A3 残留「ping×事件窗」术语 → 「快超时探测×事件窗」（对齐 D3 判据信号名）；
 >   ④挂账量化句补精度：「idle-gc 锚窗 + 至下次 sweep 触发点（持续存活 session 内无中途触发点，至 session 重开收口）」；
 >   ⑤W6 补 bash 跨 session 可见性断言（读侧过滤一刀同时改变 bash 未翻档类型的既有可见性——子 session goal 不再为父 session bash 任务 defer，钉成显式选择）。
-> - v6（2026-09-09，实施期回写——W1-W3 落地 + 一致性审查批 1 收敛后）：正文仅补 D1 两段实施期声明（childSpawned 键语义 / cancel SIGTERM 受理形态，原文决策无一改动）；实施全记录见同名 impl-plan §5 偏差表（#1-#11）与 §6 状态表。审查批 1（协议链 0 MF + 活性链 3 MF）7 findings 全部修复收口。
+> - v6（2026-09-09，实施期回写——W1-W3 落地 + 一致性审查批 1 收敛后）：正文仅补 D1 两段实施期声明（childSpawned 键语义 / cancel SIGTERM 受理形态，原文决策无一改动）；实施全记录见同名 impl-plan §5 偏差表全量与 §6 状态表。审查批 1（协议链 0 MF + 活性链 3 MF）7 findings 全部修复收口。
 
 > 关联文档：`subagent-engine-protocolization.md`（v1 协议 SSOT；本文称「协议化设计」，其 §1 :121 裁决注记是本文的授权来源）；
 > `subagent-engine-protocolization.impl-plan.md` §5/§7.3（keep-alive 偏差与 chat 域例外登记）；
