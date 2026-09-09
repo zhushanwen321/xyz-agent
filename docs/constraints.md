@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 91 条（生成于 2026-09-07）。
+共 92 条（生成于 2026-09-09）。
 
 ## pi 关系（外部依赖边界）
 
@@ -77,6 +77,7 @@
 | C-state-08 | session 级 renderer 状态三问——存哪里（分区 store/composable）？切走谁清（cleanup 编排）？切回谁喂（恢复腿）？新增 ServerMessageType 的 renderer 消费方 / useSessionEvents 调用点时 CR 必查，三问有明确归属才放行；「onMessage 直写组件本地 ref」反模式由 taste-lint 规则 no-instance-level-session-state 机器拦截 | packages/renderer/src/** | [context-consistency-design](todo/context-consistency-design.md) · [0049-session-isolation-map-partition](adr/0049-session-isolation-map-partition.md) | hook: `taste-lint/base.mjs` + review: review-data-governance |
 | C-state-09 | panel 输入面（composer/ask-user/landing）显隐只许经 derivePanelView 纯函数派生（packages/core/src/domain/session/panel-view.ts），禁止组件内直接组合 flow/chat/session 状态判显隐；landing 判据恒为 !sessionId && isFlowActive（G2 结构免疫） | packages/renderer/src/components/panel/**、packages/core/src/domain/session/panel-view.ts | [panel-view-derivation-and-flow-lifecycle](design/panel-view-derivation-and-flow-lifecycle.md) | review: review-arch-boundary |
 | C-state-10 | thinking 档位对齐 watch 仅挂「用户显式切模型」：watch 回调以入口 armed 快照（consumeArmedRestore 执行前捕获）为门禁判据（禁读消费块后的 armed 值），无 armed 快照时全部对齐分支（无档位设最高档/同体系映射/跨体系重置）一律跳过——切 session 焦点等非用户动作禁触发对齐 setThinkingLevel RPC；可用性校验分支（数据不一致安全网）保持不门禁；armed 生命周期沿用既有防线（显式 onModelSelect 设立，成功/失败/换绑/5s 过期清）零新状态 | packages/core/src/** | [composer-model-session-isolation](design/composer-model-session-isolation.md#33-关键决策与权衡) | review: review-business-logic |
+| C-state-11 | 消息流滚动到底唯一入口 = useVirtuaFollow（末项索引直取 + offset=tailHeight 真实底部原语）；禁止 findItemIndex(scrollSize) 反查模式；新增尾部文档流块必须进 tailEl；contentWrapEl 禁止定位样式 | packages/renderer/src/** | [chat-pin-bottom-fix](design/chat-pin-bottom-fix.md#44-防复发护栏用户显式要求如何防止再次发生同样的问题) | hook: `check-scroll-follow.mjs` + review: review-arch-boundary |
 
 ## extension 体系
 

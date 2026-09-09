@@ -33,6 +33,10 @@ vi.mock('virtua/vue', async () => {
       name: 'MockVirtualizer',
       props: {
         data: { type: Array, default: () => [] },
+        // [U3 适配] 吸收 MessageStream U2 起的 :scroll-ref prop（chat-pin-bottom-fix D3），
+        // 与 MessageStream-kind.test.ts mock 同款；不声明则落 reactive attrs 触发挂载期自渲染
+        // （本文件无收集器断言，仅契约对齐消除 artifact 源头）。
+        scrollRef: { type: Object, default: null },
       },
       setup() {
         return {

@@ -29,7 +29,8 @@
 
   视觉沿用 system-notice 形态（左右 hairline + Loader2 spinner + --text-xs，太极纯灰
   tokens，无 emoji 无硬编码颜色）。文档流 block（Virtualizer 之后），fork notice 等后续
-  文档流内容自然堆叠在其后（fork notice 定位结论见 useNoticeStack.ts 注释）。
+  文档流内容自然堆叠在其后（ForkNotice 为文档流 block，无 absolute 定位——定位链已随
+  D6 死路径清理删除）。
   dev 断言：COMPACTING_NOTICE_HEIGHT / EXECUTING_BASH_NOTICE_HEIGHT 常量漂移检测随行迁入
   （useConstantHeightAssert，生产裁剪零开销）。
 -->

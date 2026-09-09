@@ -1,148 +1,105 @@
 /**
- * useForkNoticeStream 单测（cw wave w4 / W2TC10-W2TC11）。
+ * useForkNoticeStream 单测（feed 消费 + 交互契约）。
  *
- * 验证 forkNoticeBaseTop 优先级链（injectedBaseTop > vlistBottom）：
- * - W2TC10 传 injectedBaseTop=500 → forkNoticeBaseTop=500（短路）；forkNoticeTop(1)=500+FORK_NOTICE_HEIGHT
- * - W2TC11 不传 injectedBaseTop，传 vlistBottom=1200 + topOffset=44 → baseTop=1244
+ * [D6 死路径清理 2026-09-09] 原 W2TC10/W2TC11 定位断言（injectedBaseTop 短路 /
+ * vlistBottom 基线 / 占位叠加 / forkNoticeTop 堆叠）随 absolute 定位链整体删除——
+ * ForkNotice 为文档流 block（tailEl 容器内），定位由文档序自然堆叠，无计算面可测。
+ * 本文件改测剩余职责：feed 按 sessionId 过滤 + onView/onDismiss 交互委托。
  *
- * [cw wave w4] 删 W2TC11b（totalHeight 旧路径）与 W2TC11c（vlistBottom/totalHeight 优先级）：
- * totalHeight 字段已删，基线优先级链简化为 injectedBaseTop > vlistBottom。
- *
- * [fix-handoff-with-message] 删 handoff notice：isHandingOff / handoffNoticeHeight 已从 deps 移除
- * （取消入口改由 composer stop 按钮承担）。基线占位链简化为 compacting → dispatching 两段。
- *
- * FORK_NOTICE_HEIGHT=40（useForkNoticeStream.ts:22 私有常量，未导出）。通过 forkNoticeTop(idx)
- * 的垂直堆叠步进断言：forkNoticeTop(idx) = forkNoticeBaseTop + idx * 40。
- *
- * mock 策略：mock useForkNoticeFeed（notices 返回 []，dismissNotice vi.fn）+ useSidebar。
+ * mock 策略：mock useForkNoticeFeed（notices 返回可配置列表，dismissNotice vi.fn）+
+ * useSidebar（selectSession vi.fn）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/effects/use-fork-notice-stream.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { computed, effectScope } from 'vue'
+import { effectScope } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useForkNoticeStream } from '@/composables/panel/useForkNoticeStream'
+import type { ForkNoticeEntry } from '@/composables/effects/useForkNoticeEffect'
 
-// mock useForkNoticeFeed：notices 返回空（本测只验定位，不验 feed 消费），dismissNotice vi.fn
+// mock useForkNoticeFeed：notices 返回可配置列表（按 sessionId 过滤的消费面在此之上），
+// dismissNotice vi.fn 供 onDismiss 委托断言。
+const dismissNotice = vi.fn()
+const feedNotices = vi.fn<(sid: string) => ForkNoticeEntry[]>()
 vi.mock('@/composables/effects/useForkNoticeEffect', () => ({
   useForkNoticeFeed: () => ({
-    notices: () => [],
-    dismissNotice: vi.fn(),
+    notices: (sid: string) => feedNotices(sid),
+    dismissNotice: (...args: unknown[]) => dismissNotice(...(args as [string, number])),
   }),
 }))
 
 // mock useSidebar：selectSession 不做真实跳转
+const selectSession = vi.fn()
 vi.mock('@/composables/features/sidebar/useSidebar', () => ({
-  useSidebar: () => ({ selectSession: vi.fn() }),
+  useSidebar: () => ({ selectSession: (...args: unknown[]) => selectSession(...(args as [string])) }),
 }))
+
+/** ForkNoticeEntry 测试造数（字段集对齐 useForkNoticeEffect 的条目形状） */
+function makeEntry(id: number): ForkNoticeEntry {
+  return {
+    id,
+    branchName: `branch-${id}`,
+    preview: `preview-${id}`,
+    kind: 'forked',
+    newSessionId: `s-child-${id}`,
+    createdAt: 0,
+  } as ForkNoticeEntry
+}
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  vi.clearAllMocks()
+  feedNotices.mockReturnValue([])
 })
 
 /** mount useForkNoticeStream（effectScope 包裹）。sessionId getter 返回固定字符串。 */
-function setup(opts: {
-  injectedBaseTop?: number
-  vlistBottom?: number
-  topOffset?: number
-  isCompacting?: boolean
-  isDispatching?: boolean
-  hasWorkingTurn?: boolean
-}) {
-  const sessionId = () => 's-fork-test'
-  const injectedBaseTop =
-    opts.injectedBaseTop != null ? computed(() => opts.injectedBaseTop!) : undefined
-  const vlistBottom = computed(() => opts.vlistBottom ?? 0)
-  const topOffset = computed(() => opts.topOffset ?? 0)
-  const isCompacting = computed(() => opts.isCompacting ?? false)
-  const isDispatching = computed(() => opts.isDispatching ?? false)
-  const hasWorkingTurn = computed(() => opts.hasWorkingTurn ?? false)
-
+function setup(sessionId = 's-fork-test') {
   const scope = effectScope()
   let ret: ReturnType<typeof useForkNoticeStream> | undefined
   scope.run(() => {
-    ret = useForkNoticeStream(sessionId, {
-      vlistBottom,
-      topOffset,
-      isCompacting,
-      isDispatching,
-      hasWorkingTurn,
-      compactNoticeHeight: 46,
-      injectedBaseTop,
-    })
+    ret = useForkNoticeStream(() => sessionId)
   })
-  return { scope, ret: ret! }
+  return { ret: ret! }
 }
 
-// ── W2TC10: injectedBaseTop 短路 ───────────────────────────────────
+describe('useForkNoticeStream · forkNotices 按 sessionId 过滤消费', () => {
+  it('notices(sessionId) 被 feed 以当前 session id 调用，返回值透传', () => {
+    const entries = [makeEntry(1), makeEntry(2)]
+    feedNotices.mockReturnValue(entries)
 
-describe('useForkNoticeStream · W2TC10: injectedBaseTop 短路', () => {
-  it('injectedBaseTop=500 → forkNoticeTop(0)=500, forkNoticeTop(1)=540（堆叠 FORK_NOTICE_HEIGHT=40）', () => {
-    const { ret } = setup({ injectedBaseTop: 500 })
+    const { ret } = setup('s-a')
+    expect(ret.forkNotices.value).toEqual(entries) // 读取触发 computed 求值
 
-    expect(ret.forkNoticeTop(0)).toBe(500)
-    expect(ret.forkNoticeTop(1)).toBe(540)
-    expect(ret.forkNoticeTop(2)).toBe(580)
+    expect(feedNotices).toHaveBeenCalledWith('s-a')
   })
 
-  it('injectedBaseTop=500 短路：忽略 vlistBottom/占位状态', () => {
-    // 即使传 vlistBottom=8888 + isCompacting=true，injectedBaseTop 仍优先
-    const { ret } = setup({
-      injectedBaseTop: 500,
-      vlistBottom: 8888,
-      isCompacting: true,
-    })
+  it('过滤键 = 容器传入的 sessionId getter（不同实例各自以自身键查询 feed）', () => {
+    const { ret } = setup('s-a')
+    expect(ret.forkNotices.value).toEqual([]) // 触发 s-a 求值
+    expect(feedNotices).toHaveBeenCalledWith('s-a')
 
-    expect(ret.forkNoticeTop(0)).toBe(500)
-  })
-})
-
-// ── W2TC11: vlistBottom 基线 ────────────────────────────────────────
-
-describe('useForkNoticeStream · W2TC11: vlistBottom 基线', () => {
-  it('W2TC11: vlistBottom=1200 + topOffset=44 → forkNoticeTop(0)=1244（1200+44）', () => {
-    const { ret } = setup({ vlistBottom: 1200, topOffset: 44 })
-
-    expect(ret.forkNoticeTop(0)).toBe(1244)
-    expect(ret.forkNoticeTop(1)).toBe(1284) // 1244 + 40
-  })
-
-  it('W2TC11d: 无 injectedBaseTop + vlistBottom 默认 0 → forkNoticeTop(0)=topOffset', () => {
-    const { ret } = setup({ topOffset: 0 })
-
-    // base = vlistBottom(0) + topOffset(0) = 0
-    expect(ret.forkNoticeTop(0)).toBe(0)
-  })
-
-  it('vlistBottom + isCompacting=true → forkNoticeTop 叠 compacting 占位（46）', () => {
-    const { ret } = setup({ vlistBottom: 1200, topOffset: 0, isCompacting: true })
-
-    // base=1200 + topOffset 0 + compacting 46 = 1246
-    expect(ret.forkNoticeTop(0)).toBe(1246)
-  })
-
-  it('vlistBottom + isDispatching(!hasWorkingTurn) → 叠 dispatching 占位（46）', () => {
-    const { ret } = setup({
-      vlistBottom: 1200,
-      topOffset: 0,
-      isDispatching: true,
-      hasWorkingTurn: false,
-    })
-
-    // base=1200 + topOffset 0 + dispatching 46 = 1246
-    expect(ret.forkNoticeTop(0)).toBe(1246)
-  })
-
-  it('vlistBottom + isDispatching 但 hasWorkingTurn=true → 不叠 dispatching 占位', () => {
-    const { ret } = setup({
-      vlistBottom: 1200,
-      topOffset: 0,
-      isDispatching: true,
-      hasWorkingTurn: true,
-    })
-
-    // hasWorkingTurn=true → dispatching 占位跳过 → base=1200
-    expect(ret.forkNoticeTop(0)).toBe(1200)
+    const other = setup('s-b')
+    expect(other.ret.forkNotices.value).toEqual([]) // 触发 s-b 求值
+    expect(feedNotices).toHaveBeenLastCalledWith('s-b')
   })
 })
 
+describe('useForkNoticeStream · 交互委托', () => {
+  it('onView(newSessionId) → selectSession 载入分支 session', () => {
+    const { ret } = setup()
+
+    ret.onView('s-child-9')
+
+    expect(selectSession).toHaveBeenCalledTimes(1)
+    expect(selectSession).toHaveBeenCalledWith('s-child-9')
+  })
+
+  it('onDismiss(noticeId) → dismissNotice 以 (sessionId, noticeId) 委托', () => {
+    const { ret } = setup('s-x')
+
+    ret.onDismiss(42)
+
+    expect(dismissNotice).toHaveBeenCalledTimes(1)
+    expect(dismissNotice).toHaveBeenCalledWith('s-x', 42)
+  })
+})
