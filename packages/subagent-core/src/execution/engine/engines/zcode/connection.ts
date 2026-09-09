@@ -34,13 +34,12 @@
 // 「惰性启动」三条路径在实现上同一条代码路径。
 
 import { spawn, type ChildProcess } from "node:child_process";
-import * as fs from "node:fs";
-import { dirname } from "node:path";
 
 import { getLogger } from "../../../../core/logger.ts";
 
 import { killChain } from "../../common/kill-chain.ts";
 import { buildNestedSpawnEnv } from "../../common/nesting-guard.ts";
+import { SizeRotatedAppendStream } from "../../common/size-rotated-stream.ts";
 import {
   ZCODE_APPSERVER_REQUEST_TIMEOUT_MS,
   ZCODE_APPSERVER_STDERR_TAIL_BUFFER_CHARS,
@@ -211,7 +210,11 @@ export class AppServerConnection {
   private reqSeq = 0;
   /** stderr 滚动缓冲（代级：崩溃诊断用）。 */
   private stderrTail = "";
-  private stderrStream: fs.WriteStream | null = null;
+  /**
+   * stderr tee 落盘流（D6-⑦：带 size 自轮转——writer 是 runtime 进程自身，rename 安全；
+   * 旧裸 createWriteStream 无帽，常驻 app-server 的异常 stderr 洪泛会无界吃磁盘）。
+   */
+  private stderrLog: SizeRotatedAppendStream | null = null;
   private stderrStreamFailed = false;
   /**
    * 本代我方杀链 promise（close/shutdown 共用）。入口顺序不破「shutdown resolve 于
@@ -569,30 +572,29 @@ export class AppServerConnection {
     }
   }
 
-  /** stderr 实时 append 落盘（懒打开；失败静默——取证面不能拖垮主通道）。 */
+  /** stderr 实时 append 落盘（懒打开 + size 自轮转；失败静默——取证面不能拖垮主通道）。 */
   private appendStderrLog(chunk: string): void {
     if (this.stderrStreamFailed) return;
-    if (this.stderrStream === null) {
+    if (this.stderrLog === null) {
       try {
-        fs.mkdirSync(dirname(this.stderrLogPath), { recursive: true });
-        this.stderrStream = fs.createWriteStream(this.stderrLogPath, { flags: "a" });
-        this.stderrStream.on("error", () => {
-          this.stderrStreamFailed = true;
-        });
+        this.stderrLog = new SizeRotatedAppendStream(this.stderrLogPath);
       } catch {
         this.stderrStreamFailed = true;
         return;
       }
     }
-    this.stderrStream.write(chunk);
+    this.stderrLog.write(chunk);
+    // 轮转/流级失败传播：同步失败由 SizeRotatedAppendStream 内部置 failed，此处对齐
+    // 旧实现语义停止后续写入（stderrStreamFailed 兼作跨代标志）
+    if (this.stderrLog.failed) this.stderrStreamFailed = true;
   }
 
   /** 代收尾时关闭 tee 流（下一代懒重开，同路径 append——崩溃重建集中同一文件）。 */
   private closeStderrStream(): void {
-    if (this.stderrStream !== null) {
-      const stream = this.stderrStream;
-      this.stderrStream = null;
-      stream.end();
+    if (this.stderrLog !== null) {
+      const log = this.stderrLog;
+      this.stderrLog = null;
+      log.end();
     }
   }
 }

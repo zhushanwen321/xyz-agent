@@ -288,3 +288,78 @@ describe('reapOrphanPiProcesses（编排）', () => {
     expect(signal).not.toHaveBeenCalled()
   })
 })
+
+describe('reapOrphanPiProcesses 杀链决策日志（crash-resilience §3.3 D6-⑥，E2 归因缺口修复）', () => {
+  it('有孤儿时落结构化决策行：动作/触发者/目标 pid/原因字段齐全', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const signal = vi.fn()
+      const delay = vi.fn(async () => {})
+      await reapOrphanPiProcesses({
+        sessionsDir: DIR,
+        ownPid: OWN_PID,
+        trigger: 'startup-sweep',
+        listProcesses: async () => psStdout([
+          row(801, 1, piCmd(DIR)),
+          row(802, 1, piCmd(DIR)),
+        ]),
+        signal,
+        delay,
+      })
+      const decisionCall = logSpy.mock.calls.find(([msg]) => msg === '[orphan-reap] kill decision')
+      expect(decisionCall).toBeDefined()
+      const meta = decisionCall![1] as Record<string, unknown>
+      expect(meta.action).toBe('reap_orphan_pi')
+      expect(meta.trigger).toBe('startup-sweep')
+      expect(meta.targets).toEqual([
+        { pid: 801, ppid: 1 },
+        { pid: 802, ppid: 1 },
+      ])
+      expect(String(meta.reason)).toContain('ppid=1')
+      // 决策之后有结果汇总行（决策 → 结果闭环，failed 非空时归因有据）
+      const resultCall = logSpy.mock.calls.find(([msg]) => msg === '[orphan-reap] reap result')
+      expect(resultCall).toBeDefined()
+      expect((resultCall![1] as Record<string, unknown>).reaped).toEqual([801, 802])
+    } finally {
+      logSpy.mockRestore()
+    }
+  })
+
+  it('无孤儿 / 枚举失败时不落决策行（决策日志只随真实杀链动作出现）', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      await reapOrphanPiProcesses({
+        sessionsDir: DIR,
+        ownPid: OWN_PID,
+        listProcesses: async () => psStdout([row(901, 1, 'node app.js')]),
+        signal: vi.fn(),
+      })
+      await reapOrphanPiProcesses({
+        sessionsDir: DIR,
+        ownPid: OWN_PID,
+        listProcesses: async () => { throw new Error('spawn ps ENOENT') },
+        signal: vi.fn(),
+      })
+      expect(logSpy.mock.calls.some(([msg]) => msg === '[orphan-reap] kill decision')).toBe(false)
+    } finally {
+      logSpy.mockRestore()
+    }
+  })
+
+  it('trigger 未传时降级 unspecified（不强制改动既有调用方）', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      await reapOrphanPiProcesses({
+        sessionsDir: DIR,
+        ownPid: OWN_PID,
+        listProcesses: async () => psStdout([row(902, 1, piCmd(DIR))]),
+        signal: vi.fn(),
+        delay: vi.fn(async () => {}),
+      })
+      const decisionCall = logSpy.mock.calls.find(([msg]) => msg === '[orphan-reap] kill decision')
+      expect((decisionCall![1] as Record<string, unknown>).trigger).toBe('unspecified')
+    } finally {
+      logSpy.mockRestore()
+    }
+  })
+})

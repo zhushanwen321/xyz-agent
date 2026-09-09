@@ -438,6 +438,17 @@ export class RelayRegistry {
     conn.once('close', () => {
       if (!this.entries.has(conn)) return // 已因 child exit 清理，no-op
       console.warn(`[relay] connection lost, killing child (kill-on-disconnect) recordId=${entry.recordId}`)
+      // 杀链决策日志（crash-resilience §3.3 D6-⑥，E2 归因缺口的直接修复）：主 session
+      // 断连（main pi 崩溃 / 代理丢失 / extension kill）连带杀受托 relay 子进程——
+      // 动作/目标（主 session、recordId、子进程 pid）/原因 字段化单行落盘，E2 型
+      // 「同秒连坐」事件可从此行反查连带关系。
+      console.warn('[relay] kill decision', {
+        action: 'kill_on_disconnect',
+        mainSessionId: entry.mainSessionId,
+        recordId: entry.recordId,
+        childPid: entry.child.pid ?? null,
+        reason: 'relay socket closed while child still alive (main pi died / proxy lost / extension kill)',
+      })
       void killRelayChild(entry.child).then(() => this.cleanupEntry(entry))
     })
   }

@@ -12,7 +12,7 @@ import { ModelService } from './services/model-service.js'
 
 import { BASE_PORT, MAX_PORT } from '@xyz-agent/shared'
 import { getDataDir } from '@xyz-agent/shared/paths'
-import { initLogger, closeLogger } from './infra/logger.js'
+import { initLogger, closeLogger, logger, captureMemorySnapshot, formatMemoryWatermarkLine, MEMORY_WATERMARK_INTERVAL_MS } from './infra/logger.js'
 import { isContainedStreamError } from './infra/system/uncaught-policy.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
@@ -138,6 +138,45 @@ function resolveRuntimeToken(): string | null {
   }
   console.warn('[runtime] WS auth token unavailable (XYZ_RUNTIME_TOKEN env / <dataDir>/runtime-token both missing) — fail-closed: ALL WebSocket connections will be rejected')
   return null
+}
+
+// ── u5b-runtime-forensics D6-②：runtime 内存水位定时器 ──────────────────
+// 每 5 分钟一行（rss/heapUsed/heapTotal/external + 活跃 session 数 + pi 进程数），
+// 走既有 logger（runtime-<date>.log）。E2 事故（7 session 连坐 SIGTERM）无法归因的
+// 直接缺口就是无水位序列——A8 验收断言「runtime 日志有 5 分钟间隔水位行」。
+//
+// timer 句柄刻意做成模块级可取消形态：u8（pi respawn）将改写本文件的 shutdown 序列，
+// 届时直接调 stopMemoryWatermarkTimer() 接入新清理链，不需要重构本段。
+let memoryWatermarkTimer: NodeJS.Timeout | undefined
+
+/** 停止内存水位定时器（shutdown / u8 改造 shutdown 序列时的取消入口）。幂等。 */
+export function stopMemoryWatermarkTimer(): void {
+  if (memoryWatermarkTimer !== undefined) {
+    clearInterval(memoryWatermarkTimer)
+    memoryWatermarkTimer = undefined
+  }
+}
+
+/**
+ * 启动内存水位定时器（组合根 listen 成功后调用一次）。
+ * unref：水位打点是纯观测面，不得阻止进程自然退出（shutdown 显式 clearInterval 是
+ * 第一道，unref 是不阻塞退出路径的兜底）。
+ */
+function startMemoryWatermarkTimer(
+  getActiveSessions: () => number,
+  getPiProcesses: () => number,
+): void {
+  stopMemoryWatermarkTimer() // 幂等防御（重复调用不产生双定时器）
+  memoryWatermarkTimer = setInterval(() => {
+    const sample = {
+      ...captureMemorySnapshot(),
+      activeSessions: getActiveSessions(),
+      piProcesses: getPiProcesses(),
+    }
+    // 单行水位行（human grep）+ meta（机器消费同源数值），writeLogEntry 保证单行落盘
+    logger.info(formatMemoryWatermarkLine(sample), sample)
+  }, MEMORY_WATERMARK_INTERVAL_MS)
+  memoryWatermarkTimer.unref?.()
 }
 
 /**
@@ -719,6 +758,9 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string, exitCode = 0) => {
     if (shuttingDown) return
     shuttingDown = true
+    // D6-②：先停水位定时器（shutdown 后不再有水位行；u8 改造 shutdown 序列时
+    // 沿用本取消入口，注释见 stopMemoryWatermarkTimer 定义处）。
+    stopMemoryWatermarkTimer()
     console.log(`\n[runtime] received ${signal}, shutting down...`)
     try {
       recentWorkspacesStore.flushAll()
@@ -811,6 +853,15 @@ async function main(): Promise<void> {
     console.error('[runtime] fatal: relay server init failed:', err)
     process.exit(1)
   }
+  // ── u5b-runtime-forensics D6-②：内存水位定时器启动 ──────────────────
+  // listen 成功后启动（依赖 sessionService/pm 均已装配）。activeSession 数含公共
+  // session（getActiveSessionIds 全量 lifecycle 键），pi 进程数是 ProcessManager 托管
+  // 的 RpcClient 数（relay 子进程不在此列，其取证走 relay-registry 决策日志）。
+  startMemoryWatermarkTimer(
+    () => sessionService.getActiveSessionIds().length,
+    () => pm.size,
+  )
+
   // 启动耗时分解探针（06 §5 m-7）：listen-ready 各段耗时（baseline 对比见汇报——
   // 改造前 getPiVersion 占 listen 延迟 1.1-1.3s，重排后该段归零）。
   console.log(`[runtime] startup breakdown: syncMigrations=${(tSyncMigrations - tStart).toFixed(1)}ms construction=${(tServicesReady - tSyncMigrations).toFixed(1)}ms listen=${(performance.now() - tListen).toFixed(1)}ms total=${(performance.now() - tStart).toFixed(1)}ms`)

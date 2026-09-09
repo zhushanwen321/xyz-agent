@@ -35,6 +35,10 @@
  */
 import { createWriteStream, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, type WriteStream } from 'node:fs'
 import { join } from 'node:path'
+// [crash-resilience §3.3 D6-⑦] 保留天数两进程共读同一函数（env 覆盖 || 默认）：原进程内
+// 常量 KEEP_DAYS（logger.ts:50-55）删除，等价提升到 shared——main 每日复扫与 runtime
+// 启动清理不出现两套值域漂移。Node-only：runtime 进程恒 Node 环境，安全。
+import { readLogKeepDays } from '@xyz-agent/shared'
 import { isPackaged } from '../utils/runtime-env.js'
 
 // ── 级别 ────────────────────────────────────────────────────────────
@@ -51,8 +55,6 @@ function parseLevel(env: string | undefined, fallback: LogLevel): LogLevel {
 const BYTES_PER_KB = 1024
 const DEFAULT_MAX_FILE_MB = 50
 const MAX_FILE_BYTES = Number(process.env.XYZ_LOG_MAX_BYTES) || DEFAULT_MAX_FILE_MB * BYTES_PER_KB * BYTES_PER_KB
-const DEFAULT_KEEP_DAYS = 7
-const KEEP_DAYS = Number(process.env.XYZ_LOG_KEEP_DAYS) || DEFAULT_KEEP_DAYS
 const SECONDS_PER_MINUTE = 60
 const HOURS_PER_DAY = 24
 const MS_PER_SECOND = 1000
@@ -315,10 +317,17 @@ function createStreamSafe(file: string): WriteStream | undefined {
   }
 }
 
-/** 清理 KEEP_DAYS 天前的日志文件（启动时调一次）。 */
+/**
+ * 清理保留期（readLogKeepDays()，shared）天前的日志文件（initLogger 启动时调一次）。
+ *
+ * [crash-resilience §3.3 D6-⑦] 保留天数从进程内常量改为 shared readLogKeepDays()：
+ * 每次调用时读 env（XYZ_LOG_KEEP_DAYS 覆盖 || 默认 7），与 main 侧每日复扫共用同一
+ * 值域。本函数仍是 runtime 侧唯一触发点（仅启动时跑）；长寿运行的持续清理由 main
+ * 每日定时器承担（u5a），两进程超龄判定同源。
+ */
 function cleanExpiredLogs(): void {
   if (!logsDir) return
-  const cutoff = Date.now() - KEEP_DAYS * MS_PER_DAY
+  const cutoff = Date.now() - readLogKeepDays() * MS_PER_DAY
   let entries: string[]
   try {
     entries = readdirSync(logsDir)
@@ -326,8 +335,13 @@ function cleanExpiredLogs(): void {
     return
   }
   for (const name of entries) {
-    // 只清理本模块产出的日志文件（runtime-* / pi-*.jsonl）
-    if (!name.startsWith('runtime-') && !name.startsWith('pi-')) continue
+    // 只清理本模块产出的日志文件（runtime-* / pi-*.jsonl / pi-crash-*.log / plugin-crash-*.log）。
+    // pi-crash-* 靠 pi- 前缀覆盖；plugin-crash-*（u5b D6-⑤，plugin worker 崩溃取证）
+    // 是新写入面，写入与清理通道同步落地（D6-⑦：有写入无清理 = 新债）。
+    // 固定名 stderr 文件（electron-runtime-stderr.log / zcode-appserver-stderr.log）
+    // 不匹配任何前缀，天然不进超龄清单（writer 持有型 append fd 的 unlink 会造成
+    // 「写成功、盘上无文件」的静默丢失；其治理归 writer 侧 size 轮转）。
+    if (!name.startsWith('runtime-') && !name.startsWith('pi-') && !name.startsWith('plugin-crash-')) continue
     const full = join(logsDir, name)
     try {
       if (statSync(full).mtimeMs < cutoff) {
@@ -469,9 +483,92 @@ export function createPiRelayLog(recordId: string): PiSessionLog {
   return createPiStreamWriter(join(logsDir, `pi-relay-${date}-${safeRecordId}.jsonl`))
 }
 
+// ── 崩溃取证上下文（crash-resilience §3.3 D6-④⑤ / A8）────────────────
+
+/** runtime 进程内存快照的四指标（process.memoryUsage() 的取证子集）。 */
+export interface MemorySnapshot {
+  rss: number
+  heapUsed: number
+  heapTotal: number
+  external: number
+}
+
+/**
+ * pi 崩溃时 runtime 侧可得的上下文（D6-④，A8 交叉归因的 runtime 半边）。
+ *
+ * 全字段可空：来源是 ProcessManager/RpcClient 在崩溃时刻已知的内存态，未知一律 null
+ * （显式落盘「不知道」而不是省略行——字段名恒在，事后 grep 可判别「没采到」与「没打点」）。
+ */
+export interface PiCrashContext {
+  /** 崩溃 session id（rpc-client options.sessionId；早期 spawn 崩溃可能缺失）。 */
+  sessionId: string | null
+  /**
+   * pi 历史文件绝对路径：switch_session 参数或 get_state 返回的 sessionFile，二者
+   * 任一发生过才非 null。新建 session 在首条 assistant 前 pi 侧尚未落盘（仓规 #6），
+   * runtime 不主动创建/探测文件，未知即 null。
+   */
+  sessionFile: string | null
+  /** 最后一次发出的 RPC 命令类型（sendCommand 记录，如 'send_prompt' / 'switch_session'）。 */
+  lastRpcCommand: string | null
+  /** pi 进程存活时长 ms（spawn 完成到崩溃时刻；未记录到 spawn 点为 null）。 */
+  uptimeMs: number | null
+  /** 崩溃时刻 runtime 进程内存快照（captureMemorySnapshot，恒可得除非宿主异常）。 */
+  memory: MemorySnapshot | null
+}
+
+/**
+ * 采集当前进程内存快照（D6-②④ 共用的四指标提取）。
+ * process.memoryUsage() 恒同步可得，无失败路径；包装成函数便于测试替身与统一形状。
+ */
+export function captureMemorySnapshot(): MemorySnapshot {
+  const m = process.memoryUsage()
+  return { rss: m.rss, heapUsed: m.heapUsed, heapTotal: m.heapTotal, external: m.external }
+}
+
+/**
+ * 渲染 pi-crash log 的 runtime 上下文头块（D6-④）。每行 `[runtime-context] key=value`
+ * 形态：与 stderr 原文可肉眼区分、grep 'runtime-context' 可整块提取、null 显式落盘。
+ * 返回多行字符串（无尾换行），调用方负责块间分隔。
+ */
+export function formatPiCrashContextHeader(ctx: PiCrashContext): string {
+  return [
+    `[runtime-context] sessionId=${ctx.sessionId ?? 'null'}`,
+    `[runtime-context] sessionFile=${ctx.sessionFile ?? 'null'}`,
+    `[runtime-context] lastRpcCommand=${ctx.lastRpcCommand ?? 'null'}`,
+    `[runtime-context] uptimeMs=${ctx.uptimeMs ?? 'null'}`,
+    `[runtime-context] memory=${ctx.memory ? JSON.stringify(ctx.memory) : 'null'}`,
+  ].join('\n')
+}
+
+/**
+ * 内存水位行格式化（D6-②，runtime 水位定时器每 5 分钟一行，A8 断言「5 分钟间隔水位行」）。
+ * 单行、数值单位 MB（1 位小数）+ session/pi 计数——grep '[watermark]' 可提取全序列画曲线。
+ */
+export function formatMemoryWatermarkLine(sample: MemoryWatermarkSample): string {
+  const mb = (n: number): string => (n / (BYTES_PER_KB * BYTES_PER_KB)).toFixed(1)
+  return `[watermark] rss=${mb(sample.rss)}MB heapUsed=${mb(sample.heapUsed)}MB heapTotal=${mb(sample.heapTotal)}MB external=${mb(sample.external)}MB sessions=${sample.activeSessions} pi=${sample.piProcesses}`
+}
+
+/** 内存水位行载荷（四指标 + 两个进程计数）。 */
+export interface MemoryWatermarkSample extends MemorySnapshot {
+  /** 活跃 session 数（sessionService.getActiveSessionIds().length）。 */
+  activeSessions: number
+  /** 托管 pi 进程数（ProcessManager.size）。 */
+  piProcesses: number
+}
+
+/** 水位打点周期（分钟，D6-②：每 5 分钟一行）。 */
+const WATERMARK_INTERVAL_MINUTES = 5
+/** runtime 内存水位定时器周期（D6-②）。 */
+export const MEMORY_WATERMARK_INTERVAL_MS = WATERMARK_INTERVAL_MINUTES * SECONDS_PER_MINUTE * MS_PER_SECOND
+
 /**
  * pi 崩溃 stderr 全量落盘（设计 file-lock-unification-and-reaper-sink §3.2-D4 / U3-4，
  * rpc-client exit handler 的异常退出分支调用）。
+ *
+ * [crash-resilience §3.3 D6-④] 第三参 context（可选）：runtime 侧上下文头
+ * （formatPiCrashContextHeader 渲染）插在 stderr 原文之前，A8 交叉归因的 runtime 半边；
+ * 未传时行为与历史版本逐字一致（纯 stderr 内容）。
  *
  * 文件名 `pi-crash-<date>-<sessionId>.log`：复用 pi-*.jsonl 命名惯例（pi- 前缀使
  * cleanExpiredLogs 的保留期清理自动覆盖，无需改过滤规则）；date + sessionId 防同日
@@ -486,12 +583,36 @@ export function createPiRelayLog(recordId: string): PiSessionLog {
  * 支持）append 语义不覆盖历史。内容为 best-effort：写失败不向上抛（调用方在 exit
  * 主流程上，观测增强不得影响 rejectAll / exitCallbacks 通知链）。
  */
-export function writePiCrashLog(sessionId: string | undefined, content: string): void {
+export function writePiCrashLog(sessionId: string | undefined, content: string, context?: PiCrashContext): void {
   if (!logsDir || !currentLevel) return
   const date = new Date().toISOString().slice(0, ISO_DATE_LENGTH)
   // 文件名安全化与 createPiSessionLog 同规则；空清洗结果（如全非法字符）回落 'nosid'
   const safeSid = (sessionId ?? 'nosid').replace(/[^a-zA-Z0-9-]/g, '').slice(0, SESSION_ID_MAX_LENGTH) || 'nosid'
   const writer = createPiStreamWriter(join(logsDir, `pi-crash-${date}-${safeSid}.log`))
+  const body = content.endsWith('\n') ? content : content + '\n'
+  // context 头块与 stderr 原文之间空一行分隔（块尾无换行，此处补两个 \n）
+  writer.write(context ? `${formatPiCrashContextHeader(context)}\n\n${body}` : body)
+  writer.end()
+}
+
+/**
+ * plugin worker 崩溃 stderr 全量落盘（[crash-resilience §3.3 D6-⑤ / A8]，plugin-host
+ * handleWorkerCrash 的三入口汇聚点调用）。
+ *
+ * 形态对齐 writePiCrashLog：`plugin-crash-<date>-<workerId>.log`（独立 plugin-crash- 前缀
+ * 进 cleanExpiredLogs 白名单，D6-⑦ 有写入即有清理）；worker 是 Worker Thread 无 pid，
+ * 文件名键用 workerId（如 'trusted-1'），内容头块记录 threadId。重复调用 append 不覆盖
+ * （同 worker 冷却窗内多次崩溃，防御性支持）。
+ *
+ * 未初始化（单元测试）no-op；best-effort：写失败不向上抛（调用方在 crash 处置主流程上，
+ * 观测增强不得影响 rebuild / onCrash 通知链）。
+ */
+export function writePluginCrashLog(workerId: string, content: string): void {
+  if (!logsDir || !currentLevel) return
+  const date = new Date().toISOString().slice(0, ISO_DATE_LENGTH)
+  // 文件名安全化与 writePiCrashLog 同规则；空清洗结果回落 'noworker'
+  const safeWorkerId = workerId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, SESSION_ID_MAX_LENGTH) || 'noworker'
+  const writer = createPiStreamWriter(join(logsDir, `plugin-crash-${date}-${safeWorkerId}.log`))
   writer.write(content.endsWith('\n') ? content : content + '\n')
   writer.end()
 }

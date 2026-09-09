@@ -186,6 +186,12 @@ export interface ReapOrphanOptions {
   ownPid: number
   /** SIGTERM→SIGKILL 宽限 ms，默认 ORPHAN_KILL_GRACE_MS。 */
   killGraceMs?: number
+  /**
+   * 杀链决策日志的「谁触发」（crash-resilience §3.3 D6-⑥，E2 归因缺口修复）：
+   * 调用方自述（如 'startup-sweep'）。可选，缺省 'unspecified'——不强制改动既有
+   * 调用方（startup-background-init），新调用方应显式传入。
+   */
+  trigger?: string
   /** 进程枚举注入（测试替身）；缺省真实执行 ps。返回 ps stdout 原文。 */
   listProcesses?: () => Promise<string>
   /** 信号注入（测试替身）；缺省 process.kill。signal 0 = 仅探活不实际发信号。 */
@@ -280,11 +286,29 @@ export async function reapOrphanPiProcesses(options: ReapOrphanOptions): Promise
   if (orphans.length === 0) return result
 
   console.log(`[orphan-reap] found ${orphans.length} orphan pi process(es) for session-dir=${sessionsDir}, reaping`)
+  // 杀链决策日志（crash-resilience §3.3 D6-⑥，E2 归因缺口的直接修复）：一条结构化
+  // 行回答「谁触发 / 杀哪些 pid / 为什么」——动作/目标/原因字段化（console patch 的
+  // meta 走 JSON.stringify 单行落盘 runtime 主日志），与下方逐 pid 处置行互为索引。
+  console.log('[orphan-reap] kill decision', {
+    action: 'reap_orphan_pi',
+    trigger: options.trigger ?? 'unspecified',
+    scanned: result.scanned,
+    targets: orphans.map(r => ({ pid: r.pid, ppid: r.ppid })),
+    reason: 'argv --session-dir matches own sessions dir AND ppid=1 (parent runtime dead, orphan reparented to init)',
+    graceMs: killGraceMs,
+  })
   for (const row of orphans) {
     const ok = await killOrphan(row, killGraceMs, signal, delay)
     if (ok) result.reaped.push(row.pid)
     else result.failed.push(row.pid)
   }
+  // 收殓结果汇总（D6-⑥ 配套：决策 → 结果闭环，failed 非空时归因有据）
+  console.log('[orphan-reap] reap result', {
+    action: 'reap_orphan_pi_result',
+    trigger: options.trigger ?? 'unspecified',
+    reaped: result.reaped,
+    failed: result.failed,
+  })
   return result
 }
 

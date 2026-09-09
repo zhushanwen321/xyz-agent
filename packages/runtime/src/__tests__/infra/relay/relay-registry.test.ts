@@ -412,7 +412,7 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     await agent.waitForClosed()
   })
 
-  t('断连即杀：客户端断开 → 伪 child 收到 SIGTERM（marker 文件）', async () => {
+  t('断连即杀：客户端断开 → 伪 child 收到 SIGTERM（marker 文件）+ 结构化决策日志', async () => {
     await startServer()
     const marker = join(workDir, 'sigterm-marker')
     const agent = new TestAgent(getActiveRelaySocketPath()!)
@@ -425,9 +425,25 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     await waitFor(() => existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'pid file written')
     // 等 handler 注册完再触发杀链：否则 SIGTERM 打进 node 启动期走默认终止，marker 永不出现
     await waitFor(() => existsSync(ready), 30_000, 'fake-pi ready (SIGTERM handler registered)')
-    agent.destroy()
-    await waitFor(() => existsSync(marker), 30_000, 'SIGTERM marker (kill-on-disconnect)')
-    await waitFor(() => !existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'pid file cleaned after kill')
+    // 杀链决策日志（crash-resilience §3.3 D6-⑥）：spy 必须在 initLogger patch console
+    // 之后挂（spy 替换的是 patched 版本，调用路径经过 spy）；close handler 同步落行
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      agent.destroy()
+      await waitFor(() => existsSync(marker), 30_000, 'SIGTERM marker (kill-on-disconnect)')
+      await waitFor(() => !existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'pid file cleaned after kill')
+      // 决策行：动作 / 主 session（哪个主 session 死）/ recordId + 子进程 pid（连带杀谁）/ 原因
+      const decisionCall = warnSpy.mock.calls.find(([msg]) => msg === '[relay] kill decision')
+      expect(decisionCall).toBeDefined()
+      const meta = decisionCall![1] as Record<string, unknown>
+      expect(meta.action).toBe('kill_on_disconnect')
+      expect(meta.mainSessionId).toBe('main-1')
+      expect(meta.recordId).toBe('rec-1')
+      expect(typeof meta.childPid).toBe('number')
+      expect(String(meta.reason)).toContain('socket closed')
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 
   // 2026-09-04 runtime 整机崩溃事故回归：对端 FIN 后本端 conn 自动 end()
