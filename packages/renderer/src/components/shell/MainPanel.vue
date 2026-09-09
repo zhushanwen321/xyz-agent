@@ -1,7 +1,9 @@
 <template>
   <!--
-    容器组件 · float-panel 浮起（spec §一：唯一带 bg/border/radius/shadow 的面板）。
-    靠 background+border+shadow 视觉浮起，不靠 z-index。
+    容器组件 · float-panel（spec §一：唯一带 bg/border/radius 的面板）。
+    靠 background+border 视觉分区，不靠 z-index。2026-09-09 去投影：浮层投影
+    （旧 --shadow-2，24px 渐变光晕）在侧边贴合场景产生明显渐变阴影（截图干扰），移除后
+    分隔完全由 border + 色差 + 圆角承载。
     圆角 rounded-[10px] 与 AppShell 窗口圆角一致：收起侧边栏时 main-panel 占满，四角与窗口圆角共线对齐（展开态 main 浮起卡片，10px 圆角同样协调）。
     view 路由：chat → Workspace（FG4），overview → Overview（FG6 ADR-0023 覆盖 main 区）。
     settings/search 浮层为全局 Dialog（FG6 骨架），不走 view 路由（hide 入口，spec §9）。
@@ -21,9 +23,9 @@ const navigation = useNavigationStore()
 </script>
 
 <style scoped>
-/* float-panel 浮起：描边（shadow-1）+ 浮层（shadow-2）双 shadow 叠加。
- * Tailwind 单 box-shadow 属性无法用两个类叠加，走 escape hatch 用 CSS 变量组合。 */
+/* float-panel 边缘压深：--shadow-1 是 1px 无模糊 spread 环（锐利线条，非渐变晕），
+ * 叠在 border 外侧加深边缘轮廓。Tailwind 单 box-shadow 属性无法直接引用变量，走 escape hatch。 */
 .main-panel {
-  box-shadow: var(--shadow-1), var(--shadow-2);
+  box-shadow: var(--shadow-1);
 }
 </style>

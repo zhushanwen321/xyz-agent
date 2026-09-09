@@ -22,13 +22,15 @@
   <Transition name="drawer-slide-right">
     <aside
       v-if="isOpen"
-      class="relative flex h-full min-w-0 flex-col rounded-r bg-bg [box-shadow:var(--shadow-drawer)]"
+      class="relative flex h-full min-w-0 flex-col rounded-r bg-bg"
       :aria-label="t('panel.sideDrawer.title')"
       data-testid="drawer-panel"
     >
       <!-- L1 tab 栏：drawer 内部子区。2026-08-14 裁决遵循 v6-drawer-tabs-demo 层次语言
-           （推翻 spec D2 一体化同色）：aside 深底 bg（比 main surface 深一档）+ 右圆角 + 弱投影
-           构成与 main 的色差分隔；L1 栏继承 aside 深底、无 border-b（demo .drawer-l1 无分隔线）。 -->
+           （推翻 spec D2 一体化同色）：aside 深底 bg（比 main surface 深一档）+ 右圆角
+           构成与 main 的色差分隔；L1 栏继承 aside 深底、无 border-b（demo .drawer-l1 无分隔线）。
+           [2026-09-09] 曾有的弱投影（--shadow-drawer）已删：父级 drawer-area overflow-hidden
+           会裁剪后代 box-shadow，该投影自布局收紧后从未实际可见（死样式）。 -->
       <div class="flex items-center gap-1 px-2 py-1.5">
         <div class="flex flex-1 gap-0.5">
           <Button
