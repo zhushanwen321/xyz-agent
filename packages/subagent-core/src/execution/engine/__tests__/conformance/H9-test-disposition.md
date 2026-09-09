@@ -2,7 +2,7 @@
 
 > 实施计划 §2.10「core 测试逐文件三选一处置清单」的执行记录（W10，2026-09-09）。
 > 处置依据 = 文件 import 实测 + W5/W7 已迁件核对。处置后 core test 全绿
-> （2999 passed | 7 skipped；删除 48 文件 / 改写 5 文件 / 保留待 W11 同批改写 4 文件）。
+> （2999 passed | 7 skipped；删除 48 文件 / 改写 5 文件 / 保留待 W11 同批改写 4 文件——保留的 4 文件已随 W3 收口（1 删 3 改写），见 §② 节尾回写注记）。
 
 ## ① 已随引擎包迁移 —— 删除 core 重复副本（11 文件）
 
@@ -39,11 +39,13 @@ W5/W7 已把自包含件迁入引擎包（pi-subagent-cli / zcode-subagent-cli `
 | `execution/engine/__tests__/common/capability-gate.test.ts` | PiEngine/ZcodeEngine 内建构造 → 读两引擎包 package.json manifest `xyz-agent.subagentEngine.capabilities`（同步成员唯一源；11 用例绿） |
 | `execution/engine/__tests__/conformance/contract.{probe,abort,read-degradation,agent-events}.test.ts` + `golden-replay.{pi,zcode}.test.ts` + `engine-conformance.live.test.ts` | conformance 契约套件整体协议黑盒化：RemoteEngine × fake 引擎 CLI / golden 语料改引擎包 `__golden__/` + 公共导出面 / live 门改「协议客户端 × 引擎包 CLI」形态（A2 真机形态本身） |
 
-## ② 改写被阻塞 —— 保留 + W10 处置注记，W11 同批改写（4 文件）
+## ② 改写被阻塞 —— 保留 + W10 处置注记，W11 同批改写（4 文件）[v1.x W3 已收口，见节尾回写注记]
 
 `src/__tests__/append-system-prompt-assembly.test.ts`、`execution/__tests__/explicit-agent-ref-guard.test.ts`、`execution/__tests__/delivery-methods.test.ts`、`execution/__tests__/gc-timer.test.ts`。
 
 阻塞原因（同根）：这些文件 `vi.mock("…engines/pi/session-runner.ts")` 拦截的**是 core 生产代码的 inproc 深路径 import**（subagent-service / lifecycle 谓词等消费点在生产侧）——mock 目标改指引擎包或镜像需生产 import 先改线，而 W6 已把改线收敛到 W11 收口（`subagent-service.ts` W7 注 + `lifecycle-predicates.test.ts` 仍深 import spawnedChildren 同证）。W11 删内建当轮必须同批改写这 4 个文件（每文件头部已留 `[W10 处置注记]`）。
+
+> **[v1.x W3 已收口 —— 回写注记（2026-09-09）]** 上方 4 文件已随 commit `0df9ef8b3`（W3 删 inproc pi 引擎 + chat 协议化改线）处理完毕：`append-system-prompt-assembly.test.ts` 删除，其余 3 文件改写为协议等价断言（`explicit-agent-ref-guard.test.ts` / `delivery-methods.test.ts` / `gc-timer.test.ts`，现头注 `[W3 改写]` 可核）。原 `[W10 处置注记]` 已被 `[W3 改写]` 头注取代，W11 对这 4 文件无剩余改写面。本节标题、阻塞原因与文首统计行保留作 W10 时点历史（[HISTORICAL] 纪律），现行状态以本注记为准。
 
 ## ③ 声明废弃 —— 删除（34 文件 + 1 helper）
 
