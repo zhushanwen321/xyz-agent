@@ -413,3 +413,10 @@ pi 升级（`PI_VERSION` bump）或触碰相关模块时逐条重验；锚点均
 - **pi 锚点**：`dist/core/session-manager.js:165-186`——sessionEntryToContextMessages 仅映射 message/custom_message/branch_summary/compaction，兑底返回 `[]`
 - **机制**：appendEntry 写的 custom entry 是持久化状态记录，AI 看不到；想让 AI 看到必须走 custom_message（sendCustomMessage）或 sendUserMessage
 - **处置建议**：这正是 extension 日志规范选 appendEntry 做「事后排查」通道的技术依据（不耗 token，见 logging-conventions.md）；反向地，靠 appendEntry「通知 AI」的代码是 bug——结果语义通知走账本 courier（C-ext-19）
+
+### 12. chat 轮 cancel 后子进程退出原因呈 exit code 143 而非 signal SIGTERM（协议 v1.x）
+
+- **现象**：chat 轮被 cancel/强关后，record/journal 的失败原因显示 `exit code 143` 而非 `signal SIGTERM`（对比：run 域引擎进程死亡呈 `signal SIGTERM`，见 conformance engine-crash 用例）。
+- **根因**：pi rpc-mode 对 SIGTERM 的 trap 是优雅收口后自行 `process.exit(143)`（`dist/modes/rpc/rpc-mode.js` trap 段）——子进程以**主动 exit** 结束，OS 层无信号终止事件，chat-session 只能拿到 (143, null)。
+- **判读**：信息仍如实（exit 143 + `engine_round_aborted`/`engine_round_crashed` 分诊）；两者语义差异 = 「引擎进程被信号杀死」（W6 钉的引擎层形态）vs 「pi 收到 SIGTERM 自行退出」（chat 子进程形态）。比对事故取证（2026-09-08 session 01a08091）时注意该形态差异。
+- **处置**：无需修复；若需区分 cancel 主动杀与外部杀，看 record 的 `engine_round_aborted`（cancel/close/superseded）与 `engine_round_crashed`（外部信号/崩溃）错误码分诊（`packages/pi-subagent-cli/src/chat-session.ts`）。
