@@ -33,6 +33,7 @@
  * - 失效信号订阅在模块顶层挂载（只执行一次），project 侧用模块级 signal watch 让订阅与实例数解耦。
  */
 import { computed, ref, watch, type Ref } from 'vue'
+import { createInflightDedup } from '@xyz-agent/core/foundation/create-inflight-dedup'
 import { config as configApi } from '@/api'
 import type { SkillCacheInvalidatedPayload, SkillInfo } from '@xyz-agent/shared'
 
@@ -139,7 +140,12 @@ export function useProjectSkills(currentCwd: Ref<string | null>) {
 // 失效信号仍写旧实例 ref 导致活跃 Composer 不刷新的 bug。
 let globalSkillsCache: SkillInfo[] | null = null
 let globalLoaded = false
-let globalInFlight: Promise<SkillInfo[]> | null = null
+// W2 收编：原单 Promise 变量 globalInFlight 改为 createInflightDedup 固定 key 退化形态
+// （state-truth-sync §3.3 D9）——同 key 复用 / settle 即清（等价原 finally 置 null，且
+// settle 清理先于调用方 await 恢复，force fall-through 重拉必发起新 RPC）/ 引用比对防
+// 误删由 factory 内建。
+const GLOBAL_SKILLS_FETCH_KEY = 'global'
+const globalSkillsFetchDedup = createInflightDedup<SkillInfo[]>()
 // 模块级单例 ref，所有 useGlobalSkills() 调用共享
 // taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：全局 skills 列表单例 ref（多 Composer 共享，12 类未覆盖）
 const globalSkills = ref<SkillInfo[]>([])
@@ -167,30 +173,12 @@ export function useGlobalSkills() {
   }
 
   /**
-   * 拉取全局 skill。force=true 跳过 globalLoaded 守卫强制重拉（失效信号触发）。
-   * 失败时不置 globalLoaded=true（修复原永久失败 bug），保留旧缓存值允许下次重试。
-   * W2：force 并发合并——多个 force 调用等待同一 in-flight 时，只有第一个执行新 RPC。
+   * 发起或复用全局 skill 拉取（固定 key 单键退化形态）。失败时不置 globalLoaded=true
+   * （修复原永久失败 bug），保留旧缓存值允许下次重试；promise 永不 reject（吞错返回
+   * 旧缓存），并发复用者共享同一次 RPC。
    */
-  async function loadGlobal(force = false): Promise<void> {
-    if (globalLoaded && !force) {
-      // globalSkills 已是模块级，无需重新赋值
-      return
-    }
-    if (globalInFlight) {
-      if (!force) {
-        await globalInFlight
-        // globalSkills 已是模块级，in-flight 完成后已更新
-        return
-      }
-      // force=true：标记待重拉，等待当前 in-flight 完成后只重拉一次（合并多次并发 force）
-      pendingForceReload = true
-      await globalInFlight
-      // await 后重新检查：多个 force 可能都在等同一个 in-flight，已被另一个 force 接管则直接 return
-      if (!pendingForceReload) return
-      pendingForceReload = false
-      // 继续往下执行新 RPC
-    }
-    globalInFlight = (async () => {
+  function runGlobalSkillsFetch(): Promise<SkillInfo[]> {
+    return globalSkillsFetchDedup.run(GLOBAL_SKILLS_FETCH_KEY, async () => {
       try {
         const skills = await configApi.getGlobalSkills()
         globalSkillsCache = skills
@@ -202,11 +190,35 @@ export function useGlobalSkills() {
         console.warn('[useGlobalSkills] getGlobalSkills failed, will retry on next trigger:', e)
         globalSkills.value = globalSkillsCache ?? []
         return globalSkillsCache ?? []
-      } finally {
-        globalInFlight = null
       }
-    })()
-    await globalInFlight
+    }).promise
+  }
+
+  /**
+   * 拉取全局 skill。force=true 跳过 globalLoaded 守卫强制重拉（失效信号触发）。
+   * W2：force 并发合并语义（pendingForceReload 标志）留调用方——多个 force 调用等待
+   * 同一 in-flight 时，只有第一个执行新 RPC。
+   */
+  async function loadGlobal(force = false): Promise<void> {
+    if (globalLoaded && !force) {
+      // globalSkills 已是模块级，无需重新赋值
+      return
+    }
+    if (globalSkillsFetchDedup.has(GLOBAL_SKILLS_FETCH_KEY)) {
+      if (!force) {
+        await runGlobalSkillsFetch()
+        // globalSkills 已是模块级，in-flight 完成后已更新
+        return
+      }
+      // force=true：标记待重拉，等待当前 in-flight 完成后只重拉一次（合并多次并发 force）
+      pendingForceReload = true
+      await runGlobalSkillsFetch()
+      // await 后重新检查：多个 force 可能都在等同一个 in-flight，已被另一个 force 接管则直接 return
+      if (!pendingForceReload) return
+      pendingForceReload = false
+      // 继续往下执行新 RPC（factory settle 即清先于本 await 恢复，此刻表已空）
+    }
+    await runGlobalSkillsFetch()
   }
 
   // S3：仅在未加载时触发首次拉取（意图明确，重挂时不发起多余异步调用）

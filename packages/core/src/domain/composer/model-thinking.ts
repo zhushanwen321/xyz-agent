@@ -2,10 +2,13 @@
  * Composer 工具条的模型 + 思考等级状态管理。
  *
  * 从 Composer.vue 拆出（script setup 行数合规）。职责：
- * - currentModelId：当前选中模型（[D3] session 已建读自身真值，空值→占位；landing 态读兜底链 currentModel → lastUsedModel → 全局默认）
+ * - currentModelId：当前选中模型（[D3] session 已建读自身真值，空值→占位；landing 态读
+ *   resolveLaunchConfig 全序解析 currentModel(explicit) → preset.modelOverride →
+ *   lastUsedModel（D4 校验）→ 全局默认）
  * - currentThinkingLevel：当前思考等级（[D3] session 已建读自身真值，空值→占位；landing 态用 localThinkingLevel）
  * - currentThinkingLevelMap：当前模型的思考档位映射 + 切模型自动重置（委托 useThinkingLevelSync）
- * - onModelSelect / onThinkingSelect：切换处理，session 已建走 RPC，landing 态延迟到首发提交后 apply
+ * - onModelSelect / onThinkingSelect：切换处理，session 已建走 RPC，landing 态记 pending /
+ *   authored 值，首发提交时经 resolve 终值随 create 快照透传（D5，无 post-create apply）
  * - Staging Mode（ADR-0056）：enter/exit 快照隔离 + getStagingConfig 导出暂存配置
  *
  * per-session 隔离：session 已建态按 sessionId 查真值（经 deps.getSessionState，非读全局 active），
@@ -13,7 +16,8 @@
  * （SessionSummary.modelId/thinkingLevel + applySnapshot(id,...)），此处只接对数据源。
  *
  * landing 态（sessionId=null）session 尚未 create，无法调 model.switch / setThinkingLevel RPC。
- * 选定值记入 pendingModel + localThinkingLevel，submitFirstMessage create session 后 apply。
+ * 选定值记入 pendingModel + localThinkingLevel，首发提交时经 resolveLaunchConfig 终值随
+ * create payload 快照透传（D5，无 post-create apply 通道）。
  *
  * Staging Mode（ADR-0056）：composer 进入 fork-ask/handoff-ask 暂存态时，模型/thinking chip
  * 切换只写暂存快照（不影响当前源 session）。退出暂存态时清空快照，chip 恢复读常规态真值。
@@ -28,24 +32,34 @@
  * - import 路径 `@/composables/panel/useThinkingLevelSync` → core 本域 `./thinking-level-sync`（batch2 已迁入）。
  * 函数签名 / 逻辑 byte-level 保持。
  *
- * [u3 记忆恢复]（设计 model-thinking-level-memory.md D2/D3，记忆表 = ./model-thinking-memory）：
- * - armed 意图持有与设立：onModelSelect 三分支各设 {modelId, at, callId}；已建态走 try/catch——
- *   失败清/成功清均按 callId 归属校验（规则 4/5）；换绑 watch 清（规则 6，注册先于 sync watch）
+ * [u3 记忆恢复 → U2a authored-only 收窄]（设计 model-thinking-level-memory.md + 其 U2a 回写，
+ * 记忆表 = ./model-thinking-memory）：
+ * - armed 意图持有与设立：onModelSelect staging/已建分支设 {modelId, at, callId}（landing 分支
+ *   不设——U2a 删除，landing 记忆档经 resolveLaunchConfig 解析链生效，armed 恢复通道在 landing
+ *   结构性不存在，设计 state-truth-sync-architecture D5）；已建态走 try/catch——失败清/成功清
+ *   均按 callId 归属校验（规则 4/5）；换绑 watch 清（规则 6，注册先于 sync watch）
  * - in-flight 按 callId 引用计数：规则 1 过期判定的豁免数据源（E10），finally 撤销晚于 flush
- * - 记录 watch（D2 双条件门禁）：已建态生效档位 → 反查 UI key → 可用性校验 → record 写穿
- * - landing memory-aware：localAuthored + 跟随 watch（immediate + 变化触发，双路径）
+ * - [U2a/D2 authored-only] 记录点收窄为 onThinkingSelect（唯一）：显式选档时刻入表（三分支统一，
+ *   记录不问生效）；「生效即记录」watch 及纪元/第三形态守卫整体废除（设计 D2/D9——非 authored
+ *   值结构性不到达记录路径，防污染 by construction）
+ * - [U2a/D1] landing 显示改线：chip 读 resolveLaunchConfig 输出（单一解析层，显示 ≡ 生效 by
+ *   construction）；landing auto 值机制（follow watch + localAuthored）删除，localThinkingLevel
+ *   只存 authored 值（唯一写点 = routeThinkingLevel landing 支；例外 = sync 分支 3 安全网，
+ *   D10-E10 声明保留）
+ * - [U4r2] chip 侧 resolve 输入补 pendingPreset 通道（deps 新增可选 getter，壳层从 flow
+ *   pendingPreset 只读视图接线）——D1「pending 三兄弟」在显示侧补齐，显式 preset 选择的
+ *   捆绑字段进入 chip 显示（等价破口修复，守卫见 launch-config-equivalence.test.ts 全矩阵）
  * - 对外 API 不变（u4 壳层解构面零变化）；记忆模块为 core 域内单例，直接 import（非 deps 注入）
  */
-import { computed, onScopeDispose, ref, watch, type ComputedRef, type Ref } from 'vue'
-import type { ProviderId } from '@xyz-agent/shared'
+import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
+import type { PiLaunchPreset, ProviderId, ProviderInfo } from '@xyz-agent/shared'
 import { useThinkingLevelSync } from './thinking-level-sync'
 import {
   normalizeSupportedLevels,
-  highestAvailableLevel,
   resolveThinkingKey,
-  resolveThinkingValue,
 } from './thinking-levels'
-import { loadOnce, lookup, onLoaded, record } from './model-thinking-memory'
+import { createLaunchConfigView } from '../new-task-search/launch-config'
+import { loadOnce, lookup, record } from './model-thinking-memory'
 import {
   loadOnce as loadLastUsedOnce,
   lookup as lookupLastUsed,
@@ -60,6 +74,15 @@ export interface ModelThinkingDeps {
   defaultModel: ComputedRef<string>
   /** landing 态 flow 选定模型（壳层从 useNewTaskFlow().currentModel 取） */
   currentModel: ComputedRef<string | null>
+  /**
+   * [U4r2] landing 态 flow 显式选定 preset id（壳层从 useNewTaskFlow().pendingPreset
+   * 只读视图取——与 currentModel 同族的 flow pending 状态读通道，非 launchData store 数据）。
+   * launchConfigView 仅 landing 态消费（已建态/staging 显示不感知）；未注入时 chip 侧
+   * resolve 输入缺 pendingPreset——显式 preset 选择不进显示链，chip 按「默认 preset」
+   * 解析而 submit 按显式 preset 解析（显示 ≠ 生效，U4 round 1 发现的等价破口形态）。
+   * getter 闭包内读响应式源（computed 视图），数据变化显示自动重算。
+   */
+  pendingPreset?: () => string | null | undefined
   /** landing 态记 pendingModel（壳层从 useNewTaskFlow().setPendingModel 取） */
   setPendingModel: (model: string) => void
   /** 已建态切模型 RPC + 乐观更新编排（壳层从 useModel().switchModel 取） */
@@ -74,6 +97,23 @@ export interface ModelThinkingDeps {
    * 为 ['off']；undefined = 下发链路未接通（归一为默认五档）。
    */
   getSupportedLevels: (modelId: string) => string[] | undefined
+  /**
+   * [U2a] landing 态生效配置解析数据注入（消费 resolveLaunchConfig，设计
+   * state-truth-sync-architecture §3.3 D1 单一解析层）：landing chip 显示与 submit
+   * 侧（U2b 改线）消费同一 resolve 输出，「显示 ≡ 生效」由构造成立。getter 闭包内
+   * 读壳层响应式 store（preset store / settings store），createLaunchConfigView 据此
+   * 建立依赖——数据晚到显示自动重算（P5①）。core 零 store 依赖（同本接口其余字段先例）。
+   * 可选：未注入时解析退化为 explicit > defaultModel（preset 档不可达；lastUsedModel 档
+   * 因 D4 校验无能力表而跳过）——完整解析行为需壳层接线 launchData。
+   */
+  launchData?: {
+    /** preset 列表（renderer preset store） */
+    presets?: () => readonly PiLaunchPreset[] | undefined
+    /** 全局默认 preset id（PiPresetsFile.defaultPresetId，空 = 未设 → builtin:full） */
+    defaultPresetId?: () => string | null | undefined
+    /** providers 能力表（settings store；D4 lastUsedModel 校验 + 记忆档 map 派生） */
+    providers?: () => readonly ProviderInfo[] | undefined
+  }
 }
 
 export function useComposerModelThinking(
@@ -99,17 +139,21 @@ export function useComposerModelThinking(
     getSessionState,
     defaultModel,
     currentModel,
+    pendingPreset: getPendingPreset,
     setPendingModel,
     switchModel,
     setThinkingLevel: applyThinkingLevel,
     getThinkingLevelMap,
     getSupportedLevels,
+    launchData,
   } = deps
 
   /**
-   * landing 态本地思考等级（session 尚未 create，无 session 真值）。
-   * 切模型时由 useThinkingLevelSync 自动设为新模型最高可用档（value）；
-   * submitFirstMessage create session 后 apply（setThinkingLevel）。
+   * landing 态本地 authored 思考等级（session 尚未 create，无 session 真值）。
+   * authored-only：唯一写点 = routeThinkingLevel landing 支（用户显式选档；唯一例外 =
+   * sync 分支 3 可用性安全网，D10-E10 声明保留）——切模型不自动写最高可用档，landing
+   * 显示初值由 resolveLaunchConfig 解析链给出（U2a）。首发提交时作 explicit 输入进
+   * resolve，终值随 create payload 快照透传（D5，无 post-create setThinkingLevel）。
    */
   const localThinkingLevel = ref<string | undefined>(undefined)
 
@@ -146,14 +190,6 @@ export function useComposerModelThinking(
   const inFlightCallIds = new Set<number>()
 
   /**
-   * [u3·D2] landing 档位 authored 标志：用户显式选档（onThinkingSelect）置位后，
-   * landing 跟随 watch 永久失效——用户选过的值不该被记忆/默认档改写。
-   * sync onReset 的自动对齐走内部路由（routeThinkingLevel）不置位——自动对齐值
-   * 不是用户 authored（D2 拆分入口的原因，见 routeThinkingLevel 注释）。
-   */
-  const localAuthored = ref(false)
-
-  /**
    * [u3·D3 规则 6「换绑清」] panel 换绑 session 瞬间清 armed——无论 callId 归属：
    * 切模型意图绑定发起时的 session，换绑即作废全部未消费意图。
    * 必须注册在 useThinkingLevelSync 的 sync watch 之前：同一 flush 内 watch job 按
@@ -181,32 +217,62 @@ export function useComposerModelThinking(
     sessionId.value ? getSessionState(sessionId.value) ?? null : null,
   )
 
+  // ── [U2a/D1] landing 态生效配置解析视图（单一解析层）───────────────────
+  /**
+   * landing chip 显示消费 resolveLaunchConfig 输出（设计 state-truth-sync §3.3 D1）：
+   * 旧显示链（currentModel > lastUsedModel > defaultModel）与生效链独立解析必然发散
+   * （§2.3-①③），改线后显示与 submit（U2b 透传）消费同一输出，「显示 ≡ 生效」由构造
+   * 成立。已建态/staging 显示不消费本视图（读 session 真值 / 暂存快照）。
+   *
+   * 输入经 getter 闭包读响应式源：launchData getters 内读壳层 store；lookupLastUsed /
+   * lookup 是模块级 reactive 源——KV 冷启动晚到时视图自动重算（P5①），无需补写回调。
+   * pendingThinkingLevel = localThinkingLevel（U2a 后唯一写点 = routeThinkingLevel
+   * landing 支，只含 authored 值——D1 authored 守卫的结构前提；例外 = sync 分支 3
+   * 安全网经同一通路写入，D10-E10 声明保留）。
+   * pendingPreset = deps 显式选定 preset（U4r2 通道，D1 pending 三兄弟至此齐备）——
+   * 仅 landing 态消费（已建态/staging 分支显示不感知，与 pendingThinkingLevel 同款门控）。
+   */
+  const launchConfigView = createLaunchConfigView(() => ({
+    pendingModel: currentModel.value,
+    pendingThinkingLevel: sessionId.value === null ? localThinkingLevel.value : null,
+    pendingPreset: sessionId.value === null ? getPendingPreset?.() ?? null : null,
+    lastUsedModel: lookupLastUsed(),
+    getRememberedThinkingLevel: lookup,
+    presets: launchData?.presets?.(),
+    defaultPresetId: launchData?.defaultPresetId?.(),
+    providers: launchData?.providers?.(),
+    defaultModel: defaultModel.value,
+    getSupportedLevels,
+  }))
+
   /**
    * 常规态思考等级（不受 staging 影响，供 enterStagingMode 快照读取）。
    * [D3 显示分流] 已建 session 空值 → 返回 undefined 作为占位信号（不回落 landing 残留）；
-   * landing 态 → localThinkingLevel。
+   * landing 态 → resolve 输出（explicit authored > preset > memory > 最高可用档，
+   * 解析链终点恒有值——authored 缺位时 localThinkingLevel 为 undefined 不参与）。
    */
   const regularThinkingLevel = computed(() => {
     if (sessionId.value !== null) {
       // 已建态：读 session 真值；空值 → undefined 占位，不回落 landing 残留
       return sessionState.value?.thinkingLevel
     }
-    // landing 态：localThinkingLevel
-    return localThinkingLevel.value
+    // landing 态：resolve 输出（|| undefined 防御空串归一为占位信号）
+    return launchConfigView.value.thinkingLevel || undefined
   })
 
   /**
    * 常规态模型 id（不受 staging 影响，供 enterStagingMode 快照读取）。
    * [D3 显示分流] 已建 session 空值 → 返回 '' 占位（不回落 landing 残留 / 全局默认）；
-   * landing 态 → 兜底链 currentModel || lastUsedModel || defaultModel。
+   * landing 态 → resolve 输出（explicit > preset.modelOverride > lastUsedModel(D4 校验)
+   * > defaultModel——与 submit 侧同一解析，不再单独兜底）。
    */
   const regularModelId = computed(() => {
     if (sessionId.value !== null) {
       // 已建态：读 session 真值；空串 → '' 占位，不兜底到其他模型
       return sessionState.value?.modelId ?? ''
     }
-    // landing 态：兜底链 currentModel || lastUsedModel || defaultModel
-    return currentModel.value || lookupLastUsed() || defaultModel.value || ''
+    // landing 态：resolve 输出（单一解析层——任何一侢单独兜底都是发散源，设计 D1）
+    return launchConfigView.value.model
   })
 
   /** 当前思考等级：staging 活跃时读快照，否则读常规态真值 */
@@ -218,7 +284,8 @@ export function useComposerModelThinking(
 
   /**
    * 当前选中模型 id（"provider/modelId" 复合串）。
-   * staging 活跃时读暂存快照，否则读常规态真值（session > landing 兜底链 currentModel > lastUsedModel > 全局默认）。
+   * staging 活跃时读暂存快照，否则读常规态真值（session 真值 > landing resolve 全序解析：
+   * currentModel(explicit) → preset.modelOverride → lastUsedModel（D4 校验）→ 全局默认）。
    */
   const currentModelId = computed(
     () => stagingModel.value !== null
@@ -230,8 +297,9 @@ export function useComposerModelThinking(
   const currentThinkingLevelMap = useThinkingLevelSync(
     currentModelId,
     currentThinkingLevel,
-    // [u3·D2] 自动对齐走内部路由（routeThinkingLevel）而非用户入口 onThinkingSelect——
-    // 经用户入口会置位 localAuthored，landing 跟随被 auto 值冻结（D2 拆分入口的原因）
+    // [U2a/D2 authored-only] 自动对齐走内部路由（routeThinkingLevel）而非用户入口
+    // onThinkingSelect——用户入口带记忆记录（唯一记录点），自动对齐值非用户 authored、
+    // 不得入表（「生效即记录」watch 已删除，非 authored 值必须结构性绕开记录路径）
     (level) => { void routeThinkingLevel(level) },
     {
       getThinkingLevelMap,
@@ -247,114 +315,29 @@ export function useComposerModelThinking(
   /** 当前模型档位可用集（供 popover 判定可用档，U6 切 supportedLevels） */
   const currentSupportedLevels = computed(() => getSupportedLevels(currentModelId.value))
 
-  // ── [u3·D2] landing memory-aware：跟随 watch + 预载触发 + E7② 补写 ──────────
+  // ── [U2a] KV 惰性预载（resolve 输入源）────────────────────────────────
   /**
-   * landing 未 authored 的 local 档位跟随模型重设：可用(lookup(当前模型)) ?? 最高可用档
-   * （value 形态，localThinkingLevel 存 value——§2.2 关键事实①）。
-   * 为什么需要：[U5/D5] 门禁后 landing 无值初值唯一来源就是本 watch（sync watch 的「无档位」
-   * 分支 2 被 armed 快照恒 null 恒拦截；历史上该分支自动设最高可用档，该 auto 值经首发
-   * 透传（send → flow apply）会以「用户从未选择」的身份进入已建态记录 watch——纯态轴
-   * 门禁挡不住它，D2 被否③：判别轴错位）。跟随重设让 auto 值本身 memory-aware，污染在
-   * 源头消灭；顺带让新任务默认档贴合用户习惯（G1 延伸）。
-   * 为什么记忆要过可用性校验（一致性审查 U-fix-2 同步，D2 公式）：能力注册表变化致记忆键
-   * 失效时（如 max 档被下线），不过校验会让 landing 短暂显示不可用档——E3/D5 的可用性
-   * 回落防线延伸到跟随路径，失效即回落最高可用档。
+   * 记忆表与 lastUsedModel 是 launchConfigView 的输入源（memory / lastUsed 档）。
+   * fire-and-forget 触发（幂等）；加载完成后 lookup / lookupLastUsed 的 reactive 源
+   * 更新驱动视图自动重算（P5①）——旧「加载完成回调补一次跟随重设」已随 follow watch
+   * 整体删除（landing auto 值机制废除，未 authored 的显示值由 resolve 解析而非写入
+   * localThinkingLevel，无补写需求）。
    */
-  function followRememberedOrDefault(): void {
-    if (sessionId.value || localAuthored.value) return
-    const supported = getSupportedLevels(currentModelId.value)
-    const remembered = lookup(currentModelId.value)
-    // 可用(lookup) ?? 最高档：命中且可用才用记忆键，未命中/失效均回落最高可用档
-    const key =
-      remembered && normalizeSupportedLevels(supported).includes(remembered)
-        ? remembered
-        : highestAvailableLevel(supported)
-    localThinkingLevel.value = resolveThinkingValue(key, getThinkingLevelMap(currentModelId.value))
-  }
-
-  /**
-   * 跟随 watch：{ immediate: true } 且模型变化触发，双路径缺一即间歇性缺陷（D2 被否⑤教训）——
-   * immediate 覆盖 defaultModel 早到（挂载时模型已就绪且后续不变，非 immediate 永不触发，
-   * auto 值透传覆写 memory）；变化触发覆盖晚到（'' → 真实模型）。
-   * 仅 landing 态生效：已建 session 初值保持现状（最高档），记忆表绝不主动触碰已建 session（G3）。
-   */
-  watch(currentModelId, followRememberedOrDefault, { immediate: true })
-
-  // [u3·E7②] KV 惰性预载 fire-and-forget 触发（首个消费方组装点）。加载完成前 lookup
-  // 恒 undefined，跟随/恢复自然回落最高档/现有规则（E7①）；加载完成回调补一次跟随重设，
-  // 消灭「landing 在毫秒级窗口内不碰档位直接发送」才会踩中的 auto 值覆写窗口。
   loadOnce()
-  // [D4] lastUsedModel KV 预载（landing 兜底链消费点）
   loadLastUsedOnce()
-  let disposed = false
-  onLoaded(() => {
-    // split panel 实例可能在预载完成前被销毁——死实例的 localThinkingLevel 不再写
-    if (!disposed) followRememberedOrDefault()
-  })
-  onScopeDispose(() => {
-    disposed = true
-  })
-
-  /**
-   * [u3·D2] 记录 watch：把「已建 session 生效档位」写入记忆表。
-   * 条件 b（来源语义）：值最终生效于已建 session 即记录，不区分是否用户手动——含手动选档、
-   * 切模型自动对齐、session 加载既有状态（immediate 覆盖最后一种，mount 即记录载入值）。
-   * 条件 a（态轴）：landing 悬空值（sessionId 空）与 staging 试选值（stagingModel 非空——
-   * fork/handoff 暂存取消时不该入表）不入表；其生效时点（新 session 建立）必进已建态由门禁补上。
-   *
-   * [Gate B 跨写污染修复] 观察源含 sessionId（第 0 位），用于识别「跨纪元错配 flush」：
-   * 切模型的回包链是两次独立 store 写——switchModel 回包 applySnapshot({modelId}) 先落，
-   * consume 恢复的 setThinkingLevel 回包 applySnapshot({thinkingLevel}) 后落，两次写之间
-   * 夹着一个 watch flush。该 flush 上 (modelId, level) 是「模型已变、档位尚未对齐」的
-   * 跨纪元快照（切走 = 新模型×旧档位；切回 = 旧模型×新纪元档位），把后者反查入表会把
-   * 旧模型槽位写成新模型的记忆档（mem[flash] ← mem[glm-5.3] 的 max，KV 写穿持久化，
-   * 即 V4 Gate B 实测污染）。纪元一致的真值必然出现在后续「level 变化」的 flush
-   * （恢复/手选/对齐回包）上，届时照常入表——「生效即记录」语义不变（D6），拒收的只是
-   * level 从未生效于该 modelId 的时序中间态。判据为纯时序纪元一致性，非用户意图判别
-   * （D6 被否②的轴未触碰）。换绑（prev sid ≠ sid）不跳过——新 session 的既有真值属新纪元，
-   * 条件 b 记录保持。
-   *
-   * [第三形态守卫（V4 第三轮追击）] 切模型链还有第二个瞬态方向「档位变、模型未变」：
-   * pi setModel 内部为新模型归一档位（_getThinkingLevelForModelSwitch：pi 侧 per-model
-   * 记忆档 > 全局默认 > 保持）并 emit thinking_level_changed，runtime 转为独立帧
-   * session.thinkingLevelSet{level}（不经 300ms 防抖，早于 model.switched 回包与原子
-   * state_changed 到达），renderer useChat handler 只写 thinkingLevel 单字段——flush 呈
-   * (旧模型, 新档位)，纪元判据（只拦「模型变、档位不变」镜像方向）不命中，pi 归一值被
-   * 反查写进旧模型槽位（V4 第三轮实测 mem[flash] ← max，32ms 内落定）。守卫：armed 在途
-   * 而 flush 的 modelId ≠ armed 目标 → 本 flush 的 level 变化属切换链、从未生效于该
-   * modelId，不入表；modelId 落到目标后的 flush 照常按既有判据入表。时序依据：本 flush
-   * 只 level 变化时 sync watch（观察源 map/supported 均随 modelId 派生）不触发，armed
-   * 不会被先消费；armed 已被消费的 flush 其 modelId 恒等于目标，守卫自然不再拦截。
-   * 代价（启发式边界，同 D5 门禁声明）：armed 在途窗口内对旧模型的手选档不入表——
-   * 窗口毫秒级且真值必现于后续 flush，可接受。
-   */
-  watch(
-    [sessionId, currentModelId, currentThinkingLevel],
-    ([sid, modelId, level], prev) => {
-      if (!sid || stagingModel.value !== null) return
-      if (!level) return
-      // 同 session 内模型已变而档位未变 → level 是旧模型纪元遗留，本 flush 不入表
-      if (prev && prev[0] === sid && prev[1] !== modelId && prev[2] === level) return
-      // 第三形态（档位先变、模型未变）：armed 在途且 modelId ≠ 目标 → level 变化属切换链
-      //（pi 归一值经独立帧先落），从未生效于该 modelId，不入表
-      if (armed.value && armed.value.modelId !== modelId) return
-      // 记录的是 UI key（D1：跨模型恢复的语义是档位名而非实现值）——value 经当前模型 map 反查
-      const uiKey = resolveThinkingKey(level, getThinkingLevelMap(modelId))
-      // 可用性校验（E5 防线）：体系外脏值（transient 窗口值/异常快照）不入表
-      if (!normalizeSupportedLevels(getSupportedLevels(modelId)).includes(uiKey)) return
-      record(modelId, uiKey)
-    },
-    { immediate: true },
-  )
 
   /**
    * 模型切换：staging 活跃时只写快照（不调 RPC，不改源 session）。
    * session 已建走 deps 注入的编排（RPC + 乐观更新）；
-   * landing 态（sid=null）session 尚未 create，记 pendingModel 供首发提交后 apply。
+   * landing 态（sid=null）session 尚未 create，记 pendingModel 供首发提交时经 resolve
+   * 终值随 create 透传（D5）。
    *
-   * [u3·D3] 三分支各设 armed 意图（{modelId, at, callId}）：恢复只挂在显式切模型上，
-   * 消费点在 sync watch 回调顶部（u2 规则 1/2/3）；本函数只负责设立与生命周期防线
-   * （规则 4 失败清 / 规则 5 成功清 / 规则 6 换绑清见上方 watch）。
+   * [u3·D3] staging / 已建两分支各设 armed 意图（{modelId, at, callId}）：恢复只挂在显式
+   * 切模型上，消费点在 sync watch 回调顶部（u2 规则 1/2/3）；本函数只负责设立与生命周期
+   * 防线（规则 4 失败清 / 规则 5 成功清 / 规则 6 换绑清见上方 watch）。
+   * [U2a] landing 分支不设 armed（旧 landing armed 设立已删）：landing 的记忆档经
+   * resolveLaunchConfig 解析链在显示与创建两侧生效（D5），armed 恢复通道在 landing
+   * 结构性不存在——显式选模型后显示即 resolve 的 explicit 档，无需暂挂恢复意图。
    */
   async function onModelSelect(payload: { modelId: string; provider: ProviderId }): Promise<void> {
     const callId = ++armedCallIdSeq
@@ -373,22 +356,11 @@ export function useComposerModelThinking(
       }
       return
     }
-    // landing 态延迟 create：记 pendingModel，submitFirstMessage create session 后 apply
+    // landing 态延迟 create：记 pendingModel，首发提交时经 resolve 终值随 create 透传（D5）
     if (!sessionId.value) {
-      // [R2-fix-1] re-select 判定读必须先于 setPendingModel 写：生产接线
-      // （composer-shell → flow.setPendingModel）是同步 ref 写，pendingModel →
-      // currentModel → currentModelId 经同步 computed 传播——写后读恒「已到达目标」，
-      // armed 将从不设立（记忆恢复整体失效）。镜像 staging 分支的写前判定。
-      const reselect = targetModelId === currentModelId.value
       setPendingModel(targetModelId)
       // [D4] lastUsedModel 写入（仅显式选模型，staging 试选不写——入口已在上方 staging return）
       recordLastUsed(targetModelId)
-      // re-select 同模型不设 armed（理由同 staging 分支）——无反应性变化 watch 必不触发，
-      // 悬留 token 被 5s 内无关刷新经规则 2 消费会把记忆值写回 local（恢复通路不检查
-      // localAuthored，会覆写用户 authored 值）= D3 规则 5 要消灭的「chip 突跳伪恢复」形态
-      if (!reselect) {
-        armed.value = { modelId: targetModelId, at: Date.now(), callId }
-      }
       return
     }
     // 已建态：RPC + 乐观更新（编排逻辑归壳层 useModel，ADR-0028）
@@ -419,19 +391,50 @@ export function useComposerModelThinking(
   }
 
   /**
-   * 思考等级切换（用户显式入口）：置 localAuthored——用户选过之后 landing 跟随永久失效
-   * （D2），随后与自动对齐同构路由。
+   * [U2a/D2 authored-only] 记忆记录点（唯一）：用户显式选档时刻入表，不问生效。
+   * 归属模型 = 选档动作的上下文模型 currentModelId（三分支自然投影：staging = 暂存
+   * 快照模型 / landing = resolve 当时选中模型 / 已建 = session 真值模型——选档动作
+   * 的上下文模型即归属模型，三分支均是用户显式选择）。
+   * 带 UI key 转换（u3 D1：跨模型恢复的语义是档位名）+ 可用性校验（E5 防线，平移自
+   * 被删「生效即记录」watch 的既有校验——体系外脏值不入表）。
+   *
+   * 刻意反转声明（设计 state-truth-sync D2 + R4 审查确认）：staging 试选后取消（未
+   * commit）/ landing 选后未发送同样留痕——记录发生在选择时刻，「用户显式选过的档」
+   * 语义一致，双向可用性校验兜底（恢复时仍校验目标模型可用性），良性自愈。这是对旧
+   * 代码注释「暂存取消时不该入表」排除语义的刻意反转。
+   *
+   * 「生效即记录」watch 已随本机制整体废除：非 authored 值（preset 档 / pi 归一档 /
+   * 钳制值 / session 加载值 / 切模型自动对齐值）结构性不到达记录路径，防污染 by
+   * construction——纪元守卫 / 第三形态守卫失去存在理由一并删除（设计 D9 净减法）。
+   */
+  function recordAuthoredThinking(level: string): void {
+    const modelId = currentModelId.value
+    // 模型未就绪（landing 全链空防御形态 / 已建态空串占位）无法归属，跳过
+    if (!modelId) return
+    // 记录 UI key（D1）——value 经当前模型 map 反查
+    const uiKey = resolveThinkingKey(level, getThinkingLevelMap(modelId))
+    // 可用性校验（E5 防线）：体系外脏值不入表
+    if (!normalizeSupportedLevels(getSupportedLevels(modelId)).includes(uiKey)) return
+    record(modelId, uiKey)
+  }
+
+  /**
+   * 思考等级切换（用户显式入口 = authored 唯一记录点）。
+   * [U2a/D2] 三分支统一在此记录（记录不问生效——staging 取消 / landing 未发送同样
+   * 留痕，见 recordAuthoredThinking 注释）；随后与自动对齐同构路由。
    */
   async function onThinkingSelect(level: string): Promise<void> {
-    localAuthored.value = true
+    recordAuthoredThinking(level)
     await routeThinkingLevel(level)
   }
 
   /**
    * 思考等级路由（三分支，原 onThinkingSelect 主体）。
-   * [u3·D2] sync onReset 的自动对齐走本函数而非用户入口：自动对齐值不是用户 authored，
-   * 不得置位 localAuthored 冻结 landing 跟随（否则 landing auto 初值经 sync 设置后跟随
-   * 即失效，memory-aware 初值落空——D2 拆分入口的原因）。
+   * [U2a/D2] sync onReset 的自动对齐走本函数而非用户入口：用户入口带记忆记录
+   * （authored-only 唯一记录点），自动对齐值非用户 authored、不得入表——「生效即
+   * 记录」watch 删除后记录路径只此一处，入口拆分即防污染的结构保证。
+   * landing 支写 localThinkingLevel 亦在本函数——localThinkingLevel 的唯一写点
+   * （用户 authored 与 sync 分支 3 安全网共用此通路，后者为 D10-E10 声明的唯一例外）。
    */
   async function routeThinkingLevel(level: string): Promise<void> {
     // Staging Mode：只写暂存快照
@@ -439,7 +442,7 @@ export function useComposerModelThinking(
       stagingThinking.value = level
       return
     }
-    // landing 态延迟 create：记本地态，submitFirstMessage create session 后 apply
+    // landing 态延迟 create：记 authored 档，首发提交时作 explicit 输入进 resolve、终值随 create 透传（D5）
     if (!sessionId.value) {
       localThinkingLevel.value = level
       return

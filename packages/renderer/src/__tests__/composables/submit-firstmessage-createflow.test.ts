@@ -1,8 +1,14 @@
 /**
  * TC-5：submitFirstMessage 改调 core createSessionFlow（C-W5-2 / FU-1）集成测试。
  *
- * 三分支断言：null→abort send / 非 null→apply thinkingLevel + send(migratedSegments) /
+ * 三分支断言：null→abort send / 非 null→create 快照化透传 + send(migratedSegments) /
  * retry（currentSession 已绑定）不调 createSessionFlow。
+ *
+ * U2b（D5 契约快照化）：thinkingLevel 经 create 入参 pendingThinkingLevel 一次到位，
+ * 壳层 C-W4-3 setThinkingLevel 补 apply 已删（useModel().setThinkingLevel 恒不调）。
+ * [U2d 后现状] 壳已注入 ports.launchConfig（preset store + settings 单例基座）——本
+ * 测试 mock 面下 preset 列表空 + settings/KV 空，resolve 输入与空基座等价（model 终值
+ * null、presetId null；thinking 落最高可用档 high），故终值断言不变。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/submit-firstmessage-createflow.test.ts
  */
@@ -90,7 +96,7 @@ describe('submitFirstMessage 改调 createSessionFlow（TC-5 / FU-1）', () => {
     expect(setThinkingLevelMock).not.toHaveBeenCalled()
   })
 
-  it('非 null 分支→ apply thinkingLevel + send(migratedSegments)', async () => {
+  it('非 null 分支→ create 快照化透传 resolve 终值 + send(migratedSegments)', async () => {
     const migrated = [{ type: 'text' as const, text: 'hi' }]
     vi.mocked(createSessionFlow).mockResolvedValue({
       session: summary({ id: 'ns' }),
@@ -100,8 +106,16 @@ describe('submitFirstMessage 改调 createSessionFlow（TC-5 / FU-1）', () => {
     await flow.startFlow()
     await flow.submitFirstMessage(textToSegments('hi'), 'high')
     expect(createSessionFlow).toHaveBeenCalledTimes(1)
-    // thinkingLevel apply（C-W4-3 留壳）
-    expect(setThinkingLevelMock).toHaveBeenCalledWith('ns', 'high')
+    // [D5] thinkingLevel 经 create 入参一次到位（explicit authored 'high' → resolve 终值 'high'）；
+    // U2d 已接 ports.launchConfig，本测试 mock 面下基座数据全空（preset 列表空 + settings
+    // 空）→ model 全链空 null、presetId null。
+    // mock 的是 core createSessionFlow(ctx, input) 原函数——终值断言定位第二参 input
+    expect(createSessionFlow).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ pendingThinkingLevel: 'high', pendingModel: null, presetId: null }),
+    )
+    // [D5] C-W4-3 已删：post-create setThinkingLevel 补 apply 恒不调
+    expect(setThinkingLevelMock).not.toHaveBeenCalled()
     // send 用 result.migratedSegments（createSessionFlow 返回的迁移后段）
     expect(sendMock).toHaveBeenCalledTimes(1)
     expect(sendMock).toHaveBeenCalledWith('ns', migrated)

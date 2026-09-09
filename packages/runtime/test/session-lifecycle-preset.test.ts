@@ -164,8 +164,8 @@ describe('session-lifecycle preset integration', () => {
     expect(opts.noContextFiles).toBe(true)
     expect(opts.model).toBe('preset-model')
     expect(opts.extensionPaths).toEqual(['/ext/builtin.js'])
-    // persistPresetBinding 写 sidecar
-    expect(persistPresetBindingFn).toHaveBeenCalledWith('/tmp/pi.jsonl', 'builtin:readonly')
+    // persistPresetBinding 写 sidecar（V9-④ 根修：create 路径携 skipJsonlExistsGuard 放行守卫）
+    expect(persistPresetBindingFn).toHaveBeenCalledWith('/tmp/pi.jsonl', 'builtin:readonly', { skipJsonlExistsGuard: true })
   })
 
   it('tc2: create 无 presetId → fallback 现有逻辑，不调 getLaunchPresetOptions', async () => {
@@ -215,8 +215,8 @@ describe('session-lifecycle preset integration', () => {
     expect(opts.extensionPaths).toEqual(['/default/ext'])
     expect(opts.skillPaths).toEqual(['/default/skill'])
     expect(opts.tools).toBeUndefined()
-    // presetId 传入值仍写 sidecar
-    expect(persistPresetBindingFn).toHaveBeenCalledWith('/tmp/pi.jsonl', 'deleted-preset')
+    // presetId 传入值仍写 sidecar（create 路径放行守卫，同 tc1）
+    expect(persistPresetBindingFn).toHaveBeenCalledWith('/tmp/pi.jsonl', 'deleted-preset', { skipJsonlExistsGuard: true })
   })
 
   // ── restoreSession ──

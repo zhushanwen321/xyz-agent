@@ -4,6 +4,7 @@
 
 - 层性质声明：本文档是**技术方案设计**（下一层产物 = 可实现的接口/数据模型/代码任务），§3 按最严格档写（数据模型 / 错误规格 / 物理数据流 / 运行时断言）。
 - 状态：待对抗式审查。
+- **[已部分废止 2026-09 U2a]**：本设计的 D2「生效即记录」记录 watch（含纪元守卫/第三形态守卫）、landing memory-aware 跟随机制（follow watch + localAuthored 标志）、landing 分支 armed 设立已被 [state-truth-sync-architecture](./state-truth-sync-architecture.md) §3.3 D2/D9（authored-only 记录 + landing auto 值机制删除）**整体废除**——记录点收窄为 onThinkingSelect 唯一显式入口，landing 显示改读 resolveLaunchConfig 输出。废止登记、语义收窄四要素与刻意反转声明见 [§6 U2a 废止登记](#6-u2a-废止登记2026-09)。本文其余内容为历史设计记录（含已删除机制的成因分析，供追溯）。
 
 ---
 
@@ -188,14 +189,18 @@
 - **证据**：key 域恰好就是 `normalizeSupportedLevels` / `highestAvailableLevel` / `isSameThinkingScheme` 的工作域（thinking-levels.ts），可用性校验无需换算；反查/换算函数均已存在且被 popover 使用（ThinkingLevelPopover.vue:96,118）。
 - **效果**：G1 的「回到上次用的档位」在语义上是档位名（max/high），不是实现值。
 
-**D2：记录「用户 authored 的已建态生效档位」+ landing 自动初值 memory-aware（选定）**
+**D2：记录「用户 authored 的已建态生效档位」+ landing 自动初值 memory-aware（选定；[已废止 2026-09 U2a]）**
+
+> **[已废止 2026-09 U2a]** 本决策的两套机制已随 state-truth-sync-architecture D2/D9 整体废除（见 [§6](#6-u2a-废止登记2026-09)）：
+> - 「生效即记录」记录 watch（条件 a/b 双条件门禁 + 纪元守卫 + 第三形态守卫）→ 记录点收窄为 onThinkingSelect 唯一显式入口（authored-only，防污染 by construction，无任何门禁标记）。条件 a 的「staging 试选值不入表」排除语义同时被**刻意反转**（见 §6 反转声明）。
+> - landing 自动初值 memory-aware（follow watch + localAuthored 标志）→ landing 显示改读 resolveLaunchConfig 输出（单一解析层），未 authored 的档位不再写入 localThinkingLevel。本节下文为历史设计记录。
 
 记录门禁 = 两个条件同时满足才写入记忆表：
 
 - **条件 a（态轴）**：已建 session 态且非 staging 快照——`sessionId 非空 && stagingModel === null`。landing 档位是悬空值不入表；staging 快照是「试选值」（用户在 fork/handoff 暂存态操作，取消退出时不该入表），其生效时点（fork/handoff 新 session 建立）必然进入已建态、由门禁通过后补上。
 - **条件 b（来源语义）**：值最终生效于已建 session 即记录，不区分是否用户手动——含用户手动选档、切模型自动对齐、session 加载既有状态。记录时带一行可用性校验（key ∈ 该模型可用集）拦截体系外脏值（见错误规格 E5）。
 
-**landing 自动初值 memory-aware（有意的行为变更）**：landing 挂载时 sync watch「无档位」分支现状自动设最高可用档（thinking-level-sync.ts:85-89），该自动值经首发无条件透传（send.ts:179 透传 `localThinkingLevel` → flow.ts:269,276-277 apply 给新 session）会以「用户从未选择」的身份进入已建态——纯态轴门禁挡不住它（判别轴错位：门禁轴是「态」，污染轴是「值是否用户 authored」）。故 landing 态的自动初值改为 memory-aware：**未 authored 的 local 档位跟随模型变化重设为 `可用(lookup(当前模型)) ?? 最高可用档`**（E3/D5 可用性校验延伸到跟随路径——能力注册表变化致记忆键失效时回落最高档而非显示不可用档；含 defaultModel 晚到的 `'' → 真实模型` 路径——不能依赖 sync `!current` 分支重跑：该分支要求 current 为 undefined，挂载 immediate 触发时已被 `''` 模型消费过一次，defaultModel 到达后 current 已 defined、走「首触发」分支，包装层无介入点）。实现：model-thinking 层设 `localAuthored` 标志（onThinkingSelect 的**用户显式入口**置位；sync onReset 通路指向内部对齐函数、不置位）+ landing 跟随 watch（`sessionId 为空 && !localAuthored` → 重设 local，**`{ immediate: true }` 且模型变化触发**——immediate 覆盖 defaultModel **早到**路径（挂载时模型已就绪且后续不变，非 immediate 则永不触发、auto 值透传覆写 memory），变化触发覆盖**晚到**路径，两路径缺一即间歇性缺陷）。**仅 landing 态生效**——已建但无档位的 session 初值行为保持现状（最高可用档），记忆表绝不主动触碰已建 session（G3）。
+**landing 自动初值 memory-aware（有意的行为变更）**：landing 挂载时 sync watch「无档位」分支现状自动设最高可用档（thinking-level-sync.ts:85-89），该自动值经首发无条件透传（send.ts:179 透传 `localThinkingLevel` → flow.ts:269,276-277 apply 给新 session）会以「用户从未选择」的身份进入已建态——纯态轴门禁挡不住它（判别轴错位：门禁轴是「态」，污染轴是「值是否用户 authored」）。故 landing 态的自动初值改为 memory-aware：**未 authored 的 local 档位跟随模型变化重设为 `可用(lookup(当前模型)) ?? 最高可用档`**（E3/D5 可用性校验延伸到跟随路径——能力注册表变化致记忆键失效时回落最高档而非显示不可用档；含 defaultModel 晚到的 `'' → 真实模型` 路径——不能依赖 sync `!current` 分支重跑：该分支要求 current 为 undefined，挂载 immediate 触发时已被 `''` 模型消费过一次，defaultModel 到达后 current 已 defined、走「首触发」分支，包装层无介入点）。实现：model-thinking 层设 localAuthored 标志（onThinkingSelect 的**用户显式入口**置位；sync onReset 通路指向内部对齐函数、不置位）+ landing 跟随 watch（`sessionId 为空 && !localAuthored` → 重设 local，**`{ immediate: true }` 且模型变化触发**——immediate 覆盖 defaultModel **早到**路径（挂载时模型已就绪且后续不变，非 immediate 则永不触发、auto 值透传覆写 memory），变化触发覆盖**晚到**路径，两路径缺一即间歇性缺陷）。**仅 landing 态生效**——已建但无档位的 session 初值行为保持现状（最高可用档），记忆表绝不主动触碰已建 session（G3）。
 
 - **被否 ①**：只记用户手动选择（初版）——需来源标注，且自动对齐场景「同一路径两次结果不同」，不可预期。
 - **被否 ②**：任何态都记录（初版）——landing 挂载自动值确定性污染（§2.2 事实 ⑤ 放大：重启后默认模型即最后切换的模型；**注：pi 0.84.4 实勘误后该行为仅单次运行内成立，见 §2.2 关键事实⑤勘误**）。
@@ -205,7 +210,10 @@
 - **证据**：sync `!current` 分支要求 current 为 undefined（thinking-level-sync.ts:85）+ 首触发分支（:92-99）、send.ts:179 + flow.ts:269,276-277（landing 透传链）、model-thinking.ts:160-173（staging 不动 sessionId）——污染链条每步有源码依据，非运行时未知行为，故升格为设计期决策而非实施期观察项。
 - **效果**：G1 延伸到新任务默认档位；G3 完整（staging 取消值、已建 session 初值均不被记忆触碰）；「新建任务不碰档位直接发送」默认流程不再污染记忆表。
 
-**D3：恢复只在用户显式切模型时发生——armed 门禁，生命周期六防线（选定）**
+**D3：恢复只在用户显式切模型时发生——armed 门禁，生命周期六防线（选定；landing 分支已随 U2a 废止）**
+
+> **[已修订 2026-09 U2a]** armed 设立收窄为 **staging / 已建两分支**（V8 回归线保留不动）；landing 分支的 armed 设立已删除——landing 的记忆档经 resolveLaunchConfig 解析链在显示与创建两侧生效（state-truth-sync D5），armed 恢复通道在 landing 结构性不存在。下文「三分支各设」为历史设计记录。
+
 - **采用**：`onModelSelect` 三个分支（staging / landing / 已建）各设一次性标志 `armed = { modelId: 目标复合串, at: 时间戳, callId: 本次调用唯一 id }`。**例外（一致性审查 R1 收编，impl-plan 偏差 #11）**：landing / staging 分支 re-select 同模型跳过 armed 设立——两分支无 RPC、无规则 5「成功清」兜底，按字面实现会留下悬留 token（5s 内 providers 刷新经规则 2 匹配分支覆写用户 authored 值），从源头消灭悬留窗口。消费点在 sync watch 回调**顶部**（先于所有既有分支分发，含「无档位」与「首触发」分支），规则（规则 4/5 及 in-flight 均以 callId 归属校验为前提——并发快速连切时后一次调用覆盖 armed，先回包的调用只允许操作**自己设立**的 token，禁止误清后来者的）：
   1. **过期清**：`now - at > 5s` 且 in-flight 计数为零（in-flight 按 callId 引用计数，per-call 置位/撤销——并发下先回包调用不得提前关闭仍在途调用的豁免窗；5s 为兜底保险丝，正常链路由规则 4/5/6 先行清理）→ 清 armed，走既有分支；
   2. **匹配即消费（含幂等跳过）**：`currentModelId === armed.modelId` → 记忆命中且可用，且换算后 value ≠ 当前档位，则 `onReset(记忆值)` 后直接 return（跳过既有分支，防双重 onReset）；value 相同（幂等）或未命中或不可用，则清 armed，继续走既有分支（回落规则，与既有分支的「value 未变不 RPC」行为对齐）；
@@ -354,7 +362,7 @@
 |---|---|---|---|
 | U1 记忆存储模块 | reactive Map + 惰性加载 + record/lookup API + KV 写穿 + E1/E6 防护；KVStorage经 `getPlatform().storage` | 新增 `packages/core/src/domain/composer/model-thinking-memory.ts` | 独立纯模块，可先行单测（KV round-trip / 损坏回退 / 非法值丢弃）；放 composer 域因唯一消费方是 composer 行为，机制上仅依赖 platform/port（core 内合法依赖） |
 | U2 sync 扩展 | `ThinkingLevelSyncDeps` 增 `getRememberedLevel(modelId)`；watch 回调顶部 armed 消费（过期/匹配幂等/保留 + 分支跳过，D3 规则 1-3）+ 记忆查询（D5） | `packages/core/src/domain/composer/thinking-level-sync.ts` | 恢复逻辑的唯一落点（单一写入者）；deps 注入保持 core 零 store 依赖（W3 迁移约束延续） |
-| U3 model-thinking 扩展 | `onModelSelect` 三分支设 armed（含 callId；landing/staging re-select 同模型跳过设立——D3 采用项例外；已建态 RPC 失败清 + 成功清均按 callId 归属校验，规则 4/5；in-flight 按 callId 引用计数，规则 1）；watch `sessionIdRef` 换绑清（规则 6）；landing memory-aware：`localAuthored` 标志（用户显式入口置位，onReset 指向内部对齐函数）+ 跟随 watch（immediate + 变化触发，D2）；记录 watch（D2 双条件门禁 + 可用性校验）；对外暴露不变 | `packages/core/src/domain/composer/model-thinking.ts` | armed 的意图源头与生命周期防线集中在显式切换动作处，与恢复消费点分离；对外 API 零变化，composer-shell 接线面最小 |
+| U3 model-thinking 扩展 | `onModelSelect` 三分支设 armed（含 callId；landing/staging re-select 同模型跳过设立——D3 采用项例外；已建态 RPC 失败清 + 成功清均按 callId 归属校验，规则 4/5；in-flight 按 callId 引用计数，规则 1）；watch `sessionIdRef` 换绑清（规则 6）；landing memory-aware：localAuthored 标志（用户显式入口置位，onReset 指向内部对齐函数）+ 跟随 watch（immediate + 变化触发，D2）；记录 watch（D2 双条件门禁 + 可用性校验）；对外暴露不变 | `packages/core/src/domain/composer/model-thinking.ts` | armed 的意图源头与生命周期防线集中在显式切换动作处，与恢复消费点分离；对外 API 零变化，composer-shell 接线面最小 |
 | U4 壳层接线（已由 U3 域内收编） | 实施演化：sync 四个新 deps 与 loadOnce/onLoaded 触发全部在 U3 的 model-thinking 内部闭合（同域 import u1 模块），`ModelThinkingDeps` 对外签名零变化，composer-shell 零改动——本单元退化为验证性验收（renderer typecheck + 测试回归） | `packages/renderer/src/composables/panel/composer-shell.ts`（零改动） | 壳层是 core deps 的唯一组装点（ADR-0028 分层），接线不外溢壳层是更内聚的演化；实施记录见 impl-plan 偏差 #10 |
 | U5 测试 | U1 模块单测；U2/U3 行为单测（armed 9 断言点序列族含 callId 并发归属、landing memory-aware 跟随三行为 + 污染反例含 defaultModel 早到/晚到双路径 + 幂等往返含非单射边界、记忆命中/回落、三态 onReset 路由、D2 双条件门禁、钳制收敛）——实施期门（§3.3 探针）；框架 vitest、子包目录运行 | `model-thinking.test.ts` 扩展 + 新增 `model-thinking-memory.test.ts` | 现有测试文件就近扩展，覆盖 §3.3 前三条探针断言 |
 
@@ -368,3 +376,42 @@
 
 - session 换绑跨体系时 sync watch 的档位重置为既有行为（§1 Out of scope）；armed 门禁保证本设计的记忆恢复不叠加到该路径，A3 场景同时守护这一点。
 - **退出暂存态（exitStagingMode）**：staging 模型 ≠ 源 session 模型时退出，currentModelId 回切源模型 → sync watch 以「staging 模型的 map」为 oldMap 触发 model-change 分支，可能对源 session 发出多余 onReset RPC（既有潜在行为，非本设计引入）。本设计在该路径不设 armed（退出暂存不是切模型）→ 记忆恢复不叠加；记录 watch 会在回切后记录（源模型, 源档位）——源 session 真值，无污染。实施期若观察到该路径行为异常，归因既有逻辑，勿误判为本设计引入。
+
+---
+
+## §6 U2a 废止登记（2026-09）
+
+**本节为现行权威登记**（source: [state-truth-sync-architecture](./state-truth-sync-architecture.md) §3.3 D1/D2/D5/D9，落地单元 U2a）——本设计（u3）的 D2「生效即记录」机制族被 authored-only 记录整体废除，本节自包含说明废止范围、语义变化与刻意的反转决策；§1-§5 未标注处均为历史设计记录。
+
+### 6.1 废止范围（净减法，设计 D9「删除」类处置）
+
+| 被废除机制 | 原职责 | 废止理由（结构性） |
+|---|---|---|
+| 「生效即记录」记录 watch（观察 `[sessionId, currentModelId, currentThinkingLevel]`） | 已建态生效档位 → 反查 UI key → 入表（条件 b：来源不区分，含自动对齐/加载值） | 记录点收窄为 onThinkingSelect 唯一显式入口后，非 authored 值（preset 档 / pi 归一档 / 钳制值 / session 加载值 / 切模型自动对齐值）**结构性不到达记录路径**——防污染 by construction，无需门禁 |
+| Gate B 纪元守卫（「模型已变而档位未变」跳过） | 拦切模型回包链两次 store 写之间的跨纪元错配 flush | 守卫保护的对象（记录 watch）已不存在，失去存在理由 |
+| 第三形态守卫（armed 在途且 modelId ≠ 目标跳过） | 拦 pi 归一独立帧先落形成的「档位先变、模型未变」错配 | 同上 |
+| landing 跟随 watch（followRememberedOrDefault 函数，immediate + 变化触发）+ 预载完成补写回调 | landing 未 authored 的 local 档位跟随模型重设为记忆档/最高档 | landing 显示改读 resolveLaunchConfig 输出（单一解析层，D1）——未 authored 的显示值由解析链给出，不再写入 localThinkingLevel；auto 值与 resolve 的 memory tier 双源并存必然发散 |
+| localAuthored 冻结标志 | 用户显式选档后冻结跟随 | 跟随已删；authored 语义由「localThinkingLevel 是否有值」结构承载（唯一写点 = onThinkingSelect 路由的 landing 支，例外 = sync 分支 3 安全网，见 D10-E10） |
+| landing 分支 armed 设立 | landing 显式切模型的记忆恢复意图 | landing 记忆档经 resolve 解析链在显示与创建两侧生效（D5），恢复通道结构性不需要 |
+
+保留不动（V8 回归线）：**staging / 已建分支 armed 族全套**（六防线规则 1-6、in-flight 豁免、换绑清 watch）——它们对抗的是 pi 异步事件时序（外部异步真值，D9「保留」类）。
+
+### 6.2 记忆语义收窄四要素（已接受代价，设计 D2 裁决）
+
+记忆语义从「用户实际生效的档」收窄为「**用户显式选过的档**」（记录发生在 onThinkingSelect 选择时刻，不问生效）：
+
+1. **被动加载老 session 不再入表**：挂载/换绑/重访 session 的既有真值不写入记忆（旧条件 b 通道删除——该通道同时是纪元守卫/第三形态守卫存在的唯一理由，一并删除属 G3 净减法）。
+2. **armed 恢复值冻结在最后显式选择**：pi 钳制/归一后的生效值不回写记忆（旧 E8「收敛为钳制值」语义废除）——陈旧档死角：用户长期用钳制后的档但未手动选过时，记忆停留在此前显式值；恢复路径 = 手动再选一次即更新。
+3. **staging 试选未 commit 也入表**：见 6.3 刻意反转声明。
+4. **pi 旁路调档不学习**：本产品 pi 是 runtime 子进程，CLI 旁路近似不可达；旧通道实证污染大于学习——被删的两套守卫存在理由就是拦它。
+
+### 6.3 staging 试选留痕——刻意反转声明（设计 D2 + R4 审查确认）
+
+本设计 D2 条件 a 原文「staging 试选值……fork/handoff 暂存取消时不该入表」的排除语义被**刻意反转**：onThinkingSelect 在 staging 态选档即入表（归属暂存快照模型），取消暂存不撤销记录；landing 选后未发送同样留痕。
+
+理由：与「用户显式选过的档」语义一致（用户确实选过）；双向可用性校验兜底（记录时校验选档时刻模型可用集；恢复消费时校验目标模型可用集，失效回落）——良性自愈。此声明防止验收阶段将试选留痕误报为污染回归（model-thinking.test.ts R2 用例按新语义断言）。
+
+### 6.4 变更历史
+
+- 2026-09-08（U2a，state-truth-sync-architecture 实施计划 Wave 3）：D2「生效即记录」机制族（记录 watch + 纪元守卫 + 第三形态守卫）、landing memory-aware 跟随机制（follow watch + localAuthored + 预载补写）、landing 分支 armed 设立整体废除；记录点收窄为 onThinkingSelect authored-only 唯一入口；landing chip 显示改读 resolveLaunchConfig 输出（D1 单一解析层）；staging 试选留痕刻意反转（6.3）；armed 已建/staging 族与 useThinkingLevelSync 已建态行为保留不动。`localThinkingLevel` 的唯一写点 = routeThinkingLevel 的 landing 支（用户 authored 与 sync 分支 3 安全网共用通路；安全网为 D10-E10 声明保留的唯一理论例外）。
+- 2026-09-08（初版）：本设计 v1 落地（U1-U5），本文其余内容为该时点记录。

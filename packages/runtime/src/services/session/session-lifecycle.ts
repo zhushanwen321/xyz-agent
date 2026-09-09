@@ -28,7 +28,7 @@ import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import type { ILifecycleSessionOps, ISessionRegistry, ISessionRegisterDeps, IManagedSessionRecord } from './session-internal.js'
 import type { IManagedSessionView, ScannedSession } from './types.js'
-import { buildPresetClientOptions } from './launch-params.js'
+import { buildPresetClientOptions, warnLaunchEffectiveMismatch } from './launch-params.js'
 import type { PresetClientOptions } from './launch-params.js'
 import type { PresetResolution } from '../preset-service.js'
 import type { IConfigStore } from '../ports/config.js'
@@ -93,9 +93,13 @@ interface CreateOptions {
   presetId?: string
   /** 归属 project id（D14 语义修正，2026-08-04）：创建时归属当前 activeProject；空 = 默认项目兑底。 */
   projectId?: string
-  /** Landing Model Chip 传入值，覆盖 preset.modelOverride（C-RL-6 优先级）。 */
+  /**
+   * 模型覆盖。D5 契约快照化：landing 新建路径恒传 renderer resolveLaunchConfig 解析
+   * 终值；fork/restore/agent-managed create 入口可缺省（走 `override > preset > 全局默认`
+   * fallback 链，见 resolveCreateLaunch）。覆盖 preset.modelOverride（C-RL-6 优先级）。
+   */
   modelOverride?: string
-  /** Landing Thinking Chip 传入值，覆盖 preset.thinkingLevel（C-RL-6 优先级）。 */
+  /** thinkingLevel 覆盖，语义同 modelOverride（覆盖 preset.thinkingLevel，C-RL-6 优先级）。 */
   thinkingOverride?: string
   /** 发起来源：'user' | 'agent'。agent-managed session 标记。 */
   spawnSource?: 'user' | 'agent'
@@ -134,6 +138,14 @@ function resolveCreateCwd(cwd: string | undefined): string {
     console.warn(`[session-lifecycle] create cwd does not exist: ${requestedCwd}, falling back to home`)
     return homedir()
   })()
+}
+
+/**
+ * 空串/非 string 归一 undefined（D6 源生效值读取用）：restore 播种在源不可知时写 '' 占位，
+ * '' 属 nullish 检查不拦截的 falsy 值——直传 `override ?? preset` 链会以 '' 短路吞掉后续档。
+ */
+function nonEmptyStr(v: string | undefined): string | undefined {
+  return typeof v === 'string' && v !== '' ? v : undefined
 }
 
 /**
@@ -387,8 +399,12 @@ export class SessionLifecycle implements ISessionRegistry {
     })
 
     // 从 pi 获取真实 session ID + U2: 顺带读回生效 model+thinkingLevel（D2 设计）。
-    // （getState / piSessionId 空值门禁 / 失败 safeDestroy 清理细节见 readBackCreateState。）
-    const { piSessionId: id, sessionFilePath, createMetaOverride } = await this.readBackCreateState(client, tempId)
+    // （getState / piSessionId 空值门禁 / 失败 safeDestroy 清理细节见 readBackCreateState；
+    // L2 对账探针以 create 入参 override 为 requested 侧，见 readBackCreateState docstring。）
+    const { piSessionId: id, sessionFilePath, createMetaOverride } = await this.readBackCreateState(client, tempId, {
+      model: options?.modelOverride,
+      thinkingLevel: options?.thinkingOverride,
+    })
 
     // 用 pi 的真实 ID 替换临时 ID
     if (id !== tempId) {
@@ -429,6 +445,13 @@ export class SessionLifecycle implements ISessionRegistry {
    * Preset 解析（设计文档 §5/§8.1）：presetId 存在时委托 PresetService.resolve，
    * 返回 PresetResolution 供 options 映射；undefined（presetService 未注入/preset 被删）
    * 时 fallback 现有 svc.getExtensionPaths/getSkillPaths 逻辑。
+   *
+   * D5 契约快照化：options.modelOverride/thinkingOverride 在 landing 新建路径恒为
+   * renderer resolveLaunchConfig 的解析终值（透传即生效，preset 同名字段档不可达）；
+   * 本函数的 `override > preset > 全局默认` fallback 链保留，服务不经 landing 解析层的
+   * 入口（fork/restore/agent-managed create——session-manager-handler.ts 的 create，
+   * override 可缺省）。分层不变：renderer 管用户可见配置选择（model/thinking/presetId），
+   * runtime 管 preset 内部展开（tools/extensions/skills/noSkills）。
    */
   private async resolveCreateLaunch(
     sessionCwd: string,
@@ -451,17 +474,28 @@ export class SessionLifecycle implements ISessionRegistry {
   }
 
   /**
-   * create 的 get_state 读回段：真实 session ID + session 文件路径 + U2 生效值播种。
+   * create 的 get_state 读回段：真实 session ID + session 文件路径 + U2 生效值播种
+   * + L2 对账探针。
    *
    * U2: 从同一 get_state 读回 pi 生效 model + thinkingLevel，通过 metaOverride 播种。
    * create 路径：pattern 引擎可能静默换模，读回值是真值（而非请求值）。
    * 解析与 restore 播种共用 readEffectiveModelFromState（restore-seeding）。
    *
+   * L2 对账探针（D7/E6）：requested = create 入参 override（有传才比，undefined 跳过
+   * 该字段——agent-managed create 不传 override 即无对账面），与读回生效值不一致时
+   * warn 单行（≤1 行/create，readBackCreateState 每 create 恰一次）——landing create 与
+   * agent-managed create 共用本段，比对逻辑统一无入口区分。不设断言不抛错（pi 钳制/
+   * 静默换模是合法行为，漂移只做可观测）。
+   *
    * 两条失败分支都在本段收口（与提取前同序）：getState 抛错 → safeDestroy(tempId) +
    * 「Failed to get session state from pi」；pi 无 session id → safeDestroy(tempId) +
    * 「pi did not return a session ID」。
    */
-  private async readBackCreateState(client: IPiEngine, tempId: string): Promise<{
+  private async readBackCreateState(
+    client: IPiEngine,
+    tempId: string,
+    requested?: { model?: string; thinkingLevel?: string },
+  ): Promise<{
     piSessionId: string
     sessionFilePath: string | undefined
     createMetaOverride: EffectiveMetaOverride | undefined
@@ -474,6 +508,7 @@ export class SessionLifecycle implements ISessionRegistry {
       piSessionId = (stateData?.sessionId as string) ?? ''
       sessionFilePath = stateData?.sessionFile as string | undefined
       const readback = readEffectiveModelFromState(stateData)
+      warnLaunchEffectiveMismatch(requested ?? {}, readback)
       if (readback.modelId || readback.thinkingLevel) {
         createMetaOverride = {
           modelId: readback.modelId,
@@ -525,9 +560,10 @@ export class SessionLifecycle implements ISessionRegistry {
    * create 的绑定落盘段（refreshAll → hydrate → sidecar persist 家族 → model binding）。
    *
    * 文件操作时序与提取前一致：只写 sidecar（*.preset.json / *.project.json / *.agent.json /
-   * *.model.json），不创建/触碰 pi session 文件本体——sessionFilePath 不存在（pi 首次
-   * flush 前的延迟写入窗口）时各守卫跳过（persistPresetBinding/persistProjectBinding/
-   * persistAgentBinding 内部 existsSync 守卫 + 本段 persistModelBinding 前置 if）。
+   * *.model.json），不创建/触碰 pi session 文件本体。preset/project/agent 三绑定经
+   * skipJsonlExistsGuard 放行 existsSync 守卫（V9-④ 根修，理由见 persistCreateSidecars
+   * docstring）；本段 persistModelBinding 前置 if + 内部守卫语义不变——model 面有 turn-end
+   * ensure 补偿（tryPersistModelBinding），不依赖本写点。
    */
   private persistCreateBindings(
     session: IManagedSessionView,
@@ -562,9 +598,10 @@ export class SessionLifecycle implements ISessionRegistry {
       thinkingLevel: resolveCreateEffectiveThinkingLevel(presetClientOptions, createMetaOverride),
     }, 'create')
     this.persistCreateSidecars(session, presetId, options)
-    // D1 写点③ create/landing：落盘生效值（读回真值优先）。注意：Gate B 实证 create 瞬间
-    // pi 尚未首 flush、sessionFilePath 恒 undefined，本写点常态被守卫跳过（偏差 #9①）——
-    // 从未显式切模型的 session 的 .model.json 由写点③的 turn-end ensure
+    // D1 写点③ create/landing：落盘生效值（读回真值优先）。注意：create 瞬间 pi 尚未首
+    // flush、sessionFilePath 路径有值但 .jsonl 文件不存在（pi 0.84.4 实装：SessionManager
+    // 构造即生成确定性路径），persistModelBinding 内部 existsSync 守卫跳过本写点（偏差
+    // #9①）——从未显式切模型的 session 的 .model.json 由写点③的 turn-end ensure
     // （tryPersistModelBinding，session-state-projection）补写，V1 文件断言由其满足；
     // 本段仅在文件已 materialize 的少见时序生效。
     if (session.sessionFilePath) {
@@ -579,30 +616,38 @@ export class SessionLifecycle implements ISessionRegistry {
   /**
    * create 的 sidecar 落盘（preset / project / agent 三绑定，创建语义）。
    *
-   * 各 persist* 内部有 existsSync 守卫：pi 延迟写入窗口（sessionFilePath 未落盘）时跳过
-   * （ES-RL-1）；空 projectId（默认项目创建）不写 sidecar——等价于未归类。
+   * [V9-④ 根修，2026-09-09] 三个 persist* 调用传 skipJsonlExistsGuard 放行 existsSync
+   * 守卫：create 路径 session 必然真实（getState 成功 + registerSession 成功后才到达
+   * 本段），.jsonl 未 flush 只是 pi 延迟写入窗口（pi 0.84.4 实装：SessionManager 构造
+   * 即确定性生成 sessionFile 路径，get_state 透传——路径有值、文件不存在），不再以文件
+   * 存在性当 session 有效性判据。规则 #6 禁止的是创建/触碰 pi session .jsonl 本体
+   *（openSync('wx') EEXIST 卡死），sidecar 是 xyz 自有文件经 atomicWrite 落盘、不触碰
+   * .jsonl，放行不违反规则 #6。此前守卫恒跳过且无补偿写点（model 面有 turn-end ensure
+   * tryPersistModelBinding 补偿，preset/project/agent 无）→ landing 新建 session 重启后
+   * preset 绑定永久回退 builtin:full / 项目归属丢失 / agent badge 丢失。fork 路径
+   * （:persistForkBindings）不传 flag——forkedFilePath 是已写出的新文件，守卫自然通过。
+   * session.sessionFilePath 第一层守卫保留：路径 undefined（pi 异常未返回）无法定位
+   * sidecar 落点。空 projectId（默认项目创建）不写 sidecar——等价于未归类。
    */
   private persistCreateSidecars(
     session: IManagedSessionView,
     presetId: string | undefined,
     options: CreateOptions | undefined,
   ): void {
-    // 持久化 preset 绑定到 .preset.json sidecar（设计文档 §4）。
-    // presetId 存在时写 sidecar，供 fork/restore 继承；sessionFilePath 不存在（pi 延迟写入窗口）
-    // 时 persistPresetBinding 内部 existsSync 守卫跳过（ES-RL-1，wave2 实现）。
+    // 持久化 preset 绑定到 .preset.json sidecar（设计文档 §4），供 fork/restore 继承。
+    const sidecarOpts = { skipJsonlExistsGuard: true }
     if (presetId && session.sessionFilePath) {
-      this.sessionStore.persistPresetBinding(session.sessionFilePath, presetId)
+      this.sessionStore.persistPresetBinding(session.sessionFilePath, presetId, sidecarOpts)
     }
     // 持久化归属 project 到 .project.json sidecar（D14 语义修正，2026-08-04）。
     // 空 projectId（默认项目创建）不写 sidecar——等价于未归类，读取侧一致兑底默认项目。
     if (options?.projectId && session.sessionFilePath) {
-      this.sessionStore.persistProjectBinding(session.sessionFilePath, options.projectId)
+      this.sessionStore.persistProjectBinding(session.sessionFilePath, options.projectId, sidecarOpts)
     }
     // .agent.json sidecar 落盘（重启恢复链路，G-1）——与 preset/project 同模式：
-    // pi 延迟写入窗口（sessionFilePath 未落盘）时 existsSync 守卫跳过，内存态兑底见上方 hydrate。
+    // parentAgentSessionId 可选（#15）：spawnSource 单独成立即持久化，防异常路径下 badge 重启丢失
     if (options?.spawnSource && session.sessionFilePath) {
-      // parentAgentSessionId 可选（#15）：spawnSource 单独成立即持久化，防异常路径下 badge 重启丢失
-      this.sessionStore.persistAgentBinding(session.sessionFilePath, options.spawnSource, options.parentAgentSessionId)
+      this.sessionStore.persistAgentBinding(session.sessionFilePath, options.spawnSource, options.parentAgentSessionId, sidecarOpts)
     }
   }
 
@@ -934,11 +979,12 @@ export class SessionLifecycle implements ISessionRegistry {
       /** timestamp 匹配的 role 限定（用户/助手侧消息消歧）。 */
       fromMessageRole?: string
       /**
-       * Staging Mode（ADR-0056）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。
-       * undefined 时 fork 仅继承源 preset（旧行为）。
+       * Staging Mode（ADR-0056）：composer 暂存的模型覆盖，优先于源 session 当前生效值与
+       * 源 preset.modelOverride（D6 继承链：staging override > 源生效值 > 源 preset > 全局默认）。
+       * undefined 时 fork 继承源 session 当前生效值（不可读回落源 preset，E9）。
        */
       modelOverride?: string
-      /** Staging Mode（ADR-0056）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
+      /** Staging Mode（ADR-0056）：composer 暂存的思考等级覆盖，继承链同 modelOverride（D6）。 */
       thinkingOverride?: string
     },
   ): Promise<SessionSummary> {
@@ -993,7 +1039,12 @@ export class SessionLifecycle implements ISessionRegistry {
     // 解析细节见各 resolve helper（求值时序与提取前一致，均在 migrationGate 等待之前）。
     const sessionCwd = this.resolveForkSpawnCwd(source)
     const { forkPresetId, forkProjectId } = this.resolveForkInheritedBindings(srcSessionId, source)
-    const { forkResolution, allExtPaths, presetClientOptions } = await this.resolveForkLaunch(sessionCwd, forkPresetId, options)
+    // D6（state-truth-sync C5）：源 session 当前生效 model+thinkingLevel 作为 fork 继承档
+    //（插在 staging override 与源 preset 之间），读取链见 resolveForkSourceEffectiveBinding。
+    const sourceEffective = this.resolveForkSourceEffectiveBinding(srcSessionId, source)
+    const { forkResolution, allExtPaths, presetClientOptions } = await this.resolveForkLaunch(
+      sessionCwd, forkPresetId, sourceEffective, options,
+    )
     // D8-3（perf W29）：fork 同样 spawn pi——gate 等待（06 审查修正：fork 是第三处 spawn 点）。
     await migrationGate
     const client = await this.pm.createSession(forkedId, sessionCwd, {
@@ -1090,13 +1141,50 @@ export class SessionLifecycle implements ISessionRegistry {
   }
 
   /**
+   * fork 的源 session 当前生效值读取（D6 / state-truth-sync C5）：modelId + thinkingLevel 两字段
+   * （sidecar BINDING_FIELDS `.model.json` 家族同源两字段，字段范围刻意不含 projectId/label 等
+   * ——各有既有继承通道）。
+   *
+   * 读取链与 resolveForkInheritedBindings 同构（W-RT-5 双源模式）：
+   * 1. 活跃源读 runtime 内存实例 meta（switchModel/setThinkingLevel 的 session.modelId/
+   *    thinkingLevel 直写 + ReplicatedState 收敛保证它是当前生效值）；
+   * 2. pi 已退出/未恢复源回落扫描 sidecar `.model.json` 值（source 来自 findScannedSession，
+   *    与 restore-seeding seedRestoreMetaOverride 的 sidecar 兜底同源）。
+   *
+   * 空串归一 undefined（restore 播种在源不可知时写 '' 占位，'' 传入 override 档会以
+   * `'' ?? preset` 短路吞掉 preset 档）。两档皆缺（E9：老会话无 sidecar 且实例不在内存）
+   * → undefined，调用方回落源 preset 档（现行为，不劣化）。
+   *
+   * 已接受代价（设计 D6 / 残留风险 P4）：「切模 → pi 死（未 restore）→ 直接 fork」序列读到
+   * 旧 sidecar 值——fork 不触发源 restore 自愈，陈旧窗口量级限该序列，恢复路径 = fork 后
+   * chip 改选；严格优于现状（现状恒落 preset/默认档）。
+   */
+  private resolveForkSourceEffectiveBinding(
+    srcSessionId: string,
+    source: ScannedSession,
+  ): { modelId?: string; thinkingLevel?: string } {
+    const active = this.get(srcSessionId) as { modelId?: string; thinkingLevel?: string } | undefined
+    return {
+      modelId: nonEmptyStr(active?.modelId) ?? nonEmptyStr(source.modelId),
+      thinkingLevel: nonEmptyStr(active?.thinkingLevel) ?? nonEmptyStr(source.thinkingLevel),
+    }
+  }
+
+  /**
    * fork 的 launch 参数解析（preset 解析 + extension 求值 + presetClientOptions 构建）。
-   * Staging Mode（ADR-0056）：override 优先于源 preset 的 modelOverride/thinkingLevel（见
-   * buildPresetClientOptions 内 C-RL-6 优先级）。undefined 时仅继承源 preset（旧行为），不影响现有 fork。
+   *
+   * 继承链（D6，state-truth-sync C5）：
+   * `staging override > 源 session 当前生效值 > 源 preset > 全局默认`
+   * ——sourceEffective（源生效值档）经 `options?.* ?? sourceEffective.*` 插在 override 与
+   * preset 之间；staging 路径（fork-ask）行为不变（override 优先）。sourceEffective 两字段
+   * undefined（E9 源真值不可读）时整档跳过，回落 buildPresetClientOptions 的
+   * `override > preset > 默认` 既有链（旧行为）。字段级独立走链（与 restore 播种的每字段
+   * 独立兜底同构）：仅传 model override 不传 thinking 时 thinking 仍继承源生效值。
    */
   private async resolveForkLaunch(
     sessionCwd: string,
     forkPresetId: string,
+    sourceEffective: { modelId?: string; thinkingLevel?: string },
     options: ForkOptions | undefined,
   ): Promise<{
     forkResolution: PresetResolution | undefined
@@ -1107,8 +1195,8 @@ export class SessionLifecycle implements ISessionRegistry {
     const allExtPaths = forkResolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
     const presetClientOptions = buildPresetClientOptions(
       forkResolution,
-      options?.modelOverride,
-      options?.thinkingOverride,
+      options?.modelOverride ?? sourceEffective.modelId,
+      options?.thinkingOverride ?? sourceEffective.thinkingLevel,
     )
     return { forkResolution, allExtPaths, presetClientOptions }
   }

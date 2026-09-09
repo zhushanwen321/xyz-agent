@@ -116,6 +116,9 @@ function createMockSessionService(opts: {
       label: 'src',
       sessionFilePath: '/tmp/s.json',
     })) as unknown as SessionService['getSession'],
+    // D6（state-truth-sync C5）：runHandoff create 前读源生效值会调 findScannedSession
+    //（内存实例字段缺值时的 sidecar 兜底）——mock 缺方法会 TypeError。
+    findScannedSession: vi.fn(() => undefined) as unknown as SessionService['findScannedSession'],
     create: vi.fn(async () => ({
       id: newSessionId,
       label: 'handoff from src',

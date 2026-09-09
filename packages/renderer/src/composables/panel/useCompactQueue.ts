@@ -39,6 +39,7 @@ import type { Segment, ServerMessage } from '@xyz-agent/shared'
 import { segmentsToPrompt } from '@xyz-agent/shared'
 import { setCompactQueueProviderForEffects, submitQueuedEntry } from '@xyz-agent/core'
 import type { SubmitQueuedEntryDeps } from '@xyz-agent/core'
+import { createInflightDedup } from '@xyz-agent/core/foundation/create-inflight-dedup'
 import { chat as chatApi, session as sessionApi } from '@/api'
 import * as events from '@xyz-agent/core/transport/api'
 import { useChatStore } from '@/stores/chat'
@@ -283,19 +284,13 @@ function createCompactQueue(): CompactQueue {
     return count(sid) > 0
   }
 
-  // per-session in-flight 守卫（S2）：flush 进行中重复触发复用同一 promise，不重复发送
-  const inflightFlushes = new Map<string, Promise<boolean>>()
+  // per-session in-flight 守卫（S2）：flush 进行中重复触发复用同一 promise，不重复发送。
+  // 「同 key 复用 / settle 即清 / 引用比对防误删」生命周期收编于 createInflightDedup
+  // （D9 共享原语，state-truth-sync §3.3）。
+  const flushDedup = createInflightDedup<boolean>()
 
-  async function flush(sid: string): Promise<boolean> {
-    const existing = inflightFlushes.get(sid)
-    if (existing) return existing
-    const p = doFlush(sid)
-    inflightFlushes.set(sid, p)
-    try {
-      return await p
-    } finally {
-      inflightFlushes.delete(sid)
-    }
+  function flush(sid: string): Promise<boolean> {
+    return flushDedup.run(sid, () => doFlush(sid)).promise
   }
 
   async function doFlush(sid: string): Promise<boolean> {

@@ -19,6 +19,8 @@ export default {
   allExisted: 'All already existed',
   discoverFailed: 'Discovery failed',
   dirNotExist: 'Directory {dir} no longer exists, switched to home directory',
+  // E7 (D10) cwd both-empty toast: explicit notice when landing falls back to home silently
+  cwdFallbackToHome: 'No directory selected, created in home directory',
   imageMigratePartialFailed: '{count} image(s) failed to migrate (temp file may be cleaned), will try original path',
   loadFailed: 'Load failed',
   contextCompacted: 'Context compacted',

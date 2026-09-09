@@ -122,12 +122,12 @@ export interface ISessionStore {
   refreshAll(): void
   /** 持久化 session 终态（W4，ADR 0042）。 */
   persistSessionEnd(filePath: string, outcome: SessionOutcome, reason?: string): void
-  /** 持久化 launch preset 绑定到 .preset.json sidecar（设计文档 §4）。 */
-  persistPresetBinding(filePath: string, presetId: string): void
-  /** 持久化归属 project 到 .project.json sidecar（D14 语义修正，2026-08-04）。 */
-  persistProjectBinding(filePath: string, projectId: string): void
-  /** 持久化 agent-managed 标记到 .agent.json sidecar（G-1，重启恢复链路）。 */
-  persistAgentBinding(filePath: string, spawnSource: 'user' | 'agent', parentAgentSessionId: string | undefined): void
+  /** 持久化 launch preset 绑定到 .preset.json sidecar（设计文档 §4）。opts.skipJsonlExistsGuard 仅限 create 路径（V9-④ 根修）。 */
+  persistPresetBinding(filePath: string, presetId: string, opts?: { skipJsonlExistsGuard?: boolean }): void
+  /** 持久化归属 project 到 .project.json sidecar（D14 语义修正，2026-08-04）。opts.skipJsonlExistsGuard 仅限 create 路径（V9-④ 根修）。 */
+  persistProjectBinding(filePath: string, projectId: string, opts?: { skipJsonlExistsGuard?: boolean }): void
+  /** 持久化 agent-managed 标记到 .agent.json sidecar（G-1，重启恢复链路）。opts.skipJsonlExistsGuard 仅限 create 路径（V9-④ 根修）。 */
+  persistAgentBinding(filePath: string, spawnSource: 'user' | 'agent', parentAgentSessionId: string | undefined, opts?: { skipJsonlExistsGuard?: boolean }): void
   /** 读取 session 终态（W5）；无 session_end entry 返回 null（历史 session）。 */
   extractSessionOutcome(filePath: string): SessionOutcome | null
   /** 清除 session 元信息缓存的 stale 条目（session 删除/重命名后调用，避免无界增长）。 */

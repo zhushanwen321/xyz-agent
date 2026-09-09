@@ -958,10 +958,10 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   /**
    * 归属 project sidecar 延迟写入兑底（D14 语义修正，2026-08-04）。
    *
-   * create 时 session 文件可能未落盘（pi 延迟写入窗口）→ persistProjectBinding 的
-   * existsSync 守卫跳过（规则 #6 禁止提前建文件），只有内存态 projectId。
-   * 本方法在 turn_end（主路径）/ agent_end（兑底）时补写——此时 pi 已完成 flush，
-   * 文件存在，写 sidecar 安全。无归属（undefined）或文件仍不存在 → 跳过（下次兑底）。
+   * [V9-④ 根修后] create 路径 persistProjectBinding 已传 skipJsonlExistsGuard 放行
+   * 守卫直接落盘，本补偿退化为异常时序兜底：仅 sessionFilePath 缺失（pi 异常未返回
+   * 路径，create 写点无从落盘）等场景，在 turn_end（主路径）/ agent_end（兑底）时
+   * 补写——此时文件存在（或仍不存在 → 跳过，下次兑底）。无归属（undefined）跳过。
    *
    * 用 projectBindingPersisted 标记防重复写（session 级运行时标记，不进 toSummary）。
    */
@@ -978,10 +978,14 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    * 2026-09-04）。镜像 tryPersistProjectBinding（D14 同款问题同款解法）。
    *
    * 背景：写点③（lifecycle create 路径）受 pi 延迟写入窗口约束——create 瞬间
-   * sessionFilePath undefined，`if (session.sessionFilePath)` 守卫恒跳过，且 pi flush 后
-   * 没有任何补写点。真实 app 实证：新建并对话过的 session 目录里无 .model.json，重启后
+   * sessionFilePath 路径有值但 .jsonl 文件未 flush（pi 0.84.4 实装：SessionManager
+   * 构造即生成确定性路径），persistModelBinding 内部 existsSync 守卫恒跳过，且 pi flush
+   * 后没有任何补写点。真实 app 实证：新建并对话过的 session 目录里无 .model.json，重启后
    * composer 回落全局默认（内存生效值丢失）；同 session 内显式切模型（写点①）立即产出
    * sidecar，证明写点本身工作、缺的只是 create 窗口的补写时机。
+   * [V9-④ 根修注] preset/project/agent 三绑定已放行 create 写点（skipJsonlExistsGuard），
+   * model 写点保留守卫语义不改——本补偿已实测工作（V1 文件断言由其满足），无需扩大
+   * create 时序行为面。
    *
    * 本方法在 turn_end（主路径）/ agent_end（兜底）时补写——此时 pi 已完成 flush，文件
    * 存在，写 sidecar 安全。文件仍不存在 → 跳过（下次兜底）。
