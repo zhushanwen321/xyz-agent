@@ -142,9 +142,9 @@ describe("10 正向方法全集", () => {
   });
 });
 
-describe("8 反向通道全集与超时二分（R9-2）", () => {
-  it("恰好 8 个通道", () => {
-    expect(REVERSE_CHANNELS).toHaveLength(8);
+describe("9 反向通道全集与超时二分（R9-2；v1.x 增 host/roundLifecycle）", () => {
+  it("恰好 9 个通道", () => {
+    expect(REVERSE_CHANNELS).toHaveLength(9);
     expect([...REVERSE_CHANNELS]).toEqual([
       "host/log",
       "host/askUser",
@@ -154,10 +154,11 @@ describe("8 反向通道全集与超时二分（R9-2）", () => {
       "host/handleReady",
       "host/childSpawned",
       "host/childStateChanged",
+      "host/roundLifecycle",
     ]);
   });
 
-  it("二分：数据面 6 通道 10s 超时；人机交互 2 通道不设统一超时", () => {
+  it("二分：数据面 7 通道 10s 超时；人机交互 2 通道不设统一超时", () => {
     const dataPlane = REVERSE_CHANNELS.filter(
       (ch) => REVERSE_CHANNEL_TIMEOUT_CLASS[ch] === "data-plane",
     );
@@ -171,6 +172,7 @@ describe("8 反向通道全集与超时二分（R9-2）", () => {
       "host/handleReady",
       "host/childSpawned",
       "host/childStateChanged",
+      "host/roundLifecycle",
     ]);
     expect(interaction).toEqual(["host/askUser", "host/permission"]);
   });

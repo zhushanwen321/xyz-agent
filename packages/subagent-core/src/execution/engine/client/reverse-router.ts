@@ -163,6 +163,9 @@ async function dispatchDataPlane(deps: ReverseRouterDeps, method: string, params
     }
     case "host/streamDelta": {
       const p = params as HostStreamDeltaParams;
+      // recordId 键 = chat 续聊轮 delta（协议 v1.x，关联键裁定 D1-A）；消费接线
+      // 归 W3 chat 改线，接线前引擎侧无发射方，此分支不可达——仅收窄联合类型。
+      if (p.recordId !== undefined) break;
       await deps.runRoutes.get(p.runId)?.onStreamDelta?.(p.delta);
       break;
     }

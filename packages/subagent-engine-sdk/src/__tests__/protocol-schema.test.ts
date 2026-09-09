@@ -58,7 +58,7 @@ describe("帧 schema 有效性（draft-07，ajv 编译 + 样本校验）", () =>
     })).toBe(false);
   });
 
-  it("④ 反向请求帧：字符串 id + method 限 8 通道词表", () => {
+  it("④ 反向请求帧：字符串 id + method 限 9 通道词表", () => {
     const validate = ajv.compile(ENGINE_PROTOCOL_SCHEMAS.reverseRequest);
     expect(validate({ id: "rev-1", method: "host/askUser", params: {} })).toBe(true);
     for (const ch of REVERSE_CHANNELS) {

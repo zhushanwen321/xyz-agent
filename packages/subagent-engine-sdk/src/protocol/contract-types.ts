@@ -133,6 +133,24 @@ export interface EngineHandleData {
   adapterVersion: string;
 }
 
+/**
+ * [v1.x] 冷续 resume 锚点——EngineHandleData 定位键的投影子集（诊断字段
+ * v/engineVersion/adapterVersion 不属锚点语义，不随锚点走）。两处消费：
+ *   - run.params.chat.resume（宿主 → 引擎：冷续重开已 idle 的 session，pi 消费
+ *     sessionRef.sessionFile —— 对照 core SpawnResumeOpts.sessionFile 的锚点面）；
+ *   - host/roundLifecycle 载荷 anchor（引擎 → 宿主：轮次终态时回填当前锚点，
+ *     宿主据此刷新冷续依据——pi 定位键形态同 EngineHandleData.sessionRef 注释）。
+ * 类型层与 EngineHandleData 定位形态的对照由测试断言（Pick 可赋值闭包）锁定。
+ */
+export interface ResumeAnchor {
+  /** 引擎定位键（pi = { recordId?, sessionFile? }；zcode = { sessionId, dbPath }）。 */
+  sessionRef: Record<string, string>;
+  /** 隔离池定位（锚点补全 handle 重建所需；pi 无池化恒 'shared'）。 */
+  poolKey: string;
+  /** journal 绝对路径（read 降级链第②级数据源；无 journal 缺省）。 */
+  journalPath?: string;
+}
+
 /** Turn → ReplayedTurn：剥离内部态（closed 恒 true——重放物无进行时语义）。 */
 export interface ReplayedTurn {
   text: string;

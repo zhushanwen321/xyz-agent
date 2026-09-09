@@ -9,6 +9,15 @@
 // 版本协商：ENGINE_PROTOCOL_VERSION = 1；core 支持 >=1 <2；越界 →
 // engine_protocol_mismatch（含双方版本 + 升级指引），该引擎标记不可用，
 // 不影响其他引擎与宿主。
+//
+// [v1.x 增量语义（chat-domain 设计 §3.2 D1-A/§3.3）]：chat 域增量（run.params.chat
+// 可选参数、host/roundLifecycle 通道、host/streamDelta 的 recordId 关联形态）以
+// **可选载荷/可选参数**形态向后兼容，major 不 bump、不引入 minor 协商位：
+//   - 新 core × 旧引擎：chat 请求被 conversation gate 同步拒（manifest 无 gate 位，
+//     A6 方向——engine_capability_unsupported + 升级引擎包指引）；run 域零影响；
+//   - 旧 core × 新引擎：新引擎可能发出旧 core 词表外的 host/roundLifecycle——
+//     既有反向路由对未知 host/* 通道回 {unsupported:true} 引擎自行降级，无需
+//     独立负向场景（设计已裁决）。
 
 /** 协议版本（引擎包 manifest `xyz-agent.subagentEngine.protocol` 与 initialize 应答同值）。 */
 export const ENGINE_PROTOCOL_VERSION = 1;
@@ -64,7 +73,8 @@ export const ENGINE_EVENT_COALESCE_DEFAULT = "0";
 /**
  * 反向请求超时二分（帧④注释，R9-2）：
  * - 数据面类（host/log / host/streamDelta / host/poolResolved / host/handleReady /
- *   host/childSpawned / host/childStateChanged）：10s 未答 = 引擎故障；
+ *   host/childSpawned / host/childStateChanged / host/roundLifecycle[v1.x]）：10s 未答 =
+ *   引擎故障；
  * - 人机交互类（host/askUser / host/permission）：不设统一超时——core 先回 {ack:true}，
  *   结果异步到达；按 ADR-0047「静默 ≠ 卡死」用无进展检测/用户取消，不据此判引擎故障。
  */
