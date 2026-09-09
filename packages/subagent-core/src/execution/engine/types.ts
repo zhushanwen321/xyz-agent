@@ -44,7 +44,7 @@ export interface AgentOutcome {
   content: string;
   /**
    * 原样（AgentResult.failureKind，D5-③ 失败分诊结构化标签）。产出侧唯一识别点 =
-   * engines/pi/output-collector（collectResult 分类写入）；缺省 = unknown = 可重试
+   * inproc pi 引擎目录/output-collector（collectResult 分类写入）；缺省 = unknown = 可重试
    * （消费侧 executeAgentCall 只读字段分诊，不扫 error 文案）。非 pi 引擎不产出，
    * 恒缺省（unknown 语义）。
    */

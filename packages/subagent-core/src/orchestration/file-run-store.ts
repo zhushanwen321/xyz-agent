@@ -19,6 +19,7 @@
 // workflow run 快照是宿主编排状态，语义归属宿主数据根本身，宿主 configureCore
 // 注入什么就落什么，不引入第二条 env 覆盖链。
 
+import { readFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -71,6 +72,13 @@ export interface FileRunStoreOptions {
    * {@link DEFAULT_SAVE_MIN_INTERVAL_MS}。测试经此注入小窗口（fake timers 推进）。
    */
   saveMinIntervalMs?: number;
+  /**
+   * [F-1 修复] run 状态目录覆盖。缺省 = `<dataRoot>/workflow-state`（zcode 宿主布局，
+   * 见 stateDir()）；pi 宿主的读侧装配点（round-supervisor sweep / idle-gc）必须传
+   * resolvePiWorkflowStateDir()（execution/workflow-state-root.ts）——pi 宿主 run state
+   * 由 JsonlRunStore 落 `<sessionDir>/workflow-state/`，与缺省根不相交。
+   */
+  stateDir?: string;
 }
 
 /** Node fs 错误 code 判定（ENOENT = 路径不存在，并发删除场景；对齐 pi isEnoentError）。 */
@@ -101,17 +109,24 @@ function isEnoentError(err: unknown): boolean {
  *   warn——单行损坏不拖垮整个 run 的恢复（与 pi 壳 kill-9 恢复同容忍度）。
  *   版本衔接（快照 codec 归 run-snapshot.ts 单源，D4）：存量无 v 行按当前版本
  *   宽容读、写入恒补 v、v 不匹配跳过 + warn（三裁决明细见 parseLine 注释）。
- * - stateFilePath：纯路径计算（<dataRoot>/workflow-state/<runId>.jsonl），不建目录。
+ * - stateFilePath：纯路径计算（<状态目录>/<runId>.jsonl），不建目录。状态目录 =
+ *   构造注入的 stateDir 覆盖，或缺省 <dataRoot>/workflow-state（pi 宿主读侧装配点
+ *   必须传 resolvePiWorkflowStateDir()——见 FileRunStoreOptions.stateDir 与
+ *   execution/workflow-state-root.ts 的同源布局论证）。
  *
  * 未 configureCore 即 save/loadAll 会抛 core_host_not_configured（dataRoot 端口
  * 语义，host-services.ts §3.4）——宿主壳必须在初始化最早期注入。
  */
 export class FileRunStore implements RunStore {
-  /** run 状态目录绝对路径（dataRoot 每次现取——宿主覆盖配置即刻生效，对齐
-   *  data-dir.ts「不缓存路径防测试/宿主切换读到旧值」先例）。 */
+  /** run 状态目录绝对路径（显式覆盖优先——pi 宿主读侧装配点；缺省 dataRoot 每次现取
+   *  ——宿主覆盖配置即刻生效，对齐 data-dir.ts「不缓存路径防测试/宿主切换读到旧值」
+   *  先例）。 */
   private stateDir(): string {
-    return join(getHostServices().dataRoot(), STATE_DIR_NAME);
+    return this.stateDirOverride ?? join(getHostServices().dataRoot(), STATE_DIR_NAME);
   }
+
+  /** 显式状态目录覆盖（构造注入；见 FileRunStoreOptions.stateDir）。 */
+  private readonly stateDirOverride: string | undefined;
 
   /** save 节流最小间隔（ms），0 = 禁用。 */
   private readonly saveMinIntervalMs: number;
@@ -125,6 +140,7 @@ export class FileRunStore implements RunStore {
 
   constructor(opts?: FileRunStoreOptions) {
     this.saveMinIntervalMs = Math.max(0, opts?.saveMinIntervalMs ?? DEFAULT_SAVE_MIN_INTERVAL_MS);
+    this.stateDirOverride = opts?.stateDir;
   }
 
   stateFilePath(runId: string): string {
@@ -179,6 +195,41 @@ export class FileRunStore implements RunStore {
       if (run) runs.push(run);
     }
     return runs;
+  }
+
+  /**
+   * [W4 sweep 判据，F2] 按 runId 同步查 run 状态（注册对账 sweep 的 workflow 收口
+   * 判据）。同步形态：sweep 在 session_start 同步链内运行（runReconcileSweep 同步
+   * 契约），不能 await loadAll——对单 runId 做同步文件读（对齐 sweep 自身的 sync fs
+   * 读先例），逐行解析复用 parseLine（版本衔接 + 形状校验与 loadLatestValidLine
+   * 单源，同步只读不触碰 lastSavedAt 节流记账）。
+   *
+   * 判定（宁挂账不失明——误注销活跃 run 是事故方向，判据保守侧取「不可判定」）：
+   * - state 文件不存在 → missing（设计判据「已归档/不存在视同终态」——run 从未
+   *   落盘或已被清理，注册是死亡窗口残留）；
+   * - 末条有效快照 status = running → running（活跃，sweep 跳过）；
+   * - 末条有效快照 status ≠ running（done）→ terminal + reason（I2：done ⟹ reason
+   *   有值；reason 作 pending unregister 的 status 语义源）；
+   * - 文件存在但全部行损坏（无有效快照）→ running（读不出 ≠ 不存在，不补注销）。
+   */
+  findStateByIdSync(runId: string): { kind: "running" } | { kind: "terminal"; reason: string | undefined } | { kind: "missing" } {
+    let content: string;
+    try {
+      content = readFileSync(this.stateFilePath(runId), "utf8");
+    } catch {
+      return { kind: "missing" }; // ENOENT（未落盘/已清理）等不可读形态同视——见头注判定
+    }
+    const lines = content.split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (line === "") continue; // 尾部空行（末行 \n 产物）静默跳过
+      const run = this.parseLine(line, `${runId}.jsonl`, i);
+      if (run === undefined) continue; // 损坏行继续向前找——最后一条有效行可能早于文件尾部
+      if (run.state.status === "running") return { kind: "running" };
+      return { kind: "terminal", reason: run.state.reason };
+    }
+    // 全部行损坏：读不出 ≠ 不存在——保守按活跃处理（宁挂账不误注销）
+    return { kind: "running" };
   }
 
   /** 单文件从尾向头取第一条有效快照行；整文件无有效行返回 undefined（warn）。 */

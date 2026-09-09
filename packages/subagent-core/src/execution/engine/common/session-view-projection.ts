@@ -1,8 +1,8 @@
 // src/execution/engine/common/session-view-projection.ts
 //
 // Turn → ReplayedTurn 投影 + usage 聚合的单一实现（P5 收敛）。此前三份同构副本：
-// common/journal-replay.ts（journal 重放投影）、engines/pi/pi-engine.ts read()（内联
-// 重写）、engines/pi/reader.ts（native reader）——投影语义唯一（strip 内部态 + closed
+// common/journal-replay.ts（journal 重放投影）、inproc pi-engine（已删） read()（内联
+// 重写）、inproc reader（已删）（native reader）——投影语义唯一（strip 内部态 + closed
 // 恒 true + usageDelta 聚合），实现也必须唯一（防三处漂移）。
 //
 // 纯函数、零运行时依赖（仅类型 import）：reader.ts 的双端复用约束（设计 §3.3.7，

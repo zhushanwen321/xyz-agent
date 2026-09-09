@@ -8,14 +8,15 @@
  * 照常发布）。本脚本在发布前强制走一遍 npm 消费者视角的最小回路：
  *
  *   1. build：cd packages/subagent-core && pnpm run build（tsup ESM+CJS 双 dist）
- *   2. require：node require CJS dist——主入口 + 四条语义子入口
- *      （engines/zcode/reader、engines/zcode/constants、engine/paths、relay-env），
+ *   2. require：node require CJS dist——主入口 + 三条语义子入口
+ *      （engine/paths、engine/engine-discovery-scan、relay-env；[W11/H3] 引擎
+ *      子入口已随内建引擎删除），
  *      经 package.json exports 的 require 条件解析（Node self-reference），
  *      等价验证 npm 消费者的加载路径与 exports→dist 映射，而非直接拼文件路径；
  *      随后同一 CJS 上下文跑 dist 行为断言——主入口（routeEngine mock 注入断言
  *      三层路由 call 层生效 + DEFAULT_DATA_ROOT / CORE_PACKAGE_VERSION 导出形态）
  *      与 engine/paths 子入口（纯函数确定性输出）；5 个入口的 .d.cts 类型产物
- *      做存在性断言。语义边界如实登记：V7 golden 回放跑在 src TS 源（步骤 3 的
+ *      做存在性断言（[W11] 起为 3+1 个入口）。语义边界如实登记：V7 golden 回放跑在 src TS 源（步骤 3 的
  *      vitest），dist 侧行为面 = 上述主入口 + paths 子入口断言，d.cts 仅验证
  *      存在性（不做内容 / TS 编译面校验）
  *   3. golden 回放：vitest run 跑 conformance 免 LLM 免二进制测试集
@@ -30,13 +31,10 @@
  *
  * node 版本说明：engines 声明 node>=20。本脚本实际执行环境跟随调用方
  * （本机 dev / release-npm.yml CI 均为 node 24）。TODO(node20 runner)：真正的
- * node 20 require 复验需 node 20 runner——已知事实：主入口 dist/index.cjs 的
- * require 链不含 node:sqlite（node 20 可加载），但 ./engines/zcode/reader 的
- * CJS 产物 require node:sqlite（node >= 22.5 才有），node 20 下该子入口不可加载
- * （zsw 消费面为主入口 + relay-env 等，reader 属引擎内部读取件）。语义等价声明：
- * 本脚本在 node 24 上验证的是「构建产物可加载 + exports 映射正确 + golden 回放
- * 绿」的回归语义，与 node 20 上的差异面仅上述已知项；接入 node 20 runner 时
- * reader 子入口需按引擎版本门控。
+ * node 20 require 复验需 node 20 runner——[W11/H3] 起 core dist 全入口
+ * require 链不含 node:sqlite（bare import("sqlite") 守卫已随 reader 迁引擎包
+ * 构建），node 20 可加载面与 node 24 一致。语义等价声明：本脚本在 node 24 上
+ * 验证的是「构建产物可加载 + exports 映射正确 + golden 回放绿」的回归语义。
  *
  * 零第三方依赖（node:child_process/node:module/node:path）。
  */
@@ -62,12 +60,16 @@ const GOLDEN_TEST_FILES = [
   'src/execution/engine/__tests__/conformance/contract.read-degradation.test.ts',
 ]
 
-// CJS dist 必须可加载的入口（exports require 条件的映射验证面）
+// CJS dist 必须可加载的入口（exports require 条件的映射验证面）。
+// [W11/H3] 引擎子入口 @zhushanwen/subagent-core/engines/zcode/{reader,constants}
+// 已随内建引擎删除（impl-plan §2.11 二选一处置，选「删除这两项、保留其余 dist 冒烟」：
+// 引擎包 @zhushanwen/zcode-subagent-cli 是 TS-source 包（无 CJS dist），不构成
+// require 冒烟面；其产物自包含性由 check-engine-package-boundary / 打包 staging
+// 冒烟覆盖）。
 const CJS_ENTRY_SPECS = [
   CORE_PKG_NAME,
-  `${CORE_PKG_NAME}/engines/zcode/reader`,
-  `${CORE_PKG_NAME}/engines/zcode/constants`,
   `${CORE_PKG_NAME}/engine/paths`,
+  `${CORE_PKG_NAME}/engine/engine-discovery-scan`,
   `${CORE_PKG_NAME}/relay-env`,
 ]
 

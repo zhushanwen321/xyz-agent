@@ -92,11 +92,26 @@ export interface DeliveryHandle {
   dispose(): void;
 }
 
+/** countActiveFromEntries 的过滤选项（[F1] 与 pending-notifications 的
+ *  CountActiveOptions 对齐的子集——core 契约面只暴露跨 session 基准一个字段）。 */
+export interface CountActivePortOptions {
+  /**
+   * [W4 读侧过滤②] 跨 session 残留过滤基准：传入时端口实现按「register entry 的
+   * sessionId ≠ 基准 → 跳过」过滤——fork 继承的父级注册残留（翻 process 档后 U4
+   * 补注销不再中性化，永久留存于子 session 文件）不进差集。
+   * 缺省（undefined）= 不过滤（向后兼容：既有调用方零改动行为不变）。
+   */
+  currentSessionId?: string;
+}
+
 export interface NotifyDomainPorts {
   /** pending 活跃计数（pi 会话 entries 中 register − unregister 差集的数值）。
    *  契约为 number 而非 pi 侧 CountActiveResult：core 消费面只读 count，契约面最窄；
-   *  pi 壳注入时拆 `countActiveFromEntries(entries).count`。 */
-  countActiveFromEntries?(entries: unknown[]): number;
+   *  pi 壳注入时拆 `countActiveFromEntries(entries).count`。
+   *  [F1] 第二参为可选过滤基准（CountActivePortOptions）——core 消费方（后代判定
+   *  读侧）持有「被读 entries 所属 session」概念时必须传入，使跨 session 残留不进
+   *  差集；与 pending-notifications 实装签名（entries, opts?) 对齐。 */
+  countActiveFromEntries?(entries: unknown[], opts?: CountActivePortOptions): number;
   /** 投递内核工厂。签名与 @xyz-agent/session-delivery 的 createDelivery 结构兼容，
    *  pi 壳直传其本体即可。缺席 = 消费方降级直发。 */
   createDelivery?(port: DeliveryPort, options?: DeliveryConfig): DeliveryHandle;

@@ -20,12 +20,19 @@ export interface GoalSession {
 	state: GoalRuntimeState | null;
 	/** 防重入标志：agent_end / before_agent_start 等事件处理器入口检查 */
 	isProcessing: boolean;
+	/**
+	 * W5 退避延迟发送的 continuation 定时器（无进展退避时 continuation 不立即发出，
+	 * 按间隔 ×2 递增延迟）。非 null 表示有一个待发的退避 continuation——调度前必须
+	 * 先清（防双发），clearGoalSession 时取消。
+	 */
+	continuationTimer: ReturnType<typeof setTimeout> | null;
 }
 
 export function createGoalSession(): GoalSession {
 	return {
 		state: null,
 		isProcessing: false,
+		continuationTimer: null,
 	};
 }
 
@@ -97,6 +104,11 @@ function isGoalStateEntry(entry: SessionEntryLike): boolean {
 // ── clearGoalSession ──────────────────────────────────
 
 export function clearGoalSession(session: GoalSession, uiPort: UiPort): void {
+	// W5：清 goal 时取消待发的退避 continuation（goal 已终态/清除，发出即僵尸 turn）
+	if (session.continuationTimer !== null) {
+		clearTimeout(session.continuationTimer);
+		session.continuationTimer = null;
+	}
 	session.state = null;
 	session.isProcessing = false;
 	// FR-6.6: hasUI 守卫

@@ -27,9 +27,11 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureNotifyDomain, resetNotifyDomainForTests } from "../../core/notify-ports.ts";
 
+// [D5 消亡] listActivePendingFromSessionFile（后代补杀清单口径）随 inproc pi 引擎目录
+// 删除消亡（消费方全在待删 session-runner；止损语义由 W4 监督器该放弃承接）——
+// 本文件覆盖收敛为 count 口径 + 游标剪枝原语。
 import {
   clearPendingCursors,
-  listActivePendingFromSessionFile,
   prunePendingCursor,
   readActivePendingFromSessionFile,
 } from "../session-pending.ts";
@@ -175,7 +177,10 @@ describe("readActivePendingFromSessionFile", () => {
   });
 
   it("fork 继承的主 session register 已被 expired unregister 抵消 → 不干扰", () => {
-    // 模拟 P fork 主 session：继承 register（sessionId 不匹配），session_start 重建补 unregister(expired)
+    // 模拟 P fork 主 session：继承 register 且文件里已有对应 unregister 抵消行
+    // （历史 session 档 U4 产物）。翻 process 档后 U4 不再补写抵消行，fork 残留的
+    // 现行收口 = 读侧过滤②（见文末 [F1] describe）——本用例锁「文件内抵消行仍生效」
+    // 的差集语义本身，不锁清理机制。
     const file = makeTmpSessionFile([
       mkRegister("parent-bg"),
       mkUnregister("parent-bg", "expired"),
@@ -319,9 +324,6 @@ describe("[LC-6] 差集计数语义等值", () => {
     expect(r.count).toBe(1); // 2 register − 1 unregister
     expect(counter.mock.calls[0]?.[0]).toHaveLength(1); // 端口收到差集（非全量 3 行）
     expect((counter.mock.calls[0]?.[0] as unknown[])[0]).toMatchObject({ customType: "pending:register" });
-
-    const list = listActivePendingFromSessionFile(f);
-    expect(list.items.map((i) => i.id)).toEqual(["bg-2"]);
   });
 
   it("同 id 重 register（未 unregister）覆盖 → 仍 1 个活跃", () => {
@@ -330,9 +332,7 @@ describe("[LC-6] 差集计数语义等值", () => {
     fs.writeFileSync(f, entryLine("pending:register", registerData("bg-1", "sess-1")));
     fs.appendFileSync(f, entryLine("pending:register", registerData("bg-1", "sess-1-moved")));
 
-    const list = listActivePendingFromSessionFile(f);
-    expect(list.items).toHaveLength(1);
-    expect(list.items[0]?.sessionId).toBe("sess-1-moved");
+    expect(readActivePendingFromSessionFile(f).count).toBe(1);
   });
 
   it("unregister 后同 id 再 register → 恢复活跃", () => {
@@ -345,9 +345,6 @@ describe("[LC-6] 差集计数语义等值", () => {
         entryLine("pending:register", registerData("bg-1", "sess-2")),
     );
 
-    const list = listActivePendingFromSessionFile(f);
-    expect(list.items.map((i) => i.id)).toEqual(["bg-1"]);
-    expect(list.items[0]?.sessionId).toBe("sess-2");
     expect(readActivePendingFromSessionFile(f).count).toBe(1);
   });
 
@@ -382,8 +379,7 @@ describe("[LC-6] 差集计数语义等值", () => {
         entryLine("pending:register", registerData("bg-2", "sess-2")),
     );
 
-    const list = listActivePendingFromSessionFile(f);
-    expect(list.items.map((i) => i.id)).toEqual(["bg-2"]);
+    expect(readActivePendingFromSessionFile(f).count).toBe(1); // 畸形行丢弃，好行入差集
   });
 });
 
@@ -410,8 +406,7 @@ describe("[LC-6] 游标剪枝", () => {
     expect(Buffer.byteLength(gen2, "utf-8")).toBeGreaterThan(150);
     fs.writeFileSync(f, gen2);
 
-    const list = listActivePendingFromSessionFile(f);
-    expect(list.items.map((i) => i.id)).toEqual(["bg-x"]); // 剪枝生效：从头全量读
+    expect(readActivePendingFromSessionFile(f).count).toBe(1); // 剪枝生效：从头全量读
   });
 
   it("prunePendingCursor：回收后重新判定等值（全量重读差集不变）", () => {
@@ -429,7 +424,6 @@ describe("[LC-6] 游标剪枝", () => {
     fs.appendFileSync(f, entryLine("pending:unregister", { id: "bg-1" }));
     const r = readActivePendingFromSessionFile(f);
     expect(r.count).toBe(1); // 重建后差集正确（无重复无丢失）
-    expect(listActivePendingFromSessionFile(f).items.map((i) => i.id)).toEqual(["bg-2"]);
   });
 
   it("prunePendingCursor：prune 后覆写文件（size ≥ 旧 offset）→ 新内容完整可见", () => {
@@ -446,7 +440,7 @@ describe("[LC-6] 游标剪枝", () => {
     fs.writeFileSync(f, gen2); // 覆写（模拟文件替换），size > 旧 offset
     prunePendingCursor(f);
 
-    expect(listActivePendingFromSessionFile(f).items.map((i) => i.id)).toEqual(["bg-y"]);
+    expect(readActivePendingFromSessionFile(f).count).toBe(1);
   });
 
   it("prunePendingCursor 不存在的条目为 no-op（不抛错）", () => {
@@ -467,5 +461,113 @@ describe("[LC-6] 游标剪枝", () => {
     // 重建后从文件头判定（无 offset 残留），条目完整恢复
     fs.writeFileSync(f, entryLine("pending:register", registerData("bg-1", "sess-1")));
     expect(readActivePendingFromSessionFile(f).count).toBe(1);
+  });
+});
+
+// ─── [F1 读侧过滤②] 跨 session 残留基准 = 被读文件所属 session ───
+//
+// fork 继承的父级 register 残留（翻 process 档后 U4 补注销不再中性化，永久留存）
+// 由读侧过滤收口：本文件读侧以「被读文件所属 session id」（pi session 文件首行
+// SessionHeader.id）为基准经端口第二参传入，端口实现按 entry sessionId ≠ 基准
+// 跳过——后代判定差集不含跨 session 残留，层主不被残留误判「尚有活跃后代」。
+
+describe("[F1 读侧过滤②] 后代判定差集的跨 session 残留基准", () => {
+  const tmpFiles: string[] = [];
+
+  afterEach(() => {
+    for (const f of tmpFiles.splice(0)) {
+      try {
+        fs.rmSync(path.dirname(f), { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+      } catch {
+        // 清理失败不影响断言
+      }
+    }
+  });
+
+  /** pi session 文件首行 SessionHeader（session-manager.js newSession 形态）。 */
+  const mkSessionHeader = (sessionId: string) =>
+    JSON.stringify({ type: "session", version: 3, id: sessionId, timestamp: "2026-09-01T00:00:00.000Z", cwd: "/tmp" });
+
+  /** 带 sessionId 的 register（pending-notifications listener 落盘形态）。 */
+  const mkRegisterIn = (id: string, sessionId: string) =>
+    JSON.stringify({ type: "custom", customType: "pending:register", data: { id, type: "subagent", name: id, registeredAt: 1, sessionId } });
+
+  /** 端口等价实现（消费基准）：按 currentSessionId 过滤后直数——pending-notifications
+   *  filterActiveRegisters 的最小转写（缺 sessionId 的旧形态条目视为本 session，不过滤）。 */
+  function filteredCountingPort(): ReturnType<typeof vi.fn<(entries: unknown[], opts?: { currentSessionId?: string }) => number>> {
+    const counter = vi.fn((entries: unknown[], opts?: { currentSessionId?: string }) => {
+      const seen = new Set<string>();
+      let count = 0;
+      for (const raw of entries) {
+        if (!raw || typeof raw !== "object") continue;
+        const data = (raw as { data?: { id?: unknown; sessionId?: unknown } }).data ?? {};
+        if (typeof data.id !== "string" || seen.has(data.id)) continue;
+        seen.add(data.id);
+        if (
+          opts?.currentSessionId !== undefined &&
+          typeof data.sessionId === "string" &&
+          data.sessionId !== opts.currentSessionId
+        ) {
+          continue;
+        }
+        count += 1;
+      }
+      return count;
+    }) as ReturnType<typeof vi.fn<(entries: unknown[], opts?: { currentSessionId?: string }) => number>>;
+    configureNotifyDomain({ countActiveFromEntries: counter });
+    return counter;
+  }
+
+  it("带 session header 的文件 → 端口收到的基准 = header.id（被读文件所属 session）", () => {
+    const counter = filteredCountingPort();
+    const file = makeTmpSessionFile([
+      mkSessionHeader("sess-child"),
+      mkRegisterIn("bg-own", "sess-child"),
+    ]);
+    tmpFiles.push(file);
+    expect(readActivePendingFromSessionFile(file).count).toBe(1);
+    const call = counter.mock.calls[0] as unknown[];
+    expect(call[1]).toEqual({ currentSessionId: "sess-child" });
+  });
+
+  it("端到端：fork 继承的父级 register 残留（sessionId = 父 session）不进后代判定差集", () => {
+    filteredCountingPort();
+    // 子 session 文件 = header(sess-child) + fork 继承的父级注册残留 + 子进程自己的注册
+    const file = makeTmpSessionFile([
+      mkSessionHeader("sess-child"),
+      mkRegisterIn("bg-parent", "sess-parent"),
+      mkRegisterIn("wf-parent", "sess-parent"),
+      mkRegisterIn("bg-own", "sess-child"),
+    ]);
+    tmpFiles.push(file);
+    // 无读侧过滤时差集为 3（层主误判「尚有活跃后代」空等）；过滤后只数本 session = 1
+    expect(readActivePendingFromSessionFile(file)).toEqual({ count: 1, recentUnregister: false });
+  });
+
+  it("无 session header（旧 fixture 形态）→ 基准 undefined = 不过滤（向后兼容）", () => {
+    const counter = filteredCountingPort();
+    const file = makeTmpSessionFile([
+      mkRegisterIn("bg-parent", "sess-parent"),
+      mkRegisterIn("bg-own", "sess-child"),
+    ]);
+    tmpFiles.push(file);
+    expect(readActivePendingFromSessionFile(file).count).toBe(2);
+    const call = counter.mock.calls[0] as unknown[];
+    expect(call[1]).toBeUndefined();
+  });
+
+  it("增量读（cursor 已热）时基准仍从 cursor 缓存透传（不依赖重读首行）", () => {
+    const counter = filteredCountingPort();
+    const file = makeTmpSessionFile([
+      mkSessionHeader("sess-child"),
+      mkRegisterIn("bg-own", "sess-child"),
+    ]);
+    tmpFiles.push(file);
+    expect(readActivePendingFromSessionFile(file).count).toBe(1); // 首读建 cursor
+    // 追加新 register 后增量读——offset > 0 不重读首行，基准取 cursor 缓存
+    fs.appendFileSync(file, mkRegisterIn("bg-own-2", "sess-child") + "\n", "utf-8");
+    expect(readActivePendingFromSessionFile(file).count).toBe(2);
+    const lastCall = counter.mock.calls[counter.mock.calls.length - 1] as unknown[];
+    expect(lastCall[1]).toEqual({ currentSessionId: "sess-child" });
   });
 });

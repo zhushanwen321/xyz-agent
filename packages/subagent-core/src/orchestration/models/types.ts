@@ -189,6 +189,14 @@ export interface AgentCallOpts {
   /** Inherit parent session context (fork mode). Independent of worktree (file isolation). */
   fork?: boolean;
   /**
+   * fork-from 显式分叉源 session 文件（fork-from 断联恢复通道的唯一 lossless 载体）。
+   * 来源 = ExecuteOptions.forkFromSessionFile（host-task-spec 映射时的唯一改名点——
+   * 本形状起与 SDK 协议字段、引擎侧 SpawnRunParams.forkSource 三层同名，降低跨层
+   * 双名漂移面）。区别于 fork:true（主 session 作分叉源）：本字段点名任意已有
+   * session 文件。chat 域唯一写入方 = fork-from action。
+   */
+  forkSource?: string;
+  /**
    * 执行引擎 id（P4 D9 三层优先级的第一层：调用参数级，workflow step 显式指定）。
    * 仅限「必须某引擎独有能力」的场景使用并注释原因（D9③ workflow 脚本不写死
    * engine——环境差异由 frontmatter/全局默认承载）；透传链 worker-script-builder
@@ -263,7 +271,7 @@ export interface ToolCallEntry {
  * 默认重试语义；仅 stale_context 与 schema_deterministic 两态维持不重试特判。
  * 词表归属（产出侧单点识别）：stale_context / schema_deterministic 的识别词表
  * （stale 词表与确定性 schema 失败标记前缀）保留在产出侧
- * execution/engine/engines/pi/output-collector.ts 包内——词表漂移的失效模式是
+ * execution/engine/inproc pi 引擎目录/output-collector.ts 包内——词表漂移的失效模式是
  * failureKind=unknown → 保守重试（安全默认），不再是静默漏诊。
  */
 export type AgentFailureKind = "stale_context" | "schema_deterministic" | "unknown";
@@ -279,7 +287,7 @@ export interface AgentResult {
   content: string;
  /**
  * [D5-③] 失败分诊结构化标签（AgentFailureKind）。产出侧唯一识别点 =
- * execution/engine/engines/pi/output-collector.ts（collectResult 对最终 error
+ * execution/engine/inproc pi 引擎目录/output-collector.ts（collectResult 对最终 error
  * 分类后写入，经 agent-result-mapper / AgentOutcome 透传到本形态）；消费侧
  * execute-agent-call 读本字段分诊，不再扫 error 文案子串。
  *

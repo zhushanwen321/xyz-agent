@@ -1,7 +1,9 @@
-// lifecycle-predicates 单测（v4 B-1）。
+// lifecycle-predicates 单测（v4 B-1；W6 随拆依赖改写：读点改 core 侧状态镜像）。
 // 验证 isIdle/isResumable/hasLiveProcessHandle 在两态收敛后的判定逻辑。
-// 依赖 lifecycle-manager 模块级 idleTimers 与 session-runner.spawnedChildren（单例 Map），
-// beforeEach 重置隔离。
+// 依赖 lifecycle-manager 模块级 idleTimers 与 core 侧 spawnedChildren 镜像
+// （engine/host/spawned-children.ts），beforeEach 重置隔离。
+// [W3 改写] inproc 过渡桥并读用例随 inproc pi 引擎目录 删除消亡——镜像成为唯一数据源
+// （host/childSpawned 上报 + 终止意图置死位），等价性用例的「并读」语义不再存在。
 
 import { describe, it, expect, beforeEach } from "vitest";
 
@@ -10,8 +12,10 @@ import {
   disarmIdleTimer,
   _resetLifecycleState,
 } from "../lifecycle-manager.ts";
-import { spawnedChildren } from "../engine/engines/pi/session-runner.ts";
-import type { ChildProcess } from "node:child_process";
+import {
+  coreSpawnedChildrenMirror,
+  _resetCoreSpawnedChildrenMirrorForTest,
+} from "../engine/host/spawned-children.ts";
 import type { ExecutionRecord } from "../types.ts";
 
 import { hasLiveProcessHandle, isIdle, isResumable } from "../lifecycle-predicates.ts";
@@ -44,16 +48,10 @@ function makeRecord(overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
   } as ExecutionRecord;
 }
 
-/** 构造最小 ChildProcess fake（hasLiveProcessHandle 只读 .killed）。 */
-function fakeChild(killed: boolean): ChildProcess {
-  // 测试 fake：被测代码仅读 .killed，其余字段不可达，用 unknown 中转满足 Map 类型。
-  return { killed } as unknown as ChildProcess;
-}
-
 describe("lifecycle-predicates (v4 B-1)", () => {
   beforeEach(() => {
     _resetLifecycleState();
-    spawnedChildren.clear();
+    _resetCoreSpawnedChildrenMirrorForTest();
   });
 
   describe("isIdle (= hasIdleTimer)", () => {
@@ -75,20 +73,27 @@ describe("lifecycle-predicates (v4 B-1)", () => {
     });
   });
 
-  describe("hasLiveProcessHandle", () => {
-    it("no child in map → false", () => {
+  describe("hasLiveProcessHandle（W6 改读镜像）", () => {
+    it("no mirror entry → false", () => {
       expect(hasLiveProcessHandle("sa-test")).toBe(false);
     });
 
-    it("child present and not killed → true", () => {
-      spawnedChildren.set("sa-test", fakeChild(false));
+    it("mirror entry running (not killed) → true", () => {
+      coreSpawnedChildrenMirror().register("sa-test", { pid: 1, killed: false });
       expect(hasLiveProcessHandle("sa-test")).toBe(true);
     });
 
-    it("child present but killed → false", () => {
-      spawnedChildren.set("sa-test", fakeChild(true));
+    it("mirror entry killed → false", () => {
+      coreSpawnedChildrenMirror().register("sa-test", { pid: 1, killed: true });
       expect(hasLiveProcessHandle("sa-test")).toBe(false);
     });
+
+    it("mirror markKilled 置死后 → false", () => {
+      coreSpawnedChildrenMirror().register("sa-test", { pid: 1, killed: false });
+      coreSpawnedChildrenMirror().markKilled("sa-test");
+      expect(hasLiveProcessHandle("sa-test")).toBe(false);
+    });
+
   });
 
   describe("isResumable (= running && !hasLiveProcessHandle)", () => {
@@ -96,9 +101,9 @@ describe("lifecycle-predicates (v4 B-1)", () => {
       expect(isResumable(makeRecord({ status: "running" }))).toBe(true);
     });
 
-    it("running + live process → false (Path A 保活 / 正在执行)", () => {
+    it("running + live process (镜像) → false (Path A 保活 / 正在执行)", () => {
       const rec = makeRecord({ status: "running" });
-      spawnedChildren.set(rec.id, fakeChild(false));
+      coreSpawnedChildrenMirror().register(rec.id, { pid: 1, killed: false });
       expect(isResumable(rec)).toBe(false);
     });
 
@@ -108,7 +113,7 @@ describe("lifecycle-predicates (v4 B-1)", () => {
 
     it("closed + live process → false (终态优先)", () => {
       const rec = makeRecord({ status: "closed" });
-      spawnedChildren.set(rec.id, fakeChild(false));
+      coreSpawnedChildrenMirror().register(rec.id, { pid: 1, killed: false });
       expect(isResumable(rec)).toBe(false);
     });
   });

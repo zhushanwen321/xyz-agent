@@ -5,7 +5,7 @@
  * 调 killAllSpawnedChildren 收割全部活子进程，且 idempotent（多信号叠加只收割一次）。
  *
  * mock 策略（对齐 wave0-package-structure.test.ts）：
- *   - session-runner.killAllSpawnedChildren → vi.fn（避免真实 kill + 可断言调用）
+ *   - killAllSpawnedChildren → vi.fn（避免真实 kill + 可断言调用）
  *   - process.on → spy + mockImplementation 捕获 handler（不真实注册，防 listener 泄漏）
  *   - process.kill → spy mock（SIGINT handler re-raise 会 kill 自身，必须拦截防杀测试 runner）
  *   - process.removeListener → spy（断言 SIGINT re-raise 前先摘除自身 listener）
@@ -14,11 +14,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-// mock session-runner：index.ts factory 顶层唯一引用点是 killAllSpawnedChildren。
+// [W3 改写] mock 目标随符号迁移更换：原 inproc session-runner（engines/pi/）随 W3
+// 删件消亡，killAllSpawnedChildren 收敛到 engine/host/spawned-children.ts 公共面
+//（宿主收割入口 = 镜像整体置死），index.ts 经 core barrel re-export 消费。mock 该深
+// 路径模块（spread actual 保其余导出，镜像其他消费方不受影响），barrel re-export
+// 命中同一物理模块 → factory 引用点被替换。
 const killAllSpawnedChildrenMock = vi.fn();
-vi.mock("@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts", () => ({
-  killAllSpawnedChildren: killAllSpawnedChildrenMock,
-}));
+vi.mock("@zhushanwen/subagent-core/execution/engine/host/spawned-children.ts", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@zhushanwen/subagent-core/execution/engine/host/spawned-children.ts")>();
+  return {
+    ...actual,
+    killAllSpawnedChildren: (...args: unknown[]) => killAllSpawnedChildrenMock(...(args as [string?])),
+  };
+});
 
 /** 最小 mock ExtensionAPI（对齐 wave0-package-structure.test.ts 的 createMockExtensionAPI）。 */
 function createMockExtensionAPI(): ExtensionAPI {

@@ -24,7 +24,6 @@ import {
   finalizedMarkerModule,
   fsSyncModule,
   manifestStoreModule,
-  tempPromptModule,
 } from "./helpers/subagent-service-mocks.ts";
 
 vi.mock("node:child_process", () => childProcessModule());
@@ -32,7 +31,6 @@ vi.mock("node:fs", async (importOriginal) => fsSyncModule(await importOriginal<t
 vi.mock("../alive-store.ts", async (importOriginal) => aliveStoreModule(await importOriginal<typeof import("../alive-store.ts")>()));
 vi.mock("../finalized-marker.ts", () => finalizedMarkerModule());
 vi.mock("../manifest-store.ts", () => manifestStoreModule());
-vi.mock("../engine/engines/pi/temp-prompt.ts", () => tempPromptModule());
 
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";

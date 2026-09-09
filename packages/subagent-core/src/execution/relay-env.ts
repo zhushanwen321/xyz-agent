@@ -35,3 +35,23 @@ export const RELAY_EXIT_CODES = {
 export function isRelayActive(env: NodeJS.ProcessEnv | Record<string, string | undefined>): boolean {
   return Boolean(env[RELAY_ENV_SOCKET] && env[RELAY_ENV_NODE] && env[RELAY_ENV_SCRIPT]);
 }
+
+/**
+ * [W8 H12] 宿主 env → relay 连接三键的转发提取（原样转发语义的单一实现）。
+ *
+ * 三键同时非空（isRelayActive 同判）才返回——全有或全无，无中间态；身份键
+ * SESSION_ID/RECORD_ID 不在本提取面（它们是父身份归属键，引擎子进程 env 由
+ * SDK buildEngineChildEnv L1 deny 剥除、引擎按 run.params.ctx 重写，不靠 env 继承）。
+ *
+ * 消费方：D8 createZcodeEngine 薄壳（zsw 宿主链路的 relay 透传）；宿主 env 形态
+ * 与 SDK EngineRelayEnv 结构等价（字段名 socket/node/script），TS 结构类型直接赋值。
+ */
+export function readRelayForwardEnv(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+): { socket: string; node: string; script: string } | undefined {
+  const socket = env[RELAY_ENV_SOCKET];
+  const node = env[RELAY_ENV_NODE];
+  const script = env[RELAY_ENV_SCRIPT];
+  if (!isRelayActive(env)) return undefined;
+  return { socket: socket as string, node: node as string, script: script as string };
+}

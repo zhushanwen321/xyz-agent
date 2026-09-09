@@ -1,18 +1,22 @@
 /**
- * MessageDispatcher abort 强杀分支测试（integrity-hardening D3a：pi 半死自愈，修 M5）。
+ * MessageDispatcher abort 强杀分支测试（integrity-hardening D3a：pi 半死自愈，修 M5；
+ * [W7] chat-domain-v1x-liveness-governance D3 改造为三级阶梯的真冻结终点）。
  *
- * 锁定决策：abort RPC 以 RpcTimeoutError 失败（pi 事件循环卡死，ping 3 连败判定真死）时
- * 走「检测即收敛」——destroySession 强杀 + 与 onSessionExit 同构的收敛编排
+ * 锁定决策：abort RPC 以 RpcTimeoutError 失败 且 真冻结判据成立（快超时探测无响应 +
+ * 事件窗静默超保守窗——mock 显式提供 getState 超时 + lastEventAt 远超窗）时走阶梯 3
+ * 「检测即收敛」——destroySession 强杀 + 与 onSessionExit 同构的收敛编排
  * （detach → destroy → stopped 终态 → session.exited → removeSessionEntry）；
  * 非超时错误保持现行 abort 收口行为（不销毁）。
+ * 阶梯全量用例（阶梯 1 有界重试 / 阶梯 2 用户显式强关 / 防重入 / 窗值配置）见
+ * src/services/session/__tests__/message-dispatcher-abort-liveness.test.ts（W7 领地）。
  *
  * 覆盖：
- * - 超时 → pm.destroySession 被调 + svc.detachSession/removeSessionEntry 被调 +
+ * - 超时 + 真冻结 → pm.destroySession 被调 + svc.detachSession/removeSessionEntry 被调 +
  *   persistSessionOutcome('stopped') + publish session.exited（含「重发即可恢复」指引）+
  *   isGenerating 复位
  * - 顺序约束：session.exited 必须在 removeSessionEntry 之前（其后 messageBus.clearSession
  *   清空订阅者，再发等于空投）
- * - 超时 → 不发 message.error（前端 handleSessionExited 已把 reason 插入聊天流，双发即双报）
+ * - 超时 + 真冻结 → 不发 message.error（前端 handleSessionExited 已把 reason 插入聊天流，双发即双报）
  * - 非超时（普通 Error）→ destroySession/detachSession/removeSessionEntry 均不调，
  *   现行 message.error 收口保持
  *
@@ -54,6 +58,9 @@ function makeMocks(abortError: Error) {
   const session = makeMockSession()
   const client = {
     abort: vi.fn(async () => { throw abortError }),
+    // [W7] 真冻结判据显式化（阶梯 3 直杀的唯一触发组合）：探测无响应 + 事件窗静默超保守窗。
+    getState: vi.fn(async () => { throw new RpcTimeoutError('get_state', 10_000) }),
+    lastEventAt: Date.now() - 700_000,
   } as unknown as IPiEngine
 
   // ServerMessage payload 是 union，属性直接访问过不了 tsc；测试只读 type + payload 字段，
@@ -108,8 +115,8 @@ describe('MessageDispatcher abort 强杀分支（D3a：RpcTimeoutError → 检�
     // 收敛编排：detach + removeEntry
     expect(svc.detachSession).toHaveBeenCalledWith('s1')
     expect(svc.removeSessionEntry).toHaveBeenCalledWith('s1')
-    // stopped 终态
-    expect(svc.persistSessionOutcome).toHaveBeenCalledWith('s1', 'stopped', expect.stringContaining('pi unresponsive'))
+    // stopped 终态（[W7] reason 带真冻结判据：探测无响应 + 事件流静默）
+    expect(svc.persistSessionOutcome).toHaveBeenCalledWith('s1', 'stopped', expect.stringContaining('pi frozen'))
     // isGenerating 复位
     expect(session.isGenerating).toBe(false)
 
@@ -150,8 +157,13 @@ describe('MessageDispatcher abort 强杀分支（D3a：RpcTimeoutError → 检�
   })
 
   it('session 已无 Map 条目（并发 deleteSession 先行）→ 收敛编排仍不抛错（幂等防御）', async () => {
-    // 并发竞态：getSessionByClient 返回 undefined（条目已被 delete 路径删走）
-    const client = { abort: vi.fn(async () => { throw new RpcTimeoutError('abort', 60_000) }) } as unknown as IPiEngine
+    // 并发竞态：getSessionByClient 返回 undefined（条目已被 delete 路径删走）。
+    // [W7] 真冻结判据成员同样显式（与 makeMocks 同款），路径 = 阶梯 3 直杀的幂等防御。
+    const client = {
+      abort: vi.fn(async () => { throw new RpcTimeoutError('abort', 60_000) }),
+      getState: vi.fn(async () => { throw new RpcTimeoutError('get_state', 10_000) }),
+      lastEventAt: Date.now() - 700_000,
+    } as unknown as IPiEngine
     const broadcasts: Array<{ type: string; payload: Record<string, unknown> }> = []
     const bus = { publish: vi.fn((_sid: string, m: ServerMessage) => { broadcasts.push(m as unknown as { type: string; payload: Record<string, unknown> }) }) } as unknown as IMessageBus
     const svc: IDispatcherSessionOps = {

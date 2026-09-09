@@ -9,9 +9,14 @@
 // 若参数名漂移或透传丢失（subagent-actions.ts L206-207），1970 个用例仍全绿。
 //
 // 两层验证：
-//   1. 接线层：真实 SubagentService.execute（mock runSpawn pending 阻断 detached 收尾）
-//      → 断言内存 record.chatMode === true / idleTimeoutMs 生效；缺省对照 chatMode === false
+//   1. 接线层：真实 SubagentService.execute（fake 引擎 run 永不 settle——阻断 detached
+//      收尾，record 停在 running）→ 断言内存 record.chatMode === true / idleTimeoutMs 生效；
+//      缺省对照 chatMode === false
 //   2. 透传层：startHandler + mock service → 断言 execute 收到 conversation/idleTimeoutMs 原值
+//
+// [W3 改写] 原(mock inproc session-runner.runSpawn 永挂) 随 inproc pi 引擎目录删除消亡；
+// 换 registerFakePiEngine 协议替身（FakeRun promise 永不 settle 同语义），派发观测点
+// 从 mockRunSpawn 调用计数换成 fake.runs 捕获数。
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -24,25 +29,14 @@ const { loggerMock } = vi.hoisted(() => ({
 }));
 vi.mock( "@zhushanwen/subagent-core/core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
-// mock session-runner：runSpawn 返回永不 resolve 的 promise（阻断 runAndFinalize 收尾，
-// record 停在 running，execute 返回后立即可断言 createRecordForMode 的接线产物）。
-vi.mock( "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts", () => ({
-  runSpawn: vi.fn(() => new Promise(() => {})),
-  killAllSpawnedChildren: vi.fn(),
-  killRecordChildWithEscalation: vi.fn(),
-  getChildByRecord: vi.fn(() => undefined),
-  spawnedChildren: new Map(),
-}));
-
-import { runSpawn } from "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts";
+import { registerFakePiEngine, type FakePiEnginePort } from "@zhushanwen/subagent-core/testing/execution/__tests__/helpers/fake-engine-port.ts";
+import { clearEngines } from "@zhushanwen/subagent-core/execution/engine/registry.ts";
 import { startHandler } from "../interface/subagent-actions.ts";
 import { ModelConfigService } from "@zhushanwen/subagent-core";
 import type { ModelInfo, ModelRegistryLike } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
 import { RecordStore } from "@zhushanwen/subagent-core";
 import { SubagentService } from "@zhushanwen/subagent-core";
 import type { ExecutionHandle, SubagentToolDetails } from "@zhushanwen/subagent-core/execution/types.ts";
-
-const mockRunSpawn = vi.mocked(runSpawn);
 
 const STUB_MODEL: ModelInfo = { id: "test-model", name: "Test", provider: "test", reasoning: false };
 
@@ -82,6 +76,7 @@ describe("[M9] conversation:true 接线：execute → createRecordForMode", () =
   let agentDir: string;
   let service: SubagentService;
   let store: RecordStore;
+  let fake: FakePiEnginePort;
 
   beforeEach(() => {
     agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "conv-wiring-"));
@@ -94,11 +89,14 @@ describe("[M9] conversation:true 接线：execute → createRecordForMode", () =
     service = new SubagentService({ cwd: agentDir, modelService });
     service.initSession({ pi: makePi(), sessionId: "root-session" });
     store = (service as unknown as ServiceInternals).store;
-    mockRunSpawn.mockClear();
+    // 协议替身引擎：run 永不 settle（FakeRun promise 挂起），record 停在 running。
+    fake = registerFakePiEngine();
   });
 
   afterEach(() => {
     service.dispose();
+    // registry 是 globalThis 进程单例——清空防替身引擎泄漏进其他测试文件。
+    clearEngines();
     fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
@@ -115,8 +113,11 @@ describe("[M9] conversation:true 接线：execute → createRecordForMode", () =
     expect(record!.chatMode).toBe(true);
     expect(record!.idleTimeoutMs).toBe(12345);
     expect(record!.status).toBe("running");
-    // execute 走到 kickOffChatRound（runSpawn 已被调用）——完整接线而非 early return
-    expect(mockRunSpawn).toHaveBeenCalledTimes(1);
+    // execute 走到 kickOffChatRound（engine.run 已派发）——完整接线而非 early return
+    await vi.waitFor(() => expect(fake.runs).toHaveLength(1));
+    // chat 会话形态接线：run ctx 携带 chat.recordId（协议 run.params.chat 承载位）
+    expect(fake.runs[0].ctx.chat?.recordId).toBe(handle.subagentId);
+    expect(fake.runs[0].task.conversation).toBe(true);
   });
 
   it("conversation 缺省 → record.chatMode===false、idleTimeoutMs undefined（一次性模式不误升级）", async () => {

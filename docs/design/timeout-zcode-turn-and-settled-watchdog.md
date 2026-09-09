@@ -17,6 +17,8 @@
 
 **本章结论：两条执行链的「任务级等待守护」是本设计的对象——zcode 侧是一个挂在共享 app-server 会话上的 300s 计时器，pi 侧是一个挂在 chatMode 每轮上的 10min settled 硬上限。**
 
+> **[v1.x 已收口注记]** 本节两条链路为设计时点（zcode 引擎仍内建 core、pi inproc session-runner 尚存）的现场快照：此后 zcode 引擎已随协议化外移至 `packages/zcode-subagent-cli`、pi inproc 引擎已随 chat 域协议 v1.x 收口删除（core `engine/engines/` 目录现不存在，commit `0df9ef8b3`）。下文文件锚点按成文时点保留为史实，现行引擎形态见 `subagent-engine-protocolization.md` §1 收口注记；守护机制语义（idle 主判定 + 宽上界 / settled 两段式）不变，现落点为 core 壳侧与引擎包内对应模块。
+
 **zcode 引擎链路**（`packages/subagent-core/src/execution/engine/engines/zcode/`）：subagent 工具派发任务 → `ZcodeEngine.run`（app-server 常驻路径）→ `runAppServerAttemptsWithRetry`（`zcode-engine.ts:490`，现仅 schema 校验失败重试）→ `attemptAppServerTurn`（`:534`）→ `SessionChannel.runTurn`（`session-channel.ts:438`）——在共享的 ZCode app-server 子进程上 create/subscribe/send 一个会话，等待终态推送。一轮任务期间 app-server 内部自主跑完整的 agent 循环（多次 LLM 调用 + 工具执行），我方只消费事件流。
 
 **pi 引擎 chatMode 链路**（`execution/`）：`session-runner.runSpawn`（首轮）与 `subagent-service.deliverMessage`（续聊轮）驱动 `pi --mode rpc` 子进程，等待每轮的 `agent_settled` 事件行（round 收尾信号）——`settled-watchdog.ts` 为这个等待挂 10min 固定硬上限，双挂载点 `session-runner.ts:2453` + `subagent-service.ts:1177`。

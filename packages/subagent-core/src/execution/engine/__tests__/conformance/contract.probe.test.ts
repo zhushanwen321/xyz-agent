@@ -1,20 +1,40 @@
 // contract.probe.test.ts —— conformance C1（probe 形状）：ProbeReport 字段完整；
 // ok=false 时 error.recovery 非空（§3.3.5——恢复指引是错误闭环「错误→权威源→重试」
-// 的载体，空指引 = 拦截了但不知道怎么修）。pi/zcode 双引擎都过（任何 adapter 必过）。
+// 的载体，空指引 = 拦截了但不知道怎么修）。
 //
-// fake 注入（不依赖真机）：pi 用 probeVersion fake + 不可解析 invocation 场景；
-// zcode 用不存在的 cliPath 构造 binary check 失败。
+// W10 协议黑盒化：断言对象从内建 PiEngine/ZcodeEngine（inproc，W11 删除）改为
+// RemoteEngine × fake 引擎 CLI（协议 probe 帧往返）——成功/失败两形态都经协议面。
+// 引擎内 probe 细节（版本探测、二进制检查）随 W5/W7 归各引擎包测试。
 
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { describe, expect, it } from "vitest";
-
-import { PiEngine } from "../../engines/pi/pi-engine.ts";
-import { ZcodeEngine } from "../../engines/zcode/zcode-engine.ts";
+import { EngineClient } from "../../client/engine-client.ts";
+import { RemoteEngine } from "../../client/remote-engine.ts";
+import { FAKE_CAPABILITIES } from "./fake-engine-capabilities.ts";
 import type { ProbeReport } from "../../types.ts";
+
+const FAKE_ENGINE = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "__fixtures__", "engine-protocol", "fake-engine-protocol.mjs",
+);
+const FIXTURE = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "__fixtures__", "engine-protocol", "smoke-run.fixture.json",
+);
+
+let dataDir: string;
+
+beforeEach(() => {
+  dataDir = mkdtempSync(join(tmpdir(), "w10-c1-probe-"));
+});
+
+afterEach(() => {
+  rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+});
 
 function assertProbeShape(report: ProbeReport): void {
   expect(typeof report.ok).toBe("boolean");
@@ -34,44 +54,47 @@ function assertProbeShape(report: ProbeReport): void {
   }
 }
 
-describe("conformance C1：probe 形状（ProbeReport 字段完整 + 失败含恢复指引）", () => {
-  it("pi：成功路径形状（fake 版本探测，不 spawn 真进程）", async () => {
-    const engine = new PiEngine({ getService: () => null, probeVersion: async () => "0.84.1" });
-    const report = await engine.probe();
-    assertProbeShape(report);
-    expect(report.ok).toBe(true);
-    expect(report.engineVersion).toBe("0.84.1");
+function makeEngine(extraEnv: Record<string, string> = {}): RemoteEngine {
+  const client = new EngineClient({
+    engineId: "fake",
+    command: process.execPath,
+    args: [FAKE_ENGINE],
+    hostKind: "test",
+    hostVersion: "w10-c1-probe",
+    dataDir,
+    envPrefixes: [],
+    baseEnv: { ...process.env, FAKE_PROTOCOL_FIXTURE: FIXTURE, ...extraEnv },
+  });
+  return new RemoteEngine({
+    engineId: "fake",
+    client,
+    manifest: { capabilities: FAKE_CAPABILITIES },
+    dataDir,
+    hostKind: "test",
+  });
+}
+
+describe("conformance C1：probe 形状（协议黑盒：RemoteEngine × fake 引擎）", () => {
+  it("成功路径：probe 帧往返 → ProbeReport 形状完整", async () => {
+    const engine = makeEngine();
+    try {
+      const report = await engine.probe();
+      assertProbeShape(report);
+      expect(report.ok).toBe(true);
+    } finally {
+      await engine.dispose();
+    }
   });
 
-  it("pi：失败路径（invocation 不可解析）——error.recovery 非空", async () => {
-    const engine = new PiEngine({
-      getService: () => null,
-      probeVersion: async () => undefined,
-    });
-    // PATH 无 pi 时 invocation check 失败；有 pi 时版本 fake 失败——两形态都走断言器
-    const report = await engine.probe({ force: true });
-    assertProbeShape(report);
-  });
-
-  it("zcode：成功路径形状（存在的 cliPath + fake 版本探测）", async () => {
-    const engine = new ZcodeEngine({
-      engineDataDir: () => fs.mkdtempSync(path.join(os.tmpdir(), "probe-zcode-")),
-      cliPath: fileURLToPath(import.meta.url),
-      probeVersion: async () => "0.16.5",
-    });
-    const report = await engine.probe();
-    assertProbeShape(report);
-    expect(report.ok).toBe(true);
-  });
-
-  it("zcode：失败路径（二进制不存在）——error.recovery 非空且含重探指引", async () => {
-    const engine = new ZcodeEngine({
-      engineDataDir: () => fs.mkdtempSync(path.join(os.tmpdir(), "probe-zcode-")),
-      cliPath: "/nonexistent/zcode.cjs",
-    });
-    const report = await engine.probe();
-    assertProbeShape(report);
-    expect(report.ok).toBe(false);
-    expect(report.error?.recovery).toContain("--version");
+  it("失败路径（FAKE_PROBE_FAIL）：ok=false + error.recovery 非空且指向动作", async () => {
+    const engine = makeEngine({ FAKE_PROBE_FAIL: "1" });
+    try {
+      const report = await engine.probe({ force: true });
+      assertProbeShape(report);
+      expect(report.ok).toBe(false);
+      expect(report.error?.recovery).toContain("Reinstall");
+    } finally {
+      await engine.dispose();
+    }
   });
 });

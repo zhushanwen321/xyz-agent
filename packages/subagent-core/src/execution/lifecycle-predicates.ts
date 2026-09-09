@@ -4,8 +4,8 @@
 //
 // 旧三态（running/idle/cancelled）折为两态（running/closed）后，「对话模式等待续聊」
 //（旧 idle）和「正在执行」都是 status="running"，需派生谓词区分。谓词复用已有
-// lifecycle-manager.hasIdleTimer（idle timer 是否 armed）与 session-runner.getChildByRecord
-//（活进程句柄是否存在），不新增状态记账。
+// lifecycle-manager.hasIdleTimer（idle timer 是否 armed）与 core 侧 spawnedChildren
+// 状态镜像读点（engine/host/spawned-children.ts，活进程句柄是否存在），不新增状态记账。
 //
 // 两种 running 子态（v4 B-1）：
 //   - 等待续聊（旧 idle）：isIdle=true（timer armed）。又分两路：
@@ -20,19 +20,21 @@
 // 故 isIdle 在这两个检查点恒为 true——notify 守卫与 early-return 判据可靠。
 
 import { hasIdleTimer } from "./lifecycle-manager.ts";
-import { getChildByRecord } from "./engine/engines/pi/session-runner.ts";
+// [W6 拆依赖] 活进程句柄读点改经 core 侧 spawnedChildren 状态镜像公共面
+// （engine/host/spawned-children.ts），不再深路径 import inproc pi 引擎目录 内部——
+// 行为不变（镜像 ∪ inproc 权威 map 并读，见该文件头注释的过渡桥语义）。
+import { hasLiveProcessHandleCore } from "./engine/host/spawned-children.ts";
 import type { ExecutionRecord } from "./types.ts";
 
 /**
  * 活进程句柄是否存在（isResumable 子判据）。
  *
- * 复用 session-runner.spawnedChildren 的 getChildByRecord 查询。child 存在且未 kill
- * = 有活进程句柄（正在执行 / Path A 保活）。进程 close 后 spawnedChildren 已 delete，
- * 返回 undefined = 无活进程（Path B / 跨重启）。
+ * [W6] 改读 core 侧状态镜像（engine/host/spawned-children.ts 的 hasLiveProcessHandleCore：
+ * 镜像项存在且未 killed = 有活进程句柄；迁移期内建 pi 的 inproc 权威 map 并读兜底）。
+ * 进程 close / 被杀后镜像项置死或移除 = 无活进程（Path B / 跨重启）。
  */
 export function hasLiveProcessHandle(recordId: string): boolean {
-  const child = getChildByRecord(recordId);
-  return child !== undefined && !child.killed;
+  return hasLiveProcessHandleCore(recordId);
 }
 
 /**

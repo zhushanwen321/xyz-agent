@@ -22,16 +22,10 @@ const { loggerMock } = vi.hoisted(() => ({
 }));
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
-const { killChildSpy } = vi.hoisted(() => ({ killChildSpy: vi.fn() }));
-vi.mock("../engine/engines/pi/session-runner.ts", () => ({
-  runSpawn: vi.fn(),
-  killAllSpawnedChildren: vi.fn(),
-  getChildByRecord: vi.fn(() => undefined),
-  registerSpawnedChildForRecord: vi.fn(),
-  spawnedChildren: new Map(),
-  killRecordChildWithEscalation: killChildSpy,
-}));
-
+// [W3 改写] 原 vi.mock(inproc pi 引擎目录/session-runner) 随删件消亡——chat 轮次走协议 seam
+//（registerFakePiEngine 替身，kickOffChatRound 的 notify 门经 engine.run 应答驱动）。
+import { registerFakePiEngine } from "./helpers/fake-engine-port.ts";
+import { clearEngines } from "../engine/registry.ts";
 import { bindNotifyLedgerHost, NOTIFY_LEDGER_CUSTOM_TYPE, _resetNotifyLedgerForTest } from "../notify-ledger.ts";
 import { createRecord } from "../execution-record.ts";
 import { ModelConfigService } from "../model-config-service.ts";
@@ -95,8 +89,10 @@ describe("T4① notify gate closedReason whitelist", () => {
     expect(notifyGateAllowsDelivery(undefined)).toBe(true);
   });
 
-  it("kickOffChatRound.then does not inject parent-new closed records into the session", async () => {
+  it("kickOffChatRound 应答回注不注入 parent-new closed records（notify 门白名单）", async () => {
     const { agentDir, service, pi } = setup();
+    clearEngines();
+    const fake = registerFakePiEngine();
     const record = createRecord("sa-gate-new", {
       agent: "general-purpose",
       model: "test/model",
@@ -107,34 +103,33 @@ describe("T4① notify gate closedReason whitelist", () => {
       rootSessionId: "root-session",
       controller: new AbortController(),
     });
-    // 模拟 disposeAllRecords 先行编排性关闭后，迟到的 kickOffChatRound.then 回注
+    // 模拟 disposeAllRecords 先行编排性关闭后，迟到的 kickOffChatRound 应答回注
     record.closedReason = "parent-new";
-    const stub = vi.fn().mockResolvedValue({
-      text: "",
-      turns: 0,
-      durationMs: 1,
-      success: false,
-      error: "closed due to parent-new",
-      sessionId: record.id,
-      toolCalls: [],
-    });
-    (service as unknown as Record<string, unknown>).runAndFinalize = stub;
-    // [D4 后形态] 轮次编排入口 kickOffChatRound（私有，bracket 调用先例见
-    // subagent-service-recovery-bounds.test.ts privateFn）；opts 形参仍是 ExecuteOptions
-    //（task/slug），chat 分支由 ticket lossless 携带——task 声明形参不参与校验。
+    // [W3] 轮次编排入口 kickOffChatRound（私有，bracket 调用先例）——协议 run 发起后
+    // 挂起，编排性关闭先行，再模拟引擎应答（迟到回注被门拦）。
     const kickOffChatRound = (
       service as unknown as Record<string, (...args: unknown[]) => void>
     )["kickOffChatRound"];
-    kickOffChatRound.call(service, record, { task: "t", slug: "gate" }, {}, {}, undefined, 1000, undefined);
-    await vi.waitFor(() => expect(stub).toHaveBeenCalled());
+    const identity = {
+      agent: "general-purpose",
+      agentConfig: undefined,
+      resolved: { model: { id: "model", name: "Model", provider: "test", reasoning: false }, thinkingLevel: undefined },
+    };
+    kickOffChatRound.call(service, record, { task: "t", slug: "gate" }, identity, undefined, 1000);
+    await vi.waitFor(() => expect(fake.runs.length).toBe(1));
+    fake.runs[0]!.settle({ content: "late round text" });
     await Promise.resolve();
     await Promise.resolve();
     expect(pi.sendMessage).not.toHaveBeenCalled();
+    service.dispose();
+    clearEngines();
     fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
-  it("kickOffChatRound.then still notifies for real failure closures (gc)", async () => {
+  it("kickOffChatRound 应答回注对真实失败关闭（gc）仍通知", async () => {
     const { agentDir, service, pi } = setup();
+    clearEngines();
+    const fake = registerFakePiEngine();
     const record = createRecord("sa-gate-gc", {
       agent: "general-purpose",
       model: "test/model",
@@ -146,12 +141,20 @@ describe("T4① notify gate closedReason whitelist", () => {
       controller: new AbortController(),
     });
     record.closedReason = "gc";
-    (service as unknown as Record<string, unknown>).runAndFinalize = vi.fn().mockResolvedValue({});
     const kickOffChatRound = (
       service as unknown as Record<string, (...args: unknown[]) => void>
     )["kickOffChatRound"];
-    kickOffChatRound.call(service, record, { task: "t", slug: "gate" }, {}, {}, undefined, 1000, undefined);
+    const identity = {
+      agent: "general-purpose",
+      agentConfig: undefined,
+      resolved: { model: { id: "model", name: "Model", provider: "test", reasoning: false }, thinkingLevel: undefined },
+    };
+    kickOffChatRound.call(service, record, { task: "t", slug: "gate" }, identity, undefined, 1000);
+    await vi.waitFor(() => expect(fake.runs.length).toBe(1));
+    fake.runs[0]!.settle({ content: "round" });
     await vi.waitFor(() => expect(pi.sendMessage).toHaveBeenCalled());
+    service.dispose();
+    clearEngines();
     fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 });

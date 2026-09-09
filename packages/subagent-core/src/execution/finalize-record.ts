@@ -44,6 +44,16 @@ export interface FinalizeDeps {
   /** pending-notifications 终态注销（绑定 pi.events.emit，由调用方闭包提供）。 */
   emitUnregister(id: string, status: string): void;
   /**
+   * [F-5 修复] record 终态化的宿主侧收口钩子（recordId；best-effort，抛错由调用方
+   * 在闭包内自行兜底）。单一汇聚点：doFinalizeRecord 是全部 closed 终态的必经路径
+   * （finalizeRecord / closeChatIdle / closeAfterRoundSettled / finalizeFailed /
+   * finalizeAborted / consumeCloseAfterRound），chat 轮路由注销（chatRoundRoutes）
+   * 由 SubagentService 经此钩子统一执行——此前仅 cancelBackground 注销，chat record
+   * 经 finalize 链终态化后路由闭包（持 record/stream/守护引用）泄漏。finalizeRoundToIdle
+   * 不经本钩子（回 idle 非终态，续聊仍需路由）。
+   */
+  onFinalized?: (recordId: string) => void;
+  /**
    * [T1/PS-9] subagent sessionDir（getSubagentSessionDir(agentDir, rootCwd)，调用方注入）。
    *
    * record.sessionFile 缺失（RC-1 握手失败 + LC-4 反查也未命中的残余形态）时用于磁盘
@@ -254,7 +264,22 @@ export async function doFinalizeRecord(
   removeAliveMarkerIfPresent(record);
 
   // pending-notifications：终态注销（只记 registry 状态，通知由 BgNotifier 发）
+  // [W4 发射点枚举归属①] 注销合法发射点枚举（设计 D2）第 ① 处：subagent record
+  // 终态化（finalizeRecord 路径，含监督器放弃）。其余合法发射点：② chatMode 轮末
+  // idle（doFinalizeRoundToIdle，本文件下方）；③ workflow run 终态迁移
+  // （transition("done") 路径）；④ 监督器显式放弃（走本路径，终态化+注销同批）；
+  // ⑤ 注册对账 sweep 补发（round-supervisor/reconcile-sweep.ts）。进程退出本身
+  // 永远不是注销理由（subagent-service disposeAllRecords 的 emit 属①——其同批
+  // completeRecord+archive 终态化）。
   deps.emitUnregister(record.id, status);
+
+  // [F-5 修复] 宿主侧终态收口钩子（chat 轮路由注销的单一汇聚点，见 FinalizeDeps
+  // .onFinalized 注释）。fire-and-forget：钩子失败不阻断 manifest 收尾（闭包内自查）。
+  try {
+    deps.onFinalized?.(record.id);
+  } catch (err) {
+    bestEffort(err, "onFinalized hook (finalizeRecord)");
+  }
 
   // ── Step 4 (last): manifest 持久化（best-effort，不阻断、不 throw）──
   await writeManifestBestEffort(deps, record);

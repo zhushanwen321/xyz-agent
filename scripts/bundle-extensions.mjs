@@ -32,7 +32,7 @@
  * Usage: node scripts/bundle-extensions.mjs
  */
 import { build } from "esbuild";
-import { readFile, writeFile, copyFile, cp, mkdir, stat, rm } from "node:fs/promises";
+import { readFile, writeFile, copyFile, cp, mkdir, stat, rm, chmod, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,6 +46,10 @@ const BUILTIN_PACKAGES = JSON.parse(
 
 const EXTENSIONS_DIR = join(REPO_ROOT, "extensions");
 const STAGED_ROOT = join(REPO_ROOT, "apps/electron/resources/extensions/@zhushanwen");
+/** 引擎包 staged 根（W9，设计 §3.7 Electron 打包态：apps/electron/resources/engines/<id>/）。 */
+const ENGINES_STAGED_ROOT = join(REPO_ROOT, "apps/electron/resources/engines");
+/** 引擎包源码目录前缀（packages/ 下，设计 §3.7「引擎包落位 packages/」）。 */
+const PACKAGES_DIR = join(REPO_ROOT, "packages");
 
 /**
  * pi 运行时 virtualModules — external（pi 进程注入，staged 不自带）。
@@ -58,6 +62,11 @@ const EXTERNAL = [
 	"typebox/*",
 	"@sinclair/typebox",
 	"@sinclair/typebox/*",
+	// W9 边界（设计 §3.7 external 边界加引擎包）：引擎 CLI 包是「被 spawn 的独立进程」，
+	// 不是可链接库——extension bundle 静态 import 它们属打包配置回归，external 化使
+	// 任何误 import 在 staged 运行期报 Cannot find module（fail-fast）而非静默内联。
+	"@zhushanwen/pi-subagent-cli",
+	"@zhushanwen/zcode-subagent-cli",
 ];
 
 /** 包名 @zhushanwen/pi-<x> → 源码目录 extensions/<group>/<x>/（group = taiji | universal，见 docs/extensions/extension-conventions.md 分组约定） */
@@ -311,6 +320,9 @@ async function main() {
 	await rm(STAGED_ROOT, { recursive: true, force: true });
 	await mkdir(STAGED_ROOT, { recursive: true });
 
+	await rm(ENGINES_STAGED_ROOT, { recursive: true, force: true });
+	await mkdir(ENGINES_STAGED_ROOT, { recursive: true });
+
 	console.log("=== bundle-extensions: esbuild self-contained bundles ===");
 	console.log(`staged root: ${STAGED_ROOT}`);
 	console.log(`packages: ${BUILTIN_PACKAGES.length}`);
@@ -353,6 +365,84 @@ async function main() {
 		console.log("");
 		console.log(`[hint] ${totalWarnings} esbuild warning(s) — 多为 tree-shaking 建议，详见上方输出`);
 	}
+
+	await bundleEngines();
+}
+
+/**
+ * W9 引擎包 staging（设计 §3.7 Electron 打包态）：packages/*-subagent-cli（带
+ * xyz-agent.subagentEngine manifest 的包，动态发现不枚举）bundle 成自包含
+ * apps/electron/resources/engines/<id>/：
+ *  - index.js（src/main.ts bundle，SDK 等 value dep 全部 inline；带 node shebang +
+ *    chmod 0755——发现器 canExecute 检查 + 独立安装形态直接可执行）
+ *  - package.json（manifest 原样保留 + bin 改指 ./index.js；源码 package.json 不动）
+ * electron-builder.yml extraResources 增该目录（resources/engines → engines）；
+ * runtime 侧 engine-roots.ts 推导该位置并经 env XYZ_AGENT_ENGINE_ROOTS 显式注入
+ * （绝对路径，不 cwd 探测——防用户 repo 预置同名目录冒充）。
+ */
+async function bundleEngines() {
+	console.log("");
+	console.log("=== bundle engines: subagent CLI packages ===");
+	const enginePkgs = [];
+	for (const entry of await readdir(PACKAGES_DIR, { withFileTypes: true })) {
+		if (!entry.isDirectory()) continue;
+		const pkgJson = join(PACKAGES_DIR, entry.name, "package.json");
+		if (!existsSync(pkgJson)) continue;
+		const pkg = JSON.parse(await readFile(pkgJson, "utf8"));
+		if (pkg["xyz-agent"]?.["subagentEngine"]?.id) {
+			enginePkgs.push({ srcDir: join(PACKAGES_DIR, entry.name), pkg });
+		}
+	}
+	if (enginePkgs.length === 0) {
+		throw new Error(
+			"no engine packages found under packages/ (expected packages/*-subagent-cli with xyz-agent.subagentEngine manifest — W5/W7 deliverables missing = packaging regression)",
+		);
+	}
+
+	for (const { srcDir, pkg } of enginePkgs) {
+		const manifest = pkg["xyz-agent"]["subagentEngine"];
+		const id = manifest.id;
+		const entry = join(srcDir, "src", "main.ts");
+		if (!existsSync(entry)) {
+			throw new Error(`engine entry not found: ${entry}（引擎包缺 src/main.ts）`);
+		}
+		const outDir = join(ENGINES_STAGED_ROOT, id);
+		await mkdir(outDir, { recursive: true });
+		const result = await build({
+			entryPoints: [entry],
+			bundle: true,
+			format: "esm",
+			platform: "node",
+			target: "node22",
+			sourcemap: true,
+			keepNames: true,
+			external: EXTERNAL,
+			outfile: join(outDir, "index.js"),
+			banner: { js: "#!/usr/bin/env node" },
+			logLevel: "warning",
+		});
+		await chmod(join(outDir, "index.js"), 0o755);
+
+		// staged manifest：bin 解析目标改指 bundle 产物；manifest 其余字段原样
+		//（发现器只读 manifest 不执行——安全立场见设计 §3.7）。
+		const staged = {
+			name: pkg.name,
+			version: pkg.version,
+			type: "module",
+			bin: { [manifest.bin]: "./index.js" },
+			"xyz-agent": { subagentEngine: manifest },
+		};
+		await writeFile(
+			join(outDir, "package.json"),
+			JSON.stringify(staged, null, 2) + "\n",
+			"utf8",
+		);
+
+		const jsStat = await stat(join(outDir, "index.js"));
+		const warn = result.warnings.length ? ` (${result.warnings.length} warnings)` : "";
+		console.log(`  ${id}: index.js ${fmtSize(jsStat.size)} (bin ${manifest.bin})${warn}`);
+	}
+	console.log(`  staged root: ${ENGINES_STAGED_ROOT}`);
 }
 
 main();

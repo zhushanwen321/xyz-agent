@@ -391,6 +391,16 @@ export class RpcClient implements IPiEngine {
   private stderrTruncated = false
   /** pi stdout JSONL 原始流落盘（架构约定 #4，诊断 pi 卡死的决定性证据） */
   private piSessionLog: PiSessionLog | null = null
+  /**
+   * 最近一次「事件帧」到达 stdout 的时刻（chat-domain-v1x-liveness-governance W7 桥事件窗信号）。
+   *
+   * 为什么记在 handleMessage 顶部而非 listener 广播分支：该戳度量的是「pi 是否还在发事件」
+   * （pi 侧产出证据），不是「runtime 是否消费」——bash_execution_update 等被 timedOutIds
+   * 丢弃 / 进早期帧缓冲的流事件同样是 pi 事件循环存活的证据。只记非 response 帧：RPC
+   * response 的活性由快超时探测（getState）专责，两信号职责正交（设计 §3.2 D3 三信号判据）。
+   * 消费方 = message-dispatcher abort 超时阶梯的「事件窗静默」判定（区分 RPC 饿死 vs 真冻结）。
+   */
+  private _lastEventAt: number | undefined
 
   constructor(private options: RpcClientOptions = {}) {}
 
@@ -576,6 +586,8 @@ export class RpcClient implements IPiEngine {
   }
 
   private handleMessage(msg: PiMessage): void {
+    // W7 桥事件窗信号：事件帧到达即更新活跃戳（语义与放置理由见 _lastEventAt 字段注释）。
+    if (msg.type !== 'response') this._lastEventAt = Date.now()
     // If id matches a pending request, resolve it; otherwise emit as event.
     // resolve 只认 RPC response：pi 的 RpcResponse union 所有变体 type === 'response'
     // （pi-mono coding-agent/src/modes/rpc/rpc-types.ts:114-223），事件各有独立 type 字符串。
@@ -838,6 +850,15 @@ export class RpcClient implements IPiEngine {
 
   get exited(): boolean {
     return this._exited
+  }
+
+  /**
+   * 最近一次事件帧到达时刻（W7 abort 超时阶梯的桥事件窗信号读点）。
+   * undefined = 本进程生命周期内从未观测到事件帧（对 abort 超时场景，配合探测无响应
+   * 即构成冻结证据——运行中的 session 几乎不可能从未有过事件，pi spawn 即发初始化事件）。
+   */
+  get lastEventAt(): number | undefined {
+    return this._lastEventAt
   }
 
   // ── High-level API ────────────────────────────────────────────────

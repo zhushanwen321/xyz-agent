@@ -25,6 +25,8 @@
 // 职责，不在纯内核复刻——git index.lock 冲突瞬时态正好落降级路径②，而非内核故障。
 
 import { execFile } from "node:child_process";
+
+import { buildOutboundChildEnv } from "@zhushanwen/subagent-engine-sdk";
 import * as fs from "node:fs";
 
 import { getLogger } from "../core/logger.ts";
@@ -115,6 +117,9 @@ export function gitRun(
         timeout: opts.timeout ?? GIT_TIMEOUT_MS,
         ...(opts.maxBuffer !== undefined ? { maxBuffer: opts.maxBuffer } : {}),
         encoding: "utf-8",
+        // 出站卫生（R3 MF-C，impl-plan §2.12）：同 worktree-manager.ts gitRunAsync——
+        // deny 键不进 git 子进程，git hooks 后代不再可能消费 deny 键。
+        env: buildOutboundChildEnv({ parentEnv: process.env }),
       },
       (err, stdout, stderr) => {
         if (err) {

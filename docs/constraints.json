@@ -1619,7 +1619,7 @@
       "summary": "非 pi 引擎分支终止链三路径全覆盖：spawn 子进程注册 session-runner spawnedChildren 记账（shutdown 收割兜底）、record AbortController 的 signal wire 到 RunContext.signal（用户 cancel 经 kill-chain 两级）、会话级联挂 dispose() 既有编排（abortRunningControllers → killAllSpawnedChildren）——不留孤儿进程",
       "scope": [
         "packages/subagent-core/src/execution/subagent-service.ts",
-        "packages/subagent-core/src/execution/engine/engines/pi/session-runner.ts",
+        "packages/subagent-core/src/execution/engine/host/spawned-children.ts",
         "packages/subagent-core/src/execution/engine/port.ts"
       ],
       "authority": [
@@ -1733,12 +1733,13 @@
     },
     {
       "id": "C-ext-20",
-      "summary": "zcode 引擎单一 app-server 形态（2026-09 用户拍板）：禁 CLI spawn 链回归（zcode --json 单轮与 probe 冒烟/protocol-drift 降级已删，漂移直接报错）；共享宿主 HOME（禁 HOME 池化回归，spawn env 不覆写 HOME，与 GUI 共写同一 SQLite）；poolKey 恒 'shared'，handle.dbPath 绝对锚定 ZCODE_HOST_DB_SUFFIX（runtime 读侧白名单同源）",
+      "summary": "zcode 引擎单一 app-server 形态（2026-09 用户拍板）：禁 CLI spawn 链回归（zcode --json 单轮与 probe 冒烟/protocol-drift 降级已删，漂移直接报错）；共享宿主 HOME 不动（禁 HOME 池化回归，spawn env 不覆写 HOME，db/plugins/MCP 继承宿主 HOME）；会话库隔离（spawn env 覆写 ZCODE_SESSION_DB_PATH 并清空别名键 ZCODE_SESSION_DB，会话落独立库 <engineDataDir>/engines/zcode/session-db/db.sqlite，不进 ZCode GUI 侧边栏、不落 engines/zcode/shared/ 池目录；poolKey 恒 'shared'）；handle.dbPath 与两条读取链（session-view-service ①级 + EnginePort.read）一律按 zcodeDbPathAllowlist(dataDir) 白名单集合成员判定放行（隔离库 + 宿主库存量兼容锚点），禁止还原为宿主路径单值比较",
       "scope": [
-        "packages/subagent-core/src/execution/engine/engines/zcode/**",
+        "packages/zcode-subagent-cli/**",
         "packages/runtime/src/services/session/**"
       ],
       "authority": [
+        "design/zcode-session-db-isolation.md",
         "design/zcode-engine-appserver-resident.md",
         "../AGENTS.md"
       ],
@@ -1780,7 +1781,7 @@
         "extensions/universal/subagent-workflow/**"
       ],
       "authority": [
-        "../packages/subagent-core/src/execution/engine/engines/pi/session-runner.ts"
+        "../packages/pi-subagent-cli/src/spawn-runner.ts"
       ],
       "dimensions": [
         "data-governance"
@@ -1983,6 +1984,35 @@
       ]
     },
     {
+      "id": "C-proc-12",
+      "summary": "引擎协议边界：引擎子进程 env 由 SDK buildEngineChildEnv 三层契约统一构建（L0 基础设施注入 / L1 deny+显式剥除 / L2 manifest 前缀放行，次序写死先过滤后注入；L0∩L1=∅ 由测试断言）、任务子进程 spawn 必经 SDK spawnEngineChild（detached:false 硬编码、子进程 stdin 恒自有 pipe 不继承引擎 fd）、引擎侧自灭以 stdio EOF 为主判据（未 ack 反向请求 30s 计时为辅，已 ack 的 askUser/executeAndAwait 排除）；ENGINE_ENV_PREFIXES/ENGINE_ENV_DENY_LIST 以 shared constants.ts 为 SSOT、SDK env.ts 镜像逐项相等；守卫 SCAN_ROOTS 覆盖 SDK、两引擎 CLI 包与 packages/subagent-core/src（W11 收口批落地；迁移期临时豁免已清零，现存 6 条 core 侧永久类豁免——pid-file/reaper/pi-engine/session-runner×2/worker-host 的只读探测/kill/Worker 场景，EXEMPT_CALLSITES 逐条附理由）",
+      "scope": [
+        "packages/subagent-engine-sdk/src/**",
+        "packages/zcode-subagent-cli/**",
+        "packages/pi-subagent-cli/**",
+        "packages/shared/src/constants.ts",
+        ".githooks/check_spawn_env_boundary.py",
+        ".githooks/check_env_whitelist_sync.py"
+      ],
+      "authority": [
+        "../docs/design/subagent-engine-protocolization.impl-plan.md#212-w12-环境与文档规格",
+        "../docs/design/env-propagation-boundary.md"
+      ],
+      "dimensions": [
+        "arch-boundary"
+      ],
+      "enforcement": [
+        {
+          "type": "machine",
+          "hook": "check_spawn_env_boundary.py"
+        },
+        {
+          "type": "machine",
+          "hook": "check_env_whitelist_sync.py"
+        }
+      ]
+    },
+    {
       "id": "C-pi-14",
       "summary": "mutation 类 RPC reply 强制含生效值字段（XxxMutationReply 命名约定）：shared 协议类型层编译期必需 + runtime 契约测试（mutation-reply-contract.test.ts）枚举全部 mutation RPC 逐一断言，新增 mutation 不入清单即红。乐观/回执裁决标准：后端可变换请求值的 mutation（pi 钳制/pattern 换模）禁乐观写、回执生效值唯一写 store 路径；后端原样存储的 mutation（preset CRUD 等 runtime 自有数据）允许乐观写 + reply 权威覆盖 + 失败回滚——C-pi-13 人肉纪律的机器化（裁决标准与新 mutation 接入检查单见 ADR-0065）",
       "scope": [
@@ -2026,6 +2056,33 @@
         {
           "type": "review",
           "agent": "review-arch-boundary"
+        }
+      ]
+    },
+    {
+      "id": "C-proc-13",
+      "summary": "引擎协议 v1.x chat 域语义与轮次活性权威：①协议面——第 9 反向通道 host/roundLifecycle 承载 chat 轮次生命周期（settled=轮收敛 / idle=收口进稳态+resume 锚回填 / failed=引擎自知失败三相位；关联键 {runId}|{recordId} 互斥联合，首轮 run 键、interact 续聊轮 recordId 键；priority 不进协议留 core 侧调度）；run 会话形态 RunParams.chat{recordId,resume} 路由 chat 轮次，manifest 无 conversation gate 位引擎同步拒（engine_capability_unsupported + 升级指引）；版本 major 恒 1，增量以可选载荷向后兼容（无 minor 协商位）。②轮次活性权威在 core 编排层（round-supervisor）——三态判定（该等/该唤醒=通知主 agent 决策/该放弃）钉死 record 级状态源：引擎镜像置死只作触发信号不作持续判据、引擎重建不解管；record 去向单一裁决表（宿主存活×进程死亡→failed+保持 resumable+接管；boot in-flight→直断 failed+注销；boot already-resumable-idle 非 conversation→重认领；conversation→轮终 idle 现状）；注销发射点枚举制（record 终态化/chatMode 轮末 idle/workflow run 终态/监督器放弃/对账 sweep 补发五语义，进程退出本身永远不是注销理由）；注册对账 sweep 以 appendEntry 为权威落盘+尽力 emit（判据=终态集∪已归档/不存在）。③pending 注册表后台类型（subagent/workflow）恒 process 档——禁回翻 session 档（1h TTL 与跨 session 补注销会静默清除长任务注册=守卫失明，2026-09-08 事故放大器）；读侧消费（countActiveFromEntries/subagent-workflow 后代判定/registry rebuild+工具投影/goal 守卫口径）一律按 sessionId≠当前 session 过滤，新消费口必须传基准；idle-gc 对 resumable record 以 startedAt 为锚只归档不补注销（注销统一交 sweep）。④goal continuation 双维度熔断——总次数正交封顶（PI_GOAL_CONTINUATION_CAP，计数只随实发递增且随 state 持久化，任何工具活动不得重置）+ 无进展退避（恢复清退避不清总数）；defer 通知按 pending 集合变化去重。⑤runtime abort RPC 超时走三级阶梯（快超时探测×事件窗×abort-pending 三信号判据；有界重试→用户显式强关→真冻结直杀，每级有终点无无界分支）；冻结静默窗未实测（P3）前裸事件新鲜度不得单独作直杀判据",
+      "scope": [
+        "packages/subagent-engine-sdk/src/protocol/**",
+        "packages/pi-subagent-cli/src/**",
+        "packages/subagent-core/src/execution/**",
+        "extensions/universal/goal/src/**",
+        "extensions/universal/pending-notifications/src/**",
+        "packages/runtime/src/services/session/message-dispatcher.ts",
+        "packages/runtime/src/infra/pi/rpc-client.ts"
+      ],
+      "authority": [
+        "../docs/design/chat-domain-v1x-liveness-governance.md#32-解决方案",
+        "../docs/design/chat-domain-v1x-liveness-governance.impl-plan.md"
+      ],
+      "dimensions": [
+        "arch-boundary",
+        "monorepo-impact"
+      ],
+      "enforcement": [
+        {
+          "type": "review",
+          "agent": "review-business-logic"
         }
       ]
     }

@@ -14,7 +14,7 @@
  * - 成功：consume usage + incrementCallCount + markDone + trace.update(completed)
  *
  * [D5-③ 结构化分诊] 失败分诊读 AgentResult.failureKind 字段（产出侧唯一识别点 =
- * execution/engine/engines/pi/output-collector.ts 的 classifyFailureKind，词表归属
+ * execution/engine/inproc pi 引擎目录/output-collector.ts 的 classifyFailureKind，词表归属
  * 见其文件头）。本模块不再扫 error 文案子串——**语义守恒（r1 MF4）**：unknown
  * （含字段缺省）= 可重试，保持收敛前的默认重试语义；仅 stale_context（不重试、
  * 换参重发场景由调用方编排）与 schema_deterministic 维持特判。

@@ -47,7 +47,7 @@
 //     };
 //   });
 //   vi.mock("../alive-store.ts", () => ({ writeAliveMarker: vi.fn() }));
-//   vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
+//   vi.mock("../engine/inproc temp-prompt（已删）", () => ({
 //     writePromptToTempFile: vi.fn(async (agent: string) => {
 //       const safeName = agent.replace(/[^\w.-]+/g, "_");
 //       return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -63,7 +63,11 @@ import { PassThrough } from "node:stream";
 import { vi } from "vitest";
 
 import { createRecord } from "../../execution-record.ts";
-import type { RunOptions, SessionRunnerContext } from "../../engine/engines/pi/session-runner.ts";
+
+// [W3 改写] RunOptions / SessionRunnerContext 类型源（inproc session-runner（已删））
+// 随删件消亡——makeOpts/makeCtx 改用结构化最小类型（消费方为 keep-alive 系历史
+// fixture 形态；引擎侧等价类型在 pi-subagent-cli）。core 侧剩余消费面为
+// recursive-visibility-baseline 的 spawn 断言工具（waitForSpawn/lastSpawnedChild）。
 
 /** FakeChild 的假 pid（满足 ChildProcess.pid 形状，无真实进程语义）。 */
 const FAKE_PID = 12345;
@@ -82,7 +86,7 @@ const SPAWN_POLL_INTERVAL_MS = 5;
  * 导出 class（而非只在工厂内部定义）是为了：
  *   1. vi.mock 工厂内 `await import("./helpers/spawn-mock.ts")` 后 `new FakeChild()` 与
  *      测试侧 `instanceof FakeChild` / 类型断言用同一个 class。
- *   2. C13 e2e 测试可直接 `new FakeChild()` 手动构造 child 喂给 ui-request-queue（不经 spawn）。
+ *   2. C13 e2e 测试可直接 `new FakeChild()` 手动构造 child 喂给 inproc UI 请求队列（已删）（不经 spawn）。
  */
 export class FakeChild extends EventEmitter {
   pid = FAKE_PID;
@@ -206,8 +210,21 @@ export function makeRecord(id = "run-1") {
   });
 }
 
+/** RunOptions 的结构化最小形态（原 inproc pi 引擎目录 RunOptions 同构；测试 fixture 用）。 */
+export interface RunOptionsLike {
+  resolved: { model: { id: string; name: string; provider: string; reasoning: boolean }; thinkingLevel: string | undefined };
+  agentConfig: undefined;
+  appendSystemPrompt?: string[];
+  skillPath?: string;
+  schema?: Record<string, unknown>;
+  maxTurns?: number;
+  graceTurns?: number;
+  signal?: AbortSignal;
+  onEvent?: ((event: unknown) => void) | undefined;
+}
+
 /** 构造最小合法的 RunOptions（runSpawn 入参，可 override 关键字段）。 */
-export function makeOpts(overrides: Partial<RunOptions> = {}): RunOptions {
+export function makeOpts(overrides: Partial<RunOptionsLike> = {}): RunOptionsLike {
   return {
     resolved: {
       model: {
@@ -230,8 +247,19 @@ export function makeOpts(overrides: Partial<RunOptions> = {}): RunOptions {
   };
 }
 
+/** SessionRunnerContext 的结构化最小形态（core 侧消费字段面）。 */
+export interface SessionRunnerContextLike {
+  cwd: string;
+  agentDir: string;
+  skillDirs: string[];
+  mainCwd: string;
+  mainSessionFile?: string;
+  sessionRootId: string;
+  rootCwd: string;
+}
+
 /** 构造最小合法的 SessionRunnerContext（runSpawn 入参，可 override 关键字段）。 */
-export function makeCtx(overrides: Partial<SessionRunnerContext> = {}): SessionRunnerContext {
+export function makeCtx(overrides: Partial<SessionRunnerContextLike> = {}): SessionRunnerContextLike {
   return {
     cwd: "/tmp/test",
     agentDir: "/tmp/test/agents",
@@ -318,11 +346,10 @@ export function sessionPendingModule() {
   return {
     readActivePendingFromSessionFile: vi.fn(() => ({ count: 1, recentUnregister: false })),
     prunePendingCursor: vi.fn(),
-    listActivePendingFromSessionFile: vi.fn(() => ({ items: [] })),
   };
 }
 
-/** "../engine/engines/pi/temp-prompt.ts" mock 工厂（prompt 落 /tmp/fake-<agent>，收尾 no-op）。 */
+/** "../engine/inproc temp-prompt（已删）" mock 工厂（prompt 落 /tmp/fake-<agent>，收尾 no-op）。 */
 export function tempPromptModule() {
   return {
     writePromptToTempFile: vi.fn(async (agent: string) => {
@@ -352,7 +379,7 @@ export function makeVisibilityRecord(overrides: { id?: string; depth?: number } 
 }
 
 /** 构造 env 注入断言族的 RunOptions（可 override 关键字段）。 */
-export function makeRunOpts(overrides: Partial<RunOptions> = {}): RunOptions {
+export function makeRunOpts(overrides: Partial<RunOptionsLike> = {}): RunOptionsLike {
   return {
     resolved: { model: { provider: "test", id: "model", name: "Model", reasoning: false }, thinkingLevel: undefined },
     agentConfig: undefined,
@@ -368,7 +395,7 @@ export function makeRunOpts(overrides: Partial<RunOptions> = {}): RunOptions {
 }
 
 /** 构造 env 注入断言族的 SessionRunnerContext（可 override 关键字段）。 */
-export function makeVisibilityCtx(overrides: Partial<SessionRunnerContext> = {}): SessionRunnerContext {
+export function makeVisibilityCtx(overrides: Partial<SessionRunnerContextLike> = {}): SessionRunnerContextLike {
   return {
     cwd: "/fake/cwd",
     agentDir: "/fake/agent",

@@ -25,6 +25,7 @@ export const ENGINE_ERROR_CODES = [
   "schema_emulation_failed",
   "engine_timeout",
   "engine_capability_unsupported",
+  "engine_capability_mismatch",
   "engine_session_not_resumable",
   "model_not_available",
   "prompt_too_large",
@@ -94,8 +95,11 @@ export const DEFAULT_RECOVERY_HINTS: Record<EngineErrorCode, string> = {
     "The engine was killed by the host timeout chain. Inspect the captured stdout tail, then re-run with a larger " +
     "timeout, a narrower task, or `engine: pi`.",
   engine_capability_unsupported:
-    "This engine declares the capability unsupported. Use a single-shot call instead of interactive steering, " +
-    "or dispatch with `engine: pi` which supports it.",
+    "This engine declares the capability unsupported. Adjust the task parameters, " +
+    "or fix the manifest capabilities / upgrade the engine package if it actually supports it.",
+  engine_capability_mismatch:
+    "The engine manifest declares a capability its initialize handshake did not confirm. " +
+    "Fix the manifest capabilities (align with actual engine behavior) or upgrade the engine package.",
   engine_session_not_resumable:
     "Idle-process reuse does not survive a main-session reload. Use a cold resume path " +
     "(engine --resume / --session with the recorded session reference), or start a new subagent.",
