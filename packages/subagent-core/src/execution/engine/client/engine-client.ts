@@ -338,6 +338,16 @@ export class EngineClient {
       logger.warn(`[engine-client:${this.engineId}] spawn error: ${err.message}`);
       this.appendStderrTail(`spawn error: ${err.message}\n`);
     });
+    // 管道死亡竞态（coverage-gate 满载 flaky 根因，2026-09）：引擎死后在途帧写入的
+    // EPIPE 以「异步 error 事件」投递——writeFrame 的同步 try/catch 接不到；stdin 无
+    // error 监听时 Node 对无监听 error 事件直接抛 uncaughtException（测试进程整轮
+    // 崩红、用例全绿）。挂监听吃掉预期内的管道死亡留 debug 痕迹；在途请求失败的
+    // 语义由 exit 事件 → teardownProcess 统一承担，不经管道错误路径。
+    for (const pipe of ["stdin", "stdout", "stderr"] as const) {
+      child[pipe]?.on("error", (err: Error) => {
+        logger.debug(`[engine-client:${this.engineId}] ${pipe} pipe error (engine died concurrently = expected): ${err.message}`);
+      });
+    }
     child.stdout?.setEncoding("utf-8");
     child.stdout?.on("data", (chunk: string) => this.onStdoutData(chunk));
     child.stderr?.setEncoding("utf-8");
@@ -615,8 +625,17 @@ export class EngineClient {
     this.recordRoutes.clear();
     this.lastPartialHandle = undefined;
     if (this.child !== undefined) {
-      this.child.removeAllListeners();
+      const child = this.child;
       this.child = undefined;
+      // 握手失败路径（版本越界 / 握手超时 / 启动僵死）引擎进程仍活着：必须组杀，
+      // 否则泄漏为常驻孤儿（crash 重建循环每次 spawn 泄漏一个；测试机实测积累
+      // 370+ 假引擎进程）。主动杀路径（killAll 已发信号，intentionalKill=true）与
+      // 进程已死路径（onEngineExit，exitCode/signalCode 非空）跳过重复发信号。
+      const alreadyDead = child.exitCode !== null || child.signalCode !== null;
+      if (!alreadyDead && !this.intentionalKill && child.pid !== undefined) {
+        killProcessTree(child.pid, detail, { engineId: this.engineId });
+      }
+      child.removeAllListeners();
     }
     if (this.state !== "unavailable" && this.state !== "disposed") {
       this.state = "exited";

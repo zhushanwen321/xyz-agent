@@ -369,6 +369,10 @@ describe("超时域二分（fake timers，R9-2 / R9-2b）", () => {
     expect(client.currentState).toBe("ready");
     expect(client.enginePid).toBe(enginePid);
     expect(isProcessAlive(enginePid)).toBe(true);
+    // 负向断言完成后必须走杀链收尾：不 dispose = 引擎进程泄漏为常驻孤儿
+    // （fake 引擎 stdin EOF 后保活不自灭），且带 exit 监听的 client 跨文件存活。
+    vi.useRealTimers(); // 杀链（dispose 帧 3s 上界 / SIGKILL 收尸）走真实时钟
+    await cleanup();
   }, 20_000);
 });
 
