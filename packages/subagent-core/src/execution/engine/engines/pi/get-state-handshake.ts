@@ -6,10 +6,11 @@
 // 查询子进程 sessionFile/sessionId，带超时重试。session-runner spawn 后无条件调用。
 //
 // 设计要点：
-//   - 重试节奏：单次超时 GET_STATE_TIMEOUT_MS（2s）后，等 GET_STATE_RETRY_INTERVAL_MS（500ms）
-//     再发起下一次 get_state，最多 GET_STATE_MAX_RETRIES（3）次。修复点：旧实现超时后
-//     立即递归 tryOnce()，GET_STATE_RETRY_INTERVAL_MS 声明了却从未使用（eslint error 阻断），
-//     现在让常量名与行为一致——重试前真的等间隔。
+//   - 重试节奏（D4 参数面 GetStateHandshakeTiming，缺省 DEFAULT_GET_STATE_HANDSHAKE_TIMING
+//     = 现状值）：单次超时 timeoutMs（2s）后，等 retryIntervalMs（500ms）再发起下一次
+//     get_state，最多 maxAttempts（3）次。修复点：旧实现超时后立即递归 tryOnce()，
+//     重试间隔常量声明了却从未使用（eslint error 阻断），现在让常量名与行为一致——
+//     重试前真的等间隔。
 //   - 加速路径：sessionFile 一旦拿到立即 resolve（不等剩余重试）。
 //   - 全部超时：resolve 空对象（调用方走兜底查找）。
 
@@ -17,12 +18,26 @@ import type { ChildProcess } from "node:child_process";
 
 import { sendGetStateCommand } from "./stdin-writer.ts";
 
-/** FR-4: get_state RPC 握手最大重试次数。 */
-const GET_STATE_MAX_RETRIES = 3;
-/** FR-4: get_state RPC 握手重试间隔（ms）——单次超时后等待此间隔再重试。 */
-const GET_STATE_RETRY_INTERVAL_MS = 500;
-/** FR-4: get_state RPC 握手单次超时（ms）。 */
-const GET_STATE_TIMEOUT_MS = 2000;
+/** get_state 握手节奏（D4 参数面：超时预算与重试节奏显式参数化，两侧各持现值=行为不变）。 */
+export interface GetStateHandshakeTiming {
+  /** 单次请求超时（ms）。 */
+  timeoutMs: number;
+  /** 重试间隔（ms）——单次超时后等待此间隔再发起下一次重试。 */
+  retryIntervalMs: number;
+  /** 最大尝试次数。 */
+  maxAttempts: number;
+}
+
+/**
+ * 默认握手节奏 = subagent-core 现状值（FR-4）：3 次尝试 × 2s 超时 + 0.5s 间隔，
+ * 总预算 ≈ 7s。u5 Runtime 注入自己的现值（sendCommand per-request timeout 语义），
+ * 不做统一取值（统一取值是行为变更，超出设计范围）。
+ */
+export const DEFAULT_GET_STATE_HANDSHAKE_TIMING: GetStateHandshakeTiming = {
+  timeoutMs: 2_000,
+  retryIntervalMs: 500,
+  maxAttempts: 3,
+};
 
 /** get_state 握手结果。 */
 export interface GetStateResult {
@@ -60,8 +75,7 @@ function extractGetStateFields(data: unknown, into: GetStateResult): void {
  * FR-4: 通过 get_state RPC 查询子进程获取 sessionFile/sessionId。
  *
  * 当 stdout header 未获取到 sessionFile 时，尝试通过 get_state RPC 查询。
- * 最多重试 GET_STATE_MAX_RETRIES 次，单次超时 GET_STATE_TIMEOUT_MS 后等待
- * GET_STATE_RETRY_INTERVAL_MS 再发起下一次重试。
+ * 按 timing 节奏重试（缺省 3 次尝试、单次超时 2s、重试间隔 500ms）。
  *
  * [U1 D1] 迟到接受（幂等 late-binding，设计 docs/design/subagent-agent-end-recovery.md
  * §3.3 D1）：握手 resolve 后到达的 response 不再被 `if (resolved) return` 静默丢弃——
@@ -77,13 +91,17 @@ function extractGetStateFields(data: unknown, into: GetStateResult): void {
  * @param onLateResponse 迟到接受回调（可选）：resolve 后到达且含可提取字段的 response
  *   经此通知；字段缺失/畸形时提取不到就跳过、不回调（错误规格：不留痕噪音）。
  *   省略时保持旧两参形态（迟到 response 丢弃，行为与 D1 前一致——既有调用方兼容）。
+ * @param timing 握手节奏（可选，D4 参数面）：缺省 = DEFAULT_GET_STATE_HANDSHAKE_TIMING
+ *   （现状值，行为不变）。
  * @returns 握手结果（可能为空——所有重试均超时/失败）
  */
 export function performGetStateHandshake(
   child: ChildProcess,
   addResponseListener: AddGetStateResponseListener,
   onLateResponse?: (r: GetStateResult) => void,
+  timing: GetStateHandshakeTiming = DEFAULT_GET_STATE_HANDSHAKE_TIMING,
 ): Promise<GetStateResult> {
+  const { timeoutMs, retryIntervalMs, maxAttempts } = timing;
   return new Promise<GetStateResult>((resolve) => {
     const collected: GetStateResult = {};
     let attempts = 0;
@@ -103,16 +121,16 @@ export function performGetStateHandshake(
       const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
         pendingRetry = undefined;
         // 单次超时：等待间隔后重试，或放弃
-        if (attempts < GET_STATE_MAX_RETRIES && !resolved) {
+        if (attempts < maxAttempts && !resolved) {
           // [Bug fix] 旧实现直接 tryOnce() 立即重试，GET_STATE_RETRY_INTERVAL_MS 声明却
           // 从未使用（eslint error 阻断 commit）。现在重试前等待间隔，让常量名与行为一致。
-          pendingRetry = setTimeout(() => tryOnce(), GET_STATE_RETRY_INTERVAL_MS);
+          pendingRetry = setTimeout(() => tryOnce(), retryIntervalMs);
           pendingRetry.unref();
         } else if (!resolved) {
           resolved = true;
           resolve(collected);
         }
-      }, GET_STATE_TIMEOUT_MS);
+      }, timeoutMs);
       timer.unref();
 
       addResponseListener(reqId, (data: unknown) => {

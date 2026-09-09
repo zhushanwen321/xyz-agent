@@ -24,7 +24,6 @@ import {
   readActivePendingFromSessionFile,
   type ActivePendingResult,
 } from "../../../session-pending.ts";
-import { killChain } from "../../common/kill-chain.ts";
 
 import type { ExtensionMode } from "../../../host-mode.ts";
 
@@ -32,17 +31,26 @@ import { type MirrorFlags, mirrorMainProcessFlags } from "./argv-mirror.ts";
 import { isProcessAlive, readAliveMarker, writeAliveMarker } from "../../../alive-store.ts";
 import { type DialogGlobalQueue, type UiRequestHandler } from "../../../dialog-queue.ts";
 import { updateFromEvent } from "../../../execution-record.ts";
+// [U4 D4] pi 通道原语单一消费入口（spawn-channel 门面：get_state 客户端 / stdin 写入 +
+// EPIPE 计数 / 行读取 / id 路由 / kill 链 / invocation 入口解析 / 四维策略位）
 import {
+  createGetStateResponseRouter,
+  createLineReader,
   type AddGetStateResponseListener,
   type GetStateResult,
+  EPIPE_FAILURE_THRESHOLD,
+  getPiInvocation,
+  killChain,
   performGetStateHandshake,
+  PI_KILL_GRACE_MS,
+  recordEpipeFailure,
   requestGetStateOnce,
-} from "./get-state-handshake.ts";
+  sendPromptCommand,
+} from "./spawn-channel.ts";
 import { willRespondToAskUser } from "../../../host-mode.ts";
 import type { AgentConfig, ResolvedModel } from "../../../model-resolver.ts";
 import { collectResult } from "./output-collector.ts";
 import { getSubagentSessionDir } from "../../../path-encoding.ts";
-import { getPiInvocation } from "./pi-invocation.ts";
 import { isRelayActive, RELAY_ENV_RECORD_ID, RELAY_ENV_SESSION_ID } from "../../../relay-env.ts";
 import { assertThinkingLevel, type ThinkingLevel } from "../../../../shared/model-ref";
 import {
@@ -61,7 +69,6 @@ import {
 import { MAX_FORK_DEPTH } from "../../../session-context-resolver.ts";
 // [U1 D2] sessionDir 扫描兜底（第二路 sessionFile 获取，agent_end 决策点 + close 收尾两接入点）
 import { locateSessionFileByScan } from "./session-file-locator.ts";
-import { EPIPE_FAILURE_THRESHOLD, recordEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
 import {
   deriveSessionFilePath,
   findSessionFileByHeaderId,
@@ -1400,12 +1407,10 @@ export interface SpawnRunState {
 
 /**
  * [D3-① 杀链合一] pi 侧杀链参数（现状值，[race-F4]）：SIGTERM 优雅窗口 30s——
- * 超窗未见 exit 视为 SIGTERM 被无视，升级 SIGKILL。秒数单提命名常量再组合 ms：
- * no-magic-numbers 豁免 const init 单字面量但不豁免乘法表达式中的裸字面量
- * （对齐上方 watchdog 系列的常量组合写法）。
+ * 超窗未见 exit 视为 SIGTERM 被无视，升级 SIGKILL。[U4 D4 参数面] 常量已迁入
+ * spawn-channel.ts（kill 策略维度 4 共享默认 escalating-sigterm 的 pi 现值），
+ * 本文件经门面 import（PI_KILL_GRACE_MS），值与语义不变。
  */
-const PI_KILL_GRACE_SECS = 30;
-const PI_KILL_GRACE_MS = PI_KILL_GRACE_SECS * MS_PER_SECOND;
 
 /**
  * [D3-① 杀链合一 + race-F4] 杀 pi 子进程：发 SIGTERM，30s 优雅窗口后仍存活则 SIGKILL。
@@ -2452,9 +2457,9 @@ function attachStdoutPump(
   // stdout pump：逐行解析 → handleSdkEvent / enqueueUiRequest
   const enqueueUiRequest = createUiRequestQueue(child, ctx);
   // FR-4: get_state RPC response 监听器（id → resolver）。
-  // parseSpawnLine 返回 kind:"response" 时，按 command+id 匹配 resolver。
-  const get_stateListeners = new Map<string, (data: unknown) => void>();
-  let stdoutBuffer = "";
+  // [U4 D4] 路由表收敛为 spawn-channel 单一实现（原内联 Map 删除，register/dispatch-delete/
+  // clear 语义逐字平移）；parseSpawnLine 返回 kind:"response" 时按 command+id 匹配 resolver。
+  const get_stateRouter = createGetStateResponseRouter();
 
   // [LC-9/T7②] stdout invalid 行可见性：per-child 计数 + debug 级前 N 条样本留痕。
   // 容错原则不变（invalid 行不中断流——stdout 可能有调试输出），但「事件行损坏被
@@ -2593,17 +2598,63 @@ function attachStdoutPump(
 
   /**
    * [圈复杂度门禁提取] RPC response 行处理（自 data handler 的 response 分支迁入）：
-   * FR-4 get_state response 按 id 匹配 resolver。
+   * FR-4 get_state response 按 id 匹配 resolver。[U4 D4] 分发表 = spawn-channel 路由器
+   * （命中即移除再调用，单次消费语义；未命中返回 false 由既有语义静默——close 已清表 /
+   * 非本次请求 id）。
    */
   const handleResponseLine = (parsed: Extract<ParsedSpawnLine, { kind: "response" }>): void => {
     if (parsed.command === "get_state" && parsed.success && parsed.id) {
-      const resolver = get_stateListeners.get(parsed.id);
-      if (resolver) {
-        get_stateListeners.delete(parsed.id);
-        resolver(parsed.data);
-      }
+      get_stateRouter.dispatch(parsed.id, parsed.data);
     }
   };
+
+  /**
+   * [U4 D4] 单行分派（原 data handler 的 for 循环体整体迁入 line reader 的 onLine 回调，
+   * 行为逐字节保持）。空行 / 纯空白行 parseSpawnLine 返回 undefined 直接跳过
+   * （不打 invalid 计数，既有语义）。
+   */
+  const handleSpawnLine = (line: string): void => {
+    const parsed = parseSpawnLine(line);
+    if (!parsed) return;
+    if (parsed.kind === "header") {
+      handleHeaderLine(parsed);
+    } else if (parsed.kind === "event") {
+      handleEventLine(parsed);
+    } else if (parsed.kind === "response") {
+      handleResponseLine(parsed);
+    } else if (parsed.kind === "extension_ui_request") {
+      // W3: 子进程发 UI 请求（ask_user）。入队 FIFO 串行处理，防止并发询问用户。
+      enqueueUiRequest(parsed.id, parsed.request);
+    } else {
+      // [LC-9/T7②] invalid 行（非法 JSON / 缺 type 字段）：不中断流（stdout 可能有
+      // 调试输出），但不再静默——计数 + debug 样本留痕（防刷屏：前 N 条逐条、
+      // 其后仅累计），close 时聚合输出总数。
+      recordInvalidLine(parsed.raw, parsed.error);
+    }
+  };
+
+  /**
+   * [U4 D4] 尾残行分派（原 processTrailingLine 的解析段，行为不变）：event 以外的 kind
+   * 仍不分发（header/response/ui 残行按既有语义丢弃）——仅 event 喂 handleSdkEvent、
+   * invalid 计数留痕。经 createLineReader 的 onTrailingLine 注入，与常规行分派保持分离。
+   */
+  const handleTrailingSpawnLine = (line: string): void => {
+    const parsed = parseSpawnLine(line);
+    if (parsed?.kind === "event" && isSdkEvent(parsed.event)) {
+      handleSdkEvent(parsed.event);
+    } else if (parsed?.kind === "invalid") {
+      // [LC-9/T7②] 残留行同计 invalid 统计（处理行为不变：event 以外仍不分发）。
+      recordInvalidLine(parsed.raw, parsed.error);
+    }
+  };
+
+  // [U4 D4] LF 行读取单一实现（spawn-channel）：跨 chunk 缓冲 + 按 \n 切分 + 尾残行冲刷。
+  // 缺省参数（无 buffer 上限、无 tee hook）与原手写 stdoutBuffer split 逐字节等价；
+  // tee hook（onStdoutLine，Runtime piSessionLog 接回位，u5）缺省 no-op。
+  const lineReader = createLineReader({
+    onLine: handleSpawnLine,
+    onTrailingLine: handleTrailingSpawnLine,
+  });
 
   child.stdout.on("data", (data: string) => {
     // [T2-① / P-T2 降级 B] 子进程有输出 = keep-alive 仍有进展迹象：刷新静默计时。
@@ -2614,44 +2665,14 @@ function attachStdoutPump(
     //（armKeepAliveNoProgressTimer 内 hasLiveActiveDescendant）。未挂载（显式
     // maxTurns/env / opt-out）时 no-op。
     refreshKeepAliveNoProgressTimer(state, child, sessionDir);
-    stdoutBuffer += data;
-    const lines = stdoutBuffer.split("\n");
-    stdoutBuffer = lines.pop() ?? ""; // 保留最后未完整行
-    // [圈复杂度门禁提取] 各 kind 分支体整体迁入上方 handleHeaderLine /
-    // handleEventLine / handleResponseLine（行为逐字节保持），本 handler 只留
-    // 缓冲切分 + kind 分派。
-    for (const line of lines) {
-      const parsed = parseSpawnLine(line);
-      if (!parsed) continue;
-      if (parsed.kind === "header") {
-        handleHeaderLine(parsed);
-      } else if (parsed.kind === "event") {
-        handleEventLine(parsed);
-      } else if (parsed.kind === "response") {
-        handleResponseLine(parsed);
-      } else if (parsed.kind === "extension_ui_request") {
-        // W3: 子进程发 UI 请求（ask_user）。入队 FIFO 串行处理，防止并发询问用户。
-        enqueueUiRequest(parsed.id, parsed.request);
-      } else {
-        // [LC-9/T7②] invalid 行（非法 JSON / 缺 type 字段）：不中断流（stdout 可能有
-        // 调试输出），但不再静默——计数 + debug 样本留痕（防刷屏：前 N 条逐条、
-        // 其后仅累计），close 时聚合输出总数。
-        recordInvalidLine(parsed.raw, parsed.error);
-      }
-    }
+    lineReader.push(data);
   });
 
-  /** get_state 监听器注册（返回注销函数供 requestGetStateOnce 自清理；见 StdoutPumpHandles）。 */
+  /** get_state 监听器注册（[U4 D4] 委托 spawn-channel 路由器；返回注销函数供 requestGetStateOnce 自清理；见 StdoutPumpHandles）。 */
   const registerGetStateListener = (
     id: string,
     resolver: (data: unknown) => void,
-  ): (() => void) => {
-    get_stateListeners.set(id, resolver);
-    // 按句守卫删除：resolver 已被同 id 覆盖（理论不发生——reqId 是 UUID）时不误删新条目。
-    return () => {
-      if (get_stateListeners.get(id) === resolver) get_stateListeners.delete(id);
-    };
-  };
+  ): (() => void) => get_stateRouter.register(id, resolver);
 
   return {
     registerGetStateListener,
@@ -2660,16 +2681,10 @@ function attachStdoutPump(
     isHandshakePending: () => settleHandshake !== undefined,
     handshakeSettled,
     processTrailingLine: () => {
-      // 处理 stdout 末尾残留行
-      if (stdoutBuffer.trim()) {
-        const parsed = parseSpawnLine(stdoutBuffer);
-        if (parsed?.kind === "event" && isSdkEvent(parsed.event)) {
-          handleSdkEvent(parsed.event);
-        } else if (parsed?.kind === "invalid") {
-          // [LC-9/T7②] 残留行同计 invalid 统计（处理行为不变：event 以外仍不分发）。
-          recordInvalidLine(parsed.raw, parsed.error);
-        }
-      }
+      // 处理 stdout 末尾残留行（[U4 D4] 缓冲与冲刷经 spawn-channel line reader：
+      // 空白残行由 reader 内部门跳过；非空白残行进 handleTrailingSpawnLine——
+      // 「event 以外仍不分发」的既有语义不变）
+      lineReader.flushTrailing();
       // [LC-9/T7②] close 聚合：本子进程生命周期的 invalid 行总数在此暴露一次
       //（processTrailingLine 由 close handler 必经调用），样本随行——LC-1 形态 (c)
       //「事件行损坏被静默丢弃」的排查入口。
@@ -2681,7 +2696,7 @@ function attachStdoutPump(
     },
     invalidLineCount: () => invalidLineCount,
     clearGetStateListeners: () => {
-      get_stateListeners.clear();
+      get_stateRouter.clear();
     },
   };
 }
