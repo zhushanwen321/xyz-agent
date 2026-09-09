@@ -195,7 +195,12 @@ async function handleContinuation(
 	// 新 turn → 又 agent_end → 又 continuation。
 	// 刻意不校验 expiresAt：长任务 subagent（>1h TTL）完成时仍 triggerTurn 唤醒主 agent，
 	// 按 TTL 判非活跃会让死循环在长任务场景复现。
-	const pendingOps = countActiveFromEntries(entries);
+	// [W4 读侧过滤①消费口] 传当前 session 基准：fork 继承的父级注册残留不进差集
+	// （守卫不幻 defer）；设计 D4「读侧过滤一刀」在本消费口的落地（W6 探针实测
+	// registry-fork-filter.test.ts 证不传则虚增，A9② 验收口径）。
+	const pendingOps = countActiveFromEntries(entries, {
+		currentSessionId: ctx.sessionManager.getSessionId(),
+	});
 	let deferred = false;
 	if (pendingOps.count > 0) {
 		deferred = true;
@@ -291,7 +296,7 @@ async function handleContinuation(
 		if (!isActiveStatus(session.state.status)) return;
 		if (ctx.signal?.aborted) return;
 		if (isContinuationCapped(session.state, cfg)) return;
-		if (countActiveFromEntries(ctx.sessionManager.getEntries()).count > 0) return;
+		if (countActiveFromEntries(ctx.sessionManager.getEntries(), { currentSessionId: ctx.sessionManager.getSessionId() }).count > 0) return;
 		deliverContinuation(ports, session);
 	}, delayMs);
 }

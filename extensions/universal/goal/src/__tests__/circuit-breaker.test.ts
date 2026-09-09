@@ -68,7 +68,12 @@ function makeHarness(): FakeHarness {
 			setWidget: () => {},
 			theme: { fg: (_c: string, t: string) => t, bold: (t: string) => t },
 		},
-		sessionManager: { getEntries: () => entries, getBranch: () => undefined },
+		sessionManager: {
+			getEntries: () => entries,
+			getBranch: () => undefined,
+			// W4 读侧过滤①消费口（agent-end 两处 countActiveFromEntries 传基准）
+			getSessionId: () => "test-session",
+		},
 	} as unknown as ExtensionContext;
 
 	return { pi, ctx, entries, piCalls, ctxCalls };
