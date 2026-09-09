@@ -64,7 +64,7 @@
 | `session.rename` | wire reply 实际回显 `{ sessionId, name }`（session-message-handler handleSessionRename）+ `broadcastSessionList` 全量广播；类型层登记 void（ack 消费）——权威覆盖由广播通道承担，豁免 reply payload 消费 |
 | `session.setProject` | 同 rename：wire 回显 + broadcastSessionList 全量刷新 |
 
-**非配置状态 mutation（excluded，排除理由登记）**：`session.switch`（视图路由非改状态值）、`session.create` / `session.delete` / `session.deleteByCwd` / `session.import` / `preset.import`（实体生命周期，终态语义走 session.created/deleted 等广播通道，无「生效值」概念）、`session.fork`（分叉创建新 session，与 session.create 同族：reply session.created 复用实体创建形态 + forkNotice/broadcastSessionList 广播；新 session 生效配置经 D6 继承链（staging override > 源生效值 > …）+ 读回播种承接，非 mutation 回执语义）、`session.handoff`（交接创建新 session，同族：reply message.status ack，完成经 session.handoffComplete 独立广播；承接配置经 D6 继承链）。
+**非配置状态 mutation（excluded，排除理由登记）**：`session.switch`（视图路由非改状态值）、`session.create` / `session.delete` / `session.deleteByCwd` / `session.import` / `preset.import`（实体生命周期，终态语义走 session.created/deleted 等广播通道，无「生效值」概念）、`session.importCandidates`（导入候选预览，只读探测非状态写入，与契约测试 registry 9 项 non-mutation 清单一一对应）、`session.fork`（分叉创建新 session，与 session.create 同族：reply session.created 复用实体创建形态 + forkNotice/broadcastSessionList 广播；新 session 生效配置经 D6 继承链（staging override > 源生效值 > …）+ 读回播种承接，非 mutation 回执语义）、`session.handoff`（交接创建新 session，同族：reply message.status ack，完成经 session.handoffComplete 独立广播；承接配置经 D6 继承链）。
 
 ### 四、范围边界
 
