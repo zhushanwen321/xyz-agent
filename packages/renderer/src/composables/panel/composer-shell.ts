@@ -53,7 +53,9 @@ import { usePresetStore } from '@/stores/preset'
 import { getSettingsStore } from '@xyz-agent/core'
 import { useChat } from '@/composables/features/chat/useChat'
 import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
-// 显示侧与 submit 侧 getSupportedLevels 的唯一实现（F5）；独立模块——composer 系列测试
+// 显示侧与 submit 侧 getSupportedLevels 的主路径唯一实现（F5；例外 = core flow.ts
+// buildFallbackLaunchInput 的壳未接线 fallback 逐字镜像，过渡语义，改动双侧同步）；
+// 独立模块——composer 系列测试
 // vi.mock 整个 useNewTaskFlow 模块时，本文件 import 链不被 mock 波及
 import { supportedLevelsOf } from '@/composables/features/new-task/supported-levels'
 import { useModel } from '@/composables/features/model/useModel'
@@ -163,7 +165,7 @@ export function useComposerShell(params: ComposerShellParams) {
   const { signal: forkEnterSignal } = useForkModeChannel()
   const { signal: handoffEnterSignal } = useHandoffModeChannel()
 
-  // ── 模型 + 思考等级（core model-thinking；含 landing 延迟 apply + staging 快照）──
+  // ── 模型 + 思考等级（core model-thinking；landing resolve 显示 + staging 快照）──
   const {
     currentModelId,
     currentThinkingLevel,

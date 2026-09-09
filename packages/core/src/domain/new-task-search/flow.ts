@@ -97,6 +97,9 @@ function buildFallbackLaunchInput(): LaunchConfigInput {
 /**
  * 按 'provider/modelId' 复合串查 providers 能力表中 model 条目的 supportedLevels
  * （无条目 = undefined，resolve 侧归一默认五档）。
+ *
+ * 逐字镜像 renderer supported-levels.ts（F5 SSOT）——core 域不能 import renderer 模块
+ * （过渡语义，见上方 buildFallbackLaunchInput），改动须双侧同步。
  */
 function supportedLevelsOf(
   modelId: string,
@@ -188,7 +191,9 @@ export function useNewTaskFlow(deps: NewTaskFlowDepsWithLaunch) {
   )
   /**
    * 当前 flow 选定模型（Composer 显示用）：session 已建用 session.modelId，
-   * 否则用 landing 选定的 pendingModel。两者均空时 Composer 自行回退全局 defaultModel。
+   * 否则用 landing 选定的 pendingModel。两者均空时 Composer 侧经 resolveLaunchConfig
+   * 全序解析兜底（preset.modelOverride → lastUsedModel（D4 校验）→ 全局默认），
+   * 不直接落全局默认。
    */
   const currentModel: ComputedRef<string | null> = computed(
     () => currentSession.value?.modelId ?? pendingModel.value,
@@ -459,10 +464,11 @@ export function useNewTaskFlow(deps: NewTaskFlowDepsWithLaunch) {
   }
 
   /**
-   * setPendingModel —— landing 态记录用户选定但尚未 apply 的模型。
+   * setPendingModel —— landing 态记录用户选定但尚未透传的模型。
    *
    * landing 态 session 尚未 create，无法调 model.switch RPC。记 pendingModel 供 Composer
-   * 显示所选模型（currentModel computed），首发提交 submitFirstMessage create session 后 apply。
+   * 显示所选模型（currentModel computed），首发提交时经 resolveLaunchConfig 终值随
+   * create payload 快照透传（D5，无 post-create apply）。
    * 守卫：仅 landing 态生效（其他态 noop，避免污染 overlay/终态流程）。
    * payload 为 "provider/modelId" 复合串（ModelSelectPopover emit 的格式约定）。
    */

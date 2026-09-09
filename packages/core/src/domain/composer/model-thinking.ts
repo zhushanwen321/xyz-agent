@@ -2,10 +2,13 @@
  * Composer 工具条的模型 + 思考等级状态管理。
  *
  * 从 Composer.vue 拆出（script setup 行数合规）。职责：
- * - currentModelId：当前选中模型（[D3] session 已建读自身真值，空值→占位；landing 态读兜底链 currentModel → lastUsedModel → 全局默认）
+ * - currentModelId：当前选中模型（[D3] session 已建读自身真值，空值→占位；landing 态读
+ *   resolveLaunchConfig 全序解析 currentModel(explicit) → preset.modelOverride →
+ *   lastUsedModel（D4 校验）→ 全局默认）
  * - currentThinkingLevel：当前思考等级（[D3] session 已建读自身真值，空值→占位；landing 态用 localThinkingLevel）
  * - currentThinkingLevelMap：当前模型的思考档位映射 + 切模型自动重置（委托 useThinkingLevelSync）
- * - onModelSelect / onThinkingSelect：切换处理，session 已建走 RPC，landing 态延迟到首发提交后 apply
+ * - onModelSelect / onThinkingSelect：切换处理，session 已建走 RPC，landing 态记 pending /
+ *   authored 值，首发提交时经 resolve 终值随 create 快照透传（D5，无 post-create apply）
  * - Staging Mode（ADR-0056）：enter/exit 快照隔离 + getStagingConfig 导出暂存配置
  *
  * per-session 隔离：session 已建态按 sessionId 查真值（经 deps.getSessionState，非读全局 active），
@@ -13,7 +16,8 @@
  * （SessionSummary.modelId/thinkingLevel + applySnapshot(id,...)），此处只接对数据源。
  *
  * landing 态（sessionId=null）session 尚未 create，无法调 model.switch / setThinkingLevel RPC。
- * 选定值记入 pendingModel + localThinkingLevel，submitFirstMessage create session 后 apply。
+ * 选定值记入 pendingModel + localThinkingLevel，首发提交时经 resolveLaunchConfig 终值随
+ * create payload 快照透传（D5，无 post-create apply 通道）。
  *
  * Staging Mode（ADR-0056）：composer 进入 fork-ask/handoff-ask 暂存态时，模型/thinking chip
  * 切换只写暂存快照（不影响当前源 session）。退出暂存态时清空快照，chip 恢复读常规态真值。
@@ -145,9 +149,11 @@ export function useComposerModelThinking(
   } = deps
 
   /**
-   * landing 态本地思考等级（session 尚未 create，无 session 真值）。
-   * 切模型时由 useThinkingLevelSync 自动设为新模型最高可用档（value）；
-   * submitFirstMessage create session 后 apply（setThinkingLevel）。
+   * landing 态本地 authored 思考等级（session 尚未 create，无 session 真值）。
+   * authored-only：唯一写点 = routeThinkingLevel landing 支（用户显式选档；唯一例外 =
+   * sync 分支 3 可用性安全网，D10-E10 声明保留）——切模型不自动写最高可用档，landing
+   * 显示初值由 resolveLaunchConfig 解析链给出（U2a）。首发提交时作 explicit 输入进
+   * resolve，终值随 create payload 快照透传（D5，无 post-create setThinkingLevel）。
    */
   const localThinkingLevel = ref<string | undefined>(undefined)
 
@@ -278,7 +284,8 @@ export function useComposerModelThinking(
 
   /**
    * 当前选中模型 id（"provider/modelId" 复合串）。
-   * staging 活跃时读暂存快照，否则读常规态真值（session > landing 兜底链 currentModel > lastUsedModel > 全局默认）。
+   * staging 活跃时读暂存快照，否则读常规态真值（session 真值 > landing resolve 全序解析：
+   * currentModel(explicit) → preset.modelOverride → lastUsedModel（D4 校验）→ 全局默认）。
    */
   const currentModelId = computed(
     () => stagingModel.value !== null
@@ -322,7 +329,8 @@ export function useComposerModelThinking(
   /**
    * 模型切换：staging 活跃时只写快照（不调 RPC，不改源 session）。
    * session 已建走 deps 注入的编排（RPC + 乐观更新）；
-   * landing 态（sid=null）session 尚未 create，记 pendingModel 供首发提交后 apply。
+   * landing 态（sid=null）session 尚未 create，记 pendingModel 供首发提交时经 resolve
+   * 终值随 create 透传（D5）。
    *
    * [u3·D3] staging / 已建两分支各设 armed 意图（{modelId, at, callId}）：恢复只挂在显式
    * 切模型上，消费点在 sync watch 回调顶部（u2 规则 1/2/3）；本函数只负责设立与生命周期
@@ -348,7 +356,7 @@ export function useComposerModelThinking(
       }
       return
     }
-    // landing 态延迟 create：记 pendingModel，submitFirstMessage create session 后 apply
+    // landing 态延迟 create：记 pendingModel，首发提交时经 resolve 终值随 create 透传（D5）
     if (!sessionId.value) {
       setPendingModel(targetModelId)
       // [D4] lastUsedModel 写入（仅显式选模型，staging 试选不写——入口已在上方 staging return）
@@ -434,7 +442,7 @@ export function useComposerModelThinking(
       stagingThinking.value = level
       return
     }
-    // landing 态延迟 create：记本地态，submitFirstMessage create session 后 apply
+    // landing 态延迟 create：记 authored 档，首发提交时作 explicit 输入进 resolve、终值随 create 透传（D5）
     if (!sessionId.value) {
       localThinkingLevel.value = level
       return

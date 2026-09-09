@@ -52,7 +52,7 @@ export const sessionMetaCache = new Map<string, CachedSessionMeta>()
 /**
  * persistBindingSidecar 的可选行为开关。
  *
- * skipJsonlExistsGuard（V9-④ 根修，2026-09-08）：跳过「JSONL 未落盘即跳过」守卫。
+ * skipJsonlExistsGuard（V9-④ 根修，2026-09-09）：跳过「JSONL 未落盘即跳过」守卫。
  * 仅限 create 路径使用——调用方以「本 session 刚由本进程创建」这一事实替代文件存在性
  * 判据（getState 成功 + registerSession 成功后 session 必然真实，.jsonl 未 flush 只是
  * pi 延迟写入窗口）。规则 #6 禁止的是创建/触碰 pi session .jsonl 本体（openSync('wx')

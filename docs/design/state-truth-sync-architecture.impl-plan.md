@@ -12,7 +12,7 @@
 | 终态/机制 | §3 解决方案（3.1 终态与交互样例 / 3.2 方案对比 / 3.3 关键决策 D1-D10 / 3.4 探针清单 P1-P5） |
 | 验收场景表 | §4 验收（V1-V11 真实场景表，含验证环境说明） |
 | 下一层拆分 | §5 下一层拆分（Batch 1 U0-U4 / Batch 2 U5-U6 / Batch 3 U7-U9 + 文件改动地图 + 待验证检查点） |
-| 待验证检查点 | §5 末尾「待验证检查点（诚实标注）」5 条（⛔ P2/P2b/P3/P4 + D2 序产品裁决） |
+| 待验证检查点 | §5 末尾「待验证检查点（诚实标注）」5 条（✅ P2/P2b/P3/P4 已验证 + D2 序产品裁决 + C3 迁移顺序） |
 
 关键锚点勘误（侦查实测 vs 设计文档标注，已核实）：
 - `flow.ts` 实际路径 = `packages/core/src/domain/new-task-search/flow.ts`（submit 透传 :264 / C-W4-3 :275-278）
@@ -164,8 +164,9 @@ worktree 决策：全部 plain。唯一热点公共文件 session-lifecycle.ts�
 | 13 | readEffectiveModelFromState 未直接复用：改用 findScannedSession（ScannedSession.modelId/thinkingLevel，与 seedRestoreMetaOverride sidecar 兜底同源数据链）+ 薄适配 | U6 | 前者输入形态 = get_state 回执解析器，与源真值两路径（内存 meta/sidecar）不匹配；走设计边界预留出口「签名不适合 → 薄适配不动 restore-seeding」 | 已裁决 |
 | 14 | nonEmptyStr（空串归一 3 行）在 session-lifecycle.ts 与 handoff-service.ts 各持一份 | U6 | handoff 不得反向依赖 session-lifecycle 内部、launch-params/restore-seeding 禁碰——依赖方向约束下不值得为 3 行工具破界 | 已裁决 |
 | 15 | ensureLaunchDataReady 聚合源缺 providers/defaultModel（设计 D1 五源之一；实现仅聚合 2 个 KV 源 + 壳侧 loadPresets） | 阶段3 审查 A-U2 | settings providers 经 WS initial-state 订阅推送（settings-lifecycle.ts:102），先于任何用户发送交互到达，占位窗口实践不可达；量级与 KV 同为毫秒级。重审触发：收到「冷启动极快发送后模型/档位与 chip 不一致」反馈即补 settings 就绪源（settings 侧暴露 loadOnce/onLoaded 形态作第三源接入） | 已裁决（声明局限） |
-| 16 | 阶段3 三分区一致性审查（基线 7fd3d100e..HEAD）：22 项 reasonable 全部核实成立——core 区 6 项（D1-D4 终态完整落地含 P2b 数组语义无缩水 / U2a authored-only 收窄完整 / U4r2 补口正确 / 两 factory 质量与处置表一致 / u3 文档回写如实 / LaunchConfigPort 内联声明有迁移意图标注）；renderer+ui 区 7 项（B6 废除彻底 / 壳层三端同源 / 6 处 in-flight 迁移行为等价 / useBackgroundTasks 良性幂等差异 / exports 领地扩展已裁决 / 4 个 wire 测试更新正确 / 壳接线测试为 U2d 交付物）；runtime+shared 区 9 项（D5 注释如实链保留 / D6 fork 插档与 handoff 无 preset 档正确 / L2 探针格式触发面全符且日志可 grep / D8 六类型必需字段+17 项清单双向零差 / ADR 锚点实读属实 / constraints 三条登记+C-pi-14 尾巴回收 / FR-15 删净保留项无误删 / 偏差 #10/#12/#13/#14 如实落地） | 阶段3 审查 | 逐项 file:line 证据见三分区审查报告；本表固存结论 | 已核实 |
-| 17 | 阶段3 审查 5 条 unreasonable 修复批（F1 契约谓词动词表 9→17 + fork/handoff 按 ADR 裁决归类 excluded / F2 thinking-level-sync 悬空注释指向 resolveLaunchConfig / F3 E7 壳侧空串分支专属文案 cwdFallbackToHome / F4 PresetSelectChip explicitPresetId watch flow.pendingPreset 重入重置同步 / F5 getSupportedLevels 两链统一为共享 supported-levels.ts 含 enabled 检查）+ 2 条 doc_error 主 agent 亲修（U7b 状态行、constraints 两条 authority slug）+ 定向复审 7/7 pass（F1 独立 node 模拟 19 候选双向零差；F4/F5 突变验证；core/renderer 全量抽验）+ 复审收尾批（watch 补 immediate 闭合挂载时序变体；历史 slice 文档 supersession 注记；ADR §四补 restore 边界声明） | 阶段4 修复批 | 批内随带修复：ui 2 个存量 typecheck 错误正面修复（provider-edit-body.test.ts 删残留 ipc 字段 / search-modal.test.ts searchMock 运行时守卫——pre-commit MANDATORY 存量修复，test-only 无生产语义）；supported-levels.ts 新模块为 F5 载体（21 个 composer 测试 mock useNewTaskFlow 模块波及，独立模块隔离）；修复 agent 一次 git stash 违规自报（突变验证误用，立即 pop 恢复净效果零） | committed（d8c411e76 + 收尾批） |
+| 16 | 阶段3 三分区一致性审查（基线 7fd3d100e..HEAD）：22 项 reasonable 全部核实成立——core 区 6 项（D1-D4 终态完整落地含 P2b 数组语义无缩水 / U2a authored-only 收窄完整 / U4r2 补口正确 / 两 factory 质量与处置表一致 / u3 文档回写如实 / LaunchConfigPort 内联声明有迁移意图标注）；renderer+ui 区 7 项（B6 废除彻底 / 壳层三端同源 / 6 处 in-flight 迁移行为等价 / useBackgroundTasks 良性幂等差异 / exports 领地扩展已裁决 / 4 个 wire 测试更新正确 / 壳接线测试为 U2d 交付物）；runtime+shared 区 9 项（D5 注释如实链保留 / D6 fork 插档与 handoff 无 preset 档正确 / L2 探针格式触发面全符且日志可 grep / D8 六类型必需字段+17 项清单双向零差（阶段3 审查时点，F1 扩谓词前；终态 19 项见偏差 #17） / ADR 锚点实读属实 / constraints 三条登记+C-pi-14 尾巴回收 / FR-15 删净保留项无误删 / 偏差 #10/#12/#13/#14 如实落地） | 阶段3 审查 | 逐项 file:line 证据见三分区审查报告；本表固存结论 | 已核实 |
+| 17 | 阶段3 审查 5 条 unreasonable 修复批（F1 契约谓词动词表 9→17 + fork/handoff 按 ADR 裁决归类 excluded / F2 thinking-level-sync 悬空注释指向 resolveLaunchConfig / F3 E7 壳侧空串分支专属文案 cwdFallbackToHome / F4 PresetSelectChip explicitPresetId watch flow.pendingPreset 重入重置同步 / F5 getSupportedLevels 两链统一为共享 supported-levels.ts 含 enabled 检查）+ 2 条 doc_error 主 agent 亲修（U7b 状态行、constraints 两条 authority slug）+ 定向复审 7/7 pass（F1 独立 node 模拟 19 候选双向零差（19 = F1 谓词扩至 17 动词后终态）；F4/F5 突变验证；core/renderer 全量抽验）+ 复审收尾批（watch 补 immediate 闭合挂载时序变体；历史 slice 文档 supersession 注记；ADR §四补 restore 边界声明） | 阶段4 修复批 | 批内随带修复：ui 2 个存量 typecheck 错误正面修复（provider-edit-body.test.ts 删残留 ipc 字段 / search-modal.test.ts searchMock 运行时守卫——pre-commit MANDATORY 存量修复，test-only 无生产语义）；supported-levels.ts 新模块为 F5 载体（21 个 composer 测试 mock useNewTaskFlow 模块波及，独立模块隔离）；修复 agent 一次 git stash 违规自报（突变验证误用，立即 pop 恢复净效果零） | committed（d8c411e76；收尾批 49819fc0b / watch immediate 2dac303ef） |
+| 18 | V9-④ 根修（Gate B 验收缺陷修复，3ba8d96ba）实改 11 文件，其中 7 个非领地文件：runtime io 骨架 4（`infra/pi/session-binding-sidecar-io.ts` / `infra/pi/session-file-utils.ts` / `infra/pi/session-store.ts` / `services/ports/session.ts`）+ service 层 2（`services/session/session-internal.ts` / `session-service.ts`）+ 测试 1（`test/preset-sidecar-io.test.ts`）；另 2 个测试文件（`test/session-lifecycle-create-fork-anchor.test.ts` / `test/session-lifecycle-preset.test.ts`）按 U6 领地括号「fork 场景单测追加于 session-lifecycle 已有测试文件」宽口径就近归属，不另列非领地；领地内 2 文件为 `launch-params.test.ts`（U3）与 `session-lifecycle.ts`（U3/U6） | 阶段5 Gate B 根修 | 验收期根修：守卫参数 skipJsonlExistsGuard（create 路径 opt-in）沿 io 骨架（io → ports → store → lifecycle/service）逐层透传，触及骨架各层故超出单单元领地；fork/restore 语义不变（守卫仅 create 路径放行），守卫动机经 pi 0.84.4 dist 实读确认为规则 #6 误延伸 | 已核实（git show 3ba8d96ba --stat：11 文件全 M 无新增） |
 
 ## 6 状态表
 
@@ -175,17 +176,17 @@ worktree 决策：全部 plain。唯一热点公共文件 session-lifecycle.ts�
 | U1 | committed | 1 | fce03ec13（49 用例；P3 结论：pi 不静默换模，turn 级报错可见，U3 无需增补校验——残留风险 #2 已消解） |
 | U2a | committed | 1 | 7b5945403（62 用例重写；armed S1-S9 保留；u3 文档回写） |
 | U2b | committed | 1 | 18896b518（core 1824 + renderer 4067 绿；E7 复用 onCwdFallback 通道） |
-| U2c | committed | 1 | 9f79a740d（B6 废除；core barrel +1 行领地扩展已接受） |
+| U2c | committed | 1 | 9f79a740d（B6 废除；领地扩展 2 项：core barrel +1 行、`__tests__/preset-select-chip.test.ts` +126/-17 测试改写——文件本体系 W4 9e0745bf0 迁移带入，非 U2c 新建） |
 | U2d | committed | 1 | bf7494449（壳接线 + 死代码清理 + 3 领地扩展：composer barrel KV 别名导出 / 2 mock 契约跟进；突变验证非空转） |
 | U3 | committed | 1 | 63d861ca1（32 用例；P2 等价成立，D3 透传前提通过，不触发 E8——残留风险 #1 已消解） |
 | U4 | committed | 2 | round1 64bd71a6c + round2 1b99920dc（等价破口 pendingPreset 通道修复，81/81 全正向绿，突变杀虫实证；core 1906 + renderer 4073） |
-| U5 | committed | 1 | 8fce84d1f（ADR-0065 + 18 项清单 + 6 豁免；C-pi-14 authority 补登） |
+| U5 | committed | 1 | 8fce84d1f（ADR-0065 + 18 项清单 + 6 豁免（U5 交付时点数字；F1 谓词扩至 17 动词后终态 19 项 + 5 豁免，见偏差 #17）；C-pi-14 authority 补登） |
 | U6 | committed | 1 | 8f8d70b36（P4 三类源 + E9 回落全过；renderer 零改动；残留风险 #3 探针验证完成——陈旧窗口按代价声明行为） |
 | U7a | committed | 1 | da67e9d4c（factory 15 用例；7 处迁移目标 API 覆盖自评无可表达缺口；exports 子路径授权给 U7b） |
 | U7b | committed | 1 | 77688f40b（4 处迁移 + core package.json exports +1 行；settle 时序自查无相反依赖；符号改名 4 处均模块私有） |
 | U7c | committed | 1 | 40929538b（3 处迁移净删 21 行；Set 标记保留属排除形态豁免已接受；35/35 定向绿） |
 | U8 | committed | 1 | 85bdde0eb（配额中断后半成品经全量核验收口：core 120f/1935t 绿、签名逐字不变、消费方零 diff、净删 86 行） |
-| U9 | committed | 1 | 7dbd88873（FR-15 净删 146 行；惰性清除 +1 回归测试；2 领地扩展：mutation 契约 stale 条目 + ADR 豁免镜像行；反向 grep 生产零命中；处置表四族覆盖确认） |
+| U9 | committed | 1 | 7dbd88873（FR-15 净删 146 行；惰性清除 +1 回归测试；2 领地扩展：mutation 契约 stale 条目 + ADR 豁免镜像行；反向 grep 生产零命中；处置表四族覆盖确认；领地内 thinking-level-sync.ts 实改见偏差 #17/F2（d8c411e76）） |
 
 ## 7 残留风险与变更历史
 
@@ -193,15 +194,15 @@ worktree 决策：全部 plain。唯一热点公共文件 session-lifecycle.ts�
 
 1. ~~⛔ P2（U3）~~ **已消解**：探针实测等价成立（63d861ca1）。
 2. ~~⛔ P3（U1）~~ **已消解**：实测 pi 不静默换模（turn 级报错可见），无需增补校验（fce03ec13）。
-3. **⛔ P4（U6）**：sidecar 陈旧窗口（切模→死→直接 fork 读旧值）为已接受代价（设计 D6）；探针仅验证可读性与回落，不消除窗口。
-4. **P5 加载窗口实测**：ensureLaunchDataReady 常态毫秒级属设计声称（⛔ P5 单测 + V1 场景实测双验证）；若 dev 环境实测显著慢（>1s），发送按钮 loading 态为实现层兜底（U2b 内按需）。
+3. **P4 陈旧窗口（U6，探针已过、窗口不消除）**：sidecar 陈旧窗口（切模→死→直接 fork 读旧值）为已接受代价（设计 D6）；探针仅验证可读性与回落，不消除窗口。
+4. ~~P5 加载窗口实测~~ **已消解**：P5 已实跑毫秒级（U1 单测 fce03ec13 + Gate B V1 场景实测双验证），「dev 实测 >1s」条件未触发，loading 态兜底无需实现。
 5. **provenance UI 角标**：设计 D1 称 provenance「供 UI 角标」——三批单元表与文件地图均无 chip 角标任务，按单元表执行不加 UI 新需求（防推测性功能）；provenance 输出能力落地，UI 消费留后续候选。终态 §3.1「来源可见性」措辞以现有 chip 默认样式（PresetSelectChip 默认预设回显样式）近似满足。
 6. ~~E7 cwd 两空 toast~~ **已落地**：U2b 守卫放宽 + 阶段4 F3 壳侧空串分支专属文案 cwdFallbackToHome（d8c411e76）。
-7. **U5 类型强化的现实偏差**：若契约测试发现现存 mutation reply 缺生效值字段（设计声称 C-pi-13 后已齐），补齐属于设计内修复；若发现某 RPC 后端原样存储无生效值语义（如 rename），按 ADR 裁决标准归类并登记清单豁免。
+7. ~~U5 类型强化的现实偏差~~ **已落定**：契约测试绿（mutation-reply-contract 清单双向零差，终态 19 项，见偏差 #16/#17）；豁免清单 6→5 调整与 fork/handoff/restore excluded 归类见 ADR-0065 与偏差 #17 F1。
 8. **分支名约束**：当前分支 fix-composer-model-chaos（非本任务分支名），用户指示在本工作区直接开发——全部 commit 落此分支，不切分支。
 
 ### 变更历史
 
-- 2026-09-09：阶段 5 双绿收尾。Gate A 全量验收绿（pnpm test 全仓含 real-pi 10/10 真跑 0 失败；lint 唯一红灯 taste/no-silent-catch 已正面修复 53df7375a；5 包 typecheck + extensions 静态两连 + runtime bundle + drift/constraints 守卫全绿；覆盖矩阵 15 单元无无人认领区）。Gate B V1-V11 真实场景（真实 Electron + 真实 pi + ~/.xyz-agent-dev）：10 pass / 1 fail / 0 blocked → 唯一 fail V9-④（landing create 路径 .preset.json sidecar 因 pi 延迟写入窗口 + jsonl-exists 守卫结构性永不落盘）根修 3ba8d96ba（守卫动机经 pi 0.84.4 dist 实读确认为规则 #6 误延伸；skipJsonlExistsGuard trusted-create 参数沿 io 骨架透传，fork/restore 语义不变，project/agent 同根修，model 写点不动）→ 定向重验 V9-④ + V3 + D3 出厂对照 + V9③ 全 pass，Gate B 转绿。环境已还原。
+- 2026-09-09：阶段 5 双绿收尾。Gate A 全量验收绿（pnpm test 全仓含 real-pi 10/10 真跑 0 失败；lint 唯一红灯 taste/no-silent-catch 已正面修复 53df7375a；5 包 typecheck + extensions 静态两连 + runtime bundle + drift/constraints 守卫全绿；覆盖矩阵 15 单元领地内无无人认领区；验收期根修 3ba8d96ba 的非领地面（7 文件）见偏差 #18）。Gate B V1-V11 真实场景（真实 Electron + 真实 pi + ~/.xyz-agent-dev）：10 pass / 1 fail / 0 blocked → 唯一 fail V9-④（landing create 路径 .preset.json sidecar 因 pi 延迟写入窗口 + jsonl-exists 守卫结构性永不落盘）根修 3ba8d96ba（守卫动机经 pi 0.84.4 dist 实读确认为规则 #6 误延伸；skipJsonlExistsGuard trusted-create 参数沿 io 骨架透传，fork/restore 语义不变，project/agent 同根修，model 写点不动）→ 定向重验 V9-④ + V3 + D3 出厂对照 + V9③ 全 pass，Gate B 转绿。环境已还原。
 - 2026-09-09：阶段 3 一致性审查（三分区独立 reviewer）22 reasonable 全部核实入登记表 #16；5 unreasonable 修复批 d8c411e76（F1 契约谓词 17 动词 + fork/handoff excluded 归类 / F2 悬空注释 / F3 E7 空串文案分支 / F4 chip 重入残留 G1 破口闭合 / F5 getSupportedLevels 统一 supported-levels.ts）+ 定向复审 7/7 pass；收尾批 49819fc0b（supersession 注记 / ADR restore 边界 / #17 收账）+ 2dac303ef（watch immediate 闭合挂载时序变体）。
 - 2026-09-08：初版。来源设计 v4（R3/R4 双审 0 must-fix）；用户预授权全权负责（豁免计划评审确认步骤）；侦查实测校准 6 处锚点漂移；in-flight 族实测 12 处裁决迁 7 处；U2 拆为 U2a/b/c（≤5 文件约束）、U7 拆为 U7a/b/c。

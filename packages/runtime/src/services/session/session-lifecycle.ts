@@ -616,7 +616,7 @@ export class SessionLifecycle implements ISessionRegistry {
   /**
    * create 的 sidecar 落盘（preset / project / agent 三绑定，创建语义）。
    *
-   * [V9-④ 根修，2026-09-08] 三个 persist* 调用传 skipJsonlExistsGuard 放行 existsSync
+   * [V9-④ 根修，2026-09-09] 三个 persist* 调用传 skipJsonlExistsGuard 放行 existsSync
    * 守卫：create 路径 session 必然真实（getState 成功 + registerSession 成功后才到达
    * 本段），.jsonl 未 flush 只是 pi 延迟写入窗口（pi 0.84.4 实装：SessionManager 构造
    * 即确定性生成 sessionFile 路径，get_state 透传——路径有值、文件不存在），不再以文件

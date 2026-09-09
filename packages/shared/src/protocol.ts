@@ -292,6 +292,8 @@ export interface ClientMessageMap {
   //   - modelOverride：模型 ID 字符串（如 'anthropic/claude-sonnet-4'），覆盖 preset.modelOverride
   //   - thinkingOverride：ThinkingLevel 值（= PI_THINKING_LEVELS 全集 7 值，含 'max'），覆盖 preset.thinkingLevel
   // 两者均可选——省略时按 preset 字段或全局默认回退。
+  // landing 新建恒传 renderer resolveLaunchConfig 解析终值（D5 契约快照化，非 chip
+  // 显式覆盖值）；fork/handoff/agent-managed create 走可选覆盖 + preset/默认 fallback 链。
   'session.create': {
     cwd?: string
     label?: string

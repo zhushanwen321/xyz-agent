@@ -13,9 +13,12 @@
  *   （explicit / preset / lastUsed / memory / default）。
  * - isFactoryFullPreset：D3 出厂等价判定（PiLaunchPreset 的 10 个 launch 生效字段逐字段
  *   比对；出厂 builtin:full 时 resolve 输出 presetId=undefined 不透传）。
- * - ensureLaunchDataReady：D1 五数据源就绪聚合（presets 列表与 defaultPresetId 同源 /
- *   providers 与全局默认模型同源 / lastUsedModel KV / 记忆表；已加载即同步返回 resolved
- *   promise；各源加载失败按既有 E1/E2/E4 语义收敛——回落默认，不 reject 不阻塞）。
+ * - ensureLaunchDataReady：数据源就绪聚合（D1 submit 侧加载窗口语义）。生产接线 = 仅直聚
+ *   core KV 双源（lastUsedModel KV / 记忆表）；presets 就绪走壳侧 launchPort.ensureReady()
+ *   （usePiPresets.loadPresets，flow.ts 并行 await）；providers 不等待（偏差 #15：WS
+ *   initial-state 先于任何用户发送交互到达）；deps 形参为预留聚合形态（生产零消费，
+ *   测试锚定）。已加载即同步返回 resolved promise；各源加载失败按既有 E1/E2/E4 语义
+ *   收敛——回落默认，不 reject 不阻塞。
  * - createLaunchConfigView：P5① 响应式包装——输入经 getter 闭包读响应式数据源
  *   （如 last-used-model 模块 ref / preset store），数据延迟到达时输出自动重算。
  *
@@ -361,7 +364,7 @@ export function createLaunchConfigView(
   return computed(() => resolveLaunchConfig(getInput()))
 }
 
-// ── D1 五数据源就绪聚合 ────────────────────────────────────────────────
+// ── D1 数据源就绪聚合 ──────────────────────────────────────────────────
 
 /**
  * 单个异步数据源的加载契约（loadOnce/onLoaded 形态，对齐 last-used-model /
@@ -377,6 +380,10 @@ export interface LaunchDataSource {
  * 壳层注入的 store 数据源（core 零 store 依赖）：
  * - presets：preset 列表 + 全局默认 presetId（renderer preset store，一源覆盖两数据）
  * - providers：providers 能力表 + 全局默认模型（settings store，一源覆盖两数据）
+ *
+ * @internal 预留聚合形态：生产接线零消费（flow.ts 唯一调用点无参调用，presets 就绪走
+ * 壳侧 launchPort.ensureReady、providers 按偏差 #15 不等待），仅 launch-config.test.ts
+ * 注入锚定聚合语义。
  */
 export interface LaunchDataDeps {
   presets?: LaunchDataSource
@@ -397,8 +404,12 @@ function waitSourceLoaded(source: LaunchDataSource): Promise<void> {
 }
 
 /**
- * 五数据源就绪聚合（D1 submit 侧加载窗口语义）：lastUsedModel KV + 记忆表（core 域
- * KV 单例直接 import）+ presets / providers（deps 注入）。全部已加载时同步返回
+ * 数据源就绪聚合（D1 submit 侧加载窗口语义）。生产接线形态（唯一调用点 flow.ts
+ * submitFirstMessage，无参调用）：仅直聚 core KV 双源（lastUsedModel KV + 记忆表，
+ * 模块单例直接 import）；presets 就绪由调用方并行 await 壳侧 launchPort.ensureReady()
+ * （renderer usePiPresets.loadPresets）；providers 不等待（偏差 #15：settings providers
+ * 经 WS initial-state 订阅推送，先于任何用户发送交互到达，占位窗口实践不可达）。
+ * deps 形参 = 预留聚合形态（生产零消费，仅测试锚定注入语义）。全部已加载时同步返回
  * resolved promise（onLoaded 立即触发路径）；任一未加载则等到全部完成。
  *
  * 各源加载失败在模块内部已按 E1/E2/E4 收敛（KV 读失败 → undefined/空表 + 状态推进

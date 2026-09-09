@@ -1,7 +1,8 @@
 /**
  * lastUsedModel KV 单键存储 —— 用户最后显式选择的模型（landing 新任务默认模型）。
  *
- * 设计文档 §3.3 D4：landing 新任务默认模型 = lastUsedModel（显式，跨重启成立）。
+ * 设计 state-truth-sync-architecture.md §3.3 D2/D4：landing 新任务默认模型链的
+ * lastUsedModel 档（D2 model 链第三档，消费前经 D4 有效性校验；显式记录，跨重启成立）。
  * 写点 = onModelSelect 非 staging 分支（用户显式选模型时写入）；staging 试选不写。
  *
  * 持久化生命周期（三态预载 / 加载完成回调 / 加载窗口守卫 / deferred 补写 / 写穿串行链）
@@ -13,9 +14,10 @@
  * KV 经 getPlatform().storage（KVStorage 接口，platform/port），core 零 localStorage 直连
  * （W3 迁移约束，同 model-thinking-memory / system-storage）。
  *
- * 错误规格（对齐设计 E4）：
+ * 错误规格（对齐 state-truth-sync-architecture.md 的 D10-E1——KV 读失败/损坏回落下一
+ * 优先级；注意其 E4 是另一条「默认预设指向已删 id 兜底 builtin:full」，不适用本键）：
  * - KV 读失败 / JSON 损坏 / 非字符串 → undefined（factory catch 回退 + parseSnapshot 形状门，
- *   不抛不吞；下游回落 defaultModel）
+ *   不抛不吞；下游 resolve 回落下一优先级档）
  * - KV 写失败 → console.warn，内存值不回滚（本次运行内仍生效，重启后丢）
  */
 import { ref } from 'vue'
@@ -64,7 +66,7 @@ export function lookup(): string | undefined {
 
 /**
  * 写记忆：同步写内存 + 异步写穿 KV。
- * KV 写失败仅 console.warn，内存不回滚（E4）。
+ * KV 写失败仅 console.warn，内存不回滚（best-effort 写穿，见文件头错误规格）。
  */
 export function record(modelId: string): void {
   slot.record(modelId, () => {

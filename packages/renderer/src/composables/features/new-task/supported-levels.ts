@@ -11,6 +11,9 @@
  * 单独兜底都是发散源）。独立成模块而非从 useNewTaskFlow 具名导出：composer 系列
  * 测试 vi.mock 整个 useNewTaskFlow 模块（flow 编排 mock），composer-shell 从本模块
  * import 不被该 mock 波及。
+ *
+ * core flow.ts buildFallbackLaunchInput 持有本函数的逐字镜像（壳未注入 launchConfig
+ * 端口时的 fallback 基座，过渡语义——core 域不能 import renderer 模块），改动须双侧同步。
  */
 import type { ProviderInfo } from '@xyz-agent/shared'
 

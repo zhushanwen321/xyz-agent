@@ -56,7 +56,7 @@ export interface ManagedSession extends IManagedSessionRecord {
   /**
    * launch preset id 的内存态持有（W-RT-4，设计文档 §4.2）。
    *
-   * create 路径 sidecar 已随 V9-④ 根修放行 existsSync 守卫落盘（2026-09-08）；
+   * create 路径 sidecar 已随 V9-④ 根修放行 existsSync 守卫落盘（2026-09-09）；
    * 仅 sessionFilePath 缺失（pi 异常未返回路径）等异常时序下 .preset.json 缺失，
    * 此时内存态兜底持有 presetId，供 forkSession 在 active 期读源 session preset（W-RT-5）。
    *

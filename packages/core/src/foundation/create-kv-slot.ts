@@ -32,7 +32,7 @@ export interface KVSlotOptions<V> {
   /**
    * 加载侧形状门：JSON.parse 产物 → 领域快照值。
    * 合法 JSON 但形状不符（数组/字符串/null 等）返回 undefined——与 JSON 损坏同等对待，
-   * 按空启动（对齐 E1「非对象 JSON 按缺省处理」/ E4「非字符串 → undefined」语义）。
+   * 按空启动（对齐 state-truth-sync-architecture.md D10-E1：KV 读失败或损坏 → 按空启动回落，不抛不阻塞）。
    */
   parseSnapshot: (parsed: unknown) => V | undefined
   /**
@@ -103,7 +103,7 @@ export function createKVSlot<V>(key: string, options: KVSlotOptions<V>): KVSlot 
         snapshot = parseSnapshot(parsed)
       }
     } catch {
-      // E1/E4：KV 读失败 / JSON 损坏 → 空启动（不抛不吞）。加载窗口内已 record 的
+      // D10-E1：KV 读失败 / JSON 损坏 → 空启动（不抛不吞）。加载窗口内已 record 的
       // 内存新值保留（mergeSnapshot 不被调用，无从覆写），由 deferred 补写收敛
       snapshot = undefined
     }
@@ -140,7 +140,7 @@ export function createKVSlot<V>(key: string, options: KVSlotOptions<V>): KVSlot 
     try {
       await getPlatform().storage.set(key, serialize())
     } catch (err) {
-      // 降级策略（best-effort，E2/E4）：写穿失败不回滚内存、不向调用方传播——
+      // 降级策略（best-effort 写穿）：写穿失败不回滚内存、不向调用方传播——
       // 偏好类数据可丢失，本次运行内仍生效、重启后丢，warn 留排障线索即可
       console.warn(`[${tag}] KV write-through failed:`, err)
     }

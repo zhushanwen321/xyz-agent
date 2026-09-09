@@ -4,6 +4,8 @@
 
 **层声明**：当前层 = 技术方案设计（架构改造）；下一层 = dev-flow 实施计划（分批 impl-plan）。本文设计深度止于下一层单元拆分，不到函数签名级实现。
 
+**行号锚点声明**：本文行号锚点以 impl-plan 基线 7fd3d100e 时点为准，现势符号位置以代码实读为准。
+
 ---
 
 ## §1 背景目标
@@ -185,7 +187,7 @@ landing 页 chip 区（`packages/renderer/src/components/new-task/Landing.vue` �
 
 | 方案 | 长期架构 | 短期成本 | 风险 | 裁决 |
 |---|---|---|---|---|
-| **A：单一解析层 + 快照契约（选）** | 「新 session 生效配置」从 ≥5 个解析点收敛到 1 个纯函数模块，显示与创建共用输出——发散 by construction 不可能；新增 landing 配置项自动继承等价性 | 中：新增 core 模块 + 三处消费方改线（chip 显示 / submit / create 契约）+ preset 默认生效化行为变更 | preset 默认生效化改变「从未设默认预设」以外用户的行为（builtin:full 等价性需探针 ⛔ P2）；renderer 解析需持有 preset 数据（已有 preset store ✅） | ✅ |
+| **A：单一解析层 + 快照契约（选）** | 「新 session 生效配置」从 ≥5 个解析点收敛到 1 个纯函数模块，显示与创建共用输出——发散 by construction 不可能；新增 landing 配置项自动继承等价性 | 中：新增 core 模块 + 三处消费方改线（chip 显示 / submit / create 契约）+ preset 默认生效化行为变更 | preset 默认生效化改变「从未设默认预设」以外用户的行为（builtin:full 等价性 ✅ 探针 P2 已实跑验证，等价成立）；renderer 解析需持有 preset 数据（已有 preset store ✅） | ✅ |
 | B：双链保留、逐点对齐 | 架构不变，给生效链补 lastUsedModel fallback、给 preset 补透传、给 thinking 补 preset 档——即历史上三次「修好了」的修法第四次重演 | 小：每点 5-30 分钟 | 四条链的 fallback 顺序仍各自演化，下一个配置项（permission mode 等）进来即再发散；无机器守卫，复发无拦截 | ❌ 若用它，§3.1 样例 1 这次对了，但样例 3 的 preset 与 thinking 仍各说各话；且明年第五起同族事故照犯 |
 | C：runtime 集中解析（renderer 发裸 pending 值，runtime 做全部 fallback） | 真源在 runtime 一侧更「权威」 | 大：landing 态无 session，需新增「预解析 launch config」RPC；chip 显示变异步（loading 态/闪烁窗口）；perCwd 默认等数据要全部下发或实时询问 | 显示即时性受损（landing 是首页，首屏 chip 等 RPC 不可接受）；解析逻辑从 renderer 移到 runtime 但仍是一个新模块，复杂度未减只是搬家 | ❌ 若用它，§3.1 样例 1 的 chip 在 RPC 返回前显示占位/旧值，landing 首屏体验回退 |
 
@@ -194,7 +196,7 @@ landing 页 chip 区（`packages/renderer/src/components/new-task/Landing.vue` �
 ### 3.3 关键决策与权衡
 
 **D1：`resolveLaunchConfig` 单一解析模块（C1 核心，选定）**
-- **采用**：新增 core 域模块 `packages/core/src/domain/new-task-search/launch-config.ts`，纯函数 `resolveLaunchConfig(input): LaunchConfig`。输入 = pending 三兄弟（显式选择）+ 生效 preset 解析 + lastUsedModel KV + 记忆表 + providers 能力表 + 全局默认；输出 = { model, thinkingLevel, presetId, cwd } + **每字段 provenance 标签**（`explicit / preset / lastUsed / memory / default`）。三个消费方全部改读它的输出：① chip 显示（`model-thinking.ts` landing 分支）；② `submitFirstMessage` → `session.create` 透传解析终值；③ PresetSelectChip 回显（替代 B6 本地 echo ref）。provenance 同时供 UI 角标（如「默认」样式）与对账日志。store 数据经 deps 注入（遵守 core 零 store 依赖约束，同 ModelThinkingDeps 先例）；KV/记忆表模块为 core 域内单例直接 import（同 model-thinking 先例）。**explicit 输入的 authored 守卫（结构性保证）**：landing auto 值机制（follow watch、landing armed 设立及其消费写 localThinkingLevel）与 resolve 的 memory tier 是两个 auto 值源，并存必然发散（auto 值被误标 explicit 时 D2 的 preset > memory 序直接反转），U2 同批删除（已建 session 的 armed 族不动）——删除后 **`localThinkingLevel` 的唯一写点 = `onThinkingSelect`**，resolve 直读 `localThinkingLevel` 即等价于 authored 值（单一写点结构保证，G1 单源不新增快照机制；唯一理论例外 = 分支 3 安全网，见 D10-E10）。**submit 侧加载窗口语义**：`submitFirstMessage` 在 create 前先 `await ensureLaunchDataReady()`（presets 列表 / defaultPresetId / providers / lastUsedModel KV / 记忆表五者的加载完成 Promise；已加载即同步返回）——加载完成前 resolve 输出是占位值，直接发送会把占位值永久固化进新 session（设了「只读模式」默认预设的用户在冷启动窗口内新建会拿到全工具）。加载是本地 WS + localStorage，常态毫秒级（⛔ P5 实测量级）；**尾部语义**：相关 RPC 均有 65s backstop 强制超时（transport pending/request 层）+ WS 断开 fast-fail rejectAll + KV=localStorage 同步读——不会永久卡死；await 期常态无感，超阈值（如 1s）发送按钮显 loading 态（实现层细节）；五者各自加载失败按 E1/E4 既有语义收敛后继续（回落默认，不阻塞发送）
+- **采用**：新增 core 域模块 `packages/core/src/domain/new-task-search/launch-config.ts`，纯函数 `resolveLaunchConfig(input): LaunchConfig`。输入 = pending 三兄弟（显式选择）+ 生效 preset 解析 + lastUsedModel KV + 记忆表 + providers 能力表 + 全局默认；输出 = { model, thinkingLevel, presetId, cwd } + **每字段 provenance 标签**（`explicit / preset / lastUsed / memory / default`）。三个消费方全部改读它的输出：① chip 显示（`model-thinking.ts` landing 分支）；② `submitFirstMessage` → `session.create` 透传解析终值；③ PresetSelectChip 回显（替代 B6 本地 echo ref）。provenance 同时供 UI 角标（如「默认」样式）与对账日志。store 数据经 deps 注入（遵守 core 零 store 依赖约束，同 ModelThinkingDeps 先例）；KV/记忆表模块为 core 域内单例直接 import（同 model-thinking 先例）。**explicit 输入的 authored 守卫（结构性保证）**：landing auto 值机制（follow watch、landing armed 设立及其消费写 localThinkingLevel）与 resolve 的 memory tier 是两个 auto 值源，并存必然发散（auto 值被误标 explicit 时 D2 的 preset > memory 序直接反转），U2 同批删除（已建 session 的 armed 族不动）——删除后 **`localThinkingLevel` 的唯一写点 = `onThinkingSelect`**，resolve 直读 `localThinkingLevel` 即等价于 authored 值（单一写点结构保证，G1 单源不新增快照机制；唯一理论例外 = 分支 3 安全网，见 D10-E10）。**submit 侧加载窗口语义**：`submitFirstMessage` 在 create 前先 `await ensureLaunchDataReady()`（presets 列表 / defaultPresetId / providers / lastUsedModel KV / 记忆表五者的加载完成 Promise；已加载即同步返回）——加载完成前 resolve 输出是占位值，直接发送会把占位值永久固化进新 session（设了「只读模式」默认预设的用户在冷启动窗口内新建会拿到全工具）。加载是本地 WS + localStorage，常态毫秒级（✅ P5 已实跑：单测 + Gate B V1 场景实测毫秒级）；**尾部语义**：相关 RPC 均有 65s backstop 强制超时（transport pending/request 层）+ WS 断开 fast-fail rejectAll + KV=localStorage 同步读——不会永久卡死；await 期常态无感，超阈值（如 1s）发送按钮显 loading 态（实现层细节）；五者各自加载失败按 E1/E4 既有语义收敛后继续（回落默认，不阻塞发送）
 - **被否**：解析放 renderer composable 层——core 是 composer/session 域所在层，flow.ts（submit）也在 core，放 renderer 会把 core flow 反向依赖 renderer；解析放 runtime——见 §3.2 方案 C
 - **证据**：双链坐标 §2.2；core deps 注入先例 `model-thinking.ts` ModelThinkingDeps；KV 模块 `last-used-model.ts` 已是 core 域单例
 - **效果**：G1 成立（显示 ≡ 生效 by construction）；①②③ 结构性消除
@@ -211,7 +213,7 @@ landing 页 chip 区（`packages/renderer/src/components/new-task/Landing.vue` �
 - **效果**：③（preset.thinking 遮蔽）消除；②的模型子情形消除；防污染 by construction（门禁零新增，反而净删一套守卫）；V8 恢复路径（armed 消费）不受影响。**已接受代价**（语义收窄，四要素）：记忆从「用户实际生效的档」收窄为「用户显式选过的档」——①被动加载老 session / pi 旁路调档不再入表（本产品 pi 是 runtime 子进程，CLI 旁路近似不可达；旧通道实证污染大于学习——被删的两套守卫存在理由就是拦它）；②armed 恢复的值冻结在最后一次显式选择，不再被后续生效值刷新（陈旧档死角：用户长期用钳制/归一后的档但未手动选过，记忆停留在旧显式值）——量级：仅影响「选过档后再未显式调整」的用户，且恢复值仍是其本人选过的合法档；恢复路径：手动再选一次即更新记忆；重审触发：收到「记忆档陈旧/不随使用更新」反馈即重审；显式判定：可接受——「显式选择语义」比「被动学习」更忠实于用户意图，且同时关闭全部污染通道。**staging 试选留痕声明**：staging 试选后取消（未 commit）/ landing 选后未发送，记忆已在选择时刻留痕（记录不问生效）——这是对旧代码注释「暂存取消时不该入表」排除语义的**刻意反转**：与「显式选过的档」语义一致（用户确实选过），双向可用性校验兜底，良性自愈，声明于此防验收误报
 
 **D3：默认预设生效化（修复②，选定）**
-- **采用**：landing 的生效 presetId = 解析输出（explicit pendingPreset > 全局默认预设），创建时透传。**出厂等价判定**：新增工具函数 `isFactoryFullPreset()` 逐字段比对「merge 后的 builtin:full」与出厂 DEFAULT 定义——比对键 = PiLaunchPreset 的 **10 个 launch 生效字段全集**（toolMode / allowedTools / deniedTools / extensionMode / allowedExtensions / deniedExtensions / modelOverride / thinkingLevel / noSkills / noContextFiles；`packages/shared/src/pi-preset.ts:51-95` 类型实读。skillPaths **不是** preset 字段——它是 resolution 派生输出，不在比对集）。**穷尽守卫**：比对键列表用 TS 映射类型对 PiLaunchPreset 生效键编译期强制（新增生效字段时类型红）+ 守卫测试（枚举比对键 vs 类型键全集）——防未来 schema 加字段被静默误判出厂——**出厂 builtin:full 时 resolve 输出 presetId=undefined 不透传**（行为与写入面全等现状：不传 presetId 的 session 不写 launchPresetId meta 与 .preset.json sidecar）；**builtin:full 被用户字段级覆写过**（savePreset 只保护 id/builtin/order/name 四字段，modelOverride/thinkingLevel/toolMode/扩展列表等均可改，`preset-service.ts:311-338`）→ 视为非出厂预设正常透传（生效与 chip 显示一致）。设过非 builtin 默认预设的用户，chip 显示即所得；透传后每个新 session 写 launchPresetId meta + .preset.json sidecar——该写入面今日显式选预设时已存在（`session-lifecycle.ts:554/593-594`），只是频率变高；.preset.json 已在 purgeSessionSidecars 清理清单（`session-lifecycle.ts:703` 实读），生命周期随 session 删除。B6 的「回显≠透传」刻意语义随之废除（它保护的是「不把回显伪装成用户选择」，本设计用 provenance 标签区分来源，比「显示一个永远不生效的值」更诚实）。FR-15 perCwd 默认特性全链（三通道 RPC + handler + 协议类型，perCwd > global > builtin:full 三级）不接入解析链（零消费 = 该特性事实上死亡；接入会给 resolve 热路径加异步 RPC），随 C3 批完整删除（范围见 §5 U9）并在 constraints 登记
+- **采用**：landing 的生效 presetId = 解析输出（explicit pendingPreset > 全局默认预设），创建时透传。**出厂等价判定**：新增工具函数 `isFactoryFullPreset()` 逐字段比对「merge 后的 builtin:full」与出厂 DEFAULT 定义——比对键 = PiLaunchPreset 的 **10 个 launch 生效字段全集**（toolMode / allowedTools / deniedTools / extensionMode / allowedExtensions / deniedExtensions / modelOverride / thinkingLevel / noSkills / noContextFiles；`packages/shared/src/pi-preset.ts:51-95` 类型实读。skillPaths **不是** preset 字段——它是 resolution 派生输出，不在比对集）。**穷尽守卫**：比对键列表用 TS 映射类型对 PiLaunchPreset 生效键编译期强制（新增生效字段时类型红）+ 守卫测试（枚举比对键 vs 类型键全集）——防未来 schema 加字段被静默误判出厂——**出厂 builtin:full 时 resolve 输出 presetId=undefined 不透传**（行为与写入面全等现状：不传 presetId 的 session 不写 launchPresetId meta 与 .preset.json sidecar）；**builtin:full 被用户字段级覆写过**（savePreset 只保护 id/builtin/order/name 四字段，modelOverride/thinkingLevel/toolMode/扩展列表等均可改，`preset-service.ts:311-338`）→ 视为非出厂预设正常透传（生效与 chip 显示一致）。设过非 builtin 默认预设的用户，chip 显示即所得；透传后每个新 session 写 launchPresetId meta + .preset.json sidecar——该写入面今日显式选预设时已存在（`session-lifecycle.ts:554/593-594`），只是频率变高；**V9-④ 根修注记（2026-09-09，3ba8d96ba）**：Gate B 实证 landing create 路径因 pi 延迟 flush × jsonl-exists 守卫结构性永不落盘（上句「已存在」在 create 路径被证伪），根修为 create 路径 sidecar 落盘经 skipJsonlExistsGuard 放行 jsonl-exists 守卫（pi 0.84.4 SessionManager 构造即生成确定性路径，.jsonl 未 flush ≠ session 无效；fork/restore 守卫不变，model 面留 turn-end tryPersistModelBinding 补偿）；.preset.json 已在 purgeSessionSidecars 清理清单（`session-lifecycle.ts:703` 实读），生命周期随 session 删除。B6 的「回显≠透传」刻意语义随之废除（它保护的是「不把回显伪装成用户选择」，本设计用 provenance 标签区分来源，比「显示一个永远不生效的值」更诚实）。FR-15 perCwd 默认特性全链（三通道 RPC + handler + 协议类型，perCwd > global > builtin:full 三级）不接入解析链（零消费 = 该特性事实上死亡；接入会给 resolve 热路径加异步 RPC），随 C3 批完整删除（范围见 §5 U9）并在 constraints 登记
 - **被否**：chip 停止回显默认预设（空态「选择预设」）——「设为默认」功能（`onToggleDefault` 写 pi-presets.json）的产品意图就是「新任务默认用它」，空态等于功能烂尾；且 landing 四 chip 一贯「所见即所得」风格（目录 chip 预填最近 cwd 同构）。~~恒透传（含出厂 builtin:full）~~（v1 方案，被主审击穿：出厂等价只在未覆写时成立，恒透传会把「写入面扩大 + 覆写人群行为变化」藏在等价声称下）
 - **证据**：`preset-service.ts:289-297`（默认预设存在性兜底 builtin:full）；出厂 builtin:full 内容实读（`packages/shared/src/pi-preset.ts:107-113`，全工具无 override）；字段级覆写面实读（`preset-service.ts:229-253` mergePresets 字段级合并）；死链 grep 证据 §2.3-②
 - **效果**：②消除；「设为默认」功能首次真正生效。**已接受代价 1**：设过非 builtin 默认预设的用户，新 session 行为变化（工具集/模型按预设生效）——量级：仅影响设过默认预设且其 preset 与裸创建不同的用户；恢复路径：landing preset chip 一键改选/改默认；重审触发：若收到「默认预设不该生效」反馈即重审 D3；显式判定：可接受——这是「设为默认」的原意图，且 chip 始终显示生效预设名（可发现、可一键改）。**已接受代价 2**：手改过 builtin:full 字段但从未设默认预设的用户，覆写字段从「仅显式选 full 时生效」变为「每次 landing 新建生效」——量级：需手工编辑 pi-presets.json 覆写 builtin 的人群，极小众，且其改 full 的意图大概率就是希望它生效；恢复路径：改回 JSON 或在 Settings 改默认预设；重审触发：收到相关反馈即重审；显式判定：可接受（chip 显示与生效一致方向正确）
@@ -232,9 +234,9 @@ landing 页 chip 区（`packages/renderer/src/components/new-task/Landing.vue` �
 - **采用**：runtime 侧两入口各加一档「源 session 当前生效值」，**两条链分别声明**（二者现状不同，不合并）：
   - **fork**：`staging override > 源 session 当前生效值 > 源 preset > 全局默认`——fork 现状本有「源 preset」档（`resolveForkInheritedBindings`，`session-lifecycle.ts:1082`），保留；新增档插在 override 与 preset 之间
   - **handoff**：`staging override > 源 session 当前生效值 > 全局默认`——handoff 现状走 `handoff-service.ts:273-278` 的 `sessionService.create`（不传 presetId，无 preset 档），**不新增 preset 继承档**（否则 handoff 将首次继承源 preset 的 tools/noSkills 全套限制——夹带行为变更，被影响面审查出后删除该档）
-  源真值从 runtime 内存实例 meta 读（活跃 session）或 sidecar `.model.json` 读（pi 已退出/未恢复 session）——复用 restore-seeding 的 `readEffectiveModelFromState` 既有读取链。**「源当前生效值」字段范围 = modelId + thinkingLevel 两字段**（sidecar BINDING_FIELDS 家族 `.model.json` 同源两字段，`session-binding-fields.ts:87`），fork/handoff 承接 session 的模型与档位一并继承；其余绑定字段（projectId/label 等）各有既有继承通道，不在本决策。renderer 快捷路径（`useForkActions.forkSession` / `useHandoffActions` ⌘H）**不改调用形状**（仍不传 override），语义自动变对；staging 路径（fork-ask）行为不变（override 优先）
+  源真值从 runtime 内存实例 meta 读（活跃 session）或 sidecar `.model.json` 读（pi 已退出/未恢复 session）——复用 restore-seeding 的 `readEffectiveModelFromState` 既有读取链（实施经偏差 #13 裁决改走 findScannedSession 薄适配——`readEffectiveModelFromState` 输入形态为 get_state 回执解析器，不匹配内存 meta/sidecar 双源，见 impl-plan 偏差 #13）。**「源当前生效值」字段范围 = modelId + thinkingLevel 两字段**（sidecar BINDING_FIELDS 家族 `.model.json` 同源两字段，`session-binding-fields.ts:87`），fork/handoff 承接 session 的模型与档位一并继承；其余绑定字段（projectId/label 等）各有既有继承通道，不在本决策。renderer 快捷路径（`useForkActions.forkSession` / `useHandoffActions` ⌘H）**不改调用形状**（仍不传 override），语义自动变对；staging 路径（fork-ask）行为不变（override 优先）
 - **被否**：renderer 快捷路径从 session store 读真值传 override——store 是副本，restore 窗口/防抖窗口内可能读占位值；runtime 侧读源真值更权威（与 D5 分层一致：真值读取归 runtime）。全局统一「不继承」（现行为）——违背「从这里继续」的用户意图，且与 staging 路径矛盾。~~fork/handoff 合并为一条链（含源 preset 档）~~（v1 方案，被影响面审击穿：handoff 现状无 preset 继承，合并链给它偷渡了从未有过的 tools/noSkills 限制）
-- **证据**：fork 现状实读（`session-lifecycle.ts:1082` 仅继承 preset/project）；handoff 现状实读（`handoff-service.ts:273-278` create 不传 presetId）；sidecar 读取链 `restore-seeding.ts:212-244` 已存在；⛔ 探针 P4（源真值可读性 + 陈旧窗口）
+- **证据**：fork 现状实读（`session-lifecycle.ts:1082` 仅继承 preset/project）；handoff 现状实读（`handoff-service.ts:273-278` create 不传 presetId）；sidecar 读取链 `restore-seeding.ts:212-244` 已存在（实施经偏差 #13 改走 findScannedSession 薄适配）；✅ 探针 P4 已实跑（源真值可读性 + 陈旧窗口，三类源 + E9 回落全过，8f8d70b36）
 - **效果**：④消除；两入口在「带着当前模型继续」语义上统一。**已接受代价**：sidecar 陈旧窗口——源 session 切模后未 restore 即死、随后被 fork 时读到旧 sidecar 值（restore-seeding 注释自证漂移窗口存在，靠 restore 读回自愈；fork 不触发源 restore）——量级：限「切模 → 未再激活 → 直接 fork」序列；恢复路径：fork 后 chip 改选；重审触发：收到 fork 模型不对反馈即重审；显式判定：可接受——严格优于现状（现状恒落 preset/默认，新链在 sidecar 新鲜的大多数情况继承当前值）
 
 **D7：「显示 ≡ 生效」等价性守卫两层（C2，选定）**
@@ -248,7 +250,7 @@ landing 页 chip 区（`packages/renderer/src/components/new-task/Landing.vue` �
 **D8：改状态回执裁决标准 + 协议层机器强制（C4，选定）**
 - **采用**：
   - **裁决标准（落 ADR）**：「后端可能变换请求值的 mutation（pi 钳制/pattern 换模）→ 禁乐观写，回执生效值唯一写 store 路径；后端原样存储的 mutation（preset CRUD、项目重命名等 runtime 自有数据）→ 允许乐观写 + reply 权威覆盖 + 失败回滚」。现有两个域恰好已分居两侧（`useModel` 回执值 / `usePiPresets` 乐观+回滚），裁决标准把它们从「相反结论」变成「同一条规则的两个合法实例」
-  - **机器强制**：① shared 协议类型层——mutation 类 RPC 的 reply 类型强制含生效值字段（`XxxMutationReply = { effective: … }` 命名约定 + 类型必需字段，编译期强制）；② runtime 契约测试——枚举全部 mutation RPC（model.switch / session.setThinkingLevel / preset.* / session.rename …），逐一断言 reply 携带生效值字段（新增 mutation 不入清单即测试红）
+  - **机器强制**：① shared 协议类型层——mutation 类 RPC 的 reply 类型强制含生效值字段（`XxxMutationReply = { effective: … }` 命名约定 + 类型必需字段，编译期强制；落地形态见 ADR-0065「二、机器强制」：reply 复用既有形状、生效值字段必需不 optional，非字面 effective 命名）；② runtime 契约测试——枚举全部 mutation RPC（model.switch / session.setThinkingLevel / preset.* / session.rename …），逐一断言 reply 携带生效值字段（新增 mutation 不入清单即测试红）
 - **被否**：全禁乐观写——runtime 自有数据（preset CRUD）无 pi 变换，乐观写有真实体验收益且 reply 覆盖幂等已有先例；纯人肉纪律（C-pi-13 现状）——§2.4 元教训已证伪
 - **证据**：C-pi-13 登记（constraints.json）；相反裁决并存实证（`usePiPresets.ts:76-133` vs `useModel.ts:10-61`）
 - **效果**：G2 成立；新 mutation 诞生即被套上契约，①类复发的上游被机器拦截
@@ -270,7 +272,7 @@ landing 页 chip 区（`packages/renderer/src/components/new-task/Landing.vue` �
 | # | 失败场景 | 行为 | 恢复指引 |
 |---|---|---|---|
 | E1 | lastUsedModel/记忆 KV 读失败或损坏 | resolve 回落下一优先级（沿用 E4 语义，不抛不阻塞） | 无需动作；KV 加载完成响应式重算 |
-| E2 | landing 极早期 providers/presets/KV 未加载 | 显示侧：resolve 输出全局默认占位，数据到达后响应式重算 chip；**submit 侧：`submitFirstMessage` create 前 await `ensureLaunchDataReady()`**（D1），窗口内发送等待加载完成后再解析透传——占位值不会固化进新 session。量级：本地 WS + localStorage，常态毫秒级（⛔ P5 实测）；**尾部：RPC 65s backstop 强制超时 + WS 断开 fast-fail——不永久卡死** | 无需动作（等待无感）；加载失败按 E1/E4 收敛后回落默认继续发送 |
+| E2 | landing 极早期 providers/presets/KV 未加载 | 显示侧：resolve 输出全局默认占位，数据到达后响应式重算 chip；**submit 侧：`submitFirstMessage` create 前 await `ensureLaunchDataReady()`**（D1），窗口内发送等待加载完成后再解析透传——占位值不会固化进新 session。量级：本地 WS + localStorage，常态毫秒级（✅ P5 已实测毫秒级）；**尾部：RPC 65s backstop 强制超时 + WS 断开 fast-fail——不永久卡死** | 无需动作（等待无感）；加载失败按 E1/E4 收敛后回落默认继续发送 |
 | E3 | lastUsedModel 失效（provider 删除/禁用） | 链内跳过 + chip 显示回落值（provenance=default）；KV 保留原值不覆写（D4） | 想换模型 → 点 chip 重选（popover 只列有效模型）；provider 恢复后原选择自动回来 |
 | E4 | 默认预设指向已删 id | preset service 兜底 builtin:full（既有 `preset-service.ts:294-297`） | 无需动作 |
 | E5 | create 失败（模型未配置） | 沿用差异化 error code MODEL_NOT_CONFIGURED → 引导 Settings | Settings 配置模型后重发 |
@@ -285,11 +287,11 @@ landing 页 chip 区（`packages/renderer/src/components/new-task/Landing.vue` �
 | ID | 验证的行为 | 探针方式 | 状态 | 失败时降级路径 |
 |---|---|---|---|---|
 | P1 | 双链坐标与发散条件（§2.2/§2.3 ①②③④） | 实读源码核实（本设计过程已逐点 read） | ✅ 已测 | — |
-| P2 | **出厂** builtin:full 与「不传 presetId」路径在**完整 launch surface** 上等价（D3 前提）：presetClientOptions 全字段 + extensionPaths（含顺序）+ skillPaths + 持久化字段 | Batch 1 实施前：runtime 单测对 **merge 后** `getPreset('builtin:full')`（非 DEFAULT fixture——否则用户覆写场景空转通过）与无 preset 路径逐面对比 | ⛔ Batch 1 门 | 失败 → E8：阻断 D3 上线，排查展开差异 |
-| P2b | `isFactoryFullPreset()` 对用户覆写过的 builtin:full 判定为非出厂 | Batch 1：单测覆写 modelOverride/noSkills/**allowedExtensions（数组字段比对语义）**后断言判定翻转 + resolve 输出 presetId='builtin:full' 正常透传 | ⛔ Batch 1 门 | 失败 → 覆写人群被静默改变行为，阻断上线 |
-| P3 | 死模型 modelOverride 传给 pi createSession 的行为（报错 or 静默换模）；post-create 双重 apply 删除后 pi 侧无同值 set_model 空调用残留 | Batch 1：本地 pi CLI rpc 模式发死模型 create 观察 reply/错误；grep create 后日志无紧跟的同值 set_model/set_thinking_level | ⛔ Batch 1 门 | 静默换模 → runtime create 增加 modelOverride 有效性校验，死模型返回错误码走 E5 路径 |
-| P4 | fork 时源 session 当前生效值可读（内存在实例 / sidecar 两路径）；**含陈旧窗口场景**：切模后未 restore 的 dead 源 fork 行为符合 D6 代价声明 | Batch 2：对活跃源、pi 已退出源、「切模→死→直接 fork」三类源各跑一次 fork，断言继承值 | ⛔ Batch 2 门 | 失败 → 降级为 renderer 从 store 读值传 override（接受副本窗口，L2 探针对账） |
-| P5 | ① resolve 输出对 KV/记忆表晚到的响应式（landing 挂载毫秒级窗口内 chip 自动脱离默认值）；② `ensureLaunchDataReady` 量级实测与窗口内 submit 语义（await 后 create 入参 = 加载后 resolve 输出） | Batch 1：core 单测模拟 KV 延迟 resolve，断言 chip computed 更新 + await 后入参等价；dev 环境实测冷启动加载耗时 | ⛔ Batch 1 门 | 失败 → 保留 onLoaded 回调补算（现有机制平移）；加载慢于预期 → 发送按钮在等待期显 loading 态 |
+| P2 | **出厂** builtin:full 与「不传 presetId」路径在**完整 launch surface** 上等价（D3 前提）：presetClientOptions 全字段 + extensionPaths（含顺序）+ skillPaths + 持久化字段 | Batch 1 实施前：runtime 单测对 **merge 后** `getPreset('builtin:full')`（非 DEFAULT fixture——否则用户覆写场景空转通过）与无 preset 路径逐面对比 | ✅ 已实跑（63d861ca1）：merge 后逐面对比等价成立，D3 透传前提通过，E8 未触发 | 失败 → E8：阻断 D3 上线，排查展开差异 |
+| P2b | `isFactoryFullPreset()` 对用户覆写过的 builtin:full 判定为非出厂 | Batch 1：单测覆写 modelOverride/noSkills/**allowedExtensions（数组字段比对语义）**后断言判定翻转 + resolve 输出 presetId='builtin:full' 正常透传 | ✅ 已实跑（fce03ec13）：覆写字段判定翻转 + resolve 透传正常 | 失败 → 覆写人群被静默改变行为，阻断上线 |
+| P3 | 死模型 modelOverride 传给 pi createSession 的行为（报错 or 静默换模）；post-create 双重 apply 删除后 pi 侧无同值 set_model 空调用残留 | Batch 1：本地 pi CLI rpc 模式发死模型 create 观察 reply/错误；grep create 后日志无紧跟的同值 set_model/set_thinking_level | ✅ 已实跑（fce03ec13）：pi 非静默换模，未知 model 走 turn 级报错可见，无需增补校验（impl-plan 偏差 #11） | 静默换模 → runtime create 增加 modelOverride 有效性校验，死模型返回错误码走 E5 路径 |
+| P4 | fork 时源 session 当前生效值可读（内存在实例 / sidecar 两路径）；**含陈旧窗口场景**：切模后未 restore 的 dead 源 fork 行为符合 D6 代价声明 | Batch 2：对活跃源、pi 已退出源、「切模→死→直接 fork」三类源各跑一次 fork，断言继承值 | ✅ 已实跑（8f8d70b36）：三类源继承 + E9 回落全过，陈旧窗口按 D6 代价声明 | 失败 → 降级为 renderer 从 store 读值传 override（接受副本窗口，L2 探针对账） |
+| P5 | ① resolve 输出对 KV/记忆表晚到的响应式（landing 挂载毫秒级窗口内 chip 自动脱离默认值）；② `ensureLaunchDataReady` 量级实测与窗口内 submit 语义（await 后 create 入参 = 加载后 resolve 输出） | Batch 1：core 单测模拟 KV 延迟 resolve，断言 chip computed 更新 + await 后入参等价；dev 环境实测冷启动加载耗时 | ✅ 已实跑（fce03ec13 单测 + Gate B V1 场景实测）：毫秒级，loading 态兜底未触发 | 失败 → 保留 onLoaded 回调补算（现有机制平移）；加载慢于预期 → 发送按钮在等待期显 loading 态 |
 
 ---
 
@@ -324,7 +326,7 @@ landing 页 chip 区（`packages/renderer/src/components/new-task/Landing.vue` �
 | 单元 | 内容 | justification | 验收 |
 |---|---|---|---|
 | U0 | constraints.json 登记新约束（landing 配置单一解析点 / mutation 回执契约 / 对账三分处置框架）+ render-constraints 重生成 | 项目纪律「先登记再写代码」 | — |
-| U1 | core：`launch-config.ts` resolveLaunchConfig 纯函数 + D2 优先级 + D4 校验 + provenance 标签 + isFactoryFullPreset（含 ⛔ P2/P2b/P3/P5 探针实跑） | 单一解析模块是全部消费方的前置 | V1/V2 部分 |
+| U1 | core：`launch-config.ts` resolveLaunchConfig 纯函数 + D2 优先级 + D4 校验 + provenance 标签 + isFactoryFullPreset（含 P2/P2b/P3/P5 探针实跑，✅ 均已实跑通过——状态见 §3.4） | 单一解析模块是全部消费方的前置 | V1/V2 部分 |
 | U2 | core/renderer 改线三消费方 + 双重 apply 删除 + landing auto 值机制/记录 watch 删除：model-thinking landing 分支（chip 读 resolve；删 follow watch + localAuthored + landing 分支 armed 设立；「生效即记录」watch 及纪元/第三形态守卫删除，记录点收窄为 onThinkingSelect）/ submitFirstMessage（ensureLaunchDataReady await + 透传 resolve 输出）/ PresetSelectChip 回显（废 B6 echo）；删 `createSessionFlow` step 7 applyModel 与壳层 C-W4-3 setThinkingLevel（D5），连带更新 create-session-flow.test.ts、model-thinking.test.ts（跟随 describe 与记录 watch describe 重写）、壳层 composer 测试 | 同源消费即等价；两个 auto 值源并存必发散（auto 误标 explicit 会反转 D2 序），记录 watch 与跟随机制必须与 resolve 改线同批删 | V1/V2/V3/V4/V5/V11 |
 | U3 | runtime：create 契约快照化（D5）+ L2 对账探针 warn 日志 | 与 U2 同批防协议半态 | V7-③ |
 | U4 | L1 等价矩阵测试 + resolve 纯函数单测 | 结构锁随结构同批落地 | V7-①② |
@@ -334,7 +336,7 @@ landing 页 chip 区（`packages/renderer/src/components/new-task/Landing.vue` �
 | 单元 | 内容 | justification | 验收 |
 |---|---|---|---|
 | U5 | D8：ADR 落裁决标准 + shared 协议 reply 类型强制 + runtime mutation 契约测试清单 | 契约先行，改线有据 | V7 扩展 |
-| U6 | D6：runtime fork/handoff 源真值继承档（⛔ P4 探针）+ 两入口语义统一 | 依赖 U1 的 resolve 分层概念但代码独立；放 P2 因源真值读取复用 restore-seeding 链（与 P1 无耦合） | V6 |
+| U6 | D6：runtime fork/handoff 源真值继承档（P4 探针 ✅ 已实跑，状态见 §3.4）+ 两入口语义统一 | 依赖 U1 的 resolve 分层概念但代码独立；放 P2 因源真值读取复用 restore-seeding 链（与 P1 无耦合） | V6 |
 
 ### Batch 3（P3）：对账三分处置执行 —— G3
 
@@ -353,9 +355,9 @@ landing 页 chip 区（`packages/renderer/src/components/new-task/Landing.vue` �
 
 ### 待验证检查点（诚实标注）
 
-1. ⛔ P2/P2b：出厂 builtin:full 与无 preset 路径在完整 launch surface 上的等价，及覆写检测——若不等价，D3 阻断上线（E8）
-2. ⛔ P3：pi 对死模型 modelOverride 的真实行为 + 双重 apply 删除后无同值 RPC 残留——决定 runtime 是否需要补校验层
-3. ⛔ P4：pi 已退出的源 session 其 sidecar 在 fork 时刻的可达性与陈旧窗口——决定 D6 是否需 renderer 降级路径
+1. ✅ P2/P2b（已验证）：出厂 builtin:full 与无 preset 路径在完整 launch surface 上的等价，及覆写检测——已实跑等价成立，D3 透传前提通过，E8 未触发（P2：63d861ca1；P2b 覆写翻转：fce03ec13）
+2. ✅ P3（已验证）：pi 对死模型 modelOverride 的真实行为 + 双重 apply 删除后无同值 RPC 残留——实测 pi 非静默换模（turn 级报错可见），无需补校验层（fce03ec13）
+3. ✅ P4（已验证）：pi 已退出的源 session 其 sidecar 在 fork 时刻的可达性与陈旧窗口——三类源 + E9 回落全过，无需 renderer 降级路径，陈旧窗口按 D6 代价声明（8f8d70b36）
 4. D2 中 thinking 的 `preset > memory` 序是产品裁决（捆绑意图 vs 个人习惯）——若真实用户反馈相反，调整只需改 resolve 一处序（这正是单一解析层的收益）
 5. C3 收编的迁移顺序以 impl-plan 的全量处置表为准；armed 族（保留类，已建 session 模型切换路径）在 Batch 3 不做任何改动
 
@@ -367,3 +369,4 @@ landing 页 chip 区（`packages/renderer/src/components/new-task/Landing.vue` �
 - v2（2026-09-08）：对抗式审查 R1 修复（主审 2 must-fix + 8 suggestions，影响面审 5 must-fix + 3 suggestions，全部当轮修完）。被否谱系：D3 恒透传（含出厂 builtin:full）被「字段级覆写 + 写入面扩大」击穿；D4 KV 自更新被「遗忘用户选择 + provenance 错标 + 纯函数冲突」击穿；D6 fork/handoff 合并链被「handoff 偷渡 preset 档」击穿；D2 无门禁被「preset 档写穿记忆表」击穿。新增机制：creationProvenance 门禁（D2，v3 废除）、ensureLaunchDataReady（D1）、isFactoryFullPreset 出厂判定（D3）。
 - v3（2026-09-08）：对抗式审查 R2 修复（主审 3 must-fix + 2 suggestions，影响面审 1 must-fix + 4 suggestions，全部当轮修完）。方案性变更：creationProvenance 内存门禁被双审独立击穿（首个 flush 语义被守卫悬留 + 重访/重启绕过）→ 废除，改为**记录路径 authored-only**（减法：记录 watch 及纪元/第三形态守卫整套删除，非 authored 值结构性不可达，防污染 by construction）；landing auto 值机制（follow/landing armed）前移至 U2 删除（与 resolve memory tier 双源发散，auto 误标 explicit 会反转 D2 序）；isFactoryFullPreset 字段全集修正（10 个 launch 生效字段，skillPaths 非 preset 字段、allowedExtensions/deniedExtensions 补上）+ 类型层穷尽守卫；D6 字段范围界定 modelId+thinkingLevel；ensureLaunchDataReady 尾部语义（65s backstop）；.preset.json 清理清单实读转正。
 - v4（2026-09-08）：对抗式审查 R3/R4 修复（两轮均双份 0 must-fix；R3 5 条 + R4 4 条 suggestions 全部当轮修完）。声明级补齐：staging 记录点三分支统一（试选未 commit 也留痕的刻意反转已声明）；D2 语义收窄四要素（含 armed 陈旧档死角）；E10 分支 3 残留论据修正（安全网值语义，与 D9 断言交叉引用）；D1 authored 守卫明确为单一写点结构保证；P2b 补数组字段用例；文件地图登记 u3 文档回写连带（C-proc-10）。
+- v5（2026-09-09）：design-code-sync 校准轮：探针 P2/P2b/P3/P4/P5 状态回写为已实跑通过（结论与 commit 锚点见 §3.4/§5）；D3 写入面补 V9-④ 根修注记（3ba8d96ba：create 路径 sidecar 落盘经 skipJsonlExistsGuard 放行 jsonl-exists 守卫）；D6 读取链补偏差 #13 findScannedSession 薄适配注记；D8 补 ADR-0065 落地形态引用；头部加行号锚点声明。
