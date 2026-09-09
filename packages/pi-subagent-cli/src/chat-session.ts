@@ -110,6 +110,13 @@ interface ChatSession {
   firstRoundDone: boolean;
   /** 轮次进行中（prompt 已投递、agent_end 排空未到）。 */
   roundActive: boolean;
+  /**
+   * 轮次 arm 序号（spawn 首轮 = 1，deliverMessage 每次投递递增）。与 settledSeq 比对
+   * 判定 agent_settled 到达前是否有新轮 arm（S6：settled→idle 间隙投递场景）。
+   */
+  armedSeq: number;
+  /** 最近一次 settled 相位发射时点的 armedSeq 快照（undefined = 尚未发射过 settled）。 */
+  settledSeq: number | undefined;
   usage: RoundUsageAcc;
   lastRoundUsage?: AgentUsage;
   /** 轮终等待体（cancel 收敛判据：settled/idle/failed 相位发射时逐一 resolve）。 */
@@ -259,6 +266,8 @@ export class ChatSessionRegistry {
       spawnRunId: opts.runId,
       firstRoundDone: false,
       roundActive: true,
+      armedSeq: 1,
+      settledSeq: undefined,
       usage: emptyUsage(),
       roundTerminalWaiters: new Set(),
       closeAfterRound: false,
@@ -325,6 +334,9 @@ export class ChatSessionRegistry {
       });
       clearEpipeFailure(recordId);
       session.roundActive = true;
+      // 新轮身份递增（S6）：与旧轮的 settledSeq 快照区分，agent_settled 据此识别
+      // 「settled→idle 间隙投递」，不清新轮的 roundActive
+      session.armedSeq += 1;
       return { ok: true, delivered: true };
     } catch (err) {
       if (err instanceof Error && err.message.includes("EPIPE")) {
@@ -431,6 +443,8 @@ export class ChatSessionRegistry {
       return;
     }
     session.roundActive = false;
+    // 记录 settled 所属轮次身份（S6）：handleAgentSettled 比对 armedSeq 判定间隙投递
+    session.settledSeq = session.armedSeq;
     const usage = toAgentUsage(session.usage);
     session.lastRoundUsage = usage;
     session.usage = emptyUsage();
@@ -440,7 +454,13 @@ export class ChatSessionRegistry {
   /** agent_settled（真空闲）：idle 相位（usage + anchor 回填）+ 优雅关闭收割。 */
   private handleAgentSettled(session: ChatSession): void {
     if (session.closed) return;
-    session.roundActive = false;
+    // 仅当 settled（agent_end）以来无新轮 arm 时清 roundActive（S6）：agent_settled 属于
+    // 发出 settled 帧的那一轮；settled→idle 间隙宿主投递的新轮（armedSeq 已前进）不能被
+    // 旧轮的空闲边界清位——否则该轮 agent_end 会被 handleRoundEnd 的 !roundActive 守卫
+    // 拦截，settled 相位永不发射（core watchdog 的 noteRoundSettled 消费面降级）。
+    if (session.armedSeq === session.settledSeq) {
+      session.roundActive = false;
+    }
     this.emitPhase(session, {
       phase: "idle",
       ...(session.lastRoundUsage !== undefined ? { usage: session.lastRoundUsage } : {}),
@@ -468,7 +488,13 @@ export class ChatSessionRegistry {
     session.closed = true;
     const hadRound = session.roundActive;
     session.roundActive = false;
-    this.sessions.delete(session.recordId);
+    // 仅当注册表条目仍是本会话对象时才删（S5）：superseded 场景下新会话可能已重建并
+    // 占用同 recordId 键——真实子进程的 exit 事件异步到达（晚于 startRound 的 stale
+    // 防御重建），旧会话迟到的消亡不得清掉新会话条目（否则 interact 控制面对活会话
+    // 失效：deliverMessage/cancel/close 全部 lookup 落空）。
+    if (this.sessions.get(session.recordId) === session) {
+      this.sessions.delete(session.recordId);
+    }
     // 无在途轮的进程回收（idle 态 cancel/close、dispose）非轮次事件——不发射
     if (!hadRound) return;
     if (session.killReason !== undefined) {
@@ -478,12 +504,27 @@ export class ChatSessionRegistry {
     this.emitPhase(session, { phase: "failed", error: roundCrashedError(session.recordId, exit) });
   }
 
-  /** 相位发射（关联键 = 首轮 runId / 续聊 recordId）+ 轮终等待体逐一 resolve。 */
+  /**
+   * 相位发射（关联键 = 首轮 runId / 续聊 recordId）+ 轮终等待体逐一 resolve。
+   * superseded 会话抑制宿主发射（S5，守卫放单一咽喉点而非仅 handleChildExited）：
+   * 同 recordId 冷续 run 已重建会话，旧会话残留终态帧（killChain 杀死在途轮的 failed、
+   * SIGTERM 优雅收口竞态下的 settled+idle——pi trap 语义先收口再退）以 recordId 键发射
+   * 会与新会话在途轮同键串扰，core 可能把旧轮终态误配到新轮（误终态化）。superseded
+   * 信号本身 = 新 run 的 start（宿主主动发起），core 无需旧会话帧。等待体仍逐一
+   * resolve：cancel 等待中 killReason 被后续冷续覆写为 superseded 的极端时序下收敛
+   * 不悬挂。
+   */
   private emitPhase(
     session: ChatSession,
     phase: { phase: "settled"; usage?: AgentUsage } | { phase: "idle"; usage?: AgentUsage; anchor?: ResumeAnchor } | { phase: "failed"; error: ProtocolError },
   ): void {
-    this.channels?.roundLifecycle({ ...roundKeyOf(session), ...phase } as HostRoundLifecycleParams);
+    if (session.killReason === "superseded") {
+      logger.debug(
+        `[chat-session] suppress ${phase.phase} phase for superseded session ${session.recordId} (record cold-resumed by a new run)`,
+      );
+    } else {
+      this.channels?.roundLifecycle({ ...roundKeyOf(session), ...phase } as HostRoundLifecycleParams);
+    }
     for (const w of session.roundTerminalWaiters) w();
     session.roundTerminalWaiters.clear();
   }

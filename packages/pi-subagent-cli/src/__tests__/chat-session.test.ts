@@ -7,7 +7,9 @@
 //   - cancel 收敛语义（D3 协议层）：受理 SIGTERM → 等轮终相位 → 超 CANCEL_SETTLE_GRACE_MS
 //     杀链升级（fake timers 驱动）；
 //   - close force/优雅分流、EPIPE 兜底耗尽 → failed 相位、子进程崩溃 → failed 相位、
-//     冷续 resume 参数传递。
+//     冷续 resume 参数传递；
+//   - 相位竞态边界：superseded 旧会话的相位抑制与注册表隔离（同 recordId 冷续串扰）、
+//     settled→idle 间隙投递下新轮 settled 相位不被 idle 边界吞掉。
 
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
@@ -490,5 +492,124 @@ describe("ChatSessionRegistry：close / 崩溃 / EPIPE / 冷续", () => {
     expect(h.captured[1].params.chatMode).toBe(true);
     await driveRoundToIdle(h.captured[1]);
     await second;
+  });
+});
+
+describe("ChatSessionRegistry：相位竞态边界（同 recordId 冷续串扰 / 间隙投递）", () => {
+  let h: ReturnType<typeof makeHarness>;
+  beforeEach(() => {
+    h = makeHarness();
+  });
+  afterEach(() => {
+    killAllActiveChildren();
+    resetAllEpipeFailures();
+    vi.useRealTimers();
+  });
+
+  it("superseded 旧会话在途轮被杀：不发射同 recordId 键的 failed 相位，新会话正常发相位", async () => {
+    const first = h.registry.startRound(
+      { recordId: "rec-s5", task: "hi", agentName: "a", model: "p/m", sessionDir: "/tmp/s", cwd: "/tmp" },
+      { runId: "run-s5a", onEvent: () => undefined },
+    );
+    await driveRoundToIdle(h.captured[0]);
+    await first;
+    h.lifecycles.length = 0;
+
+    // 旧会话在途续聊轮（相位面已切 recordId 键）
+    expect(h.registry.deliverMessage("rec-s5", "in-flight round", false)).toEqual({ ok: true, delivered: true });
+
+    // 同 recordId 冷续 run：旧会话置 superseded + 杀链（fake child 同步死于 SIGTERM）
+    const second = h.registry.startRound(
+      {
+        recordId: "rec-s5",
+        task: "cold resume",
+        agentName: "a",
+        model: "p/m",
+        sessionDir: "/tmp/s",
+        cwd: "/tmp",
+        resumeSessionFile: "/tmp/sess-1.jsonl",
+      },
+      { runId: "run-s5b", onEvent: () => undefined },
+    );
+    expect(h.children[0].kills).toEqual(["SIGTERM"]);
+    // 修复前：旧会话消亡时对 recordId 键 emit failed——与新会话在途轮同键串扰，
+    // core 冷续刚建立即收到该 record 的 failed 帧会误终态化新轮；修复后零帧
+    // （superseded 信号本身 = 新 run 的 start，core 无需旧会话帧）
+    expect(h.lifecycles).toHaveLength(0);
+
+    // 新会话首轮正常发射（runId 键 settled/idle）
+    await driveRoundToIdle(h.captured[1]);
+    await second;
+    expect(h.lifecycles.map((f) => f.phase)).toEqual(["settled", "idle"]);
+    expect(h.lifecycles[0]).toMatchObject({ runId: "run-s5b", phase: "settled" });
+    expect(h.lifecycles[1]).toMatchObject({ runId: "run-s5b", phase: "idle" });
+  });
+
+  it("superseded 旧会话迟到 exit（真实子进程 exit 事件异步到达）：不清掉新会话注册表条目", async () => {
+    const first = h.registry.startRound(
+      { recordId: "rec-s5l", task: "hi", agentName: "a", model: "p/m", sessionDir: "/tmp/s", cwd: "/tmp" },
+      { runId: "run-s5la", onEvent: () => undefined },
+    );
+    await driveRoundToIdle(h.captured[0]);
+    await first;
+    h.lifecycles.length = 0;
+
+    // 旧 child 忽略 SIGTERM → startRound 的 stale 防御发出信号后旧进程仍存活，
+    // 新会话先建立（对齐生产时序：exit 事件晚于新会话插入注册表）
+    h.children[0].ignoreSigterm = true;
+    const second = h.registry.startRound(
+      {
+        recordId: "rec-s5l",
+        task: "cold resume",
+        agentName: "a",
+        model: "p/m",
+        sessionDir: "/tmp/s",
+        cwd: "/tmp",
+        resumeSessionFile: "/tmp/sess-1.jsonl",
+      },
+      { runId: "run-s5lb", onEvent: () => undefined },
+    );
+    expect(h.registry.has("rec-s5l")).toBe(true);
+
+    // 旧进程此刻才退出：旧会话的迟到消亡不得清掉同 recordId 键的新会话条目
+    // （修复前 sessions.delete 按 recordId 盲删 → interact 控制面对活会话失效）
+    h.children[0].die(null, "SIGTERM");
+    expect(h.registry.has("rec-s5l")).toBe(true);
+    expect(h.registry.deliverMessage("rec-s5l", "next", false)).toEqual({ ok: true, delivered: true });
+    expect(h.lifecycles).toHaveLength(0); // 旧会话 idle 态消亡本就无相位；新会话轮在途未收口
+
+    await driveRoundToIdle(h.captured[1]);
+    await second;
+    expect(h.lifecycles.map((f) => f.phase)).toEqual(["settled", "idle"]);
+  });
+
+  it("settled→idle 间隙投递下一条消息：下一轮 settled 相位不被 idle 边界吞掉", async () => {
+    const runP = h.registry.startRound(
+      { recordId: "rec-s6", task: "hi", agentName: "a", model: "p/m", sessionDir: "/tmp/s", cwd: "/tmp" },
+      { runId: "run-s6", onEvent: () => undefined, stream: { onDelta: () => undefined } },
+    );
+    const cap = h.captured[0];
+    cap.callbacks.onHandleReady?.({ sessionRef: { sessionId: "sess-1", sessionFile: "/tmp/sess-1.jsonl" }, poolKey: "shared" });
+
+    // 首轮 agent_end → settled；宿主在 settled 帧与 idle 帧（agent_settled）之间投递下一条
+    cap.callbacks.onChatRoundEnd?.();
+    expect(h.lifecycles.at(-1)).toMatchObject({ runId: "run-s6", phase: "settled" });
+    expect(h.registry.deliverMessage("rec-s6", "next round", false)).toEqual({ ok: true, delivered: true });
+    cap.callbacks.onChatAgentSettled?.(); // 旧轮空闲边界：不得清掉新轮的 roundActive
+    cap.resolve(fakeResult());
+    await runP;
+    h.lifecycles.length = 0;
+
+    // 新一轮 agent_end：settled 必须发射（修复前 roundActive 被旧轮 agent_settled 覆写，
+    // handleRoundEnd 的 !roundActive 守卫拦截 → 该轮 settled 永不发射）
+    cap.callbacks.onEvent?.({ type: "message_end", usage: { input: 3, output: 2, cacheRead: 0, cacheWrite: 0 } });
+    cap.callbacks.onChatRoundEnd?.();
+    expect(h.lifecycles).toHaveLength(1);
+    expect(h.lifecycles[0]).toMatchObject({ recordId: "rec-s6", phase: "settled", usage: { input: 3, output: 2, cacheRead: 0, cacheWrite: 0 } });
+
+    // 该轮自己的 agent_settled：正常清位 + idle 相位
+    cap.callbacks.onChatAgentSettled?.();
+    expect(h.lifecycles).toHaveLength(2);
+    expect(h.lifecycles[1]).toMatchObject({ recordId: "rec-s6", phase: "idle" });
   });
 });
