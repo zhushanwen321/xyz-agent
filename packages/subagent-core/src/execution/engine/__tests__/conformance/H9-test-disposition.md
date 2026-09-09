@@ -73,11 +73,13 @@ W5/W7 已把自包含件迁入引擎包（pi-subagent-cli / zcode-subagent-cli `
 | execution-runtime-face / engine-model-validation / session-view-service-zcode-dbpath | zcode 引擎内部（zcode 包 zcode-engine-* / reader / zcode-session-db-isolation 测试） |
 | `helpers/session-runner-mocks.ts` | 消费者全部随上表删除（spawn-mock.ts 保留——3 个存活壳侧行为测试仍消费） |
 
-## 未入清单的既有深路径引用（W11 处置面，W10 显式登记）
+## 未入清单的既有深路径引用（W11 处置面，W10 显式登记）[v1.x W3 已收口，见节尾回写注记]
 
 以下文件经 `vi.mock` 字符串路径引用 `engines/pi|zcode`（非值 import，grep 字符串命中），
 不在 §2.10 三选一清单内、本次未动，W11 删内建时同批核处：
 `recursive-visibility-baseline` / `nested-visibility-env-propagation` / `execute-nesting` / `execute-and-await-worktree` / `collect-coordinator-service` / `collect-mixed-dispatch` / `get-record-for-action-restart` / `stream-sink-retirement` / `subagent-agent-runner.test` / `subagent-service-{multiproc-guard,notify-gate,parent-guard,recovery-bounds}` / `sync-collect-recovery` / `helpers/{spawn-mock,subagent-service-mocks}` / `lifecycle-predicates.test`（归 W6/W11）。
+
+> **[v1.x W3 已收口 —— 回写注记（2026-09-09）]** 上节登记的 17 项（14 测试 + 2 helper + `lifecycle-predicates.test`）已全部随 commit `0df9ef8b3`（W3 删 inproc pi 引擎 + chat 协议化改线）处理完毕：节内所列文件在该 commit 全部为改写（M），无一保留原深路径 mock；其中 `subagent-agent-runner.test` 系 `subprocess-agent-runner.test.ts` 的简写登记，同在该 commit 改写。`vi.mock(…engines/pi|zcode)` 深路径命中现全 core 树清零（grep 实测：残留仅注释/用例描述文本，无模块路径引用）；头注 `[W3]`/`[W3 改写]` 标记 17 项中 14 项可核，余 3 项（`execute-and-await-worktree` / `subagent-service-multiproc-guard` / `subagent-service-parent-guard`）无头注但同 commit 已删深路径 mock（diff 可核）。W11（commit `6d5f6747d`）对该面无剩余核处义务。原节登记保留作 W10 时点历史（[HISTORICAL] 纪律），现行状态以本注记为准。
 
 
 ## 主会话修正（2026-09-09，W10 修复轮）

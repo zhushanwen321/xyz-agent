@@ -138,7 +138,7 @@ core 负责：选引擎 → 建 journal → 派发任务 → 收集事件流 →
 
 ### 2.1 现状架构（进程内多引擎）
 
-> **[v1.x 已收口]** 本图为协议化交付时点（2026-09-08 事实基准）的结构快照：`engines/zcode/` 已随协议化外移删除（W5）、`engines/pi/` 残余已随 chat 域协议 v1.x 收口整体删除（commit `0df9ef8b3`）——`engine/engines/` 目录现不存在，见 §1 迁移范围的收口注记。现引擎形态 = `zcode-subagent-cli` / `pi-subagent-cli` 两 CLI 包（§3.1 目标架构）。
+> **[v1.x 已收口]** 本图为协议化交付时点（2026-09-08 事实基准）的结构快照：`engines/zcode/` 已随协议化外移删除（W11，commit `6d5f6747d`——W5 仅完成引擎包迁移拷贝，core 侧目录双轨保留至 W11 删除）、`engines/pi/` 残余已随 chat 域协议 v1.x 收口整体删除（commit `0df9ef8b3`）——`engine/engines/` 目录现不存在，见 §1 迁移范围的收口注记。现引擎形态 = `zcode-subagent-cli` / `pi-subagent-cli` 两 CLI 包（§3.1 目标架构）。
 
 ```
 宿主进程（pi 扩展进程 / zsw CLI 进程）—— runtime 进程是第三处消费方（见 P8）
