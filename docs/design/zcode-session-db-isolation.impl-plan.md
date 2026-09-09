@@ -57,7 +57,7 @@ xyz-agent 引擎数据目录下的**独立会话库**（spawn env `ZCODE_SESSION
 | W3 测试 | 单元 + 集成（fake-server）+ 真机 live 用例；含池 GC 守卫（经公共 API） | `packages/subagent-core/src/execution/engine/engines/zcode/__tests__/*`、`engine/__tests__/common/session-view-service-zcode-dbpath.test.ts`、`engine/__tests__/conformance/*`、`packages/runtime/test/subagent-extractor-engine.test.ts`、`packages/runtime/src/__tests__/subagent-extractor-engine.test.ts` | W1/W2 | plain | A1–A4/A6/A9；探针③④；§2.3 规格 |
 | W4 文档与约束同步 | 约束表 / AGENTS / 池边界注释 / 漂移检查 / 权威源文档 / 第六面 / 伴生面债务落点 / 设计文档 `:502` 口径句修正（R9-3） / drift 守卫 DOC_MODULE_MAP 登记（⑨） | `docs/constraints.json` + `docs/constraints.md`（生成物）、`AGENTS.md`、`packages/subagent-core/src/execution/engine/common/pool-manager.ts`（`:14` 注释）、`docs/design/zcode-engine-appserver-resident.md`、`docs/design/subagent-engine-protocolization.md`（H1/A10）、`docs/design/zcode-session-db-isolation.md`（**仅 A11 双口径段 `:502` 口径句**，见 §2.4⑧）、新建 `docs/todo/companion-surface-governance.md`、`scripts/check-doc-symbol-drift.mjs`（DOC_MODULE_MAP 登记段，§2.4⑨） | W1/W2 | plain | §2.4 规格（文档同步纪律 C-proc-10）+ `node scripts/check-doc-symbol-drift.mjs` 登记后通过（⑨） |
 | W5a 清理工具实现 | 按 D7 规格实现（I1/I2/I3/I3b + 执行形态 + 索引预检 + 跨库顺序 + 残留清单）；承接 §7.2 R9-1/R9-2/R9-4/R9-5/R9-6/R9-7 | 新建 `scripts/zcode-session-db-cleanup.mjs`（若拆多文件则 `scripts/cleanup/` 下同族脚本，均归本单元独占）；更新 `docs/design/probes/zcode-session-db/counts.sql`（R9-1/R9-2/R9-7 可跑性修复） | W1 | plain | A11（含 §7.2 R9-4 replay fixture 两条）；§2.5 规格 |
-| W5b zsw 侧交接物 | 导出 `zcodeSessionDbPath`（= db-path.ts 模块级 export，W1 交付物；不新增 package.json subpath exports）+ 仓内规格文件 + owner/投递日期 | 新建 `docs/design/handoff/zsw-session-db-cleanup-spec.md` | W1 | plain | §2.4.3；§2.6 规格 |
+| W5b zsw 侧交接物 | 导出 `zcodeSessionDbPath`（W1 交付时为 db-path.ts 模块级 export；W11 引擎包化后随包迁移，现经 `@zhushanwen/zcode-subagent-cli` 根 barrel 导出）+ 仓内规格文件 + owner/投递日期 | 新建 `docs/design/handoff/zsw-session-db-cleanup-spec.md` | W1 | plain | §2.4.3；§2.6 规格 |
 | W6 隔离库 TTL（后续项） | 按 D4 重审触发条件启动（体积/行龄阈值 → 清理策略） | 新增设计或小改 `session-file-gc` 同域 | D4 触发后 | plain | D4 触发后另立；§2.7 规格 |
 
 **版本与排序**：W1 + W2 必须同批（env 与 handle 分叉会立刻产生读取降级）；W3 随 W1/W2 同批交付；
@@ -186,9 +186,9 @@ counts.sql 路径与节名已存在，本项不依赖 W5a 的可跑性修复先�
 
 ### 2.6 W5b 规格（zsw 交接物）
 
-导出 `zcodeSessionDbPath` 语义（= db-path.ts 模块级 export，W1 交付物；**不新增 package.json subpath exports**）+ 落仓内规格文件 `docs/design/handoff/zsw-session-db-cleanup-spec.md`
+导出 `zcodeSessionDbPath` 语义（W1 交付时为 db-path.ts 模块级 export；**W11 引擎包化后随包迁移**，现经 `@zhushanwen/zcode-subagent-cli` 根 barrel 导出三构造函数，package.json `exports "."` 实证）+ 落仓内规格文件 `docs/design/handoff/zsw-session-db-cleanup-spec.md`
 （SSOT 内容 + 期望 zsw 验收点）；跨仓登记降为「投递动作」：W5b 仅落规格文件 + 本仓记 owner + 投递日期。
-**消费方式钉死**：zsw 侧唯一受支持形态 = vendored 整包源码深导入 `db-path.ts`；npm 安装形态**不可达**（core `package.json` 无 db-path 子入口 exports、根 barrel 不导出该函数）——规格文件必须显式写明此边界，避免 zsw 按 npm 形态接线。
+**消费方式钉死**（2026-09-09 W11 引擎包化后修订——原「vendored 深导入唯一受支持 / npm 形态不可达」钉死条款随函数迁出 core 失效）：消费方式 = ①npm 包导入（`@zhushanwen/zcode-subagent-cli` 根 barrel 导出）或 ②vendored 整包源码导入（**引擎包**，非 core）双形态；pi 侧运行形态仍以 vendored 深导入为准。现行权威文本 = 规格 §4，避免 zsw 按失效路径接线。
 
 ### 2.7 W6 规格（隔离库 TTL，后续项）
 
@@ -275,7 +275,7 @@ W4 在合入前完成；W5a/W5b/W6 独立排期（不阻塞 G1）。
 | W3 测试 | committed | 1 | commit 见 git log `test(subagent-core): W3 flip assertions to isolated dbPath + A9 pool-gc guard`；test_evidence = 引擎域 465 passed / 0 failed + typecheck 零错误 + runtime 侧 25 passed（探针④常驻） |
 | W4 文档与约束同步 | committed | 1 | commit 见 git log `docs: W4 constraint/doc sync for session-db isolation`；test_evidence = drift 守卫 8 映射文档零悬空 + render-constraints 92 条 md 同步 + 引擎域 465 passed 零回归 |
 | W5a 清理工具实现 | committed | 1 | commit 见 git log `feat(scripts): W5a zcode session-db cleanup tool`；test_evidence = scripts 测试 17 passed（I1-I3b/非TTY/replay 篡改拒删/R9-4 两条/索引 N→0 全覆盖）+ 引擎域 481 passed 零回归 + counts.sql R9-1/R9-2 sqlite3 实证 |
-| W5b zsw 交接物 | pending | 0 | — |
+| W5b zsw 交接物 | committed | 1 | commit ee55740dc（随 W5a 批次入库：`docs/design/handoff/zsw-session-db-cleanup-spec.md` 规格文件 + owner/投递日期齐备；消费方式正文后经 2026-09-09 一致性修复批按引擎包化终态全量修订） |
 | W6 隔离库 TTL | pending | 0 | — |
 
 ## 7 残留风险与变更历史

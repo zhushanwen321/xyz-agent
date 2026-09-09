@@ -566,7 +566,7 @@ pi 依赖宿主服务面更重——**两者拆分成本都不小**；zcode 仍�
 | 面 | 规格 |
 |----|------|
 | 持有方 | runtime 自持 `EngineClient` 实例（与 pi 宿主实例**不共享**——两进程各自 spawn；同 id 会出现**两个常驻 CLI**） |
-| 回收层 | idle 5min → 发 `dispose`（**上界 3s，超时即杀**，对齐 `cancel`）并杀进程（定时器 owner = runtime 的 `EngineClient`）；**退出钩子落点 = `packages/runtime/src/index.ts` 的 `shutdown()` 内、`deinitRelayServer()` 之后**（该文件只有单一 `shutdown()`、无通用钩子注册表；**不可用 `process.on('exit')`**——其回调不能 await，异步 dispose 会被 `process.exit` 截断） |
+| 回收层 | idle 5min → 发 `dispose`（**上界 3s，超时即杀**，对齐 `cancel`）并杀进程（定时器 owner = runtime 的 `EngineClient`）；**退出钩子落点 = `packages/runtime/src/index.ts` 的 `shutdown()` 内、与 relay 关停（`deinitRelayServer()`）并行发起（dispose 先发起、后共同收敛，relay 侧 3s 聚合上界）**（该文件只有单一 `shutdown()`、无通用钩子注册表；**不可用 `process.on('exit')`**——其回调不能 await，异步 dispose 会被 `process.exit` 截断） |
 | 与 pi 实例的关系 | **不共享连接**；zcode 两实例共享同一宿主 HOME 与**同一隔离库**（WAL 并发，与改造前同语义）；**单一数据根 env** 见下「数据根注入矩阵」 |
 | 量级 | 进程数 = 每宿主每 id 1 个常驻 CLI（典型 2 个）+ zcode 背后 app-server（宿主实例惰性建，runtime 侧 `read` 只读 sqlite **不启 app-server**）；首读延迟 150–400ms（冷）/ < 50ms（暖）；RSS 待实施期实测并回写本表 |
 | 验收 | A11 扩为「**含 runtime ①级读路径**」：先打开详情页触发 runtime spawn，再退宿主 `pgrep` |

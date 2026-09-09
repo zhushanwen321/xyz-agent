@@ -912,7 +912,8 @@ export class ZcodeEngine implements EnginePort {
     const sessionId = handle.data.sessionRef["sessionId"];
     const dbPathRaw = handle.data.sessionRef["dbPath"];
     if (typeof sessionId === "string" && typeof dbPathRaw === "string") {
-      // 绝对路径 tier1 白名单（与 runtime session-view-service 同判）：handle/
+      // 绝对路径 tier1 白名单（判定内聚本引擎包——runtime 侧经 registerNativeSessionReader
+      // 协议 read 复用本方法同一判定结果，W11 后唯①级放行点）：handle/
       // record 来自 append-only JSONL（不可信面），仅放行 zcodeDbPathAllowlist
       // 集合内精确匹配（隔离库现役 + 宿主库存量兼容；dataDir 与写侧 handle 回填
       // 同源 deps.engineDataDir），其余绝对路径拒绝 ①级 sqlite 读取、降 journal

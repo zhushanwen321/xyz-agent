@@ -9,7 +9,8 @@
 //   - HostBridge 9 成员（executeAndAwait / record 面 / idle 定时器 / ChatRoundTicket）
 //     → core（W6 host/）——v1 协议 8 反向通道未含其载荷面（host-bridge.ts 注释
 //     「W7 反向通道载荷再议」），本引擎的 run 承载 workflow 域单次任务；
-//     chat 域轮次过渡期走 core inproc（XYZ_SUBAGENT_ENGINE_MODE，W11 收口）；
+//     chat 域轮次过渡期走 core inproc（终态口径：无条件直连——XYZ_SUBAGENT_ENGINE_MODE
+//     已随 DoD#5 删除、读取方零残留，见设计 §1 裁决注记）；
 //   - read：①级 pi 原生读取依赖 core session-reconstructor（§2.7「保持 core」），
 //     引擎包 read 走 ②级 journal 重放（SDK journal-replay）→ ③级 outcome-only
 //     降级链（deviations 登记：①级留在 core 侧过渡期链路，W10 conformance 定夺）。

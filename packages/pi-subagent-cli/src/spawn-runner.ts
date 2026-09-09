@@ -21,8 +21,9 @@
 // 保留在 core 的面（deviations 登记）：chatMode 长驻轮次 / idle timer / 冷续轮
 // resume 的宿主编排（ChatRoundTicket / HostBridge 消费面）——v1 协议 8 反向通道
 // 未含 HostBridge 长运行通道（W6 host-bridge.ts 注释「W7 反向通道载荷再议」），
-// 过渡期 chat 域走 core inproc（XYZ_SUBAGENT_ENGINE_MODE），本执行器承载
-// workflow 域单次 run。
+// chat 域现走 core inproc（终态口径：无条件直连而非 env 开关——
+// XYZ_SUBAGENT_ENGINE_MODE 已随 DoD#5 删除、读取方零残留，仅 chat 域临时保留面
+// 语境残留，见设计 §1 裁决注记），本执行器承载 workflow 域单次 run。
 
 import type { ChildProcess } from "node:child_process";
 

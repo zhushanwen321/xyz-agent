@@ -1934,7 +1934,7 @@
     },
     {
       "id": "C-proc-12",
-      "summary": "引擎协议边界：引擎子进程 env 由 SDK buildEngineChildEnv 三层契约统一构建（L0 基础设施注入 / L1 deny+显式剥除 / L2 manifest 前缀放行，次序写死先过滤后注入；L0∩L1=∅ 由测试断言）、任务子进程 spawn 必经 SDK spawnEngineChild（detached:false 硬编码、子进程 stdin 恒自有 pipe 不继承引擎 fd）、引擎侧自灭以 stdio EOF 为主判据（未 ack 反向请求 30s 计时为辅，已 ack 的 askUser/executeAndAwait 排除）；ENGINE_ENV_PREFIXES/ENGINE_ENV_DENY_LIST 以 shared constants.ts 为 SSOT、SDK env.ts 镜像逐项相等；守卫 SCAN_ROOTS 覆盖 SDK 与两引擎 CLI 包（core/src 条目为 W12 拖尾子项，W11 收口时加入并清零豁免）",
+      "summary": "引擎协议边界：引擎子进程 env 由 SDK buildEngineChildEnv 三层契约统一构建（L0 基础设施注入 / L1 deny+显式剥除 / L2 manifest 前缀放行，次序写死先过滤后注入；L0∩L1=∅ 由测试断言）、任务子进程 spawn 必经 SDK spawnEngineChild（detached:false 硬编码、子进程 stdin 恒自有 pipe 不继承引擎 fd）、引擎侧自灭以 stdio EOF 为主判据（未 ack 反向请求 30s 计时为辅，已 ack 的 askUser/executeAndAwait 排除）；ENGINE_ENV_PREFIXES/ENGINE_ENV_DENY_LIST 以 shared constants.ts 为 SSOT、SDK env.ts 镜像逐项相等；守卫 SCAN_ROOTS 覆盖 SDK、两引擎 CLI 包与 packages/subagent-core/src（W11 收口批落地；迁移期临时豁免已清零，现存 6 条 core 侧永久类豁免——pid-file/reaper/pi-engine/session-runner×2/worker-host 的只读探测/kill/Worker 场景，EXEMPT_CALLSITES 逐条附理由）",
       "scope": [
         "packages/subagent-engine-sdk/src/**",
         "packages/zcode-subagent-cli/**",

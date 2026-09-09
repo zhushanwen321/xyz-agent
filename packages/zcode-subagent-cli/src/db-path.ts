@@ -1,4 +1,4 @@
-// src/execution/engine/engines/zcode/db-path.ts
+// packages/zcode-subagent-cli/src/db-path.ts（原 subagent-core 路径，2026-09-09 W11 随引擎包迁出）
 //
 // zcode 会话库路径契约（2026-09 会话库隔离）。设计权威源：
 // docs/design/zcode-session-db-isolation.md §3.2 D1（路径与 env 契约）/

@@ -46,19 +46,21 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCAN_ROOTS = [
     "packages/runtime/src",
     "apps/electron/main",
-    # W12 主时点扩展（impl-plan §2.12 / §7.1 拖尾清单第 4 项）：SDK 与两个引擎 CLI 包
-    # 出生即经 SDK 原语（buildEngineChildEnv / spawnEngineChild），无存量违规面。
-    # 两个引擎 CLI 包（W5/W7 创建）当前不在盘——iter_ts_files 对缺目录 root 打
-    # [WARN] 后 continue（容错行为，勿改）。packages/subagent-core/src 的条目
-    # 不在本时点加入（core 现存 spawn 点零构建器命中，当轮扩即红）——W11 收口
-    # 时点由 W12 拖尾子项执行（加入条目 + 清零 core 侧 EXEMPT_CALLSITES）。
+    # [历史注记] W12 主时点扩展（impl-plan §2.12 / §7.1 拖尾清单第 4 项）仅加入 SDK 与
+    # 两个引擎 CLI 包——出生即经 SDK 原语（buildEngineChildEnv / spawnEngineChild），
+    # 无存量违规面；包未创建时 iter_ts_files 对缺目录 root 打 [WARN] 后 continue
+    # （容错行为，勿改）。packages/subagent-core/src 条目已由 W11 收口批
+    # （W12 拖尾子项④执行）加入——终态口径见下条注释。
     "packages/subagent-engine-sdk/src",
     "packages/zcode-subagent-cli",
     "packages/pi-subagent-cli",
-    # [W11 收口 / W12 拖尾子项④] engines/ 内建目录已删、壳侧裸 spawn 已消（唯一
-    # spawn 面 = EngineClient（buildEngineChildEnv）/ worktree git（buildOutboundChildEnv）
-    # / relay-env 探针（豁免通道兜底））——core/src 正式入扫描，零 EXEMPT_CALLSITES
-    # 豁免为收口判据；豁免申请仍走既有 EXEMPT_CALLSITES 通道。
+    # [W11 收口 / W12 拖尾子项④，终态口径] engines/ 内建目录已删、壳侧裸 spawn 已消
+    # （唯一 spawn 面 = EngineClient（buildEngineChildEnv）/ worktree git
+    # （buildOutboundChildEnv）/ relay-env 探针（豁免通道兜底））——core/src 已入扫描；
+    # 收口判据 = 「迁移期临时豁免清零」（engines/zcode 相关临时条目随目录删除消失），
+    # 现存 6 条 core 侧永久类豁免（pid-file/reaper/pi-engine/session-runner×2/worker-host
+    # 的只读探测/kill/Worker 场景，EXEMPT_CALLSITES 逐条附理由，语义合理非泄漏面）；
+    # 豁免申请仍走既有 EXEMPT_CALLSITES 通道。
     "packages/subagent-core/src",
 ]
 
