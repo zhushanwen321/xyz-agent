@@ -1224,7 +1224,10 @@ describe('SessionService · Facade', () => {
       expect(got).toBe(client)
     })
 
-    it('throws when session is already being restored (dedup guard)', async () => {
+    it('joins the same in-flight restore when called concurrently (crash-resilience D7-3 join)', async () => {
+      // [HISTORICAL] 原断言第二个并发调用被 already being restored 拒绝（throw 语义）；
+      // u8（crash-resilience D7-③）throw→join：并发调用等待同一 in-flight Promise，
+      // restore 内核只进入一次（不报错不双跑）。
       // 让 restoreSession 挂起，模拟并发 restore。不能 mountClient，否则 ensureActive
       // 走 fast path（直接返回现有 client），不会进入 restoring 分支。
       let resolveRestore!: (v: SessionSummary) => void
@@ -1232,11 +1235,14 @@ describe('SessionService · Facade', () => {
       const restoreSpy = vi.spyOn(setup.service, 'restoreSession').mockReturnValueOnce(pending)
 
       const first = setup.service.ensureActive('dedup-sid')
-      // 第一个已进入 restoring，第二个应被拒绝
-      await expect(setup.service.ensureActive('dedup-sid')).rejects.toThrow('already being restored')
+      const second = setup.service.ensureActive('dedup-sid')
+      // join：restore 内核只进入一次（没有第二路并发 restore）
+      expect(restoreSpy).toHaveBeenCalledTimes(1)
       resolveRestore({} as SessionSummary)
-      // 第一个最终因 getClient 无 client 而 reject（符合无进程的真实场景）
+      // 双方都等恢复完成后继续；随后都因 getClient 无 client 而 reject（符合无进程的真实场景）
       await expect(first).rejects.toThrow('client not available')
+      await expect(second).rejects.toThrow('client not available')
+      expect(restoreSpy).toHaveBeenCalledTimes(1)
       restoreSpy.mockRestore()
     })
   })
@@ -1280,9 +1286,10 @@ describe('SessionService · Facade', () => {
     it('falls back to file read when getEntries throws', async () => {
       const { id, client } = await setup.seedSession()
       client.getEntries.mockRejectedValueOnce(new Error('rpc boom'))
-      mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [], truncated: false })
+      mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
       await setup.service.getHistory(id)
-      expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith(id, expect.anything())
+      // [u6] 尾读降级带窗口参数（maxTurns 缺省 + query undefined——无游标的 u4b 现状形态）
+      expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith(id, expect.anything(), expect.anything(), undefined)
     })
 
     it('终审 minor：全量重建与缓存新鲜路径返回浅拷贝——调用方就地变更不打穿缓存', async () => {
@@ -1335,9 +1342,9 @@ describe('SessionService · Facade', () => {
     })
 
     it('reads from file directly when no active client', async () => {
-      mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [], truncated: false })
+      mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
       await setup.service.getHistory('no-client')
-      expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith('no-client', expect.anything())
+      expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith('no-client', expect.anything(), expect.anything(), undefined)
     })
   })
 

@@ -20,7 +20,7 @@
  *   引用、no-op 返回原 state 引用——单条幂等/纯度契约逐字不变（R2-S1 断言锚定）。
  * - replayEntries fold → mutable collector：原地累积（push/add/set），n 条 entry 从每步全量
  *   拷贝的 O(n²) 降为 O(n)（runtime convertPiHistory = lift + replayEntries，getHistory 冷切入
- *   与 getFullHistory load-more 在 10k entry 会话上的真实痛点）。mutable 中间态只存在于 fold
+ *   与历史 load-more 在 10k entry 会话上的真实痛点）。mutable 中间态只存在于 fold
  *   过程内，snapshot 组装产物后不再写——「内部累积、产物同构」约定，产物与 copy-on-write 路径
  *   deep-equal（元断言测试 apply-entry-fold-equivalence.test.ts 守卫），不加运行时冻结开销。
  *
@@ -314,6 +314,8 @@ function fillHostToolCall(host: Message, matched: ToolCall, body: PiMessageBody)
     ...matched,
     output: fill.output,
     ...(fill.outputRaw !== undefined && { outputRaw: fill.outputRaw }),
+    // [D6-⑧] 累积态 64KB 截断标记（computeToolCallFill 与 live overlay 同函数，live≡reload）
+    ...(fill.outputTruncated && { outputTruncated: true }),
     ...(fill.isError && { status: 'error' as const }),
     ...(fill.details !== undefined && { details: fill.details }),
     ...(fill.images !== undefined && { images: fill.images }),

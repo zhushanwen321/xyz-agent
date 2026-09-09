@@ -54,7 +54,7 @@ vi.mock('@/composables/features/file-tree/useFileTree', () => ({
 
 // ── mock api 域 ──
 const switchSessionMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
-const getHistoryMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ messages: [], historyTruncated: false })))
+const getHistoryMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })))
 const getCommandsMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ commands: [] })))
 const getContextMock = vi.hoisted(() => vi.fn(() => Promise.resolve({})))
 vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
@@ -111,7 +111,7 @@ describe('lru-panel-exempt-fix 方案 C：panel 绑定 session 不被 LRU 误驱
     historyBackend.clear()
     switchSessionMock.mockResolvedValue(undefined)
     getHistoryMock.mockImplementation((sid: string) =>
-      Promise.resolve({ messages: historyBackend.get(sid) ?? [], historyTruncated: false }),
+      Promise.resolve({ messages: historyBackend.get(sid) ?? [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 }),
     )
     getCommandsMock.mockResolvedValue({ commands: [] })
     getContextMock.mockResolvedValue({})

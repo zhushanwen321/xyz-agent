@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   switchSession: vi.fn().mockResolvedValue(undefined),
   list: vi.fn().mockResolvedValue([]),
   remove: vi.fn().mockResolvedValue(undefined),
-  getHistory: vi.fn().mockResolvedValue({ messages: [], historyTruncated: false }),
+  getHistory: vi.fn().mockResolvedValue({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 }),
   ensureStreamSub: vi.fn(),
   loadTree: vi.fn(),
   cancelFlow: vi.fn(),

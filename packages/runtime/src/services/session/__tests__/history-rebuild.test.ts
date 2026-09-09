@@ -1,7 +1,8 @@
 /**
  * SessionHistoryReader 直测（S6 迁出批 2）：history 域读编排——getHistory 三分支重建
  * （缓存增量 / RPC 全量 / 尾读降级）+ parentId 不变量 + Entry-not-found 自愈 +
- * inflight 合并 + getFullHistory 文件直读 + onSessionDisposed 清理。
+ * inflight 合并 + [u6] 游标翻页（crash-resilience §3.3 D4 中期）+ onSessionDisposed 清理
+ * （getFullHistory 文件直读已随全量通路退役，用例同点退役）。
  *
  * 分层（G2：import 无 session-service，stub 面 = deps 2 方法 + session-history 模块）：
  * - mock 层 = deps（pm.getClient / sessionStore.rebuild/scan）与 session-history 的
@@ -13,19 +14,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Message } from '@xyz-agent/shared'
 import type { IProcessManager, IPiEngine } from '../../ports/pi-engine.js'
 import type { ISessionStore } from '../../ports/session.js'
-import { getHistoryTailFromFile, getHistoryFromFilePath } from '../../session-history.js'
+import { getHistoryTailFromFile } from '../../session-history.js'
 import { SessionHistoryReader } from '../history-rebuild-cache.js'
 
 vi.mock('../../session-history.js', () => ({
-  getHistoryFromFilePath: vi.fn(async () => ({ messages: [{ id: 'full-1', role: 'user', content: 'full', status: 'complete', timestamp: 1 } as Message], truncated: false })),
-  getHistoryTailFromFile: vi.fn(async () => ({ messages: [{ id: 'tail-1', role: 'user', content: 'tail', status: 'complete', timestamp: 1 } as Message], truncated: true })),
+  // [u6] getHistoryFromFilePath 不再被 history-rebuild-cache 消费（getFullHistory 退役），
+  // mock 同点移除；①档函数本体保留（session-records 的 subagent/agentcall 通路消费）。
+  getHistoryTailFromFile: vi.fn(async () => ({ messages: [{ id: 'tail-1', role: 'user', content: 'tail', status: 'complete', timestamp: 1 } as Message], truncated: true, loadedTurns: 1, totalTurnsEstimate: 1 })),
 }))
 
 // session-history 模块级 mock：调用计数跨用例累积，前置清零（r1-S16 尾读用例引入后
 // 「not.toHaveBeenCalled」类断言会被先前用例的历史调用打穿）
 beforeEach(() => {
   vi.mocked(getHistoryTailFromFile).mockClear()
-  vi.mocked(getHistoryFromFilePath).mockClear()
 })
 
 /** pi entry 最小形态（编排只消费 parentId / 传给 rebuild mock）。 */
@@ -195,19 +196,75 @@ describe('无 client（离线 session）与全量文件读', () => {
     expect(getHistoryTailFromFile).toHaveBeenCalled()
   })
 
-  it('getFullHistory：scanSessions 命中 → 全量文件读（force 旁路 TTL）', async () => {
-    const { reader, sessionStore } = makeReader()
-    ;(sessionStore.scanSessions as unknown as { mock: { calls: unknown[][] } }).mock.calls.length = 0
-    ;(sessionStore.scanSessions as ReturnType<typeof vi.fn>).mockReturnValue([{ id: 's1', filePath: '/tmp/s1.jsonl' }])
-    const { messages } = await reader.getFullHistory('s1')
-    expect(sessionStore.scanSessions).toHaveBeenCalledWith({ force: true })
-    expect(messages.map((m) => m.id)).toEqual(['full-1'])
-    expect(getHistoryFromFilePath).toHaveBeenCalledWith('/tmp/s1.jsonl', sessionStore)
+  // ── [u6] 游标翻页（crash-resilience §3.3 D4 中期；必测断言①⑥）──
+
+  it('游标翻页：缓存命中 → 全量基线切前缀，返回锚点前最近 limitTurns turns（零 RPC）', async () => {
+    const { reader, client } = makeReader()
+    // 5 turn 基线（rebuild mock 每 entry 产一条 user 消息 = 每 entry 一个 turn）
+    client.getEntries.mockResolvedValue({
+      data: { entries: [entry('e1', null), entry('e2', 'e1'), entry('e3', 'e2'), entry('e4', 'e3'), entry('e5', 'e4')], leafId: 'e5' },
+    })
+    await reader.getHistory('s1') // 建缓存（全量基线）
+    client.getEntries.mockClear()
+    const page = await reader.getHistory('s1', { cursor: 'e5', limitTurns: 2 })
+    // 缓存基线直读，零 RPC（锚前内容 append-only，对基线新鲜度不敏感）
+    expect(client.getEntries).not.toHaveBeenCalled()
+    // 锚点 e5 之前最近 2 turns = e3、e4（e5 自身不返回——已在 renderer 分区）
+    expect(page.messages.map((m) => m.id)).toEqual(['m-e3', 'm-e4'])
+    expect(page.truncated).toBe(true) // 锚前仍有更早 turn（e1、e2）
+    expect(page.loadedTurns).toBe(2)
+    expect(page.totalTurnsEstimate).toBe(4) // 锚前缀内精确 turn 总数
   })
 
-  it('getFullHistory：session 不在扫描结果 → []', async () => {
-    const { reader } = makeReader()
-    expect(await reader.getFullHistory('s-none')).toEqual({ messages: [], truncated: false })
+  it('游标翻页：翻页到头（锚点为最早 turn）→ 前缀空 → 空页 + truncated=false', async () => {
+    const { reader, client } = makeReader()
+    client.getEntries.mockResolvedValue({
+      data: { entries: [entry('e1', null), entry('e2', 'e1')], leafId: 'e2' },
+    })
+    await reader.getHistory('s1')
+    const page = await reader.getHistory('s1', { cursor: 'e1' })
+    expect(page.messages).toEqual([])
+    expect(page.truncated).toBe(false)
+    expect(page.loadedTurns).toBe(0)
+  })
+
+  it('游标翻页：cursor 未命中（已被清理）→ 空页 + truncated=false，不报错', async () => {
+    const { reader, client } = makeReader()
+    client.getEntries.mockResolvedValue({ data: { entries: [entry('e1', null)], leafId: 'e1' } })
+    const page = await reader.getHistory('s1', { cursor: 'gone-entry' })
+    expect(page.messages).toEqual([])
+    expect(page.truncated).toBe(false)
+  })
+
+  it('游标翻页：无缓存 → getEntries 全量重建写缓存后切前缀；RPC 失败 → 文件游标读降级', async () => {
+    const { reader, client } = makeReader()
+    client.getEntries.mockResolvedValue({
+      data: { entries: [entry('e1', null), entry('e2', 'e1'), entry('e3', 'e2')], leafId: 'e3' },
+    })
+    const page = await reader.getHistory('s1', { cursor: 'e3', limitTurns: 1 })
+    expect(client.getEntries).toHaveBeenCalledWith() // 无缓存 → 全量重建
+    expect(page.messages.map((m) => m.id)).toEqual(['m-e2'])
+    expect(page.truncated).toBe(true)
+
+    // RPC 失败（无缓存）→ 文件游标读降级（cursor/maxBytes 透传）
+    const { reader: reader2, client: client2 } = makeReader()
+    client2.getEntries.mockRejectedValue(new Error('rpc down'))
+    await reader2.getHistory('s1', { cursor: 'e9', maxBytes: 123 })
+    expect(getHistoryTailFromFile).toHaveBeenCalledWith(
+      's1',
+      expect.anything(),
+      20, // limitTurns 缺省回落 HISTORY_BUDGET.RECENT_TURNS
+      { cursor: 'e9', maxBytes: 123 },
+    )
+  })
+
+  it('游标翻页：离线 session（无 client）→ 文件游标读', async () => {
+    const reader = new SessionHistoryReader({
+      pm: { getClient: vi.fn(() => undefined) } as unknown as IProcessManager,
+      sessionStore: {} as unknown as ISessionStore,
+    })
+    await reader.getHistory('s1', { cursor: 'e2' })
+    expect(getHistoryTailFromFile).toHaveBeenCalledWith('s1', expect.anything(), 20, { cursor: 'e2', maxBytes: expect.any(Number) })
   })
 })
 

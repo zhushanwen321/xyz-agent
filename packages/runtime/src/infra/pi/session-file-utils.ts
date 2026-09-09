@@ -1007,7 +1007,7 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
  * 直接命中缓存快照（零 readdirSync/statSync）。1s 保证 pi 落盘新 session 文件后秒级出现在
  * 列表（pi 延迟写入：首个 assistant 前不落盘，列表本就无法更早发现，TTL 过期即重扫）。
  *
- * 正确性敏感的**单 session 路径解析消费方**（getHistoryFromFile / getFullHistory /
+ * 正确性敏感的**单 session 路径解析消费方**（getHistoryTailFromFile / getSubagentHistory /
  * getSubagents / getWorkflows / findScannedSession 等）必须传 force 旁路——pi 是外部进程
  * 写文件，不在显式失效覆盖内，若走 TTL 缓存，刚落盘 session 的查找会在窗口内静默返回
  * 空（05-scan-caching D9-1 审查修正，plan M-3）。

@@ -3,8 +3,9 @@
     [u4d-truncated-ui] 历史预算截断顶部条（crash-resilience §3.3 D4 / 场景 T3）。
     显隐由壳层（MessageStream）v-if 控制：store 截断窗口状态 truncated=false 时本组件
     结构性不挂载（A6 回归：普通 session 无任何截断提示）。
-    文案 N = loadedTurns（u4b session.history 窗口契约）；「加载更早」复用既有 load-more
-    通路（壳层 @load → useLoadMoreHistory.handleLoadMore → getFullHistory）。
+    文案 N = loadedTurns（u4b session.history 窗口契约）；「加载更早」走 [u6] 游标翻页
+    （壳层 @load → useLoadMoreHistory.handleLoadMore → useChat.loadMoreHistory，
+    session.history 带 cursor——原 getFullHistory 全量通路已退役）。
   -->
   <div data-testid="truncated-history-bar" class="flex items-center gap-1">
     <span data-testid="truncated-history-info" class="text-[length:var(--text-sm)] leading-snug text-neutral-mid">

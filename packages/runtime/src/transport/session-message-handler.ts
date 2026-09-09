@@ -88,7 +88,7 @@ export class SessionMessageHandler {
 
   /** D1: 本 handler 认领的 ClientMessageType 清单（session.compact 单独路由，故不在此列）。 */
   readonly handles: ClientMessageType[] = [
-    'session.create', 'session.delete', 'session.deleteByCwd', 'config.sessions', 'session.switch', 'session.restore', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork', 'session.setProject',
+    'session.create', 'session.delete', 'session.deleteByCwd', 'config.sessions', 'session.switch', 'session.restore', 'session.history', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork', 'session.setProject',
     // 导入 pi 会话（import-session D5/U2）：候选列表 + 执行导入（case 分发由 u3-rpc-wiring 落地）。
     'session.importCandidates', 'session.import',
     'session.handoff', 'session.abortHandoff',
@@ -132,7 +132,6 @@ export class SessionMessageHandler {
     'config.sessions': (msg, ws) => this.handleConfigSessions(msg, ws),
     'session.switch': (msg, ws) => this.handleSessionSwitch(msg, ws),
     'session.history': (msg, ws) => this.handleSessionHistory(msg, ws),
-    'session.getFullHistory': (msg, ws) => this.handleSessionGetFullHistory(msg, ws),
     'session.getSubagents': (msg, ws) => this.handleSessionGetSubagents(msg, ws),
     'session.getSubagentHistory': (msg, ws) => this.handleSessionGetSubagentHistory(msg, ws),
     'session.getSubagentEngineConfig': (msg, ws) => this.handleSessionGetSubagentEngineConfig(msg, ws),
@@ -457,22 +456,20 @@ export class SessionMessageHandler {
   }
 
   private async handleSessionHistory(msg: Extract<ClientMessage, { type: 'session.history' }>, ws: WsType): Promise<void> {
-    // u4b（crash-resilience §3.3 D4）：双预算窗口响应携带 truncated/loadedTurns/totalTurnsEstimate；
-    // historyTruncated 为 legacy 同值字段（core chat.getHistory 现存消费方，u6 分页协议落地时退役）。
-    const { messages, truncated, loadedTurns, totalTurnsEstimate } = await this.ctx.sessionService.getHistory(msg.payload.sessionId)
+    // u4b（crash-resilience §3.3 D4）：双预算窗口响应携带 truncated/loadedTurns/totalTurnsEstimate。
+    // [u6] 游标翻页（D4 中期）：payload { cursor?, limitTurns?, maxBytes? } 透传 service——
+    // cursor=turn 边界锚点 entryId 时返回锚点之前的最近窗口（活跃/离线共用语义）；
+    // cursor 未命中 → 空页 + truncated=false（翻页到头，不报错）。
+    // [u6] legacy historyTruncated 字段退役（偏差表 D7 清账：与 truncated 同值并存的双轨收口）。
+    const { sessionId, cursor, limitTurns, maxBytes } = msg.payload
+    const { messages, truncated, loadedTurns, totalTurnsEstimate } = await this.ctx.sessionService.getHistory(sessionId, { cursor, limitTurns, maxBytes })
     return this.ctx.reply(ws, msg.id, 'session.history', {
-      sessionId: msg.payload.sessionId,
+      sessionId,
       messages,
-      historyTruncated: truncated,
       truncated,
       loadedTurns,
       totalTurnsEstimate,
     })
-  }
-
-  private async handleSessionGetFullHistory(msg: Extract<ClientMessage, { type: 'session.getFullHistory' }>, ws: WsType): Promise<void> {
-    const { messages, truncated } = await this.ctx.sessionService.getFullHistory(msg.payload.sessionId)
-    return this.ctx.reply(ws, msg.id, 'session.fullHistory', { sessionId: msg.payload.sessionId, messages, truncated })
   }
 
   private async handleSessionGetSubagents(msg: Extract<ClientMessage, { type: 'session.getSubagents' }>, ws: WsType): Promise<void> {

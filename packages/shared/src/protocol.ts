@@ -48,7 +48,7 @@ export interface CommandSourceInfo {
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
 export type ClientMessageType =
-  | 'session.create' | 'session.delete' | 'session.deleteByCwd' | 'config.sessions' | 'session.switch' | 'session.restore' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
+  | 'session.create' | 'session.delete' | 'session.deleteByCwd' | 'config.sessions' | 'session.switch' | 'session.restore' | 'session.history' | 'session.getCommands' | 'session.getContext'
   | 'session.compact' | 'session.rename' | 'session.fork' | 'session.setProject'
   // composer-gen-stats（docs/design/composer-gen-stats.md §3.3 D4）：session.getGenStats 拉该 session
   // 当前模型的速度/缓存命中率快照（恢复腿——切 session 主动拉取，规避 broadcast 早于订阅的时序竞争）。
@@ -311,8 +311,15 @@ export interface ClientMessageMap {
   'session.switch': { sessionId: string }
   'session.restore': { sessionId: string }
   'session.forceQuit': { sessionId: string }
-  'session.history': { sessionId: string }
-  'session.getFullHistory': { sessionId: string }
+  // session.history 参数（crash-resilience §3.3 D4 中期分页协议，u6-paging-protocol）：
+  // - 不带 cursor：最近窗口（u4b 双预算现状）——「打开/切入 session」与 hydrate 通路。
+  // - 带 cursor：游标翻页——cursor = turn 边界锚点 entryId（renderer 当前窗口最早消息的
+  //   piEntryId），返回该锚点之前的最近 limitTurns turns（仍受 maxBytes 字节预算、单 turn
+  //   原子性、首 turn 豁免语义，同 u4b）；活跃/离线两路径共用同一参数语义。
+  // - cursor 指向的消息已不存在（被清理 / 超出预算扫描域）→ 返回空页 + truncated=false
+  //   （翻页到头语义，不报错）。
+  // limitTurns/maxBytes 缺省回落 HISTORY_BUDGET.RECENT_TURNS / HISTORY_BUDGET.MAX_BYTES。
+  'session.history': { sessionId: string; cursor?: string; limitTurns?: number; maxBytes?: number }
   'session.getCommands': { sessionId: string }
   'session.getContext': { sessionId: string }
   // session.getGenStats（docs/design/composer-gen-stats.md §3.3 D4）：生成指标恢复腿。
@@ -336,7 +343,7 @@ export interface ClientMessageMap {
   // 当 timestamp + role 在容差内仍匹配失败时（session-service.resolveEntryIdByTimestamp），
   // runtime 只 console.warn 后 fallback 取 msgEntries[last]——用户以为 fork 到消息 A，
   // 实际可能 fork 到完全不相关的最近一条。前端在能取到 piEntryId 时务必走 RPC 之外的路径
-  // （如 session.fullHistory 已填充 piEntryId 的 message）以保证 fork 点语义正确。
+  // （如 session.history 返回的 message 已填充 piEntryId）以保证 fork 点语义正确。
   'session.fork': {
     srcSessionId: string
     /** pi JSONL entry id（精确匹配，优先使用）。缺失时走 timestamp fallback（见上方风险注释）。 */
@@ -715,7 +722,7 @@ export type WorktreeUnknownErrorCode = 'worktree_failed'
 export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
 
 export type ServerMessageType =
-  | 'session.created' | 'session.deleted' | 'session.deletedByCwd' | 'config.sessions' | 'session.history' | 'session.fullHistory' | 'session.switched'
+  | 'session.created' | 'session.deleted' | 'session.deletedByCwd' | 'config.sessions' | 'session.history' | 'session.switched'
   | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.skillNotice' | 'session.handoffStarted' | 'session.handoffComplete' | 'session.handoffAborted' | 'session.setProject'
   // session.occupancy（session-occupancy-send-closure P3）：占用三维快照广播（state topic，
   // last-value 语义——重连/切回 session 自动恢复，不依赖广播时序），renderer sessionPhase 唯一数据源。
@@ -782,6 +789,9 @@ export type ServerMessageType =
   // 同名（session.subscribe 模式，sendCommand 按 id resolve），payload 见 ServerMessageMapBase。
   | 'session.importCandidates' | 'session.import'
   | 'session.exited'
+  // crash-resilience §3.3 D7（u8-pi-respawn）：pi 崩溃自动恢复结果推送（payload 见
+  // ServerMessageMapBase 两行注释）。
+  | 'session.restored' | 'session.restoreFailed'
   | 'app.info'
   | 'config.plugins' | 'plugin:crashed' | 'plugin:notification'
   | 'plugin:statusChange' | 'plugin:permissionRequest'
@@ -1164,6 +1174,19 @@ export interface ServerMessageMapBase {
   // reason: 人类可读的错误原因（含 stderr 尾部截断），供诊断面板展开显示。
   // code: pi 进程退出码（null 表示进程被信号杀死无退出码）。
   'session.exited': { sessionId: string; code: number | null; reason: string }
+  // session.restored / session.restoreFailed（crash-resilience §3.3 D7，u8-pi-respawn）：
+  // pi 非主动退出后的自动恢复结果推送（恢复编排点 = ProcessManager onSessionExit 链 →
+  // pi-respawn.ts 编排；5s 延迟 + 连续 2 次失败熔断）。两者只在「非主动退出触发的自动
+  // 恢复」链路产生——用户手动强制退出（forceQuitSession，不经 onSessionExit）与惰性
+  // 恢复（ensureActive）都不推。
+  // session.restored：自动恢复成功。前端在对话流插入恢复提示条（T4 文案：在途回合未保留、
+  // 后台任务/子代理已终止不自动恢复、可继续发消息），并恢复 session dead 态标记。
+  'session.restored': { sessionId: string; attempts: number }
+  // session.restoreFailed：一次自动恢复尝试失败。willRetry=false（连续失败达熔断阈值）
+  // 时前端把提示条切换为失败态（「引擎恢复失败，点此重试或新建会话」+ 手动重试按钮）；
+  // willRetry=true 仅落 runtime 日志（前端不渲染中间失败，避免闪烁）。
+  // reason: 人类可读失败原因（含 cwd 死路径附着的 MissingSessionCwdError 场景，P-restore-skip 分支二）。
+  'session.restoreFailed': { sessionId: string; attempts: number; willRetry: boolean; reason: string }
   // 扩展 UI 推送通道（EventAdapter 翻译 pi setWidget/setStatus，runtime 固定形状生产）
   'extension:widget': { sessionId: string; widgetKey: string; lines: string[] }
   // 结构化 widget（GuiComponent 经 NUL marker 编码透传，event-adapter 检测 marker 解码）
@@ -1549,16 +1572,14 @@ export interface ServerMessageMapBase {
   'session.handoffAborted': { srcSessionId: string }
   // session.history：session.history 的成功 reply（显式历史拉取 RPC；wave:perf-w20 后 switch
   // reply 已拆分到 session.switched，不再复用本类型）。session optional 保留向后兼容。
-  // historyTruncated：[HISTORICAL] 历史超上限截断标志（前端据此提示「历史已截断」）——
-  // 与 truncated 同值的 legacy 字段，core chat.getHistory 现存消费方，分页协议（u6）落地时退役。
   // truncated/loadedTurns/totalTurnsEstimate：历史加载双预算窗口契约（crash-resilience §3.3 D4）——
   // truncated=true 表示窗口外仍有历史；loadedTurns=本次返回的完整 turn 数；
   // totalTurnsEstimate=session 的 turn 总数估计（读到头为精确值，窗口截断时为下界）。
+  // [u6] legacy historyTruncated 字段已退役（偏差表 D7 清账：与 truncated 同值并存的双轨收口）。
   'session.history': {
     sessionId: string
     session?: SessionSummary
     messages: Message[]
-    historyTruncated: boolean
     truncated: boolean
     loadedTurns: number
     totalTurnsEstimate: number
@@ -1571,10 +1592,8 @@ export interface ServerMessageMapBase {
     sessionId: string
     session: SessionSummary
   }
-  // session.fullHistory：session.getFullHistory reply（session-message-handler.ts reply
-  // { sessionId, messages, truncated }）。truncated：u4b（D5①）文件超 READ_PRECHECK_MAX_BYTES
-  // 预检后逆序窗口降级标志（optional——mock / 旧 runtime 不带此键，消费方按 false 处理）。
-  'session.fullHistory': { sessionId: string; messages: Message[]; truncated?: boolean }
+  // [u6] session.fullHistory / session.getFullHistory 已退役（crash-resilience §3.3 D4 中期：
+  // 「加载更早」改走 session.history 游标翻页，全量通路删除——游标翻页完全替代）。
   // model.switched：model.switch reply（settings-message-handler.ts:324-339 reply { sessionId, provider, modelId }，U6 后回传 pi 生效值拆解）。
   // [C-pi-14/ADR-0065] mutation reply（分支一后端可变换）：provider/modelId = pi 生效值，必需不 optional。
   'model.switched': ModelSwitchMutationReply
@@ -1878,7 +1897,6 @@ export interface ReplyPayloadMap {
   'session.getGenStats': ServerMessageMap['session.stats_update']
   'session.getTraceEntries': ServerMessageMap['session.traceEntries']
   'session.fetchCurrentSystemPrompt': ServerMessageMap['session.currentSystemPrompt']
-  'session.getFullHistory': ServerMessageMap['session.fullHistory']
   'session.getSubagentHistory': ServerMessageMap['session.subagentHistory']
   'session.getSubagentEngineConfig': ServerMessageMap['session.subagentEngineConfig']
   'session.setSubagentDefaultEngine': ServerMessageMap['session.subagentDefaultEngineSet']

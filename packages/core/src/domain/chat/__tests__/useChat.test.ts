@@ -37,7 +37,6 @@ interface Fixture {
     bash: ReturnType<typeof vi.fn>
     abortBash: ReturnType<typeof vi.fn>
     getHistory: ReturnType<typeof vi.fn>
-    getFullHistory: ReturnType<typeof vi.fn>
     streamSubscribe: ReturnType<typeof vi.fn>
   }
   chatStore: ReturnType<typeof createChatStore>
@@ -68,9 +67,7 @@ function makeFixture(): Fixture {
     compact: vi.fn().mockResolvedValue(undefined),
     bash: vi.fn().mockResolvedValue(undefined),
     abortBash: vi.fn().mockResolvedValue(undefined),
-    getHistory: vi.fn().mockResolvedValue({ messages: [], historyTruncated: false }),
-    // [u4d] 门面对齐 real 域：getFullHistory 返回 {messages, truncated?}
-    getFullHistory: vi.fn().mockResolvedValue({ messages: [], truncated: false }),
+    getHistory: vi.fn().mockResolvedValue({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 }),
     streamSubscribe: vi.fn((sid: string, h: (m: ServerMessage) => void) => {
       streamHandlers.set(sid, h)
       return () => {
@@ -255,9 +252,9 @@ describe('createUseChat factory 行为', () => {
     f.dispose()
   })
 
-  it('hydrateHistory：注入历史 + historyTruncated 标记', async () => {
+  it('hydrateHistory：注入历史 + truncated 窗口标志', async () => {
     const f = makeFixture()
-    f.chatApi.getHistory.mockResolvedValueOnce({ messages: [], historyTruncated: true })
+    f.chatApi.getHistory.mockResolvedValueOnce({ messages: [], truncated: true, loadedTurns: 20, totalTurnsEstimate: 20 })
     await f.useChat.hydrateHistory('s10')
     expect(f.useChat.hasMoreHistory('s10')).toBe(true)
     // 幂等：二次 hydrate 不重复请求
@@ -267,25 +264,27 @@ describe('createUseChat factory 行为', () => {
     f.dispose()
   })
 
-  it('loadMoreHistory：全量加载后窗口收敛 truncated=false（[u4d] 窗口状态 SSOT）', async () => {
+  it('[u6] loadMoreHistory：游标翻页（cursor = 分区最旧消息身份）页响应收敛 truncated=false', async () => {
     const f = makeFixture()
-    f.chatApi.getHistory.mockResolvedValueOnce({ messages: [], historyTruncated: true })
+    f.chatApi.getHistory.mockResolvedValueOnce({ messages: [{ id: 'm1', role: 'user', content: 'q', status: 'complete', timestamp: 1 }], truncated: true, loadedTurns: 20, totalTurnsEstimate: 20 })
     await f.useChat.hydrateHistory('s11')
     expect(f.useChat.hasMoreHistory('s11')).toBe(true)
-    f.chatApi.getFullHistory.mockResolvedValueOnce({ messages: [], truncated: false })
+    // 游标翻页走 getHistory（带 cursor = 分区最旧消息 m1 的 id）；空页（翻页到头）收敛
+    f.chatApi.getHistory.mockResolvedValueOnce({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
     await f.useChat.loadMoreHistory('s11')
+    expect(f.chatApi.getHistory).toHaveBeenLastCalledWith('s11', { cursor: 'm1' })
     expect(f.useChat.hasMoreHistory('s11')).toBe(false)
     f.dispose()
   })
 
-  it('[u4d] loadMoreHistory：getFullHistory 巨型文件降级窗口（truncated=true）→ 顶部条入口保持', async () => {
+  it('[u6] loadMoreHistory：页响应仍 truncated=true → 顶部条入口保持', async () => {
     const f = makeFixture()
-    f.chatApi.getHistory.mockResolvedValueOnce({ messages: [], historyTruncated: true, truncated: true, loadedTurns: 20, totalTurnsEstimate: 42 })
+    f.chatApi.getHistory.mockResolvedValueOnce({ messages: [], truncated: true, loadedTurns: 20, totalTurnsEstimate: 42 })
     await f.useChat.hydrateHistory('s11b')
-    // 窗口契约字段写入 store 窗口状态（u4b 透传，非 legacy 布尔）
+    // 窗口契约字段写入 store 窗口状态（u4b 透传）
     expect(f.chatStore.getHistoryWindow('s11b')).toEqual({ truncated: true, loadedTurns: 20, totalTurnsEstimate: 42 })
-    // u4b ①档：文件超预检阈值，getFullHistory 返回逆序窗口且仍截断
-    f.chatApi.getFullHistory.mockResolvedValueOnce({ messages: [], truncated: true })
+    // [u6] 游标翻页页响应仍截断（锚前有更早历史）
+    f.chatApi.getHistory.mockResolvedValueOnce({ messages: [], truncated: true, loadedTurns: 20, totalTurnsEstimate: 40 })
     await f.useChat.loadMoreHistory('s11b')
     expect(f.useChat.hasMoreHistory('s11b')).toBe(true)
     f.dispose()

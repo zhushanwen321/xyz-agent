@@ -56,6 +56,7 @@ import type { IGitInfoReader } from '../ports/git-info.js'
 import type { IManagedSessionView, ScannedSession, SendMessageHook } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { SessionLifecycle } from './session-lifecycle.js'
+import { RespawnOrchestrator } from './pi-respawn.js'
 import { MessageDispatcher } from './message-dispatcher.js'
 import { updateSessionOccupancy } from './event-interpreter.js'
 import { SessionScanner } from './session-scanner.js'
@@ -68,7 +69,10 @@ import { PresetService, type PresetResolution } from '../preset-service.js'
 import type { IMessageBus } from '../message-bus/message-bus.js'
 
 export class SessionService implements ISessionService, ILifecycleSessionOps, IDispatcherSessionOps, IScannerSessionOps {
-  private readonly restoringSessions = new Set<string>()
+  /**
+   * in-flight 恢复注册表已迁 pi-respawn 编排器（u8，D7-③ join 状态 SSOT——自动恢复与
+   * 惰性恢复共享，join 语义见 RespawnOrchestrator.ensureRestored）。
+   */
   private readonly lifecycle: SessionLifecycle
   private readonly dispatcher: MessageDispatcher
   private readonly scanner: SessionScanner
@@ -179,9 +183,9 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   readonly backgroundTasks: BackgroundTaskService
   /**
    * history 读编排域（S6 迁出至 history-rebuild-cache.ts）：getHistory 三分支重建
-   * （缓存增量/RPC 全量/尾读降级）+ getFullHistory 文件直读 + inflight 合并。销毁经
-   * onSessionDisposed 由 removeSessionEntry 第 ⑤ 步直调（与 traceSync/projection/records
-   * 并列）。
+   * （缓存增量/RPC 全量/尾读降级）+ [u6] 游标翻页 + inflight 合并（getFullHistory 文件
+   * 直读已随全量通路退役）。销毁经 onSessionDisposed 由 removeSessionEntry 第 ⑤ 步直调
+   * （与 traceSync/projection/records 并列）。
    */
   private readonly historyReader: SessionHistoryReader
   /**
@@ -192,6 +196,19 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    * 第 ⑤ 步直调（与 traceSync/projection 并列）。
    */
   private readonly records: SessionRecords
+  /**
+   * pi 崩溃自动恢复编排（crash-resilience §3.3 D7，u8-pi-respawn）。构造器内组装（deps 窄
+   * 注入，同 traceSync/records 形态），三条挂点：
+   * - 调度 = 本构造器 pm.onSessionExit 链尾部（该链只对非主动退出通知；forceQuitSession
+   *   在 dispatcher 手工编排、exit 事件被双层守卫拦截不经此链——挂错会把用户强制退出的
+   *   session 自动复活，设计 A7 反向验收）；
+   * - 取消 = removeSessionEntry 汇聚点（主动删 / 进程退出 / forceQuit / restore 清场全覆盖，
+   *   与 bus.clearSession / reaper 同挂点先例）；
+   * - 全量取消 = shutdown 序列（组合根 index.ts，先于 server.stop 内的 destroyAll）。
+   * messageBus 经 getter 动态读（setMessageBus 晚期注入语义，同 registerDeps 模式——未注入
+   * 时 publish no-op）。
+   */
+  private readonly respawn: RespawnOrchestrator
   constructor(
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
@@ -266,6 +283,18 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
       getMessageBus: () => this.messageBus,
       getExtensionPaths: () => this.extensionService.getExtensionPaths(),
     })
+    // pi 崩溃自动恢复编排组装（u8，D7）：restore 复用既有惰性恢复内核（facade.restoreSession
+    // → lifecycle.restoreSession，附着自动走 u4c 预算化 restore 路径——⑤档预检跳过 normalize
+    // + cwd 死路径 MissingSessionCwdError 硬拒绝走熔断链路）。
+    this.respawn = new RespawnOrchestrator({
+      // isActive 守卫走可选调用：挂点在崩溃收敛链（onSessionExit）内，任何异常都会打断
+      // exitCallbacks 多播——守卫是 best-effort 优化（attemptRespawn 触发时还有复查 +
+      // restore 失败链兜底），port 缺失时按「不活跃」继续，不让守卫本身成为新故障源。
+      isActive: (sessionId) => this.pm.hasClient?.(sessionId) ?? false,
+      restore: (sessionId) => this.restoreSession(sessionId),
+      publish: (sessionId, msg) => this.messageBus?.publish(sessionId, msg),
+    })
+
     // 创建侧订阅接线(组装根,S3 seam→S5/S6 换订阅者,设计 D2②):onSessionRegistered 同步直发按
     // 订阅顺序执行——projection 先订阅(W7 播种,registerReplicatedStates)→ records 订阅
     // (ensureRecordEntriesCache(W18))→ reconciler 对账(U6,fire-and-forget .catch 降级——现状
@@ -344,6 +373,13 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
       // session.exited（独立事件，区别于 message.error 的「单次消息失败」语义）：
       // 前端据此标记 session dead 态 + 插入 error 消息 + toast 提示。
       //（wave:perf-w09：exitedMsg 的 broadcast 腿已删——session 级单通道，上方 publish 唯一出口。）
+
+      // u8（crash-resilience D7-①②）：非主动退出 → 5s 延迟自动恢复。挂在本链（而非
+      // session.exited 消息生产点）是设计裁决：本链天然不含 forceQuitSession（dispatcher
+      // 手工编排 + exit 事件双层守卫拦截）与 intentional destroy（process-manager 按
+      // processes.has 拦截）——用户手动强制退出的 session 构性不触发自动恢复（A7 反向验收）。
+      // 启动前守卫（active / restoringSessions in-flight / 熔断）在 schedule 内。
+      this.respawn.schedule(sessionId)
     })
   }
 
@@ -458,7 +494,14 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   async delete(sessionId: string): Promise<void> { return this.lifecycle.delete(sessionId) }
   async deleteByCwd(cwd: string): Promise<BatchDeleteResult> { return this.lifecycle.deleteByCwd(cwd) }
   async renameSession(sessionId: string, newName: string): Promise<void> { return this.lifecycle.renameSession(sessionId, newName) }
-  async restoreSession(sessionId: string): Promise<SessionSummary> { return this.lifecycle.restoreSession(sessionId) }
+  async restoreSession(sessionId: string): Promise<SessionSummary> {
+    const summary = await this.lifecycle.restoreSession(sessionId)
+    // u8（crash-resilience D7 熔断语义）：任一恢复成功（自动 respawn / 用户手动 / 惰性
+    // ensureActive）→ 清零连续失败计数，保证未来崩溃获得全新自动恢复额度（熔断只针对
+    // 连续失败，成功即出清；唯一清零入口，与 pi-respawn.cancel 只清 timer 不清计数配套）。
+    this.respawn.notifyRestored(sessionId)
+    return summary
+  }
   async forkSession(
     srcSessionId: string,
     fromPiEntryId: string | undefined,
@@ -564,7 +607,15 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     return this.records.invalidateRecordEntries(sessionId, customType)
   }
 
-  /** 确保会话活跃;不存在则自动 restore。并发 restore 时去重拒绝。 */
+  /**
+   * 确保会话活跃;不存在则自动 restore。
+   *
+   * 并发语义（crash-resilience D7-③，u8 join 改造）：[HISTORICAL] 原对并发调用直接
+   * throw「already being restored」——自动恢复落地后恢复窗口内用户发消息是常态路径
+   * （T4：恢复进行中用户发消息 → 等待恢复完成后继续，不报错不双跑）。现改为 join：
+   * 并发调用等待同一 in-flight Promise（只 spawn 一个 pi）；实现随 in-flight 注册表
+   * 迁入 pi-respawn 编排器（ensureRestored，join 状态单一所有者）。
+   */
   async ensureActive(sessionId: string): Promise<IPiEngine> {
     const existing = this.pm.getClient(sessionId)
     // 纵深防御（pi-exit-notification-and-respawn §6.6）：上游清理（onSessionExit）出现竞态时
@@ -572,27 +623,20 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     // existing sessions 条目已有 detach + safeDestroy + removeSessionEntry 清场），
     // 不把死 client 交给 prompt。
     if (existing && !existing.exited) return existing
-    if (this.restoringSessions.has(sessionId)) {
-      throw new Error(`Session ${sessionId} is already being restored`)
-    }
-    this.restoringSessions.add(sessionId)
-    try {
-      console.log(`[session-service] ensureActive: restoring ${sessionId}...`)
-      await this.restoreSession(sessionId)
-      const client = this.pm.getClient(sessionId)
-      if (!client) throw new Error('Restore succeeded but client not available')
-      return client
-    } finally {
-      this.restoringSessions.delete(sessionId)
-    }
+    await this.respawn.ensureRestored(sessionId)
+    const client = this.pm.getClient(sessionId)
+    if (!client) throw new Error('Restore succeeded but client not available')
+    return client
   }
 
   // ── history 读编排域（S6 迁出至 history-rebuild-cache.ts；三分支重建/inflight 合并/尾读降级详见该模块）──
 
-  /** 拉取 session 历史（缓存增量三分支重建 + 双预算窗口，实现迁 history-rebuild-cache.ts）。 */
-  async getHistory(sessionId: string): Promise<HistoryWindowResult> { return this.historyReader.getHistory(sessionId) }
-  /** 全量文件读取（「加载更多」fallback，超预检阈值走逆序窗口，实现迁 history-rebuild-cache.ts）。 */
-  async getFullHistory(sessionId: string): Promise<HistoryFileReadResult> { return this.historyReader.getFullHistory(sessionId) }
+  /**
+   * 拉取 session 历史（缓存增量三分支重建 + 双预算窗口，实现迁 history-rebuild-cache.ts）。
+   * [u6] query 透传游标翻页参数（cursor/limitTurns/maxBytes，crash-resilience §3.3 D4 中期）。
+   * [u6] getFullHistory 全量通路已退役（「加载更早」改走本方法的游标翻页，游标翻页完全替代）。
+   */
+  async getHistory(sessionId: string, query?: { cursor?: string; limitTurns?: number; maxBytes?: number }): Promise<HistoryWindowResult> { return this.historyReader.getHistory(sessionId, query) }
 
   // ── subagent/workflow 记录域（S6 迁出至 session-records.ts；磁盘扫描/引擎配置/动作详见该模块）──
 
@@ -753,6 +797,17 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     this.lifecycle.clear()
   }
 
+  /**
+   * 取消全部 pending 自动恢复 timer（crash-resilience D7-② shutdown 取消语义；组合根
+   * index.ts 的 shutdown 序列专用——必须先于 server.stop 内的 destroyAll 调用：若 destroyAll
+   * 之后 pending timer 仍可触发，shutdown 中途会 spawn 新孤儿 pi，收割器只在下次启动后
+   * 5s 跑一次，用户直接退出 app 则孤儿无限存活烧 token。对齐 u5b stopMemoryWatermarkTimer
+   * 的 shutdown 先取消先例）。
+   */
+  cancelAllPendingRespawns(): void {
+    this.respawn.cancelAll()
+  }
+
   // ── 内部协议（lifecycle/dispatcher/scanner 窄接口 + 过渡宽接口）:子模块经此访问 sessions / 共享 helper ──
 
   /** 有效 skill 路径（实现迁 launch-params.ts：cwd resolve + existsSync 过滤 + expandHome）。 */
@@ -851,6 +906,13 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     // 销毁 9 步的第 ② 步（设计 D2②）：委托 lifecycle 删 Map 条目——所有者执行，纯删除
     // 不发事件（其余步骤编排权留本 wrapper，体内顺序 = 迁移前行为等价的一部分）。
     this.lifecycle.removeEntry(sessionId)
+    // u8（crash-resilience D7-② 取消语义）：本汇聚点是「该 session 已不存在」的精确时点
+    // ——取消 pending 自动恢复 timer（5s 窗口内用户删除 session，若不取消，timer 触发会
+    // 为已删 session spawn pi 再附着失败，空转 spawn+kill）。只清 timer 不清失败计数
+    //（本汇聚点被 restoreSession 清场复用，清计数会破坏熔断——理由见 pi-respawn.cancel）。
+    // 覆盖面：主动删 / onSessionExit 进程退出（先 cancel 后 schedule，顺序安全）/ forceQuit
+    // / restore 清场全部删除路径。
+    this.respawn.cancel(sessionId)
     // R3：所有删除路径（lifecycle.delete 主动删 + onSessionExit 进程异常退）汇聚于此，
     // 触发 onSessionDelete 清 ReloadOrchestrator.pendingReload 残留。
     this.onSessionDelete?.(sessionId)

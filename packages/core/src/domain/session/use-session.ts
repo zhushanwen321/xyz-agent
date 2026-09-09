@@ -58,15 +58,14 @@ export interface NavigationRoute {
 export interface ChatHydratePort {
   /**
    * 拉取 session 历史（session.history RPC；u4b 双预算窗口可能截断）。
-   * [u4d] 窗口契约字段可选（mock/legacy reply 缺省），经 historyWindowFromReply 归一后
-   * 随 reconcileHistory 写入 chat store 截断窗口状态。
+   * [u6] 窗口契约字段必填（legacy historyTruncated 退役，偏差表 D7 双轨收口），
+   * 经 historyWindowFromReply 归一后随 reconcileHistory 写入 chat store 截断窗口状态。
    */
   getHistory(sessionId: string): Promise<{
     messages: Message[]
-    historyTruncated: boolean
-    truncated?: boolean
-    loadedTurns?: number
-    totalTurnsEstimate?: number
+    truncated: boolean
+    loadedTurns: number
+    totalTurnsEstimate: number
   }>
   /** 该 session 是否已 hydrate（幂等守卫：已回填不重复拉取） */
   isHydrated(sessionId: string): boolean

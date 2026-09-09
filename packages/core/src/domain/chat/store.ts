@@ -42,7 +42,8 @@ import type {
   SubagentDirectiveData,
   ToolCall,
 } from '@xyz-agent/shared'
-import { normalizeContent, segmentsToText, SUBAGENT_DIRECTIVE_CUSTOM_TYPE } from '@xyz-agent/shared'
+import { normalizeContent, segmentsToText, SUBAGENT_DIRECTIVE_CUSTOM_TYPE, PI_RESPAWN_NOTICE_CUSTOM_TYPE } from '@xyz-agent/shared'
+import type { PiRespawnNoticeVariant } from '@xyz-agent/shared'
 import type { RetryState, QueueState, FinalizeReason } from './store-types'
 import { isDevMode } from '../../platform/dev-mode'
 
@@ -347,21 +348,6 @@ export function createChatStore() {
    * broadcast≡get_state 对账与后续 ref 收敛消费。disposeSession / LRU 驱逐同点清理。
    */
   const entryStates = new Map<string, ChatViewState>()
-  /**
-   * [W5 D5] per-session hydrate 尾窗锚（Map 分区，与 messages 同区生命周期）。
-   *
-   * 取值规则（写死）：hydrate 注入的尾窗首条消息的 `piEntryId ?? id`——user/assistant
-   * 消息带 piEntryId（entry 派生 uuidv7）；system 族消息（bashExecution/compactionSummary/
-   * custom/branchSummary）无 piEntryId 字段但 id 即 entry 派生 uuidv7（reducer
-   * deriveBaseId：entry.id 优先），两侧取值对称。load-more（useChat.loadMoreHistory）
-   * 据此在全量历史中定位切分点，只前插锚之前的段（见 mutations.splitHistoryBeforeAnchor）。
-   *
-   * // @data-owner #7 —— 权威源 = session 文件 entries（pi append-only，compaction 不改
-   * entry id）；锚非缓存（无失效/无回写：唯一写方 = hydrate 一次性写入、重 hydrate 覆盖，
-   * 唯一读方 = loadMoreHistory）。disposeSession / LRU 驱逐同点清理（随 hydrated 标记
-   * 同生共死——驱逐重进后由重 hydrate 重建）。
-   */
-  const hydrateAnchors = new Map<string, string>()
   /** FileChanges 子域控制器（W10，ADR-0024 D5），委托 chat-changeset.ts。messages 由本 store 注入，设计见 ./README.md + chat-changeset.ts。 */
   const changeset = createChangeSetController(messages)
   const { changeSetStatuses, getChangeSetStatus, setChangeSetStatus, applyFileChanges, markChangeSetsSuperseded } = changeset
@@ -525,9 +511,7 @@ export function createChatStore() {
     (sid) => {
       deleteChangeSetStatusesFor(sid)
       entryStates.delete(sid)
-      // [W5 D5] 锚随 hydrated 标记同点清理（驱逐重进后重 hydrate 覆盖重建，防陈旧锚）
-      hydrateAnchors.delete(sid)
-      // [u4d] 截断窗口状态同点清理（同锚判据：重建型，驱逐重进后重 hydrate 重建）
+      // [u4d] 截断窗口状态同点清理（重建型，驱逐重进后重 hydrate 重建）
       clearHistoryWindow(sid)
     },
   )
@@ -573,30 +557,21 @@ export function createChatStore() {
    * 与旧的整量替换行为逐字等价。
    *
    * [u4d] window（u4b session.history 窗口契约，可选）随注入写入截断窗口状态：
-   * hydrate 路径是窗口状态的唯一写点之一（reconcileHistory 对称），缺省（mock 门面
-   * 未带窗口字段且调用方未归一）不写——消费方按「无截断」处理。
+   * hydrate 路径是窗口状态的唯一写点之一（reconcileHistory 对称），缺省不写——消费方
+   * 按「无截断」处理。
+   *
+   * [u6] hydrate 尾窗锚（hydrateAnchors，W5 D5）已退役：「加载更早」改走游标翻页，
+   * 游标取分区当前最旧消息的文件侧身份（useChat.loadMoreHistory），不再依赖 hydrate
+   * 一次性写入的静态锚。
    */
   function hydrate(sessionId: string, history: Message[], window?: HistoryWindow): void {
     if (hydrated.value.has(sessionId)) return
     const cur = messages.value.get(sessionId)?.value ?? []
     commitMessages(messages, sessionId, truncateToolOutputBatch(mergeBaselineWithLive(history, cur)))
-    // [W5 D5] hydrate 尾窗锚：hydrate 守卫保证每 session 只在此写一次；
-    // disposeSession / LRU 驱逐清 hydrated 后重 hydrate 到这里 → set 覆盖旧锚。
-    // 空 history（新 session）不记锚——此时无 load-more（truncated=false），锚缺失走兜底。
-    // [steer-bubble u3] 锚取**基线**首条（非 merged 首条）：合并追加的尾部保护段是
-    // live 实体（客户端 id，非文件侧身份），锚是 load-more 对全量历史的切分依据，
-    // 必须锚定在文件侧消息上。
-    const anchorMsg = history[0]
-    if (anchorMsg) hydrateAnchors.set(sessionId, anchorMsg.piEntryId ?? anchorMsg.id)
     // [u4d] 窗口状态随 hydrate 写入（每次 hydrate 都是 fresh getHistory 响应，覆盖语义正确）
     if (window) setHistoryWindow(sessionId, window)
     hydrated.value = new Set(hydrated.value).add(sessionId)
     lruTouch(sessionId) // W3: LRU recency
-  }
-
-  /** [W5 D5] 读 hydrate 尾窗锚（loadMoreHistory 唯一读方；未 hydrate / 空历史 → undefined）。 */
-  function getHydrateAnchor(sessionId: string): string | undefined {
-    return hydrateAnchors.get(sessionId)
   }
 
   /**
@@ -609,16 +584,19 @@ export function createChatStore() {
    * 守卫丢弃 → 流永久停滞。合并方向（登记表 #7 切入 reconcile 规则）：
    * **entry 历史为基线，分区尾部 streaming 实体追加其后**（live 真相优先于 entry 快照）。
    *
-   * - 未 hydrate → 等价 hydrate（原语义：合并注入 + 锚 + 标记 + [u4d] 窗口状态）
-   * - 已 hydrate → 基线替换 + 保留尾部保护段（streaming assistant + 未确认 user，
-   *   [steer-bubble u3/D3] 两步合并：尾部保护段收集 + user 正序-尾窗对齐去重，见
-   *   mergeBaselineWithLive——快照滞后窗口不丢已投递气泡、不双计；turn 已结束（无
-   *   保护段）则纯刷新到最新 entries
+   * - 未 hydrate → 等价 hydrate（原语义：合并注入 + 标记 + [u4d] 窗口状态）
+   * - 已 hydrate + window.truncated=false（全量响应）→ 基线替换 + 保留尾部保护段
+   *   （streaming assistant + 未确认 user，[steer-bubble u3/D3] 两步合并，见
+   *   mergeBaselineWithLive——快照滞后窗口不丢已投递气泡、不双计）
+   * - 已 hydrate + window.truncated=true（[u6] 窗口响应，crash-resilience §3.3 D4 合并
+   *   语义改造）：**仅合并覆盖最近窗口，已加载的更早历史保留，禁止整体替换**（否则
+   *   「加载更早」翻到的历史会在下次切入时被静默清掉——设计 A5b 负面场景）。切分锚 =
+   *   窗口首条消息的文件侧身份（piEntryId ?? id）在分区中的位置：锚之前的段原样保留，
+   *   锚及之后走 mergeBaselineWithLive（尾部保护段语义不丢）；锚未命中（窗口首条不在
+   *   分区——分区无更早历史 / 异常改写）→ 退化为整体合并（现状语义，窗口覆盖全部分区）。
    *
-   * [u4d] window（可选）随切入刷新覆盖窗口状态：getHistory 是预算窗口响应，truncated
-   * 必须与当前分区内容同步（load-more 已收敛为全量后切入，响应仍为窗口 → truncated
-   * 翻回 true，顶部条重显——与 reconcile 整量替换分区截回尾窗的现状行为一致；
-   * 合并语义改造归 u6）。
+   * [u4d] window（可选）随切入刷新覆盖窗口状态（窗口响应 truncated=true 时顶部条保持
+   * 「加载更早」入口；全量响应 false 时消失）。
    */
   function reconcileHistory(sessionId: string, history: Message[], window?: HistoryWindow): void {
     if (!hydrated.value.has(sessionId)) {
@@ -626,6 +604,27 @@ export function createChatStore() {
       return
     }
     const cur = messages.value.get(sessionId)?.value ?? []
+    // [u6] 窗口合并切分：windowFirstId 是窗口基线的文件侧首条，分区中它之前的消息
+    // 属「已加载的更早历史」——保留不动，仅窗口段被响应刷新。
+    let keptEarlier: Message[] | undefined
+    let tailFromIdx = 0
+    if (window?.truncated && history.length > 0) {
+      const windowFirstId = history[0]!.piEntryId ?? history[0]!.id
+      const splitIdx = cur.findIndex((m) => (m.piEntryId ?? m.id) === windowFirstId)
+      if (splitIdx > 0) {
+        keptEarlier = cur.slice(0, splitIdx)
+        tailFromIdx = splitIdx
+      }
+      // splitIdx === 0（分区无更早历史）或 -1（窗口首条不在分区）→ 走整体合并：
+      // 窗口已覆盖分区全部文件侧内容，无更早历史可保留
+    }
+    if (keptEarlier) {
+      const merged = mergeBaselineWithLive(history, cur.slice(tailFromIdx))
+      commitMessages(messages, sessionId, [...keptEarlier, ...truncateToolOutputBatch(merged)])
+      if (window) setHistoryWindow(sessionId, window)
+      lruTouch(sessionId)
+      return
+    }
     const merged = mergeBaselineWithLive(history, cur)
     commitMessages(messages, sessionId, truncateToolOutputBatch(merged))
     if (window) setHistoryWindow(sessionId, window)
@@ -1105,6 +1104,32 @@ export function createChatStore() {
   }
 
   /**
+   * [u8] 追加 pi 崩溃恢复提示条（crash-resilience D7，session.restored / session.restoreFailed
+   * 消费写入点）。customType = PI_RESPAWN_NOTICE_CUSTOM_TYPE（ui SystemNotice 按形态分支渲染；
+   * restored = T4 恢复文案，restoreFailed = 失败态 + 重试按钮），variant 入 details（渲染方
+   * 经 parseRespawnNoticeVariant 解析），liveOnly:true——runtime 生成的一次性通知，pi session
+   * JSONL 无对应 entry，重开 session 后不出现（与 stream_warn 同语义类）。
+   * content = 降级兜底文本（customType 分支渲染失败时按普通 system 行显示，不静默丢失）。
+   */
+  const appendRespawnNotice = (sessionId: string, variant: PiRespawnNoticeVariant, fallbackText: string): void => {
+    const prev = messages.value.get(sessionId)?.value ?? []
+    commitMessages(messages, sessionId, [
+      ...prev,
+      {
+        id: `sys-${crypto.randomUUID()}`,
+        role: 'system',
+        customType: PI_RESPAWN_NOTICE_CUSTOM_TYPE,
+        content: fallbackText,
+        details: { variant },
+        display: true,
+        liveOnly: true,
+        status: 'complete',
+        timestamp: Date.now(),
+      },
+    ])
+  }
+
+  /**
    * 追加 subagent 定向消息气泡（`@` 定向对话 live 链路，composer-symbol-system §3.3.3a）。
    *
    * 消息形态与 reload 链路逐字段对齐（live ≡ reload，关键规则 9）：reload 侧由
@@ -1171,8 +1196,6 @@ export function createChatStore() {
     deleteChangeSetStatusesFor(sessionId)
     // [W21] reducer 累积态分区同点清理（与 LRU 驱逐的 deleteMessageKey 内联清理同语义）
     entryStates.delete(sessionId)
-    // [W5 D5] hydrate 尾窗锚同点清理（唯一写方 hydrate 已随 hydrated 守卫失效，锚无独立存活意义）
-    hydrateAnchors.delete(sessionId)
     // [D3 closure] executingBash ephemeral 分区同点清理（bash-effects 模块级 Map 挂接本
     // 编排——session 删除无残留；形态定案理由见 bash-effects.ts 文件头注释）
     clearExecutingBash(sessionId)
@@ -1202,7 +1225,6 @@ export function createChatStore() {
     markChangeSetsSuperseded,
     isHydrated, markHistoryFailed, clearHistoryError,
     hydrate, setMessages, reconcileHistory,
-    getHydrateAnchor,
     // [u4d] 历史预算截断窗口状态（ref + 读/写/清，SSOT 见 truncated-window.ts）
     historyWindows, getHistoryWindow, setHistoryWindow, clearHistoryWindow,
     prependHistory,
@@ -1248,6 +1270,7 @@ export function createChatStore() {
     isHandingOff,
     setHandingOff,
     appendSystemNotice,
+    appendRespawnNotice,
     appendSubagentDirective,
     truncateFrom,
     applyFileChanges,
@@ -1308,7 +1331,7 @@ export type ChatStoreReaders = Pick<
   | 'occupancies'
   | 'historyWindows'
   | 'getMessages' | 'getRetryState' | 'getQueueState' | 'getChangeSetStatus'
-  | 'isHydrated' | 'getHydrateAnchor' | 'isGenerating' | 'isActive'
+  | 'isHydrated' | 'isGenerating' | 'isActive'
   | 'isCompacting' | 'getCompactingReason' | 'isHandingOff'
   | 'getOccupancy' | 'sessionPhase' | 'isPendingSend'
   | 'getInflight'
@@ -1331,7 +1354,7 @@ export type ChatStoreOps = Pick<
   | 'finalizeAllStreaming' | 'resetTransientStates' | 'addPendingSend'
   | 'clearPendingSend' | 'markSessionError' | 'setHandingOff'
   | 'setOccupancy' | 'clearOccupancy' | 'setCompactingReason'
-  | 'appendSystemNotice' | 'appendSubagentDirective' | 'truncateFrom'
+  | 'appendSystemNotice' | 'appendRespawnNotice' | 'appendSubagentDirective' | 'truncateFrom'
   | 'applyFileChanges' | 'disposeSession' | 'markStreamingBashError'
   | 'refreshStreamingTimer' | 'setStreamingIdleTimeoutMs'
   | 'touchLru' | 'evictIfNeeded' | 'evictSessionWithVirtual' | 'evictVirtualKey'

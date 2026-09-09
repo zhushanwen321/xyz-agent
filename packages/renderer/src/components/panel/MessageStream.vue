@@ -82,7 +82,7 @@
             :key="item.entry.id"
             :entry="item.entry"
           />
-          <SystemNotice v-else :key="renderKey(item)" :message="item.message" />
+          <SystemNotice v-else :key="renderKey(item)" :message="item.message" @respawn-retry="onRespawnRetry" />
         </template>
       </Virtualizer>
 
@@ -133,7 +133,7 @@
 
     <!-- [u4d] 历史预算截断顶部条（abs 定位 top=0，virta startMargin 已为它预留空间）。
          显隐 = store 截断窗口状态（u4b session.history truncated，经 useChat.hasMoreHistory 派生）；
-         条内文案 N = loadedTurns，「加载更早」复用既有 getFullHistory 通路（useLoadMoreHistory）。
+         条内文案 N = loadedTurns，「加载更早」走 [u6] 游标翻页通路（useLoadMoreHistory）。
          ref 供 dev-only 断言：实测高度 vs LOAD_MORE_RESERVED_HEIGHT 常量漂移检测（见 useConstantHeightAssert）。
          [chat-pin-bottom-fix D3] 留在 contentWrapEl wrapper 外：absolute 锚定 scrollEl
          （nearest positioned ancestor），wrapper 永不得成为 containing block（见 wrapper 注释）。 -->
@@ -181,6 +181,10 @@ import { ChevronDown, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Virtualizer, type VirtualizerHandle } from 'virtua/vue'
 import { useChatStore } from '@/stores/chat'
+import { useSessionStore } from '@/stores/session'
+import { useToast } from '@/composables/useToast'
+// [u8-pi-respawn] 恢复提示条重试按钮的手动恢复 RPC（useSidebar.restoreSession 同源通道）。
+import { session as sessionApi } from '@/api'
 import { getExecutingBash } from '@xyz-agent/core'
 import { useVirtuaFollow } from '@/composables/panel/useVirtuaFollow'
 import { usePinBottomGuard } from '@/composables/panel/usePinBottomGuard'
@@ -229,6 +233,22 @@ const { loadingMore, showLoadMore, handleLoadMore, isPrepend } = useLoadMoreHist
 /** [u4d] 顶部条「已加载最近 N 轮」的 N：store 截断窗口状态 loadedTurns（u4b session.history
  *  窗口契约；无记录（未 hydrate / 非截断）回落 0——showLoadMore 为 false 时条不渲染，值无关）。 */
 const loadedTurns = computed(() => chat.getHistoryWindow(props.sessionId)?.loadedTurns ?? 0)
+
+/**
+ * [u8-pi-respawn] 恢复提示条（restoreFailed 形态）重试按钮 → 手动恢复（crash-resilience
+ * D7 熔断后的用户出口）。自动恢复链路已熔断不再续排，此处走显式 session.restore RPC
+ * （useSidebar.restoreSession 同源通道）+ revive 复位 dead 态；成功后 runtime 推
+ * session.restored（ring 回放/重订阅可见），失败 toast 指引。
+ */
+async function onRespawnRetry(): Promise<void> {
+  try {
+    await sessionApi.restoreSession(props.sessionId)
+    useSessionStore().revive(props.sessionId)
+  } catch (e) {
+    console.warn(`[MessageStream] manual respawn retry failed for session ${props.sessionId}:`, e)
+    useToast().error(t('panel.message.respawnRetryFailed'))
+  }
+}
 
 /** 当前 session 的消息（getMessages 兼容接口：W10 D-1 后 messages Map 的 value 是内层
  *  ShallowRef<Message[]> 容器，直接 .get() 会拿到 ref 而非数组——getMessages 内部

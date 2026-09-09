@@ -28,8 +28,8 @@ import {
   resetSubscriptionStates,
 } from '../../coordination/subscription-state'
 import type { ChatStoreInstance } from './store'
-import { splitHistoryBeforeAnchor } from './mutations'
 import { historyWindowFromReply } from './truncated-window'
+import { collectImagesFromMessages, persistImagesNewestFirst } from './image-cache'
 import { createMessageCoalescer } from './delta-coalescer'
 import { getExecutingBash } from './bash-effects'
 import { toErrorMessage } from '../../utils/error-message'
@@ -1074,9 +1074,9 @@ export function createUseChat(deps: UseChatDeps) {
    * [W21 已接] 实时侧喂同一 reducer：message_end / tool_call_end 重构 entry 经
    * store.applyMessageEvent → applyEntryFrame 累积 per-session reducer state
    * （messages ref 的实时渲染仍走 overlay 路径，ref 与 reducer state 收敛归 W22 对账）。
-   * [W5 D5] store.hydrate 内部同时记录尾窗锚（首条消息 `piEntryId ?? id`，唯一写方），
-   * 供 loadMoreHistory 锚定切分——两条历史读取路径（RPC getEntries entry 树重建 /
-   * 文件尾读 mapSessionEntries）都携带 entry 派生 id，边界消息身份稳定可得。
+   * [u6] loadMoreHistory 已改游标翻页（游标取分区最旧消息文件侧身份），hydrate 尾窗锚
+   * 机制退役——两条历史读取路径（RPC getEntries entry 树重建 / 文件尾读 mapSessionEntries）
+   * 都携带 entry 派生 id，游标身份稳定可得。
    */
   async function hydrateHistory(sessionId: string): Promise<void> {
     if (chat.isHydrated(sessionId)) return
@@ -1084,6 +1084,10 @@ export function createUseChat(deps: UseChatDeps) {
     // [u4d] 窗口状态随 hydrate 写入 store（SSOT：truncated/loadedTurns/totalTurnsEstimate
     // 单点存 chat store；N1 historyTruncatedSessions 双轨退役，hasMoreHistory 派生读）。
     chat.hydrate(sessionId, reply.messages, historyWindowFromReply(reply))
+    // [D6-⑨ u7] toolResult 图片落盘 hydrate 编排（fire-and-forget 不阻塞历史注入）：
+    // 收集消息序图片反转新→旧交 main 按序落盘、超帽即停；无 electronAPI 宿主（headless/
+    // mock）内建 no-op。失败静默——渲染组件挂载兜底逐图重试。
+    void persistImagesNewestFirst(sessionId, collectImagesFromMessages(reply.messages))
   }
 
   /**
@@ -1095,47 +1099,43 @@ export function createUseChat(deps: UseChatDeps) {
   }
 
   /**
-   * W4 H4：加载更多历史（fallback 全量读 + 合并去重）。
+   * 「加载更早」游标翻页（[u6] crash-resilience §3.3 D4 中期；原 W4 H4 getFullHistory
+   * 全量通路退役——游标翻页完全替代）。
    *
-   * [W5 D5 锚定切分] getFullHistory（runtime 全量文件读取，消息 id = entry 派生 uuidv7）
-   * 取回后**按 hydrate 尾窗锚切分**，只把锚之前的段交给 prependHistory。为什么不能靠
-   * id 去重：活跃 session 的 store 混合 live 消息（`u-`/`e<N>`/`bash-` 前缀 id）与
-   * hydrate 文件侧消息（uuidv7 id），两个 id 空间**永不相等**——live 消息在文件里的
-   * 对应物会被旧去重误判为新消息，重复前插、分组错乱（机制 5）。锚 = hydrate 尾窗
-   * 首条的 entry 身份（store.hydrate 记录，唯一写方），锚之前的段必然不在 store 中。
+   * 游标 = store 当前**最旧消息**的文件侧身份（`piEntryId ?? id`；live 消息只 append
+   * 尾部，分区最旧恒为文件侧已加载最早消息）。runtime 按游标返回「锚点之前的最近
+   * 窗口」（活跃/离线两路径共用语义），prependHistory 前插 + 窗口状态更新：
+   * - 页响应 truncated=true = 锚前仍有更早历史 → 顶部条保持；false = 翻页到头 → 按钮消失。
+   * - loadedTurns 累计各页（「已加载最近 N 轮」的 N 随翻页增长）；totalTurnsEstimate
+   *   未读到头时取历史估计与页估计的较大者（均为下界），读到头时页值即精确总量。
+   * - cursor 未命中（消息已被清理/超扫描域）→ runtime 返回空页 + truncated=false
+   *   （翻页到头语义，不报错），分区不变、按钮收敛。
    *
-   * 三级定位见 mutations.splitHistoryBeforeAnchor（exact / fingerprint / none）：
-   * 非 exact 即 console.warn（V6 验收：console 出现锚降级 warn = 兜底路径命中，需检查
-   * compaction / 外部改写情形）；none 时 prependHistory 的 id 去重兜底仍在（安全网）。
-   *
-   * 幂等：切分后空段不写入（FR-4/AC-7）；锚即全量首条 = 没有更早历史，窗口收敛为
-   * truncated=false 后按钮隐藏（hasMoreHistory → false）。RPC 失败不破坏现有消息（catch
-   * 吞错，与 hydrateHistory 的 markHistoryFailed 同策略），用户可重试。
+   * 幂等：空页不写入（显式短路 + prependHistoryMut 空数组安全网）。RPC 失败不破坏
+   * 现有消息（catch 吞错，与 hydrateHistory 的 markHistoryFailed 同策略），用户可重试。
    */
   async function loadMoreHistory(sessionId: string): Promise<void> {
     try {
-      const { messages: fullHistory, truncated: fullTruncated } = await deps.chatApi.getFullHistory(sessionId)
-      // 锚消息 = store 当前最旧消息：live 消息只 append 到尾部，load-more 前最旧的
-      // 仍是 hydrate 尾窗首条（fingerprint 降级用其 role/首段文本/timestamp）。
-      const anchor = chat.getHydrateAnchor(sessionId)
-      const anchorSource = chat.getMessages(sessionId)[0]
-      const { segment, strategy } = splitHistoryBeforeAnchor(fullHistory, anchor, anchorSource)
-      if (strategy !== 'exact') {
-        console.warn(
-          `[useChat] loadMoreHistory anchor split degraded to '${strategy}' for session ${sessionId}` +
-            ` (anchor=${String(anchor)}) — ${strategy === 'none' ? 'id-dedup safety net engaged (live duplicates possible)' : 'content-fingerprint located the split point'}`,
-        )
+      const oldest = chat.getMessages(sessionId)[0]
+      const cursor = oldest ? (oldest.piEntryId ?? oldest.id) : undefined
+      if (cursor === undefined) {
+        // 分区为空却请求翻页（理论不可达：truncated=true 时分区非空）——防御短路
+        console.warn(`[useChat] loadMoreHistory skipped for session ${sessionId}: empty partition (no cursor anchor)`)
+        return
       }
-      chat.prependHistory(sessionId, segment)
-      // [u4d] 窗口状态随全量通路响应收敛（N1 clearHistoryTruncated 退役）：getFullHistory
-      // 返回完整时 truncated=false → 顶部条消失（A6/需求③）；u4b ①档巨型文件降级为逆序
-      // 窗口时 truncated=true → 顶部条保持「加载更早」入口。loadedTurns/totalTurnsEstimate
-      // 沿用最近窗口值（getFullHistory 响应无 turn 统计，最小可用；deviation 已登记）。
+      const reply = await deps.chatApi.getHistory(sessionId, { cursor })
+      // 空页（翻页到头）短路：分区不变，仅窗口状态收敛（下方统一写）
+      if (reply.messages.length > 0) {
+        chat.prependHistory(sessionId, reply.messages)
+      }
       const prev = chat.getHistoryWindow(sessionId)
+      const page = historyWindowFromReply(reply)
       chat.setHistoryWindow(sessionId, {
-        truncated: fullTruncated ?? false,
-        loadedTurns: prev?.loadedTurns ?? 0,
-        totalTurnsEstimate: prev?.totalTurnsEstimate ?? 0,
+        truncated: page.truncated,
+        loadedTurns: (prev?.loadedTurns ?? 0) + page.loadedTurns,
+        totalTurnsEstimate: page.truncated
+          ? Math.max(prev?.totalTurnsEstimate ?? 0, page.totalTurnsEstimate)
+          : page.totalTurnsEstimate,
       })
     // eslint-disable-next-line taste/no-silent-catch -- 加载更多是 best-effort：失败不破坏现有消息，用户可重试。与 hydrateHistory markHistoryFailed 同策略。
     } catch (e) {

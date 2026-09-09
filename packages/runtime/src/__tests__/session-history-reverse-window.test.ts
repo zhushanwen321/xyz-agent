@@ -4,7 +4,7 @@
  * 必测断言（impl-plan u4b 验收）：
  * - ⑤ ①档大文件逆序窗口：>32MB fixture（tmpdir 自建自删、真实 JSONL 行形态）→
  *   statSync 预检超 READ_PRECHECK_MAX_BYTES → 逆序分块读返回最近预算窗口 + truncated
- *   标记（不拒绝）；消费方语义：getFullHistory / getSubagentHistory 同链路（①档底座）
+ *   标记（不拒绝）；消费方语义：[u6] 游标翻页文件读 / getSubagentHistory 同链路（①档底座）
  * - ⑥ ②档分块扩窗：尾部凑够 20 turns 不触全量（结果只有 20 turns 即为证据——全量读
  *   会返回全部 turns）；凑不够到 32MB 上限返回部分 + truncated
  * - ⑦ 行边界对齐由 history-reverse-read.test.ts 单元覆盖（此处端到端复验）

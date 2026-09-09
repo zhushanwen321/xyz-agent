@@ -6,7 +6,8 @@
  * ① truncated=true → 顶部条渲染「已加载最近 N 轮」+「加载更早」按钮可见
  * ② truncated=false → 顶部条不存在（A6 回归：普通 session 无任何截断提示）
  * ③ 点击「加载更早」→ 既有 loadMoreHistory 通路被调（mock useChat 断言；core 侧
- *   getFullHistory 调用断言见 core __tests__/truncated-window.test.ts）
+ *   [u6] 游标翻页调用断言见 core __tests__/truncated-window.test.ts——原 getFullHistory
+ *   全量通路已退役）
  *
  * mock 边界对齐 MessageStream-kind.test.ts：virtua（happy-dom 无布局）、ChatViewDeps 装配器、
  * useChat 编排（showLoadMore 的 store→hasMoreHistory 派生链由 core truncated-window.test.ts
@@ -167,7 +168,7 @@ describe('MessageStream 截断顶部条（u4d）', () => {
     wrapper.unmount()
   })
 
-  it('必测③ 点击「加载更早」→ loadMoreHistory(sessionId) 被调（既有 getFullHistory 通路入口）', async () => {
+  it('必测③ 点击「加载更早」→ loadMoreHistory(sessionId) 被调（[u6] 游标翻页通路入口）', async () => {
     const store = useChatStore()
     store.hydrate(SID, [makeMsg('m1')])
     store.setHistoryWindow(SID, { truncated: true, loadedTurns: 20, totalTurnsEstimate: 42 })

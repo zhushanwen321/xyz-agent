@@ -23,7 +23,7 @@ const mocks = vi.hoisted(() => ({
   switchSession: vi.fn().mockResolvedValue(undefined),
   list: vi.fn().mockResolvedValue([]),
   remove: vi.fn().mockResolvedValue(undefined),
-  getHistory: vi.fn().mockResolvedValue({ messages: [], historyTruncated: false }),
+  getHistory: vi.fn().mockResolvedValue({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 }),
   ensureStreamSub: vi.fn(),
   loadTree: vi.fn(),
   cancelFlow: vi.fn(),
@@ -170,20 +170,21 @@ describe('useSidebar 接缝（TC-1..TC-4）', () => {
     useSessionStore().applySnapshot({ groups: [group([summary('s1')])] })
 
     // 首次切入 hydrate（try 分支，truncated=false）
-    mocks.getHistory.mockResolvedValue({ messages: [], historyTruncated: false })
+    mocks.getHistory.mockResolvedValue({ messages: [], truncated: false, loadedTurns: 1, totalTurnsEstimate: 1 })
     await sidebar.selectSession('s1')
     expect(useChatStore().isHydrated('s1')).toBe(true)
 
-    // 场景：hydrate（窗口 truncated=true 场景）→ load-more 前插全量并收敛窗口 → 切走切回，
-    // getHistory 又返回预算窗口（u4b）——reconcile 整量替换分区把前插历史截回尾窗。
-    // truncated 必须重新置 true：「加载更早」顶部条（hasMoreHistory 驱动）重显。
-    // [u4d] SSOT = chat store 截断窗口状态（legacy reply 无窗口字段 → 归一回落 historyTruncated）。
-    mocks.getHistory.mockResolvedValue({ messages: [], historyTruncated: true })
+    // 场景：hydrate（窗口 truncated=true）→ load-more 游标翻页 → 切走切回，
+    // getHistory 又返回预算窗口（u4b）——[u6] reconcile 合并语义：窗口响应仅合并覆盖
+    // 最近窗口（已加载更早历史保留），窗口状态同步刷新 truncated=true，
+    // 「加载更早」顶部条（hasMoreHistory 驱动）重显。
+    // [u4d] SSOT = chat store 截断窗口状态（[u6] 契约三字段必填，legacy historyTruncated 退役）。
+    mocks.getHistory.mockResolvedValue({ messages: [], truncated: true, loadedTurns: 2, totalTurnsEstimate: 2 })
     await sidebar.selectSession('s1')
     expect(useChatStore().getHistoryWindow('s1')?.truncated).toBe(true)
 
     // 响应未截断（truncated=false）→ 窗口收敛，与「分区已替换为响应内容」一致
-    mocks.getHistory.mockResolvedValue({ messages: [], historyTruncated: false })
+    mocks.getHistory.mockResolvedValue({ messages: [], truncated: false, loadedTurns: 1, totalTurnsEstimate: 1 })
     await sidebar.selectSession('s1')
     expect(useChatStore().getHistoryWindow('s1')?.truncated).toBe(false)
   })

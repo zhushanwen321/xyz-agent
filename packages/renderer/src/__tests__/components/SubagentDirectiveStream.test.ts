@@ -132,8 +132,7 @@ function makeFixture(sid: string): Fixture {
     compact: vi.fn().mockResolvedValue(undefined),
     bash: vi.fn().mockResolvedValue(undefined),
     abortBash: vi.fn().mockResolvedValue(undefined),
-    getHistory: vi.fn().mockResolvedValue({ messages: [], historyTruncated: false }),
-    getFullHistory: vi.fn().mockResolvedValue([]),
+    getHistory: vi.fn().mockResolvedValue({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 }),
     streamSubscribe: vi.fn((s: string, h: (m: ServerMessage) => void) => {
       streamHandlers.set(s, h)
       return () => streamHandlers.delete(s)

@@ -169,15 +169,12 @@ export interface ISessionService {
    * 拉取 session 历史（缓存增量三分支重建 + 双预算窗口，crash-resilience §3.3 D4）。
    * truncated=true 表示窗口外仍有历史；loadedTurns=本次返回的完整 turn 数；
    * totalTurnsEstimate=turn 总数估计（全量重建路径精确，窗口截断路径为下界）。
+   * [u6] query 可选（crash-resilience §3.3 D4 中期分页协议）：cursor=turn 边界锚点
+   * entryId（返回锚点之前的最近窗口，活跃/离线两路径共用语义）；limitTurns/maxBytes
+   * 覆盖默认预算（缺省回落 HISTORY_BUDGET）。cursor 未命中返回空页 + truncated=false
+   * （翻页到头，不报错）。
    */
-  getHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean; loadedTurns: number; totalTurnsEstimate: number }>
-  /**
-   * 获取 session 历史（直读 JSONL 文件，「加载更多」通路）。
-   * 与 getHistory 的区别：getHistory 优先走 RPC（pi client.getEntries entry 树重建）+ 双预算窗口；
-   * getFullHistory 全量读文件；文件超 READ_PRECHECK_MAX_BYTES 预检（crash-resilience §3.3 D5①）
-   * 时底层逆序分块读返回最近预算窗口 + truncated 标记（不拒绝）。
-   */
-  getFullHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean }>
+  getHistory(sessionId: string, query?: { cursor?: string; limitTurns?: number; maxBytes?: number }): Promise<{ messages: Message[]; truncated: boolean; loadedTurns: number; totalTurnsEstimate: number }>
   /**
    * 获取 session 派生的 subagent 列表（从主 session JSONL 的 subagent toolCall/toolResult 提取）。
    * 纯磁盘读取，不依赖 pi 进程活跃。文件不存在或无 subagent 调用时返回空数组。

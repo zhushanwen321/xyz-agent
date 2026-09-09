@@ -269,7 +269,7 @@ export class TraceSync {
    * ③ 未落盘（pi 延迟写入窗口）→ source='empty' 空态标记。
    *
    * 文件路径解析：活跃 session 优先内存 sessionFilePath（pi spawn 后回填，免扫描），
-   * 否则 scanSessions({force:true})（路径解析消费方旁路 TTL，plan M-3 同 getFullHistory）。
+   * 否则 scanSessions({force:true})（路径解析消费方旁路 TTL，plan M-3 单 session 形态）。
    */
   async getTraceEntries(sessionId: string): Promise<SessionTraceSnapshot> {
     const client = this.deps.pm.getClient(sessionId)

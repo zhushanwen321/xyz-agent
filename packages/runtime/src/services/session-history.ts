@@ -9,11 +9,17 @@
  * 字节预算（crash-resilience §3.3 D5 / 实施计划 u4b-history-budget）：
  * - ①档 getHistoryFromFilePath：statSync 预检超 READ_PRECHECK_MAX_BYTES（32MB）→
  *   逆序分块读返回最近预算窗口 + truncated 标记（不拒绝——通路的价值就是给内容）。
- *   消费方：getFullHistory（前端「加载更多」）、getSubagentHistory / getAgentCallHistory
- *   （session-records.ts——subagent 历史恰是巨型 JSONL 高发源）。
+ *   消费方：getSubagentHistory / getAgentCallHistory（session-records.ts——subagent
+ *   历史恰是巨型 JSONL 高发源）。[u6] getFullHistory（前端「加载更多」）消费方已随
+ *   全量通路退役（D4 中期：session.history 游标翻页替代），getHistoryFromFile 包装同点删除。
  * - ②档 tailReadHistory 尾读 fallback：分块扩窗（从尾部按 1MB 块向前扩，凑够
  *   HISTORY_BUDGET.RECENT_TURNS 或读到文件头即停，总读取量上限 32MB）替代
  *   「凑不够 20 turns 就全量读」的现行路径——离线 fallback 不再是无界读。
+ *
+ * 游标翻页（crash-resilience §3.3 D4 中期，u6-paging-protocol）：collectRecentTurnEntriesFromTail
+ * 扩展 cursorId 定位——逆序扫描遇 cursor entry 行时丢弃已收集的更新侧行，从更旧行继续
+ * 凑 N turns，即「锚点之前的最近窗口」；与活跃路径（sliceMessagesBeforeCursor +
+ * applyHistoryBudgetWindow）共用 turn 边界/首 turn 豁免/字节预算参数语义。
  */
 
 import { readFile } from 'node:fs/promises'
@@ -48,33 +54,40 @@ function filterObjectEntries(entries: unknown[]): PiSessionEntry[] {
 }
 
 /**
- * 从 .jsonl session 文件读取消息历史。
- * 文件不存在或为空时返回空数组。
+ * [u6] 离线历史窗口查询参数（session.history 协议参数的文件读路径投影）。
+ * cursor/limitTurns/maxBytes 语义与活跃路径共用（D4：活跃/离线两路径同一参数语义）。
  */
-export async function getHistoryFromFile(sessionId: string, sessionStore: ISessionStore): Promise<HistoryFileReadResult> {
-  // wave:perf-w26（D9-1 消费方分层，plan M-3）：单 session 路径解析消费方 force 旁路目录
-  // TTL 缓存——pi 是外部进程写文件（首个 assistant 后落盘），刚落盘 session 在 TTL 窗口内
-  // 也必须解析到文件路径，否则 getFullHistory（加载更多）静默返回空。
-  const target = sessionStore.scanSessions({ force: true }).find(s => s.id === sessionId)
-  if (!target) return { messages: [], truncated: false }
-  return getHistoryFromFilePath(target.filePath, sessionStore)
+export interface HistoryWindowQuery {
+  /** turn 边界锚点 entryId：返回该锚点之前的最近窗口；缺省 = 最近窗口（u4b 现状）。 */
+  cursor?: string
+  /** 窗口 turns 数（缺省 HISTORY_BUDGET.RECENT_TURNS）。 */
+  limitTurns?: number
+  /** 字节预算（缺省不启用于既有尾读调用方；游标翻页路径由 reader 归一默认传入）。 */
+  maxBytes?: number
 }
 
 /**
  * W1 H4：从 .jsonl session 文件**尾读**最近 maxTurns 个 turn 的历史。
  *
- * 与 getHistoryFromFile 的区别：尾读走预算窗口（分块扩窗，D5②），避免大 session
- * 文件全量读取。返回 TailReadResult（含 truncated 标志）。
+ * 尾读走预算窗口（分块扩窗，D5②），避免大 session 文件全量读取。返回 TailReadResult
+ * （含 truncated 标志）。getHistory 的文件 fallback 走此函数（默认尾读）。
  *
- * getHistory 的文件 fallback 走此函数（默认尾读），getFullHistory（加载更多）走
- * getHistoryFromFile——两者语义互补。
+ * [u6] query.cursor 存在时切游标窗口（锚点之前的最近 N turns，见
+ * collectRecentTurnEntriesFromTail 的 cursorId 定位）；cursor 未命中（已清理/超扫描域）→
+ * 空页 + truncated=false（翻页到头语义，不报错）。
  */
-export async function getHistoryTailFromFile(sessionId: string, sessionStore: ISessionStore, maxTurns: number = HISTORY_BUDGET.RECENT_TURNS): Promise<TailReadResult> {
-  // wave:perf-w26（D9-1 消费方分层，plan M-3）：同 getHistoryFromFile——路径解析 force 旁路，
-  // 离线 session 的尾读 fallback 不受 TTL 窗口陈旧影响。
+export async function getHistoryTailFromFile(
+  sessionId: string,
+  sessionStore: ISessionStore,
+  maxTurns: number = HISTORY_BUDGET.RECENT_TURNS,
+  query?: HistoryWindowQuery,
+): Promise<TailReadResult> {
+  // wave:perf-w26（D9-1 消费方分层，plan M-3）：路径解析 force 旁路目录 TTL 缓存——
+  // pi 是外部进程写文件（首个 assistant 后落盘），刚落盘 session 在 TTL 窗口内也必须
+  // 解析到文件路径；离线 session 的尾读 fallback 不受 TTL 窗口陈旧影响。
   const target = sessionStore.scanSessions({ force: true }).find(s => s.id === sessionId)
   if (!target) return { messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 }
-  return tailReadHistory(target.filePath, sessionStore, maxTurns)
+  return tailReadHistory(target.filePath, sessionStore, maxTurns, query)
 }
 
 /** ①档文件直读结果（crash-resilience §3.3 D5①：超预检阈值时 truncated=true）。 */
@@ -180,6 +193,15 @@ export type TailReadResult = HistoryWindowResult
  * 凑够 maxTurns 或读到文件头即停；总读取量上限 READ_PRECHECK_MAX_BYTES（32MB），
  * 到上限仍未凑够返回已凑部分 + truncated 标记。**消除「凑不够就全量读」的现行 fallback**。
  *
+ * [u6] 游标定位（cursorId 传入时）：逆序扫描（新→旧）遇 cursor entry 行时，丢弃此前
+ * 收集的行（那是 cursor 更新侧），其后收集的即「cursor 之前」区域——凑够 N turns 即停。
+ * cursor 行本身不返回（锚所在 turn 已在 renderer 分区中）。cursor 未命中（读到头 /
+ * 32MB 上限仍未遇）→ cursorMiss=true（调用方按翻页到头返回空页，不报错——D4 空游标边界）。
+ *
+ * [u6] 字节预算（maxBytes 传入时启用，游标翻页路径用；与活跃路径 applyHistoryBudgetWindow
+ * 同语义——首个 turn 豁免（超限完整放行）、后续 turn 按累计字节判定，turn 原子性不切）。
+ * 缺省（既有尾读调用方）= 仅 turn 数预算，u4b 现状不变。
+ *
  * 窗口起点对齐（entry 原子性）：分块停止时最前一行可能落在某 turn 中间（前半未读）——
  * 非全文件扫描时把起点对齐到已读区域内第一个 turn 边界（残段丢弃，同 turn entry 不拆）；
  * 全文件扫描（fullyScanned）时窗口含全部行（对齐现行 windowStart=0 行为，头部孤儿段保留）。
@@ -189,19 +211,45 @@ export type TailReadResult = HistoryWindowResult
 function collectRecentTurnEntriesFromTail(
   filePath: string,
   maxTurns: number,
-): { entries: PiSessionEntry[]; truncated: boolean; loadedTurns: number; totalTurnsEstimate: number } | null {
+  opts?: { maxBytes?: number; cursorId?: string },
+): { entries: PiSessionEntry[]; truncated: boolean; loadedTurns: number; totalTurnsEstimate: number; cursorMiss: boolean } | null {
+  const maxBytes = opts?.maxBytes
+  const cursorId = opts?.cursorId
   const linesDesc: string[] = [] // 倒序（新→旧）累积完整行
   const turnFlagsDesc: boolean[] = [] // 与 linesDesc 平行的 turn 边界标记
   let turnCount = 0
+  let accBytes = 0
+  // cursor 未定位前置 false：更新侧行不收集（cursor miss 时不得把更新侧误当锚前区域）
+  let cursorSeen = cursorId === undefined
   const summary = forEachReversedLineChunk(
     filePath,
     // maxTotalBytes 显式注入 shared SSOT（工具自身零 shared 依赖，纯 IO 形态）
     { maxTotalBytes: READ_PRECHECK_MAX_BYTES },
     ({ lines }) => {
       for (let i = lines.length - 1; i >= 0; i--) {
-        const isTurn = isTurnBoundaryLine(lines[i])
+        const parsed = parseJsonl(lines[i])
+        if (!cursorSeen) {
+          // cursor 命中判定与 turn 判定共用同一 parse。命中行本身不收集（锚所在 turn
+          // 已在 renderer 分区），并丢弃此前收集的更新侧——从下一行（更旧）即锚前区域。
+          const hitCursor = parsed.some(
+            (e) => typeof e === 'object' && e !== null && (e as Record<string, unknown>).id === cursorId,
+          )
+          if (hitCursor) {
+            cursorSeen = true
+            linesDesc.length = 0
+            turnFlagsDesc.length = 0
+            turnCount = 0
+            accBytes = 0
+          }
+          continue
+        }
+        const isTurn = parsed.length > 0 && isTurnBoundary(parsed[0])
+        // 字节预算（turn 边界处判定已收集 turns 的累计；首个 turn 恒放行 = 首 turn 豁免；
+        // 当前超界 turn 完整放行 = entry 原子性）
+        if (isTurn && turnCount > 0 && maxBytes !== undefined && accBytes > maxBytes) return false
         linesDesc.push(lines[i])
         turnFlagsDesc.push(isTurn)
+        accBytes += Buffer.byteLength(lines[i], 'utf-8')
         if (isTurn) turnCount++
         // 凑够预算 turns：立即停止扩窗（当前块内剩余更早行不交付——窗口恰好在
         // 第 maxTurns 个 turn 边界上截断，entry 原子性由 stop-at-boundary 保证）
@@ -210,6 +258,10 @@ function collectRecentTurnEntriesFromTail(
     },
   )
   if (summary.openFailed) return null
+  if (!cursorSeen) {
+    // cursor 未命中：空页 + 翻页到头语义（D4 空游标边界——不报错）
+    return { entries: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0, cursorMiss: true }
+  }
 
   const lines = linesDesc.reverse() // 正序
   const turnFlags = turnFlagsDesc.reverse()
@@ -226,11 +278,14 @@ function collectRecentTurnEntriesFromTail(
   const loadedTurns = turnFlags.slice(startIdx).filter(Boolean).length
   return {
     entries,
-    // N1 判定对齐现行语义：全文件扫描时按 turn 数精确判定；只读了部分时保守 true
-    // （窗口外 turn 数未知，宁可多显示「加载更多」也别漏）。
-    truncated: summary.fullyScanned ? turnCount > maxTurns : true,
+    // N1 判定（无 cursor）对齐现行语义：全文件扫描时按 turn 数精确判定；只读了部分时保守
+    // true（窗口外 turn 数未知，宁可多显示「加载更早」也别漏）。
+    // [u6] cursor 定位后（锚前区域）：fullyScanned = cursor 之前全部读完 → 更早历史不存在
+    // → truncated=false 精确；提前停止 / 上限截停 → 保守 true（同 N1 取向）。
+    truncated: cursorId !== undefined ? !summary.fullyScanned : (summary.fullyScanned ? turnCount > maxTurns : true),
     loadedTurns,
     totalTurnsEstimate: summary.fullyScanned ? turnCount : loadedTurns,
+    cursorMiss: false,
   }
 }
 
@@ -250,6 +305,9 @@ function convertWindowEntries(entries: PiSessionEntry[], sessionStore: ISessionS
  * N1 修复：返回 TailReadResult（含 truncated 标志），前端据此控制「加载更多」显隐，
  * 避免空 session 闪现按钮。
  *
+ * [u6] query.cursor 存在时切游标窗口（锚点之前的最近 N turns + 字节预算）；cursor 未命中
+ * → 空页 + truncated=false（翻页到头，不报错）。
+ *
  * 规则 #6：文件不存在返回空结果不抛（pi 延迟写入）。
  * AC-12：末行损坏由逆序读的残行丢弃语义承接（INVAR-tail-3 同源）。
  */
@@ -257,19 +315,24 @@ export async function tailReadHistory(
   filePath: string,
   sessionStore: ISessionStore,
   maxTurns: number = HISTORY_BUDGET.RECENT_TURNS,
+  query?: HistoryWindowQuery,
 ): Promise<TailReadResult> {
+  const emptyPage = { messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 }
   // 规则 #6：文件不存在返回空数组（statSync 失败涵盖 ENOENT；打开期竞态由 collect 的
   // openFailed 语义兜底，同样不抛）
   let fileSize: number
   try {
     fileSize = statSync(filePath).size
   } catch {
-    return { messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 }
+    return emptyPage
   }
-  if (fileSize === 0) return { messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 }
+  if (fileSize === 0) return emptyPage
 
-  const loaded = collectRecentTurnEntriesFromTail(filePath, maxTurns)
-  if (!loaded) return { messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 }
+  const loaded = collectRecentTurnEntriesFromTail(filePath, maxTurns, {
+    maxBytes: query?.maxBytes,
+    cursorId: query?.cursor,
+  })
+  if (!loaded || loaded.cursorMiss) return emptyPage
 
   // AC-5 turn 外扩（D14）：若窗口首条是孤立 toolResult（窗口外有对应 assistant），
   // convertHistory 内部 warn 丢弃（不额外拉取，外扩逻辑在 convertHistory 处理）。

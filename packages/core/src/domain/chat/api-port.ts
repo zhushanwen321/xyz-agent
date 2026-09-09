@@ -5,10 +5,11 @@
  * 把现 api/domains/chat 适配注入。core 不 import @/api。P1 完成后 api domains 迁
  * core/transport 时只需换注入实现，domain 侧零改动。
  *
- * 契约边界：方法签名严格对齐现 packages/renderer/src/api/domains/chat.ts 导出函数
- * （send/steer/followUp/abort/compact/bash/abortBash/getHistory/getFullHistory/streamSubscribe）。
- * getHistory 返回类型用内联结构（{ messages; historyTruncated }），不依赖 renderer 的
- * HistoryResult（保持 core 平台无关）。
+ * 契约边界：方法签名严格对齐 core/transport/api/domains/chat.ts 导出函数
+ * （send/steer/followUp/abort/compact/bash/abortBash/getHistory/streamSubscribe）。
+ * [u6] getFullHistory 已随全量通路退役（「加载更早」改走 getHistory 游标翻页）。
+ * getHistory 返回类型用内联结构（{ messages; truncated; loadedTurns; totalTurnsEstimate }），
+ * 不依赖 chat 域的 HistoryResult（保持 core 平台无关）。
  */
 import type { Message, SegmentsMetadataEntry, ServerMessageUnion } from '@xyz-agent/shared'
 
@@ -53,21 +54,17 @@ export interface ChatApiPort {
   abortBash(sessionId: string): Promise<void>
   /**
    * 拉取 session 历史（session.history，u4b 双预算窗口可能截断）。
-   * [u4d] 窗口契约字段（truncated/loadedTurns/totalTurnsEstimate）可选——mock 门面 /
-   * legacy reply 缺省时消费方经 historyWindowFromReply 归一（truncated 回落 historyTruncated）。
+   * [u6] query 可选（crash-resilience §3.3 D4 中期分页协议）：带 cursor 时为「加载更早」
+   * 游标翻页（返回锚点之前的最近窗口；cursor 未命中返回空页 + truncated=false）；
+   * 缺省 = 最近窗口。窗口契约字段 truncated/loadedTurns/totalTurnsEstimate 必填
+   * （[u6] legacy historyTruncated 已退役，偏差表 D7 双轨收口——mock 门面同契约）。
    */
-  getHistory(sessionId: string): Promise<{
+  getHistory(sessionId: string, query?: { cursor?: string; limitTurns?: number; maxBytes?: number }): Promise<{
     messages: Message[]
-    historyTruncated: boolean
-    truncated?: boolean
-    loadedTurns?: number
-    totalTurnsEstimate?: number
+    truncated: boolean
+    loadedTurns: number
+    totalTurnsEstimate: number
   }>
-  /**
-   * 全量拉取 session 历史（session.getFullHistory，加载更多用）。
-   * [u4b/u4d] 文件超预检阈值时 runtime 降级为逆序窗口，truncated=true（optional，按 false 处理）。
-   */
-  getFullHistory(sessionId: string): Promise<{ messages: Message[]; truncated?: boolean }>
   /** 订阅指定 session 的流式消息事件，返回取消函数。
    *  handler 收分发联合形态的 ServerMessageUnion——switch on msg.type 自动收窄 payload，
    *  ServerMessageMap 登记缺口变编译错误（R1 type-safety S4/S5，消费侧不再 as）。*/

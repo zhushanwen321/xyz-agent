@@ -35,7 +35,7 @@ vi.mock('@/api', () => ({
     load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }),
     save: vi.fn().mockResolvedValue(undefined),
   },
-  chat: { getHistory: vi.fn(() => Promise.resolve({ messages: [], historyTruncated: false })), streamSubscribe: vi.fn(() => () => {}) },
+  chat: { getHistory: vi.fn(() => Promise.resolve({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })), streamSubscribe: vi.fn(() => () => {}) },
   extension: {},
   session: {
     create: vi.fn(() => Promise.resolve(makeSummary('mock'))),
