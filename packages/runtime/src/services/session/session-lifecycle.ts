@@ -20,11 +20,13 @@
  * registerDeps(注册装配依赖)。
  */
 import { basename } from 'node:path'
-import { existsSync, unlinkSync } from 'node:fs'
+import { existsSync, rmSync, unlinkSync } from 'node:fs'
 import { unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import type { SessionSummary, BatchDeleteResult, ServerMessage } from '@xyz-agent/shared'
 import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
+// [D6-⑨ u7] 图片缓存目录推导（shared SSOT，含 sessionId 穿越校验——cache 级联删除用）
+import { getImageCacheDir } from '@xyz-agent/shared/paths'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import type { ILifecycleSessionOps, ISessionRegistry, ISessionRegisterDeps, IManagedSessionRecord } from './session-internal.js'
 import type { IManagedSessionView, ScannedSession } from './types.js'
@@ -138,6 +140,15 @@ function resolveCreateCwd(cwd: string | undefined): string {
     console.warn(`[session-lifecycle] create cwd does not exist: ${requestedCwd}, falling back to home`)
     return homedir()
   })()
+}
+
+/**
+ * [D6-⑨ u7] session 文件路径 → sessionId（`<sid>.jsonl` / sidecar `<sid>.jsonl.<suffix>` →
+ * `<sid>`）。与 main 侧 image-cache.ts 的 sessionIdFromSessionFilePath 同语义——runtime
+ * 进程无法跨包 import main 模块，内联副本（cache 级联删除的目录名派生用）。
+ */
+function sessionIdFromSessionFilePath(filePath: string): string {
+  return basename(filePath).replace(/\.jsonl.*$/, '')
 }
 
 /**
@@ -755,6 +766,12 @@ export class SessionLifecycle implements ISessionRegistry {
     try { unlinkSync(filePath + '.model.json') } catch { void 0 }
     // 清理归一化残留 .tmp-migrate-*.jsonl（差距复审 suggestion 6，与 sidecar 同点 best-effort）
     cleanupMigrateResidues(filePath)
+    // [D6-⑨ u7-memory-governance] toolResult 图片缓存级联（cache/images 是 session 文件
+    // 之外的第四类关联产物，delete 是唯一清理点补齐——纯缓存语义下删除级联是三条清理
+    // 通道之一；main 侧生命周期 SSOT 在 apps/electron/main/images/image-cache.ts 的
+    // deleteSessionImageCache，runtime 进程无法跨包 import，此处按同语义内联最小接线：
+    // 同一 shared paths 推导（getImageCacheDir 含 sessionId 穿越校验）+ force 幂等删）。
+    try { rmSync(getImageCacheDir(sessionIdFromSessionFilePath(filePath)), { recursive: true, force: true }) } catch { void 0 }
     // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
     // 派生缓存，非已删的 label 影子缓存）中的 stale 条目（避免无界增长）
     this.sessionStore.invalidateMetaCache(filePath)

@@ -13,6 +13,7 @@ import { registerBrowserHandlers } from './browser-handlers.js'
 import { registerUpdateHandlers } from './update-handlers.js'
 import { registerSoundHandlers } from './sound-handlers.js'
 import { registerRendererLogHandler } from '../logs/renderer-log-handler.js'
+import { registerImageCacheHandlers } from '../images/image-cache-ipc.js'
 
 /**
  * 注册所有 IPC handlers（特权 + 桥接 + browser drawer + 自动升级（含代理配置） + 系统提示音
@@ -27,4 +28,6 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   registerUpdateHandlers(deps)
   registerSoundHandlers()
   registerRendererLogHandler()
+  // [D6-⑨ u7] toolResult 图片落盘（含启动清扫：孤儿扫描 + 软上限）
+  registerImageCacheHandlers()
 }

@@ -25,7 +25,9 @@ export default defineConfig({
       {
         test: {
           name: 'guarded',
-          include: ['logs/__tests__/**/*.test.ts'],
+          // images/__tests__/：crash-resilience u7 图片缓存生命周期（真实文件 IO，同挂
+          // fs-guard；cache/images 夹具全部 mkdtemp tmpdir 自建自删）
+          include: ['logs/__tests__/**/*.test.ts', 'images/__tests__/**/*.test.ts'],
           setupFiles: ['./test/fs-guard.ts'],
         },
       },

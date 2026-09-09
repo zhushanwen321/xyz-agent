@@ -51,3 +51,50 @@ export interface RendererLogPayload {
   /** performance.memory 快照（Chromium 专属；API 不可用时省略——探针 P-mem-api） */
   memory?: RendererMemorySnapshot
 }
+
+// ── toolResult 图片落盘（IMAGE_CACHE_WRITE = 'image-cache:write' invoke 通道）
+//    [crash-resilience §3.3 D6-⑨，u7-memory-governance] ──────────────────────────
+
+/** 待落盘的 toolResult 图片（pi ImageContent 形态：base64 data + mimeType）。 */
+export interface ImageCacheWriteImage {
+  /** base64 编码图片数据（不带 data: 前缀，对齐 pi ImageContent.data） */
+  data: string
+  /** MIME 类型（如 image/png；扩展名映射与降级判定用） */
+  mimeType: string
+}
+
+/**
+ * renderer → main 图片落盘请求（IMAGE_CACHE_WRITE invoke 通道）。
+ *
+ * **images 数组序 = 落盘序（新→旧）**：hydrate 批量场景由 core 编排层按消息序反转后
+ * 组装（设计 D6-⑨ v8 显式声明「新→旧有序落盘、超帽即停、更旧的图占位」），live 单图
+ * 场景数组长度为 1。main 按数组序逐张处理，命中单 session size 帽即停（后续更旧图
+ * 返回 quota-full），顺序语义由两侧契约共同保证。
+ */
+export interface ImageCacheWritePayload {
+  sessionId: string
+  images: ImageCacheWriteImage[]
+}
+
+/** 单图落盘结果（与请求 images 数组按序一一对应）。 */
+export interface ImageCacheWriteImageResult {
+  /**
+   * - written：本次落盘成功
+   * - cached：内容 hash 命中已有文件，幂等跳过写（返回已有 path）
+   * - quota-full：该 session 目录已达 size 帽，未落盘（渲染占位）
+   * - invalid：payload 字段畸形（data/mimeType 非字符串或全空），不落盘
+   */
+  status: 'written' | 'cached' | 'quota-full' | 'invalid'
+  /** 落盘/命中的文件绝对路径（quota-full / invalid 时省略） */
+  path?: string
+  /** 文件字节数（quota-full / invalid 时省略） */
+  bytes?: number
+}
+
+/** 图片落盘批量结果。 */
+export interface ImageCacheWriteResult {
+  /** 与请求 images 按序一一对应 */
+  results: ImageCacheWriteImageResult[]
+  /** 本批存在因 size 帽未落盘的图（true ⇒ 后续更旧图也必然未写——超帽即停语义） */
+  quotaFull: boolean
+}

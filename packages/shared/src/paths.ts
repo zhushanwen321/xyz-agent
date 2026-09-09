@@ -120,3 +120,34 @@ export function getAttachmentsDir(sessionId: string, dataDir?: string): string {
   }
   return join(dataDir ?? getDataDir(), 'attachments', sessionId)
 }
+
+/**
+ * toolResult 图片缓存根目录（`<dataDir>/cache/images`）[crash-resilience §3.3 D6-⑨]。
+ *
+ * 纯缓存语义（可随时丢弃、可幂等重建）；落盘执行方 = main 进程（IPC IMAGE_CACHE_WRITE），
+ * 级联/孤儿/软上限清理均为此目录下的文件系统级动作（runtime session 删除链同样直接
+ * fs 删该目录——main 与 runtime 共享 getDataDir 数据根）。local-file:// 协议白名单
+ * 放行整个本目录前缀（apps/electron/main/utils/local-file-prefixes.ts）。
+ *
+ * @param dataDir 可选数据根目录（测试注入）；缺省读 getDataDir()
+ */
+export function getImageCacheRoot(dataDir?: string): string {
+  return join(dataDir ?? getDataDir(), 'cache', 'images')
+}
+
+/**
+ * 单 session 的图片缓存目录（`<getImageCacheRoot()>/<sessionId>`）[crash-resilience §3.3 D6-⑨]。
+ *
+ * 路径穿越防护与 getAttachmentsDir 同款：sessionId 必须匹配 `^[A-Za-z0-9_-]+$`，
+ * 否则 throw（cache/images 内子目录名即 sessionId，孤儿扫描据此反查 pi sessions 目录）。
+ *
+ * @param sessionId 会话 id（子目录分区，必须匹配 `^[A-Za-z0-9_-]+$`）
+ * @param dataDir   可选数据根目录（测试注入）；缺省读 getDataDir()
+ * @throws Error 当 sessionId 含路径分隔符或非法字符
+ */
+export function getImageCacheDir(sessionId: string, dataDir?: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) {
+    throw new Error(`invalid sessionId (path traversal blocked): ${sessionId}`)
+  }
+  return join(dataDir ?? getDataDir(), 'cache', 'images', sessionId)
+}

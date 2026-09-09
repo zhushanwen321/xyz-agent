@@ -1,7 +1,7 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult, RendererLogPayload } from '@xyz-agent/shared'
-import { RENDERER_LOG } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult, RendererLogPayload, ImageCacheWritePayload, ImageCacheWriteResult } from '@xyz-agent/shared'
+import { RENDERER_LOG, IMAGE_CACHE_WRITE } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -194,6 +194,14 @@ export interface ElectronAPI {
    * 必须静默消化，日志通道故障不得再炸 renderer。
    */
   reportRendererLog(payload: RendererLogPayload): Promise<void>
+  // ── toolResult 图片落盘（crash-resilience §3.3 D6-⑨ / u7）─────────────────
+  /**
+   * 委托 main 落盘 toolResult base64 图片（renderer 无 fs）。images 数组序 = 落盘序
+   * （hydrate 批量为新→旧，live 单图为单元素）；main 幂等（sha256 命中跳过写）+ 单
+   * session 64MB size 帽（超帽即停，quota-full 由 core 编排层记账渲染占位）。
+   * 失败/畸形 payload 不 reject（main handler 零抛错，返回逐图 invalid/quota-full 结果）。
+   */
+  imageCacheWrite(payload: ImageCacheWritePayload): Promise<ImageCacheWriteResult>
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -328,4 +336,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   playSystemSound: (name: string, kind?: 'success' | 'error') => ipcRenderer.invoke('sound:play', name, kind),
   // ── renderer 错误上报（crash-resilience §3.3 D2；通道名经 shared SSOT 常量，禁字面量分叉）──
   reportRendererLog: (payload: RendererLogPayload) => ipcRenderer.invoke(RENDERER_LOG, payload),
+  // ── toolResult 图片落盘（crash-resilience §3.3 D6-⑨；通道名经 shared SSOT 常量）──
+  imageCacheWrite: (payload: ImageCacheWritePayload) => ipcRenderer.invoke(IMAGE_CACHE_WRITE, payload),
 } satisfies ElectronAPI)
