@@ -22,3 +22,6 @@ const BYTES_PER_KIB = 1024;
 
 /** schema env 的 UTF-8 字节上限（256KiB）。 */
 export const SCHEMA_ENV_MAX_BYTES = SCHEMA_ENV_MAX_KIB * BYTES_PER_KIB;
+
+/** [D3-① race-F4] SIGTERM 优雅窗口：30s 超窗升级 SIGKILL（core 现状值）。 */
+export const PI_KILL_GRACE_MS = 30_000;

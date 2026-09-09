@@ -181,8 +181,12 @@ function extractHeaderSessionId(chunk: string): string | undefined {
     ) {
       return (parsed as { id: string }).id;
     }
-  } catch {
-    // 首行坏行：无基准（不过滤）
+  } catch (err) {
+    // 首行坏行：无基准（不过滤）。预期内可忽略（旧 fixture / 手工构造 / append
+    // 中途崩溃的截断行），debug 留痕对齐 applyPendingLine 的坏行处理。
+    logger.debug("skipped malformed session header line", {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
   return undefined;
 }
@@ -298,9 +302,9 @@ export function readActivePendingFromSessionFile(
   const countActive = getNotifyDomainPorts().countActiveFromEntries;
   const active = countActive
     ? countActive(
-        [...acc.activeRegisters.values()],
-        acc.headerSessionId !== undefined ? { currentSessionId: acc.headerSessionId } : undefined,
-      )
+      [...acc.activeRegisters.values()],
+      acc.headerSessionId !== undefined ? { currentSessionId: acc.headerSessionId } : undefined,
+    )
     : 0;
   return {
     count: active,

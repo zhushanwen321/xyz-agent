@@ -43,6 +43,8 @@ import {
 } from "@zhushanwen/subagent-engine-sdk";
 
 import { mirrorMainProcessFlags, type MirrorFlags } from "./argv-mirror.ts";
+import { registerActiveChild, unregisterActiveChild } from "./active-children.ts";
+import { PI_KILL_GRACE_MS } from "./constants.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
 import { collectOutcome, type CollectedOutcome } from "./output-collector.ts";
 import { toErrorMessage } from "./error-message.ts";
@@ -78,9 +80,6 @@ const logger = getLogger("session-runner");
 
 /** 默认 grace turns（soft limit 后宽限轮数，core 现状值）。 */
 const DEFAULT_GRACE_TURNS = 2;
-
-/** [D3-① race-F4] SIGTERM 优雅窗口：30s 超窗升级 SIGKILL（core 现状值）。 */
-const PI_KILL_GRACE_MS = 30_000;
 
 /** 无效 stdout 行的日志截断长度（够诊断、不刷屏）。 */
 const INVALID_LINE_LOG_CHARS = 160;
@@ -661,40 +660,13 @@ export async function runSpawnOnce(
   }
 }
 
-/** 当前活跃子进程记账（interact 热路径 / dispose 收割消费；引擎进程内权威）。 */
-const activeChildren = new Map<string, ChildProcess>();
-
-/** 注册活跃子进程（interact 热路径投递面）。 */
-export function registerActiveChild(recordId: string, child: ChildProcess): void {
-  activeChildren.set(recordId, child);
-}
-
-/** 注销（close 后调用）。 */
-export function unregisterActiveChild(recordId: string, child: ChildProcess): void {
-  if (activeChildren.get(recordId) === child) activeChildren.delete(recordId);
-}
-
-/** 按 record 取活跃子进程（undefined = 无句柄，对齐 getChildByRecord 语义）。 */
-export function getActiveChild(recordId: string): ChildProcess | undefined {
-  return activeChildren.get(recordId);
-}
-
-/** 全量收割（dispose）：SIGTERM + 30s SIGKILL 升级；返回收割数。 */
-export function killAllActiveChildren(signal: NodeJS.Signals = "SIGTERM"): number {
-  let killed = 0;
-  for (const [recordId, child] of activeChildren) {
-    if (child.exitCode === null && child.signalCode === null) {
-      killed++;
-      child.kill(signal);
-      void killChain(child, {
-        graceMs: PI_KILL_GRACE_MS,
-        unrefTimers: true,
-        escalationNote: `child ${recordId} (source: dispose killAll)`,
-      });
-    }
-    activeChildren.delete(recordId);
-  }
-  return killed;
-}
+// 活跃子进程记账（自本文件提取至 active-children.ts，行为等价）：
+// re-export 保持既有导入面（index.ts / pi-engine.ts / chat-session.ts / __tests__）。
+export {
+  getActiveChild,
+  killAllActiveChildren,
+  registerActiveChild,
+  unregisterActiveChild,
+} from "./active-children.ts";
 
 // spawn-runner 内部消费：handshake 结果防 unused（诊断面保留导出读取器）
