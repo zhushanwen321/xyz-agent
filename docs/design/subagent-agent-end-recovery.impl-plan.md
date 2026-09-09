@@ -103,13 +103,15 @@ bash scripts/validate-runtime-bundle.sh
 | u1-acquire | committed | 1 | commit（见 git log u1-acquire）；3397 passed / typecheck 绿；deviations 5 条已核合理（warn 级别/措辞时序/多匹配收集/钩子落点/测试拆分） |
 | u2-descendant | committed | 1 | commit c19208e43；3407 passed / typecheck 绿；deviations 6 条核合理（SpawnRunState 就地/派生点语义等价/字段可选/A1-3 同步段论证/debug 文案/注释压缩）；max-lines 超阈经裁决入 eslint 复杂度债务清单 |
 | u3-flip | committed | 1 | commit（git log u3-flip）；3413 passed / typecheck 绿；deviations 6 条核合理（16s 绝对上界含入口段/重判 error 续窗防退化/固定 5s 节奏/四分支提取等价/STEP_MS export 测试可观测/makeState 类型级连带 2 行已申报） |
-| u4-spawn-channel | pending | 0 | — |
+| u4-spawn-channel | committed | 1 | commit（git log u4）；3423 passed ×3 runs / typecheck 绿；deviations 8 条核合理（门面 re-export 形态保 vi.mock 锚/防循环 import/invocation 身份域留驻/策略为类型契约+默认值登记非死代码/空窗维度接线位=消费方/maxBufferChars 最小语义/10 形状测试/eslint 双规则并存遗留 u6 清理） |
 | u5-runtime-switch | pending | 0 | — |
 | u6-obs-docs | pending | 0 | — |
 
 ## 7 残留风险与变更历史
 
 **残留风险**：
+
+- 既有 vitest teardown flake（record-store-last-line / nested-visibility）偶发致 pnpm test 进程不退出（观察 2 次）——独立于本设计，建议独立任务排查 vitest worker teardown
 
 - ⛔ 设计 §5 五条待验证检查点对应实施期探针，S1/S9 场景实施前先跑注入探针（audit S-B 先例流程）
 - 误杀形态（三路获取全失败 ∧ 真有后代）按设计 D3b 代价分析登记为显式残余风险，S5 含续后处置推演
