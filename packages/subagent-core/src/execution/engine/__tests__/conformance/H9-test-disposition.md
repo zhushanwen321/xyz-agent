@@ -82,3 +82,25 @@ W5/W7 已把自包含件迁入引擎包（pi-subagent-cli / zcode-subagent-cli `
 
 - `engine/__tests__/common/session-view-service-zcode-dbpath.test.ts` 原列 §2.10 清单①（随 zcode 包迁移/W5），但 W5 未迁（它测的是 core 壳侧 session-view-service 白名单分支，非引擎内部行为）、W10 批次误删——已按原样恢复（8 用例绿）。该文件深路径 import（engines/zcode/{reader,constants,db-path}）在 **W11 H1 改写当轮**随 session-view-service 协议化同批改写为协议等价断言（或由 zcode 包 e2e 接替后删除）；在此之前保留为 A plan（zcode-session-db-isolation）生产链验收证据。
 - ①类清单中「测 core 壳侧模块」的文件（本件与 execution-runtime-face / engine-model-validation）处置归属应为「W11 H1/H2 同批」而非「随引擎包迁移」——后续处置以本节为准。
+
+
+## W6 承接回写（2026-09-09，chat-domain v1.x 轮次活性治理）
+
+> 设计权威源：`docs/design/chat-domain-v1x-liveness-governance.md` §3.2 D2/D5 + §5 W6 行。
+> 本节回写 §③ 行「keep-alive-no-progress / settled-watchdog / timeout-integration」的
+> 处置改写注记（该行「不声称已承接」状态自本节起 supersede）——三测试行为面已随
+> W4/W6 落地，承接落点如下。原注记保留作历史，不删（[HISTORICAL] 纪律）。
+
+| 原测试 | 承接落点 | 状态 |
+|---|---|---|
+| keep-alive-no-progress | **W4 轮次活性监督器**（keep-alive 编排归属裁决 A：core 编排层持有「轮次活性权威」，`execution/round-supervisor/`——no-progress 判定域按设计 D2 域分类收窄：run 域 resumable 无驱动任务归监督器三态；chat 域 idle 稳态豁免归 settled-watchdog/idle 机制）+ conformance 协议黑盒场景链 `conformance/round-liveness-supervisor.test.ts`（SIGTERM crash → 纳管 → 该唤醒 → 该放弃全链 / boot 分区 / 通知对账 / 重建不解管）+ W4 判定矩阵单测 `execution/__tests__/round-supervisor.test.ts` | 已承接（W6 回写） |
+| settled-watchdog | **含生产接线归属**：两段守护行为面 = 既有 core 原语套件（`execution/__tests__/subagent-service-recovery-bounds.test.ts`：armSettledWatchdog / mid-round no-progress / settled 硬顶 / 双 disarm 回收面）。**生产接线归属（D5「删件不同批重接 = 失守」约束）**：W4 已立协议事件 API 三入口——`execution/settled-watchdog.ts` 的 `refreshFromProtocolEvent`（协议事件行到达刷新中段）/ `noteRoundSettledFromProtocol`（settled 相位中段让位收尾段）/ `disarmRoundFromProtocol`（idle 相位/close/终态两段一并清），零新语义薄委托、与存量原语幂等并存；**W3 删 `engines/pi/session-runner.ts` 时必须同批把存量 arm/refresh/kill 接线（arm 点 = 轮开始；refresh 源 = host/streamDelta + host/roundLifecycle；kill/终态 = 既有杀链）换到这三个入口**——接线未重接完成前 W3 不得删件 | 已承接（协议事件面已立 + W3 重接认领） |
+| timeout-integration | live conformance 门（`conformance/engine-conformance.live.test.ts`，`ENGINE_CONFORMANCE_LIVE=1 PI_LIVE_MODEL=<模型>`；设计验收 A7）——超时/abort/收敛行为在真机引擎 + 真实进程生命周期下验证；单测不再锚定 inproc 实现（原 timeout-integration 的「abort 超时强杀集成」语义由 W7 runtime 三级阶梯测试 + 本 live 门共同承载） | 已承接（live 门） |
+
+**W6 同批新增语义钉住**（conformance 领地，均绿于 `pnpm --filter @zhushanwen/subagent-core test`）：
+
+- 引擎中途 SIGTERM → run 终态 failed（**D5 前置闸：本用例先于 W3 删 `engines/pi/session-runner.ts` 旧 143 误分类器存在并保持绿**，P2 探针的 conformance 承载）→ `conformance/engine-crash.test.ts`；
+- chat 轮次协议 v1.x（host/roundLifecycle 三相位 × runId|recordId 关联键回执链 + recordId 键 delta 分路 + conversation gate 负向 A6）→ `conformance/chat-round-protocol.test.ts`；
+- 翻档事实（三类型全 process 档、跨时长无 TTL 清理）+ fork 读侧过滤①③两口径 + **bash 跨 session 可见性显式断言**（R4 一刀钉成显式选择）+ 偏差 #4 探针（goal 守卫口径实测）→ `conformance/registry-fork-filter.test.ts`。
+
+**goal 熔断（W5）处置**：**由 extension 侧单测承载，不重复造**——`extensions/universal/goal` 393 例已覆盖双维度熔断（circuit-breaker 6 + liveness 17：50 次封顶必停发、第 5 轮起间隔 ×2、恢复清零退避不重置总数、defer 通知去重）；设计验收 A10（实机熔断场景）仍归 Gate B 真机剧本，不在 conformance 重复。
