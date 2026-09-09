@@ -86,7 +86,7 @@ xyz-agent 合入本改造 → core 版本 bump → zsw re-vendor（**版本门�
 
 ### 3.1 工具定位与 zsw 侧的关系
 
-- 本仓工具 = `scripts/zcode-session-db-cleanup.mjs`（清理对象 = **xyz-agent 侧**三库：宿主库 + GUI 索引库 + xyz-agent 隔离库）。**W5a 已落地**（commit ee55740dc，随本规格同批入库；测试 `scripts/__tests__/zcode-session-db-cleanup.test.mjs` 17 用例）——以脚本自身 `--help` 与实现为实现级钉死点（本节契约以 impl-plan §2.5 为设计权威文本）。
+- 本仓工具 = `scripts/zcode-session-db-cleanup.mjs`（清理对象 = **xyz-agent 侧**三库：宿主库 + GUI 索引库 + xyz-agent 隔离库）。**W5a 已落地**（commit ee55740dc，随本规格同批入库；测试 `scripts/__tests__/zcode-session-db-cleanup.test.mjs` 18 用例）——以脚本自身 `--help` 与实现为实现级钉死点（本节契约以 impl-plan §2.5 为设计权威文本）。
 - **zsw 侧对等物**：zsw 面对的是自己的隔离库（无跨库索引面——GUI 索引库只同步宿主库路径的会话，zsw 隔离库不进索引），复杂度低于本仓工具。zsw 可参考本节判据自建，或 vendor 本工具后裁剪。无论哪种，§3.8 停机窗口纪律与 §3.5 凭证机制必须等价满足。
 - 术语 gloss（设计文档定义，此处沿用）：**①级 = 读引擎原生会话存储**（内容最全）；record = 引擎任务落盘的 append-only JSONL（**不可信面**）。
 

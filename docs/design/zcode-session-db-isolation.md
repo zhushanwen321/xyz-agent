@@ -65,7 +65,7 @@
 >   ②**Δ 分布落成可执行 SQL**（counts.sql 第 0 步导出 + ④/⑤ 查询，容差推导可复跑）+ 容差「全局唯一常量」护栏；
 >   ③**「宿主已删、索引残留」降为未验证假设**（F7 只实测加法方向）+ 残留 id 清单落盘 + `--replay-residue` 补删模式 + A11 真机观测；
 >   ④**备份粒度与停机窗口写者清单**（整库还原；zsw re-vendor 进程必须在窗口内停用）；⑤确认凭证补「授权来源」；⑥counts.sql grep 法仅限只读证据，不得复用为白名单构造；⑦v8 修订记录恢复史实值。
-> - v12（2026-09-09，**W11 迁移注记**）：zcode 引擎已随引擎协议化外移至 `packages/zcode-subagent-cli`（subagent-core 内建 `engines/zcode/` 删除）——§1「系统是什么」实现锚点、§2.3 F12 读取链、§3.2 D2 站点表按迁移后实态回写：生产链①级读 = runtime `registerNativeSessionReader` 协议读（`subagent-engine-history.ts:219`）经协议 `read` 落引擎包 `zcode-engine.ts` `read()`（:908，白名单集合判定 :922 内聚引擎包）；`readZcodeNativeTier` 符号已不存在；handle 回填现锚 `:416/:466`。决策内容不变，成文时点锚点保留为史实。
+> - v12（2026-09-09，**W11 迁移注记**）：zcode 引擎已随引擎协议化外移至 `packages/zcode-subagent-cli`（subagent-core 内建 `engines/zcode/` 删除）——§1「系统是什么」实现锚点、§2.3 F12 读取链、§3.2 D2 站点表按迁移后实态回写：生产链①级读 = runtime `registerNativeSessionReader` 协议读（`subagent-engine-history.ts:219`）经协议 `read` 落引擎包 `zcode-engine.ts` `read()`（:908，白名单集合判定 :923 内聚引擎包）；`readZcodeNativeTier` 符号已不存在；handle 回填现锚 `:416/:466`。决策内容不变，成文时点锚点保留为史实。
 >
 > 关联：本设计是 [subagent-engine-protocolization.md](subagent-engine-protocolization.md) 的**前置小改**——
 > 若引擎协议化先落地，本设计改动直接落进 `zcode-subagent-cli` 包内（core 侧零改动）；否则外移时随包搬走。
@@ -185,7 +185,7 @@ ZCode GUI 左侧边栏会话列表 ← 用户看到「凭空多出来的会话�
 | F9 | 每条会话额外触发 1 次标题生成模型调用（50 条会话 → 50 条 `session_title` 用量行，37.8k input / 898 output tokens） | `model_usage` 统计 | 【实测】 |
 | F10 | 引擎**无删除会话 RPC**（24 个 `session/*` 方法里没有 delete/archive），`session/close` 只回收内存，SQLite 行保留 | engine 协议方法表盘点 + zsw 残留清理设计 | 【实测】 |
 | F11 | **池目录删除器会删池内一切非 journal 条目**（含 `db.sqlite*`）：`deletePoolNativeState`（`pool-manager.ts:374`，定义行）由 `releasePoolRef`（`:195`）与 `cleanupExpiredPoolRefs`（`:230` 定义 → `:280` 删除调用点）触发；当前休眠（`acquirePool` 生产零调用方），但**不是设计保证** | `packages/subagent-core/src/execution/engine/common/pool-manager.ts:10-18/195/230/374` | 【实测】 |
-| F12 | 生产 GUI 详情页的①级读**不经过** core 壳侧 `EnginePort.read()`：链路为 `session-records.ts:313 → readEngineSubagentHistory → readSubagentHistoryMessages → session-view-service.ts:473 → readZcodeNativeTier(:161 白名单)`；`EnginePort.read()`（`zcode-engine.ts:889`）在本仓**无生产调用方**（成文时点实测）。**v12 实态（W11 协议化后）**：runtime ①级读改经 `registerNativeSessionReader` 协议 read（`subagent-engine-history.ts:219`）——①级放行判定内聚引擎包 `zcode-engine.ts` `read()`（:908，白名单集合判定 :922），两条链路同判同源；`readZcodeNativeTier` 符号已不存在 | 全仓 `rg '\.read\('` + 上述链路逐跳 read；v12 实态 = `registerNativeSessionReader` / `zcode-engine.ts:908` 逐跳 read（2026-09-09） | 【实测】 |
+| F12 | 生产 GUI 详情页的①级读**不经过** core 壳侧 `EnginePort.read()`：链路为 `session-records.ts:313 → readEngineSubagentHistory → readSubagentHistoryMessages → session-view-service.ts:473 → readZcodeNativeTier(:161 白名单)`；`EnginePort.read()`（`zcode-engine.ts:889`）在本仓**无生产调用方**（成文时点实测）。**v12 实态（W11 协议化后）**：runtime ①级读改经 `registerNativeSessionReader` 协议 read（`subagent-engine-history.ts:219`）——①级放行判定内聚引擎包 `zcode-engine.ts` `read()`（:908，白名单集合判定 :923），两条链路同判同源；`readZcodeNativeTier` 符号已不存在 | 全仓 `rg '\.read\('` + 上述链路逐跳 read；v12 实态 = `registerNativeSessionReader` / `zcode-engine.ts:908` 逐跳 read（2026-09-09） | 【实测】 |
 
 ### 2.4 影响面量化（改造前）
 
@@ -342,7 +342,7 @@ pi 扩展进程（xyz-agent）/ zsw CLI 进程
    读取链（两条独立白名单，均需放行隔离路径）
       ├─ 生产链（成文时点）：runtime 进程 → readEngineSubagentHistory → session-view-service.readZcodeNativeTier
       │    【v12 实态·W11 后】runtime 进程 → registerNativeSessionReader 协议 read
-      │    （subagent-engine-history.ts:219）→ 引擎包 zcode-engine.ts read()（白名单判定 :922）
+      │    （subagent-engine-history.ts:219）→ 引擎包 zcode-engine.ts read()（白名单判定 :923）
       └─ API 链：EnginePort.read()（zcode-engine.ts，成文时点仅测试触达；
            v12 实态 = 协议 read 与生产链共用同一 read() 判定）
       ✗ ZCode GUI：宿主库无行 → 同步面拿不到 → 侧边栏不再出现
@@ -371,7 +371,7 @@ pi 扩展进程（xyz-agent）/ zsw CLI 进程
 
 | 链路 | 位置 | 现状 | 改造后 |
 |------|------|------|--------|
-| **生产链**（GUI 详情页①级读） | `engine/common/session-view-service.ts:161`（`readZcodeNativeTier`）——**已迁（v12 实态）**：runtime `registerNativeSessionReader` 协议读（`subagent-engine-history.ts:219`），①级放行判定内聚引擎包 `zcode-engine.ts:922` | 绝对路径只认 `resolve(homedir(), ...ZCODE_HOST_DB_SUFFIX)` | 白名单集合加入 `zcodeSessionDbPath(dataDir)` |
+| **生产链**（GUI 详情页①级读） | `engine/common/session-view-service.ts:161`（`readZcodeNativeTier`）——**已迁（v12 实态）**：runtime `registerNativeSessionReader` 协议读（`subagent-engine-history.ts:219`），①级放行判定内聚引擎包 `zcode-engine.ts:923` | 绝对路径只认 `resolve(homedir(), ...ZCODE_HOST_DB_SUFFIX)` | 白名单集合加入 `zcodeSessionDbPath(dataDir)` |
 | **API 链**（`EnginePort.read()`） | `zcode-engine.ts:889`（成文时点；**v12 实态** = `packages/zcode-subagent-cli/src/zcode-engine.ts:908`，协议 read 与生产链同判） | `dbPathRaw === hostZcodeDbPath()` | 同上（集合成员判定） |
 | handle 回填 | `zcode-engine.ts:407/453`（成文时点；**v12 实态** = 引擎包 `zcode-engine.ts:416/:466`） | `dbPath: hostZcodeDbPath()` | `dbPath: zcodeSessionDbPath(engineDataDir)` |
 
