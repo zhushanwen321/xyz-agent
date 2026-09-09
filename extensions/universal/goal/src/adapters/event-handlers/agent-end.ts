@@ -7,7 +7,8 @@
  * - FR-6.7 ESC 守卫（最关键）：ctx.signal?.aborted → 不发 continuation、不做 budget 检查、
  *   不做任何状态变更，goal 保持 active，等用户下次输入恢复
  *
- * #8 后流程：budget 预警/steering → continuation 去抖。
+ * #8 后流程：budget 预警/steering → continuation 去抖 + 轮次活性熔断（W5：
+ * 连发总次数封顶 + 无进展退避 + defer 通知去重，见 handleContinuation 头注）。
  * agent_end 只做提醒（warning + steering），不做终态转换。
  * 终态转换不在 agent_end——由 persistAndUpdate 兜底（#5 范围，单一检查点）。
  *
@@ -24,10 +25,20 @@ import { countActiveFromEntries } from "@zhushanwen/pi-pending-notifications";
 import { checkBudgetOnTurnEnd } from "../../engine/budget";
 import { isActiveStatus, isTerminalStatus } from "../../engine/goal";
 import {
+	continuationBackoffDelayMs,
+	countToolCallBlocks,
+	isContinuationCapped,
+	isProgressSignal,
+	nextNoProgressTurns,
+	pendingSetChanged,
+	resolveLivenessConfig,
+} from "../../engine/liveness";
+import {
 	budgetLimitPrompt,
 	continuationPrompt,
 } from "../../projection/prompts";
 import { persistAndUpdate, tickState } from "../../service";
+import { serializeState } from "../../persistence";
 import type { GoalSession } from "../../session";
 import type { ServicePorts } from "../../service";
 import { buildPorts } from "../ports";
@@ -135,13 +146,19 @@ async function handleBudgetChecks(
 }
 
 /**
- * continuation 去抖（budget 预警未拦截时的尾部逻辑）。
+ * continuation 去抖 + 轮次活性熔断（budget 预警未拦截时的尾部逻辑）。
  *
  * - continuation 去抖：tokenDelta=0（空 turn）不发，只 persist
- * - 否则 persist + 发 continuationPrompt
+ * - W5 主判据：continuation 连发总次数封顶（默认 50，PI_GOAL_CONTINUATION_CAP）——
+ *   封顶必停发 + notify 用户 + goal 保持 active（不擅自终态）。与「是否调工具」
+ *   正交：计数只在 deliverContinuation 实发时 +1，绝不被工具调用清零
+ *   （2026-09-08 事故：pending 守卫击穿后 64 分钟 ~320 turn 空转，无任何熔断）。
+ * - W5 辅判据：连续 N 轮（默认 5）无工具调用且 tokenDelta 低于阈值 → continuation
+ *   延迟 base×2^level 发出（间隔 ×2 递增）；真实进展清零退避计数（不动总次数）。
+ * - W5 defer 通知去重：pending 集合不变的连续 defer 轮不重复 notify。
  *
  * 注：maxTurnsReached / stall 自动终态分支随 #6 删除；budget terminal 分支随 #8 删除。
- * 终态转换由 persistAndUpdate 兑底（#5 范围，单一检查点）。
+ * 终态转换由 persistAndUpdate 兜底（#5 范围，单一检查点）。
  */
 async function handleContinuation(
 	pi: ExtensionAPI,
@@ -153,20 +170,24 @@ async function handleContinuation(
 	const state = session.state!;
 	if (checkStale()) return;
 
+	const cfg = resolveLivenessConfig();
+	const entries = ctx.sessionManager.getEntries();
+
 	// FR-8.6: continuation 去抖（空 turn 不发）
 	const tokenDelta = state.tokensUsed - state.lastTurnTokensUsed;
 	state.lastTurnTokensUsed = state.tokensUsed;
-	// 单次 persist（H2 合并：原空 turn/非空 turn 两处重复 persistAndUpdate 提到 if 前统一调用）。
-	// budget 终态检查点在 persistAndUpdate 内部（#5 单一检查点），与调用位置无关——
-	// 合并不影响预算终态触发时机（explorer 论证）。
-	persistAndUpdate(session, ports);
-	if (tokenDelta <= 0) {
-		// 空 turn：已 persist，不发 continuation
-		return;
-	}
-	// 终态守卫：persistAndUpdate 可能把 goal 转为 budget_limited 终态。
-	// 此时不应发 continuation（deliverAs:"followUp" 会触发新 turn，让已耗尽预算的 agent 再跑一轮）。
-	if (isTerminalStatus(state.status)) return;
+
+	// W5 辅判据记账：本 turn（自上次 agent_end 以来）真实工具活动 = toolCall 块差分。
+	// 无进展 → 计数 +1；有进展（工具调用或 tokenDelta 越阈值）→ 清零退避计数
+	// （主判据 continuationsSent 不在此处触碰——正交性）。
+	const toolCallsTotal = countToolCallBlocks(entries);
+	const toolDelta = toolCallsTotal - state.toolCallsSeen;
+	state.toolCallsSeen = toolCallsTotal;
+	state.noProgressTurns = nextNoProgressTurns(
+		state.noProgressTurns,
+		isProgressSignal(toolDelta, tokenDelta, cfg),
+	);
+
 	// pending 守卫：有活跃 background subagent/workflow 时不发 continuation。
 	// 靠 subagent/workflow 完成时 sendMessage({triggerTurn:true,deliverAs:"steer"}) 自然唤醒主 agent；
 	// goal 抢先催会与异步任务完成通知叠加，形成“停不下来”的死循环——continuation 排入
@@ -174,8 +195,10 @@ async function handleContinuation(
 	// 新 turn → 又 agent_end → 又 continuation。
 	// 刻意不校验 expiresAt：长任务 subagent（>1h TTL）完成时仍 triggerTurn 唤醒主 agent，
 	// 按 TTL 判非活跃会让死循环在长任务场景复现。
-	const pendingOps = countActiveFromEntries(ctx.sessionManager.getEntries());
+	const pendingOps = countActiveFromEntries(entries);
+	let deferred = false;
 	if (pendingOps.count > 0) {
+		deferred = true;
 		pi.appendEntry("goal:log", {
 			timestamp: Date.now(),
 			level: "debug",
@@ -183,17 +206,103 @@ async function handleContinuation(
 			message: `continuation deferred: ${pendingOps.count} active pending operation(s)`,
 			data: { activePending: pendingOps.count, ids: pendingOps.ids },
 		});
-		// 用户可见反馈：goal 在等待后台任务完成而非卡死（deferred 无反馈时用户只看到
-		// goal active 但无产出，无法区分等待 vs 死循环）。
-		ctx.ui.notify(
-			`Goal waiting for ${pendingOps.count} background task(s) to complete.`,
-			"info",
-		);
+		// W5 defer 通知去重：状态变化（pending 集合变化或首次进入 defer）才 notify——
+		// 事故中每轮 agent_end 都发「Goal waiting for N…」，集合不变时是纯噪音。
+		// 用户可见反馈保留：deferred 无反馈时用户只看到 goal active 但无产出，
+		// 无法区分等待 vs 死循环。
+		if (pendingSetChanged(pendingOps.ids, state.lastDeferredPendingIds)) {
+			ctx.ui.notify(
+				`Goal waiting for ${pendingOps.count} background task(s) to complete.`,
+				"info",
+			);
+			state.lastDeferredPendingIds = [...pendingOps.ids].sort();
+		}
+	} else {
+		// 非 defer 轮清空去重锚：每个等待 episode 的首次 defer 都会通知一次
+		state.lastDeferredPendingIds = [];
+	}
+
+	// 单次 persist（H2 合并）：熔断计数（noProgressTurns / toolCallsSeen /
+	// lastDeferredPendingIds）随同一快照落盘。budget 终态检查点在 persistAndUpdate
+	// 内部（#5 单一检查点），与调用位置无关——合并不影响预算终态触发时机（explorer 论证）。
+	persistAndUpdate(session, ports);
+	if (deferred) {
+		// defer 轮：已 persist + 已去重通知，不发 continuation
 		return;
 	}
-	// 发 continuation（FR-8.7: 去 debounce 后才发）
-	ports.messaging.sendContextMessage(
-		continuationPrompt(state),
-		"followUp",
-	);
+	if (tokenDelta <= 0) {
+		// 空 turn：已 persist，不发 continuation
+		return;
+	}
+	// 终态守卫：persistAndUpdate 可能把 goal 转为 budget_limited 终态。
+	// 此时不应发 continuation（deliverAs:"followUp" 会触发新 turn，让已耗尽预算的 agent 再跑一轮）。
+	if (isTerminalStatus(state.status)) return;
+
+	// W5 主判据：连发总次数封顶（与是否调工具正交——toolDelta 只影响辅判据退避）。
+	// 封顶必停发 + 通知一次（含恢复指引）+ goal 保持 active（不擅自终态）。
+	if (isContinuationCapped(state, cfg)) {
+		if (!state.continuationCapNotified) {
+			state.continuationCapNotified = true;
+			ports.ui.notify(
+				`Goal continuation stopped: ${cfg.continuationCap} continuations sent this cycle without completing (no-progress circuit breaker). The goal stays active. Use /goal resume to continue with a fresh allowance, or /goal clear to stop.`,
+				"warning",
+			);
+			pi.appendEntry("goal:log", {
+				timestamp: Date.now(),
+				level: "info",
+				component: "goal:agent-end",
+				message: `continuation capped: ${state.continuationsSent}/${cfg.continuationCap} sent, stopping (goal stays active; /goal resume resets)`,
+				data: { continuationsSent: state.continuationsSent, cap: cfg.continuationCap },
+			});
+			// 停发标志单独落盘（罕见路径——每激活周期至多一次）：否则下次 persist 前
+			// 进程重启会让停发通知重发一次
+			ports.persistence.appendState(serializeState(state));
+		}
+		return;
+	}
+
+	// W5 辅判据：无进展退避。到决策点先取消旧的待发退避 continuation——等待期内若
+	// 有外部驱动的 turn（用户输入 / 后台任务通知唤醒）到达这里，按最新状态重算：
+	// 有进展 → 立即发；仍无进展 → 按当前等级重排。保证任意时刻至多一个待发。
+	if (session.continuationTimer !== null) {
+		clearTimeout(session.continuationTimer);
+		session.continuationTimer = null;
+	}
+
+	const delayMs = continuationBackoffDelayMs(state.noProgressTurns, cfg);
+	if (delayMs <= 0) {
+		deliverContinuation(ports, session);
+		return;
+	}
+	pi.appendEntry("goal:log", {
+		timestamp: Date.now(),
+		level: "debug",
+		component: "goal:agent-end",
+		message: `continuation delayed by backoff: ${delayMs}ms (no-progress turns: ${state.noProgressTurns})`,
+		data: { delayMs, noProgressTurns: state.noProgressTurns },
+	});
+	const goalId = state.goalId;
+	session.continuationTimer = setTimeout(() => {
+		session.continuationTimer = null;
+		// 发射前守卫（延迟期间状态可能已变）：goal 未被覆盖/清除、仍 active、
+		// 未 ESC、未封顶、无活跃 pending（等待期新出现的后台任务由其完成通知唤醒，
+		// goal 不抢先催）
+		if (!session.state || session.state.goalId !== goalId) return;
+		if (!isActiveStatus(session.state.status)) return;
+		if (ctx.signal?.aborted) return;
+		if (isContinuationCapped(session.state, cfg)) return;
+		if (countActiveFromEntries(ctx.sessionManager.getEntries()).count > 0) return;
+		deliverContinuation(ports, session);
+	}, delayMs);
+}
+
+/**
+ * 发出一次 continuation 并立即落盘计数（主判据只在实发时 +1，发出即持久化——
+ * 崩溃后封顶计数不从零开始）。
+ */
+function deliverContinuation(ports: ServicePorts, session: GoalSession): void {
+	const state = session.state!;
+	state.continuationsSent += 1;
+	ports.messaging.sendContextMessage(continuationPrompt(state), "followUp");
+	ports.persistence.appendState(serializeState(state));
 }
