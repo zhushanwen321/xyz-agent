@@ -602,6 +602,29 @@
   "verifiedWith": "0.84.4"
  },
  {
+  "id": "PS-30",
+  "claim": "extension stale ctx 错误文案契约：session 替换（newSession/fork/switchSession/reload）后 runner.invalidate() 把默认 message（含 'stale after session replacement'）写入 staleMessage，此后 pi API（loader.js 的 sendMessage/sendUserMessage/appendEntry 等）与 ctx 全部方法（runner.js createContext 的 compact/abort/shutdown/getContextUsage/isIdle 等）经 assertActive() 同步 throw new Error(this.staleMessage)——跨 session 存活的异步回调触碰捕获 pi/ctx 即同步抛错，无人接即 pi 进程崩溃（E1）。该文案是 ext-guards guardStaleCtx 的兜底分诊词（代际检测为主判，文案覆盖 reload 产生全新模块环境后旧闭包代数冻结的盲区）；文案变更时守卫退化为全部上抛（回到现状崩溃链路，不更危险），门禁报红提示同步 STALE_CTX_MARKER",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/extensions/runner.js",
+    "symbol": "invalidate / assertActive / createContext",
+    "note": "invalidate :396 默认 message 含 'stale after session replacement'（staleMessage 唯一写入点）；assertActive :402-406 throw new Error(this.staleMessage)；createContext :503 起 ctx 方法（compact/abort/shutdown/getContextUsage 等）逐个 this.assertActive() 前置；agent-session.js:595 session 替换时调用 invalidate"
+   },
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/extensions/loader.js",
+    "symbol": "pi API 绑定段（bindCore 消费侧）",
+    "note": ":291-321 起——sendMessage/sendUserMessage/appendEntry/setSessionName 等每个方法 assertActive() 前置后转发共享 runtime（E1 崩溃堆栈帧 assertActive → sendUserMessage 的实装位置）"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "extensions/shared/ext-guards/src/__tests__/pi-semantics-stale-ctx-wording.test.ts"
+  },
+  "verifiedWith": "0.84.4"
+ },
+ {
   "id": "PS-29",
   "claim": "appendCustomEntry 落盘形态含 customType/data/timestamp：ExtensionAPI 的 core 绑定 appendEntry(customType, data) 直接委托 sessionManager.appendCustomEntry（同参数序、零中间变换），后者 entry 字面量固定 {type:\"custom\", customType, data, id, parentId, timestamp}——data 原样引用入参（无克隆/无字段白名单），经 _appendEntry 落盘并 emit entry_appended。rename-session 计量落账（usage-page-fixes §3.3 ③④）依赖该形态（U5 已本地 CLI 实测 P-appendEntry ✅：落盘行恰为该六字段，见实施计划状态表 U5 证据）；pi 升级若改字段名/裁剪 data/timestamp 改形，scanner ④ 分类静默失效（rename 账整桶消失，不报错），由本探针拦截",
   "piAnchor": [

@@ -11,6 +11,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { guardStaleCtx, toErrorMessage } from "@zhushanwen/pi-ext-guards";
 import { setPiHandle } from "@zhushanwen/pi-extension-logger";
 
 import {
@@ -67,6 +68,15 @@ function createSessionState(): SessionState {
 	return { takeover: createTakeoverState(), firedThresholds: new Set() };
 }
 
+// G1 代际检测（crash-resilience D1，同 scheduler/src/index.ts 的模块级代数计数器范式）：
+// 必须声明在模块级而非 factory 体内——pi 每次 session 替换（newSession/fork/switchSession）
+// 都重跑 extension factory 函数体（extensionCache 只缓存 factory 函数对象），闭包级声明
+// 每次重跑即重置，各代的 isCtxStale 恒 false。模块级声明下 extensionCache 命中期间共享
+// 同一模块绑定，计数器跨 factory 重跑保留递增：新代 session_start 递增后，旧代闭包捕获
+// 的代数从此小于模块值 → isCtxStale 生效。残余盲区（显式 reload 触发 jiti 重新 import
+// 产生全新模块环境）由 guardStaleCtx 的 STALE_CTX_MARKER 文案兜底分诊覆盖（PS-30 门禁）。
+let sessionGeneration = 0;
+
 /**
  * pi-smart-context extension 工厂函数。
  *
@@ -86,7 +96,16 @@ export default function smartContextExtension(pi: ExtensionAPI): void {
 	// session 级状态（session_start 重建闭包；模块级引用仅指向当前 session 的容器）
 	let state: SessionState = createSessionState();
 
+	// G1 代际比对闭包（isCtxStale）：session_start 装配本代比对（读实时模块级代数），
+	// 供下方事件回调与 compact 工具回调的 guardStaleCtx 前置检查使用——stale 分诊不依赖
+	// pi 错误文案。首个 session_start 前无 session，恒 false 为安全默认。
+	let isCtxStale: () => boolean = () => false;
+
 	pi.on("session_start", (_event: unknown, _ctx: ExtensionContext) => {
+		// 先递增模块级代数再装配：自此同模块环境内所有前代闭包的 isCtxStale 返回 true
+		sessionGeneration += 1;
+		const myGeneration = sessionGeneration;
+		isCtxStale = () => sessionGeneration !== myGeneration;
 		state = createSessionState();
 	});
 
@@ -105,7 +124,7 @@ export default function smartContextExtension(pi: ExtensionAPI): void {
 	});
 
 	// ── 工具注册（常驻，不可用态由 execute 运行时校验拒绝，D5）──
-	registerCompactContextTool(pi);
+	registerCompactContextTool(pi, { isCtxStale });
 
 	// ── 阈值提醒（D3/D4）：agent_settled 越档检查 + followUp 一次性投递 ──
 	pi.on("agent_settled", (_event: AgentSettledLikeEvent, ctx: ExtensionContext) => {
@@ -123,8 +142,16 @@ export default function smartContextExtension(pi: ExtensionAPI): void {
 		const message = buildThresholdReminder(crossed, usage.tokens ?? 0, usage.contextWindow, compactionCount);
 		debugLog(`reminder fired: tiers=${crossed.join(",")} tokens=${usage.tokens}`);
 		// D4：followUp（agent 空闲后投递并触发一个 turn，可立即决定压缩）；
-		// 防循环：crossed 全部已标记 fired，提醒触发的 settled 不会重复发
-		pi.sendUserMessage(message, { deliverAs: "followUp" });
+		// 防循环：crossed 全部已标记 fired，提醒触发的 settled 不会重复发。
+		// 事件回调内直接调用捕获的 pi——session 替换窗口可能 stale（crash-resilience D1
+		// 普查接入点），守卫 stale 静默降级（不杀 pi 进程），非 stale 错误原样上抛。
+		guardStaleCtx(() => {
+			pi.sendUserMessage(message, { deliverAs: "followUp" });
+		}, {
+			isCtxStale,
+			label: "smart-context:threshold-reminder",
+			onStale: (error) => debugLog(`threshold reminder delivery skipped (stale ctx): ${toErrorMessage(error)}`),
+		});
 	});
 
 	// ── 模型切换：跨界通知 + downshift 提醒（D5，仅跨界时注入一次）──
@@ -141,7 +168,14 @@ export default function smartContextExtension(pi: ExtensionAPI): void {
 		if (config.enabled && nowExcluded !== wasExcluded) {
 			const notice = buildSwitchNotice(nowExcluded ? "unavailable" : "available", modelId);
 			debugLog(`switch notice: ${nowExcluded ? "unavailable" : "available"} (${modelId})`);
-			pi.sendUserMessage(notice, { deliverAs: "steer" });
+			// session 替换窗口可能 stale（D1 普查接入点）——守卫 stale 静默降级
+			guardStaleCtx(() => {
+				pi.sendUserMessage(notice, { deliverAs: "steer" });
+			}, {
+				isCtxStale,
+				label: "smart-context:switch-notice",
+				onStale: (error) => debugLog(`switch notice delivery skipped (stale ctx): ${toErrorMessage(error)}`),
+			});
 			return;
 		}
 
@@ -154,7 +188,14 @@ export default function smartContextExtension(pi: ExtensionAPI): void {
 		);
 		if (downshift && isGatingActive(config, modelId)) {
 			debugLog("downshift notice fired");
-			pi.sendUserMessage(downshift, { deliverAs: "steer" });
+			// session 替换窗口可能 stale（D1 普查接入点）——守卫 stale 静默降级
+			guardStaleCtx(() => {
+				pi.sendUserMessage(downshift, { deliverAs: "steer" });
+			}, {
+				isCtxStale,
+				label: "smart-context:downshift-notice",
+				onStale: (error) => debugLog(`downshift notice delivery skipped (stale ctx): ${toErrorMessage(error)}`),
+			});
 		}
 	});
 }

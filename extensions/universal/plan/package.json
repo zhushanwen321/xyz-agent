@@ -42,6 +42,7 @@
     "templates/"
   ],
   "dependencies": {
+    "@zhushanwen/pi-ext-guards": "workspace:*",
     "@zhushanwen/pi-extension-logger": "workspace:*"
   }
 }
