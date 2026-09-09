@@ -19,6 +19,8 @@ import type { ServerMessage } from '@xyz-agent/shared'
 export function makeSessionStore(): ISessionStore {
   return {
     scanSessions: () => [],
+    // u4c（D5⑤）：ISessionStore 新增流式归一化成员（本文件不触达，no-op 满足类型）
+    normalizeSessionFileStreaming: () => {},
     invalidateScanCache: () => {},
     refreshAll: () => {},
     persistSessionEnd: () => {},

@@ -56,8 +56,8 @@ export interface TraceCurrentPromptSummary {
 export interface TraceSessionPartition {
   /** 加载态：idle 未加载 / loading / ready / error。 */
   status: 'idle' | 'loading' | 'ready' | 'error'
-  /** 数据通路（ready 时有值）：rpc 活跃 / file 非活跃或降级 / empty 未落盘。 */
-  source: 'rpc' | 'file' | 'empty' | null
+  /** 数据通路（ready 时有值）：rpc 活跃 / file 非活跃或降级 / empty 未落盘 / oversize 超预检阈值降级（D5④，u4c 协议扩展的编译级联——降级态 UI 渲染分支留 Trace 视图改造单元）。 */
+  source: 'rpc' | 'file' | 'empty' | 'oversize' | null
   header?: TraceSessionHeader
   entries: unknown[]
   malformed: SessionTraceMalformedLine[]

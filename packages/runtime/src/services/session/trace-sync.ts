@@ -54,8 +54,8 @@ export const CURRENT_SYSTEM_PROMPT_CUSTOM_TYPE = 'xyz:current-system-prompt'
 /** trace 台账快照（= session.traceEntries WS payload）。 */
 export interface SessionTraceSnapshot {
   sessionId: string
-  /** 数据通路：rpc（活跃，权威解析）/ file（非活跃或 RPC 失败降级）/ empty（未落盘空态）。 */
-  source: 'rpc' | 'file' | 'empty'
+  /** 数据通路：rpc（活跃，权威解析）/ file（非活跃或 RPC 失败降级）/ empty（未落盘空态）/ oversize（D5④ 超预检阈值降级）。 */
+  source: 'rpc' | 'file' | 'empty' | 'oversize'
   /** session JSONL 绝对路径（reveal 按钮数据源；empty 未落盘/路径未知时缺省）。 */
   filePath?: string | null
   /** JSONL 首行 header 完整 entry（parentSession 两形态原样透传）；未落盘/首行损坏时缺省。 */
@@ -68,6 +68,8 @@ export interface SessionTraceSnapshot {
   sessionEnd?: SessionTraceSessionEndPayload
   /** 当前叶子 entry id（RPC 路径；增量腿 since 基准）。文件路径无 leaf 概念，缺省。 */
   leafId?: string | null
+  /** D5④ oversize 降级文案（source='oversize' 时提供，含体积与源文件绝对路径）。 */
+  oversizeMessage?: string
 }
 
 /**
@@ -108,12 +110,26 @@ export function collectMalformedLines(text: string | null): SessionTraceMalforme
   return malformed
 }
 
+// eslint-disable-next-line no-magic-numbers -- 字节量纲换算基数（1MB = 1024×1024），命名常量自解释
+const BYTES_PER_MB = 1024 * 1024
+
+/**
+ * D5④ oversize 降级文案（crash-resilience §3.3 错误规格表「历史文件超 32MB」行）。
+ *
+ * 设计定版文案形态：「Trace 过大无法渲染（XX MB），源文件：<绝对路径>」——恢复指引
+ * 内嵌（文件系统直接查看源文件），不与「尚未落盘」空态文案混淆。
+ */
+export function formatTraceOversizeMessage(bytes: number, filePath: string): string {
+  return `Trace 过大无法渲染（${(bytes / BYTES_PER_MB).toFixed(1)} MB），源文件：${filePath}`
+}
+
 /**
  * 路径 B：从 JSONL 文件直读构建 trace 快照。
  *
- * 文件不存在（未落盘）→ source='empty' 空态（规则 6：不创建文件）；读出后逐行解析
- * （core parse-jsonl：损坏行占位保留行号与原文），首条 type=session 行提 header，
- * 其余 ok 行按序作 entries；sidecar session_end 合并。
+ * 文件不存在（未落盘）→ source='empty' 空态（规则 6：不创建文件）；文件超 runtime
+ * 读取预检阈值 → source='oversize' 降级态（D5④，不读全文——与 empty 显式区分）；
+ * 读出后逐行解析（core parse-jsonl：损坏行占位保留行号与原文），首条 type=session 行
+ * 提 header，其余 ok 行按序作 entries；sidecar session_end 合并。
  */
 export function buildTraceSnapshotFromFile(
   sessionId: string,
@@ -128,6 +144,19 @@ export function buildTraceSnapshotFromFile(
     // 未落盘（pi 延迟写入：首条 assistant 消息前文件不存在）或读失败（EACCES 等）——
     // 统一空态标记，前端显示「尚未落盘，落盘后自动加载」。
     return { sessionId, source: 'empty', entries: [], malformed: [] }
+  }
+  if (typeof text !== 'string') {
+    // D5④ oversize（crash-resilience §3.3 D5④）：超 READ_PRECHECK_MAX_BYTES 不读全文，
+    // 渲染降级态——文案含体积与源文件绝对路径，entries/malformed 恒空（非空态混淆：
+    // source 单独成档，前端按 oversizeMessage 渲染专属提示）。
+    return {
+      sessionId,
+      source: 'oversize',
+      filePath,
+      entries: [],
+      malformed: [],
+      oversizeMessage: formatTraceOversizeMessage(text.bytes, filePath),
+    }
   }
   const lines = parseSessionTraceJsonl(text)
   let header: SessionTraceHeaderPayload | undefined
@@ -255,10 +284,11 @@ export class TraceSync {
         const filePath = this.resolveTraceFilePath(sessionId)
         const header = parseTraceHeaderLine(filePath !== null ? this.deps.sessionStore.readSessionHeaderLine(filePath) : null)
         // G1 坏行可见性：pi get_entries 静默跳坏行，RPC 路径必须补文件解析占位（否则活跃
-        // session 的坏行对 Trace 视图彻底不可见）；读失败（未落盘窗口）→ 恒空数组降级
-        const malformed = collectMalformedLines(
-          filePath !== null ? this.deps.sessionStore.readSessionJsonlText(filePath) : null,
-        )
+        // session 的坏行对 Trace 视图彻底不可见）；读失败（未落盘窗口）→ 恒空数组降级。
+        // D5④：文件超预检阈值时同样恒空数组——malformed 补齐是增强项（权威 entries 走
+        // RPC 已返回），不为它绕过全文件读取预算。
+        const fileText = filePath !== null ? this.deps.sessionStore.readSessionJsonlText(filePath) : null
+        const malformed = typeof fileText === 'string' ? collectMalformedLines(fileText) : []
         const sessionEnd = filePath !== null ? (this.deps.sessionStore.readSessionEndMeta(filePath) ?? undefined) : undefined
         return {
           sessionId,

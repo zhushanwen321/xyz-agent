@@ -8,6 +8,11 @@
 import { existsSync, readFileSync, statSync, openSync, readSync, closeSync, readdirSync, unlinkSync, writeFileSync, renameSync } from 'node:fs'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { parseJsonl, readTailEntries } from '../../utils/jsonl.js'
+import { READ_PRECHECK_MAX_BYTES } from '@xyz-agent/shared'
+// 逆序分块读工具（u4b 交付物，D5 共享 IO 形态）。infra → services 依赖倒挂豁免（同
+// session-lifecycle.ts 的 R3 ports 倒挂惯例）：D5③ 消费方在本文件（infra/pi），共享
+// 工具落点在 u4b 领地（services/session）；工具零业务依赖，无循环引用。
+import { forEachReversedLineChunk } from '../../services/session/history-reverse-read.js'
 import { join, dirname, basename } from 'node:path'
 import { getSessionsDir } from './pi-paths.js'
 // model sidecar 家族（单向依赖：本文件经 scanSessionMeta 消费 readModelBinding；该家族
@@ -495,12 +500,20 @@ export function extractSessionOutcome(filePath: string): SessionOutcome | null {
 }
 
 /**
- * 尾读 + fallback 全量读，倒序找最后一条匹配 entry 的字段值（W2 共用骨架）。
+ * 尾读 + 预检分流 + 逆序分块读，倒序找最后一条匹配 entry 的字段值（W2 共用骨架 + D5③）。
  *
  * 1. readTailEntries 尾读尾部块（offset=max(0,size-32KB)）
  * 2. 倒序找匹配 predicate 的 entry，命中返回 extract(entry)
- * 3. 尾读未命中（INVAR-tail-2 SR1）→ fallback 全量 readFileSync + parseJsonl 倒序找
- * 4. 全量也无 → 返回 null
+ * 3. 尾读未命中（INVAR-tail-2 SR1）→ statSync 大小预检分流：
+ *    - ≤ READ_PRECHECK_MAX_BYTES（小文件）：保留原全量 readFileSync + parseJsonl 倒序找
+ *      fallback（行为逐字节不变——目标可能在文件头部，如早期命名推出的 session_info）
+ *    - > READ_PRECHECK_MAX_BYTES（D5③，crash-resilience §3.3）：**删除全量读 fallback**，
+ *      改 forEachReversedLineChunk 逆序分块扫（总读取量 ≤ 阈值），从尾向前找「最后一条
+ *      含目标字段的行」命中即止——消除「每次 pi 退出（extractSessionOutcome）未命中尾窗
+ *      就全量同步读巨文件」的退出侧内存尖峰恶性循环。上限内未命中（目标在更深历史区）
+ *      返回 null：消费方（extractSessionOutcome/extractSessionName）对 null 的既有降级
+ *      （outcome=null → idle、name=null）语义保持，非正确性回退
+ * 4. 全程未命中 → 返回 null
  *
  * 错误对等（INVAR-tail-7）：ENOENT/EACCES/JSON parse 错误与原实现一致返回 null，不引入新 throw。
  */
@@ -519,7 +532,38 @@ function findLastEntryField<R>(
       }
     }
   }
-  // fallback 全量读（INVAR-tail-2: 尾读未命中，目标可能在文件头部）
+  // D5③ 预检分流：超阈值禁全量读（原 fallback 的 readFileSync 全量同步读是崩溃收尾
+  // 路径上的内存尖峰触发器），改逆序分块扫命中即止。
+  let size = -1
+  try {
+    size = statSync(filePath).size
+  } catch {
+    return null // 文件不存在/不可读：与原 readFileSync 抛错 → catch → null 等价（INVAR-tail-7）
+  }
+  if (size > READ_PRECHECK_MAX_BYTES) {
+    // 数组包装承载命中值（闭包内赋值，规避 TS 对泛型变量的 CFA 收窄误报）
+    const found: R[] = []
+    forEachReversedLineChunk(filePath, { maxTotalBytes: READ_PRECHECK_MAX_BYTES }, (chunk) => {
+      // 块内倒序（文件尾方向优先）——「最后一条」= 更靠近文件尾的命中行
+      for (let i = chunk.lines.length - 1; i >= 0; i--) {
+        const line = chunk.lines[i]
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        let entry: unknown
+        try {
+          entry = JSON.parse(trimmed)
+        } catch {
+          continue // 损坏行跳过（parseJsonl 同语义；含块边界 UTF-8 残缺的污染行——见工具注释）
+        }
+        if (typeof entry === 'object' && entry !== null && predicate(entry as Record<string, unknown>)) {
+          found.push(extract(entry as Record<string, unknown>))
+          return false // 命中即止（当前块内更早行不再交付）
+        }
+      }
+    })
+    return found.length > 0 ? found[0] : null
+  }
+  // ≤阈值：原全量读 fallback 保留（INVAR-tail-2: 尾读未命中，目标可能在文件头部）
   try {
     const content = readFileSync(filePath, 'utf-8')
     const entries = parseJsonl(content)
@@ -672,6 +716,11 @@ export function extractHandedOff(filePath: string): string | undefined {
  *
  * @param filePath    原 session JSONL 绝对路径（内容被原子覆盖，路径不变）
  * @param transformed 变换后的完整 JSONL 文本
+ *
+ * [R1 豁免形态约束 + 拆分登记] 字符串版保持独立直写形态（写语句与本函数内 tmpPath
+ * 单跳赋值链同函数 = R1 直写检查 exempt_tmp_migrate_target 可判定）；大文件的流式
+ * 变体拆至 './session-file-streaming.ts'（max-lines 预算 + 一个概念一个模块），两版
+ * tmp 命名 / rename-over / 回滚 / scanner 排除语义同源。
  */
 export function normalizeSessionFileInPlace(filePath: string, transformed: string): void {
   // 临时名形态 = basename + '.tmp-migrate-' + 时间戳 + '.jsonl'（登记表 §4 ⑨；

@@ -1260,7 +1260,9 @@ export interface ServerMessageMapBase {
   // session.traceEntries：session.getTraceEntries 的 reply。source 区分数据通路：
   //   rpc = 活跃 session（pi get_entries 权威解析 + 文件首行补 header）；
   //   file = 非活跃/降级（JSONL 直读 + sidecar 合并）；
-  //   empty = session 未落盘（pi 延迟写入窗口，规则 6——空态标记，前端显示「尚未落盘」）。
+  //   empty = session 未落盘（pi 延迟写入窗口，规则 6——空态标记，前端显示「尚未落盘」）；
+  //   oversize = 文件超 runtime 读取预检阈值（crash-resilience D5④，u4c）——entries 恒空、
+  //     oversizeMessage 提供降级文案（体积 + 源文件绝对路径），不与 empty 混淆。
   // header 是 JSONL 首行 type=session 的完整 entry（字段镜像 core TraceSessionHeader——
   // shared 不依赖 core，结构兼容即协议兼容；parentSession 两形态（源文件路径/源 sessionId
   // fallback）原样透传，溯源解析归消费端）。entries 是 pi entry JSON 逐条（消费端按 core
@@ -1268,7 +1270,7 @@ export interface ServerMessageMapBase {
   // pi get_entries 静默跳坏行，由 runtime 补文件解析占位，G1 损坏行不静默丢失）。
   'session.traceEntries': {
     sessionId: string
-    source: 'rpc' | 'file' | 'empty'
+    source: 'rpc' | 'file' | 'empty' | 'oversize'
     /** session JSONL 绝对路径（reveal 按钮数据源——MALFORMED 行「打开所在目录」经 Electron
      *  shell.showItemInFolder 定位；empty 未落盘/路径未知时缺省）。 */
     filePath?: string | null
@@ -1278,6 +1280,8 @@ export interface ServerMessageMapBase {
     sessionEnd?: SessionTraceSessionEndPayload
     /** 当前叶子 entry id（RPC 路径；增量腿 since 基准）。文件路径无 leaf 概念，缺省。 */
     leafId?: string | null
+    /** D5④ oversize 降级文案（source='oversize' 时提供：「Trace 过大无法渲染（XX MB），源文件：<绝对路径>」）。 */
+    oversizeMessage?: string
   }
   // session.traceEntryAppended：增量腿推送（event-interpreter 触发事件 → get_entries(since=lastLeafId)
   // 拉取后的 delta entries；lifecycle RPC 成功后 runtime 主动补拉同走此通道）。entries 为空时

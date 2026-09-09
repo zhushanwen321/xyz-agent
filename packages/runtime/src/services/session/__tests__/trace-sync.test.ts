@@ -80,6 +80,8 @@ function makeSessionStore(metas: ScannedSessionMeta[]): ISessionStore {
       }
     },
     readSessionEndMeta: (p: string) => readSessionEndMeta(p),
+    // u4c（D5⑤）：ISessionStore 新增流式归一化成员（本文件不触达，no-op 满足类型）
+    normalizeSessionFileStreaming: () => {},
     persistHandoffSidecar: () => {},
     trash: () => Promise.resolve(),
   }

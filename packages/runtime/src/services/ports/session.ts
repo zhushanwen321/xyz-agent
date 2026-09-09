@@ -43,6 +43,29 @@ export interface ScannedSessionMeta {
 export type SessionOutcome = 'done' | 'error' | 'stopped'
 
 /**
+ * readSessionJsonlText 的超限标记（D5④，crash-resilience §3.3）。
+ *
+ * 文件超 READ_PRECHECK_MAX_BYTES 时实现端不读全文，返回本标记——与
+ * null（文件缺失/读失败）显式区分，消费方（trace-sync Trace 视图）渲染专属降级态。
+ */
+export interface SessionJsonlOversizeMark {
+  oversize: true
+  /** 文件实际字节数（statSync.size），供降级文案展示体积。 */
+  bytes: number
+  /** 触发阈值（READ_PRECHECK_MAX_BYTES），供文案/日志对照。 */
+  maxBytes: number
+}
+
+/**
+ * 流式归一化的行级纯变换回调（D5⑤ 变换腿）。
+ *
+ * 返回变换后的行文本；返回 null = 剔除该行。纯函数契约：只做字符串变换，不触 IO——
+ * IO（分块读/临时名写入/rename-over）全部归 port 实现，services 层调用方经本 port
+ * 消费（check_services_infra_import 的分层通道），回调不进 port 边界。
+ */
+export type SessionJsonlLineTransform = (line: string, isFirstKeptLine: boolean) => string | null
+
+/**
  * session .jsonl 首行 header entry（type=session）解析结果。
  *
  * 纯数据类型（全 string 字段），从 infra/pi/session-file-utils.ts 提升到 port：
@@ -167,8 +190,26 @@ export interface ISessionStore {
    * 读取 session .jsonl 全文文本（session-trace 路径 B 文件直读用）。
    *
    * 文件不存在（pi 延迟写入窗口，规则 6）/ 读失败 → null（不抛——空态判定依据）。
+   * D5④（crash-resilience §3.3）：文件超 READ_PRECHECK_MAX_BYTES 时不读全文，返回
+   * 明确的 oversize 标记（**不返回 null**——「文件过大」与「文件缺失」是两种用户可见
+   * 语义，混淆会把超大 Trace 误显示为「尚未落盘」空态）。string | null 返回类型的历史
+   * 调用方/测试 stub 因返回类型协变保持编译兼容；消费方需窄化 string 后再按文本消费。
    */
-  readSessionJsonlText(filePath: string): string | null
+  readSessionJsonlText(filePath: string): string | SessionJsonlOversizeMark | null
+  /**
+   * 分块流式归一化 session JSONL 并 rename-over 原子替换原文件（D5⑤ 变换腿，crash-resilience
+   * §3.3 降级形态：超 READ_PRECHECK_MAX_BYTES 文件的附着前最小规范化，不构造全文件字符串）。
+   *
+   * IO（分块读 / '.tmp-migrate-' 临时名写入 / rename / 失败回滚）全部在本 port 实现内；
+   * transformLine 为纯行变换回调（SessionJsonlLineTransform），isFirstKeptLine 游标语义
+   * = 「strip 后产物首行」。调用方 = restore-seeding（restore / renameSession 非活跃附着
+   * 共用），经构造注入消费（services 层 IO 须经 port，C-comm-03）。
+   *
+   * @param filePath     原 session JSONL 绝对路径（内容被原子覆盖，路径不变）
+   * @param transformLine 行级纯变换
+   * @param chunkBytes   读块字节数（缺省 1MB，D5② 标定；测试注入小值覆盖跨块/多字节分支）
+   */
+  normalizeSessionFileStreaming(filePath: string, transformLine: SessionJsonlLineTransform, chunkBytes?: number): void
   /**
    * 读取 sidecar `.jsonl.meta.json` 的 session_end 完整元数据（session-trace BOUNDARY 行，
    * ADR 0042）。无 sidecar / JSON 损坏 / outcome 非法 → null（不抛）。

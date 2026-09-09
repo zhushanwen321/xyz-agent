@@ -704,7 +704,7 @@ export class SessionLifecycle implements ISessionRegistry {
       // withEphemeralPi 内 switchSession（pi 报错，见其 docstring 的 @param 语义），
       // 预读 ENOENT 会短路该分工。restoreSession 无此守卫（既有行为保持，不动）。
       if (existsSync(target.filePath)) {
-        normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack)
+        normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack, this.sessionStore)
       }
       await this.pm.withEphemeralPi(target.filePath, (c) => c.setSessionName(newName))
     }
@@ -895,7 +895,7 @@ export class SessionLifecycle implements ISessionRegistry {
       // tmp 孤儿文件、原会话文件永不更新（P0 数据丢失），已整体删除。
       // 判定/变换逻辑抽至 normalizeInactiveSessionFileIfNeeded（renameSession 非活跃
       // 分支共用，p1p4-closure W1），行为不变。
-      normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack)
+      normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack, this.sessionStore)
       // F2 直附着（归一化判定未命中）：零拷贝零改写，pi 的读写目标 = 登记路径 = 原文件。
       await client.switchSession(target.filePath)
       // W2（restore-fork-attach-fix F4）：附着必断言（I1「登记路径 ≡ pi 写路径」）——

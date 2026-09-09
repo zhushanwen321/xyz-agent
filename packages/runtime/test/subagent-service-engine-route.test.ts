@@ -47,6 +47,8 @@ function createMockSessionStore(mainSessionFile: string, mainSessionId: string):
   }
   return {
     scanSessions: () => [meta],
+    // u4c（D5⑤）：ISessionStore 新增流式归一化成员（本文件不触达，no-op 满足类型）
+    normalizeSessionFileStreaming: () => {},
     invalidateScanCache: () => {},
     refreshAll: () => {},
     persistSessionEnd: () => {},
