@@ -13,10 +13,22 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createRecord } from "../execution-record.ts";
 import { RecordStore } from "../record-store.ts";
+
+// [Gate A teardown 稳定性] no-op 掉索引落盘。根因：collectRecords 扫描尾的
+// flushIndexAfterScan（record-store.ts）fire-and-forget saveIndex（tmp+fsync+rename
+// 异步 fs），满载下该 promise 可能在本文件 teardown 之后才 settle，其失败分支经
+// logger.warn → console.warn 上报 vitest（rpc onUserConsoleLog 在途）——worker 关闭
+// rpc 时在途调用被 reject 为 EnvironmentTeardownError（0 断言失败，纯 teardown 时序）。
+// 本文件用一次性 tmpdir、断言不观察索引文件，落盘与否无观察者——no-op 消除在途 IO
+// 链，任何负载下确定；loadIndex 等其余导出保留原实现（磁盘重建语义不变）。
+vi.mock("../sessions-index.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../sessions-index.ts")>()),
+  saveIndex: async () => {},
+}));
 
 // ── helpers ──
 

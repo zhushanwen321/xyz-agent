@@ -57,6 +57,37 @@ describe('logger', () => {
     }
   }
 
+  /**
+   * 等待**精确文件名**的文件内容包含 substr（写流 flush 是异步的，固定 sleep 满载下不可靠）。
+   *
+   * 与 waitForLogContent 的区别：prefix startsWith 匹配在「主文件 + .1 滚动」并存时无法
+   * 区分两者（`runtime-<date>.log` 前缀同时命中 `.log.1`，且 readdir 顺序稳定时 find 恒
+   * 返回同一文件，内容不匹配会死等到超时），size 轮转断言需要锁定主文件本体。
+   * 文件尚未创建视为未就绪继续轮询；deadline 默认 5s、间隔 25ms。
+   */
+  async function waitForNamedFileContent(
+    dir: string,
+    fileName: string,
+    substr: string,
+    deadlineMs = 5000,
+  ): Promise<string> {
+    const deadline = Date.now() + deadlineMs
+    let lastContent = ''
+    for (;;) {
+      try {
+        lastContent = readFileSync(join(dir, fileName), 'utf-8')
+        if (lastContent.includes(substr)) return lastContent
+      } catch { /* 文件尚未创建（如轮转 rename 后 reopen 前），继续轮询 */ }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `waitForNamedFileContent timeout (${deadlineMs}ms): ${fileName} in ${dir} lacks ${JSON.stringify(substr)}; `
+          + `actual content: ${JSON.stringify(lastContent)}`,
+        )
+      }
+      await new Promise((r) => setTimeout(r, 25))
+    }
+  }
+
   beforeEach(async () => {
     // 动态 import logger（每次 fresh），但 logger 是模块级单例，需 reset。
     // 用 vi.resetModules 让每个测试拿到干净的模块状态。
@@ -186,11 +217,15 @@ describe('logger', () => {
       await new Promise((r) => setImmediate(r))
       await new Promise((r) => setImmediate(r))
     }
-    // 轮转异步完成（end 旧流 flush → rename → 开新流）：轮询等 .1 滚动文件出现
+    // 轮转是异步续体（end 旧流等 flush → rename → reopen 新流 → 回放窗口行）。等
+    // 「最终主文件包含最后一行写入」而非仅等 .1 出现：line-N 恒落最终主文件（最后一行
+    // 写入后无再轮转，触发轮转的行本身经回放进新主文件），该条件蕴含 rename、reopen、
+    // 回放全部完成——旧版只等 .1 出现，满载下轮询可停在「rename 已做、新主文件未
+    // reopen」的窗口，下方主文件存在性断言假红（Gate A 并行负载偶发）。
     const today = new Date().toISOString().slice(0, 10)
-    await waitForLogContent(logsDir, `runtime-${today}.log.1`)
+    await waitForNamedFileContent(logsDir, `runtime-${today}.log`, 'line-29-')
     const files = readdirSync(logsDir).filter((f) => f.startsWith(`runtime-${today}`))
-    // 应该有主文件 + .1 滚动文件
+    // 应该有主文件 + .1 滚动文件（多轮轮转 ≥1 次 rename 已随上方等待完成）
     expect(files.some((f) => f.endsWith('.log.1'))).toBe(true)
     expect(files.some((f) => f.endsWith('.log') && !f.endsWith('.1'))).toBe(true)
     // 主文件（未滚动段）严格小于总写入量：轮转把早期数据切进了 .1（.1 段 ≥ 阈值，非空）。
