@@ -5,6 +5,7 @@
 // 计时超时 / 排除面 = 已 ack 与已终结请求）。自灭执行一律注入 killSelf fake，
 // 绝不触达缺省的 process.kill（测试红线）。
 
+import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -22,6 +23,13 @@ function fakeStdin(): NodeJS.ReadableStream {
 }
 
 describe("spawnEngineChild", () => {
+  // 断言失败路径下可能没有 stdin EOF，残留子进程在此收割
+  let spawned: ChildProcess | null = null;
+  afterEach(() => {
+    spawned?.kill("SIGKILL");
+    spawned = null;
+  });
+
   it("形态键（detached/stdio/stdin/windowsHide）出现即抛错——不暴露硬编码契约面", () => {
     const env = buildEngineChildEnv({}, { dataDir: "/d" });
     expect(() => spawnEngineChild({ command: "x", args: [], env, detached: true } as never))
@@ -34,26 +42,62 @@ describe("spawnEngineChild", () => {
 
   it("子进程 stdin 是自有 pipe 而非引擎 stdin fd（R9-4②）", async () => {
     const env = buildEngineChildEnv({}, { dataDir: "/d" });
-    const child = spawnEngineChild({
-      command: process.execPath,
-      args: ["-e", "process.stdin.once('data', (d) => process.stdout.write(d.toString().trim().toUpperCase()))"],
+    // 载荷选型：POSIX 用 /bin/sh + builtin test + /bin/cat——原生进程 fork+exec
+    // 毫秒级（node -e 载荷是完整 Node 启动，满载下墙钟成本高且无谓）。probe 从
+    // 子进程侧断言 stdin 是流式 IPC 端点（-S socket 或 -p FIFO——libuv 'pipe'
+    // stdio 在 macOS 走 socketpair、Linux 走 pipe2，两者都是 'pipe' 形态本体；
+    // 排除 TTY/文件），/bin/cat 回环验证数据面通路 + EOF 自然退出（与自灭主判据
+    // 同源的 EOF 语义）。buildEngineChildEnv 是净化面（无 PATH），一律绝对路径。
+    // Windows 无原生端点探测，回落 node -e 原样回显（契约由父侧 fd 断言 + 回环
+    // 覆盖）。
+    const usePosixProbe = process.platform !== "win32";
+    spawned = spawnEngineChild({
+      command: usePosixProbe ? "/bin/sh" : process.execPath,
+      args: usePosixProbe
+        ? ["-c", "{ test -S /dev/stdin || test -p /dev/stdin; } && /bin/cat"]
+        : ["-e", "process.stdin.once('data', (d) => process.stdout.write(d))"],
       env,
     });
-    expect(child.stdin).toBeDefined();
-    // fd 不等：继承形态下子进程 stdin 会复用父 fd（0）；自有 pipe 是新 fd。
-    const childStdinFd = (child.stdin as unknown as { fd: number }).fd;
-    expect(childStdinFd).not.toBe(process.stdin.fd);
-    expect(child.stdio[0]).not.toBe(process.stdin);
-
-    const echoed = new Promise<string>((resolve) => {
-      let out = "";
-      child.stdout!.on("data", (d: Buffer) => { out += d.toString(); });
-      child.stdout!.on("end", () => resolve(out.trim()));
+    // spawn 失败（ENOENT 等）必须快速出声，不能拖成墙钟超时。
+    // **事件监听全部在 spawn 后立即注册**——child 的 exit 与 stdout end 相对
+    // 顺序不保证（载荷秒退时 exit 常先于 end 到达），若在 await echoed 之后再
+    // 注册 once("exit")，late listener 会永久错过已发出的事件 → 用例挂死到超时。
+    // 这正是本用例历史 flaky 的真正根因（负载越高 exit/end 交错越随机，暴露率
+    // 越高；加大墙钟超时无效——事件已丢失，等多久都不会来）。等待承诺与监听
+    // 注册必须分离：先注册、后 await。
+    const failure = new Promise<never>((_, reject) => {
+      spawned!.once("error", (err) => reject(new Error(`child spawn failed: ${String(err)}`)));
     });
-    child.stdin!.end("ping\n");
-    expect(await echoed).toBe("PING");
-    await new Promise<void>((resolve) => child.once("exit", () => resolve()));
-  }, 15_000);
+    const exited = new Promise<number | null>((resolve) => {
+      spawned!.once("exit", (code) => resolve(code));
+    });
+    const echoed = new Promise<string>((resolve, reject) => {
+      let out = "";
+      spawned!.stdout!.on("data", (d: Buffer) => { out += d.toString(); });
+      spawned!.stdout!.on("end", () => resolve(out));
+      spawned!.stdout!.on("error", reject);
+    });
+
+    expect(spawned.stdin).toBeDefined();
+    // 父侧 fd 不等：继承形态下子进程 stdin 复用父 fd（0）；自有 pipe 是新分配
+    // fd——0 已被父 stdin 持有，新 fd 编号不可能与之相等。注意 Node >= 20 的
+    // net.Socket 不再暴露公开 fd（旧版有），_handle.fd 是形态探测源（fd 字段
+    // 优先以兼容旧 Node）。
+    const stdinSocket = spawned.stdin as unknown as { fd?: number; _handle?: { fd: number } };
+    const childStdinFd = stdinSocket.fd ?? stdinSocket._handle?.fd;
+    expect(typeof childStdinFd).toBe("number");
+    expect(childStdinFd).toBeGreaterThanOrEqual(0);
+    expect(childStdinFd).not.toBe(process.stdin.fd);
+    expect(spawned.stdio[0]).not.toBe(process.stdin);
+
+    // 输出到达即断言（事件驱动，无固定 sleep）；30s 只是满载兜底上限
+    spawned.stdin!.end("ping\n");
+    expect(await Promise.race([echoed, failure])).toBe("ping\n");
+    const exitCode = await Promise.race([exited, failure]);
+    // 0 = 子进程侧 test -S/-p（stdin 是流式端点）通过，且 cat 读到 EOF
+    // （child.stdin end）正常退出——EOF 语义下子进程生命周期完整走通
+    expect(exitCode).toBe(0);
+  }, 30_000);
 });
 
 describe("armEngineSelfDestruct", () => {
