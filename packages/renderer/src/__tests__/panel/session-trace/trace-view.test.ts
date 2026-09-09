@@ -509,3 +509,39 @@ describe('assistant 聚合行子 block 内联展开（chevron + block 子行 + �
     view.unmount()
   })
 })
+
+describe('oversize 降级视图（crash-resilience §3.3 D5④，u4c 协议扩展）', () => {
+  it("source='oversize' → 降级分支渲染文案（体积 + 源文件绝对路径可见），分区透传 oversizeMessage，不落空态", async () => {
+    const MB = 1024 * 1024
+    const bytes = 35.6 * MB
+    const filePath = `/pi/sessions/${SID}.jsonl`
+    // runtime formatTraceOversizeMessage 的文案形态（体积 MB + 绝对路径）
+    const oversizeMessage = `Trace 过大无法渲染（${(bytes / MB).toFixed(1)} MB），源文件：${filePath}`
+    apiMock.getTraceEntries.mockResolvedValue({
+      sessionId: SID,
+      source: 'oversize',
+      filePath,
+      entries: [],
+      malformed: [],
+      oversizeMessage,
+    } satisfies ServerMessageMap['session.traceEntries'])
+
+    const view = await mountTraceView()
+    // 分区透传（loadTrace 不再丢弃 oversizeMessage）
+    expect(useSessionTrace().partition.value.oversizeMessage).toBe(oversizeMessage)
+
+    // 降级分支：专属 testid + 文案含体积与路径（用户可见 DOM 断言）
+    const degrade = view.find('[data-testid="trace-oversize"]')
+    expect(degrade.exists()).toBe(true)
+    expect(degrade.find('[data-testid="trace-oversize-message"]').text()).toBe(oversizeMessage)
+    expect(degrade.text()).toContain('35.6 MB')
+    expect(degrade.text()).toContain(filePath)
+    // 重试入口（组件形态对齐 empty/error 分支）
+    expect(degrade.find('[data-testid="trace-retry"]').exists()).toBe(true)
+
+    // 非空态混淆：不落 empty（未落盘）与过滤空态分支
+    expect(view.find('[data-testid="trace-empty-not-persisted"]').exists()).toBe(false)
+    expect(view.find('[data-testid="trace-empty"]').exists()).toBe(false)
+    view.unmount()
+  })
+})

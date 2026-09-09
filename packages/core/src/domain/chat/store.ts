@@ -150,6 +150,14 @@ function attachRunningToolCall(prev: Message[], form: PiToolCallEntryForm): Mess
  * 已知边界（设计 D3，可接受）：跨 turn 重发相同文本时数量对齐可能误剔新 overlay——
  * 表现为该消息暂以基线旧版本显示（位置在历史区），不丢消息不重复，新 entry 落盘后
  * 下一轮 reconcile 自然收敛。
+ *
+ * 步骤③ [crash-resilience D7 reconcile 修复] respawn 提示条拣回：appendRespawnNotice 的
+ * liveOnly system 提示条（u8，T4 崩溃恢复横幅）无 piEntryId、也不满足尾部保护段条件
+ * （system 非 streaming/user）——不拣回则任何切入 reconcile 都会清掉已插入的提示条，
+ * 重显只能依赖 ring 回放重触发 session.restored（时序未声明）。合并结果产出后从旧分区
+ * 拣回**未过期**（TTL 5 分钟）提示条重插（restoreRespawnNotices），范围严格收窄
+ * customType=PI_RESPAWN_NOTICE_CUSTOM_TYPE（stream_warn 等其他 liveOnly 消息保持
+ * 一次性语义不受影响）。
  */
 /**
  * user 消息文本投影（mergeBaselineWithLive 文本多重集判据用）：基线（pi 文本经
@@ -248,7 +256,54 @@ function mergeBaselineWithLive(baseline: Message[], partition: Message[]): Messa
   const a = Math.min(protectedUserIdx.length, k)
   const alignedIdx = new Set(protectedUserIdx.slice(0, a))
   const keptTail = protectedSeg.filter((_, i) => !alignedIdx.has(i))
-  return [...baseline.map((m) => ({ ...m })), ...keptTail]
+  // 步骤③：respawn 提示条拣回重插（见函数头注释与 restoreRespawnNotices——不拣回则
+  // 任何切入 reconcile 都会清掉 liveOnly 提示条）
+  return restoreRespawnNotices(partition, [...baseline.map((m) => ({ ...m })), ...keptTail])
+}
+
+/**
+ * respawn 提示条的 reconcile 保留窗口（5 分钟，crash-resilience D7 修复）。
+ *
+ * 带 TTL 而非永不过期：liveOnly 语义是一次性通知（pi 无 entry、重开 session 不出现），
+ * 无限期的内存保留会让恢复横幅在长寿运行期持续驻留成噪音；过期后随下一次 reconcile
+ * 自然消退（用户层面 5 分钟足够读完横幅/点重试）。
+ */
+const RESPAWN_NOTICE_RETENTION_MS = 300_000
+
+/** respawn 提示条判定（appendRespawnNotice u8 唯一写入点的消息形态）。 */
+function isRespawnNotice(m: Message): boolean {
+  return m.role === 'system' && m.liveOnly === true && m.customType === PI_RESPAWN_NOTICE_CUSTOM_TYPE
+}
+
+/**
+ * 从旧分区拣回未过期的 respawn 提示条重插进合并结果（mergeBaselineWithLive 尾段调用）。
+ *
+ * 位置锚定：提示条在分区中的前驱消息文件侧身份（piEntryId ?? id）——基线克隆保留
+ * piEntryId，跨 reconcile 锚位稳定；前驱不存在（提示条是分区首条）或锚未命中合并结果
+ * （前驱是已被基线去重/窗口截掉的 live overlay）→ 退化为尾部追加（提示条是横幅，
+ * 时序精度次要于可见性）。连续提示条（restored 后紧跟 restoreFailed）按分区序依次
+ * 插入，前一条插入后即成为后一条的可命中锚。
+ *
+ * 幂等：提示条恒不在基线（无 pi entry）、也恒不进尾部保护段（步骤① walk 在 system
+ * complete 处 break），重插不会产生副本。
+ */
+function restoreRespawnNotices(partition: Message[], merged: Message[]): Message[] {
+  let result = merged
+  const mergedIds = new Set(result.map((m) => m.piEntryId ?? m.id))
+  for (let i = 0; i < partition.length; i++) {
+    const notice = partition[i]!
+    if (!isRespawnNotice(notice)) continue
+    if (Date.now() - notice.timestamp > RESPAWN_NOTICE_RETENTION_MS) continue
+    if (mergedIds.has(notice.id)) continue
+    const anchor = i > 0 ? partition[i - 1] : undefined
+    const anchorId = anchor !== undefined ? (anchor.piEntryId ?? anchor.id) : undefined
+    const aIdx = anchorId !== undefined ? result.findIndex((m) => (m.piEntryId ?? m.id) === anchorId) : -1
+    result = aIdx >= 0
+      ? [...result.slice(0, aIdx + 1), notice, ...result.slice(aIdx + 1)]
+      : [...result, notice]
+    mergedIds.add(notice.id)
+  }
+  return result
 }
 
 /**
