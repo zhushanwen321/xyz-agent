@@ -207,6 +207,35 @@ const WATCHDOG_MS_PER_TURN = WATCHDOG_MINUTES_PER_TURN * SECONDS_PER_MINUTE * MS
 export const WAKEUP_GRACE_MS = 15_000;
 
 /**
+ * [U3 D3b] error 分支回补重试窗口总时长（ms，对齐 WAKEUP_GRACE_MS 量级）。
+ *
+ * agent_end 处置「读不出」（pending.error，含 sessionFile undefined 的 handshake not
+ * settled 形态）不再无限保守 keep-alive（G3 翻转：记账失败 ≠ 合法等待）——改为 15s
+ * 窗口内交替重试双路获取（D1 get_state / D2 扫描），任一命中走既有三分支重判；耗尽
+ * kill（SIGTERM 升级链）→ runSpawn 成功语义返回（结果来自 stdout 事件累积，不依赖
+ * sessionFile）。count>0（证实有后代）分支的 keep-alive 不受影响——翻转只动「读不出」。
+ * [export] 测试可观测（disposition-retry-window 用例锚定窗口时长与耗尽语义）。
+ */
+export const DISPOSITION_RETRY_WINDOW_MS = 15_000;
+
+/**
+ * [U3 D3b] 窗口内重试步进（ms）：每 5s 一轮，15s 窗口共 3 次 fire（5s/10s/15s）。
+ * 轮序交替双路获取：轮 1 get_state 单查（复用 requestGetStateOnce，1s 预算，P-T1
+ * 实证 idle 应答亚毫秒）；轮 2 sessionDir 扫描（D2）；轮 3 纯判定轮（只做回填先行
+ * 检查 + 耗尽判定，不再获取——总收敛恰 15s 上界，最后一轮若是 1s 预算的 get_state
+ * 会把绝对上界推到 16s，违背设计「最坏 15s」名义）。
+ * [export] 测试可观测（disposition-retry-window / run-spawn-edges 用 fake timers
+ * 按步进推进断言轮次节奏）。
+ */
+export const DISPOSITION_RETRY_STEP_MS = 5_000;
+
+/** [U3 D3b] 窗口内重试轮数（15s / 5s = 3 次 fire，见 DISPOSITION_RETRY_STEP_MS 轮序声明）。 */
+const DISPOSITION_RETRY_ROUNDS = 3;
+
+/** [U3 D3b] 扫描轮序号（轮 2 = sessionDir 扫描；轮 1 = get_state 单查，轮 3 = 纯判定轮）。 */
+const DISPOSITION_RETRY_SCAN_ROUND = 2;
+
+/**
  * [T2-① / P-T2 降级路径 B] keep-alive 裸缺省无进展检测的连续静默阈值（30min）。
  *
  * P-T2 探针裁决（probe/p-t2-report.md）：历史 89 样本 96.6% keep-alive 窗口 >30min
@@ -1320,6 +1349,14 @@ export interface SpawnRunState {
    */
   keepAliveNoProgressTimer: NodeJS.Timeout | undefined;
   /**
+   * [U3 D3b] error 分支 15s 回补重试窗口 timer（error 分支专属新 timer，per-run 单例）。
+   * 重复 arm 先清旧（竞态 #8，对齐 keepAliveNoProgressTimer 的 arm 幂等模式——递归层主
+   * 被唤醒后多轮 agent_end 重复进入 error 分支时窗口重置重计，不叠加；chatMode 在
+   * routeAgentEnd 提前返回不进处置链，不构成多窗口场景）。undefined = 未挂载；
+   * runSpawn 收尾统一 disarm（对齐 state.watchdog / keepAliveNoProgressTimer 清理点）。
+   */
+  dispositionRetryTimer: NodeJS.Timeout | undefined;
+  /**
    * [T2-② / P-T2b 主路径] keep-alive 上界处置层主后置 true：runSpawn 收尾（层主
    * close 确认死亡 + sessionFile 冻结为最终快照）时对活跃后代做级联补杀 sweep。
    */
@@ -1950,15 +1987,16 @@ interface StdoutPumpHandles {
  *
  * ⓪ [U2 D3a] 快路径：state.descendantCapable === false（tools 白名单非空且不含
  *    派生/记账工具，物理不可能有进程内后代）→ 零判定零等待直接 final kill，不进
- *    回补与三分支（分支体见下方快路径块注释）。undefined / true → ①② + 三分支。
+ *    回补与三分支（分支体见下方快路径块注释）。undefined / true → ①② + 四分支。
  * ① 惰性回补：record.sessionFile 缺失（RC-1 形态：RPC mode 的 get_state 握手 7s 预算
  *    一次性耗尽后永不再试，sessionFile 成为永久缺失）时，现场向 idle 子进程单次
  *    get_state（此刻 turn 已完成，探针 P-T1 实证应答 0.3-0.4ms，预算 1s 量级）。
  *    回填 record.sessionFile + 写 alive marker + 补 handshakeResult.sessionId（对齐
- *    finishHandshake 的回填面）后走正常三分支——「有后代 keep-alive / 无后代 final
- *    kill / 读不出保守不杀」不再被一次性握手失败劫持进保守分支。
- * ② 回补失败（超时 / 空 response / stdin 已断同步 throw）不重试：readActivePending 对
- *    undefined 返回 error → 既有保守分支（行为不劣化）。决策点不变成第二个重试循环。
+ *    finishHandshake 的回填面）后走正常判定——「有后代 keep-alive / 无后代 final
+ *    kill」不再被一次性握手失败劫持进保守分支。
+ * ② 回补失败（超时 / 空 response / stdin 已断同步 throw）→ D2 扫描兜底 → 仍读不出
+ *    则 [U3 D3b] 进入 15s 回补重试窗口（每 5s 交替 get_state 单查 / 扫描，任一命中
+ *    走四分支重判；耗尽 kill 成功语义回收——「读不出」不再无限保守等待，G3）。
  *
  * fire-and-forget 契约：调用点在 stdout 同步回调链内，rejection 无人接 = unhandledRejection。
  * 内部唯一 await 对象 requestGetStateOnce 按契约永不 reject（同步写失败转空结果）；
@@ -1997,8 +2035,8 @@ async function runAgentEndDisposition(
     await backfillSessionFileViaGetState(state, child, registerGetStateListener);
     // [U1 D2 接入点 1] get_state 回补失败（response 无 sessionFile / 超时 / stdin 已断）
     // → sessionDir 扫描兜底（第二路获取：identity 精确匹配，见 session-file-locator.ts）。
-    // 回补与扫描都在子进程存活判据之后执行；后续 u3 将在此决策链上加 15s 回补重试窗口
-    //（每轮交替 get_state 单查 / 扫描），本单元只接入单轮扫描。
+    // 回补与扫描都在子进程存活判据之后执行；[U3 D3b] 两路仍全 miss 时由下方四分支的
+    // error 分支进入 15s 回补重试窗口（窗口轮 1/2 交替重试同两路获取）。
     if (!record.sessionFile && !child.killed) {
       const located = locateSessionFileByScan(record, sessionDir, state.spawnStartedAtMs);
       if (located) {
@@ -2022,17 +2060,214 @@ async function runAgentEndDisposition(
   // re-arm 泄漏 timer、touch marker 向死 pid 写心跳，final kill / warn 在已收尾进程上
   // 误导排查。存活判据用 exitCode/signalCode 双 null（close 后即非 null），不用
   // child.killed——它只表示「收到过 kill 请求」，close 之后恒 true，区分不了生死。
-  if (child.exitCode !== null || child.signalCode !== null) return;
+  // 存活判据连同处置四分支已提取为 evaluateDispositionBranches（窗口重判共用同一实现）。
+  evaluateDispositionBranches(state, child, sessionDir, registerGetStateListener, "agent_end");
+}
 
-  // ── 以下三分支与同步化前逐行一致（仅随函数迁移）──
+/**
+ * [U3 D3b] 处置四分支判定（agent_end 入口首判与重试窗口重判共用的单一实现）。
+ *
+ * 分支语义（count>0 / recentUnregister / 无后代 kill 三分支与提取前逐行一致）：
+ *   - count > 0（证实有后代）→ keepAliveOnAgentEnd（G2：keep-alive 全部原样保留，
+ *     动态 watchdog / no-progress 复核 / steer 唤醒不动——翻转只动「读不出」）；
+ *   - error（读不出，含 sessionFile undefined 的 handshake not settled）→ 翻转点：
+ *     不再无限保守 keep-alive。source === "agent_end"（入口首判）→ 进入 15s 回补
+ *     重试窗口（幂等 arm，见 armDispositionRetryWindow）；source === "retry_window"
+ *     （窗口轮拿到 sessionFile 后重判仍读不出）→ 返回 "unreadable" 交 tick 续窗
+ *     ——不立即耗尽：15s 窗口对「文件暂时读不出」（慢盘 / 高负载 EAGAIN）是自愈
+ *     缓冲（对齐 D3b 被否谱系②的零宽限误杀论证），15s 耗尽仍 error 才 kill；
+ *   - recentUnregister → keepAliveForWakeupGrace（既有 15s 唤醒宽限，不动）；
+ *   - 差集为空 → final kill（既有路径，不动）。
+ *
+ * @returns "unreadable" = 重判仍读不出且窗口未定（仅 retry_window 来源；tick 据此续挂
+ *   下一轮）；"dispositioned" = 已落确定性分支（keep-alive / 宽限 / kill / 已 arm 窗口）。
+ */
+function evaluateDispositionBranches(
+  state: SpawnRunState,
+  child: ChildProcessWithoutNullStreams,
+  sessionDir: string,
+  registerGetStateListener: AddGetStateResponseListener,
+  source: "agent_end" | "retry_window",
+): "dispositioned" | "unreadable" {
+  const { record } = state;
+  // [U3 D3b] 窗口 timer 的撤下面严格限定「落确定性分支」（keep-alive / 宽限 / kill /
+  // 探活失败交收尾）：窗口重判 miss（"unreadable"）路径**不清**——tick 同步开头刚排定
+  // 的下一轮 timer 是固定节奏的载体，误清会把窗口卡死在本轮。
+  if (child.exitCode !== null || child.signalCode !== null) {
+    disarmDispositionRetryTimer(state);
+    return "dispositioned";
+  }
   const pending = readActivePendingFromSessionFile(record.sessionFile);
-  if (pending.count > 0 || pending.error) {
+  if (pending.count > 0) {
+    disarmDispositionRetryTimer(state);
     keepAliveOnAgentEnd(state, child, sessionDir, pending);
+  } else if (pending.error) {
+    if (source === "agent_end") {
+      armDispositionRetryWindow(state, child, sessionDir, registerGetStateListener);
+      return "dispositioned";
+    }
+    return "unreadable";
   } else if (pending.recentUnregister) {
+    disarmDispositionRetryTimer(state);
     keepAliveForWakeupGrace(state, child);
   } else {
+    disarmDispositionRetryTimer(state);
     disarmKeepAliveNoProgressTimer(state);
     killChildWithEscalation(state, child, "agent_end final kill");
+  }
+  return "dispositioned";
+}
+
+/**
+ * [U3 D3b] 进入 15s 回补重试窗口（error 分支专属，设计 §3.3 D3b）。
+ *
+ * 窗口语义：窗口内每 5s 一轮（DISPOSITION_RETRY_STEP_MS），轮序交替双路获取——
+ * 轮 1 get_state 单查（复用惰性回补整面）、轮 2 sessionDir 扫描（D2）、轮 3 纯判定
+ * 轮（耗尽判定）；任一路径拿到 sessionFile 即以真实路径重走四分支（竞态 #5 的回填
+ * 先行检查在每轮 tick 开头）。窗口耗尽仍读不出 → kill 成功语义回收（见
+ * exhaustDispositionRetryWindow），结果内容来自 stdout 事件累积，不依赖 sessionFile。
+ */
+function armDispositionRetryWindow(
+  state: SpawnRunState,
+  child: ChildProcessWithoutNullStreams,
+  sessionDir: string,
+  registerGetStateListener: AddGetStateResponseListener,
+): void {
+  // [竞态 #8] 重复 arm 先清旧（幂等，对齐 keepAliveNoProgressTimer 的 arm 模式）：
+  // 递归层主被唤醒后多轮 agent_end 重复进入 error 分支时窗口重置重计，不叠加 timer。
+  disarmDispositionRetryTimer(state);
+  logger.debug(
+    `[session-runner] agent_end: sessionFile unobtainable, entering ${
+      DISPOSITION_RETRY_WINDOW_MS / MS_PER_SECOND
+    }s recovery window (alternate get_state / sessionDir scan retry): ${state.record.id}`,
+  );
+  // 执行期 watchdog（maxTurns 估算）让位：agent_end 已到，执行期保护职责结束（对齐
+  // keep-alive / 唤醒宽限分支进入时的 clearTimeout(state.watchdog) 行为）。
+  clearTimeout(state.watchdog);
+  armDispositionRetryStep(state, child, sessionDir, registerGetStateListener, 1);
+}
+
+/** [U3 D3b] 挂载窗口的单步 timer（第 round 轮，5s 后 fire；unref 不阻止进程退出）。 */
+function armDispositionRetryStep(
+  state: SpawnRunState,
+  child: ChildProcessWithoutNullStreams,
+  sessionDir: string,
+  registerGetStateListener: AddGetStateResponseListener,
+  round: number,
+): void {
+  assertSafeTimerDelay(DISPOSITION_RETRY_STEP_MS, "disposition retry window step");
+  state.dispositionRetryTimer = setTimeout(() => {
+    void dispositionRetryTick(state, child, sessionDir, registerGetStateListener, round);
+  }, DISPOSITION_RETRY_STEP_MS);
+  state.dispositionRetryTimer.unref();
+}
+
+/**
+ * [U3 D3b] 窗口单轮 tick（async；timer 回调内 void 消费，内部不抛——获取两路均按
+ * 契约永不 reject）。
+ *
+ * 固定节奏：下一轮 timer 在本函数同步开头排定（间隔恒 5s，不被本轮获取耗时顺延），
+ * 保证耗尽点恒 = arm + 15s；本轮命中落确定性分支时由 evaluate 开头的 disarm 撤下
+ * 刚排定的下一轮。
+ */
+async function dispositionRetryTick(
+  state: SpawnRunState,
+  child: ChildProcessWithoutNullStreams,
+  sessionDir: string,
+  registerGetStateListener: AddGetStateResponseListener,
+  round: number,
+): Promise<void> {
+  // 先排下一轮（同步段，间隔恒 5s）：最后一轮（耗尽判定轮）不再排。
+  if (round < DISPOSITION_RETRY_ROUNDS) {
+    armDispositionRetryStep(state, child, sessionDir, registerGetStateListener, round + 1);
+  }
+  const { record } = state;
+  // [竞态 #2] fire 先探活（exitCode/signalCode 双 null，对齐 A1-3 判据）：窗口内进程
+  // 被外部 kill（abort / dispose / watchdog）→ 已死直接返回交 close 收尾（timer 由
+  // runSpawn 收尾统一 disarm）。
+  if (child.exitCode !== null || child.signalCode !== null) {
+    disarmDispositionRetryTimer(state);
+    return;
+  }
+  // [竞态 #5] 回填先行检查：D1 迟到回填可能落在两轮之间——已回填直接重判，不重复获取。
+  if (!record.sessionFile) {
+    if (round === 1) {
+      // 轮 1：get_state 单查（复用 backfillSessionFileViaGetState 整面：requestGetStateOnce
+      // 1s 预算 + record/marker/handshakeResult 幂等回填 + warn，与入口惰性回补同源）。
+      await backfillSessionFileViaGetState(state, child, registerGetStateListener);
+    } else if (round === DISPOSITION_RETRY_SCAN_ROUND) {
+      // 轮 2：sessionDir 扫描（D2 第二路获取）。回填面与入口扫描命中分支同款。
+      const located = locateSessionFileByScan(record, sessionDir, state.spawnStartedAtMs);
+      if (located) {
+        record.sessionFile = located;
+        if (child.pid) {
+          writeAliveMarkerBestEffort(
+            located,
+            child.pid,
+            state.handshakeResult?.sessionId ?? record.id,
+          );
+        }
+        logger.warn(
+          `[session-runner] sessionFile located via sessionDir scan (retry window round 2): ${located}`,
+        );
+      }
+    }
+    // 轮 3：纯判定轮（不再获取，见 DISPOSITION_RETRY_STEP_MS 轮序声明——总收敛恰 15s）。
+  }
+  if (record.sessionFile) {
+    logger.debug(
+      `[session-runner] retry window round ${round}: sessionFile obtained, re-evaluating disposition: ${record.id}`,
+    );
+    const verdict = evaluateDispositionBranches(
+      state,
+      child,
+      sessionDir,
+      registerGetStateListener,
+      "retry_window",
+    );
+    // "unreadable"（拿到文件但重判仍读不出）= 本轮 miss：不耗尽（15s 窗口对文件暂时
+    // 读不出是自愈缓冲），续挂下一轮，耗尽仍 error 由下方耗尽分支收敛。
+    if (verdict === "dispositioned") return;
+  }
+  if (round >= DISPOSITION_RETRY_ROUNDS) {
+    disarmDispositionRetryTimer(state);
+    exhaustDispositionRetryWindow(state, child);
+    return;
+  }
+  // 每轮 miss debug 留痕（u1 locator 的 miss warn 同款语境：「will retry in window」）。
+  logger.debug(
+    `[session-runner] retry window round ${round}: get_state / sessionDir scan found no match, will retry in window: ${record.id}`,
+  );
+}
+
+/**
+ * [U3 D3b] 窗口耗尽：kill（SIGTERM→30s→SIGKILL 升级链）→ close → runSpawn 以成功
+ * 语义返回（被信号终止视为正常完成的既有 resolveRunOutcome 分支；结果内容来自 stdout
+ * 事件累积，不依赖 sessionFile）。
+ *
+ * 不置 sweepDescendantsOnClose（设计 D3b 被否谱系③）：sweep 入口
+ * sweepDescendantsOfSession 首行 `if (!rootSessionFile) return` 结构性空转（窗口耗尽 =
+ * sessionFile 恒 undefined），置位是无效安慰剂；后代清理不靠 sweep（SIGTERM 不级联，
+ * 误杀形态的残余风险与恢复路径见设计误杀代价四要素分析）。
+ */
+function exhaustDispositionRetryWindow(
+  state: SpawnRunState,
+  child: ChildProcessWithoutNullStreams,
+): void {
+  logger.warn(
+    `[session-runner] sessionFile unobtainable after ${
+      DISPOSITION_RETRY_WINDOW_MS / MS_PER_SECOND
+    }s recovery window (handshake suppressed? sessionDir missing?); process terminated, ` +
+      `result recovered from stdout events; descendants (if any) remain on disk, queryable via session reader`,
+  );
+  killChildWithEscalation(state, child, "disposition retry window exhausted");
+}
+
+/** [U3 D3b] 清除回补重试窗口 timer（窗口重判 / 收尾清理；未挂载时 no-op）。 */
+function disarmDispositionRetryTimer(state: SpawnRunState): void {
+  if (state.dispositionRetryTimer) {
+    clearTimeout(state.dispositionRetryTimer);
+    state.dispositionRetryTimer = undefined;
   }
 }
 
@@ -2104,7 +2339,8 @@ async function backfillSessionFileViaGetState(
 }
 
 /**
- * keep-alive 分支（有活跃后代 / 读不出保守不杀）：心跳 + 清原 watchdog 换等待后代超时。
+ * keep-alive 分支（count>0 证实有活跃后代；[U3 D3b] 后 error「读不出」不再进入本函数
+ * ——翻转进 15s 回补重试窗口）：心跳 + 清原 watchdog 换等待后代超时。
  * 空闲等待期间不消耗 turn（每次 agent_end 重新计时）。
  * [MF-4] 动态超时 = maxTurnsToWatchdogMs(maxTurns)：真实后代在跑，慢任务（wave 开发
  * 数小时）不能被固定 2h 误杀——2h 到点 kill 会连坐 SubagentService.dispose 的
@@ -2874,6 +3110,8 @@ export async function runSpawn(
     handshakeResult: undefined,
     resolveRun: undefined,
     keepAliveNoProgressTimer: undefined,
+    // [U3 D3b] error 分支 15s 回补重试窗口 timer（per-run 单例，收尾统一 disarm）
+    dispositionRetryTimer: undefined,
     sweepDescendantsOnClose: false,
     settledWatchdogFired: undefined,
     // [U1 D2] sessionDir 扫描兜底的 mtime 过滤基准（agent_end 接入点 1 / close 接入点 2 共用）
@@ -2977,6 +3215,9 @@ export async function runSpawn(
     // state 子进程）——旧 escalationTimer 兜底句柄随旧私有杀链一并删除。
     // [T2-①③] 收尾兜底清新增 timer（正常清除点已覆盖；防收尾路径遗漏泄漏）
     disarmKeepAliveNoProgressTimer(state);
+    // [U3 D3b] 窗口 timer 同点收尾（对齐 state.watchdog / keepAliveNoProgressTimer
+    // 清理点）：竞态 #2 探活 return 交 close 收尾后由此兜底撤下，防泄漏。
+    disarmDispositionRetryTimer(state);
     disarmSettledWatchdog(record.id);
 
     // [圈复杂度门禁提取] sessionFile 兜底反查（LC-4）迁入 backfillSessionFileByLookup。

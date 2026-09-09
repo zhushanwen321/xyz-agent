@@ -86,7 +86,7 @@ vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   cleanupTempPrompt: vi.fn(async () => {}),
 }));
 
-import { KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS, killAllSpawnedChildren, runSpawn, spawnedChildren, WAKEUP_GRACE_MS, maxTurnsToWatchdogMs, SPAWN_WATCHDOG_ENV } from "../engine/engines/pi/session-runner.ts";
+import { DISPOSITION_RETRY_STEP_MS, DISPOSITION_RETRY_WINDOW_MS, KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS, killAllSpawnedChildren, runSpawn, spawnedChildren, WAKEUP_GRACE_MS, maxTurnsToWatchdogMs, SPAWN_WATCHDOG_ENV } from "../engine/engines/pi/session-runner.ts";
 import { writeAliveMarker } from "../alive-store.ts";
 import { getSubagentSessionDir } from "../path-encoding.ts";
 import { readActivePendingFromSessionFile } from "../session-pending.ts";
@@ -663,13 +663,14 @@ describe("runSpawn", () => {
       }
     });
 
-    // [S-9] pending.error 分支（sessionFile 不可读 → 保守 keep-alive + re-arm dynamic watchdog）
-    // 集成行为 guard：session-pending 单测覆盖 error 返回值，但 session-runner 的 no-kill +
-    // re-arm 到 maxTurnsToWatchdogMs(maxTurns) 行为无集成 guard。若 re-arm 误删/误用固定超时，
-    // 保守 keep-alive 会退化成永久挂起或被固定超时误杀。
-    it("S-9: agent_end（count=0 + error）→ 保守不 kill + watchdog re-arm 到动态超时", async () => {
+    // [S-9] [U3 D3b 翻转] pending.error 分支（sessionFile 不可读 → 15s 回补重试窗口 →
+    // 耗尽 kill 成功语义）。旧行为（保守 keep-alive + re-arm 动态 watchdog）已翻转：记账
+    // 失败 ≠ 合法等待（G3）。本用例 emit header → record.sessionFile 已由 header 分支回填，
+    // error = 「文件已知但读不出」形态——窗口每轮 tick 的回填先行检查命中已有路径（无
+    // 获取动作），重判恒 error 续窗至 15s 耗尽 kill。若窗口误删/退化回 keep-alive，
+    // 「15s 即 kill」断言失败（旧 30min/100min 上界下不会触发）。
+    it("S-9 [U3 D3b]: agent_end（count=0 + error）→ 15s 回补重试窗口，耗尽 kill 成功语义", async () => {
       const maxTurns = 20;
-      const expected = maxTurnsToWatchdogMs(maxTurns);
       mockPending.mockReturnValue({ count: 0, recentUnregister: false, error: "session file unreadable: EACCES" });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: unreadable", makeOpts({ maxTurns }), makeCtx());
@@ -682,23 +683,24 @@ describe("runSpawn", () => {
         emitStdoutLine(child, sessionHeader());
         emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
         await new Promise((r) => setImmediate(r));
-        // 保守策略：sessionFile 不可读时不 kill（宁可空等也不误杀有后代的进程）
+        // 窗口内不杀（翻转后收敛上界 15s；执行期 watchdog 已在进入窗口时让位）
         expect(child.killed).toBe(false);
 
-        // watchdog re-arm 到动态超时（maxTurnsToWatchdogMs(maxTurns)），未到期不 kill
-        await vi.advanceTimersByTimeAsync(expected - 1);
-        expect(child.killed).toBe(false);
-
-        // 动态超时到期：kill。若 error 分支漏了 re-arm（或误用固定超时），此断言失败
-        await vi.advanceTimersByTimeAsync(1);
+        // 旧动态 watchdog（maxTurnsToWatchdogMs(20)）不再 re-arm：15s 窗口耗尽即 kill
+        await vi.advanceTimersByTimeAsync(DISPOSITION_RETRY_WINDOW_MS);
         expect(child.killed).toBe(true);
         expect(child.killSignal).toBe("SIGTERM");
+        // 耗尽 warn 留痕（设计 §3.5 D3b 行文案）
+        expect(loggerMock.warn).toHaveBeenCalledWith(
+          expect.stringContaining("sessionFile unobtainable after 15s recovery window"),
+        );
 
         child.stdout.end();
         child.stderr.end();
         child.emit("close", 143);
 
         const result = await promise;
+        // 被信号终止视为正常完成（结果来自 stdout 事件累积，不依赖 sessionFile）
         expect(result.success).toBe(true);
       } finally {
         vi.useRealTimers();
@@ -934,8 +936,10 @@ describe("runSpawn", () => {
       expect(result.sessionFile).toBe(expectedSessionFile);
     });
 
-    // ② 回补超时/失败 → 仍走保守分支（行为不劣化）
-    it("② 回补无响应超时 → record.sessionFile 仍缺失 → 保守不杀（不劣化为 final kill）", async () => {
+    // ② [U3 D3b 翻转] 回补超时/失败 → 15s 回补重试窗口（每 5s 交替 get_state 单查 /
+    // 扫描）→ 耗尽 kill 成功语义。旧「保守不杀 + 30min 无进展上界」行为已翻转：记账
+    // 失败 ≠ 合法等待（G3）——收敛从 30min 量级压到 15s。
+    it("② 回补无响应超时 → record.sessionFile 仍缺失 → 15s 回补重试窗口耗尽 kill（成功语义回收）", async () => {
       // mock 判定：sessionFile 缺失形态返回 error（真实现语义，见 session-pending.ts:85）
       mockPending.mockReturnValue({ count: 0, recentUnregister: false, error: "no sessionFile (handshake not settled)" });
       const record = makeRecord();
@@ -950,26 +954,40 @@ describe("runSpawn", () => {
         emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
         // stdin flush 依赖真实事件循环（setImmediate 不 fake）：决策点已发出惰性 get_state
         await new Promise((r) => setImmediate(r));
-        // 惰性请求已发出（握手 1 + 惰性 1），但无人回应
+        // 入口惰性请求已发出（握手 1 + 入口惰性 1），但无人回应
         expect(counter.seen).toBe(2);
         expect(child.killed).toBe(false);
 
-        // 1s 回补预算到期：空结果 → 不重试 → readActivePending error → 保守分支
+        // 入口回补 1s 预算到期：空结果 → 扫描兜底 miss → error → 进入 15s 回补重试窗口
         await vi.advanceTimersByTimeAsync(1000);
         expect(record.sessionFile).toBeUndefined();
-        expect(child.killed).toBe(false); // 保守不杀
+        expect(child.killed).toBe(false); // 窗口内不杀
 
-        // maxTurns 未传（opts 默认）+ env 未设 → 保守分支挂无进展检测上界
-        // [T2-① / P-T2 降级 B] 不再「不限时」：连续静默达阈值才处置；此处静默
-        // 29min（< 30min 阈值）不 kill——保守 keep-alive 仍有界但不被时长误杀
-        await vi.advanceTimersByTimeAsync(KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS - 60_000);
+        // 窗口轮 1（5s）：get_state 单查（第 3 个请求）无响应 → miss
+        await vi.advanceTimersByTimeAsync(DISPOSITION_RETRY_STEP_MS);
+        expect(counter.seen).toBe(3);
         expect(child.killed).toBe(false);
+
+        // 窗口轮 2（10s）：sessionDir 扫描（fs.readdirSync mock 空 → miss）→ 续窗
+        await vi.advanceTimersByTimeAsync(DISPOSITION_RETRY_STEP_MS);
+        expect(child.killed).toBe(false);
+
+        // 窗口耗尽：轮 3（耗尽判定轮）fire 于 arm+15s（arm 在入口回补 1s 预算后 →
+        // 本形态绝对收敛 = agent_end + 16s = 本步 advance 的 target）；不再有 30min
+        // 无进展上界（旧断言 29min 不杀已失效）
+        await vi.advanceTimersByTimeAsync(DISPOSITION_RETRY_STEP_MS);
+        expect(child.killed).toBe(true);
+        expect(child.killSignal).toBe("SIGTERM");
+        // 耗尽 warn 留痕（设计 §3.5 D3b 行文案）
+        expect(loggerMock.warn).toHaveBeenCalledWith(
+          expect.stringContaining("sessionFile unobtainable after 15s recovery window"),
+        );
 
         child.stdout.end();
         child.stderr.end();
         child.emit("close", 143);
         const result = await promise;
-        // 进程最终由 close 收尾（保守分支不吞掉 runSpawn 的完成）
+        // 被信号终止视为正常完成（结果来自 stdout 事件累积，不依赖 sessionFile）
         expect(result.success).toBe(true);
         expect(record.sessionFile).toBeUndefined();
       } finally {
@@ -983,7 +1001,8 @@ describe("runSpawn", () => {
     // sessionId，同产「handshakeResult.sessionId 有、record.sessionFile 无」形态，
     // 且顺带覆盖惰性回补的 sessionId 补入 handshakeResult 分支（close 收尾 lookupId 源）。
     it("③ LC-4: 惰性回补只回 sessionId（sessionFile 仍无）→ close 收尾 sessionDir 反查修正 record.sessionFile", async () => {
-      // sessionFile 缺失 → 决策点惰性回补；回补判定保守（error → 不杀）
+      // sessionFile 缺失 → 决策点惰性回补；[U3 D3b] 回补后仍无 → 进入 15s 回补重试窗口
+      //（窗口内不杀；本用例直接 close 收尾，窗口 timer 由收尾统一 disarm）
       mockPending.mockReturnValue({ count: 0, recentUnregister: false, error: "no sessionFile (handshake not settled)" });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: lc4-lookup", makeOpts(), makeCtx());
@@ -1001,7 +1020,7 @@ describe("runSpawn", () => {
         await new Promise((r) => setImmediate(r));
         await vi.advanceTimersByTimeAsync(1000); // 回补预算到期兜底（response 已先行到达）
 
-        // 保守分支：sessionFile 仍缺失 → 不杀（LC-4 修复前的死路：无任何反查可达）
+        // [U3 D3b] 重试窗口内：sessionFile 仍缺失 → 不杀（LC-4 修复前的死路：无任何反查可达）
         expect(record.sessionFile).toBeUndefined();
         expect(child.killed).toBe(false);
 

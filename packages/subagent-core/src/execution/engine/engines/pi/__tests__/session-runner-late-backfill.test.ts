@@ -58,6 +58,8 @@ function makeState(record: ExecutionRecord, overrides: Partial<SpawnRunState> = 
     handshakeResult: undefined,
     resolveRun: undefined,
     keepAliveNoProgressTimer: undefined,
+    // [U3 D3b] error 分支回补重试窗口 timer（本文件只测回填面纯函数，恒未挂载）
+    dispositionRetryTimer: undefined,
     sweepDescendantsOnClose: false,
     settledWatchdogFired: undefined,
     spawnStartedAtMs: Date.now() - 60_000,
