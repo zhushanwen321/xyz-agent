@@ -34,8 +34,9 @@ export interface GetStateResult {
  * get_state response 监听器注册函数形态（stdout pump / 测试注入）。
  *
  * 返回值：注销函数（从监听表移除该 resolver），可省略——performGetStateHandshake
- * 忽略返回值（既有语义：迟到 response 靠 resolved 标志自弃，条目由 close 统一清）；
- * requestGetStateOnce 消费返回值做单次请求的自清理（不依赖 close 兜底）。
+ * 忽略返回值（resolver 条目由 close 统一清；[U1 D1] 后迟到 response 经 onLateResponse
+ * 通知调用方，不再靠 resolved 标志自弃）；requestGetStateOnce 消费返回值做单次请求的
+ * 自清理（不依赖 close 兜底）。
  */
 export type AddGetStateResponseListener = (
   id: string,
@@ -62,13 +63,26 @@ function extractGetStateFields(data: unknown, into: GetStateResult): void {
  * 最多重试 GET_STATE_MAX_RETRIES 次，单次超时 GET_STATE_TIMEOUT_MS 后等待
  * GET_STATE_RETRY_INTERVAL_MS 再发起下一次重试。
  *
+ * [U1 D1] 迟到接受（幂等 late-binding，设计 docs/design/subagent-agent-end-recovery.md
+ * §3.3 D1）：握手 resolve 后到达的 response 不再被 `if (resolved) return` 静默丢弃——
+ * pi 侧 stdin reader 在全部初始化完成后才挂载，窗口内的命令在管道缓冲排队**不丢失**，
+ * pi 就绪后必答；三次超时只是 host 侧放弃等待，应答仍必然会到。迟到应答经
+ * onLateResponse 通知调用方做幂等回填（record.sessionFile 缺失则补、sessionId 补入
+ * handshakeResult），把「握手窗口被慢冷启动拖过 → sessionFile 永久缺失」从正常路径上
+ * 消灭。close 时 clearGetStateListeners 统一清理的既有语义不变——close 后 response
+ * 到不了 resolver，迟到回调自然不触发。
+ *
  * @param child 子进程（stdin 写入 get_state 命令）
  * @param addResponseListener 注册 response 监听器的函数（stdout pump 中调用）
+ * @param onLateResponse 迟到接受回调（可选）：resolve 后到达且含可提取字段的 response
+ *   经此通知；字段缺失/畸形时提取不到就跳过、不回调（错误规格：不留痕噪音）。
+ *   省略时保持旧两参形态（迟到 response 丢弃，行为与 D1 前一致——既有调用方兼容）。
  * @returns 握手结果（可能为空——所有重试均超时/失败）
  */
 export function performGetStateHandshake(
   child: ChildProcess,
   addResponseListener: AddGetStateResponseListener,
+  onLateResponse?: (r: GetStateResult) => void,
 ): Promise<GetStateResult> {
   return new Promise<GetStateResult>((resolve) => {
     const collected: GetStateResult = {};
@@ -102,7 +116,19 @@ export function performGetStateHandshake(
       timer.unref();
 
       addResponseListener(reqId, (data: unknown) => {
-        if (resolved) return;
+        if (resolved) {
+          // [U1 D1] 迟到接受：握手已 resolve（提前拿到 sessionFile 或全部重试超时）后
+          // 到达的 response 不再丢弃——提取字段经 onLateResponse 通知调用方幂等回填。
+          // 提取不到字段（畸形/缺字段）就跳过，不回调（错误规格 §3.5 D1 行：不留痕噪音）。
+          // resolved 后 resolver 条目仍留在监听表（由 close 统一清），close 后 response
+          // 匹配不到 resolver，本路径自然不再触发。
+          const late: GetStateResult = {};
+          extractGetStateFields(data, late);
+          if (late.sessionFile !== undefined || late.sessionId !== undefined) {
+            onLateResponse?.(late);
+          }
+          return;
+        }
         // [#15] 闭包清理本次 tryOnce 的 timer（2s 超时 + 排队中的 retry），不碰其他 reqId 的 timer。
         clearTimeout(timer);
         if (pendingRetry) clearTimeout(pendingRetry);

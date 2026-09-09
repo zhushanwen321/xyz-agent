@@ -59,6 +59,8 @@ import {
   type SettledWatchdogFireInfo,
 } from "../../../settled-watchdog.ts";
 import { MAX_FORK_DEPTH } from "../../../session-context-resolver.ts";
+// [U1 D2] sessionDir 扫描兜底（第二路 sessionFile 获取，agent_end 决策点 + close 收尾两接入点）
+import { locateSessionFileByScan } from "./session-file-locator.ts";
 import { EPIPE_FAILURE_THRESHOLD, recordEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
 import {
   deriveSessionFilePath,
@@ -1258,8 +1260,13 @@ function touchAliveMarkerForHeartbeat(sessionFile: string | undefined, pid: numb
 //   - resolveRunOutcome：成功/失败四分支判定
 // 拆分只移动代码不改行为——runSpawn 导出签名与事件语义不变。
 
-/** runSpawn 各阶段共享的可变状态（原闭包变量收拢，经参数在阶段函数间传递）。 */
-interface SpawnRunState {
+/**
+ * runSpawn 各阶段共享的可变状态（原闭包变量收拢，经参数在阶段函数间传递）。
+ *
+ * [U1] export：D1 迟到接受回填 / D2 close 收尾扫描兜底（backfillSessionFileFromLateGetState /
+ * backfillSessionFileByLookup）为可单测导出，参数类型需可被测试文件命名构造。
+ */
+export interface SpawnRunState {
   record: ExecutionRecord;
   opts: RunOptions;
   ctx: SessionRunnerContext;
@@ -1302,6 +1309,12 @@ interface SpawnRunState {
    * settled = 收尾段固定上界（agent_end 后 600s）。
    */
   settledWatchdogFired: SettledWatchdogFireInfo | undefined;
+  /**
+   * [U1 D2] 本轮 spawn 起始时刻（ms，runSpawn 入口 startTime）——sessionDir 扫描兜底
+   * 的 mtime 过滤基准：只扫本轮 spawn 之后新建/修改的 .jsonl（并发形态下兄弟文件与
+   * 历史文件被排除在候选外，见 session-file-locator.ts IO 契约）。
+   */
+  spawnStartedAtMs: number;
 }
 
 /**
@@ -1924,6 +1937,26 @@ async function runAgentEndDisposition(
 
   if (!record.sessionFile && !child.killed) {
     await backfillSessionFileViaGetState(state, child, registerGetStateListener);
+    // [U1 D2 接入点 1] get_state 回补失败（response 无 sessionFile / 超时 / stdin 已断）
+    // → sessionDir 扫描兜底（第二路获取：identity 精确匹配，见 session-file-locator.ts）。
+    // 回补与扫描都在子进程存活判据之后执行；后续 u3 将在此决策链上加 15s 回补重试窗口
+    //（每轮交替 get_state 单查 / 扫描），本单元只接入单轮扫描。
+    if (!record.sessionFile && !child.killed) {
+      const located = locateSessionFileByScan(record, sessionDir, state.spawnStartedAtMs);
+      if (located) {
+        record.sessionFile = located;
+        if (child.pid) {
+          writeAliveMarkerBestEffort(
+            located,
+            child.pid,
+            state.handshakeResult?.sessionId ?? record.id,
+          );
+        }
+        logger.warn(
+          `[session-runner] sessionFile located via sessionDir scan (agent_end backfill): ${located}`,
+        );
+      }
+    }
   }
 
   // [A1-3] 回补 await 的异步窗口内 child 可能已死（close / abort / watchdog）。进程已死
@@ -1942,6 +1975,45 @@ async function runAgentEndDisposition(
   } else {
     disarmKeepAliveNoProgressTimer(state);
     killChildWithEscalation(state, child, "agent_end final kill");
+  }
+}
+
+/**
+ * [U1 D1] 握手迟到接受回填（幂等 late-binding，设计 §3.3 D1）。
+ *
+ * performGetStateHandshake 的 onLateResponse 消费端：握手 resolve 后到达的 get_state
+ * response（慢冷启动拖过 7s 窗口的形态——pi stdin 排队不丢，pi 就绪后必答）经此把
+ * sessionFile 回填面补齐，消除「迟到应答被丢弃 → record.sessionFile 永久缺失」的
+ * 事故根因（carbon 2026-09-09）。回填面与既有路径逐项对齐：
+ *   - record.sessionFile：仅当此前缺失时补（!record.sessionFile 守卫，与 finishHandshake /
+ *     backfillSessionFileViaGetState 同款幂等语义）——header / resume 先行设置的不覆盖；
+ *   - alive marker：子进程可能仍活（迟到应答 = 进程活着只是慢），补写恢复崩溃恢复信号；
+ *   - handshakeResult.sessionId：补入 close 路径 LC-4 兜底反查的 lookupId 来源
+ *     （对齐 backfillSessionFileViaGetState 的既有回补面）。
+ *
+ * 效果边界（设计 D1 诚实声明）：本函数只让 sessionFile「迟到可得」，不主动重判已做出
+ * 的处置——迟到回填若发生在 agent_end 决策之后，由 D3 重试窗口（u3）消费；close 之后
+ * 迟到 response 到不了 resolver（clearGetStateListeners 既有语义），本函数不会被触发。
+ *
+ * [export] 测试可观测（session-runner-late-backfill 用例锚定幂等守卫与回填面）。
+ */
+export function backfillSessionFileFromLateGetState(
+  state: SpawnRunState,
+  childPid: number | undefined,
+  r: GetStateResult,
+): void {
+  const { record } = state;
+  if (r.sessionFile && !record.sessionFile) {
+    record.sessionFile = r.sessionFile;
+    if (childPid) {
+      writeAliveMarkerBestEffort(r.sessionFile, childPid, r.sessionId ?? record.id);
+    }
+    logger.warn(
+      `[session-runner] sessionFile backfilled via late get_state response: ${r.sessionFile}`,
+    );
+  }
+  if (r.sessionId && !state.handshakeResult?.sessionId) {
+    state.handshakeResult = { ...state.handshakeResult, sessionId: r.sessionId };
   }
 }
 
@@ -2539,8 +2611,13 @@ function attachAbortAndSpawnWatchdog(state: SpawnRunState, child: ChildProcess):
 
 /**
  * [圈复杂度门禁提取] get_state RPC 握手启动（自 runSpawn 迁入，fire-and-forget）。
+ *
+ * [U1 D1] 迟到接受接线：performGetStateHandshake 的 onLateResponse 回调接
+ * backfillSessionFileFromLateGetState——握手 resolve 后到达的 response 不再被
+ * resolver 的 resolved 短路丢弃，经此回调做幂等回填（设计 §3.3 D1）。
  */
 function startGetStateHandshake(
+  state: SpawnRunState,
   child: ChildProcessWithoutNullStreams,
   pump: StdoutPumpHandles,
 ): void {
@@ -2561,7 +2638,11 @@ function startGetStateHandshake(
   // catch 内：logger.error 留证 + pump.abandonHandshake 记录握手失败终态——close handler
   // await 的 handshakeSettled 立即 settle，isHandshakePending() 归 false，不阻塞收尾链路
   //（sessionFile 兜底由收尾时的 existsSync 校验 + findSessionFileByHeaderId 承担）。
-  void performGetStateHandshake(child, pump.registerGetStateListener).then((r) => {
+  void performGetStateHandshake(child, pump.registerGetStateListener, (late) => {
+    // [U1 D1] 迟到接受：握手 resolve 后到达的 response 经回调幂等回填（守卫与回填面
+    // 见 backfillSessionFileFromLateGetState）。同步回调（stdout pump 内），无 await 面。
+    backfillSessionFileFromLateGetState(state, child.pid, late);
+  }).then((r) => {
     // header 加速路径下 settleHandshake 已 undefined，跳过（避免覆盖 header 结果）。
     // 超时兜底（r 为空对象）也经此分支 settle，但 record.sessionFile 不回填。
     if (pump.isHandshakePending()) pump.finishHandshake(r);
@@ -2574,8 +2655,17 @@ function startGetStateHandshake(
 
 /**
  * [圈复杂度门禁提取] sessionFile 兜底反查（LC-4，自 runSpawn 收尾迁入）。
+ *
+ * [U1 D2 接入点 2] 新增 lookupId 缺失分支的扫描兜底：lookupId =
+ * sessionHeader?.id ?? handshakeResult?.sessionId，rpc mode 无 header 行且握手全失败时
+ * 两者皆无，既有 findSessionFileByHeaderId 反查不可达——此形态（含「握手 7s 窗口内
+ * 子进程被提前 kill、不产生 agent_end」的 LC-4/PS-9 原生修复面）按 record.id 调
+ * locateSessionFileByScan 扫描兜底。执行时机 = close 收尾链内、collectResult 之前的
+ * 同步点（runSpawn 收尾段本函数调用处），与既有反查同段衔接。
+ *
+ * [export] 测试可观测（session-runner-late-backfill 用例锚定 lookupId 缺失分支）。
  */
-function backfillSessionFileByLookup(state: SpawnRunState, sessionDir: string): void {
+export function backfillSessionFileByLookup(state: SpawnRunState, sessionDir: string): void {
   const { record } = state;
   // [持久化 A] sessionFile 兜底校验。
   // identity custom entry 已改由子进程 session_start hook 写（M4 / V2 决策 5），
@@ -2595,6 +2685,22 @@ function backfillSessionFileByLookup(state: SpawnRunState, sessionDir: string): 
   if (lookupId && needsLookup) {
     const actual = findSessionFileByHeaderId(sessionDir, lookupId);
     if (actual && actual !== record.sessionFile) record.sessionFile = actual;
+  } else if (!lookupId && (!record.sessionFile || !fs.existsSync(record.sessionFile))) {
+    // [U1 D2 接入点 2] lookupId 缺失：既有反查不可达，按 record.id 扫描兜底（mtime
+    // 过滤基准 = 本轮 spawn 时刻）。极早期 kill（extensions 加载完成前 session_start
+    // hook 未跑）扫描返回 undefined——此时记账缺失是正确语义（进程从未开始工作，
+    // finalize 按 crashed 记账），warn 留痕说明最终处置（设计 §3.3 D2 覆盖边界）。
+    const located = locateSessionFileByScan(record, sessionDir, state.spawnStartedAtMs);
+    if (located && located !== record.sessionFile) {
+      record.sessionFile = located;
+      logger.warn(
+        `[session-runner] sessionFile backfilled via sessionDir scan (close finalization): ${located}`,
+      );
+    } else if (!located) {
+      logger.warn(
+        `[session-runner] sessionFile unobtainable for ${record.id} (process killed before handshake settled); record will be finalized as crashed; results were never produced`,
+      );
+    }
   }
 }
 
@@ -2712,6 +2818,8 @@ export async function runSpawn(
     keepAliveNoProgressTimer: undefined,
     sweepDescendantsOnClose: false,
     settledWatchdogFired: undefined,
+    // [U1 D2] sessionDir 扫描兜底的 mtime 过滤基准（agent_end 接入点 1 / close 接入点 2 共用）
+    spawnStartedAtMs: startTime,
   };
 
   // a/b. 事件累积器（pendingTools 寄存器 + turnLimiter + handleSdkEvent/agentEvent 闭包）
@@ -2788,8 +2896,9 @@ export async function runSpawn(
     const pump = attachStdoutPump(child, state, sessionDir, handleSdkEvent);
 
     // [圈复杂度门禁提取] get_state 握手启动（fire-and-forget + F2 catch 兜底）迁入
-    // startGetStateHandshake。
-    startGetStateHandshake(child, pump);
+    // startGetStateHandshake。[U1 D1] 签名加 state：迟到接受回调需回填 state（record /
+    // handshakeResult）。
+    startGetStateHandshake(state, child, pump);
 
     child.stderr.on("data", (data: string) => {
       // 截断防 OOM：失控子进程持续打 stderr 会耗尽父进程内存。保留尾部便于诊断。

@@ -1,6 +1,6 @@
 # subagent 完成回收可靠性根修 实施计划
 
-基线: (待 commit) | 来源设计: docs/design/subagent-agent-end-recovery.md | 日期: 2026-09-10
+基线: eaa45eb32 | 来源设计: docs/design/subagent-agent-end-recovery.md | 日期: 2026-09-10
 
 ## 0 章节映射
 
@@ -100,7 +100,7 @@ bash scripts/validate-runtime-bundle.sh
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|---------------------------------------------|------|----------|
-| u1-acquire | pending | 0 | — |
+| u1-acquire | in-progress | 1 | agent 已派发（后台） |
 | u2-descendant | pending | 0 | — |
 | u3-flip | pending | 0 | — |
 | u4-spawn-channel | pending | 0 | — |
