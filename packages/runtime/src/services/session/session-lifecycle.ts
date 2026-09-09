@@ -560,9 +560,10 @@ export class SessionLifecycle implements ISessionRegistry {
    * create 的绑定落盘段（refreshAll → hydrate → sidecar persist 家族 → model binding）。
    *
    * 文件操作时序与提取前一致：只写 sidecar（*.preset.json / *.project.json / *.agent.json /
-   * *.model.json），不创建/触碰 pi session 文件本体——sessionFilePath 不存在（pi 首次
-   * flush 前的延迟写入窗口）时各守卫跳过（persistPresetBinding/persistProjectBinding/
-   * persistAgentBinding 内部 existsSync 守卫 + 本段 persistModelBinding 前置 if）。
+   * *.model.json），不创建/触碰 pi session 文件本体。preset/project/agent 三绑定经
+   * skipJsonlExistsGuard 放行 existsSync 守卫（V9-④ 根修，理由见 persistCreateSidecars
+   * docstring）；本段 persistModelBinding 前置 if + 内部守卫语义不变——model 面有 turn-end
+   * ensure 补偿（tryPersistModelBinding），不依赖本写点。
    */
   private persistCreateBindings(
     session: IManagedSessionView,
@@ -597,9 +598,10 @@ export class SessionLifecycle implements ISessionRegistry {
       thinkingLevel: resolveCreateEffectiveThinkingLevel(presetClientOptions, createMetaOverride),
     }, 'create')
     this.persistCreateSidecars(session, presetId, options)
-    // D1 写点③ create/landing：落盘生效值（读回真值优先）。注意：Gate B 实证 create 瞬间
-    // pi 尚未首 flush、sessionFilePath 恒 undefined，本写点常态被守卫跳过（偏差 #9①）——
-    // 从未显式切模型的 session 的 .model.json 由写点③的 turn-end ensure
+    // D1 写点③ create/landing：落盘生效值（读回真值优先）。注意：create 瞬间 pi 尚未首
+    // flush、sessionFilePath 路径有值但 .jsonl 文件不存在（pi 0.84.4 实装：SessionManager
+    // 构造即生成确定性路径），persistModelBinding 内部 existsSync 守卫跳过本写点（偏差
+    // #9①）——从未显式切模型的 session 的 .model.json 由写点③的 turn-end ensure
     // （tryPersistModelBinding，session-state-projection）补写，V1 文件断言由其满足；
     // 本段仅在文件已 materialize 的少见时序生效。
     if (session.sessionFilePath) {
@@ -614,30 +616,38 @@ export class SessionLifecycle implements ISessionRegistry {
   /**
    * create 的 sidecar 落盘（preset / project / agent 三绑定，创建语义）。
    *
-   * 各 persist* 内部有 existsSync 守卫：pi 延迟写入窗口（sessionFilePath 未落盘）时跳过
-   * （ES-RL-1）；空 projectId（默认项目创建）不写 sidecar——等价于未归类。
+   * [V9-④ 根修，2026-09-08] 三个 persist* 调用传 skipJsonlExistsGuard 放行 existsSync
+   * 守卫：create 路径 session 必然真实（getState 成功 + registerSession 成功后才到达
+   * 本段），.jsonl 未 flush 只是 pi 延迟写入窗口（pi 0.84.4 实装：SessionManager 构造
+   * 即确定性生成 sessionFile 路径，get_state 透传——路径有值、文件不存在），不再以文件
+   * 存在性当 session 有效性判据。规则 #6 禁止的是创建/触碰 pi session .jsonl 本体
+   *（openSync('wx') EEXIST 卡死），sidecar 是 xyz 自有文件经 atomicWrite 落盘、不触碰
+   * .jsonl，放行不违反规则 #6。此前守卫恒跳过且无补偿写点（model 面有 turn-end ensure
+   * tryPersistModelBinding 补偿，preset/project/agent 无）→ landing 新建 session 重启后
+   * preset 绑定永久回退 builtin:full / 项目归属丢失 / agent badge 丢失。fork 路径
+   * （:persistForkBindings）不传 flag——forkedFilePath 是已写出的新文件，守卫自然通过。
+   * session.sessionFilePath 第一层守卫保留：路径 undefined（pi 异常未返回）无法定位
+   * sidecar 落点。空 projectId（默认项目创建）不写 sidecar——等价于未归类。
    */
   private persistCreateSidecars(
     session: IManagedSessionView,
     presetId: string | undefined,
     options: CreateOptions | undefined,
   ): void {
-    // 持久化 preset 绑定到 .preset.json sidecar（设计文档 §4）。
-    // presetId 存在时写 sidecar，供 fork/restore 继承；sessionFilePath 不存在（pi 延迟写入窗口）
-    // 时 persistPresetBinding 内部 existsSync 守卫跳过（ES-RL-1，wave2 实现）。
+    // 持久化 preset 绑定到 .preset.json sidecar（设计文档 §4），供 fork/restore 继承。
+    const sidecarOpts = { skipJsonlExistsGuard: true }
     if (presetId && session.sessionFilePath) {
-      this.sessionStore.persistPresetBinding(session.sessionFilePath, presetId)
+      this.sessionStore.persistPresetBinding(session.sessionFilePath, presetId, sidecarOpts)
     }
     // 持久化归属 project 到 .project.json sidecar（D14 语义修正，2026-08-04）。
     // 空 projectId（默认项目创建）不写 sidecar——等价于未归类，读取侧一致兑底默认项目。
     if (options?.projectId && session.sessionFilePath) {
-      this.sessionStore.persistProjectBinding(session.sessionFilePath, options.projectId)
+      this.sessionStore.persistProjectBinding(session.sessionFilePath, options.projectId, sidecarOpts)
     }
     // .agent.json sidecar 落盘（重启恢复链路，G-1）——与 preset/project 同模式：
-    // pi 延迟写入窗口（sessionFilePath 未落盘）时 existsSync 守卫跳过，内存态兑底见上方 hydrate。
+    // parentAgentSessionId 可选（#15）：spawnSource 单独成立即持久化，防异常路径下 badge 重启丢失
     if (options?.spawnSource && session.sessionFilePath) {
-      // parentAgentSessionId 可选（#15）：spawnSource 单独成立即持久化，防异常路径下 badge 重启丢失
-      this.sessionStore.persistAgentBinding(session.sessionFilePath, options.spawnSource, options.parentAgentSessionId)
+      this.sessionStore.persistAgentBinding(session.sessionFilePath, options.spawnSource, options.parentAgentSessionId, sidecarOpts)
     }
   }
 

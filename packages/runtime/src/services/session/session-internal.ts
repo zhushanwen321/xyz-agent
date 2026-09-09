@@ -56,9 +56,9 @@ export interface ManagedSession extends IManagedSessionRecord {
   /**
    * launch preset id 的内存态持有（W-RT-4，设计文档 §4.2）。
    *
-   * session 活跃期间 .preset.json sidecar 可能因 pi 延迟写入未 flush 而无法写入
-   *（persistPresetBinding 的 existsSync 守卫跳过），此时内存态兜底持有 presetId，
-   * 供 forkSession 在 active 期读源 session preset（W-RT-5）。
+   * create 路径 sidecar 已随 V9-④ 根修放行 existsSync 守卫落盘（2026-09-08）；
+   * 仅 sessionFilePath 缺失（pi 异常未返回路径）等异常时序下 .preset.json 缺失，
+   * 此时内存态兜底持有 presetId，供 forkSession 在 active 期读源 session preset（W-RT-5）。
    *
    * 不放 IManagedSessionView（types.ts 非 slice 范围）也不入 IManagedSessionRecord
    * （binding 扩展字段归 Facade 域）：session-lifecycle 经 Registry get(id) 拿到
@@ -69,16 +69,16 @@ export interface ManagedSession extends IManagedSessionRecord {
   /**
    * 归属 project id 的内存态持有（D14 语义修正，2026-08-04）。
    *
-   * 与 launchPresetId 同模式：.project.json sidecar 可能因 pi 延迟写入未 flush 而无法写入
-   *（persistProjectBinding 的 existsSync 守卫跳过），内存态兑底持有 projectId，
-   * 供 forkSession 继承 / toSummary 透传 / setProject 同步。
+   * 与 launchPresetId 同模式：create 路径 sidecar 已放行落盘（V9-④ 根修），仅异常时序
+   * 下 .project.json 缺失，内存态兑底持有 projectId，供 forkSession 继承 / toSummary
+   * 透传 / setProject 同步。
    */
   projectId?: string
   /**
    * agent-managed session 标记的内存态持有（B-2）。
    *
-   * 与 launchPresetId/projectId 同模式：.agent.json sidecar 可能因 pi 延迟写入未 flush
-   * 而无法写入（persistAgentBinding 的 existsSync 守卫跳过），内存态兑底持有，
+   * 与 launchPresetId/projectId 同模式：create 路径 sidecar 已放行落盘（V9-④ 根修），
+   * 仅异常时序下 .agent.json 缺失，内存态兑底持有，
    * 供 session-manager list 按 spawnSource 过滤 / toSummary 透传（前端 AI badge）。
    */
   spawnSource?: 'user' | 'agent'

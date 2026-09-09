@@ -50,8 +50,27 @@ export const sessionMetaCache = new Map<string, CachedSessionMeta>()
 // ── sidecar 家族公共骨架（原 session-file-utils.ts，函数体逐字节不变迁入）────────
 
 /**
+ * persistBindingSidecar 的可选行为开关。
+ *
+ * skipJsonlExistsGuard（V9-④ 根修，2026-09-08）：跳过「JSONL 未落盘即跳过」守卫。
+ * 仅限 create 路径使用——调用方以「本 session 刚由本进程创建」这一事实替代文件存在性
+ * 判据（getState 成功 + registerSession 成功后 session 必然真实，.jsonl 未 flush 只是
+ * pi 延迟写入窗口）。规则 #6 禁止的是创建/触碰 pi session .jsonl 本体（openSync('wx')
+ * EEXIST 卡死），sidecar 是 xyz 自有文件且经 atomicWrite 落盘、不触碰 .jsonl，放行
+ * 不违反规则 #6。非 create 路径（fork/restore/setProject 等）禁用——文件不存在仍应
+ * 跳过（防为已清理/创建失败的 session 留孤儿 sidecar），守卫默认语义保持不变。
+ */
+export interface PersistBindingSidecarOpts {
+  /** 写后是否失效目录列举 TTL 缓存（默认 true，opt-out 语义见 persistBindingSidecar docstring）。 */
+  invalidateScanDir?: boolean
+  /** create 路径专用：JSONL 未 flush（existsSync=false）时仍落盘 sidecar（默认 false）。 */
+  skipJsonlExistsGuard?: boolean
+}
+
+/**
  * sidecar 家族公共写入（preset/project/agent binding 共用骨架）：
- * 空路径守卫 + JSONL 未落盘守卫（规则 #6：绝不创建 sidecar）+ 原子写 + 双层缓存失效
+ * 空路径守卫 + JSONL 未落盘守卫（规则 #6：绝不创建 sidecar；create 路径可经
+ * skipJsonlExistsGuard 放行，见 PersistBindingSidecarOpts）+ 原子写 + 双层缓存失效
  * （sessionMetaCache 必失效；scanDirCache 默认失效，见 invalidateScanDir 说明）。
  * 差异点参数化：sidecar 路径 helper、tmpfile 前缀、目录级扫描缓存的豁免开关。
  *
@@ -76,11 +95,12 @@ export function persistBindingSidecar(
   sidecarPathOf: (fp: string) => string,
   binding: PersistedSidecarBinding,
   tmpPrefix: string,
-  opts?: { invalidateScanDir?: boolean },
+  opts?: PersistBindingSidecarOpts,
 ): void {
   if (!filePath) return
-  if (!existsSync(filePath)) {
+  if (!opts?.skipJsonlExistsGuard && !existsSync(filePath)) {
     // 文件不存在（pi 延迟写入窗口 / 首 turn 前崩溃）：绝不创建文件，直接跳过（规则 #6 / ES-RL-1）。
+    // create 路径例外见 PersistBindingSidecarOpts.skipJsonlExistsGuard。
     return
   }
   try {

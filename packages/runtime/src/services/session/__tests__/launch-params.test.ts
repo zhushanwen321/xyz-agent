@@ -459,8 +459,9 @@ function makeP2Env(userPresetsFile?: unknown) {
     getDefaultModel: () => ({ provider: 'test-provider', modelId: 'test-model' }),
     getSkillPaths: () => [skillDir],
   } as unknown as IConfigStore
-  // 真实存在的 pi session 文件（触发 .preset.json sidecar 写入条件——persistPresetBinding
-  // 内部 existsSync 守卫需要真实文件）
+  // 真实存在的 pi session 文件（P2 探针环境模拟已 flush 的 session；persistPresetBinding
+  // 经 sessionStore mock 注入，真实文件仅为环境真实性——V9-④ 根修后 create 路径已放行
+  // existsSync 守卫，不再依赖文件存在性）
   const sessionFile = join(root, 'pi-session.jsonl')
   writeFileSync(sessionFile, '{"type":"session"}\n')
   // svc 三方法委托真实实现链（resolveCreateLaunch 编排真实执行）
@@ -614,8 +615,9 @@ describe('⛔ 探针 P2（D3 前提）：出厂 builtin:full 与无 preset 路�
       expect(bareSummary.launchPresetId).toBeUndefined()
       expect(presetSummary.modelId).toBe(bareSummary.modelId)
       expect(presetSummary.thinkingLevel).toBe(bareSummary.thinkingLevel)
-      // sidecar 面：.preset.json 写入条件 = presetId 存在（preset 写 / bare 不写）
-      expect(presetEnv.persistPresetBinding).toHaveBeenCalledWith(presetEnv.sessionFile, 'builtin:full')
+      // sidecar 面：.preset.json 写入条件 = presetId 存在（preset 写 / bare 不写）；
+      // V9-④ 根修后 create 路径携 skipJsonlExistsGuard 放行守卫（.jsonl 未 flush 也落盘）
+      expect(presetEnv.persistPresetBinding).toHaveBeenCalledWith(presetEnv.sessionFile, 'builtin:full', { skipJsonlExistsGuard: true })
       expect(bareEnv.persistPresetBinding).not.toHaveBeenCalled()
     } finally {
       setMigrationGate(Promise.resolve())
