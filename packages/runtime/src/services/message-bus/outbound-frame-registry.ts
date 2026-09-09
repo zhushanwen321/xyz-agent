@@ -145,13 +145,26 @@ export function formatTruncationNote(originalBytes: number, sessionId: string, o
 }
 
 /**
+ * 占位 entry id 自增序号（进程内唯一）：同 session 两次截断帧各得独立 id，防 reducer 按
+ * entry.id 把两条不同消息折叠成一条；'truncated-' 前缀与真实 pi entry id（uuidv7）及
+ * reducer 派生 id（'e<N>'）命名空间均无碰撞。counter 不跨进程持久——ring/reducer 状态
+ * 同为进程内存态，重启后各自重建，无跨重启同 id 折叠面。
+ */
+let placeholderEntrySeq = 0
+function nextPlaceholderEntryId(): string {
+  placeholderEntrySeq += 1
+  return `truncated-${placeholderEntrySeq}-array-entry`
+}
+
+/**
  * 按字段形态构造占位载荷（类型保持）：
  * - content：整字段替换为 [{type:'text', text: 占位}]——block 数组结构合法，对齐
  *   event-interpreter.ts:641 hook 改写先例（保持 pi 持久化形态，reducer 对 content 形态既有兼容）。
  * - record：{truncated, reason, originalBytes}——arguments 契约是 Record，谎报类型禁止。
  * - array-string / array-entry：单元素占位数组，元素形态与原元素同型
  *   （lines 的元素是 string → 占位字符串；entries 的元素是 PiEntry → 最小 PiMessageEntry 形态，
- *   reducer 按 entry.id/喂入序幂等消化）。
+ *   带 entry.id（幂等消化锚点：reducer 按 entry.id 派生 Message.id / 幂等去重；ring 回放
+ *   同对象同 id 天然幂等，同 session 多条截断帧靠自增 seq 互不折叠））。
  * - string：占位文案字符串本体。
  */
 function buildPlaceholder(kind: LargeFieldSpec['kind'], originalBytes: number, sessionId: string, opts: OutboundFrameGuardOptions): unknown {
@@ -166,6 +179,7 @@ function buildPlaceholder(kind: LargeFieldSpec['kind'], originalBytes: number, s
     case 'array-entry':
       return [
         {
+          id: nextPlaceholderEntryId(),
           type: 'message',
           timestamp: new Date().toISOString(),
           message: { role: 'assistant', content: [{ type: 'text', text: note }] },
@@ -208,6 +222,15 @@ function byteLenOf(value: unknown): number {
 }
 
 // ── push 通路守卫 ──────────────────────────────────────────────────
+
+/**
+ * 8MB 告警档哨兵日志（D3 已接受代价 B / A10④：miss 消息必然先打告警——告警档先于
+ * 截断/丢弃档暴露，哨兵定位上游自截失效）。drop 分支在 error 前必经此行（含 type/sessionId/bytes，
+ * 与 passthrough 告警同形态）。
+ */
+function warnLargePushFrame(type: string, sessionId: string, bytes: number): void {
+  console.warn(`[outbound-frame-guard] large outbound push frame (warn): type=${type} sessionId=${sessionId} bytes=${bytes}`)
+}
 
 /** 守卫判定结果。 */
 export type PushFrameGuardResult =
@@ -256,13 +279,14 @@ export function guardOutboundPushFrame(
     const bytes = byteLenOf(message)
     if (bytes <= opts.truncateBytes) {
       if (bytes > opts.warnBytes) {
-        console.warn(`[outbound-frame-guard] large outbound push frame (warn): type=${message.type} sessionId=${sessionId} bytes=${bytes}`)
+        warnLargePushFrame(message.type, sessionId, bytes)
       }
       return { action: 'passthrough', message, bytes }
     }
 
     const specs = LARGE_FIELD_REGISTRY[message.type]
     if (!specs || specs.length === 0) {
+      warnLargePushFrame(message.type, sessionId, bytes)
       console.error(
         `[outbound-frame-guard] dropped oversize outbound push frame (registry miss — check LARGE_FIELD_REGISTRY exhaustive table): type=${message.type} sessionId=${sessionId} bytes=${bytes}`,
       )
@@ -280,6 +304,7 @@ export function guardOutboundPushFrame(
       fieldPaths.push(spec.path.join('.'))
     }
     if (fieldPaths.length === 0) {
+      warnLargePushFrame(message.type, sessionId, bytes)
       console.error(
         `[outbound-frame-guard] dropped oversize outbound push frame (no registered field above warn threshold — oversize source not covered): type=${message.type} sessionId=${sessionId} bytes=${bytes}`,
       )
@@ -288,6 +313,7 @@ export function guardOutboundPushFrame(
 
     const bytesAfter = byteLenOf(current)
     if (bytesAfter > opts.truncateBytes) {
+      warnLargePushFrame(message.type, sessionId, bytes)
       console.error(
         `[outbound-frame-guard] dropped oversize outbound push frame (still oversize after truncation): type=${message.type} sessionId=${sessionId} bytes=${bytes} bytesAfter=${bytesAfter}`,
       )

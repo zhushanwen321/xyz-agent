@@ -6,9 +6,11 @@
  * - ring 回放 / 重订阅视角拿到同一份截断版（回放内容 === 在场广播内容）——P-publish-trunc 单测形态
  * - reply 超限替换 envelope 后 type:'error' 形态正确（前端 pending 可 reject 收口）
  * - miss 兜底整条丢弃且后续消息 seq 仍连续（不占 seq 不触发 gap）
- * - 8MB 告警档（warn 日志含消息类型与字节数）
+ * - 8MB 告警档（warn 日志含消息类型与字节数）；miss/still-oversize 丢弃分支 warn 先于 error
+ *   （D3 代价 B「miss 消息必然先打告警」/ A10④「告警档先于截断档出现」）
  * - 注册表未命中类型的小消息完全不受影响（零开销路径）
- * - content / arguments / array / string 四类占位形态契约
+ * - content / arguments / array / string 四类占位形态契约（array-entry 占位带自增唯一 id，
+ *   reducer 幂等消化锚点——同 session 多条截断帧互不折叠）
  *
  * 阈值参数化：测试注入小阈值（warn 1KB / truncate 4KB）走真实行为逻辑；
  * 生产路径用 shared 常量默认值（MessageBus/broker 无参构造即默认）。纯内存逻辑，不触 fs。
@@ -178,11 +180,32 @@ describe('guardOutboundPushFrame（push 通路守卫纯函数）', () => {
     expect(Array.isArray(entries)).toBe(true)
     expect(entries).toHaveLength(1)
     const placeholder = entries[0]
+    // 占位 entry 带 id（幂等消化锚点——文件头「reducer 按 entry.id 幂等消化」自洽）；
+    // 'truncated-<seq>-array-entry' 命名空间与真实 pi entry id（uuidv7）无碰撞
+    expect(placeholder['id']).toMatch(/^truncated-\d+-array-entry$/)
     expect(placeholder['type']).toBe('message')
     const body = placeholder['message'] as { role?: string; content?: Array<{ type: string; text: string }> }
     expect(body.role).toBe('assistant')
     expect(body.content?.[0]?.type).toBe('text')
     expect(body.content?.[0]?.text).toContain('已在传输层截断')
+  })
+
+  it('array-entry 占位 id 唯一性：同 session 两次截断帧的占位 entry id 互不相同（防 reducer 按 id 折叠两条不同消息）', () => {
+    const makeFrame = (): ServerMessage => ({
+      type: 'session.traceEntryAppended',
+      payload: {
+        sessionId: 's1',
+        entries: [{ type: 'message', id: 'e1', timestamp: '2026-09-09T00:00:00.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(5000) }] } }],
+        leafId: 'e1',
+      },
+    } as unknown as ServerMessage)
+    const r1 = guardOutboundPushFrame(makeFrame(), 's1', SMALL_OPTS)
+    const r2 = guardOutboundPushFrame(makeFrame(), 's1', SMALL_OPTS)
+    if (r1.action !== 'replaced' || r2.action !== 'replaced') return
+    const id1 = (r1.message.payload as { entries: Array<Record<string, unknown>> }).entries[0]?.['id']
+    const id2 = (r2.message.payload as { entries: Array<Record<string, unknown>> }).entries[0]?.['id']
+    expect(typeof id1).toBe('string')
+    expect(id1).not.toBe(id2)
   })
 
   it('string 类占位形态：bashResult 的 output 超限 → 占位文案字符串本体（类型保持 string）', () => {
@@ -198,20 +221,28 @@ describe('guardOutboundPushFrame（push 通路守卫纯函数）', () => {
     expect(output).toContain('已在传输层截断')
   })
 
-  it('miss 兜底：注册表未覆盖类型（message.complete）超限 → dropped(registry_miss)，error 日志', () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('miss 兜底：注册表未覆盖类型（message.complete）超限 → dropped(registry_miss)，8MB 告警档 warn 先于 error 日志（D3 代价 B / A10④）', () => {
+    const order: string[] = []
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { order.push('warn') })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => { order.push('error') })
     const msg: ServerMessage = { type: 'message.complete', payload: { sessionId: 's1', stopReason: 'end_turn', blob: 'x'.repeat(5000) } }
     const r = guardOutboundPushFrame(msg, 's1', SMALL_OPTS)
     expect(r.action).toBe('dropped')
     if (r.action !== 'dropped') return
     expect(r.dropReason).toBe('registry_miss')
+    // miss 消息必先打告警（哨兵前置暴露），error 随后
+    expect(order).toEqual(['warn', 'error'])
+    expect(warnSpy.mock.calls[0]?.[0]).toContain('large outbound push frame (warn)')
+    expect(warnSpy.mock.calls[0]?.[0]).toContain('message.complete')
     expect(errorSpy).toHaveBeenCalledOnce()
     expect(errorSpy.mock.calls[0]?.[0]).toContain('registry miss')
     expect(errorSpy.mock.calls[0]?.[0]).toContain('message.complete')
   })
 
-  it('miss 兜底（超限来自未注册字段）：注册字段未超告警档不替换 → dropped(registry_miss)', () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('miss 兜底（超限来自未注册字段）：注册字段未超告警档不替换 → dropped(registry_miss)，warn 先于 error', () => {
+    const order: string[] = []
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { order.push('warn') })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => { order.push('error') })
     // content 只有 500 字节（< warn 1KB），超限来自未注册的 blob 字段
     const msg: ServerMessage = {
       type: 'message.message_end',
@@ -229,10 +260,13 @@ describe('guardOutboundPushFrame（push 通路守卫纯函数）', () => {
     expect(r.action).toBe('dropped')
     if (r.action !== 'dropped') return
     expect(r.dropReason).toBe('registry_miss')
+    expect(order).toEqual(['warn', 'error'])
   })
 
-  it('miss 兜底：注册字段替换后帧仍超截断档 → dropped(still_oversize_after_truncate)', () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('miss 兜底：注册字段替换后帧仍超截断档 → dropped(still_oversize_after_truncate)，warn 先于 error', () => {
+    const order: string[] = []
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { order.push('warn') })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => { order.push('error') })
     // content 超限会被替换，但未注册的 blob 字段仍把帧撑过截断档
     const msg: ServerMessage = {
       type: 'message.message_end',
@@ -250,6 +284,7 @@ describe('guardOutboundPushFrame（push 通路守卫纯函数）', () => {
     expect(r.action).toBe('dropped')
     if (r.action !== 'dropped') return
     expect(r.dropReason).toBe('still_oversize_after_truncate')
+    expect(order).toEqual(['warn', 'error'])
     expect(errorSpy).toHaveBeenCalledOnce()
   })
 
@@ -327,8 +362,10 @@ describe('MessageBus.publish 出站守卫集成', () => {
     expect(replayContent[0]?.text).toContain('已在传输层截断')
   })
 
-  it('miss 兜底：未注册类型超限帧整条丢弃（不占 seq 不广播），后续消息 seq 仍连续', () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('miss 兜底：未注册类型超限帧整条丢弃（不占 seq 不广播），后续消息 seq 仍连续；丢弃前先打 8MB 告警档 warn', () => {
+    const order: string[] = []
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { order.push('warn') })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => { order.push('error') })
     const bus = new MessageBus(100, SMALL_OPTS)
     const ws = makeClient()
     bus.subscribe('s1', ws)
@@ -342,6 +379,9 @@ describe('MessageBus.publish 出站守卫集成', () => {
     expect(received).toHaveLength(2)
     expect(received.map((m) => m.seq)).toEqual([1, 2])
     expect(received.every((m) => (m.payload as { blob?: string }).blob === undefined)).toBe(true)
+    // D3 代价 B：miss 丢弃前必先打告警档 warn
+    expect(order).toEqual(['warn', 'error'])
+    expect(warnSpy.mock.calls[0]?.[0]).toContain('large outbound push frame (warn)')
     expect(errorSpy).toHaveBeenCalledOnce()
 
     // 重订阅 lastSeq 同样不包含被丢帧（seq 2，非 3）

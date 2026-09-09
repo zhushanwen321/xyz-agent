@@ -3,6 +3,8 @@
  *
  * 覆盖（验收必测断言，timer 全部 fake timers）：
  * - ①非主动退出 5s 后触发一次 restore（且只一次）；
+ * - ③join（ensureRestored）：并发调用等待同一 in-flight Promise（③c = 自动恢复执行
+ *   路径也登记 in-flight——timer 触发后 restore 进行中，并发 join 不双跑，D7-③ 双向）；
  * - ④in-flight 恢复时自动恢复跳过（schedule 与 timer 触发两道守卫）；
  * - ⑤熔断：连续失败 2 次停止自动重试；
  * - ⑥成功清零：任一次恢复成功（notifyRestored）后熔断计数归零，未来崩溃获得全新额度；
@@ -142,6 +144,35 @@ describe('RespawnOrchestrator（crash-resilience D7）', () => {
     expect(orchestrator.isRestoring('s9')).toBe(false)
     await expect(orchestrator.ensureRestored('s9')).resolves.toBeUndefined()
     expect(deps.restore).toHaveBeenCalledTimes(2)
+  })
+
+  it('③c 自动恢复执行登记 in-flight：timer 已触发、restore 进行中（spawn+attach 未完成）→ 并发 ensureRestored join 同一 Promise，restore 内核只跑一次', async () => {
+    const deps = createDeps()
+    let resolveRestore!: () => void
+    deps.restore.mockImplementationOnce(() => new Promise<unknown>((res) => { resolveRestore = () => res(undefined) }))
+    const orchestrator = new RespawnOrchestrator(deps)
+    orchestrator.schedule('s1')
+    await vi.advanceTimersByTimeAsync(RESPAWN_DELAY_MS)
+    // 自动恢复已启动且进行中：in-flight 注册表已登记（D7-③ 双向 join 的构造前提——
+    // attemptRespawn 经 ensureRestored 执行，不再直呼 deps.restore）
+    expect(deps.restore).toHaveBeenCalledTimes(1)
+    expect(orchestrator.isRestoring('s1')).toBe(true)
+    // 恢复窗口内用户发消息（ensureActive 恢复腿）→ join 同一 Promise，不发起第二路恢复
+    const join = orchestrator.ensureRestored('s1')
+    expect(deps.restore).toHaveBeenCalledTimes(1)
+    let settled = false
+    void join.then(() => { settled = true })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    resolveRestore()
+    await join
+    expect(settled).toBe(true)
+    // 只 spawn 一个：restore 内核全程只进入一次；restored 恰好一推（join 方不重复终态）
+    expect(deps.restore).toHaveBeenCalledTimes(1)
+    expect(deps.publish).toHaveBeenCalledTimes(1)
+    const [, msg] = deps.publish.mock.calls[0] as [string, ServerMessage]
+    expect(msg.type).toBe('session.restored')
+    expect(msg.payload).toMatchObject({ sessionId: 's1' })
   })
 
   it('⑤熔断：连续失败 2 次后停止自动重试（第 1 次失败续排，第 2 次失败不再续排）', async () => {

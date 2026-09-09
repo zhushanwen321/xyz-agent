@@ -13,9 +13,12 @@
  *   直接退出 app 则孤儿无限存活）；session 删除（removeSessionEntry 汇聚点）同样取消。
  *   timer 恒 unref：恢复编排是管理面动作，不得阻止进程自然退出（cancelAll 是第一道，
  *   unref 是兜底）。
- * - ③ 并发 join：恢复启动前查 restoringSessions（in-flight 惰性恢复 → 跳过自动恢复），
- *   timer 触发时复查（5s 窗口内用户先发消息即走惰性恢复，自动恢复让位）——join 语义
- *   本体在 session-service.ensureActive（throw→join 改造）。
+ * - ③ 并发 join（双向构造性）：join 语义本体 = 本模块 ensureRestored（in-flight 注册表
+ *   单一所有者）。自动恢复的执行也经 ensureRestored 走（attemptRespawn 不直呼
+ *   deps.restore）——恢复期间登记 in-flight，timer 触发后 spawn+attach 秒级窗口内用户
+ *   发消息（ensureActive→ensureRestored）join 同一 Promise，不报错不双跑；反方向，
+ *   恢复启动前查 restoringSessions（in-flight 惰性恢复 → 跳过自动恢复）+ timer 触发时
+ *   复查（5s 窗口内用户先发消息即走惰性恢复，自动恢复让位）。
  * - ④ 恢复承诺不跨 runtime 重启：本模块全部状态在进程内存，supervisor 重启后无 pending
  *   恢复，dead session 等用户交互惰性恢复（既有路径）。
  *
@@ -43,7 +46,10 @@ export interface RespawnDeps {
   /** session 是否有活进程（true = 已恢复/用户已惰性恢复，自动恢复无必要）。
    *  可选调用语义由组装方保证（port 缺失按 false 继续，守卫不得成为崩溃链新故障源）。 */
   isActive: (sessionId: string) => boolean
-  /** 恢复动作（复用既有惰性恢复内核 facade.restoreSession——附着自动走 u4c 预算化路径）。 */
+  /**
+   * 恢复动作内核（复用惰性恢复内核 facade.restoreSession——附着自动走 u4c 预算化路径）。
+   * 仅 ensureRestored 消费（恢复执行统一经注册表登记——attemptRespawn 不直呼本方法）。
+   */
   restore: (sessionId: string) => Promise<unknown>
   /** session 级消息发布（sessionId 必带，规则 7；bus 未注入时由组装方 no-op）。 */
   publish: (sessionId: string, msg: ServerMessage) => void
@@ -112,7 +118,10 @@ export class RespawnOrchestrator {
     const attempt = (this.consecutiveFailures.get(sessionId) ?? 0) + 1
     console.log(`[pi-respawn] session ${sessionId} auto restore starting (attempt ${attempt}/${RESPAWN_MAX_CONSECUTIVE_FAILURES})`)
     try {
-      await this.deps.restore(sessionId)
+      // 经 ensureRestored 执行（不直呼 deps.restore）：恢复期间登记 in-flight 注册表，
+      // spawn+attach 秒级窗口内用户发消息（ensureActive→ensureRestored）join 同一
+      // Promise——join 双向构造性成立（D7-③：restore 内核全程只跑一次，P-respawn-join）。
+      await this.ensureRestored(sessionId)
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       const willRetry = attempt < RESPAWN_MAX_CONSECUTIVE_FAILURES

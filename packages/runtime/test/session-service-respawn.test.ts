@@ -11,7 +11,9 @@
  *   clientToId 无条目拦截 intentional destroy）——本 mock 的 destroySession 与真实行为
  *   同构（仅删 Map 不触发 exitCb），故 forceQuit 后推进时间不可能产生 restore；
  * - ③join：恢复窗口内并发 ensureActive 返回同一 in-flight Promise、restore 内核只
- *   spawn 一个（pm.createSession 进程数断言）、两个调用方都在恢复完成后拿到同一 client；
+ *   spawn 一个（pm.createSession 进程数断言）、两个调用方都在恢复完成后拿到同一 client
+ *   （③c = timer 已触发的自动恢复进行中变体——自动恢复经 ensureRestored 登记 in-flight，
+ *   ensureActive join 之，双向构造性成立，D7-③）；
  * - ⑧session 删除取消：removeSessionEntry 汇聚点（lifecycle.delete 主动删的汇聚路径）
  *   取消 pending timer；
  * - ⑨restored/restoreFailed 消息形态：messageBus.publish 的 payload 必带 sessionId
@@ -293,6 +295,31 @@ describe('u8-pi-respawn 组装级（SessionService 接线，crash-resilience D7�
     const p3 = setup.service.ensureActive('s9')
     retry.resolve()
     await expect(p3).resolves.toBeDefined()
+  })
+
+  it('③c timer 已触发、自动恢复进行中（spawn+attach 未完成）→ 并发 ensureActive join 同一恢复，只 spawn 一个 pi（P-respawn-join）', async () => {
+    const setup = createSetup()
+    setup.register('s9', '/fake/s9.jsonl')
+    const deferred = setup.spyRestoreWithDeferred('s9')
+    setup.triggerExit('s9', 1, 'boom')
+    // timer 触发 → 自动恢复启动，restoreSession 进行中（spawn+attach 未完成）
+    await vi.advanceTimersByTimeAsync(RESPAWN_DELAY_MS)
+    expect(deferred.spy).toHaveBeenCalledTimes(1)
+    // 恢复窗口内用户发消息 → ensureActive 查无活 client → join 自动恢复的 in-flight Promise
+    const userCall = setup.service.ensureActive('s9')
+    expect(deferred.spy).toHaveBeenCalledTimes(1)
+    let settled = false
+    void userCall.then(() => { settled = true })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    // 自动恢复的 spawn+attach 完成 → join 方与自动恢复同时收口，进程数 = 1（无双 spawn）
+    deferred.resolve()
+    const client = await userCall
+    expect(settled).toBe(true)
+    expect(deferred.spy).toHaveBeenCalledTimes(1)
+    expect(setup.createSessionSpy).toHaveBeenCalledTimes(1)
+    expect(setup.clientMap.get('s9')).toBe(client)
   })
 
   it('⑧session 删除取消：removeSessionEntry 汇聚点（lifecycle.delete 主动删的汇聚路径）取消 pending timer', async () => {
