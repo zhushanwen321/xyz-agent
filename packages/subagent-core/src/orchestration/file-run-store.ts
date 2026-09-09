@@ -72,6 +72,13 @@ export interface FileRunStoreOptions {
    * {@link DEFAULT_SAVE_MIN_INTERVAL_MS}。测试经此注入小窗口（fake timers 推进）。
    */
   saveMinIntervalMs?: number;
+  /**
+   * [F-1 修复] run 状态目录覆盖。缺省 = `<dataRoot>/workflow-state`（zcode 宿主布局，
+   * 见 stateDir()）；pi 宿主的读侧装配点（round-supervisor sweep / idle-gc）必须传
+   * resolvePiWorkflowStateDir()（execution/workflow-state-root.ts）——pi 宿主 run state
+   * 由 JsonlRunStore 落 `<sessionDir>/workflow-state/`，与缺省根不相交。
+   */
+  stateDir?: string;
 }
 
 /** Node fs 错误 code 判定（ENOENT = 路径不存在，并发删除场景；对齐 pi isEnoentError）。 */
@@ -102,17 +109,24 @@ function isEnoentError(err: unknown): boolean {
  *   warn——单行损坏不拖垮整个 run 的恢复（与 pi 壳 kill-9 恢复同容忍度）。
  *   版本衔接（快照 codec 归 run-snapshot.ts 单源，D4）：存量无 v 行按当前版本
  *   宽容读、写入恒补 v、v 不匹配跳过 + warn（三裁决明细见 parseLine 注释）。
- * - stateFilePath：纯路径计算（<dataRoot>/workflow-state/<runId>.jsonl），不建目录。
+ * - stateFilePath：纯路径计算（<状态目录>/<runId>.jsonl），不建目录。状态目录 =
+ *   构造注入的 stateDir 覆盖，或缺省 <dataRoot>/workflow-state（pi 宿主读侧装配点
+ *   必须传 resolvePiWorkflowStateDir()——见 FileRunStoreOptions.stateDir 与
+ *   execution/workflow-state-root.ts 的同源布局论证）。
  *
  * 未 configureCore 即 save/loadAll 会抛 core_host_not_configured（dataRoot 端口
  * 语义，host-services.ts §3.4）——宿主壳必须在初始化最早期注入。
  */
 export class FileRunStore implements RunStore {
-  /** run 状态目录绝对路径（dataRoot 每次现取——宿主覆盖配置即刻生效，对齐
-   *  data-dir.ts「不缓存路径防测试/宿主切换读到旧值」先例）。 */
+  /** run 状态目录绝对路径（显式覆盖优先——pi 宿主读侧装配点；缺省 dataRoot 每次现取
+   *  ——宿主覆盖配置即刻生效，对齐 data-dir.ts「不缓存路径防测试/宿主切换读到旧值」
+   *  先例）。 */
   private stateDir(): string {
-    return join(getHostServices().dataRoot(), STATE_DIR_NAME);
+    return this.stateDirOverride ?? join(getHostServices().dataRoot(), STATE_DIR_NAME);
   }
+
+  /** 显式状态目录覆盖（构造注入；见 FileRunStoreOptions.stateDir）。 */
+  private readonly stateDirOverride: string | undefined;
 
   /** save 节流最小间隔（ms），0 = 禁用。 */
   private readonly saveMinIntervalMs: number;
@@ -126,6 +140,7 @@ export class FileRunStore implements RunStore {
 
   constructor(opts?: FileRunStoreOptions) {
     this.saveMinIntervalMs = Math.max(0, opts?.saveMinIntervalMs ?? DEFAULT_SAVE_MIN_INTERVAL_MS);
+    this.stateDirOverride = opts?.stateDir;
   }
 
   stateFilePath(runId: string): string {

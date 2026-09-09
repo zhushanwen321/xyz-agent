@@ -13,7 +13,10 @@
 //      【已接线：session-runner.ts agent_settled arm / subagent-service 新 turn disarm】
 //   2. 全局 ceiling —— 活进程上限，超限时按 LRU 挤出最久空闲（决策 4）【未接线，deferred】
 //   3. shutdown 收割 —— 父进程 shutdown 时显式 SIGTERM 全部 activation（决策 7 防线 i）
-//      【未接线：index.ts reapSpawnedChildrenOnShutdown + killAllSpawnedChildren 已等价覆盖】
+//      【未接线：[F-7 纠偏] 旧注「reapSpawnedChildrenOnShutdown 已等价覆盖」失实——
+//      该 hook 调 killAllSpawnedChildren，后者协议化后仅镜像置死 no-op（见
+//      engine/host/spawned-children.ts 与 src/index.ts 导出注释）；引擎进程实际回收 =
+//      stdin-EOF 自灭链，本职责仍无显式收割接线】
 //   4. 孤儿扫描 —— 父进程启动时按持久化 PID 扫收上次崩溃遗留的孤儿（决策 7 防线 ii）【deferred】
 //   5. activate 互斥 —— 同 recordId 的并发 activate 串行化（决策 7 防线 iii，防双写者）
 //      【已接线：subagent-service.ts 冷路径 resume 前 acquireActivateLock】
@@ -295,12 +298,12 @@ export function getActiveProcessCount(): number {
 // ============================================================
 // 职责 3：shutdown 收割（防线 i）
 //
-// [状态：未接线，已有等价实现] reapAllAliveProcesses 无生产调用方——shutdown 收割
-// 已由 index.ts 的 reapSpawnedChildrenOnShutdown（process hook → killAllSpawnedChildren
-// 发 SIGTERM，覆盖 SIGTERM/SIGINT/beforeExit 挂点）等价覆盖；后者直接遍历
-// spawnedChildren 句柄表，不依赖本模块 activeProcesses 记账的 register 时机，覆盖面
-// 更可靠。本函数保留作跨模块等价实现；若未来接入须先保证 register/unregister 记账
-// 完整，否则收割列表不全。
+// [状态：未接线，无等价实现（[F-7 纠偏]）] reapAllAliveProcesses 无生产调用方。旧注
+// 「shutdown 收割已由 reapSpawnedChildrenOnShutdown 等价覆盖」失实：该 hook 调
+// killAllSpawnedChildren，而后者协议化后（engines/pi inproc 删除、子进程活在引擎
+// 进程内）仅做 core 侧镜像置死，不发任何 SIGTERM（_signal 参数被忽略）——引擎进程
+// 实际回收走 stdin-EOF 自灭链，本职责的显式收割仍无接线。本函数保留作未来接入面；
+// 若未来接入须先保证 register/unregister 记账完整，否则收割列表不全。
 // ============================================================
 
 /**

@@ -104,3 +104,9 @@ W5/W7 已把自包含件迁入引擎包（pi-subagent-cli / zcode-subagent-cli `
 - 翻档事实（三类型全 process 档、跨时长无 TTL 清理）+ fork 读侧过滤①③两口径 + **bash 跨 session 可见性显式断言**（R4 一刀钉成显式选择）+ 偏差 #4 探针（goal 守卫口径实测）→ `conformance/registry-fork-filter.test.ts`。
 
 **goal 熔断（W5）处置**：**由 extension 侧单测承载，不重复造**——`extensions/universal/goal` 393 例已覆盖双维度熔断（circuit-breaker 6 + liveness 17：50 次封顶必停发、第 5 轮起间隔 ×2、恢复清零退避不重置总数、defer 通知去重）；设计验收 A10（实机熔断场景）仍归 Gate B 真机剧本，不在 conformance 重复。
+
+## 一致性审查批 2 修复回写（2026-09-09，F-2 首轮 arm 重接）
+
+上方 W6 承接回写节「settled-watchdog」行声称的「W3 重接」**当时失实**（一致性审查批 2 F-2 证实）：W3 实际只重接了热路径续聊轮（`deliverChatMessage` 的 arm 调用点），`kickOffChatRound`（spawn 首轮 + 冷续 resume 轮）内无任何 arm 调用——:1382 注释声称「首轮调用点在 kickOffChatRound 的 run 派发后」不存在，被删的 inproc stdout-pump 是首轮唯一中段守护，协议化后引擎侧 spawn-runner 仅 turn 计数无墙钟 → **首轮 wedged 无熔断**（LC-1 场景①重新敞开）。H9 行「已承接」按当时状态属过度声称。
+
+**修复后真实状态**（本行 supersede 上方 W6 行的承接声明）：`kickOffChatRound` 在 run 派发前（pool acquire 成功后）补 `armMidRoundNoProgress`，与热路径 arm 复用同一守护实例语义（同一 `onHotPathSettledWatchdogTimeout` 处置闭包）；refresh 源核实齐备——首轮 runId 键 `ctx.onEvent` 协议事件行（含 text_delta，引擎侧 spawn-runner 对 text_delta 同时走 onEvent/onDelta 两通道）+ `ctx.onRoundLifecycle` settled 相位交棒（`noteRoundSettledFromProtocol`，首轮 runId 键经同一 handleChatRoundPhase 收敛，本批测试核实生效）。承接测试：`execution/__tests__/chat-round-first-round-watchdog.test.ts`（首轮 arm / 冷续轮静默 30min 熔断 / 中段事件行刷新 / settled 交棒不继承中段计时）。

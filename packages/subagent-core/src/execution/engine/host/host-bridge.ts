@@ -12,8 +12,8 @@
 // 本文件只依赖 core 公共类型（types.ts / record-store / stream-sink /
 // lifecycle-manager / orchestration 类型），不 import inproc pi 引擎目录 内部——它是 pi 包
 // 反向请求消费面的契约落点（协议无关，类型闭包经 HostBridgeServiceFace 泛型参数化）。
-
-import { CANCEL_SETTLE_GRACE_MS } from "@zhushanwen/subagent-engine-sdk";
+// [F-3] cancel 收敛等待面已删（无生产装配点）；D3 core 侧收敛语义由引擎面
+// chat-session.cancel 等价承接，偏差登记见 chat-domain impl-plan §5。
 
 import { armIdleTimer, disarmIdleTimer } from "../../lifecycle-manager.ts";
 import type { AgentResult as WorkflowAgentResult } from "../../../orchestration/models/types.ts";
@@ -94,7 +94,7 @@ export interface HostBridge {
   disarmIdleTimer(id: string): void;
 }
 
-/** createHostBridge 依赖（服务面 + idle 超时处置 + [W3 D3] cancel 收敛面）。 */
+/** createHostBridge 依赖（服务面 + idle 超时处置）。 */
 export interface HostBridgeDeps {
   /** HostBridge 服务实现面（生产 = SubagentService 的结构子集）。 */
   service: HostBridgeServiceFace;
@@ -104,19 +104,12 @@ export interface HostBridgeDeps {
    * 同款）。不注入则 arm 时 throw（无处置的 idle timer = 永不回收的泄漏源，宁可显式）。
    */
   onIdleTimeout: (recordId: string) => void;
-  /**
-   * [W3 D3 协议层] cancel 收敛等待源：目标轮次的终态信号——roundLifecycle
-   * settled/failed 相位帧或 interact cancel 应答——到达时 resolve(true)。
-   * 信号源 = 宿主 chat 轮路由（EngineClient recordRoutes / RunContext.onRoundLifecycle）
-   * 与 interact cancel 应答（协议层收敛语义，引擎面应答即收敛）。不注入 = 无收敛面
-   * 可等（无 chat 轮在途/纯测试装配）→ cancel 保持受理即返回的旧形态。
-   */
-  waitForRoundTerminal?: (recordId: string) => Promise<boolean>;
-  /**
-   * [W3 D3 协议层] 收敛超时的杀链升级（run 域同构：remote-engine abort 分级的
-   * killAll 兜底形态）。与 waitForRoundTerminal 成对注入。
-   */
-  escalateKill?: (recordId: string, reason: string) => Promise<void>;
+  // [F-3 删除登记] 曾有的 waitForRoundTerminal / escalateKill 可选注入（W3 D3 cancel
+  // 终态等待面）已删：createHostBridge 全仓无生产调用点，且该面与生产 cancel 链结构
+  // 冲突（cancelBackground 同步 unregisterChatRoundRoute 后，waitForRoundTerminal 再
+  // race 轮终相位恒等满 3s 超时）。D3 core 侧收敛语义由引擎面等价承接 =
+  // chat-session.cancel（waiter 先于 kill 注册 + killChain 有界升级），偏差登记见
+  // chat-domain-v1x-liveness-governance.impl-plan.md §5。
 }
 
 /** HostBridge core 实现（SubagentService 编排面的协议化视图）。 */
@@ -135,27 +128,15 @@ export function createHostBridge(deps: HostBridgeDeps): HostBridge {
     collectRecords: (limit, filter) => service.collectRecords(limit, filter),
     closeSubagent: (record, force) => service.closeSubagent(record, force),
     /**
-     * [W3 D3 协议层] cancel 语义 = 受理 → 等目标轮次终态 → 超时杀链升级：
-     *   1. 受理：service.cancel(id)（CAS 终态化 + 终止意图记账，同步布尔）；
-     *   2. 等待：roundLifecycle settled/failed 或 interact cancel 应答，窗长
-     *      CANCEL_SETTLE_GRACE_MS（SDK 常量 3s，run 域同源）；
-     *   3. 升级：未收敛走与 run 域同构的杀链（escalateKill）。轮次 failed 相位
-     *      （engine_round_aborted 等失败码）由 chat 轮路由消费并如实标 failed
-     *      （失败相位错误码分诊）——本方法只负责收敛等待与升级，不做 completed
-     *      谎报方向的合成。
+     * cancel 语义 = 受理即返回（service.cancel 同步布尔 → 契约 void）。
+     * [F-3 删除登记] 终态等待/杀链升级面已删（无生产装配点 + 与 cancelBackground 的
+     * 路由注销冲突，见 HostBridgeDeps 尾注）；生产收敛语义由引擎面承接 =
+     * chat-session.cancel（waiter 先于 kill 注册 → 等 roundLifecycle 终态相位 →
+     * CANCEL_SETTLE_GRACE_MS 未收敛走 killChain 有界升级）。resolve 语义归引擎侧
+     * 判 notResumable（契约注释，W6 起如此）。
      */
     cancel: async (id) => {
-      const accepted = service.cancel(id);
-      if (!accepted) return; // 未受理（record 不存在/已终态）——无收敛对象
-      if (deps.waitForRoundTerminal === undefined) return;
-      const graceTimer = new Promise<boolean>((resolve) => {
-        const t = setTimeout(() => resolve(false), CANCEL_SETTLE_GRACE_MS);
-        if (typeof t.unref === "function") t.unref();
-      });
-      const settled = await Promise.race([deps.waitForRoundTerminal(id), graceTimer]);
-      if (!settled) {
-        await deps.escalateKill?.(id, `cancel did not settle within grace for record ${id}`);
-      }
+      service.cancel(id);
     },
     takeChatRound: (taskId) => service.takeChatRound?.(taskId) ?? null,
     reportRecordTransition: (record) => service.reportRecordTransition?.(record),

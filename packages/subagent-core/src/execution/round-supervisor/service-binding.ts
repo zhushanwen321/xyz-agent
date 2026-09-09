@@ -16,6 +16,7 @@ import { tryTransition } from "../execution-record.ts";
 import { writeFinalized } from "../finalized-marker.ts";
 import { hasLiveProcessHandle } from "../lifecycle-predicates.ts";
 import { FileRunStore } from "../../orchestration/file-run-store.ts";
+import { resolvePiWorkflowStateDir } from "../workflow-state-root.ts";
 import type { PiLike } from "../notify-host.ts";
 import type { RecordStore } from "../record-store.ts";
 import type { AgentResult, ExecutionRecord } from "../types.ts";
@@ -233,7 +234,11 @@ export function runPendingReconcileSweepForService(binding: RoundSupervisorBindi
     // [F2] workflow run 判据供给：FileRunStore 构造轻量（无 IO 副作用，lastSavedAt
     // 空 Map——findStateByIdSync 同步只读不触碰节流记账），sweep 挂点低频
     // （initSession），每轮构造一次闭包持有。
-    const workflowStore = new FileRunStore();
+    // [F-1 修复] stateDir 必须与 pi 壳 JsonlRunStore 的落盘布局同源
+    //（<sessionDir>/workflow-state/，推导 = resolvePiWorkflowStateDir）；缺省根
+    // <dataRoot>/workflow-state 是 zcode 宿主布局，与 pi 生产落盘不相交——曾致
+    // findStateByIdSync 恒 missing → sweep 按终态补注销活跃 run（W4 引入的装配错位）。
+    const workflowStore = new FileRunStore({ stateDir: resolvePiWorkflowStateDir() });
     runReconcileSweep({
       sessionFile: binding.getMainSessionFile(),
       lookupRecordState: (id) => {

@@ -364,6 +364,34 @@ describe("ChatSessionRegistry：cancel 收敛（D3 协议层）", () => {
     expect(h.registry.has("rec-c2")).toBe(false);
   });
 
+  it("[F-6] 收敛超时后会话已消亡（closed）→ 升级等待体注册前快速收口，不等满 grace 总窗", async () => {
+    vi.useFakeTimers();
+    const runP = h.registry.startRound(
+      { recordId: "rec-f6", task: "hi", agentName: "a", model: "p/m", sessionDir: "/tmp/s", cwd: "/tmp" },
+      { runId: "run-f6", onEvent: () => undefined },
+    );
+    const cap = h.captured[0];
+    await driveRoundToIdle(cap);
+    await runP;
+    h.lifecycles.length = 0;
+    h.children[0].ignoreSigterm = true;
+    h.registry.deliverMessage("rec-f6", "stuck round", false);
+
+    const cancelP = h.registry.cancel("rec-f6");
+    // settle 超时（resolve(false)，等待体自删）；microtask 未 flush——cancel 续体未跑
+    vi.advanceTimersByTime(3_000);
+    // 同 tick 内子进程消亡（exit 已消费：closed=true、failed 相位已射给空等待体集合）
+    h.children[0].die(null, "SIGTERM");
+    expect(h.registry.has("rec-f6")).toBe(false);
+
+    // 修复前：此处注册 33s 升级等待体，消亡会话无相位再来 → await 白等满窗；
+    // 修复后：closed 检查直接走既有收口返回
+    const r = await cancelP;
+    expect(r).toEqual({ ok: true, delivered: true });
+    // 杀链升级未发起（会话已消亡，无收割对象）
+    expect(h.children[0].kills).toEqual(["SIGTERM"]);
+  });
+
   it("idle 态 cancel：无在途轮 → 受理即返回（无收敛对象）", async () => {
     const runP = h.registry.startRound(
       { recordId: "rec-c3", task: "hi", agentName: "a", model: "p/m", sessionDir: "/tmp/s", cwd: "/tmp" },
@@ -596,6 +624,10 @@ describe("ChatSessionRegistry：相位竞态边界（同 recordId 冷续串扰 /
     expect(h.lifecycles.at(-1)).toMatchObject({ runId: "run-s6", phase: "settled" });
     expect(h.registry.deliverMessage("rec-s6", "next round", false)).toEqual({ ok: true, delivered: true });
     cap.callbacks.onChatAgentSettled?.(); // 旧轮空闲边界：不得清掉新轮的 roundActive
+    // [F-4 S6 引擎半边] 旧轮 agent_settled 的 idle 帧被 armedSeq 判别抑制（新轮已 arm、
+    // 进行中）——修复前旧 idle 帧同键放行，core handleChatRoundPhase(idle) 拆掉新轮
+    // 中段守护 + 误挂 5min idle timer → 新轮进行中超 5min 被误杀
+    expect(h.lifecycles.map((f) => f.phase)).toEqual(["settled"]);
     cap.resolve(fakeResult());
     await runP;
     h.lifecycles.length = 0;

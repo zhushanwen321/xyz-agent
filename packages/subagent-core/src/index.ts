@@ -101,11 +101,15 @@ export { syncEnginesFile } from "./execution/engine/engine-discovery.ts";
 // 引擎（inproc pi 引擎目录）与 SubagentService 自持 DI 实例一并删除——registry 'pi' 由三级发现
 // 装载 cli descriptor，chat 轮次与 run 域同路经协议客户端发往 pi-subagent-cli 引擎进程
 // （G1：pi 引擎单一 CLI 形态，core 壳侧零内建引擎）。
-// [W8 D8 薄壳] killAllSpawnedChildren：宿主收割入口（扩展 index.ts / zsw
-// runner-core.js 的业务调用点零改动）。语义 = disposeEngines() 触发全部已实例化
-// 引擎 dispose（cli 形态 = RemoteEngine.dispose → EngineClient 3s 帧上界 + 组杀）+
-// core 侧 spawnedChildren 镜像整体置死（[W3] 子进程活在引擎进程内，实际终止 =
-// 引擎进程组级收割）。实现收敛在 engine/host/spawned-children.ts 公共面。
+// [W8 D8 薄壳] killAllSpawnedChildren：扩展 index.ts / zsw runner-core.js 的业务调用点
+// 零改动。语义（[F-7 注释纠偏，如实口径]）= **仅镜像记账**——core 侧 spawnedChildren
+// 镜像整体清空（engine/host/spawned-children.ts 公共面），不发任何进程信号；
+// 子进程活在引擎进程内，其回收链 = ① stdin-EOF 自灭（宿主退出 / EngineClient 销毁
+// → 引擎进程 stdin 断源自灭，正常路径）；② disposeEngines()（registry）显式触发全部
+// 已实例化引擎 dispose（cli 形态 = RemoteEngine.dispose → EngineClient 有界收口）——
+// 该入口为宿主 shutdown 链预留，现无生产接线。subagent-workflow 扩展的
+// reapSpawnedChildrenOnShutdown（process hook 调本函数）因此同为镜像置死 no-op，
+// 不构成真实收割（现状登记，workflow 包生产码不动）。
 export { killAllSpawnedChildren } from "./execution/engine/host/spawned-children.ts";
 
 // [W8 D8 兼容公共面薄壳]（设计 §3.6 D8 表）：registerZcodeEngine 确保cli descriptor

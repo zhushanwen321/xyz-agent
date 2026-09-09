@@ -419,6 +419,15 @@ export class ChatSessionRegistry {
     if (await settle) {
       return { ok: true, delivered: true };
     }
+    // [F-6] 升级等待体注册前复查会话消亡：SIGTERM 生效极快（pi 收口完成、exit 已消费）
+    // 而其终态相位已射给此前一轮等待体集合（settle 超时自删后无人消费）时，此处
+    // session.closed 已为 true——消亡会话不再有任何相位发射（handleChildExited /
+    // handleRoundEnd 的 closed 守卫），此刻注册的升级等待体永远等不到 resolve，cancel
+    // 将白等满 CANCEL_SETTLE_GRACE_MS + CHAT_KILL_GRACE_MS。closed = 子进程已死，
+    // 杀链升级同样无对象，直接走既有收口返回。
+    if (session.closed) {
+      return { ok: true, delivered: true };
+    }
     // 收敛超时 → 杀链升级（run 域同构兜底；failed 相位由 close 事件触发）
     logger.warn(
       `[chat-session] cancel for ${recordId} did not settle within ${CANCEL_SETTLE_GRACE_MS}ms, escalating kill chain`,
@@ -513,12 +522,26 @@ export class ChatSessionRegistry {
    * 信号本身 = 新 run 的 start（宿主主动发起），core 无需旧会话帧。等待体仍逐一
    * resolve：cancel 等待中 killReason 被后续冷续覆写为 superseded 的极端时序下收敛
    * 不悬挂。
+   *
+   * [F-4 S6 引擎半边] 旧轮的 idle 相位（agent_settled 空闲边界）在 settled→idle 间隙
+   * 宿主已投递新轮时抑制宿主发射（`armedSeq !== settledSeq` = settled 以来有新轮 arm，
+   * 该 idle 帧属旧轮——时序恒晚于新轮投递）。与 S6 的 armedSeq 守卫（handleAgentSettled
+   * 保 settled 相位、不清新轮 roundActive）同模式：旧 idle 帧若放行，core 的
+   * handleChatRoundPhase(idle) 无轮次身份可判——disarmRoundFromProtocol 拆掉新轮中段
+   * 守护 + armChatIdleTimer 挂 5min idle timer → 新轮进行中超 5min 被误杀。新轮的
+   * idle 由新轮自身 agent_settled 发射（其 armedSeq === settledSeq）。等待体仍逐一
+   * resolve（在途 cancel 的收敛兜底语义不变）。
    */
   private emitPhase(
     session: ChatSession,
     phase: { phase: "settled"; usage?: AgentUsage } | { phase: "idle"; usage?: AgentUsage; anchor?: ResumeAnchor } | { phase: "failed"; error: ProtocolError },
   ): void {
-    if (session.killReason === "superseded") {
+    if (phase.phase === "idle" && session.armedSeq !== session.settledSeq) {
+      logger.debug(
+        `[chat-session] suppress stale idle phase for ${session.recordId} ` +
+          `(armedSeq=${session.armedSeq} advanced past settledSeq=${session.settledSeq} — a new round was armed in the settled→idle gap; its own agent_settled will emit idle)`,
+      );
+    } else if (session.killReason === "superseded") {
       logger.debug(
         `[chat-session] suppress ${phase.phase} phase for superseded session ${session.recordId} (record cold-resumed by a new run)`,
       );
