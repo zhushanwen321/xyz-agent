@@ -20,6 +20,16 @@
       <span>：{{ directive.text }}</span>
     </p>
   </div>
+  <!-- [u8-pi-respawn] pi 崩溃恢复提示条分支（crash-resilience D7）：customType 匹配且
+       variant 可解析时渲染 RespawnNoticeBar（restored=T4 文案 / restoreFailed=失败态+重试
+       按钮，retry 事件透传壳层）。解析失败 → respawn 为 null → 降级走兜底 system 行
+       （消息仍在流中，不静默消失——subagent 定向气泡同款降级语义）。 -->
+  <RespawnNoticeBar
+    v-else-if="respawn"
+    data-testid="respawn-notice-bar-slot"
+    :variant="respawn"
+    @retry="emit('respawnRetry')"
+  />
   <!-- 现有 system 提示行（compaction / branch / 兜底文本） -->
   <div v-else class="system-notice content-col flex min-w-0 animate-notice-in items-center gap-2 py-1">
     <span class="h-px flex-1 bg-border" />
@@ -33,13 +43,25 @@
 import { GitBranch, Archive, ArrowRight } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
-import { normalizeContent, SUBAGENT_DIRECTIVE_CUSTOM_TYPE, parseSubagentDirective } from '@xyz-agent/shared'
-import type { Message, SubagentDirectiveData } from '@xyz-agent/shared'
+import {
+  normalizeContent,
+  SUBAGENT_DIRECTIVE_CUSTOM_TYPE,
+  parseSubagentDirective,
+  PI_RESPAWN_NOTICE_CUSTOM_TYPE,
+  parseRespawnNoticeVariant,
+} from '@xyz-agent/shared'
+import type { Message, SubagentDirectiveData, PiRespawnNoticeVariant } from '@xyz-agent/shared'
+import RespawnNoticeBar from './RespawnNoticeBar.vue'
 
 const { t } = useI18n()
 
 const props = defineProps<{
   message: Message
+}>()
+
+const emit = defineEmits<{
+  /** [u8] 重试按钮点击（仅 restoreFailed 形态渲染）——壳层接手动恢复 RPC */
+  respawnRetry: []
 }>()
 
 /**
@@ -51,6 +73,12 @@ const props = defineProps<{
 const directive: SubagentDirectiveData | null =
   props.message.customType === SUBAGENT_DIRECTIVE_CUSTOM_TYPE
     ? parseSubagentDirective(props.message.content, props.message.details)
+    : null
+
+/** [u8] pi 恢复提示条形态：customType 匹配且 variant 合法时非 null（畸形降级同 directive）。 */
+const respawn: PiRespawnNoticeVariant | null =
+  props.message.customType === PI_RESPAWN_NOTICE_CUSTOM_TYPE
+    ? parseRespawnNoticeVariant(props.message.details)
     : null
 
 /** 按消息类型选图标 + 摘要文案（纯函数，props 不变则结果不变） */

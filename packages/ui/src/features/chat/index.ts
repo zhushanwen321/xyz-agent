@@ -23,7 +23,10 @@ export * from './slash-icons'
 export type { MarkdownSegment, IncrementalMarkdownResult, IncrementalMarkdownCache } from './markdown-types'
 // 展示组件
 export { default as SystemNotice } from './SystemNotice.vue'
+// [u8-pi-respawn] pi 崩溃恢复提示条（SystemNotice 按 PI_RESPAWN_NOTICE_CUSTOM_TYPE 分支渲染）
+export { default as RespawnNoticeBar } from './RespawnNoticeBar.vue'
 export { default as ImageThumb } from './ImageThumb.vue'
+export { default as ToolResultImages } from './ToolResultImages.vue'
 export { default as AmbiguousFilePopover } from './AmbiguousFilePopover.vue'
 export { default as TurnRail } from './TurnRail.vue'
 // 编排组件

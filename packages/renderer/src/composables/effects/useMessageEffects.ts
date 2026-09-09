@@ -20,7 +20,7 @@ import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useToast } from '@/composables/useToast'
 import { handleCompletion } from '@/composables/effects/useCompletionNotify'
-import { invalidateStreamSubscription } from '@xyz-agent/core'
+import { invalidateStreamSubscription, subscribeSession } from '@xyz-agent/core'
 import type { InboundEffects } from '@xyz-agent/core'
 import { resolveSubagentParentSessionId, subagentVirtualId } from '@xyz-agent/shared'
 import type { PiEntry, PiToolCallEntryForm, ServerMessage, ServerMessageMap, SubagentRecord } from '@xyz-agent/shared'
@@ -52,6 +52,40 @@ function handleSessionExited(sessionId: string, payload: { code: number | null; 
   // reason 可能含多行 stderr，toast 只取首行（完整内容在聊天流 error 消息里）
   const shortReason = payload.reason.split('\n')[0]
   useToast().error(t('connection.runtimeExited', { reason: shortReason }))
+}
+
+/**
+ * [u8] 处理 session.restored（pi 崩溃自动恢复成功，crash-resilience D7 / T4）。
+ *
+ * 对话流插入恢复提示条（T4 文案：在途回合未保留、后台任务/子代理已终止不自动恢复、
+ * 可继续发消息）+ 复位 dead 态标记。帧主要经 ring 回放到达（恢复时 renderer 订阅已被
+ * bus.clearSession 清除）——回放触发本回调后主动重发 subscribe（gap reconcile 同款
+ * 通路）：既恢复 live 订阅（后续 message.* 不丢），也让后续重开/切换拿到完整回放。
+ * subscribeSession 幂等（subscribed=true 短路），失败 console.warn 不标记（下次可重试）。
+ */
+function handleSessionRestored(sessionId: string, payload: { attempts: number }): void {
+  console.debug(`[useMessageEffects] session ${sessionId} auto-restored after ${payload.attempts} attempt(s)`)
+  useSessionStore().revive(sessionId)
+  useChatStore().appendRespawnNotice(sessionId, 'restored', t('panel.message.respawnRestored'))
+  void subscribeSession(sessionId).catch((e) => {
+    console.warn(`[useMessageEffects] re-subscribe after restore failed for session ${sessionId}:`, e)
+  })
+}
+
+/**
+ * [u8] 处理 session.restoreFailed（自动恢复失败）。willRetry=false（连续 2 次熔断）→
+ * 对话流插入失败提示条（「引擎恢复失败，点此重试或新建会话」+ 重试按钮，RespawnNoticeBar）；
+ * willRetry=true 的中间失败不渲染（重试由 runtime 自动续排，避免提示条闪烁）。
+ */
+function handleSessionRestoreFailed(
+  sessionId: string,
+  payload: { attempts: number; willRetry: boolean; reason: string },
+): void {
+  if (payload.willRetry) {
+    console.warn(`[useMessageEffects] auto restore failed (will retry) for session ${sessionId}:`, payload.reason)
+    return
+  }
+  useChatStore().appendRespawnNotice(sessionId, 'restoreFailed', t('panel.message.respawnFailed'))
 }
 
 /**
@@ -149,6 +183,8 @@ export function handleRuntimeUnavailable(reason: 'restart' | 'disconnect'): void
 export function createInboundEffects(): InboundEffects {
   return {
     onSessionExited: handleSessionExited,
+    onSessionRestored: handleSessionRestored,
+    onSessionRestoreFailed: handleSessionRestoreFailed,
     onMessageComplete: handleMessageComplete,
     onSubagents: handleSubagents,
     onSubagentEntries: handleSubagentEntries,

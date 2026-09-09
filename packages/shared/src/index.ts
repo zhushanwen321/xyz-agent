@@ -20,8 +20,9 @@ export type {
   CompactionSummary, BranchSummary, SteerFollowUpMode,
   BgNotifyRecord, BgNotifyDetails,
   SubagentDirectiveData,
+  PiRespawnNoticeVariant,
 } from './message'
-export { parseBgNotifyDetails, COMPLETE_NOTIFY_CUSTOM_TYPES, SUBAGENT_DIRECTIVE_CUSTOM_TYPE, parseSubagentDirective } from './message'
+export { parseBgNotifyDetails, COMPLETE_NOTIFY_CUSTOM_TYPES, SUBAGENT_DIRECTIVE_CUSTOM_TYPE, parseSubagentDirective, PI_RESPAWN_NOTICE_CUSTOM_TYPE, parseRespawnNoticeVariant } from './message'
 // w21 pi-entry：pi session entry wire 类型（runtime 实时重构 ↔ core reducer ↔ protocol payload 三方共用）
 export type {
   PiEntry, PiEntryBase, PiMessageEntry, PiMessageBody,
@@ -71,6 +72,14 @@ export { RENDERER_LOG, IMAGE_CACHE_WRITE } from './ipc-channels'
 // renderer-log 通道 payload 类型（crash-resilience u2：preload ElectronAPI 签名与 main
 // handler 校验共用同一形态声明，防两端漂移；main 侧仍做运行时再校验，见 ipc-payloads.ts 头注释）。
 export type { RendererErrorSource, RendererMemorySnapshot, RendererLogPayload } from './ipc-payloads'
+// image-cache 落盘通道 payload 类型（crash-resilience u7 D6-⑨：core 编排层 / preload
+// ElectronAPI 签名 / main handler 校验三方共用同一形态声明，防漂移）。
+export type {
+  ImageCacheWriteImage,
+  ImageCacheWritePayload,
+  ImageCacheWriteImageResult,
+  ImageCacheWriteResult,
+} from './ipc-payloads'
 // 出站 env 契约 SSOT + 子进程 env 构建器（纯常量/纯函数无 node 依赖，renderer barrel 安全）。
 // main 进程 safe-env 薄封装与 runtime infra/spawn-env.ts 门面均经此消费。
 export type { BuildOutboundChildEnvOptions, SpawnEnvForwardEntry } from './spawn-env-contract'

@@ -33,6 +33,9 @@ import {
   DEFAULT_OUTBOUND_FRAME_GUARD_OPTIONS,
   guardOutboundPushFrame,
 } from './outbound-frame-registry.js'
+// 组合根（index.ts）经本模块导入守卫默认值——省一条独立 import 行（index.ts max-lines 门禁），
+// 阈值 SSOT 仍在 outbound-frame-registry（shared 常量的 registry 出口）。
+export { DEFAULT_OUTBOUND_FRAME_GUARD_OPTIONS } from './outbound-frame-registry.js'
 
 /** streamRing 默认容量（O(1) 覆盖写环形缓冲）。 */
 const DEFAULT_RING_CAPACITY = 1000
@@ -98,6 +101,11 @@ const TOPIC_TABLE: Readonly<Record<string, TopicKind>> = {
   'session.compacting': 'stream',
   'session.compacted': 'stream',
   'session.exited': 'stream',
+  // pi 崩溃自动恢复结果（crash-resilience D7，u8-pi-respawn）：一次性事件（非 last-value
+  // 状态），stream 入 ring——断连重连 / 恢复后重订阅经回放补见恢复提示条（恢复发生时
+  // renderer 订阅已被 bus.clearSession 清除，回放是提示条的主要送达通路）。
+  'session.restored': 'stream',
+  'session.restoreFailed': 'stream',
   'terminal.alive': 'stream',
   'terminal.exit': 'stream',
   'terminal.ack': 'stream',

@@ -59,6 +59,9 @@ export default {
     collapse: 'Collapse',
     thinkingBlock: 'Thinking',
     inProgress: 'In progress',
+    imagePlaceholder: 'Image cache full',
+    imagePlaceholderDetail: 'This session image cache reached its limit (64MB). Existing images stay visible; new images show a placeholder',
+    imageUnavailable: 'Image unavailable',
     workflow: 'Workflow',
     workflowDone: 'Done',
     workflowRunning: 'Running',
@@ -80,6 +83,12 @@ export default {
     // [u4d-truncated-ui] History budget truncated top bar (loadMore superseded by loadEarlier)
     loadedRecentTurns: 'Loaded recent {count} turns',
     loadEarlier: 'Load earlier',
+    // [u8-pi-respawn] pi crash respawn notice bar (crash-resilience D7 / T4)
+    respawnRestored: 'Session engine recovered from a crash. The interrupted turn was not preserved; background tasks and subagents that were running have been terminated and will not resume automatically. You can continue sending messages.',
+    respawnFailed: 'Engine recovery failed — retry or create a new session',
+    respawnFailedHint: 'Automatic recovery failed repeatedly',
+    respawnRetry: 'Retry recovery',
+    respawnRetryFailed: 'Recovery failed — try again later or create a new session',
     dispatching: 'Thinking…',
     railInProgress: 'in progress…',
     startConversation: 'Start a conversation, or select a session from the left',

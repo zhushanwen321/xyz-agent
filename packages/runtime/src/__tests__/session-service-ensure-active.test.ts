@@ -6,8 +6,9 @@
  * - 活 client（exited=false）直返，不触发 restoreSession；
  * - 死 client（exited=true，processes Map 竞态残留）视同无 client 走 restoreSession，
  *   返回 restore 后的新活 client（纵深防御——上游清理竞态时消费端不把死 client 交给 prompt）；
- * - 并发 restore 去重保持：同 sessionId 的第二个并发 ensureActive 被 already being restored
- *   拒绝（既有行为，防回归）；
+ * - 并发 restore join（crash-resilience D7-③，u8 改造）：同 sessionId 的并发 ensureActive
+ *   等待同一 in-flight restore Promise（不报错不双跑，只 restore 一次）——[HISTORICAL]
+ *   原为第二个调用被 already being restored 拒绝（throw），随 D7-③ 改造同步更新；
  * - restoreSession 找不到持久化 session 时错误文案含恢复指引「请新建会话」（§6.9/§7.3，
  *   白盒表「SESSION_NOT_FOUND 恢复指引文案」断言项）。
  *
@@ -88,7 +89,10 @@ describe('SessionService.ensureActive（exited 防御，fix-respawn-pi Wave 2）
     restoreSpy.mockRestore()
   })
 
-  it('并发 ensureActive 同一 sessionId：第二个被 already being restored 拒绝（既有行为防回归）', async () => {
+  it('并发 ensureActive 同一 sessionId：join 语义——等待同一 in-flight restore，不报错不双跑（crash-resilience D7-③）', async () => {
+    // [HISTORICAL] 本用例原断言第二个并发调用被 already being restored 拒绝（throw 语义）；
+    // u8（crash-resilience D7-③）把 throw 改为 join：自动恢复落地后恢复窗口内用户发消息
+    // 是常态路径，第二个调用必须等待同一 in-flight Promise 完成后继续。
     const { svc } = makeEnv(() => undefined)
     // 让 restoreSession 挂起，模拟并发 restore 窗口
     let resolveRestore!: (v: SessionSummary) => void
@@ -96,11 +100,15 @@ describe('SessionService.ensureActive（exited 防御，fix-respawn-pi Wave 2）
     const restoreSpy = vi.spyOn(svc, 'restoreSession').mockReturnValueOnce(pending)
 
     const first = svc.ensureActive('sid-dedup')
-    // 第一个已进入 restoring，第二个应被去重拒绝
-    await expect(svc.ensureActive('sid-dedup')).rejects.toThrow('already being restored')
+    const second = svc.ensureActive('sid-dedup')
+    // join：restore 内核只进入一次（没有第二路并发 restore）
+    expect(restoreSpy).toHaveBeenCalledTimes(1)
     resolveRestore({} as SessionSummary)
-    // 第一个最终因 getClient 无 client 而 reject（符合无进程的真实场景）
+    // 双方都等恢复完成后继续；随后都因 getClient 无 client 而 reject（符合无进程的真实场景，
+    // 同一失败 = join 透传）
     await expect(first).rejects.toThrow('client not available')
+    await expect(second).rejects.toThrow('client not available')
+    expect(restoreSpy).toHaveBeenCalledTimes(1)
     restoreSpy.mockRestore()
   })
 

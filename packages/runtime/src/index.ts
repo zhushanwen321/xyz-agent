@@ -55,7 +55,7 @@ import { HandoffService } from './services/handoff-service.js'
 // bus.publish——wave:perf-w09 D1-2 删双写后唯一通道）+
 // RuntimeServer（subscribe/unsubscribe RPC handler + ConnectionManager.onClose → unsubscribeAll）。
 // 保留 re-export 供外部消费（renderer-subscribe wave 等可能 import 类型）。
-import { MessageBus } from './services/message-bus/message-bus.js'
+import { MessageBus, DEFAULT_OUTBOUND_FRAME_GUARD_OPTIONS } from './services/message-bus/message-bus.js'
 export { MessageBus } from './services/message-bus/message-bus.js'
 export type { BusClient, SessionBusState } from './services/message-bus/types.js'
 import { getAppVersion } from './services/plugin-service/plugin-version-checker.js'
@@ -219,7 +219,20 @@ async function main(): Promise<void> {
   // 在 server 构造后、setServices 前创建并注入——server 的 ConnectionManager.onDisconnect
   // 回调经 setMessageBus 拿到引用，setServices 装配 sessionHandler 时读 server.messageBus。
   // 默认 ring 容量 1000（bus-core DEFAULT_RING_CAPACITY，D4 决策）。
-  const messageBus = new MessageBus()
+  //
+  // u8 接线（实施计划偏差表 D1 移交项，u4a-outbound-guard 遗留）：第二参注入
+  // resolveSessionFilePath（OutboundFrameGuardOptions 的占位文案路径解析注入点）——出站帧
+  // 超限截断的占位文案（formatTruncationNote）从「（见 runtime 日志）」升级为携带 session
+  // 文件实路径（错误规格表「出站 reply/push 超 32MB」两行的恢复指引）。闭包引用
+  // sessionService 声明在下方（createAdapter/completionBackflow 同款「先声明后构造、
+  // 调用时恒就绪」模式——publish 仅发生在 server.start 后，构造期无调用窗口）。解析链：
+  // 活跃 session 直读内存 sessionFilePath；否则扫盘（findScannedSession）兜底冷 session。
+  // 实现抛错被守卫吞掉退化为 null 占位（resolvePathSafe，不打断消息流转）。
+  const messageBus = new MessageBus(undefined, { ...DEFAULT_OUTBOUND_FRAME_GUARD_OPTIONS,
+    // 首参缺省 = DEFAULT_RING_CAPACITY（1000）。D1（u8）：解析链 = 活跃 session 直读内存
+    // sessionFilePath，冷 session 扫盘兜底；resolver 抛错被 resolvePathSafe 吞掉退化为
+    // 「（见 runtime 日志）」占位，不打断消息流转。
+    resolveSessionFilePath: (sessionId: string): string | null | undefined => sessionService.getSession(sessionId)?.sessionFilePath ?? sessionService.findScannedSession(sessionId)?.filePath })
   server.setMessageBus(messageBus)
 
   // ── Phase 1: create all service instances (no cross-service deps at construction time) ──
@@ -761,6 +774,11 @@ async function main(): Promise<void> {
     // D6-②：先停水位定时器（shutdown 后不再有水位行；u8 改造 shutdown 序列时
     // 沿用本取消入口，注释见 stopMemoryWatermarkTimer 定义处）。
     stopMemoryWatermarkTimer()
+    // u8（crash-resilience D7-②）：取消全部 pending 自动恢复 timer——必须在下方
+    // server.stop（内部 destroyAll 全部 pi 子进程）之前：若取消晚于 destroyAll，shutdown
+    // 中途 timer 触发会 spawn 新孤儿 pi（收割器只在下次启动后 5s 跑一次，用户直接退出
+    // app 则孤儿无限存活烧 token）。对齐上方 stopMemoryWatermarkTimer 的先取消先例。
+    sessionService.cancelAllPendingRespawns()
     console.log(`\n[runtime] received ${signal}, shutting down...`)
     try {
       recentWorkspacesStore.flushAll()
