@@ -29,3 +29,6 @@ export * from "./spawn.ts";
 // W9 落地（impl-plan §2.9）：引擎 CLI 启动解析（宿主 × 平台二维矩阵 + node 执行器探针，
 // 探针复刻 runtime relay-env 先例）。
 export * from "./node-executor.ts";
+
+// stderr tee 轮转/清理单源（前缀参数化；两引擎包的 logs/stderr-rotation.ts 为薄包装）。
+export * from "./logs/stderr-rotation.ts";

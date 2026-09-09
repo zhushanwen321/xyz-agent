@@ -118,6 +118,7 @@ core 负责：选引擎 → 建 journal → 派发任务 → 收集事件流 →
 
 **迁移范围（用户裁决 2026-09-08，硬约束）**：**`pi` 与 `zcode` 两个引擎都必须完成外移**，
 **不允许任何内置引擎例外**。驱动细节重写归各自提取设计（§5 末），但「迁移完成」属本设计验收范围，
+> **【2026-09-09 实施期裁决注记】** zcode 已全量外移（engines/zcode 删除）；pi 的 **chat 续聊域**存在一处**临时显式豁免**——v1 协议 8 反向通道未含 HostBridge 载荷面（ChatRoundTicket/长驻轮/resume），chat 域 inproc 分支保留（engines/pi 仅余 chat 专用面），run/read/probe/cancel 等其余能力已全部 cli 化。该豁免非永久内置：协议 v1.x 载荷扩展落地后删除（排期待用户裁决），登记见 impl-plan §5/§7.3。
 完成定义见 §3.8 D6。
 
 **in scope**：引擎协议 v1；引擎 SDK 包；core 壳侧边界；发现与注册（manifest + 配置 + 搜索路径 + 时机）；
@@ -796,7 +797,7 @@ RSS 实施期实测回写 §3.6 表；恢复 = 取消 runtime 路径（降②级
 | # | 场景 | 步骤 | 通过标准 | 回溯 |
 |---|------|------|---------|------|
 | A1 | zcode 外移等价性 | `zcode-subagent-cli` 跑：单任务 + 3 路并行 workflow + abort 其一 | ①协议层：事件**结构等价**（类型序列/顺序/seq/字段白名单）；②真机层：record、历史详情、abort 终态与不变量断言一致 | G5 |
-| A2 | pi 外移等价性（chat 域） | `pi-subagent-cli` 跑：首轮 / 续聊（`interact message`）/ 冷续轮 resume / abort / record 状态回写 | 同上；chat 轮次票据与 **`spawnedChildren` 镜像（含 `resumable` 字段）**行为等价；EPIPE 兜底路径可复现；**首个 await 前路由决策可观测**（§3.5.3） | G5 |
+| A2 | pi 外移等价性（chat 域） | `pi-subagent-cli` 跑：首轮 / 续聊（`interact message`）/ 冷续轮 resume / abort / record 状态回写 | 同上；chat 轮次票据与 **`spawnedChildren` 镜像（含 `resumable` 字段）**行为等价；EPIPE 兜底路径可复现；**首个 await 前路由决策可观测**（§3.5.3） | G5 |（**2026-09-09 注**：chat 域 cli 形态协议化受 v1 协议载荷面限制暂走 inproc 过渡，本场景的 cli 形态验收待协议 v1.x 后恢复可执行，见 §1 裁决注记）
 | A3 | pi 外移等价性（workflow 域 + 子进程收割） | workflow 里派发 pi 任务；任务中 `kill -9` 子进程；宿主退出后 `ps`（Windows：`tasklist`） | 事件/record 等价；**SIGKILL 升级与按句守卫不回归**（`childStateChanged` 镜像可观测）；子进程被收割无残留（**POSIX 组杀 / Windows `taskkill /T /F` 两种形态各验一次**；**范围 = 一代子进程 + 组内后代**，引擎自身 detached 后代见 §3.9 已接受代价）；**POSIX：引擎上报的 `childSpawned` pid 做 `kill(-pid,0)` 组探测 → 不在同组即告警**（§3.6 D2 前提②；Windows 无外部判据，仅靠 SDK 层保证）；`killAllSpawnedChildren` 兼容符号行为不变 | G5/G4 |
 | A4 | 新引擎零改 core | 写最小 `foo-subagent-cli`（fake），只装包 + manifest（含 capabilities） | 出现在选择器；`engine: foo` 可派发跑通；**core 仓库 diff = 0** | G1 |
 | A5 | 三形态分发 | workspace dev / Electron 打包产物 / zsw vendor 各跑一次 A1 | 三形态发现、握手、执行一致；打包产物里引擎包**不在** extension bundle 内；产物无裸 `import("sqlite")`；**产物 grep `require("@zhushanwen/subagent-engine-sdk")` 零命中**（`validate-runtime-bundle.sh` 新增一步——该脚本 DEPS 过滤 `workspace:*`，不能依赖 DEPS 断言）；**三宿主 × 三平台启动解析均通过**（含「打包态 pi 宿主能拉起引擎 CLI」+ **引擎子进程 env 含 `XYZ_AGENT_ENGINE_NODE` 与（Electron 执行器时）`ELECTRON_RUN_AS_NODE=1` 且 argv 生效**）；zsw 形态显式验证「发现并驱动 zcode CLI」 | G6 |

@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentCallOpts, AgentResult } from "../../orchestration/models/types.ts";
 import type { RunContext, EnginePort } from "../engine/port.ts";
 import { clearEngines, registerEngine } from "../engine/registry.ts";
+import { PiEngine } from "../engine/engines/pi/pi-engine.ts";
 import type { ProbeReport } from "../engine/types.ts";
 import { ModelConfigService, setModelConfigService } from "../model-config-service.ts";
 // W10（§2.10 ②）：子进程句柄断言改读 core 侧状态镜像（host/spawned-children——
@@ -141,6 +142,10 @@ beforeEach(() => {
   prevDataDirEnv = process.env["XYZ_AGENT_DATA_DIR"];
   process.env["XYZ_AGENT_DATA_DIR"] = path.join(tmpRoot, "engine-data");
   clearEngines();
+  // [U-2 一致性修复] resolveHostPiEnginePort 对未注册 'pi' 不再静默直构 inproc——
+  // 测试显式登记 inproc pi（registry 命中 + instanceof PiEngine → SAR per-session
+  // DI 重绑），mock 服务的 DI 语义保持不变。
+  registerEngine("pi", () => new PiEngine({ getService: () => null }));
 });
 
 afterEach(() => {
@@ -389,5 +394,23 @@ describe("SAR 路由集成（P4 验收 1/2/3）", () => {
 
     expect(result.content).toBe("from-pi");
     expect(pi.executeOpts[0]?.maxTurns).toBe(3);
+  });
+});
+
+// [U-2 一致性修复] D4 错误契约：pi 未注册（引擎包未装/发现失败）时普通 run 路径
+// 不再静默直构 inproc——派发期显式 engine_not_found + 安装指引（与 zcode 对称）。
+describe("pi 未注册 → engine_not_found（D4 契约，U-2 修复锚定）", () => {
+  it("pi 不在 registry → run 结果 error 含 engine_not_found + 安装指引，不静默走 inproc", async () => {
+    clearEngines(); // 覆盖 beforeEach 的 inproc pi 登记——模拟发现失败/未装包
+    installModelService();
+    const pi = makeMockPiService();
+    const sar = new SubprocessAgentRunner({ subagentService: pi.service });
+
+    const result = await sar.run(makeOpts(), new AbortController().signal);
+
+    expect(result.error).toContain("engine_not_found");
+    expect(result.error).toContain("No engine packages were discovered");
+    expect(result.error).toMatch(/install an engine package/i);
+    expect(pi.executeAndAwait).not.toHaveBeenCalled();
   });
 });

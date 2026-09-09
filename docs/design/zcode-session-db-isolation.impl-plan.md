@@ -263,6 +263,7 @@ W4 在合入前完成；W5a/W5b/W6 独立排期（不阻塞 G1）。
 |---|------|------|------------|
 | D-1 | flow/plan.md 阶段 0.3 门改判 | flow/plan.md 0.3 门要求设计文档 must_fix==0；实测 R9 最新一轮 **5 MF**（主审 MF1=:518 口径 / MF2=counts.sql 装载链 / MF3=索引预检跨库；影响面 MF1=--replay-residue 防篡改 / MF2=zsw 停用不可执行）+ 5 S（3 项落 §7.2 R9-4/6/7；2 项 design 层措辞已随本轮修复设计文档）全为实现级，无决策级 must-fix，已逐条落本计划 §7.2 与单元验收条款。经用户 2026-09-08 裁决改判：设计层无决策级 must-fix 即通过 | 证据 = `.review/design-review-db-isolation-r9.md` 与 `.review/design-review-db-isolation-r9-impact.md`；变更登记见 §7.4 |
 
+| 阶段 3 审查 | 引擎抽取后 A 区机制完整存活于 zcode-subagent-cli（W5/W11 迁移），一批锚点随迁演化 | reasonable 聚合：① ZCODE_SESSION_DB_PATH 覆写/别名清空/handle 回填/集合判定逐条在引擎包内存续（zcode-engine.ts:664-671/:416/:463/:919、db-path.ts:33-62）；② 生产链读取站点形态演化 = runtime registerNativeSessionReader 协议读（subagent-engine-history.ts:219），白名单判定随 reader 迁引擎包——D3 存量分支由 runtime 双 tier1 用例覆盖；③ 清理工具/counts.sql/文档同步逐条满足 §2.5/§2.4。全文见 .review/consistency-a-db.md reasonable[]；文档锚点同步已随本轮 doc_errors 批处理 | 2026-09-09 |
 （其余初始为空；实施期出现合理不一致时登记于此，并同步设计文档措辞。）
 
 ## 6 状态表

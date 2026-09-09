@@ -28,6 +28,7 @@ export default defineConfig({
     env: 'src/env.ts',
     spawn: 'src/spawn.ts',
     'node-executor': 'src/node-executor.ts',
+    'logs/stderr-rotation': 'src/logs/stderr-rotation.ts',
   },
   format: ['esm', 'cjs'],
   dts: true,

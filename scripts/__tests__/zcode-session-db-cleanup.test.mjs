@@ -238,6 +238,29 @@ describe('zcode-session-db-cleanup', () => {
     i.close()
   })
 
+  it('宿主 FK 删除失败 → id 不计 deleted、不进 residue、单独落 fkFailures（报告不自相矛盾）', () => {
+    seedStandard()
+    // 诱导宿主侧 FK 失败：新增引用表挂住 sess_ours_2
+    const host = new DatabaseSync(hostDbPath)
+    host.exec('CREATE TABLE fk_guard (sid TEXT NOT NULL REFERENCES session(id))')
+    host.prepare("INSERT INTO fk_guard(sid) VALUES ('sess_ours_2')").run()
+    host.close()
+    const a = analyze({ whitelistRows: parseRecordWhitelist(recordsDir), hostDbPath, indexDbPath })
+    const r = executeDeletion({ analysis: a, hostDbPath, indexDbPath, residueDir: outDir, authorizationSource: 'test', now: T0 })
+    expect(r.fkFailures).toHaveLength(1)
+    expect(r.fkFailures[0]).toContain('sess_ours_2')
+    // 修复锚定：FK 失败 id 既不在 deleted 也不在 residue（replay 前提 = 宿主已删，
+    // FK 失败不满足；补删通道 = 解依赖后重跑清理，不走 residue 清单）
+    expect(r.deleted.sort()).toEqual(['sess_child_1', 'sess_ours_1', 'sess_zsw_1'])
+    expect(r.residue).toEqual([])
+    const h = new DatabaseSync(hostDbPath, { readOnly: true })
+    expect(h.prepare("SELECT COUNT(*) AS n FROM session WHERE id='sess_ours_2'").get().n).toBe(1)
+    h.close()
+    const i = new DatabaseSync(indexDbPath, { readOnly: true })
+    expect(i.prepare("SELECT COUNT(*) AS n FROM tasks WHERE task_id='sess_ours_2'").get().n).toBe(1)
+    i.close()
+  })
+
   it('R9-4 replay fixture ①：篡改清单混入真实用户索引 id（宿主行仍存在）→ 拒删并报告', () => {
     seedStandard()
     const file = join(outDir, 'w5-residue-tampered.json')

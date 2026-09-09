@@ -34,9 +34,25 @@ export const ENGINE_NODE_ENV = ENGINE_LAUNCH_ENV_KEYS.NODE
  * staged 引擎根绝对路径（双形态：打包 = <cwd>/engines；dev = <projectRoot>/resources/engines）。
  * 目录不存在返回 undefined——调用方据此决定是否注入（缺省不注入，见文件头）。
  */
+/** 打包态 staged 缺失 warn 的 once 守卫（注入面每次 pi spawn 都会调用，防刷屏）。 */
+let warnedPackagedStagedMissing = false
+
 export function getStagedEnginesDir(projectRoot: string): string | undefined {
   const dir = isPackaged() ? join(process.cwd(), 'engines') : join(projectRoot, 'resources', 'engines')
-  return existsSync(dir) ? dir : undefined
+  if (!existsSync(dir)) {
+    // 打包态 staged 目录缺失是异常形态（L1 主通道缺失 → 引擎发现回落 L2/L3，打包态
+    // 通常全空 → 派发期 engine_not_found）。推导逻辑刻意保持不变（「显式绝对路径不
+    // cwd 探测」立场），只留痕诊断信号。
+    if (isPackaged() && !warnedPackagedStagedMissing) {
+      warnedPackagedStagedMissing = true
+      console.warn(
+        `[engine-roots] staged engines dir missing at packaged location '${dir}' (cwd-based); ` +
+          `engine discovery L1 will be empty — expected injection: ${ENGINE_ROOTS_ENV}=<absolute engines root>`,
+      )
+    }
+    return undefined
+  }
+  return dir
 }
 
 /** 注入 pi 子进程的引擎 env（ROOTS + 打包态执行器两键）；无可注入面返回空对象。 */

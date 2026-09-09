@@ -29,6 +29,8 @@ import type { AgentCallOpts, AgentResult } from "../../orchestration/models/type
 import { ModelConfigService, setModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
 import { replayJournal } from "../engine/common/event-journal.ts";
+import { clearEngines, registerEngine } from "../engine/registry.ts";
+import { PiEngine } from "../engine/engines/pi/pi-engine.ts";
 import type { SubprocessAgentRunnerDeps } from "../subprocess-agent-runner.ts";
 import type { SubagentService } from "../subagent-service.ts";
 import { SubprocessAgentRunner } from "../subprocess-agent-runner.ts";
@@ -83,6 +85,10 @@ function makeBaseOpts(): AgentCallOpts {
 describe("SubprocessAgentRunner (wave-4 delegate)", () => {
   beforeEach(() => {
     configureCore({ dataRoot: () => "/fake-sar-data-root", log: () => {} });
+    // [U-2 一致性修复] pi 未注册时 resolveHostPiEnginePort 返回 engine_not_found stub
+    // ——本文件全部用例走 pi DI 链路，显式登记 inproc pi（SAR 据此 per-session DI 重绑）。
+    clearEngines();
+    registerEngine("pi", () => new PiEngine({ getService: () => null }));
   });
 
   afterEach(() => {

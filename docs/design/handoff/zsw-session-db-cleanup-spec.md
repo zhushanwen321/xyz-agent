@@ -5,7 +5,7 @@
 | **owner** | zhushanwen |
 | **投递日期** | 2026-09-09（本合入批次） |
 | **投递形态** | 本仓内 handoff 文档。跨仓登记已降为「投递动作」：本文件即仓内登记（owner + 投递日期如上）；zsw 侧认领、re-vendor 排期与实施归 zsw 仓（z-code-plugin-workspace），本仓不做跨仓操作 |
-| **路径契约权威源** | `packages/subagent-core/src/execution/engine/engines/zcode/db-path.ts`（impl-plan W1 交付物，已 committed） |
+| **路径契约权威源** | `packages/zcode-subagent-cli/src/db-path.ts`（引擎包化后随包迁移；源 impl-plan W1 交付，原 core 路径已于 2026-09-09 W11 删除） |
 | **规格来源** | 设计文档 `docs/design/zcode-session-db-isolation.md` §2.4.3（第二宿主 zsw）+ §3.2 D7（清理通道）；实现级契约 `docs/design/zcode-session-db-isolation.impl-plan.md` §2.5（清理工具）+ §2.6（W5b 消费方式钉死） |
 | **读者** | zsw（z-code-plugin-workspace）仓维护者。本文件自包含，无需读 xyz-agent 会话上下文 |
 
@@ -24,7 +24,7 @@
 唯一权威是本仓 `db-path.ts` 的构造函数（**禁止任何消费方手拼路径字面量**，与 `resolvePoolDir` 同款纪律）：
 
 ```ts
-// packages/subagent-core/src/execution/engine/engines/zcode/db-path.ts
+// packages/zcode-subagent-cli/src/db-path.ts
 export function zcodeSessionDbPath(engineDataDir: string): string {
   return path.join(engineDataDir, "engines", "zcode", "session-db", "db.sqlite");
 }

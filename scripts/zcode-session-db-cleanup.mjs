@@ -429,8 +429,14 @@ export function executeDeletion({
     fs.writeFileSync(credentialFile, JSON.stringify(credential, null, 2));
   }
 
+  // FK 失败的 id 视作未完成删除（宿主侧仍在库）——不计入 deleted，也不并入 residue：
+  // replay 只补删索引侧（其前置断言 = 宿主侧主路径已删），FK 失败 id 进 residue 会让
+  // replay 删掉「宿主仍在库」会话的索引行，制造新的中间态。FK 失败经 fkFailures 单独
+  // 报告（含错误消息），由操作者解依赖后重跑清理。
+  const fkFailureIds = new Set(fkFailures.map((entry) => entry.split(":", 1)[0]));
+
   return {
-    deleted: ids.filter((id) => !residue.includes(id)),
+    deleted: ids.filter((id) => !residue.includes(id) && !fkFailureIds.has(id)),
     residue,
     residueFile,
     credentialFile,

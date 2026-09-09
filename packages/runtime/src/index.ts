@@ -735,8 +735,9 @@ async function main(): Promise<void> {
       // 违反 A11「dispose 发起起算 1s 内引擎进程消失」；并行发起后 dispose 单侧上界
       // 3s（EngineClient dispose 帧超时即杀）+ 聚合上界 3s。先收割自己受托的子进程
       // 与引擎再关传输层（原「先于 server.stop」语义不变）。
-      // 落点约束（设计 §3.6）：钩子在 shutdown() 内、deinitRelayServer() 之后发起；
-      // 不用 process.on('exit')（回调不能 await，异步 dispose 会被 process.exit 截断）。
+      // 落点约束（设计 §3.6）：钩子在 shutdown() 内、与 deinitRelayServer() **并行发起**
+      // （dispose 不等 relay 收敛，上两条注释的时序契约）；不用 process.on('exit')
+      // （回调不能 await，异步 dispose 会被 process.exit 截断）。
       const engineClientsDisposed = disposeRuntimeEngineClients()
       await deinitRelayServer()
       await engineClientsDisposed

@@ -568,6 +568,13 @@ export class EngineClient {
   /** 引擎进程 exit：镜像整体置死 + pidfile 清理 + 在途请求失败 + 状态回落。 */
   private onEngineExit(code: number | null, signal: NodeJS.Signals | null): void {
     const detail = signal !== null ? `signal ${signal}` : `exit code ${code}`;
+    // intentionalKill 消费点：主动杀（killAll/dispose）后的 exit 是预期收敛（debug）；
+    // 非主动杀 = 意外崩溃（warn 出声，供排障区分「引擎自己挂了」与「宿主收割」）。
+    if (this.intentionalKill) {
+      logger.debug(`[engine-client:${this.engineId}] engine exited after intentional kill (${detail}) — expected`);
+    } else {
+      logger.warn(`[engine-client:${this.engineId}] engine process exited unexpectedly (${detail})`);
+    }
     this.teardownProcess(detail);
     this.state = "exited";
   }

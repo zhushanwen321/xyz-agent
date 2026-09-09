@@ -15,7 +15,7 @@
 //     descriptor 时经 descriptor 路由（W3 双模 getEngine），否则 inproc DI 工厂。
 
 import type { EnginePort } from "../port.ts";
-import { getEngine, hasEngine } from "../registry.ts";
+import { EngineNotFoundError, getEngine, hasEngine, listEngines } from "../registry.ts";
 import { PI_POOL_KEY, PiEngine } from "../engines/pi/pi-engine.ts";
 import type { PiEngineService } from "../engines/pi/pi-engine.ts";
 
@@ -48,14 +48,47 @@ export function createChatPiEngine(getService: () => PiEngineService | null): Pi
 /**
  * 宿主侧 pi EnginePort 解析（SAR）：registry 的 'pi' 已注册 **cli 形态** port
  * （发现器装载的 RemoteEngine）时经 descriptor 路由（getEngine——惰性单例 + 两形态
- * 透明）；未注册（发现失败/未接线）回落 per-session DI 直构——chat 域 inproc 保留面
- * 的兜底形态（临时豁免：pi run 的常态路径应为 cli，该回落仅在引擎包不可发现时可达，
- * warn 由发现链留痕；per-session mock 注入语义不取 registry 单例）。
+ * 透明）；注册的是 inproc pi（宿主/测试显式 registerEngine）→ per-session DI 重绑
+ * （mock 注入语义不取 registry 单例）。
+ * [U-2 一致性修复] pi **未注册**（引擎包未装/发现失败）时不再静默直构 inproc 实例——
+ * 那会把 chat 域临时豁免面扩大到普通 run 路径，并吞掉设计 D4「全不可用 → 派发期
+ * engine_not_found + 安装指引」错误契约（zcode 侧 d8-compat 已是显式报错，两引擎
+ * 语义对称）。返回不可用 stub：路由层对 pi 恒同步短路（本地 pi 恒可用口径），真正的
+ * 拒绝发生在首次 engine.run——stub 抛 EngineNotFoundError（含安装指引），由 SAR
+ * 「不 reject」契约收口进 result.error。
  */
 export function resolveHostPiEnginePort(getService: () => PiEngineService | null): EnginePort {
   if (hasEngine("pi")) {
     const port = getEngine("pi");
     if (!(port instanceof PiEngine)) return port;
+    return createChatPiEngine(getService);
   }
-  return createChatPiEngine(getService);
+  return piUnavailableEnginePort();
+}
+
+/** pi 不可用 stub（D4）：一切执行面抛 engine_not_found；capabilities 全放行（拒绝点唯一化在 run）。 */
+function piUnavailableEnginePort(): EnginePort {
+  const fail = (): never => {
+    throw new EngineNotFoundError("pi", listEngines());
+  };
+  return {
+    id: "pi",
+    capabilities: () => ({
+      schemaEnforcement: "native",
+      steer: "native",
+      conversation: "native",
+      personaInjection: "file",
+      eventGranularity: "stream",
+      sandbox: "none",
+      sessionRead: "full",
+      resume: "native",
+      interrupt: "native",
+      permissionMode: "native",
+      maxTurns: true,
+    }),
+    probe: () => fail(),
+    run: () => fail(),
+    interact: () => fail(),
+    read: () => fail(),
+  };
 }
