@@ -1,17 +1,28 @@
-// src/__tests__/chatmode-first-round-closure-service.test.ts（P1 抽包留壳：subject 为 subagent-core 件真链路，注入 pi/session-delivery 真机制，见 impl-plan 偏差 #17）
+// src/__tests__/chatmode-first-round-closure-service.test.ts
+//（P1 抽包留壳：subject 为 subagent-core 件真链路，注入 pi/session-delivery 真机制，见 impl-plan 偏差 #17）
 //
-// [V2 决策 2/3] chatMode 首轮闭环——onRoundSettled 注入 + runAndFinalize early return
-// + double-notify 防护（Step 4a 改动 2/3）。
+// [V2 决策 2/3 → W3 协议形态改写] chatMode 首轮闭环。
 //
-// 改动 2：buildSessionRunnerContext 注入 onRoundSettled 回调——设 record.status=idle +
-//   round+=1 + notifyComplete（轻量 idle 化，不调 doFinalizeRoundToIdle）。
-// 改动 3：runAndFinalize 检测 chatMode + status===idle（onRoundSettled 已设）→ early return，
-//   不进现有 chatMode 分流（那是 close 后 done/failed/cancelled 终态化的）。
-// double-notify 防护：onRoundSettled notify + kickOffChatRound.then notify 同 id:round，
-//   notifier dedup（id:round key，60s TTL）吞第二次——notifier.ts L122 是天然防线。
+// W3 契约变更：chat 轮次改走协议引擎（registry 'pi' cli 形态 port），原 inproc 面
+// buildSessionRunnerContext().onRoundSettled 注入与 runAndFinalize chatMode early-return
+// 分流随 inproc pi 引擎目录删除消亡。承接同一业务语义的新权威：
+//   - 轮次收敛 = kickOffChatRound 的 run 应答（= 首轮 agent_settled，W2 契约）→
+//     settleChatRoundFromResponse：round 0→1 + record.result = outcome.content（协议
+//     形态下 live turns 留在引擎进程，core 以应答 content 为增量权威）+ collectCoordinator
+//     路由 notify（chatMode running → status="running"，round 透传供 dedup key 递增）；
+//   - idle 定时器挂载 = host/roundLifecycle idle 相位帧（协议时序：idle 帧先于应答帧）；
+//   - 原「runAndFinalize early return 不终态化首轮」的正语义（首轮完成 record 留内存
+//     可续聊、round 恰 +1 不二次递增、result 单写点）由本文件 T1/T2 直接钉住——
+//     原 T3/T4（early-return 守卫分支与「不误伤正常分流」对照组）钉的是已删除的
+//     runAndFinalize 内部分支结构，正语义已被 T1/T2 覆盖，按「③已无对应行为」废弃。
 //
-// mock 结构与 run-and-finalize-chatmode.test.ts 一致（mock session-runner + logger，
-// 走真实 SubagentService 的 buildSessionRunnerContext / runAndFinalize 分流逻辑）。
+// mock 结构：registerFakePiEngine 协议替身（run 应答由测试显式驱动）+ logger；
+// 通知域注入真实 createDelivery（dedupe 语义参与断言）。
+//
+// [W3 契约变更记录] 原文件「double-notify 防护：onRoundSettled notify + kickOffChatRound
+// .then notifyComplete 同 id:round」在协议形态下的对应 = settleChatRoundFromResponse 内
+// notify + run 续体 collectCoordinator.route 回注，同 id:round → notifier dedup 吞第二次
+//（notifier 去重集语义不变），由 [M3] 用例锁定。
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -25,21 +36,14 @@ const { loggerMock } = vi.hoisted(() => ({
 }));
 vi.mock( "@zhushanwen/subagent-core/core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
-// mock session-runner：runSpawn 受控返回 result，killAllSpawnedChildren 空实现。
-// [M3] getChildByRecord 返回活进程假句柄：让 piAdapter.hasRunningBackground 的判定只能靠
-// 「!hasIdleTimer 排除等待续聊 record」通过（还原生产 Path A：轮次完成、进程保活）。
-vi.mock( "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts", () => ({
-  runSpawn: vi.fn(),
-  killAllSpawnedChildren: vi.fn(),
-  killRecordChildWithEscalation: vi.fn(),
-  getChildByRecord: vi.fn(() => ({ killed: false, kill: () => true })),
-}));
-
-import { runSpawn, getChildByRecord } from "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts";
-import { isIdle, isResumable } from "@zhushanwen/subagent-core/execution/lifecycle-predicates.ts";
-import { armIdleTimer, disarmIdleTimer } from "@zhushanwen/subagent-core/execution/lifecycle-manager.ts";
-import type { SessionRunnerContext } from "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts";
-import { createRecord, updateFromEvent } from "@zhushanwen/subagent-core/execution/execution-record.ts";
+import { registerFakePiEngine, type FakePiEnginePort } from "@zhushanwen/subagent-core/testing/execution/__tests__/helpers/fake-engine-port.ts";
+import { clearEngines } from "@zhushanwen/subagent-core/execution/engine/registry.ts";
+import {
+  coreSpawnedChildrenMirror,
+  _resetCoreSpawnedChildrenMirrorForTest,
+} from "@zhushanwen/subagent-core/testing/execution/engine/host/spawned-children.ts";
+import { _resetLifecycleState } from "@zhushanwen/subagent-core/execution/lifecycle-manager.ts";
+import { createRecord } from "@zhushanwen/subagent-core/execution/execution-record.ts";
 import { ModelConfigService } from "@zhushanwen/subagent-core";
 import type { ModelInfo, ModelRegistryLike } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
 import { RecordStore } from "@zhushanwen/subagent-core";
@@ -47,11 +51,7 @@ import { SubagentService } from "@zhushanwen/subagent-core";
 import type { PiLike } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
 import { createDelivery } from "@xyz-agent/session-delivery";
 import { configureNotifyDomain, resetNotifyDomainForTests } from "@zhushanwen/subagent-core/core/notify-ports.ts";
-import type {
-  AgentResult,
-  ExecutionRecord,
-  ExecuteOptions,
-} from "@zhushanwen/subagent-core/execution/types.ts";
+import type { ExecutionRecord } from "@zhushanwen/subagent-core/execution/types.ts";
 
 // 投递内核经通知域窄端口注入（u0-notify）——[M3] 的「同 id:round dedup 吞第二次」
 // 依赖真实内核 dedupe 语义，注入真实 createDelivery（降级直发无 dedupe 会发 2 条）。
@@ -61,9 +61,6 @@ beforeEach(() => {
 afterEach(() => {
   resetNotifyDomainForTests();
 });
-
-const mockRunSpawn = vi.mocked(runSpawn);
-const mockGetChildByRecord = vi.mocked(getChildByRecord);
 
 const STUB_MODEL: ModelInfo = {
   id: "test-model",
@@ -89,18 +86,6 @@ function makePi(): PiLike & {
   return { appendEntry: vi.fn(), events: { emit: vi.fn() }, sendMessage: vi.fn() };
 }
 
-function makeResult(success: boolean): AgentResult {
-  return {
-    text: success ? "done" : "err",
-    turns: 1,
-    durationMs: 100,
-    success,
-    error: success ? undefined : "boom",
-    sessionId: "sess-1",
-    toolCalls: [],
-  };
-}
-
 function makeRecord(chatMode: boolean, id = "sa-test"): ExecutionRecord {
   return createRecord(id, {
     agent: "general-purpose",
@@ -114,208 +99,166 @@ function makeRecord(chatMode: boolean, id = "sa-test"): ExecutionRecord {
   });
 }
 
-/** 暴露 runAndFinalize / store / buildSessionRunnerContext / notifyHost 私有访问。
- *  [D4-①] notifyComplete 已随通知簇搬至 notify-host——经 notifyHost 面访问（行为等价）。 */
+/** 暴露 store / notifyHost 私有访问。
+ *  [D4-①] notifyComplete 已随通知簇搬至 notify-host——经 notifyHost 面访问（行为等价）。
+ *  [merge 适配] notifyComplete 调用点已改 collectCoordinator.route 路由（U2）：
+ *  async/running record 直通 notifyHost.notify——入参为 toNotifyRecord 映射后的
+ *  BgNotifyRecord（非 ExecutionRecord）。 */
 interface ServiceInternals {
   store: RecordStore;
-  buildSessionRunnerContext(): SessionRunnerContext;
   notifyHost: {
-    notifyComplete(record: ExecutionRecord): void;
-    /** [merge 适配] notifyComplete 已被 collectCoordinator.route 路由取代（U2）：
-     *  async/running record 直通 notifyHost.notify——入参为 toNotifyRecord 映射后的
-     *  BgNotifyRecord（非 ExecutionRecord）。 */
     notify(record: { id: string; status: string; round?: number }): void;
+    notifyComplete(record: ExecutionRecord): void;
   };
-  runAndFinalize: (
-    record: ExecutionRecord,
-    opts: ExecuteOptions,
-    ctx: SessionRunnerContext,
-    identity: {
-      agent: string;
-      agentConfig: unknown;
-      resolved: { model: ModelInfo; thinkingLevel: string | undefined };
-    },
-    signal: undefined,
-    priority: number,
-  ) => Promise<AgentResult>;
 }
 
-describe("[V2 决策 2/3] chatMode 首轮闭环：onRoundSettled 注入 + early return（改动 2/3）", () => {
+describe("[V2 决策 2/3] chatMode 首轮闭环：run 应答 settle（协议形态）", () => {
   let agentDir: string;
   let modelService: ModelConfigService;
   let service: SubagentService;
   let internals: ServiceInternals;
+  let fake: FakePiEnginePort;
 
   beforeEach(() => {
+    _resetLifecycleState();
+    _resetCoreSpawnedChildrenMirrorForTest();
     agentDir = makeTmpAgentDir();
     modelService = new ModelConfigService({ agentDir });
+    modelService.initModel({
+      modelRegistry: makeEmptyRegistry(),
+      sessionId: "root-session",
+      ctxModel: STUB_MODEL,
+    });
     service = new SubagentService({ cwd: agentDir, modelService });
     service.initSession({ pi: makePi(), sessionId: "root-session" });
     internals = service as unknown as ServiceInternals;
-    mockRunSpawn.mockReset();
+    fake = registerFakePiEngine();
   });
 
   afterEach(() => {
     service.dispose();
-    disarmIdleTimer("sa-test");
+    _resetLifecycleState();
+    _resetCoreSpawnedChildrenMirrorForTest();
+    // registry 是 globalThis 进程单例——清空防替身引擎泄漏进其他测试文件。
+    clearEngines();
     fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
-  // ── 改动 2：onRoundSettled 回调注入 ──────────────────────────────────
+  // ── 改动 2 的协议承接：首轮 run 应答 = 轻量 idle 化 ───────────────────
 
-  it("buildSessionRunnerContext 注入 onRoundSettled：设 running(idle 折入) + round+=1 + notifyComplete", () => {
-    const ctx = internals.buildSessionRunnerContext();
-    expect(typeof ctx.onRoundSettled).toBe("function");
-
-    const record = makeRecord(true); // chatMode, status=running, round=undefined
-    // [merge 适配] notifyComplete 调用点已改 collectCoordinator.route（U2 语义：全部
-    // 完成通知统一路由，async/running record 直通）——spy 改盯 notifyHost.notify 出口。
+  it("首轮 run 应答 settle：running(idle 折入) + round 0→1 + notifyComplete（status=running、round 透传）", async () => {
+    const pi = makePi();
+    service.initSession({ pi, sessionId: "root-session" }); // 换上带 spy 的 pi
     const spy = vi.spyOn(internals.notifyHost, "notify");
-    // [merge 适配] 生产时序中 session-runner 先 armIdleTimer 再调 onRoundSettled
-    //（round-settlement.ts 头注释：isIdle=true 让 notify 守卫放行）。本用例直调回调
-    // 不经 session-runner，须补齐该前提——否则 toNotifyRecord 守卫（isIdle/isResumable
-    // 均假：模块 mock 的 getChildByRecord 默认活句柄）拒绝投递。
-    armIdleTimer(record.id, () => {});
-    ctx.onRoundSettled!(record);
 
-    // [改动 2] 轻量 idle 化（v4 B-1：idle 折入 running）：status=running（notify 守卫放行）+ round 0→1（dedup key 递增）
-    expect(record.status).toBe("running");
-    expect(record.round).toBe(1);
-    // 通知投递 1 次，入参为 toNotifyRecord 映射后的 BgNotifyRecord（chatMode running →
-    // status="running"，round 透传供 dedup key 递增）
-    expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy.mock.calls[0]?.[0]).toMatchObject({ id: record.id, status: "running", round: 1 });
+    const handle = await service.execute({ task: "do something", slug: "test", conversation: true });
+    await vi.waitFor(() => expect(fake.runs).toHaveLength(1));
+    const run = fake.runs[0];
+    expect(run.ctx.chat?.recordId).toBe(handle.subagentId); // chat 会话形态已声明
+
+    // 协议时序：idle 相位帧先于应答帧（W2 交接契约——idle 定时器挂载在引擎侧空闲即达）
+    run.emitLifecycle({ phase: "idle" });
+    // run 应答（= 首轮 agent_settled）：本轮内容为增量权威（协议形态 live turns 留引擎进程）
+    run.settle({ content: "first-round-done" });
+
+    // [改动 2 承接] 轻量 idle 化（v4 B-1：idle 折入 running）：status=running（notify 守卫放行）
+    // + round 0→1（dedup key 递增）+ record.result 从应答 content 写入（单写点，非手工预置）
+    await vi.waitFor(() => expect(spy).toHaveBeenCalled());
+    const record = internals.store.getMutable(handle.subagentId);
+    expect(record).toBeDefined();
+    expect(record!.status).toBe("running");
+    expect(record!.round).toBe(1);
+    expect(record!.result).toBe("first-round-done");
+    // 首条通知入参为 toNotifyRecord 映射后的 BgNotifyRecord（chatMode running →
+    // status="running"，round 透传供 dedup key 递增）。spy 可能收到 settle 内 notify 与
+    // run 续体 collectCoordinator 回注两次调用——同 id:round 在 notifier dedup 层吞并，
+    // 用户可见面（pi.sendMessage）恒 1 条（末尾断言）。
+    expect(spy.mock.calls[0]?.[0]).toMatchObject({ id: record!.id, status: "running", round: 1 });
+    // record 留 store（首轮完成不终态化——原 early-return 的正语义）
+    expect(internals.store.getMutable(record!.id)).toBe(record);
+    // 双通知点同 id:round → dedup：用户可见恰 1 条
+    await new Promise((r) => setTimeout(r, 20));
+    expect(pi.sendMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("onRoundSettled 连续两轮：round 累加（1→2，dedup key 区分每轮）", () => {
-    const ctx = internals.buildSessionRunnerContext();
-    const record = makeRecord(true);
-    record.round = 1; // 第一轮已完成
-    vi.spyOn(internals.notifyHost, "notifyComplete");
+  it("onRoundSettled 连续两轮（冷路径续轮）：round 累加（1→2，dedup key 区分每轮）", async () => {
+    const handle = await service.execute({ task: "do something", slug: "test", conversation: true });
+    await vi.waitFor(() => expect(fake.runs).toHaveLength(1));
+    const run1 = fake.runs[0];
+    run1.emitLifecycle({ phase: "idle" });
+    // sessionFile 经应答回填（冷续锚点校验需要）
+    run1.settle({ content: "round one", sessionFile: path.join(agentDir, "round-1.jsonl") });
+    await vi.waitFor(() => {
+      expect(internals.store.getMutable(handle.subagentId)?.round).toBe(1); // 第一轮已完成
+    });
 
-    ctx.onRoundSettled!(record);
+    // 第二轮：引擎侧无活会话（fake 冷路径拒绝）→ message → resumeColdRound → 新 run
+    fake.interactMessageResult = { ok: false, code: "engine_session_not_resumable", message: "no live session" };
+    const { messageHandler } = await import("../interface/subagent-actions.ts");
+    await messageHandler(service, { subagentId: handle.subagentId, text: "second round" });
+    await vi.waitFor(() => expect(fake.runs).toHaveLength(2));
 
-    expect(record.status).toBe("running");
-    expect(record.round).toBe(2); // 第二轮 round 累加
-  });
+    const run2 = fake.runs[1];
+    run2.emitLifecycle({ phase: "idle" });
+    run2.settle({ content: "round two" });
 
-  // ── 改动 3：runAndFinalize chatMode 首轮 early return ────────────────
-
-  /** 直接调私有 runAndFinalize（mock runSpawn 后走完整分流逻辑）。 */
-  async function callRunAndFinalize(record: ExecutionRecord, success: boolean): Promise<void> {
-    mockRunSpawn.mockResolvedValueOnce(makeResult(success));
-    const opts: ExecuteOptions = { task: "do something", slug: "test" };
-    const ctx: SessionRunnerContext = {
-      cwd: agentDir,
-      agentDir,
-      skillDirs: [],
-      mainCwd: agentDir,
-    };
-    const identity = {
-      agent: "general-purpose",
-      agentConfig: undefined,
-      resolved: { model: STUB_MODEL, thinkingLevel: undefined },
-    };
-    await internals.runAndFinalize(record, opts, ctx, identity, undefined, 0);
-  }
-
-  it("runAndFinalize chatMode 首轮（isIdle：timer armed）early return：不进 finalize 分流，record 保持 running-resumable", async () => {
-    // [N3] 真实 isIdle 路径：守卫判据是 `record.chatMode && isIdle(record)`（isIdle = hasIdleTimer，
-    // 非 status 值）。旧用例手工赋 status="idle" 且未 arm timer——守卫求值 false 不 early return，
-    // 通过路径是「非法状态值被 tryTransition 拒绝」，与守卫无关（假覆盖）。此处构造生产可达状态：
-    // agent_settled 已执行（armIdleTimer + onRoundSettled round+1），status 保持 running。
-    const record = makeRecord(true);
-    record.status = "running";
-    record.round = 1; // onRoundSettled 已 +1
-    internals.store.register(record);
-    armIdleTimer(record.id, () => {}); // 真实 arm（isIdle=true），模拟 agent_settled
-    try {
-      await callRunAndFinalize(record, true);
-
-      // [改动 3] early return 守卫正分支生效：不进 finalize 分流——round 不被
-      // finalizeRoundToIdle 二次 +1（仍 1）、record.result 不被覆写（MF-2 写点会写
-      // makeResult.text="done"，early return 后保持 undefined）、未 archive、store 仍持有。
-      expect(record.status).toBe("running");
-      expect(record.round).toBe(1);
-      expect(record.result).toBeUndefined();
-      expect(internals.store.getMutable(record.id)).toBe(record);
-    } finally {
-      disarmIdleTimer(record.id);
-    }
-  });
-
-  it("runAndFinalize chatMode 首轮 early return 不依赖 tryTransition：close 后 done 分流仍对 running record 生效", async () => {
-    // 对照组：chatMode + status=running（未经 onRoundSettled，如旧路径或测试直调）→
-    // tryTransition 成功 → 进现有 chatMode done 分流（finalizeRoundToIdle）。证明 early return
-    // 守卫只挡 onRoundSettled 设的 idle，不误伤 running record 的正常分流。
-    const record = makeRecord(true);
-    record.status = "running";
-    internals.store.register(record);
-    await callRunAndFinalize(record, true);
-
-    expect(record.status).toBe("running"); // finalizeRoundToIdle 设的（v4 B-1 idle 折入 running）
-    expect(record.round).toBe(1); // finalizeRoundToIdle +1
-    expect(internals.store.getMutable(record.id)).toBe(record);
+    const record = internals.store.getMutable(handle.subagentId);
+    await vi.waitFor(() => expect(record?.round).toBe(2)); // 第二轮 round 累加
+    expect(record!.status).toBe("running");
+    expect(record!.result).toBe("round two");
   });
 
   // ── double-notify 防护 + [M3] 轮次完成通知立即送达 ───────────────────
 
-  it("[M3] chatMode 轮次完成通知立即送达（不挂 60s 合并窗口）+ 同 id:round dedup 吞第二次", () => {
-    // 生产场景：chatMode 轮次完成（agent_settled arm idle timer → onRoundSettled →
-    // notifyComplete），record 留 store、status=running、进程保活（Path A）。
-    // 旧 piAdapter.hasRunningBackground 按 mode==="background" 计数 → 对该 record 恒 true
-    // → notify 恒挂 60s 合并窗口，主 agent 的续聊回复固定延迟 60s（G1 失效）。
-    // 修复后排除 isIdle（timer armed）record → 立即 flush。
+  it("[M3] chatMode 轮次完成通知立即送达（不挂 60s 合并窗口）+ 同 id:round dedup 吞第二次", async () => {
+    // 生产场景：chatMode 轮次完成（idle 相位 arm idle timer → run 应答 settle →
+    // notifyComplete），record 留 store、status=running。旧 piAdapter.hasRunningBackground
+    // 按 mode==="background" 计数 → 对该 record 恒 true → notify 恒挂 60s 合并窗口，
+    // 主 agent 的续聊回复固定延迟 60s（G1 失效）。修复后排除 isIdle（timer armed）record
+    // → 立即 flush。
     //
-    // 走真实 SubagentService.notifyComplete → BgNotifier → piAdapter（真实 host adapter），
-    // 不再手搓 NotifierHost mock 绕过生产行为（旧用例 `hasRunningBackground: () => false`
-    // 是对生产行为的 mock 绕过）。
+    // 走真实 SubagentService 通知链（settle → collectCoordinator.route → BgNotifier →
+    // pi.sendMessage），真实 createDelivery dedupe 语义参与断言。
     //
-    // [N2] 禁止手工预置 record.result（这正是掩盖「通知正文恒 (empty)」断链的方式）——
-    // 轮次文本经真实 updateFromEvent 累积进 turns，真实 onRoundSettled 回调派生写入
-    // record.result（对齐 collectResult 的 getFullText）后 notify。
+    // [N2] 禁止手工预置 record.result——轮次文本经协议应答 content 写入（协议形态下
+    // core 的增量权威 = outcome.content，非 turns 派生）。
     const pi = makePi();
     service.initSession({ pi, sessionId: "root-session" }); // 换上带 spy 的 pi
-    const record = makeRecord(true);
-    record.status = "running";
-    updateFromEvent(record, { type: "text_delta", delta: "first-round-done" });
-    updateFromEvent(record, { type: "turn_end" });
-    internals.store.register(record);
-    armIdleTimer(record.id, () => {}); // 模拟 agent_settled：轮次完成、等待续聊（Path A）
-    try {
-      // 真实回调链：round 0→1 + record.result 从 turns 派生 + notifyComplete
-      internals.buildSessionRunnerContext().onRoundSettled!(record);
-      expect(record.round).toBe(1);
-      expect(record.result).toBe("first-round-done"); // 真实派生（非手工预置）
+    const handle = await service.execute({ task: "do something", slug: "test", conversation: true });
+    await vi.waitFor(() => expect(fake.runs).toHaveLength(1));
+    const run = fake.runs[0];
+    run.emitLifecycle({ phase: "idle" }); // 模拟 agent_settled 前的空闲相位（Path A 前提）
+    run.settle({ content: "first-round-done" });
 
-      // [M3] 立即 flush——同步断言 sendMessage 已发出（旧实现此处挂 60s timer，0 次调用）
-      expect(pi.sendMessage).toHaveBeenCalledTimes(1);
-      const sentMsg = pi.sendMessage.mock.calls[0]![0] as { customType: string; content: string };
-      expect(sentMsg.customType).toBe("subagent-bg-notify");
-      expect(sentMsg.content).toContain("finished a round");
-      expect(sentMsg.content).toContain("first-round-done");
+    // [M3] 立即 flush——同步断言 sendMessage 已发出（旧实现此处挂 60s timer，0 次调用）
+    await vi.waitFor(() => expect(pi.sendMessage).toHaveBeenCalledTimes(1));
+    const record = internals.store.getMutable(handle.subagentId)!;
+    expect(record.round).toBe(1);
+    expect(record.result).toBe("first-round-done"); // 真实派生（非手工预置）
+    const sentMsg = pi.sendMessage.mock.calls[0]![0] as { customType: string; content: string };
+    expect(sentMsg.customType).toBe("subagent-bg-notify");
+    expect(sentMsg.content).toContain("finished a round");
+    expect(sentMsg.content).toContain("first-round-done");
 
-      // double-notify 防护（原用例语义保留）：onRoundSettled notify + kickOffChatRound.then
-      // notifyComplete 同 id:round → notifier dedup key=`${id}:${round}` 60s 内吞第二次。
-      internals.notifyHost.notifyComplete(record);
-      expect(pi.sendMessage).toHaveBeenCalledTimes(1);
-    } finally {
-      disarmIdleTimer(record.id);
-    }
+    // double-notify 防护（原用例语义保留）：settle 内 notify + run 续体 collectCoordinator
+    // 回注已同 id:round 被吞；显式再 notifyComplete 一次（同 id:round）→ notifier dedup
+    // key=`${id}:${round}` 60s 内吞第二次。
+    internals.notifyHost.notifyComplete(record);
+    expect(pi.sendMessage).toHaveBeenCalledTimes(1);
 
-    // 对照：真在跑的 background 工作（活进程 + 无 timer）仍计入合并窗口——closed 通知
+    // 对照：真在跑的 background 工作（镜像活进程 + 无 timer）仍计入合并窗口——closed 通知
     // 挂 60s 不立即发送（合并窗口语义对真正的并发完成保留）。
     const busy = makeRecord(false, "sa-busy");
     busy.status = "running";
-    internals.store.register(busy); // 活进程（mock 恒返回）+ 无 timer = busy，计入
+    internals.store.register(busy);
+    // 协议形态的「活进程」记账 = core 侧 spawnedChildren 镜像活位（原 mock getChildByRecord
+    // 活句柄的等价物；hasRunningBackground 判据 hasLiveProcessHandle 读本镜像）。
+    coreSpawnedChildrenMirror().register(busy.id, { pid: 4321, killed: false });
     const done = makeRecord(false, "sa-done");
     done.status = "closed"; // 终态 notify（toNotifyRecord 放行 closed）
-    try {
-      internals.notifyHost.notifyComplete(done);
-      expect(pi.sendMessage).toHaveBeenCalledTimes(1); // 未新增——busy 挂起合并窗口
-    } finally {
-      // busy/done 无 timer，无需 disarm；record 由 afterEach dispose 清理
-    }
+    internals.store.register(done);
+    internals.notifyHost.notifyComplete(done);
+    expect(pi.sendMessage).toHaveBeenCalledTimes(1); // 未新增——busy 挂起合并窗口
   });
 });
 
@@ -326,68 +269,67 @@ describe("[N1] one-shot 成功完成通知：SP-5 回退 resumable 后仍送达"
   let modelService: ModelConfigService;
   let service: SubagentService;
   let internals: ServiceInternals;
+  let fake: FakePiEnginePort;
 
   beforeEach(() => {
+    _resetLifecycleState();
+    _resetCoreSpawnedChildrenMirrorForTest();
     agentDir = makeTmpAgentDir();
     modelService = new ModelConfigService({ agentDir });
-    service = new SubagentService({ cwd: agentDir, modelService });
-    service.initSession({ pi: makePi(), sessionId: "root-session" });
-    internals = service as unknown as ServiceInternals;
-    mockRunSpawn.mockReset();
-  });
-
-  afterEach(() => {
-    service.dispose();
-    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
-    // 还原默认活进程句柄实现（其他用例的 busy 判定依赖）
-    mockGetChildByRecord.mockImplementation(() => ({ killed: false, kill: () => true }));
-  });
-
-  it("真实 execute + mock runSpawn(success) → 恰 1 条 subagent-bg-notify（status=closed、正文含真实结果），record 保持可升级", async () => {
-    // 真实链路：execute → kickOffChatRound → runAndFinalize（SP-5 分支 → finalizeRoundToIdle
-    // 回退 running-resumable）→ .then notifyComplete → BgNotifier → pi.sendMessage。
-    // round2 审查实证：旧守卫（closed/isIdle only）对 SP-5 完成态恒拒绝 → 发送数 0。
     modelService.initModel({
       modelRegistry: makeEmptyRegistry(),
       sessionId: "root-session",
       ctxModel: STUB_MODEL,
     });
+    service = new SubagentService({ cwd: agentDir, modelService });
+    service.initSession({ pi: makePi(), sessionId: "root-session" });
+    internals = service as unknown as ServiceInternals;
+    fake = registerFakePiEngine();
+  });
+
+  afterEach(() => {
+    service.dispose();
+    _resetLifecycleState();
+    _resetCoreSpawnedChildrenMirrorForTest();
+    clearEngines();
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+  });
+
+  it("真实 execute + 协议应答(success) → 恰 1 条 subagent-bg-notify（status=closed、正文含真实结果），record 保持可升级", async () => {
+    // 真实链路：execute → kickOffChatRound（非 chatMode 一次性 run）→ 协议应答 →
+    // settleOneShotOutcome（SP-5 分支 → finalizeRoundToIdle 回退 running-resumable）→
+    // collectCoordinator 回注 → BgNotifier → pi.sendMessage。
+    // round2 审查实证：旧守卫（closed/isIdle only）对 SP-5 完成态恒拒绝 → 发送数 0。
     const pi = makePi();
     service.initSession({ pi, sessionId: "root-session" }); // 换上带 spy 的 pi
 
-    // one-shot 成功完成态：进程已死（close 后 spawnedChildren 已清理）——getChildByRecord
-    // 返回 undefined，SP-5 回退的 record 因此 isResumable（running + 无活进程）。
-    mockRunSpawn.mockResolvedValueOnce(makeResult(true));
-    mockGetChildByRecord.mockImplementation(() => undefined);
-    try {
-      const handle = await service.execute({ task: "one shot task", slug: "oneshot-n1" });
+    const handle = await service.execute({ task: "one shot task", slug: "oneshot-n1" });
+    await vi.waitFor(() => expect(fake.runs).toHaveLength(1));
+    fake.runs[0].settle({ content: "done" });
 
-      await vi.waitFor(() => {
-        expect(pi.sendMessage).toHaveBeenCalledTimes(1);
-      });
-      const sentMsg = pi.sendMessage.mock.calls[0]![0] as {
-        customType: string;
-        content: string;
-        details?: { status?: string };
-      };
-      expect(sentMsg.customType).toBe("subagent-bg-notify");
-      // 完成语义：status=closed（对齐 tool 契约 "runs once, notifies on completion"；
-      // running 分支文案不含 worktree patchFile 提示，one-shot 需要 closed 分支）
-      expect(sentMsg.details?.status).toBe("closed");
-      expect(sentMsg.content).toContain("completed");
-      expect(sentMsg.content).toContain("done"); // makeResult(true).text，经 MF-2 写入 record.result
-
-      // 恰好 1 条：无第二个通知点（onRoundSettled 仅 chatMode；.then 后无再触发）
-      await new Promise((r) => setTimeout(r, 20));
+    await vi.waitFor(() => {
       expect(pi.sendMessage).toHaveBeenCalledTimes(1);
+    });
+    const sentMsg = pi.sendMessage.mock.calls[0]![0] as {
+      customType: string;
+      content: string;
+      details?: { status?: string };
+    };
+    expect(sentMsg.customType).toBe("subagent-bg-notify");
+    // 完成语义：status=closed（对齐 tool 契约 "runs once, notifies on completion"；
+    // running 分支文案不含 worktree patchFile 提示，one-shot 需要 closed 分支）
+    expect(sentMsg.details?.status).toBe("closed");
+    expect(sentMsg.content).toContain("completed");
+    expect(sentMsg.content).toContain("done"); // 应答 content，经 MF-2 写入 record.result
 
-      // SP-5 语义不破坏：record 回退 running-resumable（可 message 升级续聊），未终态化
-      const record = internals.store.getMutable(handle.subagentId);
-      expect(record).toBeDefined();
-      expect(record!.status).toBe("running");
-      expect(record!.result).toBe("done");
-    } finally {
-      mockGetChildByRecord.mockImplementation(() => ({ killed: false, kill: () => true }));
-    }
+    // 恰好 1 条：无第二个通知点（轮次 settle 仅 chatMode；回注后无再触发）
+    await new Promise((r) => setTimeout(r, 20));
+    expect(pi.sendMessage).toHaveBeenCalledTimes(1);
+
+    // SP-5 语义不破坏：record 回退 running-resumable（可 message 升级续聊），未终态化
+    const record = internals.store.getMutable(handle.subagentId);
+    expect(record).toBeDefined();
+    expect(record!.status).toBe("running");
+    expect(record!.result).toBe("done");
   });
 });

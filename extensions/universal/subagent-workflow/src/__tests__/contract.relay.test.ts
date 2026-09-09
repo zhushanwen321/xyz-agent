@@ -1,12 +1,18 @@
 // contract.relay.test.ts —— conformance relay 变体（E 方案 §2.3，默认 CI 层，免 LLM）。
 //
-// 断言口径：同一契约，spawn 通道不同——relay 是 pi 引擎的进程拓扑变体，不是引擎身份：
+// [W3 改写] 断言口径收敛到「宿主侧仍拥有的契约面」：
 //   1. 协议常量镜像一致性：relay.mjs（零依赖脚本不能 import workspace 包，只能内嵌
 //      镜像）与 relay-env.ts SSOT 逐字对齐——改名/改值双侧不同步即此处转红（§10-5）。
-//   2. pi-invocation 通道契约：三 env 齐备 → 代理形态；任一缺失 → 直连（全有或全无，
-//      E-TUI 零回归）；relay:false 强制直连（probe 语义）。
-//   3. buildChildEnv 归属契约：激活时写入 tee 帧路由键（SESSION_ID/RECORD_ID），未激活
-//      不写（继承值保持，无 relay 环境不携带误导性 env）。
+//
+// 随 W3 chat 域收口废弃的两段（行为迁出宿主进程，原断言面无宿主侧对应物，非跳过）：
+//   - C-通道（getPiInvocation 三分支）：spawn 目标解析随 inproc session-runner 删除
+//     整体迁入引擎进程（packages/pi-subagent-cli/src/pi-invocation.ts），三分支契约
+//     （三 env 齐备 → 代理 / 任一缺失 → 直连 / relay:false 强制直连）由引擎包自有
+//     pi-invocation.test.ts 的「getPiInvocation relay 分支」describe 逐条覆盖。
+//   - C-归属（buildChildEnv 归属键写入）：宿主侧不再 spawn pi 子进程——归属键
+//     （RELAY_SESSION_ID/RECORD_ID）写入点迁至引擎进程 spawn-runner.buildChildEnv
+//     （deny 终态后按 run ctx 显式重写），原「mock spawn 捕获 childEnv」观测面在
+//     宿主侧不存在。
 //
 // 真机全链（经代理 spawn 真实 pi）是 live 手动门：engine-conformance.live.test.ts 的
 // relay describe（ENGINE_CONFORMANCE_LIVE=1 + relay env 齐备），不在本文件。
@@ -15,79 +21,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { PassThrough } from "node:stream";
-
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-// ── runSpawn 集成段 mock（与 session-runner-schema-env.test.ts 同模式）──
-
-vi.mock("node:child_process", async () => {
-  const { EventEmitter } = await import("node:events");
-  const { PassThrough } = await import("node:stream");
-
-  class FakeChild extends EventEmitter {
-    pid = 12345;
-    stdout = new PassThrough();
-    stdin = new PassThrough();
-    stderr = new PassThrough();
-    killed = false;
-    killSignal: string | undefined;
-    kill(sig?: string): boolean {
-      this.killed = true;
-      this.killSignal = sig;
-      return true;
-    }
-  }
-
-  return {
-    spawn: vi.fn(() => new FakeChild()),
-    execFile: vi.fn(
-      (
-        _cmd: string,
-        _args: readonly string[],
-        _opts: unknown,
-        cb: (err: Error | null, stdout?: string, stderr?: string) => void,
-      ) => cb(new Error("execFile not configured in this test")),
-    ),
-  };
-});
-
-vi.mock("node:fs", async () => {
-  const actual = await import("node:fs");
-  return {
-    default: {
-      ...actual,
-      mkdirSync: vi.fn(),
-      existsSync: vi.fn(() => false),
-      appendFileSync: vi.fn(),
-      writeFileSync: vi.fn(),
-      readdirSync: vi.fn(() => []),
-    },
-    mkdirSync: vi.fn(),
-    existsSync: vi.fn(() => false),
-    appendFileSync: vi.fn(),
-    writeFileSync: vi.fn(),
-    readdirSync: vi.fn(() => []),
-    // 镜像段（C-镜像 describe）读 relay.mjs 源文本走真实实现——session-runner 只消费
-    // 上面被替换的几个方法，透传 readFileSync 不影响 runSpawn 集成段的 mock 语义。
-    readFileSync: actual.readFileSync,
-    promises: actual.promises,
-  };
-});
-
-vi.mock( "@zhushanwen/subagent-core/execution/alive-store.ts", () => ({
-  writeAliveMarker: vi.fn(),
-}));
-
-vi.mock( "@zhushanwen/subagent-core/execution/engine/engines/pi/temp-prompt.ts", () => ({
-  writePromptToTempFile: vi.fn(async (agent: string) => {
-    const safeName = agent.replace(/[^\w.-]+/g, "_");
-    return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
-  }),
-  cleanupTempPrompt: vi.fn(async () => {}),
-}));
-
-import { spawn } from "node:child_process";
+import { describe, expect, it } from "vitest";
 
 import {
   RELAY_ENV_NODE,
@@ -97,36 +31,13 @@ import {
   RELAY_ENV_SOCKET,
   RELAY_EXIT_CODES,
   RELAY_PROTOCOL_VERSION,
-  isRelayActive,
 } from "@zhushanwen/subagent-core/relay-env";
-import { getPiInvocation } from "@zhushanwen/subagent-core/execution/engine/engines/pi/pi-invocation.ts";
-import { runSpawn, type RunOptions, type SessionRunnerContext } from "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts";
-import { createRecord } from "@zhushanwen/subagent-core/execution/execution-record.ts";
-import { waitForSpawn } from "@zhushanwen/subagent-core/testing/execution/__tests__/helpers/spawn-mock.ts";
-
-const mockSpawn = vi.mocked(spawn);
 
 /** 被锁定的代理脚本：包根 relay/relay.mjs（与 src/ 平行的零依赖脚本）。 */
 const RELAY_SCRIPT_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../relay/relay.mjs",
 );
-
-/** relay 激活三 env 齐备的基准值。 */
-const RELAY_FULL: Record<string, string> = {
-  [RELAY_ENV_SOCKET]: "/tmp/contract-relay.sock",
-  [RELAY_ENV_NODE]: "/usr/bin/contract-relay-node",
-  [RELAY_ENV_SCRIPT]: "/opt/contract-relay/relay.mjs",
-};
-
-const RELAY_ENV_KEYS = [RELAY_ENV_SOCKET, RELAY_ENV_NODE, RELAY_ENV_SCRIPT] as const;
-
-function setRelayEnv(env: Record<string, string> | undefined): void {
-  for (const key of [...RELAY_ENV_KEYS, RELAY_ENV_SESSION_ID, RELAY_ENV_RECORD_ID]) {
-    delete process.env[key];
-  }
-  if (env !== undefined) Object.assign(process.env, env);
-}
 
 // ── 1. 协议常量镜像一致性（relay-env.ts SSOT ↔ relay.mjs 内嵌镜像）──
 
@@ -169,177 +80,15 @@ describe("relay 变体 C-镜像：relay.mjs 内嵌常量与 relay-env.ts SSOT �
   });
 });
 
-// ── 2. pi-invocation 通道契约（spawn 目标切换：全有或全无 + probe 排除）──
-
-describe("relay 变体 C-通道：getPiInvocation 三分支契约", () => {
-  const originalArgv = process.argv;
-  const originalExecPath = process.execPath;
-
-  beforeEach(() => {
-    // 落到「node + 不存在脚本 → pi-in-PATH」稳定断言直连形态
-    Object.defineProperty(process, "argv", { value: ["node", "/nonexistent"], configurable: true });
-    Object.defineProperty(process, "execPath", { value: "/usr/bin/node", configurable: true });
-  });
-
-  afterEach(() => {
-    Object.defineProperty(process, "argv", { value: originalArgv, configurable: true });
-    Object.defineProperty(process, "execPath", { value: originalExecPath, configurable: true });
-    setRelayEnv(undefined);
-  });
-
-  it("三 env 齐备 → 代理形态（command=NODE、args[0]=SCRIPT，userArgs 原样后置）", () => {
-    setRelayEnv(RELAY_FULL);
-    const result = getPiInvocation(["--mode", "rpc", "--session-dir", "/x"]);
-    expect(result.command).toBe(RELAY_FULL[RELAY_ENV_NODE]);
-    expect(result.args).toEqual([
-      RELAY_FULL[RELAY_ENV_SCRIPT],
-      "--mode",
-      "rpc",
-      "--session-dir",
-      "/x",
-    ]);
-  });
-
-  it.each([...RELAY_ENV_KEYS])("env 缺失 %s → 回落直连（全有或全无，E-TUI 零回归）", (missing) => {
-    const partial = { ...RELAY_FULL };
-    delete partial[missing];
-    setRelayEnv(partial);
-    const result = getPiInvocation(["--mode", "rpc"]);
-    expect(result.command).toBe("pi");
-    expect(result.args).toEqual(["--mode", "rpc"]);
-  });
-
-  it("relay:false → 直连（probe 探 pi 本体可解析性，不经 relay）", () => {
-    setRelayEnv(RELAY_FULL);
-    const result = getPiInvocation(["--version"], { relay: false });
-    expect(result.command).toBe("pi");
-    expect(result.args).toEqual(["--version"]);
-  });
-});
-
-// ── 3. buildChildEnv 归属契约（runSpawn 集成，mock spawn 捕获 childEnv）──
-
-describe("relay 变体 C-归属：buildChildEnv 激活写入 / 未激活不写", () => {
-  interface FakeChild {
-    pid: number;
-    stdout: PassThrough;
-    stderr: PassThrough;
-    killed: boolean;
-    emit(event: string, ...args: unknown[]): boolean;
-  }
-
-  function makeRecord(): ReturnType<typeof createRecord> {
-    return createRecord("relay-env-record-1", {
-      agent: "general-purpose",
-      model: "test/model",
-      mode: "sync",
-      task: "test task",
-      startedAt: Date.now(),
-      rootSessionId: "s1",
-      parentRecordId: undefined,
-      depth: 0,
-    });
-  }
-
-  function makeRunOpts(): RunOptions {
-    return {
-      resolved: { model: { provider: "test", id: "model" }, thinkingLevel: undefined },
-      agentConfig: undefined,
-      appendSystemPrompt: undefined,
-      skillPath: undefined,
-      schema: undefined,
-      maxTurns: undefined,
-      graceTurns: undefined,
-      signal: undefined,
-      onEvent: undefined,
-    };
-  }
-
-  function makeCtx(): SessionRunnerContext {
-    return {
-      cwd: "/fake/cwd",
-      agentDir: "/fake/agent",
-      skillDirs: [],
-      mainCwd: "/fake/cwd",
-      sessionRootId: "relay-root-session",
-      rootCwd: "/fake/cwd",
-    };
-  }
-
-  function getLastSpawnEnv(): Record<string, string | undefined> {
-    return (mockSpawn.mock.calls.at(-1)?.[2]?.env as Record<string, string | undefined>) ?? {};
-  }
-
-  function getLastSpawnedChild(): FakeChild {
-    const result = mockSpawn.mock.results.at(-1);
-    if (!result) throw new Error("spawn was not called yet");
-    return result.value as FakeChild;
-  }
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    setRelayEnv(undefined);
-  });
-
-  afterEach(() => {
-    setRelayEnv(undefined);
-    vi.restoreAllMocks();
-  });
-
-  it("激活：childEnv 写入归属键（SESSION_ID=ctx.sessionRootId、RECORD_ID=record.id）", async () => {
-    setRelayEnv(RELAY_FULL);
-    const record = makeRecord();
-    const ctx = makeCtx();
-    const resultPromise = runSpawn(record, "test task", makeRunOpts(), ctx);
-    await waitForSpawn(mockSpawn);
-    const childEnv = getLastSpawnEnv();
-    expect(childEnv[RELAY_ENV_SESSION_ID]).toBe(ctx.sessionRootId);
-    expect(childEnv[RELAY_ENV_RECORD_ID]).toBe(record.id);
-    // 顺带契约：激活时 spawn 目标即代理（command=NODE、args[0]=SCRIPT）
-    expect(mockSpawn.mock.calls.at(-1)?.[0]).toBe(RELAY_FULL[RELAY_ENV_NODE]);
-    expect(mockSpawn.mock.calls.at(-1)?.[1]?.[0]).toBe(RELAY_FULL[RELAY_ENV_SCRIPT]);
-
-    const child = getLastSpawnedChild();
-    child.emit("close", 0);
-    await resultPromise;
-  });
-
-  it("未激活：不写入归属键（继承 process.env 原值，无 relay 环境零噪声）", async () => {
-    setRelayEnv(undefined);
-    const record = makeRecord();
-    const ctx = makeCtx();
-    const resultPromise = runSpawn(record, "test task", makeRunOpts(), ctx);
-    await waitForSpawn(mockSpawn);
-    const childEnv = getLastSpawnEnv();
-    // 「不写」的精确语义 = 继承值保持（本用例前置已删，故 undefined），而非写 record 值
-    expect(childEnv[RELAY_ENV_SESSION_ID]).toBe(process.env[RELAY_ENV_SESSION_ID]);
-    expect(childEnv[RELAY_ENV_RECORD_ID]).toBe(process.env[RELAY_ENV_RECORD_ID]);
-    expect(childEnv[RELAY_ENV_SESSION_ID]).not.toBe(ctx.sessionRootId);
-    expect(childEnv[RELAY_ENV_RECORD_ID]).not.toBe(record.id);
-
-    const child = getLastSpawnedChild();
-    child.emit("close", 0);
-    await resultPromise;
-  });
-
-  it("未激活但环境残留归属值：残留身份键被出站剥除（W11 语义收紧锁定）", async () => {
-    // [W11] chat inproc spawn 的 env 基座改经 buildOutboundChildEnv（deny 剥离）后，
-    // 本用例从旧「无害性锁定：残留值继承不覆盖」收紧为「残留身份键剥除」——与
-    // impl-plan §2.12 五键剥离清单一致（RELAY_SESSION_ID/RECORD_ID 防父身份误归属，
-    // 激活时由 buildChildEnv 按 ctx 显式重写，不靠继承）。旧语义的「继承无害」在
-    // 跨 record 复用宿主进程时会让孙进程读到上一 record 的归属值，属真泄漏面。
-    setRelayEnv({ [RELAY_ENV_SESSION_ID]: "stale-inherited-sid", [RELAY_ENV_RECORD_ID]: "stale-inherited-rid" });
-    expect(isRelayActive(process.env)).toBe(false);
-    const record = makeRecord();
-    const ctx = makeCtx();
-    const resultPromise = runSpawn(record, "test task", makeRunOpts(), ctx);
-    await waitForSpawn(mockSpawn);
-    const childEnv = getLastSpawnEnv();
-    expect(childEnv[RELAY_ENV_SESSION_ID]).toBeUndefined();
-    expect(childEnv[RELAY_ENV_RECORD_ID]).toBeUndefined();
-
-    const child = getLastSpawnedChild();
-    child.emit("close", 0);
-    await resultPromise;
+// SSOT 面回归锚（原 C-通道段消费的两个常量随段废弃——保留导入面活性断言，防
+// SSOT 导出被静默删除而镜像测试仍误绿）：
+describe("relay 变体 SSOT 导出面：代理启动键仍在 relay-env.ts", () => {
+  it("RELAY_ENV_NODE / RELAY_ENV_SCRIPT 非空（代理进程启动键）", () => {
+    expect(RELAY_ENV_NODE).toBeTruthy();
+    expect(RELAY_ENV_SCRIPT).toBeTruthy();
+    // 代理启动键不进 relay.mjs 镜像（上方「镜像面不扩充」锁死）——两断言互证：
+    // SSOT 有、镜像无 = 代理经 env 接收启动键而非内嵌，契约面自洽。
+    expect(RELAY_ENV_NODE).not.toBe(RELAY_ENV_SOCKET);
+    expect(RELAY_ENV_SCRIPT).not.toBe(RELAY_ENV_SOCKET);
   });
 });
