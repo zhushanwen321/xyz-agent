@@ -102,7 +102,7 @@ bash scripts/validate-runtime-bundle.sh
 |------|---------------------------------------------|------|----------|
 | u1-acquire | committed | 1 | commit（见 git log u1-acquire）；3397 passed / typecheck 绿；deviations 5 条已核合理（warn 级别/措辞时序/多匹配收集/钩子落点/测试拆分） |
 | u2-descendant | committed | 1 | commit c19208e43；3407 passed / typecheck 绿；deviations 6 条核合理（SpawnRunState 就地/派生点语义等价/字段可选/A1-3 同步段论证/debug 文案/注释压缩）；max-lines 超阈经裁决入 eslint 复杂度债务清单 |
-| u3-flip | pending | 0 | — |
+| u3-flip | committed | 1 | commit（git log u3-flip）；3413 passed / typecheck 绿；deviations 6 条核合理（16s 绝对上界含入口段/重判 error 续窗防退化/固定 5s 节奏/四分支提取等价/STEP_MS export 测试可观测/makeState 类型级连带 2 行已申报） |
 | u4-spawn-channel | pending | 0 | — |
 | u5-runtime-switch | pending | 0 | — |
 | u6-obs-docs | pending | 0 | — |
