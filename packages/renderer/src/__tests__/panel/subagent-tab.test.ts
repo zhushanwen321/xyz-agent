@@ -444,14 +444,141 @@ describe('SubagentTab U4：zcode 终态渲染 + 运行中 coarse 提示', () => 
     wrapper.unmount()
   })
 
-  it('RPC 返回空结果 + pi record → 行为不变（不注入兜底投影，不显错误）', async () => {
+  it('RPC 返回空结果 + pi record → seed task 用户气泡（1 turn），不注入兜底投影', async () => {
+    // drawer-blank-fix T5 预期翻转（旧断言：0 turn「行为不变」）：u2 seed 生效后，pi 空历史
+    // 种入 record.task 用户气泡（分区 1 turn），杜绝首开白屏；pi 仍不走 outcome 兜底投影。
     useSubagentStore().applyRecords(MAIN_SID, [makeRecord({ status: 'done', result: 'pi 轮终结果' })])
     vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
     openSubagent({ virtualId: VIRTUAL_ID, enteredFrom: 'chat' })
     const wrapper = mountTab()
     await settle(wrapper)
-    expect(wrapper.findAll('[data-testid="turn-stub"]').length).toBe(0)
+    const turns = wrapper.findAll('[data-testid="turn-stub"]')
+    expect(turns.length).toBe(1)
+    expect(turns[0]?.text()).toContain('do something')
     expect(wrapper.find('[data-testid="subagent-outcome-summary"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+/**
+ * 非 pi 终态回填桥（status watch，设计 D2 / docs/design/subagent-nonpi-visibility-followups.md
+ * §3.3）：运行中打开的 tab 在 record 跨越 running→终态 时经 loadSubagentData 重拉一次，
+ * 对话流自动收敛到完整内容。四守卫反例（pi 零变化 / vid 切换 / 已终态不二拉）同组守护。
+ */
+describe('SubagentTab 非 pi 终态回填（status watch，D2）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    _resetDrawerForTest()
+    bindDrawerSessionId(ref(MAIN_SID))
+    vi.stubGlobal('ResizeObserver', NoopResizeObserver)
+    HTMLElement.prototype.scrollTo = vi.fn()
+    useSubagentStore().applyRecords(MAIN_SID, [makeRecord({ engine: 'zcode' })])
+  })
+
+  it('非 pi running→done 推送 → fetchAndInject 第 2 次拉取 + coarse hint 消失 + 终态内容出现', async () => {
+    vi.mocked(sessionApi.getSubagentHistory)
+      // 首拉：运行中空历史（窗口 B 形态，task seed 兜底）
+      .mockResolvedValueOnce([])
+      // 回填拉取：终态完整对话
+      .mockResolvedValueOnce([
+        { id: 'ref-u1', role: 'user', content: 'do something', status: 'complete', timestamp: 1000 },
+        { id: 'ref-a1', role: 'assistant', content: '终态完整产出', status: 'complete', timestamp: 2000 },
+      ] as Message[])
+    openSubagent({ virtualId: VIRTUAL_ID, enteredFrom: 'chat' })
+    const wrapper = mountTab()
+    await settle(wrapper)
+
+    // 运行中形态：coarse hint 在场，首拉 1 次
+    expect(wrapper.find('[data-testid="subagent-coarse-hint"]').exists()).toBe(true)
+    expect(sessionApi.getSubagentHistory).toHaveBeenCalledTimes(1)
+
+    // 终态推送（applyRecords → currentRecord status 跨越 running→done）
+    useSubagentStore().applyRecords(MAIN_SID, [
+      makeRecord({ engine: 'zcode', status: 'done', result: '终态完整产出', endedAt: 2000 }),
+    ])
+    await settle(wrapper)
+
+    // 回填拉取触发第 2 次（同参数）
+    expect(sessionApi.getSubagentHistory).toHaveBeenCalledTimes(2)
+    expect(sessionApi.getSubagentHistory).toHaveBeenLastCalledWith(MAIN_SID, SUB_ID)
+    // 黑盒 DOM：coarse hint 消失 + 终态内容出现在消息流
+    expect(wrapper.find('[data-testid="subagent-coarse-hint"]').exists()).toBe(false)
+    const turns = wrapper.findAll('[data-testid="turn-stub"]')
+    expect(turns.length).toBeGreaterThanOrEqual(1)
+    expect(turns[0]?.text()).toContain('do something')
+    expect(turns[0]?.text()).toContain('终态完整产出')
+    wrapper.unmount()
+  })
+
+  it('pi record（engine 缺省）同样推送 running→done → fetchAndInject 仍 1 次（零变化守护）', async () => {
+    useSubagentStore().applyRecords(MAIN_SID, [makeRecord({ engine: undefined })])
+    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
+    openSubagent({ virtualId: VIRTUAL_ID, enteredFrom: 'chat' })
+    const wrapper = mountTab()
+    await settle(wrapper)
+    expect(sessionApi.getSubagentHistory).toHaveBeenCalledTimes(1)
+
+    useSubagentStore().applyRecords(MAIN_SID, [
+      makeRecord({ engine: undefined, status: 'done', result: 'pi 结果', endedAt: 2000 }),
+    ])
+    await settle(wrapper)
+    expect(sessionApi.getSubagentHistory).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('vid 切换：停留 B 期间推 A 终态 → 不为 A 触发加载；切回 A → vid watch 首拉兜底', async () => {
+    const SUB_ID_B = 'sub-tab-2'
+    const VIRTUAL_ID_B = subagentVirtualId(MAIN_SID, SUB_ID_B)
+    const recordA = makeRecord({ engine: 'zcode' })
+    useSubagentStore().applyRecords(MAIN_SID, [
+      recordA,
+      makeRecord({ subagentId: SUB_ID_B, engine: 'zcode' }),
+    ])
+    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
+    openSubagent({ virtualId: VIRTUAL_ID, enteredFrom: 'chat' })
+    const wrapper = mountTab()
+    await settle(wrapper)
+    expect(sessionApi.getSubagentHistory).toHaveBeenCalledTimes(1)
+
+    // 切到 B：vid watch 首拉 B（第 2 次，参数 B）
+    openSubagent({ virtualId: VIRTUAL_ID_B, enteredFrom: 'chat' })
+    await settle(wrapper)
+    expect(sessionApi.getSubagentHistory).toHaveBeenCalledTimes(2)
+    expect(sessionApi.getSubagentHistory).toHaveBeenLastCalledWith(MAIN_SID, SUB_ID_B)
+
+    // 停留 B 期间 A 终态推送：status watch 的 vid 守卫跳过（A 非 current vid，源变化即切换守卫拦截）
+    useSubagentStore().applyRecords(MAIN_SID, [
+      makeRecord({ engine: 'zcode', status: 'done', result: 'A 结果', endedAt: 3000 }),
+      makeRecord({ subagentId: SUB_ID_B, engine: 'zcode' }),
+    ])
+    await settle(wrapper)
+    expect(sessionApi.getSubagentHistory).toHaveBeenCalledTimes(2)
+
+    // 切回 A：vid watch 首拉兜底（非 status watch）
+    openSubagent({ virtualId: VIRTUAL_ID, enteredFrom: 'chat' })
+    await settle(wrapper)
+    expect(sessionApi.getSubagentHistory).toHaveBeenCalledTimes(3)
+    expect(sessionApi.getSubagentHistory).toHaveBeenLastCalledWith(MAIN_SID, SUB_ID)
+    wrapper.unmount()
+  })
+
+  it('打开时已终态 → 首拉后推 records（status 不变 done→done）→ 不二次加载', async () => {
+    useSubagentStore().applyRecords(MAIN_SID, [
+      makeRecord({ engine: 'zcode', status: 'done', result: '结果', endedAt: 2000 }),
+    ])
+    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
+    openSubagent({ virtualId: VIRTUAL_ID, enteredFrom: 'chat' })
+    const wrapper = mountTab()
+    await settle(wrapper)
+    expect(sessionApi.getSubagentHistory).toHaveBeenCalledTimes(1)
+
+    // runtime 全量帧重推（status 无跨越）
+    useSubagentStore().applyRecords(MAIN_SID, [
+      makeRecord({ engine: 'zcode', status: 'done', result: '结果', endedAt: 2000 }),
+    ])
+    await settle(wrapper)
+    expect(sessionApi.getSubagentHistory).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
 })

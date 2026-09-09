@@ -63,6 +63,22 @@ type _SubagentStatusCoversAll = [SubagentStatus] extends [(typeof SUBAGENT_STATU
 export const SUBAGENT_STATUS_COVERAGE_LOCK: _SubagentStatusCoversAll = true
 
 /**
+ * 非 pi 引擎 ③级 outcome-only 投影的占位 assistant 文案（subagent-nonpi-visibility-followups
+ * 设计 §3.3 D6 三端锚点）。
+ *
+ * core ③级投影 content = `record.result ?? record.error ?? 本值`——本值仅在 result/error
+ * 双缺时出现（运行中被杀等；failed record 的 error 文本是真实产出，不走本值）。
+ * 三端锚定分工（改文案须三处同步，缺一即漂移）：
+ * - core（subagent-core session-view-service.ts 的 outcomeOnlyMessages）：生产代码不
+ *   import shared（双端复用约束），本地字面量/常量与本值同值 + 锚定注释；
+ * - runtime（test/subagent-extractor-engine.test.ts 契约钉子用例）：行为断言「③级投影
+ *   占位 content === 本常量」守护同值漂移——core 改文案即该用例翻红；
+ * - renderer（useSubagentThinking 思考行判据）：占位 assistant 不计入「实质产出」，
+ *   保证窗口 B 占位不熄灭 drawer 思考行。
+ */
+export const SUBAGENT_OUTCOME_PLACEHOLDER = '(no outcome recorded)' as const
+
+/**
  * 单条 subagent 记录（列表项数据）。
  *
  * 字段来源对应关系：

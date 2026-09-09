@@ -242,6 +242,13 @@ export const useSubagentStore = defineStore('subagent', () => {
   /**
    * 拉取单个 subagent 的历史并注入 chatStore（经 setMessages 回调）。
    *
+   * 返回拉取到的 history 数组，供调用方编排使用（drawer-blank-fix：空历史不擦分区，
+   * 设计 docs/design/subagent-drawer-blank.md §6.2）。
+   *
+   * 空结果不写入：history.length === 0 时**不调** setMessages——分区是否种兜底
+   * （task 气泡）由编排层依据「分区当前是否为空」决定；无条件写入会把 E-4 已投影的
+   * 内容擦空（重开 drawer 空白闪退）。非空历史照旧整体替换（定稿权威语义，天然清除兜底气泡）。
+   *
    * [W2 / M5] fail-fast：失败时 throw（不静默 setMessages([])）。调用方（drawer SubagentTab）
    * 负责 catch + 显示错误态 + 重试入口。
    */
@@ -249,10 +256,13 @@ export const useSubagentStore = defineStore('subagent', () => {
     mainSessionId: string,
     subagentId: string,
     setMessages: SetMessagesFn,
-  ): Promise<void> {
+  ): Promise<Message[]> {
     const virtualId = subagentVirtualId(mainSessionId, subagentId)
     const history = await sessionApi.getSubagentHistory(mainSessionId, subagentId)
-    setMessages(virtualId, history)
+    if (history.length > 0) {
+      setMessages(virtualId, history)
+    }
+    return history
   }
 
   /**

@@ -18,7 +18,9 @@
   - compacting：手动 →「压缩中」；threshold/overflow（reason 文案源 = setCompactingReason
     通路，u5b 保留）→「正在自动压缩上下文」
   - bash：「正在执行」+ mono 命令
-  - thinking：turn=dispatching（prompt 已发、message_start 未到）→「思考中…」
+  - thinking：turn=dispatching（prompt 已发、message_start 未到）→「思考中…」；或
+    subagentThinking prop=true（subagent-drawer-blank §6.3：虚拟 session 收不到 occupancy
+    帧，思考行由 MessageStream 的 subagent forceWorking 补充驱动，文案同复用 dispatching key）
   - settling：turn=settling（turn-end→agent_settled 收尾窗口，D6 表行 4 活动条列）且无
     compacting/bash 时渲染一行——文案暂复用 dispatching key「思考中…」；P-1 探针（V8）
     校准点：若 settling P95 > 2s 常态化，换「收尾中…」专用 key（zh/en 同步）
@@ -68,6 +70,9 @@ const props = defineProps<{
   sessionId: string
   /** 执行中 bash 瞬时态（core bash-effects 分区，MessageStream computed 注入；无则 undefined） */
   executingBash?: ExecutingBash
+  /** subagent 虚拟 session 思考中（u3-thinking / §6.3，MessageStream computed 注入：
+   *  forceWorking 且末位 turn 无 assistant 产出；默认 false） */
+  subagentThinking?: boolean
 }>()
 
 const chat = useChatStore()
@@ -101,9 +106,10 @@ const rows = computed<ActivityRow[]>(() => {
   if (props.executingBash) {
     list.push({ kind: 'bash', text: t('panel.message.executingBash'), command: props.executingBash.command })
   }
-  // thinking 行：无 compacting/bash 且 turn=dispatching（occupancy 权威投影，替代原 TurnMeta
-  // isPendingPlaceholder 占位——「无以上但有 dispatching turn」才显示，避免与压缩/命令行重复堆叠）
-  if (!compacting && !props.executingBash && turn === 'dispatching') {
+  // thinking 行：无 compacting/bash 且（turn=dispatching（occupancy 权威投影，替代原 TurnMeta
+  // isPendingPlaceholder 占位）或 subagentThinking（§6.3：虚拟 session 收不到 occupancy 帧，
+  // 思考行由 subagent forceWorking 补充驱动））——「无以上但有思考信号」才显示，避免与压缩/命令行重复堆叠
+  if (!compacting && !props.executingBash && (turn === 'dispatching' || props.subagentThinking)) {
     list.push({ kind: 'thinking', text: t('panel.message.dispatching') })
   }
   // settling 行（D6 表行 4 活动条列前半，修复一致性审查 R3-U1）：无 compacting/bash 且

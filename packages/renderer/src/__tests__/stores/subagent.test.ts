@@ -9,7 +9,7 @@
  * - isRunning 读 records status
  * - hasRunning 分区是否有 running
  * - cancelSubagent RPC + 乐观更新
- * - fetchAndInject fail-fast + setMessages
+ * - fetchAndInject fail-fast + setMessages（空历史不擦分区，返回拉取的 history）
  *
  * [HISTORICAL] overlay viewing 用例（selectSubagent/backToMain/isViewing/getViewingSubagentId/
  * getActiveSubagentVirtualId/getCurrentSubagent/per-panel getters）已随 U7 overlay 移除删除。
@@ -356,6 +356,37 @@ describe('subagent store — fetchAndInject（drawer SubagentTab 数据加载入
 
     expect(sessionApi.getSubagentHistory).toHaveBeenCalledWith('session-1', 'bg-1')
     expect(chat.setMessages).toHaveBeenCalledWith('subagent:session-1:bg-1', fakeHistory)
+  })
+
+  // ── drawer-blank-fix u1-store（T1）：空历史不擦分区 + 返回拉取的 history ──
+
+  it('RPC 返回 [] → 不调 setMessages（保留分区已有内容），fetchAndInject 返回 []', async () => {
+    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
+    const store = useSubagentStore()
+    const chat = makeChatMock()
+
+    const history = await store.fetchAndInject('session-1', 'bg-1', chat.setMessages)
+
+    // 空结果不写入：E-4 已投影内容不被擦除（drawer-blank-fix §6.2）
+    expect(chat.setMessages).not.toHaveBeenCalled()
+    // 返回值契约：调用方（u2 编排层）据此判定分区是否种兑底
+    expect(history).toEqual([])
+  })
+
+  it('RPC 返回非空 → setMessages 收到该数组且返回值等于该数组', async () => {
+    const fakeHistory: Message[] = [
+      { id: 'm1', role: 'user', content: 'task', timestamp: 1 },
+      { id: 'm2', role: 'assistant', content: 'done', timestamp: 2 },
+    ]
+    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue(fakeHistory)
+    const store = useSubagentStore()
+    const chat = makeChatMock()
+
+    const history = await store.fetchAndInject('session-1', 'bg-1', chat.setMessages)
+
+    // 非空照旧整体替换（定稿权威语义）+ 返回拉取的 history
+    expect(chat.setMessages).toHaveBeenCalledWith('subagent:session-1:bg-1', fakeHistory)
+    expect(history).toBe(fakeHistory)
   })
 
   it('getSubagentHistory 失败时 fail-fast throw（调用方负责 catch + 显示错误态）', async () => {

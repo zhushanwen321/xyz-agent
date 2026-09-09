@@ -111,7 +111,7 @@
          思考占位三处分散指示（优先级 compacting > bash > thinking，数据源 sessionPhase
          occupancy 投影）。文档流 block（Virtualizer 之后），fork notice 等后续内容自然堆叠。
          dev 断言（COMPACTING/EXECUTING_BASH 高度常量漂移检测）随行迁入组件内部。 -->
-    <ActivityStrip :session-id="sessionId" :executing-bash="executingBash" />
+    <ActivityStrip :session-id="sessionId" :executing-bash="executingBash" :subagent-thinking="subagentThinking" />
 
     <!-- ForkNotice 反馈行（transient，RV1）。文档流 block（Virtualizer 之后），多条通知垂直堆叠；
          宽度约束在 ForkNotice 根（content-col），与对话流内容列对齐。 -->
@@ -172,7 +172,7 @@ import { useConstantHeightAssert } from '@/composables/panel/useConstantHeightAs
 import { toRenderItemsIncremental, createTurnRenderCache, renderKey } from '@/composables/logic/messageTurns'
 import type { TurnRenderCache } from '@/composables/logic/messageTurns'
 import { useSessionScopedState } from '@/composables/useSessionScopedState'
-import { isSubagentVirtualId, extractSubagentId, extractMainSessionId, useSubagentStore } from '@/stores/subagent'
+import { useSubagentThinking } from '@/composables/panel/useSubagentThinking'
 // [w6 chat-ui-and-shell T6] chat 展示组件迁 @xyz-agent/ui/features/chat，壳层经
 // ChatViewDeps inject token 注入 store/composable 依赖（TD3 inject 裁决）。
 import { Turn, SystemNotice, BashOutputBlock, TurnRail, ChatViewDepsKey } from '@xyz-agent/ui'
@@ -207,7 +207,6 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const chat = useChatStore()
-const subagentStore = useSubagentStore()
 
 /** W4 H4 + cw wave w3 / IF8：加载更多历史 loading 状态 + isPrepend（virta :shift 信号）+ handler。 */
 const { loadingMore, showLoadMore, handleLoadMore, isPrepend } = useLoadMoreHistory(() => props.sessionId)
@@ -228,20 +227,7 @@ const { pendingEntries, onRemovePending } = useSessionPendingEntries(sessionId)
  *  不进 messages（执行中反馈 ephemeral 通道；run 结束后 bashExecution entry 入流承担持久语义）。 */
 const executingBash = computed(() => getExecutingBash(props.sessionId))
 
-/** subagent 虚拟 session 真在跑时强制 streaming（JSONL 读出 status 恒 complete，但 subagent 可能还在跑）。
- *  [review round2 R1-遗留-1] 窄口径判定（isStreamingSubagent，与主 session hasRunning 同判据）：
- *  running + 轮终 result 在场（running-resumable）不算 streaming——轮终后虚拟 session 末位
- *  turn 不再卡「streaming」，与主 session working 判定一致。resumable 续轮的真实流活动由
- *  消息级 streaming status 承担（subscribeStream → applySubagentStreamDelta）；订阅判定
- *  继续用宽松 isRunning（SubagentTab），此处不受影响。 */
-const forceWorking = computed(() => {
-  if (!isSubagentVirtualId(props.sessionId)) return false
-  return subagentStore.isStreamingSubagent(extractMainSessionId(props.sessionId), extractSubagentId(props.sessionId))
-})
 
-/** session 级「对话进行中」信号（session-active-ssot T4）：驱动 Turn sticky/折叠 disabled/trace 展开等。
- *  ask-user（waiting）或 subagent 后台跑（working）都保持 true → 对话流不收起（M3 修复）。 */
-const isSessionActive = useSessionActive(sessionId, forceWorking)
 
 /** [W21 D-4] turn 派生增量缓存：经 useSessionScopedState 工厂按 session 分区持有（ADR-0049——
  *  <MessageStream> 无 :key、组件实例不随 session 销毁，实例级缓存会跨 session 残留上一会话的
@@ -260,7 +246,7 @@ const turnCacheState = useSessionScopedState(
 const renderItems = computed(() =>
   toRenderItemsIncremental(
     currentMessages.value,
-    forceWorking.value,
+    forceWorking.value, // useSubagentThinking 返回（声明在下方）——computed getter 惰性求值，安全前向引用
     turnCacheState.current.value.value, // 双层 .value：分区 shallowRef → TurnRenderCache
   ),
 )
@@ -279,6 +265,16 @@ const lastRenderTurn = computed(() => {
   }
   return null
 })
+
+/** subagent drawer 思考中指示（u3-thinking / subagent-drawer-blank §6.3/§7.3）：forceWorking
+ *  （虚拟 session 真在跑强制 streaming，窄口径）+ subagentThinking（末位 turn 还没有
+ *  assistant 产出即「思考中」）派生已抽 useSubagentThinking.ts（≤300 行规范）。调用点须在
+ *  lastRenderTurn 声明之后；经 prop 传给 ActivityStrip（文案复用 dispatching key）。 */
+const { forceWorking, subagentThinking } = useSubagentThinking(sessionId, lastRenderTurn)
+
+/** session 级「对话进行中」信号（session-active-ssot T4）：驱动 Turn sticky/折叠 disabled/trace 展开等。
+ *  ask-user（waiting）或 subagent 后台跑（working）都保持 true → 对话流不收起（M3 修复）。 */
+const isSessionActive = useSessionActive(sessionId, forceWorking)
 
 /** [cw wave w3] virtua Virtualizer handle ref（shallowRef：handle 是大对象，无需深度响应式）。
  *  useVirtuaFollow / useMessageStreamRail / vlistBottom 都读它做位置查询 + scrollToIndex。 */

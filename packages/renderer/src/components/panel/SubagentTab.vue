@@ -7,7 +7,7 @@
 
   两类虚拟 id（D4）：
   - subagent:<mainSid>:<subId> 三段式（chat 块 / sidebar 入口）：
-    fetchAndInject 拉历史注入虚拟分区 + 恒订阅 stream_delta 实时增量（E-4：entry 帧走
+    fetchAndInject 拉历史注入虚拟分区（空历史不写分区，drawer-blank u1）+ 恒订阅 stream_delta 实时增量（E-4：entry 帧走
     routeInbound 兜底链消费，不依赖 drawer 打开；此处只管打字机 delta）
   - agentcall:<acsId> 两段式（workflow tab 点 agent call 入口）：
     快照只读，仅拉历史不接实时流式（D4 裁决：agent call 实时性由 workflow tab 列表 status 体现）
@@ -254,6 +254,32 @@ watch(
     if (vid) void loadSubagentData(vid)
   },
   { immediate: true },
+)
+
+/**
+ * 非 pi 终态回填桥（设计 D2，docs/design/subagent-nonpi-visibility-followups.md）：
+ * 非 pi 引擎无实时流通道，运行中打开的 tab 内容停在打开时刻——record 跨越终态
+ * （running → 非 running）时重拉一次，对话流自动收敛到完整内容。四守卫：
+ * cur/prev 任一 null（agentcall / 未选中）跳过；vid 或 subId 变化 = 切换 subagent
+ * 跳过（新 vid 由上方 selectedSubagentId watch 负责）；仅 running → 非 running 跨越
+ * 触发（打开时已终态由首拉覆盖）；pi 引擎跳过（D5 零变化——v4 波动
+ * done→running→done 由跨越守卫天然拦截，非 pi 守卫再兜一层）。
+ */
+watch(
+  () => {
+    const vid = selectedSubagentId.value
+    const record = currentRecord.value
+    if (!vid || !record) return null
+    return { vid, subId: record.subagentId, status: record.status }
+  },
+  (cur, prev) => {
+    if (!cur || !prev) return
+    if (cur.vid !== prev.vid || cur.subId !== prev.subId) return
+    if (prev.status !== 'running' || cur.status === 'running') return
+    const record = currentRecord.value
+    if (!record || recordEngine(record) === DEFAULT_ENGINE_ID) return
+    void loadSubagentData(cur.vid)
+  },
 )
 
 onBeforeUnmount(() => {

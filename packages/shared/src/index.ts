@@ -124,7 +124,9 @@ export { QUOTA_PRESETS, matchQuotaPreset } from './quota-presets'
 // normalizeSubagentStatus 已下沉至 runtime（packages/runtime/src/services/session/subagent-status.ts，
 // 单消费者归位）；shared 仅保留 renderer 消费的 deriveClosedDisplay 展示派生。
 // SUBAGENT_STATUS_ALL：枚举值全集（B3 护栏，renderer bucket 测试的全集覆盖矩阵数据源）。
-export { deriveClosedDisplay, SUBAGENT_STATUS_ALL } from './subagent'
+// SUBAGENT_OUTCOME_PLACEHOLDER：③级占位文案（D6 三端锚点 SSOT 值，core 同值字面量 /
+// runtime 钉子断言 / renderer 思考行判据的消费入口）。
+export { deriveClosedDisplay, SUBAGENT_STATUS_ALL, SUBAGENT_OUTCOME_PLACEHOLDER } from './subagent'
 export type {
   WorkflowRunStatus,
   WorkflowDoneReason,

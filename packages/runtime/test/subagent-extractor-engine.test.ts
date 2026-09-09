@@ -24,6 +24,7 @@ import {
   readEngineSubagentHistory,
 } from '../src/services/session/subagent-engine-history.js'
 import type { SubagentRecord } from '@xyz-agent/shared'
+import { SUBAGENT_OUTCOME_PLACEHOLDER } from '@xyz-agent/shared'
 
 // Mock node:os — keep all real exports, override homedir（宿主 db 白名单主路径用例的
 // 受控宿主 HOME；缺省占位值不影响其余用例——它们不经绝对 dbPath 分支的宿主比对）
@@ -303,6 +304,50 @@ describe('readEngineSubagentHistory（zcode 三级降级）', () => {
   it('degrades to outcome-only for unknown engines (未来引擎保底)', async () => {
     const messages = await readEngineSubagentHistory(zcodeRecord(undefined, 'claude-code'), dataDir)
     expect(messages[1]?.content).toBe('LGTM outcome text')
+  })
+
+  it('tier1 defined-empty view → 非空壳投影，占位 content === shared 常量（D6 契约钉子）', async () => {
+    // ①级 defined-empty：db 存在且 session 可读，但 send 后、首个 assistant content
+    // 持久化前——collectTurns 只收 assistant 消息 → {turns: [], source: 'native'}。
+    // db 建到池内相对路径（createPoolDb 同款 schema），仅插 user prompt。
+    const dbFile = join(poolDir(), DB_RELATIVE)
+    mkdirSync(join(dbFile, '..'), { recursive: true })
+    const { DatabaseSync } = (await import('node:sqlite')) as { DatabaseSync: new (p: string) => unknown }
+    type Db = {
+      exec: (s: string) => void
+      prepare: (s: string) => { run: (...a: unknown[]) => void }
+      close: () => void
+    }
+    const db = new DatabaseSync(dbFile) as unknown as Db
+    db.exec(
+      'CREATE TABLE session (id TEXT PRIMARY KEY, time_created INTEGER);' +
+        'CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, sequence INTEGER, data TEXT);' +
+        'CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, sequence INTEGER, data TEXT);',
+    )
+    db.prepare('INSERT INTO session (id, time_created) VALUES (?, ?)').run(SESSION_ID, 2000)
+    db.prepare('INSERT INTO message (id, session_id, sequence, data) VALUES (?, ?, ?, ?)').run(
+      'msg_user',
+      SESSION_ID,
+      0,
+      JSON.stringify({ role: 'user' }),
+    )
+    db.close()
+
+    // fixture 约束（设计 D6）：result 与 error 必须双缺——:450 三选一
+    // (result ?? error ?? 占位)，带任一则断言走不到占位分支、守护空转。
+    // 无 journalPath → ①空降②、②不可达 → ③级占位投影。
+    const base = zcodeRecord({ sessionRef: { dbPath: DB_RELATIVE, sessionId: SESSION_ID }, poolKey: POOL_KEY })
+    const record: EngineAwareRecord = { ...base, result: undefined, error: undefined }
+
+    const messages = await readEngineSubagentHistory(record, dataDir)
+    // 非空壳：≥2 条（task + 占位 assistant），不再返回「仅 task」
+    expect(messages.length).toBeGreaterThanOrEqual(2)
+    expect(messages[0]?.role).toBe('user')
+    expect(messages[0]?.content).toBe('review the code')
+    const placeholder = messages.find((m) => m.role === 'assistant')
+    expect(placeholder).toBeDefined()
+    // 同值钉子：core ③级本地常量若与 shared 权威值漂移，此处翻红
+    expect(placeholder?.content).toBe(SUBAGENT_OUTCOME_PLACEHOLDER)
   })
 })
 

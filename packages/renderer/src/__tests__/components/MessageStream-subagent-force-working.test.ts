@@ -22,6 +22,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useChatStore } from '@/stores/chat'
 import { useSubagentStore, subagentVirtualId } from '@/stores/subagent'
 import MessageStream from '@/components/panel/MessageStream.vue'
+import { SUBAGENT_OUTCOME_PLACEHOLDER } from '@xyz-agent/shared'
 import type { Message, SubagentRecord } from '@xyz-agent/shared'
 
 vi.mock('virtua/vue', async () => {
@@ -205,6 +206,99 @@ describe('MessageStream 虚拟 session forceWorking 接线（R1-遗留-1）', ()
     const turnStub = wrapper.find('[data-testid="turn-stub"]')
     expect(turnStub.exists()).toBe(true)
     expect(turnStub.attributes('data-streaming')).toBe('false')
+    wrapper.unmount()
+  })
+})
+
+/**
+ * u3-thinking（subagent-drawer-blank §7.3 + §6.3）：forceWorking 驱动 ActivityStrip 思考行。
+ * MessageStream 新增 computed subagentThinking = forceWorking &&（无 turn || 末位
+ * turn.assistants.length === 0），经 prop 传给真实 ActivityStrip（非 stub）——虚拟 session
+ * 收不到 occupancy 帧（sessionPhase.turn 恒 idle），思考行完全由本 prop 驱动，DOM 断言
+ * testid activity-strip-row-thinking。
+ */
+describe('MessageStream → ActivityStrip subagentThinking 接线（u3-thinking / §6.3）', () => {
+  it('forceWorking=true + 分区仅 task 用户气泡（末位 turn 无 assistant）→ thinking 行出现', async () => {
+    // 独立虚拟分区（hydrate 每 session 一次，outer beforeEach 已占 VIRTUAL_ID 名额）
+    const sidB = subagentVirtualId(MAIN_SID, 'sub-fw-2')
+    useChatStore().hydrate(sidB, [makeMsg({ id: 'u1', role: 'user', content: '任务' })])
+    const sub = useSubagentStore()
+    sub.applyRecords(MAIN_SID, [makeSubagentRecord({ subagentId: 'sub-fw-2', status: 'running' })])
+
+    const wrapper = mountStream(sidB)
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="activity-strip-row-thinking"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('forceWorking=true + 末位 turn 有 assistant 消息 → 无 thinking 行', async () => {
+    // outer beforeEach 已给 VIRTUAL_ID 注入 user + assistant 历史（末位 turn 有产出）
+    const sub = useSubagentStore()
+    sub.applyRecords(MAIN_SID, [makeSubagentRecord({ status: 'running' })])
+
+    const wrapper = mountStream(VIRTUAL_ID)
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="activity-strip-row-thinking"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('非 virtual session id → forceWorking 恒 false → 无 thinking 行（主会话零回归）', async () => {
+    useChatStore().hydrate(MAIN_SID, virtualHistory())
+    const sub = useSubagentStore()
+    sub.applyRecords(MAIN_SID, [makeSubagentRecord({ status: 'running' })])
+
+    const wrapper = mountStream(MAIN_SID)
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="activity-strip-row-thinking"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+/**
+ * 占位反例（D6 / docs/design/subagent-nonpi-visibility-followups.md §3.3）：③级投影的
+ * 占位 assistant（content === SUBAGENT_OUTCOME_PLACEHOLDER，仅 result/error 双缺时出现）
+ * 不算实质产出——思考行仍触发；真实 content（result/error 文本）= 有产出 → 熄灭。
+ * drawer-blank T3 既有断言（上方「末位 turn 无 assistant → thinking 行出现」）不动。
+ */
+describe('MessageStream subagentThinking 占位反例（D6）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.stubGlobal('ResizeObserver', NoopResizeObserver)
+    HTMLElement.prototype.scrollTo = vi.fn()
+  })
+
+  it('末位 assistant 为占位（③级 result/error 双缺投影）→ thinking 行仍出现', async () => {
+    const sidP = subagentVirtualId(MAIN_SID, 'sub-fw-ph')
+    useChatStore().hydrate(sidP, [
+      makeMsg({ id: 'u1', role: 'user', content: '任务' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: SUBAGENT_OUTCOME_PLACEHOLDER }),
+    ])
+    const sub = useSubagentStore()
+    sub.applyRecords(MAIN_SID, [makeSubagentRecord({ subagentId: 'sub-fw-ph', status: 'running' })])
+
+    const wrapper = mountStream(sidP)
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="activity-strip-row-thinking"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('末位 assistant 为真实 content（error 文本投影）→ thinking 行熄灭', async () => {
+    const sidR = subagentVirtualId(MAIN_SID, 'sub-fw-real')
+    useChatStore().hydrate(sidR, [
+      makeMsg({ id: 'u1', role: 'user', content: '任务' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: '错误：模型不可用' }),
+    ])
+    const sub = useSubagentStore()
+    sub.applyRecords(MAIN_SID, [makeSubagentRecord({ subagentId: 'sub-fw-real', status: 'running' })])
+
+    const wrapper = mountStream(sidR)
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="activity-strip-row-thinking"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })
