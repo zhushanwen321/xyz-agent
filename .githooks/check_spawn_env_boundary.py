@@ -55,6 +55,11 @@ SCAN_ROOTS = [
     "packages/subagent-engine-sdk/src",
     "packages/zcode-subagent-cli",
     "packages/pi-subagent-cli",
+    # [W11 收口 / W12 拖尾子项④] engines/ 内建目录已删、壳侧裸 spawn 已消（唯一
+    # spawn 面 = EngineClient（buildEngineChildEnv）/ worktree git（buildOutboundChildEnv）
+    # / relay-env 探针（豁免通道兜底））——core/src 正式入扫描，零 EXEMPT_CALLSITES
+    # 豁免为收口判据；豁免申请仍走既有 EXEMPT_CALLSITES 通道。
+    "packages/subagent-core/src",
 ]
 
 # 目录名成分或文件名后缀排除（测试文件不代表生产进程拓扑）
@@ -197,6 +202,47 @@ EXEMPT_CALLSITES = [
         "node:worker_threads 的 Worker 是同进程线程而非 OS 子进程，不存在 env 出站边界；"
         "trusted 插件域真正跨进程出站统一收敛于 plugin-host-process.ts 的 fork 接线点"
         "（该文件经 buildOutboundChildEnv 组装）",
+    ),
+    # --- packages/subagent-core/src（W11 收口批加入 SCAN_ROOTS；以下均为永久类，
+    # 非迁移期临时豁免——迁移期临时条目已随 engines/zcode 删除清零） ---
+    (
+        "engine/client/pid-file.ts",
+        'spawnSync("ps"',
+        "引擎 pidfile 清扫的 pid cmdline/start time 只读探测（R9-3/R9-3b：pid 复用"
+        "防御），数组参数不经 shell、显式 timeout，仅读进程表，无 env 传播意图"
+        "（与 reap-orphan-pi.ts ps 探测先例同构）",
+    ),
+    (
+        "engine/client/reaper.ts",
+        "taskkill",
+        "Windows 进程树终止（引擎崩溃收割 kill 处置，无数据回流通路；与 "
+        "supervisor/windows-process.ts taskkill.exe 先例同构）",
+    ),
+    (
+        "engine/engines/pi/pi-engine.ts",
+        "execFile(",
+        "pi 可执行入口版本探测（`<command> --version` 只读探测、显式 timeout、"
+        "仅回读 stdout 版本串，无 env 传播意图；chat 域 inproc 保留面，W7 包内"
+        "等价物同形态）",
+    ),
+    (
+        "engine/engines/pi/session-runner.ts",
+        'spawnSync("ps"',
+        "后代 pid cmdline 只读探测（身份校验/收割判定），数组参数不经 shell、显式"
+        " timeout，仅读进程表（chat 域 inproc 保留面）",
+    ),
+    (
+        "engine/engines/pi/session-runner.ts",
+        'execFile(\n          "git"',
+        "git rev-parse --abbrev-ref HEAD 只读探测（子进程 env block 的 branch 行数据"
+        "源），cwd 限定、显式 timeout、仅回读 stdout，无 env 传播意图（chat 域 "
+        "inproc 保留面）",
+    ),
+    (
+        "orchestration/worker-host.ts",
+        "new Worker(workerCode",
+        "node:worker_threads 的 Worker 是同进程线程而非 OS 子进程，不存在 env 出站"
+        "边界（与 plugin-host.ts new Worker 先例同构）",
     ),
     # --- apps/electron/main ---
     (

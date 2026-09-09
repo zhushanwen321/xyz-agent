@@ -52,6 +52,11 @@ import {
   ZCODE_KILL_GRACE_MS,
 } from "./constants.ts";
 import { toErrorMessage } from "./error-message.ts";
+import {
+  cleanupSiblingStderrLogs,
+  rotateStderrLogIfNeeded,
+  stderrRotationParams,
+} from "./logs/stderr-rotation.ts";
 
 const logger = getLogger("subagents");
 
@@ -169,6 +174,13 @@ export interface AppServerConnectionOptions {
    * （取证面不能拖垮主通道）。
    */
   stderrLogPath: string;
+  /**
+   * [W11] 实例维度路径解析器：传入当前代 app-server pid，返回该代的 tee 路径。
+   * 生产接线 = logs/stderr-rotation.ts 的 stderrLogPathFor（文件名带 pid——同
+   * engineDataDir 双实例并发 append/轮转互不干扰，设计 §3.9）；缺省回落
+   * stderrLogPath（测试注入固定路径的既有形态）。
+   */
+  stderrLogPathResolver?: (pid: number | undefined) => string;
   /** node 二进制（缺省 'node' 走 PATH）。 */
   nodeBin?: string;
   /** 控制面请求默认超时（缺省 ZCODE_APPSERVER_REQUEST_TIMEOUT_MS）。 */
@@ -211,6 +223,9 @@ export class AppServerConnection {
   private readonly cwd: string;
   private readonly env: NodeJS.ProcessEnv;
   private readonly stderrLogPath: string;
+  private readonly stderrLogPathResolver: (pid: number | undefined) => string;
+  /** 当前代 tee 流实际写入的路径（append/轮转/cleanup 共用）。 */
+  private activeStderrLogPath: string | null = null;
   private readonly nodeBin: string;
   private readonly requestTimeoutMs: number;
   private readonly reverseHandlers: Readonly<Record<string, (params: unknown) => unknown>>;
@@ -246,6 +261,7 @@ export class AppServerConnection {
     this.cwd = opts.cwd;
     this.env = opts.env;
     this.stderrLogPath = opts.stderrLogPath;
+    this.stderrLogPathResolver = opts.stderrLogPathResolver ?? (() => this.stderrLogPath);
     this.nodeBin = opts.nodeBin ?? "node";
     this.requestTimeoutMs = opts.requestTimeoutMs ?? ZCODE_APPSERVER_REQUEST_TIMEOUT_MS;
     this.reverseHandlers = opts.reverseHandlers ?? DEFAULT_REVERSE_HANDLERS;
@@ -596,29 +612,42 @@ export class AppServerConnection {
     }
   }
 
-  /** stderr 实时 append 落盘（懒打开；失败静默——取证面不能拖垮主通道）。 */
+  /** stderr 实时 append 落盘（懒打开 + 尺寸轮转 + 过期清理；失败静默——取证面不
+   * 能拖垮主通道）。 */
   private appendStderrLog(chunk: string): void {
     if (this.stderrStreamFailed) return;
     if (this.stderrStream === null) {
+      const target = this.stderrLogPathResolver(this.child?.pid);
       try {
-        fs.mkdirSync(dirname(this.stderrLogPath), { recursive: true });
-        this.stderrStream = fs.createWriteStream(this.stderrLogPath, { flags: "a" });
+        fs.mkdirSync(dirname(target), { recursive: true });
+        this.activeStderrLogPath = target;
+        this.stderrStream = fs.createWriteStream(target, { flags: "a" });
         this.stderrStream.on("error", () => {
           this.stderrStreamFailed = true;
         });
+        // 过期清理（三判据：同前缀 + pid 已死 + mtime 过期；每代流打开时机一次）
+        cleanupSiblingStderrLogs(target, process.env);
       } catch {
         this.stderrStreamFailed = true;
         return;
       }
     }
     this.stderrStream.write(chunk);
+    // 尺寸轮转：超阈值 rename 副本，本流关闭、下次写入懒重开新文件
+    if (this.activeStderrLogPath !== null) {
+      const params = stderrRotationParams(process.env);
+      if (rotateStderrLogIfNeeded(this.activeStderrLogPath, params)) {
+        this.closeStderrStream();
+      }
+    }
   }
 
-  /** 代收尾时关闭 tee 流（下一代懒重开，同路径 append——崩溃重建集中同一文件）。 */
+  /** 代收尾时关闭 tee 流（下一代懒重开；W11 起路径按新一代 pid 解析）。 */
   private closeStderrStream(): void {
     if (this.stderrStream !== null) {
       const stream = this.stderrStream;
       this.stderrStream = null;
+      this.activeStderrLogPath = null;
       stream.end();
     }
   }

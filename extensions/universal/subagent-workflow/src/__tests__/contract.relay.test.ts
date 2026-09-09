@@ -322,9 +322,12 @@ describe("relay 变体 C-归属：buildChildEnv 激活写入 / 未激活不写",
     await resultPromise;
   });
 
-  it("未激活但环境残留归属值：继承值保持不被覆盖（无害性锁定）", async () => {
-    // 场景：孙进程链上 runtime 已剥离三激活 env（relay-registry 剥离逻辑），但主进程 env
-    // 残留旧归属值——buildChildEnv 未激活不写 = 不覆盖继承值（设计 §5.2-2 语义）。
+  it("未激活但环境残留归属值：残留身份键被出站剥除（W11 语义收紧锁定）", async () => {
+    // [W11] chat inproc spawn 的 env 基座改经 buildOutboundChildEnv（deny 剥离）后，
+    // 本用例从旧「无害性锁定：残留值继承不覆盖」收紧为「残留身份键剥除」——与
+    // impl-plan §2.12 五键剥离清单一致（RELAY_SESSION_ID/RECORD_ID 防父身份误归属，
+    // 激活时由 buildChildEnv 按 ctx 显式重写，不靠继承）。旧语义的「继承无害」在
+    // 跨 record 复用宿主进程时会让孙进程读到上一 record 的归属值，属真泄漏面。
     setRelayEnv({ [RELAY_ENV_SESSION_ID]: "stale-inherited-sid", [RELAY_ENV_RECORD_ID]: "stale-inherited-rid" });
     expect(isRelayActive(process.env)).toBe(false);
     const record = makeRecord();
@@ -332,8 +335,8 @@ describe("relay 变体 C-归属：buildChildEnv 激活写入 / 未激活不写",
     const resultPromise = runSpawn(record, "test task", makeRunOpts(), ctx);
     await waitForSpawn(mockSpawn);
     const childEnv = getLastSpawnEnv();
-    expect(childEnv[RELAY_ENV_SESSION_ID]).toBe("stale-inherited-sid");
-    expect(childEnv[RELAY_ENV_RECORD_ID]).toBe("stale-inherited-rid");
+    expect(childEnv[RELAY_ENV_SESSION_ID]).toBeUndefined();
+    expect(childEnv[RELAY_ENV_RECORD_ID]).toBeUndefined();
 
     const child = getLastSpawnedChild();
     child.emit("close", 0);

@@ -25,6 +25,11 @@ import {
   type ActivePendingResult,
 } from "../../../session-pending.ts";
 import { killChain } from "../../common/kill-chain.ts";
+// [W11/C-proc-09] 出站卫生构建器：chat 域 inproc spawn 的 env 基座经 deny 剥离
+// （XYZ_AGENT_PACKAGED / XYZ_RUNTIME_TOKEN / XYZ_AGENT_API_KEY / relay 身份两键——
+// 身份键由下方注入段按 record/ctx 显式重写，不靠继承），与 pi 引擎包 buildChildEnv
+// 同一契约（impl-plan §2.12 五键剥离清单）。
+import { buildOutboundChildEnv } from "@zhushanwen/subagent-engine-sdk";
 
 import type { ExtensionMode } from "../../../host-mode.ts";
 
@@ -1761,7 +1766,9 @@ function buildChildEnv(
   opts: RunOptions,
   ctx: SessionRunnerContext,
 ): Record<string, string | undefined> {
-  const childEnv: Record<string, string | undefined> = { ...process.env };
+  const childEnv: Record<string, string | undefined> = {
+    ...buildOutboundChildEnv({ parentEnv: process.env }),
+  };
   if (opts.fork && opts.parentForkDepth !== undefined) {
     childEnv.PI_SUBAGENT_FORK_DEPTH = String(opts.parentForkDepth + 1);
   }

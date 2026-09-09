@@ -55,7 +55,7 @@ rl.on('line', (line) => {
   } catch {
     return
   }
-  const { id, method, params } = frame
+  const { id, method } = frame
   switch (method) {
     case 'initialize':
       send({

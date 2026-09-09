@@ -24,6 +24,8 @@ export default [
       'apps/electron/preload/preload.js',
       'apps/electron/resources/pi/**',
       'apps/electron/resources/extensions/**',
+      // [W11] 引擎包 staging 产物（bundle-extensions esbuild 输出，gitignored 构建产物）
+      'apps/electron/resources/engines/**',
       // .xyz-harness 是设计文档/骨架代码（spec/plan/code-skeleton），非项目源码，不参与 lint
       '.xyz-harness/**',
       // playwright 测试产物（trace/报告是工具生成的压缩 JS，非项目源码，已被 .gitignore）
@@ -150,9 +152,12 @@ export default [
   // 2026-09-05 落地后超限）。职责内聚（帧序分发、终态判定与 idle 刷新共享同一
   // ActiveTurn 状态），行数超 500。拆分违反该设计 §7「无新模块」约束，属独立重构任务。
   // 与 event-adapter/session-service 等 override 同型——唯一聚合中心，短期避免阻塞。
+  // [W11] session-channel.ts 随 zcode 引擎外移迁入 @zhushanwen/zcode-subagent-cli
+  // （W5 整包搬移），override 路径同步跟随——搬移前后生效规则集 diff = 0（impl-plan
+  // §2.11 eslint override 迁移验收）。
   {
     files: [
-      'packages/subagent-core/src/execution/engine/engines/zcode/session-channel.ts',
+      'packages/zcode-subagent-cli/src/session-channel.ts',
     ],
     rules: {
       'max-lines': 'off',
@@ -456,12 +461,11 @@ export default [
     },
   },
   // zcode-engine.ts：zcode app-server 常驻引擎的唯一聚合中心（连接池 + 会话生命周期 +
-  // 降级链 + 错误归类，packages 域上限 500 下 1038 行）。拆分方向（连接层 / 会话层 /
-  // 归类层）属独立重构任务，短期 override 至 1150 避免阻塞。U2 超时收口 + U3 终态
-  // status 分流（timeout-zcode-turn-and-settled-watchdog.md，2026-09-05）后 1165 行——
-  // 与 session-runner 同型提额至 1300（U4 重试扩展/U5 dispose 收割还将落在同文件）。
+  // 降级链 + 错误归类）。拆分方向（连接层 / 会话层 / 归类层）属独立重构任务，短期
+  // override 避免阻塞。U2 超时收口 + U3 终态 status 分流后与 session-runner 同型提额。
+  // [W11] 随 zcode 引擎外移迁入 @zhushanwen/zcode-subagent-cli（W5），路径同步跟随。
   {
-    files: ['packages/subagent-core/src/execution/engine/engines/zcode/zcode-engine.ts'],
+    files: ['packages/zcode-subagent-cli/src/zcode-engine.ts'],
     rules: {
       'max-lines': ['warn', { max: 1300, skipBlankLines: true, skipComments: true }],
     },

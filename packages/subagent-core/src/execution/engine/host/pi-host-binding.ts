@@ -24,31 +24,33 @@ import type { PiEngineService } from "../engines/pi/pi-engine.ts";
 export type { ChatRoundTicket, PiEngine, PiEngineService } from "../engines/pi/pi-engine.ts";
 export { PI_POOL_KEY };
 
-// [W7] runSpawn / SessionRunnerContext / SpawnResumeOpts（impl-plan §2.6「随 W7 迁
-// pi 包」的 core 侧过渡形态）：归属物已迁 @zhushanwen/pi-subagent-cli（spawn-runner
-// 等价物）；core inproc 过渡链路继续消费 engines/pi 原件，消费点（subagent-service）
-// 的 import 收敛到本公共面——engines/pi 深路径 import 只剩本文件与 spawned-children.ts
-// 过渡桥（W11 删）。EPIPE 兜底（resetAllEpipeFailures）同批收敛（§2.6 :82 行）。
+// [W11] runSpawn / SessionRunnerContext / SpawnResumeOpts / resetAllEpipeFailures /
+// maxTurnsToWatchdogMs：归属物已迁 @zhushanwen/pi-subagent-cli（spawn-runner 等
+// 等价物）；core 侧**chat 域 inproc 保留面**（主 agent 裁决 2026-09：chat 续聊的
+// v1 协议载荷面缺口，协议 v1.x 扩展待排期——临时豁免，非永久内置）继续消费
+// engines/pi 原件，消费点（subagent-service / barrel）的 import 收敛到本公共面。
+// 深路径 import 只剩本文件与 spawned-children.ts 两个 host 桥（豁免面最小化）。
 export { runSpawn } from "../engines/pi/session-runner.ts";
 export type { SessionRunnerContext, SpawnResumeOpts } from "../engines/pi/session-runner.ts";
 export { resetAllEpipeFailures } from "../engines/pi/stdin-writer.ts";
+export { maxTurnsToWatchdogMs } from "../engines/pi/session-runner.ts";
 
 /**
- * chat 域 pi 引擎构造（inproc 过渡形态，W11 删）：per-service DI 绑定保持——getService
- * 经适配器绑本 Service 实例（registry 全局 'pi' 单例绑进程级 getSubagentService()，
- * 直构 Service 的测试场景解析不到本实例；不能 import registration.ts 的注册工厂，
- * 其绑定点是进程单例）。cli 形态（RemoteEngine）的 chat 域接线归 W7。
+ * chat 域 pi 引擎构造（inproc 保留面，[W11 主 agent 裁决] 临时豁免）：per-service
+ * DI 绑定保持——getService 经适配器绑本 Service 实例（registry 全局 'pi' 单例绑进程级
+ * getSubagentService()，直构 Service 的测试场景解析不到本实例）。cli 形态 chat 接线
+ * 待协议 v1.x 扩展 chat 载荷面后收口（非永久内置）。
  */
 export function createChatPiEngine(getService: () => PiEngineService | null): PiEngine {
   return new PiEngine({ getService });
 }
 
 /**
- * 宿主侧 pi EnginePort 解析（SAR :33 改线落点，R1 MF-5）：registry 的 'pi' 已注册
- * **cli 形态** port（W7+ 引擎包注册的 RemoteEngine）时经 descriptor 路由（getEngine
- * ——惰性单例 + 两形态透明）；inproc / 未注册（迁移期现状）回落 per-session DI 直构，
- * 行为与改线前的 createPiEngine 逐点一致（inproc registry 单例绑进程级服务，会破坏
- * SAR 的 per-session mock 注入语义，故 inproc 形态不取 registry 单例）。
+ * 宿主侧 pi EnginePort 解析（SAR）：registry 的 'pi' 已注册 **cli 形态** port
+ * （发现器装载的 RemoteEngine）时经 descriptor 路由（getEngine——惰性单例 + 两形态
+ * 透明）；未注册（发现失败/未接线）回落 per-session DI 直构——chat 域 inproc 保留面
+ * 的兜底形态（临时豁免：pi run 的常态路径应为 cli，该回落仅在引擎包不可发现时可达，
+ * warn 由发现链留痕；per-session mock 注入语义不取 registry 单例）。
  */
 export function resolveHostPiEnginePort(getService: () => PiEngineService | null): EnginePort {
   if (hasEngine("pi")) {

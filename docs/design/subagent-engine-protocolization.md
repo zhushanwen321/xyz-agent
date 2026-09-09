@@ -739,6 +739,22 @@ RSS 实施期实测回写 §3.6 表；恢复 = 取消 runtime 路径（降②级
 ⑤ **stderr 常驻排空 I/O**：量级 = 引擎 stderr 速率（通常低频；异常刷屏时受环形缓冲约束）；
 恢复 = 降低落盘等级；重审触发 = stderr 文件增长 > 100MB/日；判定 = 可接受。
 
+**引擎卸载/禁用后目录的处置指引（§3.9 裁决② 落地登记，W11）**：
+
+- **范围**：`<engineDataDir>/engines/<id>/`（池目录 / 隔离库 / pidfile 残留）+ 共享日志目录
+  `<engineDataDir>/logs/`（跨引擎共享、无 id 维度）。引擎包卸载或 `engines{}` 配置禁用后，
+  这些目录成为无主残留——**无自动清理通道（裁决② 取裁决① 反向清理）**。
+- **无通道风险判定**：残留只占磁盘不破坏行为（record/journal 的读链按路径白名单解析，
+  越界/缺失路径自动降级 journal/outcome-only，见 A9/DoD#3 读取链）。
+- **人工清理指引**：确认引擎已不再使用（卸载 / 禁用）后，停宿主进程窗口内直接删除
+  `<engineDataDir>/engines/<id>/`；`logs/` 目录按下述判据手工清理——只删「文件名携带的
+  pid 已死（`kill -0` 探测）**且** mtime 超过保留期（缺省 7 天）」的引擎 stderr 文件
+  （`zcode-appserver-stderr-<pid>.log` / `pi-task-stderr-<pid>.log` 及其轮转副本；
+  与引擎包自实现清理三判据一致，手工通道只是同判据的兜底）。隔离库 TTL 策略另见
+  `zcode-session-db-isolation.md` §3.2 D4。
+- **重审触发**：隔离库（`engines/zcode/session-db/db.sqlite`）> 2GB，或出现磁盘异常
+  用户报告 → 重评「是否升级为发现器反向清理（裁决①）」。
+
 ### 3.10 实施不变量
 
 1. **协议是唯一界面**：引擎包不得 import `@zhushanwen/subagent-core`（只可 import SDK）；**SDK 也不得 import core**

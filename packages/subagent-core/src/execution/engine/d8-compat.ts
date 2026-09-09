@@ -41,13 +41,11 @@ import {
   resolveManifestBin,
 } from "./engine-manifest.ts";
 import { inspectEnginePackage } from "./engine-discovery-scan.ts";
-import { hasEngine, registerEngine, registerEngineDescriptor, type CliEngineDescriptor } from "./registry.ts";
+import { hasEngine, registerEngineDescriptor, type CliEngineDescriptor } from "./registry.ts";
 import type { EngineCapabilities } from "./types.ts";
 import type { EnginePort } from "./port.ts";
 import type { ModelCatalogEntry } from "@zhushanwen/subagent-engine-sdk";
 import { getLogger } from "../../core/logger.ts";
-// inproc 回退（过渡期；W11 删 engines/zcode 时同批删除本 import 与回退分支）
-import { ZcodeEngine as InprocZcodeEngine } from "./engines/zcode/zcode-engine.ts";
 
 const logger = getLogger("subagents");
 
@@ -81,6 +79,13 @@ export interface D8CompatZcodeEngineDeps {
   /** env 基底合并（buildEngineChildEnv baseEnv；缺省 {...process.env}）。 */
   processEnv?: NodeJS.ProcessEnv;
 }
+
+/**
+ * [W11 收口] 旧 ZcodeEngineDeps 的兼容别名：barrel 原类型导出（zsw 调用面的 deps
+ * 形状契约）与 D8CompatZcodeEngineDeps 合并——结构同源（engineDataDir/cliPath/
+ * sources/probeVersion/processEnv），别名保留免 zsw 侧机械改名。
+ */
+export type ZcodeEngineDeps = D8CompatZcodeEngineDeps;
 
 /** vendored 引擎包定位结果。 */
 interface LocatedEnginePkg {
@@ -210,41 +215,23 @@ function canExecute(p: string): boolean {
  * 注册表已有 descriptor（W4 发现器先装载 / 重复调用）→ 直接保留——发现器 cli
  * descriptor 携带完整 manifest 快照，权威高于薄壳构造。未注册 → vendored 定位构造
  * cli descriptor（经 W4 inspectEnginePackage 全量 manifest 解析；engineDataDir 经
- * 合成 env XYZ_AGENT_DATA_DIR 被 portFactory 捕获——「以显式值为准」）；定位失败 →
- * 回退 inproc 注册（过渡期可用性，与 W8 前行为一致）。
- */
-/** inproc 回退注册（过渡期；与 W8 前 registration.ts 行为逐字对齐——含 XYZ_ZCODE_CLI
- *  cliPath 覆盖。W11 删 engines/zcode 时同批删除）。 */
-function registerInprocZcodeFallback(engineDataDir: () => string): void {
-  registerEngine(
-    D8_ZCODE_ENGINE_ID,
-    () =>
-      new InprocZcodeEngine({
-        engineDataDir,
-        ...(process.env["XYZ_ZCODE_CLI"] !== undefined ? { cliPath: process.env["XYZ_ZCODE_CLI"] } : {}),
-      }),
-  );
-}
-
-/**
- * D8 薄壳：确保 id 'zcode' 的引擎 descriptor 已注册，engineDataDir 记入 descriptor。
- *
- * 注册表已有 descriptor（W4 发现器先装载 / 重复调用）→ 直接保留——发现器 cli
- * descriptor 携带完整 manifest 快照，权威高于薄壳构造。未注册 → vendored 定位构造
- * cli descriptor（经 W4 inspectEnginePackage 全量 manifest 解析；engineDataDir 经
- * 合成 env XYZ_AGENT_DATA_DIR 被 portFactory 捕获——「以显式值为准」）；定位失败 →
- * 回退 inproc 注册（过渡期可用性，与 W8 前行为一致）。
+ * 合成 env XYZ_AGENT_DATA_DIR 被 portFactory 捕获——「以显式值为准」）。[W11/DoD#5]
+ * 定位/解析失败保持未注册（inproc 回退已删，不变量 6「失败不静默」——派发期
+ * engine_not_found 显式报错 + 恢复指引；XYZ_ZCODE_CLI 覆盖通道由 createZcodeEngine
+ * 的 deps.cliPath 等价承载）。
  */
 export function registerZcodeEngine(engineDataDir: () => string = getEngineDataDir): void {
   const id = D8_ZCODE_ENGINE_ID;
   if (hasEngine(id)) return;
+  // [W11/DoD#5] inproc 回退分支已删（不变量 6「失败不静默」）：定位/解析失败保持
+  // 未注册——派发期 engine_not_found 显式报错（含「安装/发现引擎包」恢复指引），
+  // XYZ_ZCODE_CLI 覆盖通道由 createZcodeEngine 的 deps.cliPath 等价承载。
   const located = locateVendoredEnginePkg(id);
   if (located === undefined) {
-    logger.debug(
+    logger.warn(
       `[d8-compat] engine '${id}' vendored package not located (enginePkg ${enginePkgName(id)}); ` +
-        "falling back to inproc registration (transition period)",
+        "left unregistered — dispatch will fail with engine_not_found + recovery guidance",
     );
-    registerInprocZcodeFallback(engineDataDir);
     return;
   }
   // 合成 env：显式 engineDataDir 写进 XYZ_AGENT_DATA_DIR，portFactory 闭包经
@@ -254,9 +241,8 @@ export function registerZcodeEngine(engineDataDir: () => string = getEngineDataD
   if (inspection.status !== "ok") {
     logger.warn(
       `[d8-compat] engine '${id}' vendored package inspection failed (${inspection.reason}); ` +
-        "falling back to inproc registration (transition period)",
+        "left unregistered — dispatch will fail with engine_not_found + recovery guidance",
     );
-    registerInprocZcodeFallback(engineDataDir);
     return;
   }
   registerEngineDescriptor(id, inspection.entry.descriptor as CliEngineDescriptor);

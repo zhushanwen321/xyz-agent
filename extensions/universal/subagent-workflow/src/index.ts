@@ -26,10 +26,11 @@ import { bestEffort } from "@zhushanwen/subagent-core";
 // ═══ execution/ 层（subagents 核心 + 运行时） ═══
 // [U7] 引擎列表状态文件（registry → engines.json，GUI 引擎选择器数据源）
 import { syncEnginesFile } from "@zhushanwen/subagent-core";
-// [P1 引擎接线] 组合根登记 'pi' 引擎进 registry（引擎获取统一经 getEngine，缺省 id 'pi'）
-import { registerPiEngine } from "@zhushanwen/subagent-core";
-// [P3 引擎接线] 组合根登记 'zcode' 引擎（spawn 单轮模式；engineDataDir 默认走
-// common/data-dir SSOT，见 engines/zcode/registration.ts）
+// [W11/DoD#5] registerPiEngine（inproc 'pi' 注册）已随内建引擎删除：registry 'pi'
+// 由下方 syncEnginesFile 的三级发现装载 cli descriptor（engines/zcode 同理由
+// registerZcodeEngine D8 薄壳承载）。
+// [P3 引擎接线] 组合根登记 'zcode' 引擎（D8 薄壳：vendored 定位 cli descriptor；
+// engineDataDir 默认走 common/data-dir SSOT）
 import { registerZcodeEngine } from "@zhushanwen/subagent-core";
 import { getModelConfigService } from "@zhushanwen/subagent-core";
 import { getBoundNotifyLedger } from "@zhushanwen/subagent-core";
@@ -134,14 +135,11 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   configureCore(createPiHostServices());
   configureNotifyDomain(createPiNotifyDomainPorts());
 
-  // [P1 引擎接线] 组合根登记缺省引擎：进程级 SubagentService 单例（session_start 注入）
-  // 经 registry 以 'pi' 暴露——引擎获取从此统一走 getEngine(DEFAULT_ENGINE_ID)，上层
-  // 不再硬编码「spawn pi」。幂等（registerEngine 覆盖语义），工厂惰性解析服务单例。
-  // P4 配置路由（agent frontmatter engine 字段 + 三层优先级）在本登记之上消费。
-  registerPiEngine();
-
-  // [P3 引擎接线] 登记 'zcode'（幂等同上）。惰性工厂：不触发 CLI/凭据探测，引擎被
-  // 实际选用（P4 路由或显式 getEngine('zcode')）才解析 deps。
+  // [W11/DoD#5] 'pi' 的 inproc 注册（registerPiEngine）已删除——缺省引擎 'pi' 的
+  // registry 条目由下方 syncEnginesFile 内的三级发现装载（cli descriptor，幂等），
+  // P4 配置路由（agent frontmatter engine 字段 + 三层优先级）在其上消费；chat 域
+  // pi 引擎不经 registry（SubagentService 自持 DI，W11 主 agent 裁决的临时豁免面）。
+  // [P3 引擎接线] 登记 'zcode'（幂等同上）。D8 薄壳：vendored 定位 cli descriptor。
   registerZcodeEngine();
 
   // [U7b] 引擎列表在 extension 模块加载时即同步 engines.json（不等 session_start——

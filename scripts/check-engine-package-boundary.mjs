@@ -136,7 +136,7 @@ function main() {
     for (const sub of ["src", "bin"]) {
       for (const f of listFiles(join(pkgDir, sub), SRC_EXTENSIONS)) {
         const source = readFileSync(f, "utf8");
-        for (const { specifier, lineNo, lineText } of extractSpecifiers(source)) {
+        for (const { specifier, lineNo } of extractSpecifiers(source)) {
           if (specifier === CORE_PACKAGE_NAME || specifier.startsWith(`${CORE_PACKAGE_NAME}/`)) {
             violations.push({
               where: `${rel(f)}:${lineNo}`,

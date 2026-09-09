@@ -139,7 +139,7 @@ export interface ChatRoundTicket extends HostChatRoundTicket {
  * 设计 §3.8 D2：9 成员归 HostBridge/core）——pi 绑定把 chat 域轮次面泛型参数化为
  * pi 专有 ticket 形态；签名与拆面前的成员逐一相同（纯类型面搬移，零行为）。
  */
-export interface PiEngineService extends HostBridgeServiceFace<ChatRoundTicket> {}
+export type PiEngineService = HostBridgeServiceFace<ChatRoundTicket>;
 
 /** PiEngine 构造依赖。 */
 export interface PiEngineDeps {

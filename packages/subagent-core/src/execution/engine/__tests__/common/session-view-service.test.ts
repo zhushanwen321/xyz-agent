@@ -34,7 +34,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(dataDir, { recursive: true, force: true });
+  rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   // reader registry 是进程级状态——重置回内置集，防 fake 注入跨用例泄漏
   resetNativeSessionReaders();
 });
@@ -163,7 +163,13 @@ describe("降级链编排", () => {
     });
   });
 
-  it("①级 db 不存在（真 zcode reader throw）→ ②级 journal 命中", async () => {
+  it("[W11/H1] ①级 reader 不可达（协议 read 失败降级形态）→ ②级 journal 命中", async () => {
+    // W11 后①级 reader 全经注入（生产 = runtime 协议 read，失败在其内部 catch 后
+    // 返回 undefined）：注入一个恒 undefined 的 reader 复现「协议失败降②级」语义
+    // （原「真 zcode reader 对不存在 db 内部 catch 降级」分支随 H1 内建 reader
+    // 删除，sqlite 侧行为由 zcode 包 e2e 接替；NativeSessionReader 契约 = 不抛，
+    // 失败以 undefined 表达）。
+    registerNativeSessionReader("zcode", async () => undefined);
     const journalPath = join(dataDir, "engines", "zcode", "shared", "journal-sub-1.jsonl");
     await writeJournal(journalPath, [
       { type: "text_delta", delta: "part one. " },
@@ -190,7 +196,7 @@ describe("降级链编排", () => {
   });
 
   it("②级也不可达（无 journalPath）→ ③级 outcome-only，永不返回空数组", async () => {
-    // 真 zcode reader：dbPath 指向不存在文件 → ①级 throw 降级；handle 无 journalPath → ③级
+    // ①级无注册 reader（W11 后注册表初始为空）→ 直落②级；handle 无 journalPath → ③级
     const messages = await readSubagentHistoryMessages(
       makeRecord({ result: "final answer", endedAt: 2_000 }),
       dataDir,

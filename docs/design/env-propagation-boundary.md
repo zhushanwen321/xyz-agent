@@ -126,7 +126,7 @@
 | `XYZ_AGENT_DEBUG` | B3 白名单放行 | extension-logger、subagent-workflow 引擎（extensions 内 4 处生产读取） |
 | `XYZ_GLOBAL_AGENTS_DIR` | B3 白名单放行 | `extensions/taiji/system-prompt/src/index.ts:91`（全局 agents 目录 override） |
 | `XYZ_SUBAGENT_RELAY_SOCKET/_NODE/_SCRIPT` | B3 经 `getRelaySpawnEnv()` **显式注入**（`process-manager.ts:123`；常量定义 `subagent-workflow/src/execution/relay-env.ts:13-15`，构建 `runtime/infra/relay/relay-env.ts:107-126`，「全有或全无」降级 :110-112） | 代理链路三基础设施；嵌套 spawn 时五键被剥防旧值误导（`relay-registry.ts:177-178`） |
-| `XYZ_ZCODE_CLI` | B3 白名单放行 | `engines/zcode/registration.ts:34`（zcode CLI 路径 override，引擎在 pi 内孵化外部 CLI） |
+| `XYZ_ZCODE_CLI` | B3 白名单放行 | `packages/zcode-subagent-cli/src/registration.ts:40`（zcode CLI 路径 override，引擎孵化外部 CLI；[W11 终态] core 内建 engines/zcode 已删，core 侧等价通道 = d8-compat `createZcodeEngine` 的 `deps.cliPath`） |
 
 #### C 组：plugin 子进程域
 
@@ -291,7 +291,7 @@ rg -n 'spawn\(|execFile\(|fork\(|pty\.spawn' packages/runtime/src apps/electron/
 - **守卫扩展**：`check_spawn_env_boundary.py` 的 `SCAN_ROOTS` 已含 SDK（`packages/subagent-engine-sdk/src`）与两个引擎 CLI 包（`packages/zcode-subagent-cli`、`packages/pi-subagent-cli`，创建前 WARN 跳过）；`buildEngineChildEnv` 与 `buildOutboundChildEnv` / `composeChildEnvBase` 并列进 `CONTRACT_BUILDER_SYMBOLS`。
 - **引擎侧自灭**（SDK `armEngineSelfDestruct`）：主判据 stdio EOF；辅助判据未 ack 反向请求计时超时（缺省 30s，env `XYZ_ENGINE_HOST_REQUEST_TIMEOUT_MS`）；排除面 = 已 ack 的 host/askUser 与两阶段 ack 的长运行 `HostBridge.executeAndAwait`。配套 `spawnEngineChild`（任务子进程唯一 spawn 入口）：硬编码 `detached:false` + `windowsHide:true`，子进程 stdin 恒自有 pipe、绝不继承引擎自身 stdin fd（R9-4②，否则 EOF 主判据失效）。
 
-**【迁移期中间态标注，W12 拖尾子项（impl-plan §7.1，四项）】**：以下子项依赖引擎包迁移状态（W5/W7/W9），本时点为中间态——① 本文档 B3 条目终态与 `packages/shared/src/spawn-env-contract.ts` 的 `XYZ_ZCODE_CLI` 条目 `piConsumerAnchors` 回写（现锚 subagent-core `engines/zcode/registration.ts:34`，包迁移后改指引擎包新路径）；② SCAN_ROOTS 对引擎包的扫描实效；③ pi 侧 `buildChildEnv` 补齐 5 键剥离的落点核对；④ `packages/subagent-core/src` 的 SCAN_ROOTS 条目 + core 侧 `EXEMPT_CALLSITES` 豁免清零（W11 收口时点执行）。终态以 W11 DoD#9 门核验。
+**【W11 收口终态（原 W12 拖尾四项核对完毕，2026-09-09）】**：① 本文档 B3 条目与 `packages/shared/src/spawn-env-contract.ts` 的 `XYZ_ZCODE_CLI` `piConsumerAnchors` 已回写引擎包新路径（`packages/zcode-subagent-cli/src/registration.ts:40` + core d8-compat `deps.cliPath` 等价通道）；② `check_spawn_env_boundary.py` SCAN_ROOTS 已含 SDK 与两个引擎 CLI 包（W12 主时点落地）且 `packages/subagent-core/src` 已加入（本收口批，零豁免）；③ pi 侧 `buildChildEnv` 5 键剥离已落 `packages/pi-subagent-cli/src/spawn-runner.ts`（`buildOutboundChildEnv` deny 清单承载，SDK `ENGINE_ENV_DENY_LIST` 含 ①`XYZ_AGENT_PACKAGED` ②`XYZ_RUNTIME_TOKEN` ③`XYZ_SUBAGENT_RELAY_SESSION_ID` ④`XYZ_SUBAGENT_RELAY_RECORD_ID` ⑤`XYZ_AGENT_API_KEY`，relay 身份两键在 buildChildEnv 内按 run ctx 显式重写——次序 = 先过滤后注入，与 §2.12 规格一致）；④ 见 ②。
 
 ## 4. 验收（真实场景，非单测堆砌）
 

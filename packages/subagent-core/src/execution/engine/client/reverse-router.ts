@@ -196,8 +196,13 @@ async function dispatchDataPlane(deps: ReverseRouterDeps, method: string, params
               + `(not in the engine harvest group — one-generation children + in-group descendants `
               + `only; engine-detached descendants are an accepted cost per design §3.9)`,
           );
-        } catch {
-          // ESRCH = pid 非组长 = 在引擎组内（预期形态），静默。
+        } catch (err) {
+          // ESRCH = pid 非组长 = 在引擎组内（预期形态）；其余 errno 同按预期形态
+          // debug 留痕（组探测异常排查时的最低可见性，不判 fail）。
+          logger.debug(
+            `[engine-client:${deps.engineId}] childSpawned pid ${p.pid} group probe settled ` +
+              `(${err instanceof Error ? err.message : String(err)})`,
+          );
         }
       }
       break;

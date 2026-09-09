@@ -22,28 +22,6 @@
       },
       "default": "./src/index.ts"
     },
-    "./engines/zcode/reader": {
-      "import": {
-        "types": "./src/execution/engine/engines/zcode/reader.ts",
-        "default": "./src/execution/engine/engines/zcode/reader.ts"
-      },
-      "require": {
-        "types": "./dist/execution/engine/engines/zcode/reader.d.cts",
-        "default": "./dist/execution/engine/engines/zcode/reader.cjs"
-      },
-      "default": "./src/execution/engine/engines/zcode/reader.ts"
-    },
-    "./engines/zcode/constants": {
-      "import": {
-        "types": "./src/execution/engine/engines/zcode/constants.ts",
-        "default": "./src/execution/engine/engines/zcode/constants.ts"
-      },
-      "require": {
-        "types": "./dist/execution/engine/engines/zcode/constants.d.cts",
-        "default": "./dist/execution/engine/engines/zcode/constants.cjs"
-      },
-      "default": "./src/execution/engine/engines/zcode/constants.ts"
-    },
     "./engine/paths": {
       "import": {
         "types": "./src/execution/engine/paths.ts",
@@ -98,28 +76,6 @@
           "default": "./dist/index.cjs"
         },
         "default": "./dist/index.js"
-      },
-      "./engines/zcode/reader": {
-        "import": {
-          "types": "./dist/execution/engine/engines/zcode/reader.d.ts",
-          "default": "./dist/execution/engine/engines/zcode/reader.js"
-        },
-        "require": {
-          "types": "./dist/execution/engine/engines/zcode/reader.d.cts",
-          "default": "./dist/execution/engine/engines/zcode/reader.cjs"
-        },
-        "default": "./dist/execution/engine/engines/zcode/reader.js"
-      },
-      "./engines/zcode/constants": {
-        "import": {
-          "types": "./dist/execution/engine/engines/zcode/constants.d.ts",
-          "default": "./dist/execution/engine/engines/zcode/constants.js"
-        },
-        "require": {
-          "types": "./dist/execution/engine/engines/zcode/constants.d.cts",
-          "default": "./dist/execution/engine/engines/zcode/constants.cjs"
-        },
-        "default": "./dist/execution/engine/engines/zcode/constants.js"
       },
       "./engine/paths": {
         "import": {

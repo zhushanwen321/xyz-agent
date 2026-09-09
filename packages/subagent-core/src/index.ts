@@ -2,8 +2,8 @@
  * @zhushanwen/subagent-core — 公共 API barrel（D5 定稿 + post-convergence B-2 扩面）
  *
  * 公共 API 面 = 本文件导出 + package.json exports 的语义子入口
- * （./engines/zcode/reader、./engines/zcode/constants、./engine/paths、./relay-env）
- * + ./workflows/* 资产子入口。exports 面即 semver 契约（D5）：收窄不放宽——
+ * （./engine/paths、./engine/engine-discovery-scan、./relay-env——[W11/H3] 引擎
+ * 子入口 ./engines/zcode/* 已随内建引擎删除）+ ./workflows/* 资产子入口。exports 面即 semver 契约（D5）：收窄不放宽——
  * 新增导出走 minor，本文件刻意不使用 `export *`，逐名列出以使 diff 可审。
  * 内部实现细节（error-recovery / execute-agent-call / worker-script-builder 等
  * engine 编排件）不经 barrel 导出；host-surface 扩面（zsw 回接 U0，2026-08-30）
@@ -97,13 +97,15 @@ export { setEngineDiscoveryRescanOptions } from "./execution/engine/routing.ts";
 // 组合根 index.ts 接线消费（registerXxx 引擎注册、syncEnginesFile engines 文件
 // 同步、killAllSpawnedChildren session 派生进程兜底清理）。
 export { syncEnginesFile } from "./execution/engine/engine-discovery.ts";
-export { registerPiEngine } from "./execution/engine/engines/pi/registration.ts";
-// [W8 D8 薄壳] killAllSpawnedChildren：宿主收割入口（扩展 index.ts:103 / zsw
-// runner-core.js:428 的业务调用点零改动）。语义 = disposeEngines() 触发全部已实例化
+// [W11/DoD#5] registerPiEngine（inproc 'pi' 注册）已删：registry 'pi' 由三级发现装载
+// cli descriptor（syncEnginesFile / hasEngineWithRescan 补扫通道），chat 域 inproc 引擎
+// 是 SubagentService 自持 DI（不经 registry，主 agent 裁决的临时豁免保留面）。
+// [W8 D8 薄壳] killAllSpawnedChildren：宿主收割入口（扩展 index.ts / zsw
+// runner-core.js 的业务调用点零改动）。语义 = disposeEngines() 触发全部已实例化
 // 引擎 dispose（cli 形态 = RemoteEngine.dispose → EngineClient 3s 帧上界 + 组杀）+
-// 遍历杀进程内 per-record children（inproc 过渡残余）——即 D8「杀 per-record children
-// + 触发引擎 dispose」的目标形态，实现留在 pi session-runner（W11 随 inproc 删除收口）。
-export { killAllSpawnedChildren } from "./execution/engine/engines/pi/session-runner.ts";
+// 遍历杀进程内 per-record children（chat 域 inproc 保留面）。实现收敛在
+// engine/host/spawned-children.ts 公共面（W11 随 inproc 目录收口改线）。
+export { killAllSpawnedChildren } from "./execution/engine/host/spawned-children.ts";
 
 // [W8 D8 兼容公共面薄壳]（设计 §3.6 D8 表）：registerZcodeEngine 确保cli descriptor
 // 注册（vendored 相对定位，失败回退 inproc 过渡）+ engineDataDir 记入；createZcodeEngine
@@ -116,24 +118,21 @@ export {
   type D8CompatZcodeEngineDeps,
 } from "./execution/engine/d8-compat.ts";
 
-// pi session-runner 内核件（merge 裁决：dev 侧旧深路径 execution/session-runner.ts
-// 终态已不存在，符号随 u-2a 迁移至 engine/engines/pi/session-runner.ts）：
+// pi session-runner 内核件（[W11/H2] barrel 不再深路径触达 engines/pi——经 host
+// 公共面 re-export，chat 域 inproc 保留面的最小公共出口）：
 // maxTurnsToWatchdogMs 为 maxTurns→watchdog 毫秒换算（U3/U4 / D7，floor 语义
 // 文档化——两宿主预算一致性 S2 的函数级锚点）；killRecordChildWithEscalation 为
 // 单 record 子进程升级回收（session 派生进程清理的细粒度入口）。
 export {
   killRecordChildWithEscalation,
-  maxTurnsToWatchdogMs,
-} from "./execution/engine/engines/pi/session-runner.ts";
+} from "./execution/engine/host/spawned-children.ts";
+export { maxTurnsToWatchdogMs } from "./execution/engine/host/pi-host-binding.ts";
 
 // zcode 引擎注册面（[W8 D8 薄壳] createZcodeEngine 已上移 d8-compat——上方导出）。
-// ZcodeEngineDeps 类型保留 re-export（zsw 调用面的 deps 形状契约；W11 删 inproc 时
-// 随 d8-compat 的 D8CompatZcodeEngineDeps 合并收口）。
-export type { ZcodeEngineDeps } from "./execution/engine/engines/zcode/registration.ts";
-
-// ZcodeTaskShapeError：zcode 任务形状错误类（instanceof 分流用）——
-// execution-runtime-face.test.ts:29 消费，barrel 保留导出（engines 域 A1 裁决）。
-export { ZcodeTaskShapeError } from "./execution/engine/engines/zcode/zcode-engine.ts";
+// [W11 收口] ZcodeEngineDeps 与 D8CompatZcodeEngineDeps 合并为别名（zsw 调用面的
+// deps 形状契约保持）；ZcodeTaskShapeError 已随 engines/zcode 删除（引擎侧等价物
+// 在 @zhushanwen/zcode-subagent-cli，barrel 不再导出引擎错误类）。
+export type { ZcodeEngineDeps } from "./execution/engine/d8-compat.ts";
 
 // 引擎注册表原语 + 引擎感知提示面：engine-awareness injector 消费。
 export {
@@ -336,14 +335,14 @@ export {
 } from "./execution/concurrency-pool.ts";
 
 // 模型引用切分原语（U1 契约面批件）：provider/model 引用切分与缺省值（两宿主
-// maxTurns/model 换算同源）；实现体内聚 zcode preparer/constants 不挪文件，
-// barrel re-export（§5.3）。
+// maxTurns/model 换算同源）。[W11/H2] 实现体随 engines/zcode 删除迁至
+// shared/zcode-model-ref.ts（宿主侧原语，与引擎包各自单源）。
 export {
   DEFAULT_PROVIDER_ID,
   hasApiKey,
   splitZcodeModelRef,
-} from "./execution/engine/engines/zcode/preparer.ts";
-export { ZCODE_FALLBACK_DEFAULT_MODEL } from "./execution/engine/engines/zcode/constants.ts";
+  ZCODE_FALLBACK_DEFAULT_MODEL,
+} from "./shared/zcode-model-ref.ts";
 
 // ── worktree git 内核（U5 / D5）───────────────────────────────
 // git 语义纯函数单源：保真读（gitRun）、SafeId 校验、dirty 谓词、

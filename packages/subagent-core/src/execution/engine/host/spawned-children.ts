@@ -10,13 +10,14 @@
 //   - lifecycle-predicates（hasLiveProcessHandle / isResumable）改读本模块读点，
 //     不再 import engines/pi 内部（impl-plan §2.6 第 3 条）。
 //
-// 过渡桥（inproc 残余，W11 删）：迁移期（XYZ_SUBAGENT_ENGINE_MODE 默认 inproc/auto
-// 落内建 pi）内建引擎仍在 core 进程内——session-runner 的 spawnedChildren Map 仍是
-// 收割权威（dispose killAll / busy 投递热路径定位都消费它）。故本模块的公共 API 在
-// 写镜像的同时委托 inproc 实现（行为零变化）；读点 = 镜像 ∪ inproc 权威 map 并读
-// （runSpawn 内部注册只落 inproc map，不经过本模块注册 API——并读保证谓词不漏判）。
-// W7 pi 外移后引擎侧经 host/childSpawned / childStateChanged 反向通道上报，镜像成为
-// 唯一数据源（与 client/mirror.ts 的失效语义同构）；W11 删内建时移除 inproc 委托。
+// 过渡桥（[W11 主 agent 裁决] chat 域 inproc 保留面，临时豁免）：chat 续聊链路
+// 仍在 core 进程内跑 PiEngine（v1 协议载荷面缺口，协议 v1.x 扩展后收口）——
+// session-runner 的 spawnedChildren Map 仍是 chat 域收割权威（dispose killAll /
+// busy 投递热路径定位都消费它）。故本模块的公共 API 在写镜像的同时委托 inproc
+// 实现（行为零变化）；读点 = 镜像 ∪ inproc 权威 map 并读（runSpawn 内部注册只落
+// inproc map，不经过本模块注册 API——并读保证谓词不漏判）。cli 形态引擎经
+// host/childSpawned / childStateChanged 反向通道上报，镜像成为该部分唯一数据源
+// （与 client/mirror.ts 的失效语义同构）。chat 协议化收口时移除 inproc 委托。
 
 import type { ChildProcess } from "node:child_process";
 

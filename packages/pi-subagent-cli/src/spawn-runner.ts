@@ -26,11 +26,15 @@
 
 import type { ChildProcess } from "node:child_process";
 
+import * as fs from "node:fs";
+import { dirname } from "node:path";
+
 import {
   buildOutboundChildEnv,
   createReplayRecord,
   getLogger,
   killChain,
+  resolveEngineDataDir,
   spawnEngineChild,
   updateFromEvent as updateRecordFromEvent,
   type AgentEvent,
@@ -63,6 +67,12 @@ import { createTurnLimiter, WRAP_UP_HINT } from "./turn-limiter.ts";
 import { applySchemaEnvToChildEnv } from "./spawn-args.ts";
 import { createUiRequestQueue } from "./ui-request-queue.ts";
 import { isRelayActive, RELAY_ENV_RECORD_ID, RELAY_ENV_SESSION_ID } from "./relay-env.ts";
+import {
+  cleanupSiblingStderrLogs,
+  rotateStderrLogIfNeeded,
+  stderrLogPathFor,
+  stderrRotationParams,
+} from "./logs/stderr-rotation.ts";
 
 const logger = getLogger("session-runner");
 
@@ -259,6 +269,59 @@ function buildChildEnv(params: SpawnRunParams): Record<string, string> {
  * 生命周期：resolve = 子进程 close（exit/error）。abort（signal）经 spawnEngineChild
  * 的 signal 通道发 SIGTERM，升级链由 killPiChild 兜底。
  */
+/**
+ * stderr tee（W11）：实例维度路径 + 懒打开 + 尺寸轮转（超 XYZ_LOG_MAX_BYTES rename
+ * 副本重开）+ 三判据过期清理（同前缀 + pid 已死 + mtime 过期）。失败面全部静默
+ * 降级（取证面不拖垮任务主通道——调用方对无 tee 形态 resume 排空防背压）。
+ */
+function createStderrTee(child: ChildProcess): { close(): void } | undefined {
+  if (child.stderr === null) return undefined;
+  let dataDir: string;
+  try {
+    dataDir = resolveEngineDataDir(process.env);
+  } catch {
+    return undefined;
+  }
+  const pid = child.pid;
+  if (pid === undefined) return undefined;
+  const logPath = stderrLogPathFor(dataDir, pid);
+  let stream: fs.WriteStream | null = null;
+  let failed = false;
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => {
+    if (failed) return;
+    try {
+      if (stream === null) {
+        fs.mkdirSync(dirname(logPath), { recursive: true });
+        stream = fs.createWriteStream(logPath, { flags: "a" });
+        stream.on("error", () => {
+          failed = true;
+        });
+        cleanupSiblingStderrLogs(logPath, process.env);
+      }
+      stream.write(chunk);
+      if (rotateStderrLogIfNeeded(logPath, stderrRotationParams(process.env))) {
+        stream.end();
+        stream = null;
+      }
+    } catch {
+      failed = true;
+    }
+  });
+  return {
+    close() {
+      try {
+        stream?.end();
+      } catch (err) {
+        // best-effort：进程已在退出路径上，tee 关闭失败仅 debug 留痕（不抛——
+        // close 挂在 onClose 清理链，抛出会遮蔽真实退出码处理）。
+        logger.debug(`[session-runner] stderr tee close best-effort failed: ${toErrorMessage(err)}`);
+      }
+      stream = null;
+    },
+  };
+}
+
 export async function runSpawnOnce(
   params: SpawnRunParams,
   callbacks: SpawnRunCallbacks,
@@ -321,6 +384,15 @@ export async function runSpawnOnce(
       onDelta: callbacks.onDelta,
       abort: () => killChild("turn limiter abort"),
     });
+
+    // 2b. stderr tee 落盘（W11，设计 §3.9 同款契约）：pi 任务子进程 stderr 此前
+    // 无消费面（pipe 出来即弃，写满会背压卡死子进程）——tee 到实例维度文件
+    // <engineDataDir>/logs/pi-task-stderr-<pid>.log（懒打开 + 尺寸轮转 + 三判据
+    // 过期清理）；dataDir 不可解析（宿主未注入且无 fallback）时仅排空防背压。
+    const stderrTee = createStderrTee(child);
+    if (stderrTee === undefined && child.stderr !== null) {
+      child.stderr.resume();
+    }
 
     // 3. 镜像上报（childSpawned 先行——未收上报前宿主 = 无句柄）+ 引擎侧记账
     registerActiveChild(params.recordId, child);
@@ -402,6 +474,7 @@ export async function runSpawnOnce(
       };
       const onClose = (code: number | null, signal: NodeJS.Signals | null): void => {
         stateListeners.clear();
+        stderrTee?.close();
         unregisterActiveChild(params.recordId, child);
         if (child.pid !== undefined) {
           callbacks.onChildStateChanged?.({

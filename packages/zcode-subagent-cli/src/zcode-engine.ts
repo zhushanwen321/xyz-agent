@@ -110,6 +110,7 @@ import {
   type SessionTurnResult,
 } from "./session-channel.ts";
 import { toErrorMessage } from "./error-message.ts";
+import { stderrLogPathFor } from "./logs/stderr-rotation.ts";
 
 const logger = getLogger("subagents");
 
@@ -675,6 +676,12 @@ export class ZcodeEngine implements EnginePort {
       env,
       launcherScript,
       stderrLogPath: path.join(engineDataDir, "logs", "zcode-appserver-stderr.log"),
+      // [W11] 实例维度 tee 路径（设计 §3.9）：文件名带当前代 app-server pid——
+      // 双实例（pi 宿主 + runtime 各一个引擎 CLI）并发 append/轮转互不干扰。
+      stderrLogPathResolver: (pid) =>
+        typeof pid === "number"
+          ? stderrLogPathFor(engineDataDir, pid)
+          : path.join(engineDataDir, "logs", "zcode-appserver-stderr.log"),
     });
     const rt: AppServerRuntime = {
       conn,
