@@ -30,7 +30,7 @@
 | 包 | 命中点 | 判定 | 理由 |
 |---|---|---|---|
 | **smart-context** | tool.ts compact 两回调（E1 实锤）；index.ts 三处事件回调内 `pi.sendUserMessage` | **接入** | E1 实锤崩溃点（9/3 pi-crash log 堆栈 `assertActive → sendUserMessage`）；三处事件回调为 D1「所有 fire-and-forget 异步回调接入」判定对象（价值见 §1 崩溃面分层） |
-| **plan** | compact.ts :218-229 两处；command.ts :67/:164（/plan command handler 内） | **接入**（compact 两处）；**排除**（command 两处） | compact 回调与 E1 同构（无人接的 Promise 链）；command handler 是用户主动触发的同步上下文，执行时 session 活跃，无跨 session 存活窗口 |
+| **plan** | compact.ts :218-229 两处；compact.ts :258-263 case "direct"/default（`pi.sendUserMessage` + `tryGoalInit`）；command.ts :67/:164（/plan command handler 内） | **接入**（compact 两处）；**排除**（case "direct"、command 两处） | compact 回调与 E1 同构（无人接的 Promise 链）；case "direct" 在 plan 工具 execute 的同步链（`handlePlanComplete` 尾部 switch，经 tool.ts executeComplete 在用户批准 plan 的当次工具调用内执行），执行时 session 活跃，无跨 session 存活窗口；command handler 是用户主动触发的同步上下文，同理由 |
 | **scheduler** | runtime.ts tick（setInterval 回调内 `onAfterTick → ctx.ui` / dispatch → `pi.sendMessage`） | **迁移**（共享守卫替换原地实现） | 既有已验证范式（G1+F2+retireStaleTimer），迁移语义等价对照见 §5 |
 | **structured-output** | loop-gate.ts terminal 的 `ctx.abort()`/`ctx.shutdown()`（无防御）；workflow-hook.ts :249 `pi.sendUserMessage`（try/catch 有痕降级）；loop-gate forceExit setTimeout（只 `process.stderr.write` + `process.exit`） | **接入**（loop-gate terminal）；**排除**（workflow-hook、forceExit timer） | abort/shutdown 在 assertActive 面且无任何 try/catch（async handler 内 throw = 无人接 rejection）；workflow-hook 的 turn_end 已有 try/catch + writeSteerFailedLog（无崩溃面；守卫「非 stale 上抛」语义在此处会把有痕降级恶化为崩溃，不接入是行为保持）；forceExit timer 不触碰 pi/ctx |
 | **pending-notifications** | events.on 回调内 `pi.appendEntry`（经 safeAppendEntry） | **排除** | 包内 `safeAppendEntry` 已 try/catch 静默兜底（注释明言 stale 场景）；events.on 订阅经 pi tracked subscription 在 session 替换时自动退订（W4 注释实锚 loader.js:338-341）——双防线已覆盖，无无人接抛错路径 |
@@ -102,6 +102,8 @@ VERDICT=PASS
 ```
 
 守卫不改变正常路径：onComplete 回调在同一守卫包裹下正常完成「结果消息投递」。
+
+**与设计 A9① 的对齐**（crash-resilience §4 验收表）：场景 1 + 场景 2 合并覆盖 A9① 断言的实质两面——场景 1 以 pi CLI RPC 直跑（不经 xyz-agent）验证错误路径（stale 静默降级、pi 进程存活、无 assertActive 堆栈浮出），场景 2 验证正常路径零行为变化（onComplete 结果消息正常投递）——即「pi 行为无任何变化（ext-guards 守卫只在错误路径生效）」的正反两面均有实测。
 
 **已知边界（如实记录）**：① 本机全局 pi 为 0.84.0（workspace 实装 0.84.4），文案已核对一致；0.84.4 侧由 PS-30 静态探针（CI 内守卫，ext-guards 包测试全绿）覆盖。② 一轮 stale 补充场景中模型未配合调用 compact_context（LLM 行为波动，非守卫问题），未计入判定——判定以上述两场景为准。③ pi 原生 compact 有 `Nothing to compact (session too small)`（keepRecentTokens 默认 20000）门槛，实测用大 prompt 构造跨过；`settings.json` 的 `compaction.keepRecentTokens` 覆盖在 0.84.0 CLI 下未生效（键被忽略，原因未深查），如实登记。
 

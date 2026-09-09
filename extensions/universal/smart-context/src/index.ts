@@ -124,7 +124,11 @@ export default function smartContextExtension(pi: ExtensionAPI): void {
 	});
 
 	// ── 工具注册（常驻，不可用态由 execute 运行时校验拒绝，D5）──
-	registerCompactContextTool(pi, { isCtxStale });
+	// isCtxStale 必须传 live 绑定 wrapper 而非简写属性：本行在 factory 体同步执行，简写
+	// { isCtxStale } 会把此刻的初始 () => false 快照进 deps 对象，上方 session_start
+	// handler 的重新赋值不回写已构造对象 → compact onComplete/onError（E1 实锤崩溃点）
+	// 守卫的前置代际检查恒不生效。wrapper 每次调用读闭包当前绑定。
+	registerCompactContextTool(pi, { isCtxStale: () => isCtxStale() });
 
 	// ── 阈值提醒（D3/D4）：agent_settled 越档检查 + followUp 一次性投递 ──
 	pi.on("agent_settled", (_event: AgentSettledLikeEvent, ctx: ExtensionContext) => {
