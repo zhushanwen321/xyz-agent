@@ -45,8 +45,8 @@ const DOC_MODULE_MAP = {
   'docs/design/update-multi-source.impl-plan.md': ['apps/electron/main/update', 'apps/electron/main/gateway/update-handlers.ts', 'apps/electron/main/release-checker.ts', 'apps/electron/main/interfaces.ts'],
   'docs/design/chat-stream-perf-architecture.md': ['packages/core/src/domain/chat', 'packages/core/src/domain/session', 'packages/renderer/src/composables/features/sidebar', 'packages/renderer/src/composables/features/trace'],
   'docs/design/chat-stream-perf-architecture.impl-plan.md': ['packages/core/src/domain/chat', 'packages/core/src/domain/session', 'packages/renderer/src/composables/features/sidebar', 'packages/renderer/src/composables/features/trace'],
-  'docs/design/zcode-session-db-isolation.md': ['packages/subagent-core/src/execution/engine', 'packages/shared/src/paths.ts', 'packages/runtime/src/infra/pi/pi-paths.ts'],
-  'docs/design/zcode-session-db-isolation.impl-plan.md': ['packages/subagent-core/src/execution/engine', 'packages/shared/src/paths.ts', 'packages/runtime/src/infra/pi/pi-paths.ts'],
+  'docs/design/zcode-session-db-isolation.md': ['packages/subagent-core/src/execution/engine', 'packages/zcode-subagent-cli/src', 'packages/shared/src/paths.ts', 'packages/runtime/src/infra/pi/pi-paths.ts'],
+  'docs/design/zcode-session-db-isolation.impl-plan.md': ['packages/subagent-core/src/execution/engine', 'packages/zcode-subagent-cli/src', 'packages/shared/src/paths.ts', 'packages/runtime/src/infra/pi/pi-paths.ts'],
 }
 
 /** 环境变量名白名单（非导出符号，文档合法引用）：项目（XYZ_/PI_）与运行平台（NODE_/ELECTRON_/ZCODE_）env 前缀 */

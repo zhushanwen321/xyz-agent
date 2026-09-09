@@ -413,7 +413,7 @@ async function bundleEngines() {
 			bundle: true,
 			format: "esm",
 			platform: "node",
-			target: "node18",
+			target: "node22",
 			sourcemap: true,
 			keepNames: true,
 			external: EXTERNAL,
