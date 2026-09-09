@@ -317,6 +317,9 @@ W4 在合入前完成；W5a/W5b/W6 独立排期（不阻塞 G1）。
 
 ### 7.4 变更历史
 
+- 2026-09-09：阶段 3/4 一致性审查清零（A 区）——.review/consistency-a-db.md：unreasonable 2 项修复（major = cleanup deleted 排除 fkFailures；minor = W5b 状态行），doc_errors 5 条亲修（C-ext-20 scope / handoff 锚点与 npm 论断 / AGENTS.md 定位 / drift 映射源），reasonable 聚合入 §5；复审 pass（.review/consistency-recheck.md）。
+
+
 | 日期 | 变更 | 说明 |
 |------|------|------|
 | 2026-09-08 | 建立本计划 | 从设计文档 v10 抽取实现级细节；单元 W1–W6 与设计 §5 一一对应 |
