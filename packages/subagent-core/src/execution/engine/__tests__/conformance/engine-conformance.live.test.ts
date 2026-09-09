@@ -25,7 +25,6 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { ZcodeEngine } from "@zhushanwen/zcode-subagent-cli";
-import { getPiInvocation } from "@zhushanwen/pi-subagent-cli";
 
 import { EngineClient } from "../../client/engine-client.ts";
 import { RemoteEngine } from "../../client/remote-engine.ts";
@@ -44,9 +43,12 @@ import { assertAgentEventInvariants } from "./agent-event-invariants.ts";
 
 const LIVE = process.env["ENGINE_CONFORMANCE_LIVE"] === "1";
 
+// 锚点：本文件在 packages/subagent-core/src/execution/engine/__tests__/conformance/
+// 下，6 层 `..` 到 packages/，再进 pi-subagent-cli 的 bin 入口（manifest bin 目标，
+// 与发现器可执行检查同源）。曾错写 7 层落到仓库根 → MODULE_NOT_FOUND（Gate B F1.1）。
 const PI_CLI_ENTRY = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  "../../../../../../../pi-subagent-cli/src/main.ts",
+  "../../../../../../pi-subagent-cli/bin/pi-subagent-cli.mjs",
 );
 
 /** pi 引擎 capabilities（manifest 同源形态——真机门内 RemoteEngine 同步成员源）。 */
@@ -72,10 +74,15 @@ describe.skipIf(!LIVE)("conformance run 层（协议客户端 × 引擎包 CLI�
       return;
     }
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "w10-live-pi-"));
+    // 测试侧宿主扩展隔离（Gate B F1.2 裁决）：pi spawn 会加载宿主 ~/.pi/agent/npm
+    // 全局扩展，本机版本破碎（subagent-workflow 8.7.0 × subagent-core 0.2.0 exports
+    // 失配）时 pi 启动即退出 code 1——真机门要验的是引擎链路不是宿主扩展环境。
+    // main.ts 忽略 argv，argv-mirror 会把 --no-extensions 镜像给 pi 子进程（与
+    // pi 官方 hint "pi -ne" 同参）。产品镜像语义不动（正常宿主扩展照常加载）。
     const client = new EngineClient({
       engineId: "pi",
       command: process.execPath,
-      args: [PI_CLI_ENTRY],
+      args: [PI_CLI_ENTRY, "--no-extensions"],
       hostKind: "test",
       hostVersion: "w10-live",
       dataDir,
@@ -162,7 +169,10 @@ describe.skipIf(!LIVE)("conformance relay 变体（协议客户端 × relay 代�
             //（对齐 E-2 registry 剥离逻辑，防孙进程嵌套 relay 时旧值误导）。
             send({ v: RELAY_PROTOCOL_VERSION, kind: "accept" });
             const argv = Array.isArray(frame.argv) ? (frame.argv as string[]) : [];
-            const invocation = getPiInvocation(argv, { relay: false });
+            // 直连 spawn 真实 pi：不用 getPiInvocation——本进程是 vitest worker，
+            // argv[1] 是 vitest 自身脚本，分支 1 会镜像出「node <vitest> <pi args>」
+            // 的错误启动。与引擎 CLI 的分支 3 同语义：PATH 解析 pi。
+            const invocation = { command: "pi", args: argv };
             const env: NodeJS.ProcessEnv = { ...(frame.env as NodeJS.ProcessEnv) };
             for (const key of [RELAY_ENV_SOCKET, RELAY_ENV_NODE, RELAY_ENV_SCRIPT, RELAY_ENV_SESSION_ID, RELAY_ENV_RECORD_ID]) {
               delete env[key];
@@ -176,6 +186,7 @@ describe.skipIf(!LIVE)("conformance relay 变体（协议客户端 × relay 代�
               send({ v: RELAY_PROTOCOL_VERSION, kind: "data", dir: "up", b64: c.toString("base64") });
             });
             pi.stderr?.on("data", (c: Buffer) => {
+              if (process.env["RELAY_DEBUG_STDERR"] === "1") console.error("[fake-runtime pi stderr]", c.toString());
               send({ v: RELAY_PROTOCOL_VERSION, kind: "data", dir: "up-stderr", b64: c.toString("base64") });
             });
             pi.on("close", (code, signal) => {
@@ -218,27 +229,37 @@ describe.skipIf(!LIVE)("conformance relay 变体（协议客户端 × relay 代�
     const socketPath = path.join(tmpDir, "relay.sock");
     const server = await startFakeRuntime(socketPath);
     try {
+      // relay 三键注入的是引擎子进程 baseEnv（不是测试进程自身的 process.env）——
+      // 激活校验对 baseEnv 做（曾误查 process.env 恒 false，前置断言自爆）。
+      const relayBaseEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        [RELAY_ENV_SOCKET]: socketPath,
+        [RELAY_ENV_NODE]: process.execPath,
+        // relay.mjs 权威源在 subagent-workflow 扩展包内（runtime 经 staged 布局消费，
+        // bundle-extensions.mjs 拷到 electron resources——测试直连源文件）。曾错指
+        // subagent-core/src/relay/relay.mjs（不存在）→ relay 子进程即退 code 1。
+        [RELAY_ENV_SCRIPT]: path.resolve(
+          path.dirname(fileURLToPath(import.meta.url)),
+          "../../../../../../../extensions/universal/subagent-workflow/relay/relay.mjs",
+        ),
+      };
+      if (!isRelayActive(relayBaseEnv)) {
+        throw new Error("relay env 自构后仍不激活——前置断言失败");
+      }
       const client = new EngineClient({
         engineId: "pi",
         command: process.execPath,
-        args: [PI_CLI_ENTRY],
+        args: [PI_CLI_ENTRY, "--no-extensions"],
         hostKind: "test",
         hostVersion: "w10-live-relay",
         dataDir: tmpDir,
         envPrefixes: [],
-        baseEnv: {
-          ...process.env,
-          [RELAY_ENV_SOCKET]: socketPath,
-          [RELAY_ENV_NODE]: process.execPath,
-          [RELAY_ENV_SCRIPT]: path.resolve(
-            path.dirname(fileURLToPath(import.meta.url)),
-            "../../../../../relay/relay.mjs",
-          ),
-        },
+        baseEnv: relayBaseEnv,
+        // 归属身份（L0 identityEnv 通道）：协议 v1 ctx 无 sessionRootId 字段，引擎侧
+        // buildChildEnv 缺省回落 PI_SUBAGENT_ROOT_SESSION_ID——伪 runtime 场景由测试
+        // 显式提供（模拟宿主注入根 session 身份）。
+        identityEnv: { PI_SUBAGENT_ROOT_SESSION_ID: "sess-w10-live-relay-probe" },
       });
-      if (!isRelayActive(process.env)) {
-        throw new Error("relay env 自构后仍不激活——前置断言失败");
-      }
       const engine = new RemoteEngine({
         engineId: "pi",
         client,

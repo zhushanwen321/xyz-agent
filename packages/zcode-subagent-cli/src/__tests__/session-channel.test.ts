@@ -71,9 +71,9 @@ interface ScenarioOverrides {
   /** 终态帧组去掉收尾帧（delta 聚合 / read tokens 兜底场景）。 */
   dropFinalFrame?: boolean;
   /** 整组替换推送帧（完全自定义帧序）。 */
-  replaceSendPushes?: string[];
+  replaceSendPushes?: Array<string | Record<string, unknown>>;
   /** 在默认帧序之后追加帧（迟到帧注入）。 */
-  extraSendPushes?: string[];
+  extraSendPushes?: Array<string | Record<string, unknown>>;
   createResult?: unknown;
   createError?: RpcErrorSpec;
   sendError?: RpcErrorSpec;
@@ -436,6 +436,47 @@ describe("终态判定", () => {
     });
     expect(deltas).toEqual(["你好", "，", "任务完成"]);
     expect(r.response).not.toContain("串线文本");
+  }, 10_000);
+
+  it("reasoning_delta 按 kind 分流：走 onThinkingDelta，不混入 text 流与 response 聚合（F2 口径）", async () => {
+    // 真机形态（2026-09-09 Gate B F2 实证）：reasoning 模型的推理增量与 answer 增量
+    // 同走 session/event payload.delta，靠 payload.kind 区分（"reasoning_delta" /
+    // "text_delta"）。answer 通道 = text_delta —— 不变量 3a 的拼接比对不含 reasoning。
+    const reasoningFrames = [
+      {
+        method: "session/event",
+        params: {
+          sessionId: GOLDEN_SESSION_ID,
+          payload: { kind: "reasoning_delta", delta: "先想一想：", assistantMessageId: "msg_r" },
+        },
+      },
+      {
+        method: "session/event",
+        params: {
+          sessionId: GOLDEN_SESSION_ID,
+          payload: { kind: "reasoning_delta", delta: "答案是「你好」", assistantMessageId: "msg_r" },
+        },
+      },
+    ];
+    const deltas: string[] = [];
+    const thinking: string[] = [];
+    // reasoning 帧须在终态前到达（extraSendPushes 追加在默认帧序之后会被终态后
+    // 丢弃）——用 replaceSendPushes 在 pushStream 与 terminal 之间插入。
+    const { ch, workspacePath } = makeChannel({
+      replaceSendPushes: [
+        ...ZCODE_APPSERVER_GOLDEN.pushStream,
+        ...reasoningFrames,
+        ZCODE_APPSERVER_GOLDEN.terminal[0],
+        ZCODE_APPSERVER_GOLDEN.terminal[1],
+      ],
+    });
+    const r = await ch.runTurn({ workspacePath, mode: "yolo" }, "做点什么", {
+      onTextDelta: (d) => deltas.push(d),
+      onThinkingDelta: (d) => thinking.push(d),
+    });
+    expect(thinking).toEqual(["先想一想：", "答案是「你好」"]);
+    expect(deltas).toEqual(["你好", "，", "任务完成"]); // text 流不含 reasoning
+    expect(r.response).toBe(GOLDEN_FULL_TEXT); // response 聚合不含 reasoning
   }, 10_000);
 });
 

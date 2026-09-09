@@ -279,6 +279,13 @@ export interface SessionTurnCallbacks {
   /** payload.delta 实时文本增量（A.2 ④：文本在 session/event，stream.chunk 无文本）。 */
   onTextDelta?: (delta: string) => void;
   /**
+   * payload.kind === "reasoning_delta" 的推理增量（F2 口径裁决 2026-09-09：answer
+   * 通道 = text_delta；reasoning 通道单独分流，不混入 text 流——session/event 推送
+   * 的 kind 字段区分两通道，read 兜底的 assistant 全文也只含 text parts，两侧对齐
+   * 后不变量 3a byte 级成立）。kind 缺席的旧形态按 text 处理（向后兼容）。
+   */
+  onThinkingDelta?: (delta: string) => void;
+  /**
    * [R4] create 应答后立即回调（sessionId 已知、早于 subscribe/send/终态）。引擎
    * 编排层的 onHandleReady 回填（§3.4 不变量 3）与 abort 链的 session/stop 目标
    * 都挂在这个时点——runTurn 的 resolve 形态在终态前拿不到 sessionId。
@@ -694,7 +701,7 @@ export class SessionChannel {
     });
     const turn: ActiveTurn = {
       sessionId,
-      callbacks: { onTextDelta: opts.onTextDelta },
+      callbacks: { onTextDelta: opts.onTextDelta, onThinkingDelta: opts.onThinkingDelta },
       settled: false,
       deltas: [],
       finalText: undefined,
@@ -854,7 +861,10 @@ export class SessionChannel {
     return false;
   }
 
-  /** 增量 delta 分发：非空 delta 入账 + 回调；终态后迟到丢弃（不变量 2）。 */
+  /** 增量 delta 分发：非空 delta 入账 + 回调；终态后迟到丢弃（不变量 2）。
+   *  kind 区分两通道（F2）：reasoning_delta 只走 thinking 回调（不入 deltas 账本
+   *  ——deltas 是 response 兜底聚合，推理文本不是答案正文）；text_delta / kind
+   *  缺席走 text 路径。 */
   private applyStreamDelta(
     turn: ActiveTurn,
     payload: Record<string, unknown>
@@ -869,6 +879,10 @@ export class SessionChannel {
           DELTA_LOG_CHARS
         )}`
       );
+      return;
+    }
+    if (payload.kind === "reasoning_delta") {
+      turn.callbacks.onThinkingDelta?.(payload.delta);
       return;
     }
     turn.deltas.push(payload.delta);

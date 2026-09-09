@@ -163,7 +163,15 @@ export interface SpawnRunResult extends Omit<CollectedOutcome, "sessionId"> {
  */
 function createSdkEventTranslator(
   record: ReturnType<typeof createReplayRecord>,
-  opts: { maxTurns?: number; graceTurns?: number; onEvent: (e: AgentEvent) => void; onDelta?: (d: string) => void; abort: () => void },
+  opts: {
+    maxTurns?: number;
+    graceTurns?: number;
+    onEvent: (e: AgentEvent) => void;
+    onDelta?: (d: string) => void;
+    abort: () => void;
+    /** agent_end（非 willRetry）到达：turn 已终态、pi rpc 常驻进程需外部终结。 */
+    onAgentEnd?: () => void;
+  },
 ): (raw: SdkEvent) => void {
   // a. transient 寄存器（tool_end 缺 args 时回填）
   const pendingTools = new Map<string, { toolName: string; args?: unknown }>();
@@ -236,6 +244,18 @@ function createSdkEventTranslator(
         agentEvent({ type: "turn_end" });
         return;
       }
+      case "agent_end": {
+        // [F1.2 根修，Gate B 2026-09-09] pi rpc 模式 turn 完成后进程常驻不退出；
+        // 旧 core runSpawn 的 routeAgentEnd（agent_end → 非 willRetry → 终结子进程
+        // → close → runSpawn resolve）在 W7 协议化提取时丢失，导致 run 永不终态
+        // （事件流出齐全、outcome 悬挂）。此处恢复终结语义：message_end/turn_end
+        // 已先于 agent_end 到达并累积进 record，kill 触发 close 后正常收尾。
+        // 旧实现的 pending 后代 keep-alive 分支（session 文件 pending:register 差集
+        // 判活 + no-progress timer + notifier steer 唤醒）未随迁移——本执行器口径是
+        // workflow 域单次 run（见文件头），后台后代保活编排登记为协议化偏差。
+        if (raw.willRetry !== true) opts.onAgentEnd?.();
+        return;
+      }
       case "message_end": {
         accumulateMessageEnd(raw);
         return;
@@ -254,13 +274,19 @@ function createSdkEventTranslator(
 function buildChildEnv(params: SpawnRunParams): Record<string, string> {
   const extras: Record<string, string | undefined> = {};
   applySchemaEnvToChildEnv(extras, params.schemaEnv);
-  // relay 归属键重写（W8/H12）：三键原样转发由继承面承载；SESSION_ID/RECORD_ID
-  // 被 deny 清单剥除后按 run ctx 显式重写（不靠 env 继承）。
+  const childEnv = buildOutboundChildEnv({ parentEnv: process.env, extras });
+  // relay 归属键重写（W8/H12）：SESSION_ID/RECORD_ID 在 ENGINE_ENV_DENY_LIST，
+  // buildOutboundChildEnv 的 deny 在 extras 之后执行——经 extras 注入会被剥掉
+  // （旧实现的 RECORD_ID 重写因此从未送达 relay.mjs，归属键缺失 → 退出码 13）。
+  // 必须在 deny 终态之后按 run ctx 显式写回（不靠 env 继承）。SESSION_ID 缺省
+  // 回落 L0 身份键 PI_SUBAGENT_ROOT_SESSION_ID（协议 v1 ctx 无 sessionRootId
+  // 字段；协议补字段后收敛）。
   if (isRelayActive(process.env)) {
-    if (params.sessionRootId !== undefined) extras[RELAY_ENV_SESSION_ID] = params.sessionRootId;
-    extras[RELAY_ENV_RECORD_ID] = params.recordId;
+    const rootId = params.sessionRootId ?? process.env["PI_SUBAGENT_ROOT_SESSION_ID"];
+    if (rootId !== undefined && rootId !== "") childEnv[RELAY_ENV_SESSION_ID] = rootId;
+    childEnv[RELAY_ENV_RECORD_ID] = params.recordId;
   }
-  return buildOutboundChildEnv({ parentEnv: process.env, extras });
+  return childEnv;
 }
 
 /**
@@ -377,12 +403,19 @@ export async function runSpawnOnce(
         escalationNote: `child ${params.recordId} (source: ${source})`,
       });
     };
+    // agent_end 终结（F1.2）：正常完成后的主动 kill，close 带信号但语义是成功
+    // （旧 core waitForChildExit 的 code ?? 0 同义——signal 退出码 143 只属异常路径）。
+    let agentEndedCleanly = false;
     const handleSdkEvent = createSdkEventTranslator(record, {
       maxTurns: params.maxTurns,
       graceTurns: params.graceTurns,
       onEvent: callbacks.onEvent,
       onDelta: callbacks.onDelta,
       abort: () => killChild("turn limiter abort"),
+      onAgentEnd: () => {
+        agentEndedCleanly = true;
+        killChild("agent_end final kill");
+      },
     });
 
     // 2b. stderr tee 落盘（W11，设计 §3.9 同款契约）：pi 任务子进程 stderr 此前
@@ -490,7 +523,9 @@ export async function runSpawnOnce(
         if (sessionFile === undefined && sessionId !== undefined) {
           sessionFile = findSessionFileByHeaderId(params.sessionDir, sessionId);
         }
-        resolveExit(code ?? (signal !== null ? SIGNAL_EXIT_CODE_BASE : 0));
+        // agent_end 主动终结的 close 是正常完成（exit code 0 口径）；其余信号退出
+        // 保持 128+ 折算（异常路径判据）。
+        resolveExit(agentEndedCleanly ? 0 : code ?? (signal !== null ? SIGNAL_EXIT_CODE_BASE : 0));
       };
       child.once("close", onClose);
       child.once("error", (err) => {

@@ -451,8 +451,11 @@ export class ZcodeEngine implements EnginePort {
       signalSessionCreated = resolve;
     });
     const turn = rt.channel.runTurn(createParams, prompt, {
-      // 事件时序前移：payload.delta → text_delta 实时流出（stream 粒度，D5）
+      // 事件时序前移：payload.delta → text_delta 实时流出（stream 粒度，D5）；
+      // reasoning_delta → thinking_delta 分流（F2 口径：answer 通道仅 text_delta，
+      // 不变量 3a 的拼接比对不含 reasoning）
       onTextDelta: (delta) => ctx.onEvent?.({ type: "text_delta", delta }),
+      onThinkingDelta: (delta) => ctx.onEvent?.({ type: "thinking_delta", delta }),
       onSessionCreated: (sessionId) => {
         currentSessionId = sessionId;
         rt.activeSessions.add(sessionId);
