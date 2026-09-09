@@ -12,9 +12,11 @@ import { registerBridgeHandlers } from './bridge-handlers.js'
 import { registerBrowserHandlers } from './browser-handlers.js'
 import { registerUpdateHandlers } from './update-handlers.js'
 import { registerSoundHandlers } from './sound-handlers.js'
+import { registerRendererLogHandler } from '../logs/renderer-log-handler.js'
 
 /**
- * 注册所有 IPC handlers（特权 + 桥接 + browser drawer + 自动升级（含代理配置） + 系统提示音）。
+ * 注册所有 IPC handlers（特权 + 桥接 + browser drawer + 自动升级（含代理配置） + 系统提示音
+ * + renderer 错误上报）。
  *
  * @param deps 注入依赖（实现由 main.ts 构造 MainContext 后提供）
  */
@@ -24,4 +26,5 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   registerBrowserHandlers(deps.browserViewManager, deps.getMainWindow)
   registerUpdateHandlers(deps)
   registerSoundHandlers()
+  registerRendererLogHandler()
 }

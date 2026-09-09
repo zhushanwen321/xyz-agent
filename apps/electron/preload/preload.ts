@@ -1,6 +1,7 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult, RendererLogPayload } from '@xyz-agent/shared'
+import { RENDERER_LOG } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -184,6 +185,15 @@ export interface ElectronAPI {
    * @param kind 逻辑分类（成功/失败），用于跨平台失效时回落到对应默认；试听已知声音可不传
    */
   playSystemSound(name: string, kind?: 'success' | 'error'): Promise<{ audioData?: string; mimeType?: string }>
+  // ── renderer 错误上报（crash-resilience §3.3 D2）─────────────────
+  /**
+   * 上报 renderer 全局错误（三件套：app.config.errorHandler / window error /
+   * unhandledrejection 捕获后经此落盘 main 侧 renderer-error-<date>.log）。
+   * main 按 windowId 限流（每窗口每分钟 100 条）；windowId 由 main 从 event 权威读取，
+   * 不在 payload 内（不信任 renderer 自报）。失败时 invoke reject——调用方（error-reporter）
+   * 必须静默消化，日志通道故障不得再炸 renderer。
+   */
+  reportRendererLog(payload: RendererLogPayload): Promise<void>
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -316,4 +326,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── 系统提示音 ──────────────────────────────────────────────
   listSystemSounds: () => ipcRenderer.invoke('sound:list'),
   playSystemSound: (name: string, kind?: 'success' | 'error') => ipcRenderer.invoke('sound:play', name, kind),
+  // ── renderer 错误上报（crash-resilience §3.3 D2；通道名经 shared SSOT 常量，禁字面量分叉）──
+  reportRendererLog: (payload: RendererLogPayload) => ipcRenderer.invoke(RENDERER_LOG, payload),
 } satisfies ElectronAPI)

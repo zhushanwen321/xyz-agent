@@ -68,6 +68,9 @@ export { OUTBOUND_FRAME_WARN_BYTES, OUTBOUND_FRAME_TRUNCATE_BYTES, READ_PRECHECK
 // image-cache 落盘通道族首成员 D6-⑨）；既有通道仍内联于 preload/main 不在此收敛，
 // 存量边界说明见 ipc-channels.ts 头注释。
 export { RENDERER_LOG, IMAGE_CACHE_WRITE } from './ipc-channels'
+// renderer-log 通道 payload 类型（crash-resilience u2：preload ElectronAPI 签名与 main
+// handler 校验共用同一形态声明，防两端漂移；main 侧仍做运行时再校验，见 ipc-payloads.ts 头注释）。
+export type { RendererErrorSource, RendererMemorySnapshot, RendererLogPayload } from './ipc-payloads'
 // 出站 env 契约 SSOT + 子进程 env 构建器（纯常量/纯函数无 node 依赖，renderer barrel 安全）。
 // main 进程 safe-env 薄封装与 runtime infra/spawn-env.ts 门面均经此消费。
 export type { BuildOutboundChildEnvOptions, SpawnEnvForwardEntry } from './spawn-env-contract'

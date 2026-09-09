@@ -7,7 +7,7 @@
  *
  * 依赖方向：无下游（读全局 window.electronAPI，类型经 declare global 自动可用）
  */
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult, RendererLogPayload } from '@xyz-agent/shared'
 
 /** preload 注入的 electronAPI（web/mock 环境为 undefined） */
 const api = window.electronAPI
@@ -382,4 +382,19 @@ export async function playSystemSound(
   kind?: 'success' | 'error',
 ): Promise<{ audioData?: string; mimeType?: string }> {
   return api?.playSystemSound?.(name, kind) ?? {}
+}
+
+// ── renderer 错误上报（crash-resilience §3.3 D2 / u2）────────────────
+// 三件套（boot/error-reporter）捕获后经此上报，main 落盘 renderer-error-<date>.log
+// （windowId 限流在 main 侧）。fire-and-forget：invoke reject / 无 IPC（web/mock）/
+// 旧 preload 未暴露时全部静默——日志通道故障不得再炸 renderer（D2 降级契约）。
+
+/** 上报一条 renderer 全局错误记录。自身零抛错，调用方无需再捕获。 */
+export function reportRendererLog(payload: RendererLogPayload): void {
+  try {
+    void api?.reportRendererLog?.(payload)?.catch(() => {})
+  // eslint-disable-next-line taste/no-silent-catch -- 发送同步抛错静默：错误上报通道自身故障不得放大为 renderer 崩溃（对齐本文件「无 IPC 静默 no-op」惯例）
+  } catch {
+    // no-op
+  }
 }
