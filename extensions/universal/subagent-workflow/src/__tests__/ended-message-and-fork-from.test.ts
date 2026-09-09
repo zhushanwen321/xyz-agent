@@ -318,6 +318,10 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       await vi.waitFor(() => expect(fake.runs.length).toBe(1));
       expect(fake.runs[0].task.prompt).toContain("verify test results first");
       expect(fake.runs[0].task.prompt).toMatch(/inherited conversation via --fork/);
+      // [断链修复恢复] fork 源 sessionFile 透传到协议 run 帧 task.forkSource（W3 改写时
+      // 移除的断言——当时协议无承载位；现载体 = SDK AgentCallOpts.forkSource，pi 引擎侧
+      // SpawnRunParams.forkSource → buildSpawnArgs --fork 已有专项直测，两层合成覆盖全链）。
+      expect(fake.runs[0].task.forkSource).toBe(sourceFile);
 
       expect((service.queries.findRecord(result.response.newSubagentId))?.status).toBe("running");
       expect((service.queries.findRecord(result.response.newSubagentId))?.slug).toBe("src-resumed");
@@ -332,6 +336,8 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       await vi.waitFor(() => expect(fake.runs.length).toBe(1));
       expect(fake.runs[0].task.prompt).toMatch(/taking over work/i);
       expect(fake.runs[0].task.prompt).toMatch(/already done|left unfinished/);
+      // [断链修复恢复] 默认 prompt 形态同样携带 fork 源（W3 移除的断言，载体同上）。
+      expect(fake.runs[0].task.forkSource).toBe(path.join(sessionsDir, "sa-src2.jsonl"));
     });
 
     it("cancelled 源拒绝（用户主动告别，无接续通道）", async () => {

@@ -240,6 +240,9 @@ export class PiEngine implements EnginePort {
         ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
         ...(task.skillPath !== undefined ? { skillPaths: [task.skillPath] } : {}),
         ...(task.appendSystemPrompt !== undefined ? { appendSystemPrompt: task.appendSystemPrompt } : {}),
+        // fork-from 显式分叉源（协议 task.forkSource → --fork；一次性 run 承载——
+        // fork-from 无 chatMode，chat 轮续写走 resumeSessionFile 通路互不相交）。
+        ...(task.forkSource !== undefined ? { forkSource: task.forkSource } : {}),
       },
       callbacks,
     );

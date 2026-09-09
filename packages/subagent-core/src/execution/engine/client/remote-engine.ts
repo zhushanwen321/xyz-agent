@@ -370,6 +370,10 @@ function toSdkTaskSubset(task: AgentCallOpts): SdkAgentCallOpts {
     agent: task.agent,
     appendSystemPrompt: task.appendSystemPrompt,
     fork: task.fork,
+    // fork-from 源（fork-from 轮次 --fork 的协议载体，W3 断链修复）：host-task-spec
+    // 已把 ExecuteOptions.forkFromSessionFile 改名为 task.forkSource，此处同名透传。
+    // 缺省 undefined 不落 wire（JSON 序列化丢弃，与相邻可选字段同语义）。
+    forkSource: task.forkSource,
     worktree: task.worktree,
     conversation: task.conversation,
     idleTimeoutMs: task.idleTimeoutMs,

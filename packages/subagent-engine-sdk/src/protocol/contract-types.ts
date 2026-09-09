@@ -321,7 +321,7 @@ export interface ModelCatalogEntry {
  * 字段裁决（对照 core orchestration/models/types.ts AgentCallOpts，2026-09-09）：
  * - 入选 = 引擎消费面：任务语义（prompt/schema/thinkingLevel/skill/skillPath/agent/persona 注入）、
  *   轮次预算（maxTurns/graceTurns/conversation/idleTimeoutMs）、隔离与权限（worktree/
- *   fork/denyTools/permissionMode）、诊断（description/scene）；
+ *   fork/forkSource/denyTools/permissionMode）、诊断（description/scene）；
  * - 排除并改挂 run.params.ctx（协议层已单列，task 内双写会分叉）：model（→ctx.model）、
  *   schemaEnv（→ctx.schemaEnv）、cwd（→ctx.cwd）、engineFallback（→ctx.engineFallback）；
  * - 排除（宿主侧消费，无引擎语义）：engine（路由决策已完成，收到的引擎即选中值）、
@@ -356,6 +356,15 @@ export interface AgentCallOpts {
   appendSystemPrompt?: string[];
   /** Inherit parent session context (fork mode)。与 worktree（文件隔离）独立。 */
   fork?: boolean;
+  /**
+   * [v1.x 增量] fork-from 显式分叉源 session 文件绝对路径（断联 subagent 接续场景，
+   * 宿主点名任意已有 session 文件；fork=true 则由引擎用主 session 作源，两者互斥——
+   * 本字段存在时优先）。字段名对齐引擎侧既有 SpawnRunParams.forkSource（pi 引擎经
+   * `--fork <path>` 消费）。可选增量、负向兼容：无此概念的引擎（zcode）按未知可选
+   * 字段忽略，行为与不传一致；宿主能力门（capability-gate）仍按 steer/conversation
+   * 通道族预检，不依赖引擎对本字段的支持声明。
+   */
+  forkSource?: string;
   /** Filesystem isolation: 新建 worktree | 复用外部已创建 worktree | 不隔离。 */
   worktree?: boolean | WorktreeHandle;
   /** 可持续对话模式：true = 轮次完成进 idle 态等待 message 续聊。 */

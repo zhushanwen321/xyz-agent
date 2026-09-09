@@ -368,6 +368,40 @@ describe("chat 会话形态协议面（进程内 server + PiEngine）", () => {
     const resp = h.frames.find((f) => f.id === 2);
     expect(resp?.error).toBeUndefined();
   });
+
+  it("一次性 run 的 task.forkSource 透传 executor（--fork 接收面，fork-from 协议载体）", async () => {
+    // 链路定位：宿主 run 帧 task.forkSource（remote-engine toSdkTaskSubset 映射产物）→
+    // PiEngine run → SpawnRunParams.forkSource → buildSpawnArgs `--fork <path>`（后者
+    // 已有 spawn-args.test 专项直测）。fork-from 是一次性 run 形态（无 chat 键）。
+    h.server.handleFrame({
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: ENGINE_PROTOCOL_VERSION,
+        hostInfo: { name: "t", version: "0", dataRoot: "/tmp" },
+        engineConfig: {},
+      },
+    });
+    await flush();
+    h.server.handleFrame({
+      id: 2,
+      method: "run",
+      params: {
+        runId: "run-fork-from",
+        task: { prompt: "resume", forkSource: "/tmp/sa-src.jsonl" },
+        ctx: { poolKey: "shared", cwd: "/tmp", model: "p/m" },
+      },
+    });
+    await flush();
+    expect(h.captured[0].params.forkSource).toBe("/tmp/sa-src.jsonl");
+    // 形态互斥锚定：fork-from 走一次性 run（无 chatMode；chat 轮续写走 resumeSessionFile）。
+    expect(h.captured[0].params.chatMode).toBeUndefined();
+    expect(h.captured[0].params.resumeSessionFile).toBeUndefined();
+    h.captured[0].resolve(fakeResult());
+    await flush();
+    const resp = h.frames.find((f) => f.id === 2);
+    expect(resp?.error).toBeUndefined();
+  });
 });
 
 describe("chat 会话形态 gate 负向（A6 方向）", () => {
