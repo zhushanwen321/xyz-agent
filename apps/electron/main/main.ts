@@ -76,6 +76,7 @@ import { registerIpcHandlers } from './gateway/ipc-handlers.js'
 import { isPathInAllowedPrefixes } from './gateway/input-validators.js'
 import { fixPathEnv } from './supervisor/shell-env.js'
 import { flushStderrSink } from './supervisor/process-control.js'
+import { initMainLogger, closeMainLogger } from './logs/main-logger.js'
 import { expandLocalFilePath } from './utils/path.js'
 import { computeLocalFilePrefixes } from './utils/local-file-prefixes.js'
 
@@ -132,6 +133,14 @@ if (isDev) {
   // 实例静默退出（subagent-drawer-blank 设计 §8.2 验收场景实测发现）。
   app.setPath('userData', path.join(process.env.XYZ_AGENT_DATA_DIR ?? path.join(homedir(), '.xyz-agent-dev'), 'electron'))
 }
+
+// ── main 日志落盘（crash-resilience D6-①）────────────────────────
+// initMainLogger：建 <dataDir>/logs/ + 启动保留期清理（一次 + 每日复扫定时器）+
+// 内存水位定时器（5min）。必须晚于上面 isDev 块的 XYZ_AGENT_DATA_DIR 隔离
+// （getDataDir() 动态推导，dev 实例日志须落 ~/.xyz-agent-dev 而非 prod 目录）；
+// 早于一切业务初始化（render-process-gone / 启动期异常的落盘通道先于消费者就绪）。
+// writer 未 init 时 no-op，这里失败（磁盘满/权限）不阻断 app 启动。
+initMainLogger({ isPackaged: app.isPackaged })
 
 // ── 单实例锁（integrity-hardening §3.2 D2d）───────────────────────
 // 双开 = 两个实例并发 spawn runtime、并发读写同一数据目录，会命中「pi session 文件
@@ -332,6 +341,7 @@ app.on('before-quit', (event) => {
   // stop() 路径未触发（runtime 自然退出）时此 flush 是落盘的唯一保障。
   void ctx.runtime.stop()
     .then(() => flushStderrSink())
+    .then(() => closeMainLogger()) // flush main 日志写流（writer 缓冲尾部落盘后再 quit）
     .finally(() => {
       shortcuts.unregisterAll()
       app.quit()
