@@ -1,7 +1,7 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult, RendererLogPayload, ImageCacheWritePayload, ImageCacheWriteResult } from '@xyz-agent/shared'
-import { RENDERER_LOG, IMAGE_CACHE_WRITE } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult, RendererLogPayload, ImageCacheWritePayload, ImageCacheWriteResult, DebugRunLogRetentionResult } from '@xyz-agent/shared'
+import { RENDERER_LOG, IMAGE_CACHE_WRITE, DEBUG_RUN_LOG_RETENTION } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -202,6 +202,13 @@ export interface ElectronAPI {
    * 失败/畸形 payload 不 reject（main handler 零抛错，返回逐图 invalid/quota-full 结果）。
    */
   imageCacheWrite(payload: ImageCacheWritePayload): Promise<ImageCacheWriteResult>
+  // ── 验收调试口（crash-resilience A9②；无鉴权面，不进产品 UI）─────────────────
+  /**
+   * 手动触发 main 侧 logs/ 保留期清理扫描一次（runLogRetentionNow，与 main-logger init
+   * / 每日定时器同一函数）。**验收调试入口，仅 dev 调试用途，renderer 产品代码不得调用**。
+   * 返回本次扫描统计 {scanned, removed}；永不 reject（清理扫描自身零抛错语义）。
+   */
+  debugRunLogRetention(): Promise<DebugRunLogRetentionResult>
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -338,4 +345,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   reportRendererLog: (payload: RendererLogPayload) => ipcRenderer.invoke(RENDERER_LOG, payload),
   // ── toolResult 图片落盘（crash-resilience §3.3 D6-⑨；通道名经 shared SSOT 常量）──
   imageCacheWrite: (payload: ImageCacheWritePayload) => ipcRenderer.invoke(IMAGE_CACHE_WRITE, payload),
+  // ── 验收调试口（crash-resilience A9②；通道名经 shared SSOT 常量，不进产品 UI）──
+  debugRunLogRetention: () => ipcRenderer.invoke(DEBUG_RUN_LOG_RETENTION),
 } satisfies ElectronAPI)

@@ -240,7 +240,7 @@ try {
       .some((f) => /pi-semantics-[^/]*\.test\.ts$/.test(f) || f.endsWith('thinking-level-effective-e2e.test.ts'))
     if (!probeTouched) {
       warn(
-        `staged 的 docs/pi-semantics.json 有 ${vwChangedLines} 行 verifiedWith 变更，但无任何探针测试文件（pi-semantics-*.test.ts / thinking-level-effective-e2e.test.ts）陪跑——D6 软门禁仅提醒不拦截；恢复动作：先跑探针族确认语义仍成立（cd packages/runtime && npx vitest run src/infra/pi/__tests__/pi-semantics），全绿再更新 verifiedWith`,
+        `staged 的 docs/pi-semantics.json 有 ${vwChangedLines} 行 verifiedWith 变更，但无任何探针测试文件（pi-semantics-*.test.ts / thinking-level-effective-e2e.test.ts）陪跑——D6 软门禁仅提醒不拦截；恢复动作：先跑探针族确认语义仍成立（runtime 侧探针：cd packages/runtime && npx vitest run src/infra/pi/__tests__/pi-semantics；ext-guards 侧探针（PS-30 stale 文案）：cd extensions/shared/ext-guards && npx vitest run src/__tests__/pi-semantics-stale-ctx-wording.test.ts），全绿再更新 verifiedWith`,
       )
     }
   }

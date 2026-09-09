@@ -98,3 +98,20 @@ export interface ImageCacheWriteResult {
   /** 本批存在因 size 帽未落盘的图（true ⇒ 后续更旧图也必然未写——超帽即停语义） */
   quotaFull: boolean
 }
+
+// ── logs 保留期清理手动触发（DEBUG_RUN_LOG_RETENTION = 'debug:run-log-retention'
+//    invoke 通道）[crash-resilience A9② 验收调试口] ──────────────────────────
+
+/**
+ * 一次 logs/ 清理扫描的统计（DEBUG_RUN_LOG_RETENTION invoke 返回值）。
+ *
+ * 无请求 payload（空参 invoke）；字段语义对齐 main 侧 log-retention.ts 的
+ * LogRetentionResult（该类型住 main 领地不进 shared，此处在通道契约层镜像声明，
+ * preload 签名与 main handler 返回共用，防两端漂移）。
+ */
+export interface DebugRunLogRetentionResult {
+  /** 匹配清理前缀且为文件（非目录）的条目数。 */
+  scanned: number
+  /** 实际删除（mtime 超龄）的文件数。 */
+  removed: number
+}

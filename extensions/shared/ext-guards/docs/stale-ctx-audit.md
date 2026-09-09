@@ -20,6 +20,8 @@
 | plan | `src/compact.ts` | `handlePlanComplete` compact 隔离流的 `onComplete`/`onError` 两处（原 :218-229） | 文案兜底分诊（无代际，判定见 §4）+ onStale=logger.warn |
 | scheduler | `src/runtime.ts` | `startScheduler` 的 tick 回调整体迁移到 `guardStaleCtx`（三件套语义等价，对照见 §5） | isCtxStale + onStale=retireStaleTimer |
 | structured-output | `src/loop-gate.ts` | terminal teardown 的 `ctx.abort()`/`ctx.shutdown()` | onStale=stderr 直出（该包日志惯例） |
+| subagent-workflow | `src/interface/helpers.ts` | `notifyDone` 的 `pi.sendMessage`（workflow-result 完成通知，原 :150；经 onRunDone 异步触发，审计 §7 blockers#1 收口） | label 分诊 + onStale=logger.warn（extension-logger `subagents` 通道） |
+| subagent-workflow | `src/session-lifecycle.ts` | ledgerHost `sendDelivery` 的 `pi.sendMessage`（同链路家族同判） | 同上 |
 
 配套依赖声明（workspace:\*）：smart-context / plan / scheduler / structured-output 的 package.json 各加 `@zhushanwen/pi-ext-guards`。
 
@@ -38,7 +40,7 @@
 | **goal** | command-adapter.ts :381（/goal command handler 内 followUp）；agent-end.ts :179 `pi.appendEntry`（agent_end handler 内） | **排除**（普查实证后无需接入） | command handler = 同步上下文（同 plan command 排除理由）；agent_end handler 在 pi `emit()` 的 try/catch 内（§1 实证）——stale throw 被 pi 捕获转 emitError，非崩溃面 |
 | **base-tool-enhance** | notify.ts :154 `pi.sendMessage`（任务完成通知）；poller.ts setInterval | **排除** | sendTaskFinishedMessage 已有 try/catch（注释明言「旧 bus 已 dispose（session 替换毫秒窗口）——降级日志，不中断轮询」）；pollTick 链路经同一 handleTaskExit 入口 |
 | **cache-probe** | before_agent_start / before_provider_request handler 内多处 `pi.appendEntry` | **排除** | 全部调用点已有 try/catch（appendErr 兜底 + stderr 诊断），且在 pi emit() catch 之内——双覆盖 |
-| **subagent-workflow** | engine-awareness.ts :181（before_agent_start handler 内 try 块）；session-lifecycle.ts sendDelivery；interface/helpers.ts notifyDone :150（`pi.sendMessage` workflow-result）；jsonl-run-store.ts :477 setTimeout | **排除**（engine-awareness / jsonl-run-store）；**命中待接入（见 blockers）**（notifyDone / sendDelivery 链路） | engine-awareness 有 handler 内 try + emit() catch 双覆盖；jsonl-run-store timer 是纯文件持久化 debounce（`.catch(() => {})`，不触碰 pi/ctx）；**notifyDone 经 onRunDone 在 workflow 完成链路异步触发，不在 pi emit() catch 内、无自有 try/catch**——session 替换窗口 stale 即无人接 rejection（同 E1 机制）；sendDelivery 与 notifyDone 同链路家族 |
+| **subagent-workflow** | engine-awareness.ts :181（before_agent_start handler 内 try 块）；session-lifecycle.ts sendDelivery；interface/helpers.ts notifyDone :150（`pi.sendMessage` workflow-result）；jsonl-run-store.ts :477 setTimeout | **接入**（notifyDone / sendDelivery 链路，审计 §7 blockers#1 已收口）；**排除**（engine-awareness / jsonl-run-store） | engine-awareness 有 handler 内 try + emit() catch 双覆盖；jsonl-run-store timer 是纯文件持久化 debounce（`.catch(() => {})`，不触碰 pi/ctx）；**notifyDone 经 onRunDone 在 workflow 完成链路异步触发，不在 pi emit() catch 内、无自有 try/catch**——session 替换窗口 stale 即无人接 rejection（同 E1 机制）；sendDelivery 与 notifyDone 同链路家族（settled 边沿 / 看门狗 / 恢复重放异步触发） |
 | **unified-hooks** | pi.appendEntry（已废弃包） | **排除** | 包已 deprecated（被 base-tool-enhance 整包取代），残留安装场景不在维护面 |
 | **rename-session / msg-id-mapper / agent-ext / system-prompt-trace / extension-logger / file-lock / llm-shared / session-manager / session-reader / smart-context 其余模块 / permission / plugin-bridge（taiji）** | 普查无「跨 session 存活异步回调触碰 pi/ctx」命中 | **排除** | permission 的 setTimeout 是 classifier 超时（resolve 本地 Promise）；plugin-bridge 的 setTimeout 是 sync 重试/网关超时（Promise 竞速，不触碰 pi API）；其余命中点（pi.appendEntry 等）均在同步上下文（session_start/工具 execute 直接链）或供依赖注入的闭包声明，无 stale 窗口 |
 
@@ -53,6 +55,8 @@
 | **plan**：compact 隔离 `onComplete`/`onError` | 「Plan approved，开始执行」的执行指令消息不投递 + goalInit 不触发——**plan 文件本身已落盘** | 用户批准 plan 后未见执行启动（压缩隔离流被 session 替换打断） | **用户可手动 Read plan 文件执行**（plan 文件路径在批准交互中有留痕）；或重新走 /plan | `~/.pi/agent/logs/`：`plan execution notice delivery skipped (stale ctx)`（logger.warn） |
 | **scheduler**：tick stale 自停（retireStaleTimer） | 泄漏 timer 自停退场，旧代 runtime 不再调度——任务持久化（append-only op）不受影响，新一代 runtime 的 session_start 已接管调度 | 无感知（调度由新代接管；旧代自停正是防「任务双投递」） | 无需恢复 | `tick stopped: stale extension ctx (session replaced); timer self-retired`（warn，行为同迁移前） |
 | **structured-output**：terminal teardown | 跳过优雅 abort/shutdown——该 workflow 子进程的存在意义已随 session 替换消失，15s 硬退兜底（armForceExitTeardown）保持武装完成自清理 | 无感知（子进程延迟 ≤15s 自退） | 无需恢复 | stderr（runtime 的 pi tee 可见）：`terminal teardown skipped (stale ctx, session replaced)` |
+| **subagent-workflow**：notifyDone 完成通知 | workflow 完成通知（workflow-result 消息 + `__gui__` 渲染数据）不投递——**run 本体已终态落盘**（jsonl-run-store 持久化 + session 历史的 workflow 工具调用 entry 不受影响） | workflow 结束时无完成通知消息；用户可从 session 历史 / 工具结果看到 workflow 结果（status/trace 持久化面） | 重新打开该 session 查看 workflow 工具调用记录；或重跑 workflow | `~/.pi/agent/logs/`（`subagents` 通道）：`workflow completion notice delivery skipped (stale ctx)`（含 runId） |
+| **subagent-workflow**：sendDelivery 账本投递 | 本条通知不投递；attemptDeliver 按已受理标 sentAt（账面无重投）——session 替换后通知对旧 session 已无意义，与守卫前「留 pending 反复撞 stale 直到账本重绑」终局一致 | 旧 session 的 subagent 完成通知缺失；subagent 结果仍可从 session 历史 / bg-notify 渲染历史看到 | 打开对应 subagent session 查看结果；重启恢复面只覆盖未销账号，此路径为已受理态不重放 | 同上：`notify delivery skipped (stale ctx)` |
 
 **分诊词退化的统一语义**（D1 降级声明）：pi 升级改掉 stale 文案且 PS-30 门禁未及时更新时，守卫退化为「非 stale 判定 → 全部上抛」——回到与 E1 相同的崩溃链路（有 pi-crash log 取证，不更危险），门禁报红提示同步 `STALE_CTX_MARKER`。
 
@@ -110,3 +114,4 @@ VERDICT=PASS
 ## 7. Blockers（清单外疑似风险面，待主 agent 裁决）
 
 1. **subagent-workflow `notifyDone`**（`src/interface/helpers.ts` :150 `pi.sendMessage`，调用链 `src/index.ts` :248 `onRunDone`）：workflow 完成链路异步触发，不在 pi `emit()` catch 内、无自有 try/catch——session 替换窗口 stale 即同 E1 机制崩 pi。同链路家族的 `session-lifecycle.ts` sendDelivery 依赖注入封装同判。超出本单元授权包清单（structured-output / pending-notifications / cw-tool），未改动，建议作为后续单元接入 `guardStaleCtx`。
+   **【已收口 2026-09-09】**两处均已接入 `guardStaleCtx`（`subagent-workflow:notifyDone` / `subagent-workflow:sendDelivery`，stale 静默语义判定见 §4），单测 `src/__tests__/notify-stale-guard.test.ts` 锁定 stale 静默 / 非 stale 上抛 / 正常路径透传三面。

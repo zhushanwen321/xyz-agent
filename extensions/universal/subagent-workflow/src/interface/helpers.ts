@@ -9,10 +9,15 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { guardStaleCtx, toErrorMessage } from "@zhushanwen/pi-ext-guards";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 // bounded JSON pretty 序列化（IF13/#19，TC5/ES5）已下沉 core shared
 // （u-core-atomic 逐字平移，输出与原本地实现字节一致；本地实现已删）。
 import { boundedPrettySerialize } from "@zhushanwen/subagent-core";
+
+// 模块级 logger（与 session-lifecycle.ts / index.ts 同 component 名）
+const logger = getLogger("subagents");
 
 import type { WorkflowRun } from "@zhushanwen/subagent-core";
 import {
@@ -147,14 +152,31 @@ export function notifyDone(
     );
   }
 
-  pi.sendMessage(
+  // stale ctx 防御（crash-resilience D1 / ext-guards 审计 §7 blockers#1 收口）：
+  // notifyDone 经 index.ts onRunDone 在 workflow 完成链路异步触发，不在 pi emit() 的
+  // try/catch 内、无自有 try/catch——session 替换窗口触碰 stale pi 命中 assertActive
+  // （PS-30）即无人接 rejection 崩 pi（E1 同机制）。stale 静默降级（完成通知不投递，
+  // 用户可从 session 历史 / 工具结果看到 workflow 结果，判定见 stale-ctx-audit.md §4），
+  // 非 stale 错误原样上抛（守卫不吞真实 bug）。
+  guardStaleCtx(
+    () =>
+      pi.sendMessage(
+        {
+          customType: "workflow-result",
+          content,
+          display: true,
+          details,
+        },
+        { triggerTurn: true, deliverAs: "steer" }, // g4-allow: 存量待迁移——workflow 完成通知属结果语义，迁移切片复用 U2 账本设施（附录 B 待办）
+      ),
     {
-      customType: "workflow-result",
-      content,
-      display: true,
-      details,
+      label: "subagent-workflow:notifyDone",
+      onStale: (error) =>
+        logger.warn("workflow completion notice delivery skipped (stale ctx)", {
+          runId,
+          error: toErrorMessage(error),
+        }),
     },
-    { triggerTurn: true, deliverAs: "steer" }, // g4-allow: 存量待迁移——workflow 完成通知属结果语义，迁移切片复用 U2 账本设施（附录 B 待办）
   );
 }
 

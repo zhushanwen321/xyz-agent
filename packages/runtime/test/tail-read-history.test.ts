@@ -325,6 +325,66 @@ describe('D4 离线尾读字节预算 + A6 truncated 精确判定', () => {
     expect(responseBytes(result.messages)).toBeLessThanOrEqual(HISTORY_BUDGET.MAX_BYTES)
   })
 
+  it('D4 回退后窗口完整性：窗口首消息为 user（turn 边界）且 entry parentId 链前驱在窗内可追溯', async () => {
+    // 与「D4 语义对齐」同款预算场景（6 turns × ~200KB，640KB 预算在第 4 新 turn 边界
+    // 超界 → 回退该 turn）：fixture 额外带真实 pi 文件形态的 id/parentId 线性链
+    // （每条 entry 的 parentId = 前一条 entry 的 id），验证回退的 turn 原子性——
+    // 窗口是链的连续段（无中途截断），链上断点只允许出现在窗口首 entry（其父在窗外）。
+    const padding = 'x'.repeat(200 * 1024)
+    const lines: string[] = [makeHeader()]
+    const parentById = new Map<string, string | null>()
+    let prevId: string | null = null
+    for (let i = 0; i < 6; i++) {
+      const turnDefs: Array<{ id: string; role: string; content: string }> = [
+        { id: `u-${i}`, role: 'user', content: `user-${i}-${padding}` },
+        { id: `a-${i}`, role: 'assistant', content: `assistant-${i}` },
+        { id: `tr-${i}`, role: 'toolResult', content: `result-${i}` },
+      ]
+      for (const def of turnDefs) {
+        parentById.set(def.id, prevId)
+        prevId = def.id
+        lines.push(
+          JSON.stringify({
+            type: 'message',
+            id: def.id,
+            parentId: parentById.get(def.id),
+            timestamp: '2025-01-01T00:00:00Z',
+            message: { role: def.role, content: def.content },
+          }),
+        )
+      }
+    }
+    const filePath = writeSessionFile(lines)
+
+    // store 桩捕获 mapper 产出的平行 entryIds（message 体不带 entry 身份，链断言经此透出）
+    const seenEntryIds: string[][] = []
+    const capturingStore: ISessionStore = {
+      scanSessions: () => [],
+      convertHistory: (piMessages: unknown[], entryIds?: string[]) => {
+        seenEntryIds.push(entryIds ? [...entryIds] : [])
+        return piMessages as never
+      },
+    } as unknown as ISessionStore
+
+    const result = await tailReadHistory(filePath, capturingStore, HISTORY_BUDGET.RECENT_TURNS, {
+      maxBytes: HISTORY_BUDGET.MAX_BYTES,
+    })
+
+    // budget 停止回退已发生（回退第 4 新 turn，窗口 = 最近 3 turns）
+    expect(result.truncated).toBe(true)
+    expect(result.loadedTurns).toBe(3)
+    // 断言 1：窗口首消息为 user（turn 边界）——回退不切在 turn 中间
+    expect((result.messages[0] as { role?: string }).role).toBe('user')
+    // 断言 2：parentId 链前驱可追溯——除窗口首 entry（其父在窗外）外，每条 entry 的
+    // parentId 恰为窗口内前一条 entry 的 id（链段连续，turn 原子性未被回退破坏）
+    const windowIds = seenEntryIds[seenEntryIds.length - 1]!
+    expect(windowIds).toHaveLength(result.messages.length)
+    expect(windowIds[0]).toBe('u-3')
+    for (let i = 1; i < windowIds.length; i++) {
+      expect(parentById.get(windowIds[i]!)).toBe(windowIds[i - 1])
+    }
+  })
+
   it('A6: 恰好 20 turns 的小文件 → truncated=false（实无更早历史，不误报「加载更早」）', async () => {
     const lines: string[] = [makeHeader()]
     for (let i = 0; i < 20; i++) lines.push(...makeTurn(i))

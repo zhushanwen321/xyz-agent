@@ -22,7 +22,7 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
-import { oncePerProcess, toErrorMessage } from "@zhushanwen/pi-ext-guards";
+import { guardStaleCtx, oncePerProcess, toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 // ═══ core 宿主端口消费（随迁块的依赖；production 默认实现住本文件） ═══
 import { getOrCreateChannelRegistry } from "@zhushanwen/subagent-core";
@@ -323,8 +323,12 @@ function appendSubagentIdentityEntry(pi: ExtensionAPI): void {
  * 随文件域隔离）。compaction 存活情况归 session_compact handler 的条件降级（P-B4
  * 探针阶段 5 实测，见 notify-ledger.ts compactionCheck）。装配失败不阻断
  * session_start（通知退回 notifier 的内核路径）。
+ *
+ * export + 返回装配的 NotifyLedgerHost = 测试直入 seam（可直调 sendDelivery 验证
+ * 守卫分诊）；生产调用方（setupSessionLifecycle）忽略返回值，行为不变。装配失败
+ * 返回 undefined。
  */
-function bindLedgerHostAndRecover(pi: ExtensionAPI, ctx: ExtensionContext): void {
+export function bindLedgerHostAndRecover(pi: ExtensionAPI, ctx: ExtensionContext): NotifyLedgerHost | undefined {
   try {
     const ledgerHost: NotifyLedgerHost = {
       appendLedgerEntry: (customType, data) => {
@@ -338,16 +342,31 @@ function bindLedgerHostAndRecover(pi: ExtensionAPI, ctx: ExtensionContext): void
       sendDelivery: (message) => {
         // D5 单通道：唯一发送形态 = sendCustomMessage({triggerTurn:true})，
         // courier 已在发送前二次复查 isIdle，多通道投递选项已删（D5）。
-        pi.sendMessage(message, { triggerTurn: true });
+        // stale ctx 防御（crash-resilience D1 / ext-guards 审计 §7 blockers#1 收口）：
+        // sendDelivery 经 settled 边沿 / 看门狗 / 恢复重放异步触发——session 替换窗口
+        // 触碰 stale pi 命中 assertActive（PS-30）即无人接 rejection（E1 同机制）。
+        // stale 静默降级（本条通知不投递，attemptDeliver 按已受理标 sentAt——session
+        // 替换后通知对旧 session 已无意义，与守卫前「留 pending 反复撞 stale 直到账本
+        // 重绑」终局一致），非 stale 错误原样上抛（attemptDeliver 既有 catch 走
+        // settleRejected 留账重试语义不变）。
+        guardStaleCtx(() => pi.sendMessage(message, { triggerTurn: true }), {
+          label: "subagent-workflow:sendDelivery",
+          onStale: (error) =>
+            logger.warn("notify delivery skipped (stale ctx)", {
+              error: toErrorMessage(error),
+            }),
+        });
       },
     };
     // U4：重放观测已内聚到 ledger 分桶日志（recoveryReplays 桶经 extensionLogger
     // 通道落盘），此处不再重复打日志。
     bindNotifyLedgerHost(ledgerHost).recoverFromSession();
+    return ledgerHost;
   } catch (err) {
     logger.warn("[subagents] notify ledger bind failed", {
       reason: toErrorMessage(err),
     });
+    return undefined;
   }
 }
 

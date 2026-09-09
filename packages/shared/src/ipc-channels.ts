@@ -35,3 +35,17 @@ export const RENDERER_LOG = 'renderer-log' as const
  * 扫描、软上限均为 main 侧内部生命周期）。选冒号式：对齐 'browser:*' 领域族惯例。
  */
 export const IMAGE_CACHE_WRITE = 'image-cache:write' as const
+
+/**
+ * logs 保留期清理手动触发通道 [crash-resilience A9② 验收调试口]。
+ *
+ * invoke 通道：renderer（dev 控制台 / 调试脚本）经此触发 main 侧 `runLogRetentionNow()`
+ * 立即执行一次 logs/ 超龄清理扫描（main-logger init 与每日定时器走同一函数），返回
+ * 清理统计 {scanned, removed}——验证「清理不只启动时跑」（配 XYZ_LOG_KEEP_DAYS 小保留期
+ * + 手动触发，断言超龄 runtime-* / pi-* 文件被清、固定名 stderr 文件不误删）。
+ *
+ * **验收调试入口，无鉴权面（本地 app 内），不进任何产品 UI**——仅 dev 调试用途，
+ * renderer 产品代码不得调用。选冒号式 `debug:*`：对齐 'image-cache:write' 领域族惯例，
+ * debug 前缀标识其非产品语义。
+ */
+export const DEBUG_RUN_LOG_RETENTION = 'debug:run-log-retention' as const
