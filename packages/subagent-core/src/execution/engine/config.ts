@@ -69,45 +69,69 @@ export function readExplicitEngines(agentDir: string): Record<string, ExplicitEn
 
 /** 单条目字段级校验：command 必需非空字符串；args/config/cwd 形态坏 → 丢弃该字段 + warn。 */
 function sanitizeExplicitEntry(id: string, raw: unknown): ExplicitEngineEntry | undefined {
+  const v = requireEntryObject(id, raw);
+  if (v === undefined) return undefined;
+  if (v["enabled"] === false) return undefined; // A12⑤：显式禁用 = 不装载不进清单（非错误，不 warn）
+  const command = requireCommand(id, v["command"]);
+  if (command === undefined) return undefined;
+  return {
+    command,
+    ...normalizeArgs(id, v["args"]),
+    ...normalizeConfig(id, v["config"]),
+    ...normalizeCwd(id, v["cwd"]),
+  };
+}
+
+/** 条目形态守卫：非对象（含数组/null）→ warn 跳过整条。 */
+function requireEntryObject(id: string, raw: unknown): Record<string, unknown> | undefined {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     logger.warn(
       `[engine-discovery] config.json engines.${id} must be an object, got ${jsonKindOf(raw)} — skipping entry`,
     );
     return undefined;
   }
-  const v = raw as Record<string, unknown>;
-  if (v["enabled"] === false) return undefined; // A12⑤：显式禁用 = 不装载不进清单（非错误，不 warn）
-  const command = v["command"];
+  return raw as Record<string, unknown>;
+}
+
+/** command 校验：必需非空字符串，形态坏 → warn 跳过整条。 */
+function requireCommand(id: string, command: unknown): string | undefined {
   if (typeof command !== "string" || command.trim() === "") {
     logger.warn(
       `[engine-discovery] config.json engines.${id}.command is required (non-empty string) — skipping entry`,
     );
     return undefined;
   }
-  const args = v["args"];
+  return command;
+}
+
+/** args 字段：形态坏 warn 丢弃该字段；合法（或缺省）→ 条件 spread 形态。 */
+function normalizeArgs(id: string, args: unknown): { args: string[] } {
   if (args !== undefined && !isStringArray(args)) {
     logger.warn(
       `[engine-discovery] config.json engines.${id}.args must be a string array — ignoring args`,
     );
   }
-  const config = v["config"];
+  return { args: isStringArray(args) ? args : [] };
+}
+
+/** config 字段：形态坏 warn 丢弃该字段；合法 → 条件 spread 形态。 */
+function normalizeConfig(id: string, config: unknown): { config?: Record<string, string> } {
   if (config !== undefined && !isStringRecord(config)) {
     logger.warn(
       `[engine-discovery] config.json engines.${id}.config must be a Record<string, string> — ignoring config`,
     );
   }
-  const cwd = v["cwd"];
+  return isStringRecord(config) ? { config } : {};
+}
+
+/** cwd 字段：形态坏 warn 丢弃该字段；合法 → 条件 spread 形态。 */
+function normalizeCwd(id: string, cwd: unknown): { cwd?: string } {
   if (cwd !== undefined && typeof cwd !== "string") {
     logger.warn(
       `[engine-discovery] config.json engines.${id}.cwd must be a string — ignoring cwd`,
     );
   }
-  return {
-    command,
-    args: isStringArray(args) ? args : [],
-    ...(isStringRecord(config) ? { config } : {}),
-    ...(typeof cwd === "string" ? { cwd } : {}),
-  };
+  return typeof cwd === "string" ? { cwd } : {};
 }
 
 function isStringArray(value: unknown): value is string[] {

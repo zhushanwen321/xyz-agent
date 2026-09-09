@@ -266,82 +266,112 @@ export function sweepStalePidfiles(opts: SweepStalePidfilesOptions): PidfileSwee
   }
 
   for (const file of files) {
-    const path = join(dir, file);
-    const content = readPidfile(path);
-    if (content === undefined) {
-      removePidfile(path);
-      result.removed.push({ file, reason: "unreadable-or-corrupt" });
-      continue;
-    }
-    if (content.hostPid === opts.currentHostPid) {
-      result.skipped.push({ file, reason: "own-pidfile" });
-      continue;
-    }
-
-    const hostAlive = isProcessAlive(content.hostPid);
-    if (hostAlive === undefined) {
-      result.skipped.push({ file, reason: "host-pid-probe-uncertain" });
-      continue;
-    }
-    if (hostAlive) {
-      // 宿主 pid 存活：对方宿主实例还活着（或宿主 pid 被复用疑似）——保守跳过 +
-      // 保留文件（R9-3：宿主 pid 复用误判「已死」方向同样落这里保住）。
-      result.skipped.push({ file, reason: "host-pid-alive" });
-      continue;
-    }
-
-    // 宿主已死，pidfile 必陈旧。Windows：无可移植启动时间判据 → 不杀只删。
-    if (platform === "win32") {
-      removePidfile(path);
-      result.removed.push({ file, reason: "stale (host dead); win32 never kills" });
-      continue;
-    }
-
-    const engineAlive = isProcessAlive(content.enginePid);
-    if (engineAlive === undefined) {
-      result.skipped.push({ file, reason: "engine-pid-probe-uncertain" });
-      continue;
-    }
-    if (!engineAlive) {
-      removePidfile(path);
-      result.removed.push({ file, reason: "engine-pid-dead" });
-      continue;
-    }
-
-    const cmdline = readProcessCmdline(content.enginePid);
-    if (cmdline === undefined) {
-      result.skipped.push({ file, reason: "engine-cmdline-probe-uncertain" });
-      continue;
-    }
-    if (!opts.matchesEngineCmdline(cmdline)) {
-      // pid 已被复用给无关进程：判定不成立 → 删文件、绝不动那个无辜进程。
-      removePidfile(path);
-      result.removed.push({ file, reason: "cmdline-mismatch (pid reused by unrelated process)" });
-      continue;
-    }
-
-    const startTime = readProcessStartTime(content.enginePid);
-    if (startTime === undefined) {
-      result.skipped.push({ file, reason: "engine-start-time-probe-uncertain" });
-      continue;
-    }
-    if (content.engineStartTime === null || content.engineStartTime !== startTime) {
-      // 同 cmdline 的 pid 复用（R9-3b）：启动时间不同 → 判定不成立 → 删文件不杀。
-      removePidfile(path);
-      result.removed.push({ file, reason: "engine-start-time-mismatch (pid reused)" });
-      continue;
-    }
-
-    // 三条件全立：确是宿主崩溃残留的引擎实例 → 组杀 + 删文件。
-    const killEngine =
-      opts.killEngine ?? defaultKillEngineProcessGroup;
-    killEngine(content.enginePid);
-    removePidfile(path);
-    result.killed.push(content.enginePid);
-    result.removed.push({ file, reason: "swept after kill (stale orphan)" });
+    sweepOnePidfile(join(dir, file), file, opts, platform, result);
   }
 
   return result;
+}
+
+/**
+ * 单个 pidfile 的前置检查（顺序即优先级）：坏内容 → 删；自己 → 跳过；宿主 pid
+ * 探测不确定/存活 → 保守跳过 + 保留（活实例或宿主 pid 复用疑似）。宿主已死才进
+ * 陈旧判定链（reapDeadHostEngine）。
+ */
+function sweepOnePidfile(
+  path: string,
+  file: string,
+  opts: SweepStalePidfilesOptions,
+  platform: NodeJS.Platform,
+  result: PidfileSweepResult,
+): void {
+  const content = readPidfile(path);
+  if (content === undefined) {
+    removePidfile(path);
+    result.removed.push({ file, reason: "unreadable-or-corrupt" });
+    return;
+  }
+  if (content.hostPid === opts.currentHostPid) {
+    result.skipped.push({ file, reason: "own-pidfile" });
+    return;
+  }
+
+  const hostAlive = isProcessAlive(content.hostPid);
+  if (hostAlive === undefined) {
+    result.skipped.push({ file, reason: "host-pid-probe-uncertain" });
+    return;
+  }
+  if (hostAlive) {
+    // 宿主 pid 存活：对方宿主实例还活着（或宿主 pid 被复用疑似）——保守跳过 +
+    // 保留文件（R9-3：宿主 pid 复用误判「已死」方向同样落这里保住）。
+    result.skipped.push({ file, reason: "host-pid-alive" });
+    return;
+  }
+
+  reapDeadHostEngine(path, file, content, opts, platform, result);
+}
+
+/**
+ * 宿主已死后的陈旧判定链（pidfile 必陈旧）：win32 不杀只删；POSIX 按引擎 pid
+ * 存活 → cmdline 身份 → engineStartTime 三条件逐级校验，任一不确定保守跳过 +
+ * 保留，判定不成立删文件，全过 → 组杀 + 删。
+ */
+function reapDeadHostEngine(
+  path: string,
+  file: string,
+  content: EnginePidfileContent,
+  opts: SweepStalePidfilesOptions,
+  platform: NodeJS.Platform,
+  result: PidfileSweepResult,
+): void {
+  // 宿主已死，pidfile 必陈旧。Windows：无可移植启动时间判据 → 不杀只删。
+  if (platform === "win32") {
+    removePidfile(path);
+    result.removed.push({ file, reason: "stale (host dead); win32 never kills" });
+    return;
+  }
+
+  const engineAlive = isProcessAlive(content.enginePid);
+  if (engineAlive === undefined) {
+    result.skipped.push({ file, reason: "engine-pid-probe-uncertain" });
+    return;
+  }
+  if (!engineAlive) {
+    removePidfile(path);
+    result.removed.push({ file, reason: "engine-pid-dead" });
+    return;
+  }
+
+  const cmdline = readProcessCmdline(content.enginePid);
+  if (cmdline === undefined) {
+    result.skipped.push({ file, reason: "engine-cmdline-probe-uncertain" });
+    return;
+  }
+  if (!opts.matchesEngineCmdline(cmdline)) {
+    // pid 已被复用给无关进程：判定不成立 → 删文件、绝不动那个无辜进程。
+    removePidfile(path);
+    result.removed.push({ file, reason: "cmdline-mismatch (pid reused by unrelated process)" });
+    return;
+  }
+
+  const startTime = readProcessStartTime(content.enginePid);
+  if (startTime === undefined) {
+    result.skipped.push({ file, reason: "engine-start-time-probe-uncertain" });
+    return;
+  }
+  if (content.engineStartTime === null || content.engineStartTime !== startTime) {
+    // 同 cmdline 的 pid 复用（R9-3b）：启动时间不同 → 判定不成立 → 删文件不杀。
+    removePidfile(path);
+    result.removed.push({ file, reason: "engine-start-time-mismatch (pid reused)" });
+    return;
+  }
+
+  // 三条件全立：确是宿主崩溃残留的引擎实例 → 组杀 + 删文件。
+  const killEngine =
+    opts.killEngine ?? defaultKillEngineProcessGroup;
+  killEngine(content.enginePid);
+  removePidfile(path);
+  result.killed.push(content.enginePid);
+  result.removed.push({ file, reason: "swept after kill (stale orphan)" });
 }
 
 /** 缺省杀执行器：POSIX 负 pid 组杀（引擎 CLI 由 EngineClient detached:true spawn = 组长），失败回落单杀。 */

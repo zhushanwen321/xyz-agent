@@ -253,6 +253,69 @@ export function registerZcodeEngine(engineDataDir: () => string = getEngineDataD
 // createZcodeEngine 薄壳
 // ============================================================
 
+/** deps.sources 忽略的 warn-once（跨进程不可达面，重复注册不刷屏）。 */
+function warnSourcesIgnoredOnce(deps: D8CompatZcodeEngineDeps): void {
+  if (deps.sources === undefined || warnedSourcesIgnored) return;
+  warnedSourcesIgnored = true;
+  logger.warn(
+    "[d8-compat] createZcodeEngine deps.sources is ignored (model/credential sources do not " +
+      "cross the process boundary — the engine resolves its own credentials, protocol invariant 5)",
+  );
+}
+
+/**
+ * manifest 薄壳消费面解析 + 回退合成：vendored 包未定位/manifest 不可读 → capabilities
+ * 全保守 + envPrefixes 空（gate 同步拦生成，失败显式发生在首次协议调用）。
+ */
+function resolveManifestInfo(located: LocatedEnginePkg | undefined): ManifestInfo {
+  const info = located !== undefined ? readEngineManifest(located.pkgDir) : undefined;
+  return {
+    capabilities: info?.capabilities ?? { ...CONSERVATIVE_CAPABILITIES },
+    envPrefixes: info?.envPrefixes ?? [],
+    ...(info?.modelCatalog !== undefined && info.modelCatalog !== null ? { modelCatalog: info.modelCatalog } : {}),
+  };
+}
+
+/** RemoteEngine manifest 快照：capabilities 恒有；modelCatalog 三态语义（无枚举面不注入）。 */
+function buildManifestSnapshot(manifestInfo: ManifestInfo): RemoteEngineManifestSnapshot {
+  return {
+    capabilities: manifestInfo.capabilities,
+    ...(manifestInfo.modelCatalog !== undefined && manifestInfo.modelCatalog !== null
+      ? { modelCatalog: manifestInfo.modelCatalog }
+      : {}),
+  };
+}
+
+/** 协议客户端装配（H12 relay 透传 + manifestDiagnostics 诊断快照）。 */
+function buildZcodeEngineClient(
+  id: string,
+  command: string,
+  dataDir: string,
+  baseEnv: NodeJS.ProcessEnv,
+  manifestInfo: ManifestInfo,
+): EngineClient {
+  return new EngineClient({
+    engineId: id,
+    command,
+    args: [],
+    hostKind: D8_ZSW_HOST_KIND,
+    dataDir,
+    baseEnv,
+    envPrefixes: manifestInfo.envPrefixes,
+    // H12 relay 透传（zsw 宿主链路）：宿主 env 的 relay 连接三键原样提取走 L0 注入；
+    // 身份键 SESSION_ID/RECORD_ID 由 buildEngineChildEnv L1 deny 剥除（引擎按
+    // run.params.ctx 重写，不靠 env 继承）。relay 未激活 → undefined → 不注入。
+    ...(readRelayForwardEnv(baseEnv) !== undefined ? { relay: readRelayForwardEnv(baseEnv) } : {}),
+    manifestDiagnostics: {
+      capabilities: manifestInfo.capabilities,
+      models:
+        manifestInfo.modelCatalog === undefined || manifestInfo.modelCatalog === null
+          ? null
+          : manifestInfo.modelCatalog.models,
+    },
+  });
+}
+
 /**
  * D8 薄壳：deps → 协议客户端映射，返回 RemoteEngine('zcode')（implements EnginePort，
  * 对 zsw 透传结构兼容）。构造同步、不 throw（§3.5.3 代理形态）——引擎包缺失时
@@ -260,41 +323,14 @@ export function registerZcodeEngine(engineDataDir: () => string = getEngineDataD
  */
 export function createZcodeEngine(deps: D8CompatZcodeEngineDeps): EnginePort {
   const id = D8_ZCODE_ENGINE_ID;
+  warnSourcesIgnoredOnce(deps);
   const dataDir = deps.engineDataDir();
-  if (deps.sources !== undefined && !warnedSourcesIgnored) {
-    warnedSourcesIgnored = true;
-    logger.warn(
-      "[d8-compat] createZcodeEngine deps.sources is ignored (model/credential sources do not " +
-        "cross the process boundary — the engine resolves its own credentials, protocol invariant 5)",
-    );
-  }
   const baseEnv: NodeJS.ProcessEnv = { ...process.env, ...(deps.processEnv ?? {}) };
   const located = deps.cliPath !== undefined ? undefined : locateVendoredEnginePkg(id);
   const command = deps.cliPath ?? located?.binPath ?? expectedVendoredBinPath(id);
-  const manifestInfo = located !== undefined ? readEngineManifest(located.pkgDir) : undefined;
-  const capabilities = manifestInfo?.capabilities ?? { ...CONSERVATIVE_CAPABILITIES };
-  const modelCatalog = manifestInfo?.modelCatalog;
-  const manifestSnapshot: RemoteEngineManifestSnapshot = {
-    capabilities,
-    ...(modelCatalog !== undefined && modelCatalog !== null ? { modelCatalog } : {}),
-  };
-  const client = new EngineClient({
-    engineId: id,
-    command,
-    args: [],
-    hostKind: D8_ZSW_HOST_KIND,
-    dataDir,
-    baseEnv,
-    envPrefixes: manifestInfo?.envPrefixes ?? [],
-    // H12 relay 透传（zsw 宿主链路）：宿主 env 的 relay 连接三键原样提取走 L0 注入；
-    // 身份键 SESSION_ID/RECORD_ID 由 buildEngineChildEnv L1 deny 剥除（引擎按
-    // run.params.ctx 重写，不靠 env 继承）。relay 未激活 → undefined → 不注入。
-    ...(readRelayForwardEnv(baseEnv) !== undefined ? { relay: readRelayForwardEnv(baseEnv) } : {}),
-    manifestDiagnostics: {
-      capabilities,
-      models: modelCatalog === undefined || modelCatalog === null ? null : modelCatalog.models,
-    },
-  });
+  const manifestInfo = resolveManifestInfo(located);
+  const manifestSnapshot = buildManifestSnapshot(manifestInfo);
+  const client = buildZcodeEngineClient(id, command, dataDir, baseEnv, manifestInfo);
   return new RemoteEngine({
     engineId: id,
     client,

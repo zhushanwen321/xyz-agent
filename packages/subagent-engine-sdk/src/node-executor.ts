@@ -131,6 +131,78 @@ function engineNotFound(detail: string, recovery: string): EngineSdkError {
   return new EngineSdkError("engine_not_found", detail, recovery);
 }
 
+/** 传入 opts.env 的快照（矩阵① env 缺省 = 宿主 process.env）。 */
+function launchEnvOf(opts: EngineNodeLaunchOptions): Record<string, string | undefined> {
+  return opts.env ?? process.env;
+}
+
+/**
+ * 矩阵①：pi 扩展宿主（打包）——必须用注入执行器 XYZ_AGENT_ENGINE_NODE
+ * （env 缺失 = engine_not_found；执行器探针失败 = engine_not_found + 指引）。
+ */
+async function resolvePiExtensionLaunch(
+  entryPath: string,
+  entryArgs: string[],
+  env: Record<string, string | undefined>,
+): Promise<EngineNodeLaunch> {
+  const engineNode = env[ENGINE_NODE_ENV]?.trim();
+  if (engineNode === undefined || engineNode === "") {
+    throw engineNotFound(
+      `pi extension host must spawn engines via injected executor ${ENGINE_NODE_ENV}, `
+        + `but it is not set (host process.execPath is the pi binary, not a node executor)`,
+      `The xyz-agent runtime injects ${ENGINE_NODE_ENV} when spawning the pi host. `
+        + `If you are running the extension inside a packaged app, report this as a packaging `
+        + `regression; standalone pi installs do not use the pi-extension host kind.`,
+    );
+  }
+  // 执行器为 Electron 二进制时宿主会同时注入 ELECTRON_RUN_AS_NODE=1（矩阵① 同点注入）
+  const isElectron = env.ELECTRON_RUN_AS_NODE === "1";
+  if (!(await probeCached(engineNode, isElectron))) {
+    throw engineNotFound(
+      `injected node executor failed the probe: ${engineNode} (isElectron=${isElectron})`,
+      `Verify the executor exists and can run plain node semantics `
+        + `(Electron binaries need ELECTRON_RUN_AS_NODE=1). The host re-probes after restart.`,
+    );
+  }
+  return { command: engineNode, args: [entryPath, ...entryArgs], electronRunAsNode: isElectron };
+}
+
+/**
+ * 矩阵②：runtime sidecar——process.execPath + ELECTRON_RUN_AS_NODE=1（Electron 宿主时，
+ * 探针先行）。
+ */
+async function resolveRuntimeSidecarLaunch(
+  entryPath: string,
+  entryArgs: string[],
+  opts: EngineNodeLaunchOptions,
+): Promise<EngineNodeLaunch> {
+  const execPath = opts.execPath ?? process.execPath;
+  const isElectron = opts.isElectronHost ?? process.versions.electron !== undefined;
+  if (!(await probeCached(execPath, isElectron))) {
+    throw engineNotFound(
+      `runtime sidecar executor failed the probe: ${execPath} (isElectron=${isElectron})`,
+      `The sidecar process.execPath must run plain node semantics (ELECTRON_RUN_AS_NODE=1 `
+        + `for Electron binaries). Check how the runtime sidecar was spawned.`,
+    );
+  }
+  return { command: execPath, args: [entryPath, ...entryArgs], electronRunAsNode: isElectron };
+}
+
+/** 矩阵③：standalone——PATH node（探针被证伪 = engine_not_found + 安装指引）。 */
+async function resolveStandaloneLaunch(
+  entryPath: string,
+  entryArgs: string[],
+): Promise<EngineNodeLaunch> {
+  if (!(await probeCached("node", false))) {
+    throw engineNotFound(
+      `no usable 'node' on PATH for standalone engine launch (entry: ${entryPath})`,
+      `Install Node.js >= 22 and ensure 'node' is on PATH `
+        + `(https://nodejs.org/), or configure the engine explicitly via subagents/config.json.`,
+    );
+  }
+  return { command: "node", args: [entryPath, ...entryArgs], electronRunAsNode: false };
+}
+
 /**
  * 宿主 × 平台二维矩阵解析（W9 §2.9）。返回 spawn argv；不直接 spawn——调用方
  * （EngineClient / runtime）持有各自的平台参数（detached / 进程组收割语义）。
@@ -167,52 +239,15 @@ export async function resolveEngineNodeLaunch(
   }
 
   if (opts.hostKind === "pi-extension") {
-    const env = opts.env ?? process.env;
-    const engineNode = env[ENGINE_NODE_ENV]?.trim();
-    if (engineNode === undefined || engineNode === "") {
-      throw engineNotFound(
-        `pi extension host must spawn engines via injected executor ${ENGINE_NODE_ENV}, `
-          + `but it is not set (host process.execPath is the pi binary, not a node executor)`,
-        `The xyz-agent runtime injects ${ENGINE_NODE_ENV} when spawning the pi host. `
-          + `If you are running the extension inside a packaged app, report this as a packaging `
-          + `regression; standalone pi installs do not use the pi-extension host kind.`,
-      );
-    }
-    // 执行器为 Electron 二进制时宿主会同时注入 ELECTRON_RUN_AS_NODE=1（矩阵① 同点注入）
-    const isElectron = env.ELECTRON_RUN_AS_NODE === "1";
-    if (!(await probeCached(engineNode, isElectron))) {
-      throw engineNotFound(
-        `injected node executor failed the probe: ${engineNode} (isElectron=${isElectron})`,
-        `Verify the executor exists and can run plain node semantics `
-          + `(Electron binaries need ELECTRON_RUN_AS_NODE=1). The host re-probes after restart.`,
-      );
-    }
-    return { command: engineNode, args: [opts.entryPath, ...entryArgs], electronRunAsNode: isElectron };
+    return resolvePiExtensionLaunch(opts.entryPath, entryArgs, launchEnvOf(opts));
   }
 
   if (opts.hostKind === "runtime-sidecar") {
-    const execPath = opts.execPath ?? process.execPath;
-    const isElectron = opts.isElectronHost ?? process.versions.electron !== undefined;
-    if (!(await probeCached(execPath, isElectron))) {
-      throw engineNotFound(
-        `runtime sidecar executor failed the probe: ${execPath} (isElectron=${isElectron})`,
-        `The sidecar process.execPath must run plain node semantics (ELECTRON_RUN_AS_NODE=1 `
-          + `for Electron binaries). Check how the runtime sidecar was spawned.`,
-      );
-    }
-    return { command: execPath, args: [opts.entryPath, ...entryArgs], electronRunAsNode: isElectron };
+    return resolveRuntimeSidecarLaunch(opts.entryPath, entryArgs, opts);
   }
 
   if (opts.hostKind === "standalone") {
-    // PATH node：探针被证伪（ENOENT / 非 node 语义）→ engine_not_found + 安装指引
-    if (!(await probeCached("node", false))) {
-      throw engineNotFound(
-        `no usable 'node' on PATH for standalone engine launch (entry: ${opts.entryPath})`,
-        `Install Node.js >= 22 and ensure 'node' is on PATH `
-          + `(https://nodejs.org/), or configure the engine explicitly via subagents/config.json.`,
-      );
-    }
-    return { command: "node", args: [opts.entryPath, ...entryArgs], electronRunAsNode: false };
+    return resolveStandaloneLaunch(opts.entryPath, entryArgs);
   }
 
   // 非矩阵形态（理论不可达——hostKind 是封闭联合）；保守回落直接 spawn 入口本体。

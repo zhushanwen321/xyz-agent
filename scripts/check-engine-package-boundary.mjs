@@ -89,6 +89,103 @@ function rel(p) {
   return relative(REPO_ROOT, p);
 }
 
+/** 规则 1：依赖声明（dependencies/peerDependencies/optionalDependencies）不得含 core。 */
+function checkPackageDependencies(pkg, pkgPath, violations) {
+  for (const depType of ["dependencies", "peerDependencies", "optionalDependencies"]) {
+    const deps = pkg[depType] ?? {};
+    if (typeof deps[CORE_PACKAGE_NAME] === "string") {
+      violations.push({
+        where: `${rel(pkgPath)} (${depType})`,
+        detail: CORE_PACKAGE_NAME,
+        reason: `engine package declares a dependency on core — engines decouple via engine-protocol v1 + @zhushanwen/subagent-engine-sdk`,
+      });
+    }
+  }
+}
+
+/** 规则 3a（DoD#2）：exports 不得有 ./engines/ 子入口。 */
+function checkPackageExports(pkg, pkgPath, violations) {
+  const exportsKeys = pkg.exports !== undefined && typeof pkg.exports === "object"
+    ? Object.keys(pkg.exports)
+    : [];
+  for (const key of exportsKeys) {
+    if (key === "./engines" || key.startsWith("./engines/")) {
+      violations.push({
+        where: `${rel(pkgPath)} (exports)`,
+        detail: key,
+        reason: `DoD#2: engine packages must not expose ./engines/ subpath exports`,
+      });
+    }
+  }
+}
+
+/** 单源文件导入检查：规则 2（core import / 相对说明符逃出包根）+ 规则 3b（DoD#2 barrel 无 core engines/ 重导出）。 */
+function checkSourceFile(filePath, pkgDir, violations) {
+  const source = readFileSync(filePath, "utf8");
+  for (const { specifier, lineNo } of extractSpecifiers(source)) {
+    if (specifier === CORE_PACKAGE_NAME || specifier.startsWith(`${CORE_PACKAGE_NAME}/`)) {
+      violations.push({
+        where: `${rel(filePath)}:${lineNo}`,
+        detail: specifier,
+        reason: `engine package imports core (invariant: engines speak engine-protocol, core internals are not linkable)`,
+      });
+      continue;
+    }
+    if (specifier.startsWith(".")) {
+      const resolvedAbs = resolve(dirname(filePath), specifier);
+      if (relative(pkgDir, resolvedAbs).startsWith("..")) {
+        violations.push({
+          where: `${rel(filePath)}:${lineNo}`,
+          detail: specifier,
+          reason: `relative specifier escapes the engine package root (resolves to ${resolvedAbs})`,
+        });
+      }
+    }
+    if (/engines\/(pi|zcode)\//.test(specifier)) {
+      violations.push({
+        where: `${rel(filePath)}:${lineNo}`,
+        detail: specifier,
+        reason: `DoD#2: engine package barrel must not re-export core engine implementations`,
+      });
+    }
+  }
+}
+
+/** 规则 2 + 3b 的 src/bin 源码扫描面。 */
+function checkPackageSources(pkgDir, violations) {
+  for (const sub of ["src", "bin"]) {
+    for (const f of listFiles(join(pkgDir, sub), SRC_EXTENSIONS)) {
+      checkSourceFile(f, pkgDir, violations);
+    }
+  }
+}
+
+/** 单引擎包全规则检查（violations 按规则 1 → 3a → 2/3b 顺序追加，保持逐条输出顺序稳定）。 */
+function checkPackage(dirName, violations) {
+  const pkgDir = join(PACKAGES_DIR, dirName);
+  const pkgPath = join(pkgDir, "package.json");
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+  checkPackageDependencies(pkg, pkgPath, violations);
+  checkPackageExports(pkg, pkgPath, violations);
+  checkPackageSources(pkgDir, violations);
+}
+
+/** 违规报告（逐条 文件:行号 + 原因 + 恢复指引）。 */
+function reportViolations(violations, pkgDirs) {
+  console.error(
+    `[check-engine-package-boundary] ${violations.length} violation(s) in ${pkgDirs.length} engine package(s):`,
+  );
+  for (const v of violations) {
+    console.error(`  ${v.where}: ${v.detail}`);
+    console.error(`    reason: ${v.reason}`);
+  }
+  console.error(
+    `  Recovery: engine packages depend only on @zhushanwen/subagent-engine-sdk; ` +
+      `shared logic belongs in the SDK (core -> SDK is the legal direction, never the reverse). ` +
+      `See docs/design/subagent-engine-protocolization.md §3.7 / impl-plan §2.9.`,
+  );
+}
+
 function main() {
   const pkgDirs = listEnginePackageDirs();
   if (pkgDirs.length === 0) {
@@ -101,85 +198,11 @@ function main() {
 
   const violations = [];
   for (const dirName of pkgDirs) {
-    const pkgDir = join(PACKAGES_DIR, dirName);
-    const pkgPath = join(pkgDir, "package.json");
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-
-    // 规则 1：依赖声明不得含 core
-    for (const depType of ["dependencies", "peerDependencies", "optionalDependencies"]) {
-      const deps = pkg[depType] ?? {};
-      if (typeof deps[CORE_PACKAGE_NAME] === "string") {
-        violations.push({
-          where: `${rel(pkgPath)} (${depType})`,
-          detail: CORE_PACKAGE_NAME,
-          reason: `engine package declares a dependency on core — engines decouple via engine-protocol v1 + @zhushanwen/subagent-engine-sdk`,
-        });
-      }
-    }
-
-    // 规则 3a（DoD#2）：exports 无 ./engines/ 子入口
-    const exportsKeys = pkg.exports !== undefined && typeof pkg.exports === "object"
-      ? Object.keys(pkg.exports)
-      : [];
-    for (const key of exportsKeys) {
-      if (key === "./engines" || key.startsWith("./engines/")) {
-        violations.push({
-          where: `${rel(pkgPath)} (exports)`,
-          detail: key,
-          reason: `DoD#2: engine packages must not expose ./engines/ subpath exports`,
-        });
-      }
-    }
-
-    // 规则 2：src/bin 源码导入边界；规则 3b（DoD#2）：barrel 无引擎重导出（core
-    // engines/ 路径的 re-export 形态）
-    for (const sub of ["src", "bin"]) {
-      for (const f of listFiles(join(pkgDir, sub), SRC_EXTENSIONS)) {
-        const source = readFileSync(f, "utf8");
-        for (const { specifier, lineNo } of extractSpecifiers(source)) {
-          if (specifier === CORE_PACKAGE_NAME || specifier.startsWith(`${CORE_PACKAGE_NAME}/`)) {
-            violations.push({
-              where: `${rel(f)}:${lineNo}`,
-              detail: specifier,
-              reason: `engine package imports core (invariant: engines speak engine-protocol, core internals are not linkable)`,
-            });
-            continue;
-          }
-          if (specifier.startsWith(".")) {
-            const resolvedAbs = resolve(dirname(f), specifier);
-            if (relative(pkgDir, resolvedAbs).startsWith("..")) {
-              violations.push({
-                where: `${rel(f)}:${lineNo}`,
-                detail: specifier,
-                reason: `relative specifier escapes the engine package root (resolves to ${resolvedAbs})`,
-              });
-            }
-          }
-          if (/engines\/(pi|zcode)\//.test(specifier)) {
-            violations.push({
-              where: `${rel(f)}:${lineNo}`,
-              detail: specifier,
-              reason: `DoD#2: engine package barrel must not re-export core engine implementations`,
-            });
-          }
-        }
-      }
-    }
+    checkPackage(dirName, violations);
   }
 
   if (violations.length > 0) {
-    console.error(
-      `[check-engine-package-boundary] ${violations.length} violation(s) in ${pkgDirs.length} engine package(s):`,
-    );
-    for (const v of violations) {
-      console.error(`  ${v.where}: ${v.detail}`);
-      console.error(`    reason: ${v.reason}`);
-    }
-    console.error(
-      `  Recovery: engine packages depend only on @zhushanwen/subagent-engine-sdk; ` +
-        `shared logic belongs in the SDK (core -> SDK is the legal direction, never the reverse). ` +
-        `See docs/design/subagent-engine-protocolization.md §3.7 / impl-plan §2.9.`,
-    );
+    reportViolations(violations, pkgDirs);
     process.exit(1);
   }
 

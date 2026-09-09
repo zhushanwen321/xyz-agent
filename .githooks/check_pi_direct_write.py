@@ -159,8 +159,8 @@ STATEMENT_MAX_SPAN = 5      # 多行语句（括号未闭合）向下拼接的�
 # 工具两写点（残留清单/操作凭证落盘，registry §4 ⑬）——行号随脚本漂移须同步更新
 # ---------------------------------------------------------------------------
 ALLOWLIST: set[str] = {
-    "scripts/zcode-session-db-cleanup.mjs:410",
-    "scripts/zcode-session-db-cleanup.mjs:429",
+    "scripts/zcode-session-db-cleanup.mjs:445",
+    "scripts/zcode-session-db-cleanup.mjs:464",
 }
 
 

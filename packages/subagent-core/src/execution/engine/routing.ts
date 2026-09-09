@@ -209,58 +209,94 @@ function resolveDefaultEngineFallback(
  *   - 守卫 c（显式 model + 将换引擎）：EngineError(model_not_available)
  */
 export async function routeEngine(opts: EngineRouteOptions): Promise<EngineRouteResult> {
-  // [W8 补扫接线] 缺省存在性校验经 hasEngineWithRescan（快照未命中触发一次三级补扫，
-  // W4 ensureEngineDiscovered 通道——「装了包 → 下次解析即可用」）；宿主显式注入
-  // hasEngineFn 时以注入值为准（测试 / 宿主自定义通道不变）。
-  const has = opts.hasEngineFn ?? hasEngineWithRescan;
-  const get = opts.getEngineFn ?? getEngine;
-  const available = opts.listAvailableEnginesFn ?? listEnginesByDisplayName;
+  const { has, get, available } = resolveRouteHelpers(opts);
   const routing = resolveEngineRouting(opts.routing);
 
   // 注册表校验：call/frontmatter 层未知 id 直接报（配置错误前置暴露）；default 层走
   // D4 宽容回落（配置的缺省引擎被卸载 ≠ 用户写错 id——环境变化，回落 + 留痕）。
   if (!has(routing.engineId)) {
-    if (routing.source === "default") {
-      const fallback = resolveDefaultEngineFallback(routing.engineId, available());
-      if (fallback === undefined) {
-        // 全不可用：派发期 engine_not_found（「未发现任何引擎包」+ 安装指引，D4）
-        throw new EngineNotFoundError(routing.engineId, [], describeRoutingSource(opts.routing));
-      }
-      routing.engineId = fallback.engineId;
-      const fallbackTrace = fallback.fallback;
-      // 回落目标直接取用不探（probe 已失败一次不重复；目标引擎不可用由 run 期显式失败）
-      return {
-        engine: get(routing.engineId),
-        engineId: routing.engineId,
-        requestedEngineId: fallbackTrace.from,
-        source: routing.source,
-        engineFallback: fallbackTrace,
-      };
-    }
-    throw new EngineNotFoundError(routing.engineId, opts.listEnginesFn?.() ?? listEngines(), describeRoutingSource(opts.routing));
+    return resolveUnregisteredEngine(opts, routing, get, available);
   }
 
   // 内置缺省 pi 免探（见文件头「probe 触发时机」）——直接取引擎
   if (routing.engineId === DEFAULT_ENGINE_ID) {
-    return {
-      engine: get(routing.engineId),
-      engineId: routing.engineId,
-      requestedEngineId: routing.engineId,
-      source: routing.source,
-    };
+    return directRoute(get(routing.engineId), routing);
   }
 
   const report = await opts.probe(routing.engineId);
   if (report.ok) {
-    return {
-      engine: get(routing.engineId),
-      engineId: routing.engineId,
-      requestedEngineId: routing.engineId,
-      source: routing.source,
-    };
+    return directRoute(get(routing.engineId), routing);
   }
 
-  // ── probe 失败：strict / 三守卫 / fallback（D9① + D4 回落目标改「首个可用引擎」）──
+  return resolveProbeFailedRoute(opts, routing, get, available, report);
+}
+
+/**
+ * routeEngine 的注入解析。[W8 补扫接线] 缺省存在性校验经 hasEngineWithRescan（快照
+ * 未命中触发一次三级补扫，W4 ensureEngineDiscovered 通道——「装了包 → 下次解析即可用」）；
+ * 宿主显式注入 hasEngineFn 时以注入值为准（测试 / 宿主自定义通道不变）。
+ */
+function resolveRouteHelpers(opts: EngineRouteOptions): {
+  has: (engineId: string) => boolean;
+  get: (engineId: string) => EnginePort;
+  available: () => string[];
+} {
+  return {
+    has: opts.hasEngineFn ?? hasEngineWithRescan,
+    get: opts.getEngineFn ?? getEngine,
+    available: opts.listAvailableEnginesFn ?? listEnginesByDisplayName,
+  };
+}
+
+/**
+ * 注册表校验失败（请求 id 未发现）的收口：default 层 D4 宽容回落（清单空 → throw
+ * 「未发现任何引擎包」+ 安装指引，不静默）；call/frontmatter 层配置错误前置暴露。
+ */
+function resolveUnregisteredEngine(
+  opts: EngineRouteOptions,
+  routing: EngineRouting,
+  get: (engineId: string) => EnginePort,
+  available: () => string[],
+): EngineRouteResult {
+  if (routing.source !== "default") {
+    throw new EngineNotFoundError(routing.engineId, opts.listEnginesFn?.() ?? listEngines(), describeRoutingSource(opts.routing));
+  }
+  const fallback = resolveDefaultEngineFallback(routing.engineId, available());
+  if (fallback === undefined) {
+    // 全不可用：派发期 engine_not_found（「未发现任何引擎包」+ 安装指引，D4）
+    throw new EngineNotFoundError(routing.engineId, [], describeRoutingSource(opts.routing));
+  }
+  const fallbackTrace = fallback.fallback;
+  // 回落目标直接取用不探（probe 已失败一次不重复；目标引擎不可用由 run 期显式失败）
+  return {
+    engine: get(fallback.engineId),
+    engineId: fallback.engineId,
+    requestedEngineId: fallbackTrace.from,
+    source: routing.source,
+    engineFallback: fallbackTrace,
+  };
+}
+
+/** 直接取用形态（pi 免探 / probe 通过）：请求即执行，无 fallback 留痕。 */
+function directRoute(engine: EnginePort, routing: EngineRouting): EngineRouteResult {
+  return {
+    engine,
+    engineId: routing.engineId,
+    requestedEngineId: routing.engineId,
+    source: routing.source,
+  };
+}
+
+/**
+ * probe 失败收口：strict / 三守卫 / fallback（D9① + D4 回落目标改「首个可用引擎」）。
+ */
+function resolveProbeFailedRoute(
+  opts: EngineRouteOptions,
+  routing: EngineRouting,
+  get: (engineId: string) => EnginePort,
+  available: () => string[],
+  report: ProbeReport,
+): EngineRouteResult {
   if (opts.strict) {
     throw probeFailedError(routing.engineId, report, "engineRouting.strict=true：probe 失败一律报错（不 fallback）");
   }

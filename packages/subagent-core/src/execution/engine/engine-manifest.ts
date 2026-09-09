@@ -185,17 +185,7 @@ export function parseModelCatalog(
     return undefined;
   }
   const v = raw as Record<string, unknown>;
-  let dynamic = true;
-  const rawDynamic = v["dynamic"];
-  if (rawDynamic !== undefined) {
-    if (typeof rawDynamic === "boolean") {
-      dynamic = rawDynamic;
-    } else {
-      logger.warn(
-        `[engine-discovery] engine '${id}': modelCatalog.dynamic=${describeValue(rawDynamic)} invalid (expected boolean) — defaulting to true`,
-      );
-    }
-  }
+  const dynamic = parseCatalogDynamic(id, v);
   if (!Array.isArray(v["models"])) {
     logger.warn(
       `[engine-discovery] engine '${id}': modelCatalog.models must be an array — treating catalog as absent (null)`,
@@ -204,28 +194,46 @@ export function parseModelCatalog(
   }
   const models: ModelCatalogEntry[] = [];
   for (const item of v["models"]) {
-    if (typeof item !== "object" || item === null || Array.isArray(item)) {
-      logger.warn(`[engine-discovery] engine '${id}': modelCatalog entry ${describeValue(item)} is not an object — dropping entry`);
-      continue;
-    }
-    const entryId = (item as Record<string, unknown>)["id"];
-    if (typeof entryId !== "string" || entryId.trim() === "") {
-      logger.warn(`[engine-discovery] engine '${id}': modelCatalog entry missing string id — dropping entry`);
-      continue;
-    }
-    const aliases = (item as Record<string, unknown>)["aliases"];
-    if (aliases !== undefined && !Array.isArray(aliases)) {
-      logger.warn(`[engine-discovery] engine '${id}': modelCatalog entry '${entryId}' aliases must be an array — dropping aliases`);
-    }
-    models.push({
-      id: entryId,
-      ...(Array.isArray(aliases) ? { aliases: aliases.filter((a): a is string => typeof a === "string") } : {}),
-      ...((item as Record<string, unknown>)["canonicalRef"] !== undefined
-        ? { canonicalRef: (item as Record<string, unknown>)["canonicalRef"] as string }
-        : {}),
-    });
+    const entry = parseModelCatalogEntry(id, item);
+    if (entry === undefined) continue;
+    models.push(entry);
   }
   return { dynamic, models };
+}
+
+/** modelCatalog.dynamic 解析：缺省 true；非 boolean warn 后仍取缺省。 */
+function parseCatalogDynamic(id: string, v: Record<string, unknown>): boolean {
+  const rawDynamic = v["dynamic"];
+  if (rawDynamic === undefined) return true;
+  if (typeof rawDynamic === "boolean") return rawDynamic;
+  logger.warn(
+    `[engine-discovery] engine '${id}': modelCatalog.dynamic=${describeValue(rawDynamic)} invalid (expected boolean) — defaulting to true`,
+  );
+  return true;
+}
+
+/** 单条目解析：形态坏/缺 id → undefined（丢弃该条目）；非法 aliases 丢弃 aliases 但条目保留。 */
+function parseModelCatalogEntry(id: string, item: unknown): ModelCatalogEntry | undefined {
+  if (typeof item !== "object" || item === null || Array.isArray(item)) {
+    logger.warn(`[engine-discovery] engine '${id}': modelCatalog entry ${describeValue(item)} is not an object — dropping entry`);
+    return undefined;
+  }
+  const entryId = (item as Record<string, unknown>)["id"];
+  if (typeof entryId !== "string" || entryId.trim() === "") {
+    logger.warn(`[engine-discovery] engine '${id}': modelCatalog entry missing string id — dropping entry`);
+    return undefined;
+  }
+  const aliases = (item as Record<string, unknown>)["aliases"];
+  if (aliases !== undefined && !Array.isArray(aliases)) {
+    logger.warn(`[engine-discovery] engine '${id}': modelCatalog entry '${entryId}' aliases must be an array — dropping aliases`);
+  }
+  return {
+    id: entryId,
+    ...(Array.isArray(aliases) ? { aliases: aliases.filter((a): a is string => typeof a === "string") } : {}),
+    ...((item as Record<string, unknown>)["canonicalRef"] !== undefined
+      ? { canonicalRef: (item as Record<string, unknown>)["canonicalRef"] as string }
+      : {}),
+  };
 }
 
 /** unknown 值的短描述（warn 文案；JSON.stringify 对 Symbol/BigInt 返回 undefined 不可靠）。 */

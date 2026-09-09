@@ -197,12 +197,8 @@ function referenceDeletionSetImpl(hostDbPath, indexDbPath, whitelistRows) {
   }
 }
 
-/**
- * 主分析路径：白名单 → 四数分列 + I2/I3/I3b 校验 + 索引预检 + I1 参照断言。
- * 任一硬校验失败抛 CleanupAbortError（报告含违规 id 列表）。
- */
-export function analyze({ whitelistRows, hostDbPath, indexDbPath }) {
-  const anomalies = [];
+/** 白名单形状过滤（识别基准双过滤第一道）：不过形状的 id 记入 shapeInvalid + anomalies。 */
+function partitionWhitelistByShape(whitelistRows, anomalies) {
   const shapeInvalid = [];
   const shaped = [];
   for (const r of whitelistRows) {
@@ -213,8 +209,11 @@ export function analyze({ whitelistRows, hostDbPath, indexDbPath }) {
       shaped.push(r);
     }
   }
-  const whitelistTotal = whitelistRows.length;
+  return { shaped, shapeInvalid };
+}
 
+/** 宿主库删除面行查询（直接集行 / 派生集行 / 直接集的非 subagent_child 子行）。 */
+function queryHostDeletionRows(hostDbPath, shaped) {
   const host = new DatabaseSync(hostDbPath, { readOnly: true });
   let hostRows;
   let derivedRows;
@@ -251,10 +250,11 @@ export function analyze({ whitelistRows, hostDbPath, indexDbPath }) {
   } finally {
     host.close();
   }
+  return { hostRows, derivedRows, nonChildChildren };
+}
 
-  const startedById = new Map(shaped.map((r) => [r.sessionId, r.startedAt]));
-
-  // I2：时间戳交叉验证（作用域 = 直接删除集；超容差/取不到 → 硬中止）
+/** I2：时间戳交叉验证（作用域 = 直接删除集；超容差/取不到 → 硬中止）。 */
+function checkI2Timestamps(hostRows, startedById) {
   const i2Violations = [];
   for (const row of hostRows) {
     const startedAt = startedById.get(row.id);
@@ -272,38 +272,41 @@ export function analyze({ whitelistRows, hostDbPath, indexDbPath }) {
       `I2 时间戳交叉验证失败（容差 ${I2_TOLERANCE_MS}ms），中止：\n  ${i2Violations.join("\n  ")}`,
     );
   }
+}
 
-  // I3：形态硬中止（作用域 = 直接删除集）
+/** I3：形态硬中止（作用域 = 直接删除集）。 */
+function checkI3Shape(hostRows) {
   const i3Violations = hostRows
     .filter((r) => r.task_type !== "interactive" || r.title_source === "custom")
     .map((r) => `${r.id}(task_type=${r.task_type}, title_source=${r.title_source})`);
   if (i3Violations.length > 0) {
     throw new CleanupAbortError(`I3 形态校验失败，中止：\n  ${i3Violations.join("\n  ")}`);
   }
+}
 
-  // I3b：派生集不变量（每行 parent_id ∈ 直接删除集 且 task_type='subagent_child'）
-  const directSet = new Set(hostRows.map((r) => r.id));
-  assertDerivedInvariant(directSet, derivedRows);
-
-  // 索引预检：命中 → 两侧同时剔除
+/** 索引预检（只读挂接）：候选删除集命中四冲突源的 id 集合。 */
+function runIndexPrecheck(indexDbPath, directSet, derivedRows) {
   const idx = new DatabaseSync(indexDbPath, { readOnly: true });
-  let indexHits;
   try {
     const deletionCandidateIds = [...new Set([...directSet, ...derivedRows.map((r) => r.id)])];
-    indexHits = indexPrecheckHits(idx, deletionCandidateIds);
+    return indexPrecheckHits(idx, deletionCandidateIds);
   } finally {
     idx.close();
   }
-  const direct = [...directSet].filter((id) => !indexHits.has(id));
-  const derived = derivedRows.map((r) => r.id).filter((id) => !indexHits.has(id));
+}
+
+/** 预检后异常信号入列：索引冲突命中 + 直接集非 subagent_child 子行（SET NULL 报告面）。 */
+function appendPrecheckAnomalies(anomalies, indexHits, nonChildChildren) {
   for (const h of indexHits) {
     anomalies.push(`索引冲突源命中（两侧剔除）：${h}`);
   }
   for (const r of nonChildChildren) {
     anomalies.push(`直接集存在非 subagent_child 子行（不纳入删除，parent_id 将被 SET NULL）：${r.id}(task_type=${r.task_type})`);
   }
+}
 
-  // I1 参照断言：工具自算删除集 == counts.sql W5 参照 SQL 结果
+/** I1 参照断言：工具自算删除集 == counts.sql W5 参照 SQL 结果。 */
+function assertReferenceParity({ hostDbPath, indexDbPath, shaped, direct, derived }) {
   const ref = referenceDeletionSetImpl(hostDbPath, indexDbPath, shaped);
   const sameSet = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
   if (!sameSet(direct, [...ref.direct]) || !sameSet(derived, [...ref.derived])) {
@@ -313,6 +316,38 @@ export function analyze({ whitelistRows, hostDbPath, indexDbPath }) {
         `  参照 direct=[${[...ref.direct].join(",")}] derived=[${[...ref.derived].join(",")}]`,
     );
   }
+}
+
+/**
+ * 主分析路径：白名单 → 四数分列 + I2/I3/I3b 校验 + 索引预检 + I1 参照断言。
+ * 任一硬校验失败抛 CleanupAbortError（报告含违规 id 列表）。
+ */
+export function analyze({ whitelistRows, hostDbPath, indexDbPath }) {
+  const anomalies = [];
+  const { shaped, shapeInvalid } = partitionWhitelistByShape(whitelistRows, anomalies);
+  const whitelistTotal = whitelistRows.length;
+
+  const { hostRows, derivedRows, nonChildChildren } = queryHostDeletionRows(hostDbPath, shaped);
+
+  // I2：时间戳交叉验证（作用域 = 直接删除集；超容差/取不到 → 硬中止）
+  const startedById = new Map(shaped.map((r) => [r.sessionId, r.startedAt]));
+  checkI2Timestamps(hostRows, startedById);
+
+  // I3：形态硬中止（作用域 = 直接删除集）
+  checkI3Shape(hostRows);
+
+  // I3b：派生集不变量（每行 parent_id ∈ 直接删除集 且 task_type='subagent_child'）
+  const directSet = new Set(hostRows.map((r) => r.id));
+  assertDerivedInvariant(directSet, derivedRows);
+
+  // 索引预检：命中 → 两侧同时剔除
+  const indexHits = runIndexPrecheck(indexDbPath, directSet, derivedRows);
+  const direct = [...directSet].filter((id) => !indexHits.has(id));
+  const derived = derivedRows.map((r) => r.id).filter((id) => !indexHits.has(id));
+  appendPrecheckAnomalies(anomalies, indexHits, nonChildChildren);
+
+  // I1 参照断言：工具自算删除集 == counts.sql W5 参照 SQL 结果
+  assertReferenceParity({ hostDbPath, indexDbPath, shaped, direct, derived });
 
   return {
     whitelistTotal,
@@ -603,51 +638,89 @@ function printAnalysis(analysis) {
   return lines.join("\n");
 }
 
-/**
- * CLI 主体（可注入 stdin/isTTY/now 供测试）。返回 {exitCode, report}，不直接 process.exit。
- */
-export async function runCli({ argv = process.argv.slice(2), isTTY = process.stdin.isTTY, stdin = process.stdin, outDir = process.cwd(), now = Date.now() } = {}) {
-  const args = parseArgs(argv);
+/** CLI 路径解析（显式参数 > env > 默认推导）。 */
+function resolveCliPaths(args) {
   const homeDir = args.homeDir ?? os.homedir();
   const dataDir = args.dataDir ?? process.env.XYZ_AGENT_DATA_DIR ?? path.join(homeDir, ".xyz-agent");
   const hostDbPath = args.hostDb ?? hostZcodeDbPathJs(homeDir);
   const indexDbPath = args.indexDb ?? indexDbPathJs(homeDir);
   const recordsDir = args.recordsDir ?? path.join(dataDir, "pi", "sessions");
+  return { homeDir, dataDir, hostDbPath, indexDbPath, recordsDir };
+}
 
-  if (args.plan) {
-    return { exitCode: 0, report: buildPlanText({ homeDir, dataDir }) };
+/**
+ * replay 子命令（--replay-residue）。--confirm-count 必须提供且精确等于清单条数
+ * （同主路径纪律，防陈旧/篡改清单）。
+ */
+function runReplayCommand(args, { hostDbPath, indexDbPath }) {
+  if (args.confirmCount === undefined) {
+    return { exitCode: 2, report: "replay 必须带 --confirm-count <清单条数>（同主路径纪律，防陈旧清单）" };
   }
+  const parsed = JSON.parse(fs.readFileSync(args.replayResidue, "utf8"));
+  const count = Array.isArray(parsed?.residueIds) ? parsed.residueIds.length : -1;
+  if (args.confirmCount !== count) {
+    return { exitCode: 2, report: `--confirm-count ${args.confirmCount} != 清单条数 ${count}：拒绝（防陈旧/被篡改清单）` };
+  }
+  const r = replayResidue({ residueFile: args.replayResidue, hostDbPath, indexDbPath });
+  const code = r.status === "refused" ? 1 : 0;
+  const report = [
+    `replay ${args.replayResidue}`,
+    `  状态：${r.status}${r.reason ? " — " + r.reason : ""}`,
+    `  补删：${r.deleted.length}（${r.deleted.join(", ")}）`,
+    `  冲突源命中跳过：${r.skipped.join(", ") || "无"}`,
+    `  过期 no-op：${r.noop.join(", ") || "无"}`,
+    `  残留清单剩余：${r.status === "ok" ? "空" : "未执行"}`,
+  ].join("\n");
+  return { exitCode: code, report };
+}
 
+/**
+ * 删除前确认环节（interactive stdin / --confirm-count 受控旁路）。
+ * 返回 { confirmed, report }：confirmed=false 时 report 为拒绝报告。
+ */
+async function confirmDeletion({ mode, args, analysis, stdin }) {
+  if (mode.mode === "interactive") {
+    const line = await readLine(stdin);
+    if (line !== String(analysis.deletionTotal)) {
+      return {
+        confirmed: false,
+        report: `${printAnalysis(analysis)}\n交互确认失败：输入与删除集总数（${analysis.deletionTotal}）不匹配，未删除任何行。`,
+      };
+    }
+    return { confirmed: true, report: null };
+  }
+  if (args.confirmCount !== analysis.deletionTotal) {
+    return {
+      confirmed: false,
+      report: `${printAnalysis(analysis)}\n--confirm-count ${args.confirmCount} != 删除集总数 ${analysis.deletionTotal}：拒绝执行。`,
+    };
+  }
+  return { confirmed: true, report: null };
+}
+
+/** 删除后报告组装（FK 失败置顶 + 四数分列 + 删除计数 + 凭证）。 */
+function formatDeletionReport(analysis, result) {
+  return [
+    result.fkFailures.length > 0 ? `== 异常信号汇总（置顶）==\n  FK 失败：\n  ${result.fkFailures.join("\n  ")}` : "",
+    printAnalysis(analysis),
+    `已删除：${result.deleted.length}；索引残留：${result.residue.length}${result.residue.length ? "（清单 " + result.residueFile + "，可 --replay-residue 补删）" : "（残留清单归空）"}`,
+    `input_history 显式删除：${result.inputHistoryDeleted}`,
+    `SET NULL 越行修改（Prospective）：${JSON.stringify(result.setNullProspective)}`,
+    `确认凭证：${result.credentialFile}（${result.credential.phrase} / ${result.credential.operator} / ${result.credential.authorizationSource}）`,
+  ].filter(Boolean).join("\n");
+}
+
+/**
+ * 主路径：分析 → 确认 → 删除。分析硬校验失败（CleanupAbortError）与确认拒绝
+ * 均不触达删除面。
+ */
+async function runDeletionFlow({ args, paths, isTTY, stdin, outDir, now }) {
   const mode = resolveExecutionMode({ confirmCount: args.confirmCount, isTTY });
 
-  if (args.replayResidue) {
-    // replay：--confirm-count 必须提供且精确等于清单条数（同主路径纪律，防陈旧/篡改清单）
-    if (args.confirmCount === undefined) {
-      return { exitCode: 2, report: "replay 必须带 --confirm-count <清单条数>（同主路径纪律，防陈旧清单）" };
-    }
-    const parsed = JSON.parse(fs.readFileSync(args.replayResidue, "utf8"));
-    const count = Array.isArray(parsed?.residueIds) ? parsed.residueIds.length : -1;
-    if (args.confirmCount !== count) {
-      return { exitCode: 2, report: `--confirm-count ${args.confirmCount} != 清单条数 ${count}：拒绝（防陈旧/被篡改清单）` };
-    }
-    const r = replayResidue({ residueFile: args.replayResidue, hostDbPath, indexDbPath });
-    const code = r.status === "refused" ? 1 : 0;
-    const report = [
-      `replay ${args.replayResidue}`,
-      `  状态：${r.status}${r.reason ? " — " + r.reason : ""}`,
-      `  补删：${r.deleted.length}（${r.deleted.join(", ")}）`,
-      `  冲突源命中跳过：${r.skipped.join(", ") || "无"}`,
-      `  过期 no-op：${r.noop.join(", ") || "无"}`,
-      `  残留清单剩余：${r.status === "ok" ? "空" : "未执行"}`,
-    ].join("\n");
-    return { exitCode: code, report };
-  }
-
-  // 主路径：分析 → 确认 → 删除
-  const whitelistRows = parseRecordWhitelist(recordsDir);
+  const whitelistRows = parseRecordWhitelist(paths.recordsDir);
   let analysis;
   try {
-    analysis = analyze({ whitelistRows, hostDbPath, indexDbPath });
+    analysis = analyze({ whitelistRows, hostDbPath: paths.hostDbPath, indexDbPath: paths.indexDbPath });
   } catch (err) {
     if (err instanceof CleanupAbortError) return { exitCode: 1, report: `== 异常信号汇总（置顶）==\n  ! ${err.report}` };
     throw err;
@@ -657,37 +730,41 @@ export async function runCli({ argv = process.argv.slice(2), isTTY = process.std
     return { exitCode: 2, report: `${printAnalysis(analysis)}\n${mode.reason}` };
   }
 
-  let confirmed;
-  if (mode.mode === "interactive") {
-    const line = await readLine(stdin);
-    confirmed = line === String(analysis.deletionTotal);
-    if (!confirmed) {
-      return { exitCode: 2, report: `${printAnalysis(analysis)}\n交互确认失败：输入与删除集总数（${analysis.deletionTotal}）不匹配，未删除任何行。` };
-    }
-  } else {
-    confirmed = args.confirmCount === analysis.deletionTotal;
-    if (!confirmed) {
-      return { exitCode: 2, report: `${printAnalysis(analysis)}\n--confirm-count ${args.confirmCount} != 删除集总数 ${analysis.deletionTotal}：拒绝执行。` };
-    }
+  const confirmation = await confirmDeletion({ mode, args, analysis, stdin });
+  if (!confirmation.confirmed) {
+    return { exitCode: 2, report: confirmation.report };
   }
 
   const result = executeDeletion({
     analysis,
-    hostDbPath,
-    indexDbPath,
+    hostDbPath: paths.hostDbPath,
+    indexDbPath: paths.indexDbPath,
     residueDir: outDir,
     authorizationSource: mode.mode === "interactive" ? "interactive-stdin-confirm" : "--confirm-count",
     now,
   });
-  const report = [
-    result.fkFailures.length > 0 ? `== 异常信号汇总（置顶）==\n  FK 失败：\n  ${result.fkFailures.join("\n  ")}` : "",
-    printAnalysis(analysis),
-    `已删除：${result.deleted.length}；索引残留：${result.residue.length}${result.residue.length ? "（清单 " + result.residueFile + "，可 --replay-residue 补删）" : "（残留清单归空）"}`,
-    `input_history 显式删除：${result.inputHistoryDeleted}`,
-    `SET NULL 越行修改（Prospective）：${JSON.stringify(result.setNullProspective)}`,
-    `确认凭证：${result.credentialFile}（${result.credential.phrase} / ${result.credential.operator} / ${result.credential.authorizationSource}）`,
-  ].filter(Boolean).join("\n");
-  return { exitCode: result.residue.length > 0 || result.fkFailures.length > 0 ? 3 : 0, report };
+  return {
+    exitCode: result.residue.length > 0 || result.fkFailures.length > 0 ? 3 : 0,
+    report: formatDeletionReport(analysis, result),
+  };
+}
+
+/**
+ * CLI 主体（可注入 stdin/isTTY/now 供测试）。返回 {exitCode, report}，不直接 process.exit。
+ */
+export async function runCli({ argv = process.argv.slice(2), isTTY = process.stdin.isTTY, stdin = process.stdin, outDir = process.cwd(), now = Date.now() } = {}) {
+  const args = parseArgs(argv);
+  const paths = resolveCliPaths(args);
+
+  if (args.plan) {
+    return { exitCode: 0, report: buildPlanText({ homeDir: paths.homeDir, dataDir: paths.dataDir }) };
+  }
+
+  if (args.replayResidue) {
+    return runReplayCommand(args, paths);
+  }
+
+  return runDeletionFlow({ args, paths, isTTY, stdin, outDir, now });
 }
 
 async function readLine(stdin) {

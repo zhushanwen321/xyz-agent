@@ -184,57 +184,12 @@ export class RemoteEngine implements EnginePort {
     }
 
     const runId = ctx.taskId;
-    // 协议 ctx 承载（RunContext 字段映射表）：cwd 取任务声明值（缺省进程 cwd）；
-    // ctxModel 投影 canonical 词形（provider/id，ModelInfo 字段裁决）。
-    const ctxModelRef = ctx.ctxModel ? `${ctx.ctxModel.provider}/${ctx.ctxModel.id}` : undefined;
-    // [W3 v1.x] chat 会话形态参数直传（RunContext.chat → run.params.chat；结构由
-    // RunContext.chat 注释与 SDK RunChatParams 的 implements 互证承载）。非 chat 轮
-    // ctx.chat === undefined → wire 上不出现该键（协议 additive 语义）。
-    const runParams = {
-      runId,
-      task: toSdkTaskSubset(task),
-      ctx: {
-        poolKey: ctx.poolKey,
-        cwd: task.cwd ?? process.cwd(),
-        model: task.model,
-        schemaEnv: ctx.schemaEnv ?? task.schemaEnv,
-        ctxModel: ctxModelRef,
-        engineFallback: ctx.engineFallback,
-        streamMode: ctx.stream !== undefined ? ("stream" as const) : undefined,
-      },
-      ...(ctx.chat !== undefined ? { chat: ctx.chat } : {}),
-    };
+    const runParams = buildRunParams(task, ctx, runId);
 
-    const unregister = this.opts.client.registerRunRoute(runId, {
-      onEvent: (event) => ctx.onEvent?.(event as Parameters<NonNullable<RunContext["onEvent"]>>[0]),
-      onStreamDelta: (delta) => ctx.stream?.onDelta(delta),
-      onPoolResolved: (poolKey) => ctx.onPoolResolved?.(poolKey),
-      onHandleReady: (partial) => ctx.onHandleReady?.(partial),
-      // [W3 v1.x] 首轮（run 会话形态）轮次生命周期帧（runId 键）→ 宿主消费口。
-      onRoundLifecycle: (phase) =>
-        ctx.onRoundLifecycle?.(phase as Parameters<NonNullable<RunContext["onRoundLifecycle"]>>[0]),
-    });
+    const unregister = this.opts.client.registerRunRoute(runId, buildRunRouteHandlers(ctx));
 
     // abort 分级：cancel 帧 → 等 CANCEL_SETTLE_GRACE_MS 收敛 → 杀链兜底。
-    let cancelSent = false;
-    let settled = false;
-    let settleTimer: NodeJS.Timeout | undefined;
-    const onAbort = (): void => {
-      if (cancelSent || settled) return;
-      cancelSent = true;
-      void this.opts.client.cancelRun(runId, "abort").catch(() => {
-        // 受理失败由收敛窗口兜底（进程死 → run 请求 reject → 合成终态）。
-      });
-      settleTimer = setTimeout(() => {
-        if (!settled) {
-          void this.opts.client.killAll(`cancel did not settle within grace for run ${runId}`);
-        }
-      }, CANCEL_SETTLE_GRACE_MS);
-    };
-    if (ctx.signal !== undefined) {
-      if (ctx.signal.aborted) onAbort();
-      else ctx.signal.addEventListener("abort", onAbort, { once: true });
-    }
+    const abort = wireAbortSignal(this.opts.client, runId, ctx);
 
     try {
       // wire 载荷收窄（帧 result unknown → 协议 RunResult 形态）；SDK → core 结构
@@ -245,7 +200,7 @@ export class RemoteEngine implements EnginePort {
       };
       return { handle: { data: result.handle }, outcome: result.outcome };
     } catch (err) {
-      if (cancelSent) {
+      if (abort.isCancelSent()) {
         // cancel 后未收敛（杀链已杀）或引擎在 abort 期间报错：合成 abort 终态，不 reject
         // （exitCode null = 被信号杀死，杀链判据）。
         //
@@ -260,33 +215,19 @@ export class RemoteEngine implements EnginePort {
         // 语义（超修复范围），窗口登记于此供后续接管判据收敛时统一评估。
         return {
           handle: { data: this.synthesizeHandle(ctx.poolKey) },
-          outcome: {
-            content: "",
-            error: `engine_run_failed: run ${runId} aborted before terminal answer${
-              err instanceof Error ? ` (${err.message})` : ""
-            }`,
-            exitCode: null,
-            engineId: this.id,
-          },
+          outcome: abortedRunOutcome(this.id, runId, err),
         };
       }
       if (isTransientRunFailure(err)) {
         // 运行中失败（引擎崩溃 / 数据面故障杀链）：合成 error outcome + 正常 handle。
         return {
           handle: { data: this.synthesizeHandle(ctx.poolKey) },
-          outcome: {
-            content: "",
-            error: err instanceof Error ? err.message : String(err),
-            exitCode: null,
-            engineId: this.id,
-          },
+          outcome: transientRunOutcome(this.id, err),
         };
       }
       throw err; // prepare 期失败（连接/握手/model 拒）——进程创建前 reject，不产生 handle
     } finally {
-      settled = true;
-      if (settleTimer !== undefined) clearTimeout(settleTimer);
-      if (ctx.signal !== undefined) ctx.signal.removeEventListener("abort", onAbort);
+      abort.dispose();
       unregister();
     }
   }
@@ -353,6 +294,123 @@ function isTransientRunFailure(err: unknown): boolean {
     err.code === "engine_request_timeout" ||
     err.code === "engine_handshake_timeout"
   );
+}
+
+/** run 帧 wire 载荷（EngineClient.request("run") 入参形态）。 */
+interface WireRunParams {
+  runId: string;
+  task: SdkAgentCallOpts;
+  ctx: {
+    poolKey: string;
+    cwd: string;
+    model: string | undefined;
+    schemaEnv: string | undefined;
+    ctxModel: string | undefined;
+    engineFallback: RunContext["engineFallback"];
+    streamMode: "stream" | undefined;
+  };
+  chat?: NonNullable<RunContext["chat"]>;
+}
+
+/**
+ * run 帧 wire 载荷构建。协议 ctx 承载（RunContext 字段映射表）：cwd 取任务声明值
+ * （缺省进程 cwd）；ctxModel 投影 canonical 词形（provider/id，ModelInfo 字段裁决）。
+ * [W3 v1.x] chat 会话形态参数直传（RunContext.chat → run.params.chat；结构由
+ * RunContext.chat 注释与 SDK RunChatParams 的 implements 互证承载）。非 chat 轮
+ * ctx.chat === undefined → wire 上不出现该键（协议 additive 语义）。
+ */
+function buildRunParams(task: AgentCallOpts, ctx: RunContext, runId: string): WireRunParams {
+  const ctxModelRef = ctx.ctxModel ? `${ctx.ctxModel.provider}/${ctx.ctxModel.id}` : undefined;
+  return {
+    runId,
+    task: toSdkTaskSubset(task),
+    ctx: {
+      poolKey: ctx.poolKey,
+      cwd: task.cwd ?? process.cwd(),
+      model: task.model,
+      schemaEnv: ctx.schemaEnv ?? task.schemaEnv,
+      ctxModel: ctxModelRef,
+      engineFallback: ctx.engineFallback,
+      streamMode: ctx.stream !== undefined ? ("stream" as const) : undefined,
+    },
+    ...(ctx.chat !== undefined ? { chat: ctx.chat } : {}),
+  };
+}
+
+/** run 作用域事件路由（event / streamDelta / poolResolved / handleReady / roundLifecycle）。 */
+function buildRunRouteHandlers(ctx: RunContext): RunRoute {
+  return {
+    onEvent: (event) => ctx.onEvent?.(event as Parameters<NonNullable<RunContext["onEvent"]>>[0]),
+    onStreamDelta: (delta) => ctx.stream?.onDelta(delta),
+    onPoolResolved: (poolKey) => ctx.onPoolResolved?.(poolKey),
+    onHandleReady: (partial) => ctx.onHandleReady?.(partial),
+    // [W3 v1.x] 首轮（run 会话形态）轮次生命周期帧（runId 键）→ 宿主消费口。
+    onRoundLifecycle: (phase) =>
+      ctx.onRoundLifecycle?.(phase as Parameters<NonNullable<RunContext["onRoundLifecycle"]>>[0]),
+  };
+}
+
+/** abort 接线的运行态句柄（isCancelSent 供 run catch 分支分诊；dispose 归 finally）。 */
+interface AbortWiring {
+  isCancelSent(): boolean;
+  dispose(): void;
+}
+
+/**
+ * abort 分级接线：cancel 帧 → 等 CANCEL_SETTLE_GRACE_MS 收敛 → 杀链兜底。signal 已
+ * aborted 则立即进入收敛窗口；dispose 在 run 终态（finally）标记 settled 并清理
+ * timer / listener。
+ */
+function wireAbortSignal(client: EngineClient, runId: string, ctx: RunContext): AbortWiring {
+  let cancelSent = false;
+  let settled = false;
+  let settleTimer: NodeJS.Timeout | undefined;
+  const onAbort = (): void => {
+    if (cancelSent || settled) return;
+    cancelSent = true;
+    void client.cancelRun(runId, "abort").catch(() => {
+      // 受理失败由收敛窗口兜底（进程死 → run 请求 reject → 合成终态）。
+    });
+    settleTimer = setTimeout(() => {
+      if (!settled) {
+        void client.killAll(`cancel did not settle within grace for run ${runId}`);
+      }
+    }, CANCEL_SETTLE_GRACE_MS);
+  };
+  if (ctx.signal !== undefined) {
+    if (ctx.signal.aborted) onAbort();
+    else ctx.signal.addEventListener("abort", onAbort, { once: true });
+  }
+  return {
+    isCancelSent: () => cancelSent,
+    dispose: () => {
+      settled = true;
+      if (settleTimer !== undefined) clearTimeout(settleTimer);
+      if (ctx.signal !== undefined) ctx.signal.removeEventListener("abort", onAbort);
+    },
+  };
+}
+
+/** abort 期合成 outcome（exitCode null = 被信号杀死，杀链判据）。 */
+function abortedRunOutcome(engineId: string, runId: string, err: unknown): SdkAgentOutcome {
+  return {
+    content: "",
+    error: `engine_run_failed: run ${runId} aborted before terminal answer${
+      err instanceof Error ? ` (${err.message})` : ""
+    }`,
+    exitCode: null,
+    engineId,
+  };
+}
+
+/** 运行中失败合成 outcome（引擎崩溃 / 数据面故障杀链）。 */
+function transientRunOutcome(engineId: string, err: unknown): SdkAgentOutcome {
+  return {
+    content: "",
+    error: err instanceof Error ? err.message : String(err),
+    exitCode: null,
+    engineId,
+  };
 }
 
 /** core AgentCallOpts → SDK 引擎面子集（宿主自持字段不透传，SDK 契约类型注释裁决）。 */

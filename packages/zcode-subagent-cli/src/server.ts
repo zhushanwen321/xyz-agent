@@ -132,38 +132,38 @@ export class EngineProtocolServer {
     // 无法归类的帧：静默忽略（stdout 是独占协议通道，不回显坏帧防对端解析器混乱）。
   }
 
-  /** 10 正向方法分发。 */
+  /** 10 正向方法分发（表驱动：method → 处理器；未知方法 → engine_protocol_unknown_method）。 */
   private async dispatch(id: number, method: string, params: unknown): Promise<unknown> {
-    switch (method) {
-      case "initialize":
-        return this.initialize(params as InitializeParams);
-      case "probe":
-        return this.engine.probe(typeof params === "object" && params !== null ? (params as { force?: boolean }) : undefined) as Promise<ProbeReport>;
-      case "run":
-        return this.run(params as RunParams);
-      case "cancel":
-        return this.cancel(params as { runId: string; reason: string });
-      case "interact":
-        return this.interact(params as { handle: EngineHandleData; action: InteractAction });
-      case "read":
-        return this.read(params as ReadParams);
-      case "listModels":
-        return { models: this.engine.listModels?.() ?? null };
-      case "validateModel":
-        return this.validateModel(params as { modelRef?: string });
-      case "dispose":
-        await this.engine.dispose?.();
-        return { ok: true };
-      case "ping":
-        return { pong: true };
-      default:
-        throw new EngineSdkError(
-          "engine_protocol_unknown_method",
-          `unknown protocol method: ${method} (request id ${id})`,
-          "The engine speaks protocol v1; check the installed engine package version vs the host.",
-        );
+    const handler = this.methodHandlers[method];
+    if (handler === undefined) {
+      throw new EngineSdkError(
+        "engine_protocol_unknown_method",
+        `unknown protocol method: ${method} (request id ${id})`,
+        "The engine speaks protocol v1; check the installed engine package version vs the host.",
+      );
     }
+    return handler(params);
   }
+
+  /**
+   * 10 正向方法 → 处理器映射（每个处理器消费原始 params 并自行收敛类型——
+   * 与原 switch case 表达式一一对应）。
+   */
+  private readonly methodHandlers: Record<string, (params: unknown) => unknown> = {
+    initialize: (p) => this.initialize(p as InitializeParams),
+    probe: (p) => this.engine.probe(probeParamsOf(p)) as Promise<ProbeReport>,
+    run: (p) => this.run(p as RunParams),
+    cancel: (p) => this.cancel(p as { runId: string; reason: string }),
+    interact: (p) => this.interact(p as { handle: EngineHandleData; action: InteractAction }),
+    read: (p) => this.read(p as ReadParams),
+    listModels: () => ({ models: this.engine.listModels?.() ?? null }),
+    validateModel: (p) => this.validateModel(p as { modelRef?: string }),
+    dispose: async () => {
+      await this.engine.dispose?.();
+      return { ok: true };
+    },
+    ping: () => ({ pong: true }),
+  };
 
   // ── initialize：版本协商（越界 → engine_protocol_mismatch）+ 能力应答 ──
 
@@ -304,6 +304,13 @@ export class EngineProtocolServer {
     if (frame.error !== undefined) pending.reject(new Error(`reverse request ${String(id)} rejected: ${toErrorMessage(frame.error)}`));
     else pending.resolve(frame.result as ReverseResponseResult);
   }
+}
+
+/** probe params 归一：对象形态透传（force 面），缺省/非对象 → undefined。 */
+function probeParamsOf(params: unknown): { force?: boolean } | undefined {
+  return typeof params === "object" && params !== null
+    ? (params as { force?: boolean })
+    : undefined;
 }
 
 /** ctx.ctxModel（"provider/id" canonical 词形）→ 本地 EngineCtxModel。 */

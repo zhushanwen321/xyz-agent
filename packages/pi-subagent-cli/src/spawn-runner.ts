@@ -36,14 +36,13 @@ import {
   killChain,
   resolveEngineDataDir,
   spawnEngineChild,
-  updateFromEvent as updateRecordFromEvent,
   type AgentEvent,
   type UiRequest,
   type UiResponse,
 } from "@zhushanwen/subagent-engine-sdk";
 
 import { mirrorMainProcessFlags, type MirrorFlags } from "./argv-mirror.ts";
-import { registerActiveChild, unregisterActiveChild } from "./active-children.ts";
+import { registerActiveChild } from "./active-children.ts";
 import { PI_KILL_GRACE_MS } from "./constants.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
 import { collectOutcome, type CollectedOutcome } from "./output-collector.ts";
@@ -52,20 +51,19 @@ import {
   asThinkingLevel,
   buildEnvBlock,
   buildSpawnArgs,
-  mapAssistantMessageDelta,
   parseSpawnModelRef,
-  resolveToolEndArgs,
 } from "./spawn-args.ts";
+import { createSdkEventTranslator, type SdkTranslatorOpts } from "./spawn-event-translator.ts";
 import {
-  deriveSessionFilePath,
-  findSessionFileByHeaderId,
-  parseSpawnLine,
-  type SdkEvent,
-} from "./spawn-event-adapter.ts";
-import { performGetStateHandshake, extractGetStateFields, type GetStateResult } from "./get-state-handshake.ts";
-import { clearEpipeFailure, recordEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
+  createSessionIdentityTracker,
+  reportChildSpawned,
+  wireChildStdoutPump,
+  type RunEndState,
+} from "./spawn-run-pump.ts";
+import { performGetStateHandshake } from "./get-state-handshake.ts";
+import { clearEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
 import { cleanupTempPrompt, writePromptToTempFile } from "./temp-prompt.ts";
-import { createTurnLimiter, WRAP_UP_HINT } from "./turn-limiter.ts";
+import { WRAP_UP_HINT } from "./turn-limiter.ts";
 import { applySchemaEnvToChildEnv } from "./spawn-args.ts";
 import { createUiRequestQueue } from "./ui-request-queue.ts";
 import { isRelayActive, RELAY_ENV_RECORD_ID, RELAY_ENV_SESSION_ID } from "./relay-env.ts";
@@ -77,15 +75,6 @@ import {
 } from "./logs/stderr-rotation.ts";
 
 const logger = getLogger("session-runner");
-
-/** 默认 grace turns（soft limit 后宽限轮数，core 现状值）。 */
-const DEFAULT_GRACE_TURNS = 2;
-
-/** 无效 stdout 行的日志截断长度（够诊断、不刷屏）。 */
-const INVALID_LINE_LOG_CHARS = 160;
-
-/** 信号退出码合成值（close 无 code 只有 signal 时按 128+ 约定折算非零）。 */
-const SIGNAL_EXIT_CODE_BASE = 128;
 
 /** run 的宿主回调面（server.ts 注入：协议通知 + host/* 反向请求）。 */
 export interface SpawnRunCallbacks {
@@ -172,136 +161,6 @@ export interface SpawnRunResult extends Omit<CollectedOutcome, "sessionId"> {
   sessionId: string | undefined;
 }
 
-/**
- * SdkEvent → AgentEvent 翻译 + reducer 累积的闭包工厂（core
- * createSpawnEventHandlers 的协议化提取）。
- */
-function createSdkEventTranslator(
-  record: ReturnType<typeof createReplayRecord>,
-  opts: {
-    maxTurns?: number;
-    graceTurns?: number;
-    onEvent: (e: AgentEvent) => void;
-    onDelta?: (d: string) => void;
-    abort: () => void;
-    /** agent_end（非 willRetry）到达：turn 已终态、pi rpc 常驻进程需外部终结。 */
-    onAgentEnd?: () => void;
-    /** [chatMode] agent_settled（真空闲）到达：run resolve 点 + idle 相位锚点。 */
-    onAgentSettled?: () => void;
-  },
-): (raw: SdkEvent) => void {
-  // a. transient 寄存器（tool_end 缺 args 时回填）
-  const pendingTools = new Map<string, { toolName: string; args?: unknown }>();
-
-  // b. turnLimiter（spawn 版：abort = kill 子进程；steer 未接通，靠 WRAP_UP_HINT 补偿）
-  const limiter = createTurnLimiter({
-    maxTurns: opts.maxTurns ?? 0,
-    graceTurns: opts.graceTurns ?? DEFAULT_GRACE_TURNS,
-    steer: () => {
-      // no-op：rpc stdin steer 通道未接通；启动时已注入 WRAP_UP_HINT 让 agent 主动收尾。
-    },
-    abort: opts.abort,
-  });
-
-  // agentEvent 统一出口：reducer + limiter + 协议通知
-  const agentEvent = (event: AgentEvent): void => {
-    updateRecordFromEvent(record, event);
-    if (event.type === "turn_end") limiter.onTurnEnd(record.turnCount);
-    if (event.type === "text_delta") opts.onDelta?.(event.delta);
-    opts.onEvent(event);
-  };
-
-  const accumulateMessageEnd = (raw: SdkEvent): void => {
-    const msg = raw.message;
-    if (msg?.usage) {
-      const { cost: costObj } = msg.usage;
-      const usage = {
-        input: msg.usage.input ?? 0,
-        output: msg.usage.output ?? 0,
-        cacheRead: msg.usage.cacheRead ?? 0,
-        cacheWrite: msg.usage.cacheWrite ?? 0,
-        ...(costObj?.total !== undefined ? { cost: costObj.total } : {}),
-      };
-      agentEvent({ type: "message_end", usage });
-    }
-    const stopReason = msg?.stopReason;
-    if (stopReason === "error" || stopReason === "aborted") {
-      const errMsg = msg?.errorMessage ?? raw.reason ?? stopReason;
-      agentEvent({ type: "error", message: errMsg });
-    }
-  };
-
-  return (raw: SdkEvent): void => {
-    switch (raw.type) {
-      case "tool_execution_start": {
-        const toolName = raw.toolName ?? "";
-        if (raw.toolCallId) {
-          pendingTools.set(raw.toolCallId, { toolName, args: raw.args });
-        }
-        agentEvent({ type: "tool_start", toolName, args: raw.args });
-        return;
-      }
-      case "tool_execution_end": {
-        const toolName = raw.toolName ?? "";
-        agentEvent({
-          type: "tool_end",
-          toolName,
-          args: resolveToolEndArgs(raw, pendingTools),
-          result: raw.result,
-          isError: raw.isError,
-        });
-        return;
-      }
-      case "message_update": {
-        const mapped = mapAssistantMessageDelta(raw.assistantMessageEvent ?? {});
-        if (mapped) agentEvent(mapped);
-        return;
-      }
-      case "turn_end": {
-        agentEvent({ type: "turn_end" });
-        return;
-      }
-      case "agent_end": {
-        // [F1.2 根修，Gate B 2026-09-09] pi rpc 模式 turn 完成后进程常驻不退出；
-        // 旧 core runSpawn 的 routeAgentEnd（agent_end → 非 willRetry → 终结子进程
-        // → close → runSpawn resolve）在 W7 协议化提取时丢失，导致 run 永不终态
-        // （事件流出齐全、outcome 悬挂）。此处恢复终结语义：message_end/turn_end
-        // 已先于 agent_end 到达并累积进 record，kill 触发 close 后正常收尾。
-        // 旧实现的 pending 后代 keep-alive 分支（session 文件 pending:register 差集
-        // 判活 + no-progress timer + notifier steer 唤醒）未随迁移——本执行器口径是
-        // workflow 域单次 run（见文件头），后台后代保活编排登记为协议化偏差。
-        // [v1.x chatMode] 长驻形态分支：不 kill（轮收敛交 onChatRoundEnd 上报），
-        // resolve 改挂 agent_settled（真空闲）——对齐 inproc chatMode。
-        if (raw.willRetry !== true) opts.onAgentEnd?.();
-        return;
-      }
-      case "agent_settled": {
-        // [v1.x chatMode] 真空闲边界（agent_end 之后、post-run 完成后才 emit——
-        // pi agent-session _runAgentPrompt finally 块）。仅长驻形态消费：run 在此
-        // resolve，turn 计数与 limiter 标志按轮重置（SP-9 对齐：续聊轮独立预算，
-        // maxTurns 不跨轮累计）。一次性 run 不消费（agent_end 已 kill，进程不会
-        // 活到 settled）。
-        if (opts.onAgentSettled !== undefined) {
-          record.turnCount = 0;
-          limiter.reset();
-          opts.onAgentSettled();
-        }
-        return;
-      }
-      case "message_end": {
-        accumulateMessageEnd(raw);
-        return;
-      }
-      case "compaction_start": {
-        agentEvent({ type: "compaction" });
-        return;
-      }
-      default:
-        return;
-    }
-  };
-}
-
 /** 子进程 env 组装（deny 剥除 + schemaEnv 注入 + relay 归属键重写）。 */
 function buildChildEnv(params: SpawnRunParams): Record<string, string> {
   const extras: Record<string, string | undefined> = {};
@@ -380,6 +239,54 @@ function createStderrTee(child: ChildProcess): { close(): void } | undefined {
   };
 }
 
+/** append-system-prompt 临时文件装配（环境块 + wrap-up 提示 + 调用方片段）。 */
+async function writeAppendPromptFile(params: SpawnRunParams) {
+  const appendParts: string[] = [await buildEnvBlock(params.cwd)];
+  if (params.maxTurns && params.maxTurns > 0) appendParts.push(WRAP_UP_HINT);
+  if (params.appendSystemPrompt) appendParts.push(...params.appendSystemPrompt);
+  return appendParts.length > 0
+    ? await writePromptToTempFile(params.agentName, appendParts.join("\n\n"))
+    : undefined;
+}
+
+/** SDK 事件翻译器 opts 装配（agent_end/agent_settled 的 chatMode 分派 + run 收尾状态接线）。 */
+function buildTranslatorOpts(
+  params: SpawnRunParams,
+  callbacks: SpawnRunCallbacks,
+  killChild: (source: string) => void,
+  runEnd: RunEndState,
+): SdkTranslatorOpts {
+  const chatMode = params.chatMode === true;
+  return {
+    maxTurns: params.maxTurns,
+    graceTurns: params.graceTurns,
+    onEvent: callbacks.onEvent,
+    onDelta: callbacks.onDelta,
+    abort: () => killChild("turn limiter abort"),
+    onAgentEnd: chatMode
+      ? () => {
+        // [chatMode] 轮收敛（输出完整）：不 kill，交 chat-session 上报 settled 相位；
+        // endedCleanly 置位让「end 与 settled 之间被杀」的 close 也按 0 口径收尾。
+        runEnd.endedCleanly = true;
+        callbacks.onChatRoundEnd?.();
+      }
+      : () => {
+        runEnd.endedCleanly = true;
+        killChild("agent_end final kill");
+      },
+    ...(chatMode
+      ? {
+        onAgentSettled: () => {
+          // 相位上报先于 run resolve（idle 帧先于 run 应答帧——协议事件流时序）
+          runEnd.endedCleanly = true;
+          callbacks.onChatAgentSettled?.();
+          runEnd.resolveChatRun?.(0);
+        },
+      }
+      : {}),
+  };
+}
+
 export async function runSpawnOnce(
   params: SpawnRunParams,
   callbacks: SpawnRunCallbacks,
@@ -389,16 +296,7 @@ export async function runSpawnOnce(
   const modelRef = parseSpawnModelRef(params.model);
 
   // 1. append-system-prompt 文件（环境块 + wrap-up 提示 + 调用方片段）
-  const appendParts: string[] = [await buildEnvBlock(params.cwd)];
-  if (params.maxTurns && params.maxTurns > 0) appendParts.push(WRAP_UP_HINT);
-  if (params.appendSystemPrompt) appendParts.push(...params.appendSystemPrompt);
-  const tempFile = appendParts.length > 0
-    ? await writePromptToTempFile(params.agentName, appendParts.join("\n\n"))
-    : undefined;
-
-  // 2. spawn 参数 + invocation
-  let sessionId: string | undefined;
-  let sessionFile: string | undefined;
+  const tempFile = await writeAppendPromptFile(params);
 
   if (modelRef === undefined) {
     throw new Error(
@@ -408,6 +306,7 @@ export async function runSpawnOnce(
   }
 
   try {
+    // 2. spawn 参数 + invocation
     const args = buildSpawnArgs({
       modelRef,
       thinkingLevel: asThinkingLevel(params.thinkingLevel),
@@ -437,40 +336,14 @@ export async function runSpawnOnce(
     };
     // agent_end 终结（F1.2）：正常完成后的主动 kill，close 带信号但语义是成功
     // （旧 core waitForChildExit 的 code ?? 0 同义——signal 退出码 143 只属异常路径）。
-    let agentEndedCleanly = false;
     // [chatMode] agent_settled 的 run resolve 句柄（inproc state.resolveRun 同款：
-    // 声明先于 handler 装配，exitPromise executor 内赋值——事件只会在 pump 启动后
+    // 声明先于 handler 装配，exitPromise executor 内落位——事件只会在 pump 启动后
     // 异步到达，无空窗）。
-    let resolveChatRun: ((code: number) => void) | undefined;
-    const chatMode = params.chatMode === true;
-    const handleSdkEvent = createSdkEventTranslator(record, {
-      maxTurns: params.maxTurns,
-      graceTurns: params.graceTurns,
-      onEvent: callbacks.onEvent,
-      onDelta: callbacks.onDelta,
-      abort: () => killChild("turn limiter abort"),
-      onAgentEnd: chatMode
-        ? () => {
-          // [chatMode] 轮收敛（输出完整）：不 kill，交 chat-session 上报 settled 相位；
-          // agentEndedCleanly 置位让「end 与 settled 之间被杀」的 close 也按 0 口径收尾。
-          agentEndedCleanly = true;
-          callbacks.onChatRoundEnd?.();
-        }
-        : () => {
-          agentEndedCleanly = true;
-          killChild("agent_end final kill");
-        },
-      ...(chatMode
-        ? {
-          onAgentSettled: () => {
-            // 相位上报先于 run resolve（idle 帧先于 run 应答帧——协议事件流时序）
-            agentEndedCleanly = true;
-            callbacks.onChatAgentSettled?.();
-            resolveChatRun?.(0);
-          },
-        }
-        : {}),
-    });
+    const runEnd: RunEndState = { endedCleanly: false };
+    const handleSdkEvent = createSdkEventTranslator(
+      record,
+      buildTranslatorOpts(params, callbacks, killChild, runEnd),
+    );
 
     // 2b. stderr tee 落盘（W11，设计 §3.9 同款契约）：pi 任务子进程 stderr 此前
     // 无消费面（pipe 出来即弃，写满会背压卡死子进程）——tee 到实例维度文件
@@ -483,160 +356,34 @@ export async function runSpawnOnce(
 
     // 3. 镜像上报（childSpawned 先行——未收上报前宿主 = 无句柄）+ 引擎侧记账
     registerActiveChild(params.recordId, child);
-    if (child.pid !== undefined) {
-      callbacks.onChildSpawned?.(child.pid, params.recordId);
-      callbacks.onChildStateChanged?.({
-        pid: child.pid,
-        recordId: params.recordId,
-        state: "running",
-        killed: false,
-      });
-    }
+    reportChildSpawned(child, params.recordId, callbacks);
 
     // 4. UI 请求队列（host/askUser 两阶段等待体注入）
     const enqueueUi = createUiRequestQueue(child, {
       ...(callbacks.askUser !== undefined ? { uiRequestHandler: callbacks.askUser } : {}),
     });
 
-    // 5. get_state response 监听表（握手 + 迟到 response 自弃）
-    //    身份回填走响应行的同步路径（不经握手 promise 的 .then 微任务）：同一 stdout
-    //    data 事件内握手应答行之后的轮终事件行（chat 的 agent_settled → idle 相位
-    //    anchor）立即可见 sessionFile——整 chunk 同帧处理时微任务时序不可靠。
-    const stateListeners = new Map<string, (data: unknown) => void>();
-    const addStateListener = (id: string, resolver: (data: unknown) => void): void => {
-      stateListeners.set(id, (data: unknown) => {
-        const picked: GetStateResult = {};
-        extractGetStateFields(data, picked);
-        if (picked.sessionId !== undefined && sessionId === undefined) sessionId = picked.sessionId;
-        if (picked.sessionFile !== undefined && picked.sessionFile !== sessionFile) {
-          sessionFile = picked.sessionFile;
-          callbacks.onHandleReady?.({
-            sessionRef: {
-              ...(sessionId !== undefined ? { sessionId } : {}),
-              sessionFile: picked.sessionFile,
-            },
-            poolKey: "shared",
-          });
-        }
-        resolver(data);
-      });
-    };
-
-    // 6. stdout pump
-    const exitPromise = new Promise<number>((resolveExit) => {
-      // [chatMode] agent_settled resolve 句柄落位（见上方 resolveChatRun 声明处注释）
-      resolveChatRun = resolveExit;
-      let buffer = "";
-      child.stdout?.setEncoding("utf8");
-      child.stdout?.on("data", (chunk: string) => {
-        buffer += chunk;
-        let nl = buffer.indexOf("\n");
-        while (nl >= 0) {
-          const line = buffer.slice(0, nl);
-          buffer = buffer.slice(nl + 1);
-          consumeLine(line);
-          nl = buffer.indexOf("\n");
-        }
-      });
-      const consumeLine = (line: string): void => {
-        const parsed = parseSpawnLine(line);
-        if (parsed === null) return;
-        switch (parsed.kind) {
-          case "header": {
-            sessionId = parsed.header.id;
-            sessionFile = deriveSessionFilePath(parsed.header, params.sessionDir);
-            callbacks.onHandleReady?.({
-              sessionRef: {
-                ...(sessionId !== undefined ? { sessionId } : {}),
-                ...(sessionFile !== undefined ? { sessionFile } : {}),
-              },
-              poolKey: "shared",
-            });
-            return;
-          }
-          case "event": {
-            handleSdkEvent(parsed.event);
-            return;
-          }
-          case "response": {
-            if (parsed.id !== undefined && stateListeners.has(parsed.id)) {
-              const resolver = stateListeners.get(parsed.id);
-              stateListeners.delete(parsed.id);
-              resolver?.(parsed.success ? parsed.data : undefined);
-            }
-            return;
-          }
-          case "extension_ui_request": {
-            enqueueUi(parsed.id, parsed.request);
-            return;
-          }
-          case "invalid": {
-            logger.debug(
-              `[session-runner] invalid stdout line from ${params.recordId} (ignored): ${parsed.raw.slice(0, INVALID_LINE_LOG_CHARS)}`,
-              { error: parsed.error },
-            );
-            return;
-          }
-        }
-      };
-      const onClose = (code: number | null, signal: NodeJS.Signals | null): void => {
-        stateListeners.clear();
-        stderrTee?.close();
-        unregisterActiveChild(params.recordId, child);
-        if (child.pid !== undefined) {
-          callbacks.onChildStateChanged?.({
-            pid: child.pid,
-            recordId: params.recordId,
-            state: "exited",
-            killed: child.killed,
-            ...(code !== null ? { exitCode: code } : {}),
-            ...(signal !== null ? { signal } : {}),
-          });
-        }
-        // 兜底反查（LC-4）：header/握手全 miss 时按 sessionId 后缀匹配 sessionDir
-        if (sessionFile === undefined && sessionId !== undefined) {
-          sessionFile = findSessionFileByHeaderId(params.sessionDir, sessionId);
-        }
-        // agent_end 主动终结的 close 是正常完成（exit code 0 口径）；其余信号退出
-        // 保持 128+ 折算（异常路径判据）。
-        resolveExit(agentEndedCleanly ? 0 : code ?? (signal !== null ? SIGNAL_EXIT_CODE_BASE : 0));
-      };
-      child.once("close", onClose);
-      child.once("error", (err) => {
-        logger.error(`[session-runner] child ${params.recordId} error event`, {
-          detail: toErrorMessage(err),
-        });
-        onClose(null, null);
-      });
-      // stdin 异步 error（EPIPE 半面②）：计数留痕（热路径投递据此判死）
-      child.stdin?.on("error", (err) => {
-        if (
-          err !== null && typeof err === "object" && "code" in err &&
-          ((err as NodeJS.ErrnoException).code === "EPIPE" ||
-            (err as NodeJS.ErrnoException).code === "ERR_STREAM_DESTROYED")
-        ) {
-          recordEpipeFailure(params.recordId);
-        }
-      });
+    // 5+6. session 身份回填 + stdout pump / close 收尾（身份三路同源与退出码口径
+    // 见 spawn-run-pump.ts；get_state 监听表随 identity tracker 持有）
+    const identity = createSessionIdentityTracker(params.sessionDir, callbacks);
+    const exitPromise = wireChildStdoutPump({
+      child,
+      recordId: params.recordId,
+      callbacks,
+      identity,
+      handleSdkEvent,
+      enqueueUi,
+      stderrTee,
+      runEnd,
     });
 
     // 7. get_state 握手 fire-and-forget（RPC mode 无 header 行，靠握手回填身份）——
     //    先于 prompt 发出：chat 会话形态的 idle 相位 anchor 与 run 应答 handle 都需要
     //    sessionFile，身份先知再驱动轮次（stdout 流序保证握手应答先于轮终事件）。
-    //    身份回填主体在 addStateListener 的同步路径（见第 5 步注释），此处仅兜底
-    //    超时重试轮次拿到的新值（同值去重，不重发 handleReady）。
-    void performGetStateHandshake(child, addStateListener).then((r) => {
-      if (r.sessionId !== undefined && sessionId === undefined) sessionId = r.sessionId;
-      if (r.sessionFile !== undefined && r.sessionFile !== sessionFile) {
-        sessionFile = r.sessionFile;
-        callbacks.onHandleReady?.({
-          sessionRef: {
-            ...(sessionId !== undefined ? { sessionId } : {}),
-            sessionFile: r.sessionFile,
-          },
-          poolKey: "shared",
-        });
-      }
+    //    身份回填主体在 identity 的响应行同步路径（见 spawn-run-pump.ts 头注），此处
+    //    仅兜底超时重试轮次拿到的新值（同值去重，不重发 handleReady）。
+    void performGetStateHandshake(child, identity.addStateListener).then((r) => {
+      identity.applyGetStateFields(r);
     });
 
     // 8. prompt 命令（rpc mode 唯一任务驱动通道）
@@ -650,11 +397,11 @@ export async function runSpawnOnce(
       startTime,
       success: exitCode === 0,
       error: exitCode === 0 ? undefined : `pi child exited with code ${exitCode}`,
-      sessionId: sessionId ?? "",
-      sessionFile,
+      sessionId: identity.sessionId ?? "",
+      sessionFile: identity.sessionFile,
       ...(params.schemaEnv !== undefined ? { schemaExpected: true } : {}),
     });
-    return { ...outcome, sessionId };
+    return { ...outcome, sessionId: identity.sessionId };
   } finally {
     if (tempFile !== undefined) await cleanupTempPrompt(tempFile);
   }
@@ -668,5 +415,3 @@ export {
   registerActiveChild,
   unregisterActiveChild,
 } from "./active-children.ts";
-
-// spawn-runner 内部消费：handshake 结果防 unused（诊断面保留导出读取器）

@@ -25,15 +25,8 @@ const { loggerMock } = vi.hoisted(() => ({
 }));
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
-// mock session-runner（import 链需要 runSpawn/killAllSpawnedChildren/getChildByRecord 存在）
-vi.mock("../engine/inproc session-runner（已删）", () => ({
-  runSpawn: vi.fn(),
-  killAllSpawnedChildren: vi.fn(),
-  getChildByRecord: vi.fn(() => undefined),
-  registerSpawnedChildForRecord: vi.fn(),
-  killRecordChildWithEscalation: vi.fn(),
-  spawnedChildren: new Map(),
-}));
+// [W3 改写] 原 vi.mock(inproc pi 引擎目录/session-runner) 随删件消亡——本文件只测
+// getRecordForAction 守卫（纯内存判定，不触引擎链路），现存 import 无需再 mock 引擎替身。
 
 import { createRecord } from "../execution-record.ts";
 import { ModelConfigService } from "../model-config-service.ts";

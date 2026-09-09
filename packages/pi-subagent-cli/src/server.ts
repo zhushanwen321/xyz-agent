@@ -98,6 +98,8 @@ export class EngineProtocolServer {
   private readonly reverseTimeoutMs: number;
   private readonly activeRuns = new Map<string, ActiveRun>();
   private readonly reversePending = new Map<string, ReversePending>();
+  /** 10 正向方法 → EnginePort 装配表（构造期冻结；表驱动分发）。 */
+  private readonly dispatchTable: Record<string, (params: unknown) => unknown>;
   private revSeq = 0;
   private initialized = false;
 
@@ -106,6 +108,7 @@ export class EngineProtocolServer {
     this.engine = opts.engine ?? createDefaultPiEngine();
     this.reverseClock = opts.reverseClock;
     this.reverseTimeoutMs = opts.reverseTimeoutMs ?? REVERSE_TIMEOUT_DEFAULT_MS;
+    this.dispatchTable = this.buildDispatchTable();
     // [v1.x] chat 会话反向通道发射面绑定（进程生命周期级——会话跨 run 存活）：
     // roundLifecycle 三相位 + 续聊轮 recordId 键 streamDelta + 会话级 askUser。
     this.engine.bindHostChannels?.({
@@ -154,37 +157,37 @@ export class EngineProtocolServer {
     // 无法归类的帧：静默忽略（stdout 是独占协议通道，不回显坏帧防对端解析器混乱）。
   }
 
-  /** 10 正向方法分发。 */
-  private async dispatch(id: number, method: string, params: unknown): Promise<unknown> {
-    switch (method) {
-      case "initialize":
-        return this.initialize(params as InitializeParams);
-      case "probe":
-        return this.engine.probe(typeof params === "object" && params !== null ? (params as { force?: boolean }) : undefined) as Promise<ProbeReport>;
-      case "run":
-        return this.run(params as RunParams);
-      case "cancel":
-        return this.cancel(params as { runId: string; reason: string });
-      case "interact":
-        return this.interact(params as { handle: EngineHandleData; action: InteractAction });
-      case "read":
-        return this.read(params as ReadParams);
-      case "listModels":
-        return { models: this.engine.listModels?.() ?? null };
-      case "validateModel":
-        return this.validateModel(params as { modelRef?: string });
-      case "dispose":
+  /** 10 正向方法 → EnginePort 装配表（协议载荷 cast 收敛在各方法适配行）。 */
+  private buildDispatchTable(): Record<string, (params: unknown) => unknown> {
+    return {
+      initialize: (params) => this.initialize(params as InitializeParams),
+      probe: (params) =>
+        this.engine.probe(typeof params === "object" && params !== null ? (params as { force?: boolean }) : undefined) as Promise<ProbeReport>,
+      run: (params) => this.run(params as RunParams),
+      cancel: (params) => this.cancel(params as { runId: string; reason: string }),
+      interact: (params) => this.interact(params as { handle: EngineHandleData; action: InteractAction }),
+      read: (params) => this.read(params as ReadParams),
+      listModels: () => ({ models: this.engine.listModels?.() ?? null }),
+      validateModel: (params) => this.validateModel(params as { modelRef?: string }),
+      dispose: async () => {
         await this.engine.dispose?.();
         return { ok: true };
-      case "ping":
-        return { pong: true };
-      default:
-        throw new EngineSdkError(
-          "engine_protocol_unknown_method",
-          `unknown protocol method: ${method} (request id ${id})`,
-          "The engine speaks protocol v1; check the installed engine package version vs the host.",
-        );
+      },
+      ping: () => ({ pong: true }),
+    };
+  }
+
+  /** 10 正向方法分发（表驱动；未知方法 → engine_protocol_unknown_method）。 */
+  private async dispatch(id: number, method: string, params: unknown): Promise<unknown> {
+    const handler = this.dispatchTable[method];
+    if (handler === undefined) {
+      throw new EngineSdkError(
+        "engine_protocol_unknown_method",
+        `unknown protocol method: ${method} (request id ${id})`,
+        "The engine speaks protocol v1; check the installed engine package version vs the host.",
+      );
     }
+    return handler(params);
   }
 
   // ── initialize：版本协商（越界 → engine_protocol_mismatch）+ 能力应答 ──
@@ -219,32 +222,16 @@ export class EngineProtocolServer {
         "The host must complete the initialize handshake before dispatching runs.",
       );
     }
-    // [v1.x] chat 会话形态 gate（A6 方向防御）：conversation 位 unsupported 的引擎对
-    // chat 请求同步拒——判据单源 = SDK assertChatConversationSupported（与 core
-    // capability-gate 同一能力位，防两侧判据漂移）。本引擎 manifest 声明 native，
-    // 此处仅防御 manifest/实装漂移。
-    if (params.chat !== undefined) {
-      if (typeof params.chat.recordId !== "string" || params.chat.recordId === "") {
-        throw new EngineSdkError(
-          "engine_protocol_bad_frame",
-          `run.chat requires a non-empty recordId (got: ${JSON.stringify(params.chat.recordId)})`,
-          "The host must mint a record id before dispatching a chat-form run; it keys interact routing and roundLifecycle association.",
-        );
-      }
-      assertChatConversationSupported(this.engine.id, this.engine.capabilities());
-    }
+    if (params.chat !== undefined) this.assertChatRunFrame(params.chat);
     const { runId, task, ctx } = params;
     const controller = new AbortController();
-    const active: ActiveRun = { controller, seq: 0 };
-    this.activeRuns.set(runId, active);
+    this.activeRuns.set(runId, { controller, seq: 0 });
 
     // pi 专有：host/askUser 两阶段等待体绑定进引擎（ui-request-queue 消费；
     // ack 后等待不计 in-flight 自灭计时——R9-2；run 结束解绑防跨 run 串扰）。
     // chat 会话形态跳过：会话跨 run 存活，askUser 由 hostChannels 以 spawn 轮 runId
     // 固定绑定（per-run 绑定会在 run 应答后解绑，把长驻会话的 UI 请求断流）。
     const isChatRun = params.chat !== undefined;
-    // chat 会话形态的 record 锚定键（闭包捕获——TS 无法经 isChatRun 布尔收窄 params.chat）
-    const chatRecordId: string | undefined = params.chat?.recordId;
     if (!isChatRun) {
       this.engine.bindAskUser?.((request: UiRequest) =>
         this.reverseRequestInternal("host/askUser", { runId, request }) as Promise<UiResponse>,
@@ -253,10 +240,47 @@ export class EngineProtocolServer {
 
     // task 子集 + ctx 还原 = 本地全量 AgentCallOpts（RemoteEngine.toSdkTaskSubset 镜像）
     const fullTask: AgentCallOpts = { ...task, ...(ctx.model !== undefined ? { model: ctx.model } : {}) };
-    const ctxModel: EngineCtxModel | undefined = parseCtxModel(ctx.ctxModel);
-    const stream: EngineStream | undefined = ctx.streamMode === "stream" ? { onDelta: (delta) => { void this.reverseRequestInternal("host/streamDelta", { runId, delta }); } } : undefined;
 
-    const runCtx: RunContext = {
+    try {
+      const r = await this.engine.run(
+        fullTask,
+        this.buildRunContext(params, controller, params.chat?.recordId),
+      );
+      return { handle: r.handle.data, outcome: r.outcome };
+    } finally {
+      this.activeRuns.delete(runId);
+      if (!isChatRun) this.engine.bindAskUser?.(undefined);
+    }
+  }
+
+  /** run.chat 帧校验 + chat 能力位 gate（A6 方向防御）：recordId 非空 + conversation
+   *  位 unsupported 同步拒——判据单源 = SDK assertChatConversationSupported（与 core
+   *  capability-gate 同一能力位，防两侧判据漂移）。本引擎 manifest 声明 native，
+   *  此处仅防御 manifest/实装漂移。 */
+  private assertChatRunFrame(chat: { recordId: unknown }): void {
+    if (typeof chat.recordId !== "string" || chat.recordId === "") {
+      throw new EngineSdkError(
+        "engine_protocol_bad_frame",
+        `run.chat requires a non-empty recordId (got: ${JSON.stringify(chat.recordId)})`,
+        "The host must mint a record id before dispatching a chat-form run; it keys interact routing and roundLifecycle association.",
+      );
+    }
+    assertChatConversationSupported(this.engine.id, this.engine.capabilities());
+  }
+
+  /** RunContext 装配（协议 ctx 还原 + host/* 反向通道接线；事件 seq 由 emitEvent 计数）。 */
+  private buildRunContext(
+    params: RunParams,
+    controller: AbortController,
+    chatRecordId: string | undefined,
+  ): RunContext {
+    const { runId, ctx } = params;
+    const ctxModel: EngineCtxModel | undefined = parseCtxModel(ctx.ctxModel);
+    const stream: EngineStream | undefined = ctx.streamMode === "stream"
+      ? { onDelta: (delta) => { void this.reverseRequestInternal("host/streamDelta", { runId, delta }); } }
+      : undefined;
+
+    return {
       taskId: runId,
       poolKey: ctx.poolKey,
       signal: controller.signal,
@@ -265,7 +289,7 @@ export class EngineProtocolServer {
       ...(stream !== undefined ? { stream } : {}),
       ...(ctx.schemaEnv !== undefined ? { schemaEnv: ctx.schemaEnv } : {}),
       ...(ctx.engineFallback !== undefined ? { engineFallback: ctx.engineFallback } : {}),
-      ...(isChatRun ? { chat: params.chat } : {}),
+      ...(params.chat !== undefined ? { chat: params.chat } : {}),
       onPoolResolved: (poolKey) => {
         void this.reverseRequestInternal("host/poolResolved", { runId, poolKey });
       },
@@ -277,14 +301,6 @@ export class EngineProtocolServer {
         void this.reverseRequestInternal("host/childSpawned", { pid: child.pid, recordId: chatRecordId ?? runId });
       },
     };
-
-    try {
-      const r = await this.engine.run(fullTask, runCtx);
-      return { handle: r.handle.data, outcome: r.outcome };
-    } finally {
-      this.activeRuns.delete(runId);
-      if (!isChatRun) this.engine.bindAskUser?.(undefined);
-    }
   }
 
   private cancel(params: { runId: string; reason: string }): { ok: true } {

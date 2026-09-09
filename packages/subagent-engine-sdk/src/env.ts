@@ -115,36 +115,14 @@ function compileManifestPrefixes(prefixes: readonly string[]): string[] | null {
 }
 
 /**
- * `buildEngineChildEnv(baseEnv, opts)`：引擎子进程 env 三层契约（高者覆盖低者）。
- *
- * 写死次序 = 先过滤（L1 deny/剥除 → L2 manifest 放行）后 L0 显式注入——
- * 「core 过滤之后显式注入」即此语义：baseEnv 是调用方（core/宿主）已过滤的基座，
- * L0 键在最后写入故不受 L1 剥除影响（交集为 ∅ 由测试断言兜底）。
- *
- * 层规格（impl-plan §2.12 三层表）：
- * - L0 基础设施键：XYZ_AGENT_DATA_DIR / XYZ_AGENT_ENGINE_NODE / ELECTRON_RUN_AS_NODE
- *   （条件）/ XYZ_AGENT_SUBAGENT=1 / relay 三键 / identityEnv；
- * - L1 deny + 显式剥除（恒高于 manifest 放行）：ENGINE_ENV_DENY_LIST
- *   （deny 两键 + 凭证键 + 父身份键 + 防御性剥除三死名）；
- * - L2 manifest 放行：envPrefixes 声明前缀的 processEnv 键（保留前缀拒绝、
- *   形态校验、未声明前缀不放行 + warn）。
- *
- * 红线：纯函数，不读写 process.env 本体，不 mutate 入参。
+ * L2 manifest 放行：envPrefixes 声明前缀的 processEnv 键写入 env。
+ * - 双侧声明（processEnv + envPrefixes）→ compile 后按前缀放行，未命中 warn；
+ * - 只声明 processEnv（manifest 无 envPrefixes）→ 全部不放行 + warn。
  */
-export function buildEngineChildEnv(
-  baseEnv: Record<string, string | undefined>,
+function applyManifestAllowlist(
+  env: Record<string, string>,
   opts: EngineChildEnvOptions,
-): Record<string, string> {
-  // 基座拷贝（undefined 值不进 env——Node spawn 的 env 值须是 string）
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(baseEnv)) {
-    if (value !== undefined) env[key] = value;
-  }
-
-  // L1：deny + 显式剥除（先于 L0，保证 L0 注入不受剥除影响）
-  deleteEnvKeysCaseInsensitive(env, ENGINE_ENV_DENY_LIST);
-
-  // L2：manifest envPrefixes 放行 processEnv（在 L0 之前——L0 基础设施键优先级最高）
+): void {
   if (opts.processEnv !== undefined && opts.envPrefixes !== undefined) {
     const compiled = compileManifestPrefixes(opts.envPrefixes);
     if (compiled !== null) {
@@ -163,12 +141,16 @@ export function buildEngineChildEnv(
       logger.warn(`processEnv key not allowed (manifest declares no envPrefixes): ${key}`);
     }
   }
+}
 
-  // L1 兜底复检：deny/剥除恒高于 manifest 放行——宽前缀（如声明 XYZ_ 形态的
-  // 宽松清单）也不允许经 L2 把 deny 键带回来。L0 未注入，此轮只清 L2 写入面。
-  deleteEnvKeysCaseInsensitive(env, ENGINE_ENV_DENY_LIST);
-
-  // L0：基础设施键显式注入（最后写入 = 最高优先级）
+/**
+ * L0 基础设施键显式注入（最后写入 = 最高优先级）：dataDir 恒注入 / engineNode、
+ * ELECTRON_RUN_AS_NODE（条件）/ XYZ_AGENT_SUBAGENT=1 / relay 三键 / identityEnv。
+ */
+function injectL0InfraKeys(
+  env: Record<string, string>,
+  opts: EngineChildEnvOptions,
+): void {
   env.XYZ_AGENT_DATA_DIR = opts.dataDir;
   if (opts.engineNode !== undefined) env.XYZ_AGENT_ENGINE_NODE = opts.engineNode;
   if (opts.electronRunAsNode === true) env.ELECTRON_RUN_AS_NODE = "1";
@@ -183,6 +165,47 @@ export function buildEngineChildEnv(
       if (value !== undefined) env[key] = value;
     }
   }
+}
+
+/**
+ * `buildEngineChildEnv(baseEnv, opts)`：引擎子进程 env 三层契约（高者覆盖低者）。
+ *
+ * 写死次序 = 先过滤（L1 deny/剥除 → L2 manifest 放行）后 L0 显式注入——
+ * 「core 过滤之后显式注入」即此语义：baseEnv 是调用方（core/宿主）已过滤的基座，
+ * L0 键在最后写入故不受 L1 剥除影响（交集为 ∅ 由测试断言兜底）。
+ *
+ * 层规格（impl-plan §2.12 三层表）：
+ * - L0 基础设施键：XYZ_AGENT_DATA_DIR / XYZ_AGENT_ENGINE_NODE / ELECTRON_RUN_AS_NODE
+ *   （条件）/ XYZ_AGENT_SUBAGENT=1 / relay 三键 / identityEnv（injectL0InfraKeys）；
+ * - L1 deny + 显式剥除（恒高于 manifest 放行）：ENGINE_ENV_DENY_LIST
+ *   （deny 两键 + 凭证键 + 父身份键 + 防御性剥除三死名）；
+ * - L2 manifest 放行：envPrefixes 声明前缀的 processEnv 键（保留前缀拒绝、
+ *   形态校验、未声明前缀不放行 + warn）（applyManifestAllowlist）。
+ *
+ * 红线：纯函数，不读写 process.env 本体，不 mutate 入参。
+ */
+export function buildEngineChildEnv(
+  baseEnv: Record<string, string | undefined>,
+  opts: EngineChildEnvOptions,
+): Record<string, string> {
+  // 基座拷贝（undefined 值不进 env——Node spawn 的 env 值须是 string）
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(baseEnv)) {
+    if (value !== undefined) env[key] = value;
+  }
+
+  // L1：deny + 显式剥除（先于 L0，保证 L0 注入不受剥除影响）
+  deleteEnvKeysCaseInsensitive(env, ENGINE_ENV_DENY_LIST);
+
+  // L2：manifest envPrefixes 放行 processEnv（在 L0 之前——L0 基础设施键优先级最高）
+  applyManifestAllowlist(env, opts);
+
+  // L1 兜底复检：deny/剥除恒高于 manifest 放行——宽前缀（如声明 XYZ_ 形态的
+  // 宽松清单）也不允许经 L2 把 deny 键带回来。L0 未注入，此轮只清 L2 写入面。
+  deleteEnvKeysCaseInsensitive(env, ENGINE_ENV_DENY_LIST);
+
+  // L0：基础设施键显式注入（最后写入 = 最高优先级）
+  injectL0InfraKeys(env, opts);
 
   return env;
 }

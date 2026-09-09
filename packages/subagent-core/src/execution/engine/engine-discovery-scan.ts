@@ -27,19 +27,14 @@
 // 同 id 覆盖 → debug 留痕（core logger 三值无 info 级，debug 落宿主文件日志）；bin
 // 不存在/不可执行 → 标记不可用（不装载、不进清单）；protocol 不兼容 → 同不可用。
 
-import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { isProtocolVersionCompatible } from "@zhushanwen/subagent-engine-sdk";
-
+import { CONSERVATIVE_CAPABILITIES } from "./engine-manifest.ts";
 import {
-  CONSERVATIVE_CAPABILITIES,
-  describeValue,
-  parseCapabilities,
-  parseEnvPrefixes,
-  parseModelCatalog,
-  resolveManifestBin,
-} from "./engine-manifest.ts";
+  canExecute,
+  inspectEnginePackage,
+  type DiscoveredEngine,
+} from "./engine-inspect-package.ts";
 
 import { getLogger } from "../../core/logger.ts";
 import {
@@ -52,7 +47,7 @@ import { getHostServices, type DiscoveryRoot } from "../../core/host-services.ts
 import { getEngineDataDir } from "./common/data-dir.ts";
 import { readExplicitEngines } from "./config.ts";
 import { EngineClient } from "./client/engine-client.ts";
-import { RemoteEngine, type RemoteEngineManifestSnapshot } from "./client/remote-engine.ts";
+import { RemoteEngine } from "./client/remote-engine.ts";
 import { hasEngine, registerEngineDescriptor, type CliEngineDescriptor } from "./registry.ts";
 import { getHostUiRequestEndpoint } from "./host/host-ui-endpoint.ts";
 import type { EngineCapabilities } from "./types.ts";
@@ -60,22 +55,8 @@ import type { EngineCapabilities } from "./types.ts";
 const logger = getLogger("subagents");
 
 export { ENGINE_ROOTS_ENV, parseEngineRootsEnv, deriveNodeModuleRoots };
-
-/** 单个引擎包的检查产物。 */
-export type PackageInspection =
-  | { status: "ok"; entry: DiscoveredEngine }
-  | { status: "skip"; reason: string }
-  | { status: "unusable"; id: string | undefined; reason: string };
-
-/** 发现成功的引擎条目（装载序；同 id 后者覆盖前者）。 */
-export interface DiscoveredEngine {
-  id: string;
-  /** 发现源标签（env 名 / 宿主根 source / node-modules / config.json）。 */
-  source: string;
-  /** L3 显式 config（initialize.engineConfig 透传；L1/L2 manifest 发现无此项）。 */
-  engineConfig?: Record<string, string>;
-  descriptor: CliEngineDescriptor;
-}
+export { inspectEnginePackage };
+export type { DiscoveredEngine, PackageInspection } from "./engine-inspect-package.ts";
 
 /** 扫描结果（诊断面：skip/unusable 逐包留痕原因，对应 A12 负面场景）。 */
 export interface DiscoveryScanResult {
@@ -97,159 +78,6 @@ export interface DiscoverEnginesOptions {
   nodeModuleRoots?: string[];
   /** 附加发现根（调用方/测试追加的 L1 根，语义同 HostServices.engines）。 */
   extraRoots?: DiscoveryRoot[];
-}
-
-/**
- * 检查单个候选包目录（读 package.json → manifest 字段级解析 → bin 可执行验证）。
- * 三态：ok（装载）/ skip（必需字段缺失/不可解析——warn 跳过该包）/ unusable
- * （protocol 不兼容、bin 不可执行——标记不可用，不进清单）。
- */
-export function inspectEnginePackage(
-  pkgDir: string,
-  source: string,
-  hostKind: string,
-  env: NodeJS.ProcessEnv,
-): PackageInspection {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(path.join(pkgDir, "package.json"), "utf8");
-  } catch (err) {
-    return { status: "skip", reason: `package.json unreadable: ${errorMessage(err)}` };
-  }
-  let pkg: unknown;
-  try {
-    pkg = JSON.parse(raw);
-  } catch (err) {
-    return { status: "skip", reason: `package.json is not valid JSON: ${errorMessage(err)}` };
-  }
-  if (typeof pkg !== "object" || pkg === null) {
-    return { status: "skip", reason: "package.json is not an object" };
-  }
-  // 无 manifest 段 = 不是引擎包：扫描常态（node_modules 大量无关包），静默跳过不 warn。
-  const agentNs = (pkg as Record<string, unknown>)["xyz-agent"];
-  if (typeof agentNs !== "object" || agentNs === null) {
-    return { status: "skip", reason: "no xyz-agent.subagentEngine manifest (not an engine package)" };
-  }
-  const manifest = (agentNs as Record<string, unknown>)["subagentEngine"];
-  if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) {
-    return { status: "skip", reason: "xyz-agent.subagentEngine is not an object" };
-  }
-  const m = manifest as Record<string, unknown>;
-
-  // ── 必需字段：id / bin / protocol（缺失或形态坏 → warn 跳过该包）──
-  const id = m["id"];
-  if (typeof id !== "string" || id.trim() === "") {
-    return { status: "skip", reason: "manifest id is required (non-empty string)" };
-  }
-  const manifestBin = m["bin"];
-  if (typeof manifestBin !== "string" || manifestBin.trim() === "") {
-    return { status: "skip", reason: `engine '${id}': manifest bin is required (non-empty string)` };
-  }
-  const protocol = m["protocol"];
-  if (typeof protocol !== "number" || !Number.isInteger(protocol)) {
-    return {
-      status: "skip",
-      reason: `engine '${id}': manifest protocol is required (integer; got ${describeValue(protocol)})`,
-    };
-  }
-  if (!isProtocolVersionCompatible(protocol)) {
-    return {
-      status: "unusable",
-      id,
-      reason:
-        `engine '${id}': manifest protocol ${protocol} is not compatible ` +
-        `(core supports >=1 <2) — upgrade the engine package or the host core`,
-    };
-  }
-
-  // ── bin 解析：manifest bin = package.json npm bin 的 key（设计 §3.4 示例形态）；
-  //    package.json bin 为字符串时直接作相对路径。解析不出真实入口 = bin 缺失面。
-  const binPath = resolveManifestBin(pkgDir, pkg as Record<string, unknown>, manifestBin);
-  if (binPath === undefined) {
-    return {
-      status: "skip",
-      reason: `engine '${id}': manifest bin '${manifestBin}' does not resolve via package.json bin`,
-    };
-  }
-  if (!canExecute(binPath)) {
-    return {
-      status: "unusable",
-      id,
-      reason: `engine '${id}': bin not found or not executable: ${binPath}`,
-    };
-  }
-
-  // ── capabilities（必需；缺键取最保守值 + warn；未知键忽略 + warn）──
-  const caps = parseCapabilities(id, m["capabilities"]);
-
-  // ── envPrefixes（可选，缺省 []；非法条目丢弃该前缀 + warn，包仍可用——A12②）──
-  const envPrefixes = parseEnvPrefixes(id, m["envPrefixes"]);
-
-  // ── modelCatalog（可选；缺省 = 不注入保持 undefined——解析器不得把省略填成
-  //    models: []，否则「无枚举面」语义不可达，RemoteEngine.listModels 会说谎）──
-  const modelCatalog = parseModelCatalog(id, m["modelCatalog"]);
-
-  // ── displayName / description（可选；displayName 缺省 = id 由消费面兜底
-  //    （listEnginesByDisplayName 的 `?? id`），快照只存显式值防「缺省填充」被误读；
-  //    description 当前无消费面，仅做形态校验）──
-  let displayName: string | undefined;
-  const rawDisplayName = m["displayName"];
-  if (rawDisplayName !== undefined) {
-    if (typeof rawDisplayName === "string" && rawDisplayName.trim() !== "") {
-      displayName = rawDisplayName;
-    } else {
-      logger.warn(`[engine-discovery] engine '${id}': displayName must be a non-empty string — ignoring`);
-    }
-  }
-  const rawDescription = m["description"];
-  if (rawDescription !== undefined && typeof rawDescription !== "string") {
-    logger.warn(`[engine-discovery] engine '${id}': description must be a string — ignoring`);
-  }
-
-  const manifestSnapshot: RemoteEngineManifestSnapshot = {
-    capabilities: caps,
-    ...(modelCatalog !== undefined ? { modelCatalog } : {}),
-  };
-
-  const descriptor: CliEngineDescriptor = {
-    kind: "cli",
-    command: binPath,
-    args: [],
-    capabilities: caps,
-    portFactory: () => {
-      // 惰性求值：portFactory 在 getEngine 首次取用时才执行（registry 惰性单例），
-      // 那时宿主已 configureCore（或宿主进程 env 已带数据根）——扫描期可能早于
-      // configureCore，直接调 getEngineDataDir 会触 core_host_not_configured。
-      const dataDir = getEngineDataDir(env);
-      const client = new EngineClient({
-        engineId: id,
-        command: binPath,
-        args: [],
-        hostKind,
-        dataDir,
-        envPrefixes,
-        // [W6 R3 MF-A] host/askUser 应答端：壳侧登记处在 portFactory 惰性执行期取值
-        //（晚于 session_start 注册，未注册 → undefined → 引擎收 {unsupported:true}）。
-        uiRequestHandler: getHostUiRequestEndpoint(),
-        manifestDiagnostics: {
-          capabilities: caps,
-          models: modelCatalog === undefined || modelCatalog === null ? null : modelCatalog.models,
-        },
-      });
-      return new RemoteEngine({
-        engineId: id,
-        client,
-        manifest: manifestSnapshot,
-        dataDir,
-        hostKind,
-      });
-    },
-    manifest: {
-      ...(modelCatalog !== undefined ? { modelCatalog } : {}),
-      ...(displayName !== undefined ? { displayName } : {}),
-    },
-  };
-  return { status: "ok", entry: { id, source, descriptor } };
 }
 
 // ============================================================
@@ -438,18 +266,4 @@ function buildExplicitDescriptor(
     ...(entry.config !== undefined ? { engineConfig: entry.config } : {}),
     descriptor,
   };
-}
-
-/** 可执行探测（X_OK；ENOENT/EACCES/平台不支持 → false）。 */
-function canExecute(p: string): boolean {
-  try {
-    fs.accessSync(p, fs.constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

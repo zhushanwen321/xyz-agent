@@ -96,53 +96,7 @@ export function runReconcileSweep(deps: ReconcileSweepDeps): ReconcileSweepResul
 
   const activeRegisters = collectActiveRegisterEntries(deps.sessionFile);
   for (const entry of activeRegisters) {
-    const id = entry.id;
-    // 保守性分流（[F2]）：按注册类型选收口判据——subagent 走 record 差集；workflow/
-    // 畸形（normalizePendingType 归 workflow 偏好）走 workflow run 判据；bash 无
-    // record/store 可查，保守跳过（显式偏差，头注 bash 段）。
-    if (entry.type === "bash") {
-      result.skippedNonSubagent.push(id);
-      continue;
-    }
-    const state = entry.type === "subagent"
-      ? deps.lookupRecordState(id)
-      : deps.lookupWorkflowRunState?.(id);
-    if (state === undefined) {
-      // deps 未注入 workflow 判据：无收口通道，保守跳过（向后兼容——判据注入面
-      // 缺席 ≠ 条目可注销）。
-      result.skippedNonSubagent.push(id);
-      continue;
-    }
-    if (state === "active") {
-      result.skippedActive.push(id);
-      continue;
-    }
-    const reason =
-      state === "missing" ? "expired" : closedReasonToPendingReason(state.closedReason);
-    // 权威路径：直接 appendEntry 落盘（不经 bus emit 作权威——先例论证见文件头注）。
-    try {
-      deps.appendEntry?.("pending:unregister", { id, reason, status: reason });
-    } catch (err) {
-      // 落盘失败：差集残留交下次 sweep（session_start / 监督器启动）重试。
-      logger.warn(
-        `[subagents] reconcile sweep appendEntry failed for ${id} (retry on next sweep): ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-      continue;
-    }
-    // 尽力补 emit（listener 就绪时同步 pending 内存视图，缩短工具投影不一致窗口）。
-    try {
-      deps.emit?.("pending:unregister", { id, reason });
-    } catch (err) {
-      // 尽力语义：emit 失败无害（appendEntry 已是权威路径），debug 留痕供排查。
-      logger.debug(
-        `[subagents] reconcile sweep best-effort emit failed (harmless) for ${id}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-    result.reconciled.push(id);
+    sweepSingleRegister(deps, entry, result);
   }
   if (result.reconciled.length > 0) {
     logger.warn(
@@ -150,6 +104,72 @@ export function runReconcileSweep(deps: ReconcileSweepDeps): ReconcileSweepResul
     );
   }
   return result;
+}
+
+/**
+ * 差集单条对账（保守性分流 [F2]）：按注册类型选收口判据——subagent 走 record 差集；
+ * workflow/畸形（normalizePendingType 归 workflow 偏好）走 workflow run 判据；bash 无
+ * record/store 可查，保守跳过（显式偏差，头注 bash 段）。
+ */
+function sweepSingleRegister(
+  deps: ReconcileSweepDeps,
+  entry: ActiveRegisterEntry,
+  result: ReconcileSweepResult,
+): void {
+  const id = entry.id;
+  if (entry.type === "bash") {
+    result.skippedNonSubagent.push(id);
+    return;
+  }
+  const state = entry.type === "subagent"
+    ? deps.lookupRecordState(id)
+    : deps.lookupWorkflowRunState?.(id);
+  if (state === undefined) {
+    // deps 未注入 workflow 判据：无收口通道，保守跳过（向后兼容——判据注入面
+    // 缺席 ≠ 条目可注销）。
+    result.skippedNonSubagent.push(id);
+    return;
+  }
+  if (state === "active") {
+    result.skippedActive.push(id);
+    return;
+  }
+  reemitUnregister(deps, id, state, result);
+}
+
+/** 补发单条 unregister：appendEntry 权威落盘 + 尽力 emit 同步内存视图（均失败保守处理）。 */
+function reemitUnregister(
+  deps: ReconcileSweepDeps,
+  id: string,
+  state: Exclude<SupervisedRecordState, "active">,
+  result: ReconcileSweepResult,
+): void {
+  const reason =
+    state === "missing" ? "expired" : closedReasonToPendingReason(state.closedReason);
+  // 权威路径：直接 appendEntry 落盘（不经 bus emit 作权威——先例论证见文件头注）。
+  try {
+    deps.appendEntry?.("pending:unregister", { id, reason, status: reason });
+  } catch (err) {
+    // 落盘失败：差集残留交下次 sweep（session_start / 监督器启动）重试。
+    logger.warn(
+      `[subagents] reconcile sweep appendEntry failed for ${id} (retry on next sweep): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return;
+  }
+  // 尽力补 emit（listener 就绪时同步 pending 内存视图，缩短工具投影不一致窗口）。
+  try {
+    deps.emit?.("pending:unregister", { id, reason });
+  } catch (err) {
+    // 尽力语义：emit 失败无害（appendEntry 已是权威路径），debug 留痕供排查。
+    logger.debug(
+      `[subagents] reconcile sweep best-effort emit failed (harmless) for ${id}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+  result.reconciled.push(id);
 }
 
 /** closedReason → pending reason（未知值交 pending-notifications mapReasonToStatus
