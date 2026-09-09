@@ -27,8 +27,8 @@
  */
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { join, basename } from 'node:path'
-import { getDataDir, getImageCacheDir, getImageCacheRoot } from '@xyz-agent/shared/paths'
+import { join, basename, dirname } from 'node:path'
+import { getPiSessionsDir, getImageCacheDir, getImageCacheRoot } from '@xyz-agent/shared/paths'
 import type { ImageCacheWriteImage, ImageCacheWriteImageResult, ImageCacheWriteResult } from '@xyz-agent/shared'
 
 /** 字节/时间换算常量（帽值语义单位为 MB、孤儿龄语义单位为天，字面量收敛在此）。 */
@@ -68,32 +68,33 @@ const MIME_EXTENSIONS: Record<string, string> = {
 export interface ImageCacheDirs {
   /** 数据根目录（缺省 getDataDir()） */
   dataDir?: string
-  /** pi sessions 目录（孤儿判据反查用；缺省 `<dataDir>/pi/agent/sessions`——shared paths SSOT 推导） */
+  /** pi sessions 目录（孤儿判据反查用；缺省 getPiSessionsDir = `<dataDir>/pi/sessions`，shared paths SSOT） */
   sessionsDir?: string
 }
 
-/** 逐图写入单图（内部原语：返回 null 表示 invalid，'quota-full' 语义由调用方判帽）。 */
-function writeSingleImage(
+/**
+ * 单图定位（无副作用）：payload 校验 + hash/路径计算 + 探测已落盘（hash 命中）。
+ * 写动作（mkdir/writeFileSync）留在 writeImagesNewestFirst 的判帽之后——帽判定只作用于
+ * 未命中图（U4：cached 不耗新额度），定位阶段不留任何盘上痕迹（超帽图连空目录都不建）。
+ */
+function locateImageCacheTarget(
   sessionId: string,
   image: ImageCacheWriteImage,
   dirs: ImageCacheDirs,
-): { status: 'written' | 'cached'; path: string; bytes: number } | { status: 'invalid' } {
+): { status: 'invalid' } | { filePath: string; existingBytes: number | null; incomingBytes: number } {
   if (typeof image.data !== 'string' || image.data === '' || typeof image.mimeType !== 'string') {
     return { status: 'invalid' }
   }
   // getImageCacheDir 内含 sessionId 穿越校验（throw）——异常向上传播为 invoke rejection，
   // IPC 壳层兜底 catch（防畸形 sessionId 写到任意位置）。
-  const sessionDir = getImageCacheDir(sessionId, dirs.dataDir)
-  if (!existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true })
   const hash = createHash('sha256').update(image.data).digest('hex')
   const ext = MIME_EXTENSIONS[image.mimeType] ?? '.png'
-  const filePath = join(sessionDir, hash + ext)
+  const filePath = join(getImageCacheDir(sessionId, dirs.dataDir), hash + ext)
   if (existsSync(filePath)) {
-    return { status: 'cached', path: filePath, bytes: statSync(filePath).size }
+    // 已落盘（幂等命中）：cached 字节数 = 盘上真实字节
+    return { filePath, existingBytes: statSync(filePath).size, incomingBytes: 0 }
   }
-  const bytes = Buffer.byteLength(image.data, 'base64')
-  writeFileSync(filePath, Buffer.from(image.data, 'base64'))
-  return { status: 'written', path: filePath, bytes }
+  return { filePath, existingBytes: null, incomingBytes: Buffer.byteLength(image.data, 'base64') }
 }
 
 /** 统计目录总字节数（文件数有限，sync 遍历；目录不存在 → 0）。 */
@@ -113,11 +114,17 @@ export function sessionImageCacheBytes(sessionId: string, dirs: ImageCacheDirs =
 }
 
 /**
- * 按给定数组序落盘一批图片（数组序 = 落盘序）：超帽即停，后续图返回 quota-full。
+ * 按给定数组序落盘一批图片（数组序 = 落盘序）：逐图先探测 hash 存在性，**cached 零新
+ * 额度消耗**（不重复记账、不受帽预检拦截）；未命中图按剩余额度判帽，超帽即停（本图与
+ * 后续全部 quota-full，盘上无文件）。
  *
  * **顺序契约（设计 D6-⑨ v8 显式声明）**：调用方（core 编排层 persistImagesNewestFirst）
  * 传新→旧序——帽满时最新图已落盘、更旧图占位（「最新内容优先可见」）。live 单图传单
  * 元素数组（剩余额度内即写）。
+ *
+ * **cached 先于判帽（U4 根修）**：64MB 满帽 session 重开/重放时已落盘图全部 hash 命中 →
+ * 零占位；帽判定只作用于真正要写的新图。曾因帽预检先于 hash 探测，满帽 session 重开把
+ * 已落盘图误判 quota-full 致 renderer 重启后重图误占位。
  */
 export function writeImagesNewestFirst(
   sessionId: string,
@@ -133,20 +140,27 @@ export function writeImagesNewestFirst(
       results.push({ status: 'quota-full' })
       continue
     }
-    // 帽预检：新图字节超剩余额度 → 停（本图与后续全部 quota-full——超帽即停语义）。
-    const incoming = typeof image.data === 'string' ? Buffer.byteLength(image.data, 'base64') : 0
-    if (used + incoming > maxBytes) {
+    const located = locateImageCacheTarget(sessionId, image, dirs)
+    if ('status' in located) {
+      results.push({ status: 'invalid' })
+      continue
+    }
+    if (located.existingBytes !== null) {
+      // 已落盘图：零新额度消耗，不重复计入 used（cached 幂等命中）
+      results.push({ status: 'cached', path: located.filePath, bytes: located.existingBytes })
+      continue
+    }
+    // 未命中图判帽：新图字节超剩余额度 → 停（本图与后续全部 quota-full——超帽即停语义）
+    if (used + located.incomingBytes > maxBytes) {
       quotaFull = true
       results.push({ status: 'quota-full' })
       continue
     }
-    const r = writeSingleImage(sessionId, image, dirs)
-    if (r.status === 'invalid') {
-      results.push({ status: 'invalid' })
-      continue
-    }
-    used += r.bytes
-    results.push({ status: r.status, path: r.path, bytes: r.bytes })
+    const sessionDir = dirname(located.filePath)
+    if (!existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true })
+    writeFileSync(located.filePath, Buffer.from(image.data, 'base64'))
+    used += located.incomingBytes
+    results.push({ status: 'written', path: located.filePath, bytes: located.incomingBytes })
   }
   return { results, quotaFull }
 }
@@ -157,18 +171,37 @@ export function deleteSessionImageCache(sessionId: string, dirs: ImageCacheDirs 
 }
 
 /**
- * 孤儿判据（文件系统级）：cache 目录名（sessionId）在 pi sessions 目录无对应 session
- * 文件 → 判死。判据只看文件存在性——subagent 虚拟分区历史同存于 sessions 目录，天然覆盖。
+ * session 文件名 → sessionId（**文件名形态实测锚点**：本机 `~/.xyz-agent/pi/sessions/`
+ * 取样 `2026-09-02T14-40-39-107Z_01a06290-9ac3-7d46-90f6-39a86248025e.jsonl` 等——pi 以
+ * `<ISO时间戳>_<uuid>.jsonl` 命名，uuid 段 === 首行 header 的 id 字段（纯 uuid，与
+ * runtime 扫描链 scanSessionMeta / external-scan 按内容解析的 sessionId 同值）；
+ * sidecar 是 `<同前缀>.jsonl.<suffix>`）。
+ *
+ * 解析 = 先剥 `.jsonl` 及其后 sidecar 后缀，再取末段 `_` 后的 uuid（用 lastIndexOf 而非
+ * split[1]，防未来文件名前缀引入更多 `_`）；无 `_` 的名字（防御未知形态）回退剥后缀全名。
+ */
+function sessionFileIdFromName(fileName: string): string {
+  const main = fileName.replace(/\.jsonl.*$/, '')
+  const underscore = main.lastIndexOf('_')
+  return underscore === -1 ? main : main.slice(underscore + 1)
+}
+
+/**
+ * 孤儿判据（文件系统级）：cache 目录名（sessionId，纯 uuid = header id）在 pi sessions
+ * 目录无对应 session 文件 → 判死。判据只看文件存在性——subagent 虚拟分区历史同存于
+ * sessions 目录，天然覆盖。
  */
 function isOrphanSessionDir(sessionDirName: string, dirs: ImageCacheDirs): boolean {
-  // 缺省 `<dataDir>/pi/agent/sessions`（shared paths getPiAgentDir 同构推导——main 侧
-  // 不 import runtime 的 getSessionsDir，包边界；dataDir 注入时直接拼保持测试 tmpdir 隔离）
-  const sessionsDir = dirs.sessionsDir ?? join(dirs.dataDir ?? getDataDir(), 'pi', 'agent', 'sessions')
+  // 缺省 `<dataDir>/pi/sessions`（shared paths getPiSessionsDir SSOT——与 runtime
+  // pi-paths.ts getSessionsDir 同构推导；main 不 import runtime，包边界。曾手拼成
+  // `<dataDir>/pi/agent/sessions` 错一层致判据恒空，U1 修正）。
+  const sessionsDir = dirs.sessionsDir ?? getPiSessionsDir(dirs.dataDir)
   if (!existsSync(sessionsDir)) return false
   for (const f of readdirSync(sessionsDir)) {
-    // session 文件名形态 `<sessionId>.jsonl`（sidecar 是 `<sessionId>.jsonl.<suffix>`），
-    // 取首个 '.' 前的主名比对。
-    if (f.startsWith(sessionDirName + '.')) return false
+    // session 文件名形态 `<ISO时间戳>_<uuid>.jsonl`（sidecar `<同前缀>.jsonl.<suffix>`），
+    // sessionId = 末段 `_` 后 uuid 段——曾按 `f.startsWith(sessionDirName + '.')` 前缀
+    // 比对，与真实命名恒 false 致判据失明（U2 修正）。
+    if (f.includes('.jsonl') && sessionFileIdFromName(f) === sessionDirName) return false
   }
   return true
 }
@@ -272,7 +305,14 @@ export function runImageCacheStartupSweep(dirs: ImageCacheDirs = {}): void {
   } catch { void 0 } // 清理通道故障静默（下轮启动重试；写入路径不受影响）
 }
 
-/** 从 session 文件路径派生 sessionId（runtime 删除链接线用：`<sid>.jsonl` → `<sid>`）。 */
+/**
+ * 从 session 文件路径派生 sessionId（runtime 删除链接线用）。
+ *
+ * 真实文件名形态 `<ISO时间戳>_<uuid>.jsonl`（sidecar `<同前缀>.jsonl.<suffix>`），
+ * sessionId = 末段 `_` 后的 uuid 段（=== 首行 header id，即 renderer 写 cache 目录所用
+ * 的纯 uuid——曾按「剥 `.jsonl` 后全名」派生出 `<ts>_<uuid>`，与 cache 目录名永不相等
+ * 致级联删除 rmSync no-op，U3 修正；形态实测锚点见 sessionFileIdFromName）。
+ */
 export function sessionIdFromSessionFilePath(filePath: string): string {
-  return basename(filePath).replace(/\.jsonl.*$/, '')
+  return sessionFileIdFromName(basename(filePath))
 }

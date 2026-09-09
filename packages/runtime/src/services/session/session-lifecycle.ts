@@ -143,12 +143,19 @@ function resolveCreateCwd(cwd: string | undefined): string {
 }
 
 /**
- * [D6-⑨ u7] session 文件路径 → sessionId（`<sid>.jsonl` / sidecar `<sid>.jsonl.<suffix>` →
- * `<sid>`）。与 main 侧 image-cache.ts 的 sessionIdFromSessionFilePath 同语义——runtime
- * 进程无法跨包 import main 模块，内联副本（cache 级联删除的目录名派生用）。
+ * [D6-⑨ u7] session 文件路径 → sessionId。真实文件名形态 `<ISO时间戳>_<uuid>.jsonl`
+ *（sidecar `<同前缀>.jsonl.<suffix>`；形态实测锚点 `2026-09-02T14-40-39-107Z_01a06290-
+ * 9ac3-7d46-90f6-39a86248025e.jsonl`），sessionId = 末段 `_` 后的 uuid 段（=== 首行
+ * header id，与 scanSessionMeta / external-scan 按内容解析的 sessionId 同值；renderer
+ * 写 cache 目录用的正是该纯 uuid）。与 main 侧 image-cache.ts 的 sessionIdFromSessionFilePath
+ * 同语义——runtime 进程无法跨包 import main 模块，内联副本（cache 级联删除的目录名派生
+ * 用）。曾按「剥 `.jsonl` 后全名」派生出 `<ts>_<uuid>`，与 cache 目录名（纯 uuid）永不
+ * 相等致级联删除 rmSync no-op（U3 修正）。
  */
 function sessionIdFromSessionFilePath(filePath: string): string {
-  return basename(filePath).replace(/\.jsonl.*$/, '')
+  const main = basename(filePath).replace(/\.jsonl.*$/, '')
+  const underscore = main.lastIndexOf('_')
+  return underscore === -1 ? main : main.slice(underscore + 1)
 }
 
 /**

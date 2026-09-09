@@ -52,6 +52,20 @@ export function getPiAgentDir(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
+ * pi session 文件目录（`<dataDir>/pi/sessions`）——注意是 `pi/` 直下，**不在**
+ * `pi/agent/` 下（真实推导锚点 = runtime pi-paths.ts getSessionsDir：join(getPiRoot(), 'sessions')；
+ * 本机实测 `~/.xyz-agent/pi/sessions/`，文件名形态 `<ISO时间戳>_<uuid>.jsonl`）。
+ *
+ * main 进程不能 import runtime（包边界），孤儿判据反查等跨进程消费经本 SSOT 同构推导，
+ * 禁止各进程手拼层级（曾因手拼成 `<dataDir>/pi/agent/sessions` 错一层致判据恒空）。
+ *
+ * @param dataDir 可选数据根目录（测试注入）；缺省读 getDataDir()
+ */
+export function getPiSessionsDir(dataDir?: string): string {
+  return join(dataDir ?? getDataDir(), 'pi', 'sessions')
+}
+
+/**
  * 用户安装的 extension 目录（`<dataDir>/extensions`）。
  *
  * local/git 安装的 extension 副本存放于此；也是 discovery.json 可选目录的强制基址
