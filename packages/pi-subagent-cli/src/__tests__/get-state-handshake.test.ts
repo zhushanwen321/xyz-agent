@@ -10,11 +10,12 @@
 //   4. 自清理：finish 后从监听表注销本请求 resolver（消费注册器返回的注销函数）；
 //      注册器不返回注销函数时退化为 no-op（与握手同形态）。
 //
-// performGetStateHandshake 既有行为由 run-spawn-rpc-mode.test.ts 集成覆盖，此处不重复。
+// performGetStateHandshake 重试节奏（2s 超时 + 500ms 间隔 × 3 次 + 加速路径）由本文件
+// 第二个 describe 覆盖（fake timers 驱动）。
 
 import { describe, expect, it, vi } from "vitest";
 
-import { requestGetStateOnce } from "../get-state-handshake.ts";
+import { performGetStateHandshake, requestGetStateOnce } from "../get-state-handshake.ts";
 import type { ChildProcess } from "node:child_process";
 
 /** 最小 FakeChild：只需 stdin.write 行为（成功 / 可注入同步 throw）。 */
@@ -123,5 +124,107 @@ describe("requestGetStateOnce（[T1/RC-1] 惰性回补单次请求）", () => {
     resolvers.get(id)?.({ sessionFile: "/tmp/x.jsonl" });
 
     await expect(promise).resolves.toEqual({ sessionFile: "/tmp/x.jsonl" });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// performGetStateHandshake（FR-4 重试握手）
+//
+// 节奏常量（源码内私有）：GET_STATE_TIMEOUT_MS=2000 / RETRY_INTERVAL_MS=500 /
+// MAX_RETRIES=3。时序（全超时形态）：try1@0 → 超时@2000 → +500 → try2@2500 →
+// 超时@4500 → +500 → try3@5000 → 超时@7000 → resolve collected。
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("performGetStateHandshake（FR-4 重试握手）", () => {
+  it("首次 response 带 sessionFile → 立即 resolve（加速路径，不等剩余重试）", async () => {
+    vi.useFakeTimers();
+    try {
+      const { child, writes } = makeFakeStdin();
+      const reg = makeListenerRegistry();
+
+      const promise = performGetStateHandshake(child, reg.add);
+      expect(writes).toHaveLength(1); // 仅首次请求
+      const sent = JSON.parse(writes[0]!) as { id: string; type: string };
+      expect(sent.type).toBe("get_state");
+
+      reg.resolvers.get(sent.id)?.({ sessionFile: "/tmp/sessions/abc.jsonl", sessionId: "sess-9" });
+      await expect(promise).resolves.toEqual({
+        sessionFile: "/tmp/sessions/abc.jsonl",
+        sessionId: "sess-9",
+      });
+      // 加速 resolve 后不再发起后续重试
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(writes).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("response 只带 sessionId（无 sessionFile）→ 现存行为：timer 被清但不排 retry，握手悬挂", async () => {
+    // [疑似缺陷登记，仅测现存行为] resolver 到达即 clearTimeout(timer)（行 84），但
+    // retry 只在 timer 超时回调里排（行 70-79）——响应缺 sessionFile 时本轮 timer 被
+    // 清、retry 永不排、resolved 不置位：握手 promise 悬挂（fire-and-forget 消费面
+    // 不阻塞 run，timer 已 unref 不拖进程退出；真实 RPC 层 get_state 应答恒带
+    // sessionFile，该形态未在生产链路观测到）。
+    vi.useFakeTimers();
+    try {
+      const { child, writes } = makeFakeStdin();
+      const reg = makeListenerRegistry();
+
+      const promise = performGetStateHandshake(child, reg.add);
+      let settled = false;
+      void promise.then(() => {
+        settled = true;
+      });
+
+      const firstId = (JSON.parse(writes[0]!) as { id: string }).id;
+      reg.resolvers.get(firstId)?.({ sessionId: "only-id" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+
+      // 推进远超全部重试窗（7s+）：无 retry 发生（writes 恒 1）、promise 悬挂
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(writes).toHaveLength(1);
+      expect(settled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("全程无 response → 3 次重试后 resolve 空对象（调用方走兜底查找）", async () => {
+    vi.useFakeTimers();
+    try {
+      const { child, writes } = makeFakeStdin();
+      const reg = makeListenerRegistry();
+
+      const promise = performGetStateHandshake(child, reg.add);
+      await vi.advanceTimersByTimeAsync(7_000);
+      await expect(promise).resolves.toEqual({});
+      expect(writes).toHaveLength(3); // MAX_RETRIES 次请求
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resolve 后迟到的 response 被忽略（resolved 守卫，不二次 resolve）", async () => {
+    vi.useFakeTimers();
+    try {
+      const { child } = makeFakeStdin();
+      const resolvers = new Map<string, (data: unknown) => void>();
+      const addVoid = (id: string, resolver: (data: unknown) => void): void => {
+        resolvers.set(id, resolver);
+      };
+
+      const promise = performGetStateHandshake(child, addVoid);
+      await vi.advanceTimersByTimeAsync(7_000);
+      await expect(promise).resolves.toEqual({});
+
+      // 迟到 response：resolved 已置位，resolver 早退（无 resolve 副作用 / 不抛）
+      for (const resolver of resolvers.values()) {
+        expect(() => resolver({ sessionFile: "/tmp/late.jsonl" })).not.toThrow();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
