@@ -236,7 +236,7 @@ describe('equivalence: relay live ≡ reload（tee entry 帧 × getSubagentHisto
     dir = await mkdtemp(join(tmpdir(), 'relay-equiv-'))
     const filePath = join(dir, 'subagent-session.jsonl')
     await writeFile(filePath, toSessionJsonlLines().join('\n') + '\n', 'utf-8')
-    const reloadMessages = await getHistoryFromFilePath(filePath, new PiSessionStore())
+    const { messages: reloadMessages } = await getHistoryFromFilePath(filePath, new PiSessionStore())
 
     // ── 等价性主断言（E-重开验收）：live ≡ reload ──
     expect(liveState.messages).toEqual(reloadMessages)

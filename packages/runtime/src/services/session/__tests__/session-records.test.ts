@@ -363,7 +363,7 @@ describe('getSubagentHistory / getAgentCallFilePath：负路径守卫', () => {
 
   it('record 不存在返回 []', async () => {
     const { records } = makeRecords()
-    expect(await records.getSubagentHistory('s1', 'sa-none')).toEqual([])
+    expect(await records.getSubagentHistory('s1', 'sa-none')).toEqual({ messages: [], truncated: false })
   })
 
   it('路径穿越守卫：sessionFile 逃出 piAgentDir 的 record 历史返回 []', async () => {
@@ -373,7 +373,7 @@ describe('getSubagentHistory / getAgentCallFilePath：负路径守卫', () => {
     const { records } = makeRecords({
       sessionStore: { scanSessions: vi.fn(() => [{ id: 's1', filePath }]) } as unknown as ISessionStore,
     })
-    expect(await records.getSubagentHistory('s1', 'sa-1')).toEqual([])
+    expect(await records.getSubagentHistory('s1', 'sa-1')).toEqual({ messages: [], truncated: false })
     expect(await records.getAgentCallFilePath('s1', 'sa-1')).toBe('')
   })
 
@@ -389,7 +389,7 @@ describe('getSubagentHistory / getAgentCallFilePath：负路径守卫', () => {
 
   it('getAgentCallHistory：agent call 即 subagent，委托 getSubagentHistory 路径', async () => {
     const { records } = makeRecords()
-    expect(await records.getAgentCallHistory('s1', 'sa-none')).toEqual([])
+    expect(await records.getAgentCallHistory('s1', 'sa-none')).toEqual({ messages: [], truncated: false })
   })
 })
 

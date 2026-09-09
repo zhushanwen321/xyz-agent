@@ -457,13 +457,22 @@ export class SessionMessageHandler {
   }
 
   private async handleSessionHistory(msg: Extract<ClientMessage, { type: 'session.history' }>, ws: WsType): Promise<void> {
-    const { messages, truncated } = await this.ctx.sessionService.getHistory(msg.payload.sessionId)
-    return this.ctx.reply(ws, msg.id, 'session.history', { sessionId: msg.payload.sessionId, messages, historyTruncated: truncated })
+    // u4b（crash-resilience §3.3 D4）：双预算窗口响应携带 truncated/loadedTurns/totalTurnsEstimate；
+    // historyTruncated 为 legacy 同值字段（core chat.getHistory 现存消费方，u6 分页协议落地时退役）。
+    const { messages, truncated, loadedTurns, totalTurnsEstimate } = await this.ctx.sessionService.getHistory(msg.payload.sessionId)
+    return this.ctx.reply(ws, msg.id, 'session.history', {
+      sessionId: msg.payload.sessionId,
+      messages,
+      historyTruncated: truncated,
+      truncated,
+      loadedTurns,
+      totalTurnsEstimate,
+    })
   }
 
   private async handleSessionGetFullHistory(msg: Extract<ClientMessage, { type: 'session.getFullHistory' }>, ws: WsType): Promise<void> {
-    const messages = await this.ctx.sessionService.getFullHistory(msg.payload.sessionId)
-    return this.ctx.reply(ws, msg.id, 'session.fullHistory', { sessionId: msg.payload.sessionId, messages })
+    const { messages, truncated } = await this.ctx.sessionService.getFullHistory(msg.payload.sessionId)
+    return this.ctx.reply(ws, msg.id, 'session.fullHistory', { sessionId: msg.payload.sessionId, messages, truncated })
   }
 
   private async handleSessionGetSubagents(msg: Extract<ClientMessage, { type: 'session.getSubagents' }>, ws: WsType): Promise<void> {
@@ -472,8 +481,9 @@ export class SessionMessageHandler {
   }
 
   private async handleSessionGetSubagentHistory(msg: Extract<ClientMessage, { type: 'session.getSubagentHistory' }>, ws: WsType): Promise<void> {
-    const messages = await this.ctx.sessionService.getSubagentHistory(msg.payload.sessionId, msg.payload.subagentId)
-    return this.ctx.reply(ws, msg.id, 'session.subagentHistory', { sessionId: msg.payload.sessionId, subagentId: msg.payload.subagentId, messages })
+    // u4b（D5①）：巨型 subagent JSONL 超预检阈值时返回逆序窗口 + truncated 标记
+    const { messages, truncated } = await this.ctx.sessionService.getSubagentHistory(msg.payload.sessionId, msg.payload.subagentId)
+    return this.ctx.reply(ws, msg.id, 'session.subagentHistory', { sessionId: msg.payload.sessionId, subagentId: msg.payload.subagentId, messages, truncated })
   }
 
   // [U7] 子代理引擎配置：get（engines 动态清单 + defaultEngine）/ set（读改写 config.json，新 session 生效）
@@ -493,8 +503,9 @@ export class SessionMessageHandler {
   }
 
   private async handleSessionGetAgentCallHistory(msg: Extract<ClientMessage, { type: 'session.getAgentCallHistory' }>, ws: WsType): Promise<void> {
-    const messages = await this.ctx.sessionService.getAgentCallHistory(msg.payload.sessionId, msg.payload.agentCallSessionId)
-    return this.ctx.reply(ws, msg.id, 'session.agentCallHistory', { sessionId: msg.payload.sessionId, agentCallSessionId: msg.payload.agentCallSessionId, messages })
+    // u4b（D5①）：巨型 agent call JSONL 超预检阈值时返回逆序窗口 + truncated 标记
+    const { messages, truncated } = await this.ctx.sessionService.getAgentCallHistory(msg.payload.sessionId, msg.payload.agentCallSessionId)
+    return this.ctx.reply(ws, msg.id, 'session.agentCallHistory', { sessionId: msg.payload.sessionId, agentCallSessionId: msg.payload.agentCallSessionId, messages, truncated })
   }
 
   private async handleSessionGetAgentCallFilePath(msg: Extract<ClientMessage, { type: 'session.getAgentCallFilePath' }>, ws: WsType): Promise<void> {

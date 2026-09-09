@@ -76,7 +76,7 @@ describe('路径解析消费方 force 旁路 TTL（W26 M-3）', () => {
     expect(store.scanSessions().some((s) => s.id === freshId)).toBe(false)
 
     // 4. 路径解析消费方（force）：必须查到刚落盘 session 的历史，不返回空
-    const messages = await getHistoryFromFile(freshId, store)
+    const { messages } = await getHistoryFromFile(freshId, store)
     expect(messages.length).toBeGreaterThan(0)
     expect(messages[0].role).toBe('user')
   })
@@ -103,7 +103,7 @@ describe('路径解析消费方 force 旁路 TTL（W26 M-3）', () => {
     // 窗口内列表仍只见 s1
     expect(store.scanSessions().map((s) => s.id)).toEqual([s1])
     // 路径解析 force 可解析 s2
-    const messages = await getHistoryFromFile(s2, store)
+    const { messages } = await getHistoryFromFile(s2, store)
     expect(messages.length).toBeGreaterThan(0)
   })
 
@@ -119,7 +119,7 @@ describe('路径解析消费方 force 旁路 TTL（W26 M-3）', () => {
 
   it('getHistoryFromFile 对缓存外不存在的 session 仍返回空（不回归）', async () => {
     store.scanSessions()
-    const messages = await getHistoryFromFile('no-such-session', store)
+    const { messages } = await getHistoryFromFile('no-such-session', store)
     expect(messages).toEqual([])
   })
 })

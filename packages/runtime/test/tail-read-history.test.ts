@@ -129,7 +129,7 @@ describe('W1 tailReadHistory 尾读 + turn 边界截断', () => {
 
   it('AC-6: 文件不存在返回空数组不抛', async () => {
     const noExist = join(tmpDir, 'never-exists.jsonl')
-    await expect(tailReadHistory(noExist, store, 20)).resolves.toEqual({ messages: [], truncated: false })
+    await expect(tailReadHistory(noExist, store, 20)).resolves.toEqual({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
   })
 
   it('AC-12: 文件末行损坏（JSON 不完整）不抛异常', async () => {

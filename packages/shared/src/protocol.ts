@@ -1224,8 +1224,10 @@ export interface ServerMessageMapBase {
   'session.import': ImportReply
   // session.subagents：当前 session 派生的 subagent 列表（runtime 从主 session JSONL 提取）
   'session.subagents': { sessionId: string; subagents: SubagentRecord[] }
-  // session.subagentHistory：subagent 对话流消息（runtime 直读 subagent JSONL，复用 convertPiHistory）
-  'session.subagentHistory': { sessionId: string; subagentId: string; messages: import('./message').Message[] }
+  // session.subagentHistory：subagent 对话流消息（runtime 直读 subagent JSONL，复用 convertPiHistory）。
+  // truncated：u4b（D5①）巨型 subagent JSONL（高发源）超预检阈值后逆序窗口降级标志
+  //（optional——mock / 旧 runtime 不带此键，消费方按 false 处理）。
+  'session.subagentHistory': { sessionId: string; subagentId: string; messages: import('./message').Message[]; truncated?: boolean }
   // [U7] getSubagentEngineConfig 的 reply（engines = extension engines.json 动态清单；形状与 extension-protocol 契约一致）
   'session.subagentEngineConfig': { engines: string[]; defaultEngine: string }
   // [U7] setSubagentDefaultEngine 的 reply（写 config.json 后确认；新 session 生效）。
@@ -1246,8 +1248,9 @@ export interface ServerMessageMapBase {
   }
   // session.workflows：当前 session 派生的 workflow 列表（runtime 从主 session JSONL 的 workflow-state-link 提取）
   'session.workflows': { sessionId: string; workflows: WorkflowRunRecord[] }
-  // session.agentCallHistory：workflow 内 agent call 的对话流消息（runtime 按 trace[].sessionId 查找 JSONL）
-  'session.agentCallHistory': { sessionId: string; agentCallSessionId: string; messages: import('./message').Message[] }
+  // session.agentCallHistory：workflow 内 agent call 的对话流消息（runtime 按 trace[].sessionId 查找 JSONL）。
+  // truncated：u4b（D5①）巨型 JSONL 超预检阈值后逆序窗口降级标志（optional，消费方按 false 处理）。
+  'session.agentCallHistory': { sessionId: string; agentCallSessionId: string; messages: import('./message').Message[]; truncated?: boolean }
   // session.agentCallFilePath：agent call 对话流 JSONL 绝对路径（PanelHeader overlay 文件名展示用，找不到为空串）
   'session.agentCallFilePath': { sessionId: string; agentCallSessionId: string; filePath: string }
   // session.workflowUpdate：workflow 状态变化增量信号（event-interpreter 推送，发起/结束时刻）。
@@ -1542,12 +1545,19 @@ export interface ServerMessageMapBase {
   'session.handoffAborted': { srcSessionId: string }
   // session.history：session.history 的成功 reply（显式历史拉取 RPC；wave:perf-w20 后 switch
   // reply 已拆分到 session.switched，不再复用本类型）。session optional 保留向后兼容。
-  // historyTruncated：历史超上限截断标志（前端据此提示「历史已截断」）。
+  // historyTruncated：[HISTORICAL] 历史超上限截断标志（前端据此提示「历史已截断」）——
+  // 与 truncated 同值的 legacy 字段，core chat.getHistory 现存消费方，分页协议（u6）落地时退役。
+  // truncated/loadedTurns/totalTurnsEstimate：历史加载双预算窗口契约（crash-resilience §3.3 D4）——
+  // truncated=true 表示窗口外仍有历史；loadedTurns=本次返回的完整 turn 数；
+  // totalTurnsEstimate=session 的 turn 总数估计（读到头为精确值，窗口截断时为下界）。
   'session.history': {
     sessionId: string
     session?: SessionSummary
     messages: Message[]
     historyTruncated: boolean
+    truncated: boolean
+    loadedTurns: number
+    totalTurnsEstimate: number
   }
   // session.switched：session.switch 的成功 reply（wave:perf-w20 R-11 瘦身——switch reply 不再
   // 无条件全量 getHistory 塞 messages，被驱逐 session 切回走显式 session.history RPC（全量），
@@ -1557,8 +1567,10 @@ export interface ServerMessageMapBase {
     sessionId: string
     session: SessionSummary
   }
-  // session.fullHistory：session.getFullHistory reply（session-message-handler.ts:115 reply { sessionId, messages }，全量无截断）。
-  'session.fullHistory': { sessionId: string; messages: Message[] }
+  // session.fullHistory：session.getFullHistory reply（session-message-handler.ts reply
+  // { sessionId, messages, truncated }）。truncated：u4b（D5①）文件超 READ_PRECHECK_MAX_BYTES
+  // 预检后逆序窗口降级标志（optional——mock / 旧 runtime 不带此键，消费方按 false 处理）。
+  'session.fullHistory': { sessionId: string; messages: Message[]; truncated?: boolean }
   // model.switched：model.switch reply（settings-message-handler.ts:324-339 reply { sessionId, provider, modelId }，U6 后回传 pi 生效值拆解）。
   // [C-pi-14/ADR-0065] mutation reply（分支一后端可变换）：provider/modelId = pi 生效值，必需不 optional。
   'model.switched': ModelSwitchMutationReply

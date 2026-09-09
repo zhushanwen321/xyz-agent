@@ -17,7 +17,7 @@ import { getHistoryTailFromFile, getHistoryFromFilePath } from '../../session-hi
 import { SessionHistoryReader } from '../history-rebuild-cache.js'
 
 vi.mock('../../session-history.js', () => ({
-  getHistoryFromFilePath: vi.fn(async () => [{ id: 'full-1', role: 'user', content: 'full', status: 'complete', timestamp: 1 } as Message]),
+  getHistoryFromFilePath: vi.fn(async () => ({ messages: [{ id: 'full-1', role: 'user', content: 'full', status: 'complete', timestamp: 1 } as Message], truncated: false })),
   getHistoryTailFromFile: vi.fn(async () => ({ messages: [{ id: 'tail-1', role: 'user', content: 'tail', status: 'complete', timestamp: 1 } as Message], truncated: true })),
 }))
 
@@ -92,7 +92,7 @@ describe('分支 3：全量重建（无缓存）', () => {
     const { reader, client } = makeReader()
     client.getEntries.mockResolvedValue({ data: { entries: [], leafId: null } })
     const result = await reader.getHistory('s1')
-    expect(result).toEqual({ messages: [], truncated: false })
+    expect(result).toEqual({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
     expect(getHistoryTailFromFile).not.toHaveBeenCalled()
   })
 
@@ -199,15 +199,15 @@ describe('无 client（离线 session）与全量文件读', () => {
     const { reader, sessionStore } = makeReader()
     ;(sessionStore.scanSessions as unknown as { mock: { calls: unknown[][] } }).mock.calls.length = 0
     ;(sessionStore.scanSessions as ReturnType<typeof vi.fn>).mockReturnValue([{ id: 's1', filePath: '/tmp/s1.jsonl' }])
-    const result = await reader.getFullHistory('s1')
+    const { messages } = await reader.getFullHistory('s1')
     expect(sessionStore.scanSessions).toHaveBeenCalledWith({ force: true })
-    expect(result.map((m) => m.id)).toEqual(['full-1'])
+    expect(messages.map((m) => m.id)).toEqual(['full-1'])
     expect(getHistoryFromFilePath).toHaveBeenCalledWith('/tmp/s1.jsonl', sessionStore)
   })
 
   it('getFullHistory：session 不在扫描结果 → []', async () => {
     const { reader } = makeReader()
-    expect(await reader.getFullHistory('s-none')).toEqual([])
+    expect(await reader.getFullHistory('s-none')).toEqual({ messages: [], truncated: false })
   })
 })
 

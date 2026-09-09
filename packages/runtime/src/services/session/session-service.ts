@@ -22,7 +22,7 @@
  * onSessionExit 回调留构造函数:协调 lifecycle/scanner/broker 多方,不归属任一子模块。
  */
 import { existsSync } from 'node:fs'
-import type { SessionSummary, SessionGroup, Message, ServerMessage, ServerMessageMap, SubagentRecord, WorkflowRunRecord, BatchDeleteResult, SegmentsMetadataEntry, ProviderId } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, ServerMessage, ServerMessageMap, SubagentRecord, WorkflowRunRecord, BatchDeleteResult, SegmentsMetadataEntry, ProviderId } from '@xyz-agent/shared'
 import type { SubagentEngineConfigView } from '@xyz-agent/extension-protocol'
 import type {
   ISessionService, IMessageBroker, SessionCreateOptions,
@@ -35,6 +35,7 @@ import type { SessionTraceSnapshot } from './trace-sync.js'
 import { SessionRecords } from './session-records.js'
 import { SessionModelControl } from './session-model-control.js'
 import { SessionHistoryReader } from './history-rebuild-cache.js'
+import type { HistoryFileReadResult, HistoryWindowResult } from '../session-history.js'
 import { resolveSkillPaths, resolveExtensionPaths, resolveReplaceSystemPrompt, resolveLaunchPresetOptions } from './launch-params.js'
 // 行为保持抽取的实现体外移（max-lines 门禁）：summary 投影 / projection bus 视图构建，
 // Facade 保留一行委托，语义注释见各新模块。
@@ -588,17 +589,17 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
 
   // ── history 读编排域（S6 迁出至 history-rebuild-cache.ts；三分支重建/inflight 合并/尾读降级详见该模块）──
 
-  /** 拉取 session 历史（缓存增量三分支重建，实现迁 history-rebuild-cache.ts）。 */
-  async getHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean }> { return this.historyReader.getHistory(sessionId) }
-  /** 全量文件读取（「加载更多」fallback，实现迁 history-rebuild-cache.ts）。 */
-  async getFullHistory(sessionId: string): Promise<Message[]> { return this.historyReader.getFullHistory(sessionId) }
+  /** 拉取 session 历史（缓存增量三分支重建 + 双预算窗口，实现迁 history-rebuild-cache.ts）。 */
+  async getHistory(sessionId: string): Promise<HistoryWindowResult> { return this.historyReader.getHistory(sessionId) }
+  /** 全量文件读取（「加载更多」fallback，超预检阈值走逆序窗口，实现迁 history-rebuild-cache.ts）。 */
+  async getFullHistory(sessionId: string): Promise<HistoryFileReadResult> { return this.historyReader.getFullHistory(sessionId) }
 
   // ── subagent/workflow 记录域（S6 迁出至 session-records.ts；磁盘扫描/引擎配置/动作详见该模块）──
 
   /** subagent 列表（冷启动磁盘扫描，实现迁 session-records.ts）。 */
   async getSubagents(sessionId: string): Promise<SubagentRecord[]> { return this.records.getSubagents(sessionId) }
   /** subagent 对话流历史（record.sessionFile 直读 + 非 pi 引擎降级链，实现迁 session-records.ts）。 */
-  async getSubagentHistory(sessionId: string, subagentId: string): Promise<Message[]> { return this.records.getSubagentHistory(sessionId, subagentId) }
+  async getSubagentHistory(sessionId: string, subagentId: string): Promise<HistoryFileReadResult> { return this.records.getSubagentHistory(sessionId, subagentId) }
   /** [U7] 引擎配置视图（engines.json + config.json，实现迁 session-records.ts）。 */
   async getSubagentEngineConfig(): Promise<SubagentEngineConfigView> { return this.records.getSubagentEngineConfig() }
   /** [U7] 设置默认引擎（带跨进程锁的 RMW + 原子写，实现迁 session-records.ts）。 */
@@ -631,7 +632,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   }
 
   /** agent call 对话流（agent call 本质是 subagent，record 查找路径详见 session-records.ts）。 */
-  async getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<Message[]> { return this.records.getAgentCallHistory(sessionId, agentCallSessionId) }
+  async getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<HistoryFileReadResult> { return this.records.getAgentCallHistory(sessionId, agentCallSessionId) }
   /** agent call JSONL 路径（展示型，找不到返回空串；实现迁 session-records.ts）。 */
   async getAgentCallFilePath(sessionId: string, agentCallSessionId: string): Promise<string> { return this.records.getAgentCallFilePath(sessionId, agentCallSessionId) }
   /** workflow 生命周期操作（经扩展 slash command，实现迁 session-records.ts）。 */

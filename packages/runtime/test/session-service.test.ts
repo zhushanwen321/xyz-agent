@@ -1250,8 +1250,8 @@ describe('SessionService · Facade', () => {
       const result = await setup.service.getHistory('sid-hist')
       // rebuildHistoryFromEntries 收到原始 entries（getEntries 路径，取代旧 get_messages + convertPiHistory）
       expect(mocks.rebuildHistoryFromEntriesMock).toHaveBeenCalledWith(fakeEntries, null)
-      // getEntries 路径返回 { messages, truncated: false }（全量不截断）
-      expect(result).toEqual({ messages: ['rebuilt'], truncated: false })
+      // getEntries 路径返回双预算窗口（u4b：mock 消息无 role 字段 → 病态兜底视为单 turn 完整放行）
+      expect(result).toEqual({ messages: ['rebuilt'], truncated: false, loadedTurns: 1, totalTurnsEstimate: 1 })
     })
 
     it('R-12: returns empty array (short-circuit) when getEntries returns empty and session is idle', async () => {
@@ -1262,7 +1262,7 @@ describe('SessionService · Facade', () => {
       // 不走尾读 fallback（尾读会给最多 20 turn 的文件尾部视图，与 RPC 视图闪变不一致）。
       // 尾读降级仅在 getEntries 抛错时触发（见下方 throws 用例）。
       const result = await setup.service.getHistory(id)
-      expect(result).toEqual({ messages: [], truncated: false })
+      expect(result).toEqual({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
       expect(mocks.getHistoryTailFromFileMock).not.toHaveBeenCalled()
     })
 
@@ -1273,7 +1273,7 @@ describe('SessionService · Facade', () => {
       client.getEntries.mockResolvedValueOnce({ data: { entries: [], leafId: null } })
       const result = await setup.service.getHistory(id)
       // generating session getEntries 空 → 直接返回空（不走 fallback 尾读）
-      expect(result).toEqual({ messages: [], truncated: false })
+      expect(result).toEqual({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
       expect(mocks.getHistoryTailFromFileMock).not.toHaveBeenCalled()
     })
 

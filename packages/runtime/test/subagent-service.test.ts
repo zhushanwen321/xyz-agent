@@ -285,7 +285,7 @@ describe('SessionService.getSubagentHistory', () => {
       sessionStore, {} as never, {} as never,
     )
 
-    const messages = await svc.getSubagentHistory('main-sess-id', 'bg-hist-1-222')
+    const { messages } = await svc.getSubagentHistory('main-sess-id', 'bg-hist-1-222')
 
     expect(messages.length).toBeGreaterThanOrEqual(2)
     expect(messages.some((m) => m.role === 'user')).toBe(true)
@@ -302,7 +302,7 @@ describe('SessionService.getSubagentHistory', () => {
       sessionStore, {} as never, {} as never,
     )
 
-    const messages = await svc.getSubagentHistory('main-sess-id', 'nonexistent-subagent')
+    const { messages } = await svc.getSubagentHistory('main-sess-id', 'nonexistent-subagent')
     expect(messages).toHaveLength(0)
   })
 })
