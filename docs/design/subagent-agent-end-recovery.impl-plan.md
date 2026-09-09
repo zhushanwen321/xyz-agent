@@ -101,7 +101,7 @@ bash scripts/validate-runtime-bundle.sh
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|---------------------------------------------|------|----------|
 | u1-acquire | committed | 1 | commit（见 git log u1-acquire）；3397 passed / typecheck 绿；deviations 5 条已核合理（warn 级别/措辞时序/多匹配收集/钩子落点/测试拆分） |
-| u2-descendant | in-progress | 1 | agent 已派发（后台） |
+| u2-descendant | committed | 1 | commit c19208e43；3407 passed / typecheck 绿；deviations 6 条核合理（SpawnRunState 就地/派生点语义等价/字段可选/A1-3 同步段论证/debug 文案/注释压缩）；max-lines 超阈经裁决入 eslint 复杂度债务清单 |
 | u3-flip | pending | 0 | — |
 | u4-spawn-channel | pending | 0 | — |
 | u5-runtime-switch | pending | 0 | — |
