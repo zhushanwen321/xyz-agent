@@ -191,15 +191,17 @@ worktree 决策：全部 plain。唯一热点公共文件 session-lifecycle.ts�
 
 ### 残留风险
 
-1. **⛔ P2（U3）**：出厂 builtin:full 与无 preset 路径在完整 launch surface 不等价 → 阻断 D3 透传（U2b 的 presetId 透传逻辑需回退），走 E8 排查。U3 在 U2b 之前完成即拦截。
-2. **⛔ P3（U1）**：pi 对死模型 modelOverride 若静默换模 → U3 需增补 modelOverride 有效性校验（create 返回错误码走 E5）；U1 汇报结论后主 agent 裁决是否扩 U3 领地。
+1. ~~⛔ P2（U3）~~ **已消解**：探针实测等价成立（63d861ca1）。
+2. ~~⛔ P3（U1）~~ **已消解**：实测 pi 不静默换模（turn 级报错可见），无需增补校验（fce03ec13）。
 3. **⛔ P4（U6）**：sidecar 陈旧窗口（切模→死→直接 fork 读旧值）为已接受代价（设计 D6）；探针仅验证可读性与回落，不消除窗口。
 4. **P5 加载窗口实测**：ensureLaunchDataReady 常态毫秒级属设计声称（⛔ P5 单测 + V1 场景实测双验证）；若 dev 环境实测显著慢（>1s），发送按钮 loading 态为实现层兜底（U2b 内按需）。
 5. **provenance UI 角标**：设计 D1 称 provenance「供 UI 角标」——三批单元表与文件地图均无 chip 角标任务，按单元表执行不加 UI 新需求（防推测性功能）；provenance 输出能力落地，UI 消费留后续候选。终态 §3.1「来源可见性」措辞以现有 chip 默认样式（PresetSelectChip 默认预设回显样式）近似满足。
-6. **E7 cwd 两空 toast**：设计 In scope 声明随 C1 一并处理，但三批单元表未列专属单元——归入 U2b（flow.ts submit 路径补 toast，notifyCwdFallback 空串守卫放宽），U2b task 内明确。
+6. ~~E7 cwd 两空 toast~~ **已落地**：U2b 守卫放宽 + 阶段4 F3 壳侧空串分支专属文案 cwdFallbackToHome（d8c411e76）。
 7. **U5 类型强化的现实偏差**：若契约测试发现现存 mutation reply 缺生效值字段（设计声称 C-pi-13 后已齐），补齐属于设计内修复；若发现某 RPC 后端原样存储无生效值语义（如 rename），按 ADR 裁决标准归类并登记清单豁免。
 8. **分支名约束**：当前分支 fix-composer-model-chaos（非本任务分支名），用户指示在本工作区直接开发——全部 commit 落此分支，不切分支。
 
 ### 变更历史
 
+- 2026-09-09：阶段 5 双绿收尾。Gate A 全量验收绿（pnpm test 全仓含 real-pi 10/10 真跑 0 失败；lint 唯一红灯 taste/no-silent-catch 已正面修复 53df7375a；5 包 typecheck + extensions 静态两连 + runtime bundle + drift/constraints 守卫全绿；覆盖矩阵 15 单元无无人认领区）。Gate B V1-V11 真实场景（真实 Electron + 真实 pi + ~/.xyz-agent-dev）：10 pass / 1 fail / 0 blocked → 唯一 fail V9-④（landing create 路径 .preset.json sidecar 因 pi 延迟写入窗口 + jsonl-exists 守卫结构性永不落盘）根修 3ba8d96ba（守卫动机经 pi 0.84.4 dist 实读确认为规则 #6 误延伸；skipJsonlExistsGuard trusted-create 参数沿 io 骨架透传，fork/restore 语义不变，project/agent 同根修，model 写点不动）→ 定向重验 V9-④ + V3 + D3 出厂对照 + V9③ 全 pass，Gate B 转绿。环境已还原。
+- 2026-09-09：阶段 3 一致性审查（三分区独立 reviewer）22 reasonable 全部核实入登记表 #16；5 unreasonable 修复批 d8c411e76（F1 契约谓词 17 动词 + fork/handoff excluded 归类 / F2 悬空注释 / F3 E7 空串文案分支 / F4 chip 重入残留 G1 破口闭合 / F5 getSupportedLevels 统一 supported-levels.ts）+ 定向复审 7/7 pass；收尾批 49819fc0b（supersession 注记 / ADR restore 边界 / #17 收账）+ 2dac303ef（watch immediate 闭合挂载时序变体）。
 - 2026-09-08：初版。来源设计 v4（R3/R4 双审 0 must-fix）；用户预授权全权负责（豁免计划评审确认步骤）；侦查实测校准 6 处锚点漂移；in-flight 族实测 12 处裁决迁 7 处；U2 拆为 U2a/b/c（≤5 文件约束）、U7 拆为 U7a/b/c。
