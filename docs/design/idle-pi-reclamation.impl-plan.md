@@ -97,7 +97,7 @@ graph TD
 | u1a | committed | 2 | commit 64e70ae51；tsc 绿 + 10 文件 129 用例绿。轮 1 前任速率限制中断（语义已完整，缺 1 个测试 fake 类型成员），轮 2 接替者收尾（1 文件）。偏差 R6 已入登记表 |
 | u1b | committed | 1 | commit acc603d4d；session-viewed-at 6 用例 + relay-registry 26 用例绿；偏差 2 条已入登记表（挂点入口化 / 可选交叉成员） |
 | u2 | committed | 1 | commit 82d7d9e12；idle-pi-reaper 22 用例 + reclaim-orchestration 14 用例 + 回归绿 + tsc 绿。dev 完成实现与测试后死于速率限制（未及汇报），编排者逐 diff 核验设计保真度并重跑全部测试后收口。附带 .githooks/check_prompt_outposts.py 指纹刷新（promptReload 加 maintenance 参数触发出站点守卫） |
-| u3 | in-progress（拆为 u3a→u3b，R7） | 0 | — |
+| u3 | in-progress（u3a committed，u3b 待派） | 1 | u3a：commit e5ab883ac；4 薄访问器（relay 枚举 / handoff inflight / delivery depth() / occupancy 读）+ reclaim-accessors 7 用例 + 回归 76 绿 + tsc 绿。偏差：hasDeliveryActivity 用 handle.depth()（优于 isIdle 同源判定——覆盖 occupancy 看不到的回流队列窗口）；relay 返回内联结构类型（避免 infra→services 反向依赖） |
 | u4 | pending | 0 | — |
 
 ## 7 残留风险与变更历史
