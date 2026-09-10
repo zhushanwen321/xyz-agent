@@ -283,10 +283,9 @@ export function createUseSession(deps: UseSessionDeps) {
       // 已 hydrate：静默刷新（失败不阻断——旧数据仍在，下次切入重试）
       try {
         const reply = await chat.getHistory(id)
-        // reconcile 整量替换分区：getHistory 预算窗口（u4b）会把 load-more 前插的更早
-        // 历史截回尾窗——窗口状态必须同步刷新，truncated=true 时「加载更早」顶部条重显
-        // （hydrate 锚不被 reconcile 触碰，锚定切分仍可恢复全量）；false（响应未截断）时
-        // 顶部条消失，与「分区已替换为窗口全量」一致。合并语义改造归 u6。
+        // reconcile 按 u6 窗口合并（见 store.reconcileHistory）：truncated=true 时窗口
+        // 首条之前的更早历史原样保留，仅窗口段被响应刷新——「加载更早」顶部条保持；
+        // truncated=false（读到头）时顶部条收敛消失。
         chat.reconcileHistory(id, reply.messages, historyWindowFromReply(reply))
       } catch (e) {
         // 已 hydrate 刷新失败不阻断切入——旧数据仍在，下次切入重试；warn 留排查痕迹

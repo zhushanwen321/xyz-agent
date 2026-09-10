@@ -5,13 +5,13 @@
       渲染引用 = main 落盘后的路径（local-file:// 协议，与 ImageThumb 同协议形态）——
       base64 不直接进 img src（内存中转 + 落盘引用化是 D6-⑨ 的核心语义）。
     - 路径解析三态（core image-cache 编排层记账）：
-      ready       WeakMap 已有落盘路径（hydrate 批量编排 / 本组件此前写入）
+      ready       内容 hash 记账 Map（imageKey）已有落盘路径（hydrate 批量编排 / 本组件此前写入）
       placeholder 该 session 图片缓存帽满（64MB）——设计措辞占位，不阻断消息流
       fallback    无 electronAPI（mock/headless）或写入失败/加载失败——降级 badge（与
                   ImageThumb 降级形态同族）
     - live 单图写入由本组件触发（设计「live 期新到图片在剩余额度内即写」）；hydrate
       批量（新→旧有序、超帽即停）在 core persistImagesNewestFirst（useChat.hydrateHistory
-      挂点），两路共用 in-flight 去重与 WeakMap 记账。
+      挂点），两路共用 in-flight 去重与内容 hash 记账。
     独立子组件：Block.vue template 行数余量不足，不可内联（对齐 ImageThumb 先例）。
   -->
   <span class="tool-result-images mr-2 inline-flex flex-wrap items-center gap-1.5 align-middle">

@@ -5,7 +5,7 @@
  * - live 写盘路径：port 返回 path → img 渲染 local-file:// 路径引用（base64 不进 src）
  * - 帽满占位：port 返回 quota-full → placeholder 元素 + 设计措辞文案（i18n key 渲染链）
  * - 无 port（mock/headless 宿主）→ fallback badge 降级
- * - hydrate 编排已记账（WeakMap 命中）→ 直接渲染，不再触发 port
+ * - hydrate 编排已记账（内容 hash 命中）→ 直接渲染，不再触发 port
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
@@ -21,9 +21,10 @@ import {
 import type { Message } from '@xyz-agent/shared'
 
 /**
- * 每用例新建 image 对象：core 的路径记账表是 WeakMap<image 对象, path>（模块级、
- * _resetImageCacheForTest 无法清空——WeakMap 无 clear）——共享对象会把上一用例的
- * ready 记账泄漏进本用例（getCachedImagePath 命中即短路 port 调用）。
+ * 每用例新建 image 对象。core 的路径记账表是内容 hash 记账 Map（imageKey——键为图片
+ * data 的 hash，非对象引用），对象身份不构成用例间隔离：相同内容的图会命中上一用例
+ * 的 ready 记账（getCachedImagePath 命中即短路 port 调用）。隔离靠 beforeEach 的
+ * _resetImageCacheForTest()（Map.clear() 清空记账表），新建对象只是保持各用例字面自洽。
  */
 function pngImg(): { data: string; mimeType: string } {
   return { data: 'aGVsbG8=', mimeType: 'image/png' }
@@ -68,7 +69,7 @@ describe('ToolResultImages', () => {
     await vi.waitFor(() => expect(wrapper.find('[data-testid="tool-image-fallback"]').exists()).toBe(true))
   })
 
-  it('hydrate 编排已记账（WeakMap 命中）→ 直接 ready 渲染，零 port 触发', async () => {
+  it('hydrate 编排已记账（内容 hash 命中）→ 直接 ready 渲染，零 port 触发', async () => {
     let portCalls = 0
     const port: ImageCacheWritePort = (_sid, images) => {
       portCalls++
@@ -82,7 +83,7 @@ describe('ToolResultImages', () => {
     const collected = collectImagesFromMessages(messages)
     await persistImagesNewestFirst('s4', collected)
     expect(portCalls).toBe(1)
-    // 组件挂载：同引用命中记账，不再触发 port
+    // 组件挂载：同内容命中记账，不再触发 port
     setImageCacheWritePort((_sid, images) => {
       portCalls++
       return Promise.resolve({ results: images.map(() => ({ status: 'written' as const, path: '/x.png', bytes: 1 })), quotaFull: false })

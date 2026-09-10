@@ -188,7 +188,9 @@ export function truncateToolOutputBatch(messages: Message[]): Message[] {
  * cache 命中的消息直接复用上次投影产物——引用恒等 ⇒ 内容恒等 ⇒ 截断结果恒等
  * （ADR-0039 消息不可变替换 + 本模块纯函数，构造性成立），跳过重判定的重复 encode；
  * 未命中消息走 truncateToolOutput 并记账产物。消除 subagent 活跃期间每帧投影对分区
- * 全部历史消息 toolCall 原文（reducer 侧不截断，保留 stripAnsi 后全量）的重复 encode。
+ * 全部历史消息 toolCall 原文（reducer 累积态另有 64KB 条目级截断
+ * ENTRY_TOOL_OUTPUT_MAX_BYTES，见 apply-entry-utils.ts；本函数 4KB 是渲染投影层，
+ * 两层级正交）的重复 encode。
  *
  * 输出形态对齐调用方既有链路 `truncateToolOutputBatch(messages.map((m) => ({ ...m })))`：
  * 恒返回新数组；未命中消息 = 浅拷贝经 truncateToolOutput 判定（截断换新 toolCalls 数组，

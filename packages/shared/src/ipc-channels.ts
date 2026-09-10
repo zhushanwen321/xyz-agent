@@ -19,7 +19,8 @@
  *
  * invoke 通道：renderer 错误三件套（app.config.errorHandler / window.onerror /
  * unhandledrejection）捕获后经此上报；payload 含错误栈 + performance.memory 快照 +
- * sessionId/windowId，main 落盘 logs/renderer-error-<date>.log 并按 windowId 限流
+ * sessionId；windowId 不入 payload，由 main 从 invoke event.sender 权威读取（不信任
+ * renderer 自报），main 落盘 logs/renderer-error-<date>.log 并按 windowId 限流
  * （每窗口每分钟 100 条，超限合并汇总行）。选扁平 kebab-case：与 'runtime-port'
  * 等「单动作上报」通道同型，不属既有冒号领域族。
  */

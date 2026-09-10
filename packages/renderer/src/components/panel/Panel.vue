@@ -87,7 +87,7 @@
            数据源 = chat store respawnPending 分区（与 usePanelView 的 isSessionRespawning
            同源）；此时 panelView.kind 恒为 conversation/trace（respawning 抑制 dead），
            对话流 + composer 保持可用，恢复窗口发消息经 runtime join 等恢复完成后送达。
-           restrored 到达 / 熔断 / 超时由 useMessageEffects 收口分区 → 本条随之消失。 -->
+           restored 到达 / 熔断 / 超时由 useMessageEffects 收口分区 → 本条随之消失。 -->
       <div
         v-if="respawnPending"
         data-testid="respawn-pending-bar"

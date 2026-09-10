@@ -3,8 +3,8 @@
  *
  * 覆盖（落盘执行方 main 侧生命周期在 apps/electron/main/images/__tests__/，此处测编排层）：
  * - persistImagesNewestFirst：消息序（旧→新）输入反转为新→旧交 port（设计 v8 顺序契约）
- * - WeakMap 记账读口（getCachedImagePath）+ quota-full session 标记（isSessionImageCacheFull）
- * - requestImageWrite：单图写 + in-flight 去重（同引用并发共享同一 Promise）+ 帽满快速失败
+ * - 内容 hash 记账读口（getCachedImagePath）+ quota-full session 标记（isSessionImageCacheFull）
+ * - requestImageWrite：单图写 + in-flight 去重（同内容并发共享同一 Promise）+ 帽满快速失败
  * - port 缺省（headless/mock 宿主）编排 no-op
  * - port 异常消化（fire-and-forget 契约：编排失败不 reject）
  */
@@ -94,7 +94,7 @@ describe('persistImagesNewestFirst（hydrate 新→旧有序编排）', () => {
     expect(isSessionImageCacheFull('s1')).toBe(true)
   })
 
-  it('已记账（WeakMap 命中）的图不重复交 port（幂等编排）', async () => {
+  it('已记账（内容 hash 命中）的图不重复交 port（幂等编排）', async () => {
     const { port, calls } = makeRecordingPort()
     setImageCacheWritePort(port)
     const seen = img('seen')
@@ -134,7 +134,7 @@ describe('requestImageWrite（live 单图）', () => {
     expect(port).toHaveBeenCalledTimes(2)
   })
 
-  it('in-flight 去重：同引用并发请求共享同一写入（不双发 port）', async () => {
+  it('in-flight 去重：同内容并发请求共享同一写入（不双发 port）', async () => {
     const port = vi.fn((_sid: string, images: ImageCacheWriteImage[]) =>
       Promise.resolve(okResult(images.map((i) => `/cache/s3/${i.data}.png`))),
     ) as unknown as ImageCacheWritePort

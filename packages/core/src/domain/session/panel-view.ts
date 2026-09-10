@@ -5,7 +5,7 @@
  * 背景（§2.4 根因）：现行 Panel.vue 在组件 computed 里手工组合六个异构状态源
  * （session 绑定 / 消息有无 / flow 单例态 / dead / ask-user / trace），组合空间无穷举
  * 守卫——每个 bug 来自一个未被考虑的格子（flow 卡 landing → turn 结束后 composer 消失）。
- * 本模块把该组合收敛为单一纯函数：决策可穷举（G3，64 组合全表单测守卫）、
+ * 本模块把该组合收敛为单一纯函数：决策可穷举（G3，7 输入 = 2^7 = 128 组合全表单测守卫）、
  * 「flow 残留 × 输入面消失」在派生规则上不可表达（G2 结构免疫）。
  *
  * 设计要点：
@@ -75,7 +75,7 @@ export type PanelView =
  *
  * 优先级 dead > trace > conversation > landing > empty；dead/trace 前置约束
  * 「sessionId 非空」在分支顺序上天然成立（先判空 session 提前返回）。
- * 全输入组合（2^6 = 64）的行为由 __tests__/panel-view.test.ts 组合表守卫（验收 V5）。
+ * 全输入组合（7 输入 = 2^7 = 128）的行为由 __tests__/panel-view.test.ts 组合表守卫（验收 V5）。
  */
 export function derivePanelView(input: PanelViewInput): PanelView {
   const { sessionId, isSessionDead, isSessionRespawning, isTraceView, hasAskUserRequest, isFlowActive } = input
