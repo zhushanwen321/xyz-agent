@@ -115,7 +115,7 @@ graph TD
 | U3 | committed | 1 | 契约移除 7 / 新增 7+1 逐条对 §7.1 两表；core tsc 绿；injection-keys 零错误（NOOP_FACTORY 完整字面量编译器级对齐）；消费方红仅 ProviderEditBody.vue（U5 领地，设计用编译错强制切换）。随 M2 原子提交 `66d415f41` |
 | U4 | committed | 2 | t1（composable 重构 + core/mock 签名切 payload）：ProviderEditBody 外零编译错、readiness 逐条对 §7.2、payload 快照在 await 前（`:349`→`:364`）、setEnabled 双键（`:298`）；t2（测试重写 + 修 2 条签名断言 + 补 2 个 i18n key）：core 整包转绿、core 96/96、renderer 44/44、locale-sync 163/163、165 个 key 引用 0 缺失。随 M2 原子提交 `66d415f41` |
 | U5 | committed | 2 | t1（组件重写 3 文件，ProviderEditBody 7 条契约红清零、renderer vue-tsc 全绿、单按钮 `quota-save-test-btn` 就位、哨兵排除接线、D11 双按钮）：eslint 零输出、行数合规；t2（21 key 双语 + 4 测试文件收敛 + search-modal 存量红微修）：ui 77/77、renderer 198/198、**ui 与 renderer vue-tsc 双绿**。随 M2 原子提交 `66d415f41`（存量红微修独立提交 `82b31b736`） |
-| U6 | pending | 0 | — |
+| U6 | committed | 1 | D9 终扫 13 个 quota 源文件零残留（未改源码）；无孤儿 prop/emit（26 props/7 emits、3 props/5 emits 逐条核消费）；附录 A 四处 `[HISTORICAL]` 标注逐条对上（design.md:322/339/340/382）+ troubleshooting.md 新增 §13；i18n 断言缺口补 2 条（171/171）；doc-symbol-drift 绿；ui+renderer vue-tsc 绿。commit `7f676e961` |
 
 ## 7 残留风险与变更历史
 
@@ -124,8 +124,9 @@ graph TD
 1. ~~设计 §11 检查点 5（存量幽灵文件差集探针）是 ⛔ 实施期门——U2 落地后跑一次性只读脚本对 dev 数据目录求差集，结果记入本节。~~ **已执行（U1 期，2026-09-10，只读探针）**：严格差集（quota 行存在 ∧ `apiKeySet` 未设 ∧ `*-apikey.txt` 文件在 = 升级后静默切 provider 凭据的集合）在 `~/.xyz-agent-dev` 与 `~/.xyz-agent` **均为空**；幽灵标记两向（`apiKeySet=true` 无文件 / `cookieSet=true` 无文件）均空。唯一残留：dev 目录存在 `zhipu-router-apikey.txt` 孤儿文件（provider 条目已不存在，属已删 provider 的 secrets 残留 = D12 修复的历史实例），新逻辑下无人读取（`'provider'` 来源不读该文件），惰性无害。**判定：无需编辑体提示，检查点关闭。**
 2. 设计 §11 检查点 1（`provider.apiKeySet` 聚合不区分凭证类型）依赖 S11② 真实验证——若凭证不可得，登记为待验并上报。
 3. Gate B 凭证依赖场景（§4）可能部分 blocked——逐场景登记，不静默跳过。
-4. **U1-t2 发现的前批遗留缺口**：`quota-reason-i18n.test.ts` 的两个断言数组历史上就不含 `not_configured` 的 key（`quotaFetchFailNotConfigured` / `quotaFailNotConfigured`——locale 双侧存在但断言数组缺）→ 归 U6 终扫批补齐（该测试文件不在 U1 领地外的任何单元，U6 收尾正好覆盖）。
-5. **ui 包存量编译红（疑似与本设计无关，U3 期发现）**：`packages/ui/src/overlays/__tests__/search-modal.test.ts:386/391/396` 三处 TS18048（`searchMock` possibly undefined）。证据：该测试 import 面不含任何 quota 符号，错误为本地变量用法级（非导入类型联动）。待 U2 完成后用干净工作区复核是否 HEAD 上即红；确认为存量则单独微修（不混入 M2 原子 commit）。
+4. ~~**U1-t2 发现的前批遗留缺口**：`quota-reason-i18n.test.ts` 的两个断言数组历史上就不含 `not_configured` 的 key（`quotaFetchFailNotConfigured` / `quotaFailNotConfigured`——locale 双侧存在但断言数组缺）→ 归 U6 终扫批补齐。~~ **已关闭（U6，commit `7f676e961`）**：两个 key 补入断言数组，`quota-reason-i18n.test.ts` 8/8 + locale-sync 163/163 绿。
+5. ~~**ui 包存量编译红（疑似与本设计无关，U3 期发现）**：`packages/ui/src/overlays/__tests__/search-modal.test.ts:386/391/396` 三处 TS18048。~~ **已关闭（独立微修 commit `82b31b736`）**：逐字节确认与 HEAD 相同 = 存量红，用运行时 guard 修复，ui vue-tsc 整包转绿。
+6. **设计阶段 demo 资产的存量 lint 红**（U6 期发现，Gate A 阻塞项）：`docs/design/coding-plan-quota-ux.demo.js:120`（`onChange` 未使用）+ `:155`（短路表达式语句）两个 error，由设计批 `8766d71d3` 引入、非本次实现代码。U6 续做批处理中（禁 eslint-disable）。
 
 **变更历史**：
 
