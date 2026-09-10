@@ -7,6 +7,9 @@
  *  - 行为 2（草稿回收）：回收文本经 composer injection 一次性通道写回（target='current' +
  *    text 通道——消费端 insertTextAtCursor 光标插入，不覆盖既有草稿；多条按序 '\n\n' 拼接）
  *  - 行为 3（追加/不覆盖）：消费端组件层断言见 __tests__/panel/force-quit-draft-recovery-dom.test.ts
+ *  - [F-U2] 累积追加（写入侧）：槽位是单值覆盖通道，回收写入前读槽位现状 '\n\n' 追加，
+ *    防「forceQuit 后、restore 前」窗口内其他注入（drawer / 另一 session forceQuit）覆盖
+ *    丢失已宣称收回的文本；槽位无 text 时行为不变（FQ-1 锁定）
  *  - 提示：toast「N 条排队消息已收回草稿」（N=0 不提示）
  *  - 配套：core clearDeferFlushRetryTimer 清 1s 重投 timer + 失败计数（timer 行为本体在
  *    core __tests__/force-quit-defer-recovery.test.ts）
@@ -180,5 +183,50 @@ describe('onForceQuitSession 队列回收编排（session-dead D3）', () => {
     expect(queue.count('s1')).toBe(0)
     expect(composerInjectionStore.pendingInjection.value).toBeNull()
     expect(toastMocks.info).toHaveBeenCalledWith('1 条排队消息已收回草稿')
+  })
+
+  it('FQ-5 [F-U2]: 连续两次 forceQuit（不同 session）→ 槽位两批文本 \\n\\n 连接，前一批不丢失', async () => {
+    const queue = useCompactQueue()
+    queue.enqueue('s1', '第一批回收文本')
+    const { actions, unmount } = mountActionsHost()
+    wrappers.push({ unmount })
+
+    await actions.onForceQuitSession('s1')
+    expect(composerInjectionStore.pendingInjection.value).toMatchObject({
+      target: 'current',
+      sessionId: 's1',
+      text: '第一批回收文本',
+    })
+
+    // 第一批尚未被消费（槽位滞留）时，另一 session 也 forceQuit——覆盖语义下第一批会丢失
+    queue.enqueue('s2', '第二批回收文本')
+    await actions.onForceQuitSession('s2')
+
+    // 累积追加：两批文本 '\n\n' 连接，无丢失（目标路由 sessionId 随最后一批写入）
+    expect(composerInjectionStore.pendingInjection.value).toMatchObject({
+      target: 'current',
+      sessionId: 's2',
+      text: '第一批回收文本\n\n第二批回收文本',
+    })
+    expect(queue.count('s1')).toBe(0)
+    expect(queue.count('s2')).toBe(0)
+  })
+
+  it('FQ-6 [F-U2]: 槽位已有未消费 text 注入时单次 forceQuit → 追加而非覆盖；槽位为空时行为不变（FQ-1）', async () => {
+    // 预置一笔未消费注入（模拟其他来源的纯文本注入滞留槽位）
+    composerInjectionStore.requestInjection({ target: 'current', sessionId: 's1', text: '槽位既有文本' })
+
+    const queue = useCompactQueue()
+    queue.enqueue('s1', '回收文本')
+    const { actions, unmount } = mountActionsHost()
+    wrappers.push({ unmount })
+
+    await actions.onForceQuitSession('s1')
+
+    expect(composerInjectionStore.pendingInjection.value).toMatchObject({
+      target: 'current',
+      sessionId: 's1',
+      text: '槽位既有文本\n\n回收文本',
+    })
   })
 })

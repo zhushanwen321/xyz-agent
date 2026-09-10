@@ -156,6 +156,9 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
    *    时序：RPC reply 前 session.exited 已按 WS FIFO 到达并 markDead → dead 占位接管、
    *    Composer 已卸载 → 注入请求滞留槽位，用户点击 dead session 走 restore 重开后由
    *    useComposerInjection 的 onMounted 遗留请求补消费（草稿可见、可改、可一键重发）；
+   *    [F-U2] 槽位是单值覆盖通道（forceQuit 后、restore 前任何其他注入都会覆盖），
+   *    回收侧写入前读槽位现状做 '\n\n' 累积追加，防止 toast 已宣称「已收回草稿」的
+   *    文本被后续注入静默吞掉（详见下方写入点注释）。
    * 4. toast 一条「N 条排队消息已收回草稿」（N=0 不提示）。
    */
   async function onForceQuitSession(id: string): Promise<void> {
@@ -174,7 +177,18 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
         .filter((text) => text.trim().length > 0)
         .join('\n\n')
       if (draftText) {
-        composerInjectionStore.requestInjection({ target: 'current', sessionId: id, text: draftText })
+        // [F-U2] 槽位为单值覆盖语义（幂等以最后一次为准）：回收文本是唯一副本（队列已
+        // drain 清空，不可再生），直接请求会在「forceQuit 后、restore 前」窗口被任何其他
+        // 注入（drawer 注入 / 另一 session 的 forceQuit 回收）覆盖丢失，且 toast 已宣称
+        // 「已收回草稿」——违背「消息不丢」。故槽位已有 text 时累积 '\n\n' 追加而非覆盖
+        // （不动 store 的单值通道语义，拼接留在唯一需要它的回收侧）。槽位为 path/refSessionId
+        // chip 注入时无 text 可拼，回收文本优先覆盖——chip 由用户操作产生可重发，唯一副本优先。
+        const pendingText = composerInjectionStore.pendingInjection.value?.text
+        composerInjectionStore.requestInjection({
+          target: 'current',
+          sessionId: id,
+          text: pendingText ? `${pendingText}\n\n${draftText}` : draftText,
+        })
       }
       toastInfo(t('sidebar.forceQuitQueueRecovered', drained.length, { named: { count: drained.length } }))
     }
