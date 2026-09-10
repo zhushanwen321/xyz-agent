@@ -209,6 +209,23 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    * 时 publish no-op）。
    */
   private readonly respawn: RespawnOrchestrator
+  /**
+   * per-sid 最近查看时间戳（idle pi reclamation 设计 D2 #6，u1b）。
+   *
+   * 存储位置钉死 session-service 侧 per-sid Map——形态先例 ActiveSessionResolver
+   * （plugin-service/api/session-api.ts）：可注入实例持有状态，收口模块级可变全局
+   * （测试隔离、随实例生命周期生灭）。写方 = session.switch 处理器（不依赖 RPC
+   * touch——switch 不必然伴随 RPC 调用）；读方 = 空闲 reaper 的查看豁免判定
+   * （u2，30 分钟窗口内不回收）。
+   *
+   * 不能用 MessageBus 订阅者信号替代：renderer 对侧栏 list 全量订阅
+   * （useSessionStreamSync），hasSubscribers(sid) 恒真，reaper 会永不回收（设计 §1.1 事实 4）。
+   *
+   * 刻意不在本单元做删除清理：清理挂点 = lifecycle.delete（removeSessionEntry 汇聚
+   * 点），该领地归 u2 的 session-lifecycle.ts（计划 R4 登记）；回收态保留条目是设计
+   * 意图——非候选无害（豁免判定只会多豁免不会误杀），恢复后继续有效；量级每 sid 一个数字。
+   */
+  private readonly lastViewedAtBySession = new Map<string, number>()
   constructor(
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
@@ -597,6 +614,21 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    */
   getScalarReplicatedStates(sessionId: string): SessionReplicatedStates | undefined {
     return this.projection.getReplicatedStates(sessionId)
+  }
+
+  // ── lastViewedAt 查看时间戳（idle pi reclamation D2 #6，u1b；存储语义见字段注释）──
+
+  /** 记录一次查看（session.switch 处理器调用；时间戳 = 记录时刻）。 */
+  markSessionViewed(sessionId: string): void {
+    this.lastViewedAtBySession.set(sessionId, Date.now())
+  }
+
+  /**
+   * 查询最近查看时间戳。未记录的 sid 返回 undefined——reaper 豁免判定侧语义为
+   * 「从未被查看」（等同长期空闲），不是 0（0 是合法的 epoch 时间戳，误用会豁免全部 session）。
+   */
+  getSessionLastViewedAt(sessionId: string): number | undefined {
+    return this.lastViewedAtBySession.get(sessionId)
   }
 
   // ── W18：record entry 派生缓存（S6 迁出至 session-records.ts；interpreter 经组合根

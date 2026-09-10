@@ -234,6 +234,22 @@ export class RelayRegistry {
     return this.entries.size
   }
 
+  /**
+   * 按 mainSessionId 的只读存在性查询（idle pi reclamation 设计 D2 #3，u1b）。
+   *
+   * 注册表内存在以该 mainSessionId 关联且仍在册（未 cleanupEntry）的 relay 条目即真。
+   * 消费方 = 空闲 reaper 的「有在途 relay 子进程」豁免判定（u2）——主 pi 被杀后 relay
+   * 代理不会可靠连坐死亡（relay.mjs 显式忽略 stdin EOF），故豁免语义锚定注册表在册
+   * 条目而非进程探活。纯只读，不改变任何注册/清理行为；条目数 = 在途 subagent 数
+   * （量级小），线性扫描即可，不为低频豁免查询建反向索引。
+   */
+  hasByMainSessionId(mainSessionId: string): boolean {
+    for (const entry of this.entries.values()) {
+      if (entry.mainSessionId === mainSessionId) return true
+    }
+    return false
+  }
+
   /** socket server 的 connection 入口：等待握手 → 校验 → 注册 + spawn + 字节泵。 */
   handleConnection(conn: Socket): void {
     // 连接级 error 兜底（对端 RST → ECONNRESET 等）：socket 'error' 无 listener 时

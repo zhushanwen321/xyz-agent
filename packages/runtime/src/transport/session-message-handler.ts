@@ -43,13 +43,21 @@ export const OUTPUT_TAIL_MAX_REQUEST_BYTES = 1_048_576
 /** Interface for server methods needed by this handler */
 export interface SessionHandlerContext extends MessageHandlerContext {
   /**
-   * session 服务门面。交叉可选成员 backgroundTasks（background-task-sidebar D3）：
-   * BackgroundTaskService 由 SessionService 构造器组装并以此公有成员暴露。可选属性使
-   * 组合根（server.ts setServices 的 ctx 对象字面量，静态类型 ISessionService）经结构
-   * 兼容零改动通过类型检查——运行时实例恒有该成员；缺省仅出现在测试最小 mock 中，
-   * case 内判空走 background_task_unsupported 防御分支（对齐 handoffService 惯例）。
+   * session 服务门面。交叉可选成员 = SessionService 上不在 ISessionService 接口面的
+   * 消费端口（可选属性使组合根 server.ts setServices 的 ctx 对象字面量（静态类型
+   * ISessionService）经结构兼容零改动通过类型检查——运行时实例恒有该成员；缺省仅出
+   * 现在测试最小 mock 中，调用侧判空走防御分支）：
+   * - backgroundTasks（background-task-sidebar D3）：BackgroundTaskService 的 handler
+   *   消费面窄视图，case 内判空走 background_task_unsupported 防御分支。
+   * - markSessionViewed（idle pi reclamation D2 #6，u1b）：session.switch 处理器记录
+   *   查看时间戳（存储在 session-service 侧 per-sid Map）。可选链静默跳过而非报错——
+   *   记录是 reaper 豁免信号（u2 消费），非 switch 主流程的一部分，最小 mock 缺该
+   *   成员不应让 switch 请求失败。
    */
-  sessionService: ISessionService & { readonly backgroundTasks?: BackgroundTaskRpcPort }
+  sessionService: ISessionService & {
+    readonly backgroundTasks?: BackgroundTaskRpcPort
+    markSessionViewed?(sessionId: string): void
+  }
   /** fast-handoff 编排层（session.handoff 路由用）。可选：未注入时该 case 报 unsupported。 */
   handoffService?: HandoffService
   /**
@@ -362,6 +370,19 @@ export class SessionMessageHandler {
     // 全量序列化（长 session 数 MB）。被驱逐 session 切回由显式 history RPC（享受 D6
     // 重建缓存增量）拉取；LRU 窗口内切回本就零请求（isHydrated 守卫）。
     const switchId = msg.payload.sessionId
+    // idle pi reclamation D2 #6：switch 即用户查看该 session，记录时间戳供 reaper 查看豁免
+    // 判定（u2 消费，30 分钟窗口内不回收）。挂点在处理器入口（getSummary 之前）：switch
+    // 请求到达即查看意图已发生，summary 命中与 ensureActive 恢复两条分支都覆盖，也不依赖
+    // 恢复成败。try/catch 隔离：记录失败只损失一次豁免信号，绝不能拖垮 switch 主流程
+    // （reply 语义不变）；warn 落日志留排查线索（非静默吞，对齐 session-api 注册失败记
+    // 日志先例）。
+    try {
+      this.ctx.sessionService.markSessionViewed?.(switchId)
+    } catch (e) {
+      // 降级策略（best-effort）：查看时间戳只喂 reaper 豁免判定（u2），记录失败损失
+      // 一次豁免信号但switch 主流程照常；warn 留排查线索不静默。
+      console.warn('[runtime] session.switch markSessionViewed failed:', toErrorMessage(e))
+    }
     const summary = this.ctx.sessionService.getSummary(switchId)
     if (summary) {
       this.ctx.reply(ws, msg.id, 'session.switched', { sessionId: switchId, session: summary })

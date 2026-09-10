@@ -11,7 +11,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, writeFile as writeFileAsync } 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { initRelayServer, deinitRelayServer, isRelayServerActive, getActiveRelaySocketPath } from '../../../infra/relay/relay-server.js'
+import { initRelayServer, deinitRelayServer, isRelayServerActive, getActiveRelaySocketPath, getActiveRelayRegistry } from '../../../infra/relay/relay-server.js'
 import { RelayRegistry } from '../../../infra/relay/relay-registry.js'
 import { getRelaySocketPath, getRelayPidFilePath, getRelayChildrenDir } from '../../../infra/relay/relay-paths.js'
 import { topicOf } from '../../../services/message-bus/message-bus.js'
@@ -525,6 +525,30 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     expect(a2.rejectFrames()[0].reason).toBe('duplicate')
     a1.destroy()
     a2.destroy()
+  })
+
+  // idle pi reclamation D2 #3：hasByMainSessionId 真值表（reaper「在途 relay 子进程」
+  // 豁免判定的读面）。真注册/真清理链覆盖三态：无条目 false → 握手注册后 true →
+  // 条目清理（断连即杀 → child exit → cleanupEntry）后 false。注册完成信号 = pid 文件
+  // 落盘、清理完成信号 = pid 文件删除（与重复 recordId / 断连即杀用例同款信号，避免
+  // 探测私有 Map）。
+  t('hasByMainSessionId 真值表：无条目 false → 注册后 true → 条目清理后 false', async () => {
+    await startServer()
+    const registry = getActiveRelayRegistry()!
+    expect(registry).toBeDefined()
+    // 注册前：目标 mainSessionId 无任何在册条目
+    expect(registry.hasByMainSessionId('main-1')).toBe(false)
+    const agent = new TestAgent(getActiveRelaySocketPath()!)
+    await agent.opened
+    agent.send(validHandshake({ argv: [fakePi, 'hang'] }))
+    await waitFor(() => existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'relay registered (pid file)')
+    expect(registry.hasByMainSessionId('main-1')).toBe(true)
+    // per-sid 精度：其他 mainSessionId 仍无条目
+    expect(registry.hasByMainSessionId('main-other')).toBe(false)
+    // 断连即杀 → kill 链 → child exit → cleanupEntry 注销（pid 文件删除为完成信号）
+    agent.destroy()
+    await waitFor(() => !existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'entry cleaned up after disconnect kill')
+    expect(registry.hasByMainSessionId('main-1')).toBe(false)
   })
 
   describe('重启残留扫描（伪造 stale pid 文件 + 时间戳）', () => {
