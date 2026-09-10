@@ -85,6 +85,7 @@
       s.saved.apiKey = true; s.apiKeyDraft = ''
     }
     if (Q.needsWorkspace(t) && s.workspaceDraft.trim()) s.saved.workspace = true
+    s.saved.fetcher = t          // 落盘类型 —— 「凭证归属」的锚点（D5）
     s.savedSnap = snapOf(s)
     s.testResult = null
   }
@@ -160,11 +161,10 @@
   function bind() {
     const sel = elPanel.querySelector('[data-act="fetcher"]')
     if (sel) sel.addEventListener('change', function (e) {
+      // 类型只改草稿（D5）。草稿是「为某个平台准备的内容」，换类型即清空；
+      // 已保存状态不动 —— 它的作废由归属规则（saved.fetcher !== fetcher）表达，可逆
       state.fetcher = e.target.value || null
-      // 凭证是平台专属的（MiMo 的 cookie 拿到 opencode 上必然无效），换类型即视为失效
-      state.saved.cookie = false
-      state.saved.apiKey = false
-      state.apiKeyDraft = ''; state.cookieDraft = ''
+      state.apiKeyDraft = ''; state.cookieDraft = ''; state.workspaceDraft = ''
       state.testResult = null
       render()
     })
@@ -200,13 +200,14 @@
       + '<li>点击测试会先自动保存（runtime 从磁盘读凭证，顺序是硬约束）</li>'
       + '<li>「启用」开关不再触发任何网络请求，纯配置位</li>'
       + '<li>Cookie 输入框不再回显掩码，改为在标题旁标「已配置」</li>'
+      + '<li><b>凭证归属</b>：已保存的凭证只在「已保存类型 = 当前类型」时才算数，换类型即失效（判据可逆，不删数据）</li>'
       + '</ul>'
       + (t ? '<p style="margin-top:8px">当前：<b>' + Q.PRESETS[t].label + '</b>，齐备性 '
         + (Q.readiness(state).ready ? '<b style="color:var(--success)">齐备</b>' : '<b style="color:var(--warn)">未齐备</b>') + '</p>' : '')
   }
 
-  // 静态状态画廊
-  function fixed(mut) { const s = Q.initialState(); mut(s); return s }
+  // 静态状态画廊（saved.fetcher 对齐 fetcher：表示「已按该类型配置过」）
+  function fixed(mut) { const s = Q.initialState(); mut(s); s.saved.fetcher = s.fetcher; return s }
   const galleryStates = [
     ['未选类型', fixed(function () {})],
     ['Cookie 类 · 未齐备', fixed(function (s) { s.fetcher = 'mimo' })],

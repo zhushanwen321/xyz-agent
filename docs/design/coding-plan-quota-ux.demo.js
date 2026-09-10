@@ -50,17 +50,25 @@ window.Q = (function () {
   const needsWorkspace = (t) => !!t && PRESETS[t].needsWorkspace
 
   /**
-   * 齐备性判定（本次设计的核心）：纯本地计算，不涉及网络/落盘。
-   * 继承来的凭证与本次输入的凭证等价 —— 这就是「上面填过了下面不用填」的落地。
+   * 齐备性判定 —— 不含「凭证来源」维度的**并集版**，服务方案 A/C/D（它们没有凭证来源分段控件）。
+   *
+   * 方案 B 的 source 感知版实现在 demo-b.html 内联的 readiness()。
+   * 两者的 SSOT 是设计文档 `coding-plan-quota-config-ux.md` §7.2 —— 原型用于对照交互形态，
+   * 不是判定的权威；差异点已在文档附录 B 登记。
+   *
+   * 两条共同规则（v2）：
+   * 1) 判定取「草稿 ∨ 已保存」并集；
+   * 2) **凭证归属**：已保存的凭证只在「已保存类型 === 当前类型」时才算数（切换类型即作废）。
    */
   function readiness(s) {
     if (!s.fetcher) return { ready: false, missing: ['查询类型'] }
     const p = PRESETS[s.fetcher]
+    const typeChanged = s.saved.fetcher !== s.fetcher
     const missing = []
     if (p.auth.includes('cookie')) {
-      if (!s.cookieDraft.trim() && !s.saved.cookie) missing.push('Cookie')
+      if (!s.cookieDraft.trim() && !(s.saved.cookie && !typeChanged)) missing.push('Cookie')
     } else {
-      const hasExclusive = !!s.apiKeyDraft.trim() || s.saved.apiKey
+      const hasExclusive = !!s.apiKeyDraft.trim() || (s.saved.apiKey && !typeChanged)
       const hasProvider = s.provider.hasApiKey || (p.auth.includes('oauth') && s.provider.hasOauth)
       if (!hasExclusive && !hasProvider) missing.push('API Key')
     }
@@ -172,7 +180,8 @@ window.Q = (function () {
         apiKeyDraft: '',
         cookieDraft: '',
         workspaceDraft: '',
-        saved: { apiKey: false, cookie: false, workspace: false },
+        // saved.fetcher = 已落盘的类型（null = 从未保存过），它是「凭证归属」的锚点（D5）
+        saved: { fetcher: null, apiKey: false, cookie: false, workspace: false },
         provider: { credential: 'apikey', hasApiKey: true, hasOauth: false },
         testing: false,
         testResult: null,

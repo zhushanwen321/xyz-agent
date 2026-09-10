@@ -101,6 +101,7 @@
   state.provider.hasApiKey = true
   state.testResult = { ok: true }
   state.expanded = false
+  state.saved.fetcher = state.fetcher     // 已落盘类型（D5 归属锚点）
   state.savedSnap = snapOf(state)
 
   const elPanel = document.getElementById('panel')
@@ -121,6 +122,7 @@
       s.saved.apiKey = true; s.apiKeyDraft = ''
     }
     if (Q.needsWorkspace(t) && s.workspaceDraft.trim()) s.saved.workspace = true
+    s.saved.fetcher = t          // 落盘类型 —— 「凭证归属」的锚点（D5）
     s.savedSnap = snapOf(s)
     s.testResult = null
   }
@@ -203,8 +205,7 @@
     if (sel) sel.addEventListener('change', function (e) {
       state.fetcher = e.target.value || null
       state.apiKeyDraft = ''; state.cookieDraft = ''; state.workspaceDraft = ''
-      // 凭证是平台专属的，换类型即失效
-      state.saved.cookie = false; state.saved.apiKey = false
+      // 草稿是为旧平台准备的内容，换类型即清空；已保存状态不动 —— 作废由归属规则表达（D5）
       state.testResult = null
       render()
     })
@@ -248,6 +249,7 @@
     const s = Q.initialState()
     s.savedSnap = ''
     mut(s)
+    s.saved.fetcher = s.fetcher
     return s
   }
   const galleryStates = [
