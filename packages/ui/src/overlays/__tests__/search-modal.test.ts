@@ -381,6 +381,8 @@ describe('关闭路径（MF-4，AC-7.1/AC-7.14/MR-7.1）', () => {
     const deps = makeDeps()
     deps.ports.isMock = true // searchMock 计数 = loadResults 调用计数
     const searchMock = vi.mocked(deps.ports.searchMock)
+    // 运行时 guard（非断言强转）：ports.searchMock 类型可选，本用例强依赖该注入计数
+    if (!searchMock) throw new Error('测试前置缺失：deps.ports.searchMock 未注入')
     const wrapper = mount(SearchModal, { props: { open: true, deps } })
     await flushPromises()
     const callsAfterOpen = searchMock.mock.calls.length
