@@ -468,10 +468,18 @@ export async function runSpawnOnce(
     const exitCode = await exitPromise;
     clearEpipeFailure(params.recordId);
 
+    // spawn 'error' 形态（子进程从未运行，典型 ENOENT）：错误事件消息（含 errno
+    // code 与命令路径）直接进终态文案——比裸退出码可诊断，且不命中 stale 分诊
+    // 词表。exitCode 判定优先（close 已 settle 0 后迟到的 error 事件只留日志，
+    // 不产生 success=true + error 并存的自相矛盾终态）。
     const outcome = collectOutcome(record, {
       startTime,
       success: exitCode === 0,
-      error: exitCode === 0 ? undefined : `pi child exited with code ${exitCode}`,
+      error: exitCode === 0
+        ? undefined
+        : runEnd.childErrorMessage !== undefined
+          ? `pi child error: ${runEnd.childErrorMessage} (exit code ${exitCode})`
+          : `pi child exited with code ${exitCode}`,
       sessionId: identity.sessionId ?? "",
       sessionFile: identity.sessionFile,
       ...(params.schemaEnv !== undefined ? { schemaExpected: true } : {}),

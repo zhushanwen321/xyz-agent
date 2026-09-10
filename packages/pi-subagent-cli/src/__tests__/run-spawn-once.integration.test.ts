@@ -10,6 +10,7 @@
 //   - 失败退出（exit 3）→ success=false + failureKind 分诊；
 //   - message_end stopReason=aborted → record.lastError → success=false（stale 分诊）；
 //   - abort signal → SIGTERM → 128+signal 折算退出码；
+//   - spawn 失败（relay node 不存在路径，真实 ENOENT）→ 失败终态 + 可诊断 error（F4）；
 //   - chatMode：agent_end 不 kill、agent_settled resolve（exit 0，进程保活）；
 //   - model 缺失 → prepare 期抛错（不 spawn）。
 //
@@ -337,6 +338,36 @@ describe("runSpawnOnce 集成（fake pi 子进程）", () => {
       expect(result.failureKind).toBe("unknown");
       expect(result.turns).toBe(0);
     } finally {
+      restoreHarness(h);
+    }
+  }, 15_000);
+
+  it("spawn 失败（relay node 指向不存在路径，真实 ENOENT）→ 失败终态 + 可诊断 error，不伪成功（F4）", async () => {
+    const h = await makeHarness("success");
+    // relay 三键激活 → getPiInvocation 分支 0：command = RELAY_NODE（真实不存在的
+    // 绝对路径）。不经任何 mock——Node spawn 的 'error' 事件（ENOENT）+ 迟到
+    // close(code=-2) 全真实时序，锁「从未启动的子进程不得判成功」。
+    const ghostNode = join(h.rootDir, "nonexistent-node-bin");
+    process.env.XYZ_SUBAGENT_RELAY_SOCKET = join(h.rootDir, "relay.sock");
+    process.env.XYZ_SUBAGENT_RELAY_NODE = ghostNode;
+    process.env.XYZ_SUBAGENT_RELAY_SCRIPT = join(h.rootDir, "relay.mjs");
+    try {
+      const result = await runSpawnOnce(baseParams(h), callbacksOf(h));
+
+      expect(result.success).toBe(false); // 从未启动 → 失败，不得 success=true 空内容
+      expect(result.error).toContain("pi child error:");
+      expect(result.error).toContain("ENOENT"); // 原始 errno code 可诊断
+      expect(result.error).toContain(ghostNode); // 失败的命令路径可诊断
+      expect(result.error).toContain("127"); // 失败折算退出码
+      expect(result.failureKind).toBe("unknown"); // 不命中 stale 词表（可重试口径）
+      expect(result.content).toBe("");
+      expect(result.turns).toBe(0);
+      // 子进程从未运行：无 pid 可上报（reportChildSpawned 的 pid 缺失守卫）
+      expect(h.childSpawned).toHaveLength(0);
+    } finally {
+      delete process.env.XYZ_SUBAGENT_RELAY_SOCKET;
+      delete process.env.XYZ_SUBAGENT_RELAY_NODE;
+      delete process.env.XYZ_SUBAGENT_RELAY_SCRIPT;
       restoreHarness(h);
     }
   }, 15_000);

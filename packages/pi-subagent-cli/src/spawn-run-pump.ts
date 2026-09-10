@@ -31,10 +31,24 @@ const INVALID_LINE_LOG_CHARS = 160;
 /** 信号退出码合成值（close 无 code 只有 signal 时按 128+ 约定折算非零）。 */
 const SIGNAL_EXIT_CODE_BASE = 128;
 
+/**
+ * child 'error' 事件（spawn 失败——子进程从未运行）的收尾退出码。POSIX
+ * command-not-found 惯例值：与 128+ 信号折算族同为非零异常口径，且语义上贴近
+ * 「找不到可执行文件」（典型 ENOENT）。
+ */
+const SPAWN_ERROR_EXIT_CODE = 127;
+
 /** run 收尾状态（agent_end / agent_settled 与 close 收尾共享的可变句柄）。 */
 export interface RunEndState {
   /** agent_end 置位：主动终结的 close 按成功口径（exit 0）收尾。 */
   endedCleanly: boolean;
+  /**
+   * child 'error' 事件的消息快照（spawn 失败形态：子进程从未运行）。error 事件
+   * 先于真实 close 到达且 promise 已被手动收尾 settle——真实 close 的退出码参数
+   * 不再生效，终态装配只能靠此快照区分「从未启动」与正常退出（exitCode 判定链
+   * 见 spawn-runner collectOutcome）。
+   */
+  childErrorMessage?: string;
   /** [chatMode] agent_settled 的 run resolve 句柄（exitPromise executor 内落位）。 */
   resolveChatRun?: (code: number) => void;
 }
@@ -255,8 +269,14 @@ function createCloseFinalizer(
       bestEffort("sessionfile unobtainable warn", () => warnSessionFileUnobtainable(deps));
     } finally {
       // agent_end 主动终结的 close 是正常完成（exit code 0 口径）；其余信号退出
-      // 保持 128+ 折算（异常路径判据）。resolveExit 无条件必达。
-      resolveExit(normalizeExitCode(runEnd.endedCleanly, code, signal));
+      // 保持 128+ 折算（异常路径判据）。child 'error'（spawn 失败，子进程从未
+      // 运行）必须按失败码收尾——(code=null, signal=null) 落回 0 折算会把从未
+      // 启动的 run 伪成功（F4）。resolveExit 无条件必达。
+      resolveExit(
+        runEnd.childErrorMessage !== undefined
+          ? SPAWN_ERROR_EXIT_CODE
+          : normalizeExitCode(runEnd.endedCleanly, code, signal),
+      );
     }
   };
 }
@@ -279,6 +299,12 @@ export function wireChildStdoutPump(deps: StdoutPumpDeps): Promise<number> {
       logger.error(`[session-runner] child ${deps.recordId} error event`, {
         detail: toErrorMessage(err),
       });
+      // spawn 失败（典型 ENOENT）：error 事件先于真实 close 到达，promise 在此处
+      // 手动收尾时 settle——真实 close 携带的退出码参数（negated errno）不再生效。
+      // 先快照错误消息让收尾按失败口径 resolve（终态装配携带可诊断文案），不落回
+      // (null, null) 的 0 折算伪成功。清理链仍复用 onClose（U-A5 必达契约的步骤
+      // 一个不少；真实 close 再达时各步骤幂等）。
+      deps.runEnd.childErrorMessage = toErrorMessage(err);
       onClose(null, null);
     });
     // stdin 异步 error（EPIPE 半面②）：计数留痕（热路径投递据此判死）

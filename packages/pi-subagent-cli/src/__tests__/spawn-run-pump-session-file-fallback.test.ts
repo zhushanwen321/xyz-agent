@@ -12,6 +12,8 @@
 //   - LC-4 回填链 onHandleReady 抛错 → resolveExit 仍必达，sessionFile 已落位
 //     （先赋值后回调）；
 //   - agent_end 未置位（信号退出）→ 退出码仍按 128+ 折算，warn 步骤不改变退出码口径。
+//   - child 'error' 事件（spawn 失败，F4）：失败码 127 收尾 + 错误消息快照落 runEnd，
+//     真实 close 迟到再达不得改写已 settle 的失败终态（Node ENOENT 实测时序）。
 //
 // session 文件 fixture 落在 mkdtempSync 自建目录（tmpdir 白名单，不触碰真实数据目录）。
 
@@ -68,10 +70,11 @@ function writeLc4Fixture(): string {
   return filePath;
 }
 
-/** fake child（PassThrough stdout/stdin + 手动 close；precedent: ui-request-queue.test.ts）。 */
+/** fake child（PassThrough stdout/stdin + 手动 close/error；precedent: ui-request-queue.test.ts）。 */
 function makeFakeChild(): {
   child: ChildProcess;
   fireClose: (code: number | null, signal?: NodeJS.Signals | null) => void;
+  fireError: (err: Error) => void;
 } {
   const emitter = new EventEmitter();
   const stdout = new PassThrough();
@@ -93,6 +96,9 @@ function makeFakeChild(): {
       stdout.end();
       stdin.end();
     },
+    fireError: (err) => {
+      emitter.emit("error", err);
+    },
   };
 }
 
@@ -100,7 +106,9 @@ interface PumpHarness {
   identity: SessionIdentityTracker;
   exitPromise: Promise<number>;
   fireClose: (code: number | null, signal?: NodeJS.Signals | null) => void;
+  fireError: (err: Error) => void;
   readyCalls: Array<{ sessionRef: Record<string, string>; poolKey: string }>;
+  runEnd: import("../spawn-run-pump.ts").RunEndState;
 }
 
 /** 装配 close 收尾链（endedCleanly 缺省 true = agent_end 主动终结）。 */
@@ -108,7 +116,7 @@ function wirePump(
   overrides: Partial<SpawnRunCallbacks> = {},
   endedCleanly = true,
 ): PumpHarness {
-  const { child, fireClose } = makeFakeChild();
+  const { child, fireClose, fireError } = makeFakeChild();
   const readyCalls: PumpHarness["readyCalls"] = [];
   const callbacks: SpawnRunCallbacks = {
     onEvent: () => {},
@@ -118,6 +126,7 @@ function wirePump(
     ...overrides,
   };
   const identity = createSessionIdentityTracker(dir, callbacks);
+  const runEnd: import("../spawn-run-pump.ts").RunEndState = { endedCleanly };
   const deps: StdoutPumpDeps = {
     child,
     recordId: "rec-pump-test",
@@ -126,9 +135,9 @@ function wirePump(
     handleSdkEvent: () => {},
     enqueueUi: () => {},
     stderrTee: undefined,
-    runEnd: { endedCleanly },
+    runEnd,
   };
-  return { identity, exitPromise: wireChildStdoutPump(deps), fireClose, readyCalls };
+  return { identity, exitPromise: wireChildStdoutPump(deps), fireClose, fireError, readyCalls, runEnd };
 }
 
 describe("close finalizer sessionFile 兜底接线（LC-4 + 仍缺响亮 warn）", () => {
@@ -214,5 +223,47 @@ describe("close finalizer sessionFile 兜底接线（LC-4 + 仍缺响亮 warn）
     expect(exitCode).toBe(128);
     expect(h.identity.sessionFile).toBeUndefined();
     expect(sessionFileWarnings()).toHaveLength(1); // 仍缺 → warn 照发（口径与 128+ 并存）
+  });
+});
+
+describe("child error 事件收尾（spawn 失败形态，F4）", () => {
+  /** ENOENT 形态的 fake error（Node spawn 失败的 error 事件等价物）。 */
+  const enoentError = (): Error =>
+    Object.assign(new Error("spawn /nonexistent/pi ENOENT"), { code: "ENOENT" });
+
+  it("spawn 'error'（典型 ENOENT）：失败码 127 收尾 + 错误快照落 runEnd，绝不伪成功", async () => {
+    const h = wirePump({}, false);
+
+    h.fireError(enoentError());
+    const exitCode = await h.exitPromise;
+
+    // 子进程从未运行 → 失败终态（127）；(null,null) 的 0 折算（伪成功）已根除
+    expect(exitCode).toBe(127);
+    expect(h.runEnd.childErrorMessage).toContain("ENOENT");
+    // 清理链照走（U-A5）：无身份可回填 → sessionFile 全 miss warn 照发
+    expect(h.identity.sessionFile).toBeUndefined();
+    expect(sessionFileWarnings().length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("error 先达 + 真实 close(-2, null) 迟到再达（Node ENOENT 实测时序）：终态仍 127", async () => {
+    const h = wirePump({}, false);
+
+    h.fireError(enoentError());
+    // 真实 close 携 negated errno（code=-2）；promise 已按失败口径 settle，
+    // close 参数不得经 0 折算改写终态（close finalizer 各步骤幂等重跑无害）
+    h.fireClose(-2, null);
+    const exitCode = await h.exitPromise;
+
+    expect(exitCode).toBe(127);
+  });
+
+  it("endedCleanly 已置位且无 error：口径不变（回归锚，agent_end 主动 kill 仍 0）", async () => {
+    const h = wirePump({}, true);
+
+    h.fireClose(null, "SIGTERM"); // agent_end 后 killChain 的 SIGTERM close
+    const exitCode = await h.exitPromise;
+
+    expect(exitCode).toBe(0);
+    expect(h.runEnd.childErrorMessage).toBeUndefined();
   });
 });
