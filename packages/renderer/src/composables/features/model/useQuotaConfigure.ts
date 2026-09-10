@@ -321,8 +321,12 @@ export function useQuotaConfigure(
 
   /**
    * 保存并测试（D2）：先把草稿落盘（quota.configure），成功后再触发查询（quota.refresh）。
-   * 参数构造严格按 §7.2 细节 4 的构造表；credentialSource 恒传且**写侧禁用**
-   * resolveQuotaCredentialSource 推断（推断会把用户显式选择覆盖成按 apiKeySet 推出的值）。
+   * 参数构造严格按 §7.2 细节 4 的构造表；credentialSource 恒由 payload 显式值落盘，**写侧禁用**
+   * resolveQuotaCredentialSource 推断——该函数是**显式值优先**（`quota?.credentialSource ?? …`），
+   * `incoming ?? resolve(...)` 只在 incoming 为 undefined 时触发，不会覆盖显式值。真实危害是把
+   * **未设置的字段物化成推断值**：会在磁盘写入用户从未选择过的来源，此后该 provider 不再跟随推断
+   * （专属 Key 被清后读侧本应回落 provider，冻结的显式值会把查询带向 no-credential）。
+   * 危害与禁令的完整表述见 quota-types.ts 的 resolveQuotaCredentialSource JSDoc（SSOT）。
    *
    * [时序约定] 必须在发起 RPC 前捕获 payload 快照：configure 成功后 runtime 广播
    * provider 列表 → watch(providerRef) → syncFromProvider 把草稿重置为磁盘态；
