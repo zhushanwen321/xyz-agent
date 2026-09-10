@@ -63,7 +63,10 @@ const TEMPLATES: BuiltinProviderTemplate[] = [
     envVars: ['OPENAI_API_KEY'],
     oauthSupported: false,
     modelCount: 5,
-    models: [],
+    models: [
+      { id: 'gpt-4.1', name: 'GPT-4.1', api: 'openai-completions', baseUrl: 'https://api.openai.com/v1', reasoning: false, input: ['text'], contextWindow: 1000000 },
+      { id: 'gpt-4.1-mini', name: 'GPT-4.1 mini', api: 'openai-completions', baseUrl: 'https://api.openai.com/v1', reasoning: false, input: ['text'], contextWindow: 1000000 },
+    ],
   },
   {
     id: 'anthropic',
@@ -75,9 +78,9 @@ const TEMPLATES: BuiltinProviderTemplate[] = [
     oauthSupported: true,
     modelCount: 3,
     models: [
-      { id: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet', api: 'anthropic-messages', reasoning: false, input: ['text', 'image'], contextWindow: 200000 },
-      { id: 'claude-3-7-sonnet', name: 'Claude 3.7 Sonnet', api: 'anthropic-messages', reasoning: true, input: ['text', 'image'], contextWindow: 200000 },
-      { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', api: 'anthropic-messages', reasoning: true, input: ['text', 'image'], contextWindow: 200000 },
+      { id: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet', api: 'anthropic-messages', baseUrl: 'https://api.anthropic.com', reasoning: false, input: ['text', 'image'], contextWindow: 200000 },
+      { id: 'claude-3-7-sonnet', name: 'Claude 3.7 Sonnet', api: 'anthropic-messages', baseUrl: 'https://api.anthropic.com', reasoning: true, input: ['text', 'image'], contextWindow: 200000 },
+      { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', api: 'anthropic-messages', baseUrl: 'https://api.anthropic.com', reasoning: true, input: ['text', 'image'], contextWindow: 200000 },
     ],
   },
   {
