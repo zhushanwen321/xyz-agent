@@ -12,12 +12,21 @@ import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   locateSessionFileByScan,
   SCAN_DIR_OVERRIDE_ENV,
 } from "../session-file-locator.ts";
+
+// logger mock（模式对齐 execution/__tests__/disposition-retry-window.test.ts）：warn 文案
+// 是 impl-plan u1 验收条款②的断言面（目录缺失 / 多匹配分支留痕），mock 后可逐片段守卫漂移。
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("../../../../../core/logger.ts", () => ({
+  getLogger: () => loggerMock,
+}));
 
 const RECORD_ID = "run-42";
 
@@ -58,6 +67,7 @@ let dir: string;
 
 beforeEach(() => {
   dir = fs.mkdtempSync(join(tmpdir(), "session-file-locator-test-"));
+  loggerMock.warn.mockClear();
 });
 
 afterEach(() => {
@@ -100,6 +110,12 @@ describe("locateSessionFileByScan（[U1 D2] sessionDir 扫描兜底）", () => {
     const hit = locateSessionFileByScan({ id: RECORD_ID }, dir, sinceMs);
 
     expect(hit).toBe(newest);
+    // 多匹配 warn 留痕（hits.length > 1 分支文案，逐片段守卫漂移）
+    const warns = loggerMock.warn.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(warns).toHaveLength(1);
+    expect(warns[0]).toContain(`matched 2 files for ${RECORD_ID}`);
+    expect(warns[0]).toContain("taking newest by mtime");
+    expect(warns[0]).toContain(newest);
   });
 
   it("目录不存在 → undefined（不抛，调用方继续走重试/翻转分支）", () => {
@@ -108,6 +124,12 @@ describe("locateSessionFileByScan（[U1 D2] sessionDir 扫描兜底）", () => {
     const hit = locateSessionFileByScan({ id: RECORD_ID }, missing, Date.now() - 60_000);
 
     expect(hit).toBeUndefined();
+    // 目录缺失 warn 留痕（readdirSync 失败分支文案，逐片段守卫漂移）
+    const warns = loggerMock.warn.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(warns).toHaveLength(1);
+    expect(warns[0]).toContain("found no match");
+    expect(warns[0]).toContain(RECORD_ID);
+    expect(warns[0]).toContain(missing);
   });
 
   it("目录存在但无匹配（候选非 jsonl / 无 identity / record.id 不符）→ undefined", () => {
