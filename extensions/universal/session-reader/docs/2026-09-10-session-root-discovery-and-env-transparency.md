@@ -598,8 +598,9 @@ agent → session_read { action:"find", query:"01a08zzz" }
 
   ```text
   0. 前置检查（fail-fast，按序）：
-     a. 实参形态校验：<dataDir> basename 匹配 .xyz-agent* 且 <dataDir>/pi 下仅含
-        agent/sessions 两类子项（§12.3 实测形态）——不匹配即中止，防误传资源布局目录
+     a. 实参形态校验：<dataDir> basename 匹配 .xyz-agent* 且 <dataDir>/pi 下**含**
+        agent/ 或 sessions/ 子目录（存在性判据而非「仅含」——dev 实测 pi/ 顶层另有
+        空壳残片文件，见证据行）——不匹配即中止，防误传资源布局目录
         （如 apps/electron/resources/pi）被 rename 破坏打包资源
      b. 运行中进程检测（pgrep -f 固定模式清单：pi 二进制路径形态、relay.mjs、TaiJi.app、
         runtime node 入口；模式清单随报告打印，脚本自证本机 pi 二进制路径命中清单才继续，
@@ -647,7 +648,9 @@ agent → session_read { action:"find", query:"01a08zzz" }
   5. 校验并清除 agent/settings.json 的 sessionDir 字段（pi 优先级链第 3 位的静默覆盖位；
      有则删除并打印——不清除则任何写入者都能让「默认派生」静默失效）
   6. 打印迁移报告（分发/跳过/避让计数 + 备份路径 + 回滚命令 = 删或改名 agent/ +
-     pi.backup-v2-<ts> 改回 pi）
+     pi.backup-v2-<ts> 改回 pi；附「冲突清单」与「顶层残片清单」——pi/ 顶层不在
+     agent/ sessions/ 内的文件（dev 实测有 2B 空壳 auth.json/models-store.json 等，
+     真身在 agent/ 同名文件）不迁移、留在备份，报告列出供人工确认可忽略）
   ```
 
 - **采用（U14b）启动残留探测**：runtime 启动处（原 `migrateToPiSubdir()` 调用位，`runtime/src/index.ts:194`）若 `existsSync(join(getDataDir(),'pi'))` → 记 WARN 日志：「检测到旧布局 `<dataDir>/pi`，历史会话不在新布局中、不可见；关闭应用后运行 `scripts/migrate-pi-layout-v2.mjs` 迁移」。约 5 行，替代整个守卫矩阵，统一兜住三种残留态：「忘了迁」「出现未知存量机」「降级回装旧版重建 `pi/`」——同一探测入口，同一指引。doctor（U8）以**独立 glob 规则**（`pi.backup-v2-*/` 备份与未迁移的 `pi/`，均不在 `[legacy]` 推导式内——`dirname(agentDir)/sessions` 够不到带时间戳的备份名与 `pi/` 层）探测并标注，附同一迁移指引。**判据收紧（v9.1）**：doctor 侧 glob 基点 = `dirname(agentDir)`（xyz-agent 下 = `<dataDir>`，纯 pi 下 = `~/.pi`），且 `pi/` 须同时满足「其下含 `agent/` 或 `sessions/` 子目录」才告警——防纯 pi 宿主下任意来源的 `~/.pi/pi/` 目录误报；备份 glob 同基点同形态判据。**窗口期双面失明（已接受代价，v9.1 显式声明）**：「先升后迁」窗口内，旧主 session 对 session-reader 候选根与 TaiJi 会话列表**双面**不可见（两者都只扫新布局）；WARN 仅落 runtime 日志（TaiJi 界面无弹窗）。缓解 = 推荐时序「先迁后升」写入发布说明（§6.9 处理 5）+ doctor 可主动查；消除 = 迁移完成。量级 = 窗口时长 × 用户迁移拖延度，数据无损（旧文件在 `pi/` 原处不动）。
@@ -665,7 +668,7 @@ agent → session_read { action:"find", query:"01a08zzz" }
   - **并道分支统一「旧赢、新避让」（v9 初版）**——被第 7 轮双审独立击穿：①凭据时效反例——窗口期在新版登录的 `auth.json` 被旧侧覆盖，工作凭据换成可能过期的旧凭据（全 401 且无归因线索）；②记录域失明——`subagents/`、`workflow-state/` 整目录避让后，`scanJsonlRecursive(join(agentDir,'subagents'))` 类固定路径扫描永远够不到避让名，窗口期增量（本机 prod 该域实测 1330 文件）对全部工具消失。改为分域规则：记录型子树文件级并入 / 凭据新赢旧避让 / 其余旧赢新避让 / 冲突清单进报告。
   - **中断态靠各步幂等自然重跑（v9 初版）**——被击穿：步骤 1 完成后中断，重跑命中「pi 不存在 → 无需迁移」出口，分发步骤永不可达、剩余数据滞留备份。改为步骤 0c 续传分支（备份即暂存 + 幂等重入）。
   - copy-then-delete（双倍 IO 且留中间态）；只 move 不备份（无回滚通道）；迁移时顺带删 workflow-state 等残留（不在迁移里夹带清理）。
-- **证据**：`pi-maintenance.ts:71-110`（既有迁移）与 `:80-82`（mkdir 前置，v6 撞名反例）；`runtime/src/index.ts:194`（调用点）；`migrations.js:76-115`（pi 自带迁移语义）；本机实测 `~/.xyz-agent/pi/` 只含 `agent/` + `sessions/`（prod 主 session 首测 14 个、2026-09-10 复测 9 个，期间有清理；dev 36 个）；dev `pi/sessions/` 实测含 `--private-tmp--/` 子目录与 `.handoff.json` sidecar（§12.3）。
+- **证据**：`pi-maintenance.ts:71-110`（既有迁移）与 `:80-82`（mkdir 前置，v6 撞名反例）；`runtime/src/index.ts:194`（调用点）；`migrations.js:76-115`（pi 自带迁移语义）；本机实测 prod `~/.xyz-agent/pi/` 顶层只含 `agent/` + `sessions/`（主 session 首测 14 个、2026-09-10 复测 9 个，期间有清理；dev 36 个）；**dev `~/.xyz-agent-dev/pi/` 顶层另有空壳残片**——`auth.json`/`models-store.json` 各 2 字节（2026-08-20）与 `settings.json` 37 字节（2026-09-09），真身在 `pi/agent/` 内同名文件（235B/10152B/241B，实测对比），属陈旧残片：不迁移、留备份、进报告残片清单；dev `pi/sessions/` 实测含 `--private-tmp--/` 子目录与 `.handoff.json` sidecar（§12.3）。
 - **效果**：让 §2 目标 6 在存量机（= 本机）上成立；V9 验收（触发方式 = 手工运行脚本）。
 
 ### 6.12 reap 孤儿判据替换（方案 B 的硬前提）
@@ -989,7 +992,7 @@ npx tsx ./probe-find.mts
 | 本机 `~/.pi/sessions/` 为空残壳、4619 个真实 session 在 `~/.pi/agent/sessions/<encodeCwd>/` | 实机 `ls` / `find` 统计 | 已测 | — |
 | pi **没有** `--agent-dir` CLI flag（独立 CLI 仓的同名 flag 是其自建，非 pi 实装） | `dist/cli/args.js` grep `agent-dir` 零命中 | 已测 | — |
 | reap 判据 = argv `--session-dir` 精确相等 + ppid=1；env 判据被 SIP 探针在案否决 | `reap-orphan-pi.ts:12-27`（文件头注释 D4a/D4b）、`:147-160` | 读源码 | §6.12 |
-| `~/.xyz-agent/pi/` 根层只含 `agent/` + `sessions/` 两个子目录 | 实机 `ls` | 已测 | §6.11 |
+| `~/.xyz-agent/pi/` 根层只含 `agent/` + `sessions/` 两个子目录（prod）；dev `pi/` 顶层另有 2B 空壳 `auth.json`/`models-store.json` 与 37B `settings.json` 残片（真身在 `pi/agent/` 同名文件，size/mtime 实测对比） | 实机 `ls` + `stat` | 已测 | §6.11 |
 | xyz-agent 恒以 argv 传 18 个 mandatory extension 的 staged 路径（`--no-extensions` 恒带且只禁自动发现、显式 `--extension` 仍生效——pi help 原文 `dist/cli/args.js:294`）；**但 argv 同时也混有用户配置来源的路径**（活体实测 `~/.pi/agent/extensions/…`、项目 `.pi/extensions/…`、`~/.agents/skills`）——「用户 extension 不进 argv」被该实测证伪 | `rpc-client.ts:269,203-215` + `mandatory-extensions.json` + 活体 `ps -A -o pid,command` | 读源码 + 实测 | §6.12 |
 
 ### 12.4 变更历史
