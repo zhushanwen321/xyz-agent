@@ -183,6 +183,17 @@ export class MessageDispatcher {
     images?: Array<{ data: string; mimeType: string }>,
     clientUuid?: string,
   ): Promise<{ blocked: boolean; rejected?: boolean }> {
+    // ── dispatcher 入口同步 touch（idle-pi-reclamation D6-1，任何 await 之前）──
+    // markSessionActive 置 occupancy=dispatching 位于 await runBeforeSendHook（插件
+    // hook，单 handler 5s 超时）与 await ensureActiveOrBroadcast（restore 600ms-3s）
+    // 之后——若不入口 touch，「prompt 已发出、hook/restore 执行中」窗口内空闲回收
+    // 判定满足阈值会误回收在途 session。client 未附着（已回收态）时无需 touch：
+    // restore spawn 的新 client lastActivityAt 初值 = spawn 时刻，空闲时长天然不达标。
+    const attachedClient = this.pm.getClient(sessionId)
+    if (attachedClient) {
+      attachedClient.touchActivity()
+    }
+
     // ── BeforeSend hook ──
     // blocked: 已广播 message.error（错误气泡），此处返回 {blocked:true} 让 handler 改发 error envelope。
     // modifiedContent: hook 改写后的文本（transform 语义，Fix-1），未改写时回退原文。

@@ -95,7 +95,9 @@ function makeMocks(opts: MockOpts = {}) {
     ? vi.fn(async () => { throw opts.promptError! })
     : vi.fn(async () => ({}) as unknown as Awaited<ReturnType<IPiEngine['prompt']>>)
 
-  const client = { prompt: promptFn, bash: bashFn, abortBash: abortBashFn } as unknown as IPiEngine
+  // touchActivity：sendPrompt 入口同步 touch（idle-pi-reclamation D6-1）经 pm.getClient
+  // 到达 fake client——fake 须补齐该接口成员
+  const client = { prompt: promptFn, bash: bashFn, abortBash: abortBashFn, touchActivity: vi.fn() } as unknown as IPiEngine
 
   // wave:perf-w09（D1-2）：dispatcher 只依赖 publish 抽象（broker 双写腿已删），mock bus 收集发布消息
   const broadcasts: ServerMessage[] = []

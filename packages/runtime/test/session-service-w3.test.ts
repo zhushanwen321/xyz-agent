@@ -101,6 +101,8 @@ interface MockClient {
   onExit: MockInstance<(callback: (code: number | null) => void) => void>
   kill: MockInstance<() => Promise<void>>
   start: MockInstance<() => Promise<void>>
+  /** touchActivity：sendPrompt 入口同步 touch（idle-pi-reclamation D6-1）。 */
+  touchActivity: MockInstance<() => void>
   eventListeners: PiEventListener[]
 }
 
@@ -129,6 +131,9 @@ function makeMockClient(overrides: Partial<MockClient> = {}): MockClient {
     onExit: vi.fn(),
     kill: vi.fn().mockResolvedValue(undefined),
     start: vi.fn().mockResolvedValue(undefined),
+    // touchActivity：sendPrompt 入口同步 touch（idle-pi-reclamation D6-1）经 pm.getClient
+    // 到达 fake client——fake 须补齐该接口成员
+    touchActivity: vi.fn(),
     eventListeners,
     ...overrides,
   }

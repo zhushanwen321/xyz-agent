@@ -122,6 +122,19 @@ export interface PiSessionOptions {
 }
 
 /**
+ * sendCommand / prompt 的调用方标记（idle-pi-reclamation 设计 D1「维护通道排除」）。
+ *
+ * maintenance: true 标记本次调用是维护类通道（不体现用户/session 活跃）——RpcClient
+ * 不刷新 lastActivityAt。现有唯一维护通道是 promptReload 的 `/__xyz_reload__`
+ * prompt（skill 目录变更会对全部活跃 session 触发，计入 touch 会让空闲时钟被周期性
+ * 重置、回收饿死且日志不可见）。
+ */
+export interface SendCommandOptions {
+  /** 维护类调用：不刷新 RpcClient.lastActivityAt（空闲回收判定不受影响）。 */
+  maintenance?: boolean
+}
+
+/**
  * pi 引擎 port —— 每个 session 对应一个实例（RpcClient 实现）。
  *
  * 涵盖「单个 pi 进程的全部能力」：与 pi 的命令通信 + 该进程自身的生命周期
@@ -149,7 +162,7 @@ export interface IPiEngine {
    *
    * U1 仅开通能力，不改现有调用方行为；U5 session-manager send 排队时消费。
    */
-  prompt(content: string, images?: Array<{ data: string; mimeType: string }>, streamingBehavior?: 'steer' | 'followUp'): Promise<PiMessage>
+  prompt(content: string, images?: Array<{ data: string; mimeType: string }>, streamingBehavior?: 'steer' | 'followUp', options?: SendCommandOptions): Promise<PiMessage>
   abort(): Promise<PiMessage>
   steer(content: string): Promise<PiMessage>
   followUp(content: string): Promise<PiMessage>
@@ -211,6 +224,22 @@ export interface IPiEngine {
   onExit(callback: PiProcessExitCallback): () => void
   /** 进程是否已退出。 */
   readonly exited: boolean
+
+  // ── 空闲信号（idle-pi-reclamation 设计 D1 / D6-1）──
+  /**
+   * 最近一次 pi 双向活动时刻（ms epoch），空闲回收判定的信号源。
+   *
+   * 写点（RpcClient 内部）：出站 sendCommand（maintenance 标记除外）/ 入站
+   * handleMessage 全帧 / touchActivity()。初值 = spawn 时刻。pi 空闲期无周期性
+   * stdout（ADR-0047 ping 只在 turn 内），该值在用户态空闲下单调静止，判定干净。
+   */
+  readonly lastActivityAt: number
+  /**
+   * 手动刷新空闲时钟。调用方语义 = MessageDispatcher.sendPrompt 入口同步 touch
+   * （设计 D6-1）：markSessionActive 置 occupancy=dispatching 位于 await hook / await
+   * ensureActive 之后，「prompt 已发出、hook/restore 执行中」窗口靠入口 touch 关闭。
+   */
+  touchActivity(): void
 }
 
 /**

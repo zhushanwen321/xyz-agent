@@ -7,7 +7,7 @@ import type { ThinkingLevel, ProviderId } from '@xyz-agent/shared'
 import { BASH_RPC_TIMEOUT_MS, COMPACT_RPC_TIMEOUT_MS } from '@xyz-agent/shared'
 // B3 出站契约唯一构建器（U3 收口点；实现本体在 @xyz-agent/shared，此处走 runtime 门面）
 import { buildOutboundChildEnv } from '../spawn-env.js'
-import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
+import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo, SendCommandOptions } from '../../services/ports/pi-engine.js'
 import { createPiSessionLog, writePiCrashLog, captureMemorySnapshot, type PiSessionLog, type PiCrashContext } from '../logger.js'
 
 /**
@@ -405,6 +405,17 @@ export class RpcClient implements IPiEngine {
    */
   private attachedSessionFile: string | null = null
 
+  /**
+   * 最近一次 pi 双向活动时刻（ms epoch，idle-pi-reclamation 设计 D1 空闲信号）。
+   *
+   * 三个写点：出站 sendCommand（maintenance 标记的维护通道除外）/ 入站 handleMessage
+   * 全帧 / touchActivity()（dispatcher 入口同步 touch，D6-1）。初值 = spawn 时刻
+   * （start() 内重置——构造到 spawn 之间的间隔不冒充空闲也不冒充活跃）。pi 空闲期
+   * 无周期 stdout（ADR-0047 ping 只在 turn 内），该值在用户态空闲下单调静止——空闲
+   * 回收判定（reaper）以 now - lastActivityAt 计空闲时长。
+   */
+  private _lastActivityAt = Date.now()
+
   constructor(private options: RpcClientOptions = {}) {}
 
   async start(): Promise<void> {
@@ -435,6 +446,11 @@ export class RpcClient implements IPiEngine {
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
+
+    // 空闲信号初值 = spawn 时刻（idle-pi-reclamation D1）：client 构造（进进程表前）
+    // 到真实 spawn 之间可能隔了 ensureActive 编排耗时，以进程诞生时刻起算空闲，
+    // 构造时刻仅作未 start 形态的兜底初值。
+    this._lastActivityAt = Date.now()
 
     // pi stdout JSONL 原始流落盘（架构约定 #4）。pi 卡死时（prompt 后零事件），
     // 这个文件是判断「pi 没发事件」vs「runtime 没转发」的决定性证据。
@@ -592,6 +608,9 @@ export class RpcClient implements IPiEngine {
   }
 
   private handleMessage(msg: PiMessage): void {
+    // 入站 touch（idle-pi-reclamation D1）：任何 stdout 帧（response / 事件 / 迟到丢弃帧）
+    // 都证明 pi 在产出，进程非空闲。放在分派前——分支结构变化不影响 touch 语义。
+    this._lastActivityAt = Date.now()
     // If id matches a pending request, resolve it; otherwise emit as event.
     // resolve 只认 RPC response：pi 的 RpcResponse union 所有变体 type === 'response'
     // （pi-mono coding-agent/src/modes/rpc/rpc-types.ts:114-223），事件各有独立 type 字符串。
@@ -723,7 +742,7 @@ export class RpcClient implements IPiEngine {
     }
   }
 
-  sendCommand(type: string, params: Record<string, unknown> = {}, timeout = CMD_TIMEOUT_MS): Promise<PiMessage> {
+  sendCommand(type: string, params: Record<string, unknown> = {}, timeout = CMD_TIMEOUT_MS, options?: SendCommandOptions): Promise<PiMessage> {
     return new Promise((resolve, reject) => {
       if (!this.proc || this._exited) {
         return reject(new Error('pi process is not running'))
@@ -735,6 +754,14 @@ export class RpcClient implements IPiEngine {
       // D6-④：崩溃取证「死前最后动作」。sendCommand 是全部 RPC 的唯一入口，
       // 记录点在 pending 注册前——即使进程在写 stdin 后立刻死亡，字段已就位。
       this.lastCommandType = type
+
+      // 出站 touch（idle-pi-reclamation D1）：sendCommand 是全部出站 RPC 的唯一咽喉。
+      // 唯一例外 = 维护通道（options.maintenance，如 promptReload 的 /__xyz_reload__——
+      // skill 目录变更会对全部活跃 session 触发，计入会让空闲时钟被周期性重置、回收
+      // 饿死且不体现为豁免命中）。touch 在状态检查后：进程已死时无空闲可言。
+      if (!options?.maintenance) {
+        this._lastActivityAt = Date.now()
+      }
 
       const timer = timeout > 0
         ? setTimeout(() => {
@@ -870,6 +897,25 @@ export class RpcClient implements IPiEngine {
     return this._exited
   }
 
+  /**
+   * 最近一次 pi 双向活动时刻（ms epoch，idle-pi-reclamation D1 空闲信号）。
+   * 只读暴露：消费方（reaper 判定）只读，刷新统一走 RpcClient 内部 touch 点与
+   * touchActivity()——写点集中可审计，防止空闲时钟被随意重置。
+   */
+  get lastActivityAt(): number {
+    return this._lastActivityAt
+  }
+
+  /**
+   * 手动刷新空闲时钟（idle-pi-reclamation D6-1）。调用方语义 = MessageDispatcher
+   * .sendPrompt 入口同步 touch：「prompt 已发出、插件 hook / restore 执行中」窗口内
+   * occupancy 尚未置 dispatching（markSessionActive 在两个 await 之后），靠此处刚
+   * touch 过的时间戳让回收判定不满足空闲阈值，by construction 关闭误回收窗口。
+   */
+  touchActivity(): void {
+    this._lastActivityAt = Date.now()
+  }
+
   // ── High-level API ────────────────────────────────────────────────
 
   /**
@@ -885,14 +931,16 @@ export class RpcClient implements IPiEngine {
    * images 为 undefined 或空数组时归一化为不传 images 键（避免 pi 收到空数组），
    * 走与改动前完全一致的路径，零回归。
    */
-  prompt(content: string, images?: Array<{ data: string; mimeType: string }>, streamingBehavior?: 'steer' | 'followUp'): Promise<PiMessage> {
+  prompt(content: string, images?: Array<{ data: string; mimeType: string }>, streamingBehavior?: 'steer' | 'followUp', options?: SendCommandOptions): Promise<PiMessage> {
     const piImages = images && images.length > 0
       ? images.map(i => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType }))
       : undefined
     const params: Record<string, unknown> = { message: content }
     if (piImages) params.images = piImages
     if (streamingBehavior) params.streamingBehavior = streamingBehavior
-    return this.sendCommand('prompt', params)
+    // options 透传（idle-pi-reclamation D1）：维护通道（promptReload 的 /__xyz_reload__）
+    // 经 prompt 的语义方法形态发起，maintenance 标记直达 sendCommand touch 排除。
+    return this.sendCommand('prompt', params, CMD_TIMEOUT_MS, options)
   }
 
   abort(): Promise<PiMessage> {
