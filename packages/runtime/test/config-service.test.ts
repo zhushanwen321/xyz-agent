@@ -524,3 +524,46 @@ describe('ConfigService · LLM retry 域（llmRetrySettings port）', () => {
     expect(setRetryConfig).toHaveBeenCalledWith(arg)
   })
 })
+
+// ── M2c：D3 链 5 接线（构造器注入 → listProviders 消费）────────────────────────
+// 「装配点真的传了」的落点 = ConfigService 构造器（组合根 index.ts 以第 6 参传入）与
+// listProviders 的透传。本组用真实 ConfigService 构造 + 真实 PiConfigStore，证明 resolver
+// 经构造器到达 listProvidersImpl 并真实参与凭据判定（而非只测「listProvidersImpl 注入了就生效」）。
+describe('M2c: ConfigService 构造器注入 providerCredentialResolver（D3 链 5 接线）', () => {
+  /** 假 resolver：仅暴露接口三方法（批量方法返回值可控，用于证明其输出被消费）。 */
+  function makeResolver(credentialIds: string[]) {
+    const listCredentialBackedProviderIds = vi.fn(() => new Set(credentialIds))
+    return {
+      resolver: {
+        hasProviderCredential: vi.fn(() => false),
+        listCredentialBackedProviderIds,
+        resolveProviderCredential: vi.fn(async () => undefined),
+      },
+      listCredentialBackedProviderIds,
+    }
+  }
+
+  it('注入后 listProviders 经 resolver 批量 sync 版判定凭据（调用 + 输出被消费）', () => {
+    // 该 provider 在 models.json 无 apiKey：status=connected 只能来自 resolver 的批量结果
+    writeModels({ providers: { 'custom-no-key': { name: 'NoKey', models: [{ id: 'm1' }] } } })
+    refreshModels()
+    const { resolver, listCredentialBackedProviderIds } = makeResolver(['custom-no-key'])
+    const svc = new ConfigService(tmpDir, configStore, undefined, undefined, undefined, resolver)
+
+    const providers = svc.listProviders()
+
+    expect(listCredentialBackedProviderIds).toHaveBeenCalledTimes(1)
+    expect(providers.find(p => p.id === 'custom-no-key')?.status).toBe('connected')
+    expect(providers.find(p => p.id === 'custom-no-key')?.apiKeySet).toBe(false)
+  })
+
+  it('对照：未注入（旧形态）→ 同一份数据不判 connected（差异证明接线生效）', () => {
+    writeModels({ providers: { 'custom-no-key': { name: 'NoKey', models: [{ id: 'm1' }] } } })
+    refreshModels()
+    const svc = new ConfigService(tmpDir, configStore)
+
+    const providers = svc.listProviders()
+
+    expect(providers.find(p => p.id === 'custom-no-key')?.status).toBe('not_configured')
+  })
+})

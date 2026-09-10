@@ -102,6 +102,7 @@ import {
   setTerminalConfig as setTerminalConfigImpl,
 } from './terminal-config-helper.js'
 import type { ILlmRetrySettings, LlmRetryConfigSnapshot } from './ports/llm-retry-settings.js'
+import type { IProviderCredentialResolver } from './ports/provider-credential-resolver.js'
 
 // ── Service ─────────────────────────────────────────────────────
 
@@ -134,6 +135,12 @@ export class ConfigService implements IConfigService {
      * （生产恒注入；既有测试不关心 retry 域可不传）。
      */
     private llmRetrySettings?: ILlmRetrySettings,
+    /**
+     * Provider 凭据解析唯一通道（D3 收口，链 5 消费点）：listProviders 的凭据判定经其批量
+     * sync 版单次取（auth.json ∪ models.json）。组合根（index.ts）构造时传入；未注入时
+     * listProviders 降级旧内联判定（仅 auth.json 集合）。
+     */
+    private providerCredentialResolver?: IProviderCredentialResolver,
   ) {}
 
   /**
@@ -161,7 +168,7 @@ export class ConfigService implements IConfigService {
   }
 
   listProviders(): ProviderInfo[] {
-    return listProvidersImpl(this.configStore, this.authStorage, this.providerExtrasStore)
+    return listProvidersImpl(this.configStore, this.authStorage, this.providerExtrasStore, this.providerCredentialResolver)
   }
 
   /**

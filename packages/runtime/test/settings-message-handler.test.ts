@@ -14,6 +14,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { SettingsMessageHandler } from '../src/transport/settings-message-handler.js'
+import { RuntimeServer } from '../src/transport/server.js'
+import { createMockSessionServiceClass } from './helpers/service-mocks.js'
+import type { ISessionService } from '../src/interfaces.js'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import {
   writeModels,
@@ -26,7 +29,7 @@ import { setSettingsPath, readSettings } from '../src/infra/pi/pi-settings-store
 const mkdtempP = promisify(mkdtemp)
 const rmP = promisify(rm)
 
-function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; deleteProvider?: ReturnType<typeof vi.fn>; toggleProviderEnabled?: ReturnType<typeof vi.fn>; removeProviderByKind?: ReturnType<typeof vi.fn>; getDefaultModel?: ReturnType<typeof vi.fn>; setDefaultModel?: ReturnType<typeof vi.fn>; listProviders?: ReturnType<typeof vi.fn>; applyImportProviders?: ReturnType<typeof vi.fn>; discover?: ReturnType<typeof vi.fn>; aggregate?: ReturnType<typeof vi.fn>; oauthLogin?: ReturnType<typeof vi.fn>; oauthCancel?: ReturnType<typeof vi.fn>; oauthLogout?: ReturnType<typeof vi.fn>; modifyScopedModels?: ReturnType<typeof vi.fn>; resolver?: unknown } = {}) {
+function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; deleteProvider?: ReturnType<typeof vi.fn>; toggleProviderEnabled?: ReturnType<typeof vi.fn>; removeProviderByKind?: ReturnType<typeof vi.fn>; getDefaultModel?: ReturnType<typeof vi.fn>; setDefaultModel?: ReturnType<typeof vi.fn>; listProviders?: ReturnType<typeof vi.fn>; applyImportProviders?: ReturnType<typeof vi.fn>; discover?: ReturnType<typeof vi.fn>; aggregate?: ReturnType<typeof vi.fn>; oauthLogin?: ReturnType<typeof vi.fn>; oauthCancel?: ReturnType<typeof vi.fn>; oauthLogout?: ReturnType<typeof vi.fn>; modifyScopedModels?: ReturnType<typeof vi.fn>; resolver?: unknown; testProviderConnections?: ReturnType<typeof vi.fn> } = {}) {
   const broadcasts: ServerMessage[] = []
   const replies: { id: string; type: string; payload: Record<string, unknown> }[] = []
   const sendErrorCalls: { code: string; message: string }[] = []
@@ -68,6 +71,8 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
     switchModel: vi.fn().mockResolvedValue('p1/m1'),
     setThinkingLevel: vi.fn().mockResolvedValue(undefined),
     discoverModelsFromApi: overrides.discover ?? vi.fn().mockResolvedValue([{ id: 'm1' }]),
+    // M3a test 模式编排面（可选交集）：缺省不装配——未注入时 handler 走 test_unavailable 防御分支
+    ...(overrides.testProviderConnections ? { testProviderConnections: overrides.testProviderConnections } : {}),
   }
   const skillRegistry = {
     getGlobalSkills: vi.fn().mockReturnValue([]),
@@ -296,6 +301,93 @@ describe('SettingsMessageHandler', () => {
       await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x', providerId: 'anthropic' }), WS)
       await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
       expect(ctx.modelService.discoverModelsFromApi).toHaveBeenCalledWith('http://x', undefined, undefined)
+    })
+  })
+
+  // ── M3a：mode === 'test' 分支（per-协议真实最小请求；缺省 discover 向后兼容）──
+  describe('discoverModels mode=test（per-协议真实连接测试）', () => {
+    it('mode=test → 走 testProviderConnections（不再走 GET /v1/models），reply results 原样', async () => {
+      const testProviderConnections = vi.fn().mockResolvedValue({
+        success: true,
+        results: [
+          { api: 'anthropic-messages', modelId: 'k3', ok: true },
+          { api: 'openai-completions', modelId: 'qwen3.8-flash', ok: false, error: 'http_error|401|unauthorized' },
+        ],
+      })
+      const { ctx, replies, handler } = makeHandler({ testProviderConnections })
+      await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: '', providerId: 'opencode-go', mode: 'test' }), WS)
+      await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
+      expect(ctx.modelService.discoverModelsFromApi).not.toHaveBeenCalled()
+      expect(replies[0].type).toBe('config.discoveredModels')
+      expect(replies[0].payload).toEqual({
+        models: [],
+        success: true,
+        results: [
+          { api: 'anthropic-messages', modelId: 'k3', ok: true },
+          { api: 'openai-completions', modelId: 'qwen3.8-flash', ok: false, error: 'http_error|401|unauthorized' },
+        ],
+      })
+    })
+
+    it('mode=test + providerId → 凭据经 resolver 唯一通道取（payload apiKey 被忽略）', async () => {
+      const resolver = { resolveProviderCredential: vi.fn().mockResolvedValue({ key: 'auth-key', source: 'auth.json' }) }
+      const testProviderConnections = vi.fn().mockResolvedValue({ success: true, results: [] })
+      const { ctx, handler } = makeHandler({ resolver, testProviderConnections })
+      await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: '', providerId: 'anthropic', apiKey: 'form-key', mode: 'test' }), WS)
+      await vi.waitFor(() => expect(testProviderConnections).toHaveBeenCalled())
+      expect(resolver.resolveProviderCredential).toHaveBeenCalledWith('anthropic')
+      // 第 1 参 providerId、第 2 参 = resolver 明文、第 3 参 = infra tester（组合点）
+      expect(testProviderConnections.mock.calls[0][0]).toBe('anthropic')
+      expect(testProviderConnections.mock.calls[0][1]).toBe('auth-key')
+      expect(typeof (testProviderConnections.mock.calls[0][2] as { test?: unknown }).test).toBe('function')
+      expect(ctx.modelService.discoverModelsFromApi).not.toHaveBeenCalled()
+    })
+
+    it('mode=test 缺 providerId → provider_not_found（不发任何请求）', async () => {
+      const testProviderConnections = vi.fn()
+      const { replies, handler } = makeHandler({ testProviderConnections })
+      await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: '', mode: 'test' }), WS)
+      expect(replies[0].payload).toEqual({ models: [], success: false, error: 'provider_not_found', results: [] })
+      expect(testProviderConnections).not.toHaveBeenCalled()
+    })
+
+    it('modelService 未装配 testProviderConnections → test_unavailable 防御分支', async () => {
+      const { replies, handler } = makeHandler()
+      await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: '', providerId: 'p1', mode: 'test' }), WS)
+      await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
+      expect(replies[0].payload).toMatchObject({ success: false, error: 'test_unavailable' })
+    })
+
+    it('以 ctx.modelService 为 this 调用编排面（真实实现方法体依赖 this.configService）', async () => {
+      let seenThis: unknown
+      const testProviderConnections = vi.fn(function (this: unknown) {
+        seenThis = this
+        return Promise.resolve({ success: true, results: [] })
+      })
+      const { ctx, replies, handler } = makeHandler({ testProviderConnections })
+      await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: '', providerId: 'p1', mode: 'test' }), WS)
+      await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
+      expect(seenThis).toBe(ctx.modelService)
+    })
+
+    it('mode 缺省 → 走既有 discover 路径（向后兼容：CLI / 旧调用方零改动）', async () => {
+      const testProviderConnections = vi.fn()
+      const discover = vi.fn().mockResolvedValue([{ id: 'm1' }])
+      const { ctx, replies, handler } = makeHandler({ discover, testProviderConnections })
+      await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x', apiKey: 'k' }), WS)
+      await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
+      expect(testProviderConnections).not.toHaveBeenCalled()
+      expect(ctx.modelService.discoverModelsFromApi).toHaveBeenCalledWith('http://x', 'k', undefined)
+      expect(replies[0].payload).toMatchObject({ success: true, models: [{ id: 'm1' }] })
+    })
+
+    it("mode='discover' 显式传入 → 同缺省（走 GET /v1/models）", async () => {
+      const testProviderConnections = vi.fn()
+      const { ctx, replies, handler } = makeHandler({ testProviderConnections })
+      await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x', apiKey: 'k', mode: 'discover' }), WS)
+      await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
+      expect(testProviderConnections).not.toHaveBeenCalled()
+      expect(ctx.modelService.discoverModelsFromApi).toHaveBeenCalledOnce()
     })
   })
 
@@ -732,6 +824,61 @@ describe('SettingsMessageHandler', () => {
 
       expect(written[0]).toEqual(['p/m1', 'p/m2', 'p/m3'])
       expect(replies[0]).toMatchObject({ type: 'config.scopedModels', payload: { scopedModels: ['p/m1', 'p/m2', 'p/m3'] } })
+    })
+  })
+})
+
+// ── M2c：D3 链 2 接线（RuntimeServer.setServices → handler ctx → resolver）────────────
+// 「装配点真的传了」的落点 = RuntimeServer.setServices 的 optional 对象（组合根 index.ts
+// 经此传入）与 assembleCoreHandlers 的 ctx 透传。本组不用手搓 ctx，而是经真实 RuntimeServer
+// 装配后取真实 handler——证明 resolver 沿 server 装配链路到达消费点，且 discover 真的用它
+// 取凭据（不再降级回 configService.getProvider 的 models.json 单源）。
+describe('M2c: RuntimeServer.setServices 透传 providerCredentialResolver（D3 链 2 装配点）', () => {
+  function assembleWithResolver() {
+    const MockSvc = createMockSessionServiceClass()
+    const sessionService = new MockSvc() as unknown as ISessionService
+    const resolveProviderCredential = vi.fn(async () => ({ key: 'resolved-by-resolver', source: 'auth.json' as const }))
+    const resolver = {
+      hasProviderCredential: vi.fn(() => true),
+      listCredentialBackedProviderIds: vi.fn(() => new Set<string>()),
+      resolveProviderCredential,
+    }
+    const discoverModelsFromApi = vi.fn(async () => [{ id: 'm1' }])
+    // 降级回查的诱饵：resolver 生效时不得被触碰
+    const getProvider = vi.fn(() => ({ apiKey: 'models-json-key' }))
+    const server = new RuntimeServer(0, '/tmp/m2c-server-wiring')
+    server.setServices(sessionService, { getProvider } as never, { discoverModelsFromApi } as never, {
+      providerCredentialResolver: resolver,
+    })
+    return { server, resolver, resolveProviderCredential, discoverModelsFromApi, getProvider }
+  }
+
+  it('server 装配的 handler ctx 持有同一 resolver 实例', () => {
+    const { server, resolver } = assembleWithResolver()
+    const handler = (server as unknown as { settingsHandler: SettingsMessageHandler }).settingsHandler
+    const ctx = (handler as unknown as { ctx: { providerCredentialResolver?: unknown } }).ctx
+
+    expect(ctx.providerCredentialResolver).toBe(resolver)
+  })
+
+  it('config.discoverModels 经该 resolver 取凭据（不落 models.json 降级回查），reply 走真实 broker', async () => {
+    const { server, resolveProviderCredential, discoverModelsFromApi, getProvider } = assembleWithResolver()
+    const handler = (server as unknown as { settingsHandler: SettingsMessageHandler }).settingsHandler
+    const ws = { readyState: 1, send: vi.fn() }
+
+    await handler.handleSettingsMessage(
+      msg('config.discoverModels', { baseUrl: 'https://api.example', providerId: 'p1' }),
+      ws as never,
+    )
+
+    await vi.waitFor(() => expect(discoverModelsFromApi).toHaveBeenCalledTimes(1))
+    expect(resolveProviderCredential).toHaveBeenCalledWith('p1')
+    expect(discoverModelsFromApi).toHaveBeenCalledWith('https://api.example', 'resolved-by-resolver', undefined)
+    expect(getProvider).not.toHaveBeenCalled()
+    expect(ws.send).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(ws.send.mock.calls[0]![0] as string)).toMatchObject({
+      type: 'config.discoveredModels',
+      payload: { success: true },
     })
   })
 })

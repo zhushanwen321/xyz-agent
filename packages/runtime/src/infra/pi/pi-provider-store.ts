@@ -7,14 +7,15 @@
  *（依赖 modelsStore 模块级缓存）+ barrel re-export 保 import 路径不变，行为/签名零变化。
  */
 
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
 // builtin provider catalog（QuickSetup 模板源）：sanitizeInvalidProviders 对 catalog 已知的
 // 空壳 provider 合并 models 修复而非删除（对齐 config-service 的 builtinModelsById 先例）。
 import builtinData from '../../generated/builtin-providers.json'
 import { deriveEnabled, getMergedCatalogModels, isCatalogProvider } from '../../services/provider-catalog.js'
+// 链 3（凭据读路径收口，D3）：infra 层只 type-only import 接口，不 value import 实现
+// （C-comm-03；实现在 services/auth，由组合根经模块级 init setter 注入）。
+import type { IProviderCredentialResolver } from '../../services/ports/provider-credential-resolver.js'
 import { JsonStore } from '../../utils/json-store.js'
-import { getModelsPath, getPiAgentDir } from './pi-paths.js'
+import { getModelsPath } from './pi-paths.js'
 // settings.json 的唯一读写层（D17 收口）：readSettings/updateSettingsFields/PiSettings/缓存/
 // 跨进程锁/原子写都收敛到 pi-settings-store，model 域（本文件）与 extension 域共享同一
 // 所有者 + 缓存 + 锁。
@@ -168,22 +169,23 @@ function pickFirstModelProvider(
 }
 
 /**
- * 读 auth.json 凭据表（catalog 兜底的凭据校验用）。
- * 文件不存在返回 {}；JSON 损坏返回 {} + warn（兜底是 best-effort，不因损坏阻断）。
- * 不依赖 AuthStorage 实例——本模块是纯函数读写层，无注入依赖。
+ * Provider 凭据解析唯一通道（D3 链 3 消费面）：模块级 init 注入（检查点 5 首选形态）。
+ *
+ * 为什么是模块级 setter 而非构造参数：本模块的消费点（findValidDefaultModel / getDefaultModel）
+ * 是模块级函数，调用方（rpc-client spawn / session 激活 / PiConfigStore 委托）到不了构造参数。
+ * 组合根（index.ts）在装配期调用 initProviderCredentialResolver，且**必须先于任何
+ * findValidDefaultModel 调用**——本模块在未注入时的降级是「视为无凭据」（安全、不抛错），
+ * 旧的私有裸读（直读 agentDir/auth.json）已随本单元删除——这正是要消灭的第 3 条解析链。
+ * resolver 构造无 IO、读取懒发生（auth.json 经 AuthStorage 同步原语 + models.json 经 configStore）。
  */
-function readAuthCredentials(): Record<string, unknown> {
-  const authPath = join(getPiAgentDir(), 'auth.json')
-  if (!existsSync(authPath)) return {}
-  try {
-    const raw = readFileSync(authPath, 'utf-8')
-    if (raw.trim() === '') return {}
-    const parsed = JSON.parse(raw)
-    return parsed && typeof parsed === 'object' ? parsed : {}
-  } catch (cause) {
-    console.warn(`[provider-store] auth.json 损坏: ${authPath}`, cause)
-    return {}
-  }
+let credentialResolver: IProviderCredentialResolver | undefined
+
+/**
+ * 注入凭据 resolver（生产 = 组合根装配期调用；测试可传 undefined 清空注入，用于断言
+ * 「未注入 → 视为无凭据」的安全降级行为与装配序契约）。
+ */
+export function initProviderCredentialResolver(resolver: IProviderCredentialResolver | undefined): void {
+  credentialResolver = resolver
 }
 
 /**
@@ -279,6 +281,23 @@ export function removeProvider(providerId: string): {
   return outcome
 }
 
+/**
+ * 清除 provider 的 models.json apiKey（I9 both 清理②：OAuth 授权成功后清另一种凭据）。
+ *
+ * 语义契约（纯删键 RMW）：条目存在且含 apiKey 键时，以「去掉 apiKey 的 rest」重新 upsert——
+ * 盘上结果是键被删除，**绝不写空串**（空串是 pi schema 违规值：minLength:1，会让 pi 拒绝
+ * 整个 models.json）。models 未参与本次更新时 upsertProvider 的 default 校验自动跳过。
+ *
+ * 从组合根闭包提取为具名函数：index.ts 不可 import（import 即执行 main()），提取后 I9
+ * 清理②的落盘语义（删键而非空串）可在单测中直接断言。
+ */
+export function clearProviderApiKey(providerId: string): void {
+  const existing = getProviderConfig(providerId)
+  if (!existing || !('apiKey' in existing)) return
+  const { apiKey: _removed, ...rest } = existing
+  upsertProvider(providerId, rest)
+}
+
 export function getAllModels(): Array<PiModelDefinition & { providerId: string }> {
   const result: Array<PiModelDefinition & { providerId: string }> = []
   const models = readModels()
@@ -345,13 +364,13 @@ function adjudicateOverrideDefault(
 function adjudicateCatalogOnlyDefault(
   defaultProvider: string,
   defaultModel: string,
-  models: PiModelsConfig,
   isEnabled: boolean,
 ): { result: { provider: ProviderId; modelId: string } | null; wasFixed: boolean } | null {
   const mergedCatalog = getMergedCatalogModels(defaultProvider)
   if (!mergedCatalog || mergedCatalog.models.length === 0) return null
-  const authCredentials = readAuthCredentials()
-  const hasCredential = defaultProvider in authCredentials || !!models.providers[defaultProvider]?.apiKey
+  // 链 3（D3 收口）：凭据判定经唯一通道 sync 布尔版（auth.json → models.json 双源），
+  // 未注入 resolver 时视为无凭据（安全降级：不抛错、不误选，装配序由组合根保证）。
+  const hasCredential = credentialResolver?.hasProviderCredential(defaultProvider) ?? false
   if (!hasCredential || !isEnabled) return null
   // D5 态 3（never-seen）：pass-through——不判定有效性、不触发 auto-fix、不改写
   // settings.json，`--model` 直传 pi 由执行侧解析（模型确实不存在时 pi 报
@@ -377,18 +396,20 @@ function adjudicateCatalogOnlyDefault(
  * wasFixed=false：兜底是临时展示，不是配置修复——写回 settings.json 会污染用户配置
  * （曾踩坑：兜底结果经 updateSettingsFields 覆盖用户默认 provider，见 2026-08-09 回归）。
  */
-function pickCredentialBackedCatalogProvider(models: PiModelsConfig): {
+function pickCredentialBackedCatalogProvider(): {
   result: { provider: ProviderId; modelId: string } | null
   wasFixed: boolean
-} {
-  const authCredentials = readAuthCredentials()
+} { // eslint-disable-line indent -- standard TS function signature with multi-line return type
   const builtinProviders = (builtinData.providers ?? []) as Array<{
     id: string
     models?: Array<{ id: string }>
   }>
+  // 链 3（D3 收口）：遍历 39 个 builtin 候选用**批量形态**——auth.json / models.json 各单次
+  // 读盘（B3 先例：消除 N+1；逐个 hasProviderCredential 会对 auth.json 做 N 次同步读）。
+  // 未注入 resolver 时视为无凭据（安全降级：不抛错、不误选）。
+  const credentialBackedIds = credentialResolver?.listCredentialBackedProviderIds() ?? new Set<string>()
   for (const bp of builtinProviders) {
-    const hasCredential =
-      bp.id in authCredentials || !!models.providers[bp.id]?.apiKey
+    const hasCredential = credentialBackedIds.has(bp.id)
     // ES3：被 enabledModels 禁用的 catalog provider 不作 default 候选（避免返回用户已禁用的 provider）。
     // deriveEnabled 复用 listProviders 的启用判定（DM3），保持「可用 provider」语义一致。
     if (hasCredential && deriveEnabled(bp.id, getEnabledModels()) && bp.models && bp.models.length > 0) {
@@ -424,7 +445,7 @@ export function findValidDefaultModel(): {
     if (!providerConfig?.models?.length) {
       // D3 修复：auth.json-only catalog provider（OAuth 形态）无 models.json 条目时，
       // 校验 defaultModel ∈ 该 provider 的有效模型集，通过则不 fallback 不写回。
-      const catalogOnlyOutcome = adjudicateCatalogOnlyDefault(defaultProvider, defaultModel, models, isEnabled)
+      const catalogOnlyOutcome = adjudicateCatalogOnlyDefault(defaultProvider, defaultModel, isEnabled)
       if (catalogOnlyOutcome) return catalogOnlyOutcome
       console.warn(`[provider-store] defaultProvider "${defaultProvider}" not found in models.json`)
     }
@@ -436,7 +457,7 @@ export function findValidDefaultModel(): {
     return { result: { provider: fallback.provider, modelId: fallback.modelId }, wasFixed: true }
   }
 
-  return pickCredentialBackedCatalogProvider(models)
+  return pickCredentialBackedCatalogProvider()
 }
 
 /**
@@ -492,10 +513,16 @@ export function setDefaultThinkingLevel(level: string): void {
  * 快照 catalog 索引（provider id → 快照 models），仅剩 sanitizeInvalidProviders 空壳
  * 修复在用（MF-5）。
  *
- * 为什么修复路径不用合并视图（D4）：MF-6 守卫要求 catalog models 每个模型都有真实
- * baseUrl，而 overlay 条目归一化时 baseUrl 缺省填 ''（远程目录不保证该字段）——混入
- * 合并视图会让 every(m => !!m.baseUrl) 误判，provider 从「合并 models 修复」退化成
- * 「删除」，用户数据丢失。修复的数据源必须是编译期快照（构建期权威）。
+ * 为什么修复路径不用合并视图（D4；[D7 前提更新]）：修复是**写盘动作**，其输入必须是
+ * 与运行期缓存状态无关的确定性数据源——MF-6 守卫要求 catalog models 每个模型都有真实
+ * baseUrl（every(m => !!m.baseUrl)），编译期快照（构建期权威）满足该要求；合并视图不满足：
+ * overlay never-seen/expired 时它退化为快照、fresh 时混入远程模型，修复名单随运行期缓存
+ * 漂移（同一份 models.json 在不同启动时刻可能得到「修复」与「删除」两种处置），用户数据
+ * 丢失风险正来自这种不确定性。故修复数据源固定为编译期快照。
+ *
+ * [HISTORICAL] 本注释原论证前提是「overlay 条目归一化时 baseUrl 缺省填 ''，混入合并视图会
+ * 让 every(!!baseUrl) 误判」——该前提随设计 D7（overlayToCatalogModel 不再产空串）失效。
+ * 判据换成「数据源的确定性 + 构建期权威」，不依赖 overlay 会不会填空串这一会漂移的细节。
  *
  * 默认模型有效性判定（upsertProvider / findValidDefaultModel）已改走
  * getMergedCatalogModels 合并视图单点（D4/D5），不再消费本索引。

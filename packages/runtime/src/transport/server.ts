@@ -60,6 +60,7 @@ import type { ImportService } from '../services/session/import-service.js'
 import type { GenStatsService } from '../services/session/gen-stats-service.js'
 import type { ITerminalService } from '../services/ports/terminal-service.js'
 import type { QuotaService } from '../services/quota-service.js'
+import type { IProviderCredentialResolver } from '../services/ports/provider-credential-resolver.js'
 import { UsageStatsService } from '../services/usage/usage-stats-service.js'
 import type { PresetService } from '../services/preset-service.js'
 import { toErrorMessage } from '../utils/errors.js'
@@ -82,6 +83,12 @@ export interface RuntimeServerOptionalServices {
   handoff?: HandoffService
   preset?: PresetService
   auth?: IAuthService
+  /**
+   * Provider 凭据解析唯一通道（D3 收口，链 2 消费点）。
+   * 组合根（index.ts）经本 optional 对象注入，assembleCoreHandlers 透传给
+   * SettingsMessageHandler ctx；未注入时 handler 降级旧行为（仅 models.json apiKey）。
+   */
+  providerCredentialResolver?: IProviderCredentialResolver
   project?: ProjectStore
   delivery?: SessionDeliveryRegistry
   /** 导入 pi 会话服务（import-session D5/U2）：session.importCandidates / session.import 路由依赖。可选：未注入时该 case 报 unsupported。 */
@@ -256,7 +263,7 @@ export class RuntimeServer implements IMessageBroker {
 
   /** 核心 handler 批：bridge / settings / session / extension / plugin（无条件装配）。 */
   private assembleCoreHandlers(messaging: MessageHandlerContext, optional: RuntimeServerOptionalServices): void {
-    const { auth } = optional
+    const { auth, providerCredentialResolver } = optional
     // 第二参注入 extensionTimeoutMgr：marker 通道（method 恒 'select'）识别出的 bridge
     // 请求由 BridgeHandler 入口登记进 bridgeRequestIds（impl-plan 偏差 #5——生产装配点
     // 必须传，否则前端误发 ui_response 的拦截依据丢失）。
@@ -267,6 +274,8 @@ export class RuntimeServer implements IMessageBroker {
       sessionService: this.sessionService,
       modelService: this.modelService,
       authService: auth ?? noopAuthService,
+      // D3 链 2（M2c 接线）：discover 凭据回查经组合根注入的唯一通道（未注入时 handler 降级）。
+      providerCredentialResolver,
       // W4：skillRegistry 必须注入（settings-handler 的 config.getGlobalSkills/getProjectSkills 依赖）。
       // 组合根 index.ts 保证传入；此处断言非空（setServices 编排保证）。若未来 skillRegistry 可选，handler 需守卫。
       skillRegistry: this.skillRegistry!,

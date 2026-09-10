@@ -7,6 +7,8 @@ import { fanOutSettled } from './services/session/agent-settled-fanout.js'
 import { ConfigService } from './services/config-service.js'
 import { AuthService } from './services/auth/auth-service.js'
 import { AuthStorage } from './services/auth/auth-storage.js'
+import { ProviderCredentialResolver } from './services/auth/provider-credential-resolver.js'
+import type { IProviderCredentialResolver } from './services/ports/provider-credential-resolver.js'
 import { PresetService } from './services/preset-service.js'
 import { ModelService } from './services/model-service.js'
 
@@ -16,7 +18,7 @@ import { initLogger, closeLogger } from './infra/logger.js'
 import { isContainedStreamError } from './infra/system/uncaught-policy.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
-import { migrateToPiSubdir, getProviderConfig, upsertProvider, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
+import { migrateToPiSubdir, getProviderConfig, clearProviderApiKey, initProviderCredentialResolver, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
 import { getExtensionsDir, getNpmDir, getTmpDir, getProviderExtrasPath } from './infra/pi/pi-paths.js'
 import { getPiGlobalAgentDir } from './infra/pi/pi-maintenance.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
@@ -260,8 +262,23 @@ async function main(): Promise<void> {
   // AuthStorage（OAuth 路径 B）：auth.json 在 pi agent 目录（与 models.json 同路径，与 pi 读取侧一致）。
   // ConfigService 用它做 I9 清理①（setProvider 保存 apiKey 时清 auth.json oauth）+ I8（deleteProvider 清 auth.json）。
   const authStorage = new AuthStorage(join(configStore.getPiAgentDir(), 'auth.json'))
+  // D3 链 3 接线（M2c）：凭据解析唯一通道实例 + 模块级 init 注入（检查点 5 首选形态——
+  // pi-provider-store 的消费点是模块级函数，构造参数到不了）。
+  // 装配序契约：本行位于上方全部迁移/清洗之后、**全部 service 装配与 server.start 之前**，
+  // 因此严格早于任何 findValidDefaultModel 调用（默认模型裁定只发生在 server.start 之后的
+  // pi spawn / session 激活 / RPC 处理与启动后台初始化里）。resolver 构造无 IO、读取懒发生。
+  // authService 在下方才构造（它依赖 configService 与 clearApiKey），此处经闭包延迟引用：
+  // resolver 的 sync 腿只碰 authStorage，async 腿（resolveProviderCredential）只在
+  // server.start 之后消费，届时 authService 已就绪。
+  const providerCredentialResolver: IProviderCredentialResolver = new ProviderCredentialResolver({
+    authService: { getCredential: (providerId: string) => authService.getCredential(providerId) },
+    authStorage,
+    configStore,
+  })
+  initProviderCredentialResolver(providerCredentialResolver)
   // providerExtrasStore 注入：setProvider 的 authMethod 改写 providers.json（A1-5 写侧切换）。
-  const configService = new ConfigService(effectiveRoot, configStore, authStorage, providerExtrasStore, llmRetrySettings)
+  // providerCredentialResolver（D3 链 5 接线）：listProviders 的凭据判定经唯一通道批量 sync 版。
+  const configService = new ConfigService(effectiveRoot, configStore, authStorage, providerExtrasStore, llmRetrySettings, providerCredentialResolver)
   // ADR-0021 §1 一次性迁移：旧版本 skill 路径存在 settings.json.skills，
   // 首启用时提升为 discovery.json SSOT。幂等：discovery 已有数据则 no-op。
   // D8-1 位置判断（perf W29，06 §5 m-7 结论）：保持 listen 前同步执行——
@@ -547,12 +564,10 @@ async function main(): Promise<void> {
     getOAuthConfig: (providerId) => configService.listBuiltinProviders().find(p => p.id === providerId)?.oauthConfig,
     broadcast: (msg) => server.broadcast(msg),
     nextPushId: () => server.nextPushId(),
-    clearApiKey: (providerId) => {
-      const existing = getProviderConfig(providerId)
-      if (!existing || !('apiKey' in existing)) return
-      const { apiKey: _removed, ...rest } = existing
-      upsertProvider(providerId, rest)
-    },
+    // I9 清理②：OAuth 授权成功后清除 models.json apiKey（both provider 切换凭据源，防冲突）。
+    // 语义 = 纯删键 RMW（不写空串）——实现提取到 pi-provider-store.clearProviderApiKey
+    // 以便落盘断言（本文件不可 import：import 即执行 main()）。
+    clearApiKey: clearProviderApiKey,
   })
   // A1-4 收口：auth.json 写入唯一入口 = AuthService.saveCredential。AuthService 依赖
   // configService（getOAuthConfig），构造在 configService 之后——setter 回填（回填前无
@@ -704,6 +719,8 @@ async function main(): Promise<void> {
     providerExists: (providerId) => configService.listProviders().some(p => p.id === providerId),
     getAuthCredential: (providerId) => authService.getCredential(providerId),
     getProviderConfig: (providerId) => configStore.getProviderConfig(providerId),
+    // D3 链 1 接线（M2c）：api-key 形态的 provider 凭据经唯一通道（secrets 专属 key 段保留在前）。
+    providerCredentialResolver,
   })
 
   const tServicesReady = performance.now()
@@ -722,6 +739,8 @@ async function main(): Promise<void> {
     preset: presetService,
     auth: authService,
     project: projectStore,
+    // D3 链 2 接线（M2c）：settingsHandler ctx 的 discover 凭据回查经唯一通道。
+    providerCredentialResolver,
     // sd-u5：sessionId 单例注册表（上方 createSessionDeliveryRegistry 装配）。
     // 缺席时 server 构造退化实例并 warn（违反单例约束，仅测试装配遗漏场景）。
     delivery: sessionDelivery,

@@ -7,12 +7,14 @@
  * 可解析的 provider（auth.json credential / models.json apiKey），
  * wasFixed=false 不写回。
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { findValidDefaultModel, setModelsPath, sanitizeInvalidProviders } from '../pi-provider-store.js'
+import { findValidDefaultModel, initProviderCredentialResolver, clearProviderApiKey, readModels, getProviderConfig, setModelsPath, sanitizeInvalidProviders } from '../pi-provider-store.js'
 import { setSettingsPath, invalidateSettingsCache } from '../pi-settings-store.js'
+import { ProviderCredentialResolver } from '../../../services/auth/provider-credential-resolver.js'
+import { AuthStorage } from '../../../services/auth/auth-storage.js'
 
 let dir: string
 let agentDir: string
@@ -37,17 +39,32 @@ function writeAuth(credentials: Record<string, unknown>): void {
   writeFileSync(join(agentDir, 'auth.json'), JSON.stringify(credentials, null, 2))
 }
 
+/**
+ * 注入链 3 的生产形态 resolver（M2c）：auth.json 经真实 AuthStorage（无缓存，写文件后
+ * 立即可读），models.json 经本模块 readModels/getProviderConfig（与消费点共享同一缓存）。
+ * 自 M2c 起 findValidDefaultModel 的凭据判定只走注入的 resolver——原私有裸读（直读 auth.json）
+ * 已删除，未注入时 resolver 缺失 → 视为无凭据（安全降级）。
+ */
+function initResolver(): void {
+  initProviderCredentialResolver(new ProviderCredentialResolver({
+    authService: { getCredential: async () => undefined },
+    authStorage: new AuthStorage(join(agentDir, 'auth.json')),
+    configStore: { readModels, getProviderConfig },
+  }))
+}
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'provider-store-'))
   agentDir = realAgentDir()
   mkdirSync(agentDir, { recursive: true })
-  // readAuthCredentials 经 getPiAgentDir() 实时读 env；models/settings 经 setPath 注入
+  // auth.json 经注入的 AuthStorage（路径 = agentDir/auth.json）；models/settings 经 setPath 注入
   process.env.XYZ_AGENT_DATA_DIR = dir
   setModelsPath(join(agentDir, 'models.json'))
   setSettingsPath(join(agentDir, 'settings.json'))
   invalidateSettingsCache()
-  // 清空 auth.json（readAuthCredentials 直接读 agentDir/auth.json）
+  // 清空 auth.json 并注入 resolver（生产组合根 init 装配的等价形态）
   writeAuth({})
+  initResolver()
 })
 
 afterEach(() => {
@@ -108,6 +125,72 @@ describe('findValidDefaultModel catalog 兜底（凭据校验）', () => {
     writeFileSync(join(agentDir, 'auth.json'), '{ not valid json')
     const r = findValidDefaultModel()
     expect(r.result).toBeNull()
+  })
+})
+
+// ══ M2c 链 3（D3）：凭据判定经注入 resolver sync 版 + clearProviderApiKey 落盘语义 ══════
+describe('M2c 链 3：catalog 凭据判定经注入 resolver（无私有裸读）', () => {
+  it('catalog 兜底遍历经 resolver 批量 sync 版判定（单次调用，spy），判定结果决定候选', () => {
+    writeModels({})
+    const hasProviderCredential = vi.fn(() => true)
+    const listCredentialBackedProviderIds = vi.fn(() => new Set(['openai']))
+    initProviderCredentialResolver({
+      hasProviderCredential,
+      listCredentialBackedProviderIds,
+      resolveProviderCredential: async () => undefined,
+    })
+
+    const r = findValidDefaultModel()
+
+    // 批量形态单次调用（39 个 builtin 候选不做 N 次读盘）
+    expect(listCredentialBackedProviderIds).toHaveBeenCalledTimes(1)
+    expect(r.result?.provider).toBe('openai')
+    // resolver 的批量输出是唯一凭据来源——逐个 hasProviderCredential 不在遍历路径上
+    expect(hasProviderCredential).not.toHaveBeenCalled()
+  })
+
+  it('同一数据下 resolver 批量结果为空 → 返回 null（凭据判定唯一来源是 resolver，不走内联裸读）', () => {
+    writeModels({})
+    // auth.json 文件里明明有凭据：若仍存在旧的内联裸读，此用例会选出 provider 而非 null
+    writeAuth({ openai: { type: 'api_key', key: 'ko' } })
+    initProviderCredentialResolver({
+      hasProviderCredential: () => false,
+      listCredentialBackedProviderIds: () => new Set<string>(),
+      resolveProviderCredential: async () => undefined,
+    })
+
+    expect(findValidDefaultModel().result).toBeNull()
+  })
+})
+
+describe('M2c clearProviderApiKey（I9 清理②）：纯删键 RMW，不写空串', () => {
+  const modelsPath = (): string => join(agentDir, 'models.json')
+
+  it('条目含 apiKey → 键被删除（盘上无 apiKey 键、无空串值），其余字段原样', () => {
+    writeModels({ p1: { name: 'P1', apiKey: 'sk-live', enabled: true, models: [{ id: 'm1' }] } })
+
+    clearProviderApiKey('p1')
+
+    const raw = JSON.parse(readFileSync(modelsPath(), 'utf-8')) as { providers: Record<string, Record<string, unknown>> }
+    expect(raw.providers.p1).not.toHaveProperty('apiKey')
+    expect(raw.providers.p1.name).toBe('P1')
+    expect(raw.providers.p1.models).toEqual([{ id: 'm1' }])
+    const text = readFileSync(modelsPath(), 'utf-8')
+    expect(text).not.toContain('"apiKey"')
+    // 空串是 pi schema 违规值（拒载整个 models.json）——清除语义绝不落空串
+    expect(text).not.toMatch(/:\s*""/)
+  })
+
+  it('条目不存在 / 条目无 apiKey 键 → no-op 不写盘（逐字节 + mtime 不变）', () => {
+    writeModels({ p1: { name: 'P1', models: [{ id: 'm1' }] } })
+    const before = readFileSync(modelsPath(), 'utf-8')
+    const mtimeBefore = statSync(modelsPath()).mtimeMs
+
+    clearProviderApiKey('p1')
+    clearProviderApiKey('missing-provider')
+
+    expect(readFileSync(modelsPath(), 'utf-8')).toBe(before)
+    expect(statSync(modelsPath()).mtimeMs).toBe(mtimeBefore)
   })
 })
 

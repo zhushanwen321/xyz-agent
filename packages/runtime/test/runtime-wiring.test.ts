@@ -19,9 +19,18 @@
  * 运行：cd packages/runtime && npx vitest run test/runtime-wiring.test.ts
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { ServerMessage, ClientMessage } from '@xyz-agent/shared'
 
 import { SessionService } from '../src/services/session/session-service.js'
+import { AuthStorage } from '../src/services/auth/auth-storage.js'
+import { AuthService } from '../src/services/auth/auth-service.js'
+import { ProviderCredentialResolver } from '../src/services/auth/provider-credential-resolver.js'
+import { QuotaService } from '../src/services/quota-service.js'
+import { XyzProviderStore } from '../src/services/provider-extras-store.js'
 import { SessionMessageHandler } from '../src/transport/session-message-handler.js'
 import { ConnectionManager } from '../src/transport/connection-manager.js'
 import type { MessageBus } from '../src/services/message-bus/message-bus.js'
@@ -457,5 +466,124 @@ describe('wave:runtime-wiring · TC9 ClientMessageMap subscribe/unsubscribe payl
     }
     expect(msg.type).toBe('session.unsubscribe')
     expect(msg.payload.sessionId).toBe('s1')
+  })
+})
+
+// ───────────────────────────────────────────────────────────────────
+// M2c：D3 组合根接线（index.ts / pi-provider-store.ts 源码级断言）
+//
+// index.ts 不可 import（模块顶层 `main().catch(...)` 即执行，会起真实进程/监听端口），
+// 故组合根装配接线只能做源码级断言；它与行为断言互补——行为断言证明「消费点注入后生效」，
+// 本组证明「组合根/传输层真的把 resolver 传到了那些消费点」，以及装配序（init 先于任何
+// findValidDefaultModel 触发点）。pi-provider-store 的 readAuthCredentials 已删除，
+// 此处同时锁定该裸读不会回归。
+// ───────────────────────────────────────────────────────────────────
+describe('M2c: 组合根 providerCredentialResolver 装配接线（源码级 + quota 近端到端）', () => {
+  const readSource = (relPath: string): string =>
+    readFileSync(fileURLToPath(new URL(relPath, import.meta.url)), 'utf-8')
+
+  const indexSource = readSource('../src/index.ts')
+  const providerStoreSource = readSource('../src/infra/pi/pi-provider-store.ts')
+
+  it('index.ts 装配 ProviderCredentialResolver 三依赖（authService / authStorage / configStore）', () => {
+    const idx = indexSource.indexOf('new ProviderCredentialResolver({')
+    expect(idx).toBeGreaterThan(-1)
+    const block = indexSource.slice(idx, indexSource.indexOf('})', idx))
+    expect(block).toContain('authService')
+    expect(block).toContain('authStorage')
+    expect(block).toContain('configStore')
+  })
+
+  it('装配序：init 注入先于任何 findValidDefaultModel 触发点（服务构造 / server.start / 后台初始化）', () => {
+    const initIdx = indexSource.indexOf('initProviderCredentialResolver(providerCredentialResolver)')
+    expect(initIdx).toBeGreaterThan(-1)
+    for (const later of [
+      'new ConfigService(',
+      'new SessionService(',
+      'new AuthService(',
+      'new QuotaService(',
+      'await server.start()',
+      'runStartupBackgroundInit(',
+    ]) {
+      const laterIdx = indexSource.indexOf(later)
+      expect(laterIdx, `index.ts 缺少 ${later}`).toBeGreaterThan(-1)
+      expect(initIdx, `init 必须早于 ${later}`).toBeLessThan(laterIdx)
+    }
+  })
+
+  it('三处消费点装配均收到 resolver：ConfigService 构造 / QuotaService options / server.setServices optional', () => {
+    // ① ConfigService：组合根第 6 参
+    const configLine = indexSource.split('\n').find(l => l.includes('new ConfigService('))
+    expect(configLine).toContain('providerCredentialResolver')
+
+    // ② QuotaService options
+    const quotaStart = indexSource.indexOf('new QuotaService({')
+    expect(quotaStart).toBeGreaterThan(-1)
+    expect(indexSource.slice(quotaStart, indexSource.indexOf('const tServicesReady', quotaStart))).toContain('providerCredentialResolver')
+
+    // ③ server.setServices optional 对象（链 2 经此进 SettingsMessageHandler ctx）
+    const setServicesStart = indexSource.indexOf('server.setServices(')
+    expect(setServicesStart).toBeGreaterThan(-1)
+    expect(indexSource.slice(setServicesStart, indexSource.indexOf('// Graceful shutdown', setServicesStart))).toContain('providerCredentialResolver')
+  })
+
+  it('clearApiKey（I9 清理②）接到纯删键实现 clearProviderApiKey', () => {
+    expect(indexSource).toContain('clearApiKey: clearProviderApiKey')
+  })
+
+  it('链 3 私有裸读 readAuthCredentials 已不存在（防回归：不得再出现裸读 auth.json）', () => {
+    expect(providerStoreSource).not.toContain('readAuthCredentials')
+    // 消费点改经注入的 resolver：单 provider 判定用 sync 布尔版 + 候选遍历用批量版（消除 N+1）
+    expect(providerStoreSource).toContain('credentialResolver?.hasProviderCredential(')
+    expect(providerStoreSource).toContain('credentialResolver?.listCredentialBackedProviderIds(')
+  })
+
+  it('QuotaService 消费点（生产装配形态）：api-key 凭据经注入 resolver 解析并真实用于请求', async () => {
+    // 近端到端：按组合根 index.ts 的装配形态构造真实 ProviderCredentialResolver
+    // （auth.json 经真实 AuthStorage）+ 真实 QuotaService，驱动 refresh 走 getCredential 链。
+    const quotaDir = mkdtempSync(join(tmpdir(), 'm2c-quota-'))
+    const authPath = join(quotaDir, 'auth.json')
+    writeFileSync(authPath, JSON.stringify({ 'zai-coding-cn': { type: 'api_key', key: 'k-from-auth-json' } }))
+    const authStorage = new AuthStorage(authPath)
+    // 生产形态：resolver 的 auth.json 明文腿经 AuthService.getCredential（index.ts 同款装配）
+    const authService = new AuthService({
+      authStorage,
+      getOAuthConfig: () => undefined,
+      broadcast: () => {},
+      nextPushId: () => '1',
+      clearApiKey: () => {},
+    })
+    const resolver = new ProviderCredentialResolver({
+      authService,
+      authStorage,
+      configStore: { readModels: () => ({ providers: {} }), getProviderConfig: () => undefined } as never,
+    })
+    const resolveSpy = vi.spyOn(resolver, 'resolveProviderCredential')
+    const extrasStore = new XyzProviderStore(join(quotaDir, 'config', 'providers.json'))
+    await extrasStore.modify('zai-coding-cn', () => ({ quota: { fetcher: 'zhipu', enabled: true } }))
+    const fetchMock = vi.fn(async (_url: string, _init: { headers: Record<string, string> }) =>
+      new Response(JSON.stringify({
+        success: true,
+        data: { level: 'Max', limits: [{ type: 'TOKENS_LIMIT', percentage: 40 }] },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const svc = new QuotaService({
+        dataDir: quotaDir,
+        providerExtrasStore: extrasStore,
+        getProviderInfo: (id) => (id === 'zai-coding-cn' ? { name: id, quota: { fetcher: 'zhipu' } } : undefined),
+        providerCredentialResolver: resolver,
+      })
+
+      await svc.refresh('zai-coding-cn')
+
+      // 凭据链经 resolver（而非旧内联 auth.json/models.json 链）
+      expect(resolveSpy).toHaveBeenCalledWith('zai-coding-cn')
+      // 且解析出的 key 真实进入请求头（zhipu 裸 authorization，无 Bearer 前缀）
+      expect(new Headers(fetchMock.mock.calls[0]![1].headers).get('authorization')).toBe('k-from-auth-json')
+    } finally {
+      vi.unstubAllGlobals()
+      rmSync(quotaDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+    }
   })
 })
