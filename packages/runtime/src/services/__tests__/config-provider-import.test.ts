@@ -384,8 +384,11 @@ describe('T10: previewImport 端到端（真实 parseProviders + 真实 Pi fixtu
 // applyImport（内置模板补全）→ 真实 upsertProvider 写临时 models.json。
 // 验收标准：
 //   1. 孤儿凭据（auth.json 有、models.json 无的 openai）→ preview 组 2（builtinTemplateMatched）
-//   2. apply 后临时 models.json 出现 openai：含 name/api/baseUrl/apiKey，**models 数组 undefined**（B4 铁律）
-//   3. 脱敏红线：preview 载荷无明文 key
+//   2. [D1④ 契约变更] credentialWriter 未注入时 catalog 孤儿凭据**不写 models.json**——
+//      旧实现用内置模板（tpl.api/tpl.baseUrl = 快照 artifact）+ oc.apiKey 落盘，是 artifact
+//      捏造 + M5-01 同族 apiKey 错位写；现返回 failed 并引导用户经 UI 配置凭据
+//      （imported 状态语义只对真实落盘成立）。组 1 的非 catalog provider 照常落盘（对照）。
+//   3. 脱敏红线：preview 载荷无明文 key；models.json 亦无该明文 key
 
 describe('T11: 孤儿凭据端到端（sa3 F1 · B.3/B.4/B.6）', () => {
   let prevHome: string | undefined
@@ -421,7 +424,7 @@ describe('T11: 孤儿凭据端到端（sa3 F1 · B.3/B.4/B.6）', () => {
     rmSync(fakeHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
-  it('孤儿凭据 auth.json → preview 组 2 → apply → models.json 出现 openai（name/api/baseUrl/apiKey，models undefined）', async () => {
+  it('孤儿凭据 auth.json → preview 组 2 → catalog 无 credentialWriter → failed，且不写模板 artifact/apiKey 进 models.json（D1④）', async () => {
     const out = previewImport('pi')
     if (!('importId' in out)) throw new Error('preview should succeed')
 
@@ -439,20 +442,24 @@ describe('T11: 孤儿凭据端到端（sa3 F1 · B.3/B.4/B.6）', () => {
     // apply：组 1（zhipu/deepseek-router）+ 组 2（openai）一起导入
     const applyOut = await applyImport(out.importId, ['zhipu', 'deepseek-router', 'openai'])
     if (!('result' in applyOut)) throw new Error('apply should succeed')
-    const openaiResult = applyOut.result.imported.find((i) => i.id === 'openai')!
-    expect(openaiResult.status).toBe('imported')
 
-    // 真实 models.json 落盘验证（B4 铁律）
-    const written = JSON.parse(readFileSync(fakeModelsPath, 'utf8'))
-    const openaiCfg = written.providers.openai
-    expect(openaiCfg).toBeDefined()
-    expect(openaiCfg.name).toBe('OpenAI')
-    expect(openaiCfg.api).toBe('openai-responses')
-    expect(openaiCfg.baseUrl).toBe('https://api.openai.com/v1')
-    expect(openaiCfg.apiKey).toBe('sk-orphan-e2e-openai')
-    // B4 铁律：models 数组 undefined（内置 model 由 pi catalog 自动加载）
-    expect('models' in openaiCfg).toBe(false)
-    // 组 1 provider 不受影响
+    // 设计 D1④：catalog provider 定义来自 pi 内置 catalog、凭据只允许落 auth.json（0600）
+    // ——credentialWriter 未注入时无处安放，宁丢不写错位：不再有「写模板进 models.json」的
+    // 降级（tpl.api/tpl.baseUrl 是快照 artifact，oc.apiKey 落 models.json 是 M5-01 同族错位写），
+    // 返回 failed 并给出可操作的指引（经 UI 配置凭据）。
+    const openaiResult = applyOut.result.imported.find((i) => i.id === 'openai')!
+    expect(openaiResult.status).toBe('failed')
+    expect(openaiResult.reason).toContain('credential writer')
+
+    // 真实 models.json 落盘验证：catalog 孤儿凭据不产生任何条目（无 artifact、无 apiKey 错位写）
+    const raw = readFileSync(fakeModelsPath, 'utf8')
+    const written = JSON.parse(raw)
+    expect(written.providers.openai).toBeUndefined()
+    // 明文 key 绝不进 models.json（与 auth.json 凭据归属一致）
+    expect(raw).not.toContain('sk-orphan-e2e-openai')
+
+    // 组 1 非 catalog provider 不受影响：照常落盘（对照，证明 failed 只针对 catalog 降级分支）
     expect(written.providers.zhipu).toBeDefined()
+    expect(written.providers['deepseek-router']).toBeDefined()
   })
 })

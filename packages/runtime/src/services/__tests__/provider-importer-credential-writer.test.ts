@@ -142,18 +142,46 @@ describe('组 2：孤儿凭据（catalog providerId）经 credentialWriter 落 a
     expect(out.result.failedCount).toBe(0)
   })
 
-  it('credentialWriter 未注入 → 回退现有行为：写 models.json 模板（不调 saveCredential）', async () => {
+  it('组 1 catalog provider 未注入 credentialWriter → 源端 provider 级 api/baseUrl/apiKey 不落 models.json（D1④）', async () => {
+    // 设计 D1④：catalog 定义来自 pi 内置 catalog、凭据只允许落 auth.json——无写入通道时
+    // 不再有「写模板进 models.json」的降级。防线载体以 source='import' + kind='catalog'
+    // 剥除源端 provider 级 api/baseUrl（不产生隐形网关），apiKey 亦不写（宁丢不写错位）。
+    const importId = createPreview('pi', [{
+      _sourceName: 'openai',
+      _apiKeyExtracted: true,
+      _credentialType: 'plaintext',
+      _warnings: [],
+      name: 'OpenAI',
+      api: 'openai-responses',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-openai-xyz',
+      models: [{ id: 'm1' }],
+    } as unknown as ParsedProvider])
+    const out = await applyImport(importId, ['openai'])
+    if (!('result' in out)) throw new Error('apply should succeed')
+
+    expect(mockedUpsertProvider).toHaveBeenCalledTimes(1)
+    const [, config] = mockedUpsertProvider.mock.calls[0]
+    expect(config).not.toHaveProperty('api')
+    expect(config).not.toHaveProperty('baseUrl')
+    expect(config).not.toHaveProperty('apiKey')
+    // override models 仍原样落盘（用户侧模型覆盖是合法内容）
+    expect(config.models).toEqual([{ id: 'm1' }])
+    expect(out.result.imported[0]).toMatchObject({ id: 'openai', status: 'imported' })
+  })
+
+  it('catalog 孤儿凭据未注入 credentialWriter → 条目 failed，不写 models.json 模板/apiKey（D1④）', async () => {
     const importId = createPreview('pi', [], [makeOrphan('anthropic', 'sk-ant-orphan-key')])
     const out = await applyImport(importId, ['anthropic'])
     if (!('result' in out)) throw new Error('apply should succeed')
 
-    expect(mockedUpsertProvider).toHaveBeenCalledWith('anthropic', expect.objectContaining({
-      api: expect.any(String),
-      baseUrl: expect.any(String),
-      apiKey: 'sk-ant-orphan-key',
-    }))
-    expect(out.result.imported).toEqual([
-      { id: 'anthropic', name: 'anthropic', status: 'imported' },
-    ])
+    // 不再有「写模板进 models.json」的降级：tpl.api/tpl.baseUrl（快照 artifact）与
+    // config.apiKey（M5-01 同族错位写）都不落盘；imported 语义只对真实落盘成立，故报 failed
+    // 并引导用户经 UI 配置凭据。
+    expect(mockedUpsertProvider).not.toHaveBeenCalled()
+    const item = out.result.imported[0]
+    expect(item).toMatchObject({ id: 'anthropic', status: 'failed' })
+    expect(item.reason).toContain('credential writer')
+    expect(out.result.failedCount).toBe(1)
   })
 })

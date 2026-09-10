@@ -207,13 +207,30 @@ async function main(): Promise<void> {
   // providers.json。迁移失败不阻塞启动（warn + 下次重试，幂等），失败语义收在
   // run-extras-migration.ts 薄包装（返回值契约由其单测守卫）。
   const extrasMigration = await runProviderExtrasMigration(configStore, providerExtrasStore)
-  // 剔除 models.json 里的空壳 provider（五字段全缺）：空壳导致 bundled pi 0.80.3 严格校验时
-  // 整个 models.json 加载失败（Model not found）。系统 pi 0.83 容错但 bundled 不容错，
-  // 重装后必现。sanitize 让 xyz-agent 自愈这种脏数据（如外部脚本写入的测试 fixture）。
+  // 清洗 models.json：① 空串键剥除（pi minLength:1 全集）+ ② catalog 条目的 provider 级键处置
+  // （api 一律剥除 / baseUrl 按 extras 网关标记）→ 再做既有空壳判定/修复（设计 D2 顺序契约）。
+  // 历史背景：空壳 provider（五字段全缺）导致 bundled pi 0.80.3 严格校验时整个 models.json
+  // 加载失败（Model not found）。系统 pi 0.83 容错但 bundled 不容错，重装后必现；
+  // sanitize 让 xyz-agent 自愈这种脏数据（如外部脚本写入的测试 fixture）。
   // 仅迁移成功后执行（失败时寄生数据未出 models.json，sanitize 会物理删除空壳条目致
   // 寄生数据永久丢失，round 1 review DG#3；门控返回值语义由 run-extras-migration.test.ts 守卫）。
   if (extrasMigration.ok) {
-    sanitizeInvalidProviders()
+    // 标记读取经注入的同步原语（C-comm-03：infra/pi 层不 import services 实现，设计 D2 审查 R3-3）。
+    const sanitizeOutcome = sanitizeInvalidProviders({
+      getExtrasSync: (providerId) => providerExtrasStore.getExtrasSync(providerId),
+    })
+    // D2② 写读错位自愈（写序契约「先写 extras 标记、后写 models.json」的崩溃中间态 =
+    // 标记在、models.json 无 baseUrl 键）：清多余标记。锁内写在本 async 阶段执行，
+    // 不塞进同步清洗段。标记已被并发清除时短路不调 modify（modify 无内容 diff 守卫，
+    // 避免无谓写盘）。
+    for (const providerId of sanitizeOutcome.staleGatewayMarkers) {
+      if (providerExtrasStore.getExtrasSync(providerId)?.gatewayBaseUrl === undefined) continue
+      await providerExtrasStore.modify(providerId, current => {
+        const next = { ...current }
+        delete next.gatewayBaseUrl
+        return next
+      })
+    }
   }
 
   const sessionStore = new PiSessionStore()
