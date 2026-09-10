@@ -12,6 +12,7 @@
  */
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, ServerMessage, SkillCacheScope } from '@xyz-agent/shared'
+import { OUTBOUND_FRAME_WARN_BYTES, OUTBOUND_FRAME_TRUNCATE_BYTES } from '@xyz-agent/shared'
 import type { SessionManagerAction } from '@xyz-agent/extension-protocol'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService, IAuthService } from '../interfaces.js'
 
@@ -88,6 +89,12 @@ export interface RuntimeServerOptionalServices {
   importService?: ImportService
   /** 生成指标服务（composer-gen-stats D4）：session.getGenStats 恢复腿路由依赖。可选：未注入时该 case 报 unsupported。 */
   genStats?: GenStatsService
+  /**
+   * reply 通路出站守卫的 session 文件路径解析器（u8 与 push 通路对称接线：push 经
+   * MessageBus 构造注入，reply 经 broker 构造注入，组合根两处共用同一 resolver 实例）。
+   * 可选：未注入时 reply 超限占位文案退化为「（见 runtime 日志）」，阈值仍用默认常量。
+   */
+  replyGuardResolver?: (sessionId: string) => string | null | undefined
 }
 
 export class RuntimeServer implements IMessageBroker {
@@ -178,7 +185,7 @@ export class RuntimeServer implements IMessageBroker {
    */
   setServices(session: ISessionService, config: IConfigService, model: IModelService, optional: RuntimeServerOptionalServices = {}): void {
     this.assignServices(session, config, model, optional)
-    this.createBroker(optional.appInfo)
+    this.createBroker(optional.appInfo, optional.replyGuardResolver)
     this.assembleHandlers(optional)
     this.routes = this.buildRoutes()
   }
@@ -217,7 +224,10 @@ export class RuntimeServer implements IMessageBroker {
   }
 
   /** 阶段 2：broker 构造（依赖 services + 连接池，appInfo 缺省 unknown 占位）。 */
-  private createBroker(appInfo: RuntimeServerOptionalServices['appInfo']): void {
+  private createBroker(
+    appInfo: RuntimeServerOptionalServices['appInfo'],
+    replyGuardResolver?: RuntimeServerOptionalServices['replyGuardResolver'],
+  ): void {
     this.broker = new ServerMessageBroker(this.conn, {
       sessionService: this.sessionService,
       configService: this.configService,
@@ -226,7 +236,13 @@ export class RuntimeServer implements IMessageBroker {
       extensionService: this.extensionService,
       projectRoot: this.projectRoot,
       appInfo: appInfo ?? { appVersion: 'unknown', piVersion: 'unknown' },
-    })
+    // u8 对称接线：resolver 存在时传第三参（阈值仍用默认常量）；缺省时不传（broker 构造
+    // 默认值——阈值同为默认常量、resolver 为 undefined），测试默认行为不变。
+    }, replyGuardResolver !== undefined ? {
+      warnBytes: OUTBOUND_FRAME_WARN_BYTES,
+      truncateBytes: OUTBOUND_FRAME_TRUNCATE_BYTES,
+      resolveSessionFilePath: replyGuardResolver,
+    } : undefined)
   }
 
   /** 阶段 3：handler 组装——messaging 共享实现 + 核心/可选/SessionManager 三批，构造顺序不变。 */

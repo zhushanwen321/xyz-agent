@@ -27,6 +27,12 @@ import { WS_OPEN } from './connection-manager.js'
 export interface ReplyGuardOptions {
   warnBytes: number
   truncateBytes: number
+  /**
+   * 组合根注入的 session 文件路径解析（reply 超限错误 envelope 恢复指引用）——与
+   * OutboundFrameGuardOptions.resolveSessionFilePath 同名同语义（push 通路对称接线）。
+   * 未注入时占位文案退化为「（见 runtime 日志）」。
+   */
+  resolveSessionFilePath?: (sessionId: string) => string | null | undefined
 }
 
 /** broker 访问连接池的最小契约（由 ConnectionManager 实现：clients Set）。 */
@@ -175,6 +181,7 @@ export class ServerMessageBroker implements IMessageBroker {
       this.sendError(ws, 'payload_too_large', formatReplyOversizeMessage(bytes, sid, {
         warnBytes: this.replyGuard.warnBytes,
         truncateBytes: this.replyGuard.truncateBytes,
+        resolveSessionFilePath: this.replyGuard.resolveSessionFilePath,
       }), id, sid !== undefined ? { sessionId: sid } : undefined)
       return
     }

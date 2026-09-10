@@ -39,12 +39,13 @@ export interface OutboundFrameGuardOptions {
   /**
    * sessionId → session JSONL 文件路径（占位文案恢复指引用）。解析失败/未注入时占位文案
    * 退化为「（见 runtime 日志）」。实现抛错被守卫吞掉（返回 null 语义），不打断消息流转。
-   * 组合根接线点：MessageBus 构造第二参（当前组合根未注入，生产走占位——见 deviations）。
+   * 组合根接线点：push 通路 = MessageBus 构造第二参；reply 通路 = server.setServices 的
+   * replyGuardResolver（ServerMessageBroker replyGuard）——index.ts 两通路共用同一 resolver。
    */
   resolveSessionFilePath?: (sessionId: string) => string | null | undefined
 }
 
-/** 生产默认：shared 常量（u-foundation SSOT），无路径解析器（占位「见 runtime 日志」）。 */
+/** 生产默认阈值：shared 常量（u-foundation SSOT）；不含 resolver（生产由组合根注入，见上）。 */
 export const DEFAULT_OUTBOUND_FRAME_GUARD_OPTIONS: OutboundFrameGuardOptions = {
   warnBytes: OUTBOUND_FRAME_WARN_BYTES,
   truncateBytes: OUTBOUND_FRAME_TRUNCATE_BYTES,

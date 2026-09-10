@@ -220,19 +220,21 @@ async function main(): Promise<void> {
   // 回调经 setMessageBus 拿到引用，setServices 装配 sessionHandler 时读 server.messageBus。
   // 默认 ring 容量 1000（bus-core DEFAULT_RING_CAPACITY，D4 决策）。
   //
-  // u8 接线（实施计划偏差表 D1 移交项，u4a-outbound-guard 遗留）：第二参注入
-  // resolveSessionFilePath（OutboundFrameGuardOptions 的占位文案路径解析注入点）——出站帧
-  // 超限截断的占位文案（formatTruncationNote）从「（见 runtime 日志）」升级为携带 session
-  // 文件实路径（错误规格表「出站 reply/push 超 32MB」两行的恢复指引）。闭包引用
-  // sessionService 声明在下方（createAdapter/completionBackflow 同款「先声明后构造、
-  // 调用时恒就绪」模式——publish 仅发生在 server.start 后，构造期无调用窗口）。解析链：
-  // 活跃 session 直读内存 sessionFilePath；否则扫盘（findScannedSession）兜底冷 session。
-  // 实现抛错被守卫吞掉退化为 null 占位（resolvePathSafe，不打断消息流转）。
+  // u8 接线（实施计划偏差表 D1 移交项，u4a-outbound-guard 遗留）：push 通路（MessageBus
+  // 第二参）与 reply 通路（下方 server.setServices 的 replyGuardResolver）共用同一
+  // resolver 实例——出站帧超限的占位文案（formatTruncationNote / formatReplyOversizeMessage）
+  // 从「（见 runtime 日志）」升级为携带 session 文件实路径（错误规格表「出站 reply/push 超
+  // 32MB」两行的恢复指引）。闭包引用 sessionService 声明在下方（createAdapter/
+  // completionBackflow 同款「先声明后构造、调用时恒就绪」模式——publish/reply 仅发生在
+  // server.start 后，构造期无调用窗口）。解析链：活跃 session 直读内存 sessionFilePath；
+  // 否则扫盘（findScannedSession）兜底冷 session。实现抛错被守卫吞掉退化为 null 占位
+  // （resolvePathSafe，不打断消息流转）。
+  const resolveSessionFilePath = (sessionId: string): string | null | undefined =>
+    sessionService.getSession(sessionId)?.sessionFilePath ?? sessionService.findScannedSession(sessionId)?.filePath
+  // 首参缺省 = DEFAULT_RING_CAPACITY（1000）。D1（u8）：resolver 见上方 const（两通路共用）；
+  // resolver 抛错被 resolvePathSafe 吞掉退化为「（见 runtime 日志）」占位，不打断消息流转。
   const messageBus = new MessageBus(undefined, { ...DEFAULT_OUTBOUND_FRAME_GUARD_OPTIONS,
-    // 首参缺省 = DEFAULT_RING_CAPACITY（1000）。D1（u8）：解析链 = 活跃 session 直读内存
-    // sessionFilePath，冷 session 扫盘兜底；resolver 抛错被 resolvePathSafe 吞掉退化为
-    // 「（见 runtime 日志）」占位，不打断消息流转。
-    resolveSessionFilePath: (sessionId: string): string | null | undefined => sessionService.getSession(sessionId)?.sessionFilePath ?? sessionService.findScannedSession(sessionId)?.filePath })
+    resolveSessionFilePath })
   server.setMessageBus(messageBus)
 
   // ── Phase 1: create all service instances (no cross-service deps at construction time) ──
@@ -764,6 +766,9 @@ async function main(): Promise<void> {
     importService,
     // composer-gen-stats（D4）：session.getGenStats 恢复腿 RPC（降级链 + 写 3 回填在 service 内部）。
     genStats: genStatsService,
+    // u8（reply 通路对称接线）：reply 超限错误 envelope 的恢复指引携带 session 文件实路径，
+    // 与上方 MessageBus（push 通路）共用同一 resolveSessionFilePath resolver 实例。
+    replyGuardResolver: resolveSessionFilePath,
   })
 
   // Graceful shutdown on signals

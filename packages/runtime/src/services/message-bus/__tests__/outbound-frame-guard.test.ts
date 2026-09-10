@@ -477,6 +477,37 @@ describe('ServerMessageBroker.reply 出站守卫', () => {
     expect(warnSpy).toHaveBeenCalledOnce()
   })
 
+  it('reply 超限 + 注入 resolver → 错误 envelope message 含 resolver 解析的 session 文件实路径（u8 两通路接线对称）', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const ws = makeWsClient()
+    const broker = new ServerMessageBroker({ clients: new Set([ws]) }, mockServices, {
+      warnBytes: 1024,
+      truncateBytes: 4096,
+      resolveSessionFilePath: (sid) => (sid === 's1' ? '/data/pi/agent/sessions/x/1_s1.jsonl' : null),
+    })
+
+    broker.reply(ws, 'req-50', 'message.error', { sessionId: 's1', message: 'x'.repeat(5000) })
+
+    expect(wsSent(ws)).toHaveLength(1)
+    const sent = JSON.parse(wsSent(ws)[0][0] as string) as { payload: { code: string; message: string } }
+    expect(sent.payload.code).toBe('payload_too_large')
+    expect(sent.payload.message).toContain('/data/pi/agent/sessions/x/1_s1.jsonl')
+    expect(sent.payload.message).not.toContain('（见 runtime 日志）')
+  })
+
+  it('reply 超限 + 未注入 resolver（默认）→ message 退化为「（见 runtime 日志）」占位（回归保护）', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const ws = makeWsClient()
+    const broker = new ServerMessageBroker({ clients: new Set([ws]) }, mockServices, { warnBytes: 1024, truncateBytes: 4096 })
+
+    broker.reply(ws, 'req-51', 'message.error', { sessionId: 's1', message: 'x'.repeat(5000) })
+
+    expect(wsSent(ws)).toHaveLength(1)
+    const sent = JSON.parse(wsSent(ws)[0][0] as string) as { payload: { code: string; message: string } }
+    expect(sent.payload.code).toBe('payload_too_large')
+    expect(sent.payload.message).toContain('（见 runtime 日志）')
+  })
+
   it('reply 介于告警/截断档之间 → warn 日志但原样送达；小 reply 零日志零改动', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const ws = makeWsClient()
