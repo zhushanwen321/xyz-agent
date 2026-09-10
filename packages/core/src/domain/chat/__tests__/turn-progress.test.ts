@@ -9,6 +9,8 @@
  * - ask_user pending 豁免（D6 豁免态 + u4 验收②）：超阈值不出警示、分型 awaitingUser
  * - turn 结束（occupancy → idle）展示消失 + 记忆复位（设计：展示自动消失，reload
  *   天然无残留——纯本地派生无持久化）
+ * - 切 session 分区记忆以 turn 锚守门（F-U1）：后台 turn 已更替 → 切入重落基线不虚高；
+ *   同 turn 切回 → 字符累计与计时基线保留
  *
  * 运行：cd packages/core && npx vitest run src/domain/chat/__tests__/turn-progress.test.ts
  */
@@ -183,6 +185,59 @@ describe('turn-progress 结构事件边界驱动（u4 验收②）', () => {
     await nextTick()
     expect(sut.snapshot.value?.active).toBe(true)
     expect(sut.snapshot.value?.turnElapsedMs).toBe(25_000)
+    scope.stop()
+  })
+
+  it('双活跃切换：目标 turn 已在后台更替（user 开新 turn），切入重落基线不虚高（F-U1①）', async () => {
+    const { scope, store, sut, sid } = makeEnv()
+    // B（s-other）先有被观测的 turn1（分区留下 b1 记忆）
+    sid.value = 's-other'
+    startTurnEvents(store, 's-other', 'b1')
+    await nextTick()
+    // 切入活跃 A：双活跃（B 转后台继续）
+    sid.value = SID
+    startTurnEvents(store, SID, 'a1')
+    await nextTick()
+    vi.advanceTimersByTime(30_000)
+    // 后台：B turn1 收口 + user 消息开启 turn2（观测者在 A——B 的帧不触发边沿，分区记忆滞留 b1）
+    store.setOccupancy('s-other', { turn: 'idle', compacting: false, bash: false })
+    store.appendUser('s-other', [{ type: 'text', text: 'q2' }])
+    vi.advanceTimersByTime(10_000)
+    startTurnEvents(store, 's-other', 'b2') // b2.timestamp = t=40s（turn2 真实起点）
+    vi.advanceTimersByTime(2_000) // t=42s，turn2 已跑 2s
+    // 切入 B：锚失配（b1 ≠ 当前末组首条 b2）→ 重落基线；elapsed ≈ 2s 而非从 b1 记忆（t=0）虚高
+    sid.value = 's-other'
+    await nextTick()
+    expect(sut.snapshot.value?.active).toBe(true)
+    expect(sut.snapshot.value?.turnElapsedMs).toBe(2_000)
+    expect(sut.snapshot.value?.generatedChars).toBe(0)
+    scope.stop()
+  })
+
+  it('turn 内多条 assistant 消息（text→toolCall→text）：切走再切回，字符累计与计时保留（F-U1②）', async () => {
+    const { scope, store, sut, sid } = makeEnv()
+    startTurnEvents(store, SID, 'a1')
+    store.applyMessageEvent(SID, { type: 'message.text_delta', payload: { sessionId: SID, delta: 'hello' } })
+    await nextTick()
+    expect(sut.snapshot.value?.generatedChars).toBe(5)
+    vi.advanceTimersByTime(10_000)
+    // 切到 idle session（prev 为非活跃源——锚方案前此路径无条件 startTurn，累计被重置丢失）
+    sid.value = 's-other'
+    await nextTick()
+    expect(sut.snapshot.value).toBeNull()
+    vi.advanceTimersByTime(5_000)
+    // 切回：同 turn（锚未变）→ 前段累计与计时基线保留
+    sid.value = SID
+    await nextTick()
+    expect(sut.snapshot.value?.generatedChars).toBe(5)
+    expect(sut.snapshot.value?.turnElapsedMs).toBe(15_000)
+    // turn 内第二条 assistant（后续段）整条计入，前段不丢
+    store.applyMessageEvent(SID, { type: 'message.message_start', payload: { sessionId: SID, messageId: 'a2' } })
+    store.applyMessageEvent(SID, { type: 'message.text_delta', payload: { sessionId: SID, delta: 'world!' } })
+    await nextTick()
+    expect(sut.snapshot.value?.generatedChars).toBe(11)
+    // 计时基线不因 turn 内新 assistant 消息重置（仍从 a1 事件点起算）
+    expect(sut.snapshot.value?.turnElapsedMs).toBe(15_000)
     scope.stop()
   })
 })

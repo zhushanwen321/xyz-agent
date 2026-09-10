@@ -21,12 +21,19 @@
  * 纯本地派生无持久化——reload 后天然无残留（设计 §3.3 D6 方案一定性）。
  *
  * per-session 隔离：ADR-0049 Map 分区范式（useSessionScopedState），分区存跨帧记忆
- * （turnStartedAt / 字符累计基线 / snooze 标记），切 session 保留、切回延续计时。
+ * （turnStartedAt / turn 锚 / 字符累计基线 / snooze 标记），切 session 保留、切回延续计时。
+ * 记忆消费以 turn 锚守门（锚 = 记忆 turn 的首条 assistant 消息 id，与 message-turns SSOT
+ * 分组的当前末组首条 assistant 比对）：锚匹配（同 turn 切回）→ 延续计时与字符累计；
+ * turn 已在后台更替（锚失配）→ 重落基线（startTurn），elapsed 不从陈旧记忆虚高。
+ * 残余窗口：锚失配但新 turn 尚无 assistant 消息（dispatching 空窗切入）——新 turn 真实
+ * 起点不可观测，基线暂取末位 assistant（属上一 turn）timestamp 偏虚高，message_start
+ * 事件到达即重落自纠（快路径短路下同）。
  */
 import { onScopeDispose, ref, watch, reactive } from 'vue'
 import type { Ref } from 'vue'
 import { normalizeContent } from '@xyz-agent/shared'
 import type { Message } from '@xyz-agent/shared'
+import { groupTurns } from './message-turns'
 import { useSessionScopedState } from '../../foundation/use-session-scoped-state'
 
 /** 展示刷新间隔默认值：1s（任务原文「timer 用 setInterval 秒级刷新展示」）。 */
@@ -86,6 +93,12 @@ export interface UseTurnProgressOptions {
 interface TurnPartitionState {
   /** turn-start 边沿时刻（ms）。cold-start（挂载时已活跃）用末位 assistant timestamp 兜底。 */
   turnStartedAt: number | null
+  /**
+   * turn 锚：记忆 turn 的首条 assistant 消息 id（startTurn 落锚）。消费记忆前与
+   * message-turns SSOT 分组的当前末组首条 assistant 比对——失配 = turn 已更替，
+   * 记忆整体作废重落（防陈旧 elapsed 虚高 / 字符错账）。
+   */
+  turnAnchorId: string | null
   /** 字符增量累计基线：最近观测的 assistant 消息 id（id 变化 = 新消息整条计入）。 */
   lastAssistantId: string | null
   /** 字符增量累计基线：该消息上次观测长度（同 id 只累计正向差值，权威覆盖回退不计负）。 */
@@ -97,7 +110,14 @@ interface TurnPartitionState {
 }
 
 function createEmptyPartition(): TurnPartitionState {
-  return reactive({ turnStartedAt: null, lastAssistantId: null, lastAssistantLen: 0, generatedChars: 0, snoozed: false })
+  return reactive({
+    turnStartedAt: null,
+    turnAnchorId: null,
+    lastAssistantId: null,
+    lastAssistantLen: 0,
+    generatedChars: 0,
+    snoozed: false,
+  })
 }
 
 /** 从尾向前找最后一条 assistant 消息（delta 只发生在末位 assistant 上，实际近 O(1)）。 */
@@ -112,6 +132,29 @@ function findLastAssistantMessage(messages: Message[] | undefined): Message | un
 /** 消息内容字符长度（content 是 string | Segment[] 联合，normalizeContent 归一）。 */
 function messageTextLength(m: Message): number {
   return normalizeContent(m.content).length
+}
+
+/**
+ * 当前 turn 锚：message-turns SSOT 分组（v2 边界规则——user / 隐藏完成通知 / 可见 system
+ * 开新组）末组的首条 assistant 消息 id；无 assistant 归组（dispatching 空窗 / 无消息）= null。
+ * 分组纯函数 O(n)，仅在锚校验慢路径与 startTurn 落锚时调用（见 turnAnchorMatches 快路径）。
+ */
+function currentTurnAnchorId(messages: Message[] | undefined): string | null {
+  if (!messages || messages.length === 0) return null
+  const turns = groupTurns(messages)
+  return turns[turns.length - 1]?.assistants[0]?.id ?? null
+}
+
+/**
+ * 分区记忆是否仍指向当前 turn（F-U1：startTurn 重落判据——①后台 turn 更替锚失配 → 重落，
+ * ②同 turn 切回锚相同 → 保留累计）。
+ * 快路径：末位 assistant 自上次观测（lastAssistantId 由 accumulateChars 持续跟进）未变
+ * → 无新 assistant 落地，末组首条不可能更替（无 assistant 填实的尾随边界不产出/不改末组
+ * ——空 turn 折叠），O(1) 短路热路径；否则走 SSOT 分组精确比对。
+ */
+function turnAnchorMatches(messages: Message[] | undefined, part: TurnPartitionState): boolean {
+  if (findLastAssistantMessage(messages)?.id === part.lastAssistantId) return true
+  return currentTurnAnchorId(messages) === part.turnAnchorId
 }
 
 /**
@@ -162,6 +205,7 @@ export function useTurnProgress(
     // 分区字段整体复位（保留 Map 条目——下一 turn 边沿复用，避免增删扰动 version）。
     const part = currentPartition()
     part.turnStartedAt = null
+    part.turnAnchorId = null
     part.lastAssistantId = null
     part.lastAssistantLen = 0
     part.generatedChars = 0
@@ -172,7 +216,7 @@ export function useTurnProgress(
     }
   }
 
-  /** turn-start 边沿 / cold-start（挂载时已活跃）：落计时基线 + 字符基线。 */
+  /** turn-start 边沿 / cold-start（挂载时已活跃）/ 锚失配重落：落计时基线 + 字符基线 + turn 锚。 */
   function startTurn(messages: Message[] | undefined): void {
     // 计时基线优先取末位 assistant timestamp（message_start effect 写入的墙钟——
     // 比 watch 触发时刻更贴近 message_start(assistant) 事件点）；无消息（dispatching
@@ -180,6 +224,7 @@ export function useTurnProgress(
     const last = findLastAssistantMessage(messages)
     const part = currentPartition()
     part.turnStartedAt = last?.timestamp ?? now()
+    part.turnAnchorId = currentTurnAnchorId(messages)
     part.lastAssistantId = last?.id ?? null
     part.lastAssistantLen = last ? messageTextLength(last) : 0
     // cold-start 时正在流式的消息已产出部分计入（事实陈述）；正常边沿 message_start
@@ -226,7 +271,11 @@ export function useTurnProgress(
       finishTurn(sid)
       return
     }
-    const last = findLastAssistantMessage(chat.getMessages(sid))
+    const messages = chat.getMessages(sid)
+    // 锚失配兜底（F-U1，防御性同款校验——常态走 turnAnchorMatches 快路径短路）：
+    // 记忆 turn 与当前 turn 不一致时重落，tick 快照不从陈旧基线取值。
+    if (!turnAnchorMatches(messages, part)) startTurn(messages)
+    const last = findLastAssistantMessage(messages)
     const runningTools = last?.toolCalls?.filter((t) => t.status === 'running') ?? []
     const tool = runningTools.length > 0 ? runningTools[runningTools.length - 1] : undefined
     const nowMs = now()
@@ -276,7 +325,12 @@ export function useTurnProgress(
       return
     }
     const part = currentPartition()
-    if (!wasActive || part.turnStartedAt === null) startTurn(next.messages)
+    // 记忆消费守门（F-U1 turn 锚）：无记忆（新 turn / 首次观测）或锚失配（后台期间 turn
+    // 已更替）→ 重落基线；锚匹配（含同 turn 切回——prev 是另一 session 的快照，wasActive
+    // 无法判「同一 turn」）→ 保留计时基线与字符累计。
+    if (part.turnStartedAt === null || !turnAnchorMatches(next.messages, part)) {
+      startTurn(next.messages)
+    }
     accumulateChars(next.messages)
     ensureTicking()
     tick()
