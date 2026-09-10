@@ -14,9 +14,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { runStartupBackgroundInit } from './startup-background-init.js'
+import { runStartupBackgroundInit, resolveReclaimConfig } from './startup-background-init.js'
 import { getMigrationGate } from './session/session-lifecycle.js'
 import { getSessionsDir, getPiAgentDir } from '../infra/pi/pi-paths.js'
+import {
+  XYZ_RUNTIME_PI_RECLAIM_IDLE_MS,
+  XYZ_RUNTIME_PI_RECLAIM_TICK_MS,
+  XYZ_RUNTIME_PI_RECLAIM_VIEWED_WINDOW_MS,
+  DEFAULT_PI_RECLAIM_IDLE_MS,
+  DEFAULT_PI_RECLAIM_TICK_MS,
+  DEFAULT_PI_RECLAIM_VIEWED_WINDOW_MS,
+} from '@xyz-agent/shared'
 import type { ExtensionService } from './extension-service.js'
 import type { ProcessManager } from '../infra/pi/process-manager.js'
 import type { SkillRegistry } from './skill-registry.js'
@@ -239,5 +247,73 @@ describe('先 listen 后初始化（D8-1，index.ts 源码顺序断言）', () =
     expect(startCall).toBeGreaterThan(-1)
     expect(initCall).toBeGreaterThan(-1)
     expect(initCall).toBeGreaterThan(startCall)
+  })
+})
+
+describe('⑩ 空闲 pi 回收 reaper 挂载（idle-pi-reclamation D4，u3b）', () => {
+  it('传入 startIdleReaper 时在序列中被调用恰一次', async () => {
+    const { deps } = makeDeps()
+    const startIdleReaper = vi.fn()
+    await runStartupBackgroundInit({ ...deps, startIdleReaper })
+    expect(startIdleReaper).toHaveBeenCalledTimes(1)
+    expect(startIdleReaper).toHaveBeenCalledWith()
+  })
+
+  it('未传 startIdleReaper 时跳过且其余步骤不受影响（序列正常完成）', async () => {
+    const { deps, extensionService, pluginService } = makeDeps()
+    await expect(runStartupBackgroundInit(deps)).resolves.toBeUndefined()
+    expect(extensionService.migrateBuiltinExtensions).toHaveBeenCalled()
+    expect(pluginService.initialize).toHaveBeenCalled()
+  })
+
+  it('startIdleReaper 抛错被挂载点 catch 消化，不阻塞序列（fire-and-forget 形态）', async () => {
+    const { deps, pluginService } = makeDeps()
+    const startIdleReaper = vi.fn(() => { throw new Error('reaper start boom') })
+    await expect(runStartupBackgroundInit({ ...deps, startIdleReaper })).resolves.toBeUndefined()
+    expect(startIdleReaper).toHaveBeenCalledTimes(1)
+    expect(pluginService.initialize).toHaveBeenCalled()
+  })
+})
+
+describe('resolveReclaimConfig（idle-pi-reclamation D4 env 覆盖解析）', () => {
+  it('env 全缺失时返回 shared 默认三旋钮', () => {
+    expect(resolveReclaimConfig({})).toEqual({
+      idleThresholdMs: DEFAULT_PI_RECLAIM_IDLE_MS,
+      tickIntervalMs: DEFAULT_PI_RECLAIM_TICK_MS,
+      viewedWindowMs: DEFAULT_PI_RECLAIM_VIEWED_WINDOW_MS,
+    })
+  })
+
+  it('合法值逐项覆盖，未覆盖项保持默认', () => {
+    const env = {
+      [XYZ_RUNTIME_PI_RECLAIM_IDLE_MS]: String(5 * 60 * 1000),
+      [XYZ_RUNTIME_PI_RECLAIM_VIEWED_WINDOW_MS]: String(10 * 60 * 1000),
+    }
+    const cfg = resolveReclaimConfig(env)
+    expect(cfg.idleThresholdMs).toBe(5 * 60 * 1000)
+    expect(cfg.viewedWindowMs).toBe(10 * 60 * 1000)
+    expect(cfg.tickIntervalMs).toBe(DEFAULT_PI_RECLAIM_TICK_MS)
+  })
+
+  it.each([
+    ['负数', '-1000'],
+    ['零', '0'],
+    ['非数字', 'abc'],
+    ['空串', ''],
+    ['NaN 字面量', 'NaN'],
+    ['Infinity', 'Infinity'],
+  ])('非法值（%s）回落默认', (_label, raw) => {
+    const cfg = resolveReclaimConfig({ [XYZ_RUNTIME_PI_RECLAIM_TICK_MS]: raw })
+    expect(cfg.tickIntervalMs).toBe(DEFAULT_PI_RECLAIM_TICK_MS)
+  })
+
+  it('非法值只影响自身旋钮，其余合法项正常透传', () => {
+    const cfg = resolveReclaimConfig({
+      [XYZ_RUNTIME_PI_RECLAIM_IDLE_MS]: 'not-a-number',
+      [XYZ_RUNTIME_PI_RECLAIM_TICK_MS]: '60000',
+    })
+    expect(cfg.idleThresholdMs).toBe(DEFAULT_PI_RECLAIM_IDLE_MS)
+    expect(cfg.tickIntervalMs).toBe(60000)
+    expect(cfg.viewedWindowMs).toBe(DEFAULT_PI_RECLAIM_VIEWED_WINDOW_MS)
   })
 })

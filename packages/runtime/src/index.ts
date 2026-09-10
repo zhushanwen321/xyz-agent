@@ -17,7 +17,7 @@ import { isContainedStreamError } from './infra/system/uncaught-policy.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
 import { migrateToPiSubdir, getProviderConfig, upsertProvider, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
-import { getExtensionsDir, getNpmDir, getTmpDir, getProviderExtrasPath } from './infra/pi/pi-paths.js'
+import { getExtensionsDir, getNpmDir, getTmpDir, getProviderExtrasPath, getPiAgentDir } from './infra/pi/pi-paths.js'
 import { getPiGlobalAgentDir } from './infra/pi/pi-maintenance.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
@@ -67,7 +67,8 @@ import { WorkspaceService } from './services/workspace/workspace-service.js'
 import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
 // D8-1（perf W29）：后台初始化序列（listen 后执行）——独立模块承载使「migrateBuiltin →
 // autoUpgrade 顺序」可 spy 断言（06 §5 门禁），组合根只负责构造与注入。
-import { runStartupBackgroundInit } from './services/startup-background-init.js'
+// resolveReclaimConfig（u3b，idle-pi-reclamation D4）：reaper 三旋钮 env 解析。
+import { runStartupBackgroundInit, resolveReclaimConfig } from './services/startup-background-init.js'
 // A1-2（provider-config-quota 架构）：models.json 寄生字段 → config/providers.json 迁移。
 // 挂载薄包装在独立小模块 run-extras-migration.ts（失败语义 + 返回值契约可单测，
 // 组合根 import 即执行 main() 不可直测）；此处 readExtrasWithFallback 供 QuotaService 双读。
@@ -78,7 +79,12 @@ import { XyzProviderStore } from './services/provider-extras-store.js'
 // E-2（subagent-realtime-channel §4）：relay 基建——socket server + 子进程注册表 +
 // tee 翻译层。纯新增模块，经 messageBus.publish 广播 tee 帧；env 注入在
 // process-manager（getRelaySpawnEnv，与 server 激活状态联动）。
-import { initRelayServer, deinitRelayServer } from './infra/relay/relay-server.js'
+import { initRelayServer, deinitRelayServer, getActiveRelayRegistry } from './infra/relay/relay-server.js'
+// u3b（idle-pi-reclamation D2/D4/D6）：空闲 pi 回收装配原语——ReclaimSeat 占座单例 +
+// startIdlePiReaper 周期判定循环（DI 形态，依赖在下方 wiring 段组装）。
+import { ReclaimSeat, startIdlePiReaper } from './services/session/idle-pi-reaper.js'
+import type { IdlePiReaperHandle, ReclaimExemptions } from './services/session/idle-pi-reaper.js'
+import { reapSessionBackgroundTasks } from './services/session/background-task-reaper.js'
 import { toErrorMessage } from './utils/errors.js'
 
 function parseArgs(): { port: number; projectRoot?: string; builtinPluginsDir?: string } {
@@ -771,6 +777,71 @@ async function main(): Promise<void> {
     replyGuardResolver: resolveSessionFilePath,
   })
 
+  // ── u3b（idle-pi-reclamation）：空闲 pi 进程回收装配 ──
+  // 设计与七豁免/占座语义见 docs/design/idle-pi-reclamation.md D2/D3/D4/D6。
+  // ReclaimSeat 单例：reaper 判定 / reclaimManagedSession 占座 / ensureActive 让路三处
+  // 共享同一互斥状态（D6-2）；reaper 经后台序列 ⑩ 才启动，此前 seat 缺省行为不变。
+  const reclaimSeat = new ReclaimSeat()
+  sessionService.setReclaimSeat(reclaimSeat)
+
+  // 七类豁免闭包（D2 表序逐一对应，全部只读访问器）。任一命中 = 本拍跳过该候选。
+  const reclaimExemptions: ReclaimExemptions = {
+    // #1 occupancy 三维非 idle（undefined = 未附着无占用信号，不豁免，与 lifecycle
+    // 最终豁免块同款判定）。
+    isOccupied: (sid) => {
+      const occ = sessionService.getSessionOccupancy(sid)
+      return occ !== undefined && (occ.turn !== 'idle' || occ.compacting || occ.bash)
+    },
+    // #2 有 running 后台任务（失败模式 B 硬约束：回收会让任务被判孤儿杀掉）。
+    hasRunningBackgroundTasks: (sid) =>
+      sessionService.backgroundTasks.listTasks(sid).entries.some((e) => e.state === 'running'),
+    // #3 有在途 relay 子进程（失败模式 C）。registry 由 initRelayServer（listen 后）创建，
+    // 此处延迟解析；未激活（测试/降级）= 无在途子进程，方向安全（宁漏不误杀）。
+    hasInflightRelayChildren: (sid) => getActiveRelayRegistry()?.hasByMainSessionId(sid) ?? false,
+    // #4 handoff 进行中。#5 delivery 内核有排队投递（completion-backflow 回流）。
+    hasHandoffInflight: (sid) => handoffService.hasInflightHandoff(sid),
+    hasQueuedDeliveries: (sid) => sessionDelivery.hasDeliveryActivity(sid),
+    // #6 最近被查看时间戳（undefined = 从未被查看，不豁免——0 是合法 epoch 不可当哨兵）。
+    getLastViewedAt: (sid) => sessionService.getSessionLastViewedAt(sid),
+    // #7 restore 进行中（回收自身占座由 reaper 经 seat 自查）。
+    isRestoring: (sid) => sessionService.isSessionRestoring(sid),
+  }
+
+  // 回收执行 = SessionService.reclaimSession → lifecycle 七步最小摘除编排（D3）。
+  const reclaim = (sid: string): Promise<boolean> =>
+    sessionService.reclaimSession(sid, {
+      seat: reclaimSeat,
+      // relay 尾扫快照枚举（D3 第 5 步①）：同步单段快照，registry 未激活返回空表。
+      listRelayChildrenByMainSession: (s) => getActiveRelayRegistry()?.listTargetsByMainSessionId(s) ?? [],
+      // 定向后台任务收殓（D3 第 5 步②）：复用 reaper 单 session 入口，与 removeSessionEntry
+      // 触发面同款；路径经 getPiAgentDir 动态推导（禁硬编码）。显式丢弃结果对象
+      // （deps 契约 Promise<void>；reap 摘要在函数内部已落日志）。
+      reapBackgroundTasks: async (s) => {
+        await reapSessionBackgroundTasks(getPiAgentDir(), s)
+      },
+      // pendingReload 定向清（D3 第 6 步，防御性 no-op）。
+      clearPendingReload: (s) => reloadOrchestrator.clearPending(s),
+    })
+
+  // reaper handle：保存供 shutdown 收口（tick 定时器已 unref 不阻塞退出，stop 是双保险）。
+  let idleReaperHandle: IdlePiReaperHandle | undefined
+  const startIdleReaper = (): void => {
+    idleReaperHandle = startIdlePiReaper({
+      seat: reclaimSeat,
+      exemptions: reclaimExemptions,
+      // 空闲信号（u1a）：client.lastActivityAt；无 client = 无信号，宁漏不误杀。
+      getClientActivity: (sid) => pm.getClient(sid)?.lastActivityAt,
+      // 候选枚举：lifecycle 全量活跃键（附着中 session，含公共 session）——回收候选语义
+      // 正是「已附着」，已回收条目不在 Map 内天然不再枚举。
+      listCandidateSessionIds: () => sessionService.getActiveSessionIds(),
+      reclaim,
+      // 按拍合并广播（D3 第 7 步）：与 handoffService/authService 同款 broker 广播入口。
+      broadcast: () => server.broadcastSessionList(),
+      // 三旋钮：shared/constants SSOT 默认值 + XYZ_RUNTIME_PI_RECLAIM_* env 覆盖（D4）。
+      ...resolveReclaimConfig(process.env),
+    })
+  }
+
   // Graceful shutdown on signals
   let shuttingDown = false
   const shutdown = async (signal: string, exitCode = 0) => {
@@ -784,6 +855,9 @@ async function main(): Promise<void> {
     // 中途 timer 触发会 spawn 新孤儿 pi（收割器只在下次启动后 5s 跑一次，用户直接退出
     // app 则孤儿无限存活烧 token）。对齐上方 stopMemoryWatermarkTimer 的先取消先例。
     sessionService.cancelAllPendingRespawns()
+    // u3b（idle-pi-reclamation）：停空闲回收判定循环（若已启动）——shutdown 后不再有
+    // 回收拍。timer 已 unref，此 stop 是显式收口双保险（先取消先例同上）。
+    idleReaperHandle?.stop()
     console.log(`\n[runtime] received ${signal}, shutting down...`)
     try {
       recentWorkspacesStore.flushAll()
@@ -904,6 +978,9 @@ async function main(): Promise<void> {
     broadcastAppInfo: () => server.broadcastAppInfo(),
     skillRegistry,
     pluginService,
+    // u3b（idle-pi-reclamation D4）：reaper 启动闭包（装配在上方 wiring 段）——经后台
+    // 序列 ⑩ 触发一次，fire-and-forget 形态由该序列保证。
+    startIdleReaper,
   })
 }
 

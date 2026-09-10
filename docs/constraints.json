@@ -2060,6 +2060,25 @@
      "agent": "review-arch-boundary"
     }
    ]
+  },
+  {
+   "id": "C-state-12",
+   "summary": "replicated state 周期 pollTimer 配置全关是空闲回收保留 projection 实例的安全前提：启用任一 replicated state 的周期 poll 前，必须先给回收态加结构性收尾（dispose 定时器保留数据）或取消 projection 域跳过，否则回收态残留「周期 poll → 死进程 reject → backoff → 再 poll」循环",
+   "scope": [
+    "packages/runtime/src/services/session/replicated-states.config.ts"
+   ],
+   "authority": [
+    "design/idle-pi-reclamation.md#33-关键决策与权衡"
+   ],
+   "dimensions": [
+    "business-logic"
+   ],
+   "enforcement": [
+    {
+     "type": "review",
+     "agent": "review-business-logic"
+    }
+   ]
   }
  ]
 }

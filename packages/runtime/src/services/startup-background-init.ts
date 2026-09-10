@@ -30,6 +30,14 @@ import { ensureAutoRenameDefault } from './worktree-config-helper.js'
 import { ensureDeclaredStartupConfigs } from './extension-startup-config.js'
 import { ORPHAN_REAP_DELAY_MS, reapOrphanPiProcesses } from './reap-orphan-pi.js'
 import { reapAllSessionsBackgroundTasks } from './session/background-task-reaper.js'
+import {
+  XYZ_RUNTIME_PI_RECLAIM_IDLE_MS,
+  XYZ_RUNTIME_PI_RECLAIM_TICK_MS,
+  XYZ_RUNTIME_PI_RECLAIM_VIEWED_WINDOW_MS,
+  DEFAULT_PI_RECLAIM_IDLE_MS,
+  DEFAULT_PI_RECLAIM_TICK_MS,
+  DEFAULT_PI_RECLAIM_VIEWED_WINDOW_MS,
+} from '@xyz-agent/shared'
 import type { PiConfigStore } from '../infra/pi/pi-config-store.js'
 import type { AuthStorage, CredentialWriter } from './auth/auth-storage.js'
 import type { ExtensionService } from './extension-service.js'
@@ -50,6 +58,43 @@ export interface StartupBackgroundDeps {
   broadcastAppInfo: () => void
   skillRegistry: SkillRegistry
   pluginService: PluginService
+  /**
+   * 启动空闲 pi 回收 reaper（idle-pi-reclamation D4，u3b）。可选成员保证既有测试构造点
+   * 不破；undefined = 跳过（行为不变）。构造留在组合根（本模块只编排执行顺序，见文件头
+   * 注释）——闭包内完成 seat/豁免/reclaim 全部装配，本模块只在序列里触发一次。
+   */
+  startIdleReaper?: () => void
+}
+
+/** 空闲 pi 回收三旋钮（D4；默认值权威源 = shared/constants DEFAULT_PI_RECLAIM_*）。 */
+export interface ReclaimConfig {
+  idleThresholdMs: number
+  tickIntervalMs: number
+  viewedWindowMs: number
+}
+
+/**
+ * 解析 env 三旋钮（idle-pi-reclamation D4 env 覆盖；独立导出便于单测 env 覆盖行为）。
+ *
+ * 值语义：缺失回落 shared 默认；非法值（非数字 / NaN / Infinity / 非正数含 0）一律回落
+ * 默认——非正数周期/阈值会让 setInterval 立即连拍或永不回收，视为配置错误按缺省处理
+ * （env 是运维逃生旋钮不是校验面，warn 不 throw）。
+ */
+export function resolveReclaimConfig(env: NodeJS.ProcessEnv): ReclaimConfig {
+  const parseMs = (raw: string | undefined, fallback: number): number => {
+    if (raw === undefined) return fallback
+    const n = Number(raw)
+    if (!Number.isFinite(n) || n <= 0) {
+      console.warn(`[runtime] invalid reclaim env value "${raw}", falling back to ${fallback}ms`)
+      return fallback
+    }
+    return n
+  }
+  return {
+    idleThresholdMs: parseMs(env[XYZ_RUNTIME_PI_RECLAIM_IDLE_MS], DEFAULT_PI_RECLAIM_IDLE_MS),
+    tickIntervalMs: parseMs(env[XYZ_RUNTIME_PI_RECLAIM_TICK_MS], DEFAULT_PI_RECLAIM_TICK_MS),
+    viewedWindowMs: parseMs(env[XYZ_RUNTIME_PI_RECLAIM_VIEWED_WINDOW_MS], DEFAULT_PI_RECLAIM_VIEWED_WINDOW_MS),
+  }
 }
 
 /**
@@ -221,6 +266,20 @@ export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Pro
   } catch (e) {
     // best-effort：清扫失败不影响主流程（残留仅是磁盘垃圾，下次启动重试）
     console.warn('[runtime] tmp-migrate/tmp-import residue cleanup failed:', e)
+  }
+
+  // ⑩ 空闲 pi 回收 reaper 启动（idle-pi-reclamation D4，u3b）：对齐 ⑨ 的 fire-and-forget
+  // + try/catch 形态——startIdleReaper 只起一个 setInterval 判定循环（tick 定时器已在
+  // reaper 内部 unref，不阻塞进程退出），同步返回无异步面；首拍在 tick 间隔（默认 5min）
+  // 之后，与串行链其余步骤零共享状态。缺省（undefined）= 跳过（行为不变，既有测试构造点
+  // 不受影响）。
+  if (deps.startIdleReaper) {
+    try {
+      deps.startIdleReaper()
+    // eslint-disable-next-line taste/no-silent-catch -- best-effort：闭包装配错误仅 warn，不阻塞启动序列（reaper 缺席 = 现状行为，下轮重启重试）
+    } catch (e) {
+      console.warn('[runtime] idle pi reaper start failed:', e)
+    }
   }
 
   // 后台初始化耗时分解探针（06 §5 m-7）：listen 后各段（改造前这些段全部堆在 listen 前）。

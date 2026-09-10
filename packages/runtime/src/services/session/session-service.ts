@@ -667,6 +667,17 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   }
 
   /**
+   * 查询 session 是否处于 restore 进行中（idle pi reclamation D2 #7 豁免信号，u3b 装配）。
+   *
+   * 恢复注册表的所有权在 RespawnOrchestrator（u8 join 状态 SSOT），其实例是本类 private
+   * 字段——本方法是其唯一外部只读读点（与上方 getSessionOccupancy 同构的薄委托：内部态
+   * 无公开访问器时在 Facade 加只读口，组合根 reaper 豁免装配消费）。
+   */
+  isSessionRestoring(sessionId: string): boolean {
+    return this.respawn.isRestoring(sessionId)
+  }
+
+  /**
    * 注入空闲回收占座（idle-pi-reclamation D6-2，u3 组合根装配）。必须传与 reaper 判定
    * 循环 / reclaimManagedSession 相同的 ReclaimSeat 实例——三处共享同一互斥状态。
    */
