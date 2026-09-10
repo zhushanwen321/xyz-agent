@@ -168,12 +168,13 @@ export function useQuickSetupForm(
     return name ? (envCheck.value[name] ?? false) : undefined
   })
 
-  /** 保存：构造 SetProviderData（I6 填 authMethod；oauth 不塞 apiKey——凭据在 auth.json） */
+  /** 保存：构造 SetProviderData（I6 填 authMethod；oauth 不塞 apiKey——凭据在 auth.json）。
+   *  防线⑥（设计 D1）：只写凭据相关字段——模板 baseUrl 是快照 artifact（pi 内置定义已自带
+   *  baseUrl/api），回传会在「非空放行」语义下写入 override、再被启动清洗剥除，形成写-剥循环；
+   *  原 `api` 键与 SetProviderData.type 字段名不匹配，是从未生效的死键，一并去掉。 */
   function onSave(): void {
     const data: SetProviderData = {
       name: template.value.name,
-      ...(template.value.api ? { api: template.value.api } : {}),
-      ...(template.value.baseUrl ? { baseUrl: template.value.baseUrl } : {}),
     }
     if (authMethod.value === 'plaintext') {
       data.apiKey = apiKeyInput.value

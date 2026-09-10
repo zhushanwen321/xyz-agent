@@ -3,7 +3,8 @@
  *
  * 覆盖：provider 变化重置编辑态 + 快照捕获；isDirty 全字段对比（快照 null 返 false）；
  * runDiscover test/discover 成功失败分支（discoverModels 调用参数、合并去重、文案）；
- * save 校验/成功/失败 + apiKey 哨兵语义 + headers/authHeader/models 透传；D8 过期快照
+ * save 校验/成功/失败 + apiKey 哨兵语义 + headers/authHeader/models 透传；防线① provider 级
+ * 字段分体系（catalog 无 type 键 + baseUrl 恒带键含空串、custom 空串不带键）；D8 过期快照
  * watch（未 dirty 刷新 + captureSnapshot，dirty 不刷新）；模型 CRUD（空名/重名抛错等）。
  *
  * watch 类用例用 effectScope 包裹 + flushPromises 驱动（node 环境无组件渲染）。
@@ -344,13 +345,15 @@ describe('save 校验/成功/失败 + apiKey 哨兵', () => {
   })
 
   it('apiKey 哨兵 → 发送空串（清空语义 D18），wroteApiKey=false（清除不是配置）', async () => {
-    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ kind: 'custom' }))
     const edit = mount(providerRef)
     await nextTick()
     edit.form.apiKey = API_KEY_CLEAR_SENTINEL
     const result = await edit.save()
     expect(result.wroteApiKey).toBe(false)
     const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    // 显式空串带键（不是不传键）——「清除」与「不变」必须可区分
+    expect('apiKey' in arg).toBe(true)
     expect(arg.apiKey).toBe('')
   })
 
@@ -385,6 +388,58 @@ describe('save 校验/成功/失败 + apiKey 哨兵', () => {
     expect(result.wroteApiKey).toBe(false)
     expect(edit.actionError.value).toBe('save failed')
     expect(edit.saving.value).toBe(false)
+  })
+})
+
+describe('防线① provider 级字段分体系（catalog vs custom，设计 D1）', () => {
+  it('catalog：payload 无 type 键（快照 artifact 不回传）+ baseUrl 带键且为 trim 值', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ kind: 'catalog' }))
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.baseUrl = '  https://gateway.example.com/mirror  '
+    await edit.save()
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect('type' in arg).toBe(false)
+    expect('baseUrl' in arg).toBe(true)
+    expect(arg.baseUrl).toBe('https://gateway.example.com/mirror')
+  })
+
+  it('catalog：输入框清空 → baseUrl 为显式空串带键（清除网关；不传键=runtime「不变」会让网关回退不可达）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ kind: 'catalog', baseUrl: 'https://gateway.example.com' }))
+    const edit = mount(providerRef)
+    await nextTick()
+    expect(edit.form.baseUrl).toBe('https://gateway.example.com')
+    edit.form.baseUrl = ''
+    await edit.save()
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect('baseUrl' in arg).toBe(true)
+    expect(arg.baseUrl).toBe('')
+    expect('type' in arg).toBe(false)
+  })
+
+  it('custom：空串 baseUrl 不带键（truthy 守卫；runtime 侧空串同为「不变」语义）', async () => {
+    // kind 缺失（旧数据/新建态）= custom 分支
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.baseUrl = '   '
+    await edit.save()
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect('baseUrl' in arg).toBe(false)
+    // custom 的 provider 级协议（api）必须保留
+    expect(arg.type).toBe('anthropic-messages')
+  })
+
+  it('custom：空串 name 被 D15b 校验拦截（不调 setProvider → payload 不会带 name 键）', async () => {
+    // 空 name 在 save() 入口即被 D15b 拒绝，payload 层的 truthy 守卫是纵深防御（正常路径不可达）
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.name = ''
+    const result = await edit.save()
+    expect(result.ok).toBe(false)
+    expect(tStub).toHaveBeenCalledWith('composable.providerNameRequired')
+    expect(getTransport().setProvider).not.toHaveBeenCalled()
   })
 })
 

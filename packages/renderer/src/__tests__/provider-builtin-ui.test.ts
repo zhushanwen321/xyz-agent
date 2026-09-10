@@ -450,8 +450,10 @@ describe('ProviderQuickSetup', () => {
     expect(payload.providerId).toBe('google-vertex')
     // ambient 不塞 apiKey
     expect(payload.data.apiKey).toBeUndefined()
-    // 仍遵守方案 B 占位（name/api/baseUrl，无 models）
+    // 防线⑥：只写凭据相关字段（name + authMethod）——模板 baseUrl/api 是快照 artifact 不回传，无 models
     expect(payload.data.name).toBe('Google Vertex AI')
+    expect('baseUrl' in payload.data).toBe(false)
+    expect('api' in payload.data).toBe(false)
     expect(payload.data.models).toBeUndefined()
   })
 
@@ -641,16 +643,16 @@ describe('ProviderPage 内置模板保存链路', () => {
     clickBody('[data-testid="provider-quick-setup-save"]')
     await flushPromises()
 
-    // 4. config.setProvider 被调用且 payload 正确（方案 B：name/api/baseUrl/apiKey/authMethod，无 models）
+    // 4. config.setProvider 被调用且 payload 正确（防线⑥：catalog 模板导入只写凭据相关字段
+    //    name/apiKey/authMethod——模板 baseUrl/api 是快照 artifact 不回传，无 models）
     expect(configMock.setProvider).toHaveBeenCalledTimes(1)
     expect(configMock.setProvider).toHaveBeenCalledWith('openai', {
       name: 'OpenAI',
-      api: 'openai-completions',
-      baseUrl: 'https://api.openai.com/v1',
       apiKey: 'sk-xyz-123',
       authMethod: 'api_key',
     })
     const payload = configMock.setProvider.mock.calls[0]![1] as Record<string, unknown>
+    expect(Object.keys(payload).sort()).toEqual(['apiKey', 'authMethod', 'name'])
     expect(payload.models).toBeUndefined()
 
     // 5. 成功 toast（i18n toastSuccess = 已添加 {name}）
@@ -784,13 +786,14 @@ describe('ProviderPage 内置模板保存链路', () => {
     expect(save!.disabled).toBe(false)
 
     // 保存 → 无 apiKey → config-service 不触发 I9 清理，auth.json OAuth 凭据保留
+    // 防线⑥：payload 只含 name/authMethod（模板 baseUrl/api 快照 artifact 不回传）
     clickBody('[data-testid="provider-quick-setup-save"]')
     await flushPromises()
     expect(configMock.setProvider).toHaveBeenCalledWith('anthropic', {
       name: 'Anthropic',
-      api: 'anthropic-messages',
-      baseUrl: 'https://api.anthropic.com',
       authMethod: 'oauth',
     })
+    const payload = configMock.setProvider.mock.calls[0]![1] as Record<string, unknown>
+    expect(Object.keys(payload).sort()).toEqual(['authMethod', 'name'])
   })
 })

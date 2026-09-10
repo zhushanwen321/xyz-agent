@@ -230,4 +230,24 @@ describe('onSave authMethod（TC6，I6 契约）', () => {
     expect(saveBtn.disabled).toBe(true)
     w.unmount()
   })
+
+  it('防线⑥：模板 api/baseUrl 不落 payload（快照 artifact 不写 override；api 是从未生效的死键）', async () => {
+    const w = await mountSetup({
+      template: tpl({ api: 'openai-completions', baseUrl: 'https://api.moonshot.cn/v1' }),
+    })
+    ;(query('[data-testid="auth-option-plaintext"]')! as HTMLElement).click()
+    await flushPromises()
+    const input = query('[data-testid="credential-apikey-input"]') as HTMLInputElement
+    input.value = 'sk-abc'
+    input.dispatchEvent(new Event('input'))
+    await flushPromises()
+    ;(query('[data-testid="provider-quick-setup-save"]')! as HTMLElement).click()
+    const save = w.emitted('save')![0][0] as { data: Record<string, unknown> }
+    expect('baseUrl' in save.data).toBe(false)
+    expect('api' in save.data).toBe(false)
+    // catalog 模板导入只写凭据相关字段（name 仍是 provider 标识，保留）
+    expect(save.data.authMethod).toBe('api_key')
+    expect(save.data.apiKey).toBe('sk-abc')
+    w.unmount()
+  })
 })

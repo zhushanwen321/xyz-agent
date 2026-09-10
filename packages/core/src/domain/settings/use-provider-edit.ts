@@ -474,11 +474,23 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
     saving.value = true
     actionError.value = ''
     const providerId = providerRef.value?.id ?? form.name
+    // 防线①（设计 D1）：catalog / custom 的 provider 级字段分体系。kind 缺失（旧数据 / 新建态
+    // 无 providerRef）按 custom 处理（自定义 provider 需要 provider 级协议）。
+    const isCatalog = providerRef.value?.kind === 'catalog'
+    // 网关输入框值：trim 后判定（纯空白串与空串同视，runtime 侧同样按 trim 判定）
+    const baseUrl = form.baseUrl.trim()
     try {
       await getSettingsTransport().setProvider(providerId, {
-        name: form.name,
-        type: form.api,
-        baseUrl: form.baseUrl,
+        // 防线①：custom 空串 name 不带键（truthy 守卫，对齐 use-quick-setup-form 既有先例）；
+        // catalog 的 name 是 provider 展示名（正常态非空），保持回传。
+        ...(isCatalog || form.name.trim() ? { name: form.name } : {}),
+        // 防线①：catalog 不带 type 键——协议是模型级属性，provider 级 api 对 catalog 无用户语义
+        // （前端回传的是快照 artifact，runtime 侧对 catalog 的 type 同样忽略；不发是双保险）。
+        ...(isCatalog ? {} : { type: form.api }),
+        // 防线①：catalog 的 baseUrl **恒显式带键**（值 = trim 结果：非空 = 设置网关 / '' = 清除
+        // 网关——「undefined = 不变」是既有 merge 协议，清空输入框必须走显式空串带键，否则网关
+        // 回退通道不可达）；custom 空串不带键（runtime 对 custom 空串同样是「不变」）。
+        ...(isCatalog || baseUrl ? { baseUrl } : {}),
         // D18：apiKey 空=不变（undefined）；哨兵=清空（''）；非空=原值
         apiKey: resolveApiKeyForSave(form.apiKey),
         // B-1：凭证形态回传（undefined = 不变；runtime 写 providers.json authMethod 标注）
