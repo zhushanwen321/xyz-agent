@@ -164,6 +164,9 @@ pnpm --filter @xyz-agent/core test && pnpm --filter @xyz-agent/runtime test && p
 | D-6 | u-contracts | **i18n「模型发现」正名采用「改值不改 key」**（既有 key `settings.providerEdit.autoDiscover` 被领地外 3 个文件引用，改 key 会波及领地外） | 合理不一致 → 固化 | 2026-09-10 |
 | D-7 | M1a | **3 处既有 renderer 断言随 payload 契约变更同批更新**：`provider-builtin-ui.test.ts` t10/t14（断言 setProvider payload 含 `api`/`baseUrl`）、`ProviderPage.test.ts:480-483`（OAuth 收尾断言含 `name`）。实测已红（3 failed / 50 passed），是 payload 契约变更的直接后果而非顺手清理；M1a 领地扩展至这两个测试文件，断言强度不削弱（仍断言确切键集合，只对齐新契约） | 合理不一致 → 固化 | 2026-09-10 |
 | D-8 | M1a | **custom 空 `name` 的 payload 层 truthy 守卫在正常路径不可达**：`save()` 入口已有校验（`if (!form.name.trim())` → 返回 `ok:false` 且不调 setProvider）先行拦截，故验收条款「custom 空串 name → payload 不含该键」无法构造输入。用例改为断言可观测事实（校验拦截 + `setProvider` 未被调用），payload 层守卫按设计保留为纵深防御 | 合理不一致 → 固化（用例断言口径调整，守卫本身保留） | 2026-09-10 |
+| D-9 | M1b | **`skipUpsert` 语义收窄为「仅新建场景跳过」**（`skipUpsert && existingConfig === undefined`；既有条目一律 upsert）。第 2 轮实现把设计 D1③ 的「对既有条目是 no-op 而非删除」读成了「既有条目跳过写盘」→ 用户清空网关时 upsert 被跳过、盘上 baseUrl 键残留，**清除静默失效**（展示回内置端点但 pi 仍走旧网关），与验收场景 A'/5 与 G1 直接冲突。设计那句的本意是「不删除既有条目」（全清空后旧条目交 D2 启动清洗接管），不是「不写既有条目」 | 不合理偏差 → 打回 dev 修（第 3 轮）；**需同步设计文档措辞**（D1③ 把「不物化空壳」的适用面显式限定为**新建**，并写明既有条目的剥除/清除必须落盘），主 agent 在阶段 4 doc_errors 批次回写 | 2026-09-10 |
+| D-10 | M1b | **白名单守卫 `ensureProviderInWhitelist` 恢复为不受 `skipUpsert` 影响**（`existingConfig === undefined` 即调用）。第 2 轮以「无条目却加 `<id>/*` pattern 是死引用」为由跳过——该理由不成立：catalog provider 定义在 pi 内置 catalog，无 models.json 条目时依然可用，pattern 指的是 provider/model id 而非条目。且跳过属设计未授权的行为变更（对 enabledModels 非空的用户，首次配置凭据后 provider 不再默认启用） | 不合理偏差 → 打回 dev 修（第 3 轮），恢复既有行为 | 2026-09-10 |
+| D-11 | M1b | **3 处既有 runtime 断言随「不落空壳」语义同批更新**：`config-service-catalog.test.ts:57/:96`（改为断言 `upsertProvider` 未被调用）、`auth-credential-gateway.test.ts:127-128`（改为断言 `models.anthropic` 为 undefined）。实测已红（3 failed / 1246 passed），是 D1③ 语义的直接后果；断言强度不削弱（仍是精确断言，只对齐新契约） | 合理不一致 → 固化 | 2026-09-10 |
 
 ## 6 状态表
 
@@ -171,7 +174,7 @@ pnpm --filter @xyz-agent/core test && pnpm --filter @xyz-agent/runtime test && p
 |------|------|------|---------|
 | u-contracts | committed | 1 | commit `77e0f79cc`；shared/runtime typecheck 0；renderer i18n 196 passed；doc-symbol-drift 0 |
 | M6 | committed | 1 | commit `0e3c42847`；core vitest 50 passed；core typecheck 0；P-presets 实测 on-off 2 档 / high-max 3 档 / all-levels 5 档 |
-| M1b | in-progress | 2 | 第 1 轮产物（载体纯函数 + 空串转译 + catalog 分体系 + extras 字段）未提交在工作区；第 2 轮补 setProvider 信号接线 + 模型级空 id + eslint 上限（因第 1 轮仅产出信号未消费，防线对保存链路尚未生效，不得单独提交） |
+| M1b | in-progress | 3 | 第 1 轮（载体纯函数 + 空串转译 + catalog 分体系 + extras 字段）与第 2 轮（setProvider 信号接线 + 模型级空 id + eslint 上限 900）产物未提交在工作区；第 3 轮修 D-9（skipUpsert 收窄）/D-10（白名单守卫恢复）/D-11（3 处领地外断言） |
 | M2-r | committed | 1 | commit `cfb839308`；runtime vitest 12 passed；runtime typecheck 0；P-cred 实测（xyz 不展开 / pi 展开，已对照 `resolve-config-value.js:71-73` 逐字核对） |
 | M1a | in-progress | 2 | 第 1 轮已改 6 个领地文件（三包目标绿：core 54 / renderer oauth 8 / ui 17，core typecheck 0）；第 2 轮修 3 处领地外既有断言（见 D-7）+ 影响面扫尾 |
 | M1cd | pending | 0 | — |
