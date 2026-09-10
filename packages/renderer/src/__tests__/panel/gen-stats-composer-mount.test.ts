@@ -73,8 +73,9 @@ const stubs = {
     name: 'ContextCapacityPopover',
     template: '<div data-testid="stub-context-capacity" />',
   }),
-  ModelSelectPopover: SIMPLE,
-  ThinkingLevelPopover: SIMPLE,
+  // 独立命名：landing 隐藏断言需验证「同工具带非数据位仍可见」时按名定位
+  ModelSelectPopover: defineComponent({ name: 'StubModelSelectPopover', template: '<div />' }),
+  ThinkingLevelPopover: defineComponent({ name: 'StubThinkingLevelPopover', template: '<div />' }),
   RetryIndicator: SIMPLE,
   QueueBubble: SIMPLE,
 }
@@ -114,5 +115,17 @@ describe('Composer 挂载 GenStatsTriggers（Gate A：挂载点 + 左侧顺序�
     expect(wrapper.find('[title="缓存命中率"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="genstats-speed-value"]').text()).toBe('—')
     expect(wrapper.find('[data-testid="genstats-cache-value"]').text()).toBe('—')
+  })
+
+  it('landing（sessionId=null 未开始）隐藏速度/缓存命中率/上下文容量，不显「—」横线占位', () => {
+    const wrapper = mount(Composer, { props: { sessionId: null, variant: 'landing' as const }, global: { stubs } })
+    // 三项数据位全部不渲染（而非渲染后显「—」）
+    expect(wrapper.find('[title="TOKEN 速度"]').exists()).toBe(false)
+    expect(wrapper.find('[title="缓存命中率"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="genstats-speed-value"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="stub-context-capacity"]').exists()).toBe(false)
+    // 同条工具带上的非数据位不受影响：模型/思考档位选择器仍然可见
+    expect(wrapper.findComponent({ name: 'StubModelSelectPopover' }).exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'StubThinkingLevelPopover' }).exists()).toBe(true)
   })
 })

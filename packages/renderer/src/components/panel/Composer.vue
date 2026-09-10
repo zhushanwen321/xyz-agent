@@ -107,10 +107,11 @@
           empty="hidden"
         />
         <span class="flex-1" />
-        <!-- 生成指标双触发器（composer-gen-stats §3.1：速度 t/s + 缓存命中率 %，位于上下文容量左侧） -->
-        <GenStatsTriggers :session-id="sessionId ?? undefined" :model-id="currentModelId" />
-        <!-- 上下文容量（spec §2a：hover 出容量 popover；session 通道订阅 context.update） -->
-        <ContextCapacityPopover :session-id="sessionId ?? undefined" :model-id="currentModelId" />
+        <!-- 生成指标双触发器（composer-gen-stats §3.1：速度 t/s + 缓存命中率 %，位于上下文容量左侧）。
+             landing（无 session，尚未开始）隐藏：无采样无用量，两项恒「—」横线无信息量。 -->
+        <GenStatsTriggers v-if="sessionId" :session-id="sessionId ?? undefined" :model-id="currentModelId" />
+        <!-- 上下文容量（spec §2a：hover 出容量 popover；session 通道订阅 context.update）；landing 同上隐藏 -->
+        <ContextCapacityPopover v-if="sessionId" :session-id="sessionId ?? undefined" :model-id="currentModelId" />
         <!-- 模型（spec §2b：click 出模型切换 popover） -->
         <ModelSelectPopover :selected="currentModelId" @select="onModelSelect" />
         <!-- 思考等级（spec §2c：click 出档位 popover；level 从 session 透传；reasoning 决定可用档集——non-reasoning 只 off） -->

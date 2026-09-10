@@ -24,10 +24,22 @@ export type PendingType = "workflow" | "subagent" | "bash";
  *   shutdown 标 cancelled 全套生效。
  * - "process"：随进程存活——无 TTL（不计算/不回填 expiresAt）、跨 session 续存
  *   （fork/switch 后任务仍在跑）、shutdown 不标 cancelled（收尾归任务自身/reaper）。
+ *
+ * [W4 翻档 · 设计 chat-domain-v1x-liveness-governance D4 分档对齐] subagent/workflow
+ * 从 session 档翻 process 档：后台子代理与 workflow run 的真实生命周期跨 session 存活、
+ * 可跑超 1h——session 档的 1h TTL（U3）与跨 session 补注销（U4）会把长任务/重启后的
+ * 注册静默清除，goal 守卫随之失明（2026-09-08 事故环 4 的放大器）。翻档后守卫依赖的
+ * 收口链 = 注销合法发射点枚举（5 处，含 core 注册对账 sweep）+ idle-gc startedAt 锚
+ * 兜底归档（只归档不补注销，注销统一交 sweep）。
+ *
+ * [W4 session 档机器死代码处置] 翻档后三类型全 process 档——PENDING_TTL_MS / U3 / U4 /
+ * U11 全体暂无消费类型。机制本体保留（registry 通用能力，session 档暂无消费类型，
+ * 留存待未来类型），**勿误认清理仍在工作**：本文件不再有任何类型的 TTL 清理或跨
+ * session 注销在运行。
  */
 export const PENDING_LIFECYCLE: Record<PendingType, "session" | "process"> = {
-	subagent: "session",
-	workflow: "session",
+	subagent: "process",
+	workflow: "process",
 	bash: "process",
 };
 
@@ -74,7 +86,13 @@ interface EntryLike {
 	data?: unknown;
 }
 
-/** pending:register entry 的 TTL（1 小时） */
+/**
+ * pending:register entry 的 TTL（1 小时）。
+ *
+ * [W4 死代码登记] 翻档后三类型全 process 档，本常量仅剩 session 档机器的兼容读侧
+ * 回填路径（normalizeRegisterEntry 对 session 档缺失 expiresAt 的旧 entry 回填）——
+ * 现无任何类型声明 session 档，回填分支不可达。留存待未来 session 档类型，勿删。
+ */
 export const PENDING_TTL_MS = 3_600_000;
 
 /** 注册表：内存中的活跃操作（session 隔离，由 index.ts 在闭包内持有） */
@@ -122,6 +140,16 @@ export function getActive(registry: PendingRegistry): PendingEntry[] {
 export interface CountActiveOptions {
 	/** 只统计指定类型的活跃 pending；缺省 = 全部类型（subagent + workflow + bash） */
 	types?: PendingType[];
+	/**
+	 * [W4 读侧过滤①] 当前 session id（跨 session 残留过滤基准）：传入时按
+	 * 「register entry 的 sessionId ≠ 当前 session → 跳过」过滤——fork 继承的
+	 * 父级注册残留（翻 process 档后不再被 U4 补注销中性化，永久留存于子 session
+	 * 文件）不进差集计数，守卫不幻 defer。
+	 * 缺省（undefined）= 不过滤（向后兼容：既有调用方零改动行为不变）。
+	 * entry 缺 sessionId 字段的旧形态条目视为本 session（归一化兜底语义与
+	 * normalizeRegisterEntry 一致），不过滤。
+	 */
+	currentSessionId?: string;
 }
 
 /** countActiveFromEntries 的结果。 */
@@ -136,13 +164,15 @@ export interface CountActiveResult {
  * 从持久化 entries 计算活跃 pending 数（register − unregister 差集）。
  *
  * 与 rebuildFromEntries 的分工：本函数只做「有没有活跃 pending」的只读判断，
- * 不写 registry、不判 sessionId/expiresAt（TTL 刻意不校验——长任务 subagent >1h
+ * 不写 registry、不判 expiresAt（TTL 刻意不校验——长任务 subagent >1h
  * 仍应视为活跃，对齐 goal agent-end 的 continuation 守卫语义）。
  * 调用方：goal（agent_end 时判断是否发 continuation）、subagent-workflow
  * （agent_end 时判断子进程是否有活跃后代，决定是否保持进程等 steer 唤醒）。
  *
- * 注：跨 session 残留（fork 继承的 register）由 index.ts 的 session_start 重建
- * 流程补 unregister(expired) 抵消；本函数只做纯差集，不重复处理。
+ * [W4 读侧过滤①] 跨 session 残留的过滤职责已从「index.ts 的 session_start 重建
+ * 流程补 unregister(expired) 抵消」（session 档 U4 机制，翻档后对 process 档不再
+ * 触发）移交给本函数的 opts.currentSessionId 口——调用方持有当前 session 概念的
+ * 应传入，使 fork 继承的父级注册残留不进差集（守卫不幻 defer）。
  */
 export function countActiveFromEntries(
 	entries: unknown[],
@@ -159,7 +189,7 @@ export function countActiveFromEntries(
 	};
 }
 
-/** 差集过滤：跳过 id 非法 / 已注销 / 重复 register 的 entry，按 opts.types 过滤类型。 */
+/** 差集过滤：跳过 id 非法 / 已注销 / 重复 register / 跨 session 残留的 entry，按 opts.types 过滤类型。 */
 function filterActiveRegisters(
 	registerEntries: Array<{ data: RegisterEntryData }>,
 	unregisteredIds: Set<string>,
@@ -172,6 +202,17 @@ function filterActiveRegisters(
 		seen.add(data.id);
 		const entry = normalizeRegisterEntry(data, "");
 		if (opts?.types && !opts.types.includes(entry.type)) continue;
+		// [W4 读侧过滤①] 跨 session 残留跳过（基准 = opts.currentSessionId）。判据读
+		// 原始 data.sessionId 而非归一化值：entry 缺 sessionId 的旧形态条目（归一化
+		// 兜底为 ""）视为本 session——不过滤，与 normalizeRegisterEntry 的容错语义
+		// 对齐（守卫漏计的危害方向是幻 defer，宁放行不误杀活跃计数）。
+		if (
+			opts?.currentSessionId !== undefined &&
+			typeof data.sessionId === "string" &&
+			data.sessionId !== opts.currentSessionId
+		) {
+			continue;
+		}
 		active.push(entry);
 	}
 	return active;
@@ -232,6 +273,16 @@ function scanPendingEntries(entries: unknown[]): PendingEntryScan {
  * - TTL 过期（U3）→ expired
  *
  * process 档两检全跳过（D16：进程级生命周期跨 session 续存且无 TTL）。
+ *
+ * [W4 翻档语义核对登记] 翻档后三类型全 process 档，本函数对现存类型恒 false——
+ * U3/U4 清理对翻档类型不再触发，这是翻档的**预期语义**而非缺陷：process 档的
+ * 生命周期本就跨 shutdown/fork 存活，跨 session 检测（U4）的职能已移交读侧过滤
+ * （countActiveFromEntries 的 currentSessionId 口 + rebuildFromEntries 的
+ * currentSessionId 入 registry 过滤），清理职能移交注销发射点枚举 + core 注册对账
+ * sweep（判据 = record 终态 ∪ 已归档/不存在；覆盖 subagent/workflow——bash 无
+ * record/store 可查，死亡窗口丢失无补发通道，见 normalizePendingType 注的显式
+ * 边界登记）。本函数与 PENDING_TTL_MS 同为
+ * session 档机器留存件，待未来 session 档类型，勿误删。
  */
 function isExpiredEntry(entry: PendingEntry, currentSessionId: string, now: number): boolean {
 	// 跨 session 残留（U4）——process 档跳过（D16：进程级生命周期跨 session 续存，
@@ -263,6 +314,20 @@ export function rebuildFromEntries(
 		if (typeof data.id !== "string") continue;
 		if (unregisteredIds.has(data.id)) continue;
 
+		// [W4 读侧过滤③ rebuild 半口] 跨 session 残留不入 registry（翻 process 档后
+		// U4 补注销对现存类型不再触发，fork 继承的父级注册残留若不过滤会永久虚报
+		// pending_notifications 工具投影）。与 U4 的差异：**跳过不补注销**——残留
+		// entry 留在 session 文件（读侧过滤③①口各自兜住差集消费方），落盘收口归
+		// core 注册对账 sweep（判据含 record 查不到 → 视同终态补注销）。判据读原始
+		// data.sessionId（缺 sessionId 的旧形态条目视为本 session，不过滤——宁放行
+		// 不误逐）。
+		if (
+			typeof data.sessionId === "string" &&
+			data.sessionId !== currentSessionId
+		) {
+			continue;
+		}
+
 		const entry = normalizeRegisterEntry(data, currentSessionId);
 		if (isExpiredEntry(entry, currentSessionId, now)) {
 			expiredToFlush.push({ id: entry.id, status: "expired" });
@@ -279,6 +344,14 @@ export function rebuildFromEntries(
 /**
  * type 归一化：subagent/bash 原样保留，其余（含缺失/未知值）归 workflow。
  * state.ts 与 index.ts 两处归一化共用本函数，防止「写入侧直通、读取侧归并」漂移。
+ *
+ * [W4 偏好显式化] 缺失/未知 type 默认归 workflow = process 档 = 永不 TTL 清理。
+ * 该偏好是刻意选择：畸形条目**宁挂账不失明**——误归 session 档会让未知类型被
+ * 1h TTL / 跨 session 清理静默抹掉（守卫失明方向）。挂账的收口通道按类型分流
+ * [F2 如实口径]：workflow / 畸形条目由 core 注册对账 sweep 收口（查 WorkflowRun
+ * store：终态 ∪ state 文件不存在 → 补注销）；bash 无 record/store 可查——bash
+ * 注册随进程退出注销，进程死亡窗口的丢失无补发通道，属显式边界（impl-plan §5
+ * 偏差登记：每孤儿 bash 注册 1 条静态虚报，无空转驱动源，熔断限损）。
  */
 export function normalizePendingType(raw: unknown): PendingType {
 	if (raw === "subagent") return "subagent";

@@ -10,7 +10,7 @@ vi.mock("@zhushanwen/pi-extension-logger", () => ({
 	setPiHandle: vi.fn(),
 }));
 
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -50,6 +50,8 @@ interface MockSetup {
 	setSessionNameMock: ReturnType<typeof vi.fn>;
 	/** 防覆盖检查读 pi.getSessionName()（D5），非 ctx——默认未命名（undefined）。 */
 	getSessionNameMock: ReturnType<typeof vi.fn>;
+	/** usage 落账入口（设计 §3.3 ③）：index.ts 注入回调体内调 pi.appendEntry，接线断言用。 */
+	appendEntryMock: ReturnType<typeof vi.fn>;
 	turnEndHandler: (event: unknown, ctx: ExtensionContext) => void | Promise<void>;
 }
 
@@ -83,6 +85,7 @@ const DISABLED_CONFIG: RenameSessionConfig = {
 function createMockPi(): MockSetup {
 	const setSessionNameMock = vi.fn();
 	const getSessionNameMock = vi.fn((): string | undefined => undefined);
+	const appendEntryMock = vi.fn();
 	let turnEndHandler!: MockSetup["turnEndHandler"];
 	const pi = {
 		on: vi.fn((event: string, handler: MockSetup["turnEndHandler"]) => {
@@ -91,11 +94,13 @@ function createMockPi(): MockSetup {
 		registerCommand: vi.fn(),
 		getSessionName: getSessionNameMock,
 		setSessionName: setSessionNameMock,
+		appendEntry: appendEntryMock,
 	} as unknown as ExtensionAPI;
 	return {
 		pi,
 		setSessionNameMock,
 		getSessionNameMock,
+		appendEntryMock,
 		get turnEndHandler() {
 			return turnEndHandler;
 		},
@@ -484,5 +489,88 @@ describe("renameSessionExtension", () => {
 				!l.includes("rename LLM call failed"),
 		);
 		expect(nonA1Calls).toHaveLength(0);
+	});
+});
+
+// ────────────────────────────────────────────────────
+// usage 落账接线（appendUsageEntry 回调注入，设计 §3.3 ③ / §3.6）
+// ────────────────────────────────────────────────────
+
+/** 合法 Usage 夹具（pi-ai Usage 全必填字段，消除 unsafe-cast 强断言）。 */
+const STUB_USAGE: Usage = {
+	input: 10,
+	output: 5,
+	cacheRead: 2,
+	cacheWrite: 1,
+	totalTokens: 18,
+	cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+};
+
+describe("usage 落账接线（appendUsageEntry，设计 §3.3 ③）", () => {
+	let setup: MockSetup;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.mocked(loadRenameConfig).mockReset();
+		vi.mocked(resolveModel).mockReset();
+		vi.mocked(callLLM).mockReset();
+		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
+		setup = createMockPi();
+		renameSessionExtension(setup.pi);
+	});
+
+	it("接线：callLLM ok:true + usage → pi.appendEntry 恰被调一次 ('rename-session', {model, usage})，且先于 setSessionName（标题照常落库）", async () => {
+		vi.mocked(callLLM).mockResolvedValue({
+			ok: true,
+			content: "自动生成的标题",
+			usage: STUB_USAGE,
+		});
+
+		await fire(setup, createMockCtx());
+		await vi.waitFor(() => expect(setup.setSessionNameMock).toHaveBeenCalledWith("自动生成的标题"));
+
+		expect(setup.appendEntryMock).toHaveBeenCalledTimes(1);
+		expect(setup.appendEntryMock).toHaveBeenCalledWith("rename-session", {
+			model: "stub/stub-model",
+			usage: STUB_USAGE,
+		});
+		// 时序：appendEntry 在 callRenameLLM 内（cleanTitle 前）触发，setSessionName 在其后 .then——落账先于落库
+		expect(setup.appendEntryMock.mock.invocationCallOrder[0]).toBeLessThan(
+			setup.setSessionNameMock.mock.invocationCallOrder[0],
+		);
+	});
+
+	it("catch 在回调体内：pi.appendEntry 抛错（session 已切换等）→ logger.error 且后续流程照常（标题照常落库）", async () => {
+		vi.mocked(callLLM).mockResolvedValue({
+			ok: true,
+			content: "自动生成的标题",
+			usage: STUB_USAGE,
+		});
+		setup.appendEntryMock.mockImplementation(() => {
+			throw new Error("session switched");
+		});
+
+		await fire(setup, createMockCtx());
+		// 「标题照常落库」（§3.6）：appendEntry 抛错被回调体内 catch，detached 链继续走 cleanTitle → setSessionName
+		await vi.waitFor(() => expect(setup.setSessionNameMock).toHaveBeenCalledWith("自动生成的标题"));
+
+		expect(loggerMock.error).toHaveBeenCalledWith("failed to append usage entry", {
+			error: "Error: session switched",
+		});
+		// 外层 .catch（rename LLM failed）不应被触发——错误在回调体内已被吞掉
+		const outerCatchCalls = loggerMock.error.mock.calls.filter((c) =>
+			String(c[0]).includes("rename LLM failed"),
+		);
+		expect(outerCatchCalls).toHaveLength(0);
+	});
+
+	it("usage 缺失 → appendEntry 不被调（§3.6 存在性守卫），标题照常落库", async () => {
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "自动生成的标题" });
+
+		await fire(setup, createMockCtx());
+		await vi.waitFor(() => expect(setup.setSessionNameMock).toHaveBeenCalledWith("自动生成的标题"));
+
+		expect(setup.appendEntryMock).not.toHaveBeenCalled();
 	});
 });

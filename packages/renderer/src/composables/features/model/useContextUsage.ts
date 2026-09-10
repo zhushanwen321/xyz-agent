@@ -10,8 +10,9 @@
  * - 恢复腿：每次进入某 sid 视图无条件拉 session.getContext——no-value 也重拉（切走期间
  *   后台 turn 可能产生新值，组件级订阅已退订收不到帧，不能依赖分区缓存）；RPC 失败保留
  *   分区缓存不降级；
- * - in-flight 去重：模块级表（条目含 Promise 本体），多实例 await 同一 Promise 后各写
- *   各分区；resolve 即清条目（下次切入重拉）；组件 remount 的重复拉取接受（幂等查询）；
+ * - in-flight 去重：模块级 createInflightDedup 表（D9 共享原语收编，meta 携带发起时刻
+ *   帧序号），多实例 await 同一 Promise 后各写各分区；resolve 即清条目（下次切入重拉）；
+ *   组件 remount 的重复拉取接受（幂等查询）；
  * - cleanup：registerSessionCleanup 挂进 useSidebar.deleteSession 清理编排；
  * - G4 dev 漂移检测器：XYZ_AGENT_DEBUG=1 时恢复腿 resolve 后对账（口径见 applyReply）。
  *
@@ -24,6 +25,7 @@
 import { computed, onScopeDispose, reactive, watch, type ComputedRef, type Ref } from 'vue'
 import { registerSessionCleanup, useSessionScopedState } from '@/composables/useSessionScopedState'
 import { useSessionEvents } from '@/composables/features/chat/useSessionEvents'
+import { createInflightDedup } from '@xyz-agent/core/foundation/create-inflight-dedup'
 import { session as sessionApi } from '@/api'
 
 /** context.update 帧 / getContext reply 的 usage 载荷形状（D1：字段缺失 = 无值）。 */
@@ -52,29 +54,21 @@ export interface UseContextUsageReturn {
   current: ComputedRef<UsagePartition>
 }
 
-/** in-flight 去重表条目。 */
-interface InflightEntry {
-  /** RPC Promise 本体：每个实例各自 attach then 写自己的分区（见下方模块注释） */
-  promise: Promise<ContextUsageReply>
-  /**
-   * 发起时刻该 sid 的 live 帧序号（recency 基准）。存「发起时」而非「attach 时」：
-   * 复用条目的实例 attach 更晚，若按 attach 时序号捕获，发起后落地过 live 帧的分区会被
-   * 陈旧 reply 回滚（详见 applyReply 的 coveredByNewerFrame 判定）。
-   */
-  seqAtIssue: number
-}
-
 // taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，已落定 data-source-registry #3 例外列）：getContext RPC 的 in-flight 去重簿记（Promise 句柄，非用量数据；用量数据本体在 #3 链路的 per-session 分区，经 useSessionScopedState 持有）
 /**
- * 模块级 in-flight 去重表（D3 机制约束）：sid → 在途 getContext。
+ * 模块级 in-flight 去重表（D3 机制约束）：sid → 在途 getContext（createInflightDedup
+ * 收编，state-truth-sync §3.3 D9）。
  *
  * 为什么条目必须持 Promise 本体而不是「发起实例的回调」：useSessionScopedState 是
  * per-instance 的（每个 useContextUsage 调用建自己的分区 Map），split panel 双实例同时
- * 切入同一 sid 时，若存回调则第二实例分区永不更新——存 Promise 本体，每个实例各自
- * attach then 写自己的分区。resolve/reject 即清条目：下次切入同一 sid 重新拉取
+ * 切入同一 sid 时，若存回调则第二实例分区永不更新——factory entry 即持 Promise 本体，
+ * 每个实例各自 attach then 写自己的分区。entry.meta 携带发起时刻该 sid 的 live 帧序号
+ * （recency 基准，存「发起时」而非「attach 时」——复用条目的实例 attach 更晚，若按
+ * attach 时序号捕获，发起后落地过 live 帧的分区会被陈旧 reply 回滚，详见 applyReply
+ * 的 coveredByNewerFrame 判定）。resolve/reject 即清条目：下次切入同一 sid 重新拉取
  * （无条件恢复腿，不依赖分区缓存的时效）。
  */
-const inflightContextFetch = new Map<string, InflightEntry>()
+const inflightContextFetch = createInflightDedup<ContextUsageReply, { seqAtIssue: number }>()
 
 /** 测试隔离钩子：清模块级 in-flight 表（防用例间残留）。生产代码禁止调用。 */
 export function __clearInFlightContextFetchForTest(): void {
@@ -215,33 +209,22 @@ export function useContextUsage(sessionIdRef: Ref<string | null | undefined>): U
     // 重新进入视图 = 新生命周期：解除该 sid 的清理抑制
     suppressedSids.delete(sid)
 
-    const attach = (entry: InflightEntry): void => {
-      void entry.promise.then(
-        (reply) => applyReply(sid, reply, entry.seqAtIssue),
-        (err: unknown) => {
-          // RPC 失败：保留分区缓存不降级（分区缓存角色 = 失败兜底显示），下次切入重拉自愈。
-          // debug 级而非 warn/error：可重试瞬态 + transport/pending 层已记错误，避免断连期刷屏
-          console.debug('[context-usage] getContext failed, keep cached partition', sid, err)
-        },
-      )
-    }
-
-    let entry = inflightContextFetch.get(sid)
-    if (!entry) {
-      entry = { promise: sessionApi.getContext(sid), seqAtIssue: liveFrameSeqs.get(sid) ?? 0 }
-      inflightContextFetch.set(sid, entry)
-      // settle（resolve/reject）即清条目：下次切入重拉（无条件恢复腿）。比对条目引用防
-      // 误删后来者。不用 .finally：finally 返回的新 promise 会镜像 rejection，void 丢弃
-      // 即产生 unhandled rejection；then 双分支等价且 err 分支接管错误
-      const issued = entry
-      const clearOnSettle = (): void => {
-        if (inflightContextFetch.get(sid)?.promise === issued.promise) {
-          inflightContextFetch.delete(sid)
-        }
-      }
-      void issued.promise.then(clearOnSettle, clearOnSettle)
-    }
-    attach(entry)
+    // meta（seqAtIssue）仅在首次发起时捕获，复用条目的实例共享发起时刻值（理由见模块级
+    // 表注释）。settle 即清与引用比对防误删由 factory 内建（settle 清理先于调用方 then，
+    // err 分支接管不产生 unhandled rejection）。
+    const entry = inflightContextFetch.run(
+      sid,
+      () => sessionApi.getContext(sid),
+      { seqAtIssue: liveFrameSeqs.get(sid) ?? 0 },
+    )
+    void entry.promise.then(
+      (reply) => applyReply(sid, reply, entry.meta.seqAtIssue),
+      (err: unknown) => {
+        // RPC 失败：保留分区缓存不降级（分区缓存角色 = 失败兜底显示），下次切入重拉自愈。
+        // debug 级而非 warn/error：可重试瞬态 + transport/pending 层已记错误，避免断连期刷屏
+        console.debug('[context-usage] getContext failed, keep cached partition', sid, err)
+      },
+    )
   }
 
   // 恢复腿触发源：每次进入某 sid 视图（immediate 覆盖首挂载）。null/undefined 不拉

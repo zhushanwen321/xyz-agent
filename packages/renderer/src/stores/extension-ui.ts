@@ -23,17 +23,18 @@
  * useExtensionUI composable（T2 范围把 composable 改为写入本 store）。
  */
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
 import type { ComputedRef } from 'vue'
 import type { ExtensionUIRequest } from '@xyz-agent/core/transport/api/domains/extension'
+import { createPartitionedRecords } from '../lib/partitioned-session-records'
 
 export const useExtensionUIStore = defineStore('extension-ui', () => {
   // ── state ──
   /**
    * 按 sessionId 分区的 pending UI 请求（含 ask-user 富交互 + 非 ask-user dialog 原语）。
    * 切走不清、切回直接读 Map 分区；deleteSession 经 clearSession(sid) 精确释放。
+   * 四件套实现单源在 lib/partitioned-session-records（S4 A1，行为逐字等价迁移）。
    */
-  const requestsBySession = ref<Map<string, ExtensionUIRequest[]>>(new Map())
+  const partition = createPartitionedRecords<ExtensionUIRequest>()
 
   // ── 响应式视图（组件订阅用）──
   /**
@@ -41,13 +42,13 @@ export const useExtensionUIStore = defineStore('extension-ui', () => {
    * 切会话时读不同分区，requestsBySession 变化（不可变替换）自动重算。
    */
   function recordsOf(sessionId: string): ComputedRef<ExtensionUIRequest[]> {
-    return computed(() => requestsBySession.value.get(sessionId) ?? [])
+    return partition.recordsOf(sessionId)
   }
 
   // ── 非响应式读（getter / derivedStatus computed 内调）──
   /** 非响应式读：指定 session 的 pending 请求（不写 Map，无则空数组，对齐 subagent.ts getRecordsBySession） */
   function getRequestsBySession(sessionId: string): ExtensionUIRequest[] {
-    return requestsBySession.value.get(sessionId) ?? []
+    return partition.get(sessionId)
   }
 
   /**
@@ -71,7 +72,7 @@ export const useExtensionUIStore = defineStore('extension-ui', () => {
    * @param requests runtime 推送 / RPC 拉取的请求列表（整体替换该分区）
    */
   function applyRecords(sessionId: string, requests: ExtensionUIRequest[]): void {
-    requestsBySession.value = new Map(requestsBySession.value).set(sessionId, requests)
+    partition.apply(sessionId, requests)
   }
 
   /**
@@ -97,20 +98,17 @@ export const useExtensionUIStore = defineStore('extension-ui', () => {
 
   /** 清除指定 session 的 pending 分区（deleteSession 调，防泄漏，对齐 subagent.ts:171） */
   function clearSession(sessionId: string): void {
-    if (!requestsBySession.value.has(sessionId)) return
-    const next = new Map(requestsBySession.value)
-    next.delete(sessionId)
-    requestsBySession.value = next
+    partition.clear(sessionId)
   }
 
   /** 清空所有 session 的 pending（runtime 重连全局清理用，R3/T5） */
   function clearAllPending(): void {
-    requestsBySession.value = new Map()
+    partition.recordsBySession.value = new Map()
   }
 
   return {
     // state
-    requestsBySession,
+    requestsBySession: partition.recordsBySession,
     // 响应式视图
     recordsOf,
     // 非响应式读 / getter

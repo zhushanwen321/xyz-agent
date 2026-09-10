@@ -10,8 +10,9 @@
  * 职责（编排，非状态机实现）：NewTaskFlow 横切编排骨架——compose 状态机 + 分支 + 选目录三子模块，
  * 自身仅保留跨子模块的编排动作：
  * - startFlow：进 landing（销毁重建终态 / in-flight 守卫 / presetCwd / 不变量强制清 activeId）。
- * - submitFirstMessage：landing 态首发提交（create session + apply 模型/思考等级 / 载入 panel + 发送）。
- * - presetCwd / setPendingModel / setPendingPreset：landing 态回灌选定值（create session 后 apply）。
+ * - submitFirstMessage：landing 态首发提交（ensure 数据源就绪 → resolve 解析终值 → create session
+ *   + 载入 panel + 发送；post-create 双重 apply 已随 D5 契约快照化删除）。
+ * - presetCwd / setPendingModel / setPendingPreset：landing 态回灌选定值（submit 时经 resolve 生效）。
  * - closeOverlay / cancelFlow / reenterFlow / completeFlow：薄转换封装。
  * - computed 视图（currentSessionId/currentCwd/currentModel/gitInfo/isInflight/isOverlay/isActive）。
  *
@@ -21,6 +22,9 @@ import { computed, ref } from 'vue'
 import type { ComputedRef } from 'vue'
 import type { Segment } from '@xyz-agent/shared'
 // AC10 跨域铁律：session 域经 '@xyz-agent/core/domain/session' 公开 index API 消费（禁内部模块相对路径）
+// migrateImageSegments：tmpdir image 段迁移单源原语（S4-A2 收口——原本文件私有 migrateTmpdirImages
+// 与 create-session-flow 私有实现逐字同构，双份合一）
+import { migrateImageSegments } from '@xyz-agent/core/domain/session'
 import type { CreateSessionFlowInput } from '@xyz-agent/core/domain/session'
 import type { ThinkingLevel } from '@xyz-agent/shared'
 import {
@@ -34,56 +38,77 @@ import {
 } from './flow-state'
 import { useNewTaskBranch, type NewTaskBranchController } from './branch'
 import { useNewTaskDirSelect } from './dir-select'
+// D1 单一解析层（launch-config，U1）：submit 侧消费 resolveLaunchConfig 终值——
+// 显示侧（chip）与 create 入参同源，「显示 ≡ 生效」由构造成立
+import { ensureLaunchDataReady, resolveLaunchConfig } from './launch-config'
+import type { LaunchConfigInput } from './launch-config'
+// supportedLevelsOf 单源（原本文件内逐字镜像已收编，独立模块防 flow 编排 mock 波及）
+import { supportedLevelsOf } from './supported-levels'
+// core 域 KV 单例直接 import（设计 D1，同 launch-config.ts 自身 import 先例）
+import { lookup as lookupLastUsedModel } from '../composer/last-used-model'
+import { lookup as lookupRememberedLevel } from '../composer/model-thinking-memory'
+import { getSettingsStore } from '../settings'
 import type {
   NewTaskFlowDeps,
-  ImageMigratePort,
 } from './ports'
 
 /**
- * 把 landing 态落 tmpdir 的图片 move 到 <dataDir>/attachments/<sessionId>/（持久化）。
+ * launch 配置解析端口（D1「store 数据经 deps 注入」，U2b）。
  *
- * 单文件失败不阻断（OS 可能已清理 tmpdir），用 Promise.allSettled 收集结果，
- * 失败项 console.warn 后跳过。返回成功迁移的 Map<oldPath, newPath>，供调用方更新 segments.path。
- *
- * 边界（C-W5-2）：创建分支的迁移已下沉 core createSessionFlow（返回 migratedSegments），
- * 本函数仅保留给 retry/预建分支（session 已存在，不调 createSessionFlow）的 tmpdir image 迁移。
- *
- * migrateSessionImage 在 web/mock 环境返回 undefined（非 reject），不进 migrated；调用方据此保留原 path。
+ * 壳层（renderer useNewTaskFlow）注入 preset store / settings store 的解析数据与就绪源；
+ * 编排器（本文件）持有 pending 三兄弟 + Composer authored 档位，resolve 时覆盖到端口返回的
+ * 数据基座上。接口声明随 flow.ts（对齐 U1 launch-config 自带 LaunchDataDeps 的文件内声明
+ * 先例），壳层接线稳定后可正式化迁入 ports.ts。
  */
-async function migrateTmpdirImages(
-  images: Array<Extract<Segment, { type: 'image' }>>,
-  sessionId: string,
-  migrateImage: ImageMigratePort['migrateImage'],
-): Promise<Map<string, string>> {
-  const migrated = new Map<string, string>()
-  const results = await Promise.allSettled(
-    images.map(async (img) => {
-      const result = await migrateImage({
-        fromPath: img.path,
-        sessionId,
-        fileName: img.fileName,
-      })
-      if (result?.path) {
-        migrated.set(img.path, result.path)
-      }
-    }),
-  )
-  results.forEach((r, i) => {
-    if (r.status === 'rejected') {
-      console.warn(`[useNewTaskFlow] image migrate failed: ${images[i].path}`, r.reason)
-    }
-  })
-  return migrated
+export interface LaunchConfigPort {
+  /**
+   * 壳侧 store 数据基座（presets / defaultPresetId / providers / defaultModel /
+   * getSupportedLevels 等 resolve 输入，不含 pending 三兄弟——编排器用自身 landing 态覆盖）。
+   * 每次调用现读响应式数据源（壳侧 Ref / computed）。
+   */
+  getInput(): LaunchConfigInput
+  /**
+   * 壳侧异步源就绪（preset store 惰性加载等）：submit 在 resolve 前 await（D1 加载窗口
+   * 语义——窗口内 resolve 是占位值，直接发送会把占位值固化进新 session）。已加载时壳实现
+   * 返回 resolved promise；加载失败按 E1/E4 在壳内收敛（回落默认），本编排器只兜底 reject/同步抛错。
+   */
+  ensureReady(): Promise<void>
+}
+
+/** U2b 扩展依赖：现有 ports 结构 + launchConfig 端口（可选——壳未接线时回落 core 域单例基座）。 */
+export type NewTaskFlowDepsWithLaunch = NewTaskFlowDeps & {
+  ports: { launchConfig?: LaunchConfigPort }
+}
+
+/**
+ * 壳未注入 launchConfig 端口时的 resolve 输入基座（过渡语义）：core 域可达单例——
+ * settings store（与显示链 composer-shell 同一 getSettingsStore 单例）+ lastUsedModel /
+ * 记忆表 KV（launch-config 同款直接 import）。preset 列表 / defaultPresetId 在 core 无
+ * 镜像（renderer preset store），缺失时 preset 档不可达——preset 透传依赖壳层接线
+ * ports.launchConfig（接线前 explicit preset 选择不透传，属 U2b 已登记偏差）。
+ */
+function buildFallbackLaunchInput(): LaunchConfigInput {
+  const settings = getSettingsStore()
+  return {
+    lastUsedModel: lookupLastUsedModel(),
+    getRememberedThinkingLevel: (modelId) => lookupRememberedLevel(modelId),
+    providers: settings.providers.value,
+    defaultModel: settings.defaultModel.value,
+    getSupportedLevels: (modelId) => supportedLevelsOf(modelId, settings.providers.value),
+  }
 }
 
 /**
  * 新建任务流程编排器（IF5）。
  *
  * @param deps 全部跨域依赖经注入端口（NewTaskFlowDeps——ports 七端口 + gitApi/directoryPicker/
- *   workspaceApi/workspaceState 四端口；壳层 w5 适配 renderer api/stores/composables 注入）
+ *   workspaceApi/workspaceState 四端口；壳层 w5 适配 renderer api/stores/composables 注入）；
+ *   U2b 扩展 ports.launchConfig（launch 配置解析数据端口，可选——未注入时 submit 侧回落
+ *   core 域单例基座，preset 档不可达）
  */
-export function useNewTaskFlow(deps: NewTaskFlowDeps) {
+export function useNewTaskFlow(deps: NewTaskFlowDepsWithLaunch) {
   const { ports, gitApi, directoryPicker, workspaceApi, workspaceState } = deps
+  const launchPort = ports.launchConfig
 
   const {
     state,
@@ -115,7 +140,9 @@ export function useNewTaskFlow(deps: NewTaskFlowDeps) {
   )
   /**
    * 当前 flow 选定模型（Composer 显示用）：session 已建用 session.modelId，
-   * 否则用 landing 选定的 pendingModel。两者均空时 Composer 自行回退全局 defaultModel。
+   * 否则用 landing 选定的 pendingModel。两者均空时 Composer 侧经 resolveLaunchConfig
+   * 全序解析兜底（preset.modelOverride → lastUsedModel（D4 校验）→ 全局默认），
+   * 不直接落全局默认。
    */
   const currentModel: ComputedRef<string | null> = computed(
     () => currentSession.value?.modelId ?? pendingModel.value,
@@ -217,21 +244,145 @@ export function useNewTaskFlow(deps: NewTaskFlowDeps) {
    * 降级：单文件迁移失败（OS 已清理 tmpdir）不阻断发送，console.warn + toast 提示，path 保留 tmpdir
    * （路径进 prompt 文本，LLM 调 read 工具时文件不存在会自然报错——但路径本身仍发，非硬错误）。
    *
-   * thinkingLevel：landing 态 Composer 传入用户选定（或切模型自动重置）的思考等级，
-   * create session 后 apply（session.setThinkingLevel）。undefined 表示用户未操作，
-   * 用 runtime 默认。apply 经 SessionFlowPort.setThinkingLevel（C-W4-3 留壳步）。
+   * thinkingLevel / model / presetId（D1 单一解析层，U2b 改线）：create 前
+   * await ensureLaunchDataReady()（core KV 双源 + 壳侧 ports.launchConfig.ensureReady），
+   * 再 resolveLaunchConfig 解析终值——pending 三兄弟 + Composer authored 档位作 explicit
+   * 输入覆盖壳侧数据基座。create 入参恒传解析终值（D5 契约快照化：landing 新建
+   * modelOverride/thinkingOverride 恒非空；presetId 按 D3——出厂 builtin:full 解析为
+   * undefined 不透传，非出厂正常透传）。post-create 双重 apply（壳层 C-W4-3
+   * setThinkingLevel）已随快照化删除——landing 恒传终值后它是同值二次 RPC。
    *
    * @param segments 结构化 segments（含 text/image/skill/file/mention 段）
    * @param thinkingLevel 可选思考等级（landing 态 Composer 选定值）
    * @param bashCommand [S10] bash 命令参数。仅当 extractBashCommand.type === 'command' 时传入，
    *   undefined = 非 bash 走普通 send。调用方控制流保证此契约（Composer.vue 按 type 分支）。
    *
-   * presetId（preset 透传）：landing 态用户在 PresetSelectChip 选定的预设。
-   * 透传链路（B6 修复）：PresetSelectChip emit select → Landing.vue onPresetSelect →
-   * flow.setPendingPreset 写 pendingPreset；这里 submitFirstMessage create session 时读
-   * pendingPreset.value 透传 sessionApi.create。Composer onSend 不再直接读 store.selectedPresetId，
-   * 统一走 flow 单一真源（与 pendingCwd/pendingModel 范式一致）。
+   * presetId（preset 透传）：landing 态用户在 PresetSelectChip 选定的预设（pendingPreset，
+   * 经 setPendingPreset 写入）与全局默认预设（defaultPresetId）都作为 resolveLaunchConfig
+   * 的输入——透传的是 resolve 终值（D3：默认预设首次真正生效；出厂 builtin:full →
+   * undefined 不透传，行为与写入面全等现状）。pendingPreset 仍是用户显式选择的单一真源
+   * （PresetSelectChip emit select → Landing.vue onPresetSelect → flow.setPendingPreset）。
    */
+  /**
+   * create 分支：未绑定 session 时经 createSessionFlow 建 session 并绑定，返回迁移后
+   * segments（null = 空 content guard 命中，调用方 abort send）。
+   */
+  async function createSessionForSubmit(
+    segments: Segment[],
+    thinkingLevel?: string,
+    bashCommand?: { command: string; excludeFromContext: boolean },
+  ): Promise<Segment[] | null> {
+    // D1 加载窗口语义：create 前等全部解析数据源就绪——core KV 双源（lastUsedModel +
+    // 记忆表，launch-config 直接 import）+ 壳侧异步源（ports.launchConfig.ensureReady，
+    // 如 preset store 惰性加载）。ensureReady 失败按 E1/E4 收敛不阻塞发送（catch 放行，
+    // resolve 回落默认档），同步抛错一并兜底；allSettled = 两独立源各自收敛/降级，
+    // 一方失败不阻塞另一方完成（KV 源自身永不 reject）。
+    const shellReady = launchPort
+      ? Promise.resolve()
+        .then(() => launchPort.ensureReady())
+        .catch(() => undefined)
+      : Promise.resolve()
+    await Promise.allSettled([ensureLaunchDataReady(), shellReady])
+    // D1 单一解析层：submit 侧消费 resolve 终值（pending 三兄弟 + Composer authored 档位
+    // 作 explicit 输入，覆盖壳侧数据基座）——与显示侧（chip）同一 resolve 输出，
+    // 「显示 ≡ 生效」由构造成立
+    const resolved = resolveLaunchConfig({
+      ...(launchPort?.getInput() ?? buildFallbackLaunchInput()),
+      pendingModel: pendingModel.value,
+      pendingPreset: pendingPreset.value,
+      pendingCwd: pendingCwd.value,
+      pendingThinkingLevel: thinkingLevel ?? null,
+    })
+    // C-NT-2：session 创建部分改调注入的 createSessionFlow 端口（SessionFlowPort，
+    // 契约对齐 domain/session/createSessionFlow IF5）。壳把 createSessionFlow(ctx, input)
+    // 包成端口实现（ctx 的 store/api/defaultCwd/onCwdFallback 由壳组装）。
+    // createSessionFlow 内部做：guard→cwd 兑底→label 派生→create→INV-7 降级（含 E7
+    // 两空提示）→appendSession→migrateImages，返回 {session, migratedSegments} | null
+    // （null=空 content guard）。post-create apply（applyModel / setThinkingLevel）已随
+    // D5 契约快照化删除——override 经 create 一次到位。
+    const input: CreateSessionFlowInput = {
+      // cwd 链现行为不变（D2）：pendingCwd → createSessionFlow ctx.defaultCwd 兜底 →
+      // runtime INV-7 降级，不消费 resolve.cwd
+      cwd: pendingCwd.value,
+      // D3：透传 resolve 终值 presetId（出厂 builtin:full → undefined 不透传，
+      // 行为与写入面全等现状）
+      presetId: resolved.presetId ?? null,
+      // D5 契约快照化：恒传解析终值（'' 全链空防御形态不上线——回落 runtime 全局默认）
+      pendingModel: resolved.model || null,
+      segments,
+      bashCommand: bashCommand ?? null,
+      // resolve 输出已是 value 域（launch-config LaunchConfig.thinkingLevel 契约：
+      // authored/preset 档原样，memory/最高档经 thinkingLevelMap 转 value），cast 消除
+      // string→ThinkingLevel 类型差（同改线前 Composer emit 值域先例）
+      pendingThinkingLevel: resolved.thinkingLevel as ThinkingLevel,
+    }
+    const result = await ports.createSessionFlow.createSession(input)
+    // 空 content guard 命中（createSessionFlow 返回 null）→ abort send（不 send，session 未创建）
+    if (!result) return null
+    controller.bindCurrentSession(result.session)
+    // [D5] C-W4-3 setThinkingLevel 补 apply 已删：landing 恒传终值后它是对每个新
+    // session 的同值二次 RPC，thinkingOverride 经 create 快照化一次到位。
+    // createSessionFlow 已迁移 needsMigrate image 段（path 更新 + needsMigrate 重置），
+    // 壳直接用 result.migratedSegments 做 send（不重复迁移）。
+    return result.migratedSegments
+  }
+
+  /**
+   * retry/预建分支：session 已存在，不调 createSessionFlow。landing 态 tmpdir image 段
+   * （用户重试时新贴的图）经 migrateImageSegments 单源迁移（createSessionFlow 未跑，
+   * migration 未发生）；partial-fail toast 判定留本编排层（session 域原语不管 UI 提示）。
+   */
+  async function migrateRetryImages(segments: Segment[]): Promise<Segment[]> {
+    const { segments: finalSegments, migratedCount, total } = await migrateImageSegments(
+      segments,
+      currentSession.value!.id,
+      (p) => ports.migrateImage.migrateImage(p),
+      { logTag: 'useNewTaskFlow' },
+    )
+    if (migratedCount < total) {
+      // 部分迁移失败：toast 提示（不阻断发送）
+      ports.toast.warning(
+        ports.t('composable.imageMigratePartialFailed', {
+          count: total - migratedCount,
+        }),
+      )
+    }
+    return finalSegments
+  }
+
+  /**
+   * 交接三步（setActiveSession + loadPanel + pushChat）+ 终态定格 + 发送。
+   *
+   * [D3 交接原子化] landing→completed 在交接点定格：交接完成即 flow 职责终结——这是
+   * 「流程状态机只守自己不变量」的正确语义。send 成败属于 session 的错误通道（useChat
+   * W2 内部吞错只 toast），与 flow 状态机无关，flow 终态不应依赖它——send 链路未来任何
+   * 演化（恢复 throw、新增前置抛错点）都不再影响 flow 终态（时序正确性 + 防御加固，
+   * 设计 panel-view-derivation-and-flow-lifecycle.md §3.3 D3）。
+   */
+  async function handoverAndSend(
+    newSid: string,
+    finalSegments: Segment[],
+    bashCommand?: { command: string; excludeFromContext: boolean },
+  ): Promise<void> {
+    ports.navigation.setActiveSession(newSid)
+    ports.navigation.loadPanel(ports.navigation.activePanelId(), newSid)
+    ports.navigation.pushChat(newSid)
+    transition('completed')
+    // 文件树预加载：新建 session 后侧栏「文件」tab 计数（fileCount 读 store.getTree）立即更新。
+    // fire-and-forget：失败不阻断首发发送（文件树缺失仅致 tab 计数为 0）。
+    void ports.fileTree.loadTree(newSid)
+    // per-session sid：显式传 newSid，不依赖全局 activeId（双 panel 隔离）
+    // tmpdir 迁移已在上方分支完成（create 分支=createSessionFlow.migratedSegments，
+    // retry 分支=migrateRetryImages），finalSegments 即迁移后的段。bashCommand 无图片段，无副作用。
+    // 发送阶段：bash 首发（landing 态 !/!! 前缀）走 sendBash，否则普通 send
+    // bash 不经 segments（原始 shell 文本透传 pi bash RPC），finalSegments 仅用于 tmpdir 迁移流程（bash 无图片段，无副作用）
+    if (bashCommand) {
+      await ports.chat.sendBash(newSid, bashCommand.command, bashCommand.excludeFromContext)
+    } else {
+      await ports.chat.send(newSid, finalSegments)
+    }
+  }
+
   async function submitFirstMessage(
     segments: Segment[],
     thinkingLevel?: string,
@@ -252,87 +403,14 @@ export function useNewTaskFlow(deps: NewTaskFlowDeps) {
       let finalSegments = segments
       // 未选目录直接发送（用默认 cwd 兑底 create），或重试场景已绑定
       if (!currentSession.value) {
-        // C-NT-2：session 创建部分改调注入的 createSessionFlow 端口（SessionFlowPort，
-        // 契约对齐 domain/session/createSessionFlow IF5）。壳把 createSessionFlow(ctx, input)
-        // 包成端口实现（ctx 的 store/api/defaultCwd/onCwdFallback/applyModel 由壳组装）。
-        // createSessionFlow 内部做：guard→cwd 兑底→label 派生→create→INV-7 降级→appendSession→
-        // applyModel→migrateImages，返回 {session, migratedSegments} | null（null=空 content guard）。
-        // 壳只补 thinkingLevel apply（C-W4-3 留壳，经本端口 setThinkingLevel）+ 后续 panel/send。
-        const input: CreateSessionFlowInput = {
-          cwd: pendingCwd.value,
-          presetId: pendingPreset.value,
-          pendingModel: pendingModel.value,
-          segments,
-          bashCommand: bashCommand ?? null,
-          // B3：thinkingLevel 透传 createSessionFlow → api.create → runtime，session 创建即带正确等级。
-          // Composer emit 的 thinkingLevel 值域与 ThinkingLevel 一致，cast 消除 string→ThinkingLevel 类型差。
-          pendingThinkingLevel: (thinkingLevel as ThinkingLevel | undefined) ?? null,
-        }
-        const result = await ports.createSessionFlow.createSession(input)
-        // 空 content guard 命中（createSessionFlow 返回 null）→ abort send（不 send，session 未创建）
-        if (!result) return
-        controller.bindCurrentSession(result.session)
-        // C-W4-3：thinkingLevel apply 留壳（createSessionFlow 不做，只做 model apply）
-        if (thinkingLevel) {
-          await ports.createSessionFlow.setThinkingLevel(result.session.id, thinkingLevel)
-        }
-        // createSessionFlow 已迁移 needsMigrate image 段（path 更新 + needsMigrate 重置），
-        // 壳直接用 result.migratedSegments 做 send（不重复迁移）。
-        finalSegments = result.migratedSegments
+        const migrated = await createSessionForSubmit(segments, thinkingLevel, bashCommand)
+        if (migrated === null) return
+        finalSegments = migrated
       } else {
-        // retry/预建分支：session 已存在，不调 createSessionFlow。landing 态 tmpdir image 段
-        // （用户重试时新贴的图）需侧迁移（createSessionFlow 未跑，migration 未发生）。
-        const needsMigrateImages = segments.filter(
-          (s): s is Extract<Segment, { type: 'image' }> =>
-            s.type === 'image' && s.needsMigrate === true,
-        )
-        if (needsMigrateImages.length > 0) {
-          const migrated = await migrateTmpdirImages(
-            needsMigrateImages,
-            currentSession.value!.id,
-            ports.migrateImage.migrateImage,
-          )
-          finalSegments = segments.map((s) => {
-            if (s.type === 'image' && migrated.has(s.path)) {
-              // 迁移成功：更新 path + 重置 needsMigrate=false（避免后续重发误迁移）。
-              return { ...s, path: migrated.get(s.path)!, needsMigrate: false }
-            }
-            return s
-          })
-          if (migrated.size < needsMigrateImages.length) {
-            // 部分迁移失败：toast 提示（不阻断发送）
-            ports.toast.warning(
-              ports.t('composable.imageMigratePartialFailed', {
-                count: needsMigrateImages.length - migrated.size,
-              }),
-            )
-          }
-        }
+        finalSegments = await migrateRetryImages(segments)
       }
       // 载入 panel + 设 activeId（预建或刚建统一处理）
-      const newSid = currentSession.value!.id
-      ports.navigation.setActiveSession(newSid)
-      ports.navigation.loadPanel(ports.navigation.activePanelId(), newSid)
-      ports.navigation.pushChat(newSid)
-      // [D3 交接原子化] landing→completed 在交接点定格：交接（setActiveSession + loadPanel +
-      // pushChat）完成即 flow 职责终结——这是「流程状态机只守自己不变量」的正确语义。send
-      // 成败属于 session 的错误通道（useChat W2 内部吞错只 toast），与 flow 状态机无关，
-      // flow 终态不应依赖它——send 链路未来任何演化（恢复 throw、新增前置抛错点）都不再
-      // 影响 flow 终态（时序正确性 + 防御加固，设计 panel-view-derivation-and-flow-lifecycle.md §3.3 D3）。
-      transition('completed')
-      // 文件树预加载：新建 session 后侧栏「文件」tab 计数（fileCount 读 store.getTree）立即更新。
-      // fire-and-forget：失败不阻断首发发送（文件树缺失仅致 tab 计数为 0）。
-      void ports.fileTree.loadTree(newSid)
-      // per-session sid：显式传 newSid，不依赖全局 activeId（双 panel 隔离）
-      // tmpdir 迁移已在上方分支完成（create 分支=createSessionFlow.migratedSegments，
-      // retry 分支=migrateTmpdirImages），finalSegments 即迁移后的段。bashCommand 无图片段，无副作用。
-      // 发送阶段：bash 首发（landing 态 !/!! 前缀）走 sendBash，否则普通 send
-      // bash 不经 segments（原始 shell 文本透传 pi bash RPC），finalSegments 仅用于 tmpdir 迁移流程（bash 无图片段，无副作用）
-      if (bashCommand) {
-        await ports.chat.sendBash(newSid, bashCommand.command, bashCommand.excludeFromContext)
-      } else {
-        await ports.chat.send(newSid, finalSegments)
-      }
+      await handoverAndSend(currentSession.value!.id, finalSegments, bashCommand)
     } finally {
       controller.setCreateInFlight(false)
     }
@@ -356,10 +434,11 @@ export function useNewTaskFlow(deps: NewTaskFlowDeps) {
   }
 
   /**
-   * setPendingModel —— landing 态记录用户选定但尚未 apply 的模型。
+   * setPendingModel —— landing 态记录用户选定但尚未透传的模型。
    *
    * landing 态 session 尚未 create，无法调 model.switch RPC。记 pendingModel 供 Composer
-   * 显示所选模型（currentModel computed），首发提交 submitFirstMessage create session 后 apply。
+   * 显示所选模型（currentModel computed），首发提交时经 resolveLaunchConfig 终值随
+   * create payload 快照透传（D5，无 post-create apply）。
    * 守卫：仅 landing 态生效（其他态 noop，避免污染 overlay/终态流程）。
    * payload 为 "provider/modelId" 复合串（ModelSelectPopover emit 的格式约定）。
    */
@@ -455,6 +534,13 @@ export function useNewTaskFlow(deps: NewTaskFlowDeps) {
     presetCwd,
     setPendingModel,
     setPendingPreset,
+    /**
+     * [U4r2] landing 态显式选定 preset id 只读视图（写经 setPendingPreset，读写分离——
+     * 对齐 pendingModel 经 currentModel 的只读暴露先例）。消费方：composer-shell 把它
+     * 接入 model-thinking 的 pendingPreset 通道，使 chip 侧 resolve 输入含显式 preset
+     * 选择（与 submit 侧同源同输入，「显示 ≡ 生效」全矩阵成立）。
+     */
+    pendingPreset: computed(() => pendingPreset.value),
     openDirPopover: dirSelect.openDirPopover,
     openBranchPopover: branch.openBranchPopover,
     openPresetPopover,

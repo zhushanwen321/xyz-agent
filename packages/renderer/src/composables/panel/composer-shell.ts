@@ -49,9 +49,15 @@ import {
 } from '@xyz-agent/dom-core/composer/input'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
+import { usePresetStore } from '@/stores/preset'
 import { getSettingsStore } from '@xyz-agent/core'
 import { useChat } from '@/composables/features/chat/useChat'
 import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
+// 显示侧与 submit 侧 getSupportedLevels 的主路径唯一实现（F5；例外 = core flow.ts
+// buildFallbackLaunchInput 的壳未接线 fallback 逐字镜像，过渡语义，改动双侧同步）；
+// 独立模块——composer 系列测试
+// vi.mock 整个 useNewTaskFlow 模块时，本文件 import 链不被 mock 波及
+import { supportedLevelsOf } from '@/composables/features/new-task/supported-levels'
 import { useModel } from '@/composables/features/model/useModel'
 import { useHandoffActions } from '@/composables/features/fork-handoff/useHandoffActions'
 import { useSidebar } from '@/composables/features/sidebar/useSidebar'
@@ -147,6 +153,7 @@ export function useComposerShell(params: ComposerShellParams) {
   const { t } = useI18n()
   const chatStore = useChatStore()
   const sessionStore = useSessionStore()
+  const presetStore = usePresetStore()
   const settingsStore = getSettingsStore()
   const flow = useNewTaskFlow()
   const { error: toastError } = useToast()
@@ -158,7 +165,7 @@ export function useComposerShell(params: ComposerShellParams) {
   const { signal: forkEnterSignal } = useForkModeChannel()
   const { signal: handoffEnterSignal } = useHandoffModeChannel()
 
-  // ── 模型 + 思考等级（core model-thinking；含 landing 延迟 apply + staging 快照）──
+  // ── 模型 + 思考等级（core model-thinking；landing resolve 显示 + staging 快照）──
   const {
     currentModelId,
     currentThinkingLevel,
@@ -178,6 +185,11 @@ export function useComposerShell(params: ComposerShellParams) {
     },
     defaultModel: computed(() => settingsStore.defaultModel.value),
     currentModel: flow.currentModel,
+    // [U4r2] 显式 preset 选择进 chip 侧 resolve 输入（D1 pending 三兄弟补齐）：flow
+    // pendingPreset 只读视图（Landing.onPresetSelect 写入）——chip 显示与 submit 透传
+    // 同源同输入，显式 preset 捆绑字段不再只在 submit 侧生效（显示 ≠ 生效破口修复）。
+    // 视图缺失（部分测试 mock 的 flow 简化形态）= 无显式选择 → null，不阻断 chip 解析
+    pendingPreset: () => flow.pendingPreset?.value ?? null,
     setPendingModel: (model: string) => flow.setPendingModel(model),
     switchModel,
     setThinkingLevel,
@@ -190,12 +202,20 @@ export function useComposerShell(params: ComposerShellParams) {
       return provider?.models.find((m: { id: string }) => m.id === modelName)?.thinkingLevelMap
     },
     getSupportedLevels: (modelId: string) => {
-      // 与 getThinkingLevelMap 同源解析 models[].supportedLevels（U6：runtime 注册表
-      // pi 同源计算的 view-ready 下发，可用档判定唯一权威，不再本地推算）。
-      if (!modelId.includes('/')) return undefined
-      const [providerId, modelName] = modelId.split('/')
-      const provider = settingsStore.providers?.value?.find((p: { id: string }) => p.id === providerId)
-      return provider?.models.find((m: { id: string }) => m.id === modelName)?.supportedLevels
+      // 与 submit 侧 supportedLevelsOf 即同一函数（U6：runtime 注册表 pi 同源计算的
+      // view-ready 下发，可用档判定唯一权威，不再本地推算）。曾与本文件各持一份实现，
+      // 显示侧漏 enabled 检查 → 禁用 provider 下显示档与生效档发散（F5 统一）。
+      return supportedLevelsOf(modelId, settingsStore.providers?.value ?? [])
+    },
+    // [U2d] landing 显示链完整解析数据注入（D1 单一解析层）：preset 档可达（preset 档
+    // 此前在 core 无镜像，显示恒跳过）+ D4 lastUsedModel 校验获得 providers 能力表。
+    // getter 闭包内读响应式 store，createLaunchConfigView 据此建立依赖——preset store
+    // 惰性加载完成后 chip 自动重算（P5①）。加载触发不在此（PresetSelectChip onMounted
+    // loadPresets 既有通路覆盖 landing 挂载场景）。
+    launchData: {
+      presets: () => presetStore.presets,
+      defaultPresetId: () => presetStore.defaultPresetId || null,
+      providers: () => settingsStore.providers?.value,
     },
   })
 

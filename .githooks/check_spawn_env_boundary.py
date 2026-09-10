@@ -46,6 +46,22 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCAN_ROOTS = [
     "packages/runtime/src",
     "apps/electron/main",
+    # [历史注记] W12 主时点扩展（impl-plan §2.12 / §7.1 拖尾清单第 4 项）仅加入 SDK 与
+    # 两个引擎 CLI 包——出生即经 SDK 原语（buildEngineChildEnv / spawnEngineChild），
+    # 无存量违规面；包未创建时 iter_ts_files 对缺目录 root 打 [WARN] 后 continue
+    # （容错行为，勿改）。packages/subagent-core/src 条目已由 W11 收口批
+    # （W12 拖尾子项④执行）加入——终态口径见下条注释。
+    "packages/subagent-engine-sdk/src",
+    "packages/zcode-subagent-cli",
+    "packages/pi-subagent-cli",
+    # [W11 收口 / W12 拖尾子项④，终态口径] engines/ 内建目录已删、壳侧裸 spawn 已消
+    # （唯一 spawn 面 = EngineClient（buildEngineChildEnv）/ worktree git
+    # （buildOutboundChildEnv）/ relay-env 探针（豁免通道兜底））——core/src 已入扫描；
+    # 收口判据 = 「迁移期临时豁免清零」（engines/zcode 相关临时条目随目录删除消失），
+    # 现存 6 条 core 侧永久类豁免（pid-file/reaper/pi-engine/session-runner×2/worker-host
+    # 的只读探测/kill/Worker 场景，EXEMPT_CALLSITES 逐条附理由，语义合理非泄漏面）；
+    # 豁免申请仍走既有 EXEMPT_CALLSITES 通道。
+    "packages/subagent-core/src",
 ]
 
 # 目录名成分或文件名后缀排除（测试文件不代表生产进程拓扑）
@@ -55,7 +71,13 @@ EXCLUDED_FILE_SUFFIXES = (".test.ts", ".spec.ts", ".d.ts")
 # 文件级白名单：仅当文件真 import 或真调用了构建器才整文件通过。裸子串匹配
 # （`b in source`）会让仅注释提及构建器的文件静默放行其全部未武装调用点，故必须
 # 用形态化正则：import {...} 花括号内出现符号名，或紧跟 ( 的调用形态。
-CONTRACT_BUILDER_SYMBOLS = ("buildOutboundChildEnv", "composeChildEnvBase")
+CONTRACT_BUILDER_SYMBOLS = (
+    "buildOutboundChildEnv",
+    "composeChildEnvBase",
+    # W12：SDK 引擎 env 三层契约构建器（与 shared 版构建器并列的可接受符号——
+    # F9：SDK 消费面不可依赖 shared，自持同语义构建器）
+    "buildEngineChildEnv",
+)
 CONTRACT_BUILDER_USAGE_RE = re.compile(
     r"(?:import\s+(?:type\s+)?\{[^}]*\b(?:%s)\b[^}]*\}|\b(?:%s)\s*\()"
     % ("|".join(CONTRACT_BUILDER_SYMBOLS), "|".join(CONTRACT_BUILDER_SYMBOLS))
@@ -124,6 +146,15 @@ COMMENT_LINE_RE = re.compile(r"^\s*(?://|/\*|\*)")
 # ---------------------------------------------------------------------------
 
 EXEMPT_CALLSITES = [
+    # --- packages/subagent-engine-sdk ---
+    (
+        "node-executor.ts",
+        'spawn(execPath, ["--eval", "process.exit(0)"]',
+        "引擎执行器可用性探针（W9，与 runtime relay-env 探针同款语义的 SDK 复刻）："
+        "手工构造的白名单最小 env（仅 PATH/HOME/ELECTRON_RUN_AS_NODE）探测执行器可运行性，"
+        "父 env 全量不继承，deny 键零暴露——语义强于构建器（全量继承 + deny 剥离），"
+        "改用构建器反而放宽 env 面，故按白名单显式构造豁免（db-isolation/protocolization W9 登记 2026-09-09）",
+    ),
     # --- packages/runtime/src ---
     (
         "infra/relay/relay-env.ts",
@@ -173,6 +204,47 @@ EXEMPT_CALLSITES = [
         "node:worker_threads 的 Worker 是同进程线程而非 OS 子进程，不存在 env 出站边界；"
         "trusted 插件域真正跨进程出站统一收敛于 plugin-host-process.ts 的 fork 接线点"
         "（该文件经 buildOutboundChildEnv 组装）",
+    ),
+    # --- packages/subagent-core/src（W11 收口批加入 SCAN_ROOTS；以下均为永久类，
+    # 非迁移期临时豁免——迁移期临时条目已随 engines/zcode 删除清零） ---
+    (
+        "engine/client/pid-file.ts",
+        'spawnSync("ps"',
+        "引擎 pidfile 清扫的 pid cmdline/start time 只读探测（R9-3/R9-3b：pid 复用"
+        "防御），数组参数不经 shell、显式 timeout，仅读进程表，无 env 传播意图"
+        "（与 reap-orphan-pi.ts ps 探测先例同构）",
+    ),
+    (
+        "engine/client/reaper.ts",
+        "taskkill",
+        "Windows 进程树终止（引擎崩溃收割 kill 处置，无数据回流通路；与 "
+        "supervisor/windows-process.ts taskkill.exe 先例同构）",
+    ),
+    (
+        "engine/engines/pi/pi-engine.ts",
+        "execFile(",
+        "pi 可执行入口版本探测（`<command> --version` 只读探测、显式 timeout、"
+        "仅回读 stdout 版本串，无 env 传播意图；chat 域 inproc 保留面，W7 包内"
+        "等价物同形态）",
+    ),
+    (
+        "engine/engines/pi/session-runner.ts",
+        'spawnSync("ps"',
+        "后代 pid cmdline 只读探测（身份校验/收割判定），数组参数不经 shell、显式"
+        " timeout，仅读进程表（chat 域 inproc 保留面）",
+    ),
+    (
+        "engine/engines/pi/session-runner.ts",
+        'execFile(\n          "git"',
+        "git rev-parse --abbrev-ref HEAD 只读探测（子进程 env block 的 branch 行数据"
+        "源），cwd 限定、显式 timeout、仅回读 stdout，无 env 传播意图（chat 域 "
+        "inproc 保留面）",
+    ),
+    (
+        "orchestration/worker-host.ts",
+        "new Worker(workerCode",
+        "node:worker_threads 的 Worker 是同进程线程而非 OS 子进程，不存在 env 出站"
+        "边界（与 plugin-host.ts new Worker 先例同构）",
     ),
     # --- apps/electron/main ---
     (

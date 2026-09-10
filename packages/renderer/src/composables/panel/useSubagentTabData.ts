@@ -6,9 +6,12 @@
  * finalizeSubagentStream）属 chat store ops 面——taste-lint 规则
  * no-chat-ops-in-components 禁止组件直取，编排动作归 composable 层。
  *
- * 职责（原组件 loadSubagentData 全量迁移）：
- * - subagent 三段式虚拟 id：fetchAndInject 拉历史 + 恒订阅 stream_delta（E-4 / R3
- *   消解：不依赖 isRunning 陈旧缓存判定订阅时机）+ 客户端 outcome-only 兜底投影（U4 A8）
+ * 职责（原组件 loadSubagentData 全量迁移 + drawer-blank 修复 u2 增补）：
+ * - subagent 三段式虚拟 id：fetchAndInject 拉历史（空历史不写分区，u1）+
+ *   恒订阅 stream_delta（E-4 / R3 消解：不依赖 isRunning 陈旧缓存判定订阅时机）
+ *   + 客户端 outcome-only 兜底投影（U4 A8，判定先行）
+ *   + 空历史时 task 用户气泡种入（drawer-blank u2：outcome 先行、seed 复用分区空守卫随后，
+ *   判定顺序即优先级，见 docs/design/subagent-drawer-blank.md §7.2）
  * - agentcall 两段式：快照只读，仅拉历史（D4：不接实时流式）+ 登记虚拟 key 到主
  *   session 清理映射（[MUST_FIX 1]，防 deleteSession 泄漏）
  */
@@ -29,7 +32,7 @@ import {
 import { getAgentCallHistory } from '@xyz-agent/core/transport/api/domains/session'
 import type { Message, SubagentRecord } from '@xyz-agent/shared'
 import { DEFAULT_ENGINE_ID } from '@/constants/engine-icons'
-import { toErrorMessage } from '../../lib/error-message'
+import { toErrorMessage } from '@xyz-agent/core'
 
 export interface SubagentTabDataDeps {
   /** 当前选中 subagent 的 record（组件 computed；三段式虚拟 id 才有，agentcall 两段式为 null） */
@@ -82,9 +85,11 @@ export function useSubagentTabData(deps: SubagentTabDataDeps) {
 
   /**
    * 按虚拟 id 类型加载对话流数据并注入 chatStore 虚拟分区。
-   * - subagent 三段式：fetchAndInject 拉历史 + 恒订阅 stream_delta（E-4 / R3 消解：不再依赖
-   *   isRunning 陈旧缓存判定订阅时机——entry 帧消费走 routeInbound 兜底链不依赖 drawer，
-   *   stream_delta 订阅打开即挂，非 running 时空转零成本）
+   * - subagent 三段式：fetchAndInject 拉历史（返回值 = 拉取的 history；空历史不写分区，u1 契约）
+   *   + 恒订阅 stream_delta（E-4 / R3 消解：不再依赖 isRunning 陈旧缓存判定订阅时机——entry 帧
+   *   消费走 routeInbound 兜底链不依赖 drawer，stream_delta 订阅打开即挂，非 running 时空转零成本）
+   *   空历史时兜底判定顺序即优先级（drawer-blank-fix 设计 §7.2）：①outcome 投影（非 pi）先行
+   *   ②task 气泡种入随后——两判定共用分区空守卫，①命中或 E-4 已投影时②自然跳过
    * - agentcall 两段式：快照只读，仅拉历史（D4：不接实时流式）
    */
   async function loadSubagentData(vid: string): Promise<void> {
@@ -93,8 +98,10 @@ export function useSubagentTabData(deps: SubagentTabDataDeps) {
       if (isSubagentVirtualId(vid)) {
         const mainSessionId = extractMainSessionId(vid)
         const subId = extractSubagentId(vid)
-        await subagentStore.fetchAndInject(mainSessionId, subId, (id, msgs) => chatStore.setMessages(id, msgs))
-        // U4 A8 兜底：非 pi record 读链异常返回空（③级保底失效等异常形态）→ 客户端
+        const history = await subagentStore.fetchAndInject(mainSessionId, subId, (id, msgs) => chatStore.setMessages(id, msgs))
+        // 空历史兜底判定顺序即优先级（drawer-blank-fix 设计 §7.2，顺序写死禁止颠倒）：
+        // ① outcome 先行 → ② task 种入随后；①命中后分区非空 → ②自然跳过（靠分区空守卫）。
+        // ① U4 A8 兜底：非 pi record 读链异常返回空（③级保底失效等异常形态）→ 客户端
         // outcome 投影顶上，详情页不白屏。pi 空结果行为不变（正常空 session 也可能是空）。
         const record = deps.currentRecord.value
         if (
@@ -104,6 +111,27 @@ export function useSubagentTabData(deps: SubagentTabDataDeps) {
           (record.result !== undefined || record.error !== undefined)
         ) {
           chatStore.setMessages(vid, outcomeFallbackMessages(record, deps.noOutcomeText()))
+        }
+        // ② task 种入判定随后（drawer-blank-fix 设计 §7.2）：空历史 × 分区空 × task 非空 →
+        // 种入 record.task 用户气泡（来自侧边栏已在 record，零额外 RPC 秒开初始态）。①命中或
+        // E-4 已投影（u1 空历史不擦）时分区非空 → 自然跳过，不加额外排除条件。
+        // history.length === 0 即「空历史」前提（fetchAndInject 返回值消费点）；非 pi 无 outcome
+        // 的 seed 可达场景 = runtime 磁盘扫描滞后窗口（设计 §5.1 变体）。
+        if (
+          record &&
+          history.length === 0 &&
+          chatStore.getMessages(vid).length === 0 &&
+          record.task.length > 0
+        ) {
+          chatStore.setMessages(vid, [
+            {
+              id: `task-u-${record.subagentId}`,
+              role: 'user',
+              content: record.task,
+              status: 'complete',
+              timestamp: record.startedAt ?? Date.now(),
+            },
+          ])
         }
         // 恒订阅（U8 scope token；E-4 R3 消解点：订阅时机与 record 状态机解耦）
         subagentStore.subscribeStream(

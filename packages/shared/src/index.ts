@@ -29,7 +29,7 @@ export type {
   PiToolCallEntryForm,
 } from './pi-entry'
 export type { Segment } from './segments'
-export { segmentsToText, textToSegments, segmentsToPrompt, normalizeContent } from './segments'
+export { segmentsToText, textToSegments, segmentsToPrompt, normalizeContent, normalizeSegmentOrder, needsBoundarySpace } from './segments'
 export type { SegmentsMetadataFile, SegmentsMetadataEntry } from './message-metadata'
 export type {
   SessionStatus, SessionSummary, SessionGroup,
@@ -55,7 +55,7 @@ export { BASH_RPC_TIMEOUT_MS, COMPACT_RPC_TIMEOUT_MS, RENDERER_RPC_MARGIN_MS } f
 export * from './extension'
 export * from './git'
 export * from './plugin'
-export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, AMBIENT_ENV_NAMES, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS, IMAGE_LIMITS, MAX_WS_PAYLOAD_BYTES, PLUGIN_NOTIFY_LIMITS, UI_TOAST_LIMITS } from './constants'
+export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, AMBIENT_ENV_NAMES, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS, IMAGE_LIMITS, MAX_WS_PAYLOAD_BYTES, PLUGIN_NOTIFY_LIMITS, UI_TOAST_LIMITS, ENGINE_LAUNCH_ENV_KEYS } from './constants'
 export type { ProviderApiType } from './constants'
 // 出站 env 契约 SSOT + 子进程 env 构建器（纯常量/纯函数无 node 依赖，renderer barrel 安全）。
 // main 进程 safe-env 薄封装与 runtime infra/spawn-env.ts 门面均经此消费。
@@ -124,7 +124,9 @@ export { QUOTA_PRESETS, matchQuotaPreset } from './quota-presets'
 // normalizeSubagentStatus 已下沉至 runtime（packages/runtime/src/services/session/subagent-status.ts，
 // 单消费者归位）；shared 仅保留 renderer 消费的 deriveClosedDisplay 展示派生。
 // SUBAGENT_STATUS_ALL：枚举值全集（B3 护栏，renderer bucket 测试的全集覆盖矩阵数据源）。
-export { deriveClosedDisplay, SUBAGENT_STATUS_ALL } from './subagent'
+// SUBAGENT_OUTCOME_PLACEHOLDER：③级占位文案（D6 三端锚点 SSOT 值，core 同值字面量 /
+// runtime 钉子断言 / renderer 思考行判据的消费入口）。
+export { deriveClosedDisplay, SUBAGENT_STATUS_ALL, SUBAGENT_OUTCOME_PLACEHOLDER } from './subagent'
 export type {
   WorkflowRunStatus,
   WorkflowDoneReason,

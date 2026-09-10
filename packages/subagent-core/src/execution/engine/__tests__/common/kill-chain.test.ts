@@ -1,5 +1,11 @@
 // kill-chain.test.ts —— 杀链两分支 + 超时终态合成 + abort 两级编排（fake timers）。
 //
+// 实现体已收编 @zhushanwen/subagent-engine-sdk（common/kill-chain.ts 为 re-export
+// shim，s4-reuse 簇 1）：SDK 侧 __tests__/kill-chain.test.ts 是超集演进版（+
+// LoggerSink 捕获 + kill 抛错幂等用例），本文件保留 core 侧独有断言——engine: pi
+// 重跑建议文案、stdout 尾部 2000 字截断、signalCode 形态退出、grace 贴边不升级。
+// SDK 版 synthesizeTimeoutOutcome 的 engineId 必填（core 原缺省 "pi" 已删），用例显式传。
+//
 // 三视角：①构建者——SIGTERM 优雅 / 超时 SIGKILL 两分支的信号序列正确；②使用者——
 // abortWithFallback 对 CLI-only 与 native-interrupt 引擎都收敛不悬挂；③观察者——
 // 合成终态的 error 含 stdout 尾部与 exitCode=null（被信号杀死判据）。
@@ -120,6 +126,7 @@ describe("synthesizeTimeoutOutcome", () => {
     const outcome = synthesizeTimeoutOutcome(
       { prompt: "review files", description: "review-files" },
       "last stdout lines...",
+      "pi",
     );
     expect(outcome.error!).toContain("engine_timeout");
     expect(outcome.error).toContain("review-files");

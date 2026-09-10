@@ -3,7 +3,8 @@
  *
  * [归位] 迁自 renderer composables/new-task/useNewTaskFlowState.ts（263 行），语义逐条等价。
  * 模块级单例保持（C-NT-6 Q2=A：全局流程状态非 per-session，不套 useSessionScopedState）。
- * renderer 旧文件保留至消费方全部迁移（w5）后删除（strangler 逐域绞杀 §11.2）。
+ * renderer 旧文件（composables/new-task/useNewTaskFlowState.ts）已随消费方全部迁移（w5 完成）删除
+ * （2026-09 code-simplify R7；strangler 逐域绞杀 §11.2 收口）。
  *
  * 职责（仅状态机，深模块 §5）：
  * - NewTaskFlowState 10 态枚举 + GitInfo 派生类型。
@@ -108,9 +109,10 @@ const currentSession: Ref<SessionSummary | null> = ref(null)
 // taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：landing 态待定 cwd 单例 ref（同上）
 const pendingCwd: Ref<string | null> = ref(null)
 /**
- * landing 态用户选定但尚未 apply 的模型（"provider/modelId" 复合串，与 SessionSummary.modelId 同格式）。
- * landing 态 session 尚未 create，无法调 model.switch RPC。记 pendingModel 供 Composer 显示，
- * 首发提交 create session 后 apply（model.switch）。null=未选，回退全局默认。
+ * landing 态用户选定但尚未透传的模型（"provider/modelId" 复合串，与 SessionSummary.modelId 同格式）。
+ * landing 态 session 尚未 create，无需调 model.switch。记 pendingModel 供 Composer 显示，
+ * 首发提交时经 resolveLaunchConfig 终值随 create payload 快照透传（D5，无 post-create apply）。
+ * null=未选，Composer 侧经 resolveLaunchConfig 解析链兜底。
  */
 // taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：landing 态待定 model 单例 ref（同上）
 const pendingModel: Ref<string | null> = ref(null)

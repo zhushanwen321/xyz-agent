@@ -23,7 +23,7 @@ description: >-
 
 ### 第 1 步：处理未提交改动（AI 决策，脚本不代劳）
 
-脚本预检发现未提交的 **tracked** 改动会以 exit 1 停下（untracked 不触发预检，cleanup 阶段由 git 拒删 worktree 兜底）。此时**不要**用 `git add -A && git commit` 盲提交：
+脚本预检发现未提交的 **tracked** 改动会以 exit 1 停下（merge 预检不查 untracked；cleanup 闸门用 `status --short` 把 tracked + untracked 一并预检——删除动作是显式 `rm -rf`，无 git worktree remove 的内建拒删兜底，脏检查必须前置。[HISTORICAL] 旧版把 untracked 检查留给 git worktree remove 内建兜底，2026-09 半删态事故后前移）。此时**不要**用 `git add -A && git commit` 盲提交：
 
 - 本次会话产生的改动 → 按全局提交策略正常 commit（完成即提交）
 - 非本次会话产生的认知外改动 → **不提交、不修改、不丢弃**，先询问用户
@@ -58,6 +58,10 @@ cd /Users/zhushanwen/Code/xyz-agent-workspace/<dev-branch> && git add <files> &&
 
 解决原则：按改动意图合并而非机械取一侧；冲突两侧都看不懂时**停下来问用户**，不要猜。merge commit 会走 dev worktree 的 pre-commit hooks，检出的问题按全局规则全部正面修复。
 
+**测试文件冲突解完先跑增量测试再 commit**：机械合并可能同时保留两侧同名用例、或让用例与（自动合并的）实现错位，vitest 对重复/错位的 `it` 不报错——旧标题带新断言会绿着通过。冲突涉及测试文件时，先跑该文件相关测试，绿了再 commit。
+
+**已知故障签名（hook 报行号错位的语法错误）**：commit 进行中 hook 报行号与文件内容对不上的语法错误 = hook 文件在执行途中被替换（bash 按字节偏移续读被换过的文件；疑似并发流程复制/更新 `.githooks/`，机制未完全定域——当前实装 hook 是 create-worktree 时从主 worktree 复制的 per-worktree 文件，无常驻重生成路径）。处置：`bash -n` 校验 + `md5` 两次采样确认文件稳定后**原样重试 commit 一次**（已验证可过），不要手工改 hook，禁止 `--no-verify`。
+
 ### 第 4 步：清理源 worktree（默认自动清理）
 
 合并成功后**自动执行清理**（删除 worktree + 分支）。用户不特别说明时默认清理，无需逐次确认。仅当用户明确说「不清理」时才跳过。
@@ -66,7 +70,9 @@ cd /Users/zhushanwen/Code/xyz-agent-workspace/<dev-branch> && git add <files> &&
 bash "$(git rev-parse --show-toplevel)/.agents/skills/dev-merge/dev-merge.sh" cleanup <dev-branch>
 ```
 
-脚本内置安全闸：分支未合并进 dev 拒绝清理（`is_merged` 闸门通过后脚本直接 `git branch -D`，不依赖 `git branch -d`——`-D` 避免依赖 upstream/HEAD 校验的不确定性，已合并与否由 `is_merged` 闸门保证）；worktree 有未跟踪且未 ignore 的文件时 git 拒绝删除——**不要擅自 `--force`**，先看那些文件是什么（认知外的问用户），确认后由用户/显式决策强删。
+脚本内置安全闸：分支未合并进 dev 拒绝清理（`is_merged` 闸门通过后脚本直接 `git branch -D`，不依赖 `git branch -d`——`-D` 避免依赖 upstream/HEAD 校验的不确定性，已合并与否由 `is_merged` 闸门保证）；源 worktree 有未提交/未跟踪文件时**删除前预检拒绝**（`status --short` 在 git 完好时采集）——**不要擅自 clean**，先看那些文件是什么（认知外的问用户），确认后由用户/显式决策强删。
+
+**删除语义（显式两步）**：`rm -rf <feat 目录>` + `git worktree prune`，先删目录、后清登记。[HISTORICAL] 旧版用 `git worktree remove`，实验复现证实其内部**先删登记、后删目录**——目录删除失败时留下"登记已失、目录内 git 全废"的半删态，且旧脚本吞掉 stderr、硬编码诊断为"被 untracked 阻止"（空清单 + 不可执行的 clean -fd 指引），2026-09 事故后改为显式两步。中途失败面：`rm -rf` 失败 → 登记与分支均未动，状态完好可排查重试；prune 失败/漏跑 → 目录已删、登记残留，prune 幂等可补跑，无破坏性。
 
 **`OK:` 输出 = 全部完成的权威证明**（worktree 与分支都已删）。此后不要再调用任何 bash——包括 `git worktree list` / `git log` 复核确认。直接输出合并总结收尾。
 
@@ -79,8 +85,10 @@ Cannot execute bash commands.
 
 1. **命令没有被执行**——工具在 spawn shell 前就因 cwd 目录不存在而拒绝，`cd <别处> &&` 前缀救不了（拒绝发生在命令文本被解释之前）。重试无意义，立即停止一切 bash 调用
 2. 它同时是 **worktree 删除已成功的证明**（目录已从磁盘消失），不是失败信号
-3. 这是**会话级永久状态**：本会话后续所有 bash 调用都会得到同样错误。收尾判断——脚本输出过 `OK:` → 全部完成，正常输出总结；脚本在删 worktree 之后输出过 `ERROR: 分支 ... 删除失败` → 分支是唯一残留，在总结里写明一条待执行命令 `git -C /Users/zhushanwen/Code/xyz-agent-workspace/<dev-branch> branch -D <feat-branch>` 交给用户/下次会话
+3. 这是**会话级永久状态**：本会话后续所有 bash 调用都会得到同样错误。收尾判断——脚本输出过 `OK:` → 全部完成，正常输出总结；脚本在删目录**之后**输出过 `ERROR: worktree 登记 prune 失败` → 唯一残留是登记，待执行命令 `git -C /Users/zhushanwen/Code/xyz-agent-workspace/<dev-branch> worktree prune`；输出过 `ERROR: 分支 ... 删除失败` → 唯一残留是分支，待执行命令 `git -C /Users/zhushanwen/Code/xyz-agent-workspace/<dev-branch> branch -D <feat-branch>`。两种残留都无破坏性，写进总结交给用户/下次会话
 
 同类陷阱与反模式的完整记录见 merge skill 阶段 7。
 
-例外：如果脚本在删 worktree **之前** exit 非 0（预检失败 / 分支未合并 / 脏 worktree），目录仍在、bash 正常，按脚本输出排查。
+例外：脚本 exit 非 0 且**没看到工具层报废错误**（bash 正常返回了脚本输出）时，按失败点分两类——**删目录之前** die（闸门失败：未合并 / 脏 worktree / git 状态读取失败）：目录完好，按脚本输出处置后重跑 cleanup；**rm -rf 目录失败**（die 消息含"登记与分支均未动"）：git 登记与分支完好、dev 侧可诊断，但目录可能已部分残缺（`.git` 文件或不存，目录内 git 不可信、重跑 cleanup 未必可行），排查根因并解除后执行 die 消息里的单命令配方。不要把任何一类失败当成删除已完成。
+
+**半删态兜底（历史残留 / 手工操作产生；现行脚本结构上不再产生该状态）**：识别特征 = worktree 目录还在，但目录内一切 git 命令报 `fatal: not a git repository`，且 `.bare/worktrees/<name>/` 登记已消失（成因：`git worktree remove` 内部先删登记、目录删除中途失败——旧版脚本或手工执行）。处置：从**兄弟 worktree**（不是 doomed 目录）执行单命令 `git -C <dev> merge-base --is-ancestor <feat-branch> <dev-branch> && git -C <dev> branch -D <feat-branch> && git -C <dev> worktree prune && rm -rf <feat 目录>`（is-ancestor 在链首，未合入即中止、不删任何东西；rm -rf 在链尾，失败即停时目录与分支状态可诊断）。agent 会话 cwd 若还在 doomed 目录内，该命令执行后本会话 bash 报废——应作为最后一条 bash 命令，剩余收尾用 read/write 类工具。

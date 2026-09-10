@@ -52,15 +52,19 @@ vi.mock('@/api', async () => {
   }
 })
 
-// fixture：对照 api/mock/settings-data.ts fixtureSkills（7 条，name 不带 /）
+// fixture：对照 api/mock/settings-data.ts fixtureSkills（7 条，name 不带 /）。
+// sourcePath（I-7）：D3 的 location 链（SkillInfo.sourcePath → buildLandingSlashCandidates
+// → CmdItem.location → emit select.location → insertSkillChip dataset）必须有真实值可断——
+// 此前 fixture 无 sourcePath，L7 只能把 location: undefined 当期望值锁死，链路断裂仍全绿。
+const SKILLS_ROOT = '/Users/test/.agents/skills'
 const LANDING_SKILLS: SkillInfo[] = [
-  { id: 'sk-code-review', name: 'code-review', description: '审查代码变更', enabled: true, source: 'agents', triggers: ['review'], effective: true },
-  { id: 'sk-diagnose', name: 'diagnose', description: '诊断 bug 和性能问题', enabled: true, source: 'agents', triggers: ['diagnose'], effective: true },
-  { id: 'sk-impeccable', name: 'impeccable', description: '前端界面设计与优化', enabled: true, source: 'claude', triggers: ['impeccable'], effective: true },
-  { id: 'sk-fallow', name: 'fallow', description: '代码库健康分析', enabled: true, source: 'pi', triggers: ['fallow'], effective: true },
-  { id: 'sk-tavily', name: 'tavily-web-search', description: '网络搜索', enabled: true, source: 'agents', triggers: ['搜索'], effective: true },
-  { id: 'sk-batch-tracer', name: 'batch-tracer', description: '批量代码分析', enabled: true, source: 'agents', triggers: ['批量分析'], effective: true },
-  { id: 'sk-pi-goal', name: 'pi-goal', description: '目标驱动的任务管理', enabled: true, source: 'piinstall', triggers: ['goal'], effective: true },
+  { id: 'sk-code-review', name: 'code-review', description: '审查代码变更', enabled: true, source: 'agents', triggers: ['review'], effective: true, sourcePath: `${SKILLS_ROOT}/code-review/SKILL.md` },
+  { id: 'sk-diagnose', name: 'diagnose', description: '诊断 bug 和性能问题', enabled: true, source: 'agents', triggers: ['diagnose'], effective: true, sourcePath: `${SKILLS_ROOT}/diagnose/SKILL.md` },
+  { id: 'sk-impeccable', name: 'impeccable', description: '前端界面设计与优化', enabled: true, source: 'claude', triggers: ['impeccable'], effective: true, sourcePath: `${SKILLS_ROOT}/impeccable/SKILL.md` },
+  { id: 'sk-fallow', name: 'fallow', description: '代码库健康分析', enabled: true, source: 'pi', triggers: ['fallow'], effective: true, sourcePath: `${SKILLS_ROOT}/fallow/SKILL.md` },
+  { id: 'sk-tavily', name: 'tavily-web-search', description: '网络搜索', enabled: true, source: 'agents', triggers: ['搜索'], effective: true, sourcePath: `${SKILLS_ROOT}/tavily-web-search/SKILL.md` },
+  { id: 'sk-batch-tracer', name: 'batch-tracer', description: '批量代码分析', enabled: true, source: 'agents', triggers: ['批量分析'], effective: true, sourcePath: `${SKILLS_ROOT}/batch-tracer/SKILL.md` },
+  { id: 'sk-pi-goal', name: 'pi-goal', description: '目标驱动的任务管理', enabled: true, source: 'piinstall', triggers: ['goal'], effective: true, sourcePath: `${SKILLS_ROOT}/pi-goal/SKILL.md` },
 ]
 
 // session 源 fixture：对照 command-store.test.ts RAW（3 条 pi 动态命令，name 带 /）。
@@ -163,20 +167,84 @@ describe('CommandPopover landing 态用 globalSkills prop（L1-L14，W4）', () 
     }
   })
 
-  it('L7 选中首项 → emit select {type:"slash", name:"/skill:code-review", icon:"star", description:"审查代码变更"}（AC-4：name 带 /skill: 路由前缀，pi 可路由）', async () => {
+  it('L7 选中首项 → emit select {type:"slash", name:"/skill:code-review", icon:"star", description:"审查代码变更", location: SKILL.md 路径}（AC-4 + D3 location 链）', async () => {
     // AC-4：landing 选中 skill 后 emit name 形如 /skill:<name>（pi agent-session.ts:1210 要求 /skill: 前缀）
+    // D3 location 链：[I-7] 断言 SkillInfo.sourcePath 直达 payload.location（此前 fixture 无 sourcePath，
+    // 用例只能锁 location: undefined，location 链断裂也不报错）
     await mountLanding('')
     const btns = bodyItemButtons()
     await btns[0].click()
     const selectEvents = wrapper!.emitted('select')
     expect(selectEvents).toBeTruthy()
     const payload = selectEvents!.at(-1)![0] as { type: string; name: string; icon?: string; description?: string }
+    // isSkill/location 是 D3 项类型路由新增透传字段（skill 项 → onCmdSelect 分流 skill 通路）；
+    // 其余 session/subagent 字段缺省 undefined，一并入全等形状
     expect(payload).toEqual({
       type: 'slash',
       name: '/skill:code-review',
       icon: 'star',
       description: '审查代码变更',
+      isSkill: true,
+      location: `${SKILLS_ROOT}/code-review/SKILL.md`,
+      sessionId: undefined,
+      label: undefined,
+      subagentId: undefined,
+      slug: undefined,
     })
+  })
+
+  // L20 [I-7 边界]：sourcePath 缺失是 location === undefined 的**唯一**原因（与 L7 配对区分两因：
+  // L7 有 sourcePath → 真实路径；本用例无 sourcePath → undefined，不是「链路没接」而是「源无值」）
+  it('L20 边界：skill 无 sourcePath → emit select.location === undefined（区分 location 链断裂与源无值）', async () => {
+    const noPathSkills: SkillInfo[] = [
+      { id: 'sk-no-path', name: 'no-path-skill', description: '无路径', enabled: true, source: 'agents', effective: true },
+    ]
+    await mountLanding('', noPathSkills)
+    const btns = bodyItemButtons()
+    expect(btns).toHaveLength(1)
+    await btns[0].click()
+    const payload = wrapper!.emitted('select')!.at(-1)![0] as { name: string; location?: string; isSkill?: boolean }
+    expect(payload.name).toBe('/skill:no-path-skill')
+    expect(payload.isSkill).toBe(true)
+    expect(payload.location).toBeUndefined()
+  })
+
+  // L19 [S-2]：slash 路（行首命令浮层 / + 菜单「命令」入口）同样消费 selectedSkillNames——
+  // 已插入的 skill 项标 selected（「已选」+ aria-disabled）且 onSelect 早退，防同一 skill
+  // 经 slash 路重复插入 ⇒ runtime 注入两遍 SKILL.md 全文。未命中项不受影响。
+  it('L19 slash 路已选 skill 禁选（S-2）：命中项显示「已选」+ aria-disabled、点击不 emit select；未命中项正常选', async () => {
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: {
+        open: true,
+        type: 'slash',
+        variant: 'landing',
+        sessionId: 'public-sid',
+        query: '',
+        globalSkills: LANDING_SKILLS,
+        selectedSkillNames: ['code-review'],
+      },
+    })
+    await flushPromises()
+    await nextTick()
+
+    const btns = bodyItemButtons()
+    expect(btns).toHaveLength(7)
+    const selectedRow = btns.find((b) => b.textContent?.includes('code-review'))!
+    expect(selectedRow.getAttribute('aria-disabled')).toBe('true')
+    expect(selectedRow.textContent).toContain('已选')
+
+    // 命中项点击 → onSelect 早退，不 emit select
+    await selectedRow.click()
+    expect(wrapper!.emitted('select')).toBeFalsy()
+
+    // 未命中项（diagnose）不受禁选影响，正常 emit（禁选只作用于命中项，非整路失效）
+    const otherRow = btns.find((b) => b.textContent?.includes('diagnose'))!
+    expect(otherRow.getAttribute('aria-disabled')).toBeNull()
+    await otherRow.click()
+    const selectEvents = wrapper!.emitted('select')
+    expect(selectEvents).toBeTruthy()
+    expect(selectEvents!.at(-1)![0]).toMatchObject({ type: 'slash', name: '/skill:diagnose', isSkill: true })
   })
 
   // L9 [AC-2]：landing 合并源验证——同时显示 pi extension 命令 + globalSkills
@@ -389,11 +457,13 @@ describe('CommandPopover landing 态用 globalSkills prop（L1-L14，W4）', () 
   // ── W4 AC-8：反向断言——slash 命令源不读 settingsStore.skills（FR-5）──
   // 验证：settingsStore.skills 有值，但 globalSkills prop 为空时，landing 不显示任何 skill。
   // 这证明 CommandPopover 已与 settingsStore.skills 解耦（W4 前 landing 读 settingsStore.skills）。
-  it('L18: CommandPopover.handleKeydown 不守卫 isComposing（守卫职责在 Composer 层）', async () => {
-    // 验证守卫责任链路：isComposing 守卫在 Composer.vue onKeydown 第一行，
-    // 不在 CommandPopover.handleKeydown 内。Composer 不调用 handleKeydown →
-    // 命令不执行。本用例确认 handleKeydown 本身不检查 isComposing，
-    // 守卫职责明确在调用方（Composer）。Composer 级集成覆盖见 composer-three-states T2.x。
+  it('L18: CommandPopover.handleKeydown IME 守卫（composingRef + isComposing 双保险，设计 D2）', async () => {
+    // [HISTORICAL] 本用例原断言「handleKeydown 不守卫 isComposing（守卫职责在 Composer 层）」——
+    // composer-chip-insertion-semantics 设计 D2（r1/r2 修订）将 IME 守卫移入浮层 Enter/Tab 分支：
+    // window capture 入口无 Composer 层前置守卫，不守卫会劫持 IME 组合确认 Enter 为「选中浮层
+    // 第一项」。守卫 = composingRef（compositionstart/end 维护）+ e.isComposing 双保险。
+    // Composer 层 isComposing 守卫仍保留（composer-keydown.ts，纵深防御）。时序锁集成用例见
+    // composer-keydown.test.ts「D2 时序锁」。
     await mountLanding('co')
     const btns = bodyItemButtons()
     expect(btns).toHaveLength(1)
@@ -406,11 +476,11 @@ describe('CommandPopover landing 态用 globalSkills prop（L1-L14，W4）', () 
     const imeEvent = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
     Object.defineProperty(imeEvent, 'isComposing', { value: true })
 
-    // handleKeydown 处理了 Enter（返回 true）——它不守卫 isComposing
+    // handleKeydown 不消费（返回 false）——IME 守卫生效，事件放行给 target 做候选词确认
     const result = handleKeydown(imeEvent)
-    expect(result).toBe(true)
-    // select 被 emit（handleKeydown 不管 isComposing，照常选中）
-    expect(wrapper!.emitted('select')).toBeTruthy()
+    expect(result).toBe(false)
+    // select 未被 emit（组合中 Enter 绝不选中浮层候选）
+    expect(wrapper!.emitted('select')).toBeFalsy()
   })
 
   it('L17 AC-8 反向：settingsStore.skills 有值但 globalSkills prop 空 → landing 不显示 skill（FR-5 解耦）', async () => {

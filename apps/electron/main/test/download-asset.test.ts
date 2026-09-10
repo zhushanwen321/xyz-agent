@@ -39,7 +39,9 @@ function fetchFailedWith(code: string, msg = 'connect failed'): TypeError {
 const fsSpy = vi.hoisted(() => ({
   writeCalls: [] as Array<{ path: string; data: string }>,
   renameCalls: [] as Array<{ from: string; to: string }>,
-  /** >0 时 createWriteStream 的 open 延迟 N ms（模拟 CI threadpool 拥塞），默认 0 完全透传 */
+  /** >0 时 createWriteStream 的 open 延迟 N ms（模拟 CI threadpool 拥塞），默认 0 完全透传。
+   *  延迟走真实时钟（realSetTimeout）——否则 fake timers 用例里推进假时钟就把延迟吃掉了，
+   *  旋钮形同虚设。 */
   writeStreamOpenDelayMs: 0,
 }))
 vi.mock('node:fs', async (importOriginal) => {
@@ -69,7 +71,7 @@ vi.mock('node:fs', async (importOriginal) => {
       // 生产调用（download-asset）恒传对象形态 { flags }，其余形态落空对象。
       const streamOptions = typeof options === 'object' && options !== null ? options : {}
       const delayedOpen = (...openArgs: unknown[]) => {
-        setTimeout(() => (realStreamFs.open as (...oa: unknown[]) => void)(...openArgs), delay)
+        realSetTimeout(() => (realStreamFs.open as (...oa: unknown[]) => void)(...openArgs), delay)
       }
       return realCreateWriteStream(file, {
         ...streamOptions,
@@ -101,6 +103,24 @@ process.env.XYZ_AGENT_DATA_DIR = TMP_DATA_DIR
 // 动态 import：确保上面 env 赋值先生效
 async function loadModule() {
   return await import('../update/download-asset.js')
+}
+
+/**
+ * 真实定时器引用：vi.useFakeTimers() 替换的是 globalThis 上的定时器，本引用指向原实现。
+ * 用于在假时钟下等**真实** I/O 完成——假时钟推进在真实时间上是瞬时的，而
+ * createWriteStream 的文件创建是 threadpool 异步 open，CI 拥塞时可晚于 abort 触发；
+ * 不等就会让「temp 保留」类断言假红（2026-09-10 Test(main) CI，D1 idle 用例）。
+ */
+const realSetTimeout: typeof setTimeout = globalThis.setTimeout
+
+/**
+ * 轮询等真实文件出现（走真实时钟，不受 fake timers 影响）。
+ * 不用 Date.now() 算 deadline——它同样被 fake timers 接管。
+ */
+async function waitForRealPath(filePath: string, attempts = 400): Promise<void> {
+  for (let i = 0; i < attempts && !existsSync(filePath); i++) {
+    await new Promise((resolve) => realSetTimeout(resolve, 5))
+  }
 }
 
 /** 测试用固定内容 + 预计算 sha256 */
@@ -1251,6 +1271,11 @@ describe('D1: idle 停滞检测（总墙钟已删）', () => {
 
     source!.enqueue(new Uint8Array(CHUNK_BYTES)) // 首块到达（重置 idle）
     await vi.advanceTimersByTimeAsync(1_000) // flush data 回调
+    // 先等 .downloading 真实落盘（fd open 完成）再推进假时钟：open 是 threadpool
+    // 异步操作，CI 拥塞时可晚于 idle abort 触发，届时 destroy 会连带取消尚未创建的
+    // 文件 → 断言假红（生产不会：abort 要求 30s 无数据，必晚于 open）。
+    const stallTempPath = path.join(TMP_DATA_DIR, 'update', 'd1-stall-midstream.zip.downloading')
+    await waitForRealPath(stallTempPath)
     await vi.advanceTimersByTimeAsync(30_000) // 停滞满 30s → idle abort
 
     const err = await probe
@@ -1260,7 +1285,7 @@ describe('D1: idle 停滞检测（总墙钟已删）', () => {
     expect(updateErr.message).toContain('stalled')
     expect(updateErr.message).toContain('30s')
     // 可续传：temp 与 resume-state 均保留（重试从断点续传）
-    expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'd1-stall-midstream.zip.downloading'))).toBe(true)
+    expect(existsSync(stallTempPath)).toBe(true)
     expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'resume-state.json'))).toBe(true)
   }, 30_000)
 

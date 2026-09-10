@@ -436,3 +436,95 @@ describe('W4 tail-scroll: 无输出 tool（U10）', () => {
     expect(header.text()).toContain('/tmp/foo.txt')
   })
 })
+
+/* ── bash-running-stream-output（U3）：bash 展开恒渲染容器 + 输出区内容守卫 + 尾行取数回退 ──
+ * SSOT: docs/design/bash-running-stream-output.md §6.2 D2 / §6.3 D3 / §7 U3
+ * - D2: bash 展开容器恒渲染（含命令块），空输出不再「header 摘要消失 + 内容空白」假展开
+ * - D3: toolTailLines bash raw 源 outputRaw ?? displayContent（无 ANSI 输出走 displayContent 尾行） */
+describe('bash-running-stream-output: bash 展开容器与输出守卫（U3）', () => {
+  async function expand(wrapper: ReturnType<typeof mountToolBlock>) {
+    await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
+  }
+
+  it('running + 有流式输出：展开渲染命令块（argPath）+ 输出文本', async () => {
+    const wrapper = mountToolBlock(makeToolCall({
+      toolName: 'bash',
+      input: { command: 'for i in 1 2 3; do echo step-$i; done' },
+      status: 'running',
+      output: 'step-1\nstep-2',
+    }))
+    await expand(wrapper)
+    // 命令块可见（bg-input 容器内 argPath 文本）
+    expect(wrapper.find('.bg-bg-input').text()).toContain('for i in 1 2 3')
+    // 输出文本可见（displayContent 纯文本回退路径）
+    expect(wrapper.find('.tool-result').text()).toContain('step-1')
+    expect(wrapper.find('.tool-result').text()).toContain('step-2')
+  })
+
+  it('running + 空输出：展开仅渲染命令块，无输出 div（无空白假展开）', async () => {
+    const wrapper = mountToolBlock(makeToolCall({
+      toolName: 'bash',
+      input: { command: 'sleep 20' },
+      status: 'running',
+      output: '',
+    }))
+    await expand(wrapper)
+    // 命令块存在（header 摘要 invisible 但命令在下方显示）
+    expect(wrapper.find('.bg-bg-input').text()).toContain('sleep 20')
+    // 输出文本区不渲染（内容守卫生效）
+    expect(wrapper.find('.tool-result').exists()).toBe(false)
+  })
+
+  it('completed + 空输出：展开同样仅渲染命令块（失败模式 C）', async () => {
+    const wrapper = mountToolBlock(makeToolCall({
+      toolName: 'bash',
+      input: { command: 'cd /tmp' },
+      status: 'completed',
+      output: '',
+    }))
+    await expand(wrapper)
+    expect(wrapper.find('.bg-bg-input').text()).toContain('cd /tmp')
+    expect(wrapper.find('.tool-result').exists()).toBe(false)
+  })
+
+  it('completed + output undefined：展开同样仅命令块（缺省 output 同守卫）', async () => {
+    const wrapper = mountToolBlock(makeToolCall({
+      toolName: 'bash',
+      input: { command: 'pwd' },
+      status: 'completed',
+      output: undefined,
+    }))
+    await expand(wrapper)
+    expect(wrapper.find('.bg-bg-input').text()).toContain('pwd')
+    expect(wrapper.find('.tool-result').exists()).toBe(false)
+  })
+
+  it('尾行取数回退：running + 无 outputRaw（纯 output）→ header 尾行视口含最后一行', async () => {
+    const wrapper = mountToolBlock(makeToolCall({
+      toolName: 'bash',
+      input: { command: 'pnpm test' },
+      status: 'running',
+      output: 'step-1\nstep-2\nstep-3',
+      // 无 outputRaw（D3：raw 源回退 displayContent）
+    }))
+    await nextTick()
+    await flushRaf()
+    const header = wrapper.find('[data-testid="tool-block-header"]')
+    // 尾行视口渲染（toolTailLines 非空才出现 h-[1lh] 视口）且含最后一行
+    expect(header.find('.h-\\[1lh\\]').exists()).toBe(true)
+    expect(header.text()).toContain('step-3')
+  })
+
+  it('非 bash 工具 running 且无 output：展开行为不变（v-if 不满足不渲染）', async () => {
+    const wrapper = mountToolBlock(makeToolCall({
+      toolName: 'read',
+      input: { path: '/tmp/foo.txt' },
+      status: 'running',
+      // 无 output、无 outputRaw、无 guiComponent
+    }))
+    await expand(wrapper)
+    // 展开区不渲染（isBashTool 分支不命中非 bash 工具）
+    expect(wrapper.find('.tool-result').exists()).toBe(false)
+    expect(wrapper.find('.group\\/content').exists()).toBe(false)
+  })
+})

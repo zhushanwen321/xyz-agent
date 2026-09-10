@@ -183,8 +183,12 @@ export const SPAWN_ENV_FORWARD_REFERENCE: readonly SpawnEnvForwardEntry[] = [
   {
     name: 'XYZ_ZCODE_CLI',
     injectionPath: 'B3 白名单放行（裸 XYZ_ 前缀）',
+    // [W11] 锚点回写（W12 拖尾子项①）：core 内建 engines/zcode 已删，生产消费点
+    // 迁引擎包（registration.ts 的缺省 deps 组装）+ core D8 薄壳 createZcodeEngine
+    // 的 deps.cliPath 等价通道（原 inproc 回退分支的 env 读取已删）。
     piConsumerAnchors: [
-      'subagent-workflow engines/zcode/registration.ts:34（zcode CLI 路径 override，引擎孵化外部 CLI）',
+      'packages/zcode-subagent-cli/src/registration.ts:40（zcode CLI 路径 override，引擎孵化外部 CLI）',
+      'packages/subagent-core/src/execution/engine/d8-compat.ts createZcodeEngine deps.cliPath（D8 薄壳等价通道）',
     ],
   },
   {

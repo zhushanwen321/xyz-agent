@@ -9,6 +9,7 @@
 > **2026-08-02 审查修订**：spec↔demo 全量对照后修正——P0 内部矛盾统一（TurnRail thumb 色阶 / pulse-accent 时长 / badge 图标 / ChangeSetCard vs GitPanel badge 边界）；P1 跟 demo（send-slot 圆角矩形 / comp-box has-input 兑淡 / UiInput surface-2 / UiCheckbox focus 双环 / composer-bar 6 元素）；demo 新增 landing 页 + useTheme composable + ProjectSwitcher 增删 + 6 太极主题 SystemPage 接通，spec 同步记录；P2 笔误修正（7 tab 补 browser / tab 名统一 / keyframes SSOT 约束 / install-ok soft 底统一等）。
 > **2026-08-02 二次审查修订**：修正 4 处与 demo 真值不符的事实性错误——(1) §6.4 nav 项计数 12→11（demo `SettingsOverlay.vue` NAV 数组实为 11 项）；(2) §5.9 pulse-accent 描述由「opacity 明灭」改为「box-shadow 扩散涟漪」（`base.css:87` 实际是 box-shadow 0%→70%→100%，非 opacity）；(3) §6.1 TurnRail failed 节点色阶——demo 实际用 `warn`（TurnRail.vue:179/195/205），非 spec 声称的 `danger`，改为标注「demo 待对齐 §5.6B」；(4) §4.8 COLOR_TOKENS 计数 18→19（数组实含 19 个，漏算 `--neutral-ico`）；另补 §5.9 SSOT 约束的 3 处现存违反位置 + §6.1 thumb 色阶交叉引用 §3.5.6。
 > **2026-08-02 三次审查修订（subagent 四路并行审查）**：修正 15 处——P0：§3.4 例外计数两类→三类、§10.1 HTML spec 18→15 份+补登 3 个 demo html、附录 A mock 8→9 + 补 common/icons 子目录、§5.1 `.btn-secondary` 补 `solid`、§6.1 TurnMeta pill `bg-surface-2`→`bg-elevated`；P1：§5.11 install-ok 改为如实记录 demo 透明底现状+目标态、§7.2 A4 状态修正（pi 已实现非未消费）、§9 序言修正来源归因（D12-D14 非 review/fix-plan 来源）、§6.1 ChangeSetCard 补 superseded 例外、§6.5 SearchModal 三源→二源；P2：§6.1 ThinkingBlock 60 字符→CSS ellipsis、§6.5 MermaidRenderer 标注 demo 未实现、§10.2 真相源链删除已删除文档层级、§8.4 阶段 C 补说明 refactor 不含。
+> **2026-09-09 修订（reduce-gradient-decoration）**：移除 `--shadow-drawer`（§4.7 token 列表 / §5.5 drawer-main 分隔 / §6.3 一体化生长描述）——drawer-area `overflow-hidden` 裁剪后代 box-shadow，该投影自布局收紧后从未实际可见（死样式）；同时 main-panel 移除浮层投影（`--shadow-2`），分隔由 border + 色差 + 圆角承载，`--shadow-1` 描边保留。§4.1「唯一带 border + shadow」自本修订起指 `--shadow-1` 描边环。
 
 ---
 
@@ -296,7 +297,6 @@ demo 阶段功能做到「可见 + 可交互 + 数据 mock」即够。不接 run
 /* 阴影 */
 --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
 --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
---shadow-drawer: -12px 0 24px rgba(0,0,0,0.16);  /* 弱投影（D2 一体化分隔）*/
 --shadow-glow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);
 
 /* z-index 语义化 */
@@ -405,7 +405,7 @@ hover: text-neutral-fg
 - 静态容器只用一个表面色，**不叠加 border**
 - border 仅保留：浮起可交互容器（popover/dialog/composer）+ focus 态
 - drawer 内 header 分隔：去 `border-b`，改 `bg-surface-2` 浮起分层
-- drawer 与 main 间：D2 一体化（同 surface）+ 弱投影 `--shadow-drawer`（0.16）+ SplitterResizeHandle 透明化（仅 hover/drag 显 accent）
+- drawer 与 main 间：D2 一体化（同 surface）+ SplitterResizeHandle 透明化（仅 hover/drag 显 accent）。〔2026-09-09〕弱投影 `--shadow-drawer` 已移除——drawer-area `overflow-hidden` 裁剪后代 box-shadow，从未实际可见
 - 行分隔 hairline：`--hairline`（0.05）
 
 ### 5.6 状态指示统一（§3.3 + §3.5.2）
@@ -559,7 +559,7 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 
 ### 6.3 右侧 Drawer（D2 一体化 + 7 tab）
 
-- **一体化生长**：drawer 与 main 共享 `--surface` 浮起体，从 main 右缘生长挤占 main 宽度；保留弱投影 `--shadow-drawer`(0.16) 分隔；去 border-l
+- **一体化生长**：drawer 与 main 共享 `--surface` 浮起体，从 main 右缘生长挤占 main 宽度；去 border-l。〔2026-09-09〕原「保留弱投影 `--shadow-drawer`(0.16) 分隔」已移除（overflow-hidden 裁剪，从未可见）
 - **形态 B**：icon 一级 + 各 tab 自治二级
   - detail：多文件 tab（点文件新开/切换/关闭）—— **阶段 B 衔接点**（useDetailPane 单值→map 重构）
   - terminal：多实例 tab + 新增按钮占位 —— **阶段 B 衔接点**（单 PTY→多 PTY）

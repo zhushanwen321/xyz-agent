@@ -657,6 +657,45 @@ else
 fi
 
 # ============================================================================
+# 引擎包边界检查（W9，subagent-engine-protocolization）
+#   ① check-engine-sdk-boundary（W1 守卫，随 W9 挂载进链——此前未挂载）：
+#     SDK 源码 + dist 不得 import @zhushanwen/subagent-core（不变量：SDK 不得
+#     import core，否则 core → SDK → core 成环）；
+#   ② check-engine-package-boundary（W9 新守卫）：packages/subagent-engine-* +
+#     pi/zcode-subagent-cli 不得依赖/导入 core 内部路径 + DoD#2（exports 无
+#     ./engines/ 子入口、barrel 无引擎重导出）。
+#   设计依据：docs/design/subagent-engine-protocolization.md §3.7 / impl-plan §2.9。
+#   注：不设独立跳过开关——新增 SKIP_* 逃生口须同步登记 AGENTS.md 的 SKIP_* 清单，
+#   故本段仅受既有 SKIP_ALL_CHECKS 总闸管辖。
+# ============================================================================
+
+ENGINE_SDK_BOUNDARY_CHECKER=".githooks/check-engine-sdk-boundary.mjs"
+ENGINE_PACKAGE_BOUNDARY_CHECKER="scripts/check-engine-package-boundary.mjs"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    print_section "[引擎包边界检查]"
+    echo -e "${BLUE}[INFO] 运行引擎 SDK / 引擎包边界检查...${NC}"
+
+    if [ ! -f "$ENGINE_SDK_BOUNDARY_CHECKER" ] || [ ! -f "$ENGINE_PACKAGE_BOUNDARY_CHECKER" ]; then
+        echo -e "${YELLOW}[WARN] 找不到检查脚本（$ENGINE_SDK_BOUNDARY_CHECKER / $ENGINE_PACKAGE_BOUNDARY_CHECKER）${NC}"
+    else
+        node "$ENGINE_SDK_BOUNDARY_CHECKER" && node "$ENGINE_PACKAGE_BOUNDARY_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] 引擎包边界检查失败${NC}"
+            echo -e "${YELLOW}[INFO] 引擎包只依赖 @zhushanwen/subagent-engine-sdk；共享实现下沉 SDK（core → SDK 是合法方向）；修复指引见上方脚本输出${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}[OK] 引擎包边界检查通过${NC}"
+    fi
+else
+    echo -e "${YELLOW}[SKIP] 引擎包边界检查已跳过${NC}"
+fi
+
+# ============================================================================
 # Pi extension tool schema 顶层 Object 合规检查（OpenAI 兼容性）
 # ============================================================================
 
@@ -1308,6 +1347,36 @@ else
 fi
 
 # ============================================================================
+# 消息流滚动跟随链路守卫（约束 C-state-11，chat-pin-bottom-fix §4.4 护栏⑤）
+#   staged 命中跟随链路（composables/panel/ 或 MessageStream.vue）或守卫脚本自身时触发：
+#   scripts/check-scroll-follow.mjs —— ① 跟随链路内 scrollToIndex 只许白名单
+#   （useVirtuaFollow 唯一原语 / useMessageStreamRail rail 导航）② packages/renderer/src
+#   禁 findItemIndex(...scrollSize 模式（排除 __tests__ 与 *.test.ts，注释行豁免）。
+#   [顺序依赖] M1（U1 索引直取 + D6 vlistBottom 修正）把禁用模式归零后 M2 才挂接
+#   （设计 §4.4⑤ 顺序依赖声明；守卫防复发而非清存量）。
+#   触发面在主 STAGED_FILES 外并入本路径范围的 staged 删除（pathspec 清单天然含 D）：
+#   单独 staged 删除守卫脚本也必须触发，存在性检查正是删除场景防线。
+#   注：不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兑底）。
+# ============================================================================
+
+SCROLL_FOLLOW_STAGED=$(git diff --cached --name-only -- packages/renderer/src/composables/panel/ packages/renderer/src/components/panel/MessageStream.vue scripts/check-scroll-follow.mjs)
+if echo "$SCROLL_FOLLOW_STAGED" | grep -qE "^packages/renderer/src/composables/panel/|^packages/renderer/src/components/panel/MessageStream\.vue$|^scripts/check-scroll-follow\.mjs$"; then
+    print_section "[消息流滚动跟随链路守卫]"
+    if [ ! -f "scripts/check-scroll-follow.mjs" ]; then
+        echo -e "${RED}[ERROR] 找不到 scripts/check-scroll-follow.mjs（守卫脚本被删除）${NC}"
+        exit 1
+    fi
+    if ! node scripts/check-scroll-follow.mjs; then
+        echo -e "${RED}[ERROR] 滚动跟随链路守卫失败——按上方 ✗ 明细与 [FIX] 指引修复后重试${NC}"
+        echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}[OK] 滚动跟随链路守卫通过（C-state-11）${NC}"
+else
+    echo -e "${GREEN}[OK] 无跟随链路变更，跳过滚动跟随守卫${NC}"
+fi
+
+# ============================================================================
 # 测试 flake 卫生检查（F5 no-bail + F3 递归删除重试）
 #   [HISTORICAL] 一族「测试自身引入的满载 flake」中两类静态可检模式：
 #     F5 - 根 package.json scripts.test 缺 --no-bail：pnpm 递归 first-fail 即中止
@@ -1411,6 +1480,7 @@ echo -e "  ${GREEN}[+]${NC} i18n locale 双侧 key 对齐检查（zh-CN === en-U
 echo -e "  ${GREEN}[+]${NC} pi 边界可靠性护栏（G1 语义登记守卫 / G3 档位差分探针 / G4 subagent 通道禁则）"
 echo -e "  ${GREEN}[+]${NC} subagent-core 依赖闭包守卫（D9-① 闭包 + 检查点 5 worker 零宿主服务）"
 echo -e "  ${GREEN}[+]${NC} 文档-代码符号漂移守卫（C-proc-10：设计文档引用已删除/改名符号即拦截）"
+echo -e "  ${GREEN}[+]${NC} 消息流滚动跟随链路守卫（C-state-11：滚动到底唯一原语 + 禁 findItemIndex(scrollSize) 模式）"
 echo -e "  ${GREEN}[+]${NC} 测试 flake 卫生检查（F5 scripts.test --no-bail + F3 recursive 删除 maxRetries）"
 echo ""
 echo -e "${CYAN}Hook 脚本位置:${NC} .githooks/"

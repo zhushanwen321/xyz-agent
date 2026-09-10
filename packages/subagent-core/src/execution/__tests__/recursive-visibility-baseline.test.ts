@@ -27,7 +27,6 @@ import {
   finalizedMarkerModule,
   fsSyncModule,
   manifestStoreModule,
-  tempPromptModule,
 } from "./helpers/subagent-service-mocks.ts";
 
 // ── mock modules（同 execute-nesting.test.ts）──
@@ -37,11 +36,11 @@ vi.mock("node:fs", async (importOriginal) => fsSyncModule(await importOriginal<t
 vi.mock("../alive-store.ts", async (importOriginal) => aliveStoreModule(await importOriginal<typeof import("../alive-store.ts")>()));
 vi.mock("../finalized-marker.ts", () => finalizedMarkerModule());
 vi.mock("../manifest-store.ts", () => manifestStoreModule());
-vi.mock("../engine/engines/pi/temp-prompt.ts", () => tempPromptModule());
 
 import { spawn } from "node:child_process";
 
-import { waitForSpawn, lastSpawnedChild } from "./helpers/spawn-mock.ts";
+import { registerFakePiEngine, type FakePiEnginePort } from "./helpers/fake-engine-port.ts";
+import { clearEngines } from "../engine/registry.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
 import { ManifestStore } from "../manifest-store.ts";
@@ -60,6 +59,13 @@ const ENV_FORK_DEPTH = "PI_SUBAGENT_FORK_DEPTH";
 
 function getLastSpawnEnv(): Record<string, string | undefined> {
   return (mockSpawn.mock.calls.at(-1)?.[2]?.env as Record<string, string | undefined>) ?? {};
+}
+
+/** [W3] 协议替身：execute → engine.run 挂起不 settle——record 保持 running 在 store
+ *  可观察（原 FakeChild 挂起不推进的等价形态）。 */
+function registerHangingEngine(): FakePiEnginePort {
+  clearEngines();
+  return registerFakePiEngine();
 }
 
 // ── 辅助：service 构造 ──
@@ -122,6 +128,7 @@ describe("进程级基线兜底（ALS 断裂修复，pi 事件回调模型）", 
     process.env[ENV_DEPTH] = "1";
 
     const { service, store } = setup({});
+    registerHangingEngine();
 
     // 不在 execCtxAls.run 内调用（模拟 ALS 断裂：事件回调上下文读不到 store）
     const handle = await service.execute({ task: "child of parent", slug: "test", ctxModel });
@@ -143,6 +150,7 @@ describe("进程级基线兜底（ALS 断裂修复，pi 事件回调模型）", 
 
   it("[顶层] 无 env（根进程）：parentRecordId undefined / depth 0", async () => {
     const { service, store } = setup({});
+    registerHangingEngine();
 
     const handle = await service.execute({ task: "top level", slug: "test", ctxModel });
 
@@ -158,6 +166,7 @@ describe("进程级基线兜底（ALS 断裂修复，pi 事件回调模型）", 
     process.env[ENV_DEPTH] = "0";
 
     const { service, store } = setup({});
+    registerHangingEngine();
     const execNesting = Reflect.get(service, "execNesting") as ExecCtxAls;
 
     const handle = await execNesting.run({ recordId: "sa-inline-parent", depth: 3 }, () =>
@@ -170,24 +179,22 @@ describe("进程级基线兜底（ALS 断裂修复，pi 事件回调模型）", 
     expect(rec!.depth).toBe(4);
   });
 
-  it("[forkDepth 基线] env PI_SUBAGENT_FORK_DEPTH=1 + fork：spawn env 递增为 2（读点兜底基线生效）", async () => {
+  it("[forkDepth 基线] env PI_SUBAGENT_FORK_DEPTH=1 → initSession 建立基线（读点兜底基线生效）", async () => {
+    // [W3 改写] spawn env 注入（PI_SUBAGENT_FORK_DEPTH 递增写子 env）属 inproc
+    // runSpawn 机制，随 inproc pi 引擎目录 删除迁入引擎包（pi-subagent-cli spawn 链）；core
+    // 侧存留语义 = initSession 从 env 建立基线（ALS 断裂时的读点兜底），本用例锁定它。
     process.env[ENV_ROOT_SESSION_ID] = "root-main";
     process.env[ENV_SELF_RECORD_ID] = "sa-fork-parent";
     process.env[ENV_DEPTH] = "0";
     process.env[ENV_FORK_DEPTH] = "1";
 
     const { service } = setup({});
+    registerHangingEngine();
 
-    const execPromise = service.execute({ task: "fork child", slug: "test", ctxModel, fork: true });
-    await waitForSpawn(mockSpawn);
-    const childEnv = getLastSpawnEnv();
+    expect(Reflect.get(service, "forkDepthBaseline")).toBe(1);
 
-    // 742 行 parentDepth = forkDepthAls.getStore() ?? forkDepthBaseline —— ALS 断裂时基线=1，+1 → 2
-    expect(childEnv.PI_SUBAGENT_FORK_DEPTH).toBe("2");
-
-    const child = lastSpawnedChild(mockSpawn);
-    child.emit("close", 0);
-    await execPromise;
+    // fork 请求照常派发（引擎侧承载深度传递）——不因基线读取抛错
+    await expect(service.execute({ task: "fork child", slug: "test", ctxModel, fork: true })).resolves.toBeDefined();
   });
 
   it("[嵌套护栏] 基线 depth 参与 execute 入口嵌套护栏（depth>MAX 拒绝）", async () => {

@@ -6,8 +6,10 @@
  *        广播 session.exited{code:null, reason:用户指引文案} → removeEntry（与 abort 超时路径同构）
  * - FQ2: forceQuit 不在活跃进程表（pm.getClient 返回 undefined）→ 幂等成功：
  *        不调 destroy/persist/removeEntry、不广播（竞态兜底，菜单渲染后 session 恰好退出）
- * - FQ3: abort RPC 超时（client.abort 抛 RpcTimeoutError）→ 复用同一强杀编排：
- *        persist stopped 带 'Abort failed (pi unresponsive)' 诊断 reason + session.exited 用户文案
+ * - FQ3: abort RPC 超时 + 真冻结判据成立（探测无响应 + 事件窗静默超保守窗，W7 阶梯 3）→
+ *        复用同一强杀编排：persist stopped 带 'Abort failed (pi frozen...)' 诊断 reason +
+ *        session.exited 用户文案。[W7] abort 超时不再无条件判死——阶梯全量用例见
+ *        services/session/__tests__/message-dispatcher-abort-liveness.test.ts
  *
  * mock 模式参考 message-dispatcher-bash.test.ts 的 makeMocks。
  *
@@ -63,7 +65,14 @@ interface ForceQuitMocks {
 
 function makeMocks(opts: MockOpts = {}): ForceQuitMocks {
   const client = opts.abortError
-    ? { abort: vi.fn(async () => { throw opts.abortError! }) }
+    ? {
+        abort: vi.fn(async () => { throw opts.abortError! }),
+        // [W7] 真冻结判据显式化：探测无响应（getState 超时）+ 事件窗静默超保守窗
+        //（lastEventAt 远超默认窗 600s）= 阶梯 3 直达强杀的唯一触发组合。旧 mock（无
+        // getState / 无事件产出成员）会隐式落同一路径，显式化避免语义漂移。
+        getState: vi.fn(async () => { throw new RpcTimeoutError('get_state', 10_000) }),
+        lastEventAt: Date.now() - 700_000,
+      }
     : { abort: vi.fn(async () => ({}) as Awaited<ReturnType<IPiEngine['abort']>>) }
 
   const broadcasts: ServerMessage[] = []
@@ -127,7 +136,7 @@ describe('MessageDispatcher forceQuit —— sidebar 强制退出', () => {
 })
 
 describe('MessageDispatcher abort RPC 超时 —— 复用强杀编排', () => {
-  it('FQ3: client.abort 抛 RpcTimeoutError → 同一编排收敛 + stopped 带诊断 reason + session.exited 用户文案', async () => {
+  it('FQ3: abort 超时 + 真冻结判据（探测无响应 + 事件窗静默超窗）→ 同一编排收敛 + stopped 带冻结诊断 reason + session.exited 用户文案', async () => {
     const m = makeMocks({
       active: true,
       abortError: new RpcTimeoutError('abort', 5000),
@@ -136,10 +145,10 @@ describe('MessageDispatcher abort RPC 超时 —— 复用强杀编排', () => {
     await m.dispatcher.abort('s1')
 
     expect(m.callOrder).toEqual(['detach', 'destroy', 'persist', 'remove'])
-    expect(m.persistOutcomeFn).toHaveBeenCalledWith('s1', 'stopped', expect.stringContaining('Abort failed (pi unresponsive)'))
+    expect(m.persistOutcomeFn).toHaveBeenCalledWith('s1', 'stopped', expect.stringContaining('Abort failed (pi frozen'))
     const exited = findSessionExited(m.broadcasts)
     expect(exited).toBeDefined()
     expect(exited!.payload).toMatchObject({ sessionId: 's1', code: null })
-    expect(exited!.payload.reason).toContain('pi 无响应')
+    expect(exited!.payload.reason).toContain('冻结')
   })
 })

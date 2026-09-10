@@ -23,6 +23,11 @@
 
 import type { ChildProcess } from "node:child_process";
 
+import type {
+  HostRoundLifecycleParams,
+  ResumeAnchor,
+} from "@zhushanwen/subagent-engine-sdk";
+
 import type { AgentCallOpts } from "../../orchestration/models/types.ts";
 import type { ModelInfo } from "../model-resolver.ts";
 import type { SubagentStream } from "../stream-sink.ts";
@@ -120,6 +125,34 @@ export interface RunContext {
    * SIGTERM / 单任务 abort 误杀共享进程）。
    */
   onChildSpawned?: (child: ChildProcess) => void;
+  /**
+   * [W3 v1.x] chat 会话形态参数（协议 run.params.chat 的 RunContext 承载位）：
+   *   - recordId：core 预建 record 的关联键（引擎据此上报首轮 runId 键之外的反向
+     *     载荷与 interact 定位）——task.conversation === true 的 chat 轮必传；
+   *   - resume：冷续锚点（重开已 idle 的 session 续聊；pi 消费 sessionRef.sessionFile
+     *     ——对照协议化设计前 SpawnResumeOpts.sessionFile 的锚点面）。
+   * 类型权威 = SDK RunChatParams（remote-engine 直传，结构互证由 implements 关系
+   * 在 typecheck 期承载）。非 chat 轮不传，wire 上不出现该键。
+   */
+  chat?: { recordId: string; resume?: ResumeAnchor };
+  /**
+   * [W3 v1.x] host/roundLifecycle 轮次生命周期消费口（第 9 反向通道，settled/idle/
+   * failed 三相位；关联键 runId|recordId 互斥）。首轮（run 会话形态）经 run 作用域
+   * 路由到达（runId 键）；续聊轮（interact）无 runId——经 EnginePort
+   * registerChatRoundRoute 的 recordId 键路由到达（见下）。消费语义（arm/disarm/
+   * settled 交棒）归宿主编排层（settled-watchdog 协议事件面接线，W4 三入口）。
+   */
+  onRoundLifecycle?: (phase: HostRoundLifecycleParams) => void;
+}
+
+/**
+ * [W3 v1.x] chat 轮次反向通道路由（recordId 键）——interact 续聊轮的 streamDelta /
+ * roundLifecycle 分发目标（协议关联键裁定 D1-A：续聊轮无独立 runId）。与 run 作用域
+ * RunRoute 同构的薄消费面；注册/注销时机归宿主 chat 编排（轮开始注册、record 终态注销）。
+ */
+export interface ChatRoundRoute {
+  onStreamDelta?: (delta: string) => void | Promise<void>;
+  onRoundLifecycle?: (phase: HostRoundLifecycleParams) => void | Promise<void>;
 }
 
 // ============================================================
@@ -174,6 +207,17 @@ export interface EnginePort {
   read(handle: EngineHandle): Promise<SessionView>;
 
   /**
+   * [W3 v1.x] 可选面：chat 轮次反向通道路由注册（recordId 键）。interact 续聊轮的
+   * streamDelta / roundLifecycle 按 recordId 关联（无 runId，D1-A），引擎进程发射后
+   * 经协议客户端分发到本路由。与 validateModel/listModels 同款的 additively-optional
+   * 演进：宿主 feature-detect（`typeof registerChatRoundRoute === "function"`），
+   * 未实现的引擎（不支持 chat 域或旧客户端）续聊轮 delta/生命周期静默不可达——
+   * conversation gate 已在派发前拦住无 chat 能力的引擎，本缺省只在「能力声明与
+   * 客户端实现错位」的诊断形态出现。返回注销函数（record 终态时宿主调用）。
+   */
+  registerChatRoundRoute?(recordId: string, route: ChatRoundRoute): () => void;
+
+  /**
    * [U7] 可选面：模型可发现性——引擎自带 provider/model 体系时（如 zcode 的 v2 桌面
    * 登录态），列出当前环境实际可用的模型清单（带凭据校验），供 system prompt 引擎段
    * 与 GUI 引擎选择器消费。省略/返回 null = 「与主 agent 模型体系一致」（pi 的语义：
@@ -190,8 +234,10 @@ export interface EnginePort {
    * 「引擎与模型不配套」错误，见 engine/model-validation.ts）。
    *
    * modelRef undefined = 查询引擎缺省模型（D2-1：主 agent 的 pi id 不透传给非 pi 引擎，
-   * 缺省语义归引擎——zcode 落 ZCODE_FALLBACK_DEFAULT_MODEL）。返回 canonical 全名供
-   * record.model 留痕。
+   * 缺省语义归引擎——zcode 落 ZCODE_FALLBACK_DEFAULT_MODEL）。返回 canonical ref 供
+   * record.model 留痕。[W3 契约变更④] 协议化后 canonicalRef 允许**无斜杠**形态
+   * （引擎原样返回的 ref）——core 侧按 provider=""/id=ref/整串进 name 拆分留痕
+   * （splitEngineModelRef 单一权威），不落 "<ref>/" 畸形。
    *
    * 未实现：model 透传，引擎自身 prepare 期校验兜底（现状语义）；pi 不实现（pi 链走
    * 既有三层解析 + assertCanonicalModelRef 裁决，搬迁是大重构，设计 D2-2 被否②）。

@@ -6,7 +6,9 @@
  * - same-model 模式：完整上下文 + 会话原 system prompt + tools + 末尾追加压缩指令（kv-cache 前缀命中）
  * - cross-model 模式：直接调用包导出的 compact(preparation, 压缩Model, ...)（原生组装零复刻，R4 结论）
  *
- * 输出 CompactionResult.details 携带 {engine:"smart-context", mode} 标记（D1 entry 标记）。
+ * 输出 CompactionResult.details 携带 {engine:"smart-context", mode, model} 标记（D1 entry 标记）。
+ * model = `${model.provider}/${model.id}`（执行压缩的实际模型）——用量页 compaction 归属数据源
+ * （usage-page-fixes §3.3 ①）；pi appendCompaction 对 details 逐字透传落盘（pi-semantics PS-28）。
  */
 
 import { buildSessionContext, compact as nativeCompact, convertToLlm } from "@earendil-works/pi-coding-agent";
@@ -93,6 +95,8 @@ function warnLog(message: string, data?: unknown): void {
 export interface SmartContextDetails {
 	engine: "smart-context";
 	mode: "same-model" | "cross-model";
+	/** 执行压缩的模型 `${provider}/${modelId}`（用量归属数据源，usage-page-fixes §3.3 ①）。 */
+	model: string;
 }
 
 /** sessionManager 上会话文件字段/方法的宽松形状（D13-4，消费侧可选链兜底）。 */
@@ -219,7 +223,11 @@ async function generateSameMode(
 		firstKeptEntryId: event.preparation.firstKeptEntryId,
 		tokensBefore: event.preparation.tokensBefore,
 		usage: result.usage as CompactionResult["usage"],
-		details: { engine: "smart-context", mode: "same-model" } satisfies SmartContextDetails,
+		details: {
+			engine: "smart-context",
+			mode: "same-model",
+			model: `${model.provider}/${model.id}`,
+		} satisfies SmartContextDetails,
 	};
 }
 
@@ -266,7 +274,12 @@ async function generateCrossMode(
 	// D13-2：原生 compact 内部对截断的处理沿用原生语义；此处补 engine 标记
 	return {
 		...result,
-		details: { ...(result.details as object | undefined), engine: "smart-context", mode: "cross-model" } as SmartContextDetails,
+		details: {
+			...(result.details as object | undefined),
+			engine: "smart-context",
+			mode: "cross-model",
+			model: `${model.provider}/${model.id}`,
+		} as SmartContextDetails,
 	};
 }
 

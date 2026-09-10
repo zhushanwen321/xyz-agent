@@ -76,7 +76,12 @@ import type {
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
 import { toSubagentRecordEntry } from "../record-entry.ts";
-import { getChildByRecord } from "../engine/engines/pi/session-runner.ts";
+// W10（§2.10 ②）：子进程句柄断言改读 core 侧状态镜像（host/spawned-children——
+// 协议化后 spawnedChildren 持有方在引擎进程，core 消费镜像面；判据 pid 同构）。
+import {
+  coreSpawnedChildrenMirror,
+  _resetCoreSpawnedChildrenMirrorForTest,
+} from "../engine/host/spawned-children.ts";
 import { SubagentService } from "../subagent-service.ts";
 import type { ExecuteOptions } from "../types.ts";
 
@@ -121,6 +126,23 @@ class FakeEngine implements EnginePort {
   }
 
   capabilities(): EngineCapabilities {
+    // [W3] id==='pi' 的注册占位按 pi 真实能力位声明（gate 同步面放行 pi 全参数——
+    // V4⑤ 反向守护；否则 maxTurns/conversation 会被误拦）。
+    if (this.id === "pi") {
+      return {
+        schemaEnforcement: "native",
+        steer: "unsupported",
+        conversation: "native",
+        personaInjection: "flag",
+        eventGranularity: "stream",
+        sandbox: "emulated",
+        sessionRead: "full",
+        resume: "native",
+        interrupt: "kill-only",
+        permissionMode: "native",
+        maxTurns: true,
+      };
+    }
     return ZCODE_LIKE_CAPS;
   }
   async probe(): Promise<ProbeReport> {
@@ -231,6 +253,7 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
   let agentDir: string;
 
   beforeEach(() => {
+  _resetCoreSpawnedChildrenMirrorForTest();
     // u0-data-discovery 注入化：execute 链路的 getEngineDataDir 回退段经
     // HostServices.dataRoot() 端口，未 configureCore 即消费抛 core_host_not_configured
     // （execute fail-safe 吞掉后表现为 mock 计数 0）——端口态显式配置，值不被断言
@@ -284,8 +307,10 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     expect(mockSpawn).not.toHaveBeenCalled();
   });
 
-  it("[缺省] 全缺省 → pi 原路径（spawn 启动，不经引擎注册表）", async () => {
-    // 不注册任何引擎也照跑：pi 缺省免探免注册表校验（D4「pi 恒免探」）
+  it("[缺省] 全缺省 → pi 路由派发（[W3] pi 缺省经 registry cli 形态 port 协议派发）", async () => {
+    // [W3 改写] 原「不注册任何引擎也照跑（inproc DI 直连 spawn）」随 chat 域收口
+    // 消亡：pi 路由 = registry 'pi' 的 cli 形态 port（pi-host-binding 解析）。未注册
+    // 时为不可用 stub——engine.run 抛 engine_not_found，record 按 MF-6 回退可恢复。
     clearEngines();
     const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
     modelService.initModel({
@@ -296,8 +321,13 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     const service = new SubagentService({ cwd: agentDir, modelService });
     service.initSession({ pi: makePi(), sessionId: "test-session" });
 
-    await service.execute(baseOpts(agentDir));
-    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+    const handle = await service.execute(baseOpts(agentDir));
+    // 不可用 stub：轮次派发在首次 engine.run 拒绝（engine_not_found）→ chatMode=false
+    // 一次性 run 终态销毁（无孤儿 record——拒绝点唯一化在 run）。
+    await vi.waitFor(() => {
+      const rec = service.queries.collectRecords(10, "all").find((r) => r.id === handle.subagentId);
+      expect(rec?.status).toBe("closed");
+    });
   });
 
   // ============================================================
@@ -305,9 +335,9 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
   // ============================================================
 
   it("[D5] 全缺省 pi record：engine===undefined 且 entry JSON 不含 engine 键", async () => {
-    const { service } = setup(agentDir);
+    const { service, piEngine } = setup(agentDir);
     const handle = await service.execute(baseOpts(agentDir));
-    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+    await vi.waitFor(() => expect(piEngine.runs.length).toBe(1));
 
     const rec = service.queries.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
     expect(rec).toBeDefined();
@@ -318,12 +348,11 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
   it("[D5] 显式 engine:'pi' 路由回 pi：record 不盖章 engine", async () => {
     const { service, piEngine, zcode } = setup(agentDir);
     const handle = await service.execute(baseOpts(agentDir, { engine: "pi" }));
-    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+    await vi.waitFor(() => expect(piEngine.runs.length).toBe(1));
 
     expect(zcode.runs.length).toBe(0);
-    // piEngine 只是注册表占位——D2 单轨后 pi chat 走 Service 内部 DI 的 PiEngine 实例
-    //（chatPiEngine，经 EnginePort 交接轮次），registry 占位实例仍未被 chat 域消费
-    expect(piEngine.runs.length).toBe(0);
+    // [W3] pi chat 路由 = registry 'pi' port（cli 形态替身）——显式 pi 请求命中它
+    expect(piEngine.runs.length).toBe(1);
     const rec = service.queries.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
     expect(rec?.engine).toBeUndefined();
   });
@@ -339,9 +368,11 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toContain("不支持 conversation");
-    // 恢复指引（EngineError.recovery）含「改用 engine: pi 或不传该参数」
-    expect((err as { recovery?: string }).recovery).toContain("engine: pi");
-    expect((err as { recovery?: string }).recovery).toContain("不传该参数");
+    // 恢复指引（EngineError.recovery）：W3 协议化口径——调参数 / 修 manifest / 升级
+    // 引擎包（引擎包是能力声明载体；「改用 engine: pi」内置兜底指引已随协议化删除）
+    expect((err as { recovery?: string }).recovery).toContain("去掉 conversation 参数");
+    expect((err as { recovery?: string }).recovery).toContain("修 manifest capabilities");
+    expect((err as { recovery?: string }).recovery).toContain("升级引擎包");
     expect(zcode.runs.length).toBe(0);
     expect(service.queries.collectRecords(10, "all")).toHaveLength(0);
   });
@@ -369,22 +400,24 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toContain("engine_capability_unsupported");
     expect((err as Error).message).toContain("maxTurns");
-    expect((err as { recovery?: string }).recovery).toContain("engine: pi");
+    // W3 协议化口径：恢复指引 = 去参数 / 修 manifest / 升级引擎包（不再指向 engine: pi）
+    expect((err as { recovery?: string }).recovery).toContain("去掉 maxTurns 参数");
+    expect((err as { recovery?: string }).recovery).toContain("修 manifest capabilities");
     // 「不产生孤儿 record」断言落点（V4④）：store 无新增条目、引擎未被触达
     expect(zcode.runs.length).toBe(0);
     expect(service.queries.collectRecords(10, "all")).toHaveLength(0);
   });
 
   it("[V4⑤ 反向] pi + maxTurns/fork/conversation/worktree → 零拦截（pi 既有合法能力无回归）", async () => {
-    const { service, zcode } = setup(agentDir);
-    // maxTurns=3（V4⑤ 场景原样）：正常进入 pi 轮次（spawn 被调），无同步拒绝
+    const { service, piEngine, zcode } = setup(agentDir);
+    // maxTurns=3（V4⑤ 场景原样）：正常进入 pi 轮次（engine.run 被调），无同步拒绝
     const handle = await service.execute(baseOpts(agentDir, { maxTurns: 3 }));
-    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+    await vi.waitFor(() => expect(piEngine.runs.length).toBe(1));
     expect(zcode.runs.length).toBe(0);
     expect(service.queries.collectRecords(10, "running").find((r) => r.id === handle.subagentId)).toBeDefined();
-    // fork / conversation 组合同样直通（第二次 spawn 被调，无 engine_capability_unsupported）
+    // fork / conversation 组合同样直通（第二次 run 被调，无 engine_capability_unsupported）
     await service.execute(baseOpts(agentDir, { fork: true, conversation: true }));
-    await vi.waitFor(() => expect(mockSpawn.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await vi.waitFor(() => expect(piEngine.runs.length).toBeGreaterThanOrEqual(2));
     // pi + worktree：预检放行（caps.sandbox='emulated'）——execute 不因能力被拒而
     // reject（worktree 创建成败是另一维度，与拦截无关）
     await expect(service.execute(baseOpts(agentDir, { worktree: true }))).resolves.toBeTypeOf("object");
@@ -475,7 +508,7 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
 
     // 引擎经 RunContext.onChildSpawned 上报子进程 → 宿主记账（kill-chain 数据源）
     zcode.runs[0].ctx.onChildSpawned?.(child);
-    expect(getChildByRecord(handle.subagentId)).toBe(child);
+    expect(coreSpawnedChildrenMirror().getChildByRecord(handle.subagentId)?.pid).toBe(child.pid);
 
     // cancel → controller.abort → engine 收到的 signal aborted（kill-chain 两级的第一级）
     expect(zcode.runs[0].ctx.signal?.aborted).toBe(false);
@@ -483,7 +516,8 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     expect(zcode.runs[0].ctx.signal?.aborted).toBe(true);
     // 子进程退出后记账按句移除
     child.emit("close", 0, null);
-    expect(getChildByRecord(handle.subagentId)).toBeUndefined();
+    // 按句移除断言（W10 注）：inproc 双模不回灌 childStateChanged，镜像移除由
+    // protocol-blackbox 承载（同 subprocess-agent-runner-routing D10 注）。
   });
 });
 
@@ -507,15 +541,15 @@ describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
     vi.clearAllMocks();
   });
 
-  it("[兜底] 默认路由 zcode + probe 失败 → 回退 pi runSpawn + engineFallback 留痕", async () => {
+  it("[兜底] 默认路由 zcode + probe 失败 → 回退 pi 协议 run + engineFallback 留痕", async () => {
     writeGlobalConfig(agentDir, "zcode");
     const { service, zcode, piEngine } = setup(agentDir);
     zcode.probeFailed = true;
 
     const handle = await service.execute(baseOpts(agentDir));
-    // 兜底 = 走 pi runSpawn 路径（spawn 被调），非 pi EnginePort 未被消费
-    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
-    expect(piEngine.runs.length).toBe(0);
+    // 兜底 = 走 pi 协议 run 路径（engine.run 被调；[W3] pi 与 run 域同路）
+    await vi.waitFor(() => expect(piEngine.runs.length).toBe(1));
+    expect(mockSpawn).not.toHaveBeenCalled();
 
     const rec = service.queries.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
     expect(rec?.engine).toBe("pi");
@@ -668,9 +702,9 @@ describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
   });
 
   it("[D5 回归] pi 纯缺省路径 entry 不含 engine/engineFallback/engineHandle 键", async () => {
-    const { service, pi } = setup(agentDir);
+    const { service, piEngine, pi } = setup(agentDir);
     const handle = await service.execute(baseOpts(agentDir));
-    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+    await vi.waitFor(() => expect(piEngine.runs.length).toBe(1));
 
     const rec = service.queries.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
     const entryJson = JSON.stringify(toSubagentRecordEntry(rec!));

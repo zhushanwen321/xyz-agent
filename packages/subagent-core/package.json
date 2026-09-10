@@ -22,28 +22,6 @@
       },
       "default": "./src/index.ts"
     },
-    "./engines/zcode/reader": {
-      "import": {
-        "types": "./src/execution/engine/engines/zcode/reader.ts",
-        "default": "./src/execution/engine/engines/zcode/reader.ts"
-      },
-      "require": {
-        "types": "./dist/execution/engine/engines/zcode/reader.d.cts",
-        "default": "./dist/execution/engine/engines/zcode/reader.cjs"
-      },
-      "default": "./src/execution/engine/engines/zcode/reader.ts"
-    },
-    "./engines/zcode/constants": {
-      "import": {
-        "types": "./src/execution/engine/engines/zcode/constants.ts",
-        "default": "./src/execution/engine/engines/zcode/constants.ts"
-      },
-      "require": {
-        "types": "./dist/execution/engine/engines/zcode/constants.d.cts",
-        "default": "./dist/execution/engine/engines/zcode/constants.cjs"
-      },
-      "default": "./src/execution/engine/engines/zcode/constants.ts"
-    },
     "./engine/paths": {
       "import": {
         "types": "./src/execution/engine/paths.ts",
@@ -54,6 +32,17 @@
         "default": "./dist/execution/engine/paths.cjs"
       },
       "default": "./src/execution/engine/paths.ts"
+    },
+    "./engine/engine-discovery-scan": {
+      "import": {
+        "types": "./src/execution/engine/engine-discovery-scan.ts",
+        "default": "./src/execution/engine/engine-discovery-scan.ts"
+      },
+      "require": {
+        "types": "./dist/execution/engine/engine-discovery-scan.d.cts",
+        "default": "./dist/execution/engine/engine-discovery-scan.cjs"
+      },
+      "default": "./src/execution/engine/engine-discovery-scan.ts"
     },
     "./relay-env": {
       "import": {
@@ -88,28 +77,6 @@
         },
         "default": "./dist/index.js"
       },
-      "./engines/zcode/reader": {
-        "import": {
-          "types": "./dist/execution/engine/engines/zcode/reader.d.ts",
-          "default": "./dist/execution/engine/engines/zcode/reader.js"
-        },
-        "require": {
-          "types": "./dist/execution/engine/engines/zcode/reader.d.cts",
-          "default": "./dist/execution/engine/engines/zcode/reader.cjs"
-        },
-        "default": "./dist/execution/engine/engines/zcode/reader.js"
-      },
-      "./engines/zcode/constants": {
-        "import": {
-          "types": "./dist/execution/engine/engines/zcode/constants.d.ts",
-          "default": "./dist/execution/engine/engines/zcode/constants.js"
-        },
-        "require": {
-          "types": "./dist/execution/engine/engines/zcode/constants.d.cts",
-          "default": "./dist/execution/engine/engines/zcode/constants.cjs"
-        },
-        "default": "./dist/execution/engine/engines/zcode/constants.js"
-      },
       "./engine/paths": {
         "import": {
           "types": "./dist/execution/engine/paths.d.ts",
@@ -120,6 +87,17 @@
           "default": "./dist/execution/engine/paths.cjs"
         },
         "default": "./dist/execution/engine/paths.js"
+      },
+      "./engine/engine-discovery-scan": {
+        "import": {
+          "types": "./dist/execution/engine/engine-discovery-scan.d.ts",
+          "default": "./dist/execution/engine/engine-discovery-scan.js"
+        },
+        "require": {
+          "types": "./dist/execution/engine/engine-discovery-scan.d.cts",
+          "default": "./dist/execution/engine/engine-discovery-scan.cjs"
+        },
+        "default": "./dist/execution/engine/engine-discovery-scan.js"
       },
       "./relay-env": {
         "import": {
@@ -151,10 +129,13 @@
     "build": "tsup",
     "build:bundle": "tsup",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "record:engine-fixtures": "node scripts/record-engine-fixtures.mjs",
+    "test:engine-protocol": "vitest run src/execution/engine/__tests__/conformance/protocol-blackbox.test.ts src/execution/engine/__tests__/conformance/static-spawn-guard.test.ts"
   },
   "dependencies": {
     "@xyz-agent/extension-protocol": "workspace:*",
+    "@zhushanwen/subagent-engine-sdk": "workspace:*",
     "ajv": "^8.20.0",
     "proper-lockfile": "^4.1.2",
     "yaml": "^2.9.0"
@@ -162,6 +143,8 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@vitest/coverage-v8": "^4.1.9",
+    "@zhushanwen/pi-subagent-cli": "workspace:*",
+    "@zhushanwen/zcode-subagent-cli": "workspace:*",
     "tsup": "^8.5.1",
     "typescript": "^5.7.0",
     "vitest": "^4.1.8"

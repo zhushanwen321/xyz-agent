@@ -76,7 +76,7 @@ vi.mock('virtua/vue', async () => {
     },
     setup(props, { slots, expose }) {
       // 暴露一个最小 mock handle 满足 VirtualizerHandle 接口（MessageStream 的 vlistRef 绑定）。
-      // c-multi / c-full-cycle 不断言滚动几何，数值随便填（vlistBottom computed 有 null/scrollSize=0 guard）。
+      // c-multi / c-full-cycle 不断言滚动几何，数值随便填（消费方均有 null/空数据 guard）。
       // 注意：用 setup ctx 的 expose（非 defineExpose——后者是 <script setup> 编译宏，本文件 defineComponent 不可用）。
       expose({
         scrollSize: 1000,

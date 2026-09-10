@@ -309,3 +309,42 @@ export function _resetSettledWatchdogsForTest(): void {
   armedEntries.clear();
   envCache = undefined;
 }
+
+// ── [W4] 协议事件面接线 API（W3 删件重接的 core 半边）──────────────────
+//
+// 设计权威源：docs/design/chat-domain-v1x-liveness-governance.md §3.2 D2 前置 1 +
+// D5「settled-watchdog 生产接线重接」：两段守护的 refresh 源随 chat 域 cli 化改挂
+// 协议事件流（arm 点 = 轮开始；refresh 源 = host/streamDelta + host/roundLifecycle
+// 事件；kill/终态 = 既有杀链）。现状 refresh/handover/disarm 的驱动源在待删的
+// session-runner.ts stdout pump（inproc 过渡形态，W3 删件前不得删除——本 API 面即
+// 其替换目标：W3 删旧接线时改调下面三个命名入口，语义逐一同构）。
+//
+// 命名入口与既有原语的映射（刻意薄委托、零新语义——本单元「把新接线立起来」，
+// W3 负责删旧，两套接线并存期由原语幂等吸收重复调用）：
+//   refreshFromProtocolEvent      ↔ refreshMidRoundNoProgress（协议事件行到达）
+//   noteRoundSettledFromProtocol  ↔ handoverMidRoundToSettled（roundLifecycle
+//                                    settled 相位 = 轮收敛，中段让位收尾段）
+//   disarmRoundFromProtocol       ↔ disarmSettledWatchdog（idle 相位 / close / 终态）
+//
+// 监督器域 resume 轮的 refresh 覆盖：resume 轮的 arm 点在 subagent-service
+// deliverChatMessage（interact 返回点，冷热路径同点），其轮内协议事件（streamDelta /
+// roundLifecycle）到达时经 refreshFromProtocolEvent 刷新——W3 接线后两域轮（chat 轮
+// 与监督器域 resume 轮）共用同一事件面。
+
+/** [W4 协议事件面] 协议事件行（host/streamDelta / host/roundLifecycle）到达：刷新
+ *  中段无进展计时。未挂载 / 已交棒（收尾段不刷新）/ 已 fire 时幂等 no-op。 */
+export function refreshFromProtocolEvent(recordId: string): void {
+  refreshMidRoundNoProgress(recordId);
+}
+
+/** [W4 协议事件面] roundLifecycle settled 相位（轮收敛）：中段让位收尾段
+ *  （两段独立计时，交棒语义见 handoverMidRoundToSettled）。未挂载时幂等 no-op。 */
+export function noteRoundSettledFromProtocol(recordId: string): void {
+  handoverMidRoundToSettled(recordId);
+}
+
+/** [W4 协议事件面] roundLifecycle idle 相位 / close / 终态化处置：两段一并清。
+ *  不存在 armed entry 时幂等 no-op。 */
+export function disarmRoundFromProtocol(recordId: string): void {
+  disarmSettledWatchdog(recordId);
+}

@@ -16,6 +16,16 @@ import { join } from 'node:path'
 /** 真实 pi agent 目录（本机），用于集成测试。 */
 export const REAL_AGENT_DIR = '/Users/zhushanwen/.pi/agent'
 
+/**
+ * 全量扫描类真实数据用例的统一超时标定（90s）。
+ *
+ * 这类用例遍历本机 ~/.pi/agent 全量会话语料（实测 4600+ 文件），空载单用例已需 6-10s；
+ * 38 包并行全量测试时 CPU/IO 争抢可降速 3-4 倍，30s 标定必假红。90s ≈ 空载 9 倍余量，
+ * 仍能兜住真正的挂死。仅用于遍历全量语料的用例（findSessions / buildFamilyFromFs /
+ * listMainSessions 等）；读已知单文件的用例不需要放宽。
+ */
+export const REAL_DATA_TIMEOUT_MS = 90_000
+
 /** 5.4MB / 32 turn / 1204 entry 的真实 session（feat-plugin-arch-3 目录）。 */
 export const E6 = '019e6c96-0a0c-74b8-a73f-d1854d88e2a7'
 /** 真实 fork 家族根（fork 子代 019fe632，隔代 subagent 019fe635 挂在 019fe632 下）。 */

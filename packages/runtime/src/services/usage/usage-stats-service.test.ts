@@ -8,6 +8,8 @@
  * - toolResult-with-usage
  * - compaction entry（顶层 usage）
  * - branch_summary 无 usage 不产出 NaN 行
+ * - ③ compaction model 归属：details.model 权威优先，非 string/空串回退 'compaction'
+ * - ④ rename-session custom entry：正常落账 / usage 存在性守卫 / model 回退 / timestamp 行级失败 / cost 缺失诚实降级
  * - 首行 session_info 的 cwd 容错
  * - .tmp-migrate-*.jsonl 与 .meta.json 排除
  * - 空目录空结果
@@ -111,8 +113,8 @@ function toolResultEntry(usage?: Record<string, unknown>): string {
   })
 }
 
-/** 构造 compaction entry（usage 在顶层）。 */
-function compactionEntry(usage?: Record<string, unknown>): string {
+/** 构造 compaction entry（usage 在顶层；details 可选——U3 smart-context 落盘形态）。 */
+function compactionEntry(usage?: Record<string, unknown>, details?: Record<string, unknown>): string {
   const entry: Record<string, unknown> = {
     type: 'compaction',
     id: 'comp-1',
@@ -120,6 +122,25 @@ function compactionEntry(usage?: Record<string, unknown>): string {
     summary: 'Compacted earlier context.',
   }
   if (usage) entry.usage = usage
+  if (details) entry.details = details
+  return JSON.stringify(entry)
+}
+
+/** 构造 rename-session custom entry（pi appendCustomEntry 落盘形态，docs/pi-semantics.json PS-29）。 */
+function renameSessionEntry(opts: {
+  data?: Record<string, unknown> | null
+  timestamp?: string
+  customType?: string
+} = {}): string {
+  const { data = null, timestamp = '2026-08-25T10:04:00.000Z', customType = 'rename-session' } = opts
+  const entry: Record<string, unknown> = {
+    type: 'custom',
+    customType,
+    id: 'custom-1',
+    parentId: 'entry-0',
+    timestamp,
+  }
+  if (data !== null) entry.data = data
   return JSON.stringify(entry)
 }
 
@@ -168,6 +189,25 @@ const ZERO_COST_USAGE = {
   cacheWrite: 0,
   totalTokens: 600,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+}
+
+/** rename-session 落账样例 usage。 */
+const RENAME_USAGE = {
+  input: 800,
+  output: 40,
+  cacheRead: 20,
+  cacheWrite: 0,
+  totalTokens: 860,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.002 },
+}
+
+/** rename-session 无 cost 的 usage（P-usage-shape 降级：token 正常、费用视角 $0）。 */
+const RENAME_USAGE_NO_COST = {
+  input: 700,
+  output: 30,
+  cacheRead: 10,
+  cacheWrite: 0,
+  totalTokens: 740,
 }
 
 // ── 测试 ─────────────────────────────────────────────────────
@@ -654,6 +694,170 @@ describe('UsageStatsService', () => {
     expect(result.rows[0].costUSD).toBe(0)
   })
 
+  // ── ③ compaction model 归属（details.model 权威优先，usage-page-fixes §3.3 ④）──
+
+  it('③ compaction entry details.model 权威归属（U3 落盘形态 provider/id）', async () => {
+    const content = [
+      sessionEntry('/Users/dev/attrib-test'),
+      compactionEntry(SAMPLE_USAGE, {
+        engine: 'smart-context',
+        mode: 'cross-model',
+        model: 'zai-coding-cn/glm-5.3-flash',
+      }),
+    ].join('\n')
+    await writeFile(join(tmpDir, 'attrib-1.jsonl'), content)
+
+    const svc = new UsageStatsService(tmpDir)
+    const result = await svc.getStats()
+
+    expect(result.rows).toHaveLength(1)
+    const row = result.rows[0]
+    expect(row.provider).toBe('compaction')
+    expect(row.model).toBe('zai-coding-cn/glm-5.3-flash')
+    expect(row.input).toBe(1000)
+    expect(row.messages).toBe(1)
+  })
+
+  it('③ branch_summary 同享 details.model 归属', async () => {
+    const entry = JSON.stringify({
+      type: 'branch_summary',
+      id: 'bs-det-1',
+      timestamp: '2026-08-25T10:03:00.000Z',
+      summary: 'Branch summary.',
+      usage: SAMPLE_USAGE,
+      details: { model: 'kimi-coding/k3' },
+    })
+    const content = [sessionEntry('/Users/dev/attrib-bs'), entry].join('\n')
+    await writeFile(join(tmpDir, 'attrib-2.jsonl'), content)
+
+    const svc = new UsageStatsService(tmpDir)
+    const result = await svc.getStats()
+
+    expect(result.rows).toHaveLength(1)
+    expect(result.rows[0].provider).toBe('compaction')
+    expect(result.rows[0].model).toBe('kimi-coding/k3')
+  })
+
+  it('③ details.model 非 string/空串/details 缺失回退 compaction（守卫降级不猜测）', async () => {
+    const content = [
+      sessionEntry('/Users/dev/attrib-fb'),
+      compactionEntry(SAMPLE_USAGE, { model: '' }), // 空串
+      compactionEntry(SAMPLE_USAGE, { model: 42 }), // 非 string
+      compactionEntry(SAMPLE_USAGE), // 无 details
+    ].join('\n')
+    await writeFile(join(tmpDir, 'attrib-3.jsonl'), content)
+
+    const svc = new UsageStatsService(tmpDir)
+    const result = await svc.getStats()
+
+    expect(result.rows).toHaveLength(3)
+    for (const row of result.rows) {
+      expect(row.provider).toBe('compaction')
+      expect(row.model).toBe('compaction')
+    }
+  })
+
+  // ── ④ rename-session custom entry（xyz 自有口径，PS-29 落盘形态）────────
+
+  it('④ rename-session custom entry 正常落账（G3）', async () => {
+    const content = [
+      sessionEntry('/Users/dev/rename-ledger'),
+      renameSessionEntry({ data: { model: 'xiaomi-token-plan-cn/mimo-v2.5', usage: RENAME_USAGE } }),
+    ].join('\n')
+    await writeFile(join(tmpDir, 'rename-1.jsonl'), content)
+
+    const svc = new UsageStatsService(tmpDir)
+    const result = await svc.getStats()
+
+    expect(result.rows).toHaveLength(1)
+    const row = result.rows[0]
+    expect(row.provider).toBe('rename-session')
+    expect(row.model).toBe('xiaomi-token-plan-cn/mimo-v2.5')
+    expect(row.input).toBe(800)
+    expect(row.output).toBe(40)
+    expect(row.cacheRead).toBe(20)
+    expect(row.costUSD).toBe(0.002)
+    expect(row.messages).toBe(1)
+    expect(row.project).toBe('rename-ledger')
+    expect(row.date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
+  it('④ usage 有值但 cost 缺失：token 正常、costUSD=$0（诚实降级）', async () => {
+    const content = [
+      sessionEntry('/Users/dev/rename-nocost'),
+      renameSessionEntry({ data: { model: 'xiaomi-token-plan-cn/mimo-v2.5', usage: RENAME_USAGE_NO_COST } }),
+    ].join('\n')
+    await writeFile(join(tmpDir, 'rename-2.jsonl'), content)
+
+    const svc = new UsageStatsService(tmpDir)
+    const result = await svc.getStats()
+
+    expect(result.rows).toHaveLength(1)
+    const row = result.rows[0]
+    expect(row.provider).toBe('rename-session')
+    expect(row.input).toBe(700)
+    expect(row.output).toBe(30)
+    expect(row.cacheRead).toBe(10)
+    expect(row.costUSD).toBe(0)
+    expect(row.messages).toBe(1)
+  })
+
+  it('④ data.usage 非「非 null 对象」（缺失/null/string/number）与 customType 不符均不计 row', async () => {
+    const content = [
+      sessionEntry('/Users/dev/rename-guard'),
+      renameSessionEntry({ data: { model: 'm', usage: null } }), // null
+      renameSessionEntry({ data: { model: 'm' } }), // usage 缺失
+      renameSessionEntry({ data: { model: 'm', usage: 'oops' } }), // string
+      renameSessionEntry({ data: { model: 'm', usage: 3 } }), // number
+      renameSessionEntry({ data: { model: 'm', usage: RENAME_USAGE }, customType: 'other-ext' }), // customType 不符
+      assistantEntry(), // 对照行
+    ].join('\n')
+    await writeFile(join(tmpDir, 'rename-3.jsonl'), content)
+
+    const svc = new UsageStatsService(tmpDir)
+    const result = await svc.getStats()
+
+    expect(result.rows).toHaveLength(1)
+    expect(result.rows[0].provider).toBe('kimi-coding')
+    // 存在性守卫不命中 ≠ 行级失败，不计 skippedLines
+    expect(result.skippedLines).toBe(0)
+  })
+
+  it('④ data.model 缺失/非 string/空串回退 rename-session（守卫与 ③ 对称）', async () => {
+    const content = [
+      sessionEntry('/Users/dev/rename-modelfb'),
+      renameSessionEntry({ data: { usage: RENAME_USAGE } }), // model 缺失
+      renameSessionEntry({ data: { model: '', usage: RENAME_USAGE } }), // 空串
+      renameSessionEntry({ data: { model: 42, usage: RENAME_USAGE } }), // 非 string
+    ].join('\n')
+    await writeFile(join(tmpDir, 'rename-4.jsonl'), content)
+
+    const svc = new UsageStatsService(tmpDir)
+    const result = await svc.getStats()
+
+    expect(result.rows).toHaveLength(3)
+    for (const row of result.rows) {
+      expect(row.provider).toBe('rename-session')
+      expect(row.model).toBe('rename-session')
+      expect(row.input).toBe(800)
+    }
+  })
+
+  it('④ timestamp 非法 → skippedLines++（行级失败既有语义）', async () => {
+    const content = [
+      sessionEntry('/Users/dev/rename-ts'),
+      renameSessionEntry({ data: { model: 'm', usage: RENAME_USAGE }, timestamp: 'not-a-date' }),
+      renameSessionEntry({ data: { model: 'm', usage: RENAME_USAGE } }), // 合法对照
+    ].join('\n')
+    await writeFile(join(tmpDir, 'rename-5.jsonl'), content)
+
+    const svc = new UsageStatsService(tmpDir)
+    const result = await svc.getStats()
+
+    expect(result.rows).toHaveLength(1)
+    expect(result.skippedLines).toBe(1)
+  })
+
   // ── cwd 无 basename 场景 ─────────────────────────────────
 
   it('cwd 为空字符串时 project 为 (unknown)', async () => {
@@ -720,5 +924,6 @@ describe('UsageStatsService', () => {
     }
 
     console.info(`[smoke] ${result.rows.length} rows, ${result.sessionCount} sessions, ${result.skippedLines} skipped`)
-  })
+    // 真实数据全量扫描（~/.xyz-agent/pi/sessions），并行负载下 IO+CPU 争抢明显超默认 5s
+  }, 60_000)
 })

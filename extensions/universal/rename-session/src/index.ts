@@ -67,7 +67,21 @@ export default function renameSessionExtension(pi: ExtensionAPI): void {
 			// 5. LLM 生成标题并落库。pi 运行时的事件链是 await 的（runner.emit → await handler），
 			// 若 await callRenameLLM 会阻塞 agent 进入下一次迭代。这里用 detached promise 脱离 await 链，
 			// 真正实现 fire-and-forget：handler 立即 resolve，LLM 调用与 setSessionName 在后台异步完成。
-			void callRenameLLM(ctx, config, event.message)
+			void callRenameLLM(ctx, config, event.message, {
+				// usage 落账回调注入（设计 §3.3 ③）：闭包捕获 pi，把 rename LLM 调用的 usage 以
+				// custom entry 落盘（pi.appendEntry → {type:"custom",customType:"rename-session",
+				// data:{model,usage},timestamp}，不进对话流不进 LLM 上下文）。调用时点
+				// （ok:true && usage 后立即、cleanTitle 前）由 llm.ts 统一规定。
+				appendUsageEntry: (model, usage) => {
+					// §3.6：catch 必须位于回调实现内部——appendEntry 抛错（session 已切换等）只记
+					// 日志，不影响回调返回与后续 cleanTitle/setSessionName（「标题照常落库」）。
+					try {
+						pi.appendEntry("rename-session", { model, usage });
+					} catch (e) {
+						logger.error("failed to append usage entry", { error: String(e) });
+					}
+				},
+			})
 				.then((title) => {
 					if (!title) return;
 					// 防覆盖（D5）：落库前重查——LLM 调用窗口（2-30s）内用户手动命名的竞态由此兜住

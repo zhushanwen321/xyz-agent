@@ -47,12 +47,12 @@ async function dynamicImportRelative(spec: string): Promise<unknown> {
 
 /**
  * 对端叶子模块候选路径（相对本文件）。对端调整叶子布局时在此追加候选。
- * schema-env.ts 已从 subagent-workflow 包迁至 packages/subagent-core（session-runner
- * 所在包）——首候选指向新位置，旧 SW 路径保留兜底（对端再迁移时不丢守卫）。
+ * 契约对端迁移史：subagent-workflow 包 → packages/subagent-core shared/schema-env.ts
+ *（死副本已删）→ 现 SSOT = packages/pi-subagent-cli/src/constants.ts（零依赖纯常量
+ * 叶子；硬拒线消费方为 pi 侧 spawn-args.ts applySchemaEnvToChildEnv）。
  */
 const SW_SCHEMA_ENV_CANDIDATES = [
-	"../../../../packages/subagent-core/src/shared/schema-env.ts",
-	"../../subagent-workflow/src/shared/schema-env.ts",
+	"../../../../packages/pi-subagent-cli/src/constants.ts",
 ];
 
 async function tryImportSwSchemaEnv(): Promise<Record<string, unknown> | undefined> {
@@ -67,7 +67,7 @@ async function tryImportSwSchemaEnv(): Promise<Record<string, unknown> | undefin
 	return undefined;
 }
 
-describe("cross-package contract: schema env（structured-output ↔ subagent-workflow）", () => {
+describe("cross-package contract: schema env（structured-output ↔ pi-subagent-cli）", () => {
 	it("SW SCHEMA_ENV_VAR 与 SO ENV_SCHEMA 字节相等（env 名漂移守卫）", async (ctx) => {
 		const mod = await tryImportSwSchemaEnv();
 		if (!mod) {

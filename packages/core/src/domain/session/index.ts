@@ -22,9 +22,11 @@ export type {
   NewTaskFlowPort,
 } from './use-session'
 // w4 create-session-flow：IF5 session 创建编排原语（C-SS-2）
-export { createSessionFlow } from './create-session-flow'
+export { createSessionFlow, migrateImageSegments } from './create-session-flow'
 export type {
   CreateSessionFlowCtx,
   CreateSessionFlowInput,
   CreateSessionFlowResult,
+  MigrateImageFn,
+  MigrateImageSegmentsResult,
 } from './create-session-flow'

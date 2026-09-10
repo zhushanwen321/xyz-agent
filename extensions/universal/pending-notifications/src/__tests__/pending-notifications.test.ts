@@ -205,24 +205,31 @@ describe("state pure functions", () => {
 			expect(comp.expiredToFlush).toEqual([]);
 		});
 
-		it("U3: register expired → flush unregister with status=expired", () => {
+		it("[W4 翻档] U3 机器对现存类型不可达：workflow（process 档）超 TTL → 仍 active、无 flush", () => {
+			// 翻档后三类型全 process 档：expiresAt 判定短路（isExpiredEntry 恒 false）。
+			// 旧行为（session 档 1h TTL 过期 → flush expired unregister）已被移除——
+			// 长任务注册不再被 TTL 静默清除（事故环 4 放大器），收口归注销发射点枚举 +
+			// core 注册对账 sweep。
 			const comp = rebuild(
 				[makeRegisterEntry("w-1", { expiresAt: NOW - 1 })],
 				"sess-current",
 				NOW,
 			);
-			expect(comp.activeIds).toEqual([]);
-			expect(comp.expiredToFlush).toEqual([{ id: "w-1", status: "expired" }]);
+			expect(comp.activeIds).toEqual(["w-1"]);
+			expect(comp.expiredToFlush).toEqual([]);
 		});
 
-		it("U4: register with different sessionId → flush unregister with status=expired", () => {
+		it("[W4 读侧过滤③] U4 跨 session 残留 → 不入 registry、不补注销（读侧过滤替代 U4 中性化）", () => {
+			// 翻档后 fork 继承的父级注册残留由 rebuild 读侧过滤兜住（≠ 当前 session →
+			// 跳过），残留 entry 留在 session 文件（差集消费方各自过滤），落盘收口归
+			// core 注册对账 sweep——不再补 expired unregister。
 			const comp = rebuild(
 				[makeRegisterEntry("w-1", { sessionId: "sess-other" })],
 				"sess-current",
 				NOW,
 			);
 			expect(comp.activeIds).toEqual([]);
-			expect(comp.expiredToFlush).toEqual([{ id: "w-1", status: "expired" }]);
+			expect(comp.expiredToFlush).toEqual([]);
 		});
 
 		it("entries 含 null/undefined 元素 → 跳过不抛 TypeError（S-10）", () => {
@@ -238,7 +245,7 @@ describe("state pure functions", () => {
 	});
 
 	describe("normalizeRegisterEntry defaults (via rebuild)", () => {
-		it("entry with only {id} → type=workflow, name=id, sessionId=current, expiresAt=registeredAt+TTL", () => {
+		it("[W4 翻档] entry with only {id} → type=workflow（process 档）, name=id, sessionId=current, expiresAt=undefined", () => {
 			const r = createRegistry();
 			const result = rebuildFromEntries(
 				r,
@@ -252,7 +259,9 @@ describe("state pure functions", () => {
 			expect(entry.name).toBe("w-min");
 			expect(entry.sessionId).toBe("sess-current");
 			expect(entry.status).toBe("active");
-			expect(entry.expiresAt).toBe(entry.registeredAt + 3_600_000);
+			// 翻档后 workflow = process 档：无 TTL（normalizePendingType 默认归 workflow
+			// 的偏好 = 缺失/未知 type 宁挂账不失明，清理通道 = core 对账 sweep）。
+			expect(entry.expiresAt).toBeUndefined();
 		});
 	});
 });
@@ -290,22 +299,22 @@ describe("pendingNotificationsExtension factory", () => {
 			expect(await getCount(setup)).toBe(0);
 		});
 
-		it("U3: expired register → flush pending:unregister entry", async () => {
+		it("[W4 翻档] expired register（process 档）→ 仍 active、不补 unregister entry", async () => {
 			vi.setSystemTime(NOW + 3_700_000);
 			fireSessionStart(setup, createMockCtx([makeRegisterEntry("w-1", { expiresAt: NOW })]));
-			expect(await getCount(setup)).toBe(0);
-			expect(setup.appendEntryMock).toHaveBeenCalledWith(
+			expect(await getCount(setup)).toBe(1);
+			expect(setup.appendEntryMock).not.toHaveBeenCalledWith(
 				"pending:unregister",
-				expect.objectContaining({ id: "w-1", status: "expired" }),
+				expect.objectContaining({ id: "w-1" }),
 			);
 		});
 
-		it("U4: different sessionId → flush pending:unregister entry", async () => {
+		it("[W4 读侧过滤③] different sessionId → 不入 registry（active=0）、不补 unregister entry", async () => {
 			fireSessionStart(setup, createMockCtx([makeRegisterEntry("w-1", { sessionId: "sess-old" })], "sess-current"));
 			expect(await getCount(setup)).toBe(0);
-			expect(setup.appendEntryMock).toHaveBeenCalledWith(
+			expect(setup.appendEntryMock).not.toHaveBeenCalledWith(
 				"pending:unregister",
-				expect.objectContaining({ id: "w-1", status: "expired" }),
+				expect.objectContaining({ id: "w-1" }),
 			);
 		});
 	});
@@ -383,7 +392,10 @@ describe("pendingNotificationsExtension factory", () => {
 	});
 
 	describe("session_shutdown (U11)", () => {
-		it("U11: marks all active as cancelled + flushes unregister entries", () => {
+		it("[W4 翻档] U11 对全部现存类型（process 档）不再发生：shutdown 不标 cancelled、不补 unregister", async () => {
+			// process 档语义跨 shutdown 存活：任务收尾归任务自身/reaper/监督器，不由
+			// session 退出裁定（设计 D4 连带面 3 显式接受）；清理痕迹由 core 注册对账
+			// sweep 兜底。U11 机器留存待未来 session 档类型，勿误认清理仍在工作。
 			fireSessionStart(setup, createMockCtx([]));
 			setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "a" });
 			setup.handlers.pendingRegister!({ id: "s-1", type: "subagent", name: "b" });
@@ -393,12 +405,8 @@ describe("pendingNotificationsExtension factory", () => {
 			void setup.handlers.sessionShutdown({ type: "session_shutdown" }, createMockCtx([]));
 
 			const unregisterCalls = setup.appendEntryMock.mock.calls.filter((c) => c[0] === "pending:unregister");
-			expect(unregisterCalls).toHaveLength(2);
-			const flushedIds = unregisterCalls.map((c) => (c[1] as { id: string }).id).sort();
-			expect(flushedIds).toEqual(["s-1", "w-1"]);
-			for (const c of unregisterCalls) {
-				expect((c[1] as { status: string }).status).toBe("cancelled");
-			}
+			expect(unregisterCalls).toHaveLength(0);
+			expect(await getCount(setup)).toBe(2);
 		});
 	});
 
@@ -512,12 +520,31 @@ describe("countActiveFromEntries（纯差集，供 goal / subagent-workflow 复�
 		expect(countActiveFromEntries([bad, good]).ids).toEqual(["bg-1"]);
 	});
 
-	it("跨 session 残留（fork 继承的 register）不校验 sessionId——由 session_start 重建流程补 expired unregister 抵消", () => {
+	it("跨 session 残留（fork 继承的 register）缺省不校验 sessionId——传入 currentSessionId 时按 [W4 读侧过滤①] 跳过", () => {
+		// 差集口向后兼容：不传 currentSessionId = 不过滤（既有调用方零改动）。
 		// 模拟 P fork 主 session：继承来主 session 的 register（sessionId=s-0），已被 rebuild 补 unregister(expired)
 		const inherited = mkRegister("parent-bg", "subagent", { sessionId: "s-0" });
 		const flushed = mkUnregister("parent-bg", "expired");
 		const own = mkRegister("my-bg");
 		expect(countActiveFromEntries([inherited, flushed, own]).ids).toEqual(["my-bg"]);
+	});
+
+	it("[W4 读侧过滤①] currentSessionId 过滤：跨 session entry 跳过、本 session 计入", () => {
+		const inherited = mkRegister("parent-bg", "subagent", { sessionId: "s-0" });
+		const own = mkRegister("my-bg", "subagent", { sessionId: "s-1" });
+		const bashOwn = mkRegister("bt-1", "bash", { sessionId: "s-1" });
+		expect(
+			countActiveFromEntries([inherited, own, bashOwn], { currentSessionId: "s-1" }).ids,
+		).toEqual(["my-bg", "bt-1"]);
+		// 同一输入不传基准 → 全量计入（向后兼容面不变）
+		expect(countActiveFromEntries([inherited, own, bashOwn]).count).toBe(3);
+	});
+
+	it("[W4 读侧过滤①] entry 缺 sessionId 的旧形态条目视为本 session（不过滤，宁放行不误杀）", () => {
+		const legacy = { type: "custom", customType: "pending:register", data: { id: "old-1", type: "subagent", name: "o" } };
+		expect(
+			countActiveFromEntries([legacy], { currentSessionId: "s-1" }).ids,
+		).toEqual(["old-1"]);
 	});
 });
 
@@ -541,10 +568,10 @@ function makeBashRegisterEntry(id: string, overrides: Record<string, unknown> = 
 }
 
 describe("D16 lifecycle 分档：常量与 type 归一化", () => {
-	it("PENDING_LIFECYCLE：subagent/workflow=session，bash=process", () => {
+	it("[W4 翻档] PENDING_LIFECYCLE：subagent/workflow/bash 全 process 档（session 档机器留存待未来类型）", () => {
 		expect(PENDING_LIFECYCLE).toEqual({
-			subagent: "session",
-			workflow: "session",
+			subagent: "process",
+			workflow: "process",
 			bash: "process",
 		});
 	});
@@ -575,25 +602,29 @@ describe("D16 process 档（type=bash）纯函数行为", () => {
 		expect(comp.expiredToFlush).toEqual([]);
 	});
 
-	it("U4 跨 session 不标 expired：bash entry sessionId 不符当前 session → 仍 active（进程级生命周期跨 session 续存）", () => {
+	it("[W4 读侧过滤③] U4 跨 session 残留（含 bash）→ 不入 registry（读侧过滤一刀对全部类型生效）", () => {
+		// 读侧过滤③不分类型：跨 session 残留在 rebuild 入口即被跳过（W6 的 bash 跨
+		// session 可见性断言钉成的显式选择——子 session goal 不再为父 session bash
+		// 任务 defer）。残留 entry 的落盘收口归 core 注册对账 sweep。
 		const comp = rebuild(
 			[makeBashRegisterEntry("bt-1", { sessionId: "sess-other" })],
 			"sess-current",
 			NOW,
 		);
-		expect(comp.activeIds).toEqual(["bt-1"]);
+		expect(comp.activeIds).toEqual([]);
 		expect(comp.expiredToFlush).toEqual([]);
 	});
 
-	it("session 档对照回归：同形状（无 expiresAt 键）的 workflow entry → 回填 TTL 且过期照旧判 expired", () => {
-		// 保证分档判定没有把 session 档的 TTL 路径一并豁免
+	it("[W4 翻档] 同形状（无 expiresAt 键）的 workflow entry → 不回填 TTL、照常 active（process 档）", () => {
+		// 翻档后 workflow = process 档：读取侧不回填 TTL（normalizeRegisterEntry 对
+		// process 档恒 undefined），注册不再被 1h TTL 静默清除（守卫不失明）。
 		const legacy = {
 			customType: "pending:register",
 			data: { id: "w-1", type: "workflow", name: "w", registeredAt: NOW - 3_700_000, sessionId: "sess-current" },
 		};
 		const comp = rebuild([legacy], "sess-current", NOW);
-		expect(comp.activeIds).toEqual([]);
-		expect(comp.expiredToFlush).toEqual([{ id: "w-1", status: "expired" }]);
+		expect(comp.activeIds).toEqual(["w-1"]);
+		expect(comp.expiredToFlush).toEqual([]);
 	});
 
 	it("差集路径识别 bash entry：register 计入且 type 保留，unregister 抵消", () => {
@@ -646,14 +677,14 @@ describe("D16 process 档（type=bash）工厂行为", () => {
 		expect("expiresAt" in data).toBe(false);
 	});
 
-	it("session 档对照回归：workflow register → 落盘 data.expiresAt = NOW + TTL", async () => {
+	it("[W4 翻档] workflow register → 落盘 data 无 expiresAt 键（process 档写入侧豁免）", async () => {
 		fireSessionStart(setup, createMockCtx([]));
 
 		setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "run" });
 
 		const regCall = setup.appendEntryMock.mock.calls.find((c) => c[0] === "pending:register");
 		const data = regCall![1] as Record<string, unknown>;
-		expect(data.expiresAt).toBe(NOW + 3_600_000);
+		expect("expiresAt" in data).toBe(false);
 	});
 
 	it("U3 工厂级：bash entry 超 1h 后 session_start rebuild → 仍 active、不补 unregister", async () => {
@@ -666,10 +697,9 @@ describe("D16 process 档（type=bash）工厂行为", () => {
 		expect(flushCalls).toHaveLength(0);
 	});
 
-	it("session_shutdown：bash 不标 cancelled、不补 unregister entry、内存仍 active", async () => {
+	it("[W4 翻档] session_shutdown：bash 与 workflow（全 process 档）都不标 cancelled、内存仍 active", async () => {
 		fireSessionStart(setup, createMockCtx([]));
 		setup.handlers.pendingRegister!({ id: "bt-1", type: "bash", name: "run tests" });
-		// 同时注册一个 session 档条目，对照证明分档只豁免 process 档
 		setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "run" });
 		setup.appendEntryMock.mockClear();
 
@@ -677,8 +707,24 @@ describe("D16 process 档（type=bash）工厂行为", () => {
 		void setup.handlers.sessionShutdown({ type: "session_shutdown" }, createMockCtx([]));
 
 		const unregisterCalls = setup.appendEntryMock.mock.calls.filter((c) => c[0] === "pending:unregister");
-		expect(unregisterCalls).toHaveLength(1);
-		expect((unregisterCalls[0][1] as { id: string }).id).toBe("w-1");
+		expect(unregisterCalls).toHaveLength(0);
+		expect(await getCount(setup)).toBe(2);
+	});
+
+	it("[W4 读侧过滤③ 投影] fork 继承残留不入 registry：session 替换后 pending_notifications 工具不虚报跨 session 活跃", async () => {
+		// A9② 场景：父 session（sess-parent）注册 bg-parent → fork 出子 session
+		//（sess-child，继承父 entries）→ 子 session_start rebuild 按 sessionId 过滤
+		// 残留 → 工具 count/list 只见子 session 自己的注册。
+		const parentEntries = [
+			{ customType: "pending:register", data: { id: "bg-parent", type: "subagent", name: "p", registeredAt: NOW, sessionId: "sess-parent" } },
+		];
+		fireSessionStart(setup, createMockCtx(parentEntries, "sess-child"));
+		// 子 session 自己的新注册（listener 写入，sessionId=sess-child）
+		setup.handlers.pendingRegister!({ id: "bg-own", type: "subagent", name: "own" });
+
 		expect(await getCount(setup)).toBe(1);
+		const res = await runTool(setup, { action: "list" });
+		const ids = (res.details as { items: PendingEntry[] }).items.map((i) => i.id);
+		expect(ids).toEqual(["bg-own"]);
 	});
 });

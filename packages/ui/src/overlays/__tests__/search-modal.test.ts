@@ -353,6 +353,65 @@ describe('confirmSel 数据流三分支（MF-3，AC-6.7）', () => {
   })
 })
 
+describe('slash skill 项注入透传（SearchModal → pendingSlash 端到端）', () => {
+  it('选中 skill 命令项 → pendingSlash 带 command/isSkill/location/icon/sessionId（第三条 skill 入口合流）', async () => {
+    vi.useFakeTimers()
+    const deps = makeDeps()
+    // pi 真实形态：命令名裸（无 / 前缀）+ sourceInfo.path = SKILL.md 绝对路径
+    deps.commandStore.applyCommands('sid-1', [
+      {
+        name: 'skill:code-review',
+        description: '代码评审',
+        source: 'skill',
+        sourceInfo: { path: '/skills/code-review/SKILL.md', source: 'skill' },
+      },
+    ])
+    const wrapper = mount(SearchModal, {
+      props: { open: true, deps, activeSessionId: 'sid-1' },
+    })
+    await flushPromises()
+    const input = wrapper.find('[data-testid="search-input"]')
+    await input.setValue('code-review')
+    await vi.advanceTimersByTimeAsync(150) // debounce 120ms
+    await flushPromises()
+    expect(wrapper.find('[data-testid="search-item-0"]').exists()).toBe(true)
+
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    // 端到端三个环节都不得丢字段：DTO 映射（isSkill/location）→ confirmSel 搬运 → confirmCommand 写通道
+    expect(deps.commandStore.pendingSlash.value).toMatchObject({
+      command: 'skill:code-review',
+      isSkill: true,
+      location: '/skills/code-review/SKILL.md',
+      icon: 'star',
+      sessionId: 'sid-1',
+    })
+  })
+
+  it('选中普通命令项 → pendingSlash 无 isSkill/location（命令通路回归锁）', async () => {
+    vi.useFakeTimers()
+    const deps = makeDeps()
+    deps.commandStore.applyCommands('sid-1', [{ name: 'goal', description: '目标驱动', source: 'extension' }])
+    const wrapper = mount(SearchModal, {
+      props: { open: true, deps, activeSessionId: 'sid-1' },
+    })
+    await flushPromises()
+    const input = wrapper.find('[data-testid="search-input"]')
+    await input.setValue('goal')
+    await vi.advanceTimersByTimeAsync(150)
+    await flushPromises()
+
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    const pending = deps.commandStore.pendingSlash.value!
+    expect(pending.command).toBe('goal')
+    expect(pending.isSkill).toBe(false)
+    expect(pending.location).toBeUndefined()
+  })
+})
+
 describe('关闭路径（MF-4，AC-7.1/AC-7.14/MR-7.1）', () => {
   it('Esc（dialog div keydown）→ emit update:open false', async () => {
     const deps = makeDeps()
@@ -380,6 +439,8 @@ describe('关闭路径（MF-4，AC-7.1/AC-7.14/MR-7.1）', () => {
     vi.useFakeTimers()
     const deps = makeDeps()
     deps.ports.isMock = true // searchMock 计数 = loadResults 调用计数
+    // searchMock 在 SearchDeps ports 上是 optional（core search-ports）——运行时 guard 收窄
+    if (!deps.ports.searchMock) throw new Error('searchMock port missing')
     const searchMock = vi.mocked(deps.ports.searchMock)
     const wrapper = mount(SearchModal, { props: { open: true, deps } })
     await flushPromises()

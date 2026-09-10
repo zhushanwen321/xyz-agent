@@ -118,6 +118,44 @@ describe('U8 landing 态放行（修现有 bug：原返「无活动会话」错�
   })
 })
 
+describe('U9b skill 命令项 isSkill/location 透传（搜索 → skill 通路合流）', () => {
+  it('confirm(skill 项 isSkill:true + location) → pendingSlash 两字段透传', async () => {
+    const commandStore = useCommandStore()
+    const { confirm } = useSearchJump({ selectSession: selectSessionMock })
+    const item: SearchItem = {
+      type: 'command',
+      title: 'skill:code-review',
+      sub: '代码评审',
+      icon: 'star',
+      commandKind: 'slash',
+      isSkill: true,
+      location: '/skills/code-review/SKILL.md',
+    }
+
+    const result = await confirm(item, { activeSessionId: 's1' })
+
+    expect(result).toEqual({ ok: true })
+    expect(commandStore.pendingSlash.value).toMatchObject({
+      command: 'skill:code-review',
+      icon: 'star',
+      sessionId: 's1',
+      isSkill: true,
+      location: '/skills/code-review/SKILL.md',
+    })
+  })
+
+  it('confirm(普通命令项无 isSkill) → pendingSlash 两字段 undefined（命令通路回归锁）', async () => {
+    const commandStore = useCommandStore()
+    const { confirm } = useSearchJump({ selectSession: selectSessionMock })
+    const item: SearchItem = { type: 'command', title: 'compact', sub: '压缩', icon: 'compact', commandKind: 'slash' }
+
+    await confirm(item, { activeSessionId: 's1' })
+
+    expect(commandStore.pendingSlash.value!.isSkill).toBeUndefined()
+    expect(commandStore.pendingSlash.value!.location).toBeUndefined()
+  })
+})
+
 describe('U9 icon undefined 透传（缺省态）', () => {
   it('confirm(slash 命令无 icon) → {ok:true} + pendingSlash.icon===undefined（透传 undefined，不兜底不报错）', async () => {
     const commandStore = useCommandStore()

@@ -74,21 +74,23 @@ describe('ComposerInput.getText（换行保留 + chip × 过滤）', () => {
     expect(getText(wrapper)).toBe('text\n')
   })
 
-  it('slash-chip 文本读入（命令名作为发送文本前缀）', () => {
-    // chip label 文本 /goal 会被 getText 读入，与 composer 发送时 chip 扁平化一致
-    const wrapper = setup('<span class="slash-chip"><span class="chip-label">/goal</span></span> do something')
+  it('slash-chip 读入（命令段归位为发送文本前缀，D4-b/D4-c）', () => {
+    // 命令 chip 产 slash 段（name 走 dataset.chipName），getText 经 segmentsToText 归位
+    // 提首——产物以 /goal 开头，与发送时 composer 扁平化一致
+    const wrapper = setup('<span class="slash-chip" data-chip-type="slash" data-chip-name="goal"><span class="chip-label">/goal</span></span> do something')
     expect(getText(wrapper)).toBe('/goal do something')
   })
 
   it('chip × 按钮文本不混入发送内容', () => {
     // × 按钮在 chip 内，其 "×" 文本必须被 TreeWalker 跳过
-    const wrapper = setup('<span class="slash-chip"><span class="chip-label">/goal</span><span class="chip-x">×</span></span>')
+    const wrapper = setup('<span class="slash-chip" data-chip-type="slash" data-chip-name="goal"><span class="chip-label">/goal</span><span class="chip-x">×</span></span>')
     expect(getText(wrapper)).toBe('/goal')
   })
 
-  it('chip + 后续 <br> 换行：命令名 + 软换行 + 后续文本', () => {
-    const wrapper = setup('<span class="slash-chip"><span class="chip-label">/goal</span><span class="chip-x">×</span></span><br>详细描述')
-    expect(getText(wrapper)).toBe('/goal\n详细描述')
+  it('chip + 后续 <br> 换行：命令名 + 软换行 + 后续文本（slash→text 边界空格规则，偏差 #4）', () => {
+    const wrapper = setup('<span class="slash-chip" data-chip-type="slash" data-chip-name="goal"><span class="chip-label">/goal</span><span class="chip-x">×</span></span><br>详细描述')
+    // 归位后 slash 段在前，紧跟的 text 段以 \n 开头不属「自带前导空格」→ needsBoundarySpace 补一格
+    expect(getText(wrapper)).toBe('/goal \n详细描述')
   })
 
   it('nbsp 转普通空格，零宽空格过滤', () => {

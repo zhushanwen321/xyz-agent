@@ -88,7 +88,7 @@ function makeFakeCtx(overrides?: {
 				bold: (text: string) => text,
 			},
 		},
-		sessionManager: { getEntries: () => overrides?.entries ?? [], getBranch: () => undefined },
+		sessionManager: { getEntries: () => overrides?.entries ?? [], getBranch: () => undefined, getSessionId: () => "test-session" },
 	} as unknown as ExtensionContext;
 	return { ctx, calls };
 }

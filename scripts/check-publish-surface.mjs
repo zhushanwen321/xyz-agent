@@ -8,13 +8,16 @@
  * 但发布流程不构建它）即此缺口的事故形态。
  *
  * 动态发现：扫 packages/ 下 private !== true 且 files 含 dist 前缀目录条目的包
- * （当前 3 包：@xyz-agent/extension-protocol / @xyz-agent/session-delivery /
- * @zhushanwen/subagent-core；未来新增 dist 发布包自动纳入守卫面）。
+ * （当前 6 包：@xyz-agent/extension-protocol / @xyz-agent/session-delivery /
+ * @zhushanwen/subagent-core / @zhushanwen/subagent-engine-sdk /
+ * @zhushanwen/pi-subagent-cli / @zhushanwen/zcode-subagent-cli；
+ * 未来新增 dist 发布包自动纳入守卫面）。
  *
  * 检查项（设计 D5，双向闭合「files ↔ 产物」两个漂移方向）：
  * 1. 幽灵条目（幽灵声明方向）：files 每个条目磁盘存在且非空——判定信号以磁盘
  *    stat 为准而非字符串尾斜杠（磁盘是目录 → 须至少含 1 文件；是文件 → 须存在
- *    且非零字节；glob 条目 → 须至少命中 1 文件）。
+ *    且非零字节；glob 条目 → 须至少命中 1 文件）。npm 排除语义条目（`!` 前缀）
+ *    是「从 tarball 扣掉」的规则、非存在性承诺，不参与幽灵检查与体积估算。
  * 2. 自包含探针（存在 dist.bundle 命名约定目录的包）：静态扫描
  *    dist.bundle/index.cjs 的全部 require 说明符，三步判定顺序钉死（设计 D3，
  *    顺序即防呆——fs/promises 内建子路径必须先于含 / 分流被 PASS）：
@@ -156,6 +159,11 @@ function checkGhostEntries(pkgDir, files, pkgName) {
       : `  修复：该条目非构建产物——补文件（如 README.md）或从 files 删条目，二选一`
   }
   for (const entry of files) {
+    // npm files 官方排除语义（"!path"）：排除规则声明的是「从 tarball 里扣掉」，
+    // 不是文件存在性承诺——磁盘上无需存在对应路径，不参与幽灵检查（体积估算
+    // 同理跳过：无法从 include 求和里正确扣除排除面，跳过 = 保守高估，warning
+    // 方向安全）。
+    if (entry.startsWith('!')) continue
     if (entry.includes('*')) {
       const re = globToRegExp(entry)
       const hit = listDirFiles(pkgDir).some((abs) => re.test(relative(pkgDir, abs)))
@@ -290,6 +298,7 @@ function checkReverseCoverage(pkgDir, files) {
 function estimateFilesSize(pkgDir, files) {
   let total = 0
   for (const f of files) {
+    if (f.startsWith('!')) continue // npm 排除语义条目：不参与求和（同 checkGhostEntries 注释）
     if (f.includes('*')) {
       const re = globToRegExp(f)
       for (const file of listDirFiles(pkgDir)) {

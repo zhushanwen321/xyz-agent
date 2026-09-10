@@ -62,6 +62,15 @@ export interface PendingSlash {
   icon?: string
   sessionId: string | null
   ts: number
+  /**
+   * skill 命令标记（由 SearchItem.isSkill 透传，来自 SessionCommand.kind === 'skill'）。
+   * 消费侧（useCommandPopoverTrigger）据此分流：true → insertSkillChip（裸名 + location +
+   * 多 chip 共存），否则维持 insertSlashChip 命令通路（单命令替换语义）。
+   * 缺省/false 与既有语义完全一致（老写入方不传即维持命令 chip 行为）。
+   */
+  isSkill?: boolean
+  /** skill 的 SKILL.md 绝对路径（SearchItem.location 透传，仅 isSkill 为真时有值） */
+  location?: string
 }
 
 /** runtime 原始命令 payload（protocol.ts ServerMessageMap['session.commands']） */

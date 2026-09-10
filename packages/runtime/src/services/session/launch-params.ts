@@ -133,7 +133,11 @@ export interface PresetClientOptions {
  *
  * 输入：
  *  - resolution：PresetService.resolve 的结果（可能 undefined → 返回空对象，仅 override 生效）。
- *  - modelOverride / thinkingOverride：Landing Chip 传入值，覆盖 preset 的同名字段（C-RL-6 优先级）。
+ *  - modelOverride / thinkingOverride：D5 契约快照化语义——landing 新建路径恒传 renderer
+ *    resolveLaunchConfig 的解析终值（不再缺省，透传即生效，preset 同名字段档对 landing 不可达）；
+ *    `override > preset 字段 > 全局默认` fallback 链整体保留，服务不经 landing 解析层的入口
+ *    （fork / restore / agent-managed create——session-manager-handler.ts 的 create，override
+ *    可缺省走 preset/默认档）。C-RL-6 优先级（override > preset 同名字段）不变。
  *
  * 输出：pi createSession options 的子集（preset 相关字段），调用方再与 skillPaths/extensionPaths/systemPrompt
  * 等基础字段合并 spread 进 createSession。返回的子集字段都是可选的，undefined 字段不出现（条件 spread）。
@@ -177,4 +181,32 @@ export function buildPresetClientOptions(
     ...(effectiveModel && { model: effectiveModel }),
     ...(effectiveThinking && { thinkingLevel: effectiveThinking }),
   }
+}
+
+/**
+ * L2 对账探针（D7/E6，observability）：create 入参 override 与 pi get_state 读回生效值的
+ * 比对，不一致时输出单行结构化 warn（消费点 = readBackCreateState，每 create 恰一次 →
+ * 速率上限 ≤1 行/create 天然满足）。
+ *
+ * 不设硬断言不抛错：pi pattern 引擎静默换模/钳制是合法行为（读回播种已让显示收敛真值），
+ * 探针目的只是让「renderer 请求的 vs pi 实际生效的」漂移可 grep 排查（E6 恢复指引）。
+ *
+ * 字段语义：requested 侧 undefined 跳过该字段——create 未传 override 不比（preset 档/
+ * 全局默认档由 C-RL-6 兜底链解析，不在对账范围，agent-managed create 即此形态）；
+ * 两侧皆有值且不等才算 mismatch（读回侧缺失无法断定漂移，不记）。
+ */
+export function warnLaunchEffectiveMismatch(
+  requested: { model?: string; thinkingLevel?: string },
+  effective: { modelId?: string; thinkingLevel?: string },
+): void {
+  const modelMismatch =
+    requested.model !== undefined && effective.modelId !== undefined && requested.model !== effective.modelId
+  const thinkingMismatch =
+    requested.thinkingLevel !== undefined && effective.thinkingLevel !== undefined &&
+    requested.thinkingLevel !== effective.thinkingLevel
+  if (!modelMismatch && !thinkingMismatch) return
+  console.warn(
+    `[launch-config] effective mismatch: requested=${requested.model},${requested.thinkingLevel} ` +
+    `effective=${effective.modelId},${effective.thinkingLevel}`,
+  )
 }

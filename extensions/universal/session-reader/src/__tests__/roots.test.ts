@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { listMainSessions, listSubagentSessions } from '../discovery/roots.js'
-import { REAL_AGENT_DIR, HAS_E6, HAS_REAL_SUBAGENTS_DIR } from './real-data.js'
+import { REAL_AGENT_DIR, HAS_E6, HAS_REAL_SUBAGENTS_DIR, REAL_DATA_TIMEOUT_MS } from './real-data.js'
 
 describe('listMainSessions', () => {
   let dir: string
@@ -80,7 +80,7 @@ describe('listMainSessions', () => {
     expect(result.every((m) => !m.path.split('/').pop()!.startsWith('wf-'))).toBe(true)
     // mtime/size 真实
     expect(result.every((m) => m.mtime > 0 && m.size > 0)).toBe(true)
-  }, 30000)
+  }, REAL_DATA_TIMEOUT_MS)
 })
 
 describe('listSubagentSessions', () => {
@@ -128,5 +128,5 @@ describe('listSubagentSessions', () => {
     const result = await listSubagentSessions(REAL_AGENT_DIR)
     expect(result.length).toBeGreaterThan(0)
     expect(result.every((m) => !m.path.endsWith('.finalized'))).toBe(true)
-  }, 30000)
+  }, REAL_DATA_TIMEOUT_MS)
 })

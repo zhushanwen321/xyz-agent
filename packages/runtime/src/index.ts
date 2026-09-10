@@ -80,6 +80,9 @@ import { XyzProviderStore } from './services/provider-extras-store.js'
 // process-manager（getRelaySpawnEnv，与 server 激活状态联动）。
 import { initRelayServer, deinitRelayServer } from './infra/relay/relay-server.js'
 import { toErrorMessage } from './utils/errors.js'
+// W8 宿主接线：runtime 协议客户端的自持引擎实例 dispose 钩子（idle 5min 复用的
+// 回收面之外，进程退出的兜底回收——设计 §3.6 退出钩子落点）。
+import { disposeRuntimeEngineClients } from './services/session/subagent-engine-history.js'
 
 function parseArgs(): { port: number; projectRoot?: string; builtinPluginsDir?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
@@ -727,9 +730,17 @@ async function main(): Promise<void> {
       skillRegistry.dispose()
       // sd-u6：退订完成回流（settled / exit 两腿）
       completionBackflow.dispose()
-      // E-2：relay 优雅关停——全部注册子进程杀链（SIGTERM → 3s grace → SIGKILL）+
-      // 删 socket 文件。先于 server.stop（先收割自己受托的子进程再关传输层）。
+      // E-2 + W8：relay 优雅关停与引擎协议客户端 dispose **并行**——deinitRelayServer
+      // 内部有 3s grace，串行（先 relay 后 dispose）会把引擎进程消失时间拖到 3s 之后，
+      // 违反 A11「dispose 发起起算 1s 内引擎进程消失」；并行发起后 dispose 单侧上界
+      // 3s（EngineClient dispose 帧超时即杀）+ 聚合上界 3s。先收割自己受托的子进程
+      // 与引擎再关传输层（原「先于 server.stop」语义不变）。
+      // 落点约束（设计 §3.6）：钩子在 shutdown() 内、与 deinitRelayServer() **并行发起**
+      // （dispose 不等 relay 收敛，上两条注释的时序契约）；不用 process.on('exit')
+      // （回调不能 await，异步 dispose 会被 process.exit 截断）。
+      const engineClientsDisposed = disposeRuntimeEngineClients()
       await deinitRelayServer()
+      await engineClientsDisposed
       await server.stop()
     // eslint-disable-next-line taste/no-silent-catch -- shutdown: best-effort stop, process exits regardless
     } catch (e) {

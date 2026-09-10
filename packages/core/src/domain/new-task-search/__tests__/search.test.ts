@@ -272,6 +272,50 @@ describe('DTO 映射', () => {
     })
   })
 
+  it('skill 命令（source=skill + sourceInfo.path）→ isSkill:true + location 带出（判据同 buildPanelSlashCandidates）', async () => {
+    const deps = makeDeps()
+    deps.commandStore.applyCommands('s1', [
+      {
+        name: 'skill:code-review',
+        description: '代码评审',
+        source: 'skill',
+        sourceInfo: { path: '/skills/code-review/SKILL.md', source: 'skill' },
+      },
+    ])
+
+    const { query } = useSearch(ref<string | null>('s1'), deps)
+    const sections = await query('code', { activeSessionId: 's1' })
+    const cmd = findSection(sections, 'command')!.items[0]
+    // isSkill 判据 = SessionCommand.kind === 'skill'（applyCommands 把 pi source 归一化进 kind）
+    expect(cmd.isSkill).toBe(true)
+    // SKILL.md 路径从 sourceInfo.path 带出（搜索注入侧据此落 chip dataset）
+    expect(cmd.location).toBe('/skills/code-review/SKILL.md')
+  })
+
+  it('非 skill 命令（source=extension）→ isSkill:false 且无 location（命令分支零变化）', async () => {
+    const deps = makeDeps()
+    deps.commandStore.applyCommands('s1', [
+      { name: 'commit', description: '提交', source: 'extension' },
+    ])
+
+    const { query } = useSearch(ref<string | null>('s1'), deps)
+    const sections = await query('commit', { activeSessionId: 's1' })
+    const cmd = findSection(sections, 'command')!.items[0]
+    expect(cmd.isSkill).toBe(false)
+    expect(cmd.location).toBeUndefined()
+  })
+
+  it('AppCommand 映射不带 isSkill/location（应用命令分支零变化）', async () => {
+    const deps = makeDeps()
+    deps.commandStore.registerApp([{ id: 'n', name: '新建', shortcut: '⌘N', action: vi.fn() }])
+
+    const { query } = useSearch(ref<string | null>('s1'), deps)
+    const sections = await query('新', { activeSessionId: 's1' })
+    const cmd = findSection(sections, 'command')!.items[0]
+    expect(cmd.isSkill).toBeUndefined()
+    expect(cmd.location).toBeUndefined()
+  })
+
   it('SessionSummary 无 gitBranch → sub 不含 "undefined"', async () => {
     const deps = makeDeps()
     const groups: SessionGroup[] = [

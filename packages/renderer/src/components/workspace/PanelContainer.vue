@@ -64,6 +64,9 @@
           :session-dir="sessionDirOf(leaf)"
           :git-branch="gitBranchOf(leaf)"
         />
+        <!-- Toast 通知锚点（右上角）：锚在 main-area 内——drawer 打开时本区收窄，toast 随宽左移，
+             恒不遮 drawer；bottom 区域留给 composer。 -->
+        <ToastContainer />
       </div>
 
       <!-- Drawer：workspace-body 级辅助视图容器。单实例，跟随 panel。
@@ -191,6 +194,7 @@ import { useSessionTrace, clearTraceSelection } from '@/composables/features/tra
 import TraceInspector from '@/components/panel/trace/TraceInspector.vue'
 import Panel from '@/components/panel/Panel.vue'
 import PanelHeader from '@/components/panel/PanelHeader.vue'
+import ToastContainer from '@/components/ui/ToastContainer.vue'
 import GitPanel from '@/components/panel/GitPanel.vue'
 import CommandDocPanel from '@/components/panel/CommandDocPanel.vue'
 import BrowserPane from '@/components/panel/BrowserPane.vue'

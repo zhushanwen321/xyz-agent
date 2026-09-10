@@ -32,6 +32,7 @@ import { computed, onScopeDispose, reactive, watch } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import * as events from '@xyz-agent/core/transport/api'
 import { getState } from '@xyz-agent/core/transport/ws-client'
+import { createInflightDedup } from '@xyz-agent/core/foundation/create-inflight-dedup'
 import { registerSessionCleanup, useSessionScopedState } from '@/composables/useSessionScopedState'
 import * as backgroundTaskApi from '@xyz-agent/core/transport/api/domains/background-task'
 import type { BackgroundTaskEntry } from '@/lib/background-task-bucket'
@@ -104,9 +105,13 @@ function releaseBroadcastSubscription(sid: string): void {
 }
 
 // ── 模块级拉取 in-flight 去重（同 sid 并发 refresh/恢复腿复用同一 Promise）──
+//
+// 「同 key 复用 / settle 即清 / 引用比对防误删」生命周期收编于 createInflightDedup
+// （D9 共享原语，state-truth-sync §3.3）；本模块保留快照消费形态（各实例消费
+// ListReplySnapshot 写各自分区）与迟到写入源的抑制释放编排（下方 requestSharedList）。
 
 // @data-owner #25
-const inflightFetches = new Map<string, Promise<ListReplySnapshot | null>>()
+const listFetchDedup = createInflightDedup<ListReplySnapshot | null>()
 
 /** 单次 list RPC 的解析结果快照（RPC 结果与分区写入解耦：in-flight 去重共享同一 RPC，
  *  各实例消费快照写各自分区——旧形态共享 void Promise 会让复用者的分区永不更新）。 */
@@ -142,7 +147,7 @@ const suppressedSids = new Set<string>()
  * 分区不会被僵尸式重建，语义与抑制期间等价。
  */
 function releaseSuppressionIfIdle(sid: string): void {
-  if (!sidSubscriptions.has(sid) && !inflightFetches.has(sid)) suppressedSids.delete(sid)
+  if (!sidSubscriptions.has(sid) && !listFetchDedup.has(sid)) suppressedSids.delete(sid)
 }
 
 /** 测试隔离钩子：清空全部模块级簿记（用例间残留防污染）。生产代码禁止调用。 */
@@ -150,7 +155,7 @@ export function __resetBackgroundTasksForTest(): void {
   for (const { unsub } of sidSubscriptions.values()) unsub()
   sidSubscriptions.clear()
   broadcastListeners.clear()
-  inflightFetches.clear()
+  listFetchDedup.clear()
   suppressedSids.clear()
 }
 
@@ -206,31 +211,30 @@ export function useBackgroundTasks(sessionIdRef: Ref<string | null | undefined>)
    * 复用者与发起者**各自**消费快照写各自分区（分区 per-instance，共享 void Promise 会让
    * 复用者分区永不更新）。RPC 失败统一在上游 catch 成 null（debug 单次），各实例据 null
    * 置分区 fetchFailed（保留缓存不降级，S6 断连提示条条件之一），调用方无需 try-catch。
+   * settle 即清（下次切入重拉）+ 引用比对防误删由 factory 内建。
    * 回滚窗口说明：RPC 往返期间若更新的广播先落地，较旧的 reply 会短暂覆盖（list reply
    * 是当下 registry 全量快照，后到写赢）；下一拍广播 / 下次切入重拉自愈，不做 recency 对账。
    */
   function requestSharedList(sid: string): Promise<ListReplySnapshot | null> {
-    const existing = inflightFetches.get(sid)
-    if (existing) return existing
-    const shared: Promise<ListReplySnapshot | null> = backgroundTaskApi
-      .list(sid)
-      .then((raw): ListReplySnapshot | null => parseListReply(raw))
-      .catch((err: unknown) => {
-        // debug 级：可重试瞬态 + transport/pending 层已记错误，避免断连期刷屏（§3.1 断连路径）。
-        console.debug('[background-tasks] list failed, keep cached partition', sid, err)
-        return null
-      })
-      .finally(() => {
-        // settle 即清条目（下次切入重拉）；比对引用防误删后来者
-        if (inflightFetches.get(sid) === shared) inflightFetches.delete(sid)
-        // RPC 迟到源枯竭 → 尝试释放抑制（BG-7 有界化）。必须延迟一个 macrotask：本 finally
-        // 回调先于 fetchInto 挂在 shared 上的消费回调执行（promise 回调按注册序），此处同步
-        // 释放会让「销毁后迟到 resolve」通过消费回调的抑制检查（微任务窗口内 Set 已清）→
-        // 僵尸写回。macrotask 排到本 settle 派生的全部消费微任务之后，语义精确。
-        setTimeout(() => releaseSuppressionIfIdle(sid), 0)
-      })
-    inflightFetches.set(sid, shared)
-    return shared
+    const { promise } = listFetchDedup.run(sid, () =>
+      backgroundTaskApi
+        .list(sid)
+        .then((raw): ListReplySnapshot | null => parseListReply(raw))
+        .catch((err: unknown) => {
+          // debug 级：可重试瞬态 + transport/pending 层已记错误，避免断连期刷屏（§3.1 断连路径）。
+          console.debug('[background-tasks] list failed, keep cached partition', sid, err)
+          return null
+        }),
+    )
+    // RPC 迟到源枯竭 → 尝试释放抑制（BG-7 有界化）。必须延迟一个 macrotask：本回调与
+    // factory 的 settle 清理都先于 fetchInto 挂在 promise 上的消费回调执行（promise 回调
+    // 按注册序），此处同步释放会让「销毁后迟到 resolve」通过消费回调的抑制检查（微任务
+    // 窗口内 Set 已清）→ 僵尸写回。macrotask 排到本 settle 派生的全部消费微任务之后，语义精确。
+    // （promise 恒 resolve：上游 catch 已吞错，finally 链无 unhandled rejection 面）
+    void promise.finally(() => {
+      setTimeout(() => releaseSuppressionIfIdle(sid), 0)
+    })
+    return promise
   }
 
   function fetchInto(sid: string): Promise<void> {

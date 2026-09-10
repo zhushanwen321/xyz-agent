@@ -52,6 +52,8 @@ vi.mock('../src/infra/pi/pi-paths.js', () => ({
 // import 在 mock 之后
 import {
   persistPresetBinding,
+  persistProjectBinding,
+  persistAgentBinding,
   readPresetBinding,
   presetSidecarPath,
   scanPiSessions,
@@ -126,6 +128,50 @@ describe('preset sidecar IO', () => {
     // 既不创建 JSONL，也不创建 sidecar
     expect(realFs.existsSync(filePath)).toBe(false)
     expect(realFs.existsSync(filePath + '.preset.json')).toBe(false)
+  })
+
+  // ── V9-④ 根修：create 路径 skipJsonlExistsGuard 放行 ──
+  // 场景复现 Gate B fail：landing create 后 pi 延迟写入窗口内 .jsonl 未 flush
+  //（文件不存在，路径由 pi SessionManager 构造时确定性生成），此前 existsSync 守卫
+  // 恒跳过且 preset/agent 无补偿写点 → sidecar 结构性永不落盘，重启后 preset 绑定
+  // 回退 builtin:full。放行后 create 即落盘；sidecar 是 xyz 自有文件（atomicWrite，
+  // 不触碰 .jsonl 本体），不违反规则 #6。tc2 同时守住非 create 路径默认跳过语义。
+
+  it('tc2b: skipJsonlExistsGuard + .jsonl 未 flush（不存在）→ .preset.json 照常落盘且可读回（恢复源验证）', () => {
+    // 不创建 .jsonl 本体——精确复刻 create 窗口（路径有值、文件不存在）
+    const filePath = join(tmpDir, 'unflushed.jsonl')
+    expect(realFs.existsSync(filePath)).toBe(false)
+
+    persistPresetBinding(filePath, 'my-custom-preset', { skipJsonlExistsGuard: true })
+
+    // 不触碰 .jsonl 本体（规则 #6 红线）+ sidecar 落盘
+    expect(realFs.existsSync(filePath)).toBe(false)
+    const sidecarPath = filePath + '.preset.json'
+    expect(realFs.existsSync(sidecarPath)).toBe(true)
+    expect(JSON.parse(realFs.readFileSync(sidecarPath, 'utf-8'))).toEqual({ presetId: 'my-custom-preset', version: 1 })
+    // session 重访（restore/fork）的真实恢复源 = scanSessionMeta 第四读读回 sidecar
+    expect(readPresetBinding(filePath)).toBe('my-custom-preset')
+  })
+
+  it('tc2c: skipJsonlExistsGuard 对 project/agent 家族同样放行；缺省（非 create 调用方）三家族均保持跳过', () => {
+    const filePath = join(tmpDir, 'unflushed-family.jsonl')
+    expect(realFs.existsSync(filePath)).toBe(false)
+
+    // create 放行面：project / agent 与 preset 同写点同根因
+    persistProjectBinding(filePath, 'proj-9', { skipJsonlExistsGuard: true })
+    expect(JSON.parse(realFs.readFileSync(filePath + '.project.json', 'utf-8'))).toEqual({ projectId: 'proj-9', version: 1 })
+    persistAgentBinding(filePath, 'agent', 'pa-9', { skipJsonlExistsGuard: true })
+    expect(JSON.parse(realFs.readFileSync(filePath + '.agent.json', 'utf-8'))).toEqual({ spawnSource: 'agent', parentAgentSessionId: 'pa-9', version: 1 })
+
+    // 默认守卫语义（fork/restore/setProject 等非 create 调用方不传 flag）保持跳过：
+    // 新路径无 .jsonl → 不产生新 sidecar
+    const otherPath = join(tmpDir, 'unflushed-other.jsonl')
+    persistProjectBinding(otherPath, 'proj-x')
+    persistAgentBinding(otherPath, 'user', undefined)
+    persistPresetBinding(otherPath, 'preset-x')
+    expect(realFs.existsSync(otherPath + '.project.json')).toBe(false)
+    expect(realFs.existsSync(otherPath + '.agent.json')).toBe(false)
+    expect(realFs.existsSync(otherPath + '.preset.json')).toBe(false)
   })
 
   it('tc3: persistPresetBinding 写入后失效 sessionMetaCache', () => {

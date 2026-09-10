@@ -9,13 +9,13 @@
  * - C-NT-2：编排器全部跨域依赖收敛为构造注入端口（SessionFlowPort/ChatSendPort/
  *   NavigationPanelPort/ToastPort/FileTreePort/TranslatePort/ImageMigratePort +
  *   GitApiPort/DirectoryPickerPort/WorkspaceApiPort/WorkspaceStatePort）
- * - C-SS-2：switchModel 归 createSessionFlow 内部 applyModel（SessionFlowPort.createSession
- *   承接）；setThinkingLevel 因 createSessionFlow 留壳（C-W4-3），经 SessionFlowPort.setThinkingLevel
+ * - C-SS-2：session 创建编排经 SessionFlowPort.createSession 承接（[已废除 2026-09 D5]
+ *   post-create applyModel / setThinkingLevel 双通道已删——override 经 create 快照化一次到位）
  * - D8：Electron 直连收编——pickDirectory（lib/ipc）经 DirectoryPickerPort、
  *   workspace/worktree API 经 WorkspaceApiPort、useWorkspaceStore 经 WorkspaceStatePort
  * - IF4 契约：SessionFlowPort 契约对齐 domain/session/createSessionFlow
  *   （cwd/presetId/pendingModel/segments/bashCommand → {session, migratedSegments} | null，
- *   含 INV-7 cwd 降级比对 + applyModel + migrateImages）
+ *   含 INV-7 cwd 降级比对 + migrateImages）
  */
 import type { Segment } from '@xyz-agent/shared'
 // AC10 跨域铁律：session 域经 '@xyz-agent/core/domain/session' 公开 index API 消费（禁内部模块相对路径）
@@ -27,15 +27,14 @@ import type {
 /**
  * session 生命周期端口（壳适配 renderer useNewTaskFlow 的 createSessionFlow(ctx, input) 调用）。
  * - createSession：session 创建全编排（guard→cwd 兜底→label 派生→create→INV-7 降级→
- *   appendSession→applyModel→migrateImages），返回 null = 空 content guard 命中（未创建）。
+ *   appendSession→migrateImages），返回 null = 空 content guard 命中（未创建）。
  *   壳实现：core domain/session createSessionFlow(ctx, input) 包一层（ctx 的 store/api/
- *   defaultCwd/onCwdFallback/applyModel 由壳组装——store 是壳持有的 createSessionStore 实例）。
- * - setThinkingLevel：apply landing 态思考等级（C-W4-3 留壳步——createSessionFlow 只做
- *   model apply 不做 thinkingLevel apply；壳适配 useModel().setThinkingLevel）。
+ *   defaultCwd/onCwdFallback 由壳组装——store 是壳持有的 createSessionStore 实例）。
+ * - [已删 2026-09 D5] setThinkingLevel 方法已随契约快照化删除——landing 恒传解析终值，
+ *   post-create 补 apply 是同值二次 RPC。
  */
 export interface SessionFlowPort {
   createSession(input: CreateSessionFlowInput): Promise<CreateSessionFlowResult | null>
-  setThinkingLevel(sessionId: string, level: string): Promise<void>
 }
 
 /** chat 发送端口（壳适配 useChat().send / useChat().sendBash）。 */

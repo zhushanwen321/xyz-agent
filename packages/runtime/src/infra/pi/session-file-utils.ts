@@ -24,6 +24,7 @@ import {
   readBindingSidecar,
   refreshScanDirCache,
   sessionMetaCache,
+  type PersistBindingSidecarOpts,
 } from './session-binding-sidecar-io.js'
 export { invalidateScanDirCache, persistBindingSidecar, readBindingSidecar } from './session-binding-sidecar-io.js'
 
@@ -298,12 +299,14 @@ export { persistModelBinding, readModelBinding } from './session-model-sidecar.j
  *
  * [规则 #6] session JSONL 文件不存在时**绝不创建 sidecar**（与 persistPresetBinding 同守则）：
  * pi 延迟写入窗口内 existsSync=false → 静默跳过；active session 归属经内存态兑底
- *（ManagedSession.projectId），不阻断主流程。
+ *（ManagedSession.projectId），不阻断主流程。例外：create 路径经 opts.skipJsonlExistsGuard
+ * 放行（session 由本进程刚创建必然真实，见 PersistBindingSidecarOpts）。
  *
  * @param filePath session JSONL 绝对路径（sidecar = projectSidecarPath(filePath)）
  * @param projectId 归属 project id（空串 = 归回默认项目，删除已存在的绑定 sidecar）
+ * @param opts 可选行为开关（skipJsonlExistsGuard 仅限 create 路径）
  */
-export function persistProjectBinding(filePath: string, projectId: string): void {
+export function persistProjectBinding(filePath: string, projectId: string, opts?: PersistBindingSidecarOpts): void {
   if (!filePath) return
   // 空 projectId（归回默认项目）= 删除绑定 sidecar。readProjectBinding 以 sidecar 为权威（无 sidecar
   // 兑底 undefined → 展示层归入默认项目），若只 return 不删，已存在的 .project.json 会继续生效——
@@ -327,7 +330,7 @@ export function persistProjectBinding(filePath: string, projectId: string): void
     }
     return
   }
-  persistBindingSidecar(filePath, projectSidecarPath, { projectId, version: 1 as const }, 'project')
+  persistBindingSidecar(filePath, projectSidecarPath, { projectId, version: 1 as const }, 'project', opts)
 }
 
 /**
@@ -357,13 +360,20 @@ export function readProjectBinding(filePath: string): string | undefined {
  * 与 `.preset.json` / `.project.json` 同模式：独立 sidecar 文件，不污染 JSONL。
  *
  * [规则 #6] session JSONL 文件不存在时**绝不创建 sidecar**（与 persistPresetBinding 同守则）：
- * pi 延迟写入窗口内 existsSync=false → 静默跳过。
+ * pi 延迟写入窗口内 existsSync=false → 静默跳过。例外：create 路径经 opts.skipJsonlExistsGuard
+ * 放行（session 由本进程刚创建必然真实，见 PersistBindingSidecarOpts）。
  *
  * @param filePath session JSONL 绝对路径（sidecar = agentSidecarPath(filePath)）
  * @param spawnSource session 来源标记（如 'agent'）
  * @param parentAgentSessionId 父 agent session id
+ * @param opts 可选行为开关（skipJsonlExistsGuard 仅限 create 路径）
  */
-export function persistAgentBinding(filePath: string, spawnSource: 'user' | 'agent', parentAgentSessionId: string | undefined): void {
+export function persistAgentBinding(
+  filePath: string,
+  spawnSource: 'user' | 'agent',
+  parentAgentSessionId: string | undefined,
+  opts?: PersistBindingSidecarOpts,
+): void {
   // 显式传 true 对齐默认失效语义（骨架默认开后本参数冗余，保留作自文档）：spawnSource 的
   // 消费方是列表扫描（SessionScanner.listAll → scanPiSessions force:false），binding 写入
   // 紧跟 session 创建后的列表广播刷新，1s TTL 窗口内命中 pre-binding 快照会让 agent 标记
@@ -373,7 +383,7 @@ export function persistAgentBinding(filePath: string, spawnSource: 'user' | 'age
     agentSidecarPath,
     { spawnSource, parentAgentSessionId, version: 1 as const },
     'agent',
-    { invalidateScanDir: true },
+    { invalidateScanDir: true, ...opts },
   )
 }
 
@@ -419,13 +429,16 @@ export function readAgentBinding(filePath: string): { spawnSource: 'user' | 'age
  * [规则 #6] session JSONL 文件不存在时**绝不创建 sidecar**（与 persistSessionEnd 一致）：
  * pi 延迟写入窗口内 existsSync=false → 静默跳过（ES-RL-1）。active session 即使磁盘无文件
  * 也经 SessionScanner.listAll 合并内存 Map 显示，preset 绑定丢失仅影响 fork/restore 的
- * preset 继承，不阻断主流程。
+ * preset 继承，不阻断主流程。例外：create 路径经 opts.skipJsonlExistsGuard 放行（V9-④
+ * 根修——create 窗口是本写点唯一时机，错过则重启后 preset 绑定永久回退 builtin:full；
+ * session 由本进程刚创建必然真实，sidecar 不触碰 .jsonl 本体，见 PersistBindingSidecarOpts）。
  *
  * @param filePath session JSONL 绝对路径（sidecar = presetSidecarPath(filePath)）
  * @param presetId launch preset id（如 'builtin:full'）
+ * @param opts 可选行为开关（skipJsonlExistsGuard 仅限 create 路径）
  */
-export function persistPresetBinding(filePath: string, presetId: string): void {
-  persistBindingSidecar(filePath, presetSidecarPath, { presetId, version: 1 as const }, 'preset')
+export function persistPresetBinding(filePath: string, presetId: string, opts?: PersistBindingSidecarOpts): void {
+  persistBindingSidecar(filePath, presetSidecarPath, { presetId, version: 1 as const }, 'preset', opts)
 }
 
 /**

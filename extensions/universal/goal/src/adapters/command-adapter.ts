@@ -31,7 +31,7 @@ import { updateWidget } from "../projection/widget";
 import { finalizeAndPersist, persistState, tickState } from "../service";
 import type { GoalHistoryEntry } from "../ports";
 import type { GoalSession } from "../session";
-import { clearGoalSession } from "../session";
+import { clearGoalSession, cancelContinuationTimer } from "../session";
 import { buildPorts } from "./ports";
 import { CRITERIA_HINTS_SLASH, validateSuccessCriteriaItems } from "./success-criteria";
 
@@ -122,6 +122,9 @@ function handlePause(pi: ExtensionAPI, session: GoalSession, ctx: ExtensionConte
 	// 先 tickState 累加当前运行段（此时 status 仍为 active）
 	tickState(state);
 	state.status = transitionStatus(state.status, "paused");
+	// W5：用户主动叫停 → 取消待发的退避 continuation（paused 期间不自动续跑；
+	// resume 后由其触发的 user message 重新驱动循环）
+	cancelContinuationTimer(session);
 
 	const ports = buildPorts(pi, ctx);
 	persistState(session, ports);
@@ -141,13 +144,27 @@ function handleResume(pi: ExtensionAPI, session: GoalSession, ctx: ExtensionCont
 		ctx.ui.notify(`Goal is in terminal state (${state.status}), cannot resume.`, "warning");
 		return;
 	}
+	// W5 恢复通道②：active 且 continuation 已封顶停发 → resume 重置熔断计数续跑
+	// （goal 封顶时刻意保持 active 不转终态，续跑决策权在用户）。
+	// 未封顶的普通 active goal 无需 resume（保持原语义）。
+	const cappedActive = state.status === "active" && state.continuationCapNotified;
 	// FR-3: resume 支持 paused→active 和 blocked→active（两者对称，都做 budget 重检 + 触发 AI）
-	if (state.status !== "paused" && state.status !== "blocked") {
+	if (state.status !== "paused" && state.status !== "blocked" && !cappedActive) {
 		ctx.ui.notify("Goal is not paused or blocked, no need to resume.", "info");
 		return;
 	}
-	state.status = "active";
-	state.timeStartedAt = Date.now();
+	if (state.status !== "active") {
+		state.status = "active";
+		state.timeStartedAt = Date.now();
+	}
+	// W5：resume = 新激活周期——熔断计数清零。主判据总次数（continuationsSent）只经
+	// 用户显式 resume 重置，agent 侧任何行为（含每轮调工具）都不可清零（正交性）。
+	state.continuationsSent = 0;
+	state.noProgressTurns = 0;
+	state.continuationCapNotified = false;
+	state.lastDeferredPendingIds = [];
+	// toolCallsSeen 不清零：entries 差分口径跨周期连续（清零会让首轮差分把历史
+	// 调用全算成本轮进展，虚高一次无害但无意义）
 
 	const ports = buildPorts(pi, ctx);
 
@@ -171,8 +188,11 @@ function handleResume(pi: ExtensionAPI, session: GoalSession, ctx: ExtensionCont
 	const blockerNote = state.lastBlockerReason
 		? `\n\nPrevious blocker: ${state.lastBlockerReason}. Try a different approach.`
 		: "";
+	const capNote = cappedActive
+		? "\n\nContinuation circuit breaker was reached — pursue the objective with concrete tool-backed progress."
+		: "";
 	pi.sendUserMessage(
-		`Goal resumed. Continuing toward the objective.${blockerNote}\n\nObjective: ${state.objective}`,
+		`Goal resumed. Continuing toward the objective.${blockerNote}${capNote}\n\nObjective: ${state.objective}`,
 		{ deliverAs: "followUp" },
 	);
 }
@@ -299,6 +319,11 @@ function handleUpdate(
 	state.budgetLimitSteeringSent = false;
 	state.tokenWarning70Sent = false;
 	state.tokenWarning90Sent = false;
+	// W5：重塑 = 新激活周期，熔断计数与 budget flag 同类（cycle-scoped 记账）一并重置
+	state.continuationsSent = 0;
+	state.noProgressTurns = 0;
+	state.continuationCapNotified = false;
+	state.lastDeferredPendingIds = [];
 	// GAP-6: update 是重塑，旧 slug 已不匹配新 objective → 置空（widget fallback objective 截断）
 	state.slug = undefined;
 	// update 重塑后旧 successCriteria 可能不再完全匹配新 objective，但语义内容仍可部分适用。

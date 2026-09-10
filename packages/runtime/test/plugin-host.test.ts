@@ -157,8 +157,8 @@ describe('PluginHost', { timeout: 30_000 }, () => {
     // mock bootstrap 收到 crash → process.exit(1) → 子进程 exit(1) → onCrash 转发
     handle.postMessage({ type: 'crash' })
 
-    // 等待子进程退出事件传播
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    // 事件驱动等待子进程退出事件传播（固定 sleep 在 38 包并行负载下会超窗假红）
+    await vi.waitFor(() => expect(crashes.length).toBe(1), { timeout: 10_000 })
 
     expect(crashes.length).toBe(1)
     expect(crashes[0].workerId).toBe(workerId)

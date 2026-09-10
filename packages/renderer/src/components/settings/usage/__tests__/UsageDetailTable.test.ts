@@ -8,6 +8,7 @@
  *   - 前两组默认展开、第三组默认收起（模型行可见性）
  *   - 点击分组头 → 折叠（模型行消失）；再点 → 展开
  *   - 合计行渲染总 token 与总费用
+ *   - groups 引用刷新（重试/筛选）→ 展开态重置为前两组展开，不残留旧组状态（D5 watch）
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
@@ -77,5 +78,37 @@ describe('UsageDetailTable 分组折叠', () => {
     expect(text).toContain('合计')
     expect(text).toContain('1,234')
     expect(text).toContain('$2.50')
+  })
+})
+
+describe('UsageDetailTable groups 刷新重置展开态（D5）', () => {
+  const groupsA = [group('p1', 300, 'm1'), group('p2', 200, 'm2'), group('p3', 100, 'm3')]
+  const tot = newMetrics()
+  accumulate(tot, { ...newMetrics(), input: 600 } as AggMetrics)
+
+  it('用户改过展开态后 groups 换新引用 → 重置为新 groups 前两组展开', async () => {
+    const wrapper = mountTable(groupsA, tot)
+    // 收起第一组（展开态被用户改动）
+    await wrapper.findAll('div.cursor-pointer')[0].trigger('click')
+    expect(wrapper.text()).not.toContain('m1')
+
+    // 数据刷新：groups 换成不同 pid 的新引用 → 重置为新前两组展开（q1/q2 模型行直接可见）
+    const groupsB = [group('q1', 500, 'x1'), group('q2', 400, 'x2'), group('q3', 300, 'x3')]
+    await wrapper.setProps({ groups: groupsB })
+    expect(wrapper.text()).toContain('x1')
+    expect(wrapper.text()).toContain('x2')
+    expect(wrapper.text()).not.toContain('x3')
+  })
+
+  it('同 pid 新数组刷新后同样重置（旧折叠态不残留）', async () => {
+    const wrapper = mountTable(groupsA, tot)
+    await wrapper.findAll('div.cursor-pointer')[0].trigger('click')
+    expect(wrapper.text()).not.toContain('m1')
+
+    // 同 pid、新数组引用（筛选变化后 groups 重算的形态）→ 展开态仍重置为前两组
+    const refreshed = [group('p1', 300, 'm1'), group('p2', 200, 'm2'), group('p3', 100, 'm3')]
+    await wrapper.setProps({ groups: refreshed })
+    expect(wrapper.text()).toContain('m1')
+    expect(wrapper.text()).toContain('m2')
   })
 })

@@ -40,6 +40,16 @@ import {
 /** 快照载荷（不含 sessionId——sessionId 由各发送点按目标 sid 回填成完整 GenStatsFrame） */
 export type GenStatsModelSnapshot = Omit<GenStatsFrame, 'sessionId'>
 
+/**
+ * 本次采样刚落盘的日记录（persistSample → snapshot 传值，消「写后即读」冗余 IO）。
+ * 字段缺省 = 该文件本次未写（guard 丢弃或写失败），snapshot 对应侧照旧读盘——
+ * 写失败后帧内该侧值 = 盘上旧值，与重读行为一致（§3.5 容错语义不变）。
+ */
+interface FreshDayRecords {
+  speed?: GenStatsDayRecords
+  cache?: GenStatsDayRecords
+}
+
 /** 全 null 聚合（降级链④走尽 / 模型无记录时的帧体；model 字段按 MF8 规则由 snapshot 决定去留） */
 const NULL_SPEED: GenStatsSpeed = { current: null, day: null, d7: null, d30: null }
 const NULL_CACHE: GenStatsCacheRatio = { current: null, day: null }
@@ -107,10 +117,11 @@ export class GenStatsService {
    *
    * 丢弃规则（§3.5 / D7，丢弃不入聚合）：
    *   - model/provider 缺失 → 样本无法归属模型，整体跳过（防御，pi AssistantMessage 正常态必带）；
-   *   - durationMs=null（无配对 turn-start，D2）→ 速度样本跳过，命中率样本照常；
-   *     （D2 口径注，GS-5 登记：速度分母 durationMs 含 turn-start（assistant message_start）
-   *     与 turn_end 两帧 RPC 传输延迟之差——turn_end 帧载荷大于 message_start，系统性使
-   *     duration 略偏大、速度略偏低，量级毫秒级，不做时钟校正）
+   *   - durationMs=null（真缺闭/缺起——pi 崩溃断连致闭合帧不到达，或 runtime 中途启动/
+   *     丢 message_start 致无起算点，genstats-speed-llm-window.md D2/D3）→ 速度样本跳过，
+   *     命中率样本照常；（D2 口径注，GS-5 精神延续：速度分母 durationMs = assistant message_start
+   *     与 assistant message_end 两帧 RPC 传输延迟之差——单次 LLM 请求窗口，不含工具执行时间；
+   *     毫秒级、方向不定，不做时钟校正）
    *   - outputTokens>50 && durationMs<100（store 谓词 SSOT）→ 速度样本丢弃；
    *   - promptTotal=input+cacheRead+cacheWrite ≤0 → 命中率样本不采集（cache 字段缺省按 0
    *     计入 promptTotal，D7③，有效性由本条兜底）。
@@ -136,26 +147,30 @@ export class GenStatsService {
       this.modelBySid.set(sid, modelKey)
     }
 
-    const persisted = this.persistSample(provider, model, sample)
+    const fresh = this.persistSample(provider, model, sample)
     // 扩展广播（D4）：仅 ≥1 条样本落盘时推——无落盘则快照值不变，推帧无信息量。
-    if (persisted) this.broadcastModel(modelKey)
+    if (fresh) this.broadcastModel(modelKey, fresh)
   }
 
   /**
-   * 样本落盘（D8 同步临界段；两个文件各自独立容错）。返回是否 ≥1 条写入成功。
+   * 样本落盘（D8 同步临界段；两个文件各自独立容错）。返回本次刚写盘的日记录（≥1 条
+   * 写入成功时），供同一同步临界段内的 broadcastModel 快照复用——单线程、无 await、
+   * 无其他写者，刚写入的内存值与磁盘值恒等，免 snapshot 重读全文件（冗余 IO 消除，
+   * 每样本 6 次全文件操作 → 4 次）；全部未写返回 null。字段缺省 = 该文件本次未写
+   * （guard 丢弃或写失败），快照对应侧照旧读盘（写失败后帧内值 = 盘上旧值，§3.5
+   * 容错语义不变）。
    * 速度条目 [outputTokens, durationMs]；命中率条目 [cacheRead ?? 0, promptTotal]。
    * durationMs>0 附加防 0ms 退化样本（蓝本同款仅 guard output×duration 组合，
    * 此处补 0ms 一并排除——0ms 分母样本对 current 恒产出 null，无信息量）。
    */
-  private persistSample(provider: string, model: string, s: GenStatsSample): boolean {
+  private persistSample(provider: string, model: string, s: GenStatsSample): FreshDayRecords | null {
     const day = localDayKey()
-    let persisted = false
+    const fresh: FreshDayRecords = {}
 
     if (s.outputTokens !== null && s.durationMs !== null && s.durationMs > 0 &&
         !isBogusSpeedSample(s.outputTokens, s.durationMs)) {
       try {
-        this.appendRecord(speedFilePath(provider, model), day, [s.outputTokens, s.durationMs])
-        persisted = true
+        fresh.speed = this.appendRecord(speedFilePath(provider, model), day, [s.outputTokens, s.durationMs])
       } catch (err) {
         // §3.5：写失败 warn；内存聚合照常、当前帧照常推，下个 turn 重写自愈
         logger.warn('[gen-stats] speed record write failed', { provider, model, error: toMessage(err) })
@@ -165,22 +180,22 @@ export class GenStatsService {
     const promptTotal = (s.input ?? 0) + (s.cacheRead ?? 0) + (s.cacheWrite ?? 0)
     if (promptTotal > 0) {
       try {
-        this.appendRecord(cacheRatioFilePath(provider, model), day, [s.cacheRead ?? 0, promptTotal])
-        persisted = true
+        fresh.cache = this.appendRecord(cacheRatioFilePath(provider, model), day, [s.cacheRead ?? 0, promptTotal])
       } catch (err) {
         logger.warn('[gen-stats] cache-ratio record write failed', { provider, model, error: toMessage(err) })
       }
     }
-    return persisted
+    return fresh.speed || fresh.cache ? fresh : null
   }
 
   /** read→append→write 单同步临界段（D8；writeDayRecords 内含 30 天 GC + tmp+rename 原子写）。 */
-  private appendRecord(filePath: string, day: string, entry: [number, number]): void {
+  private appendRecord(filePath: string, day: string, entry: [number, number]): GenStatsDayRecords {
     const records = readDayRecords(filePath)
     const entries = records[day] ?? []
     entries.push(entry)
     records[day] = entries
-    writeDayRecords(filePath, records)
+    // 返回实际写盘的 prune 后对象（writeDayRecords 返回值，与磁盘内容同源）
+    return writeDayRecords(filePath, records)
   }
 
   // ── 写 2：模型切换重登记 + 推新模型快照帧（session-service state_changed 发布挂钩调用）──
@@ -227,6 +242,10 @@ export class GenStatsService {
   /**
    * 模型级快照（D6 聚合在 runtime 算好，前端只拿结论；模型视角 D4）。
    *
+   * fresh（可选）：采样路径刚写盘的日记录（recordSample → broadcastModel 传入），
+   * 命中字段免重读全文件——同一同步临界段内磁盘值 == 内存值；独立快照路径
+   * （onModelSwitched / getSnapshotForSession）不传，照旧读盘。
+   *
    * model 回填规则（R5/MF8）：modelKey 非 null 恒回填 payload.model（含该模型无记录的
    * 全 null 帧——否则写 2 推的无记录快照被自家前端校验拦截，场景 4⑥「无记录则—」分支
    * 不可达）；仅 modelKey 为 null（降级链④走尽）时 model 缺省 + 全 null。
@@ -234,14 +253,14 @@ export class GenStatsService {
    * current = 文件末条单样本换算（跨 session、可跨重启恢复）；day/d7/d30 = 本地日 key
    * 滚动窗口加权聚合（含当日）。聚合无有效样本 → null（store null 纪律，禁止 0 充数）。
    */
-  snapshot(modelKey: string | null): GenStatsModelSnapshot {
+  snapshot(modelKey: string | null, fresh?: FreshDayRecords): GenStatsModelSnapshot {
     if (modelKey === null) {
       return { speed: NULL_SPEED, cacheRatio: NULL_CACHE }
     }
     const { provider, model } = splitModelKey(modelKey)
     const now = new Date()
-    const speedRecords = readDayRecords(speedFilePath(provider, model))
-    const cacheRecords = readDayRecords(cacheRatioFilePath(provider, model))
+    const speedRecords = fresh?.speed ?? readDayRecords(speedFilePath(provider, model))
+    const cacheRecords = fresh?.cache ?? readDayRecords(cacheRatioFilePath(provider, model))
 
     // current：末条单样本过聚合函数取同一 round 口径（单条加权平均 = 该样本本身）
     const lastSpeed = lastEntry(speedRecords)
@@ -317,8 +336,8 @@ export class GenStatsService {
   }
 
   /** 对该模型全部已知 session 逐 sid 发帧（帧体共享同一快照，sessionId 各自回填）。 */
-  private broadcastModel(modelKey: string): void {
-    const snapshot = this.snapshot(modelKey)
+  private broadcastModel(modelKey: string, fresh?: FreshDayRecords): void {
+    const snapshot = this.snapshot(modelKey, fresh)
     for (const targetSid of this.sessionsOfModel(modelKey)) {
       this.deps.publish(targetSid, {
         type: 'session.stats_update',

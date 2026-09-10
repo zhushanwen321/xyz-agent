@@ -1,6 +1,6 @@
 // src/interface/subagent-tool-schema.ts
 //
-// `subagent` 工具的参数 schema 纯常量叶子（零运行时依赖，先例 shared/schema-env.ts）。
+// `subagent` 工具的参数 schema 纯常量叶子（零运行时依赖）。
 //
 // 抽取自 subagent-tool.ts（跨包契约另一半）：subagent-tool 依赖树沉重（pi SDK /
 // handler / render 链），structured-output 侧的跨包契约测试若从它 import schema

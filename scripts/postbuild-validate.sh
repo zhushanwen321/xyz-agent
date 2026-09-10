@@ -37,6 +37,49 @@ done
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+# staged 引擎 CLI 包完整性校验（W9，设计 §3.7 Electron 打包态，三平台共用）：
+# bundle-extensions.mjs 预 bundle 到 resources/engines/<id>/ + electron-builder
+# extraResources 拷贝。断言：目录存在、每引擎 index.js 存在且可执行（发现器
+# canExecute 判据）、package.json 的 manifest id == 目录名、bin 映射指向 ./index.js。
+# 任一失败 = 打包配置回归（bundle 脚本漏跑 / yml extraResources 漏拷 / staged 退化）。
+check_staged_engines() {
+    local engines_dir="$1"
+    if [ ! -d "$engines_dir" ]; then
+        echo -e "  ${RED}✗${NC} engines 目录缺失: ${engines_dir}（检查 bundle-extensions.mjs 引擎 staging + electron-builder.yml extraResources）"
+        return 1
+    fi
+    local failed=0 count=0
+    for engine_dir in "$engines_dir"/*/; do
+        [ -d "$engine_dir" ] || continue
+        count=$((count + 1))
+        local engine_id; engine_id="$(basename "$engine_dir")"
+        if [ ! -x "${engine_dir}index.js" ]; then
+            echo -e "  ${RED}✗${NC} engine ${engine_id} 缺可执行 index.js: ${engine_dir}index.js"
+            failed=1
+            continue
+        fi
+        if ! node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const m = pkg["xyz-agent"]?.subagentEngine;
+            const ok = m?.id === process.argv[2]
+                && typeof m?.bin === "string" && m.bin !== ""
+                && pkg.bin?.[m.bin] === "./index.js";
+            process.exit(ok ? 0 : 1);
+        ' "${engine_dir}package.json" "$engine_id" 2>/dev/null; then
+            echo -e "  ${RED}✗${NC} engine ${engine_id} staged package.json manifest/bin 无效（id≠目录名 或 bin 未指向 ./index.js）"
+            failed=1
+        fi
+    done
+    if [ "$count" -eq 0 ]; then
+        echo -e "  ${RED}✗${NC} engines 目录为空: ${engines_dir}（packages/*-subagent-cli 未 staged）"
+        return 1
+    fi
+    if [ "$failed" -ne 0 ]; then return 1; fi
+    echo -e "  ${GREEN}✓${NC} staged engines 完整性校验通过（$count engines: ${engines_dir}）"
+    return 0
+}
+
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${BLUE}[Postbuild Validation]${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -246,6 +289,10 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
             echo -e "  ${RED}✗${NC} builtin ext 目录缺失: ${BUILTIN_EXT_DIR}（检查 prepare-builtin-extensions.sh + electron-builder.yml）"
             FAILED=1
         fi
+        # staged subagent 引擎 CLI（W9，三平台共用 check_staged_engines）
+        if ! check_staged_engines "$APP_PATH/Contents/Resources/engines"; then
+            FAILED=1
+        fi
         # builtin xyz plugins 完整性校验（resources/plugins/<name>，如 statusline）
         # prepare-builtin-plugins.sh 预编译 index.js + electron-builder extraResources 拷贝。
         # registry 打包后扫描 <cwd>/resources/plugins；缺入口文件则插件静默不被发现或
@@ -315,6 +362,10 @@ if [ -d "$OUTPUT_DIR/win-unpacked" ]; then
         fi
     else
         echo -e "  ${RED}✗${NC} builtin ext 目录缺失: $WIN_BUILTIN"
+        FAILED=1
+    fi
+    # staged subagent 引擎 CLI（W9，三平台共用 check_staged_engines）
+    if ! check_staged_engines "$WIN_RESOURCES/engines"; then
         FAILED=1
     fi
     # builtin xyz plugins（Windows 同 mac 校验：每插件 manifest main 入口存在）
@@ -406,10 +457,11 @@ if [ -d "$OUTPUT_DIR/linux-unpacked" ]; then
         echo -e "  ${RED}✗${NC} builtin ext 目录缺失: ${LINUX_BUILTIN}（检查 prepare-builtin-extensions.sh + electron-builder.yml）"
         FAILED=1
     fi
+    # staged subagent 引擎 CLI（W9，三平台共用 check_staged_engines）
+    if ! check_staged_engines "$LINUX_RESOURCES/engines"; then
+        FAILED=1
+    fi
 fi
-
-# ── 3. 产物大小合理性 ───────────────────────────────────────────────
-echo ""
 # ── 3. renderer WASM chunk 检查（CSP 能力防线，产物级）───────────────
 # 背景：renderer CSP script-src 'self' 不放行 WASM。shiki 已换 createJavaScriptRegexEngine
 # （markdown.ts），但 bundle-full 入口仍静态携带 oniguruma loader（dead code，tree-shake

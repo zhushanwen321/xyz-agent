@@ -104,7 +104,25 @@ export function deserializeState(data: Record<string, unknown>): GoalRuntimeStat
 		lastTurnTokensUsed: req("lastTurnTokensUsed"),
 		currentTurnIndex: req("currentTurnIndex"),
 		completedAtTurnIndex: data.completedAtTurnIndex as number | undefined,
+		// W5 熔断计数（chat-domain-v1x D4）：旧持久化数据无这些字段 → 归零/空集
+		// （新激活周期语义：升级前的旧 goal 不携带历史熔断账）。slug 同款可选解析，
+		// 不用 req()（否则旧数据 throw → state 全丢，GAP-4）。
+		continuationsSent: nonNegativeNumber(data.continuationsSent),
+		noProgressTurns: nonNegativeNumber(data.noProgressTurns),
+		continuationCapNotified: data.continuationCapNotified === true,
+		lastDeferredPendingIds: normalizeStringArray(data.lastDeferredPendingIds),
+		toolCallsSeen: nonNegativeNumber(data.toolCallsSeen),
 	};
+}
+
+/** 数值字段归一化：非负有限数原样保留，其余（含 undefined）→ 0。 */
+function nonNegativeNumber(raw: unknown): number {
+	return typeof raw === "number" && Number.isFinite(raw) && raw >= 0 ? raw : 0;
+}
+
+/** string[] 字段归一化：every-string 原样保留，其余（含 undefined）→ []。 */
+function normalizeStringArray(raw: unknown): string[] {
+	return Array.isArray(raw) && raw.every((item) => typeof item === "string") ? raw : [];
 }
 
 // ── makeHistoryEntry ─────────────────────────────────

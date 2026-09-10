@@ -1,5 +1,5 @@
 /**
- * composer contenteditable 输入组合逻辑 —— core/domain/composer/input/contenteditable.ts（W2）。
+ * composer contenteditable 输入组合逻辑 —— packages/dom-core/src/composer/input/contenteditable.ts（W2）。
  *
  * 定位：迁自 renderer useContenteditableInput.ts（873 行）的 composable 部分。
  * 职责（单一变化轴「contenteditable 输入事件 + 文本/光标操作」）：
@@ -38,6 +38,7 @@ import {
   applyImagePersistResult,
 } from './input-dom'
 import type { ContenteditableCallbacks, HandleImagePasteResult } from './types'
+import { useSelectionRestore } from './selection-restore'
 
 /**
  * Cmd/Ctrl+V 富呈现通路处理（原 useContenteditableInput 模块级私有，改接收 pasteImage）。
@@ -125,7 +126,8 @@ export function useContenteditableInput(
 
   const composing = ref(false)
   const isEmpty = ref(true)
-  let savedRange: Range | null = null
+  // 选区保存/恢复（savedRange 闭包状态）提取到 selection-restore 工厂，实例级语义不变
+  const selectionRestore = useSelectionRestore(getEl)
   let preferredCaretX: number | null = null
 
   function getEl(): HTMLDivElement | null {
@@ -267,28 +269,14 @@ export function useContenteditableInput(
     onInput()
   }
 
+  /** 夺焦前保存选区（savedRange 归 selection-restore 工厂；preferredCaretX 属光标移动轴，此处清空） */
   function saveSelection(): void {
-    const sel = window.getSelection()
-    if (sel && sel.rangeCount > 0 && elRef.value?.contains(sel.anchorNode)) {
-      savedRange = sel.getRangeAt(0).cloneRange()
-    }
+    selectionRestore.saveSelection()
     preferredCaretX = null
   }
 
-  function restoreSelection(): void {
-    const el = getEl()
-    if (!el) return
-    if (!savedRange) {
-      el.focus()
-      return
-    }
-    el.focus()
-    const sel = window.getSelection()
-    if (sel) {
-      sel.removeAllRanges()
-      sel.addRange(savedRange)
-    }
-  }
+  /** 夺焦后恢复选区（活选区优先 / savedRange 回退 / addRange 静默失败落末尾，语义见 selection-restore.ts） */
+  const restoreSelection = selectionRestore.restoreSelection
 
   /**
    * 「符号+query 到光标」段删除的共用实现（boundaryLen 模式）。
@@ -370,7 +358,7 @@ export function useContenteditableInput(
     const el = getEl()
     if (!el) return
     el.textContent = ''
-    savedRange = null
+    selectionRestore.reset()
     preferredCaretX = null
     syncEmpty()
     emitInput('')
@@ -394,7 +382,7 @@ export function useContenteditableInput(
       if (i > 0) el.appendChild(document.createElement('br'))
       if (parts[i]) el.appendChild(document.createTextNode(parts[i]))
     }
-    savedRange = null
+    selectionRestore.reset()
     el.focus()
     const range = document.createRange()
     if (caretPosition === 'start') {

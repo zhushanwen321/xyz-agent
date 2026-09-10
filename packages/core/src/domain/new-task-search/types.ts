@@ -42,6 +42,20 @@ export interface SearchItem {
    *  存在动机：pi get_commands 返回的命令名不带 / 前缀（如 'goal'/'skill:code-review'），
    *  无法靠 title.startsWith('/') 区分两类，故在 DTO 映射时显式标记，useSearchJump 据此精确分发。 */
   commandKind?: 'app' | 'slash'
+  /**
+   * skill 命令项标记（仅 type='command' 且 commandKind='slash' 时可能为 true）。
+   * 判据与 CommandPopover 的 buildPanelSlashCandidates 同源：SessionCommand.kind === 'skill'
+   * （applyCommands 把 pi 的 source 归一化进 kind）。用途：搜索选中项经 pendingSlash 通道
+   * 注入 composer 时，消费侧（useCommandPopoverTrigger）按本字段分流——true 走 skill 通路
+   * （裸名 + location + 多 chip 共存，与 D3 的 onCmdSelect skill 项分流同款落点），
+   * false/缺省维持 insertSlashChip 命令通路（单命令替换语义）。
+   */
+  isSkill?: boolean
+  /**
+   * skill 命令的 SKILL.md 绝对路径（仅 isSkill 为真时携带，取自 SessionCommand.sourceInfo.path）。
+   * 与 CommandPopover 的 slash 候选 location 同源，供 chip dataset 携带 + runtime 反解析。
+   */
+  location?: string
 }
 
 /** 应用内置命令（#2，含 action 行为故非纯值对象） */

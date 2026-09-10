@@ -579,11 +579,12 @@ export async function submitQueuedEntry(
   const baseText = entry.submitText ?? segmentsToPrompt(segments)
   const markedText = `${baseText}\n<!--xyz:msg:${entry.id}-->`
   // [defer segments 化 / D-A1-2] 富内容条目写 sidecar（与 submitSegments 的 needsBackfill
-  // 谓词同款：全部 text 段跳过——纯文本重开降级渲染等价；未知新类型默认写，失败方向
-  // 安全）。key 用 deferEntryId（裸 uuid），reload 侧 entry-tree-builder 编排层提取裸
-  // 标记 id 直查回填。fire-and-forget：失败 console.warn 不阻断（sidecar 丢失只降级为
-  // 占位文本，非硬错误）。
-  const needsBackfill = segments.some((s) => s.type !== 'text')
+  // 谓词同款：全部 text 段或 slash 段跳过 sidecar 写入；defer 路径 slash 段不可达——
+  // send.ts enqueueDuringDefer 对 segmentsToPrompt 以 / 开头一律拒绝，此处排除 slash
+  // 纯为与 submit 路径谓词单点统一；未知新类型默认写，失败方向安全）。key 用
+  // deferEntryId（裸 uuid），reload 侧 entry-tree-builder 编排层提取裸标记 id 直查回填。
+  // fire-and-forget：失败 console.warn 不阻断（sidecar 丢失只降级为占位文本，非硬错误）。
+  const needsBackfill = segments.some((s) => s.type !== 'text' && s.type !== 'slash')
   if (needsBackfill) {
     deps
       .writeSegments({
@@ -660,10 +661,14 @@ export function createUseChat(deps: UseChatDeps) {
   ): Promise<void> {
     const promptText = precomputedPromptText ?? segmentsToPrompt(segments)
     // 最小写入：纯文本消息（全部 segment 为 text）跳过 sidecar + 标记——重开时 textToSegments
-    // 降级与结构化回填渲染等价，只有非 text 段（image/file/skill/mention/handoff）的 badge
-    // 依赖映射回填。谓词对未知新类型默认保留写入（≠ 'text' 即写），失败方向安全。
+    // 降级与结构化回填渲染等价，只有非纯文本段（image/file/skill/mention/handoff）的 badge
+    // 依赖映射回填。谓词对未知新类型默认保留写入（≠ text/slash 即写），失败方向安全。
     // 不变式：sidecar 条目存在 ⟺ 映射 custom entry 存在（两侧同谓词门控）。
-    const needsBackfill = segments.some((s) => s.type !== 'text')
+    // [D4-d] slash 段（命令 chip）计入纯文本——无 badge 还原需求：UserBubble 已按归位序把
+    // slash 段渲染为 `/name` 纯文本，与 reload 侧 textToSegments(归位文本) 同形（live ≡ reload），
+    // 故不为此引入 sidecar 写入。本处谓词同时门控 sidecar 写入与 custom entry 标记（defer
+    // 重放路径 `submitQueuedEntry` 另有一处同款谓词）。
+    const needsBackfill = segments.some((s) => s.type !== 'text' && s.type !== 'slash')
     // 写 segments.json sidecar（重开 session 时回填 image/file badge 用）。
     // 异步 fire-and-forget：失败 console.warn 不阻断（sidecar 丢失只是降级为占位文本，非硬错误）。
     // landing 态 session 尚未创建时（sessionId 为占位）不写——submitFirstMessage 在 session.create 后
