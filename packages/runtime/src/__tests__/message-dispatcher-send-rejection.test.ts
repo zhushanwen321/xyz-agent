@@ -57,10 +57,17 @@ interface MockOpts {
 }
 
 function makeMocks(opts: MockOpts = {}) {
+  const isBashRunning = opts.isBashRunning ?? false
+  const isGenerating = opts.isGenerating ?? false
+  const isCompacting = opts.isCompacting ?? false
+  // [u3b 预检改读 occupancy] 预检输入源从三布尔改为 occupancy 投影（session-dead-structural-fixes
+  // D2 settling 预检裁决）。真实链路里二者经转移原语原子同步（同一挂点「合并 + 派生」双写合一），
+  // fixture 镜像该同步——置布尔的用例同时给对应投影态；布尔保留供非预检读点与派生断言使用。
   const session = makeMockSession({
-    isBashRunning: opts.isBashRunning ?? false,
-    isGenerating: opts.isGenerating ?? false,
-    isCompacting: opts.isCompacting ?? false,
+    isBashRunning,
+    isGenerating,
+    isCompacting,
+    occupancy: { turn: isGenerating ? 'generating' : 'idle', compacting: isCompacting, bash: isBashRunning },
   })
 
   const promptFn = opts.promptError

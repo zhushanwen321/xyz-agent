@@ -5,6 +5,8 @@
  * 调用点在 BeforeSend hook 之后 / client.prompt/steer/followUp 之前（顺序断言）、
  * session.skillNotice 广播 payload 形状符合 protocol 契约（含 clientUuid 提取与
  * steer/followUp 无 clientUuid 的缺省形态）、失败路径不发布提示。
+ * 另含 busy 预检裁决单测（session-dead-structural-fixes D2 settling 预检裁决，u3b 验收③）：
+ * 预检读 occupancy 投影，settling 计为忙 → send.rejected{busy}。
  * 全部协作对象 fake 注入，不 spawn pi 进程。
  */
 import { describe, expect, it, vi } from 'vitest'
@@ -155,7 +157,8 @@ describe('MessageDispatcher × SkillInjector 挂载（D9）', () => {
   })
 
   it('sendPrompt：busy 预检拒绝时注入器不被调用（消息不发送，无需注入）', async () => {
-    const h = makeHarness({ sessionByClient: { isGenerating: true, isCompacting: false, isBashRunning: false } })
+    // [u3b 预检改读 occupancy] 预检输入 = occupancy 投影（D1 立场），turn='generating' 计忙
+    const h = makeHarness({ sessionByClient: { occupancy: { turn: 'generating', compacting: false, bash: false } } })
     const result = await h.dispatcher.sendMessage('s1', '消息')
     expect(result).toEqual({ blocked: true, rejected: true })
     expect(h.injectMock).not.toHaveBeenCalled()
@@ -184,5 +187,76 @@ describe('MessageDispatcher × SkillInjector 挂载（D9）', () => {
     expect(h.calls).toEqual(['inject', 'followUp'])
     expect(h.client.followUp).toHaveBeenCalledWith('INJECTED::followUp 文本')
     expect(h.published).toHaveLength(0)
+  })
+})
+
+/**
+ * busy 预检裁决单测（session-dead-structural-fixes D2 settling 预检裁决，u3b 验收条款③）。
+ *
+ * 预检门改读 occupancy 投影（D1 立场「occupancy 为体」）：turn !== 'idle' / compacting / bash
+ * 任一命中即拒。关键行为变更 = **settling 计为忙**（原三布尔读法在 settling 窗口 isGenerating
+ * 已复位 false → 误判闲放行，与前端 D1 双门相反），拒绝转 send.rejected{busy} → 前端 defer
+ * 队列入队 → agent_settled idle 帧自动投递。
+ */
+describe('MessageDispatcher busy 预检裁决（D2 settling 计忙，u3b）', () => {
+  it.each([
+    ['dispatching', 'busy'],
+    ['generating', 'busy'],
+    ['settling', 'busy'],
+  ] as const)('turn=%s 计忙：拒绝转 send.rejected{reason:%s}，prompt 不发送', async (turn, reason) => {
+    const h = makeHarness({ sessionByClient: { occupancy: { turn, compacting: false, bash: false } } })
+    const result = await h.dispatcher.sendMessage('s1', 'settling 窗口内的消息')
+    expect(result).toEqual({ blocked: true, rejected: true })
+    expect(h.client.prompt).not.toHaveBeenCalled()
+    expect(h.published).toContainEqual({
+      type: 'send.rejected',
+      payload: { sessionId: 's1', reason, message: 'Agent 正在处理' },
+    })
+  })
+
+  it('settling 且三布尔全 false（pi post-run 窗口）→ 拒绝（旧读法会放行）', async () => {
+    const h = makeHarness({
+      sessionByClient: {
+        isGenerating: false,
+        isCompacting: false,
+        isBashRunning: false,
+        occupancy: { turn: 'settling', compacting: false, bash: false },
+      },
+    })
+    const result = await h.dispatcher.sendMessage('s1', '消息')
+    expect(result).toEqual({ blocked: true, rejected: true })
+    expect(h.client.prompt).not.toHaveBeenCalled()
+    expect(h.injectMock).not.toHaveBeenCalled()
+  })
+
+  it('compacting 命中：分型保持 reason=compacting（renderer 兜底入队触发源）', async () => {
+    const h = makeHarness({
+      sessionByClient: { occupancy: { turn: 'idle', compacting: true, bash: false } },
+    })
+    const result = await h.dispatcher.sendMessage('s1', '消息')
+    expect(result).toEqual({ blocked: true, rejected: true })
+    expect(h.published).toContainEqual({
+      type: 'send.rejected',
+      payload: { sessionId: 's1', reason: 'compacting', message: '压缩进行中，消息将自动排队' },
+    })
+  })
+
+  it('bash 命中：拒绝 reason=busy', async () => {
+    const h = makeHarness({
+      sessionByClient: { occupancy: { turn: 'idle', compacting: false, bash: true } },
+    })
+    const result = await h.dispatcher.sendMessage('s1', '消息')
+    expect(result).toEqual({ blocked: true, rejected: true })
+    expect(h.published).toContainEqual(expect.objectContaining({ type: 'send.rejected' }))
+  })
+
+  it('occupancy 全 idle：预检放行（对照组——直发成功不受影响，V7④）', async () => {
+    const h = makeHarness({
+      sessionByClient: { occupancy: { turn: 'idle', compacting: false, bash: false } },
+    })
+    const result = await h.dispatcher.sendMessage('s1', '空闲期消息')
+    expect(result).toEqual({ blocked: false })
+    expect(h.client.prompt).toHaveBeenCalledTimes(1)
+    expect(h.published.filter((m) => m.type === 'send.rejected')).toHaveLength(0)
   })
 })

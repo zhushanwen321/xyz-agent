@@ -61,10 +61,16 @@ function makeMocks(opts: {
   session?: IManagedSessionView
   messageBus?: { publish: ReturnType<typeof vi.fn> }
 } = {}) {
+  const isGenerating = opts.isGenerating ?? false
+  const isCompacting = opts.isCompacting ?? false
+  const isBashRunning = opts.isBashRunning ?? false
+  // [u3b 预检改读 occupancy] sendPrompt 预检输入源改为 occupancy 投影。fixture 镜像真实
+  // 链路的原子同步（原语「合并 + 派生」双写合一）。
   const session = opts.session ?? makeMockSession({
-    isGenerating: opts.isGenerating ?? false,
-    isCompacting: opts.isCompacting ?? false,
-    isBashRunning: opts.isBashRunning ?? false,
+    isGenerating,
+    isCompacting,
+    isBashRunning,
+    occupancy: { turn: isGenerating ? 'generating' : 'idle', compacting: isCompacting, bash: isBashRunning },
   })
   const promptFn = opts.promptError
     ? vi.fn(async () => { throw opts.promptError! })

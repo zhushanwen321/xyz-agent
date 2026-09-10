@@ -69,13 +69,15 @@ export const IDLE_SESSION_OCCUPANCY: SessionOccupancy = { turn: 'idle', compacti
  * - publish 为 null/undefined 时（bus 未注入 / 测试）静默跳过广播，状态照常写——与
  *   dispatcher 其他 publish 点的 null-safe 惯例一致。
  *
- * 唯一写入口：dispatcher 挂点（#1/#7/#8/#9/#11 + forceQuit/compact 兜底）直接调用；
- * interpreter 挂点（#2-#6）经 onOccupancyTransition 回调由组合根接线到本函数。
+ * 唯一写入口：全部挂点（interpreter #2-#6 经 onOccupancyTransition 回调、dispatcher
+ * #1/#7-#9/#11 与 forceQuit/compact 兜底、deliverText 置位、agent_end/agent_settled 副作用、
+ * onSessionExit 全复位）均已改调 applySessionOccupancyTransition（u3b 迁移完成）；
+ * 本函数降级为原语的内部机制（合并 + 去重 + state-topic 广播腿），不再被挂点直调。
  * OccupancyPublisher 取 IMessageBus 的结构化窄投影（只依赖 publish，test mock 友好）。
  *
  * [session-dead-structural-fixes D2] 本函数自 u2 起降级为 applySessionOccupancyTransition
- * 原语的内部机制（合并 + 去重 + state-topic 广播腿）；既有挂点调用方式不变（u3b 统一
- * 迁移改调原语），迁移完成前本函数仍是挂点的直调入口。
+ * 原语的内部机制（u3b 挂点迁移完成后原语是唯一写入口，u3c readonly 收紧后绕开原语的
+ * 直写在编译期红）。
  */
 export function updateSessionOccupancy(
   session: Pick<IManagedSessionView, 'id' | 'occupancy'>,
@@ -151,8 +153,7 @@ const SESSION_OCCUPANCY_TRANSITIONS: Record<
  * - 三布尔直写在 session 记录（派生存储，幂等无广播语义）；occupancy 合并与去重复用
  *   updateSessionOccupancy 既有机制。
  *
- * u2 落地形态 = 包装 updateSessionOccupancy（既有挂点调用方式不变，u3b 迁移后原语成为
- * 唯一写入口；u3c readonly 收紧后绕开原语的直写在编译期红）。
+ * u3b 挂点迁移完成后本原语是唯一写入口（u3c readonly 收紧后绕开原语的直写在编译期红）。
  */
 export function applySessionOccupancyTransition(
   session: Pick<IManagedSessionView, 'id' | 'occupancy' | 'isGenerating' | 'isCompacting' | 'isBashRunning'>,
@@ -471,17 +472,18 @@ export interface EventInterpreterOptions {
    */
   onCompactingStateChange?: (sessionId: string, isCompacting: boolean) => void
   /**
-   * occupancy 挂点回调（session-occupancy-send-closure D3 #2-#6）—— interpreter 侧成功路径
-   * 挂点（turn-start→generating / turn-end→settling / agent-settled→idle / compaction-start
-   * →compacting=true / compaction-end→compacting=false）经本回调由组合根接线到
-   * updateSessionOccupancy（读改 session 记录 occupancy + 变化才广播 session.occupancy state 帧）。
+   * occupancy 挂点回调（session-dead-structural-fixes D2 挂点迁移，u3b）—— interpreter 侧
+   * 挂点（turn-start→'generating' / turn-end→'settling' / agent-settled→'idle' /
+   * compaction-start→'compacting-start' / compaction-end→'compacting-end' / turn-end 处理
+   * 异常兜底→'settling'）经本回调由组合根接线到 applySessionOccupancyTransition（封闭转移
+   * 枚举唯一入口：合并 occupancy 三维 + 派生三布尔 + 幂等比较 + 广播 state 帧）。
    *
-   * 回调只传 patch（本挂点写入的目标维度值），全量合并与去重在 updateSessionOccupancy 内——
-   * interpreter 是 per-session 实例但不持有全量 occupancy（bash/dispatching 维度由 dispatcher
-   * 侧挂点写入），必须经 session 记录（权威聚合点）合并，否则会以 stale 维度广播错误三维。
+   * 回调只传转移类型（封闭枚举值），合并/派生/去重在原语内——interpreter 是 per-session
+   * 实例但不持有全量 occupancy（bash/dispatching 维度由 dispatcher 侧挂点写入），必须经
+   * session 记录（权威聚合点）合并，否则会以 stale 维度广播错误三维。
    * 未注入时（存量单测）no-op，不广播。
    */
-  onOccupancyTransition?: (patch: Partial<SessionOccupancy>) => void
+  onOccupancyTransition?: (transition: SessionOccupancyTransition) => void
   /**
    * session-trace 增量腿补拉回调（design D4 / A33，组合根注入 sessionService.syncTraceEntries）。
    *
@@ -627,7 +629,7 @@ export class EventInterpreter {
           // settling 写入未达——与 onTurnFinalize 兜底同构，防 turn 卡 generating
           // （session 永久占用投影，renderer 永走 steer/defer 路由）。
           try {
-            this.opts.onOccupancyTransition?.({ turn: 'settling' })
+            this.opts.onOccupancyTransition?.('settling')
           } catch (occErr) {
             // best-effort：同上方 onTurnFinalize 兜底语义——已是 handle(ev) 抛错后的兜底，
             // 失败无更上层可传播，落 debug 供诊断
@@ -720,9 +722,10 @@ export class EventInterpreter {
         // composer-gen-stats（D2）：turn 起始本地时钟锚点（pi-statusline 同口径；
         // pi entry 无起算点，只能用 runtime 本地时钟）
         this.turnStartedAt = Date.now()
-        // occupancy #2（D3）：turn-start → generating。dispatching（prompt 已发）到本事件的
-        // 边界；幂等写直写目标值，retry/followUp 续跑（settling 中再收 turn-start）同样落 generating。
-        this.opts.onOccupancyTransition?.({ turn: 'generating' })
+        // occupancy #2（D2 迁移）：turn-start → 'generating'。dispatching（prompt 已发）到本
+        // 事件的边界；幂等写直写目标值，retry/followUp 续跑（settling 中再收 turn-start）同样
+        // 落 generating。三布尔派生（isGenerating=true）在原语内原子完成。
+        this.opts.onOccupancyTransition?.('generating')
         // 替换新 Map（非原地 clear）：上一 turn 排在 diff 链上的 ready 计算闭包仍持有旧引用，
         // 原地清空会让 untracked 行数回退拿不到 content。
         this.writeContents = new Map()
@@ -764,9 +767,10 @@ export class EventInterpreter {
         // W1（fix-chat-flow-order）：run 级联结束（晚于 pi finally 的 bash 落盘 flush）→
         // dispatcher 按序发布 per-session bash 待落列（见 opts.onAgentSettled 注释）。
         this.opts.onAgentSettled?.(this.sessionId)
-        // occupancy #4（D3）：agent_settled → idle（settling 终点，pi post-run 收尾完成）。
+        // occupancy #4（D2 迁移）：agent_settled → 'idle'（settling 终点，pi post-run 收尾完成）。
         // pi 卡死/异常退出时本事件不会发出——失败路径复位由 #9 abort 兜底与 #10 session.exited 承担。
-        this.opts.onOccupancyTransition?.({ turn: 'idle' })
+        // onTurnFinalize 侧（handleTurnEndSideEffects）已先以 'settling' 原子写，此处幂等去重。
+        this.opts.onOccupancyTransition?.('idle')
         // D4 收敛环挂点：被掐 turn 收尾的 settled 边沿 → 清 pendingSettled + 重置静默窗。
         // 环未活跃（无 forceQuit/restore 场景）时 no-op。
         userStoppedGate.noteAgentSettled(this.sessionId)
@@ -977,9 +981,11 @@ export class EventInterpreter {
     // 副作用：复位 isGenerating=false + project sidecar 兜底 + session_end 终态写入（W4）
     this.opts.onTurnFinalize?.(this.sessionId, ev.stopReason)
 
-    // occupancy #3（D3）：turn-end（agent_end）→ settling。pi post-run 收尾期从「空闲」中
-    // 显式分离（isGenerating 已由 onTurnFinalize 复位，但 run 未级联结束——窗口 3 的占用来源）。
-    this.opts.onOccupancyTransition?.({ turn: 'settling' })
+    // occupancy #3（D2 迁移）：turn-end（agent_end）→ 'settling'。pi post-run 收尾期从「空闲」中
+    // 显式分离。onTurnFinalize（handleTurnEndSideEffects）已先以 'settling' 原子完成
+    // 「isGenerating=false + turn=settling」双写（D2：同点双写合一），此处幂等去重——保留
+    // 调用作防御性冗余（onTurnFinalize 未注入的存量测试形态）。
+    this.opts.onOccupancyTransition?.('settling')
 
     // 观测 hook（agent_end）
     this.opts.executeHooks?.('onPiEvent', { event: 'agent_end', stopReason: ev.stopReason, usage: ev.usage }).catch(() => {})
@@ -1111,9 +1117,11 @@ export class EventInterpreter {
       payload: { sessionId: this.sessionId, status: 'compacting', reason: ev.reason },
     })
     this.opts.onCompactingStateChange?.(this.sessionId, true)
-    // occupancy #5（D3）：compaction_start → compacting=true。与 turn 维度正交（threshold
-    // 模式 turn 内压缩 = generating+compacting 并存，overflow/manual 多为 idle/settling+compacting）。
-    this.opts.onOccupancyTransition?.({ compacting: true })
+    // occupancy #5（D2 迁移）：compaction_start → 'compacting-start'。原语派生 isCompacting=true
+    // + 合并 compacting=true（与 turn 维度正交：threshold 模式 turn 内压缩 = generating+compacting
+    // 并存，overflow/manual 多为 idle/settling+compacting）。上方 onCompactingStateChange 通道
+    // 由组合根接线到同一原语行，幂等去重。
+    this.opts.onOccupancyTransition?.('compacting-start')
   }
 
   /**
@@ -1178,8 +1186,9 @@ export class EventInterpreter {
     }
     // 三路复位对称（SUG-新2）
     this.opts.onCompactingStateChange?.(this.sessionId, false)
-    // occupancy #6（D3）：compaction_end（成功/失败/aborted 三路均复位）→ compacting=false。
-    this.opts.onOccupancyTransition?.({ compacting: false })
+    // occupancy #6（D2 迁移）：compaction_end（成功/失败/aborted 三路均复位）→ 'compacting-end'。
+    // 原语派生 isCompacting=false + 合并 compacting=false；上方通道同原语行，幂等去重。
+    this.opts.onOccupancyTransition?.('compacting-end')
     // session-trace 增量腿（A33）：compaction entry 的 append 先于 compaction_end emit
     //（时序已核实，design D4），成功/aborted 路径都补拉（aborted 无新 entry 时 sync 内部
     // 空 delta 不广播）；failed 路径也补——追赶式拉取以 pi 侧实际状态为准。

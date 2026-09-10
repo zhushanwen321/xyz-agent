@@ -19,11 +19,11 @@
  */
 import type { IDispatcherSessionOps } from './session-internal.js'
 import type { IPiEngine, IProcessManager } from '../ports/pi-engine.js'
-import type { SendMessageHook, PendingBashResultData, IManagedSessionView, SessionOccupancy, ForceQuitSource } from './types.js'
+import type { SendMessageHook, PendingBashResultData, IManagedSessionView, ForceQuitSource } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import type { IMessageBus } from '../message-bus/message-bus.js'
 import { toErrorMessage, RpcTimeoutError } from '../../utils/errors.js'
-import { updateSessionOccupancy, userStoppedGate } from './event-interpreter.js'
+import { applySessionOccupancyTransition, IDLE_SESSION_OCCUPANCY, userStoppedGate } from './event-interpreter.js'
 import { SkillInjector, type SkillNotice } from './skill-injector.js'
 import { publishSkillNotices as publishSkillNoticesShared } from './skill-notice-publisher.js'
 
@@ -131,17 +131,6 @@ export class MessageDispatcher {
     // client 发送之前）；构造注入便于测试替换 spy（每入口恰好单次调用的结构化幂等）。
     private readonly injector: SkillInjector = new SkillInjector(),
   ) {}
-
-  /**
-   * occupancy 幂等写 + 变化才广播（session-occupancy-send-closure D3）——dispatcher 侧挂点
-   *（#1 dispatching / #7 bash / #8 catch 分型（processing→generating，其余→idle） /
-   * #9 abort idle / #11 bash=false / forceQuit 全复位 / compact finally compacting=false）
-   * 的统一入口。合并、比较与广播在
-   * updateSessionOccupancy（event-interpreter 导出的写原语）内。
-   */
-  private touchOccupancy(session: IManagedSessionView, patch: Partial<SessionOccupancy>): void {
-    updateSessionOccupancy(session, this.messageBus, patch)
-  }
 
   /**
    * 后置注入 / 回填 MessageBus（SessionService.setMessageBus 同步回填调用）。
@@ -252,16 +241,21 @@ export class MessageDispatcher {
    *
    * [W3, U6] 加 isCompacting：compact 进行中时 prompt 会与压缩竞态，同样必须拒。
    * [composer-bash-execute W1] 加 isBashRunning：bash 执行中 prompt 会与 bash 竞态，双向互斥。
-   * [occupancy D2 预检分型] 按命中维度分型：isCompacting → 'compacting'（renderer 兜底入队
-   * 的触发源，与 pi 转译路径同语义）；isGenerating / isBashRunning → 'busy'（存量）。
+   * [session-dead-structural-fixes D2 预检改读 occupancy（u3b settling 预检裁决）] 预检门
+   * 改读 occupancy 投影（occupancy 为体，D1 立场）：turn !== 'idle'（dispatching/generating/
+   * **settling**）/ compacting / bash 任一命中即拒——settling 自此计为忙（与前端 D1 双门归一），
+   * 拒绝转 send.rejected{busy} → 消息入 defer 队列 → agent_settled idle 帧自动投递。这是
+   * D2 显式声明的行为变更（原 settling 窗口直发成功的消息现在延迟 ≤2s 投递，P-2 探针门
+   * P95 ≤ 2s）。occupancy 与三布尔经原语原子同步，缺省（undefined）按 idle 兜底。
    */
   private rejectBusyPrecheck(
     sessionId: string,
     activeSession: IManagedSessionView,
     clientUuid: string | undefined,
   ): boolean {
-    if (activeSession.isGenerating || activeSession.isCompacting || activeSession.isBashRunning) {
-      const reason = activeSession.isCompacting ? ('compacting' as const) : ('busy' as const)
+    const occ = activeSession.occupancy ?? IDLE_SESSION_OCCUPANCY
+    if (occ.turn !== 'idle' || occ.compacting || occ.bash) {
+      const reason = occ.compacting ? ('compacting' as const) : ('busy' as const)
       console.warn(`[message-dispatcher] preemptive reject (${reason}), sid=${sessionId}`)
       this.publishSendRejected(sessionId, reason, clientUuid)
       return true
@@ -270,18 +264,18 @@ export class MessageDispatcher {
   }
 
   /**
-   * 预检通过后的活跃标记：isGenerating 置位 + occupancy #1 dispatching + workspace record
-   * best-effort 副作用。
+   * 预检通过后的活跃标记：occupancy #1 'dispatching' 转移（原语派生 isGenerating=true）+
+   * workspace record best-effort 副作用。
    *
-   * occupancy #1（D3）：sendPrompt 预检通过 → dispatching（prompt 已发、message_start 未到）。
-   * 本挂点先于 client.prompt——pi busy 类拒绝（catch 转译）发生时 turn 已处于 dispatching，
-   * 由 #8 按拒绝分型收口：processing 拒绝（pi 有 runtime 不知情的 turn 在跑）→ generating，
-   * compacting 拒绝与非 busy 真失败 → idle（见 handlePromptFailure 注释）。
+   * occupancy #1（D2 迁移）：sendPrompt 预检通过 → 'dispatching'（prompt 已发、message_start
+   * 未到）。isGenerating=true 由原语 flags 原子派生（不再直写布尔）。本挂点先于 client.prompt
+   * ——pi busy 类拒绝（catch 转译）发生时 turn 已处于 dispatching，由 #8 按拒绝分型收口：
+   * processing 拒绝（pi 有 runtime 不知情的 turn 在跑）→ 'reject-processing'，compacting 拒绝
+   * 与非 busy 真失败 → 'reject-other'（见 handlePromptFailure 注释）。
    */
   private markSessionActive(activeSession: IManagedSessionView, sessionId: string): void {
     activeSession.lastActiveAt = Date.now()
-    activeSession.isGenerating = true
-    this.touchOccupancy(activeSession, { turn: 'dispatching' })
+    applySessionOccupancyTransition(activeSession, this.messageBus, 'dispatching')
     // [W6] record 是非用户阻塞的副作用（记最近工作区），不应阻断发消息主流程。
     // 当前 record 同步链路（WorkspaceService.record → store.record → cache.set/trim）几乎不抛，
     // 但作为防御：未来 store 实现变更（如引入 sync flush）或 lazy partition 加载异常都不该让
@@ -323,30 +317,28 @@ export class MessageDispatcher {
     // 会让 pending.reject 恢复草稿，与入队/回滚流程冲突）。
     const rejectionReason = classifyPromptRejection(errMsg)
     if (activeSession) {
-      // occupancy #8（D3）：prompt 抛错 → turn 收口。核实：#1 已先于 client.prompt 置
+      // occupancy #8（D2 迁移）：prompt 抛错 → turn 收口。核实：#1 已先于 client.prompt 置
       // dispatching，故两个分支都必须写终态，否则 turn 永卡 dispatching、occupancy 永不全
       // idle（P3 起 renderer flush 触发条件，G2 投递必达被破坏）。
       if (rejectionReason === 'processing') {
         // pi 侧 turn 正在跑（runtime 之前误判空闲），拒绝的语义不是「turn 没跑起来」——
-        // 以 pi 的拒绝为权威信号反推状态：置 generating 让前端 D1 占用短路生效、defer 队列
-        // 停止重投（本挂点不再伪造空闲）。
+        // 以 pi 的拒绝为权威信号反推状态（'reject-processing' 行：派生 isGenerating=true +
+        // turn='generating'），让前端 D1 占用短路生效、defer 队列停止重投（本挂点不再伪造空闲）。
         // [session-dead 2026-09-10 已收口] 复位依赖该 turn 正常收尾——但**不能只靠 agent_end**：
         // pi 实装里 agent_end 每次 attempt 都发（retry / auto-compaction 续跑会重发），真正的 run
         // 终点是 _runAgentPrompt 的 finally 中 _emitAgentSettled()（pi dist/core/agent-session.js:772-786），
         // 且存在「post-run 尾段直接 settle」这条不含 agent_end 的收尾路径。若 prompt 落在该窗口，
         // 本分支置的 true 会永久残留（occupancy 已被 #4 复位 idle → 前端 flush，但 busy 预检读
-        // isGenerating → 后续消息恒被拒）。故第二复位点挂在 agent_settled：组合根 onAgentSettled →
+        // occupancy → 后续消息恒被拒）。故第二复位点挂在 agent_settled：组合根 onAgentSettled →
         // SessionStateProjection.handleAgentSettledSideEffects。
         // isGenerating 复位点全集：agent_end（handleTurnEndSideEffects）/ agent_settled（本补丁）/
         // abort / forceQuit / session 退出。
-        activeSession.isGenerating = true
-        this.touchOccupancy(activeSession, { turn: 'generating' })
+        applySessionOccupancyTransition(activeSession, this.messageBus, 'reject-processing')
       } else {
-        // compacting 拒绝（窗口 1）与非 busy 真失败：turn 确实没跑起来，复位 idle。
-        // compacting 拒绝后续仅 compaction_start/end（#5/#6 只写 compacting 维度），
-        // 同样依赖此处复位。
-        activeSession.isGenerating = false
-        this.touchOccupancy(activeSession, { turn: 'idle' })
+        // compacting 拒绝（窗口 1）与非 busy 真失败：turn 确实没跑起来，'reject-other' 行
+        // （派生 isGenerating=false + turn='idle'）。compacting 拒绝后续仅 compaction_start/end
+        // （#5/#6 只写 compacting 维度），同样依赖此处复位。
+        applySessionOccupancyTransition(activeSession, this.messageBus, 'reject-other')
       }
     }
     if (rejectionReason) {
@@ -424,10 +416,10 @@ export class MessageDispatcher {
       // 之后再经 getSessionByClient 反查会拿 undefined。
       const active = this.svc.getSessionByClient(client)
       if (active) {
-        active.isGenerating = false
-        // occupancy #9（D3）：abort RPC 失败兜底 → idle（pi 卡死时 agent_settled 永不到达，
-        // turn 不能停留在 dispatching/generating/settling）。
-        this.touchOccupancy(active, { turn: 'idle' })
+        // occupancy #9（D2 迁移）：abort RPC 失败兜底 → 'idle' 行（pi 卡死时 agent_settled
+        // 永不到达，turn 不能停留在 dispatching/generating/settling）。isGenerating=false 由
+        // 原语 flags 派生。
+        applySessionOccupancyTransition(active, this.messageBus, 'idle')
       }
 
       if (e instanceof RpcTimeoutError) {
@@ -465,9 +457,9 @@ export class MessageDispatcher {
     // 广播流式 message.complete 让前端正常收口（与 sendPrompt 错误路径广播 message.error 对称）。
     const active = this.svc.getSessionByClient(client)
     if (active) {
-      active.isGenerating = false
-      // occupancy #9（D3）：abort 成功 → idle（与上方的 message.complete{aborted} 收口对称）。
-      this.touchOccupancy(active, { turn: 'idle' })
+      // occupancy #9（D2 迁移）：abort 成功 → 'idle' 行（与上方的 message.complete{aborted}
+      // 收口对称）。isGenerating=false 由原语 flags 派生。
+      applySessionOccupancyTransition(active, this.messageBus, 'idle')
     }
     // W4：用户主动 abort 写 stopped 终态
     this.svc.persistSessionOutcome(sessionId, 'stopped', 'User aborted')
@@ -521,11 +513,12 @@ export class MessageDispatcher {
     // stopped 终态须在 removeSessionEntry 前写（persistSessionOutcome 内部按 id 查
     // sessions Map，条目删除后静默跳过）。
     this.svc.persistSessionOutcome(sessionId, 'stopped', outcomeReason)
-    // occupancy #10（D3，forceQuit/abort 超时收敛腿）：进程被强杀后 agent_settled /
-    // compaction_end 永不到达，占用三维全复位——session.exited 广播前发，且必须在
-    // removeSessionEntry（内部 bus.clearSession）之前，否则帧送空集合。
+    // occupancy #10（D2 迁移，forceQuit/abort 超时收敛腿）：进程被强杀后 agent_settled /
+    // compaction_end 永不到达，'full-reset' 行三维全复位 + 三布尔派生同步复位（结构上不再有
+    // 「只复位一边」）——session.exited 广播前发，且必须在 removeSessionEntry（内部
+    // bus.clearSession）之前，否则帧送空集合。
     const exiting = this.svc.getSession(sessionId)
-    if (exiting) updateSessionOccupancy(exiting, this.messageBus, { turn: 'idle', compacting: false, bash: false })
+    if (exiting) applySessionOccupancyTransition(exiting, this.messageBus, 'full-reset')
     // session.exited 须在 removeSessionEntry 前发（其后 messageBus.clearSession 清空
     // 订阅者集合，再发等于空投，前端一条也收不到）。code=null：强杀场景退出码未知，
     // 与 shared 协议「被信号杀死无退出码」语义一致。前端 handleSessionExited 会把
@@ -648,9 +641,9 @@ export class MessageDispatcher {
         this.messageBus?.publish(sessionId, rejectMsg)
         return null
       }
-      activeSession.isBashRunning = true
-      // occupancy #7（D3）：sendBash 置位 → bash=true（与 turn 维度正交，streaming 中可并存）。
-      this.touchOccupancy(activeSession, { bash: true })
+      // occupancy #7（D2 迁移）：sendBash 置位 → 'bash-start' 行（派生 isBashRunning=true +
+      // 合并 bash=true；与 turn 维度正交，streaming 中可并存）。
+      applySessionOccupancyTransition(activeSession, this.messageBus, 'bash-start')
       // [W1] 生成本次 sendBash 的代次令牌：abortBash 在广播 cancelled 终态前会旋转此 token
       // （清 undefined）。await 返回后比对 token，可判定是否被 abortBash 抢先收口。
       activeSession.bashRunToken = `bash_${Date.now()}_${randomTokenSuffix()}`
@@ -787,9 +780,9 @@ export class MessageDispatcher {
    */
   private releaseBashReservation(activeSession: IManagedSessionView | undefined, myToken: string | undefined): void {
     if (activeSession) {
-      activeSession.isBashRunning = false
-      // occupancy #7（D3）：sendBash finally（成功/失败/abort-skip 全路径）→ bash=false。
-      this.touchOccupancy(activeSession, { bash: false })
+      // occupancy #7（D2 迁移）：sendBash finally（成功/失败/abort-skip 全路径）→ 'bash-end' 行
+      // （派生 isBashRunning=false + 合并 bash=false）。
+      applySessionOccupancyTransition(activeSession, this.messageBus, 'bash-end')
       // [W1] 复位 token：仅当 token 仍是本次 sendBash 的（未被 abortBash 旋转、
       // 也未被下一次 sendBash 覆盖）时才清，避免误清 abortBash 或后续 sendBash 的标记。
       if (myToken !== undefined && activeSession.bashRunToken === myToken) {
@@ -863,10 +856,9 @@ export class MessageDispatcher {
       sent = false
     } finally {
       if (activeSession) {
-        activeSession.isBashRunning = false
-        // occupancy #11（D3）：abortBash（成败皆兜底）→ bash=false，与下方 cancelled 哨兵帧
-        // 广播同源同点（pi 卡死时 abort_bash 无响应，靠 finally 保证维度复位）。
-        this.touchOccupancy(activeSession, { bash: false })
+        // occupancy #11（D2 迁移）：abortBash（成败皆兜底）→ 'bash-end' 行，与下方 cancelled
+        // 哨兵帧广播同源同点（pi 卡死时 abort_bash 无响应，靠 finally 保证维度复位）。
+        applySessionOccupancyTransition(activeSession, this.messageBus, 'bash-end')
         // [W1] 旋转 token：通知 sendBash「已被 abort 抢先收口」。sendBash 在 await 返回后
         // 检测到 activeSession.bashRunToken !== myToken 即静默跳过终态广播，避免双终态。
         // 用新 token 而非清 undefined：若 sendBash 尚未读 myToken（仍在 await），清 undefined
@@ -988,10 +980,9 @@ export class MessageDispatcher {
       // interpreter 未触发 compaction_end 导致 session 卡死。置位归 interpreter（compaction_start），
       // dispatcher 不置 true，故此处只写 false（对 false 无害，幂等）。
       if (active) {
-        active.isCompacting = false
-        // occupancy #6 兜底（D3 同源同点）：transport 级失败时 compaction_end（#6）不到达，
-        // compacting 维度在此镜像复位（对未置位场景幂等无害）。
-        this.touchOccupancy(active, { compacting: false })
+        // occupancy #6 兜底（D2 迁移，'compacting-end' 行）：transport 级失败时 compaction_end
+        //（#6）不到达，compacting 维度在此镜像复位（派生 isCompacting=false；对未置位场景幂等无害）。
+        applySessionOccupancyTransition(active, this.messageBus, 'compacting-end')
       }
     }
   }

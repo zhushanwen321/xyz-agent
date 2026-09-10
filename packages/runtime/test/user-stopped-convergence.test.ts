@@ -330,3 +330,60 @@ describe('MessageDispatcher 置位分型与显式投递清标记', () => {
     userStoppedGate.beginRestoreConvergence(sessionId)
   }
 })
+
+// ── Part D：deliverText 显式投递清标记（u3b 补线，D4）─────────────
+//
+// session_manager send / completion-backflow 回流 / landing 首发直投（sendDirect）三个
+// 显式投递消费方全部汇聚于 SessionDeliveryRegistry.deliverText——投递前清标记放行与
+// sendPrompt 同构（清标记先于 ensureActive/restore 与 client.prompt）。补发腿不经
+// runtime delivery，不适用本放行（区分点 = 投递路径本身，D4）。
+
+describe('deliverText 显式投递清标记（u3b 补线）', () => {
+  let store: ReturnType<typeof makeMarkStore>
+  let abortSession: (sessionId: string) => Promise<void>
+
+  beforeEach(() => {
+    store = makeMarkStore()
+    abortSession = vi.fn(async (_sessionId: string) => {})
+    // deliverText 读模块级单例——configure 必须作用在同一单例上（与生产 SessionService.configure 形态一致）
+    userStoppedGate.configure({ marks: store, abortSession })
+  })
+  afterEach(() => {
+    userStoppedGate.resetForTest()
+  })
+
+  /** 最小装置：真 registry + mock 材料（session-delivery-injection harness 同款形态）。 */
+  async function sendDirectViaRegistry(sessionId: string): Promise<void> {
+    const { createSessionDeliveryRegistry } = await import('../src/services/session/session-delivery-registry.js')
+    const view = {
+      id: sessionId, cwd: '/test/workspace', lastActiveAt: 1_000,
+      isGenerating: false, isCompacting: false, isBashRunning: false,
+    }
+    const registry = createSessionDeliveryRegistry({
+      getSession: (sid) => (sid === view.id ? (view as unknown as IManagedSessionView) : undefined),
+      ensureActive: async () => ({ prompt: vi.fn(async () => ({})) } as unknown as never),
+      subscribeAgentSettled: () => () => {},
+      recordWorkspace: () => {},
+      getMessageBus: () => null,
+    })
+    await registry.sendDirect(sessionId, 'backflow 回流通知 / session_manager send 文本')
+  }
+
+  it('sendDirect（backflow / session_manager send 汇聚点）投递前清标记 + 停环', async () => {
+    userStoppedGate.markUserStopped('s1', 'user_force_quit')
+    userStoppedGate.beginRestoreConvergence('s1')
+    await sendDirectViaRegistry('s1')
+    expect(store.hasUserStoppedMark('s1')).toBe(false) // 投递前已清
+    // 显式投递开 turn 的 agent_start 事件回流不被收敛环误掐（环已停）
+    const sent: ServerMessage[] = []
+    const interpreter = new EventInterpreter('s1', { send: (m) => { sent.push(m) } })
+    interpreter.interpret([{ kind: 'hook', eventType: 'agent_start', data: {} }])
+    expect(abortSession).not.toHaveBeenCalled()
+  })
+
+  it('标记不在时（常规投递）deliverText 照常投递零额外开销', async () => {
+    await expect(sendDirectViaRegistry('s2')).resolves.not.toThrow()
+    expect(store.marks.size).toBe(0)
+    expect(abortSession).not.toHaveBeenCalled()
+  })
+})
