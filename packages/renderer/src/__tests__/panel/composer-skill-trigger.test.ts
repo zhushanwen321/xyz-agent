@@ -9,6 +9,8 @@
  * - P 组 CommandPopover（真实组件）：panel 态从 commandStore 过滤 source:"skill" 且剥
  *   `skill:` 前缀；已选项「已选」禁选（onSelect 守卫）；landing 态 global+project 合并；
  *   select payload 携带 location（sourceInfo.path）
+ * - W9/W10 组 SearchModal ⌘K 注入（第三条 skill 入口）：pendingSlash.isSkill → insertSkillChip
+ *   （裸名 + location + 多共存）；isSkill 缺省 → 维持 insertSlashChip 命令通路（回归锁）
  *
  * mock 策略与 composer-slash-trigger.test.ts 同款（真实 ComposerInput 走 contenteditable 触发）。
  * happy-dom 光标：skill 触发无程序化兜底（必须有光标），用 typeWithCursor 定位光标末尾。
@@ -55,6 +57,7 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
 
 import CommandPopover from '@/components/panel/CommandPopover.vue'
 import Composer from '@/components/panel/Composer.vue'
+import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/command/useCommandStore'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -301,6 +304,96 @@ describe('行首命令浮层 skill 项分流（D3：isSkill → insertSkillChip 
     expect(chips[0].attributes('data-chip-type')).toBe('slash')
     expect(chips[0].attributes('data-chip-name')).toBe('compact')
     expect(chips[0].attributes('data-chip-location')).toBeUndefined()
+    wrapper.unmount()
+  })
+})
+
+// ─────────────── W9/W10 组：SearchModal ⌘K 注入（pendingSlash → 按 isSkill 分流）───────────────
+// 第三条 skill 入口（搜索浮层）与 ①② 合流：pi 的 skill 命令名是裸 `skill:<name>`（无前导 /），
+// 命令通路的 insertSlashChip 内 `/skill:` 前缀判定为假 ⇒ 若不分流会落成命令 chip
+// （无 chipLocation + 受单命令替换语义管辖）。本组锁两端：isSkill 真走 skill 通路、
+// 缺省仍走命令通路。
+
+describe('SearchModal ⌘K 注入分流（pendingSlash isSkill → skill 通路）', () => {
+  beforeEach(() => {
+    __resetCommandStoreForTesting() // pendingSlash 通道跨用例隔离
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+    currentPick = null
+  })
+
+  it('W9 pendingSlash{isSkill:true, location, command:"skill:code-review"} → 落 skill chip（chipType/chipLocation/裸名）', async () => {
+    const wrapper = mountComposer()
+    await flushPromises()
+    // 真实流：先键入把光标定位在输入框内（chip 插在光标处），再写 pendingSlash 由 watch 消费
+    await typeWithCursor(wrapper, '帮我看看 ')
+    const commandStore = useCommandStore()
+    commandStore.requestSlashInjection({
+      command: 'skill:code-review',
+      icon: 'star',
+      sessionId: 's1',
+      isSkill: true,
+      location: '/skills/code-review/SKILL.md',
+    })
+    await nextTick()
+
+    const chips = wrapper.findAll('.slash-chip')
+    expect(chips).toHaveLength(1)
+    expect(chips[0].attributes('data-chip-type')).toBe('skill')
+    expect(chips[0].attributes('data-chip-location')).toBe('/skills/code-review/SKILL.md')
+    // 裸名：剥 `skill:` 前缀（bareSkillCommandName 单点）
+    expect(chips[0].attributes('data-chip-name')).toBe('code-review')
+    // chip 可见文本即裸名
+    expect(chips[0].find('.chip-label').text()).toBe('code-review')
+    // 通道被消费清空
+    expect(commandStore.pendingSlash.value).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('W9b isSkill 项不清除已存在的命令 chip（skill 通路不与命令替换语义串扰）', async () => {
+    const wrapper = mountComposer()
+    await flushPromises()
+    const commandStore = useCommandStore()
+    // 先注入一条命令 chip（无 isSkill → 命令通路）
+    await typeWithCursor(wrapper, '跑一下 ')
+    commandStore.requestSlashInjection({ command: 'goal', icon: 'goal', sessionId: 's1' })
+    await nextTick()
+    expect(wrapper.findAll('.slash-chip')).toHaveLength(1)
+    // 再注入 skill 项：skill 通路就地追加，不动已有命令 chip
+    await cursorToEnd(wrapper)
+    commandStore.requestSlashInjection({
+      command: 'skill:code-review',
+      icon: 'star',
+      sessionId: 's1',
+      isSkill: true,
+      location: '/skills/code-review/SKILL.md',
+    })
+    await nextTick()
+
+    const chips = wrapper.findAll('.slash-chip')
+    expect(chips).toHaveLength(2)
+    expect(chips[0].attributes('data-chip-type')).toBe('slash')
+    expect(chips[1].attributes('data-chip-type')).toBe('skill')
+    wrapper.unmount()
+  })
+
+  it('W10 回归锁：isSkill 缺省 → 仍走 insertSlashChip 命令 chip（chipType=slash、无 location）', async () => {
+    const wrapper = mountComposer()
+    await flushPromises()
+    await typeWithCursor(wrapper, '/go')
+    const commandStore = useCommandStore()
+    commandStore.requestSlashInjection({ command: 'goal', icon: 'goal', sessionId: 's1' })
+    await nextTick()
+
+    const chips = wrapper.findAll('.slash-chip')
+    expect(chips).toHaveLength(1)
+    // 命令 chip 形态（与 W8 同款）：chipType='slash'，无 location
+    expect(chips[0].attributes('data-chip-type')).toBe('slash')
+    expect(chips[0].attributes('data-chip-name')).toBe('goal')
+    expect(chips[0].attributes('data-chip-location')).toBeUndefined()
+    expect(commandStore.pendingSlash.value).toBeNull()
     wrapper.unmount()
   })
 })

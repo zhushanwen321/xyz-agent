@@ -5,6 +5,8 @@
  * - [轮 3 收口] 其余非 text 段（skill/file/mention/session/handoff）序列化文本同样不翻倍。
  * - [轮 3-4] RC-A-2 剥离按段序推进游标（正文里的同形字符串不被误删）；RC-A-6 剥离后
  *   只剩空白不物化 text 段（prompt 不以空格开头）。
+ * - image 段：改为与其余非 text 段同款的剥离语义，但用裸路径 token 双侧边界匹配
+ *   （序列化 `\n<path>\n` 的首尾换行会被 submitEdit 的 .trim() 吃掉，精确匹配不可靠）。
  *
  * 背景：编辑框展示的是归位全文（命令在最前，normalizeContent 产物）。若把该文本整串
  * 回灌进首个 text 段、段本身又照留，序列化后同一形态出现两次——slash 变成
@@ -211,6 +213,77 @@ describe('[轮 3] 编辑重发 file/mention/session/handoff 序列化不翻倍',
     const segments = rebuildSegmentsWithEditedText(live, draft)
     expect(segments).toContainEqual({ type: 'subagent', subagentId: 's1', slug: 'oracle' })
     expect(count(segmentsToPrompt(segments), 'oracle')).toBe(0)
+  })
+})
+
+// ── image 段：裸路径 token 双侧边界剥离（编辑重发不翻倍 / 删路径不复活）──
+// 背景：image 段序列化为 `\n<path>\n`，但 UserBubble.submitEdit 提交前对草稿 `.trim()`
+// （UserBubble.vue:258）会吃掉首尾换行，按序列化串精确匹配在真实链路不可靠。
+// 修复前 image 段恒保留、不参与剥离，两个已登记缺陷：
+//   ① 编辑稿里路径随序列化再出现一次 ⇒ 同一路径在 prompt 中出现两次；
+//   ② 用户把编辑稿里的路径删掉后重发，旧路径仍随段「复活」。
+// 修复后：命中（前边界 = 串首/空白 且 后边界 = 串尾/空白）⇒ 剥离路径、段保留（消 ①）；
+// 未命中 ⇒ 用户删掉/改写了路径，丢弃段（消 ②）。前边界必须判，否则 `x/data/a/1.png`
+// 这类正文里的相对路径片段会被当图片路径剥掉。
+describe('[image] 裸路径 token 剥离：编辑重发不翻倍 / 删路径不复活', () => {
+  const IMG: Segment = {
+    type: 'image',
+    id: 'img-a',
+    path: '/data/a/1.png',
+    fileName: '1.png',
+    displayName: '截图.png',
+  }
+  // 真实提交链路：编辑框回填 normalizeContent(live)，submitEdit 提交前对草稿 .trim()
+  const submittedDraft = (live: Segment[]) => normalizeContent(live).trim()
+
+  it('① 路径保留（只改正文）→ 编辑重发产物中该路径只出现一次（修复前为两次）', () => {
+    const live: Segment[] = [IMG, { type: 'text', text: '正文' }]
+    const edited = submittedDraft(live).replace('正文', '新正文')
+    const segments = rebuildSegmentsWithEditedText(live, edited)
+    expect(segments).toContainEqual(IMG)
+    expect(count(segmentsToPrompt(segments), IMG.path)).toBe(1)
+  })
+
+  it('② 路径被删（只留正文）→ 段丢弃，产物中不再出现该路径（修复前仍出现）', () => {
+    const live: Segment[] = [IMG, { type: 'text', text: '正文' }]
+    const segments = rebuildSegmentsWithEditedText(live, '正文')
+    expect(segments.some((s) => s.type === 'image')).toBe(false)
+    expect(count(segmentsToPrompt(segments), IMG.path)).toBe(0)
+  })
+
+  it('③ 路径被改写（/data/a/1.png → /data/b/2.png）→ 新路径以文本形态保留，旧 image 段丢弃', () => {
+    const live: Segment[] = [IMG, { type: 'text', text: '正文' }]
+    const segments = rebuildSegmentsWithEditedText(live, '/data/b/2.png\n正文')
+    expect(segments.some((s) => s.type === 'image')).toBe(false)
+    const prompt = segmentsToPrompt(segments)
+    expect(count(prompt, '/data/b/2.png')).toBe(1)
+    expect(count(prompt, IMG.path)).toBe(0)
+  })
+
+  it('④a 后边界守卫：正文 `/data/a/1.png2` 不误剥（路径后紧贴数字，属正文）', () => {
+    const live: Segment[] = [IMG, { type: 'text', text: '正文' }]
+    const edited = '/data/a/1.png2\n正文'
+    const segments = rebuildSegmentsWithEditedText(live, edited)
+    // 未命中 ⇒ 段丢弃；正文逐字保留（路径片段未被当图片路径剥掉）
+    expect(segments.some((s) => s.type === 'image')).toBe(false)
+    expect(segmentsToPrompt(segments)).toBe(edited)
+  })
+
+  it('④b 前边界守卫：正文 `x/data/a/1.png` 不误剥（路径前有字符，属相对路径片段）', () => {
+    const live: Segment[] = [IMG, { type: 'text', text: '正文' }]
+    const edited = 'x/data/a/1.png\n正文'
+    const segments = rebuildSegmentsWithEditedText(live, edited)
+    expect(segments.some((s) => s.type === 'image')).toBe(false)
+    expect(segmentsToPrompt(segments)).toBe(edited)
+  })
+
+  it('正文含同形路径（游标保护）：正文那份不被删，chip 那份剥离且段保留', () => {
+    const live: Segment[] = [{ type: 'text', text: `看看 ${IMG.path} 吧` }, IMG]
+    const segments = rebuildSegmentsWithEditedText(live, submittedDraft(live))
+    const body = segments[0] as { type: 'text'; text: string }
+    expect(body.text.startsWith(`看看 ${IMG.path} 吧`)).toBe(true)
+    expect(count(body.text, IMG.path)).toBe(1)
+    expect(segments).toContainEqual(IMG)
   })
 })
 

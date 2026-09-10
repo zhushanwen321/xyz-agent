@@ -2,7 +2,7 @@
  * rebuildSegmentsWithEditedText —— 编辑 user message 后重建 segments（w6 从 renderer lib/utils.ts 迁入）。
  *
  * 编辑框（UserBubble 内联编辑）展示的是归位后的全文（`normalizeContent` 产物，命令在最前），
- * 提交时以「段」为单位重建：非 text 段的序列化文本**从编辑稿中剥离**（段本身保留），
+ * 提交时以「段」为单位重建：非 text 段在编辑稿中的文本足迹**从编辑稿中剥离**（段本身保留），
  * 剥离不到则视为用户已删除/改写该段 → 丢弃该段，以文本形态随 prompt 进入。
  *
  * - slash 段：编辑文本里与 slash 段重复的**前缀命令**先剥离（token 边界：`/compact` 后须是
@@ -17,10 +17,17 @@
  *   不会出现「旧段序列化 + 新文本并列」的翻倍）。
  *   [轮 3 收口] 此前只处理 slash：其余类型整串随编辑文本回灌首个 text 段、段又原位保留，
  *   序列化后同一标记出现两次（skill ⇒ 注入器逐个展开 ⇒ 同一 SKILL.md 注入两遍）。
- * - image 段：**不参与剥离**，恒原位保留（现状）。序列化 `\n<path>\n` 是换行定界的裸路径，
- *   且 UserBubble 提交前对草稿 `.trim()` 会吃掉首尾换行，精确匹配在真实链路不可靠——
- *   硬剥会退化为「段被丢弃 + 首行变成 `/path` 被 pi 当行首命令」的风险，故按未修项登记，
- *   待专门设计（见报告 finding）。因此 image 段仍会随编辑文本翻倍。
+ * - image 段：序列化是 `\n<path>\n` 的裸路径，但 UserBubble.submitEdit 提交前对草稿
+ *   `.trim()` 会吃掉首尾换行——若按序列化串精确匹配，图片位于草稿首行/末行时必然匹配失败
+ *   （首尾 `\n` 已被 trim），在真实链路不可靠。故改用**裸路径 token 的双侧边界匹配**：
+ *   `seg.path` 出现处的前边界须是串首或空白、后边界须是串尾或空白。命中 ⇒ 剥离该处路径、
+ *   段保留（防序列化翻倍）；未命中 ⇒ 用户删掉/改写了该路径，丢弃段（否则重发时旧路径
+ *   随段「复活」，prompt 里重新长出用户已删的图片引用）。
+ *   前边界必须判（这是与 findDelimitedOccurrence 只判后边界的根本差异）：草稿里
+ *   `x/data/a/1.png`（正文里的相对路径片段）、`/data/a/1.png2`（正文数字紧贴路径）与图片
+ *   路径前缀同形，只判后边界会把用户正文当图片路径剥掉，造成正文损坏。
+ *   `findBarePathOccurrence` 是为此新增的 helper，不改动 findDelimitedOccurrence 的既有
+ *   尾边界语义（其余段类型的序列化串自带格式锚点，如 `@alice` 靠自身形态区分 `@alicex`）。
  * - subagent 段：序列化为空串（路由标记不进 prompt），无文本足迹 ⇒ 恒原位保留。
  * - 未知新类型：序列化为空串 ⇒ 恒原位保留（失败方向安全）。
  * - text 段：首个 text 段替换为剥离后的编辑文本，其余 text 段丢弃（其内容已并入编辑稿）；
@@ -51,6 +58,31 @@ function findDelimitedOccurrence(text: string, serialized: string, from: number)
     if (idx === -1) return -1
     const next = text[idx + serialized.length]
     if (selfDelimited || next === undefined || /\s/.test(next)) return idx
+    at = idx + 1
+  }
+  return -1
+}
+
+/**
+ * 在 text 中查找裸路径 token 的首个「双侧边界合法」出现位置，返回下标；无合法出现返回 -1。
+ * 合法 = 前边界是串首/空白 且 后边界是串尾/空白。
+ *
+ * 与 findDelimitedOccurrence（只判后边界）的差异及其必要性：后者匹配的是带格式锚点的
+ * 序列化串——`@alice` / `#sid` / `src/a.ts` 自身形态就让前边界无歧义（`@alicex` 靠后空白
+ * 排除），故只判后边界足够。image 段的序列化是 `\n<path>\n` 的裸路径，token 本身就是普通
+ * 文本片段，前后都可能与正文粘连，必须双侧判定：只判后边界会把 `x/data/a/1.png`
+ * （前边界是 `x`）也当图片路径剥掉，用户正文里的相对路径片段被误删。
+ * 独立成新 helper 而非给老 helper 加参数，避免影响其余段类型的既有剥离行为。
+ */
+function findBarePathOccurrence(text: string, path: string, from: number): number {
+  for (let at = from; at <= text.length; ) {
+    const idx = text.indexOf(path, at)
+    if (idx === -1) return -1
+    const prev = idx > 0 ? text[idx - 1] : undefined
+    const next = text[idx + path.length]
+    const frontOk = prev === undefined || /\s/.test(prev)
+    const backOk = next === undefined || /\s/.test(next)
+    if (frontOk && backOk) return idx
     at = idx + 1
   }
   return -1
@@ -98,8 +130,14 @@ export function rebuildSegmentsWithEditedText(
       retained.add(seg)
       continue
     }
-    // image 段恒保留（未参与剥离，见文件头 finding 说明）
+    // image 段：剥离与其余非 text 段同款语义，但按裸路径 token 匹配（序列化 `\n<path>\n`
+    // 的首尾换行会被 submitEdit 的 .trim() 吃掉，精确匹配不可靠，见文件头说明）。
+    // 命中 ⇒ 剥离该处路径、段保留；未命中 ⇒ 路径已被用户删掉/改写，丢弃段。
     if (seg.type === 'image') {
+      const at = findBarePathOccurrence(text, seg.path, cursor)
+      if (at === -1) continue
+      text = text.slice(0, at) + text.slice(at + seg.path.length)
+      cursor = at
       retained.add(seg)
       continue
     }

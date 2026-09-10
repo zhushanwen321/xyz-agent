@@ -28,8 +28,11 @@
     <PopoverAnchor as-child>
       <slot />
     </PopoverAnchor>
+    <!-- v-if 只看 open：每个 open 态都有可见行（候选列表 / 空态 / 加载中 / 加载失败）。
+         这是「浮层 open 即消费键盘」的前提——不可见态吞键会导致消息发不出且无提示，
+         故此前按「实际可见才消费」；反馈行补齐后该理由消失（决策因果见 command-popover-keyboard.ts）。 -->
     <PopoverContent
-      v-if="open && (items.length > 0 || fileFallbackVisible)"
+      v-if="open"
       side="top"
       align="start"
       :side-offset="6"
@@ -56,6 +59,27 @@
       >
         <FolderOpen class="size-[15px] shrink-0 opacity-60" />
         <span class="truncate">{{ t('panel.command.fileNoResults') }}</span>
+      </div>
+      <!-- 加载中空态（landing `$` 有 cwd 但候选未到）：本次 open 被 1s 节流跳过 / 上一轮请求在途。
+           两种来源都是「结果稍后会到」的态，必须有可见行兜住（否则 open 但无渲染）。 -->
+      <div
+        v-else-if="fileLoadingVisible"
+        class="flex items-center gap-2 px-2.5 py-2 text-[12px] text-neutral-dim"
+        data-testid="cmd-popover-loading"
+      >
+        <LoaderCircle class="size-[15px] shrink-0 opacity-60" />
+        <span class="truncate">{{ t('panel.command.loading') }}</span>
+      </div>
+      <!-- 通用无匹配空态：覆盖其余全部「open 但无候选」态——slash/session/subagent/skill 空源、
+           landing `@` 无 sessionId、landing `$` 无 cwd、landing `$` 候选源非空但 query 无匹配。
+           该行同时是「open 即消费键盘」的反馈前提（见脚本区 fileLoadingVisible 上方注释）。 -->
+      <div
+        v-else-if="items.length === 0"
+        class="flex items-center gap-2 px-2.5 py-2 text-[12px] text-neutral-dim"
+        data-testid="cmd-popover-empty"
+      >
+        <SearchX class="size-[15px] shrink-0 opacity-60" />
+        <span class="truncate">{{ t('panel.command.noMatches') }}</span>
       </div>
       <template v-else>
         <!-- list · 行用纯 div（对齐 demo .cmd-row：避免 Button variant=ghost 的 font-medium/ring-offset 噪音）。
@@ -116,9 +140,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, ref, toRef, watch } from 'vue'
+import { computed, inject, toRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, FolderOpen } from '@lucide/vue'
+import { AlertCircle, FolderOpen, LoaderCircle, SearchX } from '@lucide/vue'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
@@ -129,7 +153,7 @@ import { buildSkillCandidates } from './command-popover-skill-candidates'
 import { useCommandPopoverCwdFileView } from './command-popover-open-fetch'
 import { useCommandPopoverDelivery } from './command-popover-delivery'
 import { useCommandPopoverFileCandidates } from './command-popover-file-candidates'
-import { useCompositionFlag } from '@/composables/panel/composition-flag'
+import { useCommandPopoverKeyboard } from '@/composables/panel/command-popover-keyboard'
 import type { SkillInfo } from '@xyz-agent/shared'
 import { useSessionStore } from '@/stores/session'
 import { useSubagentStore } from '@/stores/subagent'
@@ -186,10 +210,6 @@ const controlledOpen = computed({
   set: (v: boolean) => emit('update:open', v),
 })
 
-const activeIndex = ref(0)
-
-/** IME 组合态双保险的事件侧面（window capture compositionstart/end 维护，详见 composition-flag.ts） */
-const { composing: composingRef } = useCompositionFlag()
 const { t } = useI18n()
 const commandStore = useCommandStore()
 /** file 候选加载（挂载 / 切 session 拉取，store 缓存幂等——ADR-0049；见 command-popover-file-candidates.ts） */
@@ -203,7 +223,6 @@ const {
   cwdFileCandidates,
   fileErrorVisible,
   fileNoResultsVisible,
-  fileFallbackVisible,
   fileTruncatedVisible,
   retryCwdFileFetch,
 } = useCommandPopoverCwdFileView({
@@ -212,6 +231,24 @@ const {
   sessionId: () => props.sessionId,
   cwd: () => props.cwd,
 })
+
+/**
+ * landing `$` 有 cwd 但候选未到（加载中反馈行）——等价于 open-fetch 内部
+ * `cwdFileStatus === 'idle'`：本次 open 因 1s 节流跳过、上一轮请求在途，两者都是
+ * 「结果稍后会到」态，需可见行兜住（否则该 open 态什么都不渲染）。
+ * 推导与状态机一一对应：success + 空候选 ⇒ fileNoResultsVisible，error ⇒ fileErrorVisible，
+ * 故「候选空 且 两态皆假」⟺ idle；用候选长度（非 items）判据，query 过滤致空不误判为加载中。
+ * cwd 访问器即 props.cwd（landing `$` 无 cwd 时无候选源，落通用无匹配行）。
+ */
+const fileLoadingVisible = computed(
+  () =>
+    props.type === 'file' &&
+    !props.sessionId &&
+    !!props.cwd &&
+    cwdFileCandidates.value.length === 0 &&
+    !fileErrorVisible.value &&
+    !fileNoResultsVisible.value,
+)
 // 四符号体系候选源：# sessionStore（sidebar 同款跨 cwd 全量）/ @ subagentStore（per-session 分区）
 const sessionStore = useSessionStore()
 const subagentStore = useSubagentStore()
@@ -342,75 +379,18 @@ function onSelect(item: CmdItem): void {
   })
 }
 
-/** ComposerInput keydown 路由：浮层实际可见（= PopoverContent 的 v-if）时处理 ↑↓ ⏎ Esc，返回
- * true 表示已消费；open 但浮层不渲染时全部键放行。幂等守卫 defaultPrevented：window capture 与
- * contenteditable 冒泡两条入口命中同一事件，不守卫 ↑↓ 会跳两项（① 已消费则 ② 不再处理）。 */
-function handleKeydown(e: KeyboardEvent): boolean {
-  if (!props.open) return false
-  if (e.defaultPrevented) return false // 幂等守卫：① 已消费则 ② 不再重复处理
-  // 消费条件 = 浮层实际可见性（RC-A-1）。[HISTORICAL] 曾按「open 即消费」把 Enter/Tab 在
-  // 不可见态也吞掉（行首 `/zzz` 空候选 ⇒ 消息发不出、Escape 失效且浮层未渲染无 reka 兜底）。
-  const overlayVisible = items.value.length > 0 || fileFallbackVisible.value
-  if (!overlayVisible) return false
-  const list = items.value
-  // 可见但无候选（仅 landing `$` 空/错误态）：方向键无项可移（NaN）放行；Enter/Tab 仍须消费（G2）。
-  const isEnterOrTab = e.key === 'Enter' || e.key === 'Tab'
-  if (list.length === 0 && !isEnterOrTab) return false
-  if (e.key === 'ArrowDown') {
-    e.preventDefault()
-    activeIndex.value = (activeIndex.value + 1) % list.length
-    return true
-  }
-  if (e.key === 'ArrowUp') {
-    e.preventDefault()
-    activeIndex.value = (activeIndex.value - 1 + list.length) % list.length
-    return true
-  }
-  if (isEnterOrTab) {
-    // 时序契约（composer-chip-insertion-semantics 设计 D2）：本分支多经 window capture
-    // （onWindowKeydown）进入，消费 Enter/Tab 后必须 stopPropagation 截断事件向 target 的
-    // 传播——这是「浮层 open 时 Enter 选中候选、绝不触发 composer onSend」的唯一防线
-    // （composer-keydown 无 defaultPrevented 防御层：contenteditable Enter 分支恒先
-    // preventDefault 再转发，防御层会拦死正常发送）。勿删。
-    // 边界：stopPropagation 不拦同节点上已注册的其他 listener——split mode 双浮层同时 open
-    // 时按注册序先到先得（设计 D2 边界声明①，已知限制）。
-    if (composingRef.value || e.isComposing) return false // IME 双保险：组合中 Enter 是确认候选词，放行
-    e.preventDefault()
-    e.stopPropagation()
-    // 空候选：无项可选中，仅消费事件终止链路；**不**顺带关闭浮层（不改变 open 状态）——
-    // 避免用户下一次 Enter 在无浮层可感知的情况下意外发送（Escape 仍是显式关闭入口）。
-    // 越界收敛（N-2）：候选源可在浮层打开期间缩短 ⇒ activeIndex 可 ≥ 长度（list[i] 为 undefined 会抛）
-    if (list.length > 0) onSelect(list[Math.min(activeIndex.value, list.length - 1)])
-    return true
-  }
-  if (e.key === 'Escape') {
-    e.preventDefault()
+// ── 键盘路由（↑↓ ⏎ Tab Esc）+ activeIndex 收敛在 command-popover-keyboard.ts ──────────
+// 由该 composable 单点收敛 activeIndex（列表变化 sync 夹到合法区间），故 Enter 读点直取
+// list[activeIndex] 不再 Math.min 兜底；window capture 监听与 Escape 关闭也随之下沉。
+const { activeIndex, handleKeydown } = useCommandPopoverKeyboard<CmdItem>({
+  open: () => props.open,
+  items: () => items.value,
+  onSelect,
+  close: () => {
     controlledOpen.value = false
-    return true
-  }
-  return false
-}
-
-/** window keydown capture 监听：键盘导航唯一入口，先于组件 keydown 保证稳定命中。 */
-function onWindowKeydown(e: KeyboardEvent): void {
-  if (!props.open) return
-  handleKeydown(e)
-}
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('keydown', onWindowKeydown, true)
-  onBeforeUnmount(() => {
-    window.removeEventListener('keydown', onWindowKeydown, true)
-  })
-}
-
-// 浮层打开时重置高亮到第一项；type 切换也重置
-watch(
-  () => [props.open, props.type, props.query],
-  () => {
-    activeIndex.value = 0
   },
-)
+  resetKeys: () => [props.open, props.type, props.query],
+})
 
 // ── D7 三态派生与 landing cwd 候选 ref 见 useCommandPopoverCwdFileView（command-popover-open-fetch.ts）──
 

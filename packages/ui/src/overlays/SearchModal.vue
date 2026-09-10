@@ -343,8 +343,14 @@ function scrollToSel() {
 async function confirmSel(): Promise<void> {
   const cur = flatItems.value[selIdx.value]
   if (!cur) return
-  const { type, title, sub, icon, commandKind } = cur
-  const result = await confirm({ type, title, sub, icon, commandKind }, { activeSessionId: props.activeSessionId ?? null })
+  // 显式字段搬运：confirm 只吃 SearchItem（IdxItem 的 idx 是渲染专用，不传）。
+  // isSkill/location 必须一并搬运——漏传会让 skill 命令项在 useSearchJump 里读不到标记，
+  // 静默退回命令 chip 通路（丢 SKILL.md 路径与多 skill 共存）。
+  const { type, title, sub, icon, commandKind, isSkill, location } = cur
+  const result = await confirm(
+    { type, title, sub, icon, commandKind, isSkill, location },
+    { activeSessionId: props.activeSessionId ?? null },
+  )
   if (result.ok) {
     // file 跳转返 drawerTab:'detail'：打开 SideDrawer detail tab 让 DetailPane 挂载渲染文件内容。
     // （DetailPane 只在 activeTab==='detail' 时挂载；useSearchJump 编排层不直接调 drawer，由本组件接线

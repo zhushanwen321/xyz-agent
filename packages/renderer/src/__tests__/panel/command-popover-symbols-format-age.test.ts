@@ -228,7 +228,7 @@ describe('open-fetch file 路 landing cwd 通道（D2/D3）', () => {
     expect(bodyRows().some((r) => r.textContent?.includes('index.ts'))).toBe(true)
   })
 
-  it('无 sid 无 cwd：不拉（S4b 无数据源不弹，无 unhandled rejection）', async () => {
+  it('无 sid 无 cwd：不拉（S4b 无数据源）；但浮层仍渲染通用无匹配反馈行（缺陷 B：open 即渲染）', async () => {
     wrapper = mount(CommandPopover, {
       attachTo: document.body,
       props: { open: false, type: 'file' },
@@ -236,9 +236,15 @@ describe('open-fetch file 路 landing cwd 通道（D2/D3）', () => {
     await nextTick()
     await wrapper.setProps({ open: true })
     await flushPromises()
+    await nextTick()
+    // 无 cwd ⇒ 无候选源，open-fetch 不拉（不产生 unhandled rejection）
     expect(getFileCandidatesByCwdMock).not.toHaveBeenCalled()
     expect(bodyRows()).toHaveLength(0)
-    expect(document.body.querySelector('[data-reka-popper-content-wrapper]')).toBeNull()
+    // [HISTORICAL] 旧行为：该 open 态不渲染任何内容（v-if = items 非空 || fileFallbackVisible）
+    // ⇒ 「open 但不可见」。反馈行补齐后 open 即渲染，消费条件得以回到「open 即消费」。
+    const row = document.body.querySelector('[data-testid="cmd-popover-empty"]')
+    expect(row).not.toBeNull()
+    expect(row!.textContent).toContain('无匹配项')
   })
 
   it('有 sid（panel）：open-fetch 不拉（file 候选专属 store 缓存路，防双路重复 RPC）', async () => {

@@ -29,8 +29,8 @@ vi.mock('@/api', () => ({
 }))
 
 // open-fetch 的 landing cwd 路 import composer domain（u5 re-anchor 后实现的 import 是 core
-// 子路径）——mock 之隔离真实 WS 通路。「浮层可见但候选为空」用例必须走真实 open 边沿拉取回写
-// 空结果（fileNoResultsVisible ⇒ fileFallbackVisible），mock specifier 必须与实现一致否则 mock 失效
+// 子路径）——mock 之隔离真实 WS 通路。「空结果 / 加载中 / query 无匹配」用例必须走真实 open
+// 边沿拉取回写，mock specifier 必须与实现一致否则 mock 失效
 // （与 composer-file-popover.test.ts 同款）
 const getFileCandidatesByCwdMock = vi.hoisted(() => vi.fn())
 vi.mock('@xyz-agent/core/transport/api/domains/composer', async (importOriginal) => {
@@ -276,6 +276,13 @@ describe('useComposerKeydown', () => {
    *
    * 链路模拟与产线同构：window（capture，CommandPopover onWindowKeydown）→ target
    * （bubble，useComposerKeydown 产物 onKeydown，cmdOpen/commandPopoverRef 按产线接线）。
+   *
+   * 消费条件（缺陷 B 修复后）= 「浮层 open 即消费」：PopoverContent 的 v-if 只看 open，
+   * 每个 open 态都有可见行（候选列表 / 通用空态 / 加载中 / 加载失败），不再存在「open 但
+   * 什么都不渲染」的态。[HISTORICAL] RC-A-1 曾把消费条件收紧为「浮层实际可见」（唯一边界 =
+   * file 错误/空结果态），理由是「不可见态吞键 = 消息发不出且无提示」；反馈行补齐后该理由
+   * 消失 ⇒ 判据删除（不是与旧判据并存）。仅「浮层未 open」仍全部键放行（末条用例锁定
+   * Enter 正常发送）。
    */
   describe('D2 时序锁：浮层 open 时 Enter 选中候选、不触发发送（capture/bubble 全链路）', () => {
     let target: HTMLElement
@@ -297,6 +304,9 @@ describe('useComposerKeydown', () => {
 
     afterEach(() => {
       vi.useRealTimers()
+      // landing `$` 拉取 mock 逐用例复位：mockImplementationOnce 若未被消费（理论上不会——
+      // 每次挂载新实例、1s 节流窗口随实例从 0 起）不留到下一用例
+      getFileCandidatesByCwdMock.mockReset()
       popoverWrapper?.unmount()
       popoverWrapper = null
       removeTarget()
@@ -332,10 +342,11 @@ describe('useComposerKeydown', () => {
 
     /**
      * 浮层「可见但候选为空」的生产形态：landing `$` 空结果态——fileNoResultsVisible 为真
-     * ⇒ fileFallbackVisible 为真 ⇒ 模板 v-if 渲染 PopoverContent（空态行），但 items 为空。
+     * ⇒ 模板渲染 file-no-results 行，但 items 为空。
      * 必须走真实链路造态：挂载时 open=false，再 setProps 打开触发 open false→true 边沿拉取
      * （getFileCandidatesByCwd 回空 files 且 truncated=false）+ flush 回写 success。
-     * 节流是模块级真实时钟，fake Date 使各用例互不撞窗口（flushPromises 依赖的
+     * 1s 节流窗口是组件实例级（useCommandPopoverOpenFetch 内的局部量，每次挂载从 0 起），
+     * 用例间不互相撞窗口；fake Date 冻结时间派生读数（flushPromises 依赖的
      * setImmediate/setTimeout 保持真实）。
      */
     async function setupLandingFileEmptyChain(): Promise<void> {
@@ -377,48 +388,118 @@ describe('useComposerKeydown', () => {
       expect(e.defaultPrevented).toBe(true)
     })
 
-    it('浮层不可见（行首 `/` + 无匹配 query，候选为空且非 landing file 空态）→ Enter 放行：onSend 被调用、浮层不消费（RC-A-1 回归锁）', () => {
-      // 生产复现：会话内行首输入 `/zzz`（无匹配命令）或 `/usr/local/bin`——open=true 但
-      // items=[]（仅剩的前端注入 compact 被 query 过滤掉），slash 路的 fileFallbackVisible
-      // 恒假 ⇒ 模板 v-if 不渲染 PopoverContent。修复前（S-1）Enter/Tab 在此被无条件消费
-      // ⇒ 消息发不出去且无任何提示。故本用例锁「不可见 → 不消费」。
+    // ── 缺陷 B：open 即渲染反馈行 + open 即消费 ──────────────────────────────
+    // 修复前这些 open 态什么都不渲染（旧 v-if = items 非空 || fileFallbackVisible），按
+    // RC-A-1「实际可见才消费」放行 Enter ⇒ landing 首发会把 `@query` 这类触发符字面量发出去。
+    // 反馈行补齐后消费条件回到「open 即消费」（因果见 command-popover-keyboard.ts 头部）。
+    it('open 但无候选（行首 `/zzz` 无匹配命令）→ 渲染「无匹配项」行 + Enter 被消费：onSend 不触发', async () => {
       setupChain(true, { query: 'zzz' })
+      // reka PopoverContent 经 Presence 渲染（open=true 后下一拍进 DOM）——DOM 断言前先 flush
+      await flushPromises()
+      await nextTick()
+
+      const emptyRow = document.body.querySelector('[data-testid="cmd-popover-empty"]')
+      expect(emptyRow).not.toBeNull()
+      expect(emptyRow!.textContent).toContain('无匹配项')
+      expect(document.body.querySelectorAll('.cmd-row')).toHaveLength(0) // 确无候选（自检）
 
       const e = dispatchEnter()
 
-      expect(onSend).toHaveBeenCalledTimes(1) // Enter 抵达 composer 分发器：消息可发送
-      expect(onSelect).not.toHaveBeenCalled()
-      // 浮层确实未渲染（不可见态自检，防「可见态误当不可见态」假绿）
-      expect(document.body.querySelectorAll('.cmd-row')).toHaveLength(0)
-      expect(document.body.querySelector('[data-testid="cmd-file-empty"]')).toBeNull()
-      // 注：defaultPrevented 此刻为 true 是 composer 自身 Enter 处理（composer-keydown.ts:133）
-      // 的既有行为，不是浮层消费——浮层消费的判据是 onSend 是否可达（本断言）与 Tab 放行。
+      expect(onSelect).not.toHaveBeenCalled() // 无项可选中
+      expect(onSend).not.toHaveBeenCalled() // stopPropagation 截断：未落到 composer 分发器
+      expect(e.defaultPrevented).toBe(true)
     })
 
-    it('浮层不可见：Tab 同样放行、不 preventDefault（不可见时全部键同口径放行，非仅 Enter）', () => {
+    it('open 但无候选：Tab 同口径被消费（不再按可见性分叉键位）', () => {
       setupChain(true, { query: 'zzz' })
 
       const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
       target.dispatchEvent(tab)
 
-      // 修复前：浮层 capture 无条件 preventDefault + stopPropagation ⇒ defaultPrevented=true
-      expect(tab.defaultPrevented).toBe(false)
+      expect(tab.defaultPrevented).toBe(true)
+      expect(onSend).not.toHaveBeenCalled()
     })
 
-    // 可见性矩阵（RC-A-1）：四条路的浮层渲染条件同源（items.length > 0 || fileFallbackVisible），
-    // 而 fileFallbackVisible 仅 landing `$` 路为真 ⇒ 四条路空候选时浮层都不渲染，Enter 必须放行。
-    it.each(['slash', 'session', 'subagent', 'skill'])(
-      '浮层不可见（type=%s 空候选源）：Enter 放行不消费（可见性矩阵）',
-      (type) => {
-        setupChain(true, { type, query: 'zzz' })
-        const handleKeydown = popoverWrapper!.vm.handleKeydown as (e: KeyboardEvent) => boolean
+    // 此前不可见态矩阵（缺陷 B）：四路空候选源 + landing `@` 无 sessionId + landing `$` 无 cwd。
+    // 共同后果 = Enter 直达 onSend（landing 首发会创建 session 并发出 `@query` 字面量）。
+    it.each([
+      { label: 'slash 空候选（/zzz 无匹配）', props: { type: 'slash', query: 'zzz' } },
+      { label: 'session 空候选', props: { type: 'session', query: 'zzz' } },
+      { label: 'landing `@` 无 sessionId', props: { type: 'subagent', variant: 'landing' } },
+      { label: 'skill 空候选', props: { type: 'skill', query: 'zzz' } },
+      { label: 'landing `$` 无 cwd', props: { type: 'file', variant: 'landing' } },
+    ])('open 但无候选（$label）→ 反馈行渲染 + Enter 被消费（不再放行）', async ({ props }) => {
+      setupChain(true, props)
+      await flushPromises() // reka PopoverContent 进 DOM 需下一拍（见上条注释）
+      await nextTick()
+      const handleKeydown = popoverWrapper!.vm.handleKeydown as (e: KeyboardEvent) => boolean
 
-        const enter = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })
-        expect(handleKeydown(enter)).toBe(false)
-        expect(enter.defaultPrevented).toBe(false)
-        expect(document.body.querySelectorAll('.cmd-row')).toHaveLength(0) // 浮层确实未渲染
-      },
-    )
+      const row = document.body.querySelector('[data-testid="cmd-popover-empty"]')
+      expect(row).not.toBeNull()
+      expect(row!.textContent).toContain('无匹配项')
+      expect(document.body.querySelectorAll('.cmd-row')).toHaveLength(0)
+      expect(document.body.querySelector('[data-testid="cmd-popover-loading"]')).toBeNull()
+
+      const enter = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })
+      expect(handleKeydown(enter)).toBe(true)
+      expect(enter.defaultPrevented).toBe(true) // 已消费 ⇒ 不再冒泡到发送链路
+    })
+
+    it('landing `$` 有 cwd 但候选未到（open-fetch 在途）→ 渲染「加载中」行 + Enter 被消费、不发送', async () => {
+      // 在途：mock 永不 settle ⇒ cwdFileStatus 停在 idle（与「本次 open 因 1s 节流跳过」同态，
+      // 两者都是「结果稍后会到」）。修复前该 open 态无任何渲染 ⇒ Enter 直达 onSend。
+      getFileCandidatesByCwdMock.mockImplementationOnce(() => new Promise(() => {}))
+      popoverWrapper = mount(CommandPopover, {
+        attachTo: document.body,
+        props: { open: false, type: 'file', variant: 'landing', cwd: '/tmp/in-flight', onSelect } as never,
+      })
+      wireComposerKeydown(true)
+      await popoverWrapper.setProps({ open: true })
+      await flushPromises()
+      await nextTick()
+
+      const row = document.body.querySelector('[data-testid="cmd-popover-loading"]')
+      expect(row).not.toBeNull()
+      expect(row!.textContent).toContain('加载中')
+      expect(document.body.querySelector('[data-testid="cmd-popover-empty"]')).toBeNull() // 两态互斥
+
+      const e = dispatchEnter()
+
+      expect(onSend).not.toHaveBeenCalled()
+      expect(onSelect).not.toHaveBeenCalled()
+      expect(e.defaultPrevented).toBe(true)
+    })
+
+    it('landing `$` 候选源非空但 query 无匹配 → 渲染「无匹配项」行（非加载中/非 file-no-results）+ Enter 被消费', async () => {
+      getFileCandidatesByCwdMock.mockImplementationOnce(() =>
+        Promise.resolve({ files: [{ path: 'a.ts', name: 'a.ts', type: 'file' }], truncated: false }),
+      )
+      popoverWrapper = mount(CommandPopover, {
+        attachTo: document.body,
+        props: { open: false, type: 'file', variant: 'landing', cwd: '/tmp/proj', onSelect } as never,
+      })
+      wireComposerKeydown(true)
+      await popoverWrapper.setProps({ open: true })
+      await flushPromises()
+      await nextTick()
+      expect(document.body.querySelectorAll('.cmd-row')).toHaveLength(1) // 造态自检：候选已到位
+
+      await popoverWrapper.setProps({ query: 'zzz' })
+      await nextTick()
+
+      expect(document.body.querySelectorAll('.cmd-row')).toHaveLength(0)
+      const row = document.body.querySelector('[data-testid="cmd-popover-empty"]')
+      expect(row).not.toBeNull()
+      expect(row!.textContent).toContain('无匹配项')
+      // 候选源非空 ⇒ 既不是「加载中」也不是「当前目录无匹配文件」（那两态各有专属文案）
+      expect(document.body.querySelector('[data-testid="cmd-popover-loading"]')).toBeNull()
+      expect(document.body.querySelector('[data-testid="cmd-file-empty"]')).toBeNull()
+
+      const e = dispatchEnter()
+
+      expect(onSend).not.toHaveBeenCalled()
+      expect(e.defaultPrevented).toBe(true)
+    })
 
     it('浮层可见但候选为空（landing `$` 空结果态）：Enter 仍被消费——defaultPrevented、不选中、不得到达 onSend、不自动关闭浮层', async () => {
       await setupLandingFileEmptyChain()

@@ -20,6 +20,9 @@ import { ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
 import { pickFile } from '@/lib/ipc'
+// 裸 skill 名归一化单点（剥 `skill:` / `/` 前缀）——与 CommandPopover skill-only 候选 /
+// slash 候选 selected 比对 / onCmdSelect skill 项分流同源，避免第三份前缀剥离实现漂移。
+import { bareSkillCommandName } from '@/components/panel/command-popover-skill-candidates'
 // W4：ComposerInput 迁 ui 包，类型 import 改 ui 包路径（旧 renderer 路径已删）
 import type { ComposerInput } from '@xyz-agent/ui/features/composer'
 import type CommandPopover from '@/components/panel/CommandPopover.vue'
@@ -107,19 +110,29 @@ export function useCommandPopoverTrigger(
   /**
    * 消费搜索浮层的 slash 注入请求（store 驱动模式，替代断链的 injectSlash 回调）。
    * SearchModal → useSearchJump.confirmCommand → commandStore.requestSlashInjection 写入 pendingSlash，
-   * 本 watch 按 sessionId 过滤消费，命中则调 insertSlashChip 注入 chip 并 clearPendingSlash。
+   * 本 watch 按 sessionId 过滤消费，命中则注入 chip 并 clearPendingSlash。
+   *
+   * 分流（与 onCmdSelect 的 D3 项类型分流同款落点）：pi 的 skill 命令名是**裸** `skill:<name>`
+   * （无前导 /），命令通路进入 insertSlashChip 后仅「以 /skill: 开头」的判据为假 ⇒ 落成命令
+   * chip（无 chipLocation + 受单命令替换语义管辖），既丢 SKILL.md 路径也丢多 skill 共存。
+   * 故 isSkill 为真时直接走 skill 通路：裸名（bareSkillCommandName 剥 `skill:` / `/`）+ location
+   * + icon，落点与 onCmdSelect 的 skill 项/type==='skill' 两分支一致；否则维持命令通路（回归锁）。
    *
    * 非 immediate：防 Composer 后挂载时读到旧 pendingSlash 残留值误注入（挂载时 store 可能已有
    * 给前一个 Composer 的请求，immediate 会立即误触发）。仅响应挂载后的新写入。
    * sessionId 匹配：含双方 null（landing 态）。不匹配分支不 clear（防误清留给其他 Composer 的请求）。
-   * 注入顺序：先 insertSlashChip 后 clearPendingSlash（防先清后注入读到 null）。
+   * 注入顺序：先插 chip 后 clearPendingSlash（防先清后注入读到 null）。
    */
   watch(
     () => commandStore.pendingSlash.value,
     (req) => {
       if (!req) return
       if (req.sessionId !== sessionId.value) return // 仅消费目标 session 的请求
-      inputRef.value?.insertSlashChip(req.command, req.icon)
+      if (req.isSkill) {
+        inputRef.value?.insertSkillChip(bareSkillCommandName(req.command), req.location, req.icon)
+      } else {
+        inputRef.value?.insertSlashChip(req.command, req.icon)
+      }
       commandStore.clearPendingSlash()
     },
   )

@@ -336,6 +336,9 @@ export default {
     fileLoadFailed: 'Load failed — click to retry',
     fileTruncated: 'Over 5,000 results — list truncated',
     fileNoResults: 'No matching files in this directory',
+    // Feedback row for open-but-empty popover states (prerequisite for "open consumes keys")
+    loading: 'Loading',
+    noMatches: 'No matches',
   },
   queue: {
     title: 'Queue',
