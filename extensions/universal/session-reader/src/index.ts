@@ -105,6 +105,10 @@ const SessionReadSchema = Type.Object({
   ),
   limit: Type.Optional(
     Type.Number({
+      // minimum:1 在 schema 校验层拒绝 limit:0 等退化输入（不落入 find F1 的
+      // 「无匹配 session」措辞面）；result 消费侧的 resolveResultLimit 防御保留
+      //（可单测绕过 schema 的调用形态）。
+      minimum: 1,
       description:
         'find/search: max results. Default 20. result: max chars per item, default 8000 (overlong text truncated with a pointer to the full file).',
     }),

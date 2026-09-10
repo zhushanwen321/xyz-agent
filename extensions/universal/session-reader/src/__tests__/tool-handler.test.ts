@@ -2030,6 +2030,100 @@ describe('u9 F1 重写 + uuid 归一化（fixture，§5.2 / §6.7 / §11.5）', 
 })
 
 // ============================================================
+// 片段解析接通 [live] 根（同一 roots 契约）：resolveByFragment/doXxx 透传
+// liveSessionDir——[live]≠[default] 环境（纯 pi + 显式 --session-dir）下，find
+// 能列出的 session 在 outline/result 等解析路径同样可达；F1 自检行含 [live] 根行。
+// 全部 mkdtemp fixture 自建自删，不触碰真实数据目录。
+// ============================================================
+
+describe('片段解析接通 [live] 根（fixture，同一 roots 契约）', () => {
+  let tmp: string
+  const SLUG = '--live-cwd--'
+  const ID = '019e6c96-aaaa-bbbb-cccc-0000000000aa'
+  const FRAGMENT = '0000000000aa'
+  let agentDir: string
+  /** liveSessionDir 信号（encodeCwd 形态，normalizeLiveSessionDir 剥层到 sessions/ 根）。 */
+  let liveDir: string
+  /** 剥层后的 [live] 根路径（F1 自检行的显示形态）。 */
+  let liveRoot: string
+
+  /** 在指定目录写 session 文件（header + user 消息，extraLines 追加 assistant 等条目）。 */
+  async function writeSessionAt(dir: string, id: string, extraLines: string[] = []): Promise<void> {
+    await mkdir(dir, { recursive: true })
+    const lines = [
+      JSON.stringify({ type: 'session', id, cwd: '/demo' }),
+      JSON.stringify({
+        type: 'message',
+        id: `${id}-m1`,
+        parentId: id,
+        message: { role: 'user', content: [{ type: 'text', text: 'live 根里的会话' }] },
+      }),
+      ...extraLines,
+    ]
+    await writeFile(join(dir, `${id}.jsonl`), lines.join('\n') + '\n')
+  }
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'tool-handler-live-'))
+    agentDir = join(tmp, 'agent')
+    await mkdir(join(agentDir, 'sessions'), { recursive: true }) // [default] 空根
+    liveDir = join(tmp, 'pi-live', 'sessions', SLUG)
+    liveRoot = join(tmp, 'pi-live', 'sessions')
+  })
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('① [live]≠[default]：outline 片段解析到 [live] 根 session；不传信号则 F1（负向对照）', async () => {
+    await writeSessionAt(liveDir, ID)
+    // 接通后：片段解析可达 [live] 根，outline 正常产出
+    const r = await handleSessionRead(
+      { action: 'outline', session: FRAGMENT },
+      { agentDir, liveSessionDir: liveDir },
+    )
+    const d = r.details as { stats: { totalTurns: number } }
+    expect(d.stats.totalTurns).toBeGreaterThanOrEqual(1)
+    // 负向对照：不传 liveSessionDir（三根降级）→ 同一片段 F1 零匹配
+    //（[default]/[legacy]/[subagent] 均无此文件——证明命中确实来自 [live] 根）
+    await expect(
+      handleSessionRead({ action: 'outline', session: FRAGMENT }, agentDir),
+    ).rejects.toThrow(/无匹配 session/)
+  })
+
+  it('② F1 自检行含 [live] 根行（剥层路径 + 实扫计数），与 [default] 空根同表可见', async () => {
+    await writeSessionAt(liveDir, ID)
+    const caught = await handleSessionRead(
+      { action: 'outline', session: 'zzz-no-hit-9q8x' },
+      { agentDir, liveSessionDir: liveDir },
+    ).catch((e: unknown) => e)
+    expect(caught).toBeInstanceOf(Error)
+    const text = (caught as Error).message
+    expect(text).toContain('无匹配 session："zzz-no-hit-9q8x"')
+    expect(text).toContain('自检（发现层，只陈述事实）')
+    // [live] 根行：encodeCwd 已剥层到 sessions/ 根，计数 = 本次实扫
+    expect(text).toContain(`${liveRoot}：1 文件`)
+    // [default] 空根同表可见（同一 roots 契约的全貌）
+    expect(text).toContain(`${join(agentDir, 'sessions')}：0 文件`)
+  })
+
+  it('③ result 片段形态同样可达 [live] 根（per-call deps 接线）', async () => {
+    await writeSessionAt(liveDir, ID, [
+      JSON.stringify({
+        type: 'message',
+        id: `${ID}-a1`,
+        parentId: `${ID}-m1`,
+        message: { role: 'assistant', content: [{ type: 'text', text: '最终结论正文' }] },
+      }),
+    ])
+    const r = await handleSessionRead(
+      { action: 'result', session: FRAGMENT },
+      { agentDir, liveSessionDir: liveDir },
+    )
+    expect(r.content[0].text).toContain('最终结论正文')
+  })
+})
+
+// ============================================================
 // u10：find 分组输出（design 2026-09-10 §5.1 形态 / §6.7 子决策 2/3 / §8.2 回归基线）
 // ============================================================
 

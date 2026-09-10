@@ -283,6 +283,11 @@ function expandHome(p: string): string {
  * 错误契约（U3）：① 文件不存在/非 .jsonl/header 读不出 → F6 风格；② sessionFile GC → ES1（manifest 元数据 + 👉）；
  * sa-id 0/>1 命中 → ES2（👉 family）。仅用于 family/outline/expand/detail/search/export/extract/result
  *（find action 自行调 findSessions，零匹配时返回空 + 提示，不抛错）。
+ *
+ * liveSessionDir（§6.1 信号 1）只作用于形态③：片段匹配与 find 消费同一 roots
+ *（[live] 根对片段解析可见——否则 find 能列出的 session 在 [live]≠[default] 环境
+ * 下 outline 等解析不到，违反「同一 roots」契约）；①按路径直读、②按 agentDir 下
+ * manifest 反查，均不依赖根列表，不消费该信号。
  */
 async function resolveSessionId(
   rawSession: string | undefined,
@@ -292,6 +297,8 @@ async function resolveSessionId(
   /** S3（code-simplify）：批量调用方（doResult）预取的 manifest 列表——省去逐 id
    *  重复全量扫 subagents/ 树（N+1）。单 id 调用点不传，行为零变化。 */
   prefetchedManifests?: RecordManifest[],
+  /** 信号包中的 liveSessionDir，透传形态③（resolveByFragment）；缺省 = 三根降级。 */
+  liveSessionDir?: string,
 ): Promise<ResolveResult> {
   const session = stripHash(requireStr(rawSession, 'session', action))
 
@@ -305,8 +312,8 @@ async function resolveSessionId(
     return resolveByRecordId(session, agentDir, prefetchedManifests)
   }
 
-  // ③ 其余：findSessions 透传 source 沿用 F1/F2
-  return resolveByFragment(session, agentDir, source)
+  // ③ 其余：findSessions 透传 source/liveSessionDir 沿用 F1/F2
+  return resolveByFragment(session, agentDir, source, liveSessionDir)
 }
 
 /** 形态①：绝对路径 / ~ 前缀 → 展开后读首行 header，sessionId=header 真实 id（文件名仅定位）。 */
@@ -357,14 +364,28 @@ async function resolveByRecordId(session: string, agentDir: string, prefetchedMa
   return { kind: 'ok', sessionId: headerId, fileName: record.sessionFile }
 }
 
-/** 形态③：其余片段 → findSessions 透传 source 沿用 F1（零匹配）/ F2（多匹配消歧）。 */
-async function resolveByFragment(session: string, agentDir: string, source?: 'main' | 'subagent'): Promise<ResolveResult> {
-  const opts = { limit: 10, ...(source ? { source } : {}) }
+/**
+ * 形态③：其余片段 → findSessions 透传 source/liveSessionDir 沿用 F1（零匹配）/ F2（多匹配消歧）。
+ * liveSessionDir 透传保证片段匹配与 find 同一 roots；F1 自检行同理须含 [live] 根行
+ *（否则 [live]≠[default] 环境下自检行看不到最高优先级根，计数失真）。
+ */
+async function resolveByFragment(
+  session: string,
+  agentDir: string,
+  source?: 'main' | 'subagent',
+  liveSessionDir?: string,
+): Promise<ResolveResult> {
+  const opts = {
+    limit: 10,
+    ...(source ? { source } : {}),
+    ...(liveSessionDir ? { liveSessionDir } : {}),
+  }
   const { matches } = await findSessions(session, agentDir, opts)
   if (matches.length === 0) {
     // F1 自检行需要发现层实况：无 options 的 resolveSessionRoots 恒实扫（不读 doctor
-    // 缓存，§7B 要点 8），与 find 刚完成的扫描同一数据源（roots.ts 薄包装语义）。
-    const roots = await resolveSessionRoots({ agentDir })
+    // 缓存，§7B 要点 8），与 find 刚完成的扫描同一数据源（roots.ts 薄包装语义）；
+    // 信号包同源（liveSessionDir 透传）——findSessions 内部对空串/undefined 已有降级 guard。
+    const roots = await resolveSessionRoots({ agentDir, liveSessionDir })
     throw err(formatNoMatch(session, roots))
   }
   if (matches.length === 1) {
@@ -965,8 +986,19 @@ async function doFind(
  * recursive=true → 嵌套执行树（buildExecutionTree + formatExecutionTreeText，任意深度
  * subagent↔workflow-call 相互嵌套，IF4）。错误契约同构：multi→disambiguate；构建抛错→catch 转 👉。
  */
-async function doFamily(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'family', agentDir, params.source)
+async function doFamily(
+  params: SessionReadParams,
+  agentDir: string,
+  liveSessionDir?: string,
+): Promise<ToolResult> {
+  const resolved = await resolveSessionId(
+    params.session,
+    'family',
+    agentDir,
+    params.source,
+    undefined,
+    liveSessionDir,
+  )
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
 
   // recursive=true：嵌套执行树（U7/U8）
@@ -1000,8 +1032,19 @@ async function doFamily(params: SessionReadParams, agentDir: string): Promise<To
 }
 
 /** outline：turn 级全貌 TOC（design §3.4 outline，~1500 token；render budget 硬编码 2000）。 */
-async function doOutline(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'outline', agentDir, params.source)
+async function doOutline(
+  params: SessionReadParams,
+  agentDir: string,
+  liveSessionDir?: string,
+): Promise<ToolResult> {
+  const resolved = await resolveSessionId(
+    params.session,
+    'outline',
+    agentDir,
+    params.source,
+    undefined,
+    liveSessionDir,
+  )
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const { entries, totalBytes, skippedLines } = await safeParse(resolved.fileName)
   const tree = buildTreeView(entries)
@@ -1022,8 +1065,19 @@ async function doOutline(params: SessionReadParams, agentDir: string): Promise<T
 }
 
 /** expand：单 turn 的 entry 列表（design §3.4 expand）。turn 越界抛 F4。 */
-async function doExpand(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'expand', agentDir, params.source)
+async function doExpand(
+  params: SessionReadParams,
+  agentDir: string,
+  liveSessionDir?: string,
+): Promise<ToolResult> {
+  const resolved = await resolveSessionId(
+    params.session,
+    'expand',
+    agentDir,
+    params.source,
+    undefined,
+    liveSessionDir,
+  )
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const turnIdx = parseTurnIndex(requireStr(params.turn, 'turn', 'expand'))
   const { entries } = await safeParse(resolved.fileName)
@@ -1044,8 +1098,19 @@ async function doExpand(params: SessionReadParams, agentDir: string): Promise<To
 }
 
 /** detail：turns 范围的完整文本（design §3.4 detail）。默认省略 toolResult/thinking。 */
-async function doDetail(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'detail', agentDir, params.source)
+async function doDetail(
+  params: SessionReadParams,
+  agentDir: string,
+  liveSessionDir?: string,
+): Promise<ToolResult> {
+  const resolved = await resolveSessionId(
+    params.session,
+    'detail',
+    agentDir,
+    params.source,
+    undefined,
+    liveSessionDir,
+  )
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const range = parseTurnsRange(requireStr(params.turns, 'turns', 'detail'))
   const { entries } = await safeParse(resolved.fileName)
@@ -1429,7 +1494,14 @@ async function doSearch(
     })
   }
   const agentDir = signals.agentDir
-  const resolved = await resolveSessionId(rawSession, 'search', agentDir, params.source)
+  const resolved = await resolveSessionId(
+    rawSession,
+    'search',
+    agentDir,
+    params.source,
+    undefined,
+    signals.liveSessionDir,
+  )
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const scope = params.scope ?? 'all'
   const limit = params.limit ?? SEARCH_DEFAULT_LIMIT
@@ -1450,9 +1522,20 @@ async function doSearch(
 const EXPORT_SEPARATOR_LEN = 40
 
 /** export：物化摘要到 <agentDir>/tmp/session-view-<id>.md（design §3.4 export，D-8）。 */
-async function doExport(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
+async function doExport(
+  params: SessionReadParams,
+  agentDir: string,
+  liveSessionDir?: string,
+): Promise<ToolResult> {
   const format = params.format ?? 'outline'
-  const resolved = await resolveSessionId(params.session, 'export', agentDir, params.source)
+  const resolved = await resolveSessionId(
+    params.session,
+    'export',
+    agentDir,
+    params.source,
+    undefined,
+    liveSessionDir,
+  )
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
 
   let text: string
@@ -1948,8 +2031,19 @@ function extractToolResults(turns: Turn[], tool: string | undefined): ToolResult
  * 流程：resolveSessionId（multi 走 disambiguate）→ safeParse → buildTreeView +
  * segmentTurns → 可选 turns 范围限定（复用 parseTurnsRange）→ F7 校验 what → 分发 5 预设。
  */
-async function doExtract(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'extract', agentDir, params.source)
+async function doExtract(
+  params: SessionReadParams,
+  agentDir: string,
+  liveSessionDir?: string,
+): Promise<ToolResult> {
+  const resolved = await resolveSessionId(
+    params.session,
+    'extract',
+    agentDir,
+    params.source,
+    undefined,
+    liveSessionDir,
+  )
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const { entries } = await safeParse(resolved.fileName)
   // extract 遍历全量 entry（含旁支/压缩历史），与 outline/expand/detail 的 leaf 视图不同：
@@ -2040,8 +2134,19 @@ interface SkippedRun {
  * step 的 call sessionId/sessionFile 是 LLM 跳 outline/detail 的入口（m0 resolveSessionId
  * 三形态复用：sessionId/绝对路径/sa-id 均可深读，TC-wf-step-sessionfile-link）。
  */
-async function doWorkflow(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'workflow', agentDir, params.source)
+async function doWorkflow(
+  params: SessionReadParams,
+  agentDir: string,
+  liveSessionDir?: string,
+): Promise<ToolResult> {
+  const resolved = await resolveSessionId(
+    params.session,
+    'workflow',
+    agentDir,
+    params.source,
+    undefined,
+    liveSessionDir,
+  )
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
 
   let workflows: WorkflowRef[]
@@ -2408,7 +2513,11 @@ function renderDoctor(
   }
 }
 
-/** result action 的注入依赖（构造期绑定本文件私有 helper，运行时零查找开销）。 */
+/**
+ * result action 的注入依赖（构造期绑定本文件私有 helper，运行时零查找开销）。
+ * resolveSessionId 仅作类型/缺省绑定——入口分发时被 per-call 包装覆盖（闭包捕获
+ * 信号包 liveSessionDir，见 handleSessionRead result case）。
+ */
 const RESULT_ACTION_DEPS: ResultActionDeps = {
   err,
   stripHash,
@@ -2459,23 +2568,30 @@ export async function handleSessionRead(
     case 'find':
       return doFind(params, norm, cachedProvider)
     case 'family':
-      return doFamily(params, agentDir)
+      return doFamily(params, agentDir, norm.liveSessionDir)
     case 'outline':
-      return doOutline(params, agentDir)
+      return doOutline(params, agentDir, norm.liveSessionDir)
     case 'expand':
-      return doExpand(params, agentDir)
+      return doExpand(params, agentDir, norm.liveSessionDir)
     case 'detail':
-      return doDetail(params, agentDir)
+      return doDetail(params, agentDir, norm.liveSessionDir)
     case 'search':
       return doSearch(params, norm, signal, cachedProvider)
     case 'export':
-      return doExport(params, agentDir)
+      return doExport(params, agentDir, norm.liveSessionDir)
     case 'extract':
-      return doExtract(params, agentDir)
+      return doExtract(params, agentDir, norm.liveSessionDir)
     case 'workflow':
-      return doWorkflow(params, agentDir)
+      return doWorkflow(params, agentDir, norm.liveSessionDir)
     case 'result':
-      return doResult(params, agentDir, RESULT_ACTION_DEPS)
+      // per-call 覆盖 deps.resolveSessionId：把信号包中的 liveSessionDir 闭包进解析调用
+      //（ResultActionDeps 接口签名固定 5 参，包装保持同形、末位补传），result 的片段
+      // 形态与 find/outline 消费同一 roots（sa-/绝对路径分支在 resolveSessionId 内不受影响）。
+      return doResult(params, agentDir, {
+        ...RESULT_ACTION_DEPS,
+        resolveSessionId: (rawSession, action, ad, source, prefetchedManifests) =>
+          resolveSessionId(rawSession, action, ad, source, prefetchedManifests, norm.liveSessionDir),
+      })
     case 'doctor':
       return doDoctor(params, norm)
     default: {

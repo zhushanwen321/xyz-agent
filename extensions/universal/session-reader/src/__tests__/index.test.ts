@@ -361,6 +361,22 @@ describe('sessionReaderExtension - TypeBox schema 与 SessionReadParams 对齐',
     expect(Check(schema, { action: 'family', session: 'x', recursive: 1 })).toBe(false)
   })
 
+  it('limit 退化输入：minimum:1 在 schema 校验层拒绝 0/负数（不落入 find F1「无匹配」措辞面）', () => {
+    const fake = makeFakePi()
+    sessionReaderExtension(fake.pi as unknown as ExtensionAPI)
+    const toolDef = fake.registerTool.mock.calls[0][0] as { parameters: unknown }
+    const schema = toolDef.parameters
+
+    // 0/负数被 schema 拒绝（minimum:1），不会进入 find/F1 输出「无匹配 session」
+    expect(Check(schema, { action: 'find', query: 'x', limit: 0 })).toBe(false)
+    expect(Check(schema, { action: 'find', query: 'x', limit: -3 })).toBe(false)
+    // 正数合法；result 消费同一 limit 字段（正数合法）
+    expect(Check(schema, { action: 'find', query: 'x', limit: 1 })).toBe(true)
+    expect(Check(schema, { action: 'result', session: 'sa-x', limit: 100 })).toBe(true)
+    // 不传 limit 向后兼容（缺省语义不变）
+    expect(Check(schema, { action: 'find', query: 'x' })).toBe(true)
+  })
+
   it('TC-u8-schema-doctor：action enum 含 doctor + includeSubagents optional boolean', () => {
     const fake = makeFakePi()
     sessionReaderExtension(fake.pi as unknown as ExtensionAPI)
