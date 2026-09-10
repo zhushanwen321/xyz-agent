@@ -98,7 +98,9 @@ graph TD
 | u1b | committed | 1 | commit acc603d4d；session-viewed-at 6 用例 + relay-registry 26 用例绿；偏差 2 条已入登记表（挂点入口化 / 可选交叉成员） |
 | u2 | committed | 1 | commit 82d7d9e12；idle-pi-reaper 22 用例 + reclaim-orchestration 14 用例 + 回归绿 + tsc 绿。dev 完成实现与测试后死于速率限制（未及汇报），编排者逐 diff 核验设计保真度并重跑全部测试后收口。附带 .githooks/check_prompt_outposts.py 指纹刷新（promptReload 加 maintenance 参数触发出站点守卫） |
 | u3 | committed | 2 | u3a：e5ab883ac（4 薄访问器 + depth() 选型偏差）。u3b：998f6ad3e（组合根 wiring + shutdown 收口 + XYZ_RUNTIME_PI_RECLAIM_* SSOT + C-state-12 约束登记 97 条校验过；领地超限 2 文件已核——isSessionRestoring 薄委托 / shared barrel 逐名 re-export，均为结构性必需） |
-| u4 | pending | 0 | — |
+| u4 | committed | 2 | commit 3b509694c；真机 real-pi 池跑绿（两轮真实 LLM turn 全链，编排者复跑 ✓ 5.6s）；main 池 0 匹配登记生效；P7 收益门实测 **PASS（incremental）**——恢复后 getHistory 走空增量短路零重建，缓存 leafId 跨进程存活，设计 session-service.ts:879-883 旧注释悲观断言被实测推翻（D5 正方胜出，无需回收时清缓存）。轮 1 前任读先例阶段被限流（零产物），轮 2 重派完成 |
+
+**P7 收益门裁决登记（2026-09-11，u4 实测）**：gate_pass=incremental。证据 = 集成测试日志 `[session-service] getHistory cache fresh (empty delta) ... returning 2 cached messages`；恢复耗时 elapsed=535ms（G3 ≤3s 达标）。设计文档 D5 的条件性收益声明兑现、P7 探针状态升级 ✅ 已实测——设计文档侧回写（D5/P7 措辞 + session-service.ts:879-883 注释修正）归一致性审查/doc 同步阶段执行。
 
 ## 7 残留风险与变更历史
 
