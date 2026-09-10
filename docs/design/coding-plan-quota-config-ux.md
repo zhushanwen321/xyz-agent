@@ -1102,7 +1102,7 @@ D3 引入的新字段要穿过 8 段才真正生效。**payload 收敛（§7.1�
   - **类型切换只清凭证草稿，Workspace 不清**（§7.2 细节 2 / D13 / S16 补 opencode 变体）：Workspace 是明文回显字段，清它只制造「磁盘有、屏幕无」—— opencode 用户类型往返后按钮永久置灰、被迫重贴还在的 wrk_ 地址。
   - **`quota.configure` 收敛为单一 `QuotaConfigurePayload`**（§7.1）：7 位置参数中 4 个同构 `string | undefined` 互相错位编译器不报错（v3 端到端链断裂正属此族）；收敛后 handler 整对象透传、忘改 handler = 参数数编译错，v3 链上唯一「不报错、静默丢字段」的段结构性消除。分期兼容：M0 类型 → M1 service+handler（wire 兼容）→ M2 core+mock+renderer 原子切换。
   - **删除链排序约束**（改动 5 / D12 代价）：`clearProviderState` 只在 `cleanProviderExtras` 成功后执行，D12 部分失败不再产生幽灵标记；残余两方向（一致残留 / 惰性孤儿文件）按四要素登记，孤儿惰性判据写入改动 2/5。
-  - **新增改动 6**：`credentialSource` 落盘走 `inheritQuotaField` 继承链，写侧禁用 `resolveQuotaCredentialSource` 推断（否则 `setEnabled` 会把用户显式选择覆盖成推断值）。
+  - **新增改动 6**：`credentialSource` 落盘走 `inheritQuotaField` 继承链，写侧禁用 `resolveQuotaCredentialSource` 推断。（**理由已于 v8 后订正**：原写「否则 `setEnabled` 会把用户显式选择覆盖成推断值」——该反例不可达（`resolve` 显式值优先），真实危害是**把未设置的字段物化成推断值**，详见 §7.3 改动 6 正文。）
   - **`QuotaCache.removeEntry` 三条语义写死**（改动 4）：`writeChain` 串行 + `memoryCache` 同步删 + 幂等，缺任一条都会被磁盘重载或并发写还原。
   - **M1 分段验收改为可执行形式**（§7.5）：v3 的「M1 期一次保存并测试后读 `providers.json`」在 M1 跑不出真值（renderer 未切换），改为 runtime 单测直调 `QuotaService.configure` 断言落盘与继承链。
   - 其余：数据流图路径纠正（providers.json 在 `<dataDir>/pi/agent/config/`，非系统 pi 的 `~/.pi/agent`）；表 A 四格清理通道与正文对齐（#4/#5/#8/#10/#11）并删 §7.1 缓存表冗余行；§11 检查点 5 补可执行差集判据；mock 签名同构入文件地图；字段级提示渲染改显式白名单（让 `'type'` 不配文案成为结构保证）。
