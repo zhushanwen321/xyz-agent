@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { mkdtemp, mkdir, writeFile, rm, utimes } from 'node:fs/promises'
 import { join } from 'node:path'
 import { findSessions } from '../discovery/find.js'
-import { REAL_AGENT_DIR, HAS_E6, HAS_REAL_SUBAGENTS_DIR } from './real-data.js'
+import { REAL_AGENT_DIR, HAS_E6, HAS_REAL_SUBAGENTS_DIR, REAL_DATA_TIMEOUT_MS } from './real-data.js'
 
 /**
  * 建一个假 session 文件：首行 header（type=session，含 id/cwd/parentSession），
@@ -523,8 +523,7 @@ describe('findSessions', () => {
         expect(matches.every((m) => m.source === 'subagent')).toBe(true)
         expect(typeof truncated).toBe('boolean')
       },
-      // 真实数据全量扫描，并行全量测试负载下 30s 会超窗假红
-      60000,
+      REAL_DATA_TIMEOUT_MS,
     )
   })
 
@@ -537,7 +536,7 @@ describe('findSessions', () => {
     expect(hit.fileName).toContain('019e6c96')
     expect(hit.mtime).toBeGreaterThan(0)
     expect(hit.sizeBytes).toBeGreaterThan(0)
-  }, 30000)
+  }, REAL_DATA_TIMEOUT_MS)
 
   it.skipIf(!HAS_E6)("真实数据：recent 返回最近 N 个，mtime 倒序，truncated=true", async () => {
     const { matches, truncated } = await findSessions('recent', REAL_AGENT_DIR, { limit: 5 })
@@ -549,7 +548,7 @@ describe('findSessions', () => {
     }
     // 真实 session 文件远多于 5 → 截断
     expect(truncated).toBe(true)
-  }, 30000)
+  }, REAL_DATA_TIMEOUT_MS)
 
   it.skipIf(!HAS_REAL_SUBAGENTS_DIR)(
     "真实数据：source:'subagent' 能找到 completed subagent（§7 场景 1 find 部分）",
@@ -565,6 +564,6 @@ describe('findSessions', () => {
         expect(m.fileName).toContain('subagents')
       }
     },
-    30000,
+    REAL_DATA_TIMEOUT_MS,
   )
 })
