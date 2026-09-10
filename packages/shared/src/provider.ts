@@ -27,7 +27,12 @@ export type ModelId = string
 export interface BuiltinModelSummary {
   id: string
   name: string
-  api: string
+  /**
+   * 模型级协议（pi model.api）。optional：overlay 归一化不再用空串捏造缺省
+   * （design catalog-provider-field-authority §3.3 D7），缺失 = 该模型无显式协议，
+   * 由消费方按 pi 语义回落；快照条目恒有值，消费方须容忍缺省（旧消费方行为不变）。
+   */
+  api?: string
   baseUrl?: string
   reasoning: boolean
   input: string[]
@@ -61,7 +66,16 @@ export interface BuiltinModelSummary {
 export interface BuiltinProviderTemplate {
   id: string
   name: string
+  /**
+   * 构建期 artifact：gen-builtin-providers.mjs 为对齐 provider 级单值 schema 捏造
+   * （取 models[0].api 冒充 provider 协议）。禁止新代码消费——展示用 runtime 派生值
+   * （ProviderInfo.api，design §3.3 D5）。
+   */
   api?: string
+  /**
+   * 构建期 artifact：gen-builtin-providers.mjs 的 `provider.baseUrl ?? ''`（pi 无此字段时为空串）。
+   * 禁止新代码消费——展示用 runtime 派生值（ProviderInfo.baseUrl，design §3.3 D5）。
+   */
   baseUrl?: string
   authMode: 'api_key' | 'oauth' | 'both' | 'ambient'
   envVars: string[]
@@ -106,7 +120,17 @@ export type ProviderKind = 'catalog' | 'custom'
 export interface ProviderInfo {
   id: ProviderId
   name: string
+  /**
+   * 协议（design catalog-provider-field-authority §3.3 D5 派生语义，runtime 聚合层下发、
+   * 前端零推导）：catalog = 按合并模型集派生——全模型同 api → 该值；混合协议 / 全空 → undefined
+   * （前端展示「按模型分发」）。custom = provider 级定义值。
+   */
   api?: string
+  /**
+   * 请求端点（同 D5）：catalog = 用户网关优先（override 非空 baseUrl 原值下发）；无网关时按
+   * 合并模型集派生——全模型同值且非空 → 该值；混合 / 全空缺省 → undefined（前端分别展示
+   * 「内置端点（按模型分发）」「内置目录未提供」）。custom = provider 级定义值。
+   */
   baseUrl?: string
   apiKeySet: boolean
   /**
