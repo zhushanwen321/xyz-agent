@@ -15,7 +15,7 @@
  *   3. 成员读取模式 `getProviderConfig(...)?.apiKey`（models.json 单源直查的现存形态）
  *   白名单 = resolver 唯一通道本体（services/auth/provider-credential-resolver.ts）仅此
  *   一个文件——白名单清零即「D3 唯一通道」成立的机器证据；新增合法读取点必须先走
- *   review 改白名单（白名单膨胀到 >3 文件 = 收口失效信号，应回到 resolver 设计重审）。
+ *   review 改白名单（白名单膨胀到 >1 文件 = 收口失效信号，应回到 resolver 设计重审）。
  *
  * 守卫 B（upsertProvider 直调清单，D6 姊妹守卫）：白名单外出现 `upsertProvider(` 调用
  * （含成员调用；接口方法签名声明同形，见 ports/config.ts 条目）即违规——models.json 的
@@ -148,7 +148,7 @@ if (violations.length > 0) {
     console.error(`    修复：${fix}；确属例外先过 review 并把文件加进本脚本白名单（附理由注释）`)
   }
   console.error('')
-  console.error('恢复动作：按上方 ✗ 明细改走 resolver / 写入载体后重试；白名单膨胀到守卫 A >3 文件')
+  console.error('恢复动作：按上方 ✗ 明细改走 resolver / 写入载体后重试；白名单膨胀到守卫 A >1 文件')
   console.error('或守卫 B >8 文件 = 收口失效信号，应回到设计 docs/design/catalog-provider-field-authority.md §3.3 D3/D6 重审。')
   process.exit(1)
 }

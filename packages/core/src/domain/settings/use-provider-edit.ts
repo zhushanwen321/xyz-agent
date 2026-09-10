@@ -148,7 +148,7 @@ export interface TestConnectionResult {
  * apiKey「清除」哨兵值（D18）。
  * 表单内 form.apiKey 默认 ''=不变（save 时 `apiKey || undefined` 跳过）。
  * 用户点「清除」时把 form.apiKey 置为此哨兵，save 识别后发送空串给 runtime
- * （config-service `if (data.apiKey !== undefined) merged.apiKey = data.apiKey`，空串=清空 key）。
+ * ——runtime 防线②把空串转译为删键（delete merged.apiKey），不落空串。
  */
 export const API_KEY_CLEAR_SENTINEL = '__CLEAR__'
 

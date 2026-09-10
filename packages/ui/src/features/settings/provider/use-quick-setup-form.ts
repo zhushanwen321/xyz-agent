@@ -180,9 +180,9 @@ export function useQuickSetupForm(
       data.apiKey = apiKeyInput.value
       data.authMethod = 'api_key'
     } else if (authMethod.value === 'env') {
-      // MF-1：空自定义变量不上送 apiKey——apiKey:'' 会触发 config-service I9 清理①
-      // （`!== undefined` 成立）静默删除 auth.json OAuth 凭据。空变量名已被 saveDisabled 挡住，
-      // 此处再守卫一层（防未来调用方绕过 disabled 直调 onSave）。
+      // MF-1：空自定义变量不上送 apiKey——apiKey 空串是「清除 models.json apiKey 键」的
+      // 哨兵信号（runtime 侧有清除语义），QuickSetup 路径不应发送。空变量名已被 saveDisabled
+      // 挡住，此处再守卫一层（防未来调用方绕过 disabled 直调 onSave）。
       if (resolvedEnvVar.value) {
         data.apiKey = `$${resolvedEnvVar.value}`
       }

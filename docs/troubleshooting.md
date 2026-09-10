@@ -245,6 +245,21 @@ CI=true ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install   # 约 6-7s 重建本地�
 
 **防护与根治**：护栏 `.githooks/check_pnpm_store_layout.sh` 挂在 pre-commit 第 0 段（install-hooks.sh 生成）与 validate-runtime-bundle.sh Gate 0，翻转即红并输出 [FIX] 指引——同时也兼作引擎侧「不覆写 HOME」修复的验收探针（修复落地后护栏应恒绿，红 = 回退信号）。根治在引擎侧不覆写 HOME（2026-09-03 开发中）；备选方案 `.npmrc` pin `store-dir` 评估结论：`~` 展开仍 HOME 相对（无效）、相对路径解析基准未验证（有 per-package store 撕裂风险）、写死绝对路径不可移植——均不采用。
 
+### 12. catalog provider 自定义网关失效 / 端点与官网不符：启动清洗剥除了手编网关（2026-09-10 D2 已接受代价）
+
+**症状**：catalog provider（openai / opencode-go 等内置目录 provider）的请求端点回到内置值——自定义网关（镜像站/代理）失效，或发现端点与官网文档不符。启动日志有：
+
+```bash
+grep "stripped unmarked provider-level keys" ~/.xyz-agent/logs/runtime-*.log   # dev 用 ~/.xyz-agent-dev
+# 形如 [provider-repair] stripped unmarked provider-level keys on "<id>": baseUrl
+```
+
+**根因**（设计 D2 已接受代价，docs/design/catalog-provider-field-authority.md §3.3）：models.json 手编的 catalog 网关（provider 级 `baseUrl` override）且**从未经新 UI 保存过**的条目，启动清洗会剥除该键——判定锚是 providers.json extras 的 `gatewayBaseUrl` 显式标记，无标记即判「历史冻结 artifact」剥除（防 pi 升级后快照漂移导致网关钉死过时值）。
+
+**检查**：数据目录 `pi/agent/models.json` 中该 provider 条目——`baseUrl` 键已被剥除（当前生效 = 内置目录端点）。
+
+**恢复**：Settings → Providers 展开该 provider，在「端点（自定义网关）」输入框重设网关 URL 并保存一次——extras `gatewayBaseUrl` 标记同步写入，之后启动清洗不再剥除该键。
+
 ## 环境变量速查
 
 | 变量 | 用途 | 生产默认值 | 开发默认值 |

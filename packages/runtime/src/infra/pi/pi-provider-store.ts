@@ -554,8 +554,8 @@ export interface SanitizeInvalidProvidersOutcome {
 }
 
 /**
- * pi schema 的 `minLength: 1` 字段集（node_modules 实装 model-config.js:137-140 provider 级
- * :170-173）——这些字段写入空串会让 pi TypeBox 校验拒绝**整个** models.json（P-poison 实测）。
+ * pi schema 的 `minLength: 1` 字段集（node_modules 实装 model-config.js:137-140 模型级 /
+ * :170-173 provider 级）——这些字段写入空串会让 pi TypeBox 校验拒绝**整个** models.json（P-poison 实测）。
  * 模型级 `id` 是必需字段（不在「删键」组，见 stripEmptyStringSchemaKeys）。
  */
 const EMPTY_STRING_PROVIDER_KEYS = ['name', 'baseUrl', 'apiKey', 'api'] as const

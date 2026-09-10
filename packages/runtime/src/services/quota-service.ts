@@ -3,10 +3,11 @@
  *
  * 职责：
  * - hover 触发查询（quota.fetch RPC）
- * - 缓存管理（成功更新，失败降级返回旧缓存 + log）
+ * - 缓存管理（成功更新，失败返回失败态 data=null + reason；旧缓存保留内存可经 getCached 查看）
  * - 并发保护（pending Map 复用 Promise）
  * - 最小间隔保护（10s throttle）
- * - 凭证读取（api-key 从 pi-provider-store，cookie 从 secrets 文件）
+ * - 凭证读取（api-key 凭据经 providerCredentialResolver：auth.json → models.json，
+ *   quota 专属 secrets key 段优先；cookie 从 secrets 文件）
  *
  * 设计文档：docs/page-design/archive/v3/coding-plan-quota/design.md §2.2.3
  */
@@ -160,7 +161,7 @@ export class QuotaService {
    * 查询额度（hover 触发）。
    * - 并发保护：同 provider pending 期间复用 Promise
    * - throttle：10s 内重复 fetch 直接返回缓存
-   * - 失败降级：返回旧缓存 + log
+   * - 失败返回失败态（data=null + reason）+ log；旧缓存保留内存可经 getCached 查看
    */
   async fetch(providerId: string): Promise<QuotaFetchResult> {
     return this.runFetch(providerId, { force: false })
@@ -170,7 +171,7 @@ export class QuotaService {
    * 强制查询额度（Settings 测试查询按钮）。
    * - 与 fetch 逻辑相同，但**绕过 throttle**（不检查 lastFetchTime）
    * - 仍走 pending 并发保护（避免同 provider 并发请求）
-   * - 失败降级：返回旧缓存 + log
+   * - 失败返回失败态（data=null + reason）+ log；旧缓存保留内存可经 getCached 查看
    */
   async refresh(providerId: string): Promise<QuotaFetchResult> {
     return this.runFetch(providerId, { force: true })

@@ -1,8 +1,8 @@
 # Provider 字段权威收口 实施计划
 
-基线: 0d8b6cbbc（本计划文档基线 commit） | 来源设计: `docs/design/catalog-provider-field-authority.md`（v3.3） | 日期: 2026-09-10
+基线: 0d8b6cbbc（本计划文档基线 commit） | 来源设计: `docs/design/catalog-provider-field-authority.md`（v3.3，已随 58f3a5eee 升 v3.4） | 日期: 2026-09-10
 
-> 本计划把设计 §5 的 M1–M6 六个语义单元细化为 13 个可派发单元。细化不是语义变更，而是**领地互斥**要求：
+> 本计划把设计 §5 的 M1–M6 六个语义单元细化为可派发单元——初版 13 单元，执行期调整为 14（M1e 新立、M2g+M5b 合并为 M2fg）。细化不是语义变更，而是**领地互斥**要求：
 > 设计里 M1/M2/M3/M4 共改同一批热点文件（`provider-config-helper.ts` 被 M1/M2/M4 共改、`use-provider-edit.ts` 被 M1/M3/M6 共改、`pi-provider-store.ts` 被 M1/M2/M5 共改），
 > 同一 wave 内并行派发会写冲突，故按「同文件共改 → 串行边」拆开，并用契约前置（u-contracts）把 M3/M4 的共享接线点一次交付。
 > 单元 ID 保留设计映射（M1a = M1 的前端部分，依此类推），追溯不受影响。
@@ -101,6 +101,8 @@ graph TD
   U2R -->|"resolver 实现被消费"| U2C
   U2R -->|"resolver 实现被消费"| U3A
   U2B -->|"同文件 settings-message-handler.ts 串行 + 协议行为"| U3A
+  U2B -->|"三处消费点已是可注入形态"| U2C
+  U2B -->|"同文件 provider-config-helper.ts 串行"| U4
   U1A -->|"同文件 use-provider-edit.ts 串行"| U3B
   U2C -->|"接线完成后降级分支才可删 + 白名单方可清零"| U2FG
   U2B -->|"三处迁移的降级残留由本轮清除"| U2FG
@@ -165,7 +167,7 @@ pnpm --filter @xyz-agent/core test && pnpm --filter @xyz-agent/runtime test && p
 
 | # | 单元 | 偏差描述 | 判定 | 登记时间 |
 |---|------|---------|------|---------|
-| D-1 | M1b | **模型级空 `id` 的处置形态 = 整条丢弃模型，而非设计原文的「不写键」**。设计 D1 防线② 把模型级 `id/name/api/baseUrl` 与其余字段统一表述为「空串 = 未指定（不写键）+ warn」，但 `id` 在 pi schema 里是**必填**字段（`model-config.js:137-140` 的 `minLength:1`）——「不写键」会留下一个无 id 的模型条目，同样过不了校验。实现取「空/纯空白 id 的模型整条丢弃 + warn」，与载体侧设计意图（防线承诺 = 任何保存都不产生 schema 违规值）一致 | 合理不一致 → 固化；**需同步设计文档措辞**（把模型级 `id` 从「不写键」组拆出，单列为「丢弃该模型」），由主 agent 在阶段 4 doc_errors 批次回写 | 2026-09-10 |
+| D-1 | M1b | **模型级空 `id` 的处置形态 = 整条丢弃模型，而非设计原文的「不写键」**。设计 D1 防线② 把模型级 `id/name/api/baseUrl` 与其余字段统一表述为「空串 = 未指定（不写键）+ warn」，但 `id` 在 pi schema 里是**必填**字段（`model-config.js:137-140` 的 `minLength:1`）——「不写键」会留下一个无 id 的模型条目，同样过不了校验。实现取「空/纯空白 id 的模型整条丢弃 + warn」，与载体侧设计意图（防线承诺 = 任何保存都不产生 schema 违规值）一致 | 合理不一致 → 固化；**需同步设计文档措辞**（把模型级 `id` 从「不写键」组拆出，单列为「丢弃该模型」），由主 agent 在阶段 4 doc_errors 批次回写——**已回写（本批）** | 2026-09-10 |
 | D-2 | M1b | **防线载体签名比设计暂名多一个 `providerId` 参数**（第 5 参）。设计暂名 `applyProviderWritePolicy(merged, data, kind, source)`，但 §3.5 错误规格要求 warn 文案带 `<id>` 才能诊断（`dropped empty-string <field> for <id>`），无 id 无法定位 | 合理不一致 → 固化（签名以本节为准） | 2026-09-10 |
 | D-3 | M1b | **`eslint.config.mjs` 该文件 max-lines override 600 → 900**。设计 D1 指定防线载体驻 `provider-config-helper.ts`，落地后该文件 eslint 计数 586 → 715 超限（`pnpm lint` = `eslint . --max-warnings 0` 会红）。仓库既有先例即「聚合中心短期 override、长期拆分」（同文件原注释 + `download-asset.ts` 抬到 1000），且 M2b/M4 还会继续向该文件追加 | 合理不一致 → 固化（沿用仓库既有模式，非新机制） | 2026-09-10 |
 | D-4 | M1b | **既有断言 `provider-write-fields.test.ts` 「id 缺省 → `String(m.id ?? '')` 空串锚定」被改写**。该断言编码的正是要消灭的空串落盘行为（空 id 落盘即毒化整文件），与 G2「任何保存操作都不可能弄丢其他 provider」直接冲突，属本设计的必然改动而非顺手清理 | 合理不一致 → 固化（同批改断言 + 留注释说明理由） | 2026-09-10 |
@@ -182,9 +184,8 @@ pnpm --filter @xyz-agent/core test && pnpm --filter @xyz-agent/runtime test && p
 | D-15 | M3a | **测试连接错误契约由设计 §3.5 的「文案」形态收敛为结构化 code**：M3a 实装为行级 `http_error\|<status>\|<响应截断>` / `network_error\|<message>` / `unsupported` / `no_base_url` / `no_enabled_model`，顶层 `success=false` 承载 provider 级 code（`no_api_key` / `no_models` / `provider_not_found` / `test_unavailable`）；且**行级失败不改变顶层 `success`**（`success:true` + 行内 `ok:false` 是常态）。M3b 消费方按实装收敛（i18n 映射表见其报告）。理由：文案归前端 i18n 单一来源、runtime 只出可判定 code，比设计原文的「文案」形态更可测。主 agent 阶段 4 回写设计 §3.5 时同步 | 合理不一致 → 固化 | 2026-09-10 |
 | D-16 | M3b | **core 传输层类型缺 `mode`/`results`**：`packages/shared/src/protocol.ts` 已由 u-contracts 加好，但 core 侧另有自己的一套传输类型（`packages/core/src/domain/settings/transport.ts` 与 `packages/core/src/transport/api/domains/config.ts`）未同步——M3b 首轮用局部交叉类型绕过。属真实契约缺口（同一契约两处定义），M3b 第 2 轮领地扩展补齐并删除垫片 | 不合理偏差 → 打回修（第 2 轮） | 2026-09-10 |
 | D-17 | M3b | **`ProviderEditBody.vue` 未接线新 props → catalog 的「模型发现」按钮在生产路径仍渲染**：M3b 的验收（catalog 不渲染该按钮）在组件级成立、应用级不成立，因宿主组件未传 `providerKind` / `testResults` / `testError` / `providerBaseUrl`。该文件属 M4 领地（M4 正在改它），故归 **M4 第 2 轮**接线——M3b 不得越过 | 集成缺口 → 排入 M4 第 2 轮 | 2026-09-10 |
-
 | D-18 | M3a | **openai-responses 的最小请求取 `max_output_tokens: 16` 而非设计写的 1**：OpenAI 拒绝低于 16，pi-ai 自身也在发请求前 clamp 到 16（实装 `dist/api/openai-responses.js:16-17` 常量 OPENAI_RESPONSES_MIN_OUTPUT_TOKENS，注释指向 pi issue #6265）。用 1 会对全部 responses provider **稳定误报 400**。属设计 §3.3 D4 的事实错误（P-test-req 探针实测驱动），主 agent 阶段 4 回写 | 不合理偏差（设计侧）→ 打回改设计文档 + 实现按实测 | 2026-09-10 |
-| D-19 | M3a | **baseUrl 回落顺序对 catalog 是「网关优先」而非「模型级优先」**：设计 §3.3 D4 写的四级顺序（模型级 → custom provider 级 → catalog 网关 override）对 catalog 反了——pi 对 catalog 是 `config.baseUrl ?? model.baseUrl`（`provider-composer.js:98` applyModelsJson，网关**覆盖全部模型端点**，优先级高于模型级）；custom 才是 `definition.baseUrl ?? providerConfig.baseUrl`（`:55`）。照设计字面实现会让设了网关的 provider 去测模型级端点、而真实聊天打网关，违反 G3「成功 = 真的能聊」。实现按 pi 真实语义分两类（`resolveModelBaseUrl`），四级逐级断言齐备。**这是本设计最实质的一处事实纠错**，主 agent 阶段 4 回写 | 不合理偏差（设计侧）→ 打回改设计文档 + 实现按 pi 实装 | 2026-09-10 |
+| D-19 | M3a | **baseUrl 回落顺序对 catalog 是「网关优先」而非「模型级优先」**：设计 §3.3 D4 写的四级顺序（模型级 → custom provider 级 → catalog 网关 override）对 catalog 反了——pi 对 catalog 是 `config.baseUrl ?? model.baseUrl`（`provider-composer.js:98` applyModelsJson，网关**覆盖全部模型端点**，优先级高于模型级）；custom 才是 `definition.baseUrl ?? providerConfig.baseUrl`（`:53`）。照设计字面实现会让设了网关的 provider 去测模型级端点、而真实聊天打网关，违反 G3「成功 = 真的能聊」。实现按 pi 真实语义分两类（`resolveModelBaseUrl`），四级逐级断言齐备。**这是本设计最实质的一处事实纠错**，主 agent 阶段 4 回写 | 不合理偏差（设计侧）→ 打回改设计文档 + 实现按 pi 实装 | 2026-09-10 |
 | D-20 | M3a | **代表模型的「baseUrl 非空」过滤取生效 baseUrl（含回落链）而非模型级字面值**：否则「模型发现」拉回的模型（只有 id/name/contextWindow）永远无法测试，与 D4 明文「模型级 baseUrl 缺省时回落 provider 级」自相矛盾 | 合理不一致 → 固化（设计措辞在同批回写时补一句） | 2026-09-10 |
 | D-21 | M3a | **tester 由 handler 自建 infra 实例（transport → infra value import），未走 model-api-discoverer 的 port + 组合根注入先例**：M3a 受领地限制未改 index.ts/server.ts，自述「三层文档的软约束由此产生一处让步」。属一致性缺陷（同仓已有 `IModelSource` + 组合根注入的正解），非功能性 bug；收口需 4 文件（新增 ports 接口 + handler 改注入消费 + server.ts 透传 + index.ts 装配）且与 M2fg 同抢 handler 文件，故排入**阶段 4 修复循环**单独成单元，不与 M2fg 同轮 | 不合理偏差 → 阶段 4 打回修（排期受同文件串行约束） | 2026-09-10 |
 | D-22 | M4 | **UI 的网关/派生归类用启发式（派生值恒等于模型集唯一非空 baseUrl，否则判为用户网关）**：shared 的 `ProviderInfo` 没有「来源」判别字段，完全零推导做不到。属**受控例外**——只归展示类别、不重算下发值；边界：用户网关值恰等于派生值时被判为「内置端点」，但两种状态下 pi 生效端点相同，无行为差异。彻底解 = 给 ProviderInfo 加 `baseUrlSource: 'gateway' \| 'derived'` 字段（长期方案，已登记 §7 残留风险） | 合理不一致 → 固化 + 登记长期方案 | 2026-09-10 |
@@ -224,14 +225,14 @@ pnpm --filter @xyz-agent/core test && pnpm --filter @xyz-agent/runtime test && p
 
 ### 残留风险（执行期需持续观察）
 
-1. **i18n key 前瞻性**：M3a/M3b/M4 的文案 key 由 u-contracts 一次预置。若某单元发现缺 key，禁止越界改 locales（同 wave 写冲突），须停下上报，由主 agent 决定补派小单元或复用既有 key。
-2. **M2c 注释时序**：`pi-provider-store.ts:495-498` 注释前提随 D7（M4）变化，M2c 与 M4 同在 Wave3。若 M2c 先提交，存在一个 commit 的窗口内注释描述领先于代码；同 PR 内收敛，不构成缺陷。
-3. **M5a 登记的 hook 名**：constraints.json 里 enforcement 指向 `check-provider-credential-reads.mjs`（M2g 产出）。文件名是计划级固定契约；若 M2g 落地时改名，主 agent 在阶段 4 同步 M5a 登记文本。
+1. **i18n key 前瞻性**：M3a/M3b/M4 的文案 key 由 u-contracts 一次预置。若某单元发现缺 key，禁止越界改 locales（同 wave 写冲突），须停下上报，由主 agent 决定补派小单元或复用既有 key。——已闭合（M3a/M3b/M4 全 committed，无缺 key 上报）
+2. **M2c 注释时序**：`pi-provider-store.ts:495-498` 注释前提随 D7（M4）变化，M2c 与 M4 同在 Wave3。若 M2c 先提交，存在一个 commit 的窗口内注释描述领先于代码；同 PR 内收敛，不构成缺陷。——已闭合（M2c/M4 提交；其引用的 pi-provider-store 注释块已被 M2c 重写，锚点作废）
+3. **M5a 登记的 hook 名**：constraints.json 里 enforcement 指向 `check-provider-credential-reads.mjs`（M2g 产出）。文件名是计划级固定契约；若 M2g 落地时改名，主 agent 在阶段 4 同步 M5a 登记文本。——已闭合（hook 名一致，constraints :1950/:1969 enforcement 同名）
 4. **存量无标记网关误剥**：设计 D2 已接受代价（手编 models.json 网关且从未经新 UI 保存的条目会被剥除）；恢复路径 = M4 的网关输入框重设 + troubleshooting 登记。
-5. **设计文档「待验证检查点」回写**：6 个检查点的实测结论由主 agent 在阶段 4（doc_errors 归口）回写设计文档 §5 + 附录变更历史——不由任何开发单元承担（避免各单元改同一设计文档）。
+5. **设计文档「待验证检查点」回写**：6 个检查点的实测结论由主 agent 在阶段 4（doc_errors 归口）回写设计文档 §5 + 附录变更历史——不由任何开发单元承担（避免各单元改同一设计文档）。——已闭合（58f3a5eee，设计 v3.4 §5/§3.6）
 6. **隔离方式全 plain**：热点文件共改已在 DAG 中用串行边消除，同 wave 领地互斥；按 dag-authoring 决策表「领地互斥已足够安全」不启 worktree。
-7. **`packages/core` 的 pi-ai 隐式解析（已派回 M5a）**：M6 的新测试 import `@earendil-works/pi-ai`，`packages/core/package.json` 未声明该依赖，当前靠根 `devDependencies` 上溯解析（vitest 与 tsc 均通过）。属真实依赖声明缺口，已归入 M5a 一并补声明；在 M5a 提交前的中间 commit 依赖根 hoisting 生效，功能无影响。
-8. **`packages/ui` typecheck 既有基线失败（非本次引入、非 CI 门禁）**：`pnpm --filter @xyz-agent/ui typecheck` 报 3 处错误（`provider-edit-body.test.ts:198` 的 `'ipc' does not exist in type 'PlatformPort'`、`search-modal.test.ts:386/391/396` 的 `'searchMock' is possibly 'undefined'`），均在本次未触碰的文件里、与 provider 字段类型无关。已核实 `.github/workflows/ci.yml` 的 typecheck job 只跑 frontend / runtime / shared / extensions，**不含 ui**——属既有本地基线问题，本次不修、只登记（不擅自处理认知外问题）。
+7. **`packages/core` 的 pi-ai 隐式解析（已派回 M5a）**：M6 的新测试 import `@earendil-works/pi-ai`，`packages/core/package.json` 未声明该依赖，当前靠根 `devDependencies` 上溯解析（vitest 与 tsc 均通过）。属真实依赖声明缺口，已归入 M5a 一并补声明；在 M5a 提交前的中间 commit 依赖根 hoisting 生效，功能无影响。——已闭合（M5a 0011e964c：core package.json +pi-ai + lock）
+8. **`packages/ui` typecheck 既有基线失败（非本次引入、非 CI 门禁）**：主 agent 2026-09-10 复跑 `pnpm --filter @xyz-agent/ui typecheck`——现仅剩 `search-modal.test.ts` 3 处 TS18048（`'searchMock' is possibly 'undefined'`）；原 3 处错误中 `provider-edit-body.test.ts:198` 的 `'ipc' does not exist in type 'PlatformPort'` 已随 M4 第 2 轮（`eec21c324`）重写自然消除（该文件本次已触碰，非认知外）。已核实 `.github/workflows/ci.yml` 的 typecheck job 只跑 frontend / runtime / shared / extensions，**不含 ui**——属既有本地基线问题，本次不修、只登记（不擅自处理认知外问题）。
 9. **同一分支存在并发会话提交**：执行期间 `5887787fd docs(design): add 4 interactive UX demos for coding-plan quota config` 由并发工作流提交（6 个 quota UX demo 文件），随后又出现未跟踪的 `docs/design/coding-plan-quota-config-ux.md`（同一 quota UX 工作流）。二者与本计划领地零交集。主 agent 全程按精确路径 `git add`，本次各单元提交均只含本单元领地文件；并发会话的改动（已提交的与未跟踪的）一律不触碰、不裹挟、不清理。
 10. **pre-commit hook 运行中被重写（根因已定位，环境性，非本次改动可修）**：M1b 与 M2-r 的提交各中断一次，报 `line 910: 全部调用点（任意接收者——防: command not found` 这类「中文注释片段被当命令执行」。根因：`.githooks/install-hooks.sh:46` 用 cat 重定向加 heredoc（shell 变量 GIT_HOOKS_DIR 指向的共享 hook 路径，定界符 HOOK_EOF）**原地截断写入**该文件；而 `.bare/hooks/` 是多 worktree 共用的 hooks 目录（`:925` 注释自述「worktree 的 pnpm install（prepare → 本脚本）都会用…源覆盖」）。任何兄弟 worktree 执行 `pnpm install` → `prepare` → `install-hooks.sh` 重写该文件时，正在执行的 bash 按**字节偏移**续读，落进新内容中间 → 把注释片段当命令。实测两次失败时刻的 hook mtime 都恰好等于提交时刻。修复方向（**不在本流水线内擅自动手**，属跨会话共享基建）：写临时文件后 `mv` 原子替换（rename 后运行中的 bash 仍读旧 inode，竞态消失），3 行改动。处置：重试提交（已两次验证重试成功）。
 11. **既有测试 fixture 使用非 pi 合法语法的 env 形态（M2-r 探针旁证发现，不在本次范围）**：`packages/runtime/src/services/auth/__tests__/auth-storage.test.ts:156/158` 用 '$ENV:ZAI_API_KEY'，而 pi 的模板语法是 $ENV_VAR / ${ENV_VAR}——pi 会把 '$ENV:ZAI_API_KEY' 解析成变量 ENV + 字面 :ZAI_API_KEY（即该字符串不是有效的环境变量引用）。该用例断言的是 AuthStorage「原样存储不展开」，字符串取值本身不影响断言有效性，故**本次不改**（认知外、非生产路径，全仓仅此 2 处命中）；仅登记供后续清理。
@@ -245,6 +246,7 @@ pnpm --filter @xyz-agent/core test && pnpm --filter @xyz-agent/runtime test && p
 - 2026-09-10 派发前调整（同一版本内）：`IProviderCredentialResolver` 接口文件从 u-contracts 移入 M2-r 领地——接口是 M2-r 自身编译的前置，留在 Wave 1 会造成同波次跨单元编译依赖（u-contracts 未完成则 M2-r 无法 typecheck）。接口定义在设计 §3.5 为逐字原文，M2-r 自行落地无歧义；对 M2b/M2c/M3a 而言 M2-r 仍是唯一前置，依赖关系不变。
 
 - 2026-09-10 Wave2 完成后编排调整（M2b/M5a 报告驱动）：① **M2g + M5b 合并为 M2fg**——M2b 的三处链迁移落地为「可注入 + 缺省降级旧行为」，其降级分支（quota 内联 auth.json/models.json 回退、handler 的 models.json 回退、listProviders 的 `new Set(authIds)` 回退）保留的正是要收口的直查模式：不删则守卫脚本白名单无法清零、D3「唯一通道」名存实亡。故「删降级 + 落守卫 + constraints 登记」三件必须同批，且必须排在 M3a/M4 之后（同文件 settings-message-handler.ts / provider-config-helper.ts 串行）。② **M2c 领地扩展**：新增 `transport/server.ts`（SettingsMessageHandler ctx 透传 resolver）与 `services/config-service.ts`（listProvidersImpl 调用点透传）——M2b 报告的领地外装配点，原计划漏列。③ **M5a 拆为两次提交**：part 1 已提交，part 2（constraints 登记）并入 M2fg（`render-constraints` 结构校验要求 hook 文件存在，而 hook 由 M2fg 自己创建，同批才自洽）。Wave3 由 5 单元降为 4 单元，新增 Wave4 单单元 M2fg 收口；关键路径深度 3 → 4，最大宽度仍为 5。
-- 2026-09-10 Wave3 完成 + Wave4 解锁：M2c 1 轮（`5b0c493e1`，偏差 D-25/D-26/D-27）、M4 2 轮（`f28ecbb20` + `eec21c324`，D-17 闭合，偏差 D-28）。共享测试文件 test/settings-message-handler.test.ts 按「M3a describe 随 M2c 提交落盘（其源先行于 `7eb790d06`）」处理，提交树自洽。pre-commit hook 竞态（残留风险 10）第 3 次复现、重试成功。M2fg 已派发（后台运行中）。主 agent 预核实的 upsertProvider 直调全景比设计白名单列举宽（+ legacy-provider-migration / provider-extras-migration / pi-config-store 实现类三处），已写入 M2fg 派发提示，设计侧措辞阶段 4 一并回写。
+- 2026-09-10 Wave3 完成 + Wave4 解锁：M2c 1 轮（`5b0c493e1`，偏差 D-25/D-26/D-27）、M3a 1 轮（`7eb790d06`，两处设计纠错 D-18/D-19）、M3b 2 轮（`78d4ecede`，偏差 D-16/D-17——D-17 归 M4 第 2 轮闭合）、M4 2 轮（`f28ecbb20` + `eec21c324`，D-17 闭合，偏差 D-28）。共享测试文件 test/settings-message-handler.test.ts 按「M3a describe 随 M2c 提交落盘（其源先行于 `7eb790d06`）」处理，提交树自洽。pre-commit hook 竞态（残留风险 10）第 3 次复现、重试成功。M2fg 已派发（后台运行中）。主 agent 预核实的 upsertProvider 直调全景比设计白名单列举宽（+ legacy-provider-migration / provider-extras-migration / pi-config-store 实现类三处），已写入 M2fg 派发提示，设计侧措辞阶段 4 一并回写。
 - 2026-09-10 Wave4 完成（M2fg，1 轮，`92d761db6`，偏差 D-29/D-30/D-31）：三处降级分支删除 + getApiKeyForProvider 死代码清除 + 守卫脚本（A 凭据直查 / B upsertProvider 直调清单，反证 0/1/0）+ pre-commit/preflight 接线 + constraints C-proc-12/13 登记收口（93 条）。领地外 4 处组合根透传由主 agent 以断言形态闭合（D-30，「必需化」46 处连锁实测否定）。提交采用 pathspec 形式避开并发会话 staged 的认知外文件（提交后 git show 复核零裹挟、对方暂存状态原样）。D-21（tester 端口化）解锁，排入阶段 4 修复循环。
 - 2026-09-10 阶段 4 修复项 D-21 闭合（1 轮，`a6adcb5b0`，偏差 D-32）：IModelConnectionTester + 两数据类型逐字迁 services/ports，handler 改 ctx 恒注入，server/index 装配；transport→infra 值导入让步清零。全部开发单元与修复项落地，进入阶段 3-4 一致性审查（design-code-sync）。
+- 2026-09-10 阶段 4 doc_errors 回写批闭合（`58f3a5eee`，设计 v3.4：11 项偏差 + 检查点 1-6 回写 + provider-config-helper checkpoint-6 注释）。
