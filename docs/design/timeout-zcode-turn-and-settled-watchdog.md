@@ -264,6 +264,7 @@ deliverMessage（subagent-service.ts:1177）/ runSpawn（session-runner.ts:2453�
 - **被否**：在 settle 时区分（把 status error 的 terminal 不当终态）——终态就是终态（`session-channel.ts:608` 注释「旧实证：不归类挂到超时」），不当终态会回到挂死；以及只信 final-frame（error 终态往往没有 final-frame，response 为 delta 聚合/空——正是假成功的成因）。
 - **证据**：`session-channel.ts:607-617`（settle 传 status）、`:569,582`（final-frame 恒 success）、`zcode-engine.ts:1439-1450`（不消费 status）。
 - **效果**：§2 目标 4 前半；§5.2 F-3。⛔P-Z2 验证 error 终态的事件序（final-frame 与 turn.terminal 的先后、read 是否携带错误信息），失败降级：只消费 source="turn.terminal" 的 status（final-frame 先到时以 read 尾部合成，覆盖面收窄但不假成功）。
+- **D5① 后续修订（2026-09-10，commit `54899e349`）**：已落定 turn 的迟到 turn.terminal 日志按权威 status 分级——真机实证该形态唯一可达路径是 **success 终态常态迟到**（failed 无 final-frame 故永不进该分支），原无条件 warn 使每个成功任务必产一条零区分度 ERROR 级日志（经引擎 stderr → runtime `[rpc:stderr]` 全量 console.error 链路）。分级：success 静默（`lastTerminalStatus`/`lastTerminalError` 无条件入账不变）；interrupted 降 debug（SDK cli-entry stderr 兜底对 debug 跳过写入，对齐 CONSOLE_SINK 语义；`host/log` 反向请求全级别透传不变）；失败类（`isFailedTerminalStatus`，判据自 zcode-engine 收编 constants.ts 单源）与 unknown 保守 warn（假成功识破防御面保留）。settle 语义逐字不动；golden `_meta.synthesisNote` 补记真机帧序（final-frame 先落定为常态路径，failed = terminal 帧独到）。
 
 ### D6：瞬时失败重试一次 = 新会话重跑 + 预算继承（选定）
 
