@@ -339,3 +339,43 @@ audit §5 三条系统性裁决在本次事故的投影：
 | 处置翻转 | 「读不出」分支的默认姿势从无限保守等待改为短窗口重试后回收（D3b） |
 | 无后代判据 | tools 未限制或白名单含派生工具（subagents/workflow）或 bash（后台记账面）⇒ 保持三分支；仅「白名单非空且三者均不含」才走零判定快路径（D3a） |
 | 通道原语 | 与 pi 子进程通信的底层机制集合：spawn 组装/行读取/命令写入/id 路由/迟到帧/kill 链/get_state（§2.3） |
+
+---
+
+## 变更历史
+
+| 日期 | 事件 |
+|------|------|
+| 2026-09-10 | 实施完成：U1-U7b 对应实施单元 u1-acquire / u2-descendant / u3-flip / u4-spawn-channel / u5-runtime-switch 全部 committed（状态与证据见 impl-plan §6），u6-obs-docs 本次回写收口（troubleshooting 词条 + audit 回写 + 本节）。Gate B 真实场景验收（S1-S9）与 ⛔ 探针五条待执行，完成度以 impl-plan §6 状态表为准 |
+
+### 实施期偏差登记（文档与实现的最终对齐记录）
+
+以下为实施与本文正文的差异，如实登记（含未切换项及理由）；正文保留原文不改写——本节即差异的权威登记处。
+
+**D3a 判据落点**：`descendantCapable` 在 `session-runner.ts` 内 tools 汇合点就地派生并存入 `SpawnRunState`，`models/types.ts` 未动——`SpawnRunState` 实际定义在 session-runner.ts，§3.3 D3a / §5 U3 写的「types.ts（state 字段）」按实际类型归属就地吸收，无跨文件新字段。
+
+**D3b 窗口三处细化**：
+
+1. **绝对收敛上界 16s**：= 15s 窗口 + 入口惰性回补段 1s（agent_end 入口先做一次 get_state 单查 `backfillSessionFileViaGetState`，失败才进窗口）。§3.3 D3b「总收敛 ≤15s」的口径按「窗口 arm 起算 15s、入口段另计 1s」实现；
+2. **窗口重判仍 error → 续窗不重置**：重试 timer 在每轮 tick 同步开头排定下一轮、耗尽点恒 = arm + 15s。递归层主被唤醒后多轮 agent_end 重复进入 error 分支时，若每轮重置窗口会退化为无限等待——恰是本设计要消灭的形态（§3.4 竞态 #8 的守卫延伸）；
+3. **轮节奏固定 5s**（`DISPOSITION_RETRY_STEP_MS`）：不被轮内获取耗时顺延，保证耗尽点的墙钟确定性。
+
+**D2 多匹配**：实现为「全候选收集 + 按 mtime 降序取最新 + warn」（§3.3 D2「匹配多个取第一个 + warn」的等价实现——候选按 mtime 降序读，最新修改者即首候选；warn 文案含命中数与所选路径）。
+
+**D4 / u5 七件原语切换盘点（如实，六件未切换及理由）**：实际切换仅 **LF 行读取**一件（runtime `rpc-client.ts` 行读取改经 spawn-channel 消费；tee 经 `onStdoutLine` hook 接回，piSessionLog 落盘不丢，S8 断言通过）。其余六件按 u4/u5 盘点保持现状，理由：
+
+- **invocation 组装**：两侧身份域不同轨（Runtime 连接级 session 域 / subagent-core record 域），合并无净收益；
+- **stdin 写入**：Runtime 的 randomUUID 命令 id 是 Runtime 行为锚，替换即行为变更（违反行为不变替换边界）；
+- **id 路由**：Runtime pending 形状带 rejectAll 遍历（abort 广播语义），subagent-core 为单请求 resolver 形状——机制同构但状态面不同；
+- **kill 链**：Runtime 即时 SIGKILL（stream error/timeout 加速死亡）以「语义不回退」为前提保留；策略注入后净收益不抵接线成本；
+- **get_state 客户端**：Runtime 硬失败 safeDestroy 策略与既有会话重建路径深度耦合，抽换风险大于双份成本；
+- **迟到帧策略**：两侧以既有代码路径表达（Runtime timedOutIds 丢弃 / subagent-core D1 迟到接受），机制点已在 spawn-channel 登记为策略位。
+
+策略接口最终形态 = 类型契约（`SpawnChannelPolicies`）+ `SUBAGENT_CORE_SPAWN_POLICIES` 默认值登记（u5 注入对照基准），非运行时注入对象——六件不切则注入面收缩为类型级契约与默认值登记。spawn-channel 以受控子入口 `./spawn-channel` 发布（exports + publishConfig 双面，changeset minor：`.changeset/subagent-core-spawn-channel-subpath-export.md`）。
+
+**既有测试改写**：`run-spawn-edges.test.ts` 断言族按翻转后语义改写（无 skip）；新增 disposition-retry-window（窗口轮序 / 耗尽 / 竞态守卫）、agent-end-descendant-fast-path（快路径判据守卫）、spawn-channel 形状测试（四维策略默认值锚定）等。§3.2 预告的「约 5-6 个测试文件」实际集中度更高（断言族多数落在 run-spawn-edges 一处）。
+
+**待办清理项（登记，不阻塞本次收口）**：
+
+1. runtime `rpc-client.ts` 的 `attachLfOnlyLineReader` deprecated 测试锚（30 行）——行读取已切 spawn-channel，旧函数保留为测试锚，待后续迁移删除；
+2. `eslint.config.mjs` session-runner.ts 双 max-lines 规则并存——复杂度债务豁免组的 `'off'`（flat config 前段）与单列提额的 `'warn'@1400`（后段，实际生效）待收敛为一条。

@@ -245,6 +245,55 @@ CI=true ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install   # 约 6-7s 重建本地�
 
 **防护与根治**：护栏 `.githooks/check_pnpm_store_layout.sh` 挂在 pre-commit 第 0 段（install-hooks.sh 生成）与 validate-runtime-bundle.sh Gate 0，翻转即红并输出 [FIX] 指引——同时也兼作引擎侧「不覆写 HOME」修复的验收探针（修复落地后护栏应恒绿，红 = 回退信号）。根治在引擎侧不覆写 HOME（2026-09-03 开发中）；备选方案 `.npmrc` pin `store-dir` 评估结论：`~` 展开仍 HOME 相对（无效）、相对路径解析基准未验证（有 per-package store 撕裂风险）、写死绝对路径不可移植——均不采用。
 
+### 12. subagent 完成后不回收 / 回收慢：sessionFile 获取与 agent_end 处置特征串判读（2026-09-10 完成回收根修）
+
+subagent 的结果回收链 = 「sessionFile 三路获取（get_state 握手 → 迟到接受 → sessionDir 扫描）→ agent_end 处置（无后代快路径 / 三分支 / 15s 回补重试窗口）」，机制与残余风险见 [design/subagent-agent-end-recovery.md](design/subagent-agent-end-recovery.md)。以下特征串落在 pi 子进程内 extension 的文件日志（core logger component = `subagents`）：
+
+```bash
+# 桌面环境：runtime spawn pi 时恒注入 XYZ_AGENT_EXT_LOG=1，warn 级特征串默认落盘
+# （dev 数据目录前缀换成 ~/.xyz-agent-dev/pi/agent/logs/）
+grep -E "backfilled via (late|lazy) get_state|(located|backfilled) via sessionDir scan|unobtainable" \
+  ~/.xyz-agent/pi/agent/logs/subagents-*.log
+```
+
+裸 pi CLI 场景默认**不落盘**（extension-logger 双开关均未注入时 no-op）：需 `XYZ_AGENT_EXT_LOG=1`（info 观测档，debug 重标 info 一并写入）或 `XYZ_AGENT_DEBUG=1`（全量）。
+
+**三条主特征串**（均为 warn 级）：
+
+**① `backfilled via late get_state response` — 正常自愈**
+
+- 日志：`[session-runner] sessionFile backfilled via late get_state response: <path>`
+- 含义：get_state 握手 7s 窗口被 pi 冷启动拖过，但命令在管道排队不丢、pi 就绪后必答，迟到应答被收下并幂等回填（D1 迟到接受）。修复前该形态 sessionFile 永久缺失、agent_end 处置落入无限保守等待（carbon 2026-09-09 事故根因），现在是正常自愈路径。
+- 下一步：无需处置。批量并发派发时常态化命中说明机器冷启动长期超 7s——降并发或预热。
+
+**② `located via sessionDir scan` / `backfilled via sessionDir scan (close finalization)` — 兜底命中（自愈，但说明前两路已失败）**
+
+- 日志：`[session-runner] sessionFile located via sessionDir scan (agent_end backfill | retry window round 2): <path>`；close 收尾形态为 `sessionFile backfilled via sessionDir scan (close finalization): <path>`（同一兜底的两处措辞，对应 agent_end 链与提前 kill 收尾链两个接入点）
+- 含义：迟到接受也没赶上，改为扫 sessionDir 按文件内 identity entry 精确匹配 record.id 命中（D2 扫描兜底，`session-file-locator.ts`）。三个落点对应三条链路：agent_end 决策回补链 / 15s 重试窗口第 2 轮 / close 收尾反查链（lookupId 缺失形态——子进程在握手窗口内就被提前 kill、不产生 agent_end，即 audit LC-4/PS-9 的修复面）。
+- 下一步：单次出现无需处置；高频出现结合 locator 侧 warn 归因——`sessionDir scan found no match ... (sessionDir unreadable: ...)` 目录不可读/被重定向；`... (candidates after mtime filter: 0)` 目录内无本轮新建文件（警惕扫描目录指错）；`matched N files ... taking newest by mtime` 多匹配（record id 全局唯一，理论不可达；可达 = 文件被外力复制/GC 恢复残留，顺手清理）。
+
+**③ `unobtainable after 15s recovery window` — 需要关注的残余形态**
+
+- 日志：`[session-runner] sessionFile unobtainable after 15s recovery window (handshake suppressed? sessionDir missing?); process terminated, result recovered from stdout events; descendants (if any) remain on disk, queryable via session reader`
+- 含义：三路获取全失败（15s 窗口内 get_state 与扫描交替重试均 miss），进程被 kill（SIGTERM→30s→SIGKILL 升级链），runSpawn 以成功语义返回、结果来自 stdout 事件累积——不冻结、成果不丢。但若该 agent 真有活跃后代即为误杀（假阴性）：SIGTERM 不级联，后代继续跑完自身任务，成果留在其自身 session 文件（session-reader 可查），但其完成通知的投递目标已死——挂账重投耗尽后 abandoned（有日志）。
+- 下一步：①`ps aux | grep "pi --mode rpc"` 清点孤儿进程，确认后手工回收；②session-reader / `subagents action:"list"` 查后代成果；③验收口径（设计 §4 S7）翻转窗口触发应恒零——出现即按日志归因三路全失败的根因并回写验收表。桌面 EXT_LOG 档可回放窗口全程：`entering 15s recovery window`（进入）→ `retry window round N: ...`（逐轮）。
+
+**两条次级特征**：
+
+**④ `no-descendant fast path` — 正常路径（debug 级）**
+
+- 日志：`[session-runner] agent_end: no-descendant fast path (tools whitelist excludes subagents/workflow/bash): final kill, <id>`
+- 含义：tools 白名单非空且不含派生/记账工具（`subagents`/`workflow`/`bash`——bash 的后台模式同样进 pending 记账）的 agent 物理不可能有进程内后代，agent_end 零判定直接 final kill，秒级回收。
+- 下一步：无需处置。若期望 keep-alive 等待的 agent 命中此串，检查 tools 白名单是否漏配派生工具。
+
+**⑤ `process killed before handshake settled` — 边界形态（记账正确，非缺陷）**
+
+- 日志：`[session-runner] sessionFile unobtainable for <id> (process killed before handshake settled); record will be finalized as crashed; results were never produced`
+- 含义：子进程在握手结算前被 kill（abort / spawn watchdog / dispose），close 收尾扫描也未命中——极早期 kill（extensions 加载完成前）时 session_start hook 未跑、identity entry 未写，扫描结构性不可达。record 按 crashed 记账是正确语义（进程从未开始工作）。
+- 下一步：确认 kill 来源符合预期即可；若怀疑进程实际已产出成果，直接查子进程 session 文件（pi session 首条 assistant 消息即落盘）。
+
+区分提示：`backfilled via lazy get_state (spawn handshake had failed)`（warn）是 agent_end 决策时刻**主动**单次问询命中的惰性回补（T1 既有路径，8.8.0 起）；特征①是 spawn 期旧应答**迟到**到达（被动收下）。两者同为自愈痕迹，grep `backfilled via` 会同时命中，按文案区分。
+
 ## 环境变量速查
 
 | 变量 | 用途 | 生产默认值 | 开发默认值 |

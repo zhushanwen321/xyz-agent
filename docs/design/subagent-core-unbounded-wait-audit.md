@@ -330,7 +330,7 @@ if (record.sessionFile) {              // ← 守卫条件恰等于它要兜底�
 
 | ID | 验证的行为断言 | 探针 | 状态 | 失败时降级路径 |
 |---|---|---|---|---|
-| P-T1 | agent_end 时子进程（已完成 turn、idle）对 get_state 毫秒级应答 | 受控复现：并发 6 路 spawn + 人为抑制首次握手，断言惰性重试 < 1s 返回 sessionFile | **已执行 PASS**：6 路 0.3-0.4ms（预算 1s，2500 倍余量），T1 惰性回补主路径成立 | 失败路径（sessionDir 后缀扫描 + leaf 短路）未启用，保留为 LC-4/PS-9 修复面 |
+| P-T1 | agent_end 时子进程（已完成 turn、idle）对 get_state 毫秒级应答 | 受控复现：并发 6 路 spawn + 人为抑制首次握手，断言惰性重试 < 1s 返回 sessionFile | **已执行 PASS**：6 路 0.3-0.4ms（预算 1s，2500 倍余量），T1 惰性回补主路径成立 | **扫描兜底已落地（2026-09-10，本行原备注「sessionDir 后缀扫描未启用，保留为 LC-4/PS-9 修复面」就此关闭）**：locateSessionFileByScan（`session-file-locator.ts`，identity 精确匹配 + mtime 降序 + 整文件前向读）接入两点——agent_end 决策回补链（含 15s 重试窗口轮 2）与 close 收尾反查链 lookupId 缺失分支，LC-4/PS-9 修复面闭合；翻转决策见 §7.2 T8，设计依据 [subagent-agent-end-recovery.md](subagent-agent-end-recovery.md) D2 |
 | P-T2 | 30min keep-alive 固定默认上限不误杀真实 wave 场景（数小时 keep-alive 合法） | 真实数据回溯：扫历史 subagent session/record 中 keep-alive 窗口分布（89 个有效 closed 样本） | **已执行**：96.6% 样本 >30min（P50=24.5min/P95=71.6min/max≈95.5h）→ 固定 30min 被否定，**按降级路径 B 落地**：无进展检测（静默阈值 30min + stdout 活动刷新 + 到期复核存活活跃后代，有则重挂再等一周期，无则处置）——「直接后代长跑、层主静默」形态由复核节奏覆盖，不误杀 | 降级 A（P95×2 固定上限）保留为后备；复核判据与 sweep 同源（差集 + pid 探测），探不出 pid 的形态与 sweep 同盲区、归 T5 marker 兜底 |
 | P-T2b | pi 子进程收 SIGTERM 后是否自行级联 kill 其活跃后代（session_shutdown → killAllSpawnedChildren 链是否存在） | 本地起嵌套 subagent（父 keep-alive 且有活跃后代），向父进程发 SIGTERM，观察后代进程存活与终态 | **已执行**：后台孤儿后代形态三跑稳定 NO-CASCADE（仅 bash 前台窗口 CASCADE） | 裁决：后代补杀为主路径（设计已按此形态，无方案变更） |
 | P-T2c | chatMode post-run（agent_end → agent_settled）真实时长分布——T2-③ 的 10min 默认硬上限标定依据 | 真实 pi 会话多轮对话（3 短 + 60KB/120KB/400KB），统计每轮 agent_end→settled 间隔；附显式 compact 30 万 tokens 实验 | **已执行**：6 轮间隔全部 <2ms（同 chunk）；compact 40.1s | 10min 硬上限维持（4 个数量级余量） |
@@ -340,6 +340,16 @@ if (record.sessionFile) {              // ← 守卫条件恰等于它要兜底�
 | P-T3 | 主线程 → worker 的 `{type:"abort"}` 广播在 terminate 竞态下不产 unhandledRejection | fake-worker 测试：abort 广播与 worker 自然退出交错 | ⛔ T3 实施期 | 失败 → 退化为 terminate 杀线程（现状），pending 条目随 worker 死亡清理 |
 | P-T5 | marker 心跳（每次 agent_end 写盘）在真实分布下写盘开销可接受 | 历史回溯 4747 个 subagent session 的 agent_end 密度（P95≈10 次/分钟上界）+ 单次 56 字节覆盖写基准 | **已执行**：0.0315ms/次，开销可忽略 4 个数量级 | 心跳主路径落地；软超时降级未启用 |
 | P-RC1 | RC-1 触发条件实锤：并发 6 路 spawn 时 pi 子进程 7s 内答不出 get_state 的原因（机器负载 vs 协议缺陷） | 受控并发复现 + 子进程侧日志时间戳对比 | ⛔ 修复验收时 | 无论结论如何 T1 方案都成立（惰性回补不依赖触发条件成立），仅影响是否需要额外的 spawn 限速 |
+
+#### T8【决策】agent_end「读不出」处置翻转：无限保守等待 → 15s 回补重试窗口（2026-09-10 登记）
+
+- **来源**：[subagent-agent-end-recovery.md](subagent-agent-end-recovery.md) D3——本文 T1-T7 之后的后续设计。其 §0 与本文的关系声明：T1 交付惰性回补基础设施（8.8.0），该设计在其上补齐失败路径（D1 迟到接受 + D2 扫描兜底，见 P-T1 行更新）并新增本文未建模的处置翻转架构决策。
+- **采用**：`descendantCapable === true` 且 sessionFile 读不出（error）时不再进入无限 keep-alive（RC-2 的保守分支，本清单裁决 2 的头号实例），改为 **15s 回补重试窗口**：每 5s 一轮交替「get_state 单查 / sessionDir 扫描」（轮 3 纯判定轮），任一路径拿到真实 sessionFile 即以真实路径重走三分支；窗口重判仍 error 则续窗不重置（重试 timer 在 tick 同步开头排定下一轮，耗尽点恒 = arm + 15s——防递归层主多轮 agent_end 重复进入 error 分支时重置退化回无限等待）；窗口耗尽仍读不出 → kill（SIGTERM→30s→SIGKILL 升级链）→ runSpawn 以成功语义返回，结果内容来自 stdout 事件累积，不依赖 sessionFile。「读不出」触发率由两路配套打到近零：D1 迟到接受（握手 resolve 后迟到应答幂等回填，消除「永久缺失」）+ D2 扫描兜底（P-T1 行已登记落地）。`count > 0`（证实有后代）分支与 keep-alive 全部原样保留（G2 不回归——翻转只动「读不出」，不动「证实有」）；无后代能力 agent（tools 白名单非空且不含 subagents/workflow/bash）走零判定快路径。
+- **收口**：§5 裁决 2「保守 = 不限时」——保守不杀是对的，但「合法等待（有活跃后代）」与「记账失败（文件读不出）」必须分家：前者保留现有等待，后者给 15s 秒级上界。裁决 2 的实例清单（RC-2/LC-3/PS-6/PS-10/PS-11/PS-12）中 RC-2（含 LC-4/PS-9 放大链的入口）由本决策直接收口，并把「记账失败终有一杀」的量级从 30min no-progress 兜底的错误量级中解放（该兜底保留为「证实有后代但后代集体挂死」场景的最后防线，与本决策正交）。
+- **被否**：①维持无限保守等（翻转前现状）——§5 裁决 2 已论证；②读不出立即杀（零宽限）——极端慢盘/高负载下扫描合理需要多轮，零宽限推高误杀率，15s 是「误杀代价 ≈ 0 且总收敛有界」的平衡点；③窗口耗尽置 sweepDescendantsOnClose——结构性空转：sweep 入口 `sweepDescendantsOfSession` 首行 `if (!rootSessionFile) return`，窗口耗尽 = sessionFile 恒 undefined，置位是无效安慰剂；后代清理不靠 sweep（SIGTERM 不级联，P-T2b）。
+- **证据**：`session-runner.ts`（`runAgentEndDisposition` / `evaluateDispositionBranches` / `armDispositionRetryWindow` / `exhaustDispositionRetryWindow`）；`session-file-locator.ts`（`locateSessionFileByScan`）；`get-state-handshake.ts`（迟到接受）。
+- **效果**：记账失败最坏等待从 30min / 无限收敛到 15s + 入口惰性回补段 1s（绝对上界 16s）。误杀形态（三路获取全失败 ∧ 真有后代）为显式残余风险——代价有界、行为可见（日志链完整）、成果不丢、外部回收通道（kill/abort/dispose/外层墙钟）对残余 keep-alive 有效；四要素代价分析、重审触发条件（生产出现「15s 窗口耗尽」日志即触发）与 resume 脏差集续后处置见设计文档 D3b 误杀代价分析与 S5。
+- **排查入口**：特征串词条见 [../troubleshooting.md](../troubleshooting.md) §12（迟到回填 / 扫描兜底 / 窗口耗尽三特征串判读）。
 
 ## 8. 验收（真实场景，非单测非 mock）
 
@@ -396,7 +406,7 @@ if (record.sessionFile) {              // ← 守卫条件恰等于它要兜底�
 
 设计阶段无法确定、留给实施期验证的点（诚实标注，不编）：
 
-1. **RC-1 触发条件实锤**（探针 P-RC1）：并发握手失败是机器负载还是协议缺陷——不影响 T1 方案成立，但影响是否需要 spawn 限速。
+1. **RC-1 触发条件实锤**（探针 P-RC1）：并发握手失败是机器负载还是协议缺陷——不影响 T1 方案成立，但影响是否需要 spawn 限速。**执行载体（2026-09-10 登记）**：[subagent-agent-end-recovery.md](subagent-agent-end-recovery.md) S1 场景（6 路并发冷启动压力 + wrapper 注入）兼作本探针执行载体（该设计 §1 已声明），随其 Gate B 真实场景验收一并执行。
 2. **LC-5 竞态窗口**：armIdleTimer 误删需 fake-timer 精确交错验证后才定修复（若窗口证伪则降级为防御性身份比对，成本一行）。
 3. **PS-6 触发前提**：compaction 对 custom_message entry 的保留行为未验证（`notify-ledger.ts:34-36` 自述）——重投上限照加，但若 compaction 实际保留回执，则该缺陷触发率可能为零。
 4. **OR-5 默认值**：STATE_MAX_RUNS 若给默认值，具体数值需统计真实 run 体积分布后标定。
@@ -423,3 +433,9 @@ if (record.sessionFile) {              // ← 守卫条件恰等于它要兜底�
 ## 附录 C：修复前的运营缓解（止血，非修复）
 
 在代码修复落地前，生产环境可设 `XYZ_SUBAGENT_SPAWN_WATCHDOG_MS=1800000`（30 分钟）把「永久挂起」降级为「有界挂起」——注意这是兜底不是修复：daily 守卫 60% 触发率的教训表明，兜底的高触发率本身就是正常路径 broken 的信号，缓解期间应同步推进 M1。**已知副作用**：该 env 挂在 spawn 起点且覆盖**全部** spawn（`session-runner.ts:1700-1707`），不只 keep-alive——超过 30 分钟的合法长 one-shot 任务也会被误杀；止血期若存在此类任务，放宽手段是**显式传 maxTurns**（按任务轮数估算，优先级高于 env，见 `resolveSpawnWatchdogMs` `:229-251`）或**调大 env 值**，或接受误杀风险。
+
+## 变更历史
+
+| 日期 | 事件 |
+|------|------|
+| 2026-09-10 | agent-end 完成回收根修落地回写（C-proc-10；设计 [subagent-agent-end-recovery.md](subagent-agent-end-recovery.md)，实施单元 u1-u5 已全部 committed，u6 即本次回写）：①P-T1 降级路径列原备注「sessionDir 后缀扫描未启用，保留为 LC-4/PS-9 修复面」关闭——D2 扫描兜底（locateSessionFileByScan）已落地，接入 agent_end 决策回补链与 close 收尾反查链两点，LC-4/PS-9 修复面闭合；②新登记 §7.2 T8 翻转决策（agent_end error 分支 15s 回补重试窗口，收口 §5 裁决 2「保守 = 不限时」）；③§11 P-RC1 补执行载体声明（S1 场景兼作探针执行载体）。本文此前无集中变更历史节（历史登记以 §7.2/§7.3 内联清账形态存在），本节自本行起建 |
