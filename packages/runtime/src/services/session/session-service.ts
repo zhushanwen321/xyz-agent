@@ -722,7 +722,16 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     // 既有 restore，绝不抢跑——抢跑的 restoreSession 对未完成摘除的 session 走 existing
     // 清场分支 = 死亡清理汇聚点被完整触发（bus.clearSession 断流 + destroyPty 连杀 +
     // didDestroy 投递，被否谱系「超时抢跑」）。等待的确定性由 reclaim 的 finally 释放保证。
-    await this.awaitReclaimSeatRelease(sessionId)
+    // [u2 回归根因] 同步短路守卫：seat 未命中时必须零微任务让步。awaitReclaimSeatRelease
+    // 是 async 函数，无条件 `await` 即使内部同步 return 也让 restore 入口晚一个微任务，
+    // 「seat 缺省 = 行为不变」的 u2 契约在微任务粒度被破坏——ensureActive() 调用不再
+    // 同步进入 respawn.ensureRestored→restoreSession（join 语义本体未坏，restoringSessions
+    // 注册表照常去重），但测试构造依赖同步进入时序（同步断言 spy 次数 / ③b 的 deferred
+    // 注册窗口），Gate A 5 例 join 失败均源于此。isHeld 为纯同步查询，命中路径行为与
+    // 原 awaitReclaimSeatRelease 内部检查逐微任务等价（内部检查保留作双保险）。
+    if (this.reclaimSeat?.isHeld(sessionId)) {
+      await this.awaitReclaimSeatRelease(sessionId)
+    }
     await this.respawn.ensureRestored(sessionId)
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error('Restore succeeded but client not available')

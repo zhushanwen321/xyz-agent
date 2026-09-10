@@ -62,6 +62,9 @@ function makeMockClient(overrides: Partial<Record<string, unknown>> = {}): MockC
     onExit: vi.fn(),
     kill: vi.fn().mockResolvedValue(undefined),
     start: vi.fn().mockResolvedValue(undefined),
+    // touchActivity：sendPrompt 入口同步 touch（idle-pi-reclamation D6-1）经 pm.getClient
+    // 到达 fake client——fake 须补齐该接口成员（IPiEngine 结构要求）
+    touchActivity: vi.fn(),
     exited: false,
     ...overrides,
   }

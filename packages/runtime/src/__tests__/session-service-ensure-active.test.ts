@@ -112,6 +112,25 @@ describe('SessionService.ensureActive（exited 防御，fix-respawn-pi Wave 2）
     restoreSpy.mockRestore()
   })
 
+  it('seat 缺省（未注入）时 restore 内核同步进入：ensureActive() 调用零微任务让步（idle-pi-reclamation u2 回归锁定）', async () => {
+    // u2（idle-pi-reclamation D6-2）曾把 seat 等待写成无条件 `await awaitReclaimSeatRelease`：
+    // async 函数即使 seat 缺省同步 return，await 也让 restore 入口晚一个微任务，破坏
+    // 「seat 缺省 = 行为不变」契约（同步断言 spy 次数得 0；respawn ③b 的 deferred 注册
+    // 窗口失效 → 5s 超时）。现实现为同步短路守卫：seat 未命中不产生任何微任务——
+    // 本用例在首个 await 之前同步断言 restore 已进入，锁定零让步属性。
+    const { svc } = makeEnv(() => undefined)
+    const restoreSpy = vi.spyOn(svc, 'restoreSession').mockResolvedValue({} as SessionSummary)
+
+    const active = svc.ensureActive('sid-sync-entry')
+
+    // 同步断言（位于任何 await 之前）：restore 内核在 ensureActive() 调用的同步执行段内已进入
+    expect(restoreSpy).toHaveBeenCalledTimes(1)
+
+    // 收尾消费 rejection（restore 完成后 getClient 无 client，符合无进程场景），防 unhandled
+    await expect(active).rejects.toThrow('client not available')
+    restoreSpy.mockRestore()
+  })
+
   it('restoreSession 找不到持久化 session 时错误文案含恢复指引（§6.9/§7.3）', async () => {
     // 真 restoreSession 的 not-found 分支：scanSessions 恒 [] → findScannedSession 落空，
     // 在任何磁盘读/spawn 之前 throw，无 IO。
