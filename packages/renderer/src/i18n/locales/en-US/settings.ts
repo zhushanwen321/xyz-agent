@@ -424,7 +424,7 @@ export default {
     quotaType: 'Type',
     quotaTypePlaceholder: 'Not selected',
     quotaTypeHint: 'Select the matching Coding Plan type',
-    // D8 (coding-plan-quota-config-ux §6.9): with no type selected the section renders only the dropdown + this line
+    // D8 (coding-plan-quota-config-ux §6.9): when the type is undetermined (empty draft or preset miss) the section renders only the dropdown + this line
     quotaTypeFirstHint: 'Select a query type first; the parameters below change with the type.',
     quotaEnable: 'Enable quota query',
     // D4 (§6.5): the toggle is a pure config bit — it only controls display in the popover, never triggers a query

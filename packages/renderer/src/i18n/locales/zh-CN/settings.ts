@@ -424,7 +424,7 @@ export default {
     quotaType: '类型',
     quotaTypePlaceholder: '未选择',
     quotaTypeHint: '选择对应的 Coding Plan 类型',
-    // D8（coding-plan-quota-config-ux §6.9）：类型未选时区块只留下拉 + 这一句说明
+    // D8（coding-plan-quota-config-ux §6.9）：类型未定（空草稿或 preset 未命中时）区块只留下拉 + 这一句说明
     quotaTypeFirstHint: '先选一个查询类型，下面的参数会按类型自动变化。',
     quotaEnable: '启用额度查询',
     // D4（§6.5）：开关退化为纯配置位——只表达「要不要在浮层里展示」，不触发查询
