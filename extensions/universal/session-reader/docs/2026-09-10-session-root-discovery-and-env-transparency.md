@@ -639,8 +639,14 @@ agent → session_read { action:"find", query:"01a08zzz" }
             **域外伴随字段**（providers.json 的 version/scopedModels、models.json
             未来新增顶层键）→ **取新侧**并进冲突清单（第 10 轮裁决：运行时是新版
             代码在读该文件，新侧伴随字段与其 schema 自洽；影面审曾建议旧赢，被
-            「version 旧赢可能使新版代码读到过期 schema 号」否决。scopedModels 等
-            list 字段取新侧不做并集——并集对覆盖型条目有语义风险）。**防御式降级
+            「version 旧赢可能使新版代码读到过期 schema 号」否决。**源码依据**
+            （§12.3 实测核证）：providers.json 的唯一读写方 `provider-extras-store.ts:24`
+            注释「version 留未来迁移钩子，当前恒 1」，写侧恒写 1、读侧对 version 的
+            唯一消费是合法性校验（≠1 → `quarantineCorruptFile` 整文件隔离重置，
+            `:143-147`）——当前两侧恒同值、取侧等价；未来启用 v2 后新侧值更可能
+            正确，且读侧 quarantine 是现成兜底（providers extras 属可重建状态，
+            失配面有界）。scopedModels 等 list 字段取新侧不做并集——并集对覆盖型
+            条目有语义风险）。**防御式降级
             （按健康侧选向，第 10 轮修正）**：任一侧 JSON 解析失败、域路径解析不到、
             或域内值非 object 形态（pi 未来改 schema）→ 该文件整体取**健康一侧**
             （旧侧坏 → 新赢；新侧坏 → 旧赢；双侧坏 → 不动 + 报告人工处理，不产
@@ -1025,6 +1031,7 @@ npx tsx ./probe-find.mts
 | reap 判据 = argv `--session-dir` 精确相等 + ppid=1；env 判据被 SIP 探针在案否决 | `reap-orphan-pi.ts:12-27`（文件头注释 D4a/D4b）、`:147-160` | 读源码 | §6.12 |
 | `~/.xyz-agent/pi/` 根层只含 `agent/` + `sessions/` 两个子目录（prod）；dev `pi/` 顶层另有 2B 空壳 `auth.json`/`models-store.json` 与 37B `settings.json` 残片（真身在 `pi/agent/` 同名文件，size/mtime 实测对比） | 实机 `ls` + `stat` | 已测 | §6.11 |
 | provider 三件套顶层形态（keyed union 的域锚点依据）：auth.json = 顶层 keyed（providerId → dict）；models.json = 顶层单键 `providers`（keyed 域在 `.providers`）；config/providers.json = 顶层 `{version:int, providers:dict, scopedModels:list}`（keyed 域在 `.providers`，另有非域键） | 实机 prod `~/.xyz-agent/pi/agent/` 三文件 python json 解析 | 已测 | §6.11 |
+| providers.json 的 `version` 当前恒 1（写侧 `provider-extras-store.ts:26,52`），读侧唯一消费 = 合法性校验（≠1 → `quarantineCorruptFile` 隔离重置，`:143-147`），无版本分派逻辑——域外伴随字段取侧等价、失配面有界 | `packages/runtime/src/services/provider-extras-store.ts` 读源码（第 10 轮影面审终验核证） | 已测 | §6.11 |
 | xyz-agent 恒以 argv 传 18 个 mandatory extension 的 staged 路径（`--no-extensions` 恒带且只禁自动发现、显式 `--extension` 仍生效——pi help 原文 `dist/cli/args.js:294`）；**但 argv 同时也混有用户配置来源的路径**（活体实测 `~/.pi/agent/extensions/…`、项目 `.pi/extensions/…`、`~/.agents/skills`）——「用户 extension 不进 argv」被该实测证伪 | `rpc-client.ts:269,203-215` + `mandatory-extensions.json` + 活体 `ps -A -o pid,command` | 读源码 + 实测 | §6.12 |
 
 ### 12.4 变更历史
