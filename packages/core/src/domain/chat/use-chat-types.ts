@@ -90,11 +90,14 @@ export interface CompactQueueLike {
  *
  * 不 import 整个 SessionStoreInstance（避免 core 内 chat→session 域强耦合 + 返回类型膨胀）。
  * useChat 只用 applySnapshot 的单 session 形态（session.renamed / state_changed /
- * thinkingLevelSet 三个广播驱动的跨 store 字段更新）。结构性类型，renderer useSessionStore()
- * 返回值自动满足。
+ * thinkingLevelSet 三个广播驱动的跨 store 字段更新）+ revive（恢复窗口内新回合开始帧
+ * 的过渡态收口——dead 复位，crash-resilience T4 回流修复）。结构性类型，
+ * renderer useSessionStore() 返回值自动满足。
  */
 export interface SessionStoreLike {
   applySnapshot(id: string, snapshot: SessionViewSnapshot): void
+  /** dead → idle 复位（恢复窗口过渡态收口时与 chat store 收口同帧调用） */
+  revive(id: string): void
 }
 
 /**

@@ -261,6 +261,33 @@ describe('PV7: respawn 过渡态（crash-resilience T4：恢复窗口不进终�
     expect(wrapper.text()).toContain('会话进程已退出')
     expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(false)
   })
+
+  it('message_start 收口语义（恢复窗口发消息的 join 路径：dead 复位 + T4 条）→ 对话流恢复，不进终态页', async () => {
+    // [crash-resilience T4 回流修复] Gate B A7 缺陷：恢复窗口内发消息经 runtime 惰性恢复
+    // join 完成，无 session.restored 帧 → 此前过渡态无收口信号，超时回落 dead 终态页。
+    // 修复后 useChat 的 message_start 收口 gate 执行同构三件套（clear + T4 条 + revive），
+    // 本用例锁定收口后的用户可见 DOM 终态（gate 链路见 respawn-pending.test.ts ⑧）。
+    const sessionStore = useSessionStore()
+    const chat = useChatStore()
+    sessionStore.appendSession(makeSession('s1'))
+    sessionStore.markDead('s1')
+    chat.markRespawnPending('s1')
+    const wrapper = mountPanel('s1')
+    expect(wrapper.find('[data-testid="respawn-pending-bar"]').exists()).toBe(true)
+
+    chat.clearRespawnPending('s1')
+    chat.appendRespawnNotice('s1', 'restored', '会话引擎已从崩溃中恢复。')
+    sessionStore.revive('s1')
+    await wrapper.vm.$nextTick()
+
+    // 用户可见 DOM 断言：dead 占位不出现（无需手动「重新打开」）；过渡条消失；
+    // 消息流渲染位恢复（T4 提示条入流——notice 数据断言见 respawn-pending.test.ts ⑧）；
+    // Composer 保持可用
+    expect(wrapper.text()).not.toContain('会话进程已退出')
+    expect(wrapper.find('[data-testid="respawn-pending-bar"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="msg-stream"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(true)
+  })
 })
 
 describe('PV5: ask-user 互斥替换（D5：overlay ⟺ (conversation || trace) && input===ask-user）', () => {

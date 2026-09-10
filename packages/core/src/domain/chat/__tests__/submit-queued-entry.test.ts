@@ -33,7 +33,7 @@ function makeDeps(over: Partial<{ send: ReturnType<typeof vi.fn>; steer: ReturnT
     },
     writeSegments: writeSegments as unknown as SubmitQueuedEntryDeps['writeSegments'],
     chat,
-    sessionStore: { applySnapshot: vi.fn() },
+    sessionStore: { applySnapshot: vi.fn(), revive: vi.fn() },
     toast: { error: vi.fn() },
     t: vi.fn((key: string) => key),
     getCompactQueue: vi.fn(),

@@ -67,7 +67,7 @@ function makeFixture(): Fixture {
       ensureStreamSubscription(
         sid,
         chatStore,
-        { applySnapshot: vi.fn() },
+        { applySnapshot: vi.fn(), revive: vi.fn() },
         deps,
       ),
     streamSubscribe,

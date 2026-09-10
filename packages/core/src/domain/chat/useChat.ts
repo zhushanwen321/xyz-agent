@@ -444,6 +444,35 @@ function handleSessionThinkingLevelSet(
   }
 }
 
+/**
+ * [crash-resilience T4 回流修复] 恢复窗口过渡态的「新回合开始」收口 gate。
+ *
+ * 缺陷（Gate B A7 真机）：恢复窗口（respawnPending）内用户发消息 → runtime 侧用户消息
+ * 触发的惰性恢复（ensureRestored join）先于 D7 自动恢复 timer 完成 → timer fire 时
+ * 「already active/restoring — skip auto respawn」→ session.restored 帧永不发布
+ * （restored 只由 attemptRespawn 自身执行的成功路径发布，惰性恢复成功路径不发布）。
+ * 前端过渡态原本只等 restored/restoreFailed/30s 超时收口 → 超时后回落 dead 终态页，
+ * 而 session 实际已恢复、消息已获回复——用户被迫手动「重新打开」。
+ *
+ * 收口信号 = 恢复窗口内该 session 的 message.message_start 到达：新 pi 已在处理用户
+ * 消息，「恢复完成」事实成立（恢复窗口订阅自 exited 时建立，恢复后的帧必经本 handler）。
+ * 执行与 useMessageEffects.handleSessionRestored 同构的收口：清过渡态 + T4 恢复提示条
+ * （复用 respawnRestored 文案）+ dead 复位。幂等：restored 帧若仍到达（消息晚于 D7
+ * 恢复完成的时序），其 handler 的 isRespawnPending 守卫使二次收口 no-op，不插双条。
+ * 30s 超时 timer 到期时分区已清 → no-op 自清，无需跨模块取消。
+ */
+function consumeRespawnWindowOnTurnStart(
+  sid: string,
+  chat: ChatStoreInstance,
+  sessionStore: SessionStoreLike,
+  deps: EnsureStreamSubDeps,
+): void {
+  if (!chat.isRespawnPending(sid)) return
+  chat.clearRespawnPending(sid)
+  chat.appendRespawnNotice(sid, 'restored', deps.t('panel.message.respawnRestored'))
+  sessionStore.revive(sid)
+}
+
 export function ensureStreamSubscription(
   sid: string,
   chat: ChatStoreInstance,
@@ -479,6 +508,11 @@ export function ensureStreamSubscription(
     // 非 delta 消息在 coalescer 内先 flush 该 sid 缓冲再同步 dispatch（终态即时，保序）。
     // 只改 message.* 分发路径，订阅编排（streamSubscriptions/subscribeSession）不动。
     if (msg.type.startsWith('message.')) {
+      // [crash-resilience T4 回流修复] 恢复窗口收口 gate（enqueue 前——同步于流式帧处理
+      // 之前插 T4 提示条，保证条目在 assistant 气泡之前；非 message_start 帧 no-op）
+      if (msg.type === 'message.message_start') {
+        consumeRespawnWindowOnTurnStart(sid, chat, sessionStore, deps)
+      }
       coalescer.enqueue(sid, msg, (m) => chat.applyMessageEvent(sid, m))
       return
     }

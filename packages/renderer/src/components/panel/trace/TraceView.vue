@@ -29,6 +29,14 @@
       <p class="text-[length:var(--text-xs)] text-neutral-fg">{{ t('panel.trace.loadFailed') }}</p>
       <p class="max-w-[420px] text-[length:var(--text-2xs)] leading-relaxed text-neutral-dim">{{ t('panel.trace.loadFailedHint') }}</p>
       <p class="font-mono text-[length:var(--text-3xs)] text-neutral-faint">{{ partition.errorCode }}</p>
+      <!-- envelope message 透出（分区已存此前未渲染）：payload_too_large 等传输守卫错误
+           的恢复指引在此字段（「加载更早」分页入口 + session 文件路径，crash-resilience §3.4），
+           只显示 code 会把恢复路径藏掉 -->
+      <p
+        v-if="partition.errorMessage"
+        class="max-w-[420px] break-all text-[length:var(--text-2xs)] leading-relaxed text-neutral-dim"
+        data-testid="trace-error-message"
+      >{{ partition.errorMessage }}</p>
       <Button variant="ghost" size="sm" data-testid="trace-retry" @click="retry(props.sessionId)">
         <RotateCcw class="mr-1 size-3" />
         {{ t('panel.trace.retry') }}

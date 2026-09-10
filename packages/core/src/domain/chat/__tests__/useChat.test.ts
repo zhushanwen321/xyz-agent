@@ -40,7 +40,7 @@ interface Fixture {
     streamSubscribe: ReturnType<typeof vi.fn>
   }
   chatStore: ReturnType<typeof createChatStore>
-  sessionStore: { applySnapshot: ReturnType<typeof vi.fn> }
+  sessionStore: { applySnapshot: ReturnType<typeof vi.fn>; revive: ReturnType<typeof vi.fn> }
   toast: { error: ReturnType<typeof vi.fn> }
   compactQueue: {
     flush: ReturnType<typeof vi.fn>
@@ -75,7 +75,7 @@ function makeFixture(): Fixture {
       }
     }),
   }
-  const sessionStore = { applySnapshot: vi.fn() }
+  const sessionStore = { applySnapshot: vi.fn(), revive: vi.fn() }
   const toast = { error: vi.fn() }
   // CompactQueueLike mock（session-occupancy D2：rejected 兜底入队 + flush 来源消歧）
   const compactQueue = {
@@ -1133,6 +1133,64 @@ describe('defer flush 重投 timer 占用短路（D1）', () => {
     f.emit('d1d', msg('d1d', 'session.occupancy', { turn: 'idle', compacting: false, bash: false }))
     await vi.advanceTimersByTimeAsync(0)
     expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
+    f.dispose()
+  })
+})
+
+describe('恢复窗口过渡态的 message_start 收口 gate（crash-resilience T4 回流修复）', () => {
+  // 缺陷背景（Gate B A7 真机）：恢复窗口（respawnPending）内用户发消息 → runtime 惰性恢复
+  // join 先于 D7 自动恢复 timer 完成 → timer fire「already active/restoring — skip」→
+  // session.restored 帧永不发布 → 前端过渡态只能等 30s 超时回落 dead 终态页（而 session
+  // 实际已活）。收口信号 = 恢复窗口内该 session 的 message_start 到达（新 pi 已在处理）。
+
+  it('respawnPending 内 message_start 到达 → 过渡态收口 + T4 条入流 + sessionStore.revive', async () => {
+    const f = makeFixture()
+    await f.useChat.send('s-join', textToSegments('hello during recovery'))
+    f.chatStore.markRespawnPending('s-join')
+
+    f.emit('s-join', msg('s-join', 'message.message_start', { messageId: 'a-join' }))
+
+    // 过渡态收口（同步于 enqueue 前——流式帧处理前 T4 条已在流内，先于 assistant 气泡）
+    expect(f.chatStore.isRespawnPending('s-join')).toBe(false)
+    expect(f.sessionStore.revive).toHaveBeenCalledWith('s-join')
+    const notice = f.chatStore
+      .getMessages('s-join')
+      .find((m) => m.role === 'system' && (m.details as { variant?: string } | undefined)?.variant === 'restored')
+    expect(notice).toBeDefined()
+    // fallbackText 经 deps.t（fixture 返回 key 本身）
+    expect(notice!.content).toBe('panel.message.respawnRestored')
+    f.dispose()
+  })
+
+  it('非恢复窗口 message_start → gate no-op（无 T4 条、revive 不调）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('s-normal', textToSegments('hi'))
+    f.emit('s-normal', msg('s-normal', 'message.message_start', { messageId: 'a1' }))
+    expect(f.sessionStore.revive).not.toHaveBeenCalled()
+    expect(
+      f.chatStore
+        .getMessages('s-normal')
+        .some((m) => m.role === 'system' && (m.details as { variant?: string } | undefined)?.variant === 'restored'),
+    ).toBe(false)
+    f.dispose()
+  })
+
+  it('restored 帧先行收口后 message_start 到达 → 二次收口 no-op（不插双条）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('s-race', textToSegments('hi'))
+    f.chatStore.markRespawnPending('s-race')
+    // 模拟 restored 帧先到（renderer useMessageEffects.handleSessionRestored 的收口三件套）
+    f.chatStore.clearRespawnPending('s-race')
+    f.chatStore.appendRespawnNotice('s-race', 'restored', 'panel.message.respawnRestored')
+
+    f.emit('s-race', msg('s-race', 'message.message_start', { messageId: 'a1' }))
+
+    expect(f.sessionStore.revive).not.toHaveBeenCalled()
+    expect(
+      f.chatStore
+        .getMessages('s-race')
+        .filter((m) => m.role === 'system' && (m.details as { variant?: string } | undefined)?.variant === 'restored'),
+    ).toHaveLength(1)
     f.dispose()
   })
 })

@@ -545,3 +545,49 @@ describe('oversize 降级视图（crash-resilience §3.3 D5④，u4c 协议扩�
     view.unmount()
   })
 })
+
+describe('error 态 envelope message 透出（crash-resilience §3.4 回流修复）', () => {
+  it("status='error' → 渲染分区 errorMessage（envelope 恢复指引：分页入口 + session 文件路径），不只显示 code", async () => {
+    // Gate B A11② 场景：活跃大 session 的 get_entries reply 被 D3 传输守卫拦为错误
+    // envelope（code=payload_too_large），message 携带恢复指引——此前 UI 只渲染 code，
+    // 指引文案被藏掉。message-broker reply envelope 生成处透传的 err.message 即原文。
+    const envelopeMessage =
+      '该内容过大无法传输（37.7 MB），请用「加载更早」分页查看或查阅 session 文件：/pi/sessions/big.jsonl'
+    apiMock.getTraceEntries.mockRejectedValue(
+      Object.assign(new Error(envelopeMessage), { code: 'payload_too_large' }),
+    )
+
+    const view = mount(TraceView, { props: { sessionId: SID } })
+    await vi.waitFor(() => expect(useSessionTrace().partition.value.status).toBe('error'))
+    await nextTick()
+
+    // 分区数据层：code 与 message 都保留（loadTrace catch 既有行为）
+    expect(useSessionTrace().partition.value.errorCode).toBe('payload_too_large')
+    expect(useSessionTrace().partition.value.errorMessage).toBe(envelopeMessage)
+
+    // 用户可见 DOM 断言：错误态同时可见 code 与 envelope message（恢复指引完整透出）
+    const errBox = view.find('[data-testid="trace-error"]')
+    expect(errBox.exists()).toBe(true)
+    expect(errBox.text()).toContain('payload_too_large')
+    expect(errBox.find('[data-testid="trace-error-message"]').text()).toBe(envelopeMessage)
+    expect(errBox.text()).toContain('加载更早')
+    expect(errBox.text()).toContain('/pi/sessions/big.jsonl')
+    // 重试入口保留
+    expect(errBox.find('[data-testid="trace-retry"]').exists()).toBe(true)
+    view.unmount()
+  })
+
+  it("errorMessage 为 null（无 message 的异常形态）→ message 行不渲染，error 分支不空窗", async () => {
+    apiMock.getTraceEntries.mockRejectedValue(new Error('boom'))
+
+    const view = mount(TraceView, { props: { sessionId: SID } })
+    await vi.waitFor(() => expect(useSessionTrace().partition.value.status).toBe('error'))
+    await nextTick()
+
+    // loadTrace catch 的兜底：err.message 恒有值（'boom'），此处验证 v-if 门控形态——
+    // message 行渲染的是兜底文案而非空节点
+    expect(useSessionTrace().partition.value.errorMessage).toBe('boom')
+    expect(view.find('[data-testid="trace-error-message"]').text()).toBe('boom')
+    view.unmount()
+  })
+})

@@ -143,7 +143,7 @@ function makeFixture(sid: string): Fixture {
     writeSegments: vi.fn().mockResolvedValue(undefined),
     // pinia store → core ChatStoreInstance 的类型鸿沟 cast（renderer useChat.ts 同款，运行时等价）
     getChatStore: () => chatStore as unknown as ChatStoreInstance,
-    getSessionStore: () => ({ applySnapshot: vi.fn() }),
+    getSessionStore: () => ({ applySnapshot: vi.fn(), revive: vi.fn() }),
     toast: { error: vi.fn() },
     t: (k: string) => k,
     getCompactQueue: () => ({ flush: vi.fn().mockResolvedValue(true) }),

@@ -20,7 +20,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 import type { ServerMessage, SessionGroup } from '@xyz-agent/shared'
 
 const mockHolder = vi.hoisted(() => {
@@ -255,5 +255,50 @@ describe('respawn 过渡态（crash-resilience T4 回流修复）', () => {
     await expect(sidebar.restoreSession('s-respawn')).rejects.toThrow()
 
     expect(chatStore.isRespawnPending('s-respawn')).toBe(false)
+  })
+
+  it('⑧ 恢复窗口发消息 → message_start 到达（join 路径无 restored 帧）→ 收口 + dead 复位 + T4 条（Gate B A7 缺陷回归）', async () => {
+    // 缺陷复现链：kill → 1s 内发消息 → runtime 惰性恢复 join 先于 D7 timer 完成 →
+    // timer fire「already active/restoring — skip auto respawn」→ session.restored 帧永不
+    // 发布 → 过渡态无收口信号，30s 超时后回落 dead 终态页（用户被迫手动「重新打开」）。
+    // 修复：恢复窗口内 message.start（新 pi 已在处理用户消息）经 useChat 收口 gate 收口。
+    await initAndConnect()
+    const chatStore = useChatStore()
+    const sessionStore = useSessionStore()
+    const events = await import('@xyz-agent/core/transport/api')
+    const { derivePanelView } = await import('@xyz-agent/core')
+
+    injectExited()
+    expect(chatStore.isRespawnPending('s-respawn')).toBe(true)
+
+    // 恢复窗口内发消息（send 建立订阅；runtime join 半边见用例④）
+    const { useChat } = await import('@/composables/features/chat/useChat')
+    await useChat().send('s-respawn', [{ type: 'text', text: 'hello during recovery' }])
+
+    // 恢复完成（无 session.restored 帧）后新 pi 开始处理：message_start 经恢复窗口订阅到达
+    events.dispatchSession('s-respawn', {
+      type: 'message.message_start',
+      payload: { sessionId: 's-respawn', messageId: 'm-join' },
+    })
+    await nextTick()
+
+    // 过渡态收口 + dead 复位（用户不再见 dead 终态屏，无需手动「重新打开」）
+    expect(chatStore.isRespawnPending('s-respawn')).toBe(false)
+    expect(sessionStore.list.find((s) => s.id === 's-respawn')?.status).toBe('idle')
+    // T4 恢复提示条入流（与 restored 帧路径同文案）
+    const msgs = chatStore.getMessages('s-respawn')
+    const notice = msgs.find((m) => m.role === 'system' && (m.details as { variant?: string } | undefined)?.variant === 'restored')
+    expect(notice).toBeDefined()
+    // 派生保持 conversation 形态（Panel.vue Composer 渲染判据，dead 占位不出现）
+    const view = derivePanelView({
+      sessionId: 's-respawn',
+      hasMessages: true,
+      isSessionDead: sessionStore.list.find((s) => s.id === 's-respawn')?.status === 'dead',
+      isSessionRespawning: chatStore.isRespawnPending('s-respawn'),
+      isTraceView: false,
+      hasAskUserRequest: false,
+      isFlowActive: false,
+    })
+    expect(view.kind).toBe('conversation')
   })
 })
