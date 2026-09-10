@@ -61,6 +61,7 @@ import {
   ZCODE_TURN_IDLE_TIMEOUT_MS,
   ZCODE_TURN_MAX_TIMEOUT_ENV,
   ZCODE_TURN_MAX_TIMEOUT_MS,
+  isFailedTerminalStatus,
   parseZcodeTurnTimeoutEnv,
 } from "./constants.ts";
 import { toErrorMessage } from "./error-message.ts";
@@ -912,14 +913,42 @@ export class SessionChannel {
     turn.lastTerminalStatus = status;
     this.recordTerminalError(turn, params);
     if (turn.settled) {
-      logger.warn(
-        `权威终态晚于落定结果到达（会话 ${turn.sessionId}，已落定 source=${
-          turn.terminal?.source
-        }）：turn.terminal status="${status}" 仅记录不改写（P0-1 D5①）`
-      );
+      this.logLateTerminal(turn, status);
       return;
     }
     turn.settle({ status, source: "turn.terminal" });
+  }
+
+  /**
+   * 已落定 turn 的迟到权威终态分级日志（P-Z2 后续：常态迟到降噪）。真机实证该
+   * 形态的唯一可达路径是 success 终态常态迟到（final-frame 先落定 + 权威
+   * turn.terminal 迟到）——即每个成功任务必经；原无条件 warn 经 SDK cli-entry
+   * 的 stderr 兜底 → runtime [rpc:stderr] 全量 console.error 链路，每个成功任务
+   * 产一条零异常区分度的 ERROR 级日志。按权威 status 分级（落定语义不动——
+   * lastTerminalStatus/lastTerminalError 的入账在上游无条件路径完成）：
+   *   - "success"：常态迟到，零日志；
+   *   - "interrupted"：用户中断形态，debug（stderr 兜底对 debug no-op——对齐
+   *     SDK logger CONSOLE_SINK 语义，host/log 反向请求侧仍可观测）；
+   *   - 失败类（isFailedTerminalStatus，与引擎失败分流同口径）与 unknown/未识别
+   *     status：保守 warn（原样 status 已写入文案）——假成功识破的防御面，理论
+   *     不可达但保留，宁可误报不静默。
+   */
+  private logLateTerminal(turn: ActiveTurn, status: string): void {
+    if (status === "success") return;
+    const message = `权威终态晚于落定结果到达（会话 ${
+      turn.sessionId
+    }，已落定 source=${
+      turn.terminal?.source
+    }）：turn.terminal status="${status}" 仅记录不改写（P0-1 D5①）`;
+    if (isFailedTerminalStatus(status)) {
+      logger.warn(message);
+      return;
+    }
+    if (status === "interrupted") {
+      logger.debug(message);
+      return;
+    }
+    logger.warn(message);
   }
 
   /** terminal 帧专属错误信息入账（⛔P-Z2 实证：真实 failed 终态的 errorCode/errorMessage
