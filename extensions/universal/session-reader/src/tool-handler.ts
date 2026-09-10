@@ -2537,7 +2537,7 @@ export { extractFinalAssistantText }
 /**
  * session_read 工具的纯逻辑 handler（信号包注入，零 pi 依赖，可单测）。
  *
- * 按 params.action 分发到 doFind/doFamily/doOutline/doExpand/doDetail/doSearch/doExport。
+ * 按 params.action 分发到 do* 家族（11 个 action，与本文件各 action 实现一一对应）。
  * F1(resolve)/F4/F5/F6 抛 Error（含 👉）；F2 多匹配与 find 零匹配返回结果不抛。
  *
  * @param signals 发现层信号包（design §7B：index.ts 采集 { agentDir, liveSessionDir? }，
