@@ -19,7 +19,7 @@
 
 ### 1.2 系统是什么（受众认知铺垫）
 
-RecordStore（`execution/record-store.ts`，1483 行）已是 record 的统一容器：内存持有 running、终态从 session.jsonl 重建、两级读写（light 头 + 全量懒加载）。本设计不是新建模块，而是把它从「容器 + 部分写面」升级为「唯一写入口 + 权威分层」。H3 拆分后其 RecordLifecycle 聚合是消费侧，本设计落在 store 自身接口。
+RecordStore（`execution/record-store.ts`，1466 行）已是 record 的统一容器：内存持有 running、终态从 session.jsonl 重建、两级读写（light 头 + 全量懒加载）。本设计不是新建模块，而是把它从「容器 + 部分写面」升级为「唯一写入口 + 权威分层」。H3 拆分后其 RecordLifecycle 聚合是消费侧，本设计落在 store 自身接口。
 
 ### 1.3 设计目标
 
@@ -37,7 +37,7 @@ RecordStore（`execution/record-store.ts`，1483 行）已是 record 的统一�
 
 ## 2. 现状与问题分析
 
-### 2.1 写面清单（现状 9 处 → H1/H2 落地后 8 处）
+### 2.1 写面清单（现状 9 处活跃写面；H1/H2 落地后 pump 游离 record 消亡）
 
 | # | 位置 | 写什么 | 为什么存在（崩溃窗口） | 终态归属 |
 |---|------|--------|----------------------|---------|
@@ -76,12 +76,12 @@ boot 期 4：store.revive / 孤儿恢复（recoverOrphanRecords）/ 对账 sweep
 |---------|------|---------|
 | `register(record)` | 创建入册 | entry（best-effort）+ 索引失效 |
 | `appendEvent(id, event)` | 事件追加（过程） | entry 变迁（best-effort） |
-| `markRoundStarted(id)` | 轮始重置（v2 补：status=running + result/resumable 清除——热路径 :1397-1401 与冷续轮 :1493-1500 两写点归口） | entry（best-effort） |
-| `markRoundIdle(id, outcome)` | 轮末置闲（**v2 补 outcome 载荷**：`{kind:"success",content}\|{kind:"failed",reason}` 与 H1 D7 判别联合同名对齐——无载荷则 result 写入规则与 entry 重建源双滞后）；内部 = result 写入规则（成功=content / 失败=前值??失败摘要 + lastError）+ round+1 + **`.alive` 删除**（v2 补——轮终必做，漏删则探活误判存活）+ 注销发射点② + entry 携带新 round 与本轮 result。调用方 = H1 Continuation + **one-shot settleOneShotOutcome**（SP-5 成功分支共享，非仅 chat 容器） | entry + `.alive` 删 + 注销② |
+| `markRoundStarted(id)` | 轮始重置（v2 补：status=running + result/resumable 清除——热路径 `subagent-service.ts:1398-1401` 与冷续轮 `subagent-service.ts:1497` 两写点归口） | entry（best-effort） |
+| `markRoundIdle(id, outcome)` | 轮末收口（**名称沿用，形态 = 保持 running-resumable，非置 idle**——status 写 idle 会断 SP-5 升级链与 hasRunning 判据；v3 补全簿记全集）；**内部簿记全集 = doFinalizeRoundToIdle 现状簿记 + H1 D7 增量，逐项**：① status **保持 running**（v4 B-1「旧 idle 折入 running」）；② result 写入规则（成功=content / 失败=前值??失败摘要 + lastError）；③ round+1；④ **closedReason 清除**（[S10]：前置 closed+closedReason 不清则 "gc"/"cancelled" 残留泄漏进 list 投影与 notify 载荷）；⑤ **resumable=true**（GUI waiting 判据）；⑥ **idleSince 刷新**（idle-GC 判据）；⑦ **`.alive` 删除**（轮终必做，漏删则探活误判存活）；⑧ 注销发射点②；⑨ reportRecordTransition（entry 携带新 round 与本轮 result）。调用方 = H1 Continuation + **one-shot settleOneShotOutcome**（SP-5 成功分支共享，非仅 chat 容器；均在 `subagent-service.ts`） | entry + `.alive` 删 + 注销② |
 | `markFinalized(id, reason)` | 正常终态 | **`.state` writeSync** + entry + manifest + archive |
 | `markCancelled(id)` | 取消终态 | **`.state` writeSync** + entry + tombstone 语义 + archive |
 | `markBatchFinalized(ids)` | sync 批终态（统一写点，吸收 #6 两处直写）；**内部写序显式复刻 barrier（v2）**：manifest 落盘（writeSyncBatchManifestBarrier）先于批通知写账——「通知可达 ⇒ 索引就位」构造性保证（session-reader 指针行反查依赖），缓存降级下 barrier 不可删 | barrier + 批 entry + manifest |
-| `adoptEngineDeath(id, {error})`（v2 补） | 引擎死亡收养（error/result/resumable 三写 :2403-2406 归口；H2 后 workflow origin 豁免 adopt，此操作仅 tool record 非 pi 引擎路径） | entry（best-effort） |
+| `adoptEngineDeath(id, {error})`（v2 补） | 引擎死亡收养（error/result/resumable 三写，`subagent-service.ts:2403-2407` 归口；H2 后 workflow origin 豁免 adopt，此操作仅 tool record 非 pi 引擎路径） | entry（best-effort） |
 | `archive(id)` / `revive(id)` | 内存↔磁盘 | 既有语义 |
 
 **字段级写点全集 → 操作映射（v2）**：record 十个业务字段（status/result/round/closedReason/resumable/idleSince/sessionFile/turns/lastError/error）的现存写点逐点归口——轮始重置→`markRoundStarted`；轮终簿记→`markRoundIdle(outcome)`；引擎死亡收养→`adoptEngineDeath`；sessionFile 回填族（finalize 反查 + outcome 回填 + chat 锚点回填）→ 归入 `register`/`markFinalized` 序言（簿记非独立意图）；lastError→`markRoundIdle` failed 载荷内部。映射全集表由 P1 产出并随 API 落地核对。
@@ -163,11 +163,11 @@ boot 期 4：store.revive / 孤儿恢复（recoverOrphanRecords）/ 对账 sweep
 
 复杂度审查（2026-09-10）将「9 处持久化」列为 H4；用户裁定方向 = 按领域收口（「不能直接写，应该都是调领域服务」——即本设计的意图级 API + 唯一写入口），L4（`.state` 合并）作为速赢先行铺了权威载体。执行序 = H1 → H2 → H3 → H4（模型 → 消费面 → 结构 → 存储收口，同一条「record 真相与写入只有一处」轴的第四步）。
 
-**被否谱系（v1 首轮双审击穿记录）**：
+**被否谱系（自包含记录：曾提方案 —— 击穿原因 —— 修正形态）**：
 
-1. **「markRoundIdle(id) 无载荷原语 + 调用方仅 chat 容器」**——被主审 MF-1 击穿：塞不下 H1 outcome 入参（result 写入规则/entry 重建源双滞后）、漏 `.alive` 删除（探活误判）、one-shot SP-5 共享调用点同样经此。修正为 outcome 载荷 + 内部写面补全 + 双调用方标注（API 表 v2）。
-2. **「grep 门 pattern = writeStateMarker|writeManifest|appendEntry」**——被双审同点击穿：`writeStateMarker` 是模块私有函数恒零命中（假绿，现存直写点 :3072 漏网）；`appendEntry` 全域禁与自身保留面（notify-ledger/sweep/extension 域）直接矛盾。修正为真实导出名 + customType 限定 + 白名单逐域 + 扫描根口径（D7 v2）。
-3. **「缓存可丢可重建（只答重建源）」**——被主审 MF-3 + 影响面 SUG-1 联合击穿：缺触发时机/失败降级/session-reader 外部进程消费方/批通知指针屏障/量级基线。修正为 D5 三要素补全 + 前向兼容双写 + S5 补指针消费场景。
-4. **「存在性判定改读 `.state`（无范围限定）」**——被主审 MF-4 击穿：E1 sync 批待通知判定的对象恒 running+resumable 无 `.state`，照搬即补发失效（不通知事故族复发）。修正为 D4 拆两判定（终态通知门挂权威 / E1 判定源维持 entry 尾）。
-5. **「恢复路径 6 条（清单完备）」**——被影响面 MF-5 击穿：漏 manifest tmp 恢复双宿主（含 extension boot 钩子触点）。修正为 §2.3 补录 + D6 退役判定 + P4 触点。
-6. **「七原语覆盖现存写点（隐含完备）」**——被影响面 MF-1 击穿：轮始重置/引擎死亡收养/sessionFile 回填族/lastError 四组写点无归口。修正为 markRoundStarted/adoptEngineDeath 新增 + 回填归序言 + 字段级映射表（P1 产出）。
+1. **「markRoundIdle(id) 无载荷原语 + 调用方仅 chat 容器」**——塞不下轮终 result 写入规则（entry 重建源双滞后）、漏 `.alive` 删除（探活误判存活）、one-shot SP-5 共享调用点同样经此——修正为 outcome 载荷 + 内部簿记全集（含 status 保持 running-resumable）+ 双调用方标注。
+2. **「grep 门 pattern = writeStateMarker|writeManifest|appendEntry」**——`writeStateMarker` 是 state-marker.ts 模块私有函数，外部不可调用，恒零命中假绿（现存直写点 writeCancelledState 漏网）；`appendEntry` 全域禁与自身保留面（notify-ledger 投递账/reconcile-sweep 注销/extensions 域）直接矛盾——修正为真实导出名全集 + customType 限定 + 白名单逐域 + 扫描根口径。
+3. **「缓存可丢可重建（只声明重建源）」**——缺触发时机、失败降级、外部进程消费方（session-reader 以 manifest 为富字段主路径与孤儿判定来源且无法触发宿主重建）、批通知指针屏障语义、重建量级基线——修正为 D5 三要素 + 前向兼容双写 + S5 指针消费场景。
+4. **「存在性判定一律改读 `.state`（无范围限定）」**——E1 sync 批待通知判定的对象（成功成员崩溃形态）恒 running+resumable、无 `.state` 可读，照搬即补发失效（「不通知」事故族复发）——修正为 D4 拆两判定（终态通知门挂权威 / E1 判定源维持 entry 尾）。
+5. **「恢复路径 6 条（清单完备）」**——漏 manifest tmp 恢复双宿主（service 启动扫描 + extension boot 钩子触点）——修正为 §2.3 补录 + D6 退役判定（tmp 静默删除）+ P4 触点。
+6. **「七原语隐含覆盖现存写点」**——轮始重置/引擎死亡收养/sessionFile 回填族/lastError 四组写点无归口——修正为 markRoundStarted/adoptEngineDeath 新增原语 + 回填归序言 + 字段级映射表（P1 产出）。
