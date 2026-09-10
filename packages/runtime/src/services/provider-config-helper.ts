@@ -1314,8 +1314,12 @@ async function cleanDeleteTail(
   if (!extrasCleared || !quotaStateCleaner) return
   try {
     await quotaStateCleaner(providerId)
-  // eslint-disable-next-line taste/no-silent-catch -- quota 副产物清理失败不阻断删除主流程（同 cleanProviderExtras 语义），warn 记录便于诊断
   } catch (err) {
+    // quota 副产物清理失败不阻断删除主流程（best-effort，同 cleanProviderExtras 语义）：
+    // 条目删除是主语义且此处已确认成功，故只记录不重抛（删除链的调用方无法补救一次
+    // 已失败的副产物清理）；留 warn 便于诊断，残留的孤立 secrets 文件由下次同 id 删除
+    // 的幂等清理兜底。注释内置而非抑制指令 —— taste/no-silent-catch 的 best-effort 放行
+    // 口径正是「catch 体内含解释性注释」，无需 suppression 注释。
     console.warn(`[config-service] quota state cleanup failed ${ctx}:`, err)
   }
 }

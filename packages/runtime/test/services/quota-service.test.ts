@@ -1340,3 +1340,117 @@ describe('QuotaService — U2⑦: 失败路径的节流不断（§7.5 清单 / �
     }
   })
 })
+
+// ── D12 改动 5 出口覆盖：clearProviderState 直调（provider 删除链 quota 副产物清理）──
+//
+// 防的回归：组合根回填漏挂 / clearProviderState 静默失效（只有 S14 能发现）——
+// provider-config-helper 的 D12 用例注入的是替身 cleaner，只验证「排序 + warn-only」
+// 不变量；真实副作用（删两个 secrets 文件 / 清 lastFailure 与 lastFetchTime / 删缓存
+// 条目）与失败分支不在其覆盖内，本组直调被测方法补齐。
+describe('QuotaService — D12: clearProviderState 直调（provider 删除链 quota 副产物清理）', () => {
+  it('成功路径：删两个 secrets 文件 + 清 lastFailure / lastFetchTime / 缓存条目', async () => {
+    // 防的回归：组合根回填漏挂 / clearProviderState 静默失效（只有 S14 能发现）
+    let cred: { key: string; source: 'models.json' } | undefined = { key: 'provider-key', source: 'models.json' }
+    const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(() => cred),
+      dataDir: tmpDir,
+      providerExtrasStore: extrasStore,
+      providerExists: () => true,
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn', quota: { fetcher: 'zhipu' } }),
+    })
+    const cookiePath = join(tmpDir, 'secrets', 'glm-del-cookie.txt')
+    const keyPath = join(tmpDir, 'secrets', 'glm-del-apikey.txt')
+    mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
+
+    // ① 经 configure 物化两个 secrets 文件（credentialSource=provider：api-key 形态走
+    //    resolver 而非专属 key 文件，下一步才能制造 no-credential 失败标记）
+    await svc.configure({
+      providerId: 'glm-del',
+      enabled: true,
+      fetcher: 'zhipu',
+      apiKey: 'exclusive-key',
+      cookie: 'session=abc',
+      credentialSource: 'provider',
+    })
+    expect(existsSync(cookiePath)).toBe(true)
+    expect(existsSync(keyPath)).toBe(true)
+
+    // ② 落一条成功缓存 + lastFetchTime（本次 fetch 会被节流观测复用为前置态）
+    await svc.fetch('glm-del')
+    expect(svc.getCached('glm-del').data?.label).toBe('zhipu')
+
+    // ③ 制造失败标记（resolver miss → 显式 no-credential；失败不清缓存行，两条内存态同时存在）
+    cred = undefined
+    await svc.refresh('glm-del')
+    expect(svc.getCached('glm-del').reason).toBe('no-credential')
+
+    // ④ 被测：删除链在 extras 条目确认清除后调用的 quota 副产物清理
+    await svc.clearProviderState('glm-del')
+
+    // 物理副作用：两个 secrets 文件都消失
+    expect(existsSync(cookiePath)).toBe(false)
+    expect(existsSync(keyPath)).toBe(false)
+    // lastFailure 清空（getCached 不再透传 reason）
+    expect(svc.getCached('glm-del').reason).toBeUndefined()
+    // cache.removeEntry 经 writeChain 落盘：等一拍后内存镜像与磁盘同为「无条目」
+    await new Promise((r) => setImmediate(r))
+    expect(svc.getCached('glm-del').data).toBeNull()
+    expect(svc.getCached('glm-del').lastFetchAt).toBeNull()
+
+    // lastFetchTime 清空（私有字段不可直读，用 throttle 行为观测）：未清时 10s 窗口内的
+    // fetch 被节流直接返回缓存、fetcher 零调用；清掉后立即发真实请求 → 恰好 1 次。
+    cred = { key: 'provider-key', source: 'models.json' }
+    mockFetchQuota.mockClear()
+    await svc.fetch('glm-del')
+    expect(mockFetchQuota).toHaveBeenCalledTimes(1)
+  })
+
+  it('幂等：provider 无 secrets 文件 / 无内存条目时调用不抛错，且不物化缓存文件', async () => {
+    // 防的回归：组合根回填漏挂 / clearProviderState 静默失效（只有 S14 能发现）
+    const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
+      dataDir: tmpDir,
+      providerExists: () => true,
+    })
+
+    // 连调两次：ENOENT 视为成功、removeEntry 无条目跳过写盘（不物化 quota-cache.json）
+    await expect(svc.clearProviderState('ghost')).resolves.toBeUndefined()
+    await expect(svc.clearProviderState('ghost')).resolves.toBeUndefined()
+    await new Promise((r) => setImmediate(r))
+    expect(existsSync(join(tmpDir, 'quota-cache.json'))).toBe(false)
+    expect(svc.getCached('ghost').data).toBeNull()
+  })
+
+  it('secrets 删除失败（同名目录占位 → 非 ENOENT）不抛错，内存态与缓存仍被清', async () => {
+    // 防的回归：组合根回填漏挂 / clearProviderState 静默失效（只有 S14 能发现）。
+    // 失败注入沿用本文件既有「同名目录占位」手法（unlinkSync(目录) 抛 EPERM/EISDIR 而非
+    // ENOENT，不会被 removeSecretFile 误判为幂等成功）。清理链只 warn 不抛是契约的一部分：
+    // cleanDeleteTail 的 catch 是唯一拦截点，删除主流程能否存活取决于本方法不逃逸异常。
+    const cookiePath = join(tmpDir, 'secrets', 'glm-del-cookie.txt')
+    mkdirSync(cookiePath, { recursive: true })
+
+    let cred: { key: string; source: 'models.json' } | undefined = { key: 'provider-key', source: 'models.json' }
+    const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(() => cred),
+      dataDir: tmpDir,
+      providerExists: () => true,
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn', quota: { fetcher: 'zhipu' } }),
+    })
+    mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
+
+    // 前置态：一条成功缓存 + 一条失败标记（apiKeySet 未置 ⇒ 推断 'provider'，resolver miss 即失败）
+    await svc.fetch('glm-del')
+    cred = undefined
+    await svc.refresh('glm-del')
+    expect(svc.getCached('glm-del').reason).toBe('no-credential')
+
+    await expect(svc.clearProviderState('glm-del')).resolves.toBeUndefined()
+
+    // cookie 路径的删除失败（目录占位仍在）；api-key 路径无文件 = 幂等成功
+    expect(existsSync(cookiePath)).toBe(true)
+    // 一个路径失败不阻断其余清理：内存态与缓存照清（provider 已删，标记失去消费方）
+    expect(svc.getCached('glm-del').reason).toBeUndefined()
+    await new Promise((r) => setImmediate(r))
+    expect(svc.getCached('glm-del').data).toBeNull()
+  })
+})
