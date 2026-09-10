@@ -105,8 +105,11 @@ export type QuotaCredentialSource = 'provider' | 'exclusive'
  * 未显式设置时按既存标记推断：有专属 Key 视为 exclusive（兼容历史数据），否则 provider。
  *
  * 仅服务读侧（组装 ProviderInfo.quota 与 fetch 时解析）。写侧（persistQuotaConfig）走
- * 键缺省 = 继承既存的继承链，禁止用本函数补默认值——否则 setEnabled 式缺省 payload
- * 会把用户显式选择的来源覆盖成按 apiKeySet 推断的值（§7.3 改动 6 的反例）。
+ * 键缺省 = 继承既存的继承链，禁止用本函数补默认值。注意本函数是**显式值优先**（见实现），
+ * 所以写侧补默认的危害不是「覆盖显式值」，而是把**未设置的字段物化成推断值**：setEnabled
+ * 式缺省 payload 会在磁盘写入用户从未选择过的来源（违反 D4「开关只写 enabled」与
+ * 「键缺省 = 继承既存」），且此后该 provider 不再跟随推断——专属 Key 被清后 apiKeySet 变
+ * false，读侧本应回落 provider，冻结的显式值会让查询走向 no-credential（§7.3 改动 6 的反例）。
  */
 export function resolveQuotaCredentialSource(
   quota: { credentialSource?: QuotaCredentialSource; apiKeySet?: boolean } | undefined,

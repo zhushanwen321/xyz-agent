@@ -1173,12 +1173,19 @@ describe('QuotaService — U2⑤: credentialSource 落盘继承链（§7.5 分�
     expect(quota?.enabled).toBe(true)
   })
 
-  it('setEnabled 式 payload（其余键缺省）不覆盖既存显式 credentialSource（继承链）', async () => {
-    // 防的回归（改动 6 的核心反例）：persist 若写成 `credentialSource: payload.credentialSource`
-    // （丢继承链），拨一次开关就把既存显式值抹掉（JSON.stringify 丢 undefined 键）；若写成
-    // `incoming ?? resolveQuotaCredentialSource(current)`（写侧推断），当 apiKeySet=true 且
-    // 显式选的是 'provider' 时会被推断翻成 'exclusive'——用户没点保存却改了来源。
-    // 两个反向场景都在此拦截：拨开关后既存显式值与其余键一字不动。
+  it('setEnabled 式 payload（其余键缺省）：既存显式 credentialSource 不被覆盖、未设置值不被物化成推断值（继承链）', async () => {
+    // 这里防两个不同的 mutation，各有自己的可证伪基线（不可互相替代）：
+    // ① 丢继承链——persist 写成 `credentialSource: payload.credentialSource`：setEnabled 式
+    //    payload 的 payload.credentialSource 是 undefined，JSON.stringify 丢键，拨一次开关
+    //    就把既存显式值抹掉。场景 A/B 拦截。
+    // ② 写侧推断物化——persist 写成 `payload.credentialSource ?? resolveQuotaCredentialSource(...)`。
+    //    注意 resolveQuotaCredentialSource 是**显式值优先**（`quota?.credentialSource ?? …`），
+    //    而 `incoming ?? …` 只在 incoming 为 undefined 时触发：因此它**不会覆盖显式值**，
+    //    「把显式 'exclusive' 覆盖成推断值」的反例不可达（场景 B 对 ② 不会变红）。真实危害是
+    //    把未设置的字段物化成推断值——setEnabled 式缺省 payload 静默在磁盘写入用户从未选择过
+    //    的来源（违反 D4「开关只写 enabled」与「键缺省 = 继承既存」），且此后该 provider 不再
+    //    跟随推断：专属 Key 被清后 apiKeySet 变 false，读侧本应回落 provider，冻结的显式值会
+    //    让查询走向 no-credential。场景 C 拦截。
     const svc = new QuotaService({
       providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
@@ -1186,7 +1193,7 @@ describe('QuotaService — U2⑤: credentialSource 落盘继承链（§7.5 分�
       providerExists: () => true,
     })
 
-    // 场景 A：显式 exclusive（无专属 Key 标记）→ setEnabled 后仍 exclusive
+    // 场景 A（拦截 ①）：显式 exclusive（无专属 Key 标记）→ setEnabled 后仍 exclusive
     await svc.configure({ providerId: 'p-a', enabled: true, fetcher: 'zhipu', credentialSource: 'exclusive' })
     const cfgA = await svc.configure({ providerId: 'p-a', enabled: false })
     expect(cfgA.ok).toBe(true)
@@ -1195,8 +1202,8 @@ describe('QuotaService — U2⑤: credentialSource 落盘继承链（§7.5 分�
     expect(quotaA?.fetcher).toBe('zhipu')
     expect(quotaA?.enabled).toBe(false)
 
-    // 场景 B（写侧推断的可证伪基线）：显式 provider + apiKeySet=true → setEnabled 后仍 provider
-    // （写侧若调 resolveQuotaCredentialSource 会因 apiKeySet=true 推断成 exclusive → 本条红）
+    // 场景 B（拦截 ①）：显式 provider + apiKeySet=true → setEnabled 后仍 provider。
+    // 注意本条对 ② 不变红——② 的 resolve 显式值优先，仍返回 'provider'（理由见上）。
     await svc.configure({
       providerId: 'p-b',
       enabled: true,
@@ -1210,6 +1217,26 @@ describe('QuotaService — U2⑤: credentialSource 落盘继承链（§7.5 分�
     expect(quotaB?.apiKeySet).toBe(true)
     expect(quotaB?.fetcher).toBe('zhipu')
     expect(quotaB?.enabled).toBe(false)
+
+    // 场景 C（拦截 ②，唯一可证伪基线）：磁盘未设置 credentialSource + apiKeySet=true →
+    // setEnabled 后仍**不含** credentialSource 键（保持「未设置」= 继承既存，而非物化成
+    // 用户没选过的 'exclusive'）。写侧若调 resolveQuotaCredentialSource(current) 补默认：
+    // apiKeySet=true → 物化成 'exclusive' → 键出现 → 本条红。
+    // 前置态直接经 extrasStore.modify 落盘（不经 configure）：让「初始即未设置」这一前提
+    // 独立于被测 persist 逻辑——否则 mutation 会先在种子步骤写坏前提，证伪落在前置断言上而
+    // 非本条真正要守的 setEnabled 断言（种子的 apiKeySet 值语义同 configure 落盘结果）。
+    await extrasStore.modify('p-c', () => ({ quota: { fetcher: 'zhipu', enabled: true, apiKeySet: true } }))
+    const quotaCBefore = readExtras('p-c')?.quota as Record<string, unknown> | undefined
+    expect(quotaCBefore?.apiKeySet).toBe(true)
+    expect('credentialSource' in (quotaCBefore ?? {})).toBe(false) // 前置：初始即未设置
+
+    const cfgC = await svc.configure({ providerId: 'p-c', enabled: false })
+    expect(cfgC.ok).toBe(true)
+    const quotaC = readExtras('p-c')?.quota as Record<string, unknown> | undefined
+    expect('credentialSource' in (quotaC ?? {})).toBe(false)
+    expect(quotaC?.apiKeySet).toBe(true)
+    expect(quotaC?.fetcher).toBe('zhipu')
+    expect(quotaC?.enabled).toBe(false)
   })
 })
 

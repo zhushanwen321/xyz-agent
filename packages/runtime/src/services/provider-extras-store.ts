@@ -43,8 +43,10 @@ export interface ProviderExtras {
     /**
      * 凭证来源（D3，coding-plan-quota-config-ux §7.3 改动 6）：恒由 configure payload
      * 显式值经继承链落盘（键缺省 = 继承既存），写侧禁止调 resolveQuotaCredentialSource
-     * 补默认——那是读侧推断，写侧补默认会让 setEnabled 式缺省 payload 把用户显式选择
-     * 的 'exclusive' 覆盖成按 apiKeySet 推断的 'provider'。未设置时读侧按
+     * 补默认——那是读侧推断（**显式值优先**），补默认的危害不是覆盖显式值，而是把未设置的
+     * 字段**物化**成推断值：setEnabled 式缺省 payload 会静默写入用户从未选择过的来源，
+     * 此后该 provider 不再跟随推断（专属 Key 被清后 apiKeySet 变 false，读侧本应回落
+     * provider，冻结的显式值会让查询走向 no-credential）。未设置时读侧按
      * resolveQuotaCredentialSource 推断（兼容历史数据：apiKeySet=true → exclusive）。
      */
     credentialSource?: QuotaCredentialSource
