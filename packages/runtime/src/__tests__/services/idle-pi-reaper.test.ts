@@ -24,6 +24,12 @@ import {
   type IdlePiReaperHandle,
   type ReclaimSkipDistribution,
 } from '../../services/session/idle-pi-reaper.js'
+// 生产权威默认值（shared/constants SSOT）：仅末尾「默认值双源等值守卫」describe 使用
+import {
+  DEFAULT_PI_RECLAIM_TICK_MS,
+  DEFAULT_PI_RECLAIM_IDLE_MS,
+  DEFAULT_PI_RECLAIM_VIEWED_WINDOW_MS,
+} from '@xyz-agent/shared'
 
 // ── fake 装置 ─────────────────────────────────────────────────
 
@@ -380,5 +386,22 @@ describe('ReclaimSeat 占座原语（D6-2）', () => {
     expect(seat.heldSessionIds().sort()).toEqual(['a', 'b'])
     seat.release('a')
     expect(seat.heldSessionIds()).toEqual(['b'])
+  })
+})
+
+// ── 默认值双源等值守卫 ────────────────────────────────────────
+
+/**
+ * 回收三旋钮默认值存在双源：shared/constants 的 DEFAULT_PI_RECLAIM_* 是生产权威值——
+ * u3b 装配经 resolveReclaimConfig（env 可覆盖）恒传给 reaper config；idle-pi-reaper
+ * 模块内的 DEFAULT_* 仅为 options 未传时的 fallback 兜底（DI 纯单测场景，模块不读 env）。
+ * 两处同源此前仅靠注释声明、无测试锁定——shared 改默认值而 reaper 兜底值未跟随会静默
+ * 陈旧。本守卫逐对断言相等：任一侧单独改动即红，强迫同步两源。
+ */
+describe('默认值双源等值守卫', () => {
+  it('reaper 兜底默认值与 shared 权威默认值逐对相等（TICK / IDLE / VIEWED_WINDOW 三对）', () => {
+    expect(DEFAULT_REAP_TICK_MS).toBe(DEFAULT_PI_RECLAIM_TICK_MS)
+    expect(DEFAULT_IDLE_THRESHOLD_MS).toBe(DEFAULT_PI_RECLAIM_IDLE_MS)
+    expect(DEFAULT_VIEWED_WINDOW_MS).toBe(DEFAULT_PI_RECLAIM_VIEWED_WINDOW_MS)
   })
 })
