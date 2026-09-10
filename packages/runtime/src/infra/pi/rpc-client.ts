@@ -339,6 +339,13 @@ export class RpcClient implements IPiEngine {
     reject: (err: Error) => void
     /** 超时 timer；undefined = 不限时（timeout ≤ 0，D2 env 逃生门 0=不限时形态） */
     timer: ReturnType<typeof setTimeout> | undefined
+    /**
+     * 维护通道标记（idle-pi-reclamation D1 双腿闭合）：true = 本请求属维护通道
+     * （options.maintenance，如 promptReload）。出站腿在 sendCommand 不 touch，
+     * 回程腿在 handleMessage 依据本标记对其 response 帧跳过 touch——回程回声与
+     * 出站请求同频，只排除出站腿时空闲时钟仍被周期性重置。
+     */
+    maintenance: boolean
   }>()
   /**
    * 已超时的 RPC id（S6 防御迟到响应被误当 event 广播）。
@@ -610,7 +617,20 @@ export class RpcClient implements IPiEngine {
   private handleMessage(msg: PiMessage): void {
     // 入站 touch（idle-pi-reclamation D1）：任何 stdout 帧（response / 事件 / 迟到丢弃帧）
     // 都证明 pi 在产出，进程非空闲。放在分派前——分支结构变化不影响 touch 语义。
-    this._lastActivityAt = Date.now()
+    // 唯一例外（D1 双腿闭合）：解析为「maintenance pending 的 response」的帧不 touch。
+    // promptReload（{ maintenance: true }）的出站腿已在 sendCommand 排除，但其 response
+    // 回程经本入口无条件 touch 会把空闲时钟重置回去——回程回声与出站请求同频（skill
+    // 变更风暴下与 promptReload 一一配对到达），只排除出站腿时回收饿死原样保留，
+    // 故双腿同豁免。事件帧 / 非 maintenance response 的 touch 语义零变化。
+    // 边角（可接受）：迟到 maintenance response——pending 已被超时清理（60s）后到达，
+    // id 命不中 pending → 照旧 touch。超时 60s 后才回的 reload 极罕见，且该边角方向 =
+    // 多豁免不误杀（多 touch 一次只推迟回收，不会误杀活跃进程），与「宁漏不误杀」同向。
+    const maintenanceResponse = msg.type === 'response'
+      && msg.id !== undefined
+      && this.pending.get(msg.id)?.maintenance === true
+    if (!maintenanceResponse) {
+      this._lastActivityAt = Date.now()
+    }
     // If id matches a pending request, resolve it; otherwise emit as event.
     // resolve 只认 RPC response：pi 的 RpcResponse union 所有变体 type === 'response'
     // （pi-mono coding-agent/src/modes/rpc/rpc-types.ts:114-223），事件各有独立 type 字符串。
@@ -792,6 +812,8 @@ export class RpcClient implements IPiEngine {
         },
         reject,
         timer,
+        // D1 双腿闭合：标记随 pending 注册写入，handleMessage 据此对回程 response 跳过 touch
+        maintenance: !!options?.maintenance,
       })
 
       try {
