@@ -63,11 +63,12 @@ function cleanupEnginePoolsBestEffort(): void {
   }
 }
 
-/** 孤儿 sidecar 名判定：.cancelled/.finalized/.alive，以及 [MF#2] patch 回传
- *  （<branch>.patch 按 branch 命名，与 .jsonl basename 无关联，删除 .jsonl 时无法同删；
- *  作为孤儿按 TTL 清理，避免永久堆积）。 */
+/** 孤儿 sidecar 名判定：终态 `.state` + 兼容期旧名（.finalized/.cancelled/.alive），
+ *  以及 [MF#2] patch 回传（<branch>.patch 按 branch 命名，与 .jsonl basename 无关联，
+ *  删除 .jsonl 时无法同删；作为孤儿按 TTL 清理，避免永久堆积）。 */
 function isOrphanSidecarName(name: string): boolean {
   return (
+    name.endsWith(".state") ||
     name.endsWith(".cancelled") ||
     name.endsWith(".finalized") ||
     name.endsWith(".alive") ||
@@ -100,8 +101,8 @@ function cleanExpiredJsonl(full: string, now: number): void {
         return; // 活进程 → 跳过，不清理
       }
       fs.unlinkSync(full);
-      // 同名 sidecar 一起清理。
-      for (const ext of [".cancelled", ".finalized", ".alive"]) {
+      // 同名 sidecar 一起清理（终态 .state + 兼容期旧名 + 探活 .alive）。
+      for (const ext of [".state", ".cancelled", ".finalized", ".alive"]) {
         try { fs.unlinkSync(`${full}${ext}`); } catch (_e) { void _e; /* sidecar 可能不存在 */ }
       }
     }

@@ -29,7 +29,7 @@ vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 // 协议 seam（registerFakePiEngine 替身；跨重启无活进程 = 引擎冷路径拒绝，续聊落
 // resumeColdRound 守卫链）。
 
-import { writeFinalized } from "../finalized-marker.ts";
+import { writeFinalizedState } from "../state-marker.ts";
 import { registerFakePiEngine } from "./helpers/fake-engine-port.ts";
 import { clearEngines } from "../engine/registry.ts";
 import { ModelConfigService } from "../model-config-service.ts";
@@ -204,9 +204,9 @@ describe("[M10] getRecordForAction 跨重启磁盘重建（S3 回归场景）", 
     expect(() => service.chatActions.getRecordForAction("sa-grand")).toThrow(/direct parent/);
   });
 
-  it(".finalized sidecar（closed 终态）不重建 → throw not found or not owned", () => {
+  it(".state sidecar（closed 终态）不重建 → throw not found or not owned", () => {
     const file = writeSessionJsonl(sessionsDir, { id: "sa-fin", rootSessionId: "root-session" });
-    writeFinalized(file); // sidecar 矩阵分支 2 → status=closed → find(status==="running") miss
+    writeFinalizedState(file); // sidecar 矩阵分支 2 → status=closed → find(status==="running") miss
 
     expect(() => service.chatActions.getRecordForAction("sa-fin")).toThrow(/not found or not owned/);
     expect(store.getMutable("sa-fin")).toBeUndefined(); // 未重建注册

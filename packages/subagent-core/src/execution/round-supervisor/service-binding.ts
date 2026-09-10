@@ -13,7 +13,7 @@
 import { bestEffort } from "../best-effort.ts";
 import { COLD_LOOKUP_SCAN_LIMIT } from "../cold-resurrect.ts";
 import { tryTransition } from "../execution-record.ts";
-import { writeFinalized } from "../finalized-marker.ts";
+import { writeFinalizedState } from "../state-marker.ts";
 import { hasLiveProcessHandle } from "../lifecycle-predicates.ts";
 import { FileRunStore } from "../../orchestration/file-run-store.ts";
 import { resolvePiWorkflowStateDir } from "../workflow-state-root.ts";
@@ -159,7 +159,7 @@ async function supervisorGiveUp(
   if (disk === undefined) return;
   if (disk.sessionFile) {
     try {
-      writeFinalized(disk.sessionFile, "gc");
+      writeFinalizedState(disk.sessionFile, "gc");
     } catch (err) {
       bestEffort(err, `round supervisor give-up sidecar (${recordId})`);
     }

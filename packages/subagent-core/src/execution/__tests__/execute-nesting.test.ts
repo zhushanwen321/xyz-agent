@@ -16,7 +16,7 @@
 //   （那是对 in-process run() 的旧 mock，在 spawn 改造后是死代码）。
 //
 //   mock 模块工厂已收敛 ./helpers/subagent-service-mocks.ts（四文件共享单源，含
-//   spawn → FakeChild / fs 同步方法 / temp-prompt / alive-store / finalized-marker /
+//   spawn → FakeChild / fs 同步方法 / temp-prompt / alive-store / state-marker /
 //   manifest-store 的完整桩形与动机注释）。
 //
 //   所有断言语义不变：它们测的是 SubagentService 的 **编排逻辑**
@@ -29,7 +29,7 @@ import {
   aliveStoreModule,
   childProcessModule,
   driveChildToCompletion,
-  finalizedMarkerModule,
+  stateMarkerModule,
   fsSyncModule,
   manifestStoreModule,
 } from "./helpers/subagent-service-mocks.ts";
@@ -37,7 +37,7 @@ import {
 vi.mock("node:child_process", () => childProcessModule());
 vi.mock("node:fs", async (importOriginal) => fsSyncModule(await importOriginal<typeof import("node:fs")>()));
 vi.mock("../alive-store.ts", async (importOriginal) => aliveStoreModule(await importOriginal<typeof import("../alive-store.ts")>()));
-vi.mock("../finalized-marker.ts", () => finalizedMarkerModule());
+vi.mock("../state-marker.ts", () => stateMarkerModule());
 vi.mock("../manifest-store.ts", () => manifestStoreModule());
 
 import { spawn } from "node:child_process";

@@ -10,9 +10,9 @@
 //        分支，替身 getMutable 受控注入驱动契约）；
 //      - finalizeClosed 异常 best-effort（不向上抛、终止通知仍发）；
 //      - superseded：errorText 带替代 id、不发终止通知；
-//      - 磁盘态（boot 重认领后看门狗到期）：writeFinalized sidecar 落盘 +
+//      - 磁盘态（boot 重认领后看门狗到期）：writeFinalizedState sidecar 落盘 +
 //        reportSubagentRecord 终态 entry（closed/gc/endedAt/error）、无 pi 通知；
-//      - 磁盘态无 sessionFile / writeFinalized 抛错（sidecar catch）/ 双 miss 收尾
+//      - 磁盘态无 sessionFile / writeFinalizedState 抛错（sidecar catch）/ 双 miss 收尾
 //        竞争 / reportSubagentRecord 抛错（entry catch，须先经 boot 重认领武装
 //        看门狗——无候选则 giveUp 不执行，用例空转）。
 //   2. runPendingReconcileSweepForService 的 lookupRecordState 闭包 subagent 判据
@@ -33,7 +33,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { COLD_LOOKUP_SCAN_LIMIT } from "../cold-resurrect.ts";
-import * as finalizedMarker from "../finalized-marker.ts";
+import * as stateMarker from "../state-marker.ts";
 import type { PiLike } from "../notify-host.ts";
 import type { RecordStore } from "../record-store.ts";
 import type { ExecutionRecord, SubagentRecord } from "../types.ts";
@@ -44,13 +44,13 @@ import {
   type RoundSupervisorBinding,
 } from "./service-binding.ts";
 
-// writeFinalized 实装自吞 IO 错（内部 try/catch，finalized-marker.ts），give-up
+// writeFinalizedState 实装自吞 IO 错（内部 try/catch，state-marker.ts），give-up
 // sidecar 的 catch（service-binding.ts:164）是防御分支——真实 ENOENT 无法驱动，
 // 仅本文件的 sidecar 抛错用例经模块替身注入抛错；默认委托真实实现，相邻用例行为
 // 不变（vi.spyOn 对跨模块具名导入绑定不可拦截，必须走 vi.mock）。
-vi.mock("../finalized-marker.ts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../finalized-marker.ts")>();
-  return { ...actual, writeFinalized: vi.fn(actual.writeFinalized) };
+vi.mock("../state-marker.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../state-marker.ts")>();
+  return { ...actual, writeFinalizedState: vi.fn(actual.writeFinalizedState) };
 });
 
 // ============================================================
@@ -341,7 +341,7 @@ describe("supervisorGiveUp 磁盘态（boot 重认领后看门狗到期）", () 
     return h;
   }
 
-  it("writeFinalized sidecar 落盘 + reportSubagentRecord 终态 entry（closed/gc/endedAt/error）；磁盘态不发终止通知", async () => {
+  it("writeFinalizedState sidecar 落盘 + reportSubagentRecord 终态 entry（closed/gc/endedAt/error）；磁盘态不发终止通知", async () => {
     const diskRecord = makeDiskRecord(sessionFile);
     const h = makeDiskBinding(diskRecord);
     const supervisor = createRoundSupervisorForService(h.binding);
@@ -350,8 +350,11 @@ describe("supervisorGiveUp 磁盘态（boot 重认领后看门狗到期）", () 
     supervisor.bootPartition();
     await vi.advanceTimersByTimeAsync(ROUND_SUPERVISOR_WATCHDOG_DEFAULT_MS + 1);
 
-    // sidecar：sessionFile 旁 .finalized 内容 = "gc"；finalizeClosed 不适用（无内存 record）
-    expect(fs.readFileSync(`${sessionFile}.finalized`, "utf-8")).toBe("gc");
+    // sidecar：sessionFile 旁 .state 内容 = {status:finalized, reason:"gc"}；finalizeClosed 不适用（无内存 record）
+    expect(JSON.parse(fs.readFileSync(`${sessionFile}.state`, "utf-8"))).toEqual({
+      status: "finalized",
+      reason: "gc",
+    });
     expect(h.finalizeClosed).not.toHaveBeenCalled();
 
     // 终态 entry 落盘（reportSubagentRecord）：磁盘 record + 终态语义位
@@ -379,7 +382,7 @@ describe("supervisorGiveUp 磁盘态（boot 重认领后看门狗到期）", () 
     supervisor.bootPartition();
     await vi.advanceTimersByTimeAsync(ROUND_SUPERVISOR_WATCHDOG_DEFAULT_MS + 1);
 
-    expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(false);
+    expect(fs.existsSync(`${sessionFile}.state`)).toBe(false);
     expect(h.store.reported).toHaveLength(1);
     expect(h.store.reported[0]?.status).toBe("closed");
   });
@@ -400,20 +403,23 @@ describe("supervisorGiveUp 磁盘态（boot 重认领后看门狗到期）", () 
     await vi.advanceTimersByTimeAsync(ROUND_SUPERVISOR_WATCHDOG_DEFAULT_MS + 1);
 
     // sidecar 与终态 entry 是两段独立 best-effort：entry 抛错不回滚已落 sidecar
-    expect(fs.readFileSync(`${sessionFile}.finalized`, "utf-8")).toBe("gc");
+    expect(JSON.parse(fs.readFileSync(`${sessionFile}.state`, "utf-8"))).toEqual({
+      status: "finalized",
+      reason: "gc",
+    });
     // 终态 entry 写入抛错被 give-up entry catch 吞掉 → reported 空
     expect(h.store.reported).toHaveLength(0);
   });
 
-  it("writeFinalized 抛错 → best-effort 吞掉，终态 entry 照常落盘", async () => {
+  it("writeFinalizedState 抛错 → best-effort 吞掉，终态 entry 照常落盘", async () => {
     const diskRecord = makeDiskRecord(path.join(tmpDir, "gone-dir", "s.jsonl"));
     const h = makeDiskBinding(diskRecord);
     const supervisor = createRoundSupervisorForService(h.binding);
     // 模块替身注入抛错（见文件头 vi.mock 注释）；finally 恢复委托真实实现。
-    const actual = await vi.importActual<typeof import("../finalized-marker.ts")>(
-      "../finalized-marker.ts",
+    const actual = await vi.importActual<typeof import("../state-marker.ts")>(
+      "../state-marker.ts",
     );
-    const writeSpy = vi.mocked(finalizedMarker.writeFinalized);
+    const writeSpy = vi.mocked(stateMarker.writeFinalizedState);
     writeSpy.mockImplementation(() => {
       throw new Error("sidecar write exploded");
     });
@@ -421,12 +427,12 @@ describe("supervisorGiveUp 磁盘态（boot 重认领后看门狗到期）", () 
       supervisor.bootPartition();
       await vi.advanceTimersByTimeAsync(ROUND_SUPERVISOR_WATCHDOG_DEFAULT_MS + 1);
     } finally {
-      writeSpy.mockImplementation(actual.writeFinalized);
+      writeSpy.mockImplementation(actual.writeFinalizedState);
     }
 
-    // 替身确实被 giveUp 消费（否则异常被 writeFinalized 实装自吞，用例假绿）
+    // 替身确实被 giveUp 消费（否则异常被 writeFinalizedState 实装自吞，用例假绿）
     expect(writeSpy).toHaveBeenCalled();
-    expect(fs.existsSync(`${diskRecord.sessionFile}.finalized`)).toBe(false);
+    expect(fs.existsSync(`${diskRecord.sessionFile}.state`)).toBe(false);
     expect(h.store.reported).toHaveLength(1);
     expect(h.store.reported[0]).toMatchObject({ id: diskRecord.id, status: "closed", closedReason: "gc" });
   });
@@ -452,7 +458,7 @@ describe("supervisorGiveUp 磁盘态（boot 重认领后看门狗到期）", () 
     expect(h.pi?.sent).toHaveLength(2); // 纳管期通知照常，终止通知不发（零通知放弃）
     expect(h.pi?.sent.every((s) => !s.message.content.includes(TERMINATION_NOTICE_MARK))).toBe(true);
     expect(h.store.reported).toHaveLength(0);
-    expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(false);
+    expect(fs.existsSync(`${sessionFile}.state`)).toBe(false);
   });
 });
 

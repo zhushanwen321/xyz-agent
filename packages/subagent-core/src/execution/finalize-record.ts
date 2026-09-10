@@ -21,13 +21,12 @@ import { getLogger } from "../core/logger.ts";
 import { removeAliveMarker } from "./alive-store.ts";
 import { bestEffort } from "./best-effort.ts";
 import { completeRecord } from "./execution-record.ts";
-import { writeFinalized } from "./finalized-marker.ts";
+import { writeCancelledState, writeFinalizedState } from "./state-marker.ts";
 import type { ManifestStore } from "./manifest-store.ts";
 import type { ModelConfigService } from "./model-config-service.ts";
 import { getSubagentSessionDir } from "./path-encoding.ts";
 import type { RecordStore } from "./record-store.ts";
 import { readIdentityHeader, readIdentityTail } from "./session-reconstructor.ts";
-import { writeCancelledTombstone } from "./tombstone-store.ts";
 import type { AgentResult, ClosedReason, ExecutionRecord } from "./types.ts";
 import type { WorktreeManager } from "./worktree-manager.ts";
 
@@ -137,27 +136,21 @@ async function collectPatchIfWorktree(deps: FinalizeDeps, record: ExecutionRecor
 }
 
 /**
- * Step 3a: finalized/tombstone sidecar（best-effort 幂等，仅 sessionFile 存在时执行）。
- * MF-1 fix / v4 B-1: cancelled（closedReason='cancelled'）写 tombstone 而非 finalized，
- * 防重建丢失 cancelled；其余 reason 写 finalized sidecar（真实 reason 进 sidecar 内容，
- * 磁盘重建用它还原 closedReason，不再一律硬编码 gc）。
+ * Step 3a: 终态 sidecar（best-effort 幂等，仅 sessionFile 存在时执行）。
+ * L4 合并：finalized / cancelled 统一写 `<session>.state`（单一形态，status 字段区分）；
+ * cancelled 保留精确 endedAt，其余 reason 进 reason 字段（磁盘重建用它还原
+ * closedReason，不再一律硬编码 gc）。
  */
-function writeFinalizedOrTombstone(record: ExecutionRecord, closedReason: ClosedReason | undefined): void {
+function writeTerminalState(record: ExecutionRecord, closedReason: ClosedReason | undefined): void {
   if (!record.sessionFile) return;
   try {
     if (closedReason === "cancelled") {
-      writeCancelledTombstone(record.sessionFile, {
-        id: record.id,
-        status: "cancelled",
-        agent: record.agent,
-        startedAt: record.startedAt,
-        endedAt: record.endedAt ?? Date.now(),
-      });
+      writeCancelledState(record.sessionFile, record.endedAt ?? Date.now());
     } else {
-      writeFinalized(record.sessionFile, closedReason);
+      writeFinalizedState(record.sessionFile, closedReason);
     }
   } catch (err) {
-    bestEffort(err, "writeFinalized/tombstone (finalizeRecord Step3)");
+    bestEffort(err, "writeTerminalState (finalizeRecord Step3)");
   }
 }
 
@@ -259,7 +252,7 @@ export async function doFinalizeRecord(
   // [Critical] 清理必须在 manifest 写入之前：worktree cleanup / finalized marker / aliveMarker
   //   都是幂等且不可跳过的副作用。绝不能因 manifest 写失败而跳过 worktree cleanup
   //   （否则 worktree 泄漏）。各件独立 try/catch，互不阻断。
-  writeFinalizedOrTombstone(record, closedReason);
+  writeTerminalState(record, closedReason);
   await cleanupWorktreeIfBound(deps, record);
   removeAliveMarkerIfPresent(record);
 

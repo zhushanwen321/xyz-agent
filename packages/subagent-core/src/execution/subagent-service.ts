@@ -107,7 +107,7 @@ import { EngineSdkError } from "@zhushanwen/subagent-engine-sdk";
 import type { HostRoundLifecycleParams, ProtocolError, ResumeAnchor } from "@zhushanwen/subagent-engine-sdk";
 import type { StreamSink, SubagentStream } from "./stream-sink.ts";
 import { createBackgroundStream } from "./stream-sink.ts";
-import { writeCancelledTombstone } from "./tombstone-store.ts";
+import { writeCancelledState } from "./state-marker.ts";
 import type { WorktreeHandle } from "./types.ts";
 import type {
   AgentEvent,
@@ -3047,22 +3047,16 @@ export class SubagentService {
       return false; // detached 已 finalize，cancel 来晚了
     }
     // 抢到锁：completeRecord（用空 result 填 cancelled）+ archive（立即移出内存）+ notify。
-    // 写 cancelled tombstone：session.jsonl 被 abort 截断，cancelled 状态靠 sidecar 标记，
+    // 写 cancelled 终态 sidecar：session.jsonl 被 abort 截断，cancelled 状态靠 sidecar 标记，
     // collectRecords 重建时 override status=cancelled。durationMs 用真实耗时（startedAt → now）。
     const cancelledResult: AgentResult = { text: "", turns: record.turnCount, durationMs: Date.now() - record.startedAt, success: false, error: "cancelled by user", sessionId: record.id, toolCalls: [] };
     completeRecord(record, cancelledResult, "closed", "cancelled");
-    // 写 tombstone（best-effort，sessionFile 可能为 undefined——窗口期 cancel）。
+    // 写终态 sidecar（best-effort，sessionFile 可能为 undefined——窗口期 cancel）。
     if (record.sessionFile) {
-      writeCancelledTombstone(record.sessionFile, {
-        id: record.id,
-        status: "cancelled",
-        agent: record.agent,
-        startedAt: record.startedAt,
-        endedAt: record.endedAt ?? Date.now(),
-      });
+      writeCancelledState(record.sessionFile, record.endedAt ?? Date.now());
     }
     this.store.archive(record);
-    // worktree cleanup + removeAliveMarker（cancel 不写 finalized，BC-4 互斥）。
+    // worktree cleanup + removeAliveMarker（终态 sidecar 单文件单状态，无互斥清理需求）。
     // cleanup 已 async 化——boolean 同步返回语义不变，清理 fire-and-forget。
     if (record.worktreeHandle) {
       void this.worktreeManager.cleanup(record.worktreeHandle).catch((err: unknown) => {

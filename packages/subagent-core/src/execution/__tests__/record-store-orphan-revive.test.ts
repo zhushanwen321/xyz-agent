@@ -3,7 +3,7 @@
 // [PS-10/T6④] revive() 复位 orphanJudged——落实 recoverOrphanRecords 注释承诺
 // 「IO 恢复后重开可重判」。
 //
-// 缺陷（设计 §4.3 PS-10）：resumable 形态（IO-error 保守分支）无 .finalized sidecar
+// 缺陷（设计 §4.3 PS-10）：resumable 形态（IO-error 保守分支）无 .state sidecar
 // 锚，重判资格完全由 orphanJudged 实例级缓存承载；dispose 有 clear 但 /new 复活路径
 // revive() 此前不复位 → 同进程内曾经的 IO 失败记录永久停留 resumable。
 //
@@ -114,7 +114,7 @@ describe("[PS-10] revive() 复位 orphanJudged（IO 恢复后重开可重判）"
     expect(appended[0]?.customType).toBe("subagent-record");
     expect(appended[0]?.data.status).toBe("running");
     expect(appended[0]?.data.resumable).toBe(true);
-    expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(false); // 保守分支无 sidecar 锚
+    expect(fs.existsSync(`${sessionFile}.state`)).toBe(false); // 保守分支无 sidecar 锚
 
     // ── 阶段 2：IO 恢复 + /new 复活（revive 复位 orphanJudged）→ 重判收敛终态 ──
     allowReads = Infinity;
@@ -126,7 +126,7 @@ describe("[PS-10] revive() 复位 orphanJudged（IO 恢复后重开可重判）"
     expect(rejudged?.data.status).toBe("closed");
     expect(rejudged?.data.closedReason).toBe("gc");
     expect(rejudged?.data.resumable).toBeUndefined(); // 不再停留 resumable
-    expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true); // 终态防重锚落盘
+    expect(fs.existsSync(`${sessionFile}.state`)).toBe(true); // 终态防重锚落盘
   });
 
   it("未 revive 时重判资格保持（防重缓存语义不回归）：重复 recover 零新 entry", () => {

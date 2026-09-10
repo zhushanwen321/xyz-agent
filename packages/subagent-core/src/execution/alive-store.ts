@@ -3,9 +3,9 @@
 // .alive sidecar 生产者 + pid 探活。
 //
 // 子进程启动时写 .alive（pid+id+startedAt），心跳检测时读它 + isProcessAlive
-// 判活。finalize/cancel 收尾时 remove。与 .cancelled/.finalized 构成三件套。
+// 判活。finalize/cancel 收尾时 remove。与宿主侧终态 sidecar（.state）构成两件套。
 //
-// 设计对齐 tombstone-store：单文件 sidecar、best-effort I/O、无全局 index。
+// 设计对齐 state-marker：单文件 sidecar、best-effort I/O、无全局 index。
 
 import * as fs from "node:fs";
 

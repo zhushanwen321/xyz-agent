@@ -137,7 +137,7 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
     // manifest write 前移到 cleanup 之前，本标志会是 false（[Critical #1] 反例）。
     const finalizedBeforeManifestWrite = { value: false };
     vi.spyOn(manifestStore, "writeManifest").mockImplementation(async () => {
-      finalizedBeforeManifestWrite.value = fs.existsSync(`${sessionFile}.finalized`);
+      finalizedBeforeManifestWrite.value = fs.existsSync(`${sessionFile}.state`);
       throw new Error("disk full");
     });
     loggerMock.error.mockClear();
@@ -150,7 +150,7 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
     ).resolves.toBeUndefined();
 
     // ── 核心 claim 2：Step 3 cleanup 先执行 —— finalized marker 真实写入 ──
-    expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
+    expect(fs.existsSync(`${sessionFile}.state`)).toBe(true);
 
     // ── 核心 claim 3：Step 3 aliveMarker 被移除（预写的 .alive 不再存在）──
     expect(fs.existsSync(`${sessionFile}.alive`)).toBe(false);
@@ -175,7 +175,7 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
 
     // ── 核心 claim 8：[Critical #1] cleanup 在 manifest 写之前 —— 顺序锁定 ──
     // 若有人把 manifest write 前移到 cleanup 之前，本标志会是 false（mock 捕获时刻
-    // .finalized 尚未被 Step 3 写入），保护 Critical #1 时序不变量。
+    // .state 尚未被 Step 3 写入），保护 Critical #1 时序不变量。
     expect(finalizedBeforeManifestWrite.value).toBe(true);
 
     // 清理 mock 调用记录防污染
@@ -213,7 +213,7 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
       return sessionFile;
     }
 
-    it("sessionFile 缺失 + 反查命中 → .finalized 落盘 + .alive 清理 + record/manifest 回填", async () => {
+    it("sessionFile 缺失 + 反查命中 → .state 落盘 + .alive 清理 + record/manifest 回填", async () => {
       const sessionFile = writeSessionFileWithIdentity("20260901T12000000_ps9.jsonl", "rec-ps9");
       // 预写 .alive 残留（模拟 running 期崩溃恢复窗口的 marker）
       fs.writeFileSync(
@@ -228,9 +228,11 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
 
       // 反查回填 record.sessionFile
       expect(record.sessionFile).toBe(sessionFile);
-      // 终态原因持久化不再丢失（closedReason gc 写入 .finalized 内容）
-      expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
-      expect(fs.readFileSync(`${sessionFile}.finalized`, "utf-8")).toBe("gc");
+      // 终态原因持久化不再丢失（closedReason gc 写入 .state 的 reason 字段）
+      expect(JSON.parse(fs.readFileSync(`${sessionFile}.state`, "utf-8"))).toEqual({
+        status: "finalized",
+        reason: "gc",
+      });
       // alive marker 不再残留
       expect(fs.existsSync(`${sessionFile}.alive`)).toBe(false);
       // manifest 拿到真实 sessionFile（诊断/重建源不再失真）
@@ -238,7 +240,7 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
       expect(manifest?.sessionFile).toBe(sessionFile);
     });
 
-    it("cancelled + 反查命中 → tombstone 写到反查路径（cancelled 语义不因 sessionFile 缺失丢失）", async () => {
+    it("cancelled + 反查命中 → cancelled 终态写反查路径（语义不因 sessionFile 缺失丢失）", async () => {
       const sessionFile = writeSessionFileWithIdentity("20260901T12000001_ps9c.jsonl", "rec-ps9c");
       const record = makeMinimalRecord({ id: "rec-ps9c", sessionFile: undefined });
       const deps = { ...makeDeps(), sessionDir };
@@ -246,12 +248,12 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
       await doFinalizeRecord(deps, record, makeMinimalResult(), "closed", "cancelled");
 
       expect(record.sessionFile).toBe(sessionFile);
-      expect(fs.existsSync(`${sessionFile}.cancelled`)).toBe(true);
-      const tomb = JSON.parse(
-        fs.readFileSync(`${sessionFile}.cancelled`, "utf-8"),
-      ) as { id: string; status: string };
-      expect(tomb.id).toBe("rec-ps9c");
-      expect(tomb.status).toBe("cancelled");
+      const marker = JSON.parse(fs.readFileSync(`${sessionFile}.state`, "utf-8")) as {
+        status: string;
+        endedAt: number;
+      };
+      expect(marker.status).toBe("cancelled");
+      expect(typeof marker.endedAt).toBe("number");
     });
 
     it("反查未命中（目录无 identity 匹配文件）→ 不抛、sessionFile 保持缺失、无 marker（行为退回修复前）", async () => {
@@ -272,14 +274,14 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
     });
   });
 
-  // ── Step 3a 判别 wiring：closedReason → tombstone vs finalized（MF-1 fix / v4 B-1）──
+  // ── Step 3a 判别 wiring：closedReason → .state 单一终态 sidecar（L4 合并后）──
   //
-  // record 带 sessionFile 直接命中 writeFinalizedOrTombstone 的核心判别分支：
-  //   cancelled → writeCancelledTombstone（防重建丢失 cancelled 语义）
-  //   其余 reason → writeFinalized（真实 reason 进 sidecar 内容，磁盘重建还原 closedReason）
-  // 两路 sidecar 互斥（BC-4）：断言「写了哪个 + 没写哪个」双向锁定。
-  describe("writeFinalizedOrTombstone 判别 wiring（closedReason → tombstone vs finalized）", () => {
-    it("closedReason=cancelled → tombstone sidecar 携带 id/status/agent/startedAt/endedAt 且不写 .finalized", async () => {
+  // record 带 sessionFile 直接命中 writeTerminalState 的判别分支：
+  //   cancelled → .state {status:"cancelled", endedAt}（重建还原 cancelled 语义 + 精确结束时间）
+  //   其余 reason → .state {status:"finalized", reason}（真实 reason 进 sidecar，重建还原 closedReason）
+  // 单文件单 status 字段 → 互斥构造性成立；兼容期旧名（.finalized/.cancelled）不再被写。
+  describe("writeTerminalState 判别 wiring（closedReason → .state status）", () => {
+    it("closedReason=cancelled → .state 携带 status/endedAt 且不写旧名 sidecar", async () => {
       const sessionFile = path.join(tmpDir, "session.jsonl");
       const record = makeMinimalRecord({
         id: "rec-wire-cancelled",
@@ -290,42 +292,41 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
 
       await doFinalizeRecord(makeDeps(), record, makeMinimalResult(), "closed", "cancelled");
 
-      // tombstone 写出且内容为完整 CancelledTombstone（经 readCancelledTombstone 形态校验的
-      // 字段逐项断言，不用 objectContaining 放宽——重建链路靠这些字段还原）
-      expect(fs.existsSync(`${sessionFile}.cancelled`)).toBe(true);
-      const tomb = JSON.parse(fs.readFileSync(`${sessionFile}.cancelled`, "utf-8")) as {
-        id: string;
+      // .state 写出且内容为终态 marker（字段逐项断言，不用 objectContaining 放宽——
+      // 重建链路靠这些字段还原）
+      expect(fs.existsSync(`${sessionFile}.state`)).toBe(true);
+      const marker = JSON.parse(fs.readFileSync(`${sessionFile}.state`, "utf-8")) as {
         status: string;
-        agent: string;
-        startedAt: number;
         endedAt: number;
       };
-      expect(tomb.id).toBe("rec-wire-cancelled");
-      expect(tomb.status).toBe("cancelled");
-      expect(tomb.agent).toBe("worker");
-      expect(tomb.startedAt).toBe(1000);
+      expect(marker.status).toBe("cancelled");
       // endedAt 来自 completeRecord 冻结后的 record.endedAt（Step 1 先于 Step 3a，
-      // record 预设的 endedAt 会被冻结值覆盖）——tombstone 携带真实收尾时间戳
-      expect(tomb.endedAt).toBe(record.endedAt);
-      expect(typeof tomb.endedAt).toBe("number");
-      // 互斥：cancelled 路径绝不写 finalized（否则重建判「正常结束」，cancelled 语义丢失）
+      // record 预设的 endedAt 会被冻结值覆盖）——sidecar 携带真实收尾时间戳
+      expect(marker.endedAt).toBe(record.endedAt);
+      expect(typeof marker.endedAt).toBe("number");
+      // 兼容期旧名不再被写（写侧单点收敛）
       expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(false);
+      expect(fs.existsSync(`${sessionFile}.cancelled`)).toBe(false);
     });
 
     it.each(["user-close", "gc"] as const)(
-      "closedReason=%s → .finalized 内容携带真实 reason 且不写 tombstone",
+      "closedReason=%s → .state 内容携带真实 reason 且不写旧名 sidecar",
       async (reason) => {
         const sessionFile = path.join(tmpDir, "session.jsonl");
         const record = makeMinimalRecord({ id: `rec-wire-${reason}`, sessionFile });
 
         await doFinalizeRecord(makeDeps(), record, makeMinimalResult(), "closed", reason);
 
-        // finalized sidecar 写出且内容 = 真实 reason（磁盘重建用它还原 closedReason，
+        // .state 写出且 reason = 真实关因（磁盘重建用它还原 closedReason，
         // 不再一律硬编码 gc）
-        expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
-        expect(fs.readFileSync(`${sessionFile}.finalized`, "utf-8")).toBe(reason);
-        // 互斥：非 cancelled 路径不写 tombstone
+        expect(fs.existsSync(`${sessionFile}.state`)).toBe(true);
+        expect(JSON.parse(fs.readFileSync(`${sessionFile}.state`, "utf-8"))).toEqual({
+          status: "finalized",
+          reason,
+        });
+        // 兼容期旧名不再被写
         expect(fs.existsSync(`${sessionFile}.cancelled`)).toBe(false);
+        expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(false);
       },
     );
   });
@@ -419,7 +420,7 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
       ).resolves.toBeUndefined();
 
       // Step 0 失败不影响后续步骤：finalized sidecar 与 manifest 照常落地
-      expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
+      expect(fs.existsSync(`${sessionFile}.state`)).toBe(true);
       const manifest = await manifestStore.readManifest("rec-patch-err");
       expect(manifest?.status).toBe("closed");
       expect(deps.worktreeManager.cleanup).toHaveBeenCalledTimes(1);

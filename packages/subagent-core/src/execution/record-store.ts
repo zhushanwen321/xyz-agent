@@ -28,7 +28,8 @@ import * as path from "node:path";
 import { getLogger } from "../core/logger.ts";
 
 import { getCurrentActivity, getDisplayItems, getEventLog, markReconstructedStatus, snapshot as toSnapshot } from "./execution-record.ts";
-import { readFinalizedReason, writeFinalized } from "./finalized-marker.ts";
+import { readStateMarker, statStateStamp, writeFinalizedState } from "./state-marker.ts";
+import type { StateMarker } from "./state-marker.ts";
 import { toSubagentRecordEntry, SUBAGENT_RECORD_CUSTOM_TYPE } from "./record-entry.ts";
 import type { ManifestRecord, ManifestStore } from "./manifest-store.ts";
 import { INDEX_WRITE_MIN_INTERVAL_MS, loadIndex, saveIndex } from "./sessions-index.ts";
@@ -50,10 +51,8 @@ import type {
   RecordSnapshot,
   SubagentRecord,
 } from "./types.ts";
-import type { CancelledTombstone } from "./tombstone-store.ts";
 import { CLOSED_REASONS as CLOSED_REASON_LIST } from "./types.ts";
 import { isProcessAlive, readAliveMarker, ALIVE_SOFT_TIMEOUT_MS } from "./alive-store.ts";
-import { readCancelledTombstone } from "./tombstone-store.ts";
 
 const logger = getLogger("subagents");
 
@@ -105,11 +104,8 @@ interface Stamp {
 
 /** sidecar 状态矩阵输入（buildLightRecord / getFullRecord 共享）。 */
 interface SidecarMatrix {
-  tomb: CancelledTombstone | undefined;
-  finalized: boolean;
-  /** [v8.5 A2] `.finalized` sidecar 内容携带的关闭原因（readFinalizedReason 读出）。
-   *  旧格式空文件 → 空串（死因不可考）；sidecar 不存在 → undefined。 */
-  finalizedReason: string | undefined;
+  /** 终态 sidecar（.state 优先，兼容旧 .finalized/.cancelled 归一）。undefined = 未终态化。 */
+  state: StateMarker | undefined;
   alive: AliveMarker | undefined;
   /** jsonl mtime（light 分支 2 的 endedAt 近似——finalize 后文件不再变化）。 */
   jsonlMtimeMs: number;
@@ -126,7 +122,7 @@ interface SidecarMatrix {
  *          full === light 是哨兵（「已尝试但无详情可补」，如无 assistant message
  *          的文件），避免重复全文重读；stat 戳变化时随 light 一起重置重试。
  *
- * 校验：jsonl + 3 sidecar 的 stat 戳对比。任何写操作至少改变一个戳 →
+ * 校验：jsonl + 终态 sidecar + alive 的 stat 戳对比（终态戳为该组文件 .state/.finalized/.cancelled 的合并戳，见 state-marker.statStateStamp）。任何写操作至少改变一个戳 →
  * 只重建该文件，其余 N-1 个复用缓存（statSync 毫秒级，取代旧的整体失效重扫）。
  */
 interface FileCacheEntry {
@@ -135,15 +131,11 @@ interface FileCacheEntry {
   light: SubagentRecord;
   full: SubagentRecord | undefined;
   jsonl: Stamp;
-  cancelled: Stamp | null;
-  finalized: Stamp | null;
+  state: Stamp | null;
   alive: Stamp | null;
-  /** 最近一次重建时读到的 sidecar 原始内容（校验命中路径复用，不重读文件）。 */
-  tomb: CancelledTombstone | undefined;
+  /** 最近一次重建时读到的终态 sidecar 内容（校验命中路径复用，不重读文件）。 */
+  stateMarker: StateMarker | undefined;
   aliveData: AliveMarker | undefined;
-  /** [v8.5 A2] 最近一次重建时读到的 `.finalized` 内容 reason（同上，校验命中复用）。
-   *  sidecar 不存在时恒 undefined（与「存在但空串」区分，后者是旧格式空文件）。 */
-  finalReason: string | undefined;
 }
 
 /** 负缓存条目：确认无 identity 的文件（损坏/异构）。缓存「没有」这一事实，
@@ -151,27 +143,24 @@ interface FileCacheEntry {
 interface NegativeFileEntry {
   negative: true;
   jsonl: Stamp;
-  cancelled: Stamp | null;
-  finalized: Stamp | null;
+  state: Stamp | null;
   alive: Stamp | null;
 }
 
 /** fileCache 值类型：正常条目或负缓存条目。 */
 type FileCacheValue = FileCacheEntry | NegativeFileEntry;
 
-/** scanFile 单文件本轮 stat 戳集合（jsonl + 3 sidecar）。 */
+/** scanFile 单文件本轮 stat 戳集合（jsonl + 终态 sidecar（含旧名合并戳）+ alive）。 */
 interface FileStamps {
   jsonl: Stamp;
-  cancelled: Stamp | null;
-  finalized: Stamp | null;
+  state: Stamp | null;
   alive: Stamp | null;
 }
 
 /** sidecar payload 读取结果（索引命中与探测重建两分支共享的读点）。 */
 interface SidecarPayloads {
-  tomb: CancelledTombstone | undefined;
+  state: StateMarker | undefined;
   aliveData: AliveMarker | undefined;
-  finalReason: string | undefined;
 }
 
 /** 孤儿判定的末行读取初始窗口（常规 entry 远小于此，避免全文件读）。 */
@@ -224,7 +213,7 @@ function readLastJsonlLine(sessionFile: string): { ok: true; line: string } | { 
       try {
         fs.closeSync(fd);
       } catch (_e) {
-        void _e; // 关闭失败不影响已读结果（对齐 finalized-marker best-effort 模式）
+        void _e; // 关闭失败不影响已读结果（对齐 state-marker best-effort 模式）
       }
     }
   }
@@ -413,12 +402,11 @@ function sameNullableStamp(a: Stamp | null, b: Stamp | null): boolean {
   return sameStamp(a, b);
 }
 
-/** 缓存条目与本轮 stat 戳全同（jsonl + 3 sidecar，null 语义对齐）→ 零读取复用。 */
+/** 缓存条目与本轮 stat 戳全同（jsonl + 终态 sidecar + alive，null 语义对齐）→ 零读取复用。 */
 function isFreshCache(cached: FileCacheValue, stamps: FileStamps): boolean {
   return (
     sameStamp(cached.jsonl, stamps.jsonl) &&
-    sameNullableStamp(cached.cancelled, stamps.cancelled) &&
-    sameNullableStamp(cached.finalized, stamps.finalized) &&
+    sameNullableStamp(cached.state, stamps.state) &&
     sameNullableStamp(cached.alive, stamps.alive)
   );
 }
@@ -436,15 +424,14 @@ function detectIdentity(file: string, size: number): IdentityHeaderRecon | undef
 }
 
 /**
- * sidecar payload 读取（读顺序：tombstone → alive marker → finalized reason）。
- * tombstone/alive 是活态数据，调用方沿用每轮重读语义；finalized reason 静态数据
- * 仅在 sidecar 存在时读一次（文件小，成本可忽略）。
+ * sidecar payload 读取（读顺序：终态 marker → alive marker）。
+ * 两者都是活态数据，调用方沿用每轮重读语义；终态 marker 静态数据仅在戳非空时读
+ * （文件小，成本可忽略）。
  */
 function readSidecarPayloads(file: string, stamps: FileStamps): SidecarPayloads {
   return {
-    tomb: stamps.cancelled !== null ? readCancelledTombstone(file) : undefined,
+    state: stamps.state !== null ? readStateMarker(file) : undefined,
     aliveData: stamps.alive !== null ? readAliveMarker(file) : undefined,
-    finalReason: stamps.finalized !== null ? readFinalizedReason(file) : undefined,
   };
 }
 
@@ -535,7 +522,7 @@ export class RecordStore {
   /**
    * 归档：record 已被 completeRecord 设置了终态 status。
    * 立即从内存移除（终态 record 下次读时从 session.jsonl 重建）。
-   * cancelled record 由调用方先写 tombstone（cancel 路径），此处只负责移除。
+   * cancelled record 由调用方先写终态 sidecar（cancel 路径），此处只负责移除。
    *
    * W16 [D4]：终态冻结字段（result/endedAt/closedReason）在 completeRecord 已就绪，
    * 此处 append 的快照即完整终态记录（所有终态路径的必经锚点）。
@@ -566,7 +553,7 @@ export class RecordStore {
   /**
    * abort 所有 running record 的 controller（background 子进程 SIGTERM）。
    *
-   * 仅在 SubagentService.dispose（进程退出路径）调用。不做 CAS/tombstone——dispose
+   * 仅在 SubagentService.dispose（进程退出路径）调用。不做 CAS/终态标记——dispose
    * 是终局，状态机收尾无意义；目的是让 background 子进程的 AbortSignal 触发 →
    * runSpawn 的 signal listener → child.kill("SIGTERM")，防止主进程退出后子进程成孤儿。
    *
@@ -606,7 +593,7 @@ export class RecordStore {
    *   ╔══════════════════════════════════════════════════════════════════╗
    *   ║  1. 磁盘源：扫 sessionsDir 的 .jsonl，逐个 scanFile（[perf] 头部    ║
    *   ║     identity 轻量重建 + stat 戳缓存命中零读取）。cancelled          ║
-   *   ║     tombstone override status。详情字段（eventLog/result/turns）    ║
+   *   ║     终态 sidecar override status。详情字段（eventLog/result/turns）    ║
    *   ║     缺省，由 getFullRecord(id) 懒加载                              ║
    *   ║  2. 内存源覆盖（同 id 内存优先——running record 更新鲜）          ║
    *   ║  3. session 过滤：只留 rootSessionId === rootSessionFilter 的       ║
@@ -702,7 +689,7 @@ export class RecordStore {
    * - chatMode = true → 不终态化（跨重启可续聊是产品语义，v4 B-1），落 resumable
    *   entry 供侧栏 waiting 细分；
    * - 子 JSONL 末行完整 JSON.parse → closed（closedReason=gc，与分支 2 重建映射一致；
-   *   done/failed 细分由 error 字段经 deriveClosedDisplay 派生）+ 写 .finalized sidecar
+   *   done/failed 细分由 error 字段经 deriveClosedDisplay 派生）+ 写 .state sidecar
    *   （防重锚——下次重建走分支 2 不再进判定）；
    * - 末行截断 → closed + error（保守，错误方向安全）+ sidecar；
    * - 文件不可读（IO 错误，可能暂时）→ 不判终态，落 resumable entry（防御性路径，
@@ -770,11 +757,11 @@ export class RecordStore {
     } catch {
       parseOk = false;
     }
-    // .finalized sidecar：防重锚（同 doFinalizeRecord 终态路径的收尾标记）。
+    // .state sidecar：防重锚（同 doFinalizeRecord 终态路径的收尾标记）。
     // 显式携 reason="gc"：孤儿判定「末行完整 = 自然完成」，与 doFinalizeRecord 写入的
     // 真实 reason 同层——否则无 reason sidecar 在磁盘重建时被兜底为 disconnected，
     // 把正常完成的记录误标成断联。
-    writeFinalized(sessionFile, "gc");
+    writeFinalizedState(sessionFile, "gc");
     // [F3 boot 直断语义，设计表 3 行 2] 走到本分支的 record 分两类：
     //  - resumable=true（上方分流保证此时 result 有值）= SP-5 one-shot 完成态——任务
     //    真实完成，直断 closed/gc 无 error，投影 completed 不变；
@@ -953,7 +940,7 @@ export class RecordStore {
    * /resume /fork /new 后复活（dispose 的逆操作）。
    *
    * [PS-10/T6④] 同步复位 orphanJudged 防重缓存：resumable 形态（IO-error 保守分支 /
-   * chatMode 分流）没有 .finalized sidecar 锚，重判资格完全由本缓存承载——dispose 时
+   * chatMode 分流）没有 .state sidecar 锚，重判资格完全由本缓存承载——dispose 时
    * 有 clear（session 结束），但 revive 此前不复位，导致「同进程内曾经的 IO 失败记录
    * 永久停留 resumable」，与本文件 recoverOrphanRecords 注释承诺的「IO 恢复后重开可重判」
    * 不符。/new 复活正是「重开」语义：IO 已恢复的记录下次 recoverOrphanRecords 重新判定
@@ -967,11 +954,12 @@ export class RecordStore {
   // ── 内部 ──────────────────────────────────────────────────
 
   /**
-   * 四分支 sidecar 矩阵重建（[perf] light 版）。
+   * 四分支状态矩阵重建（终态 marker / alive / 兜底；[perf] light 版）。
    *
    * 优先级：
-   *   1. .cancelled → closed（closedReason=cancelled）
-   *   2. .finalized → closed（closedReason=sidecar 内容 reason；空/旧格式 → disconnected）
+   *   1. 终态 sidecar status=cancelled → closed（closedReason=cancelled）
+   *   2. 终态 sidecar status=finalized → closed（closedReason=内容 reason；空/旧格式 → disconnected）
+   *   （旧名 .finalized/.cancelled 由 readStateMarker 归一，判定分支不区分来源）
    *   3. .alive + pid 存活 + 未超软超时 → running, externalInstance=true
    *   4. 兜底（无 marker、pid 死、超时）→ running（v4 B-1 可续聊语义）
    *
@@ -1056,7 +1044,7 @@ export class RecordStore {
   }
 
   /**
-   * 扫描单文件：stat 戳（jsonl + 3 sidecar）校验，全同 → 复用缓存（零文件读取，
+   * 扫描单文件：stat 戳（jsonl + 终态 sidecar + alive）校验，全同 → 复用缓存（零文件读取，
    * 含负缓存直接返回 null）；否则重建 light。
    * identity 定位两级：头部 64KB（首轮会话）→ 全文 fallback（续聊场景 identity
    * append 在尾部）；两级都找不到 → 写负缓存（防每轮全文重读）。
@@ -1070,8 +1058,7 @@ export class RecordStore {
     }
     const stamps: FileStamps = {
       jsonl,
-      cancelled: statStamp(`${file}.cancelled`),
-      finalized: statStamp(`${file}.finalized`),
+      state: statStateStamp(file),
       alive: statStamp(`${file}.alive`),
     };
 
@@ -1109,8 +1096,8 @@ export class RecordStore {
 
   /**
    * [perf L-1] 磁盘索引查询（首扫惰性装载，miss/空索引时 get 恒 undefined = 无索引）。
-   * 条目戳匹配 jsonl 当前 stat → 零内容读取构造缓存条目。sidecar payload（tombstone/
-   * alive）是活态数据，沿用探测分支的每轮重读语义；finalized reason 静态数据仅在
+   * 条目戳匹配 jsonl 当前 stat → 零内容读取构造缓存条目。sidecar payload（终态 marker /
+   * alive）是活态数据，沿用探测分支的每轮重读语义；终态 reason 静态数据仅在
    * sidecar 存在时读一次（文件小，成本可忽略）。
    *
    * 返回 undefined = 索引未命中/戳不匹配（调用方落到原三级探测）；null = 负条目命中
@@ -1234,9 +1221,7 @@ export class RecordStore {
       const recon = reconstructFromFile(file);
       if (recon) {
         entry.full = RecordStore.buildRecord(recon, {
-          tomb: entry.tomb,
-          finalized: entry.finalized !== null,
-          finalizedReason: entry.finalized !== null ? (entry.finalReason ?? "") : undefined,
+          state: entry.stateMarker,
           alive: entry.aliveData,
           jsonlMtimeMs: entry.jsonl.mtimeMs,
           fullEndedAt: recon.endedAt,
@@ -1270,25 +1255,21 @@ export class RecordStore {
   ): FileCacheEntry {
     return {
       light: RecordStore.buildRecord(base, {
-        tomb: payloads.tomb,
-        finalized: stamps.finalized !== null,
-        finalizedReason: payloads.finalReason,
+        state: payloads.state,
         alive: payloads.aliveData,
         jsonlMtimeMs: stamps.jsonl.mtimeMs,
         now,
       }),
       full: undefined,
       jsonl: stamps.jsonl,
-      cancelled: stamps.cancelled,
-      finalized: stamps.finalized,
+      state: stamps.state,
       alive: stamps.alive,
-      tomb: payloads.tomb,
+      stateMarker: payloads.state,
       aliveData: payloads.aliveData,
-      finalReason: payloads.finalReason,
     };
   }
 
-  /** identity 基底（头部 light 或全量 recon）+ 四分支 sidecar 状态矩阵 → SubagentRecord。 */
+  /** identity 基底（头部 light 或全量 recon）+ 四分支状态矩阵（终态 marker / alive / 兜底）→ SubagentRecord。 */
   private static buildRecord(
     base: IdentityHeaderRecon | ReconstructedRecord,
     m: SidecarMatrix,
@@ -1350,23 +1331,25 @@ export class RecordStore {
       };
     }
 
-    // ── 分支 1: .cancelled ──
-    // v4 B-1: cancelled 折入 closed（closedReason='cancelled' 保留 L2 区分）。
-    if (m.tomb) {
+    // ── 分支 1: 终态 sidecar（.state 优先，旧 .finalized/.cancelled 兼容归一）──
+    if (m.state !== undefined && m.state.status === "cancelled") {
+      // v4 B-1: cancelled 折入 closed（closedReason='cancelled' 保留 L2 区分）。
       markReconstructedStatus(rec, "closed");
       rec.closedReason = "cancelled";
       rec.error = "cancelled by user";
-      rec.endedAt = m.tomb.endedAt;
+      // endedAt 用 sidecar 携带的精确值（原 tombstone.endedAt）；缺失（新写侧恒携带，
+      // 兼容手写残留）回落全量末 entry ts / light mtime。
+      rec.endedAt = m.state.endedAt ?? m.fullEndedAt ?? m.jsonlMtimeMs;
     }
-    // ── 分支 2: .finalized ──
-    else if (m.finalized) {
+    // ── 分支 2: finalized（同 sidecar，status=finalized）──
+    else if (m.state !== undefined) {
       // closed 统一终态：done/failed/crashed 合并为 closed。closedReason 优先用
       // sidecar 内容携带的真实原因（[v8.5 A2] doFinalizeRecord Step3 写入）。
       // 空内容（旧格式空文件 / 未携 reason 的外部写入）→ disconnected 兜底：死因
       // 不可考，但「正常结束过」信号仍在——替代旧的误导性 gc 兜底（自然完成 vs
       // 断联不分）。非枚举值（外部损坏/手写垃圾内容）同 treated as unknown → disconnected。
       markReconstructedStatus(rec, "closed");
-      const reason = m.finalizedReason?.trim();
+      const reason = m.state.reason?.trim();
       rec.closedReason = isValidClosedReason(reason) ? (reason as ClosedReason) : "disconnected";
       // 全量路径用最后 entry ts（精确）；light 路径用 jsonl mtime 近似（finalize 后
       // 文件不再变化，误差 <1s），避免重建后耗时随墙钟无限增长。

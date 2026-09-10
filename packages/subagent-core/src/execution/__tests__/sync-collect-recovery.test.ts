@@ -295,7 +295,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
   }
 
   /** 在 sessionsDir 手工构造子 session 文件（session 头 + identity entry + 末行完整
-   *  JSON record entry，E9 用例同款形态）且**不写** `.finalized`/`.cancelled`/`.alive`
+   *  JSON record entry，E9 用例同款形态）且**不写** `.state`/`.alive`
    *  三 sidecar——重建矩阵分支 4 命中条件，保证 orphan 恢复走 finalizeOrphanRecord
    *  真实路径（entry-born 兜底测不到 D3 merge 所在路径 = 假绿）。
    *  identity 含 reconstructAll 过滤必需字段：id/agent/task string + mode 枚举 +
@@ -662,7 +662,7 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     expect(overwritten.result).toBe("kill-9 full result body");
     expect(overwritten.model).toBe("prov/round-m");
     // 防重锚落盘（覆写已判终态，二次重启不再进判定）
-    expect(fs.existsSync(`${childFile}.finalized`)).toBe(true);
+    expect(fs.existsSync(`${childFile}.state`)).toBe(true);
 
     // ── E1 真实跑：末条（覆写后 closed entry）候选命中 → 补发 + 落标 ──
     const spy = spyNotifier(recovery);
