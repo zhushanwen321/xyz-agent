@@ -275,24 +275,27 @@ const LAZY_GET_STATE_TIMEOUT_MS = 1000;
 /**
  * [U2 D3a] 派生 / 后台记账工具清单（无后代判据的**单点维护处**，[export] 守卫测试锚定内容）。
  * 白名单含任一 ⇒ descendantCapable=true（三分支 + keep-alive 保留）：
- *   - `subagents` / `workflow`：pi 侧 spawn 类工具——子进程内可派生后代，差集记账一等面；
- *   - `bash`：base-tool-enhance 的 bash **后台模式**是一等记账面——spawn-background.ts:107
- *     emit `pending:register {type:"bash"}`（notify.ts:99-107，pending-notifications index.ts:142
- *     落盘），host 侧差集计数可见；含 bash 白名单的分析型 agent 跑后台任务现状走合法
- *     keep-alive（等进程内 poller 唤醒），判 false 会零判定误杀（G2 实质回归，设计 §3.3
- *     D3a 边界声明）。bash 间接 spawn 的 pi 进程不在 register−unregister 生命周期内，
- *     但后台 bash 记账已把该面覆盖在 keep-alive 之下，无需单列。
+ *   - `subagent` / `workflow` / `workflow-script`：subagent-workflow 注册的 spawn 类工具
+ *     （真实注册名，Gate B P3 实测勘误——旧值 "subagents" 复数形态不存在于注册面，
+ *     且漏列 `workflow-script`；权威源 extensions/universal/subagent-workflow/src/interface/
+ *     {subagent-tool.ts, tool-workflow.ts, tool-workflow-script.ts}，注册名联动守卫
+ *     descendant-tools-registry-guard.test.ts 从注册面源码提取并双向核对）；
+ *   - `bash`：base-tool-enhance 的 bash **后台模式**是一等记账面——notify.ts:107
+ *     emit `pending:register {type:"bash"}`（pending-notifications index.ts 落盘），host
+ *     侧差集计数可见。Gate B S4-② 实测：subagent 进程内该面被 D14 降级结构性不可达
+ *     （subagent-guard 判 PI_SUBAGENT_* 身份 env 后忽略 background:true），本项为保守
+ *     冗余保留（判 false 无收益，判 true 仅维持既有三分支语义，无回归风险）。
  *
  * **同步义务**：新增派生工具 / 任何会 emit `pending:register` 的后台记账面必须同步本
- * 清单——漏登记会把合法 keep-alive 翻转为零判定误杀；漂移由守卫测试
- * （agent-end-descendant-fast-path）拦截。
+ * 清单——漏登记会把合法 keep-alive 翻转为零判定误杀；漂移由联动守卫测试
+ * （descendant-tools-registry-guard：注册面源码提取 ↔ 清单双向核对）拦截。
  */
-export const DESCENDANT_CAPABLE_TOOLS: readonly string[] = ["subagents", "workflow", "bash"];
+export const DESCENDANT_CAPABLE_TOOLS: readonly string[] = ["subagent", "workflow", "workflow-script", "bash"];
 
 /**
  * [U2 D3a] 无后代判据派生（设计 §3.3 D3a，[export] 守卫测试六形态断言本函数）：
  * undefined / 空数组 → true（pi 默认全工具，物理具备派生能力）；含清单任一 → true；
- * 白名单非空且三者均不含 → false（零判定快路径唯一入口形态，runAgentEndDisposition 消费）。
+ * 白名单非空且清单均不含 → false（零判定快路径唯一入口形态，runAgentEndDisposition 消费）。
  */
 export function deriveDescendantCapable(tools: readonly string[] | undefined): boolean {
   // undefined / 空数组短路为 true（pi 默认全工具）；非空白名单看是否含清单任一。
@@ -2018,8 +2021,8 @@ async function runAgentEndDisposition(
 ): Promise<void> {
   const { record } = state;
 
-  // [U2 D3a] 快路径（零判定零等待）：白名单非空且不含派生/记账工具（subagents /
-  // workflow / bash）的 agent 物理不可能有进程内后代——差集记账必然为空且无 keep-alive
+  // [U2 D3a] 快路径（零判定零等待）：白名单非空且不含派生/记账工具（DESCENDANT_CAPABLE_TOOLS）
+  // 的 agent 物理不可能有进程内后代——差集记账必然为空且无 keep-alive
   // 合法性，不需要 sessionFile（回补/扫描无消费方），直接 final kill。必须最先短路
   // （在惰性回补之前）：回补是 await 面，先回补再 kill 会给无后代 agent 平添秒级延迟
   // 与无意义 IO。本分支位于函数首个 await 之前的同步段（child 生死在同 tick 内不可变，
@@ -2252,8 +2255,11 @@ async function dispositionRetryTick(
  *
  * 不置 sweepDescendantsOnClose（设计 D3b 被否谱系③）：sweep 入口
  * sweepDescendantsOfSession 首行 `if (!rootSessionFile) return` 结构性空转（窗口耗尽 =
- * sessionFile 恒 undefined），置位是无效安慰剂；后代清理不靠 sweep（SIGTERM 不级联，
- * 误杀形态的残余风险与恢复路径见设计误杀代价四要素分析）。
+ * sessionFile 恒 undefined），置位是无效安慰剂；后代清理不靠 sweep。[Gate B S5/P5 实测
+ * 勘误——误杀连带后果]：SIGTERM 形态下层主 shutdown 链临死主动收殓后代（补写
+ * pending:unregister 并终止之）；SIGKILL 形态下后代 3s 内死于 stdout EPIPE——两种形态
+ * 后代任务均中断、未产出成果丢失（已产出部分仍可经 session-reader 从其 session 文件查
+ * 出），设计文档「后代不级联继续跑完」的原声明不成立，详见设计偏差登记。
  */
 function exhaustDispositionRetryWindow(
   state: SpawnRunState,
@@ -2263,7 +2269,9 @@ function exhaustDispositionRetryWindow(
     `[session-runner] sessionFile unobtainable after ${
       DISPOSITION_RETRY_WINDOW_MS / MS_PER_SECOND
     }s recovery window (handshake suppressed? sessionDir missing?); process terminated, ` +
-      `result recovered from stdout events; descendants (if any) remain on disk, queryable via session reader`,
+      `result recovered from stdout events; descendants (if any) were terminated with this ` +
+      `process (graceful-shutdown reap or stdout EPIPE) and their unfinished work is lost; ` +
+      `already-produced output remains queryable via session reader`,
   );
   killChildWithEscalation(state, child, "disposition retry window exhausted");
 }
@@ -3132,7 +3140,7 @@ export async function runSpawn(
     settledWatchdogFired: undefined,
     // [U1 D2] sessionDir 扫描兜底的 mtime 过滤基准（agent_end 接入点 1 / close 接入点 2 共用）
     spawnStartedAtMs: startTime,
-    // [U2 D3a] 无后代判据：spawn 链 tools 汇合点派生（两条入口——subagents 工具路径
+    // [U2 D3a] 无后代判据：spawn 链 tools 汇合点派生（两条入口——subagent 工具路径
     // 经 executeAndAwait / workflow 路径经 execute——共享本 runSpawn，opts.agentConfig?.tools
     // 已由 SubagentService.resolveIdentity 注入，与 buildSpawnInvocation 的 agentTools 同源）。
     descendantCapable: deriveDescendantCapable(opts.agentConfig?.tools),

@@ -6,8 +6,8 @@
 //
 // 覆盖：
 //   - 条款①（守卫测试）：deriveDescendantCapable 六形态断言——tools undefined / 空数组
-//     （pi 默认全工具，物理具备派生能力）/ 含 subagents / 含 workflow / 含 bash（后台
-//     记账面，判 false 会误杀进程内 poller）/ 全不含（快路径）+ 清单常量内容锚定。
+//     （pi 默认全工具，物理具备派生能力）/ 含 subagent / 含 workflow-script / 含 workflow /
+//     含 bash（后台记账面，判 false 会误杀进程内 poller）/ 全不含（快路径）+ 清单常量内容锚定。
 //   - 条款②（行为测试）：全不含白名单 subagent agent_end 后立即 final kill——零判定
 //     （三分支差集读取不触达）、零等待（wakeup grace 15s / no-progress 30min 量级均无
 //     残留 timer 副作用）、runSpawn 成功语义收尾。
@@ -70,8 +70,12 @@ describe("[U2 D3a] deriveDescendantCapable 无后代判据（六形态守卫）"
     expect(deriveDescendantCapable([])).toBe(true);
   });
 
-  it("白名单含 subagents → true（spawn 面可达）", () => {
-    expect(deriveDescendantCapable(["read", "subagents"])).toBe(true);
+  it("白名单含 subagent（真实注册名单数形态）→ true（spawn 面可达）", () => {
+    expect(deriveDescendantCapable(["read", "subagent"])).toBe(true);
+  });
+
+  it("白名单含 workflow-script → true（spawn 面可达）", () => {
+    expect(deriveDescendantCapable(["read", "workflow-script"])).toBe(true);
   });
 
   it("白名单含 workflow → true（spawn 面可达）", () => {
@@ -82,12 +86,12 @@ describe("[U2 D3a] deriveDescendantCapable 无后代判据（六形态守卫）"
     expect(deriveDescendantCapable(["read", "grep", "bash"])).toBe(true);
   });
 
-  it("白名单非空且三者均不含 → false（零判定快路径唯一入口形态）", () => {
+  it("白名单非空且清单均不含 → false（零判定快路径唯一入口形态）", () => {
     expect(deriveDescendantCapable(["read", "grep"])).toBe(false);
   });
 
-  it("清单常量单点锚定：DESCENDANT_CAPABLE_TOOLS = subagents/workflow/bash（防意外漂移）", () => {
-    expect([...DESCENDANT_CAPABLE_TOOLS].sort()).toEqual(["bash", "subagents", "workflow"]);
+  it("清单常量单点锚定：DESCENDANT_CAPABLE_TOOLS = subagent/workflow/workflow-script/bash（Gate B P3 勘误后真实注册名，防意外漂移）", () => {
+    expect([...DESCENDANT_CAPABLE_TOOLS].sort()).toEqual(["bash", "subagent", "workflow", "workflow-script"]);
   });
 });
 

@@ -274,16 +274,16 @@ grep -E "backfilled via (late|lazy) get_state|(located|backfilled) via sessionDi
 
 **③ `unobtainable after 15s recovery window` — 需要关注的残余形态**
 
-- 日志：`[session-runner] sessionFile unobtainable after 15s recovery window (handshake suppressed? sessionDir missing?); process terminated, result recovered from stdout events; descendants (if any) remain on disk, queryable via session reader`
-- 含义：三路获取全失败（15s 窗口内 get_state 与扫描交替重试均 miss），进程被 kill（SIGTERM→30s→SIGKILL 升级链），runSpawn 以成功语义返回、结果来自 stdout 事件累积——不冻结、成果不丢。但若该 agent 真有活跃后代即为误杀（假阴性）：SIGTERM 不级联，后代继续跑完自身任务，成果留在其自身 session 文件（session-reader 可查），但其完成通知的投递目标已死——挂账重投耗尽后 abandoned（有日志）。
-- 下一步：①`ps aux | grep "pi --mode rpc"` 清点孤儿进程，确认后手工回收；②session-reader / `subagents action:"list"` 查后代成果；③验收口径（设计 §4 S7）翻转窗口触发应恒零——出现即按日志归因三路全失败的根因并回写验收表。桌面 EXT_LOG 档可回放窗口全程：`entering 15s recovery window`（进入）→ `retry window round N: ...`（逐轮）。
+- 日志：`[session-runner] sessionFile unobtainable after 15s recovery window (handshake suppressed? sessionDir missing?); process terminated, result recovered from stdout events; descendants (if any) were terminated with this process (graceful-shutdown reap or stdout EPIPE) and their unfinished work is lost; already-produced output remains queryable via session reader`
+- 含义：三路获取全失败（15s 窗口内 get_state 与扫描交替重试均 miss），进程被 kill（SIGTERM→30s→SIGKILL 升级链），runSpawn 以成功语义返回、结果来自 stdout 事件累积——不冻结。但若该 agent 真有活跃后代即为误杀（假阴性）。[Gate B S5/P5 实测勘误] 误杀是**连带终局**而非「后代独立跑完」：SIGTERM 形态下层主 shutdown 链临死主动收殓后代（补写 pending:unregister 并终止之）；SIGKILL 形态下后代 3s 内死于 stdout EPIPE——两种形态后代任务均中断、未产出成果丢失；已产出的部分仍可经 session-reader 从后代自身 session 文件查出。
+- 下一步：①`ps aux | grep "pi --mode rpc"` 确认后代已随层主终止（残留即手工回收）；②session-reader / `subagents action:"list"` 查后代**已产出**的部分成果；③验收口径（设计 §4 S7）翻转窗口触发应恒零——出现即按日志归因三路全失败的根因并回写验收表。桌面 EXT_LOG 档可回放窗口全程：`entering 15s recovery window`（进入）→ `retry window round N: ...`（逐轮）。
 
 **两条次级特征**：
 
 **④ `no-descendant fast path` — 正常路径（debug 级）**
 
-- 日志：`[session-runner] agent_end: no-descendant fast path (tools whitelist excludes subagents/workflow/bash): final kill, <id>`
-- 含义：tools 白名单非空且不含派生/记账工具（`subagents`/`workflow`/`bash`——bash 的后台模式同样进 pending 记账）的 agent 物理不可能有进程内后代，agent_end 零判定直接 final kill，秒级回收。
+- 日志：`[session-runner] agent_end: no-descendant fast path (tools whitelist excludes subagent/workflow/workflow-script/bash): final kill, <id>`
+- 含义：tools 白名单非空且不含派生/记账工具（真实注册名 `subagent`/`workflow`/`workflow-script`——Gate B P3 勘误：旧表述 "subagents" 复数形态不存在于注册面；`bash` 为后台记账面保守冗余，subagent 进程内被 D14 降级实际不可达）的 agent 物理不可能有进程内后代，agent_end 零判定直接 final kill，秒级回收。
 - 下一步：无需处置。若期望 keep-alive 等待的 agent 命中此串，检查 tools 白名单是否漏配派生工具。
 
 **⑤ `process killed before handshake settled` — 边界形态（记账正确，非缺陷）**

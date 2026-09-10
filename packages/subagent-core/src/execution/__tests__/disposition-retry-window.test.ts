@@ -285,12 +285,14 @@ describe("[U3 D3b] agent_end 处置翻转：error 分支 15s 回补重试窗口"
       // 轮 3（耗尽判定轮，不再获取）：kill SIGTERM——SIGKILL 升级由 killChain 30s 窗口承接
       expect(child.killed).toBe(true);
       expect(child.killSignal).toBe("SIGTERM");
-      // 耗尽 warn 留痕（设计 §3.5 D3b 行文案）
+      // 耗尽 warn 留痕（设计 §3.5 D3b 行文案；后代连带终局表述为 Gate B S5/P5 实测勘误后）
       expect(loggerMock.warn).toHaveBeenCalledWith(
         expect.stringContaining("sessionFile unobtainable after 15s recovery window"),
       );
       expect(loggerMock.warn).toHaveBeenCalledWith(
-        expect.stringContaining("descendants (if any) remain on disk, queryable via session reader"),
+        expect.stringContaining(
+          "descendants (if any) were terminated with this process (graceful-shutdown reap or stdout EPIPE)",
+        ),
       );
 
       child.stdout.end();
