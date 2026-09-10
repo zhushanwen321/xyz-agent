@@ -20,12 +20,15 @@
  */
 
 /** 回收判定周期默认值（D4：5 分钟一拍；权威值由 u3 经 shared/constants + env 覆盖传入）。 */
+// eslint-disable-next-line no-magic-numbers -- 5min tick（D4 权威值）：5*60*1000 算式比 300000 更自文档化
 export const DEFAULT_REAP_TICK_MS = 5 * 60 * 1000
 
 /** 空闲阈值默认值（D4：2 小时；被否 30min——抖动变常态 / 24h——对午饭级离开太迟）。 */
+// eslint-disable-next-line no-magic-numbers -- 2h 空闲阈值（D4 权威值）：2*60*60*1000 算式自文档化
 export const DEFAULT_IDLE_THRESHOLD_MS = 2 * 60 * 60 * 1000
 
 /** 查看豁免窗口默认值（D2 #6：30 分钟内被 switch 过的 session 不回收）。 */
+// eslint-disable-next-line no-magic-numbers -- 30min 查看豁免窗口（D2 #6 字面值）：30*60*1000 算式自文档化
 export const DEFAULT_VIEWED_WINDOW_MS = 30 * 60 * 1000
 
 /**
@@ -317,6 +320,7 @@ async function reapTick(options: IdlePiReaperOptions): Promise<void> {
         // RSS 不经 RPC 暴露（IPiEngine 无该信号），此处的 memoryUsage 是 runtime 进程
         // 水位（与每拍汇总同源）——归因到「回收时刻」的系统内存背景。
         const mem = process.memoryUsage()
+        // eslint-disable-next-line no-magic-numbers -- 1024*1024 = bytes→MB 换算，惯例自明
         console.log(`[pi-reaper] reclaimed sid=${sid} idleMs=${idleMs} runtimeRssMB=${Math.round(mem.rss / (1024 * 1024))}`)
       } else {
         dist.reclaimFailed++
@@ -332,6 +336,7 @@ async function reapTick(options: IdlePiReaperOptions): Promise<void> {
   if (reclaimed.length > 0) {
     try {
       options.broadcast()
+    // eslint-disable-next-line taste/no-silent-catch -- 已 console.error 落盘（错误可观测，非静默吞错）；广播是 best-effort 通知，失败不阻断回收主流程
     } catch (e) {
       console.error('[pi-reaper] post-reclaim broadcast failed:', e instanceof Error ? e.message : e)
     }
@@ -348,7 +353,9 @@ async function reapTick(options: IdlePiReaperOptions): Promise<void> {
     thresholdMs: idleThresholdMs,
     viewedWindowMs,
     memory: {
+      // eslint-disable-next-line no-magic-numbers -- 1024*1024 = bytes→MB 换算，惯例自明
       rssMB: Math.round(mem.rss / (1024 * 1024)),
+      // eslint-disable-next-line no-magic-numbers -- 1024*1024 = bytes→MB 换算，惯例自明
       heapUsedMB: Math.round(mem.heapUsed / (1024 * 1024)),
     },
   })

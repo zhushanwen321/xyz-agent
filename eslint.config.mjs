@@ -94,6 +94,21 @@ export default [
       'max-lines': 'off',
     },
   },
+  // [HISTORICAL·2026-09 idle-pi-reclamation] 空闲 pi 进程回收功能接入（reaper 装配 +
+  // 生命周期挂钩）：session-service 是 session 生命周期编排的历史巨石，增量接入后再越
+  // 500 阈值（曾于 session-service-deepening 六域迁出后移出本清单，本次新功能装配再次
+  // 触发）；runtime index.ts 是进程组装 barrel，main 基线 501 行即超，本次 +41。
+  // 两文件拆分归独立重构单元（见 docs/design/idle-pi-reclamation.impl-plan.md），
+  // 禁止在 lint 收敛批次内拆文件重构。短期 max-lines override 避免阻塞。
+  {
+    files: [
+      'packages/runtime/src/services/session/session-service.ts',
+      'packages/runtime/src/index.ts',
+    ],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
   // [HISTORICAL] 复杂度债务偿还（docs/design/complexity-debt-full-repayment.md）产物：
   // 以下文件因行为保持提取（helper 签名/花括号/JSDoc 开销）代码行超 max-lines 阈值。
   // 职责内聚（每文件均为单一子系统的高复杂度函数原地拆解，cyclo 已全部 ≤12），
