@@ -59,8 +59,9 @@ import {
   reportChildSpawned,
   wireChildStdoutPump,
   type RunEndState,
+  type SessionIdentityTracker,
 } from "./spawn-run-pump.ts";
-import { performGetStateHandshake } from "./get-state-handshake.ts";
+import { performGetStateHandshake, requestGetStateOnce } from "./get-state-handshake.ts";
 import { clearEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
 import { cleanupTempPrompt, writePromptToTempFile } from "./temp-prompt.ts";
 import { WRAP_UP_HINT } from "./turn-limiter.ts";
@@ -75,6 +76,12 @@ import {
 } from "./logs/stderr-rotation.ts";
 
 const logger = getLogger("session-runner");
+
+/**
+ * agent_end 惰性回补的单次 get_state 超时（设计决策 2；超时哲学 §5.4：控制面单请求
+ * 秒级）——kill 最多延后此时长，对已完成 turn 的子进程无副作用。
+ */
+const LAZY_GET_STATE_TIMEOUT_MS = 1_000;
 
 /** run 的宿主回调面（server.ts 注入：协议通知 + host/* 反向请求）。 */
 export interface SpawnRunCallbacks {
@@ -249,10 +256,68 @@ async function writeAppendPromptFile(params: SpawnRunParams) {
     : undefined;
 }
 
+/**
+ * agent_end 惰性 get_state 回补（设计决策 2：消费零调用方的 `requestGetStateOnce`）。
+ *
+ * 回补结果走 identity tracker 既有回填面（`addStateListener` 内部已过
+ * `applyGetStateFields`；此处再显式调用一次与握手调用点同款，幂等——同值不重发
+ * handleReady），落 `outcome.sessionFile`。查询失败/超时按 miss 处理（
+ * `requestGetStateOnce` 契约：永不 reject），由 close 收尾与下游兜底接手。
+ */
+export async function backfillSessionFileAtAgentEnd(
+  child: ChildProcess,
+  identity: SessionIdentityTracker,
+): Promise<void> {
+  const fields = await requestGetStateOnce(
+    child,
+    identity.addStateListener,
+    LAZY_GET_STATE_TIMEOUT_MS,
+  );
+  identity.applyGetStateFields(fields);
+}
+
+/** agent_end 回补编排入参（backfill 可注入：验收需构造回补链抛错证明 kill 必达）。 */
+export interface AgentEndBackfillOrchestrationOpts {
+  /** run 收尾状态句柄（同步段置 endedCleanly）。 */
+  runEnd: RunEndState;
+  /** 归因日志用 record id。 */
+  recordId: string;
+  /** 回补实现（生产 = backfillSessionFileAtAgentEnd 单次查询）。 */
+  backfill: () => Promise<unknown>;
+  /** 终结子进程（生产 = killChain 包装；回补链任意抛错的 finally 必达点）。 */
+  killChild: (source: string) => void;
+}
+
+/**
+ * agent_end 回补编排（R1 MF-2 kill 必达约束）：
+ *   - **同步段**先置 `runEnd.endedCleanly`（agent_end 已到 = 本轮正常终结）——回补
+ *     异步化不得破坏「end 与 close 之间被杀」的 exit 0 口径；
+ *   - 回补段整体 try（异常按 miss 处理 + warn，不阻断收尾）；
+ *   - `killChild` 放 finally **必达**：回补链任意位置抛错都不得跳过 kill，否则 run
+ *     永挂（正常完成路径退化为依赖兜底 = 规则 20 红线）。
+ */
+export function orchestrateAgentEndBackfill(opts: AgentEndBackfillOrchestrationOpts): void {
+  opts.runEnd.endedCleanly = true;
+  void (async () => {
+    try {
+      await opts.backfill();
+    } catch (err) {
+      logger.warn(
+        `[session-runner] agent_end get_state backfill failed for ${opts.recordId} `
+          + `(treated as miss; kill proceeds): ${toErrorMessage(err)}`,
+      );
+    } finally {
+      opts.killChild("agent_end final kill");
+    }
+  })();
+}
+
 /** SDK 事件翻译器 opts 装配（agent_end/agent_settled 的 chatMode 分派 + run 收尾状态接线）。 */
 function buildTranslatorOpts(
   params: SpawnRunParams,
   callbacks: SpawnRunCallbacks,
+  child: ChildProcess,
+  identity: SessionIdentityTracker,
   killChild: (source: string) => void,
   runEnd: RunEndState,
 ): SdkTranslatorOpts {
@@ -271,8 +336,16 @@ function buildTranslatorOpts(
         callbacks.onChatRoundEnd?.();
       }
       : () => {
-        runEnd.endedCleanly = true;
-        killChild("agent_end final kill");
+        // [一次性 run] agent_end 即终态：先惰性补一次 get_state（子进程刚完成 turn、
+        // 空闲，成功率远高于 spawn 期；原事故形态的 sessionFile 缺失在此补回），再
+        // kill 触发 close → run 应答。编排的同步段/kill 必达约束见
+        // orchestrateAgentEndBackfill 头注。
+        orchestrateAgentEndBackfill({
+          runEnd,
+          recordId: params.recordId,
+          backfill: () => backfillSessionFileAtAgentEnd(child, identity),
+          killChild,
+        });
       },
     ...(chatMode
       ? {
@@ -340,9 +413,12 @@ export async function runSpawnOnce(
     // 声明先于 handler 装配，exitPromise executor 内落位——事件只会在 pump 启动后
     // 异步到达，无空窗）。
     const runEnd: RunEndState = { endedCleanly: false };
+    // 身份写入口先行装配：translator 的 agent_end 惰性回补与 stdout pump 共用同一
+    // tracker（回补走既有 addStateListener + applyGetStateFields 回填面）。
+    const identity = createSessionIdentityTracker(params.sessionDir, callbacks);
     const handleSdkEvent = createSdkEventTranslator(
       record,
-      buildTranslatorOpts(params, callbacks, killChild, runEnd),
+      buildTranslatorOpts(params, callbacks, child, identity, killChild, runEnd),
     );
 
     // 2b. stderr tee 落盘（W11，设计 §3.9 同款契约）：pi 任务子进程 stderr 此前
@@ -365,7 +441,6 @@ export async function runSpawnOnce(
 
     // 5+6. session 身份回填 + stdout pump / close 收尾（身份三路同源与退出码口径
     // 见 spawn-run-pump.ts；get_state 监听表随 identity tracker 持有）
-    const identity = createSessionIdentityTracker(params.sessionDir, callbacks);
     const exitPromise = wireChildStdoutPump({
       child,
       recordId: params.recordId,
