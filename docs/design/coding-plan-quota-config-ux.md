@@ -676,6 +676,12 @@ typeChanged  = savedFetcher !== undefined && draft.fetcher !== savedFetcher
 
 preset = QUOTA_PRESETS.find(p => p.fetcher === draft.fetcher)
 
+若 preset 未命中 → { ready: false, missing: ['type'] }
+                       （draft.fetcher 有值但不在预设表：只可能来自历史数据或手工编辑
+                        providers.json（UI 下拉只列预设）。未知 fetcher 无法判定该类型的
+                        凭证形态，按「类型缺失」处理让用户重选，**不得**静默按 api-key 类
+                        放行一条带未知 fetcher 的 configure —— 一致性审查 U-5 登记）
+
 若 preset.auth 含 'cookie'：
     cookie 有值 ⟺ draft.cookie 非空
                   ∨ (¬typeChanged ∧ provider.quota.cookieSet)
@@ -874,7 +880,13 @@ configService.setQuotaStateCleaner((providerId) => quotaService.clearProviderSta
 | 四个按钮（`quota-save-apikey-btn` / `quota-save-cookie-btn` / `quota-save-workspace-btn` / `quota-test-btn`）**合四为一** | 合并为单个 `quota-save-test-btn` |
 | **oauth 凭证态行移除** | 随 `apiKeySet` 一并删除（OAuth 信息并入 `quotaSourceProviderOauthHint`）；连带 4 个 i18n key（`quotaCredentialOauthReady` / `quotaCredentialOauthMissing` / `quotaCredentialOauthMissingHint` / `quotaApiKeyFallbackOrder`）失去全部消费方 → 同批删除（一致性审查登记，v8 遗漏） |
 
-**「已配置 / 必填」徽标的取值规则（按 D5 的凭证归属过滤，与 readiness 同源）**：徽标表达的是「该字段此刻有效」，不是「磁盘上曾存过一份」——`已配置 ⟺ 磁盘有值 ∧ ¬typeChanged`（cookie：`!typeChanged && quota.cookieSet`；专属 Key：`!typeChanged && quota.apiKeySet`；workspace：明文回显字段，取 `workspaceInput` 非空）。用磁盘原始标记会导致类型切换后出现「徽标说已配置、字段提示说必填」的同屏矛盾 —— 对照 §5.2 路径 2 的终态原型（该状态明写 `Cookie · 必填`）与 S7 的通过标准（「改类型后旧 Cookie 不计入，Cookie 与 Workspace 都提示必填」）。
+**「已配置 / 必填」徽标的取值规则（与 readiness 同源，不得独立复算）**：徽标表达的是「该字段此刻有效」，不是「磁盘上曾存过一份」——实现上**直接从 `readiness.missing` 派生**：`missing` 含该字段 key → 「必填」；否则 → 「已配置」。这是唯一真相来源的写法：凭证归属规则（`typeChanged`）只编码在 readiness 一处，徽标与字段级提示调同一个 `isMissing`，因此「徽标说已配置、提示说必填」在结构上不可达。
+
+（下方括号内是 readiness **内部**的定义式，仅用于理解判定语义，**不是**给徽标的第二份复算公式——一致性审查发现两者在「`typeChanged` ∧ 新凭证草稿非空」这一态下并不等价：readiness 按草稿判齐备，独立复算的公式会得出「徽标必填但下方无必填提示」的悬空态。）
+
+- cookie：`草稿非空 ∨ (¬typeChanged ∧ quota.cookieSet)`；专属 Key：`草稿非空 ∨ (¬typeChanged ∧ quota.apiKeySet)`；workspace：`workspaceInput` 非空（D13 只看草稿）
+
+徽标块与 readiness 的分支条件同构（`v-if needsWorkspace` / `v-if credentialSource === 'exclusive'`），故不存在「字段不适用时被误标已配置」的状态。对照依据：§5.2 路径 2 的终态原型（该状态明写 `Cookie · 必填`）与 S7 的通过标准（「改类型后旧 Cookie 不计入，Cookie 与 Workspace 都提示必填」）。
 
 `ProviderEditBody.vue:222` 的 `:api-key-set="!!provider?.apiKeySet || !!provider?.quota?.apiKeySet"` 拆成两个独立 prop（D3 的证据来源）。
 

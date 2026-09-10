@@ -129,7 +129,7 @@ graph TD
 3. Gate B 凭证依赖场景（§4）可能部分 blocked——逐场景登记，不静默跳过。
 4. ~~**U1-t2 发现的前批遗留缺口**：`quota-reason-i18n.test.ts` 的两个断言数组历史上就不含 `not_configured` 的 key（`quotaFetchFailNotConfigured` / `quotaFailNotConfigured`——locale 双侧存在但断言数组缺）→ 归 U6 终扫批补齐。~~ **已关闭（U6，commit `7f676e961`）**：两个 key 补入断言数组，`quota-reason-i18n.test.ts` 8/8 + locale-sync 163/163 绿。
 5. ~~**ui 包存量编译红（疑似与本设计无关，U3 期发现）**：`packages/ui/src/overlays/__tests__/search-modal.test.ts:386/391/396` 三处 TS18048。~~ **已关闭（独立微修 commit `82b31b736`）**：逐字节确认与 HEAD 相同 = 存量红，用运行时 guard 修复，ui vue-tsc 整包转绿。
-6. **设计阶段 demo 资产的存量 lint 红**（U6 期发现，Gate A 阻塞项）：`docs/design/coding-plan-quota-ux.demo.js:120`（`onChange` 未使用）+ `:155`（短路表达式语句）两个 error，由设计批 `8766d71d3` 引入、非本次实现代码。U6 续做批处理中（禁 eslint-disable）。
+6. ~~**设计阶段 demo 资产的存量 lint 红**（U6 期发现，Gate A 阻塞项）：`docs/design/coding-plan-quota-ux.demo.js:120`（`onChange` 未使用）+ `:155`（短路表达式语句）两个 error，由设计批 `8766d71d3` 引入、非本次实现代码。~~ **已关闭（commit `bdfbca78a`）**：`scenarioBar` 的无用形参删除（调用点本就单参，活跃回调通道是 `bindScenario` 的 `onChange`）、短路表达式改 `if`、并发现在 `demo-a.html` 的同类 `isDirty` 零引用一并清理；行为等价性用 vm 载入新旧两版逐字节对比证明；demo 全部资产 eslint 零 error（一致性审查 C 区 D-2 订正本条为已关闭）。
 
 **变更历史**：
 
