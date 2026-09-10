@@ -110,7 +110,11 @@ graph TD
 
 **P2 探针裁决登记（2026-09-11，一致性审查）**：免测（内建覆盖）——D2 #4 handoff 硬豁免已实装（`HandoffService.hasInflightHandoff` 只读访问器 + index.ts 装配接线 + reclaim-accessors.test.ts 真生命周期链用例），occupancy 对 handoff 直 prompt 的覆盖窗口不再构成误回收面；设计 §3.4 P2 行状态已同步标注。
 
-**一致性审查记录（2026-09-11，阶段 3）**：双 reviewer 分区对抗审查（A 区 infra/transport/shared / B 区 services core + 装配），区间 12127bb14..HEAD。结果：unreasonable ×4（A 中 1 低 1 / B 低 2）+ doc_errors ×5 + reasonable ×11。修复分派：组 A = 维护通道排除补回程腿（pending 级，中严重度唯一机制变更）+ 初值测试区分力；组 B = 默认值双源等值守卫测试；组 C = 两处过时注释同步（已 commit fa9d9ee39）；doc 侧 = 设计文档 D1/D3/D4/D5/D6/D7 措辞 + P2/P7 探针状态 + 本表 R8-R13 登记（主 agent 亲为）。
+**一致性审查记录（2026-09-11，阶段 3）**：双 reviewer 分区对抗审查（A 区 infra/transport/shared / B 区 services core + 装配），区间 12127bb14..HEAD。结果：unreasonable ×4（A 中 1 低 1 / B 低 2）+ doc_errors ×5 + reasonable ×11。修复分派：组 A = 维护通道排除补回程腿（pending 级，中严重度唯一机制变更，de61b4c15，定向复审 5 攻击点全过含 4 组变异复验）+ 初值测试区分力；组 B = 默认值双源等值守卫测试（f51e8042b）；组 C = 两处过时注释同步（fa9d9ee39）；doc 侧 = 设计文档 D1/D3/D4/D5/D6/D7 措辞 + P2/P7 探针状态 + 本表 R8-R13 登记（f80b5cbfa/6b06f52e6，主 agent 亲为）。
+
+**Gate A 记录（2026-09-11，阶段 5 第 1 轮）**：**FAIL**——runtime 全量 471 文件 5349 用例中 18 失败（4 文件）+ lint 19 warnings；real-pi 池零跳过真跑（u4 集成 + 13 文件全绿）、双包 tsc、render-constraints 绿。失败归因与处置：① test/session-service.test.ts ×14 + respawn ×2 + ensure-active ×1——主根因 = 该文件 fake client 未补 `touchActivity`（R6 补 fake 漏此文件，单元期增量测试未覆盖所致），sendPrompt 入口 touch TypeError 连坐 join 断言；5 条 join 类失败待补 fake 后复判是否真语义回归（修复组 1）。② rpc-client-streaming-behavior arity 断言未同步 prompt 第 4 参（R8①，修复组 1）。③ lint：idle-pi-reaper.ts 魔法数/静默 catch 17 条（对齐文件先例带理由豁免）+ session-service/index max-lines 超限（按仓库既有按文件 override 先例登记，拆分归独立重构单元）（修复组 2）。
+**Gate A uncovered 处置（登记即接受）**：pi-engine 端口扩展（类型级，tsc + 消费方测试间接覆盖）；index.ts wiring 段（reclaim-accessors 真链 + real-pi 集成端到端覆盖）；shared constants（resolveReclaimConfig 间接断言）；.githooks/check_prompt_outposts.py 指纹刷新（守卫脚本自身运行即验证）；history-rebuild-cache.ts（组 C 注释级改动，计划领地外——既有 session-history-incremental.test.ts 覆盖，注释零行为）；transport/session-message-handler.ts 在验收区间外（u1b 先于基线提交，实装终态已按 HEAD 审查）。
+**R6 更正（Gate A 发现）**：u1a 轮 2 接替者补 fake 共 8 文件不含 test/session-service.test.ts，该文件 fake 缺成员致 12 用例连坐至 Gate A 才暴露——单元期「相关回归」清单未包含全部 fake 实现文件，教训登记：接口扩展类改动的回归面应按「实现 IPiEngine 的全部 fake 构造点」grep 圈定而非人工枚举。
 
 ## 7 残留风险与变更历史
 
