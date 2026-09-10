@@ -130,4 +130,4 @@ bash scripts/validate-runtime-bundle.sh
 | 日期 | 事件 |
 |------|------|
 | 2026-09-10 | 计划创建；设计文档经 4 轮对抗式审查收敛（主审 3→0，影响面审 3→0），基线待 commit |
-| 2026-09-10 | 阶段 3 一致性审查（3 区独立 reviewer）回收：4 unreasonable（组A \r 剥离丢失 medium→修复 dev；组B warn 断言缺失 low→修复 dev；区C 两条 docs 编辑→主 agent 亲为，理由：全部落 docs 领地的措辞/结构修正且与 doc_errors 同批）+ 2 doc_errors（「S8 断言通过」失实→已改「待 Gate B」；「续窗不重置」声称过宽→设计文档与 audit T8 双处如实化：tick 续窗不清轮次 vs agent_end 重入幂等重挂重计，测试锚定）；reasonable 20 条 → §5 登记 6 条（R1-R6），其余为核实通过项 |
+| 2026-09-10 | 定向复审 pass（组A 三面核查：parseSpawnLine trim 免疫 / emit 级剥离与 pi 0.84.4 attachJsonlLineReader 逐字同构 / tee 字节等价；组B 断言逐片段相符；docs 结构完整）。2 条 low：注释漂移已微修；warn 断言广度（4 处中 2 分支覆盖，已达原 finding 目的）登记不修。阶段 3-4 收口 |（3 区独立 reviewer）回收：4 unreasonable（组A \r 剥离丢失 medium→修复 dev；组B warn 断言缺失 low→修复 dev；区C 两条 docs 编辑→主 agent 亲为，理由：全部落 docs 领地的措辞/结构修正且与 doc_errors 同批）+ 2 doc_errors（「S8 断言通过」失实→已改「待 Gate B」；「续窗不重置」声称过宽→设计文档与 audit T8 双处如实化：tick 续窗不清轮次 vs agent_end 重入幂等重挂重计，测试锚定）；reasonable 20 条 → §5 登记 6 条（R1-R6），其余为核实通过项 |

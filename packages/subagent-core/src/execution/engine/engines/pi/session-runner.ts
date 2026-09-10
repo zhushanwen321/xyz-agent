@@ -2649,7 +2649,8 @@ function attachStdoutPump(
   };
 
   // [U4 D4] LF 行读取单一实现（spawn-channel）：跨 chunk 缓冲 + 按 \n 切分 + 尾残行冲刷。
-  // 缺省参数（无 buffer 上限、无 tee hook）与原手写 stdoutBuffer split 逐字节等价；
+  // 缺省参数（无 buffer 上限、无 tee hook）在 LF 输入下与原手写 stdoutBuffer split 逐字节等价；
+  // 行尾 \r 剥离为一致性审查补回的防御增强（对齐 pi 实装，CRLF 输入下与旧手写有差异）。
   // tee hook（onStdoutLine，Runtime piSessionLog 接回位，u5）缺省 no-op。
   const lineReader = createLineReader({
     onLine: handleSpawnLine,
