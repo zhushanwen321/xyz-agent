@@ -1,6 +1,6 @@
 # session-reader 会话根发现与布局对齐 实施计划
 
-基线: <待基线 commit 后回填> | 来源设计: [2026-09-10-session-root-discovery-and-env-transparency.md](2026-09-10-session-root-discovery-and-env-transparency.md) | 日期: 2026-09-10
+基线: `60978ae1b` | 来源设计: [2026-09-10-session-root-discovery-and-env-transparency.md](2026-09-10-session-root-discovery-and-env-transparency.md) | 日期: 2026-09-10
 
 > 模型路由说明：本 harness（zcode）的 Agent 工具不暴露 per-task 模型参数，全部 subagent 使用 harness 配置的 provider（GLM-5.3-Flash 系）。全局 AGENTS.md 的模型路由表在本环境无可选面，不构成等待点。
 > 范围声明：本流水线交付 M-1 → M0-M3 → M4（设计 §9.1）。**M5（U13 双仓同步）时机绑定 merge 发版，不在本流水线**，状态表登记为 deferred；U4/U5/U7/V7 按 §6.13 B 先行路径**不建**。
