@@ -480,10 +480,16 @@ export class QuotaService {
             // 保留既有 apiKeySet，除非本次明确传入新值（含空字符串清除）
             apiKeySet: QuotaService.inheritQuotaField(apiKeySet, existingQuota?.apiKeySet, legacyQuota?.apiKeySet),
             // credentialSource 恒由 payload 显式值经继承链落盘（键缺省 = 继承既存）。
-            // 禁止在写侧调 resolveQuotaCredentialSource 补默认（§7.3 改动 6 反例：它是
-            // 读侧推断，写侧补默认会让 setEnabled 式缺省 payload 把用户显式选择的
-            // 'exclusive' 覆盖成按 apiKeySet 推断的 'provider'——拨一下开关就静默改写
-            // 来源选择，正是 D3 要消除的「UI 说的与 runtime 用的背离」）
+            // 禁止在写侧调 resolveQuotaCredentialSource 补默认（§7.3 改动 6 反例）：它是
+            // **显式值优先**（quota?.credentialSource ?? …），`incoming ?? resolve(...)` 只在
+            // incoming 为 undefined 时触发，因此不会覆盖显式值。真实危害是把**未设置的字段
+            // 物化成推断值**——setEnabled 式缺省 payload 会在磁盘写入用户从未选择过的来源
+            // （拨一下开关就静默改写来源选择，正是 D3 要消除的「UI 说的与 runtime 用的背离」），
+            // 且此后该 provider 不再跟随推断：专属 Key 被清后 apiKeySet 变 false，读侧本应
+            // 回落 provider，冻结的显式值会让查询走向 no-credential。
+            // 可证伪基线 = quota-service.test.ts「未设置值不被物化成推断值」场景 C（磁盘记录
+            // 仍不含 credentialSource 键）；同用例的场景 A/B 拦的是另一个 mutation（丢继承链：
+            // `credentialSource: payload.credentialSource` 丢 undefined 键），对本条不变红。
             credentialSource: QuotaService.inheritQuotaField(
               payload.credentialSource,
               existingQuota?.credentialSource,
