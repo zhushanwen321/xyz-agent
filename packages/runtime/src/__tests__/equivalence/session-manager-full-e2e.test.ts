@@ -77,7 +77,7 @@ async function runFullChain(): Promise<{ result: FullChainResult; fx: PiFixture;
   const savedDataDir = process.env.XYZ_AGENT_DATA_DIR
   const dataRoot = mkdtempSync(join(tmpdir(), 'u9-smoke-data-'))
   process.env.XYZ_AGENT_DATA_DIR = dataRoot
-  const sessionDir = join(dataRoot, 'pi', 'sessions', 'u9-smoke')
+  const sessionDir = join(dataRoot, 'agent', 'sessions', 'u9-smoke')
   mkdirSync(sessionDir, { recursive: true })
 
   const timings: Record<string, number> = {}

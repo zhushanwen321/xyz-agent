@@ -47,7 +47,7 @@ describe('SessionScanner W15 磁盘占位值来源标记', () => {
     process.env.XYZ_AGENT_DATA_DIR = dataDir
     // 目录列举 TTL 缓存跨测试隔离（缓存键含 dir，但显式重置防同 dir 内旧窗口泄漏）
     invalidateScanDirCache()
-    sessionsDir = join(dataDir, 'pi', 'sessions')
+    sessionsDir = join(dataDir, 'agent', 'sessions')
   })
 
   afterEach(() => {
