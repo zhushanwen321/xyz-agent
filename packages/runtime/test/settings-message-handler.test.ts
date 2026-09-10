@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { SettingsMessageHandler } from '../src/transport/settings-message-handler.js'
 import { RuntimeServer } from '../src/transport/server.js'
+import { ModelConnectionTester } from '../src/infra/model-connection-tester.js'
 import { createMockSessionServiceClass } from './helpers/service-mocks.js'
 import type { ISessionService } from '../src/interfaces.js'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
@@ -100,6 +101,9 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
     providerCredentialResolver: overrides.resolver ?? {
       resolveProviderCredential: vi.fn().mockResolvedValue(undefined),
     },
+    // D-21 端口化：ctx connectionTester 构造必需（恒注入形态，原 handler 自建实例迁组合根）——
+    // 注入真实例保持 M3a mode=test 用例对第 3 参 tester（.test 为函数）的断言等价。
+    connectionTester: new ModelConnectionTester(),
     skillRegistry,
     projectRoot: '/proj',
     nextPushId: vi.fn().mockReturnValue('p1'),

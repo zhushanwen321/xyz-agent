@@ -24,6 +24,7 @@ import { getPiGlobalAgentDir } from './infra/pi/pi-maintenance.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
 import { ModelApiDiscoverer } from './infra/model-api-discoverer.js'
+import { ModelConnectionTester } from './infra/model-connection-tester.js'
 import { NpmGitInstaller } from './infra/installers/npm-git-installer.js'
 import { NpmPluginInstaller } from './infra/installers/plugin-installer-adapter.js'
 import { ExtensionResolver } from './infra/installers/extension-resolver.js'
@@ -237,6 +238,9 @@ async function main(): Promise<void> {
 
   const sessionStore = new PiSessionStore()
   const modelSource = new ModelApiDiscoverer()
+  // IModelConnectionTester port 的 infra 实现（D-21 端口化）：组合根构造 + 经
+  // server.setServices 注入 settingsHandler ctx（transport 不再 value import infra）。
+  const connectionTester = new ModelConnectionTester()
   const extensionInstaller = new NpmGitInstaller()
   const extensionResolver = new ExtensionResolver({
     settingsDir: configStore.getPiAgentDir(),
@@ -741,6 +745,8 @@ async function main(): Promise<void> {
     project: projectStore,
     // D3 链 2 接线（M2c）：settingsHandler ctx 的 discover 凭据回查经唯一通道。
     providerCredentialResolver,
+    // D-21 端口化接线：settingsHandler ctx 的测试连接 HTTP 适配器（mode=test 路由）。
+    connectionTester,
     // sd-u5：sessionId 单例注册表（上方 createSessionDeliveryRegistry 装配）。
     // 缺席时 server 构造退化实例并 warn（违反单例约束，仅测试装配遗漏场景）。
     delivery: sessionDelivery,

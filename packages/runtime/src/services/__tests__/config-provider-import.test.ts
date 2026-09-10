@@ -19,6 +19,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { SettingsMessageHandler, type SettingsHandlerContext } from '../../transport/settings-message-handler.js'
+import { ModelConnectionTester } from '../../infra/model-connection-tester.js'
 import { previewImport, applyImport } from '../migration/provider-importer.js'
 import { _resetCacheForTest } from '../migration/preview-cache.js'
 import { getModelsPath } from '../../infra/pi/pi-paths.js'
@@ -66,6 +67,7 @@ function mockContext(): SettingsHandlerContext {
     broadcastSkillDirs: vi.fn(),
     broadcastAgentDirs: vi.fn(),
     broadcastExtensionDirs: vi.fn(),
+    connectionTester: new ModelConnectionTester(),
   } as unknown as SettingsHandlerContext
 }
 

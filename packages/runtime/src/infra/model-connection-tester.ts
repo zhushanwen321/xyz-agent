@@ -35,6 +35,11 @@
  * 解析约定：按 `|` 切分，首段 = code、末段（含自身 `|`）= message；未知 code 走通用失败文案。
  */
 import { toErrorMessage } from '../utils/errors.js'
+// 接口已端口化（D-21，对齐 IModelSource 先例）：声明 SSOT 在 services/ports，本文件是
+// infra 实现 + 既有 type-importer（model-service.ts 等）的兼容 re-export 面。
+import type { ConnectionTestRequest, ConnectionTestResult, IModelConnectionTester } from '../services/ports/model-connection-tester.js'
+
+export type { ConnectionTestRequest, ConnectionTestResult, IModelConnectionTester } from '../services/ports/model-connection-tester.js'
 
 /** 首版支持连接测试的协议集（以 P-test-req 实测为准，见文件头；集合外 → 「暂不支持」）。 */
 export const CONNECTION_TEST_APIS = ['anthropic-messages', 'openai-completions', 'openai-responses'] as const
@@ -58,29 +63,6 @@ const ANTHROPIC_VERSION = '2023-06-01'
 
 /** 探活提示词（最小非空 content，anthropic / openai 两族均要求非空 messages）。 */
 const PING_PROMPT = 'ping'
-
-export interface ConnectionTestRequest {
-  /** 协议（pi model.api）。未知协议由实现返回 `unsupported` 行，不抛。 */
-  api: string
-  modelId: string
-  /** 已由编排层按回落链解析好的请求端点（非空）。 */
-  baseUrl: string
-  apiKey?: string
-}
-
-/** 单行测试结果（协议 × 代表模型）；`error` 语法见文件头。 */
-export interface ConnectionTestResult {
-  api: string
-  modelId: string
-  ok: boolean
-  error?: string
-}
-
-export interface IModelConnectionTester {
-  /** 该协议是否在首版支持集内（协议集 SSOT 在本实现，services 层不复制）。 */
-  supports(api: string): boolean
-  test(request: ConnectionTestRequest): Promise<ConnectionTestResult>
-}
 
 interface WireRequest {
   url: string

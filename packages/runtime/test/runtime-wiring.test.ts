@@ -527,6 +527,19 @@ describe('M2c: 组合根 providerCredentialResolver 装配接线（源码级 + q
     expect(indexSource.slice(setServicesStart, indexSource.indexOf('// Graceful shutdown', setServicesStart))).toContain('providerCredentialResolver')
   })
 
+  it('D-21 端口化：组合根构造 ModelConnectionTester 经 server.setServices 注入，transport 零 infra value import', () => {
+    // ① 组合根构造（组合根允许 value import infra 实现）
+    expect(indexSource).toContain('new ModelConnectionTester()')
+    // ② server.setServices optional 对象入参（经此进 SettingsMessageHandler ctx）
+    const setServicesStart = indexSource.indexOf('server.setServices(')
+    expect(setServicesStart).toBeGreaterThan(-1)
+    expect(indexSource.slice(setServicesStart, indexSource.indexOf('// Graceful shutdown', setServicesStart))).toContain('connectionTester')
+    // ③ transport 关闭 M3a 让步：不再 value import infra 的 tester 实现
+    const handlerSource = readSource('../src/transport/settings-message-handler.ts')
+    expect(handlerSource).not.toMatch(/import\s+\{\s*ModelConnectionTester\s*\}/)
+    expect(handlerSource).toContain("from '../services/ports/model-connection-tester.js'")
+  })
+
   it('clearApiKey（I9 清理②）接到纯删键实现 clearProviderApiKey', () => {
     expect(indexSource).toContain('clearApiKey: clearProviderApiKey')
   })

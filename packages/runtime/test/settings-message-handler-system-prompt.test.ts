@@ -8,6 +8,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { SettingsMessageHandler } from '../src/transport/settings-message-handler.js'
 import type { SettingsHandlerContext } from '../src/transport/settings-message-handler.js'
+import { ModelConnectionTester } from '../src/infra/model-connection-tester.js'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import type { IConfigService, IModelService, ISessionService } from '../src/interfaces.js'
 
@@ -86,6 +87,8 @@ function makeHandler() {
       resolveProviderCredential: vi.fn().mockResolvedValue(undefined),
     },
     skillRegistry: { getGlobalSkills: () => [], getProjectSkills: vi.fn().mockResolvedValue([]) } as unknown as SettingsHandlerContext['skillRegistry'],
+    // D-21 端口化：ctx connectionTester 构造必需（本文件直接传 ctx 无 cast，缺字段 tsc 红）
+    connectionTester: new ModelConnectionTester(),
     projectRoot: '/proj',
     nextPushId: vi.fn().mockReturnValue('push-1'),
     broadcast: vi.fn((m: ServerMessage) => broadcasts.push(m)),

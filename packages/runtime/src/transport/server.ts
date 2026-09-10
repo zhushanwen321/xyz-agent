@@ -61,6 +61,7 @@ import type { GenStatsService } from '../services/session/gen-stats-service.js'
 import type { ITerminalService } from '../services/ports/terminal-service.js'
 import type { QuotaService } from '../services/quota-service.js'
 import type { IProviderCredentialResolver } from '../services/ports/provider-credential-resolver.js'
+import type { IModelConnectionTester } from '../services/ports/model-connection-tester.js'
 import { UsageStatsService } from '../services/usage/usage-stats-service.js'
 import type { PresetService } from '../services/preset-service.js'
 import { toErrorMessage } from '../utils/errors.js'
@@ -89,6 +90,12 @@ export interface RuntimeServerOptionalServices {
    * SettingsMessageHandler ctx（M2fg 删降级后 ctx 必需——生产恒注入，ctx 装配处断言非空）。
    */
   providerCredentialResolver?: IProviderCredentialResolver
+  /**
+   * 测试连接 HTTP 适配器（M3a / D-21 端口化）：组合根（index.ts）构造 infra 实现
+   * ModelConnectionTester 经本对象注入，assembleCoreHandlers 透传给 SettingsMessageHandler
+   * ctx（discoverModels mode=test 路由依赖）。生产恒注入，ctx 装配处断言非空。
+   */
+  connectionTester?: IModelConnectionTester
   project?: ProjectStore
   delivery?: SessionDeliveryRegistry
   /** 导入 pi 会话服务（import-session D5/U2）：session.importCandidates / session.import 路由依赖。可选：未注入时该 case 报 unsupported。 */
@@ -263,7 +270,7 @@ export class RuntimeServer implements IMessageBroker {
 
   /** 核心 handler 批：bridge / settings / session / extension / plugin（无条件装配）。 */
   private assembleCoreHandlers(messaging: MessageHandlerContext, optional: RuntimeServerOptionalServices): void {
-    const { auth, providerCredentialResolver } = optional
+    const { auth, providerCredentialResolver, connectionTester } = optional
     // 第二参注入 extensionTimeoutMgr：marker 通道（method 恒 'select'）识别出的 bridge
     // 请求由 BridgeHandler 入口登记进 bridgeRequestIds（impl-plan 偏差 #5——生产装配点
     // 必须传，否则前端误发 ui_response 的拦截依据丢失）。
@@ -277,6 +284,9 @@ export class RuntimeServer implements IMessageBroker {
       // D3 链 2（M2c 接线）：discover 凭据回查经组合根注入的唯一通道（M2fg 删降级后无回退，
       // 恒注入前提同上 skillRegistry——组合根 index.ts 保证传入，setServices 编排保证）。
       providerCredentialResolver: providerCredentialResolver!,
+      // D-21 端口化：测试连接 HTTP 适配器经组合根注入（恒注入前提同上——
+      // 组合根 index.ts 保证传入，setServices 编排保证；transport 不 import infra 实现）。
+      connectionTester: connectionTester!,
       // W4：skillRegistry 必须注入（settings-handler 的 config.getGlobalSkills/getProjectSkills 依赖）。
       // 组合根 index.ts 保证传入；此处断言非空（setServices 编排保证）。若未来 skillRegistry 可选，handler 需守卫。
       skillRegistry: this.skillRegistry!,

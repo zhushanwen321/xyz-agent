@@ -12,8 +12,7 @@ import { toErrorMessage } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 import { ConfigPreferencesMessageHandler } from './config-preferences-message-handler.js'
 import type { IProviderCredentialResolver } from '../services/ports/provider-credential-resolver.js'
-import { ModelConnectionTester } from '../infra/model-connection-tester.js'
-import type { IModelConnectionTester } from '../infra/model-connection-tester.js'
+import type { IModelConnectionTester } from '../services/ports/model-connection-tester.js'
 import { PROVIDER_CONNECTION_TEST_ERRORS } from '../services/model-service.js'
 import type { ProviderConnectionTestOutcome, ProviderConnectionTestService } from '../services/model-service.js'
 
@@ -34,6 +33,12 @@ export interface SettingsHandlerContext extends MessageHandlerContext {
    * 构造必需（M2fg 收口）：组合根装配注入（M2c），models.json 直查回退已删除。
    */
   providerCredentialResolver: IProviderCredentialResolver
+  /**
+   * 测试连接 HTTP 适配器（D-21 端口化：接口 SSOT 在 services/ports，infra 实现
+   * ModelConnectionTester 由组合根构造注入——transport 不再 value import infra）。
+   * 构造必需（恒注入形态，同 providerCredentialResolver）。
+   */
+  connectionTester: IModelConnectionTester
   /** W4：skillRegistry（全局 + 项目级 skill 缓存，带 watcher）。landing 全局 skill 经此拿 globalCache（FR-5）。 */
   skillRegistry: SkillRegistry
   projectRoot: string
@@ -86,12 +91,6 @@ type SettingsCaseRoutes = {
 export class SettingsMessageHandler {
   /** workspace 偏好组子 handler（worktree/streaming-idle/基分支 12 条简单转发，控本文件 max-lines） */
   private preferencesHandler: ConfigPreferencesMessageHandler
-
-  /**
-   * 测试连接 HTTP 适配器（infra 实现）。默认实例由本 handler 构造（领地内唯一可得装配点；
-   * 组合根注入通道留待后续单元需要时再加，见 M3a 报告③的装配偏差登记）。
-   */
-  private readonly connectionTester: IModelConnectionTester = new ModelConnectionTester()
 
   constructor(private ctx: SettingsHandlerContext) {
     this.preferencesHandler = new ConfigPreferencesMessageHandler(ctx)
@@ -774,7 +773,7 @@ export class SettingsMessageHandler {
       return true
     }
     this.resolveProviderApiKey(providerId)
-      .then(apiKey => testProviderConnections.call(this.ctx.modelService, providerId, apiKey, this.connectionTester))
+      .then(apiKey => testProviderConnections.call(this.ctx.modelService, providerId, apiKey, this.ctx.connectionTester))
       .then(outcome => { this.replyTestResult(ws, msg.id, outcome) })
       .catch((e: unknown) => {
         this.replyTestResult(ws, msg.id, { success: false, error: toErrorMessage(e) })
