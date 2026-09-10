@@ -46,7 +46,8 @@ export const VITE_POLL_INTERVAL_MS = 300
 const rendererRecovery = new RecoveryPolicy()
 
 /** 自动 reload 重载应用时的恢复标志 query（T2「一次性恢复提示条」main 侧注入形态）：
- *  renderer 波次（u4d/u6）读到 recoveredFrom=crash 后展示一次提示条并自行清除标志。 */
+ *  renderer 消费点 = packages/renderer/src/composables/useCrashRecoveryNotice.ts
+ *  （首次消费读标志展示提示条并 replaceState 剥离，组件 = CrashRecoveredBar.vue）。 */
 export const CRASH_RECOVERY_QUERY_FLAG = 'crash'
 
 /**
@@ -202,7 +203,7 @@ async function loadWindowContent(
  * 崩溃后自动重载应用界面（T2 主路径：目标 1s 内恢复可用）。
  *
  * 重载 URL（非 webContents.reload()）：需注入恢复标志 query（recoveredFrom=crash，
- * renderer 波次据此展示一次性提示条），reload() 不改 query 做不到。dev/prod 分支与
+ * renderer 侧 useCrashRecoveryNotice 据此展示一次性提示条并清除标志），reload() 不改 query 做不到。dev/prod 分支与
  * loadWindowContent 同构但不复用它：恢复路径不做 waitForVite 轮询（窗口存活过说明
  * Vite 曾就绪；30s 轮询违背 1s 恢复目标）也不重开 DevTools（原会话的副作用于恢复
  * 场景是噪声）。loadURL 失败走既有 did-fail-load 日志，不在此吞错。

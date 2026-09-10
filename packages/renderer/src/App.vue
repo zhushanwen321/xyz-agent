@@ -29,6 +29,10 @@
     <AppShell />
   </template>
   <ToastContainer />
+  <!-- renderer 崩溃恢复一次性提示条（crash-resilience §3.1 T2）：窗口级，URL query 标志驱动
+       （main 侧 reloadWindowAfterCrash 注入），useCrashRecoveryNotice 消费即清除标志
+       （手动刷新不重现）。挂根部使 connecting 过渡屏/主界面两态均可见。 -->
+  <CrashRecoveredBar />
   <!-- 权限请求弹窗（全局，session 无关）：bridge bus plugin-permission-request 驱动 pending；
        transport 经 PERMISSION_TRANSPORT_KEY inject 调 WS approve/revoke（main.ts provide）。 -->
   <PermissionRequestDialog :plugin-id="perm.pluginId" :permissions="perm.permissions" :pending="perm.pending" />
@@ -41,6 +45,7 @@ import { useI18n } from 'vue-i18n'
 import TaijiLogo from '@/components/icons/TaijiLogo.vue'
 import AppShell from '@/components/shell/AppShell.vue'
 import ToastContainer from '@/components/ui/ToastContainer.vue'
+import CrashRecoveredBar from '@/components/ui/CrashRecoveredBar.vue'
 import { Button } from '@/components/ui/button'
 import { useConnection } from '@/composables/useConnection'
 import { useSidebar } from '@/composables/features/sidebar/useSidebar'
