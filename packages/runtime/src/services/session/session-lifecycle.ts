@@ -968,6 +968,10 @@ export class SessionLifecycle implements ISessionRegistry {
         try {
           await this.userStoppedOps?.forceQuitFallback?.(sessionId)
         } catch (fallbackErr) {
+          // 强杀收敛吞错（降级策略）：走到此处时 abort RPC 已超时，fallback 走 forceQuitSession
+          // 完整链（含自己的日志与广播），此处异常不改变收敛路径——标记保留 + 环不启动（见上），
+          // 下次 restore 重试；restore 主体不可回滚（session 已复活进 Map），向上传播只会把
+          // 收敛细节泄漏成 restore 失败。极端兜底再失败的用户出口：再点「强制退出」即达终态。
           console.warn(`[session-lifecycle] restore-abort force-quit fallback also failed for ${sessionId}, mark kept for next restore:`, toErrorMessage(fallbackErr))
         }
       }
