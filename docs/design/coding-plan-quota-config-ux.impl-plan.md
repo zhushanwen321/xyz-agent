@@ -130,6 +130,10 @@ graph TD
 4. ~~**U1-t2 发现的前批遗留缺口**：`quota-reason-i18n.test.ts` 的两个断言数组历史上就不含 `not_configured` 的 key（`quotaFetchFailNotConfigured` / `quotaFailNotConfigured`——locale 双侧存在但断言数组缺）→ 归 U6 终扫批补齐。~~ **已关闭（U6，commit `7f676e961`）**：两个 key 补入断言数组，`quota-reason-i18n.test.ts` 8/8 + locale-sync 163/163 绿。
 5. ~~**ui 包存量编译红（疑似与本设计无关，U3 期发现）**：`packages/ui/src/overlays/__tests__/search-modal.test.ts:386/391/396` 三处 TS18048。~~ **已关闭（独立微修 commit `82b31b736`）**：逐字节确认与 HEAD 相同 = 存量红，用运行时 guard 修复，ui vue-tsc 整包转绿。
 6. ~~**设计阶段 demo 资产的存量 lint 红**（U6 期发现，Gate A 阻塞项）：`docs/design/coding-plan-quota-ux.demo.js:120`（`onChange` 未使用）+ `:155`（短路表达式语句）两个 error，由设计批 `8766d71d3` 引入、非本次实现代码。~~ **已关闭（commit `bdfbca78a`）**：`scenarioBar` 的无用形参删除（调用点本就单参，活跃回调通道是 `bindScenario` 的 `onChange`）、短路表达式改 `if`、并发现在 `demo-a.html` 的同类 `isDirty` 零引用一并清理；行为等价性用 vm 载入新旧两版逐字节对比证明；demo 全部资产 eslint 零 error（一致性审查 C 区 D-2 订正本条为已关闭）。
+7. **`cookieSet` / `workspaceConfigured` 两个 prop 已无消费方但仍声明**（阶段 4 徽标修复的 deferred 项）：徽标改由 `readiness.missing` 派生后 `CodingPlanSection.vue` 不再读这两个 prop，但 `ProviderEditBody.vue:209-240` 仍在传——移除需同批改该文件（跨领地），故本次保留并加 `[保留]` 注释。**恢复路径**：下一次触及 provider 编辑体时一并清理（prop 声明 + 调用点）。
+8. **`typecheck:test` 不被任何 gate 执行**（阶段 4 发现，影响契约门的持久性）：`tsconfig.typecheck-test.json` 已纳入 `quota-state-stub.ts`（commit `33482f636`，证伪验证 TS2741 成立），但该脚本自建立起（`.xyz-harness/cw-2026-07-17-perf-c-rpc-type-pairing/changes/retrospect.md:26`）**从未接入 pre-commit / CI / pr-pre-merge** —— 三处都只跑默认 `typecheck`。**接线位置（需协调者决定，本次未改 CI/钩子）**：① `.githooks/install-hooks.sh:156` 的 vue-tsc 之后追加 `-p tsconfig.typecheck-test.json`（改后需重跑 install-hooks）；② `.github/workflows/ci.yml` typecheck job 追加 `pnpm --filter @xyz-agent/frontend run typecheck:test`；③ `scripts/pr-pre-merge.sh:187` 附近追加一个 run_step。**重审触发条件**：再次发生契约漂移未被拦住。
+9. **`panel.*` 命名空间疑似约 98 个零引用 key**（阶段 4 i18n 清理时扫描所见，未逐个人工复核、未删）：`panel` 命名空间 460 个叶子 key，按字面引用扫描约 363 个被引用；可能存在间接/动态组装引用，**不得按此数直接删**。**恢复路径**：独立批次逐 key 核实（含动态引用排查）后处理。
+10. **三个 renderer 测试文件仍不能纳入 typecheck include**（阶段 4 发现）：`settings-modal-smoke.test.ts` / `settings-modal-skill-dirs.test.ts` / `PluginContributionsPage.test.ts` 存在**基线存量**类型漂移（`SettingsTransport` 缺 `setScopedModels`、`PlatformPort` 无 `ipc` 字段、`SkillDirConfig` 缺 `scope`、smoke 的未使用 `wrapper`），纳入即红；这三处漂移与本次改动无关（基线即存在），其 v1 契约桩问题已单独修复（commit `bb110e010`）。
 
 **变更历史**：
 
@@ -137,3 +141,14 @@ graph TD
 - 2026-09-10 **M2 原子性修正（U3 期发现）**：U3/U4/U5 由「串行三次 commit」改为**单次原子 commit**——契约与消费方分开提交会留下编译红中间态并被 pre-commit 拦截，与设计 §9.1「M2 必须原子」一致。单元工作批次不变，状态表三者同轮收口。
 - 2026-09-10 U3 验收条款②「ui vue-tsc 绿」按原子性修正重述为「injection-keys/quota-configure-state 自身零错误 + ui 红仅剩 U5 领地的 ProviderEditBody.vue」（消费方红是设计用编译错强制切换的机制，非缺陷）。
 - 2026-09-10 **U2 领地追溯授权 + 落批裁决（U2-t1 上报 blockers）**：① `quota-service-workspace.test.ts` / `provider-write-side-switch.test.ts` 两个 configure 直调消费方补入 U2 领地（机械签名更新，不补则 tsc 不可能绿）；② 设计 §7.3 改动 2 的「删除顺序重排（先校验计算 → persist → 成功后写/删 secrets）+ provider 存在性检查移进 `extrasStore.modify` 回调」归 U2（计划 U2 职责行「删除顺序重排与失败语义」本已声明），指派原 dev 会话续聊定向实施，随附既有「persist 失败 → secrets 不回滚」用例断言方向翻转。
+- 2026-09-11 **阶段 3 一致性审查（4 分区并行）**：runtime / shared+core / renderer / ui 各一名审查者，区间 `62a9651e5..HEAD`。共报出 11 条不合理项（去重后 8 项：runtime 清理锚点、runtime 删除×在途回写、v1 契约测试桩、徽标归属、死 key 与守卫反向、cookie 变体无守卫、时序断言缺口、preset 未命中分支、D11 footer 分组）+ 15 条文档类错误；另确认 30 余条实现与设计一致项。
+- 2026-09-11 **阶段 4 修复循环**（按领地分组并行，落地 commit 逐个可查）：
+  - `ec6ea70ce` runtime 清理锚点移到 persist 成功之后（+ 半提交断言，mutation 验证）
+  - `664969ed7` 写侧推断理由纠正（shared JSDoc + runtime 注释 + 可证伪场景 C）
+  - `04d433361` 徽标与 readiness 同源（+ 三条反向用例）、preset 未命中按类型缺失、时序约定回归用例（mutation 验证）
+  - `4114b1b27` 删 19 个死 key（双语 190→171 对齐）+ 新增 key 存在性守卫（双向证伪）
+  - `bb110e010` 四处 v1 契约测试桩收敛到带类型标注的 `makeQuotaStateStub`
+  - `f51474d83` D11 footer 按钮成组（+ 结构断言）
+  - `33482f636` stub 纳入 `tsconfig.typecheck-test.json`（证伪 TS2741）
+  - 文档面 `a306cbffc` / `655be0434`：设计 §4.2 表 A 两行、§5.2 路径 3 文案动作、§7.2 preset 分支、§7.3 改动 6 反例与残余窗口、§7.4 徽标规则与 oauth 行移除、§7.5 编译门与守门描述、§9.1 术语；计划 §4 shared 测试基建、§5 R1/R2 订正与 R10-R12 新增、残留风险 7-10。
+  - 未修复转登记：`panel.*` 约 98 个疑似零引用 key（需独立核实）、`typecheck:test` 未接入任何 gate（三处接线位置）、两个无消费方 prop（跨领地）、三个测试文件的基线类型漂移。
