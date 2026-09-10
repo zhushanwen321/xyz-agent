@@ -88,6 +88,7 @@ graph TD
 | R4 | lastViewedAt 清理挂点（removeSessionEntry 内）落 u2（设计属 U1 范畴） | session-lifecycle.ts 整文件领地归 u2，避免 u1b 跨领地改一行；u1b→u2 紧邻串行，中间态残留为死数据（每 sid 一个数字，无消费者读取前无行为） | D2#6「清理挂点 = lifecycle.delete」 |
 | R5 | V1-V7 真机验收不在任何 dev 单元内，作为阶段 5 Gate B 逐行签收活动执行（V6 7 天长跑项登记为交付后观察项） | 真机场景需打包版 app + 真实使用节奏，非 subagent 文件编辑任务；集成测试（u4）覆盖 V1 主干的可自动化部分 | §4 验收场景表 |
 | R6 | u1a 领地修订：实际 13 文件（原计划 4 文件）——新增 `services/ports/pi-engine.ts`（IPiEngine 端口扩展 lastActivityAt/touchActivity/SendCommandOptions）+ 8 个既有测试文件（fake client 补成员 / getClient 空守卫桩） | dispatcher 依赖端口类型 IPiEngine 而非具体 RpcClient——touch API 必须上端口才能被 dispatcher 消费（结构性必需，非顺手改）；8 个测试文件是实现 IPiEngine 的 fake，接口扩展后 tsc 强制补齐。改动全为纯追加，零断言削弱（编排者已逐 diff 核验） | 设计 D1/D6-1 的消费链（dispatcher→pm.getClient→IPiEngine） |
+| R7 | u3 拆为 u3a（豁免查询访问器面）+ u3b（装配 + 常量 + 约束登记）串行；u3a 领地新增 4 个薄只读访问器文件：`infra/relay/relay-registry.ts`（按 mainSessionId 枚举在册 child——u2 编排 deps 注释已声明缺口）、`services/handoff-service.ts`（inflight Map 无公开查询）、`services/session/session-delivery-registry.ts`（handle 注册表无存在性/活跃查询）、`services/session/session-service.ts`（occupancy 运行时内部态无外部读点） | 设计 D2 标注「现成」的信号中 4 项实装无公开访问器（设计快照与实装漂移，u2 已按窄接口注入隔离影响）；单 u3 合并计 10+ 文件超 subagent 上限，拆分后各 ≤6 文件且改动均为 ≤20 行薄访问器 | D2 七豁免表 + u2 代码内 [u3 装配清单] 注释 |
 
 ## 6 状态表
 
@@ -95,8 +96,8 @@ graph TD
 |------|------|------|----------|
 | u1a | committed | 2 | commit 64e70ae51；tsc 绿 + 10 文件 129 用例绿。轮 1 前任速率限制中断（语义已完整，缺 1 个测试 fake 类型成员），轮 2 接替者收尾（1 文件）。偏差 R6 已入登记表 |
 | u1b | committed | 1 | commit acc603d4d；session-viewed-at 6 用例 + relay-registry 26 用例绿；偏差 2 条已入登记表（挂点入口化 / 可选交叉成员） |
-| u2 | pending | 0 | — |
-| u3 | pending | 0 | — |
+| u2 | committed | 1 | commit 82d7d9e12；idle-pi-reaper 22 用例 + reclaim-orchestration 14 用例 + 回归绿 + tsc 绿。dev 完成实现与测试后死于速率限制（未及汇报），编排者逐 diff 核验设计保真度并重跑全部测试后收口。附带 .githooks/check_prompt_outposts.py 指纹刷新（promptReload 加 maintenance 参数触发出站点守卫） |
+| u3 | in-progress（拆为 u3a→u3b，R7） | 0 | — |
 | u4 | pending | 0 | — |
 
 ## 7 残留风险与变更历史
