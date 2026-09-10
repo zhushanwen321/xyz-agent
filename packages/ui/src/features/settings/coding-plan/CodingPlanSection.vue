@@ -7,8 +7,8 @@
     - D1 齐备性门控：唯一主动作按钮「保存并测试」按 readiness.ready 置灰
     - D3 凭证来源分段控件（api-key 类）：UI 显示的选择与 runtime 使用的凭证同源
     - D4 开关退化为纯配置位（无网络副作用，即时落盘由父组件 setEnabled 完成）
-    - D7 cookie / 专属 Key 输入框不回显掩码，草稿即真相；「已配置 / 必填」徽标与 readiness.missing
-      同源（§7.4：不在缺口里 = 该字段此刻有效），与字段级提示结构性一致
+    - D7 cookie / 专属 Key 输入框不回显掩码，草稿即真相；「已配置 / 必填」徽标与专属 Key 占位
+      均与 readiness.missing 同源（§7.4：不在缺口里 = 该字段此刻有效），与字段级提示结构性一致
     - D2 保存与测试合一：按钮 onclick → saveAndTest
 
     所有业务逻辑在父组件 useQuotaConfigure 中，本组件纯展示 + 事件转发。
@@ -41,8 +41,13 @@
       </Select>
     </div>
 
-    <!-- D8：类型未选——只留下拉与一句说明，不渲染开关 / 凭证区 / 按钮（也天然堵掉「没选类型就开开关」） -->
-    <p v-if="!fetcherId" class="text-[10px] text-neutral-dim" data-testid="quota-no-type-hint">
+    <!--
+      D8：类型未定——只留下拉与一句说明，不渲染开关 / 凭证区 / 按钮（也天然堵掉「没选类型就开开关」）。
+      「类型未定」有两种来源（§7.2）：草稿为空，或草稿有值但 preset 未命中（历史数据 / 手工编辑
+      providers.json）。后者若继续渲染参数区，未知 fetcher 会借 api-key 分支给出一组永远无法生效
+      的控件，正是 D8 要堵的反例；两来源共用同一指引。
+    -->
+    <p v-if="typeUndetermined" class="text-[10px] text-neutral-dim" data-testid="quota-no-type-hint">
       {{ t('settings.providerEdit.quotaTypeFirstHint') }}
     </p>
 
@@ -118,7 +123,7 @@
             :model-value="apiKeyInput"
             type="password"
             class="h-8 font-mono text-[11px]"
-            :placeholder="quotaApiKeyConfigured ? t('settings.providerEdit.quotaApiKeySetPlaceholder') : t('settings.providerEdit.quotaExclusiveKeyPlaceholder')"
+            :placeholder="exclusiveKeyPlaceholder"
             data-testid="quota-apikey-input"
             @update:model-value="emit('update:apiKeyInput', String($event ?? ''))"
           />
@@ -281,7 +286,12 @@ const props = withDefaults(defineProps<{
   credentialSource: QuotaCredentialSource
   /** Provider 侧是否有可用凭据（决定「用 Provider 凭据」分段项是否可点） */
   providerCredentialAvailable: boolean
-  /** 专属 Key 是否已保存（D3：单独表达，不再与 provider 侧合并；亦决定「已设置」占位文案） */
+  /**
+   * 专属 Key 是否已保存（D3：单独表达，不再与 provider 侧合并）。
+   * [保留] 调用方（ProviderEditBody）仍传该值；徽标与输入框占位均已改由 readiness.missing
+   * 同源派生（§7.4：类型切换后旧专属 Key 归属失效），本 prop 不再参与渲染 —— 移除需同步改
+   * ProviderEditBody，非本批领地（与 cookieSet / workspaceConfigured 同一处理）。
+   */
   quotaApiKeyConfigured?: boolean
   /** Provider 侧凭据「已填但未保存」（§7.4 两套文案的区分依据，由 ProviderEditBody 计算写入） */
   providerCredentialPendingSave?: boolean
@@ -391,6 +401,17 @@ const visibleWindows = computed<VisibleWindow[]>(() => {
 /** 「查看上次成功数据」展开态（B-3 / design §3.4：失败态下旧缓存折叠展示） */
 const showLastSuccess = ref(false)
 
+/**
+ * 类型未定（D8 分支的唯一判据，§7.2 两种来源共用同一指引）：
+ * - 草稿为空：尚未选择类型；
+ * - readiness.missing 含 'type'：草稿有值但 preset 未命中（历史数据 / 手工编辑 providers.json），
+ *   readiness 已按「类型缺失」处理 —— UI 必须同形态（只留下拉 + 说明），否则未知 fetcher 会走
+ *   api-key 分支渲染出一组永远无法生效的控件，「未判定」也会被读成「已配置」。
+ */
+const typeUndetermined = computed<boolean>(
+  () => !props.fetcherId || props.readiness.missing.includes('type'),
+)
+
 /** 缺口判定（白名单三键；'type' 已在模板层走 D8 分支，不进入本判定） */
 function isMissing(key: MissingField): boolean {
   return props.readiness.missing.includes(key)
@@ -402,6 +423,16 @@ function missingHint(key: MissingField): string {
 }
 
 /**
+ * 专属 Key 输入框占位（D7）：与徽标同源读 readiness.missing —— 有缺口时给「粘贴 Key」指引，
+ * 无缺口时说明「已配置，输入新值可覆盖」。历史实现读磁盘标记 quotaApiKeyConfigured，在 D5
+ * 类型切换（旧 Key 归属失效）态下会与「必填」徽标同屏矛盾（徽标说必填、占位说已配置）。
+ * 无缺口 ∧ 草稿为空 ⟺ 磁盘已配置（readiness 专属 Key 分支的判定语义），无需第二份复算。
+ */
+const exclusiveKeyPlaceholder = computed<string>(() => (isMissing('apiKey')
+  ? t('settings.providerEdit.quotaExclusiveKeyPlaceholder')
+  : t('settings.providerEdit.quotaApiKeySetPlaceholder')))
+
+/**
  * 字段徽标（「已配置 / 必填」，§7.4 徽标取值规则）。
  *
  * 与字段级提示**同源**：两者都读同一份 readiness.missing。missing 是唯一编码了凭证归属
@@ -410,6 +441,9 @@ function missingHint(key: MissingField): string {
  * 用磁盘原始标记（cookieSet / quotaApiKeyConfigured / workspaceConfigured）各自复算会得到
  * 第二份真相：类型切换后徽标说「已配置」而下方提示说「必填」（同屏矛盾，S7 反例）。
  * 同源之后「徽标已配置 + 提示必填」结构性不可达，无需再靠调用方自觉。
+ *
+ * 「类型未定」（missing 含 'type'）不会走到这里：params 区是 typeUndetermined 的 v-else，
+ * 该态只剩下拉 + 说明，因此「未判定被读成已配置」在结构上不可达（不是靠本函数兜底）。
  */
 function fieldBadgeLabel(key: MissingField): string {
   return isMissing(key)

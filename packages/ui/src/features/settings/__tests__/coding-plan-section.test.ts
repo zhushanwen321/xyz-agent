@@ -12,6 +12,8 @@
  * ⑤ D7（§6.8）去掩码：输入框只放草稿，不回填掩码；「已配置 / 必填」为独立标记
  * ⑤b §7.4 徽标取值规则：徽标与字段级提示同源（readiness.missing），磁盘原始标记（cookieSet /
  *    quotaApiKeyConfigured / workspaceConfigured）不能越权点亮「已配置」（三条反向用例）
+ * ⑤c 定向复审三条探针（真实 DOM 回归守卫）：① 类型切换后徽标与专属 Key 占位不得出现「已配置」
+ *    语义；② preset 未命中不出现「已配置」徽标；③ preset 未命中渲染「重选类型」指引且参数区不渲染
  * ⑥ §5.2 路径 3/4 失败态文案 + cookie 变体（unauthorized / no-credential / no-subscription）
  * ⑦ D2（§6.3）单按钮触发 saveAndTest emit
  * 附带保留：B-3 used/limit 双轨窗口、「查看上次成功数据」折叠、workspace 块事件上抛
@@ -217,15 +219,20 @@ describe('② D1 齐备性门控：唯一按钮「保存并测试」的置灰矩
     )
   })
 
-  it("missing 含 'type' 但类型已选（非 D8 分支）→ 三键提示全不渲染（'type' 结构性无文案）", async () => {
-    wrapper = mountSection({ readiness: { ready: false, missing: ['type'] } })
+  it("missing 含 'type'（preset 未命中）→ 走 D8 同形态：三键提示与参数区按钮全不渲染（'type' 结构性无文案）", async () => {
+    // 草稿有值但不在预设表（历史数据 / 手工编辑 providers.json）是「有值 + missing=['type']」的
+    // 唯一可达来源；readiness 该分支与「未选类型」同形态（§7.2），UI 必须同样收起到下拉 + 说明。
+    wrapper = mountSection({
+      fetcherId: 'legacy-unknown',
+      readiness: { ready: false, missing: ['type'] },
+    })
     await flushPromises()
 
     expect(wrapper.find('[data-testid="quota-missing-cookie"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="quota-missing-apikey"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="quota-missing-workspace"]').exists()).toBe(false)
-    // 按钮仍在（已选类型即走参数区），只是按 ready=false 置灰
-    expect(wrapper.find<HTMLButtonElement>(SAVE_TEST).element.disabled).toBe(true)
+    // 参数区整体不渲染（类型未定不展示永远无法生效的控件，D8），故没有「保存并测试」按钮
+    expect(wrapper.find(SAVE_TEST).exists()).toBe(false)
   })
 })
 
@@ -494,6 +501,70 @@ describe('⑤b §7.4 徽标取值与 readiness 同源（磁盘标记不能越权
     expect(wrapper.find('[data-testid="quota-missing-workspace"]').text()).toBe(
       'settings.providerEdit.quotaMissingWorkspace',
     )
+  })
+})
+
+// ══ ⑤c 定向复审探针（三条复现路径转正为回归守卫） ═════════════════════════
+
+describe('⑤c 定向复审探针：三条复现路径的真实 DOM 锁定', () => {
+  it('探针①：类型已变（D5 旧专属 Key 归属失效）+ 磁盘已配置 + 草稿空 → 字段块内无任何「已配置」语义（徽标与占位）', async () => {
+    wrapper = mountSection({
+      credentialSource: 'exclusive',
+      // 磁盘原始标记为 true（旧归属），readiness 因 typeChanged 判定该归属失效
+      quotaApiKeyConfigured: true,
+      apiKeyInput: '',
+      fetcherId: 'minimax',
+      readiness: { ready: false, missing: ['apiKey'] },
+    })
+    await flushPromises()
+
+    const block = wrapper.find('[data-testid="quota-exclusive-key-block"]')
+    expect(block.exists()).toBe(true)
+    // 徽标：必填（与 readiness 同源），不得出现「已配置」
+    expect(block.text()).toContain('settings.providerEdit.quotaRequiredBadge')
+    expect(block.text()).not.toContain('settings.providerEdit.quotaConfiguredBadge')
+    // 占位：粘贴 Key 指引，不得出现「已配置，输入新值可覆盖」
+    const placeholder = wrapper
+      .find('[data-testid="quota-apikey-input"]')
+      .attributes('placeholder')
+    expect(placeholder).toBe('settings.providerEdit.quotaExclusiveKeyPlaceholder')
+    // 字段级提示同屏一致（三者同一判定，不再有「必填 + 已配置」矛盾）
+    expect(wrapper.find('[data-testid="quota-missing-apikey"]').text()).toBe(
+      'settings.providerEdit.quotaMissingApiKey',
+    )
+  })
+
+  it('探针②：preset 未命中 + exclusive + 磁盘无 Key → 不出现「已配置」徽标（未判定不得被读成已配置）', async () => {
+    wrapper = mountSection({
+      fetcherId: 'legacy-unknown',
+      credentialSource: 'exclusive',
+      quotaApiKeyConfigured: false,
+      apiKeyInput: '',
+      readiness: { ready: false, missing: ['type'] },
+    })
+    await flushPromises()
+
+    // 类型未定 ⇒ 专属 Key 块整体不渲染；整区块文本不得含「已配置」
+    expect(wrapper.find('[data-testid="quota-exclusive-key-block"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="coding-plan-section"]').text()).not.toContain(
+      'settings.providerEdit.quotaConfiguredBadge',
+    )
+  })
+
+  it('探针③：preset 未命中 → 渲染「重选类型」指引，且参数区不渲染（与 D8 同形态）', async () => {
+    wrapper = mountSection({
+      fetcherId: 'legacy-unknown',
+      readiness: { ready: false, missing: ['type'] },
+    })
+    await flushPromises()
+
+    const hint = wrapper.find('[data-testid="quota-no-type-hint"]')
+    expect(hint.exists()).toBe(true)
+    expect(hint.text()).toContain('settings.providerEdit.quotaTypeFirstHint')
+    // 参数区（开关 / 凭证区 / 动作区）整体不渲染
+    expect(wrapper.find('[data-testid="quota-enabled-switch"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="quota-credential-source"]').exists()).toBe(false)
+    expect(wrapper.find(SAVE_TEST).exists()).toBe(false)
   })
 })
 
