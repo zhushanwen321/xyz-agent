@@ -399,6 +399,8 @@ function buildOneShotRunParams(
     // fork-from 显式分叉源（协议 task.forkSource → --fork；一次性 run 承载——
     // fork-from 无 chatMode，chat 轮续写走 resumeSessionFile 通路互不相交）。
     ...(task.forkSource !== undefined ? { forkSource: task.forkSource } : {}),
+    // [F6] 根 session id 透传（relay 归属键 SESSION_ID 权威源；undefined 不挂键）。
+    ...(ctx.sessionRootId !== undefined ? { sessionRootId: ctx.sessionRootId } : {}),
   };
 }
 
@@ -448,6 +450,8 @@ function buildChatRoundParams(
     ...(task.skillPath !== undefined ? { skillPaths: [task.skillPath] } : {}),
     ...(task.appendSystemPrompt !== undefined ? { appendSystemPrompt: task.appendSystemPrompt } : {}),
     ...(resumeFile !== undefined ? { resumeSessionFile: resumeFile } : {}),
+    // [F6] 根 session id 透传（relay 归属键 SESSION_ID 权威源；undefined 不挂键）。
+    ...(ctx.sessionRootId !== undefined ? { sessionRootId: ctx.sessionRootId } : {}),
   };
 }
 

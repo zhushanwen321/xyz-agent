@@ -2334,6 +2334,10 @@ export class SubagentService {
       onHandleReady: backfillEngineHandle,
       // D9①：路由层 fallback 留痕投影进 outcome（zcode 无独立 record 通路）
       ...(record.engineFallback !== undefined ? { engineFallback: record.engineFallback } : {}),
+      // [F6] 根 session id 注入（relay 归属键 SESSION_ID 权威源；null/空串不上 wire）
+      ...(this.sessionRootId !== null && this.sessionRootId !== ""
+        ? { sessionRootId: this.sessionRootId }
+        : {}),
       // D10 终止链：engine spawn 的子进程注册进 spawnedChildren 记账
       //（cancelBackground SIGTERM / dispose killAll 收割对非 pi record 生效）
       onChildSpawned: (child) => registerSpawnedChildForRecord(record.id, child),
@@ -2474,6 +2478,10 @@ export class SubagentService {
         onPoolResolved: journal.onPoolResolved,
         ...(stream !== undefined ? { stream } : {}),
         ...(record.engineFallback !== undefined ? { engineFallback: record.engineFallback } : {}),
+        // [F6] 根 session id 注入（relay 归属键 SESSION_ID 权威源；null/空串不上 wire）
+        ...(this.sessionRootId !== null && this.sessionRootId !== ""
+          ? { sessionRootId: this.sessionRootId }
+          : {}),
         // D10 终止链：引擎 spawn 的子进程注册进 spawnedChildren 镜像记账
         onChildSpawned: (child) => registerSpawnedChildForRecord(record.id, child),
       };

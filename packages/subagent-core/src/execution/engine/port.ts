@@ -94,6 +94,15 @@ export interface RunContext {
    */
   engineFallback?: { from: string; reason: string };
   /**
+   * [F6] 根 session id（SubagentService.sessionRootId 注入）——pi 引擎 relay 归属键
+   * SESSION_ID 的权威来源（经 wire ctx.sessionRootId → server 还原 → SpawnRunParams
+   * → buildChildEnv）。刻意走 per-run ctx 而非 EngineClient 的进程级 env：客户端按
+   * 引擎缓存为惰性单例，进程级 env 在 pi fork 换 sessionId 后会陈旧；per-run ctx 恒
+   * 新鲜，且与 RECORD_ID 已有的 per-run 形态一致。additive：undefined/null/空串不
+   * 上 wire，zcode 等引擎忽略。
+   */
+  sessionRootId?: string;
+  /**
    * [P4 对齐点③] 引擎声明实际隔离池 key（journal 落盘路径权威）。宿主创建 journal
    * writer 时只能用缺省占位 poolKey（pi 恒 'shared'），非池化稳定的引擎（zcode 按
    * provider+model 池化）在 prepare 期确定 poolKey 后回调本方法重定向 writer——

@@ -74,6 +74,11 @@ export interface RunContext {
   stream?: EngineStream;
   schemaEnv?: string;
   engineFallback?: { from: string; reason: string };
+  /**
+   * [F6] 根 session id（协议 run.params.ctx.sessionRootId 的进程内还原）——pi 引擎
+   * relay 归属键 SESSION_ID 的权威来源。additive 可选：宿主缺省不传。
+   */
+  sessionRootId?: string;
   onPoolResolved?: (poolKey: string) => void;
   onHandleReady?: (partial: Pick<EngineHandleData, "sessionRef" | "poolKey">) => void;
   /** 一次性子进程 pid 上报（host/childSpawned 载荷形态；ChildProcess 句柄不跨协议面）。 */

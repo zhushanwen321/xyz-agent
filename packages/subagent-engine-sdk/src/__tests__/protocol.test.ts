@@ -35,6 +35,8 @@ import {
   type ProtocolMethod,
   type ProtocolParamsMap,
   type ProtocolResultMap,
+  type RunContextParams,
+  type RunParams,
 } from "../protocol/methods.ts";
 import type { AssertMutuallyAssignable } from "../protocol/contract-types.ts";
 import {
@@ -255,5 +257,23 @@ describe("帧判别守卫（四帧型互斥判别，W2 行解析器消费）", (
     expect(isReverseRequestFrame(rev)).toBe(true);
     expect(isReverseRequestFrame({ id: "x", method: "run", params: {} })).toBe(false);
     expect(isReverseRequestFrame(req)).toBe(false);
+  });
+});
+
+describe("run.params.ctx 增量字段（F6 sessionRootId：relay 归属键 SESSION_ID 权威源）", () => {
+  const v1Ctx: RunContextParams = { poolKey: "shared", cwd: "/tmp" };
+
+  it("带 sessionRootId 的 run ctx 可构造（RunParams 形态承载）", () => {
+    const run: RunParams = {
+      runId: "run-1",
+      task: { prompt: "do" },
+      ctx: { ...v1Ctx, sessionRootId: "root-sess-9" },
+    };
+    expect(run.ctx.sessionRootId).toBe("root-sess-9");
+  });
+
+  it("v1 形态（无 sessionRootId）零破坏——additive 可选，旧宿主/引擎语义不变", () => {
+    const run: RunParams = { runId: "run-1", task: { prompt: "do" }, ctx: v1Ctx };
+    expect(run.ctx.sessionRootId).toBeUndefined();
   });
 });

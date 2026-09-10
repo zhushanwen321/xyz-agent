@@ -253,6 +253,23 @@ describe("RemoteEngine run 帧映射", () => {
     await cleanup();
   });
 
+  it("ctx.sessionRootId → wire ctx.sessionRootId 逐字保真；缺省不传 → wire 无该键（F6 additive）", async () => {
+    // 正向：根 session id 上 wire（pi 引擎 relay 归属键 SESSION_ID 的权威来源）
+    const withRoot = makeEngine();
+    const { ctx: ctxRoot, events: eventsRoot } = makeCtx({ sessionRootId: "root-sess-f6" });
+    await withRoot.engine.run({ prompt: "p" }, ctxRoot);
+    expect(extractRunParams(eventsRoot).ctx.sessionRootId).toBe("root-sess-f6");
+
+    // 负向：缺省 → wire ctx 不出现该键（undefined 不上 wire，旧引擎 additive 兼容）
+    const bare = makeEngine();
+    const { ctx: ctxBare, events: eventsBare } = makeCtx();
+    await bare.engine.run({ prompt: "p" }, ctxBare);
+    expect(extractRunParams(eventsBare).ctx).not.toHaveProperty("sessionRootId");
+
+    await withRoot.cleanup();
+    await bare.cleanup();
+  });
+
   it("poolResolved / handleReady → RunContext 回调（journal 路径权威 + 运行中句柄回填）", async () => {
     const pools: string[] = [];
     const readies: Array<{ sessionRef: Record<string, string>; poolKey: string }> = [];

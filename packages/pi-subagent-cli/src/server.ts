@@ -289,6 +289,8 @@ export class EngineProtocolServer {
       ...(stream !== undefined ? { stream } : {}),
       ...(ctx.schemaEnv !== undefined ? { schemaEnv: ctx.schemaEnv } : {}),
       ...(ctx.engineFallback !== undefined ? { engineFallback: ctx.engineFallback } : {}),
+      // [F6] 根 session id 还原（relay 归属键 SESSION_ID 权威源；undefined 不挂键）
+      ...(ctx.sessionRootId !== undefined ? { sessionRootId: ctx.sessionRootId } : {}),
       ...(params.chat !== undefined ? { chat: params.chat } : {}),
       onPoolResolved: (poolKey) => {
         void this.reverseRequestInternal("host/poolResolved", { runId, poolKey });

@@ -311,6 +311,7 @@ describe("PiEngine.run（一次性任务形态）", () => {
         onHandleReady: (p) => handleReady.push(p),
         onChildSpawned: (c) => childSpawned.push(c),
         onPoolResolved: (p) => pools.push(p),
+        sessionRootId: "root-sess-f6",
       },
     );
 
@@ -328,6 +329,7 @@ describe("PiEngine.run（一次性任务形态）", () => {
       skillPaths: ["/skills/x"],
       appendSystemPrompt: ["extra prompt"],
       forkSource: "/tmp/fork-source.jsonl",
+      sessionRootId: "root-sess-f6",
       signal,
       // resolveSessionDir：<dataDir>/subagents/sessions/<encoded(cwd)>（cwd 未传 = process.cwd()）
       sessionDir: join("/tmp/engine-data", "subagents", "sessions", process.cwd().replace(/[^a-zA-Z0-9_-]+/g, "_")),
@@ -392,6 +394,8 @@ describe("PiEngine.run（一次性任务形态）", () => {
     const { engine, captured } = makeEngine();
     const runP = engine.run({ prompt: "x" }, { taskId: "run-fb", poolKey: PI_POOL_KEY });
     expect(captured[0]!.params.agentName).toBe("workflow-agent");
+    // [F6] ctx.sessionRootId 缺省 → SpawnRunParams 不挂键（additive 语义，one-shot 形态）
+    expect(captured[0]!.params).not.toHaveProperty("sessionRootId");
     await settleRun(
       captured[0]!,
       spawnRunResult({
@@ -436,6 +440,7 @@ describe("PiEngine.run（chat 会话形态）", () => {
       {
         taskId: "run-chat-1",
         poolKey: PI_POOL_KEY,
+        sessionRootId: "root-sess-f6",
         chat: {
           recordId: "rec-chat-9",
           resume: { sessionRef: { recordId: "rec-chat-9", sessionFile: "/tmp/sess-c9.jsonl" }, poolKey: PI_POOL_KEY },
@@ -448,6 +453,7 @@ describe("PiEngine.run（chat 会话形态）", () => {
       task: "chat turn",
       chatMode: true,
       resumeSessionFile: "/tmp/sess-c9.jsonl",
+      sessionRootId: "root-sess-f6",
       sessionDir: join("/tmp/engine-data", "subagents", "sessions", process.cwd().replace(/[^a-zA-Z0-9_-]+/g, "_")),
     });
     expect(cap.params.agentName).toBe("chat-agent");
@@ -479,6 +485,8 @@ describe("PiEngine.run（chat 会话形态）", () => {
       chat: { recordId: "rec-new" },
     });
     expect(captured[0]!.params.resumeSessionFile).toBeUndefined();
+    // [F6] ctx.sessionRootId 缺省 → SpawnRunParams 不挂键（additive 语义）
+    expect(captured[0]!.params).not.toHaveProperty("sessionRootId");
     await settleRun(captured[0]!, spawnRunResult());
     const { handle } = await runP;
     expect(handle.data.sessionRef.recordId).toBe("rec-new");

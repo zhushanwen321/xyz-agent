@@ -361,6 +361,7 @@ describe("run：协议载荷 → 本地 AgentCallOpts/RunContext", () => {
           streamMode: "stream",
           schemaEnv: "PI_WORKFLOW_SCHEMA=1",
           engineFallback: { from: "zcode", reason: "manifest" },
+          sessionRootId: "root-sess-9",
         },
       },
     });
@@ -393,6 +394,7 @@ describe("run：协议载荷 → 本地 AgentCallOpts/RunContext", () => {
     expect(captured?.ctx.ctxModel).toEqual({ provider: "prov", id: "ctx-model" });
     expect(captured?.ctx.schemaEnv).toBe("PI_WORKFLOW_SCHEMA=1");
     expect(captured?.ctx.engineFallback).toEqual({ from: "zcode", reason: "manifest" });
+    expect(captured?.ctx.sessionRootId).toBe("root-sess-9");
     expect(captured?.ctx.stream).toBeDefined();
     expect(captured?.ctx.signal).toBeInstanceOf(AbortSignal);
     expect(captured?.ctx.chat).toBeUndefined();
@@ -436,6 +438,19 @@ describe("run：协议载荷 → 本地 AgentCallOpts/RunContext", () => {
       const ctx = (engine.run as Mock).mock.calls[i]?.[1] as RunContext;
       expect(ctx.ctxModel, `ctxModel=${JSON.stringify(ref)} 应归一为 undefined`).toBeUndefined();
     }
+  });
+
+  it("[F6] ctx.sessionRootId 缺省 → 还原后的 RunContext 无该键（additive 语义，relay 权威源缺省不注入）", async () => {
+    const engine = makeEngine();
+    const { server, sink } = makeServer(engine);
+    await request(server, sink, 0, "initialize", INIT_PARAMS);
+    await request(server, sink, 20, "run", {
+      runId: "run-f6",
+      task: { prompt: "p" },
+      ctx: { poolKey: "shared", cwd: "/w" },
+    });
+    const ctx = (engine.run as Mock).mock.calls[0]?.[1] as RunContext;
+    expect(ctx).not.toHaveProperty("sessionRootId");
   });
 
   it("cancel：活跃 run 的 signal 被 abort（reason 透传）；收尾后 cancel 幂等 ok；迟到事件 seq 回落 0", async () => {

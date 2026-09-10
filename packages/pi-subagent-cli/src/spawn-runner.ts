@@ -176,9 +176,10 @@ function buildChildEnv(params: SpawnRunParams): Record<string, string> {
   // relay 归属键重写（W8/H12）：SESSION_ID/RECORD_ID 在 ENGINE_ENV_DENY_LIST，
   // buildOutboundChildEnv 的 deny 在 extras 之后执行——经 extras 注入会被剥掉
   // （旧实现的 RECORD_ID 重写因此从未送达 relay.mjs，归属键缺失 → 退出码 13）。
-  // 必须在 deny 终态之后按 run ctx 显式写回（不靠 env 继承）。SESSION_ID 缺省
-  // 回落 L0 身份键 PI_SUBAGENT_ROOT_SESSION_ID（协议 v1 ctx 无 sessionRootId
-  // 字段；协议补字段后收敛）。
+  // 必须在 deny 终态之后按 run ctx 显式写回（不靠 env 继承）。SESSION_ID 权威源
+  // = 协议 ctx.sessionRootId（F6 已收敛：core SubagentService 注入的根 session id
+  // 经 wire → server 还原 → SpawnRunParams 一线透传至此）；env 回落
+  // PI_SUBAGENT_ROOT_SESSION_ID 保留给 standalone / 裸 CLI 形态（无宿主 run ctx）。
   if (isRelayActive(process.env)) {
     const rootId = params.sessionRootId ?? process.env["PI_SUBAGENT_ROOT_SESSION_ID"];
     if (rootId !== undefined && rootId !== "") childEnv[RELAY_ENV_SESSION_ID] = rootId;

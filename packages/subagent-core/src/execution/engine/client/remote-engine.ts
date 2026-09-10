@@ -308,6 +308,7 @@ interface WireRunParams {
     ctxModel: string | undefined;
     engineFallback: RunContext["engineFallback"];
     streamMode: "stream" | undefined;
+    sessionRootId?: string;
   };
   chat?: NonNullable<RunContext["chat"]>;
 }
@@ -332,6 +333,9 @@ function buildRunParams(task: AgentCallOpts, ctx: RunContext, runId: string): Wi
       ctxModel: ctxModelRef,
       engineFallback: ctx.engineFallback,
       streamMode: ctx.stream !== undefined ? ("stream" as const) : undefined,
+      // [F6] 根 session id（relay 归属键 SESSION_ID 权威源）——undefined 不上 wire
+      //（additive 语义，与顶层 chat 参数同写法）。
+      ...(ctx.sessionRootId !== undefined ? { sessionRootId: ctx.sessionRootId } : {}),
     },
     ...(ctx.chat !== undefined ? { chat: ctx.chat } : {}),
   };

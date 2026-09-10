@@ -519,6 +519,47 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     // 按句移除断言（W10 注）：inproc 双模不回灌 childStateChanged，镜像移除由
     // protocol-blackbox 承载（同 subprocess-agent-runner-routing D10 注）。
   });
+
+  // ============================================================
+  // 6. [F6] sessionRootId 注入（execute / executeAndAwait 两 runCtx 构造点）
+  // ============================================================
+
+  it("[F6] service.sessionRootId 注入 runCtx（根 session id 贯穿引擎派发——relay 归属键 SESSION_ID 权威源）", async () => {
+    // 根进程形态：env 无 PI_SUBAGENT_ROOT_SESSION_ID 时 sessionRootId = init.sessionId。
+    // 删除防外层 env 污染（该键存在时 initSession 走子进程形态，断言基准漂移）。
+    const prevRootEnv = process.env["PI_SUBAGENT_ROOT_SESSION_ID"];
+    delete process.env["PI_SUBAGENT_ROOT_SESSION_ID"];
+    try {
+      const { service, zcode, piEngine } = setup(agentDir);
+      zcode.runImpl = () => Promise.resolve({ handle: fakeHandle(), outcome: doneOutcome("ok") });
+      piEngine.runImpl = () => Promise.resolve({ handle: fakeHandle(), outcome: doneOutcome("ok") });
+
+      // chat 域 background 派发（runEngineTask 的 runCtx 构造点）
+      await service.execute(baseOpts(agentDir, { engine: "zcode" }));
+      await vi.waitFor(() => expect(zcode.runs.length).toBe(1));
+      expect(zcode.runs[0].ctx.sessionRootId).toBe("test-session");
+
+      // workflow 域 sync 派发（runAndFinalize 的 runCtx 构造点；其引擎解析恒走
+      // registry 'pi'——resolveChatEnginePort，不消费 opts.engine）。fire-and-forget：
+      // 本 harness 无 idle-notify 驱动面，收尾链（finalizeRoundToIdle）不收敛——
+      // 只断言构造点（runs 捕获在收尾之前），与既有用例的挂起 record 同等形态。
+      let awaitErr: unknown;
+      void service
+        .executeAndAwait(baseOpts(agentDir, { slug: "f6-await" }))
+        .catch((e: unknown) => {
+          awaitErr = e;
+        });
+      await vi.waitFor(() => {
+        if (awaitErr !== undefined) {
+          throw new Error(`executeAndAwait rejected before engine.run: ${String(awaitErr)}`);
+        }
+        expect(piEngine.runs.length).toBe(1);
+      });
+      expect(piEngine.runs[0].ctx.sessionRootId).toBe("test-session");
+    } finally {
+      if (prevRootEnv !== undefined) process.env["PI_SUBAGENT_ROOT_SESSION_ID"] = prevRootEnv;
+    }
+  }, 10_000);
 });
 
 // ============================================================

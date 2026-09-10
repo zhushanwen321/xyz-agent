@@ -74,6 +74,12 @@ export interface RunContextParams {
   engineFallback?: { from: string; reason: string };
   /** 事件粒度请求（引擎按 capabilities.eventGranularity 实际能力执行）。 */
   streamMode?: "stream" | "coarse";
+  /**
+   * [F6] 根 session id——pi 引擎 relay 归属键 SESSION_ID 的权威来源（生产三来源
+   * ①本字段 ②宿主 env ③根进程 env 中，宿主派发恒走①）。additive 可选：旧引擎忽略
+   * 未知字段，undefined 不上 wire。
+   */
+  sessionRootId?: string;
 }
 
 // ============================================================
