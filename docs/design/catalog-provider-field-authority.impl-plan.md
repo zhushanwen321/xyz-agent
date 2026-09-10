@@ -57,6 +57,7 @@
 | **M2g** | D6① 防复发机器守卫：新建 `scripts/check-provider-credential-reads.mjs`（白名单 + fail 收集 + 退出码 0/1）——禁 `packages/runtime/src/**` 白名单外出现 `getApiKeyForProvider` / `readAuthCredentials` / `getProvider(*).apiKey`；**姊妹守卫**：`upsertProvider` 直调清单（白名单 = setProvider / importer 主路径两处 / clearApiKey 闭包 / 启动清洗）；接线 `install-hooks.sh`（按 `packages/runtime/src/**` 路径触发）+ `preflight-check.sh` | `scripts/check-provider-credential-reads.mjs`（新）<br>`.githooks/install-hooks.sh`<br>`scripts/preflight-check.sh` | M2b · M2c（迁移完成后白名单才能清零） | plain | `node scripts/check-provider-credential-reads.mjs` 对当前 HEAD 退出 0（白名单已清零）；反证：在白名单外临时加一行 `getApiKeyForProvider(id)` → 脚本退出 1 且报文件行号与 resolver 模块路径；撤销后回绿（验收场景 8） |
 | **M3a** | D4 runtime 侧：per-协议代表模型双过滤选择（`enabled !== false` 且 `baseUrl` 非空）+ baseUrl 四级回落链（模型级 → custom provider 级 → catalog 网关 override → 报「未配置 baseUrl」）+ 3 协议最小真实请求（`max_tokens: 1` / `max_output_tokens: 1`，精确 body 以 P-test-req 实测为准）；`handleDiscoverModels` 加 `mode` 分支（test 走 per-model 编排，缺省 discover）；CLI 冒烟 + 可选 `--mode test` | `packages/runtime/src/services/model-service.ts`<br>`packages/runtime/src/infra/model-connection-tester.ts`（新）<br>`packages/runtime/src/transport/settings-message-handler.ts`<br>`packages/runtime/src/cli/commands.ts`<br>测试：`packages/runtime/src/cli/__tests__/commands.test.ts`、`packages/runtime/test/settings-message-handler*.test.ts` | u-contracts（协议 `mode`/`results`）· M2-r（凭据）· M2b（同文件 `settings-message-handler.ts` 串行） | plain | vitest 绿，含：代表模型双过滤（禁用模型不代表、空 baseUrl 模型不冒充网络错误）；baseUrl 回落链四级逐级断言；3 协议请求体断言含 `max_tokens`/`max_output_tokens: 1`；无可用模型 / 协议不支持 / 全部模型被禁用分别返回 §3.5 错误规格对应文案；`mode` 缺省走 discover（CLI 向后兼容，P-test-req 结论写进用例注释） |
 | **M3b** | D4 前端侧：`runDiscover` 传 `mode`；测试连接调用传 `mode:'test'` 并消费 `results`；`ProviderTestDiscoverSection.vue` 按协议分组渲染结果与恢复指引；catalog provider 隐藏「模型发现」按钮（custom 保留） | `packages/core/src/domain/settings/use-provider-edit.ts`<br>`packages/renderer/src/composables/shell/settings-transport-adapter.ts`<br>`packages/ui/src/features/settings/provider/ProviderTestDiscoverSection.vue`<br>测试：`packages/ui/src/features/settings/__tests__/provider-test-discover-section.test.ts`、`packages/core/src/domain/settings/__tests__/use-provider-edit.test.ts` | u-contracts（协议类型 + i18n）· M1a（同文件 `use-provider-edit.ts` 串行） | plain | vitest 绿，含：payload 带 `mode`（discover / test 两分支）；适配层透传 `mode`；组件按协议分组渲染每行 `{api, modelId, ok, error}` 与恢复指引文案；catalog provider 不渲染「模型发现」按钮、custom 渲染（用户可见 DOM 断言） |
+| **M1e** | 既有 real-verify 测试对齐 D1③ 写侧语义：`test/e1-e3-real-verify.test.ts` 的 E1 取 dev 数据首个 provider 断言 `setProvider({type})` 落盘 provider 级 api——catalog provider 在新语义下 `type` 被忽略（D1③），断言失效。改为按 kind 显式选取（custom provider 断言 api 落盘；catalog 分支断言 provider 级 api 不落盘 + 派生值不变），无 custom provider 时按既有 `skipIf` 模式跳过并注明理由 | `packages/runtime/test/e1-e3-real-verify.test.ts` | M1b（carrier 语义已定稿） | plain | `cd packages/runtime && npx vitest run test/e1-e3-real-verify.test.ts` 全绿（本地有 dev 数据时真跑，无则按既有 skip 模式跳过并给出 skip 记录）；断言强度不削弱（仍做真实落盘读取断言，只是按 kind 分支） |
 | **M4** | D5 网关优先派生两级语义（`resolveCatalogDisplayFields`：override 非空 baseUrl 优先原值 + 网关标注；无网关则对合并模型集派生「全同值 → 该值 / >1 非空值 → undefined / 全空 → undefined」，api 同规则）+ D7 `overlayToCatalogModel` 去空串归一 + `ProviderEditBody.vue` catalog 化（类型只读派生文案、端点改「自定义网关」可选框 + placeholder/清除语义 + form.api 取值定义）+ `ProviderQuickSetup.vue` 卡片混合检测展示 | `packages/runtime/src/services/provider-config-helper.ts`<br>`packages/runtime/src/services/provider-catalog.ts`<br>`packages/ui/src/features/settings/provider/ProviderEditBody.vue`<br>`packages/ui/src/features/settings/provider/ProviderQuickSetup.vue`<br>测试：`packages/runtime/src/services/__tests__/provider-config-helper.test.ts`、`packages/runtime/src/services/__tests__/provider-catalog.test.ts`、`packages/ui/src/features/settings/__tests__/provider-edit-body.test.ts`、`packages/ui/src/features/settings/__tests__/ProviderQuickSetup.test.ts` | u-contracts（i18n + 类型注释）· M1b（同文件 `provider-config-helper.ts` 串行）· M2b（同文件串行） | plain | vitest 绿，含：网关优先（override 非空 → 原值 + 标注）；派生三态（同值 / 混合 / 全空 → undefined）；`overlayToCatalogModel` 缺省不再产 `''`（为 undefined）；`ProviderEditBody` catalog 不渲染类型输入框、渲染派生文案与端点可选框，custom 照旧可编辑（用户可见 DOM 断言）；QuickSetup 卡片混合 → 「按模型分发」、空 → 「—」 |
 
 ## 3 DAG 图
@@ -72,6 +73,7 @@ graph TD
   subgraph W2[Wave 2 · 迁移与旁路修复]
     U1A["M1a 前端不产生违规值<br/>core use-provider-edit · oauth · quick-setup"]
     U1CD["M1cd 存量清洗+importer<br/>pi-provider-store · index.ts · provider-importer"]
+    U1E["M1e 既有 real-verify 测试对齐<br/>runtime test/e1-e3-real-verify"]
     U2B["M2b 链 1/2/5 迁移<br/>provider-config-helper · quota · handler"]
     U5A["M5a 卫生与登记<br/>pi-provider-repair · constraints · doc-map"]
   end
@@ -87,6 +89,7 @@ graph TD
   U0 -->|"i18n key + 类型注释"| U4
   U6 -->|"同文件 use-provider-edit.ts 串行"| U1A
   U1B -->|"防线纯函数与网关标记 API 被消费"| U1CD
+  U1B -->|"carrier 写侧语义定稿，既有 real-verify 断言据此对齐"| U1E
   U1B -->|"同文件 provider-config-helper.ts 串行"| U2B
   U1B -->|"同文件 provider-config-helper.ts 串行"| U4
   U1CD -->|"同文件 pi-provider-store.ts / index.ts 串行"| U2C
@@ -99,7 +102,7 @@ graph TD
   U1A -->|"同文件 use-provider-edit.ts 串行"| U3B
 ```
 
-分层：Wave1 4 单元 · Wave2 4 单元 · Wave3 5 单元（均 ≤5 并发上限）；关键路径深度 3，最大宽度 5。
+分层：Wave1 4 单元（u-contracts · M6 · M1b · M2-r）· Wave2 5 单元（M1a · M1cd · M1e · M2b · M5a）· Wave3 5 单元（M2c · M2g · M3a · M3b · M4）（均 ≤5 并发上限）；关键路径深度 3，最大宽度 5。M1e 为执行期新立单元（M1b 第 3 轮发现的领地外旧语义测试；M1b 已达修复轮上限，故另立承接）。
 
 ## 4 测试策略
 
@@ -174,7 +177,8 @@ pnpm --filter @xyz-agent/core test && pnpm --filter @xyz-agent/runtime test && p
 |------|------|------|---------|
 | u-contracts | committed | 1 | commit `77e0f79cc`；shared/runtime typecheck 0；renderer i18n 196 passed；doc-symbol-drift 0 |
 | M6 | committed | 1 | commit `0e3c42847`；core vitest 50 passed；core typecheck 0；P-presets 实测 on-off 2 档 / high-max 3 档 / all-levels 5 档 |
-| M1b | in-progress | 3 | 第 1 轮（载体纯函数 + 空串转译 + catalog 分体系 + extras 字段）与第 2 轮（setProvider 信号接线 + 模型级空 id + eslint 上限 900）产物未提交在工作区；第 3 轮修 D-9（skipUpsert 收窄）/D-10（白名单守卫恢复）/D-11（3 处领地外断言） |
+| M1b | in-progress | 3 | 属地全绿：4 个领地测试文件 54 passed、`npx eslint packages/runtime/src --max-warnings 0` 0。待 M1cd 收敛后核验 typecheck 并提交（typecheck 当前唯一错误在 M1cd 在途编辑的 `provider-importer.test.ts`）。残留红点两处均不在领地：`config-provider-import.test.ts` T11（归 M1cd）· `test/e1-e3-real-verify.test.ts` E1（归新立 M1e） |
+| M1e | pending | 0 | —（M1b 第 3 轮发现的领地外旧语义测试；M1b 已达修复轮上限，故另立小单元承接，避免占用其轮次） |
 | M2-r | committed | 1 | commit `cfb839308`；runtime vitest 12 passed；runtime typecheck 0；P-cred 实测（xyz 不展开 / pi 展开，已对照 `resolve-config-value.js:71-73` 逐字核对） |
 | M1a | committed | 2 | commit `f40f27fbc`；core 54 / renderer 61 / ui 17 passed；frontend typecheck 0；renderer `src/__tests__` 全量 3620 passed \| 3 skipped（影响面扫尾无新红点） |
 | M1cd | pending | 0 | — |
