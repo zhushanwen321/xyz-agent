@@ -718,6 +718,9 @@ export class SessionLifecycle implements ISessionRegistry {
   async delete(sessionId: string): Promise<void> {
     const session = this.get(sessionId)
     if (session) {
+      // D5①（session-dead-structural-fixes）：kill 路径全量日志 K5——活跃 session 被删除时
+      // 其 pi 进程被杀，含调用源与信号链（仅 active 分支有 kill；非 active 分支无进程可杀）。
+      console.warn(`[session-lifecycle] deleting active session, killing pi, session ${sessionId} (kill_source=delete | who: user delete session action | chain: detach -> pm destroy -> trash session file)`)
       this.detachSession(sessionId)
       await this.pm.destroySession(sessionId)
       this.svc.removeSessionEntry(sessionId)
@@ -798,6 +801,10 @@ export class SessionLifecycle implements ISessionRegistry {
     }
     const existing = this.get(sessionId)
     if (existing) {
+      // D5①（session-dead-structural-fixes）：kill 路径全量日志 K3——旧 pi 被清场重开时
+      // 必须留「谁发起、为什么」痕迹（2026-09-10 事故 14:14:03.104 exit 143 无 kill 日志
+      // 排查一整晚的直接教训；K3 撞车实证：restore #2 杀掉 restore #1 刚拉起的 pi）。
+      console.warn(`[session-lifecycle] killing active pi before restore, session ${sessionId} (kill_source=restore_clear | who: restore request while old pi still active (session.restore RPC / ensureActive) | chain: detach -> safeDestroy old pi -> respawn + switch_session)`)
       this.detachSession(sessionId)
       await this.safeDestroy(sessionId)
       this.svc.removeSessionEntry(sessionId)

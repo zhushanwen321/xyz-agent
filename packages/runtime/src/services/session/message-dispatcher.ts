@@ -434,7 +434,9 @@ export class MessageDispatcher {
         // 回调按 processes.has 拦截 intentional destroy），不会传播到 session-service 的
         // onSessionExit 收敛链。编排与 lifecycle.delete / onSessionExit 回调同构（detach →
         // session.exited → removeSessionEntry），非新发明。
-        console.warn(`[message-dispatcher] abort RPC timed out (pi event loop frozen), force-destroying session ${sessionId}`)
+        // D5①（session-dead-structural-fixes）：kill 路径全量日志 K2——含调用源（kill_source）
+        // 与触发信号链（谁发起、为什么），exit 143 类进程死亡可从此行回溯到发起方。
+        console.warn(`[message-dispatcher] abort RPC timed out (pi event loop frozen), force-destroying session ${sessionId} (kill_source=abort_timeout | who: user abort -> RPC timeout fallback | chain: forceQuitSession -> detach -> SIGTERM destroy -> persist stopped -> occupancy reset -> session.exited)`)
         await this.forceQuitSession(sessionId, `Abort failed (pi unresponsive): ${errMsg}`, 'pi 无响应（事件循环卡死），进程已强制终止。重发消息即可恢复（自动重启进程，历史完整）')
         return
       }
@@ -480,7 +482,9 @@ export class MessageDispatcher {
       console.log(`[message-dispatcher] forceQuit: session ${sessionId} not active, nothing to kill`)
       return
     }
-    console.warn(`[message-dispatcher] force quit requested by user, killing session ${sessionId}`)
+    // D5①（session-dead-structural-fixes）：kill 路径全量日志 K1——含调用源（kill_source）
+    // 与触发信号链（谁发起、为什么），exit 143 类进程死亡可从此行回溯到发起方。
+    console.warn(`[message-dispatcher] force quit requested by user, killing session ${sessionId} (kill_source=user_force_quit | who: user via session.forceQuit RPC | chain: skip abort -> SIGTERM destroy -> persist stopped -> occupancy reset -> session.exited)`)
     await this.forceQuitSession(sessionId, 'User forced quit', '用户强制退出，进程已终止。重新打开该 session 即可恢复（历史完整）。')
   }
 

@@ -170,7 +170,10 @@ export class ProcessManager implements IProcessManager {
       const currentId = this.clientToId.get(client)
       // clientToId 无条目 = 已被 destroySession 清理（intentional destroy），跳过通知
       if (currentId === undefined) return
-      console.warn(`[process-manager] session ${currentId} process exited unexpectedly (code: ${code})`)
+      // D5①（session-dead-structural-fixes）：kill 路径全量日志 K8——异常退出收敛的观测点：
+      // 走到此处 = pi 进程自发退出（intentional destroy 已被上方 clientToId 无条目守卫拦截），
+      // 记录退出码与收敛链，供事后从 exit 143 类死亡回溯发起方。
+      console.warn(`[process-manager] session ${currentId} process exited unexpectedly (code: ${code}) (kill_source=exit_converge | who: pi exited on its own (crash / external kill), not an intentional destroy | chain: exit event -> exitCallbacks -> upper onSessionExit convergence (persist stopped + occupancy reset + session.exited))`)
       this.processes.delete(currentId)
       this.clientToId.delete(client)
       // 命名消歧：this.exitCallbacks 是 ProcessManager 的 Set<(sessionId, code, stderr) => void>
@@ -277,6 +280,11 @@ export class ProcessManager implements IProcessManager {
    */
   async destroyAll(): Promise<void> {
     const ids = Array.from(this.processes.keys())
+    // D5①（session-dead-structural-fixes）：kill 路径全量日志 K6——批量销毁含调用源与信号链
+    //（仅实际有进程时打，空表 shutdown 空转零信息量不打）。
+    if (ids.length > 0) {
+      console.warn(`[process-manager] destroyAll killing ${ids.length} session(s) [${ids.join(', ')}] (kill_source=destroy_all | who: runtime shutdown / sessionService.destroyAll | chain: fan-out per-session SIGTERM destroy)`)
+    }
     await Promise.allSettled(ids.map(id => this.destroySession(id)))
   }
 

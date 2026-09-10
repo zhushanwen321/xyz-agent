@@ -279,7 +279,9 @@ export async function reapOrphanPiProcesses(options: ReapOrphanOptions): Promise
   const orphans = findOrphanPiRows(rows, sessionsDir, ownPid)
   if (orphans.length === 0) return result
 
-  console.log(`[orphan-reap] found ${orphans.length} orphan pi process(es) for session-dir=${sessionsDir}, reaping`)
+  // D5①（session-dead-structural-fixes）：kill 路径全量日志 K7——收殓决策点升级 warn 含
+  // 调用源与信号链（下各 pid 级明细 log 保持既有粒度不动）。
+  console.warn(`[orphan-reap] found ${orphans.length} orphan pi process(es) for session-dir=${sessionsDir}, reaping (kill_source=reap_orphan | who: runtime startup delayed reap, previous runtime died leaving unparented pi | chain: ps scan -> argv + ppid=1 orphan match -> SIGTERM -> ${killGraceMs}ms grace -> SIGKILL if alive)`)
   for (const row of orphans) {
     const ok = await killOrphan(row, killGraceMs, signal, delay)
     if (ok) result.reaped.push(row.pid)
