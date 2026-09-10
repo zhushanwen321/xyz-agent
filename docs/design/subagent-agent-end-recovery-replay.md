@@ -1,10 +1,10 @@
 # subagent 通知恢复能力在新架构上的重放移植设计（replay port）
 
-> **一句话结论**：dev-0.9.16 的新架构（pi-subagent-cli + engine protocol）消灭了「agent_end 保守处置 → 永挂 → 通知冻结」的事故主干，但对抗审查（R1）证伪了「每环都有熔断」——**workflow 域（carbon 事故原发路径）的静默楔死在新架构无任何 no-progress 熔断**（旧架构 8.8.0+ 有全形态 30min 兜底，新架构该域丢失），本设计将其补挂（M3）。加上 S2 契约防御修复（M1）与 sessionFile 获取链补强（M2 惰性回补 + M4 兜底扫描），移植面共四件；D1（迟到接受）已等价覆盖无需移植，D3/D3a/D4 的问题域在新架构不存在，判定不移植并给出证据。本文档是线 B 设计 [`subagent-agent-end-recovery.md`](subagent-agent-end-recovery.md) 在架构分叉后的重放移植裁决书。
+> **一句话结论**：dev-0.9.16 的新架构（pi-subagent-cli + engine protocol）消灭了「agent_end 保守处置 → 永挂 → 通知冻结」的事故主干，但对抗审查（R1-R4）逐步证伪了「每环都有熔断」——**workflow 域（carbon 事故原发路径）的静默楔死在两代架构都无 no-progress 熔断**（旧架构 arm 两处生产调用点均在 chatMode 门内，该域 mid-round 静默楔死的唯一外层是 rpc-client 5400s——正是 carbon 90min 耗尽形态的表现；新架构同样零覆盖），本设计将其补挂（M3）。加上 S2 契约防御修复（M1）与 sessionFile 获取链补强（M2 惰性回补 + M4 兜底扫描），移植面共四件；D1（迟到接受）已等价覆盖无需移植，D3/D3a/D4 的问题域在新架构不存在，判定不移植并给出证据。本文档是线 B 设计 [`subagent-agent-end-recovery.md`](subagent-agent-end-recovery.md) 在架构分叉后的重放移植裁决书。
 >
 > **层声明**：当前层 = 技术方案（重放移植裁决 + 落点设计）；下一层 = 实现计划（§5 拆分单元，供 dev-flow / coding-workflow 消费）。不跨层写代码。
 >
-> **状态**：R1 对抗式审查 5 must-fix + 7 suggestion、R2 聚焦复审 3 must-fix + 5 suggestion（两审合计）、R3 聚焦复审 2 must-fix + 2 suggestion（两审合计）均已全量修复。R3 关键修订：M3 落点迁至 SAR.run（`executeAndAwait/runAndFinalize` 系 W3 后无生产调用方的残留面，R1/R2 版落点系误读——根源是 SAR 类注释的过时描述，已勘误登记）；killAll 组杀连带面四要素登记（V5c）；误杀面「归零」断言收窄（host/askUser 等待形态登记）。待 R4 复审收敛确认。
+> **状态**：R1 对抗式审查 5 must-fix + 7 suggestion、R2 聚焦复审 3 must-fix + 5 suggestion（两审合计）、R3 聚焦复审 2 must-fix + 2 suggestion（两审合计）、R4 聚焦复审主审 1 must-fix + 2 suggestion + 影响面审 0/0（设计就绪）——均已全量修复。关键收敛轨迹：S2 触发前提勘误 → M3 fire 链真终止 → 落点迁 SAR.run（executeAndAwait/runAndFinalize 系残留面）→ 缺口定性勘误（**两代共有原生缺口非回归**：旧架构 arm 两点均在 chatMode 门内）。待 R5 主审确认收敛。
 
 ---
 
@@ -80,7 +80,7 @@
 | 5 | 通知链整条冻结（主 agent 永不知情） | run 终态 → core `finalizeEngineOutcome` → CollectCoordinator → notify-ledger 四步兜底 | **已覆盖**（正常终态 + 崩溃路径都有通知，见 §2.4） |
 | 6 | 引擎/进程死亡后 record 无人管 | core 侧三层兜底（§2.4） | **已覆盖** |
 
-**结论**：事故主干（环节 3-6）在新架构被结构性消灭，但审查（R1）发现一处例外——**环节 5 的「静默楔死」分支对 workflow 域无熔断**（§2.4 条目 2，kickOffChatRound 链外无 arm）。G1 的既有达成度：chat 域与引擎崩溃路径高；workflow 域静默楔死 = 真实缺口，本设计 M3 补挂。G2 要补的是环节 1 的契约防御和环节 2 的兜底强度。
+**结论**：事故主干（环节 3-6）在新架构被结构性消灭，但审查（R1-R4）发现一处例外——**环节 5 的「静默楔死」分支对 workflow 域无熔断**（§2.4 条目 5，SAR 直达路径无 arm；且为两代共有原生缺口非回归）。G1 的既有达成度：chat 域与引擎崩溃路径高；workflow 域静默楔死 = 真实缺口，本设计 M3 补挂。G2 要补的是环节 1 的契约防御和环节 2 的兜底强度。
 
 ### 2.2 S2 握手契约缺陷：应答缺 sessionFile 的死路径下 Promise 悬挂
 
@@ -132,7 +132,8 @@ addResponseListener(reqId, (data) => {
 2. **chat 域 + subagents 工具 background 的静默楔死**（agent_end 永不到）：core 侧 `armMidRoundNoProgress` 挂 30min 无进展检测（`CORE/subagent-service.ts:2676`，kickOffChatRound 的 engine.run 派发前；刷新源 = 协议事件含 text_delta）→ fire 即 kill + 失败终态化 + 失败通知（`onHotPathSettledWatchdogTimeout`，:1550）。
 3. **引擎进程死亡（宿主存活）**：`engine_crashed` → `adoptResumableAfterEngineDeath`（`CORE/subagent-service.ts:2346,2402`，条件 `chatMode !== true` 即覆盖 one-shot）→ RoundSupervisor 三态（该等/该唤醒/该放弃，2h 决策看门狗 env 可关）→ steer 通知或终止通知。
 4. **宿主重启**：`bootPartition` 重认领（initSession 挂点）→ 同 supervisor 流。
-5. **【缺口】workflow 域静默楔死无任何熔断（R1 发现、R3 修正落点，M3 修复）**：workflow 域 `agent()` 的真实调用链 = `executeAgentCall`（退避重试 ≤ MAX_ATTEMPTS，`CORE/orchestration/execute-agent-call.ts:148` 起派发）→ **SAR.run**（per-session runner，`CORE/execution/subprocess-agent-runner.ts:235`，`sa-` 前缀 taskId，不创建 ExecutionRecord）→ 引擎路由同步短路（`routing.ts:435-441`）→ `RemoteEngine.run`（协议 run 帧直达引擎进程）——**该路径零 no-progress 熔断**（SAR.run 全文无 arm；per-call 墙钟 `timeoutMs` 是 opt-in，用户未传即不限时）；引擎侧 run 帧不设墙钟（by design，规则 19）。攻击场景：workflow 域 pi 子进程静默楔死（spawn 成功、prompt 已发、零事件输出、不退出）→ 引擎无墙钟 + SAR 无 arm → `agent()` 永挂 → workflow 停摆、无终态通知 = G1 违反。**carbon 事故正是 workflow 域**；旧架构该形态经 SAR → executeAndAwait → inproc runSpawn 链有 30min no-progress 兜底，新架构 SAR 直达引擎后丢失——即 G3 要防的「旧病根借尸还魂」。
+5. **【缺口】workflow 域静默楔死无任何熔断（R1 发现、R3 修正落点，M3 修复）**：workflow 域 `agent()` 的真实调用链 = `executeAgentCall`（退避重试 ≤ MAX_ATTEMPTS，`CORE/orchestration/execute-agent-call.ts:148` 起派发）→ **SAR.run**（per-session runner，`CORE/execution/subprocess-agent-runner.ts:235`，`sa-` 前缀 taskId，不创建 ExecutionRecord）→ 引擎路由同步短路（`routing.ts:435-441`）→ `RemoteEngine.run`（协议 run 帧直达引擎进程）——**该路径零 no-progress 熔断**（SAR.run 全文无 arm；per-call 墙钟 `timeoutMs` 是 opt-in，用户未传即不限时）；引擎侧 run 帧不设墙钟（by design，规则 19）。攻击场景：workflow 域 pi 子进程静默楔死（spawn 成功、prompt 已发、零事件输出、不退出）→ 引擎无墙钟 + SAR 无 arm → `agent()` 永挂 → workflow 停摆、无终态通知 = G1 违反。**carbon 事故正是 workflow 域**。
+   - **定性勘误（R4）**：本缺口是**两代共有的原生缺口，非新架构回归**——线 B 源码核实：旧架构 `armMidRoundNoProgress` 仅有的两个生产调用点均在 chatMode 门内（线 B `session-runner.ts:2881` 的 `if (record.chatMode)` + `subagent-service.ts:1294` deliverChatMessage 热路径）；keep-alive no-progress 只挂 agent_end 后的裸缺省形态、spawn watchdog 与 worker pending 超时均为 opt-in——workflow 域 one-shot **mid-round** 静默楔死在旧架构同样零兜底（唯一外层 = runtime rpc-client 5400s，carbon 90min 耗尽正是该形态的表现）。M3 首次为该域补上熔断。
    - **勘误登记（R3）**：本文档 R1/R2 版曾断言 workflow 走 `executeAndAwait（:1815）→ runAndFinalize（:2419）`——该两方法是 W3 协议化后**无生产调用方的残留面**（`subprocess-agent-runner.ts:5/:21/:125` 类注释的「委托 executeAndAwait」描述是 W3 前过时形态，正是误读根源）。修复 = M3（§3.3 决策 9，落点 SAR.run）。
 
 残余登记（量级 + 重审条件，R2 修订、R3 沿用）：M3 的 fire 经 watchdog controller → cancel 帧 / killAll 阶梯保证 `engine.run` 收敛（含引擎活楔死形态——killAll 直接杀引擎进程后 run 请求 reject 合成终态）。不收敛残余仅剩「fire 回调自身未执行」（宿主进程在静默期内崩溃）→ 重启后 workflow 无 supervisor 纳管（workflow 域无 record），由 workflow 运行方（subagent-workflow extension 的 run 状态机）自行超时/用户重派——显式登记为已知残余。重审触发 = 出现该残余形态的实例报告。
@@ -270,14 +271,14 @@ Subagent "coder" (rec-8f3a) completed.
 
 **决策 9（R1 新增，R2/R3 修订）：M3 = workflow 域 no-progress 守护补挂，落点 SAR.run，复用 settled-watchdog 既有原语**
 
-- 缺口（§2.4 条目 5，R3 修正真实链路）：workflow 域 `agent()` → `executeAgentCall`（退避重试）→ **SAR.run**（`subprocess-agent-runner.ts:235`，`sa-` taskId、journal :197、stream :229、signal 合流 :214 三件套齐备，**不创建 ExecutionRecord**）→ `RemoteEngine.run` 直达——零熔断，静默楔死 = `agent()` 永挂 + workflow 停摆 + 无终态通知，carbon 事故正是该域，旧架构经 inproc 链有 30min 兜底、新架构丢失 = 回归。
+- 缺口（§2.4 条目 5，R3 修正真实链路、R4 修正定性）：workflow 域 `agent()` → `executeAgentCall`（退避重试）→ **SAR.run**（`subprocess-agent-runner.ts:235`，`sa-` taskId、journal :197、stream :229、signal 合流 :214 三件套齐备，**不创建 ExecutionRecord**）→ `RemoteEngine.run` 直达——零熔断，静默楔死 = `agent()` 永挂 + workflow 停摆 + 无终态通知；carbon 事故正是该域。缺口定性 = **两代共有原生缺口**（旧架构 arm 两点均在 chatMode 门内，见 §2.4 定性勘误），非新架构回归——但本设计的 G1 目标覆盖它，仍须补挂。
 - 方案对比：
   - **采用：SAR.run 内挂 per-run watchdog**——arm 点 = `engine.run` 派发之前的 try 块内；刷新源 = `journal.onEvent` 包装 ∪ `stream.onDelta` 包装（若存在，streamDelta 反向帧不经 journal——R2 S-影响1）；disarm = `finally`（journal.close 同段）+ run 收敛。
   - 被否：arm 挂 `runAndFinalize`（R1/R2 版方案）——该方法与 `executeAndAwait` 同为 W3 后无生产调用方的残留面（R3 证实），挂上去 = 守护挂不到真实路径。
-  - 被否：仅登记缺口不动——违反 G1 且是已知回归。
+  - 被否：仅登记缺口不动——违反 G1 且缺口真实存在（两代共有不等于可继续不修）。
   - 被否：给 engine.run 加墙钟超时——违反规则 19，且无进展检测（静默才判死）与 ADR-0047 一致。
-- **fire 动作（SAR 域形态，无 record 三件套）**：SAR 不持有 ExecutionRecord / tryTransition / collectCoordinator——fire = **per-run watchdog `AbortController` 叠加进既有 signal 合流**（`mergeTimeoutSignal` 旁新增一源，与 D-A9 timeoutMs 同构）：watchdogController.abort() → mergedSignal abort → `RemoteEngine` `wireAbortSignal`（`remote-engine.ts:364-392`）→ cancelRun 帧 → 引擎杀目标子进程 → run 应答 cancelled outcome → SAR `outcomeToRunnerResult` 出 error result；引擎无响应则 `CANCEL_SETTLE_GRACE_MS` 收敛窗 → `killAll` → run 请求 reject → SAR catch → error result。**两路径都保证 `engine.run` 收敛** → SAR finally（journal close）→ `agent()` 返回。
-- **重试语义**：fire 的 error result 回到 `executeAgentCall` 通用重试面（`attempts < MAX_ATTEMPTS` 退避重试，`:188-193`）——**保留重试是有意决策**：并发拥塞型楔死（carbon 形态）重试常自愈；每次重试重新 arm watchdog。最坏收敛上界 = MAX_ATTEMPTS × 30min + 退避（瞬态楔死自愈 / 持久楔死最终 finalizeCall error → workflow 收到失败）。对齐旧架构行为（旧 SAR → executeAndAwait 链的 fire error 同样过重试面）。重审条件：实例显示重试放大不可接受（如持久楔死占多数且 3×30min 太久）→ error 加 no-progress 标记跳过重试。
+- **fire 动作（SAR 域形态，无 record 三件套）**：SAR 不持有 ExecutionRecord / tryTransition / collectCoordinator——fire = **per-run watchdog `AbortController` 叠加进既有 signal 合流**（`mergeTimeoutSignal` 旁新增一源，与 D-A9 timeoutMs 同构）：watchdogController.abort() → mergedSignal abort → `RemoteEngine` `wireAbortSignal`（`remote-engine.ts:364-392`）→ cancelRun 帧 → 引擎按 runId 精确路由杀目标子进程（`server.ts:306-308`）→ run 应答 cancelled outcome → SAR `outcomeToRunnerResult` 出 error result；引擎无响应则 `CANCEL_SETTLE_GRACE_MS`（3s，`engine-protocol.ts:51`）收敛窗 → `killAll` → 引擎进程死 → **`RemoteEngine.run` 内部将 pending run 合成终态后正常返回**（非经 SAR catch）→ 同样出 error result。**两条路径都保证 `engine.run` 收敛** → SAR finally（journal close）→ `agent()` 返回。disarm 时同步移除 signal 桥接 listener（run 正常收敛后桥接若残留会在外部 signal 上挂 listener——实施卫生项，R4 INFO）。
+- **重试语义**：fire 的 error result 回到 `executeAgentCall` 通用重试面（`attempts < MAX_ATTEMPTS` 退避重试，`:188-193`）——**保留重试是有意决策**：并发拥塞型楔死（carbon 形态）重试常自愈；每次重试重新 arm watchdog（SAR.run 为 per-call 方法，重试递归全新调用，天然重挂）。最坏收敛上界 = MAX_ATTEMPTS × 30min + 退避（存在 token/时间预算时更早收敛——`budget.isExceeded` / `scheduleTimeBudget` 两条既有通道都会把 run 更早收敛为失败终态，fire error 不含 usage 不烧 token 预算）。重审条件：实例显示重试放大不可接受（如持久楔死占多数且 3×30min 太久）→ error 加 no-progress 标记跳过重试。
 - **killAll 组杀连带面（R3 MF-影响，四要素登记）**：
   - 量级：组杀触发前提 = 引擎进程对 cancelRun 帧 >3s 无响应（引擎事件循环停摆或极重拥塞）——**非每次 fire**（引擎活而响应时 cancel 只杀目标子进程，run 正常应答）；触发时 `killAll` → `teardownProcess`（`engine-client.ts:612-643`）全量 reject 在途 run 请求 + 清空路由，同引擎其余并发 run 全部 engine_crashed error 终态（失败通知照发，G1 字面保持；引擎单例共享 = `registry.ts:246-247`）。
   - 显式判定：接受——机制系既有（`cancelBackground` 同链）、被连杀 run 有失败通知与 executeAgentCall 重试通道、替代方案（per-run 引擎实例隔离）成本不成比例。
@@ -317,7 +318,7 @@ Subagent "coder" (rec-8f3a) completed.
 | V2 | S2 契约（应答缺 sessionFile） | 协议脚本对端（conformance fake-engine 先例）：首答在 2s 超时后到达且 payload 不含 sessionFile——**纯契约构造**（真实 pi 应答恒带 sessionFile，§1.2；此形态生产未观测，验证的是引擎侧握手状态机对它的鲁棒性） | 日志显示 attempts 继续推进到 3；最终 collected 带 sessionId；close 后 sessionFile 经 LC-4 落位 | G2、M1 |
 | V3 | agent_end 补查（握手总失 + agent_end 恢复） | 协议脚本对端：spawn 期 get_state 三轮全部不应答（对端扣住应答——原事故的现实形态），正常跑完任务出 agent_end，agent_end 时刻对端恢复应答 | outcome.sessionFile 非空；主会话通知可 session_read 取回全文；总耗时较正常路径 +≤1s | G2、M2 |
 | V4 | M4 兜底（全程不应答） | 协议脚本对端：get_state 全程不应答（spawn 期 + agent_end 期），对端正常落盘 session 文件后跑完 | close 后 record.sessionFile 经 prompt 键扫描补上（单命中）；若构造多命中（同 prompt 双开）则放弃 + warn，run 仍正常终态、通知照发 | G2、M4 |
-| V5 | workflow 域守护（M3 补挂，SAR 落点） | 两层：① 单测（fake timers）断言 SAR.run 内 arm → 静默推进 30min → fire（watchdog controller.abort → mergedSignal → engine.run 收敛 → SAR error result）；② 真跑一次短超时全链（K6 核实 mid-round 窗可否经 env/测试 seam 缩短后构造楔死） | ① fire 链各环节断言绿 + **`agent()` promise 收敛 + journal close + 重试面行为符合决策 9**（只断言通知不断言收敛 = 验收盲区，R2 修订）；② 真实 error result 到达 workflow、退避重试或最终失败可观测 | G1、M3 |
+| V5 | workflow 域守护（M3 补挂，SAR 落点） | 两层：① 单测（fake timers）断言 SAR.run 内 arm → 静默推进 30min → fire（watchdog controller.abort → mergedSignal → engine.run 收敛 → SAR error result），**以及产出刷新面**（事件/delta 持续到达跨窗长时不 fire——刷新源接线缺陷须可被验收暴露，R4 S）；② 真跑一次短超时全链（K6 核实 mid-round 窗可否经 env/测试 seam 缩短后构造楔死） | ① fire 链各环节断言绿 + **产出刷新不 fire 断言绿** + **`agent()` promise 收敛 + journal close + 重试面行为符合决策 9**（只断言通知不断言收敛 = 验收盲区，R2 修订）；② 真实 error result 到达 workflow、退避重试或最终失败可观测 | G1、M3 |
 | V5c | killAll 组杀邻接（M3 连带面） | 单测：同引擎 2 路 run（1 路楔死触发 fire + 引擎对 cancel 无响应形态、1 路 healthy），观察连带 | healthy run 收敛为 engine_crashed error（G1 字面保持：有终态 + 可重试），无悬挂 | G1、M3（决策 9 组杀四要素） |
 | V5b | chat 域守护回归（守护不误伤） | 单测：chat 域 arm/fire 既有行为零变化（M3 不触碰 kickOffChatRound 链） | 既有 settled-watchdog / chat-round-first-round-watchdog 测试全绿 | G1 |
 | V6 | 常规回归 | 正常单路 one-shot + 一条 chat 域 subagent（含冷续一次） | 行为与现状零差异：通知、结果、sessionFile、resume 全部正常 | G2 |
