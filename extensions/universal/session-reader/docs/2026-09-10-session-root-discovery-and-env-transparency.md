@@ -335,7 +335,7 @@ subagent（14 条命中，main 1 条 + subagent 14 条 = 15 ≤ 默认 limit 20�
 
 三处变化：候选集含 main、打印**完整 id**、按 `source` 分组且 **main 段置顶**（subagent 噪声不淹没目标，见 §6.7）；标题来自 pi 的 `SessionManager.listAll`（§6.6），所以 agent 说人话就能找到。
 
-agent 想知道自己在哪：
+agent 想知道自己在哪（**B 前世界示例**；B 后 live/env 根变为 `<dataDir>/agent/sessions`，见 §5.3）：
 
 ```text
 agent → session_read { action:"doctor" }
@@ -393,21 +393,22 @@ agent → session_read { action:"find", query:"01a08zzz" }
 ### 5.3 布局终态（方案 B 落地后）
 
 ```text
-~/.xyz-agent/                      ← ≙ ~/.pi/（唯一差异：根目录名）
-├─ config.json / runtime.port / extensions/ / npm/ / tmp/ / skills/ / agents/ / attachments/ / logs/
-│                                   ← xyz-agent 自己的，不动
-└─ agent/                           ← ≙ ~/.pi/agent（PI_CODING_AGENT_DIR = <dataDir>/agent）
-   ├─ models.json / settings.json / auth.json / config/providers.json
-   ├─ sessions/                     ← ≙ pi 默认：getSessionsDir() = join(agentDir,'sessions')
-   │  └─ --Users-zhushanwen-Stock--/     ← <encodeCwd(cwd)>/，pi 自动分目录
-   │     └─ 2026-09-10T08-28-09-852Z_01a08a6e-74fc-….jsonl（+ .model.json/.project.json 等 sidecar）
-   ├─ subagents/<encodeCwd>/{sessions,records}/   ← 相对位置不变，只是少一层 pi/
-   └─ workflow-state/ …
-
-（pi/ 整体改名为 pi.backup-v2-<ts>/ 保留，不自动删除；回滚 = 改回 pi）
+~/.xyz-agent/                      ← xyz-agent 数据根（≙ pi 的 ~/.pi/，但**根层不需要同构**——
+│                                     pi 0.84.4 的全部资源从 agentDir 派生，家级足迹为零，
+│                                     已由第 4 轮主审 grep pi dist 全量核实）
+├─ projects.json / runtime.port / attachments/ / engines/ / gen-stats/
+│  logs/ / plugins/ / run/ / secrets/ / update/   ← xyz-agent 自己的（实测清单），不动
+├─ agent/                          ← ≙ ~/.pi/agent（PI_CODING_AGENT_DIR = <dataDir>/agent）
+│  ├─ models.json / settings.json / auth.json / config/providers.json
+│  ├─ sessions/                    ← ≙ pi 默认：getSessionsDir() = join(agentDir,'sessions')
+│  │  └─ --Users-zhushanwen-Stock--/    ← <encodeCwd(cwd)>/，pi 自动分目录
+│  │     └─ 2026-09-10T08-28-09-852Z_01a08a6e-74fc-….jsonl（+ .model.json/.project.json 等 sidecar）
+│  ├─ subagents/<encodeCwd>/{sessions,records}/  ← 相对位置不变，只是少一层 pi/
+│  └─ workflow-state/ …
+└─ pi.backup-v2-<ts>/              ← 迁移备份，保留不自动删；回滚 = 改回 pi
 ```
 
-变化只有三件事：`agent/` 上移一层、`--session-dir` 从 spawn argv 中删除（pi 走默认派生）、存量平铺 session 迁入 `<encodeCwd>/` 子目录。xyz-agent 根层其余目录不动。
+**对齐范围声明**：对齐的是 **`agent/` 子树这一层**（pi 的全部读写足迹），不是根层逐目录同构——pi 的家级遗留物（`~/.pi/extensions`、`assets`、`token-stats` 等实测均非 0.84.4 读写）不需要也不应该在 xyz-agent 侧镜像。变化只有三件事：`agent/` 上移一层、`--session-dir` 从 spawn argv 删除（pi 走默认派生）、存量平铺 session 迁入 `<encodeCwd>/` 子目录。
 
 关键变化：**自检行只陈述事实**（「候选集非空」「已做归一化匹配」），**不断言**「真的没有这个 session」——v1 设计在这里犯的错（对大写/去连字符输入给出错误归因）已在 §6.7 修正；**候选行用编辑距离让 agent 一眼自纠**；**最后一行把绕行动作就地封死**。
 
@@ -444,7 +445,7 @@ agent → session_read { action:"find", query:"01a08zzz" }
 ### 6.2 环境判定：多信号合取 + evidence 附带
 
 - **采用**：`detectEnvironment(signals)` 返回 `{ kind, distribution, dataDir, evidence[] }`。判定规则：
-  - **托管（xyz-agent）** ⟺ `XYZ_AGENT_EXT_LOG === '1'` **且** `PI_CODING_AGENT_DIR` 的值匹配 `<*>/.xyz-agent*/pi/agent` 形态。**两信号同时成立才判托管**——前者单独会被用户 shell 透传污染（`ENV_WHITELIST_PREFIXES` 含裸 `XYZ_`），后者单独会被裸 pi 用户的自设值污染，合取后误判面显著收窄。
+  - **托管（xyz-agent）** ⟺ `XYZ_AGENT_EXT_LOG === '1'` **且** `PI_CODING_AGENT_DIR` 的值匹配 xyz-agent 数据目录形态（B 前为 `<*>/.xyz-agent*/pi/agent`，**B 后为 `<*>/.xyz-agent*/agent`**——形态判据随 §6.10 落地同步更新，两种形态都接受以兼容迁移前后）。**两信号同时成立才判托管**——前者单独会被用户 shell 透传污染（`ENV_WHITELIST_PREFIXES` 含裸 `XYZ_`），后者单独会被裸 pi 用户的自设值污染，合取后误判面显著收窄。
   - **发行形态**：bundle 路径（`import.meta.url`）位于 `*.app/Contents/Resources/extensions/`（macOS）或对应 Windows/Linux 应用资源目录 → `packaged`；否则 `dev`。无法判定时为 `null`，不猜。
   - **`evidence[]` 恒输出**：把每条命中的信号原样列出，让 agent（和排障的人）能核对判定依据。
 - **被否**：
@@ -577,23 +578,33 @@ agent → session_read { action:"find", query:"01a08zzz" }
 
 ### 6.11 首次启动迁移脚本（方案 B 的交付物之一）
 
-- **采用**：`pi-maintenance.ts` 新增 `migrateToPiAlignedLayout()`，在 runtime 启动、**任何 pi spawn 之前**调用（挂到现有 `migrateToPiSubdir()` 的调用点，其后执行）。流程（每步幂等）：
+- **采用**：`pi-maintenance.ts` 新增 `migrateToPiAlignedLayout()`，在 runtime 启动、**任何 pi spawn 之前**调用（`runtime/src/index.ts:194` 现调 `migrateToPiSubdir()` 处）。**前置条件（v6 新增）**：
+  - **先执行一次 reap 收殓**——迁移 rename 前孤儿 pi 可能仍持旧路径 fd 活着（启动后 5s 的常规 reap 晚于迁移，时序对调）；此刻孤儿 argv 仍带 `--session-dir <dataDir>/pi/sessions`，**旧判据仍可用**，先收殓再改名消除「孤儿写备份目录」的竞态窗口。
+  - **退役 `migrateToPiSubdir()` 的 mkdir 前置**——该函数（`pi-maintenance.ts:80-82`）无预兆 `mkdirSync(piAgentDir/sessionsDir/agentsDir)`；U15 改值后这些目标即 `<dataDir>/agent` 树，会在 aligned 迁移步骤 2 之前**预创建目标目录**，`rename` 目录到非空目录报 ENOTEMPTY——**存量机首启即崩**。处置：B 落地时 `migrateToPiSubdir` 整体退役（其迁移动作被 aligned 全覆盖），调用点替换为 `migrateToPiAlignedLayout`。
+  - **顺带校验并清除 `settings.json` 的 `sessionDir` 字段**（pi 优先级链第 3 位的静默覆盖位，本机当前无值；不清除则任何写入者都能让「默认派生」静默失效）。
+
+  流程（每步幂等）：
 
   ```text
-  0. 守卫：<dataDir>/agent 存在且 <dataDir>/pi 不存在 → 已迁移，退出（幂等出口①）
-     守卫：<dataDir>/pi 不存在 → 全新安装，mkdir agent/sessions 后退出（幂等出口②）
-  1. rename(<dataDir>/pi, <dataDir>/.pi-migrating-v2)     ← 原子；此后旧路径不再被任何代码读写
+  0. 守卫（按序判定）：
+     a. <dataDir>/.pi-migrating-v2 存在          → 续传模式：跳过 1-2，从 3 续（v6：修复崩溃续传）
+     b. 完成标记 .pi-layout-v2.done 存在
+        且 <dataDir>/agent 存在且 <dataDir>/pi 不存在 → 已迁移，退出（幂等出口①）
+     c. <dataDir>/pi 不存在                       → 全新安装，mkdir agent/sessions 后退出（出口②）
+  1. rename(<dataDir>/pi, <dataDir>/.pi-migrating-v2)     ← 原子；此后旧路径不再被新代码读写
   2. rename(.pi-migrating-v2/agent, <dataDir>/agent)      ← 配置域整体上移（models/settings/auth/
                                                              subagents/workflow-state/config/…全带走，
                                                              含 pi/agent/sessions/ 的 encodeCwd 残留——
-                                                             它们的相对位置在新布局下恰好正确）
-  3. 分发主 session：遍历 .pi-migrating-v2/sessions/ 下每个 .jsonl：
+                                                             相对位置在新布局下恰好正确）
+  3. 分发主 session：递归遍历 .pi-migrating-v2/sessions/ 下每个 .jsonl
+     （平铺层 + 既有 encodeCwd 形态子目录，dev 实测存在 --private-tmp--/ 目录）：
      读首行 header（type==='session'）→ cwd = header.cwd
        ├─ 有 cwd  → 目标 agent/sessions/<encodeCwd(cwd)>/<basename>
        └─ 无/坏头 → 目标 agent/sessions/_migrated-no-cwd/<basename>   ← pi 的 listAll 与本工具的
                                                                         scanJsonlRecursive 都按
                                                                         「任意子目录」枚举，可被发现
-     同名 sidecar（<basename>.model.json / .project.json / .meta.json / .preset.json）随行
+     sidecar 随行：匹配规则 = <basename>. 前缀的全部兄弟文件（前缀匹配而非枚举后缀白名单——
+       实测除 .model/.project/.meta/.preset.json 外还有 .handoff.json 等仓内功能 sidecar，白名单必漏）
      目标已存在同名（理论不冲突，文件名含 uuid）→ 跳过并计数
   4. 兼并更早布局：若 <dataDir>/sessions 存在（77f006420 之前的旧旧布局）→ 同 3 分发
   5. 写完成标记 <dataDir>/.pi-layout-v2.done（时间 / 分发计数 / 跳过计数 / 备份路径）
@@ -601,31 +612,34 @@ agent → session_read { action:"find", query:"01a08zzz" }
   ```
 
 - **关键设计点**：
-  1. **先原子改名、后分发**——崩溃在任何一步，原始数据都完整躺在 `.pi-migrating-v2/`，重跑从步骤 0 的存在性判断续传（agent 已在则跳过步骤 2，分发只补缺失文件）。**不做 copy-then-delete**（双倍 IO 且留中间态）。
-  2. **encodeCwd 复用** `pi-paths.ts:122-124` 现有实现；header 解析语义对齐 pi 自带迁移 `migrateSessionsFromAgentRoot`（`migrations.js`，读 `header.cwd` 编码子目录）——区别是 pi 对无 cwd 的文件 `continue` 跳过（留在原地丢失），本迁移收进 `_migrated-no-cwd/`（消费者按任意子目录枚举，仍可发现）。
-  3. **备份不自动删**：`pi.backup-v2-<ts>/` 保留，doctor 的 `[legacy]` 探测与维护文档提供清理指引；自动删除留给后续版本（观察期后）。
-  4. **并发守卫**：Electron 单实例锁（W0）保证同 userData 不双开；dev/prod 数据目录天然隔离各自迁移；迁移全程持 shared `file-lock`（本仓已有库）防异常并发。
+  1. **先原子改名、后分发 + 续传模式**——崩溃在任何一步，原始数据完整躺在 `.pi-migrating-v2/`，重跑由守卫 0a 进续传模式（agent 已在则跳过 1-2，分发只补缺失文件）。v5 版出口①（「agent 存在且 pi 不存在 → 退出」）会让步骤 2 后、6 前的崩溃**永久跳过分发**——v6 以 `.pi-migrating-v2` 存在性为续传信号、完成标记为唯一完成判据，堵死该窗口。**不做 copy-then-delete**（双倍 IO 且留中间态）。
+  2. **encodeCwd 复用** `pi-paths.ts:122-124` 现有实现；header 解析语义对齐 pi 自带迁移 `migrateSessionsFromAgentRoot`（`migrations.js`，读 `header.cwd` 编码子目录）——区别是 pi 对无 cwd 的文件 `continue` 跳过（留在原地丢失），本迁移收进 `_migrated-no-cwd/`。
+  3. **备份不自动删**：`pi.backup-v2-<ts>/` 保留；doctor 以**独立 glob 规则**（`pi.backup-v2-*/`，不在 `[legacy]` 推导式内——`dirname(agentDir)/sessions` 够不到带时间戳的备份名）探测并在 doctor 中标注；维护文档提供清理指引，自动删除留给观察期后的后续版本。
+  4. **并发守卫**：Electron 单实例锁（W0）保证同 userData 不双开；dev/prod 数据目录天然隔离各自迁移；迁移全程持 shared `file-lock`（本仓已有库）防异常并发。**测试守卫（v6）**：迁移入口检测 vitest 环境（`process.env.VITEST`）时跳过——runtime vitest 的 global-setup 把 `XYZ_AGENT_DATA_DIR` 重定向 tmp 时幂等出口②无害，但「注入 `~/.xyz-agent-dev` 跑全链路测试」的合法场景会**真实迁移 dev 数据目录**。
   5. **降级兼容（写明给用户）**：迁移后若用户**装回旧版本** app，旧版读 `<dataDir>/pi`（不存在）→ 当全新安装对待，历史会话在旧版中不可见但数据无损躺在备份里；回滚命令 = 删/改名 `agent/` + `pi.backup-v2-*` 改回 `pi`。这是接受的降级行为。
-- **被否**：copy-then-delete（上述）；只 move 不备份（无回滚通道）；迁移时顺带删 workflow-state 等残留（不该在迁移里夹带清理，另做）。
-- **证据**：`pi-maintenance.ts:71-110`（既有 `migrateToPiSubdir` 幂等范式与调用点）；`migrations.js:76-115`（pi 自带迁移语义）；本机实测 `~/.xyz-agent/pi/` 只含 `agent/` + `sessions/` 两个子目录（§12.3）。
+- **被否**：copy-then-delete（上述）；只 move 不备份（无回滚通道）；迁移时顺带删 workflow-state 等残留（不该在迁移里夹带清理，另做）；步骤 2 改 merge 语义（比退役旧迁移函数复杂且引入部分失败态）。
+- **证据**：`pi-maintenance.ts:71-110`（既有迁移）与 `:80-82`（mkdir 前置，v6 撞名反例）；`runtime/src/index.ts:194`（调用点）；`migrations.js:76-115`（pi 自带迁移语义）；本机实测 `~/.xyz-agent/pi/` 只含 `agent/` + `sessions/`；dev `pi/sessions/` 实测含 `--private-tmp--/` 子目录与 `.handoff.json` sidecar（§12.3）。
 - **效果**：让 §2 目标 6 在存量用户机上成立；V9 验收。
 
 ### 6.12 reap 孤儿判据替换（方案 B 的硬前提）
 
 - **问题**：`reap-orphan-pi` 的误杀防线①依赖「argv `--session-dir` 值与本实例 `getSessionsDir()` 精确相等」（`reap-orphan-pi.ts:147-160` + 文件头注释 D4a）；env 判据（`PI_CODING_AGENT_DIR`）已被本仓探针**在案否决**（macOS `ps eww`/`launchctl procinfo` 因 SIP 拿不到他进程 env，`reap-orphan-pi.ts:12-14`）。B1 删掉 `--session-dir` 后该判据失效，**不解决这一块就不能落地 B1**。
-- **采用：spawn 清单判据**。runtime 在构建 pi argv 时（`buildPiArgs`），把实际传入的**全部 `--extension` / `--skill` 值**写入 `<dataDir>/run/pi-spawn-markers.json`（`run/` 目录已有先例：relay socket）。reap 判据改为：
+- **采用：`--no-extensions` 判据 + spawn 白名单清单**（v6 修订，吸收两审查方的撞值反例）。runtime 在构建 pi argv 时（`buildPiArgs`），把实际传入的 **xyz-agent 专属 staged 路径**（`--extension`/`--skill` 值中位于打包资源根 `*.app/Contents/Resources/extensions/` 或 `<dataDir>` 之下者）写入 `<dataDir>/run/pi-spawn-markers.json`（`run/` 目录已有先例：relay socket）。reap 判据改为四条合取：
   - `--mode rpc`（保留，防误杀用户手跑的交互式 pi）
-  - **且** argv 中任一 `--extension`/`--skill` 值与清单中某项**精确相等**（沿用现有 `flagValue` + `===` 机器，不引入子串匹配）
+  - **且 argv 含 `--no-extensions`**——**主判别位**：xyz spawn 恒带（`buildPiArgs` 首行 `['--mode','rpc','--no-extensions','--approve']`，`rpc-client.ts:269`），而本仓 AGENTS.md 的实测命令模板与用户裸 pi **不带**（实测核对）。
+  - **且** argv 中任一 `--extension`/`--skill` 值与清单中某项**精确相等**（沿用现有 `flagValue` + `===` 机器；清单**只登记 staged 专属路径**——TaiJi spawn 的 argv 实测混有 `~/.pi/agent/extensions/…`、项目 `.pi/extensions/…`、`~/.agents/skills` 等用户世界路径，**全部不进清单**）
   - **且** `ppid === 1`（防线②原样保留；防线③单实例锁原样保留）
   - 清单缺失/读不到 → **跳过收殓并记日志**（fail-safe 方向对齐 D4b「宁漏不误杀」）。
-- **为什么清单值可用作身份**：xyz-agent 恒以 `--extension` 传入 18 个 mandatory extension 的**staged 路径**（打包版在 `*.app/Contents/Resources/extensions/…`，dev 在仓库/数据目录）；用户裸 pi 的 extension 走 `settings.json packages`，**不进 argv**——两者 argv 形态天然不交叠。dev 与 prod 的 staged 根不同，互不误伤（对齐现防线①的 dev/prod 隔离性质）。
+- **为什么必须双层**：单靠清单会被本仓自己的工作流击穿——AGENTS.md 的 MANDATORY 实测命令模板就是 `pi --mode rpc --session-dir <dir> --extension <path>`，用户从 ps 输出复制 argv 即可撞上清单值（若清单登记了用户路径），叠加 ppid=1（终端关闭/nohup 后 reparent）即被误杀。`--no-extensions` 是机器可判的硬分界；白名单清单进一步排除「带 `--no-extensions` 的其他来源进程」。**清单写语义**：每次 spawn **全量重算并覆盖写**（tmp + rename 原子写），不 append——覆盖写天然清理已禁用 extension 的历史值；并发 spawn 各写各的全量集，mandatory 18 包恒传保证最小集稳定。
+- **收殓范围变化（显式声明）**：现状孤儿 subagent/relay pi **不被** reap（其 `--session-dir` 指向 `subagents/…` ≠ 主 session 目录）；B 后 subagent pi 由 mirrorFlags 镜像主进程的 staged `--extension` 与 `--no-extensions`（`buildSpawnArgs` 注释「镜像主进程的 extension/approve flag」）→ **开始被收殓**。方向是修复现状漏收（孤儿 subagent 同样烧 token），属预期改进；活跃 subagent 的 ppid = runtime pid，不受影响。V10 增该场景。
 - **被否**：
+  - 清单登记「全部 `--extension`/`--skill` 值」（v5 原案）——被活体进程证据击穿：TaiJi spawn 的 argv 实测混有用户裸 pi 世界路径，登记它们 = 为误杀用户进程开门。
   - env 判据——SIP 在案否决，不重开。
-  - pid 登记簿（spawn 时记 pid，reap 查表）——更精确但要新基础设施 + 陈旧条目 GC；且 SIGKILL 掉的 runtime 留下的登记恰好还准，但 argv 机器已存在，清单方案复用它成本更低。
+  - pid 登记簿（spawn 时记 pid，reap 查表）——更精确但要新基础设施 + 陈旧条目 GC；argv 机器已存在，成本更低。
   - 匹配 pi 二进制路径（argv[0]）——打包版可判，dev 版与用户裸 pi 共用同一 npm 二进制，不可判。
-- **证据**：`reap-orphan-pi.ts:12-27`（env 否决记录 + 三重防线）、`:130-160`（`flagValue`/`matchesOwnPiArgv` 现有机器）；`rpc-client.ts:203-215`（`appendSkillAndExtensionArgs`，`--extension`/`--skill` 逐路径独立参数）；`mandatory-extensions.json`（18 包恒传）。
-- **效果**：B1 的落地前提成立；V10 验收（含「不误杀用户裸 pi」反向项）。
-- **待验证（§11.12）**：`options.extensionPaths` 在**所有** spawn 路径上非空（若存在零 extension 的 spawn 形态，该判据漏收——fail-safe 可接受，但需实测确认清单永远可写）。
+- **证据**：`reap-orphan-pi.ts:12-27`（env 否决记录 + 三重防线）、`:130-160`（`flagValue`/`matchesOwnPiArgv` 现有机器）；`rpc-client.ts:269`（`--no-extensions` 恒带）、`:205-216`（`appendSkillAndExtensionArgs`）；活体 `ps -A -o pid,command` 实测（TaiJi argv 混有 `~/.pi/…` 用户路径）；`mandatory-extensions.json`（18 包）。
+- **效果**：B1 的落地前提成立；V10 验收（含「不误杀带 `--extension` 的用户实测 pi」反向项）。
+- **待验证（§11.11）**：`options.extensionPaths` 在所有 spawn 路径上含 staged 专属路径——经调用链核实为恒传（`session-lifecycle.ts:382,832` 经 `resolveCreateLaunch` 恒有 builtin 前置，`preset-service.ts:502`），实施期复测确认清单永远非空。
 
 ### 6.13 两方案的关系：B 先行，A 收缩执行
 
@@ -636,7 +650,7 @@ agent → session_read { action:"find", query:"01a08zzz" }
   |---|---|---|
   | U4 env 注入 + U5 forward 登记（§6.5） | **删除** | 对齐后 pi 默认派生即正确，无信息缺口可填；少一个 env 变量与登记维护 |
   | U7 family 专项修复（§6.8） | **删除** | `join(agentDir,'sessions')` 变正确，`collectMainSessions` 无需换根列表；not-found 文案仍建议改为列实际候选根（保留为 U1 的一部分） |
-  | U1 根解析器（§6.1） | **简化** | `[default]` 根成为主根且恒正确；`[live]` 保留（纯 pi 下剥层到根、B 后与 default 去重，仍是防御）；`[legacy]` 保留（探测 `dirname(agentDir)/sessions`，B 后指向旧 `pi/sessions` 备份残留与 `~/.pi/sessions` 类残壳，纳入候选 + doctor 标注）；`[env]` 信号随 U4 删除 |
+  | U1 根解析器（§6.1） | **简化** | `[default]` 根成为主根且恒正确；`[live]` 保留（纯 pi 下剥层到根、B 后与 default 去重，仍是防御）；`[legacy]` 保留——B 后 `dirname(agentDir)/sessions` = `<dataDir>/sessions`（77f006420 之前的**旧旧布局**残留），迁移备份 `pi.backup-v2-*/sessions` **不在该推导式内**（带时间戳，固定公式够不到），备份探测走 doctor 的独立 glob 规则（§6.11 关键设计点 3）；`[env]` 信号随 U4 删除 |
   | U2/U3/U6/U8/U9/U10/U11/U12 | **保留不变** | 环境透明、doctor、错误信息、归一化、分组、标题、内容检索与布局正交，两种布局下都需要 |
 
 - **B 延期的退路**：若迁移脚本或 reap 判据在实施中受阻，A 按 v4 全量执行（含 U4/U5/U7），B 解阻塞后再落地并按上表收缩。两条路径都在本设计中完整可执行。
@@ -729,7 +743,7 @@ src/discovery/env.ts（新增）
 
 | 场景 | 回溯 §2 目标 | 真实流程 / 数据 / 路径 | 通过标准 |
 |---|---|---|---|
-| **V1 原事故复现（TaiJi.app）** | 目标 1 | 在 TaiJi.app（打包版）里新开 session，执行 `session_read{action:"find", query:"01a08a6e"}`，数据为 `~/.xyz-agent/pi/sessions/` 真实 14 个 session | 命中集含 `01a08a6e-0d26-…` / `-74fc-…` / `-b007-…` 三条 main，且 `source=main`，完整 id 可见 |
+| **V1 原事故复现（TaiJi.app）** | 目标 1 | 在 TaiJi.app（打包版）里新开 session，执行 `session_read{action:"find", query:"01a08a6e"}`，数据为真实 14 个主 session（B 前在 `~/.xyz-agent/pi/sessions/`；**B 后在迁移机 `<dataDir>/agent/sessions/<encodeCwd>/`**，V9⑤ 重跑本场景） | 命中集含 `01a08a6e-0d26-…` / `-74fc-…` / `-b007-…` 三条 main，且 `source=main`，完整 id 可见 |
 | **V2 纯 pi 不回退** | 目标 1 | **环境隔离后**启动纯 pi：`env -u PI_CODING_AGENT_DIR -u XYZ_AGENT_EXT_LOG -u XYZ_AGENT_DATA_DIR -u PI_CODING_AGENT_SESSION_DIR pi --mode rpc --session-dir <tmp> --extension <repo>/extensions/universal/session-reader`（AGENTS.md 实测命令 + 显式剥除托管信号，防 TaiJi 会话内执行时被继承 env 污染判定），对 `~/.pi/agent/sessions/` 真实 4619 个 session 执行 `find{query:"<某个已知 uuid 前缀>"}` | 命中该 session（命中来自 `[default]` = `~/.pi/agent/sessions`；本环境 `[live]` = `<tmp>` 是另一目录，**不去重**）；`[legacy]`（`~/.pi/sessions`）不产生候选也不报错；`doctor` 判 `standalone-pi` |
 | **V3 doctor 自描述 + legacy 告警** | 目标 3 | 在 V1 环境执行 `session_read{action:"doctor"}`；纯 pi 跑**两种形态**——(a) V2 环境（带 `--session-dir <tmp>`）、(b) 同样 env 隔离但**不带** `--session-dir` | TaiJi 下：`xyz-agent · packaged`、数据目录 `~/.xyz-agent`、live 根 14 文件、`[legacy]` 与主根同路径（已去重）；纯 pi (a) 下：`standalone-pi`、`[live]` = `<tmp>` 与 `[default]`（4619 文件）各自列出不去重；纯 pi (b) 下：`[live]` 剥层后与 `[default]` 同路径去重、4619 文件、`[legacy]` = `~/.pi/sessions` 空。**legacy 告警判据统一为「非空才告警」（§6.1）**：上述环境均**不出现**告警、仅事实行；另构造一个 legacy 根非空的环境（或临时放入一个 .jsonl）验证告警出现。各环境都打印各根文件数与 evidence 行 |
 | **V4 失败自证 + 封死绕行** | 目标 2 | 在 TaiJi.app 里执行 `session_read{action:"find", query:"01a08zzz"}`（不存在的片段） | 输出含：① 事实型自检行（main 根 N 文件 / subagent 根 M 文件 / 「已做归一化匹配」）② 编辑距离最近候选 ③ 三条正确做法 ④ 一行明确的「不要用 shell find/ls/rg 搜 session」；**且不含**原「去用 recent」误导指引，**且不断言**「真的没有这个 session」 |
@@ -739,7 +753,7 @@ src/discovery/env.ts（新增）
 | **V7 env 注入反向面**（**仅 A 先行/B 延期退路时执行**，B 落地后 U4 删除、本场景作废） | 目标 1 的副作用面 | 在 TaiJi.app 会话内通过 bash 执行 `env \| grep PI_CODING_AGENT_SESSION_DIR`（确认变量已注入，**可靠通道**）；随后执行**不带** `--session-dir` 的 `pi -p 'hi'`（`-p/--print` 存在于 `dist/cli/args.js:124`，print 模式本身无交互；裸 pi 读 `PI_CODING_AGENT_DIR` 下 models.json/auth 取模型，预期可用），落盘观察 = 执行前后 `ls <dataDir>/pi/sessions` 取差集 | ① 变量可见；② 落盘位置被**显式记录**为「进入 `<dataDir>/pi/sessions`」或「未进入」，与 §6.5 的已接受代价声明一致；③ subagent pi 内 `doctor` 的判定与 §6.5 表第一行一致：`[live]` 标注为 subagent 根、主根以 **`[legacy]`** 形态出现（`[env]` 在 subagent pi 内**缺席**，因 U4 不触及 session-runner），两者不被误标混淆。**收尾**：探针产生的 session 文件（无论落哪）人工 `rm` 清理，与 §6.5 恢复通道闭环 |
 | **V8 跨会话内容检索**（阶段二） | 目标 5 | 先 `find{query:"<某 cwd 或时间范围>"}` 窄化，再对结果检索关键词（如某次讨论里出现过的 `adj_factor`） | 返回包含该关键词的 session 列表 + turn 索引 + 可直接执行的调用串；纯 pi 全库宽搜被**明确拒绝**并提示先窄化（不静默超时） |
 | **V9 迁移正确性（方案 B）** | 目标 6 | 在装着真实旧布局的机器（或复制 `~/.xyz-agent` 到 tmp 造一份）上跑新版首启：迁移前后对比 `find ~/.xyz-agent` 目录树；随后在新版里 `session_read{action:"find", query:"01a08a6e"}` 与 `outline` | ① `pi/agent/*` 全部出现在 `<dataDir>/agent/`（models.json/settings.json/subagents 在位）；② 原平铺 14 个主 session 按 header.cwd 落入对应 `<encodeCwd>/`（含无 cwd 者入 `_migrated-no-cwd/`）；③ sidecar（.model.json/.project.json）随行；④ `pi.backup-v2-*` 存在且含未迁移残留；⑤ **迁移后 find/outline/family 对全部旧 session 命中**（V1 场景在迁移机上重跑通过）；⑥ 重启 app 再跑一次迁移 = 幂等零动作 |
-| **V10 reap 判据替换（方案 B）** | 目标 6 的副作用面 | ① 正向：手工制造孤儿（spawn 一个带清单内 `--extension` 的 `pi --mode rpc` 后 kill 其父）确认被收殓；② 反向：用户裸 pi（`~/.pi` 的交互式与 `--mode rpc` 形态各一）不被杀；③ 清单缺失：删掉 `pi-spawn-markers.json` 后 reap 跳过并记日志（宁漏不误杀） | 三个子项全部符合；`reap-orphan-pi.test.ts` 的 DIR 常量与断言同步更新后全绿 |
+| **V10 reap 判据替换（方案 B）** | 目标 6 的副作用面 | ① 正向：手工制造孤儿（spawn 一个带 `--no-extensions` + 清单内 `--extension` 的 `pi --mode rpc` 后 kill 其父）确认被收殓；② 反向 ×3：用户裸 pi 交互式、按 AGENTS.md 模板的 `pi --mode rpc --extension <staged路径>`（**带清单值但无 `--no-extensions`**）、带 `--no-extensions` 但 `--extension` 值不在清单——三者都不被杀；③ 孤儿 subagent pi（镜像主进程 flag）开始被收殓、活跃 subagent（ppid=runtime）不被杀；④ 清单缺失：删掉 `pi-spawn-markers.json` 后 reap 跳过并记日志（宁漏不误杀） | 四个子项全部符合；`reap-orphan-pi.test.ts` 的 DIR 常量与断言同步更新后全绿 |
 
 **回归基线**（必须保持）：
 
@@ -764,7 +778,7 @@ src/discovery/env.ts（新增）
 | **M-1 布局对齐（方案 B，先行）** | `migrateToPiAlignedLayout` 迁移脚本；`getPiAgentDir/getSessionsDir` SSOT 切换；rpc-client 删 `--session-dir` + 写 spawn 清单；reap 判据替换；全仓路径字面量清扫 | §5.3 布局终态（V9/V10）；本 bug 在**所有**消费者上根修 |
 | **M0 根发现（收缩版）** | 新增 `resolveSessionRoots` + 信号包；`index.ts` 接线（含 `ctx` 可选链降级）；`[env]` 信号与 family 专项修复**不建**（§6.13） | §5.1 候选集含 main（V1/V2 在迁移机上重跑） |
 | **M1 环境识别** | 新增 `env.ts`（多信号合取）+ pi 语义登记（U6，登记范围含布局事实） | §5.1 环境行（V3） |
-| **M2 doctor** | 新增 `doctor` action + 渲染（复用 M0/M1 数据；进程内缓存；subagent 根默认不扫；legacy 告警覆盖 `pi.backup-v2-*` 残留） | §5.1 doctor 全表（V3） |
+| **M2 doctor** | 新增 `doctor` action + 渲染（复用 M0/M1 数据；进程内缓存；subagent 根默认不扫；`pi.backup-v2-*` 备份残留走**独立 glob 探测**——不在 `[legacy]` 推导式内，§6.11 关键设计点 3） | §5.1 doctor 全表（V3） |
 | **M3 错误信息与输出** | F1 重写（事实型自检 + 编辑距离候选 + 三条做法 + 禁止项）；uuid 归一化匹配；`find` 按 source 分组 + 全 id + 可复制调用串 | §5.2（V4/V5a） |
 | **M4 检索力**（阶段二） | 元数据走 `SessionManager.listAll`（标题/cwd/首消息，惰性 + 窄化 + 缓存，§6.6）；跨会话内容检索（窄化前置 + 字节上限） | V5b/V8 |
 
@@ -774,20 +788,21 @@ M-1 独立交付且先行；M0–M3 是一个不可分割的正确性交付（M3
 
 ## 10. 下一层拆分
 
-**本章结论**：拆成 16 个可实施单元 + 1 个登记项（U13），M-1 为第一批（方案 B），M0–M3 为第二批（方案 A 收缩版），M4 为第三批。**
+**本章结论**：拆成 17 个可实施单元 + 1 个登记项（U13），M-1 为第一批（方案 B，U14–U18），M0–M3 为第二批（方案 A 收缩版），M4 为第三批。**
 
 | 单元 | 说明 | justification（为什么这么拆） |
 |---|---|---|
 | **U14**（M-1）`pi-maintenance.ts`：`migrateToPiAlignedLayout` | §6.11 六步迁移 + 完成标记 + 备份改名 + 幂等出口 | 方案 B 的数据面交付物；独立可测（tmp 目录复制真实布局做 fixture） |
-| **U15**（M-1）路径 SSOT 切换 | `shared/paths.ts` + `runtime/pi-paths.ts` 的 `getPiAgentDir/getSessionsDir` 改值、`getPiRoot` 删除；全仓 `pi/sessions`/`pi/agent` 字面量清扫（含 `reap-orphan-pi.test.ts` DIR、`usage-stats-service.test.ts`、`spawn-env.test.ts`、`logger.ts`/`workflow.ts` 注释、AGENTS.md/troubleshooting.md） | SSOT 单点改值、消费方逐个核对；字面量清扫防「SSOT 改了、注释/测试还指旧路」的漂移 |
-| **U16**（M-1）rpc-client：删 `--session-dir` + spawn 清单 | 删 argv 参数；写 `<dataDir>/run/pi-spawn-markers.json` | B 的机制面；清单是 U17 的前提，与迁移（U14）可并行开发 |
-| **U17**（M-1）reap 判据替换 | `matchesOwnPiArgv` 改清单判据；测试同步 | B 的安全面；不落地则 B 不可发布（孤儿 pi 失收殓） |
+| **U15**（M-1）路径 SSOT 切换 + 消费方改造 | `shared/paths.ts` + `runtime/pi-paths.ts` 的 `getPiAgentDir/getSessionsDir` 改值、`getPiRoot` 删除；**三个非派生消费方专项改造**（v6 增）：① `usage-stats-service.ts:66-95` 扫描改两层（现单层 `readdir` + 跳目录，B 后根层 `.jsonl` 数 = 0 → 统计**归零**）；② `pi-maintenance.ts:150-151` `getPiGlobalAgentDir` 的「向上 3 层」推导改从 `getDataDir()` 起（B 后多走一层 → `cleanLeakedPackages` 静默失效）；③ `session-fork.ts:154-162` `buildForkTarget` 改写 `join(getSessionsDir(), encodeCwd(header.cwd), fileName)`（现写平铺根，B 后 pi 原生 `listAll` 只枚举子目录 → fork session 在 TUI/`/session-pick` 不可见；`import-service.ts:252` 已是子目录形态，两写入方对齐）。字面量清扫（**数据布局清 / 资源布局豁免**两栏）：清 `reap-orphan-pi.test.ts` DIR、`usage-stats-service.test.ts`、`spawn-env.test.ts`、`scripts/probe-pi-sw-snapshot.mjs:29-61`（用旧路径存在性判生产布局）、`scripts/verify-plugin-contract.sh:128`（fixture 建旧布局）、`workflow-extractor.ts:236` 注释、AGENTS.md/troubleshooting.md；**豁免** `pi-maintenance.ts:109` bundled 同步源 `join(process.cwd(),'pi','agent')` 与 `prepare-pi-resources.sh` 的 `resources/pi`（app 资源布局，非用户数据布局） | SSOT 单点改值 + 三个硬编码消费方不改造则 B 必坏其一；资源/数据两种布局字面量同形，机械清扫会误伤打包资源逻辑 |
+| **U16**（M-1）rpc-client：删 `--session-dir` + spawn 白名单清单 | 删 argv 参数；写 `<dataDir>/run/pi-spawn-markers.json`（仅 staged 专属路径；每次 spawn 全量重算覆盖写，tmp+rename 原子） | B 的机制面；清单是 U17 的前提，与迁移（U14）可并行开发 |
+| **U17**（M-1）reap 判据替换 | `matchesOwnPiArgv` 改四条合取（`--mode rpc` + `--no-extensions` 存在 + 白名单值精确相等 + ppid=1）；测试同步；**收殓范围扩大声明**（孤儿 subagent/relay pi 从「不收」变「收」） | B 的安全面；不落地则 B 不可发布（孤儿 pi 失收殓） |
+| **U18**（M-1）constraints.json 布局对齐契约登记 | 新增 C-pi 条目：「xyz-agent 数据布局与 pi 默认布局同构（agent/ 子树），唯一差异 = 根目录；禁止再引入 `pi/` 兄弟布局引用与新 `--session-dir` 覆盖」；执行方式挂 `check_path_whitelist.py` 或 `check-pi-sync.mjs`（拦截数据布局 `pi/agent`/`pi/sessions` 字面量回流）；`node scripts/render-constraints.mjs` 重生成 md | 本仓纪律「新增约束先登记再写代码」（AGENTS.md）；U15 一次性清扫无机器守卫 = 字面量必回流（本次审查即抓到 6 处存量） |
 | **U1** `discovery/roots.ts`：`resolveSessionRoots(signals)` | 信号 → 带 `kind` 标签的根列表；规范化 `[live]`；realpath 去重；复用 `scanJsonlRecursive`。**B 后收缩**：`[env]` 信号删除，`subagents.ts` not-found 文案改列实际候选根（U7 其余不建） | 是 M0–M3 全部下游的数据源，必须最先落地且可单测 |
 | **U2** `discovery/env.ts`：`detectEnvironment(signals)` | 多信号合取判定 + `evidence[]` | 与 U1 无数据依赖，但 `doctor` 需两者齐备；独立成单元便于分别单测 |
 | **U3** `index.ts` 信号采集接线 | `execute` 组装信号包（可选链 `ctx?.sessionManager` / `process.env` / `import.meta.url`）并传入 handler | 唯一的 pi 依赖触点；`ctx === undefined` 降级必须在此层兜住（现有测试即以五参 `undefined` 调用 `execute`，见 §7.2） |
 | **U4** `runtime`：注入 `PI_CODING_AGENT_SESSION_DIR` | 经 `buildOutboundChildEnv` 的 `extras`。**B 先行路径下不建**（§6.13）；仅 A 全量退路执行 | 跨包改动，需与 U1 的 `[env]` 信号分别验收（可独立回滚） |
 | **U5** `shared` + `docs`：C-proc-09 forward 登记 | `spawn-env-contract.ts` 的 `SPAWN_ENV_FORWARD_REFERENCE` 增条目 + `env-propagation-boundary.md` B 组表 + `spawn-env-contract.test.ts` 增 `toContain` 断言。**B 先行路径下不建**（§6.13）；仅 A 全量退路执行 | 登记义务与 U4 绑定但落点不同包；无既有机器防线拦截（文件级白名单 + 测试无完整性断言），故须**自带补红**——同文件 `:42-45` 的 U0① 增补范式（`it('含 … XYZ_SUBAGENT_IDLE_TIMEOUT_MS')`）就是先例，加三行使「漏登记」从不会红变必红 |
-| **U6** `docs/pi-semantics.json`：pi 私有语义登记 | 登记 5 条：① `ENV_SESSION_DIR` 变量名（`dist/config.js:406`）；② session 目录优先级链（`dist/main.js:530-533`）；③ `ctx.sessionManager` 非 mode-gated（`types.d.ts:209-219`）；④ `getSessionDir()` 双形态（cwd 编码子目录 vs 根本身，`session-manager.js:1179-1180`）；⑤ pi 默认布局构造式 `<agentDir>/sessions/<encodeCwd>`（`session-manager.js:242-247`）；各配 pi-anchor + 探针 | 这些是 `[live]`/`[env]` 的成立前提，pi 升级若漂移将**静默**失效（无任何运行时报错，只有行为变化）；按 C-proc-08 须登记使 `check-pi-semantics.mjs` 可拦截。⑤ 与 ④ 是两个不同事实（前者是 `getDefaultSessionDirPath` 的构造式，后者是 `create()` 的分支选择），与 §12.3 的登记去向列一一对应 |
+| **U6** `docs/pi-semantics.json`：pi 私有语义登记 | 登记 6 条：① `ENV_SESSION_DIR` 变量名（`dist/config.js:406`）；② session 目录优先级链（`dist/main.js:530-533`）；③ `ctx.sessionManager` 非 mode-gated（`types.d.ts:209-219`）；④ `getSessionDir()` 双形态（cwd 编码子目录 vs 根本身，`session-manager.js:1179-1180`）；⑤ pi 默认布局构造式 `<agentDir>/sessions/<encodeCwd>`（`session-manager.js:242-247`）；⑥ `settings.sessionDir` 是优先级链第 3 位的静默覆盖位（`settings-manager.js:451-452`；B 依赖它恒为空，迁移顺带清除，§6.11 前置条件）；各配 pi-anchor + 探针 | 这些是 `[live]`/`[env]`/B 默认派生的成立前提，pi 升级若漂移将**静默**失效（无任何运行时报错，只有行为变化）；按 C-proc-08 须登记使 `check-pi-semantics.mjs` 可拦截。⑤ 与 ④ 是两个不同事实（前者是 `getDefaultSessionDirPath` 的构造式，后者是 `create()` 的分支选择），与 §12.3 的登记去向列一一对应 |
 | **U7** `discovery/subagents.ts`：家族扫描接入根列表 | `collectMainSessions` 改用 `resolveSessionRoots`。**B 先行路径下不建**——布局对齐后 `listMainSessions(agentDir)` 恒正确（§6.13）；仅 A 全量退路执行。not-found 文案改列实际候选根**两种路径都做**（并入 U1） | 消除「find 说有、family 说没有」（§6.8）；B 落地后该矛盾不存在 |
 | **U8** `doctor` action | schema enum + handler 分支 + 文本渲染 + 进程内缓存 + subagent 根默认不扫 | 新增 action 需同步 description/guidelines/测试，独立成单元 |
 | **U9** F1 错误信息重写 + uuid 归一化 | 事实型自检行 + 编辑距离 top-N + 三条做法 + 禁止项；两级归一化匹配 | 是「封死绕行」的唯一执行点，需单独的文案审查（面向 agent 的提示词）；归一化是 §3.3 盲区的唯一修复点 |
@@ -806,15 +821,18 @@ M-1 独立交付且先行；M0–M3 是一个不可分割的正确性交付（M3
 | `extensions/universal/session-reader/src/discovery/subagents.ts` | `collectMainSessions` 改用根列表；`:63-68` not-found 文案列实际候选根 |
 | `extensions/universal/session-reader/src/tool-handler.ts` | `handleSessionRead` 签名加 `signals`/`metadataProvider`；新增 `doctor` 分支与 `renderDoctor`；改写 `formatNoMatch`；`formatFindContent` 分组 + 全 id；编辑距离工具。**不改** `SESSION_ID_PREFIX_LEN` 与 `result-action.ts` |
 | `extensions/universal/session-reader/src/index.ts` | schema enum 加 `'doctor'`；description action 列表补一词；guidelines 加一句；`execute` 组装信号包（可选链）+ `metadataProvider` |
-| `packages/runtime/src/infra/pi/pi-maintenance.ts` | 新增 `migrateToPiAlignedLayout`（U14）；旧 `migrateToPiSubdir` 保留为链条一环 |
+| `packages/runtime/src/infra/pi/pi-maintenance.ts` | 新增 `migrateToPiAlignedLayout`（U14）；旧 `migrateToPiSubdir` **退役**（其 mkdir 前置会撞步骤 2 的 rename）；`getPiGlobalAgentDir` 推导改从 `getDataDir()` 起（U15②） |
 | `packages/shared/src/paths.ts` + `packages/runtime/src/infra/pi/pi-paths.ts` | `getPiAgentDir` → `join(getDataDir(),'agent')`；`getSessionsDir` → `join(getPiAgentDir(),'sessions')`；`getPiRoot` 删除（U15） |
 | `packages/runtime/src/infra/pi/rpc-client.ts` | 删 `--session-dir` argv；写 `<dataDir>/run/pi-spawn-markers.json`（U16）；B 先行路径下 `extras` **不**增 env（U4 仅退路） |
-| `packages/runtime/src/services/reap-orphan-pi.ts` | 判据换 spawn 清单（U17）；测试 DIR/断言同步 |
-| `packages/runtime/src/services/reap-orphan-pi.test.ts`、`usage/usage-stats-service.test.ts`、`infra/__tests__/spawn-env.test.ts` | 路径常量/引用同步（U15 清扫范围） |
-| `AGENTS.md` / `docs/troubleshooting.md` / `logger.ts:431` / `shared/workflow.ts` 注释 | `~/.xyz-agent/pi/` 字面量同步（U15 清扫范围） |
+| `packages/runtime/src/services/reap-orphan-pi.ts` | 判据换四条合取（U17）；测试 DIR/断言同步 |
+| `packages/runtime/src/services/usage/usage-stats-service.ts` | 扫描改两层（U15①——不改则 B 后统计归零） |
+| `packages/runtime/src/services/session/session-fork.ts` | `buildForkTarget` 改写 encodeCwd 子目录（U15③） |
+| `packages/runtime/src/services/reap-orphan-pi.test.ts`、`usage/usage-stats-service.test.ts`、`infra/__tests__/spawn-env.test.ts`、`scripts/probe-pi-sw-snapshot.mjs`、`scripts/verify-plugin-contract.sh` | 路径常量/fixture 同步（U15 清扫范围） |
+| `docs/constraints.json` + 重生成 `docs/constraints.md` | 新增布局对齐契约条目（U18） |
+| `AGENTS.md` / `docs/troubleshooting.md` / `logger.ts:431` / `shared/workflow.ts` / `workflow-extractor.ts:236` 注释 | `~/.xyz-agent/pi/` 字面量同步（U15 清扫范围） |
 | `packages/shared/src/spawn-env-contract.ts` | `SPAWN_ENV_FORWARD_REFERENCE` 增条目（U5，**仅 A 全量退路**） |
 | `docs/design/env-propagation-boundary.md` | B 组表同步（U5，**仅 A 全量退路**） |
-| `docs/pi-semantics.json` | 登记 5 条 pi 私有语义（U6） |
+| `docs/pi-semantics.json` | 登记 6 条 pi 私有语义（U6） |
 | 测试 | `src/__tests__/roots.test.ts`（三宿主信号包 table-driven）、`env.test.ts`（新增，含透传污染反例）、`tool-handler.test.ts`（`doctor` + 新 F1 文案 + 分组 + 归一化 + family 一致性）、`index.test.ts`（`ctx === undefined` 与 `sessionManager` 缺方法两例） |
 
 ---
@@ -834,8 +852,8 @@ M-1 独立交付且先行；M0–M3 是一个不可分割的正确性交付（M3
 9. **`doctor` 的 token 与墙钟成本**。输出含 4–5 个根；「扫描耗时」若使输出超预算则折叠为可选参数；墙钟上界受 §6.3 的 subagent 根默认不扫 + 进程内缓存约束，需实测确认。
 10. **迁移脚本的 header 覆盖率**（方案 B）。`~/.xyz-agent/pi/sessions/` 实测 14 文件中 3 个无 `session_info`；迁移依赖的是首行 `session` header 的 `cwd` 字段——需实测全部存量文件的首行 cwd 覆盖率（决定 `_migrated-no-cwd/` 的占比），并确认 pi 对 `_migrated-no-cwd/` 这类非 encodeCwd 形态子目录的 `listAll`/resume 行为（源码看是「任意子目录均枚举」，`session-manager.js:1306-1318`，需实跑确认）。
 11. **`--extension` 恒传断言**（方案 B / §6.12 前提）。需实测 xyz-agent 所有 spawn 路径上 `options.extensionPaths` 非空（mandatory 18 包理论恒传）；若存在零 extension 形态，reap 该次漏收（fail-safe 可接受）但清单文件仍须写入。
-12. **xyz-agent app 内 session 扫描对 `<encodeCwd>/` 子目录的兼容**（方案 B）。`session-records.ts:294` 注释声称「scanSessions 扫 pi/sessions/，含 cwd-encoded 子目录」，但布局切换后**全部** session 都进子目录、不再有平铺层——需实测 app 侧会话列表/usage-stats/background-task-reaper 在「全子目录」形态下的行为（此前只有 `pi/agent/sessions` 的 2 个残留走过子目录形态）。
-13. **迁移与运行中 pi 的竞态**（方案 B）。迁移挂在 runtime 启动、首个 pi spawn 之前；依赖 Electron 单实例锁 + file-lock。需确认 dev（`~/.xyz-agent-dev`）与 prod 同时运行时各自迁移互不干扰（数据目录隔离 → 应天然安全），以及 app 崩溃在迁移中途后重启的续传路径（§6.11 幂等设计）。
+12. **app 侧扫描对「全子目录」形态的兼容**（方案 B，v6 收敛）。第 4 轮影响面审已源码判定：会话列表 `scanPiSessionsFromDisk`（`session-file-utils.ts:1015-1058`）根层 + 一层子目录都扫 → **兼容**；`import-service.ts:252` 已写 encodeCwd 子目录 → **兼容**；`usage-stats-service.ts` 单层扫描 → **确定破坏**（已列 U15① 改造）；`session-fork.ts` 写平铺 → **确定不一致**（已列 U15③ 改造）。**剩余待实测**：`background-task-reaper` / `workflow-extractor` 在全子目录形态下的端到端行为。
+13. **迁移与运行中 pi 的竞态**（方案 B，v6 已部分收敛）。孤儿 pi 持旧路径 fd 的窗口由「迁移前先跑一次 reap（旧判据此刻仍可用，§6.11 前置条件）」消除；dev/prod 同时运行靠数据目录隔离（天然安全）；崩溃续传由守卫 0a 的续传模式保证。**剩余待实测**：reap 先行时序在真机上的收殓完整率（孤儿若已死透则无影响，活孤儿需确认 SIGTERM→SIGKILL 链在迁移开始前完成）。
 
 ---
 
@@ -914,6 +932,14 @@ npx tsx ./probe-find.mts
 
 ### 12.4 变更历史
 
+- v6（2026-09-10）：第 4 轮（方案 B 专项，主审 4 MF + 影响面 7 MF，去重后 9 条独立）全量修订。**两个预设攻击点被双向裁决**：pi 子进程 cwd 链（rpc-client→process-manager→session-lifecycle→pi main.js→getDefaultSessionDir）实测成立，B 默认派生可行；pi 家级足迹为零（dist 全量 grep），`agent/` 上移不与根层冲突。修复：
+  1. **§6.12 reap 判据改双层**（`--no-extensions` 存在 + 白名单清单只登记 staged 专属路径）：活体进程证据击穿 v5 的「用户 extension 不进 argv」假设（TaiJi argv 实测混有 `~/.pi/…` 用户路径，AGENTS.md 实测命令模板本身带 `--extension`）；补清单写语义（全量重算覆盖 + 原子写）与收殓范围扩大声明（孤儿 subagent 从不收变收）。
+  2. **§6.11 迁移三处修复**：幂等出口①与续传承诺的矛盾（守卫 0a 续传模式 + 完成标记为唯一完成判据）；`migrateToPiSubdir` 的 mkdir 前置撞步骤 2 rename（ENOTEMPTY，存量机首启即崩 → 旧函数退役）；sidecar 白名单改前缀匹配（实测存在 `.handoff.json` 第五种）+ 遍历声明递归（dev 实测存在 `--private-tmp--/` 子目录）。
+  3. **迁移前置条件新增**：先跑一次 reap（旧判据此刻仍可用，消除孤儿持旧路径 fd 的竞态）；顺带清除 `settings.json` 的 `sessionDir` 静默覆盖位；vitest 环境守卫。
+  4. **U15 扩为「SSOT + 三个非派生消费方」**：usage-stats 单层扫描（B 后统计归零）、`getPiGlobalAgentDir` 向上 3 层推导（B 后多走一层，`cleanLeakedPackages` 静默失效）、`session-fork.ts` 写平铺（pi 原生枚举不可见，与 import-service 形态分裂）；清扫清单补 2 个脚本 + 1 注释，并建「数据布局清 / 资源布局豁免」两栏。
+  5. **U18 新增**：constraints.json 布局对齐契约登记 + 字面量回流守卫（一次性清扫无守卫必回流）。
+  6. **A 侧三处判据漂移同步**：§6.2 环境判定形态（B 后 `<*>/.xyz-agent*/agent`，双形态兼容）；§6.13 `[legacy]` B 后语义（`<dataDir>/sessions` 旧旧布局，备份走 doctor 独立 glob）；§5.3 目录树按实机修正（根层实际为 attachments/engines/…，非 SSOT 注释所列）+「对齐 = agent/ 子树一层，根层不需要同构」声明。
+  7. U6 登记 5→6 条（settings.sessionDir 旁路）；§11.12/13 由待实测收敛为已核+剩余项；V1/§5.1 标注 B 后路径；V10 扩四子项。
 - v5（2026-09-10）：按用户拍板「布局完整对齐 pi（根修，先行）」并入**方案 B**（§6.10–§6.13 + §7A + V9/V10 + U14–U17）：
   1. **§6.10 布局对齐**：agent 上移一层、删 `--session-dir`、SSOT 改值；B1/B2/维持现状三案对比，B2（保留 flag 的路径对齐）记为降级退路。
   2. **§6.11 首次启动迁移脚本**：先原子改名备份、后分发的六步幂等流程；无 cwd 文件入 `_migrated-no-cwd/`（pi 按任意子目录枚举仍可发现）；备份保留不自动删；旧版本回装的降级行为写明。
