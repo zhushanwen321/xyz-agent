@@ -176,7 +176,7 @@ pnpm --filter @xyz-agent/core test && pnpm --filter @xyz-agent/runtime test && p
 | M6 | committed | 1 | commit `0e3c42847`；core vitest 50 passed；core typecheck 0；P-presets 实测 on-off 2 档 / high-max 3 档 / all-levels 5 档 |
 | M1b | in-progress | 3 | 第 1 轮（载体纯函数 + 空串转译 + catalog 分体系 + extras 字段）与第 2 轮（setProvider 信号接线 + 模型级空 id + eslint 上限 900）产物未提交在工作区；第 3 轮修 D-9（skipUpsert 收窄）/D-10（白名单守卫恢复）/D-11（3 处领地外断言） |
 | M2-r | committed | 1 | commit `cfb839308`；runtime vitest 12 passed；runtime typecheck 0；P-cred 实测（xyz 不展开 / pi 展开，已对照 `resolve-config-value.js:71-73` 逐字核对） |
-| M1a | in-progress | 2 | 第 1 轮已改 6 个领地文件（三包目标绿：core 54 / renderer oauth 8 / ui 17，core typecheck 0）；第 2 轮修 3 处领地外既有断言（见 D-7）+ 影响面扫尾 |
+| M1a | committed | 2 | commit `f40f27fbc`；core 54 / renderer 61 / ui 17 passed；frontend typecheck 0；renderer `src/__tests__` 全量 3620 passed \| 3 skipped（影响面扫尾无新红点） |
 | M1cd | pending | 0 | — |
 | M2b | pending | 0 | — |
 | M5a | pending | 0 | — |
@@ -198,7 +198,7 @@ pnpm --filter @xyz-agent/core test && pnpm --filter @xyz-agent/runtime test && p
 6. **隔离方式全 plain**：热点文件共改已在 DAG 中用串行边消除，同 wave 领地互斥；按 dag-authoring 决策表「领地互斥已足够安全」不启 worktree。
 7. **`packages/core` 的 pi-ai 隐式解析（已派回 M5a）**：M6 的新测试 import `@earendil-works/pi-ai`，`packages/core/package.json` 未声明该依赖，当前靠根 `devDependencies` 上溯解析（vitest 与 tsc 均通过）。属真实依赖声明缺口，已归入 M5a 一并补声明；在 M5a 提交前的中间 commit 依赖根 hoisting 生效，功能无影响。
 8. **`packages/ui` typecheck 既有基线失败（非本次引入、非 CI 门禁）**：`pnpm --filter @xyz-agent/ui typecheck` 报 3 处错误（`provider-edit-body.test.ts:198` 的 `'ipc' does not exist in type 'PlatformPort'`、`search-modal.test.ts:386/391/396` 的 `'searchMock' is possibly 'undefined'`），均在本次未触碰的文件里、与 provider 字段类型无关。已核实 `.github/workflows/ci.yml` 的 typecheck job 只跑 frontend / runtime / shared / extensions，**不含 ui**——属既有本地基线问题，本次不修、只登记（不擅自处理认知外问题）。
-9. **同一分支存在并发会话提交**：执行期间 `5887787fd docs(design): add 4 interactive UX demos for coding-plan quota config` 由并发工作流提交（6 个 quota UX demo 文件，与本计划领地零交集）。主 agent 全程按精确路径 `git add`，本次各单元提交均只含本单元领地文件；并发会话的改动一律不触碰、不裹挟。
+9. **同一分支存在并发会话提交**：执行期间 `5887787fd docs(design): add 4 interactive UX demos for coding-plan quota config` 由并发工作流提交（6 个 quota UX demo 文件），随后又出现未跟踪的 `docs/design/coding-plan-quota-config-ux.md`（同一 quota UX 工作流）。二者与本计划领地零交集。主 agent 全程按精确路径 `git add`，本次各单元提交均只含本单元领地文件；并发会话的改动（已提交的与未跟踪的）一律不触碰、不裹挟、不清理。
 10. **pre-commit hook 运行中被并发重写（环境性竞态，已复现一次）**：M2-r 首次提交时 hook 在 `line 910: 全部调用点（任意接收者——防: command not found` 处中断。**非 hook 缺陷**——`bash -n` 通过与文件尾部完整（1312 行），根因是 hook 文件在提交过程中被改写（`ls -la` 显示 mtime 恰为提交时刻），bash 按字节偏移续读旧文件时落进新内容中间，把中文注释片段当命令执行。触发源 = 并发会话执行 `pnpm install` → 根 `prepare` → `bash .githooks/install-hooks.sh` 重装 `.bare/hooks/pre-commit`。处置：重试提交即恢复（第二次成功）。若后续单元再遇同类中断，同样重试，不要动 hook 本体。
 11. **既有测试 fixture 使用非 pi 合法语法的 env 形态（M2-r 探针旁证发现，不在本次范围）**：`packages/runtime/src/services/auth/__tests__/auth-storage.test.ts:156/158` 用 `'$ENV:ZAI_API_KEY'`，而 pi 的模板语法是 `$ENV_VAR` / `${ENV_VAR}`——pi 会把 `$ENV:ZAI_API_KEY` 解析成变量 `ENV` + 字面 `:ZAI_API_KEY`（即该字符串不是有效的环境变量引用）。该用例断言的是 AuthStorage「原样存储不展开」，字符串取值本身不影响断言有效性，故**本次不改**（认知外、非生产路径，全仓仅此 2 处命中）；仅登记供后续清理。
 
