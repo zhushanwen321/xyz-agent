@@ -89,18 +89,28 @@ graph TD
 | R5 | V1-V7 真机验收不在任何 dev 单元内，作为阶段 5 Gate B 逐行签收活动执行（V6 7 天长跑项登记为交付后观察项） | 真机场景需打包版 app + 真实使用节奏，非 subagent 文件编辑任务；集成测试（u4）覆盖 V1 主干的可自动化部分 | §4 验收场景表 |
 | R6 | u1a 领地修订：实际 13 文件（原计划 4 文件）——新增 `services/ports/pi-engine.ts`（IPiEngine 端口扩展 lastActivityAt/touchActivity/SendCommandOptions）+ 8 个既有测试文件（fake client 补成员 / getClient 空守卫桩） | dispatcher 依赖端口类型 IPiEngine 而非具体 RpcClient——touch API 必须上端口才能被 dispatcher 消费（结构性必需，非顺手改）；8 个测试文件是实现 IPiEngine 的 fake，接口扩展后 tsc 强制补齐。改动全为纯追加，零断言削弱（编排者已逐 diff 核验） | 设计 D1/D6-1 的消费链（dispatcher→pm.getClient→IPiEngine） |
 | R7 | u3 拆为 u3a（豁免查询访问器面）+ u3b（装配 + 常量 + 约束登记）串行；u3a 领地新增 4 个薄只读访问器文件：`infra/relay/relay-registry.ts`（按 mainSessionId 枚举在册 child——u2 编排 deps 注释已声明缺口）、`services/handoff-service.ts`（inflight Map 无公开查询）、`services/session/session-delivery-registry.ts`（handle 注册表无存在性/活跃查询）、`services/session/session-service.ts`（occupancy 运行时内部态无外部读点） | 设计 D2 标注「现成」的信号中 4 项实装无公开访问器（设计快照与实装漂移，u2 已按窄接口注入隔离影响）；单 u3 合并计 10+ 文件超 subagent 上限，拆分后各 ≤6 文件且改动均为 ≤20 行薄访问器 | D2 七豁免表 + u2 代码内 [u3 装配清单] 注释 |
+| R8 | u1a 机制演化两则：① maintenance 排除标记经语义方法 `prompt` 透传至 `sendCommand`（promptReload 实际调用形态是 client.prompt）；② lastActivityAt 初值双重化（构造时刻兜底 + start() spawn 后重置） | ①排除机制可落地的必要贯通，测试锁定透传不改 RPC 线格式；②防御性细化（构造到 spawn 间隔不冒充空闲也不冒充活跃），不破坏 D1 声明 | D1 |
+| R9 | env 旋钮从设计点名的 1 个（IDLE_MS）扩展为 3 个（TICK_MS/IDLE_MS/VIEWED_WINDOW_MS），解析收口 `resolveReclaimConfig`（非法/非正数回落 shared 默认） | D4 本就定义三参数（5min/2h/30min），全 env 化落在钉死的 `XYZ_RUNTIME_PI_RECLAIM_*` 前缀内，符合 In-scope「常量 + env 覆盖先行」 | D4 |
+| R10 | relay 尾扫快照采集点从设计第 5 步（kill 后）移到代际校验通过、最小摘除之后 | 设计原顺序下并发重建被检出时迟到尾扫仍会杀新 session 的合法 relay 子进程；实现取消路径零采集零杀（fail-safe），单段快照语义与 P6 逐字一致，双向测试锁定 | D3 第 5 步① + D6-3 |
+| R11 | dispatcher 入口 touch 带 attachedClient 条件（未附着不 touch）；显式 session.restore 不做占座让路（代际校验兜底防双重摘除） | 已回收态无 client，restore 新 client 初值即 spawn 时刻；显式 restore 与 kill 窗口相撞触发用户主动请求的既有清场重建，reclaim 代际校验检出返回 false——等价于回收前既有语义，非新回归 | D6-1/D6-2 |
+| R12 | D7 按实装收敛：每拍 info 级汇总（scanned/跳过分布含 noActivity/seatHeld/reclaimFailed/runtime 水位）；回收行 RSS = runtime 进程水位；无独立「进程数」字段（scanned 可推导） | G4 目标达成且更强：pi RSS 不经 RPC 暴露，runtime 水位归因到回收时刻是可达最优；info 级 5min 一拍 prod 可查使「回收饿死」可见 | D7 |
+| R13 | 测试形态两则：relay 访问器用真 socket + 假 pi（pid 文件/SIGTERM marker 完成信号，断言注册→kill→自动清理全事件链）；session-viewed-at 三层结构（真 SessionService 存储语义 / fake handler 契约 / 故障注入） | 断言强度优于 mock 真值表；分流与取舍均有文件头注释显式声明 | D8 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
 | u1a | committed | 2 | commit 64e70ae51；tsc 绿 + 10 文件 129 用例绿。轮 1 前任速率限制中断（语义已完整，缺 1 个测试 fake 类型成员），轮 2 接替者收尾（1 文件）。偏差 R6 已入登记表 |
-| u1b | committed | 1 | commit acc603d4d；session-viewed-at 6 用例 + relay-registry 26 用例绿；偏差 2 条已入登记表（挂点入口化 / 可选交叉成员） |
+| u1b | committed | 1 | commit acc603d4d；session-viewed-at 6 用例 + relay-registry 26 用例绿；偏差 2 条经一致性审查复核为无需登记（挂点入口化 = 语义超集，覆盖 summary 命中与 ensureActive 恢复两分支；可选交叉成员 = backgroundTasks 同款实现形态自由度，设计层不规定） |
 | u2 | committed | 1 | commit 82d7d9e12；idle-pi-reaper 22 用例 + reclaim-orchestration 14 用例 + 回归绿 + tsc 绿。dev 完成实现与测试后死于速率限制（未及汇报），编排者逐 diff 核验设计保真度并重跑全部测试后收口。附带 .githooks/check_prompt_outposts.py 指纹刷新（promptReload 加 maintenance 参数触发出站点守卫） |
 | u3 | committed | 2 | u3a：e5ab883ac（4 薄访问器 + depth() 选型偏差）。u3b：998f6ad3e（组合根 wiring + shutdown 收口 + XYZ_RUNTIME_PI_RECLAIM_* SSOT + C-state-12 约束登记 97 条校验过；领地超限 2 文件已核——isSessionRestoring 薄委托 / shared barrel 逐名 re-export，均为结构性必需） |
 | u4 | committed | 2 | commit 3b509694c；真机 real-pi 池跑绿（两轮真实 LLM turn 全链，编排者复跑 ✓ 5.6s）；main 池 0 匹配登记生效；P7 收益门实测 **PASS（incremental）**——恢复后 getHistory 走空增量短路零重建，缓存 leafId 跨进程存活，设计 session-service.ts:879-883 旧注释悲观断言被实测推翻（D5 正方胜出，无需回收时清缓存）。轮 1 前任读先例阶段被限流（零产物），轮 2 重派完成 |
 
-**P7 收益门裁决登记（2026-09-11，u4 实测）**：gate_pass=incremental。证据 = 集成测试日志 `[session-service] getHistory cache fresh (empty delta) ... returning 2 cached messages`；恢复耗时 elapsed=535ms（G3 ≤3s 达标）。设计文档 D5 的条件性收益声明兑现、P7 探针状态升级 ✅ 已实测——设计文档侧回写（D5/P7 措辞 + session-service.ts:879-883 注释修正）归一致性审查/doc 同步阶段执行。
+**P7 收益门裁决登记（2026-09-11，u4 实测）**：gate_pass=incremental。证据 = 集成测试日志 `[session-service] getHistory cache fresh (empty delta) ... returning 2 cached messages`；恢复耗时 elapsed=535ms（G3 ≤3s 达标）。设计文档 D5 的条件性收益声明兑现、P7 探针状态升级 ✅ 已实测——设计文档侧回写（D5/P7 措辞 + session-service.ts:1074-1077 注释修正，原 :879-883 坐标已漂移）已随一致性审查批次完成。
+
+**P2 探针裁决登记（2026-09-11，一致性审查）**：免测（内建覆盖）——D2 #4 handoff 硬豁免已实装（`HandoffService.hasInflightHandoff` 只读访问器 + index.ts 装配接线 + reclaim-accessors.test.ts 真生命周期链用例），occupancy 对 handoff 直 prompt 的覆盖窗口不再构成误回收面；设计 §3.4 P2 行状态已同步标注。
+
+**一致性审查记录（2026-09-11，阶段 3）**：双 reviewer 分区对抗审查（A 区 infra/transport/shared / B 区 services core + 装配），区间 12127bb14..HEAD。结果：unreasonable ×4（A 中 1 低 1 / B 低 2）+ doc_errors ×5 + reasonable ×11。修复分派：组 A = 维护通道排除补回程腿（pending 级，中严重度唯一机制变更）+ 初值测试区分力；组 B = 默认值双源等值守卫测试；组 C = 两处过时注释同步（已 commit fa9d9ee39）；doc 侧 = 设计文档 D1/D3/D4/D5/D6/D7 措辞 + P2/P7 探针状态 + 本表 R8-R13 登记（主 agent 亲为）。
 
 ## 7 残留风险与变更历史
 
