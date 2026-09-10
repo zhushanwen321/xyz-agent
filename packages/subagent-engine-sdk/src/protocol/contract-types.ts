@@ -96,8 +96,12 @@ export interface Turn {
 }
 
 /**
- * 引擎事件（8 种，协议 event.params.event 逐字序列化——「事件与 handle 序列化逐字
+ * 引擎事件（9 种，协议 event.params.event 逐字序列化——「事件与 handle 序列化逐字
  * 兼容」不变量 3 的类型面）。语义锚点 = pi（ACP 词汇对照见 core execution/types.ts 注释）。
+ *
+ * activity = 纯活性信号：双侧 reducer no-op、不开 turn、不写状态、不落 journal
+ * （core journal-wiring 对其豁免 append），只承诺「引擎活跃时周期性出现」——供宿主
+ * 无进展守护刷新判活（长工具执行期）。节流属生产者实现细节，不进协议承诺。
  */
 export type AgentEvent =
   | { type: "tool_start"; toolName: string; args?: unknown }
@@ -107,6 +111,7 @@ export type AgentEvent =
   | { type: "turn_end"; summary?: string }
   | { type: "message_end"; usage?: AgentUsage; error?: string }
   | { type: "compaction" }
+  | { type: "activity" }
   | { type: "error"; message: string };
 
 // ============================================================

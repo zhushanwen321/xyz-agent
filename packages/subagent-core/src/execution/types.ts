@@ -172,6 +172,8 @@ export type ExecutionMode = "background";
 //     tool_start / tool_end      ↔ ACP tool_call / tool_call_update
 //     turn_end / message_end     ↔ ACP prompt turn 终态（stop_reason + usage）
 //     compaction                 ↔ ACP session/compaction
+//     activity                   ↔ 无 ACP 对应（协议内生活性信号：reducer no-op、
+//                                 不落 journal，仅供无进展守护刷新判活）
 //   本协议以 pi 为语义锚点（D3）——命名不迁移，对照表仅保证未来 AcpEngine 适配器
 //   与跨引擎 trace 映射的翻译成本最低。
 export type {

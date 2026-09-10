@@ -67,8 +67,8 @@ function makeHarness(overrides: Partial<SdkTranslatorOpts> = {}): Harness {
   return { record, events, deltas, feed: (line) => translator(parseEventLine(line)) };
 }
 
-/** 活性信号 = 无 usage/error 的 message_end（零写入载体，见 spawn-event-translator 选型注释）。 */
-const ACTIVITY_EVENT: AgentEvent = { type: "message_end" };
+/** 活性信号 = 第一类 activity 变体（纯活性信号，见 spawn-event-translator 载体注释）。 */
+const ACTIVITY_EVENT: AgentEvent = { type: "activity" };
 
 describe("[U-A6] tool_execution_update 到达形态与活性信号", () => {
   it("到达形态核实：rpc 行经 parseSpawnLine 归 SdkEvent（kind=event），字段形状与 pi dist 对齐", () => {

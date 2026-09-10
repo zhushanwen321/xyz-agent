@@ -20,7 +20,7 @@
 
 import type { EngineHandleData } from "@zhushanwen/subagent-engine-sdk";
 
-// AgentEvent 8 种事件：权威定义在 SDK contract-types，经 execution/types.ts re-export
+// AgentEvent 9 种事件：权威定义在 SDK contract-types，经 execution/types.ts re-export
 // → shared/agent-event.ts 转发层 → 本文件（链条保持，维持「shared/ 是类型共享层」的
 // 架构约定）。新增粗粒度约束（coarse 引擎至少合成一次 message_end + 一次 turn_end）
 // 由 conformance 套件断言（P4），不在类型层编码。

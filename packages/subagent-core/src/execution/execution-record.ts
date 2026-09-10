@@ -470,6 +470,10 @@ export function updateFromEvent(record: ExecutionRecord, event: AgentEvent): voi
     case "compaction":
       return;
 
+    // ── activity：纯活性信号，reducer no-op（协议语义见 SDK contract-types）──
+    case "activity":
+      return;
+
     default: {
       // 穷尽性检查：新增 AgentEvent variant 时编译期报错
       const _exhaustive: never = event;
@@ -990,8 +994,8 @@ function translateMessageUpdate(raw: JsonlEvent): AgentEvent[] {
 /**
  * 把一条 JSONL 事件翻译成 AgentEvent。
  *
- * 返回 undefined 表示该事件不映射到任何 AgentEvent（如 session header、message_start、
- * tool_execution_update），调用方应跳过。
+ * 返回 undefined 表示该事件不映射到任何 AgentEvent（如 session header、message_start），
+ * 调用方应跳过。
  *
  * 一个 JSONL 事件可能产出**多条** AgentEvent（message_end 的 usage + error 各一条），
  * 故返回数组。绝大多数情况长度为 0 或 1；message_end 最多 2 条。
@@ -1003,8 +1007,12 @@ export function jsonlToAgentEvent(raw: JsonlEvent): AgentEvent[] {
     case "session":
     case "message_start":
     case "turn_start":
-    case "tool_execution_update":
       return [];
+
+    // 工具执行期活性信号（与 pi 侧 spawn-event-translator 的 TOOL_ACTIVITY_EVENT 同
+    // 语义）：不产数据，只驱动宿主无进展守护刷新。
+    case "tool_execution_update":
+      return [{ type: "activity" }];
 
     case "tool_execution_start":
       return translateToolExecutionStart(raw);

@@ -24,18 +24,12 @@ const TOOL_ACTIVITY_MIN_INTERVAL_MS = 1_000;
 /**
  * [U-A6] 工具执行期活性信号载体（`tool_execution_update` → onEvent 通道，不产数据）。
  *
- * 选型依据：AgentEvent 是 SDK 闭合联合（8 种）且两侧 reducer 用 `default: never`
- * 穷尽性 switch——新增变体必须同改 subagent-engine-sdk 与 subagent-core，而后者是本批
- * 修复的禁区（B 组并行改），故只能在既有变体里选一个**真正零写入**的载体：
- * `{ type: "message_end" }` 在 usage 与 error 双双缺省时，SDK 与 core 的
- * applyMessageEnd 都是完全条件式（两个 if 均不成立），既不写 record 任何字段、也不
- * 通过 currentTurn 开 turn；其余变体要么改 record（text/thinking/tool/error）、要么改
- * turn 状态（turn_end），要么已承载别的语义（compaction）。
- *
- * 长期方案（建议，需跨包协调）：协议新增一个只做活性信号的 AgentEvent 变体，本常量
- * 随之替换（本次受领地约束不改 SDK/core，故复用零写入载体而非新造协议词）。
+ * 第一类 `activity` 变体已落地（F2 清账）：协议闭合联合的专用纯活性信号——双侧
+ * reducer no-op、core journal-wiring 豁免 append（不进持久/重放面），语义见 SDK
+ * contract-types AgentEvent 注释。历史借用形态（usage/error 双缺省的零写入
+ * message_end）见 git 历史。
  */
-const TOOL_ACTIVITY_EVENT: AgentEvent = { type: "message_end" };
+const TOOL_ACTIVITY_EVENT: AgentEvent = { type: "activity" };
 
 /** tool_call_id → 工具名/args 的 transient 寄存器（tool_end 缺 args 时回填）。 */
 type PendingToolRegistry = Map<string, { toolName: string; args?: unknown }>;

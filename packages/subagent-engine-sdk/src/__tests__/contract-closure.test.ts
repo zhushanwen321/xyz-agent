@@ -100,7 +100,7 @@ describe("契约类型运行时形状冒烟（字段可选项漂移时在构造�
     expect(handle.sessionRef).toEqual({ sessionId: "s1", dbPath: "/tmp/db.sqlite" });
   });
 
-  it("AgentEvent 8 种事件可构造（事件逐字序列化契约的构造面）", () => {
+  it("AgentEvent 9 种事件可构造（事件逐字序列化契约的构造面）", () => {
     const events: AgentEvent[] = [
       { type: "tool_start", toolName: "bash", args: { cmd: "ls" } },
       { type: "tool_end", toolName: "bash", result: { content: [] }, isError: false },
@@ -109,9 +109,10 @@ describe("契约类型运行时形状冒烟（字段可选项漂移时在构造�
       { type: "turn_end", summary: "done" },
       { type: "message_end", usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } },
       { type: "compaction" },
+      { type: "activity" },
       { type: "error", message: "boom" },
     ];
-    expect(events).toHaveLength(8);
+    expect(events).toHaveLength(9);
     expect(new Set(events.map((e) => e.type))).toEqual(
       new Set([
         "tool_start",
@@ -121,6 +122,7 @@ describe("契约类型运行时形状冒烟（字段可选项漂移时在构造�
         "turn_end",
         "message_end",
         "compaction",
+        "activity",
         "error",
       ]),
     );

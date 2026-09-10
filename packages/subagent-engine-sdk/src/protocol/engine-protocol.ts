@@ -18,6 +18,9 @@
 //   - 旧 core × 新引擎：新引擎可能发出旧 core 词表外的 host/roundLifecycle——
 //     既有反向路由对未知 host/* 通道回 {unsupported:true} 引擎自行降级，无需
 //     独立负向场景（设计已裁决）。
+//   事件变体增量同政策（例：activity 活性信号变体）：新变体以可选载荷形态进
+//   union，旧宿主 runtime 对其 no-op（reducer default 分支安全落空 / journal
+//   豁免面不感知），协议版本维持 1、不 bump。
 
 /** 协议版本（引擎包 manifest `xyz-agent.subagentEngine.protocol` 与 initialize 应答同值）。 */
 export const ENGINE_PROTOCOL_VERSION = 1;

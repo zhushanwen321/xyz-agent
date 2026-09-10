@@ -103,6 +103,7 @@ export const notificationFrameSchema = {
                 "turn_end",
                 "message_end",
                 "compaction",
+                "activity",
                 "error",
               ],
             },

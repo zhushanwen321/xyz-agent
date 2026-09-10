@@ -1346,11 +1346,14 @@ describe("createRecord 引擎留痕字段（P4）", () => {
 // jsonlToAgentEvent — subprocess JSONL → AgentEvent 翻译
 // ============================================================
 describe("jsonlToAgentEvent（JSONL → AgentEvent 翻译）", () => {
-  it("不映射类型（session/message_start/turn_start/tool_execution_update）→ 空数组", () => {
+  it("不映射类型（session/message_start/turn_start）→ 空数组", () => {
     expect(jsonlToAgentEvent({ type: "session" })).toEqual([]);
     expect(jsonlToAgentEvent({ type: "message_start" })).toEqual([]);
     expect(jsonlToAgentEvent({ type: "turn_start" })).toEqual([]);
-    expect(jsonlToAgentEvent({ type: "tool_execution_update" })).toEqual([]);
+  });
+
+  it("tool_execution_update → activity（纯活性信号，与 pi 侧 TOOL_ACTIVITY_EVENT 同语义）", () => {
+    expect(jsonlToAgentEvent({ type: "tool_execution_update" })).toEqual([{ type: "activity" }]);
   });
 
   it("未知类型 → 空数组（落空语义）", () => {
