@@ -4,7 +4,7 @@
 >
 > **层声明**：当前层 = 技术方案（重放移植裁决 + 落点设计）；下一层 = 实现计划（§5 拆分单元，供 dev-flow / coding-workflow 消费）。不跨层写代码。
 >
-> **状态**：R1 对抗式审查（主审 + 影响面审并行）5 must-fix + 7 suggestion 已全量修复——S2 触发前提勘误（pi 应答恒带 sessionFile）、workflow 域守护缺口补挂（新增 M3）、M0 合并操作语义实测固化（merge-tree 推演）、kill/resolveExit 必达约束、M4 误配四要素补齐。待 R1 聚焦复审。
+> **状态**：R1 对抗式审查（主审 + 影响面审并行）5 must-fix + 7 suggestion 已全量修复；R2 聚焦复审 3 must-fix + 5 suggestion 已全量修复——关键修订：M3 fire 链补真终止承载（`killRecordChildWithEscalation` 是纯镜像记账，workflow 域真终止 = `controller.abort()` → cancel 帧/killAll 阶梯）、S2 引文锚修正（pi `newSession()` 即赋路径的事实经 dist 直读三次验证）、方案 A 补 pendingRetry 双驱动、刷新源补 streamDelta、fire 回调同步段不抛契约。待 R2 复审收敛确认。
 
 ---
 
@@ -32,7 +32,7 @@
 - **引擎 ↔ pi 子进程**：stdin 写命令（`prompt` / `get_state` / `extension_ui_response`），stdout 逐行 NDJSON 事件（`agent_end` / `message_end` / `response` 等），经 `spawn-event-translator.ts` 翻译成 AgentEvent 上抛
 - **通知主 agent 的通路不经引擎协议**：run 终态 → core 进程内 `pi.sendMessage({customType:"subagent-bg-notify", triggerTurn:true})` 直投主会话（`packages/subagent-core/src/execution/notifier.ts:411-426`），另有 notify-ledger 四步兜底（写账 → settled 边沿投递 → 回执销账 → 重放幂等）
 
-关键协议事实（理解后文的前提）：**rpc 模式 pi 子进程无 header 行，sessionFile 唯一正常获取通道是 get_state 问答**；实装 pi（0.84.4，`dist/core/session-manager.js` `newSession()`）在 session 创建时即赋值 sessionFile 路径、延迟落盘只影响文件**存在性**（`flushed` 位）不影响应答字段——真实 RPC 层 get_state 应答恒带 sessionFile（dev-0.9.16 review 登记同口径：`.review/reports/round1/business-logic.md:27`「该形态未在生产链路观测到」）。因此握手失败的现实形态是**超时无应答**（并发负载下事件循环拥塞，即原事故形态），而非「应答缺字段」；后者是协议上可能、生产未观测的死路径——S2 修复（M1）的定位是契约一致性防御（头注「最多重试 3 次」与实现不符真实存在），不是活缺陷止血。
+关键协议事实（理解后文的前提）：**rpc 模式 pi 子进程无 header 行，sessionFile 唯一正常获取通道是 get_state 问答**；实装 pi（0.84.4，`dist/core/session-manager.js` `newSession()`，~:1136）在 session 创建时即赋值 sessionFile 路径、延迟落盘只影响文件**存在性**（`flushed` 位）不影响应答字段——真实 RPC 层 get_state 应答恒带 sessionFile。因此握手失败的现实形态是**超时无应答**（并发负载下事件循环拥塞，即原事故形态），而非「应答缺字段」；后者是协议上可能、设计期未见真实观测路径的死路径——S2 修复（M1）的定位是契约一致性防御（头注「最多重试 3 次」与实现不符真实存在，dev-0.9.16 review 登记 S2 条目同定性：SUGGESTION 级、「实际影响有限……净损失 = 剩余 2 次重试轮丢失」，见 `.review/reports/round1/business-logic.md` Findings 表），不是活缺陷止血。
 
 ### 1.3 设计目标
 
@@ -134,7 +134,7 @@ addResponseListener(reqId, (data) => {
 4. **宿主重启**：`bootPartition` 重认领（initSession 挂点）→ 同 supervisor 流。
 5. **【缺口】workflow 域静默楔死无任何熔断（R1 审查发现，M3 修复）**：workflow 域全部 `agent()` 调用走 `executeAndAwait`（:1815）→ `runAndFinalize`（:2419，await 不 detached）→ `engine.run`（:2457）——`armMidRoundNoProgress` 全文件仅 :1398（chat 冷续轮）与 :2676（kickOffChatRound）两处 arm，**该路径零覆盖**；引擎侧 run 帧不设墙钟（by design，规则 19）。攻击场景：workflow 域 pi 子进程静默楔死（spawn 成功、prompt 已发、零事件输出、不退出）→ 引擎无墙钟 + core 无 arm → `runAndFinalize` 永挂 → `agent()` 永不返回、record 永卡 running、无终态通知 = G1 违反。**carbon 事故正是 workflow 域**；旧架构该形态有 8.8.0+ 全形态 30min no-progress 兜底，新架构此域丢失——即 G3 要防的「旧病根借尸还魂」。修复 = M3（§3.3 决策 9）。
 
-残余登记（量级 + 重审条件）：M3 补挂后仍不覆盖「引擎进程活而事件循环停摆」（Node 同步死循环级故障）——fire 会 kill 子进程镜像并终态化 record + 发出通知（G1 成立），但 `engine.run` 应答仍悬、调用方 promise 挂起（workflow 停摆）。该形态超出本设计域，重审触发 = 出现引擎进程活楔死的实例报告。
+残余登记（量级 + 重审条件，R2 修订）：M3 的 fire 经 `controller.abort()` → cancel 帧 / killAll 阶梯保证 `engine.run` 收敛（含引擎活楔死形态——killAll 直接杀引擎进程后 run 请求 reject 合成终态）。不收敛残余仅剩「fire 回调自身未执行」（宿主进程在 30min 静默期内崩溃）→ 重启后 supervisor `bootPartition` 重认领接管。重审触发 = 出现该残余形态的实例报告。
 
 ### 2.5 物理数据流（sessionFile 获取链现状 → 本设计后）
 
@@ -203,7 +203,7 @@ Subagent "coder" (rec-8f3a) completed.
 
 **决策 1：S2 修复选「应答不完整视同未应答」（方案 A），不选显式 else 排 retry（方案 B）**
 
-- 方案 A：`clearTimeout(timer)` 移入 sessionFile 命中分支——应答缺 sessionFile 时保留本轮 timer，由既有 2s 超时回调驱动 retry（`CLI/get-state-handshake.ts:70-79` 现成逻辑）。
+- 方案 A：`clearTimeout(timer)` 与 `clearTimeout(pendingRetry)`（:84-85 两者）均移入 sessionFile 命中分支——应答缺 sessionFile 时保留**全部既有驱动**（迟到应答形态下 pendingRetry 可能是唯一活驱动，单留 timer 会留 500ms 悬挂窗，R2 S-主审），由既有 2s 超时回调驱动 retry（`CLI/get-state-handshake.ts:70-79` 现成逻辑）；多驱动并发安全由 `resolved`/`attempts` 守卫保证。
 - 方案 B：`:90` 后补 else 分支立即排 `pendingRetry`。
 - 选 A 理由：retry 的排定权威只有一个（timer 超时回调），B 会造出第二条排定路径，未来改节奏时两处易漂移；A 的代价仅是该轮慢 ≤2s（对 7s 总窗无关痛痒）。长期方案。
 - 定位重申（R1 勘误后）：这是契约一致性防御（§2.2），不是活缺陷止血——但契约修复独立成立（头注承诺与实现不符），M1 保留。
@@ -267,14 +267,21 @@ Subagent "coder" (rec-8f3a) completed.
 - 本文档（replay.md）是重放的权威 SSOT。
 - **drift 守卫登记决策（R1 S-4）**：`check-doc-symbol-drift.mjs` 是显式登记制（未登记的文档不检查）——M5 必须把 replay.md 登记 `DOC_MODULE_MAP` 映射 `packages/pi-subagent-cli/src`（现存反引号符号如 `requestGetStateOnce` 登记后可通过）；线 B 三份文档的修订记录中已删符号（`locateSessionFileByScan`、`appendSubagentIdentityEntry` 等）要么去反引号，要么登记映射时确保不悬空。不登记则「守卫必须过」语义空转（恒真零覆盖）。
 
-**决策 9（R1 新增）：M3 = workflow 域 no-progress 守护补挂，复用 settled-watchdog 既有原语**
+**决策 9（R1 新增，R2 修订）：M3 = workflow 域 no-progress 守护补挂，复用 settled-watchdog 既有原语**
 
 - 缺口（§2.4 条目 5）：workflow 域 `executeAndAwait → runAndFinalize → engine.run` 路径零熔断，静默楔死 = run 永挂 + 无终态通知，且 carbon 事故正是该域——旧架构 8.8.0+ 有全形态 30min 兜底，新架构此域丢失属回归。
 - 方案对比：
-  - **采用：扩 arm 到 runAndFinalize**——`runAndFinalize` 内 pool acquire 之后、`engine.run` 派发之前 `armMidRoundNoProgress(record.id, ...)`；刷新源 = 既有事件流（`journal.onEvent` 是该路径全部协议事件的必经点，包装一层即刷新——与 chat 轮的 recordId 键 streamDelta/runId 键 ctx.onEvent 等效）；disarm = `finally`（`releaseRoundResources` 同段）+ `settleOneShotOutcome` 终态化。fire 动作复用 `onHotPathSettledWatchdogTimeout` 模式（`killRecordChildWithEscalation(record.id, ...)`——子进程镜像经 `onChildSpawned` 已注册于该路径 runCtx（:2453）+ 失败终态化 + `collectCoordinator.route` 通知），跳过 `terminateChatSession`（chat 专用）。长期方案：对齐旧架构全形态覆盖，复用既有原语零新机制。
+  - **采用：扩 arm 到 runAndFinalize**——**arm 点 = try 块内、`engine.run` 派发之前**（`resolveChatEnginePort`/`wireEventJournal` 等异常路径经 `finally` disarm，无泄漏窗口，R2 S-影响2）；disarm = `finally`（`releaseRoundResources` 同段）+ `settleOneShotOutcome` 终态化 + cancel 抢先路径既有 disarm（:2997）。
   - 被否：仅登记缺口不动——违反 G1（本设计的首要目标）且是已知回归，登记不修 = 留着「借尸还魂」的壳。
   - 被否：给 engine.run 加墙钟超时——违反规则 19（任务级正常路径禁止墙钟），且 30min 无进展检测（静默才判死）与 ADR-0047 语义一致，墙钟会把活跃长任务误杀。
+- **刷新源（R2 S-影响1）**：`journal.onEvent` 包装（event 帧全量）∪ `runCtx.stream` 的 `onDelta` 包装（若调用方传 stream——streamDelta 反向帧不经 journal，纯 delta 流 >30min 不刷新会被误杀）。对齐 chat 域两通道刷新面（streamDelta + 协议事件行）。
+- **fire 动作（R2 双审击穿后重写）**——`killRecordChildWithEscalation` 是纯镜像记账**不杀进程**（`CORE/execution/engine/host/spawned-children.ts:117-119`，头注明言「实际终止在引擎进程内……经协议 interact cancel / close 或 run 域 cancel 帧承载」）；chat 域 fire 的真终止承载 = `terminateChatSession`（interact cancel）。workflow 域等价承载 = **`record.controller.abort()`**：
+  1. `killRecordChildWithEscalation(record.id, ...)`（镜像置死，通知文案用）；
+  2. `tryTransition` CAS → 成功则失败终态化 + `collectCoordinator.route` 通知（通知先出，G1）；
+  3. **无论 CAS 成败 `record.controller.abort()`**——经 `executeAndAwait` 的 signal 接线（:1877）→ RemoteEngine `wireAbortSignal`（`remote-engine.ts:364-392`）：cancelRun 帧 → 引擎侧杀子进程 → run 应答；引擎无响应则 `CANCEL_SETTLE_GRACE_MS` 收敛窗 → `killAll` 杀引擎进程 → run 请求 reject 合成终态。**两条路径都保证 `engine.run` 收敛** → `runAndFinalize` finally 执行（pool 释放 + journal close + `agent()` 返回）——只记账不 abort 的旧稿会让楔死子进程永活、pool 槽泄漏、调用方永挂（carbon 病灶本体）。
+- **fire 回调契约（R2 S-影响3）**：显式继承 `onHotPathSettledWatchdogTimeout` 的先例契约（:1545-1550）——「同步段只做 kill + CAS + abort（不抛），异步收尾 fire-and-forget 且 catch 归 bestEffort」；错误逃出回调 = uncaughtException 崩宿主。
 - 超时哲学合规：30min 无进展检测 = 回收层有界兜底（产出即刷新，非墙钟），与 chat 域同一原语同一量级，规则 19 合规。
+- 误杀代价与重审条件（R2 S-影响4）：误杀面 = 刷新面未覆盖的活跃产出形态——刷新源全化（event ∪ delta）后协议流内全部产出形态均刷新，理论误杀面归零；重审条件 = 任一「fire 时 run 实际仍在产出」实例发生 → 扩刷新面或重评估。
 - 与 W 系列无冲突：fire 终态化 record 后 RoundSupervisor `evaluate` 见 status≠running 即 release（supervisor.ts:287-290），无双通知（ledger 完成通知与 supervisor steer 互斥分支）。
 
 ### 3.4 错误规格（新增/改动面）
@@ -290,7 +297,7 @@ Subagent "coder" (rec-8f3a) completed.
 | **M4 采纳命中** | warn 附审计证据（候选文件名 + mtime + prompt 头哈希） | 证据供误配事后定位与人工纠正 record.sessionFile |
 | kill 落在已退出子进程 | 幂等 no-op（K2 验证 killChain 既有守卫） | — |
 | M2 期间子进程自行退出 | endedCleanly 已置位，close 走 exit 0，补查自然落空 | — |
-| **workflow 域静默楔死**（M3 补挂后） | 30min 无进展 fire：kill 子进程镜像 + 失败终态化 + 失败通知 | 失败文案附「subagents action:'list' 查态 + 重派」指引（对齐 chat 域 fire 文案先例） |
+| **workflow 域静默楔死**（M3 补挂后） | fire：镜像 kill → CAS 失败终态化 + 失败通知 → **controller.abort()**（cancel 帧 / 收敛窗 killAll 阶梯，保证 engine.run 收敛 → finally 释放 pool + close journal） | 失败文案附「subagents action:'list' 查态 + 重派」指引（对齐 chat 域 fire 文案先例） |
 
 ---
 
@@ -306,7 +313,7 @@ Subagent "coder" (rec-8f3a) completed.
 | V2 | S2 契约（应答缺 sessionFile） | 协议脚本对端（conformance fake-engine 先例）：首答在 2s 超时后到达且 payload 不含 sessionFile——**纯契约构造**（真实 pi 应答恒带 sessionFile，§1.2；此形态生产未观测，验证的是引擎侧握手状态机对它的鲁棒性） | 日志显示 attempts 继续推进到 3；最终 collected 带 sessionId；close 后 sessionFile 经 LC-4 落位 | G2、M1 |
 | V3 | agent_end 补查（握手总失 + agent_end 恢复） | 协议脚本对端：spawn 期 get_state 三轮全部不应答（对端扣住应答——原事故的现实形态），正常跑完任务出 agent_end，agent_end 时刻对端恢复应答 | outcome.sessionFile 非空；主会话通知可 session_read 取回全文；总耗时较正常路径 +≤1s | G2、M2 |
 | V4 | M4 兜底（全程不应答） | 协议脚本对端：get_state 全程不应答（spawn 期 + agent_end 期），对端正常落盘 session 文件后跑完 | close 后 record.sessionFile 经 prompt 键扫描补上（单命中）；若构造多命中（同 prompt 双开）则放弃 + warn，run 仍正常终态、通知照发 | G2、M4 |
-| V5 | workflow 域守护（M3 补挂） | 两层：① 单测（fake timers）断言 arm → 静默推进 30min → fire 回调链（kill 子进程镜像 + tryTransition closed + collectCoordinator.route 投递）；② 真跑一次短超时全链（K6 核实 mid-round 窗可否经 env/测试 seam 缩短后构造楔死，收失败通知端到端） | ① fire 回调链各环节断言绿；② 失败通知真实到达主会话且 record 终态 closed | G1、M3 |
+| V5 | workflow 域守护（M3 补挂） | 两层：① 单测（fake timers）断言 arm → 静默推进 30min → fire 回调链（镜像 kill + tryTransition closed + collectCoordinator.route 投递 + controller.abort 触发）；② 真跑一次短超时全链（K6 核实 mid-round 窗可否经 env/测试 seam 缩短后构造楔死） | ① fire 回调链各环节断言绿；② 失败通知真实到达主会话、record 终态 closed、**调用方 promise 收敛（agent() 返回）、pool 槽释放、journal close**（只断言通知不断言收敛 = 验收盲区，R2 修订） | G1、M3 |
 | V5b | chat 域守护回归（守护不误伤） | 单测：chat 域 arm/fire 既有行为零变化（M3 不触碰 kickOffChatRound 链） | 既有 settled-watchdog / chat-round-first-round-watchdog 测试全绿 | G1 |
 | V6 | 常规回归 | 正常单路 one-shot + 一条 chat 域 subagent（含冷续一次） | 行为与现状零差异：通知、结果、sessionFile、resume 全部正常 | G2 |
 | V7 | 机器门 | `pnpm --filter @zhushanwen/pi-subagent-cli test` + core 全量 + tsc + pre-commit 全守卫 + `node scripts/check-doc-symbol-drift.mjs`（replay.md 已登记映射后真检查，见决策 8） | 全绿 | G3 |
@@ -324,7 +331,7 @@ V2-V5 的协议脚本对端 = 独立验证脚本进程（按 pi rpc 协议应答
 | **M0 合并基底** | 本 worktree `git merge dev-0.9.16` → 解冲突 → **整树重置代码面**（决策 7：`git checkout dev-0.9.16 -- packages/ && git checkout dev-0.9.16 -- eslint.config.mjs`，覆盖冲突面/自动合并陷阱/自动保留面三类）；文档冲突保两套（线 B 三份 + dev-0.9.16 全部） | 无新改动，纯合并 + 重置 + 归位 | 合并后全量测试三连绿才动手——基底不绿后续无从归因 | — |
 | **M1 S2 契约修复** | 决策 1：clearTimeout 移入命中分支；改写锁行为专测为契约断言 | `packages/pi-subagent-cli/src/get-state-handshake.ts:82-91`；`__tests__/get-state-handshake.test.ts:163-192` | 独立可验收（V2 + 单测）；最小 diff 先行，与 M2-M4 解耦 | M0 |
 | **M2 agent_end 惰性回补** | 决策 2：onAgentEnd 非 chatMode 分支 async 编排 + requestGetStateOnce 接线 + **回补 try / kill finally 必达** + killChild 幂等核验（K2） | `packages/pi-subagent-cli/src/spawn-runner.ts:274-276`（+ 新增惰性回补小函数）；测试：agent-end 补查用例（fake timers + fake child）+ 回补链抛错 kill 仍达用例 | V3；消费死导出即「欠账清偿」，接口已备 | M0（不依赖 M1，可并行） |
-| **M3 workflow 域守护补挂** | 决策 9：runAndFinalize 内 arm mid-round no-progress（刷新 = journal.onEvent 包装，disarm = finally/settleOneShotOutcome，fire = killRecordChildWithEscalation + 失败终态化 + collectCoordinator.route） | `packages/subagent-core/src/execution/subagent-service.ts`（runAndFinalize :2419 起）；测试：workflow 域楔死 fire 链（fake timers）+ chat 域守护回归零变化（V5b） | V5/V5b；R1 审查发现的 G1 缺口闭环，复用既有原语 | M0（不依赖 M1/M2，可并行） |
+| **M3 workflow 域守护补挂** | 决策 9：runAndFinalize 的 try 块内 arm mid-round no-progress（刷新 = journal.onEvent 包装 ∪ stream.onDelta 包装；disarm = finally/settleOneShotOutcome/cancel 抢先；fire = 镜像 kill + CAS 失败终态化 + 通知 + controller.abort 真终止；同步段不抛契约） | `packages/subagent-core/src/execution/subagent-service.ts`（runAndFinalize :2419 起）；测试：workflow 域楔死 fire 链（fake timers，含 promise 收敛/pool 释放断言）+ chat 域守护回归零变化（V5b） | V5/V5b；R1 审查发现的 G1 缺口闭环，复用既有原语 | M0（不依赖 M1/M2，可并行） |
 | **M4 close 兜底扫描** | 决策 4：prompt 头键扫描器（参考线 B locator 骨架重写）+ close finalizer 接线（LC-4 之后）+ **整体 catch / resolveExit 必达 / 审计 warn / 降级门** | `packages/pi-subagent-cli/src/session-file-locator.ts`（新）；`spawn-run-pump.ts:201-216`（close finalizer 插入点）；`index.ts` barrel 按域插入；测试：单命中/零命中/多命中/坏行容错/fs 异常降级 | V4；rare² 场景 + 取证价值，允许依 K3 降级 | M0 |
 | **M5 文档与守卫** | 决策 8：线 B 三份文档头部修订记录 + troubleshooting §12 同步 + replay.md 登记 DOC_MODULE_MAP（drift 守卫真检查） | `docs/design/subagent-agent-end-recovery.md`、`.impl-plan.md`、`subagent-core-unbounded-wait-audit.md`、`docs/troubleshooting.md`、`scripts/check-doc-symbol-drift.mjs`（登记映射）；本文档回填验收 | V7 | M1-M4 |
 
