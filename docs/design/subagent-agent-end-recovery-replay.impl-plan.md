@@ -41,7 +41,9 @@
 | **M4 close 兜底扫描** | 设计决策 4：新建 prompt 头键扫描器（mtime ∈ [spawnStartedAtMs, close] 候选 + 前 ~64KB 头读 + `includes(promptHead ~200字符)` + 单命中才采纳/零多命中放弃 + 采纳 warn 附审计证据 + 降级门 >64 候选或 >100ms）；close finalizer 接线（`spawn-run-pump.ts:201-216` LC-4 之后、resolveExit 之前）；整体 try-catch / resolveExit 必达；K3① prompt 逐字落盘验证 | `packages/pi-subagent-cli/src/session-file-locator.ts`（新）；`packages/pi-subagent-cli/src/spawn-run-pump.ts`（close finalizer 插入）；`packages/pi-subagent-cli/src/index.ts`（barrel）；新增测试（单命中/零命中/多命中/坏行容错/fs 异常降级） | M0 | plain | V4（全程不应答 → 扫描补上单命中；多命中构造 → 放弃+warn+run 正常终态）；fs 异常用例证明 resolveExit 必达 |
 | **M5 文档与守卫** | 设计决策 8：线 B 三份文档头部修订记录（D1-D4 判定结论 + 新落点 M1-M4 + 旧实现文件已随 engines/pi 删除）；troubleshooting §12 同步；replay.md 登记 `DOC_MODULE_MAP` → `packages/pi-subagent-cli/src` 映射（drift 守卫真检查）；replay.md §4 回填验收结果 | `docs/design/subagent-agent-end-recovery.md`；`docs/design/subagent-agent-end-recovery.impl-plan.md`；`docs/design/subagent-core-unbounded-wait-audit.md`；`docs/troubleshooting.md`；`scripts/check-doc-symbol-drift.mjs`；`docs/design/subagent-agent-end-recovery-replay.md` | M1-M4 全 committed | plain | V7 机器门全绿 + drift 守卫对 replay.md 真检查非恒真 |
 
-**领地互斥说明**：M1 与 M2 串行因同包同文件（get-state-handshake.ts 的 K1 接线面）；M1∥M3∥M4 无文件交集（pi-subagent-cli 两文件 / subagent-core 一文件）；M4 的 spawn-run-pump.ts 与 M2 的 spawn-runner.ts 是不同文件（pump≠runner），barrel index.ts 仅 M4 触碰（M2 新增函数不进 barrel，lazy 回补是 spawn-runner 内部编排）。
+| **M6 mid-round 窗测试注入口**（阶段 3 审查后追加） | 补完决策 9 的验收：给 `settled-watchdog` 的 mid-round 阈值加**仅测试可达**的注入口（模块级覆盖钩子，先例 `_resetSettledWatchdogsForTest`）——**不做 env**（设计明文「中段阈值 v1 不开 env」，每个 knob 都是误配置通道；用户调短会误杀正常长任务），生产路径恒 30min。目的：让 V5② 用**秒级窗真跑全链**，把 M3 被拆成两段的 fire 链（V5① 计时→abort、V5c abort→killAll）焊成一条测试 | `packages/subagent-core/src/execution/settled-watchdog.ts`；`packages/subagent-core/src/execution/subprocess-agent-runner.ts`（仅在透传需要时）；新增测试 `packages/subagent-core/src/execution/__tests__/` | M3（**与 M3 修复条目同领地，必须串行同批**） | plain | V5② 真跑全链（秒级窗）：同一条测试内闭环「窗口到点 → fire → abort → 合流 → 取消帧 → 3s 宽限 → killAll」，且断言验的是**同一 AbortController 实例**；默认值 = 30min 有断言守护；注入后必须复位（防污染其他用例）；chat 域回归 V5b + subagent-core 全包绿 |
+
+**领地互斥说明**：M1 与 M2 串行因同包同文件（get-state-handshake.ts 的 K1 接线面）；M1∥M3∥M4 无文件交集（pi-subagent-cli 两文件 / subagent-core 一文件）；M4 的 spawn-run-pump.ts 与 M2 的 spawn-runner.ts 是不同文件（pump≠runner），barrel index.ts 仅 M4 触碰（M2 新增函数不进 barrel，lazy 回补是 spawn-runner 内部编排）。M6 与 M3 同领地（`settled-watchdog.ts` / `subprocess-agent-runner.ts`）→ 阶段 4 必须合并为一组串行修，不得并行派发。
 
 ## 3 DAG 图
 
@@ -91,6 +93,7 @@ node scripts/check-doc-symbol-drift.mjs         # M5 后
 
 | Unit | 偏差描述 | 判定与依据 | 登记时间 |
 |------|----------|-----------|----------|
+| M1 | `get-state-handshake.ts` 头注新增「与旧 core `engines/pi/get-state-handshake.ts` 副本分叉」的表述（S2 修复仅限本包，旧副本未同步） | M1 提交前的头注已声明确修仅限本文件；旧副本随 M0 的 `engines/pi` 整目录删除消亡，跨副本漂移面不存在。**此处补登**（§6 曾称「deviation 1 条已登记」但 §5 缺行——阶段 3 审查分区 A 的 doc_error D1 指出该不一致，本次补正） | 2026-09-10 |
 | M2 | `get-state-handshake.ts` **未改动**（K1 结论：接线不需要） | 既有握手调用点已用 `performGetStateHandshake(child, identity.addStateListener)` 同形态；`requestGetStateOnce` 形参 `AddGetStateResponseListener = (id, resolver) => void \| (() => void)` 与 `addStateListener(id, resolver): void` 直接可赋值——零接线即满足 K1「优先 identity 的 addStateListener」。已核验签名 | 2026-09-10 |
 | M2 | `orchestrateAgentEndBackfill` 入参含可注入 `backfill` 实现 | 验收条款明列「构造回补段抛错证明 kill 必达」，需在编排边界注入会抛错的实现；生产路径恒传 `backfillSessionFileAtAgentEnd`（单次 `requestGetStateOnce`），同步段置位与 try/finally 语义与设计决策 2 逐字一致 | 2026-09-10 |
 | M2 | `LAZY_GET_STATE_TIMEOUT_MS`（1000）落在 `spawn-runner.ts` 模块内且未导出 | `constants.ts` 在领地之外不可动；测试改为行为断言（假时钟推进 <1s 内收敛）而非引用常量。值域符合设计 §5.4 控制面单请求秒级 | 2026-09-10 |
@@ -120,7 +123,8 @@ node scripts/check-doc-symbol-drift.mjs         # M5 后
 | M2 agent_end 惰性回补 | committed | 1/2 | 042dccec6；diff ⊆ 领地（spawn-runner.ts + 新测试，`get-state-handshake.ts` 按 K1 结论零改动）；6 用例绿（V3 回补 ≤1s 实测 614ms / 回补 reject 与 sync-throw 两路 kill 必达 / K1 接线面 / K2 幂等 / 自退 race）+ 全包 310 passed（基线 304+6）+ tsc 干净；deviation 5 条已登记 |
 | M3 workflow 域守护补挂 | committed | 1/2 | bd4404ddf；diff ⊆ 领地（subprocess-agent-runner.ts + 2 新测试，禁区三文件未动）；8 用例绿（V5① 7 + V5c 1，V5c 真引擎 3.06s）+ 全包 2842 passed（基线 2834+8）+ tsc 干净；**K6 结论：mid-round 窗不可缩短 → V5② 降级 V1 兜底**；deviation 5 条已登记 |
 | M4 close 兜底扫描 | committed | 1/2 | f737baa7a；diff ⊆ 领地 + 授权的 1 行扩张（核验：spawn-runner.ts 恰 1 hunk/1 行、base hash = M2 提交版）；29 新用例绿（locator 17 + pump 8 + 生产路径 e2e 4，含接线前后反向探针）+ 全包 339 passed（基线 310+29）+ tsc 干净；K3① 已双源复核（探针 + 主 agent 读 pi dist）；**K3② 未执行**，归属改为阶段 5 V1 期（见 §7）；deviation 9 条已登记 |
-| M5 文档与守卫 | pending | 0/2 | — |
+| M5 文档与守卫 | committed | 1/2 | 4d9a6a703；6 文件（线 B 三文档 + troubleshooting §12 重写 + drift 守卫登记 + replay.md §4/§4.1 回填）；V7 主 agent 独立复现：守卫 exit 0（9 映射文档）+ 反向探针（插 `FAKE_NOT_EXIST_XYZ_SYMBOL` → 报 drift exit 1，还原后 md5 一致、复跑 exit 0）+ 旧特征串在现树 grep 零命中（`backfilled via late get_state` / `no-descendant fast path` / `15s recovery window` 等）；doc 交叉核验：CANCEL_SETTLE_GRACE_MS / MAX_ATTEMPTS 两个跨包符号确在登记的权威模块内 |
+| M6 mid-round 窗测试注入口 | pending | 0/2 | 阶段 3 审查后追加（用户裁定）：与 M3 同领地，随阶段 4 的 B 组串行修 |
 
 ## 7 残留风险与变更历史
 
@@ -130,15 +134,41 @@ node scripts/check-doc-symbol-drift.mjs         # M5 后
 - V1 真机验收需 dev app + 真实 workflow 派发环境（阶段 5 处理，可能需 `pnpm dev` + Playwright 连 9222）。
 - K3① 失败时 M4 降级路径已在设计决策 4 预置，不阻塞 M1-M3/M5。
 - **M3 的 K6 结论改变了验收姿势**：workflow 域 mid-round 窗不可缩短（原语内纯常量、无 env 通道），故 V5②（缩短窗口的真机验收）不可执行，按设计降级为 V1 端到端兜底——阶段 5 Gate B 不设 V5② 项，workflow 域守护的真实性由 V1（真实 workflow 派发）承接。
-- 对 M3「V5c 未真等 30min」的残余风险：fire 链被拆成两段验证（V5① 计时到点→abort；V5c abort→阶梯→killAll）。阶段 3 一致性审查须核对两段接口是否真的咬合（V5① 的 abort 对象 == V5c 的 abort 入口语义）。
+- 对 M3「V5c 未真等 30min」的残余风险：**已由阶段 3 分区 B 审查关闭**——审查独立证实 fire 链两段咬合（同一 `AbortController` 实例贯穿 watchdog → mergeRunSignals → `ctx.signal` → `wireAbortSignal`；`dispose` 吞掉待 fire 场景的反例构造失败）。M6 落地后 V5② 将把这条链再收进单条测试。
+- **U-A6（工具执行期刷新失明 → 长 bash 误杀）是本次审查最重要的发现**，也是决策 9 引入 workflow 域后暴露的真机风险形态：修复前，单次 bash 调用 >30min（pi 内置 bash 无默认超时）会被判无进展并取消、重试 3 轮后失败。设计 §3.3 决策 9 误杀面与本文档修复待办均已登记，修复并入阶段 4 的 A 组；**该修复完成前不得进入阶段 5 Gate B**（否则 V1/V6 真机验收会把误杀形态带进结论）。
 - **K3②（真实 workflow 并发形态下 prompt 头部键区分度实测）归属已裁定到阶段 5 Gate B 的 V1 期**：该检查点需要真实 workflow 派发环境（dev app），单测面无法构造真实并发头部形态。若 V1 期实测发现同模板并发头部同质率高 → M4 兜底在该场景下只会「安全放弃」（不误配，但也无效），届时应按设计决策 4 的升级路径改键策略（全文哈希 / 参数段取样）并回写设计。
 - **已接受的测试输出噪音**：M2 的 `agent-end-backfill.test.ts` race① 用例 sessionDir 为空，M4 接线后 close 收尾会多打一行 `[sessionfile] unobtainable ... reason=no_candidates` warn。这是接线后的真实降级留痕（非失败），不改该用例（静音会掩盖真实行为面）。
 - 阶段 5 Gate B 需注意 V4 的场景构造：单命中/多命中判定依赖 mtime 窗口内候选数，真机验收时目录里同期并发 run 的 session 文件会天然构成多候选——多命中即安全放弃，验收判据应是「不误配 + run 正常终态」，而非「必须命中」。
+
+**阶段 3 一致性审查结论与修复待办（2026-09-10，两分区均回）**
+
+分区 A（pi-subagent-cli，M1/M2/M4）：3 reasonable + **5 unreasonable** + 4 doc_errors。
+分区 B（subagent-core，M3）：8 reasonable + **4 unreasonable** + 1 doc_error。**两分区均明确「实现与设计字面要求逐条相符，M3 无一条要求回退或重做」；fire 链两段咬合经分区 B 独立证实（同一 AbortController 实例贯穿 watchdog → mergeRunSignals → ctx.signal → wireAbortSignal，且 dispose 吞 fire 的反例构造失败）——§7 原列的「两段接口未咬合」残余风险就此关闭。**
+
+doc_errors（4+1 条）已由主 agent 本次修订（doc_errors 归主 agent，非编码）：D1 补 §5 M1 偏差行；D2 设计 §3.1 第 4 步 warn 改结构化模板（删「5 路全 miss」不成立断言）；D3 设计 §3.3 决策 4 补第二类失效面（prompt 不在候选文件前 64KB：fork-from 大源 / `--session` 续写追加）；D4 设计 §3.3 决策 2 ③ 补 chat 域的 M4 兜底；B-doc 设计 §3.3 决策 9 误杀面补 tool_execution_update 形态（见下）。
+
+修复待办（阶段 4 按领地分两组，组间并行、组内串行 ≤5 并发）：
+
+| 组 | 条目 | 来源 | 严重度 | 落点 |
+|----|------|------|--------|------|
+| **A（pi-subagent-cli）** | U-A1：M1「至多 3 次必 settle」头注契约强于代码（`sendGetStateCommand` 抛错 → promise reject；重试路径抛错 → 定时器回调内 uncaught） | A-U1 | low | `get-state-handshake.ts`（tryOnce 包 try/catch 按「本轮未应答」处理） |
+| | U-A2：V2 未执行 + 「缺 sessionFile → 3 轮耗尽 → close 靠 LC-4 补文件」这条 M1 新打通的组合零覆盖 | A-U2 | medium | 新增 e2e（`__tests__/`） |
+| | U-A3：M2「≤1s」断言失焦——验的是「应答先到」路径，1s 改 100s 照样绿，超时路径上界未被测量 | A-U3 | medium | `agent-end-backfill.test.ts` 补「回补也不应答」用例 |
+| | U-A4：M4 时间门早退时 warn 的 `candidates=N` 是部分计数，与字段语义不符（误导诊断方向） | A-U4 | low | `session-file-locator.ts` |
+| | U-A5：close finalizer 的 `resolveExit` 必达只对 M4 自身成立——紧邻其前的 `reportChildExited`（宿主回调）无包裹，抛错即跳过 M4 与 resolveExit = run 永挂（真 G1 破口） | A-U5 | low（但属 G1 破口） | `spawn-run-pump.ts` → finalizer 体整段 try/finally |
+| | U-A6：**工具执行期刷新失明 → 单次 bash 调用 >30min 被判无进展取消（真机误杀）** | B-U1 | **中** | `spawn-event-translator.ts`（见下决策，两条硬约束） |
+| **B（subagent-core）** | U-B1：`hadOwnOnDelta===false`（生产形态：原型方法）还原分支零覆盖，偏差声称的「无残留覆写」缺证据 | B-U3 | low | 补类实例用例 |
+| | U-B2：`withNoProgressRecoveryNote` 不覆盖 catch 路径（构造性不可达，纵深防御） | B-U4 | low（理论） | `subprocess-agent-runner.ts` |
+| | U-B3：`XYZ_SUBAGENT_SETTLED_WATCHDOG_MS<=0` 现在会**静默关闭 workflow 域的 G1 熔断**（原语义只关 chat 域），耦合未登记且 warn 文案只提 chat 域 | B-U2 | 中低 | `settled-watchdog.ts`（warn 文案补 workflow 域失效提示 + 设计登记） |
+| | **M6**：mid-round 窗测试注入口 + V5② 秒级窗全链测试（§2 M6 行） | 用户裁定 + K6 | — | `settled-watchdog.ts` + 测试 |
+
+**U-A6 的核实与裁定（主 agent 独立复核）**：① pi 内置 bash 无默认超时（`dist/core/tools/bash.js` schema「optional, no default timeout」+ `resolveTimeoutMs(undefined) → undefined`）；② pi 确实发 `tool_execution_update`（`dist/core/agent-session.js:537-539`）；③ pi-subagent-cli 翻译层 switch 无该分支（`spawn-event-translator.ts` 的 `default: return`）——两路刷新同时失明。裁定 = **修**（工具持续产出即「有进展」，计入活性信号既消除误杀又不削弱「静默楔死仍被回收」），修复须在 pi-subagent-cli 内闭环（core 侧刷新面无需改动），硬约束两条：**不得污染聊天记录**（不得把工具输出当正文文本推流）、**不得让楔死工具永续命**。若最小修复无法同时满足两条 → 停下来登记为已知接受风险并回设计评审，不得硬凑。
 
 **变更历史**：
 
 - 2026-09-10：计划创建（对应设计就绪版 41d475737），待用户评审 + 基线 commit。
 - 2026-09-10：用户评审确认；基线 commit e12ea80bd。M0 执行完毕：merge 430dacabc（冲突面与 K5 预演完全吻合）+ 残留清理 e192dfe4a（checkout 整树重置碰不到的 3 个线 B 独有测试文件——教训：`git checkout <tree> -- packages/` 只覆盖 dev 树存在文件，不删 merge 自动合入的线 B 独有文件）；全量三连绿。批次 1（M1/M3/M4）派发。
+- 2026-09-10：**M5 核验通过并 commit（4d9a6a703）→ M0-M5 全 committed；阶段 3 一致性审查两分区均回，进入阶段 4**。阶段 3 结论：分区 A 5 unreasonable + 4 doc_errors + 3 reasonable；分区 B 4 unreasonable + 1 doc_error + 8 reasonable，两分区均确认实现与设计字面要求逐条相符、无回退重做项。doc_errors 5 条由主 agent 同批修订（D1 补 M1 偏差行 / D2 warn 模板 / D3 决策 4 第二类失效面 / D4 决策 2 ③ 补 M4 / B-doc 决策 9 误杀面补 tool_execution_update 形态）。unreasonable 9 条 + 用户裁定的 M6 按领地分为 A（pi-subagent-cli 6 条）与 B（subagent-core 4 条，含 M6）两组派修。**本批最重要的发现 = U-A6**：pi 内置 bash 无默认超时且其流式输出事件 `tool_execution_update` 被引擎翻译层丢弃 → 刷新两路失明 → 单次 bash >30min 被误杀；主 agent 已独立复核三项证据并裁定「修」。M5 的 V7 守卫结论由主 agent 独立复现（含反向探针与还原后 md5 校验）。
 - 2026-09-10：**M4 核验通过并 commit（f737baa7a）→ M1-M4 全部 committed，DAG 解锁 M5**。硬核验方式：`git diff` 确认 `spawn-runner.ts` 恰 1 hunk/1 行且 base hash = M2 提交版（ed2ebaa10，M2 逻辑零触碰）、领地外零改动、探针与备份文件零残留；主 agent 重跑全包 339 passed + tsc 干净；K3① 结论由主 agent 独立读 pi dist（`session-manager.js:701/732/753` 逐行 JSON.stringify）复核成立。M4 期间发生一次越界阻塞（prompt 只在 runSpawnOnce 作用域，pump 拿不到）——主 agent 裁定为计划期领地划分漏项并授权 1 行扩张，非 dev 违规。K3② 归属裁定到阶段 5 V1 期。
 - 2026-09-10：**M2 与 M3 核验通过并 commit**（M2 = `042dccec6`，M3 = `bd4404ddf`；M4 仍在途）。硬核验方式：`git diff --name-only` 确认 M3 只动 1 个源文件（禁区三文件零触碰）、M2 只动 spawn-runner.ts；主 agent 重跑双方核心测试（M2 6/6 绿、M3 8/8 绿、subagent-core 全包 2842 passed）。两单元共 10 条 deviation 已登记 §5，其中两条是有实质影响的结论：M3 的 mergeRunSignals 单实现改造（含修掉原合流函数的 listener 回收时序盲区）、M3 的 K6 mid-round 窗不可缩短 → V5② 降级 V1。
 - 2026-09-10：**额度中断后立即重派（不做等待）**。M1 committed（9578af7f4）后批次 2（M2）与批次 1 残余（M3/M4）三个 dev agent 先后返回 `[1308] 已达到 5 小时的使用上限`（provider 声明 18:39:42 重置），全部零产出。停工核验：`git status --short` 仅 1 项未跟踪产物 `packages/pi-subagent-cli/src/session-file-locator.ts`（M4 agent 死前写出的扫描器本体，175 行，无测试无接线，未经核验），`git diff --stat` 为空（M2/M3 零残留）——故 M2/M3/M4 按 pending 重算（无 committed 证据）。用户指示不用定时等待、直接继续：随即以 `u-dev` 后台重派三单元（轮次 1/2），M4 task 内附遗留半成品路径与「先核验再续作、不符则改写并说明」指令。中断期间的前一笔记录（cron 挂起方案）已按用户指示撤销。

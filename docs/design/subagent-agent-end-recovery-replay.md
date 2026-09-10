@@ -185,7 +185,7 @@ Subagent "coder" (rec-8f3a) completed.
 1. 若迟到 response 在 run 存续期到达 → 同步回填（现状已有），后续与成功路径一致。
 2. 若直到 agent_end 仍缺 → agent_end 时刻补一次 get_state（子进程刚完成 turn、空闲、负载已过，成功率远高于 spawn 时刻）→ 命中则 outcome 携带 sessionFile，通知质量与成功路径一致。
 3. 若子进程对补查也不应答（stdin 断/楔死）→ close 时后缀反查 + prompt 键扫描 → 命中则 record 补上 sessionFile。
-4. 全部 miss → 按现状语义收尾：run 正常终态、通知照发（结果正文来自 stdout 累积），`session_read` 指针行仍生成但 session-reader 侧降级（返回明确的「session file not found」而不是悬挂），warn 日志留痕 `[sessionfile] unobtainable for <recordId> (all 5 acquisition paths missed); record finalized without transcript anchor`。
+4. 全部 miss → 按现状语义收尾：run 正常终态、通知照发（结果正文来自 stdout 累积），`session_read` 指针行仍生成但 session-reader 侧降级（返回明确的「session file not found」而不是悬挂），warn 日志留痕。**文案规格 = 结构化模板 + 必含字段清单，不逐字规定整句**（M5 修正：close 单点无法断言「5 路全 miss」——chat 域不经 M2 补查、LC-4 可能已命中）：前缀 `[sessionfile] unobtainable for <recordId>` + 尾句 `record finalized without transcript anchor`，中间必含 `reason`（枚举）/ `candidates` / `promptHeadHash` / 可选 `error`，并附 Recovery 指引（session-reader 按 mtime 窗口人工归档 / 重派任务）。
 
 **失败路径（pi 子进程楔死静默）**：chat 域与 subagents 工具 background 现状已有 30min 无进展 watchdog（kill + 失败通知）；workflow 域现状**无熔断**（§2.4 条目 5 缺口），M3 补挂后同样获得 30min 兜底——fire 文案附恢复指引（查态 + 重派）。
 
@@ -217,7 +217,7 @@ Subagent "coder" (rec-8f3a) completed.
 - 落点：`buildTranslatorOpts` 非 chatMode 的 `onAgentEnd` 分支（`CLI/spawn-runner.ts:274-276`）改为 async 编排：同步段先置 `runEnd.endedCleanly = true`（保住「end 与收尾之间被杀」的 exit 0 口径），随后 `void (async () => { try { 回补 } finally { killChild(); } })()`——kill 延后 ≤1s（`LAZY_GET_STATE_TIMEOUT_MS` 量级，控制面单请求秒级，合规规则 19），对已完成 turn 的子进程无副作用。
 - **kill 必达约束（R1 MF-2）**：`requestGetStateOnce` 自身「永不 reject」，但回补结果处理链不在该契约内——补查命中 → `applyGetStateFields` → `callbacks.onHandleReady` → server 层组帧发送，任一抛点都会让 kill 丢失 → run 永挂（正常完成路径退化为依赖兜底 = 规则 20 红线）。因此回补段必须整体 try 包裹、kill 放 finally（回补异常按 miss 处理 + warn，不得阻断 kill）。
 - 回补结果走 identity tracker 既有 `applyGetStateFields` + handleReady 通路（与迟到 response 同一条回填面，幂等语义免费继承）。
-- 竞态清单（重演过）：① 查询期间子进程自行退出 → close finalizer 照跑（`endedCleanly` 已置位，exit 0），监听表被 `clearStateListeners` 清空 → `requestGetStateOnce` 超时 resolve 空对象 → `killChild` 落在已死进程上必须幂等 no-op（实现检查点 K2）；② 查询应答与 kill 竞速 → 应答先到则回填生效，kill 先到则 close 清监听、resolve 空对象，无害；③ chat 域不经此分支（chatMode 在 `onAgentEnd` 另一分支，不 kill，靠存活期迟到回填 + LC-4）。
+- 竞态清单（重演过）：① 查询期间子进程自行退出 → close finalizer 照跑（`endedCleanly` 已置位，exit 0），监听表被 `clearStateListeners` 清空 → `requestGetStateOnce` 超时 resolve 空对象 → `killChild` 落在已死进程上必须幂等 no-op（实现检查点 K2）；② 查询应答与 kill 竞速 → 应答先到则回填生效，kill 先到则 close 清监听、resolve 空对象，无害；③ chat 域不经此分支（chatMode 在 `onAgentEnd` 另一分支，不 kill），靠存活期迟到回填 + LC-4 + **close 时 M4 prompt 键扫描**（M5 修正：close finalizer 对 chat 与 one-shot 是同一条链，M4 无 chatMode 分支，实测已覆盖 chat 形态）。
 - 被否方案：15s/3 轮窗口整体重放——窗口守护的「处置决策」已不存在，重放 = 为不需要决策的场景造决策，违反减法原则。
 
 **决策 3：D3/D3a 不迁回 keep-alive（尊重 W7 显式裁决）**
@@ -229,7 +229,9 @@ Subagent "coder" (rec-8f3a) completed.
 
 - 键设计：close finalizer 内（LC-4 之后、`resolveExit` 之前），若 sessionFile 仍缺 → 扫 sessionDir 内 mtime ∈ [spawnStartedAtMs, close] 的 `.jsonl` 候选 → 逐候选前向读头部（首 ~64KB）→ `includes(promptHead)`（任务 prompt 前 ~200 字符）→ **单命中才采纳，零命中/多命中一律放弃 + warn**。采纳时的 warn 必须附审计证据（候选文件名 + mtime + prompt 头哈希），使误配事后可定位（恢复路径：人工按证据纠正 record.sessionFile）。
 - 选 prompt 键理由：引擎侧天然持有（run params 的 task prompt），零协议改动、零 extension 依赖。
-- **失效面声明（R1 S-主审1）**：「同模板批量并发」场景（同一 workflow 派 6 路 = carbon 事故旗舰形态）prompt 头部大概率相同（模板前缀共享、任务参数在后）→ 全部同模板候选命中 → 多命中 → 放弃 = **M4 在最需要它的旗舰场景结构性无效（但安全）**。缓解：K3 实测真实 workflow 并发形态的 prompt 头部区分度；若头部同质率高，键策略升级为「prompt 全文哈希」或「参数段取样」（全文含任务参数必然互异，代价是头读窗口可能不够，需增大读取或按行流式匹配）。头部键在 K3 结论出来前是默认值，不是终局。
+- **失效面声明（R1 S-主审1；M5 按一致性审查补第二类）**：共两类结构性失效，均为**安全但无效**（不误配，只是补不上）：
+  - ① 「同模板批量并发」场景（同一 workflow 派 6 路 = carbon 事故旗舰形态）prompt 头部大概率相同（模板前缀共享、任务参数在后）→ 全部同模板候选命中 → 多命中 → 放弃。缓解：K3② 实测真实 workflow 并发形态的 prompt 头部区分度；若头部同质率高，键策略升级为「prompt 全文哈希」或「参数段取样」（全文含任务参数必然互异，代价是头读窗口可能不够，需增大读取或按行流式匹配）。头部键在 K3② 结论出来前是默认值，不是终局。
+  - ② **prompt 不在候选文件前 64KB 内** → 键不可见 → 静默 `no_match`。两条真实路径必然命中此形态：`fork-from` 派生会话（pi `session-manager.js` forkFrom 先写 header 再逐条复制源会话全部非 header entry，本次 prompt 追加在全量历史之后——源会话 >64KB 即越界；入口 `CLI/pi-engine.ts` 的 `task.forkSource` → `--fork`）与 `--session` 续写追加（`CLI/spawn-runner.ts` 的 `resumeSessionFile`）。§3.1 第 3 步「close 时后缀反查 + prompt 键扫描」的覆盖面**不含**这两种形态。重审条件：若需覆盖，改按行流式匹配或全文哈希，代价是读窗口放大（并同步评估 §3.4 的 100ms 降级门）。
 - **误配代价四要素（R1 MF-3）**：
   - 量级：单命中误配需同时满足「自身文件 miss（prompt 非逐字落盘或文件不在窗口）∧ 窗口内恰有一个他文件含本 prompt 头」。同模板并发产生多命中（→ 安全放弃），异构 prompt 不含本头（→ 不命中）；危险格 = 自身 miss ∧ 恰一同头 sibling，概率由 K3 区分度实测门控，设计期不编数字。
   - 后果：错 sessionFile 进 chat 冷续 resume 锚点后引擎以 `--session` **append 续写**（`CORE/subagent-service.ts:1493-1499`；`CLI/spawn-args.ts:54` 明示禁双写约束）——若目标是另一活跃会话文件即两进程共写同一 jsonl 的**写污染**，不止取证读污染。
@@ -238,7 +240,7 @@ Subagent "coder" (rec-8f3a) completed.
 - **IO 量级与降级门（R1 S3 双审）**：候选数 = O(mtime 窗口内并发 run 数)（受 pool 并发上界约束，个位数量级）；readdir 成本 ∝ 同 cwd 历史文件总数（sessionDir 是 per-cwd 共享目录单调累积，无自动清理——重度使用数月 ≈ 数千条目 ≈ 数 ms，与既有 LC-4 同段同量级先例）。降级门：候选数 > 64 或单次扫描耗时 > 100ms → 跳过扫描 + warn。重审条件：sessionDir 文件数 > 1e4 时重评估扫描策略（如引入索引）。
 - **resolveExit 必达约束（R1 MF-2）**：扫描器整体 try-catch，任何 fs 异常降级为放弃 + warn，不得阻断 close finalizer 的 `resolveExit`（先例：`spawn-run-pump.ts:230-236` stderrTee.close 的 try-catch，注释明言「抛出会遮蔽真实退出码处理」）。
 - 线 B 的 `session-file-locator.ts` 骨架可参考（mtime 过滤 + 前向读 + 候选级容错），但匹配键与命中语义按本节重写，不做逐字 cherry-pick。
-- 诚实成本声明：M2 之后全 miss 概率是 rare²（握手总失 × agent_end 补查又失）。M4 的价值主要是取证完整性与「根本性」的收口，实现摩擦超预期（如 prompt 非逐字落盘）可降级放弃，见检查点 K3。
+- 诚实成本声明：M2 之后全 miss 概率是 rare²（握手总失 × agent_end 补查又失）。M4 的价值主要是取证完整性与「根本性」的收口，实现摩擦超预期时可降级放弃（见检查点 K3）。**K3① 实测结论（2026-09-10，M5 回填）：prompt 确为「非逐字落盘」（pi 0.84.4 逐行 `JSON.stringify`），但降级路径未采用**——匹配键改为「原文 + JSON 转义形态」双 includes：JSON 转义是单射且逐字符确定，匹配仍是逐字节精确子串，误配面与原文匹配同强度、安全底线（单命中才采纳）未放松，而单一原文键在本实现下恒 miss。故降级条件（「非逐字即不可靠」）经证据推翻，双键为终局。
 
 **决策 5：runtime rpc-client 合并取向 = dev-0.9.16 版为准**
 
@@ -286,7 +288,9 @@ Subagent "coder" (rec-8f3a) completed.
   - 重审条件：carbon 形态实测连带率高（如 >50% healthy run 被连杀）或出现 killAll 后重建失败实例 → 重评 per-run 隔离或 killAll 前逐 run cancel 广播。
 - **fire 回调契约**：继承 `onHotPathSettledWatchdogTimeout` 先例（:1545-1550）——同步段只做 controller.abort（AbortController.abort 幂等不抛）+ warn，异步收尾 fire-and-forget catch 归 bestEffort；错误逃出回调 = uncaughtException 崩宿主。
 - 超时哲学合规：30min 无进展检测 = 回收层有界兜底（产出即刷新，非墙钟），与 chat 域同一原语同一量级，规则 19 合规。
-- **误杀面（R3 S-影响，收窄断言）**：「刷新面全化后理论误杀面归零」**不成立**——`host/askUser` / `host/permission` 反向请求 ack 后不计时等待宿主答复（`reverse-router.ts:80-117` 头注明言 handler 永不 resolve 也不判故障），等待期间无 event/delta，刷新面覆盖不到 → 长于 30min 的合法用户等待会被 fire 终止。处置 = 登记形态（chat 域 mid-round 守护同款盲区，一致性先例）+ 重审条件（workflow 域 askUser 等待被误杀实例出现 → 反向请求到达计入刷新或 pending 期间挂起计时）；不加新机制（减法，chat 域同款已被 W 系列接受）。
+- **误杀面（R3 S-影响，收窄断言；M5 按一致性审查分区 B 补第二形态）**：「刷新面全化后理论误杀面归零」**不成立**——共两类形态，均为「合法任务被误判无进展 → fire 终止」：
+  - ① `host/askUser` / `host/permission` 反向请求 ack 后不计时等待宿主答复（`reverse-router.ts:80-117` 头注明言 handler 永不 resolve 也不判故障），等待期间无 event/delta，刷新面覆盖不到 → 长于 30min 的合法用户等待会被 fire 终止。处置 = 登记形态（chat 域 mid-round 守护同款盲区，一致性先例）+ 重审条件（workflow 域 askUser 等待被误杀实例出现 → 反向请求到达计入刷新或 pending 期间挂起计时）；不加新机制（减法，chat 域同款已被 W 系列接受）。
+  - ② **工具执行期只有 `tool_execution_update` 流**（pi 内置 bash **无默认超时**：`dist/core/tools/bash.js` schema 明写「optional, no default timeout」，`resolveTimeoutMs(undefined) → undefined`；pi 以 `dist/core/agent-session.js:537-539` 发 `tool_execution_update`），而引擎翻译层 `CLI/spawn-event-translator.ts:152-184` 的 switch 无该分支（`default: return`）——该事件既不产 AgentEvent 也不进 `onDelta`，**刷新两路同时失明** → 单次工具调用持续 >30min（长构建/长测试/长安装，期间有可见输出）会被判无进展并取消，重试 3 轮后失败。**处置 = 修（不是登记接受）**：工具持续产出即「有进展」，把该事件计为活性信号即可消除误杀，且不削弱「静默楔死仍被回收」的安全底线（静默工具调用仍会被回收）。修复须在 pi-subagent-cli 内闭环，受两条硬约束：不得污染聊天记录（不得把工具输出当正文文本推流）、不得让楔死工具永续命。chat 域同款盲区随同修复受益。
 - 与 W 系列无冲突：workflow 域无 record，不触 RoundSupervisor 纳管面；chat 域守护（kickOffChatRound 链）零改动（V5b 回归守护）。
 
 ### 3.4 错误规格（新增/改动面）
@@ -372,7 +376,7 @@ V2-V5 的协议脚本对端 = 独立验证脚本进程（按 pi rpc 协议应答
 
 - **K1**：`requestGetStateOnce` 的 `addResponseListener` 参数接线——用 identity tracker 的 `addStateListener`（自动过 `applyGetStateFields`）还是裸路由注册；倾向前者（回填面统一），实施时核对签名。
 - **K2**：`killChild`（→ killChain）对已退出子进程的幂等性——预期既有守卫（`child.exitCode !== null` 判活先例），实施时核实并补测试。
-- **K3（两项）**：① pi session 文件里 user prompt 是否逐字落盘（M4 匹配键前提）——V4 协议对端顺带验证；若非逐字（截断/转义），M4 降级为「只做 mtime 窗口 warn 留痕不自动采纳」，修订记录登记。② **真实 workflow 并发形态的 prompt 头部区分度实测**（同模板多路派发时前 200 字符是否相同）——头部同质率高则按决策 4 升级键策略（全文哈希/参数段取样）。
+- **K3（两项）**：① pi session 文件里 user prompt 是否逐字落盘（M4 匹配键前提）——**实测结论（2026-09-10）：非逐字**（逐行 `JSON.stringify` 落盘，引号/反斜杠/制表/换行皆转义形态），**未走原定降级路径**，改为「原文 + JSON 转义形态」双键（理由见决策 4 末条）；单一原文键恒 miss 的反证用例已锁在 `session-file-locator.test.ts`。② **真实 workflow 并发形态的 prompt 头部区分度实测**（同模板多路派发时前 200 字符是否相同）——**未执行，归属阶段 5 Gate B 的 V1 期**；头部同质率高则按决策 4 升级键策略（全文哈希/参数段取样），并同时评估决策 4 新增的第二类失效面（prompt 不在前 64KB）。
 - **K4**：两版 rpc-client diff 核验（决策 5 残余风险）。
 - **K5**：M0 合并实际面对照决策 7 的 merge-tree 预演清单（内容冲突 2 件 / 自动合并陷阱 2 件 / 自动保留面 5 件 / file-location 7 件 + modify/delete 3 件）；若出现预演清单外的 packages/ 冲突说明取向判断有误，停下重估。
 - **K6**：workflow 域 mid-round 守护窗（30min）可否经 env（`XYZ_SUBAGENT_SETTLED_WATCHDOG_MS` 族）或测试 seam 缩短以支撑 V5② 真跑——不可缩短则 V5② 降级为 V1 端到端兜底（楔死场景不真构造）。
