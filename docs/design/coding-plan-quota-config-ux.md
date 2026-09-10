@@ -101,6 +101,8 @@ Coding Plan 额度查询
 └─ 测试查询（仅启用后出现）
 ```
 
+> **本章锚点为基线快照**：§3 描述的是**改造前（基线 `4b42f85a2`）**的代码，其中 `useQuotaConfigure.ts` / `CodingPlanSection.vue` 已由本次改动重写，**下方 `file:line` 在当前 HEAD 上不可解析**（且部分符号已被 §7.1 列为移除项）。读本章请按「控件名 + 基线代码」理解，**不要用行号去 HEAD 复核、也不要据行号失准判定符号不存在**（行号权威性约定见附录 C 的行号锚定条目）。
+
 五个控件各自写盘，语义各不相同（取自 `useQuotaConfigure.ts`）：
 
 | 控件 | 本地校验 | 写给 runtime 的 payload | 额外副作用 |
@@ -884,7 +886,7 @@ configService.setQuotaStateCleaner((providerId) => quotaService.clearProviderSta
 | 新增 `providerCredentialPendingSave` | 消除「按钮灰但屏幕上明明填了 Key」的矛盾（见下） |
 | `configureErrorMsg` 保留 | 保存类错误的统一出口（走 i18n，D9） |
 | 四个按钮（`quota-save-apikey-btn` / `quota-save-cookie-btn` / `quota-save-workspace-btn` / `quota-test-btn`）**合四为一** | 合并为单个 `quota-save-test-btn` |
-| **oauth 凭证态行移除** | 随 `apiKeySet` 一并删除（OAuth 信息并入 `quotaSourceProviderOauthHint`）；本区块重写后失去全部消费方的基线 quota i18n key 一并删除——oauth 凭证态相关的 4 个（`quotaCredentialOauthReady` / `quotaCredentialOauthMissing` / `quotaCredentialOauthMissingHint` / `quotaApiKeyFallbackOrder`）加上四按钮合一/去掩码连带的其它 15 个，**共 19 个**（完整清单与复核证据见 impl-plan §7 变更历史阶段 4 条目） |
+| **oauth 凭证态行移除** | 随 `apiKeySet` 一并删除（OAuth 信息并入 `quotaSourceProviderOauthHint`）；本区块重写后失去全部消费方的基线 quota i18n key 一并删除，**共 19 个**：oauth 凭证态相关的 4 个（`quotaCredentialOauthReady` / `quotaCredentialOauthMissing` / `quotaCredentialOauthMissingHint` / `quotaApiKeyFallbackOrder`）加上四按钮合一/去掩码连带的 15 个（`quotaAuthMethod` / `quotaCredentialOk` / `quotaCredentialMissing` / `quotaApiKeyHint` / `quotaApiKeyPlaceholder` / `quotaSaveApiKey` / `quotaTestQuery` / `quotaWorkspaceHint` / `quotaWorkspaceSetPlaceholder` / `quotaWorkspaceSave` / `quotaWorkspaceSaveFail` / `quotaCookieSet` / `quotaCookieNotSet` / `quotaSaveCookie` / `quotaEnableHint`）——计数 4+15=19，逐 key 的「基线有引用 / HEAD 零引用」复核证据见提交 `4114b1b27` 与 impl-plan §7 变更历史 |
 
 **「已配置 / 必填」徽标的取值规则（与 readiness 同源，不得独立复算）**：徽标表达的是「该字段此刻有效」，不是「磁盘上曾存过一份」——实现上**直接从 `readiness.missing` 派生**：`missing` 含该字段 key → 「必填」；否则 → 「已配置」。这是唯一真相来源的写法：凭证归属规则（`typeChanged`）只编码在 readiness 一处，徽标与字段级提示调同一个 `isMissing`，因此「徽标说已配置、提示说必填」在结构上不可达。
 
@@ -920,7 +922,7 @@ providerCredentialPendingSave = form.apiKey !== '' && form.apiKey !== API_KEY_CL
 | shared | `packages/shared/src/quota-types.ts` | 加 `'no-credential'`（`:44`）、`QuotaCredentialSource`、`resolveQuotaCredentialSource` | U1 |
 | shared | `packages/shared/src/provider.ts` | `quota` 加 `credentialSource`（`:189-212`） | U1 |
 | shared | `packages/shared/src/index.ts` | 导出新符号（`:119-123`） | U1 |
-| shared | `packages/shared/src/protocol.ts` | **`'quota.configure'` payload 改用 `QuotaConfigurePayload`（含 `credentialSource?`；`:585`）** —— 漏 `credentialSource` 键则 renderer 传该键触发 excess property **编译错**（`command()` 的 payload 受 `ClientMessageMap[K]` 约束，`core/src/transport/api/request.ts:42-45`） | U1 |
+| shared | `packages/shared/src/protocol.ts` | **`'quota.configure'` payload 改用 `QuotaConfigurePayload`（含 `credentialSource?`；`:588`）** —— **必须继续引用该 SSOT 类型、禁止内联字面量**：真正的守门是 `useQuotaConfigure.saveAndTest` 里那个**带类型标注的对象字面量**（`payload: QuotaConfigurePayload`，renderer `vue-tsc` 报 excess/missing property）；`command()` 的调用点传的是类型化变量、TS 不做 excess property 检查（`ClientMessageMap[K]` 只保证键名合法），`core/src/transport/api/request.ts:42-45`） | U1 |
 | core | `packages/core/src/transport/api/domains/quota.ts` | `configure()` 收敛为单一 payload 参数（`QuotaConfigurePayload`）并整对象透传（`:66-76`）—— **M2 落地**，与 renderer 调用点同批原子切换（先切一侧即编译错，见 §7.1「分期兼容」） | U4 |
 | core | `packages/core/src/transport/mock/index.ts` | `configure` 签名同步切 payload（`:1310-1312`）—— 同构是**项目约定而非编译强制**（`packages/renderer/src/api/index.ts:54` 的门面三元的约束只在有人经门面调用 `configure` 时生效、当前无人经门面调它；`mock-domains.test.ts` 头注释「各域签名同构」正是该约定的测试形态）；mock 不参与 wire 链，漏改只影响 `VITE_MOCK=true` 分支 | U4 |
 | renderer | `packages/renderer/src/composables/features/model/useQuotaQuery.ts` | `QUOTA_FAIL_REASON_KEYS` 加 key（`:25-31`）——**枚举扩展必须与穷举映射同批，否则 `vue-tsc` 报错** | U1 |
@@ -942,13 +944,13 @@ providerCredentialPendingSave = form.apiKey !== '' && form.apiKey !== API_KEY_CL
 
 **新参数 `credentialSource` 的端到端链（实施时逐段核对）**
 
-D3 引入的新字段要穿过 8 段才真正生效。**payload 收敛（§7.1）之后守门分布变了**：第 3/6/7 段由类型系统报编译错；第 4 段（v3 里唯一「不报错、静默丢字段」的段）被整对象透传**结构性消除** —— 忘改 handler 时，旧 6 参调用对新 1 参签名直接参数数编译错。剩余不报错而失效的只有第 1 段（调用方没构造该键 —— 可选字段本不该报）。若真的发生，后果是 `providers.json` 永不写该字段、两端都退回 `apiKeySet` 推断、**§3.2 失败模式 D 原样复现**，且只有验收场景 S9 能发现：
+D3 引入的新字段要穿过 8 段才真正生效。**payload 收敛（§7.1）之后守门分布变了**：**第 3 / 6 段**由类型系统报编译错（第 3 段的门在上游的 `saveAndTest` 字面量，见该行说明）；**第 7 段是条件性守门**（共享 `fetcher` 公共属性使 weak type / excess property 都不触发，靠「整对象传入」的约定 + U2 测试断言）；第 4 段（v3 里唯一「不报错、静默丢字段」的段）被整对象透传**结构性消除** —— 忘改 handler 时，旧 6 参调用对新 1 参签名直接参数数编译错；**第 5 段无编译门**（签名即 shared 同一 payload 类型，不落盘只可能因 persist 漏写字段）。剩余不报错而失效的只有第 1 段（调用方没构造该键 —— 可选字段本不该报）。若真的发生，后果是 `providers.json` 永不写该字段、两端都退回 `apiKeySet` 推断、**§3.2 失败模式 D 原样复现**，且只有验收场景 S9 能发现：
 
 | # | 段 | 位置 | 漏改的后果 / 守门 |
 |---|---|---|---|
 | 1 | renderer 调用 | `useQuotaConfigure.ts` 的 `saveAndTest` | 未构造该键 → 字段全程缺失（不报错，靠 S9 兜底） |
 | 2 | core domain api | `core/src/transport/api/domains/quota.ts:66-76` | 整对象透传，透传层无从丢失（丢键 = 第 1 段的责任） |
-| 3 | **protocol payload** | `shared/src/protocol.ts:585` | **编译错**（excess property check） |
+| 3 | **protocol payload** | `shared/src/protocol.ts:588` | **编译错，但发生在上游**：门在 `useQuotaConfigure.saveAndTest` 的类型化字面量（renderer vue-tsc）；该行本身只负责「继续引用 SSOT 类型」，内联字面量会让门静默消失 |
 | 4 | **runtime handler** | `runtime/src/transport/quota-message-handler.ts:68`、`:75` | 整对象透传；忘改则**参数数编译错**（v3 的静默丢字段在此结构性消除） |
 | 5 | `QuotaService.configure` 签名与 `persistQuotaConfig` | `quota-service.ts:245-286`、`:381-422` | 签名 = shared 同一 payload 类型；不落盘只可能因 persist 漏写字段（改动 6 的继承链） |
 | 6 | `ProviderExtras.quota` 类型 | `provider-extras-store.ts:37-47` | **编译错**（excess property check） |
@@ -958,7 +960,7 @@ D3 引入的新字段要穿过 8 段才真正生效。**payload 收敛（§7.1�
 **分段验收（可执行形式，按阶段能力对齐）**：
 
 - **M1（段 5-7）**：M1 结束时 renderer 仍是旧实现、不传 `credentialSource`，「一次保存并测试后读 `providers.json`」在 M1 **跑不出来**（v3 写法按字面执行是假阴性）。改为：runtime 单测直接以带 `credentialSource` 的 `QuotaConfigurePayload` 调 `QuotaService.configure`，断言 `providers.json` 落盘该字段；同批断言「其余键缺省」的 `setEnabled` 式 payload **不覆盖**既存显式值（继承链，改动 6）。
-- **段 3（M0）**：类型落地即由 `vue-tsc` 编译错守门（excess property）。
+- **段 3（M0）**：类型落地后，`saveAndTest` 构造 payload 时由 `vue-tsc` 报 excess/missing property（**门在 renderer 的类型化字面量，不在 protocol.ts 行本身**——该行只须保持引用 SSOT 类型）。
 - **段 4（U2）**：接线时若保留旧 6 参解构 → 参数数编译错，守门前置；整对象透传的写法本身进 U2 审查面。
 - **段 1-2 与整链（M2）**：S9 在真实 UI 上闭环（读 `providers.json` 比对 + 把专属 Key 改错验证 runtime 确实没用它）。
 
@@ -977,14 +979,14 @@ D3 引入的新字段要穿过 8 段才真正生效。**payload 收敛（§7.1�
 | `packages/runtime/test/services/quota-service.test.ts` | 新增（no-credential / cookie 空串清除 / **按 source 解析凭证** / lastFailure 清理 / 删除顺序 / **`credentialSource` 走继承链**——`setEnabled` 式「其余键缺省」payload 不覆盖既存显式值 / **在途 fetch 守卫**——fetch 在途 → configure 换类型 → fetch 落地，断言旧行不回写、`lastFetchTime` 未写**且新类型首个 fetch 不被 throttle 压制**、RPC 返回当前 `getCached` 真相；另断言**失败路径的节流不断**——`fetchFailed` 后 10s 内第二次 hover 不再发真实请求 —— 既有 throttle 测试只断言成功路径，失败失节流无门可拦） |
 | `packages/runtime/test/services/quota-cache.test.ts` | 新增（`removeEntry` 三条语义：`writeChain` 串行化 / `memoryCache` 同步删 / 幂等） |
 | `packages/runtime/src/services/__tests__/provider-config-helper.test.ts` | 新增删除链排序三用例：① `cleanProviderExtras` 失败 → 删除主流程仍成功 + secrets 保留；② extras 删成功 + cleaner 失败 → warn-only 惰性孤儿；③ 三落点各一条 —— 排序与 boolean 短路逻辑在 helper 层，`quota-service.test.ts` 的「删除顺序」覆盖不到这里，短路写错（如 `if (!ok) throw` 阻断删除主流程、条件写反）在此拦截 |
-| `packages/core/src/transport/mock/__tests__/mock-domains.test.ts` | 更新（M2 批次：`:452` 的位置参数断言改 `quota.configure({ providerId: 'p', enabled: true })`）—— 该文件**在 `packages/core` 的 tsc 门内**（`core/tsconfig.json` 的 `include: ["src"]` 覆盖 `src/**/__tests__`）；但注意 pre-commit 与 CI 的 typecheck job **不跑 `packages/core`**（只跑 renderer/frontend/runtime/shared/extensions），只有 Gate A 与 merge 阶段的 per-package typecheck 会跑 —— 故位置参数对新签名虽是参数数**编译错**，日常提交路径并不能靠它兜住；但单跑 vitest 时旧断言仍会**假绿**（新 mock 收到 `'p'` 当 payload、忽略参数、照返 `{ok:true}`）——两个信号都要，故必须显式列清单同步更新断言 |
+| `packages/core/src/transport/mock/__tests__/mock-domains.test.ts` | 更新（M2 批次：`:452` 的位置参数断言改 `quota.configure({ providerId: 'p', enabled: true })`）—— 该文件**在 `packages/core` 的 tsc 门内**（`core/tsconfig.json` 的 `include: ["src"]` 覆盖 `src/**/__tests__`）；但注意 pre-commit、CI 的 typecheck job 与 pr-pre-merge / merge 阶段**都不跑 `packages/core`**（分别只覆盖 renderer+extensions、frontend/runtime/shared/extensions、extensions/runtime/renderer），**只有 Gate A 的手动全量 typecheck 会跑** —— 故位置参数对新签名虽是参数数**编译错**，日常提交路径并不能靠它兜住；但单跑 vitest 时旧断言仍会**假绿**（新 mock 收到 `'p'` 当 payload、忽略参数、照返 `{ok:true}`）——两个信号都要，故必须显式列清单同步更新断言 |
 | `packages/runtime/src/services/quota-providers/__tests__/fetchers.test.ts` | 无改动（fetcher 层未动） |
 
 **实现期新增的测试基建与守卫（v9 补登记，非上表「改动性质」口径内）**：
 
 | 文件 | 性质 |
 |---|---|
-| `packages/renderer/src/__tests__/helpers/quota-state-stub.ts` | 新增：`makeQuotaStateStub(): QuotaConfigureState` 带类型标注的契约桩工厂（收敛 4 处 v1 注入桩；契约漂移从此对该文件是编译错） |
+| `packages/renderer/src/__tests__/helpers/quota-state-stub.ts` | 新增：`makeQuotaStateStub(): QuotaConfigureState` 带类型标注的契约桩工厂（生产侧 3 处 renderer 注入桩收敛到它 = `bb110e010` 的 3 个文件；ui 侧 `provider-edit-body.test.ts` 的 `makeQuotaState` 为就地更新、受包边界限制无法复用该 helper；**合计 4 处契约桩**，契约漂移对该工厂文件是编译错） |
 | `packages/renderer/src/__tests__/i18n/provider-edit-key-existence.test.ts` | 新增：providerEdit key 存在性守卫（源码引用扫描 + 本次新增 24 key 的显式清单双机制；补 `locale-sync` 只查双侧一致、不查引用存在的盲区） |
 | `packages/renderer/tsconfig.typecheck-test.json` | 纳入上面的桩工厂（**该脚本目前不被任何 gate 执行**，见 impl-plan 残留风险 8） |
 | `packages/renderer/src/__tests__/settings/settings-modal-smoke.test.ts`、`settings-modal-skill-dirs.test.ts`、`packages/renderer/src/components/settings/extension/__tests__/PluginContributionsPage.test.ts` | 存量微修：v1 契约注入桩收敛到上述工厂（原为「类型坏 + 潜伏 TypeError」，无编译门可拦） |
