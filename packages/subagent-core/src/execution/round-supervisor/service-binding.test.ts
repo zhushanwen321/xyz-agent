@@ -12,7 +12,9 @@
 //      - superseded：errorText 带替代 id、不发终止通知；
 //      - 磁盘态（boot 重认领后看门狗到期）：writeFinalized sidecar 落盘 +
 //        reportSubagentRecord 终态 entry（closed/gc/endedAt/error）、无 pi 通知；
-//      - 磁盘态无 sessionFile / reportSubagentRecord 抛错 / 双 miss 收尾竞争。
+//      - 磁盘态无 sessionFile / writeFinalized 抛错（sidecar catch）/ 双 miss 收尾
+//        竞争 / reportSubagentRecord 抛错（entry catch，须先经 boot 重认领武装
+//        看门狗——无候选则 giveUp 不执行，用例空转）。
 //   2. runPendingReconcileSweepForService 的 lookupRecordState 闭包 subagent 判据
 //      （workflow 判据回归钉在 workflow-state-root.test.ts，此处补 subagent 两方向：
 //      活跃 record 不被 sweep 注销 + 终态/missing 差集补发注销）。
@@ -31,6 +33,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { COLD_LOOKUP_SCAN_LIMIT } from "../cold-resurrect.ts";
+import * as finalizedMarker from "../finalized-marker.ts";
 import type { PiLike } from "../notify-host.ts";
 import type { RecordStore } from "../record-store.ts";
 import type { ExecutionRecord, SubagentRecord } from "../types.ts";
@@ -40,6 +43,15 @@ import {
   runPendingReconcileSweepForService,
   type RoundSupervisorBinding,
 } from "./service-binding.ts";
+
+// writeFinalized 实装自吞 IO 错（内部 try/catch，finalized-marker.ts），give-up
+// sidecar 的 catch（service-binding.ts:164）是防御分支——真实 ENOENT 无法驱动，
+// 仅本文件的 sidecar 抛错用例经模块替身注入抛错；默认委托真实实现，相邻用例行为
+// 不变（vi.spyOn 对跨模块具名导入绑定不可拦截，必须走 vi.mock）。
+vi.mock("../finalized-marker.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../finalized-marker.ts")>();
+  return { ...actual, writeFinalized: vi.fn(actual.writeFinalized) };
+});
 
 // ============================================================
 // 替身
@@ -372,18 +384,51 @@ describe("supervisorGiveUp 磁盘态（boot 重认领后看门狗到期）", () 
     expect(h.store.reported[0]?.status).toBe("closed");
   });
 
-  it("reportSubagentRecord 抛错 → best-effort 吞掉不向上抛", async () => {
-    const diskRecord = makeDiskRecord(undefined);
-    const h = makeBinding({ sessionFile });
-    h.store.disk.set(diskRecord.id, diskRecord);
+  it("reportSubagentRecord 抛错 → best-effort 吞掉不向上抛，sidecar 照常落盘", async () => {
+    // 候选入 collectResult → boot 重认领（readopted）武装看门狗——没有这一步
+    // listCandidateRecords 返回空、giveUp 永不执行、entry catch 不可达（MF-R2-2）。
+    const diskRecord = makeDiskRecord(sessionFile);
+    const h = makeDiskBinding(diskRecord);
     h.store.store.reportSubagentRecord = () => {
       throw new Error("entry write exploded");
     };
     const supervisor = createRoundSupervisorForService(h.binding);
 
-    supervisor.bootPartition();
+    const { readopted } = supervisor.bootPartition();
+    expect(readopted).toEqual([diskRecord.id]);
     // 裸 await：giveUp 编排若有逃逸异常会以 unhandled rejection 判红本用例
     await vi.advanceTimersByTimeAsync(ROUND_SUPERVISOR_WATCHDOG_DEFAULT_MS + 1);
+
+    // sidecar 与终态 entry 是两段独立 best-effort：entry 抛错不回滚已落 sidecar
+    expect(fs.readFileSync(`${sessionFile}.finalized`, "utf-8")).toBe("gc");
+    // 终态 entry 写入抛错被 give-up entry catch 吞掉 → reported 空
+    expect(h.store.reported).toHaveLength(0);
+  });
+
+  it("writeFinalized 抛错 → best-effort 吞掉，终态 entry 照常落盘", async () => {
+    const diskRecord = makeDiskRecord(path.join(tmpDir, "gone-dir", "s.jsonl"));
+    const h = makeDiskBinding(diskRecord);
+    const supervisor = createRoundSupervisorForService(h.binding);
+    // 模块替身注入抛错（见文件头 vi.mock 注释）；finally 恢复委托真实实现。
+    const actual = await vi.importActual<typeof import("../finalized-marker.ts")>(
+      "../finalized-marker.ts",
+    );
+    const writeSpy = vi.mocked(finalizedMarker.writeFinalized);
+    writeSpy.mockImplementation(() => {
+      throw new Error("sidecar write exploded");
+    });
+    try {
+      supervisor.bootPartition();
+      await vi.advanceTimersByTimeAsync(ROUND_SUPERVISOR_WATCHDOG_DEFAULT_MS + 1);
+    } finally {
+      writeSpy.mockImplementation(actual.writeFinalized);
+    }
+
+    // 替身确实被 giveUp 消费（否则异常被 writeFinalized 实装自吞，用例假绿）
+    expect(writeSpy).toHaveBeenCalled();
+    expect(fs.existsSync(`${diskRecord.sessionFile}.finalized`)).toBe(false);
+    expect(h.store.reported).toHaveLength(1);
+    expect(h.store.reported[0]).toMatchObject({ id: diskRecord.id, status: "closed", closedReason: "gc" });
   });
 
   it("giveUp 执行时 record 已被 archive（内存移除 + 磁盘无 light）→ 双 miss 直接 return，零副作用", async () => {
@@ -509,11 +554,18 @@ describe("runPendingReconcileSweepForService 的 subagent 判据（lookupRecordS
 
   it("getStore 抛错（store 未初始化形态）→ best-effort 吞掉不向上抛", () => {
     setup();
+    // 差集非空是前置：无 register entry 时 collectActiveRegisterEntries 返回空、
+    // 循环零次、lookupRecordState（内含 getStore）不可达，用例空转（MF-R2-2）。
+    writeRegister("bg-gone", "subagent");
     const h = makeBinding({ sessionFile });
+    let storeRequested = 0;
     h.binding.getStore = () => {
+      storeRequested += 1;
       throw new Error("store exploded");
     };
     expect(() => runPendingReconcileSweepForService(h.binding, false)).not.toThrow();
+    // 空转守卫：getStore 未被触达 = 判据链路没跑，异常根本没进 sweep 外层 catch
+    expect(storeRequested).toBeGreaterThanOrEqual(1);
   });
 });
 
