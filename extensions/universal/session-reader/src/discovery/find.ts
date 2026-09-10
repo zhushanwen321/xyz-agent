@@ -147,14 +147,28 @@ function parseHeader(line: string | undefined): SessionHeader | null {
 }
 
 /**
- * query 是否具备 uuid 片段特征（仅十六进制字符与连字符）。
+ * uuid 归一化键（design 2026-09-10 §6.7 子决策 1）：小写 + 去连字符。
+ * 修复 §3.3 的两个盲区——大写 uuid（String.includes 大小写敏感）与去连字符 uuid
+ *（与带连字符 id 不构成子串）原先都 0 命中，且被 looksLikeUuidFragment（/i 大小写
+ * 不敏感）误判为「像 uuid 片段」跳过关键词回退，彻底查不到。
+ */
+export function normalizeUuidKey(s: string): string {
+  return s.toLowerCase().replace(/-/g, '')
+}
+
+/**
+ * query 是否具备 uuid 片段特征（归一化后仅十六进制字符）。
  * 用于 uuid 片段零匹配时决定是否走名称关键词 fallback：纯十六进制 query（如 e6c96、019fe635）
  * 几乎不会出现在自然语言首消息里，深读首消息徒劳，跳过；含非十六进制字符的 query（如 plugin、
  * 重构）才走 fallback。边界词（如 abc，恰好全十六进制）会被判 uuid 特征不走 fallback——
  * 可接受（abc 作为首消息关键词罕见，且 uuid 片段匹配已先尝试）。
+ *
+ * u9 起用 norm(query) 判定（§6.7 子决策 1 / §11.5）：/i 已忽略大小写、去连字符不扩
+ * 字符类，与旧判定 `/^[0-9a-f-]+$/i` 等价（唯一差异：纯连字符 query 归一化为空串后
+ * 不再判 uuid 特征——精确子串层已先处理它，此处语义更准确）。
  */
 function looksLikeUuidFragment(query: string): boolean {
-  return /^[0-9a-f-]+$/i.test(query)
+  return /^[0-9a-f]+$/.test(normalizeUuidKey(query))
 }
 
 interface Candidate {
@@ -361,7 +375,7 @@ async function matchByKeywords(
   return keywordHits
 }
 
-/** 步骤 2 三路匹配：recent / uuid 片段（sessionId 或文件路径含 query）/ 名称关键词+U5 元数据。 */
+/** 步骤 2 三路匹配：recent / uuid 片段（两级：精确 + 归一化，§6.7 子决策 1）/ 名称关键词+U5 元数据。 */
 async function matchCandidates(
   candidates: Candidate[],
   query: string,
@@ -371,15 +385,30 @@ async function matchCandidates(
     // recent：不经片段匹配，全部候选按 mtime 倒序后截 limit
     return candidates.map((c) => ({ ...c }))
   }
-  // 先 uuid 片段匹配（sessionId 或文件路径含 query）——cheap，已有 header
-  const uuidHits = candidates.filter(
+  // 第一级 uuid 片段匹配（sessionId 或文件路径含 query）——cheap，已有 header。
+  // 命中排最前（归一化层在其后）。
+  const exactHits = candidates.filter(
     (c) => c.ref.sessionId.includes(query) || c.meta.path.includes(query),
   )
-  if (uuidHits.length > 0) {
-    return uuidHits.map((c) => ({ ...c }))
+  if (exactHits.length > 0) {
+    return exactHits.map((c) => ({ ...c }))
+  }
+  // 第二级归一化匹配：norm(sessionId).includes(norm(query))（小写 + 去连字符）。
+  // 只比 sessionId 不比 path——path 含时间戳等非 id 数字，norm 后误吸面大。
+  // 到达此层与第一级互斥（精确命中已返回），即归一化命中恒排在精确命中之后；
+  // keyword 命中只在归一化零命中时发生，层序自然成立。nq 为空串（纯连字符
+  // query）时跳过——includes('') 恒 true 会误吸全部候选。
+  const nq = normalizeUuidKey(query)
+  if (nq.length > 0) {
+    const normHits = candidates.filter((c) => normalizeUuidKey(c.ref.sessionId).includes(nq))
+    if (normHits.length > 0) {
+      // mtime 倒序由 sortByMtimeAndTruncate 统一处理
+      return normHits.map((c) => ({ ...c }))
+    }
   }
   if (looksLikeUuidFragment(query)) {
-    // query 像 uuid 片段但无匹配 → uuid 写错的可能性高，不对全部候选深读首消息
+    // query 像 uuid 片段但精确 + 归一化两级均无匹配 → uuid 写错的可能性高，
+    // 不对全部候选深读首消息
     return []
   }
   return matchByKeywords(candidates, query, agentDir)

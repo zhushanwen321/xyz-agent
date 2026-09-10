@@ -5,6 +5,7 @@ import { tmpdir, homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import {
   handleSessionRead,
+  levenshtein,
   renderExtractItems,
   DOCTOR_CACHE_TTL_MS,
   type SessionReadParams,
@@ -100,7 +101,7 @@ describe.skipIf(!HAS_REAL)('handleSessionRead', () => {
   // wave 的 subagent task 引用了它）会触发 name-keyword fallback 命中 → 零匹配断言失败。
   // w2 实现 handler source 透传后，用 source:'main' 收窄到 main 侧避开 subagent 干扰
   //（w1 test 注释原预言的修复路径），同时恢复默认 timeout（main 单侧扫描快）。
-  it('7. F1 find zero match returns empty matches + 👉 hint (no throw)', async () => {
+  it('7. F1 find zero match returns empty matches + fact-based self-check (no throw)', async () => {
     const r = await handleSessionRead(
       { action: 'find', query: 'zzz-nonexistent-session-9q8x2', source: 'main' },
       REAL,
@@ -108,7 +109,11 @@ describe.skipIf(!HAS_REAL)('handleSessionRead', () => {
     const d = r.details as { matches: unknown[]; truncated: boolean }
     expect(d.matches).toEqual([])
     expect(d.truncated).toBe(false)
-    expect(r.content[0].text).toContain('👉')
+    // u9 F1 重写（§5.2）：事实型自检 + 无归因断言 + 无「recent 看全量」误导
+    expect(r.content[0].text).toContain('无匹配 session')
+    expect(r.content[0].text).toContain('自检（发现层，只陈述事实）')
+    expect(r.content[0].text).not.toContain('真的没有')
+    expect(r.content[0].text).not.toContain('recent')
   })
 
   it('8. F4 detail turn out of range throws with 越界', async () => {
@@ -1834,5 +1839,187 @@ describe('doctor action（u8：环境判定 + 根表 + 告警 + 残留 glob + �
     expect(text).not.toContain('[default]')
     expect((r.details as DoctorDetails).roots).toEqual([])
     expect((r.details as DoctorDetails).leftovers).toEqual([])
+  })
+})
+
+// ============================================================
+// u9：F1 重写（§5.2 事实型自检 + 编辑距离 top-3 + 四条做法 + 禁止项）
+// + uuid 归一化两级匹配（§6.7 子决策 1 + §11.5 对比基线）
+// ============================================================
+
+describe('u9 F1 重写 + uuid 归一化（fixture，§5.2 / §6.7 / §11.5）', () => {
+  let tmp: string
+  const SLUG = '--demo-cwd--'
+  const ID1 = '019e6c96-aaaa-bbbb-cccc-000000000001'
+  const ID2 = '019e6c96-aaaa-bbbb-cccc-000000000002'
+
+  /**
+   * 写 session 文件（文件名 = `${id}.jsonl`，extractSessionIdFromFilename 可提取——
+   * F1 编辑距离候选的 id 来源）。subagent:true 写入 subagent 根。
+   */
+  async function writeSession(
+    id: string,
+    opts?: { subagent?: boolean; firstUserText?: string },
+  ): Promise<void> {
+    const dir = opts?.subagent
+      ? join(tmp, 'agent', 'subagents', SLUG, 'sessions')
+      : join(tmp, 'agent', 'sessions', SLUG)
+    await mkdir(dir, { recursive: true })
+    const lines = [JSON.stringify({ type: 'session', id, cwd: '/demo' })]
+    if (opts?.firstUserText !== undefined) {
+      lines.push(
+        JSON.stringify({
+          type: 'message',
+          id: `${id}-m1`,
+          message: { role: 'user', content: [{ type: 'text', text: opts.firstUserText }] },
+        }),
+      )
+    }
+    await writeFile(join(dir, `${id}.jsonl`), lines.join('\n') + '\n')
+  }
+
+  /** find action 便捷调用（agentDir = tmp/agent）。 */
+  function find(query: string, extra?: Partial<SessionReadParams>): Promise<ToolResultLike> {
+    return handleSessionRead({ action: 'find', query, ...extra }, join(tmp, 'agent'))
+  }
+
+  interface ToolResultLike {
+    content: Array<{ type: string; text: string }>
+    details: unknown
+  }
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'tool-handler-f1-'))
+  })
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('① 大写 uuid 片段命中（§3.3 盲区：String.includes 大小写敏感）', async () => {
+    await writeSession(ID1, { firstUserText: '无关内容' })
+    const r = await find('019E6C96-AAAA')
+    const d = r.details as { matches: Array<{ sessionId: string }> }
+    expect(d.matches).toHaveLength(1)
+    expect(d.matches[0].sessionId).toBe(ID1)
+  })
+
+  it('② 去连字符完整 uuid 命中（§3.3 盲区：与带连字符 id 不构成子串）', async () => {
+    await writeSession(ID1, { firstUserText: '无关内容' })
+    // 去连字符形态与 sessionId/path 均不构成精确子串，只能走归一化层
+    const r = await find('019e6c96aaaabbbbcccc000000000001')
+    const d = r.details as { matches: Array<{ sessionId: string }> }
+    expect(d.matches).toHaveLength(1)
+    expect(d.matches[0].sessionId).toBe(ID1)
+  })
+
+  it('③ F1 文案四要素 + 负向断言（无 recent 误导指引、无「真的没有」归因）', async () => {
+    await writeSession(ID1, { firstUserText: '无关内容' })
+    const r = await find('zzz-no-hit-9q8x')
+    const text = r.content[0].text
+
+    // 首行 + ①事实型自检行（根计数 / 候选集判定 / 归一化声明）
+    expect(text).toContain('无匹配 session："zzz-no-hit-9q8x"')
+    expect(text).toContain('自检（发现层，只陈述事实）')
+    expect(text).toContain('[default]')
+    expect(text).toContain('候选集非空（共 1 文件），根解析正常')
+    expect(text).toContain('查询已做 uuid 归一化匹配（小写 + 去连字符）后仍无命中')
+    // ②编辑距离候选段存在
+    expect(text).toContain('最接近的候选（编辑距离）')
+    // ③「正确做法」四条
+    expect(text).toContain('正确做法')
+    expect(text).toContain('改用标题/keyword')
+    expect(text).toContain('直接传绝对路径')
+    expect(text).toContain('更短前缀')
+    expect(text).toContain('action:"doctor"')
+    // ④最后一行封死 shell 绕行
+    expect(text).toContain('不要用 shell find/ls/rg 搜 session 目录，不要 cat/read 原始 .jsonl')
+    // 负向：无「recent 看全量」误导、无归因断言
+    expect(text).not.toContain('recent')
+    expect(text).not.toContain('真的没有')
+    // details 程序化契约保持（零匹配形态不变）
+    expect(r.details).toEqual({ matches: [], truncated: false })
+  })
+
+  it('④ 编辑距离 top-3：近似 id 入选（标注 source 与差异位），远 id 被挤出', async () => {
+    const near1 = '019aaabc-0000-7000-8000-00000000000a'
+    const near2 = '019aaabc-0000-7000-8000-00000000000b'
+    const near3 = '019aaabc-0000-7000-8000-00000000000c'
+    const far = 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+    await writeSession(near1)
+    await writeSession(near2)
+    await writeSession(near3, { subagent: true })
+    await writeSession(far)
+    // 手算锚点：query 与 near* 前 33 字符相同，第 34 位起 z→0/z→0/z→a，距离 3
+    expect(levenshtein('019aaabc-0000-7000-8000-000000000zzz', near1)).toBe(3)
+    expect(levenshtein('kitten', 'sitting')).toBe(3)
+
+    const r = await find('019aaabc-0000-7000-8000-000000000zzz')
+    const text = r.content[0].text
+    // top-3 恰为三个近似候选（far 距离约 36，第 4 名被上限挤掉）
+    expect(text).toContain(near1)
+    expect(text).toContain(near2)
+    expect(text).toContain(near3)
+    expect(text).not.toContain(far)
+    // 差异位标注（首个差异字符，1-based）
+    expect(text).toContain('差异在第 34 位：z → 0')
+    // source 标注：near3 在 subagent 根，标注透传
+    expect(text).toContain(`${near3}  subagent`)
+  })
+
+  it('⑤ §11.5 归一化对比基线：增量仅限大小写/连字符变体，非 uuid 乱串不被 norm 误吸', async () => {
+    const idHit = '019cafe0-1234-7000-8000-deadbeef0001'
+    await writeSession(idHit, { firstUserText: '福耀玻璃深度研究' })
+    await writeSession(ID2, { firstUserText: '完全不同的另一个会话' })
+
+    // 现状基线：精确小写片段命中 1
+    const base = await find('019cafe0')
+    expect((base.details as { matches: unknown[] }).matches).toHaveLength(1)
+    // 大写变体：增量 = 同一 id（大小写变体），无新对象
+    const upper = await find('019CAFE0')
+    expect((upper.details as { matches: Array<{ sessionId: string }> }).matches.map((m) => m.sessionId)).toEqual([idHit])
+    // 去连字符变体：增量 = 同一 id（连字符变体），无新对象
+    const noDash = await find('019cafe0123470008000deadbeef0001')
+    expect((noDash.details as { matches: Array<{ sessionId: string }> }).matches.map((m) => m.sessionId)).toEqual([idHit])
+    // 'deadbeef' 段是带连字符 id 的连续子串——现状精确匹配已命中，norm 后命中数不变（无增量）
+    const deadbeef = await find('deadbeef')
+    expect((deadbeef.details as { matches: Array<{ sessionId: string }> }).matches.map((m) => m.sessionId)).toEqual([idHit])
+    // keyword 路径不受 norm 影响（非 uuid 特征照常回退首消息）
+    const kw = await find('福耀玻璃')
+    expect((kw.details as { matches: Array<{ sessionId: string }> }).matches.map((m) => m.sessionId)).toEqual([idHit])
+    // 非 uuid 乱串：0 命中（norm 不把乱串吸进 uuid 匹配）
+    const junk = await find('zzznotexist9q')
+    expect((junk.details as { matches: unknown[] }).matches).toHaveLength(0)
+    // hex 乱串（uuid 特征但非任何 id 子串）：两级均 0 → 短路不回退（与现状一致，无召回回归）
+    const hexJunk = await find('0123456789abcdef')
+    expect((hexJunk.details as { matches: unknown[] }).matches).toHaveLength(0)
+  })
+
+  it('⑥ 自检行计数 = 本次实扫结果（不读 doctor 缓存）+ 去重根注记', async () => {
+    const agentDir = join(tmp, 'agent')
+    // PS-14 形态：doctor 首跑时 main 根空 → 缓存 fileCount=0
+    await mkdir(join(agentDir, 'sessions'), { recursive: true })
+    await handleSessionRead({ action: 'doctor' }, { agentDir })
+    // 之后 session 落盘（main 2 + subagent 1）
+    await writeSession(ID1)
+    await writeSession(ID2)
+    await writeSession('019e6c96-aaaa-bbbb-cccc-000000000003', { subagent: true })
+
+    const r = await handleSessionRead(
+      { action: 'find', query: 'zzz-no-hit-9q8x' },
+      { agentDir },
+    )
+    const text = r.content[0].text
+    // 若 F1 读 doctor 缓存（0 文件），以下计数断言必红
+    expect(text).toContain(`${join(agentDir, 'sessions')}：2 文件`)
+    expect(text).toContain(`${join(agentDir, 'subagents')}：1 文件`)
+    expect(text).toContain('候选集非空（共 3 文件）')
+
+    // 完整信号包（live 与 default 同路径）→ 去重根注记，不重复计数
+    const deduped = await handleSessionRead(
+      { action: 'find', query: 'zzz-no-hit-9q8x' },
+      { agentDir, liveSessionDir: join(agentDir, 'sessions') },
+    )
+    expect(deduped.content[0].text).toContain('同路径，已去重')
+    expect(deduped.content[0].text).toContain('候选集非空（共 3 文件）')
   })
 })
