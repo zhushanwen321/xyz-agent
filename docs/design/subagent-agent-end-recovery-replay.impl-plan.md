@@ -83,7 +83,10 @@ graph TD
 pnpm run lint                                   # root ESLint
 pnpm --filter @zhushanwen/pi-subagent-cli test && pnpm --filter @zhushanwen/pi-subagent-cli typecheck
 pnpm --filter @zhushanwen/subagent-core test && pnpm --filter @zhushanwen/subagent-core typecheck
-pnpm --filter @zhushanwen/runtime test          # M0 基底重点（5 件自动保留面在其领地）
+pnpm --filter @xyz-agent/runtime test           # M0 基底重点（5 件自动保留面在其领地）
+# [Gate A 勘误 2026-09-10] 原写 @zhushanwen/runtime 是错的（该 filter 报
+# "No projects matched the filters"），实读 packages/runtime/package.json 的 name
+# = @xyz-agent/runtime。命令清单以 package.json 实读为准，本行已按实读更正。
 node scripts/check-doc-symbol-drift.mjs         # M5 后
 ```
 
@@ -185,6 +188,17 @@ doc_errors（4+1 条）已由主 agent 本次修订（doc_errors 归主 agent，
 - **F2（已登记的长期债，非本批缺陷）**：U-A6 复用了 `{type:"message_end"}` 作为工具活性信号载体。功能与安全均成立（零写入、1s 节流、不进正文槽、静默工具仍被回收），但**语义借用**是领地受限（core 为禁区）下的权宜。长期方案 = 引擎协议新增一个只做活性信号的 AgentEvent 变体（`activity`），随 `subagent-engine-sdk` + `subagent-core` + `pi-subagent-cli` 同批落地并替换该载体；该改动涉及协议契约面，需按设计流程走，不在本 replay 单元内。代码注释已就地登记（`spawn-event-translator.ts` 的 `TOOL_ACTIVITY_EVENT` 段），此处同步登记防止只写在注释里丢失。
 - **F3（覆盖边界登记，非缺陷）**：U-A6 的修复覆盖面 = **workflow 域全域 + chat 首轮**；**chat 续聊（interact）轮仍失明**（`CLI/chat-session.ts:283-285` 续聊轮不外发事件；宿主续聊轮刷新源只有 `streamDelta`，工具输出被硬约束①挡在 delta 外）→ 该轮内「仅工具输出、零正文」>30min 仍会被 30min 中段守护误杀（chat 域内既有形态，非本批引入）。**无法在 pi-subagent-cli 领地内闭合**（唯一 CLI 侧出口是伪造 streamDelta = 违反硬约束①），处置 = 登记 + 由 F2 的协议 activity 变体一并解决（变体落地后宿主续聊轮可直接消费）。**另**：commit `1d94a2471` 的 message 与设计文档原措辞称「chat 域同款盲区随同修复受益」——该表述**只在首轮成立**，设计文档决策 9 已就地更正，此条留档防止按 commit message 误判覆盖面。
 - **F4（范围外观察，另行分诊）**：`spawn-run-pump.ts` 的 stdout pump `'error'` 分支调 `onClose(null, null)`，而 `normalizeExitCode` 在 `endedCleanly=false && code=null && signal=null` 时返回 0 → **spawn 失败（如 ENOENT）可能被 `collectOutcome` 判成 success=true**。该函数与分支均为本批之前的代码（本批只改了它的使用位置），不计入本批 unreasonable；登记待分诊。
+
+**阶段 5 Gate A 结论（2026-09-10，首次执行：不全绿）**
+
+- **绿**：root lint（`eslint . --max-warnings 0`，零诊断）；pi-subagent-cli test 356 passed + typecheck；subagent-core test 2848 passed / 4 skipped + typecheck；drift 守卫；6 个 pre-commit 守卫（engine-sdk-boundary / engine-package-boundary / subagent-core-closure / test_flake_hygiene / pi-semantics / pi-sync）；extensions typecheck + lint。
+- **红（2 条，均为 flaky 而非确定性失败）**：
+  - **G-A-1（我方改动面，必修）**：`pi-subagent-cli` 的 **V3 用例**在满载下约 1/5 概率红（`statusAtBackfill === undefined`）。**该现象直接反证了 §5 A2 行的结论**——A2 声称「V3 的阶段 1 本来就带 `getStateCount >= 4`，这正是它不 flake 的原因」，实测 V3 的阶段 1 循环仍以 `!settled` 为退出条件之一且**循环体每轮推进假时钟**：子进程（独立真实进程）尚未落盘第 4 次 get_state 时，1s 假时钟已到期 → run 收敛 kill 子进程 → 循环以 settled 退出、快照 undefined。即 A2 的修法只降低了概率、未结构性消除竞态。**处置：派 G-A-1 修复组**（阶段顺序改为「先观察到送达，再推进超时」；V3 与 U-A3 两条同修）。
+  - **G-A-2（非我方改动面，M0 merge 带入的既有 flake）**：`packages/runtime` 的 `subagent-engine-history-protocol.test.ts` 「④ idle 复用」用例满载偶发红（120ms 真实 idle 窗 + 真实 timer，满载时两次 read 间隔越窗 → 第二次 read 重新 spawn）。**处置：派 G-A-2 修复组**（限测试时序确定性；若根因在产品实现则停下上报，不改产品语义）。
+- **覆盖矩阵**：9 个改动源文件逐一对应到认领测试（详见 Gate A 报告）；**唯一未认领改动区 = `pi-subagent-cli/src/index.ts` 的 M4 barrel 再导出**（本包测试全直接 import 子模块、无测试经包入口；被导出的符号本身由 `session-file-locator.test.ts` 22 用例直测，导出面由 tsc 校验）。**裁定：接受**——barrel 再导出无运行时行为，tsc + 符号直测已覆盖其实质风险，不为此新增仅验证 re-export 的用例。
+- **绕过核查**：零绕过（无 `SKIP_*`、本分支新增 `test.skip/.only/.todo` 零命中、新增 eslint-disable 零命中、lint 零 warning 容忍）。存量 skip 2 处（conformance live 门的手动 provider 门、win32/root 权限探针）均为本分支之前既有。
+- **计划勘误**：§4 全量命令原写 `pnpm --filter @zhushanwen/runtime test`，实读 `packages/runtime/package.json` 的 name = `@xyz-agent/runtime`——已更正（该错会让 Gate A 直接跑不起来）。
+- **另注**：`pnpm extensions:test` 的 filter `@zhushanwen/pi-*` 会连带跑 `packages/pi-subagent-cli`，使 extensions 门的绿红与本改动面 flake 耦合——判读 extensions 门时须剥离该包结果。
 
 **变更历史**：
 
