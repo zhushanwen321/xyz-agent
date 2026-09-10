@@ -127,6 +127,51 @@ describe('chat store appendRespawnNotice（u8 提示条写入点）', () => {
   })
 })
 
+describe('chat store respawnPending 过渡态分区（crash-resilience T4 回流修复）', () => {
+  /** store 实例（effectScope 包裹，上方 describe 同款） */
+  let store: ChatStoreInstance
+  let dispose: () => void
+
+  beforeEach(() => {
+    const scope = effectScope(true)
+    store = scope.run(() => createChatStore())!
+    dispose = () => scope.stop()
+  })
+
+  afterEach(() => {
+    dispose()
+  })
+
+  it('mark/clear/is 三件套：默认 false → mark 后 true → clear 后 false', () => {
+    expect(store.isRespawnPending('s1')).toBe(false)
+    store.markRespawnPending('s1')
+    expect(store.isRespawnPending('s1')).toBe(true)
+    store.clearRespawnPending('s1')
+    expect(store.isRespawnPending('s1')).toBe(false)
+  })
+
+  it('mark 幂等（重复 exited 不破坏恢复窗口单语义），clear 对未 pending session no-op', () => {
+    store.markRespawnPending('s1')
+    store.markRespawnPending('s1')
+    expect(store.isRespawnPending('s1')).toBe(true)
+    expect(() => store.clearRespawnPending('s-other')).not.toThrow()
+    expect(store.isRespawnPending('s1')).toBe(true)
+  })
+
+  it('per-session 隔离：A session pending 不影响 B session（Map/Set 分区范式）', () => {
+    store.markRespawnPending('s1')
+    expect(store.isRespawnPending('s1')).toBe(true)
+    expect(store.isRespawnPending('s2')).toBe(false)
+  })
+
+  it('disposeSession 同点清理过渡态分区（session 删除后不留恢复窗口残留）', () => {
+    store.markRespawnPending('s1')
+    expect(store.isRespawnPending('s1')).toBe(true)
+    store.disposeSession('s1')
+    expect(store.isRespawnPending('s1')).toBe(false)
+  })
+})
+
 describe('chat store respawn 提示条 reconcile 保留（crash-resilience D7 修复：mergeBaselineWithLive 拣回重插）', () => {
   /** store 实例（effectScope 包裹，上方 describe 同款） */
   let store: ChatStoreInstance

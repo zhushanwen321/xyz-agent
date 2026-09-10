@@ -84,6 +84,7 @@ export default {
     loadedRecentTurns: '已加载最近 {count} 轮',
     loadEarlier: '加载更早',
     // [u8-pi-respawn] pi 崩溃恢复提示条（crash-resilience D7 / T4 文案）
+    respawnPending: '会话引擎异常退出，正在自动恢复…可继续发消息，恢复完成后送达',
     respawnRestored: '会话引擎已从崩溃中恢复。中断的回合未保留；崩溃时进行中的后台任务与子代理已终止、不会自动恢复。可继续发消息。',
     respawnFailed: '引擎恢复失败，点此重试或新建会话',
     respawnFailedHint: '多次自动恢复未成功',

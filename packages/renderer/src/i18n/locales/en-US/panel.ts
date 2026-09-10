@@ -84,6 +84,7 @@ export default {
     loadedRecentTurns: 'Loaded recent {count} turns',
     loadEarlier: 'Load earlier',
     // [u8-pi-respawn] pi crash respawn notice bar (crash-resilience D7 / T4)
+    respawnPending: 'Session engine exited unexpectedly — auto-recovering… You can keep typing; messages are delivered once recovery completes',
     respawnRestored: 'Session engine recovered from a crash. The interrupted turn was not preserved; background tasks and subagents that were running have been terminated and will not resume automatically. You can continue sending messages.',
     respawnFailed: 'Engine recovery failed — retry or create a new session',
     respawnFailedHint: 'Automatic recovery failed repeatedly',

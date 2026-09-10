@@ -17,6 +17,8 @@
  * - PV5 ask-user：请求到达 → AskUserOverlay 替换 Composer；应答出队 → Composer 恢复
  * - PV6 trace 输入面保留（D5/V4，一致性审查 R-U1）：trace 视图 → TraceView 替换对话流
  *   位置 + Composer 保留；trace + ask-user 请求 → overlay 承接应答
+ * - PV7 respawn 过渡态（crash-resilience T4）：dead + respawnPending → 过渡条 + Composer
+ *   保持（dead 占位被抑制）；收口后回落 dead 占位
  *
  * mock 策略：vi.hoisted 模块级可变对象（对齐 ask-user-inline.test.ts / landing.test.ts
  * 既有基建）——useExtensionUI（ask-user 请求队列）与 useNewTaskFlow（flow 单例态）
@@ -222,6 +224,41 @@ describe('PV4: dead 占位（W6：dead 不应答，派生优先级 dead > ask-us
 
     expect(wrapper.text()).toContain('会话进程已退出')
     expect(wrapper.find('[data-testid="ask-user-overlay"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(false)
+  })
+})
+
+describe('PV7: respawn 过渡态（crash-resilience T4：恢复窗口不进终态页）', () => {
+  it('dead + respawnPending → 过渡条渲染 + Composer 保持（dead 占位被抑制）', () => {
+    const sessionStore = useSessionStore()
+    const chat = useChatStore()
+    sessionStore.appendSession(makeSession('s1'))
+    sessionStore.markDead('s1')
+    chat.markRespawnPending('s1')
+
+    const wrapper = mountPanel('s1')
+
+    // 用户可见 DOM 断言：过渡条（「正在自动恢复」文案）在位；对话流保持；Composer 可用
+    expect(wrapper.find('[data-testid="respawn-pending-bar"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('正在自动恢复')
+    expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('会话进程已退出')
+  })
+
+  it('过渡态收口（clearRespawnPending）→ 回落 dead 占位（熔断/超时/手动收口后的终态回归）', async () => {
+    const sessionStore = useSessionStore()
+    const chat = useChatStore()
+    sessionStore.appendSession(makeSession('s1'))
+    sessionStore.markDead('s1')
+    chat.markRespawnPending('s1')
+    const wrapper = mountPanel('s1')
+    expect(wrapper.find('[data-testid="respawn-pending-bar"]').exists()).toBe(true)
+
+    chat.clearRespawnPending('s1')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-testid="respawn-pending-bar"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('会话进程已退出')
     expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(false)
   })
 })

@@ -21,6 +21,7 @@ import { useSubagentStore } from '@/stores/subagent'
 import { useSessionStore } from '@/stores/session'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useToast } from '@/composables/useToast'
+import { markForcedExit, consumeForcedExit } from '@/composables/effects/forced-exit-marks'
 import { useI18n } from 'vue-i18n'
 
 /** useSidebarSessionActions 所需的注入依赖（来自 useSidebar + Sidebar.vue 本地 UI ref） */
@@ -141,11 +142,18 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
    * 成功后的 UI 收敛不在此处：终态经 session.exited 广播由 useMessageEffects.handleSessionExited
    * 统一处理（markDead 置灰 + 错误消息入流 + toast），之后点击 dead session 走 restore 重开。
    * 失败（RPC error envelope）toast；session 不在活跃进程表时 runtime 幂等成功。
+   *
+   * [T4] RPC 前置强制退出意图标记：session.exited 帧对意外崩溃（runtime 自动 respawn →
+   * renderer 过渡态）与本路径（runtime 构造性不 respawn → 终态 dead 页）不可区分，靠
+   * renderer 本地标记分流（forced-exit-marks，读后即清）。RPC 失败撤销标记，防残留把
+   * 该 session 下次意外崩溃误判为强制退出。
    */
   async function onForceQuitSession(id: string): Promise<void> {
+    markForcedExit(id)
     try {
       await sessionApi.forceQuit(id)
     } catch (e) {
+      consumeForcedExit(id)
       const msg = e instanceof Error ? e.message : String(e)
       toastError(t('sidebar.forceQuitFailed', { msg }))
     }

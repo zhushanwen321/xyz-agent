@@ -342,6 +342,23 @@ export function createChatStore() {
    *  session.compacted 清除 / 断连收口随 occupancy 分区一并清（reason 只在 isCompacting 时被读，
    *  孤立残留无害）。 */
   const compactingReasons = ref<Map<string, string>>(new Map())
+  /**
+   * [crash-resilience T4 回流修复] pi 意外退出后的「引擎恢复中」过渡态分区（session id Set）。
+   *
+   * 背景：pi 意外死亡 → runtime 5s 自动 respawn（D7）。此前 renderer 收到 session.exited
+   * 即 markDead → panel 进终态错误页（composer 卸载），恢复成功也无法自动解除——
+   * session.restored 帧两条通路都不可达（根因与修法见 useMessageEffects.handleSessionExited
+   * 注释），用户只能手动「重新打开」。
+   *
+   * 本分区是过渡态的单一数据源：exited（非用户强制）时写入 → panel 派生用 isRespawnPending
+   * 抑制 dead 终态页（derivePanelView isSessionRespawning 输入），对话流 + composer 保持可用
+   * （恢复窗口发消息经 runtime ensureActive join 等恢复完成后送达，T4 语义）；restored /
+   * restoreFailed 熔断 / 恢复超时任一到达即清除。会话 store 的 status 仍置 dead（侧栏置灰
+   * 准确反映进程已死），仅 panel 主区渲染被本分区接管。
+   *
+   * Set 形态（布尔语义无载荷）对齐 failedHistory/hydrated；disposeSession 同点清理。
+   */
+  const respawnPending = ref<Set<string>>(new Set())
   /** handingOff 瞬时态子域控制器（对称 compactingSessions），委托 chat-handoff.ts。设计见 ./README.md + chat-handoff.ts。 */
   const handoff = createHandoffController()
   const { handingOffSessions, isHandingOff, setHandingOff, clearHandingOffTimer } = handoff
@@ -1185,6 +1202,24 @@ export function createChatStore() {
   }
 
   /**
+   * [crash-resilience T4 回流修复] 进入/退出「引擎恢复中」过渡态（respawnPending 分区唯一写口）。
+   * mark 幂等（已 pending 不重复写——恢复窗口单语义，重复 exited 不重置任何计时）；
+   * clear 对未 pending session no-op。读写口分离：写归 ops 面（effects 编排），
+   * 读（isRespawnPending）归 readers 面（usePanelView 派生收集）。
+   */
+  const markRespawnPending = (sessionId: string): void => {
+    if (respawnPending.value.has(sessionId)) return
+    respawnPending.value = new Set(respawnPending.value).add(sessionId)
+  }
+  const clearRespawnPending = (sessionId: string): void => {
+    if (!respawnPending.value.has(sessionId)) return
+    const next = new Set(respawnPending.value)
+    next.delete(sessionId)
+    respawnPending.value = next
+  }
+  const isRespawnPending = (sessionId: string): boolean => respawnPending.value.has(sessionId)
+
+  /**
    * 追加 subagent 定向消息气泡（`@` 定向对话 live 链路，composer-symbol-system §3.3.3a）。
    *
    * 消息形态与 reload 链路逐字段对齐（live ≡ reload，关键规则 9）：reload 侧由
@@ -1230,7 +1265,7 @@ export function createChatStore() {
     // inflightCounts（[steer-bubble D4]）：disposeSession 同步清 inflight——确认基线随分区
     // 销毁作废（与 LRU 驱逐的刻意豁免不同，见 lruEvictDeps 处声明注释）。
     const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates, pendingBuffer, inflightCounts, compactingReasons, occupancies, historyWindows]
-    const setRefs: { value: Set<string> }[] = [hydrated, pendingSend, handingOffSessions, failedHistory]
+    const setRefs: { value: Set<string> }[] = [hydrated, pendingSend, handingOffSessions, failedHistory, respawnPending]
     for (const ref of mapRefs) {
       if (ref.value.has(sessionId)) {
         const next = new Map(ref.value)
@@ -1326,6 +1361,9 @@ export function createChatStore() {
     setHandingOff,
     appendSystemNotice,
     appendRespawnNotice,
+    markRespawnPending,
+    clearRespawnPending,
+    isRespawnPending,
     appendSubagentDirective,
     truncateFrom,
     applyFileChanges,
@@ -1389,6 +1427,7 @@ export type ChatStoreReaders = Pick<
   | 'isHydrated' | 'isGenerating' | 'isActive'
   | 'isCompacting' | 'getCompactingReason' | 'isHandingOff'
   | 'getOccupancy' | 'sessionPhase' | 'isPendingSend'
+  | 'isRespawnPending'
   | 'getInflight'
   | 'getHistoryWindow'
 >
@@ -1410,6 +1449,7 @@ export type ChatStoreOps = Pick<
   | 'clearPendingSend' | 'markSessionError' | 'setHandingOff'
   | 'setOccupancy' | 'clearOccupancy' | 'setCompactingReason'
   | 'appendSystemNotice' | 'appendRespawnNotice' | 'appendSubagentDirective' | 'truncateFrom'
+  | 'markRespawnPending' | 'clearRespawnPending'
   | 'applyFileChanges' | 'disposeSession' | 'markStreamingBashError'
   | 'refreshStreamingTimer' | 'setStreamingIdleTimeoutMs'
   | 'touchLru' | 'evictIfNeeded' | 'evictSessionWithVirtual' | 'evictVirtualKey'

@@ -83,6 +83,20 @@
          对话历史全程可见，composer 消失输入禁止（不再走全屏 modal）。
          [U7] overlay 移除后 composer 常驻（不再 v-if="!isViewingSubagent"）。 -->
     <div class="composer-band flex flex-shrink-0 flex-col gap-1.5 px-5 pb-3.5">
+      <!-- [crash-resilience T4] 「引擎恢复中」过渡条（pi 意外退出 → 自动 respawn 窗口）。
+           数据源 = chat store respawnPending 分区（与 usePanelView 的 isSessionRespawning
+           同源）；此时 panelView.kind 恒为 conversation/trace（respawning 抑制 dead），
+           对话流 + composer 保持可用，恢复窗口发消息经 runtime join 等恢复完成后送达。
+           restrored 到达 / 熔断 / 超时由 useMessageEffects 收口分区 → 本条随之消失。 -->
+      <div
+        v-if="respawnPending"
+        data-testid="respawn-pending-bar"
+        class="flex items-center gap-2 rounded-[var(--radius-sm)] border border-warn/40 bg-warn-soft px-3 py-2"
+        role="status"
+      >
+        <LoaderCircle class="size-3.5 shrink-0 animate-spin text-warn" />
+        <span class="text-xs text-text">{{ t('panel.message.respawnPending') }}</span>
+      </div>
       <!-- ask-user 渲染 ⟺ (conversation || trace) && input==='ask-user'（D5）：dead 态被
            派生优先级吞掉（kind==='dead'），保留 W6「dead 不渲染 ask-user」语义；trace 同样
            承接 ask-user（session-trace 契约「不打断对话能力」，V4）；landing/empty 无 session，
@@ -107,7 +121,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, AlertCircle, RotateCcw, Trash2 } from '@lucide/vue'
+import { MessageSquare, AlertCircle, RotateCcw, Trash2, LoaderCircle } from '@lucide/vue'
 import { isAskUserQuestion, type AskUserQuestion } from '@xyz-agent/extension-protocol'
 import { WidgetArea } from '@xyz-agent/ui'
 import MessageStream from './MessageStream.vue'
@@ -198,6 +212,12 @@ function onAskUserCancel(): void {
 /** getHistory 失败态（landing 重试出口，AC-2.6） */
 const historyError = computed(() =>
   props.sessionId ? chat.failedHistory.has(props.sessionId) : false,
+)
+
+/** [T4] 「引擎恢复中」过渡态（chat store respawnPending 分区；与 usePanelView 的
+ *  isSessionRespawning 同源——过渡条渲染位在 composer band，不进派生 kind）。 */
+const respawnPending = computed(() =>
+  props.sessionId ? chat.isRespawnPending(props.sessionId) : false,
 )
 
 /** Landing 重试 → useSidebar.retryHistory（#2 AC-2.6） */

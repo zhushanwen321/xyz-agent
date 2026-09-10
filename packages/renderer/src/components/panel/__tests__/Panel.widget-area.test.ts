@@ -22,11 +22,12 @@ import { VIEW_HOST_SOURCE_KEY, type ViewHostSource } from '@xyz-agent/ui/extensi
 
 // ── mock 面（Panel script 依赖的最小闭合集）──────────────────────────
 
-/** chat store mock：Panel 只消费 getMessages/isActive/isCompacting/failedHistory */
+/** chat store mock：Panel 只消费 getMessages/isActive/isCompacting/failedHistory/isRespawnPending（PV7 过渡条） */
 const chatMock = vi.hoisted(() => ({
   getMessages: vi.fn(() => [] as unknown[]),
   isActive: vi.fn(() => false),
   isCompacting: vi.fn(() => false),
+  isRespawnPending: vi.fn(() => false),
   failedHistory: new Map<string, boolean>(),
 }))
 vi.mock('@/stores/chat', () => ({ useChatStore: () => chatMock }))
