@@ -22,10 +22,10 @@ SubagentService 跑在宿主 pi 主进程内（extension 加载），是 subagen
 
 ### 1.3 设计目标
 
-- **G1 尺寸与聚焦（v2 口径修正）**：壳**类体**行数 ≤ 500（`wc -l` 减去 imports / 模块常量 / 接口声明——这三者外移后仍占 ~150 行，文件口径不可达，见 S2 算术）；每聚合 ≤ 700 行（附算术：RunOrchestration = #6(~12)+#7(~68)+#12(~110)+#14(~440)+#15(~49) ≈ 680 + 注入接口样板，600 不可达——v1 数值与 §2.1 自身算术矛盾，附录 B#1）；每聚合单一职责域族；改一个域不再通读其余。
+- **G1 尺寸与聚焦（v2 口径修正）**：壳**类体**行数 ≤ 500（`wc -l` 减去 imports / 模块常量 / 接口声明——**外移后残余非类体行 ~150**，文件口径不可达，见 S2 算术）；每聚合 ≤ 700 行（附算术：RunOrchestration = #6(~12)+#7(~68)+#12(~110)+#14(~440)+#15(~49) ≈ 680 + 注入接口样板，600 不可达——v1 数值与 §2.1 自身算术矛盾，附录 B#1）；每聚合单一职责域族；改一个域不再通读其余。
 - **G2 依赖单向显式**：壳组合聚合；聚合间禁止互调私有方法（需要协作的经壳编排或显式接口）；**service 实例字段**所有权单一（单写者）——共享 `ExecutionRecord` 对象内部字段的写点收口归 H4（见 D1 两级归属）。
 - **G3 测试随聚合迁移**：每聚合自持测试面；God-class 级测试拆散归属；**深绑内部结构的测试改写不降低断言强度**（见 D6）。
-- **G4 零行为变化**：纯结构重构；全量测试全绿是每步合并门槛；**前置 = R0 前确认基线绿**（存量红先归档豁免清单——2026-09-11 实测当前工作树 `workflow-state-root.test.ts` GC 写回用例红，疑似环境相关，R0 前须归档定性）。
+- **G4 零行为变化**：纯结构重构；全量测试全绿是每步合并门槛；**前置 = R0 前确认基线绿**（存量红先归档豁免清单——2026-09-11 单次实测 `workflow-state-root.test.ts` GC 写回用例红、复跑全绿 2849 用例（2845 passed + 4 skipped / 15.4s），疑似环境相关，R0 前归档定性：可复现则记录复现条件）。
 
 ### 1.4 in / out scope
 
@@ -113,7 +113,7 @@ SubagentService（装配壳，类体 ≤ 500 行）
 
 - **D1 聚合边界按「字段所有权」切（v2 扩为两级归属）**：**第一级 = service 实例字段**：每个可变字段归唯一聚合（首个系统性写它的域所属），跨聚合读经显式 getter。**第二级 = record 字段写点通道**：record 字段级写点（engineHandle 回填/sessionFile/result/error/resumable 等）在 RunOrchestration/Continuation 侧仍直写共享 `ExecutionRecord` 对象——H3 零行为变化约束下**不收口**（收口 = H4 写原语落点）；RunOrchestration 经 `finalize-record.ts` 模块函数（两聚合共享底层）与自有直写两通道，调用边界在 R0 归属表逐点声明。「唯一宿主」声明降级为「**store 与终态迁移入口的唯一宿主（H4 落点）**」——**唯一宿主 = H4 写原语落点语义，非唯一访问者**（v3 补：SyncCollect 直调 store 的落标/E1 重建投影写是独立通道，列入 R0 ②表，不得改道 RecordLifecycle——改道即违反零行为变化）；v1「record 状态机唯一所有者」与源码写拓扑（runEngineTask backfill :2309-2333 / outcomeToAgentResult sessionFile :2561-2563 / adopt 写 error/result :2402-2407）冲突，附录 B#2。**被否**：按用例切（use-case 分解会产生大量传参与共享状态复制）。
 - **D2 抽取顺序按依赖最少先**：SessionBaselines（几乎零依赖）→ SyncCollectDomain（依赖 store 注入）→ RecordLifecycle（依赖 store/notify，**含域 #4 回收面**）→ RunOrchestration（依赖前三者）。每聚合一个 PR，抽取后原类委托转发（对外方法签名不变）；**R4「删转发」仅指过渡期冗余转发——壳终态永久保留一批非聚合面 public 方法**（逐项清单见 D3+）。
-- **D3 对外 API 冻结 + 壳终态委托面清单**：`SubagentQueries`/`SubagentChatActions` 与 barrel 导出签名不变；extension/runtime 消费方零改动。**壳终态保留 public 方法（逐项，v2 补——实证消费方 subagent-actions-core ×23 处 / subprocess-agent-runner / extensions session-lifecycle）**：execute / cancel / executeAndAwait / initSession / dispose / onParentFork / onParentNew / startGcTimer / recoverSyncCollectBatch / recoverManifestTmpFiles / getCollectSyncDefault / executeViaEngine / asEngineService / queries / chatActions / 单例访问器（getSubagentService/setSubagentService/createSubagentService）。
+- **D3 对外 API 冻结 + 壳终态委托面清单**：`SubagentQueries`/`SubagentChatActions` 与 barrel 导出签名不变；extension/runtime 消费方零改动。**壳终态保留 public 方法（逐项，v2 补——实证消费方 subagent-actions-core ×23 处 / subprocess-agent-runner / extensions session-lifecycle；v4 补两个漏列活消费点**：`getStreamSink`（:357 定义，workflow `index.ts:269` 经 `getSubagentService()` 直调——包外消费方，删转发后无法经聚合投影修复；`getSessionRootId`（:336 定义，`subprocess-agent-runner.ts:272` 直调）**）**：execute / cancel / executeAndAwait / initSession / dispose / onParentFork / onParentNew / startGcTimer / recoverSyncCollectBatch / recoverManifestTmpFiles / getCollectSyncDefault / executeViaEngine / asEngineService / getStreamSink / getSessionRootId / queries / chatActions / 单例访问器（getSubagentService/setSubagentService/createSubagentService）。**R4 删除判据绑定 = 按 R0 时全量重生成的清单执行（grep 实例方法直接调用面，queries/chatActions 之外），不按本文静态列表**。
 - **D4 协作规则（v2 补第三方向；v3 补下沉前提）**：聚合间禁止互调私有方法；需要跨聚合编排的场景（如 close = cancel + finalize）留在壳层编排或经显式接口；**聚合→壳禁止 import**（assertReady 断言下沉独立模块或经构造注入——现状 9 个调用点直调壳断言 = 反向边，环风险实形态；**下沉选项的依赖形态 = late-bound getter 注入**——assertReady 读 `this.pi`（initSession 时点晚绑定）与 `this._disposed`，构造期注值会使聚合持过期引用破 session 复活，须注入 `() => ({pi, disposed})` 形态 getter 或沿 notifyHost 装配闭包先例经壳运行时读取）；R5 环检查覆盖三方向（聚合间 / 聚合→壳 / 壳→聚合）。
 - **D5 H4 同轴预告**：RecordLifecycle 聚合的接口面即 H4「意图级写操作」的落点——本设计只搬不改，H4 在其上收口持久化。
 - **D6 深绑测试改写面（v2 新增）**：≥10 个测试文件深绑 service 内部结构——运行时字段替换（`(service as unknown as {notifyHost}).notifyHost = {...}` ×4 文件，依赖「闭包经 this 运行时读取」语义，改显式注入后失效）、`ServiceInternals` 全量内部访问 ×6 文件、`vi.spyOn(internal.manifestStore)`——抽取后**是改写不是搬移**。R0 产出深绑测试全集（grep `as unknown as` / `ServiceInternals`）；R1-R4 每步声明对应测试的改写形态（mock 注入时点 / 访问路径 / ServiceInternals 重定义）；断言强度不降（S4 判据）。
@@ -143,13 +143,13 @@ SubagentService（装配壳，类体 ≤ 500 行）
 
 | 单元 | 内容 | justification | 可独立验收 |
 |------|------|--------------|-----------|
-| R0 | 壳内分区整理：按 §2.1 域重排成员 + 分区注释（纯移动零抽取）；**产出三清单：①~30 实例字段逐个归属表 ②record 字段写点通道边界表（D1 第二级，含 store 入口投影写通道——落标/E1 重建）③深绑测试全集（D6）**；**验收补两条机械对账（v3）：①清单行数 vs 类字段声明 grep 计数一致 ②写点通道表 vs record 字段赋值 grep 计数一致——给 PR reviewer 完备性量尺，防「自证完备」** | 给后续抽取建立物理锚点，diff 可机械核对；三清单是 R1-R4 的实施依据 | 全量测试绿（基线已先核对，G4 前置）+ 两条机械对账通过 |
+| R0 | 壳内分区整理：按 §2.1 域重排成员 + 分区注释（纯移动零抽取）；**产出三清单：①~30 实例字段逐个归属表 ②record 字段写点通道边界表（D1 第二级，含 store 入口投影写通道——落标/E1 重建）③深绑测试全集（D6）**；**R0 ①清单同时登记两条已知跨聚合边（v4 主审对抗线索）：disposeAllRecords → Continuation 协作面的 `unregisterChatRoundRoute`（:2996，private 互调，按 D4 显式接口规则改）+ 壳 dispose 直改 SyncCollect 内部态 `settledRescanState`（:1117，收敛为显式接口）；验收补两条机械对账（v3）：①清单行数 vs 类字段声明 grep 计数一致 ②写点通道表 vs record 字段赋值 grep 计数一致——给 PR reviewer 完备性量尺，防「自证完备」** | 给后续抽取建立物理锚点，diff 可机械核对；三清单是 R1-R4 的实施依据 | 全量测试绿（基线已先核对，G4 前置）+ 两条机械对账通过 |
 | R1 | 抽取 SessionBaselines | 依赖最少先行，模式打样 | S2/S5 |
 | R2 | 抽取 SyncCollectDomain | 自闭合批语义，注入面窄 | S2/S5 + sync 批恢复用例 |
 | R3 | 抽取 RecordLifecycle（**含域 #4 回收面**） | record 终态迁移宿主最大聚合；与既有 record-store/finalize-record 协作面理顺 | S2/S5 + S1 的 close/重启链路 |
 | R4 | 抽取 RunOrchestration + 删过渡期冗余转发（壳终态保留面见 D3 清单；notifyGateAllowsDelivery 壳保留 re-export 或 barrel 路径随迁注明例外） | 依赖前三者最后抽；转发清理收尾 | S2/S3/S5 |
 | R5 | 测试归位 + 守卫（三方向循环依赖 / 私有互调 grep 门） | G2/G3 的机械守门 | S3/S4 |
-| R6 | 外移 Init 接口 / 模块常量 / 单例访问器至 `execution/service/` 独立文件（barrel re-export 保导出面不变） | 壳类体 ≤500 门槛的达成单元（文件口径算术见 G1） | S2 + barrel 导出面不变断言 |
+| R6 | 外移 Init 接口 / 模块常量 / 单例访问器至 `execution/service/` 独立文件（**import 纪律（v4）：Init 接口 type-only；单例访问器经 barrel 直接改指向 service-bootstrap、不做壳 re-export（防壳↔bootstrap 值环——bootstrap 必须 new SubagentService，壳侧 re-export 即成环，且 bootstrap 非聚合、三方向环守卫覆盖不到此边）；类体消费的常量留壳或独立叶子模块**；R5 守卫扩壳侧支撑文件方向） | 壳类体 ≤500 门槛的达成单元（文件口径算术见 G1） | S2 + barrel 导出面不变断言 |
 
 **文件改动地图**：`execution/subagent-service.ts`（缩为壳；`notifyGateAllowsDelivery` 模块级导出 :257 壳保留 re-export——逻辑属 notify 面，不随聚合搬迁）；新增 `execution/service/{session-baselines,sync-collect-domain,record-lifecycle,run-orchestration,service-bootstrap}.ts`（service-bootstrap = R6 外移的 Init 接口/模块常量/单例访问器，命名建议新增，实施可调）；`execution/__tests__/` 对应迁移与深绑改写（D6）；barrel 消费方零改动。
 
@@ -166,5 +166,5 @@ SubagentService（装配壳，类体 ≤ 500 行）
 1. **「壳 ≤500 行 + 每聚合 ≤600 行（文件/单一数值口径）」**——被主审 MF-2 击穿：按 §2.1 自身区间算术，RunOrchestration ≈680 行出生即超、壳按文件口径需 700-800（imports 121 + 接口 74 + 常量 60 + 单例 40）。修正为：类体行数口径 + R6 外移单元 + 聚合门槛 ≤700（附算术）。
 2. **「record 状态机的唯一所有者（RecordLifecycle）」**——被双审同点击穿：源码写拓扑 RunOrchestration 大量直写 record 字段（backfill/sessionFile/result/error/resumable），字面执行 = R3 夹带改写违反零行为变化、且把 H4 收口偷进 H3。修正为「store 与终态迁移入口的唯一宿主」+ D1 两级归属。
 3. **「域 #4 回收面隐含在壳 dispose 编排」**——被双审同点击穿：disposeAllRecords/onParentFork/onParentNew 三个 record 批量关闭方法不在任何聚合清单，留壳破所有者声明、归 RL 漏列。修正为显式归 RecordLifecycle + 壳时序编排。
-4. **「最后一步删转发」**——被影响面 MF-3 击穿：字面实施（删壳 public 委托）直接破 D3 消费方零改动（实证外部消费面 25+ 处）。修正为仅删过渡期冗余转发 + 壳终态保留面逐项清单。
+4. **「最后一步删转发」**——被影响面 MF-3 击穿：字面实施（删壳 public 委托）直接破 D3 消费方零改动（实证外部消费面 25+ 处）。修正为仅删过渡期冗余转发 + 壳终态保留面逐项清单。**v4 再击穿（主审轮 2）**：静态清单仍漏 2 个活消费点（getStreamSink 包外直调 / getSessionRootId SAR 直调）——修正为 R4 删除判据绑定「按 R0 重生成清单」而非静态列表。
 5. **「测试随聚合迁移（按文件归位）」**——被影响面 MF-4 击穿：≥10 文件深绑内部结构（运行时字段替换语义依赖/ServiceInternals/spyOn internal），是改写不是搬移。修正为 D6 改写面声明 + R0 深绑清单 + 断言强度不降判据。
