@@ -112,13 +112,18 @@ graph TD
 | D-3 | 旧签名薄包装「构造 {agentDir} 信号包 → resolveSessionRoots → 过滤」，会额外扫非目标根 | §7B 要点 7 | 与设计「薄包装仅为存量单测与外部深 import」定位一致；工具运行路径 u9+ 切新签名后成本消失 | 合理 |
 | D-4 | 新增空 agentDir 防御（返回空根列表，附用例） | §7B（任务未明示） | 最小防御：避免派生式退化为 cwd 相对路径扫到无关目录；附试用例，无行为面扩大 | 合理 |
 | D-5 | subagents.ts not-found 失败路径新增一次 resolveSessionRoots 调用（重复扫描） | §6.8/U1 | 仅异常路径；换「实际扫描候选根」事实性列表，正是 U1 文案改造的目的 | 合理 |
+| D-6 | `migrateToPiSubdir` 保留 no-op 空壳而非整体删除（pi-provider-store.ts:594 barrel re-export 领地外，整体删除会 TS2305 断编译）；目录迁移与 mkdir 逻辑零残留，注释登记「re-export 清理后可整体删除」 | §6.11 既有函数处置 | 任务允许两形态；逻辑消失即达意图，空壳清除归入 u15 或收尾清扫 | 合理 |
+| D-7 | **u14a 领地扩容**（计划期缺口，执行期发现）：+`docs/architecture/data-source-registry.md`（登记条目）+ R1 检查器 ALLOWLIST（`.githooks/check_pi_direct_write.py`） | §6.11 / 检查器自身救济路径 | R1 以 rglob 扫工作树，迁移脚本必然同时含 sessions 路径痕迹（步骤 3/4 分发逻辑）与 writeFile（三件套 union 原子写）→ 被判「直写候选」；脚本对 jsonl 是 rename-only，写的是配置 JSON 与报告——正是检查器救济路径写明的「登记例外」形态。计划期漏列该登记义务，orchestrator 裁定领地扩容；**副作用：u14a 落地前 R1 挡住全仓 commit（含无关的 u14b/u3），提交队列按 u14a → u14b → u3 顺序 flush** | 合理（计划缺口） |
+| D-8 | `handleSessionRead` 第二参实做 `SessionRootSignals \| string` 联合 + 入口归一化（任务要求纯 signals 类型） | §7B/§10 U3 | 存量 tool-handler.test.ts / result.test.ts / cross-package 等约 100 处裸 string 调用不在 u3 领地，纯收紧必破 341 全包基线；与 D-3 薄包装裁定同构；工具运行路径恒传完整信号包，类型收紧随 u9+（其领地含 tool-handler.test.ts） | 合理 |
+| D-9 | u14a 六条规格空白裁决（非设计明文违反）：①encodeCwd 断言以 pi-paths.ts 实装为准（其头注释示例与自身实现不符，win32 形态 `--C--Users-x-proj--`）；②无 pi 二进制机器自证对象不存在 → 放行并在报告注明（§11.13 空白）；③union 结果与主位深等 → 无写动作（unionSkipped 计数）但冲突照进清单（V9⑥「全跳过」×V9⑦「冲突清单」交互空白，幂等与差异可见兼得）；④双侧同值单文件与 token\* 不产 aside（同值非冲突）；⑤sidecar 前缀判定排除 .jsonl（主文件只走 header 分发，杜绝双规则处理）；⑥非记录型/资源型深层目录递归逐条目分类（步骤 2b 只定义顶层；config/providers.json 经此命中三件套 union——设计意图所需） | §6.11 六步块 | 均为设计未细化处的最小确定性裁决，各附用例；⑥是三件套 union 可生效的前提 | 合理 |
+| D-10 | R1 ALLOWLIST 消费逻辑由「文件:行号精确键」改为文件级键（set→dict）+ checker docstring「空集」段与 registry 计数同步 | D-7 追加任务 | 文件级条目不改消费逻辑即永不生效——登记生效的必要组成；命中处仍按 文件：行 在通过报告列出（可观测性保留，未来新增写点不被静默吞）；docstring/计数同步为防漂移义务 | 合理 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
-| u14a | in-progress | 2 | 重试派发 agent_081a73bf（首派因账户速率限制失败） |
-| u14b | in-progress | 2 | 重试派发 agent_b9bf332b（首派因账户速率限制失败） |
+| u14a | committed | 2+1 | 脚本 759 行 + 测试 862 行；32/32 重跑绿；P-11 = 100%（11/11 全有 cwd，只读实测，登记于测试文件头）；CLI 实机负向探针（pgrep 命中 14+84 进程 → 拦截列 PID）；D-7 登记落地（R1 exit 0）；偏差 D-9/D-10 |
+| u14b | committed | 2 | 五处改动落地（退役/syncBundledResources 直挂/WARN 探测/getPiGlobalAgentDir 改 getDataDir 推导/getPiRoot 零引用）；pi-maintenance 9 用例 + 回归 43 用例重跑绿；tsc 0；偏差 D-6 |
 | u15 | pending | 0 | — |
 | u16 | pending | 0 | — |
 | u17 | pending | 0 | — |
@@ -127,7 +132,7 @@ graph TD
 | u2 | in-progress | 1 | agent_2102d150 |
 | u6 | committed | 1 | PS-28~PS-33 六条 anchor 逐条实装核对（⑤补双锚、⑥修 distPath 缺 core/ 前缀）；守卫 exit 0（33 条）重跑确认；D6 软门禁恢复动作完成（探针族 11 文件/56 用例全绿）；偏差 D-1 |
 | u2 | committed | 1 | env.ts + env.test.ts（16 用例）重跑绿；tsc --noEmit exit 0；无偏差 |
-| u3 | pending | 0 | — |
+| u3 | verified待提交 | 1 | index.test 13/13 + 全包 341 绿重跑确认；tsc 0；偏差 D-8（`SessionRootSignals \| string` 联合 shim——100 处存量裸 string 调用在领地外，收紧归 u9+；与 D-3 同构） |
 | u8 | pending | 0 | — |
 | u9 | pending | 0 | — |
 | u10 | pending | 0 | — |
@@ -148,4 +153,5 @@ graph TD
 - 已接受残留：窗口期双面失明（§6.11）、`pi/agent/{extensions,npm,tmp}` 迁出残留（§6.11 影面登记）、`~/.xyz-agent/sessions` 旧旧布局不在候选根（§11.7 裁决：不补第四根，迁移脚本步骤 4 兼并）。
 
 **变更历史**：
+- 2026-09-10（执行期 1）：u6/u2/u1/u14b 四单元核验通过；u14b commit 被两件事暴露——①首派失败的 hook 报错系旧版生成 hook 的引用错位（期间某 subagent 的 pnpm install 经 prepare 触发 install-hooks 再生，新版 bash -n 通过，不再复现）；②**R1 直写检查扫 untracked 工作树**，u14a 未完成的迁移脚本被拦 → 裁定偏差 D-7（u14a 领地扩容：data-source-registry 条目 + R1 ALLOWLIST），提交队列阻塞至 u14a 落地，flush 顺序 u14a → u14b → u3。
 - 2026-09-10 计划创建：15 单元 + 1 deferred；单元编排对设计 §10 做两处结构性归组——① U14b 的 runtime 侧（退役/直挂/WARN）与 U15② 的 `getPiGlobalAgentDir` 同在 `pi-maintenance.ts`，合并为 u14b（消除同文件跨单元领地重叠，且让 u15 删 `getPiRoot` 时无残留引用）；② reap 测试文件整体划归 u17（u15 不碰，避免 DIR 常量两次改写）。M5（U13）登记 deferred。
