@@ -25,6 +25,7 @@ import { countActiveFromEntries } from "@zhushanwen/pi-pending-notifications";
 import { checkBudgetOnTurnEnd } from "../../engine/budget";
 import { isActiveStatus, isTerminalStatus } from "../../engine/goal";
 import {
+	type LivenessConfig,
 	continuationBackoffDelayMs,
 	countToolCallBlocks,
 	isContinuationCapped,
@@ -39,7 +40,7 @@ import {
 } from "../../projection/prompts";
 import { persistAndUpdate, tickState } from "../../service";
 import { serializeState } from "../../persistence";
-import type { GoalSession } from "../../session";
+import { cancelContinuationTimer, type GoalSession } from "../../session";
 import type { ServicePorts } from "../../service";
 import { buildPorts } from "../ports";
 import { makeStaleChecker } from "./shared";
@@ -269,10 +270,7 @@ async function handleContinuation(
 	// W5 辅判据：无进展退避。到决策点先取消旧的待发退避 continuation——等待期内若
 	// 有外部驱动的 turn（用户输入 / 后台任务通知唤醒）到达这里，按最新状态重算：
 	// 有进展 → 立即发；仍无进展 → 按当前等级重排。保证任意时刻至多一个待发。
-	if (session.continuationTimer !== null) {
-		clearTimeout(session.continuationTimer);
-		session.continuationTimer = null;
-	}
+	cancelContinuationTimer(session);
 
 	const delayMs = continuationBackoffDelayMs(state.noProgressTurns, cfg);
 	if (delayMs <= 0) {
@@ -289,16 +287,49 @@ async function handleContinuation(
 	const goalId = state.goalId;
 	session.continuationTimer = setTimeout(() => {
 		session.continuationTimer = null;
-		// 发射前守卫（延迟期间状态可能已变）：goal 未被覆盖/清除、仍 active、
-		// 未 ESC、未封顶、无活跃 pending（等待期新出现的后台任务由其完成通知唤醒，
-		// goal 不抢先催）
-		if (!session.state || session.state.goalId !== goalId) return;
-		if (!isActiveStatus(session.state.status)) return;
-		if (ctx.signal?.aborted) return;
-		if (isContinuationCapped(session.state, cfg)) return;
-		if (countActiveFromEntries(ctx.sessionManager.getEntries(), { currentSessionId: ctx.sessionManager.getSessionId() }).count > 0) return;
-		deliverContinuation(ports, session);
+		// MF-6②：timer 回调跨生命周期持有本次 agent_end 的 ctx/ports 闭包，且不在
+		// pi runner 的 handler 错误隔离范围内——回调内同步异常 = uncaughtException，
+		// 可能带崩 pi 进程。整体 try/catch：stale ctx（session 关闭/替换后 ctx 的
+		// isIdle / sessionManager getter 走 assertActive 抛错，development-guide
+		// §11.1）等异常降级为一条 goal:log 记录后放弃，goal 状态仍在盘上，后续任意
+		// agent_end 会重新决策。
+		try {
+			fireBackoffContinuation(session, ports, ctx, cfg, goalId);
+		} catch (err) {
+			// pi.appendEntry 是 ExtensionAPI 层方法（无 ctx 的 assertActive stale 门控），
+			// stale 场景仍可落 goal:log 供排查
+			pi.appendEntry("goal:log", {
+				timestamp: Date.now(),
+				level: "warn",
+				component: "goal:agent-end",
+				message: `backoff continuation dropped after error: ${String(err)}`,
+			});
+		}
 	}, delayMs);
+}
+
+/**
+ * 退避 timer 到期后的发射前守卫 + 实发（延迟期间状态可能已变）：
+ * - goal 未被覆盖/清除（goalId 比对）、仍 active
+ * - MF-6① idle 守卫：ctx.signal 为实时求值（pi-agent-core agent.js get signal 返回
+ *   activeRun?.abortController.signal），agent idle 后恒 undefined，`signal?.aborted`
+ *   恒放行、不可作守卫；改用 ctx.isIdle()（SDK types.d.ts L232）——延迟窗内有活动
+ *   turn 时不发，该轮 agent_end 会按最新状态重新决策
+ * - 未封顶、无活跃 pending（等待期新出现的后台任务由其完成通知唤醒，goal 不抢先催）
+ */
+function fireBackoffContinuation(
+	session: GoalSession,
+	ports: ServicePorts,
+	ctx: ExtensionContext,
+	cfg: LivenessConfig,
+	goalId: string,
+): void {
+	if (!session.state || session.state.goalId !== goalId) return;
+	if (!isActiveStatus(session.state.status)) return;
+	if (!ctx.isIdle()) return;
+	if (isContinuationCapped(session.state, cfg)) return;
+	if (countActiveFromEntries(ctx.sessionManager.getEntries(), { currentSessionId: ctx.sessionManager.getSessionId() }).count > 0) return;
+	deliverContinuation(ports, session);
 }
 
 /**

@@ -17,6 +17,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { handleAgentEnd } from "../adapters/event-handlers/agent-end";
+import { handleBeforeAgentStart } from "../adapters/event-handlers/before-agent-start";
+import { handleSessionStart } from "../adapters/event-handlers/session-start";
 import { handleGoalCommand } from "../adapters/command-adapter";
 import { createGoalState } from "../engine/goal";
 import type { GoalRuntimeState } from "../engine/types";
@@ -38,12 +40,15 @@ interface FakeHarness {
 	entries: unknown[];
 	piCalls: RecordedCall[];
 	ctxCalls: RecordedCall[];
+	/** 可控 isIdle（MF-6① 守卫断言用：延迟窗内有活动 turn 时置 false） */
+	isIdle: { value: boolean };
 }
 
 function makeHarness(): FakeHarness {
 	const piCalls: RecordedCall[] = [];
 	const ctxCalls: RecordedCall[] = [];
 	const entries: unknown[] = [];
+	const isIdle = { value: true };
 
 	const pi = {
 		appendEntry(customType: string, data?: unknown): void {
@@ -61,6 +66,8 @@ function makeHarness(): FakeHarness {
 	const ctx = {
 		hasUI: true,
 		signal: { aborted: false } as AbortSignal,
+		// MF-6①：SDK ExtensionContext.isIdle（types.d.ts L232），agent_end 后为 true
+		isIdle: () => isIdle.value,
 		getContextUsage: () => null,
 		ui: {
 			notify: (text: string, level: string) => ctxCalls.push({ kind: "notify", text, level }),
@@ -76,7 +83,7 @@ function makeHarness(): FakeHarness {
 		},
 	} as unknown as ExtensionContext;
 
-	return { pi, ctx, entries, piCalls, ctxCalls };
+	return { pi, ctx, entries, piCalls, ctxCalls, isIdle };
 }
 
 // ── 辅助 ─────────────────────────────────────────────
@@ -295,5 +302,87 @@ describe("/goal resume 恢复通道", () => {
 
 		expect(notifyTexts(h).some((t) => t.includes("no need to resume"))).toBe(true);
 		expect(h.piCalls.filter((c) => c.kind === "sendUser")).toHaveLength(0);
+	});
+});
+
+// ── MF-6（round1 review）：退避 timer 回调跨生命周期防护 ──
+
+/** 进入退避态：4 轮立即发 + 第 5 轮延迟 20s 排定 timer（base 默认 10s ×2） */
+async function enterBackoff(): Promise<{ h: FakeHarness; session: GoalSession }> {
+	const h = makeHarness();
+	const session = createGoalSession();
+	session.state = makeRunningState();
+	for (let i = 0; i < 4; i++) await runTurn(h, session, { tokenDelta: 200 });
+	await runTurn(h, session, { tokenDelta: 200 });
+	expect(session.continuationTimer).not.toBeNull();
+	return { h, session };
+}
+
+describe("MF-6① idle 守卫：ctx.signal 实时求值失效场景由 isIdle 拦截", () => {
+	it("延迟窗内有活动 turn（isIdle=false、signal=undefined）→ 到期不误发", async () => {
+		const { h, session } = await enterBackoff();
+
+		// agent idle 后 SDK get signal 实时求值为 undefined（旧 signal?.aborted 守卫恒放行）；
+		// 用户在延迟窗内发新消息 → 活动 turn 占用 → isIdle=false
+		h.ctx.signal = undefined;
+		h.isIdle.value = false;
+		vi.advanceTimersByTime(20_000);
+
+		expect(followUpSends(h)).toHaveLength(4); // 不误发（该轮 agent_end 会重新决策）
+		expect(session.state!.continuationsSent).toBe(4);
+	});
+
+	it("延迟窗内 idle（isIdle=true、signal=undefined）→ 正常发出（守卫不误伤退避路径）", async () => {
+		const { h, session } = await enterBackoff();
+
+		h.ctx.signal = undefined;
+		vi.advanceTimersByTime(20_000);
+
+		expect(followUpSends(h)).toHaveLength(5);
+		expect(session.state!.continuationsSent).toBe(5);
+	});
+});
+
+describe("MF-6② stale 保护：timer 回调内 ctx 访问抛错不冒泡", () => {
+	it("到期时 sessionManager.getEntries 抛错（session 关闭/替换后旧 ctx）→ 降级记录 goal:log，不崩、不发", async () => {
+		const { h, session } = await enterBackoff();
+
+		// ctx.sessionManager / isIdle 均为 assertActive getter（runner.js createContext），
+		// stale 后访问即抛——以 getEntries 抛错为代表（getSessionId / isIdle 同路径被同一 catch 覆盖）
+		(h.ctx.sessionManager as { getEntries: () => unknown }).getEntries = () => {
+			throw new Error("This extension ctx is stale after session replacement...");
+		};
+		expect(() => vi.advanceTimersByTime(20_000)).not.toThrow();
+
+		expect(followUpSends(h)).toHaveLength(4); // 不发 continuation
+		expect(session.state!.continuationsSent).toBe(4);
+		// 降级诊断：goal:log 一条 warn（pi.appendEntry 为 ExtensionAPI 层，stale 下仍可写）
+		const dropLogs = h.piCalls.filter(
+			(c) => c.kind === "appendState" && (c.payload as { message?: string } | undefined)?.message?.includes("dropped after error"),
+		);
+		expect(dropLogs).toHaveLength(1);
+		expect((dropLogs[0]!.payload as { level?: string }).level).toBe("warn");
+	});
+});
+
+describe("MF-6③ timer 清理面：session_start / before_agent_start 取消旧 timer", () => {
+	it("session_start 重建 → 旧退避 timer 被取消，到期不发", async () => {
+		const { h, session } = await enterBackoff();
+
+		await handleSessionStart(h.pi, session, h.ctx);
+
+		expect(session.continuationTimer).toBeNull();
+		vi.advanceTimersByTime(20_000);
+		expect(followUpSends(h)).toHaveLength(4);
+	});
+
+	it("before_agent_start（新用户活动）→ 旧退避 timer 被取消，到期不发", async () => {
+		const { h, session } = await enterBackoff();
+
+		await handleBeforeAgentStart(h.pi, session, h.ctx);
+
+		expect(session.continuationTimer).toBeNull();
+		vi.advanceTimersByTime(20_000);
+		expect(followUpSends(h)).toHaveLength(4);
 	});
 });
