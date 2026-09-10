@@ -64,7 +64,7 @@ function makeService(): QuotaService {
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'quota-service-workspace-'))
-  agentDir = join(dir, 'pi', 'agent')
+  agentDir = join(dir, 'agent')
   mkdirSync(join(agentDir, 'config'), { recursive: true })
   process.env.XYZ_AGENT_DATA_DIR = dir
   extrasStore = new XyzProviderStore(join(agentDir, 'config', 'providers.json'))

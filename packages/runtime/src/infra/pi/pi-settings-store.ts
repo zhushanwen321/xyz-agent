@@ -1,7 +1,7 @@
 /**
  * PiSettingsStore — settings.json 的唯一读写层（D17 收口 + P0-1 + D1a/D1b 跨进程写治理）。
  *
- * 背景：settings.json 是 pi 的配置文件（pi 读取它，路径 ~/.xyz-agent/pi/agent/settings.json），
+ * 背景：settings.json 是 pi 的配置文件（pi 读取它，路径 <dataDir>/agent/settings.json），
  * 无法拆分成多个文件（pi 只认一个 schema/路径）。写方有两类进程：
  *   - xyz runtime（本模块的调用方：model 域经 pi-provider-store、extension 域经
  *     IExtensionSettings port、skills 投影经 pi-skill-paths）

@@ -261,7 +261,7 @@ describe('executeCommand: get-default-model (reads settings.json via XYZ_AGENT_D
   })
 
   it('settings.json with both fields → "provider/model"', async () => {
-    const agentDir = join(dir, 'pi', 'agent')
+    const agentDir = join(dir, 'agent')
     mkdirSync(agentDir, { recursive: true })
     writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ defaultProvider: 'openai', defaultModel: 'gpt-4o' }))
     expect(await executeCommand({ command: 'get-default-model', flags: {} })).toBe('openai/gpt-4o')
@@ -272,7 +272,7 @@ describe('executeCommand: get-default-model (reads settings.json via XYZ_AGENT_D
   })
 
   it('partial fields (only defaultProvider) → "not set"', async () => {
-    const agentDir = join(dir, 'pi', 'agent')
+    const agentDir = join(dir, 'agent')
     mkdirSync(agentDir, { recursive: true })
     writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ defaultProvider: 'openai' }))
     expect(await executeCommand({ command: 'get-default-model', flags: {} })).toBe('not set')

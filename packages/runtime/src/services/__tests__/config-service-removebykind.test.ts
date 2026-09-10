@@ -296,7 +296,7 @@ describe('边界3(a): cleanEnabledModelsResidue 重算空 → clearEnabledModels
   beforeEach(() => {
     vi.clearAllMocks()
     dir = mkdtempSync(join(tmpdir(), 'clean-residue-'))
-    agentDir = join(dir, 'pi', 'agent')
+    agentDir = join(dir, 'agent')
     mkdirSync(agentDir, { recursive: true })
     process.env.XYZ_AGENT_DATA_DIR = dir
   })

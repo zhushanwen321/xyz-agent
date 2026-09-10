@@ -11,7 +11,7 @@
  * 不是系统 pi 的 `~/.pi/agent`。
  *
  * 目录结构（方案 B：布局完整对齐 pi 0.84.x，唯一差异是根目录——pi 是 `~/.pi/`，
- * xyz-agent 是 `<dataDir>`。旧布局 `<dataDir>/pi/agent` + 平铺 sessions 已由
+ * xyz-agent 是 `<dataDir>`。旧布局（pi/ 兄弟层包 agent/ + 平铺 sessions）已由
  * scripts/migrate-pi-layout-v2.mjs 一次性迁移，pi/ 层退役为迁移备份）：
  *   ~/.xyz-agent/                    ← xyz-agent 配置根目录（XYZ_AGENT_DATA_DIR 可覆盖）
  *     config.json                    ← xyz-agent 自身配置
@@ -27,7 +27,7 @@
  *       sessions/                    ← Session jsonl 文件
  *         <encodeCwd>/               ← pi 按 cwd 自动分子目录（默认布局）
  *
- * 注意：extensions/npm/tmp 原在 pi/agent/ 下，已迁出到 dataDir 根层（与 skills/agents 对齐）。
+ * 注意：extensions/npm/tmp 原在旧布局 agent/ 子树下，已迁出到 dataDir 根层（与 skills/agents 对齐）。
  */
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -44,7 +44,7 @@ export function getDataDir(env: NodeJS.ProcessEnv = process.env): string {
 
 /**
  * xyz-agent 内嵌的 pi agent 目录（PI_CODING_AGENT_DIR）。
- * 即 `<dataDir>/agent`（方案 B 布局对齐 pi；旧布局 `<dataDir>/pi/agent` 已迁移退役），
+ * 即 `<dataDir>/agent`（方案 B 布局对齐 pi；旧布局 pi/ 兄弟层已迁移退役），
  * **不是**系统 pi 的 `~/.pi/agent`（ADR-0009 隔离）。
  *
  * @param env 可选 env 注入（测试用）；缺省读 process.env

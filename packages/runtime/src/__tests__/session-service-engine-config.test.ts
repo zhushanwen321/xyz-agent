@@ -42,7 +42,7 @@ function makeService(extOverride?: { getExtensionPaths: () => Promise<string[]> 
 }
 
 function writeJson(rel: string, v: unknown): void {
-  const p = path.join(tmpDataRoot, 'pi/agent/subagents', rel)
+  const p = path.join(tmpDataRoot, 'agent/subagents', rel)
   fs.mkdirSync(path.dirname(p), { recursive: true })
   fs.writeFileSync(p, JSON.stringify(v, null, 2))
 }
@@ -104,7 +104,7 @@ describe('setSubagentDefaultEngine', () => {
     const svc = makeService()
     await svc.setSubagentDefaultEngine('zcode')
     const conf = JSON.parse(
-      fs.readFileSync(path.join(tmpDataRoot, 'pi/agent/subagents/config.json'), 'utf8'),
+      fs.readFileSync(path.join(tmpDataRoot, 'agent/subagents/config.json'), 'utf8'),
     ) as Record<string, unknown>
     expect(conf['defaultEngine']).toBe('zcode')
     expect(conf['maxConcurrent']).toBe(3)
@@ -121,7 +121,7 @@ describe('setSubagentDefaultEngine', () => {
   it('值未变 → 幂等零写（mtime 不动）', async () => {
     writeJson('engines.json', { v: 1, engines: ['pi', 'zcode'], updatedAt: 1 })
     writeJson('config.json', { version: 1, maxConcurrent: 6, defaultEngine: 'zcode' })
-    const p = path.join(tmpDataRoot, 'pi/agent/subagents/config.json')
+    const p = path.join(tmpDataRoot, 'agent/subagents/config.json')
     const statBefore = fs.statSync(p)
     await makeService().setSubagentDefaultEngine('zcode')
     expect(fs.statSync(p).mtimeMs).toBe(statBefore.mtimeMs)
@@ -132,7 +132,7 @@ describe('setSubagentDefaultEngine', () => {
     // 用户手编），RMW 必须持 withFileLockSync（lockfile = <config.json>.lock）。
     writeJson('engines.json', { v: 1, engines: ['pi', 'zcode'], updatedAt: 1 })
     writeJson('config.json', { version: 1, maxConcurrent: 5, engineRouting: { strict: true } })
-    const configPath = path.join(tmpDataRoot, 'pi/agent/subagents/config.json')
+    const configPath = path.join(tmpDataRoot, 'agent/subagents/config.json')
     // 他方（遵守锁协议的另一写方）持同一把锁
     const release = lockfile.lockSync(configPath, { realpath: false })
     const p = makeService().setSubagentDefaultEngine('zcode')

@@ -355,7 +355,7 @@ describe('边界3 持久化（CL2）：clearEnabledModels 后 settings.json 物�
   beforeEach(() => {
     vi.clearAllMocks()
     dir = mkdtempSync(join(tmpdir(), 'toggle-bd3-'))
-    agentDir = join(dir, 'pi', 'agent')
+    agentDir = join(dir, 'agent')
     mkdirSync(agentDir, { recursive: true })
     process.env.XYZ_AGENT_DATA_DIR = dir
     setModelsPath(join(agentDir, 'models.json'))

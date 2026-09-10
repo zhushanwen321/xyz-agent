@@ -267,7 +267,7 @@ class WsClient {
 
 /** 预置 provider 数据（auth.json + models.json + providers.json） */
 function presetProviders(dataDir, opts = {}) {
-  const agentDir = join(dataDir, 'pi', 'agent')
+  const agentDir = join(dataDir, 'agent')
   const configDir = join(agentDir, 'config')
   mkdirSync(agentDir, { recursive: true })
   mkdirSync(configDir, { recursive: true })
@@ -457,7 +457,7 @@ async function scenarioE2() {
     }
 
     // 断言 settings.json defaultModel
-    const settingsPath = join(dataDir, 'pi', 'agent', 'settings.json')
+    const settingsPath = join(dataDir, 'agent', 'settings.json')
     const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
     const expectedDefault = models2[0]
     const actualDefault = settings.defaultProvider && settings.defaultModel
@@ -479,7 +479,7 @@ async function scenarioE3() {
     if (!client.latestBroadcast('model.list')) fail('E3', 'no model.list after setScopedModels')
 
     // 断言 settings.json defaultModel
-    const settingsPath = join(dataDir, 'pi', 'agent', 'settings.json')
+    const settingsPath = join(dataDir, 'agent', 'settings.json')
     let settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
     const actualDefault = settings.defaultProvider && settings.defaultModel
       ? `${settings.defaultProvider}/${settings.defaultModel}`
@@ -538,7 +538,7 @@ async function scenarioE4() {
     if (hasCustom) fail('E4', `CUSTOM_PROVIDER models should be gone after toggle OFF, got: ${JSON.stringify(modelIds)}`)
 
     // 断言 providers.json scopedModels 仍含 custom provider 条目
-    const providersPath = join(dataDir, 'pi', 'agent', 'config', 'providers.json')
+    const providersPath = join(dataDir, 'agent', 'config', 'providers.json')
     const providersData = JSON.parse(readFileSync(providersPath, 'utf-8'))
     const scopedModels = providersData.scopedModels ?? []
     const hasCustomScoped = scopedModels.some(m => m.startsWith(`${CUSTOM_PROVIDER}/`))
@@ -579,7 +579,7 @@ async function scenarioE5() {
 
     // 记录 defaultModel。前置 setScopedModels（非空）已触发 default 同步链，
     // defaultBefore 为 null = 同步链断裂（S2 契约：default = scoped[0]），显式 FAIL 不静默跳过
-    const settingsPath = join(dataDir, 'pi', 'agent', 'settings.json')
+    const settingsPath = join(dataDir, 'agent', 'settings.json')
     const settingsBefore = JSON.parse(readFileSync(settingsPath, 'utf-8'))
     const defaultBefore = settingsBefore.defaultProvider && settingsBefore.defaultModel
       ? `${settingsBefore.defaultProvider}/${settingsBefore.defaultModel}`
@@ -631,7 +631,7 @@ async function scenarioE6() {
     if (hasCustomInBroadcast) fail('E6', `broadcast scopedModels should not contain CUSTOM_PROVIDER, got: ${JSON.stringify(broadcastScoped)}`)
 
     // 2. 文件侧
-    const providersPath = join(dataDir, 'pi', 'agent', 'config', 'providers.json')
+    const providersPath = join(dataDir, 'agent', 'config', 'providers.json')
     const providersData = JSON.parse(readFileSync(providersPath, 'utf-8'))
     const fileScoped = providersData.scopedModels ?? []
     const hasCustomInFile = fileScoped.some(m => m.startsWith(`${CUSTOM_PROVIDER}/`))
@@ -657,7 +657,7 @@ async function scenarioE8() {
     if (!client.latestBroadcast('model.list')) fail('E8', 'no model.list after setScopedModels')
 
     // 断言 settings.json defaultModel == A
-    const settingsPath = join(dataDir, 'pi', 'agent', 'settings.json')
+    const settingsPath = join(dataDir, 'agent', 'settings.json')
     let settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
     let actualDefault = settings.defaultProvider && settings.defaultModel
       ? `${settings.defaultProvider}/${settings.defaultModel}`
@@ -767,7 +767,7 @@ async function scenarioE10() {
 
       // 终态 1：reply 的 session.modelId（create 时 modelOverride ?? getDefaultModel()）
       if (session.modelId !== scoped[0]) {
-        const settingsDump = readFileSync(join(dataDir, 'pi', 'agent', 'settings.json'), 'utf-8')
+        const settingsDump = readFileSync(join(dataDir, 'agent', 'settings.json'), 'utf-8')
         fail('E10', `[${source}] reply session.modelId expected ${scoped[0]}, got ${session.modelId}; settings.json: ${settingsDump}`)
       }
 

@@ -18,7 +18,7 @@ import type { IFileExecutor } from '../src/services/ports/file-executor.js'
 
 const executor = { listDir: vi.fn(), stat: vi.fn(), readFile: vi.fn() }
 const sessionService = { getSummary: vi.fn() }
-const ALLOWED = ['/home/user/.agents/skills', '/pi/agent/skills', '/pi/agent/npm']
+const ALLOWED = ['/home/user/.agents/skills', '/data/agent/skills', '/data/agent/npm']
 
 function svc(): FileService {
   return new FileService({

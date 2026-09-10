@@ -22,7 +22,7 @@ import { getConfigDir } from '../infra/pi/pi-paths.js'
 // 强制·项目（最高优先）> 强制·全局 > 可选（discovery 数组顺序）。
 //
 // ⚠️ 路径修正：ADR 文档写的逻辑路径是 ~/.xyz-agent/agents 等，但 pi 桥接层把 agentDir
-// 重定向到 ~/.xyz-agent/pi/agent/，pi 实际扫的是 <piAgentDir>/agents。故强制目录用 pi
+// 重定向到 <dataDir>/agent/（getPiAgentDir SSOT），pi 实际扫的是 <piAgentDir>/agents。故强制目录用 pi
 // 实际路径（loadAgents 内 join(configStore.getPiAgentDir(),'agents')），而项目级强制目录
 //（.xyz-agent/agents）保留 ADR 逻辑路径（项目相对路径，存在则扫）。
 //

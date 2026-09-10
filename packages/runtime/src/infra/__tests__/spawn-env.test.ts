@@ -79,10 +79,10 @@ describe('extras merge（undefined = 显式删除，对齐 safe-env.ts 约定）
   it('值注入：覆盖父 env 同名键，新增键生效', () => {
     const out = buildOutboundChildEnv({
       parentEnv: { PATH: '/old-path', HOME: '/h' },
-      extras: { PATH: '/new-path', PI_CODING_AGENT_DIR: '/data/pi/agent' },
+      extras: { PATH: '/new-path', PI_CODING_AGENT_DIR: '/data/agent' },
     })
     expect(out.PATH).toBe('/new-path')
-    expect(out.PI_CODING_AGENT_DIR).toBe('/data/pi/agent')
+    expect(out.PI_CODING_AGENT_DIR).toBe('/data/agent')
   })
 
   it('undefined 删除语义：删掉白名单已继承的父 env 键', () => {

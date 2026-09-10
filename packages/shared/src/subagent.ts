@@ -3,7 +3,7 @@
  *
  * 数据来源：pi-subagent-workflow 扩展注册的 `subagent` tool。主 agent 调用该 tool
  * 时，扩展 spawn 一个子 agent（独立 pi session，JSONL 落在
- * `~/.xyz-agent/pi/agent/subagents/<encodeCwd(mainCwd)>/sessions/*.jsonl`）。
+ * `<dataDir>/agent/subagents/<encodeCwd(mainCwd)>/sessions/*.jsonl`）。
  *
  * toolCall 携带 action=start + startParam{task, slug, agent?, model?, thinkingLevel?, fork?, worktree?, ...}；
  * toolResult 携带 subagentId + sessionFile + bgResponse|listResponse。

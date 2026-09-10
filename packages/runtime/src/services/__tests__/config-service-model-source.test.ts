@@ -45,7 +45,7 @@ function providerModels(svc: ConfigService, id: string): ReturnType<ConfigServic
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'config-service-model-source-'))
-  agentDir = join(dir, 'pi', 'agent')
+  agentDir = join(dir, 'agent')
   mkdirSync(join(agentDir, 'config'), { recursive: true })
   process.env.XYZ_AGENT_DATA_DIR = dir
   setModelsPath(join(agentDir, 'models.json'))

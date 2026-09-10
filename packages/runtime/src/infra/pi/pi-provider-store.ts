@@ -94,7 +94,7 @@ export type { PiSettings } from './pi-settings-store.js'
 // 此处 models.json 的 read-through 缓存 + 原子读写收敛到 JsonStore（P0-1）。
 
 /**
- * models.json 路径。生产用 getModelsPath()（= ~/.xyz-agent/pi/agent/models.json）。
+ * models.json 路径。生产用 getModelsPath()（= <dataDir>/agent/models.json）。
  * 测试可经 setModelsPath() 指向临时目录，与 setSettingsPath 对称。
  */
 let modelsFilePath: string = getModelsPath()

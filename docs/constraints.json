@@ -1711,6 +1711,30 @@
       ]
     },
     {
+      "id": "C-pi-14",
+      "summary": "xyz-agent 数据布局与 pi 默认布局同构（agent/ 子树），唯一差异 = 根目录（~/.pi/ vs <dataDir>/）；禁止再引入 pi/ 兄弟布局引用与新 --session-dir 覆盖（路径一律经 getPiAgentDir()/getSessionsDir() SSOT 派生；bundled 资源布局与迁移语义等合法持有者在 check-layout-literals.mjs 豁免表登记）",
+      "scope": [
+        "packages/**",
+        "apps/**",
+        "scripts/**",
+        "AGENTS.md",
+        "docs/troubleshooting.md"
+      ],
+      "authority": [
+        "../extensions/universal/session-reader/docs/2026-09-10-session-root-discovery-and-env-transparency.md#5-终态",
+        "../packages/runtime/src/infra/pi/pi-paths.ts"
+      ],
+      "dimensions": [
+        "data-governance"
+      ],
+      "enforcement": [
+        {
+          "type": "machine",
+          "hook": "check-layout-literals.mjs"
+        }
+      ]
+    },
+    {
       "id": "C-ext-19",
       "summary": "结果语义通知必须走确认式送达（持久账本 + 幂等键，session-delivery/notify-ledger 通道），禁止新建依赖 pi 内存队列（steer/nextTurn/followUp）的 at-most-once 通道；交互式注入仅限非结果语义。生效口径：新代码即禁、存量列迁移切片（subagent-workflow 内存量经 g4-allow 行级豁免定性和迁移去向，scheduler 迁移登记 pi-boundary-reliability 附录 B 待办，G4 扫描面随迁移合入扩面）",
       "scope": [

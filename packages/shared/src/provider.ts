@@ -237,7 +237,7 @@ export type ScanSourceType = 'pi' | 'claude' | 'agents' | 'custom'
 
 /**
  * discovery.json schema v2（ADR-0021 §1）—— skill/agent/extension 加载路径的唯一真相源。
- * 位于 `<piAgentDir>/discovery.json`（~/.xyz-agent/pi/agent/discovery.json）。
+ * 位于 `<piAgentDir>/discovery.json`（<dataDir>/agent/discovery.json）。
  *
  * v2 嵌套结构：每个 kind 拆 projectPaths（项目级，跟随 cwd，可含相对路径如 .agents/skills）
  * 与 globalPaths（全局级，限绝对路径如 ~/.pi/agent/skills）。

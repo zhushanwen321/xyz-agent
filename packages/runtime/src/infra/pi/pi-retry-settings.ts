@@ -16,7 +16,7 @@ import { toErrorMessage } from '../../utils/errors.js'
 
 /**
  * ILlmRetrySettings 实现。
- * @param settingsDir pi agent 配置目录（~/.xyz-agent/pi/agent），settings.json 所在地。
+ * @param settingsDir pi agent 配置目录（<dataDir>/agent），settings.json 所在地。
  *                    测试可注入临时目录；生产默认 getPiAgentDir()。
  */
 export class PiRetrySettings implements ILlmRetrySettings {

@@ -48,7 +48,7 @@ function byId(svc: ConfigService): Record<string, ReturnType<ConfigService['list
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'provider-read-source-switch-'))
-  agentDir = join(dir, 'pi', 'agent')
+  agentDir = join(dir, 'agent')
   mkdirSync(join(agentDir, 'config'), { recursive: true })
   process.env.XYZ_AGENT_DATA_DIR = dir
   setModelsPath(join(agentDir, 'models.json'))
