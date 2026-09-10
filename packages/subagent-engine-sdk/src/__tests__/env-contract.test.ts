@@ -42,9 +42,6 @@ describe("buildEngineChildEnv 三层契约", () => {
         XYZ_AGENT_API_KEY: "k",
         XYZ_SUBAGENT_RELAY_SESSION_ID: "parent",
         XYZ_SUBAGENT_RELAY_RECORD_ID: "r",
-        XYZ_SUBAGENT_RELAY_STDIN: "x",
-        XYZ_SUBAGENT_RELAY_STDOUT: "x",
-        XYZ_SUBAGENT_RELAY_STDERR: "x",
       },
       { dataDir: "/d" },
     );
@@ -162,7 +159,6 @@ describe("buildOutboundChildEnv（SDK 版出站卫生）", () => {
         XYZ_RUNTIME_TOKEN: "tok",
         XYZ_AGENT_API_KEY: "k",
         XYZ_SUBAGENT_RELAY_SESSION_ID: "s",
-        XYZ_SUBAGENT_RELAY_STDOUT: "x",
       },
     });
     expect(env.PATH).toBe("/usr/bin");
@@ -171,7 +167,6 @@ describe("buildOutboundChildEnv（SDK 版出站卫生）", () => {
     expect(env.XYZ_RUNTIME_TOKEN).toBeUndefined();
     expect(env.XYZ_AGENT_API_KEY).toBeUndefined();
     expect(env.XYZ_SUBAGENT_RELAY_SESSION_ID).toBeUndefined();
-    expect(env.XYZ_SUBAGENT_RELAY_STDOUT).toBeUndefined();
   });
 
   it("extras 注入 / undefined 删除语义", () => {

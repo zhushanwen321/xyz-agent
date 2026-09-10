@@ -133,19 +133,16 @@ export type ExecutionOutcome = "completed" | "failed" | "cancelled";
 export type ProjectedOutcome = ExecutionOutcome | "closed-legacy";
 
 /**
- * 对外四态（设计决策 10 细则 3）：内部 ExecutionStatus（v4 B-1 两态）收敛为 agent
+ * 对外两态（设计决策 10 细则 3）：内部 ExecutionStatus（v4 B-1 两态）收敛为 agent
  * 可理解的状态语义。真实映射只有两条：
  *   running → active / closed → ended（closed 统一终态，含 cancelled）。
  * mapExternalState 不消费 ClosedReason——closed 恒映射 ended。
  *
- * waiting / error 是历史多态映射（idle→waiting / failed+crashed→error）的遗留声明：
- * 对外四态联合契约不变，但当前状态机不产生这两个值。
- *
  * 原始 ExecutionStatus 进 list item 的 status 字段供调试；state 是对外主字段。
- * 映射实现见 subagent-actions.ts mapExternalState——未来内部加态必须扩展该处，
+ * 映射实现见 subagent-actions-core.ts mapExternalState——未来内部加态必须扩展该处，
  * 漏加会在 default 分支编译报错，不影响对外契约。
  */
-export type ExternalState = "active" | "waiting" | "ended" | "error";
+export type ExternalState = "active" | "ended";
 
 /** 执行模式。background = 调用方立即拿 handle 返回，子 agent 在 detached promise 里跑。 */
 export type ExecutionMode = "background";
@@ -495,12 +492,11 @@ export interface ExecutionRecord {
   sessionFile?: string;
 
   /**
-   * [V2 决策 3] 子进程 pid（spawn 后由 session-runner 回填到内存 record）。
+   * [V2 决策 3] 子进程 pid（spawn 后回填到内存 record，并随 record 持久化落盘）。
    *
-   * 用于 lifecycle-manager 孤儿扫描（V2 §5.2 职责 4：父进程重启时按持久化 pid 扫收
-   * 上次崩溃遗留的孤儿）。本字段仅在内存记账，持久化留 Step 5（record
-   * 文件写入 pid + 启动时 scanOrphanProcesses 消费）。undefined = 尚未 spawn / 已退出。
-   * 向后兼容：旧 record 无此字段，按无 pid 处理（孤儿扫描跳过）。
+   * 诊断字段：排障时对照 record 文件与进程表核实 spawn 事实。原职责 4 孤儿扫描
+   * （按持久化 pid 扫收上次崩溃遗留孤儿）自落地起未接线，已随 L2 死代码清扫删除。
+   * undefined = 尚未 spawn / 已退出。向后兼容：旧 record 无此字段，按无 pid 处理。
    */
   pid?: number;
 

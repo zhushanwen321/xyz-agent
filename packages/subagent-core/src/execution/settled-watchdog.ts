@@ -39,12 +39,14 @@
 //
 // 双挂载点共用同一原语——同一组常量 + 同一组挂载/交棒/清除 helper，仅两个 prompt
 // 发出点（设计 T2-③ 明示架构，两处各写一套恰是被否的「散布姿势」微缩复发）：
-//   - 首轮：session-runner.ts runSpawn（prompt 发出后 arm 中段）
-//   - 后续轮次热路径：subagent-service.ts deliverMessage（发出新一轮 prompt 后 arm 中段）
-// 事件侧接线（两路径共用同一 stdout pump 闭包，均在 session-runner.ts）：
-//   - 有效协议事件行 → refreshMidRoundNoProgress（中段刷新）
-//   - agent_end（chatMode，!willRetry）→ handoverMidRoundToSettled（交棒收尾段）
-//   - agent_settled / close / 收尾 → disarmSettledWatchdog（两段一并清）
+//   - chat 域：subagent-service.ts——首轮/冷续轮 kickOffChatRound（run 派发前 arm
+//     中段）+ 热路径 deliverChatMessage（发出新一轮 prompt 后 arm 中段）
+//   - workflow 域：subprocess-agent-runner.ts SAR.run per-call 守护（M3 起复用）
+// 事件侧接线（chat 域 = chatRoundRoutes 协议帧：recordId 键 streamDelta /
+// roundLifecycle；workflow 域 = subprocess-agent-runner 事件 handler）：
+//   - 有效协议事件行 → refreshMidRoundNoProgress / refreshFromProtocolEvent（中段刷新）
+//   - settled 相位（roundLifecycle）→ noteRoundSettledFromProtocol（交棒收尾段）
+//   - idle 相位 / close / 终态化 → disarmRoundFromProtocol / disarmSettledWatchdog（两段一并清）
 //
 // 与 lifecycle-manager 的 idle timer 互补：idle timer 管 settled 已到达后的空闲
 // 回收，本原语管 settled 永不到达的 wedged——两条正交通道不互相替代。
@@ -59,7 +61,7 @@ import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
 
 const logger = getLogger("subagents");
 
-/** 时间单位换算常量（命名后供 watchdog 常量组合，对齐 session-runner 同名先例，消除裸乘法字面量）。 */
+/** 时间单位换算常量（命名后供 watchdog 常量组合，消除裸乘法字面量）。 */
 const MS_PER_SECOND = 1000;
 const SECONDS_PER_MINUTE = 60;
 
@@ -351,17 +353,15 @@ export function _resetSettledWatchdogsForTest(): void {
   midRoundWindowOverrideMs = undefined;
 }
 
-// ── [W4] 协议事件面接线 API（W3 删件重接的 core 半边）──────────────────
+// ── [W4] 协议事件面接线 API ────────────────────────────────────────────
 //
 // 设计权威源：docs/design/chat-domain-v1x-liveness-governance.md §3.2 D2 前置 1 +
 // D5「settled-watchdog 生产接线重接」：两段守护的 refresh 源随 chat 域 cli 化改挂
 // 协议事件流（arm 点 = 轮开始；refresh 源 = host/streamDelta + host/roundLifecycle
-// 事件；kill/终态 = 既有杀链）。现状 refresh/handover/disarm 的驱动源在待删的
-// session-runner.ts stdout pump（inproc 过渡形态，W3 删件前不得删除——本 API 面即
-// 其替换目标：W3 删旧接线时改调下面三个命名入口，语义逐一同构）。
+// 事件；kill/终态 = 既有杀链）。旧 inproc stdout-pump 接线（session-runner.ts）已随
+// W3 删件移除，下面三个命名入口是协议事件面的唯一驱动入口。
 //
-// 命名入口与既有原语的映射（刻意薄委托、零新语义——本单元「把新接线立起来」，
-// W3 负责删旧，两套接线并存期由原语幂等吸收重复调用）：
+// 命名入口与既有原语的映射（刻意薄委托、零新语义）：
 //   refreshFromProtocolEvent      ↔ refreshMidRoundNoProgress（协议事件行到达）
 //   noteRoundSettledFromProtocol  ↔ handoverMidRoundToSettled（roundLifecycle
 //                                    settled 相位 = 轮收敛，中段让位收尾段）

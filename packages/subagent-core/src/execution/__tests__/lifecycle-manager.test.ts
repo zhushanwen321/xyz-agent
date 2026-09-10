@@ -1,8 +1,8 @@
-// lifecycle-manager 单测 —— V2 §5.2 模块 1（进程生命周期管理）五项职责。
+// lifecycle-manager 单测 —— V2 §5.2 模块 1（进程生命周期管理）存留职责（idle timer
+// / activate 互斥；原职责 2/3/4 骨架未接线，已随 L2 死代码清扫删除）。
 //
 // 测试策略：
-//   - idle timer / ceiling LRU 用 vi.useFakeTimers() + advanceTimersByTime（同时 mock
-//     Date.now()，让 lastTouched 时间戳可控）。
+//   - idle timer 用 vi.useFakeTimers() + advanceTimersByTime。
 //   - activate 互斥锁是纯 Promise 链（无 timer），用 advanceTimersByTimeAsync(0)
 //     flush microtask 验证串行化。
 //   - 每个用例 beforeEach 调 _resetLifecycleState() 隔离模块级单例状态。
@@ -20,19 +20,11 @@ vi.mock("../../core/logger.ts", () => ({
 
 import {
   DEFAULT_IDLE_TIMEOUT_MS,
-  DEFAULT_MAX_ALIVE_PROCESSES,
   _resetLifecycleState,
   acquireActivateLock,
   armIdleTimer,
   disarmIdleTimer,
-  evictIfOverCeiling,
-  getActiveProcessCount,
   hasIdleTimer,
-  reapAllAliveProcesses,
-  registerActiveProcess,
-  scanOrphanProcesses,
-  touchActiveProcess,
-  unregisterActiveProcess,
 } from "../lifecycle-manager.ts";
 
 describe("lifecycle-manager — V2 §5.2 模块 1", () => {
@@ -176,192 +168,6 @@ describe("lifecycle-manager — V2 §5.2 模块 1", () => {
       armIdleTimer("sa-lc7-clean", onTimeout);
       expect(hasIdleTimer("sa-lc7-clean")).toBe(true);
       expect(loggerMock.warn).not.toHaveBeenCalled();
-    });
-  });
-
-  // ============================================================
-  // 职责 2：全局 ceiling（LRU 挤出）
-  // ============================================================
-  describe("职责2 全局 ceiling", () => {
-    it("register 超过上限时 evictIfOverCeiling 挤出最久空闲", () => {
-      registerActiveProcess("sa-1"); // 最早
-      vi.advanceTimersByTime(10);
-      registerActiveProcess("sa-2");
-      vi.advanceTimersByTime(10);
-      registerActiveProcess("sa-3"); // 超限（size=3 > ceiling=2）
-      expect(getActiveProcessCount()).toBe(3);
-
-      const evicted: string[] = [];
-      evictIfOverCeiling((id) => evicted.push(id), 2);
-
-      expect(evicted).toEqual(["sa-1"]); // lastTouched 最老的被挤出
-      expect(getActiveProcessCount()).toBe(2);
-    });
-
-    it("不超过上限时 evictIfOverCeiling 不挤出", () => {
-      registerActiveProcess("sa-1");
-      registerActiveProcess("sa-2");
-
-      const evicted: string[] = [];
-      evictIfOverCeiling((id) => evicted.push(id), 5);
-
-      expect(evicted).toEqual([]);
-      expect(getActiveProcessCount()).toBe(2);
-    });
-
-    it("touch 更新 LRU：被 touch 的不再是挤出候选", () => {
-      registerActiveProcess("sa-1");
-      vi.advanceTimersByTime(10);
-      registerActiveProcess("sa-2");
-      vi.advanceTimersByTime(10);
-      touchActiveProcess("sa-1"); // sa-1 变最新 → sa-2 变最老
-
-      const evicted: string[] = [];
-      evictIfOverCeiling((id) => evicted.push(id), 1);
-
-      expect(evicted).toEqual(["sa-2"]); // sa-2 最久未 touch，被挤出
-    });
-
-    it("touch 不存在的 record 为 no-op（不隐式创建）", () => {
-      expect(() => touchActiveProcess("never-registered")).not.toThrow();
-      expect(getActiveProcessCount()).toBe(0);
-    });
-
-    it("unregister 清理活进程集合", () => {
-      registerActiveProcess("sa-1");
-      registerActiveProcess("sa-2");
-      unregisterActiveProcess("sa-1");
-      expect(getActiveProcessCount()).toBe(1);
-    });
-
-    it("挤出时连带 disarm 被挤 record 的 idle timer", () => {
-      registerActiveProcess("sa-1");
-      armIdleTimer("sa-1", vi.fn(), 1000);
-      registerActiveProcess("sa-2");
-      vi.advanceTimersByTime(10);
-      registerActiveProcess("sa-3"); // sa-1 最老，将被挤出
-
-      evictIfOverCeiling(() => {
-        /* kill */
-      }, 2);
-
-      expect(hasIdleTimer("sa-1")).toBe(false); // 挤出 cascade disarm
-    });
-
-    it("unregister 连带 disarm idle timer（进程终态 timer 不残留）", () => {
-      registerActiveProcess("sa-1");
-      armIdleTimer("sa-1", vi.fn(), 1000);
-      unregisterActiveProcess("sa-1");
-      expect(hasIdleTimer("sa-1")).toBe(false);
-    });
-
-    it("默认上限 = DEFAULT_MAX_ALIVE_PROCESSES（不传 maxAlive）", () => {
-      for (let i = 0; i < DEFAULT_MAX_ALIVE_PROCESSES; i++) {
-        registerActiveProcess(`sa-${i}`);
-        vi.advanceTimersByTime(1); // 保证 lastTouched 严格递增
-      }
-      registerActiveProcess("sa-over"); // 超限
-      const evicted: string[] = [];
-      evictIfOverCeiling((id) => evicted.push(id)); // 用默认上限
-
-      expect(evicted).toEqual(["sa-0"]); // 默认上限下挤出最早
-      expect(getActiveProcessCount()).toBe(DEFAULT_MAX_ALIVE_PROCESSES);
-    });
-
-    it("大幅超限时 while 循环挤出多个直到 ≤ ceiling", () => {
-      for (let i = 0; i < 5; i++) {
-        registerActiveProcess(`sa-${i}`);
-        vi.advanceTimersByTime(1);
-      }
-      const evicted: string[] = [];
-      evictIfOverCeiling((id) => evicted.push(id), 2);
-
-      expect(evicted).toEqual(["sa-0", "sa-1", "sa-2"]); // 挤出 3 个（5-2），按 LRU
-    });
-  });
-
-  // ============================================================
-  // 职责 3：shutdown 收割
-  // ============================================================
-  describe("职责3 shutdown 收割", () => {
-    it("reapAllAliveProcesses 遍历活进程调 killFn 并返回列表", () => {
-      registerActiveProcess("sa-1");
-      registerActiveProcess("sa-2");
-
-      const killed: string[] = [];
-      const reaped = reapAllAliveProcesses((id) => killed.push(id));
-
-      expect(killed).toHaveLength(2);
-      expect(killed).toEqual(expect.arrayContaining(["sa-1", "sa-2"]));
-      expect(reaped).toEqual(expect.arrayContaining(["sa-1", "sa-2"]));
-      expect(getActiveProcessCount()).toBe(0);
-    });
-
-    it("reap 后 idle timer 已 disarm（advance 不再触发）", () => {
-      registerActiveProcess("sa-1");
-      const onTimeout = vi.fn();
-      armIdleTimer("sa-1", onTimeout, 1000);
-
-      reapAllAliveProcesses(() => {
-        /* kill */
-      });
-      vi.advanceTimersByTime(10000);
-
-      expect(onTimeout).not.toHaveBeenCalled(); // timer 已被 reap 清理
-    });
-
-    it("无活进程时 reapAll 返回空列表", () => {
-      const reaped = reapAllAliveProcesses(() => {
-        /* kill */
-      });
-      expect(reaped).toEqual([]);
-    });
-  });
-
-  // ============================================================
-  // 职责 4：孤儿扫描
-  // ============================================================
-  describe("职责4 孤儿扫描", () => {
-    it("pid 存活 + 不在活进程集合 = 孤儿", () => {
-      registerActiveProcess("sa-active"); // 在集合内
-      const records = [
-        { id: "sa-active", pid: 100 },
-        { id: "sa-orphan", pid: 200 }, // pid 活但不在集合 → 孤儿
-        { id: "sa-dead", pid: 300 }, // pid 不活 → 非孤儿
-        { id: "sa-nopid" }, // 无 pid → 非孤儿
-      ];
-
-      const orphans = scanOrphanProcesses(records, (pid) => pid === 100 || pid === 200);
-
-      expect(orphans).toEqual(["sa-orphan"]);
-    });
-
-    it("pid 不存活 = 非孤儿", () => {
-      const records = [{ id: "sa-1", pid: 999 }];
-      const orphans = scanOrphanProcesses(records, () => false); // 全不活
-      expect(orphans).toEqual([]);
-    });
-
-    it("在活进程集合内 = 非孤儿（即使 pid 活）", () => {
-      registerActiveProcess("sa-1");
-      const records = [{ id: "sa-1", pid: 100 }];
-      const orphans = scanOrphanProcesses(records, () => true);
-      expect(orphans).toEqual([]);
-    });
-
-    it("无 pid 的 record 不视为孤儿", () => {
-      const records = [
-        { id: "sa-1" },
-        { id: "sa-2", sessionFile: "/x.jsonl" },
-      ];
-      const orphans = scanOrphanProcesses(records, () => true);
-      expect(orphans).toEqual([]);
-    });
-
-    it("扫描是只读（不改活进程集合）", () => {
-      registerActiveProcess("sa-1");
-      scanOrphanProcesses([{ id: "sa-2", pid: 200 }], () => true);
-      expect(getActiveProcessCount()).toBe(1); // 集合不变
     });
   });
 

@@ -468,9 +468,11 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   //  - beforeExit 是退出前最后事件，不 exit（自然退出）。
   //  - idempotent guard（reapSpawnedChildrenOnShutdown 内）防多信号叠加重复 kill。
   //
-  //  防线 iii（activate 互斥）已接入：subagent-service.ts 冷路径 resume 调
-  //  acquireActivateLock（含 30s 超时兜底，见 lifecycle-manager.ts ACTIVATE_LOCK_TIMEOUT_MS）。
-  //  防线 ii（启动 scanOrphanProcesses）骨架就位，启动时接入待实现。
+  //  防线 iii（activate 互斥）：lifecycle-manager.acquireActivateLock 机制保留
+  //  （含 30s 超时兜底），但 subagent-service 冷路径 resume 的历史接线点已随协议化
+  //  重构消失，当前无生产调用方。
+  //  防线 ii（启动孤儿扫描）：未接线，骨架已随 L2 死代码清扫删除（当前 piped stdio
+  //  下 stdin-EOF 自灭链覆盖崩溃路径，见 docs/design/v2-defense-ii-iii-resolution.md）。
   // ════════════════════════════════════════════════════════════
   process.on("SIGTERM", () => {
     reapSpawnedChildrenOnShutdown();

@@ -280,8 +280,7 @@ function assertNever(value: never): string {
  * 内部 ExecutionStatus → 对外 state 映射（设计决策 10 细则 3）。
  * 两态收敛后的真实映射只有两条：
  *   running → active / closed → ended（closed 统一终态，含 cancelled）
- * ExternalState 仍声明 waiting/error 四态联合（对外契约不变），但当前状态机不产生
- * 这两个值——它们是历史多态映射（idle→waiting / failed+crashed→error）的遗留声明。
+ * ExternalState 即两态联合（历史 waiting/error 死值成员已随 L2 清扫删除）。
  * 未来内部加态必须扩展此处，漏加会在 default 分支编译报错（而非静默返回 undefined
  * 让 state 字段以无主值进入 listResponse JSON）。
  */
@@ -297,7 +296,7 @@ export function mapExternalState(status: ExecutionStatus): ExternalState {
   }
 }
 
-/** SubagentRecord → SubagentListItem（state 四态主字段 + status 调试字段，duration 实时计算）。
+/** SubagentRecord → SubagentListItem（state 两态主字段 + status 调试字段，duration 实时计算）。
  *  parent 从 record.parentRecordId 派生（配合直接父守卫），resumable 从 isResumable 派生
  *  （「可续聊」对外表达）；outcome 一等终态语义（projectOutcome 唯一出口），closedReason
  *  退出对外 JSON（保留为 record 内部诊断字段），对外成败判读收口到 outcome。

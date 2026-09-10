@@ -2,30 +2,24 @@
 //
 // Subagent 持续对话 V2 — 进程生命周期管理（§5.2 模块 1）。
 //
-// 本模块是 V2 五项生命周期职责的中心调度器，以**模块级单例**持有全局进程
-// 状态（活进程集合、per-record idle timer、activate 串行化锁）。它**不直接持有
-// ChildProcess 句柄**——句柄仍在 session-runner 的 spawnedChildren Map——因此
+// 本模块是 subagent 进程生命周期管理器，以**模块级单例**持有全局进程
+// 状态（per-record idle timer、activate 串行化锁）。它**不直接持有
+// ChildProcess 句柄**——句柄在 engine/host/spawned-children.ts——因此
 // 所有「副作用」能力（kill / 探活 / 超时回调）都由调用方经回调/参数注入，本模块
 // 只管状态记账 + 调度顺序。这让模块可独立编译 + 单测，无需拉起真实子进程。
 //
-// 五项职责（对应 V2 决策 1/4/7），接线现状（防止「已防护」错觉，详见各节 [状态] 注释）：
+// 两项职责（V2 §5.2 五项职责经 L2 死代码清扫后的存留——原职责 2 全局 ceiling /
+// 职责 3 shutdown 收割 / 职责 4 孤儿扫描自落地起无生产接线，骨架与单测已随清扫
+// 删除；未来需要时按 docs/design/v2-defense-ii-iii-resolution.md 重新设计）：
 //   1. idle timer —— agent_settled arm / 新 turn disarm / 超时触发 onTimeout（决策 4）
-//      【已接线：session-runner.ts agent_settled arm / subagent-service 新 turn disarm】
-//   2. 全局 ceiling —— 活进程上限，超限时按 LRU 挤出最久空闲（决策 4）【未接线，deferred】
-//   3. shutdown 收割 —— 父进程 shutdown 时显式 SIGTERM 全部 activation（决策 7 防线 i）
-//      【未接线：[F-7 纠偏] 旧注「reapSpawnedChildrenOnShutdown 已等价覆盖」失实——
-//      该 hook 调 killAllSpawnedChildren，后者协议化后仅镜像置死 no-op（见
-//      engine/host/spawned-children.ts 与 src/index.ts 导出注释）；引擎进程实际回收 =
-//      stdin-EOF 自灭链，本职责仍无显式收割接线】
-//   4. 孤儿扫描 —— 父进程启动时按持久化 PID 扫收上次崩溃遗留的孤儿（决策 7 防线 ii）【deferred】
+//      【已接线：subagent-service.ts chat 域 arm/disarm】
 //   5. activate 互斥 —— 同 recordId 的并发 activate 串行化（决策 7 防线 iii，防双写者）
-//      【已接线：subagent-service.ts 冷路径 resume 前 acquireActivateLock】
+//      【保留但当前无生产调用方：历史接线点（冷路径 resume 前）已随协议化重构消失，
+//      30s 超时兜底与 tail-identity 自清机制完整，恢复接线即用】
 //
-// 触发点（谁在何时调 arm/disarm/reap）散落在 session-runner / subagent-service /
-// index.ts，由后续步骤接入；本模块不 import 它们，避免循环依赖。
+// 本模块不 import subagent-service 等 execution 编排层，避免循环依赖。
 //
-// 设计参考：session-runner 的 MF-3/MF-4 setTimeout→SIGTERM 骨架（复用 timer 形态，
-// 触发条件重构）；spawnedChildren Map 的模块级单例模式。
+// 设计参考：setTimeout→SIGTERM 骨架（复用 timer 形态）；模块级单例 Map 记账模式。
 
 import { getLogger } from "../core/logger.ts";
 import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
@@ -79,19 +73,6 @@ function getEnvIdleTimeoutMs(): number | undefined {
   }
   return parsed;
 }
-
-/**
- * 默认全局活进程上限（ceiling）。
- *
- * V2 §5.4 / 决策 4：防「N 个 subagent 于 timeout 窗口内高频复用」场景的内存高水位
- * 无上界。候选 8-10，实测定（P-ceiling）。
- *
- * 注意：挤出候选**仅限空闲进程**（busy 进程不做候选，V2 决策 4 硬约束）。本模块不
- * 感知 busy（进程句柄在 session-runner），调用方接入 evictIfOverCeiling 前应确保
- * 已把 busy 进程移出活进程集合（unregisterActiveProcess），或由后续步骤扩展注入
- * isBusy 谓词。
- */
-export const DEFAULT_MAX_ALIVE_PROCESSES = 8;
 
 // ============================================================
 // 职责 1：idle timer（per-record）
@@ -195,200 +176,6 @@ export function hasIdleTimer(recordId: string): boolean {
 }
 
 // ============================================================
-// 职责 2：全局 ceiling（活进程上限 + LRU）
-//
-// [状态：未接线（deferred）] register/touch/unregister/evictIfOverCeiling 均无生产
-// 调用方（仅本模块单测引用）——「N 个 chatMode 长驻进程内存高水位」防护当前**未生效**。
-// 接线条件：spawn/activate 完成处 registerActiveProcess + 事件驱动或周期调
-// evictIfOverCeiling（注入 SIGTERM 回调），busy 进程按 evictIfOverCeiling docstring
-// 约束移出集合。保留理由：activeProcesses 记账同时是职责 4 孤儿判定（scanOrphanProcesses
-// 的「不在当前活进程集合」检查）的数据通路，与职责 4 一并待接入，不宜单删。
-// ============================================================
-
-interface ActiveProcessEntry {
-  /** 最近活动时间戳（Date.now()）。LRU 挤出时取最小者。 */
-  lastTouched: number;
-}
-
-/**
- * recordId → 活进程记账项。register 时加入，unregister/挤出/reap 时移除。
- *
- * 该集合**不是** ChildProcess 句柄表（那在 spawnedChildren），只是 lifecycle-manager
- * 用于 ceiling 判定 + orphan 判定 + reap 枚举的记账结构。
- */
-const activeProcesses = new Map<string, ActiveProcessEntry>();
-
-/**
- * 登记一个活进程（activate/spawn 完成时调）。
- *
- * 重复 register 同一 recordId 视为刷新（更新 lastTouched），不叠加。
- */
-export function registerActiveProcess(recordId: string): void {
-  activeProcesses.set(recordId, { lastTouched: Date.now() });
-}
-
-/**
- * 续聊/新 turn 时 touch 某 record，更新 LRU 时间戳（让它不被 LRU 挤出）。
- *
- * 不存在时 no-op（保守：避免隐式创建掩盖状态不一致；调用方应先 register）。
- */
-export function touchActiveProcess(recordId: string): void {
-  const entry = activeProcesses.get(recordId);
-  if (!entry) {
-    return;
-  }
-  entry.lastTouched = Date.now();
-}
-
-/**
- * 注销一个活进程（进程退出/终态化/已被 reap 时调）。
- *
- * cascade：同时 disarm 该 record 的 idle timer——进程都没了，残留 timer 触发只会
- * 操作已清理的 record（V2 决策 4 一致性）。不存在时 no-op。
- */
-export function unregisterActiveProcess(recordId: string): void {
-  activeProcesses.delete(recordId);
-  disarmIdleTimer(recordId);
-}
-
-/**
- * 超过 ceiling 时按 LRU 挤出最久空闲的进程，直到活进程数 ≤ ceiling。
- *
- * 挤出语义（V2 决策 4 passivate）：对每个被挤出者调 onEvict（调用方注入：SIGTERM
- * 回收），并从活进程集合移除 + disarm 其 idle timer（passivate 后进程死，timer 无意义）。
- *
- * **busy 不做挤出候选**（V2 决策 4 硬约束）：本模块不感知 busy，调用方接入前负责把
- * busy 进程 unregister 出集合（或后续步骤注入 isBusy 谓词），否则 busy 进程可能被误杀。
- *
- * @param onEvict 挤出回调（recordId）——调用方 SIGTERM 该进程
- * @param maxAlive 可选上限覆盖（默认 DEFAULT_MAX_ALIVE_PROCESSES）；注入便于测试
- */
-export function evictIfOverCeiling(
-  onEvict: (recordId: string) => void,
-  maxAlive: number = DEFAULT_MAX_ALIVE_PROCESSES,
-): void {
-  while (activeProcesses.size > maxAlive) {
-    // 找 lastTouched 最小的（最久未活动）。Map 迭代顺序 = 插入顺序，最小值扫描稳定。
-    let oldestId: string | undefined;
-    let oldestTouched = Infinity;
-    for (const [id, entry] of activeProcesses) {
-      if (entry.lastTouched < oldestTouched) {
-        oldestTouched = entry.lastTouched;
-        oldestId = id;
-      }
-    }
-    if (oldestId === undefined) {
-      break; // 防御：集合为空但 size 判定异常时退出
-    }
-    // 先移除 + disarm，再回调。onEvict 是 passivate 语义（SIGTERM 回收），
-    // 不应在其中重新 register 同一 record——否则 size 不减会导致 while 死循环。
-    activeProcesses.delete(oldestId);
-    disarmIdleTimer(oldestId);
-    onEvict(oldestId);
-  }
-}
-
-/**
- * 查询当前活进程数（诊断/接入期断言用）。
- */
-export function getActiveProcessCount(): number {
-  return activeProcesses.size;
-}
-
-// ============================================================
-// 职责 3：shutdown 收割（防线 i）
-//
-// [状态：未接线，无等价实现（[F-7 纠偏]）] reapAllAliveProcesses 无生产调用方。旧注
-// 「shutdown 收割已由 reapSpawnedChildrenOnShutdown 等价覆盖」失实：该 hook 调
-// killAllSpawnedChildren，而后者协议化后（engines/pi inproc 删除、子进程活在引擎
-// 进程内）仅做 core 侧镜像置死，不发任何 SIGTERM（_signal 参数被忽略）——引擎进程
-// 实际回收走 stdin-EOF 自灭链，本职责的显式收割仍无接线。本函数保留作未来接入面；
-// 若未来接入须先保证 register/unregister 记账完整，否则收割列表不全。
-// ============================================================
-
-/**
- * 收割当前全部活进程（父进程 shutdown 时调）。
- *
- * 遍历活进程集合，对每个调 killFn（调用方注入：child.kill("SIGTERM")），并 disarm 对应
- * idle timer 避免 timer 泄漏（V2 决策 7 防线 i：shutdown hook 显式收割）。
- *
- * @param killFn 收割回调（recordId）——调用方对 spawnedChildren 中的句柄发 SIGTERM
- * @returns 被收割的 recordId 列表（按集合迭代序）
- */
-export function reapAllAliveProcesses(killFn: (recordId: string) => void): string[] {
-  const reaped: string[] = [];
-  // 拷贝 keys 再遍历——killFn 的副作用可能间接触发 unregister，避免迭代中改集合。
-  for (const recordId of [...activeProcesses.keys()]) {
-    killFn(recordId);
-    reaped.push(recordId);
-  }
-  // 全部收割后清空记账 + disarm 所有 timer。
-  for (const entry of idleTimers.values()) {
-    clearTimeout(entry.timer);
-  }
-  idleTimers.clear();
-  activeProcesses.clear();
-  return reaped;
-}
-
-// ============================================================
-// 职责 4：孤儿扫描（防线 ii）
-// ============================================================
-
-/** 孤儿扫描候选：来自持久化 record 的 pid 信息。 */
-export interface OrphanCandidate {
-  readonly id: string;
-  /** 持久化的进程 pid（缺失表示上次未持久化，无法判定）。 */
-  readonly pid?: number;
-  /** session 文件路径（调用方二次校验命令行时可用，本函数不消费）。 */
-  readonly sessionFile?: string;
-}
-
-/**
- * 扫描孤儿进程候选（父进程启动时调）。
- *
- * 判定：pid 存在 && isProcessAlive(pid) && 该 record **不在**当前活进程集合 =
- * 上次崩溃/异常退出遗留的孤儿（V2 决策 7 防线 ii）。
- *
- * **PID 复用风险**（V2 §5.4）：仅靠 pid 存活不够——pid 可能被 OS 复用给无关进程。
- * 本函数只按 pid 判定并返回候选列表，**调用方收割前必须二次校验**进程命令行含
- * `pi --mode rpc`（确保是 subagent 残留而非被复用的无关进程）。该校验在调用方，不在本函数。
- *
- * 本函数只读，不改任何状态（孤儿收割由调用方对 killFn 执行）。
- *
- * @param records 持久化的 record 列表（含 pid）
- * @param isProcessAlive pid 探活谓词（调用方注入，对齐 alive-store.isProcessAlive）
- * @returns 孤儿候选 recordId 列表
- *
- * **状态：deferred（defense-in-depth，当前 spawn 配置下不触发）**。本函数骨架 + 单测已就绪，
- * 数据通路（`.alive` sidecar 写 pid / `reconstructAll` 分支 3 读 alive.pid）也已落地，但
- * **不接入 session_start**。理由 + 接入设计草图见
- * `docs/design/v2-defense-ii-iii-resolution.md`（防线 ii 章节）。要点：当前 spawn 用 piped
- * stdio（非 detach），父进程死亡 → stdin EOF → 子进程自杀（F10）覆盖全部正常崩溃路径，
- * 孤儿近乎不可能泄漏；安全收割需 PID 复用校验（跨平台进程命令行读取，防 OS 复用 pid 误杀），
- * 属低频场景的中等复杂度工作，待 spawn 改 detach 时再接入。
- */
-export function scanOrphanProcesses(
-  records: OrphanCandidate[],
-  isProcessAlive: (pid: number) => boolean,
-): string[] {
-  const orphans: string[] = [];
-  for (const record of records) {
-    if (record.pid === undefined) {
-      continue; // 无 pid 无法判定，不视为孤儿
-    }
-    if (activeProcesses.has(record.id)) {
-      continue; // 已在本进程 activation 集合内，非孤儿
-    }
-    if (isProcessAlive(record.pid)) {
-      orphans.push(record.id);
-    }
-    // pid 不存活 → 进程已退出，非孤儿
-  }
-  return orphans;
-}
-
-// ============================================================
 // 职责 5：activate 互斥（防线 iii，防双写者）
 // ============================================================
 
@@ -417,11 +204,11 @@ const activateLockTails = new Map<string, Promise<void>>();
  * @returns release 函数——获得锁后**必须**调用它释放（finally 块），否则同 recordId
  *          的后续 acquire 永久挂起。
  *
- * **状态：已接入（双保险，D3）**。`subagent-service.ts:894` 冷路径 resume 前调
- * `acquireActivateLock(record.id)`，作为 idle CAS 守卫之外的结构化防护层：idle CAS
- *（`status !== "idle"` 检查与 `status = "running"` 翻转间无 await）仍是一级守卫，
- * reject 并发 message；锁把冷路径 resume spawn 的双写者交错升级为串行排队，防坏 session。
- * 超时兜底见下方 `ACTIVATE_LOCK_TIMEOUT_MS`（V3 D3 / v4-lifecycle-convergence.md A-2）。
+ * **状态：保留但当前无生产调用方**（历史接线点 subagent-service 冷路径 resume 前
+ * 已随协议化重构消失）。作为 idle CAS 守卫之外的结构化防护层设计：idle CAS
+ *（`status !== "idle"` 检查与 `status = "running"` 翻转间无 await）是一级守卫，
+ * 锁把冷路径 resume spawn 的双写者交错升级为串行排队，防坏 session。恢复接线时
+ * 语义不变。超时兜底见下方 `ACTIVATE_LOCK_TIMEOUT_MS`（V3 D3 / v4-lifecycle-convergence.md A-2）。
  */
 
 /**
@@ -512,7 +299,7 @@ export function acquireActivateLock(recordId: string): Promise<() => void> {
 // ============================================================
 
 /**
- * 清空全部模块级状态（idle timer / 活进程集合 / activate 锁链尾）。
+ * 清空全部模块级状态（idle timer / activate 锁链尾）。
  *
  * 仅用于单测的 beforeEach 隔离——clearTimeout 所有 armed timer 防止跨用例泄漏。
  *
@@ -524,7 +311,6 @@ export function _resetLifecycleState(): void {
     clearTimeout(entry.timer);
   }
   idleTimers.clear();
-  activeProcesses.clear();
   activateLockTails.clear();
 }
 
