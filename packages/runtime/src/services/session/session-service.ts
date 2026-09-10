@@ -56,6 +56,11 @@ import type { IGitInfoReader } from '../ports/git-info.js'
 import type { IManagedSessionView, ScannedSession, SendMessageHook } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { SessionLifecycle } from './session-lifecycle.js'
+import type { ReclaimSessionDeps } from './session-lifecycle.js'
+// 空闲回收占座原语与等待观测超时（idle-pi-reclamation D6-2，u2）。type-only import：
+// Seat 实例由 u3 组合根创建后 setter 注入，本模块不持有创建权（不引入运行时依赖环）。
+import type { ReclaimSeat } from './idle-pi-reaper.js'
+import { RECLAIM_SEAT_WAIT_OBSERVE_MS } from './idle-pi-reaper.js'
 import { RespawnOrchestrator } from './pi-respawn.js'
 import { MessageDispatcher } from './message-dispatcher.js'
 import { updateSessionOccupancy } from './event-interpreter.js'
@@ -226,6 +231,12 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    * 意图——非候选无害（豁免判定只会多豁免不会误杀），恢复后继续有效；量级每 sid 一个数字。
    */
   private readonly lastViewedAtBySession = new Map<string, number>()
+  /**
+   * 空闲回收占座（idle-pi-reclamation D6-2，u2）。u3 组合根经 setReclaimSeat 注入与
+   * reaper/reclaimManagedSession 共享的同实例；缺省 null = 行为不变（ensureActive 无
+   * 让路逻辑）——不破坏既有测试构造点（同 setConfigService 的 setter 注入模式）。
+   */
+  private reclaimSeat: ReclaimSeat | null = null
   constructor(
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
@@ -631,6 +642,32 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     return this.lastViewedAtBySession.get(sessionId)
   }
 
+  /**
+   * 删除查看时间戳条目（R4 清理挂点：removeSessionEntry 汇聚点调用）。真删除时清条目；
+   * 回收态（reclaimManagedSession）刻意**不**清——回收态保留条目是设计 D2 #6 意图：
+   * 非候选无害（豁免判定只会多豁免不会误杀），恢复后继续有效。
+   */
+  clearSessionViewed(sessionId: string): void {
+    this.lastViewedAtBySession.delete(sessionId)
+  }
+
+  /**
+   * 注入空闲回收占座（idle-pi-reclamation D6-2，u3 组合根装配）。必须传与 reaper 判定
+   * 循环 / reclaimManagedSession 相同的 ReclaimSeat 实例——三处共享同一互斥状态。
+   */
+  setReclaimSeat(seat: ReclaimSeat): void {
+    this.reclaimSeat = seat
+  }
+
+  /**
+   * 空闲回收执行入口（u3 装配：reaper options.reclaim 绑定本方法）。委托 lifecycle 的
+   * 七步最小摘除编排——进程处置语义收口在 Map 所有者（D3），Facade 只做一行委托。
+   * 返回 false = 未回收（占座被占 / 最终豁免拦截 / 代际校验取消）。
+   */
+  reclaimSession(sessionId: string, deps: ReclaimSessionDeps): Promise<boolean> {
+    return this.lifecycle.reclaimManagedSession(sessionId, deps)
+  }
+
   // ── W18：record entry 派生缓存（S6 迁出至 session-records.ts；interpreter 经组合根
   // index.ts:406 经本委托到达——u-s5 同款形态）──
 
@@ -655,10 +692,39 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     // existing sessions 条目已有 detach + safeDestroy + removeSessionEntry 清场），
     // 不把死 client 交给 prompt。
     if (existing && !existing.exited) return existing
+    // 占座让路（idle-pi-reclamation D6-2）：回收编排进行中（seat 命中）→ 等待释放后走
+    // 既有 restore，绝不抢跑——抢跑的 restoreSession 对未完成摘除的 session 走 existing
+    // 清场分支 = 死亡清理汇聚点被完整触发（bus.clearSession 断流 + destroyPty 连杀 +
+    // didDestroy 投递，被否谱系「超时抢跑」）。等待的确定性由 reclaim 的 finally 释放保证。
+    await this.awaitReclaimSeatRelease(sessionId)
     await this.respawn.ensureRestored(sessionId)
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error('Restore succeeded but client not available')
     return client
+  }
+
+  /**
+   * 等待回收占座释放（D6-2「等待方永不抢跑」硬约束的实现）。
+   *
+   * 占座区间天然有界（最坏 ~2-3s：kill 硬上限 2s + 同步摘除），且由 reclaimManagedSession
+   * 的 finally 结构性保证终将释放——所以本等待的语义是「等到为止」：单轮观测超时
+   * （RECLAIM_SEAT_WAIT_OBSERVE_MS，5s）只记 ERROR（占座实现有 bug 的信号），随后继续
+   * 等待，绝不调用任何销毁语义或直接走 restore。
+   */
+  private async awaitReclaimSeatRelease(sessionId: string): Promise<void> {
+    const seat = this.reclaimSeat
+    if (!seat || !seat.isHeld(sessionId)) return
+    let waitedMs = 0
+    while (seat.isHeld(sessionId)) {
+      const released = await seat.waitRelease(sessionId, RECLAIM_SEAT_WAIT_OBSERVE_MS)
+      if (released) return
+      waitedMs += RECLAIM_SEAT_WAIT_OBSERVE_MS
+      console.error(
+        `[session-service] ensureActive has waited ${waitedMs}ms for reclaim seat release `
+        + `(sessionId=${sessionId}) — seat held longer than the bounded reclaim window is a bug `
+        + `signal, continuing to wait (never preempt, D6-2)`,
+      )
+    }
   }
 
   // ── history 读编排域（S6 迁出至 history-rebuild-cache.ts；三分支重建/inflight 合并/尾读降级详见该模块）──
@@ -746,7 +812,11 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   async promptReload(sessionId: string): Promise<void> {
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`Session ${sessionId} not active`)
-    await client.prompt('/__xyz_reload__')
+    // 维护通道标记（idle-pi-reclamation D1 / R2 接线）：skill 目录任一文件变动会对全部
+    // 活跃 session 触发本 prompt，若计入 touch，skill 开发常态下全部空闲时钟被周期性
+    // 重置、回收饿死且不体现为豁免命中（日志看不到）——maintenance 标记让 RpcClient
+    // 跳过 lastActivityAt 刷新（u1a 的 SendCommandOptions 通道）。
+    await client.prompt('/__xyz_reload__', undefined, undefined, { maintenance: true })
   }
 
   /**
@@ -945,6 +1015,10 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     // 覆盖面：主动删 / onSessionExit 进程退出（先 cancel 后 schedule，顺序安全）/ forceQuit
     // / restore 清场全部删除路径。
     this.respawn.cancel(sessionId)
+    // R4（idle-pi-reclamation D2 #6）：真删除是 lastViewedAt 条目的清理挂点——本汇聚点是
+    // 「该 session 已不存在」的精确时点（与 respawn.cancel 同因同挂点）。回收态不清
+    // （reclaimManagedSession 不经本汇聚点，回收态保留条目是 D2 #6 设计意图）。
+    this.clearSessionViewed(sessionId)
     // R3：所有删除路径（lifecycle.delete 主动删 + onSessionExit 进程异常退）汇聚于此，
     // 触发 onSessionDelete 清 ReloadOrchestrator.pendingReload 残留。
     this.onSessionDelete?.(sessionId)
