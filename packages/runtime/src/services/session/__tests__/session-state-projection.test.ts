@@ -290,6 +290,18 @@ describe('副作用域：applyContextUpdate / handleTurn* / fetchAndBroadcastCon
     expect(env.deps.persistSessionOutcome).toHaveBeenLastCalledWith('s1', 'stopped')
   })
 
+  it('handleAgentSettledSideEffects：run 级联结束 → isGenerating 复位；session 不存在时跳过（session-dead 幽灵忙碌兜底）', () => {
+    const env = makeEnv({ session: makeSessionView({ id: 's1', isGenerating: true }) })
+    env.projection.handleAgentSettledSideEffects('s1')
+    expect(env.sessions.get('s1')!.isGenerating).toBe(false)
+    // 只碰 isGenerating：不得写 session_end 终态 / sidecar（与 handleTurnEndSideEffects 的职责边界）
+    expect(env.deps.persistSessionOutcome).not.toHaveBeenCalled()
+    expect(env.deps.tryPersistProjectBinding).not.toHaveBeenCalled()
+    expect(env.deps.tryPersistModelBinding).not.toHaveBeenCalled()
+
+    expect(() => env.projection.handleAgentSettledSideEffects('ghost')).not.toThrow()
+  })
+
   it('fetchAndBroadcastContext：fetchContext resolve 正常返回；reject 吞错不抛（fire-and-forget）', async () => {
     const ok = makeEnv()
     await ok.projection.fetchAndBroadcastContext('s1')

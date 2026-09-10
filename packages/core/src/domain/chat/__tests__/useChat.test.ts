@@ -42,7 +42,7 @@ interface Fixture {
   }
   chatStore: ReturnType<typeof createChatStore>
   sessionStore: { applySnapshot: ReturnType<typeof vi.fn> }
-  toast: { error: ReturnType<typeof vi.fn> }
+  toast: { error: ReturnType<typeof vi.fn>; warning: ReturnType<typeof vi.fn> }
   compactQueue: {
     flush: ReturnType<typeof vi.fn>
     enqueue: ReturnType<typeof vi.fn>
@@ -78,7 +78,7 @@ function makeFixture(): Fixture {
     }),
   }
   const sessionStore = { applySnapshot: vi.fn() }
-  const toast = { error: vi.fn() }
+  const toast = { error: vi.fn(), warning: vi.fn() }
   // CompactQueueLike mock（session-occupancy D2：rejected 兜底入队 + flush 来源消歧）
   const compactQueue = {
     flush: vi.fn().mockResolvedValue(true),
@@ -786,10 +786,13 @@ describe('send.rejected 兜底与回滚（session-occupancy D2 P1）', () => {
 })
 
 // ── [簇 A1] 帧序修复：入队晚于 idle 帧的 flush 触发 + 拒绝循环 timer 重投 ─────────────
-// runtime handlePromptFailure 先广播 occupancy idle（复位帧）后广播 send.rejected（WS FIFO）
+// [HISTORICAL] 帧序复现（session-dead 修复前的 runtime 行为）：handlePromptFailure 对 pi 的
+// processing 拒绝也先广播 occupancy idle（复位帧）后广播 send.rejected（WS FIFO 有序）
 // → idle 帧处理时队列尚空不 flush；其后 agent_settled 同值 idle 被幂等写去重不再来帧。
 // 修复 = rejected 入队后读当前投影已全 idle 立即 flush；flush 再拒（resolve false）由
-// per-session timer 以 1s 有界节奏重投（唯一保证可达的重投脉冲）。
+// per-session timer 以 1s 有界节奏重投（当时是唯一保证可达的重投脉冲）。
+// [session-dead 2026-09-10] runtime #8 分型后 processing 拒绝不再发 idle 复位帧（改写 generating），
+// 本 describe 的帧序用例仍作为「D1 帧序 + timer 兜底」路径的回归锚点保留。
 
 describe('簇 A1：busy 拒绝入队后的 flush 触发与拒绝循环重投', () => {
   beforeEach(() => {
@@ -802,7 +805,7 @@ describe('簇 A1：busy 拒绝入队后的 flush 触发与拒绝循环重投', (
   it('A1-MF: settling idle 帧先到（队列空不 flush）→ rejected 入队后已全 idle → 立即 flush（帧序修复锚点）', async () => {
     const f = makeFixture()
     const p = f.useChat.send('a1m', textToSegments('<xyz-skill name="review"/>帮我审查'))
-    // runtime 帧序复现（订阅已建立）：handlePromptFailure 先发复位 idle 帧——此刻队列尚空
+    // [HISTORICAL] runtime 帧序复现（订阅已建立）：handlePromptFailure 先发复位 idle 帧——此刻队列尚空
     //（hasPending false），occupancy handler 的 flush 条件不满足（改造前消息自此滞留）
     f.compactQueue.hasPending.mockReturnValue(false)
     f.emit('a1m', msg('a1m', 'session.occupancy', { turn: 'idle', compacting: false, bash: false }))
@@ -920,6 +923,158 @@ describe('簇 A1：busy 拒绝入队后的 flush 触发与拒绝循环重投', (
     const callsBefore = f.compactQueue.flush.mock.calls.length
     await vi.advanceTimersByTimeAsync(5000)
     expect(f.compactQueue.flush.mock.calls.length).toBe(callsBefore)
+    f.dispose()
+  })
+
+  // ── [session-dead 第三环] 连续 flush 失败熔断（N=5）+ 一次可操作提示 ─────────────────
+  // 事故形态：busy 拒绝 → 静默入队 → 入队后已 idle 立即 flush → 再拒 → arm 1s timer →
+  // 无限循环（runtime 日志：90s 内 82 次，1 秒 1 次，用户零感知）。
+
+  /** 事故形态起手：用户直发被 busy 拒 → 静默入队 → 入队后投影已全 idle 立即 flush（第 1 次）。
+   *  返回 flush mock（默认已被调用 1 次）。 */
+  async function primeAccidentLoop(sid: string, f: Fixture): Promise<void> {
+    f.compactQueue.hasPending.mockReturnValue(true)
+    f.compactQueue.flush.mockResolvedValue(false) // 持续 busy 拒绝（条目留队）
+    const p = f.useChat.send(sid, textToSegments('hi'))
+    f.emit(sid, msg(sid, 'send.rejected', { reason: 'busy', message: 'Agent 正在处理' }))
+    await p
+    await vi.advanceTimersByTimeAsync(0)
+  }
+
+  it('A1-CIRCUIT: 连续 5 次 busy 拒绝 → 熔断 timer 重投（无 pending timer）+ 恰一次可操作提示', async () => {
+    vi.useFakeTimers()
+    const f = makeFixture()
+    await primeAccidentLoop('a1cb', f)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(1) // 入队后立即 flush（第 1 次失败 → 计 1 → arm）
+    expect(vi.getTimerCount()).toBe(1)
+
+    // timer 自驱动重投：第 2..5 次（恰第 5 次达阈值）
+    for (const expected of [2, 3, 4, 5]) {
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(f.compactQueue.flush).toHaveBeenCalledTimes(expected)
+    }
+
+    // ① 不再排新 timer（deferFlushRetryTimers 无该 sid = fake timer 池为空）
+    expect(vi.getTimerCount()).toBe(0)
+    // 其后 10s 无第 6 次投递（熔断生效，不再是 1 秒 1 次的拒绝风暴）
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(5)
+
+    // ② 用户可见提示恰一次：文案非空 + 走可操作指引 i18n key。
+    //    真实文案（zh-CN「pi 仍在处理，消息可能已卡住…可在侧栏右键强制退出该会话后重新发送」/
+    //    en-US 对应）在 renderer 侧 use-chat-compacted-flush.test.ts TC11c 用真实 i18n 断言（本fixture 的 t 直出 key）。
+    expect(f.toast.warning).toHaveBeenCalledTimes(1)
+    const copy = f.toast.warning.mock.calls[0]![0] as string
+    expect(copy).toBe('composable.deferFlushStalled')
+    expect(copy.length).toBeGreaterThan(0)
+    f.dispose()
+  })
+
+  it('A1-CIRCUIT-EDGE: 第 4 次失败（阈值-1）仍 re-arm，第 5 次才熔断', async () => {
+    vi.useFakeTimers()
+    const f = makeFixture()
+    await primeAccidentLoop('a1ce', f)
+
+    for (const expected of [1, 2, 3, 4]) {
+      if (expected > 1) await vi.advanceTimersByTimeAsync(1000)
+      expect(f.compactQueue.flush).toHaveBeenCalledTimes(expected)
+      expect(vi.getTimerCount()).toBe(1) // 阈值-1 不得提前熔断
+      expect(f.toast.warning).not.toHaveBeenCalled() // 未达阈值不提示
+    }
+    // 第 5 次：熔断 + 提示一次
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(5)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(f.toast.warning).toHaveBeenCalledTimes(1)
+    f.dispose()
+  })
+
+  it('A1-CIRCUIT-RESET: flush 成功清零计数 → 之后新的失败序列重新累计（不「成功后永久停」）', async () => {
+    vi.useFakeTimers()
+    const f = makeFixture()
+    f.compactQueue.hasPending.mockReturnValue(true)
+    f.compactQueue.flush
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true) // 第 4 次成功：清零
+      .mockResolvedValue(false)
+
+    const p = f.useChat.send('a1cr', textToSegments('hi'))
+    f.emit('a1cr', msg('a1cr', 'send.rejected', { reason: 'busy', message: 'Agent 正在处理' }))
+    await p
+    await vi.advanceTimersByTimeAsync(0)
+
+    // 第 1..3 次失败（计数 3）→ 第 4 次成功（清零 + 不 re-arm）
+    for (const expected of [1, 2, 3, 4]) {
+      if (expected > 1) await vi.advanceTimersByTimeAsync(1000)
+      expect(f.compactQueue.flush).toHaveBeenCalledTimes(expected)
+    }
+    expect(vi.getTimerCount()).toBe(0) // 成功不 re-arm
+    expect(f.toast.warning).not.toHaveBeenCalled()
+
+    // 新的失败序列从头累计：第 5 次失败 → 计 1 → arm（若成功后未清零，此处早已静音不再 arm）
+    f.emit('a1cr', msg('a1cr', 'session.occupancy', { turn: 'idle', compacting: false, bash: false }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(5)
+    expect(vi.getTimerCount()).toBe(1)
+
+    // 新序列累计到 5 次（总第 9 次）才再次熔断 + 提示（计数不跨成功累计）
+    for (const expected of [6, 7, 8, 9]) {
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(f.compactQueue.flush).toHaveBeenCalledTimes(expected)
+    }
+    expect(vi.getTimerCount()).toBe(0)
+    expect(f.toast.warning).toHaveBeenCalledTimes(1)
+    f.dispose()
+  })
+
+  it('A1-CIRCUIT-FRAME: 熔断只停 timer 通路——occupancy idle 帧到达仍照常投递（不永久封死）', async () => {
+    vi.useFakeTimers()
+    const f = makeFixture()
+    await primeAccidentLoop('a1cf', f)
+    // 推到阈值（第 2..5 次）
+    for (let i = 0; i < 4; i++) await vi.advanceTimersByTimeAsync(1000)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(5)
+    expect(vi.getTimerCount()).toBe(0)
+
+    // 卡死解除：occupancy 帧驱动的投递路径不受熔断影响——帧到达即投递（条目不丢）
+    f.compactQueue.flush.mockResolvedValue(true)
+    f.emit('a1cf', msg('a1cf', 'session.occupancy', { turn: 'idle', compacting: false, bash: false }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(6)
+    expect(f.toast.warning).toHaveBeenCalledTimes(1) // 不重复提示
+
+    // 投递成功已清零 → 再次失败重新从 1 累计（timer 通路自动恢复，无需人工干预）
+    f.compactQueue.flush.mockResolvedValue(false)
+    f.emit('a1cf', msg('a1cf', 'session.occupancy', { turn: 'idle', compacting: false, bash: false }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(7)
+    expect(vi.getTimerCount()).toBe(1)
+    f.dispose()
+  })
+
+  it('A1-CIRCUIT-RESET-SEND: 熔断后用户重新发送（新条目入队）→ 计数清零，重投机制恢复可用', async () => {
+    vi.useFakeTimers()
+    const f = makeFixture()
+    await primeAccidentLoop('a1rs', f)
+    for (let i = 0; i < 4; i++) await vi.advanceTimersByTimeAsync(1000)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(5)
+    expect(f.toast.warning).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0) // 已熔断
+
+    // 用户重新发送：直发被拒 → 重入队（计数清零）→ 入队后投影已全 idle 立即 flush（第 6 次，失败 → 计 1）
+    const p2 = f.useChat.send('a1rs', textToSegments('second'))
+    f.emit('a1rs', msg('a1rs', 'send.rejected', { reason: 'busy', message: 'Agent 正在处理' }))
+    await p2
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(6)
+    expect(vi.getTimerCount()).toBe(1) // ← 计数已清零（否则 6 >= 阈值直接静音，不 arm）
+
+    // 重投恢复可用：1s 后第 7 次（历史计数不永久误伤后续正常发送）
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(f.compactQueue.flush).toHaveBeenCalledTimes(7)
+    expect(f.toast.warning).toHaveBeenCalledTimes(1) // 新序列未达阈值，不重复提示
     f.dispose()
   })
 })

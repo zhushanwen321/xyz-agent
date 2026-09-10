@@ -124,16 +124,23 @@ const pendingDirectSends = new Map<string, { clientUuid: string; text: string; h
 /**
  * [簇 A1] defer 队列 flush 失败重投 timer（per-session）。
  *
- * 为什么需要：S1 busy 拒绝后条目留队，原设计「等下一次 occupancy idle 帧重投」在拒绝转译
- * 路径不可达——runtime handlePromptFailure 的复位 idle 帧正是触发本次 flush 的那一帧
- *（先于 flush 发出），flush 失败后的 agent_settled 同值 idle 被幂等写去重（无变化不广播）；
- * 失败 attempt 自产的 dispatching→idle 帧又因 WS FIFO 先于 RPC reply 到达、被 S2 in-flight
- * 守卫并集进当次 promise——其后不再有任何 idle 帧。timer 是失败后唯一保证可达的重投脉冲。
+ * 为什么需要：[HISTORICAL] 原始故障形态（session-dead 事故修复前）——S1 busy 拒绝后条目留队，
+ * 原设计「等下一次 occupancy idle 帧重投」在拒绝转译路径不可达：runtime handlePromptFailure
+ * 对 pi 的 processing 拒绝也复位 idle，那帧正是触发本次 flush 的那一帧（先于 flush 发出），
+ * flush 失败后的 agent_settled 同值 idle 被幂等写去重（无变化不广播）；失败 attempt 自产的
+ * dispatching→idle 帧又因 WS FIFO 先于 RPC reply 到达、被 S2 in-flight 守卫并集进当次
+ * promise——其后不再有任何 idle 帧，timer 是当时唯一保证可达的重投脉冲。
+ * [session-dead 2026-09-10 修复后] 该前提已失效：runtime #8 按拒绝分型，processing 拒绝不再
+ * 伪造空闲（改写 generating），idle 帧重新由 agent_settled（#4）提供 → 帧驱动重投恢复可达。
+ * timer 现定位 = 「idle 帧丢失」的兜底脉冲，且失败有界（见下方熔断阈值）。
  *
  * 终止性（拒绝循环行为论证）：每次重投 = 真实投递尝试，pi settling 有界（V8 探针门
  * P95 ≤ 2s）→ 界内某次成功（flush resolve true 不再 re-arm）或条目被确认/撤销清空
- *（hasPending false 早退）；pi 活跃但持续拒绝时以 1s 有界节奏重试（消息不丢优先，
- * 对齐 ADR-0047「静默 ≠ 卡死」不判死语义），不产生 RPC 热循环。传输级 reject 不 arm
+ *（hasPending false 早退）；[HISTORICAL] 原文「pi 活跃但持续拒绝时以 1s 有界节奏重试
+ *（消息不丢优先，对齐 ADR-0047「静默 ≠ 卡死」不判死语义）」是**无上限**重试——session-dead
+ * 事故证明它在「pi 持续拒绝且 occupancy 无变化」时退化为静默空转（用户零感知）。现由
+ * DEFER_FLUSH_MAX_CONSECUTIVE_FAILURES 熔断：连续 N 次失败即停 timer 自驱重投 + 一次可见提示，
+ * 帧驱动路径不受限（idle 帧到达照常 flush）。传输级 reject 不 arm
  *（重连后 occupancy state topic 快照回放 idle 帧照常触发，§3.5 错误规格表）。
  *
  * [D1 占用短路] fire 回调查 occupancy 投影：仍忙（bash/compacting/turn 非 idle）→ 直接
@@ -146,6 +153,38 @@ const DEFER_FLUSH_RETRY_DELAY_MS = 1000
 // taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，已落定登记表 §4 ⑧ 补登 2026-09-07）：flush 失败重投 timer
 //（流程状态句柄，非 GUI 数据——与下方 pendingDirectSends 同类豁免）
 const deferFlushRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+/**
+ * [session-dead 第三环 / 拒绝风暴熔断] 连续 flush 失败阈值（1s 一次重投，N=5 ≈ 5s）。
+ *
+ * 事故链路（runtime 日志实证 90s 内 82 次拒绝，1 秒 1 次）：runtime 持续 busy 拒绝 →
+ * 本文件全 reason 静默入队（toast 已退役，用户零感知）→ flush 失败后 armDeferFlushRetry
+ * 排 1s timer → fire 时投影全 idle 再 flush → 再被拒 → 无上限静默重投。本阈值是熔断点。
+ *
+ * 只熔断「timer 自驱动重投」一条通路：occupancy 帧驱动的 flush 不受影响（帧到达仍照常
+ * 投递，条目留队不丢）——见 deferFlushFailureCounts 注释。
+ */
+const DEFER_FLUSH_MAX_CONSECUTIVE_FAILURES = 5
+
+/**
+ * [session-dead 第三环] per-session 连续 flush 失败计数（达阈值停 timer 重投 + 一次提示）。
+ *
+ * per-session 语义与 deferFlushRetryTimers 对齐：异 session 的失败互不牵连（一个卡死
+ * session 不静音另一个 session 的重投）。
+ *
+ * 计数重置：① flush 成功（submitted === true，新一轮拒绝序列从头计）；② 用户重新发送 /
+ * 条目重新入队（新一轮用户意图 = 重投机制恢复可用，防历史计数永久误伤后续正常发送）。
+ * 边界：重置只覆盖 core 可观测的发送/入队路径（send / editAndResend / 被拒重入队）；renderer
+ * composer 的 defer 路由（dispatch/send.ts enqueueCompact，settling/compacting/bash 占用期直
+ * 连入队）不经 core，不触发重置——该路径的新消息仍由 occupancy 帧驱动投递（不丢），首次
+ * 成功投递即清零。
+ * 清理：disposeSession 走 clearDeferFlushRetryTimer、测试隔离走 resetChatModuleStateForTest。
+ *
+ * 提示只给一次：仅计数恰为阈值时提示（== 而非 >=——否则后续 occupancy 帧驱动的失败每次
+ * 都重复刷屏）；提示后仅不 re-arm timer，帧驱动路径照常。
+ */
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，与上方 deferFlushRetryTimers 同类豁免）：flush 连续失败计数
+const deferFlushFailureCounts = new Map<string, number>()
 
 /**
  * 重置 useChat 模块级状态（仅供测试隔离）。
@@ -184,6 +223,9 @@ export function resetChatModuleStateForTest(): void {
   // 中途开火，flush mock 的跨用例残留调用造成非确定性断言）
   for (const timer of deferFlushRetryTimers.values()) clearTimeout(timer)
   deferFlushRetryTimers.clear()
+  // [session-dead 第三环] 清连续失败计数（与 deferFlushRetryTimers 同款：残留计数会把
+  // 上一用例的失败次数带进下一用例，提前触发熔断/提示）
+  deferFlushFailureCounts.clear()
   // wave:renderer-subscribe：重置 MessageBus 订阅状态（subscriptionStates 模块级 Map）。
   // 与 streamSubscriptions/historyTruncatedSessions 同理——测试间不 reset 会泄漏到下一用例
   //（subscriptionStates 残留 → routeInbound gap 检测误判）。
@@ -229,7 +271,23 @@ function flushDeferQueueAfterIdle(sid: string, chat: ChatStoreInstance, deps: En
     .getCompactQueue()
     .flush(sid)
     .then((submitted) => {
-      if (!submitted) armDeferFlushRetry(sid, chat, deps)
+      if (submitted) {
+        // [session-dead 第三环] 投递成功：计数清零（阈值不跨「成功投递」累计）
+        deferFlushFailureCounts.delete(sid)
+        return
+      }
+      // [session-dead 第三环] S1 busy 类拒绝：计数 + 达阈值熔断 timer 自驱动重投
+      const failures = (deferFlushFailureCounts.get(sid) ?? 0) + 1
+      deferFlushFailureCounts.set(sid, failures)
+      if (failures >= DEFER_FLUSH_MAX_CONSECUTIVE_FAILURES) {
+        // 恰达阈值 → 一次可操作提示（pi 可能已卡住 → 侧栏右键强制退出）。此后只停 timer
+        // 脉冲：occupancy idle 帧驱动的 flush 照常投递（条目留队，卡死解除后仍能送达）。
+        if (failures === DEFER_FLUSH_MAX_CONSECUTIVE_FAILURES) {
+          deps.toast.warning(deps.t('composable.deferFlushStalled'))
+        }
+        return
+      }
+      armDeferFlushRetry(sid, chat, deps)
     })
     .catch((e) => {
       const msg = e instanceof Error ? e.message : String(e)
@@ -253,13 +311,15 @@ function armDeferFlushRetry(sid: string, chat: ChatStoreInstance, deps: EnsureSt
   deferFlushRetryTimers.set(sid, timer)
 }
 
-/** [簇 A1] 清指定 session 的重投 timer（disposeSession 编排 + 测试隔离共用）。 */
+/** [簇 A1] 清指定 session 的重投 timer（disposeSession 编排 + 测试隔离共用）。
+ *  [session-dead 第三环] 同步清连续失败计数（与 timer 同生命周期，防跨用例/跨会话泄漏）。 */
 function clearDeferFlushRetryTimer(sid: string): void {
   const timer = deferFlushRetryTimers.get(sid)
   if (timer !== undefined) {
     clearTimeout(timer)
     deferFlushRetryTimers.delete(sid)
   }
+  deferFlushFailureCounts.delete(sid)
 }
 
 /** [send.rejected] 兜底通道（D-006 独立类型，不进对话流）——session-occupancy D2 改造：
@@ -297,6 +357,9 @@ function handleSendRejected(
     // （直发被拒的提交文本），包 [{type:'text',text}] 单段并同步写 submitText
     // （原文本即提交文本，①b 兜底匹配源与 flush 提交时写入的语义对齐）。
     if (!uuidQueued) {
+      // [session-dead 第三环] 新条目入队 = 新一轮用户意图：计数清零（否则上一轮达阈值后，
+      // 后续正常发送的失败被历史计数直接吞掉 timer 重投）
+      deferFlushFailureCounts.delete(sid)
       deps.getCompactQueue().enqueue(sid, pending.text, [{ type: 'text', text: pending.text }], pending.text)
       // [簇 A1] 入队晚于 idle 帧（runtime handlePromptFailure 先广播 occupancy idle 再广播
       // send.rejected，WS FIFO）——idle 帧处理时队列尚空未 flush；其后 agent_settled 的同值
@@ -704,6 +767,9 @@ export function createUseChat(deps: UseChatDeps) {
   async function send(sessionId: string, segments: Segment[]): Promise<void> {
     const sid = sessionId
     if (segments.length === 0) return
+    // [session-dead 第三环] 用户重新发送 = 新一轮用户意图：清连续失败计数（否则上一 session
+    // 卡死期累计的计数会让本轮失败立即命中阈值，timer 重投永不启动）
+    deferFlushFailureCounts.delete(sid)
     // `@` 定向分流（composer-symbol-system §3.3.4/§3.3.7）：含 subagent 段的消息改走
     // session.subagentAction RPC，不经 message.send 主 agent 通道（结构性保证无主 agent
     // turn，§3.3.8 命题 1）。分流点必须在下方两道 guard 之前：
@@ -1038,6 +1104,8 @@ export function createUseChat(deps: UseChatDeps) {
   async function editAndResend(sessionId: string, userMessageId: string, segments: Segment[]): Promise<void> {
     const promptText = segmentsToPrompt(segments)
     if (!promptText.trim() || chat.isActive(sessionId)) return
+    // [session-dead 第三环] 用户重新发送（编辑重发路线）：同 send，清连续失败计数
+    deferFlushFailureCounts.delete(sessionId)
     chat.truncateFrom(sessionId, userMessageId, true)
     // appendUser 返回生成的 user message id（u-<uuid>），作为 clientUuid 传给 submitSegments
     // （写 segments.json sidecar + prompt 标记，建立 clientUuid ↔ pi userEntryId 映射）。

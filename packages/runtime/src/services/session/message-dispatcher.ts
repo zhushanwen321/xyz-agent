@@ -134,8 +134,9 @@ export class MessageDispatcher {
 
   /**
    * occupancy 幂等写 + 变化才广播（session-occupancy-send-closure D3）——dispatcher 侧挂点
-   *（#1 dispatching / #7 bash / #8 catch idle / #9 abort idle / #11 bash=false / forceQuit
-   * 全复位 / compact finally compacting=false）的统一入口。合并、比较与广播在
+   *（#1 dispatching / #7 bash / #8 catch 分型（processing→generating，其余→idle） /
+   * #9 abort idle / #11 bash=false / forceQuit 全复位 / compact finally compacting=false）
+   * 的统一入口。合并、比较与广播在
    * updateSessionOccupancy（event-interpreter 导出的写原语）内。
    */
   private touchOccupancy(session: IManagedSessionView, patch: Partial<SessionOccupancy>): void {
@@ -266,7 +267,8 @@ export class MessageDispatcher {
    *
    * occupancy #1（D3）：sendPrompt 预检通过 → dispatching（prompt 已发、message_start 未到）。
    * 本挂点先于 client.prompt——pi busy 类拒绝（catch 转译）发生时 turn 已处于 dispatching，
-   * 由 #8 统一复位 idle（转译/非转译两路都复位，见 handlePromptFailure 注释）。
+   * 由 #8 按拒绝分型收口：processing 拒绝（pi 有 runtime 不知情的 turn 在跑）→ generating，
+   * compacting 拒绝与非 busy 真失败 → idle（见 handlePromptFailure 注释）。
    */
   private markSessionActive(activeSession: IManagedSessionView, sessionId: string): void {
     activeSession.lastActiveAt = Date.now()
@@ -287,8 +289,16 @@ export class MessageDispatcher {
   }
 
   /**
-   * prompt 失败收口（catch 体整体，恒 blocked）：复位 isGenerating + occupancy idle →
+   * prompt 失败收口（catch 体整体，恒 blocked）：按拒绝分型收口 isGenerating + occupancy →
    * pi busy 类确定性拒绝转译 send.rejected 分型广播；其余错误广播 message.error。
+   *
+   * [occupancy D2b] 复位语义按 classifyPromptRejection 分型分叉（不再无条件回 idle）：
+   * - 'processing'：pi 明确拒绝「已有一个 turn 在跑」——该 turn 由 pi 自发起（auto-retry /
+   *   steer / followUp），runtime 此前已收 agent_end 复位 isGenerating（幽灵空闲）故预检放行。
+   *   此时以 pi 的拒绝为权威信号反转状态：置 isGenerating=true + turn:'generating'。
+   *   若仍写 idle（改动前行为）：前端 occupancy 投影为 idle → D1 占用短路失效 → defer 队列
+   *   1 秒一次无限重投（实测 90 秒 82 次 `prompt failed: ... Agent is already processing`）。
+   * - 'compacting' / 非 busy 真失败：turn 确实没跑起来 → isGenerating=false + turn:'idle'（现状）。
    */
   private handlePromptFailure(
     sessionId: string,
@@ -298,23 +308,39 @@ export class MessageDispatcher {
   ): { blocked: true; rejected?: boolean } {
     const errMsg = toErrorMessage(e)
     console.error(`[message-dispatcher] prompt failed: sessionId=${sessionId}`, errMsg)
-    // 复位对转译/非转译两路同样生效（occupancy D2：转译的拒绝也意味着 turn 没跑起来，
-    // 与预检拒绝同构——单次复位，两分支不重复不遗漏）。
-    if (activeSession) {
-      activeSession.isGenerating = false
-      // occupancy #8（D3）：prompt 抛错 → turn 复位 idle。转译拒绝两路同样复位——核实：
-      // #1 已先于 client.prompt 置 dispatching；processing 拒绝（窗口 3）pi 随后的
-      // agent_settled（#4）幂等覆盖回 idle，compacting 拒绝（窗口 1）后续仅 compaction_start/end
-      //（#5/#6 只写 compacting 维度），不复位则 turn 永卡 dispatching、occupancy 永不全 idle
-      //（P3 起 renderer flush 触发条件，G2 投递必达被破坏）。
-      this.touchOccupancy(activeSession, { turn: 'idle' })
-    }
-    // [occupancy D2 拒绝转译] pi busy 类确定性拒绝 → send.rejected 分型广播，不走
-    // message.error 错误气泡链路（busy 类不进对话流；非 busy 的 pi 错误保留现状）。
-    // 返回 rejected:true 与预检拒绝同构：handler 回 message.status{rejected} 让 renderer
-    // pending 干净 resolve（send.rejected 兜底已接管用户反馈；error envelope 会让 pending.reject
-    // 恢复草稿，与入队/回滚流程冲突）。
+    // [occupancy D2 拒绝转译] pi busy 类确定性拒绝分型：决定下方复位语义，并广播
+    // send.rejected（不走 message.error 错误气泡链路——busy 类不进对话流；非 busy 的 pi
+    // 错误保留现状）。返回 rejected:true 与预检拒绝同构：handler 回 message.status{rejected}
+    // 让 renderer pending 干净 resolve（send.rejected 兜底已接管用户反馈；error envelope
+    // 会让 pending.reject 恢复草稿，与入队/回滚流程冲突）。
     const rejectionReason = classifyPromptRejection(errMsg)
+    if (activeSession) {
+      // occupancy #8（D3）：prompt 抛错 → turn 收口。核实：#1 已先于 client.prompt 置
+      // dispatching，故两个分支都必须写终态，否则 turn 永卡 dispatching、occupancy 永不全
+      // idle（P3 起 renderer flush 触发条件，G2 投递必达被破坏）。
+      if (rejectionReason === 'processing') {
+        // pi 侧 turn 正在跑（runtime 之前误判空闲），拒绝的语义不是「turn 没跑起来」——
+        // 以 pi 的拒绝为权威信号反推状态：置 generating 让前端 D1 占用短路生效、defer 队列
+        // 停止重投（本挂点不再伪造空闲）。
+        // [session-dead 2026-09-10 已收口] 复位依赖该 turn 正常收尾——但**不能只靠 agent_end**：
+        // pi 实装里 agent_end 每次 attempt 都发（retry / auto-compaction 续跑会重发），真正的 run
+        // 终点是 _runAgentPrompt 的 finally 中 _emitAgentSettled()（pi dist/core/agent-session.js:772-786），
+        // 且存在「post-run 尾段直接 settle」这条不含 agent_end 的收尾路径。若 prompt 落在该窗口，
+        // 本分支置的 true 会永久残留（occupancy 已被 #4 复位 idle → 前端 flush，但 busy 预检读
+        // isGenerating → 后续消息恒被拒）。故第二复位点挂在 agent_settled：组合根 onAgentSettled →
+        // SessionStateProjection.handleAgentSettledSideEffects。
+        // isGenerating 复位点全集：agent_end（handleTurnEndSideEffects）/ agent_settled（本补丁）/
+        // abort / forceQuit / session 退出。
+        activeSession.isGenerating = true
+        this.touchOccupancy(activeSession, { turn: 'generating' })
+      } else {
+        // compacting 拒绝（窗口 1）与非 busy 真失败：turn 确实没跑起来，复位 idle。
+        // compacting 拒绝后续仅 compaction_start/end（#5/#6 只写 compacting 维度），
+        // 同样依赖此处复位。
+        activeSession.isGenerating = false
+        this.touchOccupancy(activeSession, { turn: 'idle' })
+      }
+    }
     if (rejectionReason) {
       this.publishSendRejected(sessionId, rejectionReason, clientUuid)
       return { blocked: true, rejected: true }

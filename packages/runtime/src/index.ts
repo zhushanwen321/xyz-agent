@@ -441,6 +441,11 @@ async function main(): Promise<void> {
       // fanOutSettled（agent-settled-fanout.ts，可单测——本文件 import 即执行 main() 不可直测）。
       onAgentSettled: (sid) => {
         sessionService.flushPendingBashResults(sid)
+        // [session-dead 2026-09-10] run 级联结束（pi _runAgentPrompt 的 finally 确定性 emit）→
+        // 复位 isGenerating。agent_end 在 retry / auto-compaction 续跑时会重发、post-run 尾段
+        // 直接 settle 的收尾路径更不含 agent_end——只靠 agent_end 复位会让 processing 分支置的
+        // true 残留（幽灵忙碌）。语义与竞态自愈论证见 handleAgentSettledSideEffects 注释。
+        sessionService.handleAgentSettledSideEffects(sid)
         fanOutSettled(agentSettledListeners, sid)
       },
     })
