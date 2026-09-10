@@ -43,7 +43,15 @@ mkdir -p "$GIT_HOOKS_DIR"
 # 生成 pre-commit hook
 echo -e "${BLUE}[INFO] 安装 pre-commit hook...${NC}"
 
-cat > "$GIT_HOOKS_DIR/pre-commit" << 'HOOK_EOF'
+# [F5] 原子写：先写同目录临时文件，成功后 mv 到目标。禁止 cat > 直接截断目标——
+# pre-commit 执行中内部跑 pnpm install → prepare → 本脚本重写「正在被执行的」钩子
+# 文件时，truncate 使 bash 读偏移失步，脚本片段被当命令执行（假语法错误中止
+# commit，2026-09-10 实发一次）。mktemp 同目录保证同一文件系统、rename 原子：
+# 执行中的 bash 要么看到完整旧文件要么完整新文件，truncate 永不发生在目标路径上。
+# 写入/chmod 失败由 EXIT trap 清理临时文件，随 set -e 以原退出码失败（既有语义不变）。
+PRE_COMMIT_TMP=$(mktemp "$GIT_HOOKS_DIR/pre-commit.tmp.XXXXXX")
+trap 'rm -f "$PRE_COMMIT_TMP"' EXIT
+cat > "$PRE_COMMIT_TMP" << 'HOOK_EOF'
 #!/bin/bash
 # Git pre-commit hook: 代码质量检查
 #
@@ -1427,7 +1435,12 @@ echo ""
 exit 0
 HOOK_EOF
 
-chmod +x "$GIT_HOOKS_DIR/pre-commit"
+# chmod 755 对齐原产物权限（原路径 cat 创建 644 + chmod +x = 755；mktemp 基础
+# 权限 600，仅 +x 会得 700，静默改变权限位）。mv 前任何失败：set -e 退出触发
+# EXIT trap 清理临时文件，目标路径保持完整旧内容。
+chmod 755 "$PRE_COMMIT_TMP"
+mv -f "$PRE_COMMIT_TMP" "$GIT_HOOKS_DIR/pre-commit"
+trap - EXIT
 
 # 安装后自检：生成的 pre-commit 必须含流写逃逸护栏段。
 # 防「源缺段/heredoc 生成失败」——本脚本源若缺护栏段或 heredoc 损坏，此处 exit 1 拦下。
