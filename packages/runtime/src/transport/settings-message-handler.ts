@@ -31,9 +31,9 @@ export interface SettingsHandlerContext extends MessageHandlerContext {
   authService: IAuthService
   /**
    * Provider 凭据解析唯一通道（D3 收口，链 2 消费点）。
-   * 可选：组合根装配注入（M2c）；未注入时 handleDiscoverModels 降级旧行为（仅 models.json apiKey）。
+   * 构造必需（M2fg 收口）：组合根装配注入（M2c），models.json 直查回退已删除。
    */
-  providerCredentialResolver?: IProviderCredentialResolver
+  providerCredentialResolver: IProviderCredentialResolver
   /** W4：skillRegistry（全局 + 项目级 skill 缓存，带 watcher）。landing 全局 skill 经此拿 globalCache（FR-5）。 */
   skillRegistry: SkillRegistry
   projectRoot: string
@@ -736,7 +736,7 @@ export class SettingsMessageHandler {
     // 行为逐字节不变（CLI 与旧调用方零改动，向后兼容）。
     if (mode === 'test') return this.handleTestConnections(msg, ws, providerId)
     // 链 2（D3 收口）：payload 未带 apiKey 时经 resolver async 版解析（auth.json → models.json），
-    // 修复「catalog 凭据只在 auth.json 时恒 miss」；未注入 resolver 时降级旧行为（仅 models.json）。
+    // 修复「catalog 凭据只在 auth.json 时恒 miss」。
     const credentialPromise: Promise<string | undefined> = apiKey
       ? Promise.resolve(apiKey)
       : providerId
@@ -789,11 +789,9 @@ export class SettingsMessageHandler {
       : { models: [], success: false, error: outcome.error, results: [] })
   }
 
-  /** discover 凭据回查（链 2）：resolver 注入时走唯一通道；未注入降级为 models.json 单源。 */
+  /** discover 凭据回查（链 2）：唯一通道（auth.json → models.json，ctx 构造必需注入）。 */
   private async resolveProviderApiKey(providerId: string): Promise<string | undefined> {
-    const resolver = this.ctx.providerCredentialResolver
-    if (!resolver) return this.ctx.configService.getProvider(providerId)?.apiKey
-    const resolved = await resolver.resolveProviderCredential(providerId)
+    const resolved = await this.ctx.providerCredentialResolver.resolveProviderCredential(providerId)
     return resolved?.key
   }
 }

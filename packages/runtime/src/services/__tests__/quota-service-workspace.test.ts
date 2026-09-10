@@ -17,18 +17,28 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ProviderQuotaFetcher, QuotaFetcherConfig, QuotaFetchOutcome } from '@xyz-agent/shared'
+import type { IProviderCredentialResolver } from '../ports/provider-credential-resolver.js'
 import { QuotaService } from '../quota-service.js'
 import { XyzProviderStore } from '../provider-extras-store.js'
 import { QUOTA_FETCHERS } from '../quota-providers/index.js'
 
 vi.mock('../../infra/pi/pi-provider-store.js', () => ({
   getProviderConfig: vi.fn(() => undefined),
-  getApiKeyForProvider: vi.fn(() => null),
 }))
 // logger 落盘隔离（不依赖真实 dataDir）
 vi.mock('../../infra/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
+
+/**
+ * 恒注入形态的 resolver 替身（M2fg：QuotaService 构造必需）。本文件 fetcher 均为
+ * cookie 形态，resolver 不参与 cookie 段——miss 形态即可。
+ */
+const stubResolver: IProviderCredentialResolver = {
+  hasProviderCredential: () => false,
+  listCredentialBackedProviderIds: () => new Set<string>(),
+  resolveProviderCredential: async () => undefined,
+}
 
 let dir: string
 let agentDir: string
@@ -59,6 +69,7 @@ function makeService(): QuotaService {
     // fetcher 路由：getFetcherForProvider 读 ProviderInfo.quota.fetcher（非 extrasStore），
     // 测试统一注入指向假 fetcher
     getProviderInfo: () => ({ quota: { fetcher: 'fake-cookie-fetcher' } }),
+    providerCredentialResolver: stubResolver,
   })
 }
 

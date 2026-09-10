@@ -95,8 +95,11 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
       getCredential: vi.fn().mockResolvedValue(undefined),
       saveCredential: vi.fn().mockResolvedValue(undefined),
     },
-    // D3 链 2：未传 resolver 时保持旧行为（仅 models.json 回查）
-    providerCredentialResolver: overrides.resolver,
+    // D3 链 2（M2fg 恒注入形态）：ctx resolver 构造必需——缺省注入 miss 形态替身
+    // （resolve 返回 undefined = 「无凭据」），需要命中场景的用例经 overrides.resolver 传入。
+    providerCredentialResolver: overrides.resolver ?? {
+      resolveProviderCredential: vi.fn().mockResolvedValue(undefined),
+    },
     skillRegistry,
     projectRoot: '/proj',
     nextPushId: vi.fn().mockReturnValue('p1'),
@@ -267,8 +270,10 @@ describe('SettingsMessageHandler', () => {
       expect(replies[0].payload.error).toBe('rate limited')
     })
     it('providerId 解析 apiKey（resolvedApiKey 传给 service）', async () => {
-      const { ctx, replies, handler } = makeHandler()
-      ctx.configService.getProvider = vi.fn().mockReturnValue({ apiKey: 'resolved-key' }) as never
+      // M2fg 恒注入形态：凭据回查经 ctx 构造必需的 resolver（models.json 直查回退已删除）
+      const { ctx, replies, handler } = makeHandler({
+        resolver: { resolveProviderCredential: vi.fn().mockResolvedValue({ key: 'resolved-key', source: 'models.json' }) },
+      })
       await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x', providerId: 'p1' }), WS)
       await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
       expect(ctx.modelService.discoverModelsFromApi).toHaveBeenCalledWith('http://x', 'resolved-key', undefined)
@@ -295,11 +300,12 @@ describe('SettingsMessageHandler', () => {
       expect(resolver.resolveProviderCredential).not.toHaveBeenCalled()
       expect(ctx.modelService.discoverModelsFromApi).toHaveBeenCalledWith('http://x', 'form-key', undefined)
     })
-    it('未注入 resolver 时保持旧行为：models.json 无条目 → 凭据 undefined（失败模式 C 现状对照）', async () => {
+    it('resolver 未命中（auth.json/models.json 两段全 miss）→ 凭据 undefined', async () => {
+      // M2fg：默认 miss 形态 resolver → resolvedApiKey undefined（降级链已删除，恒注入可证伪）
       const { ctx, replies, handler } = makeHandler()
-      ctx.configService.getProvider = vi.fn().mockReturnValue(undefined) as never
       await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x', providerId: 'anthropic' }), WS)
       await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
+      expect(ctx.configService.getProvider).not.toHaveBeenCalled()
       expect(ctx.modelService.discoverModelsFromApi).toHaveBeenCalledWith('http://x', undefined, undefined)
     })
   })

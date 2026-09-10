@@ -18,6 +18,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConfigService } from '../config-service.js'
+import { ProviderCredentialResolver } from '../auth/provider-credential-resolver.js'
 import type { IConfigStore, ConfigModelsConfig, ConfigProviderConfig } from '../ports/config.js'
 import type { AuthStorage } from '../auth/auth-storage.js'
 // M5-02：mock 镜像生产 getDefaultModel 的 auto-fix 语义需要 deriveEnabled（与
@@ -112,7 +113,15 @@ function makeAuth(authIds: string[] = []): FullAuthPick {
 
 function makeService(opts: StoreOpts = {}): { svc: ConfigService; store: ReturnType<typeof makeStore> } {
   const store = makeStore(opts)
-  const svc = new ConfigService('/tmp/project', store, makeAuth(opts.authIds ?? []))
+  const auth = makeAuth(opts.authIds ?? [])
+  // M2fg 恒注入形态：凭据判定（含 B1 重选凭据优先）经 resolver 批量 sync 版，
+  // 同源于上方 store/auth mock
+  const resolver = new ProviderCredentialResolver({
+    authService: { getCredential: async () => undefined },
+    authStorage: auth,
+    configStore: store,
+  })
+  const svc = new ConfigService('/tmp/project', store, auth, undefined, undefined, resolver)
   return { svc, store }
 }
 

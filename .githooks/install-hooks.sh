@@ -1345,6 +1345,41 @@ else
 fi
 
 # ============================================================================
+# Provider 凭据读取单通道守卫（C-proc-12/13，catalog-provider-field-authority §3.3 D3/D6）
+#   packages/runtime/src 有变更时触发：scripts/check-provider-credential-reads.mjs
+#   守卫 A——凭据直查禁令（getApiKeyForProvider / readAuthCredentials /
+#   getProviderConfig(...).apiKey，白名单 = resolver 唯一通道本体）；守卫 B——
+#   upsertProvider 直调清单（白名单 = 写入载体 / importer / 迁移链 / IConfigStore
+#   实现，堵防线载体被旁路的复发通道）。
+#   注：不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
+# ============================================================================
+
+PROVIDER_CRED_READS_CHECKER="scripts/check-provider-credential-reads.mjs"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    if echo "$STAGED_FILES" | grep -q "^$RUNTIME_SRC/"; then
+        print_section "[Provider 凭据读取单通道守卫]"
+        echo -e "${BLUE}[INFO] runtime 源码有变更，扫描凭据直查与 upsertProvider 直调...${NC}"
+
+        if [ ! -f "$PROVIDER_CRED_READS_CHECKER" ]; then
+            echo -e "${RED}[ERROR] 找不到 $PROVIDER_CRED_READS_CHECKER${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+
+        node "$PROVIDER_CRED_READS_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}[OK] runtime 源码无变更，跳过 Provider 凭据读取守卫${NC}"
+    fi
+fi
+
+# ============================================================================
 # 全部通过
 # ============================================================================
 
@@ -1412,6 +1447,7 @@ echo -e "  ${GREEN}[+]${NC} pi 边界可靠性护栏（G1 语义登记守卫 / G
 echo -e "  ${GREEN}[+]${NC} subagent-core 依赖闭包守卫（D9-① 闭包 + 检查点 5 worker 零宿主服务）"
 echo -e "  ${GREEN}[+]${NC} 文档-代码符号漂移守卫（C-proc-10：设计文档引用已删除/改名符号即拦截）"
 echo -e "  ${GREEN}[+]${NC} 测试 flake 卫生检查（F5 scripts.test --no-bail + F3 recursive 删除 maxRetries）"
+echo -e "  ${GREEN}[+]${NC} Provider 凭据读取单通道守卫（runtime 变更时触发：凭据直查禁令 + upsertProvider 直调清单，C-proc-12/13）"
 echo ""
 echo -e "${CYAN}Hook 脚本位置:${NC} .githooks/"
 echo ""

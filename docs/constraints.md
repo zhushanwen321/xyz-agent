@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 91 条（生成于 2026-09-07）。
+共 93 条（生成于 2026-09-10）。
 
 ## pi 关系（外部依赖边界）
 
@@ -130,6 +130,8 @@
 | C-proc-10 | 文档-代码符号零漂移：设计文档（docs/design/）反引号内引用的代码符号（蛇形常量 / getXxx() 函数调用形态）必须存在于映射源码模块的符号表中（导出名或模块级声明；env 名 XYZ_*/PI_* 与 errno 字符串族豁免）；符号删除/改名必须同批同步文档。映射登记 SSOT = scripts/check-doc-symbol-drift.mjs 的 DOC_MODULE_MAP，新增设计文档时在该表登记映射 | docs/design/**、apps/electron/main/update/**、scripts/check-doc-symbol-drift.mjs | [check-doc-symbol-drift.mjs](../scripts/check-doc-symbol-drift.mjs) | hook: `check-doc-symbol-drift.mjs` |
 | C-proc-08 | pi 语义依赖机器登记 + 探针 + 版本门禁：docs/pi-semantics.json（PS-xx 条目，probe/observe 分型）是唯一机器登记源，scripts/check-pi-semantics.mjs（pre-commit + CI）守 schema/探针存在性/四包版本一致（pi-coding-agent ≡ pi-ai ≡ pi-agent-core ≡ runtime pin）；pi 升级 PR 必查两项——pi-ai exports 是否移除 ./compat、changelog 是否提及 ModelManager 迁移（PS-15 时间炸弹）；探针族红 = 语义漂移，先复核锚点再更新 verifiedWith | docs/pi-semantics.json、packages/runtime/src/infra/pi/**、package.json、packages/runtime/package.json | [pi-boundary-reliability](design/pi-boundary-reliability.md#d6漂移守卫体系pi-语义依赖的机器登记--探针--版本门禁选定) | hook: `check-pi-semantics.mjs` |
 | C-proc-11 | npm 发布面一致性：dist 发布包 files 白名单 ↔ 构建产出双向对齐——files 条目须磁盘存在且非空（幽灵条目拦截，npm pack 对幽灵条目静默跳过）、包内顶层 dist* 产物目录须被 files 覆盖（漏声明方向反向覆盖），由 check-publish-surface.mjs 在发布门（release workflow publish 前）与 CI PR invariants 双点强制（刻意不挂 pre-commit：dist 产物被 gitignore，干净 checkout 必红）；新增产物档须同批挂 workflow 构建步骤 + files 白名单条目 + 守卫覆盖（三者缺一不可）；自包含档命名约定 dist.bundle 且须内联全部运行时依赖（静态 require 探针，裸名外部说明符红）；非发布用途构建目录禁用 dist 前缀（否则反向覆盖检查误红，改名即可）；非 workspace 包机制上不经 changeset 发布线（changesets 按 workspace 发现包），防手滑 npm publish 一律 private:true | packages/**、.github/workflows/release-npm.yml、.github/workflows/release-npm-dev.yml、.github/workflows/ci.yml、scripts/check-publish-surface.mjs、resources/plugins/statusline/package.json | [npm-publish-surface-guard](design/npm-publish-surface-guard.md#33-关键决策与权衡) · [check-publish-surface.mjs](../scripts/check-publish-surface.mjs) | hook: `check-publish-surface.mjs` |
+| C-proc-12 | provider 凭据读路径唯一通道：packages/runtime/src/** 生产代码（排除 *.test.ts 与 __tests__/）禁止在白名单外直查凭据（getApiKeyForProvider / readAuthCredentials / getProviderConfig(...).apiKey 这类模式），一律经 services/auth/provider-credential-resolver.ts（接口在 services/ports/）；由 scripts/check-provider-credential-reads.mjs 守卫，白名单 = resolver 模块自身仅此一个文件（M2fg 收口后基线清零，新增例外须过 review 改白名单） | packages/runtime/src/** | [catalog-provider-field-authority](design/catalog-provider-field-authority.md) | hook: `check-provider-credential-reads.mjs` |
+| C-proc-13 | models.json 写入点收口：upsertProvider 直调只许白名单（setProvider 写入载体 provider-config-helper / importer 主路径 / legacy 与 extras 迁移链 / IConfigStore 实现与接口签名 pi-config-store + ports/config / pi-provider-store 定义文件本体含 clearProviderApiKey），新增直调点须接防线载体（applyProviderWritePolicy）或进白名单——堵防线载体被旁路的复发通道；与 C-proc-12 同属 scripts/check-provider-credential-reads.mjs 的姊妹守卫 | packages/runtime/src/** | [catalog-provider-field-authority](design/catalog-provider-field-authority.md) | hook: `check-provider-credential-reads.mjs` |
 
 ## subagent-workflow（单写者不变量）
 

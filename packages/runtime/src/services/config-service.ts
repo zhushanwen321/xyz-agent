@@ -137,8 +137,10 @@ export class ConfigService implements IConfigService {
     private llmRetrySettings?: ILlmRetrySettings,
     /**
      * Provider 凭据解析唯一通道（D3 收口，链 5 消费点）：listProviders 的凭据判定经其批量
-     * sync 版单次取（auth.json ∪ models.json）。组合根（index.ts）构造时传入；未注入时
-     * listProviders 降级旧内联判定（仅 auth.json 集合）。
+     * sync 版单次取（auth.json ∪ models.json）。M2fg 删降级后无回退——生产恒注入；参数保持
+     * 可选只为不强迫与 provider 无关的测试构造点（terminal-config / streaming-idle 等 46 处）
+     * 注入替身，listProviders / toggleProviderEnabled / removeProviderByKind 消费点以非空断言
+     * 锁定恒注入前提（少参构造 + 调这三法 = 运行时 TypeError，属测试构造错误）。
      */
     private providerCredentialResolver?: IProviderCredentialResolver,
   ) {}
@@ -168,7 +170,8 @@ export class ConfigService implements IConfigService {
   }
 
   listProviders(): ProviderInfo[] {
-    return listProvidersImpl(this.configStore, this.authStorage, this.providerExtrasStore, this.providerCredentialResolver)
+    // 非空断言 = 恒注入前提（组合根 index.ts 装配序测试锁定；M2fg 删降级后无回退）
+    return listProvidersImpl(this.configStore, this.authStorage, this.providerExtrasStore, this.providerCredentialResolver!)
   }
 
   /**
@@ -196,7 +199,7 @@ export class ConfigService implements IConfigService {
   }
 
   toggleProviderEnabled(providerId: string, enabled: boolean): { newDefault?: { provider: ProviderId; modelId: string } } {
-    return toggleProviderEnabledImpl(this.configStore, this.authStorage, this.providerExtrasStore, providerId, enabled)
+    return toggleProviderEnabledImpl(this.configStore, this.authStorage, this.providerExtrasStore, this.providerCredentialResolver!, providerId, enabled)
   }
 
   async deleteProvider(providerId: string): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
@@ -204,7 +207,7 @@ export class ConfigService implements IConfigService {
   }
 
   async removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
-    return removeProviderByKindImpl(this.configStore, this.authStorage, this.providerExtrasStore, providerId, kind)
+    return removeProviderByKindImpl(this.configStore, this.authStorage, this.providerExtrasStore, this.providerCredentialResolver!, providerId, kind)
   }
 
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined {

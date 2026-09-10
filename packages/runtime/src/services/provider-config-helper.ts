@@ -380,7 +380,7 @@ function buildCatalogProviderInfo(
   // C1 契约「catalog 凭据 = id ∈ 有凭据源」；override?.apiKey 是 catalog provider
   // 手动填 key 的旧数据（迁移前错位）合理扩展，双源判定避免遗漏。
   // D3 链 5（凭据收口）：credentialIdSet 由 resolver 批量 sync 版单次给出（auth.json ∪
-  // models.json），未注入 resolver 时降级为 listProviders 内联的 auth.json 集合。
+  // models.json，构造必需注入——M2fg）。
   const apiKeySet = credentialIdSet.has(id) || !!override?.apiKey
   const overrideModels = override?.models ?? []
   const display = resolveCatalogDisplayFields(id, override, builtinP, extras)
@@ -426,7 +426,7 @@ function buildCustomProviderInfo(
     // 显式标注（extras.authMethod）优先；无标注退回 apiKey 格式推断（I6）
     authMethod: extras?.authMethod ?? deriveAuthMethod(config),
     // M6 status 派生：apiKey 或凭据源任一 → connected。
-    // B3/D3 链 5：复用批量单次读的 credentialIdSet（resolver sync 版 / 降级内联 auth.json 集合），
+    // B3/D3 链 5：复用批量单次读的 credentialIdSet（resolver sync 版，构造必需注入——M2fg），
     // 消除每次循环 hasCredentialSync 的 N+1 读盘。
     status: (config.apiKey || credentialIdSet.has(id))
       ? 'connected' as const
@@ -452,21 +452,21 @@ function buildCustomProviderInfo(
  * quota 为 undefined（与迁移后 models.json 已剥离寄生字段的读值一致）。
  *
  * D3 链 5（凭据读路径收口）：apiKeySet / status 的凭据判定经 credentialResolver 的批量
- * sync 版单次取（`listCredentialBackedProviderIds`，auth.json ∪ models.json 各单次读）；
- * 未注入 resolver 时降级旧内联判定（仅 auth.json 集合，models.json apiKey 由 override /
- * config.apiKey 项覆盖）——保持批量单次读盘的 B3 不变量，禁止退回 per-provider 循环。
+ * sync 版单次取（`listCredentialBackedProviderIds`，auth.json ∪ models.json 各单次读）。
+ * resolver 构造必需（M2fg 收口：生产组合根恒注入，`new Set(authIds)` 内联回退已删除）——
+ * 保持批量单次读盘的 B3 不变量，禁止退回 per-provider 循环。
  */
 export function listProviders(
   configStore: IConfigStore,
-  authStorage?: AuthStorageAccessors,
-  extrasStore?: ProviderExtrasReader,
-  credentialResolver?: IProviderCredentialResolver,
+  authStorage: AuthStorageAccessors | undefined,
+  extrasStore: ProviderExtrasReader | undefined,
+  credentialResolver: IProviderCredentialResolver,
 ): ProviderInfo[] {
   const models = configStore.readModels()
   const enabledModels = configStore.getEnabledModels()
   const extrasAll = extrasStore ? readAllExtrasWithFallback(extrasStore, configStore) : {}
   const authIds = authStorage?.listCredentialIds() ?? []
-  const credentialIdSet = credentialResolver?.listCredentialBackedProviderIds() ?? new Set(authIds)
+  const credentialIdSet = credentialResolver.listCredentialBackedProviderIds()
 
   const result: ProviderInfo[] = []
   // catalog id 去重集合：catalog 源处理过的 id，custom 源跳过（避免 catalog id 重复出现）
@@ -1126,6 +1126,8 @@ export async function setProvider(
 /**
  * 切换 provider 启用状态（wave3 IF2 / C1）——写 enabledModels 白名单。
  * 纯函数：configStore 经参数注入（原 ConfigService.toggleProviderEnabled 逐字搬迁）。
+ * credentialResolver 必需（M2fg）：defaultModel 重选（pickEnabledDefaultModel → listProviders
+ * 的 B1 凭据优先判定）经唯一凭据通道批量 sync 版。
  *
  * enabled=true: 若 enabledModels 非空，加 `<id>/*`；空/undefined 时 no-op（CL1——
  *   全可用语义下 toggle(true) 无意义，加 pattern 反把其他 provider 隐式禁用）。
@@ -1140,6 +1142,7 @@ export function toggleProviderEnabled(
   configStore: IConfigStore,
   authStorage: AuthStorageAccessors | undefined,
   extrasStore: ProviderExtrasReader | undefined,
+  credentialResolver: IProviderCredentialResolver,
   providerId: string,
   enabled: boolean,
 ): { newDefault?: { provider: ProviderId; modelId: string } } {
@@ -1181,7 +1184,7 @@ export function toggleProviderEnabled(
     //（wave2 双源聚合 + deriveEnabled + B1 凭据优先）选新 default 并 setDefaultModel 写回，
     // 不依赖 getDefaultModel 的惰性 auto-fix（其 fallback 只扫 models.json，看不到
     // auth.json-only 的 catalog provider）。
-    const newDefault = pickEnabledDefaultModel(configStore, authStorage, extrasStore, providerId)
+    const newDefault = pickEnabledDefaultModel(configStore, authStorage, extrasStore, credentialResolver, providerId)
     if (newDefault) {
       configStore.setDefaultModel(newDefault.provider, newDefault.modelId)
       return { newDefault }
@@ -1195,15 +1198,17 @@ export function toggleProviderEnabled(
  *
  * 复用 listProviders（wave2：catalog ∪ custom 双源聚合 + deriveEnabled 派生 enabled），
  * 避免重复实现聚合/凭据/catalog 兜底逻辑。excludedId 跳过被禁用的 provider 自身。
+ * credentialResolver 必需（M2fg）：透传给 listProviders（凭据判定唯一通道）。
  * 返回 undefined 表示无可用启用 provider（UI 层 wave4 拒绝禁用最后一个）。
  */
 function pickEnabledDefaultModel(
   configStore: IConfigStore,
   authStorage: AuthStorageAccessors | undefined,
   extrasStore: ProviderExtrasReader | undefined,
+  credentialResolver: IProviderCredentialResolver,
   excludedId: string,
 ): { provider: ProviderId; modelId: string } | undefined {
-  const providers = listProviders(configStore, authStorage, extrasStore)
+  const providers = listProviders(configStore, authStorage, extrasStore, credentialResolver)
   // B1：优先选有凭据（apiKeySet）的启用 provider 作 default，
   // 避免重选到无凭据的 catalog provider（用户禁用某 provider 触发重选时）。
   // 有凭据优先，找不到再 fallback 到任意启用 provider（含 ambient 认证如 bedrock）。
@@ -1314,6 +1319,8 @@ export async function deleteProvider(
 /**
  * 按体系移除 provider（wave4 IF3 / C2）——catalog 与 custom 分体系处理。
  * 纯函数：configStore / authStorage / extrasStore 经参数注入。
+ * credentialResolver 必需（M2fg）：defaultModel 重选（pickEnabledDefaultModel → listProviders
+ * 的 B1 凭据优先判定）经唯一凭据通道批量 sync 版。
  *
  * 与 deleteProvider 的区别：deleteProvider 不分体系直接 configStore.removeProvider（向后兼容
  * 保留）；removeProviderByKind 按 ProviderInfo.kind 收窄，避免误删 catalog 定义。
@@ -1335,6 +1342,7 @@ export async function removeProviderByKind(
   configStore: IConfigStore,
   authStorage: AuthStorageAccessors | undefined,
   extrasStore: (ProviderExtrasReader & ProviderExtrasDeleter) | undefined,
+  credentialResolver: IProviderCredentialResolver,
   providerId: string,
   kind: 'catalog' | 'custom',
 ): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
@@ -1362,7 +1370,7 @@ export async function removeProviderByKind(
     // toggle 边界2 的 pickEnabledDefaultModel，B1 凭据优先），透传 newDefault 广播 config.defaults。
     if (!overrideResult.removed) {
       if (oldDefault && oldDefault.provider === providerId) {
-        const newDefault = pickEnabledDefaultModel(configStore, authStorage, extrasStore, providerId)
+        const newDefault = pickEnabledDefaultModel(configStore, authStorage, extrasStore, credentialResolver, providerId)
         if (newDefault) {
           configStore.setDefaultModel(newDefault.provider, newDefault.modelId)
           overrideResult = { removed: false, newDefault }

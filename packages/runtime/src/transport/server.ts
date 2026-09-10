@@ -86,7 +86,7 @@ export interface RuntimeServerOptionalServices {
   /**
    * Provider 凭据解析唯一通道（D3 收口，链 2 消费点）。
    * 组合根（index.ts）经本 optional 对象注入，assembleCoreHandlers 透传给
-   * SettingsMessageHandler ctx；未注入时 handler 降级旧行为（仅 models.json apiKey）。
+   * SettingsMessageHandler ctx（M2fg 删降级后 ctx 必需——生产恒注入，ctx 装配处断言非空）。
    */
   providerCredentialResolver?: IProviderCredentialResolver
   project?: ProjectStore
@@ -274,8 +274,9 @@ export class RuntimeServer implements IMessageBroker {
       sessionService: this.sessionService,
       modelService: this.modelService,
       authService: auth ?? noopAuthService,
-      // D3 链 2（M2c 接线）：discover 凭据回查经组合根注入的唯一通道（未注入时 handler 降级）。
-      providerCredentialResolver,
+      // D3 链 2（M2c 接线）：discover 凭据回查经组合根注入的唯一通道（M2fg 删降级后无回退，
+      // 恒注入前提同上 skillRegistry——组合根 index.ts 保证传入，setServices 编排保证）。
+      providerCredentialResolver: providerCredentialResolver!,
       // W4：skillRegistry 必须注入（settings-handler 的 config.getGlobalSkills/getProjectSkills 依赖）。
       // 组合根 index.ts 保证传入；此处断言非空（setServices 编排保证）。若未来 skillRegistry 可选，handler 需守卫。
       skillRegistry: this.skillRegistry!,

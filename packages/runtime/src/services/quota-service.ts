@@ -17,7 +17,7 @@ import type { NormalizedQuotaRow, ProviderQuotaFetcher, QuotaAuthKind, QuotaFetc
 import { matchQuotaPreset, normalizeQuotaWorkspaceUrl } from '@xyz-agent/shared'
 import { QUOTA_FETCHERS } from './quota-providers/index.js'
 import { QuotaCache } from './quota-cache.js'
-import { getApiKeyForProvider, getProviderConfig } from '../infra/pi/pi-provider-store.js'
+import { getProviderConfig } from '../infra/pi/pi-provider-store.js'
 import { logger } from '../infra/logger.js'
 import { getDataDir } from '@xyz-agent/shared/paths'
 import type { XyzProviderStore, ProviderExtras } from './provider-extras-store.js'
@@ -100,13 +100,13 @@ export interface QuotaServiceOptions {
    */
   getProviderConfig?: (providerId: string) => ConfigProviderConfig | undefined
   /**
-   * Provider 凭据解析唯一通道（D3 收口，链 1 消费点）：注入后 api-key 形态的
+   * Provider 凭据解析唯一通道（D3 收口，链 1 消费点）：api-key 形态的
    * auth.json / models.json 两段统一走 resolver（auth.json → models.json，源优先级单点声明）；
    * secrets 专属 key 段仍优先（Coding Plan 专属语义，不属于 provider 凭据）。
-   * 未注入时降级旧内联链（AuthService.getCredential + getApiKeyForProvider），向后兼容。
+   * 构造必需（M2fg 收口：生产组合根恒注入，降级内联链已删除）。
    * resolver 构造无 IO、读取懒发生——无缓存语义变化（原实现同样每次调用即读盘）。
    */
-  providerCredentialResolver?: IProviderCredentialResolver
+  providerCredentialResolver: IProviderCredentialResolver
 }
 
 export class QuotaService {
@@ -127,25 +127,23 @@ export class QuotaService {
   private getAuthCredential: ((providerId: string) => Promise<Credential | undefined>) | undefined
   /** models.json 单条目读取通道（arch-boundary S2 port 化，生产注入 configStore.getProviderConfig） */
   private getProviderConfigOpt: ((providerId: string) => ConfigProviderConfig | undefined) | undefined
-  /** Provider 凭据解析唯一通道（D3 链 1，未注入时降级旧内联链） */
-  private credentialResolver: IProviderCredentialResolver | undefined
+  /** Provider 凭据解析唯一通道（D3 链 1，构造必需） */
+  private readonly credentialResolver: IProviderCredentialResolver
   /** providerId → 最近一次查询失败原因（A2-4：getCached 透传；成功清除；不落盘） */
   private lastFailure: Map<string, QuotaFetchFailureReason> = new Map()
 
-  constructor(options: QuotaServiceOptions | string = {}) {
-    // 兼容旧签名：直接传 dataDir 字符串
-    const opts: QuotaServiceOptions = typeof options === 'string' ? {} : options
-    const dir = typeof options === 'string' ? options : (opts.dataDir ?? getDataDir())
+  constructor(options: QuotaServiceOptions) {
+    const dir = options.dataDir ?? getDataDir()
     this.cache = new QuotaCache(dir)
     this.secretsDir = join(dir, 'secrets')
-    this.getProviderInfo = opts.getProviderInfo ?? (() => undefined)
-    this.extrasStore = opts.providerExtrasStore
-    this.getProviderConfigOpt = opts.getProviderConfig
-    this.credentialResolver = opts.providerCredentialResolver
-    this.providerExists = opts.providerExists
+    this.getProviderInfo = options.getProviderInfo ?? (() => undefined)
+    this.extrasStore = options.providerExtrasStore
+    this.getProviderConfigOpt = options.getProviderConfig
+    this.credentialResolver = options.providerCredentialResolver
+    this.providerExists = options.providerExists
       // 保守默认：维持旧限制语义（models.json 有条目才可配置），生产恒注入聚合判定
       ?? ((providerId) => this.readProviderConfig(providerId) !== undefined)
-    this.getAuthCredential = opts.getAuthCredential
+    this.getAuthCredential = options.getAuthCredential
   }
 
   /**
@@ -576,8 +574,7 @@ export class QuotaService {
 
   /**
    * 获取凭证（单形态，来源链固定）。
-   * - api-key：secrets 专属额度 key → 注入 resolver 时经唯一凭据通道（auth.json → models.json）；
-   *   未注入 resolver 时降级旧内联链（AuthService.getCredential → models.json apiKey）
+   * - api-key：secrets 专属额度 key → 唯一凭据通道（auth.json → models.json，构造必需注入的 resolver）
    * - oauth：auth.json `credential(oauth).access`（直读现值，不自行 refresh——D6）
    * - cookie：secrets cookie 文件
    *
@@ -593,21 +590,14 @@ export class QuotaService {
       if (quotaKey) return quotaKey
       // D3 链 1（凭据收口）：auth.json api_key → models.json apiKey 两段统一走 resolver。
       // 读取异常降级为「无凭据」（对齐旧 readAuthCredential 的容错语义，不阻断 resolveCredential）。
-      if (this.credentialResolver) {
-        try {
-          const resolved = await this.credentialResolver.resolveProviderCredential(providerId)
-          return resolved?.key ?? null
-        } catch (err) {
-          const msg = toErrorMessage(err)
-          logger.debug('[quota] failed to resolve provider credential', { providerId, error: msg })
-          return null
-        }
+      try {
+        const resolved = await this.credentialResolver.resolveProviderCredential(providerId)
+        return resolved?.key ?? null
+      } catch (err) {
+        const msg = toErrorMessage(err)
+        logger.debug('[quota] failed to resolve provider credential', { providerId, error: msg })
+        return null
       }
-      // 降级（未注入 resolver）：旧内联链——auth.json api_key（catalog 凭据位置）→ models.json apiKey。
-      const authCred = await this.readAuthCredential(providerId)
-      if (authCred?.type === 'api_key' && authCred.key) return authCred.key
-      const providerKey = getApiKeyForProvider(providerId)
-      return providerKey ?? null
     }
 
     if (kind === 'oauth') {

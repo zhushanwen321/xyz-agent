@@ -15,6 +15,8 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 
 import { ConfigService } from '../src/services/config-service.js'
+import { AuthStorage } from '../src/services/auth/auth-storage.js'
+import { ProviderCredentialResolver } from '../src/services/auth/provider-credential-resolver.js'
 import type { ProviderId } from '@xyz-agent/shared'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import {
@@ -97,7 +99,20 @@ beforeAll(() => {
   refreshModels()
 
   configStore = new PiConfigStore()
-  configService = new ConfigService(tmpDir, configStore)
+  // M2fg 恒注入形态：凭据判定经 resolver 批量 sync 版（auth.json 腿指向临时目录——
+  // dev 副本未拷贝 auth.json，恒 miss；models.json 腿经真 PiConfigStore 读副本）
+  configService = new ConfigService(
+    tmpDir,
+    configStore,
+    undefined,
+    undefined,
+    undefined,
+    new ProviderCredentialResolver({
+      authService: { getCredential: async () => undefined },
+      authStorage: new AuthStorage(join(piAgentDir, 'auth.json')),
+      configStore,
+    }),
+  )
 
   // E2/E3 的被测 provider：按 id 排序后取第一个「有模型」者（E3 需要 modelId）——
   // 排序 + 显式过滤消除原先 providers[0] 的偶然顺序依赖，测试意图不变。
@@ -198,7 +213,21 @@ describe('E1 分体系（D1③）· 自建 fixture（custom 落盘 api / catalog
     setModelsPath(join(piAgentDir, 'models.json'))
     setSettingsPath(join(piAgentDir, 'settings.json'))
     refreshModels()
-    fixtureConfigService = new ConfigService(fixtureDir, new PiConfigStore())
+    const fixtureStore = new PiConfigStore()
+    fixtureConfigService = new ConfigService(
+      fixtureDir,
+      fixtureStore,
+      undefined,
+      undefined,
+      undefined,
+      // M2fg 恒注入形态：凭据判定经 resolver 批量 sync 版（auth.json 腿指向临时目录，
+      // 恒 miss；models.json 腿经真 PiConfigStore 读 fixture）
+      new ProviderCredentialResolver({
+        authService: { getCredential: async () => undefined },
+        authStorage: new AuthStorage(join(piAgentDir, 'auth.json')),
+        configStore: fixtureStore,
+      }),
+    )
 
     // fixture 前提自检：kind 判定符合构造意图，否则下面的分体系断言无意义
     const kinds = new Map(fixtureConfigService.listProviders().map(p => [p.id as string, p.kind]))

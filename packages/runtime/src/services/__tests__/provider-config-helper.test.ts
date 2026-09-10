@@ -439,18 +439,6 @@ describe('M2b: listProviders 凭据判定走 resolver 批量 sync 版（链 5）
     expect(anthropic?.status).toBe('connected')
   })
 
-  it('未注入 resolver 时降级旧内联判定（auth.json 集合命中 catalog）', () => {
-    const store = makeListStore()
-    const auth = makeAuth()
-    vi.mocked(auth.listCredentialIds).mockReturnValue(['anthropic'])
-
-    const result = listProviders(store, auth)
-
-    expect(result.find(p => p.id === 'anthropic')?.apiKeySet).toBe(true)
-    // 降级路径同样单次读盘（无 per-provider hasCredentialSync）
-    expect(auth.hasCredentialSync).not.toHaveBeenCalled()
-  })
-
   it('真 resolver 接线：auth.json-only catalog provider 判 connected（端到端，无 per-provider 判定）', () => {
     const providers = { 'my-custom': { name: 'My Custom' } }
     const store = {
@@ -487,13 +475,23 @@ describe('M2b: listProviders 凭据判定走 resolver 批量 sync 版（链 5）
  * 合并视图 == 快照，派生结果由快照模型级字段决定（数值见各用例注释）。
  */
 describe('M4: catalog 展示字段（网关优先 + 派生兜底）', () => {
+  /**
+   * 恒注入形态的 resolver 替身（M2fg：listProviders 构造必需）。本 describe 断言全部
+   * 针对展示字段（api/baseUrl），凭据集恒空即可（apiKeySet 断言归 M2b describe）。
+   */
+  const stubResolver: IProviderCredentialResolver = {
+    hasProviderCredential: () => false,
+    listCredentialBackedProviderIds: () => new Set<string>(),
+    resolveProviderCredential: async () => undefined,
+  }
+
   /** 只读 store：providers 即 models.json 全量（catalog id 出现在其中即进入 catalog 聚合） */
   function listWith(providers: Record<string, Record<string, unknown>>) {
     const store = {
       readModels: vi.fn(() => ({ providers })),
       getEnabledModels: vi.fn(() => []),
     } as unknown as IConfigStore
-    return listProviders(store)
+    return listProviders(store, undefined, undefined, stubResolver)
   }
 
   /** 取某 catalog provider 的聚合结果（override 缺省 = 空条目，等价「无用户配置」） */

@@ -79,6 +79,12 @@ function makeHandler() {
     sessionService: {} as unknown as ISessionService,
     modelService,
     authService: { login: vi.fn(), cancel: vi.fn(), hasOAuth: vi.fn(), getCredential: vi.fn(), saveCredential: vi.fn(), logout: vi.fn() },
+    // D3 链 2（M2fg 恒注入形态）：ctx resolver 构造必需，本文件用例不涉凭据——miss 替身
+    providerCredentialResolver: {
+      hasProviderCredential: vi.fn().mockReturnValue(false),
+      listCredentialBackedProviderIds: vi.fn().mockReturnValue(new Set<string>()),
+      resolveProviderCredential: vi.fn().mockResolvedValue(undefined),
+    },
     skillRegistry: { getGlobalSkills: () => [], getProjectSkills: vi.fn().mockResolvedValue([]) } as unknown as SettingsHandlerContext['skillRegistry'],
     projectRoot: '/proj',
     nextPushId: vi.fn().mockReturnValue('push-1'),

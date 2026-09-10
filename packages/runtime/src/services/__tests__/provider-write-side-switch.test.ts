@@ -19,6 +19,14 @@ import type { SetProviderInput } from '../provider-config-helper.js'
 import { setModelsPath } from '../../infra/pi/pi-provider-store.js'
 import { setSettingsPath, invalidateSettingsCache } from '../../infra/pi/pi-settings-store.js'
 import { PiConfigStore } from '../../infra/pi/pi-config-store.js'
+import type { IProviderCredentialResolver } from '../ports/provider-credential-resolver.js'
+
+/** 恒注入形态的 resolver 替身（M2fg：QuotaService 构造必需；configure 路径不消费凭据）。 */
+const stubResolver: IProviderCredentialResolver = {
+  hasProviderCredential: () => false,
+  listCredentialBackedProviderIds: () => new Set<string>(),
+  resolveProviderCredential: async () => undefined,
+}
 
 let dir: string
 let agentDir: string
@@ -41,7 +49,7 @@ function readExtrasRaw(): Record<string, unknown> {
 }
 
 function makeQuotaService(providerExists: (id: string) => boolean): QuotaService {
-  return new QuotaService({ dataDir: dir, providerExtrasStore: extrasStore, providerExists })
+  return new QuotaService({ dataDir: dir, providerExtrasStore: extrasStore, providerExists, providerCredentialResolver: stubResolver })
 }
 
 beforeEach(() => {
@@ -139,6 +147,7 @@ describe('QuotaService.configure 写侧切换（A1-5 路径 1）', () => {
       providerExists: () => true,
       getProviderConfig: (id) =>
         id === 'p1' ? { quota: { fetcher: 'from-injection', enabled: false } } : undefined,
+      providerCredentialResolver: stubResolver,
     })
 
     await svc.configure('p1', true) // fetcher 未传 → readQuotaFallback 兜底
@@ -150,7 +159,7 @@ describe('QuotaService.configure 写侧切换（A1-5 路径 1）', () => {
 
   it('未注入 providerExtrasStore → 持久化失败返回（宁失败不写错位）', async () => {
     writeModelsJson({ p1: { baseUrl: 'https://x.example.com' } })
-    const svc = new QuotaService({ dataDir: dir, providerExists: () => true })
+    const svc = new QuotaService({ dataDir: dir, providerExists: () => true, providerCredentialResolver: stubResolver })
 
     const result = await svc.configure('p1', true)
 

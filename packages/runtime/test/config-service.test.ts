@@ -18,6 +18,8 @@ import { promisify } from 'node:util'
 
 import type { LlmRetryConfig } from '@xyz-agent/shared'
 import { ConfigService } from '../src/services/config-service.js'
+import { AuthStorage } from '../src/services/auth/auth-storage.js'
+import { ProviderCredentialResolver } from '../src/services/auth/provider-credential-resolver.js'
 import type { ILlmRetrySettings, LlmRetryConfigSnapshot } from '../src/services/ports/llm-retry-settings.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { XyzProviderStore } from '../src/services/provider-extras-store.js'
@@ -36,6 +38,18 @@ let tmpDir: string
 let configStore: PiConfigStore
 let configService: ConfigService
 
+/**
+ * M2fg 恒注入形态：凭据判定经 resolver 批量 sync 版（D3 唯一通道）。
+ * auth.json 腿指向临时目录（零凭据 miss），models.json 腿经真 configStore。
+ */
+function makeResolver(store: PiConfigStore): ProviderCredentialResolver {
+  return new ProviderCredentialResolver({
+    authService: { getCredential: async () => undefined },
+    authStorage: new AuthStorage(join(tmpDir, 'pi', 'agent', 'auth.json')),
+    configStore: store,
+  })
+}
+
 beforeEach(async () => {
   tmpDir = await mkdtempP(join(tmpdir(), 'config-service-test-'))
   mkdirSync(join(tmpDir, 'pi', 'agent'), { recursive: true })
@@ -45,7 +59,7 @@ beforeEach(async () => {
   refreshModels()
   // ConfigService 接受 IConfigStore；用真实 PiConfigStore 走完整读写链路
   configStore = new PiConfigStore()
-  configService = new ConfigService(tmpDir, configStore)
+  configService = new ConfigService(tmpDir, configStore, undefined, undefined, undefined, makeResolver(configStore))
 })
 
 afterEach(async () => {
@@ -235,7 +249,7 @@ describe('ConfigService.setProvider · model 级字段写路径（U3b，修复 r
     // [G3] enabled 落 providers.json modelStates——注入 extrasStore（生产恒注入）；
     // 未注入时 enabled 丢弃 + warn（宁丢不写错位，provider-write-side-switch.test.ts 覆盖）
     const extrasStore = new XyzProviderStore(join(tmpDir, 'pi', 'agent', 'config', 'providers.json'))
-    const svc = new ConfigService(tmpDir, configStore, undefined, extrasStore)
+    const svc = new ConfigService(tmpDir, configStore, undefined, extrasStore, undefined, makeResolver(configStore))
 
     // setProvider 传入含 enabled 的 model（新模型，base={}）。modelStates 写入经
     // withFileLock 异步 RMW——必须 await 落盘后再断言
@@ -531,7 +545,7 @@ describe('ConfigService · LLM retry 域（llmRetrySettings port）', () => {
 // 经构造器到达 listProvidersImpl 并真实参与凭据判定（而非只测「listProvidersImpl 注入了就生效」）。
 describe('M2c: ConfigService 构造器注入 providerCredentialResolver（D3 链 5 接线）', () => {
   /** 假 resolver：仅暴露接口三方法（批量方法返回值可控，用于证明其输出被消费）。 */
-  function makeResolver(credentialIds: string[]) {
+  function makeSetResolver(credentialIds: string[]) {
     const listCredentialBackedProviderIds = vi.fn(() => new Set(credentialIds))
     return {
       resolver: {
@@ -547,7 +561,7 @@ describe('M2c: ConfigService 构造器注入 providerCredentialResolver（D3 链
     // 该 provider 在 models.json 无 apiKey：status=connected 只能来自 resolver 的批量结果
     writeModels({ providers: { 'custom-no-key': { name: 'NoKey', models: [{ id: 'm1' }] } } })
     refreshModels()
-    const { resolver, listCredentialBackedProviderIds } = makeResolver(['custom-no-key'])
+    const { resolver, listCredentialBackedProviderIds } = makeSetResolver(['custom-no-key'])
     const svc = new ConfigService(tmpDir, configStore, undefined, undefined, undefined, resolver)
 
     const providers = svc.listProviders()
@@ -557,10 +571,11 @@ describe('M2c: ConfigService 构造器注入 providerCredentialResolver（D3 链
     expect(providers.find(p => p.id === 'custom-no-key')?.apiKeySet).toBe(false)
   })
 
-  it('对照：未注入（旧形态）→ 同一份数据不判 connected（差异证明接线生效）', () => {
+  it('对照：resolver 空集 → 同一份数据不判 connected（差异证明 resolver 输出被消费；M2fg 恒注入形态）', () => {
     writeModels({ providers: { 'custom-no-key': { name: 'NoKey', models: [{ id: 'm1' }] } } })
     refreshModels()
-    const svc = new ConfigService(tmpDir, configStore)
+    const { resolver } = makeSetResolver([])
+    const svc = new ConfigService(tmpDir, configStore, undefined, undefined, undefined, resolver)
 
     const providers = svc.listProviders()
 

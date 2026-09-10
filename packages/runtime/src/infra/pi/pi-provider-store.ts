@@ -309,10 +309,6 @@ export function getAllModels(): Array<PiModelDefinition & { providerId: string }
   return result
 }
 
-export function getApiKeyForProvider(providerId: string): string | undefined {
-  return readModels().providers[providerId]?.apiKey
-}
-
 // ── Settings.json 操作 ───────────────────────────────────────
 // readSettings/writeSettings/setSettingsPath 收敛到 pi-settings-store（D17 唯一读写层）；
 // updateSettingsFields 不在此 re-export（零外部消费者，直接从 pi-settings-store import）。

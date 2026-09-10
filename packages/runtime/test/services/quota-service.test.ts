@@ -35,14 +35,29 @@ vi.mock('../../src/services/quota-providers/index.js', () => ({
   QUOTA_FETCHERS: mockFetchers,
 }))
 
-// ── mock pi-provider-store：模拟凭证读取 + quota 配置持久化 ──
+// ── mock pi-provider-store：模拟 quota 配置持久化 ──（凭据读取已收口 resolver，M2fg）
 vi.mock('../../src/infra/pi/pi-provider-store.js', () => ({
-  getApiKeyForProvider: vi.fn((providerId: string) => `key-for-${providerId}`),
   getProviderConfig: vi.fn(() => undefined),
   upsertProvider: vi.fn(() => ({})),
 }))
 
-import { getApiKeyForProvider, getProviderConfig, upsertProvider } from '../../src/infra/pi/pi-provider-store.js'
+import { getProviderConfig, upsertProvider } from '../../src/infra/pi/pi-provider-store.js'
+
+/**
+ * 恒注入形态的 resolver 替身（M2fg：QuotaService 构造必需，降级内联链已删除）。
+ * 默认按 id 命中 `key-for-<id>`（models.json 源）——对齐旧 getApiKeyForProvider mock 的
+ * 「models.json 通道有值」基线；miss 场景传 `() => undefined`。
+ */
+function makeResolver(
+  resolve: (providerId: string) => { key: string; source: 'auth.json' | 'models.json' } | undefined
+    = (id: string) => ({ key: `key-for-${id}`, source: 'models.json' as const }),
+): IProviderCredentialResolver {
+  return {
+    hasProviderCredential: vi.fn(() => false),
+    listCredentialBackedProviderIds: vi.fn(() => new Set<string>()),
+    resolveProviderCredential: vi.fn(async (id: string) => resolve(id)),
+  }
+}
 
 let tmpDir: string
 let extrasStore: XyzProviderStore
@@ -53,7 +68,6 @@ beforeEach(() => {
   extrasPath = join(tmpDir, 'pi', 'agent', 'config', 'providers.json')
   extrasStore = new XyzProviderStore(extrasPath)
   vi.clearAllMocks()
-  vi.mocked(getApiKeyForProvider).mockImplementation((id: string) => `key-for-${id}`)
   vi.mocked(getProviderConfig).mockImplementation(() => undefined)
   vi.mocked(upsertProvider).mockImplementation(() => ({}))
   mockFetchQuota.mockReset()
@@ -74,6 +88,7 @@ describe('QuotaService — 偏差 #B: providerId→fetcher 映射', () => {
   it('providerId 不等于 fetcher id 时，经 getProviderInfo→matchQuotaPreset 路由到正确 fetcher', async () => {
     // 用户自定义 provider id='my-glm'，baseUrl 命中 zhipu preset
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       getProviderInfo: (id) =>
         id === 'my-glm'
@@ -87,12 +102,13 @@ describe('QuotaService — 偏差 #B: providerId→fetcher 映射', () => {
     // 旧实现用 QUOTA_PRESETS.find(p => p.fetcher === providerId) 会匹配失败 → 静默返回缓存
     // 新实现经 matchQuotaPreset 命中 zhipu，调到 mock fetcher
     expect(mockFetchQuota).toHaveBeenCalledTimes(1)
-    // api-key 凭证仍用 providerId 查（getApiKeyForProvider('my-glm')），kind 按来源形态传递
+    // api-key 凭证经 resolver 按 providerId 解析（key-for-my-glm），kind 按来源形态传递
     expect(mockFetchQuota).toHaveBeenCalledWith('key-for-my-glm', 'api-key', { workspaceUrl: undefined })
   })
 
   it('name 关键字匹配：provider name 含 zhipu 命中 zhipu preset', async () => {
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       getProviderInfo: () => ({ name: 'Zhipu BigModel' }),
     })
@@ -104,7 +120,7 @@ describe('QuotaService — 偏差 #B: providerId→fetcher 映射', () => {
   })
 
   it('getProviderInfo 未注入时 fallback：providerId 直接查 fetchers（兼容恰好等于 fetcher id）', async () => {
-    const svc = new QuotaService({ dataDir: tmpDir })
+    const svc = new QuotaService({ providerCredentialResolver: makeResolver(), dataDir: tmpDir})
     mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
 
     await svc.fetch('zhipu')
@@ -114,6 +130,7 @@ describe('QuotaService — 偏差 #B: providerId→fetcher 映射', () => {
 
   it('getProviderInfo 返回的 baseUrl/name 都不命中 preset → 不调 fetcher（静默降级缓存）', async () => {
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       getProviderInfo: () => ({ baseUrl: 'https://unknown.example.com', name: 'unknown' }),
     })
@@ -128,6 +145,7 @@ describe('QuotaService — 偏差 #B: providerId→fetcher 映射', () => {
 describe('QuotaService — 偏差 #C: refresh 绕过 throttle', () => {
   it('refresh 绕过 10s throttle，连续调用都触发 fetcher', async () => {
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
     })
@@ -142,6 +160,7 @@ describe('QuotaService — 偏差 #C: refresh 绕过 throttle', () => {
 
   it('fetch 受 throttle：10s 内第二次 fetch 不触发 fetcher（返回缓存）', async () => {
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
     })
@@ -159,6 +178,7 @@ describe('QuotaService — 手动选择 fetcher（任务 1）', () => {
   it('quota.fetcher 手动指定时优先于 matchQuotaPreset', async () => {
     // baseUrl 命中 zhipu preset，但用户手动指定用 kimi-coding fetcher
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       getProviderInfo: () => ({
         baseUrl: 'https://bigmodel.cn',
@@ -180,6 +200,7 @@ describe('QuotaService — 手动选择 fetcher（任务 1）', () => {
 
   it('quota.fetcher 指定了一个不存在的 id 时 fallback 到 matchQuotaPreset', async () => {
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       getProviderInfo: () => ({
         baseUrl: 'https://bigmodel.cn',
@@ -196,6 +217,7 @@ describe('QuotaService — 手动选择 fetcher（任务 1）', () => {
 
   it('quota.fetcher 手动指定后不再依赖 baseUrl/name（空 baseUrl 也能命中）', async () => {
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       getProviderInfo: () => ({
         baseUrl: 'https://my-reverse-proxy.example.com',
@@ -219,7 +241,7 @@ describe('QuotaService — configure 持久化（任务 4，A1-5 写侧切换：
       baseUrl: 'https://bigmodel.cn',
       apiKey: 'k',
     }))
-    const svc = new QuotaService({ dataDir: tmpDir, providerExtrasStore: extrasStore })
+    const svc = new QuotaService({ providerCredentialResolver: makeResolver(), dataDir: tmpDir, providerExtrasStore: extrasStore})
 
     const result = await svc.configure('my-glm', true, undefined, 'zhipu')
 
@@ -234,7 +256,7 @@ describe('QuotaService — configure 持久化（任务 4，A1-5 写侧切换：
       name: 'test',
       quota: { fetcher: 'kimi-coding', enabled: false },
     }))
-    const svc = new QuotaService({ dataDir: tmpDir, providerExtrasStore: extrasStore })
+    const svc = new QuotaService({ providerCredentialResolver: makeResolver(), dataDir: tmpDir, providerExtrasStore: extrasStore})
 
     await svc.configure('my-glm', true)
 
@@ -243,7 +265,7 @@ describe('QuotaService — configure 持久化（任务 4，A1-5 写侧切换：
 
   it('configure provider 不存在时返回 ok=false', async () => {
     vi.mocked(getProviderConfig).mockImplementation(() => undefined)
-    const svc = new QuotaService({ dataDir: tmpDir, providerExtrasStore: extrasStore })
+    const svc = new QuotaService({ providerCredentialResolver: makeResolver(), dataDir: tmpDir, providerExtrasStore: extrasStore})
 
     const result = await svc.configure('nonexistent', true, undefined, 'zhipu')
 
@@ -261,7 +283,7 @@ describe('QuotaService — configure 持久化（任务 4，A1-5 写侧切换：
       baseUrl: 'https://xiaomimimo.com',
     }))
     const modifySpy = vi.spyOn(extrasStore, 'modify').mockRejectedValue(new Error('EACCES: disk full'))
-    const svc = new QuotaService({ dataDir: tmpDir, providerExtrasStore: extrasStore })
+    const svc = new QuotaService({ providerCredentialResolver: makeResolver(), dataDir: tmpDir, providerExtrasStore: extrasStore})
 
     const result = await svc.configure('mimo-id', true, 'session=abc123', 'mimo')
 
@@ -279,7 +301,7 @@ describe('QuotaService — configure 持久化（任务 4，A1-5 写侧切换：
       name: 'test',
       baseUrl: 'https://xiaomimimo.com',
     }))
-    const svc = new QuotaService({ dataDir: tmpDir, providerExtrasStore: extrasStore })
+    const svc = new QuotaService({ providerCredentialResolver: makeResolver(), dataDir: tmpDir, providerExtrasStore: extrasStore})
 
     const result = await svc.configure('mimo-id', true, 'session=abc123', 'mimo')
 
@@ -294,6 +316,7 @@ describe('QuotaService — configure 持久化（任务 4，A1-5 写侧切换：
 describe('QuotaService — W5: refresh 不污染 fetch 的 throttle', () => {
   it('refresh 不更新 lastFetchTime（force 路径不污染后续 fetch 的 throttle 判定）', async () => {
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
     })
@@ -312,6 +335,7 @@ describe('QuotaService — W5: refresh 不污染 fetch 的 throttle', () => {
 describe('QuotaService — W7: refresh 与 fetch pending 互不复用', () => {
   it('refresh 命中并发 fetch 的 pending 时不会返回非 force 结果（pending key 带 force 维度）', async () => {
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
     })
@@ -341,25 +365,25 @@ describe('QuotaService — W7: refresh 与 fetch pending 互不复用', () => {
   })
 })
 
-describe('QuotaService — getCredential fallback: api-key 类无专属 key 时用 provider.apiKey', () => {
-  it('secrets 目录无专属 API Key 文件时，fallback 到 provider.apiKey', async () => {
-    // secrets 目录未写入任何 <id>-apikey.txt → getCredential 应 fallback 到 provider.apiKey
+describe('QuotaService — getCredential fallback: api-key 类无专属 key 时经 resolver（M2fg 恒注入）', () => {
+  it('secrets 目录无专属 API Key 文件时，fallback 到 resolver 解析的 provider 凭据', async () => {
+    // secrets 目录未写入任何 <id>-apikey.txt → getCredential 走 resolver（auth.json → models.json）
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver((id) => ({ key: `provider-key-${id}`, source: 'models.json' })),
       dataDir: tmpDir,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
     })
-    // provider.apiKey 由 getApiKeyForProvider mock 提供（key-for-<id>）
-    vi.mocked(getApiKeyForProvider).mockImplementation((id: string) => `provider-key-${id}`)
     mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
 
     await svc.fetch('glm-id')
 
-    // 无专属 key → fallback 用 provider.apiKey（'provider-key-glm-id'）
+    // 无专属 key → fallback 用 resolver 解析的 provider 凭据（'provider-key-glm-id'）
     expect(mockFetchQuota).toHaveBeenCalledWith('provider-key-glm-id', 'api-key', { workspaceUrl: undefined })
   })
 
   it('secrets 目录有专属 API Key 文件时优先用专属 key（不 fallback）', async () => {
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       providerExtrasStore: extrasStore,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
@@ -381,7 +405,7 @@ describe('QuotaService — W4 + apiKey 清除路径', () => {
       name: 'test',
       baseUrl: 'https://bigmodel.cn',
     }))
-    const svc = new QuotaService({ dataDir: tmpDir, providerExtrasStore: extrasStore })
+    const svc = new QuotaService({ providerCredentialResolver: makeResolver(), dataDir: tmpDir, providerExtrasStore: extrasStore})
 
     // 先写入专属 key，再清除
     await svc.configure('glm-id', true, undefined, 'zhipu', 'some-key')
@@ -402,7 +426,7 @@ describe('QuotaService — W4 + apiKey 清除路径', () => {
       name: 'test',
       baseUrl: 'https://bigmodel.cn',
     }))
-    const svc = new QuotaService({ dataDir: tmpDir, providerExtrasStore: extrasStore })
+    const svc = new QuotaService({ providerCredentialResolver: makeResolver(), dataDir: tmpDir, providerExtrasStore: extrasStore})
 
     await svc.configure('glm-id', true, 'cookie-val', undefined, undefined)
 
@@ -415,6 +439,7 @@ describe('QuotaService — W4 + apiKey 清除路径', () => {
 describe('QuotaService — W6: 不同 providerId 并发 update 不丢数据', () => {
   it('并发 fetch 两个不同 provider 后，两者缓存都在（写串行化不丢）', async () => {
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       getProviderInfo: (id) =>
         id === 'p-a'
@@ -450,15 +475,16 @@ describe('QuotaService — W6: 不同 providerId 并发 update 不丢数据', ()
   })
 })
 
-// ── [A2-2] 凭证解析链（三形态 + auth.json 通道）──
+// ── [A2-2] 凭证解析链（三形态；auth.json/models.json 两段经 resolver，M2fg 收口）──
 
-describe('QuotaService — A2-2: api-key 形态优先级（secrets > auth.json > models.json）', () => {
-  it('三者都有时优先 secrets 专属 key', async () => {
+describe('QuotaService — A2-2: api-key 形态优先级（secrets > resolver 两段）', () => {
+  it('secrets 专属 key 与 resolver 命中并存时优先 secrets（resolver 不被调用）', async () => {
+    const resolver = makeResolver()
     const svc = new QuotaService({
       dataDir: tmpDir,
       providerExtrasStore: extrasStore,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
-      getAuthCredential: async () => ({ type: 'api_key', key: 'auth-json-key' }),
+      providerCredentialResolver: resolver,
     })
     await svc.configure('glm-id', true, undefined, 'zhipu', 'secrets-key')
     mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
@@ -466,65 +492,12 @@ describe('QuotaService — A2-2: api-key 形态优先级（secrets > auth.json >
     await svc.fetch('glm-id')
 
     expect(mockFetchQuota).toHaveBeenCalledWith('secrets-key', 'api-key', { workspaceUrl: undefined })
-  })
-
-  it('无 secrets key 时 auth.json api_key 优先于 models.json apiKey（场景 A 断链修复）', async () => {
-    const svc = new QuotaService({
-      dataDir: tmpDir,
-      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
-      getAuthCredential: async () => ({ type: 'api_key', key: 'auth-json-key' }),
-    })
-    // getApiKeyForProvider mock 默认返回 key-for-<id>（models.json 通道有值）
-    mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
-
-    await svc.fetch('glm-id')
-
-    expect(mockFetchQuota).toHaveBeenCalledWith('auth-json-key', 'api-key', { workspaceUrl: undefined })
-  })
-
-  it('auth.json 无凭证时 fallback models.json apiKey（现状保留）', async () => {
-    const svc = new QuotaService({
-      dataDir: tmpDir,
-      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
-      getAuthCredential: async () => undefined,
-    })
-    mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
-
-    await svc.fetch('glm-id')
-
-    expect(mockFetchQuota).toHaveBeenCalledWith('key-for-glm-id', 'api-key', { workspaceUrl: undefined })
-  })
-
-  it('getAuthCredential 未注入时跳过 auth.json 来源（向后兼容）', async () => {
-    const svc = new QuotaService({
-      dataDir: tmpDir,
-      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
-    })
-    mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
-
-    await svc.fetch('glm-id')
-
-    expect(mockFetchQuota).toHaveBeenCalledWith('key-for-glm-id', 'api-key', { workspaceUrl: undefined })
-  })
-
-  it('getAuthCredential 抛异常不阻断来源链（降级 models.json）', async () => {
-    const svc = new QuotaService({
-      dataDir: tmpDir,
-      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
-      getAuthCredential: async () => {
-        throw new Error('auth.json locked')
-      },
-    })
-    mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
-
-    await svc.fetch('glm-id')
-
-    expect(mockFetchQuota).toHaveBeenCalledWith('key-for-glm-id', 'api-key', { workspaceUrl: undefined })
+    expect(vi.mocked(resolver.resolveProviderCredential)).not.toHaveBeenCalled()
   })
 })
 
 describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
-  it('auth.json 只有 oauth 凭证时，api-key 形态不误用 oauth 凭证（继续走 models.json apiKey）', async () => {
+  it('auth.json 只有 oauth 凭证时，api-key 形态不误用 oauth 凭证（继续走 resolver 两段）', async () => {
     const svc = new QuotaService({
       dataDir: tmpDir,
       getProviderInfo: () => ({
@@ -537,8 +510,9 @@ describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
         refresh: 'r',
         expires: Date.now() + 3_600_000,
       }),
+      providerCredentialResolver: makeResolver(),
     })
-    // models.json 通道有 apiKey（getApiKeyForProvider mock）→ api-key 形态应先命中
+    // resolver 命中 api-key 形态（key-for-<id>）→ 应先于 oauth 形态
     kimiMockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'kimi', wins: [] as never } })
 
     await svc.fetch('kimi-id')
@@ -548,8 +522,7 @@ describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
     expect(kimiMockFetchQuota).toHaveBeenCalledWith('key-for-kimi-id', 'api-key', { workspaceUrl: undefined })
   })
 
-  it('kimi 场景：无 api-key 凭证（secrets/auth.json/models.json 全 miss）但有 oauth 凭证 → 按数组序降级用 oauth', async () => {
-    vi.mocked(getApiKeyForProvider).mockImplementation(() => undefined)
+  it('kimi 场景：无 api-key 凭证（secrets/resolver 两段全 miss）但有 oauth 凭证 → 按数组序降级用 oauth', async () => {
     const svc = new QuotaService({
       dataDir: tmpDir,
       getProviderInfo: () => ({
@@ -562,6 +535,7 @@ describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
         refresh: 'r',
         expires: Date.now() + 3_600_000,
       }),
+      providerCredentialResolver: makeResolver(() => undefined),
     })
     kimiMockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'kimi', wins: [] as never } })
 
@@ -581,6 +555,7 @@ describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
         quota: { fetcher: 'mimo' },
       }),
       getAuthCredential: async () => ({ type: 'api_key', key: 'auth-json-key' }),
+      providerCredentialResolver: makeResolver(),
     })
     // 写入 cookie 文件（secrets 来源）
     await svc.configure('mimo-id', true, 'session=abc', 'mimo')
@@ -593,11 +568,11 @@ describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
   })
 
   it('api-key/oauth 形态全 miss（fetcher.auth 不含 cookie）→ 不发请求返回缓存', async () => {
-    vi.mocked(getApiKeyForProvider).mockImplementation(() => undefined)
     const svc = new QuotaService({
       dataDir: tmpDir,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
       getAuthCredential: async () => undefined,
+      providerCredentialResolver: makeResolver(() => undefined),
     })
     mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
 
@@ -616,7 +591,8 @@ describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
  * 其后的 auth.json / models.json 两段统一走 resolver async 版。
  */
 describe('QuotaService — M2b 链 1: 凭据两段经 resolver（secrets 首段保留）', () => {
-  function makeResolver(result: { key: string; source: 'auth.json' | 'models.json' } | undefined) {
+  /** 固定返回值形态的 resolver 替身（与顶层 makeResolver 的按 id 回调形态区分）。 */
+  function makeResultResolver(result: { key: string; source: 'auth.json' | 'models.json' } | undefined) {
     return {
       hasProviderCredential: vi.fn(() => false),
       listCredentialBackedProviderIds: vi.fn(() => new Set<string>()),
@@ -625,7 +601,7 @@ describe('QuotaService — M2b 链 1: 凭据两段经 resolver（secrets 首段�
   }
 
   it('secrets 专属 key 仍优先，不被 resolver 覆盖（resolver 不被调用）', async () => {
-    const resolver = makeResolver({ key: 'resolver-key', source: 'auth.json' })
+    const resolver = makeResultResolver({ key: 'resolver-key', source: 'auth.json' })
     const svc = new QuotaService({
       dataDir: tmpDir,
       providerExtrasStore: extrasStore,
@@ -642,7 +618,7 @@ describe('QuotaService — M2b 链 1: 凭据两段经 resolver（secrets 首段�
   })
 
   it('无 secrets key 时 auth.json 段经 resolver 命中（场景 A 断链修复）', async () => {
-    const resolver = makeResolver({ key: 'auth-json-key', source: 'auth.json' })
+    const resolver = makeResultResolver({ key: 'auth-json-key', source: 'auth.json' })
     const svc = new QuotaService({
       dataDir: tmpDir,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
@@ -657,7 +633,7 @@ describe('QuotaService — M2b 链 1: 凭据两段经 resolver（secrets 首段�
   })
 
   it('resolver 落到 models.json 源时同样命中', async () => {
-    const resolver = makeResolver({ key: 'models-json-key', source: 'models.json' })
+    const resolver = makeResultResolver({ key: 'models-json-key', source: 'models.json' })
     const svc = new QuotaService({
       dataDir: tmpDir,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
@@ -671,7 +647,7 @@ describe('QuotaService — M2b 链 1: 凭据两段经 resolver（secrets 首段�
   })
 
   it('resolver 未命中 → api-key 形态无凭证，不发请求（zhipu 仅 api-key 形态）', async () => {
-    const resolver = makeResolver(undefined)
+    const resolver = makeResultResolver(undefined)
     const svc = new QuotaService({
       dataDir: tmpDir,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
@@ -708,6 +684,7 @@ describe('QuotaService — M2b 链 1: 凭据两段经 resolver（secrets 首段�
 describe('QuotaService — A2-4: 失败 reason 透传与清除', () => {
   it('查询失败（unauthorized）→ 结果 data=null + reason；getCached 携带旧缓存数据 + reason', async () => {
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
     })
@@ -740,6 +717,7 @@ describe('QuotaService — A2-4: 失败 reason 透传与清除', () => {
 
   it('成功后清除 reason（getCached 不再携带失败标记）', async () => {
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
     })
@@ -761,6 +739,7 @@ describe('QuotaService — A2-4: 失败 reason 透传与清除', () => {
 
   it('无旧缓存时失败：data=null + lastFetchAt=null + reason', async () => {
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
     })
@@ -775,6 +754,7 @@ describe('QuotaService — A2-4: 失败 reason 透传与清除', () => {
 describe('QuotaService — fetcher 抛异常时防御兜底 [A2-1 契约不 throw，逃逸兜底]', () => {
   it('fetcher 抛异常时降级为 network 失败态（不 reject，不返回旧缓存数据）', async () => {
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
     })
@@ -803,6 +783,7 @@ describe('QuotaService — fetcher 抛异常时防御兜底 [A2-1 契约不 thro
 
   it('fetcher 抛异常且无旧缓存时返回空失败态（lastFetchAt=null）', async () => {
     const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
     })

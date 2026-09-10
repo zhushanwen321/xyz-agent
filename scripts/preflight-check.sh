@@ -12,6 +12,7 @@
 # 8. resources/pi 无指向外部绝对路径的 symlink
 # 9. 磁盘空间
 # 10. extension-dependencies.json 一致性
+# 11. Provider 凭据读取单通道守卫（C-proc-12/13，runtime 源码约束）
 #
 # 注：builtin pi-extensions（@zhushanwen/pi-*）打包内置（2026-08 重构），
 # 由 prepare-builtin-extensions.sh 部署 + electron-builder extraResources 拷贝。
@@ -66,7 +67,7 @@ FAILED=0
 # 全部失去意义，直接终止。非 '1' 的值也拦：vite 只认 === '1'，但任何非空残留都是
 # 打包环境未清理的信号，保守拦截 + 给出可操作提示。
 echo ""
-echo -e "${BLUE}[1/10] NEW_ARCH packaging guard...${NC}"
+echo -e "${BLUE}[1/11] NEW_ARCH packaging guard...${NC}"
 if [ -n "${NEW_ARCH:-}" ]; then
     echo -e "${RED}✗ 检测到 NEW_ARCH=${NEW_ARCH}：打包不支持 NEW_ARCH${NC}"
     echo -e "${YELLOW}  WHY: NEW_ARCH=1 时 vite outDir 切到 renderer/dist-new，而 electron-builder files 只含 renderer/dist，打包会打进错误产物${NC}"
@@ -78,7 +79,7 @@ fi
 
 # ── 2. package.json 完整性 ─────────────────────────────────────────
 echo ""
-echo -e "${BLUE}[2/10] package.json fields...${NC}"
+echo -e "${BLUE}[2/11] package.json fields...${NC}"
 
 # 检查 apps/electron/package.json（electron-builder 的工作目录）
 ELECTRON_PKG="$(to_native_path "$ELECTRON_DIR/package.json")"
@@ -96,7 +97,7 @@ console.log('  ✓', pkg.name, 'v' + pkg.version);
 
 # ── 3. 产物存在性 ──────────────────────────────────────────────────
 echo ""
-echo -e "${BLUE}[3/10] Build artifacts exist...${NC}"
+echo -e "${BLUE}[3/11] Build artifacts exist...${NC}"
 
 check_file() {
     local path="$1"
@@ -129,7 +130,7 @@ check_dir() {
 
 # ── 4. tsup noExternal 与 runtime dependencies 同步 ─────────────────
 echo ""
-echo -e "${BLUE}[4/10] tsup noExternal vs runtime dependencies...${NC}"
+echo -e "${BLUE}[4/11] tsup noExternal vs runtime dependencies...${NC}"
 
 RUNTIME_PKG="$PROJECT_ROOT/packages/runtime/package.json"
 RUNTIME_TSUP="$PROJECT_ROOT/packages/runtime/tsup.config.ts"
@@ -180,7 +181,7 @@ fi
 
 # ── 5. electron-builder.yml 结构 ────────────────────────────────────
 echo ""
-echo -e "${BLUE}[5/10] electron-builder.yml structure...${NC}"
+echo -e "${BLUE}[5/11] electron-builder.yml structure...${NC}"
 
 EB_YML="$ELECTRON_DIR/electron-builder.yml"
 EB_YML_NATIVE="$(to_native_path "$EB_YML")"
@@ -208,7 +209,7 @@ fi
 # release asset 文件名需带版本号（便于归档识别）。release-checker 用 pattern 匹配
 # 平台后缀（如 -mac-arm64.dmg）定位 asset，不依赖固定文件名。
 echo ""
-echo -e "${BLUE}[6/10] artifactName versioned (contains \${version})...${NC}"
+echo -e "${BLUE}[6/11] artifactName versioned (contains \${version})...${NC}"
 
 if [ -f "$EB_YML" ]; then
     # grep 正则匹配 artifactName.*${version}（${ 在 BRE 中是字面量，无需转义）。
@@ -226,7 +227,7 @@ fi
 
 # ── 7. asarUnpack 与 files 一致性检查 ─────────────────────────────
 echo ""
-echo -e "${BLUE}[7/10] asarUnpack vs files consistency...${NC}"
+echo -e "${BLUE}[7/11] asarUnpack vs files consistency...${NC}"
 
 if [ -f "$EB_YML" ]; then
     if grep -q "asarUnpack" "$EB_YML" && grep -q "dist/runtime" "$EB_YML"; then
@@ -264,7 +265,7 @@ fi
 # .gitignore 忽略的 symlink 是 setup-worktree.sh 创建的 workspace 共享缓存
 # （指向 .pi-binary-cache/），不进 git，CI 由 prepare-pi-resources.sh 重新准备。
 echo ""
-echo -e "${BLUE}[8/10] resources/pi symlink check...${NC}"
+echo -e "${BLUE}[8/11] resources/pi symlink check...${NC}"
 
 PI_RES_DIR="$ELECTRON_DIR/resources/pi"
 SYMLINK_FOUND=false
@@ -290,7 +291,7 @@ fi
 
 # ── 9. 磁盘空间检查 ────────────────────────────────────────────────
 echo ""
-echo -e "${BLUE}[9/10] Disk space...${NC}"
+echo -e "${BLUE}[9/11] Disk space...${NC}"
 
 # df -g 是 BSD/macOS 特有，Linux 不支持。用 df -k（KB，跨平台）换算成 GB。
 AVAILABLE_GB=$(($(df -k . | tail -1 | awk '{print $4}') / 1024 / 1024))
@@ -307,7 +308,7 @@ fi
 # files 白名单守卫：npm 发布闭包校验（import 闭包 ⊆ files，防 pi-subagent-workflow@8.8.1
 # 类缺文件包）。脚本：scripts/check-extension-files.mjs（零依赖）。
 echo ""
-echo -e "${BLUE}[10/10] extension consistency (dependencies + publish files)...${NC}"
+echo -e "${BLUE}[10/11] extension consistency (dependencies + publish files)...${NC}"
 if node "$PROJECT_ROOT/scripts/check-extension-dependencies.mjs"; then
     echo -e "  ${GREEN}✓ extension-dependencies 一致${NC}"
 else
@@ -315,6 +316,19 @@ else
 fi
 if node "$PROJECT_ROOT/scripts/check-extension-files.mjs"; then
     echo -e "  ${GREEN}✓ extension files 白名单一致${NC}"
+else
+    FAILED=1
+fi
+
+# ── 11. Provider 凭据读取单通道守卫（C-proc-12/13）────────────────────
+# catalog-provider-field-authority §3.3 D3/D6：runtime 源码的凭据直查禁令
+# （getApiKeyForProvider / readAuthCredentials / getProviderConfig(...).apiKey，
+# 白名单 = resolver 唯一通道本体）+ upsertProvider 直调清单。零依赖毫秒级，
+# 与 pre-commit 同脚本同语义（CI 侧兜底——pre-commit 按路径触发，此处恒跑）。
+echo ""
+echo -e "${BLUE}[11/11] provider credential reads guard (C-proc-12/13)...${NC}"
+if node "$PROJECT_ROOT/scripts/check-provider-credential-reads.mjs"; then
+    echo -e "  ${GREEN}✓ 凭据读取单通道 / upsertProvider 直调清单一致${NC}"
 else
     FAILED=1
 fi
