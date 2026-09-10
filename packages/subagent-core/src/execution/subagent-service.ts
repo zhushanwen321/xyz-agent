@@ -390,9 +390,9 @@ export class SubagentService {
    *  分支）时 delete（幂等：execute() 新建 record 不在集合，no-op）。窗口 = resume 发起
    *  （含 pool.acquire 排队）→ 本轮 runAndFinalize 收尾。窗口内同 record 再次到达续轮
    *  （冷路径重入 / EPIPE 兜底）直接 throw——防两个 pi 子进程以 --session 同一 JSONL 双写 +
-   *  前一个脱离 kill 记账成孤儿（冷路径的 acquireActivateLock 只覆盖续轮同步段，锁释放
-   *  在子进程注册（session-runner spawnedChildren.set）之前，锁空洞由此守卫兜住；EPIPE
-   *  兜底不持锁，同样被覆盖）。child 注册完成后投递走热路径，不经此守卫。 */
+   *  前一个脱离 kill 记账成孤儿。本 Set 是当前唯一的结构化防双写者守卫（历史上的
+   *  acquireActivateLock 串行锁接线点已随协议化重构消失，该机制已删除）。
+   *  child 注册完成后投递走热路径，不经此守卫。 */
   private readonly resumesInFlight = new Set<string>();
 
   /**

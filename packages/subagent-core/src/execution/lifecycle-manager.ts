@@ -2,20 +2,19 @@
 //
 // Subagent 持续对话 V2 — 进程生命周期管理（§5.2 模块 1）。
 //
-// 本模块是 subagent 进程生命周期管理器，以**模块级单例**持有全局进程
-// 状态（per-record idle timer、activate 串行化锁）。它**不直接持有
+// 本模块是 subagent 进程生命周期管理器（现存唯一职责 = idle timer），以**模块级
+// 单例**持有全局进程状态（per-record idle timer）。它**不直接持有
 // ChildProcess 句柄**——句柄在 engine/host/spawned-children.ts——因此
 // 所有「副作用」能力（kill / 探活 / 超时回调）都由调用方经回调/参数注入，本模块
 // 只管状态记账 + 调度顺序。这让模块可独立编译 + 单测，无需拉起真实子进程。
 //
-// 两项职责（V2 §5.2 五项职责经 L2 死代码清扫后的存留——原职责 2 全局 ceiling /
-// 职责 3 shutdown 收割 / 职责 4 孤儿扫描自落地起无生产接线，骨架与单测已随清扫
-// 删除；未来需要时按 docs/design/v2-defense-ii-iii-resolution.md 重新设计）：
+// 唯一职责（V2 §5.2 五项职责的存留）：
 //   1. idle timer —— agent_settled arm / 新 turn disarm / 超时触发 onTimeout（决策 4）
 //      【已接线：subagent-service.ts chat 域 arm/disarm】
-//   5. activate 互斥 —— 同 recordId 的并发 activate 串行化（决策 7 防线 iii，防双写者）
-//      【保留但当前无生产调用方：历史接线点（冷路径 resume 前）已随协议化重构消失，
-//      30s 超时兜底与 tail-identity 自清机制完整，恢复接线即用】
+// 其余四项已删除：职责 2 全局 ceiling / 职责 3 shutdown 收割 / 职责 4 孤儿扫描自
+// 落地起无生产接线；职责 5 activate 互斥的历史接线点（冷路径 resume 前）随协议化
+// 重构消失、仅余自持单测。未来需要时按
+// docs/design/v2-defense-ii-iii-resolution.md 重新设计。
 //
 // 本模块不 import subagent-service 等 execution 编排层，避免循环依赖。
 //
@@ -176,151 +175,17 @@ export function hasIdleTimer(recordId: string): boolean {
 }
 
 // ============================================================
-// 职责 5：activate 互斥（防线 iii，防双写者）
-// ============================================================
-
-/**
- * recordId → 该 record 当前 activate 链尾的 Promise。
- *
- * 同一 recordId 的第二次 acquireActivateLock 会 await 链尾，直到前者 release 才 resolve，
- * 从而串行化并发 activate，保证「同一 recordId 全局最多一个活进程」不变量（V2 决策 7
- * 防线 iii：双写者交错 append 会写坏整个 session 文件，比脏 entry 致命一个量级）。
- *
- * **tail-identity 自清**（防长进程 recordId 条目泄漏）：release 后经 queueMicrotask
- * 异步检查——Map 链尾仍是本链尾（identity 匹配）时 delete 回收；有 waiter 排队时其
- * acquire 已用新链尾覆盖 Map（identity 不匹配）→ 不删，条目由最后释放者回收。waiter
- * 持 acquire 时刻捕获的 prev Promise 引用而非 Map 查询，delete 不影响其等待。30s
- * 超时兜底与 _resetLifecycleState（全量 clear）语义不变。
- */
-const activateLockTails = new Map<string, Promise<void>>();
-
-/**
- * 获取某 record 的 activate 串行锁。
- *
- * - 同 recordId 首次 acquire：立即 resolve，返回 release 函数。
- * - 同 recordId 第二次 acquire（前者未 release）：pending，直到前者 release 才 resolve。
- * - 不同 recordId 互不阻塞（各自独立链）。
- *
- * @returns release 函数——获得锁后**必须**调用它释放（finally 块），否则同 recordId
- *          的后续 acquire 永久挂起。
- *
- * **状态：保留但当前无生产调用方**（历史接线点 subagent-service 冷路径 resume 前
- * 已随协议化重构消失）。作为 idle CAS 守卫之外的结构化防护层设计：idle CAS
- *（`status !== "idle"` 检查与 `status = "running"` 翻转间无 await）是一级守卫，
- * 锁把冷路径 resume spawn 的双写者交错升级为串行排队，防坏 session。恢复接线时
- * 语义不变。超时兜底见下方 `ACTIVATE_LOCK_TIMEOUT_MS`（V3 D3 / v4-lifecycle-convergence.md A-2）。
- */
-
-/**
- * acquireActivateLock 等待前序锁释放的超时（v4 A-2）。
- *
- * 前 holder 崩溃/死锁导致 release 永不触发时，waiter 不无限挂起；30s 超时后抛含恢复指引
- * 的错误（调用方可用 message action 重试）。30s 远超正常冷路径 resume spawn 耗时（~ms 级），
- * 留足异常恢复余量而不误伤正常排队。
- */
-const ACTIVATE_LOCK_TIMEOUT_SECONDS = 30;
-const ACTIVATE_LOCK_TIMEOUT_MS = ACTIVATE_LOCK_TIMEOUT_SECONDS * MS_PER_SECOND;
-
-export function acquireActivateLock(recordId: string): Promise<() => void> {
-  const prev = activateLockTails.get(recordId) ?? Promise.resolve();
-  let releaseFn!: () => void;
-  // [review 修复] 超时放行句柄：超时者从未持有锁（race 已 reject），releaseFn 不会被
-  // 调用方触发，current 将永久 pending → tail（= prev.then(() => current)）永久
-  // pending → 后续同 recordId 的 acquire 只能靠 30s 超时出队（锁链瘫痪，只能重启
-  // 恢复）。超时回调显式 resolve current 放行链尾（见下方 timeoutPromise）。
-  let settleCurrent!: () => void;
-  const current = new Promise<void>((resolve) => {
-    settleCurrent = resolve;
-    // tail-identity 自清（ES7/LOCK_TAIL_GC_RACE）：resolve 后经 microtask 异步回收——
-    // 仅当 Map 链尾仍是本链尾（tail）时 delete。自清检查只读 Map 引用比较、不依赖
-    // 链尾 Promise 是否已 settle——release() 同步 resolve 后 microtask 执行时，无论
-    // then 链推进到哪一步，identity 比较结果一致；同 recordId 快速 acquire→release→
-    // acquire 序下，后继 acquire 的 set 已覆盖 Map，先行 release 的自清检查
-    // get !== 旧 tail → 不删（正确保留新链）。
-    releaseFn = () => {
-      resolve();
-      queueMicrotask(() => {
-        if (activateLockTails.get(recordId) === tail) {
-          activateLockTails.delete(recordId);
-        }
-      });
-    };
-  });
-  // 链尾 = 等 prev 完成后挂 current；current 在 releaseFn 调用前保持 pending，
-  // 让下一次 acquire 的 prev 等到本次 release。tail 引用同时作为自清的 identity key。
-  const tail = prev.then(() => current);
-  activateLockTails.set(recordId, tail);
-
-  // 30s 超时兜底（v4 A-2）：前序 holder 长期不 release（崩溃/死锁）时，waiter 不无限挂起，
-  // 超时抛含恢复指引的错误（调用方可用 message action 重试）。正常拿到锁时 clearTimeout
-  // 取消未触发的 timer 防泄漏。超时只 reject 本次 acquire 的返回 promise，不改 release 语义——
-  // 原 holder release 仍 resolve current，链尾照常推进，后续 waiter 各受同样 30s 保护。
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  // acquire 已赢标记：prev 的 then 回调（微任务）恒先于 timer 回调（宏任务）执行，
-  // 标记位防「prev 恰在 30s 边界 settle、clearTimeout 未赶上已入队 timer」的窗口——
-  // 那时调用方已（将）持有锁，若再放行链尾会让后续 waiter 提前获锁形成双写者。
-  let acquired = false;
-  const acquirePromise = prev.then(() => {
-    acquired = true;
-    clearTimeout(timeoutId);
-    return releaseFn;
-  });
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      if (acquired) return;
-      // [review 修复] 超时放行链尾：resolve 自身 current，保证前序 holder release 后
-      // tail 可 settle（不绕过前序等待——prev 未 settle 时 tail 仍等 prev，互斥保持），
-      // 后续 acquire 不被本超时者的永久 pending tail 卡死。
-      settleCurrent();
-      // [review 修复] 超时者对称自清（round2 INFO 残留）：releaseFn 永不被调用（race
-      // 已 reject），tail-identity 自清 microtask 不排队，条目滞留 Map 直到下次同
-      // recordId acquire 覆盖。此处挂 tail 尾部做同款 identity 自清——只有 tail
-      // 真正 settle（prev 也已 release）才回收：不能直接 queueMicrotask 删除——前序
-      // 仍持锁（tail pending）时删条目会让后续 acquire 不再排队等前序 release，
-      // 破坏互斥（超时放行的是链尾 settle，不是锁获取）。tail 永不 settle（前序
-      // 崩溃）时回调不执行，条目与现状一致由 _resetLifecycleState 兜底清理。
-      tail.then(() => {
-        if (activateLockTails.get(recordId) === tail) {
-          activateLockTails.delete(recordId);
-        }
-      });
-      reject(
-        new Error(
-          `subagent ${recordId} activation timed out; retry action: message`,
-        ),
-      );
-    }, ACTIVATE_LOCK_TIMEOUT_MS);
-  });
-  return Promise.race([acquirePromise, timeoutPromise]);
-}
-
-// ============================================================
 // 测试钩子（模块级单例状态隔离）
 // ============================================================
 
 /**
- * 清空全部模块级状态（idle timer / activate 锁链尾）。
+ * 清空全部模块级状态（idle timer）。
  *
  * 仅用于单测的 beforeEach 隔离——clearTimeout 所有 armed timer 防止跨用例泄漏。
- *
- * 注意：不会 resolve 已 acquire 但未 release 的锁 Promise（那些 pending holder 由测试
- * 自律 release；reset 后它们的链尾引用被 Map 丢弃，不再阻塞后续 acquire）。
  */
 export function _resetLifecycleState(): void {
   for (const entry of idleTimers.values()) {
     clearTimeout(entry.timer);
   }
   idleTimers.clear();
-  activateLockTails.clear();
-}
-
-/**
- * 测试钩子：返回 activateLockTails 当前条目数。
- *
- * activateLockTails 是模块私有 const，自清语义（tail-identity 回收）的断言需要
- * 观察点——本导出仅测试使用，命名对齐 _resetLifecycleState（本文件）与
- * _resetProcessShutdownGuardForTest（index.ts）先例。
- */
-export function _getActivateLockTailCountForTest(): number {
-  return activateLockTails.size;
 }

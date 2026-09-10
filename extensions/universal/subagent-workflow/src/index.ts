@@ -468,9 +468,9 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   //  - beforeExit 是退出前最后事件，不 exit（自然退出）。
   //  - idempotent guard（reapSpawnedChildrenOnShutdown 内）防多信号叠加重复 kill。
   //
-  //  防线 iii（activate 互斥）：lifecycle-manager.acquireActivateLock 机制保留
-  //  （含 30s 超时兜底），但 subagent-service 冷路径 resume 的历史接线点已随协议化
-  //  重构消失，当前无生产调用方。
+  //  防线 iii（activate 互斥）：未接线——acquireActivateLock 机制已随简化清扫删除
+  //  （历史接线点随协议化重构消失，仅余自持单测）。当前的双写者防护由
+  //  subagent-service 的 resumesInFlight 集合守卫承担。
   //  防线 ii（启动孤儿扫描）：未接线，骨架已随 L2 死代码清扫删除（当前 piped stdio
   //  下 stdin-EOF 自灭链覆盖崩溃路径，见 docs/design/v2-defense-ii-iii-resolution.md）。
   // ════════════════════════════════════════════════════════════

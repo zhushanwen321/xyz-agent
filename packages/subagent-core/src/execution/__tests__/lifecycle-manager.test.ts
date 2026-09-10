@@ -1,10 +1,8 @@
-// lifecycle-manager 单测 —— V2 §5.2 模块 1（进程生命周期管理）存留职责（idle timer
-// / activate 互斥；原职责 2/3/4 骨架未接线，已随 L2 死代码清扫删除）。
+// lifecycle-manager 单测 —— V2 §5.2 模块 1 现存唯一职责（idle timer）。原职责 2/3/4
+// 骨架未接线、职责 5 activate 互斥无生产调用方，已随简化清扫删除。
 //
 // 测试策略：
 //   - idle timer 用 vi.useFakeTimers() + advanceTimersByTime。
-//   - activate 互斥锁是纯 Promise 链（无 timer），用 advanceTimersByTimeAsync(0)
-//     flush microtask 验证串行化。
 //   - 每个用例 beforeEach 调 _resetLifecycleState() 隔离模块级单例状态。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,7 +19,6 @@ vi.mock("../../core/logger.ts", () => ({
 import {
   DEFAULT_IDLE_TIMEOUT_MS,
   _resetLifecycleState,
-  acquireActivateLock,
   armIdleTimer,
   disarmIdleTimer,
   hasIdleTimer,
@@ -171,58 +168,4 @@ describe("lifecycle-manager — V2 §5.2 模块 1", () => {
     });
   });
 
-  // ============================================================
-  // 职责 5：activate 互斥锁
-  // ============================================================
-  describe("职责5 activate 互斥锁", () => {
-    it("首次 acquire 立即 resolve 返回 release 函数", async () => {
-      const release = await acquireActivateLock("sa-1");
-      expect(typeof release).toBe("function");
-      release();
-    });
-
-    it("并发 acquire 同一 recordId 串行化：第二次等首次 release", async () => {
-      const release1 = await acquireActivateLock("sa-1");
-
-      let secondResolved = false;
-      const secondPromise = acquireActivateLock("sa-1").then((r) => {
-        secondResolved = true;
-        return r;
-      });
-
-      await vi.advanceTimersByTimeAsync(0); // flush microtask
-      expect(secondResolved).toBe(false); // 还在等首次 release
-
-      release1();
-      await vi.advanceTimersByTimeAsync(0); // flush microtask
-      expect(secondResolved).toBe(true);
-
-      const release2 = await secondPromise;
-      release2();
-    });
-
-    it("不同 recordId 不互斥（各自独立链）", async () => {
-      const release1 = await acquireActivateLock("sa-1");
-
-      let secondResolved = false;
-      acquireActivateLock("sa-2").then((r) => {
-        secondResolved = true;
-        r();
-      });
-
-      await vi.advanceTimersByTimeAsync(0); // flush microtask
-      expect(secondResolved).toBe(true); // sa-2 不被 sa-1 阻塞
-
-      release1();
-    });
-
-    it("release 后同 recordId 可再次 acquire", async () => {
-      const r1 = await acquireActivateLock("sa-1");
-      r1();
-
-      const r2 = await acquireActivateLock("sa-1");
-      expect(typeof r2).toBe("function");
-      r2();
-    });
-  });
 });
