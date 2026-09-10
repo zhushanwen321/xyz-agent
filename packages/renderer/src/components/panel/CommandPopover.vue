@@ -5,11 +5,14 @@
     到 body，不受 composer-box 父容器 overflow/stacking context 限制（修复 D5 定位 bug）。
     **anchor 是 slot 传入的 composer-box**：composer-box 内任何 focus 都算 inside，
     不触发 onFocusOutside dismiss（修复 focus-outside 误关 bug）。
-    键盘事件（↑↓ ⏎ Esc）由 Composer 在 ComposerInput keydown 时调 handleKeydown 路由进来。
+    键盘事件（↑↓ ⏎ Tab Esc）主入口 = 本组件经 command-popover-keyboard.ts 注册的 window
+    capture 监听；Composer 在 ComposerInput keydown 时调 handleKeydown 为兜底路（见
+    composer-keydown.ts），二者共用同一 handleKeydown——幂等守卫（e.defaultPrevented）在
+    command-popover-keyboard.ts 内，同一事件只被先到的入口消费。
     **@open-auto-focus.prevent**：禁掉 reka-ui PopoverContent 的 FocusScope 自动聚焦——
     否则浮层打开会把焦点抢到首个命令按钮，contenteditable 不再收键，导致
     「敲 / 后无法继续输入做实时筛选」（query 实时过滤依赖焦点留在输入区）。
-    键盘导航走 window capture 监听，与焦点位置无关，故禁自动聚焦不影响 ↑↓⏎Esc。
+    键盘导航走 window capture 监听，与焦点位置无关，故禁自动聚焦不影响 ↑↓⏎Tab Esc。
     **宽度**：w 取 --reka-popper-anchor-width（= composer-box 宽），严格对齐 composer 宽度；
     max-w calc(100vw-16px) 兜底防极窄视口溢出。提示词列 truncate 在固定宽度内截断。
     右侧提示词列透传 slash 命令 description（skill 描述等），无则退显 kind 标签。

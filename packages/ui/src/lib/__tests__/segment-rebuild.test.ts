@@ -6,7 +6,11 @@
  * - [轮 3-4] RC-A-2 剥离按段序推进游标（正文里的同形字符串不被误删）；RC-A-6 剥离后
  *   只剩空白不物化 text 段（prompt 不以空格开头）。
  * - image 段：改为与其余非 text 段同款的剥离语义，但用裸路径 token 双侧边界匹配
- *   （序列化 `\n<path>\n` 的首尾换行会被 submitEdit 的 .trim() 吃掉，精确匹配不可靠）。
+ *   （序列化 `\n<path>\n` 的首尾换行会被 submitEdit 的 .trim() 吃掉，精确匹配不可靠），
+ *   且剥离范围含 token 两侧紧邻换行（整个序列化单元）——只剥裸 token 会让未编辑草稿
+ *   重发每轮净增换行。[轮 3-5] 幂等用例：image 居首 / 居末连发多轮 prompt === 草稿
+ *   （并已纳入下方 CASES 幂等不变量）；居中（[text, image, text]）受既有位置近似影响
+ *   round0 ≠ 草稿，单列断言 round1 === round2（收敛不累积）。
  *
  * 背景：编辑框展示的是归位全文（命令在最前，normalizeContent 产物）。若把该文本整串
  * 回灌进首个 text 段、段本身又照留，序列化后同一形态出现两次——slash 变成
@@ -28,6 +32,17 @@ const LIVE: Segment[] = [
 ]
 
 const count = (text: string, needle: string) => text.split(needle).length - 1
+
+/** image 段：序列化单元是 `\n<path>\n`（裸路径独占一行） */
+const IMG: Segment = {
+  type: 'image',
+  id: 'img-a',
+  path: '/data/a/1.png',
+  fileName: '1.png',
+  displayName: '截图.png',
+}
+/** 复刻真实提交链路：编辑框回填 normalizeContent(live)，submitEdit 提交前对草稿 .trim() */
+const submittedDraft = (live: Segment[]) => normalizeContent(live).trim()
 
 describe('rebuildSegmentsWithEditedText：slash 段不参与 text 替换（MF-2）', () => {
   it('草稿原样提交 → slash 段保留、前缀命令剥离，prompt 命令仅一次', () => {
@@ -225,17 +240,9 @@ describe('[轮 3] 编辑重发 file/mention/session/handoff 序列化不翻倍',
 // 修复后：命中（前边界 = 串首/空白 且 后边界 = 串尾/空白）⇒ 剥离路径、段保留（消 ①）；
 // 未命中 ⇒ 用户删掉/改写了路径，丢弃段（消 ②）。前边界必须判，否则 `x/data/a/1.png`
 // 这类正文里的相对路径片段会被当图片路径剥掉。
+// 剥离范围含 token 两侧紧邻换行（即整个 `\n<path>\n` 序列化单元），换行累积的幂等用例
+// 见下方 `[轮 3-5]` describe。
 describe('[image] 裸路径 token 剥离：编辑重发不翻倍 / 删路径不复活', () => {
-  const IMG: Segment = {
-    type: 'image',
-    id: 'img-a',
-    path: '/data/a/1.png',
-    fileName: '1.png',
-    displayName: '截图.png',
-  }
-  // 真实提交链路：编辑框回填 normalizeContent(live)，submitEdit 提交前对草稿 .trim()
-  const submittedDraft = (live: Segment[]) => normalizeContent(live).trim()
-
   it('① 路径保留（只改正文）→ 编辑重发产物中该路径只出现一次（修复前为两次）', () => {
     const live: Segment[] = [IMG, { type: 'text', text: '正文' }]
     const edited = submittedDraft(live).replace('正文', '新正文')
@@ -284,6 +291,60 @@ describe('[image] 裸路径 token 剥离：编辑重发不翻倍 / 删路径不�
     expect(body.text.startsWith(`看看 ${IMG.path} 吧`)).toBe(true)
     expect(count(body.text, IMG.path)).toBe(1)
     expect(segments).toContainEqual(IMG)
+  })
+})
+
+// ── [轮 3-5] image 段剥离整个序列化单元（`\n<path>\n`）：未编辑草稿重发恒幂等 ──
+// 根因（上一轮残余）：image 分支只剥裸路径 token（`text.slice(0, at) + text.slice(at + path.length)`），
+// 而 image 的序列化单元是 `\n<path>\n`——草稿里 path 前后的换行留在 text 段内，重建后 image 段
+// 又补一遍 padding ⇒ 每轮编辑重发净增换行、无界累积（实测 5 轮：草稿 2 个换行 → 每轮 +2）。
+// 修复：命中裸路径后把删除范围向左右各扩一个紧邻换行（存在则吃、不存在则不吃），恰好抵消
+// 序列化自带的 padding。生产链路（submitEdit 的 .trim() 吃掉首尾换行）同样幂等：被 trim 的
+// 那个换行不得在重建时被累积回来。
+describe('[轮 3-5] image 段剥离整个序列化单元（`\\n<path>\\n`）', () => {
+  it('image 居首 + 正文：未编辑草稿连发 5 轮，每轮 prompt 与草稿逐字相同（修复前每轮净增换行）', () => {
+    const live: Segment[] = [IMG, { type: 'text', text: '正文' }]
+    const draft = normalizeContent(live)
+    expect(draft).toBe('\n/data/a/1.png\n正文')
+    let segments = live
+    for (let round = 0; round < 5; round++) {
+      segments = rebuildSegmentsWithEditedText(segments, normalizeContent(segments))
+      expect(segmentsToPrompt(segments)).toBe(draft)
+    }
+  })
+
+  it('正文 + image 居末：未编辑草稿连发 3 轮，每轮 prompt 与草稿逐字相同（修复前每轮净增换行）', () => {
+    const live: Segment[] = [{ type: 'text', text: '正文' }, IMG]
+    const draft = normalizeContent(live)
+    expect(draft).toBe('正文\n/data/a/1.png\n')
+    let segments = live
+    for (let round = 0; round < 3; round++) {
+      segments = rebuildSegmentsWithEditedText(segments, normalizeContent(segments))
+      expect(segmentsToPrompt(segments)).toBe(draft)
+    }
+  })
+
+  it('生产链路形态（submitEdit 的 .trim() 吃掉首尾换行）→ prompt === 未 trim 的草稿、路径仅一次', () => {
+    const live: Segment[] = [IMG, { type: 'text', text: '正文' }]
+    const draft = normalizeContent(live) // '\n/data/a/1.png\n正文'
+    const edited = submittedDraft(live) // '/data/a/1.png\n正文'
+    expect(edited).toBe('/data/a/1.png\n正文')
+    const prompt = segmentsToPrompt(rebuildSegmentsWithEditedText(live, edited))
+    expect(prompt).toBe(draft)
+    expect(count(prompt, IMG.path)).toBe(1)
+    expect(prompt.endsWith('\n\n正文')).toBe(false)
+  })
+
+  it('image 居中（[text A, image, text B]）：round0 位置近似（D6 已接受），round1 === round2 不累积', () => {
+    // 「round0 ≠ 草稿」是既有「首个 text 段承接全部正文、chip 位置不动」模型的位置近似，
+    // 与本轮换行修复无关（D6 已登记为接受项），故不并入上方幂等不变量 CASES。
+    // 本用例只锁「不再累积」：round1 起收敛，round1 === round2。
+    const live: Segment[] = [{ type: 'text', text: 'A' }, IMG, { type: 'text', text: 'B' }]
+    const round1 = rebuildSegmentsWithEditedText(live, normalizeContent(live))
+    const round2 = rebuildSegmentsWithEditedText(round1, normalizeContent(round1))
+    expect(segmentsToPrompt(round2)).toBe(segmentsToPrompt(round1))
+    expect(count(segmentsToPrompt(round1), IMG.path)).toBe(1)
+    expect(segmentsToPrompt(round1)).toBe(`AB\n${IMG.path}\n`)
   })
 })
 
@@ -375,10 +436,14 @@ describe('[轮 3-4 · RC-A-6] 剥离后只剩空白 → 不物化 text 段（pro
 
 // ── [轮 3-4] 未编辑草稿的不变量：rebuild(source, segmentsToText(source)) 序列化后逐字不变 ──
 // 这条不变量同时覆盖 RC-A-2（同形串被误删会改变正文）与 RC-A-6（残留空白段会加出前导空格）。
-// 边界：chip 夹在两段 text 之间时刻意不收（如 `[text('看看'), session, text('的讨论')]`）——
-// 「首个 text 段替换 + 其余 text 段丢弃」模型会把尾段正文并入首段、chip 位置不动，
-// 序列化后尾段正文移到 chip 之前（`看看 的讨论#sid-1`）。这是既有位置近似（D6 已登记），
-// 与本轮两条修复无关，故不入不变量用例。
+// 边界：chip 夹在两段 text 之间时刻意不收（如 `[text('看看'), session, text('的讨论')]`、
+// `[text('A'), image, text('B')]`）——「首个 text 段替换 + 其余 text 段丢弃」模型会把尾段
+// 正文并入首段、chip 位置不动，序列化后尾段正文移到 chip 之前（`看看 的讨论#sid-1`）。
+// 这是既有位置近似（D6 已登记），与本轮修复无关；image 居中那例的「不再累积」收敛断言
+// 单列在 `[轮 3-5]` describe（round1 === round2）。
+// image 居首 / 居末两种排布已纳入 CASES——此前 CASES 全部 8 例恰好都不含 image，
+// 使「未编辑草稿重发 ⇒ prompt 与草稿逐字相同」这条不变量对 image 静默失效
+// （换行累积缺陷因此逃过不变量，只在手工探针里暴露）。
 describe('[轮 3-4] 未编辑草稿重发 ⇒ prompt 与草稿逐字相同（幂等不变量）', () => {
   const CASES: Array<{ label: string; live: Segment[] }> = [
     { label: 'text + slash（命令归位）', live: [{ type: 'text', text: '总结' }, { type: 'slash', name: 'compact' }] },
@@ -389,6 +454,8 @@ describe('[轮 3-4] 未编辑草稿重发 ⇒ prompt 与草稿逐字相同（幂
     { label: '正文 + session（chip 收尾）', live: [{ type: 'text', text: '看看' }, { type: 'session', sessionId: 'sid-1', label: '会话 A' }] },
     { label: 'mention + 正文 + handoff', live: [{ type: 'mention', name: 'alice' }, { type: 'text', text: '正文' }, { type: 'handoff', sourceLabel: 'src-session' }] },
     { label: 'subagent（空串序列化）+ 正文', live: [{ type: 'subagent', subagentId: 's1', slug: 'oracle' }, { type: 'text', text: '正文' }] },
+    { label: 'image + 正文（图片居首）', live: [IMG, { type: 'text', text: '正文' }] },
+    { label: '正文 + image（图片居末）', live: [{ type: 'text', text: '正文' }, IMG] },
   ]
 
   for (const { label, live } of CASES) {

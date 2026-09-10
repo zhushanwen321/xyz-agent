@@ -7,7 +7,7 @@
  * [W2 改造] 原 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons' + i18n，
  * 现经 callbacks.renderIcon/t 注入（ADR-0058 边界修复：createVNode/render 收敛为注入 callback，
  * dom-core 零 vue render import）。
- * DOM 辅助（findImageChipEl/isSpacerNode/placeCursorAfter/removeChipNode）委托 input-dom.ts。
+ * DOM 辅助（isSpacerNode/placeCursorAfter/removeChipNode）委托 input-dom.ts。
  *
  * 不含：contenteditable 事件处理（contenteditable.ts）、模板结构、props/emits 声明。
  */
@@ -41,7 +41,8 @@ export function useComposerChipCommands(
   /**
    * chip 落位共用段：无选区 appendChild 到末尾，有选区删选区内容后插到光标处，
    * chip 后补 ZWSP spacer（光标锚点 + 删除 chip 时一并清理）并把光标定位其后。
-   * file/image/mention/session/subagent 五种内联 chip 共用（结构惯例收敛，防五份漂移）。
+   * 各 chip 插入函数共用（slash/skill/file/image/mention/session/subagent 全类型内联 chip——
+   * 结构惯例收敛，防多份漂移）。
    */
   function insertChipAtSelection(el: HTMLDivElement, chip: HTMLElement): void {
     const sel = window.getSelection()

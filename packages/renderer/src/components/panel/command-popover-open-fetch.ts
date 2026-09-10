@@ -153,8 +153,6 @@ export function useCommandPopoverCwdFileView(opts: {
   fileErrorVisible: ComputedRef<boolean>
   /** 空结果态：拉取成功但目录无文件 →「当前目录无匹配文件」（query 过滤致空不在此列） */
   fileNoResultsVisible: ComputedRef<boolean>
-  /** 浮层可见性扩展：items 非空 或 错误/空结果态可显（两因空态区分） */
-  fileFallbackVisible: ComputedRef<boolean>
   /** 截断提示：runtime DoS 上限 5000 截止（结果非空时列表底部条件提示） */
   fileTruncatedVisible: ComputedRef<boolean>
   /** 浮层内重试入口（绕过 1s 节流） */
@@ -180,7 +178,6 @@ export function useCommandPopoverCwdFileView(opts: {
   const fileNoResultsVisible = computed(
     () => isLandingFile() && cwdFileStatus.value === 'success' && cwdFileCandidates.value.length === 0,
   )
-  const fileFallbackVisible = computed(() => fileErrorVisible.value || fileNoResultsVisible.value)
   const fileTruncatedVisible = computed(
     () => isLandingFile() && cwdFileTruncated.value && cwdFileCandidates.value.length > 0,
   )
@@ -189,7 +186,6 @@ export function useCommandPopoverCwdFileView(opts: {
     cwdFileCandidates,
     fileErrorVisible,
     fileNoResultsVisible,
-    fileFallbackVisible,
     fileTruncatedVisible,
     retryCwdFileFetch,
   }

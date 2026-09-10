@@ -538,6 +538,50 @@ describe('useComposerKeydown', () => {
       expect(onSelect).not.toHaveBeenCalled()
     })
 
+    // ── ↑↓ 截断回归锁（缺陷：浮层 open 时 ↑/↓ 穿透到 composer 方向键导航）─────────────
+    // 只 preventDefault 不 stopPropagation 时：window capture 消费后事件继续到 contenteditable
+    // 的冒泡监听 → composer handleBareArrowNav 二次消费（defaultPrevented 幂等守卫只挡
+    // activeIndex 二次变更，不挡 composer 的方向键导航）→ dom-core 单视觉行 at-edge →
+    // history setText 用上一条历史消息替换当前草稿。下方用例用真实 DOM 派发锁 capture/bubble
+    // 全链路（window capture 注册 = useCommandPopoverKeyboard，target 冒泡 = useComposerKeydown）。
+    it.each(['ArrowUp', 'ArrowDown'])(
+      '浮层 open 且候选非空：%s 被完全消费（preventDefault + stopPropagation），事件不传到 contenteditable 冒泡监听',
+      async (key) => {
+        setupChain(true)
+        await flushPromises()
+        await nextTick()
+        expect(document.body.querySelectorAll('.cmd-row').length).toBeGreaterThan(0) // 造态自检：候选非空
+
+        const bubbleSpy = vi.fn()
+        target.addEventListener('keydown', bubbleSpy) // 注册在 composer 分发器之后：不截断则必被调用
+
+        const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+        target.dispatchEvent(e)
+
+        expect(e.defaultPrevented).toBe(true) // window capture 侧已消费
+        expect(e.cancelBubble).toBe(true) // stopPropagation 已截断
+        expect(bubbleSpy).not.toHaveBeenCalled() // 事件未到达 contenteditable 冒泡监听（防穿透）
+        expect(onSend).not.toHaveBeenCalled()
+      },
+    )
+
+    it('对照：浮层空态行（候选为空）时 ↑ 仍放行——事件到达 contenteditable 冒泡监听（放行行为不变）', async () => {
+      setupChain(true, { query: 'zzz' })
+      await flushPromises()
+      await nextTick()
+      expect(document.body.querySelectorAll('.cmd-row')).toHaveLength(0) // 造态自检：确为空候选
+
+      const bubbleSpy = vi.fn()
+      target.addEventListener('keydown', bubbleSpy)
+
+      const e = new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true })
+      target.dispatchEvent(e)
+
+      expect(e.defaultPrevented).toBe(true) // 被 composer 侧裸箭头导航消费（非浮层）
+      expect(e.cancelBubble).toBe(false) // 浮层未截断
+      expect(bubbleSpy).toHaveBeenCalledTimes(1) // 事件确实到达冒泡监听（放行）
+    })
+
     it('浮层可见但候选为空：Escape 由浮层 DismissableLayer 兜底关闭（不被提前返回拦死）', async () => {
       await setupLandingFileEmptyChain()
       const handleKeydown = popoverWrapper!.vm.handleKeydown as (e: KeyboardEvent) => boolean

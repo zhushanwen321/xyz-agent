@@ -17,17 +17,23 @@
  *   不会出现「旧段序列化 + 新文本并列」的翻倍）。
  *   [轮 3 收口] 此前只处理 slash：其余类型整串随编辑文本回灌首个 text 段、段又原位保留，
  *   序列化后同一标记出现两次（skill ⇒ 注入器逐个展开 ⇒ 同一 SKILL.md 注入两遍）。
- * - image 段：序列化是 `\n<path>\n` 的裸路径，但 UserBubble.submitEdit 提交前对草稿
- *   `.trim()` 会吃掉首尾换行——若按序列化串精确匹配，图片位于草稿首行/末行时必然匹配失败
- *   （首尾 `\n` 已被 trim），在真实链路不可靠。故改用**裸路径 token 的双侧边界匹配**：
- *   `seg.path` 出现处的前边界须是串首或空白、后边界须是串尾或空白。命中 ⇒ 剥离该处路径、
- *   段保留（防序列化翻倍）；未命中 ⇒ 用户删掉/改写了该路径，丢弃段（否则重发时旧路径
- *   随段「复活」，prompt 里重新长出用户已删的图片引用）。
+ * - image 段：序列化单元是 `\n<path>\n` 的裸路径（`SEGMENT_SERIALIZERS.image`）。剥离按
+ *   **裸路径 token 的双侧边界匹配**定位：UserBubble.submitEdit 提交前对草稿 `.trim()` 会
+ *   吃掉首尾换行，按序列化串精确匹配时图片位于草稿首行/末行必然匹配失败（首尾 `\n` 已被
+ *   trim），在真实链路不可靠。命中后把删除范围**向左右各扩一个紧邻换行**（存在则吃、
+ *   不存在则不吃），即剥掉整个序列化单元——只剥裸 token 会把 path 前后的换行留在 text
+ *   段内，重建时 image 段再补一遍 `\n<path>\n`，未编辑草稿重发每轮净增换行（无界累积）。
+ *   命中 ⇒ 段保留；未命中 ⇒ 用户删掉/改写了该路径，丢弃段（否则重发时旧路径随段
+ *   「复活」，prompt 里重新长出用户已删的图片引用）。
  *   前边界必须判（这是与 findDelimitedOccurrence 只判后边界的根本差异）：草稿里
  *   `x/data/a/1.png`（正文里的相对路径片段）、`/data/a/1.png2`（正文数字紧贴路径）与图片
  *   路径前缀同形，只判后边界会把用户正文当图片路径剥掉，造成正文损坏。
  *   `findBarePathOccurrence` 是为此新增的 helper，不改动 findDelimitedOccurrence 的既有
  *   尾边界语义（其余段类型的序列化串自带格式锚点，如 `@alice` 靠自身形态区分 `@alicex`）。
+ *   幂等边界：image 居首 / 居末两例由测试不变量 CASES 锁定（未编辑草稿重发 prompt 逐字
+ *   等于草稿）；image 居中（`[text('A'), image, text('B')]`）受「首个 text 段承接全部正文、
+ *   chip 位置不动」的既有位置近似影响 round0 ≠ 草稿（D6 已登记为接受项），单列用例断言
+ *   round1 === round2（收敛、不累积），不入 CASES。
  * - subagent 段：序列化为空串（路由标记不进 prompt），无文本足迹 ⇒ 恒原位保留。
  * - 未知新类型：序列化为空串 ⇒ 恒原位保留（失败方向安全）。
  * - text 段：首个 text 段替换为剥离后的编辑文本，其余 text 段丢弃（其内容已并入编辑稿）；
@@ -40,8 +46,13 @@
  * 此时若用户在改写后的正文里新插入与某 chip 序列化同形的字符串、且位于该 chip 之前，
  * 仍可能剥到正文那一处——该场景无文本级判据可区分（段序推断已失效），接受为残余。
  *
- * 纯函数，仅依赖 @xyz-agent/shared 的 Segment 类型与 segmentsToText（序列化 SSOT 复用，
- * 不在此复制第二份段→文本实现）。
+ * 残余面（轮 5 登记）：image 剥离会把紧邻路径的换行一并纳入删除范围（抵消序列化自带的
+ * `\n<path>\n` padding）。若用户在路径紧邻处**有意**敲了空行，该空行会随之内移/外移——
+ * 换行总数不变、位置近似（实测 `\n\n/data/a/1.png\n\nA` → `\n/data/a/1.png\n\n\nA`），
+ * 与 D6 登记的「编辑重发位置近似」同类，接受。
+ *
+ * 纯函数，仅依赖 @xyz-agent/shared（`Segment` 类型、`normalizeSegmentOrder` 归位、
+ * `segmentsToText` 序列化——序列化 SSOT 复用，不在此复制第二份段→文本实现）。
  */
 import type { Segment } from '@xyz-agent/shared'
 import { normalizeSegmentOrder, segmentsToText } from '@xyz-agent/shared'
@@ -132,12 +143,19 @@ export function rebuildSegmentsWithEditedText(
     }
     // image 段：剥离与其余非 text 段同款语义，但按裸路径 token 匹配（序列化 `\n<path>\n`
     // 的首尾换行会被 submitEdit 的 .trim() 吃掉，精确匹配不可靠，见文件头说明）。
-    // 命中 ⇒ 剥离该处路径、段保留；未命中 ⇒ 路径已被用户删掉/改写，丢弃段。
+    // 命中 ⇒ 剥掉整个序列化单元（token + 紧邻换行）、段保留；未命中 ⇒ 路径已被用户
+    // 删掉/改写，丢弃段。删除范围必须含 token 两侧的换行，否则 draft 里 path 前后的
+    // 换行留在 text 段内、重建时 image 段再补一遍 `\n<path>\n` ⇒ 每轮重发净增换行。
     if (seg.type === 'image') {
       const at = findBarePathOccurrence(text, seg.path, cursor)
       if (at === -1) continue
-      text = text.slice(0, at) + text.slice(at + seg.path.length)
-      cursor = at
+      const start = at > 0 && text[at - 1] === '\n' ? at - 1 : at
+      const after = at + seg.path.length
+      const end = text[after] === '\n' ? after + 1 : after
+      text = text.slice(0, start) + text.slice(end)
+      // 游标指向删除起点：其左侧内容未变且已消费，右侧是本次删除后才相邻的未消费文本。
+      // start ≥ at-1 ≥ cursor-1，不会退回「恒从 0 找」（RC-A-2）。
+      cursor = start
       retained.add(seg)
       continue
     }

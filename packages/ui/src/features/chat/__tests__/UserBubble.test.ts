@@ -5,7 +5,8 @@
  * - W4TC3: UserBubble 拆分后渲染一致（展示态/编辑态 + badge + hover actions）
  * - [pin-identity U2] D2 turnKey 负载断言 + D3 卸载清理（编辑态 unmount → emit {editing:false, turnKey}）
  * - [MF-1] slash 段按归位序渲染为 `/name` 纯文本；**段序仅含 slash/text 段**时气泡文本
- *   === segmentsToText(同段)（其余 badge 类型的显示形态本就 ≠ 序列化文本，见 [MF-1] 组注释）
+ *   === segmentsToText(同段)（含 badge 段时不等价的两条并存原因——边界空格不显式渲染 +
+ *   展示投影 ≠ 序列化——见本文件下方 [MF-1] 组注释，文件头不复述原因以免口径分叉）
  * - [MF-2] submitEdit 编辑含命令的消息后 prompt 中命令只出现一次
  *
  * 运行：cd packages/ui && npx vitest run src/features/chat/__tests__/UserBubble.test.ts

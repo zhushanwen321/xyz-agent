@@ -75,8 +75,9 @@ export type Segment =
  *
  * 收敛说明：原本 segmentsToPrompt 与 segmentsToText 分两份实现，因为 file inline 需要
  * fileContexts Map 才分开。删除 file inline 后，所有 segment 序列化收敛到本函数一处，
- * segmentsToPrompt 仅是 trim 包装。展示格式（含末尾换行）与 pi prompt 格式（trim）的差异
- * 由调用方决定是否 trim，不再分两份逻辑。
+ * segmentsToPrompt 只是同实现的语义别名（去 trim 后二者逐字同产出，见其上方 [HISTORICAL]）。
+ * 首尾空白保真——本函数不 trim，空白拦截职责归调用方（useChat send/steer/followUp 的
+ * !text.trim() 守卫），不再分两份逻辑。
  */
 /**
  * 判定 seg 的序列化文本前是否补一个空格分隔（边界空格规则单点化，替代拆分前的两处 if）：
