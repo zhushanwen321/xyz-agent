@@ -21,6 +21,10 @@ export * from "./paths.ts";
 // ── UI 请求契约类型（host/askUser 反向通道载荷；core 反向 re-export 保消费面）──
 export * from "./ui-types.ts";
 
+// UI channel 提取 + channel 注册表（round1-reuse R1：core execution 与 pi 引擎 CLI
+// 的逐字等价副本自本模块 re-export 收编）。
+export * from "./ui-channels.ts";
+
 // W12 落地（impl-plan §2.12）：env/spawn 原语（三层 env 契约 + 引擎子进程唯一 spawn
 // 入口 + 宿主死亡自灭守卫）。
 export * from "./env.ts";

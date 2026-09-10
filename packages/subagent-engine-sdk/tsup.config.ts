@@ -25,6 +25,7 @@ export default defineConfig({
     'data-dir': 'src/data-dir.ts',
     paths: 'src/paths.ts',
     'ui-types': 'src/ui-types.ts',
+    'ui-channels': 'src/ui-channels.ts',
     env: 'src/env.ts',
     spawn: 'src/spawn.ts',
     'node-executor': 'src/node-executor.ts',

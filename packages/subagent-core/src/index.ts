@@ -134,8 +134,7 @@ export { maxTurnsToWatchdogMs } from "./execution/engine/host/pi-host-binding.ts
 
 // zcode 引擎注册面（[W8 D8 薄壳] createZcodeEngine 已上移 d8-compat——上方导出）。
 // [W11 收口] ZcodeEngineDeps 与 D8CompatZcodeEngineDeps 合并为别名（zsw 调用面的
-// deps 形状契约保持）；ZcodeTaskShapeError 已随 engines/zcode 删除（引擎侧等价物
-// 在 @zhushanwen/zcode-subagent-cli，barrel 不再导出引擎错误类）。
+// deps 形状契约保持）；barrel 不导出引擎错误类（引擎错误归各引擎包自持）。
 export type { ZcodeEngineDeps } from "./execution/engine/d8-compat.ts";
 
 // 引擎注册表原语 + 引擎感知提示面：engine-awareness injector 消费。
@@ -288,7 +287,7 @@ export {
 
 // 错误类型族（error-recovery.ts 计划路径实测不存在，实测散布于下列源文件）：
 // resurrect/fork-depth/dirty-worktree 为动作层守卫抛出点（types.ts），
-// GitRunError 见 worktree 内核组裁决，ZcodeTaskShapeError 见引擎注册面。
+// GitRunError 见 worktree 内核组裁决。
 export {
   DirtyWorktreeError,
   ForkDepthExceededError,

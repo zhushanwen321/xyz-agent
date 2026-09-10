@@ -4,7 +4,8 @@ import { join } from 'node:path';
  * 引擎数据目录布局 SSOT（引擎侧原语，自 core execution/engine/paths.ts 移入
  * @zhushanwen/subagent-engine-sdk，实现体逐字等价）。
  * 迁移处置（impl-plan §2.1 paths 行）：纯 `node:path` 模块 → **移入 SDK**（引擎侧需
- * 自算池/journal 路径）；core 侧引用切换归 W2+。
+ * 自算池/journal 路径）；core 侧引用切换已完成（core execution/engine/paths.ts 为
+ * re-export shim，子入口 ./engine/paths 解析路径不变）。
  *
  * 设计权威源：subagent-engine-abstraction.md D5/D6。
  *

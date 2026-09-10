@@ -7,9 +7,10 @@
 // reducer）下沉 SDK，journal I/O 与②级降级链留 core**——
 //   - SDK 版 = eventsToSessionView（事件流 → SessionView，live/replay 共用 reducer
 //     语义）+ reducer 本体（updateFromEvent 及其私有 handler）+ Turn → ReplayedTurn
-//     投影 / usage 聚合（core session-view-projection.ts 同名函数逐字等价）；
+//     投影 / usage 聚合（原 core session-view-projection.ts 同名函数逐字等价，
+//     R6 收口后本模块为唯一实现，双活副本已删）；
 //   - 留 core = replayJournal（journal 文件 I/O）+ replayJournalToSessionView（read
-//     第②级降级编排）——core 侧文件不动，引用切换归 W2+（core 依赖 SDK 方向合法）。
+//     第②级降级编排）——core 侧引用切换已完成（core 依赖 SDK 方向合法）。
 //
 // record 形态：SDK 侧 reducer 操作 ReplayRecordView（turns/turnCount/totalTokens/
 // lastError 四字段视图）——core ExecutionRecord 留 core（类型闭包表裁决），其结构
@@ -358,8 +359,8 @@ export function updateFromEvent(record: ReplayRecordView, event: AgentEvent): vo
 
 // ============================================================
 // Turn → ReplayedTurn 投影 + usage 聚合
-// （core session-view-projection.ts 逐字等价：投影语义唯一——strip 内部态 +
-//   closed 恒 true + usageDelta 聚合，实现也唯一）
+// （原 core session-view-projection.ts 逐字等价，R6 收口后本模块为唯一实现：
+//   投影语义唯一——strip 内部态 + closed 恒 true + usageDelta 聚合，实现也唯一）
 // ============================================================
 
 /** InternalToolCall → ToolCall（导出纯净形状，不泄漏 running/done/failed 内部状态机）。 */
