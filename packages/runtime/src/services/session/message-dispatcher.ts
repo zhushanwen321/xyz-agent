@@ -19,11 +19,11 @@
  */
 import type { IDispatcherSessionOps } from './session-internal.js'
 import type { IPiEngine, IProcessManager } from '../ports/pi-engine.js'
-import type { SendMessageHook, PendingBashResultData, IManagedSessionView, SessionOccupancy } from './types.js'
+import type { SendMessageHook, PendingBashResultData, IManagedSessionView, SessionOccupancy, ForceQuitSource } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import type { IMessageBus } from '../message-bus/message-bus.js'
 import { toErrorMessage, RpcTimeoutError } from '../../utils/errors.js'
-import { updateSessionOccupancy } from './event-interpreter.js'
+import { updateSessionOccupancy, userStoppedGate } from './event-interpreter.js'
 import { SkillInjector, type SkillNotice } from './skill-injector.js'
 import { publishSkillNotices as publishSkillNoticesShared } from './skill-notice-publisher.js'
 
@@ -191,6 +191,14 @@ export class MessageDispatcher {
     if (hookOutcome.blocked) {
       return { blocked: true }
     }
+
+    // D4 显式投递清标记：经 runtime sendPrompt 的投递（用户新消息 / 前端队列 flush 重放）
+    // = 新意图，投递前清 userStopped 标记放行 + 停收敛环——新 turn 是显式意图，不受任何
+    // 闸门拦截。时序构造性保证：清标记先于 ensureActive/restore（restore-abort 读不到标记
+    // 即不掐），也先于 client.prompt（显式投递开 turn 的 agent_start 事件回流时环已停，
+    // 不会被收敛环误掐）。不经 runtime 的补发腿（notify-ledger）不适用本放行——区分点 =
+    // 投递路径本身。
+    userStoppedGate.consumeForExplicitDelivery(sessionId)
 
     // ── ensureActive(必要时 restore)──
     const client = await this.ensureActiveOrBroadcast(sessionId)
@@ -437,7 +445,8 @@ export class MessageDispatcher {
         // D5①（session-dead-structural-fixes）：kill 路径全量日志 K2——含调用源（kill_source）
         // 与触发信号链（谁发起、为什么），exit 143 类进程死亡可从此行回溯到发起方。
         console.warn(`[message-dispatcher] abort RPC timed out (pi event loop frozen), force-destroying session ${sessionId} (kill_source=abort_timeout | who: user abort -> RPC timeout fallback | chain: forceQuitSession -> detach -> SIGTERM destroy -> persist stopped -> occupancy reset -> session.exited)`)
-        await this.forceQuitSession(sessionId, `Abort failed (pi unresponsive): ${errMsg}`, 'pi 无响应（事件循环卡死），进程已强制终止。重发消息即可恢复（自动重启进程，历史完整）')
+        // D4 置位分型 K2：用户 abort 无响应的超时强杀收口 = 「用户要停」，置标记。
+        await this.forceQuitSession(sessionId, `Abort failed (pi unresponsive): ${errMsg}`, 'pi 无响应（事件循环卡死），进程已强制终止。重发消息即可恢复（自动重启进程，历史完整）', 'abort_timeout')
         return
       }
 
@@ -485,7 +494,8 @@ export class MessageDispatcher {
     // D5①（session-dead-structural-fixes）：kill 路径全量日志 K1——含调用源（kill_source）
     // 与触发信号链（谁发起、为什么），exit 143 类进程死亡可从此行回溯到发起方。
     console.warn(`[message-dispatcher] force quit requested by user, killing session ${sessionId} (kill_source=user_force_quit | who: user via session.forceQuit RPC | chain: skip abort -> SIGTERM destroy -> persist stopped -> occupancy reset -> session.exited)`)
-    await this.forceQuitSession(sessionId, 'User forced quit', '用户强制退出，进程已终止。重新打开该 session 即可恢复（历史完整）。')
+    // D4 置位分型 K1：用户强制退出 = 「用户要停」，置标记。
+    await this.forceQuitSession(sessionId, 'User forced quit', '用户强制退出，进程已终止。重新打开该 session 即可恢复（历史完整）。', 'user_force_quit')
   }
 
   /**
@@ -496,8 +506,14 @@ export class MessageDispatcher {
    * onSessionExit 收敛链。编排与 lifecycle.delete / onSessionExit 回调同构，非新发明。
    *
    * outcomeReason 进终态 entry（诊断）；exitReason 经 session.exited 广播给用户（可操作指引）。
+   *
+   * [D4] source 为置位分型（K1 user_force_quit / K2 abort_timeout）：「用户要停」的调用方
+   * 在编排开头置 userStopped 标记（宿主 = session-service.ts 模块级 Map，独立于
+   * ManagedSession 生命周期——尾步 removeSessionEntry 删条目后标记仍可被 restore 读到）。
+   * 标记驱动 restore-abort 收敛环：被杀的旧执行（notify replay / 补发腿）不得自动复活。
    */
-  private async forceQuitSession(sessionId: string, outcomeReason: string, exitReason: string): Promise<void> {
+  private async forceQuitSession(sessionId: string, outcomeReason: string, exitReason: string, source: ForceQuitSource): Promise<void> {
+    userStoppedGate.markUserStopped(sessionId, source)
     // 先 detach 再 destroy——destroySession 会删 processes/clientToId 条目，
     // 之后再经 getSessionByClient 反查会拿 undefined。
     this.svc.detachSession(sessionId)

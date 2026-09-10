@@ -60,6 +60,8 @@ function makeEnv() {
   const pm = {
     createSession: vi.fn(async () => client),
     destroySession: vi.fn(async () => undefined),
+    // D5② 短路预检读点（session-dead-structural-fixes）：undefined = 无 client → 不短路 → 全流程。
+    getClient: vi.fn(() => undefined),
   } as unknown as IProcessManager
   const configStore = {
     getDefaultModel: vi.fn(() => ({ provider: 'p', modelId: 'm' })),

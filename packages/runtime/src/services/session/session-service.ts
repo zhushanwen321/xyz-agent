@@ -56,7 +56,7 @@ import type { IManagedSessionView, ScannedSession, SendMessageHook } from './typ
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { SessionLifecycle } from './session-lifecycle.js'
 import { MessageDispatcher } from './message-dispatcher.js'
-import { updateSessionOccupancy } from './event-interpreter.js'
+import { updateSessionOccupancy, userStoppedGate } from './event-interpreter.js'
 import { SessionScanner } from './session-scanner.js'
 import { AttachmentStore } from './attachment-store.js'
 import { SessionStateProjection, type SessionReplicatedStates } from './session-state-projection.js'
@@ -65,6 +65,40 @@ import { PresetService, type PresetResolution } from '../preset-service.js'
 // 未注入时所有 bus 调用 no-op（this.messageBus?.publish）。type-only import 避免运行时环
 //（MessageBus 不反向依赖 SessionService）。
 import type { IMessageBus } from '../message-bus/message-bus.js'
+import type { ForceQuitSource, UserStoppedMarkStore } from './types.js'
+
+/**
+ * userStopped 标记宿主（session-dead-structural-fixes D4）：sessionId 键控的模块级独立 Map。
+ *
+ * 为什么是模块级、为什么独立于 ManagedSession：forceQuit 尾步 removeSessionEntry 会删
+ * sessions Map 条目、销毁 session 对象，而标记必须存活到后续 restore（用户点开 dead session
+ * 时 restoreSession 读它决定是否 restore-abort）——挂在 session 对象 / 实例字段上都会随条目
+ * 删除消亡。清理路径全列（D4）：restore 收敛消费（gate 静默窗满清，主路径）/ delete /
+ * destroyAll / 进程退出（内存态整体消亡，天然清理）；removeSessionEntry 刻意不清（forceQuit
+ * 尾步经过它，只停收敛环定时器，见 gate.disposeForEntryRemoval）。
+ *
+ * 子模块（dispatcher/lifecycle/interpreter 挂点）不直接 import 本模块（模块依赖单向性：
+ * 本 Facade 值导入全部子模块，反向 import 成环），统一经 event-interpreter.ts 的
+ * userStoppedGate 门面存取——本构造器经 gate.configure 注入下方 store 实现与 abort 能力。
+ */
+const userStoppedMarks = new Map<string, { source: ForceQuitSource; markedAt: number }>()
+
+/** 宿主 Map 的存取实现（gate.configure 注入 + 测试直断言用）。 */
+export const userStoppedMarkStore: UserStoppedMarkStore = {
+  markUserStopped(sessionId: string, source: ForceQuitSource): void {
+    userStoppedMarks.set(sessionId, { source, markedAt: Date.now() })
+    console.warn(`[session-service] userStopped mark set (sessionId=${sessionId}, source=${source})`)
+  },
+  hasUserStoppedMark(sessionId: string): boolean {
+    return userStoppedMarks.has(sessionId)
+  },
+  clearUserStoppedMark(sessionId: string): void {
+    userStoppedMarks.delete(sessionId)
+  },
+  clearAllUserStoppedMarks(): void {
+    userStoppedMarks.clear()
+  },
+}
 
 export class SessionService implements ISessionService, ILifecycleSessionOps, IDispatcherSessionOps, IScannerSessionOps {
   private readonly restoringSessions = new Set<string>()
@@ -213,7 +247,20 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
       broadcastGlobal: (msg) => this.broker.broadcast(msg),
       notifyMessageComplete: (sessionId) => this.onMessageComplete?.(sessionId),
     }
-    this.lifecycle = new SessionLifecycle(this, this.pm, this.configStore, this.sessionStore, this.workspaceService, registerDeps)
+    this.lifecycle = new SessionLifecycle(this, this.pm, this.configStore, this.sessionStore, this.workspaceService, registerDeps, {
+      // D4：restore-abort 失败（abort RPC 超时/断链）的强杀收敛兜底——复用 dispatcher.forceQuit
+      // （幂等：进程已死时成功返回；进程活着时走 forceQuitSession 完整收敛链 = K 语义日志 +
+      // 置标记 + 全复位广播）。闭包惰性求值：lifecycle 先于 dispatcher 构造，调用发生在
+      // restore 时（dispatcher 已就绪）。
+      forceQuitFallback: (sessionId) => this.dispatcher.forceQuit(sessionId),
+    })
+    // D4 收敛环接线：宿主 Map 存取（上方 store）+ abort 能力（dispatcher.abort 完整链——
+    // 成功收口广播 / 失败超时强杀收敛）。gate 未 configure 时全部 no-op/抛错，本构造器是
+    // 生产唯一接线点（测试可经 resetForTest + 局部 configure 替换）。
+    userStoppedGate.configure({
+      marks: userStoppedMarkStore,
+      abortSession: (sessionId) => this.dispatcher.abort(sessionId),
+    })
     // trace/system-prompt 同步域（S4 迁出至 trace-sync.ts）：deps 窄注入——session 查询经
     // lifecycle（Map 所有者）只读面，messageBus 经 getter 每次调用动态读（setter 晚期注入
     // 语义与原 Facade 字段直读逐字等价，未注入时广播 no-op）。
@@ -758,6 +805,9 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     // shutdown 路径：只清 sessions Map（Map 所有者执行），刻意不触发 dispose/销毁通知
     // ——进程将亡，缓存随进程同灭（迁移前行为保持，设计 D2②）。
     this.lifecycle.clear()
+    // D4 清理路径：shutdown 全量清 userStopped 标记 + 停全部收敛环定时器（与 sessions Map
+    // 同因——进程将亡，内存态随进程消亡；显式清防测试环境单例跨实例残留）。
+    userStoppedGate.disposeAll()
   }
 
   // ── 内部协议（lifecycle/dispatcher/scanner 窄接口 + 过渡宽接口）:子模块经此访问 sessions / 共享 helper ──
@@ -849,6 +899,11 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   }
 
   removeSessionEntry(sessionId: string): void {
+    // D4：收敛环定时器清理（所有删除路径汇聚点：主动删 / 进程退出 / forceQuit / restore
+    // 清场）。只停环不清标记——forceQuit（K1/K2）尾步经过本汇聚点，标记必须存活到后续
+    // restore（标记宿主独立于 ManagedSession 生命周期的原因，见模块级 Map 注释）；delete
+    // 路径的标记清理由 lifecycle.delete 显式调 gate.disposeForDelete。
+    userStoppedGate.disposeForEntryRemoval(sessionId)
     // S3-W2：删除前缓存 summary（插件 didDestroy 通知需要 SessionInfo；删除后 Map 查不到）。
     // Map 无条目（防御路径）时构造最小形状——id 之外的字段无从得知，宁发少知不发错。
     const session = this.lifecycle.get(sessionId)

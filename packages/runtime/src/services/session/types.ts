@@ -160,6 +160,75 @@ export interface IManagedSessionView {
 }
 
 /**
+ * forceQuit 的调用源分型（session-dead-structural-fixes D4 置位点分型）。
+ *
+ * 仅「用户要停」的来源置 userStopped 标记：K1（用户强制退出）与 K2（用户 abort 无响应的
+ * 超时强杀收口）。K3/K5/K6/K7/K8（restore 清场 / delete / destroyAll / 孤儿收殓 / 异常退出
+ * 收敛）不置——pi 崩溃等非用户意图场景不继承「停止」，restore 后 notify replay 属设计内
+ * 行为照常补投（设计 §3.3 D4）。
+ */
+export type ForceQuitSource = 'user_force_quit' | 'abort_timeout'
+
+/**
+ * userStopped 标记存取窄接口（session-dead-structural-fixes D4）。
+ *
+ * 宿主 Map 是 session-service.ts 的模块级独立 Map（sessionId 键控，独立于 ManagedSession
+ * 生命周期——forceQuit 尾步 removeSessionEntry 删条目后标记仍可被后续 restore 读到）。
+ * 子模块（dispatcher/lifecycle/interpreter 挂点）不直接 import session-service（模块依赖
+ * 单向性：session-service 值导入全部子模块，反向 import 成环），统一经 event-interpreter.ts
+ * 的 userStoppedGate 门面（configure 注入本接口实现）间接存取。
+ *
+ * 清理路径全列（设计 §3.3 D4）：restore 收敛消费（主路径，gate 窗满清）/ delete /
+ * destroyAll / 进程退出（内存态整体消亡，天然清理）。removeSessionEntry 刻意不清——
+ * forceQuit（K1/K2）尾步经过它，标记必须存活到 restore。
+ */
+export interface UserStoppedMarkStore {
+  /** 置标记（forceQuitSession K1/K2 置位分型的唯一写入口）。 */
+  markUserStopped(sessionId: string, source: ForceQuitSource): void
+  /** 标记是否存活（restoreSession 返回前检测 + 收敛环 agent_start 拦截守卫）。 */
+  hasUserStoppedMark(sessionId: string): boolean
+  /** 清单条标记（收敛消费 / delete / 显式投递放行经 gate 门面调用）。 */
+  clearUserStoppedMark(sessionId: string): void
+  /** 清空全部标记（destroyAll shutdown 路径）。 */
+  clearAllUserStoppedMarks(): void
+}
+
+/**
+ * session 忙闲状态的封闭转移枚举（session-dead-structural-fixes D2 转移表，转移表即文档）。
+ *
+ * 每行的 occupancy 三维 patch 与三布尔派生语义登记在 event-interpreter.ts 的
+ * SESSION_OCCUPANCY_TRANSITIONS 表——新增转移必须先在此扩枚举再在表内登记派生，
+ * 绕开原语直写三布尔/occupancy 的路径由 u3c readonly 收紧在编译期拦截。
+ *
+ * 行分组：
+ * - turn 四相：dispatching / generating / settling / idle（#1/#2/#3/#4 挂点语义）；
+ * - compacting± / bash±：与 turn 正交维度的置位/复位（#5/#6/#7/#11 挂点）；
+ * - full-reset：三维全复位（#10 forceQuit/进程退出失败路径腿）；
+ * - reject-processing / reject-other：A1 止血的转正（prompt 失败按 pi 拒绝分型收口，
+ *   processing → isGenerating=true+generating 以 pi 拒绝为权威信号；其余 → 复位 idle）；
+ * - announce-idle：registerSession 宣告帧收编行——强制广播当前投影，跳过全等去重
+ *   （Gate B V6b④；内部合并/派生均为 no-op，走 state-topic 通路双腿）；
+ * - abort-stall-converged / abort-stall-force-kill：为 fix-subagent-no-notification 分支
+ *   abort 三级阶梯预留的两行（D8 对齐点①），本单元只登记枚举与派生定义，挂点接线由
+ *   兄弟分支合并方完成。
+ */
+export type SessionOccupancyTransition =
+  | 'dispatching'
+  | 'generating'
+  | 'settling'
+  | 'idle'
+  | 'compacting-start'
+  | 'compacting-end'
+  | 'bash-start'
+  | 'bash-end'
+  | 'full-reset'
+  | 'reject-processing'
+  | 'reject-other'
+  | 'announce-idle'
+  | 'abort-stall-converged'
+  | 'abort-stall-force-kill'
+
+/**
  * bash 待落列元素（W1 fix-chat-flow-order）：sendBash 收到 pi bash RPC 结果时构造的
  * message.bashResult payload（除 sessionId 外的全部终态字段）。flush 时原样作为帧
  * payload 发布（emit 只传单个 payload 对象）。timestamp 取 RPC 完成时刻（= pi
