@@ -497,12 +497,16 @@ export default [
       'max-lines': ['warn', { max: 1000, skipBlankLines: true, skipComments: true }],
     },
   },
-  // provider-config-helper：provider 配置读改/清洗/凭据应用聚合中心（505 行）。
-  // sanitize* 校验组拆分是长期方向，短期 override 与 chat.ts 等聚合中心同模式。
+  // provider-config-helper：provider 配置读改/清洗/凭据应用聚合中心。
+  // 设计 catalog-provider-field-authority §3.3 D1 的写侧防线载体（applyProviderWritePolicy）
+  // 驻本文件，且后续单元（M2b 的 listProviders 迁移、M4 的 resolveCatalogDisplayFields 改造）
+  // 仍会继续追加，故上限抬到 900（先例：download-asset.ts 抬到 1000）。
+  // 沿用既有「sanitize* 校验组拆分是长期方向，短期 override 与 chat.ts 等聚合中心同模式」表述——
+  // 长期仍应拆分（防线载体可拆独立模块）。
   {
     files: ['packages/runtime/src/services/provider-config-helper.ts'],
     rules: {
-      'max-lines': ['warn', { max: 600, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 900, skipBlankLines: true, skipComments: true }],
     },
   },
   // runtime 组合根 main()：装配顺序带文档化时序耦合（函数内注释逐段说明构造先后

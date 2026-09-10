@@ -47,6 +47,16 @@ export interface ProviderExtras {
   }
   /** 模型启停（自 models.json providers.<id>.models[].enabled 迁入，key = modelId）。 */
   modelStates?: Record<string, { enabled: boolean }>
+  /**
+   * 用户网关标记（catalog provider 的 models.json provider 级 baseUrl 属用户显式设置时写入，
+   * 与 authMethod 同域显式标注先例）。
+   *
+   * 仅作 D2 存量清洗判定锚：清洗时**仅存在性判定**（键在 = 用户网关 → 保留 models.json 键；
+   * 键不在 = 历史冻结 artifact → 剥除），禁按值比对（标记值 stale 不影响判定）。
+   * 不参与任何展示/取值的推导——网关展示与取值的唯一来源是 models.json override 非空 baseUrl
+   * （避免「键已剥、标记待清」窗口展示 stale 标注）。
+   */
+  gatewayBaseUrl?: string
 }
 
 const EMPTY_FILE: ProviderExtrasFile = { version: 1, providers: {} }

@@ -10,7 +10,7 @@
 import builtinData from '../generated/builtin-providers.json'
 import { type ProviderInfo, type BuiltinProviderTemplate, type ProviderId } from '@xyz-agent/shared'
 import { isCatalogProvider, deriveEnabled, getMergedCatalogModels } from './provider-catalog.js'
-import type { IConfigStore, ConfigModelDefinition, ConfigProviderConfig } from './ports/config.js'
+import type { IConfigStore, ConfigModelDefinition, ConfigProviderConfig, UpsertProviderResult } from './ports/config.js'
 import type { AuthStorage, CredentialWriter } from './auth/auth-storage.js'
 import type { XyzProviderStore, ProviderExtras } from './provider-extras-store.js'
 import { readAllExtrasWithFallback, type ProviderExtrasReader } from './migration/provider-extras-migration.js'
@@ -491,7 +491,10 @@ function applyProviderCredentials(
   providerId: string,
   data: SetProviderInput,
 ): Promise<void> | undefined {
-  if (data.apiKey !== undefined && data.apiKey !== '') {
+  // 防线② 空串转译（trim 后空串同视）：apiKey 空串 = 清除语义——不写 auth.json / models.json，
+  // 由下游载体 applyProviderWritePolicy 删 merged 既有键（清除的正确落盘形态是删键）。
+  const { apiKey } = data
+  if (apiKey !== undefined && apiKey.trim() !== '') {
     if (isCatalogProvider(providerId) && credentialWriter) {
       // catalog provider: apiKey → auth.json (0600), strip from models.json
       // A1-4 收口：写入经 credentialWriter（AuthService.saveCredential），authStorage.set
@@ -503,7 +506,7 @@ function applyProviderCredentials(
       // 落盘失败 promise reject 上抛（调用方 await，handler try-catch 转 sendError），
       // 不静默吞、不 stale 广播。与 deleteProvider/removeProviderByKind 的
       // cleanAuthCredential await 对称（写入路径对齐删除路径）。
-      return credentialWriter.saveCredential(providerId, { type: 'api_key', key: data.apiKey })
+      return credentialWriter.saveCredential(providerId, { type: 'api_key', key: apiKey })
         .then(() => {
           // Don't write apiKey to models.json for catalog providers
           // （await 点后执行：落盘成功才 strip，语义同内联 await + delete）
@@ -520,24 +523,229 @@ function applyProviderCredentials(
   // delete merged.apiKey 后若此处无条件 re-add，apiKey 会双写进 models.json（G5 迁移
   // 的安全动机被此路径持续回填）。仅非 catalog 分支写回；catalog + 无 credentialWriter 时
   // apiKey 无处安放（凭据只允许落 auth.json 0600），宁丢不写错位（生产恒注入）。
-  if (data.apiKey !== undefined && !isCatalogProvider(providerId)) merged.apiKey = data.apiKey as string
+  if (apiKey !== undefined && apiKey.trim() !== '' && !isCatalogProvider(providerId)) merged.apiKey = apiKey
   return undefined
 }
 
+// ── 写侧防线载体（设计 D1 防线②③；catalog-provider-field-authority v3.3）──
+
 /**
- * provider 级字段白名单写入 merged（从 setProvider 提取）：baseUrl/api/name 直写 +
- * B-4a headers/authHeader 校验写。undefined = 不变（base spread 保留既有值），
- * 显式传值才覆盖；非法值 throw 上抛（handler try-catch 转 sendError）。
+ * 写入体系（调用方经 isCatalogProvider(providerId) 派生后传入——载体不读 catalog 快照，
+ * 保持可独立测试的纯函数形态）。
  */
-function applyProviderLevelFields(
+export type ProviderWriteKind = 'catalog' | 'custom'
+
+/**
+ * 写入来源语义（设计 D1 防线载体段）：
+ * - 'settings'：用户在 xyz UI/CLI 显式设置——catalog 非空 baseUrl = 用户网关（写入 models.json，
+ *   并产出 gatewayToSet 供调用方落 extras 标记）；
+ * - 'import'：外部 pi 配置导入——导入数据不是用户在 UI 显式设置的网关，catalog provider 级
+ *   baseUrl/api 一律剥除（不产生隐形网关）。
+ */
+export type ProviderWriteSource = 'settings' | 'import'
+
+/**
+ * 防线载体统一入参形态（各写入入口归一后传入，设计 D1「入参字段名归一」）：
+ * - 字段名以 pi models.json 为准——provider 级 api 的入参名是 `api`（不叫 type）：
+ *   setProvider 入口把 `SetProviderData.type` 经 IConfigStore.applyTypeTranslation 归一为 api；
+ *   importer 侧 PiProviderConfig 天然同形（api/baseUrl/apiKey/name/models 直传）。
+ * - `models`：传了即**整体替换** merged.models（原始条目 → 防线② 模型级转译后写入）。
+ *   仅适用于「调用方持有原始条目、本该整体写盘」的入口（importer）。
+ *   切不可把 setProvider 的原始 payload 传给已装配好合并结果的 merged（会丢掉
+ *   mergeProviderModel 的 base spread 合并）；setProvider 侧应**不传 models**，
+ *   skipUpsert 判定直接读 merged.models（见 hasSubstantiveProviderFields）。
+ */
+export interface ProviderWritePolicyInput {
+  name?: string
+  baseUrl?: string
+  apiKey?: string
+  api?: string
+  models?: Array<Record<string, unknown>>
+}
+
+/** 防线载体返回信号（extras 落盘等外部编排归调用方，载体零外部副作用）。 */
+export interface ProviderWritePolicyResult {
+  /** 就地更新后的 merged（与入参同一引用，含删键）。 */
+  merged: Record<string, unknown>
+  /** catalog + settings + 非空 baseUrl = 用户网关：调用方据此写 extras.gatewayBaseUrl 标记。 */
+  gatewayToSet?: string
+  /** catalog + 显式空串 baseUrl（带键）= 清除网关：调用方据此清 extras.gatewayBaseUrl 标记。 */
+  gatewayToClear?: boolean
+  /** 无实质字段（pi 空壳判定八字段全缺）：调用方据此跳过 upsertProvider，不物化空壳条目。 */
+  skipUpsert?: boolean
+}
+
+/** 防线② 空串判定：trim 后为空即同视空串（拦 CLI/脚本发的纯空白串 '  '）。 */
+function isBlankString(v: string): boolean {
+  return v.trim() === ''
+}
+
+/**
+ * 防线② 模型级空串转译（pi ModelDefinitionSchema 的 minLength:1 字段集 =
+ * id/name/api/baseUrl，node_modules 实装 model-config.js:137-140 核实）：
+ * - `id` 是 pi 必需字段——trim 后空 → 整条模型丢弃（写空 id 与不写 id 同样让 pi 拒载整个文件）；
+ * - `name`/`api`/`baseUrl`——trim 后空 → 删键（空串无语义且 minLength 违规）。
+ * 就地改写传入的 model 副本，返回 false 表示该模型不可写入。
+ */
+function translateModelSchemaFields(model: Record<string, unknown>, providerId: string): boolean {
+  if (typeof model.id === 'string' && isBlankString(model.id)) {
+    console.warn(`[config-service] dropped model with empty-string id for ${providerId}`)
+    return false
+  }
+  for (const field of ['name', 'api', 'baseUrl'] as const) {
+    const value = model[field]
+    if (typeof value === 'string' && isBlankString(value)) {
+      console.warn(`[config-service] dropped empty-string ${field} for ${providerId} model "${String(model.id ?? '')}"`)
+      delete model[field]
+    }
+  }
+  return true
+}
+
+/**
+ * 「实质字段」判定（防线③ 不物化空壳）：pi 空壳判定八字段任一在场即非空壳。
+ * 字段集与语义对齐 pi-provider-repair.isInvalidProvider（infra/pi 层，services 不可 import
+ * ——C-comm-03 分层约束，故此处本地复刻；该判定改动须两侧同步）。
+ * 与 pi 判定同构：models 需非空数组、modelOverrides 需非空对象、authHeader 用
+ * `!== undefined`（显式 false 是在场），其余按 truthiness。
+ */
+function hasSubstantiveProviderFields(merged: Record<string, unknown>): boolean {
+  const hasModels = Array.isArray(merged.models) && merged.models.length > 0
+  const hasOverrides = typeof merged.modelOverrides === 'object' && merged.modelOverrides !== null
+    && Object.keys(merged.modelOverrides as object).length > 0
+  return hasModels
+    || !!merged.baseUrl
+    || !!merged.headers
+    || !!merged.compat
+    || hasOverrides
+    || !!merged.apiKey
+    || !!merged.oauth
+    || merged.authHeader !== undefined
+}
+
+/**
+ * 防线载体共享纯函数（设计 D1「防线载体（结构约束）」段）——防线②③ 的核心转译逻辑单点：
+ * 空串转译（provider 级 name/baseUrl/apiKey/api + 模型级 id/name/api/baseUrl）+ catalog
+ * 分体系语义（type 忽略 / baseUrl 网关写入·清除 / 不物化空壳）。
+ *
+ * setProvider 与 importer 两条写入路径共用（importer 直调 infra upsertProvider，不经过
+ * setProvider——防线落在写入点而非某个调用方）。
+ *
+ * **零外部副作用**：extras 网关标记的落盘、跳过 upsert 的动作都不在本函数内发生，只产出
+ * 信号（gatewayToSet / gatewayToClear / skipUpsert）由调用方编排。函数就地更新并原样返回
+ * 传入的 merged（含删键）。
+ *
+ * @param merged 既有条目展开后的目标对象（调用方已持有同一引用）
+ * @param data 归一后的 provider 配置入参（见 ProviderWritePolicyInput）
+ * @param kind 写入体系（调用方经 isCatalogProvider 派生）
+ * @param source 写入来源（settings = 用户显式设置 / import = 外部配置导入）
+ * @param providerId 仅用于诊断日志
+ */
+export function applyProviderWritePolicy(
   merged: Record<string, unknown>,
-  configStore: IConfigStore,
+  data: ProviderWritePolicyInput,
+  kind: ProviderWriteKind,
+  source: ProviderWriteSource,
+  providerId: string,
+): ProviderWritePolicyResult {
+  const result: ProviderWritePolicyResult = { merged }
+
+  // ── apiKey（防线②）：空串 = 清除语义 → 删键（「清除」的正确落盘形态是删键，不是写空串；
+  //    与 index.ts clearApiKey 闭包同构）。catalog 的非空 apiKey 归 auth.json（
+  //    applyProviderCredentials 通道），载体不写 models.json 侧。 ──
+  if (data.apiKey !== undefined) {
+    if (isBlankString(data.apiKey)) {
+      delete merged.apiKey
+    } else if (kind !== 'catalog') {
+      merged.apiKey = data.apiKey
+    }
+  }
+
+  // ── name（防线② 通用转译）：空串 = 未指定 → 不写键 + warn（base spread 保留既有值）──
+  if (data.name !== undefined) {
+    if (isBlankString(data.name)) {
+      console.warn(`[config-service] dropped empty-string name for ${providerId}`)
+    } else {
+      merged.name = data.name
+    }
+  }
+
+  // ── baseUrl（防线② custom / 防线③ catalog 分体系）──
+  if (kind === 'catalog') {
+    if (source === 'import') {
+      // 导入数据不是用户在 UI 显式设置的网关 → 剥除（不产生隐形网关）
+      if (data.baseUrl !== undefined) delete merged.baseUrl
+    } else if (data.baseUrl !== undefined) {
+      if (isBlankString(data.baseUrl)) {
+        // 显式空串带键 = 清除网关（回退内置端点）；未带键（undefined）= 不变（既有 merge 协议）
+        if (merged.baseUrl !== undefined) delete merged.baseUrl
+        result.gatewayToClear = true
+      } else {
+        // 非空 = 用户网关（pi 覆盖式网关机制），同时产出标记信号
+        merged.baseUrl = data.baseUrl
+        result.gatewayToSet = data.baseUrl
+      }
+    }
+  } else if (data.baseUrl !== undefined) {
+    if (isBlankString(data.baseUrl)) {
+      // custom 清空 baseUrl 保存 = 不变更既有值（custom 无「默认」可回退，删除用删除功能）
+      console.warn(`[config-service] dropped empty-string baseUrl for ${providerId}`)
+    } else {
+      merged.baseUrl = data.baseUrl
+    }
+  }
+
+  // ── api（防线② 通用转译 / 防线③ catalog 忽略 type）──
+  if (data.api !== undefined) {
+    if (kind === 'catalog') {
+      if (source === 'import') {
+        delete merged.api // 同 baseUrl：导入不产生非用户意图的协议缺省
+      } else {
+        // provider 级 api 对 catalog 无用户语义（协议是模型级属性）
+        console.warn(`[config-service] ignored provider-level type for catalog ${providerId}`)
+      }
+    } else if (isBlankString(data.api)) {
+      console.warn(`[config-service] dropped empty-string api for ${providerId}`)
+    } else {
+      merged.api = data.api
+    }
+  }
+
+  // ── models（防线② 模型级转译）：传了才触碰 merged.models ──
+  if (data.models !== undefined) {
+    const kept: Array<Record<string, unknown>> = []
+    for (const raw of data.models) {
+      const model = { ...raw }
+      if (translateModelSchemaFields(model, providerId)) kept.push(model)
+    }
+    merged.models = kept
+  }
+
+  // ── 不物化空壳（防线③）：剥除/清除后八字段全缺 → 产出跳过 upsert 信号（对既有条目是
+  //    no-op 而非删除——调用方跳过 upsert 即可，盘上旧条目保持原状，对齐 M5-01「宁丢不写错位」）──
+  if (!hasSubstantiveProviderFields(merged)) {
+    console.warn(`[config-service] skipped empty provider entry ${providerId}`)
+    result.skipUpsert = true
+  }
+
+  return result
+}
+
+/**
+ * provider 级 headers/authHeader 白名单写入 merged（从 setProvider 提取，B-4a 校验写）。
+ * undefined = 不变（base spread 保留既有值），显式传值才覆盖；非法值 throw 上抛
+ * （handler try-catch 转 sendError）。
+ *
+ * baseUrl/name/apiKey/api 的空串转译与 catalog 分体系语义不在本函数——统一委托共享载体
+ * applyProviderWritePolicy，由 setProvider 在 models 装配**之后**调用一次（载体做
+ * 「不物化空壳」判定时需要看到 headers/authHeader 与装配完成的 merged.models）。
+ * 本函数保持在载体调用之前执行，保证 headers/authHeader 对判定可见。
+ */
+function applyProviderHeaderFields(
+  merged: Record<string, unknown>,
   providerId: string,
   data: SetProviderInput,
 ): void {
-  if (data.baseUrl !== undefined) merged.baseUrl = data.baseUrl as string
-  if (data.type !== undefined) merged.api = configStore.applyTypeTranslation(data.type as string)
-  if (data.name !== undefined) merged.name = data.name as string
   // B-4a 断链修复（design §2.1 场景 D）：headers/authHeader 是 pi ProviderConfigSchema 内
   // 字段，写入 models.json provider 条目。跟随 baseUrl/name 的 merged 赋值模式：undefined =
   // 不变（base spread 保留既有值），显式传值才覆盖——headers 传空对象 {} 即清空（pi schema
@@ -559,13 +767,20 @@ function applyProviderLevelFields(
  * 基础字段装配（从 setProvider 模型合并 arrow 提取）：name / contextWindow / input /
  * thinkingLevelMap。保持原赋值顺序；thinkingLevelMap 非法值静默忽略 + 显式 undefined 时
  * 删除 base 残留（buildMap() returned undefined (all passthrough)）语义不变。
+ *
+ * 防线②（model 级 name）：trim 后空串 = 未指定 → 不写键（base spread 保留既有值）——纯空白
+ * 串（'  '）长度非 0 会绕过 pi minLength 之外的任何检查，直写即毒化整个 models.json。
  */
 function applyModelBaseFields(
   model: Record<string, unknown>,
   m: Record<string, unknown>,
   base: Partial<ConfigModelDefinition>,
 ): void {
-  if (m.name) model.name = String(m.name)
+  if (typeof m.name === 'string' && isBlankString(m.name)) {
+    console.warn(`[config-service] dropped empty-string name for model "${String(model.id ?? '')}"`)
+  } else if (m.name) {
+    model.name = String(m.name)
+  }
   if (typeof m.contextWindow === 'number') model.contextWindow = m.contextWindow
   if (Array.isArray(m.input)) {
     model.input = (m.input as unknown[]).filter(
@@ -591,10 +806,23 @@ function recordModelStateUpdate(
   }
 }
 
-/** api / baseUrl 回写（review must_fix #1：前端回传的 model 级值必须写回，否则编辑保存即丢失）。 */
+/**
+ * api / baseUrl 回写（review must_fix #1：前端回传的 model 级值必须写回，否则编辑保存即丢失）。
+ *
+ * 防线②（model 级 api/baseUrl）：trim 后空串同视空串 = 未指定 → 不写键 + warn（base spread
+ * 保留既有值）。这两个字段是 pi ModelDefinitionSchema 的 minLength:1 字段（实装
+ * model-config.js:138-139）——写空串会让 pi TypeBox 校验拒绝整个 models.json。
+ */
 function applyModelRoutingFields(model: Record<string, unknown>, m: Record<string, unknown>): void {
-  if (typeof m.api === 'string') model.api = m.api
-  if (typeof m.baseUrl === 'string') model.baseUrl = m.baseUrl
+  for (const field of ['api', 'baseUrl'] as const) {
+    const value = m[field]
+    if (typeof value !== 'string') continue
+    if (isBlankString(value)) {
+      console.warn(`[config-service] dropped empty-string ${field} for model "${String(model.id ?? '')}"`)
+    } else {
+      model[field] = value
+    }
+  }
 }
 
 /**
@@ -667,13 +895,24 @@ function applyModelCompat(
  * 单个 model 条目合并（setProvider 模型合并 arrow 提取，白名单装配 + G3 收集）。
  * 字段赋值/校验顺序与原实现逐字保持：base spread → 基础字段 → enabled 剥除与收集 →
  * api/baseUrl → 校验型字段 → compat。
+ *
+ * 返回 null 表示该模型不可写入（防线② 模型级空 id，见下）；调用方 filter 剔除。
  */
 function mergeProviderModel(
   m: Record<string, unknown>,
   existingModels: ConfigModelDefinition[],
   modelStatesUpdates: Record<string, { enabled: boolean }>,
-): ConfigModelDefinition {
-  const id = String(m.id ?? '')
+  providerId: string,
+): ConfigModelDefinition | null {
+  // 防线②（model 级 id）：pi ModelDefinitionSchema 的 id 是必需 minLength:1 字段
+  // （node_modules 实装 model-config.js:137），空/纯空白 id 写盘会毒化整个 models.json
+  // （pi TypeBox 拒载整个文件）。与防线载体 translateModelSchemaFields 同口径：整条丢弃
+  // + warn，不产出 id:"" 条目（旧实现 String(m.id ?? '') 空串锚定正是要消灭的行为）。
+  const id = m.id === undefined || m.id === null ? '' : String(m.id)
+  if (isBlankString(id)) {
+    console.warn(`[config-service] dropped model with empty-string id for ${providerId}`)
+    return null
+  }
   const base = existingModels.find(em => em.id === id) ?? {} as Partial<ConfigModelDefinition>
   const model: Record<string, unknown> = { ...base, id }
   applyModelBaseFields(model, m, base)
@@ -732,8 +971,9 @@ export async function setProvider(
       console.warn(`[config-service] authMethod dropped for ${providerId}: providerExtrasStore not injected (A1-5)`)
     }
   }
-  // baseUrl/api/name/headers/authHeader 白名单写入：见 applyProviderLevelFields
-  applyProviderLevelFields(merged, configStore, providerId, data)
+  // headers/authHeader 白名单写入。baseUrl/name/apiKey/api 的空串转译与 catalog 分体系
+  // 语义委托防线载体（下方 models 装配后统一调用一次，见 applyProviderWritePolicy）。
+  applyProviderHeaderFields(merged, providerId, data)
   // wave3 C5/TC6：停用 provider 级 enabled 写入——provider 启用改由 enabledModels 白名单承载
   // （wave2 listProviders 已不读 models.json provider.enabled）。前端 onToggleEnabled 改走
   // toggleProviderEnabled（wave4），不再传 data.enabled 给 setProvider。data.enabled 参数声明保留
@@ -746,7 +986,11 @@ export async function setProvider(
     // G3 写侧切换：model 级 enabled 收集到 providers.json modelStates（下方 modify 落盘），
     // 不再写 models.json（pi schema 外寄生字段）。
     const modelStatesUpdates: Record<string, { enabled: boolean }> = {}
-    merged.models = rawModels.map(m => mergeProviderModel(m, existingModels, modelStatesUpdates))
+    // 防线②（模型级空 id）：mergeProviderModel 对空/纯空白 id 返回 null，此处剔除——
+    // 空 id 条目落盘会毒化整个 models.json（pi id 是必需 minLength:1 字段）。
+    merged.models = rawModels
+      .map(m => mergeProviderModel(m, existingModels, modelStatesUpdates, providerId))
+      .filter((m): m is ConfigModelDefinition => m !== null)
     // G3 写侧切换：model 级 enabled 落 providers.json modelStates。await 对齐 authMethod
     // 的 MF-1 语义：modify 失败 reject 上抛（handler try-catch 转 sendError），不静默吞。
     // extrasStore 未注入时丢弃 + warn（宁丢不写错位——生产恒注入）。
@@ -762,12 +1006,63 @@ export async function setProvider(
       console.warn(`[config-service] model enabled states dropped for ${providerId}: providerExtrasStore not injected (G3 写侧切换)`)
     }
   }
-  const result = configStore.upsertProvider(providerId, merged)
+  // ── 防线②③ 载体接线（设计 D1）──
+  // 必须在 models 装配**之后**调用：载体产出 skipUpsert 时读的是装配完成的 merged.models，
+  // 传原始 payload 会覆盖 mergeProviderModel 的 base spread 合并（见 ProviderWritePolicyInput.models
+  // 注释）。入口归一：type 是 SetProviderData 的历史字段名，pi 终值字段名是 api。
+  const api = data.type !== undefined ? configStore.applyTypeTranslation(data.type as string) : undefined
+  const { gatewayToSet, gatewayToClear, skipUpsert } = applyProviderWritePolicy(
+    merged,
+    { name: data.name, baseUrl: data.baseUrl, apiKey: data.apiKey, api },
+    isCatalogProvider(providerId) ? 'catalog' : 'custom',
+    'settings',
+    providerId,
+  )
+  // 写序契约（设计 D1③）：设置网关 = 先写 extras 标记、后写 models.json——崩溃中间态为
+  // 「标记在、键未落盘」（多余标记，D2 启动清洗自愈）；反向序会让用户网关在崩溃窗口被
+  // 当成无标记 artifact 剥除（静默丢网关）。清除网关对称：先落 models.json（键已由载体
+  // 删除）、后清标记（下方）。extrasStore 未注入时丢弃 + warn（宁丢不写错位，生产恒注入）。
+  if (gatewayToSet !== undefined) {
+    const gatewayBaseUrl = gatewayToSet
+    if (extrasStore) {
+      await extrasStore.modify(providerId, current => ({ ...current, gatewayBaseUrl }))
+    } else {
+      console.warn(`[config-service] gateway marker dropped for ${providerId}: providerExtrasStore not injected (D1③)`)
+    }
+  }
+  let result: UpsertProviderResult = {}
+  // 防线③ 语义（设计 D1③）——两层必须分清：
+  //  ① 不物化**新**空壳：新建（existingConfig === undefined）且八字段全缺 → 跳过 upsert，
+  //     不产生 models.json 条目（对齐 M5-01「宁丢不写错位」）。载体已 warn
+  //     `skipped empty provider entry`。
+  //  ② 既有条目的剥除/清除**必须落盘**：既有条目一律 upsert。载体已把 merged 剥除干净
+  //     （无 schema 违规值），不重新引入毒化；若此处也跳过，用户「清空网关/字段」就是静默
+  //     no-op（盘上旧 baseUrl 仍在 → 展示回内置端点但 pi 仍打旧网关，违反 G1「展示 = 生效」
+  //     与验收场景 A'/5）。设计 D1③ 的「对既有条目是 no-op 而非删除」指**不删除既有条目**
+  //     （用户全清空后旧条目仍在盘上、由 D2 启动清洗接管），不是「既有条目跳过写盘」。
+  if (!(skipUpsert && existingConfig === undefined)) {
+    result = configStore.upsertProvider(providerId, merged)
+  }
   // 边界1（wave3 TC5 / C2）：新建 provider 时若 enabledModels 非空，加 <id>/* 白名单守卫——
-  // 否则在白名单语义下新 provider 默认不启用。existingConfig===undefined 判定新建（与 importer
-  // applyImport 的 upsertProvider 后守卫对称，共用水台函数 ensureProviderInWhitelist）。
+  // 否则在白名单语义下新 provider 默认不启用（与 importer applyImport 的 upsertProvider 后
+  // 守卫对称，共用水台函数 ensureProviderInWhitelist）。**不受 skipUpsert 影响**：catalog
+  // 定义在 pi 内置 catalog，无 models.json 条目时 provider 依然存在可用（内置定义 + auth.json
+  // 凭据），`<id>/*` 不是死引用；且守卫幂等（pattern 已存在 no-op），首次配置凭据的 catalog
+  // 用户不能因「不物化条目」而漏启用。
   if (existingConfig === undefined) {
     configStore.ensureProviderInWhitelist(providerId)
+  }
+  if (gatewayToClear) {
+    // 清除网关：先读一次，标记不存在则短路不调 modify（extrasStore.modify 无内容 diff 守卫，
+    // 避免无谓写盘）。此处在 upsert 之后——写序契约的「先删 models.json 键、后清标记」。
+    const currentExtras = extrasStore?.getExtrasSync(providerId)
+    if (extrasStore && currentExtras?.gatewayBaseUrl !== undefined) {
+      await extrasStore.modify(providerId, current => {
+        const next = { ...current }
+        delete next.gatewayBaseUrl
+        return next
+      })
+    }
   }
   return result
 }
