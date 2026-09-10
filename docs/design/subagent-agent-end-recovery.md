@@ -357,12 +357,12 @@ audit §5 三条系统性裁决在本次事故的投影：
 **D3b 窗口三处细化**：
 
 1. **绝对收敛上界 16s**：= 15s 窗口 + 入口惰性回补段 1s（agent_end 入口先做一次 get_state 单查 `backfillSessionFileViaGetState`，失败才进窗口）。§3.3 D3b「总收敛 ≤15s」的口径按「窗口 arm 起算 15s、入口段另计 1s」实现；
-2. **窗口重判仍 error → 续窗不重置**：重试 timer 在每轮 tick 同步开头排定下一轮、耗尽点恒 = arm + 15s。递归层主被唤醒后多轮 agent_end 重复进入 error 分支时，若每轮重置窗口会退化为无限等待——恰是本设计要消灭的形态（§3.4 竞态 #8 的守卫延伸）；
+2. **窗口重判仍 error → tick 续窗不重置**：窗口内每轮 tick 重判若仍读不出（unreadable），不清已排定的下一轮 timer、不重置窗口——保证单次 arm 的窗口内耗尽点确定（= arm + 15s）。**多轮 agent_end 重入的如实表述**：递归层主被唤醒后多轮 agent_end 重复进入 error 分支时，每次按幂等 arm 语义 disarm 旧窗口 + 重挂重计（测试锚定的预期行为，竞态 #8 守卫）——重置仅由真实新事件触发，活动停止后窗口必然正常耗尽，不构成退化回无限等待（「不重置」的原始声称仅覆盖 tick 重判路径，首次登记时表述过宽，2026-09-10 一致性审查修正）；
 3. **轮节奏固定 5s**（`DISPOSITION_RETRY_STEP_MS`）：不被轮内获取耗时顺延，保证耗尽点的墙钟确定性。
 
 **D2 多匹配**：实现为「全候选收集 + 按 mtime 降序取最新 + warn」（§3.3 D2「匹配多个取第一个 + warn」的等价实现——候选按 mtime 降序读，最新修改者即首候选；warn 文案含命中数与所选路径）。
 
-**D4 / u5 七件原语切换盘点（如实，六件未切换及理由）**：实际切换仅 **LF 行读取**一件（runtime `rpc-client.ts` 行读取改经 spawn-channel 消费；tee 经 `onStdoutLine` hook 接回，piSessionLog 落盘不丢，S8 断言通过）。其余六件按 u4/u5 盘点保持现状，理由：
+**D4 / u5 七件原语切换盘点（如实，六件未切换及理由）**：实际切换仅 **LF 行读取**一件（runtime `rpc-client.ts` 行读取改经 spawn-channel 消费；tee 经 `onStdoutLine` hook 接回，piSessionLog 落盘不丢——S8 断言点已就位，待 Gate B 执行）。其余六件按 u4/u5 盘点保持现状，理由：
 
 - **invocation 组装**：两侧身份域不同轨（Runtime 连接级 session 域 / subagent-core record 域），合并无净收益；
 - **stdin 写入**：Runtime 的 randomUUID 命令 id 是 Runtime 行为锚，替换即行为变更（违反行为不变替换边界）；

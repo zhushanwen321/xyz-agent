@@ -247,7 +247,7 @@ CI=true ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install   # 约 6-7s 重建本地�
 
 ### 12. subagent 完成后不回收 / 回收慢：sessionFile 获取与 agent_end 处置特征串判读（2026-09-10 完成回收根修）
 
-subagent 的结果回收链 = 「sessionFile 三路获取（get_state 握手 → 迟到接受 → sessionDir 扫描）→ agent_end 处置（无后代快路径 / 三分支 / 15s 回补重试窗口）」，机制与残余风险见 [design/subagent-agent-end-recovery.md](design/subagent-agent-end-recovery.md)。以下特征串落在 pi 子进程内 extension 的文件日志（core logger component = `subagents`）：
+subagent 的结果回收链 = 「sessionFile 三路获取（get_state 握手 → 迟到接受 → sessionDir 扫描）→ agent_end 处置（无后代快路径 / 三分支 / 15s 回补重试窗口）」，机制与残余风险见 [design/subagent-agent-end-recovery.md](design/subagent-agent-end-recovery.md)。以下特征串由**宿主侧 pi 进程内的 subagent-core**（主 pi 进程；递归编排时各层 pi 进程各自持有，非被回收的 subagent 子进程）经 extension-logger 写入文件日志（core logger component = `subagents`）：
 
 ```bash
 # 桌面环境：runtime spawn pi 时恒注入 XYZ_AGENT_EXT_LOG=1，warn 级特征串默认落盘

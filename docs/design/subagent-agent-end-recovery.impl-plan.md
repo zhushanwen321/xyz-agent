@@ -93,8 +93,16 @@ bash scripts/validate-runtime-bundle.sh
 
 ## 5 合理偏差登记表
 
+> 登记载体说明：实施期偏差的**明细集中登记于设计文档「实施期偏差登记」节**（本文件同目录 subagent-agent-end-recovery.md 末尾，含 D3a 落点 / D3b 三处细化 / D2 多匹配 / D4 七件盘点 / 测试改写 / 待办清理六组），状态表各单元 deviations 计数指向该明细；本表收录「一致性审查确认后的合理偏差」条目。
+
 | # | 单元 | 偏差描述 | 登记理由 | 日期 |
 |---|------|----------|----------|------|
+| R1 | u3 | 窗口轮 3 为纯判定轮（获取机会 2 次：轮 1 get_state / 轮 2 扫描），非设计字面「每 5s 交替」3 次获取——若轮 3 获取，耗尽点 = arm+16s 破坏 G1 名义 | 实现优于设计名义承诺（一致性审查区A reasonable 1） | 2026-09-10 |
+| R2 | u3 | 快路径与窗口过程日志 debug 级（耗尽 warn 生产可见）——S4/S5 的过程特征串断言需 dev/XYZ_AGENT_DEBUG 日志级别 | 对齐 keep-alive 分支惯例防刷屏；关键断言（回填/命中/耗尽）均 warn 级不受影响（区A reasonable 2） | 2026-09-10 |
+| R3 | u1 | D2 扫描单候选容错细化：stat/read 失败按「该候选 miss、其余继续」，全部失败才 undefined | 设计错误规格「返回 undefined」对外契约的严格细化，覆盖并发删除竞态（区A reasonable 3） | 2026-09-10 |
+| R4 | u5 | 七件原语仅 LF 行读取实际切换（runtime），六件保持现状（invocation 身份域 / stdin randomUUID 锚 / id 路由 rejectAll 形状 / kill SIGCONT 语义 / get_state 硬失败耦合 / 迟到帧既有路径） | 行为不变替换约束下机制归一收益兑现能兑现部分；「双轨」实为策略/行为锚差异非同一机制两份拷贝（区B reasonable 1 + 设计偏差登记 D4/u5 组） | 2026-09-10 |
+| R5 | u4 | spawn-channel 策略接口落地为「类型契约 + SUBAGENT_CORE_SPAWN_POLICIES 默认值登记」形态，非运行时分派对象 | 避免无人消费的策略对象死代码；u5 注入位逐维注释（区B reasonable 4） | 2026-09-10 |
+| R6 | u6 | troubleshooting 词条日志文件名写实为 subagents-\<date\>.log + 可见性规则（桌面 EXT_LOG 恒注入 / 裸 pi CLI 需显式开关） | 修正任务预设的易错假设，与 extension-logger 实装一致（区C reasonable 2） | 2026-09-10 |
 
 ## 6 状态表
 
@@ -122,3 +130,4 @@ bash scripts/validate-runtime-bundle.sh
 | 日期 | 事件 |
 |------|------|
 | 2026-09-10 | 计划创建；设计文档经 4 轮对抗式审查收敛（主审 3→0，影响面审 3→0），基线待 commit |
+| 2026-09-10 | 阶段 3 一致性审查（3 区独立 reviewer）回收：4 unreasonable（组A \r 剥离丢失 medium→修复 dev；组B warn 断言缺失 low→修复 dev；区C 两条 docs 编辑→主 agent 亲为，理由：全部落 docs 领地的措辞/结构修正且与 doc_errors 同批）+ 2 doc_errors（「S8 断言通过」失实→已改「待 Gate B」；「续窗不重置」声称过宽→设计文档与 audit T8 双处如实化：tick 续窗不清轮次 vs agent_end 重入幂等重挂重计，测试锚定）；reasonable 20 条 → §5 登记 6 条（R1-R6），其余为核实通过项 |
