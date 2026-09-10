@@ -108,18 +108,22 @@ graph TD
 | # | 偏差 | 对应设计位置 | 裁定理由 | 状态 |
 |---|---|---|---|---|
 | D-1 | u6 六条登记全部为 observe 型守卫（设计写「各配 pi-anchor + 探针」，预期 probe 型） | §10 U6 行 | 守卫 schema 的 probe 型要求指向真实存在的 .test.ts；u6 领地仅 pi-semantics.json 且与 u1/u3 并行无法依赖其测试产物。verifiedWith 版本门禁对全表生效（pi 升级即 fail），登记意图不受损；后续 u1/u3 测试落地后可将关键条目升级为 probe（登记为可选跟进项） | 合理 |
+| D-2 | `SessionRoot` 增加设计类型签名外的两字段：`files: SessionFileMeta[]`（必填）与 `dedupedInto?: SessionRootKind`；`normalizeLiveSessionDir` 一并导出；id 恒等于 kind | §7B 要点 8/4 | §7B 要点 8 要求自检计数「取自本次 find 刚完成的实扫结果」（u9-u11 消费文件列表）；要点 4 要求 doctor 渲染「与 N 同路径，已去重」注记——无 dedupedInto 则被去重根会被误渲染为「存在 0 文件」。服务设计意图的契约补全，下游 u8/u9/u10/u11 直接受益 | 合理 |
+| D-3 | 旧签名薄包装「构造 {agentDir} 信号包 → resolveSessionRoots → 过滤」，会额外扫非目标根 | §7B 要点 7 | 与设计「薄包装仅为存量单测与外部深 import」定位一致；工具运行路径 u9+ 切新签名后成本消失 | 合理 |
+| D-4 | 新增空 agentDir 防御（返回空根列表，附用例） | §7B（任务未明示） | 最小防御：避免派生式退化为 cwd 相对路径扫到无关目录；附试用例，无行为面扩大 | 合理 |
+| D-5 | subagents.ts not-found 失败路径新增一次 resolveSessionRoots 调用（重复扫描） | §6.8/U1 | 仅异常路径；换「实际扫描候选根」事实性列表，正是 U1 文案改造的目的 | 合理 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
-| u14a | retry-pending | 1 | 首派 agent_89232f0a 因账户速率限制失败（瞬态）；待 u1/u2/u6 完成后降并发补派 |
-| u14b | retry-pending | 1 | 首派 agent_cf3180a4 因账户速率限制失败（瞬态）；待并发空位补派，轮次累计中 |
+| u14a | in-progress | 2 | 重试派发 agent_081a73bf（首派因账户速率限制失败） |
+| u14b | in-progress | 2 | 重试派发 agent_b9bf332b（首派因账户速率限制失败） |
 | u15 | pending | 0 | — |
 | u16 | pending | 0 | — |
 | u17 | pending | 0 | — |
 | u18 | pending | 0 | — |
-| u1 | in-progress | 1 | agent_6665a206 |
+| u1 | committed | 1 | roots.test 17/17 + 全包 338 绿重跑确认；tsc/eslint 干净；偏差 D-2~D-5 |
 | u2 | in-progress | 1 | agent_2102d150 |
 | u6 | committed | 1 | PS-28~PS-33 六条 anchor 逐条实装核对（⑤补双锚、⑥修 distPath 缺 core/ 前缀）；守卫 exit 0（33 条）重跑确认；D6 软门禁恢复动作完成（探针族 11 文件/56 用例全绿）；偏差 D-1 |
 | u2 | committed | 1 | env.ts + env.test.ts（16 用例）重跑绿；tsc --noEmit exit 0；无偏差 |
