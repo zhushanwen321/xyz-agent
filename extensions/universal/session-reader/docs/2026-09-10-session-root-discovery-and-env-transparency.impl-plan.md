@@ -116,6 +116,8 @@ graph TD
 | D-7 | **u14a 领地扩容**（计划期缺口，执行期发现）：+`docs/architecture/data-source-registry.md`（登记条目）+ R1 检查器 ALLOWLIST（`.githooks/check_pi_direct_write.py`） | §6.11 / 检查器自身救济路径 | R1 以 rglob 扫工作树，迁移脚本必然同时含 sessions 路径痕迹（步骤 3/4 分发逻辑）与 writeFile（三件套 union 原子写）→ 被判「直写候选」；脚本对 jsonl 是 rename-only，写的是配置 JSON 与报告——正是检查器救济路径写明的「登记例外」形态。计划期漏列该登记义务，orchestrator 裁定领地扩容；**副作用：u14a 落地前 R1 挡住全仓 commit（含无关的 u14b/u3），提交队列按 u14a → u14b → u3 顺序 flush** | 合理（计划缺口） |
 | D-8 | `handleSessionRead` 第二参实做 `SessionRootSignals \| string` 联合 + 入口归一化（任务要求纯 signals 类型） | §7B/§10 U3 | 存量 tool-handler.test.ts / result.test.ts / cross-package 等约 100 处裸 string 调用不在 u3 领地，纯收紧必破 341 全包基线；与 D-3 薄包装裁定同构；工具运行路径恒传完整信号包，类型收紧随 u9+（其领地含 tool-handler.test.ts） | 合理 |
 | D-9 | u14a 六条规格空白裁决（非设计明文违反）：①encodeCwd 断言以 pi-paths.ts 实装为准（其头注释示例与自身实现不符，win32 形态 `--C--Users-x-proj--`）；②无 pi 二进制机器自证对象不存在 → 放行并在报告注明（§11.13 空白）；③union 结果与主位深等 → 无写动作（unionSkipped 计数）但冲突照进清单（V9⑥「全跳过」×V9⑦「冲突清单」交互空白，幂等与差异可见兼得）；④双侧同值单文件与 token\* 不产 aside（同值非冲突）；⑤sidecar 前缀判定排除 .jsonl（主文件只走 header 分发，杜绝双规则处理）；⑥非记录型/资源型深层目录递归逐条目分类（步骤 2b 只定义顶层；config/providers.json 经此命中三件套 union——设计意图所需） | §6.11 六步块 | 均为设计未细化处的最小确定性裁决，各附用例；⑥是三件套 union 可生效的前提 | 合理 |
+| D-12 | u8 两条契约补全：①SessionRoot 增可选 `cached?` 标记（options.cache 命中以缓存值构造、files 恒空）+ `SessionRootScanOptions`（subagents: 'scan'\|'stat'、cache 注入式句柄，TTL/mtime 判定留在 tool-handler 侧）②description 'Ten actions'→'Eleven actions'（保留错误动作数比 6 字节缓存代价更有害，且与 V11 计数 11 一致） | §6.3 同一数据源两处渲染 / §6.4 | ① doctor 不带 options 的消费契约补全（D-2 同方向）②正确性必需；doctor 双实现镜像已被打回消除（§6.3 合规） | 合理 |
+| D-11 | spawn 清单登记规则②扩为双 dev 形态：dev 资源根（resources staging）+ **dev 源码根 `<repoRoot>/extensions/`**（resolver dev 分支实际传参形态） | §6.12 | 设计②的前提（dev/build 同源走 resources）与实装不符——dev builtin 路径来自源码根，不扩根则 dev 清单恒空、V10① dev 正向必然失败；源码根是「xyz 自己传的路径」的 dev 形态，符合清单意图；D-u16-1 由 u16 agent 发现并建议，orchestrator 批准；文档措辞同步归 design-code-sync 阶段 | 合理（设计勘误） |
 | D-10 | R1 ALLOWLIST 消费逻辑由「文件:行号精确键」改为文件级键（set→dict）+ checker docstring「空集」段与 registry 计数同步 | D-7 追加任务 | 文件级条目不改消费逻辑即永不生效——登记生效的必要组成；命中处仍按 文件：行 在通过报告列出（可观测性保留，未来新增写点不被静默吞）；docstring/计数同步为防漂移义务 | 合理 |
 
 ## 6 状态表
@@ -125,7 +127,7 @@ graph TD
 | u14a | committed | 2+1 | 脚本 759 行 + 测试 862 行；32/32 重跑绿；P-11 = 100%（11/11 全有 cwd，只读实测，登记于测试文件头）；CLI 实机负向探针（pgrep 命中 14+84 进程 → 拦截列 PID）；D-7 登记落地（R1 exit 0）；偏差 D-9/D-10 |
 | u14b | committed | 3 | 五处改动落地（退役/syncBundledResources 直挂/WARN 探测/getPiGlobalAgentDir 改 getDataDir 推导/getPiRoot 零引用）；F3 打回修复（maxRetries×3）后 9 用例绿重跑；tsc 0；偏差 D-6 |
 | u15 | committed | 2 | wave1 24fb71b0f + wave2（probe/verify 脚本、workflow-extractor 注释、troubleshooting 迁移节；AGENTS.md 实测无可清项）；残留 ~18 处生产注释 + ~40 处测试 mock 字面量与 logger.ts:431 移交 u18 守卫批；verify-plugin-contract E2E 实跑 PASS |
-| u16 | in-progress | 1 | agent_37642972（wave1 commit 后解锁） |
+| u16 | fix-round-1 微修中 | 1 | 主体完成（删 --session-dir + spawn-markers 9 用例 + §11.11 恒传核验成立）；D-u16-1 批准扩 dev 源码根（D-11），agent 续作中 |
 | u17 | pending | 0 | — |
 | u18 | pending | 0 | — |
 | u1 | committed | 1 | roots.test 17/17 + 全包 338 绿重跑确认；tsc/eslint 干净；偏差 D-2~D-5 |
@@ -133,7 +135,7 @@ graph TD
 | u6 | committed | 1 | PS-28~PS-33 六条 anchor 逐条实装核对（⑤补双锚、⑥修 distPath 缺 core/ 前缀）；守卫 exit 0（33 条）重跑确认；D6 软门禁恢复动作完成（探针族 11 文件/56 用例全绿）；偏差 D-1 |
 | u2 | committed | 1 | env.ts + env.test.ts（16 用例）重跑绿；tsc --noEmit exit 0；无偏差 |
 | u3 | committed | 1 | index.test 13/13 + 全包 341 绿重跑确认；tsc 0；偏差 D-8 |
-| u8 | in-progress | 1 | agent_7a8fa47e |
+| u8 | committed | 2 | doctor action（enum/description+Eleven actions/guidelines 三处 + renderDoctor + 独立 glob 残留探测 + TTL/mtime 缓存句柄 + subagent 默认不扫）；微修复统一数据源（roots.ts +SessionRootScanOptions，镜像 −120 行）；116/116 + 全包 358 绿 + tsc 0；偏差 D-12 |
 | u9 | pending | 0 | — |
 | u10 | pending | 0 | — |
 | u11 | pending | 0 | — |

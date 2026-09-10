@@ -2,8 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import { getAgentDir } from '@earendil-works/pi-coding-agent'
 import { StringEnum } from '@earendil-works/pi-ai'
 import { Type } from 'typebox'
-import { handleSessionRead, type SessionReadParams } from './tool-handler.js'
-import type { SessionRootSignals } from './discovery/roots.js'
+import { handleSessionRead, type SessionReadParams, type SessionReadSignals } from './tool-handler.js'
 import { createHashAutocompleteProvider } from './tui/hash-provider.js'
 import { createSessionCommand } from './tui/session-command.js'
 
@@ -33,10 +32,11 @@ const SessionReadSchema = Type.Object({
       'extract',
       'workflow',
       'result',
+      'doctor',
     ],
     {
       description:
-        'Action to perform: find (locate session), family (fork/subagent/workflow relations; recursive=true returns nested execution tree), outline (turn-level overview), expand (single-turn entries), detail (full text of turns), search (full-text grep), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps; requires session, optional runId focuses one run; step call sessionId jumps to outline/detail), result (fetch a subagent session final result text — same content as its completion notice; session = single id or comma-separated batch of at most 10, optional limit caps chars per item).',
+        'Action to perform: find (locate session), family (fork/subagent/workflow relations; recursive=true returns nested execution tree), outline (turn-level overview), expand (single-turn entries), detail (full text of turns), search (full-text grep), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps; requires session, optional runId focuses one run; step call sessionId jumps to outline/detail), result (fetch a subagent session final result text — same content as its completion notice; session = single id or comma-separated batch of at most 10, optional limit caps chars per item), doctor (show detected host environment and session-root diagnostics).',
     },
   ),
   session: Type.Optional(
@@ -133,6 +133,12 @@ const SessionReadSchema = Type.Object({
         'family action: return nested execution tree (arbitrary-depth subagent↔workflow-call nesting, precise parentRecordId chain with flat-fallback for legacy records). Default false (flat family).',
     }),
   ),
+  includeSubagents: Type.Optional(
+    Type.Boolean({
+      description:
+        'doctor action: also scan the subagent session root (adds its file count). Default false (path and existence only).',
+    }),
+  ),
 })
 
 // ---- guidelines（注入 LLM，design §3.4）----
@@ -146,11 +152,12 @@ const guidelines = [
   "workflow action to see workflow run overviews (status/budget/steps). Each step's call sessionId can jump to outline/detail for deep reading.",
   "result action to fetch a subagent's final result text (same content as its completion notice): session takes a single sa-id/uuid/path or a comma-separated batch of at most 10; optional limit caps chars per item (default 8000, truncated items carry a pointer to the full file).",
   'Errors carry a 👉 recovery hint—follow it to retry in one step.',
+  'Unsure about the host environment (pure pi vs xyz-agent) or where session roots live? Run action:"doctor" first—it prints the detected environment and every candidate session root.',
 ]
 
 // ---- 工具 description（design §3.4，照搬措辞）----
 
-const description = `Read pi session files (conversation history) by semantic structure instead of raw bytes. Use when you need to review another session, trace a fork/subagent/workflow family, or locate a past decision. Ten actions: find (locate by name/uuid fragment), family (fork/subagent/workflow relations), outline (turn-level overview, ~1500 token), expand (single-turn entry list), detail (full text of turns), search (full-text grep across a session), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps, step call sessionId jumps to outline/detail), result (fetch a subagent session final result text, same content as its completion notice; single id or comma-separated batch ≤10, optional limit chars per item default 8000). Progressive reading: outline → expand → detail. Do NOT use for the current session (the host provides current-session access) or to edit sessions (pi has /resume /fork).`
+const description = `Read pi session files (conversation history) by semantic structure instead of raw bytes. Use when you need to review another session, trace a fork/subagent/workflow family, or locate a past decision. Eleven actions: find (locate by name/uuid fragment), family (fork/subagent/workflow relations), outline (turn-level overview, ~1500 token), expand (single-turn entry list), detail (full text of turns), search (full-text grep across a session), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps, step call sessionId jumps to outline/detail), result (fetch a subagent session final result text, same content as its completion notice; single id or comma-separated batch ≤10, optional limit chars per item default 8000), doctor (show detected host environment and session-root diagnostics). Progressive reading: outline → expand → detail. Do NOT use for the current session (the host provides current-session access) or to edit sessions (pi has /resume /fork).`
 
 /**
  * 已注册过 TUI provider/command 的 pi 实例集合。
@@ -189,16 +196,21 @@ export default function sessionReaderExtension(pi: ExtensionAPI): void {
       // signal 仅 search 消费（MF-5：长扫描可中断，Esc 不再挂死）；其余 action 有界不接
       // 信号包采集（design §7B）：可选链逐层降级——ctx===undefined（存量单测五参形态）、
       // sessionManager 缺字段、getSessionDir 方法缺失，任一层不成立即 liveSessionDir=undefined
-      //（发现层走 [default]+[legacy] 三根降级）；方法调用抛错可选链兜不住，try/catch 同样
-      // 降级——宿主异常不得变成工具内部 TypeError。env/bundleUrl 信号 B 收缩后不采
-      //（design §6.13，doctor（u8）需要时再补）。
+      //（发现层走 [default]+[legacy]+[subagent] 三根降级）；方法调用抛错可选链兜不住，try/catch
+      // 同样降级——宿主异常不得变成工具内部 TypeError。env/bundleUrl 由 u8 补采（doctor
+      // 环境判定/发行形态需要，design §6.2/§6.4）。
       let liveSessionDir: string | undefined
       try {
         liveSessionDir = ctx?.sessionManager?.getSessionDir?.()
       } catch {
         liveSessionDir = undefined
       }
-      const signals: SessionRootSignals = { agentDir: getAgentDir(), liveSessionDir }
+      const signals: SessionReadSignals = {
+        agentDir: getAgentDir(),
+        liveSessionDir,
+        env: process.env,
+        bundleUrl: import.meta.url,
+      }
       return handleSessionRead(params, signals, signal)
     },
   })

@@ -1,9 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir, homedir } from 'node:os'
-import { join } from 'node:path'
-import { handleSessionRead, renderExtractItems, type SessionReadParams } from '../tool-handler.js'
+import { join, dirname } from 'node:path'
+import {
+  handleSessionRead,
+  renderExtractItems,
+  DOCTOR_CACHE_TTL_MS,
+  type SessionReadParams,
+  type SessionReadSignals,
+} from '../tool-handler.js'
 import { listRecordManifests } from '../discovery/subagents.js'
 import {
   REAL_AGENT_DIR as REAL,
@@ -1552,5 +1558,281 @@ describe('doFamily recursive（m3b U8 接入）', () => {
     expect(r.content[0].text).toContain('execution tree')
     expect(r.content[0].text).toContain('node(s)')
     expect(r.content[0].text).toContain('👉')
+  })
+})
+
+// ===========================================================================
+// doctor action（u8：design 2026-09-10 §6.3/§6.4/§7B 要点 2/4/5/8 + §6.11 U14b 段）
+// 全部 mkdtemp fixture 自建自删，不触碰真实数据目录。
+// ===========================================================================
+
+/** doctor details 的根表行形态（SessionRoot 透传，程序化消费面） */
+interface DoctorRootDetail {
+  kind: string
+  source: string
+  path: string
+  exists: boolean
+  fileCount?: number
+  scanMs?: number
+  cached?: boolean
+  dedupedInto?: string
+}
+
+interface DoctorDetails {
+  environment: { kind: string; distribution: string | null; dataDir?: string; evidence: string[] }
+  roots: DoctorRootDetail[]
+  leftovers: Array<{ path: string; kind: string }>
+  globBase: string
+}
+
+describe('doctor action（u8：环境判定 + 根表 + 告警 + 残留 glob + 缓存）', () => {
+  let tmp: string
+
+  const SLUG = '--Users-foo--'
+
+  /** 写 .jsonl fixture（父目录自建），内容合法 session header */
+  async function writeJsonl(path: string, id = 'x'): Promise<void> {
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, `{"type":"session","id":"${id}"}\n`)
+  }
+
+  /**
+   * xyz-agent 形态四根 fixture：dataDir 目录名带 .xyz-agent 前缀（detectEnvironment 的
+   * PI_CODING_AGENT_DIR 形态判据 `<*>/.xyz-agent*\/agent` 可命中，托管判定走正态）。
+   * live=agent/sessions 与 default 同字面路径（default 去重）、legacy 独立非空、subagent 独立。
+   */
+  async function buildFourRootFixture(): Promise<{
+    dataDir: string
+    agentDir: string
+    signals: SessionReadSignals
+  }> {
+    const dataDir = join(tmp, '.xyz-agent-fixture')
+    const agentDir = join(dataDir, 'agent')
+    await writeJsonl(join(agentDir, 'sessions', SLUG, 'a.jsonl'), 'aaaaaaaa')
+    await writeJsonl(join(agentDir, 'sessions', SLUG, 'b.jsonl'), 'bbbbbbbb')
+    await writeJsonl(join(dataDir, 'sessions', 'old.jsonl'), 'cccccccc') // legacy 非空
+    await writeJsonl(join(agentDir, 'subagents', SLUG, 'sessions', 's.jsonl'), 'dddddddd')
+    return {
+      dataDir,
+      agentDir,
+      signals: {
+        agentDir,
+        liveSessionDir: join(agentDir, 'sessions'),
+        env: {
+          XYZ_AGENT_EXT_LOG: '1',
+          PI_CODING_AGENT_DIR: agentDir,
+          XYZ_AGENT_DATA_DIR: dataDir,
+        },
+      },
+    }
+  }
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'tool-handler-doctor-'))
+  })
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('四根表渲染：优先级序 + 去重注记 + 文件数/耗时 + 托管判定行 + 事实型诊断（无归因断言）', async () => {
+    const { dataDir, agentDir, signals } = await buildFourRootFixture()
+    const r = await handleSessionRead({ action: 'doctor' }, signals)
+    const text = r.content[0].text
+
+    // 环境判定行：双信号合取 → xyz-agent（托管）+ 数据目录 + evidence 正态
+    expect(text).toContain('环境判定：xyz-agent（托管）')
+    expect(text).toContain(`数据目录：${dataDir}`)
+    expect(text).toContain('依据：')
+    expect(text).toContain(`PI_CODING_AGENT_DIR='${agentDir}' → 形态匹配`)
+
+    // 四根按优先级序渲染
+    const liveIdx = text.indexOf('[live]')
+    const defIdx = text.indexOf('[default]')
+    const legacyIdx = text.indexOf('[legacy]')
+    const subIdx = text.indexOf('[subagent]')
+    expect(liveIdx).toBeGreaterThan(-1)
+    expect(defIdx).toBeGreaterThan(liveIdx)
+    expect(legacyIdx).toBeGreaterThan(defIdx)
+    expect(subIdx).toBeGreaterThan(legacyIdx)
+
+    // 去重注记（§7B 要点 4）：default 与第 1 行（live）同路径，已去重
+    expect(text).toContain('与 1 同路径，已去重')
+
+    // 事实型诊断：只陈述最高优先级 main 根 N 文件；禁止归因断言（§7B 要点 5）
+    expect(text).toContain(
+      `诊断：最高优先级 main 根 [live] ${join(agentDir, 'sessions')}：2 文件。`,
+    )
+    expect(text).not.toContain('真的没有')
+
+    // details 程序化形态
+    const d = r.details as DoctorDetails
+    expect(d.roots.map((x) => x.kind)).toEqual(['live', 'default', 'legacy', 'subagent'])
+    expect(d.roots[0].fileCount).toBe(2)
+    expect(typeof d.roots[0].scanMs).toBe('number')
+    expect(d.roots[1].dedupedInto).toBe('live')
+    expect(d.roots[1].fileCount).toBeUndefined()
+    expect(d.roots[2].fileCount).toBe(1) // legacy 独立实扫
+    // subagent 默认 stat 模式：只列路径与可扫性，无计数
+    expect(d.roots[3].exists).toBe(true)
+    expect(d.roots[3].fileCount).toBeUndefined()
+    expect(d.roots[3].scanMs).toBeUndefined()
+  })
+
+  it('legacy 非空告警：独立非空 → 告警；不存在 → 无告警；与 live 同路径被去重 → 不告警（§5.1）', async () => {
+    // 正态：legacy 独立且非空
+    const { signals } = await buildFourRootFixture()
+    const positive = await handleSessionRead({ action: 'doctor' }, signals)
+    expect(positive.content[0].text).toContain(
+      `告警：[legacy] 根 ${join(tmp, '.xyz-agent-fixture', 'sessions')} 非空（1 文件）`,
+    )
+
+    // 反态：legacy 目录不存在
+    const agentDir2 = join(tmp, 'data2', 'agent')
+    await writeJsonl(join(agentDir2, 'sessions', SLUG, 'a.jsonl'))
+    const negative = await handleSessionRead({ action: 'doctor' }, { agentDir: agentDir2 })
+    expect(negative.content[0].text).not.toContain('告警：')
+
+    // 去重态：live 与 legacy 同路径（文件非空）→ 已去重不告警
+    const dataDir3 = join(tmp, 'data3')
+    const agentDir3 = join(dataDir3, 'agent')
+    await writeJsonl(join(dataDir3, 'sessions', SLUG, 'a.jsonl'))
+    const deduped = await handleSessionRead(
+      { action: 'doctor' },
+      { agentDir: agentDir3, liveSessionDir: join(dataDir3, 'sessions') },
+    )
+    expect(deduped.content[0].text).not.toContain('告警：')
+    expect(deduped.content[0].text).toContain('已去重')
+  })
+
+  it('独立 glob 残留探测：pi/ 含 agent|sessions 形态列出 + 迁移指引；pi.backup-v2-* 备份列出；基点 = dirname(agentDir)', async () => {
+    const dataDir = join(tmp, 'data')
+    const agentDir = join(dataDir, 'agent')
+    await writeJsonl(join(agentDir, 'sessions', SLUG, 'a.jsonl'))
+    // 未迁移旧布局 pi/（含 agent/ 形态）
+    await mkdir(join(dataDir, 'pi', 'agent'), { recursive: true })
+    await writeJsonl(join(dataDir, 'pi', 'agent', 'sessions', 'old.jsonl'), 'old-id')
+    // 迁移备份（含 sessions/ 形态——备份即原 pi/ 改名）
+    const backup = join(dataDir, 'pi.backup-v2-1725900000000')
+    await mkdir(join(backup, 'sessions'), { recursive: true })
+    await writeJsonl(join(backup, 'sessions', 'bak.jsonl'), 'bak-id')
+
+    const r = await handleSessionRead({ action: 'doctor' }, { agentDir })
+    const text = r.content[0].text
+    expect(text).toContain(`旧布局残留探测（基点 ${dataDir}）`)
+    expect(text).toContain(`  - ${join(dataDir, 'pi')}（未迁移旧布局 pi/）`)
+    expect(text).toContain(`  - ${backup}（迁移备份 pi.backup-v2-*）`)
+    // 同一迁移指引（§6.11：doctor 与 u14b 启动探测同指引）
+    expect(text).toContain('👉 关闭应用后运行 scripts/migrate-pi-layout-v2.mjs 完成迁移。')
+
+    const d = r.details as DoctorDetails
+    expect(d.globBase).toBe(dataDir)
+    expect(d.leftovers.map((l) => l.kind).sort()).toEqual(['backup', 'unmigrated'])
+  })
+
+  it('残留探测反态：pi/ 空壳（无 agent|sessions 子目录）不报——防纯 pi 宿主 ~/.pi/pi/ 误报（§6.11 v9.1）', async () => {
+    const dataDir = join(tmp, 'data')
+    const agentDir = join(dataDir, 'agent')
+    await writeJsonl(join(agentDir, 'sessions', SLUG, 'a.jsonl'))
+    // 纯 pi 宿主下任意来源的 pi/ 目录：只有无关子目录，无 agent/ 与 sessions/ 形态
+    await mkdir(join(dataDir, 'pi', 'extensions'), { recursive: true })
+
+    const r = await handleSessionRead({ action: 'doctor' }, { agentDir })
+    expect(r.content[0].text).not.toContain('旧布局残留')
+    expect((r.details as DoctorDetails).leftovers).toEqual([])
+  })
+
+  it('subagent 根默认不扫（只列路径与可扫性）；includeSubagents:true 才扫出文件数（§6.3）', async () => {
+    const { agentDir, signals } = await buildFourRootFixture()
+
+    const def = await handleSessionRead({ action: 'doctor' }, signals)
+    const defSub = (def.details as DoctorDetails).roots.find((x) => x.kind === 'subagent')
+    expect(defSub?.fileCount).toBeUndefined()
+    expect(defSub?.scanMs).toBeUndefined()
+    expect(defSub?.exists).toBe(true)
+    expect(def.content[0].text).toContain('未扫描（subagent 根默认不扫')
+
+    const full = await handleSessionRead({ action: 'doctor', includeSubagents: true }, signals)
+    const fullSub = (full.details as DoctorDetails).roots.find((x) => x.kind === 'subagent')
+    expect(fullSub?.fileCount).toBe(1)
+    expect(fullSub?.exists).toBe(true)
+  })
+
+  it('进程内缓存：同根二次调用命中缓存不重扫；根目录 mtime 变化即失效重扫（§7B 要点 8）', async () => {
+    const agentDir = join(tmp, 'agent')
+    await writeJsonl(join(agentDir, 'sessions', SLUG, 'a.jsonl'))
+    const signals: SessionReadSignals = { agentDir }
+
+    const first = (await handleSessionRead({ action: 'doctor' }, signals)).details as DoctorDetails
+    const firstDef = first.roots.find((x) => x.kind === 'default')!
+    expect(firstDef.cached).toBeUndefined() // 首扫
+    expect(firstDef.fileCount).toBe(1)
+
+    const second = (await handleSessionRead({ action: 'doctor' }, signals)).details as DoctorDetails
+    const secondDef = second.roots.find((x) => x.kind === 'default')!
+    expect(secondDef.cached).toBe(true) // 命中缓存，未重扫
+    expect(secondDef.fileCount).toBe(1)
+
+    // 根目录 mtime 变化（根层新增文件）→ 失效重扫，计数更新
+    await writeJsonl(join(agentDir, 'sessions', 'b.jsonl'), 'bbbbbbbb')
+    const third = (await handleSessionRead({ action: 'doctor' }, signals)).details as DoctorDetails
+    const thirdDef = third.roots.find((x) => x.kind === 'default')!
+    expect(thirdDef.cached).toBeUndefined()
+    expect(thirdDef.fileCount).toBe(2)
+  })
+
+  it('缓存 TTL 到期失效重扫（秒级 TTL，fake timers 推进时钟）', async () => {
+    vi.useFakeTimers()
+    try {
+      const agentDir = join(tmp, 'agent-ttl')
+      await writeJsonl(join(agentDir, 'sessions', SLUG, 'a.jsonl'))
+      const signals: SessionReadSignals = { agentDir }
+      const first = (await handleSessionRead({ action: 'doctor' }, signals))
+        .details as DoctorDetails
+      expect(first.roots.find((x) => x.kind === 'default')!.cached).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(DOCTOR_CACHE_TTL_MS + 1)
+      const second = (await handleSessionRead({ action: 'doctor' }, signals))
+        .details as DoctorDetails
+      // TTL 过期 → 即使 mtime 未变也重扫
+      expect(second.roots.find((x) => x.kind === 'default')!.cached).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('find 不读 doctor 缓存（§7B 要点 8 PS-14）：doctor 缓存 0 文件后新建 session，find 立即可见', async () => {
+    const agentDir = join(tmp, 'agent')
+    // doctor 首跑时 main 根为空 → 缓存 fileCount=0（PS-14 形态：首条 assistant 前 jsonl 不落盘）
+    await mkdir(join(agentDir, 'sessions'), { recursive: true })
+    await handleSessionRead({ action: 'doctor' }, { agentDir })
+    // 之后新 session 落盘
+    await writeJsonl(join(agentDir, 'sessions', SLUG, 'found-later.jsonl'), 'id-find-later-xyz')
+    // find 实扫立即可见——若 find 读 doctor 缓存（0 候选）此断言必红
+    const r = await handleSessionRead({ action: 'find', query: 'id-find-later-xyz' }, agentDir)
+    const d = r.details as { matches: Array<{ sessionId: string }> }
+    expect(d.matches.some((m) => m.sessionId.includes('id-find-later-xyz'))).toBe(true)
+  })
+
+  it('env/bundleUrl 信号缺失降级：仍出环境判定行（standalone-pi · 未知）+ 完整根表，不抛错', async () => {
+    const agentDir = join(tmp, 'agent')
+    await writeJsonl(join(agentDir, 'sessions', SLUG, 'a.jsonl'))
+    // signals 无 env/bundleUrl 字段（u3 旧信号包形态）
+    const r = await handleSessionRead({ action: 'doctor' }, { agentDir })
+    const text = r.content[0].text
+    expect(text).toContain('环境判定：standalone-pi · 发行形态：未知（不猜）')
+    expect(text).toContain('XYZ_AGENT_EXT_LOG=<未设置> → 未命中')
+    expect(text).toContain('会话根（按优先级）')
+    expect(text).toContain('[default]')
+    expect(text).toContain(
+      `诊断：最高优先级 main 根 [default] ${join(agentDir, 'sessions')}：1 文件。`,
+    )
+  })
+
+  it('空 agentDir 防御：无根表、诊断「无候选根」，残留探测不触发（不扫 cwd 相对路径）', async () => {
+    const r = await handleSessionRead({ action: 'doctor' }, { agentDir: '' })
+    const text = r.content[0].text
+    expect(text).toContain('诊断：无候选根')
+    expect(text).not.toContain('[default]')
+    expect((r.details as DoctorDetails).roots).toEqual([])
+    expect((r.details as DoctorDetails).leftovers).toEqual([])
   })
 })

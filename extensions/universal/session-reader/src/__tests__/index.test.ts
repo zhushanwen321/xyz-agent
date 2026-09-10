@@ -148,6 +148,17 @@ describe('sessionReaderExtension - execute 信号包采集（U3：ctx 全形态�
     expect(getSessionDir).toHaveBeenCalledTimes(1)
     expect(r.content[0]?.type).toBe('text')
   })
+
+  it('u8：doctor 经 execute 走通——env/bundleUrl 补采 + ctx===undefined 降级仍出环境判定与根表', async () => {
+    // mock agentDir（/tmp/pi-session-reader-test-agent）及其派生根均不存在 → 根表全空仍渲染；
+    // 残留 glob 基点 = /tmp，只读 readdir（无写操作），不触碰任何真实数据目录。
+    const r = await execute('tc-u8-1', { action: 'doctor' }, undefined, undefined, undefined)
+    const text = r.content[0]?.text as string
+    expect(text).toContain('环境判定：')
+    // bundleUrl 信号已采集：测试内 import.meta.url 为仓库源码路径 → dev（非打包资源目录）
+    expect(text).toContain('发行形态：dev')
+    expect(text).toContain('会话根（按优先级）')
+  })
 })
 
 describe('sessionReaderExtension - session_start TUI 注册', () => {
@@ -287,5 +298,18 @@ describe('sessionReaderExtension - TypeBox schema 与 SessionReadParams 对齐',
     // recursive 非 boolean 被拒
     expect(Check(schema, { action: 'family', session: 'x', recursive: 'yes' })).toBe(false)
     expect(Check(schema, { action: 'family', session: 'x', recursive: 1 })).toBe(false)
+  })
+
+  it('TC-u8-schema-doctor：action enum 含 doctor + includeSubagents optional boolean', () => {
+    const fake = makeFakePi()
+    sessionReaderExtension(fake.pi as unknown as ExtensionAPI)
+    const toolDef = fake.registerTool.mock.calls[0][0] as { parameters: unknown }
+    const schema = toolDef.parameters
+
+    expect(Check(schema, { action: 'doctor' })).toBe(true)
+    expect(Check(schema, { action: 'doctor', includeSubagents: true })).toBe(true)
+    expect(Check(schema, { action: 'doctor', includeSubagents: false })).toBe(true)
+    expect(Check(schema, { action: 'doctor', includeSubagents: 'yes' })).toBe(false)
+    expect(Check(schema, { action: 'doctor', includeSubagents: 1 })).toBe(false)
   })
 })
