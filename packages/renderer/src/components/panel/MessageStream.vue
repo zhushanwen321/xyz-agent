@@ -292,21 +292,22 @@ const scrollEl = ref<HTMLElement | null>(null)
  *  瞬时块 / 旧手写虚拟滚动的 topOffset 通路合并进 virta 内部，不再重复 + 44px。 */
 const topOffset = computed(() => 0)
 
-/**
- * [cw wave w3] virta 末项底部绝对 px（design §4.7）。
- * 瞬时块（compacting/dispatching/fork）absolute 定位的 top 基线——比原手写 totalHeight 更准
- * （virta scrollSize 含实测项高度，未实测项用估算，随 RO 测量持续收敛）。
- *
- * 边界：
- * - vlistRef null（首帧未挂载）→ 0
- * - 空数据（scrollSize=0）→ findItemIndex 返回 -1 → 0
- */
-const vlistBottom = computed(() => {
-  const v = vlistRef.value
-  if (!v || v.scrollSize === 0) return 0
-  const last = v.findItemIndex(v.scrollSize)
-  if (last < 0) return 0
-  return v.getItemOffset(last) + v.getItemSize(last)
+/** [cw wave w3] auto-scroll follow 状态机（design §4.2）+ 末项底部基线：
+ *  - onScroll 接 virta @scroll(offset) 单向翻真 / onWheel 接 scrollEl @wheel 脱离锚定（纯用户信号）
+ *  - followIfStuck rAF 内重读 stickToBottom（INVAR-M4-2，防上滑用户被扯回）
+ *  - vlistBottom 瞬时块定位基线（itemCount 直取末项索引，D1/D6 坐标语义与边界见 useVirtuaFollow.ts）
+ *  virta 是单一 scrollTop owner，应用层只声明「我要 follow 到底」。 */
+const {
+  vlistBottom,
+  showJumpButton,
+  onScroll,
+  onWheel,
+  followIfStuck,
+  followToBottom,
+} = useVirtuaFollow({
+  vlistRef,
+  // [D1] 末项索引直取数据源（= :data 同一 streamItems 基准，索引一致性硬约束见 streamItems 注释）
+  itemCount: () => streamItems.value.length,
 })
 
 /** B2 dev-only 常量漂移检测：ResizeObserver 实测 vs 像素常量，不匹配 console.warn。生产裁剪零开销。
@@ -383,19 +384,6 @@ const { pinnedIndexes } = useStreamingPin({
   sessionId: () => props.sessionId,
   editingTurnKey,
 })
-
-/** [cw wave w3] auto-scroll follow 状态机（重写自旧滚动 composable，design §4.2）。
- *  - onScroll 接 virta @scroll(offset)，只单向翻真（distance≤40 → stickToBottom=true）
- *  - onWheel 接 scrollEl @wheel，deltaY<0 脱离锚定（纯用户信号）
- *  - followIfStuck rAF 内重读 stickToBottom（INVAR-M4-2，防上滑用户被扯回）
- *  virta 是单一 scrollTop owner，应用层只声明「我要 follow 到底」。 */
-const {
-  showJumpButton,
-  onScroll,
-  onWheel,
-  followIfStuck,
-  followToBottom,
-} = useVirtuaFollow({ vlistRef })
 
 /* TurnRail（w4 wave IF4）：状态 + 事件路由下沉 useMessageStreamRail（script ≤300 行规范）。
    railTurns 派生自 renderItems；rail 内部调 useTurnExpansion（与 Turn.vue 各自 per-instance Map，w1 设计）。

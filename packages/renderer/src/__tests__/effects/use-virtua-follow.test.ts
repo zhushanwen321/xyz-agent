@@ -10,8 +10,9 @@
  *
  * mock 策略：不 mount 真实 virtua 组件（happy-dom 下 Virtualizer 行为不可控），
  * 用 createMockVlist 造一个满足 VirtualizerHandle 接口、可断言调用的 mock 对象，
- * 注入 vlistRef。followIfStuck / followToBottom 通过 v.findItemIndex(v.scrollSize)
- * 派生 lastIndex——mock 提供固定 scrollSize/findItemIndex 让结果可预测。
+ * 注入 vlistRef。滚动目标由 itemCount() - 1 直取（D1，chat-pin-bottom-fix）——
+ * 测试注入固定 itemCount 让结果可预测，并断言 findItemIndex 反查（R3 禁用模式）
+ * 不再被调用。
  *
  * fake timers：W1TC7 用 vi.useFakeTimers 控制 rAF（实现用 requestAnimationFrame）。
  * 其余用例不需要 rAF 控制（followIfStuck 调用后立即 advance/flush 或不依赖 rAF 时序），
@@ -79,20 +80,56 @@ describe('useVirtuaFollow (cw wave w1 W1TC1-W1TC9)', () => {
     expect(onStickChange).not.toHaveBeenCalled()
   })
 
-  it('W1TC5 followIfStuck stickToBottom=true 调 scrollToIndex(lastIndex, {align:"end"})', async () => {
-    // 提供可预测的 findItemIndex：scrollSize=1000 → 返回 last index 4
+  it('W1TC5 followIfStuck stickToBottom=true 调 scrollToIndex(itemCount-1, {align:"end"})（D1 索引直取）', async () => {
+    // D1：末项索引 = itemCount() - 1 直取（mock 5 项 → last index 4）；findItemIndex 反查（R3
+    // 禁用模式）不得被调用
     const findItemIndex = vi.fn(() => 4)
     mock = createMockVlist({ scrollSize: 1000, findItemIndex })
     vlistRef.value = mock
-    const { stickToBottom, followIfStuck } = useVirtuaFollow({ vlistRef, onStickChange })
+    const { stickToBottom, followIfStuck } = useVirtuaFollow({
+      vlistRef,
+      itemCount: () => 5,
+      onStickChange,
+    })
     expect(stickToBottom.value).toBe(true)
 
     followIfStuck()
     // 实现用 rAF schedule，flush 后才执行
     await vi.advanceTimersByTimeAsync(16)
 
-    expect(findItemIndex).toHaveBeenCalledWith(1000)
-    expect(mock.scrollToIndex).toHaveBeenCalledWith(4, { align: 'end' })
+    expect(findItemIndex).not.toHaveBeenCalled()
+    expect(mock.scrollToIndex).toHaveBeenCalledWith(4, { align: 'end', offset: 0 })
+  })
+
+  it('W1TC5b endOffset 注入 → scrollToIndex 携带正偏移（D2 尾部块高度补偿）', async () => {
+    mock = createMockVlist({ scrollSize: 1000 })
+    vlistRef.value = mock
+    const { followIfStuck } = useVirtuaFollow({
+      vlistRef,
+      itemCount: () => 5,
+      endOffset: () => 28,
+      onStickChange,
+    })
+
+    followIfStuck()
+    await vi.advanceTimersByTimeAsync(16)
+
+    expect(mock.scrollToIndex).toHaveBeenCalledWith(4, { align: 'end', offset: 28 })
+  })
+
+  it('W1TC5c itemCount=0（空列表）→ 不滚（无末项可滚）', async () => {
+    mock = createMockVlist({ scrollSize: 0 })
+    vlistRef.value = mock
+    const { followIfStuck } = useVirtuaFollow({
+      vlistRef,
+      itemCount: () => 0,
+      onStickChange,
+    })
+
+    followIfStuck()
+    await vi.advanceTimersByTimeAsync(16)
+
+    expect(mock.scrollToIndex).not.toHaveBeenCalled()
   })
 
   it('W1TC6 followIfStuck stickToBottom=false 不调 scrollToIndex，但置 unreadBelow=true（U15 语义）', async () => {
@@ -133,18 +170,22 @@ describe('useVirtuaFollow (cw wave w1 W1TC1-W1TC9)', () => {
     expect(mock.scrollToIndex).not.toHaveBeenCalled()
   })
 
-  it('W1TC8 followToBottom(force=true) 无视 stickToBottom，强制滚到底并翻回 true', () => {
+  it('W1TC8 followToBottom(force=true) 无视 stickToBottom，强制滚到底并翻回 true（D1 索引直取）', () => {
     const findItemIndex = vi.fn(() => 4)
     mock = createMockVlist({ scrollSize: 1000, findItemIndex })
     vlistRef.value = mock
-    const { stickToBottom, followToBottom } = useVirtuaFollow({ vlistRef, onStickChange })
+    const { stickToBottom, followToBottom } = useVirtuaFollow({
+      vlistRef,
+      itemCount: () => 5,
+      onStickChange,
+    })
     stickToBottom.value = false
 
     followToBottom(true)
 
     expect(stickToBottom.value).toBe(true)
-    expect(findItemIndex).toHaveBeenCalledWith(1000)
-    expect(mock.scrollToIndex).toHaveBeenCalledWith(4, { align: 'end' })
+    expect(findItemIndex).not.toHaveBeenCalled()
+    expect(mock.scrollToIndex).toHaveBeenCalledWith(4, { align: 'end', offset: 0 })
     expect(onStickChange).toHaveBeenCalledWith(true)
   })
 
@@ -186,6 +227,41 @@ describe('useVirtuaFollow (cw wave w1 W1TC1-W1TC9)', () => {
       vlistRef.value = mock
       const { showJumpButton } = useVirtuaFollow({ vlistRef, onStickChange })
       expect(showJumpButton.value).toBe(false)
+    })
+  })
+
+  describe('vlistBottom 定位基线（D6，收拢自 MessageStream.vue）', () => {
+    it('① 末项索引直取：getItemOffset(itemCount-1)+getItemSize(itemCount-1)，不调 findItemIndex（R3）', () => {
+      const findItemIndex = vi.fn(() => 4)
+      mock = createMockVlist({
+        scrollSize: 1000,
+        findItemIndex,
+        getItemOffset: vi.fn((i: number) => 100 * i),
+        getItemSize: vi.fn(() => 200),
+      })
+      vlistRef.value = mock
+      const { vlistBottom } = useVirtuaFollow({ vlistRef, itemCount: () => 5, onStickChange })
+
+      expect(vlistBottom.value).toBe(600) // 100*4 + 200
+      expect(mock.getItemOffset).toHaveBeenCalledWith(4)
+      expect(findItemIndex).not.toHaveBeenCalled()
+    })
+
+    it('② 边界：vlistRef 未挂载 / scrollSize=0 / itemCount≤0 → 0', () => {
+      // vlistRef null（beforeEach 初始 null，首帧未挂载）
+      const a = useVirtuaFollow({ vlistRef, itemCount: () => 5, onStickChange })
+      expect(a.vlistBottom.value).toBe(0)
+
+      // 空数据 scrollSize=0
+      mock = createMockVlist({ scrollSize: 0 })
+      vlistRef.value = mock
+      const b = useVirtuaFollow({ vlistRef, itemCount: () => 5, onStickChange })
+      expect(b.vlistBottom.value).toBe(0)
+
+      // 空列表 itemCount=0
+      vlistRef.value = createMockVlist({ scrollSize: 1000 })
+      const c = useVirtuaFollow({ vlistRef, itemCount: () => 0, onStickChange })
+      expect(c.vlistBottom.value).toBe(0)
     })
   })
 })
