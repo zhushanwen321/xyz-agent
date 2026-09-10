@@ -143,6 +143,7 @@ describe("locateSessionFileByPromptHead", () => {
     expect(result.sessionFile).toBeUndefined();
     expect(result.reason).toBe("multiple_matches");
     expect(result.candidateCount).toBe(2);
+    expect(result.candidateTotalKnown).toBe(true);
   });
 
   it("多命中（头部键失效面）：头部 200 字符相同、尾部不同 → 仍放弃", () => {
@@ -169,6 +170,7 @@ describe("locateSessionFileByPromptHead", () => {
     expect(result.sessionFile).toBeUndefined();
     expect(result.reason).toBe("candidate_limit");
     expect(result.candidateCount).toBe(MAX_SCAN_CANDIDATES + 1);
+    expect(result.candidateTotalKnown).toBe(true); // 收集跑完：计数即候选总数
   });
 
   it("降级门：单次扫描耗时 > SCAN_TIME_BUDGET_MS → time_budget", () => {
@@ -184,6 +186,67 @@ describe("locateSessionFileByPromptHead", () => {
 
     expect(result.sessionFile).toBeUndefined();
     expect(result.reason).toBe("time_budget");
+  });
+
+  it("[U-A4] 时间门在收集循环内早退：candidateCount 只是部分计数，candidateTotalKnown=false", () => {
+    // 5 个候选；时钟在第 2 次读钟后超预算（第 1 个候选已入列，其余未 stat）
+    const CANDIDATES = 5;
+    for (let i = 0; i < CANDIDATES; i++) writeSessionFile(`partial-${i}.jsonl`, "同模板任务 prompt");
+    let ticks = 0;
+    const now = (): number => {
+      ticks++;
+      return ticks <= 2 ? WINDOW_START : WINDOW_START + SCAN_TIME_BUDGET_MS + 1;
+    };
+
+    const result = locateSessionFileByPromptHead(scanInput({ prompt: "同模板任务 prompt" }), { now });
+
+    expect(result.reason).toBe("time_budget");
+    // 关键语义：计数是「扫到早退点为止」的部分值，绝不是窗口内候选总数
+    expect(result.candidateTotalKnown).toBe(false);
+    expect(result.candidateCount).toBeLessThan(CANDIDATES);
+    expect(fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"))).toHaveLength(CANDIDATES);
+  });
+
+  it("[U-A4] 时间门在匹配阶段（收集已跑完）早退：candidateCount 仍是候选总数（known=true）", () => {
+    // 2 个候选都不含 prompt（匹配阶段才超预算）；tick1=start / tick2-3=收集 / tick4-5=匹配
+    writeSessionFile("m-a.jsonl", "无关任务 A");
+    writeSessionFile("m-b.jsonl", "无关任务 B");
+    let ticks = 0;
+    const now = (): number => {
+      ticks++;
+      return ticks <= 4 ? WINDOW_START : WINDOW_START + SCAN_TIME_BUDGET_MS + 1;
+    };
+
+    const result = locateSessionFileByPromptHead(scanInput({ prompt: "本 run 的 prompt" }), { now });
+
+    expect(result.reason).toBe("time_budget");
+    expect(result.candidateCount).toBe(2);
+    expect(result.candidateTotalKnown).toBe(true);
+  });
+
+  it("[U-A4] 收集阶段 fs 异常（readdir 抛）：计数同样非总数（known=false）", () => {
+    const result = locateSessionFileByPromptHead(scanInput({ sessionDir: join(dir, "missing-dir") }));
+
+    expect(result.reason).toBe("fs_error");
+    expect(result.candidateCount).toBe(0);
+    expect(result.candidateTotalKnown).toBe(false);
+  });
+
+  it("[U-A4] 匹配阶段 fs 异常（头读前候选消失）：收集已跑完 → known=true", () => {
+    const filePath = writeSessionFile("vanish-late.jsonl", "任务 prompt");
+    let ticks = 0;
+    const now = (): number => {
+      ticks++;
+      // tick1=start / tick2=收集（候选入列）/ tick3=匹配阶段读钟前删文件
+      if (ticks === 3) fs.rmSync(filePath, { force: true });
+      return WINDOW_START;
+    };
+
+    const result = locateSessionFileByPromptHead(scanInput({ prompt: "任务 prompt" }), { now });
+
+    expect(result.reason).toBe("fs_error");
+    expect(result.candidateCount).toBe(1);
+    expect(result.candidateTotalKnown).toBe(true);
   });
 
   it("坏行容错：截断 JSON / 非法 UTF8 候选不拖垮扫描，好候选仍命中", () => {

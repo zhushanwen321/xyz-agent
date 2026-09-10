@@ -4,6 +4,9 @@
 // §3.3 决策 2 / §4 V3 / §5.2 K1-K2）：
 //   - V3：spawn 期 get_state 三轮全部不应答（原事故的现实形态）+ agent_end 时刻恢复
 //     应答 → outcome.sessionFile 非空，且恢复耗时 ≤1s（LAZY_GET_STATE_TIMEOUT_MS 上界）；
+//   - [U-A3] 回补**也不应答**（超时路径）：agent_end 起 1s 假时钟内 run 必收敛——真正
+//     测量控制面单请求（秒级）的收敛上界（V3 用例走的是「应答先到」路径，把
+//     LAZY_GET_STATE_TIMEOUT_MS 放大到 10s/100s 它照样绿，约束不了该上界）；
 //   - 回补链抛错（reject / 同步 throw）→ killChild 在 finally 必达（R1 MF-2）；
 //   - endedCleanly 在同步段先置（回补启动前已 true），回补失败不改写该标记；
 //   - K1：回补接线走 identity tracker 既有 addStateListener → applyGetStateFields →
@@ -51,6 +54,7 @@ import { resetAllEpipeFailures } from "../stdin-writer.ts";
  *  prompt 已到且收到第 3 次 get_state（spawn 期三轮耗尽）后发 agent_end；agent_end
  *  之后的 get_state 才应答「仅此路径可见」的 LATE_FILE/LATE_ID——断言该值即证明身份
  *  来自 agent_end 回补而非 spawn 期握手。
+ *  no-answer：get_state 全程不应答（spawn 三轮 + agent_end 回补都不应答）——超时路径形态。
  *  self-exit：prompt 即发事件流 + agent_end，随后自行退出（回补窗口内进程自行退出）。
  */
 const FAKE_PI_SCRIPT = `
@@ -65,7 +69,7 @@ const sessionDirArg = (() => {
 const LATE_FILE = sessionDirArg + "/late-backfill-20260910.jsonl";
 const LATE_ID = "late-backfill-sess";
 const STATUS = process.env.FAKE_PI_STATUS;
-const status = { getStateCount: 0, withheldBeforeAgentEnd: 0, answersAfterAgentEnd: 0, agentEndSent: false, prompts: 0 };
+const status = { getStateCount: 0, withheldBeforeAgentEnd: 0, withheldAfterAgentEnd: 0, answersAfterAgentEnd: 0, agentEndSent: false, prompts: 0 };
 const flush = () => { if (STATUS) fs.writeFileSync(STATUS, JSON.stringify(status)); };
 flush();
 let promptSeen = false;
@@ -85,9 +89,11 @@ rl.on("line", (line) => {
   try { msg = JSON.parse(line); } catch { return; }
   if (msg.type === "get_state") {
     status.getStateCount++;
-    if (status.agentEndSent && mode !== "self-exit") {
+    if (status.agentEndSent && mode === "backfill") {
       status.answersAfterAgentEnd++;
       send({ type: "response", command: "get_state", success: true, id: msg.id, data: { sessionFile: LATE_FILE, sessionId: LATE_ID } });
+    } else if (status.agentEndSent) {
+      status.withheldAfterAgentEnd++;
     } else {
       status.withheldBeforeAgentEnd++;
     }
@@ -109,6 +115,7 @@ rl.on("line", (line) => {
 interface ChildStatus {
   getStateCount: number;
   withheldBeforeAgentEnd: number;
+  withheldAfterAgentEnd: number;
   answersAfterAgentEnd: number;
   agentEndSent: boolean;
   prompts: number;
@@ -289,6 +296,64 @@ describe("M2 agent_end 惰性回补", () => {
         prompts: 1,
       });
       expect(readStatus(h)?.agentEndSent).toBe(true);
+    } finally {
+      restoreHarness(h);
+    }
+  }, 30_000);
+
+  it("[U-A3] 回补也不应答（超时路径）：agent_end 起 1s 假时钟内 run 必收敛，真正测量 ≤1s 上界", async () => {
+    // 既有 V3 用例验的是「应答先到」路径（LAZY_GET_STATE_TIMEOUT_MS 放大到 10s/100s
+    // 它照样绿——约束不了 1s 上界）。本用例对端在 agent_end 后同样扣住应答，run 的收敛
+    // 只能由回补超时（控制面单请求，秒级）驱动：断言「agent_end 起 1s 假时钟内 settle」，
+    // 值域锚定规则 19 的控制面单请求量级。
+    const h = makeHarness("no-answer");
+    vi.useFakeTimers();
+    try {
+      const recordId = "rec-no-answer";
+      const runPromise = runSpawnOnce(baseParams(h, { recordId }), callbacksOf(h));
+      let settled = false;
+      const tracked = runPromise.then(
+        (r) => {
+          settled = true;
+          return r;
+        },
+        (e: unknown) => {
+          settled = true;
+          throw e;
+        },
+      );
+
+      // 阶段 1：推进到子进程发出 agent_end（spawn 期三轮握手全部被扣住）。
+      // 状态文件读取在子进程写入瞬间可能读到半截 JSON（readStatus 返回 undefined）——
+      // 以「完整解析出 agentEndSent」为跳出条件并留档，避免随后重读踩写窗口。
+      let statusAtAgentEnd: ChildStatus | undefined;
+      for (let i = 0; i < 1500 && !settled; i++) {
+        await vi.advanceTimersByTimeAsync(FAKE_STEP_MS);
+        const status = readStatus(h);
+        if (status?.agentEndSent === true) {
+          statusAtAgentEnd = status;
+          break;
+        }
+        await realSleep(1);
+      }
+      expect(statusAtAgentEnd?.agentEndSent).toBe(true);
+      expect(settled).toBe(false); // 回补尚未超时：run 必须还在等
+
+      // 阶段 2：agent_end 起 ≤1s 假时钟内必须收敛（回补超时上界；更大即超时值域失守）
+      await vi.advanceTimersByTimeAsync(1_000);
+      for (let i = 0; i < 400 && !settled; i++) await realSleep(5); // 真实 close I/O 收敛
+      expect(settled).toBe(true);
+
+      const result: SpawnRunResult = await tracked;
+      expect(result.success).toBe(true); // endedCleanly（同步段置位）→ exit 0 口径
+      expect(result.sessionFile).toBeUndefined(); // 回补 miss（对端全程不应答）
+      expect(result.sessionId).toBeUndefined();
+      // 走过的确实是超时路径而非「应答先到」：agent_end 后的 get_state 一条都没被应答
+      expect(readStatus(h)).toMatchObject({
+        getStateCount: SPAWN_HANDSHAKE_ROUNDS + 1, // 3 轮握手 + 1 次 agent_end 回补
+        answersAfterAgentEnd: 0,
+        withheldAfterAgentEnd: 1,
+      });
     } finally {
       restoreHarness(h);
     }

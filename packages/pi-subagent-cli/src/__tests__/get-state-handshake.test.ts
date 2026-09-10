@@ -18,19 +18,36 @@ import { describe, expect, it, vi } from "vitest";
 import { performGetStateHandshake, requestGetStateOnce } from "../get-state-handshake.ts";
 import type { ChildProcess } from "node:child_process";
 
-/** 最小 FakeChild：只需 stdin.write 行为（成功 / 可注入同步 throw）。 */
-function makeFakeStdin(behavior?: { throwOnWrite?: Error }): { child: ChildProcess; writes: string[] } {
+/**
+ * 最小 FakeChild：只需 stdin.write 行为（成功 / 可注入同步 throw）。
+ *
+ * @param behavior.throwOnWriteTimes 前 N 次调用抛错（缺省 = 每次都抛）；
+ *        抛错调用不记入 writes（writes = 成功写出的行）。
+ */
+function makeFakeStdin(behavior?: { throwOnWrite?: Error; throwOnWriteTimes?: number }): { child: ChildProcess; writes: string[] } {
   const writes: string[] = [];
+  let calls = 0;
   const child = {
     stdin: {
       write(line: string): boolean {
-        if (behavior?.throwOnWrite) throw behavior.throwOnWrite;
+        calls++;
+        if (
+          behavior?.throwOnWrite &&
+          (behavior.throwOnWriteTimes === undefined || calls <= behavior.throwOnWriteTimes)
+        ) {
+          throw behavior.throwOnWrite;
+        }
         writes.push(line);
         return true;
       },
     },
   } as unknown as ChildProcess;
   return { child, writes };
+}
+
+/** EPIPE 形态的 stdin 同步写失败（stdin-writer.ts writeStdinLine rethrow 的错误形状）。 */
+function epipeError(): Error {
+  return Object.assign(new Error("write after end"), { code: "EPIPE" });
 }
 
 /** 可控的监听表：模拟 stdout pump 的 get_stateListeners（注册返回注销函数）。 */
@@ -103,8 +120,7 @@ describe("requestGetStateOnce（[T1/RC-1] 惰性回补单次请求）", () => {
   it("stdin 同步写失败（EPIPE code，writeStdinLine rethrow 路径）→ 立即 resolve 空对象、永不 reject", async () => {
     // writeStdinLine 只对 code 为 EPIPE / ERR_STREAM_DESTROYED 的错误 rethrow（[R3]），
     // requestGetStateOnce 的 catch 捕获后按「回补失败」resolve 空对象（同超时语义）。
-    const epipeErr = Object.assign(new Error("write after end"), { code: "EPIPE" });
-    const { child } = makeFakeStdin({ throwOnWrite: epipeErr });
+    const { child } = makeFakeStdin({ throwOnWrite: epipeError() });
     const reg = makeListenerRegistry();
 
     await expect(requestGetStateOnce(child, reg.add, 1000)).resolves.toEqual({});
@@ -218,6 +234,58 @@ describe("performGetStateHandshake（FR-4 重试握手）", () => {
       await vi.advanceTimersByTimeAsync(7_000);
       await expect(promise).resolves.toEqual({});
       expect(writes).toHaveLength(3); // MAX_RETRIES 次请求
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sendGetStateCommand 抛错（stdin EPIPE）：按「本轮未应答」处理——3 轮耗尽必 settle，不 reject 也不逃逸", async () => {
+    // [U-A1] 抛错路径的两条后果都必须消除：① 首轮经 promise executor 逃出 → reject；
+    // ② 重试轮经 setTimeout 回调进入 → 逃出即宿主 uncaughtException（比悬挂更糟）。
+    // 本用例三轮全部同步抛错：断言 promise resolve（非 reject）、3 次尝试后 settle，
+    // 且抛错轮不注册监听（无请求在途）。
+    vi.useFakeTimers();
+    try {
+      const { child } = makeFakeStdin({ throwOnWrite: epipeError() });
+      const reg = makeListenerRegistry();
+
+      let settled = false;
+      const promise = performGetStateHandshake(child, reg.add);
+      void promise.then(() => {
+        settled = true;
+      });
+
+      // 2 轮间隔 500ms（RETRY_INTERVAL_MS）——抛错路径不设 2s timer，1.5s 足够跑满 3 轮
+      await vi.advanceTimersByTimeAsync(1_500);
+
+      await expect(promise).resolves.toEqual({});
+      expect(settled).toBe(true);
+      expect(reg.resolvers.size).toBe(0); // 抛错轮未发出请求 → 无监听注册
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("首轮抛错后恢复：第 2 轮照发且应答带 sessionFile → 握手成功 resolve（抛错不吞后续轮次）", async () => {
+    vi.useFakeTimers();
+    try {
+      const { child, writes } = makeFakeStdin({ throwOnWrite: epipeError(), throwOnWriteTimes: 1 });
+      const reg = makeListenerRegistry();
+
+      const promise = performGetStateHandshake(child, reg.add);
+      expect(reg.resolvers.size).toBe(0); // 首轮抛错：未发出请求
+
+      // 500ms 后第 2 轮照发（抛错只吞掉本轮，不改写轮次节奏）
+      await vi.advanceTimersByTimeAsync(500);
+      expect(writes).toHaveLength(1);
+      const sent = JSON.parse(writes[0]!) as { id: string; type: string };
+      expect(sent.type).toBe("get_state");
+
+      reg.resolvers.get(sent.id)?.({ sessionFile: "/tmp/sessions/recovered.jsonl", sessionId: "sess-recover" });
+      await expect(promise).resolves.toEqual({
+        sessionFile: "/tmp/sessions/recovered.jsonl",
+        sessionId: "sess-recover",
+      });
     } finally {
       vi.useRealTimers();
     }

@@ -37,6 +37,8 @@ import type { AgentEvent } from "@zhushanwen/subagent-engine-sdk";
 /** fake pi 脚本：stdin JSONL 命令 → stdout JSONL 事件（pi rpc mode 行为模拟）。 */
 const FAKE_PI_SCRIPT = `
 import readline from "node:readline";
+import fs from "node:fs";
+import { join } from "node:path";
 const mode = process.env.FAKE_PI_MODE ?? "success";
 const send = (obj) => { process.stdout.write(JSON.stringify(obj) + "\\n"); };
 process.stderr.write("fake-pi stderr boot\\n");
@@ -56,6 +58,11 @@ rl.on("line", (line) => {
   try { msg = JSON.parse(line); } catch { return; }
   if (msg.type === "extension_ui_response") return;
   if (msg.type === "get_state") {
+    if (mode === "id-only") {
+      // V2 契约形态：应答只带 sessionId（缺 sessionFile）→ 握手视同未应答（走满 3 轮）
+      send({ type: "response", command: "get_state", success: true, id: msg.id, data: { sessionId: SESSION_ID } });
+      return;
+    }
     if (mode === "header") {
       const file = sessionDirArg + "/2026-09-10T01-02-03-000Z_hdr-sess.jsonl";
       send({ type: "response", command: "get_state", success: true, id: msg.id, data: { sessionFile: file, sessionId: "hdr-sess" } });
@@ -67,6 +74,18 @@ rl.on("line", (line) => {
   if (msg.type !== "prompt") return;
   if (mode === "exit-3") { process.exit(3); return; }
   if (mode === "hang") { setInterval(() => {}, 1000); return; }
+  if (mode === "id-only") {
+    // 落一个 <ts>_<sessionId>.jsonl（LC-4 后缀反查目标）；内容刻意不含任务 prompt
+    // ——M4 prompt 键扫不到，命中来源因此可归因到 LC-4。
+    fs.writeFileSync(
+      join(sessionDirArg, "20260910T010101_" + SESSION_ID + ".jsonl"),
+      JSON.stringify({ type: "message", id: "e1", parentId: null, timestamp: "2026-09-10T01:01:01.000Z",
+        message: { role: "user", content: [{ type: "text", text: "另一个 session 的历史内容" }] } }) + "\\n",
+    );
+    send({ type: "message_end", message: { stopReason: "stop" } });
+    send({ type: "agent_end", willRetry: false, reason: "end_turn" });
+    return;
+  }
   if (mode === "stop-aborted") {
     send({ type: "message_end", message: { stopReason: "aborted", errorMessage: "aborted by user" } });
     send({ type: "agent_end", willRetry: false, reason: "aborted" });
@@ -256,6 +275,29 @@ describe("runSpawnOnce 集成（fake pi 子进程）", () => {
       restoreHarness(h);
     }
   }, 15_000);
+
+  it("V2 契约（M1 打通的组合）：get_state 只回 sessionId → 3 轮耗尽带 sessionId → close 后 sessionFile 经 LC-4 落位", async () => {
+    const h = await makeHarness("id-only");
+    try {
+      const result: SpawnRunResult = await runSpawnOnce(baseParams(h), callbacksOf(h));
+      const lc4File = join(h.sessionDir, "20260910T010101_fake-sess-1.jsonl");
+
+      expect(fs.existsSync(lc4File)).toBe(true);
+      expect(result.success).toBe(true);
+      // 握手三轮应答都缺 sessionFile（S2 契约：视同未应答 → 3 轮耗尽 resolve 已收集字段）
+      // → 身份只有 sessionId；sessionFile 只可能来自 close 期的 LC-4 后缀反查
+      //（文件内容不含任务 prompt → M4 prompt 键必然 miss，命中来源可归因）
+      expect(result.sessionId).toBe("fake-sess-1");
+      expect(result.sessionFile).toBe(lc4File);
+      // handleReady 恰一次且携带 sessionFile：spawn 期应答无 sessionFile（不发通知），
+      // 故这一条只能由 close 期的 LC-4 落位产生 ——「只在 close 后发一次」
+      expect(h.handleReady).toEqual([
+        { sessionRef: { sessionId: "fake-sess-1", sessionFile: lc4File }, poolKey: "shared" },
+      ]);
+    } finally {
+      restoreHarness(h);
+    }
+  }, 20_000);
 
   it("失败退出（exit 3）→ success=false + 结构化 error + unknown 分诊", async () => {
     const h = await makeHarness("exit-3");

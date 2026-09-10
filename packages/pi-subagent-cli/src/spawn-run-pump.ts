@@ -12,7 +12,7 @@ import { getLogger, pumpNdjsonLines } from "@zhushanwen/subagent-engine-sdk";
 import { unregisterActiveChild } from "./active-children.ts";
 import { toErrorMessage } from "./error-message.ts";
 import { extractGetStateFields, type GetStateResult } from "./get-state-handshake.ts";
-import { locateSessionFileByPromptHead } from "./session-file-locator.ts";
+import { locateSessionFileByPromptHead, type SessionFileScanResult } from "./session-file-locator.ts";
 import {
   deriveSessionFilePath,
   findSessionFileByHeaderId,
@@ -120,9 +120,14 @@ export function createSessionIdentityTracker(
     },
     applyGetStateFields,
     fallbackSessionFileByHeaderId() {
-      if (sessionFile === undefined && sessionId !== undefined) {
-        sessionFile = findSessionFileByHeaderId(sessionDir, sessionId);
-      }
+      if (sessionFile !== undefined || sessionId === undefined) return;
+      const found = findSessionFileByHeaderId(sessionDir, sessionId);
+      if (found === undefined) return;
+      // 走既有回填面（与 M2 回补 / M4 采纳同一条路）：sessionFile 落位（collectOutcome
+      // 的 outcome.sessionFile 生效）+ handleReady 通知宿主回写 record——chat 域的 run
+      // 在 agent_settled 已应答，close 兜底是 record 补 transcript 锚点的最后时机，
+      // 与 M4 采纳面保持一致（只补 sessionFile，sessionId 已知不再变更）。
+      applyGetStateFields({ sessionFile: found });
     },
     clearStateListeners() {
       stateListeners.clear();
@@ -220,6 +225,16 @@ function normalizeExitCode(
 }
 
 /**
+ * 放弃诊断里的候选数渲染（U-A4）：时间门/收集期异常打断时 candidateCount 只是
+ * **部分计数**，窗口总数未知——必须写明，否则 warn 会让人误判「窗口内候选很少」。
+ */
+export function formatCandidateCount(scan: Pick<SessionFileScanResult, "candidateCount" | "candidateTotalKnown">): string {
+  return scan.candidateTotalKnown
+    ? `candidates=${scan.candidateCount}`
+    : `candidates=${scan.candidateCount} so far (collection aborted: window total unknown)`;
+}
+
+/**
  * M4 close 兜底（设计决策 4）：LC-4 之后 sessionFile 仍缺时的第五路获取——按任务
  * prompt 头部键扫 sessionDir（mtime 窗口 + 首 64KB 头读 + 单命中才采纳）。
  *
@@ -249,7 +264,7 @@ function recoverSessionFileByPromptHead(deps: StdoutPumpDeps): void {
       const errorSuffix = scan.errorMessage !== undefined ? `, error=${scan.errorMessage}` : "";
       logger.warn(
         `[sessionfile] unobtainable for ${recordId} (M4 prompt-head scan gave up: reason=${scan.reason}, ` +
-          `candidates=${scan.candidateCount}, promptHeadHash=${scan.promptHeadHash}${errorSuffix}); ` +
+          `${formatCandidateCount(scan)}, promptHeadHash=${scan.promptHeadHash}${errorSuffix}); ` +
           `record finalized without transcript anchor. Recovery: archive the session file via session-reader by sessionDir mtime window, or re-dispatch the task.`,
       );
       return;
@@ -269,23 +284,46 @@ function recoverSessionFileByPromptHead(deps: StdoutPumpDeps): void {
   }
 }
 
-/** close/exit 收尾：监听表清理 + tee 关闭 + 镜像上报 + LC-4 反查 + M4 兜底扫描 + 退出码折算 resolve。 */
+/**
+ * close/exit 收尾：监听表清理 + tee 关闭 + 镜像上报 + LC-4 反查 + M4 兜底扫描 + 退出码折算 resolve。
+ *
+ * 必达契约（U-A5，G1 破口）：链上任一步抛错都不许跳过后续步骤，尤其不许跳过
+ * `resolveExit`——`reportChildExited` 直调宿主回调（server 组帧链）且原先无包裹，
+ * 宿主回调抛出即让 LC-4/M4 与 resolveExit 全部丢失 = run 永挂（G1 要根除的形态）。
+ * 故每步独立 best-effort（单个步骤抛错只降级该步并 warn 留痕），resolveExit 放
+ * finally 必达区；异常也不得逃出 close 监听器（逃出即宿主 uncaughtException）。
+ */
 function createCloseFinalizer(
   deps: StdoutPumpDeps,
   resolveExit: (code: number) => void,
 ): (code: number | null, signal: NodeJS.Signals | null) => void {
   const { child, recordId, callbacks, identity, stderrTee, runEnd } = deps;
+  const bestEffort = (step: string, fn: () => void): void => {
+    try {
+      fn();
+    } catch (err) {
+      logger.warn(
+        `[session-runner] close finalizer step '${step}' failed for ${recordId} `
+          + `(degraded; remaining steps and resolveExit still run)`,
+        { detail: toErrorMessage(err) },
+      );
+    }
+  };
   return (code, signal) => {
-    identity.clearStateListeners();
-    stderrTee?.close();
-    unregisterActiveChild(recordId, child);
-    reportChildExited(child, recordId, callbacks, code, signal);
-    identity.fallbackSessionFileByHeaderId();
-    // M4（设计决策 4）：LC-4 之后仍缺 → prompt 头部键扫描（不抛错，resolveExit 必达）
-    recoverSessionFileByPromptHead(deps);
-    // agent_end 主动终结的 close 是正常完成（exit code 0 口径）；其余信号退出
-    // 保持 128+ 折算（异常路径判据）。
-    resolveExit(normalizeExitCode(runEnd.endedCleanly, code, signal));
+    try {
+      bestEffort("clearStateListeners", () => identity.clearStateListeners());
+      bestEffort("stderrTee.close", () => stderrTee?.close());
+      bestEffort("unregisterActiveChild", () => unregisterActiveChild(recordId, child));
+      // 宿主回调（onChildStateChanged → server 组帧链）：抛错不得阻断下面的兜底链
+      bestEffort("reportChildExited", () => reportChildExited(child, recordId, callbacks, code, signal));
+      bestEffort("LC-4 suffix lookup", () => identity.fallbackSessionFileByHeaderId());
+      // M4（设计决策 4）：LC-4 之后仍缺 → prompt 头部键扫描（必达区内的最后一路兜底）
+      bestEffort("M4 prompt-head scan", () => recoverSessionFileByPromptHead(deps));
+    } finally {
+      // agent_end 主动终结的 close 是正常完成（exit code 0 口径）；其余信号退出
+      // 保持 128+ 折算（异常路径判据）。resolveExit 无条件必达。
+      resolveExit(normalizeExitCode(runEnd.endedCleanly, code, signal));
+    }
   };
 }
 

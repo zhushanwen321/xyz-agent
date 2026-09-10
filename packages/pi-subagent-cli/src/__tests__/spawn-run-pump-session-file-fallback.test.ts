@@ -27,6 +27,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SpawnRunCallbacks } from "../spawn-runner.ts";
 import {
   createSessionIdentityTracker,
+  formatCandidateCount,
   wireChildStdoutPump,
   type SessionFileFallbackInput,
   type SessionIdentityTracker,
@@ -255,6 +256,41 @@ describe("close finalizer M4 兜底扫描接线", () => {
     const warns = sessionFileWarnings();
     expect(warns).toHaveLength(1);
     expect(warns[0]).toContain("M4 prompt-head scan not wired");
+  });
+
+  it("[U-A5] 宿主回调 onChildStateChanged 抛错：不逃出 close 监听器，resolveExit 必达且 LC-4/M4 兜底链不被跳过", async () => {
+    const prompt = "宿主回调抛错任务 prompt";
+    const filePath = writeSessionFile("host-throw.jsonl", prompt);
+    const h = wirePump(
+      dir,
+      { prompt, spawnStartedAtMs: WINDOW_START, sessionDir: dir },
+      {
+        onChildStateChanged: () => {
+          throw new Error("宿主镜像回调抛错（模拟 server 组帧链失败）");
+        },
+      },
+    );
+
+    // 原实现：异常从 close 监听器逃出（本行即抛）且 M4/resolveExit 双双被跳过 → run 永挂
+    h.fireClose(0);
+    const exitCode = await h.exitPromise;
+
+    expect(exitCode).toBe(0); // resolveExit 必达 + 正常折算（endedCleanly=true）
+    expect(h.identity.sessionFile).toBe(filePath); // M4 扫描仍执行（必达区）
+    const warns = sessionFileWarnings();
+    expect(warns.some((w) => w.includes("recovered for rec-m4-test by M4 prompt-head scan"))).toBe(true);
+    // 降级留痕（非 [sessionfile] 前缀，不经过 sessionFileWarnings）
+    const allWarnText = logs.filter((l) => l.level === "warn").map((l) => l.message);
+    expect(allWarnText.some((w) => w.includes("close finalizer step 'reportChildExited' failed for rec-m4-test"))).toBe(true);
+  });
+
+  it("[U-A4] 放弃诊断的候选数渲染：完整计数 = candidates=N；部分计数显式写明 so far + 总数未知", () => {
+    // 完整收集（上限门/多命中/收集后异常）：直接报数，诊断方按「窗口内候选总数」读
+    expect(formatCandidateCount({ candidateCount: 3, candidateTotalKnown: true })).toBe("candidates=3");
+    // 收集被时间门/readdir 打断：不得把部分计数冒充候选总数
+    const partial = formatCandidateCount({ candidateCount: 3, candidateTotalKnown: false });
+    expect(partial).toBe("candidates=3 so far (collection aborted: window total unknown)");
+    expect(partial).not.toBe("candidates=3");
   });
 
   it("agent_end 未置位（信号退出）：退出码仍按 128+ 折算，扫描逻辑不改变退出码口径", async () => {

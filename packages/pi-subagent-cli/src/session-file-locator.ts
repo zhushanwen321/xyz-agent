@@ -79,8 +79,16 @@ export interface SessionFileScanResult {
   sessionFile: string | undefined;
   /** 放弃原因（采纳命中时 undefined）。 */
   reason: SessionFileScanGiveUpReason | undefined;
-  /** mtime 入窗的候选数（触发上限门时 = 实际候选总数）。 */
+  /**
+   * 已收集到的 mtime 入窗候选数。
+   * - 收集阶段跑完（no_candidates / candidate_limit / 匹配阶段的判定与 time_budget、
+   *   收集完成后的 fs 异常）→ = 窗口内候选总数（candidateTotalKnown=true）；
+   * - 收集阶段被时间门打断 / readdir 抛错 → 只是到中断点为止的**部分计数**，
+   *   窗口总数未知（candidateTotalKnown=false，warn 不得把它呈现为候选总数）。
+   */
   candidateCount: number;
+  /** candidateCount 是否为窗口内候选总数（false = 收集被中断，总数未知）。 */
+  candidateTotalKnown: boolean;
   /** 采纳命中审计证据：候选文件名 + mtime（误配事后定位用）。 */
   matchedFileName: string | undefined;
   matchedMtimeMs: number | undefined;
@@ -139,10 +147,16 @@ export function locateSessionFileByPromptHead(
   const promptHeadHash = createHash("sha256").update(promptHead).digest("hex").slice(0, PROMPT_HEAD_HASH_CHARS);
 
   const candidates: ScanCandidate[] = [];
-  const giveUp = (reason: SessionFileScanGiveUpReason): SessionFileScanResult => ({
+  /** 收集阶段是否跑完（决定 candidateTotalKnown：被打断时计数只是部分值）。 */
+  let collectionComplete = false;
+  const giveUp = (
+    reason: SessionFileScanGiveUpReason,
+    candidateTotalKnown = true,
+  ): SessionFileScanResult => ({
     sessionFile: undefined,
     reason,
     candidateCount: candidates.length,
+    candidateTotalKnown,
     matchedFileName: undefined,
     matchedMtimeMs: undefined,
     promptHeadHash,
@@ -152,6 +166,7 @@ export function locateSessionFileByPromptHead(
     sessionFile: matched.path,
     reason: undefined,
     candidateCount: candidates.length,
+    candidateTotalKnown: true,
     matchedFileName: matched.name,
     matchedMtimeMs: matched.mtimeMs,
     promptHeadHash,
@@ -168,7 +183,10 @@ export function locateSessionFileByPromptHead(
     // mtime 过滤（窗口 [spawnStartedAtMs, closeAtMs] 含边界）；任一 fs 异常向上抛
     // → 整体 catch 放弃（设计 §3.4：stat 抛错不做候选级吞，保守安全）
     for (const entry of entries) {
-      if (now() - startMs > SCAN_TIME_BUDGET_MS) return giveUp("time_budget");
+      // 时间门早退在收集循环内：此时 candidates 只是部分计数，窗口总数未知——
+      // 显式标 candidateTotalKnown=false（warn 须写明「so far」，不得让诊断方
+      // 误以为窗口内候选只有这么少）
+      if (now() - startMs > SCAN_TIME_BUDGET_MS) return giveUp("time_budget", false);
       if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
       const filePath = join(input.sessionDir, entry.name);
       const mtimeMs = fs.statSync(filePath).mtimeMs;
@@ -176,6 +194,7 @@ export function locateSessionFileByPromptHead(
         candidates.push({ name: entry.name, path: filePath, mtimeMs });
       }
     }
+    collectionComplete = true;
 
     if (candidates.length === 0) return giveUp("no_candidates");
     if (candidates.length > MAX_SCAN_CANDIDATES) return giveUp("candidate_limit");
@@ -192,6 +211,7 @@ export function locateSessionFileByPromptHead(
     if (matched === undefined) return giveUp("no_match");
     return adopt(matched);
   } catch (err) {
-    return { ...giveUp("fs_error"), errorMessage: toErrorMessage(err) };
+    // 收集阶段中断（readdir 抛 / stat 抛）→ 计数非总数；匹配阶段抛（头读）→ 收集已完
+    return { ...giveUp("fs_error", collectionComplete), errorMessage: toErrorMessage(err) };
   }
 }
