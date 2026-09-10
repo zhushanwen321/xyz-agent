@@ -58,6 +58,7 @@ bash scripts/validate-runtime-bundle.sh    # runtime bundle 深度验证
 
 - 多实例坑：打包版太极.app 可能同跑（占 3210）；dev renderer 在 9222、runtime 在 3310。连错看到旧代码——先确认 `list-pages` URL 是 `localhost:1420`
 - runtime 改动不热重载（tsx 非 watch）：改 runtime 源码必须重启 `pnpm dev`；renderer 走 vite HMR
+- **staged 引擎副本 dev 恒重建 [F7]**：dev 的 subagent 引擎加载 gitignored 产物 `apps/electron/resources/engines/<id>/index.js`（非源码——extensions 走源码但引擎没有 dev/build 分流）；`pnpm dev` 启动链已前置 `bundle-extensions.mjs`（<1s）重建，改 subagent CLI 源码后重启 dev 即生效。曾因 staged 滞后致 GUI 真机跑旧引擎代码（Gate B 发现 F7）。绕过 dev 链直接起 Electron 时须手动 `node scripts/bundle-extensions.mjs`
 
 ## 关键规则（违反必出 bug）
 
