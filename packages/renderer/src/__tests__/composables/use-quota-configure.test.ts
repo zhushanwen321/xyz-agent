@@ -2,7 +2,8 @@
  * useQuotaConfigure composable 单测（契约 v2，coding-plan-quota-config-ux §7.1/§7.2）。
  *
  * 覆盖（设计 §7.5 测试改动清单的 U4 行）：
- * ① readiness 齐备性矩阵（D1/D13）：未选类型 → ['type']；cookie 类缺 cookie；
+ * ① readiness 齐备性矩阵（D1/D13）：未选类型 → ['type']；草稿类型未命中 QUOTA_PRESETS（历史数据）
+ *    也 → ['type']（不静默按 api-key 分支放行）；cookie 类缺 cookie；
  *    api-key 类按 credentialSource 分流（provider 看 providerCredentialAvailable，
  *    exclusive 看「草稿 ∨ (¬typeChanged ∧ apiKeySet)」）；workspace 只看草稿
  * ② 凭证归属（D5）：savedFetcher undefined 不算类型已变；类型切换后旧凭证不计入齐备
@@ -13,6 +14,7 @@
  * ⑥ 同值选中类型不重置草稿（D5 细节 2 的值守卫）
  * ⑦ loadCached：data=null + reason 时保留失败态（D6 影响面表修正）
  * ⑧ configureError 走 i18n（D9）：quotaConfigureFail / quotaSaveAndTestFail
+ * ⑨ §7.1 时序约定 1：payload 必须在 await 之前捕获（configure 期间广播重置草稿也不影响已提交值）
  *
  * mock 策略：vi.mock('@xyz-agent/core/transport/api/domains/quota') 替换 RPC 层（composable 直连
  * domain，对齐 provider-edit-body-phase-b.test.ts）；pinia 提供 useQuotaStore。
@@ -114,6 +116,28 @@ describe('readiness 齐备性矩阵（D1 / D13）', () => {
 
     expect(cookieInput.value).toBe('')
     expect(readiness.value).toEqual({ ready: true, missing: [] })
+  })
+
+  it('草稿类型不在 QUOTA_PRESETS（历史数据 / 手工编辑 providers.json）→ missing [type]，不静默按 api-key 放行', async () => {
+    // 未知 fetcher 无法判定凭证形态（是否 cookie 类 / 是否需要 workspace）：旧行为是
+    // isCookieAuth / needsWorkspace 双双落 false 后走 api-key 分支，provider 凭据可用时
+    // readiness.ready=true → 放行一条带未知 fetcher 的 configure。按「类型缺失」处理（D8 同形态）。
+    const providerRef = ref<ProviderInfo | null>(
+      provider({
+        id: 'legacy-p',
+        apiKeySet: true,
+        quota: { enabled: false, fetcher: 'legacy-unknown', apiKeySet: true },
+      }),
+    )
+    const { readiness, fetcherId } = useQuotaConfigure(NONE_PRESET, providerRef)
+    await Promise.resolve()
+
+    expect(fetcherId.value).toBe('legacy-unknown')
+    expect(readiness.value).toEqual({ ready: false, missing: ['type'] })
+
+    // 重选一个有效预设类型 → 判定恢复常态（守卫不是「命中一次就永久卡死」）
+    fetcherId.value = 'kimi-coding'
+    expect(readiness.value.missing).not.toContain('type')
   })
 
   it('api-key 类 source=provider：看 providerCredentialAvailable（provider.apiKeySet）', async () => {
@@ -456,6 +480,32 @@ describe('saveAndTest payload 构造（§7.2 细节 4）', () => {
 
     expect(quotaApi.refreshQuota).not.toHaveBeenCalled()
     expect(configureError.value).toBe('保存并测试失败')
+  })
+
+  it('payload 在 await 之前捕获：configure 期间 provider 广播重置草稿，提交的 fetcher 仍是调用时刻的草稿值', async () => {
+    // 防的回归：payload 组装被移到 await 之后（§7.1 时序约定 1）。真实链路里 configure 成功后
+    // runtime 广播 provider 列表 → watch(providerRef) → syncFromProvider 把草稿重置为磁盘态，
+    // 此时再读草稿读到的是被重置后的值（用户选的类型丢失）。
+    const providerRef = ref<ProviderInfo | null>(
+      provider({ id: 'kimi-p', quota: { enabled: false, fetcher: 'kimi-coding' } }),
+    )
+    const { fetcherId, saveAndTest } = useQuotaConfigure(ref(KIMI_PRESET), providerRef)
+    await Promise.resolve()
+
+    // 草稿：用户把类型从磁盘值 kimi-coding 改成 zhipu
+    fetcherId.value = 'zhipu'
+
+    // 调用期间改写 providerRef（新对象引用触发 watch → syncFromProvider 重置草稿）
+    vi.mocked(quotaApi.configure).mockImplementation(async () => {
+      providerRef.value = provider({ id: 'kimi-p', quota: { enabled: false, fetcher: 'kimi-coding' } })
+      return { ok: true }
+    })
+
+    await saveAndTest()
+
+    expect(lastConfigurePayload()?.fetcher).toBe('zhipu')
+    // 反证：重置确实发生了（否则本用例空转 —— 草稿本来就还是 'zhipu'）
+    expect(fetcherId.value).toBe('kimi-coding')
   })
 })
 

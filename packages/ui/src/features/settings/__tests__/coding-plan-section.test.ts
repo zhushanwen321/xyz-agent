@@ -9,7 +9,9 @@
  * ② D1（§6.2）单按钮置灰矩阵 + 字段级提示白名单（§7.4：'type' 结构性不进提示渲染）
  * ③ D3（§6.4）凭证来源分段控件：provider 项按 providerCredentialAvailable 置 disabled，切换 emit
  * ④ §7.4 跨区块时序两套 provider 凭据文案（providerCredentialPendingSave 区分）
- * ⑤ D7（§6.8）去掩码：输入框只放草稿，不回填掩码；「已配置」为独立标记
+ * ⑤ D7（§6.8）去掩码：输入框只放草稿，不回填掩码；「已配置 / 必填」为独立标记
+ * ⑤b §7.4 徽标取值规则：徽标与字段级提示同源（readiness.missing），磁盘原始标记（cookieSet /
+ *    quotaApiKeyConfigured / workspaceConfigured）不能越权点亮「已配置」（三条反向用例）
  * ⑥ §5.2 路径 3/4 失败态文案 + cookie 变体（unauthorized / no-credential / no-subscription）
  * ⑦ D2（§6.3）单按钮触发 saveAndTest emit
  * 附带保留：B-3 used/limit 双轨窗口、「查看上次成功数据」折叠、workspace 块事件上抛
@@ -429,6 +431,69 @@ describe('⑤ D7 去掩码：输入框只放草稿，「已配置」是独立标
     expect(
       wrapper.find<HTMLTextAreaElement>('[data-testid="quota-cookie-input"]').element.value,
     ).toBe('raw-cookie-value')
+  })
+})
+
+// ══ ⑤b §7.4：徽标与 readiness 同源（反向用例） ══════════════════════════════
+
+describe('⑤b §7.4 徽标取值与 readiness 同源（磁盘标记不能越权点亮「已配置」）', () => {
+  it('反向：cookieSet=true 但 missing 含 cookie（类型切换后归属失效）→ 徽标「必填」，与字段提示同屏一致', async () => {
+    // 复现 D5 的核心场景：已保存 MiMo cookie，用户把类型改成 opencode-go（同为 cookie 类）后
+    // 旧 cookie 归属失效 → readiness 报 ['cookie']。若徽标读原始 cookieSet 就会与下方
+    // 「这里必须填」提示同屏矛盾（S7 反例）。
+    wrapper = mountSection({
+      isCookieAuth: true,
+      fetcherId: 'opencode-go',
+      cookieSet: true,
+      needsWorkspace: true,
+      readiness: { ready: false, missing: ['cookie', 'workspace'] },
+    })
+    await flushPromises()
+
+    const cookieBlock = wrapper.find('[data-testid="quota-cookie-block"]')
+    // 用户可见：徽标文本必须与字段级提示同一判定（都来自 readiness.missing）
+    expect(cookieBlock.text()).toContain('settings.providerEdit.quotaRequiredBadge')
+    expect(cookieBlock.text()).not.toContain('settings.providerEdit.quotaConfiguredBadge')
+    expect(wrapper.find('[data-testid="quota-missing-cookie"]').text()).toBe(
+      'settings.providerEdit.quotaMissingCookie',
+    )
+  })
+
+  it('反向：quotaApiKeyConfigured=true 但 missing 含 apiKey（类型切换后旧专属 Key 失效）→ 徽标「必填」', async () => {
+    wrapper = mountSection({
+      credentialSource: 'exclusive',
+      quotaApiKeyConfigured: true,
+      apiKeyInput: '',
+      fetcherId: 'minimax',
+      readiness: { ready: false, missing: ['apiKey'] },
+    })
+    await flushPromises()
+
+    const keyBlock = wrapper.find('[data-testid="quota-exclusive-key-block"]')
+    expect(keyBlock.text()).toContain('settings.providerEdit.quotaRequiredBadge')
+    expect(keyBlock.text()).not.toContain('settings.providerEdit.quotaConfiguredBadge')
+    expect(wrapper.find('[data-testid="quota-missing-apikey"]').text()).toBe(
+      'settings.providerEdit.quotaMissingApiKey',
+    )
+  })
+
+  it('反向：workspaceConfigured=true 但 missing 含 workspace（草稿被清空）→ 徽标「必填」（D13 屏幕即真相）', async () => {
+    wrapper = mountSection({
+      isCookieAuth: true,
+      fetcherId: 'opencode-go',
+      needsWorkspace: true,
+      workspaceConfigured: true,
+      workspaceInput: '',
+      readiness: { ready: false, missing: ['workspace'] },
+    })
+    await flushPromises()
+
+    const wsBlock = wrapper.find('[data-testid="quota-workspace-block"]')
+    expect(wsBlock.text()).toContain('settings.providerEdit.quotaRequiredBadge')
+    expect(wsBlock.text()).not.toContain('settings.providerEdit.quotaConfiguredBadge')
+    expect(wrapper.find('[data-testid="quota-missing-workspace"]').text()).toBe(
+      'settings.providerEdit.quotaMissingWorkspace',
+    )
   })
 })
 

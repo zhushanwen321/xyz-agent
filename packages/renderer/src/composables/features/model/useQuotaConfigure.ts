@@ -185,6 +185,13 @@ export function useQuotaConfigure(
     const fid = fetcherId.value
     if (!fid) return { ready: false, missing: ['type'] }
 
+    // 草稿类型不在 QUOTA_PRESETS（仅历史数据 / 手工编辑 providers.json 可达，下拉只列预设）：
+    // 未知 fetcher 无法判定该类型的凭证形态（是否 cookie 类、是否需要 workspace），isCookieAuth /
+    // needsWorkspace 会双双落 false 后静默走 api-key 分支 —— providerCredentialAvailable 为 true 时
+    // 就放行一条带未知 fetcher 的 configure。按「类型缺失」处理（与 D8「类型未选」同形态），
+    // 让用户重选一个有效类型，而不是让未知值借 api-key 分支混过门控。
+    if (!activePreset.value) return { ready: false, missing: ['type'] }
+
     const missing: ReadinessMissing[] = []
     const quota = providerRef.value?.quota
     const typeChanged = quota?.fetcher !== undefined && fid !== quota.fetcher
