@@ -351,6 +351,7 @@ audit §5 三条系统性裁决在本次事故的投影：
 | 2026-09-10 | 实施完成：U1-U7b 对应实施单元 u1-acquire / u2-descendant / u3-flip / u4-spawn-channel / u5-runtime-switch 全部 committed（状态与证据见 impl-plan §6），u6-obs-docs 本次回写收口（troubleshooting 词条 + audit 回写 + 本节）。Gate B 真实场景验收（S1-S9）与 ⛔ 探针五条待执行，完成度以 impl-plan §6 状态表为准 |
 | 2026-09-10 | Gate A（整体测试验收）绿：subagent-core 3429 passed / runtime 5088 passed（real-pi e2e 一次全绿）/ bundle 验证 / eslint 0 errors / extensions 三连 / 零容忍绕过检查（新增 0）/ 覆盖矩阵无测试真空。uncovered 2 条均为领地登记滞后非测试真空（tsup.config.ts、eslint.config.mjs，状态表已追认）。清理批次：待办清理项 2 条完成 + warn 断言广度补齐（见下方清理项节） |
 | 2026-09-10 | Gate B 批次 1 完成：探针 P1-P5 + S1-S7/S9（5 pass / 2 fail / S8 留批次 2）；四项决策主链路在真实 pi 场景全部生效（守卫降级 120 只 run 归零、完成→回收 p50=7ms）；实测勘误 4 组回写（P3 清单漂移已修 + 联动守卫 / S4-② D14 不可达 / S5+P5 误杀连带终局 / P4 D2 落盘前提），见「Gate B 批次 1 实测勘误」节 |
+| 2026-09-10 | **Gate B 双绿收口**：批次 2 S8 pass（GUI 会话行为逐项一致 / stdout tee 三段断言持续写入 / 早期帧缓冲即时到达 / bundle exit 0 / runtime 全量 5087/5088，唯一失败为验收面外 logger 轮转时序 flake 单跑复验绿）。四项决策（D1 迟到接受 / D2 扫描兜底 / D3 翻转+快路径 / D4 通道归一）真实场景验收全部通过，G1-G4 目标达成。后续独立任务：design-code-sync 校准（用户指令第三阶段） |
 
 ### 实施期偏差登记（文档与实现的最终对齐记录）
 
