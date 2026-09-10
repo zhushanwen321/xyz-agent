@@ -1,6 +1,6 @@
 # session-dead-structural-fixes 实施计划
 
-基线: <待 commit 后回填> | 来源设计: docs/design/session-dead-structural-fixes.md | 日期: 2026-09-11
+基线: d9be77290 | 来源设计: docs/design/session-dead-structural-fixes.md | 日期: 2026-09-11
 
 ## 0 章节映射
 
@@ -77,26 +77,39 @@ u6（冻结）不入图。
 
 ## 5 合理偏差登记表
 
-（初始为空，阶段 3 填写）
+| Unit | 偏差 | 判定 | 联动 |
+|------|------|------|------|
+| u1a | i18n key 落在分段文件 locales/{zh-CN,en-US}/sidebar.ts（计划清单写的聚合入口 zh-CN.ts/en-US.ts）——项目 i18n 为分段组织 | 合理：实现文件细化，非领地外 | 领地清单以此为准 |
+| u1a | 草稿回收走既有 composerInjectionStore 一次性通道（forceQuit 后 dead 占位接管、Composer 卸载，注入请求滞留槽位，restore 重开挂载时补消费落输入框）而非直写 drafts 分区 | 合理：drafts 是 Composer 实例私有分区外部不可达；时序与 V1②「点击后草稿可见」自洽 | 无 |
+| u1a | 多条排队消息以空行分隔拼接（§5 检查点④实施期定稿事项） | 合理：设计授权实施期定稿 | 检查点④销账 |
+| u1a | in-flight 占位不回收（依赖既有失败链回滚兜底；chat store 不在领地且为现状既有缺口） | 合理：非 D3 引入，登记现状 | 阶段 3 审查复核 |
+| u1b | K7 收殓日志由 console.log 升级 console.warn（D5① 要求 warn 级，原级别在 prod info 下不落盘） | 合理：职责内级别变更 | 无 |
+| u1b | K6 destroyAll 空表不打日志（降噪，配套边界单测）；日志形态 = console.warn 键值对内嵌（项目无独立 logger 库，既有惯例） | 合理 | 无 |
+| u2 | 显式投递清标记只接了 sendPrompt；delivery（deliverText）与 backflow 回流的清标记**未接线**（两文件属 u3b 领地）——补线前缺口为保守方向（多拦不漏拦） | 移交：**u3b 必须补线**（已写入 u3b task 目标 C 块） | u3b 验收新增 |
+| u2 | restore-abort 失败 fallback 直达 forceQuit 强杀（非错误规格字面的「走既有 abort 失败链」——避免对已超时 client 二次 abort 双倍 60s 等待）；kill 日志 source 呈 K1 形态 | 合理：收敛动作一致，代价已代码注释登记 | 阶段 3 审查复核 |
+| u2 | UserStoppedGate 模块级门面（event-interpreter.ts）替代 session-service 直接导出——session-service 值导入全部子模块，直接导出成环；SessionService 构造器 configure 注入为唯一无环通路 | 合理：架构必要 | 无 |
+| u2 | 存量测试兼容：gate.markUserStopped 未 configure 时降级 no-op+warn（生产不可达）；5 个存量测试 mock 补 getClient | 合理：测试兼容 | 无 |
+| 基础设施 | 滚动跟随守卫（C-state-11）脚本从 main 恢复 + 3 处 findItemIndex(scrollSize) 存量归零（commit 98f5a94b4）——本分支基线早于 main 的 chat-pin-bottom-fix 合并，共享 hook 与分支进度错位；u1a commit 被拦截的正面修复，非计划单元 | 合理：基线设施修复 | 变更历史已记 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u1a | pending | 0 | — |
-| u1b | pending | 0 | — |
-| u2 | pending | 0 | — |
-| u3b | pending | 0 | — |
+| u1a | committed | 1 | commit 5d4644cb4（core 3 + renderer 32 测试绿，双 typecheck 绿） |
+| u1b | committed | 1 | commit d879fe120（9 单测绿，Bundle 验证 + Plugin E2E 绿） |
+| u2 | committed | 1 | commit bc960acb1（32 文件 473 测试绿，Bundle 验证 + Plugin E2E 绿） |
+| u3b | in-progress | 0 | dev 后台运行中 |
 | u3c | pending | 0 | — |
-| u4 | pending | 0 | — |
+| u4 | in-progress | 0 | dev 后台运行中 |
 | u6 | blocked（P-3 实测阻塞，设计显式判定） | — | 设计 §3.5 P-3 / §5 PR-5 行 |
 
 ## 7 残留风险与变更历史
 
 **残留风险**：
-1. P-1 探针双场景实测（单通知 abort 时序 + ≥2 条通知收敛环 + 收敛窗 3s 初值校准）需真实 pi 环境，随阶段 5 Gate B 的 V1/V4 执行；若实测触发 §3.5 降级档，按设计降级路径回改 u2 并重跑受影响验收。
-2. u2 单元为关键路径最大单元（5 文件、原语+收敛环+短路三块新逻辑），dev 轮次预算按 2 轮预置，超 2 轮未绿按 SKILL 阈值冻结升级用户。
+1. P-1 探针双场景实测（单通知 abort 时序 + ≥2 条通知收敛环 + 收敛窗 3s 初值校准）需真实 pi 环境，随阶段 5 Gate B 的 V1/V4 执行；若实测触发 §3.5 降级档，按设计降级路径回改 u2 并重跑受影响验收。u2 补充：replay turn 收尾超窗（pi 收尾卡顿 >3s）的极端时序残余缝 runtime 无先验信号，按本条随 P-1 标定。
+2. u2 单元为关键路径最大单元（5 文件、原语+收敛环+短路三块新逻辑），dev 轮次预算按 2 轮预置，超 2 轮未绿按 SKILL 阈值冻结升级用户。（实际 1 轮绿）
 3. V8 场景（≥3 轮 forceQuit/restore 循环 + 重启）依赖 pnpm dev 稳定长跑，阶段 5 执行时注意多实例端口坑（AGENTS.md：3210/9222/3310 归属确认）。
 
 **变更历史**：
 - 2026-09-11：初版计划。单元切分对设计 §5 的 PR 表做了两处映射说明：① 设计 PR-3 拆为 u2 基座（原语+转移表+宣告帧收编，因 event-interpreter/session-lifecycle 与 PR-2 同文件共改，合并以压关键路径至 4 层）+ u3b（挂点迁移）+ u3c（readonly+文档收口）；② 设计 PR-5 → u6 冻结（P-3 阻塞为设计文档显式判定，非本计划新增裁决）。
+- 2026-09-11：执行期记录——基础设施阻塞修复：u1a commit 被滚动跟随守卫拦截（共享 hook 与分支基线错位 + 3 处存量违规），恢复守卫脚本 + M1 等价归零（commit 98f5a94b4，含一轮定向修复 MessageStream 行数超限），登记偏差表「基础设施」行。u1a/u1b/u2 依次 committed；u2 两条移交项（delivery/backflow 清标记补线）写入 u3b task。
