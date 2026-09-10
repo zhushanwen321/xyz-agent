@@ -26,6 +26,22 @@ import {
 } from '../use-provider-edit'
 import { InMemoryStorage } from './helpers/in-memory-storage'
 import type { ProviderInfo } from '@xyz-agent/shared'
+// D9 档位断言用 pi 实装同源函数（唯一权威）——从根 node_modules 解析 pi-ai 0.84.4 dist
+import { getSupportedThinkingLevels } from '@earendil-works/pi-ai'
+
+/**
+ * 经 pi 同源 getSupportedThinkingLevels 算可用档位。
+ * 入参只需 reasoning + thinkingLevelMap 子集（pi 实装只读这两个字段，见
+ * pi-ai dist/models.js:548-558），其余 Model 必填字段经 unknown 收窄——
+ * 与 runtime model-capability.ts 的 computeSupportedLevels 同款调用方式。
+ */
+function supportedLevelsOf(
+  map: Record<string, string | null> | undefined,
+  reasoning = true,
+): string[] {
+  const model = { reasoning, ...(map ? { thinkingLevelMap: map } : {}) }
+  return getSupportedThinkingLevels(model as unknown as Parameters<typeof getSupportedThinkingLevels>[0])
+}
 
 /** i18n stub：返回 key 本身（校验调用参数而非翻译）。 */
 const tStub = vi.fn((key: string) => key)
@@ -258,6 +274,21 @@ describe('runDiscover discover 分支', () => {
     expect(tStub).toHaveBeenCalledWith('composable.allExisted')
   })
 
+  it('D9①：合并发现的模型 reasoning 显式 true（不 undefined，对齐 addModel 出厂语义）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    getTransport().discoverModels = vi.fn(async () => ({
+      success: true,
+      models: [{ id: 'm2', name: 'M2', contextWindow: 128_000 }],
+    }))
+    await edit.autoDiscover()
+    const merged = edit.localModels.value.find((m) => m.id === 'm2')
+    // pi 两级门控把 reasoning 缺失判「关」——合并入口必须出厂显式 boolean
+    expect(merged?.reasoning).toBe(true)
+    expect(merged?.reasoning).not.toBeUndefined()
+  })
+
   it('失败：success:false → actionError', async () => {
     const providerRef = ref<ProviderInfo | null>(makeProvider())
     const edit = mount(providerRef)
@@ -478,13 +509,16 @@ describe('模型 CRUD', () => {
     expect(m.input).toEqual(['image'])
   })
 
-  it('pickStrategy high-max → thinkingLevelMap {off,high,max:xhigh}', async () => {
+  it('pickStrategy 按预设写 map（D9③ 补显式 null 剔除项）+ all-levels 清空 map', async () => {
     const providerRef = ref<ProviderInfo | null>(null)
     const edit = mount(providerRef)
     await nextTick()
     const m: LocalModel = { id: 'm', name: 'M' }
     edit.pickStrategy(m, 'high-max')
-    expect(m.thinkingLevelMap).toEqual({ off: 'off', high: 'high', max: 'xhigh' })
+    // pi 黑名单过滤语义：不要的档显式写 null 才能剔除
+    expect(m.thinkingLevelMap).toEqual({ off: 'off', high: 'high', max: 'xhigh', minimal: null, low: null, medium: null })
+    edit.pickStrategy(m, 'on-off')
+    expect(m.thinkingLevelMap).toEqual({ off: 'off', high: 'high', minimal: null, low: null, medium: null })
     edit.pickStrategy(m, 'all-levels')
     expect(m.thinkingLevelMap).toBeUndefined()
   })
@@ -495,6 +529,68 @@ describe('模型 CRUD', () => {
     expect(edit.getStrategyFromMap(undefined)).toBe('all-levels')
     expect(edit.getStrategyFromMap({ off: 'off', high: 'high' })).toBe('on-off')
     expect(edit.getStrategyFromMap({ off: 'off', high: 'high', max: 'xhigh' })).toBe('high-max')
+  })
+})
+
+describe('D9 思考档位修复（reasoning 显式化 + 预设对齐 pi 过滤语义）', () => {
+  it('D9②：pickStrategy 对 reasoning === undefined 的模型置 true（存量「从未设策略」形态救回）', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    const m: LocalModel = { id: 'm', name: 'M' } // reasoning 缺失（用户数据实测形态）
+    edit.pickStrategy(m, 'high-max')
+    expect(m.reasoning).toBe(true)
+
+    // all-levels 分支同规则：存量最常见形态 = all-levels + reasoning 缺失，
+    // 救回路径必须闭合在这里（只联动非 all-levels 会让它不闭合）
+    const mAll: LocalModel = { id: 'm2', name: 'M2' }
+    edit.pickStrategy(mAll, 'all-levels')
+    expect(mAll.reasoning).toBe(true)
+    expect(mAll.thinkingLevelMap).toBeUndefined()
+  })
+
+  it('D9②：pickStrategy 永不覆盖显式 reasoning === false（high-max 分支）', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    const m: LocalModel = { id: 'm', name: 'M', reasoning: false }
+    edit.pickStrategy(m, 'high-max')
+    expect(m.reasoning).toBe(false)
+    // 显式选择优先于联动：pi 语义下 reasoning=false → 弹层只有「关」
+    expect(supportedLevelsOf(m.thinkingLevelMap, false)).toEqual(['off'])
+  })
+
+  it('D9②：pickStrategy 永不覆盖显式 reasoning === false（all-levels 分支）', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    const m: LocalModel = { id: 'm', name: 'M', reasoning: false }
+    edit.pickStrategy(m, 'all-levels')
+    expect(m.reasoning).toBe(false)
+    expect(m.thinkingLevelMap).toBeUndefined()
+  })
+
+  it('D9③：on-off 预设经 pi 同源函数输出 [off, high] 两档（v1 白名单心智下实际 5 档）', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    const m: LocalModel = { id: 'm', name: 'M' }
+    edit.pickStrategy(m, 'on-off')
+    expect(supportedLevelsOf(m.thinkingLevelMap)).toEqual(['off', 'high'])
+    // Select 回显 round-trip：含 null 剔除项的 map 反推策略仍是 on-off
+    expect(edit.getStrategyFromMap(m.thinkingLevelMap)).toBe('on-off')
+  })
+
+  it('D9③：high-max 预设经 pi 同源函数输出 [off, high, max] 三档（v1 实际 6 档；第三档档位名 max、map 值 xhigh）', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    const m: LocalModel = { id: 'm', name: 'M' }
+    edit.pickStrategy(m, 'high-max')
+    expect(supportedLevelsOf(m.thinkingLevelMap)).toEqual(['off', 'high', 'max'])
+    // 展示档位名是 max，发给 pi 的实际 level 是 xhigh
+    expect(m.thinkingLevelMap?.max).toBe('xhigh')
+    expect(edit.getStrategyFromMap(m.thinkingLevelMap)).toBe('high-max')
   })
 })
 

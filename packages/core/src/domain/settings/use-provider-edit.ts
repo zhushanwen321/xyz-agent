@@ -99,16 +99,22 @@ export const CONTEXT_OPTIONS = [
 ] as const
 
 /**
- * 思考策略预设 → thinkingLevelMap。thinkingLevelMap 语义：
- * - key = UI 可选档位（ThinkingLevel 枚举值，含 max），用于展示和判定可用
- * - value = 发给 runtime/pi 的实际 level（string=可用，null=不可用）
- * - 发给 pi 的是 value（如 max 档发 xhigh），不是 key——展示是展示，传递 value 是 value
- * 预设：all-levels(undefined=全档) / on-off(off+high) / high-max(off+high+max→xhigh)
+ * 思考策略预设 → thinkingLevelMap。thinkingLevelMap 语义是 pi 的**黑名单过滤**，
+ * 不是「key = UI 可选档位」的白名单（按白名单心智写预设会多出未列出的默认档）：
+ * pi `getSupportedThinkingLevels`（pi-ai dist/models.js:548-558）对 reasoning=true 的
+ * 模型遍历 EXTENDED_THINKING_LEVELS（off/minimal/low/medium/high/xhigh/max）逐档判定：
+ * - value = null → 剔除该档
+ * - xhigh / max → 必须显式列出（未列即视为不支持）
+ * - 其余档（off/minimal/low/medium/high）→ 默认保留（未列也参与）
+ * 所以「只保留某几档」必须把不要的档显式写 null，不能靠不写 key 实现。
+ * value = 发给 pi 的实际 level（如 max 档发 xhigh），不是 key——展示是展示、传递是 value。
+ * 预设：all-levels(undefined = pi 默认五档 off~high；xhigh/max 需显式映射，要最高档选 high-max)
+ *      / on-off(off+high 两档) / high-max(off+high+max→xhigh 三档)
  */
 const THINKING_PRESETS: Record<ThinkingStrategy, Record<string, string | null> | undefined> = {
   'all-levels': undefined,
-  'on-off': { off: 'off', high: 'high' },
-  'high-max': { off: 'off', high: 'high', max: 'xhigh' },
+  'on-off': { off: 'off', high: 'high', minimal: null, low: null, medium: null },
+  'high-max': { off: 'off', high: 'high', max: 'xhigh', minimal: null, low: null, medium: null },
 }
 
 /** 思考策略 Select 选项（template thinkingStrategies 来源）。
@@ -414,7 +420,14 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
         const existing = new Set(localModels.value.map((m) => m.id))
         const merged = discovered.filter((m) => !existing.has(m.id))
         localModels.value.push(
-          ...merged.map((m) => ({ id: m.id, name: m.name, contextWindow: m.contextWindow })),
+          ...merged.map((m) => ({
+            id: m.id,
+            name: m.name,
+            contextWindow: m.contextWindow,
+            // D9①：出厂显式 reasoning（对齐 addModel）——pi 两级门控把缺失判「关」，
+            // 缺字段会让合并进来的模型思考档位恒只有「关」（失败模式 D 用户数据命中此入口）。
+            reasoning: true,
+          })),
         )
         discoverResult.value = t('composable.discoveredModels', { count: discovered.length, merged: merged.length > 0 ? t('composable.newMerged', { count: merged.length }) : t('composable.allExisted') })
       } else {
@@ -556,8 +569,15 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
     m.contextWindow = value
   }
 
-  /** 行级思考策略（Select → 写 thinkingLevelMap） */
+  /**
+   * 行级思考策略（Select → 写 thinkingLevelMap）。
+   * D9②：reasoning 缺失时补显式 true——pi 两级门控把缺失判「关」，不补则用户设的策略
+   * 根本轮不到被读取（弹层只显示「关」）。永不覆盖用户显式 false（显式选择优先于联动）；
+   * all-levels 与其余策略同规则——存量最常见形态正是「从未设策略 = all-levels + reasoning
+   * 缺失」，救回路径必须闭合在 all-levels 分支上。
+   */
   function pickStrategy(m: LocalModel, strategy: ThinkingStrategy): void {
+    if (m.reasoning === undefined) m.reasoning = true
     m.thinkingLevelMap = THINKING_PRESETS[strategy]
       ? structuredClone(THINKING_PRESETS[strategy])
       : undefined
