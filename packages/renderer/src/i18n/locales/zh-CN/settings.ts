@@ -427,26 +427,14 @@ export default {
     // D8（coding-plan-quota-config-ux §6.9）：类型未选时区块只留下拉 + 这一句说明
     quotaTypeFirstHint: '先选一个查询类型，下面的参数会按类型自动变化。',
     quotaEnable: '启用额度查询',
-    quotaEnableHint: '查询 5h/周/月 配额使用',
     // D4（§6.5）：开关退化为纯配置位——只表达「要不要在浮层里展示」，不触发查询
     quotaEnableHintIdle: '在对话框容量浮层里展示配额；可随时开关，不触发查询',
-    quotaAuthMethod: '认证方式',
-    quotaCredentialOk: 'API Key 已配置',
-    quotaCredentialMissing: 'API Key 未设置',
     // §7.4 跨区块时序两套文案：provider 表单是草稿模型，runtime 只能读落盘凭据
     quotaProviderCredentialMissing: '上方「凭据」区还没有可用的 API Key，请先填写，或改用专属 Key',
     quotaProviderCredentialPendingSave: '上方「凭据」区已填写 API Key，保存 provider 配置后即可查询',
-    // B-3：fetcher.auth 含 oauth 时的凭证态
-    quotaCredentialOauthReady: '凭证已就绪（OAuth 登录）',
-    quotaCredentialOauthMissing: '请先完成 OAuth 登录',
-    quotaCredentialOauthMissingHint: '在上方「凭据」区完成 OAuth 登录后即可查询额度',
     quotaApiKey: '专属 API Key',
-    quotaApiKeyHint: '（可选）用于查询额度，留空则使用上方的 API Key',
-    quotaApiKeyPlaceholder: '留空则使用上方的 API Key',
     quotaApiKeySetPlaceholder: '已配置，输入新值可覆盖',
     quotaExclusiveKeyPlaceholder: '粘贴 Coding Plan 平台的 API Key',
-    quotaSaveApiKey: '保存',
-    quotaApiKeyFallbackOrder: '查询将依次使用：专属 Key → Provider 凭证',
     // D3（§6.4）凭证来源分段控件：UI 显示的选择与 runtime 实际使用的凭证同源
     quotaCredentialSourceLabel: '凭证来源',
     quotaSourceProvider: '用 Provider 凭据',
@@ -454,7 +442,6 @@ export default {
     quotaSourceProviderOauthHint: '使用上方「凭据」区的 OAuth 登录态',
     quotaSourceProviderApiKeyHint: '使用上方「凭据」区填写的 API Key',
     quotaSourceExclusiveHint: '只用于额度查询，不影响对话使用的凭据',
-    quotaTestQuery: '测试查询',
     quotaTestSuccess: '查询成功',
     quotaTestFail: '查询失败，请检查凭证',
     // D9（coding-plan-quota-config-ux §6.10）：configureError 统一走 i18n，不再透出硬编码中文——
@@ -486,24 +473,17 @@ export default {
     quotaFetchFailNoCredentialCookie: '额度查询失败：未找到可用凭证。请在下方重新粘贴该平台的 Cookie 后重试',
     // Workspace 地址（资源维度 fetcher 如 opencode-go，D1-1）
     quotaWorkspaceLabel: 'Workspace 地址',
-    quotaWorkspaceHint: '（opencode 必填）',
     quotaWorkspacePlaceholder: '粘贴 workspace 页 URL 或 wrk_ id',
-    quotaWorkspaceSetPlaceholder: '已配置，输入新值可覆盖',
-    quotaWorkspaceSave: '保存',
     quotaWorkspaceHelp: '打开 opencode.ai 控制台进入你的 workspace，从浏览器地址栏复制页面 URL（形如 https://opencode.ai/workspace/wrk_xxx/go）',
     quotaWorkspaceRequired: '请先输入 Workspace 地址',
     quotaWorkspaceInvalid: 'Workspace 地址无效：请粘贴 opencode.ai 的 workspace 页 URL（形如 https://opencode.ai/workspace/wrk_xxx/go）或裸 wrk_ id',
-    quotaWorkspaceSaveFail: 'Workspace 保存失败',
     // B-3 失败态旧缓存折叠入口（design §3.4 展示语义）
     quotaLastSuccessToggle: '查看上次成功数据',
     quotaLastSuccessAt: '数据截至 {time}',
-    quotaCookieSet: '已配置',
-    quotaCookieNotSet: '未配置',
     // D1 字段级标记：独立于输入草稿（D7 去掩码后输入框为空不代表未配置）
     quotaRequiredBadge: '必填',
     quotaConfiguredBadge: '已配置',
     quotaCookiePlaceholder: '在此粘贴 cookie 字符串',
-    quotaSaveCookie: '保存 Cookie',
     quotaUpdateCookie: '更新 Cookie',
     // 三窗口标签 + 时间格式化（CodingPlanSection 内联额度预览）
     quotaWindow5h: '5h',

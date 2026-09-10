@@ -26,24 +26,32 @@ function loadLocaleObject(filePath: string): LocaleObject {
 
 const LOCALES_DIR = resolve(__dirname, '../../i18n/locales')
 
-/** A2-4 新增 key（settings.ts 的 providerEdit 命名空间，quota 失败态恢复指引；全 4 reason 专属文案）。
+/** A2-4 新增 key（settings.ts 的 providerEdit 命名空间，quota 失败态恢复指引）。
  *  S5 收尾：quotaFetchFailNoSubscriptionCookie = cookie 类 provider 的 no-subscription 两可文案
  *  （业务码不可区分无订阅 vs Cookie 失效，CodingPlanSection 按 authKinds 分支）。
  *  D6 收尾（coding-plan-quota-config-ux §5.2 路径 4）：quotaFetchFailNoCredential = 凭证链解析不到
  *  任何凭证（api-key 语境基础版；cookie 变体由 CodingPlanSection 按 authKinds 分支渲染，归 U5）。
  *  D1-3 补齐（U6 终扫）：quotaFetchFailNotConfigured 历史上 locale 双侧存在但本数组漏列——
- *  not_configured = 必填 Workspace 缺失（opencode 类 fetcher），CodingPlanSection 有专属渲染分支。 */
+ *  not_configured = 必填 Workspace 缺失（opencode 类 fetcher），CodingPlanSection 有专属渲染分支。
+ *  U-3 补齐（一致性审查）：quotaFetchFailUnauthorizedCookie / quotaFetchFailNoCredentialCookie 同为
+ *  CodingPlanSection 按 authKinds 分支消费的 cookie 变体，此前漏列——本数组自称「全 reason 专属文案」
+ *  却漏了 2 个，删除其 locale 值曾能全绿通过。 */
 const REQUIRED_QUOTA_FAIL_KEYS = [
   'quotaFetchFailUnauthorized',
+  'quotaFetchFailUnauthorizedCookie',
   'quotaFetchFailNetwork',
   'quotaFetchFailNoSubscription',
   'quotaFetchFailNoSubscriptionCookie',
   'quotaFetchFailParse',
   'quotaFetchFailNotConfigured',
   'quotaFetchFailNoCredential',
+  'quotaFetchFailNoCredentialCookie',
 ] as const
 
-/** Phase B 新增 key（settings.ts providerEdit 命名空间：B-1 凭证区 / B-3 额度区泛化） */
+/** Phase B 新增 key（settings.ts providerEdit 命名空间：B-1 凭证区 / B-3 额度区泛化）。
+ *  §7.4「oauth 凭证态行移除」已删 quotaCredentialOauthReady / quotaCredentialOauthMissing /
+ *  quotaCredentialOauthMissingHint / quotaApiKeyFallbackOrder 四键（随 apiKeySet 行一并移走），
+ *  故不再列入本数组。 */
 const REQUIRED_PHASE_B_KEYS = [
   'credentialOauthLoggedIn',
   'credentialOauthNotLoggedIn',
@@ -54,10 +62,6 @@ const REQUIRED_PHASE_B_KEYS = [
   'switchToApiKeyConfirmDesc',
   'switchToOauthConfirmDesc',
   'switchConfirmBtn',
-  'quotaCredentialOauthReady',
-  'quotaCredentialOauthMissing',
-  'quotaCredentialOauthMissingHint',
-  'quotaApiKeyFallbackOrder',
   'quotaUsedOf',
   'quotaUnitRequests',
   'quotaUnitTokens',

@@ -427,26 +427,14 @@ export default {
     // D8 (coding-plan-quota-config-ux §6.9): with no type selected the section renders only the dropdown + this line
     quotaTypeFirstHint: 'Select a query type first; the parameters below change with the type.',
     quotaEnable: 'Enable quota query',
-    quotaEnableHint: 'Query 5h/week/month quota usage',
     // D4 (§6.5): the toggle is a pure config bit — it only controls display in the popover, never triggers a query
     quotaEnableHintIdle: 'Show quota in the chat capacity popover; toggle anytime, no query triggered',
-    quotaAuthMethod: 'Auth method',
-    quotaCredentialOk: 'API Key configured',
-    quotaCredentialMissing: 'API Key not set',
     // §7.4 cross-section timing, two variants: the provider form is a draft model, runtime can only read persisted credentials
     quotaProviderCredentialMissing: 'No usable API Key in the "Credentials" section above yet. Enter one first, or switch to a dedicated key',
     quotaProviderCredentialPendingSave: 'An API Key is entered in the "Credentials" section above. Save the provider config to run the query',
-    // B-3: credential state when fetcher.auth includes oauth
-    quotaCredentialOauthReady: 'Credential ready (OAuth signed in)',
-    quotaCredentialOauthMissing: 'Complete OAuth sign-in first',
-    quotaCredentialOauthMissingHint: 'Sign in via OAuth in the credential section above to query quota',
     quotaApiKey: 'Dedicated API Key',
-    quotaApiKeyHint: '(optional) used for quota query, leave empty to use the API Key above',
-    quotaApiKeyPlaceholder: 'Leave empty to use the API Key above',
     quotaApiKeySetPlaceholder: 'Configured, enter new value to override',
     quotaExclusiveKeyPlaceholder: 'Paste the Coding Plan platform API Key',
-    quotaSaveApiKey: 'Save',
-    quotaApiKeyFallbackOrder: 'Query order: dedicated key, then provider credential',
     // D3 (§6.4) credential source segmented control: what the UI shows is what runtime uses
     quotaCredentialSourceLabel: 'Credential source',
     quotaSourceProvider: 'Use provider credential',
@@ -454,7 +442,6 @@ export default {
     quotaSourceProviderOauthHint: 'Uses the OAuth sign-in from the "Credentials" section above',
     quotaSourceProviderApiKeyHint: 'Uses the API Key entered in the "Credentials" section above',
     quotaSourceExclusiveHint: 'Only used for quota queries; does not affect the credential used for chat',
-    quotaTestQuery: 'Test query',
     quotaTestSuccess: 'Query successful',
     quotaTestFail: 'Query failed, please check credentials',
     // D9 (coding-plan-quota-config-ux §6.10): configureError goes through i18n, no hardcoded Chinese —
@@ -486,24 +473,17 @@ export default {
     quotaFetchFailNoCredentialCookie: 'Quota query failed: no usable credential found. Re-paste this platform’s Cookie below and retry',
     // Workspace URL (resource-scoped fetcher e.g. opencode-go, D1-1)
     quotaWorkspaceLabel: 'Workspace URL',
-    quotaWorkspaceHint: '(required for opencode)',
     quotaWorkspacePlaceholder: 'Paste the workspace page URL or a bare wrk_ id',
-    quotaWorkspaceSetPlaceholder: 'Configured, type to override',
-    quotaWorkspaceSave: 'Save',
     quotaWorkspaceHelp: 'Open the opencode.ai console and enter your workspace, then copy the page URL from the browser address bar (like https://opencode.ai/workspace/wrk_xxx/go)',
     quotaWorkspaceRequired: 'Enter the Workspace URL first',
     quotaWorkspaceInvalid: 'Invalid Workspace URL: paste an opencode.ai workspace page URL (like https://opencode.ai/workspace/wrk_xxx/go) or a bare wrk_ id',
-    quotaWorkspaceSaveFail: 'Failed to save the Workspace URL',
     // B-3 stale-cache collapse entry in failure state (design §3.4 display semantics)
     quotaLastSuccessToggle: 'View last successful data',
     quotaLastSuccessAt: 'Data as of {time}',
-    quotaCookieSet: 'Configured',
-    quotaCookieNotSet: 'Not configured',
     // D1 field-level badges: independent of the input draft (with D7 unmasked inputs, an empty box does not mean unconfigured)
     quotaRequiredBadge: 'Required',
     quotaConfiguredBadge: 'Configured',
     quotaCookiePlaceholder: 'Paste cookie string here',
-    quotaSaveCookie: 'Save Cookie',
     quotaUpdateCookie: 'Update Cookie',
     // window labels + time formatting (CodingPlanSection inline quota preview)
     quotaWindow5h: '5h',
