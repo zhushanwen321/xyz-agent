@@ -15,6 +15,7 @@ import type { AuthStorage, CredentialWriter } from './auth/auth-storage.js'
 import type { XyzProviderStore, ProviderExtras } from './provider-extras-store.js'
 import { readAllExtrasWithFallback, type ProviderExtrasReader } from './migration/provider-extras-migration.js'
 import { pickModelCapabilityFields } from './model-mapper.js'
+import type { IProviderCredentialResolver } from './ports/provider-credential-resolver.js'
 
 /** auth.json 存储能力（ConfigService 注入，与 ConfigService 构造函数 authStorage 同构）。
  * 不含 'set'——写入唯一经 credentialWriter（A1-4 收口，AuthService.saveCredential）。 */
@@ -327,12 +328,14 @@ function buildCatalogProviderInfo(
   override: ConfigProviderConfig | undefined,
   builtinP: BuiltinProviderTemplate,
   extras: ProviderExtras | undefined,
-  authIdSet: Set<string>,
+  credentialIdSet: Set<string>,
   enabledModels: string[],
 ): ProviderInfo {
-  // C1 契约「catalog 凭据 = id ∈ auth.json keys」；override?.apiKey 是 catalog provider
+  // C1 契约「catalog 凭据 = id ∈ 有凭据源」；override?.apiKey 是 catalog provider
   // 手动填 key 的旧数据（迁移前错位）合理扩展，双源判定避免遗漏。
-  const apiKeySet = authIdSet.has(id) || !!override?.apiKey
+  // D3 链 5（凭据收口）：credentialIdSet 由 resolver 批量 sync 版单次给出（auth.json ∪
+  // models.json），未注入 resolver 时降级为 listProviders 内联的 auth.json 集合。
+  const apiKeySet = credentialIdSet.has(id) || !!override?.apiKey
   const overrideModels = override?.models ?? []
   const display = resolveCatalogDisplayFields(id, override, builtinP, extras)
   // id 来自 models.json / auth.json 的磁盘 key（反序列化边界，design D5）→ as ProviderId 提升
@@ -344,7 +347,7 @@ function buildCatalogProviderInfo(
     baseUrl: display.baseUrl,
     apiKeySet,
     authMethod: display.authMethod,
-    // catalog 凭据在 auth.json：apiKeySet 已含 auth.json 判定（authIdSet.has(id)），
+    // catalog 凭据在 auth.json：apiKeySet 已含 auth.json 判定（credentialIdSet），
     // 与旧 status 逻辑（hasCredentialSync(id)）等价，避免重复读 auth.json。
     status: apiKeySet ? 'connected' as const : 'not_configured' as const,
     models: buildCatalogProviderModels(id, builtinP, overrideModels, extras?.modelStates),
@@ -361,7 +364,7 @@ function buildCustomProviderInfo(
   id: string,
   config: ConfigProviderConfig,
   extras: ProviderExtras | undefined,
-  authIdSet: Set<string>,
+  credentialIdSet: Set<string>,
   enabledModels: string[],
 ): ProviderInfo {
   const userModels = (config.models ?? []).map(m => toUserInfoModel(m, extras?.modelStates))
@@ -376,9 +379,10 @@ function buildCustomProviderInfo(
     apiKeySet,
     // 显式标注（extras.authMethod）优先；无标注退回 apiKey 格式推断（I6）
     authMethod: extras?.authMethod ?? deriveAuthMethod(config),
-    // M6 status 派生：apiKey 或 auth.json 凭据任一 → connected。
-    // B3：复用 authIdSet（listProviders 开头批量读），消除每次循环 hasCredentialSync 的 N+1 读盘。
-    status: (config.apiKey || authIdSet.has(id))
+    // M6 status 派生：apiKey 或凭据源任一 → connected。
+    // B3/D3 链 5：复用批量单次读的 credentialIdSet（resolver sync 版 / 降级内联 auth.json 集合），
+    // 消除每次循环 hasCredentialSync 的 N+1 读盘。
+    status: (config.apiKey || credentialIdSet.has(id))
       ? 'connected' as const
       : 'not_configured' as const,
     // T9/M5 models 合并：用户自定义 models 非空 → 保留；为空 → builtin models 兜底
@@ -400,17 +404,23 @@ function buildCustomProviderInfo(
  * 经 readAllExtrasWithFallback 双读——providers.json 优先 + models.json 旧寄生字段兜底
  * （迁移失败窗口兼容）。未注入 extrasStore 时 extras 恒空：authMethod 退回 apiKey 推断、
  * quota 为 undefined（与迁移后 models.json 已剥离寄生字段的读值一致）。
+ *
+ * D3 链 5（凭据读路径收口）：apiKeySet / status 的凭据判定经 credentialResolver 的批量
+ * sync 版单次取（`listCredentialBackedProviderIds`，auth.json ∪ models.json 各单次读）；
+ * 未注入 resolver 时降级旧内联判定（仅 auth.json 集合，models.json apiKey 由 override /
+ * config.apiKey 项覆盖）——保持批量单次读盘的 B3 不变量，禁止退回 per-provider 循环。
  */
 export function listProviders(
   configStore: IConfigStore,
   authStorage?: AuthStorageAccessors,
   extrasStore?: ProviderExtrasReader,
+  credentialResolver?: IProviderCredentialResolver,
 ): ProviderInfo[] {
   const models = configStore.readModels()
   const enabledModels = configStore.getEnabledModels()
   const extrasAll = extrasStore ? readAllExtrasWithFallback(extrasStore, configStore) : {}
   const authIds = authStorage?.listCredentialIds() ?? []
-  const authIdSet = new Set(authIds)
+  const credentialIdSet = credentialResolver?.listCredentialBackedProviderIds() ?? new Set(authIds)
 
   const result: ProviderInfo[] = []
   // catalog id 去重集合：catalog 源处理过的 id，custom 源跳过（避免 catalog id 重复出现）
@@ -423,14 +433,14 @@ export function listProviders(
     const builtinP = builtinProvidersById.get(id)
     if (!builtinP) continue // 只聚合 builtin 内的 catalog provider（∩ builtinData）
     catalogIdsHandled.add(id)
-    result.push(buildCatalogProviderInfo(id, models.providers[id], builtinP, extrasAll[id], authIdSet, enabledModels))
+    result.push(buildCatalogProviderInfo(id, models.providers[id], builtinP, extrasAll[id], credentialIdSet, enabledModels))
   }
 
   // ── custom 源：models.json providers where !isCatalogProvider(id)（保留旧逻辑，kind='custom'）──
   // catalogIdsHandled 已收录 models.json 里的 catalog 条目（上面聚合时加入），此处跳过避免重复。
   for (const [id, config] of Object.entries(models.providers)) {
     if (catalogIdsHandled.has(id)) continue
-    result.push(buildCustomProviderInfo(id, config, extrasAll[id], authIdSet, enabledModels))
+    result.push(buildCustomProviderInfo(id, config, extrasAll[id], credentialIdSet, enabledModels))
   }
 
   return result

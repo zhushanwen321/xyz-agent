@@ -16,9 +16,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConfigService } from '../config-service.js'
 import { XyzProviderStore } from '../provider-extras-store.js'
-import { applyProviderWritePolicy } from '../provider-config-helper.js'
+import { applyProviderWritePolicy, listProviders } from '../provider-config-helper.js'
+import { ProviderCredentialResolver } from '../auth/provider-credential-resolver.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { AuthStorage } from '../auth/auth-storage.js'
+import type { IProviderCredentialResolver } from '../ports/provider-credential-resolver.js'
 
 type FullAuthPick = Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'set' | 'hasCredentialSync' | 'listCredentialIds'>
 
@@ -373,5 +375,104 @@ describe('M1b: setProvider 接线（防线②③ 经 applyProviderWritePolicy �
 
     expect(upsertProvider).not.toHaveBeenCalled()
     expect(ensureProviderInWhitelist).toHaveBeenCalledWith('p-new-empty')
+  })
+})
+
+/**
+ * M2b：链 5 凭据判定迁移到 resolver 批量 sync 版（设计 D3 收口）。
+ *
+ * 不变量：apiKeySet / status 判定经 `listCredentialBackedProviderIds` 单次批量取（auth.json ∪
+ * models.json），不得退回 per-provider `hasProviderCredential` / `hasCredentialSync` 循环
+ * （那会重新引入 N+1 读盘，B3 先例 provider-config-helper.ts:412）。
+ */
+describe('M2b: listProviders 凭据判定走 resolver 批量 sync 版（链 5）', () => {
+  function makeListStore(providers: Record<string, unknown> = {}) {
+    return {
+      readModels: vi.fn(() => ({ providers })),
+      getEnabledModels: vi.fn(() => []),
+    } as unknown as IConfigStore
+  }
+
+  function makeResolver(ids: string[]) {
+    const resolver: IProviderCredentialResolver = {
+      hasProviderCredential: vi.fn(() => false),
+      listCredentialBackedProviderIds: vi.fn(() => new Set(ids)),
+      resolveProviderCredential: vi.fn(async () => undefined),
+    }
+    return resolver
+  }
+
+  it('apiKeySet 以 resolver 批量结果为权威，且 store/auth 均单次读（无 N+1）', () => {
+    const store = makeListStore({ 'my-custom': { name: 'My Custom' } })
+    const auth = makeAuth()
+    // auth.json 有 anthropic（catalog），但 resolver 批量结果为空 → apiKeySet 应以 resolver 为准
+    vi.mocked(auth.listCredentialIds).mockReturnValue(['anthropic'])
+    const resolver = makeResolver([])
+
+    const result = listProviders(store, auth, undefined, resolver)
+
+    // 单次批量调用（非 per-provider hasProviderCredential / hasCredentialSync 循环）
+    expect(vi.mocked(resolver.listCredentialBackedProviderIds)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(resolver.hasProviderCredential)).not.toHaveBeenCalled()
+    // 批量单次读盘：readModels / listCredentialIds 各一次
+    expect(vi.mocked(store.readModels)).toHaveBeenCalledTimes(1)
+    expect(auth.listCredentialIds).toHaveBeenCalledTimes(1)
+    expect(auth.hasCredentialSync).not.toHaveBeenCalled()
+    // 权威性：resolver 空集 → catalog 凭据判定为 false，status 落到 not_configured
+    const anthropic = result.find(p => p.id === 'anthropic')
+    expect(anthropic?.kind).toBe('catalog')
+    expect(anthropic?.apiKeySet).toBe(false)
+    expect(anthropic?.status).toBe('not_configured')
+  })
+
+  it('resolver 批量结果命中时 catalog provider 判 connected', () => {
+    // catalog 候选来自 models.json 条目（auth.json 无该 id）；无 override.apiKey →
+    // 旧内联判定为 false，命中仅可能来自 resolver 批量集
+    const store = makeListStore({ anthropic: {} })
+    const auth = makeAuth()
+    const resolver = makeResolver(['anthropic'])
+
+    const result = listProviders(store, auth, undefined, resolver)
+
+    const anthropic = result.find(p => p.id === 'anthropic')
+    expect(anthropic?.apiKeySet).toBe(true)
+    expect(anthropic?.status).toBe('connected')
+  })
+
+  it('未注入 resolver 时降级旧内联判定（auth.json 集合命中 catalog）', () => {
+    const store = makeListStore()
+    const auth = makeAuth()
+    vi.mocked(auth.listCredentialIds).mockReturnValue(['anthropic'])
+
+    const result = listProviders(store, auth)
+
+    expect(result.find(p => p.id === 'anthropic')?.apiKeySet).toBe(true)
+    // 降级路径同样单次读盘（无 per-provider hasCredentialSync）
+    expect(auth.hasCredentialSync).not.toHaveBeenCalled()
+  })
+
+  it('真 resolver 接线：auth.json-only catalog provider 判 connected（端到端，无 per-provider 判定）', () => {
+    const providers = { 'my-custom': { name: 'My Custom' } }
+    const store = {
+      readModels: vi.fn(() => ({ providers })),
+      getEnabledModels: vi.fn(() => []),
+      getProviderConfig: vi.fn((id: string) => (providers as Record<string, unknown>)[id]),
+    } as unknown as IConfigStore
+    const auth = makeAuth()
+    // 凭据只在 auth.json（models.json 的 my-custom 无 apiKey）
+    vi.mocked(auth.listCredentialIds).mockReturnValue(['anthropic'])
+    const resolver = new ProviderCredentialResolver({
+      authService: { getCredential: vi.fn(async () => undefined) },
+      authStorage: auth,
+      configStore: store,
+    })
+
+    const result = listProviders(store, auth, undefined, resolver)
+
+    // auth.json-only catalog provider 命中（旧内联路径也命中；此处证明真 resolver 接线可达）
+    expect(result.find(p => p.id === 'anthropic')?.apiKeySet).toBe(true)
+    // 批量形态：不逐 provider 走 getProviderConfig / hasCredentialSync
+    expect(store.getProviderConfig).not.toHaveBeenCalled()
+    expect(auth.hasCredentialSync).not.toHaveBeenCalled()
   })
 })

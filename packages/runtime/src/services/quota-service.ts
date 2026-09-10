@@ -24,6 +24,7 @@ import type { XyzProviderStore, ProviderExtras } from './provider-extras-store.j
 import { readExtrasWithFallback } from './migration/provider-extras-migration.js'
 import type { Credential } from './auth/auth-storage.js'
 import type { ConfigProviderConfig } from './ports/config.js'
+import type { IProviderCredentialResolver } from './ports/provider-credential-resolver.js'
 import { toErrorMessage } from '../utils/errors.js'
 
 /** 最小查询间隔（毫秒） */
@@ -98,6 +99,14 @@ export interface QuotaServiceOptions {
    * 未注入时回退 infra 模块函数（保持既有单测的模块 mock 体系与未注入行为不变）。
    */
   getProviderConfig?: (providerId: string) => ConfigProviderConfig | undefined
+  /**
+   * Provider 凭据解析唯一通道（D3 收口，链 1 消费点）：注入后 api-key 形态的
+   * auth.json / models.json 两段统一走 resolver（auth.json → models.json，源优先级单点声明）；
+   * secrets 专属 key 段仍优先（Coding Plan 专属语义，不属于 provider 凭据）。
+   * 未注入时降级旧内联链（AuthService.getCredential + getApiKeyForProvider），向后兼容。
+   * resolver 构造无 IO、读取懒发生——无缓存语义变化（原实现同样每次调用即读盘）。
+   */
+  providerCredentialResolver?: IProviderCredentialResolver
 }
 
 export class QuotaService {
@@ -118,6 +127,8 @@ export class QuotaService {
   private getAuthCredential: ((providerId: string) => Promise<Credential | undefined>) | undefined
   /** models.json 单条目读取通道（arch-boundary S2 port 化，生产注入 configStore.getProviderConfig） */
   private getProviderConfigOpt: ((providerId: string) => ConfigProviderConfig | undefined) | undefined
+  /** Provider 凭据解析唯一通道（D3 链 1，未注入时降级旧内联链） */
+  private credentialResolver: IProviderCredentialResolver | undefined
   /** providerId → 最近一次查询失败原因（A2-4：getCached 透传；成功清除；不落盘） */
   private lastFailure: Map<string, QuotaFetchFailureReason> = new Map()
 
@@ -130,6 +141,7 @@ export class QuotaService {
     this.getProviderInfo = opts.getProviderInfo ?? (() => undefined)
     this.extrasStore = opts.providerExtrasStore
     this.getProviderConfigOpt = opts.getProviderConfig
+    this.credentialResolver = opts.providerCredentialResolver
     this.providerExists = opts.providerExists
       // 保守默认：维持旧限制语义（models.json 有条目才可配置），生产恒注入聚合判定
       ?? ((providerId) => this.readProviderConfig(providerId) !== undefined)
@@ -564,8 +576,8 @@ export class QuotaService {
 
   /**
    * 获取凭证（单形态，来源链固定）。
-   * - api-key：secrets 专属额度 key → auth.json `credential(api_key).key`（经注入的
-   *   AuthService.getCredential 通道）→ models.json `providers[id].apiKey`（§3.5 终态链）
+   * - api-key：secrets 专属额度 key → 注入 resolver 时经唯一凭据通道（auth.json → models.json）；
+   *   未注入 resolver 时降级旧内联链（AuthService.getCredential → models.json apiKey）
    * - oauth：auth.json `credential(oauth).access`（直读现值，不自行 refresh——D6）
    * - cookie：secrets cookie 文件
    *
@@ -575,13 +587,25 @@ export class QuotaService {
    */
   private async getCredential(providerId: string, kind: QuotaAuthKind): Promise<string | null> {
     if (kind === 'api-key') {
-      // 优先读 Coding Plan 专属 API Key（secrets 目录）
+      // 优先读 Coding Plan 专属 API Key（secrets 目录）——quota 专属 key 语义，
+      // 不属于 provider 凭据，不并入 resolver（D3：resolver 只管 provider 凭据两源）。
       const quotaKey = this.readSecret(this.getApiKeyPath(providerId))
       if (quotaKey) return quotaKey
-      // auth.json api_key（catalog provider 凭证的目标位置，M5-01——修复场景 A 断点的关键来源）
+      // D3 链 1（凭据收口）：auth.json api_key → models.json apiKey 两段统一走 resolver。
+      // 读取异常降级为「无凭据」（对齐旧 readAuthCredential 的容错语义，不阻断 resolveCredential）。
+      if (this.credentialResolver) {
+        try {
+          const resolved = await this.credentialResolver.resolveProviderCredential(providerId)
+          return resolved?.key ?? null
+        } catch (err) {
+          const msg = toErrorMessage(err)
+          logger.debug('[quota] failed to resolve provider credential', { providerId, error: msg })
+          return null
+        }
+      }
+      // 降级（未注入 resolver）：旧内联链——auth.json api_key（catalog 凭据位置）→ models.json apiKey。
       const authCred = await this.readAuthCredential(providerId)
       if (authCred?.type === 'api_key' && authCred.key) return authCred.key
-      // fallback：复用 provider 的 API Key（models.json）
       const providerKey = getApiKeyForProvider(providerId)
       return providerKey ?? null
     }

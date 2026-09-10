@@ -26,7 +26,7 @@ import { setSettingsPath, readSettings } from '../src/infra/pi/pi-settings-store
 const mkdtempP = promisify(mkdtemp)
 const rmP = promisify(rm)
 
-function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; deleteProvider?: ReturnType<typeof vi.fn>; toggleProviderEnabled?: ReturnType<typeof vi.fn>; removeProviderByKind?: ReturnType<typeof vi.fn>; getDefaultModel?: ReturnType<typeof vi.fn>; setDefaultModel?: ReturnType<typeof vi.fn>; listProviders?: ReturnType<typeof vi.fn>; applyImportProviders?: ReturnType<typeof vi.fn>; discover?: ReturnType<typeof vi.fn>; aggregate?: ReturnType<typeof vi.fn>; oauthLogin?: ReturnType<typeof vi.fn>; oauthCancel?: ReturnType<typeof vi.fn>; oauthLogout?: ReturnType<typeof vi.fn>; modifyScopedModels?: ReturnType<typeof vi.fn> } = {}) {
+function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; deleteProvider?: ReturnType<typeof vi.fn>; toggleProviderEnabled?: ReturnType<typeof vi.fn>; removeProviderByKind?: ReturnType<typeof vi.fn>; getDefaultModel?: ReturnType<typeof vi.fn>; setDefaultModel?: ReturnType<typeof vi.fn>; listProviders?: ReturnType<typeof vi.fn>; applyImportProviders?: ReturnType<typeof vi.fn>; discover?: ReturnType<typeof vi.fn>; aggregate?: ReturnType<typeof vi.fn>; oauthLogin?: ReturnType<typeof vi.fn>; oauthCancel?: ReturnType<typeof vi.fn>; oauthLogout?: ReturnType<typeof vi.fn>; modifyScopedModels?: ReturnType<typeof vi.fn>; resolver?: unknown } = {}) {
   const broadcasts: ServerMessage[] = []
   const replies: { id: string; type: string; payload: Record<string, unknown> }[] = []
   const sendErrorCalls: { code: string; message: string }[] = []
@@ -90,6 +90,8 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
       getCredential: vi.fn().mockResolvedValue(undefined),
       saveCredential: vi.fn().mockResolvedValue(undefined),
     },
+    // D3 链 2：未传 resolver 时保持旧行为（仅 models.json 回查）
+    providerCredentialResolver: overrides.resolver,
     skillRegistry,
     projectRoot: '/proj',
     nextPushId: vi.fn().mockReturnValue('p1'),
@@ -265,6 +267,35 @@ describe('SettingsMessageHandler', () => {
       await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x', providerId: 'p1' }), WS)
       await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
       expect(ctx.modelService.discoverModelsFromApi).toHaveBeenCalledWith('http://x', 'resolved-key', undefined)
+    })
+    it('注入 resolver：凭据只在 auth.json（models.json 无 apiKey）时命中（链 2 断链修复）', async () => {
+      // 旧实现只查 configService.getProvider(providerId)?.apiKey（models.json），对 catalog
+      // provider 恒 miss；resolver 命中 auth.json → discover 能拿到凭据
+      const resolver = {
+        resolveProviderCredential: vi.fn().mockResolvedValue({ key: 'auth-json-key', source: 'auth.json' }),
+      }
+      const { ctx, replies, handler } = makeHandler({ resolver })
+      // models.json 无该 provider（旧路径必 miss 的可证伪信号）
+      ctx.configService.getProvider = vi.fn().mockReturnValue(undefined) as never
+      await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x', providerId: 'anthropic' }), WS)
+      await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
+      expect(resolver.resolveProviderCredential).toHaveBeenCalledWith('anthropic')
+      expect(ctx.modelService.discoverModelsFromApi).toHaveBeenCalledWith('http://x', 'auth-json-key', undefined)
+    })
+    it('payload 自带 apiKey → 不走 resolver（表单值优先）', async () => {
+      const resolver = { resolveProviderCredential: vi.fn().mockResolvedValue({ key: 'ignored', source: 'auth.json' }) }
+      const { ctx, replies, handler } = makeHandler({ resolver })
+      await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x', apiKey: 'form-key', providerId: 'p1' }), WS)
+      await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
+      expect(resolver.resolveProviderCredential).not.toHaveBeenCalled()
+      expect(ctx.modelService.discoverModelsFromApi).toHaveBeenCalledWith('http://x', 'form-key', undefined)
+    })
+    it('未注入 resolver 时保持旧行为：models.json 无条目 → 凭据 undefined（失败模式 C 现状对照）', async () => {
+      const { ctx, replies, handler } = makeHandler()
+      ctx.configService.getProvider = vi.fn().mockReturnValue(undefined) as never
+      await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x', providerId: 'anthropic' }), WS)
+      await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
+      expect(ctx.modelService.discoverModelsFromApi).toHaveBeenCalledWith('http://x', undefined, undefined)
     })
   })
 

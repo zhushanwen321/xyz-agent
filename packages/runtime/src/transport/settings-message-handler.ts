@@ -11,6 +11,7 @@ import { attachSupportedLevelsSafe } from './message-broker.js'
 import { toErrorMessage } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 import { ConfigPreferencesMessageHandler } from './config-preferences-message-handler.js'
+import type { IProviderCredentialResolver } from '../services/ports/provider-credential-resolver.js'
 
 /** Interface for server methods needed by this handler */
 export interface SettingsHandlerContext extends MessageHandlerContext {
@@ -19,6 +20,11 @@ export interface SettingsHandlerContext extends MessageHandlerContext {
   modelService: IModelService
   /** OAuth Login（路径 B）：config.oauthLogin/oauthCancel RPC 路由 + auth.* 事件由 AuthService 推 broadcast */
   authService: IAuthService
+  /**
+   * Provider 凭据解析唯一通道（D3 收口，链 2 消费点）。
+   * 可选：组合根装配注入（M2c）；未注入时 handleDiscoverModels 降级旧行为（仅 models.json apiKey）。
+   */
+  providerCredentialResolver?: IProviderCredentialResolver
   /** W4：skillRegistry（全局 + 项目级 skill 缓存，带 watcher）。landing 全局 skill 经此拿 globalCache（FR-5）。 */
   skillRegistry: SkillRegistry
   projectRoot: string
@@ -710,15 +716,29 @@ export class SettingsMessageHandler {
 
   private handleDiscoverModels(msg: Extract<ClientMessage, { type: 'config.discoverModels' }>, ws: WsType): boolean {
     const { baseUrl, apiKey, providerType, providerId } = msg.payload
-    let resolvedApiKey = apiKey
-    if (!resolvedApiKey && providerId) resolvedApiKey = this.ctx.configService.getProvider(providerId)?.apiKey
+    // 链 2（D3 收口）：payload 未带 apiKey 时经 resolver async 版解析（auth.json → models.json），
+    // 修复「catalog 凭据只在 auth.json 时恒 miss」；未注入 resolver 时降级旧行为（仅 models.json）。
+    const credentialPromise: Promise<string | undefined> = apiKey
+      ? Promise.resolve(apiKey)
+      : providerId
+        ? this.resolveProviderApiKey(providerId)
+        : Promise.resolve(undefined)
     // 错误文案翻译（ByteString / fetch failed → 中文）已下沉 model-service；
     // handler 只 reply service 返回的 models 或 error.message。
-    this.ctx.modelService.discoverModelsFromApi(baseUrl, resolvedApiKey, providerType)
+    credentialPromise
+      .then((resolvedApiKey) => this.ctx.modelService.discoverModelsFromApi(baseUrl, resolvedApiKey, providerType))
       .then((models) => { this.ctx.reply(ws, msg.id, 'config.discoveredModels', { models, success: true }) })
       .catch((e: unknown) => {
         this.ctx.reply(ws, msg.id, 'config.discoveredModels', { models: [], success: false, error: toErrorMessage(e) })
       })
     return true
+  }
+
+  /** discover 凭据回查（链 2）：resolver 注入时走唯一通道；未注入降级为 models.json 单源。 */
+  private async resolveProviderApiKey(providerId: string): Promise<string | undefined> {
+    const resolver = this.ctx.providerCredentialResolver
+    if (!resolver) return this.ctx.configService.getProvider(providerId)?.apiKey
+    const resolved = await resolver.resolveProviderCredential(providerId)
+    return resolved?.key
   }
 }

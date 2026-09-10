@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { QuotaService } from '../../src/services/quota-service.js'
 import { XyzProviderStore } from '../../src/services/provider-extras-store.js'
+import type { IProviderCredentialResolver } from '../../src/services/ports/provider-credential-resolver.js'
 
 // vi.hoisted 提升变量到 vi.mock factory 可访问的位置（factory 会被 hoist 到文件顶部）
 // [A2-1] fetcher 接口数组化：authType 单值 → auth 数组；fetchQuota(credential, kind)
@@ -608,8 +609,102 @@ describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
   })
 })
 
-// ── [A2-4] 失败 reason 透传 ──
+/**
+ * M2b：链 1 迁移到 resolver（设计 D3 收口）。
+ *
+ * 语义边界：secrets 专属额度 key 是 Coding Plan 私有语义，仍优先且不并入 resolver；
+ * 其后的 auth.json / models.json 两段统一走 resolver async 版。
+ */
+describe('QuotaService — M2b 链 1: 凭据两段经 resolver（secrets 首段保留）', () => {
+  function makeResolver(result: { key: string; source: 'auth.json' | 'models.json' } | undefined) {
+    return {
+      hasProviderCredential: vi.fn(() => false),
+      listCredentialBackedProviderIds: vi.fn(() => new Set<string>()),
+      resolveProviderCredential: vi.fn(async () => result),
+    } as unknown as IProviderCredentialResolver
+  }
 
+  it('secrets 专属 key 仍优先，不被 resolver 覆盖（resolver 不被调用）', async () => {
+    const resolver = makeResolver({ key: 'resolver-key', source: 'auth.json' })
+    const svc = new QuotaService({
+      dataDir: tmpDir,
+      providerExtrasStore: extrasStore,
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
+      providerCredentialResolver: resolver,
+    })
+    await svc.configure('glm-id', true, undefined, 'zhipu', 'secrets-key')
+    mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
+
+    await svc.fetch('glm-id')
+
+    expect(mockFetchQuota).toHaveBeenCalledWith('secrets-key', 'api-key', { workspaceUrl: undefined })
+    expect(vi.mocked(resolver.resolveProviderCredential)).not.toHaveBeenCalled()
+  })
+
+  it('无 secrets key 时 auth.json 段经 resolver 命中（场景 A 断链修复）', async () => {
+    const resolver = makeResolver({ key: 'auth-json-key', source: 'auth.json' })
+    const svc = new QuotaService({
+      dataDir: tmpDir,
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
+      providerCredentialResolver: resolver,
+    })
+    mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
+
+    await svc.fetch('glm-id')
+
+    expect(vi.mocked(resolver.resolveProviderCredential)).toHaveBeenCalledWith('glm-id')
+    expect(mockFetchQuota).toHaveBeenCalledWith('auth-json-key', 'api-key', { workspaceUrl: undefined })
+  })
+
+  it('resolver 落到 models.json 源时同样命中', async () => {
+    const resolver = makeResolver({ key: 'models-json-key', source: 'models.json' })
+    const svc = new QuotaService({
+      dataDir: tmpDir,
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
+      providerCredentialResolver: resolver,
+    })
+    mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
+
+    await svc.fetch('glm-id')
+
+    expect(mockFetchQuota).toHaveBeenCalledWith('models-json-key', 'api-key', { workspaceUrl: undefined })
+  })
+
+  it('resolver 未命中 → api-key 形态无凭证，不发请求（zhipu 仅 api-key 形态）', async () => {
+    const resolver = makeResolver(undefined)
+    const svc = new QuotaService({
+      dataDir: tmpDir,
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
+      providerCredentialResolver: resolver,
+    })
+
+    const result = await svc.fetch('glm-id')
+
+    expect(vi.mocked(resolver.resolveProviderCredential)).toHaveBeenCalledWith('glm-id')
+    expect(mockFetchQuota).not.toHaveBeenCalled()
+    expect(result.data).toBeNull()
+  })
+
+  it('resolver 读取异常 → 降级无凭据（不向上抛出）', async () => {
+    const resolver = {
+      hasProviderCredential: vi.fn(() => false),
+      listCredentialBackedProviderIds: vi.fn(() => new Set<string>()),
+      resolveProviderCredential: vi.fn(async () => { throw new Error('auth.json locked') }),
+    } as unknown as IProviderCredentialResolver
+    const svc = new QuotaService({
+      dataDir: tmpDir,
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
+      providerCredentialResolver: resolver,
+    })
+
+    const result = await svc.fetch('glm-id')
+
+    expect(result.data).toBeNull()
+    expect(mockFetchQuota).not.toHaveBeenCalled()
+  })
+})
+
+// ── [A2-4] 失败 reason 透传 ──
 describe('QuotaService — A2-4: 失败 reason 透传与清除', () => {
   it('查询失败（unauthorized）→ 结果 data=null + reason；getCached 携带旧缓存数据 + reason', async () => {
     const svc = new QuotaService({
