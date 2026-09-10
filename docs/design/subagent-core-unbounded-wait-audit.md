@@ -2,6 +2,31 @@
 
 > **一句话结论**：weekly/monthly workflow 并发挂死（RC-1/2/3）不是孤立 bug，而是「默认无界」设计裁决的家族性发作——全仓普查共登记 **32 条同家族独立缺陷**（原始普查 34 条发现经并条归并；13 条可致永久挂起/进程泄漏/宿主崩溃），修复按「正常路径逐点根修 + 回收层统一有界兜底」两层推进，兜底只许出现在回收层。
 
+## 修订记录（2026-09-10 架构分叉后的重放移植）
+
+> **本文档的 §7.2 T8 与 §7.3 P-T1 更新、§11-1 载体声明是线 B（旧架构）的落地回写，已被架构分叉取代。** 2026-09-10 本分支按 [subagent-agent-end-recovery-replay.md](subagent-agent-end-recovery-replay.md)（重放移植权威 SSOT）在 dev-0.9.16 新架构上重新落地：M0 把代码面**整树重置**到 dev-0.9.16（决策 7），**线 B 的旧实现宿主 `packages/subagent-core/src/execution/engine/engines/pi/` 整目录已删除**。下文引用的 `session-runner.ts` / `get-state-handshake.ts` / `session-file-locator.ts` / `session-pending.ts` 等 engines/pi 系文件路径，以及 `locateSessionFileByScan` / `runAgentEndDisposition` / `evaluateDispositionBranches` / `armDispositionRetryWindow` / `exhaustDispositionRetryWindow` / `deriveDescendantCapable` / `PI_SUBAGENT_SELF_RECORD_ID` 等符号，**均为线 B 历史记录，不再对应当前代码**。
+
+**D1-D4 移植判定（以 replay.md §3.2 为准）**：
+
+| 项 | 旧机制（本 audit 关联面） | 判定 | 新落点（当前树） |
+|---|---|---|---|
+| **D1 握手迟到接受** | 迟到 response 幂等回填 sessionFile | **不移植（等价覆盖且更强）** | 既有 `packages/pi-subagent-cli/src/spawn-run-pump.ts`（零改动） |
+| **D2 sessionDir 扫描兜底** | `locateSessionFileByScan`（identity entry 精确匹配；T8/P-T1 回写所引） | **精简重放（匹配键更换为 prompt 头部键）**：identity entry 数据源结构性消亡（决策 6） | M4 `packages/pi-subagent-cli/src/session-file-locator.ts`（新）+ `spawn-run-pump.ts` close finalizer；M2 `spawn-runner.ts` agent_end 惰性 get_state 回补 |
+| **D3 处置翻转 + 15s 窗口** | T8 登记的 `descendantCapable` + error 分支 15s 回补窗口 | **不移植（问题域结构性消失）**：新架构 agent_end 无条件 kill，无保守等待分支 | — |
+| **D3a descendantCapable 快路径** | 无后代能力工具零判定直接杀 | **不移植（被整体包含）** | — |
+| **D4 spawn-channel 门面** | 七件原语归一 | **不移植（目标已由进程边界达成）**：原语住在 pi-subagent-cli + SDK | — |
+
+**本次重放移植的实际落点（M1-M4，均 committed）**：
+
+| 单元 | 关联本 audit 主题 | commit | 落点文件 |
+|---|---|---|---|
+| M1 S2 契约修复 | RC-1 握手一次性缺陷的契约面防御 | `9578af7f4` | `packages/pi-subagent-cli/src/get-state-handshake.ts` |
+| M2 agent_end 惰性回补 | T1 惰性回补在新架构的重放 | `042dccec6` | `packages/pi-subagent-cli/src/spawn-runner.ts` |
+| M3 workflow 域守护补挂 | 本 audit §7.2 T2-③ 同原语（`settled-watchdog`）在新域补挂 | `bd4404ddf` | `packages/subagent-core/src/execution/subprocess-agent-runner.ts` |
+| M4 close 兜底扫描 | T1 的 LC-4/PS-9 兜底面在新架构的重放（键更换） | `f737baa7a` | `packages/pi-subagent-cli/src/session-file-locator.ts`（新）+ `spawn-run-pump.ts` |
+
+**对本文两处「已闭合」声明的勘误（当前树口径）**：① §7.3 P-T1 降级路径列称「D2 扫描兜底接入 agent_end 决策回补链 + close 收尾反查链两点、LC-4/PS-9 修复面闭合」——该两点接入属线 B；新架构 M4 只在 **close 收尾单点**（LC-4 之后）扫描，agent_end 侧改由 **M2 惰性 get_state 回补**承担（不再扫目录），且匹配键为 prompt 头部而非 identity entry。② §7.2 T8 的 15s 回补窗口在本次重放**不移植**（判定 D3 问题域结构性消失），T8 仅作线 B 历史决策保留。当前实现与排查词条以 replay 设计 + [../troubleshooting.md](../troubleshooting.md) §12 为准。
+
 ## 开篇（SCQA）
 
 - **S（情境）**：subagent-core（`packages/subagent-core/`）是 xyz-agent 的子代理执行核心——spawn pi RPC 子进程跑 subagent、worker 线程跑 workflow 编排，承载着 daily/weekly/monthly 等生产调度。
@@ -328,6 +353,8 @@ if (record.sessionFile) {              // ← 守卫条件恰等于它要兜底�
 
 #### T8【决策】agent_end「读不出」处置翻转：无限保守等待 → 15s 回补重试窗口（2026-09-10 登记）
 
+> **[架构分叉后勘误 2026-09-10]** 本条是**线 B 历史决策**：本次重放移植判定 D3「问题域结构性消失」（新架构 agent_end 无条件 kill），**15s 回补窗口不移植**；下述 `descendantCapable` / `runAgentEndDisposition` / `locateSessionFileByScan` 均为已删的 engines/pi 实现。当前树落点见头部「修订记录」节与 [subagent-agent-end-recovery-replay.md](subagent-agent-end-recovery-replay.md)。
+
 - **来源**：[subagent-agent-end-recovery.md](subagent-agent-end-recovery.md) D3——本文 T1-T7 之后的后续设计。其 §0 与本文的关系声明：T1 交付惰性回补基础设施（8.8.0），该设计在其上补齐失败路径（D1 迟到接受 + D2 扫描兜底，见 P-T1 行更新）并新增本文未建模的处置翻转架构决策。
 - **采用**：`descendantCapable === true` 且 sessionFile 读不出（error）时不再进入无限 keep-alive（RC-2 的保守分支，本清单裁决 2 的头号实例），改为 **15s 回补重试窗口**：每 5s 一轮交替「get_state 单查 / sessionDir 扫描」（轮 3 纯判定轮），任一路径拿到真实 sessionFile 即以真实路径重走三分支；窗口内 tick 重判仍 error 则续窗不清已排定轮次（保证单次 arm 的耗尽点确定 = arm + 15s）；多轮 agent_end 重入 error 分支按幂等 arm 语义 disarm 旧窗口 + 重挂重计（重置仅由真实新事件触发，活动停止后窗口必然耗尽，不构成退化回无限等待）；窗口耗尽仍读不出 → kill（SIGTERM→30s→SIGKILL 升级链）→ runSpawn 以成功语义返回，结果内容来自 stdout 事件累积，不依赖 sessionFile。「读不出」触发率由两路配套打到近零：D1 迟到接受（握手 resolve 后迟到应答幂等回填，消除「永久缺失」）+ D2 扫描兜底（P-T1 行已登记落地）。`count > 0`（证实有后代）分支与 keep-alive 全部原样保留（G2 不回归——翻转只动「读不出」，不动「证实有」）；无后代能力 agent（tools 白名单非空且不含派生/记账工具，[Gate B P3 勘误后真实注册名] subagent/workflow/workflow-script/bash）走零判定快路径。
 - **收口**：§5 裁决 2「保守 = 不限时」——保守不杀是对的，但「合法等待（有活跃后代）」与「记账失败（文件读不出）」必须分家：前者保留现有等待，后者给 15s 秒级上界。裁决 2 的实例清单（RC-2/LC-3/PS-6/PS-10/PS-11/PS-12）中 RC-2（含 LC-4/PS-9 放大链的入口）由本决策直接收口，并把「记账失败终有一杀」的量级从 30min no-progress 兜底的错误量级中解放（该兜底保留为「证实有后代但后代集体挂死」场景的最后防线，与本决策正交）。
@@ -340,7 +367,7 @@ if (record.sessionFile) {              // ← 守卫条件恰等于它要兜底�
 
 | ID | 验证的行为断言 | 探针 | 状态 | 失败时降级路径 |
 |---|---|---|---|---|
-| P-T1 | agent_end 时子进程（已完成 turn、idle）对 get_state 毫秒级应答 | 受控复现：并发 6 路 spawn + 人为抑制首次握手，断言惰性重试 < 1s 返回 sessionFile | **已执行 PASS**：6 路 0.3-0.4ms（预算 1s，2500 倍余量），T1 惰性回补主路径成立 | **扫描兜底已落地（2026-09-10，本行原备注「sessionDir 后缀扫描未启用，保留为 LC-4/PS-9 修复面」就此关闭）**：locateSessionFileByScan（`session-file-locator.ts`，identity 精确匹配 + mtime 降序 + 整文件前向读）接入两点——agent_end 决策回补链（含 15s 重试窗口轮 2）与 close 收尾反查链 lookupId 缺失分支，LC-4/PS-9 修复面闭合；翻转决策见 §7.2 T8，设计依据 [subagent-agent-end-recovery.md](subagent-agent-end-recovery.md) D2 |
+| P-T1 | agent_end 时子进程（已完成 turn、idle）对 get_state 毫秒级应答 | 受控复现：并发 6 路 spawn + 人为抑制首次握手，断言惰性重试 < 1s 返回 sessionFile | **已执行 PASS**：6 路 0.3-0.4ms（预算 1s，2500 倍余量），T1 惰性回补主路径成立 | **扫描兜底已落地（2026-09-10，本行原备注「sessionDir 后缀扫描未启用，保留为 LC-4/PS-9 修复面」就此关闭）**：locateSessionFileByScan（`session-file-locator.ts`，identity 精确匹配 + mtime 降序 + 整文件前向读）接入两点——agent_end 决策回补链（含 15s 重试窗口轮 2）与 close 收尾反查链 lookupId 缺失分支，LC-4/PS-9 修复面闭合；翻转决策见 §7.2 T8，设计依据 [subagent-agent-end-recovery.md](subagent-agent-end-recovery.md) D2。**[架构分叉后勘误 2026-09-10]** 本单元格描述的是线 B（engines/pi 已删）落地形态；当前树口径（M4 仅 close 单点 + prompt 头部键 / agent_end 侧由 M2 惰性 get_state 回补承担）见头部「修订记录」节与 replay 设计 |
 | P-T2 | 30min keep-alive 固定默认上限不误杀真实 wave 场景（数小时 keep-alive 合法） | 真实数据回溯：扫历史 subagent session/record 中 keep-alive 窗口分布（89 个有效 closed 样本） | **已执行**：96.6% 样本 >30min（P50=24.5min/P95=71.6min/max≈95.5h）→ 固定 30min 被否定，**按降级路径 B 落地**：无进展检测（静默阈值 30min + stdout 活动刷新 + 到期复核存活活跃后代，有则重挂再等一周期，无则处置）——「直接后代长跑、层主静默」形态由复核节奏覆盖，不误杀 | 降级 A（P95×2 固定上限）保留为后备；复核判据与 sweep 同源（差集 + pid 探测），探不出 pid 的形态与 sweep 同盲区、归 T5 marker 兜底 |
 | P-T2b | pi 子进程收 SIGTERM 后是否自行级联 kill 其活跃后代（session_shutdown → killAllSpawnedChildren 链是否存在） | 本地起嵌套 subagent（父 keep-alive 且有活跃后代），向父进程发 SIGTERM，观察后代进程存活与终态 | **已执行**：后台孤儿后代形态三跑稳定 NO-CASCADE（仅 bash 前台窗口 CASCADE） | 裁决：后代补杀为主路径（设计已按此形态，无方案变更） |
 | P-T2c | chatMode post-run（agent_end → agent_settled）真实时长分布——T2-③ 的 10min 默认硬上限标定依据 | 真实 pi 会话多轮对话（3 短 + 60KB/120KB/400KB），统计每轮 agent_end→settled 间隔；附显式 compact 30 万 tokens 实验 | **已执行**：6 轮间隔全部 <2ms（同 chunk）；compact 40.1s | 10min 硬上限维持（4 个数量级余量） |
@@ -439,3 +466,4 @@ if (record.sessionFile) {              // ← 守卫条件恰等于它要兜底�
 | 日期 | 事件 |
 |------|------|
 | 2026-09-10 | agent-end 完成回收根修落地回写（C-proc-10；设计 [subagent-agent-end-recovery.md](subagent-agent-end-recovery.md)，实施单元 u1-u5 已全部 committed，u6 即本次回写）：①P-T1 降级路径列原备注「sessionDir 后缀扫描未启用，保留为 LC-4/PS-9 修复面」关闭——D2 扫描兜底（locateSessionFileByScan）已落地，接入 agent_end 决策回补链与 close 收尾反查链两点，LC-4/PS-9 修复面闭合；②新登记 §7.2 T8 翻转决策（agent_end error 分支 15s 回补重试窗口，收口 §5 裁决 2「保守 = 不限时」）；③§11 P-RC1 补执行载体声明（S1 场景兼作探针执行载体）。本文此前无集中变更历史节（历史登记以 §7.2/§7.3 内联清账形态存在），本节自本行起建 |
+| 2026-09-10 | **架构分叉后的重放移植修订（C-proc-10；权威 SSOT [subagent-agent-end-recovery-replay.md](subagent-agent-end-recovery-replay.md)）**：M0 整树重置到 dev-0.9.16 后，线 B 实现宿主（engines/pi 整目录）删除。①新增「修订记录」节（D1-D4 移植判定 + M1-M4 新落点 + 已删文件/符号清单）；②对上两行（P-T1 降级路径列 / §7.2 T8）作当前树口径勘误：D2 扫描在本次重放只在 close 收尾单点接入、匹配键改为 prompt 头部（M4），agent_end 侧由 M2 惰性 get_state 回补承担，15s 窗口不移植（D3 问题域结构性消失）；③本 audit 层面的既有修复（T1-T7 / 32 条登记）不受影响，仍为 dev-0.9.16 基线的现行事实 |

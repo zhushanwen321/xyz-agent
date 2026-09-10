@@ -312,19 +312,46 @@ Subagent "coder" (rec-8f3a) completed.
 >
 > **验收分层声明**：V2-V4 的被测系统 = 引擎 CLI 真实进程 + 真实 spawn/stdio/时序边界，仅 pi 对端用可控协议脚本进程替代（dev-0.9.16 conformance 测试的 fake-engine 同先例）——S2/M2/M4 验证的是握手与收尾的时序行为，需要可控构造「应答缺字段/不应答/延迟」形态，真实 pi 无法确定性构造；V1 用真实 pi 端到端兜底事故形态；V5 的 M3 守护链在 core 包内用单测 + 短超时 seam。
 
-| # | 场景 | 步骤 | 通过标准 | 回溯 |
-|---|---|---|---|---|
-| V1 | 事故形态重放（6 路并发 one-shot） | dev app（`pnpm dev`）真机，主会话派发 6 路并发 workflow subagent（同 carbon 任务形态），等待完成 | 6 条完成通知全部到达（分钟级，无 90min 挂死）；通知含结果正文；抽 1 条 record 验证 sessionFile 非空且 session-reader 能读全文 | G1、G2、M2 |
-| V2 | S2 契约（应答缺 sessionFile） | 协议脚本对端（conformance fake-engine 先例）：首答在 2s 超时后到达且 payload 不含 sessionFile——**纯契约构造**（真实 pi 应答恒带 sessionFile，§1.2；此形态生产未观测，验证的是引擎侧握手状态机对它的鲁棒性） | 日志显示 attempts 继续推进到 3；最终 collected 带 sessionId；close 后 sessionFile 经 LC-4 落位 | G2、M1 |
-| V3 | agent_end 补查（握手总失 + agent_end 恢复） | 协议脚本对端：spawn 期 get_state 三轮全部不应答（对端扣住应答——原事故的现实形态），正常跑完任务出 agent_end，agent_end 时刻对端恢复应答 | outcome.sessionFile 非空；主会话通知可 session_read 取回全文；总耗时较正常路径 +≤1s | G2、M2 |
-| V4 | M4 兜底（全程不应答） | 协议脚本对端：get_state 全程不应答（spawn 期 + agent_end 期），对端正常落盘 session 文件后跑完 | close 后 record.sessionFile 经 prompt 键扫描补上（单命中）；若构造多命中（同 prompt 双开）则放弃 + warn，run 仍正常终态、通知照发 | G2、M4 |
-| V5 | workflow 域守护（M3 补挂，SAR 落点） | 两层：① 单测（fake timers）断言 SAR.run 内 arm → 静默推进 30min → fire（watchdog controller.abort → mergedSignal → engine.run 收敛 → SAR error result），**以及产出刷新面**（事件/delta 持续到达跨窗长时不 fire——刷新源接线缺陷须可被验收暴露，R4 S）；② 真跑一次短超时全链（K6 核实 mid-round 窗可否经 env/测试 seam 缩短后构造楔死） | ① fire 链各环节断言绿 + **产出刷新不 fire 断言绿** + **`agent()` promise 收敛 + journal close + 重试面行为符合决策 9**（只断言通知不断言收敛 = 验收盲区，R2 修订）；② 真实 error result 到达 workflow、退避重试或最终失败可观测 | G1、M3 |
-| V5c | killAll 组杀邻接（M3 连带面） | 单测：同引擎 2 路 run（1 路楔死触发 fire + 引擎对 cancel 无响应形态、1 路 healthy），观察连带 | healthy run 收敛为 engine_crashed error（G1 字面保持：有终态 + 可重试），无悬挂 | G1、M3（决策 9 组杀四要素） |
-| V5b | chat 域守护回归（守护不误伤） | 单测：chat 域 arm/fire 既有行为零变化（M3 不触碰 kickOffChatRound 链） | 既有 settled-watchdog / chat-round-first-round-watchdog 测试全绿 | G1 |
-| V6 | 常规回归 | 正常单路 one-shot + 一条 chat 域 subagent（含冷续一次） | 行为与现状零差异：通知、结果、sessionFile、resume 全部正常 | G2 |
-| V7 | 机器门 | `pnpm --filter @zhushanwen/pi-subagent-cli test` + core 全量 + tsc + pre-commit 全守卫 + `node scripts/check-doc-symbol-drift.mjs`（replay.md 已登记映射后真检查，见决策 8） | 全绿 | G3 |
+| # | 场景 | 步骤 | 通过标准 | 回溯 | 结果（2026-09-10 M5 回填） |
+|---|---|---|---|---|---|
+| V1 | 事故形态重放（6 路并发 one-shot） | dev app（`pnpm dev`）真机，主会话派发 6 路并发 workflow subagent（同 carbon 任务形态），等待完成 | 6 条完成通知全部到达（分钟级，无 90min 挂死）；通知含结果正文；抽 1 条 record 验证 sessionFile 非空且 session-reader 能读全文 | G1、G2、M2 | ⏳ **待阶段 5 Gate B 回填（真机端到端）**。判据：dev app（`pnpm dev`）6 路并发 workflow subagent，6 条完成通知分钟级全到（无 90min 挂死）、通知含结果正文、抽 1 条 record sessionFile 非空且 session-reader 能读全文。 |
+| V2 | S2 契约（应答缺 sessionFile） | 协议脚本对端（conformance fake-engine 先例）：首答在 2s 超时后到达且 payload 不含 sessionFile——**纯契约构造**（真实 pi 应答恒带 sessionFile，§1.2；此形态生产未观测，验证的是引擎侧握手状态机对它的鲁棒性） | 日志显示 attempts 继续推进到 3；最终 collected 带 sessionId；close 后 sessionFile 经 LC-4 落位 | G2、M1 | ✅ **单测/契约对端通过（M1，commit `9578af7f4`）**：`get-state-handshake.test.ts` 9 passed，含契约用例「response 只带 sessionId（无 sessionFile）→ 视同未应答：剩余重试照发，3 轮耗尽 resolve 已收集字段」（attempts 1→2→3，settled 置位）。复跑证据 2026-09-10：`pnpm vitest run src/__tests__/get-state-handshake.test.ts` → 9 passed。⏳「close 后 sessionFile 经 LC-4 落位」子断言由 M4 e2e/既有 LC-4 面覆盖，V2 真机形态待阶段 5 Gate B。 |
+| V3 | agent_end 补查（握手总失 + agent_end 恢复） | 协议脚本对端：spawn 期 get_state 三轮全部不应答（对端扣住应答——原事故的现实形态），正常跑完任务出 agent_end，agent_end 时刻对端恢复应答 | outcome.sessionFile 非空；主会话通知可 session_read 取回全文；总耗时较正常路径 +≤1s | G2、M2 | ✅ **协议脚本对端通过（M2，commit `042dccec6`）**：`agent-end-backfill.test.ts` 6 passed，含 V3 用例「spawn 期三轮不应答 + agent_end 恢复应答 → outcome.sessionFile 非空且恢复 ≤1s」（impl-plan §6 实测 614ms；2026-09-10 复跑 721ms）+ 回补链 reject / 同步 throw 两路 kill 必达 + K2 幂等 + 自退 race。⏳ **V3 真机形态待阶段 5 Gate B**：判据 = 真实 pi 子进程 + wrapper 扣响应形态下 outcome.sessionFile 非空、主会话 session_read 可取回全文、总耗时较正常路径 +≤1s。 |
+| V4 | M4 兜底（全程不应答） | 协议脚本对端：get_state 全程不应答（spawn 期 + agent_end 期），对端正常落盘 session 文件后跑完 | close 后 record.sessionFile 经 prompt 键扫描补上（单命中）；若构造多命中（同 prompt 双开）则放弃 + warn，run 仍正常终态、通知照发 | G2、M4 | ✅ **协议脚本对端通过（M4，commit `f737baa7a`）**：29 用例 passed = `session-file-locator.test.ts` 17（单/零/多命中、坏行容错、降级门、代理对边界、fs 异常）+ `spawn-run-pump-session-file-fallback.test.ts` 8 + `run-spawn-once-session-file-fallback.e2e.test.ts` 4（真实 runSpawnOnce → 真实 pump/locator，fake pi 全程不应答；单命中采纳 + handleReady + 多命中放弃 + run 正常终态）。⏳ **V4 真机形态待阶段 5 Gate B**：判据 = 同期并发多候选时「不误配 + run 正常终态」（非「必须命中」；多命中即安全放弃）。 |
+| V5 | workflow 域守护（M3 补挂，SAR 落点） | 两层：① 单测（fake timers）断言 SAR.run 内 arm → 静默推进 30min → fire（watchdog controller.abort → mergedSignal → engine.run 收敛 → SAR error result），**以及产出刷新面**（事件/delta 持续到达跨窗长时不 fire——刷新源接线缺陷须可被验收暴露，R4 S）；② 真跑一次短超时全链（K6 核实 mid-round 窗可否经 env/测试 seam 缩短后构造楔死） | ① fire 链各环节断言绿 + **产出刷新不 fire 断言绿** + **`agent()` promise 收敛 + journal close + 重试面行为符合决策 9**（只断言通知不断言收敛 = 验收盲区，R2 修订）；② 真实 error result 到达 workflow、退避重试或最终失败可观测 | G1、M3 | ① ✅ **单测（fake timers）通过（M3，commit `bd4404ddf`）**：`subprocess-agent-runner-no-progress-watchdog.test.ts` 7 passed——arm → 静默推进 30min → fire（watchdog abort → mergedSignal → engine.run 收敛 → SAR error result）+ 产出刷新不 fire（事件/delta 两路）+ `agent()` 收敛 / journal close / 重试面。② ⏳ **V5② 按 K6 结论降级取消**（见下「K 检查点终局」K6）：mid-round 30min 窗为原语内纯常量、无 env/测试 seam 可缩短，真机短超时构造不可执行——workflow 域守护真实性由 **V1 端到端**承接（不设独立 V5② 项）。 |
+| V5c | killAll 组杀邻接（M3 连带面） | 单测：同引擎 2 路 run（1 路楔死触发 fire + 引擎对 cancel 无响应形态、1 路 healthy），观察连带 | healthy run 收敛为 engine_crashed error（G1 字面保持：有终态 + 可重试），无悬挂 | G1、M3（决策 9 组杀四要素） | ✅ **单测通过（M3）**：`subprocess-agent-runner-no-progress-killall.test.ts` 1 passed（真引擎 3.06s；watchdog fire + 引擎对 cancel 无响应 → killAll → 邻接 healthy run 以 engine_crashed 收敛、无悬挂）。 |
+| V5b | chat 域守护回归（守护不误伤） | 单测：chat 域 arm/fire 既有行为零变化（M3 不触碰 kickOffChatRound 链） | 既有 settled-watchdog / chat-round-first-round-watchdog 测试全绿 | G1 | ✅ **单测回归通过（M3）**：`chat-round-first-round-watchdog.test.ts` 6 passed（2026-09-10 复跑；M3 未触碰 kickOffChatRound 链，settled-watchdog 原语既有行为零变化）。 |
+| V6 | 常规回归 | 正常单路 one-shot + 一条 chat 域 subagent（含冷续一次） | 行为与现状零差异：通知、结果、sessionFile、resume 全部正常 | G2 | ⏳ **待阶段 5 Gate B 回填（真机）**。判据：dev app 正常单路 one-shot + 一条 chat 域 subagent（含冷续一次），通知 / 结果 / sessionFile / resume 与现状零差异。 |
+| V7 | 机器门 | `pnpm --filter @zhushanwen/pi-subagent-cli test` + core 全量 + tsc + pre-commit 全守卫 + `node scripts/check-doc-symbol-drift.mjs`（replay.md 已登记映射后真检查，见决策 8） | 全绿 | G3 | ✅ **守卫机器门通过（M5）**：`node scripts/check-doc-symbol-drift.mjs` exit 0（replay.md 已登记 `DOC_MODULE_MAP` → pi-subagent-cli / subagent-core execution 等模块，反向探针证明非恒真——插不存在符号即报 drift，见 M5 汇报）。单元级测试：M1 `9578af7f4` / M2 `042dccec6` / M3 `bd4404ddf` / M4 `f737baa7a`，包内全量见各 commit 状态。⏳ 阶段 5 Gate B 的 pi-subagent-cli test + core 全量 + tsc + pre-commit 全守卫 待回填。 |
 
 V2-V5 的协议脚本对端 = 独立验证脚本进程（按 pi rpc 协议应答，形态可控），用完归档移除（对齐 AGENTS.md「外部系统对接先验证再编码」惯例）。V1 是真实 pi 端到端。**对端进程数据目录约束（R1 S-2）**：对端的 sessionDir 必须 `mkdtempSync` 自建自删，或显式继承测试进程已重定向的 `XYZ_AGENT_DATA_DIR`（pi-subagent-cli vitest global-setup 已重定向），禁止硬编码真实数据目录——fs-guard 是进程内切面，罩不住独立对端进程。V5 的 30min 量级不真跑（fake timers），量级依据已有 P-T2c 探针先例。
+
+### 4.1 K 检查点终局与单元级证据（2026-09-10 M5 回填）
+
+**K1 接线签名**：✅ **零接线改动即满足**——既有握手调用点已用 `performGetStateHandshake(child, identity.addStateListener)` 同形态；`AddGetStateResponseListener = (id, resolver) => void | (() => void)` 与 `addStateListener(id, resolver): void` 直接可赋值。M2 未改 `get-state-handshake.ts`（diff ⊆ 领地，零改动）。
+
+**K2 killChild 幂等**：✅ **成立**（非偏差，结论登记）——`subagent-engine-sdk/src/kill-chain.ts:95` 首行 `if (child.exitCode !== null || child.signalCode !== null) return "terminated"` 早退，:121-129 safeKill 吞「检查与 kill 之间自退」抛出；M2 补组合级用例（回补 finally 经杀链落已退出 child → 不调 `child.kill`、不注册 exit 监听、可重复）。
+
+**K3① prompt 是否逐字落盘**：✅ **结论 = 非逐字**（实装 pi 0.84.4 `dist/core/session-manager.js:701/732/753` 逐行 `JSON.stringify(entry)` 落盘）→ M4 启用「原文 + JSON 转义形态」双 includes，**未走设计预置的降级路径**（降级 = 只做 mtime 窗口 warn、不自动采纳）。双 includes 的误配面与原文匹配同强度（JSON 转义是单射、逐字符确定性），安全底线「单命中才采纳」未放松；反证用例已锁（仅原文 includes 必 miss）。
+
+**K3② 真实 workflow 并发 prompt 头部区分度**：⏳ **未执行，归属阶段 5 Gate B 的 V1 期**（需真实 workflow 派发环境，单测面无法构造真实并发头部形态）。判据：实测同模板多路派发前 200 字符同质率；同质率高 → M4 在该旗舰场景只会安全放弃（不误配但无效），按决策 4 升级键策略（全文哈希 / 参数段取样）并回写设计。
+
+**K4 rpc-client 双版 diff**：✅ **无欠账重放**（主 agent 核验：线 B 对 `rpc-client.ts` 的改动 = 纯 D4 消费切换 + 注释迁移；线 B 注释提及的 stdout error 吞转发防护在 dev 版同点位存在——`rpc-client.ts:482` 一行防护 + `:496` W2 完整监听）。M5 无 rpc-client 相关重放。
+
+**K5 M0 合并冲突面对照**：✅ **与决策 7 预演清单完全吻合**（内容冲突 2 件 / 自动合并陷阱 2 件 / 自动保留面 5 件 / file-location 7 + modify/delete 3 件）；另清理 3 个 `git checkout <tree> -- packages/` 覆盖不到的线 B 独有测试文件（残留清理 `e192dfe4a`）。
+
+**K6 mid-round 30min 窗可否缩短**：✅ **结论 = 不可缩短**——中段阈值是原语内纯常量（`settled-watchdog.ts:32` 注释「中段阈值 v1 不开 env」），env `XYZ_SUBAGENT_SETTLED_WATCHDOG_MS` 只覆盖收尾段或两段全关，无缩短中段窗通道；加测试 seam 需改 `settled-watchdog.ts`（M3 领地外，不越界）→ **V5② 按设计降级取消，由 V1 端到端承接**（阶段 5 Gate B 不设 V5② 项）。
+
+**单元级证据（commit + 测试）**：
+
+| 单元 | commit | 测试结果 |
+|---|---|---|
+| M1 S2 契约修复 | `9578af7f4` | 契约断言（缺 sessionFile → 重试 1→2→3 照发 → 3 轮耗尽 resolve 已收集字段）；pi-subagent-cli 全包 304 passed + tsc 干净 |
+| M2 agent_end 惰性回补 | `042dccec6` | 6 用例（V3 回补 ≤1s 实测 614ms / 回补 reject 与 sync-throw 两路 kill 必达 / K1 接线面 / K2 幂等 / 自退 race）；全包 310 passed + tsc 干净 |
+| M3 workflow 域守护补挂 | `bd4404ddf` | 8 用例（V5① 7 + V5c 1，真引擎 3.06s）；subagent-core 全包 2842 passed + tsc 干净 |
+| M4 close 兜底扫描 | `f737baa7a` | 29 用例（locator 17 + pump 8 + 生产路径 e2e 4，含接线前后反向探针）；全包 339 passed + tsc 干净 |
+
+**复跑证据（2026-09-10 M5 独立复跑）**：pi-subagent-cli 5 个测试文件 `44 passed (44)`；subagent-core M3 两文件 `8 passed (8)`（含 V5c 真引擎 3060ms）+ chat 域回归 `6 passed (6)`。
 
 ---
 

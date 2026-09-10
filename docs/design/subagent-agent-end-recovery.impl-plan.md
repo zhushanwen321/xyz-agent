@@ -2,6 +2,33 @@
 
 基线: eaa45eb32 | 来源设计: docs/design/subagent-agent-end-recovery.md | 日期: 2026-09-10
 
+## 修订记录（2026-09-10 架构分叉后的重放移植）
+
+> **本文件是线 B（旧架构）实施计划记录，已被架构分叉取代。** 2026-09-10 本分支按 [subagent-agent-end-recovery-replay.md](subagent-agent-end-recovery-replay.md)（重放移植权威 SSOT）在 dev-0.9.16 新架构上重新落地：M0 先 `git merge dev-0.9.16` 并把代码面**整树重置**到 dev-0.9.16（决策 7）——**本文 u1-u6 的领地文件（`packages/subagent-core/src/execution/engine/engines/pi/` 系与 runtime `spawn-channel` 消费面）已随整目录删除**，u1-u6 的性质是「线 B 已在旧架构上实施并收口」的历史记录，**不是本次重放的实施单元**。
+>
+> 本次重放移植的实施单元是 replay.md §5.1 的 **M0-M5**，落点全部在新架构包内。下表是旧单元与新落点的对应（判定以 replay.md §3.2 为准）：
+
+**D1-D4 移植判定（以 replay.md §3.2 为准）**：
+
+| 项 | 旧机制（本文 §2 单元） | 判定 | 新落点（当前树） |
+|---|---|---|---|
+| **D1 握手迟到接受** | u1 的 resolver 迟到路径幂等回填 | **不移植（等价覆盖且更强）**：identity tracker 监听表驻留至 close，迟到 response 同步回填 | 既有 `packages/pi-subagent-cli/src/spawn-run-pump.ts`（零改动） |
+| **D2 sessionDir 扫描兜底** | u1 的 `locateSessionFileByScan`（identity entry 精确匹配，两个接入点） | **精简重放（匹配键更换）**：identity entry 数据源结构性消亡 | M4 `packages/pi-subagent-cli/src/session-file-locator.ts`（新，prompt 头部键，close 单点）+ M2 `spawn-runner.ts` agent_end 惰性回补 |
+| **D3 处置翻转 + 15s 窗口** | u3 的 `runAgentEndDisposition` error 分支翻转 + 重试窗口 | **不移植（问题域结构性消失）** | — |
+| **D3a descendantCapable 快路径** | u2 的 `descendantCapable` 派生 + 快路径 | **不移植（被整体包含）** | — |
+| **D4 spawn-channel 门面** | u4/u5 的七件原语合并与 runtime 切换 | **不移植（目标已由进程边界达成）** | — |
+
+**本次重放移植的实际落点（M1-M4，均 committed；M5 = 本文档修订与守卫）**：
+
+| 单元 | 对应旧单元 | commit | 落点文件（当前树） |
+|---|---|---|---|
+| M1 S2 契约修复 | u1（握手契约面） | `9578af7f4` | `packages/pi-subagent-cli/src/get-state-handshake.ts` |
+| M2 agent_end 惰性回补 | u1（惰性回补面） | `042dccec6` | `packages/pi-subagent-cli/src/spawn-runner.ts` |
+| M3 workflow 域守护补挂 | u3（no-progress 面，新域） | `bd4404ddf` | `packages/subagent-core/src/execution/subprocess-agent-runner.ts` |
+| M4 close 兜底扫描 | u1（扫描兜底面，键更换） | `f737baa7a` | `packages/pi-subagent-cli/src/session-file-locator.ts`（新）+ `spawn-run-pump.ts` + `spawn-runner.ts` 1 行 seam |
+
+**下文 §2 领地列与 §6 状态表的 `session-runner.ts` / `get-state-handshake.ts` / `session-file-locator.ts` / `spawn-channel.ts` / `stdin-writer.ts` / `types.ts` 等路径，以及 `locateSessionFileByScan` / `runAgentEndDisposition` / `descendantCapable` / `SpawnChannelPolicies` / `SUBAGENT_CORE_SPAWN_POLICIES` 等符号，均为线 B 历史记录**（engines/pi 整目录已随 M0 删除）；当前实现与状态以 replay 设计 + 其 impl-plan 与 [../troubleshooting.md](../troubleshooting.md) §12 为准。
+
 ## 0 章节映射
 
 | 内容 | 本文实际位置 |

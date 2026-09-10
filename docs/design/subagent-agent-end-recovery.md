@@ -2,6 +2,31 @@
 
 > **一句话结论**：把「subagent 完成后不通知主 agent」的根因——get_state 握手一次性失败导致 sessionFile 永久缺失、agent_end 处置误入无限保守等待——从正常路径上消灭：迟到应答照收（它必然会到）、sessionDir 扫描兜底（文件必然在）、处置默认翻转（读不出不再无限等）。三件互相独立、可分批落地，合并预期把「读不出」分支的触发率打到接近零、残余失败的最坏等待从 30 分钟 / 无限收敛到 15 秒。
 
+## 修订记录（2026-09-10 架构分叉后的重放移植）
+
+> **本文档是线 B（旧架构）设计记录，已被架构分叉取代。** 2026-09-10 本分支按 [subagent-agent-end-recovery-replay.md](subagent-agent-end-recovery-replay.md)（重放移植权威 SSOT）在 dev-0.9.16 新架构上重新落地。M0 先 `git merge dev-0.9.16` 并把代码面**整树重置**到 dev-0.9.16（决策 7：`git checkout dev-0.9.16 -- packages/ && git checkout dev-0.9.16 -- eslint.config.mjs`）——**本文描述的旧实现宿主 `packages/subagent-core/src/execution/engine/engines/pi/` 整目录已随之删除**（D1-D4 的旧落点全部消失）。下文正文中的旧文件路径与旧符号（`session-runner.ts` / `get-state-handshake.ts` / `session-file-locator.ts` / `spawn-channel.ts` / `session-pending.ts` / `stdin-writer.ts` 等 engines/pi 系路径，及 `locateSessionFileByScan` / `appendSubagentIdentityEntry` / `backfillSessionFileByLookup` / `readActivePendingFromSessionFile` / `runAgentEndDisposition` / `deriveDescendantCapable` / `PI_SUBAGENT_SELF_RECORD_ID` 等）**均为线 B 历史记录，不再对应当前代码**——读现行实现与排查词条以 replay.md 与 [../troubleshooting.md](../troubleshooting.md) §12 为准。
+
+**D1-D4 移植判定（以 replay.md §3.2 为准）**：
+
+| 项 | 旧机制（本文 §3.3 决策） | 判定 | 新落点（当前树） |
+|---|---|---|---|
+| **D1 握手迟到接受** | resolver resolved 后回调 `onLateResponse` 幂等回填 | **不移植（等价覆盖且更强）**：identity tracker 监听表驻留至 close，迟到 response 同步回填 | 既有 `packages/pi-subagent-cli/src/spawn-run-pump.ts`（零改动） |
+| **D2 sessionDir 扫描兜底** | `locateSessionFileByScan` 按文件内 identity entry 精确匹配 record.id | **精简重放（匹配键更换为 prompt 头部键）**：identity entry 数据源结构性消亡（引擎 CLI 不加载 extension，决策 6） | M4 `packages/pi-subagent-cli/src/session-file-locator.ts`（新，`locateSessionFileByPromptHead`）+ `spawn-run-pump.ts` close finalizer；M2 `spawn-runner.ts` agent_end 惰性 get_state 回补 |
+| **D3 处置翻转 + 15s 窗口** | error 分支开 15s/3 轮回补窗口，耗尽 kill 成功语义 | **不移植（问题域结构性消失）**：新架构 agent_end 无条件 kill，「读不出 → 保守永挂」失败模式连同处置链不存在 | — |
+| **D3a descendantCapable 快路径** | 无后代能力工具时零判定直接杀 | **不移植（被整体包含）**：所有 one-shot run 都零判定直接杀 | — |
+| **D4 spawn-channel 门面** | 七件原语 + 四维策略收拢为受控子入口 | **不移植（目标已由进程边界达成）**：原语全部住在 pi-subagent-cli + SDK | — |
+
+**本次重放移植的实际落点（M1-M4，均 committed）**：
+
+| 单元 | 对应旧决策 | commit | 落点文件 |
+|---|---|---|---|
+| M1 S2 契约修复 | 握手契约防御（本文 §1.2 头注问题） | `9578af7f4` | `packages/pi-subagent-cli/src/get-state-handshake.ts`（应答缺 sessionFile 不再停止重试驱动） |
+| M2 agent_end 惰性回补 | 沿用旧 T1 惰性回补思路（决策 2） | `042dccec6` | `packages/pi-subagent-cli/src/spawn-runner.ts`（`orchestrateAgentEndBackfill` / `backfillSessionFileAtAgentEnd`，1s 超时，kill 必达） |
+| M3 workflow 域守护补挂 | 新增（旧架构同域零熔断，决策 9） | `bd4404ddf` | `packages/subagent-core/src/execution/subprocess-agent-runner.ts`（`armRunNoProgressWatchdog` / `mergeRunSignals`） |
+| M4 close 兜底扫描 | D2 精简重放（决策 4） | `f737baa7a` | `packages/pi-subagent-cli/src/session-file-locator.ts`（新）+ `spawn-run-pump.ts` + `spawn-runner.ts` 1 行 seam |
+
+判定依据与证据链见 replay.md §3.2 / §3.3 决策 1-9；实施细节、偏差与状态见 replay impl-plan §5/§6。**本文正文的「实施期偏差登记」与「Gate B 实测勘误」节是线 B 实施的历史记录**（其 `session-runner.ts` / `session-file-locator.ts` 等落点均指已删的 engines/pi 面），不构成当前实现描述。
+
 ## 0. 层声明
 
 当前层 = 技术方案层（缺陷根修 + 架构收敛的设计）。下一层产物 = 可实施的代码任务（§5 拆分单元），非需求规格。涉及运行时行为 / 数据流 / 错误处理，准则 5/6/7 全适用（最严格档）。

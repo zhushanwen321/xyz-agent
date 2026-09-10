@@ -245,54 +245,71 @@ CI=true ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install   # 约 6-7s 重建本地�
 
 **防护与根治**：护栏 `.githooks/check_pnpm_store_layout.sh` 挂在 pre-commit 第 0 段（install-hooks.sh 生成）与 validate-runtime-bundle.sh Gate 0，翻转即红并输出 [FIX] 指引——同时也兼作引擎侧「不覆写 HOME」修复的验收探针（修复落地后护栏应恒绿，红 = 回退信号）。根治在引擎侧不覆写 HOME（2026-09-03 开发中）；备选方案 `.npmrc` pin `store-dir` 评估结论：`~` 展开仍 HOME 相对（无效）、相对路径解析基准未验证（有 per-package store 撕裂风险）、写死绝对路径不可移植——均不采用。
 
-### 12. subagent 完成后不回收 / 回收慢：sessionFile 获取与 agent_end 处置特征串判读（2026-09-10 完成回收根修）
+### 12. subagent 完成后不回收 / 回收慢：sessionFile 获取链与 workflow 域守护特征串判读（2026-09-10 重放移植重写）
 
-subagent 的结果回收链 = 「sessionFile 三路获取（get_state 握手 → 迟到接受 → sessionDir 扫描）→ agent_end 处置（无后代快路径 / 三分支 / 15s 回补重试窗口）」，机制与残余风险见 [design/subagent-agent-end-recovery.md](design/subagent-agent-end-recovery.md)。以下特征串由**宿主侧 pi 进程内的 subagent-core**（主 pi 进程；递归编排时各层 pi 进程各自持有，非被回收的 subagent 子进程）经 extension-logger 写入文件日志（core logger component = `subagents`）：
+> **本节 2026-09-10 按 replay port 重写**（权威 SSOT：[design/subagent-agent-end-recovery-replay.md](design/subagent-agent-end-recovery-replay.md)）。线 B 原实现宿主（`packages/subagent-core/src/execution/engine/engines/pi/` 整目录）已随 M0 整树重置到 dev-0.9.16 删除，旧特征串（`backfilled via late get_state response` / `located via sessionDir scan` / `unobtainable after 15s recovery window` / `no-descendant fast path` / `process killed before handshake settled` 等）**在现树已全部不存在**——按旧串 grep 恒零命中是预期，不是日志丢失。
+
+新架构结果回收链 = 两层进程嵌套（core → `pi-subagent-cli` 引擎 CLI 进程 → `pi --mode rpc` 任务子进程）。**sessionFile 五路获取**（全部在 `pi-subagent-cli`）：
+
+1. spawn 期 get_state 握手 3×2s + 500ms 间隔（M1 契约修复：应答缺 sessionFile 不再悬挂，照常排 retry 至 3 轮耗尽 resolve 已收集字段）；
+2. 握手窗口后的迟到 response（identity tracker 监听表驻留至 close，回填走 `applyGetStateFields` 同步路径 + handleReady）；
+3. agent_end 惰性 get_state 单查（**M2**，1s 超时；one-shot 域；chat 域不走此分支）；
+4. close 收尾 LC-4 后缀反查（`findSessionFileByHeaderId`，需 sessionId 已知；静默回填、无独立特征串）；
+5. close 收尾 prompt 头部键扫描（**M4**，最后兜底；单命中才采纳，零/多命中一律放弃）。
+
+**agent_end 处置**在新架构是「无条件 kill」（agent_end 即终态，无保守等待分支）；**workflow 域静默楔死**由 **M3** 在 core `SAR.run` 挂 30min 无进展守护（复用 `settled-watchdog` 原语）。
+
+日志落盘：宿主 core 与引擎 CLI 的日志统一进 **`<dataDir>/pi/agent/logs/subagents-<date>.log`**（core logger component = `subagents`；引擎 CLI 经 stderr + `host/log` 反向请求转投宿主日志）。桌面 runtime spawn pi 时恒注入 `XYZ_AGENT_EXT_LOG=1`，warn 级默认落盘：
 
 ```bash
 # 桌面环境：runtime spawn pi 时恒注入 XYZ_AGENT_EXT_LOG=1，warn 级特征串默认落盘
 # （dev 数据目录前缀换成 ~/.xyz-agent-dev/pi/agent/logs/）
-grep -E "backfilled via (late|lazy) get_state|(located|backfilled) via sessionDir scan|unobtainable" \
+grep -E "\[sessionfile\]|agent_end get_state backfill|workflow no-progress watchdog" \
   ~/.xyz-agent/pi/agent/logs/subagents-*.log
 ```
 
 裸 pi CLI 场景默认**不落盘**（extension-logger 双开关均未注入时 no-op）：需 `XYZ_AGENT_EXT_LOG=1`（info 观测档，debug 重标 info 一并写入）或 `XYZ_AGENT_DEBUG=1`（全量）。
 
-**三条主特征串**（均为 warn 级）：
+**六条现行特征串**（均为 warn 级；M4 的四条与 M2 一条来自 `pi-subagent-cli`，M3 一条来自 `subagent-core`）：
 
-**① `backfilled via late get_state response` — 正常自愈**
+**① `recovered for ... by M4 prompt-head scan (single match)` — 兜底命中（自愈，说明前四路已全失败）**
 
-- 日志：`[session-runner] sessionFile backfilled via late get_state response: <path>`
-- 含义：get_state 握手 7s 窗口被 pi 冷启动拖过，但命令在管道排队不丢、pi 就绪后必答，迟到应答被收下并幂等回填（D1 迟到接受）。修复前该形态 sessionFile 永久缺失、agent_end 处置落入无限保守等待（carbon 2026-09-09 事故根因），现在是正常自愈路径。
-- 下一步：无需处置。批量并发派发时常态化命中说明机器冷启动长期超 7s——降并发或预热。
+- 日志：`[sessionfile] recovered for <recordId> by M4 prompt-head scan (single match): file=<候选文件名>, mtime=<mtimeMs>, promptHeadHash=<16hex> (audit evidence for mis-binding review)`
+- 含义：前四路全 miss，close 收尾时按任务 prompt 头部（前 200 字符，**原文 + JSON 转义形态双 includes**——pi 0.84.4 逐行 `JSON.stringify` 落盘，prompt 非逐字明文）扫 sessionDir 内 mtime ∈ `[spawnStartedAtMs, close]` 的 `.jsonl` 候选，恰一个命中即采纳为该 record 的 sessionFile（回填走 identity 既有通路，handleReady 通知 core）。
+- 下一步：单次出现无需处置。`promptHeadHash` 是误配事后定位证据——错 sessionFile 进 chat 冷续 resume 锚点后会 `--session` **append 续写**（写污染），命中记录可据此核对纠正 record.sessionFile。高频出现说明前四路长期失败，按 ② 的 reason 继续归因。
 
-**② `located via sessionDir scan` / `backfilled via sessionDir scan (close finalization)` — 兜底命中（自愈，但说明前两路已失败）**
+**② `unobtainable for ... (M4 prompt-head scan gave up: ...)` — 需要关注的残余形态**
 
-- 日志：`[session-runner] sessionFile located via sessionDir scan (agent_end backfill | retry window round 2): <path>`；close 收尾形态为 `sessionFile backfilled via sessionDir scan (close finalization): <path>`（同一兜底的两处措辞，对应 agent_end 链与提前 kill 收尾链两个接入点）
-- 含义：迟到接受也没赶上，改为扫 sessionDir 按文件内 identity entry 精确匹配 record.id 命中（D2 扫描兜底，`session-file-locator.ts`）。三个落点对应三条链路：agent_end 决策回补链 / 15s 重试窗口第 2 轮 / close 收尾反查链（lookupId 缺失形态——子进程在握手窗口内就被提前 kill、不产生 agent_end，即 audit LC-4/PS-9 的修复面）。
-- 下一步：单次出现无需处置；高频出现结合 locator 侧 warn 归因——`sessionDir scan found no match ... (sessionDir unreadable: ...)` 目录不可读/被重定向；`... (candidates after mtime filter: 0)` 目录内无本轮新建文件（警惕扫描目录指错）；`matched N files ... taking newest by mtime` 多匹配（record id 全局唯一，理论不可达；可达 = 文件被外力复制/GC 恢复残留，顺手清理）。
+- 日志：`[sessionfile] unobtainable for <recordId> (M4 prompt-head scan gave up: reason=<reason>, candidates=<n>, promptHeadHash=<hash>[, error=<msg>]); record finalized without transcript anchor. Recovery: archive the session file via session-reader by sessionDir mtime window, or re-dispatch the task.`
+- 含义：五路获取全 miss（chat 域无 M2 回补，实际为四路），record 无 transcript 锚点收尾。run 仍正常终态、通知照发（结果正文来自 stdout 事件累积，不依赖 sessionFile）；`session_read` 指针行仍生成，但 session-reader 侧降级为明确「session file not found」而非悬挂。**零/多命中一律安全放弃，不误配**。
+- 下一步：按 `reason` 枚举归因——`no_match` 窗口内有候选但无一含 prompt 头（自身文件未落盘/被 GC）；`multiple_matches` **同模板批量并发头部同质**（M4 在旗舰场景结构性安全放弃，非缺陷）；`no_candidates` 窗口内无 `.jsonl` 候选（sessionDir 指错/文件不在盘）；`candidate_limit`/`time_budget` 降级门触发（>64 候选 / 单次 >100ms）；`fs_error` 目录不可读等（`error=` 附原始消息）；`empty_prompt_head` prompt 为空。恢复指引即 warn 尾句：session-reader 列 sessionDir mtime 窗口文件人工归档，或重派任务。
+- 真机验收注意（设计残留风险）：同目录同期并发 run 天然构成多候选 → 多命中即放弃，验收判据是「不误配 + run 正常终态」而非「必须命中」。
 
-**③ `unobtainable after 15s recovery window` — 需要关注的残余形态**
+**③ `M4 prompt-head scan not wired` — 接线回归（防御性，生产不应出现）**
 
-- 日志：`[session-runner] sessionFile unobtainable after 15s recovery window (handshake suppressed? sessionDir missing?); process terminated, result recovered from stdout events; descendants (if any) were terminated with this process (graceful-shutdown reap or stdout EPIPE) and their unfinished work is lost; already-produced output remains queryable via session reader`
-- 含义：三路获取全失败（15s 窗口内 get_state 与扫描交替重试均 miss），进程被 kill（SIGTERM→30s→SIGKILL 升级链），runSpawn 以成功语义返回、结果来自 stdout 事件累积——不冻结。但若该 agent 真有活跃后代即为误杀（假阴性）。[Gate B S5/P5 实测勘误] 误杀是**连带终局**而非「后代独立跑完」：SIGTERM 形态下层主 shutdown 链临死主动收殓后代（补写 pending:unregister 并终止之）；SIGKILL 形态下后代 3s 内死于 stdout EPIPE——两种形态后代任务均中断、未产出成果丢失；已产出的部分仍可经 session-reader 从后代自身 session 文件查出。
-- 下一步：①`ps aux | grep "pi --mode rpc"` 确认后代已随层主终止（残留即手工回收）；②session-reader / `subagents action:"list"` 查后代**已产出**的部分成果；③验收口径（设计 §4 S7）翻转窗口触发应恒零——出现即按日志归因三路全失败的根因并回写验收表。桌面 EXT_LOG 档可回放窗口全程：`entering 15s recovery window`（进入）→ `retry window round N: ...`（逐轮）。
+- 日志：`[sessionfile] unobtainable for <recordId> (M4 prompt-head scan not wired: StdoutPumpDeps.sessionFileFallback absent); record finalized without transcript anchor. Recovery: ...`
+- 含义：pump 装配缺 `sessionFileFallback`（新调用方/测试形态）。生产 `runSpawnOnce` 恒接线（`spawn-runner.ts` 一行 seam：`sessionFileFallback: { prompt: params.task, spawnStartedAtMs: startTime, sessionDir: params.sessionDir }`）——出现即接线回归，查该 seam。
 
-**两条次级特征**：
+**④ `M4 prompt-head scan threw` — 扫描器调用期异常被吞（close 收尾不被阻断）**
 
-**④ `no-descendant fast path` — 正常路径（debug 级）**
+- 日志：`[sessionfile] M4 prompt-head scan threw for <recordId> (treated as miss, close finalizer continues)`（附 `data.detail`）
+- 含义：扫描器内部 fs 异常本已在 locator 内降级为结构化放弃（reason=fs_error）；此串覆盖**调用期**异常（含 identity 回填链 `handleReady` → server 组帧抛出）。按 miss 处理，`resolveExit` 必达是硬约束——run 不因扫描异常挂死。
 
-- 日志：`[session-runner] agent_end: no-descendant fast path (tools whitelist excludes subagent/workflow/workflow-script/bash): final kill, <id>`
-- 含义：tools 白名单非空且不含派生/记账工具（真实注册名 `subagent`/`workflow`/`workflow-script`——Gate B P3 勘误：旧表述 "subagents" 复数形态不存在于注册面；`bash` 为后台记账面保守冗余，subagent 进程内被 D14 降级实际不可达）的 agent 物理不可能有进程内后代，agent_end 零判定直接 final kill，秒级回收。
-- 下一步：无需处置。若期望 keep-alive 等待的 agent 命中此串，检查 tools 白名单是否漏配派生工具。
+**⑤ `agent_end get_state backfill failed` — M2 惰性回补链抛错（kill 仍必达）**
 
-**⑤ `process killed before handshake settled` — 边界形态（记账正确，非缺陷）**
+- 日志：`[session-runner] agent_end get_state backfill failed for <recordId> (treated as miss; kill proceeds): <msg>`
+- 含义：agent_end 惰性回补（1s 单查）的**结果处理链**抛错（`requestGetStateOnce` 自身永不 reject；抛点在上层回填/组帧）。`killChild` 放 finally 必达——run 不因回补失败挂死；回补超时/子进程不应答则静默 resolve 空对象（无任何串），交 close 收尾第 4/5 路兜底。
 
-- 日志：`[session-runner] sessionFile unobtainable for <id> (process killed before handshake settled); record will be finalized as crashed; results were never produced`
-- 含义：子进程在握手结算前被 kill（abort / spawn watchdog / dispose），close 收尾扫描也未命中。两类结构性 miss（命中前提 = 文件已落盘 ∧ identity entry 在文件内）：①极早期 kill（extensions 加载完成前）session_start hook 未跑、identity entry 未写；②[Gate B P4 实测勘误] hook 已跑但 session 文件未落盘——pi session 随首条 assistant 消息才落盘，4.5s/6s abort 实测 miss。两者 record 按 crashed 记账均为正确语义（进程从未开始产出）。
-- 下一步：确认 kill 来源符合预期即可；若怀疑进程实际已产出成果，直接查子进程 session 文件（pi session 首条 assistant 消息即落盘）。
+**⑥ `workflow no-progress watchdog ... fired` — workflow 域静默楔死熔断（M3）**
 
-区分提示：`backfilled via lazy get_state (spawn handshake had failed)`（warn）是 agent_end 决策时刻**主动**单次问询命中的惰性回补（T1 既有路径，8.8.0 起）；特征①是 spawn 期旧应答**迟到**到达（被动收下）。两者同为自愈痕迹，grep `backfilled via` 会同时命中，按文案区分。
+- 日志：`[subagents] workflow no-progress watchdog (<phase>) fired for <taskId>: no valid protocol event for <n> min after run dispatched — aborting run (cancel frame → settle grace window → killAll if the engine does not settle). Note: a killAll group-kills the engine CLI process, so other concurrent runs on the same engine may end as engine_crashed (they still get a failure notification and retry). Recovery: check state with subagents action:'list', then re-dispatch the workflow.`
+- 含义：workflow 域 run（SAR.run，`sa-` taskId，**不创建 ExecutionRecord**）派发后 30min 无任何协议事件/stream delta → `AbortController.abort()` → mergedSignal → `wireAbortSignal` 阶梯（cancel 帧 → 3s 收敛窗 → killAll）。失败结果附后缀 `workflow no-progress watchdog fired: the run was aborted after a long silence window with no protocol event or stream delta. Recovery: check state with subagents action:'list', then re-dispatch the workflow.`。30min 中段阈值是原语内**纯常量**（`settled-watchdog.ts` 注释「中段阈值 v1 不开 env」），`XYZ_SUBAGENT_SETTLED_WATCHDOG_MS` 只覆盖收尾段或两段全关，**不可缩短**——无法用 env 在真机快速构造。
+- 下一步：同引擎并发 run 可能被 killAll **连带** engine_crashed 失败终态化（有失败通知 + `executeAgentCall` 退避重试通道，四要素见设计决策 9）；check subagents list 后重派 workflow。产出仍在刷新（事件/delta 持续到达）时不 fire——fire 只在连续静默满窗时发生。
+
+**旧文案去留（明确，防按旧串误判）**：
+
+- **已随旧实现消失（现树 grep 恒零命中）**：`backfilled via late get_state response`、`backfilled via lazy get_state (spawn handshake had failed)`、`located via sessionDir scan`、`backfilled via sessionDir scan (close finalization)`、`unobtainable after 15s recovery window`、`entering 15s recovery window`、`retry window round N`、`no-descendant fast path`、`process killed before handshake settled`。原「区分提示」里 late vs lazy 的两路对比也随之失效（现树只有 M2 一条主动回补链，且命中不落串）。
+- **仍存在的现行面**：本节 ①-⑥ 全部；`findSessionFileByHeaderId`（LC-4 后缀反查，第 4 路）仍存在但其回填静默无独立特征串；M1 握手契约修复自身无日志面。
 
 ## 环境变量速查
 
