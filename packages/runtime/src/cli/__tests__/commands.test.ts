@@ -232,6 +232,50 @@ describe('executeCommand: discover-models', () => {
     const out = await executeCommand({ command: 'discover-models', flags: { 'base-url': 'https://api.x', json: true } })
     expect(out).toBe(JSON.stringify(models, null, 2))
   })
+
+  // ── M3a：--mode test（per-协议真实最小请求，排障入口）；不带 mode 时仍走 discover（向后兼容）──
+  it('不带 --mode → payload 无 mode 键（旧调用方行为零改动）', async () => {
+    delete process.env.XYZ_AGENT_API_KEY
+    vi.mocked(rpc).mockResolvedValueOnce({ models: [{ id: 'm-1' }], success: true } as never)
+    await executeCommand({ command: 'discover-models', flags: { 'base-url': 'https://api.x' } })
+    expect(rpc).toHaveBeenCalledWith('config.discoverModels', { baseUrl: 'https://api.x' })
+  })
+
+  it('--mode test 缺 --name → Usage error（copy anchored）', async () => {
+    await expect(executeCommand({ command: 'discover-models', flags: { mode: 'test' } })).rejects.toThrow(
+      'Usage: xyz-settings discover-models --mode test --name <provider-id> [--json]',
+    )
+  })
+
+  it('--mode test → payload {baseUrl:"", providerId, mode:"test"}（baseUrl 被 runtime 忽略）+ 逐协议结果输出', async () => {
+    vi.mocked(rpc).mockResolvedValueOnce({
+      success: true,
+      results: [
+        { api: 'anthropic-messages', modelId: 'k3', ok: true },
+        { api: 'openai-completions', modelId: 'qwen3.8-flash', ok: false, error: 'http_error|401|invalid api key' },
+      ],
+    } as never)
+    const out = await executeCommand({ command: 'discover-models', flags: { mode: 'test', name: 'opencode-go' } })
+    expect(rpc).toHaveBeenCalledWith('config.discoverModels', { baseUrl: '', providerId: 'opencode-go', mode: 'test' })
+    expect(out).toBe(
+      '  ok   anthropic-messages/k3\n' +
+      '  FAIL openai-completions/qwen3.8-flash  http_error|401|invalid api key',
+    )
+  })
+
+  it('--mode test --json → JSON.stringify(results, null, 2)', async () => {
+    const results = [{ api: 'anthropic-messages', modelId: 'k3', ok: true }]
+    vi.mocked(rpc).mockResolvedValueOnce({ success: true, results } as never)
+    const out = await executeCommand({ command: 'discover-models', flags: { mode: 'test', name: 'p1', json: true } })
+    expect(out).toBe(JSON.stringify(results, null, 2))
+  })
+
+  it('--mode test provider 级失败（success:false）→ throws error code（copy anchored）', async () => {
+    vi.mocked(rpc).mockResolvedValueOnce({ success: false, error: 'no_api_key' } as never)
+    await expect(
+      executeCommand({ command: 'discover-models', flags: { mode: 'test', name: 'p1' } }),
+    ).rejects.toThrow('no_api_key')
+  })
 })
 
 describe('executeCommand: list-providers', () => {

@@ -173,8 +173,12 @@ async function runDeleteProvider(flags: Record<string, string | boolean>): Promi
 }
 
 async function runDiscoverModels(flags: Record<string, string | boolean>, json: boolean): Promise<string> {
-  // 协议（protocol.ts:141）：{ baseUrl, apiKey?, providerType?, providerId? }。
-  // handler（settings-message-handler.ts:197-209）把 baseUrl 作为位置参数传给
+  // 协议（protocol.ts:453 config.discoverModels）：{ baseUrl, apiKey?, providerType?, providerId?, mode? }。
+  // mode 缺省 'discover'（GET /v1/models，向后兼容旧调用方）；`--mode test` = per-协议真实最小
+  // 请求（design catalog-provider-field-authority §3.3 D4，排障用），此时只需 --name <providerId>。
+  const mode = flags.mode === 'test' ? 'test' : undefined
+  if (mode === 'test') return runTestConnections(flags, json)
+  // handler（settings-message-handler.ts handleDiscoverModels）把 baseUrl 作为位置参数传给
   // modelService.discoverModelsFromApi(baseUrl, ...)，必填；apiKey 缺省时用 providerId 查已配置 provider。
   const baseUrl = flags['base-url'] as string
   if (!baseUrl) {
@@ -201,6 +205,28 @@ async function runDiscoverModels(flags: Record<string, string | boolean>, json: 
   const models = reply.models ?? []
   if (json) return JSON.stringify(models, null, JSON_INDENT)
   return models.map(m => `  ${m.id}`).join('\n')
+}
+
+/** `discover-models --mode test --name <provider-id>`：per-协议真实最小请求结果（排障入口）。 */
+async function runTestConnections(flags: Record<string, string | boolean>, json: boolean): Promise<string> {
+  const providerId = flags.name as string
+  if (!providerId) {
+    throw new Error('Usage: xyz-settings discover-models --mode test --name <provider-id> [--json]')
+  }
+  // baseUrl 在 test 模式被 runtime 忽略（端点走模型级/provider 级回落链），协议类型要求必填故送空串。
+  const reply = await rpc<{
+    success?: boolean
+    error?: string
+    results?: Array<{ api: string; modelId: string; ok: boolean; error?: string }>
+  }>('config.discoverModels', { baseUrl: '', providerId, mode: 'test' })
+  if (reply.success === false) {
+    throw new Error(reply.error ?? 'connection test failed')
+  }
+  const results = reply.results ?? []
+  if (json) return JSON.stringify(results, null, JSON_INDENT)
+  return results
+    .map(r => `  ${r.ok ? 'ok  ' : 'FAIL'} ${r.api}${r.modelId ? `/${r.modelId}` : ''}${r.error ? `  ${r.error}` : ''}`)
+    .join('\n')
 }
 
 // ── 命令执行 ──────────────────────────────────
