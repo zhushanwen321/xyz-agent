@@ -669,14 +669,17 @@ describe("reverseRequest 客户端", () => {
     ]);
   });
 
-  it("error 应答 → reject（文案含 rejected 前缀；现状 [object Object] 见汇报登记）", async () => {
+  it("error 应答 → reject（文案含 rejected 前缀与结构化 error 帧）", async () => {
     const { server, sink } = makeServer();
     const p = server.reverseRequest("host/askUser", { request: { kind: "select" } });
     await sink.waitFor((f) => f.id === "rev-1", "rev-1");
     server.handleFrame({ id: "rev-1", error: { code: "host_unavailable", message: "no ui", recovery: "retry" } });
-    // 现状断言：toErrorMessage(结构化 error 对象) = String(object) = "[object Object]"，
-    // 原始 code/message 不进 reject 文案（与 zcode 包 settleReject 同构漂移，登记待清理）
-    await expect(p).rejects.toThrow("reverse request rev-1 rejected: [object Object]");
+    // A8 修复落地（round1 business-logic S1）：toErrorMessage(非 Error object) 改
+    // JSON.stringify——结构化 error 帧（含原始 code/message/recovery）直进 reject 文案，
+    // 不再退化为 "[object Object]"（与 zcode 包 settleReverse 同批修复）
+    await expect(p).rejects.toThrow(
+      'reverse request rev-1 rejected: {"code":"host_unavailable","message":"no ui","recovery":"retry"}',
+    );
   });
 
   it("缺省 60s 超时兜底：reject + clock.settled + 迟到应答不再落位（fake timers）", async () => {

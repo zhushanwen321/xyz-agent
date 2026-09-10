@@ -117,9 +117,6 @@ export const DEFAULT_RECOVERY_HINTS: Record<EngineErrorCode, string> = {
 // P2 消费的具名构造器（动态参数进 detail/recovery）
 // ============================================================
 
-/** 错误回显长度上限（截断长输出，避免错误消息爆炸——对齐 structured-output echo 上限量级）。 */
-const DETAIL_ECHO_MAX_CHARS = 200;
-
 /** truncate(text, max)：尾部截断 + 省略号标记（模板共用）。 */
 function truncate(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max)}...`;
@@ -174,14 +171,6 @@ export function engineRunFailedDetail(reason: string, exitCode: number | null, s
   );
 }
 
-/**
- * schema_emulation_failed 的终报文案（宿主编排层「重试一次仍失败」后消费）：
- * 与 structured-output 的重试语义对齐（重试一次 → 报错含原始输出尾部）。
- */
-export function schemaEmulationFailedDetail(error: string, tail: string): string {
-  return (
-    `structured output emulation failed after tolerant extraction and one host-side retry: ${error}. ` +
-    `Raw output tail: ${truncate(tail, DETAIL_ECHO_MAX_CHARS)}. ` +
-    `Recovery: ${DEFAULT_RECOVERY_HINTS.schema_emulation_failed}`
-  );
-}
+// schema_emulation_failed 的终报文案（schemaEmulationFailedDetail）已随 schema-emulation
+// 死镜像收口删除：活体单源 SDK error-codes.ts（emulated 引擎的宿主编排层经 SDK 消费），
+// core 侧此前仅剩自身测试引用（test-only）。

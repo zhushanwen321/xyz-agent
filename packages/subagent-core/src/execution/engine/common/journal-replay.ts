@@ -10,9 +10,11 @@
 
 import { createRecord, updateFromEvent } from "../../execution-record.ts";
 import type { AgentEvent } from "../../types.ts";
+// aggregateUsage / toReplayedTurn 单源 SDK（自 session-view-projection.ts 逐字等价
+// 迁入后收口——双活副本删除，live ≡ replay 的投影语义不再靠双份手工同步）。
+import { aggregateUsage, toReplayedTurn } from "@zhushanwen/subagent-engine-sdk";
 import type { EngineHandle, SessionView } from "../types.ts";
 import { replayJournal } from "./event-journal.ts";
-import { aggregateUsage, toReplayedTurn } from "./session-view-projection.ts";
 
 /**
  * journal → SessionView（read 第②级）。

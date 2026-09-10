@@ -20,7 +20,7 @@
  */
 import { computed, ref } from 'vue'
 import type { ComputedRef } from 'vue'
-import type { ProviderInfo, Segment } from '@xyz-agent/shared'
+import type { Segment } from '@xyz-agent/shared'
 // AC10 跨域铁律：session 域经 '@xyz-agent/core/domain/session' 公开 index API 消费（禁内部模块相对路径）
 import type { CreateSessionFlowInput } from '@xyz-agent/core/domain/session'
 import type { ThinkingLevel } from '@xyz-agent/shared'
@@ -39,6 +39,8 @@ import { useNewTaskDirSelect } from './dir-select'
 // 显示侧（chip）与 create 入参同源，「显示 ≡ 生效」由构造成立
 import { ensureLaunchDataReady, resolveLaunchConfig } from './launch-config'
 import type { LaunchConfigInput } from './launch-config'
+// supportedLevelsOf 单源（原本文件内逐字镜像已收编，独立模块防 flow 编排 mock 波及）
+import { supportedLevelsOf } from './supported-levels'
 // core 域 KV 单例直接 import（设计 D1，同 launch-config.ts 自身 import 先例）
 import { lookup as lookupLastUsedModel } from '../composer/last-used-model'
 import { lookup as lookupRememberedLevel } from '../composer/model-thinking-memory'
@@ -92,24 +94,6 @@ function buildFallbackLaunchInput(): LaunchConfigInput {
     defaultModel: settings.defaultModel.value,
     getSupportedLevels: (modelId) => supportedLevelsOf(modelId, settings.providers.value),
   }
-}
-
-/**
- * 按 'provider/modelId' 复合串查 providers 能力表中 model 条目的 supportedLevels
- * （无条目 = undefined，resolve 侧归一默认五档）。
- *
- * 逐字镜像 renderer supported-levels.ts（F5 SSOT）——core 域不能 import renderer 模块
- * （过渡语义，见上方 buildFallbackLaunchInput），改动须双侧同步。
- */
-function supportedLevelsOf(
-  modelId: string,
-  providers: readonly ProviderInfo[],
-): string[] | undefined {
-  const slash = modelId.indexOf('/')
-  if (slash <= 0) return undefined
-  const provider = providers.find((p) => p.id === modelId.slice(0, slash))
-  if (!provider || provider.enabled === false) return undefined
-  return provider.models.find((m) => m.id === modelId.slice(slash + 1))?.supportedLevels
 }
 
 /**

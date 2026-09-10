@@ -3,7 +3,8 @@
  *
  * [归位] 迁自 renderer composables/new-task/useNewTaskFlowState.ts（263 行），语义逐条等价。
  * 模块级单例保持（C-NT-6 Q2=A：全局流程状态非 per-session，不套 useSessionScopedState）。
- * renderer 旧文件保留至消费方全部迁移（w5）后删除（strangler 逐域绞杀 §11.2）。
+ * renderer 旧文件（composables/new-task/useNewTaskFlowState.ts）已随消费方全部迁移（w5 完成）删除
+ * （2026-09 code-simplify R7；strangler 逐域绞杀 §11.2 收口）。
  *
  * 职责（仅状态机，深模块 §5）：
  * - NewTaskFlowState 10 态枚举 + GitInfo 派生类型。

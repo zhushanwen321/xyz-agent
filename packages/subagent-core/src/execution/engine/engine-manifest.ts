@@ -20,10 +20,10 @@ import type { EngineCapabilities } from "./types.ts";
 const logger = getLogger("subagents");
 
 /** 引擎 env 放行前缀的保留字（§2.4/§2.12 L2：引擎 manifest 不得声明宿主命名空间）。 */
-export const RESERVED_ENV_PREFIXES = ["XYZ_", "XYZ_AGENT_", "XYZ_SUBAGENT_"];
+const RESERVED_ENV_PREFIXES = ["XYZ_", "XYZ_AGENT_", "XYZ_SUBAGENT_"];
 
 /** env 前缀合法形态（§2.4：^[A-Za-z0-9_]+$；保留前缀比对大小写不敏感）。 */
-export const ENV_PREFIX_PATTERN = /^[A-Za-z0-9_]+$/;
+const ENV_PREFIX_PATTERN = /^[A-Za-z0-9_]+$/;
 
 /**
  * capabilities 全保守值（manifest capabilities 缺失/缺键时的回退——「声明即能力」

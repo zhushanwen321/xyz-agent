@@ -39,6 +39,7 @@ import { assertTaskShapeSupported } from "./engine/common/capability-gate.ts";
 import { ExecutionNestingContext } from "./engine/common/nesting-guard.ts";
 import { JOURNAL_INITIAL_POOL_KEY, wireEventJournal } from "./engine/common/journal-wiring.ts";
 import { executeOptionsToEngineTaskSpec } from "./engine/host-task-spec.ts";
+import type { AgentCallOpts } from "../orchestration/models/types.ts";
 import { setHostUiRequestEndpoint } from "./engine/host/host-ui-endpoint.ts";
 // [W3 chat 域收口] chat 轮次与 run 域同路：经 pi-host-binding 解析 registry 'pi' 的
 // cli 形态 port（RemoteEngine），协议 run(interact) 发往 pi-subagent-cli 引擎进程。
@@ -2401,16 +2402,7 @@ export class SubagentService {
       this.adoptResumableAfterEngineDeath(record, outcome.error);
       return true;
     }
-    const result: AgentResult = {
-      text: outcome.content,
-      turns: outcome.usage?.turns ?? 0,
-      durationMs: outcome.durationMs ?? Date.now() - record.startedAt,
-      success: outcome.error === undefined,
-      ...(outcome.error !== undefined ? { error: outcome.error } : {}),
-      sessionId: outcome.sessionId ?? record.id,
-      toolCalls: [],
-      ...(outcome.parsedOutput !== undefined ? { parsedOutput: outcome.parsedOutput } : {}),
-    };
+    const result = this.outcomeToAgentResult(record, outcome);
     if (tryTransition(record, "closed", "gc")) {
       await this.finalizeRecord(record, result, "closed", "gc");
     }
@@ -2462,12 +2454,7 @@ export class SubagentService {
         // D10 终止链：引擎 spawn 的子进程注册进 spawnedChildren 镜像记账
         onChildSpawned: (child) => registerSpawnedChildForRecord(record.id, child),
       };
-      const { handle, outcome } = await engine.run(
-        // model = record 留痕词形（resolved 解析产物，joinEngineModelRef 规范形）——
-        // 原链路 identity.resolved 经 runSpawn --model 兜底的协议等价承载。
-        { ...executeOptionsToEngineTaskSpec(opts), ...(record.model !== undefined ? { model: record.model } : {}) },
-        runCtx,
-      );
+      const { handle, outcome } = await engine.run(this.taskSpecWithModel(opts, record.model), runCtx);
       record.engineHandle = {
         sessionRef: handle.data.sessionRef,
         poolKey: handle.data.poolKey,
@@ -2489,6 +2476,14 @@ export class SubagentService {
     // v4 B-1: status 恒为 closed。cancelled 折入 closed（closedReason='cancelled'）。
     await this.settleOneShotOutcome(record, result, signal?.aborted === true);
     return result;
+  }
+
+  /** engine.run taskSpec 装配单一来源（runAndFinalize 与 kickOffChatRound 共用）：
+   *  executeOptions 协议映射 + model = record 留痕词形（resolved 解析产物，
+   *  joinEngineModelRef 规范形）覆盖——原 identity.resolved 经 runSpawn --model
+   *  兜底的协议等价承载。 */
+  private taskSpecWithModel(opts: ExecuteOptions, model: string | undefined): AgentCallOpts {
+    return { ...executeOptionsToEngineTaskSpec(opts), ...(model !== undefined ? { model } : {}) };
   }
 
   /**
@@ -2518,8 +2513,9 @@ export class SubagentService {
     }
   }
 
-  /** AgentOutcome → execution AgentResult（workflow run 域映射；与 finalizeEngineOutcome
-   *  的 result 构造同形——exitCode null = 被信号杀死的合成终态，error 如实透传）。 */
+  /** AgentOutcome → execution AgentResult 单一映射源（workflow run 域映射；
+   *  finalizeEngineOutcome 终态 result 复用此处构造——exitCode null = 被信号杀死的
+   *  合成终态，error 如实透传）。 */
   private outcomeToAgentResult(record: ExecutionRecord, outcome: AgentOutcome): AgentResult {
     if (outcome.sessionFile !== undefined) {
       record.sessionFile = outcome.sessionFile;
@@ -2686,9 +2682,8 @@ export class SubagentService {
         // handleChatRoundPhase + settleChatRoundFromResponse 承接）；非 chatMode =
         // 一次性 run（协议面无 chat 键，终态语义对齐原 settleOneShotOutcome）。
         const { outcome } = await engine.run(
-          // model = record 留痕词形（resolved 解析产物）——原 identity.resolved 经
-          // runSpawn --model 承载的协议等价形态；resume 锚点轮引擎侧覆盖解析。
-          { ...executeOptionsToEngineTaskSpec(opts), ...(record.model !== undefined ? { model: record.model } : {}) },
+          // resume 锚点轮引擎侧覆盖 model 解析（taskSpec 装配单一来源见 taskSpecWithModel）。
+          this.taskSpecWithModel(opts, record.model),
           {
             taskId: record.id,
             poolKey: PI_POOL_KEY,

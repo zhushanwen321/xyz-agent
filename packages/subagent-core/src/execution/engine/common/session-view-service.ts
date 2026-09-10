@@ -38,13 +38,15 @@ import { isAbsolute, relative, resolve } from "node:path";
 // 相对 import 用 .js 形态（本文件是双端复用模块，被 xyz-agent runtime import——对齐
 // 先例：runtime tsconfig 无 allowImportingTsExtensions，.ts 形态在 runtime tsc 下报
 // TS5097；.js 后缀经 bundler/ESM 解析器 substitution 到 .ts）。
+// aggregateUsage 单源 SDK（原 ./session-view-projection.js 逐字等价双活副本已删）。
+// 包名 import 在 runtime 编译图可解析（先例：dialog-queue.ts 同式 import SDK barrel）。
+import { aggregateUsage } from "@zhushanwen/subagent-engine-sdk";
 import { getLogger } from "../../../core/logger.js";
 import { createRecord, updateFromEvent } from "../../execution-record.js";
 import type { Turn } from "../../types.js";
 import { resolveEnginesRoot } from "../paths.js";
 import type { SessionView } from "../types.js";
 import { replayJournal } from "./event-journal.js";
-import { aggregateUsage } from "./session-view-projection.js";
 import type {
   EngineHandleView,
   EngineToolCallSource,

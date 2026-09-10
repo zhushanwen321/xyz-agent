@@ -261,15 +261,19 @@ export function readDayRecords(filePath: string): GenStatsDayRecords {
  * 写日记录文件（D8 同步临界段终点；设计 D3「写入时顺带清理」）：先 GC 30 天前日键，
  * 再经 atomicWrite（tmp + renameSync 原子覆盖）落盘；父目录不存在则递归创建。
  * 写失败由调用方按 §3.5 容错（内存聚合照常、当前帧照常推），本函数不吞异常。
+ * 返回实际写盘的 prune 后记录对象——调用方在同一同步临界段内紧接 snapshot 时可直接
+ * 复用（单线程无第三方写者，磁盘值 == 返回值），省去 snapshot 的重复全文件读。
  * tmp 孤儿清理（D6 #3）：崩溃（SIGKILL/断电）落在 atomicWrite 的 write→rename 窗口时留下
  * `*.json.tmp` 孤儿——本次写入对**同路径**的孤儿必然自愈（writeFileSync 覆写后 rename 带走），
  * 但换模型后旧模型文件永不重写，孤儿永驻；写入时顺带清扫同目录全部 `.tmp` 孤儿兜底
  * （gen-stats 目录仅本 store 写入，`*.tmp` 只可能是本原子写残留，清扫无旁观者伤害）。
  */
-export function writeDayRecords(filePath: string, records: GenStatsDayRecords): void {
+export function writeDayRecords(filePath: string, records: GenStatsDayRecords): GenStatsDayRecords {
   mkdirSync(dirname(filePath), { recursive: true })
-  atomicWrite(filePath, JSON.stringify(pruneExpiredDays(records)))
+  const persisted = pruneExpiredDays(records)
+  atomicWrite(filePath, JSON.stringify(persisted))
   sweepTmpOrphans(dirname(filePath))
+  return persisted
 }
 
 /** 原子写 tmp 孤儿清扫（见 writeDayRecords 注释；失败 warn 不抛——清理是顺带兜底非主路径）。 */

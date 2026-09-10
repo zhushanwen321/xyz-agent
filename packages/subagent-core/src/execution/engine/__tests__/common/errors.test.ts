@@ -16,7 +16,6 @@ import {
   isEngineErrorCode,
   nestedSpawnRejectedError,
   promptTooLargeError,
-  schemaEmulationFailedDetail,
   STDOUT_TAIL_ECHO_CHARS,
 } from "../../common/errors.ts";
 
@@ -126,10 +125,6 @@ describe("具名构造器", () => {
     expect(engineRunFailedDetail("crash", null, "t")).toContain("killed by signal");
   });
 
-  it("schemaEmulationFailedDetail：含错误明细 + 原始输出尾部 + 重试一次语义", () => {
-    const detail = schemaEmulationFailedDetail("Schema validation failed: /a must be number", '{"a":"x"}');
-    expect(detail).toContain("Schema validation failed");
-    expect(detail).toContain('{"a":"x"}');
-    expect(detail).toMatch(/retry once/i);
-  });
+  // schemaEmulationFailedDetail 用例已随函数删除（test-only 死镜像收口，活体单源
+  // SDK error-codes.ts，其行为由 SDK __tests__/primitives.test.ts 覆盖）。
 });

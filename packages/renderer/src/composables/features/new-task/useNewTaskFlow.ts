@@ -48,8 +48,9 @@ import { useToast } from '@/composables/useToast'
 import { worktreeApi } from '@xyz-agent/core/transport/api/domains/worktree'
 import { pickDirectory } from '@/lib/ipc'
 import i18n from '@/i18n'
-// supportedLevelsOf：显示侧（composer-shell）与 submit 侧共用的唯一实现（F5，独立模块
-// 防 composer 系列测试对 flow 模块的整体 mock 波及 composer-shell 的 import 链）
+// supportedLevelsOf：显示侧（composer-shell）与 submit 侧共用的唯一实现（F5，实现单源
+// core new-task-search/supported-levels.ts，本目录 shim re-export——独立文件形态防
+// composer 系列测试对本模块的整体 mock 波及 composer-shell 的 import 链）
 import { supportedLevelsOf } from './supported-levels'
 
 const t = i18n.global.t

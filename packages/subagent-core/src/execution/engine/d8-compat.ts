@@ -145,37 +145,17 @@ function attemptVendoredPkgDir(engineId: string): string {
 }
 
 /**
- * vendored 相对定位：`<coreDir>/../<engineId>-subagent-cli`。三重校验防同名目录冒充：
- * package.json 可读 + name 精确匹配 + manifest bin 可执行。任一不成立 → undefined
- * （调用方按通道②/显式 cliPath/期望路径降级）。
+ * vendored package.json 的 manifest 段原始解析（单一来源，locateVendoredEnginePkg 与
+ * readEngineManifest 共用）：读取 pkgDir/package.json 并 duck-typed 三段下降
+ * pkg["xyz-agent"]["subagentEngine"]。读文件/JSON 解析失败或 manifest 段缺失/非对象
+ * （含 null 与数组）→ undefined。数组拒绝上收到共用守卫对两个调用点均结局等价：
+ * JSON.parse 产物为数组时不可能携带字符串键（JSON 语法限制），bin 提取路径对数组取
+ * ["bin"] 恒 undefined——与拒绝分支同收敛为定位失败。pkg 一并返回供调用方做 name
+ * 精确匹配与 bin 相对路径解析（单次解析，不重复读盘）。
  */
-function locateVendoredEnginePkg(engineId: string): LocatedEnginePkg | undefined {
-  const pkgDir = attemptVendoredPkgDir(engineId);
-  let pkg: Record<string, unknown>;
-  try {
-    pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8")) as Record<string, unknown>;
-  } catch {
-    return undefined;
-  }
-  if (pkg["name"] !== enginePkgName(engineId)) return undefined;
-  const agentNs = pkg["xyz-agent"];
-  const manifest =
-    typeof agentNs === "object" && agentNs !== null
-      ? (agentNs as Record<string, unknown>)["subagentEngine"]
-      : undefined;
-  const manifestBin =
-    typeof manifest === "object" && manifest !== null
-      ? (manifest as Record<string, unknown>)["bin"]
-      : undefined;
-  if (typeof manifestBin !== "string" || manifestBin.trim() === "") return undefined;
-  const binPath = resolveManifestBin(pkgDir, pkg, manifestBin);
-  if (binPath === undefined || !canExecute(binPath)) return undefined;
-  return { pkgDir, binPath };
-}
-
-/** manifest 薄壳消费面解析（复用 W4 engine-manifest 字段级解析器——单源，不复制规则）。 */
-function readEngineManifest(pkgDir: string): ManifestInfo | undefined {
-  let manifest: Record<string, unknown>;
+function readSubagentEngineManifestRaw(
+  pkgDir: string,
+): { pkg: Record<string, unknown>; manifest: Record<string, unknown> } | undefined {
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8")) as Record<string, unknown>;
     const agentNs = pkg["xyz-agent"];
@@ -184,10 +164,35 @@ function readEngineManifest(pkgDir: string): ManifestInfo | undefined {
         ? (agentNs as Record<string, unknown>)["subagentEngine"]
         : undefined;
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
-    manifest = raw as Record<string, unknown>;
+    return { pkg, manifest: raw as Record<string, unknown> };
   } catch {
     return undefined;
   }
+}
+
+/**
+ * vendored 相对定位：`<coreDir>/../<engineId>-subagent-cli`。三重校验防同名目录冒充：
+ * package.json 可读 + name 精确匹配 + manifest bin 可执行。任一不成立 → undefined
+ * （调用方按通道②/显式 cliPath/期望路径降级）。
+ */
+function locateVendoredEnginePkg(engineId: string): LocatedEnginePkg | undefined {
+  const pkgDir = attemptVendoredPkgDir(engineId);
+  const parsed = readSubagentEngineManifestRaw(pkgDir);
+  if (parsed === undefined) return undefined;
+  const { pkg, manifest } = parsed;
+  if (pkg["name"] !== enginePkgName(engineId)) return undefined;
+  const manifestBin = manifest["bin"];
+  if (typeof manifestBin !== "string" || manifestBin.trim() === "") return undefined;
+  const binPath = resolveManifestBin(pkgDir, pkg, manifestBin);
+  if (binPath === undefined || !canExecute(binPath)) return undefined;
+  return { pkgDir, binPath };
+}
+
+/** manifest 薄壳消费面解析（复用 W4 engine-manifest 字段级解析器——单源，不复制规则）。 */
+function readEngineManifest(pkgDir: string): ManifestInfo | undefined {
+  const parsed = readSubagentEngineManifestRaw(pkgDir);
+  if (parsed === undefined) return undefined;
+  const manifest = parsed.manifest;
   const id = typeof manifest["id"] === "string" ? manifest["id"] : D8_ZCODE_ENGINE_ID;
   const modelCatalog = parseModelCatalog(id, manifest["modelCatalog"]);
   return {

@@ -81,12 +81,8 @@ import {
   ZCODE_TURN_MAX_TIMEOUT_ENV,
   parseZcodeTurnTimeoutEnv,
 } from "./constants.ts";
-import { hostZcodeDbPath, zcodeDbPathAllowlist, zcodeSessionDbPath } from "./db-path.ts";
+import { zcodeDbPathAllowlist, zcodeSessionDbPath } from "./db-path.ts";
 
-// 会话库路径契约的模块级 re-export：既有测试（zcode-engine-timeout/status）与 W2 改造前
-// 的 handle 回填/read 判定消费 hostZcodeDbPath——实现已迁 db-path.ts（断环），此处保来源
-// 兼容（impl-plan §2.1：测试 import 来源不变）。
-export { hostZcodeDbPath };
 import {
   mapZcodeOutcomeUsage,
   mapZcodeUsage,
@@ -1417,23 +1413,6 @@ function buildAppServerTimeoutMessage(
     `${head}止损路径：${stopPathText(stopPath)}。\n` +
     `${rerunGuide}${selfHelp}若持续出现，检查 ZCode 桌面端模型连通性或改用 engine: pi。`
   );
-}
-
-/**
- * prepare 期能力拒绝的历史载体（code 进 message 前缀，调用方可程序化分流）。
- *  [U10① D6] execution 运行时面错误族成员：export 供宿主 instanceof 分流。
- *  [D3-④ 合并注] 引擎内 shape 拒绝已上提 common/capability-gate（EngineError 承载），
- *  本引擎不再抛出；保留 export 维持错误族面兼容（execution-runtime-face.test 消费），
- *  待波 2 收口时随 export 面清理一并裁决。
- */
-export class ZcodeTaskShapeError extends Error {
-  readonly code: string;
-
-  constructor(code: string, message: string) {
-    super(`[${code}] ${message}`);
-    this.name = "ZcodeTaskShapeError";
-    this.code = code;
-  }
 }
 
 /** 宿主超时 abort 判别（对齐点④）：signal.reason 带超时标记 = 超时杀链合成终态路径。 */

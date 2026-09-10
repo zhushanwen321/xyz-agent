@@ -32,3 +32,13 @@ export * from "./node-executor.ts";
 
 // stderr tee 轮转/清理单源（前缀参数化；两引擎包的 logs/stderr-rotation.ts 为薄包装）。
 export * from "./logs/stderr-rotation.ts";
+
+// relay 通道 env 名与协议常量 SSOT（round1-reuse R9：core ./relay-env 子入口与 pi
+// 引擎包副本自本模块 re-export 收编，消 5 个 XYZ_SUBAGENT_RELAY_* env 名双副本）。
+export * from "./relay-env.ts";
+
+// 「错误 → 可读字符串」与 best-effort 吞错 helper 单源（round1-reuse R11：core 与
+// pi/zcode 引擎包的微副本 re-export 收编；toErrorMessage 含 A8 修复——非 Error
+// object 入参 JSON.stringify 结构化文本，Error 入参逐字节不变）。
+export * from "./error-message.ts";
+export * from "./best-effort.ts";

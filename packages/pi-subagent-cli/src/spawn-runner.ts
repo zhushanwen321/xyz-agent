@@ -413,5 +413,4 @@ export {
   getActiveChild,
   killAllActiveChildren,
   registerActiveChild,
-  unregisterActiveChild,
 } from "./active-children.ts";

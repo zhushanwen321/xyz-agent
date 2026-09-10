@@ -184,7 +184,7 @@ export function isProcessAlive(pid: number): boolean | undefined {
  * 返回 undefined：ps 失败 / 超时 / 空输出（进程刚死等）——调用方按「不确定」保守跳过。
  * 复用 pi/session-runner.ts:595 readProcessCmdline 先例（同实现、同超时、同失败语义）。
  */
-export function readProcessCmdline(pid: number): string | undefined {
+function readProcessCmdline(pid: number): string | undefined {
   try {
     const r = spawnSync("ps", ["-p", String(pid), "-o", "command="], {
       encoding: "utf-8",

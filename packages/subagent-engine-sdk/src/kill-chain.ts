@@ -9,26 +9,19 @@
 //     不再携带 core registry 缺省值（调用方显式传自己的引擎 id）；
 //   - logger 走 SDK facade（src/logger.ts）；
 //   - engineTimeoutDetail / STDOUT_TAIL_ECHO_CHARS 自持（src/protocol/error-codes.ts，
-//     文案与 core errors.ts 逐字等价）；toErrorMessage 最小等价自持（core
-//     error-message.ts 同款实现，core 侧多包自持先例）。
+//     文案与 core errors.ts 逐字等价）；toErrorMessage 改用 SDK 单源
+//     src/error-message.ts（round1-reuse R11 收编原内联副本）。
 //
 // 设计权威源：docs/architecture/subagent-engine-abstraction.md D1（abort 分级：引擎原生
 // 中断 → 公共杀链兜底；CLI-only 引擎直接杀链，杀死后宿主合成终态）+ §3.3.3
 // engine_timeout / engine_run_failed 行 + 附录 A「CLI 超时」行。
 
 import { getLogger } from "./logger.ts";
+import { toErrorMessage } from "./error-message.ts";
 import { engineTimeoutDetail, STDOUT_TAIL_ECHO_CHARS } from "./protocol/error-codes.ts";
 import type { AgentCallOpts, AgentOutcome } from "./protocol/contract-types.ts";
 
 const logger = getLogger("subagents");
-
-/**
- * 「错误 → 可读字符串」兜底（core 各包自持同款实现，src/core/error-message.ts 先例；
- * 单消费方内联自持，不另立模块——tsup entry 显式登记清单约束）。
- */
-function toErrorMessage(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
 
 /** STDOUT_TAIL_ECHO_CHARS re-export（core 版同款导出面，调用方免跨模块 import）。 */
 export { STDOUT_TAIL_ECHO_CHARS };
