@@ -12,13 +12,14 @@
  * 调用序断言用 invocation log 数组（S3 全序可读）。beforeEach 调 resetSessionListSubForTest()
  * 清模块级订阅计数（跨用例隔离）。
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { effectScope } from 'vue'
-import type { SessionGroup, SessionSummary, BatchDeleteResult } from '@xyz-agent/shared'
+import type { SessionGroup, SessionSummary, BatchDeleteResult, ImageCacheWriteImage, ImageCacheWriteResult } from '@xyz-agent/shared'
 import { createSessionStore } from '../store'
 import { createUseSession, resetSessionListSubForTest } from '../use-session'
 import type { UseSessionDeps, SessionCleanupHooks, ChatHydratePort } from '../use-session'
 import type { SessionEntryPort } from '../api-port'
+import { setImageCacheWritePort, _resetImageCacheForTest } from '../../chat/image-cache'
 
 /** 构造 SessionSummary 最小形状（类型收窄后字段由测试按需给全） */
 function summary(id: string, cwd = '/a'): SessionSummary {
@@ -655,6 +656,140 @@ describe('bindSessionListBroadcast refCount', () => {
     expect(unsub).toHaveBeenCalledTimes(1)
 
     resetSessionListSubForTest()
+  })
+})
+
+/**
+ * 图片落盘编排收口测试（crash-resilience §3.3 D6-⑨，Gate B A9③ 缺陷#2 回流修复）。
+ *
+ * 断言 use-session 侧三条 hydrate 通路（首次切入 / 已 hydrate 刷新 / retryHistory）
+ * 统一经 reconcileFromReply 触发 persistImagesNewestFirst——此前编排只挂
+ * useChat.hydrateHistory，主流点击切入三处 reconcile 旁路致 cache 零写入。
+ * 引擎级语义（新→旧反转 / 超帽即停 / 幂等去重）由 chat/__tests__/image-cache-orchestration.test.ts
+ * 覆盖，此处只测编排点挂接：注入 recording write port 断言「被调用 + sessionId + 新→旧序」。
+ */
+describe('hydrate 通路图片落盘编排收口（D6-⑨ 缺陷#2）', () => {
+  /** 记录型 write port：捕获 (sessionId, images 序)，回写全量 written。 */
+  function makeRecordingPort() {
+    const calls: Array<{ sessionId: string; order: string[] }> = []
+    const port = vi.fn((sessionId: string, images: ImageCacheWriteImage[]): Promise<ImageCacheWriteResult> => {
+      calls.push({ sessionId, order: images.map((i) => i.data) })
+      return Promise.resolve({
+        results: images.map((i) => ({ status: 'written' as const, path: `/cache/${sessionId}/${i.data}.png`, bytes: 10 })),
+        quotaFull: false,
+      })
+    })
+    return { calls, port }
+  }
+
+  /** 含单张 toolResult 图的 assistant 消息（collectImagesFromMessages 扫描对象）。 */
+  function msgWithImage(id: string, data: string): never {
+    return {
+      id, role: 'assistant', content: '', status: 'complete', timestamp: 0,
+      toolCalls: [{ id: `t-${id}`, toolName: 'shot', input: {}, status: 'completed', startTime: 0, images: [{ data, mimeType: 'image/png' }] }],
+    } as never
+  }
+
+  beforeEach(() => {
+    resetSessionListSubForTest()
+    _resetImageCacheForTest()
+  })
+
+  afterEach(() => {
+    _resetImageCacheForTest()
+  })
+
+  it('selectSession 首次切入（主流点击路径）：getHistory 含 toolResult 图 → 落盘编排被调，port 收新→旧序', async () => {
+    const { calls, port } = makeRecordingPort()
+    setImageCacheWritePort(port)
+    const f = makeFixture()
+    // 消息序（旧→新）：m-old 在前、m-new 在后
+    f.chat.getHistory.mockResolvedValue({
+      messages: [msgWithImage('m-old', 'old-1'), msgWithImage('m-new', 'new-2')],
+      truncated: false, loadedTurns: 2, totalTurnsEstimate: 2,
+    })
+
+    await f.session.selectSession('sid-1')
+
+    expect(f.chat.reconcileHistory).toHaveBeenCalledTimes(1)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.sessionId).toBe('sid-1')
+    // D6-⑨ 顺序契约：消息序反转为新→旧交 main 落盘（超帽弃最旧）
+    expect(calls[0]!.order).toEqual(['new-2', 'old-1'])
+    f.dispose()
+  })
+
+  it('selectSession 已 hydrate 刷新：reconcile 通路同样触发落盘编排', async () => {
+    const { calls, port } = makeRecordingPort()
+    setImageCacheWritePort(port)
+    const f = makeFixture()
+    f.chat.isHydrated.mockReturnValue(true)
+    f.chat.getHistory.mockResolvedValue({
+      messages: [msgWithImage('m1', 'img-1')],
+      truncated: true, loadedTurns: 1, totalTurnsEstimate: 3,
+    })
+
+    await f.session.selectSession('sid-1')
+
+    expect(f.chat.reconcileHistory).toHaveBeenCalledTimes(1)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.sessionId).toBe('sid-1')
+    expect(calls[0]!.order).toEqual(['img-1'])
+    f.dispose()
+  })
+
+  it('retryHistory：reconcile 通路触发落盘编排', async () => {
+    const { calls, port } = makeRecordingPort()
+    setImageCacheWritePort(port)
+    const f = makeFixture()
+    f.chat.getHistory.mockResolvedValue({
+      messages: [msgWithImage('m1', 'img-1')],
+      truncated: false, loadedTurns: 1, totalTurnsEstimate: 1,
+    })
+
+    await f.session.retryHistory('s1')
+
+    expect(f.chat.reconcileHistory).toHaveBeenCalledTimes(1)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.sessionId).toBe('s1')
+    f.dispose()
+  })
+
+  it('无图历史：port 不被调（collect 空列表零开销早退）；getHistory 失败短路：编排不触达', async () => {
+    const { calls, port } = makeRecordingPort()
+    setImageCacheWritePort(port)
+    const f = makeFixture()
+
+    // 无图消息（messages 无 toolCalls.images）
+    f.chat.getHistory.mockResolvedValue({ messages: [{ id: 'm1' } as never], truncated: false, loadedTurns: 1, totalTurnsEstimate: 1 })
+    await f.session.selectSession('sid-1')
+    expect(calls).toHaveLength(0)
+    f.dispose()
+
+    // hydrate 失败（getHistory reject）：markHistoryFailed 分支不触达编排
+    const f2 = makeFixture()
+    f2.chat.getHistory.mockRejectedValue(new Error('io'))
+    await expect(f2.session.selectSession('sid-1')).resolves.toBeUndefined()
+    expect(f2.chat.markHistoryFailed).toHaveBeenCalledWith('sid-1')
+    expect(calls).toHaveLength(0)
+    f2.dispose()
+  })
+
+  it('重复切入幂等：已落盘图（内容 hash 记账）不重复交 port', async () => {
+    const { calls, port } = makeRecordingPort()
+    setImageCacheWritePort(port)
+    const f = makeFixture()
+    f.chat.getHistory.mockResolvedValue({
+      messages: [msgWithImage('m1', 'img-1')],
+      truncated: false, loadedTurns: 1, totalTurnsEstimate: 1,
+    })
+
+    await f.session.selectSession('sid-1')
+    f.chat.isHydrated.mockReturnValue(true) // 第二次切入走已 hydrate 刷新分支
+    await f.session.selectSession('sid-1')
+
+    expect(calls).toHaveLength(1) // 第二次编排 pending 全被记账剔除，port 不再被调
+    f.dispose()
   })
 })
 
