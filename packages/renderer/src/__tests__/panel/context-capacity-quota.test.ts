@@ -427,6 +427,37 @@ describe('ContextCapacityPopover coding-plan 区', () => {
       wrapper.unmount()
     })
 
+    it('D11 布局：失败态状态文字在左，两个按钮同组贴右端（结构断言，不依赖像素坐标）', async () => {
+      // [HISTORICAL] 回归守卫：footer 用 justify-between，两按钮若散作直接子项，失败态（3 子项）会把
+      // 「刷新」挤到中间，与成功态（2 子项）的贴右位置跳变，且两个恢复动作看起来不相关。
+      // jsdom 无布局引擎，故断言结构等价形态：按钮同属一个按钮组容器，且按钮组是 footer 的末子元素
+      // （justify-between 下末子元素贴右端），状态文字是首子元素（贴左端）。
+      setupProviders([zhipuProvider])
+      const quotaStore = useQuotaStore()
+      quotaStore.setCache('zhipu', mockQuotaRow, 500)
+      quotaStore.setError('zhipu', 'panel.context.quotaFailNoCredential')
+
+      const wrapper = await openPopover()
+      await flushPromises()
+
+      const refreshBtn = findBodyButton('刷新')
+      const configureBtn = findBodyButton('配置')
+      const group = document.body.querySelector('[data-testid="quota-footer-actions"]')
+      expect(group).toBeTruthy()
+
+      // 成组：两按钮的直接父容器同一个，且就是按钮组容器
+      expect(refreshBtn!.parentElement).toBe(group)
+      expect(configureBtn!.parentElement).toBe(group)
+
+      // 贴右端 + 状态文字在左：footer 只有「状态文字 + 按钮组」两个元素子节点，次序固定
+      const footer = group!.parentElement!
+      expect(footer.children).toHaveLength(2)
+      expect(footer.firstElementChild!.tagName).toBe('SPAN')
+      expect(footer.lastElementChild).toBe(group)
+
+      wrapper.unmount()
+    })
+
     it('D11 边界：成功态（有数据无 error）footer 只有「刷新」，不渲染「配置」（形态不被改变）', async () => {
       setupProviders([zhipuProvider])
       const quotaStore = useQuotaStore()
