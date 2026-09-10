@@ -107,21 +107,21 @@ graph TD
 
 | # | 偏差 | 对应设计位置 | 裁定理由 | 状态 |
 |---|---|---|---|---|
-| （空） | | | | |
+| D-1 | u6 六条登记全部为 observe 型守卫（设计写「各配 pi-anchor + 探针」，预期 probe 型） | §10 U6 行 | 守卫 schema 的 probe 型要求指向真实存在的 .test.ts；u6 领地仅 pi-semantics.json 且与 u1/u3 并行无法依赖其测试产物。verifiedWith 版本门禁对全表生效（pi 升级即 fail），登记意图不受损；后续 u1/u3 测试落地后可将关键条目升级为 probe（登记为可选跟进项） | 合理 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
-| u14a | pending | 0 | — |
-| u14b | pending | 0 | — |
+| u14a | retry-pending | 1 | 首派 agent_89232f0a 因账户速率限制失败（瞬态）；待 u1/u2/u6 完成后降并发补派 |
+| u14b | retry-pending | 1 | 首派 agent_cf3180a4 因账户速率限制失败（瞬态）；待并发空位补派，轮次累计中 |
 | u15 | pending | 0 | — |
 | u16 | pending | 0 | — |
 | u17 | pending | 0 | — |
 | u18 | pending | 0 | — |
-| u1 | pending | 0 | — |
-| u2 | pending | 0 | — |
-| u6 | pending | 0 | — |
+| u1 | in-progress | 1 | agent_6665a206 |
+| u2 | in-progress | 1 | agent_2102d150 |
+| u6 | committed | 1 | PS-28~PS-33 六条 anchor 逐条实装核对（⑤补双锚、⑥修 distPath 缺 core/ 前缀）；守卫 exit 0（33 条）重跑确认；偏差 D-1 |
 | u3 | pending | 0 | — |
 | u8 | pending | 0 | — |
 | u9 | pending | 0 | — |
