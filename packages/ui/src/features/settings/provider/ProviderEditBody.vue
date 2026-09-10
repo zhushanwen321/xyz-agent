@@ -241,13 +241,11 @@
         @update:workspace-input="quotaWorkspaceInput = $event"
       />
 
-      <!-- 测试连接 / 自动发现（纯展示块抽为 ProviderTestDiscoverSection，编排仍在 useProviderEdit） -->
+      <!-- 测试连接 / 自动发现（纯展示块抽为 ProviderTestDiscoverSection，编排仍在 useProviderEdit）。
+           props 经 useCatalogDisplay().testDiscoverProps 整体接线（含 M3b 的 providerKind /
+           testResults / testError / providerBaseUrl 4 项），派生来源见 provider-catalog-display.ts。 -->
       <ProviderTestDiscoverSection
-        :testing="testing"
-        :discovering="discovering"
-        :test-result="testResult"
-        :discover-result="discoverResult"
-        :model-count="localModels.length"
+        v-bind="testDiscoverProps"
         @test="testConnection"
         @discover="autoDiscover"
       />
@@ -439,17 +437,15 @@ const {
   testQuery: quotaTestQuery,
 } = quotaFactory(matchedPreset, toRef(props, 'provider'))
 
-// 业务编排全在 composable
+// 业务编排全在 composable。整份返回值留作 edit：展示接线 composable 从这里读 test 状态与模型数
+// （test/discover 结果不再逐个解构到本组件——第 1 轮抽走展示逻辑后本组件行数余量已用尽）。
+const edit = useProviderEdit(toRef(props, 'provider'), { t })
 const {
   form,
   newModel,
   localModels,
   headerRows,
   showKey,
-  testing,
-  discovering,
-  testResult,
-  discoverResult,
   showAddModel,
   saving,
   actionError,
@@ -470,12 +466,12 @@ const {
   addHeader,
   removeHeader,
   syncHeadersFromRows,
-} = useProviderEdit(toRef(props, 'provider'), { t })
+} = edit
 
-// catalog 展示字段（类型只读派生文案 + 端点自定义网关；设计 D5）——逻辑在同目录 composable
-// （受本组件行数约束抽出；runtime 已下发派生值，此处只做展示转译与端点草稿同步）
-const { apiText: catalogApiText, endpointDraft, endpointHint, onEndpointInput, syncBeforeSave } =
-  useCatalogDisplay(toRef(props, 'provider'), form, t, isCatalog)
+// catalog 展示字段（类型只读派生文案 + 端点自定义网关；设计 D5）+ 测试连接区 props 接线（M3b）
+// ——逻辑在同目录 composable（受本组件行数约束抽出；runtime 已下发派生值，此处只做展示转译）
+const { apiText: catalogApiText, endpointDraft, endpointHint, onEndpointInput, syncBeforeSave, testDiscoverProps } =
+  useCatalogDisplay(toRef(props, 'provider'), edit, t, isCatalog)
 
 // ── B-1 凭证区条件化（需 form 已就绪，故置于 useProviderEdit 之后） ──
 

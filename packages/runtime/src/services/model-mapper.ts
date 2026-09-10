@@ -58,6 +58,11 @@ export function toModelInfo<T extends { id: string; name?: string; api?: string;
     name: m.name ?? m.id,
     providerId,
     providerName,
+    // 本回落路径在 catalog 混合协议 provider 上真实可达（设计 §3.3 D5 消费点表）：这类 provider
+    // 的 provider 级协议不是定义权威（协议随模型走，聚合层对混合协议下发 providerApi=undefined），
+    // 故 model 与 provider 同时无 api 时 ModelInfo.api 即 undefined。该字段只作元数据展示
+    // （provider 详情 / 模型列表），聊天协议由 pi 侧按模型自身定义解析，不读此处——
+    // 不要把 undefined 当作「协议缺失」的错误信号。
     api: m.api ?? providerApi,
     // W2：从 model.enabled 读，undefined/true 视为启用（向上兼容存量无此字段的 model）
     enabled: m.enabled !== false,

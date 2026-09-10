@@ -47,6 +47,7 @@ import {
   __resetSettingsStoreForTesting,
   __resetSettingsTransportForTesting,
   type SettingsTransport,
+  type DiscoverModelsResponse,
 } from '@xyz-agent/core'
 import ProviderEditBody from '../provider/ProviderEditBody.vue'
 import {
@@ -201,7 +202,8 @@ const toastStub: SettingsToast = {
 // ── transport / platform stub（core 模块级单例注入）──
 
 const setProviderSpy = vi.fn(async (_id: string, _data: SetProviderData) => undefined)
-const discoverModelsSpy = vi.fn(async () => ({ success: true, models: [] }))
+/** 显式标注返回类型：M4 场景 ⑨ 需按用例注入 results / error（类型推断会把返回值收窄成 models: never[]） */
+const discoverModelsSpy = vi.fn(async (): Promise<DiscoverModelsResponse> => ({ success: true, models: [] }))
 
 function makeTransport(): SettingsTransport {
   const noop = (): void => {}
@@ -890,5 +892,113 @@ describe('M4 catalog 展示：类型只读派生 + 端点（自定义网关）',
     expect(wrapper.find(ENDPOINT_HINT).text()).toBe('settings.providerEdit.endpointBuiltinMixed')
     expect(wrapper.find('[data-testid="provider-save-bar"]').exists()).toBe(false)
     expect(wrapper.emitted('dirtyChange')!.at(-1)).toEqual([false])
+  })
+})
+
+// ══ 场景 ⑨：M3b 测试连接/发现接线（计划 D-17 集成缺口回归）════════════════════
+
+/**
+ * M3b 单元把 ProviderTestDiscoverSection 改成「按协议分组 + catalog 门控模型发现」并加了 4 个
+ * 可选 props（providerKind/testResults/testError/providerBaseUrl），但宿主 ProviderEditBody 未接线，
+ * 4 个 props 全走默认值——子组件级测试绿，应用级「模型发现」按钮对 catalog 仍渲染、测试结果拿不到
+ * results（计划登记为 D-17）。本组断言**应用级**行为：mount 宿主组件、点宿主按钮、断言宿主 DOM，
+ * 证明 props 真由 useProviderEdit 经 useCatalogDisplay().testDiscoverProps 接上，而非子组件默认值。
+ *
+ * 三视角：
+ * - 黑盒用户视角（主）：catalog 编辑体内无「模型发现」按钮、custom 有；测试连接后按协议分组的结果
+ *   行与失败指引出现在编辑体内；无可用模型时的指引文案按 provider 体系分叉。
+ * - 构建者白盒（佐证）：结果数据由 transport.discoverModels 真实流经 useProviderEdit → props → DOM。
+ * - 观察者形态：全部为 DOM 断言 + transport spy，不窥探组件内部状态。
+ */
+describe('M3b 接线：测试连接分组结果与模型发现门控（应用级）', () => {
+  const DISCOVER_TEXT = 'settings.providerEdit.autoDiscover'
+  const TEST_TEXT = 'settings.providerEdit.testConnection'
+
+  /** 宿主编辑体内按文案（i18n key；t() mock 返回 key）查找按钮 */
+  function findButton(text: string) {
+    return wrapper!.findAll('button').find((b) => b.text().includes(text))
+  }
+
+  async function clickTest(): Promise<void> {
+    const btn = findButton(TEST_TEXT)
+    expect(btn).toBeTruthy()
+    await btn!.trigger('click')
+    await flushPromises()
+  }
+
+  it('catalog provider：编辑体内不渲染「模型发现」按钮（catalog 门控经宿主接线生效）', async () => {
+    wrapper = mountBody(CATALOG_MIXED_P)
+    await flushPromises()
+
+    expect(findButton(DISCOVER_TEXT)).toBeUndefined()
+    // 门控只针对发现：测试连接按钮仍在
+    expect(findButton(TEST_TEXT)).toBeTruthy()
+  })
+
+  it('custom provider：编辑体内渲染「模型发现」按钮（custom 发现语义保留）', async () => {
+    wrapper = mountBody(CUSTOM_P)
+    await flushPromises()
+
+    expect(findButton(DISCOVER_TEXT)).toBeTruthy()
+  })
+
+  it('测试连接回多协议结果 → 编辑体内按协议分组渲染结果行 + 失败指引（testResults / providerBaseUrl 接线）', async () => {
+    discoverModelsSpy.mockResolvedValueOnce({
+      success: true,
+      results: [
+        { api: 'anthropic-messages', modelId: 'minimax-m3', ok: true },
+        { api: 'openai-completions', modelId: 'qwen3.8-flash', ok: false, error: 'http_error|404|not found' },
+      ],
+    })
+    // 网关态 fixture：生效端点 = provider.baseUrl（网关 override，非表单快照 artifact）
+    wrapper = mountBody(CATALOG_GATEWAY_P)
+    await flushPromises()
+    await clickTest()
+
+    const results = wrapper.find('[data-testid="provider-test-results"]')
+    expect(results.exists()).toBe(true)
+    // 标题 + 每协议一行 = 3 个直接子节点（未接线时 testResults 走默认 []，本区根本不渲染）
+    expect(results.element.children.length).toBe(3)
+    expect(results.text()).toContain('settings.providerEdit.testRowSuccess')
+    expect(results.text()).toContain('anthropic-messages')
+    expect(results.text()).toContain('settings.providerEdit.testRowHttpError')
+    expect(results.text()).toContain('404')
+    // 有分组结果时不渲染整体失败行
+    expect(wrapper.find('[data-testid="provider-test-overall-error"]').exists()).toBe(false)
+
+    // 失败指引的 {baseUrl} = 宿主下发的生效端点（默认 '' 时 mock 不 append，故此断言即接线证据）
+    const hints = wrapper.find('[data-testid="provider-test-hints"]')
+    expect(hints.exists()).toBe(true)
+    expect(hints.text()).toContain('settings.providerEdit.testHintHttpError')
+    expect(hints.text()).toContain(CATALOG_GATEWAY_URL)
+  })
+
+  it('测试连接整体失败（success=false）→ 编辑体内渲染整体失败原因 + 指引（testError 接线）', async () => {
+    discoverModelsSpy.mockResolvedValueOnce({ success: false, error: 'no_api_key' })
+    wrapper = mountBody(APIKEY_P)
+    await flushPromises()
+    await clickTest()
+
+    const overall = wrapper.find('[data-testid="provider-test-overall-error"]')
+    expect(overall.exists()).toBe(true)
+    expect(overall.text()).toContain('settings.providerEdit.testNoApiKey')
+    // 无分组结果（testResults 保持空）→ 整体指引按 testError 分类
+    expect(wrapper.find('[data-testid="provider-test-results"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="provider-test-hints"]').text()).toContain('settings.providerEdit.testHintNoApiKey')
+  })
+
+  it('providerKind 接线：无可用模型失败指引按 catalog / custom 分叉', async () => {
+    discoverModelsSpy.mockResolvedValueOnce({ success: false, error: 'no_models' })
+    wrapper = mountBody(CATALOG_MIXED_P)
+    await flushPromises()
+    await clickTest()
+    expect(wrapper.find('[data-testid="provider-test-hints"]').text()).toContain('settings.providerEdit.testHintNoModelsCatalog')
+
+    wrapper.unmount()
+    discoverModelsSpy.mockResolvedValueOnce({ success: false, error: 'no_models' })
+    wrapper = mountBody(CUSTOM_P)
+    await flushPromises()
+    await clickTest()
+    expect(wrapper.find('[data-testid="provider-test-hints"]').text()).toContain('settings.providerEdit.testHintNoModelsCustom')
   })
 })
