@@ -67,7 +67,7 @@ import { cleanupTempPrompt, writePromptToTempFile } from "./temp-prompt.ts";
 import { WRAP_UP_HINT } from "./turn-limiter.ts";
 import { applySchemaEnvToChildEnv } from "./spawn-args.ts";
 import { createUiRequestQueue } from "./ui-request-queue.ts";
-import { isRelayActive, RELAY_ENV_RECORD_ID, RELAY_ENV_SESSION_ID } from "./relay-env.ts";
+import { isRelayActive, RELAY_ENV_RECORD_ID, RELAY_ENV_SESSION_ID } from "@zhushanwen/subagent-engine-sdk";
 import {
   cleanupSiblingStderrLogs,
   rotateStderrLogIfNeeded,

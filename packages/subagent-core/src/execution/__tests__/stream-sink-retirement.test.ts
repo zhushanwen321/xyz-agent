@@ -110,7 +110,7 @@ import { spawn } from "node:child_process";
 
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
-import { RELAY_ENV_NODE, RELAY_ENV_SCRIPT, RELAY_ENV_SOCKET } from "../relay-env.ts";
+import { RELAY_ENV_NODE, RELAY_ENV_SCRIPT, RELAY_ENV_SOCKET } from "@zhushanwen/subagent-engine-sdk";
 import { SubagentService } from "../subagent-service.ts";
 import { createBackgroundStream } from "../stream-sink.ts";
 import type { ExtensionMode } from "../host-mode.ts";
