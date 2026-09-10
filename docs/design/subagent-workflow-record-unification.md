@@ -100,7 +100,7 @@ workflow 域早于引擎协议化演进定型。协议化（D3 系列）把真�
   ⑤ 磁盘重建投影不过滤（record 全量持久化，重建后投影层同规则生效）；
   ⑥ 通知恢复链（`recoverOrphanRecords`/revive）全量可见（治理面）。
   **被否**：store 查询层默认过滤（破治理面）；按 slug 前缀推导（隐式约定，规则 19 之鉴）。
-- **D2 进度源切换**：trace node 的 `live` 字段删除；views 改 store 订阅（parentRunId 查询 + record 事件 `getEventLog`/`getCurrentActivity` 同源 API）；`run-snapshot.ts` 剥离 live 序列化分支；node 保留 `result` 终态摘要。**stream 通道承接**：pump 的 `new SubagentStream`（`:790-792`）随 progress record 一并删除，streaming 由 service 派发路径既有通道承载（`executeAndAwait` stream 透传）。**查询域显式（v3）**：parentRunId 查询域 = **内存 ∪ 磁盘重建**（`collectRecords` 现状即内存 + 磁盘重建合并，`record-store.ts:8`）——D7 成功即 archive 出内存后，先完成步骤的 record 从磁盘重建面回查，run 视图不丢行；archive 时向订阅方推送终态快照事件（订阅面零空窗）；查询上限沿用 `LIST_LIMIT` 口径（`subagents.ts:236` 现状），超限分页不在本设计范围。
+- **D2 进度源切换**：trace node 的 `live` 字段删除；views 改 store 订阅（parentRunId 查询 + record 事件 `getEventLog`/`getCurrentActivity` 同源 API）；`run-snapshot.ts` 剥离 live 序列化分支；node 保留 `result` 终态摘要。**stream 通道承接**：pump 的 `new SubagentStream`（`:790-792`）随 progress record 一并删除，streaming 由 service 派发路径既有通道承载（`executeAndAwait` stream 透传）。**查询域显式（v3）**：parentRunId 查询域 = **内存 ∪ 磁盘重建**（`collectRecords` 现状即内存 + 磁盘重建合并，`record-store.ts:8`）——D7 成功即 archive 出内存后，先完成步骤的 record 从磁盘重建面回查，run 视图不丢行；archive 终态快照的**实现锚点（v3 终审补）= 复用 archive 内置 notifyChange tick（订阅方收 tick 后经 parentRunId 查询域重查取终态 record）+ archive 内置终态 entry 同步落盘，store 侧零改动、不新增带 payload 的事件类型**；查询上限沿用 `LIST_LIMIT` 口径（`subagents.ts:236` 现状），超限分页不在本设计范围。
 - **D3 并发共享池（定性修正：回归验证非新行为）**：现状 SAR 委托 `executeAndAwait` → `runAndFinalize` → `acquirePoolOrFinalize`——**已走共享池**（v1 检查点①就此定案）。编排归一后保持「路由/预检**先于** acquire」的现行顺序（失败零池占用语义保留）；全局上限默认值实施期从 settings 读实际数入验收表。
 - **D4 守护单点**：no-progress 守护 arm 键从 taskId 归一为 record.id，service 派发路径统一 arm/disarm；**双刷新源包裹（journal.onEvent ∪ stream.onDelta）与 fire 恢复指引追注（noteIfNoProgressFired）逐项复刻**（M3 语义不变，与 H1 Continuation 同模式）。
 - **D5 发射面按域分明（v2 修正——v1「归一」主张撤销）**：run 级注册/注销**本就配对**（`lifecycle.ts:318-325` 注册 `id: runId, type:"workflow"` ↔ `pump:284-287` 注销 `id: run.runId`），保留于 run 域不动——v1「pump unregister 删除改由 record 终态化发射」会拆散配对、run 级注册永久残留（pending-notifications 未知 id 归 process 档永不 TTL 自愈，残留被放大）。修正后：record 级 register/unregister 已配对（`:1849-1850` / record 终态化注销）不动；C-proc-13 ② 枚举回写为按域分明（record 域注销单点 = record 终态化；run 域注册/注销对 = lifecycle/pump）。
@@ -112,7 +112,7 @@ workflow 域早于引擎协议化演进定型。协议化（D3 系列）把真�
 | 机制 | 处置 |
 |------|------|
 | round-supervisor 运行期监督 | 纳管照旧（非 chatMode 全量纳管，H1 D8 定案；reconcile-sweep 对 workflow record 走标准对账） |
-| round-supervisor **adopt 接管**（v3 改判） | **豁免**（adoptOnProcessDeath 的 origin 分支，与 chatMode 豁免并列）——引擎死亡即 run 失败即 record 终态化（失败路径表），adopt 链的「唤醒→guidance→2h 看门狗→giveUp」对无脚本可回的 record 全程无意义且制造 2h 挂账（pending 差集非零 / list 可见 running，watchdog 默认 `WATCHDOG_DEFAULT_HOURS=2`，`supervisor.ts:53`）；v2「纳管照旧」被轮 2 影响面 SUG-1/SUG-2 击穿后改判 |
+| round-supervisor **adopt 接管**（v3 改判） | **豁免**——豁免落点 = **service 分诊条件两处**（`runEngineTask` catch 的 engine_crashed 分支 :2379 与 `finalizeEngineOutcome` 的 exitCode===null 分支 :2437，`chatMode !== true` 并列处加 origin，落空即 `finalizeFailed` 立即终态化）**+ supervisor 域分类**（domain.ts:39）双点，防单点豁免留下「无监督、永不终态化、pending 永不注销」的 resumable 僵尸（比现状更差）；理由 = 引擎死亡即 run 失败即 record 终态化（失败路径表），adopt 链的「唤醒→guidance→2h 看门狗→giveUp」对无脚本可回的 record 全程无意义且制造 2h 挂账（watchdog 默认 `WATCHDOG_DEFAULT_HOURS=2`，`supervisor.ts:53`）；v2「纳管照旧」被轮 2 影响面 SUG-1/SUG-2 击穿后改判 |
 | superseded 分类（v3 新增行） | **workflow origin 豁免**——classifyReplacement（`supervisor.ts:319-337`）按 same root/agent/slug 判定，parallel 同 slug 并行是 workflow 常态而非替代关系（v2「可接受」定性被击穿：replacedNotice 文案「was already replaced by your new task」把并行任务误述为替代关系） |
 | notifyHost 完成/关闭/失败回注 | **静默**（D6：toNotifyRecord 单漏斗 origin gate） |
 | 监督器通知族（supervisorNotify steer 通道） | 随 adopt 豁免自然零触发（D6 出口枚举） |
@@ -127,7 +127,7 @@ workflow 域早于引擎协议化演进定型。协议化（D3 系列）把真�
 |------|------|------|------|
 | 池排队中被 abort | workflow abort 信号 | run 域既有 cancelled 收口（S1 同款分支） | 脚本层重试 |
 | record 创建失败（极端） | store 异常 | agent() 同步抛错回脚本 | 文案附原因 |
-| 引擎死亡于 workflow agent 在途 | run 失败（engine_crashed 抛回脚本）→ record 由失败路径立即终态化 | adopt 豁免后无 2h 看门狗挂账窗（v3）；完成/失败通知静默（D6） | 脚本层重跑；排查 `list includeWorkflow:true` |
+| 引擎死亡于 workflow agent 在途 | run 失败——engine_crashed 经 catch 合成为 failed result **回脚本**（swallow 语义，脚本观察到失败结果非异常）→ record 由失败路径立即终态化 | adopt 豁免后无 2h 看门狗挂账窗（v3）；完成/失败通知静默（D6） | 脚本层重跑；排查 `list includeWorkflow:true` |
 
 ### 3.5 终态数据流
 
@@ -162,7 +162,7 @@ worker agent() → pump（薄：消息转调 + run 级收尾）→ service.execu
 | 单元 | 内容 | justification | 可独立验收 |
 |------|------|--------------|-----------|
 | W1 | `origin`/`parentRunId` 字段 + **持久化链三环（v3）**：`record-entry.ts` entry schema 加字段 + `recordToSubagent` 投影加字段 + 重建链透传（终态 record 过重启的唯一载体 = 自描述 entry，漏任一环则重启后 origin 丢失、D1 六面全失效——U5 投影缺字段同型事故先例）+ store 查询面（parentRunId 查询、`includeWorkflow` 参数）+ 投影层过滤（list/sidebar/hasRunning/TUI 四处） | 纯 additive 字段先行，消费方可渐进切换 | 单测：entry 往返（写→重建→字段保真）+ 四投影面过滤断言 |
-| W2 | service 统一编排入口 `executeWorkflowAgent`（**接管迁移清单**见下表）+ D7 origin 收口分支 + D6 通知 origin gate | 新路径最小闭环；与 H1 咬合点：settleOneShotOutcome 增 origin 分支（tool one-shot 四分支零改动）、守护键与 H1 Continuation 同模式 | 单测：注册面/池顺序/守护 arm 键/D7 收口/D6 gate/治理决策表逐族 |
+| W2 | service 统一编排入口 `executeWorkflowAgent`（**接管迁移清单**见下表）+ D7 origin 收口分支 + D6 通知 origin gate | 新路径最小闭环；与 H1 咬合点：settleOneShotOutcome 增 origin 分支（tool one-shot 四分支零改动）、守护键与 H1 Continuation 同模式 | 单测：注册面/池顺序/守护 arm 键/D7 收口/D6 gate/治理决策表逐族（**含 bootPartition 对 workflow 形态负面断言——boot 重认领豁免的推导坐实**） |
 | W3 | pump 切换：删 progress record + trace.live + `new SubagentStream`；views/detail-content + WorkflowsView + run-snapshot 的 live 消费面改造；订阅源切 store | 消费面切换，W2 就绪后一次切换 | S1/S3 真机 + live 零引用编译 |
 | W4 | runner 归位（**v3 定形：保留 SAR 类壳掏空 run() 改纯转调 executeWorkflowAgent——构造签名不变，唯一装配点 `session-lifecycle.ts:537` 零改动不进地图；ctxModel dep 保留签名兼容、run() 内不再消费**）；journal-wiring 调用点 2→1；sweep 的 workflow 判据装配处置（run 级判据保留） | 死代码删除，最后做避免中间态；壳形态避免 extension 装配点连带 | S5 + 全量测试 |
 | W5 | 约束/文档回写（C-proc-13 ②按域分明、sweep 条款修正、troubleshooting 排查通道更新） | C-proc-10 同步纪律 | doc-symbol-drift 绿 |
