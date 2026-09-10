@@ -13,7 +13,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { provide, ref } from 'vue'
 import {
   providePlatform,
   provideSettingsTransport,
@@ -79,6 +78,7 @@ vi.mock('@/lib/ipc', () => ({
 }))
 
 import SettingsModal from '@/components/settings/SettingsModal.vue'
+import { makeQuotaStateStub } from '../helpers/quota-state-stub'
 
 /** 构造最小 SettingsTransport stub（订阅返回 noop 取消函数，请求返回空）。 */
 function stubTransport(): SettingsTransport {
@@ -141,15 +141,9 @@ describe('SettingsModal 首屏冒烟（AC12 渲染 gate）', () => {
       global: {
         provide: {
           [SETTINGS_TOAST_KEY as symbol]: { error: vi.fn(), info: vi.fn(), warning: vi.fn() },
-          [USE_QUOTA_CONFIGURE_KEY as symbol]: () => ({
-            fetcherId: ref(undefined), fetcherOptions: [], enabled: ref(false),
-            cookieInput: ref(''), apiKeyInput: ref(''), apiKeyConfigured: ref(false),
-            testStatus: ref('idle'), testError: ref(''), quotaData: ref(null),
-            lastFetchAt: ref(null), isCookieAuth: ref(false), helpUrl: ref(undefined),
-            helpText: ref(undefined), configuring: ref(false), configureError: ref(''),
-            toggleEnabled: vi.fn(), selectFetcher: vi.fn(), saveCookie: vi.fn(),
-            saveApiKey: vi.fn(), testQuery: vi.fn(), reset: vi.fn(),
-          }),
+          // 不再 `as symbol` 强转：保留 InjectionKey 类型；契约门由 makeQuotaStateStub 的
+          // QuotaConfigureState 返回标注承担（v2 漏成员即编译错）。
+          [USE_QUOTA_CONFIGURE_KEY]: () => makeQuotaStateStub(),
           [SETTINGS_CONFIG_API_KEY as symbol]: { detectSources: vi.fn(async () => []) },
         },
       },
@@ -186,15 +180,9 @@ describe('SettingsModal 懒加载挂载即 open 的 open 语义（W31 review maj
       global: {
         provide: {
           [SETTINGS_TOAST_KEY as symbol]: { error: vi.fn(), info: vi.fn(), warning: vi.fn() },
-          [USE_QUOTA_CONFIGURE_KEY as symbol]: () => ({
-            fetcherId: ref(undefined), fetcherOptions: [], enabled: ref(false),
-            cookieInput: ref(''), apiKeyInput: ref(''), apiKeyConfigured: ref(false),
-            testStatus: ref('idle'), testError: ref(''), quotaData: ref(null),
-            lastFetchAt: ref(null), isCookieAuth: ref(false), helpUrl: ref(undefined),
-            helpText: ref(undefined), configuring: ref(false), configureError: ref(''),
-            toggleEnabled: vi.fn(), selectFetcher: vi.fn(), saveCookie: vi.fn(),
-            saveApiKey: vi.fn(), testQuery: vi.fn(), reset: vi.fn(),
-          }),
+          // 不再 `as symbol` 强转：保留 InjectionKey 类型；契约门由 makeQuotaStateStub 的
+          // QuotaConfigureState 返回标注承担（v2 漏成员即编译错）。
+          [USE_QUOTA_CONFIGURE_KEY]: () => makeQuotaStateStub(),
           [SETTINGS_CONFIG_API_KEY as symbol]: { detectSources: vi.fn(async () => []) },
         },
       },

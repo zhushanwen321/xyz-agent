@@ -30,6 +30,7 @@ import {
 } from '@xyz-agent/ui/features/settings'
 import SettingsModal from '@/components/settings/SettingsModal.vue'
 import SettingsResourcePage from '@/components/settings/resource/SettingsResourcePage.vue'
+import { makeQuotaStateStub } from '../helpers/quota-state-stub'
 import type { SkillDirConfig } from '@xyz-agent/shared'
 import { useToast } from '@/composables/useToast'
 
@@ -106,7 +107,9 @@ describe('SettingsModal onUpdateSkillDirs 错误反馈（W2 D10）', () => {
       global: {
         provide: {
           [SETTINGS_TOAST_KEY as symbol]: { error: (m: string) => useToast().error(m), info: (m: string) => useToast().info(m), warning: (m: string) => useToast().warning(m) },
-          [USE_QUOTA_CONFIGURE_KEY as symbol]: () => ({ enabled: { value: false }, fetcherId: { value: undefined }, fetcherOptions: [], cookieInput: { value: '' }, apiKeyInput: { value: '' }, apiKeyConfigured: { value: false }, testStatus: { value: 'idle' }, testError: { value: '' }, quotaData: { value: null }, lastFetchAt: { value: null }, isCookieAuth: { value: false }, helpUrl: { value: undefined }, helpText: { value: undefined }, configuring: { value: false }, configureError: { value: '' }, toggleEnabled: vi.fn(), selectFetcher: vi.fn(), saveCookie: vi.fn(), saveApiKey: vi.fn(), testQuery: vi.fn(), reset: vi.fn() }),
+          // 不再 `as symbol` 强转：保留 InjectionKey 类型；契约门由 makeQuotaStateStub 的
+          // QuotaConfigureState 返回标注承担（v2 漏成员即编译错）。
+          [USE_QUOTA_CONFIGURE_KEY]: () => makeQuotaStateStub(),
           [SETTINGS_CONFIG_API_KEY as symbol]: { detectSources: vi.fn(async () => []) },
         },
       },
