@@ -101,6 +101,58 @@ const CUSTOM_P: ProviderInfo = {
   models: [{ id: 'gpt-4o', name: 'GPT-4o' }],
 }
 
+// ── M4 fixture：catalog 派生展示四态（设计 D5；runtime 已按合并模型集派生下发）──
+
+/** 混合协议 + 混合端点（opencode-go 形态）：runtime 派生 api/baseUrl 均 undefined */
+const CATALOG_MIXED_P: ProviderInfo = {
+  id: 'opencode-go' as ProviderId,
+  name: 'OpenCode Go',
+  apiKeySet: true,
+  authMethod: 'api_key',
+  status: 'connected',
+  kind: 'catalog',
+  models: [
+    { id: 'minimax-m3', name: 'MiniMax M3', api: 'anthropic-messages', baseUrl: 'https://opencode.ai/zen/go', source: 'builtin' },
+    { id: 'qwen3.8-flash', name: 'Qwen3.8 Flash', api: 'openai-completions', baseUrl: 'https://opencode.ai/zen/go/v1', source: 'builtin' },
+    { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', api: 'openai-responses', baseUrl: 'https://opencode.ai/zen/go/v1', source: 'builtin' },
+  ],
+}
+
+/** 单协议 + 单端点（deepseek 形态）：派生 api/baseUrl 均为该单值 */
+const CATALOG_UNIFORM_P: ProviderInfo = {
+  id: 'deepseek' as ProviderId,
+  name: 'DeepSeek',
+  api: 'openai-completions',
+  baseUrl: 'https://api.deepseek.com',
+  apiKeySet: true,
+  authMethod: 'api_key',
+  status: 'connected',
+  kind: 'catalog',
+  models: [
+    { id: 'deepseek-chat', name: 'DeepSeek Chat', api: 'openai-completions', baseUrl: 'https://api.deepseek.com', source: 'builtin' },
+  ],
+}
+
+/** 端点全空（azure-openai-responses 形态）：baseUrl 派生 undefined、api 单值 */
+const CATALOG_NO_ENDPOINT_P: ProviderInfo = {
+  id: 'azure-openai-responses' as ProviderId,
+  name: 'Azure OpenAI (Responses)',
+  api: 'azure-openai-responses',
+  apiKeySet: false,
+  status: 'not_configured',
+  kind: 'catalog',
+  models: [
+    { id: 'gpt-5', name: 'GPT-5', api: 'azure-openai-responses', source: 'builtin' },
+  ],
+}
+
+/** 用户网关态：provider 级 baseUrl = 网关（override 非空 baseUrl，覆盖全部模型端点） */
+const CATALOG_GATEWAY_URL = 'https://gw.corp.example/opencode'
+const CATALOG_GATEWAY_P: ProviderInfo = {
+  ...CATALOG_MIXED_P,
+  baseUrl: CATALOG_GATEWAY_URL,
+}
+
 // ── injection stub（零 renderer import：契约对齐 injection-keys.ts）──
 
 /** QuotaConfigureState 最小 stub：字段逐一对齐接口（ProviderEditBody 解构后全量透传给 CodingPlanSection） */
@@ -195,7 +247,6 @@ beforeEach(() => {
     kind: 'mock',
     storage: inMemoryStorage(),
     webSocket: { create: () => ({ readyState: 0, send: () => {}, close: () => {}, onopen: null, onclose: null, onmessage: null, onerror: null }) },
-    ipc: null,
   })
   provideSettingsTransport(makeTransport())
   setProviderSpy.mockClear()
@@ -663,5 +714,181 @@ describe('quota workspace 输入回写注入态', () => {
     await nextTick()
 
     expect(state!.workspaceInput.value).toBe('wrk_9')
+  })
+})
+
+// ══ 场景 ⑧：M4 catalog 展示对齐 pi 真实语义（设计 D5/D7）════════════════════
+
+/**
+ * M4：catalog provider 的 provider 级字段展示改为「网关优先 + 模型集派生兜底」。
+ *
+ * 三视角：
+ * - 黑盒用户视角（主）：类型不再是输入框而是只读派生文案（含协议分布）；端点是「自定义
+ *   网关」可选框、框下标注当前派生端点态；custom 照旧可编辑。
+ * - 构建者白盒（佐证）：保存 payload 的 baseUrl 语义（留空 = 显式空串 = 清除网关 / 非空 =
+ *   设置网关）与 runtime 防线③ 一致——这是「展示 = 生效」的落盘侧证据。
+ * - 观察者形态：全部经 DOM 与 payload 断言，无组件内部 spy。
+ */
+describe('M4 catalog 展示：类型只读派生 + 端点（自定义网关）', () => {
+  /** 端点输入框（catalog 分支） */
+  const ENDPOINT = '[data-testid="provider-edit-endpoint"]'
+  const ENDPOINT_HINT = '[data-testid="provider-edit-endpoint-hint"]'
+
+  it('混合协议 catalog：不渲染类型输入框，展示「按模型分发」+ 协议分布', async () => {
+    wrapper = mountBody(CATALOG_MIXED_P)
+    await flushPromises()
+
+    // 用户可见：只读派生文案（非输入控件）
+    const derived = wrapper.find('[data-testid="provider-edit-api-derived"]')
+    expect(derived.exists()).toBe(true)
+    const typeField = wrapper.find('[data-testid="provider-edit-type-field"]')
+    expect(typeField.exists()).toBe(true)
+    expect(typeField.find('input').exists()).toBe(false)
+    expect(typeField.find('[role="combobox"]').exists()).toBe(false)
+
+    // 文案：按模型分发（{distribution}）+ 三种协议各自出现
+    expect(derived.text()).toContain('settings.providerEdit.apiMixedDetail')
+    expect(derived.text()).toContain('settings.providerEdit.apiDistributionItem')
+    expect(derived.text()).toContain('anthropic-messages')
+    expect(derived.text()).toContain('openai-completions')
+    expect(derived.text()).toContain('openai-responses')
+  })
+
+  it('单协议 catalog：展示该协议名（仍无类型输入框）', async () => {
+    wrapper = mountBody(CATALOG_UNIFORM_P)
+    await flushPromises()
+
+    const derived = wrapper.find('[data-testid="provider-edit-api-derived"]')
+    expect(derived.exists()).toBe(true)
+    expect(derived.text()).toBe('openai-completions')
+    expect(wrapper.find('[data-testid="provider-edit-type-field"] [role="combobox"]').exists()).toBe(false)
+  })
+
+  it('端点框留空：单端点 → 「内置端点」+ 派生 URL；混合 → 「内置端点（按模型分发）」；全空 → 「内置目录未提供」', async () => {
+    wrapper = mountBody(CATALOG_UNIFORM_P)
+    await flushPromises()
+    // 单端点：标注内置端点并展示当前派生端点值（输入框本身留空）
+    expect(wrapper.find(ENDPOINT_HINT).text()).toContain('settings.providerEdit.endpointBuiltin')
+    expect(wrapper.find(ENDPOINT_HINT).text()).toContain('https://api.deepseek.com')
+    expect((wrapper.find(ENDPOINT).element as HTMLInputElement).value).toBe('')
+
+    wrapper.unmount()
+    wrapper = mountBody(CATALOG_MIXED_P)
+    await flushPromises()
+    // 混合端点：按模型分发（无单值可展示）
+    expect(wrapper.find(ENDPOINT_HINT).text()).toBe('settings.providerEdit.endpointBuiltinMixed')
+
+    wrapper.unmount()
+    wrapper = mountBody(CATALOG_NO_ENDPOINT_P)
+    await flushPromises()
+    // 全空：内置目录未提供
+    expect(wrapper.find(ENDPOINT_HINT).text()).toBe('settings.providerEdit.endpointNotProvided')
+  })
+
+  it('端点框填值：标注「自定义网关：{url}（覆盖全部模型）」', async () => {
+    wrapper = mountBody(CATALOG_MIXED_P)
+    await flushPromises()
+
+    await wrapper.find(ENDPOINT).setValue('https://mirror.example/opencode')
+    await flushPromises()
+
+    const hint = wrapper.find(ENDPOINT_HINT).text()
+    expect(hint).toContain('settings.providerEdit.endpointGateway')
+    expect(hint).toContain('https://mirror.example/opencode')
+    expect(hint).toContain('settings.providerEdit.endpointGatewayCovers')
+  })
+
+  it('已设网关的 catalog：端点框回填网关值 + 网关标注；保存不改写该值', async () => {
+    wrapper = mountBody(CATALOG_GATEWAY_P)
+    await flushPromises()
+
+    expect((wrapper.find(ENDPOINT).element as HTMLInputElement).value).toBe(CATALOG_GATEWAY_URL)
+    expect(wrapper.find(ENDPOINT_HINT).text()).toContain('settings.providerEdit.endpointGateway')
+
+    // 改一个无关字段（名称）后保存 → payload 仍带网关照旧下发
+    await wrapper.find('[data-testid="provider-edit-name"]').setValue('OpenCode Go (corp)')
+    await flushPromises()
+    await wrapper.find('[data-testid="provider-save-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(savePayload().baseUrl).toBe(CATALOG_GATEWAY_URL)
+    // catalog 不带 type 键（防线①：协议是模型级属性）
+    expect('type' in savePayload()).toBe(false)
+  })
+
+  it('端点无网关且未改动 → 保存 payload baseUrl 为空串（不回写 runtime 派生值，防线③ 清除语义）', async () => {
+    wrapper = mountBody(CATALOG_UNIFORM_P)
+    await flushPromises()
+
+    // 改名称制造 dirty（端点框保持留空）
+    await wrapper.find('[data-testid="provider-edit-name"]').setValue('DeepSeek 2')
+    await flushPromises()
+    await wrapper.find('[data-testid="provider-save-btn"]').trigger('click')
+    await flushPromises()
+
+    // 派生值 https://api.deepseek.com 不是用户网关——绝不能当网关写回（artifact 冻结）
+    expect(savePayload().baseUrl).toBe('')
+  })
+
+  it('填网关后保存 → payload baseUrl = 用户输入（设置网关）', async () => {
+    wrapper = mountBody(CATALOG_MIXED_P)
+    await flushPromises()
+
+    await wrapper.find(ENDPOINT).setValue('https://mirror.example/opencode')
+    await flushPromises()
+    await wrapper.find('[data-testid="provider-save-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(savePayload().baseUrl).toBe('https://mirror.example/opencode')
+  })
+
+  it('清空已设网关 → 保存 payload baseUrl 为空串（清除网关，回退内置端点）', async () => {
+    wrapper = mountBody(CATALOG_GATEWAY_P)
+    await flushPromises()
+
+    await wrapper.find(ENDPOINT).setValue('')
+    await flushPromises()
+    expect(wrapper.find(ENDPOINT_HINT).text()).toBe('settings.providerEdit.endpointBuiltinMixed')
+
+    await wrapper.find('[data-testid="provider-save-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(savePayload().baseUrl).toBe('')
+  })
+
+  it('custom 回归：类型 Select 与 Base URL 输入框照旧可编辑，保存 payload 带 type 与 baseUrl', async () => {
+    wrapper = mountBody(CUSTOM_P)
+    await flushPromises()
+
+    // 类型输入框存在（非 catalog 派生文案）、无端点框
+    expect(wrapper.find('[data-testid="provider-edit-api-derived"]').exists()).toBe(false)
+    expect(wrapper.find(ENDPOINT).exists()).toBe(false)
+    const baseUrlInput = wrapper.find('input[placeholder="https://api.anthropic.com"]')
+    expect(baseUrlInput.exists()).toBe(true)
+    expect(wrapper.text()).toContain('settings.providerEdit.baseUrlKeepHint')
+
+    await baseUrlInput.setValue('https://api.example.com/v1')
+    await flushPromises()
+    await wrapper.find('[data-testid="provider-save-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(savePayload().type).toBe('openai-completions')
+    expect(savePayload().baseUrl).toBe('https://api.example.com/v1')
+  })
+
+  it('切换 provider（网关 → 无网关）：端点框重置为空且不产生虚假 dirty', async () => {
+    wrapper = mountBody(CATALOG_GATEWAY_P)
+    await flushPromises()
+    expect((wrapper.find(ENDPOINT).element as HTMLInputElement).value).toBe(CATALOG_GATEWAY_URL)
+    expect(wrapper.find('[data-testid="provider-save-bar"]').exists()).toBe(false)
+
+    await wrapper.setProps({ provider: CATALOG_MIXED_P })
+    await flushPromises()
+
+    // 无网关 provider 的派生值（undefined）不回填输入框；草稿重置不得改写 form.baseUrl（否则假 dirty）
+    expect((wrapper.find(ENDPOINT).element as HTMLInputElement).value).toBe('')
+    expect(wrapper.find(ENDPOINT_HINT).text()).toBe('settings.providerEdit.endpointBuiltinMixed')
+    expect(wrapper.find('[data-testid="provider-save-bar"]').exists()).toBe(false)
+    expect(wrapper.emitted('dirtyChange')!.at(-1)).toEqual([false])
   })
 })

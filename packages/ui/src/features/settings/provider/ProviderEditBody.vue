@@ -23,13 +23,11 @@
         />
       </div>
 
-      <!-- 类型 -->
-      <div>
-        <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">
-          {{ t('settings.providerEdit.fieldType') }}
-          <span class="normal-case tracking-normal">{{ t('settings.providerEdit.fieldTypeHint') }}</span>
-        </Label>
-        <Select v-model="form.api">
+      <!-- 类型 + 端点（D5 派生展示，逻辑见 provider-catalog-display.ts）：catalog 类型为只读派生文案、端点为「自定义网关」可选框；custom 照旧（provider 级 api/baseUrl 是定义权威） -->
+      <div data-testid="provider-edit-type-field">
+        <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">{{ t('settings.providerEdit.fieldType') }}<span v-if="!isCatalog" class="normal-case tracking-normal">{{ t('settings.providerEdit.fieldTypeHint') }}</span></Label>
+        <p v-if="isCatalog" data-testid="provider-edit-api-derived" class="text-[12px] text-neutral-fg">{{ catalogApiText }}</p>
+        <Select v-else v-model="form.api">
           <SelectTrigger class="h-9">
             <SelectValue :placeholder="t('settings.providerEdit.selectTypePlaceholder')" />
           </SelectTrigger>
@@ -41,10 +39,16 @@
         </Select>
       </div>
 
-      <!-- Base URL -->
       <div>
-        <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">{{ t('settings.providerEdit.fieldBaseUrl') }}</Label>
-        <Input v-model="form.baseUrl" placeholder="https://api.anthropic.com" />
+        <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">{{ isCatalog ? t('settings.providerEdit.fieldEndpoint') : t('settings.providerEdit.fieldBaseUrl') }}</Label>
+        <template v-if="isCatalog">
+          <Input :model-value="endpointDraft" data-testid="provider-edit-endpoint" :placeholder="t('settings.providerEdit.fieldEndpointPlaceholder')" @update:model-value="onEndpointInput" />
+          <p class="mt-1 text-[10px] text-neutral-dim" data-testid="provider-edit-endpoint-hint">{{ endpointHint }}</p>
+        </template>
+        <template v-else>
+          <Input v-model="form.baseUrl" placeholder="https://api.anthropic.com" />
+          <p class="mt-1 text-[10px] text-neutral-dim">{{ t('settings.providerEdit.baseUrlKeepHint') }}</p>
+        </template>
       </div>
 
       <!-- 凭证区（B-1：按 authMethod 条件化——oauth → OAuth 状态区 + 形态切换；
@@ -366,6 +370,7 @@ import { useQuotaConfigureFactory as useQuotaConfigure } from '../injection-keys
 import CodingPlanSection from '../coding-plan/CodingPlanSection.vue'
 import ModelListSection from '../common/ModelListSection.vue'
 import ProviderTestDiscoverSection from './ProviderTestDiscoverSection.vue'
+import { useCatalogDisplay } from './provider-catalog-display.js'
 import { useSettingsToast as useToast } from '../injection-keys'
 
 const props = defineProps<{
@@ -467,6 +472,11 @@ const {
   syncHeadersFromRows,
 } = useProviderEdit(toRef(props, 'provider'), { t })
 
+// catalog 展示字段（类型只读派生文案 + 端点自定义网关；设计 D5）——逻辑在同目录 composable
+// （受本组件行数约束抽出；runtime 已下发派生值，此处只做展示转译与端点草稿同步）
+const { apiText: catalogApiText, endpointDraft, endpointHint, onEndpointInput, syncBeforeSave } =
+  useCatalogDisplay(toRef(props, 'provider'), form, t, isCatalog)
+
 // ── B-1 凭证区条件化（需 form 已就绪，故置于 useProviderEdit 之后） ──
 
 /** oauth 形态 → OAuth 状态区；api_key / env_var / ambient → 现有 API Key 输入（现状不动） */
@@ -514,7 +524,13 @@ provide('modelListDeps', {
   removeModel,
   expandedCompat,
   toggleCompatExpand,
-  providerApi: computed(() => form.api),
+  // providerApi（ModelListSection 据此选 compat 字段集，design D5 消费点表）：
+  // catalog 的 provider 级协议 = runtime 派生值（ProviderInfo.api；混合协议 → undefined），
+  // **不取 form.api**——composable 对 catalog 的回填是 `p.api ?? 'anthropic-messages'`
+  // （三值 Select 历史兜底，对 catalog 无用户语义），拿它会把混合 provider 误判成
+  // anthropic-messages 的 compat 字段集；undefined 时 ModelListSection 走通用字段集，
+  // 并由模型自身 api 回落（见 ModelListSection compat 判定）。
+  providerApi: computed(() => isCatalog.value ? props.provider?.api : form.api),
 })
 
 // dirty 上抛父组件（展开切换守卫）。immediate 让父组件初始即知当前 dirty 态
@@ -532,6 +548,9 @@ function onAddModel(): void {
 
 /** 保存成功 → toast 反馈 + 上抛 @saved（父组件收起展开行；状态经 onProviders 订阅推回） */
 async function onSave(): Promise<void> {
+  // catalog 端点按输入框归一：form.baseUrl 初值是 runtime 派生端点（展示信息，不是用户网关），
+  // 未改动直接保存会把它当网关写回并冻结成覆盖式网关——非空 = 设置网关 / 空 = 显式清除网关
+  syncBeforeSave()
   const result = await save()
   if (result.ok) {
     toastInfo(t('settings.saved'))

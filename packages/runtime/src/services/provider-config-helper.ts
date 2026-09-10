@@ -306,17 +306,63 @@ function buildCatalogProviderModels(
   ]
 }
 
-/** catalog 源展示字段回退链装配（override 优先，逐字段回退 builtin 模板 / extras 标注 / id）。 */
+/**
+ * 合并模型集的 provider 级字段派生（D5 派生兜底）：取全模型该字段的非空唯一值——
+ * 全模型非空且同值 → 该值；存在 >1 种非空值（混合协议/混合端点）或全部空/缺省 → undefined。
+ *
+ * 为什么需要派生：provider 级 `api`/`baseUrl` 在 pi 侧不是单值权威（协议与端点是模型级
+ * 属性，pi-ai 按 `model.api` 分发、按 `model.baseUrl` 路由），快照 provider 级字段是构建期
+ * artifact（gen-builtin-providers.mjs 取 models[0].api / `provider.baseUrl ?? ''` 捏造）。
+ * 混合 provider 无法用单值表达，只能 undefined 由展示层转译为「按模型分发 / 内置目录未提供」。
+ */
+function deriveUniformModelField(
+  models: Array<{ api?: string; baseUrl?: string }>,
+  field: 'api' | 'baseUrl',
+): string | undefined {
+  let value: string | undefined
+  for (const m of models) {
+    const current = m[field]
+    if (typeof current !== 'string' || current === '') continue
+    if (value === undefined) value = current
+    else if (value !== current) return undefined
+  }
+  return value
+}
+
+/**
+ * catalog 源展示字段装配（设计 catalog-provider-field-authority §3.3 D5）。
+ *
+ * provider 级字段的下发语义是**网关优先 + 派生兜底**（对齐 pi 真实生效顺序）：
+ * - `baseUrl`：override 非空 baseUrl = **用户网关**（pi 官方覆盖式网关机制，
+ *   provider-composer.js:98 对全部内置模型执行 `baseUrl: config.baseUrl ?? model.baseUrl`
+ *   ——镜像站/代理/企业网关工作流）→ 原值下发，前端展示「自定义网关：{url}」；
+ *   无网关（未带键 / 空串——空串是清除语义、不落盘）→ 对合并模型集派生。
+ * - `api`：无用户语义（写侧 D1③ 对 catalog 忽略 provider 级 type）→ 纯派生。
+ *
+ * 计算放 runtime 聚合层（前端零推导，对齐 supportedLevels 的 view-ready 原则）：
+ * 快照 provider 级 artifact（BuiltinProviderTemplate.api/baseUrl）不再是展示源。
+ * 派生数据源 = getMergedCatalogModels（快照 ⊕ overlay 单点，与校验视图同源）。
+ *
+ * 语义收窄的消费点已逐处判定（设计 D5「已接受代价」消费点表）：model-mapper.ts:61
+ * toModelInfo 的 `m.api ?? providerApi` 回落路径在混合 provider 下可达（providerApi
+ * undefined → 回落模型自身 api），ModelInfo.api 仅作 composer 元数据展示，聊天协议由
+ * pi 侧解析；quota preset 相关 provider 实测单协议单 baseUrl，派生值 = 原值，匹配不变。
+ */
 function resolveCatalogDisplayFields(
   id: string,
   override: ConfigProviderConfig | undefined,
   builtinP: BuiltinProviderTemplate,
   extras: ProviderExtras | undefined,
 ): Pick<ProviderInfo, 'name' | 'api' | 'baseUrl' | 'authMethod'> {
+  // 合并视图缺失（provider 不在快照内，理论不可达——调用方已 ∩ builtinData）时退回模板模型集
+  const mergedModels = getMergedCatalogModels(id)?.models ?? builtinP.models ?? []
+  // trim 后空串同视「未设置」（与写侧防线②③/D2 清洗口径一致）：空白串不是合法网关
+  const gateway = override?.baseUrl
+  const hasGateway = typeof gateway === 'string' && gateway.trim() !== ''
   return {
     name: override?.name || builtinP.name || id,
-    api: override?.api ?? builtinP.api,
-    baseUrl: override?.baseUrl ?? builtinP.baseUrl,
+    api: deriveUniformModelField(mergedModels, 'api'),
+    baseUrl: hasGateway ? gateway : deriveUniformModelField(mergedModels, 'baseUrl'),
     // 显式标注（extras.authMethod）优先；无标注退回 apiKey 格式推断（I6）
     authMethod: extras?.authMethod ?? deriveAuthMethod(override),
   }

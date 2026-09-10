@@ -476,3 +476,91 @@ describe('M2b: listProviders 凭据判定走 resolver 批量 sync 版（链 5）
     expect(auth.hasCredentialSync).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * M4：catalog provider 级展示字段下发（设计 catalog-provider-field-authority §3.3 D5
+ * 「网关优先 + 模型集派生兜底」）。
+ *
+ * 断言口径 = 真实快照数据（builtin-providers.json 编译期 import）：快照 provider 级
+ * api/baseUrl 是构建期 artifact，不再是展示源——展示值必须来自 override 用户网关（优先）
+ * 或合并模型集（快照 ⊕ overlay）派生。overlay 在单测内为 never-seen（无数据目录文件）→
+ * 合并视图 == 快照，派生结果由快照模型级字段决定（数值见各用例注释）。
+ */
+describe('M4: catalog 展示字段（网关优先 + 派生兜底）', () => {
+  /** 只读 store：providers 即 models.json 全量（catalog id 出现在其中即进入 catalog 聚合） */
+  function listWith(providers: Record<string, Record<string, unknown>>) {
+    const store = {
+      readModels: vi.fn(() => ({ providers })),
+      getEnabledModels: vi.fn(() => []),
+    } as unknown as IConfigStore
+    return listProviders(store)
+  }
+
+  /** 取某 catalog provider 的聚合结果（override 缺省 = 空条目，等价「无用户配置」） */
+  function displayOf(id: string, override: Record<string, unknown> = {}) {
+    const found = listWith({ [id]: override }).find(p => p.id === id)
+    expect(found).toBeDefined()
+    // 防御性断言后再返回（不过度使用非空断言）
+    if (!found) throw new Error(`catalog provider ${id} 未出现在 listProviders 结果中`)
+    return found
+  }
+
+  it('a 网关优先：override 非空 baseUrl（用户网关）→ 原值下发，不参与派生', () => {
+    // opencode-go 模型端点分两组（https://opencode.ai/zen/go 与 .../zen/go/v1），
+    // 无网关时派生 undefined；存在用户网关时下发网关原值
+    // （pi provider-composer.js:98 对全部内置模型执行 baseUrl 覆盖）
+    const p = displayOf('opencode-go', { baseUrl: 'https://gw.corp.example/opencode' })
+
+    expect(p.baseUrl).toBe('https://gw.corp.example/opencode')
+    // 网关只覆盖端点，协议派生不受影响（该 provider 三协议混合 → undefined）
+    expect(p.api).toBeUndefined()
+  })
+
+  it('b1 派生·全模型同值 → 该值（api/baseUrl 同规则）', () => {
+    const p = displayOf('deepseek')
+
+    expect(p.baseUrl).toBe('https://api.deepseek.com')
+    expect(p.api).toBe('openai-completions')
+  })
+
+  it('b2 派生·>1 种非空值 → undefined（快照 artifact 非空也不再展示）', () => {
+    // fireworks 快照 provider 级 baseUrl = https://api.fireworks.ai/inference（artifact），
+    // 但模型级有 /inference 与 /inference/v1 两种 → 派生 undefined（artifact 不再被消费）
+    const p = displayOf('fireworks')
+    expect(p.baseUrl).toBeUndefined()
+    expect(p.api).toBeUndefined()
+
+    // 反向对照：amazon-bedrock 协议单一（api 有派生值）而端点两种（baseUrl undefined）
+    const bedrock = displayOf('amazon-bedrock')
+    expect(bedrock.api).toBe('bedrock-converse-stream')
+    expect(bedrock.baseUrl).toBeUndefined()
+  })
+
+  it('b3 派生·全部空/缺省 → undefined（api 仍有派生值）', () => {
+    // azure-openai-responses：38 个模型 baseUrl 全空（host 型目录），协议单一
+    const p = displayOf('azure-openai-responses')
+
+    expect(p.baseUrl).toBeUndefined()
+    expect(p.api).toBe('azure-openai-responses')
+  })
+
+  it('c api 派生·混合协议 → undefined；单端点 provider 的 baseUrl 不受影响', () => {
+    // github-copilot：3 协议混合（api undefined）+ 端点单一（baseUrl 有派生值）
+    const p = displayOf('github-copilot')
+
+    expect(p.api).toBeUndefined()
+    expect(p.baseUrl).toBe('https://api.individual.githubcopilot.com')
+  })
+
+  it('c2 override.api（历史固化的快照 artifact）不参与展示：catalog 协议恒为派生值', () => {
+    const p = displayOf('deepseek', { api: 'anthropic-messages' })
+
+    expect(p.api).toBe('openai-completions')
+    expect(p.baseUrl).toBe('https://api.deepseek.com')
+  })
+
+  it('空串/纯空白 baseUrl override（毒化残留窗口）视同无网关 → 走派生', () => {
+    expect(displayOf('deepseek', { baseUrl: '' }).baseUrl).toBe('https://api.deepseek.com')
+    expect(displayOf('deepseek', { baseUrl: '  ' }).baseUrl).toBe('https://api.deepseek.com')
+  })
+})
