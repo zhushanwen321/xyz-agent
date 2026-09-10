@@ -462,6 +462,10 @@ async function main(): Promise<void> {
       sessionId,
       (events) => interpreter.interpret(events),
       (_sid) => sessionService.backgroundTasks?.checkForChanges(),
+      // [定向复审缺陷 2] detach 转调 interpreter.dispose：销毁路径（forceQuit/exit/delete/
+      // restore 清场）经 adapter.detach 收口时，清 interpreter 在途 settling 延迟 timer +
+      // 置 disposed 短路，防迟到副作用打在同 id restore 重注册的新 session 记录上。
+      () => interpreter.dispose(),
     )
   }
 

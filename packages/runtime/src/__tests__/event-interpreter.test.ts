@@ -296,4 +296,63 @@ describe('agent-settled V7 dev-only 延迟注入（session-dead-structural-fixes
     })
     expect(vi.getTimerCount()).toBe(0)
   })
+
+  it('缺陷 1 修复：delay ≥ 收敛窗（3000ms）→ 拒绝生效零行为差异（防 settled 被推迟过收敛窗，破坏「掐而 settled 未到」判定）', () => {
+    vi.useFakeTimers()
+    const onAgentSettled = vi.fn()
+    const onOccupancyTransition = vi.fn()
+    const { interp } = makeInterpreter({ onAgentSettled, onOccupancyTransition })
+    for (const [i, tooLarge] of ['3000', '5000', '60000'].entries()) {
+      vi.stubEnv(ENV_KEY, tooLarge)
+      interp.interpret([{ kind: 'agent-settled' }])
+      // 同步处理（拒绝生效）：delay 达到 ABORT_STALL_CONVERGENCE_WINDOW_MS 量级时，
+      // restore-abort 受害 turn 的 settled 会被推迟到收敛窗满之后 → onWindowElapsed 在
+      // pendingSettled=false 下误判收敛清标记（设计 v4 ③边界缝确定性重开）
+      expect(onAgentSettled).toHaveBeenCalledTimes(i + 1)
+      expect(onOccupancyTransition).toHaveBeenCalledWith('idle')
+    }
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('缺陷 2 修复：dispose 后在途延迟 timer 到点零副作用（防幽灵 idle 打在同 id restore 的新 session 上）', async () => {
+    vi.useFakeTimers()
+    vi.stubEnv(ENV_KEY, '2000')
+    const onAgentSettled = vi.fn()
+    const onOccupancyTransition = vi.fn()
+    const { interp } = makeInterpreter({ onAgentSettled, onOccupancyTransition })
+
+    interp.interpret([{ kind: 'agent-settled' }])
+    expect(vi.getTimerCount()).toBe(1) // timer 在途
+    interp.dispose() // 销毁（生产经 adapter.detach 转调）
+    expect(vi.getTimerCount()).toBe(0) // timer 已清
+
+    await vi.advanceTimersByTimeAsync(10_000) // 原定到期点之后
+    // 到点零副作用：session 已销毁（同 id 可能已重注册新 interpreter），迟到帧不得打在新记录上
+    expect(onAgentSettled).not.toHaveBeenCalled()
+    expect(onOccupancyTransition).not.toHaveBeenCalled()
+  })
+
+  it('缺陷 2 修复：dispose 后到达的 agent-settled 同步路径同样短路（防御深度）', () => {
+    vi.useFakeTimers()
+    const onAgentSettled = vi.fn()
+    const onOccupancyTransition = vi.fn()
+    const { interp } = makeInterpreter({ onAgentSettled, onOccupancyTransition })
+
+    interp.dispose()
+    interp.interpret([{ kind: 'agent-settled' }])
+
+    expect(onAgentSettled).not.toHaveBeenCalled()
+    expect(onOccupancyTransition).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('dispose 幂等：重复调用不抛、二次 interpret 仍短路', () => {
+    vi.useFakeTimers()
+    const onOccupancyTransition = vi.fn()
+    const { interp } = makeInterpreter({ onOccupancyTransition })
+    interp.dispose()
+    expect(() => interp.dispose()).not.toThrow()
+    interp.interpret([{ kind: 'agent-settled' }])
+    expect(onOccupancyTransition).not.toHaveBeenCalled()
+  })
 })
