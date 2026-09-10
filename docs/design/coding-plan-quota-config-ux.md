@@ -486,7 +486,7 @@ api-key 类加专属 Key → 加一个保存按钮；cookie 类 → 再加一个
 
 ### 6.9 D8：类型未选时不渲染参数与开关（选定）
 
-- **采用**：`fetcher` 为空时，区块只渲染类型下拉 + 一句说明（「先选一个查询类型，下面的参数会按类型自动变化」）。开关、凭证区、按钮全部不渲染。
+- **采用**：`fetcher` 为空时，区块只渲染类型下拉 + 一句说明（「先选一个查询类型，下面的参数会按类型自动变化」）。开关、凭证区、按钮全部不渲染。**「类型未定」的判据是 `typeUndetermined = !fetcherId || readiness.missing.includes('type')`**——后者覆盖「fetcher 有值但不在 `QUOTA_PRESETS`（历史数据/手工编辑）」这一态（一致性审查 U-5 / §7.2），两种来源共用同一形态，故不存在「类型不可用却渲染出可交互控件」的窗口。
 - **被否**：**始终渲染全部控件**（现状，`ProviderEditBody.vue:205` 无 v-if）。
 - **证据**：`ProviderEditBody.vue:205-238` 的 `CodingPlanSection` 没有 `v-if`；原始设计文档 `design.md:322` 写的是「仅在 provider 命中 QUOTA_PRESETS 时显示」—— 实现与该约定早已脱节，后来演化为「始终显示以支持手动指定类型」（`CodingPlanSection.vue:15` 注释）。
 - **效果**：达成 §2 目标 1。同时天然堵掉「没选类型就开开关」这条路径 —— 该状态下开关根本不存在。区块仍然对所有 provider 显示（用户决策），只是内部按 `fetcher` 是否已选分层渲染。
@@ -681,6 +681,12 @@ preset = QUOTA_PRESETS.find(p => p.fetcher === draft.fetcher)
                         providers.json（UI 下拉只列预设）。未知 fetcher 无法判定该类型的
                         凭证形态，按「类型缺失」处理让用户重选，**不得**静默按 api-key 类
                         放行一条带未知 fetcher 的 configure —— 一致性审查 U-5 登记）
+
+**UI 形态必须与 D8 收敛（不是只共享 missing 标记）**：D8 分支的判据是
+`typeUndetermined = !fetcherId || readiness.missing.includes('type')` —— 该态下
+**只渲染类型下拉 + 说明，不渲染参数区**。若沿用「按 fetcherId 是否为空」判定，未知 fetcher
+态会渲染出可交互的开关与凭证控件（开关能触发 configure），让用户以为在配一个有效类型，
+正是 D8 要堵的反例；收敛后「未判定被读成已配置」在结构上也不可达（参数区根本不渲染）。
 
 若 preset.auth 含 'cookie'：
     cookie 有值 ⟺ draft.cookie 非空
@@ -886,7 +892,9 @@ configService.setQuotaStateCleaner((providerId) => quotaService.clearProviderSta
 
 - cookie：`草稿非空 ∨ (¬typeChanged ∧ quota.cookieSet)`；专属 Key：`草稿非空 ∨ (¬typeChanged ∧ quota.apiKeySet)`；workspace：`workspaceInput` 非空（D13 只看草稿）
 
-徽标块与 readiness 的分支条件同构（`v-if needsWorkspace` / `v-if credentialSource === 'exclusive'`），故不存在「字段不适用时被误标已配置」的状态。对照依据：§5.2 路径 2 的终态原型（该状态明写 `Cookie · 必填`）与 S7 的通过标准（「改类型后旧 Cookie 不计入，Cookie 与 Workspace 都提示必填」）。
+徽标块与 readiness 的分支条件同构（`v-if needsWorkspace` / `v-if credentialSource === 'exclusive'`），且「类型未定」态（D8 形态）根本不渲染参数区——故不存在「字段不适用时被误标已配置」的状态（该等价关系**仅在参数区渲染的状态下**成立；类型未定的收敛见 §7.2）。对照依据：§5.2 路径 2 的终态原型（该状态明写 `Cookie · 必填`）与 S7 的通过标准（「改类型后旧 Cookie 不计入，Cookie 与 Workspace 都提示必填」）。
+
+**同一字段块内的第三处文本也必须同源（一致性审查订正）**：专属 Key 输入框的 placeholder 若仍读磁盘原始标记，会在类型切换后与徽标/提示互相打脸（「必填」徽标 + 「已配置，输入新值可覆盖」占位）。因此 placeholder 也由 readiness 派生（`isMissing('apiKey')` → 粘贴 Key 的占位，否则已配置占位）；改完后 `quotaApiKeyConfigured` 不参与该块任何渲染。
 
 `ProviderEditBody.vue:222` 的 `:api-key-set="!!provider?.apiKeySet || !!provider?.quota?.apiKeySet"` 拆成两个独立 prop（D3 的证据来源）。
 
