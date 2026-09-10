@@ -93,7 +93,7 @@ graph TD
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
 | u1a | pending | 0 | — |
-| u1b | pending | 0 | — |
+| u1b | committed | 1 | commit acc603d4d；session-viewed-at 6 用例 + relay-registry 26 用例绿；偏差 2 条已入登记表（挂点入口化 / 可选交叉成员） |
 | u2 | pending | 0 | — |
 | u3 | pending | 0 | — |
 | u4 | pending | 0 | — |
