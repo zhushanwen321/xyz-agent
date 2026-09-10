@@ -16,9 +16,9 @@ import { initLogger, closeLogger } from './infra/logger.js'
 import { isContainedStreamError } from './infra/system/uncaught-policy.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
-import { migrateToPiSubdir, getProviderConfig, upsertProvider, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
+import { getProviderConfig, upsertProvider, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
 import { getExtensionsDir, getNpmDir, getTmpDir, getProviderExtrasPath } from './infra/pi/pi-paths.js'
-import { getPiGlobalAgentDir } from './infra/pi/pi-maintenance.js'
+import { getPiGlobalAgentDir, syncBundledResources, warnLegacyPiLayout } from './infra/pi/pi-maintenance.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
 import { ModelApiDiscoverer } from './infra/model-api-discoverer.js'
@@ -185,13 +185,15 @@ async function main(): Promise<void> {
 
   // ── Phase 1: create all service instances (no cross-service deps at construction time) ──
 
-  // 一次性迁移：将旧路径下的配置/session/agent 文件移到新的 xyz-pi 目录结构。
-  // 原为 pi-config-bridge 的 import 副作用，现改为组合根显式调用（启动时序显式化）。
-  // 必须在首次配置读取（readModels/readSettings/migrateSettingsSkillsToDiscovery）前完成。
-  // 幂等：新路径已存在文件则跳过。
-  // D8-1（perf W29）：三个同步迁移保持 listen 前——「首次配置读取前」硬约束（06 §3.3 证据）。
+  // 打包模式 bundled 资源同步（skills/extensions，全仓唯一 bundled skills 同步点，
+  // 打包版全新安装依赖）+ 旧布局残留探测（WARN 指引 scripts/migrate-pi-layout-v2.mjs，
+  // 不迁移不阻塞启动）。
+  // [HISTORICAL] 原为 migrateToPiSubdir() 一次性目录迁移——迁移使命终结后退役
+  // （v9 布局对齐，设计 §6.11），残留交手工迁移脚本 + WARN 指引承接。
+  // D8-1（perf W29）：同步段保持 listen 前——「首次配置读取前」硬约束（06 §3.3 证据）。
   const tSyncMigrations = performance.now()
-  migrateToPiSubdir()
+  syncBundledResources()
+  warnLegacyPiLayout()
   // 清理 settings.json.packages 中泄漏到 pi 全局目录的相对路径项（架构约定 #1 隔离保障）
   cleanLeakedPackages()
   // PiConfigStore 提前构造（纯委托无副作用）：下方 A1-2 迁移经 port 读写 models.json。
