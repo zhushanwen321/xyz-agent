@@ -1,7 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
-import { getAgentDir } from '@earendil-works/pi-coding-agent'
+import { getAgentDir, SessionManager } from '@earendil-works/pi-coding-agent'
 import { StringEnum } from '@earendil-works/pi-ai'
 import { Type } from 'typebox'
+import type { SessionMetadataProvider } from './discovery/find.js'
 import { handleSessionRead, type SessionReadParams, type SessionReadSignals } from './tool-handler.js'
 import { createHashAutocompleteProvider } from './tui/hash-provider.js'
 import { createSessionCommand } from './tui/session-command.js'
@@ -176,6 +177,13 @@ const registeredPis = new WeakSet<ExtensionAPI>()
 let currentCwdSessionDir: string | null = null
 
 export default function sessionReaderExtension(pi: ExtensionAPI): void {
+  // u11（design 2026-09-10 §6.6）：标题元数据走 pi 的 SessionManager.listAll(dir)——
+  // session_info name 提取、首消息采集与并发解析由 pi 维护。注入范式同 §6.2 信号包：
+  // pi 类型只在本层出现（SessionInfo 对发现层 SessionMetadataEntry 结构兼容，直接透传），
+  // 发现层只见注入函数，零 pi 依赖。调用成本由三条调用策略约束（惰性/窄化/缓存，
+  // 缓存在 tool-handler 注入边界包装），listAll 实装语义「扫一层平铺目录 + 每文件
+  // 全量解析」决定了不得对含子目录根调用（hash-provider.ts:158 空参灾难同源教训）。
+  const metadataProvider: SessionMetadataProvider = async (dir) => SessionManager.listAll(dir)
   pi.registerTool({
     name: 'session_read',
     label: 'Session Reader',
@@ -211,7 +219,9 @@ export default function sessionReaderExtension(pi: ExtensionAPI): void {
         env: process.env,
         bundleUrl: import.meta.url,
       }
-      return handleSessionRead(params, signals, signal)
+      // u11：标题元数据 provider 随信号包注入（provider 抛错由发现层单目录降级，
+      // 不会变成工具错误——宿主 listAll 异常不得打断 find 的「能找到 session」底线）。
+      return handleSessionRead(params, signals, signal, metadataProvider)
     },
   })
 

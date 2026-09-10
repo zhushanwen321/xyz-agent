@@ -17,7 +17,12 @@ import { existsSync, openSync, readSync, closeSync } from 'node:fs'
 import { mkdir, readdir, stat, writeFile } from 'node:fs/promises'
 import { join, isAbsolute, dirname } from 'node:path'
 import { homedir } from 'node:os'
-import { findSessions, type MatchedSession } from './discovery/find.js'
+import {
+  findSessions,
+  type MatchedSession,
+  type SessionMetadataEntry,
+  type SessionMetadataProvider,
+} from './discovery/find.js'
 import {
   resolveSessionRoots,
   type SessionRoot,
@@ -589,6 +594,8 @@ interface FindGroup {
  *   §3.2 失败模式 D）。SESSION_ID_PREFIX_LEN 常量本体与 result 通路不动（§6.7 范围声明）。
  * - 每条 main 候选附一行可直接复制执行的 outline 调用串（↳，§6.7 子决策 3）；
  *   subagent 候选不附（噪声不配指针）。
+ * - 候选行末段文本：标题优先（u11，name 来自 SessionManager.listAll，§5.1 形态
+ *   「… · 福耀玻璃深度研究」），无标题回退首消息预览（现状行为）。
  * - truncated 按**合并总量**（命中总数 vs 实际输出数）计算，由调用方传入，此处只负责标注。
  * - subagent 段超配额折叠为一行展开提示（加 source:"subagent" 查看）；main 段溢出
  *   仅在组头标注（规格的折叠提示只针对 subagent）。
@@ -615,7 +622,8 @@ function formatFindContent(query: string, groups: FindGroup[], truncated: boolea
       index += 1
       const parts = [`${index}. ${m.sessionId}`, formatDate(m.mtime)]
       if (m.cwd) parts.push(shortCwd(m.cwd))
-      if (m.firstMessagePreview) parts.push(m.firstMessagePreview)
+      if (m.name) parts.push(m.name)
+      else if (m.firstMessagePreview) parts.push(m.firstMessagePreview)
       lines.push(`  ${parts.join(' · ')}`)
       if (g.source === 'main') {
         lines.push(`     ↳ session_read { action:"outline", session:"${m.sessionId}" }`)
@@ -863,8 +871,17 @@ function findNoMatch(query: string, signals: SessionReadSignals): Promise<ToolRe
  *   recent 形态下命中可达全库量级，IO 不可接受），折叠行只报「有更多 + 展开方式」。
  * - 显式 source 过滤走单组查询（现状语义）：显式 source 本身就是折叠提示所指的展开
  *   动作，不再折叠。
+ *
+ * u11（design 2026-09-10 §6.6）：metadataProvider / liveSessionDir 透传匹配层——标题
+ * 检索的惰性/窄化/TTL 缓存策略都在发现层与注入包装侧，本函数只负责透传（缺省
+ * undefined = 现状行为）。多次 findSessions 调用（分组探测）经注入侧 TTL 缓存去重，
+ * 标题 listAll 每 TTL 窗口至多一次/目录。
  */
-async function doFind(params: SessionReadParams, signals: SessionReadSignals): Promise<ToolResult> {
+async function doFind(
+  params: SessionReadParams,
+  signals: SessionReadSignals,
+  metadataProvider?: SessionMetadataProvider,
+): Promise<ToolResult> {
   const query = requireStr(params.query, 'query', 'find')
   const limit = params.limit ?? FIND_DEFAULT_LIMIT
   const cwd = params.cwd
@@ -875,6 +892,8 @@ async function doFind(params: SessionReadParams, signals: SessionReadSignals): P
       cwd,
       limit,
       source: params.source,
+      liveSessionDir: signals.liveSessionDir,
+      metadataProvider,
     })
     if (matches.length === 0) return findNoMatch(query, signals)
     return {
@@ -893,7 +912,13 @@ async function doFind(params: SessionReadParams, signals: SessionReadSignals): P
   }
 
   // 分组查询：main 段以 limit+1 探测溢出，优先占满配额
-  const mainRes = await findSessions(query, signals.agentDir, { cwd, limit: limit + 1, source: 'main' })
+  const mainRes = await findSessions(query, signals.agentDir, {
+    cwd,
+    limit: limit + 1,
+    source: 'main',
+    liveSessionDir: signals.liveSessionDir,
+    metadataProvider,
+  })
   const mainHasMore = mainRes.matches.length > limit
   const mainShown = mainHasMore ? mainRes.matches.slice(0, limit) : mainRes.matches
 
@@ -901,7 +926,13 @@ async function doFind(params: SessionReadParams, signals: SessionReadSignals): P
   // → limit:1 仅探测有无命中（折叠计数判据，不做全量深读）
   const remaining = limit - mainShown.length
   const subLimit = remaining > 0 ? remaining + 1 : 1
-  const subRes = await findSessions(query, signals.agentDir, { cwd, limit: subLimit, source: 'subagent' })
+  const subRes = await findSessions(query, signals.agentDir, {
+    cwd,
+    limit: subLimit,
+    source: 'subagent',
+    liveSessionDir: signals.liveSessionDir,
+    metadataProvider,
+  })
   const subOverflow = remaining > 0 ? subRes.matches.length > remaining : subRes.matches.length > 0
   const subShown = subRes.matches.slice(0, Math.max(remaining, 0))
 
@@ -1880,6 +1911,58 @@ const doctorRootCache: SessionRootCache = {
   },
 }
 
+// ---------------------------------------------------------------------------
+// u11 标题元数据 TTL 缓存（design 2026-09-10 §6.6 调用策略 ③）
+// ---------------------------------------------------------------------------
+
+/**
+ * 标题缓存条目（SessionMetadataEntry[] keyed by 目录字面路径）。与 doctor 的
+ * doctorScanCache **独立实例**——两者语义不同：doctor 缓存根扫描统计（文件数/耗时），
+ * 本缓存标题元数据（session_info name / firstMessage，低频变更）。
+ */
+interface MetadataCacheEntry {
+  entries: SessionMetadataEntry[]
+  /** 写入时刻（Date.now()），TTL 判定用 */
+  cachedAt: number
+  /** 目录 mtime(ms)；不存在为 null（存在性翻转即失效） */
+  dirMtimeMs: number | null
+}
+
+const metadataCache = new Map<string, MetadataCacheEntry>()
+
+/**
+ * 标题缓存 TTL（秒级，§6.6 策略 ③）。量级与 doctor 根扫描缓存同档（DOCTOR_CACHE_TTL_MS），
+ * 待 §11.3a 实测校准；mtime 是主失效通道，TTL 兜「目录内文件追加不改目录 mtime」的陈旧面
+ *（标题恰好随首条消息落盘，同窗口内新增标题最多延迟一个 TTL 可见，可接受）。
+ */
+export const METADATA_CACHE_TTL_MS = DOCTOR_CACHE_TTL_MS
+
+/**
+ * 把注入的 metadataProvider 包上 TTL 缓存（get 失效判定 + set 快照）。
+ *
+ * 只缓存成功结果——provider 抛错原样上抛，由发现层单目录 try/catch 记空继续（guard），
+ * 且瞬态失败不污染缓存（下个查询即重试）。find 的多次 findSessions 调用（u10 分组探测
+ * main/subagent 两路）与连续 keyword 查询都经此处去重，listAll 每 TTL 窗口至多一次/目录。
+ */
+export function withMetadataCache(provider: SessionMetadataProvider): SessionMetadataProvider {
+  return async (dir) => {
+    const hit = metadataCache.get(dir)
+    if (hit !== undefined) {
+      const expired = Date.now() - hit.cachedAt >= METADATA_CACHE_TTL_MS
+      const mtime = await statDirMtimeOrNull(dir)
+      if (!expired && mtime === hit.dirMtimeMs) return hit.entries
+      metadataCache.delete(dir)
+    }
+    const entries = await provider(dir)
+    metadataCache.set(dir, {
+      entries,
+      cachedAt: Date.now(),
+      dirMtimeMs: await statDirMtimeOrNull(dir),
+    })
+    return entries
+  }
+}
+
 /** 旧布局残留条目（§6.11 U14b doctor 侧独立 glob 探测）。 */
 interface PiLayoutLeftover {
   path: string
@@ -2058,19 +2141,27 @@ export { extractFinalAssistantText }
  *   完整信号包）。u9 起 find/F1 路径消费根列表（F1 自检行恒走无 options 实扫，
  *   不读 doctor 缓存，§7B 要点 8）。
  * @param signal 可选 AbortSignal（MF-5）：仅 search 消费（长扫描可中断）；其余 action 有界，不接。
+ * @param metadataProvider 可选标题元数据注入（u11，design 2026-09-10 §6.6）：index.ts 构造
+ *   `(dir) => SessionManager.listAll(dir)`，此处包 TTL 缓存后透传 find。缺省 = undefined =
+ *   现状行为（标题检索不可用，首条 user 匹配不受影响）；provider 抛错由发现层单目录
+ *   try/catch 降级，不外抛。
  */
 export async function handleSessionRead(
   params: SessionReadParams,
   signals: SessionReadSignals | string,
   signal?: AbortSignal,
+  metadataProvider?: SessionMetadataProvider,
 ): Promise<ToolResult> {
   // 裸 string（存量单测/外部深 import 旧签名，D-8）归一化为信号包；doctor 需要完整
   // 信号包（liveSessionDir/env/bundleUrl），缺省字段按各自降级语义处理。
   const norm: SessionReadSignals = typeof signals === 'string' ? { agentDir: signals } : signals
   const agentDir = norm.agentDir
+  // u11：TTL 缓存包装在注入边界（策略 ③，独立于 doctorScanCache 的实例）；仅 find 消费。
+  const cachedProvider =
+    metadataProvider === undefined ? undefined : withMetadataCache(metadataProvider)
   switch (params.action) {
     case 'find':
-      return doFind(params, norm)
+      return doFind(params, norm, cachedProvider)
     case 'family':
       return doFamily(params, agentDir)
     case 'outline':

@@ -116,6 +116,7 @@ graph TD
 | D-7 | **u14a 领地扩容**（计划期缺口，执行期发现）：+`docs/architecture/data-source-registry.md`（登记条目）+ R1 检查器 ALLOWLIST（`.githooks/check_pi_direct_write.py`） | §6.11 / 检查器自身救济路径 | R1 以 rglob 扫工作树，迁移脚本必然同时含 sessions 路径痕迹（步骤 3/4 分发逻辑）与 writeFile（三件套 union 原子写）→ 被判「直写候选」；脚本对 jsonl 是 rename-only，写的是配置 JSON 与报告——正是检查器救济路径写明的「登记例外」形态。计划期漏列该登记义务，orchestrator 裁定领地扩容；**副作用：u14a 落地前 R1 挡住全仓 commit（含无关的 u14b/u3），提交队列按 u14a → u14b → u3 顺序 flush** | 合理（计划缺口） |
 | D-8 | `handleSessionRead` 第二参实做 `SessionRootSignals \| string` 联合 + 入口归一化（任务要求纯 signals 类型） | §7B/§10 U3 | 存量 tool-handler.test.ts / result.test.ts / cross-package 等约 100 处裸 string 调用不在 u3 领地，纯收紧必破 341 全包基线；与 D-3 薄包装裁定同构；工具运行路径恒传完整信号包，类型收紧随 u9+（其领地含 tool-handler.test.ts） | 合理 |
 | D-9 | u14a 六条规格空白裁决（非设计明文违反）：①encodeCwd 断言以 pi-paths.ts 实装为准（其头注释示例与自身实现不符，win32 形态 `--C--Users-x-proj--`）；②无 pi 二进制机器自证对象不存在 → 放行并在报告注明（§11.13 空白）；③union 结果与主位深等 → 无写动作（unionSkipped 计数）但冲突照进清单（V9⑥「全跳过」×V9⑦「冲突清单」交互空白，幂等与差异可见兼得）；④双侧同值单文件与 token\* 不产 aside（同值非冲突）；⑤sidecar 前缀判定排除 .jsonl（主文件只走 header 分发，杜绝双规则处理）；⑥非记录型/资源型深层目录递归逐条目分类（步骤 2b 只定义顶层；config/providers.json 经此命中三件套 union——设计意图所需） | §6.11 六步块 | 均为设计未细化处的最小确定性裁决，各附用例；⑥是三件套 union 可生效的前提 | 合理 |
+| D-16 | u11 四条契约补全：①collectCandidates 由薄包装切 `resolveSessionRoots` 根列表（窄化策略②需根级事实；= D-3 预告的工具路径切新签名在本单元落地，find 开始消费 [live] 根）②`MatchedSession.name` 可选字段 + 标题优先渲染（§5.1 形态要求标题可见，否则标题检索命中不可辨识）③标题命中候选的 preview 取元数据 firstMessage 免二次深读 ④TTL=5000ms 与 doctor 同档（§11.3a 实测校准登记为验收期项） | §6.6/§5.1 | 均为实现目标的必要组成；①同时消除 F1 已消除的二次扫盘反模式 | 合理 |
 | D-15 | u10 三条裁决：①溢出/配额满的计数为确定下界（>N 形态）而非精确总数——精确总数需 O(命中) 次深读首条 user，truncated 布尔经 +1 探测保持精确等价；②显式 source 过滤查询不参与分组/折叠（显式 source 即折叠提示的展开动作，全 id 与 ↳ 串仍适用）；③一次窗口性 flaky 观测（u9⑥ 去重注记用例 02:40-02:48 高负载窗口 4 连红，双 stash 对照排除本单元，窗口外 14+ 连绿）——登记为 Gate A 全量关注项 | §6.7 子决策 2/3 | ①设计要求 truncated 精确而计数行形态未细化，下界计数符合「折叠为计数行」意图 ②语义自洽 ③非确定性、对照排除，如实登记 | 合理 |
 | D-13 | F1 编辑距离候选源 = resolveSessionRoots 实扫 files 提取的 sessionId（设计未细化候选源；与自检计数同批实扫、零额外扫盘）；resolveByFragment/doFind 零匹配路径删去 findSessions('recent') 重复扫盘调用（新文案无 recent 候选） | §6.7/§5.2 | 最小裁决 + 死代码清除；u9 微修复另将 doFind 内部签名改 signals（对外 D-8 联合不变） | 合理 |
 | D-14 | u17 接口改名 `ReapOrphanOptions.sessionsDir→dataDir`（v1 的 --session-dir 等值目标语义已死，新语义 = 清单读取根）牵出 3 处计划盲区必改：生产调用方 startup-background-init.ts:82、计划未登记的第二个测试文件 test/reap-orphan-pi.test.ts、u18 守卫测试以 reap 豁免为 fixture 的断言行；另 flagValue 扩展为 collectFlagValues（argv 可重复传 --extension，「任一命中」必须遍历） | §6.12/U17 | 保留死字段双轨会使生产调用静默失效，改名是正确裁决；3 处均为改名的机械组成，orchestrator 授权扩容收口 | 合理（计划盲区） |
@@ -141,7 +142,7 @@ graph TD
 | u8 | committed | 2 | doctor action（enum/description+Eleven actions/guidelines 三处 + renderDoctor + 独立 glob 残留探测 + TTL/mtime 缓存句柄 + subagent 默认不扫）；微修复统一数据源（roots.ts +SessionRootScanOptions，镜像 −120 行）；116/116 + 全包 358 绿 + tsc 0；偏差 D-12 |
 | u9 | committed | 1 | 2575192b0：归一化两级匹配 + F1 四要素重写 + 编辑距离 top-3；364 全包绿 + tsc 0；偏差 D-13 |
 | u10 | committed | 1 | find 分组渲染（main 置顶/limit 配额/truncated 合并总量/折叠计数/全 id+↳串）；373 全包绿 + tsc×2 + eslint 0；偏差 D-15 |
-| u11 | pending | 0 | — |
+| u11 | committed | 1 | metadataProvider 三层落点（策略在 find.ts / TTL 缓存在 handler 注入边界 / listAll 构造在 index.ts）；385 全包绿 + 零 pi 依赖；偏差 D-16（collectCandidates 切根列表 = D-3 收口） |
 | u12 | pending | 0 | — |
 | u13 | deferred | — | M5 随 merge 发版触发（设计 §9.1） |
 

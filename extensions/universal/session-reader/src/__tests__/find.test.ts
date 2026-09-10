@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { tmpdir } from 'node:os'
 import { mkdtemp, mkdir, writeFile, rm, utimes } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -566,4 +566,209 @@ describe('findSessions', () => {
     },
     30000,
   )
+})
+
+// ============================================================
+// u11：标题元数据 metadataProvider 注入（design 2026-09-10 §6.6）
+// 覆盖三条调用策略中的 ①惰性 ②窄化（TTL 缓存句柄在 tool-handler 注入侧，
+// 见 tool-handler.test.ts u11 段）+ 两条 guard + §11.3b 多目录合并语义
+// + 纯 TS 首条 user 降级路径保留。
+// provider 一律注入替身（不真调 pi SessionManager）。
+// ============================================================
+describe('u11 标题元数据（metadataProvider 注入，§6.6）', () => {
+  let root: string
+  let agentDir: string
+  /** 平铺 main 根（xyz-agent 形态：session 直在 sessions/ 下，[default] 根无子目录） */
+  let flatMain: string
+  /** legacy 根（dirname(agentDir)/sessions） */
+  let legacyDir: string
+
+  async function writeSession(
+    dir: string,
+    opts: { name: string; id: string; cwd?: string; firstUserText?: string },
+  ): Promise<string> {
+    await mkdir(dir, { recursive: true })
+    const lines = [JSON.stringify({ type: 'session', id: opts.id, cwd: opts.cwd ?? '/demo' })]
+    if (opts.firstUserText !== undefined) {
+      lines.push(
+        JSON.stringify({
+          type: 'message',
+          id: `${opts.id}-m1`,
+          message: { role: 'user', content: [{ type: 'text', text: opts.firstUserText }] },
+        }),
+      )
+    }
+    const path = join(dir, opts.name)
+    await writeFile(path, lines.join('\n') + '\n')
+    return path
+  }
+
+  beforeEach(async () => {
+    // agentDir 挂在 mkdtemp 子目录下，legacy 根（dirname(agentDir)/sessions）仍在
+    // 自建 tmp 树内，不污染共享 tmpdir（也不受其他用例残留影响）
+    root = await mkdtemp(join(tmpdir(), 'find-u11-'))
+    agentDir = join(root, 'agent')
+    flatMain = join(agentDir, 'sessions')
+    legacyDir = join(root, 'sessions')
+  })
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('① 惰性触发：uuid 精确/归一化路径不调 provider（spy 计数 0）', async () => {
+    await writeSession(flatMain, { name: 'a.jsonl', id: '019cafe00001', firstUserText: '无关' })
+    const provider = vi.fn(async () => [])
+    // 精确子串层命中
+    await findSessions('019cafe00001', agentDir, { metadataProvider: provider })
+    expect(provider).not.toHaveBeenCalled()
+    // 归一化层命中（大写变体：精确层大小写敏感 0 命中，norm 层命中后短路）
+    await findSessions('019CAFE00001', agentDir, { metadataProvider: provider })
+    expect(provider).not.toHaveBeenCalled()
+  })
+
+  it('② keyword 路径调用 provider 且标题进匹配（name 命中，preview 取元数据首消息免深读）', async () => {
+    const pathA = await writeSession(flatMain, {
+      name: 'a.jsonl',
+      id: 'title-aaaa',
+      firstUserText: '首消息完全无关',
+    })
+    await writeSession(flatMain, { name: 'b.jsonl', id: 'title-bbbb', firstUserText: '另一个无关会话' })
+    const provider = vi.fn(async (dir: string) =>
+      dir === flatMain
+        ? [
+            {
+              path: pathA,
+              id: 'title-aaaa',
+              cwd: '/demo',
+              name: '福耀玻璃深度研究',
+              modified: new Date('2026-09-01'),
+              firstMessage: '首消息完全无关',
+            },
+          ]
+        : [],
+    )
+    const { matches } = await findSessions('福耀玻璃', agentDir, { metadataProvider: provider })
+    // 平铺存在的 [default] 根被调用，且永传非空串
+    expect(provider).toHaveBeenCalledTimes(1)
+    expect(provider.mock.calls[0][0]).toBe(flatMain)
+    expect(provider.mock.calls[0][0].length).toBeGreaterThan(0)
+    // 标题命中：name 透传 + preview 取元数据 firstMessage
+    expect(matches).toHaveLength(1)
+    expect(matches[0].sessionId).toBe('title-aaaa')
+    expect(matches[0].name).toBe('福耀玻璃深度研究')
+    expect(matches[0].firstMessagePreview).toBe('首消息完全无关')
+  })
+
+  it('③ 窄化：含子目录根跳过 provider，候选不退出 keyword 匹配（回退首条 user，标题留空）', async () => {
+    // 纯 pi 形态：文件在 encodeCwd 子目录 → [default] 根含子目录 → listAll 跳过
+    await writeSession(join(flatMain, '--Users-demo--'), {
+      name: 'a.jsonl',
+      id: 'nested-aaaa',
+      firstUserText: '重构插件架构 plugin review',
+    })
+    const provider = vi.fn(async () => [])
+    const { matches } = await findSessions('plugin', agentDir, { metadataProvider: provider })
+    expect(provider).not.toHaveBeenCalled()
+    expect(matches).toHaveLength(1)
+    expect(matches[0].sessionId).toBe('nested-aaaa')
+    expect(matches[0].firstMessagePreview).toContain('plugin')
+    // 标题维度降级留空：「能找到 session」不受影响（§6.6 降级路径）
+    expect(matches[0].name).toBeUndefined()
+  })
+
+  it('④ guard：provider 抛错降级（标题留空 + 不抛，回退首条 user 匹配）', async () => {
+    await writeSession(flatMain, {
+      name: 'a.jsonl',
+      id: 'err-aaaa',
+      firstUserText: '按首条消息命中的文本',
+    })
+    const provider = vi.fn(async () => {
+      throw new Error('listAll boom')
+    })
+    const { matches } = await findSessions('按首条消息命中', agentDir, {
+      metadataProvider: provider,
+    })
+    expect(provider).toHaveBeenCalledTimes(1) // 调用了但抛错
+    expect(matches).toHaveLength(1)
+    expect(matches[0].sessionId).toBe('err-aaaa')
+    expect(matches[0].name).toBeUndefined()
+    expect(matches[0].firstMessagePreview).toContain('按首条消息命中')
+  })
+
+  it('⑤ 多目录结果合并：按 id 去重、重复取新 modified（§11.3b）', async () => {
+    const pathA = await writeSession(flatMain, {
+      name: 'a.jsonl',
+      id: 'dup-id-0001',
+      firstUserText: '无关',
+    })
+    // legacy 根平铺存在（0 文件也算存在根，isFlatRoot 空集恒真）
+    await mkdir(legacyDir, { recursive: true })
+    const provider = vi.fn(async (dir: string) =>
+      dir === flatMain
+        ? [{ path: pathA, id: 'dup-id-0001', cwd: '/demo', name: '旧标题', modified: 1000 }]
+        : [{ path: pathA, id: 'dup-id-0001', cwd: '/demo', name: '新标题', modified: 2000 }],
+    )
+    const { matches } = await findSessions('新标题', agentDir, { metadataProvider: provider })
+    expect(provider).toHaveBeenCalledTimes(2) // 两个平铺存在的根各一次
+    expect(matches).toHaveLength(1)
+    expect(matches[0].name).toBe('新标题') // 同 id 重复 → 取新 modified 的条目
+    const miss = await findSessions('旧标题', agentDir, { metadataProvider: provider })
+    expect(miss.matches).toHaveLength(0) // 旧条目已按合并规则丢弃
+  })
+
+  it('⑥ guard：仅对存在的根调用且永传非空串（不存在根 / 不存在 liveSessionDir 不调）', async () => {
+    await writeSession(flatMain, { name: 'a.jsonl', id: 'guard-aaaa', firstUserText: '无关' })
+    const provider = vi.fn(async () => [])
+    await findSessions('zzznohit9q', agentDir, {
+      liveSessionDir: join(agentDir, 'no-such-dir'),
+      metadataProvider: provider,
+    })
+    // 仅平铺存在的 [default] 根被调；不存在的 liveSessionDir 与 [legacy] 根均被排除
+    expect(provider).toHaveBeenCalledTimes(1)
+    expect(provider.mock.calls[0][0]).toBe(flatMain)
+    expect(provider.mock.calls.every((c) => typeof c[0] === 'string' && c[0].length > 0)).toBe(true)
+  })
+
+  it('⑥b liveSessionDir 与平铺根同字面路径 → 同目录只调一次（字面路径去重）', async () => {
+    await writeSession(flatMain, { name: 'a.jsonl', id: 'dedup-aaaa', firstUserText: '无关' })
+    const provider = vi.fn(async () => [])
+    await findSessions('zzznohit9q', agentDir, {
+      liveSessionDir: flatMain,
+      metadataProvider: provider,
+    })
+    expect(provider).toHaveBeenCalledTimes(1)
+    expect(provider.mock.calls[0][0]).toBe(flatMain)
+  })
+
+  it('⑦ recent：仅对 limit 截断后的少数候选补元数据（旧候选所在根不调）', async () => {
+    const pNew1 = await writeSession(flatMain, { name: 'n1.jsonl', id: 'recent-new-1' })
+    const pNew2 = await writeSession(flatMain, { name: 'n2.jsonl', id: 'recent-new-2' })
+    await writeSession(legacyDir, { name: 'o1.jsonl', id: 'recent-old-1' })
+    await writeSession(legacyDir, { name: 'o2.jsonl', id: 'recent-old-2' })
+    const base = Math.floor(Date.now() / 1000)
+    await utimes(pNew1, base + 300, base + 300)
+    await utimes(pNew2, base + 200, base + 200)
+    await utimes(join(legacyDir, 'o1.jsonl'), base + 100, base + 100)
+    await utimes(join(legacyDir, 'o2.jsonl'), base + 50, base + 50)
+    const provider = vi.fn(async (dir: string) =>
+      dir === flatMain
+        ? [
+            { path: pNew1, id: 'recent-new-1', cwd: '/demo', name: '最新标题一', modified: (base + 300) * 1000 },
+            { path: pNew2, id: 'recent-new-2', cwd: '/demo', name: '最新标题二', modified: (base + 200) * 1000 },
+          ]
+        : [],
+    )
+    const { matches, truncated } = await findSessions('recent', agentDir, {
+      limit: 2,
+      metadataProvider: provider,
+    })
+    expect(truncated).toBe(true)
+    expect(matches.map((m) => m.sessionId)).toEqual(['recent-new-1', 'recent-new-2'])
+    // provider 只调最新两个候选所在的平铺根；被截断的 legacy 根候选不触发补元数据
+    expect(provider).toHaveBeenCalledTimes(1)
+    expect(provider.mock.calls[0][0]).toBe(flatMain)
+    // 截断后少数候选补到标题
+    expect(matches[0].name).toBe('最新标题一')
+    expect(matches[1].name).toBe('最新标题二')
+  })
 })

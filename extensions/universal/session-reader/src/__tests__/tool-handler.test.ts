@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { existsSync } from 'node:fs'
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, rm, utimes } from 'node:fs/promises'
 import { tmpdir, homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import {
@@ -8,10 +8,12 @@ import {
   levenshtein,
   renderExtractItems,
   DOCTOR_CACHE_TTL_MS,
+  METADATA_CACHE_TTL_MS,
   type SessionReadParams,
   type SessionReadSignals,
 } from '../tool-handler.js'
 import { listRecordManifests } from '../discovery/subagents.js'
+import type { SessionMetadataProvider } from '../discovery/find.js'
 import {
   REAL_AGENT_DIR as REAL,
   E6,
@@ -2267,5 +2269,132 @@ describe('u10 find 分组输出（fixture，§6.7 子决策 2/3 + §8.2 回归�
     expect(d.matches).toHaveLength(1)
     expect(d.matches[0].source).toBe('subagent')
     expect(d.truncated).toBe(true)
+  })
+})
+
+// ============================================================
+// u11：metadataProvider 注入 + TTL 缓存（design 2026-09-10 §6.6）
+// handler 级集成：注入包装（withMetadataCache 独立实例，不与 doctorScanCache 串扰）
+// + 标题渲染（§5.1 候选行标题优先）+ provider 抛错降级不外抛。
+// 策略①惰性/②窄化/合并语义在 find.test.ts u11 段覆盖。
+// ============================================================
+describe('u11 metadataProvider 注入 + TTL 缓存（fixture，§6.6）', () => {
+  let tmp: string
+  /** 平铺 main 根（xyz-agent 形态），同时作 liveSessionDir（与 [default] 根同字面路径） */
+  let flatMain: string
+
+  async function writeSession(
+    id: string,
+    opts?: { firstUserText?: string },
+  ): Promise<string> {
+    await mkdir(flatMain, { recursive: true })
+    const lines = [JSON.stringify({ type: 'session', id, cwd: '/demo' })]
+    if (opts?.firstUserText !== undefined) {
+      lines.push(
+        JSON.stringify({
+          type: 'message',
+          id: `${id}-m1`,
+          message: { role: 'user', content: [{ type: 'text', text: opts.firstUserText }] },
+        }),
+      )
+    }
+    const path = join(flatMain, `${id}.jsonl`)
+    await writeFile(path, lines.join('\n') + '\n')
+    return path
+  }
+
+  function findWithProvider(
+    query: string,
+    provider: SessionMetadataProvider,
+  ): ReturnType<typeof handleSessionRead> {
+    return handleSessionRead(
+      { action: 'find', query },
+      { agentDir: join(tmp, 'agent'), liveSessionDir: flatMain },
+      undefined,
+      provider,
+    )
+  }
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'tool-handler-u11-'))
+    flatMain = join(tmp, 'agent', 'sessions')
+  })
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('② 标题进匹配与渲染：keyword 命中 name → 候选行标题优先展示 + details.matches[].name 透传', async () => {
+    const id = 'm-title-0001'
+    const p = await writeSession(id, { firstUserText: '首消息无关' })
+    const provider = vi.fn(async (dir: string) =>
+      dir === flatMain
+        ? [
+            {
+              path: p,
+              id,
+              cwd: '/demo',
+              name: '太保寿险深度研究攻坚',
+              modified: new Date(),
+              firstMessage: '首消息无关',
+            },
+          ]
+        : [],
+    )
+    const r = await findWithProvider('太保寿险', provider)
+    const text = r.content[0].text
+    // §5.1 形态：候选行末段为标题（name 优先于首消息预览）
+    expect(text).toContain('太保寿险深度研究攻坚')
+    const d = r.details as { matches: Array<{ sessionId: string; name?: string }> }
+    expect(d.matches[0].sessionId).toBe(id)
+    expect(d.matches[0].name).toBe('太保寿险深度研究攻坚')
+    // 注入边界生效：provider 被 TTL 包装调用且实参非空串
+    expect(provider).toHaveBeenCalledTimes(1)
+    expect(provider.mock.calls[0][0]).toBe(flatMain)
+  })
+
+  it('④ provider 抛错 → handler 不抛，降级首条 user 匹配（标题留空，错误不外泄）', async () => {
+    const id = 'err-handler-01'
+    await writeSession(id, { firstUserText: 'handler 降级命中文本' })
+    const provider = vi.fn(async () => {
+      throw new Error('listAll secret boom')
+    })
+    const r = await findWithProvider('handler 降级命中', provider)
+    const d = r.details as { matches: Array<{ sessionId: string; name?: string }> }
+    expect(d.matches).toHaveLength(1)
+    expect(d.matches[0].sessionId).toBe(id)
+    expect(d.matches[0].name).toBeUndefined()
+    // 错误细节不进工具输出（降级不是错误）
+    expect(r.content[0].text).not.toContain('boom')
+  })
+
+  it('⑤ TTL 缓存（fake timers）：TTL 内不重调、过期重调、目录 mtime 变化失效', async () => {
+    const id = 'ttl-00000001'
+    const p = await writeSession(id, { firstUserText: '无关' })
+    const provider = vi.fn(async (dir: string) =>
+      dir === flatMain
+        ? [{ path: p, id, cwd: '/demo', name: '标题', modified: new Date() }]
+        : [],
+    )
+    // 仅 fake Date（缓存 TTL 判定用），fs/performance 走真实实现
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      // 首查：cache miss → 调 1 次
+      await findWithProvider('zzznohit9q', provider)
+      expect(provider).toHaveBeenCalledTimes(1)
+      // TTL 内二查：命中缓存不重调
+      await findWithProvider('zzznohit9q', provider)
+      expect(provider).toHaveBeenCalledTimes(1)
+      // TTL 过期 → 重调
+      vi.setSystemTime(Date.now() + METADATA_CACHE_TTL_MS + 1)
+      await findWithProvider('zzznohit9q', provider)
+      expect(provider).toHaveBeenCalledTimes(2)
+      // TTL 内但目录 mtime 变化 → 失效重调
+      const bumped = new Date(Date.now() + 60_000)
+      await utimes(flatMain, bumped, bumped)
+      await findWithProvider('zzznohit9q', provider)
+      expect(provider).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
