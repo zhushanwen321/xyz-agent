@@ -182,7 +182,7 @@ pnpm --filter @xyz-agent/core test && pnpm --filter @xyz-agent/runtime test && p
 | M1e | pending | 0 | —（M1b 第 3 轮发现的领地外旧语义测试；M1b 已达修复轮上限，故另立小单元承接，避免占用其轮次） |
 | M2-r | committed | 1 | commit `cfb839308`；runtime vitest 12 passed；runtime typecheck 0；P-cred 实测（xyz 不展开 / pi 展开，已对照 `resolve-config-value.js:71-73` 逐字核对） |
 | M1a | committed | 2 | commit `f40f27fbc`；core 54 / renderer 61 / ui 17 passed；frontend typecheck 0；renderer `src/__tests__` 全量 3620 passed \| 3 skipped（影响面扫尾无新红点） |
-| M1cd | pending | 0 | — |
+| M1cd | committed | 2 | commit `f6a73542f`；pi-provider-store 13 + migration 143 + credential-writer 6 + config-provider-import 11 passed；`src/services/__tests__` 376 passed 0 failed；runtime typecheck 0；P-sanitize 实测（毒化 `providers.size` 0 → 清洗后 5 / error=undefined；有标记保留 / 无标记剥除 / 错位标记进待清清单 / 合法条目零触碰）+ P-oauth-shell 实测（零条目） |
 | M2b | pending | 0 | — |
 | M5a | pending | 0 | — |
 | M2c | pending | 0 | — |
