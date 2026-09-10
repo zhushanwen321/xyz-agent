@@ -102,7 +102,7 @@ session attach（create/restore/fork）
 
 - **采用**：`RpcClient` 新增 `lastActivityAt`，两个唯一咽喉各 touch——出站 `sendCommand()`（`rpc-client.ts:710-762`；`sendRaw` 仅内部调试旁路）、入站 `handleMessage()`（`:578-610`）。初值 = spawn 时刻（start 前 client 以构造时刻兜底）。**排除维护通道（双腿闭合）**：出站腿 = `promptReload` 的调用带 `{ maintenance: true }` 标记，`sendCommand` 跳过 touch；回程腿 = maintenance pending 被其 response 解析时入站同样跳过 touch（标记随 pending 注册携带——出站与回程同频，只闭出站腿则 skill 变更风暴下空闲时钟仍被回声重置）。标记经语义方法 `prompt` 透传至 `sendCommand`（promptReload 实际调用形态是 `client.prompt`）。skill 目录任一文件变动会对全部活跃 session 触发它（`skill-registry.ts:359-366` → `reload-orchestrator.ts:87-94`），若计入 touch，skill 开发常态（本仓库日常）下全部空闲时钟被周期性重置、回收饿死且不体现为豁免命中（日志看不到）。
 - **被否**：① 复用 `IManagedSessionView.lastActiveAt`——只记「最后出站 prompt」（写点仅 dispatcher/delivery），语义不对；② 不排除维护通道 + 接受污染——饿死是静默失效，违背 G4 可发现原则。
-- **证据**：pi 空闲期无周期性 stdout（ADR-0047 ping 只在 turn 内 `event-interpreter.ts:457-458`；gen-stats/trace-sync 均按需非周期）——用户态空闲判定干净；唯一污染源即维护通道，已排除。
+- **证据**：pi 空闲期无周期性 stdout（ADR-0047 ping 只在 turn 内 `event-interpreter.ts:457-458`；gen-stats/trace-sync 均按需非周期）——用户态空闲判定干净；唯一污染源即维护通道，已双腿排除（出站 touch 跳过 + 回程 maintenance pending 的 response 跳过，一致性审查后补齐——初版只闭出站腿，回程回声同频重置时钟的缺口由审查发现并修复）。
 - **效果**：场景一的 2h 判定成立；「被使用即活跃」by construction。
 
 **D2：豁免集 = 七类信号全查（选定）**
@@ -199,7 +199,7 @@ session attach（create/restore/fork）
 | P2 | occupancy 对 handoff 直 prompt（不经 dispatcher）的覆盖窗口 | 实施期实测 handoff 全程 occupancy 曲线 | ✅ 免测（内建覆盖）——D2 #4 handoff 硬豁免已实装（`hasInflightHandoff` + 装配接线 + 真生命周期链用例），occupancy 覆盖窗口不再构成误回收面（2026-09-11 一致性审查裁决，实施计划 §7 登记） | — |
 | P3 | 恢复后广播流连续：订阅者不丢新事件、seq 无断裂 | 实施期实测：回收 → restore → 发消息，断言 renderer 收到流式 delta 且无 gap 重连 | ⛔（D3 核心断言） | 失败 → 回收改发轻量 `session.detached` 通知触发 renderer 失效订阅（renderer 需小改，In-scope 同步修订） |
 | P4 | scheduler 类 extension 空闲期经 relay spawn 的尾扫收殓 | 实施期实测：scheduler 定时任务在回收窗口触发，验证尾扫杀 relay 子进程并记日志 | ⛔ | 失败 → relay 注册加主 session 存在性校验（D6 被否方案回炉） |
-| P5 | 维护通道不污染 touch：skill 变更风暴下空闲时钟不被重置 | 单测：mock sendCommand 维护标记 + 真机变更 skill 目录验证候选不被饿死 | ⛔ | 失败 → touch 排除面扩大（get_state 等其余维护 RPC 一并排除） |
+| P5 | 维护通道不污染 touch：skill 变更风暴下空闲时钟不被重置 | 单测锁定双腿（出站跳过 + maintenance pending 回程跳过 + 事件帧/非维护 response 照常 touch）+ 真机变更 skill 目录验证候选不被饿死 | ✅ 单测腿已实测（rpc-client-activity.test.ts 双腿用例）；真机腿归 V6 长跑观察 | 失败 → touch 排除面扩大（get_state 等其余维护 RPC 一并排除） |
 | P6 | 竞态三窗口全部关闭 | 单测三场景：① dispatcher 入口 touch 关 hook 窗口；② kill await 期间并发 `session.switch`（占座让路、等待方不抢跑、释放后 existing 分支 no-op、无二次销毁）；③ 摘除前代际校验（注入重建竞态）。**另含尾扫不误杀**：restore 完成后新 session 经 relay 合法 spawn 的子进程不被迟到的尾扫命中（单段快照语义） | ⛔ | 失败 → 对应窗口的兜底机制回炉（入口 touch 提前 / 占座范围扩大 / 校验强化 / 尾扫改两段式前的存在性校验） |
 | P7 | **收益门（非仅验证）**：缓存 leafId 跨进程存活——回收 → 再进入的 getHistory 命中增量而非 "Entry not found" fallback（与 `session-service.ts` 旧注释的正冲突由此定案，见 D5） | 实施期实测：回收 → 再进入，日志断言 `getHistory incremental`；若走 fallback 则门失败 | ✅ 已实测 **PASS（incremental）**（2026-09-11，idle-pi-reclaim-integration.test.ts 阶段 4：`cache fresh (empty delta)`，restore elapsed=535ms；裁决登记实施计划 §7） | 已兑现，降级路径归档不启用（见 D5） |
 | P8 | 大 session 恢复端到端耗时 | 50MB+/198MB 级真实 session 实测 restore + getHistory 全链 | ⛔ | 超 5s → 触发代价声明 2 的重审条件 |
