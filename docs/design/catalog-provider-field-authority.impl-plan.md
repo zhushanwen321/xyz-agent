@@ -197,11 +197,11 @@ pnpm --filter @xyz-agent/core test && pnpm --filter @xyz-agent/runtime test && p
 | M2b | committed | 1 | commit `c13351c26`；runtime typecheck 0；三个目标测试文件 119 passed；`test/` 230 files / 2905 passed；全量 450 files / 5144 passed。**注意：三处迁移均为「可注入 + 缺省降级旧行为」，生产未接线前不生效**——接线归 M2c、降级分支删除归 M2fg |
 | M5a | committed | 1 | commit `0011e964c`（锚点校正 + core 补 pi-ai 声明 + lock）；core typecheck 0、use-provider-edit 54 passed；锚点逐条经实装核实（TypeBox :3-4/:184、provider 级 :170-173、模型级 :137-140、modelOverrides :152、oauth :174；pi-ai models.js :548-558）。**登记部分拆出为 M5b**（见 D-13） |
 | ~~M5b~~ | 已并入 M2fg | — | — |
-| M2c | pending | 0 | — |
+| M2c | in-progress | 1 | 运行中（接线：链 3 迁移 + 组合根装配 + server.ts/config-service.ts 透传） |
 | ~~M2g~~ | 已并入 M2fg | — | — |
-| M3a | pending | 0 | — |
-| M3b | pending | 0 | — |
-| M4 | pending | 0 | — |
+| M3a | in-progress | 1 | 运行中（runtime per-model 真实请求 + mode 分支 + P-test-req 探针；契约产物已被 M3b 对齐） |
+| M3b | committed | 2 | commit `78d4ecede`；core typecheck 0 / frontend typecheck 0；core use-provider-edit 58 passed、ui provider-test-discover-section 20 passed；回归 core 全量 1784 / ui settings 137 / renderer settings 191 passed。第 2 轮补 core 传输层类型（transport.ts + config.ts 补 mode/results 并对齐 shared 协议），删除首轮临时交叉类型垫片。**遗留 D-17（ProviderEditBody 未接线）归 M4 第 2 轮** |
+| M4 | in-progress | 1 | 运行中（网关优先派生展示 + D7 overlay 去空串 + ProviderEditBody catalog 化 + QuickSetup 卡片）；**待第 2 轮补 D-17 接线** |
 
 ## 7 残留风险与变更历史
 
