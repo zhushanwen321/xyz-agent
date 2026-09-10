@@ -587,7 +587,12 @@ agent → session_read { action:"find", query:"01a08zzz" }
 
   ```text
   0. 守卫（按序判定）：
-     a. <dataDir>/.pi-migrating-v2 存在          → 续传模式：跳过 1-2，从 3 续（v6：修复崩溃续传）
+     a. <dataDir>/.pi-migrating-v2 存在且 <dataDir>/pi 不存在
+                                                   → 续传模式：跳过 1-2，从 3 续（v6：修复崩溃续传；
+                                                     v8：补「pi 不存在」——否则「迁移中途崩溃 + 用户装回
+                                                     旧版（旧版 migrateToPiSubdir 重建 pi/）+ 再装新版」的
+                                                     三重叠加态会被续传静默吞掉旧版增量，要拖到下一次启动
+                                                     才由 0d 兜住；该态直接落 0d 显式处理）
      b. 完成标记 .pi-layout-v2.done 存在
         且 <dataDir>/agent 存在且 <dataDir>/pi 不存在 → 已迁移，退出（幂等出口①）
      c. <dataDir>/pi 不存在                       → 全新安装，mkdir agent/sessions 后退出（出口②）
@@ -941,12 +946,13 @@ npx tsx ./probe-find.mts
 
 ### 12.4 变更历史
 
+- v8（2026-09-10）：第 6 轮收尾复审——主审判 **0 must-fix，设计就绪**（1 SG + 2 INFO 已当轮修）：守卫 0a 补「且 pi 不存在」条件，关闭「迁移中途崩溃 + 旧版回装重建 pi/ + 再装新版」三重叠加态被续传静默吞掉旧版增量的最后一格状态矩阵缝隙；形态③折中的论证措辞按主审 INFO 精确化。
 - v7（2026-09-10）：第 5 轮聚焦复审（主审 1 MF + 4 SG；影响面审 3 MF + 5 SG——两方在 dev staged 缺口、前置 reap 判据断链、pi+agent 并存态三处独立收敛，互为印证）：
   0. **`--no-extensions` 判别位自洽确认（主审，源码+活体双证）**：pi help 原文「Disable extension discovery (**explicit -e paths still work**)」——只禁自动发现，显式 `--extension` 不受影响；活体 4 个 TaiJi pi 全带 `--no-extensions` + 23 个 `--extension` 且工具正在其中运行。「恒带」与「staged 生效」两前提互不矛盾。
   1. **§6.11 前置 1 重写（影响面 MF-A = 主审 SG-B）**：v6「迁移前 reap 用旧判据」不成立——旧判据期望值由 `getSessionsDir()` 代码推导（B 版返回新路径 ≠ 孤儿 argv 旧值）、新判据清单在首个 spawn 前不存在，两条路径都收不了。改「迁移模块导出 `LEGACY_PI_SESSIONS_DIR` 常量 + reap 期望值双候选精确匹配」；§11.13 补「前置 reap 收殓数落日志」可观测判定；§7A 同步。
   2. **退役范围拆分（影响面 MF-B）**：`migrateToPiSubdir` 的 `isPackaged()` bundled 同步段（`pi-maintenance.ts:107-126`，全仓唯一 skills 同步点）保留为独立 `syncBundledResources()` 挂 aligned 入口（覆盖全新安装出口②）；仅目录迁移段退役——v6「整体退役」会让打包版首装缺 pi 技能。
   3. **U18 守卫改独立检查器（影响面 MF-C）**：v6 拟挂的 `check_path_whitelist.py`（TARGETS 单文件）与 `check-pi-sync.mjs`（版本锚点）均无字面量扫描能力，照挂即假防护；改为显式文件范围 + 字面量模式 + **集中豁免常量表**（`LAYOUT_LITERAL_EXEMPT`，含 v6 漏列的 `find-pi-executable.ts:47` bundled pi 二进制——漏列则打包版起不了 pi）+ pre-commit 新钩子。
-  4. **白名单登记规则补 dev 形态并收紧（主审 MF-5 = 影响面 SG-2）**：builtin staged 根三形态（打包资源根 / **dev 仓库资源根** `<projectRoot>/apps/electron/resources/extensions/`——漏掉则 dev 清单恒空、dev 孤儿全漏收且无报错 / `<dataDir>` 下 ExtensionResolver 管理的 `extensions/`+`npm/` 子树）；用户配置来源一律排除。V10① 补 dev 正向子项。
+  4. **白名单登记规则补 dev 形态并收紧（主审 MF-5 = 影响面 SG-2）**：builtin staged 根三形态（打包资源根 / **dev 仓库资源根** `<projectRoot>/apps/electron/resources/extensions/`——漏掉则 dev 清单恒空、dev 孤儿全漏收且无报错 / `<dataDir>` 下 ExtensionResolver 管理的 `extensions/`+`npm/` 子树）；用户配置来源一律排除。主审第 6 轮评估该折中**可接受、不必强制收紧到仅 mandatory**（mandatory 恒传使形态①②值恒在孤儿 argv，排除形态③实际几乎不损失收殓面、净效应≈纯安全收益；保留的理由是这些路径同样是 xyz 自己传的，语义上并不更「正确」）。V10① 补 dev 正向子项。
   5. **守卫加第 0d 分支 + ENOTEMPTY 双保险（影面 SG-1 = 主审 SG-C）**：「迁移完成 → 装回旧版产生增量 → 升回新版」的 agent+pi 并存态原先无定义（步骤 2 rename 撞非空 agent/ 即 ENOTEMPTY）；显式策略 = 不自动迁移 + doctor 持续告警 + 人工处理指引；步骤 2 另对 ENOTEMPTY 加 catch 转显式自救文案。
   6. **事实勘误（主审 SG-A）**：活跃 subagent 的 ppid = **主 pi pid**（subagent 由主 pi 进程内的 extension spawn，`argv-mirror.ts:60-64`），非 runtime pid；结论不变（ppid≠1 不杀），孤儿 subagent 收殓为两轮时序，V10③ 校准。
   7. **判据原理性极限声明（主审 SG-D）**：完整复制 xyz pi argv 重跑的进程与真孤儿在判据维度同形，原理上不可区分——接受极限，不为此加机制。
