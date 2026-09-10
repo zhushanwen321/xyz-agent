@@ -334,6 +334,19 @@ describe('先迁后升端到端（tmp 布局副本，V9①②③④）', () => {
       cleanup(d)
     }
   })
+  it('步骤 5 清除日志含 sessionDir 原值（delete 前先存值——时序回归锁）', () => {
+    const d = makeDataDir()
+    try {
+      const dd = join(d, '.xyz-agent')
+      makeLegacyPi(dd, { agentFiles: { 'settings.json': { theme: 'dark', sessionDir: '/some/override' } } })
+      const logs = []
+      const r = run(dd, { log: (m) => logs.push(m) })
+      expect(r.sessionDirCleared).toBe(true)
+      expect(logs.some((m) => m.includes('sessionDir') && m.includes('/some/override'))).toBe(true)
+    } finally {
+      cleanup(d)
+    }
+  })
   it('旧旧布局 <dataDir>/sessions 兼并（步骤 4，同法分发）', () => {
     const d = makeDataDir()
     try {

@@ -5,7 +5,7 @@
  * 其余 pi 子路径在此派生。
  *
  * 目录结构（方案 B：布局完整对齐 pi 0.84.x，唯一差异是根目录；旧布局
- * 旧布局 pi/ 兄弟层已由 scripts/migrate-pi-layout-v2.mjs 迁移退役）：
+ * pi/ 兄弟层已由 scripts/migrate-pi-layout-v2.mjs 迁移退役）：
  *   ~/.xyz-agent/                    ← xyz-agent 配置根目录
  *     config.json                    ← xyz-agent 自身配置
  *     extensions/                    ← 用户安装的 extension（local/git + discovery 扫描根）

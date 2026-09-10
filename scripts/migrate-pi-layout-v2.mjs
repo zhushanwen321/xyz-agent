@@ -587,9 +587,10 @@ function clearSessionDirOverride(settingsPath, report, fsMod, log) {
     return false
   }
   if (isPlainObject(parsed) && Object.prototype.hasOwnProperty.call(parsed, 'sessionDir')) {
+    const removed = parsed.sessionDir // delete 前先存原值：log 在 delete 之后执行，直接读 parsed 恒为 fallback
     delete parsed.sessionDir
     writeAtomic(settingsPath, JSON.stringify(parsed, null, 2) + '\n', fsMod)
-    log(`已清除 agent/settings.json 的 sessionDir 覆盖位（原值：${JSON.stringify(parsed.sessionDir ?? '(已删)')} 之前的值见备份）`)
+    log(`已清除 agent/settings.json 的 sessionDir 覆盖位（原值：${JSON.stringify(removed ?? '(已删)')} 之前的值见备份）`)
     return true
   }
   return false
