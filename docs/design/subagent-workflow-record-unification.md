@@ -127,7 +127,7 @@ workflow 域早于引擎协议化演进定型。协议化（D3 系列）把真�
 |------|------|------|------|
 | 池排队中被 abort | workflow abort 信号 | run 域既有 cancelled 收口（S1 同款分支） | 脚本层重试 |
 | record 创建失败（极端） | store 异常 | agent() 同步抛错回脚本 | 文案附原因 |
-| 引擎死亡于 workflow agent 在途 | run 失败（engine_crashed 抛回脚本）→ record 由失败路径**立即终态化**（adopt 豁免后无 2h 看门狗挂账窗，v3）；完成/失败通知静默（D6） | 脚本层重跑；排查 `list includeWorkflow:true` |
+| 引擎死亡于 workflow agent 在途 | run 失败（engine_crashed 抛回脚本）→ record 由失败路径立即终态化 | adopt 豁免后无 2h 看门狗挂账窗（v3）；完成/失败通知静默（D6） | 脚本层重跑；排查 `list includeWorkflow:true` |
 
 ### 3.5 终态数据流
 
