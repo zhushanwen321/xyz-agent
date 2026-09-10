@@ -1,5 +1,11 @@
 # @zhushanwen/subagent-core
 
+## 0.7.0
+
+### Minor Changes
+
+- 838806898: Align with engine protocol v1.x: protocol-first engine session-history reads land with journal fallback, and the shared schema-env byte-limit contract moves to the engine CLI package.
+
 ## 0.6.0
 
 ### Minor Changes

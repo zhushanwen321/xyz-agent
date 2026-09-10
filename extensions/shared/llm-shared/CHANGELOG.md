@@ -1,5 +1,11 @@
 # @zhushanwen/pi-llm-shared
 
+## 0.6.0
+
+### Minor Changes
+
+- 838806898: `CallLLMResult` now carries token usage through to callers, enabling downstream LLM calls to report usage.
+
 ## 0.5.1
 
 ### Patch Changes

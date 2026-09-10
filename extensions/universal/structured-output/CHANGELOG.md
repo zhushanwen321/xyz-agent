@@ -1,5 +1,11 @@
 # @zhushanwen/pi-structured-output
 
+## 5.1.4
+
+### Patch Changes
+
+- 838806898: Point the cross-package schema-env contract reference at the engine CLI package that now owns it (comment-only, no behavior change).
+
 ## 5.1.3
 
 ### Patch Changes

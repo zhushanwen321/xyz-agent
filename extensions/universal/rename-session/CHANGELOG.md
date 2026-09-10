@@ -1,5 +1,11 @@
 # @zhushanwen/pi-rename-session
 
+## 0.7.0
+
+### Minor Changes
+
+- 838806898: Append a usage custom entry after each LLM call so session token usage is recorded for the usage page.
+
 ## 0.6.1
 
 ### Patch Changes

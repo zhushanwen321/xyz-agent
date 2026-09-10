@@ -1,5 +1,11 @@
 # @zhushanwen/pi-smart-context
 
+## 0.2.0
+
+### Minor Changes
+
+- 838806898: Compaction entries now record the model used (`details.model`) for usage attribution.
+
 ## 0.1.4
 
 ### Patch Changes
