@@ -121,7 +121,8 @@ graph TD
 | u18 | pending | 0 | — |
 | u1 | in-progress | 1 | agent_6665a206 |
 | u2 | in-progress | 1 | agent_2102d150 |
-| u6 | committed | 1 | PS-28~PS-33 六条 anchor 逐条实装核对（⑤补双锚、⑥修 distPath 缺 core/ 前缀）；守卫 exit 0（33 条）重跑确认；偏差 D-1 |
+| u6 | committed | 1 | PS-28~PS-33 六条 anchor 逐条实装核对（⑤补双锚、⑥修 distPath 缺 core/ 前缀）；守卫 exit 0（33 条）重跑确认；D6 软门禁恢复动作完成（探针族 11 文件/56 用例全绿）；偏差 D-1 |
+| u2 | committed | 1 | env.ts + env.test.ts（16 用例）重跑绿；tsc --noEmit exit 0；无偏差 |
 | u3 | pending | 0 | — |
 | u8 | pending | 0 | — |
 | u9 | pending | 0 | — |
