@@ -13,16 +13,18 @@
 
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const distEntry = join(here, "../dist/main.js");
 const srcEntry = join(here, "../src/main.ts");
 
+// dynamic import 只接受 URL：裸绝对路径在 Windows（盘符 `C:\...` 被解析成协议）
+// 报 ERR_UNSUPPORTED_ESM_URL_SCHEME，必须经 pathToFileURL 转 file:/// URL。
 if (existsSync(distEntry)) {
-  await import(distEntry);
+  await import(pathToFileURL(distEntry).href);
 } else if (existsSync(srcEntry) && !here.split(/[\\/]/).includes("node_modules")) {
-  await import(srcEntry);
+  await import(pathToFileURL(srcEntry).href);
 } else {
   console.error(
     [
