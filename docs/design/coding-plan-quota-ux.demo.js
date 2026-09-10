@@ -72,7 +72,9 @@ window.Q = (function () {
       const hasProvider = s.provider.hasApiKey || (p.auth.includes('oauth') && s.provider.hasOauth)
       if (!hasExclusive && !hasProvider) missing.push('API Key')
     }
-    if (p.needsWorkspace && !s.workspaceDraft.trim() && !s.saved.workspace) missing.push('Workspace 地址')
+    // workspace 是明文、始终回显 → 判定只看草稿（D13：屏幕即真相）；
+    // cookie/apiKey 是密文、不回显 → 判定取「草稿 ∨ 已保存」并集
+    if (p.needsWorkspace && !s.workspaceDraft.trim()) missing.push('Workspace 地址')
     return { ready: missing.length === 0, missing }
   }
 

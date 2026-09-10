@@ -92,7 +92,8 @@
       const hasProvider = s.provider.hasApiKey || (p.auth.includes('oauth') && s.provider.hasOauth)
       if (!hasProvider) missing.push('Provider API Key')
     }
-    if (p.needsWorkspace && !s.workspaceDraft.trim() && !s.saved.workspace) missing.push('Workspace 地址')
+    // workspace 是明文、始终回显 → 判定只看草稿（D13）；cookie/apiKey 密文不回显 → 取并集
+    if (p.needsWorkspace && !s.workspaceDraft.trim()) missing.push('Workspace 地址')
     return { ready: missing.length === 0, missing }
   }
   const lacks = (s, name) => readiness(s).missing.indexOf(name) !== -1
