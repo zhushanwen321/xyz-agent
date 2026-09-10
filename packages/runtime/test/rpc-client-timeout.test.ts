@@ -20,7 +20,7 @@ import { RpcTimeoutError } from '../src/infra/pi/rpc-client.js'
 /** 捕获的 stdin 写入行（每条 JSON 字符串）。 */
 const stdinWrites: string[] = []
 
-/** stdout data handler——start() 内 attachLfOnlyLineReader 注册（D10 后不再有 readline）。 */
+/** stdout data handler——start() 内 stdout 行读取接线注册（D10 后不再有 readline）。 */
 let stdoutDataHandler: ((chunk: Buffer | string) => void) | null = null
 
 /** proc.exit handler，start() startup check 用。 */

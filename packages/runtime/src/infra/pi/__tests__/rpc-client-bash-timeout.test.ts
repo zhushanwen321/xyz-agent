@@ -10,8 +10,8 @@
  *
  * 策略：沿用 rpc-client-observability.test.ts 的 mock 骨架（node:child_process + fake
  * streams），fake timers 驱动超时墙钟（STARTUP_DELAY_MS / RPC timer 均走同一时钟）。
- * pi 帧注入走 data 分帧桥接（D10：RpcClient 不消费 node:readline，attachLfOnlyLineReader
- * 在 stdout 上挂 data handler 自行 LF 分帧——emitData 直投「整行 + \n」由生产读取器分帧，
+ * pi 帧注入走 data 分帧桥接（D10：RpcClient 不消费 node:readline，stdout 行读取接线
+ * （u5 起为共享 createLineReader）自行 LF 分帧——emitData 直投「整行 + \n」由生产读取器分帧，
  * 先例：test/helpers/rpc-client-mock.ts emitPiLine）。
  *
  * 运行：cd packages/runtime && npx vitest run src/infra/pi/__tests__/rpc-client-bash-timeout.test.ts
@@ -206,7 +206,7 @@ describe('bash() 超时行为 —— 默认 / env 覆盖 / 0=不限时', () => {
     await vi.advanceTimersByTimeAsync(10 * 3_600_000)
     expect(settled).toBe('pending')
     // 命令真实完成：response 帧到达（id 与请求配对）→ resolve 真实结果。
-    // data 分帧桥接：直投「整行 JSONL + \n」（= pi stdout 输出）由生产 attachLfOnlyLineReader 分帧。
+    // data 分帧桥接：直投「整行 JSONL + \n」（= pi stdout 输出）由生产 stdout 行读取接线分帧。
     const call = fakeProc.stdin.write.mock.calls.find((c) => String(c[0]).includes('"type":"bash"'))
     expect(call).toBeDefined()
     const { id } = JSON.parse(String(call![0])) as { id: string }

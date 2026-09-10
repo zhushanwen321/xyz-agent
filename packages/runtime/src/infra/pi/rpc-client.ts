@@ -32,58 +32,6 @@ export interface PiMessage {
 export type PiEventListener = (event: PiMessage) => void
 
 /**
- * [DEPRECATED u5] 生产路径已切换至 spawn-channel createLineReader 共享实现（D4/U7b
- * 行为不变替换，见 wireProcessHandlers）。本函数保留的唯一消费方是
- * rpc-client-lf-framing.test.ts 的 D10 分帧回归锚（测试文件不在 u5 领地内，删除须同批
- * 迁移测试锚，登记为后续清理项）。分帧语义与 createLineReader 等价（StringDecoder 与
- * setEncoding('utf8') 是同一底层机制；一致性审查修复批后行尾 '\r' 剥离也由共享层
- * createLineReader 同款承载，两函数行为等价——此前共享层曾缺该防御，等价性仅在 LF
- * 形态成立）。新代码禁用本函数，走共享原语。
- *
- * LF-only 行读取器（D10 分帧防御；pi dist/modes/rpc/jsonl.js attachJsonlLineReader 同款思路）。
- *
- * 为什么不用 node readline：readline 除 \n/\r 外还把 U+2028（LINE SEPARATOR）/U+2029
- * （PARAGRAPH SEPARATOR）当行分隔符——这两个字符在 JSON 字符串内合法（JSON.stringify
- * 不转义，pi 侧 serializeJsonLine 的帧协议是 LF-only）。pi 回显含这两个字符的单行 JSON
- * 会被 readline 拆成多帧 → JSON.parse 失败 → 消息静默丢失；skill 全文注入后大文本回显
- * 流量上升，敞口变大，故随 composer 多 skill 注入一并修（设计 §2.3 失败模式 D）。
- *
- * 分帧只在「字节流解码后的字符串」上找 '\n'；StringDecoder 处理多字节 UTF-8 字符跨
- * chunk 截断的半帧残留；流 end 时 flush decoder 尾巴与无换行结尾的最后一行（与 readline
- * 的 close 交付语义一致）；行尾 '\r' 剥离（对齐 pi 实装）。返回解绑函数（测试用；
- * 生产路径随进程生命周期终结，无需解绑）。
- */
-export function attachLfOnlyLineReader(stream: NodeJS.ReadableStream, onLine: (line: string) => void): () => void {
-  const decoder = new StringDecoder('utf8')
-  let buffer = ''
-  const emitLine = (line: string): void => {
-    onLine(line.endsWith('\r') ? line.slice(0, -1) : line)
-  }
-  const onData = (chunk: Buffer | string): void => {
-    buffer += typeof chunk === 'string' ? chunk : decoder.write(chunk)
-    let newlineIndex = buffer.indexOf('\n')
-    while (newlineIndex !== -1) {
-      emitLine(buffer.slice(0, newlineIndex))
-      buffer = buffer.slice(newlineIndex + 1)
-      newlineIndex = buffer.indexOf('\n')
-    }
-  }
-  const onEnd = (): void => {
-    buffer += decoder.end()
-    if (buffer.length > 0) {
-      emitLine(buffer)
-      buffer = ''
-    }
-  }
-  stream.on('data', onData)
-  stream.on('end', onEnd)
-  return () => {
-    stream.off('data', onData)
-    stream.off('end', onEnd)
-  }
-}
-
-/**
  * pi get_available_models 返回的模型元素（pi-ai Model 翻译为内部消费形状的子集：
  * id/provider/reasoning/thinkingLevelMap，对账所需字段）。
  *
@@ -475,12 +423,12 @@ export class RpcClient implements IPiEngine {
       }
     })
 
-    // Parse stdout JSONL（D10：LF-only 分帧 → u5 切换 spawn-channel createLineReader 共享
+    // Parse stdout JSONL（D10：LF-only 分帧，u5 起消费 spawn-channel createLineReader 共享
     // 实现，D4/U7b 行为不变替换：机制一份，Runtime 与 subagent-core 消费同一份 LF 行读取原语）。
-    // 解码沿用旧 attachLfOnlyLineReader 的 StringDecoder 形态（多字节 UTF-8 跨 chunk 半帧
+    // 解码保持 StringDecoder 逐 chunk 形态（D10 首版实现确立；多字节 UTF-8 跨 chunk 半帧
     // 挂起，不产 replacement char；U+2028/U+2029 不拆帧的 D10 防御由共享实现承载）——刻意
     // 不用 setEncoding（改造 stdout 流编码模式），data handler 内逐 chunk 解码后喂入，
-    // 与旧实现解码路径逐字对应。
+    // 与切换前解码路径逐字对应。
     // stdout error 吞转发（2026-09-04 事故审计，原 readline 防护语义保留）：
     // pi 崩溃/被杀时 stdout 管道流错误无 listener 直接 throw 成 uncaughtException →
     // 整机 shutdown（stderr 已有同款防护，见下方 stderr 段注释）；行读取只挂 data/end，
@@ -490,8 +438,8 @@ export class RpcClient implements IPiEngine {
     const stdoutLineReader = createLineReader({
       // tee hook（D4 单侧附加面①归宿）：piSessionLog 原始 JSONL 落盘（架构约定 #4，
       // 「pi 卡死时唯一证据」诊断通道）经行读取原语的 hook 位接回。hook 在解析/分发之前
-      // 回调（含 flushTrailing 尾残行）；行尾 '\r' 剥离已由共享 createLineReader 承载
-      //（对齐 pi 实装与本文件旧 attachLfOnlyLineReader 防御，一致性审查修复批补齐），
+      // 回调（含 flushTrailing 尾残行）；行尾 '\r' 剥离由共享 createLineReader 承载
+      //（对齐 pi 实装 attachJsonlLineReader 防御，一致性审查修复批补齐），
       // tee 收到剥离后的行——与切换前（旧 onLine 内 tee，收到的同为剥离后行）落盘字节
       // 逐行一致成立（S8 断言点）；保留旧 tee 的「空白行不落盘」过滤。
       onStdoutLine: (line) => {

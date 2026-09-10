@@ -21,17 +21,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { writeAliveMarker } from "../../../../alive-store.ts";
 import type { ExecutionRecord } from "../../../../types.ts";
+// spawn-mock 必须先于 session-runner 初始化：后者的模块顶层 getLogger 调用会触发
+// 下方 vi.mock 工厂，工厂引用的 loggerMock 单例届时必须已就绪（否则 TDZ）。
+import {
+  loggerMock,
+  makeCtx,
+  makeOpts,
+  makeRecord,
+} from "../../../../__tests__/helpers/spawn-mock.ts";
 import {
   backfillSessionFileByLookup,
   backfillSessionFileFromLateGetState,
   type SpawnRunState,
 } from "../session-runner.ts";
-import { makeCtx, makeOpts, makeRecord } from "../../../../__tests__/helpers/spawn-mock.ts";
 
 vi.mock("../../../../alive-store.ts", () => ({
   writeAliveMarker: vi.fn(),
   readAliveMarker: vi.fn(() => undefined),
   isProcessAlive: vi.fn(() => false),
+}));
+
+// 回填 warn 文案留痕断言用（[2026-09-10 清理] warn 断言广度补齐；spawn-mock 共享单例）。
+// 注意 mock 路径相对本测试文件解析：五级向上 = src/core/logger.ts（与 session-runner.ts
+// 的四级 import 解析到同一模块，vitest 按解析后绝对路径拦截）。
+vi.mock("../../../../../core/logger.ts", () => ({
+  getLogger: () => loggerMock,
 }));
 
 const mockWriteAliveMarker = vi.mocked(writeAliveMarker);
@@ -95,6 +109,10 @@ describe("backfillSessionFileFromLateGetState（[U1 D1] 迟到接受回填面）
       "/tmp/agents/sa-late.jsonl",
       expect.objectContaining({ pid: 4321, id: "sess-late" }),
     );
+    // 回填 warn 留痕（troubleshooting §12 词条①）
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      "[session-runner] sessionFile backfilled via late get_state response: /tmp/agents/sa-late.jsonl",
+    );
   });
 
   it("!record.sessionFile 幂等守卫：已有 sessionFile（header/resume 先行设置）不覆盖、不重写 marker", () => {
@@ -111,6 +129,10 @@ describe("backfillSessionFileFromLateGetState（[U1 D1] 迟到接受回填面）
     expect(record.sessionFile).toBe("/resume/locked.jsonl"); // 不被迟到值覆盖
     expect(mockWriteAliveMarker).not.toHaveBeenCalled();
     expect(state.handshakeResult?.sessionId).toBe("old-sess"); // 已有 sessionId 不覆盖
+    // 守卫生效 = 无回填发生 = 无回填 warn
+    expect(loggerMock.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("backfilled via late get_state response"),
+    );
   });
 
   it("childPid undefined（进程已死形态）→ 仍回填 sessionFile/sessionId，跳过 marker 不抛", () => {
@@ -138,6 +160,10 @@ describe("backfillSessionFileByLookup 接入点 2（[U1 D2] lookupId 缺失扫�
     backfillSessionFileByLookup(state, dir);
 
     expect(record.sessionFile).toBe(target);
+    // 扫描兜底 warn 留痕（troubleshooting §12 词条②的 close finalization 措辞）
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      `[session-runner] sessionFile backfilled via sessionDir scan (close finalization): ${target}`,
+    );
   });
 
   it("lookupId 缺失且扫描无匹配（极早期 kill：identity 未写）→ sessionFile 保持 undefined", () => {
@@ -149,6 +175,10 @@ describe("backfillSessionFileByLookup 接入点 2（[U1 D2] lookupId 缺失扫�
 
     // 记账缺失 = 正确语义（进程从未开始工作，finalize 按 crashed 记账），不误指路径
     expect(record.sessionFile).toBeUndefined();
+    // crashed 记账前的 warn 留痕（troubleshooting §12 词条⑤的 close 链措辞）
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      expect.stringContaining(`sessionFile unobtainable for run-42 (process killed before handshake settled)`),
+    );
   });
 
   it("lookupId 存在（既有反查路径）→ 即使反查不命中也不走扫描（既有语义主导）", () => {
@@ -161,6 +191,13 @@ describe("backfillSessionFileByLookup 接入点 2（[U1 D2] lookupId 缺失扫�
     backfillSessionFileByLookup(state, dir);
 
     expect(record.sessionFile).toBeUndefined();
+    // 未走扫描分支：两条扫描路径 warn 均不出现
+    expect(loggerMock.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("sessionDir scan"),
+    );
+    expect(loggerMock.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("unobtainable"),
+    );
   });
 
   it("record.sessionFile 已在盘（既有守卫）→ 整体跳过兜底，路径不被扫描结果覆盖", () => {

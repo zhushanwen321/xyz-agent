@@ -1,12 +1,14 @@
 /**
- * LF-only 读取器构造帧测试（composer-multi-skill-injection D10 / 验收场景 9）。
+ * LF-only 分帧回归测试（composer-multi-skill-injection D10 / 验收场景 9）。
  *
  * 场景 9 例外声明（设计 §4 明文许可）：U+2028/U+2029 无法依赖真实模型输出可靠构造，
  * 协议层防御采用确定性构造帧验证（标准做法）；端到端大文本路径由真实会话场景覆盖。
  *
  * 三组断言：
- * ① 新读取器（attachLfOnlyLineReader）：含 U+2028/U+2029 的单行 JSON 不拆帧，
- *    JSON.parse 全部成功——多帧连续 / 尾部无换行 / 半行到达（含多字节字符跨 chunk）/ CRLF；
+ * ① 共享读取器（spawn-channel createLineReader；[2026-09-10 清理] 自 runtime 旧
+ *    attachLfOnlyLineReader 迁移——生产路径 u5 已切共享实现，D10 分帧契约锚随迁，
+ *    旧函数本体已删）：含 U+2028/U+2029 的单行 JSON 不拆帧，JSON.parse 全部成功——
+ *    多帧连续 / 尾部无换行 / 半行到达（含多字节字符跨 chunk）/ CRLF；
  * ② 对照组：同输入下 node readline 语义复现拆帧——证明隐患真实（readline 把 U+2028/U+2029
  *    当行分隔符，单条 JSON 被拆成多帧且各自 parse 失败）；若未来 node 改变 readline 行为
  *    使本组失守，说明隐患面消失，可复核后移除对照组；
@@ -17,17 +19,30 @@
 import { describe, it, expect } from 'vitest'
 import { PassThrough } from 'node:stream'
 import { createInterface } from 'node:readline'
-import { attachLfOnlyLineReader } from '../rpc-client.js'
+import { StringDecoder } from 'node:string_decoder'
+import { createLineReader } from '@zhushanwen/subagent-core/spawn-channel'
 import type { PiMessage } from '../rpc-client.js'
 
-/** 收集流上的全部行（等待流 end 后断言，避免 async 断言竞态）。 */
+/**
+ * 收集流上的全部行（等待流 end 后断言，避免 async 断言竞态）。
+ * 接线形态与生产 wireProcessHandlers 逐字同款：StringDecoder 逐 chunk 解码（多字节
+ * UTF-8 跨 chunk 半帧挂起）→ 共享 createLineReader 分帧（行尾 \r 剥离 / 尾残行冲刷）。
+ */
 function collectLinesViaLfReader(): { stream: PassThrough; lines: string[]; done: Promise<void> } {
   const stream = new PassThrough()
   const lines: string[] = []
   let finish: () => void
   const done = new Promise<void>((resolve) => { finish = resolve })
-  const detach = attachLfOnlyLineReader(stream, (line) => lines.push(line))
-  stream.on('end', () => { detach(); finish() })
+  const decoder = new StringDecoder('utf8')
+  const reader = createLineReader({ onLine: (line) => lines.push(line) })
+  stream.on('data', (chunk: Buffer | string) => {
+    reader.push(typeof chunk === 'string' ? chunk : decoder.write(chunk))
+  })
+  stream.on('end', () => {
+    reader.push(decoder.end())
+    reader.flushTrailing()
+    finish()
+  })
   return { stream, lines, done }
 }
 
@@ -50,7 +65,7 @@ function lineWithSeparators(id: number): string {
   })
 }
 
-describe('attachLfOnlyLineReader（D10：LF-only 分帧）', () => {
+describe('LF-only 分帧（D10，共享 createLineReader + 生产同款 StringDecoder 接线）', () => {
   it('① 含 U+2028/U+2029 的单行 JSON 多帧连续：不拆帧，JSON.parse 全部成功', async () => {
     const { stream, lines, done } = collectLinesViaLfReader()
     const l1 = lineWithSeparators(1)

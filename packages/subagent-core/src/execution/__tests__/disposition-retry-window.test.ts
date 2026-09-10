@@ -228,6 +228,12 @@ describe("[U3 D3b] agent_end 处置翻转：error 分支 15s 回补重试窗口"
       mockReaddirSync.mockReturnValue([scannedName]);
       await vi.advanceTimersByTimeAsync(DISPOSITION_RETRY_STEP_MS);
       expect(record.sessionFile).toBe(scannedPath);
+      // 扫描命中 warn 留痕（troubleshooting §12 词条②的窗口轮措辞）
+      expect(loggerMock.warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `[session-runner] sessionFile located via sessionDir scan (retry window round 2): ${scannedPath}`,
+        ),
+      );
       expect(mockWriteAliveMarker).toHaveBeenCalledWith(
         scannedPath,
         expect.objectContaining({ pid: child.pid, id: "scan-hit-1" }),

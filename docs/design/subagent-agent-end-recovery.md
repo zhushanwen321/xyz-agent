@@ -347,6 +347,7 @@ audit §5 三条系统性裁决在本次事故的投影：
 | 日期 | 事件 |
 |------|------|
 | 2026-09-10 | 实施完成：U1-U7b 对应实施单元 u1-acquire / u2-descendant / u3-flip / u4-spawn-channel / u5-runtime-switch 全部 committed（状态与证据见 impl-plan §6），u6-obs-docs 本次回写收口（troubleshooting 词条 + audit 回写 + 本节）。Gate B 真实场景验收（S1-S9）与 ⛔ 探针五条待执行，完成度以 impl-plan §6 状态表为准 |
+| 2026-09-10 | Gate A（整体测试验收）绿：subagent-core 3429 passed / runtime 5088 passed（real-pi e2e 一次全绿）/ bundle 验证 / eslint 0 errors / extensions 三连 / 零容忍绕过检查（新增 0）/ 覆盖矩阵无测试真空。uncovered 2 条均为领地登记滞后非测试真空（tsup.config.ts、eslint.config.mjs，状态表已追认）。清理批次：待办清理项 2 条完成 + warn 断言广度补齐（见下方清理项节） |
 
 ### 实施期偏差登记（文档与实现的最终对齐记录）
 
@@ -375,7 +376,8 @@ audit §5 三条系统性裁决在本次事故的投影：
 
 **既有测试改写**：`run-spawn-edges.test.ts` 断言族按翻转后语义改写（无 skip）；新增 disposition-retry-window（窗口轮序 / 耗尽 / 竞态守卫）、agent-end-descendant-fast-path（快路径判据守卫）、spawn-channel 形状测试（四维策略默认值锚定）等。§3.2 预告的「约 5-6 个测试文件」实际集中度更高（断言族多数落在 run-spawn-edges 一处）。
 
-**待办清理项（登记，不阻塞本次收口）**：
+**待办清理项（2026-09-10 Gate A 后清理批次：全部完成，原登记留痕）**：
 
-1. runtime `rpc-client.ts` 的 `attachLfOnlyLineReader` deprecated 测试锚（30 行）——行读取已切 spawn-channel，旧函数保留为测试锚，待后续迁移删除；
-2. `eslint.config.mjs` session-runner.ts 双 max-lines 规则并存——复杂度债务豁免组的 `'off'`（flat config 前段）与单列提额的 `'warn'@1400`（后段，实际生效）待收敛为一条。
+1. ~~runtime `rpc-client.ts` 的 `attachLfOnlyLineReader` deprecated 测试锚（30 行）~~ **已清理**：`rpc-client-lf-framing.test.ts` 分帧契约锚迁移至共享 `createLineReader`（接线形态与生产 wireProcessHandlers 逐字同款：StringDecoder 逐 chunk 解码 → push/flushTrailing），deprecated 函数本体删除，rpc-client 内外注释悬空引用同批清扫；runtime rpc-client 测试群 25 passed + 双包 typecheck 绿；
+2. ~~`eslint.config.mjs` session-runner.ts 双 max-lines 规则并存~~ **已收敛**：删除 off 块中的 session-runner.ts 条目（flat config 中 off 在前、warn@1400 在后，off 为被覆盖的死配置——Gate A 风险项发现），warn 块同型提额至 1600（当前 1535 行，对齐 zcode-engine.ts 提额先例；保持 warn 债务可见性），lint 0 error 0 warning；
+3. **warn 断言广度补齐（Gate A 覆盖矩阵识别的可选增强，本次一并完成）**：回填 warn 锚点 4 处中 3 处补单测文案断言（late response / close finalization / retry window round 2，含幂等守卫与既有反查路径的反断言），`agent_end backfill` 首轮扫描措辞与窗口轮同构，由 late-response-runspawn e2e 形态覆盖，无独立单测。

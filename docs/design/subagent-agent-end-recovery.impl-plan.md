@@ -91,6 +91,8 @@ bash scripts/validate-runtime-bundle.sh
 - extensions/ 无改动（D1-D4 全部在 subagent-core 与 runtime），`extensions:*` 三连不强制；若实施中领地蔓延至 extensions/ 立即上报
 - Gate B：设计 §4 验收场景 S1-S9 真实场景表逐行签收（真实 pi 子进程 + wrapper 故障注入；⛔ 检查点 5 条在对应场景前先跑探针）
 
+**Gate A 结果（2026-09-10，绿）**：subagent-core test 3429 passed（7 skipped = 既有 .live 门控）/ typecheck / build（spawn-channel.{cjs,d.cts} 产物在位）；runtime 449 files / 5088 passed（real-pi e2e 一次全绿，已知负载 flake 未命中）/ typecheck；validate-runtime-bundle.sh exit 0；eslint pi 目录 0 errors（max-lines 1535>1400 warning = 已裁决债务）；extensions 三连 exit 0（26 包全 passed，无蔓延破坏）；零容忍检查 skip/SKIP_* 新增 0、eslint-disable 新增 0（1 处为同内容搬迁，基线=HEAD=2）；覆盖矩阵无测试真空，uncovered 2 条（subagent-core tsup.config.ts / eslint.config.mjs）均属领地登记滞后且状态表已追认 → 收录为本表 R7/R8。
+
 ## 5 合理偏差登记表
 
 > 登记载体说明：实施期偏差的**明细集中登记于设计文档「实施期偏差登记」节**（本文件同目录 subagent-agent-end-recovery.md 末尾，含 D3a 落点 / D3b 三处细化 / D2 多匹配 / D4 七件盘点 / 测试改写 / 待办清理六组），状态表各单元 deviations 计数指向该明细；本表收录「一致性审查确认后的合理偏差」条目。
@@ -103,6 +105,8 @@ bash scripts/validate-runtime-bundle.sh
 | R4 | u5 | 七件原语仅 LF 行读取实际切换（runtime），六件保持现状（invocation 身份域 / stdin randomUUID 锚 / id 路由 rejectAll 形状 / kill SIGCONT 语义 / get_state 硬失败耦合 / 迟到帧既有路径） | 行为不变替换约束下机制归一收益兑现能兑现部分；「双轨」实为策略/行为锚差异非同一机制两份拷贝（区B reasonable 1 + 设计偏差登记 D4/u5 组） | 2026-09-10 |
 | R5 | u4 | spawn-channel 策略接口落地为「类型契约 + SUBAGENT_CORE_SPAWN_POLICIES 默认值登记」形态，非运行时分派对象 | 避免无人消费的策略对象死代码；u5 注入位逐维注释（区B reasonable 4） | 2026-09-10 |
 | R6 | u6 | troubleshooting 词条日志文件名写实为 subagents-\<date\>.log + 可见性规则（桌面 EXT_LOG 恒注入 / 裸 pi CLI 需显式开关） | 修正任务预设的易错假设，与 extension-logger 实装一致（区C reasonable 2） | 2026-09-10 |
+| R7 | u5 | `packages/subagent-core/tsup.config.ts` 的 spawn-channel entry 增补未在 §2 领地清单——U7b exports 落地必要配套（验收条款②必然连带） | build 产物检查触达正确性；状态表 u5 已追认；Gate A 覆盖矩阵 uncovered 登记 | 2026-09-10 |
+| R8 | u2/u4 | `eslint.config.mjs` session-runner.ts 债务登记未在 §2 领地清单 | lint 运行触达；状态表 u2/u4 已追认；Gate A 覆盖矩阵 uncovered 登记；后经清理批次收敛为单条 warn@1600（死配置 off 删除） | 2026-09-10 |
 
 ## 6 状态表
 
@@ -124,6 +128,12 @@ bash scripts/validate-runtime-bundle.sh
 - ⛔ 设计 §5 五条待验证检查点对应实施期探针，S1/S9 场景实施前先跑注入探针（audit S-B 先例流程）
 - 误杀形态（三路获取全失败 ∧ 真有后代）按设计 D3b 代价分析登记为显式残余风险，S5 含续后处置推演
 - u5-runtime-switch 是行为不变替换，但 rpc-client.ts 是 runtime 核心链路——dev→fix 超 2 轮未绿即冻结升级用户（数字阈值纪律）
+
+**变更历史**：
+
+| 日期 | 事件 |
+|------|------|
+| 2026-09-10 | Gate A 绿（结果见 §4 Gate A 结果节）；Gate B 批次 1（探针 + S1-S7 + S9）后台派发中；清理批次完成——待办清理项 2 条（deprecated 测试锚迁移删除 / eslint 双规则收敛 warn@1600）+ warn 断言广度补齐 3 处（明细登记于设计文档「待办清理项」节），uncovered 2 条入偏差表 R7/R8 |
 
 **变更历史**：
 

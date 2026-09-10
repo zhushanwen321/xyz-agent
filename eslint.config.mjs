@@ -99,9 +99,6 @@ export default [
   // 职责内聚（每文件均为单一子系统的高复杂度函数原地拆解，cyclo 已全部 ≤12），
   // 按行数再拆属独立重构任务。第一批：rpc-client / session-lifecycle / 两个
   // message-handler / session-reconstructor；第二批：download-asset。
-  // session-runner.ts：pi 引擎执行器单文件（spawn/握手/处置/收尾单一数据流），
-  // 2026-09 完成回收根修（docs/design/subagent-agent-end-recovery.md U1-U3）增量后
-  // 超阈；拆分属独立重构任务，随本批登记。
   {
     files: [
       'packages/runtime/src/infra/pi/rpc-client.ts',
@@ -109,7 +106,6 @@ export default [
       'packages/runtime/src/transport/session-message-handler.ts',
       'packages/runtime/src/transport/settings-message-handler.ts',
       'packages/subagent-core/src/execution/session-reconstructor.ts',
-      'packages/subagent-core/src/execution/engine/engines/pi/session-runner.ts',
     ],
     rules: {
       'max-lines': 'off',
@@ -453,10 +449,14 @@ export default [
   // 透传 + SIGKILL 升级链）后 1266 行。拆分方向（runner 编排 / 进程收割 / 恢复扫描）
   // 属独立重构任务，短期 override 至 1400 避免阻塞。
   // [u-2a] 文件物理迁入 engines/pi/（rename 级搬运），本条目路径同步跟随。
+  // [2026-09 回收根修] pi 引擎执行器单文件（spawn/握手/处置/收尾单一数据流），完成
+  // 回收根修（docs/design/subagent-agent-end-recovery.md U1-U4）后 1535 行——与
+  // zcode-engine 同型提额至 1600（保持 warn 债务可见性；曾短暂登记 max-lines: off，
+  // 因 flat config 中本块在后覆盖 off 致死配置，收敛回单条 warn 登记）。
   {
     files: ['packages/subagent-core/src/execution/engine/engines/pi/session-runner.ts'],
     rules: {
-      'max-lines': ['warn', { max: 1400, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 1600, skipBlankLines: true, skipComments: true }],
     },
   },
   // zcode-engine.ts：zcode app-server 常驻引擎的唯一聚合中心（连接池 + 会话生命周期 +
