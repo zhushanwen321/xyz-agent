@@ -105,7 +105,7 @@ export function getSessionsDir(): string {
 1. **任何宿主下主 session 全 action 可见**：`find`（uuid / recent / 关键词三条匹配路径）以及 `family` / `export{format:"family"}` 等按 id 解析的 action，候选集必须包含当前宿主的全部主 session。
 2. **失败时能自证，且不给出错误归因**：定位失败的错误信息必须携带「发现层内部状态」（每个候选根路径 + 文件数）+ 一条**确定能成功**的替代动作 + 明确的禁止项；**不得**在证据不足时断言「真的没有这个 session」。
 3. **环境透明**：agent 能直接问出「我现在跑在纯 pi 还是 xyz-agent/TaiJi，数据目录在哪」，不必靠猜或探测。
-4. **主 session 可按人话检索**（范围限定）：能用标题（如「福耀玻璃深度研究」）、cwd、时间检索**当前宿主会话根**内的主 session，不必记 uuid。**显式不覆盖**：纯 pi 的跨项目标题检索（pi 默认布局把各项目 session 放在 `<encodeCwd>/` 子目录，标题检索需逐目录全量解析，成本不可接受——§6.6 调用策略 2）。
+4. **主 session 可按人话检索**（范围限定）：能用标题（如「福耀玻璃深度研究」）、cwd、时间检索**当前宿主会话根**内的主 session，不必记 uuid。**显式不覆盖（仅标题维度）**：纯 pi 的跨项目标题检索（pi 默认布局把各项目 session 放在 `<encodeCwd>/` 子目录，标题检索需逐目录全量解析，成本不可接受——§6.6 调用策略 2）。**首条 user 关键词匹配不在此限定内**：该维度维持现状能力（全部候选可检索，含纯 pi 跨项目），见 §6.6 策略 2 的回退规则。
 5. **跨会话内容检索**（阶段二）：能回答「哪个 session 讨论过 X」，而不是只能按元数据匹配。
 
 **In-scope**：`session-reader` extension 的发现层重构（根解析 / 环境识别 / `doctor` / 错误信息 / 检索维度）；`subagents.ts` 的家族扫描接入同一根列表；xyz-agent 侧为 session 目录增加一个自描述环境变量并完成 forward 登记。
@@ -452,7 +452,7 @@ agent → session_read { action:"find", query:"01a08zzz" }
 - **被否**：只改 session-reader 探测（不做宿主侧声明）——能修好本次问题，但断点仍在，任何新消费者都要重走一遍猜测。
 - **证据**：`dist/main.js:530-533`（pi 读取 `ENV_SESSION_DIR`，优先级仅次于 `--session-dir`）；`dist/config.js:406`（变量名）；`rpc-client.ts:200`（既有 `PI_CODING_AGENT_DIR` 注入先例）；`spawn-env-contract.ts:150-158`（forward 条目范式）；`env-propagation-boundary.md:215`（登记义务）。
 - **效果**：让 §6.1 的 `[env]` 信号长期可靠；即使 session-reader 的 `[live]` 探针因 pi 升级失效，`[env]` 仍在。
-- **验收**：活体 pi 进程 `ps eww` 能观测到该变量（§12.1 P-3）；subagent pi 内 `doctor` 的 `[env]`/`[live]` 两根被正确标注（§8 V7）。
+- **验收**：主探针 = 会话内 bash `env` 自读（P-3/P-5；`ps eww` 仅 best-effort，见 §12.1 的 SIP 在案否决）；subagent pi 内 `doctor` 的判定为「`[live]` 标注为 subagent 根、主根以 `[legacy]` 形态出现（`[env]` 缺席）」（§8 V7③）。
 
 ### 6.6 主 session 元数据：`SessionManager.listAll`，但**惰性 + 窄化 + 缓存**（选定）
 
@@ -462,7 +462,7 @@ agent → session_read { action:"find", query:"01a08zzz" }
   2. **每次调用 = 全量解析该目录全部文件**——`buildSessionInfo`（`session-manager.js:443-511`）`for await` 读到 EOF、无 break，顺带收集 `allMessagesText` / `messageCount` / 时间戳。成本是 O(目录总字节) 而非 O(文件数)：本仓自有实测「全盘 3488 项 ≈ 8s」（`hash-provider.ts:161`）、单 cwd 目录 530 文件 667ms（`docs/2026-08-10-cwd-popup-redesign.md:190`）。**「19ms vs 1500ms」的既有记录（`index.ts:203`）语境是单个 per-cwd 小目录，不可外推到根目录。**
 - **由此定调用策略（三条，缺一会退化成秒级卡顿）**：
   1. **惰性触发**：仅在「uuid 精确匹配 = 0 **且** uuid 归一化匹配 = 0 **且** query 非纯 hex（即 keyword 路径）」时才调 `listAll`。uuid / recent 路径不调（recent 只对 limit 截断后的少数候选补元数据）。
-  2. **窄化目标**：只对**平铺目录**调用——即「未做 encodeCwd 剥层的 `liveSessionDir` 本身」（xyz-agent 下即主根，平铺；纯 pi 下即当前 cwd 的目录，小）+ 扫描结果**无子目录**的候选根。**含子目录的根跳过**并显式声明：纯 pi 跨项目标题检索本轮不覆盖（需枚举全部 encodeCwd 子目录 × 全量解析，成本不可接受）——§2 目标 4 的适用范围据此限定。
+  2. **窄化目标**：只对**平铺目录**调用——即「未做 encodeCwd 剥层的 `liveSessionDir` 本身」（xyz-agent 下即主根，平铺；纯 pi 下即当前 cwd 的目录，小）+ 扫描结果**无子目录**的候选根。**含子目录的根跳过 listAll，但其中的候选不退出 keyword 匹配**：这些候选回退现状 `readFirstUserMessageText` 路径做首条 user 匹配（现状 `matchByKeywords` 本就对全部候选深读首条 user，回退即成本与召回均无变化）；被跳过的只是「标题检索」这一**增量**能力（对含子目录的根做标题检索需枚举全部 encodeCwd 子目录 × 全量解析，成本不可接受）。`liveSessionDir` 缺失时同理全部回退。——**§2 目标 4 的范围限定只针对标题维度；首条 user 维度的现状能力不收缩**（否则纯 pi 跨项目「按首条 user 内容找 session」会被静默砍掉，main session 无 manifest、首条 user 是其唯一 keyword 匹配键）。
   3. **进程内 TTL 缓存**（keyed by 目录路径；秒级 TTL / 目录 mtime 失效）：标题数据变更低频，重复 keyword 查询不重复全量解析。
 - **降级路径**：`metadataProvider` 注入失败 / 调用抛错（单目录 try/catch，记空并继续）→ 回退现有 `readFirstUserMessageText`（只读首条 user，命中即停），**标题字段留空**。降级只损失「标题检索」，不损失「能找到 session」。
 - **为什么仍优于自写深读**：自写「顺带解析 `session_info`」同样必须读全文件才能证明不存在（实测某 23MB 主 session 中 `session_info` 在第 31 行；xyz-agent 14 个主 session 中 3 个无 `session_info`，须读到 EOF），纯 pi 全库最坏 ≈ 2.7GB（放大约 170 倍，P-9）。`listAll` 的全量解析是**同样的输入、但由 pi 维护且有并发封装**（`buildSessionInfosWithConcurrency`），且配合上面的惰性 + 窄化 + 缓存后，实际触发面被压到「小目录 + 低频」。
@@ -578,8 +578,8 @@ src/discovery/env.ts（新增）
 | 场景 | 回溯 §2 目标 | 真实流程 / 数据 / 路径 | 通过标准 |
 |---|---|---|---|
 | **V1 原事故复现（TaiJi.app）** | 目标 1 | 在 TaiJi.app（打包版）里新开 session，执行 `session_read{action:"find", query:"01a08a6e"}`，数据为 `~/.xyz-agent/pi/sessions/` 真实 14 个 session | 命中集含 `01a08a6e-0d26-…` / `-74fc-…` / `-b007-…` 三条 main，且 `source=main`，完整 id 可见 |
-| **V2 纯 pi 不回退** | 目标 1 | **环境隔离后**启动纯 pi：`env -u PI_CODING_AGENT_DIR -u XYZ_AGENT_EXT_LOG -u XYZ_AGENT_DATA_DIR -u PI_CODING_AGENT_SESSION_DIR pi --mode rpc --session-dir <tmp> --extension <repo>/extensions/universal/session-reader`（AGENTS.md 实测命令 + 显式剥除托管信号，防 TaiJi 会话内执行时被继承 env 污染判定），对 `~/.pi/agent/sessions/` 真实 4619 个 session 执行 `find{query:"<某个已知 uuid 前缀>"}` | 命中该 session；`[default]` 根被标为真根；`[legacy]`（`~/.pi/sessions`）不产生候选也不报错；`doctor` 判 `standalone-pi` |
-| **V3 doctor 自描述 + legacy 告警** | 目标 3 | 分别在 V1 与 V2 的环境里执行 `session_read{action:"doctor"}` | TaiJi 下：`xyz-agent · packaged`、数据目录 `~/.xyz-agent`、live 根 14 文件、`[legacy]` 与主根同路径（已去重）；纯 pi 下：`standalone-pi`、agentDir `~/.pi/agent`、`[default]` 根 4619 文件（与 `[live]` 同路径去重）、`[legacy]` = `~/.pi/sessions` 空。**legacy 告警判据统一为「非空才告警」（§6.1）**：上述两个环境均**不出现**告警、仅事实行；另构造一个 legacy 根非空的环境（或临时放入一个 .jsonl）验证告警出现。两者都打印各根文件数与 evidence 行 |
+| **V2 纯 pi 不回退** | 目标 1 | **环境隔离后**启动纯 pi：`env -u PI_CODING_AGENT_DIR -u XYZ_AGENT_EXT_LOG -u XYZ_AGENT_DATA_DIR -u PI_CODING_AGENT_SESSION_DIR pi --mode rpc --session-dir <tmp> --extension <repo>/extensions/universal/session-reader`（AGENTS.md 实测命令 + 显式剥除托管信号，防 TaiJi 会话内执行时被继承 env 污染判定），对 `~/.pi/agent/sessions/` 真实 4619 个 session 执行 `find{query:"<某个已知 uuid 前缀>"}` | 命中该 session（命中来自 `[default]` = `~/.pi/agent/sessions`；本环境 `[live]` = `<tmp>` 是另一目录，**不去重**）；`[legacy]`（`~/.pi/sessions`）不产生候选也不报错；`doctor` 判 `standalone-pi` |
+| **V3 doctor 自描述 + legacy 告警** | 目标 3 | 在 V1 环境执行 `session_read{action:"doctor"}`；纯 pi 跑**两种形态**——(a) V2 环境（带 `--session-dir <tmp>`）、(b) 同样 env 隔离但**不带** `--session-dir` | TaiJi 下：`xyz-agent · packaged`、数据目录 `~/.xyz-agent`、live 根 14 文件、`[legacy]` 与主根同路径（已去重）；纯 pi (a) 下：`standalone-pi`、`[live]` = `<tmp>` 与 `[default]`（4619 文件）各自列出不去重；纯 pi (b) 下：`[live]` 剥层后与 `[default]` 同路径去重、4619 文件、`[legacy]` = `~/.pi/sessions` 空。**legacy 告警判据统一为「非空才告警」（§6.1）**：上述环境均**不出现**告警、仅事实行；另构造一个 legacy 根非空的环境（或临时放入一个 .jsonl）验证告警出现。各环境都打印各根文件数与 evidence 行 |
 | **V4 失败自证 + 封死绕行** | 目标 2 | 在 TaiJi.app 里执行 `session_read{action:"find", query:"01a08zzz"}`（不存在的片段） | 输出含：① 事实型自检行（main 根 N 文件 / subagent 根 M 文件 / 「已做归一化匹配」）② 编辑距离最近候选 ③ 三条正确做法 ④ 一行明确的「不要用 shell find/ls/rg 搜 session」；**且不含**原「去用 recent」误导指引，**且不断言**「真的没有这个 session」 |
 | **V5a 归一化 + 分组**（M3 交付） | 目标 1/4 | 在 TaiJi.app 里依次执行：`find{query:"01A08A6E-74FC-78A4-9580-8539B40E0920"}`（全大写）、`find{query:"01a08a6e74fc78a495808539b40e0920"}`（去连字符）、`find{query:"福耀玻璃"}` | 前两者（v1 设计下为 0 命中）各自命中 `01a08a6e-74fc-…`；第三者 main 段**置顶**且含 `01a08a6e-0d26-…`；所有输出完整 id（**标题字段可为空**——标题检索随 V5b/M4 生效） |
 | **V5b 标题检索命中**（M4 交付） | 目标 4 | 在 TaiJi.app 里执行 `find{query:"福耀玻璃"}`、`find{query:"海康威视"}` | main 段置顶且含正确标题（「福耀玻璃深度研究」/「deep-research-分析海康威视」）；标题来自 `listAll` 的 `name` 字段 |
@@ -592,6 +592,7 @@ src/discovery/env.ts（新增）
 - `find{query:"红队"}` 等 subagent 关键词检索行为不变（现网依赖）。
 - 传入绝对路径 `outline{session:"<路径>.jsonl"}` 仍可用（防回退，`resolveBySessionPath` 不动）。
 - `find{query:"01a08a", limit:100}` 的 subagent 段含 34 条（uuidv7 时间前缀碰撞属正确行为，§3.4；分组后 main 段 0 条 + subagent 段 34 条，合计不变）。
+- 纯 pi 下 `find{query:"<某个非当前 cwd session 首条 user 中的关键词>"}` 行为与现状一致（命中来自 `[default]`，走首条 user 回退路径——§6.6 策略 2 的可判定回归项）。
 - `find{query:"recent"}` 的候选集含主 session（原失败模式 #4 的验收保护；预期 main 14 条 + subagent 淹没，**main 段置顶**后可辨识——若实现按 §6.7 分组，`recent` 亦同规则）。
 - `result` action 的批量头行仍为 8 字符短 id（§6.7 范围声明；`execution-tree.test.ts:747` 断言不变）。
 - `index.test.ts:97`（`ctx === undefined`）仍通过且断言的是 `👉` 错误文案（§7.2 降级）。
@@ -649,7 +650,7 @@ M0–M3 是一个不可分割的正确性交付（M3 的自检行依赖 M0 的�
 | `packages/runtime/src/infra/pi/rpc-client.ts` | `buildPiOutboundEnv` 的 `extras` 增 `PI_CODING_AGENT_SESSION_DIR` |
 | `packages/shared/src/spawn-env-contract.ts` | `SPAWN_ENV_FORWARD_REFERENCE` 增条目（U5） |
 | `docs/design/env-propagation-boundary.md` | B 组表同步（U5） |
-| `docs/pi-semantics.json` | 登记 4 条 pi 私有语义（U6） |
+| `docs/pi-semantics.json` | 登记 5 条 pi 私有语义（U6） |
 | 测试 | `src/__tests__/roots.test.ts`（三宿主信号包 table-driven）、`env.test.ts`（新增，含透传污染反例）、`tool-handler.test.ts`（`doctor` + 新 F1 文案 + 分组 + 归一化 + family 一致性）、`index.test.ts`（`ctx === undefined` 与 `sessionManager` 缺方法两例） |
 
 ---
@@ -735,6 +736,11 @@ npx tsx ./probe-find.mts
 
 ### 12.4 变更历史
 
+- v4（2026-09-10）：第 3 轮主审聚焦复审（1 MF + 3 SG）全量修订：
+  1. **keyword 匹配域规格补全（MF-1）**：§6.6 策略 2 补「含子目录被跳过 listAll 的候选**不退出 keyword 匹配**，回退现状 `readFirstUserMessageText` 首条 user 匹配（现状 `matchByKeywords` 本就对全部候选深读首条 user，成本与召回均无变化）」；§2 目标 4 明确「范围限定只针对标题维度，首条 user 维度现状能力不收缩」；§8 回归基线补纯 pi 跨项目首条 user 检索的可判定项。此前的窄化策略按字面实施会静默砍掉现状能力。
+  2. **§6.5 验收行残留（SG-1）**：「`[env]`/`[live]` 两根被正确标注」改为与表格/V7③ 一致的「`[live]` 标 subagent 根、主根以 `[legacy]` 出现（`[env]` 缺席）」，并同步探针口径（env 自读为主）。
+  3. **U6 登记条数（SG-2）**：§10.1 文件地图行 4→5，与 U6 justification 一致。
+  4. **V2/V3 场景漂移（SG-3）**：V2 注明本环境 `[live]` = `<tmp>` 与 `[default]` 不去重；V3 的纯 pi 拆带 / 不带 `--session-dir` 两种跑法分别给判定。
 - v3（2026-09-10）：第 2 轮聚焦复审（影响面审 0 MF + 6 SG；主审 5 MF + 5 SG）全量修订：
   1. **§6.6 重写（主审 MF-A）**：`listAll(dir)` 两条实装语义核定——只扫一层平铺目录不递归（`session-manager.js:550-556`）、每文件全量解析读到 EOF（`:443-511`）；调用策略改为**惰性触发 + 窄化（仅平铺目录）+ TTL 缓存**；§2 目标 4 限定范围（纯 pi 跨项目标题检索显式不覆盖）；§11.3 的「是否递归」由待验证转为源码已核。
   2. **§6.5/V7③ 更正（主审 MF-B）**：subagent pi 的 env 是 runtime 进程 env 整体继承（`session-runner.ts:1764`），U4 的 extras 不进 runtime 自身 env → subagent pi 内 `[env]` **缺席**、主根以 `[legacy]` 出现；扩展注入属范围变更须另过 C-proc-09 评审，本设计默认不做。
