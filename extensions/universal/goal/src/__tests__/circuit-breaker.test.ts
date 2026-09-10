@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { handleAgentEnd } from "../adapters/event-handlers/agent-end";
 import { handleBeforeAgentStart } from "../adapters/event-handlers/before-agent-start";
+import { handleSessionShutdown } from "../adapters/event-handlers/session-shutdown";
 import { handleSessionStart } from "../adapters/event-handlers/session-start";
 import { handleGoalCommand } from "../adapters/command-adapter";
 import { createGoalState } from "../engine/goal";
@@ -42,16 +43,29 @@ interface FakeHarness {
 	ctxCalls: RecordedCall[];
 	/** 可控 isIdle（MF-6① 守卫断言用：延迟窗内有活动 turn 时置 false） */
 	isIdle: { value: boolean };
+	/**
+	 * 可控 appendEntry 抛错（MF-R2-1 测试前提修正）：pi.appendEntry 与 ctx 同生命周期
+	 * （loader.js appendEntry 首行 assertActive，0.84.4 实装核对）——模拟全量 stale
+	 * 时必须置 true 按 SDK 契约抛错，否则测试默许了真实场景必抛的调用
+	 */
+	appendEntryFails: { value: boolean };
 }
+
+/** runner.js invalidate 默认 stale 文案首句（0.84.4 实装），assertActive 据此抛出 */
+const STALE_CTX_MESSAGE = "This extension ctx is stale after session replacement or reload.";
 
 function makeHarness(): FakeHarness {
 	const piCalls: RecordedCall[] = [];
 	const ctxCalls: RecordedCall[] = [];
 	const entries: unknown[] = [];
 	const isIdle = { value: true };
+	const appendEntryFails = { value: false };
 
 	const pi = {
 		appendEntry(customType: string, data?: unknown): void {
+			if (appendEntryFails.value) {
+				throw new Error(STALE_CTX_MESSAGE);
+			}
 			piCalls.push({ kind: customType === "goal-history" ? "appendHistory" : "appendState", payload: data });
 		},
 		sendMessage(message: unknown, options?: unknown): void {
@@ -83,7 +97,7 @@ function makeHarness(): FakeHarness {
 		},
 	} as unknown as ExtensionContext;
 
-	return { pi, ctx, entries, piCalls, ctxCalls, isIdle };
+	return { pi, ctx, entries, piCalls, ctxCalls, isIdle, appendEntryFails };
 }
 
 // ── 辅助 ─────────────────────────────────────────────
@@ -343,25 +357,72 @@ describe("MF-6① idle 守卫：ctx.signal 实时求值失效场景由 isIdle �
 	});
 });
 
-describe("MF-6② stale 保护：timer 回调内 ctx 访问抛错不冒泡", () => {
-	it("到期时 sessionManager.getEntries 抛错（session 关闭/替换后旧 ctx）→ 降级记录 goal:log，不崩、不发", async () => {
+describe("MF-6② stale 保护：timer 回调内异常不冒泡（catch 块自身零抛出）", () => {
+	it("全量 stale（isIdle / getEntries / appendEntry 均按 SDK 契约抛错）→ 不崩、不发、不产生任何调用", async () => {
 		const { h, session } = await enterBackoff();
 
-		// ctx.sessionManager / isIdle 均为 assertActive getter（runner.js createContext），
-		// stale 后访问即抛——以 getEntries 抛错为代表（getSessionId / isIdle 同路径被同一 catch 覆盖）
+		// SDK 契约（0.84.4 实装核对）：invalidate 后 isIdle / sessionManager getter
+		// （runner.js assertActive）与 pi.appendEntry（loader.js appendEntry 首行
+		// assertActive）全部抛错——旧 fake appendEntry 永不抛，默许了真实场景必抛的调用
+		h.ctx.isIdle = () => {
+			throw new Error(STALE_CTX_MESSAGE);
+		};
 		(h.ctx.sessionManager as { getEntries: () => unknown }).getEntries = () => {
-			throw new Error("This extension ctx is stale after session replacement...");
+			throw new Error(STALE_CTX_MESSAGE);
+		};
+		h.appendEntryFails.value = true;
+		const callsBefore = h.piCalls.length;
+
+		expect(() => vi.advanceTimersByTime(20_000)).not.toThrow();
+
+		expect(followUpSends(h)).toHaveLength(4); // 不发 continuation
+		expect(session.state!.continuationsSent).toBe(4);
+		expect(h.piCalls).toHaveLength(callsBefore); // 降级日志 stale 下同样必抛 → 放弃
+	});
+
+	it("回调内非 stale 异常（getEntries 抛运行时错误、appendEntry 可用）→ 降级 warn 落一条", async () => {
+		const { h, session } = await enterBackoff();
+
+		(h.ctx.sessionManager as { getEntries: () => unknown }).getEntries = () => {
+			throw new Error("entries read failed");
 		};
 		expect(() => vi.advanceTimersByTime(20_000)).not.toThrow();
 
 		expect(followUpSends(h)).toHaveLength(4); // 不发 continuation
 		expect(session.state!.continuationsSent).toBe(4);
-		// 降级诊断：goal:log 一条 warn（pi.appendEntry 为 ExtensionAPI 层，stale 下仍可写）
+		// 降级诊断：非 stale 异常时 pi.appendEntry 可用，goal:log 落一条 warn
 		const dropLogs = h.piCalls.filter(
 			(c) => c.kind === "appendState" && (c.payload as { message?: string } | undefined)?.message?.includes("dropped after error"),
 		);
 		expect(dropLogs).toHaveLength(1);
 		expect((dropLogs[0]!.payload as { level?: string }).level).toBe("warn");
+	});
+});
+
+describe("MF-R2-1 根修：session_shutdown 取消旧退避 timer", () => {
+	it("session_shutdown（invalidate 前触发）后旧 timer 到期不发；全量 stale 下不崩、不冒泡", async () => {
+		const { h, session } = await enterBackoff();
+
+		// SDK 触发序：所有失效路径（reload / new / resume / fork / quit）先 emit
+		// session_shutdown 再 runner.invalidate——此刻 pi/ctx 仍可用
+		await handleSessionShutdown(session);
+		expect(session.continuationTimer).toBeNull();
+
+		// 全量 stale 注入：若 timer 未被取消，回调在 isIdle 首查即抛、catch 内
+		// appendEntry 二次抛出 → advanceTimersByTime 冒泡（本用例即红）
+		h.ctx.isIdle = () => {
+			throw new Error(STALE_CTX_MESSAGE);
+		};
+		(h.ctx.sessionManager as { getEntries: () => unknown }).getEntries = () => {
+			throw new Error(STALE_CTX_MESSAGE);
+		};
+		h.appendEntryFails.value = true;
+		const callsBefore = h.piCalls.length;
+
+		expect(() => vi.advanceTimersByTime(20_000)).not.toThrow();
+		expect(followUpSends(h)).toHaveLength(4); // 不发 continuation
+		expect(session.state!.continuationsSent).toBe(4);
+		expect(h.piCalls).toHaveLength(callsBefore); // 到期零回调（timer 已取消）
 	});
 });
 

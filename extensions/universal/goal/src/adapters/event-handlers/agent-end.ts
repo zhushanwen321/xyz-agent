@@ -292,18 +292,29 @@ async function handleContinuation(
 		// 可能带崩 pi 进程。整体 try/catch：stale ctx（session 关闭/替换后 ctx 的
 		// isIdle / sessionManager getter 走 assertActive 抛错，development-guide
 		// §11.1）等异常降级为一条 goal:log 记录后放弃，goal 状态仍在盘上，后续任意
-		// agent_end 会重新决策。
+		// agent_end 会重新决策。（正常运行时路径的兜底：session_shutdown 已在
+		// invalidate 前取消旧 timer，stale 到期属极端残留场景。）
 		try {
 			fireBackoffContinuation(session, ports, ctx, cfg, goalId);
 		} catch (err) {
-			// pi.appendEntry 是 ExtensionAPI 层方法（无 ctx 的 assertActive stale 门控），
-			// stale 场景仍可落 goal:log 供排查
-			pi.appendEntry("goal:log", {
-				timestamp: Date.now(),
-				level: "warn",
-				component: "goal:agent-end",
-				message: `backoff continuation dropped after error: ${String(err)}`,
-			});
+			// MF-R2-1 兜底：pi.appendEntry 与 ctx 同生命周期（loader.js appendEntry
+			// 首行 assertActive，0.84.4 实装核对）——stale 场景此调用同样必抛，
+			// 故降级日志自包 try/catch，保证 catch 块自身零抛出。放弃日志无害：
+			// goal 状态在盘上，后续任意 agent_end 会重新决策。
+			try {
+				pi.appendEntry("goal:log", {
+					timestamp: Date.now(),
+					level: "warn",
+					component: "goal:agent-end",
+					message: `backoff continuation dropped after error: ${String(err)}`,
+				});
+			} catch (logErr) {
+				// 刻意放弃：appendEntry（goal:log 落盘通道）自身失效的场景（stale /
+				// runtime 失效）下再调任何 runtime 方法都会二次抛出——本 catch 存在的
+				// 意义即阻断该 uncaughtException 路径。void 显式忽略，对齐
+				// extension-logger 内部 appendEntry 失败兜底的既定惯例。
+				void logErr;
+			}
 		}
 	}, delayMs);
 }

@@ -31,7 +31,7 @@ import { updateWidget } from "../projection/widget";
 import { finalizeAndPersist, persistState, tickState } from "../service";
 import type { GoalHistoryEntry } from "../ports";
 import type { GoalSession } from "../session";
-import { clearGoalSession } from "../session";
+import { clearGoalSession, cancelContinuationTimer } from "../session";
 import { buildPorts } from "./ports";
 import { CRITERIA_HINTS_SLASH, validateSuccessCriteriaItems } from "./success-criteria";
 
@@ -124,10 +124,7 @@ function handlePause(pi: ExtensionAPI, session: GoalSession, ctx: ExtensionConte
 	state.status = transitionStatus(state.status, "paused");
 	// W5：用户主动叫停 → 取消待发的退避 continuation（paused 期间不自动续跑；
 	// resume 后由其触发的 user message 重新驱动循环）
-	if (session.continuationTimer !== null) {
-		clearTimeout(session.continuationTimer);
-		session.continuationTimer = null;
-	}
+	cancelContinuationTimer(session);
 
 	const ports = buildPorts(pi, ctx);
 	persistState(session, ports);
