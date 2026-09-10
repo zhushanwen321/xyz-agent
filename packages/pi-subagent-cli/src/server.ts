@@ -45,7 +45,7 @@ import {
 import { PI_ADAPTER_VERSION } from "./constants.ts";
 import { PiEngine } from "./pi-engine.ts";
 import type { ChatHostChannels } from "./chat-session.ts";
-import type { EnginePort, EngineStream, EngineCtxModel, RunContext } from "./port-types.ts";
+import { parseCtxModel, type EnginePort, type EngineStream, type EngineCtxModel, type RunContext } from "./port-types.ts";
 import { toErrorMessage } from "./error-message.ts";
 
 /** 出站帧写入面（main.ts 注入 process.stdout；测试注入内存缓冲）。 */
@@ -379,14 +379,6 @@ export class EngineProtocolServer {
     if (frame.error !== undefined) pending.reject(new Error(`reverse request ${String(id)} rejected: ${toErrorMessage(frame.error)}`));
     else pending.resolve(frame.result as ReverseResponseResult);
   }
-}
-
-/** ctx.ctxModel（"provider/id" canonical 词形）→ 本地 EngineCtxModel。 */
-function parseCtxModel(ref: string | undefined): EngineCtxModel | undefined {
-  if (ref === undefined || ref.trim() === "") return undefined;
-  const slash = ref.indexOf("/");
-  if (slash <= 0 || slash === ref.length - 1) return undefined;
-  return { provider: ref.slice(0, slash), id: ref.slice(slash + 1) };
 }
 
 /** unknown → 协议错误帧载荷（可操作恢复指引，规则 16）。 */

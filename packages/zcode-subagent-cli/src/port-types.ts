@@ -1,91 +1,28 @@
 // src/port-types.ts
 //
-// EnginePort / RunContext / EngineRunResult 的引擎包本地契约面（W5 迁移承接）。
+// EnginePort / RunContext / EngineRunResult 的引擎包契约面——re-export shim
+// （S4 簇 1 收编：W5 迁移承接的本地镜像七符号 + server.ts 的 parseCtxModel 单源
+// 收编 SDK port-contract；本包 import 点零改写）。
 //
-// 为什么本地镜像而非 SDK 契约：EnginePort 是 core 侧编排契约（实现方与上层都在
-// core/宿主进程），SDK 类型闭包只收「跨进程协议可序列化面」（AgentCallOpts 子集 /
-// 事件 / handle / outcome——见 SDK contract-types.ts 字段裁决）。引擎进程内的
-// ZcodeEngine 实现本接口，由协议服务器（server.ts）映射到 10 正向方法——映射语义
-// 与 core RemoteEngine（对端）互为镜像。字段与 core src/execution/engine/port.ts
-// 逐字段等价；漂移面由 W10 conformance 套件覆盖（本包过渡期与 core 双轨，core 侧
-// 原件未动）。
+// 原头注「本地镜像而非 SDK 契约」的理由已随收编消解：这是 W5/W7 双轨沉淀后的
+// 收编——RunContext 含 AbortSignal/回调/EngineStream 非序列化成员，SDK 侧收主
+// barrel 而非 protocol/ 子入口（protocol/ 是 semver 收窄的跨进程可序列化面，
+// 跨进程面经 server.ts 帧映射）。字段与 core src/execution/engine/port.ts 的
+// 漂移面由 W10 conformance 套件继续覆盖（core 侧宿主契约不收编）。
+//
+// 命名：全量任务声明 SDK 侧名 EngineAgentCallOpts（SDK 主 barrel 已有 protocol
+// 的 AgentCallOpts 引擎面子集，同名不可共存），shim 转名保本包消费面不变。
+// onChildSpawned 统一为窄载荷形态（原 zcode 版 ChildProcess 全句柄——生产零
+// 调用（D6），形态统一无行为影响）。
 
-import type { ChildProcess } from "node:child_process";
-
-/**
- * 本地全量任务声明 = SDK AgentCallOpts 引擎面子集 + 协议 ctx 还原字段（model/cwd/
- * schemaEnv——SDK 契约把它们从 task 移到 run.params.ctx，进程内接口合回单对象；
- * server.ts 做 ctx→task 还原，与 core RemoteEngine.toSdkTaskSubset 镜像）。
- */
-export type AgentCallOpts = SdkAgentCallOpts & {
-  model?: string;
-  cwd?: string;
-  schemaEnv?: string;
-};
-
-import type {
-  AgentCallOpts as SdkAgentCallOpts,
-  AgentEvent,
-  AgentOutcome,
-  EngineCapabilities,
-  EngineHandleData,
-  InteractAction,
-  InteractResult,
-  ProbeReport,
-  SessionView,
+export type {
+  EngineAgentCallOpts as AgentCallOpts,
+  EngineCtxModel,
+  EngineStream,
+  RunContext,
+  EngineHandle,
+  EngineRunResult,
+  EnginePort,
 } from "@zhushanwen/subagent-engine-sdk";
 
-/**
- * 引擎进程内的 ctxModel 形态（core ModelInfo 的结构等价镜像——仅 id/provider 被引擎
- * 消费，name/reasoning 等字段透传保留防测试/未来消费面漂移）。
- */
-export interface EngineCtxModel {
-  id: string;
-  provider: string;
-  name?: string;
-  reasoning?: boolean;
-  thinkingLevelMap?: Record<string, unknown>;
-  contextWindow?: number;
-}
-
-/** text_delta streaming 出口（协议 host/streamDelta 的本地承载）。 */
-export interface EngineStream {
-  onDelta(delta: string): void;
-}
-
-/** run 的运行期上下文（core RunContext 逐字段等价镜像，见文件头）。 */
-export interface RunContext {
-  taskId: string;
-  poolKey: string;
-  signal?: AbortSignal;
-  onEvent?: (event: AgentEvent) => void;
-  ctxModel?: EngineCtxModel;
-  stream?: EngineStream;
-  schemaEnv?: string;
-  engineFallback?: { from: string; reason: string };
-  onPoolResolved?: (poolKey: string) => void;
-  onHandleReady?: (partial: Pick<EngineHandleData, "sessionRef" | "poolKey">) => void;
-  onChildSpawned?: (child: ChildProcess) => void;
-}
-
-export interface EngineHandle {
-  readonly data: EngineHandleData;
-}
-
-export interface EngineRunResult {
-  handle: EngineHandle;
-  outcome: AgentOutcome;
-}
-
-/** 引擎进程内的引擎契约点（core EnginePort 的结构等价镜像）。 */
-export interface EnginePort {
-  readonly id: string;
-  capabilities(): EngineCapabilities;
-  probe(opts?: { force?: boolean }): Promise<ProbeReport>;
-  run(task: AgentCallOpts, ctx: RunContext): Promise<EngineRunResult>;
-  interact(handle: EngineHandle, action: InteractAction): Promise<InteractResult>;
-  read(handle: EngineHandle): Promise<SessionView>;
-  listModels?(): Array<{ id: string; name?: string }> | null;
-  validateModel?(modelRef: string | undefined): { canonicalRef: string };
-  dispose?(): Promise<void>;
-}
+export { parseCtxModel } from "@zhushanwen/subagent-engine-sdk";

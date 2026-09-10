@@ -214,3 +214,33 @@ export function armEngineSelfDestruct(opts: EngineSelfDestructOptions): ReverseR
     },
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NDJSON 行泵（子进程 stdout 拆行）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 流式 NDJSON 行泵：utf8 解码 + 缓冲累积 + "\n" 拆行循环（S4 簇 5b 收编：pi
+ * spawn-run-pump 与 zcode connection 的逐字同构段单源化，实现以 pi 版为基线）。
+ * 末行无换行符时滞留缓冲（NDJSON 语义：行以 \n 定界）；不监听 end/close/error——
+ * 生命周期接线（close 收尾/error 兜底）由调用方自行挂接。stream 为 null/undefined
+ * （无 stdio）时无操作，与原调用点 `child.stdout?.` 可选链语义等价。
+ */
+export function pumpNdjsonLines(
+  stream: NodeJS.ReadableStream | null | undefined,
+  onLine: (line: string) => void,
+): void {
+  if (stream === null || stream === undefined) return;
+  stream.setEncoding("utf8");
+  let buffer = "";
+  stream.on("data", (chunk: string) => {
+    buffer += chunk;
+    let nl = buffer.indexOf("\n");
+    while (nl >= 0) {
+      const line = buffer.slice(0, nl);
+      buffer = buffer.slice(nl + 1);
+      onLine(line);
+      nl = buffer.indexOf("\n");
+    }
+  });
+}

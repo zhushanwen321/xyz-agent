@@ -22,6 +22,9 @@ import { computed, ref } from 'vue'
 import type { ComputedRef } from 'vue'
 import type { Segment } from '@xyz-agent/shared'
 // AC10 跨域铁律：session 域经 '@xyz-agent/core/domain/session' 公开 index API 消费（禁内部模块相对路径）
+// migrateImageSegments：tmpdir image 段迁移单源原语（S4-A2 收口——原本文件私有 migrateTmpdirImages
+// 与 create-session-flow 私有实现逐字同构，双份合一）
+import { migrateImageSegments } from '@xyz-agent/core/domain/session'
 import type { CreateSessionFlowInput } from '@xyz-agent/core/domain/session'
 import type { ThinkingLevel } from '@xyz-agent/shared'
 import {
@@ -47,7 +50,6 @@ import { lookup as lookupRememberedLevel } from '../composer/model-thinking-memo
 import { getSettingsStore } from '../settings'
 import type {
   NewTaskFlowDeps,
-  ImageMigratePort,
 } from './ports'
 
 /**
@@ -94,43 +96,6 @@ function buildFallbackLaunchInput(): LaunchConfigInput {
     defaultModel: settings.defaultModel.value,
     getSupportedLevels: (modelId) => supportedLevelsOf(modelId, settings.providers.value),
   }
-}
-
-/**
- * 把 landing 态落 tmpdir 的图片 move 到 <dataDir>/attachments/<sessionId>/（持久化）。
- *
- * 单文件失败不阻断（OS 可能已清理 tmpdir），用 Promise.allSettled 收集结果，
- * 失败项 console.warn 后跳过。返回成功迁移的 Map<oldPath, newPath>，供调用方更新 segments.path。
- *
- * 边界（C-W5-2）：创建分支的迁移已下沉 core createSessionFlow（返回 migratedSegments），
- * 本函数仅保留给 retry/预建分支（session 已存在，不调 createSessionFlow）的 tmpdir image 迁移。
- *
- * migrateSessionImage 在 web/mock 环境返回 undefined（非 reject），不进 migrated；调用方据此保留原 path。
- */
-async function migrateTmpdirImages(
-  images: Array<Extract<Segment, { type: 'image' }>>,
-  sessionId: string,
-  migrateImage: ImageMigratePort['migrateImage'],
-): Promise<Map<string, string>> {
-  const migrated = new Map<string, string>()
-  const results = await Promise.allSettled(
-    images.map(async (img) => {
-      const result = await migrateImage({
-        fromPath: img.path,
-        sessionId,
-        fileName: img.fileName,
-      })
-      if (result?.path) {
-        migrated.set(img.path, result.path)
-      }
-    }),
-  )
-  results.forEach((r, i) => {
-    if (r.status === 'rejected') {
-      console.warn(`[useNewTaskFlow] image migrate failed: ${images[i].path}`, r.reason)
-    }
-  })
-  return migrated
 }
 
 /**
@@ -364,31 +329,21 @@ export function useNewTaskFlow(deps: NewTaskFlowDepsWithLaunch) {
 
   /**
    * retry/预建分支：session 已存在，不调 createSessionFlow。landing 态 tmpdir image 段
-   * （用户重试时新贴的图）需侧迁移（createSessionFlow 未跑，migration 未发生）。
+   * （用户重试时新贴的图）经 migrateImageSegments 单源迁移（createSessionFlow 未跑，
+   * migration 未发生）；partial-fail toast 判定留本编排层（session 域原语不管 UI 提示）。
    */
   async function migrateRetryImages(segments: Segment[]): Promise<Segment[]> {
-    const needsMigrateImages = segments.filter(
-      (s): s is Extract<Segment, { type: 'image' }> =>
-        s.type === 'image' && s.needsMigrate === true,
-    )
-    if (needsMigrateImages.length === 0) return segments
-    const migrated = await migrateTmpdirImages(
-      needsMigrateImages,
+    const { segments: finalSegments, migratedCount, total } = await migrateImageSegments(
+      segments,
       currentSession.value!.id,
-      ports.migrateImage.migrateImage,
+      (p) => ports.migrateImage.migrateImage(p),
+      { logTag: 'useNewTaskFlow' },
     )
-    const finalSegments = segments.map((s) => {
-      if (s.type === 'image' && migrated.has(s.path)) {
-        // 迁移成功：更新 path + 重置 needsMigrate=false（避免后续重发误迁移）。
-        return { ...s, path: migrated.get(s.path)!, needsMigrate: false }
-      }
-      return s
-    })
-    if (migrated.size < needsMigrateImages.length) {
+    if (migratedCount < total) {
       // 部分迁移失败：toast 提示（不阻断发送）
       ports.toast.warning(
         ports.t('composable.imageMigratePartialFailed', {
-          count: needsMigrateImages.length - migrated.size,
+          count: total - migratedCount,
         }),
       )
     }
@@ -418,7 +373,7 @@ export function useNewTaskFlow(deps: NewTaskFlowDepsWithLaunch) {
     void ports.fileTree.loadTree(newSid)
     // per-session sid：显式传 newSid，不依赖全局 activeId（双 panel 隔离）
     // tmpdir 迁移已在上方分支完成（create 分支=createSessionFlow.migratedSegments，
-    // retry 分支=migrateTmpdirImages），finalSegments 即迁移后的段。bashCommand 无图片段，无副作用。
+    // retry 分支=migrateRetryImages），finalSegments 即迁移后的段。bashCommand 无图片段，无副作用。
     // 发送阶段：bash 首发（landing 态 !/!! 前缀）走 sendBash，否则普通 send
     // bash 不经 segments（原始 shell 文本透传 pi bash RPC），finalSegments 仅用于 tmpdir 迁移流程（bash 无图片段，无副作用）
     if (bashCommand) {

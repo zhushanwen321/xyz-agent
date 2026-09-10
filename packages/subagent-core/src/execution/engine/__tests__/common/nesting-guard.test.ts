@@ -1,5 +1,11 @@
 // nesting-guard.test.ts —— 嵌套标记注入与原生标记剥离（D8 双层防护）。
 //
+// 实现体已收编 @zhushanwen/subagent-engine-sdk（common/nesting-guard.ts 为
+// re-export shim，s4-reuse 簇 2）：SDK 侧 __tests__/primitives.test.ts 已有同语义
+// 断言，本文件保留 core 侧独有细粒度断言——精确名 vs 前缀剥离边界（CLAUDE_UNRELATED）、
+// 非 '1' 值不抛、空白 env 最小产出。错误形态随收编改 NestedSpawnRejectedError
+//（code/recovery 文案与 core 词表逐字一致）。
+//
 // 三视角：①构建者——三引擎原生标记（PI_SUBAGENT_* / CLAUDECODE / ZSW_NESTED）全部
 // 剥离且其余 env 保留；②使用者——子代理进程内 assertNotNestedSpawn 同步拒绝且文案
 // 可操作；③观察者——产出的 env 是新对象（不污染入参）。
@@ -9,9 +15,9 @@ import { describe, expect, it } from "vitest";
 import {
   assertNotNestedSpawn,
   buildNestedSpawnEnv,
+  NestedSpawnRejectedError,
   NESTED_SPAWN_ENV,
 } from "../../common/nesting-guard.ts";
-import { EngineError } from "../../common/errors.ts";
 
 describe("buildNestedSpawnEnv", () => {
   it("注入统一标记 XYZ_AGENT_SUBAGENT=1", () => {
@@ -60,12 +66,12 @@ describe("buildNestedSpawnEnv", () => {
 
 describe("assertNotNestedSpawn", () => {
   it("检测到统一标记（本进程已是 subagent）→ 抛 nested_spawn_rejected", () => {
-    expect(() => assertNotNestedSpawn({ [NESTED_SPAWN_ENV]: "1" })).toThrowError(EngineError);
+    expect(() => assertNotNestedSpawn({ [NESTED_SPAWN_ENV]: "1" })).toThrowError(NestedSpawnRejectedError);
     try {
       assertNotNestedSpawn({ [NESTED_SPAWN_ENV]: "1" });
       expect.unreachable("should throw");
     } catch (err) {
-      const e = err as EngineError;
+      const e = err as NestedSpawnRejectedError;
       expect(e.code).toBe("nested_spawn_rejected");
       // 文案说明防护规则（标记名）+ 指向 task 内自行完成
       expect(e.message).toContain("XYZ_AGENT_SUBAGENT");

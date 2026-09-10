@@ -46,3 +46,18 @@ export * from "./relay-env.ts";
 // object 入参 JSON.stringify 结构化文本，Error 入参逐字节不变）。
 export * from "./error-message.ts";
 export * from "./best-effort.ts";
+
+// journal 文件读取单源（S4 簇 6：core event-journal 与 zcode journal-io 的
+// replayJournal/parseLine 逐字等价双副本收编；JournalWriter 写侧留 core）。
+export * from "./journal-io.ts";
+
+// 引擎进程内契约面七符号 + parseCtxModel（S4 簇 1：pi/zcode port-types.ts 本地镜像
+// 收编，两包改 re-export shim。收主 barrel 不进 protocol/——RunContext 含
+// AbortSignal/回调非序列化成员；全量任务声明名 EngineAgentCallOpts 避让 protocol
+// 的 AgentCallOpts 引擎面子集）。
+export * from "./port-contract.ts";
+
+// 引擎 CLI 进程入口样板（S4 簇 2：pi/zcode main.ts 同构段收编，两包收缩为薄层；
+// armEngineSelfDestruct 与 server 构造留薄层，configureLoggerSink/readline 循环
+// 在此）。
+export * from "./cli-entry.ts";

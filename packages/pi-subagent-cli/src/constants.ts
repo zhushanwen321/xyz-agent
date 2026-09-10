@@ -12,15 +12,18 @@ export const PI_ADAPTER_VERSION = "1.0.0";
 /** pi 无隔离池（PI_CODING_AGENT_DIR 全局一份，设计 §3.3.9），poolKey 恒 'shared'。 */
 export const PI_POOL_KEY = "shared";
 
-/** pi 域 schema env 名（core shared/schema-env.ts SSOT 的包内等值锚点——SDK 未
- *  导出该常量；structured-output 扩展读取它注册 tool）。 */
+/** pi 域 schema env 名（宿主侧唯一活定义；structured-output 扩展读取它注册 tool——
+ *  跨包契约另一端为该扩展的 ENV_SCHEMA 副本，等值由其
+ *  tests/cross-package-contract.test.ts 守卫）。 */
 export const SCHEMA_ENV_VAR = "PI_WORKFLOW_SCHEMA";
 
-/** schema env 上限的 KiB 数与每 KiB 字节数（E2BIG 防护，与 core SCHEMA_ENV_MAX_BYTES 等值）。 */
+/** schema env 上限的 KiB 数与每 KiB 字节数（E2BIG 防护）。 */
 const SCHEMA_ENV_MAX_KIB = 256;
 const BYTES_PER_KIB = 1024;
 
-/** schema env 的 UTF-8 字节上限（256KiB）。 */
+/** schema env 的 UTF-8 字节上限（256KiB）：env 值随 spawn 走 execve/ARG_MAX 语义，
+ *  超大值在 spawn 调用点报 E2BIG（与 schema 内容无关的表象，难归因）——故注入前
+ *  按此上限 fail-fast 拒绝（spawn-args.ts applySchemaEnvToChildEnv）。 */
 export const SCHEMA_ENV_MAX_BYTES = SCHEMA_ENV_MAX_KIB * BYTES_PER_KIB;
 
 /** [D3-① race-F4] SIGTERM 优雅窗口：30s 超窗升级 SIGKILL（core 现状值）。 */

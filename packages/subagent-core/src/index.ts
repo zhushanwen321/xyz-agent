@@ -509,10 +509,14 @@ export type {
 // LifecycleDeps.store 用；pi 壳继续用 session 锚定的 JsonlRunStore。
 // DEFAULT_* 两常量：壳 jsonl-run-store.ts 生产消费（D3 判定进 barrel），
 // u-2c 删 ./* 通配后深路径仅测试侧 vitest alias 可解析，生产消费必须走 barrel。
+// pruneStateFilesBeyondCap：磁盘 retention 裁剪单源（S4-A7）——壳 jsonl-run-store
+// 的同构私有实现已删，改 import 本函数并注入自身 logger tag / toErrorMessage。
 export {
   DEFAULT_SAVE_MIN_INTERVAL_MS,
   DEFAULT_STATE_MAX_RUNS,
   FileRunStore,
+  pruneStateFilesBeyondCap,
+  type PruneStateDeps,
 } from "./orchestration/file-run-store.ts";
 
 // ── 快照 codec（U8 / D4）──────────────────────────────────────

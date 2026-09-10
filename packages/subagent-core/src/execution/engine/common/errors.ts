@@ -134,15 +134,6 @@ export function promptTooLargeError(actualBytes: number, limitBytes: number): En
   );
 }
 
-/** nested_spawn_rejected（nesting-guard 消费）：文案说明防护规则 + 指向 task 内自行完成。 */
-export function nestedSpawnRejectedError(): EngineError {
-  return new EngineError(
-    "nested_spawn_rejected",
-    "this process is already a subagent (XYZ_AGENT_SUBAGENT=1)",
-    DEFAULT_RECOVERY_HINTS.nested_spawn_rejected,
-  );
-}
-
 /** stdout 尾部回显上限（engine_timeout / engine_run_failed 的错误规格载体系数）。 */
 export const STDOUT_TAIL_ECHO_CHARS = 2000;
 

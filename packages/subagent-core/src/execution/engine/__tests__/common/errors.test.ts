@@ -14,7 +14,6 @@ import {
   engineRunFailedDetail,
   engineTimeoutDetail,
   isEngineErrorCode,
-  nestedSpawnRejectedError,
   promptTooLargeError,
   STDOUT_TAIL_ECHO_CHARS,
 } from "../../common/errors.ts";
@@ -92,13 +91,6 @@ describe("具名构造器", () => {
     expect(err.recovery).toMatch(/stdin/);
   });
 
-  it("nestedSpawnRejectedError：说明防护规则 + 指向 task 内自行完成", () => {
-    const err = nestedSpawnRejectedError();
-    expect(err.code).toBe("nested_spawn_rejected");
-    expect(err.message).toContain("XYZ_AGENT_SUBAGENT");
-    expect(err.recovery).toMatch(/inside the current task/);
-  });
-
   it("engineTimeoutDetail：含 stdout 尾部 + engine: pi 重跑建议", () => {
     const detail = engineTimeoutDetail("partial stdout output");
     expect(detail).toContain("partial stdout output");
@@ -125,6 +117,9 @@ describe("具名构造器", () => {
     expect(engineRunFailedDetail("crash", null, "t")).toContain("killed by signal");
   });
 
+  // nestedSpawnRejectedError 用例已随构造器删除（nesting-guard 收编 SDK 后死导出，
+  // 活体单源 SDK nesting-guard.ts NestedSpawnRejectedError，其行为由 SDK
+  // __tests__/primitives.test.ts + 本目录 nesting-guard.test.ts 覆盖）。
   // schemaEmulationFailedDetail 用例已随函数删除（test-only 死镜像收口，活体单源
   // SDK error-codes.ts，其行为由 SDK __tests__/primitives.test.ts 覆盖）。
 });

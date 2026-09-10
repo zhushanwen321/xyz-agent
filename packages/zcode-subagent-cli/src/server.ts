@@ -42,7 +42,7 @@ import {
 
 import { ZCODE_ADAPTER_VERSION } from "./constants.ts";
 import { createDefaultZcodeEngine } from "./registration.ts";
-import type { EnginePort, EngineStream, EngineCtxModel, RunContext } from "./port-types.ts";
+import { parseCtxModel, type EnginePort, type EngineStream, type EngineCtxModel, type RunContext } from "./port-types.ts";
 import { toErrorMessage } from "./error-message.ts";
 
 /** 出站帧写入面（main.ts 注入 process.stdout；测试注入内存缓冲）。 */
@@ -311,14 +311,6 @@ function probeParamsOf(params: unknown): { force?: boolean } | undefined {
   return typeof params === "object" && params !== null
     ? (params as { force?: boolean })
     : undefined;
-}
-
-/** ctx.ctxModel（"provider/id" canonical 词形）→ 本地 EngineCtxModel。 */
-function parseCtxModel(ref: string | undefined): EngineCtxModel | undefined {
-  if (ref === undefined || ref.trim() === "") return undefined;
-  const slash = ref.indexOf("/");
-  if (slash <= 0 || slash === ref.length - 1) return undefined;
-  return { provider: ref.slice(0, slash), id: ref.slice(slash + 1) };
 }
 
 /** unknown → 协议错误帧载荷（可操作恢复指引，规则 16）。 */

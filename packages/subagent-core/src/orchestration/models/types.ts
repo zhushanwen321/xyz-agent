@@ -7,11 +7,18 @@
  * 核心内容：
  * - 状态机：RunStatus = "running" | "done"（2 态，一次性生命周期，FR-3）
  * + DoneReason（completed/failed/aborted/budget_limited/time_limited）
- * - AgentCallOpts / AgentResult / AgentUsage（单次 agent 调用的输入/输出）
+ * - AgentCallOpts / AgentResult（单次 agent 调用的输入/输出，宿主面 SSOT 留守本地）
+ * + AgentUsage / ToolCallEntry / AgentFailureKind（自 SDK re-export，S4 簇 3 收编）
  * - ExecutionTraceNode / TracePatch / ToolCallEntry / WorkerLogEntry（trace 数据）
  *
  * 层归属：Engine（数据结构 + 不变式守卫）。
  */
+
+import type {
+  AgentFailureKind,
+  AgentOutcomeUsage as AgentUsage,
+  ToolCallEntry,
+} from "@zhushanwen/subagent-engine-sdk";
 
 import type { ExecutionRecord, WorktreeHandle } from "../../execution/types.ts";
 
@@ -235,46 +242,32 @@ export interface AgentCallOpts {
   permissionMode?: string;
 }
 
-/**
- * 单次 agent 调用的资源用量（FR-7 跨 turn 累积）。
- */
-export interface AgentUsage {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  cost: number;
-  contextTokens: number;
-  turns: number;
-}
-
-/**
- * 单次 tool 调用记录（FR-7 从 agent JSONL 流采）。
- */
-export interface ToolCallEntry {
- /** Tool name. */
-  name: string;
- /** Args preview string. */
-  input: string;
-}
-
-/**
- * 失败分诊结构化标签（D5-③，r1 MF4 钉正语义）。
- *
- * - stale_context：pi session context 被 compact/cancel/替换——重试无意义（同 call
- *   再次失败），不重试。
- * - schema_deterministic：确定性 schema 失败（SO tool 从未调用 / gate 终止 /
- *   不可满足 schema）——同 schema 重试必同结果，不重试。
- * - unknown：其余一切失败（瞬态 provider 错误、spawn 失败等）——**默认可重试**。
- *
- * **语义守恒（最高优先约束）**：unknown（含字段缺省）= 可重试——保持收敛前的
- * 默认重试语义；仅 stale_context 与 schema_deterministic 两态维持不重试特判。
- * 词表归属（产出侧单点识别）：stale_context / schema_deterministic 的识别词表
- * （stale 词表与确定性 schema 失败标记前缀）保留在产出侧
- * execution/engine/inproc pi 引擎目录/output-collector.ts 包内——词表漂移的失效模式是
- * failureKind=unknown → 保守重试（安全默认），不再是静默漏诊。
- */
-export type AgentFailureKind = "stale_context" | "schema_deterministic" | "unknown";
+// [S4 簇 3 收编] 以下三个契约类型本地定义已删除，自 @zhushanwen/subagent-engine-sdk
+// re-export（type-only，import 方路径零改动，结构等价由 protocol-closure.test.ts
+// 断言族守卫）：
+//   - AgentUsage ← SDK AgentOutcomeUsage（SDK 改名消歧：core 的两个同名 AgentUsage
+//     分属 execution 与 orchestration 域，本处锚定 orchestration 域——AgentResult.usage
+//     字段型，FR-7 跨 turn 累积）；
+//   - ToolCallEntry（单次 tool 调用记录，FR-7 从 agent JSONL 流采）；
+//   - AgentFailureKind（失败分诊结构化标签，D5-③）。
+// AgentCallOpts / AgentResult 留守本地（宿主面 SSOT——SDK 版 AgentCallOpts 是引擎面
+// 子集，字段裁决见 SDK contract-types 注释）。
+//
+// AgentFailureKind 语义守恒（最高优先约束，core 侧权威说明——SDK 侧为简版）：
+// - stale_context：pi session context 被 compact/cancel/替换——重试无意义（同 call
+//   再次失败），不重试。
+// - schema_deterministic：确定性 schema 失败（SO tool 从未调用 / gate 终止 /
+//   不可满足 schema）——同 schema 重试必同结果，不重试。
+// - unknown：其余一切失败（瞬态 provider 错误、spawn 失败等）——**默认可重试**。
+//   unknown（含字段缺省）= 可重试；仅 stale_context 与 schema_deterministic 两态
+//   维持不重试特判。词表归属（产出侧单点识别）：识别词表保留在产出侧
+//   execution/engine/inproc pi 引擎目录/output-collector.ts 包内——词表漂移的失效模式
+//   是 failureKind=unknown → 保守重试（安全默认），不再是静默漏诊。
+export type {
+  AgentFailureKind,
+  AgentOutcomeUsage as AgentUsage,
+  ToolCallEntry,
+} from "@zhushanwen/subagent-engine-sdk";
 
 /**
  * 单次 agent 调用的结果（统一形态）。

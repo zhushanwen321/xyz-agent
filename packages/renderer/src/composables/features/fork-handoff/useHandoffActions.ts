@@ -21,7 +21,7 @@ import { session as sessionApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useToast } from '@/composables/useToast'
 import { triggerEnterHandoffMode } from '@/composables/panel/useHandoffModeChannel'
-import { toErrorMessage } from '../../../lib/error-message'
+import { toErrorMessage } from '@xyz-agent/core'
 
 /**
  * Handoff 操作 composable。

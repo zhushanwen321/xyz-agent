@@ -43,6 +43,7 @@ import {
   buildNestedSpawnEnv,
   getLogger,
   killChain,
+  pumpNdjsonLines,
   spawnEngineChild,
 } from "@zhushanwen/subagent-engine-sdk";
 import {
@@ -457,18 +458,7 @@ export class AppServerConnection {
       }
     };
 
-    child.stdout?.setEncoding("utf8");
-    let buffer = "";
-    child.stdout?.on("data", (chunk: string) => {
-      buffer += chunk;
-      let nl = buffer.indexOf("\n");
-      while (nl >= 0) {
-        const line = buffer.slice(0, nl);
-        buffer = buffer.slice(nl + 1);
-        this.handleLine(line);
-        nl = buffer.indexOf("\n");
-      }
-    });
+    pumpNdjsonLines(child.stdout, (line) => this.handleLine(line));
 
     child.stderr?.setEncoding("utf8");
     child.stderr?.on("data", (chunk: string) => {

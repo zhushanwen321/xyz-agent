@@ -45,21 +45,52 @@ function deriveSessionLabel(text: string): string {
   return chars.slice(0, SESSION_LABEL_MAX).join('') + '…'
 }
 
+/** 图片迁移回调签名（SessionApiPort.migrateImage 与 ImageMigratePort.migrateImage 结构同型，C-W4-1）。 */
+export type MigrateImageFn = (
+  p: { fromPath: string; sessionId: string; fileName: string },
+) => Promise<{ path: string }>
+
+/** migrateImageSegments 返回：迁移后的段 + 成功计数（调用方做 partial-fail 判定）。 */
+export interface MigrateImageSegmentsResult {
+  /** 迁移后的段（无待迁移段原样返回；迁移成功 image 段 path 更新 + needsMigrate 重置 false） */
+  segments: Segment[]
+  /** 成功迁移的 image 段数 */
+  migratedCount: number
+  /** 待迁移的 image 段总数（needsMigrate=true 的段数） */
+  total: number
+}
+
 /**
- * 把 landing 态落 tmpdir 的图片 move 到 attachments/<sessionId>/（持久化）。
+ * tmpdir image 段迁移原语（单源）：扫描 segments 中 needsMigrate=true 的 image 段，
+ * 经 migrateImage 回调 move 到 attachments/<sessionId>/（持久化），返回更新后的段。
  *
- * 迁自 renderer useNewTaskFlow.migrateTmpdirImages。单文件失败不阻断（OS 可能已清理 tmpdir），
- * 用 Promise.allSettled 收集结果，rejected console.warn 后跳过。返回成功迁移的 Map<oldPath,newPath>。
+ * 为什么导出：创建分支（本文件 createSessionFlow）与 retry/预建分支
+ * （new-task-search flow.migrateRetryImages）消费同一迁移语义——双份实现曾因
+ * 各自演化产生漂移面（S4-A2 收口）。单文件失败不阻断（OS 可能已清理 tmpdir），
+ * Promise.allSettled 收集结果，rejected console.warn 后跳过（migratedCount < total
+ * 即部分失败，调用方自决 toast 提示）。migrateImage 回调在 web/mock 环境可能
+ * 返回 undefined（非 reject），不进 migrated，调用方据此保留原 path。
+ *
+ * [归位] 迁自 renderer useNewTaskFlow.migrateTmpdirImages + 本文件私有 migrateSegments
+ * （两处逐字同构，合一于此——session 域固有的图片归档副作用原语）。
  */
-async function migrateTmpdirImages(
-  images: Array<Extract<Segment, { type: 'image' }>>,
+export async function migrateImageSegments(
+  segments: Segment[],
   sessionId: string,
-  api: SessionApiPort,
-): Promise<Map<string, string>> {
+  migrateImage: MigrateImageFn,
+  opts?: { logTag?: string },
+): Promise<MigrateImageSegmentsResult> {
+  const logTag = opts?.logTag ?? 'createSessionFlow'
+  const needsMigrateImages = segments.filter(
+    (s): s is Extract<Segment, { type: 'image' }> => s.type === 'image' && s.needsMigrate === true,
+  )
+  if (needsMigrateImages.length === 0) {
+    return { segments, migratedCount: 0, total: 0 }
+  }
   const migrated = new Map<string, string>()
   const results = await Promise.allSettled(
-    images.map(async (img) => {
-      const result = await api.migrateImage({
+    needsMigrateImages.map(async (img) => {
+      const result = await migrateImage({
         fromPath: img.path,
         sessionId,
         fileName: img.fileName,
@@ -71,10 +102,17 @@ async function migrateTmpdirImages(
   )
   results.forEach((r, i) => {
     if (r.status === 'rejected') {
-      console.warn(`[createSessionFlow] image migrate failed: ${images[i].path}`, r.reason)
+      console.warn(`[${logTag}] image migrate failed: ${needsMigrateImages[i].path}`, r.reason)
     }
   })
-  return migrated
+  const finalSegments = segments.map((s) => {
+    if (s.type === 'image' && migrated.has(s.path)) {
+      // 迁移成功：更新 path + 重置 needsMigrate=false（避免后续重发误迁移）
+      return { ...s, path: migrated.get(s.path)!, needsMigrate: false }
+    }
+    return s
+  })
+  return { segments: finalSegments, migratedCount: migrated.size, total: needsMigrateImages.length }
 }
 
 /** createSessionFlow 的依赖注入上下文（壳注入实现，core 零跨包 import）。 */
@@ -162,20 +200,12 @@ function notifyCwdFallback(ctx: CreateSessionFlowCtx, reqCwd: string, actualCwd:
 
 /** step 7：migrateImages（needsMigrate image 段经 api.migrateImage 迁移，更新 path + 重置 needsMigrate）。 */
 async function migrateSegments(segments: Segment[], sessionId: string, api: SessionApiPort): Promise<Segment[]> {
-  const needsMigrateImages = segments.filter(
-    (s): s is Extract<Segment, { type: 'image' }> => s.type === 'image' && s.needsMigrate === true,
+  const { segments: migratedSegments } = await migrateImageSegments(
+    segments,
+    sessionId,
+    (p) => api.migrateImage(p),
   )
-  if (needsMigrateImages.length === 0) {
-    return segments
-  }
-  const migrated = await migrateTmpdirImages(needsMigrateImages, sessionId, api)
-  return segments.map((s) => {
-    if (s.type === 'image' && migrated.has(s.path)) {
-      // 迁移成功：更新 path + 重置 needsMigrate=false（避免后续重发误迁移）
-      return { ...s, path: migrated.get(s.path)!, needsMigrate: false }
-    }
-    return s
-  })
+  return migratedSegments
 }
 
 /**

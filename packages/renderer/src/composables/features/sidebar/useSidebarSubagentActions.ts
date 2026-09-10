@@ -17,7 +17,7 @@ import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
 import { openSubagent } from '@xyz-agent/core/domain/drawer'
 import * as sessionApi from '@xyz-agent/core/transport/api/domains/session'
-import { toErrorMessage } from '../../../lib/error-message'
+import { toErrorMessage } from '@xyz-agent/core'
 
 export function useSidebarSubagentActions(focusedSessionId: Ref<string | null>) {
   const { t } = useI18n()

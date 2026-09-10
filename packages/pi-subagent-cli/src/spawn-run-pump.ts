@@ -6,7 +6,7 @@
 
 import type { ChildProcess } from "node:child_process";
 
-import { getLogger } from "@zhushanwen/subagent-engine-sdk";
+import { getLogger, pumpNdjsonLines } from "@zhushanwen/subagent-engine-sdk";
 
 import { unregisterActiveChild } from "./active-children.ts";
 import { toErrorMessage } from "./error-message.ts";
@@ -227,18 +227,7 @@ export function wireChildStdoutPump(deps: StdoutPumpDeps): Promise<number> {
     deps.runEnd.resolveChatRun = resolveExit;
     const consumeLine = createLineConsumer(deps);
     const onClose = createCloseFinalizer(deps, resolveExit);
-    let buffer = "";
-    child.stdout?.setEncoding("utf8");
-    child.stdout?.on("data", (chunk: string) => {
-      buffer += chunk;
-      let nl = buffer.indexOf("\n");
-      while (nl >= 0) {
-        const line = buffer.slice(0, nl);
-        buffer = buffer.slice(nl + 1);
-        consumeLine(line);
-        nl = buffer.indexOf("\n");
-      }
-    });
+    pumpNdjsonLines(child.stdout, consumeLine);
     child.once("close", onClose);
     child.once("error", (err) => {
       logger.error(`[session-runner] child ${deps.recordId} error event`, {
