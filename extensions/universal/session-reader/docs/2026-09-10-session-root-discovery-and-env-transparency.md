@@ -937,7 +937,7 @@ npx tsx ./probe-find.mts
 | pi **没有** `--agent-dir` CLI flag（独立 CLI 仓的同名 flag 是其自建，非 pi 实装） | `dist/cli/args.js` grep `agent-dir` 零命中 | 已测 | — |
 | reap 判据 = argv `--session-dir` 精确相等 + ppid=1；env 判据被 SIP 探针在案否决 | `reap-orphan-pi.ts:12-27`（文件头注释 D4a/D4b）、`:147-160` | 读源码 | §6.12 |
 | `~/.xyz-agent/pi/` 根层只含 `agent/` + `sessions/` 两个子目录 | 实机 `ls` | 已测 | §6.11 |
-| xyz-agent 恒以 argv 传 18 个 mandatory extension 的 staged 路径；用户裸 pi 的 extension 走 settings.json 不进 argv | `rpc-client.ts:203-215` + `mandatory-extensions.json` + `~/.pi/agent/settings.json`（packages 列表） | 读源码 + 实测 | §6.12（§11.11 待实测全路径非空） |
+| xyz-agent 恒以 argv 传 18 个 mandatory extension 的 staged 路径（`--no-extensions` 恒带且只禁自动发现、显式 `--extension` 仍生效——pi help 原文 `dist/cli/args.js:294`）；**但 argv 同时也混有用户配置来源的路径**（活体实测 `~/.pi/agent/extensions/…`、项目 `.pi/extensions/…`、`~/.agents/skills`）——「用户 extension 不进 argv」被该实测证伪 | `rpc-client.ts:269,203-215` + `mandatory-extensions.json` + 活体 `ps -A -o pid,command` | 读源码 + 实测 | §6.12 |
 
 ### 12.4 变更历史
 
@@ -951,14 +951,6 @@ npx tsx ./probe-find.mts
   6. **事实勘误（主审 SG-A）**：活跃 subagent 的 ppid = **主 pi pid**（subagent 由主 pi 进程内的 extension spawn，`argv-mirror.ts:60-64`），非 runtime pid；结论不变（ppid≠1 不杀），孤儿 subagent 收殓为两轮时序，V10③ 校准。
   7. **判据原理性极限声明（主审 SG-D）**：完整复制 xyz pi argv 重跑的进程与真孤儿在判据维度同形，原理上不可区分——接受极限，不为此加机制。
   8. **§11.12 全收敛（影响面 INFO）**：background-task-reaper（扫 agentDir 派生目录）与 workflow-extractor（按文件解析不枚举）源码核实兼容，撤除实施期实测项。
-- v6（2026-09-10）：第 4 轮（方案 B 专项，主审 4 MF + 影响面 7 MF，去重后 9 条独立）全量修订。
-  1. **§6.11 前置 1 重写（MF-A）**：v6「迁移前 reap 用旧判据」不成立——旧判据期望值由 `getSessionsDir()` 代码推导（B 版返回新路径 ≠ 孤儿 argv 旧值）、新判据清单在首个 spawn 前不存在，两条路径都收不了。改「迁移模块导出 `LEGACY_PI_SESSIONS_DIR` 常量 + reap 期望值双候选精确匹配」；§7A 同步。
-  2. **退役范围拆分（MF-B）**：`migrateToPiSubdir` 的 `isPackaged()` bundled 同步段（`pi-maintenance.ts:107-126`，全仓唯一 skills 同步点）保留为独立 `syncBundledResources()` 挂 aligned 入口（覆盖全新安装出口②）；仅目录迁移段退役——v6「整体退役」会让打包版首装缺 pi 技能。
-  3. **U18 守卫改独立检查器（MF-C）**：v6 拟挂的 `check_path_whitelist.py`（TARGETS 单文件）与 `check-pi-sync.mjs`（版本锚点）均无字面量扫描能力，照挂即假防护；改为显式文件范围 + 字面量模式 + **集中豁免常量表**（`LAYOUT_LITERAL_EXEMPT`，含 v6 漏列的 `find-pi-executable.ts:47` bundled pi 二进制——漏列则打包版起不了 pi）+ pre-commit 新钩子。
-  4. **守卫加第 0d 分支（SG-1）**：「迁移完成 → 装回旧版产生增量 → 升回新版」的 agent+pi 并存态原先无定义（步骤 2 rename 撞非空 agent/ 即 ENOTEMPTY）；显式策略 = 不自动迁移 + doctor 持续告警 + 人工处理指引。
-  5. **清单登记规则补 dev 形态（SG-2）**：dev staged 路径 `<projectRoot>/apps/electron/resources/extensions/`（`relay-paths.ts:50`）不在原两根之下 → dev 清单恒空、dev 孤儿全漏收；补第三根。
-  6. **§7A 两处 v5 残留同步（SG-3）**：「全部 --extension/--skill 值」→「仅 staged 专属路径」；reap 判据补 `--no-extensions` 主判别位。
-  7. **§11.12 全收敛（INFO）**：background-task-reaper / workflow-extractor 源码核实兼容，撤除实施期实测项。
 - v6（2026-09-10）：第 4 轮（方案 B 专项，主审 4 MF + 影响面 7 MF，去重后 9 条独立）全量修订。**两个预设攻击点被双向裁决**：pi 子进程 cwd 链（rpc-client→process-manager→session-lifecycle→pi main.js→getDefaultSessionDir）实测成立，B 默认派生可行；pi 家级足迹为零（dist 全量 grep），`agent/` 上移不与根层冲突。修复：
   1. **§6.12 reap 判据改双层**（`--no-extensions` 存在 + 白名单清单只登记 staged 专属路径）：活体进程证据击穿 v5 的「用户 extension 不进 argv」假设（TaiJi argv 实测混有 `~/.pi/…` 用户路径，AGENTS.md 实测命令模板本身带 `--extension`）；补清单写语义（全量重算覆盖 + 原子写）与收殓范围扩大声明（孤儿 subagent 从不收变收）。
   2. **§6.11 迁移三处修复**：幂等出口①与续传承诺的矛盾（守卫 0a 续传模式 + 完成标记为唯一完成判据）；`migrateToPiSubdir` 的 mkdir 前置撞步骤 2 rename（ENOTEMPTY，存量机首启即崩 → 旧函数退役）；sidecar 白名单改前缀匹配（实测存在 `.handoff.json` 第五种）+ 遍历声明递归（dev 实测存在 `--private-tmp--/` 子目录）。
