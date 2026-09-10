@@ -406,8 +406,9 @@ describe('MessageDispatcher occupancy 挂点', () => {
     // finally 兜底复位（interpreter 的 compaction_end #6 不到达）。
     const { dispatcher, publish, session, compactFn } = makeDispatcher({ compactBehavior: 'error' })
     compactFn.mockImplementation(async () => {
-      session.isCompacting = true
-      session.occupancy = { turn: 'idle', compacting: true, bash: false }
+      // 模拟 compaction_start 已到达（interpreter #5 语义）：经原语置位（u3c readonly 收口；
+      // publish 传 null 与改前直写一致不广播——本用例焦点是 finally 兜底复位帧）
+      applySessionOccupancyTransition(session, null, 'compacting-start')
       throw new Error('compact transport exploded')
     })
     await expect(dispatcher.compact('s1')).rejects.toThrow('compact transport exploded')

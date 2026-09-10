@@ -49,6 +49,7 @@ import type {
   IManagedSessionView,
   PiTranslatedEvent,
   SessionOccupancy,
+  SessionOccupancyStateStore,
   SessionOccupancyTransition,
   UserStoppedMarkStore,
 } from './types.js'
@@ -153,10 +154,12 @@ const SESSION_OCCUPANCY_TRANSITIONS: Record<
  * - 三布尔直写在 session 记录（派生存储，幂等无广播语义）；occupancy 合并与去重复用
  *   updateSessionOccupancy 既有机制。
  *
- * u3b 挂点迁移完成后本原语是唯一写入口（u3c readonly 收紧后绕开原语的直写在编译期红）。
+ * u3b 挂点迁移完成后本原语是唯一写入口；u3c readonly 收紧已落地——三布尔在 IManagedSessionView
+ * 为 readonly 派生存储，原语经 SessionOccupancyStateStore 写视图（types.ts）完成内部派生写，
+ * 绕开原语的直写在编译期红（约束 C-data-17）。
  */
 export function applySessionOccupancyTransition(
-  session: Pick<IManagedSessionView, 'id' | 'occupancy' | 'isGenerating' | 'isCompacting' | 'isBashRunning'>,
+  session: SessionOccupancyStateStore,
   publish: { publish(sessionId: string, msg: ServerMessage): void } | null | undefined,
   transition: SessionOccupancyTransition,
 ): void {

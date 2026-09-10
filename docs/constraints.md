@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 91 条（生成于 2026-09-07）。
+共 92 条（生成于 2026-09-10）。
 
 ## pi 关系（外部依赖边界）
 
@@ -44,6 +44,7 @@
 | C-data-14 | hydrate 记录尾窗锚（piEntryId），load-more 按锚切分只前插；id 去重降级为兜底断言 | packages/renderer/src/**、packages/core/src/** | [conversation-turn-attribution](architecture/conversation-turn-attribution.md) | review: review-data-governance |
 | C-data-15 | per-session 模型/思考档位必须持久化到独立 sidecar <sessionFile>.model.json（persistBindingSidecar 家族：原子写 + sessionMetaCache 失效 + JSONL 不存在不创建守卫），禁只存内存；BINDING_FIELDS 矩阵登记 modelId/thinkingLevel 绑定字段且 restore 列='none'（扫描值禁覆写 get_state 读回的播种真值）；全部写点写生效值；purgeSessionSidecars 清单必须含 .model.json 防孤儿；sidecar 是 best-effort 显示缓存非权威（权威 = pi 会话文件 entries，restore 读回覆写过期值自愈） | packages/runtime/src/** | [composer-model-session-isolation](design/composer-model-session-isolation.md#33-关键决策与权衡) | hook: `check_pi_direct_write.py` + review: review-data-governance |
 | C-data-16 | 全局默认模型不得由 session 级模型切换改写：ModelService.switchModel 禁广播 config.defaults（source=model-switch），settingsStore.defaultModel 单一语义 = Settings 配置值（消费点不得因 session 级切换写默认或弹「默认模型自动更新」toast）；landing 新任务默认模型显式化为 lastUsedModel KV（仅显式选择写入，staging 试选不写），landing 兜底链 currentModel \|\| lastUsedModel \|\| defaultModel 仅限 landing 态 | packages/runtime/src/**、packages/core/src/**、packages/renderer/src/** | [composer-model-session-isolation](design/composer-model-session-isolation.md#33-关键决策与权衡) | review: review-business-logic |
+| C-data-17 | session 忙闲状态单写原语：runtime session 域的 isGenerating/isCompacting/isBashRunning 三布尔与 occupancy 投影的唯一写入口 = event-interpreter.ts 的 applySessionOccupancyTransition（封闭转移枚举 SessionOccupancyTransition + SESSION_OCCUPANCY_TRANSITIONS 表，转移表即文档；新增转移先扩枚举再登记派生行，原语内部经 SessionOccupancyStateStore 写视图完成派生）。三布尔为派生存储——IManagedSessionView 类型层 readonly 使绕开原语的直写在编译期红（TS2540）；occupancy 合并/全等去重/session.occupancy state-topic 广播由原语原子完成，禁止第二广播出口。执行方式 = review（本条 enforcement）+ 编译期 readonly + grep 守卫（`\.isGenerating\s*=\|\.isCompacting\s*=\|\.isBashRunning\s*=` 于 packages/runtime 应零命中；测试 fixture 的运行期置位/复位一律经原语，构造期对象字面量初始化除外）。C-data-04 同族范式在 occupancy 域的实例（session-dead-structural-fixes D2） | packages/runtime/src/services/session/** | [session-occupancy-send-closure](design/session-occupancy-send-closure.md) · [event-interpreter.ts](../packages/runtime/src/services/session/event-interpreter.ts) | review: review-data-governance |
 
 ## 进程与通信架构
 

@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import { createSessionDeliveryRegistry } from '../session-delivery-registry.js'
+import { applySessionOccupancyTransition } from '../event-interpreter.js'
 import type { SkillInjector, SkillInjectionResult } from '../skill-injector.js'
 import type { IMessageBus } from '../../message-bus/message-bus.js'
 import type { IManagedSessionView } from '../types.js'
@@ -93,13 +94,14 @@ describe('A2-MF-C：deliverText 挂 skill 注入', () => {
 
   it('busy 入队 → settled flush 的投递同样经注入（queued 路径不旁路）', async () => {
     const h = makeHarness()
-    h.view.isGenerating = true
+    // busy 置位/复位经转移原语（u3c 单写原语收口；publish null 与改前直写一致零广播）
+    applySessionOccupancyTransition(h.view, null, 'generating')
     const handle = h.registry.getOrCreateDelivery('s1')
     handle.send({ payload: { kind: 'text', content: '排队的消息' } })
     expect(h.inject).not.toHaveBeenCalled() // busy 期只入队，未注入
     expect(handle.depth()).toBe(1)
     // idle 边沿（settled + 标志复位）→ flush：此刻才注入 + prompt
-    h.view.isGenerating = false
+    applySessionOccupancyTransition(h.view, null, 'idle')
     h.emitSettled()
     await vi.waitFor(() => expect(handle.depth()).toBe(0))
     expect(h.inject).toHaveBeenCalledTimes(1)

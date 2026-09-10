@@ -397,3 +397,17 @@ ServerMessageMap += {
 - `removeQueuedTextFromSnapshot` 对「快照中不存在的实例」的幂等性【已核实 2026-09-05 u4a 期】：includes→filter 模式天然幂等——无快照/无维度/idx===-1 三处早退，命中后 filter 不可变写，对不存在实例调用 no-op 不抛错；ID1-ID3 单测锁定（effects-defer-confirmation.test.ts）。
 
 **迁移期双轨收口**：P3 落地前 renderer 仍消费 session.compacting/compacted（P1/P2 兼容现状）；P3 落地时 isCompacting 判定切到 occupancy 派生、setCompacting 通路废弃；P4 清理 TurnMeta 占位与 CompactQueueBadge。全程每阶段结束跑受影响模块增量测试 + 上述对应验收场景。
+
+---
+
+## 6. 实施状态：session-dead 结构性修复的挂点收敛落地记录（2026-09-11）
+
+> 本文 D3 十一挂点的统一写原语方案，被 [session-dead-structural-fixes](session-dead-structural-fixes.md)（B1 忙碌状态写侧分叉修复）吸收为其 D2 决策的实施载体并完成收敛。本节为实施落地记录（C-proc-10），不改写上文设计内容。
+
+**挂点收敛完成**：`updateSessionOccupancy`（本文 D3 的幂等写原语）自 session-dead-structural-fixes u2 起降级为 `applySessionOccupancyTransition`（event-interpreter.ts）的内部机制；u3b 完成 14+ 挂点全量迁移（interpreter #2-#6、dispatcher #1/#7-#9/#11、deliverText 置位、agent_end/agent_settled 副作用、onSessionExit 全复位、A1 拒绝反转 → `reject-processing`/`reject-other` 行），grep 全量复核 `updateSessionOccupancy(` 直调点清零、三布尔直写点清零（实施期检查点③销账）。原语内部原子完成「合并 occupancy 三维 → 按封闭转移表派生三布尔 → 幂等比较 → state-topic 广播」，本文 §3「只写一边」的漂移写点结构上不可能再出现。
+
+**announce-idle 收编**：§5 检查点登记的 registerSession idle 宣告帧特例（Gate B V6b④——原刻意绕开 `updateSessionOccupancy` 直接 publish，因初值即 idle 会被全等去重短路）收编为转移表封闭枚举行 `announce-idle`：语义 = 强制广播当前投影、跳过全等去重（内部合并/派生均为 no-op），广播走原语既有 state-topic 通路（实时广播 + 快照写入/重订阅回放双腿保留，occupancy-runtime 测试 Part D「重订阅回放必达」断言为回归锚）。原语由此成为 occupancy 广播的唯一出口，防回潮守卫无需豁免名单。
+
+**readonly 防回潮**：三布尔 `isGenerating / isCompacting / isBashRunning` 在 `IManagedSessionView`（runtime types.ts）改 readonly 派生存储，唯一写点 = 原语（经 `SessionOccupancyStateStore` 可变写视图，types.ts 定义）——绕开原语的直写在编译期红（TS2540）。u3c 收口时测试 fixture 的 14 处运行期置位/复位直写（occupancy-runtime / message-dispatcher-bash-race / completion-backflow 及 e2e / session-service-test-env / send-queue / session-delivery-injection）全部改为经原语对应转移行，生产 src 零直写。
+
+**约束登记**：本收敛以「session 忙闲状态单写原语」登记为 [C-data-17](../constraints.md)（docs/constraints.json；scope = `packages/runtime/src/services/session/**`；权威源 = 本文档 + event-interpreter.ts；执行 = review + 编译期 readonly + grep 守卫），与同族先例 C-data-04 同一 enforcement 通路。settling 预检裁决（计忙拒绝入队）与转移表全行清单见 session-dead-structural-fixes 设计文档 §3.3 D2。
