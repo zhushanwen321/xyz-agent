@@ -1,6 +1,6 @@
 # idle pi reclamation 实施计划
 
-基线: (本文件首次 commit hash) | 来源设计: [docs/design/idle-pi-reclamation.md](idle-pi-reclamation.md)（commit af81f289f） | 日期: 2026-09-10
+基线: 1744ef0a2 | 来源设计: [docs/design/idle-pi-reclamation.md](idle-pi-reclamation.md)（commit af81f289f） | 日期: 2026-09-10
 
 ## 0 章节映射
 
@@ -95,6 +95,7 @@ graph TD
 | R11 | dispatcher 入口 touch 带 attachedClient 条件（未附着不 touch）；显式 session.restore 不做占座让路（代际校验兜底防双重摘除） | 已回收态无 client，restore 新 client 初值即 spawn 时刻；显式 restore 与 kill 窗口相撞触发用户主动请求的既有清场重建，reclaim 代际校验检出返回 false——等价于回收前既有语义，非新回归 | D6-1/D6-2 |
 | R12 | D7 按实装收敛：每拍 info 级汇总（scanned/跳过分布含 noActivity/seatHeld/reclaimFailed/runtime 水位）；回收行 RSS = runtime 进程水位；无独立「进程数」字段（scanned 可推导） | G4 目标达成且更强：pi RSS 不经 RPC 暴露，runtime 水位归因到回收时刻是可达最优；info 级 5min 一拍 prod 可查使「回收饿死」可见 | D7 |
 | R13 | 测试形态两则：relay 访问器用真 socket + 假 pi（pid 文件/SIGTERM marker 完成信号，断言注册→kill→自动清理全事件链）；session-viewed-at 三层结构（真 SessionService 存储语义 / fake handler 契约 / 故障注入） | 断言强度优于 mock 真值表；分流与取舍均有文件头注释显式声明 | D8 |
+| R14 | reaper 默认值双源：shared SSOT（生产权威，装配恒传）+ reaper 模块内联兜底（仅 DI 单测场景） | DI 纯单测不依赖 shared 常量装配即可独立构造（单测独立性代价）；两源等值由守卫测试锁定（f51e8042b，idle-pi-reaper.test.ts） | D4（默认值双源登记） |
 
 ## 6 状态表
 
@@ -116,16 +117,28 @@ graph TD
 
 **Gate B 记录（2026-09-11，阶段 5）**：实环境验收（独立 runtime + 真实 WS + 真 pi + 真 LLM，旋钮 tick 5s/阈值 8s/窗口 30s，数据目录全程 tmp）：**V1/V2/V3/V4/V5/V7 全部 pass**，V6 blocked（7 天长跑，计划 R5 登记的交付后观察项）。关键证据：V1 回收三进程 + restore elapsed=544ms + per-sid seq 跨回收边界 gaps=0（广播流不断）；V3 模型真实使用 bash 后台模式，sleep 45 存活至自然结束、任务结束下一拍精确回收；V5 查看窗口 30s 边界精确、断线重连 subscribe 已回收 session 零错误；负面行为全程零命中（零 pi-crash、零 session.exited、零误杀、零孤儿）。**观察登记**：① V2 生成中豁免由 D1 touch 层（belowThreshold）拦截，occupancy 为第二道防线——双防线顺序与设计假设相反但目标成立；② V4 session-manager 通道的 subagent 为 pi 进程内 turn（occupancy/touch 覆盖），relayChildren 豁免层未被该形态触发——D2 #3 的保护对象是 relay socket 子进程（scheduler 类 extension 空闲期 spawn），两物种各自有防线，无缺口；③ 测试环境注记：runtime WS 45s 心跳超时需应用层 ping；独立 runtime 环境扩展加载走 `<dataDir>/extensions/` 第三方目录。
 **交付态**：Gate A 绿（5350/0 失败/0 跳过 + lint 0 + 双包 tsc 绿）+ Gate B 绿（V6 交付后观察除外）。残留：V6 观察（7 天默认阈值真实使用：足迹平台期/重启一致性/PTY 存活，复核 D7 每拍水位）；CI real-pi 池需真跑证据（本机已真跑，凭据依赖）。
-**交付态**：Gate A 绿（5350/0 失败/0 跳过 + lint 0 + 双包 tsc 绿）+ Gate B 绿（V6 交付后观察除外）。残留：V6 观察（7 天默认阈值真实使用：足迹平台期/重启一致性/PTY 存活，复核 D7 每拍水位）；CI real-pi 池需真跑证据（本机已真跑，凭据依赖）。失败归因与处置：① test/session-service.test.ts ×14 + respawn ×2 + ensure-active ×1——主根因 = 该文件 fake client 未补 `touchActivity`（R6 补 fake 漏此文件，单元期增量测试未覆盖所致），sendPrompt 入口 touch TypeError 连坐 join 断言；5 条 join 类失败待补 fake 后复判是否真语义回归（修复组 1）。② rpc-client-streaming-behavior arity 断言未同步 prompt 第 4 参（R8①，修复组 1）。③ lint：idle-pi-reaper.ts 魔法数/静默 catch 17 条（对齐文件先例带理由豁免）+ session-service/index max-lines 超限（按仓库既有按文件 override 先例登记，拆分归独立重构单元）（修复组 2）。
 **Gate A uncovered 处置（登记即接受）**：pi-engine 端口扩展（类型级，tsc + 消费方测试间接覆盖）；index.ts wiring 段（reclaim-accessors 真链 + real-pi 集成端到端覆盖）；shared constants（resolveReclaimConfig 间接断言）；.githooks/check_prompt_outposts.py 指纹刷新（守卫脚本自身运行即验证）；history-rebuild-cache.ts（组 C 注释级改动，计划领地外——既有 session-history-incremental.test.ts 覆盖，注释零行为）；transport/session-message-handler.ts 在验收区间外（u1b 先于基线提交，实装终态已按 HEAD 审查）。
-**R6 更正（Gate A 发现）**：u1a 轮 2 接替者补 fake 共 8 文件不含 test/session-service.test.ts，该文件 fake 缺成员致 12 用例连坐至 Gate A 才暴露——单元期「相关回归」清单未包含全部 fake 实现文件，教训登记：接口扩展类改动的回归面应按「实现 IPiEngine 的全部 fake 构造点」grep 圈定而非人工枚举。
+**R6 更正（Gate A 发现）**：u1a 轮 2 接替者补 fake 共 8 文件不含 test/session-service.test.ts，该文件 fake 缺成员致 14 用例连坐至 Gate A 才暴露（口径同 Gate A 记录：13 × touchActivity fake 缺成员 + 1 × join；全仓 join 类合计 4 条真语义回归）——单元期「相关回归」清单未包含全部 fake 实现文件，教训登记：接口扩展类改动的回归面应按「实现 IPiEngine 的全部 fake 构造点」grep 圈定而非人工枚举。
 
 ## 7 残留风险与变更历史
 
 **残留风险（实施期盯防）**：
-- P7 收益门两分支都有降级路径（设计 D5/§3.4），但**结论必须落记录**——增量命中 → 收益兑现登记；fallback → 撤回 D5 增量收益声明（doc_error 走设计文档修订），不许悬而不决。
-- constraints.json 登记晚于 u2 代码落点（R4 同因：领地归 u3）——同一交付内闭环，合并前齐备即可（AGENTS「先登记再写代码」以分支合并为交付边界）。
-- u4 真进程测试依赖本机模型凭据与 pi 安装；若环境不可用，登记阻塞并升级用户，不得以 mock 冒充真机验收（准则 11）。
+- 【已闭环】P7 收益门结论已落记录——**PASS（incremental）**（2026-09-11 u4 实测）：见 §6 状态表 u4 行 + 「P7 收益门裁决登记」段 + 设计 §3.4 P7 ✅，D5 增量收益兑现。
+- 【已闭环】constraints.json 已登记——commit 998f6ad3e（u3b），C-state-12，97 条校验过（§6 状态表 u3 行）。
+- 【开放】u4 真进程测试依赖本机模型凭据与 pi 安装；若环境不可用，登记阻塞并升级用户，不得以 mock 冒充真机验收（准则 11）。CI real-pi 池真跑证据仍缺（本机已真跑，凭据依赖，见交付态残留）。
 
-**变更历史**：
-- 2026-09-10 计划创建（基线 commit 见文件头）。
+**变更历史**（按 commit 序；实施单元 commit 均随附本计划状态表同步，不单列）：
+- 1744ef0a2 计划基线（§0-§5 全量创建）。
+- acc603d4d u1b 落地（查看信号 + relay 只读查询）。
+- 64e70ae51 u1a 落地（RpcClient 空闲信号；轮 2 接替路径收尾，偏差 R6 登记）。
+- 82d7d9e12 u2 落地（reaper + 最小摘除 + 占座/代际校验，偏差 R7-R12 相继登记）。
+- e5ab883ac u3a 落地（4 薄豁免访问器 + depth() 选型，R7）。
+- 998f6ad3e u3b 落地（组合根 wiring + `XYZ_RUNTIME_PI_RECLAIM_*` SSOT + C-state-12 约束登记）。
+- 3b509694c u4 落地（真进程集成测试，P7 收益门 PASS=incremental）。
+- de61b4c15 一致性审查修复：维护通道排除补回程腿（pending 级回声重置缺口）。
+- f51e8042b 一致性审查修复：reaper 默认值双源等值守卫测试（R14）。
+- fa9d9ee39 一致性审查修复：两处过时注释同步。
+- 021a0cfe9 Gate A lint 收敛（魔法数/静默 catch 带理由豁免 + max-lines 按先例 override）。
+- f978dd2d5 Gate A 修复：u2 无条件 await 微任务让步真语义回归（同步短路守卫 + 锁定用例）。
+- f80b5cbfa / 6b06f52e6 doc 侧同步（设计 D1/D3-D7 措辞 + P2/P7 探针状态 + 本表 R8-R13 登记）。
+- 9c78c7eab Gate B 记录（V1-V5/V7 pass，V6 交付后观察）。
