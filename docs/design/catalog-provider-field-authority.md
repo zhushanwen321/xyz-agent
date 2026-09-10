@@ -68,7 +68,7 @@ pi 内置 catalog（编译期快照 packages/runtime/src/generated/builtin-provi
 4. `save()` **无条件**回传 `type: form.api` + `baseUrl: form.baseUrl`（`use-provider-edit.ts:467-468`，不读 `kind`，catalog/custom 无区分）。
 5. runtime `applyProviderLevelFields`：`if (data.baseUrl !== undefined) merged.baseUrl = data.baseUrl`（`provider-config-helper.ts:538`）——`''` 非 undefined，空串写入；`:539` 快照 api 固化进 override。`upsertProvider` 落盘（`:765`）。
 6. pi 下次加载 models.json：TypeBox 校验 `ProviderConfigSchema.baseUrl = Type.Optional(Type.String({ minLength: 1 }))`（`pi-coding-agent/dist/core/model-config.js:171`）→ 空串违规 → **拒绝整个文件**，`ModelConfig.load` 返回空 Map + error 字符串（`:232-238`）。
-7. 后果：models.json 里**全部** provider（custom 的 deepseek 及其 apiKey、全部 override）从 pi 视野静默消失；catalog provider 因定义在内置 catalog、凭据在 auth.json 而幸存。错误只经 `ModelRuntime.getError()` 暴露给 **pi 自己的 TUI/CLI**（`interactive-mode.js:854` 等 5 处）——xyz-agent 这类 RPC 宿主看不到任何告警。
+7. 后果：models.json 里**全部** provider（custom 的 deepseek 及其 apiKey、全部 override）从 pi 视野静默消失；catalog provider 因定义在内置 catalog、凭据在 auth.json 而幸存。错误只经 pi 侧 ModelRuntime.getError() 暴露给 **pi 自己的 TUI/CLI**（`interactive-mode.js:854` 等 5 处）——xyz-agent 这类 RPC 宿主看不到任何告警。
 
 **探针 P-poison（✅ 已实测，2026-09-10）**：构造含 `opencode-go.baseUrl=""` + 合法 deepseek 的 models.json，调 pi 0.84.4 实装 `ModelConfig.load`：
 
@@ -417,7 +417,7 @@ export interface IProviderCredentialResolver {  // services/ports/ —— infra 
 // 或调用链显式传参（备选）——见 D3「分层与注入设计」，禁选构造参数形态（薄委托类实态到不了消费点）
 ```
 
-`$ENV_VAR` 引用与 command 配置值的解析行为见探针 P-cred（实施期门）。
+$ENV_VAR 引用与 command 配置值的解析行为见探针 P-cred（实施期门）。
 
 **setProvider 契约变化（D1）**：`SetProviderData` 协议注释增补——「catalog provider 忽略 `type`；`baseUrl` 非空 = 设置网关（覆盖全部模型端点）、显式空串 = 清除网关回退内置、**未带键（undefined）= 不变**（既有 merge 协议不动）；custom 及模型级：空串 `name/baseUrl/apiKey/api` 按 pi schema 语义转译（apiKey = 清除删键，其余 = 未指定不写键）」。运行时行为变化，协议形状不变（向后兼容）。
 
@@ -464,7 +464,7 @@ export interface IProviderCredentialResolver {  // services/ports/ —— infra 
 | P-schema | 0.84.4 校验器是 TypeBox 非 zod；minLength 全集 = provider 级 name/baseUrl/apiKey/api + 模型级 id/name/api/baseUrl + modelOverrides name | 静态核实 `dist/core/model-config.js:3-4,:137-140,:170-173,:184` + P-poison 行为印证 | ✅ 已测 | — |
 | P-scope | artifact 规模：39 provider 中 7 个 provider 级 baseUrl=''、5 个混合 api、38/1290 模型级 baseUrl=''（azure 38/38）、fireworks provider.baseUrl 与模型级部分不一致 | 直读 `generated/builtin-providers.json` 统计 | ✅ 已测 | — |
 | P-gateway | catalog override 的 provider 级 baseUrl 覆盖式改写全部内置模型端点 | 静态核实 `provider-composer.js:98`（applyModelsJson）+ fireworks 实例推演 | ✅ 已测（静态核实；行为正确性由验收场景 8 端到端验证） | — |
-| P-cred | xyz `AuthService.getCredential` 对 `$ENV_VAR` 引用 / command 配置值凭据的解析行为（是否返回明文） | 读 `services/auth/auth-storage.ts` 与 pi `dist/core/auth-storage.js:213-216 resolveConfigValue` 比对 + 构造 env 引用凭据实测 resolver 输出 | ⛔ 实施期门（M2 内） | 失败 → resolver 对 `$ENV` 用 `process.env` 展开（与 pi `resolveConfigValue` 同语义）；command 配置值首版不支持，resolver 返回该形态标记，测试连接报「该凭据形态暂不支持」 |
+| P-cred | xyz `AuthService.getCredential` 对 $ENV_VAR 引用 / command 配置值凭据的解析行为（是否返回明文） | 读 `services/auth/auth-storage.ts` 与 pi `dist/core/auth-storage.js:213-216 resolveConfigValue` 比对 + 构造 env 引用凭据实测 resolver 输出 | ⛔ 实施期门（M2 内） | 失败 → resolver 对 $ENV 用 `process.env` 展开（与 pi `resolveConfigValue` 同语义）；command 配置值首版不支持，resolver 返回该形态标记，测试连接报「该凭据形态暂不支持」 |
 | P-test-req | 3 协议最小请求体（max_tokens=1 级）在真实端点可调通且响应可区分 401/网络错/协议错；空 baseUrl 回落链与「不可测」分支行为 | 实施期对真实 provider（opencode-go 或等价测试端点）发 3 协议最小请求 + 构造无 baseUrl 模型组验证分支 | ⛔ 实施期门（M3 内） | 某协议调不通 → 该协议从支持集剔除，测试连接对该协议报「暂不支持」（错误规格表第 3 行），不阻断其他协议 |
 | P-sanitize | 剥空串键 + catalog provider 级键处置（api 一律剥 / baseUrl 按 extras 网关标记）后同一 models.json 经 pi `ModelConfig.load` 通过（覆盖 8 字段矩阵 + fireworks 冻结实例 + 有/无标记对照） | 复用 P-poison 探针脚本：剥键 → load → 断言 providers.size 恢复；有标记网关保留 / 无标记剥除的对照断言 | ⛔ 实施期门（M1 内） | 失败 → 收窄清洗范围到「仅空串键剥除」（provider 级键处置降级为展示侧不消费 + troubleshooting 手动指引），并在发布说明标注 |
 | P-oauth-shell | D1⑤ 后 OAuth 收尾不再物化 models.json 条目（`{authMethod:'oauth'}`-only 调用 → 无条目/无空壳） | 实施期模拟 OAuth 收尾调用 setProvider 后读 models.json | ⛔ 实施期门（M1 内） | 失败 → 由防线③「不物化空壳」兜底（条目不落盘即无空壳）；仍失败则 OAuth 收尾链回退为携带 headers 占位（现状 hack 显式化）并登记 M5 清理 |
@@ -558,7 +558,7 @@ M5（卫生：锚点修复 + 约束登记 + DOC_MODULE_MAP）          ← 收�
 
 ### 待验证检查点（设计阶段无法确定，实施期必验）
 
-1. **P-cred**（M2 内）：xyz AuthStorage 对 `$ENV_VAR` / command 配置值凭据的解析现状——决定 resolver 是否要自实现 env 展开（降级路径见 §3.6）。
+1. **P-cred**（M2 内）：xyz AuthStorage 对 $ENV_VAR / command 配置值凭据的解析现状——决定 resolver 是否要自实现 env 展开（降级路径见 §3.6）。
 2. **P-test-req**（M3 内）：3 协议最小请求体在真实端点的可调通性——决定支持集与「暂不支持」文案的覆盖范围。
 3. **P-sanitize**（M1 内）：剥键清洗（空串矩阵 + 冻结 artifact）对毒化文件的充分性——复用 P-poison 脚本验证。
 4. **P-oauth-shell**（M1 内）：OAuth 收尾不物化条目的端到端验证。
