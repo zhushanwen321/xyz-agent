@@ -684,7 +684,9 @@ preset = QUOTA_PRESETS.find(p => p.fetcher === draft.fetcher)
    - `workspace` 是**明文、始终回显**：判定**只看草稿**，保存时传草稿值。「屏幕上显示什么就保存什么」对它天然成立，无需从已保存值借力。
    - 这条差异的后果：Workspace 失去「清空」通道（见 D13）。
 
-4. **保存时的参数构造表**（`configure(pid, enabled, cookie, fetcher, apiKey, workspace, credentialSource)`）：
+4. **保存时的参数构造表**（`configure(pid, enabled, cookie, fetcher, apiKey, workspace, credentialSource)`，**仅适用于 `saveAndTest`**）：
+
+   > **`setEnabled` 不走这张表**：它只传 `enabled`，`fetcher` / `credentialSource` / 凭证全部传 `undefined`（= 不变）。否则草稿里的类型或来源选择会经由一次拨开关被**偷偷落盘** —— 用户没点保存却改了配置。这一点与 D4「开关是纯配置位、语义唯一」是同一个约束的两面。
 
    | 参数 | 取值规则 |
    |---|---|
