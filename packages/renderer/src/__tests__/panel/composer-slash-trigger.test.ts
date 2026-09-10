@@ -133,11 +133,12 @@ const MOCK_CMDS = [
   { name: 'fix', source: 'skill' },
 ]
 
-/** 推 session.commands 到 sessionId 订阅者（CommandPopover 用 events.on(sessionId) 订阅） */
-function pushCommands(sessionId: string): void {
+/** 推 session.commands 到 sessionId 订阅者（CommandPopover 用 events.on(sessionId) 订阅）。
+ *  commands 可覆盖——用于模拟浮层打开期间候选源缩短（N-2 越界路径）。 */
+function pushCommands(sessionId: string, commands: typeof MOCK_CMDS = MOCK_CMDS): void {
   const msg = {
     type: 'session.commands',
-    payload: { sessionId, commands: MOCK_CMDS },
+    payload: { sessionId, commands },
   } as ServerMessage<'session.commands'>
   events.dispatchSession(sessionId, msg)
 }
@@ -148,6 +149,13 @@ function pushCommands(sessionId: string): void {
 function bodyItemButtons(): HTMLElement[] {
   const list = document.body.querySelector('.max-h-\\[180px\\]')
   return Array.from((list ?? document.body).querySelectorAll('.cmd-row'))
+}
+
+/** 高亮行下标（模板选中态 = bg-surface 实色 token）。
+ *  必须用 classList.contains 逐 token 判定：未选中态含 hover:bg-surface-hover，
+ *  用 className.includes('bg-surface') 会把每一行都判成高亮（假绿）。 */
+function highlightedRowIndex(): number {
+  return bodyItemButtons().findIndex((r) => r.classList.contains('bg-surface'))
 }
 
 describe('CommandPopover slash query 过滤（U6-U8）', () => {
@@ -184,11 +192,13 @@ describe('CommandPopover slash query 过滤（U6-U8）', () => {
     expect(bodyItemButtons().some((b) => b.textContent?.includes('/compact'))).toBe(true)
   })
 
-  it('U8 query="zzz" → 0 项，PopoverContent 不渲染（v-if items.length>0）', async () => {
+  it('U8 query="zzz" → 0 候选 + 渲染「无匹配项」反馈行（open 即渲染：缺陷 B）', async () => {
     await mountPopover('zzz')
     expect(bodyItemButtons()).toHaveLength(0)
-    // PopoverContent 整体未挂载（无命令项按钮，无 cmd-pop 容器）
-    expect(document.body.querySelector('[data-radix-popper-content-wrapper]')).toBeNull()
+    // 每条 open 态都有可见行：无候选渲染通用空态（修复前 PopoverContent 整体不挂载 ⇒ 无反馈）
+    const row = document.body.querySelector('[data-testid="cmd-popover-empty"]')
+    expect(row).not.toBeNull()
+    expect(row!.textContent).toContain('无匹配项')
   })
 
   // ── U8b 键盘导航幂等（回归：window capture + 事件冒泡双入口曾导致 ↑↓ 跳两项）──
@@ -206,6 +216,85 @@ describe('CommandPopover slash query 过滤（U6-U8）', () => {
     const ret2 = vm.handleKeydown(e1)
     expect(ret2).toBe(false)
     expect((vm as unknown as { activeIndex: number }).activeIndex).toBe(before) // 未二次跳动
+  })
+
+  // ── 缺陷 A：候选源缩短导致 activeIndex 越界（高亮/选中/↑↓ 起点三处必须同时正确）──
+  // 候选源可在浮层打开期间**缩短**（session.commands 新快照条目更少 / sessionStore.list
+  // 广播删除）。旧实现在 Enter 读点用 Math.min 兜底：只救了 Enter，模板高亮（i === activeIndex）
+  // 与 ↑↓ 起点（(idx ± 1 + len) % len）对越界值仍旧错。现在收敛点单点化在
+  // command-popover-keyboard.ts 的 sync watch（列表变化同一拍夹到 [0, len-1]），三处天然一致。
+  it('N-2 候选在浮层打开期间缩短 → Enter 不抛错且选中末项（收敛点单一化替代读点兜底）', async () => {
+    await mountPopover('')
+    const vm = wrapper!.vm as unknown as { handleKeydown: (e: KeyboardEvent) => boolean }
+    // 4 项（compact + 3 pi 命令）时方向键下移到末项（activeIndex=3）
+    for (let i = 0; i < 3; i++) {
+      vm.handleKeydown(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    }
+    await nextTick()
+    expect(highlightedRowIndex()).toBe(3) // 前置：索引确已到末项
+    // 源缩短：新 session.commands 快照只剩 1 条 pi 命令（+ 前端注入 compact = 2 项）
+    pushCommands('s1', [{ name: 'commit', source: 'extension' }])
+    await flushPromises()
+    await nextTick()
+    expect(bodyItemButtons()).toHaveLength(2)
+    // 越界索引在收敛点夹到末项（回退收敛 ⇒ Enter 读 list[3] 为 undefined，抛 TypeError）
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    expect(() => vm.handleKeydown(enter)).not.toThrow()
+    // 收敛到末项（而非归零到首项——保住缩短前的相对位置）
+    expect(wrapper!.emitted('select')?.at(-1)?.[0]).toMatchObject({ type: 'slash', name: '/commit' })
+  })
+
+  it('N-2a 候选缩短 → 模板高亮行 == Enter 实际选中行（高亮与选中同源，非读点兜底）', async () => {
+    await mountPopover('')
+    const vm = wrapper!.vm as unknown as { handleKeydown: (e: KeyboardEvent) => boolean }
+    for (let i = 0; i < 3; i++) {
+      vm.handleKeydown(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    }
+    await nextTick()
+    expect(highlightedRowIndex()).toBe(3)
+
+    // 缩短到 2 项 ⇒ 收敛值 = 末项（index 1）
+    pushCommands('s1', [{ name: 'commit', source: 'extension' }])
+    await flushPromises()
+    await nextTick()
+    const rows = bodyItemButtons()
+    expect(rows).toHaveLength(2)
+    // ① 收缩后确有行高亮，且 = 收敛值处那一行（旧实现：无任何行高亮）
+    const highlighted = highlightedRowIndex()
+    expect(highlighted).toBe(1)
+
+    // Enter 选中的正是高亮行（同一 activeIndex 读点，不是「读点兜底出的末项」）
+    vm.handleKeydown(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    const selected = wrapper!.emitted('select')?.at(-1)?.[0] as { name: string }
+    expect(selected.name).toBe('/commit')
+    expect(rows[highlighted].textContent).toContain('/commit')
+  })
+
+  it('N-2b 候选缩短 → 首次 ↑ 从收敛值出发（不是归 0）', async () => {
+    await mountPopover('')
+    const vm = wrapper!.vm as unknown as { handleKeydown: (e: KeyboardEvent) => boolean }
+    // 4 项（compact + commit/review/fix）时下移到末项（index 3）
+    for (let i = 0; i < 3; i++) {
+      vm.handleKeydown(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    }
+    await nextTick()
+    expect(highlightedRowIndex()).toBe(3)
+
+    // 缩短到 3 项（compact + commit + review）⇒ 收敛值 2
+    pushCommands('s1', [
+      { name: 'commit', source: 'extension' },
+      { name: 'review', source: 'extension' },
+    ])
+    await flushPromises()
+    await nextTick()
+    expect(bodyItemButtons()).toHaveLength(3)
+    await nextTick()
+    expect(highlightedRowIndex()).toBe(2)
+
+    // ↑ 从收敛值 2 出发 → (2 - 1 + 3) % 3 = 1；若按旧实现「越界 ⇒ 起点归 0」→ (0 - 1 + 3) % 3 = 2
+    vm.handleKeydown(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))
+    await nextTick()
+    expect(highlightedRowIndex()).toBe(1)
   })
 })
 
@@ -313,6 +402,9 @@ describe('insertSlashChip / 前缀归一化（U11）', () => {
     wrapper = mount(ComposerInput, { attachTo: document.body, global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
     await flushPromises()
     const vm = wrapper.vm as unknown as { insertSlashChip: (cmd: string, icon?: string) => void }
+    // 确定性选区前置：清掉上一用例残留 selection（指向已卸载 DOM 时 range.insertNode
+    // 会把 chip 插进游离树），rangeCount=0 走 insertChipAtSelection 的 appendChild 通路
+    document.getSelection()?.removeAllRanges()
     vm.insertSlashChip('goal', 'terminal')
     await nextTick()
     const chip = wrapper.find('.slash-chip .chip-label')
@@ -324,9 +416,38 @@ describe('insertSlashChip / 前缀归一化（U11）', () => {
     wrapper = mount(ComposerInput, { attachTo: document.body, global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
     await flushPromises()
     const vm = wrapper.vm as unknown as { insertSlashChip: (cmd: string, icon?: string) => void }
+    // 同 U11a：清残留 selection，走 appendChild 通路
+    document.getSelection()?.removeAllRanges()
     vm.insertSlashChip('/commit', 'terminal')
     await nextTick()
     const chip = wrapper.find('.slash-chip .chip-label')
     expect(chip.text()).toBe('/commit')
+  })
+
+  // U11c（设计 D4-a）：命令 chip 视觉就地——光标在草稿中部时 chip 落光标处，
+  // 不再强制跳到全文最前（旧断言语义「chip 必须是 firstChild」已随 D4-a 失效，改写为就地断言）
+  it('U11c 命令 chip 就地插入：草稿中部光标 → chip 在光标处不强制最前', async () => {
+    wrapper = mount(ComposerInput, { attachTo: document.body, global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
+    await flushPromises()
+    const div = wrapper.find('[role="textbox"]').element as HTMLDivElement
+    div.textContent = '任务描述'
+    const textNode = div.firstChild as Text
+    // 活光标在文本末尾（键盘呼出浮层时的焦点从未离开形态）
+    const sel = document.getSelection()
+    sel?.removeAllRanges()
+    const range = document.createRange()
+    range.setStart(textNode, 4)
+    range.collapse(true)
+    sel?.addRange(range)
+    const vm = wrapper.vm as unknown as { insertSlashChip: (cmd: string, icon?: string) => void }
+    vm.insertSlashChip('/compact', 'terminal')
+    await nextTick()
+    const chip = div.querySelector('.slash-chip') as HTMLElement
+    expect(chip).not.toBeNull()
+    // 就地：文本仍在最前，chip 前邻是原文本节点
+    expect(div.firstChild).toBe(textNode)
+    expect(chip.previousSibling).toBe(textNode)
+    // chip 后跟 ZWSP spacer
+    expect(chip.nextSibling?.textContent).toBe('\u200B')
   })
 })

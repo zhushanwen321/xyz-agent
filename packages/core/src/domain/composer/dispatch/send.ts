@@ -32,6 +32,7 @@ import type { ComputedRef, Ref } from 'vue'
 import type { Segment } from '@xyz-agent/shared'
 import type { BashCommandExtract, StagingAction, StagingConfig } from '../types'
 import type { SendRoute } from './send-route'
+import { segmentsToPrompt } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../../utils/error-message'
 
 /**
@@ -151,7 +152,7 @@ export interface ComposerSendDeps {
  * 返回：'blocked' = 守卫拦截（结束发送）；'handled' = staging.send 已消费（结束发送）；
  * 'pass' = 走后续普通链路。
  */
-async function routeStaging(deps: ComposerSendDeps, text: string): Promise<'blocked' | 'handled' | 'pass'> {
+async function routeStaging(deps: ComposerSendDeps): Promise<'blocked' | 'handled' | 'pass'> {
   // staging 活跃时由 StagingAction 自管 allowsEmptySend（handoff 允许空，fork 不允许）；
   // 双发锁只看 isSending（staging 发送自身会置位），不拦 isActive——fork-ask 发给新建
   // session 对源 session 只读，streaming 中合法（handoff 的 streaming 拦截在
@@ -162,7 +163,15 @@ async function routeStaging(deps: ComposerSendDeps, text: string): Promise<'bloc
   // staging 路由：经 useComposerStaging.send → activeStaging.send。仅在有活跃 staging 时取 staging config
   // 透传（fork/handoff 内部 handleXxxSend 也自取 deps.getStagingConfig，传参与自取等价故实际被忽略）。
   // 守卫 hasActiveStaging：非 staging 态不调 getStagingConfig（避免测试 mock 未提供该方法时炸 + 语义清晰）。
-  if (deps.staging.hasActiveStaging.value && (await deps.staging.send(text, deps.getStagingConfig()))) return 'handled'
+  if (deps.staging.hasActiveStaging.value) {
+    // [D4-c 迁移] staging 提交载荷从 draft.value 迁 segmentsToPrompt——判定源单一化 +
+    // 消除 draft 快照失真窗口（staging 载荷本就是 segments 的序列化，改后判定与载荷同一
+    // 表达式）。轮 3 修正理由：draft 与 prompt 同源同归位，「命令 chip 就地化后 DOM 序文本
+    // `/cmd` 不在行首 ⇒ staged prompt 静默变字面文本」的原由不成立。快照在 staging.send
+    // 前（内部消费即可能清 DOM）。
+    const segments = deps.inputRef.value?.getSegments() ?? []
+    if (await deps.staging.send(segmentsToPrompt(segments), deps.getStagingConfig())) return 'handled'
+  }
   return 'pass'
 }
 
@@ -206,17 +215,21 @@ function enqueueDuringDefer(deps: ComposerSendDeps, text: string): void {
   // sessionIdRef 非空性与 defer 路由同源（无 session 的 landing 无 occupancy 记录恒 direct，
   // 不会进本分支；守卫是防御层）。把不变量局部化，消除 enqueue 处的 `!` 断言。
   if (!deps.sessionIdRef.value) return
-  // `/` 与 `!`/`!!` 前缀都是命令（slash 命令 / bash 命令）——占用结束后才能执行，
-  // 此处拒绝 + toast，draft 保留不清空。`!` 对称于 `/`：避免 bash 命令被静默降级
-  // 为纯文本入队（重放走普通 send 不会按 bash 执行，用户语义被悄悄改变）。
-  // 拒绝判据基于 text 前缀——富内容消息的 draft 文本同样适用（chip 不改变命令判定）。
-  if (text.trim().startsWith('/') || text.trim().startsWith('!')) {
-    deps.toastError(deps.t('panel.composer.commandQueuedRejected'))
-    return
-  }
   // 先快照 segments 再 enqueue/clearInput：clearInput 会清空 DOM（chips 随之消失），
   // 顺序颠倒会入队纯文本条目（丢段）。与 routeSteer/onSend 的快照范式一致。
   const segments = deps.inputRef.value?.getSegments() ?? []
+  // `/` 与 `!`/`!!` 前缀都是命令（slash 命令 / bash 命令）——占用结束后才能执行，
+  // 此处拒绝 + toast，draft 保留不清空。`!` 对称于 `/`：避免 bash 命令被静默降级
+  // 为纯文本入队（重放走普通 send 不会按 bash 执行，用户语义被悄悄改变）。
+  // [D4-c 迁移] 双源拆开判定：`/` 半边读 segmentsToPrompt——判定源单一化 + 消除 draft
+  // 快照失真窗口（draft 是 getText() 的调用快照，回滚/程序化 setText/时序窗口下可滞后于
+  // DOM）。轮 3 修正理由：`getTextFromEl` 在基线与 HEAD 相同（恒为 segmentsToText(段)），
+  // draft 与 prompt 同源同归位，「DOM 序文本不以 / 开头 ⇒ 漏拒」的原由不成立；
+  // `!` 半边保持 draft.value——`!` 不产 chip，手打必在 DOM 文本行首，两源恒一致。
+  if (segmentsToPrompt(segments).trim().startsWith('/') || text.trim().startsWith('!')) {
+    deps.toastError(deps.t('panel.composer.commandQueuedRejected'))
+    return
+  }
   deps.enqueueCompact(deps.sessionIdRef.value, text, segments)
   deps.clearInput()
 }
@@ -249,7 +262,12 @@ async function sendLandingFirstMessage(deps: ComposerSendDeps, segments: Segment
  */
 async function sendActiveMessage(deps: ComposerSendDeps, segments: Segment[], text: string): Promise<void> {
   if (await deps.composerBash.trySendBash(text)) return
-  const trimmed = text.trim()
+  // [D4-c 迁移] /compact 拦截输入从 draft.value 迁 segmentsToPrompt——判定源单一化 +
+  // 消除 draft 快照失真窗口：`segmentsToPrompt(segments)` 即发送载荷本身，判定与载荷构造
+  // 同源，快照滞后面归零。轮 3 修正理由：draft 与 prompt 同源同归位，「命令 chip 在中部时
+  // DOM 序文本不以 /compact 起头 ⇒ 漏拦截」的原由不成立。bash 判定（上行）按裁决表不迁
+  // （`!` 前缀与 chip 无关）。
+  const trimmed = segmentsToPrompt(segments).trim()
   if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
     const customInstructions = trimmed.startsWith('/compact ')
       ? trimmed.slice('/compact '.length).trim() || undefined
@@ -295,7 +313,7 @@ export function useComposerSend(deps: ComposerSendDeps): { onSend: () => Promise
     if (await routeSteer(deps, route)) return
     const text = deps.draft.value
     // staging 门 + canSend 守卫 + staging 路由：'blocked'/'handled' 均结束本次发送
-    if ((await routeStaging(deps, text)) !== 'pass') return
+    if ((await routeStaging(deps)) !== 'pass') return
     // [D6] defer 路由（settling / compacting / bash，行 4/5/6）：占用期发送动作改为入队待重放
     // （flush 在 occupancy 全 idle 时由 useChat occupancy handler 统一触发——触发源不再绑定
     // session.compacted）。

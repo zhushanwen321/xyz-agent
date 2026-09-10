@@ -137,7 +137,8 @@ export interface CreateSessionFlowInput {
   pendingModel?: string | null
   /** 归属 project id（D14 语义修正 2026-08-04：创建时归属当前 activeProject；空 = 默认项目兑底） */
   projectId?: string | null
-  /** 首发消息段（含 text/image/skill 等；label 从首条 text 段取，image 段需迁移） */
+  /** 首发消息段（含 text/image/skill 等；label 从首条 text 段取、trim 空时回退首个 slash 段，
+   * image 段需迁移） */
   segments: Segment[]
   /** bash 首发（landing 态 !/!! 前缀）；存在时 label 从 command 取 */
   bashCommand?: { command: string; excludeFromContext: boolean } | null
@@ -153,12 +154,23 @@ export interface CreateSessionFlowResult {
   migratedSegments: Segment[]
 }
 
-/** step 1 输入：首条 text 段 trim（无 text 段 → ''；guard 判定与 label 派生共用）。 */
+/**
+ * step 1 输入：首条 text 段 trim；trim 后为空（含无 text 段）→ 回退首个 slash 段（'/' + name）。
+ *
+ * D4-a 后命令 chip 产结构化 slash 段（不再拍平进 text 段），landing 首发纯命令（如 `/tasks`）
+ * 若只认 text 段，label 会从 `/tasks` 退化为通用兜底文案。此处把 slash 段视同 text-like 作为
+ * label 文本源回退——`hasSubmittableContent` 的判定维度不变（slash 仍算非 text 段）。
+ */
 function firstTextTrimmed(input: CreateSessionFlowInput): string {
   const firstTextSeg = input.segments.find(
     (s): s is Extract<Segment, { type: 'text' }> => s.type === 'text',
   )
-  return firstTextSeg?.text?.trim() ?? ''
+  const trimmed = firstTextSeg?.text?.trim() ?? ''
+  if (trimmed) return trimmed
+  const firstSlashSeg = input.segments.find(
+    (s): s is Extract<Segment, { type: 'slash' }> => s.type === 'slash',
+  )
+  return firstSlashSeg ? `/${firstSlashSeg.name}` : ''
 }
 
 /** step 1 guard：无 text trim 且无非 text 段且无 bashCommand → 无可用内容（不创建）。 */
@@ -239,7 +251,7 @@ export async function createSessionFlow(
   // 2. cwd 兜底
   const cwd = input.cwd ?? ctx.defaultCwd
 
-  // 3. label 派生（bash 首发用 command，否则首条 text）
+  // 3. label 派生（bash 首发用 command，否则首条 text；trim 空回退首个 slash 段）
   const label = deriveSessionLabel(input.bashCommand ? input.bashCommand.command : trimmed)
 
   // 4. create session（label 已派生；presetId 透传；projectId 归属透传：D14 语义修正，创建时归属当前 activeProject）

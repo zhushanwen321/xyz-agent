@@ -109,11 +109,24 @@ describe('getSegmentsFromEl', () => {
     expect(getSegmentsFromEl(el)).toEqual([{ type: 'skill', name: 'myskill' }])
   })
 
-  it('slash-chip（普通命令）把 chip-label 文本并入 text segment', () => {
+  it('slash-chip（普通命令）产出 slash segment（D4-b：name 取 dataset.chipName 不含 / 前缀，不并入文本）', () => {
     const el = setupEl(
       '<span class="slash-chip" data-chip-type="slash" data-chip-name="commit"><span class="chip-label">/commit</span></span>',
     )
-    expect(getSegmentsFromEl(el)).toEqual([{ type: 'text', text: '/commit' }])
+    expect(getSegmentsFromEl(el)).toEqual([{ type: 'slash', name: 'commit' }])
+  })
+
+  it('命令 chip 与文本混合：前后文本正确分段，chip-label 不混入文本（D4-b）', () => {
+    const el = setupEl(
+      '任务描述<br><span class="slash-chip" data-chip-type="slash" data-chip-name="compact"><span class="chip-label">/compact</span></span> 清理一下',
+    )
+    expect(getSegmentsFromEl(el)).toEqual([
+      { type: 'text', text: '任务描述\n' },
+      { type: 'slash', name: 'compact' },
+      { type: 'text', text: ' 清理一下' },
+    ])
+    // 序列化归位（D4-c）：slash 段提首，产物以 /compact 开头（pi 行首协议）
+    expect(getTextFromEl(el)).toBe('/compact 任务描述\n 清理一下')
   })
 
   it('image-chip 产出 image segment（含 id/path/fileName/displayName/needsMigrate）', () => {
@@ -215,7 +228,8 @@ describe('getSegmentsFromEl', () => {
     const el = setupEl(
       '<span class="slash-chip" data-chip-type="slash" data-chip-name="c"><span class="chip-label">/c</span><span class="chip-x">×</span></span>',
     )
-    expect(getSegmentsFromEl(el)).toEqual([{ type: 'text', text: '/c' }])
+    // D4-b：命令 chip 产 slash segment（name 走 dataset），× 按钮文本不混入
+    expect(getSegmentsFromEl(el)).toEqual([{ type: 'slash', name: 'c' }])
   })
 
   it('null el 返回空数组', () => {
@@ -435,6 +449,51 @@ describe('detectSlashTriggerFromEl（行首 slash 触发，D5 正则化）', () 
 
   it('null el 返回 null', () => {
     expect(detectSlashTriggerFromEl(null)).toBeNull()
+  })
+
+  // ── 检查点 1（设计 §5/§7）：chip 后 ZWSP spacer 处光标再打 / 的行为 ──
+  // insertSlashChip/insertChipAtSelection 落位后光标锚定在 chip 后的 ZWSP spacer（文本节点）。
+  // 行首正则 (?:^|\n)\/ 的 ^ 匹配「光标所在文本节点开头」，spacer 节点开头是 ZWSP 而非 /，
+  // 故 spacer 后打 / 不触发行首命令浮层（与 hasChip 抑制一致；skill 域正则同理由天然不命中）。
+  it('检查点 1：命令 chip 后 spacer 处光标（ZWSP 末尾）→ null（不触发行首命令浮层）', () => {
+    el = setupElInBody('')
+    const chip = document.createElement('span')
+    chip.className = 'slash-chip'
+    chip.dataset.chipType = 'slash'
+    chip.dataset.chipName = 'compact'
+    el.appendChild(chip)
+    const spacer = document.createTextNode('\u200B')
+    el.appendChild(spacer)
+    setCursor(spacer, 1) // 光标在 spacer 末尾（chip 插入后的落位点）
+    expect(detectSlashTriggerFromEl(el)).toBeNull()
+  })
+
+  it('检查点 1：spacer 后打 /（节点内容 \\u200B/）→ 仍 null（^ 后是 ZWSP 非行首）', () => {
+    el = setupElInBody('')
+    const chip = document.createElement('span')
+    chip.className = 'slash-chip'
+    chip.dataset.chipType = 'slash'
+    chip.dataset.chipName = 'compact'
+    el.appendChild(chip)
+    const spacer = document.createTextNode('\u200B/')
+    el.appendChild(spacer)
+    setCursor(spacer, 2) // 打完 / 后光标
+    expect(detectSlashTriggerFromEl(el)).toBeNull()
+  })
+
+  it('检查点 1 对照：chip 后 Enter 新行（新文本节点）行首 / 照常触发', () => {
+    el = setupElInBody('')
+    const chip = document.createElement('span')
+    chip.className = 'slash-chip'
+    chip.dataset.chipType = 'slash'
+    chip.dataset.chipName = 'compact'
+    el.appendChild(chip)
+    el.appendChild(document.createTextNode('\u200B'))
+    el.appendChild(document.createElement('br'))
+    const newLine = document.createTextNode('/compact')
+    el.appendChild(newLine)
+    setCursor(newLine, 8)
+    expect(detectSlashTriggerFromEl(el)).toEqual({ query: 'compact' })
   })
 })
 

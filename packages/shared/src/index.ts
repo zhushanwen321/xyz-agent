@@ -29,7 +29,7 @@ export type {
   PiToolCallEntryForm,
 } from './pi-entry'
 export type { Segment } from './segments'
-export { segmentsToText, textToSegments, segmentsToPrompt, normalizeContent } from './segments'
+export { segmentsToText, textToSegments, segmentsToPrompt, normalizeContent, normalizeSegmentOrder, needsBoundarySpace } from './segments'
 export type { SegmentsMetadataFile, SegmentsMetadataEntry } from './message-metadata'
 export type {
   SessionStatus, SessionSummary, SessionGroup,

@@ -1,5 +1,5 @@
 /**
- * composer chip DOM 操作 —— core/domain/composer/input/chip-commands.ts（W2）。
+ * composer chip DOM 操作 —— packages/dom-core/src/composer/input/chip-commands.ts（W2）。
  *
  * 定位：迁自 renderer useComposerChipCommands.ts（341 行）。slash 命令 chip / @·# mention chip /
  * image badge 的 DOM 创建与删除。
@@ -7,7 +7,7 @@
  * [W2 改造] 原 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons' + i18n，
  * 现经 callbacks.renderIcon/t 注入（ADR-0058 边界修复：createVNode/render 收敛为注入 callback，
  * dom-core 零 vue render import）。
- * DOM 辅助（findImageChipEl/isSpacerNode/placeCursorAfter/removeChipNode）委托 input-dom.ts。
+ * DOM 辅助（isSpacerNode/placeCursorAfter/removeChipNode）委托 input-dom.ts。
  *
  * 不含：contenteditable 事件处理（contenteditable.ts）、模板结构、props/emits 声明。
  */
@@ -41,7 +41,8 @@ export function useComposerChipCommands(
   /**
    * chip 落位共用段：无选区 appendChild 到末尾，有选区删选区内容后插到光标处，
    * chip 后补 ZWSP spacer（光标锚点 + 删除 chip 时一并清理）并把光标定位其后。
-   * file/image/mention/session/subagent 五种内联 chip 共用（结构惯例收敛，防五份漂移）。
+   * 各 chip 插入函数共用（slash/skill/file/image/mention/session/subagent 全类型内联 chip——
+   * 结构惯例收敛，防多份漂移）。
    */
   function insertChipAtSelection(el: HTMLDivElement, chip: HTMLElement): void {
     const sel = window.getSelection()
@@ -72,40 +73,53 @@ export function useComposerChipCommands(
     }
   }
 
-  /** 插入 slash 命令 chip（§2e：必须在最前，只允许一个，整体可删，× 可点删）。 */
+  /**
+   * 插入 slash 命令 chip（设计 D4-a：视觉就地 + 替换语义，只允许一个，整体可删，× 可点删）。
+   *
+   * 命令分支（非 '/skill:' 前缀）：仅移除已有命令 chip（dataset.chipType==='slash'，维持
+   * 单命令不变量——pi 命令模型 = 消息级单命令）+ insertChipAtSelection 落在光标处，
+   * skill chip（chipType='skill'）不再被误删；「必须在最前」的行首约束由序列化层
+   * segmentsToText 归位承担（shared D4-c），DOM 位置层就地化。
+   *
+   * skill 分支（'/skill:' 前缀）：委托 insertSkillChip（skill 语义单点）——u4 起行首浮层 skill 项
+   * 已直接路由到 insertSkillChip，本分支只承接带 '/skill:' 前缀的异常/历史输入。委托后形态与
+   * 行首浮层通路一致（光标处 + 不删其他 chip），不再走旧的「删光全部 .slash-chip +
+   * 强制插最前 + 丢 location」破坏性通路（该形态是失败模式 C 的破坏面）。
+   */
   function insertSlashChip(command: string, icon?: string): void {
     const el = getEl()
     if (!el) return
+    if (command.startsWith('/skill:')) {
+      // 单次 restoreSelection 不变：委托路径由 insertSkillChip 内部调用一次（原分支在此直接调用，
+      // 改成委托后不重复）；位置语义由「强制最前」改为「光标处」（与行首浮层 skill 项一致）。
+      insertSkillChip(command.slice('/skill:'.length), undefined, icon)
+      return
+    }
+    // restoreSelection 活选区优先（设计 D1）：键盘选中路径 chip 落呼出位置，blur 路径落 savedRange
+    restoreSelection()
     el.focus()
-    el.querySelectorAll('.slash-chip').forEach((n) => removeChipNode(n, onChanged))
+    // 替换语义只针对命令 chip；skill chip 复用 .slash-chip class 但不在此删除范围（D4-a）
+    el.querySelectorAll<HTMLElement>('.slash-chip').forEach((n) => {
+      if (n.dataset.chipType === 'slash') removeChipNode(n, onChanged)
+    })
     const chip = document.createElement('span')
     chip.className = 'slash-chip'
     chip.contentEditable = 'false'
-    if (command.startsWith('/skill:')) {
-      chip.dataset.chipType = 'skill'
-      chip.dataset.chipName = command.slice('/skill:'.length)
-    } else {
-      chip.dataset.chipType = 'slash'
-      chip.dataset.chipName = command.startsWith('/') ? command.slice(1) : command
-    }
+    chip.dataset.chipType = 'slash'
+    chip.dataset.chipName = command.startsWith('/') ? command.slice(1) : command
     renderIconInto(chip, icon)
     const label = document.createElement('span')
     label.className = 'chip-label'
-    label.textContent = chip.dataset.chipType === 'skill'
-      ? (chip.dataset.chipName ?? '')
-      : (command.startsWith('/') ? command : `/${command}`)
+    label.textContent = command.startsWith('/') ? command : `/${command}`
     chip.appendChild(label)
     chip.appendChild(makeXButton(chip))
-    el.insertBefore(chip, el.firstChild)
-    const spacer = document.createTextNode('\u200B')
-    chip.after(spacer)
-    placeCursorAfter(spacer)
+    insertChipAtSelection(el, chip)
     onChanged()
   }
 
   /**
    * 插入 skill 标记 chip（多 skill 注入设计 D2）：类比 insertFileChip 走 insertChipAtSelection
-   * 通用机制——插在光标处、多个共存（与 insertSlashChip 的「最前唯一」命令语义区分，
+   * 通用机制——插在光标处、多个共存（与 insertSlashChip 的「唯一/替换语义」命令语义区分，
    * 不清除已存在 chip）、× 删除 / Backspace 整块删除（复用 .slash-chip 的既有删除通路）。
    *
    * DOM 形态复用 .slash-chip class + dataset.chipType='skill'：getSegmentsFromEl 的 skill
@@ -118,6 +132,8 @@ export function useComposerChipCommands(
   function insertSkillChip(name: string, location?: string, icon?: string): void {
     const el = getEl()
     if (!el) return
+    // restoreSelection 内部保证活选区优先（设计 D1）：编辑器内活选区原样使用（键盘路径 chip 落
+    // 呼出位置），仅活选区失效时才应用 savedRange（blur 回退）——调用方无需感知键盘/点击路径
     restoreSelection()
     el.focus()
     const chip = document.createElement('span')
@@ -142,6 +158,8 @@ export function useComposerChipCommands(
   function insertFileChip(path: string, lineRange?: [number, number]): void {
     const el = getEl()
     if (!el) return
+    // restoreSelection 内部保证活选区优先（设计 D1）：编辑器内活选区原样使用（键盘路径 chip 落
+    // 呼出位置），仅活选区失效时才应用 savedRange（blur 回退）——调用方无需感知键盘/点击路径
     restoreSelection()
     el.focus()
     const chip = document.createElement('span')
@@ -169,6 +187,8 @@ export function useComposerChipCommands(
   function insertImageBadge(path: string, fileName: string, displayName: string, needsMigrate: boolean = false): void {
     const el = getEl()
     if (!el) return
+    // restoreSelection 内部保证活选区优先（设计 D1）：编辑器内活选区原样使用（键盘路径 chip 落
+    // 呼出位置），仅活选区失效时才应用 savedRange（blur 回退）——调用方无需感知键盘/点击路径
     restoreSelection()
     el.focus()
     const chip = document.createElement('span')
@@ -197,6 +217,8 @@ export function useComposerChipCommands(
     }
     const el = getEl()
     if (!el) return
+    // restoreSelection 内部保证活选区优先（设计 D1）：编辑器内活选区原样使用（键盘路径 chip 落
+    // 呼出位置），仅活选区失效时才应用 savedRange（blur 回退）——调用方无需感知键盘/点击路径
     restoreSelection()
     el.focus()
     const chip = document.createElement('span')
@@ -216,6 +238,8 @@ export function useComposerChipCommands(
   function insertSessionChip(sessionId: string, label: string): void {
     const el = getEl()
     if (!el) return
+    // restoreSelection 内部保证活选区优先（设计 D1）：编辑器内活选区原样使用（键盘路径 chip 落
+    // 呼出位置），仅活选区失效时才应用 savedRange（blur 回退）——调用方无需感知键盘/点击路径
     restoreSelection()
     el.focus()
     const chip = document.createElement('span')
@@ -242,6 +266,8 @@ export function useComposerChipCommands(
   function insertSubagentChip(subagentId: string, slug: string): void {
     const el = getEl()
     if (!el) return
+    // restoreSelection 内部保证活选区优先（设计 D1）：编辑器内活选区原样使用（键盘路径 chip 落
+    // 呼出位置），仅活选区失效时才应用 savedRange（blur 回退）——调用方无需感知键盘/点击路径
     restoreSelection()
     el.focus()
     const chip = document.createElement('span')

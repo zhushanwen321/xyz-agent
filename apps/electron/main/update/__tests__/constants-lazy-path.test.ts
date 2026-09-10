@@ -2,7 +2,7 @@
  * constants 延迟求值回归守护（module-eager-binding 修复）。
  *
  * 背景 bug：UPDATE_DIR 等原为模块级常量（import 期经 getDataDir 求值），
- * 而 main.ts 的 dev 兜底 env（XYZ_AGENT_DATA_DIR ?? ~/.xyz-agent-dev）在模块
+ * 而 main.ts 的 dev 钉死 env（XYZ_AGENT_DATA_DIR 无条件 = ~/.xyz-agent-dev）在模块
  * import 链之后才执行——无 env 启动的 dev 实例（keeper 自动重启）会把全部升级
  * 路径烤死到真实目录 ~/.xyz-agent/update，升级产物误写生产数据。
  *

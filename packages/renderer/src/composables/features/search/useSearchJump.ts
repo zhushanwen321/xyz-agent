@@ -74,10 +74,14 @@ export function useSearchJump(options: UseSearchJumpOptions) {
         // landing 态（ctx.activeSessionId=null）也放行——landing composer 存在，sessionId 透传 null
         // 供消费侧 Composer 按 sessionId 过滤（双方 null 命中 landing composer）。
         // icon 从 item.icon 透传（保证搜索注入 chip 与 CommandPopover 选中 chip 图标一致）。
+        // isSkill/location 同透传（SearchItem ← SessionCommand 映射带出）：消费侧据此把 skill
+        // 项分流到 insertSkillChip（裸名 + location + 多 chip 共存），否则维持 insertSlashChip。
         commandStore.requestSlashInjection({
           command: item.title,
           icon: item.icon,
           sessionId: ctx.activeSessionId,
+          isSkill: item.isSkill,
+          location: item.location,
         })
       } else {
         // 应用命令：commandStore.appCommands 取 action 执行（core 实例 ref 需 .value）

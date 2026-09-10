@@ -17,6 +17,9 @@ import { buildSkillMarker } from './skill-marker'
 /**
  * Segment 判别联合。type 字段是判别器（discriminant），switch(type) 可穷尽检查。
  *
+ * - slash: 命令段（行首 `/` 命令浮层选中的命令项，D4-b），name 不含 `/` 前缀。
+ *   视觉上 chip 就地插在草稿光标处（D4-a），序列化时由 segmentsToText 归位提为首段，
+ *   保证产物以 `/cmd` 开头满足 pi 行首命令协议（设计 §2.5）——pi 协议零改动
  * - text: 纯文本段（用户输入的文字）
  * - skill: skill 命令段，含 name 和可选的 SKILL.md 文件路径
  *   （序列化为 `<xyz-skill/>` 私有标记，见 segmentsToText；D3）
@@ -43,6 +46,7 @@ import { buildSkillMarker } from './skill-marker'
  *   读路径（vision/非 vision 模型都能处理）。不走 base64 message.send.images 通道。
  */
 export type Segment =
+  | { type: 'slash'; name: string }
   | { type: 'text'; text: string }
   | { type: 'skill'; name: string; location?: string }
   | { type: 'file'; path: string; lineRange?: [number, number] }
@@ -61,6 +65,7 @@ export type Segment =
  * `/skill:name`——已登记于设计 §3.5-⑤（composer-multi-skill-injection.md）判定可接受。
  * 手打 `/skill:name` 文本不经此路径也不被 runtime 处理（G5：与 pi 原生行为零偏差）。
  * file → `path`（可选 `:L<s>-L<e>` 行范围），mention → `@name`，
+ * slash → `/name`（归位提为首段，见函数体 D4-c），
  * session → `#sessionId`（TUI session_read 协议），subagent → 空串（路由标记不进 prompt），
  * text → 原文，image → 裸 path 独占一行（对齐 pi TUI，LLM 自己调 read 工具读），
  * handoff → `[handoff from sourceLabel]`（来源标记，文档内容在 text segment 中）。
@@ -70,8 +75,9 @@ export type Segment =
  *
  * 收敛说明：原本 segmentsToPrompt 与 segmentsToText 分两份实现，因为 file inline 需要
  * fileContexts Map 才分开。删除 file inline 后，所有 segment 序列化收敛到本函数一处，
- * segmentsToPrompt 仅是 trim 包装。展示格式（含末尾换行）与 pi prompt 格式（trim）的差异
- * 由调用方决定是否 trim，不再分两份逻辑。
+ * segmentsToPrompt 只是同实现的语义别名（去 trim 后二者逐字同产出，见其上方 [HISTORICAL]）。
+ * 首尾空白保真——本函数不 trim，空白拦截职责归调用方（useChat send/steer/followUp 的
+ * !text.trim() 守卫），不再分两份逻辑。
  */
 /**
  * 判定 seg 的序列化文本前是否补一个空格分隔（边界空格规则单点化，替代拆分前的两处 if）：
@@ -79,8 +85,12 @@ export type Segment =
  * - seg 是 image → 不补（补空格会污染行首，产出 `\n /path`）
  * - seg 是 text → 仅当文本非空且不以空格开头时补（chip→text 粘连修复；text 自带前导空格则不重复补）
  * - 其余 chip→chip / chip→text → 补
+ *
+ * 导出供展示侧共用（UserBubble.vue 按归位序渲染时，slash 段是纯文本、无 badge 的
+ * `mr-1` 间距，段间边界空格必须显式渲染才与 segmentsToText 产物逐字一致）——
+ * 边界空格规则保持单点实现，展示侧不复制第二份。
  */
-function needsBoundarySpace(prev: Segment | null, seg: Segment): boolean {
+export function needsBoundarySpace(prev: Segment | null, seg: Segment): boolean {
   if (!prev || prev.type === 'text' || prev.type === 'image' || seg.type === 'image') return false
   if (seg.type === 'text') {
     // truthiness 语义与基线一致：text 为 undefined/null 脏数据时不补空格（非空串才补）
@@ -110,6 +120,8 @@ function serializeFileSegment(seg: Extract<Segment, { type: 'file' }>): string {
  */
 const SEGMENT_SERIALIZERS: { [K in Segment['type']]: (seg: Extract<Segment, { type: K }>) => string } = {
   text: (seg) => seg.text,
+  // D4-b：`/` 前缀在此补（name 不含前缀），归位提首后产物满足 pi 行首命令协议
+  slash: (seg) => `/${seg.name}`,
   // D3：`<xyz-skill/>` 私有标记（location 可得时带上）。反解析对偶实现在 core parseSkillBlock。
   skill: (seg) => buildSkillMarker(seg.name, seg.location),
   file: serializeFileSegment,
@@ -150,12 +162,39 @@ function serializeSegment(seg: Segment): string {
   return serialize ? serialize(seg) : ''
 }
 
+/**
+ * slash 段归位（D4-c 单一实现）：slash 段（命令 chip）提为首段，其余段保持原序。
+ *
+ * 命令 chip 视觉就地（D4-a）后段序不再以 `/` 开头，归位保证序列化产物以 `/cmd` 开头
+ * （pi 行首命令协议）。多个 slash 段防御性全前置按原序（正常态至多一个）。
+ *
+ * 两个消费方共用本实现（不复制第二份归位实现）：
+ * - segmentsToText：pi prompt / 展示序列化的前缀步
+ * - UserBubble.vue：chat 流气泡按归位序渲染——live 段序与 reload 侧序列化产物
+ *   （apply-entry-convert 的 textToSegments(deliveryText)）同序，live ≡ reload
+ *   （AGENTS.md 关键规则 9）
+ *
+ * 空数组返回空数组；本函数不做过滤/去重，仅重排。
+ */
+export function normalizeSegmentOrder(segments: Segment[]): Segment[] {
+  const slash: Segment[] = []
+  const rest: Segment[] = []
+  for (const seg of segments) {
+    if (seg.type === 'slash') slash.push(seg)
+    else rest.push(seg)
+  }
+  return [...slash, ...rest]
+}
+
 export function segmentsToText(segments: Segment[]): string {
   if (segments.length === 0) return ''
+  // D4-c 归位：slash 段提首（判定与理由见 normalizeSegmentOrder）；needsBoundarySpace
+  // 在归位后的序上执行，slash 段视同 chip 类段（default 补空格分支覆盖）。
+  const ordered = normalizeSegmentOrder(segments)
   const parts: string[] = []
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i]
-    const prev = i > 0 ? segments[i - 1] : null
+  for (let i = 0; i < ordered.length; i++) {
+    const seg = ordered[i]
+    const prev = i > 0 ? ordered[i - 1] : null
     if (needsBoundarySpace(prev, seg)) {
       parts.push(' ')
     }

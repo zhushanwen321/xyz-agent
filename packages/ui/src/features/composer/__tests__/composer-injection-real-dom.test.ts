@@ -20,8 +20,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ref, nextTick, type Ref } from 'vue'
 import { createComposerInjectionStore, useComposerInjection } from '@xyz-agent/core/domain/composer/context'
 import type { ComposerInputInstance } from '@xyz-agent/core/domain/composer'
-import { useComposerChipCommands } from '@xyz-agent/dom-core/composer/input'
-import type { ChipCallbacks } from '@xyz-agent/dom-core/composer/input'
+import { useComposerChipCommands, useContenteditableInput } from '@xyz-agent/dom-core/composer/input'
+import type { ChipCallbacks, ContenteditableCallbacks } from '@xyz-agent/dom-core/composer/input'
 
 beforeEach(() => {
   document.body.innerHTML = ''
@@ -41,9 +41,24 @@ function setupRealChipChain(variant: 'panel' | 'landing', sessionId: string | nu
   // 清掉前一个测试残留的 selection range（指向已移除节点会导致 insertNode 静默失败）
   window.getSelection()?.removeAllRanges()
   const elRef = ref(el) as Ref<HTMLDivElement | null>
+  // 真实 restoreSelection 链路（设计 D1 / u2 改写点）：不 mock restoreSelection——
+  // 活选区优先 + savedRange blur 回退的真实语义是 chip 落位正确性的被测对象，
+  // mock 会掩盖插入位置回归（composer chip bug 存活根因）
+  const inputCallbacks = {
+    onInput: vi.fn(),
+    onSlashTrigger: vi.fn(),
+    onFileTrigger: vi.fn(),
+    onEnterKeydown: vi.fn(),
+    onKeydown: vi.fn(),
+    handleBackspaceOnChip: vi.fn(() => false),
+    insertImageBadge: vi.fn(),
+    getSessionId: vi.fn(() => 's1'),
+    pasteImage: vi.fn(),
+  } as unknown as ContenteditableCallbacks
+  const input = useContenteditableInput(elRef, inputCallbacks)
   const chipCommands = useComposerChipCommands(elRef, {
     onChanged: vi.fn(),
-    restoreSelection: vi.fn(),
+    restoreSelection: input.restoreSelection,
     renderIcon: () => false,
     t: (key: string) => key,
   } as ChipCallbacks)
@@ -64,7 +79,17 @@ function setupRealChipChain(variant: 'panel' | 'landing', sessionId: string | nu
     getSessionCwd: () => undefined,
     getActiveSessionId: () => sessionIdRef.value,
   })
-  return { el, store: injectionStore }
+  return { el, store: injectionStore, input }
+}
+
+/** 把光标 collapse 到指定文本节点的 offset 处 */
+function setCursor(node: Node, offset: number): void {
+  const sel = window.getSelection()
+  sel?.removeAllRanges()
+  const range = document.createRange()
+  range.setStart(node, offset)
+  range.collapse(true)
+  sel?.addRange(range)
 }
 
 describe('composer 注入真实 DOM chip（R1/R3）', () => {
@@ -111,6 +136,26 @@ describe('composer 注入真实 DOM chip（R1/R3）', () => {
     store.requestInjection({ target: 'current', path: 'a.ts', sessionId: 's1' })
     await nextTick()
     expect(store.pendingInjection.value).toBeNull()
+  })
+
+  it('R1d: 真实选区链路——savedRange=头部旧快照 + 活光标在草稿末尾 → 注入 chip 落活光标处（设计 D1）', async () => {
+    const { el, store, input } = setupRealChipChain('panel', 's1')
+    el.textContent = 'AAA BBB'
+    const textNode = el.firstChild as Text
+    // savedRange 旧快照 = 头部（模拟点击框后打字推进，savedRange 不随打字更新）
+    setCursor(textNode, 0)
+    input.saveSelection()
+    // 活光标在草稿末尾（键盘路径焦点从未离开）
+    setCursor(textNode, 7)
+    store.requestInjection({ target: 'current', path: 'cursor.ts', sessionId: 's1' })
+    await nextTick()
+
+    const chip = el.querySelector('.mention-file') as HTMLElement
+    expect(chip).not.toBeNull()
+    expect(chip.dataset.chipPath).toBe('cursor.ts')
+    // chip 不在头部（失败模式 A 回归）：firstChild 仍是正文文本，chip 紧跟其后
+    expect(el.firstChild).toBe(textNode)
+    expect(chip.previousSibling).toBe(textNode)
   })
 })
 

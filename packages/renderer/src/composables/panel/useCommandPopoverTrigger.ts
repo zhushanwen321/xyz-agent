@@ -20,6 +20,9 @@ import { ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
 import { pickFile } from '@/lib/ipc'
+// 裸 skill 名归一化单点（剥 `skill:` / `/` 前缀）——与 CommandPopover skill-only 候选 /
+// slash 候选 selected 比对 / onCmdSelect skill 项分流同源，避免第三份前缀剥离实现漂移。
+import { bareSkillCommandName } from '@/components/panel/command-popover-skill-candidates'
 // W4：ComposerInput 迁 ui 包，类型 import 改 ui 包路径（旧 renderer 路径已删）
 import type { ComposerInput } from '@xyz-agent/ui/features/composer'
 import type CommandPopover from '@/components/panel/CommandPopover.vue'
@@ -36,6 +39,11 @@ export interface CommandSelectPayload {
   name: string
   icon?: string
   description?: string
+  /** slash 路 skill 项标记（设计 D3）：行首命令浮层的 skill 项（name 形如 '/skill:xxx'）
+   *  按项类型分流到 skill 通路，与 type==='skill' 行为合流（光标处插入 + 多 chip 共存 +
+   *  带 location + 已选禁选，后者即 S-2：slash 路候选同样消费 selectedSkillNames）——
+   *  不再走 insertSlashChip（强制最前 + 误删全部 slash-chip + 丢 location） */
+  isSkill?: boolean
   /** skill 路：SKILL.md 绝对路径（可得时带上，chip dataset 携带供反解析）；缺省时 runtime 经 get_commands 权威映射解析 */
   location?: string
   /** session 路：选中 session 的 id（TUI session_read 协议消费） */
@@ -102,19 +110,29 @@ export function useCommandPopoverTrigger(
   /**
    * 消费搜索浮层的 slash 注入请求（store 驱动模式，替代断链的 injectSlash 回调）。
    * SearchModal → useSearchJump.confirmCommand → commandStore.requestSlashInjection 写入 pendingSlash，
-   * 本 watch 按 sessionId 过滤消费，命中则调 insertSlashChip 注入 chip 并 clearPendingSlash。
+   * 本 watch 按 sessionId 过滤消费，命中则注入 chip 并 clearPendingSlash。
+   *
+   * 分流（与 onCmdSelect 的 D3 项类型分流同款落点）：pi 的 skill 命令名是**裸** `skill:<name>`
+   * （无前导 /），命令通路进入 insertSlashChip 后仅「以 /skill: 开头」的判据为假 ⇒ 落成命令
+   * chip（无 chipLocation + 受单命令替换语义管辖），既丢 SKILL.md 路径也丢多 skill 共存。
+   * 故 isSkill 为真时直接走 skill 通路：裸名（bareSkillCommandName 剥 `skill:` / `/`）+ location
+   * + icon，落点与 onCmdSelect 的 skill 项/type==='skill' 两分支一致；否则维持命令通路（回归锁）。
    *
    * 非 immediate：防 Composer 后挂载时读到旧 pendingSlash 残留值误注入（挂载时 store 可能已有
    * 给前一个 Composer 的请求，immediate 会立即误触发）。仅响应挂载后的新写入。
    * sessionId 匹配：含双方 null（landing 态）。不匹配分支不 clear（防误清留给其他 Composer 的请求）。
-   * 注入顺序：先 insertSlashChip 后 clearPendingSlash（防先清后注入读到 null）。
+   * 注入顺序：先插 chip 后 clearPendingSlash（防先清后注入读到 null）。
    */
   watch(
     () => commandStore.pendingSlash.value,
     (req) => {
       if (!req) return
       if (req.sessionId !== sessionId.value) return // 仅消费目标 session 的请求
-      inputRef.value?.insertSlashChip(req.command, req.icon)
+      if (req.isSkill) {
+        inputRef.value?.insertSkillChip(bareSkillCommandName(req.command), req.location, req.icon)
+      } else {
+        inputRef.value?.insertSlashChip(req.command, req.icon)
+      }
       commandStore.clearPendingSlash()
     },
   )
@@ -198,9 +216,10 @@ export function useCommandPopoverTrigger(
   }
 
   /** 命令浮层选中：五路各先清「符号+query」过滤文本再插对应 chip。
-   *  - slash：clearSlashQueryText → insertSlashChip
+   *  - slash：clearSlashQueryText → 命令项 insertSlashChip；skill 项（isSkill）按项类型分流
+   *    insertSkillChip（设计 D3，与 skill 入口行为合流：光标处、多共存、带 location）
    *  - skill（行中空白后 / 触发）：clearSkillQueryText → insertSkillChip（光标处标记 chip，
-   *    多个共存——与 slash 的「最前唯一」命令 chip 通道区分，多 skill 注入 D2）
+   *    多个共存——与 slash 的「唯一/替换语义」命令 chip 通道区分，多 skill 注入 D2）
    *  - file（$ 触发）：clearDollarFileQueryText → insertFileChip（绿色 file chip，
    *    与原 insertMentionChip('#') 等价——dom-core 内 # 委托 insertFileChip，直接走本名）
    *  - session（# 触发）：clearSessionQueryText → insertSessionChip（显示 label 非 uuid）
@@ -217,7 +236,16 @@ export function useCommandPopoverTrigger(
     inputRef.value?.focus()
     if (payload.type === 'slash') {
       inputRef.value?.clearSlashQueryText()
-      inputRef.value?.insertSlashChip(payload.name, payload.icon)
+      if (payload.isSkill) {
+        // 设计 D3：行首浮层的 skill 项按「项类型」分流——与 type==='skill' 分支合流
+        //（光标处 + 多个共存 + 带 location），不再走 insertSlashChip 老通路
+        const parsedName = payload.name.startsWith('/skill:')
+          ? payload.name.slice('/skill:'.length)
+          : payload.name
+        inputRef.value?.insertSkillChip(parsedName, payload.location, payload.icon)
+      } else {
+        inputRef.value?.insertSlashChip(payload.name, payload.icon)
+      }
     } else if (payload.type === 'skill') {
       inputRef.value?.clearSkillQueryText()
       inputRef.value?.insertSkillChip(payload.name, payload.location, payload.icon)

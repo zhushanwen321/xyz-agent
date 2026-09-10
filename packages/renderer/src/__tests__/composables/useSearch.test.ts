@@ -520,6 +520,33 @@ describe('U5/U6 toCommandItem icon + commandKind 透传', () => {
     expect(hit!.commandKind).toBe('slash')
   })
 
+  it('U5b skill 命令（source=skill + sourceInfo.path）→ isSkill:true + location 带出；非 skill 命令两者缺省', async () => {
+    const store = useCommandStore()
+    // pi 真实形态：name 不带 / 前缀（'skill:<name>'），sourceInfo.path 是 SKILL.md 绝对路径
+    store.applyCommands('s1', [
+      { name: 'skill:code-review', description: '代码评审', source: 'skill', sourceInfo: { path: '/skills/code-review/SKILL.md', source: 'skill' } },
+      { name: 'commit', description: '提交', source: 'extension' },
+    ])
+    const sid = ref<string | null>('s1')
+    const { query } = useSearch(sid)
+
+    const sections = await query('ski', { activeSessionId: 's1' })
+
+    const cmdSection = findSection(sections, '命令')
+    expect(cmdSection).toBeTruthy()
+    const skill = cmdSection!.items.find((it) => it.title === 'skill:code-review')
+    expect(skill).toBeTruthy()
+    // isSkill 判据 = SessionCommand.kind === 'skill'（applyCommands 把 pi source 归一化进 kind）
+    expect(skill!.isSkill).toBe(true)
+    // SKILL.md 路径从 sourceInfo.path 带出（搜索注入侧据此落 chip dataset）
+    expect(skill!.location).toBe('/skills/code-review/SKILL.md')
+
+    const sections2 = await query('commit', { activeSessionId: 's1' })
+    const cmd = findSection(sections2, '命令')!.items.find((it) => it.title === 'commit')
+    expect(cmd!.isSkill).toBe(false)
+    expect(cmd!.location).toBeUndefined()
+  })
+
   it('U6 AppCommand 映射无 icon（undefined）+ commandKind:app', async () => {
     const store = useCommandStore()
     const appCmd: AppCommand = { id: 'new', name: '新建', shortcut: '⌘N', action: noop }

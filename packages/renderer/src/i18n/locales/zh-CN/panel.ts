@@ -334,6 +334,9 @@ export default {
     fileLoadFailed: '加载失败，点击重试',
     fileTruncated: '结果超过 5000 项已截断',
     fileNoResults: '当前目录无匹配文件',
+    // 浮层 open 但无候选时的通用反馈行（键盘消费前提：每个 open 态都有可见行）
+    loading: '加载中',
+    noMatches: '无匹配项',
   },
   queue: {
     title: '队列',
