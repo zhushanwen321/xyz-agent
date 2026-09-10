@@ -270,11 +270,11 @@ pi-*.jsonl tee 累计流量达 198MB = 长会话高频大 entry 真实流入的�
 | 出站 reply 超 32MB | 出站帧守卫（reply 通路=message-broker.reply 内联） | 错误提示「内容过大无法传输」 | 提示含「加载更早」分页入口与 session 文件路径 |
 | 出站 push 超 32MB | 出站帧守卫（push 通路=guardOutboundPushFrame@publish 入口，seq 分配前契约保持式截断） | 该条消息显示占位文案，其余消息照常 | 占位文案含 session 文件路径 |
 | push 注册表 miss / 截断后仍超限（病态兜底） | publish 入口兜底，seq 分配前整条丢弃 | 该条消息不出现 | error 日志含消息类型与体积 → 补注册表后同类消息恢复；8MB 告警档前置暴露 miss |
-| 历史文件超 32MB | statSync 预检 | 最近窗口正常显示 + truncated 标记 | 「加载更早」翻页；Trace 视图降级为「文件过大，源文件：<路径>」 |
+| 历史文件超 32MB | statSync 预检 | 最近窗口正常显示 + truncated 标记 | 「加载更早」翻页；Trace 视图降级为「文件过大，源文件：<路径>」（④档降级文案在离线/file 通路生效；**活跃态** Trace 走 RPC get_entries 通路，超限被 D3 reply 守卫拦截为错误 envelope——错误提示同样携带路径指引，不再只显示错误码；活跃态协议级降级为已知限制，挂数据驱动重审） |
 | restore 附着超 32MB（最小规范化，v9 降级形态） | statSync 预检（⑤档） | 尾部 session_end 被流式 strip、首行 cwd 死路径被 fallback 修复 → session 正常附着可用（失忆防由 strip 保证、cwd 防由首行修复保证）；显式失败仅在文件头损坏等极端形态触发 | 分支二的根治：在原 worktree 路径重建目录（推荐）；或手工编辑 session 文件首行 header 的 cwd 字段指向现存目录——**pi 按 header 的 cwd 判定而非文件所在目录，只移动文件不改 header 无效** |
 | pi 进程死亡 | ProcessManager onSessionExit 链 | T4 恢复提示条（含在途回合与后台任务丢失说明） | 自动 respawn（5s 延迟，2 次熔断）→ 手动重试按钮 |
 | pi 恢复后 subagent/后台任务缺失 | 崩溃时已连坐终止（relay kill/reap） | T4 提示条明示「不会自动恢复」 | 用户重新发起子代理/后台任务 |
-| 用户手动强制退出 session | forceQuitSession（不经 onSessionExit） | 现状 UI（dead 标记） | 不自动恢复（设计意图）；下次发消息惰性恢复 |
+| 用户手动强制退出 session | forceQuitSession（不经 onSessionExit） | 现状 UI（dead 标记） | 不自动恢复（设计意图）；下次交互（点击 session 即惰性附着恢复，实测口径） |
 | runtime 整机死亡 | supervisor（既有） | 「重启中…」过渡屏（既有） | 退避重启（既有）；5 次用尽 → 手动重试（既有）；重启后 dead session 等用户交互惰性恢复 |
 
 ### 3.5 探针清单（准则 7：运行时断言必须实锚）
