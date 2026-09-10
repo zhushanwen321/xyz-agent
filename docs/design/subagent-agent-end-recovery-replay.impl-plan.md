@@ -99,9 +99,9 @@ node scripts/check-doc-symbol-drift.mjs         # M5 后
 |------|------|------|----------|
 | M0 合并基底 | committed | 1/2 | merge 430dacabc + 残留清理 e192dfe4a；K5 冲突面与预演清单完全吻合；全量三连绿（pi-subagent-cli 304 passed / subagent-core 2834 passed / runtime 457 文件 5184 passed / tsc 干净） |
 | M1 S2 契约修复 | committed | 1/2 | 9578af7f4；diff ⊆ 领地（2 文件）；契约断言（缺 sessionFile → 重试照发 1→2→3 → 耗尽 resolve）+ 全包 304 绿 + tsc 干净；deviation 1 条已登记（注释分叉表述修正） |
-| M2 agent_end 惰性回补 | pending | 0/2 | — |
-| M3 workflow 域守护补挂 | in-progress | 0/2 | 批次 1 派发 |
-| M4 close 兜底扫描 | in-progress | 0/2 | 批次 1 派发 |
+| M2 agent_end 惰性回补 | pending | 0/2 | 批次 2 派发后额度中断（16:48 起无产出），待恢复重派；工作区零残留 |
+| M3 workflow 域守护补挂 | pending | 0/2 | 批次 1 派发后额度中断（16:48 起无产出），待恢复重派；工作区零残留 |
+| M4 close 兜底扫描 | pending | 0/2 | 批次 1 派发后额度中断（16:48 起无产出）；遗留未跟踪半成品 `packages/pi-subagent-cli/src/session-file-locator.ts`（175 行，仅扫描器本体，无测试、无 pump 接线），重派时按「先核验现状再续作」处理 |
 | M5 文档与守卫 | pending | 0/2 | — |
 
 ## 7 残留风险与变更历史
@@ -116,4 +116,5 @@ node scripts/check-doc-symbol-drift.mjs         # M5 后
 
 - 2026-09-10：计划创建（对应设计就绪版 41d475737），待用户评审 + 基线 commit。
 - 2026-09-10：用户评审确认；基线 commit e12ea80bd。M0 执行完毕：merge 430dacabc（冲突面与 K5 预演完全吻合）+ 残留清理 e192dfe4a（checkout 整树重置碰不到的 3 个线 B 独有测试文件——教训：`git checkout <tree> -- packages/` 只覆盖 dev 树存在文件，不删 merge 自动合入的线 B 独有文件）；全量三连绿。批次 1（M1/M3/M4）派发。
+- 2026-09-10：**额度中断停工**。M1 committed（9578af7f4）后批次 2（M2）与批次 1 残余（M3/M4）三个 dev agent 先后返回 `[1308] 已达到 5 小时的使用上限`（provider 声明 18:39:42 重置）。停工核验：`git status --short` 仅 1 项未跟踪产物 `packages/pi-subagent-cli/src/session-file-locator.ts`（M4 agent 死前写出的扫描器本体，无测试无接线，未经核验），`git diff --stat` 为空（M2/M3 零残留）——故 M2/M3/M4 一律按 pending 重算（无 committed 证据）。恢复后按 execute.md「中断恢复」回到第 1 步：重派 M3 ∥ M4（+ M2 与 M1 串行已解开，可同批），M4 task 附「遗留半成品路径 + 先核验再续作」指令。
 - 2026-09-10：**K4 提前核验完毕（结论：无欠账）**——线 B 对 rpc-client.ts 的 112 行改动 = 纯 D4 消费切换（createLineReader import + 本地 LF 读取器删除）+ 注释迁移；线 B 注释提及的「stdout error 吞转发（2026-09-04 事故审计）」在 dev 版同点位存在（`rpc-client.ts:482` 一行防护 + :496 W2 完整监听），决策 5「预期无欠账」证实。M5 无需 rpc-client 相关重放。
