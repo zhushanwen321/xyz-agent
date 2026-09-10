@@ -268,6 +268,8 @@ export class SubprocessAgentRunner implements AgentRunner {
       unbindStream = stream === undefined ? undefined : bindNoProgressRefresh(stream, taskId);
 
       // ── P1/P4 引擎接线：EnginePort.run ──
+      // [F6] 根 session id 惰性取值（派发时点的 sessionRootId——initSession 后有值）。
+      const rootId = this.subagentService.getSessionRootId();
       const runCtx: RunContext = {
         taskId,
         poolKey: JOURNAL_INITIAL_POOL_KEY,
@@ -281,6 +283,9 @@ export class SubprocessAgentRunner implements AgentRunner {
         // taskId（'sa-' 前缀）即记账 key，与 chat 域 kickOffEngineRun 的 record.id 同构
         onChildSpawned: (child) => registerSpawnedChildForRecord(taskId, child),
         ...(stream !== undefined ? { stream } : {}),
+        // [F6] 根 session id 注入（relay 归属键 SESSION_ID 权威源；null/空串不上 wire）
+        //——workflow 域 sync 面（executeAndAwait）的 pi 引擎 run 同经协议引擎派发。
+        ...(rootId !== null && rootId !== "" ? { sessionRootId: rootId } : {}),
         // [D6 合流] 解耦形态（有 schemaEnv 无 schema）不再经 RunContext.schemaEnv
         // 兜底通道——schemaEnv 已在合流形状 AgentCallOpts.schemaEnv 内，pi 直出
         // （agentCallToExecuteOptions）以「schema 派生优先、schemaEnv 兜底」取值，

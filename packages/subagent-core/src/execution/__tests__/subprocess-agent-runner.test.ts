@@ -94,7 +94,8 @@ function createMockService(impl?: typeof vi.fn): SubagentService {
   const executeAndAwait = impl ?? vi.fn().mockResolvedValue(makeMockResult());
   // partial mock（仅 executeAndAwait + asEngineService self-引用）——SAR 测试路径
   // 不触达其余成员，经 unknown 双跳收敛到 SubagentService 视图
-  const partial: { executeAndAwait: typeof executeAndAwait; asEngineService?: unknown } = { executeAndAwait };
+  // getSessionRootId = [F6] SAR runCtx 注入的根 session id 访问（替身恒 null = 不上 wire）。
+  const partial: { executeAndAwait: typeof executeAndAwait; asEngineService?: unknown; getSessionRootId?: () => string | null } = { executeAndAwait, getSessionRootId: () => null };
   const service = partial as unknown as SubagentService;
   partial.asEngineService = service;
 

@@ -95,7 +95,8 @@ function makeMockPiService() {
   });
   // [D4 聚合连带] SAR 构造器经 asEngineService 显式视图取引擎服务面——fake 的
   // face 即自身，getter 直接返回 self。
-  const service = { executeAndAwait } as unknown as SubagentService & { asEngineService: unknown };
+  // getSessionRootId = [F6] SAR runCtx 注入的根 session id 访问（替身恒 null = 不上 wire）。
+  const service = { executeAndAwait, getSessionRootId: () => null } as unknown as SubagentService & { asEngineService: unknown };
   (service as { asEngineService: unknown }).asEngineService = service;
   // [W3] 登记当前 mock 服务——委托式替身 port 的工厂闭包按它路由（getEngine 惰性）。
   currentPiService = service as unknown as SubagentService;

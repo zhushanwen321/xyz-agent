@@ -186,7 +186,10 @@ describe("M6 V5② workflow no-progress 秒级窗全链（真引擎）", () => {
     const killAllSpy = vi.spyOn(client, "killAll");
 
     // SAR 构造：pi 已注册 → resolveHostPiEnginePort 取上面的真引擎（不消费 service）。
-    const partial: { asEngineService?: unknown } = {};
+    // getSessionRootId = [F6] SAR runCtx 注入的根 session id 访问（替身恒 null = 不上 wire）。
+    const partial: { asEngineService?: unknown; getSessionRootId?: () => string | null } = {
+      getSessionRootId: () => null,
+    };
     const service = partial as unknown as SubagentService;
     partial.asEngineService = service;
     const deps: SubprocessAgentRunnerDeps = { subagentService: service };

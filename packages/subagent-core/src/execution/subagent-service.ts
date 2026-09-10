@@ -327,6 +327,15 @@ export class SubagentService {
    *  （collectRecords filter 用，与 createRecordForMode 的 rootSessionId 盖章同源——子进程
    *  因此看到整棵 ROOT 树）。设计见 recursive-subagent-visibility.md 决策 3。 */
   private sessionRootId: string | null = null;
+
+  /**
+   * [F6] 当前根 session id 的只读访问——引擎接线方（SAR 等）构造 RunContext 注入
+   * `ctx.sessionRootId`（pi 引擎 relay 归属键 SESSION_ID 权威源）。initSession 后有值
+   * （根进程 = 本 session id；嵌套 = env 贯穿的真 ROOT）。
+   */
+  getSessionRootId(): string | null {
+    return this.sessionRootId;
+  }
   /**
    * [D3-⑤ 嵌套防护合一] 进程内执行嵌套上下文（原 execCtxAls 私有字段下沉公共层
    * common/nesting-guard.ts ExecutionNestingContext——机制注释含 ALS 断裂基线兜底）。
@@ -2722,6 +2731,12 @@ export class SubagentService {
             signal,
             ...(stream !== undefined ? { stream } : {}),
             ctxModel: identity.resolved.model,
+            // [F6] 根 session id 注入（relay 归属键 SESSION_ID 权威源；null/空串不上 wire）。
+            // 本方法是 pi 引擎 background 派发的主路径（isPiRoute 恒路由至此，含 workflow
+            // 域一次性 run——非 chatMode 不带 chat 键但同经此处），漏注 = pi child exit 13。
+            ...(this.sessionRootId !== null && this.sessionRootId !== ""
+              ? { sessionRootId: this.sessionRootId }
+              : {}),
             // chat 会话形态参数（conversation 形态必传；冷续带锚点）；一次性 run 不携带。
             ...(record.chatMode
               ? {

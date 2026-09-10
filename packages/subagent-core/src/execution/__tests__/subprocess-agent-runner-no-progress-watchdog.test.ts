@@ -101,7 +101,10 @@ type RunImpl = (task: AgentCallOpts, ctx: RunContext) => Promise<EngineRunResult
  * 装配「注册 pi 引擎替身 + mock SubagentService」的 SAR harness——run 实现由用例注入
  *（捕获 RunContext / 挂 abort 监听 / 立即返回失败等）。
  */
-function makeHarness(runImpl: RunImpl): { sar: SubprocessAgentRunner; runSpy: ReturnType<typeof vi.fn> } {
+function makeHarness(
+  runImpl: RunImpl,
+  opts: { rootSessionId?: string } = {},
+): { sar: SubprocessAgentRunner; runSpy: ReturnType<typeof vi.fn> } {
   const runSpy = vi.fn(runImpl);
   const port: EnginePort = {
     id: "pi",
@@ -114,7 +117,10 @@ function makeHarness(runImpl: RunImpl): { sar: SubprocessAgentRunner; runSpy: Re
   clearEngines();
   registerEngine("pi", () => port);
   // partial mock：SAR 构造器只经 asEngineService 取引擎服务面（已注册 pi 时不被消费）。
-  const partial: { asEngineService?: unknown } = {};
+  // getSessionRootId = [F6] SAR runCtx 注入的根 session id 访问（替身恒 null = 不上 wire）。
+  const partial: { asEngineService?: unknown; getSessionRootId?: () => string | null } = {
+    getSessionRootId: () => opts.rootSessionId ?? null,
+  };
   const service = partial as unknown as SubagentService;
   partial.asEngineService = service;
   const deps: SubprocessAgentRunnerDeps = { subagentService: service };
@@ -179,6 +185,24 @@ describe("M3 workflow 域 no-progress 守护（SAR.run 落点）", () => {
   });
 
   // ── arm 落点 + disarm ──
+
+  it("[F6] runCtx 带 sessionRootId（service 根 id 非空）；缺省 null 不上键（additive）", async () => {
+    let capturedRoot: RunContext | undefined;
+    const { sar } = makeHarness((_t, ctx) => {
+      capturedRoot = ctx;
+      return Promise.resolve(successRunResult());
+    }, { rootSessionId: "root-f6-sar" });
+    await sar.run(makeBaseOpts(), new AbortController().signal);
+    expect(capturedRoot?.sessionRootId).toBe("root-f6-sar");
+
+    let capturedBare: RunContext | undefined;
+    const { sar: sarBare } = makeHarness((_t, ctx) => {
+      capturedBare = ctx;
+      return Promise.resolve(successRunResult());
+    });
+    await sarBare.run(makeBaseOpts(), new AbortController().signal);
+    expect(capturedBare).not.toHaveProperty("sessionRootId");
+  });
 
   it("V5①-a run 期间 armed（mid-round）+ merged signal 不等于外部 signal；收敛后 disarm", async () => {
     const gate = deferred<EngineRunResult>();
