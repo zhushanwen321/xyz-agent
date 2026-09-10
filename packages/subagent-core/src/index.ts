@@ -2,8 +2,8 @@
  * @zhushanwen/subagent-core — 公共 API barrel（D5 定稿 + post-convergence B-2 扩面）
  *
  * 公共 API 面 = 本文件导出 + package.json exports 的语义子入口
- * （./engines/zcode/reader、./engines/zcode/constants、./engine/paths、./relay-env）
- * + ./workflows/* 资产子入口。exports 面即 semver 契约（D5）：收窄不放宽——
+ * （./engine/paths、./engine/engine-discovery-scan、./relay-env——[W11/H3] 引擎
+ * 子入口 ./engines/zcode/* 已随内建引擎删除）+ ./workflows/* 资产子入口。exports 面即 semver 契约（D5）：收窄不放宽——
  * 新增导出走 minor，本文件刻意不使用 `export *`，逐名列出以使 diff 可审。
  * 内部实现细节（error-recovery / execute-agent-call / worker-script-builder 等
  * engine 编排件）不经 barrel 导出；host-surface 扩面（zsw 回接 U0，2026-08-30）
@@ -88,34 +88,54 @@ export {
   type EngineRoutingInput,
   type EngineRoutingSource,
 } from "./execution/engine/routing.ts";
+// [W8 补扫接线面] setEngineDiscoveryRescanOptions：宿主登记 hasEngineWithRescan 的
+// 补扫发现参数（与 session_start 发现扫描同源）；壳消费 = runtime
+// subagent-engine-history 的 ensureRuntimeEngineWiring。
+export { setEngineDiscoveryRescanOptions } from "./execution/engine/routing.ts";
 
 // ── 引擎注册 / 发现与进程面（execution/engine）────────────────
 // 组合根 index.ts 接线消费（registerXxx 引擎注册、syncEnginesFile engines 文件
 // 同步、killAllSpawnedChildren session 派生进程兜底清理）。
 export { syncEnginesFile } from "./execution/engine/engine-discovery.ts";
-export { registerPiEngine } from "./execution/engine/engines/pi/registration.ts";
-export { killAllSpawnedChildren } from "./execution/engine/engines/pi/session-runner.ts";
-export { registerZcodeEngine } from "./execution/engine/engines/zcode/registration.ts";
+// [W11/DoD#5] registerPiEngine（inproc 'pi' 注册）已删；[W3 chat 域收口] chat 域 inproc
+// 引擎（inproc pi 引擎目录）与 SubagentService 自持 DI 实例一并删除——registry 'pi' 由三级发现
+// 装载 cli descriptor，chat 轮次与 run 域同路经协议客户端发往 pi-subagent-cli 引擎进程
+// （G1：pi 引擎单一 CLI 形态，core 壳侧零内建引擎）。
+// [W8 D8 薄壳] killAllSpawnedChildren：扩展 index.ts / zsw runner-core.js 的业务调用点
+// 零改动。语义（[F-7 注释纠偏，如实口径]）= **仅镜像记账**——core 侧 spawnedChildren
+// 镜像整体清空（engine/host/spawned-children.ts 公共面），不发任何进程信号；
+// 子进程活在引擎进程内，其回收链 = ① stdin-EOF 自灭（宿主退出 / EngineClient 销毁
+// → 引擎进程 stdin 断源自灭，正常路径）；② disposeEngines()（registry）显式触发全部
+// 已实例化引擎 dispose（cli 形态 = RemoteEngine.dispose → EngineClient 有界收口）——
+// 该入口为宿主 shutdown 链预留，现无生产接线。subagent-workflow 扩展的
+// reapSpawnedChildrenOnShutdown（process hook 调本函数）因此同为镜像置死 no-op，
+// 不构成真实收割（现状登记，workflow 包生产码不动）。
+export { killAllSpawnedChildren } from "./execution/engine/host/spawned-children.ts";
 
-// pi session-runner 内核件（merge 裁决：dev 侧旧深路径 execution/session-runner.ts
-// 终态已不存在，符号随 u-2a 迁移至 engine/engines/pi/session-runner.ts）：
+// [W8 D8 兼容公共面薄壳]（设计 §3.6 D8 表）：registerZcodeEngine 确保cli descriptor
+// 注册（vendored 相对定位，失败回退 inproc 过渡）+ engineDataDir 记入；createZcodeEngine
+// 返回 RemoteEngine('zcode')（deps → 协议客户端映射，sources 不跨进程）。实现见
+// execution/engine/d8-compat.ts——engines/zcode/registration.ts 的同名符号不再经
+// barrel 导出（inproc 实现保留至 W11，仅内部测试/过渡消费）。
+export {
+  createZcodeEngine,
+  registerZcodeEngine,
+  type D8CompatZcodeEngineDeps,
+} from "./execution/engine/d8-compat.ts";
+
 // maxTurnsToWatchdogMs 为 maxTurns→watchdog 毫秒换算（U3/U4 / D7，floor 语义
-// 文档化——两宿主预算一致性 S2 的函数级锚点）；killRecordChildWithEscalation 为
-// 单 record 子进程升级回收（session 派生进程清理的细粒度入口）。
+// 文档化——两宿主预算一致性 S2 的函数级锚点；[W3] 定义收敛在 pi-host-binding，
+// 原 inproc session-runner（已删） 定义随删件消亡）；killRecordChildWithEscalation 为
+// 单 record 子进程终止的镜像记账入口（[W3] 实际终止在引擎进程内经协议承载）。
 export {
   killRecordChildWithEscalation,
-  maxTurnsToWatchdogMs,
-} from "./execution/engine/engines/pi/session-runner.ts";
+} from "./execution/engine/host/spawned-children.ts";
+export { maxTurnsToWatchdogMs } from "./execution/engine/host/pi-host-binding.ts";
 
-// zcode 引擎注册面：registerZcodeEngine 把 'zcode' 引擎登记进 registry（组合根
-// 职责，幂等，上方已导出）；createZcodeEngine 为 DI 工厂（测试/宿主注入 deps）。
-// ZcodeEngineDeps 经 registration.ts 的 re-export 导出（避免与 zcode-engine.ts 双源）。
-export { createZcodeEngine } from "./execution/engine/engines/zcode/registration.ts";
-export type { ZcodeEngineDeps } from "./execution/engine/engines/zcode/registration.ts";
-
-// ZcodeTaskShapeError：zcode 任务形状错误类（instanceof 分流用）——
-// execution-runtime-face.test.ts:29 消费，barrel 保留导出（engines 域 A1 裁决）。
-export { ZcodeTaskShapeError } from "./execution/engine/engines/zcode/zcode-engine.ts";
+// zcode 引擎注册面（[W8 D8 薄壳] createZcodeEngine 已上移 d8-compat——上方导出）。
+// [W11 收口] ZcodeEngineDeps 与 D8CompatZcodeEngineDeps 合并为别名（zsw 调用面的
+// deps 形状契约保持）；barrel 不导出引擎错误类（引擎错误归各引擎包自持）。
+export type { ZcodeEngineDeps } from "./execution/engine/d8-compat.ts";
 
 // 引擎注册表原语 + 引擎感知提示面：engine-awareness injector 消费。
 export {
@@ -132,6 +152,11 @@ export {
 // 子入口（D9：每条子入口 bundle 多一份 host-services 副本）。
 export { parseEngineHandle } from "./execution/engine/common/session-view-types.ts";
 export { readSubagentHistoryMessages } from "./execution/engine/common/session-view-service.ts";
+// [W8] registerNativeSessionReader：runtime 成为协议客户端的①级接入点——宿主把
+// 「协议 read」注册为引擎原生 reader，core 三级降级链（①协议 read → ②journal →
+// ③outcome）自动编排（含投影），宿主零投影代码。壳消费 = runtime
+// subagent-engine-history 的协议 reader 注册。
+export { registerNativeSessionReader } from "./execution/engine/common/session-view-service.ts";
 
 // ── 执行域（execution/）──────────────────────────────────────
 // types.ts 领域类型族：record / 响应 / 列表项等 subagent 域公共契约（壳消费最高频面，
@@ -262,7 +287,7 @@ export {
 
 // 错误类型族（error-recovery.ts 计划路径实测不存在，实测散布于下列源文件）：
 // resurrect/fork-depth/dirty-worktree 为动作层守卫抛出点（types.ts），
-// GitRunError 见 worktree 内核组裁决，ZcodeTaskShapeError 见引擎注册面。
+// GitRunError 见 worktree 内核组裁决。
 export {
   DirtyWorktreeError,
   ForkDepthExceededError,
@@ -313,14 +338,14 @@ export {
 } from "./execution/concurrency-pool.ts";
 
 // 模型引用切分原语（U1 契约面批件）：provider/model 引用切分与缺省值（两宿主
-// maxTurns/model 换算同源）；实现体内聚 zcode preparer/constants 不挪文件，
-// barrel re-export（§5.3）。
+// maxTurns/model 换算同源）。[W11/H2] 实现体随 engines/zcode 删除迁至
+// shared/zcode-model-ref.ts（宿主侧原语，与引擎包各自单源）。
 export {
   DEFAULT_PROVIDER_ID,
   hasApiKey,
   splitZcodeModelRef,
-} from "./execution/engine/engines/zcode/preparer.ts";
-export { ZCODE_FALLBACK_DEFAULT_MODEL } from "./execution/engine/engines/zcode/constants.ts";
+  ZCODE_FALLBACK_DEFAULT_MODEL,
+} from "./shared/zcode-model-ref.ts";
 
 // ── worktree git 内核（U5 / D5）───────────────────────────────
 // git 语义纯函数单源：保真读（gitRun）、SafeId 校验、dirty 谓词、
@@ -484,10 +509,14 @@ export type {
 // LifecycleDeps.store 用；pi 壳继续用 session 锚定的 JsonlRunStore。
 // DEFAULT_* 两常量：壳 jsonl-run-store.ts 生产消费（D3 判定进 barrel），
 // u-2c 删 ./* 通配后深路径仅测试侧 vitest alias 可解析，生产消费必须走 barrel。
+// pruneStateFilesBeyondCap：磁盘 retention 裁剪单源（S4-A7）——壳 jsonl-run-store
+// 的同构私有实现已删，改 import 本函数并注入自身 logger tag / toErrorMessage。
 export {
   DEFAULT_SAVE_MIN_INTERVAL_MS,
   DEFAULT_STATE_MAX_RUNS,
   FileRunStore,
+  pruneStateFilesBeyondCap,
+  type PruneStateDeps,
 } from "./orchestration/file-run-store.ts";
 
 // ── 快照 codec（U8 / D4）──────────────────────────────────────

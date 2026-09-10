@@ -4,10 +4,10 @@
 <template>
   <div class="flex flex-col gap-3">
     <!-- 每个 model 一行 -->
-    <div v-for="row in cacheData" :key="row.model" class="flex flex-col gap-1.5">
+    <div v-for="row in cacheData" :key="`${row.provider}/${row.model}`" class="flex flex-col gap-1.5">
       <!-- 模型名 + 命中率 -->
       <div class="flex items-center justify-between gap-2">
-        <span class="min-w-0 truncate font-[var(--font-mono)] text-[12px] text-[var(--neutral-fg)]">{{ row.model }}</span>
+        <span class="min-w-0 truncate font-[var(--font-mono)] text-[12px] text-[var(--neutral-fg)]"><span class="text-[var(--neutral-dim)]">{{ row.provider }}/</span>{{ row.model }}</span>
         <span class="shrink-0 font-[var(--font-mono)] text-[11px] tabular-nums text-[var(--neutral-dim)]">
           <span class="mr-1 text-[10px] text-[var(--neutral-dim)]">{{ t('settings.usage.cacheHitRate') }}</span>{{ fmtPct(row.hitRate) }}
         </span>
@@ -57,6 +57,6 @@ import { fmtPct } from './aggregate'
 const { t } = useI18n()
 
 defineProps<{
-  cacheData: { model: string; hit: number; newIn: number; out: number; hitRate: number }[]
+  cacheData: { provider: string; model: string; hit: number; newIn: number; out: number; hitRate: number }[]
 }>()
 </script>

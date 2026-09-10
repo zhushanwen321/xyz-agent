@@ -6,8 +6,8 @@
  * RpcClient 的 handleMessage 与 lastWrittenJson 断言 sendCommand。
  * 不依赖真实 pi 进程。
  *
- * [HISTORICAL] D10（LF-only stdout framing）后 RpcClient 不再消费 node:readline，改为在
- * proc.stdout 上挂 data handler 喂共享行读取器（u5 起 = spawn-channel createLineReader 接线）。emitPiLine 桥接该 data handler，
+ * [HISTORICAL] D10（LF-only stdout framing）后 RpcClient 不再消费 node:readline，改为
+ * attachLfOnlyLineReader 在 proc.stdout 上挂 data handler。emitPiLine 桥接该 data handler，
  * 直投「整行 + \n」由生产读取器分帧——与 rpc-client.test.ts 内联 mock 同款（先例注释：
  * 「测试改为在 fake stdout 上桥接 'data' handler，emitPiLine 直投整行由读取器分帧」）。
  *

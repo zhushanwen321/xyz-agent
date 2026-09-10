@@ -28,7 +28,9 @@
     <!-- L0 Shell 挂载点。traffic light 安全区在 AsideRegion 内（padding-top:52px，spec §三）。 -->
     <AppShell />
   </template>
-  <ToastContainer />
+  <!-- Toast 通知：不再在根部固定挂载——ToastContainer 改 absolute 右上角锚定，挂载点
+       收敛到 main-panel 内两分支（PanelContainer main-area（chat 主区）/ MainPanel
+       overview/settings 兜底），避免遮 composer 与 drawer。 -->
   <!-- 权限请求弹窗（全局，session 无关）：bridge bus plugin-permission-request 驱动 pending；
        transport 经 PERMISSION_TRANSPORT_KEY inject 调 WS approve/revoke（main.ts provide）。 -->
   <PermissionRequestDialog :plugin-id="perm.pluginId" :permissions="perm.permissions" :pending="perm.pending" />
@@ -40,7 +42,6 @@ import { Loader2, AlertCircle } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import TaijiLogo from '@/components/icons/TaijiLogo.vue'
 import AppShell from '@/components/shell/AppShell.vue'
-import ToastContainer from '@/components/ui/ToastContainer.vue'
 import { Button } from '@/components/ui/button'
 import { useConnection } from '@/composables/useConnection'
 import { useSidebar } from '@/composables/features/sidebar/useSidebar'

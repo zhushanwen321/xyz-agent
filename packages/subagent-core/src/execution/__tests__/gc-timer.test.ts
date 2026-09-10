@@ -1,3 +1,6 @@
+// [W3 改写] 原 vi.mock(inproc pi 引擎目录/session-runner)（runSpawn 占位 + getChildByRecord
+// 活进程判定）随 inproc pi 引擎目录 删除消亡——「有活进程」形态改经 core 侧 spawnedChildren
+// 镜像注入（host/spawned-children.ts，isResumable 的 hasLiveProcessHandle 唯一读点）。
 // src/execution/__tests__/gc-timer.test.ts
 //
 // [M8] idle record GC 定时器测试（subagent-service.ts startGcTimer，L485-507）。
@@ -12,7 +15,6 @@
 // session-runner（import 链依赖 + isResumable 的 hasLiveProcessHandle 查询点）与 logger。
 // timer 全部 vi.useFakeTimers，不真实等待。
 
-import type { ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -24,17 +26,6 @@ const { loggerMock } = vi.hoisted(() => ({
 }));
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
-// mock session-runner：runSpawn/killAllSpawnedChildren 占位（import 链需要），
-// getChildByRecord 默认返回 undefined（无活进程 → isResumable=true），用例内按需覆盖。
-vi.mock("../engine/engines/pi/session-runner.ts", () => ({
-  runSpawn: vi.fn(),
-  killAllSpawnedChildren: vi.fn(),
-  getChildByRecord: vi.fn(() => undefined),
-  registerSpawnedChildForRecord: vi.fn(),
-  killRecordChildWithEscalation: vi.fn(),
-  spawnedChildren: new Map(),
-}));
-
 // [D8] idle-gc 归档时释放引擎池引用（releasePoolRef 经 getEngineDataDir 解析
 // dataDir）——测试钉到模块级 holder（vi.mock factory 闭包只能引用模块级变量），
 // beforeEach 刷新为当前 tmp agentDir，防触碰真实数据目录。
@@ -44,14 +35,12 @@ vi.mock("../engine/common/data-dir.ts", () => ({
 }));
 
 import { acquirePool } from "../engine/common/pool-manager.ts";
-import { getChildByRecord } from "../engine/engines/pi/session-runner.ts";
+import { coreSpawnedChildrenMirror, _resetCoreSpawnedChildrenMirrorForTest } from "../engine/host/spawned-children.ts";
 import { createRecord } from "../execution-record.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import { RecordStore } from "../record-store.ts";
 import { SubagentService } from "../subagent-service.ts";
 import type { ExecutionRecord } from "../types.ts";
-
-const mockGetChildByRecord = vi.mocked(getChildByRecord);
 
 /** 与 startGcTimer 内部常量一致（1h 扫描 / 30 天 TTL）。 */
 const GC_INTERVAL_MS = 60 * 60 * 1000;
@@ -111,9 +100,8 @@ describe("[M8] idle record GC 定时器（startGcTimer）", () => {
     service = new SubagentService({ cwd: agentDir, modelService });
     service.initSession({ pi: makePi(), sessionId: "root-session" });
     store = (service as unknown as ServiceInternals).store;
-    mockGetChildByRecord.mockReset();
     // 默认无活进程（isResumable=true）——Path B：进程已回收、可冷路径 resume 的等待续聊态
-    mockGetChildByRecord.mockImplementation(() => undefined);
+    _resetCoreSpawnedChildrenMirrorForTest();
     loggerMock.warn.mockClear();
   });
 
@@ -144,12 +132,9 @@ describe("[M8] idle record GC 定时器（startGcTimer）", () => {
 
   it("有活进程的 record 不归档（isResumable=false，即使 idleSince 超 TTL）", () => {
     const fireAt = Date.now() + GC_INTERVAL_MS;
-    // Path A：进程保活等待续聊（idle timer armed、child 未 kill）——归档会让活进程失管
+    // Path A：进程保活等待续聊（idle timer armed、镜像登记活句柄）——归档会让活进程失管
     store.register(makeIdleRecord("sa-live", fireAt - IDLE_TTL_MS - 1));
-    mockGetChildByRecord.mockImplementation(
-      (id: string): ChildProcess | undefined =>
-        id === "sa-live" ? ({ killed: false } as unknown as ChildProcess) : undefined,
-    );
+    coreSpawnedChildrenMirror().register("sa-live", { pid: 4242, killed: false });
 
     service.startGcTimer();
     vi.advanceTimersByTime(GC_INTERVAL_MS);

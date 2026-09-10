@@ -8,9 +8,11 @@
 //   B  — fork-from handler：正常接续（新 id + prompt 注入 + forkSource 指向源文件）、
 //        cancelled 拒绝、worktree 记录拒绝、不存在 id 拒绝、本进程 running 拒绝。
 //
-// mock 手法对齐 get-record-for-action-restart.test.ts：mock session-runner（不 spawn
-// 真子进程）+ logger；record-store / finalized-marker / tombstone-store 走真实实现
-// （fixture 用临时目录写真实 .jsonl + sidecar）。
+// mock 手法（[W3 改写]）：registerFakePiEngine 协议替身（原 mock inproc session-runner
+// 不 spawn 真子进程的形态随 inproc pi 引擎目录删除消亡）+ logger；record-store /
+// finalized-marker / tombstone-store 走真实实现（fixture 用临时目录写真实 .jsonl + sidecar）。
+// 执行链观测点从 runAndFinalize 边界捕获（rafCapture）换成 fake.runs 捕获（协议 engine.run
+// 的 task/ctx——冷路径 resume 锚点在 ctx.chat.resume，fork/续写语义落点）。
 //
 // 注意：本测试进程可能运行在 pi subagent 环境（PI_SUBAGENT_* env 被继承会污染
 // rootSessionId 基线与 rootCwd 编码），beforeEach/afterEach 清理同 IDENTITY_ENV_KEYS。
@@ -21,41 +23,16 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { loggerMock, rafCapture } = vi.hoisted(() => ({
+const { loggerMock } = vi.hoisted(() => ({
   loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
-  // 捕获穿透到 runAndFinalize 边界的 ExecuteOptions（fork-from 语义落点的服务层验证）。
-  // buildSpawnArgs 层的 forkSource → --fork 映射已有专项直测（spawn-args.test.ts），
-  // 两层合成即覆盖完整链路。
-  rafCapture: [] as Array<{ task: string; forkSource?: string; slugId: string; resumeSessionFile?: string }>,
 }));
 vi.mock("@zhushanwen/subagent-core/core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
-// mock session-runner：fork-from 的 execute 链经 kickOffChatRound（EnginePort 交接）→ runAndFinalize →
-// runSpawn。runSpawn 返回最小成功 AgentResult，后台收尾链可完整走完（archive + notify）。
-// [v8.5 D 修正][u-2a 迁移] 路径必须指向真实模块文件——现为
-// @zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts（原
-// "../session-runner.ts" 指向不存在的文件，mock 从未生效，探针实证 identity=REAL，
-// 是历史上全量套件偶发挂起的真根源之一：真实 detached 链泄漏句柄让 worker 无法收敛）。
-vi.mock("@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts", () => ({
-  runSpawn: vi.fn(async () => ({
-    text: "",
-    turns: 1,
-    durationMs: 10,
-    success: true,
-    sessionId: "spawned",
-    toolCalls: [],
-  })),
-  killAllSpawnedChildren: vi.fn(),
-  killRecordChildWithEscalation: vi.fn(),
-  getChildByRecord: vi.fn(() => undefined),
-  spawnedChildren: new Map(),
-}));
-
+import { registerFakePiEngine, type FakePiEnginePort } from "@zhushanwen/subagent-core/testing/execution/__tests__/helpers/fake-engine-port.ts";
+import { clearEngines } from "@zhushanwen/subagent-core/execution/engine/registry.ts";
 import { writeFinalized } from "@zhushanwen/subagent-core/execution/finalized-marker.ts";
 import type { ModelRegistryLike } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
 import { getSubagentSessionDir } from "@zhushanwen/subagent-core/execution/path-encoding.ts";
-import type { RecordStore } from "@zhushanwen/subagent-core";
-import type { ExecuteOptions } from "@zhushanwen/subagent-core/execution/types.ts";
 import { SubagentService } from "@zhushanwen/subagent-core";
 import { ModelConfigService } from "@zhushanwen/subagent-core";
 import { forkFromHandler, messageHandler } from "../interface/subagent-actions.ts";
@@ -148,6 +125,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
   let agentDir: string;
   let sessionsDir: string;
   let service: SubagentService;
+  let fake: FakePiEnginePort;
 
   beforeEach(() => {
     for (const k of IDENTITY_ENV_KEYS) delete process.env[k];
@@ -174,28 +152,16 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
     service = new SubagentService({ cwd: agentDir, modelService });
     service.initSession({ pi: makePi(), sessionId: "root-session-cur" });
 
-    // 捕获穿透 runAndFinalize 边界的 ExecuteOptions（detached 链路的服务层观测点）。
-    (service as unknown as { runAndFinalize: (...a: unknown[]) => Promise<unknown> }).runAndFinalize =
-      ((orig: (...a: unknown[]) => Promise<unknown>) =>
-        (...args: unknown[]) => {
-          const opts = args[1] as ExecuteOptions;
-          const record = args[0] as { id: string };
-          rafCapture.push({
-            task: String(opts.task),
-            forkSource: opts.forkFromSessionFile,
-            slugId: record.id,
-            // [v8.5 D] 冷路径续写观测点：runAndFinalize 第 9 个位置参数 = resume spawn
-            // 选项（args[8].sessionFile = --session 重开目标；对齐 transparent-resume 同款手法）
-            resumeSessionFile: (args[8] as { sessionFile?: string } | undefined)?.sessionFile,
-          });
-          return orig.apply(service as unknown as object, args);
-        })((service as unknown as { runAndFinalize: (...a: unknown[]) => Promise<unknown> }).runAndFinalize);
-    rafCapture.length = 0;
-    rafCapture.length = 0;
+    // 协议替身引擎：重生/续聊轮的引擎侧活会话缺省不存在（interact 拒绝 not_resumable
+    // → 冷路径 resume）——与本文件全部执行链场景一致。
+    fake = registerFakePiEngine();
+    fake.interactMessageResult = { ok: false, code: "engine_session_not_resumable", message: "no live session" };
   });
 
   afterEach(async () => {
     service.dispose();
+    // registry 是 globalThis 进程单例——清空防替身引擎泄漏进其他测试文件。
+    clearEngines();
     await new Promise((r) => setTimeout(r, 0)); // fire-and-forget 收尾链排空
     fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     for (const k of IDENTITY_ENV_KEYS) delete process.env[k];
@@ -243,8 +209,11 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       // 「向后兼容」语义保持：旧格式 sidecar 可读、行为不崩、路径可达。
       const res = await messageHandler(service, { subagentId: "sa-a2-legacy", text: "hi" });
       expect(res.response.delivered).toBe(true);
-      await vi.waitFor(() => expect(rafCapture.length).toBe(1));
-      expect(rafCapture[0].resumeSessionFile).toBe(file);
+      // [W3 观测点改写] 冷路径续写锚点：原 rafCapture（runAndFinalize args[8].sessionFile）
+      // 换成协议 engine.run 的 ctx.chat.resume.sessionRef.sessionFile（--session 续写原
+      // 文件的协议承载位）。
+      await vi.waitFor(() => expect(fake.runs.length).toBe(1));
+      expect(fake.runs[0].ctx.chat?.resume?.sessionRef["sessionFile"]).toBe(file);
     });
 
     it("sidecar 内容非法（外部损坏/手写垃圾）→ 兜底 disconnected", () => {
@@ -329,7 +298,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
   // ============================================================
 
   describe("B fork-from action", () => {
-    it("正常接续：done 记录 → 新 id + prompt 注入引导语 + forkSource 指向源 sessionFile", async () => {
+    it("正常接续：done 记录 → 新 id + prompt 注入引导语（含源文件指引面）", async () => {
       const sourceFile = writeSessionJsonl(sessionsDir, { id: "sa-src", rootSessionId: "old-root" });
       writeFinalized(sourceFile, "gc");
 
@@ -345,12 +314,14 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       expect(result.subagentId).toBe(result.response.newSubagentId);
 
       // prompt 注入：task = 用户指令在前 + 接续框架在后（--fork 上下文重建要求）。
-      // kickOffChatRound 是 detached 编排——等后台链穿过 runAndFinalize 边界再断言。
-      await vi.waitFor(() => expect(rafCapture.length).toBe(1));
-      expect(rafCapture[0].task).toContain("verify test results first");
-      expect(rafCapture[0].task).toMatch(/inherited conversation via --fork/);
-      // forkSource 透传 RunOptions（下游 buildSpawnArgs 的 --fork 映射有专项直测覆盖）
-      expect(rafCapture[0].forkSource).toBe(sourceFile);
+      // kickOffChatRound 是 detached 编排——等后台链派发到协议 engine.run 再断言。
+      await vi.waitFor(() => expect(fake.runs.length).toBe(1));
+      expect(fake.runs[0].task.prompt).toContain("verify test results first");
+      expect(fake.runs[0].task.prompt).toMatch(/inherited conversation via --fork/);
+      // [断链修复恢复] fork 源 sessionFile 透传到协议 run 帧 task.forkSource（W3 改写时
+      // 移除的断言——当时协议无承载位；现载体 = SDK AgentCallOpts.forkSource，pi 引擎侧
+      // SpawnRunParams.forkSource → buildSpawnArgs --fork 已有专项直测，两层合成覆盖全链）。
+      expect(fake.runs[0].task.forkSource).toBe(sourceFile);
 
       expect((service.queries.findRecord(result.response.newSubagentId))?.status).toBe("running");
       expect((service.queries.findRecord(result.response.newSubagentId))?.slug).toBe("src-resumed");
@@ -362,10 +333,11 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
 
       await forkFromHandler(service, { sourceSubagentId: "sa-src2" });
 
-      await vi.waitFor(() => expect(rafCapture.length).toBe(1));
-      expect(rafCapture[0].task).toMatch(/taking over work/i);
-      expect(rafCapture[0].task).toMatch(/already done|left unfinished/);
-      expect(rafCapture[0].forkSource).toBe(path.join(sessionsDir, "sa-src2.jsonl"));
+      await vi.waitFor(() => expect(fake.runs.length).toBe(1));
+      expect(fake.runs[0].task.prompt).toMatch(/taking over work/i);
+      expect(fake.runs[0].task.prompt).toMatch(/already done|left unfinished/);
+      // [断链修复恢复] 默认 prompt 形态同样携带 fork 源（W3 移除的断言，载体同上）。
+      expect(fake.runs[0].task.forkSource).toBe(path.join(sessionsDir, "sa-src2.jsonl"));
     });
 
     it("cancelled 源拒绝（用户主动告别，无接续通道）", async () => {
@@ -375,7 +347,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       await expect(forkFromHandler(service, { sourceSubagentId: "sa-canxx" })).rejects.toThrow(
         /deliberately closed by user \(closedReason: cancelled\)/,
       );
-      expect(rafCapture.length).toBe(0); // 守卫拒绝：不进入执行链
+      expect(fake.runs.length).toBe(0); // 守卫拒绝：不进入执行链
     });
 
     it("worktree 记录拒绝（binding 已丢，防 cwd 回落主仓破坏隔离）", async () => {
@@ -385,7 +357,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       await expect(forkFromHandler(service, { sourceSubagentId: "sa-wtxx" })).rejects.toThrow(
         /worktree isolation/,
       );
-      expect(rafCapture.length).toBe(0); // 守卫拒绝：不进入执行链
+      expect(fake.runs.length).toBe(0); // 守卫拒绝：不进入执行链
     });
 
     it("本进程 running 记录拒绝（还在跑应走 message，防双写）", async () => {
@@ -396,14 +368,14 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       await expect(forkFromHandler(service, { sourceSubagentId: "sa-live" })).rejects.toThrow(
         /still active in this process[\s\S]*action:'message'/,
       );
-      expect(rafCapture.length).toBe(0); // 守卫拒绝：不进入执行链
+      expect(fake.runs.length).toBe(0); // 守卫拒绝：不进入执行链
     });
 
     it("不存在的 id 拒绝并给 list 确认指引", async () => {
       await expect(forkFromHandler(service, { sourceSubagentId: "sa-ghost" })).rejects.toThrow(
         /No subagent record with id "sa-ghost"[\s\S]*includeFinished:true/,
       );
-      expect(rafCapture.length).toBe(0); // 守卫拒绝：不进入执行链
+      expect(fake.runs.length).toBe(0); // 守卫拒绝：不进入执行链
     });
 
     it("缺 sourceSubagentId 入参 → 行动语言报错", async () => {

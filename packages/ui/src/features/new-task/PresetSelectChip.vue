@@ -11,8 +11,8 @@
  *
  * 三态（由 props.sessionId + props.launchPresetId 派生）：
  * 1. landing 态（sessionId=null）：Popover 可展开，列预设（PopoverListItem 项 + selected
- *    单选语义）+ 描述 + 「设为默认」Checkbox。selectedPresetId 本地 ref，初值在
- *    loadPresets 后设为 defaultPresetId。
+ *    单选语义）+ 描述 + 「设为默认」Checkbox。回显 = launch-config 解析输出
+ *    （explicit 显式选择 > 全局默认 > builtin:full，D2/D3 序）。
  * 2. 已创建态（sessionId!=null + launchPresetId 有值）：Lock 图标 + 预设名 + HoverCard tooltip
  *    「此 Session 使用 {预设名} 模式创建，不可更改」。不展开 Popover。
  * 3. 历史 session（sessionId!=null + launchPresetId undefined）：Lock 图标 + 「全工具模式」+
@@ -23,14 +23,17 @@
  * 与 dir/branch popover 共享 NewTaskFlowState 单实例状态机，三 popover 互斥（开 preset 自动
  * 关 dir/branch，反之亦然）。组件本身不读 flow——只声明 presetOpen prop + emit update:presetOpen。
  *
- * 数据流（B6 修复）：onMounted 调 deps.loadPresets() 拉预设列表 + 默认预设写 deps 侧 store
- * （presets/defaultPresetId/loadError）。选中态用本地 ref selectedPresetId（仅回显），透传走
- * emit('select') → 父组件（Landing.vue）调 flow.setPendingPreset → submitFirstMessage 透传。
- * 不再读写 store.selectedPresetId（已删除第二真源）。
+ * 数据流（D3 单一解析层，废 B6「回显≠透传」echo 机制）：onMounted 调 deps.loadPresets()
+ * 拉预设列表 + 默认预设写 deps 侧 store（presets/defaultPresetId/loadError）；chip 回显 =
+ * core launch-config 的 createLaunchConfigView 输出（输入 = explicitPresetId（用户点击的
+ * 显式选择档）+ deps.presets/deps.defaultPresetId，数据延迟到达响应式重算——P5①）。
+ * **chip 显示的预设就是将生效的预设**：显式选择走 explicit 档（emit select → 父组件
+ * Landing.vue 调 flow.setPendingPreset → submit 侧同函数透传），未显式选择走默认预设解析
+ * 档（D3 默认预设生效化）——显示与 submit 消费同一 resolve 函数，「显示 ≡ 生效」由构造成立。
  *
- * emit select 的契约：**仅在用户真实点击预设项时 emit**（onSelectPreset），onMounted 回显默认
- * 预设**不 emit**——避免把「默认回显」伪装成「用户选择」污染透传链路（透传源是 NewTaskFlow.pendingPreset，
- * 用户没选时不写，submitFirstMessage 用 undefined → runtime 走默认）。
+ * emit select 的契约：仅在用户真实点击预设项时 emit（onSelectPreset）。显式选择的单向链
+ * 是「点击 → 本地 explicitPresetId（resolve 输入）+ emit → Landing → flow.setPendingPreset」；
+ * 回显真源是 resolve 输出（displayPresetId），本地 ref 只是 explicit 档输入、非显示真源。
  *
  * 加载错误态（S-RN-2）：loadPresets rejected 时 deps 侧 store.loadError 写入错误消息，本组件区分
  * 「未加载（presets=[] + loadError=null）」与「加载失败（presets=[] + loadError 有值）」，
@@ -48,7 +51,8 @@ import { Checkbox } from '../../primitives/checkbox'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '../../primitives/hover-card'
 import { Popover, PopoverContent, PopoverTrigger, PopoverListItem } from '../../primitives/popover'
 import { useNewTaskDeps } from './new-task-deps'
-import type { PiLaunchPreset } from '@xyz-agent/shared'
+import { createLaunchConfigView } from '@xyz-agent/core'
+import { BUILTIN_PRESET_IDS, type PiLaunchPreset } from '@xyz-agent/shared'
 
 const props = defineProps<{
   /** 绑定的 session id（landing 态为 null） */
@@ -71,14 +75,62 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const { presets, defaultPresetId, presetOpenRequest, loadPresets, setDefaultPreset } = useNewTaskDeps()
+const { presets, defaultPresetId, presetOpenRequest, loadPresets, setDefaultPreset, flow } = useNewTaskDeps()
 
 /**
- * landing 态触发按钮回显的预设 id（纯本地交互态，不放 store——B6：store 不再持有 selectedPresetId）。
- * 初值 '' —— onMounted loadPresets 完成后设为 defaultPresetId（仅回显，不 emit）。
- * 用户真实点击 onSelectPreset 时才 emit select 给父组件透传。
+ * 显式选择档（resolve 输入，非回显真源）：用户真实点击 popover 项时记录（onSelectPreset），
+ * 同步 emit select → 父组件写 flow.pendingPreset（单向链，写点唯一）。外部重置（startFlow
+ * 重入把 pendingPreset 归 null）经下方 watch 同步回本 ref——Landing 在 flow 活跃期间保持
+ * 挂载（isActive 守卫），组件实例不重建，生命周期与 pendingPreset 不同构，须显式跟随。
  */
-const selectedPresetId = ref('')
+const explicitPresetId = ref<string | null>(null)
+
+/**
+ * 重入同步（G1 破口修复）：flow.pendingPreset 是 submit 透传真值（显式档单一真源），
+ * startFlow 每次进入 landing 都无条件重置它（多次 ⌘N / initApp 重试 / cancelled 复活），
+ * 而 Landing 不重挂载 → 本地 explicitPresetId 若不跟随会残留旧选择：chip 显示旧预设、
+ * submit 按默认预设创建（显示与生效发散）。watch 单向跟随：重置 → explicit 档清空，
+ * resolve 回落默认链；用户显式点击仍经 onSelectPreset 写入 + emit（链路不变）。
+ *
+ * immediate:true（挂载时序变体闭合）：chip 实例可能在 flow.pendingPreset 已非 null 时
+ * 新挂载（如 landing 已有显式选择后新增分屏 pane）——新实例 explicitPresetId 初值 null，
+ * 无 immediate 则 chip 显示默认链而 submit 消费显式档（显示 ≠ 生效的挂载变体）。
+ * 挂载即跟随当前真值，与重入同步共用同一条单向链。
+ */
+watch(
+  // ?. 防御：部分测试 mock 的 deps.flow 是简化形态（无 pendingPreset 字段，同
+  // composer-shell pendingPreset 通道先例）——缺失时观察源恒 null，不阻断组件解析。
+  () => flow.pendingPreset?.value ?? null,
+  (v) => {
+    explicitPresetId.value = v ?? null
+  },
+  { immediate: true },
+)
+
+/**
+ * 单一解析层视图（D3）：chip 回显 = resolveLaunchConfig 对 preset 字段的解析输出
+ * （explicit > 全局默认 > builtin:full，D2 序与 submit 侧同一函数）。输入经 getter 闭包读
+ * deps 响应式数据源，loadPresets 数据延迟到达时自动重算（P5①），无需手动回显。
+ */
+const resolvedPreset = createLaunchConfigView(() => ({
+  pendingPreset: explicitPresetId.value,
+  presets: presets.value,
+  defaultPresetId: defaultPresetId.value,
+}))
+
+/**
+ * chip 显示的 preset id。resolve 输出 presetId=undefined 有两义，均映射到显示语义：
+ * - 出厂等价 builtin:full（D3 不透传，但生效面 = 全工具 = builtin:full）→ 显示 full 本体
+ * - presets 未加载/加载失败（列表空，解析不到任何档）→ ''（selectedPresetName 走
+ *   loadingPresets / 错误态文案，与现状区分逻辑一致）
+ */
+const displayPresetId = computed(() => {
+  const pid = resolvedPreset.value.presetId
+  if (pid) return pid
+  return presets.value.some((p) => p.id === BUILTIN_PRESET_IDS.FULL)
+    ? BUILTIN_PRESET_IDS.FULL
+    : ''
+})
 
 // ── 三态派生 ──
 /** landing 态：sessionId 为空（无绑定 session，可创建/选预设） */
@@ -98,13 +150,13 @@ const lockedPresetName = computed(() => {
 
 /**
  * landing 态触发按钮显示的预设名。
- * - 未加载（selectedPresetId 空 + 无 loadError）→ loadingPresets「加载中…」
- * - 加载失败（selectedPresetId 空 + loadError 有值）→ 仍显 loadingPresets（i18n key 不可改，
+ * - 未加载（displayPresetId 空 + 无 loadError）→ loadingPresets「加载中…」
+ * - 加载失败（displayPresetId 空 + loadError 有值）→ 仍显 loadingPresets（i18n key 不可改，
  *   popover 内空态行区分错误），避免 trigger 文案与 i18n SSOT 脱节。
- * - 有选中 → 查名兜底 id。
+ * - 有解析结果 → 查名兜底 id。
  */
 const selectedPresetName = computed(() => {
-  const id = selectedPresetId.value
+  const id = displayPresetId.value
   if (!id) return t('newTask.presetSelect.loadingPresets')
   return presets.value.find((p) => p.id === id)?.name ?? id
 })
@@ -126,23 +178,18 @@ const lockedTooltip = computed(() => {
   return base
 })
 
-/** 「设为默认」Checkbox 勾选态（当前选定 = 全局默认） */
+/** 「设为默认」Checkbox 勾选态（当前显示/将生效 = 全局默认；未解析出显示值时恒不勾） */
 const isDefaultChecked = computed(() => {
-  if (!selectedPresetId.value) return false
-  return selectedPresetId.value === defaultPresetId.value
+  if (!displayPresetId.value || !defaultPresetId.value) return false
+  return displayPresetId.value === defaultPresetId.value
 })
 
-// onMounted 拉预设数据 + 回显默认预设（landing 态）。
-// B6 修复：**只回显本地选中态，不 emit select**——避免把「默认回显」伪装成「用户选择」
-// 污染透传链路。用户没选时 NewTaskFlow.pendingPreset 保持 null，submitFirstMessage 传
-// undefined → runtime 用默认，与「显式选了默认预设」语义区分清晰。
+// onMounted 拉预设数据（landing 态）。回显无需手动写入——displayPresetId 是 resolve 响应式
+// 视图，loadPresets 写 deps 侧 store（presets/defaultPresetId）后自动重算（P5①）。
+// emit select 仍只在用户真实点击时发出（onSelectPreset），显式选择链路不变。
 onMounted(async () => {
   if (!isLanding.value) return // 锁定/历史态无需拉数据（只读展示，预设名从 launchPresetId 查）
   await loadPresets()
-  // loadPresets 后回显全局默认预设（landing 态 chip 所见即默认，纯视觉一致性）
-  if (defaultPresetId.value && !selectedPresetId.value) {
-    selectedPresetId.value = defaultPresetId.value
-  }
 })
 
 // FR-16：键盘快捷键 Cmd+Shift+P → 打开 PresetSelectChip Popover
@@ -157,32 +204,24 @@ watch(() => presetOpenRequest.value, async () => {
 
 /**
  * landing 态用户真实点击选预设（PopoverListItem selected 单选语义：点一项即选中）。
- * B6：仅此处 emit select——透传源是 NewTaskFlow.pendingPreset（父组件 Landing.vue 接收写入），
- * 不再读写 store.selectedPresetId（已删除）。本地 selectedPresetId 只管 trigger 回显。
+ * 写 explicitPresetId（resolve 输入）+ emit select → 父组件写 flow.setPendingPreset——
+ * 显示（resolve explicit 档）与透传（submit 侧 resolve 读 pendingPreset）同源同步。
  */
 function onSelectPreset(preset: PiLaunchPreset): void {
-  selectedPresetId.value = preset.id
+  explicitPresetId.value = preset.id
   emit('select', { presetId: preset.id })
 }
 
 /**
  * 勾选/取消「设为默认」。
- * 勾选：调 setDefaultPreset(selectedPresetId) 写全局默认 + deps 侧 store 更新。
+ * 勾选：调 setDefaultPreset(displayPresetId) 把当前显示/将生效的预设写为全局默认。
  * 取消：no-op（全局默认至少有一个值，不支持取消到空——用户可选其他预设设默认替代）。
  */
 async function onToggleDefault(checked: boolean | string): Promise<void> {
-  if (checked && selectedPresetId.value) {
-    await setDefaultPreset(selectedPresetId.value)
+  if (checked && displayPresetId.value) {
+    await setDefaultPreset(displayPresetId.value)
   }
 }
-
-// defaultPresetId 变化时（外部 setDefault），同步 selectedPresetId 若用户未主动选过
-watch(() => defaultPresetId.value, (newDefault) => {
-  if (isLanding.value && newDefault && !props.presetOpen) {
-    // 仅在 Popover 未展开时回显（避免用户正在选时被覆盖）。纯本地回显，不 emit。
-    selectedPresetId.value = newDefault
-  }
-})
 </script>
 
 <template>
@@ -193,7 +232,7 @@ watch(() => defaultPresetId.value, (newDefault) => {
         data-testid="chip-preset"
         variant="ghost"
         class="h-auto gap-1.5 px-2 py-1 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-3.5"
-        :class="{ '!text-accent': selectedPresetId && selectedPresetId === defaultPresetId }"
+        :class="{ '!text-accent': displayPresetId && displayPresetId === defaultPresetId }"
       >
         <SlidersHorizontal class="shrink-0" />
         <span class="font-mono">{{ selectedPresetName }}</span>
@@ -224,7 +263,7 @@ watch(() => defaultPresetId.value, (newDefault) => {
         v-else
         :key="preset.id"
         :test-id="`preset-option-${preset.id}`"
-        :selected="selectedPresetId === preset.id"
+        :selected="displayPresetId === preset.id"
         @click="onSelectPreset(preset)"
       >
         <span class="flex min-w-0 flex-1 flex-col items-start gap-0.5">

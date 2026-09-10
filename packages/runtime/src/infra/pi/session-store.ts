@@ -49,16 +49,16 @@ export class PiSessionStore implements ISessionStore {
     persistSessionEnd(filePath, outcome, reason)
   }
 
-  persistPresetBinding(filePath: string, presetId: string): void {
-    persistPresetBinding(filePath, presetId)
+  persistPresetBinding(filePath: string, presetId: string, opts?: { skipJsonlExistsGuard?: boolean }): void {
+    persistPresetBinding(filePath, presetId, opts)
   }
 
-  persistProjectBinding(filePath: string, projectId: string): void {
-    persistProjectBinding(filePath, projectId)
+  persistProjectBinding(filePath: string, projectId: string, opts?: { skipJsonlExistsGuard?: boolean }): void {
+    persistProjectBinding(filePath, projectId, opts)
   }
 
-  persistAgentBinding(filePath: string, spawnSource: 'user' | 'agent', parentAgentSessionId: string | undefined): void {
-    persistAgentBinding(filePath, spawnSource, parentAgentSessionId)
+  persistAgentBinding(filePath: string, spawnSource: 'user' | 'agent', parentAgentSessionId: string | undefined, opts?: { skipJsonlExistsGuard?: boolean }): void {
+    persistAgentBinding(filePath, spawnSource, parentAgentSessionId, opts)
   }
 
   extractSessionOutcome(filePath: string): SessionOutcome | null {

@@ -3,7 +3,10 @@
 // parser」的形态：构造抽掉 message_end / usage 半映射的坏样本流，断言套件转红；
 // 若断言器检不出破坏则本元测试失败）。
 //
-// 2026-09 重构（共享宿主 HOME）：CLI spawn 链删除后引擎只剩 app-server 常驻链，
+// W10 协议化：app-server 常驻全链用例随 zcode 引擎内移（zcode-subagent-cli
+// protocol-e2e/zcode-engine-* 测试覆盖，fake-appserver + golden 同款语料）；core 侧
+// 保留断言器正反例与负例自证（协议黑盒套件 protocol-blackbox.test.ts 消费断言器）。
+// 历史注：2026-09 重构（共享宿主 HOME）：CLI spawn 链删除后引擎只剩 app-server 常驻链，
 // C3 的引擎全链覆盖只走 app-server 形态（fake 常驻引擎 + stream 口径，文件末
 // describe；app-server 设计 §3.4 不变量 1：text_delta 拼接 == read 全文、终态唯一
 // turn.terminal 权威、message_end.usage 完整、tool 事件不合成——granularity 声明
@@ -12,12 +15,6 @@
 import { describe, expect, it } from "vitest";
 
 import type { AgentEvent } from "../../../types.ts";
-import { ZCODE_APPSERVER_GOLDEN } from "../../engines/zcode/golden-sample.ts";
-import { ZCODE_SHARED_POOL_KEY } from "../../engines/zcode/constants.ts";
-import {
-  goldenReadFullText,
-  makeAppserverHarness,
-} from "./zcode-appserver-harness.ts";
 import {
   assertAgentEventInvariants,
   checkAgentEventInvariants,
@@ -97,78 +94,4 @@ describe("conformance 负例自证（A12：套件有牙）", () => {
     const findings = checkAgentEventInvariants(badParser(), { granularity: "coarse" });
     expect(findings.some((f) => f.invariant === "2")).toBe(true);
   });
-});
-
-// ============================================================
-// [R6] C3 app-server 口径：fake 常驻引擎全链（eventGranularity=stream 形态）
-// —— 2026-09 重构后唯一生产形态（CLI spawn 降级链已删，无钉扎/降级双通道）。
-// ============================================================
-
-describe("conformance C3：zcode app-server 常驻通道（stream 口径，fake 常驻全链）", () => {
-  it("text_delta 拼接 == read 全文（byte 级）+ 终态唯一 + message_end.usage 完整 + tool 事件不合成", async () => {
-    const h = makeAppserverHarness();
-    try {
-      const events: AgentEvent[] = [];
-      const { outcome } = await h.engine.run(
-        { prompt: "做点什么", description: "c3-appserver", model: "conformance-provider/m1", cwd: h.workspace },
-        { taskId: "sa-c3-appserver", poolKey: "", onEvent: (e) => events.push(e) },
-      );
-
-      // granularity 声明与实际流出一致：声明 stream，流出有 text_delta 实时形态
-      expect(h.engine.capabilities().eventGranularity).toBe("stream");
-      expect(events.some((e) => e.type === "text_delta")).toBe(true);
-
-      // 事件形态：三条 delta（golden pushStream）→ message_end(usage) → turn_end
-      expect(events.map((e) => e.type)).toEqual([
-        "text_delta", "text_delta", "text_delta", "message_end", "turn_end",
-      ]);
-      const messageEnd = events.find((e) => e.type === "message_end") as
-        | { usage?: { input: number; output: number; cacheRead: number; cacheWrite: number } }
-        | undefined;
-      expect(messageEnd?.usage).toEqual({ input: 12599, output: 17, cacheRead: 0, cacheWrite: 0 });
-
-      // tool 事件不合成：首期无逐工具推送帧，流出面不伪造 tool_start/tool_end
-      // （granularity 声明与实际流出一致即合法——app-server 设计 §3.4 不变量 1）
-      expect(events.some((e) => e.type === "tool_start" || e.type === "tool_end")).toBe(false);
-
-      // 不变量五条（stream 口径）：3a 的 content 用 read 全文（终态权威来源）
-      const readFullText = goldenReadFullText();
-      assertAgentEventInvariants(events, { granularity: "stream", content: readFullText });
-      expect(outcome.content).toBe(readFullText);
-    } finally {
-      await h.dispose();
-    }
-  }, 20_000);
-
-  it("终态权威 turn.terminal 缺失 → read 兜底收口，事件不变量仍全绿（宽松匹配防洪堤不破坏 C3）", async () => {
-    const h = makeAppserverHarness({ dropTurnTerminal: true });
-    try {
-      const events: AgentEvent[] = [];
-      const { outcome } = await h.engine.run(
-        { prompt: "做点什么", description: "c3-no-terminal", model: "conformance-provider/m1", cwd: h.workspace },
-        { taskId: "sa-c3-no-terminal", poolKey: "", onEvent: (e) => events.push(e) },
-      );
-      expect(outcome.error).toBeUndefined();
-      // 缺 turn.terminal 时收尾帧 + read 兜底仍产出完整终态（session-channel 宽松匹配）
-      assertAgentEventInvariants(events, { granularity: "stream", content: goldenReadFullText() });
-    } finally {
-      await h.dispose();
-    }
-  }, 20_000);
-
-  it("handle 携带 shared poolKey（共享宿主 HOME 的 journal 分组锚点，①级读取钥匙随 handle 走）", async () => {
-    const h = makeAppserverHarness();
-    try {
-      const { handle, outcome } = await h.engine.run(
-        { prompt: "做点什么", description: "c3-anchor", model: "conformance-provider/m1", cwd: h.workspace },
-        { taskId: "sa-c3-anchor", poolKey: "" },
-      );
-      expect(handle.data.poolKey).toBe(ZCODE_SHARED_POOL_KEY);
-      expect(handle.data.sessionRef["sessionId"]).toBe(outcome.sessionId);
-      // golden 锚点：sessionId 来自 session.sessionId（projection.sessionId 恒 "unknown" 勿用）
-      expect(JSON.parse(ZCODE_APPSERVER_GOLDEN.createResponse).session.sessionId).toBe("sess_golden_r3_01");
-    } finally {
-      await h.dispose();
-    }
-  }, 20_000);
 });

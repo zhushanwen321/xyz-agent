@@ -25,23 +25,28 @@
 // pi 分支维持现状（A1 守护）：pi 历史走 runtime 自有 JSONL 直读链
 // （session-service.getSubagentHistory），不经本模块；engineId='pi' 的防御分支
 // 返回空数组，与被收敛前的 runtime 实现一致。
+//
+// [W11/H1] 零静态引擎依赖（设计 §3.8 DoD#3）：①级 native reader 全部经
+// registerNativeSessionReader 注入——core 不再静态 import engines/zcode 的
+// reader/constants/db-path（zcode sqlite 直读迁引擎进程，宿主经协议 read 消费；
+// dbPath 白名单/池锚定判定随 reader 迁 @zhushanwen/zcode-subagent-cli，A plan
+// 证据面由 zcode 包 e2e 接替，原 svs-zcode-dbpath 守护测试随迁删除）。
 
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
 import { isAbsolute, relative, resolve } from "node:path";
 
 // 相对 import 用 .js 形态（本文件是双端复用模块，被 xyz-agent runtime import——对齐
-// engines/zcode/reader.ts 先例：runtime tsconfig 无 allowImportingTsExtensions，.ts
-// 形态在 runtime tsc 下报 TS5097；.js 后缀经 bundler/ESM 解析器 substitution 到 .ts）。
+// 先例：runtime tsconfig 无 allowImportingTsExtensions，.ts 形态在 runtime tsc 下报
+// TS5097；.js 后缀经 bundler/ESM 解析器 substitution 到 .ts）。
+// aggregateUsage 单源 SDK（原 ./session-view-projection.js 逐字等价双活副本已删）。
+// 包名 import 在 runtime 编译图可解析（先例：dialog-queue.ts 同式 import SDK barrel）。
+import { aggregateUsage } from "@zhushanwen/subagent-engine-sdk";
 import { getLogger } from "../../../core/logger.js";
 import { createRecord, updateFromEvent } from "../../execution-record.js";
 import type { Turn } from "../../types.js";
-import { readZcodeSessionView } from "../engines/zcode/reader.js";
-import { ZCODE_ENGINE_ID, ZCODE_HOST_DB_SUFFIX } from "../engines/zcode/constants.js";
-import { resolveEnginesRoot, resolvePoolDir } from "../paths.js";
+import { resolveEnginesRoot } from "../paths.js";
 import type { SessionView } from "../types.js";
 import { replayJournal } from "./event-journal.js";
-import { aggregateUsage } from "./session-view-projection.js";
 import type {
   EngineHandleView,
   EngineToolCallSource,
@@ -50,17 +55,26 @@ import type {
   SubagentRecordSnapshot,
 } from "./session-view-types.js";
 import { parseEngineHandle } from "./session-view-types.js";
-import { toErrorMessage } from "../../../core/error-message.ts";
 
 const logger = getLogger("subagents");
 
 /**
  * 缺省引擎 id（与 registry.ts 的 DEFAULT_ENGINE_ID 同值本地锚定——对齐
- * engines/pi/reader.ts 的 PI_ENGINE_ID 先例：import registry 会连带 port.ts →
+ * inproc reader（已删） 的 PI_ENGINE_ID 先例：import registry 会连带 port.ts →
  * stream-sink.ts 的 .ts 后缀值 import 链进 runtime tsc 编译图，破坏双端复用闭包
  * 约束；锚定漂移由本包 registry.test / 读取链测试双重守护）。
  */
 const DEFAULT_ENGINE_ID = "pi";
+
+/**
+ * ③级 outcome-only 占位 assistant 文案（subagent-nonpi-visibility-followups 设计
+ * §3.3 D6 三端锚点）。core 生产代码不 import shared（双端复用约束，见上方 import
+ * 注释），故本地同值常量 + 锚定注释：权威值 = packages/shared 的
+ * SUBAGENT_OUTCOME_PLACEHOLDER（'(no outcome recorded)'）；同值漂移由 runtime
+ * test/subagent-extractor-engine.test.ts 契约钉子用例的行为断言守护（③级投影占位
+ * content === shared 常量）——core 改文案即该用例翻红。
+ */
+const OUTCOME_PLACEHOLDER_TEXT = "(no outcome recorded)";
 
 // ============================================================
 // 引擎 id 提取（record 路由段）
@@ -83,8 +97,12 @@ export function extractEngineId(record: SubagentRecordSnapshot): string {
 /**
  * 引擎原生 reader（①级）：handle + dataDir → SessionView。
  * 返回 undefined = 本级不可达/失败（编排层降②级）；reader 内部自行留 debug 日志。
- * 双端复用约束（设计 §3.3.7，与 zcode/reader.ts 同款）：实现必须无状态纯函数、
- * 不 import 引擎运行时件（launcher/preparer/parser）。
+ * 双端复用约束（设计 §3.3.7）：实现必须无状态纯函数、不 import 引擎运行时件。
+ *
+ * [W11/H1] 本模块零静态引擎依赖：①级 reader 全部经注入面注册——生产调用方 =
+ * runtime 协议客户端（W8 subagent-engine-history 把「协议 read」注册为引擎原生
+ * reader，引擎 id 动态、zcode sqlite 直读在引擎进程内完成）；注册表初始为空，
+ * 未注册引擎直接落②级 journal。
  */
 export type NativeSessionReader = (
   handle: EngineHandleView,
@@ -102,18 +120,15 @@ function getReaderSlot(): Map<string, NativeSessionReader> {
     | undefined;
   if (!slot) {
     slot = new Map();
-    // 内置注册：core 自带 reader 的引擎（当前仅 zcode——pi 的历史读取按 D1 范围声明
-    // 走 runtime 自有 JSONL 直读链，不注册原生 reader）
-    slot.set(ZCODE_ENGINE_ID, readZcodeNativeTier);
     Reflect.set(globalThis, NATIVE_READER_SLOT_KEY, slot);
   }
   return slot;
 }
 
 /**
- * 登记引擎原生 reader（未来引擎 / 测试注入 fake 用）。重复注册同 id = 覆盖
- * （幂等，对齐 registerEngine 惯例）。生产调用方 = core 内新引擎的接入模块；
- * xyz-agent runtime 不需要注册（zcode 内置）。
+ * 登记引擎原生 reader（W11/H1 后的唯①级接入点）。重复注册同 id = 覆盖
+ * （幂等，对齐 registerEngine 惯例）。生产调用方 = 宿主协议客户端接线
+ * （runtime subagent-engine-history 的 ensureProtocolReaderFor）。
  */
 export function registerNativeSessionReader(engineId: string, reader: NativeSessionReader): void {
   getReaderSlot().set(engineId, reader);
@@ -124,65 +139,9 @@ function lookupNativeSessionReader(engineId: string): NativeSessionReader | unde
   return getReaderSlot().get(engineId);
 }
 
-/** 清空注册表并重置为内置集（测试隔离专用，生产禁用——对齐 clearEngines 惯例）。 */
+/** 清空注册表（测试隔离专用，生产禁用——对齐 clearEngines 惯例）。 */
 export function resetNativeSessionReaders(): void {
-  const slot = getReaderSlot();
-  slot.clear();
-  slot.set(ZCODE_ENGINE_ID, readZcodeNativeTier);
-}
-
-// ============================================================
-// ①级：zcode sqlite 原生读取（内置注册的 reader）
-// ============================================================
-
-/**
- * zcode ①级 reader：sessionRef 的 dbPath/sessionId 重定位 + 白名单 +
- * readZcodeSessionView（extension/runtime 双端复用的同一份 reader）。
- * 语义复刻被收敛前的 runtime readZcodeNativeTier（含共享宿主 HOME 形态的绝对
- * dbPath 精确白名单）：绝对 dbPath 只认宿主 zcode 会话 db（ZCODE_HOST_DB_SUFFIX
- * SSOT 推导，防任意读）；相对路径锚池目录 resolve，越界路径（../ 逃逸 / 跨池）
- * 拒绝降②级；读取失败（结构化错误）降②级。
- */
-async function readZcodeNativeTier(
-  handle: EngineHandleView,
-  dataDir: string,
-): Promise<SessionView | undefined> {
-  const dbPathRaw = handle.sessionRef["dbPath"];
-  const sessionId = handle.sessionRef["sessionId"];
-  if (typeof dbPathRaw !== "string" || typeof sessionId !== "string") {
-    logger.debug("[session-view-service] zcode tier1 skipped: handle missing dbPath/sessionId");
-    return undefined;
-  }
-  let dbPath: string;
-  if (dbPathRaw.startsWith("/")) {
-    // 共享宿主 HOME 形态（2026-09 起，写侧 zcode-engine 恒绝对路径）：唯一合法绝对
-    // 路径 = 宿主 zcode 会话 db（record 来自 JSONL 文本不可信，精确匹配 core SSOT
-    // 后缀拼出的路径，防任意读）
-    if (dbPathRaw !== resolve(homedir(), ...ZCODE_HOST_DB_SUFFIX)) {
-      logger.warn(
-        `[session-view-service] zcode absolute dbPath not host db, reject tier1: ${dbPathRaw}`,
-      );
-      return undefined;
-    }
-    dbPath = dbPathRaw;
-  } else {
-    // 旧池时代 records（HOME 池化时期）：相对路径锚池目录重定位，白名单防逃逸
-    const poolDir = resolvePoolDir(dataDir, ZCODE_ENGINE_ID, handle.poolKey);
-    dbPath = resolve(poolDir, dbPathRaw);
-    if (!isStrictlyUnder(poolDir, dbPath)) {
-      logger.warn(`[session-view-service] zcode dbPath escapes pool dir, reject tier1: ${dbPath}`);
-      return undefined;
-    }
-  }
-  try {
-    return await readZcodeSessionView(dbPath, sessionId);
-  } catch (err) {
-    logger.debug(
-      `[session-view-service] zcode tier1 read failed, degrade to journal tier: ` +
-        `${toErrorMessage(err)}`,
-    );
-    return undefined;
-  }
+  getReaderSlot().clear();
 }
 
 // ============================================================
@@ -291,7 +250,7 @@ function replayEventsToHistory(
   return undefined;
 }
 
-function hasTurnContent(turn: Turn): boolean {
+function hasTurnContent(turn: { text: string; thinking: string; toolCalls: unknown[] }): boolean {
   return turn.text !== "" || turn.thinking !== "" || turn.toolCalls.length > 0;
 }
 
@@ -447,7 +406,7 @@ function outcomeOnlyMessages(record: SubagentRecordSnapshot): HistoryMessage[] {
     id: randomUUID(),
     role: "assistant",
     // result 优先（正常轮终文本）；error 次之（失败终态）；双缺占位（运行中被杀等）
-    content: record.result ?? record.error ?? "(no outcome recorded)",
+    content: record.result ?? record.error ?? OUTCOME_PLACEHOLDER_TEXT,
     status: isErrorOutcome ? "error" : "complete",
     timestamp: record.endedAt ?? base,
     ...(isErrorOutcome && record.error !== undefined ? { error: record.error } : {}),
@@ -464,8 +423,8 @@ function outcomeOnlyMessages(record: SubagentRecordSnapshot): HistoryMessage[] {
  *
  * 降级顺序 ①→②→③ 逐级尝试，每级失败留 debug/warn 日志不抛崩溃（GUI 详情页
  * 永不白屏报错，设计 A8）。engineId='pi' 返回 []（pi 的①级 = 调用方现有 JSONL
- * 直读链，A1 守护）。未注册 reader 的引擎（未来）直接落③级——record 字段就够，
- * 详情页至少有摘要卡。
+ * 直读链，A1 守护）。未注册 reader 的引擎（W11 后 = 宿主未接线协议 reader 的
+ * 进程）跳过①级直落②级 journal——record 字段就够，详情页至少有摘要卡。
  *
  * @param record  record 快照（engine/engineHandle 为不可信源，内部守卫消费）
  * @param dataDir xyz-agent 数据根（journal/dbPath 白名单经 paths.ts 布局 SSOT 推导）
@@ -484,16 +443,29 @@ export async function readSubagentHistoryMessages(
     );
     return outcomeOnlyMessages(record);
   }
+  // [W11/H1] ①级 reader 全经注入：未注册（W11 后注册表初始为空——宿主未接线协议
+  // reader 的进程）不可跳过②级——journal 是宿主自有数据，与引擎 reader 无关，
+  // 未注册 reader 的引擎仍走②→③（与「reader 失败降②级」同构）。
   const reader = lookupNativeSessionReader(engineId);
-  if (reader === undefined) {
+  if (reader !== undefined) {
+    const native = await reader(handle, dataDir);
+    if (native !== undefined) {
+      // ①级判空降级（设计 D3）：读成功但 turns 无实质内容（text/thinking/toolCalls
+      // 全空，与②级 replayEventsToHistory 的 contentTurns 判定同语义）= 本级不可用，
+      // 降②级——「仅 task」空壳投影（窗口 B）不再从①级放行。
+      if (native.turns.some(hasTurnContent)) return sessionViewToMessages(native, record);
+      logger.debug(
+        `[session-view-service] tier1 native view has no substantive content ` +
+          `(turns=${native.turns.length}), degrade to journal tier ` +
+          `(subagentId=${record.subagentId})`,
+      );
+    }
+  } else {
     logger.debug(
       `[session-view-service] engine '${engineId}' has no native reader tier, ` +
-        `degrade to outcome-only (subagentId=${record.subagentId})`,
+        `fall through to journal tier (subagentId=${record.subagentId})`,
     );
-    return outcomeOnlyMessages(record);
   }
-  const native = await reader(handle, dataDir);
-  if (native !== undefined) return sessionViewToMessages(native, record);
   const journaled = readJournalTier(record, handle, dataDir);
   if (journaled !== undefined) return journaled;
   return outcomeOnlyMessages(record);

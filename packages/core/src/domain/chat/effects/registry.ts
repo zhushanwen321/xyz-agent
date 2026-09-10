@@ -62,14 +62,13 @@ import {
   readBool,
   readStringArray,
   readDetail,
-  readUsage,
   readCompactionSummary,
   readBranchSummary,
   readFileChanges,
   readChangeSetStatus,
 } from '../readers'
 import { findLastAssistantIndex, findToolCallOwner } from '../chunk-processor'
-import { commitMessages } from '../mutations'
+import { commitMessages, terminalMessagePatch } from '../mutations'
 import { truncateToolCall } from '../truncate-tool-output'
 import { bashStartEffect, bashResultEffect } from '../bash-effects'
 import { applyEntryFrameWithOverlay } from './entry-overlay'
@@ -410,17 +409,9 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const next = prev.map((m, i) => {
       if (m.role !== 'assistant' || m.status !== 'streaming') return m
       changed = true
-      // 仅最后一条 assistant 回填 usage + content（turn 级聚合，回填到非末 assistant 语义错位）
-      const usage = i === lastAssistantIdx ? readUsage(payload) : undefined
-      const shouldOverrideContent = i === lastAssistantIdx && finalContent && finalContent.length > 0
-      return {
-        ...m,
-        status: isErrorStop ? 'error' : 'complete',
-        ...(usage ? { usage } : {}),
-        // 追加形态错误：仅最后一条 assistant 写 Message.error（finalizeMessages 双通道同语义）
-        ...(i === lastAssistantIdx && isErrorStop && errorMessage ? { error: errorMessage } : {}),
-        ...(shouldOverrideContent ? { content: finalContent } : {}),
-      } satisfies Message
+      // 终态字段 patch 单源（与 complete-recovery 恢复分支同语义，S4-A6）：
+      // usage/error/content 只作用于末位 assistant，见 terminalMessagePatch 注释
+      return terminalMessagePatch(m, i, { lastAssistantIdx, isErrorStop, errorMessage, finalContent, payload })
     })
     // ── [premature-timeout §5.2 D2] 误判收口自愈：恢复分支（实现见 ./complete-recovery.ts）──
     if (changed) commitMessages(messages, sid, next)
@@ -626,7 +617,10 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
         ? truncateToolCall({
           ...c,
           ...(output !== undefined && { output }),
-          ...(outputRaw !== undefined && { outputRaw }),
+          // end 有 content 时无条件写入 outputRaw（含 undefined 显式清空）——running 期
+          // tool_call_update 写入的 outputRaw 在 end 文本无 ANSI 时会残留，用户终态看到
+          // 带色陈旧尾窗而非 end 文本（错误信息），且 live ≠ reload。
+          ...(hasContent && { outputRaw }),
           // 与重放路径（reducer：isError → status:'error'）保持一致：实时失败的 tool call
           // 必须带 status:'error'，否则前端 Block.vue 的 isFailed 判定恒为 false（恒显示成功）。
           status: isError ? 'error' : 'completed',
@@ -674,8 +668,14 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // ID 锚定（见 tool_call_end 注释），避免乱序命中错误 message。
     updateStreamingAssistant(ctx, sid, (prev) => findToolCallOwner(prev, callId), (m) => {
       const detail = readDetail(payload, 'detail')
+      // [bash-running-stream-output U2] running 态流式输出复用 ToolCall.output/outputRaw：
+      // 条件写入（字段缺省不触碰既有值）；readString 对非字符串返回 undefined 天然降级。
+      const output = readString(payload, 'output')
+      const outputRaw = readString(payload, 'outputRaw')
       const toolCalls = (m.toolCalls ?? []).map((c) =>
-        c.id === callId ? { ...c, detail } : c,
+        c.id === callId
+          ? { ...c, detail, ...(output !== undefined && { output }), ...(outputRaw !== undefined && { outputRaw }) }
+          : c,
       )
       return { ...m, toolCalls }
     })

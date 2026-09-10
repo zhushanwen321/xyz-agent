@@ -38,10 +38,7 @@ export default defineConfig({
   // pi-subagent-workflow 深路径改走语义子入口）：engines/zcode/reader + constants +
   // engine/paths + relay-env（E-2 relay env 名/协议版本常量 SSOT，纯常量+纯函数，
   // 设计 §3.3.1 例外条款），运行时闭包 = node:fs + 纯常量；import 链其余均为
-  // type-only（bundle 后消失）。u5 增补（D4/U7b，subagent-agent-end-recovery）：
-  // ./spawn-channel 子入口——pi 通道原语共享机制（行读取等）消费，闭包 = 纯机制 +
-  // core logger facade（无模块加载期副作用）+ node 内置，实测无 ajv/yaml/lockfile
-  // 外部依赖入链。禁止扩大消费面到 launcher/preparer/parser/EnginePort
+  // type-only（bundle 后消失）。禁止扩大消费面到 launcher/preparer/parser/EnginePort
   // （依赖方向纪律）。require 条件解析到该包 dist CJS——core dist 未 build 时打包失败
   // 属预期（build 前置）
   // @earendil-works/pi-ai：能力注册表（pi-boundary-reliability U5）pi 同源档位计算——
@@ -54,7 +51,10 @@ export default defineConfig({
   // xyz-agent-plugin-sdk：插件契约 SSOT（D28 方向反转）——runtime 的 plugin-types
   // 薄壳 re-export 其类型与 PermissionConstants 常量值。纯 TS 源码包（main 直指
   // src/index.ts，零 dependencies），esbuild 直接编译，同 pi-file-lock 先例
-  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', '@xyz-agent/session-delivery', '@xyz-agent/core', '@zhushanwen/subagent-core', '@zhushanwen/pi-file-lock', '@earendil-works/pi-ai', 'chokidar', '@iarna/toml', 'xyz-agent-plugin-sdk'],
+  // @zhushanwen/subagent-engine-sdk [W11/A5]：runtime 经 subagent-core 协议面传递消费
+  // SDK 原语（buildEngineChildEnv / spawnEngineChild 等），workspace TS 源码包无 dist
+  // 解析面，必须内联进 bundle（否则打包态 Cannot find module）
+  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', '@xyz-agent/session-delivery', '@xyz-agent/core', '@zhushanwen/subagent-core', '@zhushanwen/subagent-engine-sdk', '@zhushanwen/pi-file-lock', '@earendil-works/pi-ai', 'chokidar', '@iarna/toml', 'xyz-agent-plugin-sdk'],
   // platform: 'node' 已自动处理所有 node:* 内置模块，无需手动 external
   // node-pty 是 native module（含 .node 二进制），不能打包进 JS bundle：
   // 其 JS 入口用 node-gyp-build 动态 require prebuilds/<platform>/*.node，

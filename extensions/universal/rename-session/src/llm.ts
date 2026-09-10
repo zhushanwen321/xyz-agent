@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message, Usage } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { callLLM, resolveModel } from "@zhushanwen/pi-llm-shared";
@@ -195,6 +195,23 @@ function messageText(message: Message): string {
 
 // ──────────────────────── LLM 调用 ────────────────────────
 
+// ──────────────────────── 注入项（usage 落账，设计 §3.3 ③） ────────────────────────
+
+/**
+ * callRenameLLM 可选注入项。llm.ts 不依赖 pi 句柄（ExtensionAPI）——依赖 pi 的副作用由
+ * index.ts 调用处注入回调（闭包捕获 pi），本模块只定义回调形状与调用时点。
+ */
+export interface CallRenameLLMOptions {
+	/**
+	 * usage 落账回调（设计 §3.3 ③）：`callLLM` 返回 `ok:true && usage` 存在后**立即**、
+	 * `cleanTitle` 之前调用——计量「LLM 调用事实」与标题清洗成败解耦（标题清洗为空导致
+	 * rename 跳过时，调用用量照常落账）。`usage` 缺失时不调用（§3.6 存在性守卫）。
+	 * 契约（§3.6）：catch 必须位于回调实现内部（index.ts 侧 try/catch + logger.error），
+	 * 不向调用方抛错；本函数不包裹 try/catch（catch 归属钉死回调体内，防双重 catch 漂移）。
+	 */
+	appendUsageEntry?: (model: string, usage: Usage) => void;
+}
+
 /**
  * 发起 rename LLM 调用，返回提取+清洗后的标题（空串/异常返回 null 表示应跳过 rename）。
  *
@@ -209,6 +226,8 @@ function messageText(message: Message): string {
  * - tools：不传（callLLM 内部显式 tools:[]；旧版 `pi.getAllTools()` 塞全部工具，纯浪费 token）
  * - model 不可用（resolveModel 返回 null）→ 静默跳过返回 null，不报错不阻断
  * - signal：透传 ctx.signal（保留旧版随 session abort 取消的语义）
+ * - options.appendUsageEntry：usage 落账回调注入（§3.3 ③——时点 ok:true && usage 后立即、
+ *   cleanTitle 前；catch 归属回调实现内部，§3.6）
  *
  * 本函数是 async（内部 await callLLM，这是 callRenameLLM 自身流程）；
  * 调用方（turn_end handler）用 fire-and-forget 包裹（`void callRenameLLM(...).then(...).catch(...)`），
@@ -218,6 +237,7 @@ export async function callRenameLLM(
 	ctx: ExtensionContext,
 	config: RenameSessionConfig,
 	finalMessage: unknown,
+	options?: CallRenameLLMOptions,
 ): Promise<string | null> {
 	// 内部顺序不可调换（E2E 竞态断言依赖「内省日志在请求发起前打出」）：
 	// resolveModel → extract prompt → extract finalText → truncate ×2 → build → debug 内省 → callLLM
@@ -271,6 +291,14 @@ export async function callRenameLLM(
 		// A1 失败路径日志：调用失败不静默（不抛错，靠日志留痕）。
 		logger.warn("rename LLM call failed", { error: result.error ?? "unknown error" });
 		return null;
+	}
+
+	// usage 落账（设计 §3.3 ③）：ok:true && usage 存在后立即、cleanTitle 之前——「LLM 调用
+	// 事实」的计量与标题清洗成败解耦（cleanTitle 为空跳过 rename 不影响已落账）；usage 缺失
+	// （provider 不回）→ 跳过回调不落账（§3.6 存在性守卫）。回调契约自带 catch（§3.6 归属
+	// 回调实现内部），此处不包裹 try/catch。
+	if (options?.appendUsageEntry && result.usage) {
+		options.appendUsageEntry(`${model.provider}/${model.id}`, result.usage);
 	}
 
 	// A1 成功路径日志（B2+B3 修正）：默认不输出，避免常开 console.warn 污染 Pi 输入框；

@@ -84,6 +84,39 @@ if [ ! -f "$ESM_LOADER_PATH" ]; then
 fi
 echo -e "${GREEN}[OK] 产物存在: index.cjs + plugin-bootstrap.cjs + plugin-bootstrap-process.cjs + plugin-esm-loader.cjs${NC}"
 
+# ── 1b. staged 引擎 CLI 包（W9，设计 §3.7 Electron 打包态）────────────
+# bundle-extensions.mjs 把 packages/*-subagent-cli bundle 到
+# apps/electron/resources/engines/<id>/；缺失/退化（漏跑 bundle / 引擎包 manifest
+# 坏 / index.js 不可执行）在此拦截——否则 electron-builder extraResources 静默拷空，
+# 打包态引擎发现零命中，延迟到 release 后 GUI 才暴露。
+echo ""
+echo -e "${BLUE}[1b/6] 检查 staged 引擎包...${NC}"
+STAGED_ENGINES="$PROJECT_ROOT/apps/electron/resources/engines"
+if ! node -e '
+const fs = require("fs"), path = require("path");
+const root = process.argv[1];
+const fail = (msg) => { console.error(`[ERROR] ${msg}`); process.exit(1); };
+let entries;
+try { entries = fs.readdirSync(root, { withFileTypes: true }); }
+catch { fail(`engines staged 根缺失: ${root}（先跑 node scripts/bundle-extensions.mjs）`); }
+const dirs = entries.filter((e) => e.isDirectory());
+if (dirs.length === 0) fail(`engines staged 根为空: ${root}（packages/*-subagent-cli 未 staged = 打包回归）`);
+for (const d of dirs) {
+  const dir = path.join(root, d.name);
+  const idx = path.join(dir, "index.js");
+  try { if (!fs.statSync(idx).isFile() || !(fs.statSync(idx).mode & 0o111)) fail(`engine ${d.name}: index.js 缺失或不可执行: ${idx}`); }
+  catch { fail(`engine ${d.name}: index.js 缺失: ${idx}`); }
+  const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  const m = pkg["xyz-agent"]?.subagentEngine;
+  if (m?.id !== d.name || typeof m?.bin !== "string" || m.bin === "" || pkg.bin?.[m.bin] !== "./index.js")
+    fail(`engine ${d.name}: staged package.json manifest/bin 无效`);
+  console.log(`[OK] engine ${d.name}: index.js + manifest 有效`);
+}
+' "$STAGED_ENGINES"; then
+    echo -e "${YELLOW}[FIX] 运行 node scripts/bundle-extensions.mjs 重新 staged，并核对 packages/*-subagent-cli 的 xyz-agent.subagentEngine manifest${NC}"
+    exit 1
+fi
+
 # ── 2. 依赖打包检查 ─────────────────────────────────────────────────
 echo ""
 echo -e "${BLUE}[2/6] 检查依赖是否打包（noExternal）...${NC}"
@@ -130,6 +163,22 @@ if [ -n "$MISSING" ]; then
     exit 1
 fi
 [ -z "$NATIVE_SKIPPED" ] && echo -e "${GREEN}[OK] 所有 runtime dependencies 已打包 (noExternal: $NO_EXTERNAL)${NC}"
+
+# ── 2b. workspace:* 依赖零外漏（W11/A5，第 2 步 DEPS 过滤的盲区补口）─────
+# 第 2 步把 workspace:* 协议依赖从 DEPS 断言中过滤（它们被 tsup inline 是预期），
+# 但「inline 后产物里不再出现裸 require(workspace 包名)」未被覆盖——SDK 若因
+# noExternal 漏配以外部依赖形态残留在 bundle，打包态 Cannot find module 延迟到
+# release 后才暴露。此处对产物 grep 断言零命中（A5 验收：产物 grep
+# require("@zhushanwen/subagent-engine-sdk") 零命中）。
+echo ""
+echo -e "${BLUE}[2b/6] 检查 workspace:* 依赖零外漏（SDK grep 零命中）...${NC}"
+BUNDLE_DIR_FOR_GREP="$(dirname "$BUNDLE_PATH")"
+if grep -rn 'require("@zhushanwen/subagent-engine-sdk")' "$BUNDLE_DIR_FOR_GREP"/*.cjs >/dev/null 2>&1; then
+    echo -e "${RED}[ERROR] runtime bundle 内出现裸 require(\"@zhushanwen/subagent-engine-sdk\")——SDK 未被 noExternal 内联${NC}"
+    echo -e "${YELLOW}[FIX] 编辑 $RUNTIME_DIR/tsup.config.ts，noExternal 追加 '@zhushanwen/subagent-engine-sdk' 后重跑 build${NC}"
+    exit 1
+fi
+echo -e "${GREEN}[OK] 产物 require(\"@zhushanwen/subagent-engine-sdk\") 零命中（SDK 已内联）${NC}"
 
 # ── 3. CJS 兼容性检查 ───────────────────────────────────────────────
 echo ""

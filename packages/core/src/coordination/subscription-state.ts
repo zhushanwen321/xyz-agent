@@ -33,6 +33,7 @@
  */
 import type { ServerMessage } from '@xyz-agent/shared'
 import type * as sessionDomain from '../transport/api/domains/session'
+import { createInflightDedup } from '../foundation/create-inflight-dedup'
 
 /**
  * per-session 订阅状态。
@@ -76,10 +77,13 @@ const subscriptionStates = new Map<string, SubscriptionState>()
  *
  * key 必须含 fromSeq：gap backfill（fromSeq 显式）与 initial subscribe（fromSeq undefined）
  * 语义不同，不得互吞；同参并发（重复相同 backfill）则复用同一 Promise。
- * 失败也清理（finally）：failed subscribe 可重试，不残留死 Promise。
+ *
+ * 「Map + Promise 复用」生命周期（同 key 复用 / settle 即清失败可重试不残留死 Promise /
+ * 引用比对防误删并发后到的新条目）收编于 createInflightDedup（D9 共享原语，
+ * state-truth-sync §3.3）；本模块只负责 key 语义（subscribeKey）与订阅意图写入。
  */
 // taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：in-flight 订阅去重表（并发收敛到同一 Promise，非 GUI 数据）
-const inFlightSubscribes = new Map<string, Promise<void>>()
+const subscribeDedup = createInflightDedup<void>()
 
 function subscribeKey(sessionId: string, fromSeq?: number): string {
   return fromSeq === undefined ? sessionId : `${sessionId}:${fromSeq}`
@@ -272,7 +276,11 @@ export function seqGate(sessionId: string, msg: { seq?: number }): SeqGateResult
  * 不 await，失败属连接级故障，WS 重连后重建。不抛——抛出变 unhandled rejection。
  */
 export async function subscribeSession(sessionId: string, fromSeq?: number): Promise<void> {
-  if (!subscribeImpl || !replayImpl) {
+  // 端口捕获为局部 const（非空守卫的 narrowing 跨 run 回调闭包保留；模块级 let 的收窄
+  // 在传参回调内失效）。fn 于 run() 调用的同一同步帧执行到首个 await，捕获值与实时读取恒等。
+  const subscribe = subscribeImpl
+  const replay = replayImpl
+  if (!subscribe || !replay) {
     // 防御：端口未注入（configureRouteInbound 未调用 / 测试未 setSubscriptionPorts）
     console.warn(`[core/subscription-state] subscribe ports not injected, skip subscribe for ${sessionId}`)
     return
@@ -286,91 +294,82 @@ export async function subscribeSession(sessionId: string, fromSeq?: number): Pro
 
   // in-flight 去重（MF-2）：守卫通过后、await 前的窗口内并发调用复用同一 Promise，
   // 避免重复 RPC + 重复 snapshot 回放。key 含 fromSeq（gap backfill 不吞 initial subscribe）。
+  // settle 即清（成败都清：失败可重试，成功靠 subscribed 守卫拦截后续调用）由 factory 内建。
   const key = subscribeKey(sessionId, fromSeq)
-  const inFlight = inFlightSubscribes.get(key)
-  if (inFlight) return inFlight
-
-  const run = (async (): Promise<void> => {
-    try {
-      // 登记「订阅意图」条目（M1/W09 follow-up）：RPC 失败时留存 subscribed=false 的意图记录，
-      // 供 WS 重连后 resubscribeAll 重发（否则断线期间新 session 的订阅意图丢失——
-      // useChat 侧 streamSubscriptions 已同步记录，core 侧无条目则重连恢复遍历不到该 sid）。
-      // subscribed=false 走 gap 检测兼容路径（evalSeqGap 分支 1/2），行为与「无条目」一致。
-      if (!subscriptionStates.has(sessionId)) {
-        subscriptionStates.set(sessionId, { lastSeenSeq: 0, subscribed: false })
-      }
-      let reply: { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
-      try {
-        reply = await subscribeImpl(sessionId, fromSeq)
-      } catch (e) {
-        // subscribe 失败：不标记 subscribed（下次可重试）。不抛——调用方 fire-and-forget。
-        console.warn(`[core/subscription-state] subscribe failed for session ${sessionId}:`, e)
-        return
-      }
-
-      // applySnapshot：回放历史经 replay dispatcher 进入 routeInbound 共享路由管线
-      // （PR #175 review R1 MUST_FIX）——与 live push 同一语义：
-      // - seq 去重：已 subscribed 的 session（gap reconcile）回放消息过 seqGate，
-      //   gap 触发消息（live 已 dispatch、基线未推进）靠 gapDispatchedSeqs 簿记 drop，
-      //   缺失段逐条递进 dispatch 并推进基线；未 subscribed（initial/resubscribe）走兼容
-      //   路径全量回放。
-      // - ROUTE_TABLE effects + crossSession：回放的 session.subagents / message.complete /
-      //   session.exited / extension:* 帧与 live 一样触发 onSubagents 等兜底与
-      //   dispatchCrossSession——重连/gap 后非活跃 session 的 subagent 终态不再丢失。
-      //
-      // snapshot 元素是带 seq 的 ServerMessage（bus ring 内当前事件序列），逐条 replay
-      // 让订阅端（useChat/useSessionEvents 等）复现已发生事件。回放循环内收集已回放
-      // seq（含被 drop 的——drop 意味着该消息此前已经处理过），供 stateSnapshot 重叠去重。
-      const replayedSeqs = new Set<number>()
-      for (const msg of reply.snapshot) {
-        replayImpl(sessionId, msg)
-        if (typeof msg.seq === 'number') replayedSeqs.add(msg.seq)
-      }
-
-      // stateSnapshot（wave:remove-bandaids）：5 个 state topic
-      // （commands/context/subagents/workflows/state_changed，见 message-bus STATE_TYPE_KEY_MAP）
-      // 的 last-value 数组，逐条 replay 让 routeInbound 兜底分支据此更新对应 store。
-      // stateSnapshot 与 snapshot 独立（snapshot 受 fromSeq 增量过滤，stateSnapshot 是
-      // last-value 不受影响），同一条消息（同 seq）可能同时出现在两者——ring 内未溢出时
-      // snapshot 已回放过，skip 防二连击；ring 溢出后只剩 last-value 的旧消息不在
-      // replayedSeqs 内，正常回放（ADR-0055 stateSnapshot 注入语义）。
-      for (const msg of reply.stateSnapshot) {
-        if (typeof msg.seq === 'number' && replayedSeqs.has(msg.seq)) continue
-        replayImpl(sessionId, msg)
-      }
-
-      // 记基线 + 标记 subscribed（后续 routeInbound 启用 gap 检测）。
-      // lastSeq 可能小于已 dispatch 的某条 snapshot seq（ring 溢出场景）或小于 routeInbound 已更新
-      // 的 lastSeenSeq（reconcile 期间 live 消息已推进基线），取 max 保证基线不回退。
-      // stateSnapshot 内消息的 seq 也纳入 max 计算——state topic 消息同样占用 bus seqCounter。
-      // （MF-3：gap 触发后基线推进在此发生——reconcile 成功才推进，失败则保持原位可重试）
-      // [M1/W09 follow-up] 新 bus（runtime 重启，seqCounter 归零）的基线收缩不在此处理——
-      // 「reply.lastSeq < prevLastSeen」无法区分「新 seq 空间」与「同 bus RPC 快照落后于 live 推进」
-      //（后者取 min 会错误回退基线），由 resubscribeAll 在发 RPC 前重置条目解决（prevLastSeen=0）。
-      const existingNow = subscriptionStates.get(sessionId)
-      const prevLastSeen = existingNow?.lastSeenSeq ?? 0
-      const maxSnapshotSeq = reply.snapshot.reduce((max, m) => (typeof m.seq === 'number' && m.seq > max ? m.seq : max), 0)
-      const maxStateSnapshotSeq = reply.stateSnapshot.reduce((max, m) => (typeof m.seq === 'number' && m.seq > max ? m.seq : max), 0)
-      const lastSeenSeq = Math.max(reply.lastSeq, maxSnapshotSeq, maxStateSnapshotSeq, prevLastSeen)
-      // gap 簿记清理：基线已覆盖的条目（<= lastSeenSeq）此后由常规 seq 去重接管，无独立
-      // 价值，清理防慢增长；超前条目保留（live gap dispatch 的消息可能晚于本 reply 的
-      // lastSeq，仍需簿记去重直到下次收敛/递进覆盖）。无残留时不写字段（state 形状最小）。
-      const carriedGapSeqs = existingNow?.gapDispatchedSeqs
-        ? new Set([...existingNow.gapDispatchedSeqs].filter((s) => s > lastSeenSeq))
-        : undefined
-      subscriptionStates.set(
-        sessionId,
-        carriedGapSeqs && carriedGapSeqs.size > 0
-          ? { lastSeenSeq, subscribed: true, gapDispatchedSeqs: carriedGapSeqs }
-          : { lastSeenSeq, subscribed: true },
-      )
-    } finally {
-      // 无论成败都清 in-flight（失败可重试，成功靠 subscribed 守卫拦截后续调用）
-      inFlightSubscribes.delete(key)
+  return subscribeDedup.run(key, async (): Promise<void> => {
+    // 登记「订阅意图」条目（M1/W09 follow-up）：RPC 失败时留存 subscribed=false 的意图记录，
+    // 供 WS 重连后 resubscribeAll 重发（否则断线期间新 session 的订阅意图丢失——
+    // useChat 侧 streamSubscriptions 已同步记录，core 侧无条目则重连恢复遍历不到该 sid）。
+    // subscribed=false 走 gap 检测兼容路径（evalSeqGap 分支 1/2），行为与「无条目」一致。
+    if (!subscriptionStates.has(sessionId)) {
+      subscriptionStates.set(sessionId, { lastSeenSeq: 0, subscribed: false })
     }
-  })()
-  inFlightSubscribes.set(key, run)
-  return run
+    let reply: { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
+    try {
+      reply = await subscribe(sessionId, fromSeq)
+    } catch (e) {
+      // subscribe 失败：不标记 subscribed（下次可重试）。不抛——调用方 fire-and-forget。
+      console.warn(`[core/subscription-state] subscribe failed for session ${sessionId}:`, e)
+      return
+    }
+
+    // applySnapshot：回放历史经 replay dispatcher 进入 routeInbound 共享路由管线
+    // （PR #175 review R1 MUST_FIX）——与 live push 同一语义：
+    // - seq 去重：已 subscribed 的 session（gap reconcile）回放消息过 seqGate，
+    //   gap 触发消息（live 已 dispatch、基线未推进）靠 gapDispatchedSeqs 簿记 drop，
+    //   缺失段逐条递进 dispatch 并推进基线；未 subscribed（initial/resubscribe）走兼容
+    //   路径全量回放。
+    // - ROUTE_TABLE effects + crossSession：回放的 session.subagents / message.complete /
+    //   session.exited / extension:* 帧与 live 一样触发 onSubagents 等兜底与
+    //   dispatchCrossSession——重连/gap 后非活跃 session 的 subagent 终态不再丢失。
+    //
+    // snapshot 元素是带 seq 的 ServerMessage（bus ring 内当前事件序列），逐条 replay
+    // 让订阅端（useChat/useSessionEvents 等）复现已发生事件。回放循环内收集已回放
+    // seq（含被 drop 的——drop 意味着该消息此前已经处理过），供 stateSnapshot 重叠去重。
+    const replayedSeqs = new Set<number>()
+    for (const msg of reply.snapshot) {
+      replay(sessionId, msg)
+      if (typeof msg.seq === 'number') replayedSeqs.add(msg.seq)
+    }
+
+    // stateSnapshot（wave:remove-bandaids）：5 个 state topic
+    // （commands/context/subagents/workflows/state_changed，见 message-bus STATE_TYPE_KEY_MAP）
+    // 的 last-value 数组，逐条 replay 让 routeInbound 兜底分支据此更新对应 store。
+    // stateSnapshot 与 snapshot 独立（snapshot 受 fromSeq 增量过滤，stateSnapshot 是
+    // last-value 不受影响），同一条消息（同 seq）可能同时出现在两者——ring 内未溢出时
+    // snapshot 已回放过，skip 防二连击；ring 溢出后只剩 last-value 的旧消息不在
+    // replayedSeqs 内，正常回放（ADR-0055 stateSnapshot 注入语义）。
+    for (const msg of reply.stateSnapshot) {
+      if (typeof msg.seq === 'number' && replayedSeqs.has(msg.seq)) continue
+      replay(sessionId, msg)
+    }
+
+    // 记基线 + 标记 subscribed（后续 routeInbound 启用 gap 检测）。
+    // lastSeq 可能小于已 dispatch 的某条 snapshot seq（ring 溢出场景）或小于 routeInbound 已更新
+    // 的 lastSeenSeq（reconcile 期间 live 消息已推进基线），取 max 保证基线不回退。
+    // stateSnapshot 内消息的 seq 也纳入 max 计算——state topic 消息同样占用 bus seqCounter。
+    // （MF-3：gap 触发后基线推进在此发生——reconcile 成功才推进，失败则保持原位可重试）
+    // [M1/W09 follow-up] 新 bus（runtime 重启，seqCounter 归零）的基线收缩不在此处理——
+    // 「reply.lastSeq < prevLastSeen」无法区分「新 seq 空间」与「同 bus RPC 快照落后于 live 推进」
+    //（后者取 min 会错误回退基线），由 resubscribeAll 在发 RPC 前重置条目解决（prevLastSeen=0）。
+    const existingNow = subscriptionStates.get(sessionId)
+    const prevLastSeen = existingNow?.lastSeenSeq ?? 0
+    const maxSnapshotSeq = reply.snapshot.reduce((max, m) => (typeof m.seq === 'number' && m.seq > max ? m.seq : max), 0)
+    const maxStateSnapshotSeq = reply.stateSnapshot.reduce((max, m) => (typeof m.seq === 'number' && m.seq > max ? m.seq : max), 0)
+    const lastSeenSeq = Math.max(reply.lastSeq, maxSnapshotSeq, maxStateSnapshotSeq, prevLastSeen)
+    // gap 簿记清理：基线已覆盖的条目（<= lastSeenSeq）此后由常规 seq 去重接管，无独立
+    // 价值，清理防慢增长；超前条目保留（live gap dispatch 的消息可能晚于本 reply 的
+    // lastSeq，仍需簿记去重直到下次收敛/递进覆盖）。无残留时不写字段（state 形状最小）。
+    const carriedGapSeqs = existingNow?.gapDispatchedSeqs
+      ? new Set([...existingNow.gapDispatchedSeqs].filter((s) => s > lastSeenSeq))
+      : undefined
+    subscriptionStates.set(
+      sessionId,
+      carriedGapSeqs && carriedGapSeqs.size > 0
+        ? { lastSeenSeq, subscribed: true, gapDispatchedSeqs: carriedGapSeqs }
+        : { lastSeenSeq, subscribed: true },
+    )
+  }).promise
 }
 
 /**
@@ -400,19 +399,20 @@ export function clearSubscription(sessionId: string): void {
 /**
  * 失效指定 session 的全部订阅簿记（状态条目 + in-flight 去重条目），session.exited 时调用。
  *
- * 与 clearSubscription 的差异：额外清 inFlightSubscribes 里该 session 的条目。残留的
+ * 与 clearSubscription 的差异：额外清 subscribeDedup 里该 session 的条目。残留的
  * in-flight Promise 对应死 session 的 subscribe RPC（runtime 侧 session 已删，reply 要么
  * 报错要么 65s 超时），不清会让 respawn 后首次 ensureStreamSubscription 被 in-flight
  * 去重收敛到死 Promise——不重发 subscribe RPC，新 pi 的流式推送无订阅者。
  *
  * 被清的旧 Promise 自身无害：resolve 路径（订阅真实成功）才写回状态条目，reject 路径
- * 不写；其 finally 对已删 key 的 delete 是 no-op。
+ * 不写；其 settle 清理经引用比对对本表 delete 是 no-op（factory 内建，不误删后续新条目）。
  */
 export function invalidateSubscription(sessionId: string): void {
   subscriptionStates.delete(sessionId)
-  for (const key of [...inFlightSubscribes.keys()]) {
+  // keys() 快照副本后前缀匹配删除（factory 契约：迭代中删除安全）
+  for (const key of subscribeDedup.keys()) {
     if (key === sessionId || key.startsWith(`${sessionId}:`)) {
-      inFlightSubscribes.delete(key)
+      subscribeDedup.delete(key)
     }
   }
 }
@@ -486,6 +486,6 @@ export function resubscribeAll(): void {
  */
 export function resetSubscriptionStates(): void {
   subscriptionStates.clear()
-  // in-flight 去重表同步清空（测试隔离；生产代码 in-flight 条目由 finally 自清理）
-  inFlightSubscribes.clear()
+  // in-flight 去重表同步清空（测试隔离；生产代码 in-flight 条目由 factory settle 自清理）
+  subscribeDedup.clear()
 }

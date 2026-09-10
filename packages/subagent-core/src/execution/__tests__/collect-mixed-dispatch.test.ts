@@ -27,32 +27,15 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
-const { loggerMock, runSpawnMock } = vi.hoisted(() => ({
+const { loggerMock } = vi.hoisted(() => ({
   loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
-  runSpawnMock: vi.fn(async () => ({
-    text: "ok",
-    turns: 1,
-    durationMs: 10,
-    success: true,
-    sessionId: "spawned",
-    toolCalls: [],
-  })),
 }));
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
-// mock 路径自检（impl-plan 偏差 #6 教训）：从 __tests__ 解析必须命中生产 import 的
-// 真实模块——merge 后 session-runner 落位 src/execution/engine/engines/pi/session-runner.ts
-//（subagent-service.ts 的 import 源），旧路径 "../session-runner.ts" 模块已不存在，
-// 拦截静默失效（真 runSpawn 被执行，runSpawnMock.calls 恒 0 → 受控 promise 用例超时）。
-vi.mock("../engine/engines/pi/session-runner.ts", () => ({
-  runSpawn: runSpawnMock,
-  killAllSpawnedChildren: vi.fn(),
-  killRecordChildWithEscalation: vi.fn(),
-  getChildByRecord: vi.fn(() => undefined),
-  registerSpawnedChildForRecord: vi.fn(),
-  spawnedChildren: new Map(),
-}));
-
+// [W3 改写] 替身从 vi.mock session-runner 的受控 runSpawn 改为协议 seam 的受控
+// engine.run（registerFakePiEngine 替身 + 显式 settle）。
+import { registerFakePiEngine, type FakePiEnginePort } from "./helpers/fake-engine-port.ts";
+import { clearEngines } from "../engine/registry.ts";
 import { getSubagentSessionDir } from "../path-encoding.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelRegistryLike } from "../model-resolver.ts";
@@ -106,31 +89,10 @@ async function until(cond: () => boolean, timeoutMs = 3000): Promise<void> {
   }
 }
 
-const spawnOk = () => ({
-  text: "ok",
-  turns: 1,
-  durationMs: 10,
-  success: true,
-  sessionId: "spawned",
-  toolCalls: [],
-});
-
-/** 受控 runSpawn：每次调用挂起返回 resolver，测试按成员序号放行终态。
- *  resolver 在 runSpawn 实际调用时（execute 异步链内）才构造——release 函数按
- *  索引延迟取用，不能在挂起注册时立刻闭包捕获（彼时尚为 undefined）。 */
-function controlledSpawns(n: number): Array<(v?: ReturnType<typeof spawnOk>) => void> {
-  const resolvers: Array<(v: ReturnType<typeof spawnOk>) => void> = [];
-  for (let i = 0; i < n; i += 1) {
-    runSpawnMock.mockImplementationOnce(
-      () =>
-        new Promise((res) => {
-          resolvers[i] = res;
-        }),
-    );
-  }
-  return Array.from({ length: n }, (_, i) => (v?: ReturnType<typeof spawnOk>) =>
-    resolvers[i]!(v ?? spawnOk()),
-  );
+/** 受控替身 run：等 n 个替身 run 到位（execute 异步链内发起），按索引放行 settle。
+ *  与原受控 runSpawn 的 resolver 形态同构（索引 = execute 派发序）。 */
+function makeRelease(fk: FakePiEnginePort, n: number): Array<() => void> {
+  return Array.from({ length: n }, (_, i) => () => fk.runs[i]!.settle({ content: "ok" }));
 }
 
 describe("A8 混派正交 service e2e（同轮 2 sync + 1 async，U8）", () => {
@@ -138,8 +100,12 @@ describe("A8 混派正交 service e2e（同轮 2 sync + 1 async，U8）", () => 
   let service: SubagentService;
   let pi: ReturnType<typeof makePi>;
 
+  let fake: FakePiEnginePort;
+
   beforeEach(() => {
     for (const k of IDENTITY_ENV_KEYS) delete process.env[k];
+    clearEngines();
+    fake = registerFakePiEngine();
     agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "core-mixed-dispatch-"));
     fs.mkdirSync(getSubagentSessionDir(agentDir, agentDir), { recursive: true });
     pi = makePi();
@@ -160,6 +126,7 @@ describe("A8 混派正交 service e2e（同轮 2 sync + 1 async，U8）", () => 
 
   afterEach(() => {
     service.dispose();
+    clearEngines();
     fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
@@ -167,11 +134,11 @@ describe("A8 混派正交 service e2e（同轮 2 sync + 1 async，U8）", () => 
     const spy = spyNotifier(service);
     // 同轮三连派发：2 sync + 1 async（派发顺序 sync, sync, async——同一条消息内的
     // 混派形态；runSpawn 调用序与 execute 序一致）
-    const [doneSync1, doneSync2, doneAsync] = controlledSpawns(3);
+    const [doneSync1, doneSync2, doneAsync] = makeRelease(fake, 3);
     const hSync1 = await service.execute({ task: "s1", slug: "sync-one", collect: "sync" });
     const hSync2 = await service.execute({ task: "s2", slug: "sync-two", collect: "sync" });
     const hAsync = await service.execute({ task: "a1", slug: "async-one" });
-    await until(() => runSpawnMock.mock.calls.length >= 3); // 三个受控 promise 均已构造
+    await until(() => fake.runs.length >= 3); // 三个替身 run 均已到位
 
     // async 成员先终态：立即单条 notify（现状路径），批零投递、零扣留
     doneAsync();
@@ -198,11 +165,11 @@ describe("A8 混派正交 service e2e（同轮 2 sync + 1 async，U8）", () => 
 
   it("sync 批先闭合（async 仍在跑）：背靠背紧窗口合批单批；async 随后独立单条 notify", async () => {
     const spy = spyNotifier(service);
-    const [doneSync1, doneSync2, doneAsync] = controlledSpawns(3);
+    const [doneSync1, doneSync2, doneAsync] = makeRelease(fake, 3);
     const hSync1 = await service.execute({ task: "s1", slug: "sync-one", collect: "sync" });
     const hSync2 = await service.execute({ task: "s2", slug: "sync-two", collect: "sync" });
     const hAsync = await service.execute({ task: "a1", slug: "async-one" });
-    await until(() => runSpawnMock.mock.calls.length >= 3);
+    await until(() => fake.runs.length >= 3);
 
     // 两个 sync 同步段背靠背终态（窄于 finalize 链宽度——U8 拆批盲窗的精确复现形态：
     // 先 archive 的成员 route 时，后者的 notifyComplete 尚在 finalize 链间隙，闭合
@@ -228,11 +195,11 @@ describe("A8 混派正交 service e2e（同轮 2 sync + 1 async，U8）", () => 
 
   it("观察者形态：同轮混派三 record 的落盘 entry 各自携带正确 collectMode", async () => {
     const spy = spyNotifier(service);
-    const [, , doneAsync] = controlledSpawns(3);
+    const [, , doneAsync] = makeRelease(fake, 3);
     const hSync1 = await service.execute({ task: "s1", slug: "sync-one", collect: "sync" });
     const hSync2 = await service.execute({ task: "s2", slug: "sync-two", collect: "sync" });
     const hAsync = await service.execute({ task: "a1", slug: "async-one" });
-    await until(() => runSpawnMock.mock.calls.length >= 3);
+    await until(() => fake.runs.length >= 3);
     doneAsync();
     await until(() => spy.notify.mock.calls.length > 0);
     // 批不必闭合即可断言落盘（register 期 entry 即带 collectMode）：

@@ -19,8 +19,11 @@ import { app, BrowserWindow, shell } from 'electron'
 import type { WindowOptions } from '../interfaces.js'
 import { isAllowedAppNavigation, isValidExternalUrl } from '../gateway/input-validators.js'
 
-/** Dev 模式 Vite URL */
-export const VITE_DEV_URL = 'http://localhost:1420'
+/** Dev 模式 Vite URL（XYZ_VITE_DEV_URL 可覆盖：多 worktree 并行 dev 时错开端口，如 1421）。
+ *  注意：本常量同时是 will-navigate 导航白名单的 devOrigin（:153）——覆盖后导航白名单
+ *  同步接受覆盖源（行为正确：应用实际从哪个端口加载就应放行哪个）；prod 下仅 loadFile，
+ *  该覆盖无生效面。 */
+export const VITE_DEV_URL = process.env.XYZ_VITE_DEV_URL ?? 'http://localhost:1420'
 
 /** 等待 Vite dev server 就绪的总超时 */
 export const VITE_READY_TIMEOUT_MS = 30_000

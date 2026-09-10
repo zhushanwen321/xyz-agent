@@ -8,6 +8,14 @@
  * `responseModel?` = 仅 openai-completions 在 provider 报告模型 ≠ 请求 id 时才设置
  * （OpenRouter auto 路由场景）——gen-stats 分桶 key 采 model 不采 responseModel 的裁定依据。
  *
+ * ── 追加探针组（genstats-speed-llm-window，docs/design/genstats-speed-llm-window.md §2.4）──
+ * LLM 请求窗口时序契约（runtime 速度采样闭合点前移到 assistant message_end 所依赖的 pi 事件时序）：
+ * P1 成功路径 assistant message_end 先于 turn_end；P3① error/aborted 分支在流内收敛真实 partial
+ * message 的 message_end 后才 turn_end+return；P3② agent.js handleRunFailure 合成四事件
+ * （message_start→message_end→turn_end→agent_end）+ failureMessage 形态（assistant role/空
+ * text/EMPTY_USAGE/stopReason 三元）；P4 内层循环每 turn 恰一次 streamAssistantResponse 调用
+ * （tokens↔duration 1:1 配对前提）。pi 升级后红 = 窗口闭合前提漂移：按断言消息复核锚点后更新。
+ *
  * 断言方式：静态直读 node_modules 实装 dist（pi-ai / pi-agent-core / pi-coding-agent 三包），
  * 同 pi-semantics-rpc-surface.test.ts 范式。dist 不可达时 skip 不 fail；不进 REAL_PI_TESTS
  * 分池。pi 升级后红 = AssistantMessage 结构 / turn_end 通路 / responseModel 语义漂移，
@@ -143,6 +151,100 @@ describe.skipIf(SKIP_REASON !== '')(
         rpcMode.includes('output(toJsonEvent(event));'),
         'PS-25 漂移：rpc-mode 不再经 toJsonEvent 下发 session 事件——复核 modes/rpc/rpc-mode.js subscribe 段',
       ).toBe(true)
+    })
+
+    // ── genstats-speed-llm-window 探针组：LLM 请求窗口时序契约（设计 §2.4 P1/P3①/P3②/P4）──
+    // 函数体切片依据：dist 编译产物顶层函数以行首 `}` 收尾、agent.js 类方法以 4 空格 `}` 收尾，
+    // 非贪婪切片在首个匹配收尾符处安全截断（同文件 PS-25 接口切片同范式）。
+    const runLoopBody = /async function runLoop\([\s\S]*?\n\}/.exec(agentLoop)?.[0] ?? ''
+    const streamBody = /async function streamAssistantResponse\([\s\S]*?\n\}/.exec(agentLoop)?.[0] ?? ''
+    const handleFailureBody = /    async handleRunFailure\(error, aborted\) \{[\s\S]*?\n    \}/.exec(agentCore)?.[0] ?? ''
+
+    describe('genstats-speed-llm-window 探针：LLM 请求窗口时序契约 P1/P3①/P3②/P4（静态断言）', () => {
+      it('P1：成功路径 assistant message_end 先于 turn_end（流式收敛结构 + runLoop 直线序）', () => {
+        expect(runLoopBody, 'P1 锚点漂移：runLoop 函数体切片为空——复核 agent-loop.js 结构').not.toBe('')
+        expect(streamBody, 'P1 锚点漂移：streamAssistantResponse 函数体切片为空——复核 agent-loop.js 结构').not.toBe('')
+        // ① 流式函数内不出现 turn_end：闭合信号必在流结束（message_end 已 emit）之后由 runLoop 发出
+        expect(
+          streamBody.includes('type: "turn_end"'),
+          'P1 漂移：streamAssistantResponse 内部出现 turn_end emit——message_end 先于 turn_end 的窗口闭合契约破裂，复核 agent-loop.js',
+        ).toBe(false)
+        // ② 双收敛点（done/error case + for-await 循环后兜底）均以 message_end 为返回前最后动作
+        const convergences = streamBody.match(/await emit\(\{ type: "message_end", message: finalMessage \}\);\s*\n\s*return finalMessage;/g) ?? []
+        expect(
+          convergences.length,
+          'P1 漂移：流式收敛点不再以 message_end 为返回前最后 emit（done/error 收敛 + 循环后兜底应各一处）——复核 agent-loop.js streamAssistantResponse 收敛段',
+        ).toBe(2)
+        // ③ runLoop 直线序：streamAssistantResponse 调用（内部必以 message_end 收敛）先于成功路径 turn_end
+        const callIdx = runLoopBody.indexOf('const message = await streamAssistantResponse(')
+        const turnEndIdx = runLoopBody.indexOf('await emit({ type: "turn_end", message, toolResults })')
+        expect(callIdx, 'P1 锚点漂移：streamAssistantResponse 调用点消失——复核 agent-loop.js runLoop').toBeGreaterThan(-1)
+        expect(turnEndIdx, 'P1 锚点漂移：成功路径 turn_end(toolResults) 发射点消失——复核 agent-loop.js runLoop').toBeGreaterThan(-1)
+        expect(
+          callIdx < turnEndIdx,
+          'P1 漂移：成功路径 turn_end 不再位于 streamAssistantResponse 之后——assistant message_end 先于 turn_end 的窗口闭合前提破裂，复核 agent-loop.js runLoop 直线序',
+        ).toBe(true)
+      })
+
+      it('P3①：error/aborted 分支——真实 partial message 的 message_end（流内收敛）先于 turn_end(空工具结果) + return', () => {
+        expect(streamBody, 'P3① 锚点漂移：streamAssistantResponse 函数体切片为空——复核 agent-loop.js 结构').not.toBe('')
+        expect(runLoopBody, 'P3① 锚点漂移：runLoop 函数体切片为空——复核 agent-loop.js 结构').not.toBe('')
+        // 流内 error 事件与 done 同 case：response.result() 取真实 partial message（provider 已计部分 usage）并 emit message_end 后返回
+        expect(
+          /case "done":\s*\n\s*case "error": \{\s*\n\s*const finalMessage = await response\.result\(\);[\s\S]*?await emit\(\{ type: "message_end", message: finalMessage \}\);\s*\n\s*return finalMessage;/.test(streamBody),
+          'P3① 漂移：流 error 事件不再收敛出真实 partial message 的 message_end——Esc 中断的「部分流窗口」样本前提破裂，复核 agent-loop.js case "error" 段',
+        ).toBe(true)
+        // runLoop 分支：stopReason error/aborted → turn_end(toolResults:[]) → agent_end → return（无工具执行、无二次流式）
+        expect(
+          /if \(message\.stopReason === "error" \|\| message\.stopReason === "aborted"\) \{\s*\n\s*await emit\(\{ type: "turn_end", message, toolResults: \[\] \}\);\s*\n\s*await emit\(\{ type: "agent_end", messages: newMessages \}\);\s*\n\s*return;/.test(runLoopBody),
+          'P3① 漂移：error/aborted 分支不再是「turn_end(空工具结果) → agent_end → return」结构——复核 agent-loop.js',
+        ).toBe(true)
+      })
+
+      it('P3②：handleRunFailure 合成四事件序（start→end→turn_end→agent_end）+ failureMessage 形态（assistant role/空 text/EMPTY_USAGE/stopReason 三元）', () => {
+        expect(handleFailureBody, 'P3② 锚点漂移：handleRunFailure 方法体切片为空——复核 agent.js 结构').not.toBe('')
+        const failure = /const failureMessage = \{[\s\S]*?\n\s{8}\};/.exec(handleFailureBody)
+        expect(failure, 'P3② 漂移：failureMessage 构造消失——复核 agent.js handleRunFailure').not.toBeNull()
+        const body = failure![0]
+        expect(body, 'failureMessage.role 不再是 assistant').toMatch(/role: "assistant",/)
+        expect(body, 'failureMessage.content 不再是空文本 text（合成 message_end 将携带非空内容）').toMatch(/content: \[\{ type: "text", text: "" \}\],/)
+        expect(body, 'failureMessage.usage 不再引用 EMPTY_USAGE（runtime totalTokens gate 依赖其丢弃合成 turn 的样本）').toMatch(/usage: EMPTY_USAGE,/)
+        expect(body, 'failureMessage.stopReason 不再是 aborted?"aborted":"error" 三元').toMatch(/stopReason: aborted \? "aborted" : "error",/)
+        // 合成四事件：message_start → message_end → turn_end → agent_end 依次 processEvents
+        const seq = [
+          'await this.processEvents({ type: "message_start", message: failureMessage });',
+          'await this.processEvents({ type: "message_end", message: failureMessage });',
+          'await this.processEvents({ type: "turn_end", message: failureMessage, toolResults: [] });',
+          'await this.processEvents({ type: "agent_end", messages: [failureMessage] });',
+        ].map((s) => handleFailureBody.indexOf(s))
+        for (const [i, idx] of seq.entries()) {
+          expect(idx, `P3② 锚点漂移：合成事件 #${i + 1}（start/end/turn_end/agent_end）形态改变——复核 agent.js handleRunFailure`).toBeGreaterThan(-1)
+        }
+        expect(
+          seq[0]! < seq[1]! && seq[1]! < seq[2]! && seq[2]! < seq[3]!,
+          'P3② 漂移：合成四事件不再按 message_start → message_end → turn_end → agent_end 顺序发射——复核 agent.js handleRunFailure',
+        ).toBe(true)
+      })
+
+      it('P4：内层循环每 turn 迭代恰一次 streamAssistantResponse 调用（调用点全文件唯一 + 内层 while 直线体）', () => {
+        // 全文件唯一调用点（函数定义行无 await 前缀，不重复计数）
+        const calls = agentLoop.match(/await streamAssistantResponse\(/g) ?? []
+        expect(
+          calls.length,
+          'P4 漂移：streamAssistantResponse 调用点不再唯一——每 turn 恰一次 LLM 请求的 1:1 配对前提破裂，新口径将产「末窗口 × 全 turn tokens」静默偏高样本，复核 agent-loop.js',
+        ).toBe(1)
+        // 调用点位于 runLoop 内层 while 直线体：while 头 → turn_start/steering 注入 → 唯一流式调用（无条件执行）
+        const whileIdx = runLoopBody.indexOf('while (hasMoreToolCalls || pendingMessages.length > 0) {')
+        const steeringIdx = runLoopBody.indexOf('for (const message of pendingMessages) {')
+        const callIdx = runLoopBody.indexOf('const message = await streamAssistantResponse(')
+        expect(whileIdx, 'P4 锚点漂移：内层 while 条件结构改变——复核 agent-loop.js runLoop').toBeGreaterThan(-1)
+        expect(steeringIdx, 'P4 锚点漂移：steering 注入循环消失——复核 agent-loop.js runLoop').toBeGreaterThan(-1)
+        expect(callIdx, 'P4 锚点漂移：streamAssistantResponse 调用点消失——复核 agent-loop.js runLoop').toBeGreaterThan(-1)
+        expect(
+          whileIdx < steeringIdx && steeringIdx < callIdx,
+          'P4 漂移：steering 注入与流式调用的次序改变（设计前提：steering 只注入 user 消息、发生在 turn_start 与 streaming 之间，不产生 assistant message）——复核 agent-loop.js runLoop',
+        ).toBe(true)
+      })
     })
   },
 )

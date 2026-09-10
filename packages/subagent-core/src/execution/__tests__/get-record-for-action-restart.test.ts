@@ -25,18 +25,13 @@ const { loggerMock } = vi.hoisted(() => ({
 }));
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
-// mock session-runner：import 链需要（getRecordForAction 本身不调 spawn，仅守卫读
-// hasLiveProcessHandle——默认无活进程，与跨重启场景一致）。
-vi.mock("../engine/engines/pi/session-runner.ts", () => ({
-  runSpawn: vi.fn(),
-  killAllSpawnedChildren: vi.fn(),
-  getChildByRecord: vi.fn(() => undefined),
-  registerSpawnedChildForRecord: vi.fn(),
-  killRecordChildWithEscalation: vi.fn(),
-  spawnedChildren: new Map(),
-}));
+// [W3 改写] 原 vi.mock(inproc pi 引擎目录/session-runner) 随删件消亡——deliverChatMessage 走
+// 协议 seam（registerFakePiEngine 替身；跨重启无活进程 = 引擎冷路径拒绝，续聊落
+// resumeColdRound 守卫链）。
 
 import { writeFinalized } from "../finalized-marker.ts";
+import { registerFakePiEngine } from "./helpers/fake-engine-port.ts";
+import { clearEngines } from "../engine/registry.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import { getSubagentSessionDir } from "../path-encoding.ts";
 import { RecordStore } from "../record-store.ts";
@@ -224,6 +219,14 @@ describe("[M10] getRecordForAction 跨重启磁盘重建（S3 回归场景）", 
   // 不可序列化、重建后恒缺失，若无守卫 → 冷路径 resume 的 spawn cwd 静默回落主 repo
   //（隔离失效，正是 worktree 要防的并发写冲突场景）。
   it("[review round2] worktree record 跨重启重建 → hadWorktree 标记 + 续聊被拒（行动语言）", async () => {
+    clearEngines();
+    const fake = registerFakePiEngine();
+    // 跨重启无活进程 → 引擎冷路径拒绝 → 续聊落 resumeColdRound 守卫链
+    fake.interactMessageResult = {
+      ok: false,
+      code: "engine_session_not_resumable",
+      message: "no live process (cold path)",
+    };
     writeSessionJsonl(sessionsDir, {
       id: "sa-wt",
       rootSessionId: "root-session",
@@ -243,6 +246,13 @@ describe("[M10] getRecordForAction 跨重启磁盘重建（S3 回归场景）", 
   });
 
   it("[review round2] 非 worktree record 跨重启重建 → 续聊不受 worktree 守卫拦截（向后兼容）", async () => {
+    clearEngines();
+    const fake = registerFakePiEngine();
+    fake.interactMessageResult = {
+      ok: false,
+      code: "engine_session_not_resumable",
+      message: "no live process (cold path)",
+    };
     // identity entry 无 worktree 字段（旧文件）→ found.worktree undefined → hadWorktree false
     writeSessionJsonl(sessionsDir, { id: "sa-nowt", rootSessionId: "root-session" });
 

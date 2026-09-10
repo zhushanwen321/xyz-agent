@@ -11,7 +11,9 @@
  *   （day/d7/d30 滚动窗口、current=文件末条）；
  * - getSnapshotForSession 降级链四分支：get_state 成功 → 内存映射 → replicated states
  *   缓存值 → 全 null；
- * - interpreter 接线：turn-usage → onGenStats 携带扩展字段；无 turn-start → durationMs=null。
+ * - interpreter 接线（LLM 窗口口径 genstats-speed-llm-window D1/D3）：turn-start →
+ *   message_end(assistant) → turn-usage → onGenStats 携带扩展字段 + durationMs=窗口差；
+ *   无 turn-start / 缺闭合 → durationMs=null。
  *
  * 数据目录红线（TEST-STRATEGY / fs-guard）：全部写删目标 = mkdtempSync(
  * join(tmpdir(), 'xyz-gen-stats-')) + XYZ_AGENT_DATA_DIR env 注入，零共享推导路径触碰。
@@ -374,8 +376,19 @@ const TURN_USAGE_EVENT: PiTranslatedEvent = {
   provider: 'prov',
 }
 
+/** assistant message_end 帧（照抄 event-adapter 翻译形态：{sessionId, entry: PiMessageEntry}；构造范式同 event-interpreter.test.ts D3 矩阵）。 */
+function makeAssistantMessageEnd(): ServerMessage {
+  return {
+    type: 'message.message_end',
+    payload: {
+      sessionId: 's1',
+      entry: { type: 'message', timestamp: new Date().toISOString(), message: { role: 'assistant' } },
+    },
+  }
+}
+
 describe('EventInterpreter gen-stats 接线（D1/D2）', () => {
-  it('turn-start → turn-usage：onGenStats 携带扩展字段 + durationMs=本地时钟差', () => {
+  it('turn-start → message_end(assistant) → turn-usage：onGenStats 携带扩展字段 + durationMs=LLM 窗口差', () => {
     vi.useFakeTimers()
     const onGenStats = vi.fn()
     const interp = makeInterpreter(onGenStats)
@@ -383,6 +396,8 @@ describe('EventInterpreter gen-stats 接线（D1/D2）', () => {
     vi.setSystemTime(T0)
     interp.interpret([{ kind: 'turn-start', messageId: 'm1' }])
     vi.setSystemTime(T0 + 5_000)
+    interp.interpret([{ kind: 'message', message: makeAssistantMessageEnd() }]) // message_end 结算窗口 t1-t0=5000
+    vi.setSystemTime(T0 + 35_000) // end → usage 之间的墙钟（工具执行等）不得计入窗口
     interp.interpret([TURN_USAGE_EVENT])
 
     expect(onGenStats).toHaveBeenCalledTimes(1)
@@ -404,7 +419,7 @@ describe('EventInterpreter gen-stats 接线（D1/D2）', () => {
     expect(onGenStats).toHaveBeenCalledWith('s1', expect.objectContaining({ durationMs: null }))
   })
 
-  it('消费后锚点复位：缺配对的下一个 turn-usage 不得复用上一 turn 旧锚点（§3.5 一致性）', () => {
+  it('消费后置空：缺闭合的下一个 turn-usage 不得复用上一窗口（§3.5 一致性）', () => {
     vi.useFakeTimers()
     const onGenStats = vi.fn()
     const interp = makeInterpreter(onGenStats)
@@ -412,9 +427,11 @@ describe('EventInterpreter gen-stats 接线（D1/D2）', () => {
     vi.setSystemTime(T0)
     interp.interpret([{ kind: 'turn-start', messageId: 'm1' }])
     vi.setSystemTime(T0 + 5_000)
+    interp.interpret([{ kind: 'message', message: makeAssistantMessageEnd() }])
     interp.interpret([TURN_USAGE_EVENT])
-    // 第二个 turn-usage 无配对 turn-start：若旧锚点未复位会算出 10_000（系统性偏大），
-    // 修复后必须为 null（§3.5：速度样本跳过而非脏样本）
+    // 第二个 turn-usage 缺配对闭合（真缺闭：pi 崩溃/断连）：窗口消费后置 null + 重锚
+    // 清除不变量——若旧窗口未清会复用 5_000 产出「旧窗口 × 新 token」脏样本（系统性
+    // 失真），必须为 null（§3.5：速度样本跳过而非脏样本）
     vi.setSystemTime(T0 + 10_000)
     interp.interpret([TURN_USAGE_EVENT])
 

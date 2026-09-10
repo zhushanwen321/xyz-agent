@@ -744,7 +744,13 @@ export class RecordStore {
     // 的修补对 async/chat 成员同样生效——拉齐 light 重建丢 result/model 与 full 重建的
     // 既有形态不一致（v2 D3 影响面诚实口径），不触碰任何通知文案（golden 不锁 entry 字节）。
     const rec0 = lastEntry === undefined ? rec : RecordStore.mergeOrphanLastEntry(rec, lastEntry);
-    if (rec0.chatMode === true) {
+    // [W4 boot 分区 · 裁决表行 3] 重认领保留分支的判据 = resumable 且**无完成产出**：
+    // 非 chatMode 的 resumable=true 且 result 有值是 SP-5 one-shot 完成态（任务已完成，
+    // 直断 closed/gc 无损）；resumable=true 且 result 缺失是「监督器死亡纳管态」（W4：
+    // 引擎死亡接管后宿主重启）——保留 running 交 round-supervisor boot 重认领继续
+    // 管辖（注册存续 process 档），误判 closed 会制造「指向已终态 record 的残留注册」
+    // 并损失 resume 可能。
+    if (rec0.chatMode === true || (rec0.resumable === true && rec0.result === undefined)) {
       // chat 会话跨重启等续聊：保留 running（可续聊），仅落执行态信号。
       this.reportSubagentRecord({ ...rec0, resumable: true });
       return;
@@ -769,12 +775,29 @@ export class RecordStore {
     // 真实 reason 同层——否则无 reason sidecar 在磁盘重建时被兜底为 disconnected，
     // 把正常完成的记录误标成断联。
     writeFinalized(sessionFile, "gc");
+    // [F3 boot 直断语义，设计表 3 行 2] 走到本分支的 record 分两类：
+    //  - resumable=true（上方分流保证此时 result 有值）= SP-5 one-shot 完成态——任务
+    //    真实完成，直断 closed/gc 无 error，投影 completed 不变；
+    //  - 其余 = in-flight（重启前在途、无 resumable 信号）——宿主重启中断了在途任务，
+    //    投影不得是 completed（事故环 3：异常中断被谎报完成，违反 G3）。error 载体经
+    //    deriveOutcome("gc", error) = "failed"（execution-record.ts 唯一权威派生）
+    //    投影 failed，文案供 GUI/主 agent 明确「任务因宿主重启中断」；ClosedReason
+    //    枚举不扩展（sidecar/entry 面最小改动，"gc" 由 error 载体补足失败语义）。
+    const inFlightAbortedError =
+      rec0.resumable === true
+        ? undefined
+        : "orphan recovery: task aborted by host restart (in-flight at shutdown; session context lost" +
+          (parseOk ? "" : "; truncated last line") + ")";
     this.reportSubagentRecord({
       ...rec0,
       status: "closed",
       closedReason: "gc",
       endedAt: Date.now(),
-      ...(parseOk ? {} : { error: "orphan recovery: subagent session ended abnormally (truncated last line)" }),
+      ...(inFlightAbortedError !== undefined
+        ? { error: inFlightAbortedError }
+        : parseOk
+          ? {}
+          : { error: "orphan recovery: subagent session ended abnormally (truncated last line)" }),
     });
   }
 
@@ -794,6 +817,10 @@ export class RecordStore {
       // `?? ""`），pickStr 签名宽返回 string|undefined —— `?? ""` 运行时不可达，
       // 仅满足 model 非可选类型，空串回退语义不变（cur 空 → src，src 也空 → ""）。
       model: pickStr(rec.model, last.model) ?? "",
+      // [W4 boot 分区] 轮终执行态信号（resumable）随末条 entry 保留：子文件侧重建
+      // （reconstructAll）不带该信号，boot 分区的「already-resumable-idle 重认领 vs
+      // in-flight 直断」分流（finalizeOrphanRecord）只能从主 session 末条 entry 取证。
+      resumable: rec.resumable ?? last.resumable,
     };
   }
 

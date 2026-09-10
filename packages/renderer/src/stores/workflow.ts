@@ -24,7 +24,7 @@
  * chatStore.messages Map 支持任意 string key，直接用虚拟 session ID 注入消息。
  */
 import { defineStore } from 'pinia'
-import { computed, getCurrentScope, onScopeDispose, ref } from 'vue'
+import { getCurrentScope, onScopeDispose, ref } from 'vue'
 import type { ComputedRef } from 'vue'
 import type { WorkflowRunRecord } from '@xyz-agent/shared'
 // 虚拟 session ID 工厂 SSOT 迁至 @xyz-agent/shared/virtual-session-id（跨层协议级约定）。
@@ -36,14 +36,16 @@ export {
   extractAgentCallSessionId,
 } from '@xyz-agent/shared'
 import { session as sessionApi } from '@/api'
+import { createEmptyResultStrikeGuard, createPartitionedRecords } from '../lib/partitioned-session-records'
 
 export const useWorkflowStore = defineStore('workflow', () => {
   // ── state ──
   /**
-   * 按 sessionId 分区的 workflow 列表（ADR-0049 Map 分区派，同 command.ts / subagent.ts 范式）。
+   * 按 sessionId 分区的 workflow 列表（ADR-0049 Map 分区派）。
    * 切走不清、切回直接读 Map 分区；deleteSession 经 clearSession(sid) 精确释放。
+   * 四件套实现单源在 lib/partitioned-session-records（S4 A1，行为逐字等价迁移）。
    */
-  const recordsBySession = ref<Map<string, WorkflowRunRecord[]>>(new Map())
+  const partition = createPartitionedRecords<WorkflowRunRecord>()
 
   /** 加载态（M1：loadWorkflows 在途时 true，组件据此显示 spinner） */
   const isLoading = ref(false)
@@ -73,11 +75,12 @@ export const useWorkflowStore = defineStore('workflow', () => {
   const workflowReloadTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   /**
-   * loadWorkflows 空结果守卫的连续空命中计数（R1 business-logic S3，与 subagent.ts 同款）：
-   * 达到 LIMIT 判真实删空放行覆盖。非响应式簿记（不驱动 UI），clearSession 一并清除防泄漏。
+   * loadWorkflows 空结果守卫（R1 business-logic S3，与 subagent.ts 同款）：达到 LIMIT 判
+   * 真实删空放行覆盖。strike 语义单源在 createEmptyResultStrikeGuard JSDoc
+   * （lib/partitioned-session-records），此处只声明本 store 的阈值与 log tag。
    */
-  const emptyResultStrikes = new Map<string, number>()
   const EMPTY_RESULT_STRIKE_LIMIT = 2
+  const strikeGuard = createEmptyResultStrikeGuard(EMPTY_RESULT_STRIKE_LIMIT, 'workflow-store', 'getWorkflows')
 
   // [W15] 防御性清理：workflowReloadTimers 是模块级 Map（不在 ref 里），HMR / store dispose
   // 时若不主动 clearTimeout，在途的 running 重试 timer 仍会在 500ms 后触发 loadWorkflows(sid)
@@ -96,12 +99,12 @@ export const useWorkflowStore = defineStore('workflow', () => {
    * 切会话时读不同分区，records 变化自动重算。
    */
   function recordsOf(sessionId: string): ComputedRef<WorkflowRunRecord[]> {
-    return computed(() => recordsBySession.value.get(sessionId) ?? [])
+    return partition.recordsOf(sessionId)
   }
 
   /** 非响应式读：指定 session 的 workflow 列表（不写 Map，无则空数组） */
   function getRecordsBySession(sessionId: string): WorkflowRunRecord[] {
-    return recordsBySession.value.get(sessionId) ?? []
+    return partition.get(sessionId)
   }
 
   /** 该 session 是否有 workflow 仍在 running 或 paused（供 derivedStatus 计算 hasBackgroundWork） */
@@ -111,16 +114,13 @@ export const useWorkflowStore = defineStore('workflow', () => {
 
   /** 写入指定 session 的 workflow 列表（不可变写，确保 Map 响应性触发） */
   function applyRecords(sessionId: string, list: WorkflowRunRecord[]): void {
-    recordsBySession.value = new Map(recordsBySession.value).set(sessionId, list)
+    partition.apply(sessionId, list)
   }
 
   /** 清除指定 session 的 workflow 列表分区（deleteSession 调，防泄漏，ADR-0049 AC-8） */
   function clearSession(sessionId: string): void {
-    emptyResultStrikes.delete(sessionId)
-    if (!recordsBySession.value.has(sessionId)) return
-    const next = new Map(recordsBySession.value)
-    next.delete(sessionId)
-    recordsBySession.value = next
+    strikeGuard.reset(sessionId)
+    partition.clear(sessionId)
   }
 
   // ── getters ──
@@ -156,32 +156,19 @@ export const useWorkflowStore = defineStore('workflow', () => {
     try {
       const records = await sessionApi.getWorkflows(sessionId)
       // 空结果守卫（sidebar-sync-plan P1 + R1 business-logic S3，与 subagent.ts 同款）：
-      // runtime getWorkflows 读盘失败时 catch 降级返回 []，瞬时读失败若当空列表覆盖会清掉
-      // 分区历史——RPC 成功且空 + 分区非空时先保留旧分区。但「真实删空」（记录被清掉且
-      // 无 session.workflows 推送）同样表现为空结果，单次判定无法区分二者：用连续空命中
-      // 计数（strike）区分——连续 LIMIT 次空结果判定真实删空放行覆盖（瞬时读失败不会连续
-      // 命中，RPC 失败走 catch 且重置计数），非空结果即清零。推送路径是权威数据，不经此守卫。
-      if (records.length === 0 && getRecordsBySession(sessionId).length > 0) {
-        const strikes = (emptyResultStrikes.get(sessionId) ?? 0) + 1
-        emptyResultStrikes.set(sessionId, strikes)
-        if (strikes < EMPTY_RESULT_STRIKE_LIMIT) {
-          console.warn(
-            `[workflow-store] getWorkflows returned empty list but partition non-empty, keeping existing records (empty strike ${strikes}/${EMPTY_RESULT_STRIKE_LIMIT}):`,
-            sessionId,
-          )
-          return
-        }
-        console.warn(
-          '[workflow-store] consecutive empty results, treating as real deletion and clearing partition:',
-          sessionId,
-        )
+      // strike 语义单源在 createEmptyResultStrikeGuard JSDoc（S4 A1），此处只判定 +
+      // 覆盖前清零。推送路径是权威数据，不经此守卫。
+      if (
+        strikeGuard.shouldKeepExisting(sessionId, records.length, getRecordsBySession(sessionId).length)
+      ) {
+        return
       }
-      emptyResultStrikes.delete(sessionId)
+      strikeGuard.reset(sessionId)
       applyRecords(sessionId, records)
     } catch (e) {
       // M1：失败不覆盖现有分区（保留旧数据），设 loadError 让组件显示重试态；strike 重置
       //（「连续 RPC 成功且空」语义纯净，读失败与数据空不同通道，不让 RPC 故障累计出误清分区）
-      emptyResultStrikes.delete(sessionId)
+      strikeGuard.reset(sessionId)
       const msg = e instanceof Error ? e.message : String(e)
       console.error('[workflow-store] loadWorkflows failed:', e)
       loadError.value = msg
@@ -225,7 +212,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
 
   /** 清空所有 workflow 分区 + 退出侧边栏视图 2 + 清 agentcall 映射（全局重置场景用） */
   function clearWorkflows(): void {
-    recordsBySession.value = new Map()
+    partition.recordsBySession.value = new Map()
     detailRunIdMap.value = new Map()
     // W3-2：清非响应式的 mainSessionAgentCalls（registerAgentCall 写入，deleteSession/clearWorkflows 调本函数清）
     mainSessionAgentCalls.clear()
@@ -280,7 +267,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
 
   return {
     // state
-    recordsBySession,
+    recordsBySession: partition.recordsBySession,
     isLoading,
     loadError,
     // getters

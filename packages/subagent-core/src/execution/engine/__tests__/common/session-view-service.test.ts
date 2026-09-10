@@ -34,7 +34,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(dataDir, { recursive: true, force: true });
+  rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   // reader registry 是进程级状态——重置回内置集，防 fake 注入跨用例泄漏
   resetNativeSessionReaders();
 });
@@ -163,7 +163,13 @@ describe("降级链编排", () => {
     });
   });
 
-  it("①级 db 不存在（真 zcode reader throw）→ ②级 journal 命中", async () => {
+  it("[W11/H1] ①级 reader 不可达（协议 read 失败降级形态）→ ②级 journal 命中", async () => {
+    // W11 后①级 reader 全经注入（生产 = runtime 协议 read，失败在其内部 catch 后
+    // 返回 undefined）：注入一个恒 undefined 的 reader 复现「协议失败降②级」语义
+    // （原「真 zcode reader 对不存在 db 内部 catch 降级」分支随 H1 内建 reader
+    // 删除，sqlite 侧行为由 zcode 包 e2e 接替；NativeSessionReader 契约 = 不抛，
+    // 失败以 undefined 表达）。
+    registerNativeSessionReader("zcode", async () => undefined);
     const journalPath = join(dataDir, "engines", "zcode", "shared", "journal-sub-1.jsonl");
     await writeJournal(journalPath, [
       { type: "text_delta", delta: "part one. " },
@@ -190,7 +196,7 @@ describe("降级链编排", () => {
   });
 
   it("②级也不可达（无 journalPath）→ ③级 outcome-only，永不返回空数组", async () => {
-    // 真 zcode reader：dbPath 指向不存在文件 → ①级 throw 降级；handle 无 journalPath → ③级
+    // ①级无注册 reader（W11 后注册表初始为空）→ 直落②级；handle 无 journalPath → ③级
     const messages = await readSubagentHistoryMessages(
       makeRecord({ result: "final answer", endedAt: 2_000 }),
       dataDir,
@@ -227,6 +233,87 @@ describe("降级链编排", () => {
     );
     expect(messages).toHaveLength(2);
     expect(messages[1]).toMatchObject({ content: "r" });
+  });
+
+  // ============================================================
+  // ①级判空降级矩阵（设计 D3：turns 无实质内容 = 本级不可用，与②级同语义）
+  // ============================================================
+
+  it("①级 defined 空 turns（{turns:[], source:'native'}）→ 降②级，journal 内容命中（不返回 [task] 空壳）", async () => {
+    const journalPath = join(dataDir, "engines", "zcode", "shared", "journal-sub-1.jsonl");
+    await writeJournal(journalPath, [
+      { type: "text_delta", delta: "journal answer" },
+      { type: "turn_end" },
+    ]);
+    registerNativeSessionReader("zcode", async () => ({
+      engineId: "zcode",
+      sessionId: "sess-1",
+      turns: [],
+      source: "native",
+    }));
+    const record = makeRecord({
+      engineHandle: {
+        sessionRef: { sessionId: "sess-1", dbPath: ".zcode/cli/db/db.sqlite" },
+        poolKey: "shared",
+        journalPath,
+      },
+    });
+    const messages = await readSubagentHistoryMessages(record, dataDir);
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({ role: "user", content: "do the thing" });
+    expect(messages[1]).toMatchObject({ role: "assistant", content: "journal answer" });
+  });
+
+  it("①级非空数组但全空 turn（截断/被杀残留形态）→ 同样降级：无 journalPath 落③级 outcome-only", async () => {
+    registerNativeSessionReader("zcode", async () => ({
+      engineId: "zcode",
+      sessionId: "sess-1",
+      // closeTurn 对 step-finish 无条件 push + applyPartToTurn 空 acc 创建——形态代码级可达
+      turns: [{ text: "", thinking: "", toolCalls: [], closed: true }],
+      source: "native",
+    }));
+    const messages = await readSubagentHistoryMessages(
+      makeRecord({ result: "outcome text" }),
+      dataDir,
+    );
+    // 不是「仅 task」空壳：①级空 turn 被判不可用 → ③级占位投影
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toMatchObject({ role: "assistant", content: "outcome text" });
+  });
+
+  it("①级混合 turn（含空 turn 但任一有实质内容）→ 不降级，真实内容原样投影", async () => {
+    registerNativeSessionReader("zcode", async () => ({
+      engineId: "zcode",
+      sessionId: "sess-1",
+      turns: [
+        { text: "", thinking: "", toolCalls: [], closed: true },
+        { text: "real answer", thinking: "", toolCalls: [], closed: true },
+      ],
+      source: "native",
+    }));
+    const messages = await readSubagentHistoryMessages(makeRecord(), dataDir);
+    // task + 两个 turn（空 turn 也随①级放行原样投影）
+    expect(messages).toHaveLength(3);
+    expect(messages[2]).toMatchObject({ role: "assistant", content: "real answer" });
+  });
+
+  it("①空（defined 空 turns）②亦不可达（无 journalPath）→ 落③级 outcome-only 占位", async () => {
+    registerNativeSessionReader("zcode", async () => ({
+      engineId: "zcode",
+      sessionId: "sess-1",
+      turns: [],
+      source: "native",
+    }));
+    const messages = await readSubagentHistoryMessages(
+      makeRecord({ result: undefined, error: undefined }),
+      dataDir,
+    );
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toMatchObject({
+      role: "assistant",
+      content: "(no outcome recorded)",
+      status: "complete",
+    });
   });
 });
 

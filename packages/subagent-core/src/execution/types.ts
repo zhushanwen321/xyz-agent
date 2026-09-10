@@ -8,6 +8,14 @@
 //   - TUI 只读 Record/Details 快照，永不持有可变引用
 
 import type { GuiRenderResult } from "@xyz-agent/extension-protocol";
+import type {
+  AgentUsage,
+  AgentUsageTotal,
+  ToolCall,
+  ToolCallResult,
+  Turn,
+  WorktreeHandle,
+} from "@zhushanwen/subagent-engine-sdk";
 
 import type { AgentFailureKind } from "../orchestration/models/types.ts";
 import type { ModelInfo, ModelRegistryLike } from "./model-resolver.ts";
@@ -146,47 +154,35 @@ export type ExecutionMode = "background";
 // Agent 事件流（Core → Record 的唯一更新驱动）
 // ============================================================
 
-/**
- * Pi session.subscribe 上报的事件。Runtime 把它喂给 updateFromEvent。
- *
- * 设计：AgentEvent 携带 updateFromEvent 收口进 record 所需的**全部数据**——
- * tool_end 带 result（供 turn.toolCalls 存完整 ToolCall），无需翻译层旁路累积。
- *
- * ACP 词汇对照（D11 注记级校准，零行为变更；新引擎实现者按本表对齐语义，
- * 详见 docs/architecture/subagent-engine-gui-visibility.md §3.3 D11）：
- *   text_delta / thinking_delta ↔ ACP content blocks（text / thinking）
- *   tool_start / tool_end      ↔ ACP tool_call / tool_call_update
- *   turn_end / message_end     ↔ ACP prompt turn 终态（stop_reason + usage）
- *   compaction                 ↔ ACP session/compaction
- * 本协议以 pi 为语义锚点（D3）——命名不迁移，对照表仅保证未来 AcpEngine 适配器
- * 与跨引擎 trace 映射的翻译成本最低。
- */
-export type AgentEvent =
-  | { type: "tool_start"; toolName: string; args?: unknown }
-  | { type: "tool_end"; toolName: string; args?: unknown; result?: ToolCallResult; isError?: boolean }
-  | { type: "text_delta"; delta: string }
-  | { type: "thinking_delta"; delta: string }
-  | { type: "turn_end"; summary?: string }
-  | { type: "message_end"; usage?: AgentUsage; error?: string }
-  | { type: "compaction" }
-  | { type: "error"; message: string };
-
-/** token 用量（message_end 时由 Core 累加进 record.totalTokens）。 */
-export interface AgentUsage {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  /** 本 message 的成本（USD，来自 SDK usage.cost.total）。可选——无成本数据时缺省。 */
-  cost?: number;
-}
-
-export interface AgentUsageTotal extends AgentUsage {
-  /** 上述四项之和。投影时不再手工求和。 */
-  total: number;
-  /** 累计成本（USD，来自 SdkEvent.message.usage.cost.total 求和）。无成本数据时为 0。 */
-  cost: number;
-}
+// [S4 簇 3 收编] 事件面契约类型单源化（type-only）：AgentEvent / AgentUsage /
+// AgentUsageTotal / ToolCallResult / ToolCall / InternalToolCall / Turn 的本地定义
+// 已删除，自 @zhushanwen/subagent-engine-sdk re-export（SDK protocol/contract-types.ts
+// 是类型闭包 SSOT，core 反向 re-export 保上层消费面——import 方路径零改动；
+// shared/agent-event.ts 转发层链条保持）。结构等价由 protocol-closure.test.ts
+// 断言族守卫。
+//
+// AgentEvent 语义锚定（SDK 侧注释指向本处的对照权威源，勿删）：
+//   - Pi session.subscribe 上报的事件。Runtime 把它喂给 updateFromEvent。
+//   - 设计：AgentEvent 携带 updateFromEvent 收口进 record 所需的**全部数据**——
+//     tool_end 带 result（供 turn.toolCalls 存完整 ToolCall），无需翻译层旁路累积。
+//
+//   ACP 词汇对照（D11 注记级校准，零行为变更；新引擎实现者按本表对齐语义，
+//   详见 docs/architecture/subagent-engine-gui-visibility.md §3.3 D11）：
+//     text_delta / thinking_delta ↔ ACP content blocks（text / thinking）
+//     tool_start / tool_end      ↔ ACP tool_call / tool_call_update
+//     turn_end / message_end     ↔ ACP prompt turn 终态（stop_reason + usage）
+//     compaction                 ↔ ACP session/compaction
+//   本协议以 pi 为语义锚点（D3）——命名不迁移，对照表仅保证未来 AcpEngine 适配器
+//   与跨引擎 trace 映射的翻译成本最低。
+export type {
+  AgentEvent,
+  AgentUsage,
+  AgentUsageTotal,
+  InternalToolCall,
+  ToolCall,
+  ToolCallResult,
+  Turn,
+} from "@zhushanwen/subagent-engine-sdk";
 
 /**
  * eventLog 条目（getEventLog 派生产出的元素）。所有字段 readonly。
@@ -249,69 +245,6 @@ export type SdkEvent = {
   reason?: string;
 };
 
-/** tool 调用结果（tool_execution_end 时累积，含 structured-output 的 details）。 */
-export interface ToolCallResult {
-  content?: unknown[];
-  details?: unknown;
-}
-
-/**
- * tool 调用（导出的纯净数据形状，不含内部状态）。
- *
- *   tool_start 到达但 tool_end 未到时，调用为进行中；一旦 tool_end 到达，
- *   result/isError 填充完成。对外投影（AgentResult.toolCalls / getAllToolCalls）
- *   一律返回此类型——**不泄漏 running/done/failed 内部状态机**。
- *
- * 进行中状态由 execution-record 内部的 `InternalToolCall`（= ToolCall + _status）承载，
- * 只存在于 record.turns[].toolCalls，跨边界导出时由 getAllToolCalls strip _status。
- */
-export interface ToolCall {
-  toolName: string;
-  args?: unknown;
-  result?: ToolCallResult;
-  isError?: boolean;
-}
-
-/**
- * 内部 ToolCall：在 ToolCall 基础上追加 _status 进行中状态标记与 startedTs 时间戳。
- *
- *   running = tool_start 已收到但 tool_end 未到；
- *   done/failed = tool_end 已到。
- *
- * 仅存在于 ExecutionRecord.turns[].toolCalls（Core 内部可变状态）。
- * 跨边界导出（getAllToolCalls → AgentResult.toolCalls / 持久化）由 getAllToolCalls
- * 映射回 ToolCall（丢弃 _status / startedTs），保证导出形状清洁。
- */
-export interface InternalToolCall extends ToolCall {
-  _status: "running" | "done" | "failed";
-  /** tool_start 到达时的墙钟时间戳（Date.now()，ms）。getEventLog 派生 tool 条目 ts 用。 */
-  startedTs: number;
-}
-
-/**
- * 一个 turn 的完整内容（ExecutionRecord.turns[] 的元素）。
- *
- * 收口设计：text/thinking 流式累积**完整内容**（非 100 字切片），
- * toolCalls 存完整 ToolCall（含 result + _status 内部状态）。turn_end 到达后 closed=true，
- * 下次 text/thinking/tool 时开新 turn。
- *
- * eventLog / currentActivity / result 均从 turns[] 派生，不再独立存储。
- */
-export interface Turn {
-  /** 本 turn assistant 正文（text_delta 流式累积，完整）。 */
-  text: string;
-  /** 本 turn 推理（thinking_delta 流式累积，完整）。 */
-  thinking: string;
-  /** 本 turn 工具调用（InternalToolCall：含完整 result + _status 进行中标记）。 */
-  toolCalls: InternalToolCall[];
-  /** 本 turn message_end 的 token 增量（聚合得 totalUsage）。 */
-  usageDelta?: AgentUsage;
-  /** turn_end 是否已到达。false=正在进行；true=已闭合，下次内容开新 turn。 */
-  closed: boolean;
-  /** turn_end 到达时的墙钟时间戳（Date.now()，ms）。getEventLog 派生 turn_end 条目 ts 用。 */
-  closedTs?: number;
-}
-
 /** 一次 session 执行的完整结果。collectResult 产出，写入 Record.outcome。 */
 export interface AgentResult {
   text: string;
@@ -341,19 +274,10 @@ export interface AgentResult {
 // 本 section 先声明 ExecutionRecord 的组成值对象（WorktreeHandle / AliveMarker /
 // PatchResult 等），ExecutionRecord 本体及其文档注释在 section 末尾。
 
-/**
- * worktree handle 值对象。仅 worktree:true 时持有——worktree 是独立维度，
- * 需显式开启，fork alone 不创建 worktree。
- * Object.freeze 守卫保证不可变。
- */
-export interface WorktreeHandle {
-  /** checkout 目录（子 agent 工作目录，tmpdir 下）。 */
-  readonly path: string;
-  readonly branch: string;
-  readonly baseCommit: string;
-  /** 主仓库根目录（cleanup/scan 需要，不再靠路径反推）。 */
-  readonly mainCwd: string;
-}
+// [S4 簇 3 收编] WorktreeHandle 本地定义已删除，自 SDK re-export（原为结构等价
+// 副本，单源化后 SDK contract-types 是唯一定义点；「仅 worktree:true 时持有、
+// Object.freeze 守卫不可变」的语义注释见消费方 worktree-manager / worktree-git-ops）。
+export type { WorktreeHandle } from "@zhushanwen/subagent-engine-sdk";
 
 /** alive marker：子进程存活标记，用于心跳检测和 crash 推断。 */
 export interface AliveMarker {

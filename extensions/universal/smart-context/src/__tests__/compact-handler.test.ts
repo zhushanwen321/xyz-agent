@@ -43,14 +43,17 @@ function makeEvent(overrides?: Partial<BeforeCompactLikeEvent["preparation"]>): 
 	};
 }
 
-function makeCtx(): ExtensionContext {
+function makeCtx(crossModel?: { provider: string; id: string } | null): ExtensionContext {
 	return {
 		model: { provider: "zai", id: "glm" },
 		getSystemPrompt: () => "sys",
 		sessionManager: { getSessionId: () => "s1", getSessionFile: () => "/tmp/s1.jsonl" },
 		modelRegistry: {
 			getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "k" }),
-			find: () => null,
+			// resolveRef 精确匹配：仅 (provider,id) 同时命中时返回模型（配合 hasConfiguredAuth 放行）
+			find: (provider: string, id: string) =>
+				crossModel && provider === crossModel.provider && id === crossModel.id ? crossModel : null,
+			hasConfiguredAuth: () => crossModel != null,
 		},
 	} as unknown as ExtensionContext;
 }
@@ -84,11 +87,12 @@ describe("session_before_compact 接管 handler", () => {
 		expect(mockedCall).not.toHaveBeenCalled();
 	});
 
-	it("same-model 成功 → compaction 带 engine/mode 标记 + preamble + fileOps 清单 + transcript 指针", async () => {
+	it("same-model 成功 → compaction 带 engine/mode/model 标记 + preamble + fileOps 清单 + transcript 指针", async () => {
 		mockedCall.mockResolvedValue({ ok: true, text: "summary body", usage: { input: 1, output: 2 } });
 		const { handler } = makeHandler(normalizeSmartContextConfig({ compactModel: { type: "ref", ref: "" } }));
 		const decision = await handler(makeEvent(), makeCtx());
-		expect(decision.compaction?.details).toEqual({ engine: "smart-context", mode: "same-model" });
+		// details.model = `${ctx.model.provider}/${ctx.model.id}`（§3.3 ①，用量归属数据源）
+		expect(decision.compaction?.details).toEqual({ engine: "smart-context", mode: "same-model", model: "zai/glm" });
 		expect(decision.compaction?.summary).toContain("summary body");
 		// D13-9 preamble 在最前；D11-2 fileOps；D13-4 transcript
 		expect(decision.compaction?.summary.startsWith("This is an automatically generated checkpoint")).toBe(true);
@@ -113,6 +117,32 @@ describe("session_before_compact 接管 handler", () => {
 		const ctx = makeCtx();
 		await expect(handler(makeEvent(), ctx)).resolves.toEqual({});
 		expect(mockedNative).not.toHaveBeenCalled();
+	});
+
+	it("cross-model 成功 → details.model=compactModel 解析结果，native details 字段保留", async () => {
+		mockedNative.mockResolvedValue({
+			summary: "native checkpoint",
+			firstKeptEntryId: "kept-1",
+			tokensBefore: 500_000,
+			usage: {
+				input: 5, output: 6, cacheRead: 0, cacheWrite: 0, totalTokens: 11,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			details: { nativeMarker: "keep" },
+		});
+		const { handler } = makeHandler(
+			normalizeSmartContextConfig({ compactModel: { type: "ref", ref: "xiaomi/mimo" } }),
+		);
+		const decision = await handler(makeEvent(), makeCtx({ provider: "xiaomi", id: "mimo" }));
+		// details.model = `${resolveModel(...).provider}/${id}`（§3.3 ①）；native details 字段原样保留（spread 增量，不改变其他字段）
+		expect(decision.compaction?.details).toEqual({
+			engine: "smart-context",
+			mode: "cross-model",
+			model: "xiaomi/mimo",
+			nativeMarker: "keep",
+		});
+		// nativeCompact 收到的 model 就是解析结果（details.model 与实际执行模型同源）
+		expect(mockedNative.mock.calls[0][1]).toEqual({ provider: "xiaomi", id: "mimo" });
 	});
 
 	it("收缩校验失败（摘要 ≥ 被压段）→ 拒绝 + 同段记录不重试（D13-1）", async () => {

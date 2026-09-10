@@ -21,8 +21,7 @@ const { loggerMock } = vi.hoisted(() => ({
 }));
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
-const { killChildSpy, foreignLiveSpy } = vi.hoisted(() => ({
-  killChildSpy: vi.fn(),
+const { foreignLiveSpy } = vi.hoisted(() => ({
   foreignLiveSpy: vi.fn<() => { pid: number; id: string; startedAt: number } | undefined>(),
 }));
 vi.mock("../alive-store.ts", () => ({
@@ -32,15 +31,6 @@ vi.mock("../alive-store.ts", () => ({
   isProcessAlive: vi.fn(() => false),
   ALIVE_SOFT_TIMEOUT_MS: 3_600_000,
   findForeignLiveInstance: foreignLiveSpy,
-}));
-
-vi.mock("../engine/engines/pi/session-runner.ts", () => ({
-  runSpawn: vi.fn(),
-  killAllSpawnedChildren: vi.fn(),
-  getChildByRecord: vi.fn(() => undefined),
-  registerSpawnedChildForRecord: vi.fn(),
-  spawnedChildren: new Map(),
-  killRecordChildWithEscalation: killChildSpy,
 }));
 
 import { ModelConfigService } from "../model-config-service.ts";

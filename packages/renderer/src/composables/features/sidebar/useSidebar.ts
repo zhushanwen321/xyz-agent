@@ -44,7 +44,7 @@ import type {
   SessionEntryPort,
 } from '@xyz-agent/core'
 import { chat as chatApi, session as sessionApi, extension as extensionApi } from '@/api'
-import * as events from '@xyz-agent/core/transport/api'
+import { buildSessionApiPort } from '@/api/session-api-port'
 import { useChatStore } from '@/stores/chat'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'
@@ -74,24 +74,6 @@ export function resetAppBootstrap(): void {
   appBootstrapped = false
   hasConnectedBefore = false
   resetSessionListSubForTest()
-}
-
-/**
- * 构建 SessionApiPort 适配（壳把现 api/domains/session + events 适配注入 core）。
- * core 定义端口接口、壳注入实现（与 PlatformPort 同模式，D4 单一归位）。
- */
-function buildSessionApiPort(): SessionApiPort {
-  return {
-    list: () => sessionApi.list(),
-    switchSession: (id) => sessionApi.switchSession(id),
-    create: (cwd, label, presetId) => sessionApi.create(cwd, label, presetId),
-    rename: (id, label) => sessionApi.rename(id, label),
-    remove: (id) => sessionApi.remove(id),
-    removeByCwd: (cwd) => sessionApi.removeByCwd(cwd),
-    migrateImage: (p) => sessionApi.migrateImage(p),
-    onConfigSessions: (handler) =>
-      events.onGlobalType('config.sessions', (msg) => handler(msg.payload.groups)),
-  }
 }
 
 export function useSidebar() {

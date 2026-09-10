@@ -1,8 +1,10 @@
 /**
  * 用量统计扫描服务（W1 数据层）
  *
- * 扫描 session JSONL 目录，按 pi 三分类（assistant / toolResult-with-usage /
- * compaction-with-usage）聚合 Token 用量，返回 UsageRow[]。
+ * 扫描 session JSONL 目录，按四分类聚合 Token 用量，返回 UsageRow[]：
+ * ①②③ 为 pi 三分类（assistant / toolResult-with-usage / compaction-with-usage），
+ * ④ 为 xyz 自有口径（rename-session custom entry，G3 rename 落账通道，
+ * usage-page-fixes §3.3 ④；落盘形态锚 docs/pi-semantics.json PS-29，非 pi 语义）。
  *
  * 缓存策略：per-file 分片 (mtimeMs, size) 双键（D9）——append-only 场景下
  * mtime 不变但 size 变仍能 miss。
@@ -119,17 +121,21 @@ export class UsageStatsService {
   }
 
   /**
-   * 流式扫描单个 JSONL 文件，按 pi 三分类计入 usage。
+   * 流式扫描单个 JSONL 文件，按四分类计入 usage。
    *
-   * 计入规则（对齐 pi getUsageCostBreakdown，锚点：@earendil-works/pi-coding-agent@0.84.1
-   * dist/core/usage-totals.js:22-33，升级 pi 时须重新核对该锚点）：
+   * 计入规则（①②③ 对齐 pi getUsageCostBreakdown，锚点：@earendil-works/pi-coding-agent@0.84.4
+   * dist/core/usage-totals.js:23-33，升级 pi 时须重新核对该锚点；④ 为 xyz 自有口径）：
    * ① type==='message' && message.role==='assistant' && message.usage → 主桶
    * ② type==='message' && message.role==='toolResult' && message.usage → compaction 虚拟桶
    * ③ (type==='compaction' || type==='branch_summary') && entry.usage → compaction 虚拟桶
+   *    model 归属：details.model（smart-context 落盘的 `${provider}/${id}`）权威优先，
+   *    非 string/空串回退 'compaction'（usage-page-fixes §3.3 ④ 守卫与回退字面量）
+   * ④ type==='custom' && customType==='rename-session' && data.usage 为非 null 对象
+   *    → rename-session 虚拟桶（G3）
    *
-   * 三类判定互斥（①② 同 type 不同 role，③ 不同 type），拆分到
-   * rowFromAssistant / rowFromToolResult / rowFromCompactionEntry 三个辅助方法；
-   * 本方法只做行读取 + cwd 提取 + 编排。
+   * 四类判定互斥（①② 同 type 不同 role，③④ 不同 type），拆分到
+   * rowFromAssistant / rowFromToolResult / rowFromCompactionEntry /
+   * rowFromRenameSessionEntry 四个辅助方法；本方法只做行读取 + cwd 提取 + 编排。
    *
    * @returns FileShard 分片（含 rows, skippedLines, cwd）
    */
@@ -167,11 +173,12 @@ export class UsageStatsService {
           foundSessionEntry = true
         }
 
-        // 按原顺序尝试三类判定；'skip' 短路（timestamp 无效行不再计入任何桶）
+        // 按原顺序尝试四类判定；'skip' 短路（timestamp 无效行不再计入任何桶）
         const row =
           this.rowFromAssistant(entry, cwd) ??
           this.rowFromToolResult(entry, cwd) ??
-          this.rowFromCompactionEntry(entry, cwd)
+          this.rowFromCompactionEntry(entry, cwd) ??
+          this.rowFromRenameSessionEntry(entry, cwd)
 
         if (row === 'skip') {
           skippedLines++
@@ -238,6 +245,8 @@ export class UsageStatsService {
 
   /**
    * ③ compaction / branch_summary with entry.usage → compaction 虚拟桶。
+   * model 归属：details.model 权威优先（smart-context 落盘 `${provider}/${id}`），
+   * 非 string/空串诚实回退 generic 'compaction' 行（存量数据/守卫降级，不猜测归属）。
    * 命中但 timestamp 无效 → 'skip'（计 skippedLines）；不命中 → null。
    */
   private rowFromCompactionEntry(entry: Record<string, unknown>, cwd: string | null): ScanRowResult {
@@ -247,7 +256,32 @@ export class UsageStatsService {
     const date = toLocalDate(entry.timestamp as string)
     if (date === null) return 'skip'
 
-    return this.makeRow(date, 'compaction', 'compaction', cwd, entry.usage as Record<string, unknown>)
+    const details = entry.details as Record<string, unknown> | undefined
+    const model =
+      typeof details?.model === 'string' && details.model !== '' ? details.model : 'compaction'
+    return this.makeRow(date, 'compaction', model, cwd, entry.usage as Record<string, unknown>)
+  }
+
+  /**
+   * ④ rename-session custom entry（xyz 自有口径，非 pi 三分类）→ rename-session 虚拟桶。
+   * 落盘形态锚：docs/pi-semantics.json PS-29（appendCustomEntry 字面量含
+   * customType/data/timestamp）。usage 存在性守卫：data.usage 为非 null 对象才计 row
+   * （同 ①②③ 范式）；字段缺失由 extractMetrics 按 0 兜底，cost 缺失 → 费用视角 $0
+   * （诚实降级）。model 守卫与 ③ 对称：data.model 非 string/空串回退 'rename-session'。
+   * 命中但 timestamp 无效 → 'skip'（计 skippedLines）；不命中 → null。
+   */
+  private rowFromRenameSessionEntry(entry: Record<string, unknown>, cwd: string | null): ScanRowResult {
+    if (entry.type !== 'custom') return null
+    if (entry.customType !== 'rename-session') return null
+    const data = entry.data as Record<string, unknown> | undefined
+    const usage = data?.usage
+    if (typeof usage !== 'object' || usage === null) return null
+
+    const date = toLocalDate(entry.timestamp as string)
+    if (date === null) return 'skip'
+
+    const model = typeof data?.model === 'string' && data.model !== '' ? data.model : 'rename-session'
+    return this.makeRow(date, 'rename-session', model, cwd, usage as Record<string, unknown>)
   }
 
   /**

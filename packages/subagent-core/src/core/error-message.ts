@@ -1,9 +1,10 @@
 /**
- * 从任意 thrown 值提取可读的错误信息字符串：Error → `.message`，其它 → `String(e)`。
+ * toErrorMessage re-export shim——单源在 @zhushanwen/subagent-engine-sdk
+ * （round1-reuse R11 微副本收编；core → SDK 边界正向合法）。本文件路径不变，
+ * core 内部 8 个消费方 import 不动。
  *
- * 各包独立持有本 helper（core/renderer/runtime/subagent-core/electron/ext-guards 同实现），
- * 不引跨包依赖——收敛 `e instanceof Error ? e.message : String(e)` 样板。
+ * [A8 修复]：非 Error 的 object 入参经 SDK 单源输出 JSON 结构化文本（原
+ * String(e) = "[object Object]"）；Error 入参输出逐字节不变。core barrel 不导出
+ * 该符号（导出面零变化）。
  */
-export function toErrorMessage(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
+export { toErrorMessage } from "@zhushanwen/subagent-engine-sdk";

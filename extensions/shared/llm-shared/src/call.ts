@@ -18,7 +18,7 @@ import type {
 	Context as LlmContext,
 	SimpleStreamOptions,
 } from "@earendil-works/pi-ai/compat";
-import type { Api, Message, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
+import type { Api, Message, Model, ModelThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 // ──────────────────────── 类型 ────────────────────────
@@ -49,12 +49,14 @@ export interface CallLLMOptions {
 
 /**
  * callLLM 出参。
- * - ok:true → content 为提取并 trim 的文本
+ * - ok:true → content 为提取并 trim 的文本；usage 为 completeSimple 响应的 resp.usage 透传
+ *   （可选，存在才带——usage 整体缺失时不带字段，「跳过落账」语义由调用方处理，如
+ *   rename-session 的 appendEntry 存在性守卫；permission classifier 等既有调用方不消费，零影响）。
  * - ok:false → stopReason 是独立透传字段（失败原因维度），供调用方保留
  *   error/aborted 的日志区分（如 permission classifier 的 G3 语义）。
  */
 export type CallLLMResult =
-	| { ok: true; content: string }
+	| { ok: true; content: string; usage?: Usage }
 	| { ok: false; error: string; stopReason?: "error" | "aborted" };
 
 // ──────────────────────── 文本提取 ────────────────────────
@@ -87,7 +89,8 @@ export function extractText(resp: {
  * 2. 调用：completeSimple(model, {systemPrompt, messages, tools:[]}, {apiKey, headers?, env?, signal?, maxTokens?, timeoutMs?, sessionId?})
  * 3. 检查 resp.stopReason：error/aborted（completeSimple 对错误/中止也 resolve 带 stopReason，G3）
  *    → {ok:false, error: 提取错误文本, stopReason}（不再当正常内容提取）
- * 4. 提取 text → {ok:true, content}
+ * 4. 提取 text → {ok:true, content}；resp.usage 存在则一并透传（条件 spread，缺失时不带字段——
+ *    AssistantMessage.usage 类型必填但运行时 provider 可能不回，P-usage-shape 的降级分支）
  * 5. throw（getApiKeyAndHeaders reject / 网络 / 超时 / 解析）→ catch → {ok:false, error:String(e)}
  *    （stopReason 不设——错误原因不可知）
  *
@@ -133,7 +136,12 @@ export async function callLLM(
 			const errorText = extractText(resp) || "unknown error";
 			return { ok: false, error: errorText, stopReason: resp.stopReason };
 		}
-		return { ok: true, content: extractText(resp) };
+		return {
+			ok: true,
+			content: extractText(resp),
+			// additive（设计 §3.3 ②）：透传 resp.usage，存在才带；缺失时整体不带字段
+			...(resp.usage ? { usage: resp.usage } : {}),
+		};
 	} catch (error) {
 		return { ok: false, error: error instanceof Error ? error.message : String(error) };
 	}

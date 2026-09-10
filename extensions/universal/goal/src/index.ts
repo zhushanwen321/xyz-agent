@@ -25,6 +25,7 @@ import {
 	handleAgentEnd,
 	handleBeforeAgentStart,
 	handleMessageEnd,
+	handleSessionShutdown,
 	handleSessionStart,
 	handleTurnEnd,
 	type MessageEndLikeEvent,
@@ -55,6 +56,11 @@ interface AgentEndLikeEvent {
 interface SessionStartLikeEvent {
 	type: "session_start";
 	reason: string;
+}
+
+interface SessionShutdownLikeEvent {
+	type: "session_shutdown";
+	reason: "quit" | "reload" | "new" | "resume" | "fork";
 }
 
 interface LikeCustomMessage {
@@ -120,6 +126,13 @@ export default function goalExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event: SessionStartLikeEvent, ctx: ExtensionContext) => {
 		await handleSessionStart(pi, session, ctx);
+	});
+
+	// MF-R2-1 根修：session_shutdown 在 runner invalidate 之前触发（此刻 pi/ctx
+	// 仍可用），取消待发的退避 continuation timer——覆盖 reload / new / resume /
+	// fork / quit 全部失效路径，旧 timer 不再携 stale ctx 闭包存活到到期
+	pi.on("session_shutdown", async (_event: SessionShutdownLikeEvent, _ctx: ExtensionContext) => {
+		await handleSessionShutdown(session);
 	});
 
 	// ── Message Renderers ──────────────────────────────

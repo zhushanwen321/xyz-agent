@@ -9,7 +9,7 @@
  *
  * 端口适配映射（C-NT-2 / C-SS-2 / D8 裁决）：
  * - createSessionFlow：core domain/session createSessionFlow(ctx, input) 包一层
- *   （ctx 的 store/api/defaultCwd/onCwdFallback/applyModel 由本壳组装）
+ *   （ctx 的 store/api/defaultCwd/onCwdFallback 由本壳组装）
  * - chat：useChat().send / sendBash
  * - navigation：useSessionStore().activeId + usePanelStore().loadSession +
  *   useNavigationStore().push + useWorkspaceStore().defaultCwd
@@ -17,6 +17,9 @@
  * - fileTree：useFileTree().loadTree + useFileTreeStore().selectFile
  * - t：i18n.global.t
  * - migrateImage：sessionApi.migrateImage
+ * - launchConfig（U2d 接线）：preset store 数据基座 + usePiPresets().loadPresets 就绪源
+ *   + settings 单例 getters + core KV 双源（lastUsedModel / 记忆表）——submit 侧
+ *   resolveLaunchConfig 获得完整输入（preset 档透传恢复，D3 默认预设生效化）
  * - gitApi：@/api git domain（checkout/checkoutByCwd/createBranch）
  * - directoryPicker：lib/ipc pickDirectory
  * - workspaceApi：@/api workspace.detect + worktreeApi.list
@@ -27,23 +30,28 @@
  * 与测试 import 路径不变即获得 core 版）。
  */
 import { session as sessionApi, git as gitApi, workspace as workspaceApi } from '@/api'
-import type { ProviderId } from '@xyz-agent/shared'
-import * as events from '@xyz-agent/core/transport/api'
-import { createSessionFlow, useNewTaskFlow as useCoreNewTaskFlow } from '@xyz-agent/core'
-import type { CreateSessionFlowCtx, SessionApiPort } from '@xyz-agent/core'
+import { createSessionFlow, getSettingsStore, useNewTaskFlow as useCoreNewTaskFlow } from '@xyz-agent/core'
+import type { CreateSessionFlowCtx, LaunchConfigPort } from '@xyz-agent/core'
+import { lookup as lookupRememberedLevel, lookupLastUsedModel } from '@xyz-agent/core/domain/composer'
 import { useSessionStore } from '@/stores/session'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useProjectStore } from '@/stores/project'
 import { usePanelStore } from '@/stores/panel'
 import { useNavigationStore } from '@/stores/navigation'
+import { usePresetStore } from '@/stores/preset'
 import { useChat } from '@/composables/features/chat/useChat'
-import { useModel } from '@/composables/features/model/useModel'
+import { usePiPresets } from '@/composables/features/settings/usePiPresets'
 import { useFileTree } from '@/composables/features/file-tree/useFileTree'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useToast } from '@/composables/useToast'
 import { worktreeApi } from '@xyz-agent/core/transport/api/domains/worktree'
 import { pickDirectory } from '@/lib/ipc'
+import { buildSessionApiPort } from '@/api/session-api-port'
 import i18n from '@/i18n'
+// supportedLevelsOf：显示侧（composer-shell）与 submit 侧共用的唯一实现（F5，实现单源
+// core new-task-search/supported-levels.ts，本目录 shim re-export——独立文件形态防
+// composer 系列测试对本模块的整体 mock 波及 composer-shell 的 import 链）
+import { supportedLevelsOf } from './supported-levels'
 
 const t = i18n.global.t
 
@@ -51,34 +59,40 @@ const t = i18n.global.t
 export type { NewTaskFlowState, GitInfo } from '@xyz-agent/core'
 export { resetNewTaskFlow } from '@xyz-agent/core'
 
-/**
- * 构建 SessionApiPort 适配（createSessionFlow ctx.api 注入用）。
- *
- * 与 useSidebar.buildSessionApiPort 同一套适配——createSessionFlow 运行时只调
- * create + migrateImage，但 SessionApiPort 类型要求全方法，故全量代理（零转换透传
- * 现 api/domains/session）。
- */
-function buildCreateFlowApiPort(): SessionApiPort {
-  return {
-    list: () => sessionApi.list(),
-    switchSession: (id) => sessionApi.switchSession(id),
-    create: (cwd, label, presetId, projectId, modelOverride, thinkingOverride) =>
-      sessionApi.create(cwd, label, presetId, projectId, modelOverride, thinkingOverride),
-    rename: (id, label) => sessionApi.rename(id, label),
-    remove: (id) => sessionApi.remove(id),
-    removeByCwd: (cwd) => sessionApi.removeByCwd(cwd),
-    migrateImage: (p) => sessionApi.migrateImage(p),
-    onConfigSessions: (handler) =>
-      events.onGlobalType('config.sessions', (msg) => handler(msg.payload.groups)),
-  }
-}
-
 /** 模块级单例（Landing 与 useSidebar 共享同一 core flow 实例）。 */
 let cachedFlow: ReturnType<typeof useCoreNewTaskFlow> | null = null
 
 /** 仅测试用：重置单例（pinia 重建后旧实例捕获的 store 引用失效，beforeEach 调；对齐 core reset 先例）。 */
 export function __resetNewTaskFlowForTesting(): void {
   cachedFlow = null
+}
+
+/**
+ * [U2d] LaunchConfigPort 壳适配——submit 侧 resolveLaunchConfig 的完整数据基座：
+ * - preset 档：presetStore（presets / defaultPresetId；core 无镜像，接线前该档不可达）
+ * - providers / defaultModel / getSupportedLevels：settings 单例（与显示链同源）
+ * - lastUsedModel / 记忆表：core 域 KV 单例（经 composer barrel 别名导出读取）——
+ *   getInput 返回值整体替换 core fallback 基座（flow.ts spread 语义），KV 字段缺失会
+ *   使 lastUsed/memory 档在 submit 侧丢失、与显示链（直接 import）发散，必须覆盖
+ * - ensureReady：loadPresets 拉最新 preset 数据（allSettled 收敛，失败回落默认不阻塞）
+ */
+function buildLaunchConfigPort(
+  presetStore: ReturnType<typeof usePresetStore>,
+  settings: ReturnType<typeof getSettingsStore>,
+  loadPresets: () => Promise<void>,
+): LaunchConfigPort {
+  return {
+    getInput: () => ({
+      presets: presetStore.presets,
+      defaultPresetId: presetStore.defaultPresetId || null,
+      providers: settings.providers?.value,
+      defaultModel: settings.defaultModel.value,
+      getSupportedLevels: (modelId) => supportedLevelsOf(modelId, settings.providers?.value ?? []),
+      lastUsedModel: lookupLastUsedModel(),
+      getRememberedThinkingLevel: (modelId) => lookupRememberedLevel(modelId),
+    }),
+    ensureReady: () => loadPresets(),
+  }
 }
 
 /**
@@ -93,30 +107,30 @@ export function useNewTaskFlow() {
   const navigation = useNavigationStore()
   const chat = useChat()
   const { error: toastError, warning: toastWarning } = useToast()
-  // 模型切换 + 思考等级设置的 RPC + 乐观更新编排（features 层，ADR-0028）。
-  const { switchModel, setThinkingLevel } = useModel()
+  // [U2d] launch 配置解析数据源：preset store（presets/defaultPresetId）+ 惰性加载编排
+  //（usePiPresets.loadPresets 内部 allSettled 永不 reject——E1/E4 收敛语义）+ settings
+  // 单例（与显示链 composer-shell 同一 getSettingsStore，两链同源）
+  const presetStore = usePresetStore()
+  const { loadPresets } = usePiPresets()
+  const settings = getSettingsStore()
 
   cachedFlow = useCoreNewTaskFlow({
     ports: {
+      launchConfig: buildLaunchConfigPort(presetStore, settings, loadPresets),
       createSessionFlow: {
-        // 会话创建编排（guard→cwd 兜底→label→create→INV-7 降级→appendSession→applyModel→migrateImages）
+        // 会话创建编排（guard→cwd 兜底→label→create→INV-7 降级→appendSession→migrateImages）
         createSession: async (input) => {
           const ctx: CreateSessionFlowCtx = {
             // pinia useSessionStore cast——createSessionFlow 只调 store.appendSession
             // （方法调用，pinia proxy 方法调用正常），不碰 ref，故 cast 可行。
             store: session as unknown as CreateSessionFlowCtx['store'],
-            api: buildCreateFlowApiPort(),
+            api: buildSessionApiPort(),
             defaultCwd: workspaceStore.defaultCwd ?? '',
             // INV-7 cwd 降级比对：runtime create 内部可能降级 homedir，比对不一致 toast 通知。
-            onCwdFallback: (reqCwd) => toastError(t('composable.dirNotExist', { dir: reqCwd })),
-            // apply landing 态选定模型（pendingModel 为 "provider/modelId" 复合串；空跳过）。
-            applyModel: async (sid, pending) => {
-              const slashIdx = pending.indexOf('/')
-              if (slashIdx > 0) {
-                // pending 是 "providerId/modelId" 复合串；切分出 providerId 段（design D5 复合串切分边界）
-                await switchModel(sid, pending.slice(0, slashIdx) as ProviderId, pending.slice(slashIdx + 1))
-              }
-            },
+            // E7（D10）两空分支：reqCwd 空串 = landing 未选目录且无 defaultCwd（create('') 落
+            // 主目录，非「目录不存在」），用专属文案；非空 = 既有 INV-7 降级文案（行为不变）。
+            onCwdFallback: (reqCwd) =>
+              toastError(reqCwd ? t('composable.dirNotExist', { dir: reqCwd }) : t('composable.cwdFallbackToHome')),
           }
           // D14 语义修正（2026-08-04）：归属 project 经 input 透传——创建时归属当前
           // activeProject（与 cwd 无关，project 可跨目录）。默认项目不传（undefined = 未归类，
@@ -128,7 +142,6 @@ export function useNewTaskFlow() {
           })
           return result
         },
-        setThinkingLevel: (sid, level) => setThinkingLevel(sid, level),
       },
       chat: {
         send: (sid, segments) => chat.send(sid, segments),

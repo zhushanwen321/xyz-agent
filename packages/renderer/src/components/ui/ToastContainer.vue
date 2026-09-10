@@ -1,13 +1,19 @@
 <template>
+  <!--
+    定位契约：absolute 右上角锚定最近 positioned 祖先（非视口 fixed）——右上角避开 composer，
+    锚在 chat 主区（main-area）内时 drawer 打开随主区收窄左移，恒不遮 drawer。
+    挂载点两分支（互斥）：PanelContainer main-area（chat 主区）/ MainPanel
+    （overview/settings view 兜底）。
+  -->
   <TransitionGroup
     tag="div"
     name="toast"
-    class="fixed bottom-6 right-6 z-[9999] flex flex-col items-end gap-2.5 pointer-events-none"
+    class="absolute inset-x-4 top-4 z-[9999] flex flex-col items-end gap-2.5 pointer-events-none"
   >
     <div
       v-for="t in toasts"
       :key="t.id"
-      class="pointer-events-auto flex w-fit max-w-[min(360px,calc(100vw-3rem))] items-start gap-2.5 rounded-lg border border-border bg-surface py-2.5 pl-3 pr-2 shadow-lg"
+      class="pointer-events-auto flex w-fit max-w-[min(360px,100%)] items-start gap-2.5 rounded-lg border border-border bg-surface py-2.5 pl-3 pr-2 shadow-lg"
       :class="toastClass(t.type)"
       @mouseenter="pause(t.id)"
       @mouseleave="resume(t.id)"

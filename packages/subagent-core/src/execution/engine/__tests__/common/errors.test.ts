@@ -1,7 +1,9 @@
 // errors.test.ts —— 引擎层错误 SSOT 的结构锁定。
 //
-// 三视角：①构建者——11 条 code 与设计 §3.3.3 全表一致；②使用者——错误消息
-// code 前缀格式可被字符串匹配分流；③观察者——每条错误必有非空恢复指引（可操作）。
+// 三视角：①构建者——12 条 code 与设计错误规格全表一致（[W3] 协议化增
+// engine_capability_mismatch——manifest 多声明的 run 期握手阻断面，与 SDK 协议错误码
+// 词表同源）；②使用者——错误消息 code 前缀格式可被字符串匹配分流；③观察者——每条
+// 错误必有非空恢复指引（可操作）。
 
 import { describe, expect, it } from "vitest";
 
@@ -12,14 +14,12 @@ import {
   engineRunFailedDetail,
   engineTimeoutDetail,
   isEngineErrorCode,
-  nestedSpawnRejectedError,
   promptTooLargeError,
-  schemaEmulationFailedDetail,
   STDOUT_TAIL_ECHO_CHARS,
 } from "../../common/errors.ts";
 
 describe("ENGINE_ERROR_CODES（§3.3.3 全表）", () => {
-  it("11 条错误码与设计文档错误规格表逐条一致", () => {
+  it("12 条错误码与设计文档错误规格表逐条一致（[W3] 协议化增 engine_capability_mismatch）", () => {
     expect([...ENGINE_ERROR_CODES]).toEqual([
       "engine_not_found",
       "engine_probe_failed",
@@ -28,6 +28,7 @@ describe("ENGINE_ERROR_CODES（§3.3.3 全表）", () => {
       "schema_emulation_failed",
       "engine_timeout",
       "engine_capability_unsupported",
+      "engine_capability_mismatch",
       "engine_session_not_resumable",
       "model_not_available",
       "prompt_too_large",
@@ -90,13 +91,6 @@ describe("具名构造器", () => {
     expect(err.recovery).toMatch(/stdin/);
   });
 
-  it("nestedSpawnRejectedError：说明防护规则 + 指向 task 内自行完成", () => {
-    const err = nestedSpawnRejectedError();
-    expect(err.code).toBe("nested_spawn_rejected");
-    expect(err.message).toContain("XYZ_AGENT_SUBAGENT");
-    expect(err.recovery).toMatch(/inside the current task/);
-  });
-
   it("engineTimeoutDetail：含 stdout 尾部 + engine: pi 重跑建议", () => {
     const detail = engineTimeoutDetail("partial stdout output");
     expect(detail).toContain("partial stdout output");
@@ -123,10 +117,9 @@ describe("具名构造器", () => {
     expect(engineRunFailedDetail("crash", null, "t")).toContain("killed by signal");
   });
 
-  it("schemaEmulationFailedDetail：含错误明细 + 原始输出尾部 + 重试一次语义", () => {
-    const detail = schemaEmulationFailedDetail("Schema validation failed: /a must be number", '{"a":"x"}');
-    expect(detail).toContain("Schema validation failed");
-    expect(detail).toContain('{"a":"x"}');
-    expect(detail).toMatch(/retry once/i);
-  });
+  // nestedSpawnRejectedError 用例已随构造器删除（nesting-guard 收编 SDK 后死导出，
+  // 活体单源 SDK nesting-guard.ts NestedSpawnRejectedError，其行为由 SDK
+  // __tests__/primitives.test.ts + 本目录 nesting-guard.test.ts 覆盖）。
+  // schemaEmulationFailedDetail 用例已随函数删除（test-only 死镜像收口，活体单源
+  // SDK error-codes.ts，其行为由 SDK __tests__/primitives.test.ts 覆盖）。
 });

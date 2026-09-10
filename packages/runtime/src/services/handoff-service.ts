@@ -27,6 +27,16 @@ import type { PiAgentEndEvent, PiAgentEndMessage } from '../infra/pi/pi-protocol
 import { buildHandoffPrompt, sanitizeReply } from './handoff-prompt.js'
 import { wrapWithXmlTag } from './handoff-formatter.js'
 
+/**
+ * 空串/非 string 归一 undefined（D6 源生效值读取用）：restore 播种在源不可知时写 '' 占位，
+ * '' 属 nullish 检查不拦截的 falsy 值——直传 `override ?? 默认` 链会以 '' 短路吞掉后续档。
+ * 与 session-lifecycle.ts 的同名单函数语义一致（两文件各自持有：跨文件抽共享避免
+ * handoff-service 反向依赖 session-lifecycle 内部）。
+ */
+function nonEmptyStr(v: string | undefined): string | undefined {
+  return typeof v === 'string' && v !== '' ? v : undefined
+}
+
 interface HandoffServiceOpts {
   sessionService: SessionService
   broker: IMessageBroker
@@ -263,6 +273,10 @@ export class HandoffService {
     // 9. 新建空白 session（复用源 cwd）
     // Staging Mode（ADR-0056）：透传 modelOverride/thinkingOverride 让承接 session 用用户当前选定模型/思考等级，
     // 而非全局默认。源 session 的 handoff turn 已用自身模型跑完，不受此 override 影响。
+    // D6（state-truth-sync C5）：staging 未传时承接 session 继承源 session 当前生效
+    // model+thinkingLevel——链 = `staging override > 源当前生效值 > 全局默认`。
+    // 刻意不新增 preset 继承档：handoff 现状不传 presetId（承接走无 preset 的 create），
+    // 新增 preset 档会让承接 session 首次继承源 preset 的 tools/noSkills 全套限制——夹带行为变更。
     // A'（2026-08-24）：persistLabel=true —— "handoff from X" 是语义性承接名，持久化到
     // session_info 且防 auto-rename 覆盖（承接会话名不应被 LLM 标题改写）。
     // 缺陷 C 修复（sidecar-binding-sync 决策 1 矩阵 handoff 列）：承接 session 继承源 project
@@ -270,10 +284,15 @@ export class HandoffService {
     // fork 同款 as-cast 惯例（IManagedSessionView 未声明 projectId）；源无归属时 undefined，
     // create 内部不触发 project 分支（行为与现状一致，归默认项目）。
     const srcProjectId = (srcSession as { projectId?: string }).projectId
+    // 源真值在 handoff turn 完成后读取（此时源必已 ensureActive，内存实例恒命中）：
+    // switchModel/setThinkingLevel 对 session.modelId/thinkingLevel 的直写 + ReplicatedState
+    // 收敛保证内存实例是当前生效值。承接 session 的 hydrate/sidecar 持久化由 create 路径按
+    // options（modelOverride/thinkingOverride）既有形态写入，与 staging override 路径同构。
+    const srcEffective = this.readSourceEffectiveBinding(srcSessionId)
     const newSession = await this.opts.sessionService.create(srcCwd, `handoff from ${srcLabel}`, {
       persistLabel: true,
-      modelOverride: options?.modelOverride,
-      thinkingOverride: options?.thinkingOverride,
+      modelOverride: options?.modelOverride ?? srcEffective.modelId,
+      thinkingOverride: options?.thinkingOverride ?? srcEffective.thinkingLevel,
       projectId: srcProjectId,
     })
     const newId = newSession.id
@@ -346,6 +365,26 @@ export class HandoffService {
     // finalize 内 settled 标志保证 abort 与并发的 agent_end / timeout / exit 不会重复 settle。
     entry.reject(new Error('handoff aborted'))
     return true
+  }
+
+  /**
+   * 读源 session 当前生效 model + thinkingLevel（D6 / state-truth-sync C5 源真值档）。
+   *
+   * 读取链与 fork 的 resolveForkSourceEffectiveBinding 同构（W-RT-5 双源模式）：
+   * 1. 活跃内存实例优先——handoff 源必已 ensureActive（runHandoff 第 4 步），getSession
+   *    命中 ManagedSession 实例；switchModel/setThinkingLevel 的 modelId/thinkingLevel
+   *    直写 + ReplicatedState 收敛保证它是当前生效值；
+   * 2. 回落扫描 sidecar `.model.json` 值（findScannedSession，防御性兜底——内存实例
+   *    在 restore 播种空串等形态下字段级缺值时取扫描值）。
+   * 字段级独立走链；两档皆缺（E9）→ undefined，调用方回落 create 的全局默认（现行为，不劣化）。
+   */
+  private readSourceEffectiveBinding(srcSessionId: string): { modelId?: string; thinkingLevel?: string } {
+    const active = this.opts.sessionService.getSession(srcSessionId)
+    const scanned = this.opts.sessionService.findScannedSession(srcSessionId)
+    return {
+      modelId: nonEmptyStr(active?.modelId) ?? nonEmptyStr(scanned?.modelId),
+      thinkingLevel: nonEmptyStr(active?.thinkingLevel) ?? nonEmptyStr(scanned?.thinkingLevel),
+    }
   }
 
   /**

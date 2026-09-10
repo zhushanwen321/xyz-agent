@@ -13,7 +13,7 @@
  * - P3 组件黑盒·全 idle 不渲染（G3：无占用 = 无活动条）
  * - P4 MessageStream 集成·迁移收口：TurnMeta 旧 dispatching 占位不再渲染 + thinking 行接管；
  *   executingBash 瞬时行迁入（bashStart 帧驱动）；fork notice 与活动条的文档流定位顺序
- *   （活动条在前——fork notice 定位结论见 useNoticeStack.ts [u6a] 注释）
+ *   （活动条在前——ForkNotice 为文档流 block，按文档序自然堆叠）
  * - P5 i18n key 完整：四个行文案 key 在 zh/en locale 均定义
  *
  * i18n：vitest 全局 setup（vitest-i18n-setup.ts）mock useI18n → t() 返回 zh-CN 文案。
@@ -296,7 +296,7 @@ describe('ActivityStrip × MessageStream 集成 · 迁移收口（P4）', () => 
     const chat = useChatStore()
     // 压缩中 + 一条 fork notice：文档序应为 ActivityStrip → ForkNotice（fork notice 定位结论：
     // 生产路径 fork notice 是 Virtualizer 之后的文档流 block，按文档序自然堆叠在活动条之后，
-    // 不依赖 forkNoticeBaseTop absolute 基线——useNoticeStack.ts [u6a] 注释）
+    // 不依赖任何 absolute 基线——定位链已随 D6 死路径清理删除）
     chat.setOccupancy(SID, { turn: 'idle', compacting: true, bash: false })
     feedRef.value = new Map(feedRef.value).set(SID, [{ id: 1, newSessionId: 'sess-branch-1', branchName: 'fix-branch' }])
     await nextTick()

@@ -31,6 +31,10 @@
    "types": "./src/rendering-protocol/custom-registry.ts",
    "import": "./src/rendering-protocol/custom-registry.ts"
   },
+  "./foundation/create-inflight-dedup": {
+   "types": "./src/foundation/create-inflight-dedup.ts",
+   "import": "./src/foundation/create-inflight-dedup.ts"
+  },
   "./foundation/use-session-scoped-state": {
    "types": "./src/foundation/use-session-scoped-state.ts",
    "import": "./src/foundation/use-session-scoped-state.ts"

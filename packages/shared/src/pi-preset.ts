@@ -166,8 +166,6 @@ export interface PiPresetsFile {
   defaultPresetId?: string
   /** 预设使用统计（FR-14）：key=presetId, value=使用次数+最后使用时间 */
   usage?: Record<string, PresetUsageEntry>
-  /** per-cwd 默认预设映射（FR-15）：key=cwd 绝对路径, value=presetId */
-  perCwdDefaults?: Record<string, string>
   /** schema 版本，便于未来迁移 */
   version: 1
 }
@@ -176,7 +174,7 @@ export interface PiPresetsFile {
  * 预设导出 payload（FR-13 导入/导出）。
  *
  * runtime exportPresets 只序列化 presets/defaultPresetId/version 三字段，
- * **故意排除 usage/perCwdDefaults**（这两项是 runtime 本地状态，不随预设分享）。
+ * **故意排除 usage**（runtime 本地状态，不随预设分享）。
  * 与 PiPresetsFile 区别：PiPresetsFile 是磁盘全量持久化形状，PresetExportPayload 是
  * 分享用精简形状。
  *

@@ -2,10 +2,13 @@
 //
 // UI 请求 handler 工厂（透传 + 排队总控）。
 //
-// 按 ctx.mode（ExtensionMode）创建合适的 UiRequestHandler，让 SubagentService 持有后
-// 经 session-runner 透传给子进程的 extension_ui_request。本模块是「handler 注入链路」的
-// 组装点：把 channel registry（业务路由）+ dialog queue（L2 跨子进程串行）+ mode 分流
-//（TUI/GUI/headless）粘合成一个 handler。
+// 按 ctx.mode（ExtensionMode）创建合适的 UiRequestHandler，SubagentService 持有后经
+// host-ui-endpoint 登记处注入协议客户端——引擎进程的 extension_ui_request 经
+// host/askUser 反向通道到达本 handler（[W3] inproc L1 队列 inproc UI 请求队列（已删） 随
+// inproc pi 引擎目录 删除消亡，「run 生命周期内闭包队列」语义由引擎包内等价物 +
+// 协议应答路径承接）。本模块是「handler 注入链路」的组装点：把 channel registry
+//（业务路由）+ dialog queue（L2 跨子进程串行）+ mode 分流（TUI/GUI/headless）
+// 粘合成一个 handler。
 //
 // 设计依据（.fix-plans/00-master-summary.md）：
 //   - §一冲突 2「透传矩阵」：

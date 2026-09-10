@@ -81,7 +81,10 @@ describe("readLastJsonlLine 孤儿终态判定（超长末行 / 截断行）", (
     const rec = recovered("orphan-bigline");
     expect(rec.status).toBe("closed");
     expect(rec.closedReason).toBe("gc");
-    expect(rec.error).toBeUndefined();
+    // 回归锚点本体：300KB 完整行不误判截断（[F3] in-flight 重启中断 error 在场，
+    // 但无截断标记——64KB 固定尾窗的旧实现会把本行从中间切开判「truncated」）。
+    expect(rec.error).toContain("host restart");
+    expect(rec.error).not.toContain("truncated");
   });
 
   it("末行截断（无尾换行的半行 JSON）→ closed/gc + error 标记截断", () => {
@@ -91,7 +94,9 @@ describe("readLastJsonlLine 孤儿终态判定（超长末行 / 截断行）", (
     const rec = recovered("orphan-truncated");
     expect(rec.status).toBe("closed");
     expect(rec.closedReason).toBe("gc");
-    expect(rec.error).toContain("truncated last line");
+    // [F3] 无 resumable 信号 = in-flight：截断判定并入重启中断文案（"— last line truncated"）
+    expect(rec.error).toContain("host restart");
+    expect(rec.error).toContain("truncated");
   });
 
   it("超长且截断的末行 → 仍判截断 error（扩窗是为完整行服务，不放宽截断判定）", () => {
@@ -99,15 +104,18 @@ describe("readLastJsonlLine 孤儿终态判定（超长末行 / 截断行）", (
     writeOrphanSession("orphan-bigcut", bigTruncated, { trailingNewline: false });
     const rec = recovered("orphan-bigcut");
     expect(rec.status).toBe("closed");
-    expect(rec.error).toContain("truncated last line");
+    // [F3] 无 resumable 信号 = in-flight：截断判定并入重启中断文案
+    expect(rec.error).toContain("host restart");
+    expect(rec.error).toContain("truncated");
   });
 
-  it("常规末行（多行文件、完整 JSON）→ closed/gc 无 error", () => {
+  it("常规末行（多行文件、完整 JSON）→ closed/gc；无 resumable 信号 = in-flight 重启中断（[F3]）", () => {
     writeOrphanSession("orphan-normal", JSON.stringify({ type: "message", role: "assistant", content: "final" }));
     const rec = recovered("orphan-normal");
     expect(rec.status).toBe("closed");
     expect(rec.closedReason).toBe("gc");
-    expect(rec.error).toBeUndefined();
+    // [F3] 末行完整但无 resumable/result 信号 = 在途被重启中断：投影不得谎报 completed
+    expect(rec.error).toContain("host restart");
   });
 
   it("仅 identity 单行文件（首行即末行，合法 JSON）→ closed 无 error", () => {
@@ -122,8 +130,9 @@ describe("readLastJsonlLine 孤儿终态判定（超长末行 / 截断行）", (
     // identity 首行 + 紧跟空行结尾：非空段只剩 identity（窗口到文件头，首段完整）
     fs.writeFileSync(path.join(sessionsDir, "2026-07-18T12-00-00-000Z_orphan-empty.jsonl"), identity + "\n", "utf8");
     const rec = recovered("orphan-empty");
-    // 唯一非空行 = identity 首行（合法 JSON）→ 不判 error
+    // 唯一非空行 = identity 首行（合法 JSON）→ 无截断标记；[F3] in-flight 重启中断 error 在场
     expect(rec.status).toBe("closed");
-    expect(rec.error).toBeUndefined();
+    expect(rec.error).toContain("host restart");
+    expect(rec.error).not.toContain("truncated");
   });
 });

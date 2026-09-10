@@ -9,7 +9,8 @@
 // 顶层薄壳 + 组装
 export { default as ChatView } from './ChatView.vue'
 // deps inject token（ChatViewDeps）。trace 折叠 stick-guard 通路已随 <Transition> 删除退役
-//（useVirtuaFollow INVAR-M4-2：onScroll 只单向翻真，永不翻 false，guarded 回归结构上不可能）。
+//（useVirtuaFollow INVAR-M4-2′ 复合判据：程序性写入回声不翻 stickToBottom=false，guarded
+// 回归结构上不可能；现行语义见 docs/design/chat-pin-bottom-fix.md §4.3 D7）。
 export { ChatViewDepsKey, useChatViewDeps } from './chat-view-deps'
 export type { ChatViewDeps, DrawerOpenOptions } from './chat-view-deps'
 // 纯函数（图标决策 + 耗时格式化）

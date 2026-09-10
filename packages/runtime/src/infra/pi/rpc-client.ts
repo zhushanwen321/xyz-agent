@@ -5,9 +5,6 @@ import { getDefaultModel } from './pi-provider-store.js'
 import { RpcTimeoutError } from '../../utils/errors.js'
 import type { ThinkingLevel, ProviderId } from '@xyz-agent/shared'
 import { BASH_RPC_TIMEOUT_MS, COMPACT_RPC_TIMEOUT_MS } from '@xyz-agent/shared'
-// D4/U7b（docs/design/subagent-agent-end-recovery.md §3.3）：pi 通道原语共享机制消费入口——
-// LF 行读取切换后 Runtime 与 subagent-core 消费同一份实现，消除「同类修复只落一边」的双轨分叉。
-import { createLineReader } from '@zhushanwen/subagent-core/spawn-channel'
 // B3 出站契约唯一构建器（U3 收口点；实现本体在 @xyz-agent/shared，此处走 runtime 门面）
 import { buildOutboundChildEnv } from '../spawn-env.js'
 import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
@@ -30,6 +27,50 @@ export interface PiMessage {
 }
 
 export type PiEventListener = (event: PiMessage) => void
+
+/**
+ * LF-only 行读取器（D10 分帧防御；pi dist/modes/rpc/jsonl.js attachJsonlLineReader 同款思路）。
+ *
+ * 为什么不用 node readline：readline 除 \n/\r 外还把 U+2028（LINE SEPARATOR）/U+2029
+ * （PARAGRAPH SEPARATOR）当行分隔符——这两个字符在 JSON 字符串内合法（JSON.stringify
+ * 不转义，pi 侧 serializeJsonLine 的帧协议是 LF-only）。pi 回显含这两个字符的单行 JSON
+ * 会被 readline 拆成多帧 → JSON.parse 失败 → 消息静默丢失；skill 全文注入后大文本回显
+ * 流量上升，敞口变大，故随 composer 多 skill 注入一并修（设计 §2.3 失败模式 D）。
+ *
+ * 分帧只在「字节流解码后的字符串」上找 '\n'；StringDecoder 处理多字节 UTF-8 字符跨
+ * chunk 截断的半帧残留；流 end 时 flush decoder 尾巴与无换行结尾的最后一行（与 readline
+ * 的 close 交付语义一致）；行尾 '\r' 剥离（对齐 pi 实装）。返回解绑函数（测试用；
+ * 生产路径随进程生命周期终结，无需解绑）。
+ */
+export function attachLfOnlyLineReader(stream: NodeJS.ReadableStream, onLine: (line: string) => void): () => void {
+  const decoder = new StringDecoder('utf8')
+  let buffer = ''
+  const emitLine = (line: string): void => {
+    onLine(line.endsWith('\r') ? line.slice(0, -1) : line)
+  }
+  const onData = (chunk: Buffer | string): void => {
+    buffer += typeof chunk === 'string' ? chunk : decoder.write(chunk)
+    let newlineIndex = buffer.indexOf('\n')
+    while (newlineIndex !== -1) {
+      emitLine(buffer.slice(0, newlineIndex))
+      buffer = buffer.slice(newlineIndex + 1)
+      newlineIndex = buffer.indexOf('\n')
+    }
+  }
+  const onEnd = (): void => {
+    buffer += decoder.end()
+    if (buffer.length > 0) {
+      emitLine(buffer)
+      buffer = ''
+    }
+  }
+  stream.on('data', onData)
+  stream.on('end', onEnd)
+  return () => {
+    stream.off('data', onData)
+    stream.off('end', onEnd)
+  }
+}
 
 /**
  * pi get_available_models 返回的模型元素（pi-ai Model 翻译为内部消费形状的子集：
@@ -350,6 +391,16 @@ export class RpcClient implements IPiEngine {
   private stderrTruncated = false
   /** pi stdout JSONL 原始流落盘（架构约定 #4，诊断 pi 卡死的决定性证据） */
   private piSessionLog: PiSessionLog | null = null
+  /**
+   * 最近一次「事件帧」到达 stdout 的时刻（chat-domain-v1x-liveness-governance W7 桥事件窗信号）。
+   *
+   * 为什么记在 handleMessage 顶部而非 listener 广播分支：该戳度量的是「pi 是否还在发事件」
+   * （pi 侧产出证据），不是「runtime 是否消费」——bash_execution_update 等被 timedOutIds
+   * 丢弃 / 进早期帧缓冲的流事件同样是 pi 事件循环存活的证据。只记非 response 帧：RPC
+   * response 的活性由快超时探测（getState）专责，两信号职责正交（设计 §3.2 D3 三信号判据）。
+   * 消费方 = message-dispatcher abort 超时阶梯的「事件窗静默」判定（区分 RPC 饿死 vs 真冻结）。
+   */
+  private _lastEventAt: number | undefined
 
   constructor(private options: RpcClientOptions = {}) {}
 
@@ -423,59 +474,24 @@ export class RpcClient implements IPiEngine {
       }
     })
 
-    // Parse stdout JSONL（D10：LF-only 分帧，u5 起消费 spawn-channel createLineReader 共享
-    // 实现，D4/U7b 行为不变替换：机制一份，Runtime 与 subagent-core 消费同一份 LF 行读取原语）。
-    // 解码保持 StringDecoder 逐 chunk 形态（D10 首版实现确立；多字节 UTF-8 跨 chunk 半帧
-    // 挂起，不产 replacement char；U+2028/U+2029 不拆帧的 D10 防御由共享实现承载）——刻意
-    // 不用 setEncoding（改造 stdout 流编码模式），data handler 内逐 chunk 解码后喂入，
-    // 与切换前解码路径逐字对应。
-    // stdout error 吞转发（2026-09-04 事故审计，原 readline 防护语义保留）：
+    // Parse stdout JSONL（D10：LF-only 读取器，U+2028/U+2029 不拆帧——pi rpc/jsonl.js 帧协议的对端）
+    // stdout error 吞转发（2026-09-04 事故审计，原 readline 防护语义在 LF-only 读取器上保留）：
     // pi 崩溃/被杀时 stdout 管道流错误无 listener 直接 throw 成 uncaughtException →
-    // 整机 shutdown（stderr 已有同款防护，见下方 stderr 段注释）；行读取只挂 data/end，
-    // error 防护在此补齐；pi 退出处置归 exit/kill 链路，此处只堵转发逃逸。
+    // 整机 shutdown（stderr 已有同款防护，见下方 stderr 段注释）；attachLfOnlyLineReader
+    // 只挂 data/end，error 防护在此补齐；pi 退出处置归 exit/kill 链路，此处只堵转发逃逸。
     proc.stdout!.on('error', () => {})
-    const stdoutDecoder = new StringDecoder('utf8')
-    const stdoutLineReader = createLineReader({
-      // tee hook（D4 单侧附加面①归宿）：piSessionLog 原始 JSONL 落盘（架构约定 #4，
-      // 「pi 卡死时唯一证据」诊断通道）经行读取原语的 hook 位接回。hook 在解析/分发之前
-      // 回调（含 flushTrailing 尾残行）；行尾 '\r' 剥离由共享 createLineReader 承载
-      //（对齐 pi 实装 attachJsonlLineReader 防御，一致性审查修复批补齐），
-      // tee 收到剥离后的行——与切换前（旧 onLine 内 tee，收到的同为剥离后行）落盘字节
-      // 逐行一致成立（S8 断言点）；保留旧 tee 的「空白行不落盘」过滤。
-      onStdoutLine: (line) => {
-        if (!line.trim()) return
-        this.piSessionLog?.write(line)
-      },
-      onLine: (line) => {
-        if (!line.trim()) return
-        try {
-          const msg: PiMessage = JSON.parse(line)
-          this.handleMessage(msg)
-        // eslint-disable-next-line taste/no-silent-catch -- malformed line from pi process, skip and continue
-        } catch (e) {
-          console.error('[rpc] stdout parse error:', line, e)
-        }
-      },
+    attachLfOnlyLineReader(proc.stdout!, (line) => {
+      if (!line.trim()) return
+      // tee 原始 JSONL 到 pi session 日志（架构约定 #4，卡死诊断证据）
+      this.piSessionLog?.write(line)
+      try {
+        const msg: PiMessage = JSON.parse(line)
+        this.handleMessage(msg)
+      // eslint-disable-next-line taste/no-silent-catch -- malformed line from pi process, skip and continue
+      } catch (e) {
+        console.error('[rpc] stdout parse error:', line, e)
+      }
     })
-    proc.stdout!.on('data', (chunk: Buffer | string) => {
-      stdoutLineReader.push(typeof chunk === 'string' ? chunk : stdoutDecoder.write(chunk))
-    })
-    // 流 end：StringDecoder 尾巴先冲入行缓冲，再冲刷尾残行——无换行结尾的最后一行照常
-    // tee + parse（与旧 onEnd 的 `buffer += decoder.end(); emitLine` 交付语义一致）
-    proc.stdout!.on('end', () => {
-      stdoutLineReader.push(stdoutDecoder.end())
-      stdoutLineReader.flushTrailing()
-    })
-
-    // ── u5 四维策略对照（D4 语义分叉差异清单，Runtime 现值 = 既有代码路径不变，S8 逐项对照锚；
-    // 策略以实际接线表达，不引入运行时分派对象——与 spawn-channel 的 SpawnChannelPolicies
-    // 类型化登记对齐）：① 事件帧空窗 = buffer-until-first-listener——onLine → handleMessage
-    // 内 early-frame-buffer FIFO + 首个 listener 注册重放（既有机制不动，本 onLine 即接线位）；
-    // ② 迟到 response = discard——timedOutIds 既有语义（handleMessage 分支），不当 event 广播；
-    // ③ 失败处理 = hard-fail-safe-destroy——RPC 超时/写入错误 reject → 上层 safeDestroy（既有，
-    // session-lifecycle 调用面不动）；④ kill = immediate-sigkill——stream error 即时 SIGKILL
-    // （killProcAfterStreamError）+ kill() SIGCONT→SIGTERM→2s→SIGKILL；SIGCONT 唤醒语义为
-    // spawn-channel killChain 所无，kill 链保持现实现（盘点结论：策略差异非机制重复）。
 
     // W2：监听 stdout stream 的 'error' 事件。
     // proc.on('error') 只覆盖 spawn 失败；stdout 是独立的 Readable stream，pi 崩溃 /
@@ -570,6 +586,8 @@ export class RpcClient implements IPiEngine {
   }
 
   private handleMessage(msg: PiMessage): void {
+    // W7 桥事件窗信号：事件帧到达即更新活跃戳（语义与放置理由见 _lastEventAt 字段注释）。
+    if (msg.type !== 'response') this._lastEventAt = Date.now()
     // If id matches a pending request, resolve it; otherwise emit as event.
     // resolve 只认 RPC response：pi 的 RpcResponse union 所有变体 type === 'response'
     // （pi-mono coding-agent/src/modes/rpc/rpc-types.ts:114-223），事件各有独立 type 字符串。
@@ -832,6 +850,15 @@ export class RpcClient implements IPiEngine {
 
   get exited(): boolean {
     return this._exited
+  }
+
+  /**
+   * 最近一次事件帧到达时刻（W7 abort 超时阶梯的桥事件窗信号读点）。
+   * undefined = 本进程生命周期内从未观测到事件帧（对 abort 超时场景，配合探测无响应
+   * 即构成冻结证据——运行中的 session 几乎不可能从未有过事件，pi spawn 即发初始化事件）。
+   */
+  get lastEventAt(): number | undefined {
+    return this._lastEventAt
   }
 
   // ── High-level API ────────────────────────────────────────────────

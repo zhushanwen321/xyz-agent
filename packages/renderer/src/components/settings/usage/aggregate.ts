@@ -138,10 +138,7 @@ export function fmtISO(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
-const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
-export function fmtWeekday(d: Date): string {
-  return '周' + WEEKDAYS[d.getDay()]
-}
+// fmtWeekday 已随 i18n 收口（设计 D6）迁往 UsageDailyChart 组件层用 t() 渲染（复用 heatWeek* keys）
 
 /* ── 过滤器状态 ── */
 
@@ -174,12 +171,21 @@ export interface RankRow {
   provs?: Record<string, AggMetrics>
 }
 
+/** perModel 值结构：一行 = 一个 provider×model 组合（key = `${provider}/${model}` 复合键，设计决策点四 A） */
+export interface PerModelEntry {
+  provider: string
+  model: string
+  u: AggMetrics
+}
+
 /* ── 聚合结果 ── */
 
 export interface AggregatedData {
   perDay: DayView[]
-  perModel: Record<string, AggMetrics>
+  perModel: Record<string, PerModelEntry>
   perProv: Record<string, AggMetrics>
+  /** 全量 provider 聚合：尊重 range、忽略 offProv/isolate（图例恒显数据源，设计 D1） */
+  perProvFull: Record<string, AggMetrics>
   tot: AggMetrics
   msgs: number
   activeDays: number
@@ -244,8 +250,9 @@ function buildDateRange(
 
 /* aggregate 跨日累加器（aggregateDay 就地累计） */
 interface AggAccumulator {
-  perModel: Record<string, AggMetrics>
+  perModel: Record<string, PerModelEntry>
   perProv: Record<string, AggMetrics>
+  perProvFull: Record<string, AggMetrics>
   tot: AggMetrics
   msgs: number
   activeDays: number
@@ -265,20 +272,27 @@ function aggregateDay(
   let has = false
 
   for (const row of dayRows) {
+    const u = rowToMetrics(row)
+
+    // 全量累加器：尊重 range（本函数仅处理窗口内日期）、忽略 offProv/isolate（图例恒显，D1）
+    if (!acc.perProvFull[row.provider]) acc.perProvFull[row.provider] = newMetrics()
+    accumulate(acc.perProvFull[row.provider], u)
+
     if (filter.offProv.has(row.provider)) continue
-    if (filter.isolate && row.model !== filter.isolate) continue
+    // isolate 键语义 = 复合键 `${provider}/${model}`（设计 §3.3 ⑤）：裸 model 比较会让跨 provider 同名模型互相误命中
+    if (filter.isolate && `${row.provider}/${row.model}` !== filter.isolate) continue
 
     has = true
     acc.msgs += row.messages
-
-    const u = rowToMetrics(row)
 
     if (!provs[row.provider]) provs[row.provider] = newMetrics()
     accumulate(provs[row.provider], u)
     accumulate(dTot, u)
 
-    if (!acc.perModel[row.model]) acc.perModel[row.model] = newMetrics()
-    accumulate(acc.perModel[row.model], u)
+    if (!acc.perModel[`${row.provider}/${row.model}`]) {
+      acc.perModel[`${row.provider}/${row.model}`] = { provider: row.provider, model: row.model, u: newMetrics() }
+    }
+    accumulate(acc.perModel[`${row.provider}/${row.model}`].u, u)
 
     if (!acc.perProv[row.provider]) acc.perProv[row.provider] = newMetrics()
     accumulate(acc.perProv[row.provider], u)
@@ -318,6 +332,7 @@ export function aggregate(
   const acc: AggAccumulator = {
     perModel: {},
     perProv: {},
+    perProvFull: {},
     tot: newMetrics(),
     msgs: 0,
     activeDays: 0,
@@ -332,6 +347,7 @@ export function aggregate(
     perDay,
     perModel: acc.perModel,
     perProv: acc.perProv,
+    perProvFull: acc.perProvFull,
     tot: acc.tot,
     msgs: acc.msgs,
     activeDays: acc.activeDays,
@@ -351,7 +367,8 @@ export function aggregateHeatmap(
   const result = new Map<string, number>()
   for (const row of rows) {
     if (filter.offProv.has(row.provider)) continue
-    if (filter.isolate && row.model !== filter.isolate) continue
+    // isolate 复合键比较（设计 §3.3 ⑤，与 aggregateDay 同款）
+    if (filter.isolate && `${row.provider}/${row.model}` !== filter.isolate) continue
     const prev = result.get(row.date) ?? 0
     result.set(row.date, prev + row.input + row.output + row.cacheRead + row.cacheWrite)
   }
@@ -365,7 +382,7 @@ const TOP_PROJECTS = 8
 
 export function aggregateProjects(
   rows: UsageRow[],
-  filter: Pick<FilterState, 'offProv' | 'isolate' | 'range'>,
+  filter: Pick<FilterState, 'offProv' | 'isolate' | 'range' | 'metric'>,
 ): RankRow[] {
   const byDate = groupByDate(rows)
   const sortedDates = [...byDate.keys()].sort()
@@ -375,7 +392,8 @@ export function aggregateProjects(
   for (const dateStr of sliceDates) {
     for (const row of byDate.get(dateStr) ?? []) {
       if (filter.offProv.has(row.provider)) continue
-      if (filter.isolate && row.model !== filter.isolate) continue
+      // isolate 复合键比较（设计 §3.3 ⑤，与 aggregateDay 同款）
+      if (filter.isolate && `${row.provider}/${row.model}` !== filter.isolate) continue
       const key = row.project
       if (!projMap.has(key)) projMap.set(key, { provs: {}, total: newMetrics() })
       const entry = projMap.get(key)!
@@ -388,26 +406,32 @@ export function aggregateProjects(
 
   return [...projMap.entries()]
     .map(([name, { provs, total }]) => ({ name, metrics: total, provs }))
-    .sort((a, b) => totalTokens(b.metrics) - totalTokens(a.metrics))
+    // metric 贯穿（G4）：项目谱 TOP8 排序按当前指标（token 或费用）
+    .sort((a, b) => metricValue(b.metrics, filter.metric) - metricValue(a.metrics, filter.metric))
     .slice(0, TOP_PROJECTS)
 }
 
 /**
  * 缓存构成聚合：按 model 聚合 cacheRead / input / output+cacheWrite。
+ *
+ * TOP-4 排序切片恒用 totalTokens（token 域例外，设计 §3.3 ⑤：缓存构成本质是 token 比例概念，
+ * 不随 metric 切换口径；G4「metric 贯穿」范围不含缓存构成）。
  */
 const TOP_CACHE_MODELS = 4
 
 export function aggregateCacheMix(
-  perModel: Record<string, AggMetrics>,
-): { model: string; hit: number; newIn: number; out: number; hitRate: number }[] {
+  perModel: Record<string, PerModelEntry>,
+): { provider: string; model: string; hit: number; newIn: number; out: number; hitRate: number }[] {
   return Object.entries(perModel)
-    .filter(([, u]) => u.cacheRead + u.input > 0)
-    .sort((a, b) => totalTokens(b[1]) - totalTokens(a[1]))
+    .filter(([, entry]) => entry.u.cacheRead + entry.u.input > 0)
+    .sort((a, b) => totalTokens(b[1].u) - totalTokens(a[1].u))
     .slice(0, TOP_CACHE_MODELS)
-    .map(([model, u]) => {
+    .map(([, entry]) => {
+      const u = entry.u
       const base = u.cacheRead + u.input + u.output + u.cacheWrite
       return {
-        model,
+        provider: entry.provider,
+        model: entry.model,
         hit: base ? u.cacheRead / base : 0,
         newIn: base ? u.input / base : 0,
         out: base ? (u.output + u.cacheWrite) / base : 0,
@@ -417,28 +441,33 @@ export function aggregateCacheMix(
 }
 
 /**
- * 明细台账分组：按 provider 分组，每组内按 model 排序。
+ * 明细台账分组：按 provider 分组，每组内按当前指标降序。
+ *
+ * @param metric - 当前指标（组间与组内排序口径，G4 metric 贯穿）
  */
 export function aggregateDetailGroups(
   perProv: Record<string, AggMetrics>,
-  perModel: Record<string, AggMetrics>,
+  perModel: Record<string, PerModelEntry>,
   rows: UsageRow[],
+  metric: FilterState['metric'],
 ): { pid: string; u: AggMetrics; models: { model: string; u: AggMetrics }[] }[] {
-  // 建立 model -> provider 映射
+  // 复合键 -> provider 映射：派生源必须 = 全量 rows（与过滤无关，设计 §3.3 ⑤；
+  // 禁止从过滤后 perModel/perProvFull 派生——键会随过滤消失，归属判定失义）
   const modelProv = new Map<string, string>()
   for (const row of rows) {
-    if (!modelProv.has(row.model)) modelProv.set(row.model, row.provider)
+    const key = `${row.provider}/${row.model}`
+    if (!modelProv.has(key)) modelProv.set(key, row.provider)
   }
 
   const provs = Object.keys(perProv)
     .map((pid) => {
       const models = Object.entries(perModel)
-        .filter(([m]) => modelProv.get(m) === pid)
-        .sort((a, b) => totalTokens(b[1]) - totalTokens(a[1]))
-        .map(([model, mu]) => ({ model, u: mu }))
+        .filter(([key]) => modelProv.get(key) === pid)
+        .sort((a, b) => metricValue(b[1].u, metric) - metricValue(a[1].u, metric))
+        .map(([, entry]) => ({ model: entry.model, u: entry.u }))
       return { pid, u: perProv[pid], models }
     })
-    .sort((a, b) => totalTokens(b.u) - totalTokens(a.u))
+    .sort((a, b) => metricValue(b.u, metric) - metricValue(a.u, metric))
 
   return provs
 }

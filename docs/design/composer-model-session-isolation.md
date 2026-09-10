@@ -4,6 +4,7 @@
 
 - **层性质声明**：本文档是技术方案设计（slice 级），下一层产物 = 可实现的接口/数据模型/代码任务。准则 5（物理数据流）/6（错误恢复）/7（运行时断言探针）全适用。
 - **状态**：已过 4 轮对抗式审查（r1：3 must-fix + 4 suggestion 全修；r2：0 must-fix + 3 suggestion 当轮吸收；r3：1 must-fix + 3 suggestion——must-fix 为 impl-plan U5 blocked 误诊更正，设计 D5 本体裁决无缺陷；r4 聚焦复审：r3 修复全部核验通过，2 must-fix 跨文档文字残留已修，审查方结论「无需 r5，设计就绪」。报告 `docs/design/composer-model-session-isolation.review-r1.md` / `.review-r2.md` / `.review-r3.md` / `.review-r4.md`）。**DoR 达成，可进入实施**。
+- **[部分废止 2026-09]**：本设计的 **landing auto 值机制（`followRememberedOrDefault` follow watch + localAuthored）已被 [state-truth-sync-architecture](state-truth-sync-architecture.md) D9/U2a 整体废除**——landing 档位初值现由 `resolveLaunchConfig` 解析链给出（authored-only 记忆语义）；本文 :213/:329 等处的 follow watch 描述仅为历史设计记录，不属现行行为。armed 族（已建/staging 意图保护）与本设计的 sidecar/读回播种机制继续有效。
 
 ---
 

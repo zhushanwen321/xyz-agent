@@ -173,7 +173,7 @@ export class PresetService {
    * 从磁盘读取并解析 pi-presets.json（容错，S-RT-2 抽出以便 loadPresetsFile 复用）。
    *
    * 主函数只留编排：读文件容错（readPresetsObject）→ presets 逐项 coerce →
-   * usage/perCwdDefaults/defaultPresetId 透传兜底。
+   * usage/defaultPresetId 透传兜底。
    */
   private parsePresetsFileFromDisk(path: string): PiPresetsFile {
     if (!existsSync(path)) {
@@ -188,20 +188,30 @@ export class PresetService {
     const presets = coercePresetsArray(
       Array.isArray(obj['presets']) ? obj['presets'] as unknown[] : [],
     )
-    // 透传 usage/perCwdDefaults（FR-14/FR-15 的持久化字段，load 容错不做强类型守卫，
+    // 透传 usage（FR-14 的持久化字段，load 容错不做强类型守卫，
     // 与 defaultPresetId 同策略：只校验顶层存在性，值合法性由消费方在使用时兜底）
     const usage = coerceRecordField(obj['usage'])
-    const perCwdDefaults = coerceRecordField(obj['perCwdDefaults'])
     const defaultPresetId = typeof obj['defaultPresetId'] === 'string' ? obj['defaultPresetId'] as string : undefined
-    return {
+    const file: PiPresetsFile = {
       presets,
       defaultPresetId,
-      // usage/perCwdDefaults 用 as 保持 PiPresetsFile 兼容（值是 Record<string, PresetUsageEntry|string>，
+      // usage 用 as 保持 PiPresetsFile 兼容（值是 Record<string, PresetUsageEntry>，
       // 已知字段类型不安全但与原实现一致——load 容错不抛错，消费方信任读到的形状）
       usage: usage as PiPresetsFile['usage'],
-      perCwdDefaults: perCwdDefaults as PiPresetsFile['perCwdDefaults'],
       version: 1,
     }
+    // [HISTORICAL] FR-15（per-cwd 默认预设）已随 state-truth-sync U9 全链删除，perCwdDefaults
+    // 字段无消费者。存量数据惰性清除：读盘检出即剥离重写（清除失败只 warn 不抛——驻留数据
+    // 本身无害，不应因清除失败拖垮 preset 域全部 RPC）。写盘内容已无该字段，收敛一次不重写。
+    if (obj['perCwdDefaults'] !== undefined) {
+      try {
+        this.savePresetsFile(file)
+      } catch (e) {
+        // best-effort 降级：存量数据清洗失败不应阻塞 preset 加载；warn 可观测，下次 load 重试。
+        console.warn('[preset-service] failed to purge legacy perCwdDefaults field:', e)
+      }
+    }
+    return file
   }
 
   /**
@@ -284,7 +294,7 @@ export class PresetService {
   }
 
   /**
-   * 计算「有效」默认 preset id（W-RT-3 抽出，getDefaultPresetId + getCwdDefaultPresetId 共用）。
+   * 计算「有效」默认 preset id（W-RT-3 抽出，getDefaultPresetId 共用）。
    *
    * 校验：defaultPresetId 非空且存在于 merge 后的 presets 列表（含 DEFAULT 兜底，builtin:full 总存在）。
    * 不存在 → 回退 BUILTIN_PRESET_IDS.FULL。
@@ -350,8 +360,8 @@ export class PresetService {
    *
    * W-RT-2：删除后清理对被删 preset 的引用：
    *   - 若 file.defaultPresetId === presetId → 清空（回退到 BUILTIN_PRESET_IDS.FULL，下次 getDefaultPresetId 兜底）
-   *   - file.perCwdDefaults 中 value === presetId 的条目全部删除（避免僵尸 cwd 映射）
    * 避免 Landing / restoreSession 拿到僵尸 id（getLaunchPresetOptions 拿不到 preset 返回 undefined）。
+   * [HISTORICAL] perCwdDefaults 条目清理已随 FR-15 删除（state-truth-sync U9）。
    */
   deletePreset(presetId: string): void {
     if (DEFAULT_PRESETS.some(p => p.id === presetId)) {
@@ -366,20 +376,6 @@ export class PresetService {
     if (file.defaultPresetId === presetId) {
       file.defaultPresetId = undefined
       changed = true
-    }
-    // W-RT-2：清理 perCwdDefaults 中指向被删 preset 的条目
-    if (file.perCwdDefaults) {
-      const cwdKeys = Object.keys(file.perCwdDefaults)
-      for (const cwd of cwdKeys) {
-        if (file.perCwdDefaults[cwd] === presetId) {
-          delete file.perCwdDefaults[cwd]
-          changed = true
-        }
-      }
-      // 全删空后置 undefined，保持磁盘形状干净（避免序列化出空对象 {}）
-      if (Object.keys(file.perCwdDefaults).length === 0) {
-        file.perCwdDefaults = undefined
-      }
     }
     // 仅当确实有变更时才写盘（no-op 时不触发 IO + cache invalidate）
     if (changed) {
@@ -411,50 +407,11 @@ export class PresetService {
     return this.loadPresetsFile().usage ?? {}
   }
 
-  // ── FR-15：per-cwd 默认预设 ──────────────────────────────────
-
-  /**
-   * 获取 cwd 对应的默认预设 id。
-   * 优先级：perCwdDefaults[cwd] > global defaultPresetId > 'builtin:full'。
-   */
-  /**
-   * 获取 cwd 对应的默认预设 id。
-   * 优先级：perCwdDefaults[cwd] > global defaultPresetId > 'builtin:full'。
-   *
-   * W-RT-3：每一级都校验 id 存在性（perCwd / global 都可能指向已删 preset），不存在则向下一级 fallback，
-   * 最终兜底 BUILTIN_PRESET_IDS.FULL（builtin:full 永远存在于 DEFAULT_PRESETS）。
-   */
-  getCwdDefaultPresetId(cwd: string): string {
-    const file = this.loadPresetsFile()
-    const allIds = new Set(this.mergePresets(file.presets).map(p => p.id))
-    const perCwd = file.perCwdDefaults?.[cwd]
-    if (perCwd && allIds.has(perCwd)) return perCwd
-    // perCwd 不存在/僵尸 → 回退 global default（再校验一次存在性）
-    return this.resolveDefaultPresetId(file)
-  }
-
-  /** 设置 cwd 对应的默认预设。presetId 为空串时删除该 cwd 的覆盖（回退全局默认）。 */
-  setCwdDefaultPresetId(cwd: string, presetId: string): void {
-    const file = this.loadPresetsFile()
-    if (!file.perCwdDefaults) file.perCwdDefaults = {}
-    if (presetId) {
-      file.perCwdDefaults[cwd] = presetId
-    } else {
-      delete file.perCwdDefaults[cwd]
-    }
-    this.savePresetsFile(file)
-  }
-
-  /** 获取全部 per-cwd 默认映射（供前端展示）。 */
-  getCwdDefaults(): Record<string, string> {
-    return this.loadPresetsFile().perCwdDefaults ?? {}
-  }
-
   // ── FR-13：预设导入/导出 ─────────────────────────────────────
 
   /**
    * 导出全部预设为 JSON 字符串（前端通过 electronAPI 文件对话框保存）。
-   * 导出格式：{ presets, defaultPresetId, version }（不含 usage/perCwdDefaults，避免跨机器泄漏）。
+   * 导出格式：{ presets, defaultPresetId, version }（不含 usage，避免跨机器泄漏）。
    */
   exportPresets(): string {
     const file = this.loadPresetsFile()
@@ -640,7 +597,7 @@ function coercePresetsArray(presets: unknown[]): PiLaunchPreset[] {
 }
 
 /**
- * coerce Record 形状的持久化字段（usage/perCwdDefaults 共用，FR-14/FR-15）：
+ * coerce Record 形状的持久化字段（usage 用，FR-14）：
  * 普通对象原样透传，其余（缺失/数组/标量）返回 undefined。不做强类型守卫，
  * 值合法性由消费方在使用时兜底（与 defaultPresetId 同策略）。
  */

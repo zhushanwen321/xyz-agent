@@ -6,7 +6,9 @@
  *   error('操作失败')
  *   info('goal blocked', { sessionLabel: '修通知 · xyz-agent' })
  *
- * ToastContainer 组件负责渲染，App.vue 挂载。
+ * ToastContainer 组件负责渲染，挂载点在 main-panel 内两分支：PanelContainer 的
+ * main-area（chat 主区，右上角，不遮 drawer/composer）与 MainPanel（overview/settings
+ * view 兜底）。
  *
  * 在列上限（D7 S3-W4 限流与防毒化）：在列 toast 达到 UI_TOAST_LIMITS.MAX_IN_FLIGHT
  * （shared SSOT，默认 5）时新 toast 丢弃并累计 droppedCount——通知风暴（恶意/缺陷

@@ -15,7 +15,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AgentEvent } from "../../../types.ts";
 import { JournalWriter, replayJournal } from "../../common/event-journal.ts";
-import { parseSpawnLine } from "../../engines/pi/spawn-event-adapter.ts";
+import { parseSpawnLine } from "@zhushanwen/pi-subagent-cli";
 import { assertAgentEventInvariants } from "./agent-event-invariants.ts";
 
 interface PiGoldenFile {
@@ -23,7 +23,12 @@ interface PiGoldenFile {
   content: string;
 }
 
-const fixturePath = join(dirname(fileURLToPath(import.meta.url)), "__fixtures__", "pi-golden-events.json");
+// 引擎层 golden 随引擎包（基线三层②）：pi 包 __golden__/ 为采集 SSOT（W10 前
+// 副本在 conformance/__fixtures__，已上移；core 侧本测试为协议层回放消费方）。
+const fixturePath = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../../../../pi-subagent-cli/src/__golden__", "pi-golden-events.json",
+);
 const golden = JSON.parse(readFileSync(fixturePath, "utf8")) as PiGoldenFile;
 
 describe("pi golden 回放（conformance C3/C5-journal，免 LLM）", () => {
