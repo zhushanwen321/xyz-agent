@@ -450,6 +450,7 @@ export async function runSpawnOnce(
       enqueueUi,
       stderrTee,
       runEnd,
+      sessionFileFallback: { prompt: params.task, spawnStartedAtMs: startTime, sessionDir: params.sessionDir },
     });
 
     // 7. get_state 握手 fire-and-forget（RPC mode 无 header 行，靠握手回填身份）——
