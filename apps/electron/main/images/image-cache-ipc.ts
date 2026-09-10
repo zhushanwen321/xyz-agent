@@ -10,8 +10,8 @@
  *   整批拒绝返回空结果，不 throw
  * - **handler 零抛错**：落盘失败吞没为 quota-full 之外的 error-free 降级（invalid 结果），
  *   图片缓存故障不得放大为 main 崩溃或 invoke rejection 风暴（消息流不阻断，设计占位语义）
- * - **启动清扫挂点**：注册时 fire-and-forget 执行孤儿扫描 + 软上限（app ready 后调用，
- *   时序即「启动孤儿扫描」语义；异步清扫不阻塞 handler 注册与窗口创建）
+ * - **启动清扫挂点**：注册时同步执行孤儿扫描 + 软上限（main 模块加载期、app ready 前
+ *   调用；sync 清扫量级 = 目录条目级 stat，模块加载期内完成，先于窗口创建）
  */
 import { ipcMain } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'

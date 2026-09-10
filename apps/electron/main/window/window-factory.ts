@@ -28,9 +28,9 @@ import { RecoveryPolicy } from './recovery-policy.js'
 import { getDataDir } from '@xyz-agent/shared/paths'
 
 /** Dev 模式 Vite URL（XYZ_VITE_DEV_URL 可覆盖：多 worktree 并行 dev 时错开端口，如 1421）。
- *  注意：本常量同时是 will-navigate 导航白名单的 devOrigin（:153）——覆盖后导航白名单
- *  同步接受覆盖源（行为正确：应用实际从哪个端口加载就应放行哪个）；prod 下仅 loadFile，
- *  该覆盖无生效面。 */
+ *  注意：本常量同时是 will-navigate 导航白名单的 devOrigin（createWindow 内
+ *  isAllowedAppNavigation 调用）——覆盖后导航白名单同步接受覆盖源（行为正确：应用实际
+ *  从哪个端口加载就应放行哪个）；prod 下仅 loadFile，该覆盖无生效面。 */
 export const VITE_DEV_URL = process.env.XYZ_VITE_DEV_URL ?? 'http://localhost:1420'
 
 /** 等待 Vite dev server 就绪的总超时 */

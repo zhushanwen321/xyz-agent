@@ -9,7 +9,9 @@
  * - LRU 驱逐（renderer 内存分区）永不调用本模块的删除 API——驱逐只释放内存，重进
  *   hydrate 重新编排时 hash 命中或从 base64 重建，磁盘层无感知；
  * - 三条文件系统级清理通道（判据全部在文件系统层，不依赖跨进程内存态）：
- *   ① session 删除级联（deleteSessionImageCache，runtime session-lifecycle 删除链调用）；
+ *   ① session 删除级联（deleteSessionImageCache；runtime 侧因包边界无法跨包 import，
+ *      按同语义内联接线 session-lifecycle.ts purgeSessionSidecars——其注释指认本文件为
+ *      SSOT；本导出为 main 侧形态保留 + 测试锚定）；
  *   ② 启动孤儿扫描（scanOrphanImageCaches：目录 mtime 超 30 天且路径内 sessionId 在 pi
  *      sessions 目录无对应 session 文件 → 判死删目录；文件级判据天然覆盖 subagent 虚拟
  *      分区——subagent 历史同存于 sessions 目录）；
@@ -295,8 +297,8 @@ export function enforceImageCacheGlobalCap(
 }
 
 /**
- * 启动清扫（孤儿扫描 + 软上限，一次调用）：main 侧注册 IPC handler 时 fire-and-forget
- * 执行（app ready 后时序 = 启动扫描语义；全部异常消化，清理故障不阻塞启动）。
+ * 启动清扫（孤儿扫描 + 软上限，一次调用）：main 侧注册 IPC handler 时同步执行
+ * （模块加载期、app ready 前 = 启动扫描语义；全部异常消化，清理故障不阻塞启动）。
  */
 export function runImageCacheStartupSweep(dirs: ImageCacheDirs = {}): void {
   try {
