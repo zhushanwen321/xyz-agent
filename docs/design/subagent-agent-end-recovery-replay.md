@@ -4,7 +4,7 @@
 >
 > **层声明**：当前层 = 技术方案（重放移植裁决 + 落点设计）；下一层 = 实现计划（§5 拆分单元，供 dev-flow / coding-workflow 消费）。不跨层写代码。
 >
-> **状态**：R1 对抗式审查 5 must-fix + 7 suggestion、R2 聚焦复审 3 must-fix + 5 suggestion（两审合计）、R3 聚焦复审 2 must-fix + 2 suggestion（两审合计）、R4 聚焦复审主审 1 must-fix + 2 suggestion + 影响面审 0/0（设计就绪）——均已全量修复。关键收敛轨迹：S2 触发前提勘误 → M3 fire 链真终止 → 落点迁 SAR.run（executeAndAwait/runAndFinalize 系残留面）→ 缺口定性勘误（**两代共有原生缺口非回归**：旧架构 arm 两点均在 chatMode 门内）。待 R5 主审确认收敛。
+> **状态**：**设计就绪**（2026-09-10）。对抗式审查五轮收敛：R1（5 MF + 7 S）→ R2（3 MF + 5 S）→ R3（2 MF + 2 S）→ R4（主审 1 MF + 2 S；影响面审 0/0 收敛）→ R5（主审 0/0 收敛）。关键收敛轨迹：S2 触发前提勘误（pi 应答恒带 sessionFile）→ M3 fire 链真终止（镜像记账不杀进程，abort 阶梯承载）→ 落点迁 SAR.run（executeAndAwait/runAndFinalize 系 W3 后残留面）→ 缺口定性勘误（两代共有原生缺口非回归）。审查报告归档 `.review/design-review-replay-r1~r5*.md`。
 
 ---
 
