@@ -1,11 +1,15 @@
 /**
- * provider-config-helper scoped-model 残留清理测试（scoped-model design §4.1 A8 / S8）。
+ * provider-config-helper 测试：scoped-model 残留清理（scoped-model design §4.1 A8 / S8）
+ * + 删除链 quota 清理（coding-plan-quota-config-ux D12，见文末 describe 列表）。
  *
  * 测试框架：vitest（从 vitest 导入 describe/it/expect/vi/beforeEach/afterEach，禁 node:test）。
  * 运行命令：cd packages/runtime && npx vitest run src/services/__tests__/provider-config-helper.test.ts
  *
  * A8 语义：deleteProvider 后 scopedModels（providers.json 顶层白名单）中该 provider 的
  * `providerId/` 前缀条目被清，其他 provider 条目保留。
+ *
+ * D12 语义：provider 删除链在 extras 条目已从磁盘清除之后才调 quota 清理器，且清理器失败
+ * warn-only（惰性孤儿），不阻断删除主流程。
  *
  * 策略：真实 XyzProviderStore（tmpdir providers.json，走 RMW 锁 + 原子写真路径）
  * + mock configStore/authStorage（调用路由断言，模式同 config-service-removebykind.test.ts）。

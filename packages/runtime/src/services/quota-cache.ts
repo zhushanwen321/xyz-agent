@@ -97,7 +97,8 @@ export class QuotaCache {
    */
   update(providerId: string, data: NormalizedQuotaRow): void {
     // doUpdate 是同步方法（内部 try/catch 已吞掉所有错误，不会 throw），
-    // 用 Promise.resolve().then(run) 把每次同步调用串到微任务队列，保证「读-改-写」互不交错。
+    // 把每次调用串到同一条 writeChain 上（then(run, run)：前序链 settle 后必执行 run，
+    // 既不丢写也不因前序失败断链），保证「读-改-写」互不交错。
     const run = () => {
       try {
         this.doUpdate(providerId, data)

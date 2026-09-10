@@ -10,6 +10,8 @@
  * happy-dom 环境下 portal 内容不渲染（hover 状态不触发）。
  * 窗口行渲染、分档配色等视觉测试需 E2E 或浏览器环境验证。
  * 本测试聚焦于：数据流（quota API 调用）+ 容量区回归。
+ * 本分支新增：D11 失败态 footer 双入口（刷新 + 配置，66d415f41 / U5）与布局结构断言
+ * （f51474d83：两个恢复动作同组贴右端，结构断言不依赖像素坐标）——见「刷新 / 失败态 DOM」describe。
  *
  * mock 策略：vi.mock('@/api') + vi.mock('@xyz-agent/core/transport/api/domains/quota') 替换 RPC，
  * mount 组件 + 手动设置 session/settings store 状态。
