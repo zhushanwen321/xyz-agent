@@ -64,6 +64,16 @@ export interface EngineStream {
   onDelta(delta: string): void;
 }
 
+/**
+ * 无隔离池引擎的恒定池 key（pi / zcode 共用；值锚定）：两引擎进程内全局一份运行态
+ * （pi = PI_CODING_AGENT_DIR 全局一份，zcode = 共享宿主 HOME + journal 固定分组），
+ * poolKey 恒本值。core（PI_POOL_KEY / JOURNAL_INITIAL_POOL_KEY）与两引擎包
+ * （PI_POOL_KEY / ZCODE_SHARED_POOL_KEY）的等值异名常量一律 = 本常量——**值逐字
+ * 不变**（存量 journal 落盘路径与记录含该值分段，改名不改值）。zcode 池化引擎在
+ * prepare 期经 ctx.onPoolResolved retarget 到实际池 key，与本占位值不冲突。
+ */
+export const SHARED_POOL_KEY = "shared";
+
 /** run 的运行期上下文（core RunContext 结构等价镜像；chat? = 会话形态参数，缺省一次性任务）。 */
 export interface RunContext {
   taskId: string;

@@ -10,6 +10,7 @@ import type { ChildProcess } from "node:child_process";
 import { getLogger, pumpNdjsonLines } from "@zhushanwen/subagent-engine-sdk";
 
 import { unregisterActiveChild } from "./active-children.ts";
+import { PI_POOL_KEY } from "./constants.ts";
 import { toErrorMessage } from "./error-message.ts";
 import { extractGetStateFields, type GetStateResult } from "./get-state-handshake.ts";
 import {
@@ -94,7 +95,7 @@ export function createSessionIdentityTracker(
           ...(sessionId !== undefined ? { sessionId } : {}),
           sessionFile: fields.sessionFile,
         },
-        poolKey: "shared",
+        poolKey: PI_POOL_KEY,
       });
     }
   };
@@ -114,7 +115,7 @@ export function createSessionIdentityTracker(
           ...(sessionId !== undefined ? { sessionId } : {}),
           ...(sessionFile !== undefined ? { sessionFile } : {}),
         },
-        poolKey: "shared",
+        poolKey: PI_POOL_KEY,
       });
     },
     addStateListener(id, resolver) {

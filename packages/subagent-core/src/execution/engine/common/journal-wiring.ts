@@ -17,6 +17,7 @@
 // fsync 一次，§3.3.6 写入纪律；写失败已由 writer 内部 warn + failed 收口，close 不抛，
 // journal 是②级尽力而为数据源）。
 
+import { SHARED_POOL_KEY } from "@zhushanwen/subagent-engine-sdk";
 import type { AgentEvent } from "../../../shared/agent-event.ts";
 import { getEngineDataDir } from "./data-dir.ts";
 import { JournalWriter } from "./event-journal.ts";
@@ -26,10 +27,11 @@ import type { EngineHandle } from "../types.ts";
 /**
  * journal 初始占位池 key（= pi 的恒定池 key 'shared'）。pi 无隔离池
  * （PI_CODING_AGENT_DIR 全局一份，设计 §3.3.9），占位即终值；zcode 在 prepare 期
- * retarget 到实际池 key。值与 RunContext.poolKey 的初始占位同源——本常量是该值在
- * common 层的单一权威（原先 Service 用 'shared' 字面量、SAR 用 PI_POOL_KEY，等值异名）。
+ * retarget 到实际池 key。值与 RunContext.poolKey 的初始占位同源——值单源
+ * SDK SHARED_POOL_KEY（L3 收编：原先 Service 用 'shared' 字面量、SAR 用 PI_POOL_KEY，
+ * 等值异名；本名保留 journal 占位语义，值不再本地声明）。
  */
-export const JOURNAL_INITIAL_POOL_KEY = "shared";
+export const JOURNAL_INITIAL_POOL_KEY = SHARED_POOL_KEY;
 
 /** wireEventJournal 的参数。 */
 export interface JournalWiringOptions {

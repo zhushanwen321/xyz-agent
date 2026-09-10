@@ -12,6 +12,7 @@ import {
   buildOutboundChildEnv,
   ENGINE_ENV_DENY_LIST,
   ENGINE_ENV_L0_INFRA_KEYS,
+  SHARED_POOL_KEY,
   type LoggerSink,
   configureLoggerSink,
   resetLoggerSinkForTests,
@@ -189,5 +190,9 @@ describe("buildOutboundChildEnv（SDK 版出站卫生）", () => {
 describe("常量镜像自洽", () => {
   it("ENGINE_ENV_L0_INFRA_KEYS 无重复", () => {
     expect(new Set(ENGINE_ENV_L0_INFRA_KEYS).size).toBe(ENGINE_ENV_L0_INFRA_KEYS.length);
+  });
+
+  it("SHARED_POOL_KEY 值锚定 'shared'（存量 journal 落盘路径分段，L3 收编后改名不改值）", () => {
+    expect(SHARED_POOL_KEY).toBe("shared");
   });
 });
