@@ -568,20 +568,63 @@ async function safeParse(fileName: string): Promise<ParseResult> {
 // 文本渲染（content）
 // ---------------------------------------------------------------------------
 
-function formatFindContent(
-  query: string,
-  matches: MatchedSession[],
-  truncated: boolean,
-): string {
-  const lines = matches.map((m, i) => {
-    const parts = [`${i + 1}. ${m.sessionId.slice(0, SESSION_ID_PREFIX_LEN)}…`, formatDate(m.mtime)]
-    if (m.cwd) parts.push(shortCwd(m.cwd))
-    if (m.firstMessagePreview) parts.push(m.firstMessagePreview)
-    return parts.join(' · ')
-  })
-  const head = `${matches.length} session(s) matched "${query}"${
-    truncated ? ` (truncated, showing first ${matches.length})` : ''
+/**
+ * find 分组渲染的单组数据（u10，design 2026-09-10 §6.7 子决策 2）。
+ * main 组恒在 groups 首位（置顶），编号跨组连续。
+ */
+interface FindGroup {
+  source: 'main' | 'subagent'
+  /** 配额切片后实际展示的候选 */
+  shown: MatchedSession[]
+  /** 溢出：该组命中数 > shown.length（+1 探测；溢出时精确总数未知，只知更多） */
+  overflow: boolean
+}
+
+/**
+ * find 输出渲染（u10 分组版，design §5.1 形态 + §6.7 子决策 2/3 精确规格）：
+ *
+ * - 按 source 分组、main 段置顶（subagent 噪声不淹没目标），组头标注各组命中数，
+ *   组内编号跨组连续（§5.1 示例：subagent 段从 main 段末尾续号）。
+ * - 候选行打印完整 sessionId（废除 8 字符截断——agent 拿到截断 id 无法粘回做精确调用，
+ *   §3.2 失败模式 D）。SESSION_ID_PREFIX_LEN 常量本体与 result 通路不动（§6.7 范围声明）。
+ * - 每条 main 候选附一行可直接复制执行的 outline 调用串（↳，§6.7 子决策 3）；
+ *   subagent 候选不附（噪声不配指针）。
+ * - truncated 按**合并总量**（命中总数 vs 实际输出数）计算，由调用方传入，此处只负责标注。
+ * - subagent 段超配额折叠为一行展开提示（加 source:"subagent" 查看）；main 段溢出
+ *   仅在组头标注（规格的折叠提示只针对 subagent）。
+ */
+function formatFindContent(query: string, groups: FindGroup[], truncated: boolean): string {
+  const shown = groups.flatMap((g) => g.shown)
+  const head = `${shown.length} session(s) matched "${query}"${
+    truncated ? ` (truncated, showing first ${shown.length})` : ''
   }`
+  const lines: string[] = []
+  let index = 0
+  for (const g of groups) {
+    lines.push('')
+    if (g.overflow && g.shown.length === 0) {
+      // main 占满配额、subagent 有命中但 0 条展示（§6.7：「subagent 段为 0 条仅显示计数」；
+      // 命中总数须全量深读首条 user 才能精确计数，recent 形态下 IO 不可接受，只报有命中）
+      lines.push(`${g.source}（有命中未显示——展示配额已被 main 占满）：`)
+    } else if (g.overflow) {
+      lines.push(`${g.source}（>${g.shown.length} 条命中，显示前 ${g.shown.length} 条）：`)
+    } else {
+      lines.push(`${g.source}（${g.shown.length} 条命中）：`)
+    }
+    for (const m of g.shown) {
+      index += 1
+      const parts = [`${index}. ${m.sessionId}`, formatDate(m.mtime)]
+      if (m.cwd) parts.push(shortCwd(m.cwd))
+      if (m.firstMessagePreview) parts.push(m.firstMessagePreview)
+      lines.push(`  ${parts.join(' · ')}`)
+      if (g.source === 'main') {
+        lines.push(`     ↳ session_read { action:"outline", session:"${m.sessionId}" }`)
+      }
+    }
+    if (g.overflow && g.source === 'subagent') {
+      lines.push('  … 另有 subagent 命中未显示。👉 加 source:"subagent" 查看')
+    }
+  }
   return `${head}\n${lines.join('\n')}`
 }
 
@@ -794,25 +837,91 @@ function snippet(text: string, idx: number, len: number): string {
 /** find action 的默认匹配数上限。 */
 const FIND_DEFAULT_LIMIT = 20
 
-/** find：按片段/名称/recent 定位 session（design §3.4 find）。零匹配不抛，返回提示。 */
+/**
+ * find 零匹配：F1 自检行（u9）。计数取本次实扫（无 options 恒实扫，不读 doctor
+ * 缓存——§7B 要点 8 PS-14），完整信号包保证 [live] 根（最高优先级）计数可见。
+ */
+function findNoMatch(query: string, signals: SessionReadSignals): Promise<ToolResult> {
+  // F1 自检行需要发现层实况：resolveSessionRoots 与 find 刚完成的扫描同一数据源。
+  return resolveSessionRoots(signals).then((roots) => ({
+    content: [{ type: 'text', text: formatNoMatch(query, roots) }],
+    details: { matches: [], truncated: false },
+  }))
+}
+
+/**
+ * find：按片段/名称/recent 定位 session（design §3.4 find）。零匹配不抛，返回提示。
+ *
+ * u10 分组（design 2026-09-10 §6.7 子决策 2 精确规格，纯展示层规则）：
+ * - `limit` 作用于**分组后的合并列表**：main 段优先占满（上限 limit），剩余配额给
+ *   subagent 段；main 命中 > limit 时 subagent 段为 0 条仅显示计数 + 展开提示。
+ * - `truncated` 按**合并总量**（命中总数 vs 实际输出数）计算：各 source 独立查询以
+ *   「配额 +1」探测溢出，`hasMore ⟺ 该组命中数 > 该组展示数`，合取即精确等价于
+ *   「命中总数 > 实际输出数」，与单次合并查询的 truncated 语义逐值一致。
+ * - 匹配层 findSessions 不动：分组只是展示规则，各 source 独立查询的组内语义仍是
+ *   mtime 排序 + limit 截断。subagent 溢出时不做精确计数（需对全部命中深读首条 user，
+ *   recent 形态下命中可达全库量级，IO 不可接受），折叠行只报「有更多 + 展开方式」。
+ * - 显式 source 过滤走单组查询（现状语义）：显式 source 本身就是折叠提示所指的展开
+ *   动作，不再折叠。
+ */
 async function doFind(params: SessionReadParams, signals: SessionReadSignals): Promise<ToolResult> {
   const query = requireStr(params.query, 'query', 'find')
-  const { matches, truncated } = await findSessions(query, signals.agentDir, {
-    cwd: params.cwd,
-    limit: params.limit ?? FIND_DEFAULT_LIMIT,
-    ...(params.source ? { source: params.source } : {}),
-  })
-  if (matches.length === 0) {
-    // F1 自检行计数取本次实扫（无 options 恒实扫，不读 doctor 缓存——§7B 要点 8 PS-14），
-    // 完整信号包保证 [live] 根（最高优先级）计数可见。
-    const roots = await resolveSessionRoots(signals)
+  const limit = params.limit ?? FIND_DEFAULT_LIMIT
+  const cwd = params.cwd
+
+  // 显式 source：单组，匹配层原语义（mtime 排序 + limit 截断），无分组展示
+  if (params.source !== undefined) {
+    const { matches, truncated } = await findSessions(query, signals.agentDir, {
+      cwd,
+      limit,
+      source: params.source,
+    })
+    if (matches.length === 0) return findNoMatch(query, signals)
     return {
-      content: [{ type: 'text', text: formatNoMatch(query, roots) }],
-      details: { matches: [], truncated: false },
+      content: [
+        {
+          type: 'text',
+          text: formatFindContent(
+            query,
+            [{ source: params.source, shown: matches, overflow: false }],
+            truncated,
+          ),
+        },
+      ],
+      details: { matches, truncated },
     }
   }
+
+  // 分组查询：main 段以 limit+1 探测溢出，优先占满配额
+  const mainRes = await findSessions(query, signals.agentDir, { cwd, limit: limit + 1, source: 'main' })
+  const mainHasMore = mainRes.matches.length > limit
+  const mainShown = mainHasMore ? mainRes.matches.slice(0, limit) : mainRes.matches
+
+  // subagent 段：remaining>0 → 配额 remaining+1 探测溢出；remaining=0（main 占满/溢出）
+  // → limit:1 仅探测有无命中（折叠计数判据，不做全量深读）
+  const remaining = limit - mainShown.length
+  const subLimit = remaining > 0 ? remaining + 1 : 1
+  const subRes = await findSessions(query, signals.agentDir, { cwd, limit: subLimit, source: 'subagent' })
+  const subOverflow = remaining > 0 ? subRes.matches.length > remaining : subRes.matches.length > 0
+  const subShown = subRes.matches.slice(0, Math.max(remaining, 0))
+
+  const matches = [...mainShown, ...subShown]
+  if (matches.length === 0) return findNoMatch(query, signals)
+  const truncated = mainHasMore || subOverflow
   return {
-    content: [{ type: 'text', text: formatFindContent(query, matches, truncated) }],
+    content: [
+      {
+        type: 'text',
+        text: formatFindContent(
+          query,
+          [
+            { source: 'main', shown: mainShown, overflow: mainHasMore },
+            { source: 'subagent', shown: subShown, overflow: subOverflow },
+          ],
+          truncated,
+        ),
+      },
+    ],
     details: { matches, truncated },
   }
 }

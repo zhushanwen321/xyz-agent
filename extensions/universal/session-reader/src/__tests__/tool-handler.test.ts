@@ -2023,3 +2023,249 @@ describe('u9 F1 重写 + uuid 归一化（fixture，§5.2 / §6.7 / §11.5）', 
     expect(deduped.content[0].text).toContain('候选集非空（共 3 文件）')
   })
 })
+
+// ============================================================
+// u10：find 分组输出（design 2026-09-10 §5.1 形态 / §6.7 子决策 2/3 / §8.2 回归基线）
+// ============================================================
+
+describe('u10 find 分组输出（fixture，§6.7 子决策 2/3 + §8.2 回归基线）', () => {
+  let tmp: string
+  const SLUG = '--demo-cwd--'
+  // uuidv7 同毫秒时间前缀碰撞是现网「34 条 subagent」形态的成因（§3.4），fixture 沿用共享前缀
+  const PREFIX = '019e6c96'
+  const mainId = (n: number) => `${PREFIX}-aaaa-bbbb-cccc-d${String(n).padStart(11, '0')}`
+  const subId = (n: number) => `${PREFIX}-aaaa-bbbb-cccc-e${String(n).padStart(11, '0')}`
+
+  /** 写 session 文件（subagent:true 写入 subagent 根），形态同 u9 段 writeSession。 */
+  async function writeSession(
+    id: string,
+    opts?: { subagent?: boolean; firstUserText?: string },
+  ): Promise<void> {
+    const dir = opts?.subagent
+      ? join(tmp, 'agent', 'subagents', SLUG, 'sessions')
+      : join(tmp, 'agent', 'sessions', SLUG)
+    await mkdir(dir, { recursive: true })
+    const lines = [JSON.stringify({ type: 'session', id, cwd: '/demo' })]
+    if (opts?.firstUserText !== undefined) {
+      lines.push(
+        JSON.stringify({
+          type: 'message',
+          id: `${id}-m1`,
+          message: { role: 'user', content: [{ type: 'text', text: opts.firstUserText }] },
+        }),
+      )
+    }
+    await writeFile(join(dir, `${id}.jsonl`), lines.join('\n') + '\n')
+  }
+
+  /**
+   * 写带 assistant 正文的 subagent（manifest + session 文件三行形态），
+   * 供 result action 批量调用（回归基线：批量头行 8 字符短 id 不受 u10 影响）。
+   */
+  async function writeSubagentWithResult(saId: string, id: string, body: string): Promise<void> {
+    const sessionFile = join(tmp, 'agent', 'subagents', SLUG, 'sessions', `${id}.jsonl`)
+    await mkdir(dirname(sessionFile), { recursive: true })
+    const lines = [
+      JSON.stringify({ type: 'session', id, cwd: '/demo' }),
+      JSON.stringify({
+        type: 'message',
+        id: `${id}-m1`,
+        message: { role: 'user', content: [{ type: 'text', text: 'task' }] },
+      }),
+      JSON.stringify({
+        type: 'message',
+        id: `${id}-a1`,
+        message: { role: 'assistant', content: [{ type: 'text', text: body }] },
+      }),
+    ]
+    await writeFile(sessionFile, lines.join('\n') + '\n')
+    const recordsDir = join(tmp, 'agent', 'subagents', SLUG, 'records')
+    await mkdir(recordsDir, { recursive: true })
+    await writeFile(
+      join(recordsDir, `${saId}.json`),
+      JSON.stringify({ id: saId, rootSessionId: 'root-u10', agentName: 'explorer', sessionFile }),
+    )
+  }
+
+  function find(
+    query: string,
+    extra?: Partial<SessionReadParams>,
+  ): ReturnType<typeof handleSessionRead> {
+    return handleSessionRead({ action: 'find', query, ...extra }, join(tmp, 'agent'))
+  }
+
+  interface FindDetails {
+    matches: Array<{ source: string; sessionId: string }>
+    truncated: boolean
+  }
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'tool-handler-u10-'))
+  })
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('① main 置顶 + 全 id + ↳ 可复制调用串 + 编号跨组连续（§5.1 全列出形态）', async () => {
+    const M1 = mainId(1)
+    const S1 = subId(1)
+    const S2 = subId(2)
+    await writeSession(M1, { firstUserText: 'main content' })
+    await writeSession(S1, { subagent: true, firstUserText: 'sub content one' })
+    await writeSession(S2, { subagent: true, firstUserText: 'sub content two' })
+
+    const r = await find(PREFIX)
+    const text = r.content[0].text
+    // main 段置顶：main 组头与 main id 均先于 subagent 出现
+    expect(text.indexOf('main（')).toBeLessThan(text.indexOf('subagent（'))
+    expect(text.indexOf(M1)).toBeLessThan(text.indexOf(S1))
+    expect(text).toContain('main（1 条命中）：')
+    expect(text).toContain('subagent（2 条命中）：')
+    // 全 id：36 字符完整出现，8 字符截断形态消失（§6.7 子决策 3）
+    expect(text).toContain(M1)
+    expect(text).not.toContain(`${M1.slice(0, 8)}…`)
+    // ↳ 可复制调用串只附 main 候选（subagent 噪声不配指针）
+    expect(text).toContain(`↳ session_read { action:"outline", session:"${M1}" }`)
+    expect(text).not.toContain(`session:"${S1}"`)
+    // 编号跨组连续：main 是 1 号，subagent 段续 2 号（组内 mtime 序不固定，用正则）
+    expect(text).toContain(`  1. ${M1}`)
+    expect(text).toMatch(/  2\. 019e6c96-aaaa-bbbb-cccc-e0000000000[12]/)
+    // details 合并列表：main 首位、集合完整、无截断
+    const d = r.details as FindDetails
+    expect(d.truncated).toBe(false)
+    expect(d.matches[0]).toMatchObject({ source: 'main', sessionId: M1 })
+    expect(new Set(d.matches.map((m) => m.sessionId))).toEqual(new Set([M1, S1, S2]))
+  })
+
+  it('② subagent 超剩余配额 → 折叠计数行 + 加 source:"subagent" 提示（§6.7 子决策 2）', async () => {
+    const M1 = mainId(1)
+    await writeSession(M1)
+    for (let i = 1; i <= 3; i++) await writeSession(subId(i), { subagent: true })
+
+    // limit 2：main 1 条（无溢出）→ 剩余配额 1 → subagent 展示 1 条 + 溢出折叠
+    const r = await find(PREFIX, { limit: 2 })
+    const text = r.content[0].text
+    expect(text).toContain('main（1 条命中）：')
+    expect(text).toContain('subagent（>1 条命中，显示前 1 条）：')
+    expect(text).toContain('… 另有 subagent 命中未显示。👉 加 source:"subagent" 查看')
+    const d = r.details as FindDetails
+    expect(d.truncated).toBe(true)
+    expect(d.matches).toHaveLength(2)
+    expect(d.matches[0].source).toBe('main')
+    expect(d.matches.filter((m) => m.source === 'subagent')).toHaveLength(1)
+  })
+
+  it('③ main 命中占满 limit → subagent 段 0 条仅显示计数（§6.7：main 优先占满）', async () => {
+    for (let i = 1; i <= 3; i++) await writeSession(mainId(i))
+    for (let i = 1; i <= 2; i++) await writeSession(subId(i), { subagent: true })
+
+    const r = await find(PREFIX, { limit: 3 })
+    const text = r.content[0].text
+    expect(text).toContain('main（3 条命中）：')
+    expect(text).toContain('subagent（有命中未显示——展示配额已被 main 占满）：')
+    expect(text).toContain('👉 加 source:"subagent" 查看')
+    // subagent 条目与调用串不出现（0 条展示）
+    expect(text).not.toContain(subId(1))
+    const d = r.details as FindDetails
+    expect(d.matches).toHaveLength(3)
+    expect(d.matches.every((m) => m.source === 'main')).toBe(true)
+    // 合并总量：命中 3 main + 2 sub > 展示 3 → truncated=true
+    expect(d.truncated).toBe(true)
+  })
+
+  it('④ truncated 按合并总量计算（命中总数 vs 实际输出数，含 main 恰满边界）', async () => {
+    for (let i = 1; i <= 2; i++) await writeSession(mainId(i))
+    for (let i = 1; i <= 2; i++) await writeSession(subId(i), { subagent: true })
+
+    // a) 全列出（4 ≤ 20）：truncated=false
+    const all = (await find(PREFIX)).details as FindDetails
+    expect(all.matches).toHaveLength(4)
+    expect(all.truncated).toBe(false)
+
+    // b) main 恰好占满 limit（2/2）+ subagent 有命中 → 仍截断（防 main 恰满漏探测 subagent）
+    const exact = (await find(PREFIX, { limit: 2 })).details as FindDetails
+    expect(exact.matches).toHaveLength(2)
+    expect(exact.matches.every((m) => m.source === 'main')).toBe(true)
+    expect(exact.truncated).toBe(true)
+
+    // c) 混合截断：展示 3（2 main + 1 sub）< 命中 4 → truncated=true
+    const mixed = (await find(PREFIX, { limit: 3 })).details as FindDetails
+    expect(mixed.matches).toHaveLength(3)
+    expect(mixed.matches.filter((m) => m.source === 'main')).toHaveLength(2)
+    expect(mixed.matches.filter((m) => m.source === 'subagent')).toHaveLength(1)
+    expect(mixed.truncated).toBe(true)
+  })
+
+  it('⑤a 回归基线：find{query:<前缀>, limit:100} main 0 条 + subagent 全列（现网 34 条形态）', async () => {
+    for (let i = 1; i <= 34; i++) await writeSession(subId(i), { subagent: true })
+
+    const r = await find(PREFIX, { limit: 100 })
+    const d = r.details as FindDetails
+    expect(d.matches).toHaveLength(34)
+    expect(d.matches.every((m) => m.source === 'subagent')).toBe(true)
+    expect(d.truncated).toBe(false)
+    const text = r.content[0].text
+    // main 段 0 条可辨识（防「全是 subagent」被误读），subagent 段全列不折叠
+    expect(text).toContain('main（0 条命中）：')
+    expect(text).toContain('subagent（34 条命中）：')
+    expect(text).not.toContain('加 source:"subagent"')
+  })
+
+  it('⑤b 回归基线：result 批量头行仍 8 字符短 id（SESSION_ID_PREFIX_LEN 通路不动）', async () => {
+    const R1 = `${PREFIX}-aaaa-bbbb-cccc-f00000000001`
+    const R2 = `${PREFIX}-aaaa-bbbb-cccc-f00000000002`
+    await writeSubagentWithResult('sa-u10-r1', R1, 'alpha body')
+    await writeSubagentWithResult('sa-u10-r2', R2, 'beta body')
+
+    const res = await handleSessionRead(
+      { action: 'result', session: 'sa-u10-r1,sa-u10-r2' },
+      join(tmp, 'agent'),
+    )
+    const text = res.content[0].text
+    expect(text).toContain(`(session ${R1.slice(0, 8)}…)`)
+    expect(text).toContain(`(session ${R2.slice(0, 8)}…)`)
+  })
+
+  it('⑤c 回归基线：recent 查询 main 段置顶可辨识', async () => {
+    for (let i = 1; i <= 2; i++) await writeSession(mainId(i))
+    for (let i = 1; i <= 2; i++) await writeSession(subId(i), { subagent: true })
+
+    const r = await find('recent')
+    const text = r.content[0].text
+    expect(text.indexOf('main（2 条命中）：')).toBeLessThan(text.indexOf('subagent（2 条命中）：'))
+    const d = r.details as FindDetails
+    expect(d.matches).toHaveLength(4)
+    // 分组价值：main/subagent 的 mtime 交错也被 main 段置顶（§8.2「main 段置顶后可辨识」）
+    expect(d.matches.slice(0, 2).every((m) => m.source === 'main')).toBe(true)
+    expect(d.truncated).toBe(false)
+  })
+
+  it('⑥ resolveByFragment 独立无分组语义：outline 片段多匹配 → F2 全量候选（不被配额截断）', async () => {
+    for (let i = 1; i <= 2; i++) await writeSession(mainId(i))
+    for (let i = 1; i <= 3; i++) await writeSession(subId(i), { subagent: true })
+
+    // 解析路径（resolveByFragment → findSessions limit:10 无 source）保持 mtime 排序 +
+    // limit 截断原语义：5 命中全进 F2 消歧候选，无 main 置顶/配额分组介入（§6.7 末条）
+    const r = await handleSessionRead({ action: 'outline', session: PREFIX }, join(tmp, 'agent'))
+    const d = r.details as { ambiguous: boolean; candidates: Array<{ sessionId: string }> }
+    expect(d.ambiguous).toBe(true)
+    expect(d.candidates).toHaveLength(5)
+    expect(new Set(d.candidates.map((c) => c.sessionId))).toEqual(
+      new Set([mainId(1), mainId(2), subId(1), subId(2), subId(3)]),
+    )
+  })
+
+  it('⑥b 显式 source 查询走单组原语义：不折叠、保持 mtime+limit 截断', async () => {
+    for (let i = 1; i <= 3; i++) await writeSession(subId(i), { subagent: true })
+
+    // 显式 source 本身就是折叠提示所指的展开动作，不再折叠
+    const r = await find(PREFIX, { source: 'subagent', limit: 1 })
+    const text = r.content[0].text
+    expect(text).toContain('subagent（1 条命中）：')
+    expect(text).not.toContain('加 source:"subagent"')
+    const d = r.details as FindDetails
+    expect(d.matches).toHaveLength(1)
+    expect(d.matches[0].source).toBe('subagent')
+    expect(d.truncated).toBe(true)
+  })
+})
