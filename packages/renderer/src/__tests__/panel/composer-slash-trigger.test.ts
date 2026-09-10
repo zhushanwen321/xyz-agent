@@ -133,11 +133,12 @@ const MOCK_CMDS = [
   { name: 'fix', source: 'skill' },
 ]
 
-/** 推 session.commands 到 sessionId 订阅者（CommandPopover 用 events.on(sessionId) 订阅） */
-function pushCommands(sessionId: string): void {
+/** 推 session.commands 到 sessionId 订阅者（CommandPopover 用 events.on(sessionId) 订阅）。
+ *  commands 可覆盖——用于模拟浮层打开期间候选源缩短（N-2 越界路径）。 */
+function pushCommands(sessionId: string, commands: typeof MOCK_CMDS = MOCK_CMDS): void {
   const msg = {
     type: 'session.commands',
-    payload: { sessionId, commands: MOCK_CMDS },
+    payload: { sessionId, commands },
   } as ServerMessage<'session.commands'>
   events.dispatchSession(sessionId, msg)
 }
@@ -206,6 +207,33 @@ describe('CommandPopover slash query 过滤（U6-U8）', () => {
     const ret2 = vm.handleKeydown(e1)
     expect(ret2).toBe(false)
     expect((vm as unknown as { activeIndex: number }).activeIndex).toBe(before) // 未二次跳动
+  })
+
+  // ── N-2 候选源缩短导致 activeIndex 越界（最终复审 info，既有缺陷当轮收口）──
+  // 候选源可在浮层打开期间**缩短**（session.commands 新快照条目更少 / sessionStore.list
+  // 广播删除），而 activeIndex 只在 open/type/query 变化时归零 ⇒ 索引可 ≥ 新长度 ⇒
+  // Enter/Tab 读 list[activeIndex] 为 undefined ⇒ onSelect(undefined) 读 item.selected 抛
+  // TypeError（上一轮的 list.length > 0 只挡空表不挡越界）。修复 = 在唯一数组读点收敛到末项。
+  it('N-2 候选在浮层打开期间缩短 → Enter 不抛错且选中末项（读点收敛）', async () => {
+    await mountPopover('')
+    const vm = wrapper!.vm as unknown as { handleKeydown: (e: KeyboardEvent) => boolean }
+    // 4 项（compact + 3 pi 命令）时方向键下移到末项（activeIndex=3）
+    for (let i = 0; i < 3; i++) {
+      vm.handleKeydown(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    }
+    expect(bodyItemButtons()[3].className).toContain('bg-surface') // 前置：索引确已到末项
+    // 源缩短：新 session.commands 快照只剩 1 条 pi 命令（+ 前端注入 compact = 2 项）
+    pushCommands('s1', [{ name: 'commit', source: 'extension' }])
+    await flushPromises()
+    await nextTick()
+    expect(bodyItemButtons()).toHaveLength(2)
+    // 越界索引在 Enter 读点收敛（回退收敛 ⇒ 本行抛 TypeError: reading 'selected' of undefined）
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    expect(() => vm.handleKeydown(enter)).not.toThrow()
+    // 收敛到末项（而非归零到首项——保住缩短前的相对位置）
+    expect(wrapper!.emitted('select')?.at(-1)?.[0]).toMatchObject({ type: 'slash', name: '/commit' })
+    // 已知残留（不在本 finding 范围）：读点收敛不改写 activeIndex，收缩后到下一次 ↑↓ 前
+    // 无行高亮；此处不断言，避免把「不修高亮」固化成期望。
   })
 })
 

@@ -14,8 +14,8 @@
  *   core dispatch/send，keydown 层不分流）；⇧⏎ 放行换行。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { computed, ref } from 'vue'
-import { mount } from '@vue/test-utils'
+import { computed, nextTick, ref } from 'vue'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { SendRoute, StagingAction } from '@xyz-agent/core/domain/composer'
 import { useComposerKeydown, type ComposerKeydownDeps } from './composer-keydown'
@@ -27,6 +27,19 @@ import CommandPopover from '@/components/panel/CommandPopover.vue'
 vi.mock('@/api', () => ({
   session: { getCommands: vi.fn().mockResolvedValue({ sessionId: '', commands: [] }) },
 }))
+
+// open-fetch 的 landing cwd 路 import composer domain（u5 re-anchor 后实现的 import 是 core
+// 子路径）——mock 之隔离真实 WS 通路。「浮层可见但候选为空」用例必须走真实 open 边沿拉取回写
+// 空结果（fileNoResultsVisible ⇒ fileFallbackVisible），mock specifier 必须与实现一致否则 mock 失效
+// （与 composer-file-popover.test.ts 同款）
+const getFileCandidatesByCwdMock = vi.hoisted(() => vi.fn())
+vi.mock('@xyz-agent/core/transport/api/domains/composer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@xyz-agent/core/transport/api/domains/composer')>()
+  return {
+    ...actual,
+    getFileCandidatesByCwd: (...args: unknown[]) => getFileCandidatesByCwdMock(...args),
+  }
+})
 
 type KeyMods = { shift?: boolean; alt?: boolean; ctrl?: boolean; meta?: boolean }
 
@@ -283,21 +296,19 @@ describe('useComposerKeydown', () => {
     })
 
     afterEach(() => {
+      vi.useRealTimers()
       popoverWrapper?.unmount()
       popoverWrapper = null
       removeTarget()
       document.body.innerHTML = ''
     })
 
-    /** 挂真 CommandPopover（panel 态无 sid → compact 一项保底非空）+ 接线 composer keydown */
-    function setupChain(open: boolean): void {
-      popoverWrapper = mount(CommandPopover, {
-        attachTo: document.body,
-        props: { open, type: 'slash', variant: 'panel', onSelect } as never,
-      })
+    /** target（composer contenteditable）挂 composer keydown 分发器，cmdOpen/commandPopoverRef
+     *  按产线接线指向已挂载的浮层实例。 */
+    function wireComposerKeydown(open: boolean): void {
       const deps: ComposerKeydownDeps = {
         cmdOpen: ref(open),
-        commandPopoverRef: ref(popoverWrapper.vm as never),
+        commandPopoverRef: ref(popoverWrapper!.vm as never),
         inputRef: ref(null),
         staging: { handleEsc: vi.fn(() => false), activeStaging: computed(() => null) },
         sendRoute: computed(() => 'direct' as SendRoute),
@@ -307,6 +318,40 @@ describe('useComposerKeydown', () => {
         onSend,
       }
       target.addEventListener('keydown', useComposerKeydown(deps))
+    }
+
+    /** 挂真 CommandPopover（panel 态无 sid → compact 一项保底非空）+ 接线 composer keydown。
+     *  propsOverride 供可见性矩阵用例换 type/query/variant（query 无匹配即可造「open 但空候选」）。 */
+    function setupChain(open: boolean, propsOverride: Record<string, unknown> = {}): void {
+      popoverWrapper = mount(CommandPopover, {
+        attachTo: document.body,
+        props: { open, type: 'slash', variant: 'panel', onSelect, ...propsOverride } as never,
+      })
+      wireComposerKeydown(open)
+    }
+
+    /**
+     * 浮层「可见但候选为空」的生产形态：landing `$` 空结果态——fileNoResultsVisible 为真
+     * ⇒ fileFallbackVisible 为真 ⇒ 模板 v-if 渲染 PopoverContent（空态行），但 items 为空。
+     * 必须走真实链路造态：挂载时 open=false，再 setProps 打开触发 open false→true 边沿拉取
+     * （getFileCandidatesByCwd 回空 files 且 truncated=false）+ flush 回写 success。
+     * 节流是模块级真实时钟，fake Date 使各用例互不撞窗口（flushPromises 依赖的
+     * setImmediate/setTimeout 保持真实）。
+     */
+    async function setupLandingFileEmptyChain(): Promise<void> {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      getFileCandidatesByCwdMock.mockResolvedValueOnce({ files: [], truncated: false })
+      popoverWrapper = mount(CommandPopover, {
+        attachTo: document.body,
+        props: { open: false, type: 'file', variant: 'landing', cwd: '/tmp/empty-dir', onSelect } as never,
+      })
+      wireComposerKeydown(true)
+      await nextTick()
+      await popoverWrapper.setProps({ open: true })
+      await flushPromises()
+      await nextTick()
+      // 造态自检：浮层确实渲染（空态行在 DOM 中），否则下方「可见态消费」断言会假绿
+      expect(document.body.querySelector('[data-testid="cmd-file-empty"]')).not.toBeNull()
     }
 
     /** 真实 DOM 派发（cancelable 保证 preventDefault 生效；bubbles 走完整 capture→target→bubble） */
@@ -332,7 +377,102 @@ describe('useComposerKeydown', () => {
       expect(e.defaultPrevented).toBe(true)
     })
 
-    it('IME composing 态（compositionstart 置 composingRef）：Enter 不选中浮层候选', () => {
+    it('浮层不可见（行首 `/` + 无匹配 query，候选为空且非 landing file 空态）→ Enter 放行：onSend 被调用、浮层不消费（RC-A-1 回归锁）', () => {
+      // 生产复现：会话内行首输入 `/zzz`（无匹配命令）或 `/usr/local/bin`——open=true 但
+      // items=[]（仅剩的前端注入 compact 被 query 过滤掉），slash 路的 fileFallbackVisible
+      // 恒假 ⇒ 模板 v-if 不渲染 PopoverContent。修复前（S-1）Enter/Tab 在此被无条件消费
+      // ⇒ 消息发不出去且无任何提示。故本用例锁「不可见 → 不消费」。
+      setupChain(true, { query: 'zzz' })
+
+      const e = dispatchEnter()
+
+      expect(onSend).toHaveBeenCalledTimes(1) // Enter 抵达 composer 分发器：消息可发送
+      expect(onSelect).not.toHaveBeenCalled()
+      // 浮层确实未渲染（不可见态自检，防「可见态误当不可见态」假绿）
+      expect(document.body.querySelectorAll('.cmd-row')).toHaveLength(0)
+      expect(document.body.querySelector('[data-testid="cmd-file-empty"]')).toBeNull()
+      // 注：defaultPrevented 此刻为 true 是 composer 自身 Enter 处理（composer-keydown.ts:133）
+      // 的既有行为，不是浮层消费——浮层消费的判据是 onSend 是否可达（本断言）与 Tab 放行。
+    })
+
+    it('浮层不可见：Tab 同样放行、不 preventDefault（不可见时全部键同口径放行，非仅 Enter）', () => {
+      setupChain(true, { query: 'zzz' })
+
+      const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+      target.dispatchEvent(tab)
+
+      // 修复前：浮层 capture 无条件 preventDefault + stopPropagation ⇒ defaultPrevented=true
+      expect(tab.defaultPrevented).toBe(false)
+    })
+
+    // 可见性矩阵（RC-A-1）：四条路的浮层渲染条件同源（items.length > 0 || fileFallbackVisible），
+    // 而 fileFallbackVisible 仅 landing `$` 路为真 ⇒ 四条路空候选时浮层都不渲染，Enter 必须放行。
+    it.each(['slash', 'session', 'subagent', 'skill'])(
+      '浮层不可见（type=%s 空候选源）：Enter 放行不消费（可见性矩阵）',
+      (type) => {
+        setupChain(true, { type, query: 'zzz' })
+        const handleKeydown = popoverWrapper!.vm.handleKeydown as (e: KeyboardEvent) => boolean
+
+        const enter = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })
+        expect(handleKeydown(enter)).toBe(false)
+        expect(enter.defaultPrevented).toBe(false)
+        expect(document.body.querySelectorAll('.cmd-row')).toHaveLength(0) // 浮层确实未渲染
+      },
+    )
+
+    it('浮层可见但候选为空（landing `$` 空结果态）：Enter 仍被消费——defaultPrevented、不选中、不得到达 onSend、不自动关闭浮层', async () => {
+      await setupLandingFileEmptyChain()
+
+      const e = dispatchEnter()
+
+      expect(e.defaultPrevented).toBe(true) // 事件被浮层消费（preventDefault），未被放行
+      expect(onSend).not.toHaveBeenCalled() // 未落到 composer 分发器（stopPropagation 截断）
+      expect(onSelect).not.toHaveBeenCalled() // 无候选可选中
+      // 不改变 open 状态：不自动关闭（否则用户下一次 Enter 会在无浮层可感知下意外发送）
+      expect(popoverWrapper!.emitted('update:open')).toBeFalsy()
+    })
+
+    it('浮层可见但候选为空：↑↓ 仍无害放行（现状行为不变），仅 Enter/Tab 被消费', async () => {
+      await setupLandingFileEmptyChain()
+      const handleKeydown = popoverWrapper!.vm.handleKeydown as (e: KeyboardEvent) => boolean
+
+      // 方向键无项可移 → 返回 false 且不 preventDefault（行为与修复前一致，未被本次重排改变）
+      const down = new KeyboardEvent('keydown', { key: 'ArrowDown', cancelable: true })
+      expect(handleKeydown(down)).toBe(false)
+      expect(down.defaultPrevented).toBe(false)
+
+      const up = new KeyboardEvent('keydown', { key: 'ArrowUp', cancelable: true })
+      expect(handleKeydown(up)).toBe(false)
+      expect(up.defaultPrevented).toBe(false)
+
+      // Enter/Tab 例外：可见空态也消费（返回 true + preventDefault），但不选中任何项
+      const enter = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })
+      expect(handleKeydown(enter)).toBe(true)
+      expect(enter.defaultPrevented).toBe(true)
+
+      const tab = new KeyboardEvent('keydown', { key: 'Tab', cancelable: true })
+      expect(handleKeydown(tab)).toBe(true)
+      expect(tab.defaultPrevented).toBe(true)
+
+      expect(onSelect).not.toHaveBeenCalled()
+    })
+
+    it('浮层可见但候选为空：Escape 由浮层 DismissableLayer 兜底关闭（不被提前返回拦死）', async () => {
+      await setupLandingFileEmptyChain()
+      const handleKeydown = popoverWrapper!.vm.handleKeydown as (e: KeyboardEvent) => boolean
+
+      const esc = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+      // 本层不消费（方向键/其他键在无候选项时放行）——浮层已渲染，Escape 交 reka DismissableLayer
+      expect(handleKeydown(esc)).toBe(false)
+      expect(esc.defaultPrevented).toBe(false)
+    })
+
+    it('IME composing 态（compositionstart 置 composingRef）：Enter 不选中浮层候选（只锁「浮层不选中」）', () => {
+      // 本用例只锁浮层侧行为（composingRef 真值时 handleKeydown 不消费 Enter → 不选中候选）。
+      // 不加 onSend 断言的原因：本用例的 target 是纯 div 直挂 composer 分发器，绕过产线上
+      // 真正的 IME 防线——dom-core contenteditable.ts:242 的元素级 composing 守卫（事件根本
+      // 不会转发到 composer-keydown）。「IME 场景不发送」的有效锁在 dom-core contenteditable.test.ts
+      // 「onKeydown IME 守卫」用例；事件属性路径（e.isComposing=true）见下方用例。
       setupChain(true)
       // 组合发生在 composer 输入区（target），compositionstart 冒泡到 window capture 置 composingRef
       target.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))

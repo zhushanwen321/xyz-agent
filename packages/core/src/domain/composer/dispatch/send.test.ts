@@ -237,9 +237,12 @@ describe('useComposerSend.onSend', () => {
   })
 
   it('②i [D4-c] staging 提交载荷 = segmentsToPrompt(segments)——命令 chip 在中部时归位产物以 /cmd 开首', async () => {
-    // u5 视觉就地后 draft（DOM 序）= '任务描述 /compact'，命令 chip 不在行首；
-    // 载荷迁 segmentsToPrompt 后 = '/compact 任务描述'——防止 fork/handoff staged prompt
-    // 中 /cmd 不在行首被 pi 当字面文本（命令静默失效）。
+    // 载荷必须用 segmentsToPrompt（slash 段归位提首 + 边界空格）——防止 fork/handoff
+    // staged prompt 中 /cmd 不在行首被 pi 当字面文本（命令静默失效）。
+    // [轮 3 注释校正] fixture 的 draft: '任务描述/compact' 是**构造值，生产不可达**：真实
+    // getText() 走 segmentsToText，产出（已归位 + 边界空格）'/compact 任务描述'。此构造值
+    // 专门锁定「判定源不得退回 draft.value」——若退回按 draft 判定，该未归位草稿不以
+    // '/compact' 起首 → 漏命中、测试红；按 segmentsToPrompt 判定才命中。
     const midSlashSegments: Segment[] = [
       { type: 'text', text: '任务描述' },
       { type: 'slash', name: 'compact' },
@@ -309,10 +312,11 @@ describe('useComposerSend.onSend', () => {
     expect(spies.clearInput).toHaveBeenCalledTimes(1)
   })
 
-  it('⑤d [D4-c] defer 路由 + 命令 chip 在中部（DOM 序不以 / 开头）→ segmentsToPrompt 归位命中拒绝', async () => {
-    // u5 视觉就地后 draft（DOM 序）= '看看 /compact 一下'，命令 chip 不在行首；
-    // `/` 半边判定源迁 segmentsToPrompt（slash 段归位提首）后命中拒绝。
-    // segmentsToPrompt 产出：'/compact' + 边界空格 + '任务描述……'。
+  it('⑤d [D4-c] defer 路由 + 命令 chip 在中部 → segmentsToPrompt 归位命中拒绝', async () => {
+    // `/` 半边判定源 = segmentsToPrompt（slash 段归位提首 + 边界空格）→ 命中拒绝。
+    // [轮 3 注释校正] fixture 的 draft: '任务描述/compact' 是**构造值，生产不可达**：真实
+    // getText() 走 segmentsToText，产出 '/compact 任务描述'。此构造值锁定「判定源不得退回
+    // draft.value」——退回则未归位草稿不以 '/compact' 起首 → 漏命中、测试红。
     const midSlashSegments: Segment[] = [
       { type: 'text', text: '任务描述' },
       { type: 'slash', name: 'compact' },
@@ -376,9 +380,13 @@ describe('useComposerSend.onSend', () => {
   })
 
   it('⑨c [D4-c] 命令 chip 在中部的 /compact → segmentsToPrompt 归位后仍拦截（DOM 序文本不以 /compact 起头）', async () => {
-    // u5 视觉就地：draft（DOM 序）= '整理一下 /compact focus on auth'，chip 在中部；
-    // 归位产物 = '/compact focus on auth 整理一下'——拦截命中，args = 命令后剩余全部文本
-    // （D4-e：维持现状协议语义，args 恒为命令后的剩余全部文本含命令 chip 之前的正文）。
+    // 判定源 = segmentsToPrompt（slash 段归位提首）：产物以 '/compact ' 起首 → 拦截命中，
+    // args = 命令后剩余全部文本（D4-e：维持现状协议语义，args 恒为命令后的剩余全部文本含
+    // 命令 chip 之前的正文）。
+    // [轮 3 注释校正] fixture 的 draft: '整理一下/compact focus on auth' 是**构造值，生产
+    // 不可达**：真实 getText() 走 segmentsToText，产出（已归位）'/compact 整理一下focus on auth'。
+    // 此构造值锁定「判定源不得退回 draft.value」——若退回按 draft 判定，该未归位草稿不以
+    // '/compact' 起首 → 漏命中、测试红。
     const midSlashSegments: Segment[] = [
       { type: 'text', text: '整理一下' },
       { type: 'slash', name: 'compact' },

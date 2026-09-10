@@ -11,6 +11,7 @@ import {
   segmentsToPrompt,
   textToSegments,
   normalizeContent,
+  normalizeSegmentOrder,
   type Segment,
 } from '../segments'
 import { parseSkillMarkers } from '../skill-marker'
@@ -331,6 +332,54 @@ describe('skill 标记序列化（D3，composer 多 skill 注入 u3）', () => {
   })
 })
 
+describe('normalizeSegmentOrder（D4-c 归位单一实现，segmentsToText 与 UserBubble 共用）', () => {
+  it('slash 段提为首段，其余段保持原序', () => {
+    const segs: Segment[] = [
+      { type: 'text', text: '总结' },
+      { type: 'slash', name: 'compact' },
+    ]
+    expect(normalizeSegmentOrder(segs)).toEqual([
+      { type: 'slash', name: 'compact' },
+      { type: 'text', text: '总结' },
+    ])
+    // 序列化前缀产物的归位序与展示侧同源（live ≡ reload 的前提）
+    expect(segmentsToText(segs)).toBe('/compact 总结')
+  })
+
+  it('无 slash 段时零重排（原序内容不变）', () => {
+    const segs: Segment[] = [
+      { type: 'text', text: '看看' },
+      { type: 'session', sessionId: 'sid-1', label: '会话 A' },
+    ]
+    expect(normalizeSegmentOrder(segs)).toEqual(segs)
+  })
+
+  it('多个 slash 段全前置并按原序（正常态至多一个）', () => {
+    const segs: Segment[] = [
+      { type: 'text', text: 'a' },
+      { type: 'slash', name: 'compact' },
+      { type: 'text', text: 'b' },
+      { type: 'slash', name: 'fork' },
+      { type: 'text', text: 'c' },
+    ]
+    expect(normalizeSegmentOrder(segs).map((s) => s.type)).toEqual([
+      'slash',
+      'slash',
+      'text',
+      'text',
+      'text',
+    ])
+    expect(normalizeSegmentOrder(segs).slice(0, 2)).toEqual([
+      { type: 'slash', name: 'compact' },
+      { type: 'slash', name: 'fork' },
+    ])
+  })
+
+  it('空数组返回空数组', () => {
+    expect(normalizeSegmentOrder([])).toEqual([])
+  })
+})
+
 describe('slash segment（D4-b 命令段 + D4-c 归位）', () => {
   it('slash segment 序列化为 /name（name 不含前缀，serializer 补 /）', () => {
     expect(segmentsToText([{ type: 'slash', name: 'compact' }])).toBe('/compact')
@@ -345,14 +394,16 @@ describe('slash segment（D4-b 命令段 + D4-c 归位）', () => {
     expect(segmentsToText(segs)).toBe('/compact 清理一下')
   })
 
-  it('slash 段在中部时提最前，其余段保持原序（归位 = 现状强制最前的序列化产物）', () => {
+  it('slash 段在中部时提最前，其余段保持原序（归位产物与现状强制最前除边界空格外逐字相同）', () => {
     const segs: Segment[] = [
       { type: 'text', text: '任务描述' },
       { type: 'slash', name: 'compact' },
       { type: 'text', text: '清理一下' },
     ]
     // 归位后 slash 提首（prev=null 不补空格）；slash→text 边界补一个空格；
-    // 两个 text 段间不补。产物与现状（chip 强制最前）逐字相同（D4-e args 语义维持现状）
+    // 两个 text 段间不补。本用例锁的是**新行为**：产物与现状（chip 强制最前）除边界空格外
+    // 逐字相同（D4-e）——该空格是修正而非等价：现状产物 `/compact任务描述清理一下` 首 token
+    // 粘连正文（非法命令名），pi 侧命令静默失效、按字面文本处理
     expect(segmentsToText(segs)).toBe('/compact 任务描述清理一下')
   })
 

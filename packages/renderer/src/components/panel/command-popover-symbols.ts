@@ -11,6 +11,7 @@
  */
 import type { CommandSourceInfo, SessionSummary, SkillInfo, SubagentRecord } from '@xyz-agent/shared'
 import { isInternalSkillName, isInternalSlashName } from '@/lib/internal-command-filter'
+import { bareSkillCommandName } from './command-popover-skill-candidates'
 
 /** 「＋ 新建 subagent」固定项 id（CommandPopover 选中上抛 subagentId/slug 空串） */
 export const NEW_SUBAGENT_ITEM_ID = '__new_subagent__'
@@ -126,11 +127,14 @@ export function normalizedSlashName(name: string): string {
   return name.startsWith('/') ? name : `/${name}`
 }
 
-/** skill 显示名：剥离 /skill: 或 / 前缀，只留 skill 名（icon 已表示类型）。 */
+/** skill 显示名：剥离 `skill:` / `/skill:` / `/` 前缀，只留 skill 名（icon 已表示类型）。
+ *  复用 bareSkillCommandName（口径单点，与 skill-only 入口 / selected 比对同源）——pi 的 skill
+ *  命令名是**裸** `skill:<name>`（无前导 /，见 pi dist/core/agent-session.js 的
+ *  `name: \`skill:${skill.name}\``），只剥 `/skill:` 会漏配 ⇒ 浮层显示名带前缀。
+ *  [HISTORICAL] RC-A-5/RC-B-11：此前仅剥 `/skill:` 与 `/`，裸 `skill:x` 原样返回，
+ *  与设计 §3.1 场景 2 期望（显示 code-review-graph）及模板「skill 只显名字」注释不符。 */
 export function skillDisplayName(name: string): string {
-  if (name.startsWith('/skill:')) return name.slice('/skill:'.length)
-  if (name.startsWith('/')) return name.slice(1)
-  return name
+  return bareSkillCommandName(name)
 }
 
 export interface SlashCandidateInput {
@@ -149,11 +153,23 @@ export interface SlashCandidateInput {
  * skill 命令去 /skill: 前缀显名（icon 已表示类型）；displayName 仅用于模板，onSelect 传完整
  * name；声明侧无 icon（schema v2 无 icon 字段）——iconKeyForCommand 按 name/source 推断
  * （builtin 命中 / skill→star / extension→terminal）。
+ *
+ * `selectedSkillNames`（多 skill 注入 D2 已选去重，S-2）：已插入的 skill 名集合，命中项标
+ * `selected` → CommandPopover 渲染「已选」且 onSelect 早退。此前只有 skill-only 入口打该标记，
+ * slash 路（`+` 菜单「命令」入口 / 行首浮层）不打 ⇒ 同一 skill 可插两次、runtime 注入两遍
+ * SKILL.md 全文。比对键与 skill 通路同口径：剥 `/skill:` / `/` 前缀的裸 skill 名。
+ *
+ * `isSkill` 判据（`kind === 'skill' || name 带 /skill:`）同时驱动 selected 比对、onSelect 分流
+ * （insertSkillChip）与 displayName 剥前缀——提成局部量后一处判定三处消费。此前 displayName
+ * 只看 `c.kind === 'skill'`：kind 非 skill 但名字带 `/skill:` 的项会被判为 skill（裸名比对 +
+ * 走 skill chip），显示却仍带 `/skill:` 前缀（最终复审 N-4）。当前产线不可达（pi 的 source 恒
+ * `'skill'`、landing 侧显式写 `kind:'skill'`），提同源只为消除潜在不一致。
  */
 export function buildSlashCandidates(
   all: SlashCandidateInput[],
   query: string | undefined,
   iconKeyForCommand: (name: string, kind: string) => string,
+  selectedSkillNames?: readonly string[],
 ): Array<{
   id: string
   name: string
@@ -163,21 +179,26 @@ export function buildSlashCandidates(
   isSkill: boolean
   description?: string
   location?: string
+  /** skill 项：已插入过（selectedSkillNames 按裸名命中）→「已选」禁选；非 skill 项恒 undefined */
+  selected?: boolean
   dirPath: undefined
 }> {
   const q = (query ?? '').trim().toLowerCase()
+  const selectedSkills = new Set(selectedSkillNames ?? [])
   const filtered = q ? all.filter((c) => normalizedSlashName(c.name).toLowerCase().includes(q)) : all
   return filtered.map((c) => {
     const name = normalizedSlashName(c.name)
+    const isSkill = c.kind === 'skill' || name.startsWith('/skill:')
     return {
       id: c.id,
       name,
-      displayName: c.kind === 'skill' ? skillDisplayName(c.name) : name,
+      displayName: isSkill ? skillDisplayName(c.name) : name,
       kind: c.kind,
       icon: c.icon ?? iconKeyForCommand(c.name, c.kind),
-      isSkill: c.kind === 'skill' || name.startsWith('/skill:'),
+      isSkill,
       description: c.description,
       location: c.location,
+      selected: isSkill ? selectedSkills.has(bareSkillCommandName(name)) : undefined,
       dirPath: undefined,
     }
   })

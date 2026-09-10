@@ -80,50 +80,39 @@ export function useComposerChipCommands(
    * skill chip（chipType='skill'）不再被误删；「必须在最前」的行首约束由序列化层
    * segmentsToText 归位承担（shared D4-c），DOM 位置层就地化。
    *
-   * skill 分支（'/skill:' 前缀）保留旧通路不动：u4 起行首浮层 skill 项已路由到
-   * insertSkillChip，正常不再进入此分支，仅作兼容残留。
+   * skill 分支（'/skill:' 前缀）：委托 insertSkillChip（skill 语义单点）——u4 起行首浮层 skill 项
+   * 已直接路由到 insertSkillChip，本分支只承接带 '/skill:' 前缀的异常/历史输入。委托后形态与
+   * 行首浮层通路一致（光标处 + 不删其他 chip），不再走旧的「删光全部 .slash-chip +
+   * 强制插最前 + 丢 location」破坏性通路（该形态是失败模式 C 的破坏面）。
    */
   function insertSlashChip(command: string, icon?: string): void {
     const el = getEl()
     if (!el) return
-    const isSkill = command.startsWith('/skill:')
+    if (command.startsWith('/skill:')) {
+      // 单次 restoreSelection 不变：委托路径由 insertSkillChip 内部调用一次（原分支在此直接调用，
+      // 改成委托后不重复）；位置语义由「强制最前」改为「光标处」（与行首浮层 skill 项一致）。
+      insertSkillChip(command.slice('/skill:'.length), undefined, icon)
+      return
+    }
     // restoreSelection 活选区优先（设计 D1）：键盘选中路径 chip 落呼出位置，blur 路径落 savedRange
     restoreSelection()
     el.focus()
-    if (!isSkill) {
-      // 替换语义只针对命令 chip；skill chip 复用 .slash-chip class 但不在此删除范围（D4-a）
-      el.querySelectorAll<HTMLElement>('.slash-chip').forEach((n) => {
-        if (n.dataset.chipType === 'slash') removeChipNode(n, onChanged)
-      })
-    } else {
-      el.querySelectorAll('.slash-chip').forEach((n) => removeChipNode(n, onChanged))
-    }
+    // 替换语义只针对命令 chip；skill chip 复用 .slash-chip class 但不在此删除范围（D4-a）
+    el.querySelectorAll<HTMLElement>('.slash-chip').forEach((n) => {
+      if (n.dataset.chipType === 'slash') removeChipNode(n, onChanged)
+    })
     const chip = document.createElement('span')
     chip.className = 'slash-chip'
     chip.contentEditable = 'false'
-    if (isSkill) {
-      chip.dataset.chipType = 'skill'
-      chip.dataset.chipName = command.slice('/skill:'.length)
-    } else {
-      chip.dataset.chipType = 'slash'
-      chip.dataset.chipName = command.startsWith('/') ? command.slice(1) : command
-    }
+    chip.dataset.chipType = 'slash'
+    chip.dataset.chipName = command.startsWith('/') ? command.slice(1) : command
     renderIconInto(chip, icon)
     const label = document.createElement('span')
     label.className = 'chip-label'
-    label.textContent = isSkill
-      ? (chip.dataset.chipName ?? '')
-      : (command.startsWith('/') ? command : `/${command}`)
+    label.textContent = command.startsWith('/') ? command : `/${command}`
     chip.appendChild(label)
     chip.appendChild(makeXButton(chip))
-    if (isSkill) {
-      el.insertBefore(chip, el.firstChild)
-      const spacer = document.createTextNode('\u200B')
-      chip.after(spacer)
-      placeCursorAfter(spacer)
-    } else {
-      insertChipAtSelection(el, chip)
-    }
+    insertChipAtSelection(el, chip)
     onChanged()
   }
 

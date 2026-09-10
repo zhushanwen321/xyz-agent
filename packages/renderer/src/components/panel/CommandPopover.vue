@@ -258,7 +258,8 @@ interface CmdItem {
   description?: string
   /** skill 路透传：SKILL.md 绝对路径（select payload → insertSkillChip dataset），可得时带上 */
   location?: string
-  /** skill 路专用：已插入过（selectedSkillNames 命中）→「已选」禁选（多 skill 注入 D2 去重） */
+  /** skill 候选（skill 路 + slash 路的 skill 项，S-2）：已插入过（selectedSkillNames 命中）
+   *  →「已选」禁选（多 skill 注入 D2 去重） */
   selected?: boolean
   /** file 路副行（父目录）/ session·subagent 路副行（subText） */
   dirPath?: string
@@ -306,8 +307,10 @@ const items = computed<CmdItem[]>(() => {
     // skill-only 候选（多 skill 注入 D1/D2）：分数据源 + query 过滤 + 已选标记（纯函数拆分）
     return buildSkillCandidates(variant.value, props, props.sessionId ? commandStore.getCommands(props.sessionId) : [])
   }
-  // slash 路（行首命令浮层）：query 过滤 + CmdItem 组装（纯函数拆分至 command-popover-symbols）
-  return buildSlashCandidates(slashCommands.value, props.query, iconKeyForCommand)
+  // slash 路（行首命令浮层）：query 过滤 + CmdItem 组装（纯函数拆分至 command-popover-symbols）。
+  // selectedSkillNames 透传（S-2）：slash 路的 skill 项同样打 selected → 「已选」禁选，
+  // 与 skill 入口去重口径合流（否则同一 skill 可经 + 菜单「命令」入口插两次）
+  return buildSlashCandidates(slashCommands.value, props.query, iconKeyForCommand, props.selectedSkillNames)
 })
 
 const ICONS = SLASH_ICON_COMPONENTS
@@ -339,14 +342,20 @@ function onSelect(item: CmdItem): void {
   })
 }
 
-/** ComposerInput keydown 路由：浮层 open 时处理 ↑↓ ⏎ Esc，返回 true 表示已消费。
- * 幂等守卫 defaultPrevented：window capture 与 contenteditable 冒泡两条入口命中同一事件，
- * 不守卫 ↑↓ 会跳两项。① preventDefault，② 见 defaultPrevented 直接 return。 */
+/** ComposerInput keydown 路由：浮层实际可见（= PopoverContent 的 v-if）时处理 ↑↓ ⏎ Esc，返回
+ * true 表示已消费；open 但浮层不渲染时全部键放行。幂等守卫 defaultPrevented：window capture 与
+ * contenteditable 冒泡两条入口命中同一事件，不守卫 ↑↓ 会跳两项（① 已消费则 ② 不再处理）。 */
 function handleKeydown(e: KeyboardEvent): boolean {
   if (!props.open) return false
   if (e.defaultPrevented) return false // 幂等守卫：① 已消费则 ② 不再重复处理
+  // 消费条件 = 浮层实际可见性（RC-A-1）。[HISTORICAL] 曾按「open 即消费」把 Enter/Tab 在
+  // 不可见态也吞掉（行首 `/zzz` 空候选 ⇒ 消息发不出、Escape 失效且浮层未渲染无 reka 兜底）。
+  const overlayVisible = items.value.length > 0 || fileFallbackVisible.value
+  if (!overlayVisible) return false
   const list = items.value
-  if (list.length === 0) return false
+  // 可见但无候选（仅 landing `$` 空/错误态）：方向键无项可移（NaN）放行；Enter/Tab 仍须消费（G2）。
+  const isEnterOrTab = e.key === 'Enter' || e.key === 'Tab'
+  if (list.length === 0 && !isEnterOrTab) return false
   if (e.key === 'ArrowDown') {
     e.preventDefault()
     activeIndex.value = (activeIndex.value + 1) % list.length
@@ -357,7 +366,7 @@ function handleKeydown(e: KeyboardEvent): boolean {
     activeIndex.value = (activeIndex.value - 1 + list.length) % list.length
     return true
   }
-  if (e.key === 'Enter' || e.key === 'Tab') {
+  if (isEnterOrTab) {
     // 时序契约（composer-chip-insertion-semantics 设计 D2）：本分支多经 window capture
     // （onWindowKeydown）进入，消费 Enter/Tab 后必须 stopPropagation 截断事件向 target 的
     // 传播——这是「浮层 open 时 Enter 选中候选、绝不触发 composer onSend」的唯一防线
@@ -368,7 +377,10 @@ function handleKeydown(e: KeyboardEvent): boolean {
     if (composingRef.value || e.isComposing) return false // IME 双保险：组合中 Enter 是确认候选词，放行
     e.preventDefault()
     e.stopPropagation()
-    onSelect(list[activeIndex.value])
+    // 空候选：无项可选中，仅消费事件终止链路；**不**顺带关闭浮层（不改变 open 状态）——
+    // 避免用户下一次 Enter 在无浮层可感知的情况下意外发送（Escape 仍是显式关闭入口）。
+    // 越界收敛（N-2）：候选源可在浮层打开期间缩短 ⇒ activeIndex 可 ≥ 长度（list[i] 为 undefined 会抛）
+    if (list.length > 0) onSelect(list[Math.min(activeIndex.value, list.length - 1)])
     return true
   }
   if (e.key === 'Escape') {

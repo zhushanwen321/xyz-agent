@@ -664,8 +664,10 @@ export function createUseChat(deps: UseChatDeps) {
     // 降级与结构化回填渲染等价，只有非纯文本段（image/file/skill/mention/handoff）的 badge
     // 依赖映射回填。谓词对未知新类型默认保留写入（≠ text/slash 即写），失败方向安全。
     // 不变式：sidecar 条目存在 ⟺ 映射 custom entry 存在（两侧同谓词门控）。
-    // [D4-d] slash 段（命令 chip）计入纯文本——无 badge 还原需求（chat 流显示归位后纯文本
-    // 即可），不为此引入 sidecar 写入。谓词单点：同时门控 sidecar 写入与 custom entry 标记。
+    // [D4-d] slash 段（命令 chip）计入纯文本——无 badge 还原需求：UserBubble 已按归位序把
+    // slash 段渲染为 `/name` 纯文本，与 reload 侧 textToSegments(归位文本) 同形（live ≡ reload），
+    // 故不为此引入 sidecar 写入。本处谓词同时门控 sidecar 写入与 custom entry 标记（defer
+    // 重放路径 `submitQueuedEntry` 另有一处同款谓词）。
     const needsBackfill = segments.some((s) => s.type !== 'text' && s.type !== 'slash')
     // 写 segments.json sidecar（重开 session 时回填 image/file badge 用）。
     // 异步 fire-and-forget：失败 console.warn 不阻断（sidecar 丢失只是降级为占位文本，非硬错误）。

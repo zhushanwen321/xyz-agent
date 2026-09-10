@@ -164,9 +164,11 @@ async function routeStaging(deps: ComposerSendDeps): Promise<'blocked' | 'handle
   // 透传（fork/handoff 内部 handleXxxSend 也自取 deps.getStagingConfig，传参与自取等价故实际被忽略）。
   // 守卫 hasActiveStaging：非 staging 态不调 getStagingConfig（避免测试 mock 未提供该方法时炸 + 语义清晰）。
   if (deps.staging.hasActiveStaging.value) {
-    // [D4-c 迁移] staging 提交载荷从 draft.value（DOM 序）迁 segmentsToPrompt——命令 chip
-    // 就地化后 DOM 序文本 `/cmd` 不在行首，fork/handoff staged prompt 会静默变字面文本
-    // （pi 从「执行命令」变「纯文本」）。快照在 staging.send 前（内部消费即可能清 DOM）。
+    // [D4-c 迁移] staging 提交载荷从 draft.value 迁 segmentsToPrompt——判定源单一化 +
+    // 消除 draft 快照失真窗口（staging 载荷本就是 segments 的序列化，改后判定与载荷同一
+    // 表达式）。轮 3 修正理由：draft 与 prompt 同源同归位，「命令 chip 就地化后 DOM 序文本
+    // `/cmd` 不在行首 ⇒ staged prompt 静默变字面文本」的原由不成立。快照在 staging.send
+    // 前（内部消费即可能清 DOM）。
     const segments = deps.inputRef.value?.getSegments() ?? []
     if (await deps.staging.send(segmentsToPrompt(segments), deps.getStagingConfig())) return 'handled'
   }
@@ -219,8 +221,10 @@ function enqueueDuringDefer(deps: ComposerSendDeps, text: string): void {
   // `/` 与 `!`/`!!` 前缀都是命令（slash 命令 / bash 命令）——占用结束后才能执行，
   // 此处拒绝 + toast，draft 保留不清空。`!` 对称于 `/`：避免 bash 命令被静默降级
   // 为纯文本入队（重放走普通 send 不会按 bash 执行，用户语义被悄悄改变）。
-  // [D4-c 迁移] 双源拆开判定：`/` 半边读 segmentsToPrompt（命令 chip 就地化后 DOM 序
-  // 文本不以 / 开头，读 draft 会漏拒 → 静默入队重放绕过「命令不入队」语义）；
+  // [D4-c 迁移] 双源拆开判定：`/` 半边读 segmentsToPrompt——判定源单一化 + 消除 draft
+  // 快照失真窗口（draft 是 getText() 的调用快照，回滚/程序化 setText/时序窗口下可滞后于
+  // DOM）。轮 3 修正理由：`getTextFromEl` 在基线与 HEAD 相同（恒为 segmentsToText(段)），
+  // draft 与 prompt 同源同归位，「DOM 序文本不以 / 开头 ⇒ 漏拒」的原由不成立；
   // `!` 半边保持 draft.value——`!` 不产 chip，手打必在 DOM 文本行首，两源恒一致。
   if (segmentsToPrompt(segments).trim().startsWith('/') || text.trim().startsWith('!')) {
     deps.toastError(deps.t('panel.composer.commandQueuedRejected'))
@@ -258,9 +262,11 @@ async function sendLandingFirstMessage(deps: ComposerSendDeps, segments: Segment
  */
 async function sendActiveMessage(deps: ComposerSendDeps, segments: Segment[], text: string): Promise<void> {
   if (await deps.composerBash.trySendBash(text)) return
-  // [D4-c 迁移] /compact 拦截输入从 draft.value（DOM 序）迁 segmentsToPrompt——命令 chip
-  // 就地化后 chip 在中部时 DOM 序文本不以 /compact 起头，漏拦截 → pi 侧原生执行，
-  // 绕过 renderer compact 编排。bash 判定（上行）按裁决表不迁（`!` 前缀与 chip 无关）。
+  // [D4-c 迁移] /compact 拦截输入从 draft.value 迁 segmentsToPrompt——判定源单一化 +
+  // 消除 draft 快照失真窗口：`segmentsToPrompt(segments)` 即发送载荷本身，判定与载荷构造
+  // 同源，快照滞后面归零。轮 3 修正理由：draft 与 prompt 同源同归位，「命令 chip 在中部时
+  // DOM 序文本不以 /compact 起头 ⇒ 漏拦截」的原由不成立。bash 判定（上行）按裁决表不迁
+  // （`!` 前缀与 chip 无关）。
   const trimmed = segmentsToPrompt(segments).trim()
   if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
     const customInstructions = trimmed.startsWith('/compact ')

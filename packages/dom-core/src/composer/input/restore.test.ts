@@ -2,9 +2,10 @@
  * restore.ts composable 单测 —— composer 发送后清空 / 失败恢复（W2 TC）。
  *
  * 覆盖：clearInput（draft 置空 + drafts.delete 边界：sid=null 不删 + inputRef.clear）、
- * restoreInput（draft 同步 + setText）、restoreSegments（4 段类型分发：text 过滤 join /
- * image→insertImageBadge 含 needsMigrate ?? false 空值合并 / skill→insertSkillChip(name, location)（设计 D3）/
- * file→insertFileChip lineRange 透传）。
+ * restoreInput（draft 同步 + setText）、restoreSegments（7 段类型分发：text 过滤 join /
+ * image→insertImageBadge 含 needsMigrate ?? false 空值合并 / slash→insertSlashChip(name) /
+ * skill→insertSkillChip(name, location)（设计 D3）/ file→insertFileChip lineRange 透传 /
+ * session→insertSessionChip / subagent→insertSubagentChip）。
  *
  * restore.ts 自述「纯逻辑编排，零 DOM 直连」，故本测试零 jsdom DOM 断言，全 mock deps。
  *

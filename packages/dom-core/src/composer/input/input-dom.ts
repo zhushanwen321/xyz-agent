@@ -1,5 +1,5 @@
 /**
- * composer input 模块 DOM 直连收敛层 —— core/domain/composer/input/ 的 DOM 适配单一出口（W2）。
+ * composer input 模块 DOM 直连收敛层 —— packages/dom-core/src/composer/input/ 的 DOM 适配单一出口（W2）。
  *
  * 定位：slice design review TC1 落地——useContenteditableInput（873 行）+ useComposerChipCommands
  * 中所有 DOM 直连（document./window./Range/Selection/TreeWalker/getClientRects/caretRangeFromPoint）

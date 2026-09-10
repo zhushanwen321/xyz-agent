@@ -26,9 +26,17 @@
       v-else
       class="max-w-[85%] min-w-0 break-words rounded-[14px_14px_4px_14px] border border-border-strong bg-[var(--bubble-bg)] px-[13px] py-[9px] text-[length:var(--text-base)] leading-[1.55] text-neutral-fg"
     >
-      <template v-for="(seg, i) in userSegments" :key="i">
+      <template v-for="(seg, i) in orderedSegments" :key="i">
+        <!-- slash 段与后继段之间的边界空格：slash 段按纯文本渲染（D4-d，无 badge、
+             无 mr-1 间距），空格必须显式渲染才与 segmentsToText 产物逐字一致。规则复用
+             shared 的 needsBoundarySpace（单点实现），仅对 prev 为 slash 时渲染——其余
+             badge 类型沿用自身 mr-1 间距，不引入额外文本节点。 -->
+        <span v-if="boundarySpaceBefore(i)">{{ ' ' }}</span>
+        <!-- slash 段（命令 chip 段，D4-b）：D4-d 无 badge 还原需求 → 纯文本 `/name`
+             渲染（与 reload 侧 textToSegments(归位文本) 同形，live ≡ reload） -->
+        <span v-if="seg.type === 'slash'">{{ '/' + seg.name }}</span>
         <span
-          v-if="seg.type === 'skill'"
+          v-else-if="seg.type === 'skill'"
           class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[length:var(--text-sm)] font-medium leading-[1.4] text-reasoning transition-colors hover:bg-[color-mix(in_oklch,var(--reasoning)_32%,transparent)]"
           style="vertical-align: middle"
           role="button"
@@ -128,7 +136,7 @@ import { Textarea } from '../../primitives/textarea'
 import { turnStableId } from '@xyz-agent/core/domain/chat'
 import type { MessageTurn } from '@xyz-agent/core/domain/chat'
 import type { Segment } from '@xyz-agent/shared'
-import { normalizeContent } from '@xyz-agent/shared'
+import { normalizeContent, needsBoundarySpace, normalizeSegmentOrder } from '@xyz-agent/shared'
 import { rebuildSegmentsWithEditedText } from '../../lib/segment-rebuild'
 import { useCopy } from './composables/useCopy'
 import { SLASH_ICON_COMPONENTS } from './slash-icons'
@@ -187,6 +195,25 @@ const userSegments = computed<Segment[]>(() => {
   if (Array.isArray(content)) return content
   return []
 })
+
+/**
+ * 展示序 = 归位序（slash 段提首），复用 shared 的 normalizeSegmentOrder 单一实现。
+ * live content 段序是 DOM 序（命令 chip 就地插，D4-a），reload 侧是 textToSegments(归位文本)
+ * 的单 text 段；只有按归位序渲染，live 与 reload 的可见文本才逐字一致（关键规则 9）。
+ */
+const orderedSegments = computed<Segment[]>(() => normalizeSegmentOrder(userSegments.value))
+
+/**
+ * 第 i 段之前是否需显式渲染一个边界空格（与 segmentsToText 同规则，避免第二份实现）。
+ * 仅 prev 为 slash 时渲染：slash 段无 badge 的 mr-1 间距，其余 badge→text 边界沿用 mr-1，
+ * 不额外插文本节点（保持既有视觉）。
+ */
+function boundarySpaceBefore(i: number): boolean {
+  const prev = orderedSegments.value[i - 1]
+  const seg = orderedSegments.value[i]
+  if (!prev || !seg || prev.type !== 'slash') return false
+  return needsBoundarySpace(prev, seg)
+}
 
 /** 复制反馈 */
 const { copied, copy } = useCopy()

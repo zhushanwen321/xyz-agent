@@ -37,8 +37,9 @@ export interface CommandSelectPayload {
   icon?: string
   description?: string
   /** slash 路 skill 项标记（设计 D3）：行首命令浮层的 skill 项（name 形如 '/skill:xxx'）
-   *  按项类型分流到 skill 通路，与 type==='skill' 行为合流——不再走 insertSlashChip
-   *  （强制最前 + 误删全部 slash-chip + 丢 location） */
+   *  按项类型分流到 skill 通路，与 type==='skill' 行为合流（光标处插入 + 多 chip 共存 +
+   *  带 location + 已选禁选，后者即 S-2：slash 路候选同样消费 selectedSkillNames）——
+   *  不再走 insertSlashChip（强制最前 + 误删全部 slash-chip + 丢 location） */
   isSkill?: boolean
   /** skill 路：SKILL.md 绝对路径（可得时带上，chip dataset 携带供反解析）；缺省时 runtime 经 get_commands 权威映射解析 */
   location?: string

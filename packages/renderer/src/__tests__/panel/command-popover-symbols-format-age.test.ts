@@ -17,7 +17,6 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import type { FileNode, SessionSummary, SubagentRecord } from '@xyz-agent/shared'
-import { formatAge } from '@/components/panel/command-popover-symbols'
 
 // open-fetch 直接 import composer domain（landing cwd 通道）——mock 之隔离真实 WS 通路。
 // u5 re-anchor（e79ba3647/8ca21226f）后实现 import 的是 core 子路径，mock 必须对齐同一
@@ -33,7 +32,7 @@ vi.mock('@xyz-agent/core/transport/api/domains/composer', async (importOriginal)
 })
 
 import CommandPopover from '@/components/panel/CommandPopover.vue'
-import { buildSessionCandidates, buildSubagentCandidates } from '@/components/panel/command-popover-symbols'
+import { formatAge, skillDisplayName, buildSlashCandidates, buildSessionCandidates, buildSubagentCandidates } from '@/components/panel/command-popover-symbols'
 
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -116,6 +115,78 @@ describe('buildSubagentCandidates hasSessionId 保留（landing 空语义）', (
     expect(items).toHaveLength(2)
     expect(items[0].slug).toBe('build-api')
     expect(items[1].id).toBe('__new_subagent__')
+  })
+})
+
+// ─────────── skill 显示名剥前缀（RC-A-5/RC-B-11：pi 裸 `skill:` 形态） ───────────
+
+describe('skillDisplayName 剥前缀（三形态同口径）', () => {
+  it('pi 裸名 skill:x（无前导 /）、/skill:x、裸 x 三形态 → 同口径 x', () => {
+    // pi getCommands() 对 skill 产 { name: `skill:${skill.name}`, source: 'skill' }（无前导 /），
+    // 修复前 skillDisplayName 只剥 `/skill:` 与 `/` ⇒ 裸 `skill:` 原样返回（浮层显示带前缀）。
+    expect(skillDisplayName('skill:code-review-graph')).toBe('code-review-graph')
+    expect(skillDisplayName('/skill:code-review-graph')).toBe('code-review-graph')
+    expect(skillDisplayName('code-review-graph')).toBe('code-review-graph')
+  })
+
+  it('非 skill 的 / 前缀命令仍剥 /（既有语义不回归）', () => {
+    expect(skillDisplayName('/compact')).toBe('compact')
+  })
+})
+
+describe('buildSlashCandidates skill 项显示名（RC-A-5）', () => {
+  const iconKey = () => 'star'
+
+  it('pi 源（name="skill:x", kind="skill"）→ displayName 剥前缀；name 保留完整路由名供 onSelect', () => {
+    const [item] = buildSlashCandidates(
+      [{ id: 'skill-code-review-graph', name: 'skill:code-review-graph', kind: 'skill' }],
+      '',
+      iconKey,
+    )
+    expect(item.displayName).toBe('code-review-graph')
+    expect(item.name).toBe('/skill:code-review-graph') // 归一化后的路由名（补 / 前缀）
+    expect(item.isSkill).toBe(true)
+  })
+
+  it('对照：/skill:x（landing 声明源形态）与裸名 x 形态 displayName 同口径', () => {
+    const [slashForm] = buildSlashCandidates(
+      [{ id: 's1', name: '/skill:code-review-graph', kind: 'skill' }],
+      '',
+      iconKey,
+    )
+    const [bareForm] = buildSlashCandidates([{ id: 's2', name: 'code-review-graph', kind: 'skill' }], '', iconKey)
+    expect(slashForm.displayName).toBe('code-review-graph')
+    expect(bareForm.displayName).toBe('code-review-graph')
+  })
+
+  it('非 skill 命令显示名仍保留 / 前缀（命令调用语义，不被本修复波及）', () => {
+    const [item] = buildSlashCandidates([{ id: 'c1', name: 'commit', kind: 'extension' }], '', iconKey)
+    expect(item.displayName).toBe('/commit')
+    expect(item.isSkill).toBe(false)
+  })
+
+  // N-4（最终复审 info）：displayName 曾只看 c.kind === 'skill'，与 isSkill 判据
+  // （kind === 'skill' || name 带 /skill:）不同源 ⇒ kind 非 skill 但名字带 /skill: 的项被
+  // 判为 skill（裸名比对 selected + onSelect 走 insertSkillChip），显示却仍带 /skill: 前缀。
+  // 当前产线不可达（pi 的 source 恒 'skill'、landing 侧显式写 kind:'skill'），本用例锁住
+  // 「一处判定、三处消费」的不变式防漂移。
+  it('kind 非 skill 但名字带 /skill:（潜在形态）→ isSkill 与 displayName 同源：显示裸名', () => {
+    const [item] = buildSlashCandidates([{ id: 'p1', name: '/skill:hidden', kind: 'extension' }], '', iconKey)
+    expect(item.isSkill).toBe(true)
+    // 修复前：displayName 走 name（= '/skill:hidden'），与本处 isSkill=true 自相矛盾
+    expect(item.displayName).toBe('hidden')
+    // 路由名保留完整前缀供 onSelect → pi 路由
+    expect(item.name).toBe('/skill:hidden')
+  })
+
+  it('kind 非 skill 但名字带 /skill: → selected 比对仍走裸名（与 displayName 同判据）', () => {
+    const [item] = buildSlashCandidates(
+      [{ id: 'p2', name: '/skill:hidden', kind: 'extension' }],
+      '',
+      iconKey,
+      ['hidden'],
+    )
+    expect(item.selected).toBe(true)
   })
 })
 

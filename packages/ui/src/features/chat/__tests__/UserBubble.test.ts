@@ -4,6 +4,9 @@
  * 覆盖：
  * - W4TC3: UserBubble 拆分后渲染一致（展示态/编辑态 + badge + hover actions）
  * - [pin-identity U2] D2 turnKey 负载断言 + D3 卸载清理（编辑态 unmount → emit {editing:false, turnKey}）
+ * - [MF-1] slash 段按归位序渲染为 `/name` 纯文本；**段序仅含 slash/text 段**时气泡文本
+ *   === segmentsToText(同段)（其余 badge 类型的显示形态本就 ≠ 序列化文本，见 [MF-1] 组注释）
+ * - [MF-2] submitEdit 编辑含命令的消息后 prompt 中命令只出现一次
  *
  * 运行：cd packages/ui && npx vitest run src/features/chat/__tests__/UserBubble.test.ts
  */
@@ -12,6 +15,7 @@ import { mount } from '@vue/test-utils'
 import { UserBubble, ChatViewDepsKey } from '@xyz-agent/ui'
 import type { MessageTurn } from '@xyz-agent/core/domain/chat'
 import type { Message, Segment } from '@xyz-agent/shared'
+import { buildSkillMarker, segmentsToPrompt, segmentsToText } from '@xyz-agent/shared'
 import { createMockDeps, mockChatProvide } from './helpers'
 
 const NOW = Date.now()
@@ -155,6 +159,100 @@ describe('W4TC3: UserBubble skill badge', () => {
   })
 })
 
+// ── [MF-1] slash 段渲染：命令文本不消失 + live ≡ reload ──
+// live content 段序是 DOM 序（命令 chip 就地插，D4-a），reload 侧是 textToSegments(归位文本)
+// 的单 text 段（apply-entry-convert）；气泡只有按归位序渲染 slash 段为 `/name` 纯文本，
+// 两侧可见文本才逐字一致（AGENTS.md 关键规则 9）。默认 MarkdownRenderer stub 不渲染
+// content，无法断言气泡可见文本，故本组改用渲染 content 的 stub。
+//
+// **等价锁的范围（轮 3-4 收窄）**：`text() === segmentsToText(段)` 只在**段序仅含 slash/text
+// 段**（无 badge 类型段）时成立——`UserBubble.boundarySpaceBefore` 只对 prev 为 slash 时渲染
+// 边界空格、且只有 slash 段按纯文本渲染；一旦含 badge 段就不等价：file 显示
+// `fileBasename(path)`、session 显示 `label`（序列化为 `#sessionId`）、skill/subagent 显示
+// name/slug、image 显示缩略图，均 ≠ 序列化形态；且 `segmentsToText` 经 `needsBoundarySpace`
+// 对 chip→text 边界补空格，气泡只对 prev 为 slash 时渲染空格、其余 badge 走自身 `mr-1` 间距
+// ——两条原因并存。该展示投影与序列化的差异是本分支之前既有（登记于
+// docs/design/composer-multi-skill-injection.md §3.5-⑤ 的「normalizeContent 纯文本投影面」），
+// 不在本组用例锁定范围。
+//
+// **等价锁的层次（轮 3-5 复审 N-3a）**：本锁在下方 `MarkdownContentStub`（显式注册、只回显
+// content prop）下成立——锁定的是**段/序列化层**等价（归位序 + 边界空格 + 命令文本不消失），
+// **不是产线 DOM 层等价**：产线 `MarkdownRenderer` 会把正文作为独立 markdown 文档块级渲染，
+// 与 reload 侧把「命令 + 正文」作为单文档渲染的块级边界可能不同（段落/换行归属不同）。
+// 该产线 markdown 块级渲染边界不在本锁范围（真实 MarkdownRenderer 在本测试环境渲染为空，
+// 无法在此证伪或证实）。
+describe('[MF-1] UserBubble slash 段（归位序渲染 + live ≡ reload）', () => {
+  /** 渲染 content prop 的 MarkdownRenderer stub（默认 stub 不输出文本） */
+  const MarkdownContentStub = {
+    name: 'MarkdownRenderer',
+    props: { content: { type: String, default: '' }, sessionId: { type: String, default: '' } },
+    template: '<span>{{ content }}</span>',
+  }
+
+  function mountWithSlash(content: Segment[]) {
+    return mount(UserBubble, {
+      props: {
+        turn: makeTurn({
+          user: { id: 'u1', role: 'user', content, status: 'complete', timestamp: NOW } as Message,
+        }),
+        sessionId: 's1',
+        canEdit: false,
+        isSessionEditable: false,
+      },
+      global: {
+        provide: mockChatProvide(),
+        stubs: { MarkdownRenderer: MarkdownContentStub, ImageThumb: true },
+      },
+    })
+  }
+
+  function bubbleText(wrapper: ReturnType<typeof mount>): string {
+    return wrapper.find('.rounded-\\[14px_14px_4px_14px\\]').text()
+  }
+
+  it('含 slash 段 → 气泡渲染 `/name`（此前无分支，命令文本静默消失）', () => {
+    const segments: Segment[] = [
+      { type: 'text', text: '总结' },
+      { type: 'slash', name: 'compact' },
+    ]
+    expect(bubbleText(mountWithSlash(segments))).toContain('/compact')
+  })
+
+  it('slash 段后接 text 段（段序无 badge 段）渲染文本 === segmentsToText(同段)：命令在前 + 边界空格', () => {
+    const segments: Segment[] = [
+      { type: 'text', text: '总结' },
+      { type: 'slash', name: 'compact' },
+    ]
+    // 该字符串即 reload 侧 textToSegments(deliveryText) 的渲染文本
+    expect(bubbleText(mountWithSlash(segments))).toBe(segmentsToText(segments))
+    // 归位序（命令在前）；按 DOM 序渲染会得到 `总结/compact`
+    expect(bubbleText(mountWithSlash(segments))).toBe('/compact 总结')
+  })
+
+  it('slash-only content（landing `/tasks` 首发）渲染 `/tasks`，与 segmentsToText 一致（单 slash 段退化情形）', () => {
+    const segments: Segment[] = [{ type: 'slash', name: 'tasks' }]
+    expect(bubbleText(mountWithSlash(segments))).toBe(segmentsToText(segments))
+    expect(bubbleText(mountWithSlash(segments))).toBe('/tasks')
+  })
+
+  // 对照：badge 段（file）的显示形态 ≠ 序列化文本，故上面的等价锁不覆盖这类边界
+  // （file badge 显示 basename，序列化是完整 path；见组注释的登记指向）。
+  it('对照 · slash + file + text：slash 仍纯文本，但 file badge 显示 basename ⇒ 与 segmentsToText 不等', () => {
+    const segments: Segment[] = [
+      { type: 'slash', name: 'compact' },
+      { type: 'file', path: 'src/a.ts' },
+      { type: 'text', text: '正文' },
+    ]
+    // 序列化形态：完整路径
+    expect(segmentsToText(segments)).toBe('/compact src/a.ts 正文')
+    // 气泡文本：slash 纯文本 + file badge（basename）+ text；不等价是既有展示投影差异
+    const text = bubbleText(mountWithSlash(segments))
+    expect(text).toContain('/compact')
+    expect(text).toContain('a.ts')
+    expect(text).not.toBe(segmentsToText(segments))
+  })
+})
+
 describe('W4TC3: UserBubble 编辑态', () => {
   it('canEdit=true 点编辑按钮 → 进入编辑态 + emit edit-state-change', async () => {
     const wrapper = mountBubble({ canEdit: true, isSessionEditable: false })
@@ -271,5 +369,136 @@ describe('[D3] submitEdit 双发锁', () => {
     await wrapper.find('textarea').setValue('降级提交')
     await findSendButton(wrapper).trigger('click')
     expect(editAndResend).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ── [MF-2] submitEdit 编辑含命令的消息：prompt 中命令只出现一次 ──
+// 草稿展示归位全文（命令可见、可改）；提交时 rebuildSegmentsWithEditedText 剥离与 slash 段
+// 重复的前缀命令并保留 slash 段，避免序列化归位后命令翻倍（`/compact /compact …`）。
+describe('[MF-2] submitEdit 编辑重发 slash 段不翻倍', () => {
+  /** 挂载含 live content = [text('总结'), slash('compact')] 的气泡（DOM 序，命令 chip 就地插） */
+  function mountCommandMessage(prompts: string[]) {
+    const editAndResend = vi.fn((_sid: string, _uid: string, segs: Segment[]) => {
+      prompts.push(segmentsToPrompt(segs))
+    })
+    const segments: Segment[] = [
+      { type: 'text', text: '总结' },
+      { type: 'slash', name: 'compact' },
+    ]
+    const wrapper = mount(UserBubble, {
+      props: {
+        turn: makeTurn({
+          user: { id: 'u1', role: 'user', content: segments, status: 'complete', timestamp: NOW } as Message,
+        }),
+        sessionId: 's1',
+        canEdit: true,
+        isSessionEditable: false,
+      },
+      global: {
+        provide: mockChatProvide({ editAndResend }),
+        stubs: { MarkdownRenderer: true, ImageThumb: true },
+      },
+    })
+    return wrapper
+  }
+
+  it('草稿展示归位全文（命令可见可改）→ 直接发送：prompt = `/compact 总结`（命令仅一次）', async () => {
+    const prompts: string[] = []
+    const wrapper = mountCommandMessage(prompts)
+    await wrapper.find('.group\\/user .opacity-0').findAll('button')[1]!.trigger('click')
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('/compact 总结')
+    const sendBtn = wrapper.findAll('button').find((b) => b.text().includes('panel.composer.send'))
+    expect(sendBtn).toBeDefined()
+    await sendBtn!.trigger('click')
+    // 修复前为 `/compact /compact 总结`（命令翻倍）；现在命令只由 slash 段承担一次
+    expect(prompts).toEqual(['/compact 总结'])
+    expect(prompts[0]!.split('/compact').length - 1).toBe(1)
+  })
+
+  it('用户改了正文后发送：prompt 命令仍仅一次且与命令名一致', async () => {
+    const prompts: string[] = []
+    const wrapper = mountCommandMessage(prompts)
+    await wrapper.find('.group\\/user .opacity-0').findAll('button')[1]!.trigger('click')
+    await wrapper.find('textarea').setValue('/compact 总结一下')
+    const sendBtn = wrapper.findAll('button').find((b) => b.text().includes('panel.composer.send'))
+    await sendBtn!.trigger('click')
+    expect(prompts).toEqual(['/compact 总结一下'])
+    expect(prompts[0]!.split('/compact').length - 1).toBe(1)
+  })
+
+  it('用户改命令名（/compact → /goal）：prompt 只含新命令，旧命令不残留', async () => {
+    const prompts: string[] = []
+    const wrapper = mountCommandMessage(prompts)
+    await wrapper.find('.group\\/user .opacity-0').findAll('button')[1]!.trigger('click')
+    await wrapper.find('textarea').setValue('/goal 总结')
+    const sendBtn = wrapper.findAll('button').find((b) => b.text().includes('panel.composer.send'))
+    await sendBtn!.trigger('click')
+    expect(prompts).toEqual(['/goal 总结'])
+  })
+})
+
+// ── [轮 3 收口] submitEdit 编辑含 skill 段的消息：prompt 中标记只出现一次 ──
+// 草稿由 normalizeContent 回填标记文本（视觉退化，已登记 §3.5-⑤②）；提交时
+// rebuildSegmentsWithEditedText 剥离编辑稿中与该段重复的标记并保留段——修复前标记翻倍，
+// runtime 注入器按标记逐个展开 ⇒ 同一 SKILL.md 注入两遍。
+describe('[轮 3] submitEdit 编辑重发 skill 段标记不翻倍', () => {
+  const SKILL: Segment = { type: 'skill', name: 'review', location: '/skills/review/SKILL.md' }
+  const MARKER = buildSkillMarker('review', '/skills/review/SKILL.md')
+
+  /** 挂载含 live content = [text('正文'), skill] 的气泡（D4-a：chip 就地插在正文之后） */
+  function mountSkillMessage(prompts: string[]) {
+    const editAndResend = vi.fn((_sid: string, _uid: string, segs: Segment[]) => {
+      prompts.push(segmentsToPrompt(segs))
+    })
+    const segments: Segment[] = [{ type: 'text', text: '正文' }, SKILL]
+    return mount(UserBubble, {
+      props: {
+        turn: makeTurn({
+          user: { id: 'u1', role: 'user', content: segments, status: 'complete', timestamp: NOW } as Message,
+        }),
+        sessionId: 's1',
+        canEdit: true,
+        isSessionEditable: false,
+      },
+      global: {
+        provide: mockChatProvide({ editAndResend }),
+        stubs: { MarkdownRenderer: true, ImageThumb: true },
+      },
+    })
+  }
+
+  async function submitDraft(wrapper: ReturnType<typeof mount>, draft?: string) {
+    await wrapper.find('.group\\/user .opacity-0').findAll('button')[1]!.trigger('click')
+    if (draft !== undefined) await wrapper.find('textarea').setValue(draft)
+    const sendBtn = wrapper.findAll('button').find((b) => b.text().includes('panel.composer.send'))
+    expect(sendBtn).toBeDefined()
+    await sendBtn!.trigger('click')
+  }
+
+  it('草稿回填标记文本 → 直接提交：prompt 标记仅一次（修复前为两次）', async () => {
+    const prompts: string[] = []
+    const wrapper = mountSkillMessage(prompts)
+    await wrapper.find('.group\\/user .opacity-0').findAll('button')[1]!.trigger('click')
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe(`正文${MARKER}`)
+    const sendBtn = wrapper.findAll('button').find((b) => b.text().includes('panel.composer.send'))
+    await sendBtn!.trigger('click')
+    expect(prompts).toEqual([`正文${MARKER}`])
+    expect(prompts[0]!.split('<xyz-skill').length - 1).toBe(1)
+  })
+
+  it('用户只改正文后提交：prompt 标记仍仅一次且正文更新', async () => {
+    const prompts: string[] = []
+    const wrapper = mountSkillMessage(prompts)
+    await submitDraft(wrapper, `改后的正文${MARKER}`)
+    expect(prompts).toEqual([`改后的正文${MARKER}`])
+    expect(prompts[0]!.split('<xyz-skill').length - 1).toBe(1)
+  })
+
+  it('用户删掉标记只留正文：prompt 无标记（段不被复活）', async () => {
+    const prompts: string[] = []
+    const wrapper = mountSkillMessage(prompts)
+    await submitDraft(wrapper, '改后的正文')
+    expect(prompts).toEqual(['改后的正文'])
+    expect(prompts[0]!.split('<xyz-skill').length - 1).toBe(0)
   })
 })

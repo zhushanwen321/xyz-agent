@@ -1,8 +1,9 @@
 /**
  * createSessionFlow 单测（IF5，w4）。
  *
- * 覆盖 TC-1..TC-8（label 三分支 / 编排序 / ES4 降级 / 空 model 跳过 / 空 content guard /
- * migrateImages path 更新 / 降级 allSettled / defaultCwd 兜底）。mock 注入点即 ctx 依赖注入点：
+ * 覆盖 TC-1..TC-8 + TC-1b（label 三分支 + slash 段回退 label 文本源 / 编排序 / ES4 降级 /
+ * 空 model 跳过 / 空 content guard / migrateImages path 更新 / 降级 allSettled / defaultCwd 兜底）。
+ * mock 注入点即 ctx 依赖注入点：
  * api.create / api.migrateImage 用 vi.fn；applyModel / onCwdFallback 用 vi.fn；store 用真实
  * createSessionStore（w1 交付，appendSession 终态断言需真实响应式）。
  */
@@ -54,6 +55,11 @@ function imageSeg(path: string, needsMigrate = false): Segment {
   }
 }
 
+/** 构造 slash 命令段（D4-a 后命令 chip 的结构化形态，name 不含 '/' 前缀）。 */
+function slashSeg(name: string): Segment {
+  return { type: 'slash', name }
+}
+
 describe('createSessionFlow', () => {
   let ctx: CreateSessionFlowCtx
   beforeEach(() => {
@@ -83,6 +89,28 @@ describe('createSessionFlow', () => {
       segments: [imageSeg('/tmp/a.png', false)],
     })
     expect(ctx.api.create).toHaveBeenCalledWith('/x', '无提示词', undefined, undefined, undefined, undefined)
+  })
+
+  it('TC-1b slash 段视同 text-like 作 label 文本源（S-6）：landing 首发纯命令 → label 含 /tasks', async () => {
+    // ① 纯命令首发（结构：[{type:'slash'}]）→ label 回退首个 slash 段拼 '/' + name，不退化为兜底文案
+    await createSessionFlow(ctx, { cwd: '/x', segments: [slashSeg('tasks')] })
+    expect(ctx.api.create).toHaveBeenCalledWith('/x', '/tasks', undefined, undefined, undefined, undefined)
+
+    // ② 有非空 text 段 → 仍以 text 段为准（slash 段只在 trim 空时回退，不抢占 label）
+    ctx = makeCtx()
+    await createSessionFlow(ctx, { cwd: '/x', segments: [textSeg('总结'), slashSeg('compact')] })
+    expect(ctx.api.create).toHaveBeenCalledWith('/x', '总结', undefined, undefined, undefined, undefined)
+
+    // ③ text 段仅空白（trim 空）+ slash 段 → 回退 slash 段（对齐 base：命令拍平进 text 时的 label）
+    ctx = makeCtx()
+    await createSessionFlow(ctx, { cwd: '/x', segments: [textSeg('   '), slashSeg('tasks')] })
+    expect(ctx.api.create).toHaveBeenCalledWith('/x', '/tasks', undefined, undefined, undefined, undefined)
+
+    // ④ 无非 text 段且无 slash 段时仍走原兜底（guard 语义未变：空段不创建）
+    ctx = makeCtx()
+    const empty = await createSessionFlow(ctx, { cwd: '/x', segments: [] })
+    expect(empty).toBeNull()
+    expect(ctx.api.create).toHaveBeenCalledTimes(0)
   })
 
   it('TC-2 create 成功全编排序：create→appendSession→applyModel（无图片段 migrateImages 跳过）', async () => {

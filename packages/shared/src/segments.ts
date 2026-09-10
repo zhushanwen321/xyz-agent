@@ -84,8 +84,12 @@ export type Segment =
  * - seg 是 image → 不补（补空格会污染行首，产出 `\n /path`）
  * - seg 是 text → 仅当文本非空且不以空格开头时补（chip→text 粘连修复；text 自带前导空格则不重复补）
  * - 其余 chip→chip / chip→text → 补
+ *
+ * 导出供展示侧共用（UserBubble.vue 按归位序渲染时，slash 段是纯文本、无 badge 的
+ * `mr-1` 间距，段间边界空格必须显式渲染才与 segmentsToText 产物逐字一致）——
+ * 边界空格规则保持单点实现，展示侧不复制第二份。
  */
-function needsBoundarySpace(prev: Segment | null, seg: Segment): boolean {
+export function needsBoundarySpace(prev: Segment | null, seg: Segment): boolean {
   if (!prev || prev.type === 'text' || prev.type === 'image' || seg.type === 'image') return false
   if (seg.type === 'text') {
     // truthiness 语义与基线一致：text 为 undefined/null 脏数据时不补空格（非空串才补）
@@ -157,16 +161,35 @@ function serializeSegment(seg: Segment): string {
   return serialize ? serialize(seg) : ''
 }
 
+/**
+ * slash 段归位（D4-c 单一实现）：slash 段（命令 chip）提为首段，其余段保持原序。
+ *
+ * 命令 chip 视觉就地（D4-a）后段序不再以 `/` 开头，归位保证序列化产物以 `/cmd` 开头
+ * （pi 行首命令协议）。多个 slash 段防御性全前置按原序（正常态至多一个）。
+ *
+ * 两个消费方共用本实现（不复制第二份归位实现）：
+ * - segmentsToText：pi prompt / 展示序列化的前缀步
+ * - UserBubble.vue：chat 流气泡按归位序渲染——live 段序与 reload 侧序列化产物
+ *   （apply-entry-convert 的 textToSegments(deliveryText)）同序，live ≡ reload
+ *   （AGENTS.md 关键规则 9）
+ *
+ * 空数组返回空数组；本函数不做过滤/去重，仅重排。
+ */
+export function normalizeSegmentOrder(segments: Segment[]): Segment[] {
+  const slash: Segment[] = []
+  const rest: Segment[] = []
+  for (const seg of segments) {
+    if (seg.type === 'slash') slash.push(seg)
+    else rest.push(seg)
+  }
+  return [...slash, ...rest]
+}
+
 export function segmentsToText(segments: Segment[]): string {
   if (segments.length === 0) return ''
-  // D4-c 归位：slash 段（命令 chip）提为首段——命令 chip 视觉就地（D4-a）后段序
-  // 不再以 / 开头，归位保证序列化产物以 /cmd 开头（pi 行首协议）。多个 slash 段
-  // 防御性全前置按原序（正常态至多一个）。needsBoundarySpace 在归位后的序上执行，
-  // slash 段视同 chip 类段（default 补空格分支覆盖）。
-  const ordered: Segment[] = [
-    ...segments.filter((s) => s.type === 'slash'),
-    ...segments.filter((s) => s.type !== 'slash'),
-  ]
+  // D4-c 归位：slash 段提首（判定与理由见 normalizeSegmentOrder）；needsBoundarySpace
+  // 在归位后的序上执行，slash 段视同 chip 类段（default 补空格分支覆盖）。
+  const ordered = normalizeSegmentOrder(segments)
   const parts: string[] = []
   for (let i = 0; i < ordered.length; i++) {
     const seg = ordered[i]

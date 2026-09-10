@@ -58,29 +58,44 @@ describe('useComposerChipCommands insertSlashChip', () => {
     cleanup?.()
   })
 
-  it('skill 命令 (/skill:name)：dataset.chipType=skill + chipName=name + label=name + contentEditable=false', () => {
-    const c = setup()
-    c.insertSlashChip('/skill:cw-cli', 'terminal')
-    const chip = c.el.querySelector('.slash-chip') as HTMLElement
-    expect(chip).not.toBeNull()
-    expect(chip.dataset.chipType).toBe('skill')
-    expect(chip.dataset.chipName).toBe('cw-cli')
-    expect(chip.contentEditable).toBe('false')
-    expect(chip.querySelector('.chip-label')?.textContent).toBe('cw-cli')
-    // 图标注入（renderIcon 返回 true → .chip-icon 已挂载）
-    expect(chip.querySelector('.chip-icon')).not.toBeNull()
+  it('skill 命令 (/skill:name)：委托 insertSkillChip —— chipType=skill + 就地插入 + 不删已有 chip（S-4）', () => {
+    const c = setup(
+      '<span class="slash-chip" data-chip-type="slash" data-chip-name="compact"><span class="chip-label">/compact</span></span>' +
+        '正文' +
+        '<span class="slash-chip" data-chip-type="skill" data-chip-name="cw-cli"><span class="chip-label">cw-cli</span></span>',
+    )
+    const textNode = c.el.childNodes[1] as Text
+    setCursor(textNode, 2) // 光标在「正文」末尾
+    c.insertSlashChip('/skill:cw-new', 'terminal')
+    const chips = Array.from(c.el.querySelectorAll<HTMLElement>('.slash-chip'))
+    const newChip = chips.find((n) => n.dataset.chipName === 'cw-new') as HTMLElement
+    // chip 形态：skill 类型 + 剥前缀名 + contentEditable=false（与 insertSkillChip 单点一致）
+    expect(newChip).not.toBeNull()
+    expect(newChip.dataset.chipType).toBe('skill')
+    expect(newChip.dataset.chipName).toBe('cw-new')
+    expect(newChip.contentEditable).toBe('false')
+    expect(newChip.querySelector('.chip-label')?.textContent).toBe('cw-new')
+    // '/skill:' 前缀串不携带 SKILL.md 路径 → 不写 dataset.chipLocation
+    expect(newChip.dataset.chipLocation).toBeUndefined()
+    // 图标经 renderIcon 透传（第三参 icon 原样传给 insertSkillChip）
     expect(c.callbacks.renderIcon).toHaveBeenCalledWith(expect.any(HTMLElement), 'terminal')
     // × 删除按钮（aria-label 经 t 注入）
-    const xBtn = chip.querySelector('.chip-x') as HTMLElement
+    const xBtn = newChip.querySelector('.chip-x') as HTMLElement
     expect(xBtn).not.toBeNull()
     expect(xBtn.getAttribute('role')).toBe('button')
     expect(xBtn.getAttribute('aria-label')).toBe('composable.removeLabel')
     expect(xBtn.textContent).toBe('×')
-    // chip 插在最前 + 后跟 ZWSP spacer
-    expect(c.el.firstChild).toBe(chip)
-    expect(c.el.lastChild?.nodeType).toBe(Node.TEXT_NODE)
-    expect(c.el.lastChild?.textContent).toBe('\u200B')
-    expect(c.callbacks.onChanged).toHaveBeenCalled()
+    // 旧破坏性行为已消除：不删光全部 .slash-chip —— 已有命令 chip 与已有 skill chip 均原样保留
+    expect(chips.filter((n) => n.dataset.chipType === 'slash')).toHaveLength(1)
+    expect(chips.find((n) => n.dataset.chipName === 'cw-cli')).toBeTruthy()
+    // 就地插入光标处（旧行为是 insertBefore(firstChild) 强制最前），chip 后跟 ZWSP spacer
+    expect(newChip.previousSibling).toBe(textNode)
+    expect(newChip.nextSibling?.textContent).toBe('\u200B')
+    // 与 insertSkillChip 单点形态一致（含 C5 tooltip）
+    expect(newChip.title).toBe('composable.skillChipTitle')
+    // 委托链路 restoreSelection/onChanged 各恰好一次（不因委托而重复调用）
+    expect(c.callbacks.restoreSelection).toHaveBeenCalledTimes(1)
+    expect(c.callbacks.onChanged).toHaveBeenCalledTimes(1)
     cleanup = c.cleanup
   })
 
