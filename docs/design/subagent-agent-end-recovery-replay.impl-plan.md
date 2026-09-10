@@ -131,6 +131,11 @@ node scripts/check-doc-symbol-drift.mjs         # M5 后
 | M4 | 采纳面只补 `sessionFile`，不由文件名反推 sessionId | 决策 4 采纳面仅 sessionFile；e2e 明确断言 `result.sessionId` 仍为 undefined（已知面，非缺陷） | 2026-09-10 |
 | M4 | **领土扩张：`spawn-runner.ts` +1 行**（`sessionFileFallback: { prompt: params.task, spawnStartedAtMs: startTime, sessionDir: params.sessionDir }`） | 计划期领地划分漏项：prompt 只存在于 `runSpawnOnce` 作用域，pump 的 `StdoutPumpDeps` 不含它，设计决策 4 只写了 pump 侧插入未预见此依赖。主 agent 裁定授权（M2 已 commit 042dccec6，无并发写者）；核验确认 diff 恰 1 hunk / 1 行，`index ed2ebaa10` = M2 提交版，M2 逻辑零触碰 | 2026-09-10 |
 | M4 | 新增 seam 缺省分支 warn「M4 prompt-head scan not wired」 | 设计未规定；防止缺接线时静默降级（规则 20）。生产已接线，该分支现只覆盖未接线调用方与测试 | 2026-09-10 |
+| G-A-1 | 修复超出任务书「阶段顺序重排」的字面范围：另把 fake 子进程状态文件改为写前日志（write-ahead，计数先落盘再发 stdout 副作用） | 证据驱动而非镀金：只做阶段重排时 120 次满载仍有 1 红——存在第二竞态（子进程先回包后落盘，父侧成功路径的 finally kill 会把状态文件截断在 O_TRUNC 写窗口，实测 rawLen=0），不在阶段重排覆盖面内。写前日志使「父进程可观察 ⇒ 文件已记录」成为因果不变式。改动全在测试文件内的 fake 子进程脚本，零生产源码变更 | 2026-09-10 |
+| G-A-1 | 阶段 ① 停点选「第 3 次握手落盘可见」而非任务书字面的「agent_end 已发出」 | 子进程 flush(count=3) causally 先于 emitAgentEnd()，停在前者可证明回补超时 arm 后假时钟累计推进 ≤ 一个 FAKE_STEP_MS（10ms）vs 1000ms 预算（差两个数量级）；停在 agentEndSent 则「子进程 flush 与我方轮询」之间留有与 arm 无因果序的窗口，慢机器仍可输 | 2026-09-10 |
+| G-A-1 | 阶段 ② 真实等待上界用轮数（REAL_WAIT_POLLS=2000 × 1ms realSleep ≈ ≥2s 墙钟）而非 Date.now() deadline | `vi.useFakeTimers()` 连 Date 一起伪造，deadline 在刻意停摆的假时钟下冻结不前进；轮数 × realSleep 不受假时钟影响且给满真实 I/O 余量。等待超时的报错信息含 last/raw 诊断（永久性，非探针残留） | 2026-09-10 |
+| G-A-2 | 产品文件 `subagent-engine-history.ts` 有改动（任务书字面限「测试时序确定性」） | 改动 = 测试钩子换装：删旧 seam `setEngineIdleReuseMsForTests` 与可变 `idleReuseMs`（唯一消费者即被改用例，删后全仓引用零残留、drift 守卫过）、提取 `expireIdleEntry` 共享函数、新增 `expireIdleEngineClientsForTests` 钩子（与真实定时器回调共用同一到期路径）。生产路径逐点不变：`armIdleTimer` 直接用 `ENGINE_IDLE_REUSE_MS` 常量（原可变量生产态恒等于该常量）、武装/重置/清除语义全同、钩子无生产调用方。沿用本仓 `*ForTests` 先例（settled-watchdog 的 `_setMidRoundNoProgressWindowMsForTest` 同款）。主 agent 逐行核验 diff 后接受该 1 文件领地扩张 | 2026-09-10 |
+| G-A-2 | 用例不再直接断言「真实定时器按被覆盖窗口值到期」 | 该覆盖原本只由竞态路径顺带提供，本身不可确定性断言；两条语义断言（窗口内零新 spawn / 过期 dispose 后重建 +1）逐字保留并经变异测试证明非空洞（去 delete / 跳复用缓存各自把用例变红）。代价 = 5min 窗口的真实 timer 到期触发不再被 e2e 直接观测，由共用 `expireIdleEntry` 的同路径间接覆盖 | 2026-09-10 |
 
 ## 6 状态表
 
@@ -157,6 +162,7 @@ node scripts/check-doc-symbol-drift.mjs         # M5 后
 - **K3②（真实 workflow 并发形态下 prompt 头部键区分度实测）归属已裁定到阶段 5 Gate B 的 V1 期**：该检查点需要真实 workflow 派发环境（dev app），单测面无法构造真实并发头部形态。若 V1 期实测发现同模板并发头部同质率高 → M4 兜底在该场景下只会「安全放弃」（不误配，但也无效），届时应按设计决策 4 的升级路径改键策略（全文哈希 / 参数段取样）并回写设计。
 - **已接受的测试输出噪音**：M2 的 `agent-end-backfill.test.ts` race① 用例 sessionDir 为空，M4 接线后 close 收尾会多打一行 `[sessionfile] unobtainable ... reason=no_candidates` warn。这是接线后的真实降级留痕（非失败），不改该用例（静音会掩盖真实行为面）。
 - 阶段 5 Gate B 需注意 V4 的场景构造：单命中/多命中判定依赖 mtime 窗口内候选数，真机验收时目录里同期并发 run 的 session 文件会天然构成多候选——多命中即安全放弃，验收判据应是「不误配 + run 正常终态」，而非「必须命中」。
+- **F5（基础设施 flake，范围外登记，非本批代码缺陷）**：pre-commit 存在自改写竞态——「Runtime Bundle 验证」段内部的 `pnpm install` 触发根 `prepare`（`.githooks/install-hooks.sh`）→ `cat >` 重写**正在被执行的** `.bare/hooks/pre-commit`。若装的是旧代（`.githooks` 源变更后无根级 install 刷新，本次即 M0 合并 aa12eed36 更新源后），新旧代字节长度不同 → bash 读偏移失步 → 把正则片段当命令执行、报假语法错、commit 中止。本次 G-A-2 首次提交即被此中断（详见 §7 Gate A 复验块）；钩子本体完好（`bash -n` 通过、重生成 md5 确定性）。**长期修法另行任务**：install-hooks 改原子写（tmp + mv 同目录 rename）或 bundle 验证内的 install 加 `--ignore-scripts`。
 
 **阶段 3 一致性审查结论与修复待办（2026-09-10，两分区均回）**
 
@@ -200,10 +206,19 @@ doc_errors（4+1 条）已由主 agent 本次修订（doc_errors 归主 agent，
 - **计划勘误**：§4 全量命令原写 `pnpm --filter @zhushanwen/runtime test`，实读 `packages/runtime/package.json` 的 name = `@xyz-agent/runtime`——已更正（该错会让 Gate A 直接跑不起来）。
 - **另注**：`pnpm extensions:test` 的 filter `@zhushanwen/pi-*` 会连带跑 `packages/pi-subagent-cli`，使 extensions 门的绿红与本改动面 flake 耦合——判读 extensions 门时须剥离该包结果。
 
+**阶段 5 Gate A 复验结论（2026-09-10，第二次执行：绿）**
+
+- **重验范围声明**（入口门第 3 条）：两处红均为测试时序 flake；修复触及面 = `pi-subagent-cli` 1 个测试文件 + `runtime` 1 产品文件（测试钩子换装）+ 1 测试文件，**未触及任何共享接线点** → 按规则只重验影响面包，其余门（root lint / subagent-core / drift 守卫 / pre-commit 守卫 / extensions）沿用首次执行结果。
+- **G-A-1 关闭（commit `d626b7300`）**：根因 = 观测通道与超时通道耦合（假时钟推进与子进程真实落盘赛跑，满载 ~1/5 红）+ 修复中发现的第二竞态（fake 子进程先回包后落盘，父侧成功路径 kill 把状态文件截断在 O_TRUNC 写窗口，实测 rawLen=0）。修法 = 三段式（假时钟只推进到 spawn 期三轮握手落盘即停 → 有界真实时间等第 4 次 get_state 落盘（停摆期假超时不可能 fire、子进程不可能被杀）→ 快照后才推进超时）+ 子进程写前日志。断言零削弱（可选链改非可选，变强）。证据：修复组 20/20 串行全量 + 216 次满载并行全绿 + 慢子进程注入对照（400ms：修前 3/3 红 / 修后 3/3 绿）；主 agent 复核 = 单文件 ×10 + 全量 ×2（356/356）+ typecheck + 24 次满载并行（8 burner，load avg ~10）全绿。
+- **G-A-2 关闭（commit `e0667f4d9`）**：根因在测试不在产品——idle 定时器在 entry 创建时武装（早于 read 的 spawn/握手），120ms 真实窗 + 满载下 read1 耗时 1356ms 越窗 → 出表 dispose → read2 重建 → spawn 计数 2（与 Gate A 原始红同形）。生产窗口 5min 对 <400ms 冷读无重叠风险。修法 = 「窗口内」用生产 5min 窗（判定与 read 耗时解耦）+「窗口过期」由 `expireIdleEngineClientsForTests` 显式驱动（与真实定时器回调共用 `expireIdleEntry`，同一实现路径非并行仿真）；旧 seam 删除后 `armIdleTimer` 直接用常量，生产行为逐点不变。证据：修复组单文件 ×10 + 满载（24 burner，load avg 26.77）×5 + 全量 ×6 + 变异测试 ×2；主 agent 复核 = 单文件 ×10 + 全量 ×1（457 文件 / 5184 tests）+ tsc + eslint + pre-commit 完整 Bundle 验证（运行时健康检查 + 插件 E2E 全过）。
+- **Gate A 判定：绿**。
+- **F5 基础设施发现（附带，非 Gate 判定项）**：G-A-2 提交首次尝试被 pre-commit 假语法错中止——钩子自改写竞态（机制与长期修法见 §7 残留风险 F5 条）。瞬时态：验证钩子本体完好（`bash -n` 通过）+ 手动重跑 `install-hooks.sh` 生成 md5 与装后一致（生成确定性）后重试提交通过（此时重写等长零失步）。该发现不动本批任何代码，登记待另行任务。
+
 **变更历史**：
 
 - 2026-09-10：计划创建（对应设计就绪版 41d475737），待用户评审 + 基线 commit。
 - 2026-09-10：用户评审确认；基线 commit e12ea80bd。M0 执行完毕：merge 430dacabc（冲突面与 K5 预演完全吻合）+ 残留清理 e192dfe4a（checkout 整树重置碰不到的 3 个线 B 独有测试文件——教训：`git checkout <tree> -- packages/` 只覆盖 dev 树存在文件，不删 merge 自动合入的线 B 独有文件）；全量三连绿。批次 1（M1/M3/M4）派发。
+- 2026-09-10：**Gate A 复验绿 → 进入 Gate B**。G-A-1/G-A-2 两个修复组先后回报并经主 agent 硬核验（diff 领地核对 + 引用清扫 + 独立重跑）后分别 commit（`d626b7300` / `e0667f4d9`）；G-A-1 修复组额外挖出并修掉第二竞态（子进程回包/落盘顺序 vs 父侧成功路径 kill），G-A-2 修复组以「同路径测试钩子」替换「可变窗口 seam」实现确定性且生产行为逐点不变。提交 G-A-2 时首次遭遇 F5 钩子自改写竞态（假语法错中止），诊断为瞬时态后重试通过，F5 已登记。§5 新增 5 条偏差行（G-A-1 ×3 / G-A-2 ×2）。
 - 2026-09-10：**复审回流修复组 A2 完成并 commit（b066b4f91）→ 代码面冻结，进入阶段 5**。硬核验：改动集恰 5 文件 ⊆ 领地；主 agent **独立连跑全量 8 次全绿**（修复前 5 次中 1 次红，签名一致）——flaky 确认消除；源文件 diff 只含注释/文档与 `empty_prompt_head` 的 flag 语义修正，无逻辑扩张。**A2 的最大价值是它没按复审给的修法做，而是挖到根因**：终局读只是症状，真因是「阶段 1 未等第 4 次 get_state 送达就推进超时」→ 子进程可能从未读到该请求即被 kill（观测通道竞态），改用可判定条件（对齐 V3 用例）后竞态结构性消失，而非靠 sleep 掩盖。至此阶段 3 的 9 条 unreasonable + 两轮定向复审的 6 条问题全部关闭；代码面 commit 序列 = M0-M6 单元 + 修复批次 A/B/C/A2。
 - 2026-09-10：**复审回流修复组 C 完成并 commit（dda8b4d98）→ F1 关闭**。硬核验：`git status` 改动集恰 3 文件 ⊆ 领地；主 agent 逐行读 `subagent-service.ts` diff 确认「首落整写 / 后续按字段补缺 / poolKey+journalPath 不参与 / 仅有落位才落 entry」四点；重跑 subagent-core 全包 2848 passed（基线 2847+1）+ tsc 干净。C 组 3 条 deviation 已登记。**当前仍有 A2 组在途**（pi-subagent-cli：U-A3 用例 flaky 修复 + U-A6 措辞与 `empty_prompt_head` flag 契约修正），完成后才进阶段 5（Gate A 需在代码面完全冻结后跑）。
 - 2026-09-10：**定向复审 A 回流 + doc_errors 修订（e47c3adbc）**。复审结论：6 条职责全部落地、U-A6 载体复用经**全量枚举消费点**确认零写入（复审独立找出主 agent 未抽查的 3 处：`session-view-service.ts:200-251` GUI read ②级投影、`worker-message-pump.ts:784-786` workflow TUI liveRecord、`subagent-service.ts:2704` chat 首轮）；同时挑出 2 条 medium + 2 条 low 真问题（U-A3 用例 flaky 可复现、U-A6 覆盖面只到 chat 首轮、U-A6 静默工具措辞与实装 off-by-one、`empty_prompt_head` 的 `candidateTotalKnown` 契约冲突）→ 派 A2 组修。doc_errors 两条已由主 agent 就地修订（决策 9 标注「已修 + 覆盖边界」、V2 的 LC-4 子断言标注已覆盖）。新增登记 F3（chat 续聊轮仍失明的覆盖边界）、F4（spawn 失败可能被判 success 的范围外观察，待分诊）。
