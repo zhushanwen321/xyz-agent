@@ -127,7 +127,7 @@ graph TD
 - 【已闭环】constraints.json 已登记——commit 998f6ad3e（u3b），C-state-12，97 条校验过（§6 状态表 u3 行）。
 - 【开放】u4 真进程测试依赖本机模型凭据与 pi 安装；若环境不可用，登记阻塞并升级用户，不得以 mock 冒充真机验收（准则 11）。CI real-pi 池真跑证据仍缺（本机已真跑，凭据依赖，见交付态残留）。
 
-**变更历史**（按 commit 序；实施单元 commit 均随附本计划状态表同步，不单列）：
+**变更历史**（按主题分批，批内为提交序；实施单元 commit 均随附本计划状态表同步，不单列）：
 - 1744ef0a2 计划基线（§0-§5 全量创建）。
 - acc603d4d u1b 落地（查看信号 + relay 只读查询）。
 - 64e70ae51 u1a 落地（RpcClient 空闲信号；轮 2 接替路径收尾，偏差 R6 登记）。
@@ -135,10 +135,11 @@ graph TD
 - e5ab883ac u3a 落地（4 薄豁免访问器 + depth() 选型，R7）。
 - 998f6ad3e u3b 落地（组合根 wiring + `XYZ_RUNTIME_PI_RECLAIM_*` SSOT + C-state-12 约束登记）。
 - 3b509694c u4 落地（真进程集成测试，P7 收益门 PASS=incremental）。
-- de61b4c15 一致性审查修复：维护通道排除补回程腿（pending 级回声重置缺口）。
-- f51e8042b 一致性审查修复：reaper 默认值双源等值守卫测试（R14）。
 - fa9d9ee39 一致性审查修复：两处过时注释同步。
+- f80b5cbfa / 6b06f52e6 doc 侧同步（设计 D1/D3-D7 措辞 + P2/P7 探针状态 + 本表 R8-R13 登记）。
+- de61b4c15 一致性审查修复：维护通道排除补回程腿（pending 级回声重置缺口；定向复审 5 攻击点通过）。
+- f51e8042b 一致性审查修复：reaper 默认值双源等值守卫测试（R14）。
+- b930bc28d Gate A 第 1 轮 FAIL 记录 + uncovered 处置 + R6 更正（详见 §6 Gate A 记录）。
 - 021a0cfe9 Gate A lint 收敛（魔法数/静默 catch 带理由豁免 + max-lines 按先例 override）。
 - f978dd2d5 Gate A 修复：u2 无条件 await 微任务让步真语义回归（同步短路守卫 + 锁定用例）。
-- f80b5cbfa / 6b06f52e6 doc 侧同步（设计 D1/D3-D7 措辞 + P2/P7 探针状态 + 本表 R8-R13 登记）。
 - 9c78c7eab Gate B 记录（V1-V5/V7 pass，V6 交付后观察）。
