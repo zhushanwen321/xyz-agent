@@ -97,11 +97,11 @@ node scripts/check-doc-symbol-drift.mjs         # M5 后
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| M0 合并基底 | pending | 0/2 | — |
-| M1 S2 契约修复 | pending | 0/2 | — |
+| M0 合并基底 | committed | 1/2 | merge 430dacabc + 残留清理 e192dfe4a；K5 冲突面与预演清单完全吻合；全量三连绿（pi-subagent-cli 304 passed / subagent-core 2834 passed / runtime 457 文件 5184 passed / tsc 干净） |
+| M1 S2 契约修复 | in-progress | 0/2 | 批次 1 派发 |
 | M2 agent_end 惰性回补 | pending | 0/2 | — |
-| M3 workflow 域守护补挂 | pending | 0/2 | — |
-| M4 close 兜底扫描 | pending | 0/2 | — |
+| M3 workflow 域守护补挂 | in-progress | 0/2 | 批次 1 派发 |
+| M4 close 兜底扫描 | in-progress | 0/2 | 批次 1 派发 |
 | M5 文档与守卫 | pending | 0/2 | — |
 
 ## 7 残留风险与变更历史
