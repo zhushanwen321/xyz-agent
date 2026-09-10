@@ -341,7 +341,9 @@ function deriveUniformModelField(
  *
  * 计算放 runtime 聚合层（前端零推导，对齐 supportedLevels 的 view-ready 原则）：
  * 快照 provider 级 artifact（BuiltinProviderTemplate.api/baseUrl）不再是展示源。
- * 派生数据源 = getMergedCatalogModels（快照 ⊕ overlay 单点，与校验视图同源）。
+ * 派生数据源 = getMergedCatalogModels（快照 ⊕ overlay 单点，与校验视图同源）；overlay
+ * expired/never-seen 时合并视图退化为纯快照，派生值随之变化（如 pi.dev 目录新增模型
+ * 改变同值性）——预期行为：派生值跟随数据权威变化，非缺陷（设计检查点 6 实施确认）。
  *
  * 语义收窄的消费点已逐处判定（设计 D5「已接受代价」消费点表）：model-mapper.ts:61
  * toModelInfo 的 `m.api ?? providerApi` 回落路径在混合 provider 下可达（providerApi
