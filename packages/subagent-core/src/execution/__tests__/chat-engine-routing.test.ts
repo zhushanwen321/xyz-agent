@@ -334,6 +334,16 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
   // 2. pi 缺省守护（D5 字节级）
   // ============================================================
 
+  it("[F6] pi 路由 kickOffChatRound：runCtx 带 sessionRootId（initSession 注入的根 id，relay 归属键权威源）", async () => {
+    const { service, piEngine } = setup(agentDir);
+    const handle = await service.execute(baseOpts(agentDir));
+    await vi.waitFor(() => expect(piEngine.runs.length).toBe(1));
+    // initSession({sessionId: "test-session"}) 无 env → sessionRootId = "test-session"；
+    // kickOffChatRound 是 pi 引擎 background 派发主路径（isPiRoute 恒路由至此，含
+    // workflow 域一次性 run），漏注 = GUI pi 派发 relay 拒绝 exit 13（Gate B F6 形态）。
+    expect(piEngine.runs[0]!.ctx.sessionRootId).toBe("test-session");
+  });
+
   it("[D5] 全缺省 pi record：engine===undefined 且 entry JSON 不含 engine 键", async () => {
     const { service, piEngine } = setup(agentDir);
     const handle = await service.execute(baseOpts(agentDir));
