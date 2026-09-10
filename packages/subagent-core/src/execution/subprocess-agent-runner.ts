@@ -23,10 +23,15 @@
 // 设计基线：
 //   D-A8（onEvent 桥接）/ D-A9（timeoutMs 合并 signal）/
 //   D-008（model 填底，不调 resolveModel）/ BC-9（timeoutMs 行为）/ BC-10（live-record 进度）
+//   [M3 决策 9]（workflow 域 no-progress 守护补挂：SAR.run try 块内、engine.run 派发前
+//   arm per-run 30min 无进展检测；刷新源 = journal.onEvent 包装 ∪ stream.onDelta 包装；
+//   fire = watchdog AbortController 并入 mergeRunSignals 合流 → RemoteEngine
+//   wireAbortSignal 阶梯（cancel 帧 → 收敛窗 → killAll）；disarm = finally）
 
 import type { AgentRunner } from "../orchestration/models/ports.ts";
 import type { AgentCallOpts, AgentResult } from "../orchestration/models/types.ts";
 import type { AgentEvent } from "../shared/agent-event.ts";
+import { getLogger } from "../core/logger.ts";
 import { assertTaskShapeSupported } from "./engine/common/capability-gate.ts";
 import { HOST_TIMEOUT_ABORT_REASON } from "./engine/common/kill-chain.ts";
 import { JOURNAL_INITIAL_POOL_KEY, wireEventJournal } from "./engine/common/journal-wiring.ts";
@@ -48,6 +53,22 @@ import { registerSpawnedChildForRecord } from "./engine/host/spawned-children.ts
 import type { SubagentStream } from "./stream-sink.ts";
 import type { SubagentService } from "./subagent-service.ts";
 import { toErrorMessage } from "../core/error-message.ts";
+// [M3 决策 9] workflow 域 no-progress 守护复用 chat 域同一原语（同一组常量 + 同一组
+// 挂载/刷新/清除 helper——不新造一套）。fire 的 abort 经 mergeRunSignals 并入
+// engine.run 的 ctx.signal → RemoteEngine wireAbortSignal 阶梯（cancel 帧 → 收敛窗
+// → killAll），与 chat 域 kill 阶梯同源。
+import {
+  armMidRoundNoProgress,
+  disarmSettledWatchdog,
+  refreshFromProtocolEvent,
+  type SettledWatchdogFireInfo,
+} from "./settled-watchdog.ts";
+
+/** 本模块日志出口（fire warn 留痕；core 侧 log 端口，禁 console）。 */
+const logger = getLogger("subagents");
+
+/** fire warn 文案的窗长换算（30min 阈值 → 分钟展示）。 */
+const MS_PER_MINUTE = 60_000;
 
 // ── 构造依赖（per-session 注入）──
 
@@ -196,6 +217,12 @@ export class SubprocessAgentRunner implements AgentRunner {
     const taskId = `sa-${crypto.randomUUID()}`;
     const journal = wireEventJournal({ engineId: route.engineId, taskId, forwardEvents: onEvent });
 
+    // 合并 signal 句柄 + stream 刷新包裹的 unbind（finally 释放：run 正常收敛时 merged
+    // signal 不 abort，外部 run 级 signal 上的 listener 若不显式移除会随每次 agent 调用
+    // 累积，最终触发 MaxListenersExceededWarning——R4 INFO 实施卫生项；stream 覆写同理）。
+    let runSignal: MergedRunSignalHandle | undefined;
+    let unbindStream: (() => void) | undefined;
+
     try {
       // ── [U1 D2] RunContext.modelRef 接入：ctxModel 继承路径的孪生守卫 ──
       // ctxModel 是运行时已验证的 ModelInfo（豁免 registry 存在性复查），但继承产出的
@@ -210,15 +237,37 @@ export class SubprocessAgentRunner implements AgentRunner {
         if (modelService) modelRefFromVerified(this.ctxModel, modelService.getModelRegistry());
       }
 
-      // ── D-A9: timeoutMs 合并 signal（超时 abort 带 HOST_TIMEOUT_ABORT_REASON 标记）──
-      const mergedSignal = mergeTimeoutSignal(signal, opts.timeoutMs);
+      // ── [M3 决策 9] per-run no-progress 守护 arm（try 块内、engine.run 派发之前）──
+      // workflow 域 agent() 的真实链路 = executeAgentCall → SAR.run → RemoteEngine.run
+      // 协议 run 帧直达引擎进程：该路径此前零熔断（引擎侧 run 帧不设墙钟 by design，
+      // per-call timeoutMs 是 opt-in）——引擎子进程静默楔死（spawn 成功、prompt 已发、
+      // 零事件输出、不退出）= agent() 永挂 + workflow 停摆 + 无终态通知（carbon 事故
+      // 形态）。arm 点必须在派发前：刷新面随本 run 的事件/增量通道建立。
+      const noProgress = armRunNoProgressWatchdog(taskId);
+
+      // ── D-A9: timeoutMs 合并 signal（超时 abort 带 HOST_TIMEOUT_ABORT_REASON 标记）
+      //    + [M3] no-progress watchdog abort 并入同一合流（第三信号源，与 timeoutMs
+      //    同构——fire 的 abort 不携带 reason，wireAbortSignal 只消费 abort 事实）──
+      runSignal = mergeRunSignals(signal, opts.timeoutMs, noProgress.signal);
+
+      // ── 无进展刷新面（两路，缺一不可）──
+      // journal.onEvent 包装：引擎协议事件（message_*/tool_*/turn_end 等）经 journal
+      // 落盘前的转发通道刷新；streamDelta 反向帧不经 journal（host/streamDelta 独立
+      // 通道），故 stream 的 onDelta 需单独包裹——只接一路会漏掉纯流式产出的活性
+      // 信号（V5① 刷新源接线缺陷的验收靶子）。
+      const journalOnEvent = journal.onEvent;
+      const observedEvent = (event: AgentEvent): void => {
+        refreshFromProtocolEvent(taskId);
+        journalOnEvent(event);
+      };
+      unbindStream = stream === undefined ? undefined : bindNoProgressRefresh(stream, taskId);
 
       // ── P1/P4 引擎接线：EnginePort.run ──
       const runCtx: RunContext = {
         taskId,
         poolKey: JOURNAL_INITIAL_POOL_KEY,
-        signal: mergedSignal,
-        onEvent: journal.onEvent,
+        signal: runSignal.signal,
+        onEvent: observedEvent,
         ctxModel: this.ctxModel,
         ...(route.engineFallback !== undefined ? { engineFallback: route.engineFallback } : {}),
         onPoolResolved: journal.onPoolResolved,
@@ -242,7 +291,12 @@ export class SubprocessAgentRunner implements AgentRunner {
       // handle.journalPath 回填（§3.3.6：read ②级的自描述定位符——运行期落盘路径
       // 权威在 writer，handle 记录最终路径供跨重启 read 消费）
       journal.backfillHandle(handle);
-      return outcomeToRunnerResult(outcome);
+      // [M3] fire 后的失败结果附恢复指引（设计 §3.4 错误规格）；成功收敛或被外部
+      // cancel 的形态不附加（只对 error 结果追注，不伪造失败）。
+      const result = outcomeToRunnerResult(outcome);
+      return noProgress.fired() && result.error !== undefined
+        ? withNoProgressRecoveryNote(result)
+        : result;
     } catch (err) {
       // executeAndAwait throw（嵌套超限 ForkDepthExceededError，BC-12）或未预期异常 → 不 reject，入 error。
       const message = toErrorMessage(err);
@@ -253,6 +307,10 @@ export class SubprocessAgentRunner implements AgentRunner {
         toolCalls: [],
       };
     } finally {
+      // 先摘桥接与 stream 包裹（不残留 listener/覆写），再清 watchdog，最后落盘收口。
+      runSignal?.dispose();
+      unbindStream?.();
+      disarmSettledWatchdog(taskId);
       // run 终态后 flush + fsync 一次（§3.3.6 写入纪律）；写失败已由 writer 内部
       // warn + failed 收口，close 不抛（journal 是②级尽力而为数据源）
       await journal.close();
@@ -326,12 +384,100 @@ function outcomeToRunnerResult(outcome: AgentOutcome): AgentResult {
   };
 }
 
+// ── [M3 决策 9] workflow 域 no-progress 守护 ──────────────────────────────
+
+/**
+ * per-run no-progress 守护句柄：signal 供 mergeRunSignals 合流，fired 供 run 收敛后
+ * 判定是否要附恢复指引（fire 是异步 timer 事件，run 返回时读取最终状态）。
+ */
+interface RunNoProgressGuard {
+  signal: AbortSignal;
+  fired(): boolean;
+}
+
+/**
+ * arm workflow 域 per-run no-progress 守护（30min 连续静默 = 回收层有界兜底，产出即
+ * 刷新；非任务级墙钟——规则 19 合规，与 chat 域同一原语同一量级）。
+ *
+ * 复用 `settled-watchdog` 既有原语（armMidRoundNoProgress / refreshFromProtocolEvent /
+ * disarmSettledWatchdog），不自造第二套计时器：键 = taskId（'sa-' 前缀，per-call 唯一；
+ * executeAgentCall 重试递归 = 全新 SAR.run 调用 → 天然重挂新窗口）。
+ *
+ * fire 回调契约（对齐 onHotPathSettledWatchdogTimeout 先例）：本回调在 timer 同步
+ * 上下文执行，同步段只做「warn + AbortController.abort()」（abort 幂等不抛）——错误
+ * 逃出回调 = uncaughtException 崩宿主。真正终止由 abort 经 mergedSignal →
+ * RemoteEngine wireAbortSignal 阶梯（cancel 帧 → 收敛窗 → killAll）承载，本层不直接
+ * 杀进程（SAR 无 ExecutionRecord 三件套）。
+ *
+ * onSettleTimeout 与 onMidTimeout 同体：workflow 域无 agent_end 交棒点（SAR 不调用
+ * handoverMidRoundToSettled），该 handler 仅为满足原语签名保留——同体保证若未来接
+ * 交棒，语义仍为「无进展即终止本 run」。
+ */
+function armRunNoProgressWatchdog(taskId: string): RunNoProgressGuard {
+  const controller = new AbortController();
+  let fired = false;
+  const fire = (info: SettledWatchdogFireInfo): void => {
+    fired = true;
+    // 恢复指引闭环（错误 → 权威源 → 重试）：killAll 组杀连带面在此显式出声——
+    // 引擎对 cancel 帧 >收敛窗无响应时组杀引擎 CLI，同引擎其余并发 run 会以
+    // engine_crashed 失败终态化（失败通知照发、executeAgentCall 重试通道仍在）。
+    logger.warn(
+      `[subagents] workflow no-progress watchdog (${info.phase}) fired for ${taskId}: ` +
+        `no valid protocol event for ${info.waitedMs / MS_PER_MINUTE} min after run dispatched — ` +
+        `aborting run (cancel frame → settle grace window → killAll if the engine does not settle). ` +
+        `Note: a killAll group-kills the engine CLI process, so other concurrent runs on the same ` +
+        `engine may end as engine_crashed (they still get a failure notification and retry). ` +
+        `Recovery: check state with subagents action:'list', then re-dispatch the workflow.`,
+    );
+    controller.abort();
+  };
+  armMidRoundNoProgress(taskId, { onMidTimeout: fire, onSettleTimeout: fire });
+  return { signal: controller.signal, fired: () => fired };
+}
+
+/**
+ * streamDelta 刷新接线：在**原实例**上包裹 onDelta（先刷新再委托原实现），返回
+ * unbind 函数由 finally 调用恢复。
+ *
+ * 保持对象 identity（不建代理）：SAR 对下游的 stream 透传契约要求同一实例
+ *（既有测试锁定同对象），而 host/streamDelta 反向帧只经 `ctx.stream.onDelta`
+ * 到达（remote-engine 的 onStreamDelta）——原地包裹是唯一既保 identity 又能观测
+ * delta 的接法。恢复用「原为自有属性则回写、原为原型方法则删自有属性」精确还原。
+ */
+function bindNoProgressRefresh(stream: SubagentStream, taskId: string): () => void {
+  const originalOnDelta = stream.onDelta;
+  const hadOwnOnDelta = Object.prototype.hasOwnProperty.call(stream, "onDelta");
+  stream.onDelta = (delta: string): void => {
+    refreshFromProtocolEvent(taskId);
+    originalOnDelta.call(stream, delta);
+  };
+  return () => {
+    if (hadOwnOnDelta) stream.onDelta = originalOnDelta;
+    else Reflect.deleteProperty(stream, "onDelta");
+  };
+}
+
+/**
+ * fire 后的失败结果附恢复指引（设计 §3.4 错误规格「失败结果附『重派 workflow /
+ * 检查 subagents』指引」）。只对已带 error 的结果追注——成功收敛或被外部 cancel 的
+ * 形态保持原样，不伪造失败。
+ */
+function withNoProgressRecoveryNote(result: AgentResult): AgentResult {
+  return {
+    ...result,
+    error:
+      `${result.error} | workflow no-progress watchdog fired: the run was aborted after a long ` +
+      `silence window with no protocol event or stream delta. ` +
+      `Recovery: check state with subagents action:'list', then re-dispatch the workflow.`,
+  };
+}
+
 /**
  * D-A9: per-call timeoutMs 合并进 AbortSignal（[D6 合流迁入]——原定义在已删除的
- * execution/execute-options-mapper.ts，本类是唯一消费点，运行期件随消费方落位）。
+ * execution/execute-options-mapper.ts）。
  *
- * 墙钟 timeoutMs（per-call）+ 外部 signal（run 级 abort）都生效。
- * 缺此合并则 agent({timeoutMs:5000}) 静默无效（BC-9）。
+ * 保留此薄包装（历史导出契约 + 既有测试锁定的纯函数行为）：timeoutMs 无信号源时
+ * 原样返回 external signal。生产消费点已改用 mergeRunSignals（需要 dispose 面）。
  *
  * @param signal    外部 signal（workflow run 级 controller.signal）
  * @param timeoutMs per-call 墙钟超时；undefined/<=0 → 不设超时，原样返回 signal
@@ -341,32 +487,78 @@ export function mergeTimeoutSignal(
   signal: AbortSignal,
   timeoutMs?: number,
 ): AbortSignal {
-  if (!timeoutMs || timeoutMs <= 0) {
-    return signal;
+  return mergeRunSignals(signal, timeoutMs).signal;
+}
+
+/** 合并 signal 的句柄：signal 供 engine.run 消费，dispose 移除桥接 listener（finally 必达）。 */
+export interface MergedRunSignalHandle {
+  signal: AbortSignal;
+  /** 移除全部桥接 listener（幂等）。run 正常收敛（merged 不 abort）时是唯一清理通道。 */
+  dispose(): void;
+}
+
+/**
+ * D-A9 + [M3] 运行期 signal 合流：外部 signal（run 级 abort）+ per-call 墙钟 timeoutMs
+ * + [M3] no-progress watchdog abort —— 任一 abort 都让返回 signal abort。
+ *
+ * reason 语义保持 D-A9 原样：timeoutMs 到期 abort 带 HOST_TIMEOUT_ABORT_REASON 标记
+ *（引擎合成终态时判别「宿主超时」vs「外部 cancel」）；外部 signal 与 watchdog 的
+ * abort 不带标记（wireAbortSignal 只消费 abort 事实，不读 reason）。
+ *
+ * 无任何信号源（timeoutMs 缺省/<=0 且无 watchdog）时原样返回 external signal（零新对象，
+ * 既有行为逐点不变）。
+ *
+ * dispose 的必要性：merged signal 正常收敛（不 abort）时，桥接在外部 run 级 signal 上的
+ * listener 不会自行移除——同一 run 多次 agent 调用会累积 listener 直至
+ * MaxListenersExceededWarning，故由调用方 finally 调 dispose。
+ */
+export function mergeRunSignals(
+  signal: AbortSignal,
+  timeoutMs?: number,
+  noProgressSignal?: AbortSignal,
+): MergedRunSignalHandle {
+  const hasTimeout = timeoutMs !== undefined && timeoutMs > 0;
+  if (!hasTimeout && noProgressSignal === undefined) {
+    return { signal, dispose: () => {} };
   }
 
   const controller = new AbortController();
-  // 超时 abort 带 reason 标记（对齐点④）：引擎合成终态时判别「宿主超时」
-  // （engine_timeout 公共合成）vs「外部 cancel」（中止标记）——pi 链路不读 reason，
-  // 行为不变。外部 signal abort 不带标记（用户/编排层 cancel 语义）。
-  const timer = setTimeout(() => controller.abort(HOST_TIMEOUT_ABORT_REASON), timeoutMs);
-  timer.unref();
+  const bridges: Array<{ source: AbortSignal; handler: () => void }> = [];
+  let timer: NodeJS.Timeout | undefined;
 
-  const onExternalAbort = (): void => controller.abort();
-  if (signal.aborted) {
-    controller.abort();
-  } else {
-    signal.addEventListener("abort", onExternalAbort, { once: true });
-  }
+  const dispose = (): void => {
+    for (const bridge of bridges) bridge.source.removeEventListener("abort", bridge.handler);
+    bridges.length = 0;
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  };
 
+  // 先挂清理 listener：任一信号源已 abort 时 bridge 会同步 abort controller，若清理
+  // listener 尚未就位，timeout timer / 已挂 listener 将不会被回收（原实现的既有时序盲区）。
   controller.signal.addEventListener(
     "abort",
-    () => {
-      clearTimeout(timer);
-      if (!signal.aborted) signal.removeEventListener("abort", onExternalAbort);
-    },
+    () => dispose(),
     { once: true },
   );
 
-  return controller.signal;
+  if (hasTimeout) {
+    timer = setTimeout(() => controller.abort(HOST_TIMEOUT_ABORT_REASON), timeoutMs);
+    timer.unref();
+  }
+
+  const bridge = (source: AbortSignal): void => {
+    // 已 abort（前序信号源抢先 / 外部 signal 传入时已中止）后不再挂新 listener：
+    // 否则该 listener 永远等不到 controller 的清理（已过 abort 时点）。
+    if (controller.signal.aborted) return;
+    const handler = (): void => controller.abort();
+    bridges.push({ source, handler });
+    if (source.aborted) handler();
+    else source.addEventListener("abort", handler, { once: true });
+  };
+  bridge(signal);
+  if (noProgressSignal !== undefined) bridge(noProgressSignal);
+
+  return { signal: controller.signal, dispose };
 }
