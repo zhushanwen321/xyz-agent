@@ -152,6 +152,7 @@ graph TD
 
 **残留风险 / 实施期门**（设计 §11 + §12.1，执行到对应单元时必须消解并回填结论）：
 - 存量（非本流水线引入）：renderer MessageStream-bash.test.ts 3 个无条件 it.skip（Gate A 零容忍规则登记，归 renderer 侧独立处理）；tool-handler.ts 拆分若回流后仍不达标则进一步抽缝。
+- 候选后续迭代（用户裁决）：受限成本的标题索引——xyz-agent 主根 encodeCwd 子目录数小（个位数），可枚举子目录调 listAll + 惰性 + TTL（§11.3a 实测校准），恢复标题维度检索；§6.6 当时的否决针对「全库逐目录全量解析」，主根受限版成本待实测。
 
 - ⛔ P-11（u14a）：存量主 session 首行 cwd 覆盖率 → 决定 `_migrated-no-cwd/` 占比。
 - ⛔ §11.14（M-1 门）：B 后空 `agent/` 自举——tmp 空数据目录启动新版实测；不能自举则「先升后迁」降格、V9 子场景改负向判定。
@@ -163,6 +164,8 @@ graph TD
 
 **变更历史**：
 - 2026-09-11（执行期 2）：M-1 门消解登记（审查 A unreasonable#3）——①V9 端到端：真实布局 tmp 副本（251M）迁移成功（11 主 session 分发 5 encodeCwd 目录 + 28 sidecar；备份空壳属正确形态；报告 14 字段齐）；重跑 resume 全零动作（V9⑥）；迁移后 find("01a08a") = main 3 + subagent 34（V9⑤ 实证，原 bug 恒 0）；V9⑦⑧ 单测+活体 pgrep 探针覆盖；②§11.14 自举门：pi 空 agentDir 活体启动自举（auth/models-store/sessions/<encodeCwd> 生成）——「先升后迁」保住合法兜底资格，应用级全链路自举归 merge 后真机验证；③P-6 部分消解：pi 默认派生 encodeCwd 子目录形态活体确认（[live] 剥层前提成立），扩展进程内 getSessionDir() 实跑值归 Gate B RPC 实测；④V10①②③ 实机制造孤儿：显式 deferred 至 Gate B（单测面已全覆盖）；⑤scoped-model.e2e smoke+E1 实跑 PASS（u18 fixture 修复验证）。
+- 2026-09-11（阶段 5 Gate B 组1）：8 判定 7 pass / 1 fail（V5b）。pass：V1（main 3 条全命中置顶 + 完整 id + ↳串，原事故消除）、V3(a)（doctor 全表 + 残留 glob 正向标注备份）、V4（四要素 + 负向双断言）、V5a（大写/去连字符/福耀玻璃 main 置顶）、V6（family/export 正常 + subagent 8 节点 + find-family 一致）、V8（2/3 hit + turn 索引 + 字节预算可见 + 11 候选拒绝）、P-6（[live] 剥层活体确认 encodeCwd 形态）。V5b fail 归因设计内部漂移（§6.6 平铺前提被 §6.10 取代）→ doc_errors 亲改：V5b 行与目标 4 注记改 B 后语义（v9.6），标题可见性由 search 通路承载（活体正例在案）；**能力后果显式声明：标题维度检索对 encodeCwd 布局（含 xyz-agent 主根）不覆盖，find 命中归因首条 user；受限成本的目录级标题索引列为候选后续迭代（残留风险节）**。驱动方式：单一 pi RPC 活体 12 轮 prompt 串行，主证据 = tool_execution_end 原文；进程零残留、探针清理、fixture 恢复原状（2 个驱动 session 保留已记录）。
+- 2026-09-11（阶段 5 Gate B 组3）：V10 实机 4/4 pass——正向 ×2（真实写侧清单 + D-11 dev 源码根两值，孤儿 SIGTERM 收殓）、反向三态两轮 reap 存活、两轮时序（内核 reparent 活体观测：ps ppid 由主 pi 变 1 后第二轮收）、清单缺失 fail-safe（恢复即恢复收殓）。附带发现备案：node 形态 pi（node_modules/.bin）启动即 process.title='pi' 吞 ps argv 观测面（fail-safe 漏收方向）；实机 runtime 经 piCommand 注入 bun binary 不受影响——登记为 §6.12 原理性极限的实机补充，随 design-code-sync 同步。
 - 2026-09-11（阶段 5 Gate A 回流）：lint 清零落地（9605fd0d7）——2 unused 删除 + tool-handler 四缝拆分（doctor/search-across/no-match/extract + handler-utils，2606→1406 物理行，re-export 保测试面零改动）；根 lint exit 0、397 全包绿、守卫 exit 0 复验。**Gate A 判绿**。
 - 2026-09-11（阶段 5 Gate A 首轮）：测试（19664 用例 0 失败，含 runtime 5124/renderer 4067/session-reader 397）+ extensions 三连 + runtime bundle 深度验证全绿；`pnpm lint` exit 1 = 唯一不通过项：2 个 unused error（u18 守卫文件，本次引入）+ tool-handler.ts max-lines warning 加重（1863/1200）。回流修复派发（删 unused + 按 doctor/跨会话检索自然缝拆分 tool-handler.ts，禁调阈值）。存量项登记：renderer MessageStream-bash.test.ts 3 个无条件 it.skip（与本流水线零交集，转残留风险）；extensions:lint 与根 lint 的 --max-warnings 口径不一致（建议项，非本流水线范围）；logger.test.ts flaky 本次全量直接绿未触发。
 - 2026-09-11（阶段 3）：两区报告到齐。A 区 5 reasonable / 3 unreasonable / 2 doc_errors；B 区 5 reasonable / 2 unreasonable / 2 doc_errors。聚合：unreasonable 4 条（A#1 日志时序、A#2 失真 mock、B#1 解析路径 [live] 缺席〔裁定修复：liveSessionDir 透传，收口「同一 roots」契约〕、B#2 limit:0 退化输入〔裁定 schema minimum:1〕；A#3 计划失真已由编排者修正）；doc_errors 4 条（A 的 §7A 判据 + pi-paths 注释重复词、B 的 V3 子句 + V4 计数——§7A/V3/V4 已由编排者修正，pi-paths 归组 1）；reasonable 10 条登记 D-18（4 条设计同步已写入）。修复批次 2 组并行派发（组 1 = runtime/scripts 三小修；组 2 = extension 两语义收口）。
