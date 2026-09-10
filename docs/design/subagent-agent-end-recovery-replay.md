@@ -291,6 +291,7 @@ Subagent "coder" (rec-8f3a) completed.
 - **误杀面（R3 S-影响，收窄断言；M5 按一致性审查分区 B 补第二形态）**：「刷新面全化后理论误杀面归零」**不成立**——共两类形态，均为「合法任务被误判无进展 → fire 终止」：
   - ① `host/askUser` / `host/permission` 反向请求 ack 后不计时等待宿主答复（`reverse-router.ts:80-117` 头注明言 handler 永不 resolve 也不判故障），等待期间无 event/delta，刷新面覆盖不到 → 长于 30min 的合法用户等待会被 fire 终止。处置 = 登记形态（chat 域 mid-round 守护同款盲区，一致性先例）+ 重审条件（workflow 域 askUser 等待被误杀实例出现 → 反向请求到达计入刷新或 pending 期间挂起计时）；不加新机制（减法，chat 域同款已被 W 系列接受）。
   - ② **工具执行期只有 `tool_execution_update` 流**（pi 内置 bash **无默认超时**：`dist/core/tools/bash.js` schema 明写「optional, no default timeout」，`resolveTimeoutMs(undefined) → undefined`；pi 以 `dist/core/agent-session.js:537-539` 发 `tool_execution_update`），而引擎翻译层 `CLI/spawn-event-translator.ts:152-184` 的 switch 无该分支（`default: return`）——该事件既不产 AgentEvent 也不进 `onDelta`，**刷新两路同时失明** → 单次工具调用持续 >30min（长构建/长测试/长安装，期间有可见输出）会被判无进展并取消，重试 3 轮后失败。**处置 = 修（不是登记接受）**：工具持续产出即「有进展」，把该事件计为活性信号即可消除误杀，且不削弱「静默楔死仍被回收」的安全底线（静默工具调用仍会被回收）。修复须在 pi-subagent-cli 内闭环，受两条硬约束：不得污染聊天记录（不得把工具输出当正文文本推流）、不得让楔死工具永续命。chat 域同款盲区随同修复受益。
+- **env 关闭的连带面（M6 登记）**：`XYZ_SUBAGENT_SETTLED_WATCHDOG_MS<=0` 的文档语义是「关掉 chat 域两段守护」，但本决策让 workflow 域经 `armMidRoundNoProgress` **同一入口**挂载——故该 env 为 ≤0 时 workflow 域的 G1 熔断（静默楔死 run 的无进展回收）**一并静默失效**。处置：不改开关语义（减法，且规则 19 下有界兜底的处置须可解释），而是让连带后果**可见**——`settled-watchdog.ts` 的 warn 文案与头注已明示，`troubleshooting.md` §12 第 ⑥ 条同步登记排查入口。
 - 与 W 系列无冲突：workflow 域无 record，不触 RoundSupervisor 纳管面；chat 域守护（kickOffChatRound 链）零改动（V5b 回归守护）。
 
 ### 3.4 错误规格（新增/改动面）

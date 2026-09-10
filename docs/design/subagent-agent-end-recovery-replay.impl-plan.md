@@ -138,11 +138,11 @@ node scripts/check-doc-symbol-drift.mjs         # M5 后
 
 **残留风险**：
 
-- K1-K6 检查点（设计 §5.2）分别挂在：M2（K1 接线签名 / K2 killChild 幂等）、M4（K3① prompt 逐字落盘——非逐字则 M4 降级为「只 warn 不采纳」并登记）、M0（K5 冲突面预演对照——清单外 packages/ 冲突即停下重估）、M5（K4 rpc-client diff 核验无欠账重放）、V5②（K6 mid-round 窗可否缩短——不可则降级 V1 兜底）。
+- K1-K6 检查点（设计 §5.2）分别挂在：M2（K1 接线签名 / K2 killChild 幂等）、M4（K3① prompt 逐字落盘——**实测非逐字，已启用双形态键、未降级**，见 §5 M4 行）、M0（K5 冲突面预演对照——清单外 packages/ 冲突即停下重估）、M5（K4 rpc-client diff 核验无欠账重放）、V5②（K6 mid-round 窗可否缩短——**已由 M6 打通测试 seam 并跑通，未降级**，见 §6 M6 行）。
 - V1 真机验收需 dev app + 真实 workflow 派发环境（阶段 5 处理，可能需 `pnpm dev` + Playwright 连 9222）。
 - K3① 失败时 M4 降级路径已在设计决策 4 预置，不阻塞 M1-M3/M5。
-- **M3 的 K6 结论改变了验收姿势**：workflow 域 mid-round 窗不可缩短（原语内纯常量、无 env 通道），故 V5②（缩短窗口的真机验收）不可执行，按设计降级为 V1 端到端兜底——阶段 5 Gate B 不设 V5② 项，workflow 域守护的真实性由 V1（真实 workflow 派发）承接。
-- 对 M3「V5c 未真等 30min」的残余风险：**已由阶段 3 分区 B 审查关闭**——审查独立证实 fire 链两段咬合（同一 `AbortController` 实例贯穿 watchdog → mergeRunSignals → `ctx.signal` → `wireAbortSignal`；`dispose` 吞掉待 fire 场景的反例构造失败）。M6 落地后 V5② 将把这条链再收进单条测试。
+- **M3 的 K6 结论已被 M6 修订**：原判「workflow 域 mid-round 窗不可缩短 → V5② 不可执行、降级 V1 兜底」只对 **env 路线**成立；测试 seam 路线经 M6 的 `_setMidRoundNoProgressWindowMsForTest` 打通，**V5② 已恢复为可执行并跑通**（真引擎秒级窗单条测试闭环，§6 M6 行）。**阶段 5 Gate B 仍设 V5② 项**（不再是「不设」）；V1 真机端到端继续保留。
+- 对 M3「V5c 未真等 30min」的残余风险：**已关闭两重**——① 阶段 3 分区 B 审查独立证实 fire 链两段咬合（同一 `AbortController` 实例贯穿 watchdog → mergeRunSignals → `ctx.signal` → `wireAbortSignal`；`dispose` 吞掉待 fire 场景的反例构造失败）；② M6 落地后 V5② **已**把这条链收进单条测试（不再是「将」）。
 - **U-A6（工具执行期刷新失明 → 长 bash 误杀）是本次审查最重要的发现**，也是决策 9 引入 workflow 域后暴露的真机风险形态：修复前，单次 bash 调用 >30min（pi 内置 bash 无默认超时）会被判无进展并取消、重试 3 轮后失败。设计 §3.3 决策 9 误杀面与本文档修复待办均已登记，修复并入阶段 4 的 A 组；**该修复完成前不得进入阶段 5 Gate B**（否则 V1/V6 真机验收会把误杀形态带进结论）。
 - **K3②（真实 workflow 并发形态下 prompt 头部键区分度实测）归属已裁定到阶段 5 Gate B 的 V1 期**：该检查点需要真实 workflow 派发环境（dev app），单测面无法构造真实并发头部形态。若 V1 期实测发现同模板并发头部同质率高 → M4 兜底在该场景下只会「安全放弃」（不误配，但也无效），届时应按设计决策 4 的升级路径改键策略（全文哈希 / 参数段取样）并回写设计。
 - **已接受的测试输出噪音**：M2 的 `agent-end-backfill.test.ts` race① 用例 sessionDir 为空，M4 接线后 close 收尾会多打一行 `[sessionfile] unobtainable ... reason=no_candidates` warn。这是接线后的真实降级留痕（非失败），不改该用例（静音会掩盖真实行为面）。
