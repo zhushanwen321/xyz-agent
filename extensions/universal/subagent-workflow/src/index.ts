@@ -5,10 +5,13 @@
  * 注册项：3 tool（subagent + workflow + workflow-script）+ 2 command（subagents + workflows）
  * + messageRenderer（subagent-bg-notify）+ pi.__workflowRun + session 事件。
  *
- * 三层架构：
- *   interface/ → 注册胶水（tools/commands/tui）
- *   orchestration/ → workflow engine（launcher/lifecycle/error-recovery）
- *   execution/ → subagents 执行运行时（SubagentService/session-runner/concurrency-pool）
+ * 包内结构（执行运行时已迁 packages/subagent-core，本包只留注册面与宿主适配）：
+ *   interface/ → 注册胶水（tools / commands / TUI 渲染 / GUI mappers）
+ *   host/      → pi 宿主端口实现（HostServices / NotifyDomain 的 pi 侧兑现）
+ *   injectors/ → 提示注入器（engine-awareness / model-list / resource-list …）
+ *   session-lifecycle.ts → 会话生命周期装配 seam（测试可注入 fake 依赖）
+ *
+ * 架构导航见 docs/extensions/subagents/architecture.md。
  *
  * 设计基线：D-004（旧包不动）/ ADR-025（进程内执行）/ D-8（pi.__workflowRun 签名）。
  */
@@ -23,7 +26,7 @@ import { configureNotifyDomain } from "@zhushanwen/subagent-core";
 import { createPiHostServices, createPiNotifyDomainPorts } from "./host/pi-host.ts";
 
 import { bestEffort } from "@zhushanwen/subagent-core";
-// ═══ execution/ 层（subagents 核心 + 运行时） ═══
+// ═══ 经 core barrel 消费执行域（执行运行时住 packages/subagent-core） ═══
 // [U7] 引擎列表状态文件（registry → engines.json，GUI 引擎选择器数据源）
 import { syncEnginesFile } from "@zhushanwen/subagent-core";
 // [W11/DoD#5] registerPiEngine（inproc 'pi' 注册）已随内建引擎删除：registry 'pi'
@@ -50,7 +53,7 @@ import { registerSubagentTool } from "./interface/subagent-tool.ts";
 import { registerSubagentsCommand } from "./interface/subagents.ts";
 import { registerWorkflowTool } from "./interface/tool-workflow.ts";
 import { registerWorkflowScriptTool } from "./interface/tool-workflow-script.ts";
-// ═══ orchestration/ 层（workflow engine + infra） ═══
+// ═══ 经 core barrel 消费 workflow 域（引擎与 worker 住 packages/subagent-core） ═══
 import type { LauncherDeps } from "@zhushanwen/subagent-core";
 import { executeNestedWorkflow, runAndWait, type WorkflowRunResult } from "@zhushanwen/subagent-core";
 import {

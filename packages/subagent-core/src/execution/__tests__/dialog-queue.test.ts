@@ -287,8 +287,9 @@ describe("DialogGlobalQueue — #19 单一推进点 + child close 集成语义",
   });
 
   it("child close 集成语义：queue 中同一 child 的多个 pending 被 rejectChildDialogs 一次全部 settle cancelled", async () => {
-    // 模拟 session-runner child 'close' 事件 → dialogQueue.rejectChildDialogs(child) 清理路径。
-    // 绑定点在 session-runner（非 dialog-queue 内部），本测试验证 rejectChildDialogs 公共方法语义。
+    // 模拟子进程 close 事件 → dialogQueue.rejectChildDialogs(child) 清理路径。
+    // 绑定点在宿主侧 close 感知（原 session-runner，已随协议化重构消失；当前无生产调用方，
+    // 本测试验证 rejectChildDialogs 公共方法语义，重启接线即用）。
     // 用 blocker 占 current（另一 child）使被测 child 的项全排队，聚焦验证 queue 批量 cancel。
     const queue = new DialogGlobalQueue();
     const blocker = { pid: 70000 };

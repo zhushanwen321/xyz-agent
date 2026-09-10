@@ -150,7 +150,7 @@ subagent 能力现由 5 类包协作，跨进程边界只有一处（宿主 ↔ 
 
 ## 7. 历史沿革（本节为归档说明，不描述现状）
 
-早期实现是**单包三层**：`extensions/subagent-workflow` 内部同时容纳 TUI 层（`tool-render` / `list-view` / `bg-notify-render` / `format`）、Runtime 层（双 Service + `executor` + `record-store` + `notifier` + `tombstone-store` + `session-file-gc`）、Core 层（`session-runner`（含内联 session-factory / EventBridge）+ `output-collector` + 叶子原语），依赖方向自下而上严格单向，Pi SDK 只在 `session-runner` 与外壳注册两处出现。
+早期实现是**单包三层**：`extensions/universal/subagent-workflow` 内部同时容纳 TUI 层（`tool-render` / `list-view` / `bg-notify-render` / `format`）、Runtime 层（双 Service + `executor` + `record-store` + `notifier` + `tombstone-store` + `session-file-gc`）、Core 层（`session-runner`（含内联 session-factory / EventBridge）+ `output-collector` + 叶子原语），依赖方向自下而上严格单向，Pi SDK 只在 `session-runner` 与外壳注册两处出现。
 
 该结构随后被三步重构取代：
 
