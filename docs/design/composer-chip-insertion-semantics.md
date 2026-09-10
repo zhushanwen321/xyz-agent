@@ -4,6 +4,8 @@
 
 **层声明**：本文档是技术方案层设计——下一层产物是「可实现的接口/数据模型/代码任务」（P1-P4 实施单元）。涉及运行时行为与数据流，准则 5/6/7（探针/物理数据流/错误恢复）全适用。
 
+**行号与轮次口径（design-code-sync 轮 3 补；轮 3 第 4 轮升级为规则；轮 3 收尾校正为与实情一致）**：**本文保留的绝对 `file:line` 均为设计时点（基线 `135c1dbab`）坐标**，仅三类例外——① 变更历史条目内的行号为其修订时点坐标；② 显式标注「提交时点」者（当前 0 处）；③ 显式标注「HEAD」者（当前 1 处：§3.3 D1 调用点清单的「HEAD 为七处 `:91/147/173/202/232/253/281`」，其语义即提交时点坐标）。已就地标注「设计时点」者：§2.2 标题、§2.4 标题、§3.3 D1 收口范围 bullet，以及 D1 调用点清单与 `contenteditable.ts:278`。**凡本设计改动涉及的位置一律用「符号 + 文件」引用**（函数名 / 常量名 / `describe` 文本），不写绝对行号——这是避免每轮重复产生行号漂移 finding 的长期口径；不逐轮追平行号漂移（历史漂移示例：`chip-commands.ts` 76→86、`contenteditable.ts` 240→242 / 278→279 / 379→367、`send.ts` 154→155 / 165→171 / 296→308 / 306→318、`CommandPopover.vue` 357→347；语义未变）。另：本文「rN」= 设计评审轮（r1/r2/r3），「轮 N」= design-code-sync 代码-文档同步轮（轮 1/轮 2/轮 3）——两者独立计数。
+
 ---
 
 ## 1. 背景目标
@@ -24,7 +26,7 @@ composer 是 xyz-agent 桌面端的输入区：一个 contenteditable 富文本�
 | # | 目标 | 使用者体验表述 |
 |---|---|---|
 | G1 | 键盘选中就地插入 | 在草稿任意位置输入 `#`/`@`/`$`/行中 `/` 呼出浮层，按 Enter 或 Tab 选中，chip 落在呼出位置——与鼠标点击选中行为完全一致 |
-| G2 | 选中不误发送 | 浮层开着时按 Enter 是「选中候选」，绝不触发消息发送；Tab/Enter 语义等同 |
+| G2 | 选中不误发送 | 浮层**实际可见（有渲染内容）**时按 Enter 是「选中候选」，绝不触发消息发送；Tab/Enter 语义等同。不可见态语义（轮 3 第 4 轮 RC-A-1 与实现对齐；轮 3 第 5 轮补全逐态枚举与后果登记）：消费条件 = `items.length > 0 \|\| fileFallbackVisible`（与模板 `PopoverContent` 的 `v-if` 逐字同条件），不可见即**全部键放行** ⇒ Enter 落 `onSend`。逐态枚举：① 非空候选**五路**（slash/session/subagent/skill/`$` file——file 候选非空指 panel 态已加载 cwd 候选或 landing 拉取成功且有文件，即 `items.length > 0`）⇒ 可见、消费；② slash/session/subagent/skill 空候选 ⇒ 不可见、放行；③ panel 态 `$` 无候选 ⇒ 不可见、放行；④ landing `$` 错误态 ⇒ 可见（`fileFallbackVisible` 真）、消费；⑤ landing `$` 空结果态（拉取成功且目录无文件）⇒ 可见、消费；⑥ landing `$` 拉取中/无 cwd 态（`cwdFileStatus === 'idle'`——open 边沿把状态复位为 idle 后**本次 open 不发请求**：无 cwd 直接返回，或 1s 节流命中跳过；节流命中时上一轮 open 的在途回执到达即写回 success/error，故 idle 是瞬态窗口而非终态）⇒ 不可见、放行；⑦ landing `@` 无 sessionId（`buildSubagentCandidates` 无 sessionId 时返回 `[]`）⇒ 不可见、放行；⑧ landing `$` 候选源非空但 query 无匹配（`items` 被过滤空，而 `fileNoResultsVisible` 要求候选源为空 ⇒ `fileFallbackVisible` 假）⇒ 不可见、放行。**后果与判定（轮 3 第 5 轮显式登记）**：⑥⑦⑧ 放行时 Enter 直达 `onSend`——landing `@`/`$` 首发会创建 session 并发出含触发符字面量（如 `@query`）的消息；判定 = 已接受（RC-A-1「不可见即放行」的直接推论，与分支基线行为一致；反向方案「不可见也吞 Enter/Tab」曾实测回归致消息发不出且无提示） |
 | G3 | skill 两入口统一 | 同一个 skill 无论从行首 `/` 浮层还是行中空格后 `/` 浮层选中，都产 skill chip：插在光标处、多个共存、携带 SKILL.md 路径、不删已有 chip |
 | G4 | 命令 chip 视觉就地 | 行首 `/` 浮层选中命令项，chip 插在光标处（不再强制跳到全文最前）；发送时命令自动归位到消息最前生效——pi 协议零改动 |
 | G5 | 零回归 | 鼠标点击路径行为不变；手打 `/skill:xxx` 等纯文本行为零变化；发送后消息文本与现状等价 |
@@ -39,7 +41,7 @@ composer 是 xyz-agent 桌面端的输入区：一个 contenteditable 富文本�
 - 浮层 UI / 过滤 / 排序 / 触发正则（四符号触发域 D1/D5 决策不变）
 - `hasChip` 触发抑制的放开（multi-skill D2 明确保留「存在任何 chip 时行首 `/` 不触发」——本设计维持，见 §3.3 D5）
 - bash 模式（`!`/`!!` 前缀）行为
-- 草稿持久化机制（drafts 存纯文本的现状不变，见 §3.3 D6 边界声明）
+- 草稿持久化机制（drafts 存纯文本的现状不变；**该路径的真实行为变化 = 恢复后 `/cmd` 命令会被执行**——此前因缺边界空格、首 token 非法而按字面文本发送，见 §3.3 D6 边界声明，列为已接受的行为变化）
 
 ---
 
@@ -52,10 +54,12 @@ composer 是 xyz-agent 桌面端的输入区：一个 contenteditable 富文本�
 | 行首 `/` 命令浮层 | 光标所在行行首 `/`（多行任意行行首，D5 放宽） | `'slash'` | `clearSlashQueryText` → `insertSlashChip` | **强制全文最前** + 先删光所有 `.slash-chip`（含 skill chip！）+ 无 location |
 | 行中空白后 `/` skill-only 浮层 | `(?:空格+非换行)/query`（multi-skill D1） | `'skill'` | `clearSkillQueryText` → `insertSkillChip` | 光标处 + 多个共存 + 带 location（multi-skill 模型） |
 | `$`/`#`/`@` 浮层 | `(?:行首\|空格)符号+query` | `'file'`/`'session'`/`'subagent'` | `clearXxxQueryText` → `insertXxxChip` | 光标处（`insertChipAtSelection`） |
+| SearchModal ⌘K（skill 的第三入口，轮 3 补） | 全局搜索选择 → `commandStore.pendingSlash` → `useCommandPopoverTrigger.ts` 的 `watch(() => commandStore.pendingSlash, …)` → `insertSlashChip(req.command, req.icon)` | ——（不经浮层） | `insertSlashChip` | **命令 chip**（skill 亦落此形态：`command-store.ts` 的 `PendingSlash` 接口无 location 字段，pi 0.84.4 的 skill 命令名不带 `/` 前缀 ⇒ 该通路的 `isSkill` 判定为假）：无 `dataset.chipLocation`、受单命令替换语义管辖、不计入已选 skill——**已知不一致，不在本设计 scope**，见 §3.3 D3 |
+| `+` 菜单「命令」入口（轮 3 补） | 菜单项选择 → `useCommandPopoverTrigger.ts` 的 `onAddSelect('slash')`（`saveSelection()` + `cmdType='slash'` + `cmdOpen=true`）→ **打开行首 slash 浮层**（与第 1 行同通路） | `'slash'` | `clearSlashQueryText` → 命令项 `insertSlashChip`；skill 项（`isSkill`）经 D3 分流 `insertSkillChip` | 与第 1 行完全一致（同一浮层通路的第二触发路径）：命令项就地 + 单命令替换语义；skill 项光标处 + 多共存 + 带 location + **已选禁选生效**（S-2 后 slash 路消费 `selectedSkillNames`） |
 
-回答本次设计的直接疑问「**multi-skill 不就是 slash command 插入吗？还有别的入口吗？**」：**有两条**。multi-skill PR 只新建了第二条（skill-only 浮层 → `insertSkillChip`）；第一条（行首命令浮层混列的 skill 项，name 形如 `/skill:code-review-graph`）仍走 `insertSlashChip` 老通路——两条入口对同一个 skill 产出完全不同的行为。数据层两条都已产 skill segment（`visitSlashChip` 读 `dataset.chipType==='skill'`），分裂只在**插入行为**层。
+回答本次设计的直接疑问「**multi-skill 不就是 slash command 插入吗？还有别的入口吗？**」：**有两条浮层入口**（行首 `/` 命令浮层——`+` 菜单「命令」是其第二触发路径；行中 `/` skill 浮层），加上不经浮层的 SearchModal ⌘K 共**三条 skill 入径**；本设计只覆盖两条浮层入口。multi-skill PR 只新建了第二条（skill-only 浮层 → `insertSkillChip`）；第一条（行首命令浮层混列的 skill 项，name 形如 `/skill:code-review-graph`）仍走 `insertSlashChip` 老通路。**`+` 菜单「命令」入口触发的正是这同一条行首浮层通路**（`onAddSelect('slash')` 打开行首 slash 浮层，命令项/skill 项随之按同一分派）——它并非独立通路，行为已随 D3/S-2 与第一条合流；真正未合流的只有 SearchModal ⌘K（不经浮层，`pendingSlash` 直调 `insertSlashChip`）。数据层第 1/2 条浮层入径都已产 skill segment（`visitSlashChip` 读 `dataset.chipType==='skill'`），SearchModal ⌘K 注入的 skill 因落命令 chip 形态（`chipType='slash'`）而在数据层产 slash 段（序列化 `/skill:xxx`，pi 侧仍展开）——分裂只在**插入行为**层。
 
-### 2.2 真实失败模式（全部已在 dev app 实测复现，Playwright + CDP）
+### 2.2 真实失败模式（全部已在 dev app 实测复现，Playwright + CDP；本节 `file:line` 为设计时点坐标，基线 `135c1dbab`）
 
 **失败模式 A：键盘选中 chip 落到 stale savedRange（用户报告的「跳到头部」）**
 
@@ -83,9 +87,9 @@ composer 是 xyz-agent 桌面端的输入区：一个 contenteditable 富文本�
 
 **失败模式 D：命令 chip 强制最前 × D5 多行触发放宽 = 视觉重排 + args 语义欺骗**
 
-现状序列：多行草稿 `"任务描述…"`（第 1 行），Shift+Enter 后在第 2 行行首输 `/compact 我说明一下` 选中——`clearSlashQueryText` 只删第 2 行的 `/compact 我说明一下` 段（D5 已修正），但 `insertSlashChip` 把 chip **强制插到全文最前**。用户看到：命令从第 2 行「跳」到第 1 行前面，草稿视觉重排。
+现状序列：多行草稿 `"任务描述…"`（第 1 行），Shift+Enter 后在第 2 行行首输 `/compact` → **Enter 选中**（chip 就地插入）→ 光标处补打 `我说明一下`——`clearSlashQueryText` 只删第 2 行的 `/compact` 过滤段（D5 已修正），但 `insertSlashChip` 把 chip **强制插到全文最前**。用户看到：命令从第 2 行「跳」到第 1 行前面，草稿视觉重排。（步骤说明：slash 触发正则 `(?:^|\n)\/(\S*)$` 的 query 捕获段是 `\S*`，命令与 args 连写成 `/compact 我说明一下` 会因空格失配 ⇒ 浮层关闭、Enter 落到 `onSend` 发出字面文本——故命令必须在浮层里先选中、args 再在光标处补打；下文场景 3 与 §4 场景 6 同此。）
 
-args 语义的准确表述（r1 修订，F2）：pi 的命令模型是 `/cmd` + **剩余全部文本**为 args（§2.5 实装），与用户在哪里打 `/cmd` 无关。现状（chip 强制最前）的序列化产物 = `/compact 任务描述…\n我说明一下`——**args 从来就包含命令前的全部正文**；视觉重排掩盖了这一点，用户以为 args 是「我说明一下」。本设计 D4 修复的是**视觉欺骗**（chip 就地、不再重排草稿），序列化产物与现状**逐字相同**（归位语义 = 现状语义）；「命令 chip 之后的文本才算 args」是独立的协议级行为变更，不属于本设计（§3.3 D4-e 登记）。
+args 语义的准确表述（r1 修订，F2；轮 3 修正「逐字相同」）：pi 的命令模型是 `/cmd` + **剩余全部文本**为 args（§2.5 实装），与用户在哪里打 `/cmd` 无关。现状（chip 强制最前）的序列化产物 = `/compact任务描述…\n我说明一下`（旧 `visitSlashChip` 把命令 label 拍平进 `pendingText`，且 chip 恒在最前 ⇒ 命令与正文之间**无边界空格**）——**args 从来就包含命令前的全部正文**；视觉重排掩盖了这一点，用户以为 args 是「我说明一下」。本设计 D4 修复的是**视觉欺骗**（chip 就地、不再重排草稿），归位产物与现状**除边界空格外逐字相同**（归位语义 = 现状语义）：slash 段后接不以空格开头的 text 段时（本形态即此），`needsBoundarySpace`（`shared/segments.ts`）补一格，产物为 `/compact 任务描述…\n我说明一下`。**该空格是修正而非等价**——旧产物首 token 是 `/compact任务描述…`（非法命令名，pi 侧命令静默失效、按字面文本处理），新产物首 token 才是 `/compact`（§3.3 D4-e 登记）；「命令 chip 之后的文本才算 args」是独立的协议级行为变更，不属于本设计。
 
 ### 2.3 根因分析
 
@@ -97,7 +101,7 @@ args 语义的准确表述（r1 修订，F2）：pi 的命令模型是 `/cmd` + 
 
 **根因 4（D 的根因）：「chip 必须在最前」是对 pi 行首协议的**位置层**妥协，而非协议本身的约束。** pi 只约束**序列化文本**以 `/cmd` 开头（§2.5）；现状把该约束前移到了** DOM 插入位置**，于是与 D5「任意行行首触发」组合后产生视觉重排。
 
-### 2.4 物理数据流（现状）
+### 2.4 物理数据流（基线现状；标注行含改动点与 HEAD 差异；未标 HEAD 的行号为设计时点坐标）
 
 ```
 [composer DOM]
@@ -110,7 +114,7 @@ args 语义的准确表述（r1 修订，F2）：pi 的命令模型是 `/cmd` + 
     ↓ getSegments / getSegments（发送前快照，core dispatch/send.ts:306）
     ├─→ segmentsToText (shared segments.ts，prompt 真源) → promptText → chatApi.send
     │     └─ runtime message-dispatcher.sendPrompt → BeforeSend hook → SkillInjector → client.prompt(pi)
-    └─→ （draft.value = getText()，DOM 序文本）→ defer 拒绝判定 / /compact 拦截判定 / canSend   ← 第二文本真源（D4 迁移点）
+    └─→ （draft.value = getText() = segmentsToText(DOM segments)，与 prompt 同源（基线与 HEAD 同源同序）；**HEAD 起**因 `visitSlashChip` 产 slash 段而表现为「已归位」，基线为拍平无空格形态）→ defer 拒绝判定 / /compact 拦截判定 / canSend   ← D4-c 迁移点（判定源单一化）
 [pi RPC]
   prompt(text)：
     ├─ text.startsWith("/") → _tryExecuteExtensionCommand（含 pi builtin 命令）   ← 行首硬约束
@@ -121,7 +125,7 @@ args 语义的准确表述（r1 修订，F2）：pi 的命令模型是 `/cmd` + 
     └─ skill 段 → insertSlashChip('/skill:name')                                                  ← 第三处通路错位（C 的另一实例）
 ```
 
-**两个文本真源**是 D4 改造的关键背景：`draft.value`（getText，DOM 序）用于命令判定；`segmentsToText`（段序）用于实际 prompt。现状命令 chip 恒在最前时两源对「是否以 `/` 开头」的判定一致；chip 就地化后若不迁移判定源，两源将分裂（§3.3 D4-c）。
+**`draft.value` 与 prompt 同源（轮 3 修正）**：`getText()` 与发送前快照走的都是 `segmentsToText(getSegmentsFromEl(el))`——`input-dom.ts` 的 `getTextFromEl` 在基线与 HEAD **完全相同**，D4 只改了 `visitSlashChip` 的段产出，因此 `draft.value` **现在也已归位**（`ComposerInput.vue:130` onInput → `Composer.vue` onInputChange `draft.value = text`，与 `send.ts` 的 `segmentsToPrompt(segments)` 是同一函数的两次调用，恒同源同序）。原「两个文本真源的序差异」前提因此不成立：即使不迁移判定源，`draft.value` 也已以 `/cmd` 开头。D4-c 迁移的真实价值是**判定源单一化 + 消除 draft 快照失真窗口**（`draft` 是 `getText()` 的调用快照，`restore.ts` 的 `restoreInput(textOnly)` / 程序化 setText / 时序窗口下可滞后于 DOM；读 segments 恒取当前真值）——迁移本身无害且仍有价值，但**不是**「漏命中」修复（§3.3 D4-c 理由列已按此修正）。
 
 ### 2.5 pi 协议约束（实装证据，0.84.4 node_modules 权威版）
 
@@ -147,7 +151,7 @@ args 语义的准确表述（r1 修订，F2）：pi 的命令模型是 `/cmd` + 
 
 **场景 3（G4，命令 chip 视觉就地 + 发送归位，r1 断言修正）**：
 
-> 多行草稿：第 1 行 `总结这个项目`，Shift+Enter 后第 2 行行首输 `/compact 清理一下` 选中 → `/compact` chip 出现在**第 2 行原位**，第 1 行纹丝不动。按 Enter 发送 → 消息文本自动归位为 `/compact 总结这个项目\n清理一下`（命令在最前，与现状序列化产物逐字相同，D4-e）→ renderer /compact 拦截命中（判定基于归位文本）→ 压缩执行，customInstructions = `总结这个项目\n清理一下`（全部剩余文本，现状语义）——用户从 DOM 位置已能直观看到命令在第二行，不再被视觉重排欺骗。
+> 多行草稿：第 1 行 `总结这个项目`，Shift+Enter 后第 2 行行首输 `/compact` → **Enter 选中**（`/compact` chip 出现在**第 2 行原位**，第 1 行纹丝不动）→ 光标处补打 `清理一下`。按 Enter 发送 → 消息文本自动归位为 `/compact 总结这个项目\n清理一下`（命令在最前，slash 段与 text 段之间由 `needsBoundarySpace` 补一格边界空格，与现状序列化产物除该空格外逐字相同，D4-e）→ renderer /compact 拦截命中（判定基于归位文本；`send.ts` 的拦截条件要求 `/compact ` 前缀，该空格正是使旧产物漏拦截的修正点）→ 压缩执行，customInstructions = `总结这个项目\n清理一下`（全部剩余文本，现状 args 语义）——用户从 DOM 位置已能直观看到命令在第二行，不再被视觉重排欺骗。（步骤说明：命令与 args 必须分两步输入——连写成浮层 query 会因空格失配关闭浮层，见 §2.2 失败模式 D 的步骤说明。）
 
 **场景 4（G5，点击路径回归保护）**：
 
@@ -179,7 +183,7 @@ args 语义的准确表述（r1 修订，F2）：pi 的命令模型是 `/cmd` + 
 
 **D1：插入位置权威源 = `restoreSelection` 本体活选区优先（r1 修订，F1 落点修正）**
 
-v1 把 liveInEditor 检查放进 `insertChipAtSelection` 是**无效落点**：六类 `insertXxxChip` 的调用序都是 `restoreSelection()` → `el.focus()` → … → `insertChipAtSelection()`（`chip-commands.ts:121/146/174/201/219/246`），活选区在检查点之前就已被 `restoreSelection` 用 savedRange 覆盖，检查恒走「活选区」分支但读到的已是 stale 位置。r1 把优先级判定**上移到 `restoreSelection` 本体**（`contenteditable.ts:278`；design-code-sync 轮 1 同步：终态本体经偏差 #14 提取至 `packages/dom-core/src/composer/input/selection-restore.ts:36`，contenteditable.ts 经 useSelectionRestore 工厂消费——`contenteditable.ts:278` 为设计时点行号）：
+v1 把 liveInEditor 检查放进 `insertChipAtSelection` 是**无效落点**：六类 `insertXxxChip` 的调用序都是 `restoreSelection()` → `el.focus()` → … → `insertChipAtSelection()`（设计时点六处：`chip-commands.ts:121/145/172/200/219/245`；轮 3 补：D4-a 后命令通路 `insertSlashChip` 也收编进同款调用序，HEAD 为七处 `:91/147/173/202/232/253/281`），活选区在检查点之前就已被 `restoreSelection` 用 savedRange 覆盖，检查恒走「活选区」分支但读到的已是 stale 位置。r1 把优先级判定**上移到 `restoreSelection` 本体**（`contenteditable.ts:278`；design-code-sync 轮 1 同步：终态本体经偏差 #14 提取至 `packages/dom-core/src/composer/input/selection-restore.ts` 的 `restoreSelection`，contenteditable.ts 经 useSelectionRestore 工厂消费——`contenteditable.ts:278` 为设计时点行号）：
 
 ```ts
 function restoreSelection(): void {
@@ -210,7 +214,7 @@ function restoreSelection(): void {
 ```
 
 - **等价性论证（r1 修正 F4 的未验证断言）**：不依赖「blur 后活选区必不在编辑器内」——两个分支都收敛到编辑器内的正确选区：键盘路径活选区即光标（savedRange 不再覆盖）；点击路径若 Chrome 保留编辑器内 selection（与 blur 前 caret 同值）则原样使用，若被移出（点击落到浮层文本）则应用 savedRange（blur 时 `saveSelection` 刚刷新为 caret 同值）——两种浏览器行为产出一致结果。
-- **收口范围**：`restoreSelection` 的全部调用方一次修复——六类 `insertXxxChip`、`insertTextAtCursor`（:379，触发链是 sidebar/drawer 的 context 注入 `injection.ts:111`，r2 表述修正——+菜单 attach 走 `insertFileChip` 不经此路径）、`onAddSelect` slash 路径（`useCommandPopoverTrigger.ts:192`，开头显式 `saveSelection()` 使两分支同值，等价性由 r2 影响面审核实）。`insertChipAtSelection` 保持现状逻辑（`rangeCount` 兜底 appendChild 保留）。
+- **收口范围（本 bullet 行号为设计时点坐标，基线 `135c1dbab`）**：`restoreSelection` 的全部调用方一次修复——六类 `insertXxxChip`、`insertTextAtCursor`（:379，触发链是 sidebar/drawer 的 context 注入 `injection.ts:111`，r2 表述修正——+菜单 attach 走 `insertFileChip` 不经此路径）、`onAddSelect` 的 slash 分支（开头显式 `saveSelection()` 使两分支同值，等价性由 r2 影响面审核实）。`insertChipAtSelection` 保持现状逻辑（`rangeCount` 兜底 appendChild 保留）。
 - **被否 B（selectionchange）**：修症状不修错源 + 高频全局事件 + split mode 跨实例边界。**被否 C（调用方分支）**：分支组合散逸。**被否 D（v1 落点）**：见上，检查点读到的恒是 savedRange 应用后的选区。
 - **效果**：G1 对六类 inline chip 一次成立；点击路径零变化；split mode 无新增边界（savedRange 是实例级闭包变量，非模块级——影响面审已核实）。
 
@@ -220,7 +224,7 @@ function restoreSelection(): void {
 
 ```ts
 if (e.key === 'Enter' || e.key === 'Tab') {
-  if (composingRef.value || e.isComposing) return  // IME 双保险（r2 修订）：事件属性 + compositionstart/end 维护的模块内 boolean，对齐 contenteditable.ts:240 既有范式——历史存在过 IME 发 isComposing=false+keyCode 229 先于 compositionend 的引擎 bug 面，单靠事件属性无兑底
+  if (composingRef.value || e.isComposing) return false  // IME 双保险（r2 修订）：事件属性 + compositionstart/end 维护的模块内 boolean，对齐 contenteditable.ts:240 既有范式——历史存在过 IME 发 isComposing=false+keyCode 229 先于 compositionend 的引擎 bug 面，单靠事件属性无兑底。返回值按实现：`handleKeydown` 声明 boolean，草案裸 `return` 与终态不符（偏差 #2）
   e.preventDefault()
   e.stopPropagation()                 // capture 阶段截断，事件不再到达 target（双触发结构性消除）
   onSelect(list[activeIndex.value])
@@ -229,10 +233,11 @@ if (e.key === 'Enter' || e.key === 'Tab') {
 ```
 （`composingRef`：CommandPopover 模块内监听 `compositionstart/compositionend` 维护的 boolean，与 contenteditable.ts 的 `composing` 同款范式。design-code-sync 轮 1 同步：CommandPopover 侧终态经偏差 #5 提取为 `packages/renderer/src/composables/panel/composition-flag.ts` 的 useCompositionFlag；AmbiguousFilePopover 保留同款范式的自建 composingRef 未迁移——改其 IME 守卫需单独动该文件副本。）
 
-- **删除 v1 的 defaultPrevented 防御层**（r1 影响面审 MF-1）：`contenteditable.ts` onKeydown 的 Enter 分支先 `e.preventDefault()` 再 `onEnterKeydown(e)` 转发（:240-249）——composer-keydown 收到的 Enter **恒** `defaultPrevented===true`，「Enter 分支前 `if (e.defaultPrevented) return`」会拦死全部正常发送。双触发的防护完全依赖 stopPropagation 主修 + 单测锁定时序契约（P5：浮层 open 时 Enter 不触发 onSend 的 capture/bubble 全链路用例）。
+- **消费前提 = 浮层实际可见（轮 3 第 4 轮 RC-A-1，与实现逐字对齐）**：`handleKeydown` 在进入上方三步前先判 `items.length > 0 || fileFallbackVisible`（与模板 `PopoverContent` 的 `v-if` 同条件），为假则**全部键放行**——候选为空的 slash/session/subagent/skill 路浮层不渲染任何内容，此时吞掉 Enter/Tab 会让消息发不出且无任何提示（[HISTORICAL] 曾按「open 即消费」实现，复审实测回归）。候选非空（含 `$` file 路的 panel 态已加载候选 / landing 成功且有文件）或候选为空的 landing `$` 错误/空结果态浮层**可见**（判定式 `items.length > 0 || fileFallbackVisible`）⇒ Enter/Tab 被消费（后者无项可选中，仅终止事件链路、**不**关浮层；`Escape` 仍是显式关闭入口），方向键因无项可移放行。**轮 3 第 5 轮补全不可见态清单与后果登记**：放行态除「slash/session/subagent/skill 空候选」外还有三处——landing `@` 无 sessionId（`buildSubagentCandidates` 返回 `[]`）、landing `$` 的 `cwdFileStatus === 'idle'`（本次 open 不发请求：无 cwd 或 1s 节流命中；节流命中时上一轮在途回执到达即结束该窗口）、landing `$` 候选源非空但 query 无匹配（`fileNoResultsVisible` 要求候选源为空，故 `fileFallbackVisible` 为假）。三态放行 ⇒ Enter 直达 `onSend`：landing 首发会创建 session 并把触发符当字面量发出（如 `@query`）。判定 = **已接受**（RC-A-1「不可见即放行」的直接推论，与分支基线行为一致；对照物「不可见也吞 Enter/Tab」曾实测回归）。逐态枚举同见 §1 G2。
+- **删除 v1 的 defaultPrevented 防御层**（r1 影响面审 MF-1）：`contenteditable.ts` onKeydown 的 Enter 分支先 `e.preventDefault()` 再 `onEnterKeydown(e)` 转发（:240-249）——composer-keydown 收到的 Enter **恒** `defaultPrevented===true`，「Enter 分支前 `if (e.defaultPrevented) return`」会拦死全部正常发送。双触发的防护完全依赖 stopPropagation 主修 + 单测锁定时序契约（P5：浮层实际可见时 Enter 不触发 onSend 的 capture/bubble 全链路用例）。
 - **IME 守卫是现状 bug 顺带修复**：浮层 query 过滤态下 IME 组合中按 Enter 确认候选词，现状会被 capture 劫持为「选中浮层第一项」（`onWindowKeydown` 无 isComposing 检查）——D2 重写该分支时一并修复，与 G2「绝不触发发送」的承诺域一致。
 - **同款模式顺带修复**：`packages/ui/src/features/chat/AmbiguousFilePopover.vue:113-150` 是同款「window capture + preventDefault + 无 stopPropagation」双入口模式（r2 影响面审核实：其选中链路仅 emit('select') → selectFile + drawer.open，无 chip 插入/无 composer 参与/关闭不依赖 target 阶段 handler，加 stopPropagation 安全）——P2 一并加 **stopPropagation + IME 双保险守卫**（同款问题：其 capture 劫持 IME 确认 Enter），并在两处登记时序契约注释（防未来复制复发）。
-- **边界声明**：① split mode 双 CommandPopover 同时 open（理论可达）时，stopPropagation 使先注册的实例独裁消费——现状双消费同样按注册序，行为差异可忽略，登记为已知限制；② 浮层 open 期间 Tab 被完全消费（焦点遍历不可用）——期望行为，属工作流变更显式登记（r1 SG-6）。
+- **边界声明**：① split mode 双 CommandPopover 同时 open（理论可达）时，stopPropagation 使先注册的实例独裁消费——现状双消费同样按注册序，行为差异可忽略，登记为已知限制；② 浮层**实际可见**期间 Tab 被完全消费（焦点遍历不可用；不可见态放行）——期望行为，属工作流变更显式登记（r1 SG-6）。
 - **重演验证**（修复后时序）：capture 命中 Enter → isComposing 否 → preventDefault + stopPropagation + onSelect（同步插 chip、关浮层、D1 保证插在活选区）→ 事件不到 target → contenteditable onKeydown 不跑 → onSend 不可能触发。IME 组合中 → isComposing return → 事件正常到达 target → 候选词确认照常。
 - **被否 C（nextTick 延迟关浮层）**：时序补丁掩盖事件流缺陷。**被否 B（防御层）**：见上，拦死正常发送。
 
@@ -243,38 +248,40 @@ if (e.key === 'Enter' || e.key === 'Tab') {
 - **location 透传链补齐**：`SlashCandidateInput` 加 `location?`；`CommandPopover.vue` slashCommands computed 从 `PiCommandInfo.sourceInfo?.path`（skill 项）填充（design-code-sync 轮 1 同步：终态回填逻辑经偏差 #6 位于 command-popover-symbols.ts 的 buildPanelSlashCandidates，非 CommandPopover.vue 内联）；landing 态 SkillInfo 分支填 `sourcePath`。**对 runtime 注入器零改动**（D4 权威映射兜底本就兼容缺 location，带上后走自描述路径）。
 - **被否 B（砍入口）**：破坏 pi TUI 原生习惯。**被否 C（字符串约定）**：脆弱协议。
 - **同修第三处错位**：`restore.ts restoreSegments` 的 skill 分支从 `insertSlashChip('/skill:'+name)` 改为 `insertSkillChip(name, seg.location)`——发送失败回滚不再丢 location、不再误删其他 chip。
+- **已知不一致（不在本设计 scope，轮 3 登记；轮 3 第 4 轮收窄到 SearchModal ⌘K）**：SearchModal ⌘K 注入是 skill 的**第三入口**——全局搜索选择 → `commandStore` 的 `PendingSlash`（无 location 字段）→ `useCommandPopoverTrigger.ts` 的 `watch(() => commandStore.pendingSlash, …)` 直接调 `insertSlashChip(req.command, req.icon)`；pi 0.84.4 的 skill 命令名不带 `/` 前缀（形如 `skill:code-review-graph`）⇒ `insertSlashChip` 的 `isSkill`（判 `/skill:` 前缀）为假 ⇒ 产**命令 chip**：无 `dataset.chipLocation`、受单命令替换语义管辖、不计入 `selectedSkillNames`（G3「携带 SKILL.md 路径」在该入口不成立；pi 侧仍能展开，功能未破坏——location 兜底走 runtime get_commands 权威映射）。**`+` 菜单「命令」入口不属此列**：它打开的是行首 slash 浮层本身（同一浮层的第二触发路径），命令项/skill 项按同一分派，行为已随 D3/S-2 与第 1 行合流（§2.1 第 5 行）。**为何不修**：location 数据面在 `SearchItem`/`PendingSlash` 上不存在，补齐属于新增数据管道，超出本设计 In scope（本设计只覆盖行首浮层 skill 项的通路切换）。**后续迭代条件（仅需覆盖 SearchModal ⌘K 一项）**：把 location 纳入搜索项与 `PendingSlash` 数据面后，按「项类型」而非「入口」路由到 `insertSkillChip`（与 D3 同构）——`+` 菜单侧无需改动（已走浮层通路）。
 
 **D4：命令 chip 视觉就地 + 序列化归位（选定，含四个子决策）**
 
 - **D4-a DOM 插入**：`insertSlashChip` 命令分支（非 `/skill:`）从「删光全部 `.slash-chip` + `insertBefore(firstChild)`」改为「仅移除已有**命令** chip（`dataset.chipType==='slash'`，替换语义，维持单命令不变量）+ `insertChipAtSelection`」；命令分支同样先经 `restoreSelection()`（D1）取活选区落位——与五类 inline chip 同款调用序（r3 一致性审查补记）。
 - **D4-b 数据模型**：`Segment` 联合类型新增 `{ type: 'slash'; name: string }`（name 不含 `/` 前缀）；`visitSlashChip` 非 skill 分支从「label 并入 pendingText」改为 `flushText + push({type:'slash', name: dataset.chipName})`（chipName 已有，insertSlashChip 现存）。`SEGMENT_SERIALIZERS` 加 `slash: (seg) => '/' + seg.name`。
-- **D4-c 归位与判定真源迁移（r1 修订：消费点清单补全，F5/MF-2）**：`segmentsToText` 函数级归位——序列化前把 slash 段提为首段（多个 slash 段防御性全前置按序，正常态至多一个），后接原序其余段；既有 `needsBoundarySpace` 规则沿用（slash 段视同 chip 类段）。**发送判定逐点裁决**（`draft.value` 全部消费方，命令 chip 就地化后 DOM 序文本不再以 `/` 开头）：
+- **D4-c 归位与判定真源迁移（r1 修订：消费点清单补全，F5/MF-2；轮 3 修正理由列）**：`segmentsToText` 函数级归位——序列化前把 slash 段提为首段（多个 slash 段防御性全前置按序，正常态至多一个），后接原序其余段；既有 `needsBoundarySpace` 规则沿用（slash 段视同 chip 类段）。**发送判定逐点裁决**（`draft.value` 全部消费方）：注意 `draft.value = getText()` 与 prompt 同源且**自 HEAD 起已归位**（§2.4；基线为拍平无空格形态），三条「迁移」行的理由因此是**判定源单一化 + 消除 draft 快照失真窗口**（`draft` 是 `getText()` 的调用快照，回滚/程序化 setText/时序窗口下可滞后于 DOM），而非「DOM 序漏命中」——后者在 `getTextFromEl` 恒走 `segmentsToText` 的前提下不成立：
 
   | 消费点 | 现状输入 | 裁决 | 理由 |
   |---|---|---|---|
-  | defer 拒绝判定 `/` 半边（`send.ts:213`） | draft.value | **迁移** segmentsToPrompt | 命令 chip 在中部时 DOM 序不命中 → 静默入队重放（重放归位后执行，绕过「命令不入队」现状语义） |
-  | defer 拒绝判定 `!` 半边（同上） | draft.value | 不迁 | `!` 不产 chip，手打必在 DOM 文本行首，两源恒一致；同函数内双源拆开判定 |
-  | `/compact` 拦截（`send.ts:253`） | draft.value | **迁移** segmentsToPrompt | 不迁则 chip 在中部的 /compact 漏拦截 → pi 侧原生执行，绕过 renderer compact 编排 |
-  | staging 提交（`routeStaging` → `staging.send(draft.value)`，`send.ts:154-167`） | draft.value | **迁移** segmentsToPrompt（r1 MF-2） | 不迁则 fork/handoff staged prompt 中 `/cmd` 不在行首 → pi 从「执行命令」静默变「字面文本」 |
+  | defer 拒绝判定 `/` 半边（`send.ts` 的 `enqueueDuringDefer`） | draft.value | **迁移** segmentsToPrompt | 判定源单一化 + 消除 draft 快照失真窗口（回滚/程序化 setText/时序）；defer 的 segments 载荷与 UI 判定读同一真值，杜绝快照滞后；即使不迁，draft 也已以 `/cmd` 开头（同源归位） |
+  | defer 拒绝判定 `!` 半边（同上函数） | draft.value | 不迁 | `!` 不产 chip，手打必在 DOM 文本行首，两源恒一致；同函数内双源拆开判定 |
+  | `/compact` 拦截（`send.ts` 的 `sendActiveMessage`） | draft.value | **迁移** segmentsToPrompt | 同「判定源单一化 + 消除 draft 快照失真窗口」；`segmentsToPrompt(segments)` 即发送载荷本身，判定与载荷构造同源，快照滞后面归零 |
+  | staging 提交（`send.ts` 的 `routeStaging` → `staging.send(draft.value)`） | draft.value | **迁移** segmentsToPrompt（r1 MF-2） | 同「判定源单一化 + 消除 draft 快照失真窗口」；staging 载荷本就是 segments 的序列化，改后判定与载荷同一表达式，fork/handoff staged prompt 的 `/cmd` 前缀不再依赖 draft 与 DOM 的时序一致性 |
+  | 用户消息展示 / 复制 / 历史条目（`normalizeContent` / `UserBubble` 渲染） | message content segments | **接受**（随同一序列化实现归位） | slash 段渲染为 `/name` 纯文本且前置——`segmentsToText` 同时是展示序列化（`segments.ts` 头部注释自述「归一化展示用 + pi prompt 序列化的唯一实现」），不拆两条实现（与 §2.4「判定源单一化」、§3.2 D4「pi 约束收敛在序列化单点」一致）；展示面与 prompt 面形态一致，避免同一条消息两副样子。渲染侧实现：`shared` 抽出归位序与边界空格单一实现（`normalizeSegmentOrder` / `needsBoundarySpace`，与 `segmentsToText` 共用），`packages/ui/src/features/chat/UserBubble.vue` 按归位序渲染 slash 段为纯文本（MF-1） |
   | defer 入队展示文本（`enqueueCompact` 的 text 参数） | draft.value | 不迁（登记） | 仅入队条目展示；重放载荷走 segments（归位序列化），协议面不受展示文本影响 |
   | bash 判定（`trySendBash`/`extractBashCommand`） | draft.value | 不迁 | `!` 前缀语义与 chip 无关；命令 chip + `!ls` 混排的现状行为两源本就一致 |
   | canSend / hasInput / placeholder / isBashMode | draft.value | 不迁 | 非空判定不受 chip 位置影响（getText 含 chip label）；isBashMode 判定 `!` 前缀同上 |
-- **D4-d 纯文本判定**：sidecar 写入条件「全部 text 段才跳过」扩展为「text 段 + slash 段跳过」——slash 段无 badge 还原需求（chat 流显示归位后纯文本即可），不为此引入 sidecar 写入。**单点声明（r2 影响面审）**：该判定落在 `useChat.ts:666-670` 的 `needsBackfill` 谓词，它**同时门控 sidecar 写入与 custom entry 标记**两处消费——不变式是「谓词认定纯文本 → 两条写入通道都不触发」，改动只落谓词单点，两侧自然同步（另经核实：pi RPC 侧无 Segment 穷尽 switch，skill-injector / entry-tree-builder 均消费序列化文本，sidecar 旧数据兼容成立）。
-- **D4-e args 语义显式登记（r1 F2）**：归位后的序列化产物与现状（chip 强制最前）**逐字相同**——args 恒为命令后的剩余全部文本（含命令 chip 之前的正文），**维持现状协议语义**。「命令 chip 之后的文本才算 args」（slash 段之前的 text 段移到其后）是独立的协议级行为变更，超出本设计，登记为未来独立决策候选。
+- **D4-d 纯文本判定**：sidecar 写入条件「全部 text 段才跳过」扩展为「text 段 + slash 段跳过」——slash 段无 badge 还原需求（chat 流显示归位后纯文本——该展示分支由本设计的代码侧一并落地：`UserBubble` 按归位序渲染 slash 段，见 D4-c 展示行），不为此引入 sidecar 写入。**谓词存在两处（轮 3 修正，原「单点声明」与实现不符；轮 3 第 4 轮按口径规则改符号引用）**：字面相同的 `segments.some((s) => s.type !== 'text' && s.type !== 'slash')` 落在 `useChat.ts` 的 `submitSegments`（直发路径，函数内 `const needsBackfill`）与 `submitQueuedEntry`（defer 重放路径，函数内 `const needsBackfill`）各一处，无共享 helper（提取属结构改造，超出本设计范围；`submitSegments` 侧该谓词上方的不变式注释「sidecar 条目存在 ⟺ 映射 custom entry 存在」本身要求两侧同谓词，字面重复即口径同步的代价）。**不变式**：谓词认定纯文本 → sidecar 写入与 custom entry 标记两条通道都不触发；defer 侧 slash 段不可达（`send.ts` 的 `enqueueDuringDefer` 对以 `/` 开头的 `segmentsToPrompt(segments)` 一律拒绝入队），两处同谓词排除纯为口径统一（另经核实：pi RPC 侧无 Segment 穷尽 switch，skill-injector / entry-tree-builder 均消费序列化文本，sidecar 旧数据兼容成立）。
+- **D4-e args 语义显式登记（r1 F2，轮 3 修正「逐字相同」）**：归位后的序列化产物与现状（chip 强制最前）**除边界空格外逐字相同**——slash 段后接不以空格开头的 text 段时，`needsBoundarySpace`（`shared/segments.ts`）补一格：旧产物 `/compact任务描述…\n我说明一下`，新产物 `/compact 任务描述…\n我说明一下`。**该空格是修正而非等价**：旧产物首 token 为 `/compact任务描述…`（非法命令名，pi 侧命令静默失效、按字面文本处理），新产物首 token 才是 `/compact`，行首命令协议成立（`send.ts` 的 `/compact ` 前缀拦截同理——旧产物根本进不了该分支）。args 语义不变：恒为命令后的剩余全部文本（含命令 chip 之前的正文），**维持现状协议语义**。「命令 chip 之后的文本才算 args」（slash 段之前的 text 段移到其后）是独立的协议级行为变更，超出本设计，登记为未来独立决策候选。
 - **风险与对策**：触及发送判定链是本设计最大风险面——对策是 §4 场景 6/7/10/11（defer 入队、/compact 拦截、staging 提交、defer 重放四条链路的真机验收）+ 判定源迁移用例全量同步改写。
 - **被否 A（保持现状）**：失败模式 D 永存。**被否 C（runtime 接管命令）**：与 pi 漂移面不可控。
 
 **D5（登记，不改）：hasChip 触发抑制维持现状**
 
-存在任何 chip 时行首 `/` 不触发（multi-skill D2 保留决策）。本设计不改——放开是独立行为变更（误触发面需独立评估 query 合法性过滤对命令域的适配），超出「修插入语义」的 scope。已知限制：插了 skill chip 后行首无法再呼命令浮层（删 chip 或发送后恢复）。未来放开条件：命令域 query 过滤对齐 skill 域合法性过滤（`[a-z0-9-]`）后评估。
+存在任何 chip 时行首 `/` 不触发（multi-skill D2 保留决策）。本设计不改——放开是独立行为变更（误触发面需独立评估 query 合法性过滤对命令域的适配），超出「修插入语义」的 scope。已知限制：插了 skill chip 后行首无法再呼命令浮层（删 chip 或发送后恢复）——**§4 场景 5 因此按逆向序（先行首 skill、后行中 skill）验收**。未来放开条件：命令域 query 过滤对齐 skill 域合法性过滤（`[a-z0-9-]`）后评估。
 
 **D6（边界声明，r1 扩充为「恢复语义边界」集中登记）：三类恢复路径均为近似，不保序**
 
 | 恢复路径 | 机制 | 近似点 | 判定 |
 |---|---|---|---|
-| 草稿持久化（session 切换） | drafts 存 `getText()` 纯文本，恢复 setText | chip 形态全丢（含命令/skill 位置）；命令文本若不在行首，恢复后发送按字面文本处理（与现状手打句中 `/cmd` 一致） | 既有行为延续，非本设计引入；segments 持久化属独立迭代 |
+| 草稿持久化（session 切换） | drafts 存 `getText()` 纯文本（HEAD 起已归位），恢复 setText | chip 形态全丢（含命令/skill 位置）；**恢复后命令会被执行**（此前因缺边界空格、首 token 非法而按字面文本发送），与手打行首 `/cmd` 行为一致 | **已接受的行为变化**（轮 3 登记，与 D4-e 同根）：变化方向是修正（命令恢复后生效而非静默失效）；不采「另加 DOM 序取文本入口」以维持旧文案的备选——引入第二文本真源、与 §2.4「判定源单一化」及 §3.2 D4「pi 约束收敛在序列化单点」相悖，且旧行为是命令静默失效的缺陷。segments 持久化属独立迭代 |
 | 发送失败回滚（`restoreSegments`） | text 段 setText 重建 + 非文本段逐个 `insertXxxChip` 追加 | **位置近似**：chip 回滚后落在全文尾部而非原位置（slash/skill/image/session/subagent 同理，现状已如此）；skill 段 location 保留（D3 同修）、slash 段形态恢复 | 接受（登记）；位置保序需 DOM 快照机制，成本不成比例 |
-| 编辑重发（editAndResend） | `segment-rebuild.ts` 重建草稿 | 同回滚：位置近似；slash 段重建后再归位，发送行为正确 | 接受；§4 场景 10 验收发送行为（不验收位置） |
+| 编辑重发（editAndResend） | **消息气泡上的内联编辑框**（`UserBubble.vue` 的 `draftText`，`startEdit` 经 `normalizeContent(content)` 回填**归位后全文**——命令可见可改）→ `rebuildSegmentsWithEditedText(user.content, text)` → `editAndResend(sessionId, user.id, segments)`（`useChat.ts` 的 `editAndResend`）：内部 `segmentsToPrompt(segments)` 后 `submitSegments` **直发**——全程不写 composer DOM、不经 `restoreSelection` | 同回滚：位置近似；消息 content 含 slash 段时（即由命令 chip 发出的消息），提交时**剥离编辑文本里与 slash 段重复的前缀命令**（命令由 slash 段承担；用户改写/删除命令时丢弃对应 slash 段），重发 prompt 命令在归位首且**只出现一次**（MF-2 采纳备选方案，理由：编辑框展示归位全文使用户可改命令）；**其余非 text 段（skill/file/mention/session/handoff）同走序列化文本剥离**（序列化 SSOT 取自 `segmentsToText([seg])`；剥离不到即丢弃该段、以文本形态随 prompt 进入——防止序列化标记随编辑稿整串回灌 text 段而翻倍，轮 3 收口）；subagent/未知类型序列化为空串 ⇒ 恒保留；**image 段为未修项，两方向均未修**——① 翻倍（编辑稿中同一路径随序列化出现两次）；② **删除后路径复活**（用户删掉编辑稿里的 `/data/a/1.png` 后 prompt 仍出现该路径：image 段恒保留、不参与剥离）——其序列化 `\n<path>\n` 是换行定界的裸路径，与 `submitEdit` 的 `draftText.trim()` 交互使精确匹配不可靠，根因与处置方向见 `composer-multi-skill-injection.md` §3.5-⑤②；历史纯文本 `/cmd` 消息 content 无 slash 段 ⇒ 该路径不产 slash 段，重发文本不变 | 接受；§4 场景 12 验收发送行为（不验收位置） |
 
 ---
 
@@ -288,14 +295,14 @@ if (e.key === 'Enter' || e.key === 'Tab') {
 | 2 | Tab 与 Enter 等价 | 同场景 1 但按 Tab | 结果逐字符一致（除选中项） | G1 |
 | 3 | 点击路径回归 | 同场景 1 但鼠标点击浮层项 | 结果与现状（修复前实测基线）一致 | G5 |
 | 4 | stale savedRange 防御 | 点击草稿头部（savedRange=头部）→ End 键到尾部 → `#` → Enter | chip 在尾部（活选区），不在头部 | G1 |
-| 5 | 行首浮层选 skill 不误删 | 行中 `/` 插入 skill A（skill chip）→ 行首 `/` 选 skill B | A chip 原样保留；B chip 在行首光标处；两 chip 均带 location（DOM dataset 断言）；发送后 JSONL 含两个 `<skill>` 全文 block（location 均自描述） | G3 |
-| 6 | 命令 chip 视觉就地 + 归位拦截 | 打 `任务描述` → Shift+Enter → 第二行行首 `/compact 清理` → Enter 选中 | chip 在第二行原位，第一行不动；再按 Enter 发送 → **renderer /compact 拦截命中**（压缩流程触发，customInstructions = `任务描述\n清理`，全部剩余文本——现状语义，D4-e），非 pi 侧字面执行 | G4 |
-| 7 | defer 态命令判定不裂 | 占用中（streaming）→ 草稿中部插 `/compact` chip → 发送 | 被拒绝入队并 toast「命令排队被拒」（判定基于归位文本）——与现状行为一致，非静默入队成字面文本 | G4 |
+| 5 | 行首浮层选 skill 不误删 | **逆向序（D5 抑制）**：行首 `/` 选 skill B（此刻无 chip，行首浮层才可呼出）→ 行中空白后 `/` 插入 skill A | 两 chip 均保留（插 A 不删 B）；B 在行首光标处、A 在插入点；均带 location（DOM dataset 断言）；发送后 JSONL 含两个 `<skill>` 全文 block（location 均自描述） | G3 |
+| 6 | 命令 chip 视觉就地 + 归位拦截 | 打 `任务描述` → Shift+Enter → 第二行行首输 `/compact` → Enter 选中（chip 就地在第二行）→ 光标处补打 `清理`（命令与 args 分两步，见 §2.2 步骤说明） | chip 在第二行原位，第一行不动；再按 Enter 发送 → 归位产物 `/compact 任务描述\n清理`（`needsBoundarySpace` 补的边界空格，D4-e 修正点——`send.ts` 中 `sendActiveMessage` 的 `/compact ` 前缀拦截分支据此成立，旧产物无空格时根本进不了该分支）→ **renderer /compact 拦截命中**（压缩流程触发，customInstructions = `任务描述\n清理`，全部剩余文本——现状 args 语义，D4-e），非 pi 侧字面执行；**气泡 DOM 断言**：发送后用户气泡文本以 `/compact ` 开首且命令只出现一次（展示面随同一归位序列化，D4-c 展示行） | G4 |
+| 7 | defer 态命令判定不裂 | 占用中（streaming）→ 多行草稿中间某行行首输 `/compact` → Enter 选中（chip 就地在行首）→ 发送 | 被拒绝入队并 toast「命令排队被拒」（判定基于归位文本）——与现状行为一致，非静默入队成字面文本 | G4 |
 | 8 | 手打零变化 | 手打整条 `/skill:a 请review` 发送 | pi 行首展开（JSONL 断言 `<skill name="a">` 全文），无 xyz 干预 | G5 |
 | 9 | 发送失败回滚保留 skill chip | 场景 5 发送前制造 runtime 不可达（断 pi）→ 发送 → 失败回滚 | 两 skill chip 形态恢复（非纯文本），location 保留；**位置不验收**（回滚位置近似=尾部，D6 登记边界） | G3 |
-| 10 | staging 提交含命令 chip | fork staging 态 → 草稿中部插 `/compact` chip → Enter 提交 | staged prompt 以 `/compact` 开首（归位文本），pi 侧行为与现状一致；无「静默变字面文本」 | G4 |
+| 10 | staging 提交含命令 chip | fork staging 态 → 多行草稿中间某行行首输 `/compact` → Enter 选中（chip 就地）→ Enter 提交 | staged prompt 以 `/compact` 开首（归位文本），pi 侧行为与现状一致；无「静默变字面文本」 | G4 |
 | 11 | defer 重放归位一致 | defer 态入队非命令富内容（file chip + 正文）→ flush 重放 | 重放 prompt 与直发同构（归位序列化）；无字段丢失 | G4+G5 |
-| 12 | 编辑重发含命令 chip | 对历史含 `/cmd` 前缀消息 editAndResend → 编辑器重建草稿（含正文）→ 发送 | 重发文本以 `/cmd` 开首（重建后归位），命令正常生效 | G5 |
+| 12 | 编辑重发（命令不重复） | 对**由命令 chip 发出**的 user 消息（content 含 slash 段）→ 点消息气泡的**内联编辑框**（展示归位全文，命令可见可改）→ 直接提交或改正文后提交（`rebuildSegmentsWithEditedText` → `editAndResend` 直发，不写 composer DOM、不经 `restoreSelection`）；另对**含 skill/file/mention/session/handoff 段**的消息同理编辑重发 | 重发 prompt 以 `/cmd ` 开首、命令**只出现一次**（MF-2：剥离编辑文本里与 slash 段重复的前缀命令；改写命令时只含新命令、旧命令不残留）；skill/file/mention/session/handoff 段的序列化形态在 prompt 中**各只出现一次**（段保留即剥离对应文本，改写/删除则丢弃段——防标记翻倍，回归锁 `packages/ui/src/lib/__tests__/segment-rebuild.test.ts`）；image 段为**未修项**（翻倍与「删除后路径复活」两方向均未修，见 D6 与 `composer-multi-skill-injection.md` §3.5-⑤②）；历史**纯文本** `/cmd` 消息（content 无 slash 段）编辑重发 → 文本不变（该路径不产 slash 段，不覆盖归位逻辑） | G5 |
 | 13 | IME 组合确认不被劫持 | 浮层 query 过滤态 → IME 输入中文过滤词 → 组合中按 Enter 确认候选词 | 候选词确认照常，浮层不选中、不关闭、不发送（capture 层 isComposing 守卫，D2） | G2 |
 
 补充断言（探针）：场景 1/5/6 的 DOM 断言同时校验 `window.getSelection().anchorNode` 位于 chip 后 spacer（光标位置正确）。
@@ -307,8 +314,10 @@ if (e.key === 'Enter' || e.key === 'Tab') {
 | shared | `src/__tests__/segments.test.ts` | slash 段类型 + serializer + 归位断言（穷尽守卫新增 key） |
 | dom-core | `composer/input/chip-commands.test.ts` / `input-dom.test.ts` / `contenteditable.test.ts` / `restore.test.ts` / `skill-chip.test.ts` | D1 插入位置、D4-a 命令 chip 就地、visitSlashChip slash 段、restoreSegments（r3 审查修正：原列 skill-trigger.test.ts 实际未被行为变更触及，删；skill-chip.test.ts 才是被改文件） |
 | ui | `features/composer/__tests__/`（file-chip / composer-input-get-text / useComposerChipCommands.image / composer-input-trigger-forward / composer-injection-real-dom / useComposerDragDrop） | 真实选区链路去 mock（restoreSelection mock 盲区——bug 存活根因；实施收窄见偏差 #15：仅 composer-injection-real-dom 去 mock，位置覆盖由 dom-core chip-commands.test 真实链路区段承接）；触发转发回归 |
-| renderer | `composer-keydown.test.ts`（D2 改动本体，含 capture/bubble 时序锁用例：浮层 open 时 Enter 不触发 onSend）；`composer-slash-injection.test.ts` / `composer-slash-trigger.test.ts`（强制最前断言改写为就地断言）；`composer-hash-trigger / composer-compact-queue / composer-dispatch-route / composer-bash-mode / composer-send-button-states / composer-fork-mode / composer-landing-skill-reload`（D4-c 判定源迁移） |
-| core | `domain/composer/dispatch/send.test.ts` / `submit.test.ts`；`domain/chat/` 的 `mutations.test.ts` / `useChat.test.ts` / `submit-queued-entry.test.ts`（场景 10/11/12 对应：staging/defer 重放/编辑重发） | 判定源迁移 + staging/defer 载荷 |
+| ui | `features/chat/__tests__/`（UserBubble 展示面，轮 3 补） | slash 段按归位序渲染为 `/name` 纯文本（气泡文本含 `/compact`、命令在首）；**段序仅含 slash/text 段（无 badge 段）时**：气泡渲染文本 === `segmentsToText(同段)` 等价锁（slash 与其后继段之间的边界空格显式渲染）——该范围由 `UserBubble.test.ts` 的 MF-1 组注释界定，同组含反例用例（`[slash, file, text]` 断言 `not.toBe(segmentsToText(同段))`）；含 badge 段不等价的原因是**两条并存**：① badge 边界空格不显式渲染——`UserBubble.boundarySpaceBefore` 只在 `prev.type === 'slash'` 时渲染一格空格，其余 badge 边界走自身 CSS `mr-1` 间距、不产文本节点，而 `segmentsToText` 经 `needsBoundarySpace` 对 chip→text 边界补空格，两者因此不等（取投影无差异的段序 `[file('a.ts'), text('正文')]` 即可单独证伪「只有一条原因」：序列化 `a.ts 正文` 与气泡文本 `a.ts正文` 的唯一差异就是这格空格）；② badge 段展示投影 ≠ 序列化（file 显 `fileBasename(path)` + 行范围、session 显 `label`、skill/subagent 显 name/slug、image 显缩略图），登记面见 `composer-multi-skill-injection.md` §3.5-⑤「`normalizeContent` 纯文本投影面（P0-12 登记）」（实有标题）。①②同为本锁不覆盖 badge 段的原因，均不在本锁范围——**在段/序列化层**结构性锁 live ≡ reload（MF-1），产线 `MarkdownRenderer` 的 markdown 块级渲染边界不在本锁范围（组注释 N-3a） |
+| ui | `lib/__tests__/segment-rebuild.test.ts`（轮 3 新增） | 编辑重发：slash 前缀剥离 + 其余非 text 段（skill/file/mention/session/handoff）序列化剥离、subagent/未知类型恒保留；image 恒保留（未修项：**翻倍**与**删除后路径复活**两方向均未修——登记见 D6 与 `composer-multi-skill-injection.md` §3.5-⑤②）；**image 为无单测覆盖项**（image 段不参与剥离，本测试文件无 image 用例） |
+| renderer | `composer-keydown.test.ts`（D2 改动本体，含 capture/bubble 时序锁用例）；`composer-slash-trigger.test.ts`（U11c）；`composer-hash-trigger / composer-compact-queue / composer-dispatch-route / composer-bash-mode / composer-send-button-states / composer-fork-mode / composer-landing-skill-reload` | 浮层实际可见时 Enter 不触发 onSend（时序锁）+ 浮层不可见（open 但无渲染内容）时 Enter 放行（RC-A-1 回归锁——可见性判定由单一表达式 `items.length > 0 \|\| fileFallbackVisible` 覆盖，landing `$` 错误/空结果态属「可见空态」⇒ Enter 仍消费；回归锁按该表达式覆盖，不逐态造态）；强制最前断言改写为就地断言（**仅 `composer-slash-trigger.test.ts` U11c**——原同步列的 `composer-slash-injection.test.ts` 本分支零改动（`git log 135c1dbab..HEAD` 为空），轮 3 收窄）；D4-c 判定源迁移 |
+| core | `domain/composer/dispatch/send.test.ts` / `submit.test.ts`；`domain/chat/` 的 `mutations.test.ts` / `useChat.test.ts` / `submit-queued-entry.test.ts`（场景 10/11/12 对应：staging/defer 重放/编辑重发） | 判定源迁移 + staging/defer 载荷。**轮 3 第 5 轮同步实施实况**：`submit.test.ts` / `mutations.test.ts` / `submit-queued-entry.test.ts` 三者**未实施**（`git log --oneline 135c1dbab..HEAD` 对三者输出均为空），用例归并至 `send.test.ts` / `useChat.test.ts`（本分支实际改动的两个文件），见实施计划 u6 领地登记 |
 | runtime | skill-injector 相关（回归——slash 段不进注入器，预期零变化） | 反向回归锁 |
 
 ---
@@ -317,10 +326,10 @@ if (e.key === 'Enter' || e.key === 'Tab') {
 
 | 单元 | 内容 | 文件改动地图 | justification（为何独立成单元） |
 |---|---|---|---|
-| P1 | D1 restoreSelection 活选区优先 + 应用防御 | `dom-core/composer/input/contenteditable.ts`（restoreSelection 本体重写 + placeCaretAtEnd 辅助；design-code-sync 轮 1 同步：终态本体经偏差 #14 提取至 selection-restore.ts，contenteditable.ts 经 useSelectionRestore 工厂消费）；`chip-commands.ts`（调用点注释更新，无需改逻辑） | 根因 1 单点收口；判定在 restoreSelection 本体使其全部调用方（六类 insertXxxChip + insertTextAtCursor + onAddSelect）一次修复（r1 F1 落点修正）；独立可验收（场景 1-4） |
+| P1 | D1 restoreSelection 活选区优先 + 应用防御 | `dom-core/composer/input/contenteditable.ts`（restoreSelection 本体重写 + placeCaretAtEnd 辅助；design-code-sync 轮 1 同步：终态本体经偏差 #14 提取至 selection-restore.ts，contenteditable.ts 经 useSelectionRestore 工厂消费）；`chip-commands.ts`（调用点注释更新，无需改逻辑） | 根因 1 单点收口；判定在 restoreSelection 本体使其全部调用方（六类 insertXxxChip + D4-a 后的命令通路 insertSlashChip + insertTextAtCursor + onAddSelect）一次修复（r1 F1 落点修正；轮 3 补列 insertSlashChip 收编）；独立可验收（场景 1-4） |
 | P2 | D2 capture 截断 + IME 守卫 + 同款模式修复 | `renderer/components/panel/CommandPopover.vue`（handleKeydown Enter/Tab：isComposing + stopPropagation）；`ui/features/chat/AmbiguousFilePopover.vue`（同款模式顺带修）；两处时序契约注释 | 根因 2；IME 确认劫持与 AmbiguousFilePopover 是同根双入口模式，合并修复防复发（r1 F3/SG-1）；独立可验收（场景 1「无新消息」+ 场景 13） |
 | P3 | D3 skill 项按类型路由 + location 链 | `renderer/composables/panel/useCommandPopoverTrigger.ts`（payload + onCmdSelect 分流）；`command-popover-symbols.ts`（SlashCandidateInput.location + buildPanelSlashCandidates 的 sourceInfo.path 回填——r3 审查同步：回填逻辑经偏差 #6 提取至此，非 CommandPopover.vue 内联）；`CommandPopover.vue`（消费构建函数）；`dom-core/composer/input/restore.ts`（skill 回滚分支） | 根因 3；与 P1/P2 无代码耦合，可并行；独立可验收（场景 5/9） |
-| P4 | D4 命令 chip 就地 + 归位 + 判定迁移 | `dom-core/composer/input/chip-commands.ts`（insertSlashChip 命令分支）；`input-dom.ts`（visitSlashChip slash 段）；`shared/segments.ts`（类型 + serializer + 归位）；`core/domain/composer/dispatch/send.ts`（defer `/` 半边 / /compact / staging.send 判定迁移）；`core/domain/chat/useChat.ts`（纯文本判定扩展）；`dom-core/composer/input/restore.ts`（slash 段回滚） | 根因 4，触及数据模型与发送链——风险面最大，单独成单元便于审查与回滚；判定迁移点以 D4-c 裁决表为准（含 staging，r1 MF-2）；独立可验收（场景 6/7/10/11/12） |
+| P4 | D4 命令 chip 就地 + 归位 + 判定迁移 | `dom-core/composer/input/chip-commands.ts`（insertSlashChip 命令分支）；`input-dom.ts`（visitSlashChip slash 段）；`shared/segments.ts`（类型 + serializer + 归位）；`core/domain/composer/dispatch/send.ts`（defer `/` 半边 / /compact / staging.send 判定迁移）；`core/domain/chat/useChat.ts`（纯文本判定扩展，谓词两处：`submitSegments` / `submitQueuedEntry` 内的 `const needsBackfill`）；`dom-core/composer/input/restore.ts`（slash 段回滚） | 根因 4，触及数据模型与发送链——风险面最大，单独成单元便于审查与回滚；判定迁移点以 D4-c 裁决表为准（含 staging，r1 MF-2；轮 3 修正：迁移价值 = 判定源单一化 + 消除 draft 快照失真窗口，非「漏命中」修复）；独立可验收（场景 6/7/10/11/12） |
 | P5 | 测试补齐（清单见 §4） | §4 回归测试清单全量 + 键盘路径真实选区用例（去 restoreSelection mock）+ capture/bubble 时序锁用例 | 测试盲区是 bug 存活至今的直接原因；时序锁用例是 D2 删除防御层后的唯一防线（r1 MF-1 对策） |
 
 **实施顺序**：P1 → P2 → P3 → P4 → P5 随各单元带上（P1/P2 可并行，P4 依赖 P1 的 **restoreSelection 改造**——命令 chip 就地插入位置由它保证；`insertChipAtSelection` 本身不变，r2 修订消除 v1 残留表述）。
@@ -332,5 +341,9 @@ if (e.key === 'Enter' || e.key === 'Tab') {
 
 **变更历史**：
 - v1（2026-09-08）：初版。
-- v2（r1 修订，同日）：① D1 落点上移至 restoreSelection 本体（主审 F1：v1 检查点读到的恒是 savedRange 应用后的选区，回退永不触发；新增被否 D）；② D2 删除 defaultPrevented 防御层（影响面审 MF-1：contenteditable Enter 分支先 preventDefault 再转发，防御层会拦死全部正常发送；新增被否 B）+ 加 isComposing 守卫（F3：IME 确认劫持）+ AmbiguousFilePopover 同款模式顺带修（SG-1）+ split mode 注册序/Tab a11y 边界声明（F6/SG-6）；③ D4-c 判定源迁移消费点补全为裁决表（F5/MF-2：staging.send 迁移、defer `!` 半边拆分、bash/canSend 逐点不迁登记）；④ D4-e args 语义显式登记（F2：归位产物与现状逐字相同，args 含命令前全部正文是现状语义；场景 3/6 断言修正）；⑤ D6 扩充为三类恢复路径集中登记（F7：回滚位置近似=尾部）；⑥ §4 新增场景 10-13（staging/defer 重放/编辑重发/IME）+ 回归测试清单补全（MF-3）；⑦ §5 P1/P2/P4/P5 同步 D1 落点、IME+AmbiguousFilePopover、staging 迁移、测试清单。
-- v3（r2 修订，同日）：① §5 实施顺序改为「P4 依赖 P1 的 restoreSelection 改造」（主审 r2 MUST_FIX：v1 残留「依赖 insertChipAtSelection 改造」与 D1 r1 修订矛盾）；② D1 代码草案重排——活选区判定移至 el.focus() 之前（主审 r2 SG-a：focus 对无存活选区编辑器会头部新建 caret，先 focus 再判定是自毁式检查；失败分支在 Chromium 已知路径不触发但属健壮性缺陷，一行成本修复）；③ D2 IME 守卫升级双条件 composingRef||isComposing（主审 r2 SG-d：对齐 contenteditable.ts:240 既有范式，防御 keyCode 229 型引擎 bug 面）+ AmbiguousFilePopover 同步双保险（影响面审 r2 SG-1）；④ D4-d 补 needsBackfill 谓词单点声明（影响面审 r2 SG-2：谓词同时门控 sidecar 写入与 custom entry 标记）；⑤ D1 收口范围 insertTextAtCursor 触发链表述修正为 context 注入 injection.ts:111（影响面审 r2 SG-4）；⑥ §4 core 行测试文件点名（影响面审 r2 SG-3：mutations/useChat/submit-queued-entry）；⑦ D1 草案 !savedRange 分支补 el.focus() 对齐现状回焦行为（主审 r3 SG-r3-1，随 r3 确认当轮修完）。
+- v2（r1 修订，同日）：① D1 落点上移至 restoreSelection 本体（主审 F1：v1 检查点读到的恒是 savedRange 应用后的选区，回退永不触发；新增被否 D）；② D2 删除 defaultPrevented 防御层（影响面审 MF-1：contenteditable Enter 分支先 preventDefault 再转发，防御层会拦死全部正常发送；新增被否 B）+ 加 isComposing 守卫（F3：IME 确认劫持）+ AmbiguousFilePopover 同款模式顺带修（SG-1）+ split mode 注册序/Tab a11y 边界声明（F6/SG-6）；③ D4-c 判定源迁移消费点补全为裁决表（F5/MF-2：staging.send 迁移、defer `!` 半边拆分、bash/canSend 逐点不迁登记）；④ D4-e args 语义显式登记（F2：归位产物与现状逐字相同——该表述经 design-code-sync 轮 3 修正为「除边界空格外逐字相同」，见 v4；args 含命令前全部正文是现状语义；场景 3/6 断言修正）；⑤ D6 扩充为三类恢复路径集中登记（F7：回滚位置近似=尾部）；⑥ §4 新增场景 10-13（staging/defer 重放/编辑重发/IME）+ 回归测试清单补全（MF-3）；⑦ §5 P1/P2/P4/P5 同步 D1 落点、IME+AmbiguousFilePopover、staging 迁移、测试清单。
+- v3（r2 修订，同日）：① §5 实施顺序改为「P4 依赖 P1 的 restoreSelection 改造」（主审 r2 MUST_FIX：v1 残留「依赖 insertChipAtSelection 改造」与 D1 r1 修订矛盾）；② D1 代码草案重排——活选区判定移至 el.focus() 之前（主审 r2 SG-a：focus 对无存活选区编辑器会头部新建 caret，先 focus 再判定是自毁式检查；失败分支在 Chromium 已知路径不触发但属健壮性缺陷，一行成本修复）；③ D2 IME 守卫升级双条件 composingRef||isComposing（主审 r2 SG-d：对齐 contenteditable.ts:240 既有范式，防御 keyCode 229 型引擎 bug 面）+ AmbiguousFilePopover 同步双保险（影响面审 r2 SG-1）；④ D4-d 补 needsBackfill 谓词单点声明（影响面审 r2 SG-2：谓词同时门控 sidecar 写入与 custom entry 标记；该「单点」经 design-code-sync 轮 3 修正为「谓词两处」，见 v4）；⑤ D1 收口范围 insertTextAtCursor 触发链表述修正为 context 注入 injection.ts:111（影响面审 r2 SG-4）；⑥ §4 core 行测试文件点名（影响面审 r2 SG-3：mutations/useChat/submit-queued-entry）；⑦ D1 草案 !savedRange 分支补 el.focus() 对齐现状回焦行为（主审 r3 SG-r3-1，随 r3 确认当轮修完）。
+- v4（design-code-sync 轮 3 同步，2026-09-10，对齐 HEAD `39a8b08fe`）：① MF-3 三处「归位产物与现状逐字相同」（§2.2 失败模式 D / §3.1 场景 3 / D4-e）修正为「除边界空格外逐字相同」并写明该空格是修正（旧产物首 token `/compact任务描述…` 非法 ⇒ pi 侧命令静默失效；`send.ts` 的 `/compact ` 前缀拦截同理），§4 场景 6 期望值按实际产物补全；② MF-4 §2.4 撤除「两个文本真源」前提（`draft.value = getText() = segmentsToText(DOM segments)`，与 prompt 同源且已归位；`getTextFromEl` 基线与 HEAD 相同），D4-c 三条迁移行理由改为「判定源单一化 + 消除 draft 快照失真窗口」，D6 草稿持久化行与 Out of scope 补登记「恢复后命令会被执行」为已接受的行为变化并给出不采备选的理由；③ MF-6 D4-d「单点声明」改为谓词两处（`submitQueuedEntry` defer 重放 / `submitSegments` 直发，各持 `const needsBackfill`；轮 3 第 4 轮按口径规则改符号引用），登记 defer 侧 slash 段不可达；④ MF-7 §4 回归清单 renderer 行删除 `composer-slash-injection.test.ts` 的失实改写登记（该文件本分支零改动，改写实际在 `composer-slash-trigger.test.ts` U11c）；⑤ S-5 §2.1 入口表补 `+` 菜单 / SearchModal ⌘K 第三入口行，D3 增「已知不一致（不在本设计 scope）+ 后续迭代条件」；⑥ S-7 §4 场景 5 改逆向序（行首 skill → 行中 skill）以符合 D5 抑制；⑦ S-8 D4-c 新增「用户消息展示 / 复制 / 历史条目」行（随同一归位序列化，`UserBubble` 按归位序渲染 slash 段为纯文本），场景 6 补气泡 DOM 断言；⑧ S-9 D6 编辑重发行与 §4 场景 12 改为真实路径（消息气泡内联编辑框 → `rebuildSegmentsWithEditedText` → `editAndResend` 直发，不写 composer DOM）；⑨ I-5 D2 草案裸 `return` 改 `return false`（偏差 #2）；⑩ I-6 文档头部加「行号（设计时点 135c1dbab）与轮次口径」注，D1 调用点清单补 `insertSlashChip`（设计时点六处 → D4-a 后 HEAD 七处）；⑪ §5 P1/P4 同步上述改动。
+- v5（design-code-sync 轮 3 第 4 轮复审修复，2026-09-10）：① RC-B-3 头部「行号与轮次口径」注升级为规则——**未标「设计时点」的 `file:line` 视为提交时点坐标；设计时点坐标（基线 `135c1dbab`）一律显式标注**，新增/改写引用尽量改「符号 + 文件」表述，不逐轮追平行号；② RC-B-4 §2.1 入口表第 4 行**拆为两行**——SearchModal ⌘K（真正的第三入口，真实描述保留）与 `+` 菜单「命令」入口（`onAddSelect('slash')` 打开行首 slash 浮层，与第 1 行同通路；skill 项经 D3 走 `insertSkillChip`、S-2 后已选禁选生效），导语同步改写，D3「已知不一致」收窄到 SearchModal ⌘K 一项（「后续迭代条件」只覆盖它）；③ RC-B-2 D4-d / §5 P4 / v4 变更历史三处谓词行号改**符号引用**（`submitSegments` / `submitQueuedEntry` 内的 `const needsBackfill`）——原写的绝对行号落在谓词上方的注释行（实测谓词在其下一行），故按新口径规则弃用数字；④ RC-B-5 §2.2 失败模式 D / §3.1 场景 3 / §4 场景 6 三处步骤改为「先选命令 `→` Enter 选中 `→` 光标处补 args」（slash 触发正则 query 捕获段 `\S*` 不含空白，连写会失配关闭浮层），期望产物不变；同模式扫涟漪：§4 场景 7/10 的「草稿中部插 `/compact` chip」改为「多行草稿中间某行行首输 `/compact` → Enter 选中」（slash 浮层只在行首触发，原表述不可执行）；⑤ RC-B-6 §2.4 标题与数据流图 `draft.value` 行加时态限定（基线与 HEAD 同源同序；**HEAD 起**因 `visitSlashChip` 产 slash 段才表现为已归位，基线为拍平无空格形态），消除「基线 draft 也已归位」误读；⑥ RC-B-8 §4 回归清单补 `ui/lib/__tests__/segment-rebuild.test.ts` 行；⑦ RC-B-9 该行等价锁措辞收窄为「**含 slash 段的段序**…（其余 badge 边界间距走 `mr-1`，不计入文本等价）」；⑧ RC-B-10 D6 编辑重发行补登记其余非 text 段的序列化剥离与 **image 恒保留（未修项）**，§4 场景 12 同步补非 text 段不翻倍的通过标准；⑨ 按新口径规则顺带对齐同模式坐标——D4-c 裁决表四行的 `send.ts` 行号改符号（`enqueueDuringDefer` / `sendActiveMessage` / `routeStaging`，消除与 D4-d `send.ts:225` 并存的「同一代码点两套坐标」）、D4-d 的 `send.ts:225` 同改符号、`selection-restore.ts:36` 改 `restoreSelection` 符号引用、`needsBoundarySpace` 的 `segments.ts:88-95` 两处（§2.2 / D4-e）改 `shared/segments.ts` 符号引用，并补 §2.2 / §2.4 / §3.3 D1 收口范围三处「设计时点」截面标注、D4-c 段首时态改为「自 HEAD 起已归位」。**（轮 3 第 5 轮注）**该条 ① 的规则经轮 3 收尾校正为「本文保留的绝对行号均为设计时点（`135c1dbab`）坐标，显式标注者除外」，见头部口径与 v7。
+- v6（design-code-sync 轮 3 收尾文档修复，2026-09-10）：G2 口径与实现对齐（RC-A-1）——原表述「浮层**开着**时按 Enter 是『选中候选』」比实现宽：实现（`CommandPopover.vue` 的 `handleKeydown`，轮 3 第 4 轮）先判 `overlayVisible`（= `items.length > 0 || fileFallbackVisible`，与模板 `PopoverContent` 的 `v-if` 逐字同条件），只在浮层**实际可见**时消费 Enter/Tab；不可见态（候选为空的 slash/session/subagent/skill 路）浮层不渲染任何内容，吞掉 Enter 会让消息发不出且无提示。① §1 G2 收紧为「实际可见（有渲染内容）时…」并补不可见态语义（不可见 ⇒ Enter 正常发送属预期；landing `$` 错误/空结果态浮层可见 ⇒ 仍被消费不发送）；② §3.3 D2 补「消费前提 = 浮层实际可见」bullet，同节两处与 §4 回归测试清单 renderer 行的「浮层 open 时」措辞同步改为「实际可见时」（并补不可见态放行的回归锁条目）。实现侧修复与回归锁：`CommandPopover.vue` 的 `overlayVisible` 判定 + `composer-keydown.test.ts` 的 RC-A-1 用例。
+- v7（design-code-sync 轮 3 第 5 轮收尾文档修复，2026-09-10）：① §4 回归清单 ui 行等价锁范围按用例实情收窄为「**段序仅含 slash/text 段（无 badge 段）**」，并把含 badge 段的非等价归因补为**两条并存**——(a) badge 边界空格不显式渲染（`UserBubble.boundarySpaceBefore` 只对 `prev.type === 'slash'` 渲染空格，其余 badge 走 CSS `mr-1` 间距、不产文本节点，而 `segmentsToText` 经 `needsBoundarySpace` 对 chip→text 补空格）；(b) badge 段展示投影 ≠ 序列化（file 显 `fileBasename(path)` + 行范围、session 显 `label`、skill/subagent 显 name/slug、image 显缩略图）。(b) 的登记面改引 `composer-multi-skill-injection.md` §3.5-⑤ 的实有标题「`normalizeContent` 纯文本投影面（P0-12 登记）」——原引「展示投影 ≠ 序列化」为该文档不存在的措辞（`UserBubble.test.ts` 的 MF-1 组注释与 `[slash, file, text]` 反例用例为证）。（**轮 3 第 6 轮复审勘误**）本条曾于第 5 轮把归因写成单因 (b)，并判定 (a) 的旧表述「失实」而删除——该判定本身失实：(a) 经代码与段序实测成立（`UserBubble.vue` 的 `boundarySpaceBefore` 与该文件注释「其余 badge 类型沿用自身 `mr-1` 间距，不引入额外文本节点」为证；取投影无差异的段序 `[file('a.ts'), text('正文')]`，序列化 `a.ts 正文` 与气泡文本 `a.ts正文` 的唯一差异即该空格），单因结论被证伪。v5 ⑦ 记录的同款措辞随之被本轮取代；② §1 G2 与 §3.3 D2 的不可见态枚举补 landing `@`（无 sessionId）与 landing `$` 两态（`idle` 拉取中/无 cwd、候选源非空但 query 无匹配），并显式登记后果（Enter 放行 ⇒ 首发送出含触发符字面量的消息并创建 session；判定已接受）；（**轮 3 第 6 轮勘误**）① 行「非空候选四路」补 `$` file 路为**五路**（原枚举漏了最常见的可见态：panel 态 cwd 候选已加载 / landing 成功有文件）；⑥ 行「永不进入 success/error」改「**本次 open 不发请求**（无 cwd，或 1s 节流命中）——节流命中时上一轮 open 的在途回执到达即写回 success/error，idle 是瞬态窗口」；③ §4 回归清单 core 行补括注（`submit.test.ts` / `mutations.test.ts` / `submit-queued-entry.test.ts` 三者未实施，用例归并 `send.test.ts` / `useChat.test.ts`）；④ 同清单 segment-rebuild 行 image 项补「无单测覆盖」标注；⑤ §3.3 D1 收口范围 bullet 的 `useCommandPopoverTrigger.ts:192` 改符号引用（`onAddSelect` 的 slash 分支——基线 `:192` 实为 attach/image 分支收尾，slash 分支起于 `:193`）；⑥ 头部口径补第三类例外（显式标注 HEAD 者，当前 1 处）；⑦（**轮 3 第 6 轮补登记**）第 5 轮代码侧改动进本文登记面：`CommandPopover.vue` 的 `handleKeydown` 的 Enter/Tab 读点对 `activeIndex` 收敛到末项（`onSelect(list[Math.min(activeIndex.value, list.length - 1)])`，防候选源缩短后 `list[activeIndex]` 为 `undefined` 抛错）；`command-popover-symbols.ts` 的 `displayName` 与 `isSkill` 判据同源（`skillDisplayName` 与 `displayName` 消费同一 `isSkill`）；`insertSlashChip` 的 slash 路消费 `selectedSkillNames`（S-2「已选禁选」的落地）。**该修复的残余（已接受）**：候选源缩短后到下一次 ↑/↓ 前模板无行高亮（模板只按 `i === activeIndex` 命中）、该窗口内按 Enter 静默选中末项（`composer-slash-trigger.test.ts` 已把该行为固化为期望）、该窗口内首次 ↑/↓ 均把 `activeIndex` 归 0（`(activeIndex ± 1 + len) % len` 对越界值不收敛到邻项）；判定 = 已接受（越界抛错已消除，残余仅高亮缺失与窗口内选末项）；⑧（**轮 3 第 6 轮补**）image 未修项的方向枚举补齐——D6 编辑重发行 / §4 场景 12 / 回归清单 segment-rebuild 行原只记「翻倍」，补记第二方向「**删除后路径复活**」（用户删掉编辑稿里的路径后 prompt 仍出现该路径：image 段恒保留、不参与剥离），与 `composer-multi-skill-injection.md` §3.5-⑤② 的两方向登记同口径。
