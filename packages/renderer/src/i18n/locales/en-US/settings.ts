@@ -456,8 +456,11 @@ export default {
     quotaMissingApiKey: 'Required here — "Use dedicated key" is selected, but no key is available yet',
     quotaMissingWorkspace: 'Required here — quota is bound to a specific workspace, and one Cookie may map to several',
     quotaSaveAndTestFail: 'Save and test failed',
-    // A2-4 failure-state copy (recovery guidance for reason passthrough, rendered in Phase B)
-    quotaFetchFailUnauthorized: 'Quota query failed: the credential may have expired. Start a conversation with this provider to trigger a credential refresh, then click refresh to retry',
+    // A2-4 failure-state copy (recovery guidance for reason passthrough, rendered in Phase B).
+    // The action must point at a control that exists on this screen (§5.2 path 3): the settings
+    // section only has "Save and test" — "refresh" lives in the chat-page popover only
+    // (its counterpart key is under panel.context.*).
+    quotaFetchFailUnauthorized: 'Quota query failed: the credential may have expired. Start a conversation with this provider to trigger a credential refresh, then click "Save and test" to retry',
     // §5.2 path 3 cookie variant: "start a conversation to refresh" is not an action a cookie user can take
     quotaFetchFailUnauthorizedCookie: 'Quota query failed: the credential may have expired. Copy this platform’s Cookie from the browser again, paste it, and retry',
     quotaFetchFailNetwork: 'Quota query failed: network error or service unavailable. Check your network connection and retry',

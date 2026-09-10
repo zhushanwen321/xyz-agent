@@ -682,11 +682,27 @@ export class QuotaService {
    * 按 fetcher.auth 能力声明数组序解析凭证（A2-2 三形态解析链）。
    * 首个解析到凭证的形态即生效，并以该形态作为 kind 传给 fetchQuota（凭证语义可区分）。
    * 全形态 miss → null（调用方不发请求，返回缓存）。
+   *
+   * 例外（D3 / §7.3 改动 3）：「用专属 Key」（exclusive）且该 fetcher 声明了 api-key
+   * 形态时，只允许 api-key 形态，不回退 auth 数组中的其它形态。原因：`getCredential`
+   * 的 api-key 分支在 exclusive 下只读专属 Key 文件，缺失返回 null——若上层继续遍历，
+   * kimi-coding（auth=['api-key','oauth']）会用 provider 的 OAuth 登录态查成功，而 UI
+   * 分段控件显示「用专属 Key」，正是 D3「UI 的选择与 runtime 使用的凭证不得背离」要
+   * 消灭的「显示用 A、实际用 B」（§3.2 失败模式 D）。文件缺失即 null → 上层落
+   * no-credential（§7.3 改动 3「缺失即 no-credential，不回退」）。
+   *
+   * 收窄条件含 `auth.includes('api-key')`：cookie 类 fetcher（auth 不含 api-key）不命中，
+   * 仍按数组序正常解析；source === 'provider' 时也完全走原路径。
    */
   private async resolveCredential(
     providerId: string,
     auth: readonly QuotaAuthKind[],
   ): Promise<{ credential: string; kind: QuotaAuthKind } | null> {
+    const source = resolveQuotaCredentialSource(this.getProviderInfo(providerId)?.quota)
+    if (source === 'exclusive' && auth.includes('api-key')) {
+      const credential = await this.getCredential(providerId, 'api-key')
+      return credential ? { credential, kind: 'api-key' } : null
+    }
     for (const kind of auth) {
       const credential = await this.getCredential(providerId, kind)
       if (credential) return { credential, kind }

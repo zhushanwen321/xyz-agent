@@ -1,9 +1,15 @@
 /**
- * QuotaService 单测 — 聚焦偏差 #B（providerId→fetcher 映射）+ 偏差 #C（refresh 绕过 throttle）。
+ * QuotaService 单测。
  *
- * 任务 1 回归防护：providerId 是用户自定义 id（如 'my-zhipu'），不是 fetcher id（'zhipu'）。
+ * 最初的聚焦点：偏差 #B（providerId→fetcher 映射）+ 偏差 #C（refresh 绕过 throttle）。
+ *   任务 1 回归防护：providerId 是用户自定义 id（如 'my-zhipu'），不是 fetcher id（'zhipu'）——
  *   必须经 getProviderInfo → matchQuotaPreset 路由到正确 fetcher，旧实现用 === 导致静默失败。
- * 任务 3 回归防护：refresh 绕过 10s throttle，测试查询每次都发真实请求。
+ *   任务 3 回归防护：refresh 绕过 10s throttle，测试查询每次都发真实请求。
+ *
+ * 后续随 §7.3 runtime 改动落地，文件已扩到覆盖 no-credential 显式失败、cookie 空串清除、
+ * 按 credentialSource 解析凭证（D3，含 exclusive 不回退其它 auth 形态）、删除与写入顺序 /
+ * 半提交、finishFetch 五出口与在途写回守卫、失败路径节流、clearProviderState 等。
+ * **当期覆盖面以各 describe 列表为准**（条目随改动增删，此处不逐条罗列，避免与用例脱节）。
  *
  * 运行：cd packages/runtime && npx vitest run test/services/quota-service.test.ts
  */
@@ -12,6 +18,7 @@ import { mkdtempSync, rmSync, existsSync, statSync, readFileSync, mkdirSync } fr
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { QuotaService } from '../../src/services/quota-service.js'
+import type { ProviderInfoLike } from '../../src/services/quota-service.js'
 import { XyzProviderStore } from '../../src/services/provider-extras-store.js'
 import type { IProviderCredentialResolver } from '../../src/services/ports/provider-credential-resolver.js'
 
@@ -1056,6 +1063,49 @@ describe('QuotaService — U2③: 按 credentialSource 解析凭证（§7.5 清�
 
     expect(mockFetchQuota).toHaveBeenCalledWith('exclusive-key', 'api-key', { workspaceUrl: undefined })
     expect(vi.mocked(resolver.resolveProviderCredential)).not.toHaveBeenCalled()
+  })
+
+  it('kimi-coding（auth 含 api-key+oauth）+ source=exclusive + 专属 Key 文件缺失 → 不回退 OAuth，落 no-credential', async () => {
+    // 防的回归（D3 / §7.3 改动 3 的收窄）：getCredential 的 api-key 分支只做到「exclusive 时
+    // 不读 provider 凭据段」，但 resolveCredential 若继续遍历 auth 数组，kimi-coding 紧随的
+    // 'oauth' 形态会从 auth.json 读到 OAuth 登录态并**查询成功**——UI 分段控件显示「用专属
+    // Key」而 runtime 实际用 provider 的 OAuth，正是 D3 要消灭的「显示用 A、实际用 B」
+    // （§3.2 失败模式 D）。三个独立可证伪信号：失败原因、fetchQuota 未被调用、OAuth 读取
+    // 替身未被调用（后者不依赖 fetcher 路由，直接证明「根本没走到 oauth 形态」）。
+    const oauthReader = vi.fn(async () => ({
+      type: 'oauth' as const,
+      access: 'oauth-access-token',
+      refresh: 'r',
+      expires: Date.now() + 3_600_000,
+    }))
+    const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(), // provider 凭据段有值：也不得被用到
+      dataDir: tmpDir,
+      providerExtrasStore: extrasStore,
+      providerExists: () => true,
+      // 生产 ProviderInfo 组装的 quota 即来自 providers.json 落盘值 — 收窄依据的磁盘真相
+      getProviderInfo: () => ({
+        baseUrl: 'https://api.kimi.com',
+        name: 'Kimi Coding',
+        quota: readExtras('kimi-id')?.quota as ProviderInfoLike['quota'],
+      }),
+      getAuthCredential: oauthReader,
+    })
+    // 幽灵标记态：标记说「用专属 Key」但文件不在（persist→文件写入窗口 / 手工删文件）。
+    // 前置态直接经 extrasStore.modify 落盘（不经 configure），让「文件缺失」独立于被测 persist 逻辑。
+    await extrasStore.modify('kimi-id', () => ({
+      quota: { fetcher: 'kimi-coding', enabled: true, credentialSource: 'exclusive', apiKeySet: true },
+    }))
+    expect(existsSync(join(tmpDir, 'secrets', 'kimi-id-apikey.txt'))).toBe(false)
+    // 若发生回退，这条 mock 会让查询「成功」——正是要消灭的假成功，故红信号不止 reason
+    kimiMockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'kimi', wins: [] as never } })
+
+    const result = await svc.fetch('kimi-id')
+
+    expect(kimiMockFetchQuota).not.toHaveBeenCalled()
+    expect(oauthReader).not.toHaveBeenCalled()
+    expect(result.data).toBeNull()
+    expect(result.reason).toBe('no-credential')
   })
 
   it('source=provider：完全跳过专属 Key 文件（文件仍在但不被读），经 resolver 解析', async () => {

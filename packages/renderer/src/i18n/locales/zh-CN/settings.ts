@@ -456,8 +456,10 @@ export default {
     quotaMissingApiKey: '这里必须填 —— 已选择「用专属 Key」，但还没有可用的 Key',
     quotaMissingWorkspace: '这里必须填 —— 额度挂在具体 workspace 下，同一个 Cookie 可能对应多个',
     quotaSaveAndTestFail: '保存并测试失败',
-    // A2-4 失败态文案（reason 透传后的恢复指引，Phase B 渲染）
-    quotaFetchFailUnauthorized: '额度查询失败：凭证可能过期。与该供应商发起一次对话触发凭证刷新后，点击刷新重试',
+    // A2-4 失败态文案（reason 透传后的恢复指引，Phase B 渲染）。
+    // 动作必须指向本屏真实存在的控件（§5.2 路径 3）：设置页区块内只有「保存并测试」，
+    // 没有「刷新」——「刷新」入口只存在于对话页浮层（那里的对应 key 在 panel.context.*）。
+    quotaFetchFailUnauthorized: '额度查询失败：凭证可能过期。与该供应商发起一次对话触发凭证刷新后，点击「保存并测试」重试',
     // §5.2 路径 3 cookie 变体：「发起一次对话刷新」对 cookie 用户是不存在的动作
     quotaFetchFailUnauthorizedCookie: '额度查询失败：凭证可能已失效。请从浏览器重新复制该平台的 Cookie 粘贴后重试',
     quotaFetchFailNetwork: '额度查询失败：网络异常或服务不可用，请检查网络连接后重试',
