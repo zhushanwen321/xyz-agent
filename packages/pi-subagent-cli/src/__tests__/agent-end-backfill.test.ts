@@ -323,20 +323,29 @@ describe("M2 agent_end 惰性回补", () => {
         },
       );
 
-      // 阶段 1：推进到子进程发出 agent_end（spawn 期三轮握手全部被扣住）。
-      // 状态文件读取在子进程写入瞬间可能读到半截 JSON（readStatus 返回 undefined）——
-      // 以「完整解析出 agentEndSent」为跳出条件并留档，避免随后重读踩写窗口。
+      // 阶段 1：推进到「子进程已收到 agent_end 回补的 get_state」（第 4 次）并已发出
+      // agent_end（spawn 期三轮握手全部被扣住）。
+      //
+      // [U-A3 根因] 跳出条件必须与 V3 阶段 1 同款，含 getStateCount >= SPAWN_HANDSHAKE_ROUNDS+1：
+      // 若只等 agentEndSent 就进入阶段 2，阶段 2 的 1s 假时钟一到 run 即收敛 → kill 子进程，
+      // 而子进程可能尚未从 stdin 读到第 4 行 → 终局计数为 3（观测通道竞态，不是被测语义）。
+      // 先等子进程「收到并落盘第 4 次」再推进超时，终局事实即已完整可见且此后无新写入
+      // （no-answer 形态没有第 5 条命令）——终局断言因此结构确定，不依赖 I/O 与假时钟的
+      // 相对速度（历史 flake：终局单读撞上子进程 writeFileSync 的 O_TRUNC 写窗口 →
+      // JSON.parse 抛 → Received: undefined）。
+      // 每次读失败（半截 JSON → undefined）只是本轮不满足跳出条件，下一轮重读，天然收敛。
       let statusAtAgentEnd: ChildStatus | undefined;
       for (let i = 0; i < 1500 && !settled; i++) {
         await vi.advanceTimersByTimeAsync(FAKE_STEP_MS);
         const status = readStatus(h);
-        if (status?.agentEndSent === true) {
+        if (status !== undefined && status.agentEndSent === true && status.getStateCount >= SPAWN_HANDSHAKE_ROUNDS + 1) {
           statusAtAgentEnd = status;
           break;
         }
         await realSleep(1);
       }
       expect(statusAtAgentEnd?.agentEndSent).toBe(true);
+      expect(statusAtAgentEnd?.getStateCount).toBe(SPAWN_HANDSHAKE_ROUNDS + 1); // 回补请求确已送达
       expect(settled).toBe(false); // 回补尚未超时：run 必须还在等
 
       // 阶段 2：agent_end 起 ≤1s 假时钟内必须收敛（回补超时上界；更大即超时值域失守）
@@ -348,8 +357,10 @@ describe("M2 agent_end 惰性回补", () => {
       expect(result.success).toBe(true); // endedCleanly（同步段置位）→ exit 0 口径
       expect(result.sessionFile).toBeUndefined(); // 回补 miss（对端全程不应答）
       expect(result.sessionId).toBeUndefined();
-      // 走过的确实是超时路径而非「应答先到」：agent_end 后的 get_state 一条都没被应答
-      expect(readStatus(h)).toMatchObject({
+      // 走过的确实是超时路径而非「应答先到」：agent_end 后的 get_state 一条都没被应答。
+      // 复用阶段 1 的快照：它已是终局事实（第 4 行送达 + 扣答），且此后子进程无新写入
+      // （阶段 2 只 kill，不再发命令）——不再二次读文件，绕开写窗口。
+      expect(statusAtAgentEnd).toMatchObject({
         getStateCount: SPAWN_HANDSHAKE_ROUNDS + 1, // 3 轮握手 + 1 次 agent_end 回补
         answersAfterAgentEnd: 0,
         withheldAfterAgentEnd: 1,

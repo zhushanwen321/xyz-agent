@@ -83,11 +83,13 @@ export interface SessionFileScanResult {
    * 已收集到的 mtime 入窗候选数。
    * - 收集阶段跑完（no_candidates / candidate_limit / 匹配阶段的判定与 time_budget、
    *   收集完成后的 fs 异常）→ = 窗口内候选总数（candidateTotalKnown=true）；
-   * - 收集阶段被时间门打断 / readdir 抛错 → 只是到中断点为止的**部分计数**，
-   *   窗口总数未知（candidateTotalKnown=false，warn 不得把它呈现为候选总数）。
+   * - 计数非总数（candidateTotalKnown=false，warn 不得把它呈现为候选总数）：
+   *   ① 收集阶段被时间门打断 / readdir 抛错 → 只是到中断点为止的**部分计数**；
+   *   ② empty_prompt_head → 匹配键为空，扫描根本没有启动，恒 0 的计数不是「窗口内没有
+   *      候选」，不得让诊断方误判目录为空。
    */
   candidateCount: number;
-  /** candidateCount 是否为窗口内候选总数（false = 收集被中断，总数未知）。 */
+  /** candidateCount 是否为窗口内候选总数（false = 扫描/收集未跑完，总数未知）。 */
   candidateTotalKnown: boolean;
   /** 采纳命中审计证据：候选文件名 + mtime（误配事后定位用）。 */
   matchedFileName: string | undefined;
@@ -174,7 +176,9 @@ export function locateSessionFileByPromptHead(
   });
 
   try {
-    if (promptHead.length === 0) return giveUp("empty_prompt_head");
+    // 扫描未启动：匹配键为空，窗口总数未知 → 计数非总数（candidateCount 恒 0 不等于
+    // 「窗口内没有候选」；warn 须按 so far 表述，避免诊断方误判目录为空）
+    if (promptHead.length === 0) return giveUp("empty_prompt_head", false);
     // 匹配键双形态：原文 + JSON 序列化转义形态（pi 落盘形态，见头注 K3①）
     const escapedHead = JSON.stringify(promptHead).slice(1, -1);
     const keys = escapedHead === promptHead ? [promptHead] : [promptHead, escapedHead];

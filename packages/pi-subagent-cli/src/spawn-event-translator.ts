@@ -96,8 +96,11 @@ function handleAssistantMessageUpdate(raw: SdkEvent, agentEvent: AgentEventSink)
  * 证据链（实装 pi 0.84.4 dist 逐行核对，2026-09-10）：
  *   - 内置 bash 无默认超时：`dist/core/tools/bash.js` schema 描述「Timeout in seconds
  *     (optional, no default timeout)」+ `resolveTimeoutMs(undefined) → undefined`；
- *   - 执行期只以 100ms 节流推 tool_execution_update（bash.js `BASH_UPDATE_THROTTLE_MS=100`
- *     + emitOutputUpdate 仅在 updateDirty 时发 → 静默工具零事件），事件对象
+ *   - 执行期以 100ms 节流推 tool_execution_update（bash.js `BASH_UPDATE_THROTTLE_MS=100`
+ *     + emitOutputUpdate 仅在 updateDirty 时发）；除节流刷新外还有两条固定刷新：执行入口
+ *     **无条件**发一条空 content（bash.js:287 `onUpdate({content: [], details: undefined})`），
+ *     finishOutput 收尾再发一条（同文件 :299；updateDirty 为假即无产出时不重发）。故实装
+ *     「静默工具」的形态是**启动瞬间恰一条、此后零 update**，不是零 update。事件对象
  *     `{type,toolCallId,toolName,args,partialResult}` 由 pi-agent-core agent-loop 逐次产出，
  *     agent-session `_emit` 原样转发，rpc-mode `session.subscribe` → `output(toJsonEvent(event))`
  *     逐行写 stdout（json-event.js 对非 message_update 原样透传）→ parseSpawnLine 归
@@ -111,8 +114,9 @@ function handleAssistantMessageUpdate(raw: SdkEvent, agentEvent: AgentEventSink)
  * refreshFromProtocolEvent）。两条硬约束：
  *   ① 不把 partialResult 文本推给 onDelta——正文槽（text_delta 专用，见 agentEvent），
  *      工具输出混进 assistant 正文不可接受；
- *   ② 只在工具真产出时才发（纯信号，无心跳）——静默楔死工具零 update，照常被 30min
- *      无进展守护回收，不因本信号永续命。
+ *   ② 只在工具真产出时才发（纯信号，无心跳）——静默楔死工具**启动后零 update**（启动
+ *      瞬间那条固定刷新至多让守卫多等一次窗口），照常被 30min 无进展守护回收，不因本信号
+ *      永续命。
  *
  * 节流：pi 已按 100ms 节流，这里再按 1s 收敛（对 30min 窗仍是密刷新；把合成事件的
  * journal/wire 体量压到 1/10——30min 长构建从约 18k 条降到约 1.8k 条）。

@@ -322,6 +322,19 @@ describe("locateSessionFileByPromptHead", () => {
     expect(result.reason).toBe("empty_prompt_head");
   });
 
+  it("[A2-3] empty_prompt_head：扫描未启动 → candidateCount=0 但总数未知（candidateTotalKnown=false）", () => {
+    // 目录里确实有文件，扫描却根本没开始（匹配键为空即早退）——恒 0 的计数是「未扫描」
+    // 而非「窗口内无候选」；若报 known=true，warn 会把 0 呈现成候选总数，把诊断引向
+    // 「目录为空」。
+    writeSessionFile("present.jsonl", "目录里确实存在的文件");
+
+    const result = locateSessionFileByPromptHead(scanInput({ prompt: "" }));
+
+    expect(result.reason).toBe("empty_prompt_head");
+    expect(result.candidateCount).toBe(0);
+    expect(result.candidateTotalKnown).toBe(false);
+  });
+
   it("代理对边界：截断点落在高代理时丢弃半字符，仍能命中全文前缀", () => {
     // 第 200 个 UTF-16 单元是 emoji 的高代理——不丢弃则两形态均失配（静默失效）
     const prompt = `${"x".repeat(PROMPT_HEAD_CHARS - 1)}😀 尾部任务参数`;
