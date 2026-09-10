@@ -222,6 +222,10 @@ export class SubprocessAgentRunner implements AgentRunner {
     // 累积，最终触发 MaxListenersExceededWarning——R4 INFO 实施卫生项；stream 覆写同理）。
     let runSignal: MergedRunSignalHandle | undefined;
     let unbindStream: (() => void) | undefined;
+    // [U-B2] 守护句柄提升到 try 外：fire 后的恢复指引收敛到单一出口
+    // noteIfNoProgressFired，正常返回与 catch 两路共用（纵深防御——catch 路径此前是
+    // 无指引的裸 error）。
+    let noProgress: RunNoProgressGuard | undefined;
 
     try {
       // ── [U1 D2] RunContext.modelRef 接入：ctxModel 继承路径的孪生守卫 ──
@@ -243,12 +247,13 @@ export class SubprocessAgentRunner implements AgentRunner {
       // per-call timeoutMs 是 opt-in）——引擎子进程静默楔死（spawn 成功、prompt 已发、
       // 零事件输出、不退出）= agent() 永挂 + workflow 停摆 + 无终态通知（carbon 事故
       // 形态）。arm 点必须在派发前：刷新面随本 run 的事件/增量通道建立。
-      const noProgress = armRunNoProgressWatchdog(taskId);
+      const guard = armRunNoProgressWatchdog(taskId);
+      noProgress = guard;
 
       // ── D-A9: timeoutMs 合并 signal（超时 abort 带 HOST_TIMEOUT_ABORT_REASON 标记）
       //    + [M3] no-progress watchdog abort 并入同一合流（第三信号源，与 timeoutMs
       //    同构——fire 的 abort 不携带 reason，wireAbortSignal 只消费 abort 事实）──
-      runSignal = mergeRunSignals(signal, opts.timeoutMs, noProgress.signal);
+      runSignal = mergeRunSignals(signal, opts.timeoutMs, guard.signal);
 
       // ── 无进展刷新面（两路，缺一不可）──
       // journal.onEvent 包装：引擎协议事件（message_*/tool_*/turn_end 等）经 journal
@@ -292,20 +297,25 @@ export class SubprocessAgentRunner implements AgentRunner {
       // 权威在 writer，handle 记录最终路径供跨重启 read 消费）
       journal.backfillHandle(handle);
       // [M3] fire 后的失败结果附恢复指引（设计 §3.4 错误规格）；成功收敛或被外部
-      // cancel 的形态不附加（只对 error 结果追注，不伪造失败）。
-      const result = outcomeToRunnerResult(outcome);
-      return noProgress.fired() && result.error !== undefined
-        ? withNoProgressRecoveryNote(result)
-        : result;
+      // cancel 的形态不附加（只对 error 结果追注，不伪造失败）。追注收敛到单一出口
+      // noteIfNoProgressFired（U-B2：与 catch 路径共用同一判定）。
+      return noteIfNoProgressFired(outcomeToRunnerResult(outcome), noProgress);
     } catch (err) {
       // executeAndAwait throw（嵌套超限 ForkDepthExceededError，BC-12）或未预期异常 → 不 reject，入 error。
+      // [U-B2] 纵深防御：fire 后该路径上的失败同样追注恢复指引（同单一出口）。审查
+      // 论证的「engine.run 的 reject 走合成 outcome 不 throw」成立，但 fire 后 try 块
+      // 内仍有非 engine.run 的抛点（如 journal.backfillHandle 收到坏 handle）——单出口
+      // 消除「两路文案分叉」形态，成本为零。
       const message = toErrorMessage(err);
-      return {
-        content: "",
-        durationMs: Date.now() - startedAt,
-        error: message,
-        toolCalls: [],
-      };
+      return noteIfNoProgressFired(
+        {
+          content: "",
+          durationMs: Date.now() - startedAt,
+          error: message,
+          toolCalls: [],
+        },
+        noProgress,
+      );
     } finally {
       // 先摘桥接与 stream 包裹（不残留 listener/覆写），再清 watchdog，最后落盘收口。
       runSignal?.dispose();
@@ -455,6 +465,22 @@ function bindNoProgressRefresh(stream: SubagentStream, taskId: string): () => vo
     if (hadOwnOnDelta) stream.onDelta = originalOnDelta;
     else Reflect.deleteProperty(stream, "onDelta");
   };
+}
+
+/**
+ * [U-B2] fire 判定 + 追注的单一出口：正常收敛返回与 catch 两路共用同一判定，消除
+ * 「两路文案分叉」形态。
+ *
+ * 只对已带 error 的结果追注（成功收敛或被外部 cancel 的形态保持原样，不伪造失败）。
+ * catch 路径的追注是纵深防御：审查论证的「fire 后 engine.run 的 reject 必走 RemoteEngine
+ * 合成 outcome 而非 throw」成立（fire 的 abort 在同步派发内让 wireAbortSignal 置
+ * cancelSent=true），但 fire 后 try 块内仍有非 engine.run 的抛点（如 journal.backfillHandle
+ * 收到坏 handle）——单测以「fire 后返回缺 handle 的 outcome」构造该形态锁定行为。
+ */
+function noteIfNoProgressFired(result: AgentResult, guard: RunNoProgressGuard | undefined): AgentResult {
+  return guard?.fired() === true && result.error !== undefined
+    ? withNoProgressRecoveryNote(result)
+    : result;
 }
 
 /**

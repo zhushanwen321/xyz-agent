@@ -43,7 +43,7 @@ import {
   SETTLED_MID_ROUND_NO_PROGRESS_MS,
   SETTLED_WATCHDOG_ENV,
 } from "../settled-watchdog.ts";
-import type { SubagentStream } from "../stream-sink.ts";
+import { SubagentStream } from "../stream-sink.ts";
 import type { SubagentService } from "../subagent-service.ts";
 
 // ── 测试辅助 ──
@@ -321,6 +321,55 @@ describe("M3 workflow 域 no-progress 守护（SAR.run 落点）", () => {
     expect(hasSettledWatchdog(taskId)).toBe(false);
   });
 
+  // ── U-B1：生产形态（SubagentStream 类实例 = onDelta 在原型上）的还原分支 ──
+  //
+  // 既有两处 stream 用例（本文件 V5①-d 与 subprocess-agent-runner.test.ts「U1 stream
+  // 透传」）都用**对象字面量**造 stream（onDelta 是自有属性）→ 只覆盖 bind 还原的
+  // hadOwnOnDelta === true 分支。生产形态是 SubagentStream 类实例（原型方法）→ 实际走
+  // Reflect.deleteProperty 分支，此前零覆盖（偏差登记的「无残留覆写」缺证据）。
+
+  it("U-B1 生产形态 stream（类实例，onDelta 在原型上）→ 还原走 deleteProperty 分支：无残留自有属性且原型实现仍可达", async () => {
+    vi.useFakeTimers();
+    const gate = deferred<EngineRunResult>();
+    let captured: RunContext | undefined;
+    const { sar } = makeHarness((_task, ctx) => {
+      captured = ctx;
+      return gate.promise;
+    });
+
+    const sink = { setWidget: vi.fn() };
+    const stream = new SubagentStream("rec-u-b1", sink);
+    // 前置事实：类实例的 onDelta 在原型上（生产形态与对象字面量用例的分野）。
+    expect(Object.prototype.hasOwnProperty.call(stream, "onDelta")).toBe(false);
+    expect(stream.onDelta).toBe(SubagentStream.prototype.onDelta);
+
+    const runPromise = sar.run(makeBaseOpts(), new AbortController().signal, undefined, stream);
+    await Promise.resolve();
+    const taskId = captured!.taskId;
+
+    // 运行中：包裹生效（自有属性），且刷新接线真的有效——delta 跨半窗不 fire。
+    expect(Object.prototype.hasOwnProperty.call(stream, "onDelta")).toBe(true);
+    expect(stream.onDelta).not.toBe(SubagentStream.prototype.onDelta);
+    await vi.advanceTimersByTimeAsync(Math.floor(SETTLED_MID_ROUND_NO_PROGRESS_MS / 2) + 1);
+    stream.onDelta("x");
+    expect(runSignalOf(captured!).aborted).toBe(false);
+    expect(sink.setWidget).toHaveBeenCalledTimes(1); // leading edge 立即 flush = 原型实现被委托
+
+    gate.resolve(successRunResult());
+    await runPromise;
+
+    // 还原：deleteProperty 分支（不是回写自有属性）——hasOwnProperty 回归 false。
+    expect(Object.prototype.hasOwnProperty.call(stream, "onDelta")).toBe(false);
+    expect(stream.onDelta).toBe(SubagentStream.prototype.onDelta);
+
+    // 直调仍达原型实现：trailing edge 走 timer 合并，推进后 sink 再收一次。
+    stream.onDelta("y");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(sink.setWidget).toHaveBeenCalledTimes(2);
+    expect(sink.setWidget).toHaveBeenLastCalledWith("subagent-stream-rec-u-b1", ["xy"]);
+    expect(hasSettledWatchdog(taskId)).toBe(false);
+  });
+
   it("V5①-e stream 未传时不 arm 失败（onEvent 一路即可覆盖）", async () => {
     vi.useFakeTimers();
     const gate = deferred<EngineRunResult>();
@@ -362,6 +411,52 @@ describe("M3 workflow 域 no-progress 守护（SAR.run 落点）", () => {
     const files = readdirSync(journalDir).filter((f) => f.startsWith("journal-") && f.endsWith(".jsonl"));
     expect(files.length).toBe(1);
     expect(replayJournal(join(journalDir, files[0] ?? ""))).toEqual([{ type: "turn_end" }]);
+  });
+
+  // ── U-B2：catch 路径恢复指引（纵深防御；单一出口）──
+
+  it("U-B2 fire 后 catch 路径同样追注恢复指引（单一出口：backfillHandle 抛错强制走 catch）", async () => {
+    vi.useFakeTimers();
+    let captured: RunContext | undefined;
+    const { sar } = makeHarness(
+      (_task, ctx) =>
+        new Promise<EngineRunResult>((resolve) => {
+          captured = ctx;
+          // fire 的 abort 到达后返回**缺 handle** 的结果 → SAR 紧接着的
+          // journal.backfillHandle(handle) 抛 TypeError → 走 catch 分支。这是 fire 后
+          // try 块内「非 engine.run 抛点」的真实形态（U-B2 纵深防御的靶子；审查已论证
+          // engine.run 自身在该形态下必走 RemoteEngine 合成 outcome 而非 throw）。
+          runSignalOf(ctx).addEventListener(
+            "abort",
+            () =>
+              resolve({
+                handle: undefined as unknown as EngineRunResult["handle"],
+                outcome: {
+                  content: "",
+                  error: "engine_run_failed: run aborted (test shape)",
+                  exitCode: null,
+                  engineId: "pi",
+                },
+              }),
+            { once: true },
+          );
+        }),
+    );
+
+    const runPromise = sar.run(makeBaseOpts(), new AbortController().signal);
+    await Promise.resolve();
+    const taskId = captured!.taskId;
+    expect(hasSettledWatchdog(taskId)).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(SETTLED_MID_ROUND_NO_PROGRESS_MS);
+    const result = await runPromise;
+
+    expect(result.error).toBeDefined();
+    // catch 路径的失败同样带恢复指引（修复前该路径是无指引的裸 error——单一出口消除分叉）。
+    expect(result.error).toContain("workflow no-progress watchdog fired");
+    expect(result.error).toContain("re-dispatch the workflow");
+    // 收敛后 disarm
+    expect(hasSettledWatchdog(taskId)).toBe(false);
   });
 
   // ── 重试面保留 ──
