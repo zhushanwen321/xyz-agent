@@ -2,7 +2,8 @@
  * 逆序分块读共享工具（crash-resilience §3.3 D5 / 实施计划 u4b-history-budget）。
  *
  * 从文件尾按固定字节块向前扫描，按「完整行块」交付给调用方——JSONL 行边界对齐
- * （跨块切断的行留在 pending，读到其前部后拼接成交整行才交付），供以下调用方复用：
+ * （跨块切断的行留在 pending，读到其前部后拼接成交整行才交付）+ UTF-8 字符边界对齐
+ * （块首落在多字节序列中间时回退至 lead byte 重读，交付行无 U+FFFD 污染），供以下调用方复用：
  * - ①档 getHistoryFromFilePath 预检超限后的逆序窗口（session-history.ts）
  * - ②档尾读 fallback 分块扩窗（session-history.ts，替代「凑不够 20 turns 就全量读」）
  * - ③档 findLastEntryField 逆序分块读（u4c-read-paths，另一单元，预留同款形态）
@@ -73,6 +74,7 @@ export interface ReverseReadSummary {
  * - offset > 0 → 首段是被切断行的头部 → 成为新 pending，其余段完整交付；
  * - offset === 0（文件头）→ 全部段完整（pending 补齐后一起交付），pending 清空。
  * 文件末字节非 '\n' 时最后一行仍完整交付（EOF 终止行）。
+ * 块起点先做 UTF-8 字符边界回退（见循环体内注释），保证每块文本 decode 无 U+FFFD 污染。
  *
  * @param filePath JSONL 文件绝对路径
  * @param options 块大小 / 总量上限（缺省 1MB / 调用方注入 READ_PRECHECK_MAX_BYTES）
@@ -108,9 +110,36 @@ export function forEachReversedLineChunk(
       const remaining = maxTotalBytes - totalBytesRead
       if (remaining <= 0) break // 总量上限：停止（sawStart=false，调用方保守判定）
       const chunkLen = Math.min(chunkBytes, end, remaining)
-      const offset = end - chunkLen
-      const buf = Buffer.alloc(chunkLen)
-      const bytesRead = readSync(fd, buf, 0, chunkLen, offset)
+      let offset = end - chunkLen
+      // 块首 UTF-8 多字节对齐（镜像 session-file-streaming.trimToUtf8Boundary 的块尾防御，
+      // 方向相反——逆序读的污染面在块首）：offset 落在多字节序列中间时块首字节是
+      // continuation byte（10xxxxxx），toString 会把残缺序列替换为 U+FFFD，污染随 segs[0]
+      // → pending 拼接进入交付行。回退至该序列的 lead byte 重读：lead 距块首 ≤ 3（序列
+      // 最长 4 字节），探针读块首前 ≤4 字节、从右向左首个非 continuation 字节即 lead
+      //（lead 右侧至块首全在同一序列内必为 continuation，首个命中即精确边界，无需迭代；
+      // 固定步长循环回退在纯 3 字节字符流的特定相位下会永不命中，故必须探针定位）。
+      // 前移后 end = offset 天然继承对齐——下一块终点即本块起点，块间无重叠无遗漏；
+      // 回退量 ≤ 3 字节全在同一序列内（无 '\n'），行归属判定不受影响。
+      /* eslint-disable no-magic-numbers -- UTF-8 位级判定：掩码 0xc0/0x80、探针窗口 4 与
+       * 回退上限 3 是 RFC 3629 协议常量（序列最长 4 字节 = lead + 3 continuation），
+       * 命名抽象反而掩盖位语义（session-file-streaming.trimToUtf8Boundary 同款豁免） */
+      if (offset > 0) {
+        // 探针含块首字节：仅块首是 continuation（切在序列内）时才回退
+        const probeBase = Math.max(0, offset - 4)
+        const probe = Buffer.alloc(offset - probeBase + 1)
+        readSync(fd, probe, 0, probe.length, probeBase)
+        if ((probe[probe.length - 1] & 0xc0) === 0x80) {
+          // 从块首左侧第 1 字节向左扫：lead 右侧至块首全在同一序列内（必为
+          // continuation），首个非 continuation 字节即精确 lead。探针扫空（文件头
+          // 即残缺序列的损坏形态）放弃对齐，接受一次 U+FFFD，与不回退等价无害
+          let boundary = offset - 1
+          while (boundary >= probeBase && (probe[boundary - probeBase] & 0xc0) === 0x80) boundary--
+          if (boundary >= probeBase) offset = boundary
+        }
+      }
+      const buf = Buffer.alloc(chunkLen + 3) // 块首对齐回退量 ≤ 3 字节（协议常量，上方豁免同源）
+      /* eslint-enable no-magic-numbers */
+      const bytesRead = readSync(fd, buf, 0, end - offset, offset)
       totalBytesRead += bytesRead
       // 当前块在前、pending（来自更靠后的块）在后，文件顺序拼接
       const text = buf.subarray(0, bytesRead).toString('utf-8') + pending

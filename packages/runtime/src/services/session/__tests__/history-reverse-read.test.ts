@@ -2,7 +2,9 @@
  * 逆序分块读共享工具测试（u4b-history-budget，crash-resilience §3.3 D5）。
  *
  * 覆盖：
- * - 行边界对齐（断言⑦）：块边界切断长行 → 拼接后交付的行与原文件行逐字一致
+ * - 行边界对齐（断言⑦）：块边界切断长行 → 拼接后交付的行与原文件行逐字一致；
+ *   含 UTF-8 字符边界（块首切多字节序列 → 回退 lead byte 重读，无 U+FFFD 污染，
+ *   chunkBytes 全相位扫描 + 定向构造切中用例双重覆盖）
  * - 多块迭代 / 读到文件头（sawStart / fullyScanned）
  * - visit 提前停止（stopped，停止时当前块内更早行不交付）
  * - 总量上限截停（maxTotalBytes，sawStart=false）
@@ -59,9 +61,63 @@ describe('行边界对齐（断言⑦：JSONL 行不切断）', () => {
     expect(summary.fullyScanned).toBe(true)
   })
 
-  it('多字节边界组合：短行/长行交错 + 尾行无换行（EOF 终止行完整交付）', () => {
-    const lines = ['a', 'y'.repeat(200), 'b', 'z'.repeat(199), 'tail-no-newline']
-    const filePath = write('mixed.jsonl', lines.join('\n')) // 无尾换行
+  it('块首切多字节序列（reviewer 探针复现）：offset 落『中』的 3 字节序列内 → 交付行无 U+FFFD、逐字一致', () => {
+    // 精确字节布局：x*10(0-9) + 中(10-12, 3B) + y*10(13-22) + \n(23)，size=24
+    // - chunkBytes=12 → 首块 offset=12 = 『中』第 3 字节（continuation）
+    // - chunkBytes=13 → 首块 offset=11 = 『中』第 2 字节（continuation）
+    // 两者均为构造性切中（非碰运气），修复前交付行首出现 U+FFFD
+    const line = 'x'.repeat(10) + '中' + 'y'.repeat(10)
+    const filePath = write('mb-single.jsonl', line + '\n')
+
+    for (const chunkBytes of [12, 13]) {
+      const { lines: delivered, summary } = readAll(filePath, { chunkBytes, maxTotalBytes: 1 << 20 })
+      expect(delivered).toEqual([line])
+      expect(delivered[0]).not.toContain('\ufffd')
+      expect(summary.fullyScanned).toBe(true)
+    }
+  })
+
+  it('多字节边界组合：中/emoji 混合长行 + chunkBytes 全相位扫描（4..40）逐字一致', () => {
+    // 1/2/3/4 字节 UTF-8 字符混合（ASCII/é/中/😀），行长 > chunkBytes 上界 → 必然多块；
+    // chunkBytes 4..40 全相位扫描：任意字节相位下块首切序列都被覆盖（含 2/3/4 字节序列）
+    const lines = [
+      'a',
+      `中文${'é'.repeat(30)}${'😀'.repeat(20)}日本語テスト` + 'y'.repeat(120),
+      'b',
+      `${'😀'.repeat(40)}tail-emoji-heavy`,
+      'tail-no-newline-末行无换行',
+    ]
+    const filePath = write('mb-mixed.jsonl', lines.join('\n')) // 无尾换行
+
+    for (let chunkBytes = 4; chunkBytes <= 40; chunkBytes++) {
+      const { lines: delivered, summary } = readAll(filePath, { chunkBytes, maxTotalBytes: 1 << 20 })
+      expect(delivered, `chunkBytes=${chunkBytes}`).toEqual(lines)
+      for (const l of delivered) expect(l, `chunkBytes=${chunkBytes}`).not.toContain('\ufffd')
+      expect(summary.fullyScanned, `chunkBytes=${chunkBytes}`).toBe(true)
+    }
+  })
+
+  it('跨块多行：多字节行与 ASCII 行交错，行归属不串（多 chunkBytes 扫描）', () => {
+    const lines = [
+      '中文行-1',
+      'ascii-line-2',
+      `emoji😀行-3-${'中'.repeat(50)}`,
+      'x'.repeat(100),
+      `${'😀'.repeat(10)}-尾行`,
+    ]
+    const filePath = write('mb-multiline.jsonl', lines.join('\n') + '\n')
+
+    for (const chunkBytes of [4, 7, 12, 13, 16, 32]) {
+      const { lines: delivered, summary } = readAll(filePath, { chunkBytes, maxTotalBytes: 1 << 20 })
+      expect(delivered, `chunkBytes=${chunkBytes}`).toEqual(lines)
+      for (const l of delivered) expect(l, `chunkBytes=${chunkBytes}`).not.toContain('\ufffd')
+      expect(summary.fullyScanned, `chunkBytes=${chunkBytes}`).toBe(true)
+    }
+  })
+
+  it('多字节 + 短行交错：短行/长行组合 + 尾行无换行（EOF 终止行完整交付）', () => {
+    const lines = ['甲', '乙'.repeat(100), '丙', '丁'.repeat(99), 'tail-no-newline-尾']
+    const filePath = write('mb-eof.jsonl', lines.join('\n')) // 无尾换行
 
     const { lines: delivered, summary } = readAll(filePath, { chunkBytes: 50, maxTotalBytes: 1 << 20 })
 

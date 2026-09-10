@@ -79,7 +79,7 @@ export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Pro
   // pi 收殓失败（catch 兜底后）仍继续扫描——B 处置 registry 遗留，与 pi 收殓成败解耦，
   // 硬序只约束先后不约束成败传递。整体 fire-and-forget：不阻塞本启动序列。
   const reapTimer = setTimeout(() => {
-    void reapOrphanPiProcesses({ sessionsDir: getSessionsDir(), ownPid: process.pid })
+    void reapOrphanPiProcesses({ sessionsDir: getSessionsDir(), ownPid: process.pid, trigger: 'startup-sweep' })
       .catch((e) => {
         console.warn('[runtime] orphan pi reap failed unexpectedly:', e)
       })

@@ -22,7 +22,8 @@
  * - ④ 恢复承诺不跨 runtime 重启：本模块全部状态在进程内存，supervisor 重启后无 pending
  *   恢复，dead session 等用户交互惰性恢复（既有路径）。
  *
- * 熔断：连续失败 2 次（spawn/附着失败，含 D5-⑤ cwd 死路径 MissingSessionCwdError 硬拒绝）
+ * 熔断：连续失败 2 次（spawn/附着失败——含文件头损坏等极端形态的 MissingSessionCwdError，
+ * cwd 死路径常态已由附着前最小规范化的首行 cwd fallback 修复，见 restore-seeding）
  * → 停止自动重试，session 保持 dead，推 willRetry=false 的 session.restoreFailed（前端
  * 切失败态提示条 + 手动重试按钮）；任一次自动恢复成功 → 计数清零（notifyRestored，
  * 挂在 facade.restoreSession 成功路径——手动恢复成功同样清零，保证未来崩溃获得全新

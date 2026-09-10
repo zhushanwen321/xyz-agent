@@ -127,6 +127,24 @@ describe('①档超预检阈值：逆序窗口（断言⑤）', () => {
     // 读取量受 32MB 上限：未返回全部 6 个 turn
     expect(messages.length).toBeLessThan(12)
   })
+
+  it('>32MB 且尾部 turn 超 MAX_BYTES 字节帽：窗口在 turn 边界受帽截断（首 turn 豁免）+ truncated', async () => {
+    // 17 个 turn 各 ~2MB（总 ~34MB > 32MB 触发①档），单 turn ~2MB > 640KB 字节帽：
+    // 首 turn 豁免完整入窗，第 2 个 turn 边界处超帽 → 停止。无字节帽时读满 32MB
+    // 可凑 ~4 turns（对齐上一用例 big-2 行为）——有帽时仅 1 turn 即为受帽截断的行为证据
+    const { filePath, fileSize } = writeBigSession({ sessionId: 'big-cap', preTurns: 17, bigPadBytes: 2048 * 1024, tailTurns: 0 })
+    expect(fileSize).toBeGreaterThan(READ_PRECHECK_MAX_BYTES)
+
+    // ①档返回形状 HistoryFileReadResult（messages + truncated）
+    const { messages, truncated } = await getHistoryFromFilePath(filePath, realStore)
+
+    expect(messages).toHaveLength(2) // 首 turn 豁免入窗（1 turn = 2 条），后续超帽不入窗
+    expect(messages[0]).toMatchObject({ role: 'user' })
+    expect(messages[1]).toMatchObject({ role: 'assistant' })
+    // 窗口是尾部（最新）turn，且内容完整未被帽切断（单行字节完整交付）
+    expect(String(messages[1].content)).toContain('answer-32')
+    expect(truncated).toBe(true)
+  })
 })
 
 // ════════════════════════════════════════════════════════════════════

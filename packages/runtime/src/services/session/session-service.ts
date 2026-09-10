@@ -284,8 +284,8 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
       getExtensionPaths: () => this.extensionService.getExtensionPaths(),
     })
     // pi 崩溃自动恢复编排组装（u8，D7）：restore 复用既有惰性恢复内核（facade.restoreSession
-    // → lifecycle.restoreSession，附着自动走 u4c 预算化 restore 路径——⑤档预检跳过 normalize
-    // + cwd 死路径 MissingSessionCwdError 硬拒绝走熔断链路）。
+    // → lifecycle.restoreSession，附着自动走 u4c 预算化 restore 路径——⑤档超阈值走逆序分块
+    // 最小规范化（流式 strip + 首行 cwd fallback，见 restore-seeding.normalizeLargeSessionFileMinimal）。
     this.respawn = new RespawnOrchestrator({
       // isActive 守卫走可选调用：挂点在崩溃收敛链（onSessionExit）内，任何异常都会打断
       // exitCallbacks 多播——守卫是 best-effort 优化（attemptRespawn 触发时还有复查 +

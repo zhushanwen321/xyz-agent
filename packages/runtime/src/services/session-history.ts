@@ -8,7 +8,8 @@
  *
  * 字节预算（crash-resilience §3.3 D5 / 实施计划 u4b-history-budget）：
  * - ①档 getHistoryFromFilePath：statSync 预检超 READ_PRECHECK_MAX_BYTES（32MB）→
- *   逆序分块读返回最近预算窗口 + truncated 标记（不拒绝——通路的价值就是给内容）。
+ *   逆序分块读返回最近预算窗口（RECENT_TURNS turns × MAX_BYTES 字节帽双预算）+
+ *   truncated 标记（不拒绝——通路的价值就是给内容）。
  *   消费方：getSubagentHistory / getAgentCallHistory（session-records.ts——subagent
  *   历史恰是巨型 JSONL 高发源）。[u6] getFullHistory（前端「加载更多」）消费方已随
  *   全量通路退役（D4 中期：session.history 游标翻页替代），getHistoryFromFile 包装同点删除。
@@ -37,7 +38,8 @@ import { forEachReversedLineChunk } from './session/history-reverse-read.js'
 /**
  * 过滤出 object entry 并收窄为 PiSessionEntry[]（供 mapSessionEntries 消费）。
  *
- * parseJsonl/readTailBytes 可能返回非 object JSON 值（裸数字/字符串/null/畸形行 parse 出的非对象值），
+ * parseJsonl 可能返回非 object JSON 值（裸数字/字符串/null/畸形行 parse 出的非对象值——
+ * 本文件读路径数据来源 = 全量 readFile + forEachReversedLineChunk 交付行，经 parseJsonl 解析），
  * 而 mapSessionEntries 的 switch(entry.type) 要求 entry 是 object（非 object 访问 .type 会抛错）。
  * 此处前置过滤，mapper 只处理 object entry。
  *
@@ -46,7 +48,7 @@ import { forEachReversedLineChunk } from './session/history-reverse-read.js'
  * 分支透传，convertPiHistory 的 bashExecution 分支正确还原，无需单独处理。
  */
 function filterObjectEntries(entries: unknown[]): PiSessionEntry[] {
-  // parseJsonl/readTailBytes 可能返回非 object（裸数字/字符串/null），mapSessionEntries 的
+  // parseJsonl 可能返回非 object（裸数字/字符串/null），mapSessionEntries 的
   // switch(entry.type) 要求 entry 是 object。前置过滤后 cast 为 PiSessionEntry[]（运行时降级，
   // mapper 按 entry.type 结构访问，非合规字段走 default 跳过）。不用类型谓词，保留 unknown[]
   // 到 PiSessionEntry[] 的 cast（TS 认为充分重叠；谓词会收窄成 Record<string,unknown>[] 导致
@@ -65,8 +67,8 @@ export interface HistoryWindowQuery {
   limitTurns?: number
   /**
    * 字节预算（缺省由 reader 归一 HISTORY_BUDGET.MAX_BYTES 默认传入——离线尾读与游标
-   * 翻页同源，D4「活跃 doGetHistory 与离线尾读合并为同一预算逻辑」；仅 turn 数截取的
-   * 缺省形态保留给直接调用方如 getHistoryFromFilePath ①档）。
+   * 翻页同源，D4「活跃 doGetHistory 与离线尾读合并为同一预算逻辑」；①档
+   * getHistoryFromFilePath 超限路径同样透传该缺省，与②档同源）。
    */
   maxBytes?: number
 }
@@ -109,8 +111,9 @@ export interface HistoryFileReadResult {
  * （pi SessionManager._persist 写入），parseJsonl + filter + convertHistory 零适配复用。
  *
  * D5①：statSync 预检超 READ_PRECHECK_MAX_BYTES（32MB）→ 逆序分块读最近预算窗口
- * （HISTORY_BUDGET.RECENT_TURNS 个完整 turn）+ truncated 标记，不拒绝——消费方
- * （「加载更多」/ subagent 历史面板）的价值就是给内容，拒绝等于功能缺失。
+ * （HISTORY_BUDGET.RECENT_TURNS 个完整 turn，叠加 HISTORY_BUDGET.MAX_BYTES 字节帽，
+ * 与②档同源）+ truncated 标记，不拒绝——消费方（subagent/agent-call 历史面板）的
+ * 价值就是给内容，拒绝等于功能缺失。
  */
 export async function getHistoryFromFilePath(filePath: string, sessionStore: ISessionStore): Promise<HistoryFileReadResult> {
   // statSync 预检（D5①）。ENOENT 与下方 readFile catch 同语义（预检与打开之间的
@@ -127,7 +130,12 @@ export async function getHistoryFromFilePath(filePath: string, sessionStore: ISe
   }
 
   if (fileSize >= READ_PRECHECK_MAX_BYTES) {
-    const loaded = collectRecentTurnEntriesFromTail(filePath, HISTORY_BUDGET.RECENT_TURNS)
+    // 与②档同源透传字节预算（HISTORY_BUDGET.MAX_BYTES）：>32MB 文件的最近 20 turn 再超
+    // 字节帽时，窗口在 turn 边界处受帽截断（truncated 如实置位）——不透传时 reply 可能
+    // 被撑爆成 payload_too_large envelope，①档消费方（subagent/agent-call 历史面板，
+    // 无翻页）的「加载更早」指引在该面板不成立（死路 UX）。首 turn 豁免语义由
+    // collectRecentTurnEntriesFromTail 内置。
+    const loaded = collectRecentTurnEntriesFromTail(filePath, HISTORY_BUDGET.RECENT_TURNS, { maxBytes: HISTORY_BUDGET.MAX_BYTES })
     // 预检后文件被竞态删除（openSync 失败）→ 空结果不抛（对齐规则 #6 降级语义）
     if (!loaded) return { messages: [], truncated: false }
     return { messages: convertWindowEntries(loaded.entries, sessionStore), truncated: loaded.truncated }

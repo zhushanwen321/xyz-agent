@@ -36,7 +36,7 @@ const h = vi.hoisted(() => {
 // ⑨ 孤儿收殓挂载测试用 mock：文件级 vi.mock 同时保护其余用例——若测试文件整体跑超
 // 5s（慢 CI），真实 5s 定时器触发时命中的也是此 mock，不会真扫/真杀本机进程。
 const rh = vi.hoisted(() => ({
-  reapOrphanPiProcesses: vi.fn(async (_options: { sessionsDir: string; ownPid: number }) => ({
+  reapOrphanPiProcesses: vi.fn(async (_options: { sessionsDir: string; ownPid: number; trigger?: string }) => ({
     scanned: 0,
     reaped: [] as number[],
     failed: [] as number[],
@@ -199,6 +199,9 @@ describe('⑨ 孤儿 pi 收殓挂载（integrity-hardening §3.4 D4a）', () => 
       const arg = rh.reapOrphanPiProcesses.mock.calls[0][0]
       expect(arg.ownPid).toBe(process.pid)
       expect(arg.sessionsDir).toBe(getSessionsDir())
+      // trigger 透传（E2 归因缺口收口）：生产调用点显式传 'startup-sweep'，
+      // 杀链决策日志不再恒为 'unspecified'
+      expect(arg.trigger).toBe('startup-sweep')
     } finally {
       vi.useRealTimers()
     }
