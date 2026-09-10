@@ -53,7 +53,7 @@ import { getPiAgentDir } from '../../infra/pi/pi-paths.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore, SessionOutcome } from '../ports/session.js'
 import type { IGitInfoReader } from '../ports/git-info.js'
-import type { IManagedSessionView, ScannedSession, SendMessageHook } from './types.js'
+import type { IManagedSessionView, ScannedSession, SendMessageHook, SessionOccupancy } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { SessionLifecycle } from './session-lifecycle.js'
 import type { ReclaimSessionDeps } from './session-lifecycle.js'
@@ -649,6 +649,21 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    */
   clearSessionViewed(sessionId: string): void {
     this.lastViewedAtBySession.delete(sessionId)
+  }
+
+  /**
+   * 查询 session 占用状态投影（idle pi reclamation D2 #1 豁免信号，u3a 只读访问器）。
+   *
+   * occupancy 是运行时内部态（IManagedSessionView.occupancy，事件驱动幂等投影，
+   * 唯一写方 updateSessionOccupancy；不进 toSummary——对外只经 session.occupancy
+   * state 帧），本方法是其唯一外部只读读点：委托 lifecycle Map（所有权在 lifecycle，
+   * S3 单写者约定）取条目读字段。
+   * 未附着 / 已摘除（含回收后）返回 undefined——reaper 侧语义「无条目即无占用信号」，
+   * 回收安全由 reclaimManagedSession 的最终同步豁免块兜底（与 getClientActivity 的
+   * 「宁漏不误杀」同向）。
+   */
+  getSessionOccupancy(sessionId: string): SessionOccupancy | undefined {
+    return this.lifecycle.get(sessionId)?.occupancy
   }
 
   /**

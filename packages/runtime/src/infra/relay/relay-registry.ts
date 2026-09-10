@@ -250,6 +250,30 @@ export class RelayRegistry {
     return false
   }
 
+  /**
+   * 按 mainSessionId 枚举在册 relay 子进程目标（idle pi reclamation D3 第 5 步尾扫，u3a）。
+   *
+   * 返回元素结构对齐 session-lifecycle.ts 的 ReclaimRelayTarget（{ kill }）——刻意不
+   * import 该类型（infra → services 反向依赖禁向），结构类型天然兼容，u3 装配接线
+   * listRelayChildrenByMainSession 时可直接赋值。kill 实现绑本文件导出的 killRelayChild
+   * （SIGCONT→SIGTERM→grace→SIGKILL，幂等：已退出 child 直接 resolve）。
+   *
+   * 「杀完走注册表清理」由既有事件链结构性保证：attachRelayChildWiring 挂载的 child
+   * 'exit' handler 收到 exit 即调 cleanupEntry（tee 销毁 + pid 文件删除 + 双 Map 注销，
+   * 幂等）——调用方 kill 后无需（也不应）手工注销注册表。
+   *
+   * 线性扫描（对齐 hasByMainSessionId 取态）：条目数 = 在途 subagent 数，量级小，
+   * 不为低频尾扫建反向索引。纯只读枚举，不改变任何注册/清理行为。
+   */
+  listTargetsByMainSessionId(mainSessionId: string): Array<{ kill(): Promise<void> }> {
+    const targets: Array<{ kill(): Promise<void> }> = []
+    for (const entry of this.entries.values()) {
+      if (entry.mainSessionId !== mainSessionId) continue
+      targets.push({ kill: () => killRelayChild(entry.child) })
+    }
+    return targets
+  }
+
   /** socket server 的 connection 入口：等待握手 → 校验 → 注册 + spawn + 字节泵。 */
   handleConnection(conn: Socket): void {
     // 连接级 error 兜底（对端 RST → ECONNRESET 等）：socket 'error' 无 listener 时
