@@ -10,12 +10,13 @@
 //   - journal close（finally 必达）+ 重试面保留（executeAgentCall 照常退避重试，
 //     每次重试 per-call 新 taskId = 重新 arm）
 //
-// K6 结论（mid-round 窗可否缩短）：不可——中段阈值是原语内纯常量
-// SETTLED_MID_ROUND_NO_PROGRESS_MS（settled-watchdog.ts:32「中段阈值 v1 不开 env」+
-// :82 常量定义），env XYZ_SUBAGENT_SETTLED_WATCHDOG_MS 只覆盖收尾段（>0）或两段全关
-// （≤0），不存在缩短中段窗的通道；且原语文件不在 M3 领地，不得为其新增测试 seam。
-// 故 V5②（真跑短超时全链）按设计降级为 V1 端到端兜底——本文件用 fake timers 走完整
-// fire 链（V5①），V5c 在独立文件用真引擎进程验证 killAll 组杀邻接。
+// K6 修订（M6，替代本节原「不可缩短 → V5② 降级」结论）：env 路线仍关闭——中段阈值是
+// 原语内纯常量 SETTLED_MID_ROUND_NO_PROGRESS_MS（settled-watchdog.ts:32「中段阈值 v1
+// 不开 env」+ :88 常量定义），env XYZ_SUBAGENT_SETTLED_WATCHDOG_MS 只覆盖收尾段（>0）
+// 或两段全关（≤0）；测试 seam 由 _setMidRoundNoProgressWindowMsForTest 打通
+// （settled-watchdog.ts:110，生产恒 30min）→ V5②（真跑秒级窗全链）见姊妹文件
+// subprocess-agent-runner-no-progress-full-chain.test.ts。本文件继续用 fake timers 走
+// 完整 fire 链（V5①），V5c 在独立文件用真引擎进程验证 killAll 组杀邻接。
 //
 // 测试红线：vitest + fake timers；写删目标全部 mkdtempSync 自建自删（不碰真实数据目录）。
 

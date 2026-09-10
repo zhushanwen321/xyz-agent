@@ -676,6 +676,66 @@ describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
     await vi.waitFor(() => expect(service["findRecord"](handle.subagentId)).toBeUndefined());
   }, 10_000);
 
+  it("[onHandleReady F1] sessionId 先落 + 迟到只补 sessionFile → 按字段补缺落位；已有值不被迟到值覆盖（幂等）", async () => {
+    process.env.XYZ_AGENT_DATA_DIR = agentDir;
+    const { service, zcode, pi } = setup(agentDir);
+    const POOL = "zcode-appserver-home";
+    const LATE_SESSION_FILE = "/tmp/late/session-abc.jsonl";
+    let releaseRun!: (v: { handle: EngineHandle; outcome: AgentOutcome }) => void;
+    zcode.runImpl = (task, ctx) => {
+      ctx.onPoolResolved?.(POOL);
+      // ① create 应答：只带 sessionId（本 replay 批次新打通的可达面——close 期 LC-4
+      // 后缀反查 / M4 prompt 键扫描采纳都在 sessionId 已知后才补发 sessionFile）。
+      ctx.onHandleReady?.({
+        sessionRef: { dbPath: ".zcode/cli/db/db.sqlite", sessionId: "sess-live-1" },
+        poolKey: POOL,
+      });
+      // ② 迟到 handleReady：只补 sessionFile——旧守卫「有 sessionId 即整条 return」
+      // 会把它整条吞掉，sessionFile 永不落位（消费点：冷续 resume 锚点 / interact 定位）。
+      ctx.onHandleReady?.({
+        sessionRef: { sessionId: "sess-live-1", sessionFile: LATE_SESSION_FILE },
+        poolKey: POOL,
+      });
+      // ③ 再迟到一次且带冲突值：已有值必须原样保留（幂等），poolKey 不被重置。
+      ctx.onHandleReady?.({
+        sessionRef: { sessionId: "sess-OVERWRITE", sessionFile: "/tmp/late/other.jsonl" },
+        poolKey: "hijacked-pool",
+      });
+      return new Promise((resolve) => {
+        releaseRun = resolve;
+      });
+    };
+    const handle = await service.execute(baseOpts(agentDir, { engine: "zcode" }));
+    await vi.waitFor(() => expect(zcode.runs.length).toBe(1));
+
+    const running = service["collectRecords"](10, "running").find((r) => r.id === handle.subagentId);
+    // 补缺落位：sessionFile 进 record.engineHandle（①级会话取证 / 冷续 resume 锚点钥匙）
+    expect(running?.engineHandle?.sessionRef["sessionFile"]).toBe(LATE_SESSION_FILE);
+    expect(running?.engineHandle).toEqual({
+      sessionRef: {
+        dbPath: ".zcode/cli/db/db.sqlite",
+        sessionId: "sess-live-1",
+        sessionFile: LATE_SESSION_FILE,
+      },
+      poolKey: POOL,
+      journalPath: resolveJournalPath(agentDir, "zcode", POOL, handle.subagentId),
+    });
+    // 补缺经 entry 持久化（运行中 GUI 经 entry 重建 record 即可见），且 ③ 的
+    // 「无新字段」重复回调不产生第二条写噪（同 sessionFile 恰好一条）。
+    const entries = pi.appendEntry.mock.calls.filter((c) => c[0] === "subagent-record");
+    const withLateSessionFile = entries.filter(
+      (c) =>
+        ((c[1] as Record<string, unknown>).engineHandle as
+          | { sessionRef?: Record<string, string> }
+          | undefined)?.sessionRef?.["sessionFile"] === LATE_SESSION_FILE,
+    );
+    expect(withLateSessionFile).toHaveLength(1);
+
+    // 终态收口（防 dangling）
+    releaseRun({ handle: fakeHandle(), outcome: doneOutcome("ok") });
+    await vi.waitFor(() => expect(service["findRecord"](handle.subagentId)).toBeUndefined());
+  }, 10_000);
+
   it("[onHandleReady] 引擎不回调（spawn 形态）时零回填——终态回填仍兜底（行为不变）", async () => {
     process.env.XYZ_AGENT_DATA_DIR = agentDir;
     const { service, zcode, pi } = setup(agentDir);

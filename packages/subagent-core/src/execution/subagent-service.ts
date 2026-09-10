@@ -2287,15 +2287,38 @@ export class SubagentService {
     // 不再等终态回填（详情页中途打开可见当时进度快照）。journalPath 此时已是
     // retarget 后的最终路径（onPoolResolved 在 prepare 期先行触发，writer 是路径权威）。
     // 仅 chat 域接线——workflow 域 SAR 无运行中 record 读取方，刻意不做同类回填（防误扩展）。
+    // [F1 修复] 幂等语义 = 按字段补缺，不是整条丢弃：已有值一律不被迟到值覆盖，缺失
+    // 字段照常补上。「sessionId 先落、迟到 handleReady 只补 sessionFile」是本 replay
+    // 批次新打通且更有价值的形态（close 期 LC-4 后缀反查 / M4 prompt 键扫描采纳都会在
+    // sessionId 已知后补发 sessionFile）——旧守卫「有 sessionId 即整条 return」会把该
+    // 回填永久吞掉，令冷续 resume 锚点（anchor.sessionRef.sessionFile）与引擎 interact
+    // 定位（chatHandleFor）拿不到 sessionFile。poolKey / journalPath 不参与补缺：
+    // journalPath 权威归 journal writer（本闭包写入即定稿），poolKey 由 onPoolResolved
+    // retarget 与首次回填定稿，迟到值不得重置。仅在确有字段落位时才落 entry——无新字段
+    // 不写噪（迟到重复回调即零副作用，GUI 无额外投影）。
     const backfillEngineHandle = (partial: { sessionRef: Record<string, string>; poolKey: string }): void => {
-      if (record.engineHandle !== undefined && record.engineHandle.sessionRef["sessionId"] !== undefined) {
-        return; // 幂等守卫：终态回填已落（迟到重复回调不覆盖）
+      const current = record.engineHandle;
+      if (current === undefined) {
+        record.engineHandle = {
+          sessionRef: { ...partial.sessionRef },
+          poolKey: partial.poolKey,
+          journalPath: journal.path,
+        };
+        this.store.reportRecordTransition(record);
+        return;
       }
-      record.engineHandle = {
-        sessionRef: partial.sessionRef,
-        poolKey: partial.poolKey,
-        journalPath: journal.path,
-      };
+      const merged: Record<string, string> = { ...current.sessionRef };
+      let filled = false;
+      for (const [key, value] of Object.entries(partial.sessionRef)) {
+        if (value === undefined || value === "") continue; // 空值不是可落位的字段值
+        const existing = merged[key];
+        if (existing === undefined || existing === "") {
+          merged[key] = value;
+          filled = true;
+        }
+      }
+      if (!filled) return;
+      record.engineHandle = { ...current, sessionRef: merged };
       this.store.reportRecordTransition(record);
     };
     // 对齐点③：journal 路径权威 = 引擎声明的池 key（writer 初始用占位，retarget 后
