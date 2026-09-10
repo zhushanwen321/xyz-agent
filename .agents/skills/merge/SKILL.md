@@ -491,7 +491,7 @@ cd $WS_ROOT/main && bash .agents/skills/merge/scripts/remove-worktree.sh <branch
 **这是删除已成功**的最强确认信号——**不是错误**。原因：
 
 1. bash 工具每个命令在新 shell 内执行，shell 的 cwd 继承自某处（具体继承语义取决于 harness 实现）
-2. 目标 worktree 目录已被 `git worktree remove` + `rmdir` 真实删除
+2. 目标 worktree 目录已被 `rm -rf` 真实删除（删除语义见下条）
 3. 现有 shell 的 cwd 指向不存在的目录 → 新命令的 bash 进程启动即失败
 
 **正确处理**：
@@ -500,7 +500,8 @@ cd $WS_ROOT/main && bash .agents/skills/merge/scripts/remove-worktree.sh <branch
 - 执行完 `remove-worktree.sh` 后**立即输出合并总结收尾**，不再调用任何 bash 工具做"再次确认"或执行其他任务
 - 如果 bash 失效已发生，**不要再尝试调用 bash**——这只会循环报错
 - 此时不需要（也不可能）做 git status / ls / pwd 等确认；删除本身的成功（无论脚本 exit 0 还是 bash 后续失效）已经说明清理完成
-- 例外：如果脚本本身因业务原因（如分支未合并、worktree 被占用）**明确 exit 非 0**，那是另一回事，需按脚本输出排查；bash 失效仅在删除**已执行**后发生
+- 例外：如果脚本 **exit 非 0 且 bash 仍正常返回**（没出现工具层报废错误），说明删除没走完，按失败点分两类——**rm -rf 失败**：登记与分支均未动，目录可能残缺，排查文件锁/权限/挂载后重跑脚本，或执行脚本打印的单命令；**prune 失败**：目录已删、仅登记残留，`git worktree prune` 幂等补跑即可。两类都不得当成"删除已完成"
+- **[HISTORICAL] 半删态识别（旧版脚本或手工操作产生；现行脚本结构上不再产生）**：worktree 目录还在，但目录内一切 git 命令报 `fatal: not a git repository`，且 `.bare/worktrees/<name>/` 登记已消失——这正是 `git worktree remove` 内部「先删登记、后删目录」在目录删除失败时留下的形态（2026-09-10 v0.9.16 发布实测 `Directory not empty`）。恢复：从**兄弟 worktree**（不是 doomed 目录）执行单命令 `git -C <main-wt> merge-base --is-ancestor <feat-branch> <main> && rm -rf <feat 目录> && git -C <main-wt> worktree prune && git -C <main-wt> branch -D <feat-branch>`（is-ancestor 在链首，未合入即中止不删任何东西；rm -rf 在链尾，失败即停、剩余状态仍可诊断）。该命令删除会话 cwd 所在目录 → 必须作为最后一条 bash 命令，之后只用 read/write 类工具收尾
 
 **反模式**：删除后为"确认"再跑 `git worktree list` / `ls <worktree-dir>` → bash ENOENT → 误判为"删除失败"或"流程出错"→ 尝试 `cd $WS_ROOT` 重试 → 可能进一步混乱。
 
