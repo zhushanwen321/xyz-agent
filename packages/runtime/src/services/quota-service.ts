@@ -306,6 +306,18 @@ export class QuotaService {
       return { ok: false, error: 'failed to persist quota config' }
     }
 
+    // 改动 4：配置态已提交（persist 成功）——上次失败原因不再适用；fetcher 变更 →
+    // 缓存行（按 provider 存储、不含类型）必须失效，否则旧行被 getCached 取回并以新
+    // 类型标签展示。清理锚定 persist 成功而非 configure 整体成功，且必须落在下方
+    // secrets 物理写入之前：secrets 段失败返回 error 但不回滚 persist（设计登记的
+    // 半提交方向），清理若排在 secrets 之后，该路径会「persist 已换新 fetcher，而缓存行
+    // 与失败原因仍属旧类型」——浮层/编辑体把旧平台数据以新类型标签展示，正是改动 4
+    // 要消除的现象。
+    this.lastFailure.delete(providerId)
+    if (payload.fetcher !== undefined && payload.fetcher !== prevFetcher) {
+      this.cache.removeEntry(providerId)
+    }
+
     // ── 第三段：persist 成功后执行 secrets 物理写入/删除 ──
     // 此处失败返回错误但不回滚 persist（已提交）；残余窗口见本方法 JSDoc。
     const dirError = this.ensureSecretsDir(providerId)
@@ -319,14 +331,6 @@ export class QuotaService {
       if ('error' in keyResult) return { ok: false, error: keyResult.error }
     }
 
-    // 改动 4：配置态已提交（persist 成功）——上次失败原因不再适用；fetcher 变更 →
-    // 缓存行（按 provider 存储、不含类型）必须失效，否则旧行被 getCached 取回并以新
-    // 类型标签展示。清理锚定 persist 成功而非 configure 整体成功：secrets 段失败不回滚
-    // persist（设计登记的半提交方向），清理若延后到 secrets 之后会在该路径漏做。
-    this.lastFailure.delete(providerId)
-    if (payload.fetcher !== undefined && payload.fetcher !== prevFetcher) {
-      this.cache.removeEntry(providerId)
-    }
     return { ok: true }
   }
 

@@ -4,7 +4,8 @@
  * 职责：
  * - 读写 `<dataDir>/quota-cache.json`（原子写：.tmp → rename）
  * - 失败不删除旧缓存（只 log）
- * - 缓存永不主动删除（只有用户手动清除数据目录时才丢失）
+ * - 除 fetcher 变更 / provider 删除的定点删除（removeEntry）外不主动删除——只有用户
+ *   手动清除数据目录时才会丢失其余条目
  *
  * 架构约定 #2：路径用 getDataDir() 动态推导。
  */
@@ -196,8 +197,11 @@ export class QuotaCache {
         writeFileSync(tmpPath, JSON.stringify(cache, null, CACHE_INDENT), 'utf-8')
         renameSync(tmpPath, this.filePath)
       }
-      // 幂等：条目不存在视为成功（跳过写盘，不物化文件）。无条件同步镜像——删除后
-      // 「内存=磁盘」口径统一，getEntry 的 miss-reload 不会把已删的行取回。
+      // 幂等：条目不存在视为成功（跳过写盘，不物化文件）。成功路径无条件同步镜像——
+      // 删除后「内存=磁盘」口径统一，getEntry 的 miss-reload 不会把已删的行取回；
+      // 失败路径仅 log（catch 分支不更新镜像）：此时内存镜像已在 removeEntry 同步段被删
+      // 而磁盘保留旧行，下一次 getEntry 的 miss-reload 会把旧行取回（等价于删除未生效，
+      // 由下次 update/removeEntry 重试）。
       this.memoryCache = cache
     } catch (err) {
       // 失败不删除旧缓存，只 log（架构约定 #4 落盘，与 doUpdate 同款降级）

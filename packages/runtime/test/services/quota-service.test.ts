@@ -944,6 +944,53 @@ describe('QuotaService — U2②: cookie 空串 = 清除（§7.5 清单 / 改动
     expect(existsSync(cookiePath)).toBe(true)
   })
 
+  it('半提交（persist 成功 + secrets 段失败）时清理已发生：fetcher 变更的旧缓存行与失败原因不得残留', async () => {
+    // 防的回归：清理块被放回 secrets 早退之后（半提交路径漏清，改动 4 失效）——persist
+    // 已提交新 fetcher，而缓存行与失败原因仍属旧类型，浮层/编辑体会把旧平台数据以新类型
+    // 标签展示，正是改动 4 要消除的现象。secrets 段失败不回滚 persist（设计 §7.3 登记的
+    // 半提交方向），所以清理必须锚定 persist 成功本身，且排在 secrets 物理写入之前。
+    // 失败注入点沿用上方半提交用例的手法：用同名目录占据 cookie 文件路径——第三段写入时
+    // 对目录 writeFileSync 抛 EISDIR（非 ENOENT，writeCookieSecret 不会误判为成功）。
+    const cookiePath = join(tmpDir, 'secrets', 'p-cookie.txt')
+    let cred: { key: string; source: 'models.json' } | undefined = { key: 'provider-key', source: 'models.json' }
+    const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(() => cred),
+      dataDir: tmpDir,
+      providerExtrasStore: extrasStore,
+      providerExists: () => true,
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn', quota: { fetcher: 'zhipu' } }),
+    })
+    mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
+
+    // ① 旧类型（zhipu）先落一行成功缓存
+    await svc.fetch('p')
+    await new Promise((r) => setImmediate(r)) // 等 writeChain flush（与 U2① 同款）
+    expect(svc.getCached('p').data?.label).toBe('zhipu')
+
+    // ② 制造失败原因：凭证消失 → refresh 显式 no-credential（旧缓存行保留内存）
+    cred = undefined
+    await svc.refresh('p')
+    expect(svc.getCached('p').reason).toBe('no-credential')
+    expect(svc.getCached('p').data?.label).toBe('zhipu')
+
+    // ③ 让第三段必失败（recursive 顺带建出 secrets 目录，ensureSecretsDir 直接放行）
+    mkdirSync(cookiePath, { recursive: true })
+
+    // ④ 换类型（zhipu → mimo）并传 cookie → secrets 段写入失败，configure 整体失败
+    const result = await svc.configure({ providerId: 'p', enabled: true, fetcher: 'mimo', cookie: 'x' })
+
+    expect(result.ok).toBe(false)
+    expect(typeof result.error).toBe('string')
+    expect(result.error).not.toBe('')
+    // 半提交方向：persist 已提交新 fetcher/cookieSet（secrets 段失败不回滚）
+    expect(readExtras('p')?.quota).toMatchObject({ fetcher: 'mimo', enabled: true, cookieSet: true })
+
+    // ⑤ 清理已在 secrets 段失败之前完成：失败原因与旧类型缓存行都不残留
+    expect(svc.getCached('p').reason).toBeUndefined()
+    await new Promise((r) => setImmediate(r)) // 等 writeChain flush removeEntry 的磁盘删除
+    expect(svc.getCached('p').data).toBeNull()
+  })
+
   it('校验失败（workspace 非法）时 secrets 未被删除：先校验计算 → persist → 成功后才写/删 secrets', async () => {
     // 防的回归：旧顺序是「写/删 secrets → 归一化 workspace → persist」，后两步任一失败时
     // 凭证已被物理删除而 providers.json 未更新（renderer 只回滚本地 fetcherId），文件不可
