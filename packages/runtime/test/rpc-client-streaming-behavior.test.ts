@@ -44,6 +44,10 @@ vi.mock('node:child_process', () => ({
 vi.mock('../src/infra/pi/pi-paths.js', () => ({
   getSessionsDir: () => '/tmp/fake-sessions',
   getPiAgentDir: () => '/tmp/fake-pi-agent',
+  // spawn-markers（rpc-client start 链，recordSpawnMarkers 默认 dataDir = getConfigDir()）
+  // 会真实落盘 <dataDir>/run/pi-spawn-markers.json：读 globalSetup 注入的 env（fs-guard
+  // 白名单第 2 项），写进 tmp 数据目录——与生产实现（sharedGetDataDir 读同一 env）同语义
+  getConfigDir: () => process.env.XYZ_AGENT_DATA_DIR ?? '/tmp/fake-data',
 }))
 
 vi.mock('../src/infra/pi/pi-provider-store.js', () => ({

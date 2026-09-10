@@ -87,10 +87,20 @@ export async function osModule() {
 /** '../src/infra/pi/pi-paths.js' mock 工厂（importActual spread，目录固定）。 */
 export async function piPathsModule() {
   const actual = await vi.importActual<typeof import('../../src/infra/pi/pi-paths.js')>('../../src/infra/pi/pi-paths.js')
+  // tmpdir 工厂体内动态 import（本 helper 必须保持顶层零 mock 依赖：消费方测试可能 mock
+  // node:os 且工厂定义在本文件——顶层静态 import node:os 会形成「helper 求值等 os mock
+  // 工厂、os mock 工厂等 helper 求值」的死锁，实测挂死 vitest fork）
+  const { tmpdir } = await import('node:os')
   return {
     ...actual,
     getSessionsDir: () => '/mock/home/.xyz-agent/sessions',
-    getPiAgentDir: () => '/mock/home/.xyz-agent/pi/agent',
+    getPiAgentDir: () => '/mock/home/.xyz-agent/agent',
+    // spawn-markers（rpc-client start 链）经 getConfigDir 真实落盘 <dataDir>/run/ 清单：
+    // spread 保留的真实 getConfigDir 走被 mock 的 getDataDir（'/mock/home/...' 假路径），
+    // fs-guard 白名单外 → 写入抛错 → recordSpawnMarkers 降级 console.error，污染用例的
+    // errorSpy 计数（early-frame-buffer R1-4「error 恰好 1 次」红）。指向 fs-guard 白名单
+    // 内的 tmp 数据目录（globalSetup 注入的 env），与生产实现同语义（读同一 env）
+    getConfigDir: () => process.env.XYZ_AGENT_DATA_DIR ?? tmpdir(),
   }
 }
 
