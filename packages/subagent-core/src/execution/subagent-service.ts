@@ -224,8 +224,8 @@ export interface SubagentServiceSessionInit {
    *  createUiRequestHandlerForMode 返回 undefined 时壳侧传 null）；值 = 注入并重置
    *  缺失告警去重。 */
   uiRequestHandler?: UiRequestHandler | null;
-  /** L2 跨子进程全局 dialog 串行队列（进程单例）。透传给 session-runner，
-   *  子进程 close 时调 rejectChildDialogs 清理 pending（SR-4，见 dialogQueue 字段注释的现状说明）。 */
+  /** L2 跨子进程全局 dialog 串行队列（进程单例）。子进程退出时经引擎镜像层
+   *  （SpawnedChildrenMirror → notifyChildProcessExited）取消该 pid 的挂起请求（SR-4）。 */
   dialogQueue?: DialogGlobalQueue;
   /** [竞态修复] 主 agent 是否空闲查询（ctx.isIdle），透传给 notifier 的 flush isIdle gate。
    *  避免 background 完成通知在 agent_end→finishRun 窗口里走错 sendMessage 分支丢失。
@@ -311,9 +311,8 @@ export class SubagentService {
   private readonly getMainSessionFile: (() => string | undefined) | undefined;
   /** UI 请求 handler（进程级，可被 setUiRequestHandler / initSession 覆盖）。 */
   private uiRequestHandler: SubagentServiceInit["uiRequestHandler"];
-  /** L2 dialog 串行队列（进程级）。SR-4：子进程 close 时调 rejectChildDialogs 清理该子进程的
-   *  pending 请求——原绑定点（session-runner child close）已随协议化重构消失，当前无生产
-   *  调用方（后果 = 延迟清理：队列 30min 超时兜底仍在，不会永久挂起）。 */
+  /** L2 dialog 串行队列（进程级）。SR-4：子进程退出时经引擎镜像层
+   *  （SpawnedChildrenMirror → notifyChildProcessExited）取消该子进程的挂起请求。 */
   private dialogQueue: DialogGlobalQueue | undefined;
   /** UI 请求可观测性（sessionMode + handler 缺失告警去重，提取自本类降低行数）。 */
   private readonly uiObservability = new UiRequestObservability();

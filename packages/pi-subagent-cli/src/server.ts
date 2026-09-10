@@ -110,7 +110,8 @@ export class EngineProtocolServer {
     this.reverseTimeoutMs = opts.reverseTimeoutMs ?? REVERSE_TIMEOUT_DEFAULT_MS;
     this.dispatchTable = this.buildDispatchTable();
     // [v1.x] chat 会话反向通道发射面绑定（进程生命周期级——会话跨 run 存活）：
-    // roundLifecycle 三终态 + active 轮内心跳（F3）+ 续聊轮 recordId 键 streamDelta + 会话级 askUser。
+    // roundLifecycle 三终态 + active 轮内心跳（F3）+ 续聊轮 recordId 键 streamDelta +
+    // 会话级 askUser + 子进程退出态（SR-4：宿主镜像据此取消该 pid 的挂起 dialog）。
     this.engine.bindHostChannels?.({
       streamDelta: (p) => {
         void this.reverseRequestInternal("host/streamDelta", p);
@@ -120,6 +121,9 @@ export class EngineProtocolServer {
       },
       askUser: (runId, request) =>
         this.reverseRequestInternal("host/askUser", { runId, request }) as Promise<UiResponse>,
+      childStateChanged: (p) => {
+        void this.reverseRequestInternal("host/childStateChanged", p);
+      },
     });
   }
 
@@ -301,6 +305,19 @@ export class EngineProtocolServer {
       onChildSpawned: (child) => {
         if (child.pid === undefined) return;
         void this.reverseRequestInternal("host/childSpawned", { pid: child.pid, recordId: chatRecordId ?? runId });
+      },
+      // [SR-4 接线] 子进程退出态上报（宿主镜像据此取消该 pid 的挂起 dialog）。
+      // 只报 exited——running 由上方 childSpawned 帧覆盖，不重复上报。
+      onChildStateChanged: (p) => {
+        if (p.state !== "exited") return;
+        void this.reverseRequestInternal("host/childStateChanged", {
+          pid: p.pid,
+          recordId: chatRecordId ?? runId,
+          state: p.state,
+          killed: p.killed,
+          ...(p.exitCode !== undefined ? { exitCode: p.exitCode } : {}),
+          ...(p.signal !== undefined ? { signal: p.signal } : {}),
+        });
       },
     };
   }

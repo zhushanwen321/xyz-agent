@@ -407,6 +407,20 @@ describe("run：协议载荷 → 本地 AgentCallOpts/RunContext", () => {
     captured?.ctx.onChildSpawned?.({ pid: undefined, killed: false });
     expect(sink.frames.filter((f) => f.method === "host/childSpawned")).toHaveLength(spawnedCount);
 
+    // [SR-4] onChildStateChanged：只有 exited 发帧（宿主镜像据此取消该 pid 的挂起 dialog）；
+    // running 由 childSpawned 覆盖，不发重复帧
+    const stateChangedCount = sink.frames.filter((f) => f.method === "host/childStateChanged").length;
+    captured?.ctx.onChildStateChanged?.({ pid: 4242, recordId: "run-1", state: "running", killed: false });
+    expect(sink.frames.filter((f) => f.method === "host/childStateChanged")).toHaveLength(stateChangedCount);
+
+    captured?.ctx.onChildStateChanged?.({
+      pid: 4242, recordId: "run-1", state: "exited", killed: true, exitCode: 1,
+    });
+    const exitedFrame = await sink.waitFor((f) => f.method === "host/childStateChanged", "childStateChanged");
+    expect(exitedFrame.params).toEqual({
+      pid: 4242, recordId: "run-1", state: "exited", killed: true, exitCode: 1,
+    });
+
     // 反向请求必须先于事件到达（journal 归属契约的帧序证据）
     expect(sink.frames.indexOf(pool)).toBeLessThan(sink.frames.indexOf(ev1));
 
@@ -560,6 +574,13 @@ describe("bindAskUser 两阶段绑定体（pi 专有）", () => {
     ctx.onChildSpawned?.({ pid: 777, killed: false });
     const spawned = await sink.waitFor((f) => f.method === "host/childSpawned", "childSpawned");
     expect(spawned.params).toEqual({ pid: 777, recordId: "rec-chat-9" });
+
+    // [SR-4] chat 形态同键锚定：childStateChanged 用 chat recordId（非 runId）
+    ctx.onChildStateChanged?.({ pid: 777, recordId: "rec-chat-9", state: "exited", killed: true });
+    const exitedChat = await sink.waitFor((f) => f.method === "host/childStateChanged", "childStateChanged");
+    expect(exitedChat.params).toEqual({
+      pid: 777, recordId: "rec-chat-9", state: "exited", killed: true,
+    });
   });
 
   it("run.chat 空 recordId → engine_protocol_bad_frame（前置校验，run 不进引擎）", async () => {

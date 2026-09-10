@@ -38,6 +38,7 @@ import {
   killChain,
   type AgentEvent,
   type AgentUsage,
+  type HostChildStateChangedParams,
   type HostRoundLifecycleParams,
   type HostStreamDeltaParams,
   type InteractResult,
@@ -77,6 +78,9 @@ export interface ChatHostChannels {
   roundLifecycle(params: HostRoundLifecycleParams): void;
   /** host/askUser（chat 会话跨 run 存活，runId 固定为 spawn 轮的 runId——W3 消费注意）。 */
   askUser(runId: string, request: UiRequest): Promise<UiResponse>;
+  /** host/childStateChanged（子进程退出态；宿主镜像据此取消该 pid 的挂起 dialog，
+   *  SR-4 接线）。仅 exited 相位上报——running 由 host/childSpawned 覆盖。 */
+  childStateChanged(params: HostChildStateChangedParams): void;
 }
 
 /** startRound 的宿主回调面（server 注入：首轮事件通知 + run 键 delta + handle 回填）。 */
@@ -298,7 +302,20 @@ export class ChatSessionRegistry {
       },
       onChildSpawned: opts.onChildSpawned,
       onChildStateChanged: (p) => {
-        if (p.state === "exited") this.handleChildExited(session, p);
+        // [SR-4 接线] 退出态先上报宿主（镜像据此取消该 pid 的挂起 dialog），再走会话
+        // 内部消亡处理——顺序固定：宿主取消不依赖会话状态机，且会话已 closed 时
+        // handleChildExited 早退也不影响上报（子进程确实死了）。
+        if (p.state === "exited") {
+          this.channels?.childStateChanged({
+            pid: p.pid,
+            recordId: session.recordId,
+            state: p.state,
+            killed: p.killed,
+            ...(p.exitCode !== undefined ? { exitCode: p.exitCode } : {}),
+            ...(p.signal !== undefined ? { signal: p.signal } : {}),
+          });
+          this.handleChildExited(session, p);
+        }
       },
       onDelta: (delta) => {
         if (!session.firstRoundDone) opts.stream?.onDelta(delta);

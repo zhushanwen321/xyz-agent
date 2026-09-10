@@ -415,6 +415,9 @@ function buildRunCallbacks(
     onChildSpawned: (pid) => {
       ctx.onChildSpawned?.({ pid, killed: false });
     },
+    onChildStateChanged: (p) => {
+      ctx.onChildStateChanged?.(p);
+    },
     ...(ctx.stream !== undefined
       ? { onDelta: (delta: string) => ctx.stream?.onDelta(delta) }
       : {}),

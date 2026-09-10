@@ -94,6 +94,18 @@ export interface RunContext {
   /** 一次性子进程 pid 上报（host/childSpawned 载荷形态；ChildProcess 句柄不跨协议面）。 */
   onChildSpawned?: (child: { pid: number | undefined; killed: boolean }) => void;
   /**
+   * 子进程退出态上报（host/childStateChanged 载荷形态；SR-4 接线：宿主镜像据此取消
+   * 该 pid 的挂起 dialog）。引擎侧只在 exited 相位上报——running 由 onChildSpawned 覆盖。
+   */
+  onChildStateChanged?: (p: {
+    pid: number;
+    recordId: string;
+    state: "running" | "exited";
+    killed: boolean;
+    exitCode?: number;
+    signal?: string;
+  }) => void;
+  /**
    * [v1.x] chat 会话形态参数（协议 run.params.chat 的进程内还原；缺省 = 一次性任务
    * 形态）。recordId = chat 轮次关联键与 interact 定位键；resume 锚点存在 = 冷续
    * （--session 续写原文件），不存在 = 首轮新建。

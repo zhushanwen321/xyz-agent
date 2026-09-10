@@ -19,6 +19,7 @@ import type { ChildProcess } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  HostChildStateChangedParams,
   HostRoundLifecycleParams,
   HostStreamDeltaParams,
 } from "@zhushanwen/subagent-engine-sdk";
@@ -122,6 +123,7 @@ function makeHarness() {
   const captured: Captured[] = [];
   const streamDeltas: HostStreamDeltaParams[] = [];
   const lifecycles: HostRoundLifecycleParams[] = [];
+  const childStates: HostChildStateChangedParams[] = [];
   const executor: ChatSpawnExecutor = (params, callbacks) => {
     const child = new FakeChild();
     children.push(child);
@@ -149,10 +151,11 @@ function makeHarness() {
     streamDelta: (p) => streamDeltas.push(p),
     roundLifecycle: (p) => lifecycles.push(p),
     askUser: () => Promise.resolve({ cancelled: true }),
+    childStateChanged: (p) => childStates.push(p),
   };
   const registry = new ChatSessionRegistry({ spawnRunner: executor });
   registry.bindHostChannels(channels);
-  return { registry, children, captured, streamDeltas, lifecycles };
+  return { registry, children, captured, streamDeltas, lifecycles, childStates };
 }
 
 /** 驱动一轮的标准事件序列（handleReady → delta → message_end → agent_end → agent_settled → resolve）。 */
@@ -472,6 +475,26 @@ describe("ChatSessionRegistry：close / 崩溃 / EPIPE / 冷续", () => {
     expect(failed?.phase === "failed" && failed.error.code).toBe("engine_round_crashed");
     expect(failed?.phase === "failed" && failed.error.message).toContain("exit code 1");
     expect(h.registry.has("rec-x3")).toBe(false);
+  });
+
+  it("[SR-4] 子进程退出 → channels.childStateChanged 上报 exited（宿主镜像据此取消挂起 dialog）", async () => {
+    const runP = h.registry.startRound(
+      { recordId: "rec-sr4", task: "hi", agentName: "a", model: "p/m", sessionDir: "/tmp/s", cwd: "/tmp" },
+      { runId: "run-sr4", onEvent: () => undefined },
+    );
+    h.children[0].die(1, null);
+    await runP.catch(() => undefined);
+    await Promise.resolve();
+
+    expect(h.childStates).toHaveLength(1);
+    expect(h.childStates[0]).toMatchObject({
+      pid: h.children[0].pid,
+      recordId: "rec-sr4",
+      state: "exited",
+      // FakeChild.die 是唯一退出路径且置 killed=true（载荷 killed 语义 = 已终止）
+      killed: true,
+      exitCode: 1,
+    });
   });
 
   it("EPIPE 兜底耗尽：failed(epipe_exhausted) 相位 + 结构化失败返回", async () => {
