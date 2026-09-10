@@ -98,10 +98,16 @@ u6（冻结）不入图。
 | u1a | committed | 1 | commit 5d4644cb4（core 3 + renderer 32 测试绿，双 typecheck 绿） |
 | u1b | committed | 1 | commit d879fe120（9 单测绿，Bundle 验证 + Plugin E2E 绿） |
 | u2 | committed | 1 | commit bc960acb1（32 文件 473 测试绿，Bundle 验证 + Plugin E2E 绿） |
-| u3b | in-progress | 0 | dev 后台运行中 |
-| u3c | pending | 0 | — |
-| u4 | in-progress | 0 | dev 后台运行中 |
+| u3b | committed | 1 | commit 2048f03ab（runtime 全量 5156 绿，等价性 core 33 + runtime 65 绿，Bundle+E2E 绿） |
+| u3c | in-progress | 0 | dev 后台运行中 |
+| u4 | committed | 1 | commit 6dbb8a35b（core 1788 + panel 634 全绿，双 typecheck 绿） |
 | u6 | blocked（P-3 实测阻塞，设计显式判定） | — | 设计 §3.5 P-3 / §5 PR-5 行 |
+
+| u3b | index.ts（组合根）不在领地列举但必须改：interpreter onOccupancyTransition 回调签名改封闭转移枚举 + 接线内三布尔直写改调原语——否则 grep 复核无法清零 | 合理：纯机械接线，D2 挂点迁移本体 | 领地清单补记 |
+| u3b | onCompactingStateChange 回调通道保留（双通道对同一原语行幂等），单通道收敛建议随 u3c readonly 收口一并处理 | 移交：u3c 裁决执行（已写入 u3c task B 块） | u3c 验收 |
+| u4 | 新增子组件 TurnProgressBar.vue（Composer.vue script 余量 ~40 行，内联必超 300 上限）+ 4 个既有测试 mock 补 2 行 + index.ts 域出口 +1 行 | 合理：最小侵入与既有 mock 先例同构 | 领地清单补记 |
+| u4 | turn 活跃窗口 = occupancy.turn !== 'idle'（含 dispatching/settling），turnElapsedMs 严格 message_start(assistant) timestamp 起算 | 合理：与设计原文一致 | 无 |
+| 基础设施 | C-pi-14 layout-literal 守卫（共享 hook 02:57 被并行会话 install-hooks 更新扩散）：脚本从其分支 d484b3dac 提取 + 101 文件 200 处存量 file 级临时豁免（[temp-branch-exemption]，用户裁决「豁免存量+继续」）；守卫脚本自身 commit 用一次 SKIP_ALL_CHECKS（用户授权，commit 3164782b6 message 已说明）。**合并 fix-session-reader-session-not-found 时必须整段删除临时豁免并复跑守卫** | 合理：用户裁决 | 变更历史已记；合并 PR 检查单 |
 
 ## 7 残留风险与变更历史
 
@@ -113,3 +119,4 @@ u6（冻结）不入图。
 **变更历史**：
 - 2026-09-11：初版计划。单元切分对设计 §5 的 PR 表做了两处映射说明：① 设计 PR-3 拆为 u2 基座（原语+转移表+宣告帧收编，因 event-interpreter/session-lifecycle 与 PR-2 同文件共改，合并以压关键路径至 4 层）+ u3b（挂点迁移）+ u3c（readonly+文档收口）；② 设计 PR-5 → u6 冻结（P-3 阻塞为设计文档显式判定，非本计划新增裁决）。
 - 2026-09-11：执行期记录——基础设施阻塞修复：u1a commit 被滚动跟随守卫拦截（共享 hook 与分支基线错位 + 3 处存量违规），恢复守卫脚本 + M1 等价归零（commit 98f5a94b4，含一轮定向修复 MessageStream 行数超限），登记偏差表「基础设施」行。u1a/u1b/u2 依次 committed；u2 两条移交项（delivery/backflow 清标记补线）写入 u3b task。
+- 2026-09-11：执行期记录——u3b/u4 一轮绿 committed（2048f03ab / 6dbb8a35b）。C-pi-14 layout 守卫经共享 hook 扩散拦截后续 commit，用户裁决「豁免存量+继续」：守卫脚本提取 + 101 文件临时豁免 + 一次授权 SKIP 提交（3164782b6）。u3b 验收超预期：runtime 全量 5156 测试绿（收口单元 u3c 前）。u3c（readonly 收口 + 约束登记 + 文档回写）已派发。
