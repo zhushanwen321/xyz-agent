@@ -500,8 +500,12 @@ export class SessionHistoryReader {
    * session.history 游标翻页，全量通路删除——游标翻页完全替代）。
    *
    * 销毁清理（Facade removeSessionEntry 第 ⑤ 步直调，与 traceSync/projection/records
-   * 的 onSessionDisposed 并列）：清历史重建缓存 + lastLeafId。pi 进程退出后缓存基线
-   * （lastLeafId）不再与新进程的 entry 集合对应，保留只会走 "Entry not found" fallback。
+   * 的 onSessionDisposed 并列）：清历史重建缓存 + lastLeafId——真删除后缓存必须清，
+   * 行为本身正确。但「缓存基线（lastLeafId）跨进程必失效、保留只会走 "Entry not found"
+   * fallback」的旧因果断言已被实测推翻：空闲回收（reclaimManagedSession）刻意不走
+   * removeSessionEntry、保留缓存，P7 真机实测回收→恢复后 leafId 命中空增量短路零重建
+   *（PASS incremental，2026-09-11，证据：packages/runtime/src/__tests__/services/
+   * idle-pi-reclaim-integration.test.ts 阶段 4）。
    */
   onSessionDisposed(sessionId: string): void {
     this.historyCache.delete(sessionId)

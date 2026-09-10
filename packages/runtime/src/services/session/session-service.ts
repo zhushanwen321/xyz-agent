@@ -1071,10 +1071,14 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     // 该 sid 的 registry 不再参与 mtime 轮询/变更检测。与 reapSessionBackgroundTasks 同挂
     // 本汇聚点（主动删 / 进程退出 / forceQuit / restore 清场全覆盖，D8④ runtime 侧腿）。
     this.backgroundTasks.unwatch(sessionId)
-    // wave:perf-w20（D6-1）：session 删除 / pi 进程退出时清历史重建缓存 + lastLeafId。
-    // pi 进程退出后缓存基线（lastLeafId）不再与新进程的 entry 集合对应，保留只会
-    // 走 "Entry not found" fallback（防御兜底存在，但清理是正路径）。S6 起清理随域迁入
-    // historyReader（onSessionDisposed 直调形态，traceSync/projection/records 同款）。
+    // wave:perf-w20（D6-1）：session 删除 / pi 进程退出时清历史重建缓存 + lastLeafId
+    // ——真删除后缓存必须清，清理行为本身正确。但「pi 进程退出后缓存基线（lastLeafId）
+    // 必不再与新进程的 entry 集合对应、保留只会走 "Entry not found" fallback」的因果断言
+    // 已被实测推翻：空闲回收（reclaimManagedSession）刻意不走本汇聚点、保留缓存，P7 真机
+    // 实测回收→恢复后 leafId 命中空增量短路零重建（PASS incremental，2026-09-11，证据：
+    // packages/runtime/src/__tests__/services/idle-pi-reclaim-integration.test.ts 阶段 4）。
+    // S6 起清理随域迁入 historyReader（onSessionDisposed 直调形态，
+    // traceSync/projection/records 同款）。
     this.historyReader.onSessionDisposed(sessionId)
     // session-trace（A33）：同汇聚点清 trace 增量腿基线与串行链（与 historyCache 同因——
     // 基线跨进程存活无意义；链已 settled，删 Map 条目只释放槽位）。S4：清理随域迁入
