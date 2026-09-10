@@ -38,7 +38,10 @@ export default defineConfig({
   // pi-subagent-workflow 深路径改走语义子入口）：engines/zcode/reader + constants +
   // engine/paths + relay-env（E-2 relay env 名/协议版本常量 SSOT，纯常量+纯函数，
   // 设计 §3.3.1 例外条款），运行时闭包 = node:fs + 纯常量；import 链其余均为
-  // type-only（bundle 后消失）。禁止扩大消费面到 launcher/preparer/parser/EnginePort
+  // type-only（bundle 后消失）。u5 增补（D4/U7b，subagent-agent-end-recovery）：
+  // ./spawn-channel 子入口——pi 通道原语共享机制（行读取等）消费，闭包 = 纯机制 +
+  // core logger facade（无模块加载期副作用）+ node 内置，实测无 ajv/yaml/lockfile
+  // 外部依赖入链。禁止扩大消费面到 launcher/preparer/parser/EnginePort
   // （依赖方向纪律）。require 条件解析到该包 dist CJS——core dist 未 build 时打包失败
   // 属预期（build 前置）
   // @earendil-works/pi-ai：能力注册表（pi-boundary-reliability U5）pi 同源档位计算——

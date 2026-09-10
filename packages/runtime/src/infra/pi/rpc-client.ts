@@ -5,6 +5,9 @@ import { getDefaultModel } from './pi-provider-store.js'
 import { RpcTimeoutError } from '../../utils/errors.js'
 import type { ThinkingLevel, ProviderId } from '@xyz-agent/shared'
 import { BASH_RPC_TIMEOUT_MS, COMPACT_RPC_TIMEOUT_MS } from '@xyz-agent/shared'
+// D4/U7b（docs/design/subagent-agent-end-recovery.md §3.3）：pi 通道原语共享机制消费入口——
+// LF 行读取切换后 Runtime 与 subagent-core 消费同一份实现，消除「同类修复只落一边」的双轨分叉。
+import { createLineReader } from '@zhushanwen/subagent-core/spawn-channel'
 // B3 出站契约唯一构建器（U3 收口点；实现本体在 @xyz-agent/shared，此处走 runtime 门面）
 import { buildOutboundChildEnv } from '../spawn-env.js'
 import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
@@ -29,6 +32,12 @@ export interface PiMessage {
 export type PiEventListener = (event: PiMessage) => void
 
 /**
+ * [DEPRECATED u5] 生产路径已切换至 spawn-channel createLineReader 共享实现（D4/U7b
+ * 行为不变替换，见 wireProcessHandlers）。本函数保留的唯一消费方是
+ * rpc-client-lf-framing.test.ts 的 D10 分帧回归锚（测试文件不在 u5 领地内，删除须同批
+ * 迁移测试锚，登记为后续清理项）。分帧语义与 createLineReader 等价（StringDecoder 与
+ * setEncoding('utf8') 是同一底层机制）。新代码禁用本函数，走共享原语。
+ *
  * LF-only 行读取器（D10 分帧防御；pi dist/modes/rpc/jsonl.js attachJsonlLineReader 同款思路）。
  *
  * 为什么不用 node readline：readline 除 \n/\r 外还把 U+2028（LINE SEPARATOR）/U+2029
@@ -464,24 +473,57 @@ export class RpcClient implements IPiEngine {
       }
     })
 
-    // Parse stdout JSONL（D10：LF-only 读取器，U+2028/U+2029 不拆帧——pi rpc/jsonl.js 帧协议的对端）
-    // stdout error 吞转发（2026-09-04 事故审计，原 readline 防护语义在 LF-only 读取器上保留）：
+    // Parse stdout JSONL（D10：LF-only 分帧 → u5 切换 spawn-channel createLineReader 共享
+    // 实现，D4/U7b 行为不变替换：机制一份，Runtime 与 subagent-core 消费同一份 LF 行读取原语）。
+    // 解码沿用旧 attachLfOnlyLineReader 的 StringDecoder 形态（多字节 UTF-8 跨 chunk 半帧
+    // 挂起，不产 replacement char；U+2028/U+2029 不拆帧的 D10 防御由共享实现承载）——刻意
+    // 不用 setEncoding（改造 stdout 流编码模式），data handler 内逐 chunk 解码后喂入，
+    // 与旧实现解码路径逐字对应。
+    // stdout error 吞转发（2026-09-04 事故审计，原 readline 防护语义保留）：
     // pi 崩溃/被杀时 stdout 管道流错误无 listener 直接 throw 成 uncaughtException →
-    // 整机 shutdown（stderr 已有同款防护，见下方 stderr 段注释）；attachLfOnlyLineReader
-    // 只挂 data/end，error 防护在此补齐；pi 退出处置归 exit/kill 链路，此处只堵转发逃逸。
+    // 整机 shutdown（stderr 已有同款防护，见下方 stderr 段注释）；行读取只挂 data/end，
+    // error 防护在此补齐；pi 退出处置归 exit/kill 链路，此处只堵转发逃逸。
     proc.stdout!.on('error', () => {})
-    attachLfOnlyLineReader(proc.stdout!, (line) => {
-      if (!line.trim()) return
-      // tee 原始 JSONL 到 pi session 日志（架构约定 #4，卡死诊断证据）
-      this.piSessionLog?.write(line)
-      try {
-        const msg: PiMessage = JSON.parse(line)
-        this.handleMessage(msg)
-      // eslint-disable-next-line taste/no-silent-catch -- malformed line from pi process, skip and continue
-      } catch (e) {
-        console.error('[rpc] stdout parse error:', line, e)
-      }
+    const stdoutDecoder = new StringDecoder('utf8')
+    const stdoutLineReader = createLineReader({
+      // tee hook（D4 单侧附加面①归宿）：piSessionLog 原始 JSONL 落盘（架构约定 #4，
+      // 「pi 卡死时唯一证据」诊断通道）经行读取原语的 hook 位接回。hook 在解析/分发之前
+      // 回调（含 flushTrailing 尾残行），诊断字节序与 pi 写出序一致；保留旧 tee 的
+      // 「空白行不落盘」过滤，落盘内容与切换前逐行一致（S8 断言点）。
+      onStdoutLine: (line) => {
+        if (!line.trim()) return
+        this.piSessionLog?.write(line)
+      },
+      onLine: (line) => {
+        if (!line.trim()) return
+        try {
+          const msg: PiMessage = JSON.parse(line)
+          this.handleMessage(msg)
+        // eslint-disable-next-line taste/no-silent-catch -- malformed line from pi process, skip and continue
+        } catch (e) {
+          console.error('[rpc] stdout parse error:', line, e)
+        }
+      },
     })
+    proc.stdout!.on('data', (chunk: Buffer | string) => {
+      stdoutLineReader.push(typeof chunk === 'string' ? chunk : stdoutDecoder.write(chunk))
+    })
+    // 流 end：StringDecoder 尾巴先冲入行缓冲，再冲刷尾残行——无换行结尾的最后一行照常
+    // tee + parse（与旧 onEnd 的 `buffer += decoder.end(); emitLine` 交付语义一致）
+    proc.stdout!.on('end', () => {
+      stdoutLineReader.push(stdoutDecoder.end())
+      stdoutLineReader.flushTrailing()
+    })
+
+    // ── u5 四维策略对照（D4 语义分叉差异清单，Runtime 现值 = 既有代码路径不变，S8 逐项对照锚；
+    // 策略以实际接线表达，不引入运行时分派对象——与 spawn-channel 的 SpawnChannelPolicies
+    // 类型化登记对齐）：① 事件帧空窗 = buffer-until-first-listener——onLine → handleMessage
+    // 内 early-frame-buffer FIFO + 首个 listener 注册重放（既有机制不动，本 onLine 即接线位）；
+    // ② 迟到 response = discard——timedOutIds 既有语义（handleMessage 分支），不当 event 广播；
+    // ③ 失败处理 = hard-fail-safe-destroy——RPC 超时/写入错误 reject → 上层 safeDestroy（既有，
+    // session-lifecycle 调用面不动）；④ kill = immediate-sigkill——stream error 即时 SIGKILL
+    // （killProcAfterStreamError）+ kill() SIGCONT→SIGTERM→2s→SIGKILL；SIGCONT 唤醒语义为
+    // spawn-channel killChain 所无，kill 链保持现实现（盘点结论：策略差异非机制重复）。
 
     // W2：监听 stdout stream 的 'error' 事件。
     // proc.on('error') 只覆盖 spawn 失败；stdout 是独立的 Readable stream，pi 崩溃 /

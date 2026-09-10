@@ -13,7 +13,8 @@ const bundleOnly = process.env.npm_lifecycle_event === 'build:bundle'
 // entry 用对象形态保形输出：dist/<key>.js|cjs|d.ts|d.cts 与 src/ 目录结构一一对应
 // （src/ 前缀替换为 dist/），package.json exports 的语义子入口按同形路径映射
 // （./execution/relay-env -> dist/execution/relay-env.cjs 等）。
-// 主入口 index 之外的四个 entry 恰好是 exports 的四个语义子入口（D5 公共面）：
+// 主入口 index 之外的五个 entry 恰好是 exports 的语义子入口（D5 公共面 4 条 + D4/U7b
+// 增补的 ./spawn-channel）：
 // runtime 复用链（D8）与 zsw 复用链（D6）只允许经语义子入口消费这些模块，
 // 语义子入口因此必须各自成为 bundle 入口——否则它们只存在于主入口 bundle 内部，
 // 无法被独立加载（单一 bundle 不做 chunk 拆分，模块实例也会分裂成两份）。
@@ -24,6 +25,10 @@ const mainConfig = defineConfig({
     'execution/engine/paths': 'src/execution/engine/paths.ts',
     'execution/engine/engines/zcode/reader': 'src/execution/engine/engines/zcode/reader.ts',
     'execution/engine/engines/zcode/constants': 'src/execution/engine/engines/zcode/constants.ts',
+    // pi 通道原语门面（D4/U7b，docs/design/subagent-agent-end-recovery.md）：runtime 经
+    // ./spawn-channel 受控子入口消费共享行读取原语，require 条件按同形路径映射 dist 产物——
+    // 语义子入口必须各自成为 bundle 入口（上方 D5 注释），否则 dist 无独立产物可解析。
+    'execution/engine/engines/pi/spawn-channel': 'src/execution/engine/engines/pi/spawn-channel.ts',
   },
   format: ['esm', 'cjs'],
   dts: true,
@@ -34,7 +39,7 @@ const mainConfig = defineConfig({
   // npm dist 仅 ESM（.mjs），node 20 下 require() 加载 ESM 不可靠——
   // 运行时面仅常量的 protocol 必须 bundle 进产物（noExternal），
   // 不让它以外部 ESM 依赖形态出现在 CJS require 链上。
-  // （一致性审查 r2 注记：当前 5 个 entry 闭包无 protocol 运行时引用——唯一 import
+  // （一致性审查 r2 注记：当前 6 个 entry 闭包无 protocol 运行时引用——唯一 import
   // 点 engine-discovery.ts 仅 pi 壳深路径消费，dist 实测零常量命中；noExternal 为
   // 防御性边界，未来 entry 引入运行时引用时即生效 bundle。）
   // 降级路径（D4 既定）：bundle 边界出问题时改为全量 bundle 闭包内非 node 依赖。
