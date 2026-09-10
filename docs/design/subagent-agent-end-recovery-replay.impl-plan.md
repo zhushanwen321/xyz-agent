@@ -98,7 +98,7 @@ node scripts/check-doc-symbol-drift.mjs         # M5 后
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
 | M0 合并基底 | committed | 1/2 | merge 430dacabc + 残留清理 e192dfe4a；K5 冲突面与预演清单完全吻合；全量三连绿（pi-subagent-cli 304 passed / subagent-core 2834 passed / runtime 457 文件 5184 passed / tsc 干净） |
-| M1 S2 契约修复 | in-progress | 0/2 | 批次 1 派发 |
+| M1 S2 契约修复 | committed | 1/2 | 9578af7f4；diff ⊆ 领地（2 文件）；契约断言（缺 sessionFile → 重试照发 1→2→3 → 耗尽 resolve）+ 全包 304 绿 + tsc 干净；deviation 1 条已登记（注释分叉表述修正） |
 | M2 agent_end 惰性回补 | pending | 0/2 | — |
 | M3 workflow 域守护补挂 | in-progress | 0/2 | 批次 1 派发 |
 | M4 close 兜底扫描 | in-progress | 0/2 | 批次 1 派发 |
