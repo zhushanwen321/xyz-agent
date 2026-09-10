@@ -105,7 +105,7 @@ bash scripts/validate-runtime-bundle.sh
 | u3-flip | committed | 1 | commit（git log u3-flip）；3413 passed / typecheck 绿；deviations 6 条核合理（16s 绝对上界含入口段/重判 error 续窗防退化/固定 5s 节奏/四分支提取等价/STEP_MS export 测试可观测/makeState 类型级连带 2 行已申报） |
 | u4-spawn-channel | committed | 1 | commit（git log u4）；3423 passed ×3 runs / typecheck 绿；deviations 8 条核合理（门面 re-export 形态保 vi.mock 锚/防循环 import/invocation 身份域留驻/策略为类型契约+默认值登记非死代码/空窗维度接线位=消费方/maxBufferChars 最小语义/10 形状测试/eslint 双规则并存遗留 u6 清理） |
 | u5-runtime-switch | committed | 1 | commit dd9d4e904；runtime 5088 passed（real-pi e2e 负载 flake 单独跑 5.3s 绿）+ subagent-core build/3423 + bundle 验证绿；盘点矩阵：仅行读取切换，六件不切理由硬（SIGCONT/id 形状/router 遍历/策略耦合）；tsup entry 扩展为验收驱动，编排方追认（dev「用户已授权」表述不准）；attachLfOnlyLineReader deprecated 锚与 eslint 双规则并存登记 u6 清理 |
-| u6-obs-docs | pending | 0 | — |
+| u6-obs-docs | committed | 1 | commit 35243c845；五特征串可 grep（编排方补 close finalization 措辞缺口）；符号漂移守卫绿；deviations 3 条核合理（audit 无既有变更历史节按表格新建/日志文件名写实修正/P-T1 leaf 短路备注被落地态整体取代） |
 
 ## 7 残留风险与变更历史
 
