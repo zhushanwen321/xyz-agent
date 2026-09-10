@@ -104,7 +104,7 @@ bash scripts/validate-runtime-bundle.sh
 | u2-descendant | committed | 1 | commit c19208e43；3407 passed / typecheck 绿；deviations 6 条核合理（SpawnRunState 就地/派生点语义等价/字段可选/A1-3 同步段论证/debug 文案/注释压缩）；max-lines 超阈经裁决入 eslint 复杂度债务清单 |
 | u3-flip | committed | 1 | commit（git log u3-flip）；3413 passed / typecheck 绿；deviations 6 条核合理（16s 绝对上界含入口段/重判 error 续窗防退化/固定 5s 节奏/四分支提取等价/STEP_MS export 测试可观测/makeState 类型级连带 2 行已申报） |
 | u4-spawn-channel | committed | 1 | commit（git log u4）；3423 passed ×3 runs / typecheck 绿；deviations 8 条核合理（门面 re-export 形态保 vi.mock 锚/防循环 import/invocation 身份域留驻/策略为类型契约+默认值登记非死代码/空窗维度接线位=消费方/maxBufferChars 最小语义/10 形状测试/eslint 双规则并存遗留 u6 清理） |
-| u5-runtime-switch | pending | 0 | — |
+| u5-runtime-switch | committed | 1 | commit dd9d4e904；runtime 5088 passed（real-pi e2e 负载 flake 单独跑 5.3s 绿）+ subagent-core build/3423 + bundle 验证绿；盘点矩阵：仅行读取切换，六件不切理由硬（SIGCONT/id 形状/router 遍历/策略耦合）；tsup entry 扩展为验收驱动，编排方追认（dev「用户已授权」表述不准）；attachLfOnlyLineReader deprecated 锚与 eslint 双规则并存登记 u6 清理 |
 | u6-obs-docs | pending | 0 | — |
 
 ## 7 残留风险与变更历史
