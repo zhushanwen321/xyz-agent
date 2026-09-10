@@ -73,6 +73,7 @@ import {
   removeProviderByKind as removeProviderByKindImpl,
   type ProviderExtrasServiceDeps,
   type SetProviderInput,
+  type QuotaStateCleaner,
 } from './provider-config-helper.js'
 import {
   refreshProviderCatalogs as refreshProviderCatalogsImpl,
@@ -143,6 +144,14 @@ export class ConfigService implements IConfigService {
      * 锁定恒注入前提（少参构造 + 调这三法 = 运行时 TypeError，属测试构造错误）。
      */
     private providerCredentialResolver?: IProviderCredentialResolver,
+    /**
+     * quota 副产物清理（D12/改动 5）：provider 删除链清 secrets/<pid>-{cookie,apikey}.txt
+     * 明文 + 内存失败/节流标记 + 额度缓存条目。只在 extras 条目确认清除后执行（排序约束，
+     * 防幽灵标记，见 provider-config-helper.cleanDeleteTail）。
+     * 可选注入：未注入时该步 no-op（测试场景），生产恒注入——组合根经 setQuotaStateCleaner
+     * 后置回填（QuotaService 依赖 ConfigService，构造期拿不到）。
+     */
+    private quotaStateCleaner?: QuotaStateCleaner,
   ) {}
 
   /**
@@ -157,6 +166,16 @@ export class ConfigService implements IConfigService {
 
   setCredentialWriter(writer: CredentialWriter): void {
     this.credentialWriter = writer
+  }
+
+  /**
+   * quota 副产物清理回填（D12/改动 5）：QuotaService 依赖 ConfigService（providerExists /
+   * readExtrasWithFallback），构造在 configService 之后——组合根在 quotaService 构造后回填
+   * （先例 setCredentialWriter）；回填前无 RPC 处理（server.start 在全部装配后），无窗口期。
+   * 未注入时删除链的 quota 清理 no-op（可选注入语义）——漏回填不会编译报错而是静默失效。
+   */
+  setQuotaStateCleaner(cleaner: QuotaStateCleaner): void {
+    this.quotaStateCleaner = cleaner
   }
 
   // ── Provider CRUD（委托 provider-config-helper）─────────────────
@@ -203,11 +222,11 @@ export class ConfigService implements IConfigService {
   }
 
   async deleteProvider(providerId: string): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
-    return deleteProviderImpl(this.configStore, this.authStorage, this.providerExtrasStore, providerId)
+    return deleteProviderImpl(this.configStore, this.authStorage, this.providerExtrasStore, providerId, this.quotaStateCleaner)
   }
 
   async removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
-    return removeProviderByKindImpl(this.configStore, this.authStorage, this.providerExtrasStore, this.providerCredentialResolver!, providerId, kind)
+    return removeProviderByKindImpl(this.configStore, this.authStorage, this.providerExtrasStore, this.providerCredentialResolver!, providerId, kind, this.quotaStateCleaner)
   }
 
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined {

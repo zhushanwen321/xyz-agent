@@ -6,16 +6,18 @@
  * - 缓存管理（成功更新，失败返回失败态 data=null + reason；旧缓存保留内存可经 getCached 查看）
  * - 并发保护（pending Map 复用 Promise）
  * - 最小间隔保护（10s throttle）
- * - 凭证读取（api-key 凭据经 providerCredentialResolver：auth.json → models.json，
- *   quota 专属 secrets key 段优先；cookie 从 secrets 文件）
+ * - 凭证读取（api-key 按 credentialSource 解析（D3）：exclusive 只读专属 Key 文件，
+ *   provider 跳过专属文件经 providerCredentialResolver：auth.json → models.json；
+ *   cookie 从 secrets 文件）
  *
  * 设计文档：docs/page-design/archive/v3/coding-plan-quota/design.md §2.2.3
+ * 交互重构（D3/D12）：docs/design/coding-plan-quota-config-ux.md §7.3
  */
 
 import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
-import type { NormalizedQuotaRow, ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchFailureReason, QuotaFetcherConfig } from '@xyz-agent/shared'
-import { matchQuotaPreset, normalizeQuotaWorkspaceUrl } from '@xyz-agent/shared'
+import type { NormalizedQuotaRow, ProviderQuotaFetcher, QuotaAuthKind, QuotaCredentialSource, QuotaConfigurePayload, QuotaFetchFailureReason, QuotaFetcherConfig } from '@xyz-agent/shared'
+import { matchQuotaPreset, normalizeQuotaWorkspaceUrl, resolveQuotaCredentialSource } from '@xyz-agent/shared'
 import { QUOTA_FETCHERS } from './quota-providers/index.js'
 import { QuotaCache } from './quota-cache.js'
 import { getProviderConfig } from '../infra/pi/pi-provider-store.js'
@@ -36,13 +38,20 @@ const SECRET_FILE_MODE = 0o600
 /** secrets 目录权限：仅属主可读写执行（W4） */
 const SECRET_DIR_MODE = 0o700
 
-/** ProviderInfo 的最小子集（matchQuotaPreset 只需 baseUrl/name）。 */
+/** ProviderInfo 的最小子集（matchQuotaPreset 只需 baseUrl/name + quota 凭证来源解析所需字段）。 */
 export interface ProviderInfoLike {
   baseUrl?: string
   name?: string
   /** 用户手动指定的 fetcher id（优先于 matchQuotaPreset）。 */
   quota?: {
     fetcher?: string
+    /**
+     * 凭证来源（D3，§7.1）。未设置 = resolveQuotaCredentialSource 按 apiKeySet 推断
+     * （兼容历史数据：apiKeySet=true → exclusive，否则 provider）。
+     */
+    credentialSource?: QuotaCredentialSource
+    /** 专属 Key 已写入 secrets 的标记（credentialSource 的推断锚点，§7.1）。 */
+    apiKeySet?: boolean
   }
 }
 
@@ -63,6 +72,18 @@ export interface QuotaFetchResult {
 export interface QuotaConfigureResult {
   ok: boolean
   error?: string
+}
+
+/**
+ * provider 已在聚合层不存在（删除链已执行）——persist 的存在性守卫异常（§7.3 改动 2）。
+ * 在 extrasStore.modify 回调内抛出：modify 只在回调正常返回后才写盘，回调抛错则整个
+ * 写入被跳过（读-判-写与删除链的 extrasStore.delete 在同一临界区）。
+ */
+class ProviderGoneError extends Error {
+  constructor(providerId: string) {
+    super(`provider not found in aggregated provider list: ${providerId}`)
+    this.name = 'ProviderGoneError'
+  }
 }
 
 export interface QuotaServiceOptions {
@@ -233,65 +254,78 @@ export class QuotaService {
 
   /**
    * 配置 provider 额度查询（Settings UI 调用）。
-   * - 持久化 fetcher/enabled/cookieSet/apiKeySet 到 config/providers.json（A1-5 写侧切换）
-   * - cookie 写入 secrets 目录（cookie 类 provider）
-   * - apiKey 写入 secrets 目录（api-key 类 provider，可选；不填 = 复用 provider.apiKey）
+   * - 持久化 fetcher/enabled/cookieSet/apiKeySet/credentialSource 到 config/providers.json（A1-5 写侧切换）
+   * - cookie/apiKey 的 secrets 物理写入/删除在 persist 成功之后执行（§7.3 改动 2 顺序重排）
    *
-   * @param fetcher - 用户手动选择的 fetcher id（可选）。未传时保留既有 fetcher 不变。
-   * @param apiKey - Coding Plan 专属 API Key（可选，api-key 类）。空字符串 = 清除专属 key，复用 provider.apiKey。
-   * @param workspace - 资源维度 fetcher（opencode）的 workspace 地址（可选，D1-1）。
-   *   接受完整 URL 或裸 wrk_ id（归一化为规范 URL 存储，P1-1）；空字符串 = 清除；
-   *   非法输入返回 ok:false（不发请求可区分 not_configured）。
+   * 单 payload 对象签名（§7.1 契约收敛）：可选键缺省 = 不变（persist 继承链）。
+   * cookie 空字符串 = 清除（写入 cookieSet=false）；apiKey 空字符串 = 清除专属 key；
+   * workspace 接受完整 URL 或裸 wrk_ id（归一化为规范 URL 存储，P1-1），空串 = 清除，
+   * 非法输入返回 ok:false（不发请求可区分 not_configured）。
+   *
+   * 三段顺序（§7.3 改动 2「删除与写入的顺序重排」）：全部校验与计算 → persist →
+   * persist 成功后执行 secrets 物理写入/删除。原顺序是 secrets 在前——workspace 归一化
+   * 或 persist 任一失败时凭证已被物理删除而 providers.json 未更新，且 renderer 只回滚
+   * 本地 fetcherId（useQuotaConfigure.ts），文件不可回滚。
+   *
+   * 残余窗口（设计 §7.3 改动 2 显式登记，不可完全消除）：
+   * - persist（锁内）与紧随的 secrets 写入之间仍有间隙：删除链若在间隙内跑完，会留下
+   *   「孤立 secrets 文件 + 无 extras 条目」。量级：需同一 provider 并发「删除」与
+   *   「保存额度配置」（两个 panel 或脚本），单人单编辑体操作时为 0。恢复：下一次对该
+   *   provider 的删除会清掉孤立文件（D12 清理幂等）；readiness 也不把它算齐备（无
+   *   extras 条目 → savedFetcher === undefined → 无既存归属）。
+   * - persist 成功但 secrets 文件写入/删除失败：providers.json 已提交新状态而物理文件
+   *   未同步（如说 cookieSet: true 而文件不存在）。量级：仅本地 IO 异常（磁盘满/权限）。
+   *   恢复：用户重新点一次「保存并测试」即自愈。失败方向优于原顺序——「先写文件后
+   *   persist」失败留下的是「幽灵文件 + 标记为 false」的静默坏状态。
    */
-  async configure(
-    providerId: string,
-    enabled: boolean,
-    cookie?: string,
-    fetcher?: string,
-    apiKey?: string,
-    workspace?: string,
-  ): Promise<QuotaConfigureResult> {
-    // 各阶段按 secrets 目录 → cookie → apiKey → workspace 归一化 → 持久化的固定序执行，
-    // 任一阶段失败 fail-fast（错误文案与 log 侧写由阶段 helper 原样产生，行为不变）。
-    const dirError = this.ensureSecretsDir(providerId)
-    if (dirError !== undefined) return { ok: false, error: dirError }
+  async configure(payload: QuotaConfigurePayload): Promise<QuotaConfigureResult> {
+    const { providerId } = payload
 
-    // cookie 写入 secrets（cookie 类）
-    let cookieSet: boolean | undefined
-    if (cookie !== undefined) {
-      const cookieError = this.writeCookieSecret(providerId, cookie)
-      if (cookieError !== undefined) return { ok: false, error: cookieError }
-      cookieSet = true
-    }
-
-    // Coding Plan 专属 API Key 写入 secrets（api-key 类，可选）
-    let apiKeySet: boolean | undefined
-    if (apiKey !== undefined) {
-      const keyResult = this.writeApiKeySecret(providerId, apiKey)
-      if ('error' in keyResult) return { ok: false, error: keyResult.error }
-      apiKeySet = keyResult.apiKeySet
-    }
-
+    // ── 第一段：全部校验与计算（零物理副作用）──
     // workspace 归一化校验（D1-1/P1-1）：非法输入 fail-fast（不落半成品配置），错误面
     // 返回给调用方（renderer 已本地预校验，此处是直接 RPC 调用者的防御线）
     let normalizedWorkspace: string | null | undefined
-    if (workspace !== undefined) {
-      const wsResult = this.normalizeWorkspaceInput(providerId, workspace)
+    if (payload.workspace !== undefined) {
+      const wsResult = this.normalizeWorkspaceInput(providerId, payload.workspace)
       if ('error' in wsResult) return { ok: false, error: wsResult.error }
       normalizedWorkspace = wsResult.value
     }
+    // cookieSet/apiKeySet 由 payload 纯计算（不触碰文件）：true = 本次写入，false = 本次
+    // 清除，undefined = 本次不动（继承既存）。实际物理写入在第三段——persist 失败时
+    // providers.json 与 secrets 都不被触碰（顺序重排的目标）
+    const cookieSet = payload.cookie !== undefined ? payload.cookie !== '' : undefined
+    const apiKeySet = payload.apiKey !== undefined ? payload.apiKey !== '' : undefined
+    // 改动 4：fetcher 变更检测锚点——必须在 persist 之前读（persist 落盘后再读已是新值）
+    const prevFetcher = this.readQuotaFallback(providerId)?.fetcher
 
-    // 持久化 quota 配置到 config/providers.json（fetcher/enabled/cookieSet/apiKeySet/workspace）
-    const persistOk = await this.persistQuotaConfig(
-      providerId,
-      enabled,
-      fetcher,
-      cookieSet,
-      apiKeySet,
-      normalizedWorkspace,
-    )
+    // ── 第二段：persist（provider 存在性检查在 modify 回调内，见 persistQuotaConfig）──
+    // 持久化 quota 配置到 config/providers.json
+    // （fetcher/enabled/cookieSet/apiKeySet/credentialSource/workspace）
+    const persistOk = await this.persistQuotaConfig(payload, cookieSet, apiKeySet, normalizedWorkspace)
     if (!persistOk) {
       return { ok: false, error: 'failed to persist quota config' }
+    }
+
+    // ── 第三段：persist 成功后执行 secrets 物理写入/删除 ──
+    // 此处失败返回错误但不回滚 persist（已提交）；残余窗口见本方法 JSDoc。
+    const dirError = this.ensureSecretsDir(providerId)
+    if (dirError !== undefined) return { ok: false, error: dirError }
+    if (payload.cookie !== undefined) {
+      const cookieError = this.writeCookieSecret(providerId, payload.cookie)
+      if (cookieError !== undefined) return { ok: false, error: cookieError }
+    }
+    if (payload.apiKey !== undefined) {
+      const keyResult = this.writeApiKeySecret(providerId, payload.apiKey)
+      if ('error' in keyResult) return { ok: false, error: keyResult.error }
+    }
+
+    // 改动 4：配置态已提交（persist 成功）——上次失败原因不再适用；fetcher 变更 →
+    // 缓存行（按 provider 存储、不含类型）必须失效，否则旧行被 getCached 取回并以新
+    // 类型标签展示。清理锚定 persist 成功而非 configure 整体成功：secrets 段失败不回滚
+    // persist（设计登记的半提交方向），清理若延后到 secrets 之后会在该路径漏做。
+    this.lastFailure.delete(providerId)
+    if (payload.fetcher !== undefined && payload.fetcher !== prevFetcher) {
+      this.cache.removeEntry(providerId)
     }
     return { ok: true }
   }
@@ -316,8 +350,16 @@ export class QuotaService {
     }
   }
 
-  /** configure 阶段 helper 之二：cookie 写入 secrets（失败返回 error 文案）。 */
+  /**
+   * configure 阶段 helper 之二：cookie 写入/清除 secrets（失败返回 error 文案）。
+   * 非空 = 写入；空串 = 清除（§7.3 改动 2：目标文件存在则删除，删除失败返回 error
+   * 使 configure 整体失败——否则「标记说已清除、文件仍在」，读取端把空内容当 null
+   * 会造成「标记 cookieSet=true 而实际无凭证」的幽灵态）。
+   */
   private writeCookieSecret(providerId: string, cookie: string): string | undefined {
+    if (!cookie) {
+      return this.removeSecretFile(providerId, this.getCookiePath(providerId), 'cookie')
+    }
     try {
       this.writeSecretFile(this.getCookiePath(providerId), cookie)
       return undefined
@@ -329,29 +371,39 @@ export class QuotaService {
   }
 
   /**
+   * secrets 文件删除（§7.3 改动 2，cookie 空串=清除与 apiKey 清除分支共用同一语义）：
+   * 文件存在则删除；文件不存在视为成功（幂等）。删除失败返回 error 文案使 configure
+   * 整体失败。不做 existsSync 预检——预检本身是 TOCTOU，直接 unlink 按 ENOENT 判定缺席。
+   */
+  private removeSecretFile(providerId: string, filePath: string, label: string): string | undefined {
+    try {
+      unlinkSync(filePath)
+      return undefined
+    } catch (err) {
+      // ENOENT = 文件本就不存在：幂等语义的成功分支（等价「文件不存在视为成功」）
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+      const msg = toErrorMessage(err)
+      logger.warn(`[quota] failed to remove ${label} secret file`, { providerId, error: msg })
+      return msg
+    }
+  }
+
+  /**
    * configure 阶段 helper 之三：Coding Plan 专属 API Key 写入/清除。
    * 非空 = 写入专属 key（apiKeySet=true）；空字符串 = 清除专属 key，fallback 到
-   * provider.apiKey（apiKeySet=false）。写失败返回 error 文案（调用方 fail-fast）。
+   * provider.apiKey（apiKeySet=false）。写/删失败均返回 error 文案（调用方 fail-fast）——
+   * 清除分支旧实现 unlink 失败被 catch 后只 debug log 仍返回 apiKeySet:false（标记说
+   * 已清除、文件仍在，exclusive 读侧会继续读到已作废的 key），§7.3 改动 2 要求与
+   * cookie 清除同语义：两处必须一致，否则凭证作废效果绑在一个不实的标记上。
    */
   private writeApiKeySecret(providerId: string, apiKey: string): { apiKeySet: boolean } | { error: string } {
+    if (!apiKey) {
+      const removeError = this.removeSecretFile(providerId, this.getApiKeyPath(providerId), 'api key')
+      return removeError !== undefined ? { error: removeError } : { apiKeySet: false }
+    }
     try {
-      const keyPath = this.getApiKeyPath(providerId)
-      if (apiKey) {
-        // 非空 = 写入专属 key
-        this.writeSecretFile(keyPath, apiKey)
-        return { apiKeySet: true }
-      }
-      // 空字符串 = 清除专属 key，fallback 到 provider.apiKey
-      if (existsSync(keyPath)) {
-        try {
-          unlinkSync(keyPath)
-        } catch (cleanupErr) {
-          // 清理失败不阻断主流程（下次写入会覆盖）
-          const cleanupMsg = toErrorMessage(cleanupErr)
-          logger.debug('[quota] failed to remove api key file', { providerId, error: cleanupMsg })
-        }
-      }
-      return { apiKeySet: false }
+      this.writeSecretFile(this.getApiKeyPath(providerId), apiKey)
+      return { apiKeySet: true }
     } catch (err) {
       const msg = toErrorMessage(err)
       logger.warn('[quota] failed to write apiKey', { providerId, error: msg })
@@ -390,18 +442,13 @@ export class QuotaService {
    * models.json 已剥离，该回退恒 miss）。
    */
   private async persistQuotaConfig(
-    providerId: string,
-    enabled: boolean,
-    fetcher: string | undefined,
+    payload: QuotaConfigurePayload,
     cookieSet: boolean | undefined,
     apiKeySet: boolean | undefined,
     /** undefined = 本次不动 workspace；null = 清除；string = 归一化 URL 写入 */
     workspace: string | null | undefined,
   ): Promise<boolean> {
-    if (!this.providerExists(providerId)) {
-      logger.warn('[quota] provider not found in aggregated provider list, cannot persist quota', { providerId })
-      return false
-    }
+    const { providerId } = payload
     if (!this.extrasStore) {
       logger.warn('[quota] provider extras store not configured, cannot persist quota', { providerId })
       return false
@@ -409,17 +456,35 @@ export class QuotaService {
     const legacyQuota = this.readQuotaFallback(providerId)
     try {
       await this.extrasStore.modify(providerId, current => {
+        // §7.3 改动 2：存在性检查在锁内（原在 modify 之前）——modify 的锁只锁文件、不锁
+        // provider 存在性，而删除链的 cleanProviderExtras 用同一把锁：检查放在 modify
+        // 之前会把 TOCTOU 窗口拉大。失败序列：T2(configure) 检查通过 → T1(删除) 完整
+        // 跑完（models.json / auth.json / extras / secrets 全清）→ T2 的 persist 落盘
+        // 复活僵尸 quota 条目 → T2 的 secrets 写入重建刚被删的凭据文件 → 同 id 重建时
+        // readiness 因「¬typeChanged ∧ cookieSet」判齐备 → 复用被删 provider 的旧 Cookie
+        // （M5-05 缺口重开）。放回调内与 delete 争同一临界区，回调抛错则整个写入被跳过。
+        if (!this.providerExists(providerId)) throw new ProviderGoneError(providerId)
         // workspace 三态（对齐 apiKeySet 的「本次明确传入才动」语义，清除态显式落 undefined）
         const existingQuota = current?.quota
         return {
           ...current,
           quota: {
-            fetcher: QuotaService.inheritQuotaField(fetcher, existingQuota?.fetcher, legacyQuota?.fetcher),
-            enabled,
-            // 保留既有 cookieSet，除非本次明确写入新 cookie
+            fetcher: QuotaService.inheritQuotaField(payload.fetcher, existingQuota?.fetcher, legacyQuota?.fetcher),
+            enabled: payload.enabled,
+            // 保留既有 cookieSet，除非本次明确写入/清除（空串清除 → cookieSet=false）
             cookieSet: QuotaService.inheritQuotaField(cookieSet, existingQuota?.cookieSet, legacyQuota?.cookieSet),
             // 保留既有 apiKeySet，除非本次明确传入新值（含空字符串清除）
             apiKeySet: QuotaService.inheritQuotaField(apiKeySet, existingQuota?.apiKeySet, legacyQuota?.apiKeySet),
+            // credentialSource 恒由 payload 显式值经继承链落盘（键缺省 = 继承既存）。
+            // 禁止在写侧调 resolveQuotaCredentialSource 补默认（§7.3 改动 6 反例：它是
+            // 读侧推断，写侧补默认会让 setEnabled 式缺省 payload 把用户显式选择的
+            // 'exclusive' 覆盖成按 apiKeySet 推断的 'provider'——拨一下开关就静默改写
+            // 来源选择，正是 D3 要消除的「UI 说的与 runtime 用的背离」）
+            credentialSource: QuotaService.inheritQuotaField(
+              payload.credentialSource,
+              existingQuota?.credentialSource,
+              legacyQuota?.credentialSource,
+            ),
             workspace: QuotaService.resolveWorkspaceValue(workspace, existingQuota, legacyQuota),
           },
         }
@@ -470,24 +535,32 @@ export class QuotaService {
   }
 
   /**
-   * 实际执行查询（内部方法）。
+   * 实际执行查询（内部方法）。五个出口（§7.3 改动 4「出口覆盖」）：
+   * ① `!fetcher` 早退——不发请求，不经收尾 helper（lastFetchTime 不写；本地判定无请求
+   *    无日志，速率受 hover 事件与 renderer markPending 去重双重有界，显式行为变更）；
+   * ② `no-credential`——凭证缺失显式失败（§7.3 改动 1，原为静默返回缓存）；
+   * ③ 成功 `cache.update`；④ `fetchFailed(reason)`；⑤ throw → `fetchFailed('network')`。
+   * ②-⑤ 全部经 finishFetch 收尾 helper（守卫 + 三件套 + lastFetchTime 单点收口）。
    *
-   * [W5] throttle 计时只在非 force 路径更新：refresh（force=true）不应更新 lastFetchTime，
-   * 否则 refresh 后 10s 内的 hover fetch 会被错误拦截（refresh 绕过 throttle，但不能「污染」
-   * 后续 fetch 的 throttle 判定）。force 调用不重置计时器，保持 fetch 路径的 throttle 语义独立。
+   * [W5] throttle 计时只在非 force 路径更新（现迁入 finishFetch）：refresh（force=true）
+   * 不应更新 lastFetchTime，否则 refresh 后 10s 内的 hover fetch 会被错误拦截。
    */
   private async doFetch(providerId: string, force: boolean): Promise<QuotaFetchResult> {
-    if (!force) {
-      this.lastFetchTime.set(providerId, Date.now())
-    }
-
     const fetcher = this.getFetcherForProvider(providerId)
+    // 出口 ①（!fetcher 早退）：静默降级缓存，不经 finishFetch（不写 lastFetchTime）
     if (!fetcher) return this.getCached(providerId)
+
+    // 在途写回守卫锚点：发起时的 fetcher id（下方两个 await——resolveCredential /
+    // fetchQuota——期间 configure 可能换类型，落地前与当前值比对）
+    const fetcherIdAtStart = fetcher.id
 
     const resolved = await this.resolveCredential(providerId, fetcher.auth)
     if (!resolved) {
-      // 凭证缺失（fetcher.auth 数组序全形态都未解析到凭证），返回缓存（不发请求）
-      return this.getCached(providerId)
+      // 出口 ②（no-credential，§7.3 改动 1）：凭证缺失显式失败而非静默返回缓存——
+      // 从零日志变为每次一条 warn（表 A #13，失败查询的节流速率前提）
+      logger.warn('[quota] fetch failed', { providerId, reason: 'no-credential' })
+      return this.finishFetch(providerId, force, fetcherIdAtStart, () =>
+        this.fetchFailed(providerId, 'no-credential'))
     }
 
     try {
@@ -499,23 +572,61 @@ export class QuotaService {
       const outcome = await fetcher.fetchQuota(resolved.credential, resolved.kind, config)
 
       if (outcome.ok) {
-        // 成功：更新缓存，清除失败标记
-        this.lastFailure.delete(providerId)
-        this.cache.update(providerId, outcome.data)
-        return { data: outcome.data, lastFetchAt: Date.now() }
+        // 出口 ③（成功）：清失败标记 + 更新缓存
+        return this.finishFetch(providerId, force, fetcherIdAtStart, () => {
+          this.lastFailure.delete(providerId)
+          this.cache.update(providerId, outcome.data)
+          return { data: outcome.data, lastFetchAt: Date.now() }
+        })
       }
 
-      // 查询失败（ok:false，reason 可区分）：返回失败态——data 置 null
+      // 出口 ④（查询失败，ok:false，reason 可区分）：返回失败态——data 置 null
       // 不再降级展示旧缓存（§3.4 失败态语义：旧缓存保留内存，可经 getCached 查看并
       // 标注 lastFetchAt）；401 恢复指引文案归 Phase B（i18n key 已就绪）。
       logger.warn('[quota] fetch failed', { providerId, reason: outcome.reason })
-      return this.fetchFailed(providerId, outcome.reason)
+      return this.finishFetch(providerId, force, fetcherIdAtStart, () =>
+        this.fetchFailed(providerId, outcome.reason))
     } catch (err) {
-      // 异常防御（fetcher 契约不 throw，此处兜底逃逸异常）：按 network 失败态处理 + log
+      // 出口 ⑤（异常防御，fetcher 契约不 throw，此处兜底逃逸异常）：按 network 失败态处理 + log
       const msg = toErrorMessage(err)
       logger.warn('[quota] fetch threw', { providerId, error: msg })
-      return this.fetchFailed(providerId, 'network')
+      return this.finishFetch(providerId, force, fetcherIdAtStart, () =>
+        this.fetchFailed(providerId, 'network'))
     }
+  }
+
+  /**
+   * doFetch 收尾 helper（§7.3 改动 4「结构收口，防出口漂移」）：在途写回守卫 +
+   * lastFetchTime 节流锚点单点收口——除「!fetcher 早退」外全部出口经此，新出口不经
+   * helper 即不写时间戳，遗漏在代码结构里可见而非靠清单纪律。
+   *
+   * - 守卫：发起时捕获的 fetcherId 与当前 getFetcherForProvider 比对（该读直读盘无缓存，
+   *   persist 落盘后立即可见，与 broadcast 无关）。失配 = 在途期间类型已变更 → 三件套
+   *   （cache.update / lastFailure / lastFetchTime）全部不写——旧行不回写、时间戳不盖
+   *   （否则新类型首个 fetch 在 10s 内被 throttle 压制，返回已清空的 getCached，
+   *   「暂无额度数据」持续 ≤10s），返回 getCached 读当前真相（不是手工空对象——
+   *   消费方按「有 reason → setError；无 reason → setCache」分流，手工 {data:null} 会被
+   *   当成功数据写进 store 并清掉诊断态 error）。
+   * - lastFetchTime：完成时刻写入（[W5] 写点从发起处迁到此处——发起时刻写在两个 await
+   *   之前，守卫撤不回已发生的写）。仅非 force 路径写（refresh 不污染 fetch 的 throttle
+   *   判定）；在途期间由 pending 并发复用去重覆盖，窗口实际拉长一个在途时长，无害。
+   * - 被否方案（设计原文）：失配分支补 lastFetchTime.delete(pid) 的补偿写——「set 后
+   *   再按条件 delete」依赖两处写点的顺序永不改变，比单一写点脆弱。
+   */
+  private finishFetch(
+    providerId: string,
+    force: boolean,
+    fetcherIdAtStart: string,
+    commit: () => QuotaFetchResult,
+  ): QuotaFetchResult {
+    if (this.getFetcherForProvider(providerId)?.id !== fetcherIdAtStart) {
+      // 失配出口：全部落地写丢弃（不写 lastFetchTime、不写三件套）
+      return this.getCached(providerId)
+    }
+    if (!force) {
+      this.lastFetchTime.set(providerId, Date.now())
+    }
+    return commit()
   }
 
   /** 失败态构造（A2-4）：记录失败原因；lastFetchAt 标注上次成功时间（§3.4 旧缓存标注语义）。 */
@@ -574,23 +685,31 @@ export class QuotaService {
   }
 
   /**
-   * 获取凭证（单形态，来源链固定）。
-   * - api-key：secrets 专属额度 key → 唯一凭据通道（auth.json → models.json，构造必需注入的 resolver）
+   * 获取凭证（单形态，来源链按 credentialSource 分支，§7.3 改动 1+3 / D3）。
+   * - api-key：exclusive → 只读专属 Key 文件（缺失 → null → no-credential，**不回退**——
+   *   配置声明「用专属 Key」而 Key 不在就应报出来，不偷偷换成另一份凭证）；
+   *   provider → 完全跳过专属 Key 文件，经唯一凭据通道 resolver（auth.json → models.json）
    * - oauth：auth.json `credential(oauth).access`（直读现值，不自行 refresh——D6）
    * - cookie：secrets cookie 文件
    *
    * 支持自定义 API Key 是为了适配 router/反代场景：provider 的 baseUrl 指向本地 router，
    * 但 provider.apiKey 是 router 的 key，而 Coding Plan 平台（如 bigmodel.cn）需要平台专属 key。
-   * 用户可为 Coding Plan 单独配置一个 API Key，不填则默认用上方的 provider API Key。
    */
   private async getCredential(providerId: string, kind: QuotaAuthKind): Promise<string | null> {
     if (kind === 'api-key') {
-      // 优先读 Coding Plan 专属 API Key（secrets 目录）——quota 专属 key 语义，
-      // 不属于 provider 凭据，不并入 resolver（D3：resolver 只管 provider 凭据两源）。
-      const quotaKey = this.readSecret(this.getApiKeyPath(providerId))
-      if (quotaKey) return quotaKey
+      // 凭证归属锚点（D3）：UI 与 runtime 必须用同一个 resolveQuotaCredentialSource，
+      // 否则两端推断可以背离。未显式设置时按 apiKeySet 推断（兼容历史数据）。
+      const source = resolveQuotaCredentialSource(this.getProviderInfo(providerId)?.quota)
+      if (source === 'exclusive') {
+        // 只读 quota 专属 Key 文件——quota 专属 key 语义，不属于 provider 凭据，
+        // 不并入 resolver（D3：resolver 只管 provider 凭据两源）。缺失 → null → no-credential
+        return this.readSecret(this.getApiKeyPath(providerId))
+      }
+      // source === 'provider'：完全跳过专属 Key 文件——这是 D3 消除「显示用 A、实际
+      // 用 B」（§3.2 失败模式 D）的机制所在：来源切走后残留的专属 Key 永不被读。
       // D3 链 1（凭据收口）：auth.json api_key → models.json apiKey 两段统一走 resolver。
-      // 读取异常降级为「无凭据」（对齐旧 readAuthCredential 的容错语义，不阻断 resolveCredential）。
+      // 异常降级保留（resolveCredential 在 doFetch 的 try 之外，删掉降级会让 resolver
+      // 异常逃逸成 RPC 无响应——退化为 backstop 超时，比 no-credential 难诊断）。
       try {
         const resolved = await this.credentialResolver.resolveProviderCredential(providerId)
         return resolved?.key ?? null
@@ -662,5 +781,28 @@ export class QuotaService {
   /** Coding Plan 专属 API Key 文件路径：`<dataDir>/secrets/<providerId>-apikey.txt` */
   private getApiKeyPath(providerId: string): string {
     return join(this.secretsDir, `${providerId}-apikey.txt`)
+  }
+
+  /**
+   * provider 删除链的 quota 状态清理（D12，§7.3 改动 5）：删两个 secrets 文件 + 清内存
+   * 失败/节流标记 + 清缓存条目。幂等（ENOENT 视为成功）。
+   *
+   * 接线形态（t2 批）：本批仅提供实现——组合根经 ConfigService 的可选注入钩子
+   * `setQuotaStateCleaner((pid) => quotaService.clearProviderState(pid))` 后置回填
+   * （先例 setCredentialWriter），并遵循「只在 cleanProviderExtras 成功之后执行」的
+   * 排序约束（防幽灵标记）。清理失败只 warn 不阻断删除主流程（对齐
+   * cleanAuthCredential / cleanProviderExtras 的既有语义）。
+   */
+  async clearProviderState(providerId: string): Promise<void> {
+    const cookieError = this.removeSecretFile(providerId, this.getCookiePath(providerId), 'cookie')
+    const apiKeyError = this.removeSecretFile(providerId, this.getApiKeyPath(providerId), 'api key')
+    if (cookieError !== undefined || apiKeyError !== undefined) {
+      // secrets 删失败留下惰性孤儿文件（provider 已删 ⇒ 无人 fetch；下次同 id 删除再清），
+      // 不阻断——但内存态仍清（provider 已删，失败/节流标记失去消费方）
+      logger.warn('[quota] failed to clear provider quota secrets', { providerId, cookieError, apiKeyError })
+    }
+    this.lastFailure.delete(providerId)
+    this.lastFetchTime.delete(providerId)
+    this.cache.removeEntry(providerId)
   }
 }

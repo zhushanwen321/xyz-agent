@@ -11,7 +11,7 @@
  * + mock configStore/authStorage（调用路由断言，模式同 config-service-removebykind.test.ts）。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConfigService } from '../config-service.js'
@@ -74,10 +74,11 @@ function makeAuth(): FullAuthPick {
   } as unknown as FullAuthPick
 }
 
-function makeService(): { svc: ConfigService; store: ReturnType<typeof makeStore> } {
+function makeService(): { svc: ConfigService; store: ReturnType<typeof makeStore>; extras: XyzProviderStore } {
   const store = makeStore()
-  const svc = new ConfigService('/tmp/project', store, makeAuth(), new XyzProviderStore(extrasPath))
-  return { svc, store }
+  const extras = new XyzProviderStore(extrasPath)
+  const svc = new ConfigService('/tmp/project', store, makeAuth(), extras)
+  return { svc, store, extras }
 }
 
 describe('A8: deleteProvider 清 scopedModels 残留', () => {
@@ -560,5 +561,132 @@ describe('M4: catalog 展示字段（网关优先 + 派生兜底）', () => {
   it('空串/纯空白 baseUrl override（毒化残留窗口）视同无网关 → 走派生', () => {
     expect(displayOf('deepseek', { baseUrl: '' }).baseUrl).toBe('https://api.deepseek.com')
     expect(displayOf('deepseek', { baseUrl: '  ' }).baseUrl).toBe('https://api.deepseek.com')
+  })
+})
+
+/**
+ * D12（设计 §7.3 改动 5）：删除链 quota 清理的**排序约束**与失败语义。
+ *
+ * 语义两条（缺一即失效）：
+ * ① 排序：quotaStateCleaner（生产 = QuotaService.clearProviderState，删 secrets/<pid>-{cookie,apikey}.txt
+ *    明文 + lastFailure/lastFetchTime + 缓存条目）**只在 cleanProviderExtras 确认成功后**执行——
+ *    否则留下「quota.apiKeySet=true 但 secrets 文件已删」的幽灵标记，同 id 重建的凭证归属判定
+ *    读到假状态（M5-05 缺口）。
+ * ② warn-only：extras 失败或清理器失败都不得阻断删除主流程（与 cleanAuthCredential 同语义）。
+ *
+ * 落点三处：deleteProvider 尾 + removeProviderByKind 的 catalog / custom 两分支尾。
+ * 覆盖不到 helper 层则 quota-service.test.ts 无法发现排序/短路写反（如 `if (!ok) throw`）。
+ */
+describe('D12: 删除链 quota 清理（排序约束 + warn-only）', () => {
+  /** 恒注入形态的 resolver 替身（catalog 分支构造必需；本 describe 的 default 为 null 故不被消费）。 */
+  const stubResolver: IProviderCredentialResolver = {
+    hasProviderCredential: () => false,
+    listCredentialBackedProviderIds: () => new Set<string>(),
+    resolveProviderCredential: async () => undefined,
+  }
+
+  /** 真实 XyzProviderStore（tmpdir providers.json）+ 最小 mock IConfigStore，走 ConfigService 删除链。 */
+  function makeD12Service() {
+    const store = makeStore()
+    const extras = new XyzProviderStore(extrasPath)
+    const svc = new ConfigService('/tmp/project', store, makeAuth(), extras, undefined, stubResolver)
+    return { svc, store, extras }
+  }
+
+  it('① cleanProviderExtras 失败 → 删除主流程仍成功、清理器不被调用、secrets 保留', async () => {
+    const { svc, store, extras } = makeD12Service()
+    await extras.modify('my-custom', () => ({ quota: { enabled: true, apiKeySet: true } }))
+    // extras 删除 IO 失败（boolean 失败信号来源）
+    vi.spyOn(extras, 'delete').mockRejectedValue(new Error('disk full'))
+    // secrets 文件 = 清理器唯一删除对象；清理器不被调用 ⇔ 文件保留
+    const secretPath = join(dir, 'secrets', 'my-custom-cookie.txt')
+    mkdirSync(join(dir, 'secrets'), { recursive: true })
+    writeFileSync(secretPath, 'session=xyz')
+    const cleaner = vi.fn(async () => { rmSync(secretPath, { force: true }) })
+    svc.setQuotaStateCleaner(cleaner)
+
+    const ret = await svc.deleteProvider('my-custom')
+
+    // 主语义（条目删除）不受清理失败影响
+    expect(ret.removed).toBe(true)
+    expect(store.removeProvider).toHaveBeenCalledWith('my-custom')
+    // 排序约束：extras 未确认清除 → 清理器短路跳过（否则产生幽灵标记）
+    expect(cleaner).not.toHaveBeenCalled()
+    expect(existsSync(secretPath)).toBe(true)
+    // warn 语义不变（失败可诊断，不抛）
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining('providers.json extras cleanup failed'),
+      expect.anything(),
+    )
+  })
+
+  it('② extras 清除成功 + 清理器失败 → warn-only 惰性孤儿，删除主流程仍成功', async () => {
+    const { svc, extras } = makeD12Service()
+    await extras.modify('my-custom', () => ({ quota: { enabled: true, apiKeySet: true } }))
+    const cleaner = vi.fn().mockRejectedValue(new Error('secrets unlink failed'))
+    svc.setQuotaStateCleaner(cleaner)
+
+    const ret = await svc.deleteProvider('my-custom')
+
+    // extras 已删（排序前提满足）→ 清理器被执行；其失败只 warn，不外抛
+    expect(ret.removed).toBe(true)
+    expect(cleaner).toHaveBeenCalledWith('my-custom')
+    expect(extras.getExtrasSync('my-custom')).toBeUndefined()
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining('quota state cleanup failed'),
+      expect.anything(),
+    )
+  })
+
+  it('③ deleteProvider 落点：清理器在 extras 条目已从磁盘清除之后才执行', async () => {
+    const { svc, extras } = makeD12Service()
+    await extras.modify('my-custom', () => ({ quota: { enabled: true, apiKeySet: true } }))
+    let extrasSeenByCleaner: unknown = 'cleaner-not-called'
+    const cleaner = vi.fn(async (pid: string) => { extrasSeenByCleaner = extras.getExtrasSync(pid) })
+    svc.setQuotaStateCleaner(cleaner)
+
+    await svc.deleteProvider('my-custom')
+
+    expect(cleaner).toHaveBeenCalledTimes(1)
+    expect(cleaner).toHaveBeenCalledWith('my-custom')
+    // 排序证据：清理器执行时读 providers.json，该条目已不在（保证 secrets 与标记同清）
+    expect(extrasSeenByCleaner).toBeUndefined()
+  })
+
+  it('④ removeProviderByKind(catalog) 分支尾：清理器在 extras 清除后执行', async () => {
+    const { svc, extras } = makeD12Service()
+    await extras.modify('openai', () => ({ quota: { enabled: true, apiKeySet: true } }))
+    let extrasSeenByCleaner: unknown = 'cleaner-not-called'
+    const cleaner = vi.fn(async (pid: string) => { extrasSeenByCleaner = extras.getExtrasSync(pid) })
+    svc.setQuotaStateCleaner(cleaner)
+
+    const ret = await svc.removeProviderByKind('openai', 'catalog')
+
+    expect(ret.removed).toBe(true)
+    expect(cleaner).toHaveBeenCalledWith('openai')
+    expect(extrasSeenByCleaner).toBeUndefined()
+  })
+
+  it('⑤ removeProviderByKind(custom) 分支尾：清理器在 extras 清除后执行', async () => {
+    const { svc, extras } = makeD12Service()
+    await extras.modify('my-custom', () => ({ quota: { enabled: true, apiKeySet: true } }))
+    let extrasSeenByCleaner: unknown = 'cleaner-not-called'
+    const cleaner = vi.fn(async (pid: string) => { extrasSeenByCleaner = extras.getExtrasSync(pid) })
+    svc.setQuotaStateCleaner(cleaner)
+
+    await svc.removeProviderByKind('my-custom', 'custom')
+
+    expect(cleaner).toHaveBeenCalledWith('my-custom')
+    expect(extrasSeenByCleaner).toBeUndefined()
+  })
+
+  it('未注入清理器（未回填）→ 删除链正常，无 no-op 之外的行为变化', async () => {
+    const { svc, extras } = makeD12Service()
+    await extras.modify('my-custom', () => ({ quota: { enabled: true } }))
+
+    const ret = await svc.deleteProvider('my-custom')
+
+    expect(ret.removed).toBe(true)
+    expect(extras.getExtrasSync('my-custom')).toBeUndefined()
   })
 })

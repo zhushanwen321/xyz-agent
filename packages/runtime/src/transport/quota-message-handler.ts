@@ -65,14 +65,18 @@ export class QuotaMessageHandler {
         return
       }
       case 'quota.configure': {
-        const { providerId, enabled, cookie, fetcher, apiKey, workspace } = msg.payload
+        const { providerId } = msg.payload
+        // [W3] 防御 undefined/非 string providerId，避免下游静默失败——修过的真实 bug
+        // 类校验，整对象透传不豁免它（透传解耦的是字段增减，不是入口合法性）
         if (!providerId || typeof providerId !== 'string') {
           this.ctx.sendError(ws, 'invalid_payload', 'providerId required', msg.id)
           return
         }
         // A1-5：configure 持久化走 providers.json（统一 mkdir 锁 RMW），await 防止
-        // reply 先于落盘（handler 返回时配置已持久，broadcast/后续读不拿 stale）
-        const result = await this.ctx.quotaService.configure(providerId, enabled, cookie, fetcher, apiKey, workspace)
+        // reply 先于落盘（handler 返回时配置已持久，broadcast/后续读不拿 stale）。
+        // §7.1 契约收敛：整对象透传（无逐参解构，后续 payload 加字段 handler 零改动；
+        // 实施者漏切调用方对新单参签名必是参数数编译错，不可能静默丢字段）
+        const result = await this.ctx.quotaService.configure(msg.payload)
         // 成功后广播 provider 列表：quota 配置进 providers.json extras，renderer 的
         // matchedProviderId 消费 providers 快照——不广播则须重启才生效（同
         // setProvider/toggleProviderEnabled 等 provider 变更 RPC 的广播惯例）

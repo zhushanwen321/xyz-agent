@@ -148,4 +148,68 @@ export class QuotaCache {
       }
     }
   }
+
+  /**
+   * 删除单个 provider 的缓存条目（coding-plan-quota-config-ux §7.3 改动 4：configure
+   * 检测 fetcher 变更时失效旧类型的行——额度缓存按 provider 存储、不含类型，不清的话
+   * 旧行会被 getCached 原样取回并以新类型标签展示）。
+   *
+   * 三条语义（缺一即失效，设计原文）：
+   * ① 磁盘删除走 writeChain 与 update 串行化——remove 的读-删-写与并发 update
+   *    （hover fetch 写缓存）的读-改-写互不交错，否则后写者基于陈旧读互相覆盖；
+   * ② 同步删除 memoryCache 镜像中该条目——只删磁盘则内存镜像继续供旧值；只删内存
+   *    则 getEntry 内存 miss 时 read() 从磁盘把旧行重载回来（两个方向都复现本改动
+   *    要消除的现象）；
+   * ③ 幂等：条目不存在视为成功，不物化文件。
+   */
+  removeEntry(providerId: string): void {
+    // 同步段：立即从内存镜像删除（若已加载）。链 flush 前的窗口内 getEntry 内存 miss
+    // 会从磁盘重载旧行——此刻磁盘删除尚未发生，旧行仍是当时真相，不算异常读；链
+    // flush 后 doRemoveEntry 无条件同步镜像，删除对内存/磁盘同时生效、不会被还原。
+    if (this.memoryCache) delete this.memoryCache.providers[providerId]
+    const run = () => {
+      try {
+        this.doRemoveEntry(providerId)
+      } catch (err) {
+        // doRemoveEntry 内部已 log 写入错误，此处仅防链中断（与 update 同款：同步实现
+        // 理论不抛，但若 throw 需吞掉避免 unhandled rejection 中断 writeChain）
+        const msg = err instanceof Error ? err.message : String(err)
+        logger.debug('[quota-cache] writeChain caught unexpected error', { providerId, error: msg })
+      }
+    }
+    this.writeChain = this.writeChain.then(run, run)
+  }
+
+  /** removeEntry 的实际实现（私有）。已串行化，调用方通过 removeEntry 入口。 */
+  private doRemoveEntry(providerId: string): void {
+    try {
+      const cache = this.read()
+      if (providerId in cache.providers) {
+        delete cache.providers[providerId]
+        // [W1] 目录推导用 dirname()（Windows 路径分隔符，同 doUpdate）
+        const dir = dirname(this.filePath)
+        if (!existsSync(dir)) {
+          mkdirSync(dir, { recursive: true })
+        }
+        // 原子写：先写 .tmp，再 rename（与 doUpdate 同款）
+        const tmpPath = `${this.filePath}.tmp`
+        writeFileSync(tmpPath, JSON.stringify(cache, null, CACHE_INDENT), 'utf-8')
+        renameSync(tmpPath, this.filePath)
+      }
+      // 幂等：条目不存在视为成功（跳过写盘，不物化文件）。无条件同步镜像——删除后
+      // 「内存=磁盘」口径统一，getEntry 的 miss-reload 不会把已删的行取回。
+      this.memoryCache = cache
+    } catch (err) {
+      // 失败不删除旧缓存，只 log（架构约定 #4 落盘，与 doUpdate 同款降级）
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.warn('[quota-cache] failed to remove cache entry', { error: msg })
+      try {
+        const tmpPath = `${this.filePath}.tmp`
+        if (existsSync(tmpPath)) unlinkSync(tmpPath)
+      } catch (cleanupErr) {
+        const cleanupMsg = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)
+        logger.debug('[quota-cache] failed to cleanup tmp file', { error: cleanupMsg })
+      }
+    }
+  }
 }

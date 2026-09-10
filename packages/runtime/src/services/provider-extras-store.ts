@@ -17,6 +17,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
+import type { QuotaCredentialSource } from '@xyz-agent/shared'
 import { withFileLockAsync } from '../utils/file-lock.js'
 import { atomicWrite } from '../utils/fs-utils.js'
 import { quarantineCorruptFile } from '../utils/json-store.js'
@@ -39,6 +40,14 @@ export interface ProviderExtras {
     enabled: boolean
     cookieSet?: boolean
     apiKeySet?: boolean
+    /**
+     * 凭证来源（D3，coding-plan-quota-config-ux §7.3 改动 6）：恒由 configure payload
+     * 显式值经继承链落盘（键缺省 = 继承既存），写侧禁止调 resolveQuotaCredentialSource
+     * 补默认——那是读侧推断，写侧补默认会让 setEnabled 式缺省 payload 把用户显式选择
+     * 的 'exclusive' 覆盖成按 apiKeySet 推断的 'provider'。未设置时读侧按
+     * resolveQuotaCredentialSource 推断（兼容历史数据：apiKeySet=true → exclusive）。
+     */
+    credentialSource?: QuotaCredentialSource
     /**
      * 资源维度 fetcher（opencode）的 workspace 归一化地址（规范 URL，非凭证明文存储——
      * 用户浏览器地址栏可见的同一 URL，timeout-audit-hygiene-batch D1-1）。

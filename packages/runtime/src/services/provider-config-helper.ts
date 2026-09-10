@@ -44,6 +44,15 @@ export type ProviderExtrasDeleter = Pick<XyzProviderStore, 'delete' | 'cleanScop
 export type ProviderExtrasServiceDeps = ProviderExtrasAccessors & ProviderExtrasDeleter & ProviderExtrasReader
   & Pick<XyzProviderStore, 'getScopedModelsSync' | 'modifyScopedModels'>
 
+/**
+ * quota 副产物清理回调（D12/改动 5，生产形态 = QuotaService.clearProviderState 绑定）。
+ * 清除内容：`secrets/<pid>-{cookie,apikey}.txt` 明文 + 内存 lastFailure/lastFetchTime
+ * + 额度缓存条目。经 ConfigService.setQuotaStateCleaner 后置回填——ConfigService 不反依赖
+ * QuotaService（后者构造依赖前者）；删除链在 extras 条目确认清除后才调用（排序约束见
+ * cleanDeleteTail）。
+ */
+export type QuotaStateCleaner = (providerId: string) => Promise<void>
+
 /** setProvider 的入参形状（原 ConfigService.setProvider 内联类型提取，逐字一致）。 */
 export type SetProviderInput = {
   name?: string
@@ -1262,19 +1271,52 @@ async function cleanAuthCredential(
  *   真异步，紧随其后的 broadcastProviderList → listProviders 双读 providers.json 会
  *   读到旧 extras（quota.enabled 仍 true）→ 广播 stale。
  * - 失败仅 warn 不阻断（与 cleanAuthCredential 同语义：条目删除是主语义）。
+ * - 返回 boolean 失败信号（D12/改动 5）：true = 条目已删或本就不存在（幂等成功），
+ *   false = IO 异常未确认删除。调用方 cleanDeleteTail 据此决定是否继续清 quota 副产物。
+ *   未注入 extras 通道时同样返回 false——无法确认标记已清，按排序约束取保守方向。
  * - 幂等：条目不存在时跳过写、文件不存在不物化（XyzProviderStore.delete 保证）。
  */
 async function cleanProviderExtras(
   extrasStore: ProviderExtrasDeleter | undefined,
   providerId: string,
   ctx: string,
-): Promise<void> {
-  if (!extrasStore) return
+): Promise<boolean> {
+  if (!extrasStore) return false
   try {
     await extrasStore.delete(providerId)
-  // eslint-disable-next-line taste/no-silent-catch -- extras 清理失败不阻断删除主流程（同 cleanAuthCredential 语义），warn 记录便于诊断
+    return true
   } catch (err) {
     console.warn(`[config-service] providers.json extras cleanup failed ${ctx}:`, err)
+    return false
+  }
+}
+
+/**
+ * 删除链共享尾部（D12/改动 5）：清 providers.json extras 条目，**确认成功之后**才清 quota 副产物。
+ *
+ * 排序约束（为什么两者不能并列清理）：quota 副产物清理会删 `secrets/<pid>-{cookie,apikey}.txt`
+ * 明文，而 `quota.apiKeySet` / `cookieSet` 标记还写在 providers.json extras 里。extras 删失败
+ * 却先删了 secrets 会留下「标记 true + 文件已删」的幽灵标记——同 id 重建的凭证归属判定会读到
+ * 假状态，正是 D12 要对齐的 M5-05「同 id 重建不静默继承旧配置」缺口。两个失败方向里宁可留下
+ * 「标记与文件一致」的残留（重试删除即清），也不制造幽灵标记。
+ *
+ * 清理回调失败只 warn 不阻断删除主流程（对齐 cleanAuthCredential / cleanProviderExtras 既有
+ * 语义）；extras 未确认清除时整段跳过。三处落点（deleteProvider 尾 + removeProviderByKind 的
+ * catalog / custom 两分支尾）共享本函数，避免排序逻辑写三遍（设计 §7.3 改动 5）。
+ */
+async function cleanDeleteTail(
+  extrasStore: ProviderExtrasDeleter | undefined,
+  quotaStateCleaner: QuotaStateCleaner | undefined,
+  providerId: string,
+  ctx: string,
+): Promise<void> {
+  const extrasCleared = await cleanProviderExtras(extrasStore, providerId, ctx)
+  if (!extrasCleared || !quotaStateCleaner) return
+  try {
+    await quotaStateCleaner(providerId)
+  // eslint-disable-next-line taste/no-silent-catch -- quota 副产物清理失败不阻断删除主流程（同 cleanProviderExtras 语义），warn 记录便于诊断
+  } catch (err) {
+    console.warn(`[config-service] quota state cleanup failed ${ctx}:`, err)
   }
 }
 
@@ -1300,12 +1342,16 @@ async function removeProviderCore(
 /**
  * 删除 provider（I8：await 清 auth.json 凭据）。
  * 纯函数：configStore / authStorage / extrasStore 经参数注入。
+ *
+ * quotaStateCleaner（D12）：可选注入的 quota 副产物清理回调，只在 extras 条目确认清除后执行
+ * （排序约束见 cleanDeleteTail）；未注入时该步 no-op（可选注入语义，生产恒注入）。
  */
 export async function deleteProvider(
   configStore: IConfigStore,
   authStorage: AuthStorageAccessors | undefined,
   extrasStore: ProviderExtrasDeleter | undefined,
   providerId: string,
+  quotaStateCleaner?: QuotaStateCleaner,
 ): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
   // I8：删 provider 后 await 清 auth.json 凭据（OAuth token 强绑定，不能残留）。
   // 幂等：auth.json 无该 provider 时 no-op。顺序：先删条目（同步生效）→ 再 await 清凭据，
@@ -1313,8 +1359,8 @@ export async function deleteProvider(
   const result = await removeProviderCore(configStore, extrasStore, providerId)
   await cleanAuthCredential(authStorage, providerId, `(I8) ${providerId}`)
   // extras 同步清理（review suggestion）：quota/modelStates/authMethod 不残留，同 id 重建
-  // 不静默继承旧配置。幂等（无条目 no-op）。
-  await cleanProviderExtras(extrasStore, providerId, `(deleteProvider) ${providerId}`)
+  // 不静默继承旧配置。幂等（无条目 no-op）；quota 副产物清理只在 extras 确认清除后执行（D12）。
+  await cleanDeleteTail(extrasStore, quotaStateCleaner, providerId, `(deleteProvider) ${providerId}`)
   return result
 }
 
@@ -1339,6 +1385,8 @@ export async function deleteProvider(
  * （wave3 既有行为），透传给 transport 层广播 config.defaults。
  *
  * @param kind ProviderInfo.kind（renderer 传入，wave2 聚合层权威标注）
+ * @param quotaStateCleaner （D12）可选 quota 副产物清理回调，catalog / custom 两分支都只在
+ *   extras 条目确认清除后执行（排序约束见 cleanDeleteTail）；未注入时该步 no-op。
  */
 export async function removeProviderByKind(
   configStore: IConfigStore,
@@ -1347,6 +1395,7 @@ export async function removeProviderByKind(
   credentialResolver: IProviderCredentialResolver,
   providerId: string,
   kind: 'catalog' | 'custom',
+  quotaStateCleaner?: QuotaStateCleaner,
 ): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
   if (kind === 'catalog') {
     // 清 models.json override 条目（若有）。无 override 时 removeProvider 返回 { removed: false }，
@@ -1385,7 +1434,8 @@ export async function removeProviderByKind(
     await cleanAuthCredential(authStorage, providerId, `for catalog provider ${providerId}`)
     // 清 providers.json extras（review suggestion）：catalog「移除」语义=清用户侧状态，
     // quota.enabled=true 残留会让额度链路继续对无凭证 provider 发查询。幂等无风险。
-    await cleanProviderExtras(extrasStore, providerId, `for catalog provider ${providerId}`)
+    // D12：extras 确认清除后才清 quota 副产物（secrets 明文 + 失败/节流标记 + 缓存条目）。
+    await cleanDeleteTail(extrasStore, quotaStateCleaner, providerId, `for catalog provider ${providerId}`)
     // catalog 定义不可删（pi 二进制内置），「移除」= 清凭据/override/残留。removed=true 表示
     // 用户侧状态已清，listProviders 双源聚合（凭据 ∪ override）将不再显示该 provider。
     return { removed: true, newDefault: overrideResult.newDefault }
@@ -1394,6 +1444,7 @@ export async function removeProviderByKind(
   // custom 凭据随条目存在 models.json（apiKey 字段），删条目即清；auth.json 无需单独清理。
   const result = await removeProviderCore(configStore, extrasStore, providerId)
   // extras 同步清理（review suggestion）：同 deleteProvider，防同 id 重建继承旧配置。
-  await cleanProviderExtras(extrasStore, providerId, `for custom provider ${providerId}`)
+  // D12：extras 确认清除后才清 quota 副产物（同 catalog 分支，共享 cleanDeleteTail）。
+  await cleanDeleteTail(extrasStore, quotaStateCleaner, providerId, `for custom provider ${providerId}`)
   return result
 }

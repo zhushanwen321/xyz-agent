@@ -727,6 +727,12 @@ async function main(): Promise<void> {
     providerCredentialResolver,
   })
 
+  // D12（改动 5）：删除链 quota 副产物清理回填——QuotaService 依赖 ConfigService（providerExists /
+  // readExtrasWithFallback），构造在 configService 之后，构造期拿不到，故 setter 后置回填
+  // （先例 setCredentialWriter）。漏回填不报错但 D12 静默失效（可选注入 = 未注入 no-op），
+  // 只有 S14 场景能发现。删除链侧保证只在 extras 条目确认清除后调用（防幽灵标记）。
+  configService.setQuotaStateCleaner((providerId) => quotaService.clearProviderState(providerId))
+
   const tServicesReady = performance.now()
   server.setServices(sessionService, configService, modelService, {
     extension: extensionService,

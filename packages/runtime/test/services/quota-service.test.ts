@@ -8,7 +8,7 @@
  * 运行：cd packages/runtime && npx vitest run test/services/quota-service.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, rmSync, existsSync, statSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, statSync, readFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { QuotaService } from '../../src/services/quota-service.js'
@@ -243,7 +243,7 @@ describe('QuotaService — configure 持久化（任务 4，A1-5 写侧切换：
     }))
     const svc = new QuotaService({ providerCredentialResolver: makeResolver(), dataDir: tmpDir, providerExtrasStore: extrasStore})
 
-    const result = await svc.configure('my-glm', true, undefined, 'zhipu')
+    const result = await svc.configure({ providerId: 'my-glm', enabled: true, fetcher: 'zhipu' })
 
     expect(result.ok).toBe(true)
     expect(readExtras('my-glm')).toEqual({ quota: { fetcher: 'zhipu', enabled: true } })
@@ -258,7 +258,7 @@ describe('QuotaService — configure 持久化（任务 4，A1-5 写侧切换：
     }))
     const svc = new QuotaService({ providerCredentialResolver: makeResolver(), dataDir: tmpDir, providerExtrasStore: extrasStore})
 
-    await svc.configure('my-glm', true)
+    await svc.configure({ providerId: 'my-glm', enabled: true })
 
     expect(readExtras('my-glm')).toEqual({ quota: { fetcher: 'kimi-coding', enabled: true } })
   })
@@ -267,17 +267,21 @@ describe('QuotaService — configure 持久化（任务 4，A1-5 写侧切换：
     vi.mocked(getProviderConfig).mockImplementation(() => undefined)
     const svc = new QuotaService({ providerCredentialResolver: makeResolver(), dataDir: tmpDir, providerExtrasStore: extrasStore})
 
-    const result = await svc.configure('nonexistent', true, undefined, 'zhipu')
+    const result = await svc.configure({ providerId: 'nonexistent', enabled: true, fetcher: 'zhipu' })
 
     expect(result.ok).toBe(false)
     expect(upsertProvider).not.toHaveBeenCalled()
-    expect(existsSync(extrasPath)).toBe(false)
+    // §7.3 改动 2：存在性检查移进 modify 回调后，modify 的锁前 ensureFileExists 会物化
+    // 空的 providers.json（原检查在 modify 之前完全不触文件）——文件被物化但**无该
+    // provider 条目**（回调抛 ProviderGoneError → 写入被跳过，僵尸条目未产生）
+    expect(existsSync(extrasPath)).toBe(true)
+    expect(readExtras('nonexistent')).toBeUndefined()
   })
 
-  it('persist 失败（extrasStore.modify reject）→ ok=false + "failed to persist quota config"，secrets 副作用不回滚', async () => {
-    // round-1 review MUST_FIX #2：persistQuotaConfig 的 modify catch 分支——
-    // cookie 文件已写（副作用发生在 persist 之前）但 providers.json 持久化失败，
-    // configure 必须报错而不是静默吞掉
+  it('persist 失败（extrasStore.modify reject）→ ok=false + "failed to persist quota config"，secrets 不被触碰', async () => {
+    // round-1 review MUST_FIX #2 + §7.3 改动 2 顺序重排：persistQuotaConfig 的 modify
+    // catch 分支——persist 失败时 secrets 物理写入尚未执行（secrets 段在 persist 之后），
+    // cookie 文件不应被创建；configure 必须报错而不是静默吞掉
     vi.mocked(getProviderConfig).mockImplementation(() => ({
       name: 'test',
       baseUrl: 'https://xiaomimimo.com',
@@ -285,13 +289,16 @@ describe('QuotaService — configure 持久化（任务 4，A1-5 写侧切换：
     const modifySpy = vi.spyOn(extrasStore, 'modify').mockRejectedValue(new Error('EACCES: disk full'))
     const svc = new QuotaService({ providerCredentialResolver: makeResolver(), dataDir: tmpDir, providerExtrasStore: extrasStore})
 
-    const result = await svc.configure('mimo-id', true, 'session=abc123', 'mimo')
+    const result = await svc.configure({ providerId: 'mimo-id', enabled: true, cookie: 'session=abc123', fetcher: 'mimo' })
 
     expect(result).toEqual({ ok: false, error: 'failed to persist quota config' })
     expect(modifySpy).toHaveBeenCalledTimes(1)
-    // secrets 副作用已发生：cookie 文件已落盘（持久化失败不回滚已写 secret）
-    expect(readFileSync(join(tmpDir, 'secrets', 'mimo-id-cookie.txt'), 'utf-8')).toBe('session=abc123')
-    // providers.json 未物化，models.json 也不写（寄生字段禁复活）
+    // 顺序重排（原断言方向：cookie 文件已落盘、持久化失败不回滚已写 secret）：secrets 段
+    // 在 persist 之后，persist 失败 → cookie 文件与 secrets 目录均不被创建——凭证不再
+    // 先于配置落盘，也就不存在「文件不可回滚」的坏状态
+    expect(existsSync(join(tmpDir, 'secrets', 'mimo-id-cookie.txt'))).toBe(false)
+    // providers.json 未物化（modify 被 spy 替换，锁前 ensureFileExists 未执行），
+    // models.json 也不写（寄生字段禁复活）
     expect(existsSync(extrasPath)).toBe(false)
     expect(upsertProvider).not.toHaveBeenCalled()
   })
@@ -303,7 +310,7 @@ describe('QuotaService — configure 持久化（任务 4，A1-5 写侧切换：
     }))
     const svc = new QuotaService({ providerCredentialResolver: makeResolver(), dataDir: tmpDir, providerExtrasStore: extrasStore})
 
-    const result = await svc.configure('mimo-id', true, 'session=abc123', 'mimo')
+    const result = await svc.configure({ providerId: 'mimo-id', enabled: true, cookie: 'session=abc123', fetcher: 'mimo' })
 
     expect(result.ok).toBe(true)
     expect(readExtras('mimo-id')).toEqual({ quota: { fetcher: 'mimo', enabled: true, cookieSet: true } })
@@ -386,10 +393,17 @@ describe('QuotaService — getCredential fallback: api-key 类无专属 key 时�
       providerCredentialResolver: makeResolver(),
       dataDir: tmpDir,
       providerExtrasStore: extrasStore,
-      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
+      // §7.3 改动 2 顺序重排后 configure 的 secrets 写入以 persist 成功为前提，
+      // providerExists 必须注入（生产恒注入聚合层判定；未注入的默认回退走 models.json，
+      // 本文件 mock 返回 undefined 会让 persist 失败、secrets 不写）
+      providerExists: () => true,
+      // §7.3 改动 3：api-key 按 credentialSource 分支——apiKeySet=true 且未显式设置
+      // credentialSource 时，resolveQuotaCredentialSource 推断 'exclusive'（历史数据形态，
+      // 对齐生产 getProviderInfo 从 providers.json 读 quota 的注入形态）
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn', quota: { apiKeySet: true } }),
     })
     // 先写入专属 key 文件
-    await svc.configure('glm-id', true, undefined, 'zhipu', 'quota-exclusive-key')
+    await svc.configure({ providerId: 'glm-id', enabled: true, fetcher: 'zhipu', apiKey: 'quota-exclusive-key' })
     mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
 
     await svc.fetch('glm-id')
@@ -408,12 +422,12 @@ describe('QuotaService — W4 + apiKey 清除路径', () => {
     const svc = new QuotaService({ providerCredentialResolver: makeResolver(), dataDir: tmpDir, providerExtrasStore: extrasStore})
 
     // 先写入专属 key，再清除
-    await svc.configure('glm-id', true, undefined, 'zhipu', 'some-key')
+    await svc.configure({ providerId: 'glm-id', enabled: true, fetcher: 'zhipu', apiKey: 'some-key' })
     const keyPath = join(tmpDir, 'secrets', 'glm-id-apikey.txt')
     expect(existsSync(keyPath)).toBe(true)
 
     // 清除：传 apiKey=''
-    const result = await svc.configure('glm-id', true, undefined, 'zhipu', '')
+    const result = await svc.configure({ providerId: 'glm-id', enabled: true, fetcher: 'zhipu', apiKey: '' })
 
     expect(result.ok).toBe(true)
     expect(existsSync(keyPath)).toBe(false)
@@ -428,7 +442,7 @@ describe('QuotaService — W4 + apiKey 清除路径', () => {
     }))
     const svc = new QuotaService({ providerCredentialResolver: makeResolver(), dataDir: tmpDir, providerExtrasStore: extrasStore})
 
-    await svc.configure('glm-id', true, 'cookie-val', undefined, undefined)
+    await svc.configure({ providerId: 'glm-id', enabled: true, cookie: 'cookie-val' })
 
     const cookiePath = join(tmpDir, 'secrets', 'glm-id-cookie.txt')
     const mode = statSync(cookiePath).mode & 0o777
@@ -483,10 +497,13 @@ describe('QuotaService — A2-2: api-key 形态优先级（secrets > resolver �
     const svc = new QuotaService({
       dataDir: tmpDir,
       providerExtrasStore: extrasStore,
-      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
+      // §7.3 改动 2 顺序重排：secrets 写入以 persist 成功为前提，需注入存在性判定
+      providerExists: () => true,
+      // §7.3 改动 3：来源为 exclusive（apiKeySet=true 推断）才读专属 key 文件
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn', quota: { apiKeySet: true } }),
       providerCredentialResolver: resolver,
     })
-    await svc.configure('glm-id', true, undefined, 'zhipu', 'secrets-key')
+    await svc.configure({ providerId: 'glm-id', enabled: true, fetcher: 'zhipu', apiKey: 'secrets-key' })
     mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
 
     await svc.fetch('glm-id')
@@ -522,7 +539,7 @@ describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
     expect(kimiMockFetchQuota).toHaveBeenCalledWith('key-for-kimi-id', 'api-key', { workspaceUrl: undefined })
   })
 
-  it('kimi 场景：无 api-key 凭证（secrets/resolver 两段全 miss）但有 oauth 凭证 → 按数组序降级用 oauth', async () => {
+  it('kimi 场景：无 api-key 凭证（来源 provider，resolver miss——§7.3 改动 3 跳过专属 key 文件）但有 oauth 凭证 → 按数组序降级用 oauth', async () => {
     const svc = new QuotaService({
       dataDir: tmpDir,
       getProviderInfo: () => ({
@@ -550,6 +567,8 @@ describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
     const svc = new QuotaService({
       dataDir: tmpDir,
       providerExtrasStore: extrasStore,
+      // §7.3 改动 2 顺序重排：secrets 写入以 persist 成功为前提，需注入存在性判定
+      providerExists: () => true,
       getProviderInfo: () => ({
         baseUrl: 'https://platform.xiaomimimo.com',
         quota: { fetcher: 'mimo' },
@@ -558,7 +577,7 @@ describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
       providerCredentialResolver: makeResolver(),
     })
     // 写入 cookie 文件（secrets 来源）
-    await svc.configure('mimo-id', true, 'session=abc', 'mimo')
+    await svc.configure({ providerId: 'mimo-id', enabled: true, cookie: 'session=abc', fetcher: 'mimo' })
     mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'mimo', wins: [] as never } })
 
     await svc.fetch('mimo-id')
@@ -567,7 +586,7 @@ describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
     expect(mockFetchQuota).toHaveBeenCalledWith('session=abc', 'cookie', { workspaceUrl: undefined })
   })
 
-  it('api-key/oauth 形态全 miss（fetcher.auth 不含 cookie）→ 不发请求返回缓存', async () => {
+  it('api-key/oauth 形态全 miss（fetcher.auth 不含 cookie）→ 不发请求，显式失败 no-credential', async () => {
     const svc = new QuotaService({
       dataDir: tmpDir,
       getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
@@ -578,9 +597,11 @@ describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
 
     const result = await svc.fetch('glm-id')
 
+    // §7.3 改动 1：凭证缺失从「静默返回缓存」变为显式失败（reason=no-credential，
+    // lastFailure 落内存供 getCached 透传），仍不发请求
     expect(mockFetchQuota).not.toHaveBeenCalled()
     expect(result.data).toBeNull()
-    expect(result.reason).toBeUndefined()
+    expect(result.reason).toBe('no-credential')
   })
 })
 
@@ -605,10 +626,13 @@ describe('QuotaService — M2b 链 1: 凭据两段经 resolver（secrets 首段�
     const svc = new QuotaService({
       dataDir: tmpDir,
       providerExtrasStore: extrasStore,
-      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
+      // §7.3 改动 2 顺序重排：secrets 写入以 persist 成功为前提，需注入存在性判定
+      providerExists: () => true,
+      // §7.3 改动 3：来源为 exclusive（apiKeySet=true 推断）才读专属 key 文件
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn', quota: { apiKeySet: true } }),
       providerCredentialResolver: resolver,
     })
-    await svc.configure('glm-id', true, undefined, 'zhipu', 'secrets-key')
+    await svc.configure({ providerId: 'glm-id', enabled: true, fetcher: 'zhipu', apiKey: 'secrets-key' })
     mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
 
     await svc.fetch('glm-id')
@@ -792,5 +816,453 @@ describe('QuotaService — fetcher 抛异常时防御兜底 [A2-1 契约不 thro
     const result = await svc.fetch('glm-id')
 
     expect(result).toEqual({ data: null, lastFetchAt: null, reason: 'network' })
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════════
+// U2 新增行为用例（设计 coding-plan-quota-config-ux §7.5「quota-service.test.ts 新增」行
+// + §7.3 改动 1/2/3/4/6 行为规格）。
+//
+// 背景：U2-t1 只更新了既有 36 用例的断言方向，零新增；本文件所属设计清单要求的新行为
+// （no-credential / cookie 空串清除与失败语义 / 按 credentialSource 解析凭证 /
+// lastFailure 清理 / credentialSource 落盘继承链 / 在途 fetch 写回守卫 / 失败路径节流不断）
+// 全部由本节补齐。每条用例的断言都落在调用方可见面（返回 data/reason、getCached、
+// providers.json 落盘结果、secrets 文件系统状态），而非内部私有字段。
+// ══════════════════════════════════════════════════════════════════════════
+
+describe('QuotaService — U2①: no-credential 显式失败（§7.5 清单 / 改动 1）', () => {
+  it('api-key 类 provider 无任何可用凭证 → 显式失败 no-credential，lastFailure 经 getCached 可见', async () => {
+    // 防的回归：改动 1 之前凭证缺失是 `return this.getCached(providerId)`——静默返回
+    // 缓存（无请求、无日志、无 reason），浮层/编辑体表现为 idle 或「暂无额度数据」，
+    // 用户看不到「没凭证」这个唯一可行动的原因。
+    const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(() => undefined),
+      dataDir: tmpDir,
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
+    })
+    mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
+
+    const result = await svc.fetch('glm-id')
+
+    // 不发请求（无凭证）——但仍要「显式失败」而不是「看起来成功」
+    expect(mockFetchQuota).not.toHaveBeenCalled()
+    expect(result.data).toBeNull()
+    expect(result.reason).toBe('no-credential')
+    // 调用方（浮层 getCached / 编辑体 loadCached）拿到同一真相：reason 可见
+    expect(svc.getCached('glm-id').data).toBeNull()
+    expect(svc.getCached('glm-id').reason).toBe('no-credential')
+  })
+
+  it('有旧缓存时凭证消失 → 不再静默返回旧缓存；显式失败 + 旧数据仍可经 getCached 查看', async () => {
+    // 防的回归：这是改动 1 的「行为变更点」最尖锐的形态——先成功缓存一行，凭证随后
+    // 消失（被外部删除/切换来源），旧实现会把旧行当成功结果返回（UI 显示过期数据却
+    // 无任何失败信号）；新实现必须显式失败，同时保留旧数据供「查看上次成功数据」。
+    let cred: { key: string; source: 'models.json' } | undefined = { key: 'provider-key', source: 'models.json' }
+    const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(() => cred),
+      dataDir: tmpDir,
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
+    })
+
+    mockFetchQuota.mockResolvedValueOnce({ ok: true, data: { label: 'zhipu', wins: [] as never } })
+    await svc.fetch('glm-id')
+    await new Promise((r) => setImmediate(r)) // 等 writeChain flush
+    expect(svc.getCached('glm-id').data?.label).toBe('zhipu')
+
+    // 凭证消失后强制重查（refresh 绕过 throttle）
+    cred = undefined
+    const result = await svc.refresh('glm-id')
+
+    expect(mockFetchQuota).toHaveBeenCalledTimes(1) // 只有第一次成功请求，第二次未发
+    expect(result.data).toBeNull() // 旧缓存不作为当前数据返回
+    expect(result.reason).toBe('no-credential')
+    expect(result.lastFetchAt).not.toBeNull() // 失败态标注上次成功时间
+    expect(svc.getCached('glm-id').data?.label).toBe('zhipu') // 旧缓存保留内存
+    expect(svc.getCached('glm-id').reason).toBe('no-credential')
+  })
+})
+
+describe('QuotaService — U2②: cookie 空串 = 清除（§7.5 清单 / 改动 2）', () => {
+  it('cookie 空串：目标文件存在则删除 + cookieSet=false；文件不存在时幂等成功', async () => {
+    // 防的回归：旧实现 writeCookieSecret(pid, '') 会物化一个空文件且置 cookieSet=true，
+    // 而读取端 readSecret 把空内容当 null → 「标记说已配置、实际没有」的幽灵态。
+    vi.mocked(getProviderConfig).mockImplementation(() => ({
+      name: 'test',
+      baseUrl: 'https://xiaomimimo.com',
+    }))
+    const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
+      dataDir: tmpDir,
+      providerExtrasStore: extrasStore,
+      providerExists: () => true,
+    })
+    const cookiePath = join(tmpDir, 'secrets', 'mimo-id-cookie.txt')
+
+    await svc.configure({ providerId: 'mimo-id', enabled: true, cookie: 'session=abc123', fetcher: 'mimo' })
+    expect(existsSync(cookiePath)).toBe(true)
+
+    const result = await svc.configure({ providerId: 'mimo-id', enabled: true, cookie: '' })
+
+    expect(result.ok).toBe(true)
+    expect(existsSync(cookiePath)).toBe(false) // 空串 = 物理删除
+    expect(readExtras('mimo-id')?.quota).toEqual({ fetcher: 'mimo', enabled: true, cookieSet: false })
+
+    // 幂等（设计原文「文件不存在视为成功，不先 existsSync 预检——预检本身是 TOCTOU」）：
+    // 文件已不存在时再传空串仍成功，且标记维持 false
+    const again = await svc.configure({ providerId: 'mimo-id', enabled: true, cookie: '' })
+    expect(again.ok).toBe(true)
+    expect(readExtras('mimo-id')?.quota).toEqual({ fetcher: 'mimo', enabled: true, cookieSet: false })
+  })
+
+  it('cookie 空串清除时物理删除失败 → configure 整体返回 error（半提交：persist 已落 cookieSet=false）', async () => {
+    // 防的回归：清除分支若吞掉 unlink 失败（旧 writeApiKeySecret 只 logger.debug 后仍返回
+    // 已清除），会留下「标记 false + 文件仍在」的反向幽灵——exclusive/provider 读侧仍可能
+    // 读到已作废的凭证。设计 §7.3 改动 2 要求删除失败返回 error 使 configure 整体失败。
+    //
+    // 失败注入点：用「同名目录」占据 cookie 文件路径——unlinkSync(目录) 抛 EPERM（非
+    // ENOENT，removeSecretFile 不会误判为幂等成功）。比 chmod 只读目录更稳（root 会绕过）。
+    const secretsDir = join(tmpDir, 'secrets')
+    mkdirSync(secretsDir, { recursive: true })
+    const cookiePath = join(secretsDir, 'mimo-id-cookie.txt')
+    mkdirSync(cookiePath)
+
+    const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
+      dataDir: tmpDir,
+      providerExtrasStore: extrasStore,
+      providerExists: () => true,
+    })
+
+    const result = await svc.configure({ providerId: 'mimo-id', enabled: true, cookie: '', fetcher: 'mimo' })
+
+    expect(result.ok).toBe(false)
+    expect(typeof result.error).toBe('string')
+    expect(result.error).not.toBe('')
+    // 半提交方向（设计 §7.3 改动 2 显式登记）：persist 在 secrets 物理操作之前，已提交
+    // 清除标记；调用方拿到失败信号即知情，重试一次自愈
+    expect(readExtras('mimo-id')?.quota).toEqual({ fetcher: 'mimo', enabled: true, cookieSet: false })
+    expect(existsSync(cookiePath)).toBe(true)
+  })
+
+  it('校验失败（workspace 非法）时 secrets 未被删除：先校验计算 → persist → 成功后才写/删 secrets', async () => {
+    // 防的回归：旧顺序是「写/删 secrets → 归一化 workspace → persist」，后两步任一失败时
+    // 凭证已被物理删除而 providers.json 未更新（renderer 只回滚本地 fetcherId），文件不可
+    // 回滚。重排后：workspace 非法在 persist 之前 fail-fast，secrets 零触碰。
+    const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
+      dataDir: tmpDir,
+      providerExtrasStore: extrasStore,
+      providerExists: () => true,
+    })
+    const cookiePath = join(tmpDir, 'secrets', 'mimo-id-cookie.txt')
+    await svc.configure({ providerId: 'mimo-id', enabled: true, cookie: 'session=abc', fetcher: 'mimo' })
+    expect(existsSync(cookiePath)).toBe(true)
+
+    // 同时传 cookie=''（清除）与非法 workspace：若 secrets 段先执行，文件会被删掉
+    const result = await svc.configure({
+      providerId: 'mimo-id',
+      enabled: true,
+      fetcher: 'mimo',
+      cookie: '',
+      workspace: 'https://evil.example.com',
+    })
+
+    expect(result.ok).toBe(false)
+    expect(typeof result.error).toBe('string')
+    expect(existsSync(cookiePath)).toBe(true) // 校验失败未触碰 secrets
+  })
+})
+
+describe('QuotaService — U2③: 按 credentialSource 解析凭证（§7.5 清单 / 改动 3）', () => {
+  it("source=exclusive：只读专属 Key 文件，缺失即 no-credential 不回退（resolver 不被调用）", async () => {
+    // 防的回归：exclusive 来源下若继续回退 auth.json/models.json，就是 §3.2 失败模式 D
+    // 「显示用 A、实际用 B」——配置声明了「用专属 Key」而 Key 不在，必须报出来。
+    const resolver = makeResolver() // 默认会给 key-for-<id>：模拟 provider 凭据源有值
+    const svc = new QuotaService({
+      providerCredentialResolver: resolver,
+      dataDir: tmpDir,
+      providerExtrasStore: extrasStore,
+      providerExists: () => true,
+      getProviderInfo: () => ({
+        baseUrl: 'https://bigmodel.cn',
+        quota: { fetcher: 'zhipu', credentialSource: 'exclusive' },
+      }),
+    })
+    mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
+
+    // 专属 Key 文件不存在 → 即使 resolver 有凭据也不回退
+    const miss = await svc.fetch('glm-id')
+    expect(mockFetchQuota).not.toHaveBeenCalled()
+    expect(miss.data).toBeNull()
+    expect(miss.reason).toBe('no-credential')
+    expect(vi.mocked(resolver.resolveProviderCredential)).not.toHaveBeenCalled()
+
+    // 写入专属 Key 后读专属值（refresh 绕过上一次失败查询写入的 throttle 锚点）
+    await svc.configure({
+      providerId: 'glm-id',
+      enabled: true,
+      fetcher: 'zhipu',
+      credentialSource: 'exclusive',
+      apiKey: 'exclusive-key',
+    })
+    await svc.refresh('glm-id')
+
+    expect(mockFetchQuota).toHaveBeenCalledWith('exclusive-key', 'api-key', { workspaceUrl: undefined })
+    expect(vi.mocked(resolver.resolveProviderCredential)).not.toHaveBeenCalled()
+  })
+
+  it('source=provider：完全跳过专属 Key 文件（文件仍在但不被读），经 resolver 解析', async () => {
+    // 防的回归：provider 来源下若仍读专属 Key 文件，用户「切到 Provider 凭据」后实际仍在
+    // 用旧专属 Key（失败模式 D 的另一半）。切换只改标记、不删文件（D3 可逆性）——所以
+    // 文件存在是刻意的，可证伪信号是 fetchQuota 收到的凭据不是 'exclusive-key'。
+    const resolver = makeResolver((id) => ({ key: `provider-key-${id}`, source: 'models.json' }))
+    const svc = new QuotaService({
+      providerCredentialResolver: resolver,
+      dataDir: tmpDir,
+      providerExtrasStore: extrasStore,
+      providerExists: () => true,
+      getProviderInfo: () => ({
+        baseUrl: 'https://bigmodel.cn',
+        quota: { fetcher: 'zhipu', credentialSource: 'provider' },
+      }),
+    })
+    const keyPath = join(tmpDir, 'secrets', 'glm-id-apikey.txt')
+
+    await svc.configure({ providerId: 'glm-id', enabled: true, fetcher: 'zhipu', apiKey: 'exclusive-key' })
+    expect(existsSync(keyPath)).toBe(true)
+    await svc.configure({ providerId: 'glm-id', enabled: true, fetcher: 'zhipu', credentialSource: 'provider' })
+    expect(readExtras('glm-id')?.quota).toEqual({
+      fetcher: 'zhipu',
+      enabled: true,
+      apiKeySet: true,
+      credentialSource: 'provider',
+    })
+
+    mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
+    await svc.fetch('glm-id')
+
+    expect(vi.mocked(resolver.resolveProviderCredential)).toHaveBeenCalledWith('glm-id')
+    expect(mockFetchQuota).toHaveBeenCalledWith('provider-key-glm-id', 'api-key', { workspaceUrl: undefined })
+    expect(existsSync(keyPath)).toBe(true) // 来源切换不删文件（可逆）
+  })
+
+  it('source=provider 且 resolver 抛异常 → 降级 no-credential（不逃逸成 RPC 无响应）', async () => {
+    // 防的回归：改动 3 的 try/catch 降级若被删，resolver 异常会逃出 doFetch（它不在
+    // doFetch 的 try 内）→ quota.fetch RPC 无响应 → 退化为 backstop 超时，比
+    // no-credential 难诊断得多。
+    const resolver = {
+      hasProviderCredential: vi.fn(() => false),
+      listCredentialBackedProviderIds: vi.fn(() => new Set<string>()),
+      resolveProviderCredential: vi.fn(async () => {
+        throw new Error('auth.json locked')
+      }),
+    } as unknown as IProviderCredentialResolver
+    const svc = new QuotaService({
+      providerCredentialResolver: resolver,
+      dataDir: tmpDir,
+      getProviderInfo: () => ({
+        baseUrl: 'https://bigmodel.cn',
+        quota: { fetcher: 'zhipu', credentialSource: 'provider' },
+      }),
+    })
+
+    const result = await svc.fetch('glm-id')
+
+    expect(mockFetchQuota).not.toHaveBeenCalled()
+    expect(result.data).toBeNull()
+    expect(result.reason).toBe('no-credential')
+    expect(svc.getCached('glm-id').reason).toBe('no-credential')
+  })
+})
+
+describe('QuotaService — U2④: configure 成功后清理 lastFailure（§7.5 清单 / 改动 4）', () => {
+  it('configure 成功清除该 provider 的失败标记，再次失败重新记录（清理不是永久屏蔽）', async () => {
+    // 防的回归：配置已改变，上一次失败原因不再适用——不清的话用户重开编辑体/浮层仍看到
+    // 旧失败态（reason 陈旧）。同时必须验证「清理 ≠ 屏蔽」：下一次真实失败要重新记录。
+    const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(() => undefined),
+      dataDir: tmpDir,
+      providerExtrasStore: extrasStore,
+      providerExists: () => true,
+      getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn', quota: { fetcher: 'zhipu' } }),
+    })
+    mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'zhipu', wins: [] as never } })
+
+    await svc.fetch('glm-id')
+    expect(svc.getCached('glm-id').reason).toBe('no-credential')
+
+    const cfg = await svc.configure({ providerId: 'glm-id', enabled: true, fetcher: 'zhipu' })
+    expect(cfg.ok).toBe(true)
+    expect(svc.getCached('glm-id').reason).toBeUndefined()
+
+    // 下一次失败重新记录（refresh 绕过 throttle 锚点）
+    await svc.refresh('glm-id')
+    expect(svc.getCached('glm-id').reason).toBe('no-credential')
+  })
+})
+
+describe('QuotaService — U2⑤: credentialSource 落盘继承链（§7.5 分段验收 M1 形式 / 改动 6）', () => {
+  it('带 credentialSource 的 payload 直调 configure → providers.json 落盘该字段', async () => {
+    // M1 结束时 renderer 仍是旧实现、不传 credentialSource，「一次保存并测试后读 providers.json」
+    // 在 M1 跑不出来（假阴性）；设计 §7.5 分段验收改为 runtime 单测直调 configure 断言落盘。
+    const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
+      dataDir: tmpDir,
+      providerExtrasStore: extrasStore,
+      providerExists: () => true,
+    })
+
+    const result = await svc.configure({
+      providerId: 'my-glm',
+      enabled: true,
+      fetcher: 'zhipu',
+      credentialSource: 'exclusive',
+    })
+
+    expect(result.ok).toBe(true)
+    const quota = readExtras('my-glm')?.quota as Record<string, unknown> | undefined
+    expect(quota?.credentialSource).toBe('exclusive')
+    expect(quota?.fetcher).toBe('zhipu')
+    expect(quota?.enabled).toBe(true)
+  })
+
+  it('setEnabled 式 payload（其余键缺省）不覆盖既存显式 credentialSource（继承链）', async () => {
+    // 防的回归（改动 6 的核心反例）：persist 若写成 `credentialSource: payload.credentialSource`
+    // （丢继承链），拨一次开关就把既存显式值抹掉（JSON.stringify 丢 undefined 键）；若写成
+    // `incoming ?? resolveQuotaCredentialSource(current)`（写侧推断），当 apiKeySet=true 且
+    // 显式选的是 'provider' 时会被推断翻成 'exclusive'——用户没点保存却改了来源。
+    // 两个反向场景都在此拦截：拨开关后既存显式值与其余键一字不动。
+    const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
+      dataDir: tmpDir,
+      providerExtrasStore: extrasStore,
+      providerExists: () => true,
+    })
+
+    // 场景 A：显式 exclusive（无专属 Key 标记）→ setEnabled 后仍 exclusive
+    await svc.configure({ providerId: 'p-a', enabled: true, fetcher: 'zhipu', credentialSource: 'exclusive' })
+    const cfgA = await svc.configure({ providerId: 'p-a', enabled: false })
+    expect(cfgA.ok).toBe(true)
+    const quotaA = readExtras('p-a')?.quota as Record<string, unknown> | undefined
+    expect(quotaA?.credentialSource).toBe('exclusive')
+    expect(quotaA?.fetcher).toBe('zhipu')
+    expect(quotaA?.enabled).toBe(false)
+
+    // 场景 B（写侧推断的可证伪基线）：显式 provider + apiKeySet=true → setEnabled 后仍 provider
+    // （写侧若调 resolveQuotaCredentialSource 会因 apiKeySet=true 推断成 exclusive → 本条红）
+    await svc.configure({
+      providerId: 'p-b',
+      enabled: true,
+      fetcher: 'zhipu',
+      apiKey: 'exclusive-key',
+      credentialSource: 'provider',
+    })
+    await svc.configure({ providerId: 'p-b', enabled: false })
+    const quotaB = readExtras('p-b')?.quota as Record<string, unknown> | undefined
+    expect(quotaB?.credentialSource).toBe('provider')
+    expect(quotaB?.apiKeySet).toBe(true)
+    expect(quotaB?.fetcher).toBe('zhipu')
+    expect(quotaB?.enabled).toBe(false)
+  })
+})
+
+describe('QuotaService — U2⑥: 在途 fetch 写回守卫（§7.5 清单 / 改动 4）', () => {
+  it('fetch 在途期间 configure 换类型：旧 fetch 落地不回写缓存/lastFetchTime，返回当前 getCached 真相，新类型首个 fetch 不被 throttle 压制', async () => {
+    // 防的回归（writeChain 只保证已发生的写互不交错，管不住在途落地这一扇门）：
+    // hover 在途（旧类型、旧凭据已在内存）→ 设置页换类型 → removeEntry 删旧行 →
+    // 旧 fetch 迟到落地 → 若失守：① cache.update 把旧类型行写回（以新类型标签展示）；
+    // ② lastFetchTime 被盖住 → 新类型首个 hover 在 10s 内被 throttle 压制，返回已清空的
+    // getCached（「暂无额度数据」持续 ≤10s）；③ RPC 返回手工空对象而非当前真相。
+    const info: { baseUrl: string; quota: { fetcher: string } } = {
+      baseUrl: 'https://bigmodel.cn',
+      quota: { fetcher: 'zhipu' },
+    }
+    const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(),
+      dataDir: tmpDir,
+      providerExtrasStore: extrasStore,
+      providerExists: () => true,
+      getProviderInfo: () => info,
+    })
+
+    // 旧类型（zhipu）fetch 在途：手动控制 resolve 时刻
+    let resolveOld!: (v: { ok: true; data: { label: string; wins: never[] } }) => void
+    mockFetchQuota.mockReturnValueOnce(
+      new Promise((r) => {
+        resolveOld = r as typeof resolveOld
+      }),
+    )
+    const oldFetchP = svc.fetch('p')
+    await new Promise((r) => setImmediate(r)) // 凭证解析含 await，等一拍再确认已进入 fetchQuota
+    expect(mockFetchQuota).toHaveBeenCalledTimes(1)
+
+    // 在途期间「保存并测试」换类型：persist 新 fetcher（生产 getProviderInfo 直读 providers.json，
+    // 测试里用可变 holder 模拟落盘后的可见性）+ 清旧缓存条目
+    info.quota = { fetcher: 'kimi-coding' }
+    const cfg = await svc.configure({ providerId: 'p', enabled: true, fetcher: 'kimi-coding' })
+    expect(cfg.ok).toBe(true)
+
+    // 新类型先落地一次（写入新行）——旧 fetch 迟到时才存在「被旧行覆盖」的对象
+    kimiMockFetchQuota.mockResolvedValueOnce({ ok: true, data: { label: 'kimi-new', wins: [] as never } })
+    await svc.refresh('p')
+    await new Promise((r) => setImmediate(r))
+    expect(svc.getCached('p').data?.label).toBe('kimi-new')
+
+    // 旧类型 fetch 迟到落地：守卫丢弃其全部写
+    resolveOld({ ok: true, data: { label: 'zhipu-stale', wins: [] as never } })
+    const oldResult = await oldFetchP
+
+    expect(svc.getCached('p').data?.label).toBe('kimi-new') // 旧行未回写（失守时会被 zhipu-stale 覆盖）
+    expect(svc.getCached('p').reason).toBeUndefined()
+    expect(oldResult.data?.label).toBe('kimi-new') // RPC 返回当前 getCached 真相，不是旧行
+    expect(oldResult.reason).toBeUndefined()
+
+    // 守卫同时不写 lastFetchTime（写点已迁到完成时刻）：新类型首个 hover fetch 不被压制。
+    // 若 lastFetchTime 仍写在发起处，这里 elapsed≈0 < 10s 会直接返回缓存、kimi fetcher 不再被调。
+    kimiMockFetchQuota.mockResolvedValueOnce({ ok: true, data: { label: 'kimi-second', wins: [] as never } })
+    const hover = await svc.fetch('p')
+    expect(kimiMockFetchQuota).toHaveBeenCalledTimes(2)
+    expect(hover.data?.label).toBe('kimi-second')
+  })
+})
+
+describe('QuotaService — U2⑦: 失败路径的节流不断（§7.5 清单 / 改动 4 出口覆盖）', () => {
+  it('fetchFailed 后 10s 内第二次 hover 不发真实请求（lastFetchTime 写点迁移后失败出口同等覆盖）', async () => {
+    // 防的回归：既有 throttle 测试只断言成功路径；lastFetchTime 写点从「doFetch 开头」
+    // 迁到「守卫后的完成时刻」时，若只放在成功出口旁，持续失败的 provider（凭证缺失 /
+    // unauthorized）每次 hover 都发真实请求并落一条 warn——请求与日志速率失去上界
+    // （表 A #13「每次一条 warn」的速率前提正是一次性开头写的覆盖全部出口）。
+    vi.useFakeTimers()
+    try {
+      const svc = new QuotaService({
+        providerCredentialResolver: makeResolver(),
+        dataDir: tmpDir,
+        getProviderInfo: () => ({ baseUrl: 'https://bigmodel.cn' }),
+      })
+      mockFetchQuota.mockResolvedValue({ ok: false, reason: 'unauthorized' })
+
+      const first = await svc.fetch('glm-id')
+      expect(first.data).toBeNull()
+      expect(first.reason).toBe('unauthorized')
+      expect(mockFetchQuota).toHaveBeenCalledTimes(1)
+
+      // 10s 窗口内第二次 hover：被节流，零真实请求（失败也节流）
+      await vi.advanceTimersByTimeAsync(5_000)
+      const second = await svc.fetch('glm-id')
+      expect(mockFetchQuota).toHaveBeenCalledTimes(1)
+      expect(second.data).toBeNull()
+      expect(second.reason).toBe('unauthorized')
+      expect(svc.getCached('glm-id').reason).toBe('unauthorized')
+
+      // 窗口过后恢复真实请求（节流不是永久压制）
+      await vi.advanceTimersByTimeAsync(6_000)
+      mockFetchQuota.mockResolvedValueOnce({ ok: true, data: { label: 'zhipu', wins: [] as never } })
+      const third = await svc.fetch('glm-id')
+      expect(mockFetchQuota).toHaveBeenCalledTimes(2)
+      expect(third.data?.label).toBe('zhipu')
+      expect(svc.getCached('glm-id').reason).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
