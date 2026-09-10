@@ -68,15 +68,3 @@ export {
   DETERMINISTIC_SCHEMA_FAILURE_PREFIX,
 } from "./output-collector.ts";
 export { replayJournalToSessionView } from "./read-fallback.ts";
-
-// ── M4 close 兜底扫描（prompt 头部键找回 sessionFile，replay 设计 §3.3 决策 4）──
-export {
-  locateSessionFileByPromptHead,
-  PROMPT_HEAD_CHARS,
-  HEADER_READ_BYTES,
-  MAX_SCAN_CANDIDATES,
-  SCAN_TIME_BUDGET_MS,
-  type SessionFileScanInput,
-  type SessionFileScanResult,
-  type SessionFileScanGiveUpReason,
-} from "./session-file-locator.ts";

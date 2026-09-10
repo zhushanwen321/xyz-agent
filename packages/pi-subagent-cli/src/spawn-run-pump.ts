@@ -1,9 +1,9 @@
 // src/spawn-run-pump.ts
 //
 // stdout pump + close 收尾 + session 身份回填（自 runSpawnOnce 行为等价提取的
-// 子进程生命周期接线面）。身份四路同源：header 行 / get_state 应答（响应行同步
-// 路径 + 握手 promise 兜底）/ LC-4 后缀反查 / M4 close 兜底扫描（prompt 头部键，
-// 见 session-file-locator.ts）——写入口收敛在 identity tracker。
+// 子进程生命周期接线面）。身份三路同源：header 行 / get_state 应答（响应行同步
+// 路径 + 握手 promise 兜底）/ LC-4 后缀反查——写入口收敛在 identity tracker；
+// close 收尾时三路全 miss = 应响亮报错的异常信号，warn 留痕不自动认领。
 
 import type { ChildProcess } from "node:child_process";
 
@@ -12,7 +12,6 @@ import { getLogger, pumpNdjsonLines } from "@zhushanwen/subagent-engine-sdk";
 import { unregisterActiveChild } from "./active-children.ts";
 import { toErrorMessage } from "./error-message.ts";
 import { extractGetStateFields, type GetStateResult } from "./get-state-handshake.ts";
-import { locateSessionFileByPromptHead, type SessionFileScanResult } from "./session-file-locator.ts";
 import {
   deriveSessionFilePath,
   findSessionFileByHeaderId,
@@ -123,31 +122,16 @@ export function createSessionIdentityTracker(
       if (sessionFile !== undefined || sessionId === undefined) return;
       const found = findSessionFileByHeaderId(sessionDir, sessionId);
       if (found === undefined) return;
-      // 走既有回填面（与 M2 回补 / M4 采纳同一条路）：sessionFile 落位（collectOutcome
-      // 的 outcome.sessionFile 生效）+ handleReady 通知宿主回写 record——chat 域的 run
-      // 在 agent_settled 已应答，close 兜底是 record 补 transcript 锚点的最后时机，
-      // 与 M4 采纳面保持一致（只补 sessionFile，sessionId 已知不再变更）。
+      // 走既有回填面（与 M2 回补同一条路）：sessionFile 落位（collectOutcome 的
+      // outcome.sessionFile 生效）+ handleReady 通知宿主回写 record——chat 域的 run
+      // 在 agent_settled 已应答，close 兜底是 record 补 transcript 锚点的最后时机
+      // （只补 sessionFile，sessionId 已知不再变更）。
       applyGetStateFields({ sessionFile: found });
     },
     clearStateListeners() {
       stateListeners.clear();
     },
   };
-}
-
-/**
- * M4 close 兜底扫描输入（prompt 头部键找回 sessionFile，设计决策 4）。
- *
- * 调用方（runSpawnOnce）在装配 pump deps 时提供；缺省 = 不扫描（LC-4 之后仍缺
- * sessionFile 时只 warn 留痕，无最后一道兜底）。
- */
-export interface SessionFileFallbackInput {
-  /** 任务 prompt 全文（扫描器内部截头部作匹配键）。 */
-  prompt: string;
-  /** run spawn 起始时刻（mtime 窗口下界，ms）。 */
-  spawnStartedAtMs: number;
-  /** 子进程 session 目录（--session-dir）。 */
-  sessionDir: string;
 }
 
 /** stdout pump 接线依赖（runSpawnOnce 装配后的每 run 依赖集）。 */
@@ -160,11 +144,6 @@ export interface StdoutPumpDeps {
   enqueueUi: (id: string, request: ExtensionUiRequest) => void;
   stderrTee: { close(): void } | undefined;
   runEnd: RunEndState;
-  /**
-   * M4 close 兜底扫描输入（设计决策 4）：LC-4 之后 sessionFile 仍缺时按 prompt
-   * 头部键扫 sessionDir。缺省 = 不扫描（保留既有调用面的可选性）。
-   */
-  sessionFileFallback?: SessionFileFallbackInput;
 }
 
 /** stdout 行消费（parseSpawnLine 分类 → 身份/事件/响应/UI 各通道）。 */
@@ -225,71 +204,26 @@ function normalizeExitCode(
 }
 
 /**
- * 放弃诊断里的候选数渲染（U-A4）：时间门/收集期异常打断时 candidateCount 只是
- * **部分计数**，窗口总数未知——必须写明，否则 warn 会让人误判「窗口内候选很少」。
+ * close 收尾的 sessionFile 仍缺响亮 warn：握手 / 迟到应答 / agent_end 补查 / LC-4
+ * 后缀反查全 miss 本身是应响亮报错的异常信号，不做启发式自动认领（prompt 头键
+ * 误配的代价——错 sessionFile 让冷续 resume 共写他 session 文件——高于收益，且旗舰
+ * 并发形态头部同质必然多命中、结构性地采不中）。warn 附人工排查指引，不静默。
  */
-export function formatCandidateCount(scan: Pick<SessionFileScanResult, "candidateCount" | "candidateTotalKnown">): string {
-  return scan.candidateTotalKnown
-    ? `candidates=${scan.candidateCount}`
-    : `candidates=${scan.candidateCount} so far (collection aborted: window total unknown)`;
-}
-
-/**
- * M4 close 兜底（设计决策 4）：LC-4 之后 sessionFile 仍缺时的第五路获取——按任务
- * prompt 头部键扫 sessionDir（mtime 窗口 + 首 64KB 头读 + 单命中才采纳）。
- *
- * 不抛错契约：扫描器自持 try-catch，此处再兜一层调用期异常（含 identity 回填链
- * onHandleReady → server 组帧抛出）——close finalizer 的 resolveExit 必达是硬约束
- * （设计 §3.4；先例 stderrTee.close 的 best-effort 注释）。采纳/放弃均 warn 留痕，
- * 采纳的 warn 附审计证据（候选文件名 + mtime + prompt 头哈希，不落 prompt 明文）。
- */
-function recoverSessionFileByPromptHead(deps: StdoutPumpDeps): void {
-  const { recordId, identity, sessionFileFallback } = deps;
+function warnSessionFileUnobtainable(deps: StdoutPumpDeps): void {
+  const { recordId, identity } = deps;
   if (identity.sessionFile !== undefined) return;
-  if (sessionFileFallback === undefined) {
-    logger.warn(
-      `[sessionfile] unobtainable for ${recordId} (M4 prompt-head scan not wired: StdoutPumpDeps.sessionFileFallback absent); ` +
-        `record finalized without transcript anchor. Recovery: archive the session file via session-reader by sessionDir mtime window, or re-dispatch the task.`,
-    );
-    return;
-  }
-  try {
-    const scan = locateSessionFileByPromptHead({
-      sessionDir: sessionFileFallback.sessionDir,
-      spawnStartedAtMs: sessionFileFallback.spawnStartedAtMs,
-      closeAtMs: Date.now(),
-      prompt: sessionFileFallback.prompt,
-    });
-    if (scan.sessionFile === undefined) {
-      const errorSuffix = scan.errorMessage !== undefined ? `, error=${scan.errorMessage}` : "";
-      logger.warn(
-        `[sessionfile] unobtainable for ${recordId} (M4 prompt-head scan gave up: reason=${scan.reason}, ` +
-          `${formatCandidateCount(scan)}, promptHeadHash=${scan.promptHeadHash}${errorSuffix}); ` +
-          `record finalized without transcript anchor. Recovery: archive the session file via session-reader by sessionDir mtime window, or re-dispatch the task.`,
-      );
-      return;
-    }
-    logger.warn(
-      `[sessionfile] recovered for ${recordId} by M4 prompt-head scan (single match): file=${scan.matchedFileName}, ` +
-        `mtime=${scan.matchedMtimeMs}, promptHeadHash=${scan.promptHeadHash} (audit evidence for mis-binding review)`,
-    );
-    // 回填走 identity 既有通路（与迟到 response / M2 回补同一条面）：sessionFile 落位
-    // → collectOutcome 的 outcome.sessionFile 生效；handleReady 通知 core 回写 record。
-    identity.applyGetStateFields({ sessionFile: scan.sessionFile });
-  } catch (err) {
-    logger.warn(
-      `[sessionfile] M4 prompt-head scan threw for ${recordId} (treated as miss, close finalizer continues)`,
-      { detail: toErrorMessage(err) },
-    );
-  }
+  logger.warn(
+    `[sessionfile] unobtainable for ${recordId} (all acquisition paths missed: spawn handshake, late response, agent_end backfill, LC-4 suffix lookup); ` +
+      `record finalized without transcript anchor. Recovery: 若需 transcript 取证，用 session-reader 列 sessionDir 内 mtime 窗口文件人工归档；若需完整结果，重派任务。`,
+  );
 }
 
 /**
- * close/exit 收尾：监听表清理 + tee 关闭 + 镜像上报 + LC-4 反查 + M4 兜底扫描 + 退出码折算 resolve。
+ * close/exit 收尾：监听表清理 + tee 关闭 + 镜像上报 + LC-4 反查 + sessionFile 仍缺 warn + 退出码折算 resolve。
  *
  * 必达契约（U-A5，G1 破口）：链上任一步抛错都不许跳过后续步骤，尤其不许跳过
  * `resolveExit`——`reportChildExited` 直调宿主回调（server 组帧链）且原先无包裹，
- * 宿主回调抛出即让 LC-4/M4 与 resolveExit 全部丢失 = run 永挂（G1 要根除的形态）。
+ * 宿主回调抛出即让 LC-4 兜底与 resolveExit 全部丢失 = run 永挂（G1 要根除的形态）。
  * 故每步独立 best-effort（单个步骤抛错只降级该步并 warn 留痕），resolveExit 放
  * finally 必达区；异常也不得逃出 close 监听器（逃出即宿主 uncaughtException）。
  */
@@ -317,8 +251,8 @@ function createCloseFinalizer(
       // 宿主回调（onChildStateChanged → server 组帧链）：抛错不得阻断下面的兜底链
       bestEffort("reportChildExited", () => reportChildExited(child, recordId, callbacks, code, signal));
       bestEffort("LC-4 suffix lookup", () => identity.fallbackSessionFileByHeaderId());
-      // M4（设计决策 4）：LC-4 之后仍缺 → prompt 头部键扫描（必达区内的最后一路兜底）
-      bestEffort("M4 prompt-head scan", () => recoverSessionFileByPromptHead(deps));
+      // LC-4 之后仍缺 = 全路 miss 的异常信号：响亮 warn + 人工排查指引（不自动认领）
+      bestEffort("sessionfile unobtainable warn", () => warnSessionFileUnobtainable(deps));
     } finally {
       // agent_end 主动终结的 close 是正常完成（exit code 0 口径）；其余信号退出
       // 保持 128+ 折算（异常路径判据）。resolveExit 无条件必达。

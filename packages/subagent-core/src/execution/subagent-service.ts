@@ -2289,8 +2289,8 @@ export class SubagentService {
     // 仅 chat 域接线——workflow 域 SAR 无运行中 record 读取方，刻意不做同类回填（防误扩展）。
     // [F1 修复] 幂等语义 = 按字段补缺，不是整条丢弃：已有值一律不被迟到值覆盖，缺失
     // 字段照常补上。「sessionId 先落、迟到 handleReady 只补 sessionFile」是本 replay
-    // 批次新打通且更有价值的形态（close 期 LC-4 后缀反查 / M4 prompt 键扫描采纳都会在
-    // sessionId 已知后补发 sessionFile）——旧守卫「有 sessionId 即整条 return」会把该
+    // 批次新打通且更有价值的形态（close 期 LC-4 后缀反查会在 sessionId 已知后补发
+    // sessionFile）——旧守卫「有 sessionId 即整条 return」会把该
     // 回填永久吞掉，令冷续 resume 锚点（anchor.sessionRef.sessionFile）与引擎 interact
     // 定位（chatHandleFor）拿不到 sessionFile。poolKey / journalPath 不参与补缺：
     // journalPath 权威归 journal writer（本闭包写入即定稿），poolKey 由 onPoolResolved

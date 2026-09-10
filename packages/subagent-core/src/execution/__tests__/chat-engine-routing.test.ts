@@ -685,7 +685,7 @@ describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
     zcode.runImpl = (task, ctx) => {
       ctx.onPoolResolved?.(POOL);
       // ① create 应答：只带 sessionId（本 replay 批次新打通的可达面——close 期 LC-4
-      // 后缀反查 / M4 prompt 键扫描采纳都在 sessionId 已知后才补发 sessionFile）。
+      // 后缀反查在 sessionId 已知后才补发 sessionFile）。
       ctx.onHandleReady?.({
         sessionRef: { dbPath: ".zcode/cli/db/db.sqlite", sessionId: "sess-live-1" },
         poolKey: POOL,

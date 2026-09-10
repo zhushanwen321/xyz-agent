@@ -47,7 +47,7 @@ const DOC_MODULE_MAP = {
   'docs/design/chat-stream-perf-architecture.impl-plan.md': ['packages/core/src/domain/chat', 'packages/core/src/domain/session', 'packages/renderer/src/composables/features/sidebar', 'packages/renderer/src/composables/features/trace'],
   'docs/design/zcode-session-db-isolation.md': ['packages/subagent-core/src/execution/engine', 'packages/zcode-subagent-cli/src', 'packages/shared/src/paths.ts', 'packages/runtime/src/infra/pi/pi-paths.ts'],
   'docs/design/zcode-session-db-isolation.impl-plan.md': ['packages/subagent-core/src/execution/engine', 'packages/zcode-subagent-cli/src', 'packages/shared/src/paths.ts', 'packages/runtime/src/infra/pi/pi-paths.ts'],
-  // replay port 设计（subagent 完成回收在新架构上的重放移植）：M1/M2/M4 落点在
+  // replay port 设计（subagent 完成回收在新架构上的重放移植）：M1/M2 落点在
   // pi-subagent-cli，M3 落点在 subagent-core execution（watchdog 复用 settled-watchdog
   // 原语）；MAX_ATTEMPTS 引执行面、CANCEL_SETTLE_GRACE_MS 引协议面、DOC_MODULE_MAP 引守卫
   // 本体——按文档实际引用符号的所在模块逐条登记（宁准勿滥）。

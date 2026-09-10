@@ -75,8 +75,7 @@ rl.on("line", (line) => {
   if (mode === "exit-3") { process.exit(3); return; }
   if (mode === "hang") { setInterval(() => {}, 1000); return; }
   if (mode === "id-only") {
-    // 落一个 <ts>_<sessionId>.jsonl（LC-4 后缀反查目标）；内容刻意不含任务 prompt
-    // ——M4 prompt 键扫不到，命中来源因此可归因到 LC-4。
+    // 落一个 <ts>_<sessionId>.jsonl（LC-4 后缀反查目标）
     fs.writeFileSync(
       join(sessionDirArg, "20260910T010101_" + SESSION_ID + ".jsonl"),
       JSON.stringify({ type: "message", id: "e1", parentId: null, timestamp: "2026-09-10T01:01:01.000Z",
@@ -286,7 +285,6 @@ describe("runSpawnOnce 集成（fake pi 子进程）", () => {
       expect(result.success).toBe(true);
       // 握手三轮应答都缺 sessionFile（S2 契约：视同未应答 → 3 轮耗尽 resolve 已收集字段）
       // → 身份只有 sessionId；sessionFile 只可能来自 close 期的 LC-4 后缀反查
-      //（文件内容不含任务 prompt → M4 prompt 键必然 miss，命中来源可归因）
       expect(result.sessionId).toBe("fake-sess-1");
       expect(result.sessionFile).toBe(lc4File);
       // handleReady 恰一次且携带 sessionFile：spawn 期应答无 sessionFile（不发通知），
