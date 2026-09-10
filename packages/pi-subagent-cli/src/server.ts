@@ -110,7 +110,7 @@ export class EngineProtocolServer {
     this.reverseTimeoutMs = opts.reverseTimeoutMs ?? REVERSE_TIMEOUT_DEFAULT_MS;
     this.dispatchTable = this.buildDispatchTable();
     // [v1.x] chat 会话反向通道发射面绑定（进程生命周期级——会话跨 run 存活）：
-    // roundLifecycle 三相位 + 续聊轮 recordId 键 streamDelta + 会话级 askUser。
+    // roundLifecycle 三终态 + active 轮内心跳（F3）+ 续聊轮 recordId 键 streamDelta + 会话级 askUser。
     this.engine.bindHostChannels?.({
       streamDelta: (p) => {
         void this.reverseRequestInternal("host/streamDelta", p);

@@ -3,8 +3,9 @@
 // [v1.x] chat 会话管理器（chat-domain 设计 §3.2 D1-A 引擎侧 / impl-plan W2）。
 //
 // chat 域轮次迁入引擎进程后的长驻会话状态面：spawn 长驻 pi rpc 子进程（agent_end 不
-// kill——对齐 core chatMode「进程长驻」语义）+ 轮次追踪 + host/roundLifecycle 三相位
-// 上报 + interact 控制面（message/close/cancel）。
+// kill——对齐 core chatMode「进程长驻」语义）+ 轮次追踪 + host/roundLifecycle 上报
+// （settled/idle/failed 三终态 + active 轮内心跳——F3）+ interact 控制面（message/
+// close/cancel）。
 //
 // HostChatRoundTicket 五字段过协议映射（设计 §3.2 D1「五字段过协议映射」逐字段落点）：
 //   - record   → run.params.chat.recordId（首轮）/ handle.sessionRef.recordId（interact
@@ -72,7 +73,7 @@ const CHAT_KILL_GRACE_MS = 30_000;
 export interface ChatHostChannels {
   /** host/streamDelta（续聊轮 recordId 键形态；首轮 runId 键经 server 既有 run wiring）。 */
   streamDelta(params: HostStreamDeltaParams): void;
-  /** host/roundLifecycle（三相位；键形态由会话状态决定：首轮 runId / 续聊 recordId）。 */
+  /** host/roundLifecycle（settled/idle/failed 终态 + active 轮内心跳；键形态由会话状态决定：首轮 runId / 续聊 recordId）。 */
   roundLifecycle(params: HostRoundLifecycleParams): void;
   /** host/askUser（chat 会话跨 run 存活，runId 固定为 spawn 轮的 runId——W3 消费注意）。 */
   askUser(runId: string, request: UiRequest): Promise<UiResponse>;
@@ -282,7 +283,11 @@ export class ChatSessionRegistry {
         this.accumulateUsage(session, event);
         // 首轮事件走 run 通知通道（runId 键）；续聊轮无 runId——协议面仅
         // streamDelta/roundLifecycle 承载（W1 契约），事件不外发（W3 消费注意）。
+        // 例外（F3）：activity 纯活性信号经轮内心跳相位（active）转发——续聊轮
+        // 「仅工具输出、零正文」时 delta 通道无帧，本相位是宿主中段守护的唯一
+        // 刷新源；不透传 opts.onEvent（chat 轮宿主没注册 onEvent 路由）。
         if (!session.firstRoundDone) opts.onEvent(event);
+        else if (event.type === "activity") this.emitActivePhase(session);
       },
       onHandleReady: (partial) => {
         const sf = partial.sessionRef.sessionFile;
@@ -550,6 +555,28 @@ export class ChatSessionRegistry {
     }
     for (const w of session.roundTerminalWaiters) w();
     session.roundTerminalWaiters.clear();
+  }
+
+  /**
+   * [F3] 轮内心跳相位发射（active——无载荷，非轮终）。续聊轮 activity 事件
+   * （translator 已 1s 节流，本函数不重复节流）的唯一出口。
+   *
+   * 不经 emitPhase（红线）：emitPhase 会逐一 resolve roundTerminalWaiters——cancel
+   * 的收敛等待（waitForRoundTerminal）判据 = settled/idle/failed 三终态相位，active
+   * 若经此发射，在途轮的长工具执行期会被 cancel 误判为轮终（提前收敛返回）。
+   *
+   * 唯一守卫 = superseded 抑制（与 emitPhase 同款判定，非独立实现）：同 recordId
+   * 冷续 run 已重建会话时，旧会话残留的 activity 不得以 recordId 键发射——否则旧
+   * 进程的心跳会刷新新轮的中段守护（core 把旧轮活跃误配到新轮）。
+   */
+  private emitActivePhase(session: ChatSession): void {
+    if (session.killReason === "superseded") {
+      logger.debug(
+        `[chat-session] suppress active phase for superseded session ${session.recordId} (record cold-resumed by a new run)`,
+      );
+      return;
+    }
+    this.channels?.roundLifecycle({ ...roundKeyOf(session), phase: "active" });
   }
 
   /** message_end 用量累加（轮内增量；interact 轮无 event 通知通道，用量经相位帧回填）。 */

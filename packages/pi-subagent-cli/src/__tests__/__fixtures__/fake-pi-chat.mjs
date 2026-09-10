@@ -6,7 +6,8 @@
 //   - get_state → 应答 sessionFile/sessionId；
 //   - prompt（首轮，无 streamingBehavior）→ text_delta + message_end usage +
 //     agent_end + agent_settled，长驻；
-//   - prompt（续聊，带 streamingBehavior）→ 同上事件流，长驻；
+//   - prompt（续聊，带 streamingBehavior）→ tool_execution_update（F3：经 translator
+//     → activity → 引擎发 recordId 键 active 心跳相位）+ 同上事件流，长驻；
 //   - SIGTERM → exit 0（pi trap 语义：先 flush 后退出）。
 
 import * as readline from "node:readline";
@@ -51,6 +52,11 @@ rl.on("line", (line) => {
   }
   if (cmd.type === "prompt") {
     const tag = cmd.streamingBehavior ?? "first";
+    if (cmd.streamingBehavior !== undefined) {
+      // [F3] 续聊轮先跑一段工具（tool_execution_update → translator 节流 → activity
+      // → chat-session 发 recordId 键 active 心跳相位——e2e 断言面）
+      write({ type: "tool_execution_update", toolCallId: "tc-e2e-activity", update: "progress" });
+    }
     write({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: `chat-${tag}-answer` } });
     write({ type: "message_end", message: { usage: { input: 42, output: 21 }, stopReason: "end" } });
     write({ type: "agent_end" });

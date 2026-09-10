@@ -182,14 +182,16 @@ export interface RoundKeyedByRecord {
 }
 
 /**
- * 轮次终态相位（事件即 record 回写载体——chat 域 record 处置由相位一一映射，
- * 设计 D2 裁决表 conversation 行：settled/idle 轮收口不终态、failed 标 failed）：
+ * 轮次终态相位 + 轮内心跳（事件即 record 回写载体——chat 域 record 处置由相位
+ * 一一映射，设计 D2 裁决表 conversation 行：settled/idle 轮收口不终态、failed 标
+ * failed）：
  *   - settled：轮收敛（输出完整）。消费点 = settled-watchdog disarm + D3 abort
  *     收敛判据（cancel 受理后等本事件，超 CANCEL_SETTLE_GRACE_MS 走杀链）；
  *   - idle：轮收口 + 会话进 idle 稳态（core 侧 doFinalizeRoundToIdle + idle 定时器
  *     锚点）。settled 与 idle 是两个锚点：watchdog 在 settled 即解除，idle 管置闲；
  *   - failed：轮异常终止（引擎自知失败，如 EPIPE 兜底耗尽）——error 如实上报，
- *     record 标 failed（与 run 域 AgentOutcome.error 的「失败收口」语义对齐）。
+ *     record 标 failed（与 run 域 AgentOutcome.error 的「失败收口」语义对齐）；
+ *   - active：轮内心跳（F3，非终态——见 RoundActivePhase，只刷守护不处置 record）。
  * usage 为本轮 message_end 增量（interact 续聊轮无 event 通知通道，用量经本帧回填）。
  * 不设 seq：stdio NDJSON 单连接有序 + 数据面应答确认，无重排/重放面（与 event
  * 通知的 seq 对照——后者镜像进程内事件流基线，本帧无基线可镜像）。
@@ -213,17 +215,32 @@ export interface RoundFailedPhase {
   anchor?: ResumeAnchor;
 }
 
-/** 相位联合（消费侧 switch(phase) 判别用）。 */
-export type RoundLifecyclePhase = RoundSettledPhase | RoundIdlePhase | RoundFailedPhase;
+/**
+ * 轮内心跳相位（F3 清账——chat 续聊轮工具执行期活性失明修复）：无载荷（无文本、
+ * 无 usage），仅承诺「轮进行中引擎仍活跃」。发射面 = 续聊轮的 `activity` 事件
+ * （translator 已 1s 节流，到达本相位天然 ≤1/s）；消费面 = 宿主中段无进展守护刷新
+ * （refreshFromProtocolEvent）——**非轮终相位**，不得 resolve 任何轮终等待体
+ * （引擎侧 cancel 的收敛判据 = settled/idle/failed 三终态，见 pi chat-session
+ * emitPhase；active 必须经独立发射函数旁路等待体 resolve）。首轮不需要本相位
+ * （runId 键 ctx.onEvent 事件行已是刷新面）。
+ */
+export interface RoundActivePhase {
+  phase: "active";
+}
 
-/** host/roundLifecycle 载荷：关联键（run|record）× 相位（settled|idle|failed）。 */
+/** 相位联合（消费侧 switch(phase) 判别用；active = 轮内心跳，非终态）。 */
+export type RoundLifecyclePhase = RoundSettledPhase | RoundIdlePhase | RoundFailedPhase | RoundActivePhase;
+
+/** host/roundLifecycle 载荷：关联键（run|record）× 相位（settled|idle|failed|active）。 */
 export type HostRoundLifecycleParams =
   | (RoundKeyedByRun & RoundSettledPhase)
   | (RoundKeyedByRun & RoundIdlePhase)
   | (RoundKeyedByRun & RoundFailedPhase)
+  | (RoundKeyedByRun & RoundActivePhase)
   | (RoundKeyedByRecord & RoundSettledPhase)
   | (RoundKeyedByRecord & RoundIdlePhase)
-  | (RoundKeyedByRecord & RoundFailedPhase);
+  | (RoundKeyedByRecord & RoundFailedPhase)
+  | (RoundKeyedByRecord & RoundActivePhase);
 
 /**
  * roundLifecycle 载荷结构判定：关联键互斥 + phase 词表 + 各相位专属形状
@@ -236,7 +253,8 @@ export function isHostRoundLifecycleParams(value: unknown): value is HostRoundLi
   const hasRunId = typeof v.runId === "string";
   const hasRecordId = typeof v.recordId === "string";
   if (hasRunId === hasRecordId) return false;
-  if (v.phase === "settled" || v.phase === "idle") return true;
+  // active = 轮内心跳，无载荷（无专属形状可校验）
+  if (v.phase === "settled" || v.phase === "idle" || v.phase === "active") return true;
   if (v.phase !== "failed") return false;
   const err = v.error;
   return (

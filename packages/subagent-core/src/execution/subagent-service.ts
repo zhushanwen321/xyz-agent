@@ -2780,7 +2780,10 @@ export class SubagentService {
      *     （引擎不实现 idle 定时器——core arm，W2 交接契约）；
    *   - failed：轮异常终止（engine_round_aborted / engine_round_crashed /
    *     engine_round_epipe_exhausted）——record 如实标 failed（禁 completed 谎报），
-   *     chatMode 按 MF-6 回退可恢复（onChatRoundFailed）。
+   *     chatMode 按 MF-6 回退可恢复（onChatRoundFailed）；
+   *   - active：轮内心跳（F3）——只刷新中段无进展守护（refreshFromProtocolEvent，
+   *     与 streamDelta 路同款），不处置 record。续聊轮「仅工具输出、零正文」时
+   *     delta 通道无帧，active 是该形态下守护的唯一刷新源。
    */
   private handleChatRoundPhase(record: ExecutionRecord, phase: HostRoundLifecycleParams): void {
     switch (phase.phase) {
@@ -2796,6 +2799,11 @@ export class SubagentService {
         break;
       case "failed":
         this.onChatRoundFailed(record, phase.error);
+        break;
+      case "active":
+        // 轮内心跳（F3）：与 streamDelta 路同款刷新——续聊轮「仅工具输出、零正文」
+        // 时 delta 通道无帧，active 是中段守护的唯一刷新源。不处置 record（非终态）。
+        refreshFromProtocolEvent(record.id);
         break;
     }
   }

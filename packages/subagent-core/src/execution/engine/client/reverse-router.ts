@@ -193,7 +193,7 @@ async function dispatchStreamDelta(deps: ReverseRouterDeps, p: HostStreamDeltaPa
 }
 
 async function dispatchRoundLifecycle(deps: ReverseRouterDeps, p: HostRoundLifecycleParams): Promise<void> {
-  // [W3 v1.x] 第 9 反向通道消费（settled/idle/failed 三相位 × runId|recordId 键）。
+  // [W3 v1.x] 第 9 反向通道消费（settled/idle/failed 三终态 + active 轮内心跳（F3）× runId|recordId 键）。
   // 相位语义（arm/disarm/交棒/失败分诊）归宿主编排层——本路由只做键分发，
   // 消费方 = RunContext.onRoundLifecycle（首轮 runId 键）与 registerChatRoundRoute
   // 路由（续聊轮 recordId 键）。载荷形状自证（isHostRoundLifecycleParams）归

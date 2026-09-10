@@ -2,14 +2,16 @@
 //
 // [v1.x] chat 会话管理器单元测试（fake spawn executor + fake ChildProcess——不 spawn
 // 真实子进程）。覆盖验收面：
-//   - 轮次终态事件三相位帧（settled/idle/failed）与关联键滚动（首轮 runId → 续聊 recordId）；
+//   - 轮次终态三相位帧（settled/idle/failed）+ active 轮内心跳（F3）与关联键滚动（首轮 runId → 续聊 recordId）；
 //   - 续聊轮 recordId 键 streamDelta；
 //   - cancel 收敛语义（D3 协议层）：受理 SIGTERM → 等轮终相位 → 超 CANCEL_SETTLE_GRACE_MS
 //     杀链升级（fake timers 驱动）；
 //   - close force/优雅分流、EPIPE 兜底耗尽 → failed 相位、子进程崩溃 → failed 相位、
 //     冷续 resume 参数传递；
 //   - 相位竞态边界：superseded 旧会话的相位抑制与注册表隔离（同 recordId 冷续串扰）、
-//     settled→idle 间隙投递下新轮 settled 相位不被 idle 边界吞掉。
+//     settled→idle 间隙投递下新轮 settled 相位不被 idle 边界吞掉；
+//   - [F3] 续聊轮轮内心跳：activity 事件 → active 相位帧（recordId 键、无载荷、
+//     不 resolve 轮终等待体）；superseded 抑制；首轮零变化（activity 仍走 onEvent）。
 
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
@@ -20,6 +22,7 @@ import type {
   HostRoundLifecycleParams,
   HostStreamDeltaParams,
 } from "@zhushanwen/subagent-engine-sdk";
+import { CANCEL_SETTLE_GRACE_MS } from "@zhushanwen/subagent-engine-sdk";
 
 import {
   ChatSessionRegistry,
@@ -643,5 +646,117 @@ describe("ChatSessionRegistry：相位竞态边界（同 recordId 冷续串扰 /
     cap.callbacks.onChatAgentSettled?.();
     expect(h.lifecycles).toHaveLength(2);
     expect(h.lifecycles[1]).toMatchObject({ recordId: "rec-s6", phase: "idle" });
+  });
+});
+
+describe("ChatSessionRegistry：[F3] 续聊轮轮内心跳（activity → active 相位）", () => {
+  let h: ReturnType<typeof makeHarness>;
+  beforeEach(async () => {
+    h = makeHarness();
+    const runP = h.registry.startRound(
+      { recordId: "rec-1", task: "hi", agentName: "a", model: "p/m", sessionDir: "/tmp/s", cwd: "/tmp" },
+      { runId: "run-1", onEvent: () => undefined, stream: { onDelta: () => undefined } },
+    );
+    await driveRoundToIdle(h.captured[0]);
+    await runP;
+    h.lifecycles.length = 0;
+    // 续聊轮进行中（本轮工具执行期——activity 信号的触发窗）
+    h.registry.deliverMessage("rec-1", "long tool round", false);
+  });
+  afterEach(() => {
+    killAllActiveChildren();
+    resetAllEpipeFailures();
+    vi.useRealTimers();
+  });
+
+  it("续聊轮 activity 事件 → active 相位帧（recordId 键、无载荷）；其他事件仍吞掉", () => {
+    const cap = h.captured[0];
+    cap.callbacks.onEvent?.({ type: "activity" });
+    cap.callbacks.onEvent?.({ type: "activity" });
+    // 节流归 translator（到达本层的 activity 已 ≤1/s）——每事件一帧
+    expect(h.lifecycles).toEqual([
+      { recordId: "rec-1", phase: "active" },
+      { recordId: "rec-1", phase: "active" },
+    ]);
+
+    // 其余事件维持吞掉（行为面最小化）：message 记账等不外发任何帧
+    cap.callbacks.onEvent?.({ type: "message_end", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } });
+    expect(h.lifecycles).toHaveLength(2);
+  });
+
+  it("首轮零变化：首轮 activity 走 onEvent 出口（run 通知通道），不产生 active 相位帧", async () => {
+    const events: unknown[] = [];
+    const first = h.registry.startRound(
+      { recordId: "rec-f3f", task: "hi", agentName: "a", model: "p/m", sessionDir: "/tmp/s", cwd: "/tmp" },
+      { runId: "run-f3f", onEvent: (e) => events.push(e) },
+    );
+    const cap = h.captured[1];
+    cap.callbacks.onHandleReady?.({ sessionRef: { sessionId: "s", sessionFile: "/tmp/sess.jsonl" }, poolKey: "shared" });
+    // 首轮进行中（firstRoundDone=false）：activity 是普通事件行——runId 键通知通道
+    cap.callbacks.onEvent?.({ type: "activity" });
+    expect(events).toEqual([{ type: "activity" }]);
+    expect(h.lifecycles).toHaveLength(0); // 无 active 帧（首轮守护刷新面 = ctx.onEvent）
+
+    await driveRoundToIdle(cap);
+    await first;
+    expect(h.lifecycles.filter((f) => f.phase === "active")).toHaveLength(0);
+  });
+
+  it("[红线] active 发射不 resolve 轮终等待体：cancel 在途时 activity 到达不提前收敛，超时走杀链升级", async () => {
+    vi.useFakeTimers();
+    const cap = h.captured[0];
+    // SIGTERM 无效（模拟长工具执行期不受中断影响、子进程继续跑）——cancel 进入
+    // 轮终等待窗（同步收口路径测不出「等待体在册」期间的行为）
+    h.children[0].ignoreSigterm = true;
+    const cancelP = h.registry.cancel("rec-1");
+    let returned = false;
+    void cancelP.then(() => {
+      returned = true;
+    });
+
+    // 工具执行期 activity 心跳到达（cancel 的轮终等待体在册期间）
+    cap.callbacks.onEvent?.({ type: "activity" });
+    expect(h.lifecycles.some((f) => f.phase === "active")).toBe(true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    // 修复红线验证：active 帧已发射但轮终等待体未被 resolve——cancel 不误判轮终
+    // （若 active 经 emitPhase 发射（逐一 resolve roundTerminalWaiters），此处
+    // cancel 已被 activity 提前收敛返回）
+    expect(returned).toBe(false);
+    expect(h.children[0].kills).toEqual(["SIGTERM"]); // 未提前收敛 → 无杀链升级
+
+    // 无真轮终相位：收敛宽限耗尽 → 超时 resolve(false) → 杀链升级（SIGTERM 重发 →
+    // 30s grace → SIGKILL）→ 收敛返回（与存量升级用例同时序）
+    await vi.advanceTimersByTimeAsync(CANCEL_SETTLE_GRACE_MS);
+    expect(h.children[0].kills).toContain("SIGTERM");
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(h.children[0].kills.some((k) => k.startsWith("SIGKILL"))).toBe(true);
+    const r = await cancelP;
+    expect(r).toEqual({ ok: true, delivered: true });
+    expect(returned).toBe(true);
+  });
+
+  it("superseded 旧会话的 activity 抑制：残留进程的心跳不得以 recordId 键刷新新轮", async () => {
+    // 旧 child 忽略 SIGTERM（冷续 stale 防御收割后残留进程仍在跑、事件仍流入旧会话）
+    h.children[0].ignoreSigterm = true;
+    const second = h.registry.startRound(
+      {
+        recordId: "rec-1",
+        task: "cold resume",
+        agentName: "a",
+        model: "p/m",
+        sessionDir: "/tmp/s",
+        cwd: "/tmp",
+        resumeSessionFile: "/tmp/sess-1.jsonl",
+      },
+      { runId: "run-1b", onEvent: () => undefined },
+    );
+    // 旧会话（killReason=superseded）的迟到 activity：抑制发射
+    h.captured[0].callbacks.onEvent?.({ type: "activity" });
+    expect(h.lifecycles).toHaveLength(0);
+
+    // 新会话正常面不受影响：首轮 settled/idle 相位照常
+    await driveRoundToIdle(h.captured[1]);
+    await second;
+    expect(h.lifecycles.map((f) => f.phase)).toEqual(["settled", "idle"]);
   });
 });

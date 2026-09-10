@@ -29,6 +29,7 @@ import {
   type HostRoundLifecycleParams,
   type HostStreamDeltaParams,
   type ResumeAnchor,
+  type RoundActivePhase,
   type RunChatParams,
   type RunParams,
 } from "../protocol/index.ts";
@@ -44,7 +45,7 @@ describe("host/roundLifecycle 载荷（轮次终态 + record 回写 + resume 锚
     poolKey: "shared",
   };
 
-  it("关联键 × 相位全六形态可构造（run 域轮 = runId；interact 续聊轮 = recordId——D1-A 裁定）", () => {
+  it("关联键 × 相位全形态可构造（run 域轮 = runId；interact 续聊轮 = recordId——D1-A 裁定）", () => {
     const frames: HostRoundLifecycleParams[] = [
       { runId: "run-1", phase: "settled", usage },
       { runId: "run-1", phase: "idle", anchor },
@@ -53,6 +54,7 @@ describe("host/roundLifecycle 载荷（轮次终态 + record 回写 + resume 锚
         phase: "failed",
         error: { code: "engine_run_failed", message: "boom", recovery: "retry" },
       },
+      { runId: "run-1", phase: "active" },
       { recordId: "rec-1", phase: "settled" },
       { recordId: "rec-1", phase: "idle", usage, anchor },
       {
@@ -61,11 +63,23 @@ describe("host/roundLifecycle 载荷（轮次终态 + record 回写 + resume 锚
         error: { code: "engine_run_failed", message: "EPIPE fallback exhausted", recovery: "retry" },
         anchor,
       },
+      { recordId: "rec-1", phase: "active" },
     ];
-    expect(frames).toHaveLength(6);
+    expect(frames).toHaveLength(8);
     for (const frame of frames) {
       expect(isHostRoundLifecycleParams(frame)).toBe(true);
     }
+  });
+
+  it("active 相位 = 轮内心跳（F3）：无载荷（无文本、无 usage），两键形态均过守卫", () => {
+    const runKeyed: HostRoundLifecycleParams = { runId: "run-1", phase: "active" };
+    const recordKeyed: HostRoundLifecycleParams = { recordId: "rec-1", phase: "active" };
+    expect(isHostRoundLifecycleParams(runKeyed)).toBe(true);
+    expect(isHostRoundLifecycleParams(recordKeyed)).toBe(true);
+    // 字段面：相位本体只有 phase（无 usage/anchor/error 载荷位——类型层证明）
+    type _ActiveKeys = AssertMutuallyAssignable<keyof RoundActivePhase, "phase">;
+    const check: _ActiveKeys = true;
+    expect(check).toBe(true);
   });
 
   it("结构守卫负向：无关联键 / 双键 / 未知相位 / failed 缺 error 形状全拒", () => {

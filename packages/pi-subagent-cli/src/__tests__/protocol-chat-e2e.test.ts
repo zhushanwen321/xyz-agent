@@ -191,12 +191,17 @@ describe("pi-subagent-cli chat 会话形态 e2e（bin 真机 NDJSON 往返）", 
     expect(runResult.handle.sessionRef.sessionFile).toBe(sessionFile);
     expect(runResult.outcome.content).toContain("chat-first-answer");
 
-    // ② 续聊 interact message：recordId 键 delta + settled/idle
+    // ② 续聊 interact message：recordId 键 active 心跳（工具执行期）+ delta + settled/idle
     const msg = await host.request("interact", {
       handle: { ...handle, sessionRef: { recordId: "rec-chat-1", sessionFile } },
       action: { kind: "message", payload: "next" },
     });
     expect(msg.result).toEqual({ ok: true, delivered: true });
+    // [F3] fake 先发 tool_execution_update → translator 节流 → activity → active 相位
+    //（recordId 键、无载荷——续聊轮「仅工具输出、零正文」形态的中段守护刷新面）
+    const activeFrame = await host.waitForReverse("host/roundLifecycle");
+    expect(activeFrame.params).toEqual({ recordId: "rec-chat-1", phase: "active" });
+    host.replyReverse(String(activeFrame.id), { ok: true });
     const followUpDelta = await host.waitForReverse("host/streamDelta");
     expect(followUpDelta.params).toEqual({ recordId: "rec-chat-1", delta: "chat-followUp-answer" });
     host.replyReverse(String(followUpDelta.id), { ok: true });

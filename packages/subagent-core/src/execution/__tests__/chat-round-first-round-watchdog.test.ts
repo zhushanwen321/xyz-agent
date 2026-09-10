@@ -13,6 +13,10 @@
 // （closeChatIdle / closeAfterRoundSettled / finalizeRecord）不注销 → 路由闭包持
 // record/stream/守护引用泄漏。修复 = doFinalizeRecord 的 onFinalized 钩子单一汇聚点。
 //
+// [F3 修复] 续聊轮 active 轮内心跳相位消费：handleChatRoundPhase 增 case "active"
+// → refreshFromProtocolEvent（与 streamDelta 路同款刷新）。缺口：续聊轮「仅工具
+// 输出、零正文」时 delta 通道无帧，>30min 中段守护误杀（工具执行期活性失明）。
+//
 // 替身形态与 subagent-service-recovery-bounds.test.ts 同源（fake-engine-port 协议 seam）。
 
 import * as fs from "node:fs";
@@ -251,5 +255,83 @@ describe("[F-5] chat 轮路由终态化注销（doFinalizeRecord onFinalized 汇
 
     expect(fake.chatRouteUnregisters).toContain(record.id);
     expect(record.status).toBe("closed");
+  });
+});
+
+describe("[F3] 续聊轮 active 轮内心跳相位（handleChatRoundPhase case active → 守护刷新）", () => {
+  let agentDir: string;
+  let service: SubagentService;
+  let store: RecordStore;
+  let fake: FakePiEnginePort;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    killChildSpy.mockClear();
+    ({ agentDir, service, store, fake } = setup());
+    // 热路径受理形态：interact message ok（deliverChatMessage 的续聊轮分支）
+    fake.interactMessageResult = { ok: true, delivered: true };
+  });
+
+  afterEach(() => {
+    service.dispose();
+    clearEngines();
+    vi.useRealTimers();
+    _resetLifecycleState();
+    _resetSettledWatchdogsForTest();
+    _resetCoreSpawnedChildrenMirrorForTest();
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+  });
+
+  /** 热路径续聊轮就位：record 注册 + deliverChatMessage（路由注册 + 中段守护 armed）。 */
+  async function armHotPathRound(recordId: string): Promise<ExecutionRecord> {
+    const record = makeChatRecord(recordId);
+    record.sessionFile = path.join(agentDir, `${recordId}-session.jsonl`);
+    fs.writeFileSync(record.sessionFile, "{}\n", "utf-8");
+    store.register(record);
+    await service.chatActions.deliverChatMessage(record, "long tool round", false);
+    expect(hasSettledWatchdog(record.id)).toBe(true);
+    expect(getSettledWatchdogPhase(record.id)).toBe("mid-round");
+    return record;
+  }
+
+  it("recordId 键 active 相位刷新中段静默计时：半窗 + active + 半窗不触发，再满窗才触发", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const record = await armHotPathRound("sa-active-hb");
+
+    await vi.advanceTimersByTimeAsync(SETTLED_MID_ROUND_NO_PROGRESS_MS / 2);
+    // 续聊轮「仅工具输出、零正文」形态：delta 通道无帧，唯一刷新源 = active 心跳
+    fake.emitRecordLifecycle(record.id, { phase: "active" });
+    await vi.advanceTimersByTimeAsync(SETTLED_MID_ROUND_NO_PROGRESS_MS / 2 + 1);
+    // 半窗已过但 active 刷新过——未到期（修复前无刷新源，此处已 kill）
+    expect(killChildSpy).not.toHaveBeenCalled();
+    expect(hasSettledWatchdog(record.id)).toBe(true);
+
+    // active 之后无新帧：再满整窗才触发
+    await vi.advanceTimersByTimeAsync(SETTLED_MID_ROUND_NO_PROGRESS_MS + 1);
+    expect(killChildSpy).toHaveBeenCalledWith(record.id, "settled watchdog (hot path)");
+  });
+
+  it("active 非轮终相位：不交棒不置闲（phase 保持 mid-round、record 状态不动）", async () => {
+    const record = await armHotPathRound("sa-active-nonterminal");
+    fake.emitRecordLifecycle(record.id, { phase: "active" });
+    // 对照 settled（交棒收尾段）/idle（disarm + 挂 idle timer）：active 两者皆不触发
+    expect(getSettledWatchdogPhase(record.id)).toBe("mid-round");
+    expect(record.status).toBe("running");
+    expect(killChildSpy).not.toHaveBeenCalled();
+  });
+
+  it("未知相位静默忽略（前向兼容：不 throw、不刷新、不处置 record）", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const record = await armHotPathRound("sa-unknown-phase");
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(() => {
+      // 未来协议相位（运行时帧不受本地类型联合约束——switch 无 default 静默忽略）
+      fake.emitRecordLifecycle(record.id, { phase: "queued" });
+    }).not.toThrow();
+    expect(getSettledWatchdogPhase(record.id)).toBe("mid-round");
+    expect(record.status).toBe("running");
+    // 未刷新：1s 已过但静默窗仍从 arm 起算——active/未知相位之外无处置面
+    expect(killChildSpy).not.toHaveBeenCalled();
   });
 });

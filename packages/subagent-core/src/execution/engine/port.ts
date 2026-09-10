@@ -137,7 +137,7 @@ export interface RunContext {
   chat?: { recordId: string; resume?: ResumeAnchor };
   /**
    * [W3 v1.x] host/roundLifecycle 轮次生命周期消费口（第 9 反向通道，settled/idle/
-   * failed 三相位；关联键 runId|recordId 互斥）。首轮（run 会话形态）经 run 作用域
+   * failed 三终态 + active 轮内心跳（F3）；关联键 runId|recordId 互斥）。首轮（run 会话形态）经 run 作用域
    * 路由到达（runId 键）；续聊轮（interact）无 runId——经 EnginePort
    * registerChatRoundRoute 的 recordId 键路由到达（见下）。消费语义（arm/disarm/
    * settled 交棒）归宿主编排层（settled-watchdog 协议事件面接线，W4 三入口）。
