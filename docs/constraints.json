@@ -2038,6 +2038,7 @@
     "extensions/universal/plan/**",
     "extensions/universal/scheduler/**",
     "extensions/universal/structured-output/**",
+    "extensions/universal/subagent-workflow/**",
     "docs/pi-semantics.json",
     "docs/design/crash-resilience.md"
    ],
