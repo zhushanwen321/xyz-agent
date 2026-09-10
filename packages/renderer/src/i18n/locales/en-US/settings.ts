@@ -451,6 +451,8 @@ export default {
     quotaFetchFailParse: 'Quota query failed: could not parse the quota response. Retry later; if it persists, update the app',
     // not_configured (D1-3, timeout-audit-hygiene-batch): workspace missing — point to config, not credentials
     quotaFetchFailNotConfigured: 'Quota query failed: no Workspace configured. Open the opencode.ai console, copy the workspace page URL from the browser address bar, paste it into "Workspace URL" above, then retry',
+    // no-credential (D6, coding-plan-quota-config-ux §5.2 path 4): no credential resolvable in the chain — point to both fillable locations; cookie variant rendered by CodingPlanSection per authKinds (U5)
+    quotaFetchFailNoCredential: 'Quota query failed: no usable credential found. Fill in the API Key in the "Credentials" section above, or enter a dedicated API Key here',
     // Workspace URL (resource-scoped fetcher e.g. opencode-go, D1-1)
     quotaWorkspaceLabel: 'Workspace URL',
     quotaWorkspaceHint: '(required for opencode)',

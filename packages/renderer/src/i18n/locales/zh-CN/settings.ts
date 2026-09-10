@@ -451,6 +451,8 @@ export default {
     quotaFetchFailParse: '额度查询失败：额度响应解析失败，请稍后重试；若持续出现请更新应用',
     // not_configured（D1-3，timeout-audit-hygiene-batch）：workspace 未配置——指引去配置而非检查凭证
     quotaFetchFailNotConfigured: '额度查询失败：未配置 Workspace。打开 opencode.ai 控制台，从浏览器地址栏复制 workspace 页 URL，填入上方「Workspace 地址」后重试',
+    // no-credential（D6，coding-plan-quota-config-ux §5.2 路径 4）：凭证链解析不到任何凭证——文案指向两个可填位置；cookie 变体由 CodingPlanSection 按 authKinds 分支渲染（U5）
+    quotaFetchFailNoCredential: '额度查询失败：未找到可用凭证。请在上方「凭据」区填写 API Key，或在此填写专属 API Key',
     // Workspace 地址（资源维度 fetcher 如 opencode-go，D1-1）
     quotaWorkspaceLabel: 'Workspace 地址',
     quotaWorkspaceHint: '（opencode 必填）',

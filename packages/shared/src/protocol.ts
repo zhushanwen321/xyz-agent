@@ -27,6 +27,8 @@ import type { ImportCandidatesRequest, ImportCandidatesReply, ImportRequest, Imp
 import type { UsageStatsResult } from './usage-stats'
 // composer-gen-stats（docs/design/composer-gen-stats.md §3.4）：生成指标帧形状 SSOT（本文件仅登记 type→payload 映射）
 import type { GenStatsFrame } from './gen-stats'
+// quota.configure payload 形状 SSOT 引用（coding-plan-quota-config-ux §7.1 契约收敛）
+import type { QuotaConfigurePayload } from './quota-types'
 
 // ── Client → Runtime message types
 
@@ -578,11 +580,12 @@ export interface ClientMessageMap {
   'quota.fetch': { providerId: string }
   'quota.getCached': { providerId: string }
   /**
-   * quota.configure：Coding Plan 额度查询配置。
+   * quota.configure：Coding Plan 额度查询配置。payload 形状 SSOT = QuotaConfigurePayload
+   * （quota-types.ts，coding-plan-quota-config-ux §7.1——四处共用单一类型，加字段零改动）。
    * workspace（D1-1）：资源维度 fetcher（opencode）的 workspace 地址——完整 URL 或裸 wrk_ id
    * 均可（runtime 归一化存储）；空字符串 = 清除（恢复未配置态，查询报 not_configured）。
    */
-  'quota.configure': { providerId: string; enabled: boolean; cookie?: string; fetcher?: string; apiKey?: string; workspace?: string }
+  'quota.configure': QuotaConfigurePayload
   /** 强制刷新额度（绕过 throttle，Settings 测试查询用）。 */
   'quota.refresh': { providerId: string }
   /** usage.getStats：拉取用量统计数据（无参数）。 */

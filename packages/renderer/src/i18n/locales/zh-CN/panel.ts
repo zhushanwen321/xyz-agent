@@ -151,6 +151,7 @@ export default {
     quotaFailNoSubscription: '未检测到有效订阅',
     quotaFailParse: '额度响应解析失败',
     quotaFailNotConfigured: '未配置 Workspace，请在设置中填写后重试',
+    quotaFailNoCredential: '未找到可用凭证，请到设置页检查额度查询配置',
     window5h: '5h',
     windowWeek: '本周',
     windowMonth: '本月',

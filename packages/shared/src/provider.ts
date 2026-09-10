@@ -8,6 +8,8 @@
  * 反序列化边界（settings.json `defaultProvider` / auth.json key / builtin-providers.json `id`）
  * 从磁盘读出是裸 string，用 `as ProviderId` 提升（design D5，先不加运行时 guard，P5 审查清单）。
  */
+import type { QuotaCredentialSource } from './quota-types'
+
 declare const __providerIdBrand: unique symbol
 export type ProviderId = string & { readonly [__providerIdBrand]: true }
 
@@ -204,6 +206,11 @@ export interface ProviderInfo {
      * 未设置/false = 复用 ProviderInfo.apiKey（provider 的 API Key）。
      */
     apiKeySet?: boolean
+    /**
+     * 凭证来源（D3，coding-plan-quota-config-ux §6.4）。未设置 = 按 resolveQuotaCredentialSource
+     * 推断（兼容历史数据：apiKeySet=true → exclusive，否则 provider）。
+     */
+    credentialSource?: QuotaCredentialSource
     /**
      * 资源维度 fetcher（opencode）的 workspace 归一化地址（规范 URL，非凭证可明文回显）。
      * 未配置 = 查询返回 not_configured（D1-3，timeout-audit-hygiene-batch）。

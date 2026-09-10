@@ -151,6 +151,7 @@ export default {
     quotaFailNoSubscription: 'no active subscription detected',
     quotaFailParse: 'failed to parse quota response',
     quotaFailNotConfigured: 'no Workspace configured — set it in Settings and retry',
+    quotaFailNoCredential: 'no usable credential found — check the quota query configuration in Settings',
     window5h: '5h',
     windowWeek: 'This week',
     windowMonth: 'This month',
