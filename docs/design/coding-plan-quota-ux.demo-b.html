@@ -245,6 +245,10 @@
       + '<li><b>切换类型：草稿清空 + 已存凭证按「归属」失效</b>（不删数据，切回即恢复）—— MiMo 的 cookie 拿到 opencode 上必然无效，留着只会让齐备性误放行</li>'
       + '<li><b>开关纯配置位</b>：随时可拨，不发任何请求</li>'
       + '</ul>'
+      + '<p style="margin-top:8px;color:var(--warn)"><b>原型与实现的差异</b>：这里用的是原生 <code>&lt;select&gt;</code>（重复点选同一项不触发 change）；'
+      + '真实实现用 reka <code>Select</code>，它在<b>点选当前已选项时也会 emit</b>。所以「切换类型」的判断在实现里<b>必须落在值上</b>'
+      + '（<code>if (newId === fetcherId.value) return</code>），不能挂在事件上 —— 否则用户点一下当前类型就会丢掉正在输入的 Cookie。'
+      + '详见设计文档 §7.2 细节 2 与验收场景 S8。</p>'
       + (t ? '<p style="margin-top:8px">当前：<b>' + Q.PRESETS[t].label + '</b>，齐备性 '
         + (readiness(state).ready ? '<b style="color:var(--success)">齐备</b>' : '<b style="color:var(--warn)">未齐备</b>')
         + (readiness(state).missing.length ? '（还缺 ' + readiness(state).missing.join('、') + '）' : '') + '</p>' : '')

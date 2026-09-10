@@ -359,6 +359,14 @@ api-key 类加专属 Key → 加一个保存按钮；cookie 类 → 再加一个
 
 👉 **恢复动作**：文案直接指向两个可执行的位置。这条文案就是本次新增的 `no-credential`，替代了今天那句什么都说不清的「查询失败，请检查凭证」。
 
+**cookie 类平台需要一份变体**：cookie 类 provider 同样会出现 `no-credential`（`cookieSet=true` 但 secrets 文件缺失的幽灵态 —— §7.3 改动 2 登记的窗口）。此时 api-key 语境的两个位置对用户都不存在，文案会把他指向不存在的动作。按 `authKinds.includes('cookie')` 分支：
+
+```
+✗ 额度查询失败：未找到可用凭证。请在下方重新粘贴该平台的 Cookie 后重试
+```
+
+先例：`CodingPlanSection.vue:398-404` 已用同样的手法给 `no-subscription` 做过 cookie / 非 cookie 两套文案。
+
 **路径 5 · 在对话页看到额度查询失败**
 
 浮层的 coding-plan 区在失败态下显示错误文案，**同时**渲染两个按钮：「刷新」与「配置」（跳转设置页）。今天这个位置只有「刷新」，而刷新在凭证缺失时只会再失败一次，形成死路 —— 见 D11。
@@ -600,8 +608,14 @@ quota?: {
 | `saveAndTest` | `() => Promise<void>` | 落盘 + 查询（D2） |
 
 ```ts
-/** 齐备性缺口项（UI 据此渲染字段级提示，i18n key 一一对应） */
-export type ReadinessMissing = 'cookie' | 'apiKey' | 'workspace'
+/**
+ * 齐备性缺口项（UI 据此渲染字段级提示）。四态显式命名：
+ * - 'type'      : 尚未选择查询类型 —— UI 走 D8 的「只渲染下拉 + 一句说明」，不渲染按钮，
+ *                 故该值**不配 i18n 文案**，只用于让契约自解释（避免消费方把它误读为
+ *                 「齐备但不可点」或渲染出「参数齐全后可点」这类空提示）。
+ * - 'cookie' / 'apiKey' / 'workspace' : 已选类型下的具体缺口，各配一条 i18n 提示。
+ */
+export type ReadinessMissing = 'type' | 'cookie' | 'apiKey' | 'workspace'
 ```
 
 **缓存失效的副作用声明**（补齐既有行为，不得静默丢失，也不得留下陈旧数据）：
@@ -632,7 +646,8 @@ savedFetcher = provider.quota?.fetcher
 // 用户从未请求的 `cookie: ''` 删除（api-key 类走该分支时 readiness 不检查 cookie，会被放行）。
 typeChanged  = savedFetcher !== undefined && draft.fetcher !== savedFetcher
 
-若 draft.fetcher 为空 → { ready: false, missing: [] }（UI 不渲染按钮，无需缺口项）
+若 draft.fetcher 为空 → { ready: false, missing: ['type'] }
+                       （UI 走 D8：只渲染类型下拉 + 说明，不渲染按钮，不消费该缺口项）
 
 preset = QUOTA_PRESETS.find(p => p.fetcher === draft.fetcher)
 
@@ -659,7 +674,10 @@ preset = QUOTA_PRESETS.find(p => p.fetcher === draft.fetcher)
 
 1. **`typeChanged` 是「凭证归属」的唯一判据，且只在有既存归属时成立。** 判据是 `savedFetcher !== undefined && draft.fetcher !== savedFetcher` —— 「从未保存过某个类型」不等于「归属失效」。这条规则同时解决三件事：切换类型后按钮立刻置灰（用户必须重填）、「打开编辑体时旧类型凭证被误认为对新类型有效」、以及「无历史归属的 provider 被误判为类型已变而触发一次多余删除」。
 
-2. **切换类型时清空草稿，但不动已保存状态。** 草稿（Cookie / 专属 Key / Workspace 的输入框内容）是「为某个平台准备的内容」，切类型后它不再有意义。若保留，`draft.cookie 非空` 会让新类型被误判为齐备 —— 用户给 MiMo 敲了一半 Cookie、改选 opencode.go，按钮却是亮的，点下去就把 MiMo 的 Cookie 存成了 opencode 的，正是 D5 要消除的失败模式 C。**已保存状态不清**：它的作废由第 1 条的归属规则表达，物理数据保留（D3 的可逆性由此成立）。
+2. **类型真正发生变化时才清空草稿；已保存状态不动。**
+   - **守卫必须落在值上，不能落在事件上**：`if (newId === fetcherId.value) return`。理由：`CodingPlanSection.vue:21-24` 用的是 `:model-value` + `@update:model-value`，而 reka 的 `SelectItem.handleSelect` 无条件调用 `onValueChange`，`SelectRoot` 走 `useVModel(..., { passive: props.modelValue === void 0 })`（`SelectRoot.js:71-77`）—— 传入 `:model-value` 时 `set()` **恒 emit、无同值判断**。若把「清空草稿」挂在事件上，用户「点一下当前已选的类型」就会丢掉尚未提交的输入（丢的是正在输入的内容，不是磁盘数据）。
+   - **清空的是草稿**（Cookie / 专属 Key / Workspace 的输入框内容）：草稿是「为某个平台准备的内容」，切类型后它不再有意义。若保留，`draft.cookie 非空` 会让新类型被误判为齐备 —— 用户给 MiMo 敲了一半 Cookie、改选 opencode.go，按钮却是亮的，点下去就把 MiMo 的 Cookie 存成了 opencode 的，正是 D5 要消除的失败模式 C。
+   - **已保存状态不清**：它的作废由第 1 条的归属规则表达，物理数据保留（D3 的可逆性由此成立）。所以「改类型 → 改回原类型」之后旧凭证仍然有效、按钮重新变亮，只是期间输入的内容需要重新输入。
 
 3. **敏感字段与明文字段的判定来源不同（这条差异是全局的，不只影响 Workspace）。**
    - `cookie` / 专属 `apiKey` 是**密文、不回显**：判定取「草稿 ∨ 已保存」的并集，**保存时只在草稿非空才传**（`undefined` = 保留既存）。回退到已保存值是必要的 —— 否则用户每次打开编辑体都会看到按钮是灰的（明明已经配好了）。
@@ -705,6 +723,7 @@ if (!resolved) return this.fetchFailed(providerId, 'no-credential')
 | 设置页 `loadCached`（`useQuotaConfigure.ts:167`） | **当前有缺陷**：`if (result.data)` 在 `data=null` 时丢弃 reason，导致重开编辑体仍是 `idle` 态。本次一并修正为 `if (result.data || result.reason)` |
 | `<dataDir>/logs/` | 凭证缺失从零日志变为每次一条 `logger.warn`（表 A #13） |
 | runtime `lastFailure` Map | 新增一个写入源（表 A #10），清理通道见改动 4 |
+| **「幽灵标记」态**（`quota.apiKeySet=true` 但 `secrets/<pid>-apikey.txt` 不存在） | 新分支在 `source === 'exclusive'` 时**只读该文件**，缺失即返回 null → `no-credential` 失败；而旧链会继续回退 auth.json → models.json，**可能成功**。即本改动对这个状态引入一次「从能查到查不到」的行为回退。**判定**：**有意为之** —— 配置声明了「用专属 Key」而 Key 不在，就应该报出来，而不是偷偷换成另一份凭证（后者正是 §3.2 失败模式 D 的成因）。且失败可诊断、可恢复（文案指向「填专属 Key 或改用 Provider 凭据」，且 UI 的齐备性会因 `apiKeySet=true` 判 ready，用户点一下就能看到明确原因）。**量级**：仅改动 2 登记的 persist→文件写入窗口，或用户手工删文件。**重审触发条件**：若真实数据里该状态占比非 0 且用户因此受困，改为「`exclusive` 分支也在文件缺失时回退并 warn」 |
 
 **改动 2 · cookie 的「空串 = 清除」**（`quota-service.ts:309-318`）
 
@@ -813,7 +832,13 @@ configService.setQuotaStateCleaner((providerId) => quotaService.clearProviderSta
 - `provider.apiKeySet === false ∧ form.apiKey 为空` → 「上方「凭据」区还没有可用的 API Key，请先填写，或改用专属 Key」
 - `provider.apiKeySet === false ∧ form.apiKey 非空` → 「上方「凭据」区已填写 API Key，**保存 provider 配置后**即可查询」
 
-`ProviderEditBody` 把 `form.apiKey` 的非空状态作为 `providerCredentialPendingSave` 传入。
+`ProviderEditBody` 把 `form.apiKey` 的状态作为 `providerCredentialPendingSave` 传入。**判定式必须排除清除哨兵**：
+
+```ts
+providerCredentialPendingSave = form.apiKey !== '' && form.apiKey !== API_KEY_CLEAR_SENTINEL
+```
+
+`API_KEY_CLEAR_SENTINEL = '__CLEAR__'` 是用户在 provider 表单点「清除」时写入的标记（`use-provider-edit.ts:166`，写入点 `:578`）。只用 `!== ''` 判断的话，用户刚点完「清除」会看到「已填写 API Key，保存 provider 配置后即可查询」—— 与实际正好相反。等价写法是复用 `resolveApiKeyForSave`（`use-provider-edit.ts:501` 用它派生 `wroteApiKey`）。
 
 ### 7.5 文件改动地图
 
@@ -822,10 +847,13 @@ configService.setQuotaStateCleaner((providerId) => quotaService.clearProviderSta
 | shared | `packages/shared/src/quota-types.ts` | 加 `'no-credential'`（`:44`）、`QuotaCredentialSource`、`resolveQuotaCredentialSource` | U1 |
 | shared | `packages/shared/src/provider.ts` | `quota` 加 `credentialSource`（`:189-212`） | U1 |
 | shared | `packages/shared/src/index.ts` | 导出新符号（`:119-123`） | U1 |
+| shared | `packages/shared/src/protocol.ts` | **`'quota.configure'` payload 加 `credentialSource?`（`:585`）** —— 不加则 renderer 传该键触发 excess property **编译错**（`command()` 的 payload 受 `ClientMessageMap[K]` 约束，`core/src/transport/api/request.ts:42-45`） | U1 |
+| core | `packages/core/src/transport/api/domains/quota.ts` | `configure()` 加第 7 个参数并透传（`:66-76`） | U1 |
 | renderer | `packages/renderer/src/composables/features/model/useQuotaQuery.ts` | `QUOTA_FAIL_REASON_KEYS` 加 key（`:25-31`）——**枚举扩展必须与穷举映射同批，否则 `vue-tsc` 报错** | U1 |
 | renderer | `packages/renderer/src/i18n/locales/{zh-CN,en-US}/settings.ts` | 新增/调整/删除 key（块 `:422-487`） | U1 |
 | renderer | `packages/renderer/src/i18n/locales/{zh-CN,en-US}/panel.ts` | `panel.context.*` 加 `quotaFailNoCredential`（`:149-153`） | U1 |
-| runtime | `packages/runtime/src/services/quota-service.ts` | 改动 1/2/3/4（`:245-286`、`:309-349`、`:476-480`、`:511-515`、`:576-596`） | U2 |
+| runtime | `packages/runtime/src/services/quota-service.ts` | 改动 1/2/3/4（`:245-286`、`:309-349`、`:476-480`、`:511-515`、`:576-596`）；**另需扩 `ProviderInfoLike.quota`（`:37-45`，当前只声明 `{ fetcher?: string }`，拿不到 `credentialSource`/`apiKeySet`）并在 `persistQuotaConfig`（`:381-422`，嵌套字面量 `:400-414`）写入新字段** | U2 |
+| runtime | `packages/runtime/src/transport/quota-message-handler.ts` | **`quota.configure` 分支 destructure 加 `credentialSource` 并作为第 7 参传给 `QuotaService.configure`（`:68`、`:75`）** —— 见下方「端到端链」警告 | U2 |
 | runtime | `packages/runtime/src/services/provider-extras-store.ts` | **`ProviderExtras.quota` 加 `credentialSource`（`:37-47`）** —— 否则 `persistQuotaConfig` 的嵌套对象字面量对 `ProviderExtras['quota']` 触发 excess property check **编译错** | U2 |
 | runtime | `packages/runtime/src/services/quota-cache.ts` | 新增「删除单 provider 条目」API（改动 4 依赖；当前只有 `getEntry` / `update`） | U2 |
 | runtime | `packages/runtime/src/services/provider-config-helper.ts` | 改动 5：删除链加 quota 清理钩子（custom `:1341`、catalog `:1329-1332`）；清理函数实现参照 `:1188-1203` / `:1214-1226` 的同款 warn-only 语义 | U2 |
@@ -837,6 +865,23 @@ configService.setQuotaStateCleaner((providerId) => quotaService.clearProviderSta
 | ui | `packages/ui/src/features/settings/coding-plan/CodingPlanSection.vue` | 重写 | U5 |
 | ui | `packages/ui/src/features/settings/provider/ProviderEditBody.vue` | prop 接线（`:204-238`、`:222`），新增 `providerCredentialPendingSave` | U5 |
 | renderer | `packages/renderer/src/components/panel/ContextCapacityPopover.vue` | D11：失败态 footer 补「配置」按钮（`:136-154`） | U5 |
+
+**新参数 `credentialSource` 的端到端链（实施时逐段核对，漏任何一段都不必然报错）**
+
+D3 引入的新字段要穿过 8 段才真正生效，其中**第 3、4 段的漏改不会编译报错**（少传一个可选参数在 TS 里合法），只会让字段在 wire 上被静默丢弃 —— 后果是 `providers.json` 永不写该字段、两端都退回 `apiKeySet` 推断、**§3.2 失败模式 D 原样复现**，且只有验收场景 S9 能发现：
+
+| # | 段 | 位置 | 漏改的后果 |
+|---|---|---|---|
+| 1 | renderer 调用 | `useQuotaConfigure.ts` 的 `saveAndTest` / `setEnabled` | 未传 → 字段全程缺失 |
+| 2 | core domain api | `core/src/transport/api/domains/quota.ts:66-76` | 少一参 → 字段不出口 |
+| 3 | **protocol payload** | `shared/src/protocol.ts:585` | **编译错**（excess property check） |
+| 4 | **runtime handler** | `runtime/src/transport/quota-message-handler.ts:68`、`:75` | **不报错**，wire 字段被静默丢弃 |
+| 5 | `QuotaService.configure` 签名与 `persistQuotaConfig` | `quota-service.ts:245-286`、`:381-422` | 不落盘 |
+| 6 | `ProviderExtras.quota` 类型 | `provider-extras-store.ts:37-47` | **编译错**（excess property check） |
+| 7 | 读侧 `ProviderInfoLike.quota` | `quota-service.ts:37-45` | **编译错**（weak type：无公共属性的全可选对象无法互赋） |
+| 8 | `resolveQuotaCredentialSource` | `quota-types.ts`（新增） | 两端推断各写各的 |
+
+**M1/U1 的验收必须包含第 3、4 段的实链路检查**：一次「保存并测试」之后，直接读 `providers.json` 确认 `providers.<pid>.quota.credentialSource` 有值且与 UI 选择一致（这是终态 S9 的前置；没有它，M1 可以「全绿但不生效」）。
 
 **测试改动清单**
 
@@ -857,7 +902,7 @@ configService.setQuotaStateCleaner((providerId) => quotaService.clearProviderSta
 
 ## 8. 验收（真实场景，非单测非 mock）
 
-**本章结论：15 个真实场景，其中 8 个是反向验证（验「不该发生的事没发生」）。**
+**本章结论：16 个真实场景，其中 8 个是反向验证（验「不该发生的事没发生」）。**
 
 ### 8.1 改动规模
 
@@ -876,7 +921,7 @@ configService.setQuotaStateCleaner((providerId) => quotaService.clearProviderSta
 | S5 | **反向 · 拨开关不发请求** | 目标 3 | S1 完成后把开关关掉再打开；观察 `<dataDir>/quota-cache.json` 的 `lastFetchAt` 与文件 mtime、runtime 日志 | `providers.json` 的 `enabled` 即时跟随；`quota-cache.json` 的 mtime 与 `lastFetchAt` **均不变**，runtime 日志无新的 fetch 记录 |
 | S6 | **反向 · cookie 掩码不再损坏凭证** | 目标 5（失败模式 B） | S2 完成后重进设置页 → 观察 Cookie 输入框 → **不做任何修改**直接点「保存并测试」 | 输入框**为空**且字段旁标「已配置」；直接点按钮后查询**仍然成功**（真 cookie 未被覆盖） |
 | S7 | **切换类型后凭证归属失效** | 目标 5（失败模式 C） | S2 配好 MiMo 后把类型改成「opencode.go」→ 观察齐备性 → 点「保存并测试」→ 检查 `<dataDir>/secrets/<pid>-cookie.txt` | 改成 opencode.go 后按钮**立刻置灰**（旧 Cookie 不计入），Cookie 与 Workspace 都提示必填；补齐并保存后，`<pid>-cookie.txt` 内容为新的 opencode cookie |
-| S8 | **反向 · 点选当前已选类型不产生副作用** | 目标 5 | S2 完成后，打开类型下拉、点选当前已经选中的「小米 MiMo」，不做其它操作 | **不产生** `quota.configure` RPC；`<pid>-cookie.txt` 与 `providers.json` 的 `quota` 字段完全不变（对照：v1 设计下这一步会删掉 Cookie） |
+| S8 | **反向 · 点选当前已选类型不清空草稿** | 目标 5 | opencode.go：在 Cookie 输入框里粘贴一段**尚未提交**的内容 → 打开类型下拉，点选当前已经选中的「opencode.go」→ 观察输入框 | 输入框内容**仍在**；不产生 `quota.configure` RPC；`<pid>-cookie.txt` 与 `providers.json` 的 `quota` 字段完全不变。**场景前提**：必须先在草稿里留下未提交内容 —— 否则草稿本来就是空的，清不清都「通过」，测不出同值 emit 这个 bug（对照：若把清空挂在 Select 事件上，这一步会丢输入） |
 | S9 | **反向 · 凭证来源与 runtime 实际行为一致** | 目标 4（失败模式 D） | ①给智谱配专属 Key（分段控件选「用专属 Key」）→ 保存并测试成功；②切到「用 Provider 凭据」→ 保存并测试；③检查 `providers.json` 的 `quota.credentialSource` 与 `secrets/<pid>-apikey.txt` | ② 之后 `credentialSource` 为 `provider`，且查询**确实没有使用**专属 Key（把专属 Key 改成一个明显错误的串，查询应仍成功）；`<pid>-apikey.txt` **仍然存在**（未被删除）；③ 切回「用专属 Key」无需重新粘贴即可生效 |
 | S10 | **反向 · 未选类型时不渲染参数、不产生写入** | 目标 1（D8） | 打开一个从未配过额度的 provider 编辑体，不选类型，观察区块 | 只渲染类型下拉 + 一句说明；**不渲染**开关、凭证区、按钮；不产生任何 `quota.configure` RPC |
 | S11 | **失败路径分辨得清** | 目标 5 | ①填一个错误的 API Key → 测试；②用只有 OAuth 凭证的 provider 配一个只支持 api-key 的类型 → 测试 | ①显示「凭证可能过期」并给出刷新动作；②显示「未找到可用凭证」并指向凭据区。**两条文案必须不同** |
@@ -884,6 +929,7 @@ configService.setQuotaStateCleaner((providerId) => quotaService.clearProviderSta
 | S13 | **反向 · 宿主表面不被改变** | 目标 5 | S1-S3 各跑一轮，再执行 S7（触发一次 secrets 删除），然后重启应用，检查 `providers.json` 与 `<dataDir>/secrets/` | `providers.json` 结构完好（`version: 1`、无 `.corrupt-<ts>` 隔离文件、无 `.tmp` 堆积）；secrets 目录只含当前配置过的 provider 的文件、**无空文件残留**；重启后对话页浮层正常显示；连续 5 次切换类型 + 保存后，`.tmp` 与隔离文件数量不增长 |
 | S14 | **provider 删除清残留**（D12） | 目标 5 | 给一个 custom provider 配好 cookie → 删除该 provider → 检查磁盘 → 用同一个 id 重建 | 删除后 `secrets/<pid>-cookie.txt` **不存在**（对照：现状会残留）；重建后编辑体显示「未配置」，不继承旧 cookie |
 | S15 | **反向 · Workspace 不能被清空**（D13） | 目标 1 | opencode.go 配好 Workspace → 手动清空输入框 → 观察按钮与后续行为 | 按钮**置灰**并提示「还缺：Workspace 地址」；**不产生**任何 `quota.configure`；已保存的 Workspace 不被删除（对照：v1 设计下空串会被解释为清除） |
+| S16 | **改类型再改回原类型** | 目标 4、5 | S2 的 MiMo 配好并测试通过 → 把类型改成 opencode.go（草稿清空、按钮置灰）→ 不改任何参数，把类型改回「小米 MiMo」→ 观察按钮 | 按钮**恢复可点**（旧 Cookie 的归属重新成立，未被删除）；直接点「保存并测试」仍能成功 —— 证明 D5 的作废是**判定层**的、不是销毁层的 |
 
 > **关于 S5 的探针**：该场景验证「开关不发请求」这一运行时断言。设计阶段未实跑（需要改造后的运行环境），标记为 **⛔ 实施期门**。**失败时的降级路径**：若探针显示拨开关确实产生了请求，说明 `setEnabled` 内仍有残留的查询调用 —— 直接回到 §7.1 的契约检查 `setEnabled` 实现；此时**不得**用「加一个标志位跳过首次查询」之类的补丁绕过，必须删掉该调用。
 >
@@ -901,10 +947,10 @@ configService.setQuotaStateCleaner((providerId) => quotaService.clearProviderSta
 |---|---|---|---|
 | **M0** | shared 枚举 `'no-credential'` + **`useQuotaQuery.ts` 的穷举映射** + 双语 i18n key（含 `panel.context.quotaFailNoCredential`）+ `QuotaCredentialSource` 类型与解析函数 + `ProviderInfo.quota.credentialSource` 字段 | 错误规格与数据模型可表达 | 类型检查通过 + i18n key 存在性测试 |
 | **M1** | runtime 改动 1-5（`no-credential` / cookie 空串清除 + 删除顺序与失败语义 / 按 source 解析凭证 / 失败标记清理 / provider 删除清理钩子） | §7.3 | 场景 S11②、S14；runtime 单测 |
-| **M2** | core 契约 + renderer composable + ui 区块 + 浮层入口 **原子切换** | §7.1 / §7.2 / §7.4 | 场景 S1-S10、S12、S13 全量 |
+| **M2** | core 契约 + renderer composable + ui 区块 + 浮层入口 **原子切换** | §7.1 / §7.2 / §7.4 | 场景 S1-S10、**S11①**、S12、S13、**S15**、**S16** 全量 |
 | **M3** | 收尾：清 10 处硬编码中文、移除旧 prop、回写文档（附录 A） | §6.10 | lint + 全量测试 |
 
-**为什么 M0 必须包含 `useQuotaQuery.ts` 与 `ProviderInfo` 字段**：`useQuotaQuery.ts:25-31` 的 `QUOTA_FAIL_REASON_KEYS` 是 `Record<QuotaFetchFailureReason, string>` 的**穷举映射**，漏 key 不是运行期静默 undefined，而是 `vue-tsc --noEmit` **编译错误**（pre-commit 在 `packages/renderer` 会跑 vue-tsc）。文档 v1 把它漏在 U1 之外，会导致「声称可独立合入」的阶段一提交就红。
+**为什么 M0 必须包含 `useQuotaQuery.ts`、`protocol.ts` 与 `ProviderInfo` 字段**：`useQuotaQuery.ts:25-31` 的 `QUOTA_FAIL_REASON_KEYS` 是 `Record<QuotaFetchFailureReason, string>` 的**穷举映射**，漏 key 不是运行期静默 undefined，而是 `vue-tsc --noEmit` **编译错误**（pre-commit 在 `packages/renderer` 会跑 vue-tsc）；`protocol.ts:585` 的 payload 类型是 renderer `command()` 的约束源（`core/src/transport/api/request.ts:42-45`），漏字段会触发 excess property 编译错。**反过来，runtime handler 那一段漏改不报错**（少传可选参数合法），所以它必须被显式列进 U2 与端到端链清单 —— 靠编译器守不住。
 
 **为什么 M2 必须原子**：`QuotaConfigureState` 是 core / ui / renderer 三方共享的类型，且 `injection-keys.ts:61-89` 的 `NOOP_FACTORY` 是该类型的**完整字面量** —— 契约增删成员后必须同批更新，否则编译不过。
 
@@ -916,10 +962,10 @@ configService.setQuotaStateCleaner((providerId) => quotaService.clearProviderSta
 
 | 单元 | 说明 | justification（为什么这么拆） |
 |---|---|---|
-| **U1** · 数据模型与错误规格 | shared 枚举 + `QuotaCredentialSource` + `resolveQuotaCredentialSource` + `ProviderInfo.quota.credentialSource` + **`useQuotaQuery.ts` 穷举映射** + 双语 i18n key | 类型与文案是 U2-U5 的共同前置；「枚举 + 全部穷举消费点 + 文案」必须作为一个原子单元，否则类型检查红。单独合入零行为变更 |
-| **U2** · runtime 凭证与清理 | `no-credential` 返回；cookie 空串清除；删除顺序重排与失败语义；按 `credentialSource` 解析；`lastFailure` 清理；provider 删除清理钩子 | 与前端完全解耦，可独立单测与独立验收（S11②、S14）；先修好 runtime，前端才能依赖它 |
+| **U1** · 数据模型与错误规格 | shared 枚举 + `QuotaCredentialSource` + `resolveQuotaCredentialSource` + `ProviderInfo.quota.credentialSource` + **`useQuotaQuery.ts` 穷举映射** + **`protocol.ts` 的 `quota.configure` payload** + **core `domains/quota.ts` 的 `configure` 签名** + 双语 i18n key | 类型、文案与**协议管道**是 U2-U5 的共同前置；「枚举 + 全部穷举消费点 + 协议字段 + 文案」必须作为一个原子单元，否则类型检查红或字段断链。此单元内 runtime handler 尚未更新，故仍零行为变更 |
+| **U2** · runtime 凭证与清理 | `no-credential` 返回；cookie 空串清除；删除顺序重排与失败语义；按 `credentialSource` 解析（含扩 `ProviderInfoLike.quota`）；`lastFailure` / `QuotaCache` 清理；provider 删除清理钩子；**`quota-message-handler.ts` 的 destructure 与第 7 参透传** | 与前端解耦，可独立单测与独立验收（S11②、S14）；先修好 runtime，前端才能依赖它。handler 必须在此单元内接线，否则 wire 字段被静默丢弃、D3 失效 |
 | **U3** · core 契约重构 | `QuotaConfigureState` 按 §7.1 重写；`injection-keys.ts` 的 `NOOP_FACTORY` 同步 | 契约是 U4/U5 的接口 SSOT；单独拆出便于审查「接口设计是否合理」而不被实现细节干扰。`NOOP_FACTORY` 与该契约强绑定，必须同单元 |
-| **U4** · renderer composable 重构 | `useQuotaConfigure` 实现新契约（齐备性判定 + 凭证归属、saveAndTest 参数构造、开关无副作用、类型进草稿、去掩码、i18n、`loadCached` 修 reason） | 这是全部业务逻辑的落点，也是测试密度最高的一层（单测可覆盖齐备性矩阵的全部组合） |
+| **U4** · renderer composable 重构 | `useQuotaConfigure` 实现新契约（齐备性判定 + 凭证归属、saveAndTest 参数构造与 payload 快照、开关无副作用、类型进草稿且同值短路、去掩码、i18n、`loadCached` 修 reason） | 这是全部业务逻辑的落点，也是测试密度最高的一层（单测可覆盖齐备性矩阵 —— **含 D13 的判定/保存规则与 D5 的同值短路**，这两条是纯逻辑，最适合在此层用单测穷举） |
 | **U5** · ui 区块重写 + 浮层入口 | `CodingPlanSection` 重写、`ProviderEditBody` prop 拆分、`ContextCapacityPopover` 失败态补「配置」 | 与 U4 同批合入（契约是它们之间的接口）。拆开的意义在于审查面不同：U4 看状态机，U5 看渲染与置灰 |
 | **U6** · 收尾与文档回写 | 清硬编码中文、移除旧 prop、回写 `design.md:322/339` 与 `docs/troubleshooting.md` | 按项目「设计文档同步纪律」（C-proc-10）：被本设计推翻的历史约定必须同批回写，否则下次会有人照着旧文档改回去 |
 
@@ -959,9 +1005,21 @@ configService.setQuotaStateCleaner((providerId) => quotaService.clearProviderSta
 
 共享 `coding-plan-quota-ux.demo.css`（对齐 `docs/page-design/design-tokens.md` 的玄·暗 tokens）与 `coding-plan-quota-ux.demo.js`。
 
-> **原型与本文档的关系（v2 修订）**：`demo.js` 的 `Q.readiness()` 是**不含凭证来源维度的并集版**，服务于没有分段控件的方案 A/C/D；**方案 B 的 source 感知版实现在 `demo-b.html` 内联的 `readiness()`**，它包含「`credentialSource` 分支」。两者都已同步：类型只进草稿、`typeChanged` 归属过滤、workspace 判定只看草稿（D13）、凭证类字段取并集。**但原型尚未包含**：`savedFetcher === undefined` 不算类型已变这条边界（§7.2 细节 1）。实施时以 §7.2 的文字规则为准；原型用于对照交互形态，不是判定的 SSOT —— 差异点已在此显式登记，避免实施者照抄原型导致 D3/D5 静默退化。
+> **原型与本文档的关系（v2 修订）**：`demo.js` 的 `Q.readiness()` 是**不含凭证来源维度的并集版**，服务于没有分段控件的方案 A/C/D；**方案 B 的 source 感知版实现在 `demo-b.html` 内联的 `readiness()`**，它包含「`credentialSource` 分支」。两者都已同步：类型只进草稿、`typeChanged` 归属过滤、workspace 判定只看草稿（D13）、凭证类字段取并集。**原型的两处已知局限**（`demo-b.html` 的说明区已就地标注）：
+> 1. 原型用的是**原生 `<select>`**（重复点选同一项不触发 `change`），而真实实现是 reka `Select`（同值也 emit）。所以 §7.2 细节 2 的同值短路守卫在原型里**测不出来** —— 实现时必须落在值上。
+> 2. 原型尚未包含 `savedFetcher === undefined` 不算类型已变这条边界（§7.2 细节 1）。
+>
+> 实施时以 §7.2 的文字规则为准；原型用于对照交互形态，不是判定的 SSOT —— 差异点已在此显式登记，避免实施者照抄原型导致 D3/D5 静默退化。
 
 ## 附录 C：变更历史
 
 - v1（2026-09-10）：首版。四个交互方案对比（demo 驱动）后选定方案 B；11 个决策；9 个验收场景（4 个反向）；6 个拆分单元。
-- v2（2026-09-10）：对抗式审查后修订（主审 4 must-fix + 5 suggestion，影响面审 6 must-fix + 4 suggestion，共 10 must-fix / 9 suggestion 全修）。关键变更：①D3 从「事件语义的清除」改为**凭证来源持久化 + runtime 共同遵守**（消除「UI 承诺与 runtime 行为背离」这一新发现的失败模式 D）；②D5 从「类型即时落盘 + 同值守卫」改为**类型进草稿 + 凭证归属规则**（消除 reka 同值 emit 导致误删凭证的风险）；③新增 D11（浮层失败态恢复入口）、D12（补齐 quota 清理通道，对齐 M5-05）、D13（Workspace 取消清空语义，统一判定）；④补充写入面穷举（16 项）与 runtime 删除顺序/失败语义；⑤M0/U1 纳入穷举映射点，修正阶段可独立合入的断言；⑥验收场景 9 → 14（反向 4 → 6）。
+- v2（2026-09-10）：第一轮对抗式审查后修订（主审 4 must-fix + 5 suggestion，影响面审 6 must-fix + 4 suggestion，共 10 must-fix / 9 suggestion 全修）。关键变更：①D3 从「事件语义的清除」改为**凭证来源持久化 + runtime 共同遵守**（消除新发现的失败模式 D「界面说用 A、实际用 B」）；②D5 从「类型即时落盘 + 同值守卫」改为**类型进草稿 + 凭证归属规则**；③新增 D11（浮层失败态恢复入口）、D12（补齐 quota 清理通道，对齐 M5-05）、D13（Workspace 判定规则）；④补充写入面穷举（16 项）与 runtime 删除顺序/失败语义；⑤M0/U1 纳入穷举映射点；⑥验收场景 9 → 14。
+- v3（2026-09-10）：第二轮聚焦复审后修订（主审 2 must-fix + 5 suggestion，影响面审 2 must-fix + 6 suggestion，共 4 must-fix / 11 suggestion 全修）。关键变更：
+  - **补齐 `credentialSource` 的端到端传递链**（§7.5 新增 `protocol.ts` / core `domains/quota.ts` / runtime `quota-message-handler.ts` 三处；新增「新参数端到端链」清单）。其中 **runtime handler 漏改不报错、只静默丢字段** → `providers.json` 永不写该字段 → 两端退回推断 → 失败模式 D 原样复现，只有 S9 能发现。这是 v2 最大的漏洞。
+  - **「切换类型清空草稿」补同值短路守卫**（守卫落在值上而非事件上）；S8 改为必须带未提交草稿的前置（原写法测不出该 bug），并新增 S16（改类型再改回）。
+  - **撤回「`providerExists` 检查提前」**（v2 引入、反而拉大了 TOCTOU 窗口）：改为移进 `extrasStore.modify` 回调（同锁串行），并显式登记 persist→secrets 之间的残余竞态窗口。
+  - **D13 改为「Workspace 判定只看草稿」**：v2 的并集写法会让用户清空后按钮仍亮、保存又被回填，产生视觉矛盾。
+  - **`typeChanged` 补 `savedFetcher !== undefined` 边界**：避免「无历史归属」的 provider 被误判类型已变而触发一次用户从未请求的删除。
+  - **D12 补「已知代价」量化 + 组合根后置回填说明**（漏回填不报错、D12 静默失效）。
+  - 杂项：`no-credential` 的 cookie 文案变体、`__CLEAR__` 哨兵判定、`readiness` 第四态显式命名、写入面表补 `quota-cache.json.tmp` 与新增清理通道、6 处行号纠正、验收场景 14 → 16。
