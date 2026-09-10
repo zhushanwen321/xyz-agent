@@ -162,6 +162,8 @@ pnpm --filter @xyz-agent/core test && pnpm --filter @xyz-agent/runtime test && p
 | D-4 | M1b | **既有断言 `provider-write-fields.test.ts` 「id 缺省 → `String(m.id ?? '')` 空串锚定」被改写**。该断言编码的正是要消灭的空串落盘行为（空 id 落盘即毒化整文件），与 G2「任何保存操作都不可能弄丢其他 provider」直接冲突，属本设计的必然改动而非顺手清理 | 合理不一致 → 固化（同批改断言 + 留注释说明理由） | 2026-09-10 |
 | D-5 | M2-r | **resolver 接口文件归本单元而非 u-contracts**（派发前调整，理由见 §7 变更历史） | 合理不一致 → 固化 | 2026-09-10 |
 | D-6 | u-contracts | **i18n「模型发现」正名采用「改值不改 key」**（既有 key `settings.providerEdit.autoDiscover` 被领地外 3 个文件引用，改 key 会波及领地外） | 合理不一致 → 固化 | 2026-09-10 |
+| D-7 | M1a | **3 处既有 renderer 断言随 payload 契约变更同批更新**：`provider-builtin-ui.test.ts` t10/t14（断言 setProvider payload 含 `api`/`baseUrl`）、`ProviderPage.test.ts:480-483`（OAuth 收尾断言含 `name`）。实测已红（3 failed / 50 passed），是 payload 契约变更的直接后果而非顺手清理；M1a 领地扩展至这两个测试文件，断言强度不削弱（仍断言确切键集合，只对齐新契约） | 合理不一致 → 固化 | 2026-09-10 |
+| D-8 | M1a | **custom 空 `name` 的 payload 层 truthy 守卫在正常路径不可达**：`save()` 入口已有校验（`if (!form.name.trim())` → 返回 `ok:false` 且不调 setProvider）先行拦截，故验收条款「custom 空串 name → payload 不含该键」无法构造输入。用例改为断言可观测事实（校验拦截 + `setProvider` 未被调用），payload 层守卫按设计保留为纵深防御 | 合理不一致 → 固化（用例断言口径调整，守卫本身保留） | 2026-09-10 |
 
 ## 6 状态表
 
@@ -171,7 +173,7 @@ pnpm --filter @xyz-agent/core test && pnpm --filter @xyz-agent/runtime test && p
 | M6 | committed | 1 | commit `0e3c42847`；core vitest 50 passed；core typecheck 0；P-presets 实测 on-off 2 档 / high-max 3 档 / all-levels 5 档 |
 | M1b | in-progress | 2 | 第 1 轮产物（载体纯函数 + 空串转译 + catalog 分体系 + extras 字段）未提交在工作区；第 2 轮补 setProvider 信号接线 + 模型级空 id + eslint 上限（因第 1 轮仅产出信号未消费，防线对保存链路尚未生效，不得单独提交） |
 | M2-r | committed | 1 | commit `cfb839308`；runtime vitest 12 passed；runtime typecheck 0；P-cred 实测（xyz 不展开 / pi 展开，已对照 `resolve-config-value.js:71-73` 逐字核对） |
-| M1a | pending | 0 | — |
+| M1a | in-progress | 2 | 第 1 轮已改 6 个领地文件（三包目标绿：core 54 / renderer oauth 8 / ui 17，core typecheck 0）；第 2 轮修 3 处领地外既有断言（见 D-7）+ 影响面扫尾 |
 | M1cd | pending | 0 | — |
 | M2b | pending | 0 | — |
 | M5a | pending | 0 | — |
