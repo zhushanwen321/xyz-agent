@@ -8,33 +8,31 @@
  *（find/subagents）+ doctor 的环境判定与根表渲染（u8，discovery/env）。content 给 LLM
  * 读（人类可读摘要），details 供程序化消费/测试断言。
  *
+ * 域模块拆分（max-lines 拆分轮机械提取，零行为变更，result-action.ts 先例同型）：
+ *   result-action.ts（result）/ doctor.ts（doctor + SessionReadSignals）/
+ *   search-across.ts（search 管线 + u12 跨会话）/ extract.ts（extract 预设）/
+ *   no-match.ts（F1 自检行）/ handler-utils.ts（pad/err/turn 索引解析低层小工具）。
+ * 本模块保留公共类型、定位解析（resolveSessionId）、各 action 编排与共享渲染；
+ * 拆出域的公开导出经此 re-export（index.ts / 单测白盒 import 路径不变）。
+ *
  * 错误规格 F1-F6：handler 抛 Error（message 含 👉 恢复指引），index.ts 的 execute 闭包
  * 原样传播给 pi——pi-agent-core 只对 execute throw 置 isError:true（返回值里的 isError
  * 字段被丢弃，agent-loop.js:453-483）。handler 可抛（纯逻辑可测）。
  * 例外：F2 多匹配与 F1 find 零匹配「不视为错误」，返回消歧/提示结果而非抛错。
  */
 import { existsSync, openSync, readSync, closeSync } from 'node:fs'
-import { mkdir, readdir, stat, writeFile } from 'node:fs/promises'
-import { join, isAbsolute, dirname } from 'node:path'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import {
-  buildSessionFileIndex,
   findSessions,
   type MatchedSession,
   type SessionMetadataEntry,
   type SessionMetadataProvider,
 } from './discovery/find.js'
-import {
-  resolveSessionRoots,
-  type SessionRoot,
-  type SessionRootCache,
-  type SessionRootCacheEntry,
-  type SessionRootSignals,
-} from './discovery/roots.js'
-import { detectEnvironment, type DetectedEnvironment } from './discovery/env.js'
+import { resolveSessionRoots } from './discovery/roots.js'
 import {
   buildFamilyFromFs,
-  extractSessionIdFromFilename,
   listRecordManifests,
   type RecordManifest,
 } from './discovery/subagents.js'
@@ -42,8 +40,7 @@ import { readRunSnapshot, resolveWorkflows } from './discovery/workflows.js'
 import { parseSessionFile, type Entry, type ParseResult } from './core/parser.js'
 import { parseRunSnapshot, renderWorkflowOverview, type WorkflowOverview } from './core/workflow.js'
 import { buildTreeView } from './core/tree.js'
-import { segmentTurns, type Turn } from './core/turns.js'
-import { extractToolCalls, formatToolCallSummary, basename } from './core/toolcall.js'
+import { segmentTurns } from './core/turns.js'
 import {
   renderOutline,
   renderExpand,
@@ -64,6 +61,34 @@ import {
   formatExecutionTreeText,
   type ExecutionTree,
 } from './core/execution-tree.js'
+// 同轮拆分的域模块（依赖方向：本模块 → 域模块 → handler-utils，无循环；
+// 域模块对本模块仅 type import——编译期擦除，同 result-action.ts 先例）。
+import { err, pad, parseTurnIndex, parseTurnsRange, rangeLabel } from './handler-utils.js'
+import { formatNoMatch } from './no-match.js'
+import {
+  collectSearchHits,
+  compilePattern,
+  formatSearchText,
+  isCatastrophicPattern,
+  searchAcrossSessions,
+  SEARCH_DEFAULT_LIMIT,
+} from './search-across.js'
+import {
+  extractCommits,
+  extractCommands,
+  extractFiles,
+  extractToolResults,
+  extractUserMessages,
+  type ExtractWhat,
+} from './extract.js'
+import { doDoctor, DOCTOR_CACHE_TTL_MS, statDirMtimeOrNull, type SessionReadSignals } from './doctor.js'
+
+// 拆出域的公开导出面保持从本模块可见（index.ts / 单测白盒 import 路径不变）。
+export type { SessionReadSignals }
+export { DOCTOR_CACHE_TTL_MS }
+export { levenshtein } from './no-match.js'
+export { MULTI_SEARCH_MAX_SESSIONS, SEARCH_SCAN_BYTE_BUDGET, searchAcrossSessions } from './search-across.js'
+export { renderExtractItems } from './extract.js'
 
 // ---------------------------------------------------------------------------
 // 公共类型（与 index.ts 的 TypeBox schema 对齐）
@@ -124,16 +149,6 @@ export interface ToolResult {
 // 小工具
 // ---------------------------------------------------------------------------
 
-/** turn 索引显示宽度（T013 三位补零）。 */
-const TURN_INDEX_WIDTH = 3
-
-const pad = (n: number): string => String(n).padStart(TURN_INDEX_WIDTH, '0')
-
-/** 构造带 👉 恢复指引的 Error（handler 抛出，由 execute 闭包 catch）。 */
-function err(message: string): Error {
-  return new Error(message)
-}
-
 /** 剥 # 前缀（TUI `#e6c96` 引用 → 纯片段，design §3.3 D-3/D-4）。 */
 function stripHash(s: string): string {
   return s.replace(/^#+/, '')
@@ -169,48 +184,6 @@ function requireStr(
     throw err(`action:"${action}" 需要参数 "${name}"。👉 补上 "${name}" 重试。`)
   }
   return val.trim()
-}
-
-// ---------------------------------------------------------------------------
-// turn / turns 索引解析
-// ---------------------------------------------------------------------------
-
-const TURN_RE = /^T?(\d+)$/i
-
-function parseTurnIndex(raw: string): number {
-  const m = raw.trim().match(TURN_RE)
-  if (!m) {
-    throw err(
-      `turn "${raw}" 格式无效（应为 T013 或 013）。👉 用合法 turn 索引重试，或 outline 重看有效范围。`,
-    )
-  }
-  return parseInt(m[1], 10)
-}
-
-/** turns 范围 "T013-T015" 的段数。 */
-const TURNS_RANGE_PARTS = 2
-
-function parseTurnsRange(raw: string): { start: number; end: number } {
-  const parts = raw.split('-').map((s) => s.trim())
-  if (parts.length === 1) {
-    const i = parseTurnIndex(parts[0])
-    return { start: i, end: i }
-  }
-  if (parts.length === TURNS_RANGE_PARTS) {
-    const start = parseTurnIndex(parts[0])
-    const end = parseTurnIndex(parts[1])
-    if (end < start) {
-      throw err(
-        `turns 范围 "${raw}" 起始大于结束。👉 检查范围格式（如 T013-T015）重试。`,
-      )
-    }
-    return { start, end }
-  }
-  throw err(`turns "${raw}" 格式无效（应为 T013 或 T013-T015）。👉 用合法范围重试。`)
-}
-
-function rangeLabel(r: { start: number; end: number }): string {
-  return r.start === r.end ? `T${pad(r.start)}` : `T${pad(r.start)}-T${pad(r.end)}`
 }
 
 // ---------------------------------------------------------------------------
@@ -429,137 +402,6 @@ function formatSaIdAmbiguous(saId: string, records: RecordManifest[]): string {
 const SESSION_ID_PREFIX_LEN = 8
 /** 消歧提示的 uuid 片段长度（比短显略长，引导输入更长片段消歧）。 */
 const HINT_ID_PREFIX_LEN = 12
-
-// ---------------------------------------------------------------------------
-// F1 编辑距离工具（u9，design 2026-09-10 §5.2 / §6.7 子决策 3）
-// ---------------------------------------------------------------------------
-
-/**
- * Levenshtein 编辑距离（纯函数）。单行 DP 滚动数组，O(len(a)×len(b)) 时间。
- * F1 用它对 uuid query 找最接近的候选 id（§5.2「最接近的候选」），让 agent 一眼自纠
- *（如 01a08zzz → 01a08aac）。候选量级 ≤ 数千、uuid 36 字符，毫秒级。
- */
-export function levenshtein(a: string, b: string): number {
-  if (a === b) return 0
-  if (a.length === 0) return b.length
-  if (b.length === 0) return a.length
-  let prev = new Array<number>(b.length + 1)
-  let curr = new Array<number>(b.length + 1)
-  for (let j = 0; j <= b.length; j++) prev[j] = j
-  for (let i = 1; i <= a.length; i++) {
-    curr[0] = i
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1
-      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
-    }
-    const swap = prev
-    prev = curr
-    curr = swap
-  }
-  return prev[b.length]
-}
-
-/** 首个差异位（1-based，人类位次）；等串/一方为前缀时 undefined（无「X → Y」可标）。 */
-function firstDiffPosition(a: string, b: string): number | undefined {
-  const n = Math.min(a.length, b.length)
-  for (let i = 0; i < n; i++) {
-    if (a[i] !== b[i]) return i + 1
-  }
-  return undefined
-}
-
-/** F1 编辑距离候选行上限（§5.2 top-3）。 */
-const NO_MATCH_SUGGESTIONS = 3
-
-/**
- * F1 自检行根标签列宽（2 空格缩进 + 最长 `[subagent]` 10 字符 + 3 对齐间距，
- * 同 doctor 表 DOCTOR_ROOT_LABEL_PAD 的对齐思路）。
- */
-const F1_ROOT_LABEL_PAD = 15
-
-/**
- * F1 无匹配（u9 重写，design §5.2 形态——逐段规格）：
- *
- * ① 事实型自检行：main 根 N 文件 / subagent 根 M 文件 /「候选集非空|为空」/「查询已做
- *    uuid 归一化匹配（小写+去连字符）后仍无命中」。计数取 roots——调用方在 F1 路径
- *    恒以无 options 的 resolveSessionRoots 实扫（find/doctor 缓存句柄不注入，§7B 要点 8：
- *    缓存计数会把 PS-14「首条 assistant 前 0 文件」误报成「主根为空」），即本次实扫结果。
- *    只陈述事实，**不得**出现「真的没有这个 session」类归因断言（§3.3 教训：大写/去连
- *    字符输入在归一化前会被错误归因为「不存在」）。
- * ② 编辑距离最近候选 top-3（标注 source 与差异位），候选 = roots 实扫文件名提取的
- *    sessionId（extractSessionIdFromFilename 与 buildManifestIndex 同源；非 id 形态
- *    文件名提不出 → 不进候选，文件名与 header id 同源由 pi 写入保证）。
- * ③「正确做法」四条：标题/keyword、绝对路径 outline、更短前缀、doctor。
- * ④ 最后一行封死 shell 绕行：find/ls/rg 搜 session 目录、cat/read 原始 .jsonl 均禁止。
- *
- * 无「👉 用 recent 看全量」误导指引（recent 候选对写错的 uuid 无自纠价值，§6.7 被否项）。
- */
-function formatNoMatch(query: string, roots: SessionRoot[]): string {
-  const lines: string[] = []
-  lines.push(`无匹配 session："${query}"`)
-
-  // ① 自检行（只陈述事实）
-  lines.push('')
-  lines.push('自检（发现层，只陈述事实）：')
-  let totalFiles = 0
-  for (const r of roots) {
-    if (r.dedupedInto !== undefined) {
-      lines.push(`  [${r.kind}]`.padEnd(F1_ROOT_LABEL_PAD) + `与 [${r.dedupedInto}] 同路径，已去重`)
-      continue
-    }
-    const count = r.fileCount ?? r.files.length
-    totalFiles += count
-    lines.push(`  [${r.kind}]`.padEnd(F1_ROOT_LABEL_PAD) + `${r.path}：${count} 文件`)
-  }
-  lines.push(
-    totalFiles > 0
-      ? `  → 候选集非空（共 ${totalFiles} 文件），根解析正常`
-      : '  → 候选集为空（所有候选根均 0 文件）',
-  )
-  lines.push('  → 查询已做 uuid 归一化匹配（小写 + 去连字符）后仍无命中')
-
-  // ② 编辑距离最近候选 top-3（source 标注 + 首个差异位）
-  const candidates = new Map<string, { sessionId: string; source: string; mtime: number }>()
-  for (const r of roots) {
-    if (r.dedupedInto !== undefined) continue
-    for (const f of r.files) {
-      const sid = extractSessionIdFromFilename(basename(f.path))
-      if (sid === '') continue
-      const existing = candidates.get(sid)
-      if (existing === undefined || f.mtime > existing.mtime) {
-        candidates.set(sid, { sessionId: sid, source: r.source, mtime: f.mtime })
-      }
-    }
-  }
-  const suggestions = [...candidates.values()]
-    .map((c) => ({ ...c, distance: levenshtein(query, c.sessionId) }))
-    .sort((a, b) => a.distance - b.distance || b.mtime - a.mtime)
-    .slice(0, NO_MATCH_SUGGESTIONS)
-  lines.push('')
-  lines.push('最接近的候选（编辑距离）：')
-  if (suggestions.length === 0) {
-    lines.push('  （候选集中无可比对的 session id）')
-  }
-  for (const s of suggestions) {
-    const pos = firstDiffPosition(query, s.sessionId)
-    const diff =
-      pos !== undefined ? `差异在第 ${pos} 位：${query[pos - 1] ?? ''} → ${s.sessionId[pos - 1] ?? ''}` : ''
-    lines.push(`  ${s.sessionId}  ${s.source}  ${diff}`.trimEnd())
-  }
-
-  // ③ 正确做法四条（每条都确定能成功，§2 目标 2）
-  lines.push('')
-  lines.push('正确做法：')
-  lines.push(`  - 改用标题/keyword：session_read { action:"find", query:"<标题关键词>" }`)
-  lines.push(`  - 已知文件路径时直接传绝对路径：session_read { action:"outline", session:"<绝对路径>.jsonl" }`)
-  lines.push(`  - 截断/过期 id 用更短前缀：session_read { action:"find", query:"<更短前缀>" }`)
-  lines.push(`  - 想先看环境与根目录状态：session_read { action:"doctor" }`)
-
-  // ④ 就地封死 shell 绕行（§5.2 最后一行）
-  lines.push('')
-  lines.push('不要用 shell find/ls/rg 搜 session 目录，不要 cat/read 原始 .jsonl —— session_read 是唯一入口。')
-  return lines.join('\n')
-}
 
 /** F2 多匹配消歧结果（不抛错，返回候选 + 👉）。 */
 function disambiguate(query: string, candidates: MatchedSession[]): ToolResult {
@@ -785,79 +627,6 @@ function formatFamilyText(f: Family): string {
         .join('\n')}`,
     )
   return lines.join('\n')
-}
-
-// ---------------------------------------------------------------------------
-// search 辅助
-// ---------------------------------------------------------------------------
-
-/**
- * 灾难性正则形态探测（MF-5）：组内含量词/`|` 且组本身又被量词修饰的 pattern
- *（`(a+)+`、`(a*)*`、`(a|aa)+`、`(a{1,3})*` 等）对长文本指数级回溯，可挂死整个 turn（5.4MB session
- * 全文逐 entry 匹配）。内层字符类含 `{` 以捕获 `{m,n}` 范围量词（MF-1）；`(a{1,3})` 单独使用
- *（组后无尾随量词）不命中，仍按正则执行。命中则降级为字面子串匹配（与非法正则同一兜底路径）。
- * 保守拒绝（把合法但形似的 pattern 降级为子串）比挂死可接受。
- */
-function isCatastrophicPattern(pattern: string): boolean {
-  return (
-    /\((?:[^()\\]|\\.)*[+*?{](?:[^()\\]|\\.)*\)[+*?{]/.test(pattern) ||
-    /\((?:[^()\\]|\\.)*\|(?:[^()\\]|\\.)*\)[+*?{]/.test(pattern)
-  )
-}
-
-/** 编译检索 pattern：先当正则，非法/灾难性则转义为字面子串（design §3.4 pattern 子串或正则）。 */
-function compilePattern(pattern: string): RegExp {
-  if (isCatastrophicPattern(pattern)) {
-    return new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
-  }
-  try {
-    return new RegExp(pattern, 'i')
-  } catch {
-    return new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
-  }
-}
-
-/** 安全序列化：循环引用等异常时返回空串（catch 非空——记默认值）。 */
-function safeStringify(v: unknown): string {
-  try {
-    return JSON.stringify(v)
-  } catch {
-    return '' // 循环引用等致 stringify 失败，跳过该块
-  }
-}
-
-/** search 的可检索文本：含 text/thinking/toolResult 全量（按 scope 过滤由调用方做）。 */
-function searchableText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    const parts: string[] = []
-    for (const b of content) {
-      if (b && typeof b === 'object') {
-        const o = b as Record<string, unknown>
-        if (typeof o.text === 'string') parts.push(o.text)
-        else if (typeof o.thinking === 'string') parts.push(o.thinking)
-        else {
-          const serialized = safeStringify(o)
-          if (serialized) parts.push(serialized)
-        }
-      }
-    }
-    return parts.join('\n')
-  }
-  return safeStringify(content)
-}
-
-/** search 命中片段的前后上下文字符数。 */
-const SNIPPET_CONTEXT_CHARS = 20
-
-function snippet(text: string, idx: number, len: number): string {
-  const start = Math.max(0, idx - SNIPPET_CONTEXT_CHARS)
-  const end = Math.min(text.length, idx + len + SNIPPET_CONTEXT_CHARS)
-  return (
-    (start > 0 ? '…' : '') +
-    text.slice(start, end).replace(/\s+/g, ' ').trim() +
-    (end < text.length ? '…' : '')
-  )
 }
 
 // ===========================================================================
@@ -1133,340 +902,7 @@ async function doDetail(
   }
 }
 
-/** search action 的默认命中数上限。 */
-const SEARCH_DEFAULT_LIMIT = 20
-
-/** search 单条命中（turn 内 entry 定位 + 角色 + 摘要片段）。 */
-interface SearchHit {
-  turnIndex: number
-  entryIndex: number
-  role: string
-  matchSnippet: string
-}
-
-/** search 扫描阶段：遍历 turns 收集命中；每 turn 前检查 abort（MF-5 尽早退出）。 */
-function collectSearchHits(
-  turns: Turn[],
-  regex: RegExp,
-  scope: NonNullable<SessionReadParams['scope']>,
-  signal: AbortSignal | undefined,
-): SearchHit[] {
-  const hits: SearchHit[] = []
-  for (const t of turns) {
-    // MF-5：Esc/abort 后 pi 已丢弃本 turn 结果，尽早退出避免继续扫描长 session
-    if (signal?.aborted) {
-      throw err('搜索已中断（信号 aborted）。👉 重试或换更精确的 pattern。')
-    }
-    for (let i = 0; i < t.entries.length; i++) {
-      const msg = t.entries[i].message
-      if (msg === undefined) continue
-      if (scope !== 'all' && msg.role !== scope) continue
-      const text = searchableText(msg.content)
-      const m = regex.exec(text)
-      if (m !== null) {
-        hits.push({
-          turnIndex: t.index,
-          entryIndex: i,
-          role: msg.role,
-          matchSnippet: snippet(text, m.index, m[0].length),
-        })
-      }
-    }
-  }
-  return hits
-}
-
-/** search 收口阶段：结果文本组装（header 标注降级/scope/截断 + 逐行命中列表）。 */
-function formatSearchText(
-  pattern: string,
-  degraded: boolean,
-  scope: NonNullable<SessionReadParams['scope']>,
-  sliced: SearchHit[],
-  truncated: boolean,
-): string {
-  const lines = sliced.map(
-    (h) => `  T${pad(h.turnIndex)} #${h.entryIndex} ${h.role}: ${h.matchSnippet}`,
-  )
-  return `${sliced.length} hit(s) for /${pattern}/${degraded ? '（已降级为字面子串匹配）' : ''}${
-    scope !== 'all' ? ' scope=' + scope : ''
-  }${truncated ? ` (truncated, showing first ${sliced.length})` : ''}\n${lines.join('\n')}`
-}
-
-// ---------------------------------------------------------------------------
-// u12 跨会话内容检索（design 2026-09-10 §2 目标 5 / §8.2 V8）
-// ---------------------------------------------------------------------------
-
-/**
- * 跨会话单次检索的候选数上限（窄化前置阈值，V8「先 find 窄化，再对结果检索」）。
- * 与 result action 批量 ≤10 先例对齐；候选集全文检索成本 O(总字节)，数量上限是
- * 第一道闸（超限明确拒绝并指引先 find，不静默超时）。
- */
-export const MULTI_SEARCH_MAX_SESSIONS = 10
-
-/** 字节展示/预算换算基数（人话格式化与预算常量共用同一量纲）。 */
-const BYTES_PER_KB = 1024
-const BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB
-
-/** 跨会话单次检索的预算 MB 数（§8.2 V8 字节上限的量纲；换算见 SEARCH_SCAN_BYTE_BUDGET）。 */
-const SEARCH_SCAN_BUDGET_MB = 64
-
-/**
- * 跨会话单次检索的总扫描字节上限（第二道闸，design §2 Out-of-scope「阶段二先用
- * 『窄化后线性扫 + 字节上限』」）。64MB ≈ 近 3 个大型主 session（P-9 实测单主 session
- * 23MB、纯 pi 全库最坏 2.7GB）——窄化后候选 ≤10 正常远触不到；触顶即「候选集仍不够
- * 窄」或「存在超大单文件」，按列表顺序停止并报告已扫范围（防大库拖死）。
- * 测试经 searchAcrossSessions 的 byteBudget 注入小预算，不构造 64MB fixture。
- */
-export const SEARCH_SCAN_BYTE_BUDGET = SEARCH_SCAN_BUDGET_MB * BYTES_PER_MB
-
-/** 跨会话检索的单 session 扫描结果（零命中者也入 scanned——已扫范围对调用方可见）。 */
-interface CrossSearchScan {
-  sessionId: string
-  source: 'main' | 'subagent'
-  path: string
-  /** 用户标题（u11 metadataProvider 尽力补全；provider 缺省/抛错留空） */
-  name?: string
-  hits: SearchHit[]
-  /** 截断前的命中总数（> hits.length 即被 limit 截断，渲染「>N hits, showing first M」） */
-  hitsTotal?: number
-}
-
-/** 跨会话检索的未扫/跳过条目（有检测必有报告：每条未扫 id 都带原因）。 */
-interface CrossSearchSkipped {
-  sessionId: string
-  /** not-found=库中无此 id；byte-budget=字节预算在此处耗尽（其后全部未扫）；read-error=文件读取/解析失败 */
-  reason: 'not-found' | 'byte-budget' | 'read-error'
-  sizeBytes?: number
-}
-
-/** 跨会话检索 details（程序化消费/测试断言面）。 */
-export interface CrossSearchDetails {
-  pattern: string
-  scope: NonNullable<SessionReadParams['scope']>
-  degraded: boolean
-  byteBudget: number
-  /** 实际已扫字节和（只含解析成功文件） */
-  scannedBytes: number
-  scanned: CrossSearchScan[]
-  skipped: CrossSearchSkipped[]
-  truncated: boolean
-}
-
-/** 跨会话检索头部/未扫段的人话字节格式（MB 保留 1 位，<1MB 显示 KB）。 */
-function formatScanBytes(bytes: number): string {
-  if (bytes >= BYTES_PER_MB) return `${(bytes / BYTES_PER_MB).toFixed(1)}MB`
-  return `${Math.max(1, Math.round(bytes / BYTES_PER_KB))}KB`
-}
-
-/** 调用串内嵌 pattern 的转义（文案是 JSON-ish 形态，引号/反斜杠须保真可复制执行）。 */
-function escapeCallArg(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-}
-
-/**
- * 窄化前置拒绝（V8：宽搜明确拒绝，不静默超时）。返回结果不抛——引导类输出与
- * F1（find 零匹配）/F2（多匹配消歧）同形态。
- */
-function formatCrossSearchRejected(candidateCount: number): ToolResult {
-  const text = [
-    `跨会话检索已拒绝：候选集 ${candidateCount} 个 session 超出单次上限 ${MULTI_SEARCH_MAX_SESSIONS} 个。`,
-    `对大候选集做全文检索的扫描量不可控（单次字节上限 ${formatScanBytes(SEARCH_SCAN_BYTE_BUDGET)}）——先窄化，再检索。`,
-    `👉 先窄化候选集：session_read { action:"find", query:"<标题/cwd/时间关键词>" }`,
-    `   再对 find 结果中的完整 id 检索：session_read { action:"search", session:"<id1>,<id2>", pattern:"<关键词>" }（≤${MULTI_SEARCH_MAX_SESSIONS} 个）`,
-  ].join('\n')
-  return {
-    content: [{ type: 'text', text }],
-    details: { rejected: true, candidateCount, maxSessions: MULTI_SEARCH_MAX_SESSIONS },
-  }
-}
-
-/**
- * 跨会话检索结果渲染：命中 session 块（完整 id + source + 标题若有 + 命中数 + 逐命中
- * turn 索引/角色/片段 + 可直接执行的调用串）+ 已扫无命中 + 未扫（超预算，附单检指引）
- * + not-found。结构行英文（渲染类现状风格），👉 指引中文（disambiguate/F1 同风格）。
- */
-function formatCrossSearchText(d: CrossSearchDetails): string {
-  const scannedBytesLabel = `${formatScanBytes(d.scannedBytes)} of ${formatScanBytes(d.byteBudget)} budget`
-  const hitSessions = d.scanned.filter((s) => s.hits.length > 0)
-  const head =
-    `${hitSessions.length}/${d.scanned.length} session(s) hit for /${d.pattern}/` +
-    (d.degraded ? '（已降级为字面子串匹配）' : '') +
-    (d.scope !== 'all' ? ` scope=${d.scope}` : '') +
-    ` · scanned ${scannedBytesLabel}`
-
-  const lines: string[] = []
-  if (hitSessions.length > 0) lines.push('hits:')
-  let index = 0
-  for (const s of d.scanned) {
-    if (s.hits.length === 0) continue
-    index += 1
-    const parts = [`${index}. ${s.sessionId}`, s.source]
-    if (s.name !== undefined) parts.push(s.name)
-    const overflow = s.hitsTotal !== undefined && s.hitsTotal > s.hits.length
-    // 命中数是块级标注（对整个 session），不并入 ' · ' 信息段——紧跟末段拼接
-    const countLabel = overflow
-      ? `（>${s.hitsTotal} hits, showing first ${s.hits.length}）`
-      : `（${s.hits.length} hit${s.hits.length === 1 ? '' : 's'}）`
-    lines.push(`  ${parts.join(' · ')}${countLabel}`)
-    for (const h of s.hits) {
-      lines.push(`     T${pad(h.turnIndex)} #${h.entryIndex} ${h.role}: ${h.matchSnippet}`)
-    }
-    lines.push(
-      `     ↳ session_read { action:"search", session:"${s.sessionId}", pattern:"${escapeCallArg(d.pattern)}" }`,
-    )
-  }
-  const noHit = d.scanned.filter((s) => s.hits.length === 0)
-  if (noHit.length > 0) {
-    lines.push('scanned, no hit:')
-    for (const s of noHit) lines.push(`  ${s.sessionId} · ${s.source}`)
-  }
-  const overBudget = d.skipped.filter((s) => s.reason === 'byte-budget')
-  if (overBudget.length > 0) {
-    lines.push(`not scanned (byte budget ${formatScanBytes(d.byteBudget)} reached after ${formatScanBytes(d.scannedBytes)}):`)
-    for (const s of overBudget) {
-      lines.push(`  - ${s.sessionId}（${formatScanBytes(s.sizeBytes ?? 0)}）`)
-      lines.push(
-        `    👉 检索单个：session_read { action:"search", session:"${s.sessionId}", pattern:"${escapeCallArg(d.pattern)}" }`,
-      )
-    }
-  }
-  const notFound = d.skipped.filter((s) => s.reason === 'not-found')
-  if (notFound.length > 0) {
-    lines.push('not found in library (confirm full id via find):')
-    for (const s of notFound) lines.push(`  - ${s.sessionId}`)
-  }
-  const readErrors = d.skipped.filter((s) => s.reason === 'read-error')
-  if (readErrors.length > 0) {
-    lines.push('skipped (read/parse failed):')
-    for (const s of readErrors) lines.push(`  - ${s.sessionId}`)
-  }
-  if (hitSessions.length === 0 && d.scanned.length > 0) {
-    lines.push('👉 无命中：换更精确 pattern，或用 find 重新窄化候选集后重试。')
-  }
-  return `${head}\n${lines.join('\n')}`
-}
-
-/**
- * 跨会话内容检索主体（u12 导出：byteBudget 参数供测试注入小预算，工具路径经 doSearch
- * 走默认 SEARCH_SCAN_BYTE_BUDGET）。
- *
- * 流程：窄化拒绝（候选 > MULTI_SEARCH_MAX_SESSIONS，V8）→ buildSessionFileIndex（一次
- * 根扫描，id 语义与 find 候选同源）→ 按传入顺序逐个「复用单会话扫描管线」（safeParse →
- * buildTreeView → segmentTurns → collectSearchHits，零新解析；signal.abort 中断与单会话
- * 一致抛错）→ 字节预算按序消耗（放不下的文件起整段停止，已扫范围 = 列表前缀，报告
- * 每条未扫 id 与原因）→ 标题尽力补全（仅对已扫 session 的目录调 metadataProvider，
- * 按目录去重 + 单目录 try/catch 降级留空）→ 渲染。
- *
- * limit 语义延续单会话（每 session 命中数上限，默认 SEARCH_DEFAULT_LIMIT）；候选 ≤10
- * 且每 session ≤limit 命中，输出规模有界。truncated = 任一 session 命中被截断。
- */
-export async function searchAcrossSessions(
-  ids: string[],
-  pattern: string,
-  signals: SessionReadSignals,
-  opts?: {
-    scope?: NonNullable<SessionReadParams['scope']>
-    limit?: number
-    signal?: AbortSignal
-    metadataProvider?: SessionMetadataProvider
-    byteBudget?: number
-  },
-): Promise<ToolResult> {
-  // ① 窄化前置（V8）：候选集超阈值明确拒绝（不进入扫描）
-  if (ids.length > MULTI_SEARCH_MAX_SESSIONS) {
-    return formatCrossSearchRejected(ids.length)
-  }
-
-  const scope = opts?.scope ?? 'all'
-  const limit = opts?.limit ?? SEARCH_DEFAULT_LIMIT
-  const byteBudget = opts?.byteBudget ?? SEARCH_SCAN_BYTE_BUDGET
-  const degraded = isCatastrophicPattern(pattern)
-  const regex = compilePattern(pattern)
-
-  // ② 候选索引（一次根扫描；候选数上限在上方已闸，索引只做 id 全覆盖）
-  const index = await buildSessionFileIndex(signals)
-
-  // ③ 按传入顺序逐个扫描（调用方列表顺序即优先级，字节预算按序消耗）
-  const scanned: CrossSearchScan[] = []
-  const skipped: CrossSearchSkipped[] = []
-  let scannedBytes = 0
-  let truncated = false
-  for (let i = 0; i < ids.length; i++) {
-    const id = ids[i]!
-    const ref = index.get(id)
-    if (ref === undefined) {
-      skipped.push({ sessionId: id, reason: 'not-found' })
-      continue
-    }
-    if (scannedBytes + ref.sizeBytes > byteBudget) {
-      // 预算按序消耗：从这里起整段停止（含更小的后续文件也不扫）——已扫范围恒为
-      // 列表前缀，报告无歧义；超大单文件走括注的单检通路（单会话 search 不受此预算）
-      for (const rest of ids.slice(i)) {
-        skipped.push({ sessionId: rest, reason: 'byte-budget', sizeBytes: index.get(rest)?.sizeBytes })
-      }
-      break
-    }
-    // 复用单会话扫描管线（core 层只读复用，零新解析）；坏文件跳过不拖死整体（F6 只属单会话契约）
-    let turns: Turn[]
-    try {
-      const { entries } = await parseSessionFile(ref.path)
-      turns = segmentTurns(entries, new Set(buildTreeView(entries).leafPath))
-    } catch {
-      skipped.push({ sessionId: id, reason: 'read-error' })
-      continue
-    }
-    const hits = collectSearchHits(turns, regex, scope, opts?.signal)
-    if (hits.length > limit) {
-      truncated = true
-      scanned.push({
-        sessionId: id,
-        source: ref.source,
-        path: ref.path,
-        hits: hits.slice(0, limit),
-        hitsTotal: hits.length,
-      })
-    } else {
-      scanned.push({ sessionId: id, source: ref.source, path: ref.path, hits })
-    }
-    scannedBytes += ref.sizeBytes
-  }
-
-  // ④ 标题尽力补全（u11 provider 复用；仅对已扫 session 的所在目录，按目录去重 +
-  //    单目录 try/catch 记空——provider 缺省/抛错标题留空，检索本体不受影响）
-  if (opts?.metadataProvider !== undefined && scanned.length > 0) {
-    const titles = new Map<string, string>()
-    for (const dir of new Set(scanned.map((s) => dirname(s.path)))) {
-      let entries: SessionMetadataEntry[]
-      try {
-        entries = await opts.metadataProvider(dir)
-      } catch {
-        continue // 降级：该目录标题不可用（§6.6 同款 guard），留空继续
-      }
-      for (const e of entries) {
-        if (e.name !== undefined) titles.set(e.id, e.name)
-      }
-    }
-    for (const s of scanned) {
-      const name = titles.get(s.sessionId)
-      if (name !== undefined) s.name = name
-    }
-  }
-
-  const details: CrossSearchDetails = {
-    pattern,
-    scope,
-    degraded,
-    byteBudget,
-    scannedBytes,
-    scanned,
-    skipped,
-    truncated,
-  }
-  return { content: [{ type: 'text', text: formatCrossSearchText(details) }], details }
-}
-
-/**
- * search：全文检索（design §3.4 search，M3 新实现）。
+/** search：全文检索（design §3.4 search，M3 新实现）。
  *
  * u12 两种形态（design 2026-09-10 §2 目标 5 / §8.2 V8）：
  * - session 含逗号 → 跨会话模式（searchAcrossSessions）：候选集 = find 输出的完整 id
@@ -1601,25 +1037,9 @@ async function doExport(
 // extract action（v2 O4：跨 turn 按类型提取素材）
 // ===========================================================================
 //
-// design §3.3 D3 的 5 个预设 + F7/F8/F9 错误规格。复用 O1 共享层（extractToolCalls /
-// formatToolCallSummary / basename）与现有 resolveSessionId/safeParse/buildTreeView/
-// segmentTurns/parseTurnsRange。纯提取，不调 LLM。
-
-/** extract 的 5 个合法 what（design §3.3 D3）。 */
-type ExtractWhat = 'user-messages' | 'commands' | 'files' | 'commits' | 'tool-results'
-
-/** extract 结果预算（design §3.3 F9）：8000 字节 ≈ 2000 token。 */
-const EXTRACT_BUDGET_BYTES = 8000
-
-/** 含 path 参数的文件类工具（design §3.3 D3 files scope）。 */
-const FILE_TOOLS = new Set(['read', 'edit', 'write', 'head'])
-
-/** git 命令关键词（commits 预设判定 bash 结果是否来自 git 命令）。 */
-const GIT_CMD_RE = /\bgit\s+(log|show|commit|push|merge|cherry-pick|revert|reset|rebase|diff)\b/
-/** git short hash（commits 预设，保守限定 7-8 位避免 uuid 全量误报）。 */
-const SHORT_HASH_RE = /\b[0-9a-f]{7,8}\b/g
-/** commit 上下文消歧关键词（commits 次路径：hash 附近出现才纳入）。 */
-const COMMIT_CTX_RE = /feat:|fix:|refactor:|chore:|docs:|\b(commit|commits|merged|pushed|merge)\b/i
+// design §3.3 D3 的 5 个预设 + F7/F8/F9 错误规格。预设管线与预算渲染在 extract.ts
+//（max-lines 拆分轮机械提取）；本段保留 F7 what 校验与 doExtract 编排（定位依赖
+// tool-handler 私有的 resolveSessionId/safeParse/segmentTurns）。纯提取，不调 LLM。
 
 /** what 类型守卫（直接比较，避开不安全断言；schema 已校验，此处防御 + 可单测绕过）。 */
 function isExtractWhat(v: unknown): v is ExtractWhat {
@@ -1629,399 +1049,6 @@ function isExtractWhat(v: unknown): v is ExtractWhat {
     v === 'files' ||
     v === 'commits' ||
     v === 'tool-results'
-  )
-}
-
-/**
- * 从 message.content 提取纯 text（string 直取；数组拼接 text 块）。
- *
- * 与 render.ts 内部 extractText 同语义，但那未导出；extract 仅需纯 text
- *（user-messages / tool-results 的正文），不要 thinking/toolCall 占位，本地实现。
- * content 是 unknown 做类型守卫。
- */
-function extractContentText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    const parts: string[] = []
-    for (const b of content) {
-      if (b !== null && typeof b === 'object') {
-        const o = b as Record<string, unknown>
-        if (o.type === 'text' && typeof o.text === 'string') parts.push(o.text)
-      }
-    }
-    return parts.join('\n')
-  }
-  return ''
-}
-
-/** 截断到 max 字符，超出加省略号（防爆；tool-results 正文用）。 */
-function truncateText(s: string, max: number): string {
-  return s.length <= max ? s : s.slice(0, max) + '…'
-}
-
-/** turnsLabel 展示的 turn 数上限（超出折叠为 +N）。 */
-const TURNS_LABEL_HEAD_COUNT = 5
-
-/** turns 数组紧凑标签（前 5 个 + +N，避免一行过长撑爆预算）。 */
-function turnsLabel(turns: number[]): string {
-  const head = turns.slice(0, TURNS_LABEL_HEAD_COUNT).map((n) => `T${pad(n)}`)
-  const suffix = turns.length > TURNS_LABEL_HEAD_COUNT ? `+${turns.length - TURNS_LABEL_HEAD_COUNT}` : ''
-  return head.join(',') + suffix
-}
-
-/**
- * 计算工具分布（按出现次数降序），用于 F8 提示 + details.toolDistribution。
- * 遍历 assistant entry 的 toolCall，复用 extractToolCalls。
- */
-function computeToolDistribution(
-  turns: Turn[],
-): Array<{ name: string; count: number }> {
-  const counts = new Map<string, number>()
-  for (const t of turns) {
-    for (const e of t.entries) {
-      if (e.message?.role !== 'assistant') continue
-      for (const tc of extractToolCalls(e)) {
-        counts.set(tc.name, (counts.get(tc.name) ?? 0) + 1)
-      }
-    }
-  }
-  return Array.from(counts.entries())
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count)
-}
-
-/** F8 提示展示的工具分布条数上限。 */
-const TOOL_DISTRIBUTION_LIMIT = 10
-
-/** F8：commands/tool-results 的 tool 过滤零匹配 → 返回工具分布 + 👉（不抛错，design §3.3 F8）。 */
-function f8ToolNoMatch(what: ExtractWhat, tool: string, turns: Turn[]): ToolResult {
-  const dist = computeToolDistribution(turns).slice(0, TOOL_DISTRIBUTION_LIMIT)
-  const distStr = dist.map((d) => `${d.name}×${d.count}`).join(', ')
-  const text = `what=${what} tool="${tool}" 无匹配。该 session 工具：${distStr}。👉 用存在的工具名重试。`
-  return { content: [{ type: 'text', text }], details: { what, tool, toolDistribution: dist } }
-}
-
-/**
- * 通用预算渲染：逐项累加字节，超 EXTRACT_BUDGET_BYTES 截断（design §3.3 F9）。
- *
- * details.items 放实际展示的子集（截断后），count 放全集长度，测试可断言 shown/count/truncated。
- * emptyHint 仅 items 为空时用（files/commits 无匹配不报错，返空 + 提示）。
- *
- * 预算控制：按 item 累计字节达预算即截断。**首项超大也内部截断**（对单行 slice 到剩余字节预算，
- * 字节→字符 ×3 近似防 UTF8 多字节被切半），保证 body 不超预算——而非放行首项致 body 远超预算。
- * 导出供 tool-handler.test 单测 F9 截断逻辑（首项截断 + 文案含 turn 范围 + 实际 token）。
- *
- * getTurns：从 item 提取 turn 列表（files 是 turns 数组，其余单值包数组），供 F9 文案报 turn 范围。
- */
-
-/** UTF8 单字符最大字节数（预算字节→字符的保守换算基数，防多字节字符被切半）。 */
-const UTF8_MAX_BYTES_PER_CHAR = 3
-/** token 估算换算基数（bytes/4 口径，与 render 层 chars/4 同近似）。 */
-const CHARS_PER_TOKEN = 4
-
-export function renderExtractItems<I>(
-  what: ExtractWhat,
-  items: I[],
-  renderLine: (item: I) => string,
-  getTurns: (item: I) => number[],
-  emptyHint?: string,
-): ToolResult {
-  if (items.length === 0) {
-    const text = emptyHint ?? `what=${what} 无匹配。`
-    return {
-      content: [{ type: 'text', text }],
-      details: { what, count: 0, shown: 0, truncated: false, items: [] },
-    }
-  }
-  const shown: I[] = []
-  const shownLines: string[] = []
-  let bytes = 0
-  let cut = false
-  for (const item of items) {
-    const line = renderLine(item)
-    const lineBytes = Buffer.byteLength(line, 'utf8') + 1 // +\n
-    if (bytes + lineBytes > EXTRACT_BUDGET_BYTES) {
-      // 超预算：对当前 line 内部截断到剩余预算（首项超大也截断，但保留截断后的内容）
-      const remainingBytes = EXTRACT_BUDGET_BYTES - bytes
-      const charBudget = Math.floor(remainingBytes / UTF8_MAX_BYTES_PER_CHAR) // 字节→字符 ×3 近似防 UTF8 切半
-      if (charBudget > 0) {
-        const sliced = line.slice(0, charBudget) + '…'
-        shown.push(item)
-        shownLines.push(sliced)
-      }
-      cut = true
-      break
-    }
-    shown.push(item)
-    shownLines.push(line)
-    bytes += lineBytes
-  }
-  const body = shownLines.join('\n')
-  if (!cut) {
-    return {
-      content: [{ type: 'text', text: body }],
-      details: {
-        what,
-        count: items.length,
-        shown: shown.length,
-        truncated: false,
-        items: shown,
-      },
-    }
-  }
-  // F9：超预算截断。tokens 反映 body 实际体积（非固定 2000）；文案报 shown/count + turn 范围 + 实际 token
-  const shownTurns = shown.flatMap(getTurns)
-  const turnRange =
-    shownTurns.length > 0
-      ? `（T${pad(Math.min(...shownTurns))}-T${pad(Math.max(...shownTurns))}）`
-      : ''
-  const actualTokens = Math.round(Buffer.byteLength(body, 'utf8') / CHARS_PER_TOKEN)
-  const text =
-    body +
-    `\n[what=${what} 已显示 ${shown.length}/${items.length} 项${turnRange}，约 ${actualTokens} token 达预算上限。👉 用较小 turns 范围（如 T000-T005）缩小，或换 what 重试。]`
-  return {
-    content: [{ type: 'text', text }],
-    details: {
-      what,
-      count: items.length,
-      shown: shown.length,
-      truncated: true,
-      items: shown,
-    },
-  }
-}
-
-/** 预设 1：user-messages——收集 role==='user' 的全文（按 turn 排列，design §3.3 D3）。 */
-function extractUserMessages(turns: Turn[]): ToolResult {
-  const items: Array<{ turn: number; text: string }> = []
-  for (const t of turns) {
-    for (const e of t.entries) {
-      if (e.message?.role !== 'user') continue
-      items.push({ turn: t.index, text: extractContentText(e.message.content) })
-    }
-  }
-  return renderExtractItems(
-    'user-messages',
-    items,
-    (it) => `T${pad(it.turn)}: ${it.text}`,
-    (it) => [it.turn],
-  )
-}
-
-/**
- * 预设 2：commands——assistant 的 toolCall，带 name + D1 摘要（design §3.3 D3）。
- * 可选 tool 过滤；过滤后零匹配 → F8（工具分布 + 👉，不抛错）。
- * index = entry 在 turn.entries 内的位置，与 expand 的 [N] 对齐便于定位。
- */
-function extractCommands(turns: Turn[], tool: string | undefined): ToolResult {
-  const items: Array<{ turn: number; index: number; name: string; summary: string }> = []
-  for (const t of turns) {
-    for (let ei = 0; ei < t.entries.length; ei++) {
-      const e = t.entries[ei]
-      if (e.message?.role !== 'assistant') continue
-      for (const tc of extractToolCalls(e)) {
-        if (tool !== undefined && tc.name !== tool) continue
-        items.push({
-          turn: t.index,
-          index: ei,
-          name: tc.name,
-          summary: formatToolCallSummary(tc),
-        })
-      }
-    }
-  }
-  if (tool !== undefined && items.length === 0) return f8ToolNoMatch('commands', tool, turns)
-  return renderExtractItems(
-    'commands',
-    items,
-    (it) => `T${pad(it.turn)} #${it.index} ${it.summary}`,
-    (it) => [it.turn],
-  )
-}
-
-/**
- * 预设 3：files——read/edit/write/head 的 path 去重（design §3.3 D3）。
- * 同 path 多次操作合并，op 聚合成 `read+edit` 形式，turns 记录出现过的轮次。
- * todo/subagent/cw 无 path 不纳入。无匹配不报错（返空 + 提示）。
- */
-function extractFiles(turns: Turn[]): ToolResult {
-  const map = new Map<string, { ops: Set<string>; turns: Set<number> }>()
-  for (const t of turns) {
-    for (const e of t.entries) {
-      if (e.message?.role !== 'assistant') continue
-      for (const tc of extractToolCalls(e)) {
-        if (!FILE_TOOLS.has(tc.name)) continue
-        const p = tc.arguments.path
-        if (typeof p !== 'string') continue
-        let rec = map.get(p)
-        if (rec === undefined) {
-          rec = { ops: new Set(), turns: new Set() }
-          map.set(p, rec)
-        }
-        rec.ops.add(tc.name)
-        rec.turns.add(t.index)
-      }
-    }
-  }
-  const items = Array.from(map.entries()).map(([path, rec]) => ({
-    path,
-    basename: basename(path),
-    op: Array.from(rec.ops).sort().join('+'),
-    turns: Array.from(rec.turns).sort((a, b) => a - b),
-  }))
-  return renderExtractItems(
-    'files',
-    items,
-    (it) => `${it.op}: ${it.path} (${turnsLabel(it.turns)})`,
-    (it) => it.turns,
-    `what=files 无匹配（该 session 无 read/edit/write/head 文件操作）。`,
-  )
-}
-
-/**
- * 预设 4：commits——git 命令 toolResult 的 hash（design §3.3 D3 + D6 误匹配处理）。
- *
- * 保守策略（宁可少召回不要乱报 uuid）：
- * ① 主路径（高置信）：只从 bash 且关联 command 含 git (log|show|commit|push|merge|...) 的
- *    toolResult 文本提取 7-8 位 hex；
- * ② 次路径（中置信）：扫所有 toolResult 文本，hash 前后各 30 字符内含
- *    feat:/fix:/commit/merge 等关键词的才纳入；
- * ③ 去重，git-cmd 置信度优先；不扫 user/assistant 自由文本（uuid/session-id 误报太多）。
- *
- * 已知局限：7-8 位 hex 与 uuid v7 片段形似，靠 git 命令上下文过滤；仍可能漏报
- *（git 操作未被 toolResult 捕获）或误报（git log 输出里的其他 hex）。每条标注来源 turn
- * + source + context，agent 可快速辨认。完全语义判断需 LLM，本工具零 LLM 依赖。
- */
-/** commits 提取的 hash 前后上下文字符数（次路径关键词判定窗口）。 */
-const COMMIT_CONTEXT_CHARS = 30
-
-/** commits 预设的单条提取结果（hash + 来源 turn + 置信来源 + 上下文片段）。 */
-interface CommitItem {
-  hash: string
-  turn: number
-  source: 'git-cmd' | 'commit-context'
-  context: string
-}
-
-/** 建 toolCallId → bash command 映射（用于判定 toolResult 是否来自 git 命令）。 */
-function collectBashCommands(turns: Turn[]): Map<string, string> {
-  const bashCmds = new Map<string, string>()
-  for (const t of turns) {
-    for (const e of t.entries) {
-      if (e.message?.role !== 'assistant') continue
-      for (const tc of extractToolCalls(e)) {
-        if (tc.name === 'bash') {
-          const cmd = tc.arguments.command
-          if (typeof cmd === 'string') bashCmds.set(tc.id, cmd)
-        }
-      }
-    }
-  }
-  return bashCmds
-}
-
-/** 单条 toolResult 文本的 hash 提取：git-cmd 全收（高置信），否则按上下文关键词过滤（次路径）。 */
-function matchCommitsInResult(
-  text: string,
-  turnIndex: number,
-  isGitBash: boolean,
-  high: CommitItem[],
-  low: CommitItem[],
-): void {
-  for (const m of text.matchAll(SHORT_HASH_RE)) {
-    const hash = m[0]
-    const idx = m.index ?? 0
-    const ctx = text
-      .slice(Math.max(0, idx - COMMIT_CONTEXT_CHARS), idx + hash.length + COMMIT_CONTEXT_CHARS)
-      .replace(/\s+/g, ' ')
-      .trim()
-    if (isGitBash) {
-      high.push({ hash, turn: turnIndex, source: 'git-cmd', context: ctx })
-    } else if (COMMIT_CTX_RE.test(ctx)) {
-      low.push({ hash, turn: turnIndex, source: 'commit-context', context: ctx })
-    }
-  }
-}
-
-/** 主扫描阶段：遍历 toolResult entry，分类收集高/低置信 commit 候选。 */
-function collectCommitCandidates(
-  turns: Turn[],
-  bashCmds: Map<string, string>,
-): { high: CommitItem[]; low: CommitItem[] } {
-  const high: CommitItem[] = []
-  const low: CommitItem[] = []
-  for (const t of turns) {
-    for (const e of t.entries) {
-      if (e.message?.role !== 'toolResult') continue
-      const msg = e.message
-      const text = extractContentText(msg.content)
-      if (text === '') continue
-      const cmd = msg.toolCallId !== undefined ? bashCmds.get(msg.toolCallId) : undefined
-      const isGitBash = msg.toolName === 'bash' && cmd !== undefined && GIT_CMD_RE.test(cmd)
-      matchCommitsInResult(text, t.index, isGitBash, high, low)
-    }
-  }
-  return { high, low }
-}
-
-/** 收口阶段：去重，高置信优先，同 hash 保留首次。 */
-function dedupeCommits(high: CommitItem[], low: CommitItem[]): CommitItem[] {
-  const seen = new Set<string>()
-  const items: CommitItem[] = []
-  for (const c of high) {
-    if (seen.has(c.hash)) continue
-    seen.add(c.hash)
-    items.push(c)
-  }
-  for (const c of low) {
-    if (seen.has(c.hash)) continue
-    seen.add(c.hash)
-    items.push(c)
-  }
-  return items
-}
-
-function extractCommits(turns: Turn[]): ToolResult {
-  // 建 toolCallId → bash command 映射（用于判定 toolResult 是否来自 git 命令）
-  const bashCmds = collectBashCommands(turns)
-  const { high, low } = collectCommitCandidates(turns, bashCmds)
-  const items = dedupeCommits(high, low)
-
-  return renderExtractItems(
-    'commits',
-    items,
-    (it) => `T${pad(it.turn)} ${it.hash} [${it.source}] ${it.context}`,
-    (it) => [it.turn],
-    `what=commits 无匹配（该 session 无 git commit hash，或未在 toolResult 中出现）。`,
-  )
-}
-
-/** tool-results 正文截断上限（防爆）。 */
-const TOOL_RESULT_TEXT_MAX_CHARS = 500
-
-/**
- * 预设 5：tool-results——role==='toolResult' 文本（design §3.3 D3）。
- * text 截断到 500 字防爆；可选 tool 过滤（msg.toolName）；过滤零匹配 → F8。
- */
-function extractToolResults(turns: Turn[], tool: string | undefined): ToolResult {
-  const items: Array<{ turn: number; index: number; toolName: string; text: string }> = []
-  for (const t of turns) {
-    for (let ei = 0; ei < t.entries.length; ei++) {
-      const e = t.entries[ei]
-      if (e.message?.role !== 'toolResult') continue
-      const tn = e.message.toolName ?? '?'
-      if (tool !== undefined && tn !== tool) continue
-      const text = truncateText(extractContentText(e.message.content), TOOL_RESULT_TEXT_MAX_CHARS)
-      items.push({ turn: t.index, index: ei, toolName: tn, text })
-    }
-  }
-  if (tool !== undefined && items.length === 0)
-    return f8ToolNoMatch('tool-results', tool, turns)
-  return renderExtractItems(
-    'tool-results',
-    items,
-    (it) => `T${pad(it.turn)} #${it.index} ${it.toolName}: ${it.text}`,
-    (it) => [it.turn],
   )
 }
 
@@ -2234,84 +1261,6 @@ async function doWorkflow(
   return { content: [{ type: 'text', text }], details }
 }
 
-// ===========================================================================
-// doctor action（u8：design 2026-09-10 §6.2/§6.3/§6.4/§7B 要点 2/4/5/8 + §6.11 U14b 段）
-// ===========================================================================
-
-/**
- * doctor 所需环境信号：u3 信号包（SessionRootSignals）的超集，index.ts execute 补采
- * env/bundleUrl。env 属宿主信号（detectEnvironment 契约），与根信号分属两个注入接口，
- * 在 handler 层合流；两字段可选——缺省时 doctor 按「空 env / bundleUrl 缺失」降级
- *（kind=standalone-pi、distribution=null），根表照常输出。
- */
-export interface SessionReadSignals extends SessionRootSignals {
-  /** process.env 快照（doctor 环境判定，design §6.2；缺省按空 env 降级） */
-  env?: Record<string, string | undefined>
-  /** extension 模块 import.meta.url（doctor 发行形态判定；缺省 distribution=null 不猜） */
-  bundleUrl?: string
-}
-
-/**
- * doctor 扫描缓存（进程内，keyed by 根字面路径；Map 生命周期 = pi 进程生命周期，
- * 即「进程生命周期兜底上限」）。失效 = 秒级 TTL 到期 **或** 根目录 mtime 变化（任一）。
- *
- * 以 SessionRootCache 句柄注入 resolveSessionRoots（§6.3「同一数据源两处渲染」——根
- * 骨架/去重/扫描全在 roots.ts，doctor 只注入缓存与 subagent 扫描模式）；TTL/mtime
- * 失效判定全在本侧实现，roots.ts 不内置。**仅 doctor 消费——find 一律不读缓存**
- *（§7B 要点 8）：find 恒不传 options；若 find 读缓存，最坏形态是 PS-14（首条
- * assistant 前 main 根 0 文件被缓存，之后每次都把「根解析正常」误报成「主根为空」）
- * ——正是本设计要消灭的错误归因。
- */
-interface DoctorCacheEntry extends SessionRootCacheEntry {
-  /** 写入时刻（Date.now()），TTL 判定用 */
-  cachedAt: number
-  /** 根目录 mtime(ms)；目录不存在为 null（存在性翻转即失效） */
-  dirMtimeMs: number | null
-}
-
-const doctorScanCache = new Map<string, DoctorCacheEntry>()
-
-/** doctor 根表来源标签列宽（最长 `[subagent]` 10 字符 + 1 对齐间距，§5.1 表格形态）。 */
-const DOCTOR_ROOT_LABEL_PAD = 11
-
-/** 缓存 TTL（秒级，§6.3）。mtime 是主失效通道；TTL 兜「子目录内增删不改变根 mtime」的陈旧面。 */
-export const DOCTOR_CACHE_TTL_MS = 5000
-
-/** stat 根目录 mtime；不存在返回 null（与缓存条目的 null 比对 = 存在性未翻转）。 */
-async function statDirMtimeOrNull(path: string): Promise<number | null> {
-  try {
-    return (await stat(path)).mtimeMs
-  } catch (err) {
-    // 目录不存在是 doctor 的常态输入（三根降级形态），非异常——void 同 roots.ts 容错
-    void err
-    return null
-  }
-}
-
-/** doctor 侧缓存句柄：get 做失效判定（未命中即删除条目），set 快照 mtime 与写入时刻。 */
-const doctorRootCache: SessionRootCache = {
-  async get(key) {
-    const hit = doctorScanCache.get(key)
-    if (hit === undefined) return undefined
-    if (Date.now() - hit.cachedAt >= DOCTOR_CACHE_TTL_MS) {
-      doctorScanCache.delete(key)
-      return undefined
-    }
-    if ((await statDirMtimeOrNull(key)) !== hit.dirMtimeMs) {
-      doctorScanCache.delete(key)
-      return undefined
-    }
-    return { exists: hit.exists, fileCount: hit.fileCount, scanMs: hit.scanMs }
-  },
-  async set(key, value) {
-    doctorScanCache.set(key, {
-      ...value,
-      cachedAt: Date.now(),
-      dirMtimeMs: await statDirMtimeOrNull(key),
-    })
-  },
-}
-
 // ---------------------------------------------------------------------------
 // u11 标题元数据 TTL 缓存（design 2026-09-10 §6.6 调用策略 ③）
 // ---------------------------------------------------------------------------
@@ -2361,155 +1310,6 @@ export function withMetadataCache(provider: SessionMetadataProvider): SessionMet
       dirMtimeMs: await statDirMtimeOrNull(dir),
     })
     return entries
-  }
-}
-
-/** 旧布局残留条目（§6.11 U14b doctor 侧独立 glob 探测）。 */
-interface PiLayoutLeftover {
-  path: string
-  kind: 'backup' | 'unmigrated'
-}
-
-/**
- * 旧布局残留独立 glob 探测（§6.11 v9.1）。基点 = dirname(agentDir)（xyz-agent 下 =
- * `<dataDir>`，纯 pi 下 = `~/.pi`）；`pi/`（未迁移）与 `pi.backup-v2-` 前缀目录（迁移备份）
- * 都不在任何候选根推导式内（[legacy] 够不到带时间戳的备份名与 pi/ 层），故须独立探测。
- *
- * 形态判据（与 u14b 启动探测 / u14a 脚本 0a 同源）：目录下含 `agent/` 或 `sessions/`
- * 子目录才算残留——防纯 pi 宿主下任意来源的 `~/.pi/pi/` 目录误报。读探测，每次现查
- * 不入缓存（两次 readdir 成本可忽略，缓存只服务扫盘贵的根）。
- */
-async function detectPiLayoutLeftovers(
-  agentDir: string,
-): Promise<{ base: string; hits: PiLayoutLeftover[] }> {
-  const base = dirname(agentDir)
-  if (agentDir.length === 0) return { base, hits: [] }
-  let names: string[]
-  try {
-    names = (await readdir(base, { withFileTypes: true }))
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name)
-  } catch {
-    return { base, hits: [] }
-  }
-  const hits: PiLayoutLeftover[] = []
-  for (const name of names) {
-    const isUnmigrated = name === 'pi'
-    const isBackup = name.startsWith('pi.backup-v2-')
-    if (!isUnmigrated && !isBackup) continue
-    const dir = join(base, name)
-    // 形态判据：含 agent/ 或 sessions/ 子目录（迁移备份必含其一——备份即原 pi/ 改名）
-    if (!existsSync(join(dir, 'agent')) && !existsSync(join(dir, 'sessions'))) continue
-    hits.push({ path: dir, kind: isBackup ? 'backup' : 'unmigrated' })
-  }
-  return { base, hits }
-}
-
-/**
- * doctor：环境判定 + 根表 + 事实型诊断 + legacy 非空告警 + 旧布局残留探测。
- *
- * 诊断结论只陈述事实（「最高优先级 main 根 N 文件」），禁止「真的没有 session」类
- * 归因断言（§7B 要点 5 / §3.3 教训）；env/bundleUrl 信号缺失时环境判定按降级输出，
- * 根表照常（§7B 要点 2 同款降级哲学）。
- */
-async function doDoctor(
-  params: SessionReadParams,
-  signals: SessionReadSignals,
-): Promise<ToolResult> {
-  const environment = detectEnvironment({
-    env: signals.env ?? {},
-    ...(signals.bundleUrl !== undefined ? { bundleUrl: signals.bundleUrl } : {}),
-    agentDir: signals.agentDir,
-  })
-  const roots = await resolveSessionRoots(signals, {
-    // subagent 根默认只 stat（§6.3 成本控制：只列路径与可扫性）；includeSubagents:true
-    // 才扫（走同一缓存句柄）。find/F1 路径恒不传 options——不读缓存（§7B 要点 8）。
-    subagents: params.includeSubagents === true ? 'scan' : 'stat',
-    cache: doctorRootCache,
-  })
-  const leftovers = await detectPiLayoutLeftovers(signals.agentDir)
-  return renderDoctor(roots, environment, leftovers)
-}
-
-/**
- * 渲染 doctor 输出（§5.1 形态）：环境判定 + evidence + 会话根表（来源标签/路径/存在/
- * 文件数/扫描耗时/去重注记）+ 事实型诊断 + legacy 非空告警 + 旧布局残留（命中才出现）。
- */
-function renderDoctor(
-  roots: SessionRoot[],
-  environment: DetectedEnvironment,
-  leftovers: { base: string; hits: PiLayoutLeftover[] },
-): ToolResult {
-  const lines: string[] = []
-
-  // 环境判定行 + evidence（§6.2：判定可被证据推翻，非黑盒断言；evidence 恒非空）
-  lines.push(
-    `环境判定：${environment.kind === 'xyz-agent' ? 'xyz-agent（托管）' : 'standalone-pi'}` +
-      ` · 发行形态：${environment.distribution ?? '未知（不猜）'}`,
-  )
-  if (environment.dataDir !== undefined) lines.push(`数据目录：${environment.dataDir}`)
-  lines.push('依据：')
-  for (const e of environment.evidence) lines.push(`  - ${e}`)
-
-  // 会话根表（按优先级）
-  lines.push('')
-  lines.push('会话根（按优先级）：')
-  roots.forEach((r, i) => {
-    lines.push(`  ${i + 1}. ${`[${r.kind}]`.padEnd(DOCTOR_ROOT_LABEL_PAD)} ${r.path}`)
-    if (r.dedupedInto !== undefined) {
-      const keptIndex = roots.findIndex((k) => k.kind === r.dedupedInto) + 1
-      lines.push(`     与 ${keptIndex} 同路径，已去重`)
-      return
-    }
-    const facts = [r.exists ? '存在' : '不存在']
-    if (r.fileCount === undefined) {
-      // 仅 subagents:'stat' 的 subagent 根（doctor 默认形态）——其余根恒有计数
-      //（实扫或缓存命中）；被去重根已在上方提前返回
-      facts.push('未扫描（subagent 根默认不扫，includeSubagents:true 开启）')
-    } else {
-      facts.push(`${r.fileCount} 文件`, `扫 ${Math.round(r.scanMs ?? 0)}ms`)
-    }
-    if (r.cached === true) facts.push('缓存命中')
-    facts.push(r.source === 'main' ? 'main' : 'subagent')
-    lines.push(`     ${facts.join(' · ')}`)
-  })
-
-  // 事实型诊断（§7B 要点 5）：列表内首个 main 根即最高优先级 main 根（去重只移除后位根，
-  // 首位根恒有计数——实扫或缓存命中）。0 文件也是事实——首条 assistant 前 jsonl 不落盘
-  //（PS-14），不做归因。
-  lines.push('')
-  const firstMain = roots.find((r) => r.source === 'main')
-  if (firstMain === undefined) {
-    lines.push('诊断：无候选根（agentDir 为空，未派生任何根）。')
-  } else {
-    lines.push(
-      `诊断：最高优先级 main 根 [${firstMain.kind}] ${firstMain.path}：${firstMain.fileCount ?? 0} 文件。`,
-    )
-  }
-
-  // legacy 非空告警（§6.1/§5.1：判据 = 非空才告警；与主根同路径被去重 → 不告警）
-  const legacy = roots.find((r) => r.kind === 'legacy')
-  if (legacy !== undefined && legacy.dedupedInto === undefined && (legacy.fileCount ?? 0) > 0) {
-    lines.push(
-      `告警：[legacy] 根 ${legacy.path} 非空（${legacy.fileCount} 文件）——该位置已作为候选根纳入 find。`,
-    )
-  }
-
-  // 旧布局残留（§6.11：命中才列，附同一迁移指引）
-  if (leftovers.hits.length > 0) {
-    lines.push('')
-    lines.push(`旧布局残留探测（基点 ${leftovers.base}）：`)
-    for (const h of leftovers.hits) {
-      lines.push(
-        `  - ${h.path}（${h.kind === 'backup' ? '迁移备份 pi.backup-v2-*' : '未迁移旧布局 pi/'}）`,
-      )
-    }
-    lines.push('  👉 关闭应用后运行 scripts/migrate-pi-layout-v2.mjs 完成迁移。')
-  }
-
-  return {
-    content: [{ type: 'text', text: lines.join('\n') }],
-    details: { environment, roots, leftovers: leftovers.hits, globBase: leftovers.base },
   }
 }
 

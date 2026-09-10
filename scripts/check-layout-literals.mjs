@@ -38,7 +38,6 @@ const RANGE_DIRS = ['packages', 'apps', 'scripts']
 const RANGE_FILES = ['AGENTS.md', 'docs/troubleshooting.md']
 
 const SOURCE_EXTS = new Set(['.ts', '.tsx', '.mts', '.cts', '.mjs', '.cjs', '.js', '.jsx', '.sh', '.py'])
-const MD_EXTS = new Set(['.md'])
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'test-results', '.git', 'build', 'release', 'out'])
 
 /**

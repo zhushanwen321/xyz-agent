@@ -16,7 +16,6 @@ import {
   collectFiles,
   isLayoutLiteralLine,
   LAYOUT_LITERAL_EXEMPT,
-  JOIN_LITERAL_RE,
   PATH_LITERAL_RE,
 } from '../check-layout-literals.mjs'
 
