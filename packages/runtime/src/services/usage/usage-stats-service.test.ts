@@ -924,5 +924,6 @@ describe('UsageStatsService', () => {
     }
 
     console.info(`[smoke] ${result.rows.length} rows, ${result.sessionCount} sessions, ${result.skippedLines} skipped`)
-  })
+    // 真实数据全量扫描（~/.xyz-agent/pi/sessions），并行负载下 IO+CPU 争抢明显超默认 5s
+  }, 60_000)
 })

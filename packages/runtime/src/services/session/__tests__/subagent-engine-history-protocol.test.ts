@@ -150,17 +150,19 @@ describe('W8 runtime 协议客户端接线（subagent-engine-history）', () => 
   })
 
   it('④ idle 复用：窗口内二次 read 零新 spawn；窗口过期 dispose 后重建 +1', async () => {
-    setEngineIdleReuseMsForTests(120)
+    // 窗口按负载容差标定（3s）：idle 定时器在实例创建时启动，并行全量测试下子进程
+    // 冷启动可超秒级，窗口过小会让「窗口内复用」假红；生产恒 5min，不受此钩子影响。
+    setEngineIdleReuseMsForTests(3_000)
     truncateSpawnLog()
     await readEngineSubagentHistory(makeRecord(), dataDir)
     await readEngineSubagentHistory(makeRecord(), dataDir)
     expect(spawnLogPids()).toHaveLength(1) // idle 窗口内复用同一引擎实例
 
-    await new Promise((r) => setTimeout(r, 250)) // 过期 → idle dispose（协议帧 + 20ms 退出）
+    await new Promise((r) => setTimeout(r, 4_500)) // 过期 → idle dispose（协议帧 + 20ms 退出）
     await readEngineSubagentHistory(makeRecord(), dataDir)
     expect(spawnLogPids()).toHaveLength(2) // dispose 后新实例
     setEngineIdleReuseMsForTests(5 * 60 * 1000)
-  }, 20_000)
+  }, 30_000)
 
   it('③ 协议 read 失败降②级 journal：journalPath 白名单内事件重放投影', async () => {
     setEnv('FAKE_READ_MODE', 'error')

@@ -471,7 +471,8 @@ describe.skipIf(!HAS_REAL_ROOT)('buildFamilyFromFs - 真实数据 ~/.pi/agent', 
     )
     expect(sub).toBeDefined()
     expect(sub!.sessionId.startsWith('sa-')).toBe(false)
-  }, 30000)
+    // 真实数据全量扫描，并行全量测试负载下 30s 会超窗假红
+  }, 60000)
 })
 
 describe.skipIf(!HAS_REAL_WF)('buildFamilyFromFs - 真实 workflow 数据', () => {

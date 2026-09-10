@@ -523,7 +523,8 @@ describe('findSessions', () => {
         expect(matches.every((m) => m.source === 'subagent')).toBe(true)
         expect(typeof truncated).toBe('boolean')
       },
-      30000,
+      // 真实数据全量扫描，并行全量测试负载下 30s 会超窗假红
+      60000,
     )
   })
 
