@@ -260,6 +260,32 @@ grep "stripped unmarked provider-level keys" ~/.xyz-agent/logs/runtime-*.log   #
 
 **恢复**：Settings → Providers 展开该 provider，在「端点（自定义网关）」输入框重设网关 URL 并保存一次——extras `gatewayBaseUrl` 标记同步写入，之后启动清洗不再剥除该键。
 
+### 13. Coding Plan 额度查询失败 / 数据疑似过期：先查 reason 与凭证来源（2026-09-10 配置交互重构）
+
+**症状**：设置页「保存并测试」报查询失败；对话页容量浮层的 Coding Plan 区显示失败或无数据；或改过查询类型后浮层仍显示旧平台的数据。
+
+**根因/现状**（设计 docs/design/coding-plan-quota-config-ux.md，D1/D3/D4/D6/D12）：本次把「用哪份凭证」从隐式约定改为**显式持久化字段** `providers.json` 的 `providers[*].quota.credentialSource`（`'provider'` | `'exclusive'`），并新增失败原因 `no-credential`。因此排查第一步是核对「界面显示的来源」与「磁盘上的字段 / 文件」是否一致，而不是猜凭证有没有填。
+
+**检查**：
+
+```bash
+CD=~/.xyz-agent            # dev 用 ~/.xyz-agent-dev
+# ① 失败原因：no-credential = 按当前来源选中的链路解析不到任何凭证
+grep "\[quota\] fetch failed" $CD/logs/runtime-*.log | tail -20
+# ② 凭证来源字段（'provider' = 用 Provider 凭据；'exclusive' = 只读专属 Key 文件）
+grep -n -A6 '"quota"' $CD/pi/agent/config/providers.json
+# ③ secrets 实际文件（cookieSet / apiKeySet 标记必须与文件存在性一致）
+ls -la $CD/secrets/
+```
+
+- **`no-credential` 的判据是「选中的链路解析不到凭证」，不是「凭证一个都没有」**：`exclusive` 只读 `secrets/<pid>-apikey.txt`，缺失即失败、**不再回退** auth.json → models.json；`provider` 分支则完全跳过该文件。所以「专属 Key 明明填过却报 no-credential」的第一嫌疑是 `credentialSource` 为 `exclusive` 而文件不在（手工删过 / 半提交窗口），恢复 = 重填专属 Key，或把来源切回 Provider 后重新「保存并测试」。
+- **Cookie 的「空串 = 清除」**：Cookie 提交空串时 runtime 删除 `secrets/<pid>-cookie.txt` 并把 `cookieSet` 落为 `false`；删除失败会让本次保存整体失败（`[quota] failed to remove cookie secret file`）。看到「标记 false 但文件仍在」的告警即这条失败方向，重贴 Cookie 保存一次即自愈（孤儿文件在 `credentialSource` 兜底为 `'provider'` 后不再被读取）。
+- **provider 删除 / 移除会一并清理**：`secrets/<pid>-{cookie,apikey}.txt` + `quota-cache.json` 条目 + 内存失败标记（D12）。删除时 `cleanProviderExtras` 失败 → secrets 删除被跳过（留下「标记与文件一致」的残留，重试删除即清）；extras 成功而 secrets 删除失败 → 惰性孤儿文件（`[quota] failed to clear provider quota secrets`，下次同 id 删除或手工删）。**注意**：删除是用户显式动作，删掉的是用户粘贴的 Cookie / 专属 Key，重新导入 provider 不会恢复，需重新粘贴。
+- **类型变更后旧数据不应残留**：改类型并保存会删 `quota-cache.json` 中该 provider 的条目（内存镜像同步删），旧类型的行不会再被 `getCached` 取回并以新类型标签展示。若仍看到旧数据，查 `[quota-cache] failed to remove cache entry` 与该文件同目录的 `.tmp` 残留（`.tmp` 为原子写中间产物，rename 即消费）。
+- **`not_configured`**：opencode 类 fetcher 的 Workspace 必填项为空——虽然 UI 的齐备性会挡住这个保存（按钮置灰），但 runtime 保留该分支作权威兜底；浮层提示指向「去设置里填 Workspace」。
+
+**恢复入口**：失败态浮层的 footer 现在同时给「刷新」与「配置」（D11，此前只有「刷新」——凭证缺失时刷新只会再失败一次，形成死路）；设置页的「保存并测试」是唯一落盘 + 查询动作，齐备性不满足时按钮置灰并给字段级提示。
+
 ## 环境变量速查
 
 | 变量 | 用途 | 生产默认值 | 开发默认值 |

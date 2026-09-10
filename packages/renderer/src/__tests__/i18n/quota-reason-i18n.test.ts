@@ -30,13 +30,16 @@ const LOCALES_DIR = resolve(__dirname, '../../i18n/locales')
  *  S5 收尾：quotaFetchFailNoSubscriptionCookie = cookie 类 provider 的 no-subscription 两可文案
  *  （业务码不可区分无订阅 vs Cookie 失效，CodingPlanSection 按 authKinds 分支）。
  *  D6 收尾（coding-plan-quota-config-ux §5.2 路径 4）：quotaFetchFailNoCredential = 凭证链解析不到
- *  任何凭证（api-key 语境基础版；cookie 变体由 CodingPlanSection 按 authKinds 分支渲染，归 U5）。 */
+ *  任何凭证（api-key 语境基础版；cookie 变体由 CodingPlanSection 按 authKinds 分支渲染，归 U5）。
+ *  D1-3 补齐（U6 终扫）：quotaFetchFailNotConfigured 历史上 locale 双侧存在但本数组漏列——
+ *  not_configured = 必填 Workspace 缺失（opencode 类 fetcher），CodingPlanSection 有专属渲染分支。 */
 const REQUIRED_QUOTA_FAIL_KEYS = [
   'quotaFetchFailUnauthorized',
   'quotaFetchFailNetwork',
   'quotaFetchFailNoSubscription',
   'quotaFetchFailNoSubscriptionCookie',
   'quotaFetchFailParse',
+  'quotaFetchFailNotConfigured',
   'quotaFetchFailNoCredential',
 ] as const
 
@@ -81,12 +84,16 @@ function loadProviderEdit(locale: string): LocaleObject {
 }
 
 /** panel.context 的 quota 失败 reason 简短文案（A2-4 BL round1 #3：quotaFailReasonText 映射；
- *  D6 追加 quotaFailNoCredential = no-credential 简短版，长恢复指引在 settings.providerEdit） */
+ *  D6 追加 quotaFailNoCredential = no-credential 简短版，长恢复指引在 settings.providerEdit；
+ *  D1-3 补齐（U6 终扫）：quotaFailNotConfigured 历史上 locale 双侧存在但本数组漏列）。
+ *  数组顺序与 QuotaFetchFailureReason 枚举一致（unauthorized → network → no-subscription →
+ *  parse → not_configured → no-credential），与 useQuotaQuery 的 QUOTA_FAIL_REASON_KEYS 映射同序。 */
 const REQUIRED_PANEL_QUOTA_FAIL_KEYS = [
   'quotaFailUnauthorized',
   'quotaFailNetwork',
   'quotaFailNoSubscription',
   'quotaFailParse',
+  'quotaFailNotConfigured',
   'quotaFailNoCredential',
 ] as const
 
