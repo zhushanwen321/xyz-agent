@@ -151,6 +151,7 @@ graph TD
 ## 7 残留风险与变更历史
 
 **残留风险 / 实施期门**（设计 §11 + §12.1，执行到对应单元时必须消解并回填结论）：
+- 存量（非本流水线引入）：renderer MessageStream-bash.test.ts 3 个无条件 it.skip（Gate A 零容忍规则登记，归 renderer 侧独立处理）；tool-handler.ts 拆分若回流后仍不达标则进一步抽缝。
 
 - ⛔ P-11（u14a）：存量主 session 首行 cwd 覆盖率 → 决定 `_migrated-no-cwd/` 占比。
 - ⛔ §11.14（M-1 门）：B 后空 `agent/` 自举——tmp 空数据目录启动新版实测；不能自举则「先升后迁」降格、V9 子场景改负向判定。
@@ -162,6 +163,7 @@ graph TD
 
 **变更历史**：
 - 2026-09-11（执行期 2）：M-1 门消解登记（审查 A unreasonable#3）——①V9 端到端：真实布局 tmp 副本（251M）迁移成功（11 主 session 分发 5 encodeCwd 目录 + 28 sidecar；备份空壳属正确形态；报告 14 字段齐）；重跑 resume 全零动作（V9⑥）；迁移后 find("01a08a") = main 3 + subagent 34（V9⑤ 实证，原 bug 恒 0）；V9⑦⑧ 单测+活体 pgrep 探针覆盖；②§11.14 自举门：pi 空 agentDir 活体启动自举（auth/models-store/sessions/<encodeCwd> 生成）——「先升后迁」保住合法兜底资格，应用级全链路自举归 merge 后真机验证；③P-6 部分消解：pi 默认派生 encodeCwd 子目录形态活体确认（[live] 剥层前提成立），扩展进程内 getSessionDir() 实跑值归 Gate B RPC 实测；④V10①②③ 实机制造孤儿：显式 deferred 至 Gate B（单测面已全覆盖）；⑤scoped-model.e2e smoke+E1 实跑 PASS（u18 fixture 修复验证）。
+- 2026-09-11（阶段 5 Gate A 首轮）：测试（19664 用例 0 失败，含 runtime 5124/renderer 4067/session-reader 397）+ extensions 三连 + runtime bundle 深度验证全绿；`pnpm lint` exit 1 = 唯一不通过项：2 个 unused error（u18 守卫文件，本次引入）+ tool-handler.ts max-lines warning 加重（1863/1200）。回流修复派发（删 unused + 按 doctor/跨会话检索自然缝拆分 tool-handler.ts，禁调阈值）。存量项登记：renderer MessageStream-bash.test.ts 3 个无条件 it.skip（与本流水线零交集，转残留风险）；extensions:lint 与根 lint 的 --max-warnings 口径不一致（建议项，非本流水线范围）；logger.test.ts flaky 本次全量直接绿未触发。
 - 2026-09-11（阶段 3）：两区报告到齐。A 区 5 reasonable / 3 unreasonable / 2 doc_errors；B 区 5 reasonable / 2 unreasonable / 2 doc_errors。聚合：unreasonable 4 条（A#1 日志时序、A#2 失真 mock、B#1 解析路径 [live] 缺席〔裁定修复：liveSessionDir 透传，收口「同一 roots」契约〕、B#2 limit:0 退化输入〔裁定 schema minimum:1〕；A#3 计划失真已由编排者修正）；doc_errors 4 条（A 的 §7A 判据 + pi-paths 注释重复词、B 的 V3 子句 + V4 计数——§7A/V3/V4 已由编排者修正，pi-paths 归组 1）；reasonable 10 条登记 D-18（4 条设计同步已写入）。修复批次 2 组并行派发（组 1 = runtime/scripts 三小修；组 2 = extension 两语义收口）。
 - 2026-09-10（执行期 1）：u6/u2/u1/u14b 四单元核验通过；u14b commit 被两件事暴露——①首派失败的 hook 报错系旧版生成 hook 的引用错位（期间某 subagent 的 pnpm install 经 prepare 触发 install-hooks 再生，新版 bash -n 通过，不再复现）；②**R1 直写检查扫 untracked 工作树**，u14a 未完成的迁移脚本被拦 → 裁定偏差 D-7（u14a 领地扩容：data-source-registry 条目 + R1 ALLOWLIST），提交队列阻塞至 u14a 落地，flush 顺序 u14a → u14b → u3。
 - 2026-09-10 计划创建：15 单元 + 1 deferred；单元编排对设计 §10 做两处结构性归组——① U14b 的 runtime 侧（退役/直挂/WARN）与 U15② 的 `getPiGlobalAgentDir` 同在 `pi-maintenance.ts`，合并为 u14b（消除同文件跨单元领地重叠，且让 u15 删 `getPiRoot` 时无残留引用）；② reap 测试文件整体划归 u17（u15 不碰，避免 DIR 常量两次改写）。M5（U13）登记 deferred。
