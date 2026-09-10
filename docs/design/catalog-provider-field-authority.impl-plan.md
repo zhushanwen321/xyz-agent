@@ -1,8 +1,8 @@
 # Provider 字段权威收口 实施计划
 
-基线: 0d8b6cbbc（本计划文档基线 commit） | 来源设计: `docs/design/catalog-provider-field-authority.md`（v3.3，已随 58f3a5eee 升 v3.4） | 日期: 2026-09-10
+基线: 0d8b6cbbc（本计划文档基线 commit） | 来源设计: `docs/design/catalog-provider-field-authority.md`（v3.3，已随 58f3a5eee 升 v3.4、复经 f15838cea 修补为 v3.4.1） | 日期: 2026-09-10
 
-> 本计划把设计 §5 的 M1–M6 六个语义单元细化为可派发单元——初版 13 单元，执行期调整为 14（M1e 新立、M2g+M5b 合并为 M2fg）。细化不是语义变更，而是**领地互斥**要求：
+> 本计划把设计 §5 的 M1–M6 六个语义单元细化为可派发单元——初版 13 单元，执行期调整为 14（净 +1：M1e 新立、M5a 拆出 M5b、M2g+M5b 合并为 M2fg）。细化不是语义变更，而是**领地互斥**要求：
 > 设计里 M1/M2/M3/M4 共改同一批热点文件（`provider-config-helper.ts` 被 M1/M2/M4 共改、`use-provider-edit.ts` 被 M1/M3/M6 共改、`pi-provider-store.ts` 被 M1/M2/M5 共改），
 > 同一 wave 内并行派发会写冲突，故按「同文件共改 → 串行边」拆开，并用契约前置（u-contracts）把 M3/M4 的共享接线点一次交付。
 > 单元 ID 保留设计映射（M1a = M1 的前端部分，依此类推），追溯不受影响。
