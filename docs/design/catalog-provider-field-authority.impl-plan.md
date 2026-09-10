@@ -183,6 +183,13 @@ pnpm --filter @xyz-agent/core test && pnpm --filter @xyz-agent/runtime test && p
 | D-16 | M3b | **core 传输层类型缺 `mode`/`results`**：`packages/shared/src/protocol.ts` 已由 u-contracts 加好，但 core 侧另有自己的一套传输类型（`packages/core/src/domain/settings/transport.ts` 与 `packages/core/src/transport/api/domains/config.ts`）未同步——M3b 首轮用局部交叉类型绕过。属真实契约缺口（同一契约两处定义），M3b 第 2 轮领地扩展补齐并删除垫片 | 不合理偏差 → 打回修（第 2 轮） | 2026-09-10 |
 | D-17 | M3b | **`ProviderEditBody.vue` 未接线新 props → catalog 的「模型发现」按钮在生产路径仍渲染**：M3b 的验收（catalog 不渲染该按钮）在组件级成立、应用级不成立，因宿主组件未传 `providerKind` / `testResults` / `testError` / `providerBaseUrl`。该文件属 M4 领地（M4 正在改它），故归 **M4 第 2 轮**接线——M3b 不得越过 | 集成缺口 → 排入 M4 第 2 轮 | 2026-09-10 |
 
+| D-18 | M3a | **openai-responses 的最小请求取 `max_output_tokens: 16` 而非设计写的 1**：OpenAI 拒绝低于 16，pi-ai 自身也在发请求前 clamp 到 16（实装 `dist/api/openai-responses.js:16-17` 常量 OPENAI_RESPONSES_MIN_OUTPUT_TOKENS，注释指向 pi issue #6265）。用 1 会对全部 responses provider **稳定误报 400**。属设计 §3.3 D4 的事实错误（P-test-req 探针实测驱动），主 agent 阶段 4 回写 | 不合理偏差（设计侧）→ 打回改设计文档 + 实现按实测 | 2026-09-10 |
+| D-19 | M3a | **baseUrl 回落顺序对 catalog 是「网关优先」而非「模型级优先」**：设计 §3.3 D4 写的四级顺序（模型级 → custom provider 级 → catalog 网关 override）对 catalog 反了——pi 对 catalog 是 `config.baseUrl ?? model.baseUrl`（`provider-composer.js:98` applyModelsJson，网关**覆盖全部模型端点**，优先级高于模型级）；custom 才是 `definition.baseUrl ?? providerConfig.baseUrl`（`:55`）。照设计字面实现会让设了网关的 provider 去测模型级端点、而真实聊天打网关，违反 G3「成功 = 真的能聊」。实现按 pi 真实语义分两类（`resolveModelBaseUrl`），四级逐级断言齐备。**这是本设计最实质的一处事实纠错**，主 agent 阶段 4 回写 | 不合理偏差（设计侧）→ 打回改设计文档 + 实现按 pi 实装 | 2026-09-10 |
+| D-20 | M3a | **代表模型的「baseUrl 非空」过滤取生效 baseUrl（含回落链）而非模型级字面值**：否则「模型发现」拉回的模型（只有 id/name/contextWindow）永远无法测试，与 D4 明文「模型级 baseUrl 缺省时回落 provider 级」自相矛盾 | 合理不一致 → 固化（设计措辞在同批回写时补一句） | 2026-09-10 |
+| D-21 | M3a | **tester 由 handler 自建 infra 实例（transport → infra value import），未走 model-api-discoverer 的 port + 组合根注入先例**：M3a 受领地限制未改 index.ts/server.ts，自述「三层文档的软约束由此产生一处让步」。属一致性缺陷（同仓已有 `IModelSource` + 组合根注入的正解），非功能性 bug；收口需 4 文件（新增 ports 接口 + handler 改注入消费 + server.ts 透传 + index.ts 装配）且与 M2fg 同抢 handler 文件，故排入**阶段 4 修复循环**单独成单元，不与 M2fg 同轮 | 不合理偏差 → 阶段 4 打回修（排期受同文件串行约束） | 2026-09-10 |
+| D-22 | M4 | **UI 的网关/派生归类用启发式（派生值恒等于模型集唯一非空 baseUrl，否则判为用户网关）**：shared 的 `ProviderInfo` 没有「来源」判别字段，完全零推导做不到。属**受控例外**——只归展示类别、不重算下发值；边界：用户网关值恰等于派生值时被判为「内置端点」，但两种状态下 pi 生效端点相同，无行为差异。彻底解 = 给 ProviderInfo 加 `baseUrlSource: 'gateway' \| 'derived'` 字段（长期方案，已登记 §7 残留风险） | 合理不一致 → 固化 + 登记长期方案 | 2026-09-10 |
+| D-23 | M4 | **QuickSetup 卡片空端点用 `endpointNotProvided`（「内置目录未提供」）而非验收条款写的「—」**：协议为空才用 `emptyValue`（「—」），端点为空给更具体的信息量。属展示措辞的合理细化，阶段 5 验收按此判据 | 合理不一致 → 固化（验收判据按此更新） | 2026-09-10 |
+| D-24 | M4 | **M4 新建领地外文件 `packages/ui/src/features/settings/provider/provider-catalog-display.ts`（主 agent 追认）**：`ProviderEditBody.vue` 改动前 eslint 计数已 490/500、`<script setup>` 191/300，展示逻辑内联会同时越 `max-lines` 与 vue_rules_checker 上限。M4 选择抽 composable 而非改 `eslint.config.mjs`（后者会与 M1b 的 D-3 争用同一文件，且 override 解决不了 script setup 上限）。与仓库既有先例一致（同组件此前抽出 ProviderTestDiscoverSection） | 合理不一致 → 追认（领地扩展） | 2026-09-10 |
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
@@ -199,9 +206,9 @@ pnpm --filter @xyz-agent/core test && pnpm --filter @xyz-agent/runtime test && p
 | ~~M5b~~ | 已并入 M2fg | — | — |
 | M2c | in-progress | 1 | 运行中（接线：链 3 迁移 + 组合根装配 + server.ts/config-service.ts 透传） |
 | ~~M2g~~ | 已并入 M2fg | — | — |
-| M3a | in-progress | 1 | 运行中（runtime per-model 真实请求 + mode 分支 + P-test-req 探针；契约产物已被 M3b 对齐） |
+| M3a | committed | 1 | commit `7eb790d06`；runtime typecheck 0；新增/更新测试 61 passed；eslint 0；服务分层与守卫全绿。**P-test-req 实测**：anthropic-messages / openai-completions 用 max_tokens=1 真实调通、401 与网络错可区分；openai-responses 无凭据用 stub 验形状。两处设计纠错见 D-18/D-19 |
 | M3b | committed | 2 | commit `78d4ecede`；core typecheck 0 / frontend typecheck 0；core use-provider-edit 58 passed、ui provider-test-discover-section 20 passed；回归 core 全量 1784 / ui settings 137 / renderer settings 191 passed。第 2 轮补 core 传输层类型（transport.ts + config.ts 补 mode/results 并对齐 shared 协议），删除首轮临时交叉类型垫片。**遗留 D-17（ProviderEditBody 未接线）归 M4 第 2 轮** |
-| M4 | in-progress | 1 | 运行中（网关优先派生展示 + D7 overlay 去空串 + ProviderEditBody catalog 化 + QuickSetup 卡片）；**待第 2 轮补 D-17 接线** |
+| M4 | in-progress | 2 | 第 1 轮已提交 `f28ecbb20`（runtime 42 / ui 50 passed，typecheck 0）；第 2 轮补 D-17 接线（ProviderEditBody 传 providerKind/testResults/testError/providerBaseUrl）+ model-mapper D5 注释 + 行数上限处置 |
 
 ## 7 残留风险与变更历史
 
