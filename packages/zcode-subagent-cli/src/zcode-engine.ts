@@ -453,6 +453,11 @@ export class ZcodeEngine implements EnginePort {
       // 不变量 3a 的拼接比对不含 reasoning）
       onTextDelta: (delta) => ctx.onEvent?.({ type: "text_delta", delta }),
       onThinkingDelta: (delta) => ctx.onEvent?.({ type: "thinking_delta", delta }),
+      // [PR3] 工具执行期活性：非终态非增量的 session/event 帧（tool.updated progress
+      // 等，真机探针实证每 ~1s 一帧）→ activity 事件（零载荷纯活性信号——宿主无进展
+      // 守护对任何事件类型刷新；reducer no-op、不落 journal）。zcode 引擎
+      // conversation:"unsupported"，run 域是唯一发射面（无 chat 域接线）。
+      onActivity: () => ctx.onEvent?.({ type: "activity" }),
       onSessionCreated: (sessionId) => {
         currentSessionId = sessionId;
         rt.activeSessions.add(sessionId);

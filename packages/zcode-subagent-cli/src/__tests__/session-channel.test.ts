@@ -487,6 +487,95 @@ describe("终态判定", () => {
 });
 
 // ============================================================
+// [PR3] onActivity：非终态非增量 session/event 帧的活性回调
+// ============================================================
+
+describe("onActivity（tool 执行期活性）", () => {
+  // 真机探针实证（/tmp/zcode-activity-probe.log，2026-09-10）：工具执行期
+  // session/event 每隔 ~1.0s 推一帧 tool.updated {kind:"progress"}——既非
+  // final-frame（无 response）也非 delta（无 delta 字段），此前不产生任何宿主可见
+  // 回调，「仅工具执行、零正文」形态下宿主侧无进展守护饿死误杀。onActivity 即该
+  // 帧族的宿主刷新面（引擎映射 AgentEvent {type:"activity"}）。
+  function toolUpdatedProgressFrame(
+    elapsedMs: number,
+    stdoutTail: string
+  ): string {
+    return JSON.stringify({
+      method: "session/event",
+      params: {
+        sessionId: GOLDEN_SESSION_ID,
+        type: "tool.updated",
+        payload: {
+          toolCallId: "call_e914fc9643b7459da05127a6",
+          toolName: "Bash",
+          elapsedMs,
+          pid: 2824,
+          stdoutBytes: 11,
+          stdoutTail,
+          kind: "progress",
+        },
+      },
+    });
+  }
+
+  it("无 delta 无 response 的帧（探针同款 tool.updated progress）→ onActivity 恰调用一次/帧", async () => {
+    const onActivity = vi.fn();
+    // 三帧 progress 夹在 delta 流与终态之间（turn 中途——工具执行期形态）
+    const { ch, workspacePath } = makeChannel({
+      replaceSendPushes: [
+        ...ZCODE_APPSERVER_GOLDEN.pushStream,
+        toolUpdatedProgressFrame(2134, "progress-1\n"),
+        toolUpdatedProgressFrame(3200, "progress-2\n"),
+        toolUpdatedProgressFrame(4260, "progress-3\n"),
+        ZCODE_APPSERVER_GOLDEN.terminal[0],
+        ZCODE_APPSERVER_GOLDEN.terminal[1],
+      ],
+    });
+    const r = await ch.runTurn({ workspacePath, mode: "yolo" }, "做点什么", {
+      onActivity,
+    });
+    expect(onActivity).toHaveBeenCalledTimes(3); // 恰一次/帧，无重复发射
+    expect(r.terminal).toEqual({ status: "success", source: "turn.terminal" }); // progress 帧不干扰终态判定
+  }, 10_000);
+
+  it("payload.delta 帧 → onActivity 不调（delta 回调已是宿主可见进展，不双发活性）", async () => {
+    const onActivity = vi.fn();
+    const deltas: string[] = [];
+    const { ch, workspacePath } = makeChannel(); // golden 序：session/event 全是 delta 帧
+    await ch.runTurn({ workspacePath, mode: "yolo" }, "做点什么", {
+      onTextDelta: (d) => deltas.push(d),
+      onActivity,
+    });
+    expect(deltas).toEqual(["你好", "，", "任务完成"]); // delta 路径确实走了
+    expect(onActivity).not.toHaveBeenCalled();
+  }, 10_000);
+
+  it("final-frame（payload.response）→ onActivity 不调（终态帧非活性语义）", async () => {
+    const onActivity = vi.fn();
+    // dropTurnTerminal：终态仅由收尾帧宽松判定——final-frame 路径直达断言面
+    const { ch, workspacePath } = makeChannel({ dropTurnTerminal: true });
+    const r = await ch.runTurn({ workspacePath, mode: "yolo" }, "做点什么", {
+      onActivity,
+    });
+    expect(r.terminal).toEqual({ status: "success", source: "final-frame" });
+    expect(onActivity).not.toHaveBeenCalled();
+  }, 10_000);
+
+  it("已落定 turn 的迟到非 delta 帧 → onActivity 不调（settle 后 run 已收尾）", async () => {
+    const onActivity = vi.fn();
+    // extraSendPushes 追加在终态帧之后：turn.terminal 已落定，迟到的 progress 帧不产活性
+    const { ch, workspacePath } = makeChannel({
+      extraSendPushes: [toolUpdatedProgressFrame(9_000, "progress-late\n")],
+    });
+    const r = await ch.runTurn({ workspacePath, mode: "yolo" }, "做点什么", {
+      onActivity,
+    });
+    expect(r.terminal).toEqual({ status: "success", source: "turn.terminal" });
+    expect(onActivity).not.toHaveBeenCalled();
+  }, 10_000);
+});
+
+// ============================================================
 // 权威终态迟到分级日志（P-Z2 常态迟到降噪：final-frame 先落定 + turn.terminal 迟到）
 // ============================================================
 
