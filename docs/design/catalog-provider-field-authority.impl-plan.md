@@ -1,0 +1,193 @@
+# Provider 字段权威收口 实施计划
+
+基线: pending（本文件 commit 后回填） | 来源设计: `docs/design/catalog-provider-field-authority.md`（v3.3） | 日期: 2026-09-10
+
+> 本计划把设计 §5 的 M1–M6 六个语义单元细化为 13 个可派发单元。细化不是语义变更，而是**领地互斥**要求：
+> 设计里 M1/M2/M3/M4 共改同一批热点文件（`provider-config-helper.ts` 被 M1/M2/M4 共改、`use-provider-edit.ts` 被 M1/M3/M6 共改、`pi-provider-store.ts` 被 M1/M2/M5 共改），
+> 同一 wave 内并行派发会写冲突，故按「同文件共改 → 串行边」拆开，并用契约前置（u-contracts）把 M3/M4 的共享接线点一次交付。
+> 单元 ID 保留设计映射（M1a = M1 的前端部分，依此类推），追溯不受影响。
+
+## 0 章节映射
+
+| 内容 | 本文实际位置 |
+|------|--------------|
+| 背景/目标 | 设计 §1 背景目标（SCQA + 设计目标 G1–G5 + In/Out of Scope） |
+| 终态/机制 | 设计 §3 解决方案（§3.1 终态场景 A/A'/B/C/D + 终态物理数据流 · §3.2 架构级方案对比 · §3.3 关键决策 D1–D9 · §3.4 外部共享状态写入面 · §3.5 接口与错误规格） |
+| 验收场景表 | 设计 §4 验收（11 个真实场景 + 依赖说明） |
+| 下一层拆分 | 设计 §5 下一层拆分（实施路径 + 拆分清单 + 文件改动地图 + 待验证检查点 1–6） |
+| 探针清单 | 设计 §3.6 探针清单（P-poison ✅ / P-gate ✅ / P-schema ✅ / P-scope ✅ / P-gateway ✅ / P-cred ⛔M2 / P-test-req ⛔M3 / P-sanitize ⛔M1 / P-oauth-shell ⛔M1 / P-presets ⛔M6） |
+| 对抗式审查证据 | `.review/design-review-catalog-provider-field-authority.md`（主审 R4：must_fix 0 / suggestion 0）· `.review/design-review-catalog-provider-field-authority-impact-round4.md`（影响面 R4：must_fix 0 / suggestion 1 已修） |
+
+## 1 目标快照
+
+**（逐字摘录设计 §1，禁止改写）**
+
+### 设计目标（从使用者体验倒推）
+
+- **G1（展示真实）**：用户在 settings 页看到的 catalog provider 信息永远等于 pi 真实生效语义——不再有「类型：anthropic-messages」式误导；混合协议 provider 的协议分布对用户可见；用户设置的网关覆盖值如实展示。
+- **G2（操作无害）**：用户在 settings 页做任何保存操作都不可能弄丢其他 provider——P0 雷拆除；已踩雷用户的 models.json 自动修复、消失的 custom provider 回来。
+- **G3（测试可信）**：「测试连接」测的是真实聊天要走的协议与端点——成功 = 真的能聊；失败 = 告诉用户哪个协议哪个模型为什么失败、去哪修。
+- **G4（收口防复发）**：凭据读取有唯一入口，新场景不需要也不会再发明第 6 条解析链（lint 机器拦截）；约束登记进 constraints.json 进 CR 视野。
+- **G5（档位如实）**：用户为自定义模型设置的思考档位在 composer 真实可选——落盘的模型能力字段语义与 pi 门控语义一致，不再「设置了高档、弹层只有关」。
+
+### In / Out of Scope
+
+- **In scope**：settings-provider 页对 catalog provider 的展示 / 保存 / 测试连接 / 模型发现；自定义模型思考档位链路（reasoning 出厂显式化 + 预设过滤语义对齐）；models.json 写侧防线与存量清洗；provider 凭据读路径收口与防复发约束；本设计文档引用的 pi 语义锚点卫生。
+- **Out of scope**：① 模型双名称（id/name）编辑表单与 composer 显示 `provider/model` 两个独立 UI 改进（走 dev-flow 小改动，不进入本设计）；② pi 侧行为修改；③ quota fetcher 本身的协议逻辑；④ overlay 刷新链对 pi 侧 `models-store.json` 的无锁写竞态；⑤ ProviderInfo 判别联合类型重构（远期演进，方案 C）。
+
+### 实施期不可动摇的既有裁定
+
+- 不做 baseUrl 兜底（对 artifact 字段打补丁是错误分层）
+- 不做全局单点探活（测试连接 = per-协议代表模型发真实最小请求）
+- [MANDATORY] 不修改 pi 源码、不提 PR、不 fork；pi 语义断言以 node_modules 实装 `0.84.4` dist 为准
+
+## 2 单元列表
+
+| Unit | 职责（对应设计决策） | 领地（精确文件路径） | 依赖 | 隔离 | 验收条款 |
+|------|---------------------|---------------------|------|------|----------|
+| **u-contracts** | 共享接线点一次交付：`config.discoverModels` 加 optional `mode`、`config.discoveredModels` 加 optional `results`、`SetProviderData` 语义注释（§3.5）；`BuiltinModelSummary.api` 改 optional（D7 连带）+ `ProviderInfo.api/baseUrl` 网关/派生语义注释 + `BuiltinProviderTemplate.api/baseUrl` artifact 标记（D5）；新建 `IProviderCredentialResolver` 接口（D3）；M3/M4 全部新增 i18n key（zh + en） | `packages/shared/src/protocol.ts`<br>`packages/shared/src/provider.ts`<br>`packages/runtime/src/services/ports/provider-credential-resolver.ts`（新）<br>`packages/renderer/src/i18n/locales/zh-CN/settings.ts`<br>`packages/renderer/src/i18n/locales/en-US/settings.ts` | — | plain | `pnpm --filter @xyz-agent/shared typecheck` + `pnpm --filter @xyz-agent/runtime typecheck` + `pnpm --filter @xyz-agent/frontend typecheck` 全绿；`cd packages/renderer && npx vitest run src/__tests__/i18n/` 绿（含 locale-sync-check：zh/en key 集合一致） |
+| **M6** | D9 全部：discover 合并补 `reasoning: true`；`pickStrategy` 行级联动（`reasoning === undefined` 才置 true，永不覆盖显式 false，all-levels 同规则）；`THINKING_PRESETS` 两预设补显式 null 剔除项（on-off 两档 / high-max 三档）；头注释改 pi 黑名单过滤语义；troubleshooting 存量恢复指引 | `packages/core/src/domain/settings/use-provider-edit.ts`<br>`packages/core/src/domain/settings/__tests__/use-provider-edit.test.ts`<br>`docs/troubleshooting.md` | — | plain | `cd packages/core && npx vitest run src/domain/settings/__tests__/use-provider-edit.test.ts` 绿，含新增用例：discover 合并产出的模型 `reasoning === true`；`pickStrategy` 对 undefined 置 true / 对显式 false 不覆盖（high-max 与 all-levels 两分支）；两预设经 pi 同源 `getSupportedThinkingLevels` 输出档位名为 `[off, high]` / `[off, high, max]`（P-presets 探针结论写进用例注释） |
+| **M1b** | D1②③ runtime 写侧防线：`applyProviderLevelFields`/`applyModelRoutingFields` 空串转译（trim 后空串同视；`apiKey` 空串 = 删键，其余 = 不写键 + warn）；catalog 分体系（`type` 键忽略 + warn；`baseUrl` 非空 = 网关写入、显式空串带键 = 清除；不物化空壳）；**防线载体共享纯函数** `applyProviderWritePolicy(merged, data, kind, source)`（纯函数无副作用，返回 `{ merged, gatewayToSet?, gatewayToClear? }`，`source: 'settings' \| 'import'`）；`ProviderExtras` 加 `gatewayBaseUrl` + `getExtrasSync` sync 原语 | `packages/runtime/src/services/provider-config-helper.ts`<br>`packages/runtime/src/services/provider-extras-store.ts`<br>`packages/runtime/src/services/__tests__/provider-config-helper.test.ts` | — | plain | `cd packages/runtime && npx vitest run src/services/__tests__/provider-config-helper.test.ts` 绿，含：空串矩阵（provider 级 name/baseUrl/apiKey/api + 模型级 id/name/api/baseUrl）落盘无空串键；`apiKey:''` → 键被删除（非写空串）；catalog `type` 键不写 + warn；catalog baseUrl 非空 → `merged.baseUrl` 且返回 `gatewayToSet`；显式 `''` → 返回 `gatewayToClear` 且 merged 无 baseUrl 键；八字段全缺 → 返回不落盘信号；`source='import'` + catalog → provider 级 baseUrl/api 一律剥除 |
+| **M2-r** | D3 resolver 实现：双形态（async 明文 / sync 布尔 + 批量）+ 源优先级单点声明（auth.json → models.json）+ P-cred 探针（`$ENV_VAR` / command 配置值解析行为） | `packages/runtime/src/services/auth/provider-credential-resolver.ts`（新）<br>`packages/runtime/src/services/auth/__tests__/provider-credential-resolver.test.ts`（新） | u-contracts（接口） | plain | `cd packages/runtime && npx vitest run src/services/auth/__tests__/provider-credential-resolver.test.ts` 绿，含：auth.json 命中优先于 models.json；两源皆无 → `undefined` / `false`；`listCredentialBackedProviderIds` 返回并集（单次读，非 N 次）；P-cred 探针实测结论（`$ENV_VAR` 是否已展开）写入用例注释与提交信息，降级路径按 §3.6 落地 |
+| **M1a** | D1①⑤⑥ 前端不产生违规值 + 两条旁路调用方：`save()` 对 catalog 不带 `type` 键、`baseUrl` **恒显式带键**（trim 结果：非空 = 设网关、`''` = 清除网关）、对 custom 空串 name/baseUrl 不带键；OAuth 收尾 payload 改 `{authMethod:'oauth'}`-only；QuickSetup payload 去 `baseUrl`（模板默认值不落盘）与 `api` 死键 | `packages/core/src/domain/settings/use-provider-edit.ts`<br>`packages/renderer/src/composables/features/settings/useProviderPageOauth.ts`<br>`packages/ui/src/features/settings/provider/use-quick-setup-form.ts`<br>测试：`packages/core/src/domain/settings/__tests__/use-provider-edit.test.ts`、`packages/renderer/src/__tests__/composables/use-provider-page-oauth.test.ts`、`packages/ui/src/features/settings/__tests__/ProviderQuickSetup.test.ts` | M6（同文件 `use-provider-edit.ts` 串行） | plain | 三个包对应测试文件 vitest 绿，含：save() payload 对 catalog 无 `type` 键且恒含 `baseUrl` 键（含 `''`）；custom 空串 name/baseUrl 不带键；OAuth 收尾 setProvider payload 仅 `{authMethod:'oauth'}`；QuickSetup payload 无 `baseUrl`、无 `api` |
+| **M1cd** | D2 存量清洗 + D1④ importer 旁路：`sanitizeInvalidProviders` 扩展（①空串全集剥键 → ②catalog provider 级键处置：`api` 一律剥、`baseUrl` 按 extras `gatewayBaseUrl` **仅存在性**判定，有标记保留 / 无标记剥除 + 日志；写读错位 → 待清标记清单；顺序契约：剥键先于既有空壳判定）；`index.ts` 启动 async 阶段编排待清清单的 `extrasStore.modify`；importer 主路径（`:251/:322`）接防线载体纯函数 + fallback catalog 返回 `failed` 不写 `tpl.api`/`tpl.baseUrl`/`config.apiKey` | `packages/runtime/src/infra/pi/pi-provider-store.ts`<br>`packages/runtime/src/index.ts`<br>`packages/runtime/src/services/migration/provider-importer.ts`<br>测试：`packages/runtime/src/infra/pi/__tests__/pi-provider-store.test.ts`、`packages/runtime/src/services/migration/__tests__/provider-importer.test.ts` | M1b（纯函数与标记 API） | plain | vitest 绿，含：空串全集剥键矩阵（P-sanitize 探针：剥键后同一文件经 pi `ModelConfig.load` `providers.size` 恢复）；catalog 无标记 `baseUrl` 剥除 / `api` 一律剥 / 有标记保留三对照；写读错位产待清清单且不塞进同步清洗段；剥键先于空壳判定；importer 主路径 catalog 源端 provider 级字段不落盘、空串转译；fallback catalog 返回 `failed`（P-oauth-shell 同族：不新增 models.json 条目） |
+| **M2b** | D3 链 1/2/5 迁移：`QuotaService.getCredential` 的 auth.json / models.json 两段改 resolver（保留 secrets 首段）；`handleDiscoverModels` 凭据回查改 resolver async 版；`listProviders` 内联 apiKeySet 判定改 resolver 批量 sync 版（维持 B3「消除 N+1 读盘」） | `packages/runtime/src/services/provider-config-helper.ts`<br>`packages/runtime/src/services/quota-service.ts`<br>`packages/runtime/src/transport/settings-message-handler.ts`<br>测试：`packages/runtime/src/services/__tests__/quota-service-workspace.test.ts`、`packages/runtime/test/services/quota-service.test.ts`、`packages/runtime/test/settings-message-handler*.test.ts`、`packages/runtime/src/services/__tests__/provider-config-helper.test.ts` | M2-r（resolver 实现）· M1b（同文件 `provider-config-helper.ts` 串行） | plain | vitest 绿，含：`listProviders` 走批量 sync 版（断言单次 `listCredentialIds` 型调用，无 N+1）；quota 保留 secrets 首段 + 后两段走 resolver；discover 凭据回查对「凭据只在 auth.json」的 catalog provider 命中（失败模式 C 凭据断链修复） |
+| **M5a** | D8 锚点卫生 + D6② 约束登记 + D6③ 文档映射登记：`pi-provider-repair.ts:34/:45` 注释锚点改 0.84.4 实装（TypeBox 非 zod、provider 级 baseUrl 在 `:171`、校验器装配 `:184`）；`constraints.json` 登记新约束（凭据读路径 + `upsertProvider` 直调清单，id 取 C-proc 域下一个空号）+ `render-constraints.mjs` 重生成 md；`check-doc-symbol-drift.mjs` 的 `DOC_MODULE_MAP` 登记本文档与映射源码模块 | `packages/runtime/src/infra/pi/pi-provider-repair.ts`<br>`docs/constraints.json`<br>`docs/constraints.md`<br>`scripts/check-doc-symbol-drift.mjs` | — | plain | `node scripts/check-doc-symbol-drift.mjs` 退出 0；`node scripts/render-constraints.mjs --check` 退出 0；`pi-provider-repair.ts` 注释中的锚点（校验器类型 / 行号）与 0.84.4 实装一致 |
+| **M2c** | D3 链 3 迁移 + 组合根：`pi-provider-store.readAuthCredentials` 两处消费（`:353/:384`）改经注入的 resolver sync 版（消除私有裸读）；`pi-config-store.ts` 落地链 3 注入通道（检查点 5：**模块级 init setter 首选 / 调用链传参备选，禁构造参数形态**）；`index.ts` 装配 resolver + init 注入 + `clearApiKey` 闭包改 sync 版（仍为纯删键）；`pi-provider-store.ts:495-498`「为什么修复路径不用合并视图」注释前提随 D7 更新 | `packages/runtime/src/infra/pi/pi-provider-store.ts`<br>`packages/runtime/src/infra/pi/pi-config-store.ts`<br>`packages/runtime/src/index.ts`<br>测试：`packages/runtime/src/infra/pi/__tests__/pi-provider-store-finddefault.test.ts` | M2-r（resolver）· M1cd（同文件 `pi-provider-store.ts` / `index.ts` 串行） | plain | vitest 绿，含：`readAuthCredentials` 私有裸读消失且链 3 消费点经注入 resolver；装配序满足「init 先于任何 `findValidDefaultModel` 调用」；`clearApiKey` 走 sync 版且落盘仍为删键（无空串写入）；检查点 5 的实际注入形态记录在提交信息 |
+| **M2g** | D6① 防复发机器守卫：新建 `scripts/check-provider-credential-reads.mjs`（白名单 + fail 收集 + 退出码 0/1）——禁 `packages/runtime/src/**` 白名单外出现 `getApiKeyForProvider` / `readAuthCredentials` / `getProvider(*).apiKey`；**姊妹守卫**：`upsertProvider` 直调清单（白名单 = setProvider / importer 主路径两处 / clearApiKey 闭包 / 启动清洗）；接线 `install-hooks.sh`（按 `packages/runtime/src/**` 路径触发）+ `preflight-check.sh` | `scripts/check-provider-credential-reads.mjs`（新）<br>`.githooks/install-hooks.sh`<br>`scripts/preflight-check.sh` | M2b · M2c（迁移完成后白名单才能清零） | plain | `node scripts/check-provider-credential-reads.mjs` 对当前 HEAD 退出 0（白名单已清零）；反证：在白名单外临时加一行 `getApiKeyForProvider(id)` → 脚本退出 1 且报文件行号与 resolver 模块路径；撤销后回绿（验收场景 8） |
+| **M3a** | D4 runtime 侧：per-协议代表模型双过滤选择（`enabled !== false` 且 `baseUrl` 非空）+ baseUrl 四级回落链（模型级 → custom provider 级 → catalog 网关 override → 报「未配置 baseUrl」）+ 3 协议最小真实请求（`max_tokens: 1` / `max_output_tokens: 1`，精确 body 以 P-test-req 实测为准）；`handleDiscoverModels` 加 `mode` 分支（test 走 per-model 编排，缺省 discover）；CLI 冒烟 + 可选 `--mode test` | `packages/runtime/src/services/model-service.ts`<br>`packages/runtime/src/infra/model-connection-tester.ts`（新）<br>`packages/runtime/src/transport/settings-message-handler.ts`<br>`packages/runtime/src/cli/commands.ts`<br>测试：`packages/runtime/src/cli/__tests__/commands.test.ts`、`packages/runtime/test/settings-message-handler*.test.ts` | u-contracts（协议 `mode`/`results`）· M2-r（凭据）· M2b（同文件 `settings-message-handler.ts` 串行） | plain | vitest 绿，含：代表模型双过滤（禁用模型不代表、空 baseUrl 模型不冒充网络错误）；baseUrl 回落链四级逐级断言；3 协议请求体断言含 `max_tokens`/`max_output_tokens: 1`；无可用模型 / 协议不支持 / 全部模型被禁用分别返回 §3.5 错误规格对应文案；`mode` 缺省走 discover（CLI 向后兼容，P-test-req 结论写进用例注释） |
+| **M3b** | D4 前端侧：`runDiscover` 传 `mode`；测试连接调用传 `mode:'test'` 并消费 `results`；`ProviderTestDiscoverSection.vue` 按协议分组渲染结果与恢复指引；catalog provider 隐藏「模型发现」按钮（custom 保留） | `packages/core/src/domain/settings/use-provider-edit.ts`<br>`packages/renderer/src/composables/shell/settings-transport-adapter.ts`<br>`packages/ui/src/features/settings/provider/ProviderTestDiscoverSection.vue`<br>测试：`packages/ui/src/features/settings/__tests__/provider-test-discover-section.test.ts`、`packages/core/src/domain/settings/__tests__/use-provider-edit.test.ts` | u-contracts（协议类型 + i18n）· M1a（同文件 `use-provider-edit.ts` 串行） | plain | vitest 绿，含：payload 带 `mode`（discover / test 两分支）；适配层透传 `mode`；组件按协议分组渲染每行 `{api, modelId, ok, error}` 与恢复指引文案；catalog provider 不渲染「模型发现」按钮、custom 渲染（用户可见 DOM 断言） |
+| **M4** | D5 网关优先派生两级语义（`resolveCatalogDisplayFields`：override 非空 baseUrl 优先原值 + 网关标注；无网关则对合并模型集派生「全同值 → 该值 / >1 非空值 → undefined / 全空 → undefined」，api 同规则）+ D7 `overlayToCatalogModel` 去空串归一 + `ProviderEditBody.vue` catalog 化（类型只读派生文案、端点改「自定义网关」可选框 + placeholder/清除语义 + form.api 取值定义）+ `ProviderQuickSetup.vue` 卡片混合检测展示 | `packages/runtime/src/services/provider-config-helper.ts`<br>`packages/runtime/src/services/provider-catalog.ts`<br>`packages/ui/src/features/settings/provider/ProviderEditBody.vue`<br>`packages/ui/src/features/settings/provider/ProviderQuickSetup.vue`<br>测试：`packages/runtime/src/services/__tests__/provider-config-helper.test.ts`、`packages/runtime/src/services/__tests__/provider-catalog.test.ts`、`packages/ui/src/features/settings/__tests__/provider-edit-body.test.ts`、`packages/ui/src/features/settings/__tests__/ProviderQuickSetup.test.ts` | u-contracts（i18n + 类型注释）· M1b（同文件 `provider-config-helper.ts` 串行）· M2b（同文件串行） | plain | vitest 绿，含：网关优先（override 非空 → 原值 + 标注）；派生三态（同值 / 混合 / 全空 → undefined）；`overlayToCatalogModel` 缺省不再产 `''`（为 undefined）；`ProviderEditBody` catalog 不渲染类型输入框、渲染派生文案与端点可选框，custom 照旧可编辑（用户可见 DOM 断言）；QuickSetup 卡片混合 → 「按模型分发」、空 → 「—」 |
+
+## 3 DAG 图
+
+```mermaid
+graph TD
+  subgraph W1[Wave 1 · 契约与零耦合单元]
+    U0["u-contracts 共享契约<br/>shared/protocol.ts · shared/provider.ts<br/>ports/ · i18n locales"]
+    U6["M6 思考档位修复<br/>core use-provider-edit.ts · troubleshooting"]
+    U1B["M1b runtime 写侧防线<br/>provider-config-helper · provider-extras-store"]
+    U2R["M2-r 凭据 resolver 实现<br/>services/auth/"]
+  end
+  subgraph W2[Wave 2 · 迁移与旁路修复]
+    U1A["M1a 前端不产生违规值<br/>core use-provider-edit · oauth · quick-setup"]
+    U1CD["M1cd 存量清洗+importer<br/>pi-provider-store · index.ts · provider-importer"]
+    U2B["M2b 链 1/2/5 迁移<br/>provider-config-helper · quota · handler"]
+    U5A["M5a 卫生与登记<br/>pi-provider-repair · constraints · doc-map"]
+  end
+  subgraph W3[Wave 3 · 功能重做与展示对齐]
+    U2C["M2c 链 3 迁移+组合根<br/>pi-provider-store · pi-config-store · index.ts"]
+    U2G["M2g 防复发守卫<br/>scripts/ · hooks · preflight"]
+    U3A["M3a 测试连接 runtime<br/>model-service · tester · handler · cli"]
+    U3B["M3b 测试连接前端<br/>core use-provider-edit · adapter · ui"]
+    U4["M4 网关派生展示<br/>provider-config-helper · catalog · ui"]
+  end
+  U0 -->|"接口定义（IProviderCredentialResolver）"| U2R
+  U0 -->|"协议 mode/results 类型"| U3A
+  U0 -->|"协议类型 + i18n key"| U3B
+  U0 -->|"i18n key + 类型注释"| U4
+  U6 -->|"同文件 use-provider-edit.ts 串行"| U1A
+  U1B -->|"防线纯函数与网关标记 API 被消费"| U1CD
+  U1B -->|"同文件 provider-config-helper.ts 串行"| U2B
+  U1B -->|"同文件 provider-config-helper.ts 串行"| U4
+  U1CD -->|"同文件 pi-provider-store.ts / index.ts 串行"| U2C
+  U2R -->|"resolver 实现被消费"| U2B
+  U2R -->|"resolver 实现被消费"| U2C
+  U2R -->|"resolver 实现被消费"| U3A
+  U2B -->|"同文件 settings-message-handler.ts 串行 + 协议行为"| U3A
+  U2B -->|"迁移完成白名单方可清零"| U2G
+  U2C -->|"迁移完成白名单方可清零"| U2G
+  U1A -->|"同文件 use-provider-edit.ts 串行"| U3B
+```
+
+分层：Wave1 4 单元 · Wave2 4 单元 · Wave3 5 单元（均 ≤5 并发上限）；关键路径深度 3，最大宽度 5。
+
+## 4 测试策略
+
+框架：vitest（项目红线，禁 `node:test` / `tsx --test`）；命令从各包 `package.json` 与 `TEST-STRATEGY.md` 真实读取。
+
+### 增量（单元开发期，只跑受影响文件）
+
+```bash
+# core（M6 / M1a / M3b）
+cd packages/core && npx vitest run src/domain/settings/__tests__/use-provider-edit.test.ts
+# runtime（M1b / M2-r / M1cd / M2b / M2c / M3a / M4）
+cd packages/runtime && npx vitest run src/services/__tests__/provider-config-helper.test.ts
+# ui（M1a / M3b / M4）
+cd packages/ui && npx vitest run src/features/settings/__tests__/
+# renderer（u-contracts i18n / M1a / M3b）
+cd packages/renderer && npx vitest run src/__tests__/i18n/ src/__tests__/composables/use-provider-page-oauth.test.ts
+# 类型检查（u-contracts 及各单元收尾）
+pnpm --filter @xyz-agent/shared typecheck
+pnpm --filter @xyz-agent/runtime typecheck
+pnpm --filter @xyz-agent/core typecheck
+pnpm --filter @xyz-agent/ui typecheck
+pnpm --filter @xyz-agent/frontend typecheck
+```
+
+### 阶段 5 全量（收尾场景才跑）
+
+```bash
+pnpm test          # 根：全部 packages/apps/extensions
+pnpm lint          # eslint --max-warnings 0
+pnpm --filter @xyz-agent/core test && pnpm --filter @xyz-agent/runtime test && pnpm --filter @xyz-agent/ui test && pnpm --filter @xyz-agent/frontend test
+```
+
+### 测试红线与既有守卫（每个 commit 都会跑）
+
+- **禁止触碰真实数据目录**：runtime vitest 有 `test/global-setup.ts` fail-fast + `test/fs-guard.ts` 白名单（`os.tmpdir()` / `$XYZ_AGENT_DATA_DIR` / `~/.xyz-agent-dev`）；新测试的写删目标必须 `mkdtempSync(join(tmpdir(), ...))` 自建自删
+- 改 `use-provider-edit.ts` → pre-commit 触发 `scripts/diff-probe-thinking.mjs`（能力注册表 vs pi-ai 同源差分，必须绿）
+- 改 `packages/renderer/src/i18n/locales/*.ts` → `check_i18n_locale_sync.py`（zh/en key 集合一致）
+- 改 `packages/renderer/src/**/*.vue` → `check_i18n_cjk.py`（模板无 CJK 硬编码）
+- 改 `docs/constraints.json` → `render-constraints.mjs --check`；改 `docs/design/` → `check-doc-symbol-drift.mjs`
+- 新增测试文件 → `check_test_flake_hygiene.py`（F3 flake 模式）
+- 三视角缺一不可：每条 UI 用例至少一个用户可见 DOM 断言
+
+### 实施期探针门（设计 §3.6，未跑不得宣称对应单元完成）
+
+| 探针 | 归属单元 | 要求 |
+|------|---------|------|
+| P-cred | M2-r | 构造 `$ENV_VAR` 引用凭据实测 resolver 输出；结论写用例注释 + 提交信息，失败走降级路径 |
+| P-sanitize | M1cd | 复用 P-poison 脚本：剥键后同一文件经 pi `ModelConfig.load` `providers.size` 恢复；有/无标记对照 |
+| P-oauth-shell | M1cd | 模拟 OAuth 收尾调用 setProvider 后读 models.json：无新增条目/无空壳 |
+| P-test-req | M3a | 对真实端点发 3 协议最小请求；调不通的协议从支持集剔除并落「暂不支持」文案 |
+| P-presets | M6 | 修正后预设逐个调 pi `getSupportedThinkingLevels` 断言档位数；discover 合并 + 行级联动后 reasoning 落盘显式 boolean |
+
+## 5 合理偏差登记表
+
+| # | 单元 | 偏差描述 | 判定 | 登记时间 |
+|---|------|---------|------|---------|
+| — | — | （初始为空，执行期按 dev-flow 偏差三分类回填） | — | — |
+
+## 6 状态表
+
+| Unit | 状态 | 轮次 | 证据指针 |
+|------|------|------|---------|
+| u-contracts | pending | 0 | — |
+| M6 | pending | 0 | — |
+| M1b | pending | 0 | — |
+| M2-r | pending | 0 | — |
+| M1a | pending | 0 | — |
+| M1cd | pending | 0 | — |
+| M2b | pending | 0 | — |
+| M5a | pending | 0 | — |
+| M2c | pending | 0 | — |
+| M2g | pending | 0 | — |
+| M3a | pending | 0 | — |
+| M3b | pending | 0 | — |
+| M4 | pending | 0 | — |
+
+## 7 残留风险与变更历史
+
+### 残留风险（执行期需持续观察）
+
+1. **i18n key 前瞻性**：M3a/M3b/M4 的文案 key 由 u-contracts 一次预置。若某单元发现缺 key，禁止越界改 locales（同 wave 写冲突），须停下上报，由主 agent 决定补派小单元或复用既有 key。
+2. **M2c 注释时序**：`pi-provider-store.ts:495-498` 注释前提随 D7（M4）变化，M2c 与 M4 同在 Wave3。若 M2c 先提交，存在一个 commit 的窗口内注释描述领先于代码；同 PR 内收敛，不构成缺陷。
+3. **M5a 登记的 hook 名**：constraints.json 里 enforcement 指向 `check-provider-credential-reads.mjs`（M2g 产出）。文件名是计划级固定契约；若 M2g 落地时改名，主 agent 在阶段 4 同步 M5a 登记文本。
+4. **存量无标记网关误剥**：设计 D2 已接受代价（手编 models.json 网关且从未经新 UI 保存的条目会被剥除）；恢复路径 = M4 的网关输入框重设 + troubleshooting 登记。
+5. **设计文档「待验证检查点」回写**：6 个检查点的实测结论由主 agent 在阶段 4（doc_errors 归口）回写设计文档 §5 + 附录变更历史——不由任何开发单元承担（避免各单元改同一设计文档）。
+6. **隔离方式全 plain**：热点文件共改已在 DAG 中用串行边消除，同 wave 领地互斥；按 dag-authoring 决策表「领地互斥已足够安全」不启 worktree。
+
+### 变更历史
+
+- 2026-09-10 初版。来源：设计 v3.3（四轮双审、13 must-fix + 12 suggestion 全闭环、双报告 0 must-fix）。把设计 §5 的 M1–M6 细化为 13 个领地互斥单元（u-contracts + M1a/b/cd + M2-r/b/c/g + M3a/b + M4 + M5a + M6）；3 波调度、关键路径深度 3、最大并发 5。细化依据：设计 M1/M2/M3/M4 共改 `provider-config-helper.ts`（M1/M2/M4）、`use-provider-edit.ts`（M1/M3/M6）、`pi-provider-store.ts`（M1/M2/M5）、`index.ts`（M1/M2）、`settings-message-handler.ts`（M2/M3）、i18n `settings.ts`（M3/M4）六个热点文件，同 wave 并行会写冲突。
