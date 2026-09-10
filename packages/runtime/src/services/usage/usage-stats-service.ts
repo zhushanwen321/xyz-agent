@@ -9,9 +9,10 @@
  */
 
 import { readdir, stat } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { createReadStream } from 'node:fs'
-import { basename } from 'node:path'
+import { basename, join } from 'node:path'
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
 import type { UsageMetrics, UsageRow, UsageStatsResult } from '@xyz-agent/shared'
 
@@ -38,6 +39,23 @@ function emptyShard(fileStat: { mtimeMs: number; size: number }): FileShard {
   return { mtimeMs: fileStat.mtimeMs, size: fileStat.size, rows: [], skippedLines: 0, cwd: null }
 }
 
+/**
+ * 收集单个目录层内可扫描的 .jsonl 文件路径（仅普通文件）。
+ *
+ * 文件过滤：复刻 isScannableSessionFile 规则——排除 .tmp-migrate-*.jsonl
+ *（归一化崩溃残留）；.jsonl.meta.json（sidecar）不以 .jsonl 结尾被天然排除。
+ */
+function collectScannableJsonlPaths(dirPath: string, entries: Dirent[]): string[] {
+  const paths: string[] = []
+  for (const entry of entries) {
+    if (!entry.isFile()) continue
+    if (!entry.name.endsWith('.jsonl')) continue
+    if (entry.name.includes('.tmp-migrate-')) continue
+    paths.push(join(dirPath, entry.name))
+  }
+  return paths
+}
+
 // ── 服务主体 ─────────────────────────────────────────────────
 
 export class UsageStatsService {
@@ -53,7 +71,13 @@ export class UsageStatsService {
   /**
    * 聚合全部 session 文件的用量数据。
    *
-   * 流程：readdir + stat → 比对 (mtimeMs, size) 双键 → 未变用分片、变化/新增重读、删除丢分片 → 拼装。
+   * 两层扫描（方案 B 布局）：pi 默认布局把 session jsonl 写入
+   * `<sessionsDir>/<encodeCwd>/` 子目录，单层 readdir 会漏掉全部子目录文件
+   * → 统计归零，故根层 + 一层子目录都统计（§11.12：两层即够——pi 只写一层
+   * encodeCwd，`_migrated-no-cwd/` 与 fork 产物也都是一层）。
+   *
+   * 流程：readdir(withFileTypes)（根层 + 一层子目录）→ stat → 比对 (mtimeMs, size)
+   * 双键 → 未变用分片、变化/新增重读、删除丢分片 → 拼装。
    */
   async getStats(): Promise<UsageStatsResult> {
     const scannedAt = Date.now()
@@ -61,32 +85,39 @@ export class UsageStatsService {
     let skippedLines = 0
     let sessionCount = 0
 
-    let entries: string[]
+    let entries: Dirent[]
     try {
-      entries = await readdir(this.sessionsDir)
+      entries = await readdir(this.sessionsDir, { withFileTypes: true })
     } catch {
       // 目录不存在或不可读 → 返回空结果
       return { rows: [], scannedAt, sessionCount: 0, skippedLines: 0 }
     }
 
+    // 根层 + 一层 encodeCwd 子目录（只下钻一层，孙目录不进）
+    const jsonlPaths = collectScannableJsonlPaths(this.sessionsDir, entries)
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const subDir = join(this.sessionsDir, entry.name)
+      let subEntries: Dirent[]
+      try {
+        subEntries = await readdir(subDir, { withFileTypes: true })
+      } catch {
+        // 单个子目录不可读 → 跳过继续（与单文件读失败的容错语义一致）
+        continue
+      }
+      jsonlPaths.push(...collectScannableJsonlPaths(subDir, subEntries))
+    }
+
     // 收集当前磁盘文件路径，用于清理已删除文件的分片
     const currentPaths = new Set<string>()
 
-    for (const entry of entries) {
-      // 文件过滤：复刻 isScannableSessionFile 规则
-      // 排除 .tmp-migrate-*.jsonl（归一化崩溃残留）和 .jsonl.meta.json（sidecar）
-      if (!entry.endsWith('.jsonl')) continue
-      if (entry.includes('.tmp-migrate-')) continue
-
-      const filePath = `${this.sessionsDir}/${entry}`
+    for (const filePath of jsonlPaths) {
       let fileStat
       try {
         fileStat = await stat(filePath)
       } catch {
         continue
       }
-      // 跳过目录
-      if (!fileStat.isFile()) continue
 
       currentPaths.add(filePath)
       const cached = this.shards.get(filePath)

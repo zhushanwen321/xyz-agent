@@ -18,6 +18,7 @@
  * - 多文件 skippedLines 分片求和不污染
  * - 目录不可读返回空结果
  * - 删除文件后分片被丢弃
+ * - 两层扫描（方案 B 布局：encodeCwd 子目录文件被统计 / 根层子目录混合 / 孙目录不下钻 / 子目录内排除规则）
  * - 真实数据冒烟测试（可跳过条件：目录不存在）
  */
 
@@ -26,6 +27,7 @@ import { mkdtemp, writeFile, rm, mkdir, readdir, stat, appendFile, unlink } from
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { UsageStatsService } from './usage-stats-service.js'
+import { encodeCwd, getSessionsDir } from '../../infra/pi/pi-paths.js'
 
 // ── stat mock 基建（M6：双键 size 分量确定性场景）───────────
 // macOS/Linux 上 appendFile 必然同时更新 mtime，「mtime 不变仅 size 变」无法用真实文件系统构造，
@@ -670,11 +672,88 @@ describe('UsageStatsService', () => {
     expect(result.rows[0].project).toBe('(unknown)')
   })
 
+  // ── 两层扫描（方案 B 布局：pi 按 cwd 分 encodeCwd 子目录）──
+
+  it('两层扫描：encodeCwd 子目录内的 .jsonl 被统计（方案 B 布局核心回归）', async () => {
+    const subDir = join(tmpDir, encodeCwd('/Users/dev/project-sub'))
+    await mkdir(subDir, { recursive: true })
+    const content = [
+      sessionEntry('/Users/dev/project-sub'),
+      assistantEntry(),
+    ].join('\n')
+    await writeFile(join(subDir, 'sub-1.jsonl'), content)
+
+    const svc = new UsageStatsService(tmpDir)
+    const result = await svc.getStats()
+
+    // 单层 readdir 会漏掉子目录文件 → 统计归零；两层扫描后子目录文件计入
+    expect(result.rows).toHaveLength(1)
+    expect(result.sessionCount).toBe(1)
+    expect(result.rows[0].project).toBe('project-sub')
+  })
+
+  it('两层扫描：根层与子目录文件混合统计', async () => {
+    await writeFile(join(tmpDir, 'root.jsonl'), [
+      sessionEntry('/Users/dev/root-proj'),
+      assistantEntry(),
+    ].join('\n'))
+    const subDir = join(tmpDir, encodeCwd('/Users/dev/sub-proj'))
+    await mkdir(subDir, { recursive: true })
+    await writeFile(join(subDir, 'sub.jsonl'), [
+      sessionEntry('/Users/dev/sub-proj'),
+      assistantEntry(),
+    ].join('\n'))
+
+    const svc = new UsageStatsService(tmpDir)
+    const result = await svc.getStats()
+
+    expect(result.rows).toHaveLength(2)
+    expect(result.sessionCount).toBe(2)
+    const projects = result.rows.map((r) => r.project).sort()
+    expect(projects).toEqual(['root-proj', 'sub-proj'])
+  })
+
+  it('两层扫描：只下钻一层，孙目录不扫（pi 只写一层 encodeCwd）', async () => {
+    const subDir = join(tmpDir, encodeCwd('/Users/dev/level-1'))
+    const grandDir = join(subDir, 'nested-deeper')
+    await mkdir(grandDir, { recursive: true })
+    await writeFile(join(grandDir, 'grand.jsonl'), [
+      sessionEntry('/Users/dev/grand'),
+      assistantEntry(),
+    ].join('\n'))
+
+    const svc = new UsageStatsService(tmpDir)
+    const result = await svc.getStats()
+
+    expect(result.rows).toHaveLength(0)
+    expect(result.sessionCount).toBe(0)
+  })
+
+  it('两层扫描：子目录内的排除规则依然生效（.tmp-migrate- 残留 / sidecar）', async () => {
+    const subDir = join(tmpDir, encodeCwd('/Users/dev/mig-sub'))
+    await mkdir(subDir, { recursive: true })
+    const content = [
+      sessionEntry('/Users/dev/mig-sub'),
+      assistantEntry(),
+    ].join('\n')
+    // 正常文件（子目录内）
+    await writeFile(join(subDir, 'normal.jsonl'), content)
+    // 残留文件（子目录内，应被排除）
+    await writeFile(join(subDir, 'normal.jsonl.tmp-migrate-99.jsonl'), content)
+    // sidecar（子目录内，不以 .jsonl 结尾，天然排除）
+    await writeFile(join(subDir, 'normal.jsonl.meta.json'), JSON.stringify({ type: 'session_end' }))
+
+    const svc = new UsageStatsService(tmpDir)
+    const result = await svc.getStats()
+
+    expect(result.rows).toHaveLength(1)
+    expect(result.sessionCount).toBe(1)
+  })
+
   // ── 真实数据冒烟测试 ────────────────────────────────────
 
   it('真实数据冒烟测试：默认目录 getStats() 输出合规', async () => {
-    const homeDir = process.env.HOME || process.env.USERPROFILE
-    const realSessionsDir = `${homeDir}/.xyz-agent/pi/sessions`
+    const realSessionsDir = getSessionsDir()
 
     // 检查目录是否存在
     let dirExists = false
