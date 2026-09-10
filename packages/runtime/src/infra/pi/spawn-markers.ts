@@ -37,7 +37,7 @@
  * 零 staged 值的 spawn 仍须写文件，§11.11）。
  */
 
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative } from 'node:path'
 import { getConfigDir } from './pi-paths.js'
 
@@ -46,6 +46,12 @@ export const SPAWN_MARKERS_FILE_NAME = 'pi-spawn-markers.json'
 
 /** run/ 目录名（先例：relay socket，relay-paths.ts getRelayRunDir 同款 <dataDir>/run 派生）。 */
 const RUN_DIR_NAME = 'run'
+
+/**
+ * 读侧降级 warn 的统一前缀（u17 reap 消费读侧：null = 清单缺失/坏 → services 侧
+ * fail-safe 跳过收殓，宁漏不误杀）。原因细节（io error / 格式坏）随参数拼在后面。
+ */
+const READ_SKIP_WARN_PREFIX = '[spawn-markers] read pi-spawn-markers.json failed, consumer must skip marker matching (fail-safe: prefer missed reap over mis-kill):'
 
 /** ① 打包资源根段链（macOS .app bundle 布局；`*.app` 为任意 bundle 名——.app 是目录名后缀）。 */
 const PACKAGED_APP_EXTENSIONS_RE = /\/[^/]+\.app\/Contents\/Resources\/extensions(?:\/|$)/
@@ -62,6 +68,38 @@ const DEV_SOURCE_EXTENSIONS_RE = /\/extensions\/[^/]+\/[^/]+/
 /** 清单文件路径：<dataDir>/run/pi-spawn-markers.json。 */
 export function getSpawnMarkersPath(dataDir: string): string {
   return join(dataDir, RUN_DIR_NAME, SPAWN_MARKERS_FILE_NAME)
+}
+
+/**
+ * 读 spawn 清单（写侧 recordSpawnMarkers 全量覆盖写的读侧对称面，u17 reap 判据③数据源）。
+ *
+ * 分层：infra 唯一持有清单文件 io（services 层 IO 须经 port，D6c——reap-orphan-pi 经
+ * 组合根注入本函数，不直接 import infra）。
+ *
+ * 返回 null = 清单缺失/读不到/坏 JSON/格式非字符串数组——消费方（reap）跳过本轮
+ * marker 匹配（fail-safe：宁漏不误杀），原因已在此记 warn 日志（console 经 logger
+ * tee 落盘，同写侧 recordSpawnMarkers 惯例）。文件不存在属常态分支（首启前 / 从未
+ * spawn 过），warn 保留路径信息便于排障但语义是「跳过」不是「错误」。
+ */
+export function readSpawnMarkerList(dataDir: string): string[] | null {
+  const markersPath = getSpawnMarkersPath(dataDir)
+  let raw: string
+  try {
+    raw = readFileSync(markersPath, 'utf-8')
+  } catch (e) {
+    console.warn(`${READ_SKIP_WARN_PREFIX} unreadable (${markersPath}):`, e instanceof Error ? e.message : e)
+    return null
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed) || parsed.some(v => typeof v !== 'string')) {
+      throw new Error('expected a JSON string array')
+    }
+    return parsed
+  } catch (e) {
+    console.warn(`${READ_SKIP_WARN_PREFIX} malformed (${markersPath}):`, e instanceof Error ? e.message : e)
+    return null
+  }
 }
 
 /** win32 反斜杠归一为斜杠（段链判定统一按 posix 形态做，跨平台一致）。 */

@@ -68,10 +68,6 @@ export const LAYOUT_LITERAL_EXEMPT = [
     reason: ':236 历史证据标注行（B 布局迁移前旧布局时期的实测记录，历史证据不改写）',
   },
   {
-    file: 'packages/runtime/src/services/reap-orphan-pi.test.ts',
-    reason: 'u17 并行单元领地（matchesOwnPiArgv 四条合取改造中，DIR 常量与断言同步是其验收条款）——u17 清零后应移除本条',
-  },
-  {
     file: 'packages/runtime/test/recent-workspaces-real.test.ts',
     reason: '负向回归断言：字面量 pi/agent 即「getConfigDir() 返回值不得含旧布局子串」的断言本体（守卫同盟，非违规）',
   },

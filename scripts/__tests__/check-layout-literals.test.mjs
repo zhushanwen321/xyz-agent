@@ -59,7 +59,9 @@ describe('R2 豁免表放行', () => {
   it('豁免文件整文件跳过（file 级，对齐 R1 D-10 先例——行号键随编辑漂移永不生效）', () => {
     expect(scanFile('scripts/migrate-pi-layout-v2.mjs', "join(dd, 'pi', 'sessions')")).toEqual([])
     expect(scanFile('packages/runtime/src/infra/pi/pi-maintenance.ts', "join(process.cwd(), 'pi', 'agent')")).toEqual([])
-    expect(scanFile('packages/runtime/src/services/reap-orphan-pi.test.ts', "const DIR = '/Users/x/.xyz-agent/pi/sessions'")).toEqual([])
+    // u17 已清零并移除 reap-orphan-pi.test.ts 豁免（判据 v2 测试无旧布局字面量）；
+    // 放行 fixture 换 migrate-pi-layout-v2.test.mjs——迁移测试 fixture 恒需构造旧布局，稳定长期持有者
+    expect(scanFile('scripts/__tests__/migrate-pi-layout-v2.test.mjs', "const DIR = '/Users/x/.xyz-agent/pi/sessions'")).toEqual([])
   })
   it('非豁免文件同内容仍报红（豁免按登记生效，不是全局放行）', () => {
     expect(scanFile('some/other.ts', "join(dd, 'pi', 'sessions')")).toHaveLength(1)

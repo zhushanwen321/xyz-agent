@@ -17,13 +17,14 @@
  *
  * 运行：npx vitest run src/infra/__tests__/rpc-client-spawn-markers.test.ts
  */
-import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
   getSpawnMarkersPath,
   isStagedMarkerPath,
+  readSpawnMarkerList,
   recordSpawnMarkers,
   selectSpawnMarkerPaths,
   writeSpawnMarkersFile,
@@ -323,6 +324,67 @@ describe('C · spawn-markers 写语义（全量覆盖 / 原子 / 自建 / 降级
       // 判定一致），darwin 上 C:\\ 开头串本就不是绝对路径，跨平台硬造无意义
     } finally {
       rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+    }
+  })
+})
+
+describe('D · readSpawnMarkerList 读侧（u17 reap 判据③数据源）', () => {
+  const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+  afterEach(() => {
+    warnSpy.mockClear()
+  })
+
+  it('D1 合法清单（写侧落盘形态）→ 返回字符串数组', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pi-spawn-markers-read-'))
+    try {
+      mkdirSync(join(dir, 'run'), { recursive: true })
+      const entries = [join(dir, 'extensions', 'a'), join(dir, 'npm', 'node_modules', 'b')]
+      writeFileSync(getSpawnMarkersPath(dir), `${JSON.stringify(entries, null, 2)}\n`, 'utf-8')
+      expect(readSpawnMarkerList(dir)).toEqual(entries)
+      expect(warnSpy).not.toHaveBeenCalled()
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+    }
+  })
+
+  it('D2 文件缺失 → null + warn（unreadable；首启前常态分支，消费方须跳过匹配）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pi-spawn-markers-read-'))
+    try {
+      expect(readSpawnMarkerList(dir)).toBeNull()
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      expect(String(warnSpy.mock.calls[0]?.[0])).toContain('unreadable')
+      expect(String(warnSpy.mock.calls[0]?.[0])).toContain(getSpawnMarkersPath(dir))
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+    }
+  })
+
+  it('D3 坏 JSON → null + warn（malformed）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pi-spawn-markers-read-'))
+    try {
+      mkdirSync(join(dir, 'run'), { recursive: true })
+      writeFileSync(getSpawnMarkersPath(dir), '{ not valid json', 'utf-8')
+      expect(readSpawnMarkerList(dir)).toBeNull()
+      expect(String(warnSpy.mock.calls[0]?.[0])).toContain('malformed')
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+    }
+  })
+
+  it('D4 非字符串数组（对象 / 混入非字符串元素）→ null + warn（格式守卫）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pi-spawn-markers-read-'))
+    try {
+      mkdirSync(join(dir, 'run'), { recursive: true })
+      const p = getSpawnMarkersPath(dir)
+      writeFileSync(p, JSON.stringify({ extensions: [] }), 'utf-8')
+      expect(readSpawnMarkerList(dir)).toBeNull()
+      writeFileSync(p, JSON.stringify([join(dir, 'extensions', 'a'), 42]), 'utf-8')
+      expect(readSpawnMarkerList(dir)).toBeNull()
+      expect(warnSpy).toHaveBeenCalledTimes(2)
+      expect(String(warnSpy.mock.calls[0]?.[0])).toContain('malformed')
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
     }
   })
 })

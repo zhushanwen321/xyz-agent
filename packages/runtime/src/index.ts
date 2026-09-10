@@ -68,6 +68,9 @@ import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
 // D8-1（perf W29）：后台初始化序列（listen 后执行）——独立模块承载使「migrateBuiltin →
 // autoUpgrade 顺序」可 spy 断言（06 §5 门禁），组合根只负责构造与注入。
 import { runStartupBackgroundInit } from './services/startup-background-init.js'
+// u17（设计 §6.12）：spawn 清单读侧在 infra SSOT（读写同模块）；组合根注入给 services 层
+// （D6c port 纪律——reap/startup-background-init 不直接 import infra）。
+import { readSpawnMarkerList } from './infra/pi/spawn-markers.js'
 // A1-2（provider-config-quota 架构）：models.json 寄生字段 → config/providers.json 迁移。
 // 挂载薄包装在独立小模块 run-extras-migration.ts（失败语义 + 返回值契约可单测，
 // 组合根 import 即执行 main() 不可直测）；此处 readExtrasWithFallback 供 QuotaService 双读。
@@ -832,6 +835,8 @@ async function main(): Promise<void> {
     broadcastAppInfo: () => server.broadcastAppInfo(),
     skillRegistry,
     pluginService,
+    // u17 判据 v2：spawn 清单读取（infra 读侧经 port 注入；闭包绑定组合根同源 getDataDir()）
+    readSpawnMarkers: () => readSpawnMarkerList(getDataDir()),
   })
 }
 
