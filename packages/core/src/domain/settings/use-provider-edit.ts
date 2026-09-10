@@ -21,6 +21,7 @@ import { ref, reactive, watch, computed, type Ref } from 'vue'
 import type { ProviderInfo } from '@xyz-agent/shared'
 import { getSettingsStore } from './settings-store'
 import { getSettingsTransport } from './transport'
+import type { DiscoverModelsRequest } from './transport'
 
 // ── 类型 ──
 
@@ -131,6 +132,17 @@ export const THINKING_STRATEGIES: Array<{
 
 /** discover 动作：test（探活，结果显示连接成败）/ discover（合并发现的模型） */
 export type DiscoverAction = 'test' | 'discover'
+
+/**
+ * 测试连接按协议分组的单条结果（runtime `config.discoveredModels.results` 元素，设计 §3.5 D4）：
+ * 每协议一条，代表模型 + 成败 + 失败时的真实原因（HTTP 状态码与响应截断）。
+ */
+export interface TestConnectionResult {
+  api: string
+  modelId: string
+  ok: boolean
+  error?: string
+}
 
 /**
  * apiKey「清除」哨兵值（D18）。
@@ -304,6 +316,10 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
   const discovering = ref(false)
   /** test 结果：ok=连接成功 / error=失败 / null=未测 */
   const testResult = ref<'ok' | 'error' | null>(null)
+  /** test 模式按协议分组的连接结果（runtime results；空数组 = 无分组结果，如整体性失败） */
+  const testResults = ref<TestConnectionResult[]>([])
+  /** test 模式整体性失败原因（success=false 的 error；有分组结果时留空） */
+  const testError = ref('')
   /** discover 结果文案（如「已发现 N 个模型，新增 M 个已合并」） */
   const discoverResult = ref('')
   const showAddModel = ref(false)
@@ -329,6 +345,8 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
   function resetTransientState(): void {
     showKey.value = false
     testResult.value = null
+    testResults.value = []
+    testError.value = ''
     discoverResult.value = ''
     showAddModel.value = false
     actionError.value = ''
@@ -400,15 +418,24 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
     actionError.value = ''
 
     try {
-      const res = await getSettingsTransport().discoverModels({
-        baseUrl: form.baseUrl,
-        // D18：探活与 save 同路径解析——哨兵（清除标记）→ undefined，不把哨兵串当真 key 发出
-        apiKey: resolveApiKeyForSave(form.apiKey),
-        providerType: form.api,
+      // M3b（D4）：discover 显式带 mode（协议缺省即 discover，显式化防默认值将来变化）；
+      // test 只需 providerId + mode——代表模型选择归 runtime（前端零推导，对齐 view-ready
+      // 原则），baseUrl/apiKey/providerType 在 test 模式被 runtime 忽略故不发
+      // （baseUrl 是协议形状必填键，传 '' 占位）。
+      const req: DiscoverModelsRequest = {
+        mode: action === 'test' ? 'test' : 'discover',
+        baseUrl: action === 'test' ? '' : form.baseUrl,
         providerId: providerRef.value?.id,
-      })
+        ...(action === 'test'
+          ? {}
+          : { providerType: form.api, apiKey: resolveApiKeyForSave(form.apiKey) }),
+      }
+      const res = await getSettingsTransport().discoverModels(req)
 
       if (action === 'test') {
+        // 分组结果与整体性失败互斥：成功走 results（每协议一行），失败走 error
+        testResults.value = res.results ?? []
+        testError.value = res.success ? '' : res.error ?? ''
         testResult.value = res.success ? 'ok' : 'error'
         if (!res.success && res.error) actionError.value = res.error
         return
@@ -680,6 +707,8 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
     testing,
     discovering,
     testResult,
+    testResults,
+    testError,
     discoverResult,
     showAddModel,
     saving,

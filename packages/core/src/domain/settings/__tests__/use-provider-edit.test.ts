@@ -3,9 +3,11 @@
  *
  * 覆盖：provider 变化重置编辑态 + 快照捕获；isDirty 全字段对比（快照 null 返 false）；
  * runDiscover test/discover 成功失败分支（discoverModels 调用参数、合并去重、文案）；
- * save 校验/成功/失败 + apiKey 哨兵语义 + headers/authHeader/models 透传；防线① provider 级
- * 字段分体系（catalog 无 type 键 + baseUrl 恒带键含空串、custom 空串不带键）；D8 过期快照
- * watch（未 dirty 刷新 + captureSnapshot，dirty 不刷新）；模型 CRUD（空名/重名抛错等）。
+ * M3b 协议分流（discover 带 mode=discover 全参 / test 带 mode=test 只带 providerId +
+ * 消费 results → testResults/testError）；save 校验/成功/失败 + apiKey 哨兵语义 +
+ * headers/authHeader/models 透传；防线① provider 级字段分体系（catalog 无 type 键 +
+ * baseUrl 恒带键含空串、custom 空串不带键）；D8 过期快照 watch（未 dirty 刷新 +
+ * captureSnapshot，dirty 不刷新）；模型 CRUD（空名/重名抛错等）。
  *
  * watch 类用例用 effectScope 包裹 + flushPromises 驱动（node 环境无组件渲染）。
  */
@@ -202,7 +204,7 @@ describe('isDirty 对比', () => {
 })
 
 describe('runDiscover test 分支', () => {
-  it('成功 → testResult ok；discoverModels 调用参数正确', async () => {
+  it('成功 → testResult ok；discoverModels 调用参数带 mode=test 且只需 providerId（协议占位 baseUrl=""）', async () => {
     const providerRef = ref<ProviderInfo | null>(makeProvider())
     const edit = mount(providerRef)
     await nextTick()
@@ -210,14 +212,60 @@ describe('runDiscover test 分支', () => {
     edit.form.apiKey = 'sk-abc'
     await edit.testConnection()
     const transport = getTransport()
+    // M3b（设计 D4）：test 模式代表模型选择归 runtime——前端不发 baseUrl/apiKey/providerType
+    // （快照 artifact 不参战）；baseUrl 是协议形状必填键（shared/protocol.ts），传 '' 占位。
     expect(transport.discoverModels).toHaveBeenCalledWith({
-      baseUrl: 'https://api.example.com',
-      apiKey: 'sk-abc',
-      providerType: 'anthropic-messages',
+      mode: 'test',
+      baseUrl: '',
       providerId: 'p1',
     })
     expect(edit.testResult.value).toBe('ok')
     expect(edit.testing.value).toBe(false)
+  })
+
+  it('M3b：成功返回 results → testResults 按协议分组消费（每协议 api/modelId/ok/error）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    // error 语法 = M3a runtime 实装（model-connection-tester.ts 头注「错误编码」）
+    getTransport().discoverModels = vi.fn(async () => ({
+      success: true,
+      models: [],
+      results: [
+        { api: 'anthropic-messages', modelId: 'minimax-m3', ok: true },
+        { api: 'openai-completions', modelId: 'qwen3.8-flash', ok: false, error: 'http_error|401|invalid api key' },
+      ],
+    }))
+    await edit.testConnection()
+    expect(edit.testResults.value).toEqual([
+      { api: 'anthropic-messages', modelId: 'minimax-m3', ok: true },
+      { api: 'openai-completions', modelId: 'qwen3.8-flash', ok: false, error: 'http_error|401|invalid api key' },
+    ])
+    // 行级失败不改变顶层 success（M3a 语义）——行内失败由行文案承载
+    expect(edit.testResult.value).toBe('ok')
+    expect(edit.testError.value).toBe('')
+  })
+
+  it('M3b：success=false 整体性失败 → results 空 + testError 携带原因（可展示状态，不抛全局）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    getTransport().discoverModels = vi.fn(async () => ({ success: false, error: 'no_api_key', results: [] }))
+    await edit.testConnection()
+    expect(edit.testResults.value).toEqual([])
+    expect(edit.testError.value).toBe('no_api_key')
+    expect(edit.testResult.value).toBe('error')
+    expect(edit.actionError.value).toBe('no_api_key')
+  })
+
+  it('M3b：runtime 未回 results（旧 runtime）→ testResults 空数组（UI 走整体反馈兜底）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    getTransport().discoverModels = vi.fn(async () => ({ success: true, models: [] }))
+    await edit.testConnection()
+    expect(edit.testResults.value).toEqual([])
+    expect(edit.testResult.value).toBe('ok')
   })
 
   it('success:false → testResult error + actionError', async () => {
@@ -242,6 +290,22 @@ describe('runDiscover test 分支', () => {
 })
 
 describe('runDiscover discover 分支', () => {
+  it('M3b：discover 调用参数带 mode=discover + baseUrl/apiKey/providerType/providerId', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.baseUrl = 'https://api.example.com'
+    edit.form.apiKey = 'sk-abc'
+    await edit.autoDiscover()
+    expect(getTransport().discoverModels).toHaveBeenCalledWith({
+      mode: 'discover',
+      baseUrl: 'https://api.example.com',
+      apiKey: 'sk-abc',
+      providerType: 'anthropic-messages',
+      providerId: 'p1',
+    })
+  })
+
   it('成功：合并去重 + discoverResult 文案（newMerged）', async () => {
     const providerRef = ref<ProviderInfo | null>(makeProvider())
     const edit = mount(providerRef)
