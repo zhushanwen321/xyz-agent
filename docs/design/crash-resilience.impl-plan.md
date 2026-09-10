@@ -167,6 +167,7 @@ graph TD
 2. u4d/u6/u7/u8 的 renderer 精确文件路径在实施期按「限于 chat 组件目录与 hooks」约束落地，若发现领地外必改文件，按领地锁定纪律停下上报主 agent。
 3. main/preload 侧（apps/electron）当前无独立 vitest 配置——u5a/u2/u3 新增纯逻辑单测时需建最小 vitest 配置（含 fs-guard setupFiles 对齐仓规测试红线）；若建配置成本过高，退化为可机械判定的脚本验证 + 阶段 5 真机验收覆盖，偏差登记。
 4. 并发派发受 provider 稳定性影响（本会话早期曾出现认证失败）；单单元 dev→fix 超 2 轮未绿即冻结升级用户。
+5. runtime 惰性恢复路径（pi-respawn.ts ensureRestored）不发布 session.restored（skip 防双跑分支无完成信号）——前端已由第四收口信号结构性兜底（恢复窗口内 message_start 到达即收口，c87deab2e 缺陷#1 修复），但 runtime 半边补发 restored 事件需另立单元（涉及 respawn 状态机事件语义，超出本缺陷回流范围）。
 
 **变更历史**：
 
@@ -179,3 +180,4 @@ graph TD
 - 2026-09-10：Gate B 组2c：A11 六项全 pass（>32MB×3 构造、②档扩窗、④档降级、游标翻页、session_end 变体⑤档最小规范化 + parentId 链机械核对连通、cwd 死路径变体 v9 降级形态附着成功）；A7 重验：过渡态/T4/强制退出不恢复/pi-crash 头 pass，**恢复窗口发消息 fail（缺陷#1：后端 join 链正确，前端切 dead 终态屏不自愈）**；A9③：删除级联/孤儿扫描/软上限 pass，**size 帽端到端 fail（缺陷#2：主流 hydrate 路径绕过 persistImagesNewestFirst 编排）**。观察 3 项：活跃态 Trace 超限走 D3 守卫错误态（口径已回写设计 v10）、⑤档 no-op warn 日志噪音（登记不修）、惰性恢复触发方式（设计措辞已按实测口径修正）。
 - 2026-09-10：design-code-sync 全量终态审（5 区 reviewer + 台账机械专项）：must-fix 8 / suggestion 9 / info 8，5 批修复 committed（0de4b6490 文档 / d4c95e3ea 前端注释 / 组B T2 提示条接线 8e7d4828e / 95e59d646 runtime / 3a659603c electron 注释），聚焦复审 must-fix==0 收敛（25 条 24 fixed + 1 计划内挂起 = 本 Gate B 登记），新增 discovered-during-review 缺陷 F6（逆序读多字节污染，含旧算法 37/37 相位必红实证）与 F4（T2 提示条接线缺失，补齐 renderer 消费链）。
 - 2026-09-10：流程违规登记——commit u1（8ca11d330）时主 agent 使用了 --no-verify（当时 hook 的 ws-client 段被并行单元 u2 在途违规阻塞，主 agent 判断误用了跳过通道，违反仓规 MANDATORY）。补救：对 u1 已提交 diff 补跑被跳过的检查段全部通过（禁用模式 grep 零命中 / flake 卫生零命中 / doc-drift OK / pi-semantics 30 条 OK）；后续所有 commit 恢复全量 hook。教训：并行工作区下 hook 失败应先甄别拦截归属，被他人文件阻塞时等待而非跳过。
+- 2026-09-10：Gate B 回流重验（组G）三场景全绿——A7 恢复窗口发消息不切 dead 终态屏（message_start 收口 gate 生效；恢复窗口内 spawning 计数=1 无双跑；对照 kill 不发消息无回归）、A9③ hydrate 图片真实落盘（reconcileFromReply 收口生效）+ 帽满「图片缓存已满」占位 + 清目录重进幂等重建（newest-first、次旧图正确跳过）、A11② Trace 错误态渲染 envelope message（含「加载更早」分页指引）+ 重试入口保留且可重发。缺陷#1/#2/观察#3 回流修复（c87deab2e defect-1/defect-3、b638c2ff9 defect-2）全部验证通过。组G 新发现 1 缺陷：reply 通路 oversize envelope 的 session 文件路径指引恒占位「（见 runtime 日志）」——ReplyGuardOptions 缺 resolveSessionFilePath 字段且组合根未接线（push/reply 两通路守卫接线不对称，push 侧 u8 接线时 reply 侧遗漏），根因定位至 message-broker.ts reply() 超限分支，当轮回流修复（01b5fa44f：ReplyGuardOptions 加字段 + server.setServices replyGuardResolver 接线 + 组合根两通路共用同一 resolver 实例 + 注入/占位双向测试，附带清理 registry 过时「生产走占位」JSDoc）。
