@@ -103,6 +103,16 @@ const REJECT_MESSAGE_BUSY = 'Agent 正在处理'
 export type PromptRejectionReason = 'compacting' | 'processing'
 
 /**
+ * abort 发起方分型（U2 修复，一致性审查）：收敛环复用 abort 完整链时用于区分「用户操作」
+ * 与「runtime 自动收敛」的终态语义。默认 'user'（全部既有调用方零改动保持用户语义）；
+ * 'convergence' 仅由 session-service 的 userStoppedGate.configure 接线传入（收敛环
+ * restore-abort 后的 re-abort 通路——收敛环掐掉的是 runtime 自动收敛的补发 turn，非用户
+ * 操作，终态与日志不得写「User aborted」语义）。export 供 session-service import；
+ * types.ts 不在本次修复领地内，故就近定义在唯一消费者旁。
+ */
+export type AbortSource = 'user' | 'convergence'
+
+/**
  * 识别 pi prompt() 的 busy 类确定性拒绝（按错误消息原文），输出转译 reason；非 busy 类返回 null。
  *
  * 两个拒绝分支（pi 0.84.4 agent-session.js prompt()）：
@@ -403,7 +413,16 @@ export class MessageDispatcher {
     }
   }
 
-  async abort(sessionId: string): Promise<void> {
+  /**
+   * 中止 session 当前 turn（协作式 abort RPC）：成功 → occupancy #9 idle 复位 + stopped 终态
+   * 写入 + message.complete{aborted} 收口广播；失败 → 终态兜底（超时走 K2 强杀收敛）。
+   *
+   * [U2 修复] source 分型（默认 'user' 既有调用方零改动）：'convergence' 由收敛环通路传入
+   * （session-service gate.configure 接线），成功路径终态 reason 写 'Convergence abort (auto)'
+   * ——收敛环掐的是 runtime 自动收敛的补发 turn，终态/日志不得谎报用户操作语义。
+   * aborted 完成帧广播两种 source 均保持不变（前端 no-op，U2 明确不动广播逻辑）。
+   */
+  async abort(sessionId: string, source: AbortSource = 'user'): Promise<void> {
     const client = this.getClientOrThrow(sessionId, 'abort')
     try {
       await client.abort()
@@ -411,7 +430,7 @@ export class MessageDispatcher {
       // [HISTORICAL] abort 失败也必须广播终态（规则 #3）：否则前端 isStreaming / runtime
       // isGenerating 永不复位，UI 卡在「思考中」。pi 卡死时 client.abort() 无响应，靠这条兜底。
       const errMsg = toErrorMessage(e)
-      console.error(`[message-dispatcher] abort failed: sessionId=${sessionId}`, errMsg)
+      console.error(`[message-dispatcher] abort failed (source=${source}): sessionId=${sessionId}`, errMsg)
       // 先取 active 再 destroy——destroySession 会删 processes/clientToId 条目，
       // 之后再经 getSessionByClient 反查会拿 undefined。
       const active = this.svc.getSessionByClient(client)
@@ -436,7 +455,10 @@ export class MessageDispatcher {
         // session.exited → removeSessionEntry），非新发明。
         // D5①（session-dead-structural-fixes）：kill 路径全量日志 K2——含调用源（kill_source）
         // 与触发信号链（谁发起、为什么），exit 143 类进程死亡可从此行回溯到发起方。
-        console.warn(`[message-dispatcher] abort RPC timed out (pi event loop frozen), force-destroying session ${sessionId} (kill_source=abort_timeout | who: user abort -> RPC timeout fallback | chain: forceQuitSession -> detach -> SIGTERM destroy -> persist stopped -> occupancy reset -> session.exited)`)
+        // [U2] who 按本次 abort 的 source 区分：收敛环 re-abort 超时（convergence）不得在
+        // kill 日志里冒充用户 abort。
+        const abortWho = source === 'convergence' ? 'convergence re-abort (runtime auto)' : 'user abort'
+        console.warn(`[message-dispatcher] abort RPC timed out (pi event loop frozen), force-destroying session ${sessionId} (kill_source=abort_timeout | who: ${abortWho} -> RPC timeout fallback | chain: forceQuitSession -> detach -> SIGTERM destroy -> persist stopped -> occupancy reset -> session.exited)`)
         // D4 置位分型 K2：用户 abort 无响应的超时强杀收口 = 「用户要停」，置标记。
         await this.forceQuitSession(sessionId, `Abort failed (pi unresponsive): ${errMsg}`, 'pi 无响应（事件循环卡死），进程已强制终止。重发消息即可恢复（自动重启进程，历史完整）', 'abort_timeout')
         return
@@ -461,8 +483,16 @@ export class MessageDispatcher {
       // 收口对称）。isGenerating=false 由原语 flags 派生。
       applySessionOccupancyTransition(active, this.messageBus, 'idle')
     }
-    // W4：用户主动 abort 写 stopped 终态
-    this.svc.persistSessionOutcome(sessionId, 'stopped', 'User aborted')
+    // W4：abort 写 stopped 终态。[U2] reason 按发起方分型：收敛环 re-abort（restore-abort
+    // 收敛环掐补发 turn / 掐 idle pi）是 runtime 自动收敛而非用户操作，写区分性文案——
+    // 终态 entry 是「谁 stopped 了 session」的权威记录，语义不得谎报。
+    if (source === 'convergence') {
+      console.warn(`[message-dispatcher] convergence abort (runtime auto, userStopped convergence loop), sid=${sessionId}`)
+      this.svc.persistSessionOutcome(sessionId, 'stopped', 'Convergence abort (auto)')
+    } else {
+      console.warn(`[message-dispatcher] user abort accepted, sid=${sessionId}`)
+      this.svc.persistSessionOutcome(sessionId, 'stopped', 'User aborted')
+    }
     const completeMsg = { type: 'message.complete' as const, payload: { sessionId, stopReason: 'aborted' as const } }
     this.messageBus?.publish(sessionId, completeMsg)
   }
@@ -480,7 +510,11 @@ export class MessageDispatcher {
     if (!client) {
       // 不在活跃进程表（已退出 / 未 spawn）：无可杀对象，幂等成功。菜单入口对 dead/idle
       // 历史 session 隐藏，此分支是「菜单渲染后 session 恰好退出」的竞态兑底。
-      console.log(`[message-dispatcher] forceQuit: session ${sessionId} not active, nothing to kill`)
+      // [U3 修复] 早退也须置 userStopped 标记：用户点「强制退出」的意图与进程死活无关
+      // （与 K1 同源）——无 client 时 pi 可能已自行 spawn 恢复链（restore replay turn），
+      // 缺标记会让后续 restore 的收敛环不设防，被杀的旧执行复活。
+      console.log(`[message-dispatcher] forceQuit: session ${sessionId} not active, nothing to kill (userStopped mark still set)`)
+      userStoppedGate.markUserStopped(sessionId, 'user_force_quit')
       return
     }
     // D5①（session-dead-structural-fixes）：kill 路径全量日志 K1——含调用源（kill_source）

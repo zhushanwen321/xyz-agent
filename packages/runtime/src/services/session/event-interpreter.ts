@@ -190,6 +190,25 @@ export function applySessionOccupancyTransition(
 export const ABORT_STALL_CONVERGENCE_WINDOW_MS = 3_000
 
 /**
+ * [V7 验收用，验收后默认移除（设计 §4.2 开关保留策略）] dev-only 事件流延迟注入开关。
+ *
+ * 环境变量 XYZ_AGENT_DEV_SETTLING_DELAY_MS 设置为正数（毫秒）时生效：agent_settled 事件
+ * 延迟 N ms 再处理，用于在 dev 环境拉长 settling 窗口，构造 D2 行为变更（settling 预检
+ * 拒绝入队）的正向验收场景（V7）。真实链路定性（设计 v3）：pi 与 provider 交互完全真实，
+ * 本注入是时间维度的 chaos 延迟手法，非 mock、不替换任何依赖。
+ *
+ * 未设 / 非法值（非数字、≤0）→ 返回 null = 零行为差异（不带默认值进 prod）。纯内存延迟
+ * 不落盘。export 供测试跟随（SR6 SSOT 惯例）。
+ */
+export function readDevSettlingDelayMs(): number | null {
+  const raw = process.env.XYZ_AGENT_DEV_SETTLING_DELAY_MS
+  if (raw === undefined || raw === '') return null
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return null
+  return n
+}
+
+/**
  * userStopped 门面 + 收敛环控制器（D4）。
  *
  * 为什么放本文件：标记宿主 Map 按规格必须在 session-service.ts（模块级、独立于
@@ -572,6 +591,11 @@ export class EventInterpreter {
   private pingFailCount = 0
   /** 本 turn 是否已广播过 message.stream_warn（避免重复） */
   private pingWarned = false
+  /**
+   * [V7 验收用] agent_settled 延迟注入的 pending timer（null = 无延迟在途）。仅 dev-only
+   * 开关生效时非 null；未设开关时恒 null 零开销。
+   */
+  private settlingDelayTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
     private readonly sessionId: string,
@@ -767,16 +791,9 @@ export class EventInterpreter {
         }
         return true
       case 'agent-settled':
-        // W1（fix-chat-flow-order）：run 级联结束（晚于 pi finally 的 bash 落盘 flush）→
-        // dispatcher 按序发布 per-session bash 待落列（见 opts.onAgentSettled 注释）。
-        this.opts.onAgentSettled?.(this.sessionId)
-        // occupancy #4（D2 迁移）：agent_settled → 'idle'（settling 终点，pi post-run 收尾完成）。
-        // pi 卡死/异常退出时本事件不会发出——失败路径复位由 #9 abort 兜底与 #10 session.exited 承担。
-        // onTurnFinalize 侧（handleTurnEndSideEffects）已先以 'settling' 原子写，此处幂等去重。
-        this.opts.onOccupancyTransition?.('idle')
-        // D4 收敛环挂点：被掐 turn 收尾的 settled 边沿 → 清 pendingSettled + 重置静默窗。
-        // 环未活跃（无 forceQuit/restore 场景）时 no-op。
-        userStoppedGate.noteAgentSettled(this.sessionId)
+        // [V7] 延迟编排入口：dev-only 开关生效时整体延迟处理（注入点在 settling→idle 转移
+        // 处理之前，见 handleAgentSettled 注释）；未设开关 = 直通零开销。
+        this.handleAgentSettled()
         return true
       case 'trace-trigger':
         // session-trace 增量腿（A33）：触发事件到达 → 追赶式 since 补拉（fire-and-forget，
@@ -786,6 +803,50 @@ export class EventInterpreter {
       default:
         return false
     }
+  }
+
+  /**
+   * agent_settled 处理路径编排（W1 bash flush + occupancy #4 idle + D4 收敛环 settled 挂点
+   * 三件副作用的统一入口）。
+   *
+   * [V7 验收用，验收后默认移除（设计 §4.2 开关保留策略）] 环境开关
+   * XYZ_AGENT_DEV_SETTLING_DELAY_MS 设置时整体延迟 N ms 执行。注入点时点约束（设计 v4）：
+   * 延迟必须作用于 settling→idle 转移处理**之前**——若落在转移后仅延迟广播，settling 窗口
+   * 构造会静默失败且难与「注入无效」区分，故本方法包住全部三件副作用（含转移）。
+   *
+   * 受控 timer 异步延迟：interpret 循环对后续事件照常同步处理，不阻塞事件流。延迟窗口内
+   * 重复 agent_settled（物理上极窄：pi 单 run 结束只发一次）→ 先同步 flush 前一个再排新
+   * timer——顺序保持、事件不丢（applyAgentSettled 各副作用均幂等，flush 乱序无害）。
+   */
+  private handleAgentSettled(): void {
+    const delayMs = readDevSettlingDelayMs()
+    if (delayMs === null) {
+      this.applyAgentSettled()
+      return
+    }
+    if (this.settlingDelayTimer !== null) {
+      clearTimeout(this.settlingDelayTimer)
+      this.settlingDelayTimer = null
+      this.applyAgentSettled()
+    }
+    this.settlingDelayTimer = setTimeout(() => {
+      this.settlingDelayTimer = null
+      this.applyAgentSettled()
+    }, delayMs)
+  }
+
+  /** agent_settled 的三件副作用（原 agent-settled case 逐字迁移，行为保持提取）。 */
+  private applyAgentSettled(): void {
+    // W1（fix-chat-flow-order）：run 级联结束（晚于 pi finally 的 bash 落盘 flush）→
+    // dispatcher 按序发布 per-session bash 待落列（见 opts.onAgentSettled 注释）。
+    this.opts.onAgentSettled?.(this.sessionId)
+    // occupancy #4（D2 迁移）：agent_settled → 'idle'（settling 终点，pi post-run 收尾完成）。
+    // pi 卡死/异常退出时本事件不会发出——失败路径复位由 #9 abort 兜底与 #10 session.exited 承担。
+    // onTurnFinalize 侧（handleTurnEndSideEffects）已先以 'settling' 原子写，此处幂等去重。
+    this.opts.onOccupancyTransition?.('idle')
+    // D4 收敛环挂点：被掐 turn 收尾的 settled 边沿 → 清 pendingSettled + 重置静默窗。
+    // 环未活跃（无 forceQuit/restore 场景）时 no-op。
+    userStoppedGate.noteAgentSettled(this.sessionId)
   }
 
   /** server 路由回调事件的编排（原 handle 同名 case 逐字迁移）。命中返回 true。 */

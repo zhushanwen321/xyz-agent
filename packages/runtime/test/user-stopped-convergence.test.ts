@@ -239,6 +239,8 @@ describe('MessageDispatcher 置位分型与显式投递清标记', () => {
   function makeDispatcher(opts: {
     session?: IManagedSessionView
     abortBehavior?: 'ok' | 'rpc-timeout'
+    /** U3 用例：pm.getClient 无条目（forceQuit 早退分支）。 */
+    clientMissing?: boolean
   } = {}) {
     const session = opts.session ?? makeMockSession()
     const abortFn = opts.abortBehavior === 'rpc-timeout'
@@ -248,21 +250,22 @@ describe('MessageDispatcher 置位分型与显式投递清标记', () => {
       prompt: vi.fn(async () => ({}) as unknown as Awaited<ReturnType<IPiEngine['prompt']>>),
       abort: abortFn,
     } as unknown as IPiEngine
+    const persistSessionOutcome = vi.fn()
     const svc: IDispatcherSessionOps = {
       ensureActive: vi.fn(async () => client),
       getSessionByClient: vi.fn(() => session),
-      persistSessionOutcome: vi.fn(),
+      persistSessionOutcome,
       getSession: vi.fn(() => session),
       removeSessionEntry: vi.fn(),
       detachSession: vi.fn(),
     }
     const pm = {
-      getClient: vi.fn(() => client),
+      getClient: vi.fn(() => (opts.clientMissing ? undefined : client)),
       destroySession: vi.fn(async () => {}),
     } as unknown as IProcessManager
     const publish = vi.fn()
     const dispatcher = new MessageDispatcher(svc, pm, { record: vi.fn() } as unknown as WorkspaceService, { publish } as unknown as IMessageBus)
-    return { dispatcher, session, publish, abortFn }
+    return { dispatcher, session, publish, abortFn, persistSessionOutcome }
   }
 
   function makeMockSession(overrides: Partial<IManagedSessionView> = {}): IManagedSessionView {
@@ -292,6 +295,50 @@ describe('MessageDispatcher 置位分型与显式投递清标记', () => {
     const { dispatcher } = makeDispatcher()
     await dispatcher.forceQuit('s1')
     expect(store.marks.get('s1')).toEqual({ source: 'user_force_quit' })
+  })
+
+  it('U3 修复：无 client（进程已退出）时 forceQuit 早退分支仍置标记 source=user_force_quit', async () => {
+    // 「用户要停」的意图与进程死活无关：无 client 早退不进 forceQuitSession，但标记必须
+    // 置上——否则后续 restore 的收敛环不设防（restore replay turn 无闸跑起）。
+    const { dispatcher } = makeDispatcher({ clientMissing: true })
+    await dispatcher.forceQuit('s1')
+    expect(store.marks.get('s1')).toEqual({ source: 'user_force_quit' })
+  })
+
+  it('U2 修复：默认 abort（用户语义）→ persistSessionOutcome reason=User aborted', async () => {
+    const { dispatcher, persistSessionOutcome } = makeDispatcher()
+    await dispatcher.abort('s1')
+    expect(persistSessionOutcome).toHaveBeenCalledWith('s1', 'stopped', 'User aborted')
+  })
+
+  it('U2 修复：收敛环 abort（source=convergence）→ reason=Convergence abort (auto)，与用户 abort 可区分', async () => {
+    const { dispatcher, persistSessionOutcome } = makeDispatcher()
+    await dispatcher.abort('s1', 'convergence')
+    expect(persistSessionOutcome).toHaveBeenCalledWith('s1', 'stopped', 'Convergence abort (auto)')
+  })
+
+  it('U2 修复：aborted 完成帧广播两种 source 均保持不变（前端 no-op 契约）', async () => {
+    const user = makeDispatcher()
+    await user.dispatcher.abort('s1')
+    const conv = makeDispatcher()
+    await conv.dispatcher.abort('s2', 'convergence')
+    // 广播保持不变：两路都发 message.complete{stopReason:'aborted'}（U2 明确不动广播逻辑）
+    expect(user.publish).toHaveBeenCalledWith('s1', expect.objectContaining({ type: 'message.complete', payload: { sessionId: 's1', stopReason: 'aborted' } }))
+    expect(conv.publish).toHaveBeenCalledWith('s2', expect.objectContaining({ type: 'message.complete', payload: { sessionId: 's2', stopReason: 'aborted' } }))
+  })
+
+  it('U2 端到端：收敛环 re-abort 经 gate.abortSession 接线（source=convergence）→ 终态写收敛语义', async () => {
+    // 锁定 session-service.ts gate.configure 接线语义：abortSession 闭包必须传
+    // source='convergence'（生产唯一接线点——接线丢参即本用例红）。
+    const { dispatcher, persistSessionOutcome } = makeDispatcher()
+    userStoppedGate.configure({ marks: store, abortSession: (sid) => dispatcher.abort(sid, 'convergence') })
+    userStoppedGate.markUserStopped('s1', 'user_force_quit')
+    userStoppedGate.beginRestoreConvergence('s1')
+    // 补发腿开 turn → 收敛环拦截再 abort（生产通路：noteAgentStart → deps.abortSession）
+    const interpreter = new EventInterpreter('s1', { send: () => {} })
+    interpreter.interpret([{ kind: 'hook', eventType: 'agent_start', data: {} }])
+    await vi.advanceTimersByTimeAsync(0)
+    expect(persistSessionOutcome).toHaveBeenCalledWith('s1', 'stopped', 'Convergence abort (auto)')
   })
 
   it('K2：abort RPC 超时强杀收口 → 置标记 source=abort_timeout', async () => {

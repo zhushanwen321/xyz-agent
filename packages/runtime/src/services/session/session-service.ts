@@ -257,9 +257,12 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     // D4 收敛环接线：宿主 Map 存取（上方 store）+ abort 能力（dispatcher.abort 完整链——
     // 成功收口广播 / 失败超时强杀收敛）。gate 未 configure 时全部 no-op/抛错，本构造器是
     // 生产唯一接线点（测试可经 resetForTest + 局部 configure 替换）。
+    // [U2 修复] source='convergence'：收敛环掐的是 runtime 自动收敛的补发 turn（非用户
+    // 操作），终态 reason 写 'Convergence abort (auto)' 与用户 abort 可区分（日志/终态
+    // 不得谎报用户语义；aborted 完成帧广播保持不变——前端 no-op）。
     userStoppedGate.configure({
       marks: userStoppedMarkStore,
-      abortSession: (sessionId) => this.dispatcher.abort(sessionId),
+      abortSession: (sessionId) => this.dispatcher.abort(sessionId, 'convergence'),
     })
     // trace/system-prompt 同步域（S4 迁出至 trace-sync.ts）：deps 窄注入——session 查询经
     // lifecycle（Map 所有者）只读面，messageBus 经 getter 每次调用动态读（setter 晚期注入

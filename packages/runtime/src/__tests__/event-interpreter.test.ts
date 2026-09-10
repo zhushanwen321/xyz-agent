@@ -4,6 +4,7 @@
  * - session-renamed（MF-3 ②）：session_info_changed 中间事件 → onSessionRenamed 回调
  *   （组合根接 sessionService.setLabelCache，runtime 内存 label 自动同步链）
  * - compaction（M4 事件驱动：interpreter 唯一源）：
+ * - agent-settled V7 dev-only 延迟注入（session-dead-structural-fixes U1/V7）：
  *
  * 锁定（SSOT §3.3.4 编排表）：
  * - TC1: compaction_start{reason} → 广播 session.compacting{reason} + onCompactingStateChange(sid,true)
@@ -16,9 +17,9 @@
  *
  * 运行：npx vitest run src/__tests__/event-interpreter.test.ts
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { EventInterpreter } from '../services/session/event-interpreter.js'
-import type { PiTranslatedEvent } from '../services/session/types.js'
+import type { PiTranslatedEvent, SessionOccupancyTransition } from '../services/session/types.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 function makeInterpreter(overrides: {
@@ -26,14 +27,25 @@ function makeInterpreter(overrides: {
   onCompactingStateChange?: (sid: string, v: boolean) => void
   onContextUpdate?: (sid: string, data: { inputTokens: number; totalTokens: number }) => void
   onSessionRenamed?: (sid: string, name: string | undefined) => void
+  onAgentSettled?: (sid: string) => void
+  onOccupancyTransition?: (transition: SessionOccupancyTransition) => void
 } = {}) {
   const sent: ServerMessage[] = []
   const send = overrides.send ?? ((m: ServerMessage) => { sent.push(m) })
   const onCompactingStateChange = overrides.onCompactingStateChange ?? vi.fn()
   const onContextUpdate = overrides.onContextUpdate ?? vi.fn()
   const onSessionRenamed = overrides.onSessionRenamed ?? vi.fn()
-  const interp = new EventInterpreter('s1', { send, onCompactingStateChange, onContextUpdate, onSessionRenamed })
-  return { interp, sent, onCompactingStateChange, onContextUpdate, onSessionRenamed }
+  const onAgentSettled = overrides.onAgentSettled ?? vi.fn()
+  const onOccupancyTransition = overrides.onOccupancyTransition ?? vi.fn()
+  const interp = new EventInterpreter('s1', {
+    send,
+    onCompactingStateChange,
+    onContextUpdate,
+    onSessionRenamed,
+    onAgentSettled,
+    onOccupancyTransition,
+  })
+  return { interp, sent, onCompactingStateChange, onContextUpdate, onSessionRenamed, onAgentSettled, onOccupancyTransition }
 }
 
 describe('EventInterpreter session-renamed 编排（MF-3 ②，label 自动同步链）', () => {
@@ -209,5 +221,79 @@ describe('EventInterpreter compaction 编排 (M4 事件驱动)', () => {
     // 置位 + 复位各一次，顺序 true → false
     expect(onCompactingStateChange).toHaveBeenNthCalledWith(1, 's1', true)
     expect(onCompactingStateChange).toHaveBeenNthCalledWith(2, 's1', false)
+  })
+})
+
+describe('agent-settled V7 dev-only 延迟注入（session-dead-structural-fixes U1）', () => {
+  const ENV_KEY = 'XYZ_AGENT_DEV_SETTLING_DELAY_MS'
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllEnvs()
+  })
+
+  it('未设开关：agent-settled 同步处理（bash flush + idle 转移立即发生，零行为差异锚）', () => {
+    vi.useFakeTimers()
+    const onAgentSettled = vi.fn()
+    const onOccupancyTransition = vi.fn()
+    const { interp } = makeInterpreter({ onAgentSettled, onOccupancyTransition })
+
+    interp.interpret([{ kind: 'agent-settled' }])
+
+    // 三件副作用同步完成，无 timer 在途
+    expect(onAgentSettled).toHaveBeenCalledTimes(1)
+    expect(onOccupancyTransition).toHaveBeenCalledWith('idle')
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('设开关：idle 转移延迟发生——延迟期内 settling 窗口保持（注入点在 settling→idle 转移之前）', async () => {
+    vi.useFakeTimers()
+    vi.stubEnv(ENV_KEY, '2000')
+    const onAgentSettled = vi.fn()
+    const onOccupancyTransition = vi.fn()
+    const { interp } = makeInterpreter({ onAgentSettled, onOccupancyTransition })
+
+    interp.interpret([{ kind: 'agent-settled' }])
+
+    // 关键时点断言（设计 §4.2 V7 注入点时点约束）：延迟期内转移尚未发生——settling 窗口
+    // 保持，预检门可观测到 turn !== 'idle'。若延迟落在转移后（仅延迟广播）本断言即红。
+    expect(onAgentSettled).not.toHaveBeenCalled()
+    expect(onOccupancyTransition).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(2000)
+
+    // 窗口期满，三件副作用按原序补发（idle 转移 + bash flush）
+    expect(onAgentSettled).toHaveBeenCalledTimes(1)
+    expect(onOccupancyTransition).toHaveBeenCalledWith('idle')
+  })
+
+  it('设开关：延迟不阻塞事件流其他处理（同批次后续事件同步处理）', async () => {
+    vi.useFakeTimers()
+    vi.stubEnv(ENV_KEY, '2000')
+    const onSessionRenamed = vi.fn()
+    const onOccupancyTransition = vi.fn()
+    const { interp, onAgentSettled } = makeInterpreter({ onSessionRenamed, onOccupancyTransition })
+
+    interp.interpret([{ kind: 'agent-settled' }, { kind: 'session-renamed', name: 'after-settled' }])
+
+    // agent-settled 在延迟在途，同批次后续事件已同步完成
+    expect(onSessionRenamed).toHaveBeenCalledTimes(1)
+    expect(onAgentSettled).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(onOccupancyTransition).toHaveBeenCalledWith('idle')
+  })
+
+  it('非法开关值（非数字 / ≤0 / 空串）→ 视为未设，零行为差异', () => {
+    vi.useFakeTimers()
+    const onAgentSettled = vi.fn()
+    const { interp } = makeInterpreter({ onAgentSettled })
+    const invalidValues = ['abc', '-5', '0', '']
+    invalidValues.forEach((invalid, i) => {
+      vi.stubEnv(ENV_KEY, invalid)
+      interp.interpret([{ kind: 'agent-settled' }])
+      // 每次都同步处理（无延迟在途）：计数随迭代线性增长，无 timer 积压
+      expect(onAgentSettled).toHaveBeenCalledTimes(i + 1)
+    })
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
