@@ -73,7 +73,6 @@
   const elGallery = document.getElementById('gallery')
   const snapOf = (s) => [s.fetcher, s.apiKeyDraft, s.cookieDraft, s.workspaceDraft, s.enabled].join('|')
   state.savedSnap = snapOf(state)
-  const isDirty = () => snapOf(state) !== state.savedSnap
 
   /** 落盘：把输入写进「已保存」态，密钥类输入清空（真值不回显），workspace 保持回显 */
   function commit() {

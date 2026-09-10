@@ -116,8 +116,8 @@ window.Q = (function () {
     })
   }
 
-  /** 场景控制条：模拟 provider 侧的真实状态差异 */
-  function scenarioBar(state, onChange) {
+  /** 场景控制条：模拟 provider 侧的真实状态差异（纯渲染——点击回调经 bindScenario 的 onChange 通道） */
+  function scenarioBar(state) {
     function seg(name, options, current) {
       return '<div class="seg" data-seg="' + name + '">' + options.map(function (o) {
         return '<button type="button" data-val="' + o.val + '" aria-pressed="'
@@ -152,7 +152,7 @@ window.Q = (function () {
         } else {
           state.simulateResult = val
         }
-        onChange && onChange()
+        if (onChange) onChange()
         rerender()
       })
     })
