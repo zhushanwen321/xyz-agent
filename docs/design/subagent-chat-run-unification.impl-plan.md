@@ -1,0 +1,75 @@
+# subagent chat 域统一进 run 域 实施计划
+基线: <待填> | 来源设计: docs/design/subagent-chat-run-unification.md (v7) | 日期: 2026-09-11
+
+## 0 章节映射
+| 内容 | 设计文档实际位置 |
+|------|------------------|
+| 背景/目标 | §1 背景目标（1.1 SCQA / 1.3 设计目标 G1-G3 / 1.4 in-out scope） |
+| 终态/机制 | §3 解决方案（3.3 关键决策 D1-D8 + 红线 / 3.4 ConversationContinuation / 3.5 终态数据流） |
+| 验收场景表 | §4 验收（S1-S8 真实场景表） |
+| 下一层拆分 | §5 下一层拆分（U1-U7 单元表 + S5 grep 门测试处置表 + 文件改动地图 + 待验证检查点①-⑦） |
+| 待验证检查点 | §5 末段「待验证检查点」①-⑦ |
+
+对抗式审查证据：本会话 tech-design 双审循环 6 轮收敛（终轮主审 0 MF + 0 SUG、影响面 0 MF + 0 SUG），收敛声明见设计文档头部「修订状态：v7（设计就绪）」，被否谱系 19 条在附录 B。
+
+## 1 目标快照
+
+**背景/目标（§1.3 逐字摘录）**：
+- G1 agent() 等同 subagent 语义稳定：同一派发路径、同一 record 模型、同一保障。
+- G2 删除面干净：chat 域独立状态机整族退役，四包 + extensions 测试全绿，grep 门零命中。
+- G3 行为兼容：one-shot 行为零变化；崩溃/重启后续聊语义保持（30 天 idle-gc 只归档不终态化）。
+
+**Out-of-scope（§1.4）**：本设计不动 zcode 会话库（C-ext-20）、不动 H2/H3/H4 范围（workflow record 归位、service 拆分、持久化收口另案）、不改 pi 源码。
+
+## 2 单元列表
+
+| Unit | 职责 | 领地（精确文件路径） | 依赖 | 隔离 | 验收条款 |
+|------|------|---------------------|------|------|---------|
+| U1 | SDK 协议双键过渡：新增 `resume` 子对象与 `chat` 并存（载荷同形）+ schema/测试；roundLifecycle/interact 标 deprecated | `packages/subagent-engine-sdk/src/protocol/{methods,contract-types,schema,reverse-channels,port-contract,engine-protocol}.ts` + `packages/subagent-engine-sdk/src/__tests__/`（resume schema 用例新增） | 无（DAG 根） | plain | `cd packages/subagent-engine-sdk && pnpm test` 绿；resume 与 chat 键载荷同形单测 |
+| U2 | core 建路：ConversationContinuation（§3.4 全规格）+ message/close 编排改写 + SP-5 升级路由与 gate（双写点）+ 引擎退出链收割（红线①POSIX 组杀/Windows 镜像通道，intentionalKill 跳过）+ settle 交棒改 run 应答驱动 + doFinalizeRoundToIdle outcome 入参 | `packages/subagent-core/src/execution/conversation-continuation.ts`（新增）/ `execution/subagent-service.ts` / `execution/subagent-actions-core.ts` / `execution/finalize-record.ts` / `execution/notifier.ts` / `execution/engine/client/engine-client.ts` / `execution/settled-watchdog.ts` / `execution/engine/common/capability-gate.ts` / 对应 `__tests__/`（新增 continuation 用例族） | U1 | plain | `cd packages/subagent-core && pnpm test` 绿；U2 单测清单（§5 U2 验收列全项）逐条有对应用例 |
+| U3 | pi CLI 建路：run 路径 resume 参数穿透（spawn-args 已支持 `--session`）+ 首轮不再经 ChatSessionRegistry | `packages/pi-subagent-cli/src/{pi-engine,server,spawn-runner}.ts` | U1 | plain | e2e：resume run 续写同文件、历史召回（`cd packages/pi-subagent-cli && pnpm test`） |
+| U4 | 真机验收：S1-S8 全表 + 冷启耗时实测入表（D2 量化闭环） | 无代码领地（真机场景执行；发现缺陷回对应单元修复） | U2+U3 | plain | §4 场景表逐行签收（此单元在阶段 5 Gate B 复验；建路后先跑一轮拿基线） |
+| U5 | 删路①（引擎侧）：pi chat-session.ts + e2e chat 形态改写；SDK roundLifecycle 通道族 + interact + port-contract/engine-protocol + schema + conformance fixtures + probe；zcode server.ts interact dispatch + zcode-engine.ts 桩；测试处置表前 8 行 | `packages/pi-subagent-cli/src/chat-session.ts`（删）/ `packages/pi-subagent-cli/src/__tests__/{chat-session,chat-protocol,pi-engine,protocol-chat-e2e,server}.test.ts`（处置表）/ `packages/subagent-engine-sdk/src/protocol/*`（通道族删）/ `packages/subagent-engine-sdk/src/__tests__/{chat-domain-v1x,protocol}.test.ts` / `packages/zcode-subagent-cli/src/{server,zcode-engine}.ts` / `packages/zcode-subagent-cli/src/__tests__/server.test.ts` | U2+U4 | plain | S5 grep 门方向：处置表前 8 行清零；`cd packages/pi-subagent-cli && pnpm test` + `cd packages/subagent-engine-sdk && pnpm test` + `cd packages/zcode-subagent-cli && pnpm test` 绿 |
+| U6 | 删路②（core 侧）：删除清单（deliverChatMessage/resumeColdRound/cold-resurrect/closeChatIdle 族/handleChatRoundPhase/engine 层承载件/finalizeChatSpawnFailure/settleChatRoundFromResponse/base 两函数）；core 测试处置表后 4 行；**U6 同批 `chat`→`resume` 键读写两端切换**（U1 配对）；settled-watchdog 刷新源收尾 | `packages/subagent-core/src/execution/*`（删除清单）/ `execution/__tests__/`（处置表后 4 行）/ `execution/engine/{port.ts,client/{remote-engine,reverse-router,engine-client}.ts,host/host-bridge.ts}` / `execution/execution-record.ts`（roundBaseTurnIndex 清理）/ `execution/types.ts` | U5 | plain | S5 grep 门全量零命中 + 四包全量绿 + 净删统计 |
+| U7 | 文档与约束回写：C-proc-13 五段逐段、chat-domain-v1x 文档 superseded 横幅、protocolization 文档族符号清扫、troubleshooting §12 | `docs/constraints.json` + `docs/constraints.md`（render 脚本再生）/ `docs/design/chat-domain-v1x-liveness-governance*.md` / `docs/troubleshooting.md` | U6 | plain | `node scripts/check-doc-symbol-drift.mjs` 绿 + `node scripts/render-constraints.mjs` 已跑 |
+
+## 3 DAG 图
+
+```mermaid
+graph TD
+    U1[U1 SDK 双键] --> U2[U2 core 建路]
+    U1 --> U3[U3 pi CLI 建路]
+    U2 --> U4[U4 真机验收基线]
+    U3 --> U4
+    U2 --> U5[U5 删路① 引擎侧]
+    U4 --> U5
+    U5 --> U6[U6 删路② core 侧 + 键切换]
+    U6 --> U7[U7 文档约束回写]
+```
+
+## 4 测试策略
+
+- 增量（单元开发期）：`cd packages/<受影响包> && pnpm test`（vitest run；四包 = subagent-core / subagent-engine-sdk / pi-subagent-cli / zcode-subagent-cli）；extensions 触及时 `pnpm extensions:test`
+- 全量（收尾阶段 5）：四包全部 + `pnpm extensions:typecheck && pnpm extensions:lint && pnpm extensions:test` + `bash scripts/validate-runtime-bundle.sh`
+- 红线：vitest only；timer 测试用 fake timers；测试写删目标 mkdtempSync 自建自删，禁触真实数据目录
+
+## 5 合理偏差登记表
+
+（初始为空）
+
+## 6 状态表
+
+| Unit | 状态 | 轮次 | 证据指针 |
+|------|------|------|---------|
+| U1 | pending | 0 | — |
+| U2 | pending | 0 | — |
+| U3 | pending | 0 | — |
+| U4 | pending | 0 | — |
+| U5 | pending | 0 | — |
+| U6 | pending | 0 | — |
+| U7 | pending | 0 | — |
+
+## 7 残留风险与变更历史
+
+- 残留风险：① 设计文档行号基于 commit 64e379a7c 附近，实施以符号 grep 锚定（文档头部已声明）；② 用户 L 批次并行改动可能与 U2 领地交叉——派发前核对工作区，L 批改动一律认知外处理；③ F7 staged 引擎副本新鲜度——U4 真机前确认（`19a5401ab` 已修 dev 启动恒重建）。
+- 变更历史：2026-09-11 计划创建（来源设计 v7，双 0 收敛版）。
