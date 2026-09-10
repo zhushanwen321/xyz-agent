@@ -648,7 +648,10 @@ export function registerSpawnedChildForRecord(recordId: string, child: ChildProc
 // 背景（设计 §7.2 T2-② + 探针 probe/p-t2b-report.md）：keep-alive 上界 kill 的是层主
 // 进程，其后台化 pi 后代不会随层主 SIGTERM 级联死亡（P-T2b 三次稳定复现 NO-CASCADE，
 // 实装机制层 rpc-mode SIGTERM handler 只 kill tracked detached children，agent_end 后
-// bash 已 untrack）。补杀时序分两步：层主确认死亡（close）后从其 sessionFile 冻结
+// bash 已 untrack）。[Gate B P5 勘误限定] P-T2b 验证的是裸形态（无 SubagentService 活跃
+// 记录）；真实层主（持有服务记录）的 SIGTERM 由 pi shutdown 链临死收殓后代，不依赖本
+// sweep——sweep 保留覆盖 SIGKILL / 异常死亡形态（shutdown 链来不及执行时的兜底）。
+// 补杀时序分两步：层主确认死亡（close）后从其 sessionFile 冻结
 // 快照采集活跃后代清单（此刻 pending entries 最完整，避开「kill 前采集」的垂死窗口
 // 漏项），再对清单内每个后代迭代展开至叶（递归读各后代的 pending 差集）逐个
 // escalation kill。
@@ -2378,6 +2381,8 @@ function keepAliveOnAgentEnd(
   // [T5② / PS-7a] keep-alive 心跳：决定保活即刷新 .alive marker（软超时基准推新，
   // 防 keep-alive 数小时的活记录被异进程孤儿恢复误终态；P-T5 探针裁决写盘开销可忽略）。
   touchAliveMarkerForHeartbeat(record.sessionFile, child.pid, record.id);
+  // [D3b 翻转后不可达，防御保留] evaluateDispositionBranches 仅 count>0 进入本函数；
+  // session-pending 契约 error ⇒ count=0，本分支理论不可达，留作契约破坏哨兵。
   if (pending.error) {
     logger.warn(
       `[session-runner] agent_end: keep alive (sessionFile unreadable, conservative): ${pending.error}`,
@@ -2404,7 +2409,9 @@ function keepAliveOnAgentEnd(
       // [T2-② / P-T2b 主路径] keep-alive 上界处置层主的两步时序前半：kill 层主；
       // close（确认死亡 + sessionFile 冻结为最终快照）后由 runSpawn 收尾 sweep
       // 活跃后代（后半）。SIGTERM 对后台化 pi 后代无级联（P-T2b NO-CASCADE 三次
-      // 复现），补杀必须显式做，不能押注子进程自行级联。
+      // 复现），补杀必须显式做，不能押注子进程自行级联。[Gate B P5 勘误限定]
+      // P-T2b 验证的是裸形态；真实层主的 SIGTERM 由 shutdown 链收殓后代（Gate B P5），
+      // sweep 保留覆盖 SIGKILL / 异常死亡形态。
       state.sweepDescendantsOnClose = true;
       killChildWithEscalation(state, child, "keep-alive watchdog");
     }, keepAliveMs);
@@ -3005,9 +3012,11 @@ export function backfillSessionFileByLookup(state: SpawnRunState, sessionDir: st
     if (actual && actual !== record.sessionFile) record.sessionFile = actual;
   } else if (!lookupId && (!record.sessionFile || !fs.existsSync(record.sessionFile))) {
     // [U1 D2 接入点 2] lookupId 缺失：既有反查不可达，按 record.id 扫描兜底（mtime
-    // 过滤基准 = 本轮 spawn 时刻）。极早期 kill（extensions 加载完成前 session_start
-    // hook 未跑）扫描返回 undefined——此时记账缺失是正确语义（进程从未开始工作，
-    // finalize 按 crashed 记账），warn 留痕说明最终处置（设计 §3.3 D2 覆盖边界）。
+    // 过滤基准 = 本轮 spawn 时刻）。扫描命中前提 = 文件已落盘 ∧ identity entry 在文件内
+    // ——两类 miss 均返回 undefined 且记账缺失是正确语义（进程从未产出，finalize 按
+    // crashed 记账）：①极早期 kill（extensions 加载完成前 session_start hook 未跑）；
+    // ②hook 已跑但文件未落盘（pi session 随首条 assistant 消息才落盘，[Gate B P4 实测
+    // 勘误] 4.5s/6s abort 形态）。warn 留痕说明最终处置（设计 §3.3 D2 覆盖边界）。
     const located = locateSessionFileByScan(record, sessionDir, state.spawnStartedAtMs);
     if (located && located !== record.sessionFile) {
       record.sessionFile = located;

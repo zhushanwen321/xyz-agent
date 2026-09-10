@@ -6,10 +6,12 @@
 // 背景：get_state 握手一次性失败后 record.sessionFile 永久缺失（D1 迟到接受修主路径
 // ——迟到的应答经管道语义保证必达），本模块是决策点的第二路兜底：不经子进程，直接扫
 // spawn 时已知的 sessionDir，按文件内 identity entry 精确匹配 record.id 定位 session
-// 文件。pi session 文件在首条 assistant 消息时落盘，agent_end / close 收尾时刻文件必然
-// 在盘上；identity entry 由子进程 session_start hook 必写（session-runner.ts
-// buildChildEnv 的 PI_SUBAGENT_SELF_RECORD_ID 注入链），故「文件在盘 + identity 已写」
-// 的命中率结构性接近 100%。
+// 文件。命中前提 = **文件已落盘 ∧ identity entry 在文件内**（[Gate B P4 实测勘误] 两者
+// 不等价：pi session 文件随首条 assistant 消息才落盘，「session_start hook 已跑但文件
+// 未落盘」的极早期 kill 结构性 miss，属正确 crashed 记账）。agent_end 时刻两前提结构上
+// 必然成立（完成的定义 = 已有 assistant 输出），该链路命中率结构性接近 100%；close
+// 收尾的提前 kill 形态不作此保证，miss 按 crashed 记账（session_start hook 必写
+// identity，session-runner.ts buildChildEnv 的 PI_SUBAGENT_SELF_RECORD_ID 注入链）。
 //
 // IO 契约（设计 D2 IO 量级声明）：
 //   - mtime 过滤（statSync）把候选压到「spawn 后新建/修改」的文件，正常个位数；

@@ -31,8 +31,8 @@
 | Unit | 职责 | 领地（精确文件路径） | 依赖 | 隔离 | 验收条款 |
 |------|------|------|------|------|----------|
 | u1-acquire | D1 迟到接受（resolver 迟到路径幂等回填 record.sessionFile/sessionId + alive marker）+ D2 扫描兜底（新 locateSessionFileByScan：mtime 过滤 + mtime 降序 + 整文件前向读行扫描命中即停 + identity 精确匹配；agent_end 决策点与 close 收尾 collectResult 前 lookupId 缺失分支两个接入点）+ 路径 warn/debug 文案 | `packages/subagent-core/src/execution/engine/engines/pi/get-state-handshake.ts`；`packages/subagent-core/src/execution/engine/engines/pi/session-file-locator.ts`（新）；`packages/subagent-core/src/execution/engine/engines/pi/session-runner.ts`；上述模块配套新增测试 | — | plain | ① 单测：迟到 response 幂等回填（`!record.sessionFile` 守卫、close 后迟到不到达 resolver）；② 单测：扫描 identity 精确匹配 / mtime 过滤 / 目录缺失返回 undefined + warn / 多匹配取第一 + warn / 坏行跳过；③ 接入点 2 单测：lookupId 缺失时按 record.id 扫描回填；④ `cd packages/subagent-core && pnpm test && pnpm typecheck` 绿 |
-| u2-descendant | D3a descendantCapable 派生（session-runner spawn 链 tools 汇合点 `agentTools = opts.agentConfig?.tools`，undefined/空=true；清单 = subagents/workflow/bash）+ 快路径分支（`descendantCapable===false` → 入口直接 final kill）+ 清单常量单点 + 守卫测试 + 文案 | `packages/subagent-core/src/execution/engine/engines/pi/session-runner.ts`；`packages/subagent-core/src/orchestration/models/types.ts`（state 字段）；配套守卫测试 | u1（同文件 session-runner.ts，串行） | plain | ① 守卫测试：tools undefined/空数组/含 subagents/含 workflow/含 bash/全不含 六形态断言判据；② 单测：全不含白名单 subagent agent_end 后立即 final kill、零等待 timer 挂载；③ 含 bash 白名单不受快路径影响（三分支照走）；④ test + typecheck 绿 |
-| u3-flip | D3b error 分支翻转：descendantCapable 且读不出 → 15s 回补重试窗口（每 5s 交替 get_state 单查 / D2 扫描，任一命中走三分支；耗尽 kill 成功语义 resolveRunOutcome :2668-2671）+ 竞态守卫（#2 存活双 null 判据 / #5 回填先行检查 / #8 timer 挂 state 幂等 arm）+ 既有测试改写（unreadable→keep-alive 断言族翻转等） | `packages/subagent-core/src/execution/engine/engines/pi/session-runner.ts`；`packages/subagent-core/src/execution/engine/engines/pi/__tests__/keep-alive-no-progress.test.ts` 等既有测试文件群 | u2（同函数 runAgentEndDisposition 串行）；u1（窗口消费迟到接受/扫描产物） | plain | ① 既有「unreadable → keep alive conservative」断言族按新语义翻转后全绿；② 单测：窗口内第 2 轮扫描命中 → 三分支重判；窗口耗尽 → SIGTERM 升级链 kill + runSpawn 成功语义 + 结果来自 stdout 累积；窗口内外部 kill → 交由 close 收尾；③ count>0 证实有后代分支行为不变（G2 回归断言）；④ test + typecheck 绿 |
+| u2-descendant | D3a descendantCapable 派生（session-runner spawn 链 tools 汇合点 `agentTools = opts.agentConfig?.tools`，undefined/空=true；清单 = subagents/workflow/bash（[Gate B P3 勘误] 计划期旧口径，实装为 subagent/workflow/workflow-script/bash，见设计文档 Gate B 批次 1 实测勘误 1））+ 快路径分支（`descendantCapable===false` → 入口直接 final kill）+ 清单常量单点 + 守卫测试 + 文案 | `packages/subagent-core/src/execution/engine/engines/pi/session-runner.ts`；`packages/subagent-core/src/orchestration/models/types.ts`（state 字段）；配套守卫测试 | u1（同文件 session-runner.ts，串行） | plain | ① 守卫测试：tools undefined/空数组/含 subagents/含 workflow/含 bash/全不含 六形态断言判据；② 单测：全不含白名单 subagent agent_end 后立即 final kill、零等待 timer 挂载；③ 含 bash 白名单不受快路径影响（三分支照走）；④ test + typecheck 绿 |
+| u3-flip | D3b error 分支翻转：descendantCapable 且读不出 → 15s 回补重试窗口（每 5s 交替 get_state 单查 / D2 扫描，任一命中走三分支；耗尽 kill 成功语义 resolveRunOutcome :2668-2671）+ 竞态守卫（#2 存活双 null 判据 / #5 回填先行检查 / #8 timer 挂 state 幂等 arm）+ 既有测试改写（unreadable→keep-alive 断言族翻转等） | `packages/subagent-core/src/execution/engine/engines/pi/session-runner.ts`；`packages/subagent-core/src/execution/__tests__/keep-alive-no-progress.test.ts` 等既有测试文件群 | u2（同函数 runAgentEndDisposition 串行）；u1（窗口消费迟到接受/扫描产物） | plain | ① 既有「unreadable → keep alive conservative」断言族按新语义翻转后全绿；② 单测：窗口内第 2 轮扫描命中 → 三分支重判；窗口耗尽 → SIGTERM 升级链 kill + runSpawn 成功语义 + 结果来自 stdout 累积；窗口内外部 kill → 交由 close 收尾；③ count>0 证实有后代分支行为不变（G2 回归断言）；④ test + typecheck 绿 |
 | u4-spawn-channel | U7a spawn-channel.ts 七件原语合并（invocation 组装 / LF 行读取 / stdin 写入+EPIPE / id 路由 / 迟到帧策略位 / kill 升级链 / get_state 客户端）+ 三类差异清单落地（四维策略注入：事件帧空窗/迟到 response/失败处理/kill 语义；参数面：超时预算/重试节奏/TTL/buffer 上限显式参数；单侧附加面：tee hook + EPIPE 计数归宿）+ subagent-core 内部消费切换 | `packages/subagent-core/src/execution/engine/engines/pi/spawn-channel.ts`（新）；`session-runner.ts`；`get-state-handshake.ts`；`stdin-writer.ts` | u3（session-runner 消费面定型后平移） | plain | ① subagent-core 全量 `pnpm test` 绿（行为等价回归，现有测试为锚点）；② typecheck 绿；③ tee hook 与 EPIPE 计数在共享层有归宿（代码审查点：无静默丢失） |
 | u5-runtime-switch | U7b spawn-channel 进 subagent-core exports 面（受控子入口 `./spawn-channel`，exports + publishConfig 双面，changeset minor）+ runtime rpc-client 消费切换 + 四维策略注入（Runtime：帧缓冲重放 / 迟到 response 丢弃 / 硬失败 safeDestroy / 即时 SIGKILL）+ 参数现值注入 + tee hook 消费接回（piSessionLog 不丢） | `packages/subagent-core/package.json`；`packages/runtime/src/infra/pi/rpc-client.ts`；`packages/runtime/package.json` 与 `packages/runtime/tsup.config.ts`（现状确认，workspace 依赖与 noExternal 已就绪）；changeset 文件 | u4 | plain | ① `cd packages/runtime && pnpm test` 全绿；② subagent-core `pnpm build`（tsup）绿 + typecheck 绿；③ `bash scripts/validate-runtime-bundle.sh` 绿；④ changeset minor 文件存在且 body 完整 |
 | u6-obs-docs | U5 `docs/troubleshooting.md` 排查词条（三特征串：迟到回填 / 扫描兜底 / 窗口耗尽）+ U6 audit 回写（关闭「LC-4/PS-9 修复面」备注 + 翻转决策登记为新条目）+ 本设计文档变更历史补记 | `docs/troubleshooting.md`；`docs/design/subagent-core-unbounded-wait-audit.md`；`docs/design/subagent-agent-end-recovery.md`（变更历史节） | u5（全部代码定型后一次回写不失实） | plain | ① 词条含三特征串可 grep 定位；② audit 备注关闭 + 新条目 diff 可见；③ pre-commit 文档-代码符号漂移守卫绿 |
@@ -95,13 +95,13 @@ bash scripts/validate-runtime-bundle.sh
 
 **Gate B 结果（2026-09-10，双绿收口）**：
 
-- **批次 1**（探针 P1-P5 + S1-S7/S9）：5 pass / 2 fail / S8 留批次 2。主链路全成立：S7 守卫降级归零（20 轮 × 6 并发 = 120 只真实 run，no-progress 触发 0 / 翻转窗口触发 0，完成→回收 p50=7ms）；S1/S2 迟到接受与扫描兜底痕迹齐备；S3 递归编排 keep-alive 不回归；S6 通知秒级端到端；S9 两形态（close 收尾扫描命中 / 极早期 kill crashed 记账）正确。2 个 fail 为设计声明与外部实现的事实漂移（P3 清单漂移 must-fix 已修 + 联动守卫；S4-② D14 不可达 + S5 误杀连带终局为文档裁决回写），详见设计文档「Gate B 批次 1 实测勘误」节，修复 commit 06c798e4b。
+- **批次 1**（探针 P1-P5 + S1-S7/S9）：6 pass / 2 fail / S8 留批次 2（场景域 8 个 = S1/S2/S3/S6/S7/S9 pass + S4/S5 fail，与勘误节权威记账一致）。主链路全成立：S7 守卫降级归零（20 轮 × 6 并发 = 120 只真实 run，no-progress 触发 0 / 翻转窗口触发 0，完成→回收 p50=7ms）；S1/S2 迟到接受与扫描兜底痕迹齐备；S3 递归编排 keep-alive 不回归；S6 通知秒级端到端；S9 两形态（close 收尾扫描命中 / 极早期 kill crashed 记账）正确。2 个 fail 为设计声明与外部实现的事实漂移（P3 清单漂移 must-fix 已修 + 联动守卫；S4-② D14 不可达 + S5 误杀连带终局为文档裁决回写），详见设计文档「Gate B 批次 1 实测勘误」节，修复 commit 06c798e4b。
 - **S4/S5 修复重验判定**：fail 根因为设计声明事实错误（非处置逻辑缺陷），主链路代码零改动；新文案由 disposition-retry-window 单测锚定，判定行为由 deriveDescendantCapable 六形态单测（true 路径 = S3 真实场景 / false 路径 = S4-① 真实场景）覆盖——判定单测 + 既有真实场景覆盖充分，不重跑真实场景。
 - **批次 2**（S8）：pass。GUI 会话行为（消息流/切换/恢复）逐项一致；stdout tee 三段断言持续写入；早期帧缓冲语义即时到达（14 采样点单调递增）；validate-runtime-bundle exit 0；runtime 全量 5087/5088（唯一失败 logger.test.ts 轮转断言为负载型时序 flake，单跑 8/8 绿，不在验收面——与 send-queue-e2e 并列登记为已知不稳定点）。观察项：resume 会话按 sessionId append 同一 tee 文件（产品既定命名行为，非切换引入）。
 
 ## 5 合理偏差登记表
 
-> 登记载体说明：实施期偏差的**明细集中登记于设计文档「实施期偏差登记」节**（本文件同目录 subagent-agent-end-recovery.md 末尾，含 D3a 落点 / D3b 三处细化 / D2 多匹配 / D4 七件盘点 / 测试改写 / 待办清理六组），状态表各单元 deviations 计数指向该明细；本表收录「一致性审查确认后的合理偏差」条目。
+> 登记载体说明（双载体）：实施期偏差的**主题组明细**登记于设计文档「实施期偏差登记」节（本文件同目录 subagent-agent-end-recovery.md 末尾，含 D3a 落点 / D3b 四处细化 / D2 多匹配与单候选容错 / D4 七件盘点 / 测试改写 / 待办清理六组）；**单元级明细**在 §6 状态表各单元「证据指针」列括号内——状态表 deviations 计数按单元指向 §6 括号内明细，按主题回查走设计文档节。本表收录「一致性审查确认后的合理偏差」条目。
 
 | # | 单元 | 偏差描述 | 登记理由 | 日期 |
 |---|------|----------|----------|------|
@@ -118,10 +118,10 @@ bash scripts/validate-runtime-bundle.sh
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|---------------------------------------------|------|----------|
-| u1-acquire | committed | 1 | commit（见 git log u1-acquire）；3397 passed / typecheck 绿；deviations 5 条已核合理（warn 级别/措辞时序/多匹配收集/钩子落点/测试拆分） |
+| u1-acquire | committed | 1 | commit a12854c4e；3397 passed / typecheck 绿；deviations 5 条已核合理（warn 级别/措辞时序/多匹配收集/钩子落点/测试拆分） |
 | u2-descendant | committed | 1 | commit c19208e43；3407 passed / typecheck 绿；deviations 6 条核合理（SpawnRunState 就地/派生点语义等价/字段可选/A1-3 同步段论证/debug 文案/注释压缩）；max-lines 超阈经裁决入 eslint 复杂度债务清单 |
-| u3-flip | committed | 1 | commit（git log u3-flip）；3413 passed / typecheck 绿；deviations 6 条核合理（16s 绝对上界含入口段/重判 error 续窗防退化/固定 5s 节奏/四分支提取等价/STEP_MS export 测试可观测/makeState 类型级连带 2 行已申报） |
-| u4-spawn-channel | committed | 1 | commit（git log u4）；3423 passed ×3 runs / typecheck 绿；deviations 8 条核合理（门面 re-export 形态保 vi.mock 锚/防循环 import/invocation 身份域留驻/策略为类型契约+默认值登记非死代码/空窗维度接线位=消费方/maxBufferChars 最小语义/10 形状测试/eslint 双规则并存遗留 u6 清理） |
+| u3-flip | committed | 1 | commit 3df4b4224；3413 passed / typecheck 绿；deviations 6 条核合理（16s 绝对上界含入口段/重判 error 续窗防退化/固定 5s 节奏/四分支提取等价/STEP_MS export 测试可观测/makeState 类型级连带 2 行已申报） |
+| u4-spawn-channel | committed | 1 | commit 0bbdbd320；3423 passed ×3 runs / typecheck 绿；deviations 8 条核合理（门面 re-export 形态保 vi.mock 锚/防循环 import/invocation 身份域留驻/策略为类型契约+默认值登记非死代码/空窗维度接线位=消费方/maxBufferChars 最小语义/10 形状测试/eslint 双规则并存遗留 u6 清理） |
 | u5-runtime-switch | committed | 1 | commit dd9d4e904；runtime 5088 passed（real-pi e2e 负载 flake 单独跑 5.3s 绿）+ subagent-core build/3423 + bundle 验证绿；盘点矩阵：仅行读取切换，六件不切理由硬（SIGCONT/id 形状/router 遍历/策略耦合）；tsup entry 扩展为验收驱动，编排方追认（dev「用户已授权」表述不准）；attachLfOnlyLineReader deprecated 锚与 eslint 双规则并存登记 u6 清理 |
 | u6-obs-docs | committed | 1 | commit 35243c845；五特征串可 grep（编排方补 close finalization 措辞缺口）；符号漂移守卫绿；deviations 3 条核合理（audit 无既有变更历史节按表格新建/日志文件名写实修正/P-T1 leaf 短路备注被落地态整体取代） |
 
@@ -132,19 +132,16 @@ bash scripts/validate-runtime-bundle.sh
 - 既有 vitest teardown flake（record-store-last-line / nested-visibility）偶发致 pnpm test 进程不退出（观察 2 次）——独立于本设计，建议独立任务排查 vitest worker teardown
 
 - ⛔ 设计 §5 五条待验证检查点对应实施期探针，S1/S9 场景实施前先跑注入探针（audit S-B 先例流程）
-- 误杀形态（三路获取全失败 ∧ 真有后代）按设计 D3b 代价分析登记为显式残余风险，S5 含续后处置推演
+- 误杀形态（三路获取全失败 ∧ 真有后代）按设计 D3b 代价分析登记为显式残余风险，S5 含续后处置推演——[Gate B S5 勘误] 误杀为**连带终局**（SIGTERM 形态 shutdown 链收殓后代 / SIGKILL 形态后代死于 stdout EPIPE，后代任务中断、未产出成果丢失），代价高于设计 D3b 原声明，详见设计文档「Gate B 批次 1 实测勘误」第 3 条
+- ⛔ NotifyDomainPorts 端口缺席脆弱点（登记不修，同设计文档勘误第 7 条）：`countActiveFromEntries` 端口缺席时差集恒 0（DEFAULT_NOTIFY_PORTS）——宿主壳漏接线即系统性误杀且无告警（pi 壳已注入 pi-host.ts:157）。建议后续：端口缺席改保守（不可判定走三分支）或加启动 warn——属独立加固任务，不在本设计实施范围，不影响「全单元无遗留待办」收口
 - u5-runtime-switch 是行为不变替换，但 rpc-client.ts 是 runtime 核心链路——dev→fix 超 2 轮未绿即冻结升级用户（数字阈值纪律）
 
-**变更历史**：
+**变更历史**（单节，时间正序）：
 
 | 日期 | 事件 |
 |------|------|
+| 2026-09-10 | 计划创建；设计文档经 4 轮对抗式审查收敛（主审 3 轮收敛，影响面审 4 轮 MF 3→0），基线待 commit |
+| 2026-09-10 | 定向复审 pass（组A 三面核查：parseSpawnLine trim 免疫 / emit 级剥离与 pi 0.84.4 attachJsonlLineReader 逐字同构 / tee 字节等价；组B 断言逐片段相符；docs 结构完整）。2 条 low：注释漂移已微修；warn 断言广度（4 处中 2 分支覆盖，已达原 finding 目的）登记不修。阶段 3-4 收口 |
+| 2026-09-10 | 定向复审回收裁决（3 区独立 reviewer）：4 unreasonable（组A \r 剥离丢失 medium→修复 dev；组B warn 断言缺失 low→修复 dev；区C 两条 docs 编辑→主 agent 亲为，理由：全部落 docs 领地的措辞/结构修正且与 doc_errors 同批）+ 2 doc_errors（「S8 断言通过」失实→已改「待 Gate B」；「续窗不重置」声称过宽→设计文档与 audit T8 双处如实化：tick 续窗不清轮次 vs agent_end 重入幂等重挂重计，测试锚定）；reasonable 20 条 → §5 登记 6 条（R1-R6），其余为核实通过项 |
 | 2026-09-10 | Gate A 绿（结果见 §4 Gate A 结果节）；Gate B 批次 1（探针 + S1-S7 + S9）后台派发中；清理批次完成——待办清理项 2 条（deprecated 测试锚迁移删除 / eslint 双规则收敛 warn@1600）+ warn 断言广度补齐 3 处（明细登记于设计文档「待办清理项」节），uncovered 2 条入偏差表 R7/R8 |
-| 2026-09-10 | **双绿收口**：Gate B 批次 1 完成（5 pass / 2 fail → 修复 commit 06c798e4b + 设计文档实测勘误 4 组回写，重验判定见上）；批次 2 S8 pass（GUI/tee/帧缓冲/bundle/runtime 全量，1 个验收面外 flake 单跑复验绿）。§4 测试策略全项闭环，全单元无遗留待办 |
-
-**变更历史**：
-
-| 日期 | 事件 |
-|------|------|
-| 2026-09-10 | 计划创建；设计文档经 4 轮对抗式审查收敛（主审 3→0，影响面审 3→0），基线待 commit |
-| 2026-09-10 | 定向复审 pass（组A 三面核查：parseSpawnLine trim 免疫 / emit 级剥离与 pi 0.84.4 attachJsonlLineReader 逐字同构 / tee 字节等价；组B 断言逐片段相符；docs 结构完整）。2 条 low：注释漂移已微修；warn 断言广度（4 处中 2 分支覆盖，已达原 finding 目的）登记不修。阶段 3-4 收口 |（3 区独立 reviewer）回收：4 unreasonable（组A \r 剥离丢失 medium→修复 dev；组B warn 断言缺失 low→修复 dev；区C 两条 docs 编辑→主 agent 亲为，理由：全部落 docs 领地的措辞/结构修正且与 doc_errors 同批）+ 2 doc_errors（「S8 断言通过」失实→已改「待 Gate B」；「续窗不重置」声称过宽→设计文档与 audit T8 双处如实化：tick 续窗不清轮次 vs agent_end 重入幂等重挂重计，测试锚定）；reasonable 20 条 → §5 登记 6 条（R1-R6），其余为核实通过项 |
+| 2026-09-10 | **双绿收口**：Gate B 批次 1 完成（6 pass / 2 fail → 修复 commit 06c798e4b + 设计文档实测勘误 4 组回写，重验判定见上）；批次 2 S8 pass（GUI/tee/帧缓冲/bundle/runtime 全量，1 个验收面外 flake 单跑复验绿）。§4 测试策略全项闭环，全单元无遗留待办（域外登记不修项见残留风险 NotifyDomainPorts 条） |

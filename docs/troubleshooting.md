@@ -289,7 +289,7 @@ grep -E "backfilled via (late|lazy) get_state|(located|backfilled) via sessionDi
 **⑤ `process killed before handshake settled` — 边界形态（记账正确，非缺陷）**
 
 - 日志：`[session-runner] sessionFile unobtainable for <id> (process killed before handshake settled); record will be finalized as crashed; results were never produced`
-- 含义：子进程在握手结算前被 kill（abort / spawn watchdog / dispose），close 收尾扫描也未命中——极早期 kill（extensions 加载完成前）时 session_start hook 未跑、identity entry 未写，扫描结构性不可达。record 按 crashed 记账是正确语义（进程从未开始工作）。
+- 含义：子进程在握手结算前被 kill（abort / spawn watchdog / dispose），close 收尾扫描也未命中。两类结构性 miss（命中前提 = 文件已落盘 ∧ identity entry 在文件内）：①极早期 kill（extensions 加载完成前）session_start hook 未跑、identity entry 未写；②[Gate B P4 实测勘误] hook 已跑但 session 文件未落盘——pi session 随首条 assistant 消息才落盘，4.5s/6s abort 实测 miss。两者 record 按 crashed 记账均为正确语义（进程从未开始产出）。
 - 下一步：确认 kill 来源符合预期即可；若怀疑进程实际已产出成果，直接查子进程 session 文件（pi session 首条 assistant 消息即落盘）。
 
 区分提示：`backfilled via lazy get_state (spawn handshake had failed)`（warn）是 agent_end 决策时刻**主动**单次问询命中的惰性回补（T1 既有路径，8.8.0 起）；特征①是 spawn 期旧应答**迟到**到达（被动收下）。两者同为自愈痕迹，grep `backfilled via` 会同时命中，按文案区分。

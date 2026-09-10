@@ -153,9 +153,9 @@ audit §5 三条系统性裁决在本次事故的投影：
 
 **场景 B：递归编排（防回归场景）**。层主 subagent 派 2 个后台后代后结束本轮。终态行为：层主 agent_end 时 pending 差集读出 count=2 → keep-alive 等待（与今天完全一致：动态 watchdog 保护、后代完成 steer 唤醒、心跳刷新）。后代全部完成后层主被唤醒、汇总、下一次 agent_end 判 count=0 → 正常杀 → 通知链启动。**G2 不回归**。
 
-**场景 C：记账失败的残余形态（翻转后的兜底）**。极端情形：握手失败 + 迟到应答也异常（进程 rpc 半死）+ 扫描也找不到文件（如 sessionDir 被外力清空）。终态行为：agent_end 后进入 **15s 回补重试窗口**（get_state + 扫描交替），窗口耗尽仍无 sessionFile → 杀（SIGTERM→30s→SIGKILL）→ `runSpawn` 以成功语义返回（被信号终止视为正常完成，结果内容来自 stdout 事件累积，不依赖 sessionFile）→ 通知照发。误杀的层主（假阴性——真有后代但读不出）的后代终态，**如实描述**：后代进程不级联（SIGTERM 只杀层主），继续跑完自身任务，成果留在其 session 文件（session-reader 可查）；但层主死后其完成通知**投递目标已不存在**——挂账重投耗尽后 abandoned（有日志），不会自动回流；`/subagents list` 仅 record 层可见（manifest 磁盘重建），孤儿记账由根进程孤儿恢复终态化（仅记账不杀进程）；层主 session 文件在盘，resume 可续聊。**代价有界、行为可见（日志链完整）、成果不丢**——对比现状的「全链冻结 90 分钟」。
+**场景 C：记账失败的残余形态（翻转后的兜底）**。极端情形：握手失败 + 迟到应答也异常（进程 rpc 半死）+ 扫描也找不到文件（如 sessionDir 被外力清空）。终态行为：agent_end 后进入 **15s 回补重试窗口**（get_state + 扫描交替），窗口耗尽仍无 sessionFile → 杀（SIGTERM→30s→SIGKILL）→ `runSpawn` 以成功语义返回（被信号终止视为正常完成，结果内容来自 stdout 事件累积，不依赖 sessionFile）→ 通知照发。误杀的层主（假阴性——真有后代但读不出）的后代终态，**如实描述** [Gate B S5/P5 勘误：后代连带终局，见 D3b 勘误块]：后代进程不级联（SIGTERM 只杀层主），继续跑完自身任务，成果留在其 session 文件（session-reader 可查）；但层主死后其完成通知**投递目标已不存在**——挂账重投耗尽后 abandoned（有日志），不会自动回流；`/subagents list` 仅 record 层可见（manifest 磁盘重建），孤儿记账由根进程孤儿恢复终态化（仅记账不杀进程）；层主 session 文件在盘，resume 可续聊。**代价有界、行为可见（日志链完整）、成果不丢**——对比现状的「全链冻结 90 分钟」。
 
-**场景 D：无后代能力的 subagent（新快路径）**。tools 白名单不含派生工具（subagents / workflow）**且不含 bash** 的分析型 agent（事故中的 dims-llm 即是；bash 经 base-tool-enhance 后台模式同样进 pending 记账，见 D3a 边界声明）：agent_end → **零判定直接杀** → 秒级回收。不进入任何等待分支。
+**场景 D：无后代能力的 subagent（新快路径）**。tools 白名单不含派生/记账工具（`subagent` / `workflow` / `workflow-script`——[Gate B P3 勘误：初版「subagents / workflow」为旧口径，真实注册名四项见 D3a 勘误与 Gate B 批次 1 实测勘误 1]）**且不含 bash** 的分析型 agent（事故中的 dims-llm 即是；bash 经 base-tool-enhance 后台模式同样进 pending 记账，见 D3a 边界声明）：agent_end → **零判定直接杀** → 秒级回收。不进入任何等待分支。
 
 ### 3.2 方案对比
 
@@ -194,7 +194,7 @@ audit §5 三条系统性裁决在本次事故的投影：
 **选择**：新增纯函数 `locateSessionFileByScan(record, sessionDir, sinceMs)`：扫 `getSubagentSessionDir`（spawn 时已知）下 mtime > spawn 时刻的 JSONL，逐个读**文件内 identity entry**（子进程 session_start hook 必写，含 `PI_SUBAGENT_SELF_RECORD_ID` 派生的 record id）匹配 `record.id`，命中即返回路径。**接入两个点**：
 
 1. **agent_end 决策回补链**：backfill 失败后调扫描；D3 重试窗口每轮交替尝试 get_state 与扫描。
-2. **close 收尾反查链**：`backfillSessionFileByLookup` 的现有反查依赖 lookupId = `sessionHeader?.id ?? handshakeResult?.sessionId`（session-runner.ts:2591）——rpc mode 无 header 行且握手全失败时两者皆无，反查不可达。此形态在 lookupId 缺失时按 `record.id` 调扫描兜底。执行时机 = close 收尾链内、collectResult 之前的同步点（session-runner.ts:2812 附近），与既有反查同段衔接。这覆盖的是 **agent_end 链完全不经过的形态**：握手 7s 窗口内子进程被提前 kill（abort / spawn watchdog / dispose）→ 不产生 agent_end → D1 的「迟到应答必然会到」随管道关闭失效、D3b 窗口不挂——close 收尾是该形态唯一的获取机会，也正是 audit LC-4/PS-9 的原生修复面（finalize marker / alive marker / identity 写入依据 = record.sessionFile）。
+2. **close 收尾反查链**：`backfillSessionFileByLookup` 的现有反查依赖 lookupId = `sessionHeader?.id ?? handshakeResult?.sessionId`（session-runner.ts `backfillSessionFileByLookup` 内 lookupId 赋值行）——rpc mode 无 header 行且握手全失败时两者皆无，反查不可达。此形态在 lookupId 缺失时按 `record.id` 调扫描兜底。执行时机 = close 收尾链内、collectResult 之前的同步点（session-runner.ts close handler 内 `backfillSessionFileByLookup(state, sessionDir)` 调用点，先于 resolveRunOutcome 结果判定），与既有反查同段衔接。这覆盖的是 **agent_end 链完全不经过的形态**：握手 7s 窗口内子进程被提前 kill（abort / spawn watchdog / dispose）→ 不产生 agent_end → D1 的「迟到应答必然会到」随管道关闭失效、D3b 窗口不挂——close 收尾是该形态唯一的获取机会，也正是 audit LC-4/PS-9 的原生修复面（finalize marker / alive marker / identity 写入依据 = record.sessionFile）。
 
 **覆盖边界（诚实声明）**：接入点 2 的命中前提是子进程死前已写入 identity entry（session_start hook 已跑）。极早期 kill（extensions 加载完成前，hook 未跑、session 文件可能未创建）扫描返回 undefined——此时记账缺失是**正确语义**（进程从未开始工作，finalize 按 crashed 记账），不属于缺陷。**[Gate B P4 实测勘误 2026-09-10]**：真实前提比本段更严格——pi 延迟首写（架构约定 #6）：**identity 已写 ≠ 文件已落盘**，session 文件随首条 assistant 消息落盘；「hook 已跑但文件未落盘」的 kill（实测 4.5s/6s abort 形态）扫描结构性 miss，crashed 记账同为正确语义。准确前提 = **文件已落盘 ∧ identity entry 在文件内**。另实测（53 个真实 session 文件，agent_end 终态采样）：identity 恒在文件头部固定槽位（第 4 行），p50 体积 3.1KB——整文件前向读实际只读头部 2-4 行即命中，亚毫秒级，比本节「落点不固定」的保守假设更有利；fork 大文件形态无真实样本（未构造，如实登记）。
 
@@ -202,7 +202,7 @@ audit §5 三条系统性裁决在本次事故的投影：
 
 **被否谱系**：①初版 IO 约束「读到 identity entry 即停 + 头部窗口读」——「identity 在文件头部区域」先验被同仓实测击穿（identity 实测靠尾部，subagents.ts:17-18，第 2 轮审查），废弃；②二版「尾行定长读」——被同一实测文件内的生产遥测击穿：64KB 尾窗覆盖率仅 93.4%（3203/3430，subagents.ts:233/:292），约 6.6% 真实文件的 identity 不在尾部窗口且 miss 集中在大任务 / fork 大文件形态（第 3 轮审查）——定长窗口在规模化下有结构性 miss 面，废弃，改整文件前向读 + 命中即停。
 
-**证据**：pi session 文件在**首条 assistant 消息时落盘**（AGENTS.md 关键规则 6 登记的延迟写入行为）——agent_end 时刻子进程必有 assistant 输出（这就是完成的定义），故文件必然已在盘上；identity entry 由 session_start hook 必写（hook 已跑即已在文件内，**落点不固定**——见 IO 声明），扫描对「文件在盘 + identity 已写」的命中率结构性接近 100%。identity entry 机制现成（buildChildEnv 的 `PI_SUBAGENT_SELF_RECORD_ID` 注入 + 子进程 hook 写入，session-runner.ts:1783-1787 注释锚定）。Runtime 侧 restore 路径的 `scanSessions` 是同一模式在生产验证多年的先例（session-lifecycle.ts:767）。
+**证据**：pi session 文件在**首条 assistant 消息时落盘**（AGENTS.md 关键规则 6 登记的延迟写入行为）——agent_end 时刻子进程必有 assistant 输出（这就是完成的定义），故文件必然已在盘上；identity entry 由 session_start hook 必写（hook 已跑即已在文件内，**落点不固定**——见 IO 声明），扫描对「文件在盘 + identity 已写」的命中率结构性接近 100%。identity entry 机制现成（buildChildEnv 的 `PI_SUBAGENT_SELF_RECORD_ID` 注入 + 子进程 hook 写入，session-runner.ts buildChildEnv 内身份贯穿 env 注入注释块锚定）。Runtime 侧 restore 路径的 `scanSessions` 是同一模式在生产验证多年的先例（session-lifecycle.ts:767）。
 
 **错误规格**：目录不存在 / 无匹配文件 / 文件读失败 → 返回 undefined（调用方继续走 D3 重试或最终翻转分支），warn 留痕含 record.id 与尝试的目录。匹配到多个（理论不可达——record.id 全局唯一）→ 取第一个 + warn。
 
@@ -216,9 +216,9 @@ audit §5 三条系统性裁决在本次事故的投影：
 
 **被否谱系**：①初版判据「白名单不含 subagents/workflow ⇒ false」——被反例击穿：bash 后台任务是差集记账一等面（上述链路），含 bash 白名单的分析型 agent 现状合法等待会被翻转为误杀（第 1 轮审查 MF1），已废弃；②初版判据落点 agent-opts-resolver——被层级事实击穿：其唯一生产调用方是 workflow 路径的 dispatchAgentCall（worker-message-pump.ts:746），subagents 工具路径不经过；且 tools 由 resolveIdentity 在其后注入（models/types.ts：agent ref 的 tools「Not handled by resolveAgentOpts」），该时刻判据无从计算——「分析型 agent 全覆盖」对半边入口失效（第 2 轮审查），落点改 session-runner 汇合点，已废弃。
 
-**D3b error 分支翻转（慢路径→秒级）**：`descendantCapable === true` 且 sessionFile 读不出（error）时，不再进入无限 keep-alive，改为 **15s 回补重试窗口**（对齐既有 `WAKEUP_GRACE_MS` 量级）：窗口内每 5s 交替「get_state 单查 / D2 扫描」，任一命中即以真实 sessionFile 重新走三分支判定；窗口耗尽仍读不出 → **直接 kill**（SIGTERM→30s→SIGKILL）→ close → `runSpawn` 以成功语义返回（被信号终止视为正常完成，resolveRunOutcome 既有分支，:2668-2671）。
+**D3b error 分支翻转（慢路径→秒级）**：`descendantCapable === true` 且 sessionFile 读不出（error）时，不再进入无限 keep-alive，改为 **15s 回补重试窗口**（对齐既有 `WAKEUP_GRACE_MS` 量级）：窗口内每 5s 交替「get_state 单查 / D2 扫描」，任一命中即以真实 sessionFile 重新走三分支判定；窗口耗尽仍读不出 → **直接 kill**（SIGTERM→30s→SIGKILL）→ close → `runSpawn` 以成功语义返回（被信号终止视为正常完成，resolveRunOutcome 既有分支——exitCode 0 与信号终止同归 success）。
 
-**被否谱系**：①读不出维持无限等（现状）——§2.5 裁决 2 已论证；②读不出立即杀（零宽限）——极端慢盘 / 高负载下 15s 内扫描可能合理地需要多轮，零宽限把误杀率推高，15s 是「误杀代价 ≈ 0 且总收敛 ≤15s」的平衡点（对齐 MF-3 对 WAKEUP_GRACE_MS 的量级论证）；③「窗口耗尽置 sweepDescendantsOnClose」——被结构性空转击穿：sweep 入口 `sweepDescendantsOfSession` 首行 `if (!rootSessionFile) return`（session-runner.ts:693），而窗口耗尽 = sessionFile 恒 undefined，sweep 必然零操作，置位是无效安慰剂（第 1 轮双审一致），已废弃——后代清理本就不靠 sweep（见误杀代价分析）。
+**被否谱系**：①读不出维持无限等（现状）——§2.5 裁决 2 已论证；②读不出立即杀（零宽限）——极端慢盘 / 高负载下 15s 内扫描可能合理地需要多轮，零宽限把误杀率推高，15s 是「误杀代价 ≈ 0 且总收敛 ≤15s」的平衡点（对齐 MF-3 对 WAKEUP_GRACE_MS 的量级论证）；③「窗口耗尽置 sweepDescendantsOnClose」——被结构性空转击穿：sweep 入口 `sweepDescendantsOfSession` 首行 `if (!rootSessionFile) return`（session-runner.ts），而窗口耗尽 = sessionFile 恒 undefined，sweep 必然零操作，置位是无效安慰剂（第 1 轮双审一致），已废弃——后代清理本就不靠 sweep（见误杀代价分析）。
 
 **误杀代价分析（假阴性：真有后代但 15s 内读不出，四要素）**：
 
@@ -278,8 +278,8 @@ audit §5 三条系统性裁决在本次事故的投影：
 | D1 迟到接受 | 迟到 response 字段缺失/畸形 | 提取不到就跳过，不留痕噪音 | —（正常路径无错误面） |
 | D2 扫描 | 目录不存在 / 无匹配 / 读失败 | 返回 undefined + warn（含 record.id、目录、原因） | 「sessionDir scan found no match for <id>; will retry in window / fall back to disposition flip」 |
 | D2 扫描（close 收尾形态） | 提前 kill + 握手全失败，极早期 kill 下 identity entry 未写 | 返回 undefined，finalize 按 crashed 记账（正确语义，见 D2 覆盖边界） | 「sessionFile unobtainable (process killed before handshake settled); record finalized as crashed; results were never produced」 |
-| D3b 窗口耗尽 | 三路（迟到/回补/扫描）全失败 | kill（SIGTERM 升级链）+ runSpawn 成功返回 | warn「sessionFile unobtainable after 15s recovery window (handshake suppressed? sessionDir missing?); process terminated, result recovered from stdout events; descendants (if any) remain on disk, queryable via session reader」 |
-| D3b 误杀（假阴性） | 后代完成时父已死 | 后代跑完，成果留其 session 文件；完成通知挂账重投耗尽后 abandoned（有日志）；孤儿记账由根进程孤儿恢复终态化 | session-reader 查后代 session 文件取成果；`/subagents list` 看 record 层状态；resume 层主续聊（注意：编排形态续作遇脏差集会 keep-alive 等待，kill/abort 可回收，见 D3b 代价分析） |
+| D3b 窗口耗尽 | 三路（迟到/回补/扫描）全失败 | kill（SIGTERM 升级链）+ runSpawn 成功返回 | warn「sessionFile unobtainable after 15s recovery window (handshake suppressed? sessionDir missing?); process terminated, result recovered from stdout events; descendants (if any) were terminated with this process (graceful-shutdown reap or stdout EPIPE) and their unfinished work is lost; already-produced output remains queryable via session reader」[Gate B S5/P5 勘误后实装文案] |
+| D3b 误杀（假阴性） | 后代完成时父已死 | [Gate B S5/P5 勘误：后代连带终局，见 D3b 勘误块] 后代跑完，成果留其 session 文件；完成通知挂账重投耗尽后 abandoned（有日志）；孤儿记账由根进程孤儿恢复终态化 | session-reader 查后代 session 文件取成果；`/subagents list` 看 record 层状态；resume 层主续聊（注意：编排形态续作遇脏差集会 keep-alive 等待，kill/abort 可回收，见 D3b 代价分析） |
 | D3a 判据 | 派生/记账工具清单漂移（未来新增 spawn 类工具或后台记账面忘登记） | 清单常量在 session-runner 单点维护 + 注释标注「新增派生工具/后台记账工具必须同步」 | 清单测试守卫（枚举已知派生工具 + bash 后台记账面断言判据） |
 
 ---
@@ -310,7 +310,7 @@ audit §5 三条系统性裁决在本次事故的投影：
 |---|---|---|---|---|
 | U1 | D1 迟到接受 | `get-state-handshake.ts`（resolver 迟到路径）、`session-runner.ts`（finishHandshake 回填面复用） | 最小改动最大收益；独立于其余单元可先行交付 | S2 |
 | U2 | D2 扫描兜底（两个接入点） | 新 `session-file-locator.ts`（locateSessionFileByScan 纯函数 + identity 整文件前向读/行扫描命中即停 + 测试钩子 env）、`session-runner.ts`（agent_end 决策点接入 + close 收尾 collectResult 前同步点 `backfillSessionFileByLookup` lookupId 缺失分支接入） | 纯函数 + 独立文件，可单独单测后接入；接入点 2 补齐 LC-4/PS-9 修复面 | S1/S5/S9 |
-| U3 | D3a 判据 | `session-runner.ts`（descendantCapable 派生 @ tools 汇合点 agentTools 注入处 + 快路径分支 + 派生/记账工具清单常量单点：subagents/workflow/bash + tools-undefined 语义）、`types.ts`（state 字段）、清单守卫测试、既有测试改写（快路径使部分「保守等待」断言族需按新判据重申） | 消灭最大悬挂面（分析型 agent 全覆盖——两条入口汇合点统一派生），零等待零判定 | S4 |
+| U3 | D3a 判据 | `session-runner.ts`（descendantCapable 派生 @ tools 汇合点 agentTools 注入处 + 快路径分支 + 派生/记账工具清单常量单点：subagents/workflow/bash + tools-undefined 语义（[Gate B P3 勘误] 实装为 subagent/workflow/workflow-script/bash，见 Gate B 批次 1 实测勘误 1））、`types.ts`（state 字段）、清单守卫测试、既有测试改写（快路径使部分「保守等待」断言族需按新判据重申） | 消灭最大悬挂面（分析型 agent 全覆盖——两条入口汇合点统一派生），零等待零判定 | S4 |
 | U4 | D3b 翻转 + 重试窗口 | `session-runner.ts`（runAgentEndDisposition 改造 + 窗口 timer 生命周期）、竞态 #2/#5/#8 守卫、**既有测试改写**（keep-alive-no-progress.test.ts「unreadable → keep alive conservative」断言族翻转、descendant-sweep 族、robustness 系列） | U1/U2 之后实施（窗口消费它们的产物） | S1/S5 |
 | U5 | 可观测性 | 上述各路径的 warn/debug 文案 + `docs/troubleshooting.md` 排查词条（三特征串：迟到回填 / 扫描兜底 / 窗口耗尽） | 排障先于事故；与既有 LC-9 可见性原则对齐 | 全场景 |
 | U6 | 文档回写 | `subagent-core-unbounded-wait-audit.md`（D2 两接入点落地后关闭「LC-4/PS-9 修复面」备注；登记翻转决策为新条目）、变更历史 | C-proc-10 设计文档同步纪律 | — |
@@ -323,7 +323,7 @@ audit §5 三条系统性裁决在本次事故的投影：
 
 - ⛔ S1 的 wrapper 注入可行性（stdout 行过滤器对 get_state response 的精确匹配）——实施期先跑注入探针再写正式场景（audit S-B 先例同款流程）。
 - ⛔ pi 冷启动在本机负载下的真实延迟分布——决定 S1 是否需要 wrapper 辅助（不依赖结论，D1/D2 有效性不受影响，仅影响复现手段）。
-- ⛔ D3a 派生/记账工具清单的完备性核对（`subagents`/`workflow`/`bash` 之外是否还有 spawn 类工具或会 emit `pending:register` 的后台记账面）——实施期 grep tools 注册面 + pending:register emit 面核对。
+- ⛔ D3a 派生/记账工具清单的完备性核对（`subagents`/`workflow`/`bash` 之外是否还有 spawn 类工具或会 emit `pending:register` 的后台记账面）——实施期 grep tools 注册面 + pending:register emit 面核对。**[Gate B P3 已执行]**：结果见 Gate B 批次 1 实测勘误 1——真实注册名 `subagent`/`workflow`/`workflow-script`/`bash`，清单已修 + 联动守卫补齐。
 - ⛔ identity entry 落点分布实测（观察时机钉死 **agent_end 终态**——非任意时刻采样，且样本须含 fork 大文件形态）：验证整文件读的量级假设（subagent session 体积分布），若大文件形态占比显著则在实施层改异步流式读（不改变本设计契约，见 IO 声明）。
 - ⛔ 误杀形态下「host 死后 stdout 读端关闭 → 后代 EPIPE 行为」探针（P-T2b 验证的是 host 主动 kill 的 SIGTERM 不级联，非此形态）——实施期与 S5 一并验证。
 
@@ -339,7 +339,7 @@ audit §5 三条系统性裁决在本次事故的投影：
 | 迟到接受 | 握手窗口关闭后到达的 get_state 应答仍被采纳回填（D1） |
 | 扫描兜底 | 不经子进程、直接扫 sessionDir 按 identity entry 匹配定位 sessionFile（D2） |
 | 处置翻转 | 「读不出」分支的默认姿势从无限保守等待改为短窗口重试后回收（D3b） |
-| 无后代判据 | tools 未限制或白名单含派生工具（subagents/workflow）或 bash（后台记账面）⇒ 保持三分支；仅「白名单非空且三者均不含」才走零判定快路径（D3a） |
+| 无后代判据 | tools 未限制（undefined/空）或白名单含派生/记账工具（`subagent`/`workflow`/`workflow-script`/`bash`——[Gate B P3 勘误] 初版「subagents/workflow」+「三者均不含」为旧口径，真实注册名四项，见 D3a 勘误）⇒ 保持三分支；仅「白名单非空且四者均不含」才走零判定快路径（D3a） |
 | 通道原语 | 与 pi 子进程通信的底层机制集合：spawn 组装/行读取/命令写入/id 路由/迟到帧/kill 链/get_state（§2.3） |
 
 ---
@@ -350,7 +350,7 @@ audit §5 三条系统性裁决在本次事故的投影：
 |------|------|
 | 2026-09-10 | 实施完成：U1-U7b 对应实施单元 u1-acquire / u2-descendant / u3-flip / u4-spawn-channel / u5-runtime-switch 全部 committed（状态与证据见 impl-plan §6），u6-obs-docs 本次回写收口（troubleshooting 词条 + audit 回写 + 本节）。Gate B 真实场景验收（S1-S9）与 ⛔ 探针五条待执行，完成度以 impl-plan §6 状态表为准 |
 | 2026-09-10 | Gate A（整体测试验收）绿：subagent-core 3429 passed / runtime 5088 passed（real-pi e2e 一次全绿）/ bundle 验证 / eslint 0 errors / extensions 三连 / 零容忍绕过检查（新增 0）/ 覆盖矩阵无测试真空。uncovered 2 条均为领地登记滞后非测试真空（tsup.config.ts、eslint.config.mjs，状态表已追认）。清理批次：待办清理项 2 条完成 + warn 断言广度补齐（见下方清理项节） |
-| 2026-09-10 | Gate B 批次 1 完成：探针 P1-P5 + S1-S7/S9（5 pass / 2 fail / S8 留批次 2）；四项决策主链路在真实 pi 场景全部生效（守卫降级 120 只 run 归零、完成→回收 p50=7ms）；实测勘误 4 组回写（P3 清单漂移已修 + 联动守卫 / S4-② D14 不可达 / S5+P5 误杀连带终局 / P4 D2 落盘前提），见「Gate B 批次 1 实测勘误」节 |
+| 2026-09-10 | Gate B 批次 1 完成：探针 P1-P5 + S1-S7/S9（6 pass / 2 fail / S8 留批次 2）；四项决策主链路在真实 pi 场景全部生效（守卫降级 120 只 run 归零、完成→回收 p50=7ms）；实测勘误 4 组回写（P3 清单漂移已修 + 联动守卫 / S4-② D14 不可达 / S5+P5 误杀连带终局 / P4 D2 落盘前提），见「Gate B 批次 1 实测勘误」节 |
 | 2026-09-10 | **Gate B 双绿收口**：批次 2 S8 pass（GUI 会话行为逐项一致 / stdout tee 三段断言持续写入 / 早期帧缓冲即时到达 / bundle exit 0 / runtime 全量 5087/5088，唯一失败为验收面外 logger 轮转时序 flake 单跑复验绿）。四项决策（D1 迟到接受 / D2 扫描兜底 / D3 翻转+快路径 / D4 通道归一）真实场景验收全部通过，G1-G4 目标达成。后续独立任务：design-code-sync 校准（用户指令第三阶段） |
 
 ### 实施期偏差登记（文档与实现的最终对齐记录）
@@ -359,13 +359,16 @@ audit §5 三条系统性裁决在本次事故的投影：
 
 **D3a 判据落点**：`descendantCapable` 在 `session-runner.ts` 内 tools 汇合点就地派生并存入 `SpawnRunState`，`models/types.ts` 未动——`SpawnRunState` 实际定义在 session-runner.ts，§3.3 D3a / §5 U3 写的「types.ts（state 字段）」按实际类型归属就地吸收，无跨文件新字段。
 
-**D3b 窗口三处细化**：
+**D3b 窗口四处细化**：
 
 1. **绝对收敛上界 16s**：= 15s 窗口 + 入口惰性回补段 1s（agent_end 入口先做一次 get_state 单查 `backfillSessionFileViaGetState`，失败才进窗口）。§3.3 D3b「总收敛 ≤15s」的口径按「窗口 arm 起算 15s、入口段另计 1s」实现；
 2. **窗口重判仍 error → tick 续窗不重置**：窗口内每轮 tick 重判若仍读不出（unreadable），不清已排定的下一轮 timer、不重置窗口——保证单次 arm 的窗口内耗尽点确定（= arm + 15s）。**多轮 agent_end 重入的如实表述**：递归层主被唤醒后多轮 agent_end 重复进入 error 分支时，每次按幂等 arm 语义 disarm 旧窗口 + 重挂重计（测试锚定的预期行为，竞态 #8 守卫）——重置仅由真实新事件触发，活动停止后窗口必然正常耗尽，不构成退化回无限等待（「不重置」的原始声称仅覆盖 tick 重判路径，首次登记时表述过宽，2026-09-10 一致性审查修正）；
 3. **轮节奏固定 5s**（`DISPOSITION_RETRY_STEP_MS`）：不被轮内获取耗时顺延，保证耗尽点的墙钟确定性。
+4. **轮 3 为纯判定轮（窗口获取机会仅 2 次）**：实际轮序 = 轮 1 get_state / 轮 2 扫描 / 轮 3 仅重判（消费前两轮获取产物，不再获取）——正文 §3.3 D3b「每 5s 交替」若按「3 轮均获取」理解，耗尽点 = arm+16s 破坏 G1 名义收敛上界，故轮 3 获取被裁掉（impl-plan §5 偏差表 R1，2026-09-10 一致性审查登记）。
 
 **D2 多匹配**：实现为「全候选收集 + 按 mtime 降序取最新 + warn」（§3.3 D2「匹配多个取第一个 + warn」的等价实现——候选按 mtime 降序读，最新修改者即首候选；warn 文案含命中数与所选路径）。
+
+**D2 单候选容错**：实现为「stat/read 失败按该候选 miss、其余候选继续，全部候选失败才返回 undefined」——§3.3 D2 错误规格「文件读失败 → 返回 undefined」对外契约的严格细化，覆盖并发删除竞态（impl-plan §5 偏差表 R3，2026-09-10 一致性审查登记）。
 
 **D4 / u5 七件原语切换盘点（如实，六件未切换及理由）**：实际切换仅 **LF 行读取**一件（runtime `rpc-client.ts` 行读取改经 spawn-channel 消费；tee 经 `onStdoutLine` hook 接回，piSessionLog 落盘不丢——S8 断言点已就位，待 Gate B 执行）。其余六件按 u4/u5 盘点保持现状，理由：
 
@@ -388,11 +391,11 @@ audit §5 三条系统性裁决在本次事故的投影：
 
 **Gate B 批次 1 实测勘误（2026-09-10，真实 pi 0.84.4 + 真实 LLM；探针 P1-P5 + 场景 S1-S7/S9）**：
 
-批次结果：S1/S2/S3/S6/S7/S9 pass，S4/S5 fail（下述勘误，非 subagent-core 代码缺陷），S8 留批次 2。证据归档 `/tmp/gateb-batch1-evidence.tar.gz`。
+批次结果：S1/S2/S3/S6/S7/S9 pass，S4/S5 fail（下述勘误，非 subagent-core 代码缺陷），S8 留批次 2。证据归档 `.xyz-harness/gateb-batch1-evidence.tar.gz`（2026-09-10 design-code-sync 自 /tmp 迁入仓内）。
 
 1. **P3 → D3a 清单勘误（已修，must-fix）**：真实注册名为 `subagent`（单数）/ `workflow` / `workflow-script` / `bash`；初版清单 `subagents` 不存在且漏列 `workflow-script`——tools 白名单含 `subagent` 的合法配置会被误判走零判定快路径杀层主（G2 回归形态）。修复：清单改真实注册名 + 新增注册面/记账面源码提取联动守卫（descendant-tools-registry-guard.test.ts，双向核对 + 变异验证拦截能力）。守卫只断言清单自身的缺口已由本守卫补齐。
 2. **S4-② → D3a 边界声明勘误**：bash 后台记账面在 subagent 进程内被 base-tool-enhance D14 降级结构性不可达（subagent-guard 判 PI_SUBAGENT_* 身份 env 后忽略 background:true）——「含 bash 白名单 → 后台任务 → keep-alive」链路不发生。裁决：bash 清单项保守冗余保留（判 false 无收益无回归），D14 是否放开属 base-tool-enhance 域独立决策。正文 D3a 边界声明已标注。
-3. **S5/P5 → D3b 误杀代价勘误**：「后代不级联、继续跑完、成果不丢」三处声明被双形态实测证伪——SIGTERM 形态层主 shutdown 链临死收殓后代（补写 unregister 并终止），SIGKILL 形态后代 3s 内死于 stdout EPIPE；误杀实际后果 = 后代任务中断 + 未产出成果丢失（已产出可查）；「resume 脏差集无限重挂」残余风险前提（孤儿 register 永无 unregister）不成立。翻转方向不变（对照全链冻结仍严格改善）；耗尽 warn 文案与 troubleshooting §12③ 已同步如实化。
+3. **S5/P5 → D3b 误杀代价勘误**：「后代不级联、继续跑完、成果不丢」三处声明被双形态实测证伪——SIGTERM 形态层主 shutdown 链临死收殓后代（补写 unregister 并终止），SIGKILL 形态后代 3s 内死于 stdout EPIPE；误杀实际后果 = 后代任务中断 + 未产出成果丢失（已产出可查）；「resume 脏差集无限重挂」残余风险前提（孤儿 register 永无 unregister）不成立。翻转方向不变（对照全链冻结仍严格改善）；耗尽 warn 文案与 troubleshooting §12③ 已同步如实化。（2026-09-10 design-code-sync 补记：§3.5 错误规格表 D3b 窗口耗尽行的 warn 引文当时仍留勘误前旧文案「remain on disk, queryable」，已随本条取代为上方实装文案——见该行「[Gate B S5/P5 勘误后实装文案]」标记。）
 4. **P4 → D2 覆盖边界勘误**：真实命中前提 = 文件已落盘（首条 assistant 后）∧ identity 在文件内——「hook 已跑即可命中」偏乐观（identity 已写 ≠ 文件在盘，4.5s/6s abort 实测 miss 属正确 crashed 记账）。另实测 identity 恒在头部第 4 行（53 样本 agent_end 终态），整文件前向读实际读 2-4 行即命中，亚毫秒级，IO 量级假设成立且优于声明；fork 大文件形态无真实样本（未构造）。
 5. **P2 → S1 复现手段**：本机（darwin arm64）pi 冷启动 p50 1.7-2.2s（含 9 路 CPU 压测），远小于 7s 握手窗口——自然慢启动不可复现，S1/S2/S5/S9 全部按设计预留的 wrapper 注入制造（P1 探针验证过滤器可行性，S-B 先例同款）。
 6. **S6 观察项（不阻塞）**：完成通知端到端秒级到达并触发新轮 pass；`session_read {...}` 指针行子断言未复现——后代结果 <4000 字符预算被内联（LLM 实际输出短），指针实现在位（notifier.ts buildTruncationPointer 有单测），指针形态端到端触发条件未构造成功，登记为观察项。
