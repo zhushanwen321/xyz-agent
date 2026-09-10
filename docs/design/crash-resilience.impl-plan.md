@@ -134,6 +134,7 @@ graph TD
 | D16 | u8 | respawn 提示条被切入 reconcile 清除——已修：拣回重插（5min TTL、锚定前驱、范围限 respawn liveOnly），含锚未命中补测（3163aa4bc + d492f0d96） | 定向复审 verified | 已闭环 |
 | D17 | u5a | A9② 清理定时器手动触发入口——已修：DEBUG_RUN_LOG_RETENTION 通道端到端（d492f0d96） | A9② 真机验收可操作 | 已闭环 |
 | D18 | u4a/u4b | runtime 区 3 条 low——已修：占位 id truncated-<seq>-array-entry、miss warn 先行、恰好 maxTurns 到文件头 truncated=false（6a915b229 + f7c0e152f） | 定向复审 verified | 已闭环 |
+| D19 | u1 | loop-gate.ts:567 接入 guardStaleCtx 未传 isCtxStale（最简接入形态：label + onStale 文案兜底，无代际前置检查）——u1 普查清单该候选点按文案兜底形态收口 | ①触发面单一低频（terminal teardown 每 gate 至多一次，非轮询回调）；②主触发路径 = pi assertActive 同步 throw，文案必含 STALE_CTX_MARKER（PS-30 实装锚点），文案分诊不漏主路径；③PS-30 探针族守卫文案漂移（漂移即测试红）；④分诊失效退化情形仍有 armForceExitTeardown 15s 硬退兜底武装（不挂死）；⑤代际接线需 gate 闭包额外回调，收益不抵成本 | 合法偏差，接受 |
 
 ## 6 状态表
 
