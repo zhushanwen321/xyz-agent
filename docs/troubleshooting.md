@@ -8,7 +8,7 @@ Runtime 日志落盘到 `<数据目录>/logs/`（`runtime-YYYY-MM-DD.log`，按�
 |------|---------|---------|
 | **Electron 主进程** | 终端直接看 | 终端启动 `/Applications/太极.app/Contents/MacOS/TaiJi` 或 `log show --process TaiJi` |
 | **Runtime** | 终端 `[runtime:out]` / `[runtime:err]` 前缀 + `~/.xyz-agent-dev/logs/runtime-*.log` | 同主进程转发 + `~/.xyz-agent/logs/runtime-*.log` |
-| **pi 子进程** | 终端 pi 自身输出 + `~/.xyz-agent-dev/logs/pi-<date>-<sessionId>.jsonl` | `~/.xyz-agent/logs/pi-<date>-<sessionId>.jsonl` + pi 日志目录 `~/.xyz-agent/pi/agent/logs/` |
+| **pi 子进程** | 终端 pi 自身输出 + `~/.xyz-agent-dev/logs/pi-<date>-<sessionId>.jsonl` | `~/.xyz-agent/logs/pi-<date>-<sessionId>.jsonl` + pi 日志目录 `~/.xyz-agent/agent/logs/` |
 | **前端 DevTools** | Cmd+Option+I 打开 | 同左 |
 
 **打包模式启动应用获取完整日志**：
@@ -123,17 +123,17 @@ builtin pi extensions（13 个 `@zhushanwen/pi-*`）随应用打包内置，不�
 ls /Applications/太极.app/Contents/Resources/extensions/@zhushanwen/
 
 # builtin 扩展不生效时，检查是否被禁用（infrastructure 级 6 个不可禁用）
-cat ~/.xyz-agent/pi/agent/settings.json
+cat ~/.xyz-agent/agent/settings.json
 ```
 
 第三方扩展（任意 npm 包 / 本地目录 / git）经 Settings → Extensions 页面安装，走 `npm install` 到数据目录，安装失败最常见原因是网络：
 
 ```bash
 # 检查用户级 npm extension 安装目录
-ls ~/.xyz-agent/pi/agent/npm/node_modules/@zhushanwen/
+ls ~/.xyz-agent/npm/node_modules/@zhushanwen/
 
 # 检查 settings.json 的 packages[] 是否记录了该 extension
-cat ~/.xyz-agent/pi/agent/settings.json | grep '@zhushanwen/pi'
+cat ~/.xyz-agent/agent/settings.json | grep '@zhushanwen/pi'
 
 # 检查 npm registry 可达性
 npm view @zhushanwen/pi-goal version
@@ -245,6 +245,40 @@ CI=true ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install   # 约 6-7s 重建本地�
 
 **防护与根治**：护栏 `.githooks/check_pnpm_store_layout.sh` 挂在 pre-commit 第 0 段（install-hooks.sh 生成）与 validate-runtime-bundle.sh Gate 0，翻转即红并输出 [FIX] 指引——同时也兼作引擎侧「不覆写 HOME」修复的验收探针（修复落地后护栏应恒绿，红 = 回退信号）。根治在引擎侧不覆写 HOME（2026-09-03 开发中）；备选方案 `.npmrc` pin `store-dir` 评估结论：`~` 展开仍 HOME 相对（无效）、相对路径解析基准未验证（有 per-package store 撕裂风险）、写死绝对路径不可移植——均不采用。
 
+## pi 数据布局迁移（方案 B，2026-09-10）
+
+数据布局已对齐 pi 0.84.x 默认布局：pi 的 agent 目录从 `<dataDir>/pi/agent` 上移到 `<dataDir>/agent`（`PI_CODING_AGENT_DIR` 新值），session jsonl 由 pi 按 cwd 写入 `<dataDir>/agent/sessions/<encodeCwd>/` 子目录。`<dataDir>/pi/` 层退役（迁移备份为 `pi.backup-v2-<ts>/`）。旧版数据目录（`~/.xyz-agent` / `~/.xyz-agent-dev`）需各跑一次迁移脚本；新装机直接是新布局，无需迁移。
+
+### 识别旧布局残留
+
+- **启动 WARN**：新版 runtime 启动时若发现 `<dataDir>/pi` 存在且含 `agent/` 或 `sessions/` 子目录，记 WARN 日志（`<dataDir>/logs/runtime-*.log`）——此时历史会话不在新布局中，对会话列表与 session-reader 双面不可见（数据无损，躺在原处）
+- **doctor 自查**：session-reader 工具的 `doctor` action 独立探测未迁移的 `pi/` 与迁移备份 `pi.backup-v2-*/`（两者都不在会话候选根推导式内，靠独立 glob 标注并附迁移指引）
+
+### 迁移操作（一次性手工，不在 app 启动路径）
+
+```bash
+# 推荐时序「先迁后升」：关闭应用 → 跑脚本 → 再装/启动新版
+node scripts/migrate-pi-layout-v2.mjs ~/.xyz-agent       # 生产实例
+node scripts/migrate-pi-layout-v2.mjs ~/.xyz-agent-dev   # dev 实例（如存在）
+```
+
+- 脚本幂等可重入：前置检查（实参形态 / 运行中进程 pgrep 自证，命中列 PID 即中止）→ `pi/` 原子改名为 `pi.backup-v2-<ts>/`（备份即暂存）→ agent 整体上移或分域并道 → 旧 session 按首行 header.cwd 分发到 `agent/sessions/<encodeCwd>/`（无 cwd 的进 `_migrated-no-cwd/`，仍可被枚举）→ 输出迁移报告（分发/跳过计数、冲突清单、避让文件 `*.old-v2-aside` / `*.new-v2-aside`、顶层残片清单、备份体积）
+- 「先升后迁」是合法兜底时序：新版启动收到 WARN 后再跑脚本，续传分支把窗口期增量并道进新布局（记录型子树文件级并入，无增量丢失）；中断后重跑安全
+- 迁移后鉴权异常 / provider 列表缺项：先查报告「冲突清单」与避让文件（provider 三件套 keyed union 的冲突去向，按 providerId 手工搬回）
+
+### 备份清理与回滚
+
+```bash
+# 回滚（与迁移报告尾部命令一致）：删或改名新 agent/ + 备份改回 pi
+rm -rf ~/.xyz-agent/agent && mv ~/.xyz-agent/pi.backup-v2-<ts> ~/.xyz-agent/pi
+
+# 清理备份（不自动删）：新版运行一切正常（历史会话/模型/鉴权均正常）观察一段时间后手工删
+du -sh ~/.xyz-agent/pi.backup-v2-*/
+rm -rf ~/.xyz-agent/pi.backup-v2-<ts>
+```
+
+- 装回旧版本的降级行为：旧版把「`pi/` 不存在」当全新安装，历史会话在旧版中不可见但数据无损躺在备份里；旧版运行重建 `pi/` 后，新版启动 WARN 会再次出现 → 重跑脚本并道即可
+
 ## 环境变量速查
 
 | 变量 | 用途 | 生产默认值 | 开发默认值 |
@@ -282,7 +316,7 @@ runtime 代码禁止出现特定项目的绝对路径或硬编码假设，所有
 分层架构里，每层只看自己视角，「我这层没做」≠「没发生」。涉及 pi extension ↔ xyz-agent runtime 的跨层机制排查，必须穷尽所有可能发起方，不能只看 xyz-agent runtime 侧就下结论。
 
 - 事故：排查「background subagent 完成后主 agent 是否续跑」，explorer 只看 xyz-agent runtime 就断言「不续跑」，差点设计出「永不响」的错方案。真相：续跑由 pi 进程内的 extension 发起（pi-subagent-workflow notifier 调 `pi.sendMessage(..., {triggerTurn:true, deliverAs:'steer'})`，pi 核心收到后开新 turn），xyz-agent runtime 只是旁观转发
-- 排查步骤：① xyz-agent runtime 侧（event-interpreter / session-service / message-dispatcher）只是旁观转发；② pi extension 机制（pi 进程内）——开发期源码在本项目 `extensions/`，用户机器运行时安装在 `~/.xyz-agent/pi/agent/npm/node_modules/@zhushanwen/pi-*/src/`；③ pi 私有协议（`triggerTurn`/`deliverAs`）语义见 `packages/shared/src/message.ts` 注释；④ 设计文档：`docs/page-design/archive/v3/` + `docs/extensions/extension-conventions.md`
+- 排查步骤：① xyz-agent runtime 侧（event-interpreter / session-service / message-dispatcher）只是旁观转发；② pi extension 机制（pi 进程内）——开发期源码在本项目 `extensions/`，用户机器运行时安装在 `~/.xyz-agent/npm/node_modules/@zhushanwen/pi-*/src/`；③ pi 私有协议（`triggerTurn`/`deliverAs`）语义见 `packages/shared/src/message.ts` 注释；④ 设计文档：`docs/page-design/archive/v3/` + `docs/extensions/extension-conventions.md`
 - 判断依据：涉及 pi 的 session loop / turn 调度 / LLM 调用的行为，发起方几乎一定在 pi 进程内；xyz-agent 的职责是 UI 状态同步 + 用户命令转发
 - 教训：当用户的领域知识与 explorer 结论冲突时，**优先怀疑 explorer 排查范围不全**，而非怀疑用户
 
