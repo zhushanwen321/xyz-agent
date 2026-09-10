@@ -18,6 +18,7 @@ import { mkdir, readdir, stat, writeFile } from 'node:fs/promises'
 import { join, isAbsolute, dirname } from 'node:path'
 import { homedir } from 'node:os'
 import {
+  buildSessionFileIndex,
   findSessions,
   type MatchedSession,
   type SessionMetadataEntry,
@@ -1126,15 +1127,310 @@ function formatSearchText(
   }${truncated ? ` (truncated, showing first ${sliced.length})` : ''}\n${lines.join('\n')}`
 }
 
-/** search：session 内全文检索（design §3.4 search，M3 新实现）。 */
+// ---------------------------------------------------------------------------
+// u12 跨会话内容检索（design 2026-09-10 §2 目标 5 / §8.2 V8）
+// ---------------------------------------------------------------------------
+
+/**
+ * 跨会话单次检索的候选数上限（窄化前置阈值，V8「先 find 窄化，再对结果检索」）。
+ * 与 result action 批量 ≤10 先例对齐；候选集全文检索成本 O(总字节)，数量上限是
+ * 第一道闸（超限明确拒绝并指引先 find，不静默超时）。
+ */
+export const MULTI_SEARCH_MAX_SESSIONS = 10
+
+/** 字节展示/预算换算基数（人话格式化与预算常量共用同一量纲）。 */
+const BYTES_PER_KB = 1024
+const BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB
+
+/** 跨会话单次检索的预算 MB 数（§8.2 V8 字节上限的量纲；换算见 SEARCH_SCAN_BYTE_BUDGET）。 */
+const SEARCH_SCAN_BUDGET_MB = 64
+
+/**
+ * 跨会话单次检索的总扫描字节上限（第二道闸，design §2 Out-of-scope「阶段二先用
+ * 『窄化后线性扫 + 字节上限』」）。64MB ≈ 近 3 个大型主 session（P-9 实测单主 session
+ * 23MB、纯 pi 全库最坏 2.7GB）——窄化后候选 ≤10 正常远触不到；触顶即「候选集仍不够
+ * 窄」或「存在超大单文件」，按列表顺序停止并报告已扫范围（防大库拖死）。
+ * 测试经 searchAcrossSessions 的 byteBudget 注入小预算，不构造 64MB fixture。
+ */
+export const SEARCH_SCAN_BYTE_BUDGET = SEARCH_SCAN_BUDGET_MB * BYTES_PER_MB
+
+/** 跨会话检索的单 session 扫描结果（零命中者也入 scanned——已扫范围对调用方可见）。 */
+interface CrossSearchScan {
+  sessionId: string
+  source: 'main' | 'subagent'
+  path: string
+  /** 用户标题（u11 metadataProvider 尽力补全；provider 缺省/抛错留空） */
+  name?: string
+  hits: SearchHit[]
+  /** 截断前的命中总数（> hits.length 即被 limit 截断，渲染「>N hits, showing first M」） */
+  hitsTotal?: number
+}
+
+/** 跨会话检索的未扫/跳过条目（有检测必有报告：每条未扫 id 都带原因）。 */
+interface CrossSearchSkipped {
+  sessionId: string
+  /** not-found=库中无此 id；byte-budget=字节预算在此处耗尽（其后全部未扫）；read-error=文件读取/解析失败 */
+  reason: 'not-found' | 'byte-budget' | 'read-error'
+  sizeBytes?: number
+}
+
+/** 跨会话检索 details（程序化消费/测试断言面）。 */
+export interface CrossSearchDetails {
+  pattern: string
+  scope: NonNullable<SessionReadParams['scope']>
+  degraded: boolean
+  byteBudget: number
+  /** 实际已扫字节和（只含解析成功文件） */
+  scannedBytes: number
+  scanned: CrossSearchScan[]
+  skipped: CrossSearchSkipped[]
+  truncated: boolean
+}
+
+/** 跨会话检索头部/未扫段的人话字节格式（MB 保留 1 位，<1MB 显示 KB）。 */
+function formatScanBytes(bytes: number): string {
+  if (bytes >= BYTES_PER_MB) return `${(bytes / BYTES_PER_MB).toFixed(1)}MB`
+  return `${Math.max(1, Math.round(bytes / BYTES_PER_KB))}KB`
+}
+
+/** 调用串内嵌 pattern 的转义（文案是 JSON-ish 形态，引号/反斜杠须保真可复制执行）。 */
+function escapeCallArg(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+/**
+ * 窄化前置拒绝（V8：宽搜明确拒绝，不静默超时）。返回结果不抛——引导类输出与
+ * F1（find 零匹配）/F2（多匹配消歧）同形态。
+ */
+function formatCrossSearchRejected(candidateCount: number): ToolResult {
+  const text = [
+    `跨会话检索已拒绝：候选集 ${candidateCount} 个 session 超出单次上限 ${MULTI_SEARCH_MAX_SESSIONS} 个。`,
+    `对大候选集做全文检索的扫描量不可控（单次字节上限 ${formatScanBytes(SEARCH_SCAN_BYTE_BUDGET)}）——先窄化，再检索。`,
+    `👉 先窄化候选集：session_read { action:"find", query:"<标题/cwd/时间关键词>" }`,
+    `   再对 find 结果中的完整 id 检索：session_read { action:"search", session:"<id1>,<id2>", pattern:"<关键词>" }（≤${MULTI_SEARCH_MAX_SESSIONS} 个）`,
+  ].join('\n')
+  return {
+    content: [{ type: 'text', text }],
+    details: { rejected: true, candidateCount, maxSessions: MULTI_SEARCH_MAX_SESSIONS },
+  }
+}
+
+/**
+ * 跨会话检索结果渲染：命中 session 块（完整 id + source + 标题若有 + 命中数 + 逐命中
+ * turn 索引/角色/片段 + 可直接执行的调用串）+ 已扫无命中 + 未扫（超预算，附单检指引）
+ * + not-found。结构行英文（渲染类现状风格），👉 指引中文（disambiguate/F1 同风格）。
+ */
+function formatCrossSearchText(d: CrossSearchDetails): string {
+  const scannedBytesLabel = `${formatScanBytes(d.scannedBytes)} of ${formatScanBytes(d.byteBudget)} budget`
+  const hitSessions = d.scanned.filter((s) => s.hits.length > 0)
+  const head =
+    `${hitSessions.length}/${d.scanned.length} session(s) hit for /${d.pattern}/` +
+    (d.degraded ? '（已降级为字面子串匹配）' : '') +
+    (d.scope !== 'all' ? ` scope=${d.scope}` : '') +
+    ` · scanned ${scannedBytesLabel}`
+
+  const lines: string[] = []
+  if (hitSessions.length > 0) lines.push('hits:')
+  let index = 0
+  for (const s of d.scanned) {
+    if (s.hits.length === 0) continue
+    index += 1
+    const parts = [`${index}. ${s.sessionId}`, s.source]
+    if (s.name !== undefined) parts.push(s.name)
+    const overflow = s.hitsTotal !== undefined && s.hitsTotal > s.hits.length
+    // 命中数是块级标注（对整个 session），不并入 ' · ' 信息段——紧跟末段拼接
+    const countLabel = overflow
+      ? `（>${s.hitsTotal} hits, showing first ${s.hits.length}）`
+      : `（${s.hits.length} hit${s.hits.length === 1 ? '' : 's'}）`
+    lines.push(`  ${parts.join(' · ')}${countLabel}`)
+    for (const h of s.hits) {
+      lines.push(`     T${pad(h.turnIndex)} #${h.entryIndex} ${h.role}: ${h.matchSnippet}`)
+    }
+    lines.push(
+      `     ↳ session_read { action:"search", session:"${s.sessionId}", pattern:"${escapeCallArg(d.pattern)}" }`,
+    )
+  }
+  const noHit = d.scanned.filter((s) => s.hits.length === 0)
+  if (noHit.length > 0) {
+    lines.push('scanned, no hit:')
+    for (const s of noHit) lines.push(`  ${s.sessionId} · ${s.source}`)
+  }
+  const overBudget = d.skipped.filter((s) => s.reason === 'byte-budget')
+  if (overBudget.length > 0) {
+    lines.push(`not scanned (byte budget ${formatScanBytes(d.byteBudget)} reached after ${formatScanBytes(d.scannedBytes)}):`)
+    for (const s of overBudget) {
+      lines.push(`  - ${s.sessionId}（${formatScanBytes(s.sizeBytes ?? 0)}）`)
+      lines.push(
+        `    👉 检索单个：session_read { action:"search", session:"${s.sessionId}", pattern:"${escapeCallArg(d.pattern)}" }`,
+      )
+    }
+  }
+  const notFound = d.skipped.filter((s) => s.reason === 'not-found')
+  if (notFound.length > 0) {
+    lines.push('not found in library (confirm full id via find):')
+    for (const s of notFound) lines.push(`  - ${s.sessionId}`)
+  }
+  const readErrors = d.skipped.filter((s) => s.reason === 'read-error')
+  if (readErrors.length > 0) {
+    lines.push('skipped (read/parse failed):')
+    for (const s of readErrors) lines.push(`  - ${s.sessionId}`)
+  }
+  if (hitSessions.length === 0 && d.scanned.length > 0) {
+    lines.push('👉 无命中：换更精确 pattern，或用 find 重新窄化候选集后重试。')
+  }
+  return `${head}\n${lines.join('\n')}`
+}
+
+/**
+ * 跨会话内容检索主体（u12 导出：byteBudget 参数供测试注入小预算，工具路径经 doSearch
+ * 走默认 SEARCH_SCAN_BYTE_BUDGET）。
+ *
+ * 流程：窄化拒绝（候选 > MULTI_SEARCH_MAX_SESSIONS，V8）→ buildSessionFileIndex（一次
+ * 根扫描，id 语义与 find 候选同源）→ 按传入顺序逐个「复用单会话扫描管线」（safeParse →
+ * buildTreeView → segmentTurns → collectSearchHits，零新解析；signal.abort 中断与单会话
+ * 一致抛错）→ 字节预算按序消耗（放不下的文件起整段停止，已扫范围 = 列表前缀，报告
+ * 每条未扫 id 与原因）→ 标题尽力补全（仅对已扫 session 的目录调 metadataProvider，
+ * 按目录去重 + 单目录 try/catch 降级留空）→ 渲染。
+ *
+ * limit 语义延续单会话（每 session 命中数上限，默认 SEARCH_DEFAULT_LIMIT）；候选 ≤10
+ * 且每 session ≤limit 命中，输出规模有界。truncated = 任一 session 命中被截断。
+ */
+export async function searchAcrossSessions(
+  ids: string[],
+  pattern: string,
+  signals: SessionReadSignals,
+  opts?: {
+    scope?: NonNullable<SessionReadParams['scope']>
+    limit?: number
+    signal?: AbortSignal
+    metadataProvider?: SessionMetadataProvider
+    byteBudget?: number
+  },
+): Promise<ToolResult> {
+  // ① 窄化前置（V8）：候选集超阈值明确拒绝（不进入扫描）
+  if (ids.length > MULTI_SEARCH_MAX_SESSIONS) {
+    return formatCrossSearchRejected(ids.length)
+  }
+
+  const scope = opts?.scope ?? 'all'
+  const limit = opts?.limit ?? SEARCH_DEFAULT_LIMIT
+  const byteBudget = opts?.byteBudget ?? SEARCH_SCAN_BYTE_BUDGET
+  const degraded = isCatastrophicPattern(pattern)
+  const regex = compilePattern(pattern)
+
+  // ② 候选索引（一次根扫描；候选数上限在上方已闸，索引只做 id 全覆盖）
+  const index = await buildSessionFileIndex(signals)
+
+  // ③ 按传入顺序逐个扫描（调用方列表顺序即优先级，字节预算按序消耗）
+  const scanned: CrossSearchScan[] = []
+  const skipped: CrossSearchSkipped[] = []
+  let scannedBytes = 0
+  let truncated = false
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i]!
+    const ref = index.get(id)
+    if (ref === undefined) {
+      skipped.push({ sessionId: id, reason: 'not-found' })
+      continue
+    }
+    if (scannedBytes + ref.sizeBytes > byteBudget) {
+      // 预算按序消耗：从这里起整段停止（含更小的后续文件也不扫）——已扫范围恒为
+      // 列表前缀，报告无歧义；超大单文件走括注的单检通路（单会话 search 不受此预算）
+      for (const rest of ids.slice(i)) {
+        skipped.push({ sessionId: rest, reason: 'byte-budget', sizeBytes: index.get(rest)?.sizeBytes })
+      }
+      break
+    }
+    // 复用单会话扫描管线（core 层只读复用，零新解析）；坏文件跳过不拖死整体（F6 只属单会话契约）
+    let turns: Turn[]
+    try {
+      const { entries } = await parseSessionFile(ref.path)
+      turns = segmentTurns(entries, new Set(buildTreeView(entries).leafPath))
+    } catch {
+      skipped.push({ sessionId: id, reason: 'read-error' })
+      continue
+    }
+    const hits = collectSearchHits(turns, regex, scope, opts?.signal)
+    if (hits.length > limit) {
+      truncated = true
+      scanned.push({
+        sessionId: id,
+        source: ref.source,
+        path: ref.path,
+        hits: hits.slice(0, limit),
+        hitsTotal: hits.length,
+      })
+    } else {
+      scanned.push({ sessionId: id, source: ref.source, path: ref.path, hits })
+    }
+    scannedBytes += ref.sizeBytes
+  }
+
+  // ④ 标题尽力补全（u11 provider 复用；仅对已扫 session 的所在目录，按目录去重 +
+  //    单目录 try/catch 记空——provider 缺省/抛错标题留空，检索本体不受影响）
+  if (opts?.metadataProvider !== undefined && scanned.length > 0) {
+    const titles = new Map<string, string>()
+    for (const dir of new Set(scanned.map((s) => dirname(s.path)))) {
+      let entries: SessionMetadataEntry[]
+      try {
+        entries = await opts.metadataProvider(dir)
+      } catch {
+        continue // 降级：该目录标题不可用（§6.6 同款 guard），留空继续
+      }
+      for (const e of entries) {
+        if (e.name !== undefined) titles.set(e.id, e.name)
+      }
+    }
+    for (const s of scanned) {
+      const name = titles.get(s.sessionId)
+      if (name !== undefined) s.name = name
+    }
+  }
+
+  const details: CrossSearchDetails = {
+    pattern,
+    scope,
+    degraded,
+    byteBudget,
+    scannedBytes,
+    scanned,
+    skipped,
+    truncated,
+  }
+  return { content: [{ type: 'text', text: formatCrossSearchText(details) }], details }
+}
+
+/**
+ * search：全文检索（design §3.4 search，M3 新实现）。
+ *
+ * u12 两种形态（design 2026-09-10 §2 目标 5 / §8.2 V8）：
+ * - session 含逗号 → 跨会话模式（searchAcrossSessions）：候选集 = find 输出的完整 id
+ *   列表，窄化前置 + 字节上限 + 分 session 渲染；
+ * - 否则单会话模式（现状零变化）：session 经 resolveSessionId 解析后对单个 session 检索。
+ */
 async function doSearch(
   params: SessionReadParams,
-  agentDir: string,
+  signals: SessionReadSignals,
   signal?: AbortSignal,
+  metadataProvider?: SessionMetadataProvider,
 ): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'search', agentDir, params.source)
-  if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const pattern = requireStr(params.pattern, 'pattern', 'search')
+  const rawSession = params.session
+  if (rawSession !== undefined && rawSession.includes(',')) {
+    const ids = rawSession
+      .split(',')
+      .map((s) => stripHash(s.trim()))
+      .filter((s) => s.length > 0)
+    return searchAcrossSessions(ids, pattern, signals, {
+      scope: params.scope,
+      limit: params.limit,
+      signal,
+      metadataProvider,
+    })
+  }
+  const agentDir = signals.agentDir
+  const resolved = await resolveSessionId(rawSession, 'search', agentDir, params.source)
+  if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const scope = params.scope ?? 'all'
   const limit = params.limit ?? SEARCH_DEFAULT_LIMIT
   const { entries } = await safeParse(resolved.fileName)
@@ -2171,7 +2467,7 @@ export async function handleSessionRead(
     case 'detail':
       return doDetail(params, agentDir)
     case 'search':
-      return doSearch(params, agentDir, signal)
+      return doSearch(params, norm, signal, cachedProvider)
     case 'export':
       return doExport(params, agentDir)
     case 'extract':

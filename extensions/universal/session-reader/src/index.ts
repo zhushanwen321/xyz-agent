@@ -37,13 +37,13 @@ const SessionReadSchema = Type.Object({
     ],
     {
       description:
-        'Action to perform: find (locate session), family (fork/subagent/workflow relations; recursive=true returns nested execution tree), outline (turn-level overview), expand (single-turn entries), detail (full text of turns), search (full-text grep), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps; requires session, optional runId focuses one run; step call sessionId jumps to outline/detail), result (fetch a subagent session final result text — same content as its completion notice; session = single id or comma-separated batch of at most 10, optional limit caps chars per item), doctor (show detected host environment and session-root diagnostics).',
+        'Action to perform: find (locate session), family (fork/subagent/workflow relations; recursive=true returns nested execution tree), outline (turn-level overview), expand (single-turn entries), detail (full text of turns), search (full-text grep, single session or cross-session over a comma-separated id list), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps; requires session, optional runId focuses one run; step call sessionId jumps to outline/detail), result (fetch a subagent session final result text — same content as its completion notice; session = single id or comma-separated batch of at most 10, optional limit caps chars per item), doctor (show detected host environment and session-root diagnostics).',
     },
   ),
   session: Type.Optional(
     Type.String({
       description:
-        'Session id, uuid fragment (e.g. e6c96), subagent record id (sa-xxx, precise lookup), or absolute .jsonl path (~ or ~/ allowed). Required for family/outline/expand/detail/search/export/extract/workflow/result. result also accepts a comma-separated list of up to 10 ids. # prefix auto-stripped.',
+        'Session id, uuid fragment (e.g. e6c96), subagent record id (sa-xxx, precise lookup), or absolute .jsonl path (~ or ~/ allowed). Required for family/outline/expand/detail/search/export/extract/workflow/result. result also accepts a comma-separated list of up to 10 ids. search also accepts a comma-separated list of up to 10 full ids (from find output) for cross-session search. # prefix auto-stripped.',
     }),
   ),
   query: Type.Optional(
@@ -158,7 +158,7 @@ const guidelines = [
 
 // ---- 工具 description（design §3.4，照搬措辞）----
 
-const description = `Read pi session files (conversation history) by semantic structure instead of raw bytes. Use when you need to review another session, trace a fork/subagent/workflow family, or locate a past decision. Eleven actions: find (locate by name/uuid fragment), family (fork/subagent/workflow relations), outline (turn-level overview, ~1500 token), expand (single-turn entry list), detail (full text of turns), search (full-text grep across a session), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps, step call sessionId jumps to outline/detail), result (fetch a subagent session final result text, same content as its completion notice; single id or comma-separated batch ≤10, optional limit chars per item default 8000), doctor (show detected host environment and session-root diagnostics). Progressive reading: outline → expand → detail. Do NOT use for the current session (the host provides current-session access) or to edit sessions (pi has /resume /fork).`
+const description = `Read pi session files (conversation history) by semantic structure instead of raw bytes. Use when you need to review another session, trace a fork/subagent/workflow family, or locate a past decision. Eleven actions: find (locate by name/uuid fragment), family (fork/subagent/workflow relations), outline (turn-level overview, ~1500 token), expand (single-turn entry list), detail (full text of turns), search (full-text grep across a session, or cross-session over a comma-separated id list ≤10 from find output), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps, step call sessionId jumps to outline/detail), result (fetch a subagent session final result text, same content as its completion notice; single id or comma-separated batch ≤10, optional limit chars per item default 8000), doctor (show detected host environment and session-root diagnostics). Progressive reading: outline → expand → detail. Do NOT use for the current session (the host provides current-session access) or to edit sessions (pi has /resume /fork).`
 
 /**
  * 已注册过 TUI provider/command 的 pi 实例集合。

@@ -673,3 +673,49 @@ export async function findSessions(
 
   return { matches, truncated }
 }
+
+// ============================================================
+// u12 跨会话内容检索（design 2026-09-10 §2 目标 5 / §8.2 V8）：候选索引
+// ============================================================
+
+/** 跨会话检索的候选文件引用（id/路径/大小/来源，字节预算与渲染所需的最小集）。 */
+export interface SessionFileRef {
+  sessionId: string
+  path: string
+  sizeBytes: number
+  mtime: number
+  source: SessionSource
+}
+
+/**
+ * 一次根扫描建 sessionId → 文件引用索引（u12，跨会话 search 的候选来源）。
+ *
+ * id 取自首行 header（复用 collectCandidates 的首行扫描——与 find 候选、resolveSessionId
+ * 同一 id 语义，agent 从 find 输出复制的完整 id 恒能命中；不按文件名反推，避免「文件改名
+ * 后与 header id 失配」的误报面）。workflow-state 跳过、坏 header 跳过、被去重根不产候选
+ * 均随 collectCandidates 继承。同 id 多根出现（[live] 与 [default] 不去重，V2 语义）时取
+ * mtime 新者（与 loadTitleIndex 合并语义一致）。
+ *
+ * 本函数不做数量限制——窄化前置（候选数阈值拒绝）与字节预算在调用方（tool-handler
+ * searchAcrossSessions），索引只负责「一次实扫、id 全覆盖」。
+ */
+export async function buildSessionFileIndex(
+  signals: SessionRootSignals,
+): Promise<Map<string, SessionFileRef>> {
+  const roots = await resolveSessionRoots(signals)
+  const candidates = await collectCandidates(roots, undefined, undefined)
+  const index = new Map<string, SessionFileRef>()
+  for (const c of candidates) {
+    const prev = index.get(c.ref.sessionId)
+    if (prev === undefined || c.ref.mtime > prev.mtime) {
+      index.set(c.ref.sessionId, {
+        sessionId: c.ref.sessionId,
+        path: c.ref.fileName,
+        sizeBytes: c.ref.sizeBytes,
+        mtime: c.ref.mtime,
+        source: c.source,
+      })
+    }
+  }
+  return index
+}

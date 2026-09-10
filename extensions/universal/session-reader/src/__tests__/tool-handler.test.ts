@@ -9,6 +9,9 @@ import {
   renderExtractItems,
   DOCTOR_CACHE_TTL_MS,
   METADATA_CACHE_TTL_MS,
+  MULTI_SEARCH_MAX_SESSIONS,
+  SEARCH_SCAN_BYTE_BUDGET,
+  searchAcrossSessions,
   type SessionReadParams,
   type SessionReadSignals,
 } from '../tool-handler.js'
@@ -2396,5 +2399,287 @@ describe('u11 metadataProvider 注入 + TTL 缓存（fixture，§6.6）', () => 
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// u12 跨会话内容检索（fixture，§2 目标 5 / §8.2 V8：窄化前置 + 字节上限 + 渲染）
+// 全部 mkdtemp fixture 自建自删，不触碰真实数据目录。
+// ---------------------------------------------------------------------------
+
+describe('u12 跨会话内容检索（fixture，V8）', () => {
+  let tmp: string
+  /** main 根（平铺，[default] 根直扫）与 subagent 根 */
+  let mainDir: string
+  const SLUG = '--demo-cwd--'
+  // uuidv7 风格形态（find 输出的完整 id 即此形态；u12 索引按 header id，不依赖文件名反推）
+  const mainId = (n: number) => `019e6c96-aaaa-bbbb-cccc-d${String(n).padStart(11, '0')}`
+  const subId = (n: number) => `019e6c96-aaaa-bbbb-cccc-e${String(n).padStart(11, '0')}`
+
+  /**
+   * 写多 turn session（链式 parentId——buildTreeView leaf 回溯需要，无链的后行 entry
+   * 会被当旁支过滤，MF-5 段同款教训）。turn 分段：user 开新 turn，assistant 并入当前。
+   */
+  async function writeSession(
+    id: string,
+    turns: Array<{ role: 'user' | 'assistant'; text: string }>,
+    opts?: { subagent?: boolean },
+  ): Promise<void> {
+    const dir = opts?.subagent
+      ? join(tmp, 'agent', 'subagents', SLUG, 'sessions')
+      : join(tmp, 'agent', 'sessions')
+    await mkdir(dir, { recursive: true })
+    const lines = [JSON.stringify({ type: 'session', id, cwd: '/demo' })]
+    turns.forEach((t, i) => {
+      lines.push(
+        JSON.stringify({
+          type: 'message',
+          id: `${id}-m${i}`,
+          parentId: i === 0 ? id : `${id}-m${i - 1}`,
+          message: { role: t.role, content: [{ type: 'text', text: t.text }] },
+        }),
+      )
+    })
+    await writeFile(join(dir, `${id}.jsonl`), lines.join('\n') + '\n')
+  }
+
+  /** 造大文件：追加一条 2KB filler 文本（字节上限用例用，pattern 避开 filler 字符）。 */
+  async function writeFatSession(id: string): Promise<void> {
+    await writeSession(id, [
+      { role: 'user', text: `filler ${'x'.repeat(2048)}` },
+      { role: 'assistant', text: 'done' },
+    ])
+  }
+
+  interface CrossDetails {
+    rejected?: boolean
+    candidateCount?: number
+    pattern: string
+    scope: string
+    degraded: boolean
+    byteBudget: number
+    scannedBytes: number
+    scanned: Array<{
+      sessionId: string
+      source: string
+      name?: string
+      hits: Array<{ turnIndex: number; entryIndex: number; role: string; matchSnippet: string }>
+      hitsTotal?: number
+    }>
+    skipped: Array<{ sessionId: string; reason: string; sizeBytes?: number }>
+    truncated: boolean
+  }
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'tool-handler-u12-'))
+    mainDir = join(tmp, 'agent', 'sessions')
+  })
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('① 窄化拒绝：候选超上限 → 拒绝文案 + 先 find 指引，不深扫（V8）', async () => {
+    // 库中放一个真实可命中的 session——拒绝路径不得把它扫出来
+    await writeSession(mainId(1), [
+      { role: 'user', text: '讨论 adj_factor 的历史数据' },
+      { role: 'assistant', text: 'adj_factor 表在 dws 库' },
+    ])
+    const ids = Array.from({ length: MULTI_SEARCH_MAX_SESSIONS + 1 }, (_, i) => mainId(i + 10))
+    const r = await handleSessionRead(
+      { action: 'search', session: ids.join(','), pattern: 'adj_factor' },
+      join(tmp, 'agent'),
+    )
+    const text = r.content[0].text
+    expect(text).toContain('跨会话检索已拒绝')
+    expect(text).toContain(`超出单次上限 ${MULTI_SEARCH_MAX_SESSIONS} 个`)
+    expect(text).toContain('先窄化')
+    expect(text).toContain('action:"find"')
+    expect(text).toContain('action:"search", session:"<id1>,<id2>"')
+    const d = r.details as Partial<CrossDetails>
+    expect(d.rejected).toBe(true)
+    expect(d.candidateCount).toBe(MULTI_SEARCH_MAX_SESSIONS + 1)
+    // 不深扫：可命中内容与命中结构都不出现
+    expect(text).not.toContain('adj_factor 表在 dws 库')
+    expect(text).not.toContain('hits:')
+    expect(d.scanned).toBeUndefined()
+  })
+
+  it('②a 字节上限截断：预算按序消耗，放不下的文件起整段停止并报告已扫范围', async () => {
+    const A = mainId(1)
+    const B = mainId(2)
+    await writeSession(A, [
+      { role: 'user', text: 'small session' },
+      { role: 'assistant', text: 'ok' },
+    ])
+    await writeFatSession(B)
+    // 直接调导出函数注入小预算（工具路径走默认 64MB，fixture 不构造 64MB 文件）
+    const r = await searchAcrossSessions([A, B], 'zzzkw', { agentDir: join(tmp, 'agent') }, {
+      byteBudget: 1024,
+    })
+    const d = r.details as CrossDetails
+    // A 扫完（无命中也入 scanned），B 放不下 → byte-budget，且其 sizeBytes 有报告
+    expect(d.scanned).toHaveLength(1)
+    expect(d.scanned[0].sessionId).toBe(A)
+    expect(d.scannedBytes).toBeGreaterThan(0)
+    expect(d.scannedBytes).toBeLessThanOrEqual(1024)
+    expect(d.skipped).toHaveLength(1)
+    expect(d.skipped[0]).toMatchObject({ sessionId: B, reason: 'byte-budget' })
+    expect(d.skipped[0].sizeBytes).toBeGreaterThan(1024)
+    const text = r.content[0].text
+    expect(text).toContain('not scanned')
+    expect(text).toContain(B)
+    expect(text).toContain(A)
+    // 未扫 id 附单独检索指引
+    expect(text).toContain(`action:"search", session:"${B}", pattern:"zzzkw"`)
+  })
+
+  it('②b 首个文件即超预算 → 0 扫描，整段未扫报告（不突破上限）', async () => {
+    const B = mainId(2)
+    await writeFatSession(B)
+    const r = await searchAcrossSessions([B], 'zzzkw', { agentDir: join(tmp, 'agent') }, {
+      byteBudget: 512,
+    })
+    const d = r.details as CrossDetails
+    expect(d.scanned).toHaveLength(0)
+    expect(d.scannedBytes).toBe(0)
+    expect(d.skipped).toEqual([{ sessionId: B, reason: 'byte-budget', sizeBytes: expect.any(Number) }])
+    expect(r.content[0].text).toContain('not scanned')
+  })
+
+  it('③ 命中渲染：session 列表（完整 id+source+标题）+ turn 索引/角色/片段 + 可执行调用串', async () => {
+    const A = mainId(1)
+    const B = subId(1)
+    const C = mainId(2)
+    // A：T000 两命中（user+assistant）+ T001 一命中（assistant）
+    await writeSession(A, [
+      { role: 'user', text: '查询 adj_factor 的历史数据' },
+      { role: 'assistant', text: 'adj_factor 表在 dws 库' },
+      { role: 'user', text: '换一个话题' },
+      { role: 'assistant', text: '再看 adj_factor 的最新分区' },
+    ])
+    await writeSession(B, [
+      { role: 'user', text: 'subagent task 无关键词' },
+      { role: 'assistant', text: '结果里含 adj_factor 字样' },
+    ], { subagent: true })
+    await writeSession(C, [
+      { role: 'user', text: '完全没有关键词的内容' },
+    ])
+    const provider: SessionMetadataProvider = async (dir) =>
+      dir === mainDir
+        ? [{ path: join(mainDir, `${A}.jsonl`), id: A, cwd: '/demo', name: '太保寿险深度研究', modified: new Date() }]
+        : []
+    const r = await handleSessionRead(
+      { action: 'search', session: `${A},${B},${C}`, pattern: 'adj_factor' },
+      { agentDir: join(tmp, 'agent'), liveSessionDir: mainDir },
+      undefined,
+      provider,
+    )
+    const text = r.content[0].text
+    // header：命中/已扫计数 + 默认预算标注（handleSessionRead 路径走 SEARCH_SCAN_BYTE_BUDGET，
+    // formatScanBytes 的 MB 形态恒 1 位小数）
+    expect(text).toContain('2/3 session(s) hit for /adj_factor/')
+    expect(text).toContain(`${(SEARCH_SCAN_BYTE_BUDGET / (1024 * 1024)).toFixed(1)}MB budget`)
+    // 命中块：完整 id + source + 标题（provider 注入）+ 命中数，列表序 = 传入序
+    expect(text).toContain(`1. ${A} · main · 太保寿险深度研究（3 hits）`)
+    expect(text).toContain(`2. ${B} · subagent（1 hit）`)
+    // turn 索引 + entry 序号 + 角色 + 片段
+    expect(text).toContain('     T000 #0 user: ')
+    expect(text).toContain('     T000 #1 assistant: ')
+    expect(text).toContain('     T001 #1 assistant: ')
+    // 可直接执行的调用串（真实参数 = pattern）
+    expect(text).toContain(`↳ session_read { action:"search", session:"${A}", pattern:"adj_factor" }`)
+    expect(text).toContain(`↳ session_read { action:"search", session:"${B}", pattern:"adj_factor" }`)
+    // 已扫无命中段
+    expect(text).toContain('scanned, no hit:')
+    expect(text).toContain(`${C} · main`)
+    const d = r.details as CrossDetails
+    expect(d.rejected).toBeUndefined()
+    expect(d.truncated).toBe(false)
+    expect(d.degraded).toBe(false)
+    expect(d.byteBudget).toBe(SEARCH_SCAN_BYTE_BUDGET)
+    expect(d.skipped).toEqual([])
+    expect(d.scanned.map((s) => s.sessionId)).toEqual([A, B, C])
+    expect(d.scanned[0].hits).toHaveLength(3)
+    expect(d.scanned[0].name).toBe('太保寿险深度研究')
+    expect(d.scanned[1].hits).toHaveLength(1)
+    // B 只有一条 user → 单 turn，assistant 命中在 T000 #1
+    expect(d.scanned[1].hits[0]).toMatchObject({
+      turnIndex: 0,
+      entryIndex: 1,
+      role: 'assistant',
+    })
+    expect(d.scanned[2].hits).toHaveLength(0)
+  })
+
+  it('④ 无命中形态 + not-found 报告（不在库中的 id 不中断整体）', async () => {
+    const A = mainId(1)
+    const GHOST = mainId(99)
+    await writeSession(A, [{ role: 'user', text: '普通内容' }])
+    const r = await handleSessionRead(
+      { action: 'search', session: `${A},${GHOST}`, pattern: 'zzznothing' },
+      join(tmp, 'agent'),
+    )
+    const text = r.content[0].text
+    expect(text).toContain('0/1 session(s) hit for /zzznothing/')
+    expect(text).toContain('scanned, no hit:')
+    expect(text).toContain(`${A} · main`)
+    expect(text).toContain('换更精确 pattern')
+    expect(text).toContain('not found in library')
+    expect(text).toContain(`- ${GHOST}`)
+    const d = r.details as CrossDetails
+    expect(d.scanned).toHaveLength(1)
+    expect(d.scanned[0].hits).toHaveLength(0)
+    expect(d.skipped).toEqual([{ sessionId: GHOST, reason: 'not-found' }])
+  })
+
+  it('⑤ 单会话语义无回归：无逗号 session 走原路径（hits 结构），pattern 含逗号不误分流', async () => {
+    const A = mainId(1)
+    await writeSession(A, [
+      { role: 'user', text: 'aaa plugin 内容' },
+      { role: 'assistant', text: 'bbb' },
+    ])
+    // 单 id：原 details.hits 结构与 header 形态不变
+    const r = await handleSessionRead(
+      { action: 'search', session: A, pattern: 'plugin' },
+      join(tmp, 'agent'),
+    )
+    expect(r.content[0].text).toContain('1 hit(s) for /plugin/')
+    const d = r.details as { hits: unknown[]; truncated: boolean; scanned?: unknown }
+    expect(d.hits).toHaveLength(1)
+    expect(d.truncated).toBe(false)
+    expect(d.scanned).toBeUndefined()
+    // pattern 含逗号不触发跨会话（分流只看 session）
+    const r2 = await handleSessionRead(
+      { action: 'search', session: A, pattern: 'aaa,bbb' },
+      join(tmp, 'agent'),
+    )
+    expect((r2.details as { hits: unknown[] }).hits).toHaveLength(0)
+    expect((r2.details as { scanned?: unknown }).scanned).toBeUndefined()
+    expect(r2.content[0].text).not.toContain('session(s) hit')
+  })
+
+  it('⑥ per-session limit 截断：超限 session 标注 >N hits，truncated=true', async () => {
+    const A = mainId(1)
+    await writeSession(A, [
+      { role: 'user', text: 'kw one' },
+      { role: 'assistant', text: 'kw two' },
+      { role: 'user', text: 'kw three' },
+    ])
+    const r = await searchAcrossSessions([A], 'kw', { agentDir: join(tmp, 'agent') }, { limit: 2 })
+    const d = r.details as CrossDetails
+    expect(d.truncated).toBe(true)
+    expect(d.scanned[0].hits).toHaveLength(2)
+    expect(d.scanned[0].hitsTotal).toBe(3)
+    expect(r.content[0].text).toContain('（>3 hits, showing first 2）')
+  })
+
+  it('⑦ abort 信号透传：跨会话扫描中断抛错（与单会话 MF-5 语义一致）', async () => {
+    const A = mainId(1)
+    await writeSession(A, [{ role: 'user', text: 'content' }])
+    const ac = new AbortController()
+    ac.abort()
+    await expect(
+      searchAcrossSessions([A], 'kw', { agentDir: join(tmp, 'agent') }, { signal: ac.signal }),
+    ).rejects.toThrow(/中断/)
   })
 })
