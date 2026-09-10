@@ -1,12 +1,15 @@
 // src/get-state-handshake.ts
 //
-// FR-4: get_state RPC 握手逻辑（W7 迁 pi 包，core engines/pi/get-state-handshake.ts
-// 逐字等价副本——仅依赖 stdin-writer）。
+// FR-4: get_state RPC 握手逻辑（W7 自 core engines/pi/get-state-handshake.ts 迁入。
+// 2026-09 S2 契约修复后与旧副本分叉：应答缺 sessionFile 不再悬挂，见
+// performGetStateHandshake 的停表分支——修复仅限本文件）。
 //
 // 通过 get_state RPC 查询子进程 sessionFile/sessionId，带超时重试。
 //   - 重试节奏：单次超时 GET_STATE_TIMEOUT_MS（2s）后，等 GET_STATE_RETRY_INTERVAL_MS
 //     （500ms）再发起下一次 get_state，最多 GET_STATE_MAX_RETRIES（3）次。
 //   - 加速路径：sessionFile 一旦拿到立即 resolve（不等剩余重试）。
+//   - 应答不完整（缺 sessionFile）：视同未应答——不清本轮 timer/retry 驱动，
+//     超时照常排 retry，3 轮耗尽 resolve 已收集字段（契约：至多 3 次尝试后必 settle）。
 //   - 全部超时：resolve 空对象（调用方走兜底查找）。
 
 import type { ChildProcess } from "node:child_process";
@@ -81,10 +84,14 @@ export function performGetStateHandshake(
 
       addResponseListener(reqId, (data: unknown) => {
         if (resolved) return;
-        clearTimeout(timer);
-        if (pendingRetry) clearTimeout(pendingRetry);
         extractGetStateFields(data, collected);
         if (collected.sessionFile) {
+          // 应答完整才停表（S2 契约修复）：缺 sessionFile 视同未应答，保留 timer
+          // 与 pendingRetry 全部驱动——重试的排定权威唯一（timer 超时回调），由它
+          // 照常排 retry 直至 3 轮耗尽 resolve collected；多驱动并发安全由既有
+          // resolved/attempts 守卫保证。
+          clearTimeout(timer);
+          if (pendingRetry) clearTimeout(pendingRetry);
           resolved = true;
           resolve(collected);
         }

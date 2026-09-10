@@ -160,12 +160,12 @@ describe("performGetStateHandshake（FR-4 重试握手）", () => {
     }
   });
 
-  it("response 只带 sessionId（无 sessionFile）→ 现存行为：timer 被清但不排 retry，握手悬挂", async () => {
-    // [疑似缺陷登记，仅测现存行为] resolver 到达即 clearTimeout(timer)（行 84），但
-    // retry 只在 timer 超时回调里排（行 70-79）——响应缺 sessionFile 时本轮 timer 被
-    // 清、retry 永不排、resolved 不置位：握手 promise 悬挂（fire-and-forget 消费面
-    // 不阻塞 run，timer 已 unref 不拖进程退出；真实 RPC 层 get_state 应答恒带
-    // sessionFile，该形态未在生产链路观测到）。
+  it("response 只带 sessionId（无 sessionFile）→ 视同未应答：剩余重试照发，3 轮耗尽 resolve 已收集字段", async () => {
+    // [S2 契约修复，方案 A] 不完整应答不清任何驱动（clearTimeout 移入 sessionFile
+    // 命中分支）——本轮 timer 超时照常排 retry，剩余轮次照发（writes 推进到 3）；
+    // 3 轮耗尽 resolve collected（带已收集的 sessionId），不悬挂。与头注「最多重试
+    // GET_STATE_MAX_RETRIES（3）次」契约一致（真实 RPC 层 get_state 应答恒带
+    // sessionFile，此形态为纯契约构造的防御面，生产未观测）。
     vi.useFakeTimers();
     try {
       const { child, writes } = makeFakeStdin();
@@ -177,15 +177,32 @@ describe("performGetStateHandshake（FR-4 重试握手）", () => {
         settled = true;
       });
 
+      // 第 1 轮应答缺 sessionFile（仅 sessionId）：不 resolve，驱动保留
       const firstId = (JSON.parse(writes[0]!) as { id: string }).id;
       reg.resolvers.get(firstId)?.({ sessionId: "only-id" });
       await vi.advanceTimersByTimeAsync(0);
       expect(settled).toBe(false);
 
-      // 推进远超全部重试窗（7s+）：无 retry 发生（writes 恒 1）、promise 悬挂
-      await vi.advanceTimersByTimeAsync(20_000);
-      expect(writes).toHaveLength(1);
-      expect(settled).toBe(false);
+      // 2s 超时 + 500ms 间隔 → 第 2 轮照发（重试轮未丢失）
+      await vi.advanceTimersByTimeAsync(2_500);
+      expect(writes).toHaveLength(2);
+
+      // 第 2 轮应答仍缺 sessionFile → 第 3 轮照发
+      const secondId = (JSON.parse(writes[1]!) as { id: string }).id;
+      reg.resolvers.get(secondId)?.({ sessionId: "only-id" });
+      await vi.advanceTimersByTimeAsync(2_500);
+      expect(writes).toHaveLength(3);
+
+      // 第 3 轮应答缺 sessionFile → 3 轮耗尽必 settle：resolve 已收集字段（非悬挂）
+      const thirdId = (JSON.parse(writes[2]!) as { id: string }).id;
+      reg.resolvers.get(thirdId)?.({ sessionId: "only-id" });
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(promise).resolves.toEqual({ sessionId: "only-id" });
+      expect(settled).toBe(true);
+
+      // 耗尽后不再发起新请求（attempts 封顶 3）
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(writes).toHaveLength(3);
     } finally {
       vi.useRealTimers();
     }
