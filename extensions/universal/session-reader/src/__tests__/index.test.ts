@@ -13,6 +13,8 @@ import { Check } from 'typebox/value'
  * 4. typeof ctx.ui.addAutocompleteProvider 运行时守卫（ui 缺方法 → 跳过，不崩）
  * 5. registerCommand + addAutocompleteProvider 组装（tui 模式下各注册一次）
  * 6. TypeBox schema 与 SessionReadParams 对齐：合法 params 过、非法 action/scope 拒
+ * 7. U3 信号包采集降级：sessionManager 缺 getSessionDir 方法 / getSessionDir 抛错 →
+ *    liveSessionDir 降级 undefined，find 正常返回不抛（ctx===undefined 形态由 1 覆盖）
  *
  * 不触碰真实文件系统：getAgentDir mock 固定假路径（execute 用例只触发 F5 抛错路径，
  * 不读盘）。
@@ -96,6 +98,55 @@ describe('sessionReaderExtension - execute 契约', () => {
     await expect(
       toolDef.execute('tc-1', { action: 'find' }, undefined, undefined, undefined),
     ).rejects.toThrow(/👉/)
+  })
+})
+
+describe('sessionReaderExtension - execute 信号包采集（U3：ctx 全形态降级）', () => {
+  type ExecFn = (
+    toolCallId: string,
+    params: unknown,
+    signal: AbortSignal | undefined,
+    onUpdate: unknown,
+    ctx: unknown,
+  ) => Promise<{ content: Array<{ type: string; text: string }> }>
+
+  let execute: ExecFn
+
+  beforeEach(() => {
+    const fake = makeFakePi()
+    sessionReaderExtension(fake.pi as unknown as ExtensionAPI)
+    execute = (fake.registerTool.mock.calls[0][0] as { execute: ExecFn }).execute
+  })
+
+  // find 零匹配不抛（返回提示文本）——用例只断言「正常返回」降级语义，不碰真实数据目录
+  //（mock agentDir = /tmp/pi-session-reader-test-agent 及其派生根均不存在，扫描瞬时零文件）
+  const FIND_NO_MATCH = { action: 'find', query: 'zzznoindexmatch' } as const
+
+  it('sessionManager 存在但缺 getSessionDir 方法 → 降级 liveSessionDir=undefined，find 正常返回不抛', async () => {
+    const ctx = { mode: 'tui', sessionManager: {} }
+    const r = await execute('tc-u3-1', FIND_NO_MATCH, undefined, undefined, ctx)
+    expect(r.content[0]?.type).toBe('text')
+  })
+
+  it('getSessionDir 调用抛错 → 同样降级不抛（可选链只防缺失，调用抛错由 try/catch 兜住）', async () => {
+    const ctx = {
+      mode: 'tui',
+      sessionManager: {
+        getSessionDir: () => {
+          throw new Error('boom')
+        },
+      },
+    }
+    const r = await execute('tc-u3-2', FIND_NO_MATCH, undefined, undefined, ctx)
+    expect(r.content[0]?.type).toBe('text')
+  })
+
+  it('ctx 提供正常 getSessionDir → 信号被采集（调用一次）且 find 正常返回', async () => {
+    const getSessionDir = vi.fn(() => '/tmp/pi-session-reader-test-live-dir')
+    const ctx = { mode: 'tui', sessionManager: { getSessionDir } }
+    const r = await execute('tc-u3-3', FIND_NO_MATCH, undefined, undefined, ctx)
+    expect(getSessionDir).toHaveBeenCalledTimes(1)
+    expect(r.content[0]?.type).toBe('text')
   })
 })
 

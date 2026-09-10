@@ -17,6 +17,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import { findSessions, type MatchedSession } from './discovery/find.js'
+import type { SessionRootSignals } from './discovery/roots.js'
 import { buildFamilyFromFs, listRecordManifests, type RecordManifest } from './discovery/subagents.js'
 import { readRunSnapshot, resolveWorkflows } from './discovery/workflows.js'
 import { parseSessionFile, type Entry, type ParseResult } from './core/parser.js'
@@ -1566,18 +1567,23 @@ export { extractFinalAssistantText }
 // ===========================================================================
 
 /**
- * session_read 工具的纯逻辑 handler（agentDir 注入，零 pi 依赖，可单测）。
+ * session_read 工具的纯逻辑 handler（信号包注入，零 pi 依赖，可单测）。
  *
  * 按 params.action 分发到 doFind/doFamily/doOutline/doExpand/doDetail/doSearch/doExport。
  * F1(resolve)/F4/F5/F6 抛 Error（含 👉）；F2 多匹配与 find 零匹配返回结果不抛。
  *
+ * @param signals 发现层信号包（design §7B：index.ts 采集 { agentDir, liveSessionDir? }，
+ *   采集端全可选链可降级）。兼容接受裸 agentDir string（存量单测与外部深 import 的旧签名
+ *   形态，入口归一化为只含 agentDir 的信号包，行为与旧签名逐字节一致；工具运行路径恒传
+ *   完整信号包——根列表消费随 u9/u11 切换，本单元纯接线零行为变化）。
  * @param signal 可选 AbortSignal（MF-5）：仅 search 消费（长扫描可中断）；其余 action 有界，不接。
  */
 export async function handleSessionRead(
   params: SessionReadParams,
-  agentDir: string,
+  signals: SessionRootSignals | string,
   signal?: AbortSignal,
 ): Promise<ToolResult> {
+  const agentDir = typeof signals === 'string' ? signals : signals.agentDir
   switch (params.action) {
     case 'find':
       return doFind(params, agentDir)

@@ -123,7 +123,7 @@ graph TD
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
 | u14a | committed | 2+1 | 脚本 759 行 + 测试 862 行；32/32 重跑绿；P-11 = 100%（11/11 全有 cwd，只读实测，登记于测试文件头）；CLI 实机负向探针（pgrep 命中 14+84 进程 → 拦截列 PID）；D-7 登记落地（R1 exit 0）；偏差 D-9/D-10 |
-| u14b | committed | 2 | 五处改动落地（退役/syncBundledResources 直挂/WARN 探测/getPiGlobalAgentDir 改 getDataDir 推导/getPiRoot 零引用）；pi-maintenance 9 用例 + 回归 43 用例重跑绿；tsc 0；偏差 D-6 |
+| u14b | committed | 3 | 五处改动落地（退役/syncBundledResources 直挂/WARN 探测/getPiGlobalAgentDir 改 getDataDir 推导/getPiRoot 零引用）；F3 打回修复（maxRetries×3）后 9 用例绿重跑；tsc 0；偏差 D-6 |
 | u15 | pending | 0 | — |
 | u16 | pending | 0 | — |
 | u17 | pending | 0 | — |
@@ -132,7 +132,7 @@ graph TD
 | u2 | in-progress | 1 | agent_2102d150 |
 | u6 | committed | 1 | PS-28~PS-33 六条 anchor 逐条实装核对（⑤补双锚、⑥修 distPath 缺 core/ 前缀）；守卫 exit 0（33 条）重跑确认；D6 软门禁恢复动作完成（探针族 11 文件/56 用例全绿）；偏差 D-1 |
 | u2 | committed | 1 | env.ts + env.test.ts（16 用例）重跑绿；tsc --noEmit exit 0；无偏差 |
-| u3 | verified待提交 | 1 | index.test 13/13 + 全包 341 绿重跑确认；tsc 0；偏差 D-8（`SessionRootSignals \| string` 联合 shim——100 处存量裸 string 调用在领地外，收紧归 u9+；与 D-3 同构） |
+| u3 | committed | 1 | index.test 13/13 + 全包 341 绿重跑确认；tsc 0；偏差 D-8 |
 | u8 | pending | 0 | — |
 | u9 | pending | 0 | — |
 | u10 | pending | 0 | — |

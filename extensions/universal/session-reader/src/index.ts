@@ -3,6 +3,7 @@ import { getAgentDir } from '@earendil-works/pi-coding-agent'
 import { StringEnum } from '@earendil-works/pi-ai'
 import { Type } from 'typebox'
 import { handleSessionRead, type SessionReadParams } from './tool-handler.js'
+import type { SessionRootSignals } from './discovery/roots.js'
 import { createHashAutocompleteProvider } from './tui/hash-provider.js'
 import { createSessionCommand } from './tui/session-command.js'
 
@@ -179,14 +180,26 @@ export default function sessionReaderExtension(pi: ExtensionAPI): void {
       params: SessionReadParams,
       signal: AbortSignal | undefined,
       _onUpdate: unknown,
-      _ctx: ExtensionContext,
+      ctx: ExtensionContext | undefined,
     ) {
       // 错误路径直接 throw：pi 契约只有 throw 才置 isError:true（tool_execution_end /
       // ToolResultMessage），handler 抛的 Error 文案（含 👉 恢复提示）原样成为
       // toolResult content，模型仍可读到。曾用 return {isError:true}——被 agent-loop
       // 丢弃，错误轮被标成功（W4 修复）。
       // signal 仅 search 消费（MF-5：长扫描可中断，Esc 不再挂死）；其余 action 有界不接
-      return handleSessionRead(params, getAgentDir(), signal)
+      // 信号包采集（design §7B）：可选链逐层降级——ctx===undefined（存量单测五参形态）、
+      // sessionManager 缺字段、getSessionDir 方法缺失，任一层不成立即 liveSessionDir=undefined
+      //（发现层走 [default]+[legacy] 三根降级）；方法调用抛错可选链兜不住，try/catch 同样
+      // 降级——宿主异常不得变成工具内部 TypeError。env/bundleUrl 信号 B 收缩后不采
+      //（design §6.13，doctor（u8）需要时再补）。
+      let liveSessionDir: string | undefined
+      try {
+        liveSessionDir = ctx?.sessionManager?.getSessionDir?.()
+      } catch {
+        liveSessionDir = undefined
+      }
+      const signals: SessionRootSignals = { agentDir: getAgentDir(), liveSessionDir }
+      return handleSessionRead(params, signals, signal)
     },
   })
 
