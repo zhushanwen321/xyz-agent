@@ -55,13 +55,20 @@ graph TD
 
 ## 5 合理偏差登记表
 
-（初始为空）
+| Unit | 偏差 | 处置 |
+|------|------|------|
+| U1 | port-contract.ts 实际在 src/ 根而非计划的 src/protocol/ 花括号范围 | 合理——计划路径写法笔误，按实际路径修改，语义等同；U2-U6 领地引用时同读 |
+| U1 | schema 同形校验落地为载荷级 JSON Schema 片段 runSessionParamsSchema，非帧级深校验 | 合理——帧级 params=ANY_JSON 不深校验是 schema.ts 现行设计裁决，U1 不越界 |
+| U1 | deprecated 落点扩展到 InteractResult 与 ProtocolParamsMap/ResultMap 的 interact 属性行（+2 处） | 合理——同属「声明处标注」，保证 IDE 消费面完整 |
+| U1 | resume-schema.test.ts 双键同形断言族在 U6 删 chat 键后随退役 | 登记——纳入 U6 测试处置范围（文件头已注明去向） |
+
+## 6 状态表
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| U1 | pending | 0 | — |
+| U1 | **blocked（环境冲突冻结）** | 1 | 开发完成且硬核验通过（SDK 7 文件 + 12 用例；重跑 152 passed）；改动已 staged 未 commit——被共享 pre-commit 的 C-pi-14 布局守卫拦截（`.bare/hooks/pre-commit` 跨 worktree 全局生效；本分支缺 `scripts/check-layout-literals.mjs` 交付物，且实测本分支存量 205 处旧布局字面量，其清理 sweep 在兄弟分支 `fix-session-reader-session-not-found` d484b3dac 单提交 72 文件）。**升级用户裁决：port sweep / 调整合并序 / 守卫豁免，三选一** |
 | U2 | pending | 0 | — |
 | U3 | pending | 0 | — |
 | U4 | pending | 0 | — |
@@ -72,4 +79,6 @@ graph TD
 ## 7 残留风险与变更历史
 
 - 残留风险：① 设计文档行号基于 commit 64e379a7c 附近，实施以符号 grep 锚定（文档头部已声明）；② 用户 L 批次并行改动可能与 U2 领地交叉——派发前核对工作区，L 批改动一律认知外处理；③ F7 staged 引擎副本新鲜度——U4 真机前确认（`19a5401ab` 已修 dev 启动恒重建）。
-- 变更历史：2026-09-11 计划创建（来源设计 v7，双 0 收敛版）。
+- 变更历史：
+  - 2026-09-11 计划创建（来源设计 v7，双 0 收敛版）。
+  - 2026-09-11 U1 开发完成 + 硬核验通过，流转 commit 被共享 pre-commit 的 C-pi-14 布局守卫拦截（守卫交付物缺失 + 本分支 205 处存量旧布局字面量，清理 sweep 在兄弟分支未合并）→ **U1 冻结升级用户**（dev-flow MANDATORY：环境冲突超出编排者裁决范围）。全流水线 packages/ 提交均被同一守卫拦截，冻结期间 doc-only 提交不受影响。
