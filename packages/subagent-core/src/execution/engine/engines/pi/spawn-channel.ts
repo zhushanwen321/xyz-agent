@@ -129,15 +129,15 @@ export const SUBAGENT_CORE_SPAWN_POLICIES: SpawnChannelPolicies = {
  * stdout tee hook（D4 单侧附加面①的归宿）。
  *
  * Runtime 侧的 piSessionLog JSONL 落盘（「pi 卡死时唯一证据」通道）挂在本 hook 上：
- * 每一行完整行在解析/分发**之前**原样回调（含空行；含 flushTrailing 的尾残行），
- * 解析失败不影响 tee。subagent-core 现状无 tee——缺省（不传）即 no-op，行为与
- * u4 前逐字节一致；u5 Runtime 接回 piSessionLog 时注入本 hook。
+ * 每一行完整行在解析/分发**之前**回调（行尾 '\r' 剥离后；含空行；含 flushTrailing 的
+ * 尾残行），解析失败不影响 tee。subagent-core 现状无 tee——缺省（不传）即 no-op；
+ * u5 Runtime 接回 piSessionLog 时注入本 hook。
  */
 export type StdoutTeeHook = (line: string) => void;
 
 /** createLineReader 可选项。 */
 export interface LineReaderOptions {
-  /** 完整行分派回调（每行含空行都会到达；行内容不含结尾 LF）。 */
+  /** 完整行分派回调（每行含空行都会到达；行内容不含结尾 LF，行尾 '\r' 已剥离）。 */
   onLine: (line: string) => void;
   /**
    * 流结束（close）时的尾残行回调（无换行结尾的最后一段）。缺省 = 复用 onLine。
@@ -155,7 +155,7 @@ export interface LineReaderOptions {
   maxBufferChars?: number;
 }
 
-/** LF 行读取器：跨 chunk 缓冲 + 按 \n 切分 + 尾残行冲刷。 */
+/** LF/CRLF 行读取器：跨 chunk 缓冲 + 按 \n 切分 + 行尾 \r 剥离 + 尾残行冲刷。 */
 export interface LineReader {
   /** 喂入 stdout chunk（编码已由调用方 setEncoding("utf8")）。 */
   push(chunk: string): void;
@@ -167,8 +167,10 @@ export interface LineReader {
  * LF 行读取单一实现（原语 2）。
  *
  * 吸收 session-runner attachStdoutPump 的手写 `stdoutBuffer += data; split("\n"); pop()`
- * 循环——机制一份，两侧（subagent-core / u5 Runtime）共享；subagent-core 缺省参数下
- * 与原手写实现逐字节等价（无上限、无 tee、尾残行走同一 onLine 时语义不变）。
+ * 循环——机制一份，两侧（subagent-core / u5 Runtime）共享。LF 形态下缺省参数与原手写
+ * 实现逐字节等价；行尾 '\r' 剥离是有意的防御增强（一致性审查修复批补齐）：对齐 pi 实装
+ * attachJsonlLineReader 与 runtime 旧 attachLfOnlyLineReader 的同款防御——pi stdout 消费
+ * 原语两侧统一承载，消除「runtime 剥 / subagent-core 不剥」的残留分叉。
  */
 export function createLineReader(options: LineReaderOptions): LineReader {
   const { onLine, onStdoutLine } = options;
@@ -177,9 +179,14 @@ export function createLineReader(options: LineReaderOptions): LineReader {
   let buffer = "";
 
   const emit = (line: string, handler: (line: string) => void): void => {
-    // tee 在解析/分发之前：诊断通道看到的字节序与子进程写出顺序一致
-    onStdoutLine?.(line);
-    handler(line);
+    // 行尾 '\r' 剥离（CRLF 防御）：只在行完整确定后（emit 时）做——跨 chunk 的 "\r\n"
+    //（\r 随上一 chunk 尾留缓冲、\n 在下一 chunk 头到达）拼接后完整行仍以 '\r' 结尾，
+    // 此处统一剥离，无需缓冲级特判；行中间 '\r' 是合法 JSON 字符串内容，不剥。
+    // 剥离先于 tee：Runtime piSessionLog 落盘字节与切换前（旧实现在 onLine 前剥离）一致。
+    const stripped = line.endsWith("\r") ? line.slice(0, -1) : line;
+    // tee 在解析/分发之前：诊断通道看到的行序与子进程写出顺序一致
+    onStdoutLine?.(stripped);
+    handler(stripped);
   };
 
   return {

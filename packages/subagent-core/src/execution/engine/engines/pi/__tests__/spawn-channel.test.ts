@@ -85,6 +85,59 @@ describe("createLineReader（原语 2：LF 行读取）", () => {
   });
 });
 
+describe("createLineReader CRLF 防御（行尾 \\r 剥离，对齐 pi 实装 / runtime 旧 attachLfOnlyLineReader）", () => {
+  it("单 chunk CRLF：行尾 \\r 剥离后交付", () => {
+    const lines: string[] = [];
+    const reader = createLineReader({ onLine: (l) => lines.push(l) });
+    reader.push('{"a":1}\r\n{"b":2}\r\n');
+    expect(lines).toEqual(['{"a":1}', '{"b":2}']);
+  });
+
+  it("跨 chunk \\r\\n 边界：\\r 随上一 chunk 尾留缓冲、\\n 在下一 chunk 头到达，拼接后正确剥离", () => {
+    const lines: string[] = [];
+    const reader = createLineReader({ onLine: (l) => lines.push(l) });
+    reader.push('{"a":1}\r'); // \n 未到达，"\\r" 随未完整行留缓冲，无行交付
+    expect(lines).toEqual([]);
+    reader.push('\n{"b":2}\r\n');
+    expect(lines).toEqual(['{"a":1}', '{"b":2}']);
+  });
+
+  it("混合 LF/CRLF 形态：CRLF 空行剥 \\r 后仍按空行到达 onLine", () => {
+    const lines: string[] = [];
+    const reader = createLineReader({ onLine: (l) => lines.push(l) });
+    reader.push("lf\n\r\ncrlf\r\nlf2\n");
+    expect(lines).toEqual(["lf", "", "crlf", "lf2"]);
+  });
+
+  it("行中间 \\r 是合法内容（如 JSON 字符串内），不剥", () => {
+    const lines: string[] = [];
+    const reader = createLineReader({ onLine: (l) => lines.push(l) });
+    reader.push('{"text":"a\rb"}\n');
+    expect(lines).toEqual(['{"text":"a\rb"}']);
+  });
+
+  it("尾残行以 \\r 结尾（流断在 CR 与 LF 之间）：flushTrailing 剥离后交付", () => {
+    const lines: string[] = [];
+    const reader = createLineReader({ onLine: (l) => lines.push(l) });
+    reader.push("tail\r");
+    reader.flushTrailing();
+    expect(lines).toEqual(["tail"]);
+  });
+
+  it("tee hook 收到剥离后的行（runtime piSessionLog 落盘与切换前一致的锚点）", () => {
+    const teed: string[] = [];
+    const lines: string[] = [];
+    const reader = createLineReader({
+      onLine: (l) => lines.push(l),
+      onStdoutLine: (l) => teed.push(l),
+    });
+    reader.push("a\r\nb\n");
+    reader.flushTrailing(); // 缓冲空，no-op
+    expect(teed).toEqual(["a", "b"]);
+    expect(lines).toEqual(["a", "b"]);
+  });
+});
+
 describe("createGetStateResponseRouter（原语 4：response id 路由）", () => {
   it("register → dispatch：命中即移除再调用（单次消费），二次分发 no-op", () => {
     const router = createGetStateResponseRouter();

@@ -36,7 +36,9 @@ export type PiEventListener = (event: PiMessage) => void
  * 行为不变替换，见 wireProcessHandlers）。本函数保留的唯一消费方是
  * rpc-client-lf-framing.test.ts 的 D10 分帧回归锚（测试文件不在 u5 领地内，删除须同批
  * 迁移测试锚，登记为后续清理项）。分帧语义与 createLineReader 等价（StringDecoder 与
- * setEncoding('utf8') 是同一底层机制）。新代码禁用本函数，走共享原语。
+ * setEncoding('utf8') 是同一底层机制；一致性审查修复批后行尾 '\r' 剥离也由共享层
+ * createLineReader 同款承载，两函数行为等价——此前共享层曾缺该防御，等价性仅在 LF
+ * 形态成立）。新代码禁用本函数，走共享原语。
  *
  * LF-only 行读取器（D10 分帧防御；pi dist/modes/rpc/jsonl.js attachJsonlLineReader 同款思路）。
  *
@@ -488,8 +490,10 @@ export class RpcClient implements IPiEngine {
     const stdoutLineReader = createLineReader({
       // tee hook（D4 单侧附加面①归宿）：piSessionLog 原始 JSONL 落盘（架构约定 #4，
       // 「pi 卡死时唯一证据」诊断通道）经行读取原语的 hook 位接回。hook 在解析/分发之前
-      // 回调（含 flushTrailing 尾残行），诊断字节序与 pi 写出序一致；保留旧 tee 的
-      // 「空白行不落盘」过滤，落盘内容与切换前逐行一致（S8 断言点）。
+      // 回调（含 flushTrailing 尾残行）；行尾 '\r' 剥离已由共享 createLineReader 承载
+      //（对齐 pi 实装与本文件旧 attachLfOnlyLineReader 防御，一致性审查修复批补齐），
+      // tee 收到剥离后的行——与切换前（旧 onLine 内 tee，收到的同为剥离后行）落盘字节
+      // 逐行一致成立（S8 断言点）；保留旧 tee 的「空白行不落盘」过滤。
       onStdoutLine: (line) => {
         if (!line.trim()) return
         this.piSessionLog?.write(line)
