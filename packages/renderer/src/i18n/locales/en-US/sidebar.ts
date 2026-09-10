@@ -80,6 +80,8 @@ export default {
   },
   assignProjectFailed: 'Failed to assign to project',
   forceQuitFailed: 'Failed to force quit: {msg}',
+  // [session-dead structural fix D3] explicit toast after forceQuit recovers the defer queue into the Composer draft
+  forceQuitQueueRecovered: '{count} queued message moved back to draft | {count} queued messages moved back to draft',
   forkGroup: {
     title: 'Branches',
     branchN: 'Branch {n}',

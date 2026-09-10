@@ -15,6 +15,8 @@
 import type { Ref } from 'vue'
 import { useChat } from '@/composables/features/chat/useChat'
 import { session as sessionApi } from '@/api'
+import { useCompactQueue } from '@/composables/panel/useCompactQueue'
+import { composerInjectionStore } from '@/composables/panel/composer-injection-store'
 import { useSearchModalDeps } from '@/composables/features/search/useSearchModalDeps'
 import { useSideDrawer } from '@/composables/features/drawer/useSideDrawer'
 import { useSubagentStore } from '@/stores/subagent'
@@ -59,10 +61,12 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
     targetSessionId,
   } = options
   const { t } = useI18n()
-  const { error: toastError } = useToast()
+  const { error: toastError, info: toastInfo } = useToast()
   const subagentStore = useSubagentStore()
   const workflowStore = useWorkflowStore()
-  const { abort: abortSession } = useChat()
+  const { abort: abortSession, clearDeferFlushRetryTimer } = useChat()
+  // [session-dead 结构性修复 D3] forceQuit 队列回收的清队/注入通路（单例，App.vue scope 常驻）
+  const compactQueue = useCompactQueue()
 
   async function onSelectSession(id: string): Promise<void> {
     try {
@@ -141,6 +145,18 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
    * 成功后的 UI 收敛不在此处：终态经 session.exited 广播由 useMessageEffects.handleSessionExited
    * 统一处理（markDead 置灰 + 错误消息入流 + toast），之后点击 dead session 走 restore 重开。
    * 失败（RPC error envelope）toast；session 不在活跃进程表时 runtime 幂等成功。
+   *
+   * [session-dead 结构性修复 D3] forceQuit 成功后回收该 session 的 defer 队列（仅挂用户
+   * 显式强制退出入口——设计 D4 置位点分型，K2 强杀等非用户路径不经此处）：
+   * 1. 清 core 的 1s 重投 timer + 连续失败计数（队列将被清空，重投脉冲失效）；
+   * 2. compactQueue.drain 整队回收（含已提交在途条目——进程已死确认帧永不再来），斩断
+   *    「forceQuit 的 occupancy 全复位帧触发自动 flush → ensureActive → 0.5s 复活」主腿；
+   * 3. 回收文本经 composer injection 一次性通道写回 Composer 草稿（insertTextAtCursor
+   *    追加语义，不覆盖用户正在输入的内容；多条按序 '\n\n' 拼接，设计 §5 检查点④定稿）。
+   *    时序：RPC reply 前 session.exited 已按 WS FIFO 到达并 markDead → dead 占位接管、
+   *    Composer 已卸载 → 注入请求滞留槽位，用户点击 dead session 走 restore 重开后由
+   *    useComposerInjection 的 onMounted 遗留请求补消费（草稿可见、可改、可一键重发）；
+   * 4. toast 一条「N 条排队消息已收回草稿」（N=0 不提示）。
    */
   async function onForceQuitSession(id: string): Promise<void> {
     try {
@@ -148,6 +164,19 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       toastError(t('sidebar.forceQuitFailed', { msg }))
+      return
+    }
+    clearDeferFlushRetryTimer(id)
+    const drained = compactQueue.drain(id)
+    if (drained.length > 0) {
+      const draftText = drained
+        .map((m) => m.text)
+        .filter((text) => text.trim().length > 0)
+        .join('\n\n')
+      if (draftText) {
+        composerInjectionStore.requestInjection({ target: 'current', sessionId: id, text: draftText })
+      }
+      toastInfo(t('sidebar.forceQuitQueueRecovered', drained.length, { named: { count: drained.length } }))
     }
   }
 

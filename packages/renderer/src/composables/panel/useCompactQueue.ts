@@ -105,6 +105,16 @@ export interface CompactQueue {
   /** 是否有待发消息（count > 0） */
   hasPending(sid: string): boolean
   /**
+   * [session-dead 结构性修复 D3] 整队回收：取出该 session 全部条目并清空分区，返回
+   * 出队快照（副本）。forceQuit 编排专用——pi 已被杀，未提交条目的自动投递权被斩断
+   * （L1 复活主腿），已提交在途条目（mode 已写）的确认帧也永不再来（进程消亡），
+   * 一并回收，文本交还用户处置（回 Composer 草稿）。
+   * 与 remove（单条撤销，已提交条目 no-op）、confirmDelivery（投递事实确认出队）
+   * 语义不同，不可互替：本方法是「用户停止意图」对整队的强制回收（唯一允许动已提交
+   * 条目的出口，前提 = 进程已死、在途记账不再有意义）。
+   */
+  drain(sid: string): QueuedMessage[]
+  /**
    * [session-occupancy u4a / D5.3 ①] 投递确认出队 + 气泡转态（core CompactQueueLike.
    * confirmDelivery 契约）：message_end(user) 帧经 core effects/registry ① 命中本队列
    * 条目时调用——按 id 精确移除并返回 true（出队成功）；未知 id no-op 返回 false（core
@@ -283,6 +293,16 @@ function createCompactQueue(): CompactQueue {
     return count(sid) > 0
   }
 
+  /** [session-dead 结构性修复 D3] 整队回收（语义见接口 jsdoc）：快照取出 + 清空分区 */
+  function drain(sid: string): QueuedMessage[] {
+    let drained: QueuedMessage[] = []
+    state.updateFor(sid, (p) => {
+      drained = p.messages.map((m) => ({ ...m }))
+      p.messages = []
+    })
+    return drained
+  }
+
   // per-session in-flight 守卫（S2）：flush 进行中重复触发复用同一 promise，不重复发送
   const inflightFlushes = new Map<string, Promise<boolean>>()
 
@@ -371,7 +391,7 @@ function createCompactQueue(): CompactQueue {
     }
   }
 
-  return { enqueue, remove, count, peek, hasPending, confirmDelivery, flush, _clearAllForTest: state._clearAllForTest }
+  return { enqueue, remove, count, peek, hasPending, drain, confirmDelivery, flush, _clearAllForTest: state._clearAllForTest }
 }
 
 // [session-occupancy u4a / D5.3] 注册 defer 队列 provider（core effects/registry ① 的注入点）。

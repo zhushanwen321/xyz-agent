@@ -79,6 +79,8 @@ export default {
   },
   assignProjectFailed: '归入项目失败',
   forceQuitFailed: '强制退出失败：{msg}',
+  // [session-dead 结构性修复 D3] 强制退出后 defer 队列回收进 Composer 草稿的显式提示
+  forceQuitQueueRecovered: '{count} 条排队消息已收回草稿',
   forkGroup: {
     title: '本会话的分支',
     branchN: '分支 {n}',

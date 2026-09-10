@@ -312,7 +312,10 @@ function armDeferFlushRetry(sid: string, chat: ChatStoreInstance, deps: EnsureSt
 }
 
 /** [簇 A1] 清指定 session 的重投 timer（disposeSession 编排 + 测试隔离共用）。
- *  [session-dead 第三环] 同步清连续失败计数（与 timer 同生命周期，防跨用例/跨会话泄漏）。 */
+ *  [session-dead 第三环] 同步清连续失败计数（与 timer 同生命周期，防跨用例/跨会话泄漏）。
+ *  [session-dead 结构性修复 D3] 经 createUseChat 返回面暴露给 renderer forceQuit 编排
+ *  （不进 domain/chat barrel——对外导出面不变）：用户强制退出后队列整体回收进 Composer
+ *  草稿，重投脉冲与失败计数随之失效（否则残留 1s timer 对空队列重投、计数跨入下一轮意图）。 */
 function clearDeferFlushRetryTimer(sid: string): void {
   const timer = deferFlushRetryTimers.get(sid)
   if (timer !== undefined) {
@@ -679,7 +682,8 @@ export async function submitQueuedEntry(
  *
  * @param deps 依赖注入（chatApi/writeSegments/getChatStore/getSessionStore/toast/t/getCompactQueue）
  * @returns send/steer/followUp/abort/compact/editAndResend/hydrateHistory/loadMoreHistory/
- *          hasMoreHistory/setHistoryTruncated/disposeSession/sendBash/abortBash
+ *          hasMoreHistory/setHistoryTruncated/disposeSession/sendBash/abortBash/
+ *          clearDeferFlushRetryTimer
  */
 export function createUseChat(deps: UseChatDeps) {
   const chat = deps.getChatStore()
@@ -1259,6 +1263,8 @@ export function createUseChat(deps: UseChatDeps) {
     disposeSession,
     sendBash,
     abortBash,
+    // [session-dead 结构性修复 D3] forceQuit 队列回收编排消费：清重投 timer + 失败计数
+    clearDeferFlushRetryTimer,
   }
 }
 
