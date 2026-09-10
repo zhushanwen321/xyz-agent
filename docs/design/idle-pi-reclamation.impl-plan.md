@@ -87,12 +87,13 @@ graph TD
 | R3 | restore elapsed 日志、按拍合并广播、每拍水位实现落 u2（设计列在 U3） | 文件领地连续性：三者分别在 session-service.ts（u2 领地）与 reaper tick（u2 新模块）内；U3 的列举是编排视角（「挂载时这些能力就绪」）非文件归属 | D5（elapsed）、D3 第 7 步（合并广播）、D7（水位） |
 | R4 | lastViewedAt 清理挂点（removeSessionEntry 内）落 u2（设计属 U1 范畴） | session-lifecycle.ts 整文件领地归 u2，避免 u1b 跨领地改一行；u1b→u2 紧邻串行，中间态残留为死数据（每 sid 一个数字，无消费者读取前无行为） | D2#6「清理挂点 = lifecycle.delete」 |
 | R5 | V1-V7 真机验收不在任何 dev 单元内，作为阶段 5 Gate B 逐行签收活动执行（V6 7 天长跑项登记为交付后观察项） | 真机场景需打包版 app + 真实使用节奏，非 subagent 文件编辑任务；集成测试（u4）覆盖 V1 主干的可自动化部分 | §4 验收场景表 |
+| R6 | u1a 领地修订：实际 13 文件（原计划 4 文件）——新增 `services/ports/pi-engine.ts`（IPiEngine 端口扩展 lastActivityAt/touchActivity/SendCommandOptions）+ 8 个既有测试文件（fake client 补成员 / getClient 空守卫桩） | dispatcher 依赖端口类型 IPiEngine 而非具体 RpcClient——touch API 必须上端口才能被 dispatcher 消费（结构性必需，非顺手改）；8 个测试文件是实现 IPiEngine 的 fake，接口扩展后 tsc 强制补齐。改动全为纯追加，零断言削弱（编排者已逐 diff 核验） | 设计 D1/D6-1 的消费链（dispatcher→pm.getClient→IPiEngine） |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u1a | pending | 0 | — |
+| u1a | committed | 2 | commit 64e70ae51；tsc 绿 + 10 文件 129 用例绿。轮 1 前任速率限制中断（语义已完整，缺 1 个测试 fake 类型成员），轮 2 接替者收尾（1 文件）。偏差 R6 已入登记表 |
 | u1b | committed | 1 | commit acc603d4d；session-viewed-at 6 用例 + relay-registry 26 用例绿；偏差 2 条已入登记表（挂点入口化 / 可选交叉成员） |
 | u2 | pending | 0 | — |
 | u3 | pending | 0 | — |
