@@ -138,15 +138,21 @@
           variant="secondary"
           class="h-5 rounded-sm px-1.5 font-mono text-[9.5px]"
           :disabled="refreshing"
+          data-testid="quota-refresh-btn"
           @click.stop="onRefresh"
         >
           {{ refreshing ? t('panel.context.refreshing') : t('panel.context.refresh') }}
         </Button>
-        <!-- 未配置态：显示「配置」按钮跳转 Settings（偏差 #D） -->
+        <!--
+          D11：失败态 footer 同时给「刷新」与「配置」。现状是 v-if matchedProviderId / v-else 二选一
+          ——「已启用但凭证缺失」的 provider 必有 matchedProviderId，只会拿到「刷新」，而刷新在凭证
+          缺失时只会再失败一次，形成死路。error 非空即查询失败态，此时补上跳设置页的恢复入口。
+        -->
         <Button
-          v-else
+          v-if="!matchedProviderId || error"
           variant="secondary"
           class="h-5 rounded-sm px-1.5 font-mono text-[9.5px]"
+          data-testid="quota-configure-btn"
           @click.stop="openSettings"
         >
           {{ t('panel.context.configureCodingPlan') }}

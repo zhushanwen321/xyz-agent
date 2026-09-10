@@ -37,6 +37,7 @@ import type {
   SetProviderData,
   QuotaPreset,
   QuotaAuthKind,
+  QuotaCredentialSource,
   QuotaFetchFailureReason,
   NormalizedQuotaRow,
 } from '@xyz-agent/shared'
@@ -56,6 +57,7 @@ import {
   type SettingsToast,
   type QuotaConfigureState,
   type QuotaTestStatus,
+  type ReadinessMissing,
 } from '../injection-keys'
 
 // ── fixture ──
@@ -156,7 +158,7 @@ const CATALOG_GATEWAY_P: ProviderInfo = {
 
 // ── injection stub（零 renderer import：契约对齐 injection-keys.ts）──
 
-/** QuotaConfigureState 最小 stub：字段逐一对齐接口（ProviderEditBody 解构后全量透传给 CodingPlanSection） */
+/** QuotaConfigureState 最小 stub：字段逐一对齐契约 v2（ProviderEditBody 解构后全量透传给 CodingPlanSection） */
 function makeQuotaState(): QuotaConfigureState {
   return {
     fetcherId: ref<string | undefined>(undefined),
@@ -164,10 +166,14 @@ function makeQuotaState(): QuotaConfigureState {
     enabled: ref(false),
     cookieInput: ref(''),
     apiKeyInput: ref(''),
-    apiKeyConfigured: ref(false),
+    credentialSource: ref<QuotaCredentialSource>('provider'),
+    providerCredentialAvailable: ref(false),
+    quotaApiKeyConfigured: ref(false),
+    providerCredentialPendingSave: ref(false),
     workspaceInput: ref(''),
     workspaceConfigured: ref(false),
     needsWorkspace: ref(false),
+    readiness: ref<{ ready: boolean; missing: ReadinessMissing[] }>({ ready: false, missing: [] }),
     testStatus: ref<QuotaTestStatus>('idle'),
     testError: ref(''),
     quotaData: ref<NormalizedQuotaRow | null>(null),
@@ -179,12 +185,8 @@ function makeQuotaState(): QuotaConfigureState {
     helpText: ref<string | undefined>(undefined),
     configuring: ref(false),
     configureError: ref(''),
-    toggleEnabled: async () => {},
-    selectFetcher: async () => {},
-    saveCookie: async () => {},
-    saveApiKey: async () => {},
-    saveWorkspace: async () => {},
-    testQuery: async () => {},
+    setEnabled: async () => {},
+    saveAndTest: async () => {},
     reset: () => {},
   }
 }
@@ -691,9 +693,9 @@ describe('添加模型表单：reasoning 思考开关（D4）', () => {
   })
 })
 
-// ══ 场景 ⑦：Coding Plan workspace 输入回写（D1-1 资源维度 fetcher 透传面）══════
+// ══ 场景 ⑦：Coding Plan 接线（契约 v2：workspace 回写 + R4 carry-in 槽位哨兵排除）══════
 
-describe('quota workspace 输入回写注入态', () => {
+describe('quota 接线注入态（契约 v2 透传）', () => {
   it('CodingPlanSection 上抛 update:workspaceInput → 写回注入的 quotaWorkspaceInput ref', async () => {
     // 捕获注入的 quota state（ProviderEditBody 透传给 CodingPlanSection 的 workspace 真源）
     let state: QuotaConfigureState | undefined
@@ -705,6 +707,8 @@ describe('quota workspace 输入回写注入态', () => {
     await flushPromises()
 
     // cookie 类 + 资源维度 fetcher → CodingPlanSection 渲染 workspace 块
+    // （契约 v2：D8 要求类型已选才渲染参数区，故先给出 fetcherId）
+    state!.fetcherId.value = 'opencode-go'
     state!.isCookieAuth.value = true
     state!.needsWorkspace.value = true
     await nextTick()
@@ -716,6 +720,85 @@ describe('quota workspace 输入回写注入态', () => {
     await nextTick()
 
     expect(state!.workspaceInput.value).toBe('wrk_9')
+  })
+
+  /**
+   * R4（impl-plan §5）：providerCredentialPendingSave 是 carry-in 可写 ref，由 ProviderEditBody
+   * 按 `form.apiKey !== '' && !== API_KEY_CLEAR_SENTINEL` 写入。判定式排除哨兵是必须的：
+   * 用户点「清除」时 form.apiKey === '__CLEAR__'（非空但语义是无凭据），只用 `!== ''` 会让
+   * UI 显示与事实相反的「已填写，保存后即可查询」（§7.4 两套文案）。
+   */
+  it('provider 表单填 API Key → pendingSave=true 且 UI 渲染「已填写，保存后即可查询」文案', async () => {
+    let state: QuotaConfigureState | undefined
+    quotaFactoryStub.mockImplementationOnce(() => {
+      state = makeQuotaState()
+      return state
+    })
+    wrapper = mountBody(APIKEY_P)
+    await flushPromises()
+
+    // 注入态：选中 api-key 类类型、来源=provider、provider 侧无可用凭据 → 警告文案可见
+    state!.fetcherId.value = 'zhipu'
+    state!.credentialSource.value = 'provider'
+    state!.providerCredentialAvailable.value = false
+    await nextTick()
+    // 草稿为空 → 「还没有可用的 API Key」
+    expect(wrapper.text()).toContain('settings.providerEdit.quotaProviderCredentialMissing')
+    expect(state!.providerCredentialPendingSave.value).toBe(false)
+
+    // 表单里填 Key（尚未保存 provider）→ carry-in ref 翻转 + 文案切换（用户可见）
+    await wrapper.find('[data-testid="provider-edit-apikey"]').setValue('sk-draft-key')
+    await flushPromises()
+    expect(state!.providerCredentialPendingSave.value).toBe(true)
+    expect(wrapper.text()).toContain('settings.providerEdit.quotaProviderCredentialPendingSave')
+    expect(wrapper.text()).not.toContain('settings.providerEdit.quotaProviderCredentialMissing')
+  })
+
+  it('点「清除」写入 __CLEAR__ 哨兵 → pendingSave 回 false，文案退回「还没有可用的 API Key」', async () => {
+    let state: QuotaConfigureState | undefined
+    quotaFactoryStub.mockImplementationOnce(() => {
+      state = makeQuotaState()
+      return state
+    })
+    wrapper = mountBody(APIKEY_P)
+    await flushPromises()
+
+    state!.fetcherId.value = 'zhipu'
+    state!.credentialSource.value = 'provider'
+    state!.providerCredentialAvailable.value = false
+    await wrapper.find('[data-testid="provider-edit-apikey"]').setValue('sk-draft-key')
+    await flushPromises()
+    expect(state!.providerCredentialPendingSave.value).toBe(true)
+
+    // 清除按钮（provider.apiKeySet=true 时才渲染）→ form.apiKey = API_KEY_CLEAR_SENTINEL
+    const clearBtn = wrapper.find('button[aria-label="settings.providerEdit.clearKey"]')
+    expect(clearBtn.exists()).toBe(true)
+    await clearBtn.trigger('click')
+    await flushPromises()
+
+    // 哨兵非空，但语义 = 无凭据：pendingSave 必须回 false，否则文案与事实相反
+    expect(state!.providerCredentialPendingSave.value).toBe(false)
+    expect(wrapper.text()).toContain('settings.providerEdit.quotaProviderCredentialMissing')
+    expect(wrapper.text()).not.toContain('settings.providerEdit.quotaProviderCredentialPendingSave')
+  })
+
+  it('provider 表单草稿清空（删除已输入内容）→ pendingSave 回 false', async () => {
+    let state: QuotaConfigureState | undefined
+    quotaFactoryStub.mockImplementationOnce(() => {
+      state = makeQuotaState()
+      return state
+    })
+    wrapper = mountBody(APIKEY_P)
+    await flushPromises()
+
+    const input = wrapper.find('[data-testid="provider-edit-apikey"]')
+    await input.setValue('sk-draft-key')
+    await flushPromises()
+    expect(state!.providerCredentialPendingSave.value).toBe(true)
+
+    await input.setValue('')
+    await flushPromises()
+    expect(state!.providerCredentialPendingSave.value).toBe(false)
   })
 })
 

@@ -15,11 +15,11 @@
  */
 import { inject, ref } from 'vue'
 import type { ComputedRef, InjectionKey, Ref } from 'vue'
-import type { ProviderInfo, NormalizedQuotaRow, QuotaPreset, QuotaAuthKind, QuotaFetchFailureReason } from '@xyz-agent/shared'
-import type { QuotaConfigureState, QuotaTestStatus } from '@xyz-agent/core'
+import type { ProviderInfo, NormalizedQuotaRow, QuotaPreset, QuotaAuthKind, QuotaCredentialSource, QuotaFetchFailureReason } from '@xyz-agent/shared'
+import type { QuotaConfigureState, QuotaTestStatus, ReadinessMissing } from '@xyz-agent/core'
 
 // 状态契约 SSOT re-export（消费方 CodingPlanSection / settings barrel 经本模块取类型）
-export type { QuotaConfigureState, QuotaTestStatus }
+export type { QuotaConfigureState, QuotaTestStatus, ReadinessMissing }
 
 // ── ① Toast ──
 
@@ -58,16 +58,22 @@ function noopAsync(): Promise<void> {
   return Promise.resolve()
 }
 
+// 契约 v2（coding-plan-quota-config-ux §7.1）：草稿模型 + readiness/credentialSource，
+// 旧动作成员（selectFetcher/save*/testQuery/toggleEnabled）与 apiKeyConfigured 已移除
 const NOOP_FACTORY: UseQuotaConfigureFactory = () => ({
   fetcherId: ref<string | undefined>(undefined),
   fetcherOptions: [],
   enabled: ref(false),
   cookieInput: ref(''),
   apiKeyInput: ref(''),
-  apiKeyConfigured: ref(false),
+  credentialSource: ref<QuotaCredentialSource>('provider'),
+  providerCredentialAvailable: ref(false),
+  quotaApiKeyConfigured: ref(false),
+  providerCredentialPendingSave: ref(false),
   workspaceInput: ref(''),
   workspaceConfigured: ref(false),
   needsWorkspace: ref(false),
+  readiness: ref({ ready: false, missing: [] as ReadinessMissing[] }),
   testStatus: ref<QuotaTestStatus>('idle'),
   testError: ref(''),
   quotaData: ref<NormalizedQuotaRow | null>(null),
@@ -79,12 +85,8 @@ const NOOP_FACTORY: UseQuotaConfigureFactory = () => ({
   helpText: ref<string | undefined>(undefined),
   configuring: ref(false),
   configureError: ref(''),
-  toggleEnabled: noopAsync,
-  selectFetcher: noopAsync,
-  saveCookie: noopAsync,
-  saveApiKey: noopAsync,
-  saveWorkspace: noopAsync,
-  testQuery: noopAsync,
+  setEnabled: noopAsync,
+  saveAndTest: noopAsync,
   reset: () => {},
 })
 

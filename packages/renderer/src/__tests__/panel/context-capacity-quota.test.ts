@@ -327,16 +327,18 @@ describe('ContextCapacityPopover coding-plan 区', () => {
     })
   })
 
-  describe('refresh 路径失败态（A2-4 reason 消费 + DOM 渲染）', () => {
+  describe('刷新 / 失败态 DOM（A2-4 reason 消费 + D11 双入口）', () => {
     /**
      * 打开 popover：HoverCardContent 渲染在 reka-ui HoverCardPortal（document.body）。
      * trigger('focus') → reka onFocus → onOpen（openDelay 700ms 后 open=true）。
      * 只 fake setTimeout/clearTimeout（reka open 计时器），microtask 不受影响。
+     * @param openSettings - AppShell provide('openSettings') 的测试替身（断言 D11「配置」入口可达）
      */
-    async function openPopover(): Promise<ReturnType<typeof mount>> {
+    async function openPopover(openSettings: () => void = () => {}): Promise<ReturnType<typeof mount>> {
       const wrapper = mount(ContextCapacityPopover, {
         props: { modelId: 'zhipu/glm-4' },
         attachTo: document.body,
+        global: { provide: { openSettings } },
       })
       await flushPromises()
       await wrapper.find('[title="上下文容量"]').trigger('focus')
@@ -396,6 +398,76 @@ describe('ContextCapacityPopover coding-plan 区', () => {
       // error 经 '@/i18n' mock 返回 key 本身（vitest-i18n-setup 插值 {error}）
       const bodyText = document.body.textContent ?? ''
       expect(bodyText).toContain('查询失败：panel.context.quotaFailNetwork')
+      wrapper.unmount()
+    })
+
+    // ── D11（coding-plan-quota-config-ux §6.12）：失败态 footer 双入口 ──
+
+    it('D11 失败态 footer 同时给「刷新」与「配置」；点「配置」触发 openSettings（死路给出路）', async () => {
+      setupProviders([zhipuProvider])
+      const quotaStore = useQuotaStore()
+      quotaStore.setCache('zhipu', mockQuotaRow, 500)
+      // 「已启用但凭证缺失」的必经形态：matchedProviderId 存在 + error 非空
+      quotaStore.setError('zhipu', 'panel.context.quotaFailNoCredential')
+
+      const openSettings = vi.fn()
+      const wrapper = await openPopover(openSettings)
+      await flushPromises()
+
+      // 用户可见：失败文案 + 两个恢复动作同屏（原来只有「刷新」，刷新在凭证缺失时只会再失败一次）
+      expect(document.body.textContent).toContain('查询失败：panel.context.quotaFailNoCredential')
+      const refreshBtn = findBodyButton('刷新')
+      const configureBtn = findBodyButton('配置')
+      expect(refreshBtn).toBeTruthy()
+      expect(configureBtn).toBeTruthy()
+
+      configureBtn!.click()
+      await flushPromises()
+      expect(openSettings).toHaveBeenCalledTimes(1)
+      wrapper.unmount()
+    })
+
+    it('D11 边界：成功态（有数据无 error）footer 只有「刷新」，不渲染「配置」（形态不被改变）', async () => {
+      setupProviders([zhipuProvider])
+      const quotaStore = useQuotaStore()
+      quotaStore.setCache('zhipu', mockQuotaRow, 500)
+
+      const wrapper = await openPopover()
+      await flushPromises()
+
+      expect(findBodyButton('刷新')).toBeTruthy()
+      expect(findBodyButton('配置')).toBeUndefined()
+      wrapper.unmount()
+    })
+
+    it('D11 边界：无数据态（matchedProviderId 且无 error）footer 只有「刷新」，不渲染「配置」', async () => {
+      setupProviders([zhipuProvider])
+
+      const wrapper = await openPopover()
+      await flushPromises()
+
+      // 从未查询：无 quotaRow 也无 error → 仍保持单按钮形态
+      expect(document.body.textContent).toContain('无 Coding Plan 数据')
+      expect(findBodyButton('刷新')).toBeTruthy()
+      expect(findBodyButton('配置')).toBeUndefined()
+      wrapper.unmount()
+    })
+
+    it('D11 边界：provider 未命中 quota → footer 只有「配置」（原 v-else 分支形态保留）', async () => {
+      setupProviders([deepseekProvider])
+
+      const wrapper = mount(ContextCapacityPopover, {
+        props: { modelId: 'deepseek/v3' },
+        attachTo: document.body,
+        global: { provide: { openSettings: () => {} } },
+      })
+      await flushPromises()
+      await wrapper.find('[title="上下文容量"]').trigger('focus')
+      await vi.advanceTimersByTimeAsync(700)
+      await flushPromises()
+
+      expect(findBodyButton('配置')).toBeTruthy()
+      expect(findBodyButton('刷新')).toBeUndefined()
       wrapper.unmount()
     })
   })

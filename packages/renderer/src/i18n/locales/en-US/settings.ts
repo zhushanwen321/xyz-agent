@@ -424,11 +424,18 @@ export default {
     quotaType: 'Type',
     quotaTypePlaceholder: 'Not selected',
     quotaTypeHint: 'Select the matching Coding Plan type',
+    // D8 (coding-plan-quota-config-ux §6.9): with no type selected the section renders only the dropdown + this line
+    quotaTypeFirstHint: 'Select a query type first; the parameters below change with the type.',
     quotaEnable: 'Enable quota query',
     quotaEnableHint: 'Query 5h/week/month quota usage',
+    // D4 (§6.5): the toggle is a pure config bit — it only controls display in the popover, never triggers a query
+    quotaEnableHintIdle: 'Show quota in the chat capacity popover; toggle anytime, no query triggered',
     quotaAuthMethod: 'Auth method',
     quotaCredentialOk: 'API Key configured',
     quotaCredentialMissing: 'API Key not set',
+    // §7.4 cross-section timing, two variants: the provider form is a draft model, runtime can only read persisted credentials
+    quotaProviderCredentialMissing: 'No usable API Key in the "Credentials" section above yet. Enter one first, or switch to a dedicated key',
+    quotaProviderCredentialPendingSave: 'An API Key is entered in the "Credentials" section above. Save the provider config to run the query',
     // B-3: credential state when fetcher.auth includes oauth
     quotaCredentialOauthReady: 'Credential ready (OAuth signed in)',
     quotaCredentialOauthMissing: 'Complete OAuth sign-in first',
@@ -437,13 +444,35 @@ export default {
     quotaApiKeyHint: '(optional) used for quota query, leave empty to use the API Key above',
     quotaApiKeyPlaceholder: 'Leave empty to use the API Key above',
     quotaApiKeySetPlaceholder: 'Configured, enter new value to override',
+    quotaExclusiveKeyPlaceholder: 'Paste the Coding Plan platform API Key',
     quotaSaveApiKey: 'Save',
     quotaApiKeyFallbackOrder: 'Query order: dedicated key, then provider credential',
+    // D3 (§6.4) credential source segmented control: what the UI shows is what runtime uses
+    quotaCredentialSourceLabel: 'Credential source',
+    quotaSourceProvider: 'Use provider credential',
+    quotaSourceExclusive: 'Use dedicated key',
+    quotaSourceProviderOauthHint: 'Uses the OAuth sign-in from the "Credentials" section above',
+    quotaSourceProviderApiKeyHint: 'Uses the API Key entered in the "Credentials" section above',
+    quotaSourceExclusiveHint: 'Only used for quota queries; does not affect the credential used for chat',
     quotaTestQuery: 'Test query',
     quotaTestSuccess: 'Query successful',
     quotaTestFail: 'Query failed, please check credentials',
+    // D9 (coding-plan-quota-config-ux §6.10): configureError goes through i18n, no hardcoded Chinese —
+    // setEnabled persist failure / saveAndTest persist failure paths (useQuotaConfigure.ts)
+    quotaConfigureFail: 'Failed to save quota query settings',
+    // D2 (§6.3): save + test merged into the section's single primary button; D1 disabled note beside it
+    quotaSaveAndTest: 'Save and test',
+    quotaSaveAndTestRunning: 'Querying…',
+    quotaReadyHint: 'Available once all parameters are filled',
+    // D1 (§6.2) field-level hints: explicit whitelist of three keys ('type' goes through the D8 branch, see §7.4)
+    quotaMissingCookie: 'Required here — this platform’s quota API only accepts a Cookie, with no inheritance path',
+    quotaMissingApiKey: 'Required here — "Use dedicated key" is selected, but no key is available yet',
+    quotaMissingWorkspace: 'Required here — quota is bound to a specific workspace, and one Cookie may map to several',
+    quotaSaveAndTestFail: 'Save and test failed',
     // A2-4 failure-state copy (recovery guidance for reason passthrough, rendered in Phase B)
     quotaFetchFailUnauthorized: 'Quota query failed: the credential may have expired. Start a conversation with this provider to trigger a credential refresh, then click refresh to retry',
+    // §5.2 path 3 cookie variant: "start a conversation to refresh" is not an action a cookie user can take
+    quotaFetchFailUnauthorizedCookie: 'Quota query failed: the credential may have expired. Copy this platform’s Cookie from the browser again, paste it, and retry',
     quotaFetchFailNetwork: 'Quota query failed: network error or service unavailable. Check your network connection and retry',
     quotaFetchFailNoSubscription: 'Quota query failed: no active subscription detected. Confirm your account has the corresponding coding plan subscription',
     // S5: for cookie-based providers the no-subscription business code cannot distinguish "no subscription" from "expired cookie" (proven infeasible at fetcher layer), so hint both
@@ -453,6 +482,8 @@ export default {
     quotaFetchFailNotConfigured: 'Quota query failed: no Workspace configured. Open the opencode.ai console, copy the workspace page URL from the browser address bar, paste it into "Workspace URL" above, then retry',
     // no-credential (D6, coding-plan-quota-config-ux §5.2 path 4): no credential resolvable in the chain — point to both fillable locations; cookie variant rendered by CodingPlanSection per authKinds (U5)
     quotaFetchFailNoCredential: 'Quota query failed: no usable credential found. Fill in the API Key in the "Credentials" section above, or enter a dedicated API Key here',
+    // §5.2 path 4 cookie variant (ghost state: cookieSet=true but the secrets file is missing; only re-pasting the Cookie recovers)
+    quotaFetchFailNoCredentialCookie: 'Quota query failed: no usable credential found. Re-paste this platform’s Cookie below and retry',
     // Workspace URL (resource-scoped fetcher e.g. opencode-go, D1-1)
     quotaWorkspaceLabel: 'Workspace URL',
     quotaWorkspaceHint: '(required for opencode)',
@@ -468,6 +499,9 @@ export default {
     quotaLastSuccessAt: 'Data as of {time}',
     quotaCookieSet: 'Configured',
     quotaCookieNotSet: 'Not configured',
+    // D1 field-level badges: independent of the input draft (with D7 unmasked inputs, an empty box does not mean unconfigured)
+    quotaRequiredBadge: 'Required',
+    quotaConfiguredBadge: 'Configured',
     quotaCookiePlaceholder: 'Paste cookie string here',
     quotaSaveCookie: 'Save Cookie',
     quotaUpdateCookie: 'Update Cookie',

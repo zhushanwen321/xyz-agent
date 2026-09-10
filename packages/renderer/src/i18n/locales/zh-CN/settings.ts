@@ -424,11 +424,18 @@ export default {
     quotaType: '类型',
     quotaTypePlaceholder: '未选择',
     quotaTypeHint: '选择对应的 Coding Plan 类型',
+    // D8（coding-plan-quota-config-ux §6.9）：类型未选时区块只留下拉 + 这一句说明
+    quotaTypeFirstHint: '先选一个查询类型，下面的参数会按类型自动变化。',
     quotaEnable: '启用额度查询',
     quotaEnableHint: '查询 5h/周/月 配额使用',
+    // D4（§6.5）：开关退化为纯配置位——只表达「要不要在浮层里展示」，不触发查询
+    quotaEnableHintIdle: '在对话框容量浮层里展示配额；可随时开关，不触发查询',
     quotaAuthMethod: '认证方式',
     quotaCredentialOk: 'API Key 已配置',
     quotaCredentialMissing: 'API Key 未设置',
+    // §7.4 跨区块时序两套文案：provider 表单是草稿模型，runtime 只能读落盘凭据
+    quotaProviderCredentialMissing: '上方「凭据」区还没有可用的 API Key，请先填写，或改用专属 Key',
+    quotaProviderCredentialPendingSave: '上方「凭据」区已填写 API Key，保存 provider 配置后即可查询',
     // B-3：fetcher.auth 含 oauth 时的凭证态
     quotaCredentialOauthReady: '凭证已就绪（OAuth 登录）',
     quotaCredentialOauthMissing: '请先完成 OAuth 登录',
@@ -437,13 +444,35 @@ export default {
     quotaApiKeyHint: '（可选）用于查询额度，留空则使用上方的 API Key',
     quotaApiKeyPlaceholder: '留空则使用上方的 API Key',
     quotaApiKeySetPlaceholder: '已配置，输入新值可覆盖',
+    quotaExclusiveKeyPlaceholder: '粘贴 Coding Plan 平台的 API Key',
     quotaSaveApiKey: '保存',
     quotaApiKeyFallbackOrder: '查询将依次使用：专属 Key → Provider 凭证',
+    // D3（§6.4）凭证来源分段控件：UI 显示的选择与 runtime 实际使用的凭证同源
+    quotaCredentialSourceLabel: '凭证来源',
+    quotaSourceProvider: '用 Provider 凭据',
+    quotaSourceExclusive: '用专属 Key',
+    quotaSourceProviderOauthHint: '使用上方「凭据」区的 OAuth 登录态',
+    quotaSourceProviderApiKeyHint: '使用上方「凭据」区填写的 API Key',
+    quotaSourceExclusiveHint: '只用于额度查询，不影响对话使用的凭据',
     quotaTestQuery: '测试查询',
     quotaTestSuccess: '查询成功',
     quotaTestFail: '查询失败，请检查凭证',
+    // D9（coding-plan-quota-config-ux §6.10）：configureError 统一走 i18n，不再透出硬编码中文——
+    // setEnabled 落盘失败 / saveAndTest 落盘失败两条路径（useQuotaConfigure.ts）
+    quotaConfigureFail: '额度查询配置保存失败',
+    // D2（§6.3）：保存与测试合一——区块唯一主动作按钮；D1 置灰时旁注「参数齐全后可点」
+    quotaSaveAndTest: '保存并测试',
+    quotaSaveAndTestRunning: '查询中…',
+    quotaReadyHint: '参数齐全后可点',
+    // D1（§6.2）字段级提示：显式白名单三键（'type' 走 D8 分支不配文案，见 §7.4）
+    quotaMissingCookie: '这里必须填 —— 该平台的额度接口只认 Cookie，没有继承路径',
+    quotaMissingApiKey: '这里必须填 —— 已选择「用专属 Key」，但还没有可用的 Key',
+    quotaMissingWorkspace: '这里必须填 —— 额度挂在具体 workspace 下，同一个 Cookie 可能对应多个',
+    quotaSaveAndTestFail: '保存并测试失败',
     // A2-4 失败态文案（reason 透传后的恢复指引，Phase B 渲染）
     quotaFetchFailUnauthorized: '额度查询失败：凭证可能过期。与该供应商发起一次对话触发凭证刷新后，点击刷新重试',
+    // §5.2 路径 3 cookie 变体：「发起一次对话刷新」对 cookie 用户是不存在的动作
+    quotaFetchFailUnauthorizedCookie: '额度查询失败：凭证可能已失效。请从浏览器重新复制该平台的 Cookie 粘贴后重试',
     quotaFetchFailNetwork: '额度查询失败：网络异常或服务不可用，请检查网络连接后重试',
     quotaFetchFailNoSubscription: '额度查询失败：未检测到有效订阅，请确认账号已开通对应 Coding Plan 套餐',
     // S5：cookie 类 provider 的 no-subscription 业务码不可区分「无订阅 vs Cookie 失效」（fetcher 层论证不可行），两可提示
@@ -453,6 +482,8 @@ export default {
     quotaFetchFailNotConfigured: '额度查询失败：未配置 Workspace。打开 opencode.ai 控制台，从浏览器地址栏复制 workspace 页 URL，填入上方「Workspace 地址」后重试',
     // no-credential（D6，coding-plan-quota-config-ux §5.2 路径 4）：凭证链解析不到任何凭证——文案指向两个可填位置；cookie 变体由 CodingPlanSection 按 authKinds 分支渲染（U5）
     quotaFetchFailNoCredential: '额度查询失败：未找到可用凭证。请在上方「凭据」区填写 API Key，或在此填写专属 API Key',
+    // §5.2 路径 4 cookie 变体（幽灵态：cookieSet=true 但 secrets 缺失，只能重贴 Cookie 恢复）
+    quotaFetchFailNoCredentialCookie: '额度查询失败：未找到可用凭证。请在下方重新粘贴该平台的 Cookie 后重试',
     // Workspace 地址（资源维度 fetcher 如 opencode-go，D1-1）
     quotaWorkspaceLabel: 'Workspace 地址',
     quotaWorkspaceHint: '（opencode 必填）',
@@ -468,6 +499,9 @@ export default {
     quotaLastSuccessAt: '数据截至 {time}',
     quotaCookieSet: '已配置',
     quotaCookieNotSet: '未配置',
+    // D1 字段级标记：独立于输入草稿（D7 去掩码后输入框为空不代表未配置）
+    quotaRequiredBadge: '必填',
+    quotaConfiguredBadge: '已配置',
     quotaCookiePlaceholder: '在此粘贴 cookie 字符串',
     quotaSaveCookie: '保存 Cookie',
     quotaUpdateCookie: '更新 Cookie',
