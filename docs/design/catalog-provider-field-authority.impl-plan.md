@@ -1,6 +1,6 @@
 # Provider 字段权威收口 实施计划
 
-基线: pending（本文件 commit 后回填） | 来源设计: `docs/design/catalog-provider-field-authority.md`（v3.3） | 日期: 2026-09-10
+基线: 0d8b6cbbc（本计划文档基线 commit） | 来源设计: `docs/design/catalog-provider-field-authority.md`（v3.3） | 日期: 2026-09-10
 
 > 本计划把设计 §5 的 M1–M6 六个语义单元细化为 13 个可派发单元。细化不是语义变更，而是**领地互斥**要求：
 > 设计里 M1/M2/M3/M4 共改同一批热点文件（`provider-config-helper.ts` 被 M1/M2/M4 共改、`use-provider-edit.ts` 被 M1/M3/M6 共改、`pi-provider-store.ts` 被 M1/M2/M5 共改），
