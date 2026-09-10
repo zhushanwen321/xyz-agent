@@ -1,8 +1,9 @@
 // src/main.ts
 //
-// zcode-subagent-cli 进程入口（bin/zcode-subagent-cli.mjs 直载本文件——node ≥23.6
-// 原生 TS type-stripping，本仓实际运行面 node 24；仓 engines 下限 22.19 之外由
-// 发现器 bin 可执行检查兜底）。
+// zcode-subagent-cli 进程入口（bin/zcode-subagent-cli.mjs dist-first 加载：
+// dist/main.js 为 tsup 构建产物——npm 发布形态的常规路径；本文件仅在 workspace
+// 未构建时被回退直载——node ≥23.6 原生 TS type-stripping，realpath 须在
+// node_modules 外，回退判据见 bin/zcode-subagent-cli.mjs）。
 //
 // 启动序：
 //   1. armEngineSelfDestruct（SDK）：宿主死亡自灭守卫（主判据 stdin EOF；辅助判据

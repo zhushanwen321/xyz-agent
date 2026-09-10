@@ -91,6 +91,20 @@ describe('discoverGuardedPackages（D5 动态发现）', () => {
 
 describe('checkGhostEntries（检查项 1：磁盘 stat 判定形态）', () => {
   const DIR = (root) => join(root, 'packages', 'p')
+  it('npm 排除语义条目（"!" 前缀）不参与幽灵检查——排除的是 tarball 扣除规则而非存在性承诺', () => {
+    const root = makeRepo({
+      'packages/p/package.json': pkgJsonOf({}),
+      'packages/p/src/index.ts': 'export {}',
+      'packages/p/dist/index.js': 'export {}',
+    })
+    try {
+      // "!src/__tests__" 指向的路径磁盘上不存在：排除规则对不存在的东西排除
+      // 是合法 npm 形态（subagent-engine-sdk files 实态），不得按幽灵条目红
+      expect(checkGhostEntries(DIR(root), ['src/', '!src/__tests__', 'dist/'], '@fixture/p')).toEqual([])
+    } finally {
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+    }
+  })
   it('目录条目磁盘不存在 → 红（含幽灵定性 + 三处构建段恢复指引 + --filter 包名）', () => {
     const root = makeRepo({ 'packages/p/package.json': pkgJsonOf({}) })
     try {
