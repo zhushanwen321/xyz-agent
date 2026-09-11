@@ -55,6 +55,7 @@ graph TD
 | 3 | u1 | worktree-registry.ts 对齐目标列举补 extension 侧 pi-file-lock | 合理（列举补全） | u1 汇报 |
 | 4 | u1 | 连带：scripts/check-layout-literals.mjs 登记 bundled session-reader 探测证据文案豁免（守卫恢复动作 3，存量源码字面量经 bundle 同步首次入扫域） | 合理（守卫指引路径） | commit 5cebdd5e7 |
 | 5 | u2 | fingerprint.test.ts 15→14 用例：diffFingerprints(fp(), null) 分支经 buildProbeEntry 公有面不可达，语义由多字段变化用例等价承载 | 合理（设计给定改法的自然结果） | u2 汇报 |
+| 6 | u1/u2 | V2（pi CLI 实测 permission/rename-session 保存链路）与 V4（cache-probe 采集 + analyze.py）无实跑证据 | 已关闭，见变更历史 Gate B 组 2（原定：阶段 5 Gate B 统一补跑，不静默跳过） | 14 区审查 unreasonable #2（medium） |
 
 ## 6 状态表
 
@@ -68,5 +69,5 @@ graph TD
 
 - 残留风险：①file-lock-external-removal.test.ts 改 sync 后断言形态以测试绿确认（§7.4 ①）；②worker 改 sync 竞争时序等价性由 V1 终值断言兜底（§7.4 ②）；③版本 bump 后 pnpm-lock.yaml 若因 workspace 协议需要更新，随单元 commit 带上。
 - 变更历史：2026-09-12 初版（来源设计 v4，双审查 0 must-fix 证据齐）。
-| 6 | u1/u2 | V2（pi CLI 实测 permission/rename-session 保存链路）与 V4（cache-probe 采集 + analyze.py）无实跑证据 | 待执行（阶段 5 Gate B 统一补跑，不静默跳过） | 14 区审查 unreasonable #2（medium） |
-- 2026-09-12 Gate B 组 2 证据（阶段 5）：V2 = pass（隔离 agentDir 下 pi CLI 实测：/permission strict 触发 saveConfig→withFileLockSync 写 permission-ext-config.json 正确落盘；/auto-rename off 触发 rename-session-ext-config.json 落盘；config 目录 0 个 .lock 残留；两会话 0 个 ELOCKED 报错）；V4 = pass（3 个真实会话采集：baseline entry {v:2, seq:1, baseline:true, changed:['*']} + normal entry 增量形态 {seq:2, changed:['spFull']} + 跨 session skill 文件修改致 skills hash 变化；analyze.py exit 0 五部分输出正常）。本计划偏差 #6（V2/V4 待执行）就此关闭。
+- 2026-09-12 阶段 6 审查登记：stage-4 修复 b6c52f4d4（设计 v5 ① 契约段矛盾代码侧落地，extension 侧 `extensions/shared/file-lock/src/file-lock.ts`）；runtime 侧 `packages/runtime/src/utils/file-lock.ts` 契约段同款修正随阶段 6 F1 批次落地。
+- 2026-09-12 Gate B 组 2 证据（阶段 5）：V2 = pass（隔离 agentDir 下 pi CLI 实测：/permission strict 触发 saveConfig→withFileLockSync 写 permission-ext-config.json 正确落盘；/auto-rename off 触发 rename-session-ext-config.json 落盘；config 目录 0 个 .lock 残留；两会话 0 个 ELOCKED 报错）；V4 = pass（3 个真实会话采集：baseline entry {v:2, seq:1, baseline:true, changed:['*']} + normal entry 增量形态 {seq:2, changed:['spFull']} + 跨 session skill 文件修改致 skills hash 变化；analyze.py exit 0 五部分输出正常）。本计划偏差 #6（V2/V4 待执行）就此关闭（登记表 #6 行同步置已关闭）。

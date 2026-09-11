@@ -18,8 +18,10 @@
 > **改造后维护者能做到：token 估算只认 pi 一个口径源、事件类型只认 SDK 一个权威源、门控规则只改一处；agent 的工具重会话不再被收缩校验误拒。**
 > 1. **G1 估算口径归一（行为修复）**：被压段估算与 pi 自身核算同源（`estimateTokens`），toolCall arguments 与 thinking 块计入分母，工具重会话的合法摘要不再被误判膨胀（验证 §7 场景 1）。
 > 2. **G2 类型权威源唯一**：Like\*Event×5 与 ToolInfoLike 删除，事件/工具类型 = pi SDK 类型面（包根缺席的符号经 `on()` 重载/函数体类型推断对齐，见 §5.1）；SDK 演进编译报错而非静默漂移（验证 §7 场景 3）。
-> 3. **G3 门控单一来源**：D5 门控判定只在 `isGatingActive` 一处，接管 handler 不再手写第二份（验证 §7 场景 4）。
-> 4. **G4 宿主表面不变**：配置 schema、compaction entry details 形状、renderer 设置页读写零变化（验证 §7 场景 5）。
+> 3. **G3 门控单一来源**：D5 门控判定只在 `isGatingActive` 一处，接管 handler 不再手写第二份（验证 §7 场景 2）。
+> 4. **G4 宿主表面不变**：配置 schema、compaction entry details 形状、renderer 设置页读写零变化（验证 §7 场景 4）。
+
+勘误注：2026-09-12 阶段 6 审查修正编号映射，原设计 §2 误写 G3→4/G4→5（§7 场景表仅 4 行，「场景 5」为悬空引用；正确映射 G3→场景 2、G4→场景 4）。上文 G3/G4 两行已同步为修正后文本，其余各行为逐字摘录。
 
 Out-of-scope（逐字）：移交清单 T1–T6（§5.7，移交 code-simplify）；双模式接管机制、3 档阈值提醒、R2 降级态（本质复杂度，不动）；SimpleResponseLike 与 CompactionResultLike（不在核对面）；estimateTextTokens 维持现状。
 
@@ -64,7 +66,8 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-- 残留风险：①projectTools 的 parameters cast 去留由 P1 typecheck 定案（报错则保留单点 cast + 注释）；②vitest importOriginal 形态（P2 降级路径已给）；③fixture 必填字段集以 tsc 报错为准逐个补齐（形态约束：content 锁定单 text 块，不得追加 thinking/toolCall 块——设计 §8.3）。
+- 残留风险：①projectTools 的 parameters cast 去留由 P1 typecheck 定案（报错则保留单点 cast + 注释）——**已闭合（定案 = 删，见 §6 u1 状态表「cast 去留=删」证据指针）**；②vitest importOriginal 形态（P2 降级路径已给）——**已闭合（主路径跑通，见 §6 u2 状态表「P2 主路径跑通」证据指针，未走降级路径）**；③fixture 必填字段集以 tsc 报错为准逐个补齐（形态约束：content 锁定单 text 块，不得追加 thinking/toolCall 块——设计 §8.3）——**已闭合（已按 SDK 类型实测补齐、含 settings 字段，见 §6 u1 状态表 deviation 列）**。
 - 变更历史：2026-09-12 初版（来源设计 v3，双审查 0 must-fix 证据齐）。
+- 2026-09-12 阶段 6 审查登记：SC09-05 sdk-contract.test.ts:6 版本号 0.84.1 失实：维持 T6 移交登记，code-simplify 触达时改 0.84.4。
 - 2026-09-12 阶段 3 一致性审查后簿记修正：①u2 证据指针 shell 字面量改为真实 hash 233b22298；②u4 状态 pending→committed（d7f1264f0，当时漏翻）；③u4 领地行 :19 锚点改行号无关「09 号行」（与设计 §6 doc_error 修正在设计 v4 同步）。
 - 2026-09-12 Gate B 组 2 证据（阶段 5）：场景 1 = pass（真实接管决定性证据：entry details.engine=smart-context，takeover ok 日志 summaryTokens=3990 < shadowedTokens=9075，无误拒无 inflated warn，分母与被压段 chars/4≈9538 量级相称）；场景 2 = pass（排除模型下 /compact 走原生无 takeover 日志 + compact_context 拒绝带恢复指引 + 未排除下同工具放行——isGatingActive 双入口同源）；场景 3 = pass（三连 typecheck/lint 绿；test 三连中 pi-subagent-cli 3 用例为高并行负载 timeout flaky——失败文件单独复跑全绿且失败包不在本设计改动面；CLI 事件冒烟 model_select/agent_settled/压缩接管三链路 0 error）；场景 4 = pass + 局部 blocked（配置四字段 schema 与 entry details 三字段形状逐字一致 pass；GUI 设置页子项 dev 应用未运行，blocked 如实登记，静态对照四字段引用仍在）。环境校准注记：pi 默认 keepRecentTokens=20000 门槛需隔离 agentDir settings 调低后才可触发 manual compact（环境校准非缺陷）；全局 pi CLI 0.85.1 与 worktree 实装 0.84.4 并存，CLI 验收须 --no-extensions（与 03 组 1 发现一致）。

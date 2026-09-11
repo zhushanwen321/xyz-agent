@@ -8,7 +8,8 @@
 //    全局文件锁（原 reapOrphanedTasks 的 reaper.lock 路径随模块删除一并消失）
 //  - 入口无条件 debug 日志按派发次数出现，detail 仅含 reason（reapSkipped 字段
 //    随 reap 调用移除，S6 观测通道语义更新）
-// 断言方式：reconcile / logger / file-lock 全部间谍注入，观察调用次数与参数。
+// 断言方式：reconcile / logger 间谍注入观察调用次数与参数；file-lock 为 mock
+// 缺键守卫 + withFileLockSync throw 哨兵（不计数）。
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

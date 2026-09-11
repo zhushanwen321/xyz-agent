@@ -1,7 +1,7 @@
 /**
  * same-model 模式的 LLM 调用（D12 + D13-5 cache-key 一致性）。
  *
- * 不走 llm-shared callLLM：其 tools:[] 硬编码会破坏前缀缓存对齐（call.ts:113）。
+ * 不走 llm-shared callLLM：其 tools:[] 硬编码会破坏前缀缓存对齐（llm-shared call.ts）。
  * 此处直接用 completeSimple + getApiKeyAndHeaders，并把 tools schema 与主会话对齐
  * （deepseek-harness summarizer 同款做法：system + tools + messages 全部复用做缓存对齐）。
  *

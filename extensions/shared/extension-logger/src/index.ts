@@ -223,7 +223,7 @@ export function setPiHandle(pi: PiLike | undefined): void {
 /**
  * 创建具名 logger。
  *
- * @param extName  extension 名（如 "subagents"、"unified-hooks"），用作：
+ * @param extName  extension 名（如 "subagents"、"smart-context"），用作：
  *                  - appendEntry 的 customType 前缀（`<extName>:log`）
  *                  - 文件日志名（`<extName>-YYYY-MM-DD.log`）
  *                  - msg 前缀（`[<extName>]`，自动补）

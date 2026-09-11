@@ -36,8 +36,8 @@
 
 1. **G1 估算口径归一（行为修复）**：被压段估算与 pi 自身核算同源（`estimateTokens`），toolCall arguments 与 thinking 块计入分母，工具重会话的合法摘要不再被误判膨胀（验证 §7 场景 1）。
 2. **G2 类型权威源唯一**：Like\*Event×5 与 ToolInfoLike 删除，事件/工具类型 = pi SDK 类型面（包根缺席的符号经 `on()` 重载/函数体类型推断对齐，见 §5.1）；SDK 演进编译报错而非静默漂移（验证 §7 场景 3）。
-3. **G3 门控单一来源**：D5 门控判定只在 `isGatingActive` 一处，接管 handler 不再手写第二份（验证 §7 场景 4）。
-4. **G4 宿主表面不变**：配置 schema、compaction entry details 形状、renderer 设置页读写零变化（验证 §7 场景 5）。
+3. **G3 门控单一来源**：D5 门控判定只在 `isGatingActive` 一处，接管 handler 不再手写第二份（验证 §7 场景 2）。
+4. **G4 宿主表面不变**：配置 schema、compaction entry details 形状、renderer 设置页读写零变化（验证 §7 场景 4）。
 
 **In-scope**：`extensions/universal/smart-context/`（src + tests）。
 **Out-of-scope**：
@@ -148,7 +148,7 @@ if (config.enabled !== true || currentModelId === "" || config.excludedModels.in
 
 ### 5.1 D1：Like\*Event×5 归一方式（contested 裁决，选定：SDK 类型面归一——直标/省略标注/函数体推断）
 
-- **采用**：删 5 个本地接口；`BeforeCompactLikeEvent` → `SessionBeforeCompactEvent`（包根直标）、`AgentSettledLikeEvent`/`SessionCompactLikeEvent` → handler 参数省略标注（`on()` 重载推导，事件体整个忽略）、`ModelSelectLikeEvent` → **handler 参数同样省略标注**（该 handler 是内联箭头函数，上下文推断给出完整 `ModelSelectEvent` 类型——含 model/previousModel/source 字段，消费点不损失类型）。`BeforeCompactDecision` 删除，**factory/generate 的返回类型省略标注、由函数体对象字面量推断**：handler 内 `return {}` / `return { compaction: result }` 推断出的结构化返回类型（`{cancel?; compaction?: CompactionResult}` 形状）与 SDK `SessionBeforeCompactResult`（types.d.ts:857-860）逐字段同形，注册点 `pi.on("session_before_compact", beforeCompact)` 重载要求的 `ExtensionHandler<SessionBeforeCompactEvent, SessionBeforeCompactResult>` 按结构兼容赋值校验通过——该链路已用 tsc 探针验证可编译（✅ 已测 2026-09-11，`--moduleResolution bundler`，含 generate→factory→on() 全链推断与 `event.preparation` 直传 nativeCompact 的 cast 删除形态；探针临时文件已删除）。返回类型不写名义标注的原因：`SessionBeforeCompactResult` **不在包根导出**（见审计修正），任何显式标注该名的写法都不可 import。`CompactionResult` 本身包根可用（dist/index.d.ts:5，现 :15 已 import），generateSameMode/generateCrossMode 的 `Promise<CompactionResult | null>` 标注保留。联动删除两处因宽松类型而存在的 cast：compact-handler.ts:261-264 `event.preparation as Parameters<typeof nativeCompact>[0]`（SDK 类型下 `event.preparation` 本就是 `CompactionPreparation`，types.d.ts:142 compact 首参即它）与 :185 `event.branchEntries as SessionEntry[]`（SDK 事件中已是 `SessionEntry[]`）；index.ts:99-100 只为携带类型标注而存在的箭头包装收敛为 `pi.on("session_before_compact", beforeCompact)`；:48-49 逆变摩擦注释随接口删除。
+- **采用**：删 5 个本地接口；`BeforeCompactLikeEvent` → `SessionBeforeCompactEvent`（包根直标）、`AgentSettledLikeEvent`/`SessionCompactLikeEvent` → handler 参数省略标注（`on()` 重载推导，事件体整个忽略）、`ModelSelectLikeEvent` → **handler 参数同样省略标注**（该 handler 是内联箭头函数，上下文推断给出完整 `ModelSelectEvent` 类型——含 model/previousModel/source 字段，消费点不损失类型）。`BeforeCompactDecision` 删除，**factory/generate 的返回类型省略标注、由函数体对象字面量推断**：handler 内 `return {}` / `return { compaction: result }` 推断出的结构化返回类型（`{cancel?; compaction?: CompactionResult}` 形状）与 SDK `SessionBeforeCompactResult`（types.d.ts:857-860）逐字段同形，注册点 `pi.on("session_before_compact", beforeCompact)` 重载要求的 `ExtensionHandler<SessionBeforeCompactEvent, SessionBeforeCompactResult>` 按结构兼容赋值校验通过——该链路已用 tsc 探针验证可编译（✅ 已测 2026-09-11，`--moduleResolution bundler`，含 generate→factory→on() 全链推断与 `event.preparation` 直传 nativeCompact 的 cast 删除形态；探针临时文件已删除）。返回类型不写名义标注的原因：`SessionBeforeCompactResult` **不在包根导出**（见审计修正），任何显式标注该名的写法都不可 import。`CompactionResult` 本身包根可用（dist/index.d.ts:5，现 :15 已 import），generateSameMode/generateCrossMode 的 `Promise<CompactionResult | null>` 标注保留。联动删除两处因宽松类型而存在的 cast：compact-handler.ts:261-264 `event.preparation as Parameters<typeof nativeCompact>[0]`（SDK 类型下 `event.preparation` 本就是 `CompactionPreparation`，compaction.d.ts:142 compact 首参即它）与 :185 `event.branchEntries as SessionEntry[]`（SDK 事件中已是 `SessionEntry[]`）；index.ts:99-100 只为携带类型标注而存在的箭头包装收敛为 `pi.on("session_before_compact", beforeCompact)`；:48-49 逆变摩擦注释随接口删除。
 - **被否**：
   - *D1-v1（初版方案，被第 1 轮影响面审查击穿）：`BeforeCompactDecision` → `SessionBeforeCompactResult` 直接换名 + factory 返回签名 `Promise<SessionBeforeCompactResult>`*——击穿反例：该符号**不在包根导出**（`dist/index.d.ts` 全文 36 行无此名，:7 为显式白名单且无 `export *`），`import type { SessionBeforeCompactResult } from "@earendil-works/pi-coding-agent"` 报 TS2724（tsc 探针实证）；省略「单字段标注」救不了显式写的返回类型标注，P1 探针必红且彼时降级清单未覆盖「符号不存在」失败模式。已改为上文省略标注 + 推断方案。
   - *D1-v2：深层导出路径 import（`@earendil-works/pi-coding-agent/dist/core/extensions/index.js`）*——击穿反例：包 `exports` 字段仅 `"."`/`./rpc-entry`/`./client` 三入口，bundler 解析下深层路径报 TS2307（tsc 探针实证）；即使绕过也是 dist 内部私有路径，pi 升级随目录布局漂移，违背「公共 API 面」纪律。
@@ -194,11 +194,11 @@ if (config.enabled !== true || currentModelId === "" || config.excludedModels.in
 
 ### 5.4 D4：projectTools / ToolInfoLike 处置（contested 裁决，选定：保留函数 + 类型归一）
 
-- **采用**：`projectTools`（llm.ts:29-35，唯一生产调用 compact-handler.ts:191）**保留**——函数名 + 头注承载「投影即透传、勿改造」的 D13-5 缓存对齐知识（parameters 原样透传是前缀缓存命中的关键不变量），是该不变量的可检索命名锚点；`ToolInfoLike`（llm.ts:18-23）删除改 `import type { ToolInfo }`（types.d.ts:1190-1192，`pi.getAllTools()` 返回 `ToolInfo[]`，types.d.ts:997）；函数体内 `parameters as LlmTool["parameters"]` cast 预期可一并删除（两侧均为 typebox TSchema），由 P1 typecheck 定案。
+- **采用**：`projectTools`（llm.ts:29-35，唯一生产调用 compact-handler.ts:191）**保留**——函数名 + 头注承载「投影即透传、勿改造」的 D13-5 缓存对齐知识（parameters 原样透传是前缀缓存命中的关键不变量），是该不变量的可检索命名锚点；`ToolInfoLike`（llm.ts:18-23）删除改 `import type { ToolInfo }`（types.d.ts:1192-1194，`pi.getAllTools()` 返回 `ToolInfo[]`，types.d.ts:997）；函数体内 `parameters as LlmTool["parameters"]` cast 预期可一并删除（两侧均为 typebox TSchema），由 P1 typecheck 定案。
 - **被否**：
   - *B1 删函数、调用点 inline map + 注释迁移*——省约 10 行，但「勿改造」知识埋进 generateSameMode 60 行函数体，下一个想「顺手规范化 parameters」的人失去锚点；pass-through 反模式的「删掉行为不变」判定在此成立，但该层的价值不在行为在知识命名。
   - *B2 原样全保留（ToolInfoLike 不动）*——宽松重声明的负防腐缺失照旧，与 G2 的权威源收敛矛盾。
-- **证据**：四问记录发现 8（contested，记录自身倾向「保留可辩护」）；ToolInfo 导出 types.d.ts:1190-1192 实读。
+- **证据**：四问记录发现 8（contested，记录自身倾向「保留可辩护」）；ToolInfo 导出 types.d.ts:1192-1194 实读。
 - **效果**：G2 补全（类型权威源无第二份），D13-5 知识锚点保留。
 
 ### 5.5 方案对比总览（决策级）

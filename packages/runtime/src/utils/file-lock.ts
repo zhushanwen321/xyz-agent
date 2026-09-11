@@ -30,10 +30,10 @@
  * （ensure/logTag），消费方无感。
  *
  * 契约：
- *   - fn 内禁止任何 I/O（sync 版）/ await（async 版）/ 再次对本文件加锁
- *     （嵌套取锁必然 ELOCKED → 重试耗尽 → fail-fast）。持锁范围应仅为
- *     「读文件 + 纯内存变更 + 原子写」，毫秒级（必须远小于 stale——无保活
- *     touch，超时持锁会被对端 stale 夺取）。
+ *   - fn 内仅做既定读改写（读目标文件 + 纯内存变更 + 原子写），禁其他 I/O 与
+ *     再次对本文件加锁（嵌套取锁必然 ELOCKED → 重试耗尽 → fail-fast），毫秒级
+ *     完成（必须远小于 stale——无保活 touch，超时持锁会被对端 stale 夺取）。
+ *     async 版 fn 允许 await，临界区时长约束同上。
  *   - 预算耗尽 fail-fast 抛错（对齐 pi 放弃保存的语义），不静默不重排队——
  *     同步 busy-wait 阻塞整个 event loop，预算必须被严格限制在 ~1s 量级。
  *
